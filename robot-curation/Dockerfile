@@ -8,16 +8,13 @@
 ARG BASE_IMAGE=python:3.10-slim
 FROM ${BASE_IMAGE}
 
-# 构建上下文兼容(2026-07-17 火山 CI 上下文=仓库根,代码在 robot-curation/ 子目录):
-#   火山 fork 根上下文:默认值即可;本地/子目录上下文:--build-arg APP_DIR=.
-ARG APP_DIR=robot-curation
-
+# 构建上下文=本目录(火山 CI 的 ContextPath 填 robot-curation;本地在包目录下 build)
 WORKDIR /app
-COPY ${APP_DIR}/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ${APP_DIR}/curation/ ./curation/
-COPY ${APP_DIR}/pyproject.toml ${APP_DIR}/README.md* ./
+COPY curation/ ./curation/
+COPY pyproject.toml README.md* ./
 RUN pip install --no-cache-dir --no-deps -e .
 
 # 数据/输出经挂载进出(VKE 挂 TOS/PVC 到这两个路径)
