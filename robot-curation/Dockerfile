@@ -8,6 +8,12 @@
 ARG BASE_IMAGE=python:3.10-slim
 FROM ${BASE_IMAGE}
 
+# PyPI 源可换(2026-07-17 火山构建集群→官方 PyPI 实测 17kB/s+超时):
+# 默认=火山公共镜像(国内构建零参数直接快);要回官方源:
+#   --build-arg PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_INDEX_URL=https://mirrors.volces.com/pypi/simple
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} PIP_DEFAULT_TIMEOUT=120
+
 # 构建上下文=本目录(火山 CI 的 ContextPath 填 robot-curation;本地在包目录下 build)
 WORKDIR /app
 COPY requirements.txt .
