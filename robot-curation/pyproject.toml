@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "curation"
+version = "0.1.0"
+description = "机器人数据 curation 流水线:质检/清洗/组织"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["curation*"]
+
+[project.scripts]
+curation = "curation.cli:main"

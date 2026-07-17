@@ -1,0 +1,24 @@
+# SO-100(lerobot 官方开源臂,svla_so100_* 用)。STS3215 舵机。
+# SO-101 已拆分独立表(so101.yaml,2026-07-14):同家族但录制约定不同——
+# so100 实测数据是舵机原始角(97-177°),本表±中心约定与之错位,故保持 draft。
+# 极限来源:lerobot SO100 配置与社区文档,近似值 —— P5 校准时用真机数据精化
+embodiment_id: so100
+aliases: [so100_follower]
+dof: 6
+action_space: joint_position
+unit: deg_normalized           # lerobot so100 数据常为归一化/度混合,读数时确认
+joint_limits:
+  - [-110.0, 110.0]   # shoulder_pan
+  - [-100.0, 100.0]   # shoulder_lift
+  - [-100.0, 100.0]   # elbow_flex
+  - [-100.0, 100.0]   # wrist_flex
+  - [-160.0, 160.0]   # wrist_roll
+  - [0.0, 100.0]      # gripper(开合度)
+velocity_limits: [300.0, 300.0, 300.0, 300.0, 300.0, 200.0]  # deg/s 级,近似
+gripper_range: [0.0, 100.0]
+control_freq_hz: 30
+urdf_path: null
+source: "lerobot so100 配置 + 社区规格(近似)"
+quality: draft   # 2026-07-07 降级:实测数据用舵机原始角约定(joint1 常驻 97-177°),
+                 # 本表是±中心约定 → 全量"违规"实为坐标系错位;P5.1 人工核对后转正
+gripper_dims: [5]   # 夹爪列下标(本数据布局约定)

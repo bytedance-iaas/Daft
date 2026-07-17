@@ -1,0 +1,232 @@
+"""VLM 客户端适配器:openai 兼容端点(vLLM serve)→ vlm_completion 注入函数。
+
+★ 换模型硬需求(用户 2026-07-02):模型名/端点只出现在 pipeline YAML 的 vlm: 一处,
+本模块从配置构造客户端,core/checks/task_success.py 对模型零感知。
+prompt 设计借 OpenGVL:单帧提问完成度(VOC 的打乱在 core 层做,这里只管"一帧一问")。
+"""
+from __future__ import annotations
+
+import base64
+import re
+
+import numpy as np
+
+# ⚠️ 协议演化(2026-07-02 实测,详见 spikes/vlm_ab_report.md):
+# v1 单帧无参考:模型一律回"50"(无参照物,敷衍是理性答案)→ 废弃;
+# v2 多图一次问(无上下文):Qwen3-VL 位置偏置幻觉——无视画面按图片顺序输出递增数列
+#    (VOC 正确拦截,但可判率掉到 5%)→ 废弃;
+# v3 锚定单查询:起始参考帧+单查询帧,免疫位置偏置(Qwen3 rho ~0→0.77-0.96),
+#    但没解决绝对定标(干净/截断终值分布重叠);
+# v4 few-shot 多图(忠实 openGVL):起始帧+标注上下文+8 张打乱评测帧一次问 →
+#    实测(3 模型)仍崩:模型跟踪不了"哪张是哪张",Qwen2.5 18/20 全同预测,VOC 中位≈0;
+# v5 few-shot + 锚定单查询(现行):每请求 = 标注上下文(教标尺)+ 起始帧 + 1 张待评帧
+#    (无跟踪/位置问题)。few-shot 解决绝对定标,单查询解决多图跟踪,各治各的病。
+#    上下文在客户端构造期绑定 → 注入接口不变,core/funnel 零改动。
+ANCHORED_PROMPT = (
+    "Task: {instruction}\n"
+    "Image 1 shows the START of a robot episode (reference, 0% complete).\n"
+    "Image 2 is ONE frame from the SAME episode at an unknown time.\n"
+    "How complete is the task in Image 2? Answer ONLY an integer from 0 to 100."
+)
+
+FEWSHOT_SYSTEM = (
+    "You are an expert roboticist tasked to predict task completion percentages for frames "
+    "of a robot performing the task: {instruction}. Completion is between 0 and 100, where "
+    "100 is full task completion. The frames may be in random order; reason about each frame "
+    "independently when estimating completion."          # openGVL get_prompt 同款措辞
+)
+FEWSHOT_ASK = (
+    "Now estimate the task completion percentage of EACH of the {k} frames above "
+    "(after the labeled examples). Answer with exactly {k} comma-separated integers "
+    "in the same order as given, nothing else."
+)
+
+
+def parse_completion(text: str) -> float:
+    """模型回答 → 完成度 0-1。找第一个数;>1 视为百分制;解析失败抛 ValueError。"""
+    m = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not m:
+        raise ValueError(f"VLM 回答里没有数字: {text!r}")
+    v = float(m.group())
+    if v > 1.0:
+        v = v / 100.0
+    return float(np.clip(v, 0.0, 1.0))
+
+
+def strip_reasoning(text: str) -> str:
+    """去掉推理模型的思维链(Cosmos-Reason 等输出 <think>…</think> 再给答案)。
+
+    只取最后一个 </think> 之后的部分;没有标签则原样返回。
+    """
+    if "</think>" in text:
+        return text.rsplit("</think>", 1)[1]
+    return text
+
+
+def parse_completion_list(text: str, k: int) -> list[float]:
+    """模型回答 → K 个完成度(0-1)。数量不符抛 ValueError(调用方转不可判)。
+
+    先剥思维链(CoT 正文里满是数字,不剥会解析到推理过程);答案段若数字多于 K,
+    取最后 K 个(模型爱复述题干"the 8 frames"之类)。
+    """
+    answer = strip_reasoning(text)
+    nums = re.findall(r"-?\d+(?:\.\d+)?", answer)
+    if len(nums) < k:
+        raise ValueError(f"期望 {k} 个数,got {len(nums)}: {answer[-200:]!r}")
+    vals = [float(x) for x in nums[-k:]]
+    if any(v > 1.0 for v in vals):
+        vals = [v / 100.0 for v in vals]
+    return [float(np.clip(v, 0.0, 1.0)) for v in vals]
+
+
+def _frame_to_data_uri(frame: np.ndarray, quality: int = 85) -> str:
+    import cv2
+
+    ok, buf = cv2.imencode(".jpg", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
+                           [cv2.IMWRITE_JPEG_QUALITY, quality])
+    if not ok:
+        raise ValueError("帧 JPEG 编码失败")
+    return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
+
+
+def make_vlm_completion(
+    endpoint: str,
+    model: str,
+    *,
+    context: tuple[list[np.ndarray], list[float]] | None = None,  # v4:上下文帧+完成度标注(0-1)
+    timeout_s: float = 600.0,
+    temperature: float = 0.0,
+    max_tokens: int = 2048,       # 推理模型(Cosmos-Reason)的 CoT 需要余量
+):
+    """构造批式 vlm(reference, shuffled_frames, instruction) -> list[float](注入给 task_success)。
+
+    context 给出 → v4 few-shot 协议(单会话多图,忠实 openGVL);否则 → v3 锚定单查询。
+    上下文在构造期绑定 → 注入接口不变,core/funnel 零改动。
+    endpoint: openai 兼容根路径(如 http://localhost:8000/v1)。
+    """
+    import requests
+
+    url = endpoint.rstrip("/") + "/chat/completions"
+
+    def _post(content: list) -> str:
+        payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
+                   "messages": [{"role": "user", "content": content}]}
+        resp = requests.post(url, json=payload, timeout=timeout_s)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+    def _img(frame: np.ndarray) -> dict:
+        return {"type": "image_url", "image_url": {"url": _frame_to_data_uri(frame)}}
+
+    def vlm_v3(reference, shuffled_frames, instruction) -> list[float]:
+        preds = []
+        for f in shuffled_frames:                     # 锚定单查询:每帧一次请求
+            text = ANCHORED_PROMPT.format(
+                instruction=instruction or "the robot manipulation task")
+            ans = _post([{"type": "text", "text": text}, _img(reference), _img(f)])
+            preds.append(parse_completion(strip_reasoning(ans)))
+        return preds
+
+    def vlm_v5(reference, shuffled_frames, instruction) -> list[float]:
+        ctx_frames, ctx_rates = context
+        head = [{"type": "text", "text": FEWSHOT_SYSTEM.format(
+            instruction=instruction or "the robot manipulation task")},
+            {"type": "text", "text": "Labeled example frames (from a similar episode):"}]
+        for f, r in zip(ctx_frames, ctx_rates):       # few-shot:教绝对标尺
+            head.append(_img(f))
+            head.append({"type": "text", "text": f"Task completion: {int(round(r * 100))}%"})
+        head.append({"type": "text", "text": "Initial frame of the CURRENT episode (0% complete):"})
+        head.append(_img(reference))
+        preds = []
+        for f in shuffled_frames:                     # 单查询:每请求只评 1 帧,无跟踪问题
+            content = list(head)
+            content.append({"type": "text",
+                            "text": "Now estimate the task completion percentage of THIS frame "
+                                    "of the current episode. Answer ONLY an integer 0-100:"})
+            content.append(_img(f))
+            preds.append(parse_completion(strip_reasoning(_post(content))))
+        return preds
+
+    return vlm_v5 if context is not None else vlm_v3
+
+
+def build_linear_context(frames: list[np.ndarray], n: int = 8,
+                         shuffle_seed: int = 1) -> tuple[list[np.ndarray], list[float]]:
+    """从一条已知成功的干净 episode 造 few-shot 上下文:均匀抽 n 帧,
+    完成度=线性近似(openGVL 的 approx_completion_rates 同款假设),打乱后连标注一起给
+    (示范"乱序也要按内容判")。"""
+    idx = np.unique(np.linspace(0, len(frames) - 1, n, dtype=int))
+    rates = idx / max(len(frames) - 1, 1)
+    order = np.random.default_rng(shuffle_seed).permutation(len(idx))
+    return [frames[idx[j]] for j in order], [float(rates[j]) for j in order]
+
+
+def vlm_completion_from_config(cfg: dict):
+    """pipeline YAML 的 checks.task_success.vlm 段 → 注入函数(模型只在配置一处)。"""
+    vlm = cfg["checks"]["task_success"].get("vlm") or {}
+    if not vlm.get("endpoint"):
+        raise ValueError("配置 checks.task_success.vlm.endpoint 缺失")
+    return make_vlm_completion(vlm["endpoint"], vlm["model"])
+
+
+def make_llm_ask(endpoint: str, model: str, timeout_s: float = 1800.0,
+                 max_tokens: int = 8192):
+    """纯文本 LLM 调用工厂(M7 taxonomy/audit 用;同一端点同一模型,配置一处)。"""
+    import requests
+
+    url = endpoint.rstrip("/") + "/chat/completions"
+
+    def llm_ask(prompt_text: str) -> str:
+        r = requests.post(url, json={"model": model, "temperature": 0.0,
+                                     "max_tokens": max_tokens,
+                                     "messages": [{"role": "user", "content": prompt_text}]},
+                          timeout=timeout_s)
+        r.raise_for_status()
+        return strip_reasoning(r.json()["choices"][0]["message"]["content"])
+
+    return llm_ask
+
+
+def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0):
+    """终态二值复核(2026-07-08):VOC 渐变问询在真机宽景上常失效(模型给不出逐帧
+    渐变分,droid 全程答0),但"看首末帧答完成与否"的二值问题它答得动。
+    双问法互检(完成了吗/失败了吗)=迷你测谎:两答矛盾 → None(不采信)。
+    judge(start_frames, end_frames, instruction) -> True完成/False失败/None不可信。
+    """
+    import requests
+
+    url = endpoint.rstrip("/") + "/chat/completions"
+
+    def _ask(text, imgs):
+        content = [{"type": "text", "text": text}] + [
+            {"type": "image_url", "image_url": {"url": _frame_to_data_uri(f)}}
+            for f in imgs]
+        r = requests.post(url, json={"model": model, "temperature": 0.0,
+                                     "max_tokens": 2048,
+                                     "messages": [{"role": "user", "content": content}]},
+                          timeout=timeout_s)
+        r.raise_for_status()
+        ans = strip_reasoning(r.json()["choices"][0]["message"]["content"]).strip().lower()
+        return "yes" in ans[:8]
+
+    def judge(start_frames, end_frames, instruction):
+        task = instruction or "the robot manipulation task"
+        imgs = list(start_frames) + list(end_frames)
+        n0 = len(start_frames)
+        try:
+            done = _ask(f"Task: {task}\nImages 1-{n0}: START of a robot episode "
+                        f"(different camera views). Images {n0+1}-{len(imgs)}: END of the "
+                        "same episode. Was the task completed by the end? "
+                        "Answer ONLY yes or no.", imgs)
+            failed = _ask(f"Task: {task}\nImages 1-{n0} show the beginning, "
+                          f"images {n0+1}-{len(imgs)} show the final state. Judging from "
+                          "the final state, did the robot FAIL to complete the task? "
+                          "Answer ONLY yes or no.", imgs)
+        except Exception:  # noqa: BLE001
+            return None
+        if done and not failed:
+            return True
+        if failed and not done:
+            return False
+        return None                       # 两答矛盾 → 不采信
+    return judge

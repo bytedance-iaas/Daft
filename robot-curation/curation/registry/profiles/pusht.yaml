@@ -1,0 +1,17 @@
+# PushT 仿真(2D 平面推块,lerobot/pusht 用;robot_type=unknown,接入时人工指定)
+# action = 目标点 (x,y),像素坐标系 0..512
+embodiment_id: pusht
+aliases: []
+dof: 2
+action_space: ee_position_2d
+unit: px
+joint_limits:
+  - [0.0, 512.0]
+  - [0.0, 512.0]
+velocity_limits: [5120.0, 5120.0]   # px/s,宽松(仿真无物理极限,只防狂跳)
+gripper_range: null
+control_freq_hz: 10
+urdf_path: null
+source: "pusht 环境定义(gym-pusht,坐标系 512×512)"
+quality: authoritative
+gripper_dims: []   # 夹爪列下标(本数据布局约定)

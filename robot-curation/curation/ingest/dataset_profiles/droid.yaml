@@ -1,0 +1,13 @@
+match: {robot_type: franka, action_names: [x, y, z, roll, pitch, yaw, gripper]}
+action:
+  space: ee
+  control_mode: velocity
+  unit: normalized      # 分位数归一化(Q01/Q99)的笛卡尔速度,来源 OpenVLA droid_baseact_transform
+  gripper_dims: [6]
+  angle_dims: [3, 4, 5]
+  euler_triplet: true
+  stuck_strategy: velocity_dual_scale   # 速度指令×位置读数,各用自身尺度(免物理标定)
+state: {space: ee}
+extras:
+  note: "action=分位数归一化笛卡尔速度;平移 Δstate≈k·action(k~0.01-0.02,R²~0.6),旋转euler不线性(R²~0)"
+  velocity_scale_translation_empirical: [0.010, 0.020, 0.016]   # xyz 经验系数(本地200条拟合)

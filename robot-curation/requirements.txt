@@ -1,0 +1,12 @@
+# 生产依赖(版本=H200 验证过的组合,2026-07-16 固化;277 测试全绿的基线)
+daft==0.7.16            # 执行底座;pin 正式版,永不装 main(CLAUDE 纪律)
+numpy==2.2.6
+pandas==2.3.3
+pyarrow==24.0.0
+scipy==1.15.3
+opencv-python-headless==4.12.0.88   # 光流/图像;headless 免 GUI 依赖
+av==15.1.0              # 视频解码(自带 ffmpeg)
+requests==2.34.2
+PyYAML==6.0.3
+matplotlib==3.10.9      # 同步曲线证据图(可选依赖,缺失时自动跳过绘图)
+huggingface_hub==0.36.2 # 仅下载脚本用

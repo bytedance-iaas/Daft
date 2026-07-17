@@ -1,0 +1,5 @@
+match:
+  robot_type: aloha
+  action_names: [left_waist, left_shoulder, left_elbow, left_forearm_roll, left_wrist_angle, left_wrist_rotate, left_gripper, right_waist, right_shoulder, right_elbow, right_forearm_roll, right_wrist_angle, right_wrist_rotate, right_gripper]
+action: {space: joint, control_mode: absolute, unit: rad, gripper_dims: [6, 13], stuck_strategy: cmd_delta_vs_pos}
+state: {space: joint}

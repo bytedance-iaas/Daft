@@ -1,0 +1,27 @@
+# Franka Emika Panda(DROID 用)。极限来源:Franka Control Interface 官方文档
+# https://frankaemika.github.io/docs/control_parameters.html(权威,非近似)
+embodiment_id: franka
+aliases: [franka_panda, panda, fr3]
+dof: 7
+action_space: joint_position   # 机器人原生控制空间;数据集可能转成 EE 指令(如 DROID)
+unit: rad
+joint_limits:
+  - [-2.8973, 2.8973]
+  - [-1.7628, 1.7628]
+  - [-2.8973, 2.8973]
+  - [-3.0718, -0.0698]
+  - [-2.8973, 2.8973]
+  - [-0.0175, 3.7525]
+  - [-2.8973, 2.8973]
+velocity_limits: [2.1750, 2.1750, 2.1750, 2.1750, 2.6100, 2.6100, 2.6100]
+gripper_range: [0.0, 0.08]     # m(两指开度)
+control_freq_hz: 1000
+urdf_path: null
+# EE(笛卡尔)规格:Franka 官方。球包络半径=**最大伸展 1.19m**(垂直方向,官方工作
+# 空间图),不是水平臂展 0.855——droid 实测"举高"姿态法兰离原点 1.09m,用水平臂展
+# 当球半径会假阳性(2026-07-14 教训)。速度极限:平移 1.7 m/s / 旋转 2.5 rad/s(官方)
+ee_reach_m: 1.19
+ee_velocity_limits: {translation_m_s: 1.7, rotation_rad_s: 2.5}                # FK 需要时再配(P2 fk.py)
+source: "Franka Control Interface docs(官方)"
+quality: authoritative
+gripper_dims: [6]   # 夹爪列下标(本数据布局约定)

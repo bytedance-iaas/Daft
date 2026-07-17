@@ -1,0 +1,5 @@
+match:
+  robot_type: so100
+  action_names: [main_shoulder_pan, main_shoulder_lift, main_elbow_flex, main_wrist_flex, main_wrist_roll, main_gripper]
+action: {space: joint, control_mode: absolute, unit: deg_normalized, gripper_dims: [5], stuck_strategy: cmd_delta_vs_pos}
+state: {space: joint}

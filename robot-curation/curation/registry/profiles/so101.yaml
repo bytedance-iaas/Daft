@@ -1,0 +1,25 @@
+# SO-101(SO-ARM101,TheRobotStudio/lerobot 开源臂,SO-100 迭代款)。STS3215 舵机。
+# 单位=归一化度数:lerobot SO-101 标定把各关节行程映射到 ±100(夹爪 0-100)。
+# 约定核对(2026-07-14):henry-guo 4 数据集 185 条实测(action+state 双侧)——
+#   ±中心归一化确认;实测范围 pan[-58,50] lift[-95,58] elbow[-59,99]
+#   wrist_f[25,101] wrist_r[-160,1] grip[0,100];峰值速度 279/s < 300。
+#   wrist_f 峰 101.2 / wrist_r 峰 -160.2 在检查的 2% 裕度内,不会错杀。
+embodiment_id: so101
+aliases: [so_follower, so101_follower]
+dof: 6
+action_space: joint_position
+unit: deg_normalized
+joint_limits:
+  - [-110.0, 110.0]   # shoulder_pan
+  - [-100.0, 100.0]   # shoulder_lift
+  - [-100.0, 100.0]   # elbow_flex
+  - [-100.0, 100.0]   # wrist_flex
+  - [-160.0, 160.0]   # wrist_roll
+  - [0.0, 100.0]      # gripper(开合度)
+velocity_limits: [300.0, 300.0, 300.0, 300.0, 300.0, 300.0]  # 归一化单位/s,近似(实测峰279)
+gripper_range: [0.0, 100.0]
+control_freq_hz: 30
+urdf_path: null
+source: "lerobot SO-101 归一化标定约定(±100=标定行程端点)+ henry-guo 4数据集185条实测核对(2026-07-14)"
+quality: approximate   # 角度=标定约定(归一化定义),速度=实测上包络近似;可硬判
+gripper_dims: [5]

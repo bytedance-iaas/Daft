@@ -1,0 +1,11 @@
+match: {robot_type: widowx, action_names: [x, y, z, roll, pitch, yaw, gripper]}
+action:
+  space: ee
+  control_mode: delta
+  unit: meter+rad
+  gripper_dims: [6]
+  angle_dims: [3, 4, 5]
+  euler_triplet: true
+  stuck_strategy: abstain   # state=action累加合成(下方note),无独立实际信号,stuck不可判(2026-07-15定)
+state: {space: ee}
+extras: {note: "state 由 action 累加合成(new_state=old_state+action,误差0),指令-实际无独立信息"}

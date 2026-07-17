@@ -1,0 +1,25 @@
+# Trossen WidowX 250 6DOF(BridgeData V2 用)。
+# 极限来源:Interbotix 官方规格页(度→弧度换算),velocity 为 XM430 舵机近似
+embodiment_id: widowx
+aliases: [widowx_250, wx250s]
+dof: 6
+action_space: joint_position
+unit: rad
+joint_limits:
+  - [-3.1416, 3.1416]   # waist ±180°
+  - [-1.8850, 1.9897]   # shoulder -108°..114°
+  - [-2.1468, 1.6057]   # elbow -123°..92°
+  - [-3.1416, 3.1416]   # forearm_roll ±180°
+  - [-1.7453, 2.1468]   # wrist_angle -100°..123°
+  - [-3.1416, 3.1416]   # wrist_rotate ±180°
+velocity_limits: [3.14, 3.14, 3.14, 3.14, 3.14, 3.14]
+gripper_range: [0.015, 0.037]  # m
+control_freq_hz: 50
+urdf_path: null
+# EE 规格:reach=Interbotix 官方 650mm;速度极限为估算上界(官方未发布笛卡尔速度,
+# 按关节速度×臂长放大取整——只拦离谱值如瞬移,不做精细判)
+ee_reach_m: 0.75   # 球包络上界(水平臂展650mm+垂直伸展估算;同 franka 教训)
+ee_velocity_limits: {translation_m_s: 2.0, rotation_rad_s: 4.0}
+source: "Interbotix WidowX-250 官方规格(角度权威,速度近似)"
+quality: approximate
+gripper_dims: [6]   # 夹爪列下标(本数据布局约定)

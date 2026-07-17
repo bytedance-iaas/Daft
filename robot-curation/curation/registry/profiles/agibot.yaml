@@ -1,0 +1,13 @@
+# AgiBot(国产,AgiBotWorld 数据)。规格收集推后(CLAUDE.md:国产线暂缓)—— 占位
+embodiment_id: agibot
+aliases: [agibot_g1, agibot_world]
+dof: 14
+action_space: joint_position
+unit: rad
+joint_limits: []               # 待收集;空=只能做格式校验,不能做极限校验
+velocity_limits: []
+gripper_range: null
+control_freq_hz: 30
+urdf_path: null
+source: "待收集(国产臂 profile=壁垒,列目标清单逐家收集)"
+quality: draft

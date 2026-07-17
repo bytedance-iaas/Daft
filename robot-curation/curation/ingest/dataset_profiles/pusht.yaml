@@ -1,0 +1,3 @@
+match: {robot_type: unknown, action_names: [motor_0, motor_1]}
+action: {space: joint, control_mode: absolute, unit: pixel, gripper_dims: [], stuck_strategy: cmd_delta_vs_pos}
+state: {space: joint}

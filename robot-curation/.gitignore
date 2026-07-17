@@ -1,0 +1,11 @@
+# 环境/中间产物
+.pip_install.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+smoke_out/
+spikes/smoke_out/
+
+# 大文件不进 git(数据/参考代码在 /data03/hao/data 与 /data03/hao/ref)
+*.parquet
+*.mp4

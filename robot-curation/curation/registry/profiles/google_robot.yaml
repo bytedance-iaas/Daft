@@ -1,0 +1,20 @@
+# Google Robot(RT-1/OXE 数据用)。公开规格少,占位近似值 —— 用到 OXE 数据(V1)前精化
+embodiment_id: google_robot
+aliases: [rt1, google_rt1]
+dof: 7
+action_space: joint_position
+unit: rad
+joint_limits:
+  - [-3.14, 3.14]
+  - [-3.14, 3.14]
+  - [-3.14, 3.14]
+  - [-3.14, 3.14]
+  - [-3.14, 3.14]
+  - [-3.14, 3.14]
+  - [-3.14, 3.14]
+velocity_limits: [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
+gripper_range: [0.0, 1.0]
+control_freq_hz: 3
+urdf_path: null
+source: "占位近似(公开规格少;RLDS/OXE 是 V1 范围,届时精化)"
+quality: draft

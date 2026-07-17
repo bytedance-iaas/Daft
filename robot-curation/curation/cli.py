@@ -1,0 +1,140 @@
+"""curation 命令行入口。
+
+用法(P3.6 漏斗装配后接通):
+    python -m curation.cli run --config default.yaml --input <数据集目录> --output <输出目录>
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="curation",
+        description="机器人数据 curation 流水线:质检/清洗/组织,交付干净数据集+质检报告+技能画像",
+    )
+    sub = p.add_subparsers(dest="command", required=True)
+
+    run = sub.add_parser("run", help="端到端跑一遍 curation")
+    run.add_argument("--config", default=None, help="流水线 YAML 配置(缺省用 default.yaml)")
+    run.add_argument("--input", required=True, help="输入数据集目录(LeRobot 格式)")
+    run.add_argument("--output", required=True, help="输出目录(交付三件套)")
+    run.add_argument("--embodiment-id", default=None,
+                     help="人工指定机器人型号(数据集 robot_type 缺失/unknown 时)")
+    run.add_argument("--max-episodes", type=int, default=None, help="只处理前 N 条(调试)")
+    run.add_argument("--only", default=None,
+                     help="只跑这些模块(逗号分隔,如 visual_quality,motion_quality;"
+                          "含数据集级模块 skill_profile(技能画像)/dedup(精确去重))")
+    run.add_argument("--skip", default=None, help="跳过这些模块(逗号分隔,与 --only 互斥)")
+    run.add_argument("--overwrite", action="store_true",
+                     help="覆盖:输出目录已有结果时,清理旧交付物后重跑(默认拒绝并提示换目录)")
+    run.add_argument("--batch", action="store_true",
+                     help="批处理:--input 指向含多个数据集的父目录,逐个处理到 --output/<数据集名>/")
+    run.add_argument("--lite", action="store_true",
+                     help="精简版:跳过 VLM 环节(任务判定/caption画像),不碰 GPU,秒级出报告")
+    run.add_argument("--set", action="append", dest="set_overrides", metavar="路径=值",
+                     help="临时覆盖单个配置值(可重复),如 --set pipeline.sync_plots=all "
+                          "--set checks.visual_quality.params.blur_ref_var=80;"
+                          "免为一个开关复制整份 yaml")
+    run.add_argument("--report-only", action="store_true",
+                     help="只出报告,不导出数据集(单模块快查时省去重编码视频的时间)")
+
+    return p
+
+
+def _list_datasets(parent: str) -> list[str]:
+    """父目录下所有有效 LeRobot 数据集(含 meta/info.json 的子目录)。"""
+    import os
+    return sorted(
+        name for name in os.listdir(parent)
+        if os.path.exists(os.path.join(parent, name, "meta", "info.json")))
+
+
+def main(argv: list[str] | None = None) -> int:
+    import os
+    args = build_parser().parse_args(argv)
+    if args.command == "run":
+        from .ingest.lerobot_reader import NotADatasetError, OutputExistsError
+        from .pipeline.run import run_pipeline
+
+        def _run_one(inp, outp):
+            return run_pipeline(args.config, inp, outp,
+                                embodiment_id=args.embodiment_id,
+                                max_episodes=args.max_episodes,
+                                only_checks=args.only, skip_checks=args.skip,
+                                report_only=args.report_only, lite=args.lite,
+                                overwrite=args.overwrite,
+                                set_overrides=args.set_overrides)
+
+        if args.batch:
+            datasets = _list_datasets(args.input)
+            if not datasets:
+                print(f"[输入错误] {args.input} 下没有有效数据集", file=sys.stderr)
+                return 2
+            print(f"[batch] 处理 {len(datasets)} 个数据集: {datasets}\n")
+            agg = []
+            robots: dict = {}
+            for ds in datasets:
+                print(f"===== {ds} =====")
+                try:
+                    s = _run_one(os.path.join(args.input, ds),
+                                 os.path.join(args.output, ds))
+                    print(f"  交付 {s['n_delivered']} 条(输入 {s['stats'].get('input')})")
+                    agg.append((ds, s["stats"].get("input"), s["n_delivered"]))
+                    robots[ds] = s.get("robot") or {}
+                except Exception as e:  # noqa: BLE001  单集失败不拖垮整批
+                    print(f"  失败: {type(e).__name__}: {str(e)[:120]}", file=sys.stderr)
+                    agg.append((ds, None, "失败"))
+            print("\n===== 批处理汇总 =====")
+            for ds, ni, nd in agg:
+                print(f"  {ds}: 输入 {ni} → 交付 {nd}")
+            print(f"  各数据集结果: {args.output}/<数据集名>/")
+            # 批处理汇总文件(2026-07-15 用户定):数据集名 + 机器人型号一览
+            import json as _json
+            summary_rows = []
+            for i, (ds, ni, nd) in enumerate(agg):
+                rb = robots.get(ds) or {}
+                summary_rows.append({"数据集": ds,
+                                     "机器人": rb.get("robot_type", "(失败/未知)"),
+                                     "规格表": rb.get("registry_profile", "-"),
+                                     "输入": ni, "交付": nd})
+            with open(os.path.join(args.output, "batch_summary.json"), "w") as f:
+                _json.dump({"数据集数": len(agg), "datasets": summary_rows},
+                           f, ensure_ascii=False, indent=1)
+            md = ["# 批处理汇总", "",
+                  "| 数据集 | 机器人型号 | 规格表 | 输入 | 交付 |",
+                  "|---|---|---|---|---|"]
+            for r in summary_rows:
+                md.append(f"| {r['数据集']} | {r['机器人']} | {r['规格表']} |"
+                          f" {r['输入']} | {r['交付']} |")
+            md.append("")
+            md.append(f"各数据集完整报告见 <输出目录>/<数据集名>/report.md")
+            with open(os.path.join(args.output, "batch_summary.md"), "w") as f:
+                f.write("\n".join(md))
+            print(f"  汇总清单: {args.output}/batch_summary.md")
+            return 0
+
+        try:
+            summary = _run_one(args.input, args.output)
+        except NotADatasetError as e:
+            print(f"[输入错误] {e}", file=sys.stderr)
+            return 2
+        except OutputExistsError as e:
+            print(f"[输出目录冲突] {e}", file=sys.stderr)
+            return 3
+        except Exception as e:
+            from .pipeline.config import ConfigError
+            if isinstance(e, ConfigError):
+                print(f"[配置错误] {e}", file=sys.stderr)
+                return 2
+            raise
+        print(f"漏斗统计: {summary['stats']}")
+        print(f"交付 {summary['n_delivered']} 条;三件套:")
+        for k, v in summary["deliverables"].items():
+            print(f"  - {k}: {v}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

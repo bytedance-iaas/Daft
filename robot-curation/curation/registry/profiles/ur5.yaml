@@ -1,0 +1,19 @@
+# Universal Robots UR5/UR5e。极限来源:UR 官方 datasheet(权威)
+embodiment_id: ur5
+aliases: [ur5e, universal_robots_ur5e]
+dof: 6
+action_space: joint_position
+unit: rad
+joint_limits:
+  - [-6.2832, 6.2832]
+  - [-6.2832, 6.2832]
+  - [-6.2832, 6.2832]
+  - [-6.2832, 6.2832]
+  - [-6.2832, 6.2832]
+  - [-6.2832, 6.2832]
+velocity_limits: [3.1416, 3.1416, 3.1416, 3.1416, 3.1416, 3.1416]  # ±180°/s
+gripper_range: null            # 夹爪第三方,接入时按客户配置
+control_freq_hz: 125
+urdf_path: null
+source: "UR5 官方 datasheet"
+quality: authoritative

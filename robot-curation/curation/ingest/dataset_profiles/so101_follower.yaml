@@ -1,0 +1,7 @@
+# SO-101 follower(lerobot 新版 record 产出,如 henry-guo/so101-pick-place)。
+# 与 so100 同家族:绝对关节位置指令,归一化度数([-100,100] 区间,gripper 0-100)。
+match:
+  robot_type: so_follower
+  action_names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+action: {space: joint, control_mode: absolute, unit: deg_normalized, gripper_dims: [5], stuck_strategy: cmd_delta_vs_pos}
+state: {space: joint}
