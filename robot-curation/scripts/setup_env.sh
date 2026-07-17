@@ -43,3 +43,13 @@ echo "done. 激活: source $VENV/bin/activate"
 
 # curation 包可编辑安装(任意目录可跑 CLI;容器重建后重跑本脚本即恢复)
 "$VENV_CURATION/bin/pip" install -e /data03/hao/curation-project 2>/dev/null || /data03/hao/venv/curation/bin/pip install -e /data03/hao/curation-project
+
+# GitHub CLI(fork 推送/PR 用;apt 源版本太老,装官方最新二进制)
+if ! command -v gh >/dev/null; then
+  GHV=$(curl -sL https://api.github.com/repos/cli/cli/releases/latest | grep -oP '"tag_name":\s*"v\K[0-9.]+' | head -1)
+  curl -sL "https://github.com/cli/cli/releases/download/v${GHV}/gh_${GHV}_linux_amd64.tar.gz" | tar -xz -C /tmp
+  install "/tmp/gh_${GHV}_linux_amd64/bin/gh" /usr/local/bin/gh
+fi
+# gh 凭证也要持久化:重建容器后 gh auth login 的 token 不丢
+export GH_CONFIG_DIR=/data03/hao/.gh_config
+grep -q GH_CONFIG_DIR ~/.bashrc || echo 'export GH_CONFIG_DIR=/data03/hao/.gh_config' >> ~/.bashrc
