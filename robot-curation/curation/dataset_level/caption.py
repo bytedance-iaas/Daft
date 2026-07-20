@@ -42,13 +42,15 @@ def caption_episodes(rows: list[dict], captioner: Captioner,
     return caps
 
 
-def make_vlm_captioner(endpoint: str, model: str, timeout_s: float = 600.0) -> Captioner:
+def make_vlm_captioner(endpoint: str, model: str, timeout_s: float = 600.0,
+                       api_key_env: str | None = None) -> Captioner:
     """openai 兼容端点 → captioner(生产用;模型/端点来自 YAML)。"""
     import requests
 
-    from ..adapters.vlm_client import _frame_to_data_uri, strip_reasoning
+    from ..adapters.vlm_client import _frame_to_data_uri, auth_headers, strip_reasoning
 
     url = endpoint.rstrip("/") + "/chat/completions"
+    headers = auth_headers(api_key_env)
 
     def captioner(frames: list) -> str:
         content = [{"type": "text", "text": CAPTION_PROMPT}]
@@ -57,7 +59,7 @@ def make_vlm_captioner(endpoint: str, model: str, timeout_s: float = 600.0) -> C
                             "image_url": {"url": _frame_to_data_uri(np.asarray(f))}})
         r = requests.post(url, json={"model": model, "temperature": 0.0, "max_tokens": 512,
                                      "messages": [{"role": "user", "content": content}]},
-                          timeout=timeout_s)
+                          headers=headers, timeout=timeout_s)
         r.raise_for_status()
         return strip_reasoning(r.json()["choices"][0]["message"]["content"])
 

@@ -38,9 +38,21 @@ checks:
     gate: hard
     params: {n_probe: 8, voc_min: 0.3, success_min: 0.45, fail_max: 0.25}
     vlm:                           # ★ 模型只在这一处配置——换模型=改这里,零代码改动
-      provider: openai             # openai 兼容端点(vLLM serve)
-      model: nvidia/Cosmos-Reason2-8B   # 2026-07-16 默认降 8B(H20 单卡96GB 从容;32B 需两卡tp)。⚠️8B 未跑过七模型选拔(32B 冠军 0.75),补考后再全信任务判定;切回: --set checks.task_success.vlm.model=nvidia/Cosmos-Reason2-32B。火山上优先方舟MaaS(豆包,OpenAI兼容端点+API Key,待接)
+                                   #   本段同时供 M4c(成败判定/终态复核)与 M7(caption/归纳/审计)
+      provider: openai             # openai 兼容端点:自托管 vLLM 与托管 MaaS(方舟)同一套协议
+      model: nvidia/Cosmos-Reason2-8B   # 2026-07-16 默认降 8B(H20 单卡96GB 从容;32B 需两卡tp)。⚠️8B 未跑过七模型选拔(32B 冠军 0.75),补考后再全信任务判定;切回: --set checks.task_success.vlm.model=nvidia/Cosmos-Reason2-32B
       endpoint: http://localhost:8000/v1
+      api_key_env:                 # 托管端点(方舟)才需要:这里只写**环境变量名**,
+                                   #   密钥本身只存环境变量/K8s Secret,绝不进 YAML 与仓库。
+                                   #   留空/不配 = 自托管 vLLM 原行为(不发鉴权头),两条路共存。
+      # ── 三种用法(默认=①,切换零代码改动)──────────────────────────
+      # ① H20 自托管 8B(默认):保持上面原样
+      # ② H20 自托管 32B:--set checks.task_success.vlm.model=nvidia/Cosmos-Reason2-32B
+      # ③ 方舟 MaaS(豆包):
+      #    export ARK_API_KEY=<你的Key>
+      #    --set checks.task_success.vlm.endpoint=https://ark.cn-beijing.volces.com/api/v3
+      #    --set checks.task_success.vlm.model=<豆包视觉模型名或推理接入点ID ep-xxx>
+      #    --set checks.task_success.vlm.api_key_env=ARK_API_KEY
 
 skill_profile:                     # 技能画像:caption 路线(VLM 端点可达时);不可达降级为按原始标注分组
   method: caption

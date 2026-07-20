@@ -15,12 +15,14 @@ def _try_build_vlm(cfg: dict):
     if not enabled(cfg, "task_success"):
         return None, "task_success 在配置中关闭"
     try:
-        import requests
+        from ..adapters.vlm_client import probe_endpoint, vlm_completion_from_config
 
-        from ..adapters.vlm_client import vlm_completion_from_config
-
-        endpoint = cfg["checks"]["task_success"]["vlm"]["endpoint"]
-        requests.get(endpoint.rstrip("/") + "/models", timeout=5).raise_for_status()
+        v = cfg["checks"]["task_success"]["vlm"]
+        # 探活须带鉴权:托管端点(方舟)无 Bearer 头会 401,会被误判成"不可达"
+        ok, why = probe_endpoint(v["endpoint"], v["model"],
+                                 api_key_env=v.get("api_key_env"))
+        if not ok:
+            return None, f"{why},task_success 跳过"
         return vlm_completion_from_config(cfg), None
     except Exception as e:  # noqa: BLE001
         return None, f"VLM 端点不可达({type(e).__name__}),task_success 跳过"
@@ -117,7 +119,8 @@ def run_pipeline(
     else:
         from ..adapters.vlm_server import ensure_vlm
         vcfg_e = cfg["checks"]["task_success"].get("vlm", {})
-        ok, note = ensure_vlm(vcfg_e.get("endpoint", ""), vcfg_e.get("model", ""))
+        ok, note = ensure_vlm(vcfg_e.get("endpoint", ""), vcfg_e.get("model", ""),
+                              api_key_env=vcfg_e.get("api_key_env"))
         print(f"[curation] {note}", flush=True)
         vlm_ready = ok
         if enabled(cfg, "task_success"):
@@ -134,7 +137,8 @@ def run_pipeline(
         if unlabeled:
             from ..dataset_level.caption import caption_episodes, make_vlm_captioner
             vcfg0 = cfg["checks"]["task_success"]["vlm"]
-            capper = make_vlm_captioner(vcfg0["endpoint"], vcfg0["model"])
+            capper = make_vlm_captioner(vcfg0["endpoint"], vcfg0["model"],
+                                        api_key_env=vcfg0.get("api_key_env"))
             for r, c in zip(unlabeled, caption_episodes(
                     unlabeled, capper, n_frames=cfg.get("skill_profile", {}).get("n_frames", 8))):
                 if c:
@@ -267,8 +271,10 @@ def run_pipeline(
         from ..dataset_level.taxonomy import assign, induce_taxonomy
 
         vcfg = cfg["checks"]["task_success"]["vlm"]
-        captioner = make_vlm_captioner(vcfg["endpoint"], vcfg["model"])
-        llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"])
+        captioner = make_vlm_captioner(vcfg["endpoint"], vcfg["model"],
+                                       api_key_env=vcfg.get("api_key_env"))
+        llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"],
+                               api_key_env=vcfg.get("api_key_env"))
         caps = caption_episodes(keep_rows, captioner,
                                 n_frames=sp_cfg.get("n_frames", 8),
                                 precomputed=auto_caps)

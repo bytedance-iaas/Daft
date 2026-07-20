@@ -345,7 +345,8 @@ def run_funnel(
         try:
             from ..adapters.vlm_client import make_endstate_judge
             vcfg_t = cfg["checks"]["task_success"]["vlm"]
-            endstate_judge = make_endstate_judge(vcfg_t["endpoint"], vcfg_t["model"])
+            endstate_judge = make_endstate_judge(vcfg_t["endpoint"], vcfg_t["model"],
+                                                 api_key_env=vcfg_t.get("api_key_env"))
         except Exception:  # noqa: BLE001
             endstate_judge = None
 

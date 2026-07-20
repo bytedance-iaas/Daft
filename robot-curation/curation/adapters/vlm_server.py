@@ -18,14 +18,13 @@ VLLM_BIN = os.environ.get("CURATION_VLLM_BIN", "/data03/hao/venv/vllm/bin/vllm")
 VLLM_LOG = os.environ.get("CURATION_VLLM_LOG", "/data03/hao/.vllm_auto.log")
 
 
-def endpoint_alive(endpoint: str, model: str, timeout: float = 3.0) -> bool:
-    import requests
+def endpoint_alive(endpoint: str, model: str, timeout: float = 3.0,
+                   api_key_env: str | None = None) -> bool:
+    """探活:自托管 vLLM 与托管 MaaS(方舟)通用——见 vlm_client.probe_endpoint。"""
+    from .vlm_client import probe_endpoint
 
-    try:
-        r = requests.get(endpoint.rstrip("/") + "/models", timeout=timeout)
-        return model.split("/")[-1] in r.text
-    except Exception:  # noqa: BLE001
-        return False
+    ok, _ = probe_endpoint(endpoint, model, api_key_env=api_key_env, timeout=timeout)
+    return ok
 
 
 def find_idle_gpu(min_free_mb: int = 100_000) -> int | None:
@@ -63,16 +62,21 @@ def _serving_pid(model: str) -> int | None:
 
 
 def ensure_vlm(endpoint: str, model: str, wait_s: int = 1200,
-               idle_timeout_s: float = 7200.0) -> tuple[bool, str]:
-    """确保 VLM 服务可用。返回 (是否可用, 说明)。"""
-    if endpoint_alive(endpoint, model):
+               idle_timeout_s: float = 7200.0,
+               api_key_env: str | None = None) -> tuple[bool, str]:
+    """确保 VLM 服务可用。返回 (是否可用, 说明)。
+
+    api_key_env:托管端点(方舟 MaaS)的鉴权环境变量名。⚠️ 必须一路传到探活——
+    否则无 Bearer 头 → 401 → 被误判成"非本机且不可达",托管端点永远接不上。
+    """
+    if endpoint_alive(endpoint, model, api_key_env=api_key_env):
         return True, "VLM 服务已在线(复用)"
     if _serving_pid(model) is not None:
         # 进程在、端口还没活 = 正在加载(冷启动 3-5 分钟):等它,绝不双开
         print(f"[curation] 检测到 {model} 服务进程已存在(加载中),等待就绪…", flush=True)
         t0 = time.time()
         while time.time() - t0 < wait_s:
-            if endpoint_alive(endpoint, model):
+            if endpoint_alive(endpoint, model, api_key_env=api_key_env):
                 return True, "VLM 服务已在线(等到了正在加载的已有进程)"
             if _serving_pid(model) is None:
                 break                          # 它死了,走正常启动流程

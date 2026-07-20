@@ -7,9 +7,22 @@ prompt 设计借 OpenGVL:单帧提问完成度(VOC 的打乱在 core 层做,这�
 from __future__ import annotations
 
 import base64
+import os
 import re
 
 import numpy as np
+
+
+def auth_headers(api_key_env: str | None) -> dict:
+    """按环境变量名取 API Key → OpenAI 兼容的 Bearer 头。
+
+    ★ 安全约定:YAML 里只写**环境变量名**(api_key_env),密钥本身只存环境变量/K8s Secret,
+    绝不进配置文件与仓库。自托管 vLLM 无需鉴权 → 不配 api_key_env 即返回空头,行为不变。
+    """
+    if not api_key_env:
+        return {}
+    key = os.environ.get(api_key_env, "").strip()
+    return {"Authorization": f"Bearer {key}"} if key else {}
 
 # ⚠️ 协议演化(2026-07-02 实测,详见 spikes/vlm_ab_report.md):
 # v1 单帧无参考:模型一律回"50"(无参照物,敷衍是理性答案)→ 废弃;
@@ -89,6 +102,38 @@ def _frame_to_data_uri(frame: np.ndarray, quality: int = 85) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
 
 
+def probe_endpoint(endpoint: str, model: str, *, api_key_env: str | None = None,
+                   timeout: float = 8.0) -> tuple[bool, str]:
+    """两段式探活,兼容自托管 vLLM 与托管 MaaS(方舟)。
+
+    ① GET /models:vLLM 支持,且能顺带确认模型确实已加载;
+    ② 退化为一次最小 chat 请求:托管平台不一定实现 /models(或模型名是推理接入点 ID
+       而非列表里的名字)。这一步更硬——它同时验证了"端点可达 + 鉴权有效 + 模型名可用",
+       正是我们真正依赖的能力。
+    返回 (可用, 说明)。
+    """
+    import requests
+
+    base = endpoint.rstrip("/")
+    headers = auth_headers(api_key_env)
+    try:
+        r = requests.get(base + "/models", headers=headers, timeout=timeout)
+        if r.ok and model.split("/")[-1] in r.text:
+            return True, "VLM 端点可用(/models 已列出该模型)"
+    except Exception:  # noqa: BLE001
+        pass                      # 落到 ② 兜底,不在此判死
+    try:
+        r = requests.post(base + "/chat/completions", headers=headers, timeout=timeout,
+                          json={"model": model, "max_tokens": 1, "temperature": 0.0,
+                                "messages": [{"role": "user", "content": "ping"}]})
+        if r.ok:
+            return True, "VLM 端点可用(chat 探活通过)"
+        hint = " —— 检查 api_key_env 指向的环境变量是否已注入" if r.status_code in (401, 403) else ""
+        return False, f"VLM 端点探活失败 HTTP {r.status_code}:{r.text[:120]}{hint}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"VLM 端点不可达({type(e).__name__})"
+
+
 def make_vlm_completion(
     endpoint: str,
     model: str,
@@ -97,6 +142,7 @@ def make_vlm_completion(
     timeout_s: float = 600.0,
     temperature: float = 0.0,
     max_tokens: int = 2048,       # 推理模型(Cosmos-Reason)的 CoT 需要余量
+    api_key_env: str | None = None,   # 托管端点(方舟 MaaS)鉴权;自托管 vLLM 留空
 ):
     """构造批式 vlm(reference, shuffled_frames, instruction) -> list[float](注入给 task_success)。
 
@@ -107,11 +153,12 @@ def make_vlm_completion(
     import requests
 
     url = endpoint.rstrip("/") + "/chat/completions"
+    headers = auth_headers(api_key_env)
 
     def _post(content: list) -> str:
         payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
                    "messages": [{"role": "user", "content": content}]}
-        resp = requests.post(url, json=payload, timeout=timeout_s)
+        resp = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
@@ -166,28 +213,31 @@ def vlm_completion_from_config(cfg: dict):
     vlm = cfg["checks"]["task_success"].get("vlm") or {}
     if not vlm.get("endpoint"):
         raise ValueError("配置 checks.task_success.vlm.endpoint 缺失")
-    return make_vlm_completion(vlm["endpoint"], vlm["model"])
+    return make_vlm_completion(vlm["endpoint"], vlm["model"],
+                               api_key_env=vlm.get("api_key_env"))
 
 
 def make_llm_ask(endpoint: str, model: str, timeout_s: float = 1800.0,
-                 max_tokens: int = 8192):
+                 max_tokens: int = 8192, api_key_env: str | None = None):
     """纯文本 LLM 调用工厂(M7 taxonomy/audit 用;同一端点同一模型,配置一处)。"""
     import requests
 
     url = endpoint.rstrip("/") + "/chat/completions"
+    headers = auth_headers(api_key_env)
 
     def llm_ask(prompt_text: str) -> str:
         r = requests.post(url, json={"model": model, "temperature": 0.0,
                                      "max_tokens": max_tokens,
                                      "messages": [{"role": "user", "content": prompt_text}]},
-                          timeout=timeout_s)
+                          headers=headers, timeout=timeout_s)
         r.raise_for_status()
         return strip_reasoning(r.json()["choices"][0]["message"]["content"])
 
     return llm_ask
 
 
-def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0):
+def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0,
+                        api_key_env: str | None = None):
     """终态二值复核(2026-07-08):VOC 渐变问询在真机宽景上常失效(模型给不出逐帧
     渐变分,droid 全程答0),但"看首末帧答完成与否"的二值问题它答得动。
     双问法互检(完成了吗/失败了吗)=迷你测谎:两答矛盾 → None(不采信)。
@@ -196,6 +246,7 @@ def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0):
     import requests
 
     url = endpoint.rstrip("/") + "/chat/completions"
+    headers = auth_headers(api_key_env)
 
     def _ask(text, imgs):
         content = [{"type": "text", "text": text}] + [
@@ -204,7 +255,7 @@ def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0):
         r = requests.post(url, json={"model": model, "temperature": 0.0,
                                      "max_tokens": 2048,
                                      "messages": [{"role": "user", "content": content}]},
-                          timeout=timeout_s)
+                          headers=headers, timeout=timeout_s)
         r.raise_for_status()
         ans = strip_reasoning(r.json()["choices"][0]["message"]["content"]).strip().lower()
         return "yes" in ans[:8]
