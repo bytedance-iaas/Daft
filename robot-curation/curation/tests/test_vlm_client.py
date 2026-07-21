@@ -1,12 +1,37 @@
 """A.2 验收:VLM 客户端解析/请求构造(本地 stub 服务器,不需要真模型)。"""
 from __future__ import annotations
 
+import base64
+import io
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 
 import numpy as np
 import pytest
+
+
+def _mark_frame(mark: int) -> np.ndarray:
+    """造一帧"带标记"的图:整幅填同一灰度值 mark → 服务端解码后能认出是第几帧。
+    用于校验并发下的**保序性**(见 _Stub.do_POST 注释)。"""
+    return np.full((32, 32, 3), mark, dtype=np.uint8)
+
+
+def _decode_mark(data_uri: str) -> int:
+    """从 data URI 解出 _mark_frame 编进去的灰度值(取中心像素,避开 JPEG 边缘振铃)。"""
+    from PIL import Image
+
+    raw = base64.b64decode(data_uri.split(",", 1)[1])
+    arr = np.asarray(Image.open(io.BytesIO(raw)).convert("RGB"))
+    return int(round(float(arr[arr.shape[0] // 2, arr.shape[1] // 2].mean())))
+
+
+class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """并发桩:默认 HTTPServer 单线程串行处理,并发请求会排队,
+    既测不出真并发行为、也掩盖竞态。"""
+
+    daemon_threads = True
 
 from curation.adapters.vlm_client import (
     make_vlm_completion,
@@ -48,11 +73,18 @@ def test_parse_completion_list():
 
 class _Stub(BaseHTTPRequestHandler):
     seen: list[dict] = []
+    _lock = threading.Lock()
+    delay_jitter: float = 0.0          # >0 时每请求随机延迟,用于放大乱序风险
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        _Stub.seen.append({"path": self.path, "body": body})
-        # v3:每请求 2 图 → 回 1 个数(按请求序号递增);v4:按 ask 文本里的 k 回 k 个数
+        if _Stub.delay_jitter:
+            import random
+            import time as _t
+            _t.sleep(random.random() * _Stub.delay_jitter)
+        with _Stub._lock:                      # 并发请求下 seen 是共享状态,必须加锁
+            _Stub.seen.append({"path": self.path, "body": body})
+        # v3:每请求 2 图 → 回 1 个数;v4:按 ask 文本里的 k 回 k 个数
         import re as _re
         texts = " ".join(c.get("text", "") for c in body["messages"][0]["content"]
                          if c["type"] == "text")
@@ -61,7 +93,12 @@ class _Stub(BaseHTTPRequestHandler):
             k = int(m.group(1))
             resp = {"choices": [{"message": {"content": ", ".join(str((i + 1) * 10) for i in range(k))}}]}
         else:
-            resp = {"choices": [{"message": {"content": str(len(_Stub.seen) * 10)}}]}
+            # ⚠️ 回值必须由**请求内容**决定,不能用到达序号:客户端并发发出后到达顺序不确定,
+            # 用序号会让"第 i 帧 ↔ 第 i 个回值"的对应关系断裂,从而测不出真正的保序性。
+            # 查询帧的像素值(_QUERY_MARK)编在图里 → 回该值,断言即可校验保序。
+            imgs = [c for c in body["messages"][0]["content"] if c["type"] == "image_url"]
+            mark = _decode_mark(imgs[-1]["image_url"]["url"]) if imgs else 0
+            resp = {"choices": [{"message": {"content": str(mark)}}]}
         data = json.dumps(resp).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -76,7 +113,7 @@ class _Stub(BaseHTTPRequestHandler):
 @pytest.fixture()
 def stub_server():
     _Stub.seen = []
-    srv = HTTPServer(("127.0.0.1", 0), _Stub)
+    srv = _ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     yield f"http://127.0.0.1:{srv.server_port}/v1"
@@ -85,10 +122,12 @@ def stub_server():
 
 def test_end_to_end_against_stub(stub_server):
     vlm = make_vlm_completion(stub_server, model="test-model")
-    ref = np.zeros((32, 32, 3), dtype=np.uint8)
-    shuffled = [np.zeros((32, 32, 3), dtype=np.uint8) for _ in range(4)]
+    ref = _mark_frame(0)
+    marks = [10, 20, 30, 40]
+    shuffled = [_mark_frame(m) for m in marks]         # 每帧编入自己的标记值
     out = vlm(ref, shuffled, "push the block")
-    assert out == pytest.approx([0.1, 0.2, 0.3, 0.4])
+    # 桩按"请求里查询帧的标记"回值 → 第 i 帧必须拿到第 i 个值,并发下也不能错位
+    assert out == pytest.approx([m / 100 for m in marks], abs=0.02)
 
     assert len(_Stub.seen) == 4                        # 锚定协议:4 帧 = 4 次请求
     req = _Stub.seen[0]
@@ -106,9 +145,35 @@ def test_from_config_single_source_of_truth(stub_server):
     """模型只在 YAML 一处:从配置构造,端点/模型都来自 vlm: 段。"""
     cfg = {"checks": {"task_success": {"vlm": {"endpoint": stub_server, "model": "m-x"}}}}
     vlm = vlm_completion_from_config(cfg)
-    ref = np.zeros((16, 16, 3), dtype=np.uint8)
-    assert vlm(ref, [ref, ref], "t") == pytest.approx([0.1, 0.2])
+    marks = [30, 60]
+    out = vlm(_mark_frame(0), [_mark_frame(m) for m in marks], "t")
+    assert out == pytest.approx([m / 100 for m in marks], abs=0.02)
     assert _Stub.seen[-1]["body"]["model"] == "m-x"
+
+
+def test_from_config_reads_max_concurrency(stub_server):
+    """并发度可从 YAML 配置(上 Ray 后要按 worker 数调小,不能写死)。"""
+    cfg = {"checks": {"task_success": {"vlm": {
+        "endpoint": stub_server, "model": "m-x", "max_concurrency": 1}}}}   # 1=串行
+    vlm = vlm_completion_from_config(cfg)
+    marks = [10, 20, 30]
+    out = vlm(_mark_frame(0), [_mark_frame(m) for m in marks], "t")
+    assert out == pytest.approx([m / 100 for m in marks], abs=0.02)   # 串行也必须对
+
+
+@pytest.mark.parametrize("concurrency", [1, 4, 8])
+def test_order_preserved_under_concurrency(stub_server, concurrency):
+    """★ 保序是正确性要求:VOC 抗幻觉靠"预测完成度 vs 真实时序"的相关性,
+    结果错位整个判定就废。服务端加随机延迟放大乱序风险,断言 i 帧拿到 i 值。"""
+    _Stub.delay_jitter = 0.05          # 让响应先后顺序与请求顺序脱钩
+    try:
+        vlm = make_vlm_completion(stub_server, model="m", max_concurrency=concurrency)
+        marks = [70, 10, 90, 40, 20, 60, 30, 80]        # 刻意乱序,非单调
+        out = vlm(_mark_frame(0), [_mark_frame(m) for m in marks], "t")
+        assert out == pytest.approx([m / 100 for m in marks], abs=0.02)
+        assert len(_Stub.seen) == len(marks)            # 不多发也不漏发
+    finally:
+        _Stub.delay_jitter = 0.0
 
 
 def test_missing_endpoint_is_explicit():

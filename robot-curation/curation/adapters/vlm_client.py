@@ -9,8 +9,29 @@ from __future__ import annotations
 import base64
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+
+# 并发请求默认值(2026-07-20 实测方舟:并发1→0.10 req/s、8→0.49、16→0.96,零 429、延迟不涨
+# ≈7.8s/请求恒定 ⇒ 瓶颈是串行等待而非服务端限流)。默认 8 = n_probe 常用值,一条 episode
+# 的 VOC 问询一轮打完;**保持可配置**:上 Ray 后每 worker 调小,总并发=worker数×本值,
+# 一个旋钮压在服务端配额下(见 progress backlog)。
+DEFAULT_MAX_CONCURRENCY = 8
+
+
+def _map_concurrent(fn, items: list, max_concurrency: int) -> list:
+    """并发映射,**保序返回**。
+
+    ⚠️ 顺序是正确性要求而非性能细节:VOC 抗幻觉靠"预测完成度 vs 真实时序"的相关性,
+    结果错位整个判定就废了。ThreadPoolExecutor.map 保证按输入顺序返回。
+    max_concurrency<=1 时退化为串行(便于排障/对照)。
+    """
+    items = list(items)
+    if max_concurrency <= 1 or len(items) <= 1:
+        return [fn(x) for x in items]
+    with ThreadPoolExecutor(max_workers=min(max_concurrency, len(items))) as ex:
+        return list(ex.map(fn, items))
 
 
 def auth_headers(api_key_env: str | None) -> dict:
@@ -143,6 +164,7 @@ def make_vlm_completion(
     temperature: float = 0.0,
     max_tokens: int = 2048,       # 推理模型(Cosmos-Reason)的 CoT 需要余量
     api_key_env: str | None = None,   # 托管端点(方舟 MaaS)鉴权;自托管 vLLM 留空
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY,   # 逐帧问询的并发度;1=串行
 ):
     """构造批式 vlm(reference, shuffled_frames, instruction) -> list[float](注入给 task_success)。
 
@@ -166,13 +188,15 @@ def make_vlm_completion(
         return {"type": "image_url", "image_url": {"url": _frame_to_data_uri(frame)}}
 
     def vlm_v3(reference, shuffled_frames, instruction) -> list[float]:
-        preds = []
-        for f in shuffled_frames:                     # 锚定单查询:每帧一次请求
-            text = ANCHORED_PROMPT.format(
-                instruction=instruction or "the robot manipulation task")
-            ans = _post([{"type": "text", "text": text}, _img(reference), _img(f)])
-            preds.append(parse_completion(strip_reasoning(ans)))
-        return preds
+        text = ANCHORED_PROMPT.format(
+            instruction=instruction or "the robot manipulation task")
+        ref_img = _img(reference)                     # 参考帧编码一次,各请求复用
+
+        def ask(f):                                   # 锚定单查询:每帧一次请求
+            ans = _post([{"type": "text", "text": text}, ref_img, _img(f)])
+            return parse_completion(strip_reasoning(ans))
+
+        return _map_concurrent(ask, shuffled_frames, max_concurrency)   # 保序
 
     def vlm_v5(reference, shuffled_frames, instruction) -> list[float]:
         ctx_frames, ctx_rates = context
@@ -184,15 +208,16 @@ def make_vlm_completion(
             head.append({"type": "text", "text": f"Task completion: {int(round(r * 100))}%"})
         head.append({"type": "text", "text": "Initial frame of the CURRENT episode (0% complete):"})
         head.append(_img(reference))
-        preds = []
-        for f in shuffled_frames:                     # 单查询:每请求只评 1 帧,无跟踪问题
-            content = list(head)
+
+        def ask(f):                                   # 单查询:每请求只评 1 帧,无跟踪问题
+            content = list(head)                      # 每线程独立副本,勿共享可变列表
             content.append({"type": "text",
                             "text": "Now estimate the task completion percentage of THIS frame "
                                     "of the current episode. Answer ONLY an integer 0-100:"})
             content.append(_img(f))
-            preds.append(parse_completion(strip_reasoning(_post(content))))
-        return preds
+            return parse_completion(strip_reasoning(_post(content)))
+
+        return _map_concurrent(ask, shuffled_frames, max_concurrency)   # 保序
 
     return vlm_v5 if context is not None else vlm_v3
 
@@ -214,7 +239,9 @@ def vlm_completion_from_config(cfg: dict):
     if not vlm.get("endpoint"):
         raise ValueError("配置 checks.task_success.vlm.endpoint 缺失")
     return make_vlm_completion(vlm["endpoint"], vlm["model"],
-                               api_key_env=vlm.get("api_key_env"))
+                               api_key_env=vlm.get("api_key_env"),
+                               max_concurrency=int(vlm.get("max_concurrency",
+                                                           DEFAULT_MAX_CONCURRENCY)))
 
 
 def make_llm_ask(endpoint: str, model: str, timeout_s: float = 1800.0,
@@ -264,15 +291,17 @@ def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0,
         task = instruction or "the robot manipulation task"
         imgs = list(start_frames) + list(end_frames)
         n0 = len(start_frames)
+        # 双问法互不依赖 → 并发发出(两问各约 8s,串行 16s → 并发 8s)
+        q_done = (f"Task: {task}\nImages 1-{n0}: START of a robot episode "
+                  f"(different camera views). Images {n0+1}-{len(imgs)}: END of the "
+                  "same episode. Was the task completed by the end? "
+                  "Answer ONLY yes or no.")
+        q_failed = (f"Task: {task}\nImages 1-{n0} show the beginning, "
+                    f"images {n0+1}-{len(imgs)} show the final state. Judging from "
+                    "the final state, did the robot FAIL to complete the task? "
+                    "Answer ONLY yes or no.")
         try:
-            done = _ask(f"Task: {task}\nImages 1-{n0}: START of a robot episode "
-                        f"(different camera views). Images {n0+1}-{len(imgs)}: END of the "
-                        "same episode. Was the task completed by the end? "
-                        "Answer ONLY yes or no.", imgs)
-            failed = _ask(f"Task: {task}\nImages 1-{n0} show the beginning, "
-                          f"images {n0+1}-{len(imgs)} show the final state. Judging from "
-                          "the final state, did the robot FAIL to complete the task? "
-                          "Answer ONLY yes or no.", imgs)
+            done, failed = _map_concurrent(lambda q: _ask(q, imgs), [q_done, q_failed], 2)
         except Exception:  # noqa: BLE001
             return None
         if done and not failed:

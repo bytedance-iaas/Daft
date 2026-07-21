@@ -42,6 +42,9 @@ checks:
       provider: openai             # openai 兼容端点:自托管 vLLM 与托管 MaaS(方舟)同一套协议
       model: nvidia/Cosmos-Reason2-8B   # 2026-07-16 默认降 8B(H20 单卡96GB 从容;32B 需两卡tp)。⚠️8B 未跑过七模型选拔(32B 冠军 0.75),补考后再全信任务判定;切回: --set checks.task_success.vlm.model=nvidia/Cosmos-Reason2-32B
       endpoint: http://localhost:8000/v1
+      max_concurrency: 8           # 逐帧问询并发度(1=串行)。2026-07-20 实测方舟:并发1→0.10 req/s、
+                                   #   8→0.49、16→0.96,零 429 且延迟恒定 ~8s ⇒ 瓶颈是串行等待非限流。
+                                   #   ⚠️上 Ray 后调小:总并发=worker数×本值,一个旋钮压在服务端配额下。
       api_key_env:                 # 托管端点(方舟)才需要:这里只写**环境变量名**,
                                    #   密钥本身只存环境变量/K8s Secret,绝不进 YAML 与仓库。
                                    #   留空/不配 = 自托管 vLLM 原行为(不发鉴权头),两条路共存。

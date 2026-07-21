@@ -87,7 +87,7 @@ def test_ensure_vlm_waits_for_loading_process(monkeypatch):
     alive_after = {"n": 0}
 
     monkeypatch.setattr(vs, "_serving_pid", lambda m: 12345)
-    def fake_alive(ep, m, timeout=3.0):
+    def fake_alive(ep, m, timeout=3.0, api_key_env=None):   # 签名须跟随 endpoint_alive
         alive_after["n"] += 1
         return alive_after["n"] >= 3            # 第三次探测时"加载完成"
     monkeypatch.setattr(vs, "endpoint_alive", fake_alive)
