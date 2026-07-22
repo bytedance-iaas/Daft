@@ -33,6 +33,64 @@ def _result_dtype():
                             "detail": DataType.string()})
 
 
+# 进度状态存模块级全局,按 key 索引。
+# ⚠️ 为什么不把状态放对象里让 UDF 闭包捕获:**daft 要求 UDF 可序列化**(cloudpickle),
+#    而 threading.Lock 不可 pickle → 实测直接报 "cannot pickle '_thread.lock' object"。
+#    这同时预演了 RayRunner 的 UDF 序列化约束(见 progress backlog)。
+#    UDF 里只捕获一个字符串 key,锁与计数在执行侧按 key 惰性创建。
+_PROGRESS: dict = {}
+_PROGRESS_GUARD = None
+
+
+def _progress_init(key: str, total: int, label: str, min_interval_s: float = 20.0) -> str:
+    """登记一个进度阶段,返回给 UDF 捕获的 key(纯字符串,可序列化)。"""
+    import time
+
+    _PROGRESS[key] = {"total": max(int(total), 0), "label": label, "n": 0,
+                      "t0": time.time(), "last": 0.0, "min_interval_s": min_interval_s,
+                      "step": max(1, max(int(total), 0) // 20), "lock": None}
+    return key
+
+
+def _progress_tick(key: str) -> None:
+    """UDF 内逐条调用。锁在执行侧惰性创建 → 不进闭包、不参与序列化。
+
+    显示的是"**已完成** N 条"而非"正在处理第 N 条":daft 可能并行执行行,顺序不保证。
+    """
+    import threading
+    import time
+
+    st = _PROGRESS.get(key)
+    if st is None:                       # 反序列化到别的进程 → 静默跳过,绝不因进度条中断质检
+        return
+    if st["lock"] is None:
+        st["lock"] = threading.Lock()
+    with st["lock"]:
+        st["n"] += 1
+        n, total = st["n"], st["total"]
+        now = time.time()
+        due = (n % st["step"] == 0) or (n == total) or \
+              (now - st["last"] >= st["min_interval_s"])
+        if not due:
+            return
+        st["last"] = now
+        elapsed = now - st["t0"]
+    pct = f" ({n / total * 100:.0f}%)" if total else ""
+    msg = f"[curation] {st['label']} {n}/{total or '?'}{pct} | 已用 {_fmt_dur(elapsed)}"
+    if total and n:
+        msg += f" | 剩余 ~{_fmt_dur(elapsed / n * (total - n))}"
+    print(msg, flush=True)
+
+
+def _fmt_dur(sec: float) -> str:
+    sec = max(float(sec), 0.0)
+    if sec < 60:
+        return f"{sec:.0f}s"
+    if sec < 3600:
+        return f"{sec / 60:.1f}min"
+    return f"{sec / 3600:.1f}h"
+
+
 def run_funnel(
     df,
     cfg: dict,
@@ -47,6 +105,12 @@ def run_funnel(
     pcfg = cfg.get("pipeline", {})
     interval = pcfg.get("frame_sample_interval_s", 0.5)
     max_side = pcfg.get("frame_max_side", 448)
+    # 终态复核纳入的相机路数上限(主相机优先)。默认 4 覆盖现有数据集(DROID 3 / Bridge 4);
+    # 图片数 = 路数 × endstate_frames,过多会干扰模型且涨 token,故封顶而非无限。
+    max_endstate_cams = pcfg.get("max_endstate_cams", 4)
+    # 二值复核每路取几帧(全程均匀,含中段)。8 帧经 ep34 消融验证足够;首尾2帧会漏掉
+    # 阶跃型任务(倒/放/开关)的动作瞬间证据。图片总数 = 路数 × 本值。
+    endstate_frames = pcfg.get("endstate_frames", 8)
     hard_cols: list[str] = []
 
     # ---------- 第一段:纯数值检查(最便宜) ----------
@@ -206,6 +270,8 @@ def run_funnel(
         # 非"过"条目(人工会看的那批,内存有界);all=全存(小数据集/演示);off=不存
         sync_plots_mode = str(pcfg.get("sync_plots", "flagged"))
 
+        _pk_frame = _progress_init("frame", stats["after_numeric_gates"], "抽帧检查(解码+光流)")
+
         @daft.func(return_dtype=daft.DataType.struct({
             "visual": _result_dtype(), "sync": _result_dtype(),
             "curves": daft.DataType.string()}))
@@ -320,6 +386,7 @@ def run_funnel(
                         "verdict": ("pass" if _sync_res.passed else
                                     "fail" if _sync_res.passed is False else "abstain"),
                         "detail": _sync_res.detail})
+            _progress_tick(_pk_frame)
             return out
 
         df = df.with_column("_frame_checks", frame_checks(
@@ -342,13 +409,18 @@ def run_funnel(
     # ---------- 第三段:VLM 任务成败(只跑幸存者) ----------
     if enabled(cfg, "task_success") and vlm_completion is not None:
         p_task = cfg["checks"]["task_success"].get("params", {})
+        _pk_vlm = _progress_init("vlm", stats["survivors_for_vlm"], "VLM 任务成败判定")
         try:
             from ..adapters.vlm_client import make_endstate_judge
             vcfg_t = cfg["checks"]["task_success"]["vlm"]
             endstate_judge = make_endstate_judge(vcfg_t["endpoint"], vcfg_t["model"],
                                                  api_key_env=vcfg_t.get("api_key_env"))
-        except Exception:  # noqa: BLE001
+        except Exception as _e:  # noqa: BLE001
             endstate_judge = None
+            # 不静默:构造失败=配置问题(它不做网络IO,只拼URL/闭包)。若无此提示,
+            # 现场会看到"VOC 判失败→硬杀"一片却不知复核压根没启动。
+            print(f"[curation] ⚠️ 二值复核不可用({type(_e).__name__}:{_e}),"
+                  "task_success 将仅凭 VOC 单判据判定", flush=True)
 
         @daft.func(return_dtype=_result_dtype())
         def task_check(video, task_desc, task_src, fps):
@@ -361,37 +433,75 @@ def run_funnel(
             res = task_success(frames, task_desc, vlm_completion, **p_task)
             res.detail["task_desc"] = str(task_desc)[:80]
             res.detail["task_desc_source"] = str(task_src)
-            # 终态二值复核:VOC 渐变问询不可判时的第二意见(双视角首末帧,双问法互检)
-            if res.passed is None and endstate_judge is not None:
+            # ---- 二值复核:VOC 未判成功时的第二意见(多视角×全程帧,双问法互检)----
+            # 2026-07-21 三处修正,均由 DROID ep34("把橙杯里的东西倒进碗",人工核对为成功
+            # 却被硬门误杀)的消融实验定案:
+            #  ① 触发条件 res.passed is None → is not True:VOC 判 False("有把握的失败")时
+            #     同样要复核。ep34 正死于此——VOC 在看不清碗内的主视角上给出 False,复核
+            #     根本没机会开口。用户定的 OR 原则:任一路/任一判据看到成功即成功
+            #     (依据:七模型评测 32B 干净成功率仅 0.75 ⇒ 假阴性才是主要误差,假阳性少见)。
+            #  ② 帧集合首尾两帧 → 全程均匀:消融证明这才是根因。同一相机同一模型,
+            #     首尾2帧无论怎么问都判"未完成";带中段的全程8帧无论怎么问都判"完成"。
+            #     倒/放/开关这类**阶跃型任务**的证据在动作瞬间(约1-2秒),末态看不出来。
+            #  ③ 相机放开(原 `cam2 == cam or "wrist" in cam2`):ep34 唯一能看清的
+            #     exterior_2 曾被按名字过滤挡掉。上限见 max_endstate_cams。
+            # 成本:仍是双问法 2 次请求,只是每次多带若干图。
+            if res.passed is not True and endstate_judge is not None:
+                voc_verdict = res.passed          # 复核前的 VOC 结论,留痕用
                 starts, ends = [], []
-                for cam2 in sorted(video.keys()):
-                    if not (cam2 == cam or "wrist" in cam2):
-                        continue
+
+                def _feed(fr):
+                    """前半段进 start 组、后半段进 end 组:保留双问法的前后对照语义,
+                    同时把中段证据带进来(不再只有首尾两帧)。"""
+                    fr = fr[:endstate_frames]
+                    mid = max(1, len(fr) // 2)
+                    starts.extend(fr[:mid])
+                    ends.extend(fr[mid:] or fr[-1:])
+
+                # 主相机**直接复用 VOC 已解码的帧**:两者现在都是"全程均匀取帧",没必要解两遍。
+                # 更关键的是消除一个静默降级——只要 VOC 跑到了,复核就一定有帧可用,
+                # 不会因主相机重解码失败而 starts 为空、复核被静默跳过。
+                if frames:
+                    step = max(1, len(frames) // endstate_frames)
+                    _feed(frames[::step])
+                # 其余相机为补充证据:解码失败只是少一路视角,不影响上面主相机那份
+                for cam2 in [c for c in sorted(video.keys()) if c != cam][:max_endstate_cams - 1]:
                     v2 = video[cam2]
                     try:
-                        f0, _ = decode_window(v2["path"], v2["from_ts"],
-                                              min(v2["to_ts"], v2["from_ts"] + 0.4),
+                        span = max(v2["to_ts"] - v2["from_ts"], 1e-6)
+                        fr, _ = decode_window(v2["path"], v2["from_ts"], v2["to_ts"],
+                                              sample_interval_s=span / endstate_frames,
                                               max_side=max_side)
-                        f1, _ = decode_window(v2["path"], max(v2["from_ts"],
-                                              v2["to_ts"] - 0.4), v2["to_ts"],
-                                              max_side=max_side)
-                        if f0 and f1:
-                            starts.append(f0[0])
-                            ends.append(f1[-1])
+                        if fr:
+                            _feed(fr)
                     except Exception:  # noqa: BLE001
                         continue
                 if starts:
                     es = endstate_judge(starts, ends, str(task_desc))
+                    src = "渐变问询不可判" if voc_verdict is None else "渐变问询判失败"
                     if es is True:
-                        res.passed = True
+                        res.passed = True         # OR:任一判据看到成功即成功
                         res.detail["verdict"] = "endstate_success"
-                        res.detail["reason"] = "渐变问询不可判;终态二值复核(双问法一致)判完成"
+                        res.detail["reason"] = f"{src};多视角全程帧二值复核(双问法一致)判完成"
                     elif es is False:
                         res.detail["verdict"] = "endstate_failure_suspect"
-                        res.detail["reason"] = ("渐变问询不可判;终态二值复核判未完成——"
-                                                "存疑进人工裁决,不硬杀")
+                        if voc_verdict is False:
+                            res.passed = False    # 两个判据一致判失败 → 维持硬杀
+                            res.detail["reason"] = "渐变问询与多视角二值复核一致判未完成"
+                        else:
+                            res.passed = None
+                            res.detail["reason"] = (f"{src};二值复核判未完成——"
+                                                    "存疑进人工裁决,不硬杀")
                     else:
                         res.detail["endstate"] = "两问法矛盾,不采信"
+                        if voc_verdict is False:
+                            res.passed = None     # 复核不采信 → 不凭 VOC 单方硬杀,降级弃权
+                            res.detail["reason"] = "渐变问询判失败但二值复核两问矛盾;存疑进人工裁决"
+            elif res.passed is not True:
+                # 复核该跑却没跑(judge 构造失败)→ 在 detail 留痕,报告里能看出
+                # "本条只有 VOC 单判据把关",不至于误以为都双判据复核过
+                res.detail["endstate"] = "二值复核不可用,仅 VOC 单判据"
+            _progress_tick(_pk_vlm)
             return result_to_struct(res)
 
         df = df.with_column("check_task_success", task_check(

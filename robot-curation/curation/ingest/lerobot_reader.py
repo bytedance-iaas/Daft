@@ -367,6 +367,7 @@ def read_lerobot_meta(
     max_episodes: int | None = None,
     embodiment_id: str | None = None,
     skip_missing: bool = False,
+    episode_indices: set[int] | None = None,
 ) -> list[dict]:
     """每 episode 一个轻量 dict:episode_id/instruction/video指针/fps/length/语义。
 
@@ -378,7 +379,7 @@ def read_lerobot_meta(
     metas: list[dict] = []
     skipped: list[int] = []
     if version.startswith("v3"):
-        ep_meta = _v3_ep_meta(dataset_dir, max_episodes)
+        ep_meta = _v3_ep_meta(dataset_dir, max_episodes, episode_indices=episode_indices)
         for _, ep in ep_meta.iterrows():
             tasks = ep.get("tasks")
             metas.append({
@@ -391,7 +392,7 @@ def read_lerobot_meta(
                 "length": int(ep["length"]),
             })
     elif version.startswith("v2"):
-        for ep in _v2_episode_list(dataset_dir, max_episodes):
+        for ep in _v2_episode_list(dataset_dir, max_episodes, episode_indices=episode_indices):
             data_path, videos = _v2_episode_paths(dataset_dir, info, ep)
             if skip_missing and _v2_missing(data_path, videos):
                 skipped.append(int(ep["episode_index"]))

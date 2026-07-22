@@ -81,3 +81,24 @@ def test_skill_profile_present(cli_output):
     assert rep["skills"]["n_skills"] >= 1              # pusht 单任务 → 1 类
     md = open(os.path.join(out_dir, "report.md")).read()
     assert "技能分布画像" in md
+
+# ---------- --episodes(只跑指定 episode;2026-07-21) ----------
+def test_parse_episodes_forms():
+    """单条/多条/区间/混用 四种写法。"""
+    from curation.cli import _parse_episodes
+
+    assert _parse_episodes(None) is None
+    assert _parse_episodes("") is None
+    assert _parse_episodes("34") == {34}
+    assert _parse_episodes("34,56,78") == {34, 56, 78}
+    assert _parse_episodes("10-13") == {10, 11, 12, 13}
+    assert _parse_episodes("3,10-12") == {3, 10, 11, 12}
+    assert _parse_episodes(" 5 , 7 ") == {5, 7}          # 容忍空格
+
+
+def test_parse_episodes_rejects_bad_input():
+    from curation.cli import _parse_episodes
+
+    for bad in ("abc", "1-", "-", "5-3"):                # 非数字/残缺/起止颠倒
+        with pytest.raises(ValueError):
+            _parse_episodes(bad)

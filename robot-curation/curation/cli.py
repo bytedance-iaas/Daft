@@ -23,6 +23,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--embodiment-id", default=None,
                      help="人工指定机器人型号(数据集 robot_type 缺失/unknown 时)")
     run.add_argument("--max-episodes", type=int, default=None, help="只处理前 N 条(调试)")
+    run.add_argument("--episodes", default=None, metavar="表达式",
+                     help="只跑指定 episode(调试/复现单条):单条 34;多条 34,56,78;"
+                          "区间 10-20;可混用 3,10-12。与 --max-episodes 同时给时先选本参数再截断")
     run.add_argument("--only", default=None,
                      help="只跑这些模块(逗号分隔,如 visual_quality,motion_quality;"
                           "含数据集级模块 skill_profile(技能画像)/dedup(精确去重))")
@@ -51,12 +54,45 @@ def _list_datasets(parent: str) -> list[str]:
         if os.path.exists(os.path.join(parent, name, "meta", "info.json")))
 
 
+
+def _parse_episodes(expr: str | None) -> set[int] | None:
+    """"34" / "34,56" / "10-20" / "3,10-12" → {int};非法表达式抛 ValueError 由调用方友好报错。"""
+    if not expr:
+        return None
+    out: set[int] = set()
+    for part in str(expr).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part.lstrip("-"):          # 区间(不把负号当分隔)
+            lo, hi = part.split("-", 1)
+            lo_i, hi_i = int(lo), int(hi)
+            if hi_i < lo_i:
+                raise ValueError(f"区间起止颠倒: {part}")
+            out.update(range(lo_i, hi_i + 1))
+        else:
+            out.add(int(part))
+    if not out:
+        raise ValueError("未解析出任何 episode 编号")
+    return out
+
 def main(argv: list[str] | None = None) -> int:
     import os
     args = build_parser().parse_args(argv)
     if args.command == "run":
         from .ingest.lerobot_reader import NotADatasetError, OutputExistsError
         from .pipeline.run import run_pipeline
+
+        try:
+            _eps = _parse_episodes(args.episodes)
+        except ValueError as e:
+            print(f"[输入错误] --episodes {args.episodes!r} 解析失败:{e}\n"
+                  "  用法:单条 34 / 多条 34,56,78 / 区间 10-20 / 混用 3,10-12",
+                  file=sys.stderr)
+            return 2
+        if _eps:
+            print(f"[curation] 只跑指定 episode({len(_eps)} 条): "
+                  f"{sorted(_eps)[:10]}{'…' if len(_eps) > 10 else ''}")
 
         def _run_one(inp, outp):
             return run_pipeline(args.config, inp, outp,
@@ -65,7 +101,8 @@ def main(argv: list[str] | None = None) -> int:
                                 only_checks=args.only, skip_checks=args.skip,
                                 report_only=args.report_only, lite=args.lite,
                                 overwrite=args.overwrite,
-                                set_overrides=args.set_overrides)
+                                set_overrides=args.set_overrides,
+                                episode_indices=_eps)
 
         if args.batch:
             datasets = _list_datasets(args.input)

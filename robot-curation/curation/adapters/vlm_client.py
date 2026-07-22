@@ -292,13 +292,16 @@ def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0,
         imgs = list(start_frames) + list(end_frames)
         n0 = len(start_frames)
         # 双问法互不依赖 → 并发发出(两问各约 8s,串行 16s → 并发 8s)
-        q_done = (f"Task: {task}\nImages 1-{n0}: START of a robot episode "
-                  f"(different camera views). Images {n0+1}-{len(imgs)}: END of the "
-                  "same episode. Was the task completed by the end? "
+        # ⚠️措辞与 funnel 传入的帧集合保持一致:现在传的是**全程帧**(前半段进 start 组、
+        # 后半段进 end 组),不再是首尾各一帧,故问"是否曾经完成"而非"仅从末态看"——
+        # 阶跃型任务(倒/放/开关)的证据在动作瞬间,末态常看不出来(ep34 消融实证)。
+        q_done = (f"Task: {task}\nImages 1-{n0}: EARLIER part of a robot episode "
+                  f"(possibly multiple camera views). Images {n0+1}-{len(imgs)}: LATER part "
+                  "of the same episode. Did the robot COMPLETE the task at any point? "
                   "Answer ONLY yes or no.")
-        q_failed = (f"Task: {task}\nImages 1-{n0} show the beginning, "
-                    f"images {n0+1}-{len(imgs)} show the final state. Judging from "
-                    "the final state, did the robot FAIL to complete the task? "
+        q_failed = (f"Task: {task}\nImages 1-{n0} are from the earlier part, "
+                    f"images {n0+1}-{len(imgs)} from the later part of the same episode. "
+                    "Did the robot FAIL to complete the task (i.e. it never got done)? "
                     "Answer ONLY yes or no.")
         try:
             done, failed = _map_concurrent(lambda q: _ask(q, imgs), [q_done, q_failed], 2)

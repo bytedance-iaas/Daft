@@ -40,6 +40,7 @@ def run_pipeline(
     lite: bool = False,
     overwrite: bool = False,
     set_overrides: list | None = None,
+    episode_indices: set[int] | None = None,   # 只跑指定 episode(CLI --episodes)
 ) -> dict:
     from ..dataset_level.dedup import episode_fingerprint
     from ..dataset_level.profile import instruction_grouping_available, skill_profile
@@ -84,6 +85,7 @@ def run_pipeline(
     # 轻量元数据(只读 meta 文件,万条秒级)。skip_missing=True:客户数据/下载缺口是
     # 常态,缺文件跳过并在 stderr 汇报(不崩、不静默),而非碰到一个缺失就整批失败。
     rows = read_lerobot_meta(input_dir, max_episodes=max_episodes,
+                             episode_indices=episode_indices,
                              embodiment_id=embodiment_id, skip_missing=True)
     row_of = {r["episode_id"]: r for r in rows}
     # 身份行(2026-07-15 用户定):终端开跑即亮明数据集+机器人,不用等报告文件
@@ -162,6 +164,7 @@ def run_pipeline(
         return desc_src_of.get(episode_id, "无")
 
     df0 = read_lerobot_lazy(input_dir, max_episodes=max_episodes,
+                            episode_indices=episode_indices,
                             embodiment_id=embodiment_id)
     df0 = df0.with_column("task_desc", _lookup_desc(_daft.col("episode_id")))
     df0 = df0.with_column("task_desc_source", _lookup_desc_src(_daft.col("episode_id")))

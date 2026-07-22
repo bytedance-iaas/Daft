@@ -60,11 +60,13 @@ class LeRobotDataSource(DataSource):
 
     def __init__(self, dataset_dir: str, max_episodes: int | None = None,
                  embodiment_id: str | None = None, validate: bool = True,
-                 skip_missing: bool = True):
+                 skip_missing: bool = True,
+                 episode_indices: set[int] | None = None):
         from .validate import validate_info
 
         self._dir = dataset_dir
         self._max = max_episodes
+        self._eps = episode_indices          # 只跑指定 episode(调试/复现单条问题)
         self._embodiment = embodiment_id
         self._validate = validate
         self._skip_missing = skip_missing
@@ -138,14 +140,14 @@ class LeRobotDataSource(DataSource):
 
         emitted = 0
         if self._v3:
-            ep_meta = _v3_ep_meta(self._dir, self._max)
+            ep_meta = _v3_ep_meta(self._dir, self._max, episode_indices=self._eps)
             for _, grp in _v3_file_groups(ep_meta):
                 if quota is not None and emitted >= quota:
                     return
                 yield _LeRobotScanTask(self, ("v3", grp))
                 emitted += len(grp)
         else:
-            eps = _v2_episode_list(self._dir, self._max)
+            eps = _v2_episode_list(self._dir, self._max, episode_indices=self._eps)
             # 缺失过滤前置到规划期(2026-07-15):部分下载的数据集(bridge 下载 1k/
             # 清单 53k)此前会给缺失文件也发任务——引擎白执行上千个空任务、每个刷一行
             # "跳过 64 条"(用户实测刷屏 1280 行)。规划期一次过滤+汇报总账;任务只发
@@ -209,7 +211,11 @@ class _LeRobotScanTask(DataSourceTask):
 
 def read_lerobot_lazy(dataset_dir: str, max_episodes: int | None = None,
                       embodiment_id: str | None = None, validate: bool = True,
-                      skip_missing: bool = True):
-    """LeRobot 数据集 → 懒扫描 daft DataFrame(与 read_lerobot 同 schema)。"""
+                      skip_missing: bool = True,
+                      episode_indices: set[int] | None = None):
+    """LeRobot 数据集 → 懒扫描 daft DataFrame(与 read_lerobot 同 schema)。
+
+    episode_indices:只跑指定 episode(CLI --episodes;调试/复现单条时免跑前 N 条)。
+    """
     return LeRobotDataSource(dataset_dir, max_episodes, embodiment_id,
-                             validate, skip_missing).read()
+                             validate, skip_missing, episode_indices).read()
