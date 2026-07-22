@@ -24,6 +24,7 @@ from ..core.checks.video_action_sync import (
 )
 from ..core.checks.visual_quality import visual_quality
 from .config import enabled
+from .progress import _progress_init, _progress_tick
 from .verdict import episode_verdict
 
 
@@ -34,13 +35,8 @@ def _result_dtype():
                             "detail": DataType.string()})
 
 
-# 进度状态存模块级全局,按 key 索引。
-# ⚠️ 为什么不把状态放对象里让 UDF 闭包捕获:**daft 要求 UDF 可序列化**(cloudpickle),
-#    而 threading.Lock 不可 pickle → 实测直接报 "cannot pickle '_thread.lock' object"。
-#    这同时预演了 RayRunner 的 UDF 序列化约束(见 progress backlog)。
-#    UDF 里只捕获一个字符串 key,锁与计数在执行侧按 key 惰性创建。
-_PROGRESS: dict = {}
-_PROGRESS_GUARD = None
+# 进度显示已抽到 pipeline/progress.py(M7 在 run.py 里也要用,不该 import funnel 私有名)
+
 # 并发探针(仅 CURATION_DEBUG_CONCURRENCY=1 时启用):量 VLM 段真实在飞条数。
 # 单进程单事件循环内 += 无竞态(协程间无抢占点),故不需要锁——加锁反而不可 pickle。
 _INFLIGHT: dict = {"n": 0, "max": 0, "t0": 0.0}
@@ -64,55 +60,6 @@ def _episode_gate(limit: int):
     if _EPISODE_SEM.get("loop") is not loop or _EPISODE_SEM.get("limit") != limit:
         _EPISODE_SEM.update(loop=loop, limit=limit, sem=asyncio.Semaphore(limit))
     return _EPISODE_SEM["sem"]
-
-
-def _progress_init(key: str, total: int, label: str, min_interval_s: float = 20.0) -> str:
-    """登记一个进度阶段,返回给 UDF 捕获的 key(纯字符串,可序列化)。"""
-    import time
-
-    _PROGRESS[key] = {"total": max(int(total), 0), "label": label, "n": 0,
-                      "t0": time.time(), "last": 0.0, "min_interval_s": min_interval_s,
-                      "step": max(1, max(int(total), 0) // 20), "lock": None}
-    return key
-
-
-def _progress_tick(key: str) -> None:
-    """UDF 内逐条调用。锁在执行侧惰性创建 → 不进闭包、不参与序列化。
-
-    显示的是"**已完成** N 条"而非"正在处理第 N 条":daft 可能并行执行行,顺序不保证。
-    """
-    import threading
-    import time
-
-    st = _PROGRESS.get(key)
-    if st is None:                       # 反序列化到别的进程 → 静默跳过,绝不因进度条中断质检
-        return
-    if st["lock"] is None:
-        st["lock"] = threading.Lock()
-    with st["lock"]:
-        st["n"] += 1
-        n, total = st["n"], st["total"]
-        now = time.time()
-        due = (n % st["step"] == 0) or (n == total) or \
-              (now - st["last"] >= st["min_interval_s"])
-        if not due:
-            return
-        st["last"] = now
-        elapsed = now - st["t0"]
-    pct = f" ({n / total * 100:.0f}%)" if total else ""
-    msg = f"[curation] {st['label']} {n}/{total or '?'}{pct} | 已用 {_fmt_dur(elapsed)}"
-    if total and n:
-        msg += f" | 剩余 ~{_fmt_dur(elapsed / n * (total - n))}"
-    print(msg, flush=True)
-
-
-def _fmt_dur(sec: float) -> str:
-    sec = max(float(sec), 0.0)
-    if sec < 60:
-        return f"{sec:.0f}s"
-    if sec < 3600:
-        return f"{sec / 60:.1f}min"
-    return f"{sec / 3600:.1f}h"
 
 
 def run_funnel(
@@ -142,6 +89,20 @@ def run_funnel(
     hard_cols: list[str] = []
 
     # ---------- 第一段:纯数值检查(最便宜) ----------
+    # 进度:三个检查是三个独立 UDF,每条 episode 会过 3 次 → 只在**最后一个启用的**
+    # 检查里 tick,否则计数变 3 倍(10 条显示 30/30)。标签同样按实际启用拼,
+    # --only/--skip 时不会还写着没跑的检查名。
+    _NUMERIC_CN = {"timestamp_check": "时间戳", "kinematic_limits": "运动学极限",
+                   "motion_quality": "运动质量"}
+    _numeric_on = [n for n in _NUMERIC_CN if enabled(cfg, n)]
+    _pk_num = None
+    if _numeric_on:
+        _pk_num = _progress_init(
+            "numeric", stats["input"],
+            "数值检查(" + " + ".join(_NUMERIC_CN[n] for n in _numeric_on) + ")",
+            quiet_before_s=3.0)      # 快就只留一行完成汇总;慢(十万条)才逐步报
+    _num_last = _numeric_on[-1] if _numeric_on else None
+
     if enabled(cfg, "timestamp_check"):
         p_ts = cfg["checks"]["timestamp_check"].get("params", {})
 
@@ -263,10 +224,25 @@ def run_funnel(
                                          col("semantics_extras") if "semantics_extras"
                                          in df.column_names else lit("{}")))
 
+    # 数值段计数:单独一个 UDF 挂在段末,而不是往三个检查里插 tick。
+    # 理由:kin/motion 有多处 early return(弃权分支),逐个插必漏;且启用组合随
+    # --only/--skip 变,"哪个是最后一个"会漂。独立 UDF 与检查逻辑解耦,组合怎么变都对。
+    # daft 会把相邻投影融进同一条流水线,故每行是"过完三个检查再 tick",计数语义
+    # 仍是"已完成"。开销=每行一次函数调用,相对解码/VLM 可忽略。
+    if _pk_num is not None:
+        @daft.func(return_dtype=daft.DataType.bool())
+        def _numeric_progress(_eid):
+            _progress_tick(_pk_num)
+            return True
+
+        df = df.with_column("_numeric_done", _numeric_progress(col("episode_id")))
+
     # ⚡ 物化一次:daft 惰性,每个 count_rows/to_pydict 都会从头重算整条检查链。
     # 数值段建完后 collect(),后续统计/过滤都基于物化结果 → 检查只跑一遍(2026-07-10 修
     # "懒重算8次"效率bug:此前 timestamp 等被重复调用 8×)。
     df = df.collect()
+    if _pk_num is not None:
+        df = df.exclude("_numeric_done")     # 计数用的临时列,不进后续 schema/交付
 
     # 硬门 filter ①(纯数值段短路,后面贵的不再算)
     stats["hard_killed"] = []
@@ -298,7 +274,13 @@ def run_funnel(
         # 非"过"条目(人工会看的那批,内存有界);all=全存(小数据集/演示);off=不存
         sync_plots_mode = str(pcfg.get("sync_plots", "flagged"))
 
-        _pk_frame = _progress_init("frame", stats["after_numeric_gates"], "抽帧检查(解码+光流)")
+        # 标签用**语义化检查名**,不是实现机制(2026-07-22 用户反馈:"抽帧检查(解码+光流)"
+        # 让人以为视觉质量/运动学没跑——机制名把纪律"用户界面只用语义名"开了个后门)。
+        # 括号里点明两者共用一次解码,解释了它们为何合成一个阶段、无法分开报进度。
+        _frame_names = (["视觉质量"] if do_visual else []) + (["视频动作同步"] if do_sync else [])
+        _frame_label = (" + ".join(_frame_names)
+                        + ("(共用一次解码)" if len(_frame_names) > 1 else "(需解码视频)"))
+        _pk_frame = _progress_init("frame", stats["after_numeric_gates"], _frame_label)
 
         @daft.func(return_dtype=daft.DataType.struct({
             "visual": _result_dtype(), "sync": _result_dtype(),

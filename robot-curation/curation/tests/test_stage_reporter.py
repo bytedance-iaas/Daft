@@ -9,8 +9,8 @@ import threading
 
 import pytest
 
-from curation.pipeline.funnel import (_fmt_dur, _PROGRESS, _progress_init,
-                                      _progress_tick)
+from curation.pipeline.progress import (_fmt_dur, _PROGRESS, _progress_init,
+                                        _progress_tick)
 
 
 def test_counts_every_episode(capsys):
@@ -98,3 +98,89 @@ def test_lock_would_break_serialization():
 
     with _pytest.raises(Exception):
         daft_dumps(bad_udf)
+
+
+# ───────── 静默期(2026-07-22:快阶段别刷屏)─────────
+
+def test_quiet_period_suppresses_intermediate_but_not_completion(capsys):
+    """又快又多的阶段:头几秒不打中间行,但**完成行必须打**。
+
+    这是数值检查的场景——10 条 episode 毫秒级跑完,不设静默就瞬间刷 10 行噪音;
+    但完全不吭声又会让人以为这段没跑。故设计成"只留一行完成汇总"。
+    """
+    k = _progress_init("q1", 10, "数值检查", quiet_before_s=60.0)   # 静默期远长于本测试
+    for _ in range(10):
+        _progress_tick(k)
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    assert len(lines) == 1, f"静默期内应只剩完成行,实得 {len(lines)} 行:{lines}"
+    assert "10/10" in lines[0] and "数值检查" in lines[0]
+
+
+def test_quiet_period_zero_keeps_old_behavior(capsys):
+    """默认(quiet_before_s=0)行为不变——不能因为加了参数就改了既有阶段的表现。"""
+    k = _progress_init("q2", 5, "抽帧")
+    for _ in range(5):
+        _progress_tick(k)
+    assert len(capsys.readouterr().out.strip().splitlines()) == 5
+
+
+def test_quiet_period_still_reports_when_stage_is_slow(capsys):
+    """慢阶段不能被静默期吞掉:超过静默期后中间行照常出。
+
+    否则十万条的数值检查会长时间零输出,又回到"分不清在跑还是卡死"的老问题。
+    """
+    k = _progress_init("q3", 100, "数值检查", quiet_before_s=0.05)
+    _PROGRESS[k]["t0"] -= 1.0          # 假装这阶段已经跑了 1 秒 → 静默期已过
+    for _ in range(100):
+        _progress_tick(k)
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    assert len(lines) > 1, "静默期已过却只有完成行 → 慢阶段没进度可看"
+
+
+# ───────── 阶段式(不可数的 LLM 步骤)─────────
+
+def test_phase_step_reports_position_and_action_without_fake_percent(capsys):
+    """阶段式只报'第几步/在做什么',**绝不编百分比**。
+
+    这些步骤各是一次 LLM 大调用,耗时不可预测。假进度条比没有更糟:卡住时
+    用户还以为在动。本测试钉住"不出现 %"这条。
+    """
+    from curation.pipeline.progress import phase_step
+
+    phase_step("技能画像", 2, 5, "归纳技能体系(LLM)…")
+    out = capsys.readouterr().out
+    assert "技能画像 2/5 归纳技能体系(LLM)…" in out
+    assert "%" not in out
+
+
+def test_phase_step_shows_elapsed_when_given_t0(capsys):
+    """给了起点就报累计用时——这是不可预测步骤里唯一能诚实给出的时间信息。"""
+    import time
+
+    from curation.pipeline.progress import phase_step
+
+    phase_step("技能画像", 5, 5, "汇总", time.time() - 90)
+    assert "已用 1.5min" in capsys.readouterr().out
+
+
+# ───────── caption 逐条回调 ─────────
+
+def test_caption_progress_counts_failures_and_cache_hits():
+    """on_progress 必须**每条都调**,含失败条与命中缓存的条。
+
+    否则有失败时进度永远到不了 100%,看着像卡死——而 caption 单条失败是设计内的
+    (空串=未获 caption,不崩批)。
+    """
+    from curation.dataset_level.caption import caption_episodes
+
+    rows = [
+        {"episode_id": "ok_cached"},                       # 命中缓存 → continue 分支
+        {"episode_id": "broken"},                          # 无 video 键 → 异常分支
+        {"episode_id": "also_cached"},
+    ]
+    seen = []
+    caps = caption_episodes(rows, lambda frames: "x",
+                            precomputed={"ok_cached": "c1", "also_cached": "c2"},
+                            on_progress=lambda: seen.append(1))
+    assert len(seen) == 3, f"应每条各调一次,实得 {len(seen)}"
+    assert caps == ["c1", "", "c2"]

@@ -97,6 +97,18 @@ skill_profile:                     # 技能画像:caption 路线(VLM 端点可�
       a count. One family holding everything is a failure; one sub-skill per caption
       is a failure.
   n_frames: 8
+  caption_concurrency: 8           # caption 同时处理几条 episode(1=串行,排障基线)。
+                                   #   2026-07-22 实测 20 条 DROID(caption 段墙钟):
+                                   #     1 → 312s  1.0×    8 → 66s  4.7×    16 → 37s  8.4×
+                                   #   默认 8:与 vlm_episode_concurrency 一致(一个心智模型),
+                                   #   4.7× 已足;要更快可设 16(实测 8.4×,下述内存/配额均有余量)。
+                                   #   为什么是**独立**旋钮而非复用 vlm_episode_concurrency:
+                                   #   漏斗那层总在飞 = episode并发 × 帧级并发(8×8=64),
+                                   #   而 caption 每条只发 1 个请求 ⇒ 同数字在两处实际负载差 8 倍,
+                                   #   共用会让 caption 白白欠载;且 caption 并发 16 = 16 请求,
+                                   #   仍远低于漏斗已验证的 64,方舟侧安全。
+                                   #   内存:decode 未采样,整条 episode 帧全解进内存再抽 8 帧,
+                                   #   但抽样后原始帧即释放 ⇒ 实测并发16 容器峰值仅 1.83GB(limit 5%)。
 
 verdict:
   soft_threshold: 0.5              # 软分加权低于此 → drop(P5.1 校准)

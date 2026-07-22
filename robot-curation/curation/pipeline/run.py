@@ -278,13 +278,31 @@ def run_pipeline(
                                        api_key_env=vcfg.get("api_key_env"))
         llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"],
                                api_key_env=vcfg.get("api_key_env"))
+
+        # 进度:本段是"1 个逐条长循环 + 4 个离散 LLM 步",故两种显示混用——
+        # caption 有明确总数 → 条目式进度条;后四步各是一次 LLM 大调用,既无可数单位
+        # 又不可预测耗时 → 阶段式只报"第几步/在做什么"。给不可预测的步骤编百分比是
+        # 骗人:卡住时用户还以为在动。详见 pipeline/progress.py 的模块注释。
+        import time as _t
+
+        from .progress import _progress_init, _progress_tick, phase_step
+        _sp_t0 = _t.time()
+        _G = "技能画像"
+        _pk_cap = _progress_init("caption", len(keep_rows), f"{_G}·逐条 caption",
+                                 quiet_before_s=3.0)
+        _cap_conc = int(sp_cfg.get("caption_concurrency", 8))
+        phase_step(_G, 1, 5, f"逐条 caption({len(keep_rows)} 条,并发 {_cap_conc})…", _sp_t0)
         caps = caption_episodes(keep_rows, captioner,
                                 n_frames=sp_cfg.get("n_frames", 8),
-                                precomputed=auto_caps)
+                                precomputed=auto_caps,
+                                on_progress=lambda: _progress_tick(_pk_cap),
+                                max_concurrency=_cap_conc)
+        phase_step(_G, 2, 5, "归纳技能体系(LLM)…", _sp_t0)
         taxonomy = induce_taxonomy(caps, llm_ask,
                                    guideline=sp_cfg.get("taxonomy_guideline"))
         # 自查裁判回合:LLM 对照判据审自己的分类,合并"按目的地/物体分"的违规类
         from ..dataset_level.taxonomy import refine_taxonomy
+        phase_step(_G, 3, 5, "自查裁判:按判据复核分类(LLM)…", _sp_t0)
         taxonomy = refine_taxonomy(taxonomy, llm_ask,
                                    guideline=sp_cfg.get("taxonomy_guideline"))
         fams, subs = assign(caps, taxonomy)
@@ -292,10 +310,15 @@ def run_pipeline(
         missed = sorted({c for c, f in zip(caps, fams) if f == "未归类" and c.strip()})
         if missed:
             from ..dataset_level.taxonomy import repair_unassigned
+            phase_step(_G, 4, 5, f"补漏:{len(missed)} 条未归类重新指认(LLM)…", _sp_t0)
             fix = repair_unassigned(missed, taxonomy, llm_ask)
             for i, c in enumerate(caps):
                 if fams[i] == "未归类" and c in fix:
                     fams[i], subs[i] = fix[c]
+        else:
+            # 没漏网也要报,否则用户看到 3/5 直接跳 5/5 会以为漏了一步或出错
+            phase_step(_G, 4, 5, "补漏:无未归类,跳过", _sp_t0)
+        phase_step(_G, 5, 5, "汇总画像 + 标注审计", _sp_t0)
         profile = skill_profile_two_level(keep_rows, fams, subs, caps)
         # 判据留痕(2026-07-11):guideline + LLM 自述的归类理由进报告,分类可审计
         from ..dataset_level.taxonomy import DEFAULT_GUIDELINE, criteria_of
