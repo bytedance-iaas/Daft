@@ -125,13 +125,15 @@ def global_lag(
     st = np.asarray(speed_t, dtype=np.float64)
     if len(f) < 8 or len(s) < 8:
         return CheckResult(name="video_action_sync", passed=None,
-                           detail={"reason": f"信号过短(flow={len(f)}, speed={len(s)})"})
+                           detail={"code": "short_signal",
+                                   "reason": f"信号过短(flow={len(f)}, speed={len(s)})"})
 
     # 重采样到光流时间轴(通常更稀);无运动信号(std≈0)= 不可判
     s_on_f = np.interp(ft, st, s)
     if f.std() < min_active_std or s_on_f.std() < min_active_std:
         return CheckResult(name="video_action_sync", passed=None,
-                           detail={"reason": "静止段无信号(std≈0)"})
+                           detail={"code": "no_motion",
+                                   "reason": "静止段无信号(std≈0)"})
     zf = (f - f.mean()) / f.std()
     zs = (s_on_f - s_on_f.mean()) / s_on_f.std()
 
@@ -151,9 +153,11 @@ def global_lag(
     # 值的噪声假峰可达 (1/√N)·√(2lnK)——bridge 25样本实测假峰 lag 0.8-1.8s/corr 0.44。
     # 短序列的滞后估计统计上不可靠 → 硬门诚实弃权(5fps 短片=方法边界,非数据有罪)
     if len(zf) < 60:
+        detail["code"] = "short_sequence"
         detail["reason"] = f"序列过短(n={len(zf)}<60),滞后估计统计上不可靠,不可判"
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
     if corr_peak < corr_min:
+        detail["code"] = "weak_corr"
         detail["reason"] = f"corr_peak {corr_peak:.2f} < {corr_min} 不可判"
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
     # 峰值突出度门控(2026-07-07 评测教训:bridge 26帧@5fps 短序列互相关噪声假峰
@@ -166,13 +170,17 @@ def global_lag(
     prominence = 0.15
     tol_eff = max(lag_tol_s, 2.0 * dt)
     if abs(lag_s) <= tol_eff:
+        detail["code"] = "aligned"
         return CheckResult(name="video_action_sync", passed=True, detail=detail)
     if corr_zero >= corr_peak - prominence:
+        detail["code"] = "ambiguous_peak"
         detail["reason"] = (f"滞后 {lag_s:.2f}s 超容差但峰不突出"
                             f"(corr0 {corr_zero:.2f}≈peak {corr_peak:.2f}),证据含糊 → 不可判")
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
     if corr_peak < kill_corr_min:
+        detail["code"] = "weak_corr_no_kill"
         detail["reason"] = (f"疑似滞后 {lag_s:.2f}s 但相关偏弱"
                             f"(corr {corr_peak:.2f} < {kill_corr_min}),不足以硬杀 → 人工复核")
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
+    detail["code"] = "lag_exceeds_tol"
     return CheckResult(name="video_action_sync", passed=False, detail=detail)

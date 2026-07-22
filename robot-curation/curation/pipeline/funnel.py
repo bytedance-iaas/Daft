@@ -7,6 +7,7 @@ filter(硬门) → VLM 任务成败(垫底只跑幸存者,省一个数量级)→
 from __future__ import annotations
 
 import json
+import time
 from typing import Callable
 
 import numpy as np
@@ -40,6 +41,29 @@ def _result_dtype():
 #    UDF 里只捕获一个字符串 key,锁与计数在执行侧按 key 惰性创建。
 _PROGRESS: dict = {}
 _PROGRESS_GUARD = None
+# 并发探针(仅 CURATION_DEBUG_CONCURRENCY=1 时启用):量 VLM 段真实在飞条数。
+# 单进程单事件循环内 += 无竞态(协程间无抢占点),故不需要锁——加锁反而不可 pickle。
+_INFLIGHT: dict = {"n": 0, "max": 0, "t0": 0.0}
+
+# episode 级并发闸门。⚠️ 2026-07-22 实测:daft 0.7.16 的 `max_concurrency=` 对 async
+# **行级** UDF 不限在飞协程数——设 1/2/4/12 实测峰值一律 = morsel 全部行数(12/12)。
+# 即在飞数 = morsel 行数,乘帧级并发后可达数百,会砸穿服务端配额。故闸门必须自己装。
+# 放在模块级:UDF 闭包只按引用捞它(与 _PROGRESS 同理),不进 cloudpickle。
+_EPISODE_SEM: dict = {}
+
+
+def _episode_gate(limit: int):
+    """取当前事件循环上的 episode 并发信号量(懒建,按 loop 缓存)。
+
+    懒建的原因:Semaphore 必须绑在**运行中的** loop 上,而 UDF 定义期还没有 loop。
+    协程从进入到首个 await 之间不会被抢占,故这里的检查-创建无竞态,不需要锁。
+    """
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    if _EPISODE_SEM.get("loop") is not loop or _EPISODE_SEM.get("limit") != limit:
+        _EPISODE_SEM.update(loop=loop, limit=limit, sem=asyncio.Semaphore(limit))
+    return _EPISODE_SEM["sem"]
 
 
 def _progress_init(key: str, total: int, label: str, min_interval_s: float = 20.0) -> str:
@@ -111,6 +135,10 @@ def run_funnel(
     # 二值复核每路取几帧(全程均匀,含中段)。8 帧经 ep34 消融验证足够;首尾2帧会漏掉
     # 阶跃型任务(倒/放/开关)的动作瞬间证据。图片总数 = 路数 × 本值。
     endstate_frames = pcfg.get("endstate_frames", 8)
+    # VLM 段的 episode 级并发。VLM 段占端到端 ~97%,且几乎全是等服务端响应 → 唯一有效提速手段。
+    # 2026-07-22 实测 10 条 DROID(VLM 段墙钟):1→447s、2→221s(2.0×)、4→117s(3.8×)、8→84s(5.3×),
+    # 均延迟恒定 ~21s(服务端零排队)。默认 8;闸门见下方 _episode_gate。
+    episode_concurrency = pcfg.get("vlm_episode_concurrency", 8)
     hard_cols: list[str] = []
 
     # ---------- 第一段:纯数值检查(最便宜) ----------
@@ -422,8 +450,7 @@ def run_funnel(
             print(f"[curation] ⚠️ 二值复核不可用({type(_e).__name__}:{_e}),"
                   "task_success 将仅凭 VOC 单判据判定", flush=True)
 
-        @daft.func(return_dtype=_result_dtype())
-        def task_check(video, task_desc, task_src, fps):
+        def _task_check_sync(video, task_desc, task_src, fps):
             from ..adapters.decode import decode_window
 
             cam = sorted(video.keys())[0]
@@ -503,6 +530,50 @@ def run_funnel(
                 res.detail["endstate"] = "二值复核不可用,仅 VOC 单判据"
             _progress_tick(_pk_vlm)
             return result_to_struct(res)
+
+        # ---- async 壳:让 daft 并发跑多条 episode(2026-07-22)----
+        # 为什么这么套:VLM 段单条约 30s,其中绝大部分是**等方舟响应**(网络阻塞),CPU 闲着。
+        # daft 的并发只对 async UDF 生效(同步 UDF 会明确报 "has no effect"),而把 async
+        # 一路传染进 core/ 会破坏"检查=框架无关纯函数"的红线。故只在最外层套 async,
+        # 内部同步工作交给 asyncio.to_thread → **core/ 与 vlm_client 零改动**。
+        #
+        # ⚠️⚠️ 闸门是自己的信号量,不是 daft 的 `max_concurrency=`(2026-07-22 血泪):
+        # 该参数对 async 行级 UDF **完全不限在飞数**——设 1/2/4/12 实测峰值一律等于
+        # morsel 全部行数。误信它会导致:①以为在跑串行基线,其实是全并发(白测一轮);
+        # ②上规模时在飞数随 morsel 涨,乘帧级并发后砸穿服务端配额。故不再传该参数。
+        # 总并发 = vlm_episode_concurrency × vlm.max_concurrency(帧级),两层相乘。
+        _INFLIGHT.update(n=0, max=0, t0=time.time())
+
+        @daft.func(return_dtype=_result_dtype())
+        async def task_check(video, task_desc, task_src, fps):
+            import asyncio
+            import os
+            import sys
+            import time
+
+            async with _episode_gate(episode_concurrency):
+                if not os.environ.get("CURATION_DEBUG_CONCURRENCY"):
+                    return await asyncio.to_thread(
+                        _task_check_sync, video, task_desc, task_src, fps)
+
+                from ..adapters.vlm_client import http_stats
+
+                _INFLIGHT["n"] += 1
+                _INFLIGHT["max"] = max(_INFLIGHT["max"], _INFLIGHT["n"])
+                t_in = time.time()
+                try:
+                    return await asyncio.to_thread(
+                        _task_check_sync, video, task_desc, task_src, fps)
+                finally:
+                    _INFLIGHT["n"] -= 1
+                    n_req, s_req = http_stats()
+                    wall = time.time() - _INFLIGHT["t0"]
+                    print(f"[并发探针] 出 t={wall:6.1f}s 本条={time.time() - t_in:5.1f}s "
+                          f"在飞={_INFLIGHT['n']} 峰值={_INFLIGHT['max']} | "
+                          f"累计请求={n_req} Σ请求耗时={s_req:.0f}s "
+                          f"有效并发={s_req / max(wall, 1e-9):.1f} "
+                          f"均延迟={s_req / max(n_req, 1):.1f}s",
+                          file=sys.stderr, flush=True)
 
         df = df.with_column("check_task_success", task_check(
             col("video"),

@@ -9,14 +9,37 @@ from __future__ import annotations
 import base64
 import os
 import re
+import threading
+import time as _time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+
+# HTTP 计时探针(诊断用,始终累计,开销可忽略)。判读:
+#   Σ请求耗时 / VLM段墙钟 ≈ 有效并发度;≈1 说明请求实际被串行化了。
+#   Σ请求耗时 / 请求数     = 平均单请求延迟;并发下明显变大 = 服务端在排队。
+_HTTP_STATS = {"n": 0, "secs": 0.0}
+_HTTP_LOCK = threading.Lock()          # 模块级,不进 UDF 闭包 → 不参与 cloudpickle
+
+
+def _http_record(dt: float) -> None:
+    with _HTTP_LOCK:
+        _HTTP_STATS["n"] += 1
+        _HTTP_STATS["secs"] += dt
+
+
+def http_stats() -> tuple[int, float]:
+    """返回 (请求数, 请求耗时总和秒)。"""
+    with _HTTP_LOCK:
+        return _HTTP_STATS["n"], _HTTP_STATS["secs"]
 
 # 并发请求默认值(2026-07-20 实测方舟:并发1→0.10 req/s、8→0.49、16→0.96,零 429、延迟不涨
 # ≈7.8s/请求恒定 ⇒ 瓶颈是串行等待而非服务端限流)。默认 8 = n_probe 常用值,一条 episode
 # 的 VOC 问询一轮打完;**保持可配置**:上 Ray 后每 worker 调小,总并发=worker数×本值,
 # 一个旋钮压在服务端配额下(见 progress backlog)。
+# ⚠️ 上面那个 7.8s 是**小 payload** 下的数;真实流水线每请求带 8-24 张 base64 图,
+#    2026-07-22 端到端实测均延迟 ~21s(且到总并发 64 仍平坦)。凡拿裸 HTTP 小请求外推
+#    真实吞吐,都会高估拐点——定并发必须用真实 payload 量(教训见 progress 2026-07-22)。
 DEFAULT_MAX_CONCURRENCY = 8
 
 
@@ -180,7 +203,11 @@ def make_vlm_completion(
     def _post(content: list) -> str:
         payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
                    "messages": [{"role": "user", "content": content}]}
-        resp = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
+        _t = _time.time()
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
+        finally:
+            _http_record(_time.time() - _t)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
