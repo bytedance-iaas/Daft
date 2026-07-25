@@ -57,7 +57,7 @@ checks:
     vlm:                           # ★ 模型只在这一处配置——换模型=改这里,零代码改动
                                    #   本段同时供 M4c(成败判定/终态复核)与 M7(caption/归纳/审计)
       provider: openai             # openai 兼容端点:自托管 vLLM 与托管 MaaS(方舟)同一套协议
-      model: nvidia/Cosmos-Reason2-8B   # 2026-07-16 默认降 8B(H20 单卡96GB 从容;32B 需两卡tp)。⚠️8B 未跑过七模型选拔(32B 冠军 0.75),补考后再全信任务判定;切回: --set checks.task_success.vlm.model=nvidia/Cosmos-Reason2-32B
+      model: nvidia/Cosmos-Reason2-8B   # ⚠️旧判断"32B 需两卡tp"已证伪(2026-07-23 单卡H20实测跑通,util0.92/ctx32768;H200 141GB 更从容)。8B 小考已考:硬门零战力,仅作 caption/预筛;换后端用 --vlm-backend
       endpoint: http://localhost:8000/v1
       max_concurrency: 8           # 逐帧问询并发度(1=串行)。2026-07-20 实测方舟:并发1→0.10 req/s、
                                    #   8→0.49、16→0.96,零 429 且延迟恒定 ~8s ⇒ 瓶颈是串行等待非限流。
