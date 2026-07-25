@@ -67,3 +67,12 @@ def test_h20_32b_preset_available():
     assert v["model"] == "nvidia/Cosmos-Reason2-32B"
     assert "vllm-cosmos-32b" in v["endpoint"]
     assert not v["api_key_env"]
+
+
+def test_a30_8b_preset_available():
+    """A30 备胎上线(2026-07-24):四预设齐备,a30-8b 指向独立 Service。"""
+    cfg = apply_vlm_backend(_cfg(), "a30-8b")
+    v = cfg["checks"]["task_success"]["vlm"]
+    assert v["model"] == "nvidia/Cosmos-Reason2-8B"
+    assert "vllm-cosmos-8b-a30" in v["endpoint"]
+    assert not v["api_key_env"]
