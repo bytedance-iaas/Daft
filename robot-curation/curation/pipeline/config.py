@@ -77,6 +77,29 @@ def apply_overrides(cfg: dict, sets: list[str]) -> dict:
     return cfg
 
 
+def apply_vlm_backend(cfg: dict, name: str | None) -> dict:
+    """CLI --vlm-backend <名> → 按预设(default.yaml 的 vlm_backends)整组切换
+    checks.task_success.vlm 的 endpoint/model/api_key_env(2026-07-23 用户定)。
+
+    动机:切后端要记三条 --set 且拼错静默跑偏(曾把 --set 掉在 sh -c 引号外,
+    用了默认值还以为切了)。预设仍集中在 YAML 一处(端点/模型不进代码,红线);
+    本函数只做查表覆盖。错名报错并列出可选——绝不静默回退默认。
+    调用顺序:backend 先、--set 后 ⇒ --set 仍可在预设之上微调单项。
+    """
+    if not name:
+        return cfg
+    presets = cfg.get("vlm_backends") or {}
+    if name not in presets:
+        raise ConfigError(f"--vlm-backend 未知预设 {name!r};可用: {sorted(presets)}"
+                          "(预设定义在 default.yaml 的 vlm_backends 段)")
+    p = presets[name] or {}
+    vlm = cfg.setdefault("checks", {}).setdefault("task_success", {}).setdefault("vlm", {})
+    for k in ("endpoint", "model", "api_key_env"):
+        vlm[k] = p.get(k)          # 三元组整组覆盖(含置空 api_key_env,防止残留旧密钥头)
+    print(f"[curation] VLM 后端 → {name}: {p.get('model')} @ {p.get('endpoint')}")
+    return cfg
+
+
 def enabled(cfg: dict, name: str) -> bool:
     c = cfg["checks"].get(name)
     return bool(c and c.get("enable", True))

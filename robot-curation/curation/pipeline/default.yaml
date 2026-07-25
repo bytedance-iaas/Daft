@@ -65,14 +65,24 @@ checks:
       api_key_env:                 # 托管端点(方舟)才需要:这里只写**环境变量名**,
                                    #   密钥本身只存环境变量/K8s Secret,绝不进 YAML 与仓库。
                                    #   留空/不配 = 自托管 vLLM 原行为(不发鉴权头),两条路共存。
-      # ── 三种用法(默认=①,切换零代码改动)──────────────────────────
-      # ① H20 自托管 8B(默认):保持上面原样
-      # ② H20 自托管 32B:--set checks.task_success.vlm.model=nvidia/Cosmos-Reason2-32B
-      # ③ 方舟 MaaS(豆包):
-      #    export ARK_API_KEY=<你的Key>
-      #    --set checks.task_success.vlm.endpoint=https://ark.cn-beijing.volces.com/api/v3
-      #    --set checks.task_success.vlm.model=<豆包视觉模型名或推理接入点ID ep-xxx>
-      #    --set checks.task_success.vlm.api_key_env=ARK_API_KEY
+      # ── 切换后端:--vlm-backend <名>(预设见下方 vlm_backends,一个参数三元组全换)──
+      #    仍可 --set checks.task_success.vlm.* 微调(--set 在 backend 之后应用,赢)
+
+# VLM 后端预设(2026-07-23):--vlm-backend <名> 一键切换,免记三条 --set。
+# 端点/模型仍只在本文件一处(红线);密钥只写环境变量名。
+vlm_backends:
+  ark:                             # 方舟 MaaS(豆包)——托管,零运维,有配额
+    endpoint: https://ark.cn-beijing.volces.com/api/v3
+    model: doubao-seed-2-0-pro-260215
+    api_key_env: ARK_API_KEY
+  h20-8b:                          # 自托管 Cosmos-8B @ H20(deploy/vllm-cosmos-8b.yaml)
+    endpoint: http://vllm-cosmos-8b.curation.svc.cluster.local:8000/v1
+    model: nvidia/Cosmos-Reason2-8B
+    api_key_env:                   # 自托管无鉴权
+  # h20-32b:                       # 32B 部署后解注释(deploy/vllm-cosmos-32b.yaml,待建)
+  #   endpoint: http://vllm-cosmos-32b.curation.svc.cluster.local:8000/v1
+  #   model: nvidia/Cosmos-Reason2-32B
+  #   api_key_env:
 
 skill_profile:                     # 技能画像:caption 路线(VLM 端点可达时);不可达降级为按原始标注分组
   method: caption

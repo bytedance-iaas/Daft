@@ -40,6 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="临时覆盖单个配置值(可重复),如 --set pipeline.sync_plots=all "
                           "--set checks.visual_quality.params.blur_ref_var=80;"
                           "免为一个开关复制整份 yaml")
+    run.add_argument("--vlm-backend", default=None, metavar="预设名",
+                     help="一键切换 VLM 后端(端点/模型/密钥三元组整组换),预设定义在 "
+                          "default.yaml 的 vlm_backends 段(如 ark / h20-8b);"
+                          "仍可 --set checks.task_success.vlm.* 微调(--set 后应用,赢)")
     run.add_argument("--report-only", action="store_true",
                      help="只出报告,不导出数据集(单模块快查时省去重编码视频的时间)")
 
@@ -102,7 +106,8 @@ def main(argv: list[str] | None = None) -> int:
                                 report_only=args.report_only, lite=args.lite,
                                 overwrite=args.overwrite,
                                 set_overrides=args.set_overrides,
-                                episode_indices=_eps)
+                                episode_indices=_eps,
+                                vlm_backend=args.vlm_backend)
 
         if args.batch:
             datasets = _list_datasets(args.input)

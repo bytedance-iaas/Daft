@@ -41,6 +41,7 @@ def run_pipeline(
     overwrite: bool = False,
     set_overrides: list | None = None,
     episode_indices: set[int] | None = None,   # 只跑指定 episode(CLI --episodes)
+    vlm_backend: str | None = None,            # VLM 后端预设名(CLI --vlm-backend)
 ) -> dict:
     from ..dataset_level.dedup import episode_fingerprint
     from ..dataset_level.profile import instruction_grouping_available, skill_profile
@@ -74,6 +75,10 @@ def run_pipeline(
     if only_checks or skip_checks:
         from .config import apply_check_selection
         cfg = apply_check_selection(cfg, only=only_checks, skip=skip_checks)
+    if vlm_backend:
+        # backend 先于 --set:预设整组切换后,--set 仍可微调单项(后到者赢)
+        from .config import apply_vlm_backend
+        cfg = apply_vlm_backend(cfg, vlm_backend)
     if set_overrides:
         # --set 在 --only/--skip 之后应用(后者管开关,前者管任意值;后到者赢)
         from .config import apply_overrides, validate_config
