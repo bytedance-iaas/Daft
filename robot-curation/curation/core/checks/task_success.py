@@ -109,3 +109,89 @@ def task_success(
     detail["reason"] = (f"末态完成度 {final:.2f} 在灰区({fail_max}~{success_min}),"
                         "证据不足以硬判 → 不可判")
     return CheckResult(name="task_success", passed=None, detail=detail)
+
+
+def endstate_review(
+    res: CheckResult,
+    task_desc: str,
+    endstate_judge: Callable | None,
+    primary_frames: Sequence,
+    extra_frames_fn: Callable[[], list] | None = None,
+    endstate_frames: int = 8,
+) -> CheckResult:
+    """二值复核协议:VOC 未判成功时的第二意见(多视角×全程帧,双问法互检)。
+
+    ★ 2026-07-23 从 funnel 闭包抽出为纯函数:此前协议只能随整条漏斗跑,考卷
+    (spike_vlm_ab)只能考裸 VOC 层,得出"8B 冤杀 2/10"的错误结论(实测走全协议
+    后 1 救回 1 进人工,硬杀 0)。抽出后:漏斗薄壳 / 考卷 / 单测共用同一份协议,
+    永不分叉——回到"检查=框架无关纯函数"红线。
+
+    注入接口(全部框架无关):
+      endstate_judge(starts, ends, desc) -> True完成 / False未完成 / None两问矛盾;
+        传 None = 判官不可用(构造失败),detail 留痕后原样返回。
+      primary_frames: 主相机全程帧(VOC 已解码的直接复用——只要 VOC 跑到了,
+        复核就一定有帧,不会因重解码失败而被静默跳过)。
+      extra_frames_fn: () -> [各补充相机的全程帧列表]。**惰性**:仅在触发复核时
+        调用(解码贵);解码失败的相机由调用方自行跳过。
+
+    2026-07-21 三处修正,均由 DROID ep34("把橙杯里的东西倒进碗",人工核对为成功
+    却被硬门误杀)的消融实验定案:
+     ① 触发条件 passed is None → is not True:VOC 判 False("有把握的失败")时同样
+        要复核。ep34 正死于此——VOC 在看不清碗内的主视角上给出 False,复核根本没
+        机会开口。用户定的 OR 原则:任一路/任一判据看到成功即成功(依据:七模型
+        评测 32B 干净成功率仅 0.75 ⇒ 假阴性才是主要误差,假阳性少见)。
+     ② 帧集合首尾两帧 → 全程均匀:消融证明这才是根因。同一相机同一模型,首尾2帧
+        无论怎么问都判"未完成";带中段的全程8帧无论怎么问都判"完成"。倒/放/开关
+        这类**阶跃型任务**的证据在动作瞬间(约1-2秒),末态看不出来。
+     ③ 相机放开(原按名字过滤):ep34 唯一能看清的 exterior_2 曾被挡掉。
+    成本:仍是双问法 2 次请求,只是每次多带若干图。
+    """
+    if res.passed is True:
+        return res                                    # VOC 已判成功,复核不启动
+    if endstate_judge is None:
+        # 复核该跑却没跑(judge 构造失败)→ detail 留痕,报告里能看出
+        # "本条只有 VOC 单判据把关",不至于误以为都双判据复核过
+        res.detail["endstate"] = "二值复核不可用,仅 VOC 单判据"
+        return res
+
+    voc_verdict = res.passed                          # 复核前的 VOC 结论,留痕用
+    starts, ends = [], []
+
+    def _feed(fr):
+        """前半段进 start 组、后半段进 end 组:保留双问法的前后对照语义,
+        同时把中段证据带进来(不再只有首尾两帧)。"""
+        fr = list(fr)[:endstate_frames]
+        mid = max(1, len(fr) // 2)
+        starts.extend(fr[:mid])
+        ends.extend(fr[mid:] or fr[-1:])
+
+    if len(primary_frames) > 0:
+        step = max(1, len(primary_frames) // endstate_frames)
+        _feed(primary_frames[::step])
+    if extra_frames_fn is not None:
+        for fr in extra_frames_fn():                  # 惰性:仅走到这里才解其余相机
+            if len(fr) > 0:
+                _feed(fr)
+    if not starts:
+        return res                                    # 无帧可复核(极端情形),原样返回
+
+    es = endstate_judge(starts, ends, str(task_desc))
+    src = "渐变问询不可判" if voc_verdict is None else "渐变问询判失败"
+    if es is True:
+        res.passed = True                             # OR:任一判据看到成功即成功
+        res.detail["verdict"] = "endstate_success"
+        res.detail["reason"] = f"{src};多视角全程帧二值复核(双问法一致)判完成"
+    elif es is False:
+        res.detail["verdict"] = "endstate_failure_suspect"
+        if voc_verdict is False:
+            res.passed = False                        # 两个判据一致判失败 → 维持硬杀
+            res.detail["reason"] = "渐变问询与多视角二值复核一致判未完成"
+        else:
+            res.passed = None
+            res.detail["reason"] = f"{src};二值复核判未完成——存疑进人工裁决,不硬杀"
+    else:
+        res.detail["endstate"] = "两问法矛盾,不采信"
+        if voc_verdict is False:
+            res.passed = None                         # 复核不采信 → 不凭 VOC 单方硬杀,降级弃权
+            res.detail["reason"] = "渐变问询判失败但二值复核两问矛盾;存疑进人工裁决"
+    return res
