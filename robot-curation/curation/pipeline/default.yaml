@@ -79,10 +79,10 @@ vlm_backends:
     endpoint: http://vllm-cosmos-8b.curation.svc.cluster.local:8000/v1
     model: nvidia/Cosmos-Reason2-8B
     api_key_env:                   # 自托管无鉴权
-  # h20-32b:                       # 32B 部署后解注释(deploy/vllm-cosmos-32b.yaml,待建)
-  #   endpoint: http://vllm-cosmos-32b.curation.svc.cluster.local:8000/v1
-  #   model: nvidia/Cosmos-Reason2-32B
-  #   api_key_env:
+  h20-32b:                         # 自托管 Cosmos-32B @ H20(deploy/vllm-cosmos-32b.yaml,2026-07-23 上线)
+    endpoint: http://vllm-cosmos-32b.curation.svc.cluster.local:8000/v1
+    model: nvidia/Cosmos-Reason2-32B
+    api_key_env:                   # 自托管无鉴权
 
 skill_profile:                     # 技能画像:caption 路线(VLM 端点可达时);不可达降级为按原始标注分组
   method: caption

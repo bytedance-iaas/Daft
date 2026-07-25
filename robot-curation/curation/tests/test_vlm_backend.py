@@ -58,3 +58,12 @@ def test_set_override_wins_after_backend():
     v = cfg["checks"]["task_success"]["vlm"]
     assert v["model"] == "nvidia/Cosmos-Reason2-32B"     # --set 赢
     assert "vllm-cosmos-8b" in v["endpoint"]             # 预设其余保留
+
+
+def test_h20_32b_preset_available():
+    """32B 上线后(2026-07-23)三预设齐备;32B 端点/模型/无鉴权正确。"""
+    cfg = apply_vlm_backend(_cfg(), "h20-32b")
+    v = cfg["checks"]["task_success"]["vlm"]
+    assert v["model"] == "nvidia/Cosmos-Reason2-32B"
+    assert "vllm-cosmos-32b" in v["endpoint"]
+    assert not v["api_key_env"]
