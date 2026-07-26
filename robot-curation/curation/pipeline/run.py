@@ -42,6 +42,9 @@ def run_pipeline(
     set_overrides: list | None = None,
     episode_indices: set[int] | None = None,   # 只跑指定 episode(CLI --episodes)
     vlm_backend: str | None = None,            # VLM 后端预设名(CLI --vlm-backend)
+    vlm_endpoint: str | None = None,           # 直连端点(CLI --vlm-endpoint / env)
+    vlm_model: str | None = None,              # 直连模型(CLI --vlm-model / env)
+    vlm_api_key_env: str | None = None,        # 直连密钥环境变量名
 ) -> dict:
     from ..dataset_level.dedup import episode_fingerprint
     from ..dataset_level.profile import instruction_grouping_available, skill_profile
@@ -79,6 +82,11 @@ def run_pipeline(
         # backend 先于 --set:预设整组切换后,--set 仍可微调单项(后到者赢)
         from .config import apply_vlm_backend
         cfg = apply_vlm_backend(cfg, vlm_backend)
+    if vlm_endpoint or vlm_model or vlm_api_key_env:
+        # 直连参数在 backend 之后:可单用(免别名的正门),也可在预设之上单项覆盖
+        from .config import apply_vlm_direct
+        cfg = apply_vlm_direct(cfg, endpoint=vlm_endpoint, model=vlm_model,
+                               api_key_env=vlm_api_key_env)
     if set_overrides:
         # --set 在 --only/--skip 之后应用(后者管开关,前者管任意值;后到者赢)
         from .config import apply_overrides, validate_config

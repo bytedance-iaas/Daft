@@ -73,6 +73,28 @@ def load_config(path: str | None = None) -> dict:
     return cfg
 
 
+def apply_vlm_direct(cfg: dict, endpoint: str | None = None, model: str | None = None,
+                     api_key_env: str | None = None) -> dict:
+    """CLI 直连参数 --vlm-endpoint/--vlm-model/--vlm-api-key-env → 单项覆盖。
+
+    业界通行的"正门"(OpenAI 系工具惯例):不用预先起别名、不用记 --set 点路径。
+    与预设可混用:--vlm-backend 打底,本函数在其后单项覆盖(应用顺序:
+    site/default 合并 → backend 预设 → 本函数 → --set,后到者赢)。
+    环境变量 CURATION_VLM_ENDPOINT/MODEL/API_KEY_ENV 由 CLI 层作为参数缺省值接入。
+    """
+    vlm = cfg.setdefault("checks", {}).setdefault("task_success", {}).setdefault("vlm", {})
+    shown = []
+    if endpoint:
+        vlm["endpoint"] = endpoint; shown.append(f"endpoint={endpoint}")
+    if model:
+        vlm["model"] = model; shown.append(f"model={model}")
+    if api_key_env is not None and api_key_env != "":
+        vlm["api_key_env"] = api_key_env; shown.append(f"api_key_env={api_key_env}")
+    if shown:
+        print(f"[curation] VLM 直连覆盖: {', '.join(shown)}")
+    return cfg
+
+
 def apply_overrides(cfg: dict, sets: list[str]) -> dict:
     """CLI --set 路径=值(可重复)→ 点路径覆盖单个配置值(2026-07-15 用户定)。
 
