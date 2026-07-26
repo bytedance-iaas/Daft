@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 
@@ -40,6 +41,18 @@ def build_parser() -> argparse.ArgumentParser:
                      help="临时覆盖单个配置值(可重复),如 --set pipeline.sync_plots=all "
                           "--set checks.visual_quality.params.blur_ref_var=80;"
                           "免为一个开关复制整份 yaml")
+    run.add_argument("--vlm-endpoint", default=os.environ.get("CURATION_VLM_ENDPOINT"),
+                     metavar="URL",
+                     help="VLM 服务直连地址(OpenAI 兼容,如 http://10.0.0.5:8000/v1);"
+                          "免起别名的正门。缺省读环境变量 CURATION_VLM_ENDPOINT")
+    run.add_argument("--vlm-model", default=os.environ.get("CURATION_VLM_MODEL"),
+                     metavar="模型名",
+                     help="VLM 模型名(如 Qwen/Qwen2.5-VL-32B-Instruct)。"
+                          "缺省读环境变量 CURATION_VLM_MODEL")
+    run.add_argument("--vlm-api-key-env", default=os.environ.get("CURATION_VLM_API_KEY_ENV"),
+                     metavar="环境变量名",
+                     help="存放 API Key 的环境变量**名**(托管端点用;密钥本身绝不进命令行)。"
+                          "缺省读 CURATION_VLM_API_KEY_ENV")
     run.add_argument("--vlm-backend", default=None, metavar="预设名",
                      help="一键切换 VLM 后端(端点/模型/密钥三元组整组换),预设定义在 "
                           "default.yaml 的 vlm_backends 段(如 ark / h20-8b);"
@@ -107,7 +120,10 @@ def main(argv: list[str] | None = None) -> int:
                                 overwrite=args.overwrite,
                                 set_overrides=args.set_overrides,
                                 episode_indices=_eps,
-                                vlm_backend=args.vlm_backend)
+                                vlm_backend=args.vlm_backend,
+                                vlm_endpoint=args.vlm_endpoint,
+                                vlm_model=args.vlm_model,
+                                vlm_api_key_env=args.vlm_api_key_env)
 
         if args.batch:
             datasets = _list_datasets(args.input)

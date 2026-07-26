@@ -3,6 +3,7 @@
 需求背景:产品最终跑在什么硬件上事先未知,客户要能用**自己的配置文件**设 IP/模型。
 方案:出厂 default.yaml 为底,--config 的站点文件**深合并**其上——客户只写想改的
 几行,没写的一切随出厂默认升级(消灭"复制整份 yaml → 副本腐烂")。
+应用顺序契约:default ⊕ site → --vlm-backend 预设 → 直连参数 → --set(后到者赢)。
 """
 from __future__ import annotations
 
@@ -11,7 +12,8 @@ import os
 import pytest
 import yaml
 
-from curation.pipeline.config import (ConfigError, apply_vlm_backend,
+from curation.pipeline.config import (ConfigError, apply_overrides,
+                                      apply_vlm_backend, apply_vlm_direct,
                                       load_config)
 
 
@@ -85,3 +87,35 @@ def test_env_var_config_path(tmp_path, monkeypatch):
         "endpoint": "http://flag:8000/v1", "model": "m"}}}))
     cfg2 = load_config(str(explicit))
     assert "from-flag" in cfg2["vlm_backends"] and "from-env" not in cfg2["vlm_backends"]
+
+
+# ───────── 直连参数(免别名的正门)─────────
+
+def test_direct_flags_standalone():
+    """manager 场景:客户不懂也不想懂别名——两个直连参数即完成接线。"""
+    cfg = apply_vlm_direct(load_config(None),
+                           endpoint="http://10.1.2.3:8000/v1", model="my/model")
+    v = cfg["checks"]["task_success"]["vlm"]
+    assert v["endpoint"] == "http://10.1.2.3:8000/v1" and v["model"] == "my/model"
+
+
+def test_direct_overrides_preset_single_field():
+    """顺序契约:backend 打底,直连单项覆盖(换模型不换端点)。"""
+    cfg = apply_vlm_backend(load_config(None), "ark")
+    cfg = apply_vlm_direct(cfg, model="doubao-experimental")
+    v = cfg["checks"]["task_success"]["vlm"]
+    assert v["model"] == "doubao-experimental"
+    assert "ark.cn-beijing" in v["endpoint"]               # 端点仍是预设的
+
+
+def test_set_still_wins_last():
+    """--set 仍是最后手(万能逃生门):直连之后还能被 --set 压。"""
+    cfg = apply_vlm_direct(load_config(None), model="a")
+    cfg = apply_overrides(cfg, ["checks.task_success.vlm.model=b"])
+    assert cfg["checks"]["task_success"]["vlm"]["model"] == "b"
+
+
+def test_direct_noop_when_all_none():
+    before = load_config(None)["checks"]["task_success"]["vlm"].copy()
+    after = apply_vlm_direct(load_config(None))["checks"]["task_success"]["vlm"]
+    assert after == before
