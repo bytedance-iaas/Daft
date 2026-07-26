@@ -1,4 +1,7 @@
-"""--vlm-backend 预设切换测试(2026-07-23)。
+"""--vlm-backend 预设切换测试(2026-07-23;2026-07-25 预设去机房化后改造)。
+
+出厂 default.yaml 只带通用预设(ark / self-hosted-example)——具体机房预设
+(h20-8b 等)属于站点配置,经 --config 叠加注入,见 test_config_overlay.py。
 
 背景:切 VLM 后端(方舟 ↔ 自托管 H20)要记三条 --set,且拼错会**静默跑偏**
 ——实测踩过:--set 掉在 sh -c 引号外,用了默认值还以为切了。
@@ -26,22 +29,20 @@ def test_known_backend_swaps_all_three_keys():
     assert v["api_key_env"] == "ARK_API_KEY"
 
 
-def test_h20_backend_clears_stale_api_key_env():
-    """自托管预设必须**置空** api_key_env——先切 ark 再切 h20-8b,
+def test_selfhosted_backend_clears_stale_api_key_env():
+    """自托管预设必须**置空** api_key_env——先切 ark 再切自托管,
     不能残留 ARK_API_KEY(否则给自托管端点发无意义鉴权头,还可能泄密钥)。"""
     cfg = apply_vlm_backend(_cfg(), "ark")
-    cfg = apply_vlm_backend(cfg, "h20-8b")
+    cfg = apply_vlm_backend(cfg, "self-hosted-example")
     v = cfg["checks"]["task_success"]["vlm"]
-    assert v["model"] == "nvidia/Cosmos-Reason2-8B"
-    assert "vllm-cosmos-8b" in v["endpoint"]
     assert not v["api_key_env"], "切回自托管后 api_key_env 必须清掉"
 
 
 def test_unknown_backend_raises_with_choices():
     """错名报错并列出可选——绝不静默回退默认(那正是要消灭的事故形态)。"""
     with pytest.raises(ConfigError) as e:
-        apply_vlm_backend(_cfg(), "h20_8b")      # 下划线手滑
-    assert "h20-8b" in str(e.value) and "ark" in str(e.value)
+        apply_vlm_backend(_cfg(), "arkk")        # 手滑
+    assert "ark" in str(e.value) and "self-hosted-example" in str(e.value)
 
 
 def test_none_is_noop():
@@ -53,26 +54,9 @@ def test_none_is_noop():
 
 def test_set_override_wins_after_backend():
     """应用顺序契约:backend 先、--set 后 ⇒ --set 可在预设之上微调单项。"""
-    cfg = apply_vlm_backend(_cfg(), "h20-8b")
-    cfg = apply_overrides(cfg, ["checks.task_success.vlm.model=nvidia/Cosmos-Reason2-32B"])
+    cfg = apply_vlm_backend(_cfg(), "ark")
+    cfg = apply_overrides(cfg, ["checks.task_success.vlm.model=another-model"])
     v = cfg["checks"]["task_success"]["vlm"]
-    assert v["model"] == "nvidia/Cosmos-Reason2-32B"     # --set 赢
-    assert "vllm-cosmos-8b" in v["endpoint"]             # 预设其余保留
+    assert v["model"] == "another-model"                 # --set 赢
+    assert "ark.cn-beijing" in v["endpoint"]             # 预设其余保留
 
-
-def test_h20_32b_preset_available():
-    """32B 上线后(2026-07-23)三预设齐备;32B 端点/模型/无鉴权正确。"""
-    cfg = apply_vlm_backend(_cfg(), "h20-32b")
-    v = cfg["checks"]["task_success"]["vlm"]
-    assert v["model"] == "nvidia/Cosmos-Reason2-32B"
-    assert "vllm-cosmos-32b" in v["endpoint"]
-    assert not v["api_key_env"]
-
-
-def test_a30_8b_preset_available():
-    """A30 备胎上线(2026-07-24):四预设齐备,a30-8b 指向独立 Service。"""
-    cfg = apply_vlm_backend(_cfg(), "a30-8b")
-    v = cfg["checks"]["task_success"]["vlm"]
-    assert v["model"] == "nvidia/Cosmos-Reason2-8B"
-    assert "vllm-cosmos-8b-a30" in v["endpoint"]
-    assert not v["api_key_env"]
