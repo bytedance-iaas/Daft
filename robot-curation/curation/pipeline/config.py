@@ -38,11 +38,37 @@ def validate_config(cfg: dict, origin: str = "config") -> None:
         raise ConfigError(f"{origin}: 缺 verdict.soft_threshold")
 
 
+def _deep_merge(base: dict, over: dict) -> dict:
+    """递归合并:dict 递归、其余类型(标量/列表)整值覆盖。over 赢。"""
+    out = dict(base)
+    for k, v in (over or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
 def load_config(path: str | None = None) -> dict:
-    path = path or DEFAULT_CONFIG_PATH
-    with open(path) as f:
+    """出厂 default.yaml 为底,--config 的文件**叠加**其上(2026-07-25 manager 反馈)。
+
+    此前 --config 是整文件替换 → 客户想改一个 endpoint 就得复制整份 default.yaml,
+    副本会腐烂(default 升级不跟随)。改为深合并:客户站点文件(site.yaml)只写想改的
+    几行,没写的一切照用出厂默认、且随产品升级自动更新。
+    传完整文件的老用法不受影响(全量覆盖=结果相同)。合并后统一校验。
+    路径缺省可用环境变量 CURATION_CONFIG 提供(K8s 场景:ConfigMap 挂载成文件,
+    Deployment 里设一次 env,日常命令零改动)。
+    """
+    with open(DEFAULT_CONFIG_PATH) as f:
         cfg = yaml.safe_load(f)
-    validate_config(cfg, path)
+    path = path or os.environ.get("CURATION_CONFIG") or None
+    if path:
+        with open(path) as f:
+            site = yaml.safe_load(f) or {}
+        if not isinstance(site, dict):
+            raise ConfigError(f"{path}: 站点配置必须是 YAML 映射(键值),got {type(site).__name__}")
+        cfg = _deep_merge(cfg, site)
+    validate_config(cfg, path or DEFAULT_CONFIG_PATH)
     cfg.setdefault("pipeline", {})
     return cfg
 
