@@ -57,6 +57,21 @@ def _map_concurrent(fn, items: list, max_concurrency: int) -> list:
         return list(ex.map(fn, items))
 
 
+def list_models(endpoint: str, api_key_env: str | None = None,
+                timeout_s: float = 5.0) -> list[str]:
+    """GET <endpoint>/models → 服务端模型 id 列表(探活+发现一体,失败抛异常)。
+
+    供 `curation backends` 子命令与运维探查用;托管端点(方舟)自动带鉴权头。
+    """
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(endpoint.rstrip("/") + "/models",
+                                 headers=auth_headers(api_key_env))
+    with urllib.request.urlopen(req, timeout=timeout_s) as r:
+        return [m["id"] for m in json.load(r).get("data", [])]
+
+
 def auth_headers(api_key_env: str | None) -> dict:
     """按环境变量名取 API Key → OpenAI 兼容的 Bearer 头。
 
