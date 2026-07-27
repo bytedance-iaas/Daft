@@ -14,6 +14,16 @@ FROM ${BASE_IMAGE}
 ARG PIP_INDEX_URL=https://mirrors.volces.com/pypi/simple
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} PIP_DEFAULT_TIMEOUT=120
 
+# 运维基础件:curl(pod 内探查 OpenAI 端点/健康检查用;slim 镜像默认没有,
+# 以前靠 pod 里临时 apt 装,一重建就丢——2026-07-26 进镜像固化)。
+# apt 也走火山镜像:deb.debian.org 公网在部分节点/构建机极慢(同 init 容器的教训)。
+ARG APT_MIRROR=https://mirrors.volces.com
+RUN sed -i "s|http://deb.debian.org|${APT_MIRROR}|g; s|https://deb.debian.org|${APT_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources 2>/dev/null || true \
+    && apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # 构建上下文=本目录(火山 CI 的 ContextPath 填 robot-curation;本地在包目录下 build)
 WORKDIR /app
 COPY requirements.txt .
