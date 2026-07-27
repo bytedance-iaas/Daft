@@ -60,7 +60,39 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--report-only", action="store_true",
                      help="只出报告,不导出数据集(单模块快查时省去重编码视频的时间)")
 
+    be = sub.add_parser("backends", help="一次列出全部 VLM 后端预设的在线状态与服务端模型")
+    be.add_argument("--config", default=None,
+                    help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
+    be.add_argument("--timeout", type=float, default=5.0, help="单端点探活超时秒数")
+
     return p
+
+
+def _cmd_backends(config_path: str | None, timeout: float) -> int:
+    """`curation backends`:逐预设探活 + 列服务端模型,表格输出。
+
+    信息型命令,恒返回 0(出厂自带的 self-hosted-example 占位预设注定不可达,
+    以退出码报警会让健康的部署天天假红)。要脚本化判活,grep DOWN 即可。
+    """
+    from .adapters.vlm_client import list_models
+    from .pipeline.config import load_config
+
+    cfg = load_config(config_path)
+    presets = cfg.get("vlm_backends") or {}
+    if not presets:
+        print("(配置中没有任何 vlm_backends 预设)")
+        return 0
+    print(f"{'预设':<24}{'状态':<10}服务端模型")
+    for name in sorted(presets):
+        p_ = presets[name] or {}
+        try:
+            ids = list_models(p_.get("endpoint") or "", p_.get("api_key_env"),
+                              timeout_s=timeout)
+            extra = f" …(共{len(ids)}个)" if len(ids) > 3 else ""
+            print(f"{name:<24}{'✅在线':<10}{', '.join(ids[:3])}{extra}")
+        except Exception as e:  # noqa: BLE001  单预设失败照常列完其余
+            print(f"{name:<24}{'❌不可达':<10}({type(e).__name__})")
+    return 0
 
 
 def _list_datasets(parent: str) -> list[str]:
@@ -96,6 +128,8 @@ def _parse_episodes(expr: str | None) -> set[int] | None:
 def main(argv: list[str] | None = None) -> int:
     import os
     args = build_parser().parse_args(argv)
+    if args.command == "backends":
+        return _cmd_backends(args.config, args.timeout)
     if args.command == "run":
         from .ingest.lerobot_reader import NotADatasetError, OutputExistsError
         from .pipeline.run import run_pipeline
