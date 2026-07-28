@@ -8,6 +8,17 @@ import json
 import os
 
 
+def check_entry(res: dict) -> dict:
+    """检查结果 struct → 报告条目。detail 有就带(2026-07-27 U0 修正:旧逻辑只在
+    弃权时保留 detail,被拒条目"为什么杀"的 VLM 证据全被丢弃——reject.json 里
+    只剩"拒绝"二字,UI/人工裁决无据可查)。"""
+    entry = {"passed": res.get("passed"), "score": res.get("score")}
+    det = res.get("detail")
+    if det and det != "{}":                   # 占位空 JSON 不进报告
+        entry["detail"] = det
+    return entry
+
+
 def _try_build_vlm(cfg: dict):
     """按配置起 VLM 客户端;端点不可达 → 明确降级(task_success 跳过,报告里注明)。"""
     from ..pipeline.config import enabled
@@ -92,6 +103,12 @@ def run_pipeline(
         from .config import apply_overrides, validate_config
         cfg = apply_overrides(cfg, set_overrides)
         validate_config(cfg, "--set 覆盖后")
+    if not lite:
+        # n_probe/帧问询并发未对齐 → 分波问询,单条耗时静默上升;开跑前一行点破
+        from .config import probe_concurrency_hint
+        _hint = probe_concurrency_hint(cfg)
+        if _hint:
+            print(_hint, flush=True)
 
     # ① 摄入(M1,懒扫描,2026-07-10):构造 DataFrame 零数据读取,数值 parquet 由
     # daft 引擎执行时按 task 流式拉取(ingest/daft_source);caption/报告所需上下文走
@@ -186,8 +203,12 @@ def run_pipeline(
     _sel_cols = list(check_cols)
     if "_sync_curves" in df.column_names:
         _sel_cols.append("_sync_curves")
+    _has_video = "video" in df.column_names
+    if _has_video:
+        _sel_cols.append("video")             # 指针 struct(KB 级),证据帧导出要用
     out = df.select("episode_id", "verdict", *_sel_cols).to_pydict()
     verdicts = {e: json.loads(v) for e, v in zip(out["episode_id"], out["verdict"])}
+    videos_of = (dict(zip(out["episode_id"], out["video"])) if _has_video else {})
     # 逐 episode 结果(幸存者:全部检查的 passed/score)
     per_episode = {}
     for i, e in enumerate(out["episode_id"]):
@@ -195,13 +216,8 @@ def run_pipeline(
                           "soft_score": verdicts[e].get("soft_score"),
                           "reason": verdicts[e].get("reason", ""),
                           "undecidable": verdicts[e].get("undecidable", []),
-                          "checks": {c.replace("check_", ""): {
-                              "passed": out[c][i].get("passed"),
-                              "score": out[c][i].get("score"),
-                              **({"detail": out[c][i].get("detail")}
-                                 if out[c][i].get("passed") is None
-                                 and out[c][i].get("score") is None else {})}
-                              for c in check_cols if out[c][i] is not None}}
+                          "checks": {c.replace("check_", ""): check_entry(out[c][i])
+                                     for c in check_cols if out[c][i] is not None}}
     # stuck 单列(二值,不进总分):统计被判 stuck 的 episode 数,进报告
     stuck_eps = []
     for i, e in enumerate(out["episode_id"]):
@@ -486,6 +502,25 @@ def run_pipeline(
     import csv as _csv
     det_dir = os.path.join(output_dir, "details")
     os.makedirs(det_dir, exist_ok=True)
+    # 生效配置快照(2026-07-27 U0):UI/复盘要能回答"这次到底用了什么阈值/后端"。
+    # 配置里只有 env 变量名(api_key_env),无密钥,可安心入交付件。
+    report["config_effective"] = cfg
+    # task_success 证据帧(2026-07-27 U0):被拒/待裁决条目的 probe 帧落 JPEG——
+    # detail 里只有帧号,没图人工没法裁决。导出期重解码,不碰漏斗并发路径。
+    _ev_mode = str(cfg.get("pipeline", {}).get("evidence_frames", "flagged"))
+    if _ev_mode != "off" and videos_of:
+        from ..export.evidence import render_task_evidence
+        _pcfg2 = cfg.get("pipeline", {})
+        _ev = render_task_evidence(
+            per_episode, videos_of, os.path.join(det_dir, "evidence"),
+            interval=_pcfg2.get("frame_sample_interval_s", 0.5),
+            max_side=_pcfg2.get("frame_max_side", 448), mode=_ev_mode)
+        if _ev:
+            report["dataset"]["task_evidence"] = {
+                "episodes": len(_ev), "帧数": sum(len(v) for v in _ev.values()),
+                "目录": "details/evidence/",
+                "note": "task_success 拒绝/待裁决条目的 VLM probe 帧"
+                        "(配置 pipeline.evidence_frames: flagged|all|off)"}
     M_COLS = ["smoothness", "spike", "stuck", "gripper_jitter", "actuator_saturation",
               "joint_stability", "path_efficiency", "fluency", "active_ratio",
               "idle_head_s", "idle_tail_s", "idle_mid_count", "idle_mid_total_s",
