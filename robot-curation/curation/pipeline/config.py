@@ -95,6 +95,26 @@ def apply_vlm_direct(cfg: dict, endpoint: str | None = None, model: str | None =
     return cfg
 
 
+def probe_concurrency_hint(cfg: dict) -> str | None:
+    """n_probe > 帧问询并发时给一行提醒(2026-07-27 用户定,选'提示'弃'绑定')。
+
+    两键语义不同(帧数=看多细;并发=压服务端多重),绑定会让调帧数静默加压;
+    但不对齐会让问询分波、单条耗时上升且**不报错**——用提示消灭这个失误模式。
+    纯函数:返回提示文本或 None,不打印(打印归调用方,可单测)。
+    """
+    ts = cfg.get("checks", {}).get("task_success", {})
+    if not ts.get("enable", False):
+        return None
+    n_probe = ts.get("params", {}).get("n_probe", 8)
+    mc = ts.get("vlm", {}).get("max_concurrency", 8)
+    if n_probe <= mc:
+        return None
+    waves = -(-n_probe // mc)                  # ceil
+    return (f"[curation] ⚠️ n_probe={n_probe} > 帧问询并发 {mc}:问询将分 {waves} 波,"
+            f"单条耗时约 ×{waves}。建议 --set checks.task_success.vlm.max_concurrency="
+            f"{n_probe} 对齐(一波齐发)")
+
+
 def apply_overrides(cfg: dict, sets: list[str]) -> dict:
     """CLI --set 路径=值(可重复)→ 点路径覆盖单个配置值(2026-07-15 用户定)。
 

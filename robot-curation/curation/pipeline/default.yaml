@@ -2,21 +2,22 @@
 # ⚠️ 权重/阈值当前为工程默认,P5.1 校准集扫 ROC 后固化正式值。
 pipeline:
   sync_plots: flagged            # 同步曲线证据图:flagged=只画非'过'(默认)/all=全画/off=不画
+  evidence_frames: flagged       # 任务成败证据帧:flagged=只存拒绝/待裁决(默认)/all=全存/off=不存
   frame_sample_interval_s: 0.5     # 视觉/同步检查的抽帧间隔
   frame_max_side: 448
   max_endstate_cams: 4             # 二值复核纳入的相机路数上限(主相机优先,其余按名字序)。
                                    #   2026-07-21 由"主相机+wrist"放开为全部路:DROID ep34 的关键
                                    #   视角 exterior_2 曾被按名字过滤挡掉。
-  vlm_episode_concurrency: 8       # VLM 段同时处理几条 episode。VLM 段占端到端 ~97%
+  vlm_episode_concurrency: 32      # VLM 段同时处理几条 episode。VLM 段占端到端 ~97%
                                    #   (10条 DROID:关掉 VLM 仅 12s),且几乎全是等服务端响应 → 并发是这里
                                    #   唯一有效的提速手段。⚠️ 总并发 = 本值 × vlm.max_concurrency(帧级)。
-                                   #   2026-07-22 实测 10 条 DROID(VLM 段墙钟 / 提速 / 均延迟):
-                                   #     1 → 447s  1.0×  21.9s      4 → 117s  3.8×  21.3s
-                                   #     2 → 221s  2.0×  20.1s      8 →  84s  5.3×  21.4s
-                                   #   均延迟全程平坦 ⇒ 到 8×8=64 总并发方舟侧零排队,未触天花板;
-                                   #   4→8 收益已从 1.9× 降到 1.4×,故默认 8(收益与配额风险的平衡点)。
-                                   #   设 1 = 退回串行。⚠️ 闸门是自建信号量,**不是** daft 的
-                                   #   max_concurrency(那个对 async 行级 UDF 静默失效,见 funnel.py)。
+                                   #   2026-07-22 实测 10 条 DROID(1→447s,8→84s,5.3×);
+                                   #   2026-07-27 全后端基准(32条 droid,并发 8/16/32)后默认 8→32
+                                   #   (用户定):方舟 32×8=256 总在飞零 429 零排队(配额余量充足),
+                                   #   判定质量三档稳定;自托管 vLLM 服务端排队无害。批量越大收益
+                                   #   越大(墙钟≈N×单条耗时/并发)。设 1 = 退回串行。⚠️ 闸门是自建
+                                   #   信号量,**不是** daft 的 max_concurrency(那个对 async 行级
+                                   #   UDF 静默失效,见 funnel.py)。
   endstate_frames: 8               # 二值复核每路取几帧(全程均匀,含中段)。⚠️原实现只取首尾各1帧,
                                    #   ep34 消融证明那是误杀根因:同相机同模型,首尾2帧怎么问都判
                                    #   "未完成",带中段的全程8帧怎么问都判"完成"——阶跃型任务
@@ -112,11 +113,12 @@ skill_profile:                     # 技能画像:caption 路线(VLM 端点可�
       a count. One family holding everything is a failure; one sub-skill per caption
       is a failure.
   n_frames: 8
-  caption_concurrency: 8           # caption 同时处理几条 episode(1=串行,排障基线)。
+  caption_concurrency: 32          # caption 同时处理几条 episode(1=串行,排障基线)。
                                    #   2026-07-22 实测 20 条 DROID(caption 段墙钟):
                                    #     1 → 312s  1.0×    8 → 66s  4.7×    16 → 37s  8.4×
-                                   #   默认 8:与 vlm_episode_concurrency 一致(一个心智模型),
-                                   #   4.7× 已足;要更快可设 16(实测 8.4×,下述内存/配额均有余量)。
+                                   #   2026-07-27 默认 8→32(用户定,与 vlm_episode_concurrency
+                                   #   同步):32 条 caption 请求仍远低于漏斗段已验证的 256 在飞;
+                                   #   内存按 16 并发实测 1.83GB 峰值线性外推 ~3.7GB,limit 内富余。
                                    #   为什么是**独立**旋钮而非复用 vlm_episode_concurrency:
                                    #   漏斗那层总在飞 = episode并发 × 帧级并发(8×8=64),
                                    #   而 caption 每条只发 1 个请求 ⇒ 同数字在两处实际负载差 8 倍,

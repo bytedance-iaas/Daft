@@ -119,3 +119,30 @@ def test_direct_noop_when_all_none():
     before = load_config(None)["checks"]["task_success"]["vlm"].copy()
     after = apply_vlm_direct(load_config(None))["checks"]["task_success"]["vlm"]
     assert after == before
+
+
+# ───────── n_probe/帧问询并发 对齐提示(2026-07-27,选"提示"弃"绑定")─────────
+
+def test_probe_hint_fires_when_misaligned():
+    from curation.pipeline.config import probe_concurrency_hint
+    cfg = load_config(None)
+    cfg["checks"]["task_success"]["params"]["n_probe"] = 12   # 并发默认 8 → 2 波
+    hint = probe_concurrency_hint(cfg)
+    assert hint and "n_probe=12" in hint and "max_concurrency=12" in hint and "2 波" in hint
+
+
+def test_probe_hint_silent_when_aligned_or_disabled():
+    from curation.pipeline.config import probe_concurrency_hint
+    assert probe_concurrency_hint(load_config(None)) is None      # 出厂 8≤8,无话可说
+    cfg = load_config(None)
+    cfg["checks"]["task_success"]["params"]["n_probe"] = 12
+    cfg["checks"]["task_success"]["enable"] = False               # 模块关了也闭嘴
+    assert probe_concurrency_hint(cfg) is None
+
+
+def test_factory_concurrency_defaults_are_32():
+    """2026-07-27 用户定:两旋钮默认 8→32(依据=全后端基准:方舟 256 在飞零限流,
+    质量三档稳定;自托管服务端排队无害)。锚定防回退。"""
+    cfg = load_config(None)
+    assert cfg["pipeline"]["vlm_episode_concurrency"] == 32
+    assert cfg["skill_profile"]["caption_concurrency"] == 32
