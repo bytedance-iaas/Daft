@@ -118,6 +118,10 @@ def run_pipeline(
             print(f"[curation] VLM 模型自动发现: {_v['model']} @ {_v['endpoint']}",
                   flush=True)
 
+    # 延时档案清零(2026-07-28):每个 run 一份独立的 VLM 调用延时统计
+    from ..adapters.vlm_client import latency_reset
+    latency_reset()
+
     # ① 摄入(M1,懒扫描,2026-07-10):构造 DataFrame 零数据读取,数值 parquet 由
     # daft 引擎执行时按 task 流式拉取(ingest/daft_source);caption/报告所需上下文走
     # 轻量元数据(只读 meta 文件,万条秒级)。skip_missing=True:客户数据/下载缺口是
@@ -504,8 +508,6 @@ def run_pipeline(
                              if s.get("abstain_reasons") else {}),
                           "avg_score": round(float(_np.mean(s["scores"])), 4) if s["scores"] else None}
                       for n, s in per_check.items()}}
-    jp, mp = save_report(report, output_dir)
-
     # 明细表(表格格式交付件):运动逐子项 / 视觉逐路相机
     import csv as _csv
     det_dir = os.path.join(output_dir, "details")
@@ -515,6 +517,18 @@ def run_pipeline(
     report["config_effective"] = cfg
     # task_success 证据帧(2026-07-27 U0):被拒/待裁决条目的 probe 帧落 JPEG——
     # detail 里只有帧号,没图人工没法裁决。导出期重解码,不碰漏斗并发路径。
+    # VLM 调用延时档案(2026-07-28 同事需求):按类型分桶的分位数进报告,
+    # 逐请求明细进 details/vlm_latency.csv(画 CDF/箱线的原料)。
+    from ..adapters.vlm_client import latency_rows, latency_summary
+    _lat = latency_summary()
+    if _lat:
+        report["dataset"]["vlm_latency"] = _lat
+        with open(os.path.join(det_dir, "vlm_latency.csv"), "w", newline="") as f:
+            _w = __import__("csv").writer(f)
+            _w.writerow(["call_type", "seconds", "ok"])
+            for tag, dt, ok in latency_rows():
+                _w.writerow([tag, round(dt, 3), int(ok)])
+
     _ev_mode = str(cfg.get("pipeline", {}).get("evidence_frames", "flagged"))
     if _ev_mode != "off" and videos_of:
         from ..export.evidence import render_task_evidence
@@ -529,6 +543,10 @@ def run_pipeline(
                 "目录": "details/evidence/",
                 "note": "task_success 拒绝/待裁决条目的 VLM probe 帧"
                         "(配置 pipeline.evidence_frames: flagged|all|off)"}
+    # ⚠️ 首次落盘必须在 config_effective/延时档案/证据帧汇总**之后**(2026-07-28 实测
+    # 教训:曾放在装饰块之前,三者只能靠后面"补写含图版本"的**条件**再保存才进报告,
+    # 跳过绘图的运行(--only/--lite)passed.json 就静默缺这些段)。
+    jp, mp = save_report(report, output_dir)
     M_COLS = ["smoothness", "spike", "stuck", "gripper_jitter", "actuator_saturation",
               "joint_stability", "path_efficiency", "fluency", "active_ratio",
               "idle_head_s", "idle_tail_s", "idle_mid_count", "idle_mid_total_s",

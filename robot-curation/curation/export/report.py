@@ -78,6 +78,23 @@ def to_markdown(report: dict) -> str:
                 for rsn, cnt in (s.get("abstain_reasons") or {}).items():
                     lines.append(f"  - 弃权原因: {rsn}({cnt} 条)")
         lines.append("")
+    lat = report.get("dataset", {}).get("vlm_latency")
+    if lat:
+        # 延时档案(2026-07-28):客户端视角 = 网络+服务端排队+推理。四类调用体质
+        # 不同分开报;逐请求明细在 details/vlm_latency.csv。
+        _cn = {"probe": "渐变问询(VOC)", "endstate": "二值复核",
+               "caption": "画像 caption", "llm": "归纳/审计 LLM"}
+        lines.append("## 模型调用延时(客户端视角,秒)")
+        lines.append("| 调用类型 | 次数 | 错误 | 均值 | P50 | P90 | P99 | 最大 |")
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for tag, s in lat.items():
+            if s.get("n"):
+                lines.append(f"| {_cn.get(tag, tag)} | {s['n']} | {s['errors']} | "
+                             f"{s['mean_s']} | {s['p50_s']} | {s['p90_s']} | "
+                             f"{s['p99_s']} | {s['max_s']} |")
+            else:
+                lines.append(f"| {_cn.get(tag, tag)} | 0 | {s['errors']} | - | - | - | - | - |")
+        lines.append("")
     results = report["episodes"].get("results")
     if results:
         names = sorted({n for pe in results.values() for n in pe["checks"]})
