@@ -9,9 +9,11 @@ ARG BASE_IMAGE=python:3.10-slim
 FROM ${BASE_IMAGE}
 
 # PyPI 源可换(2026-07-17 火山构建集群→官方 PyPI 实测 17kB/s+超时):
-# 默认=火山公共镜像(国内构建零参数直接快);要回官方源:
-#   --build-arg PIP_INDEX_URL=https://pypi.org/simple
-ARG PIP_INDEX_URL=https://mirrors.volces.com/pypi/simple
+# 默认=火山**内网**镜像 ivolces(2026-07-27 换:公网 volces 对大 wheel 间歇 504,
+# CI 第 12 次构建栽在 contourpy、pod 内曾栽在 gradio,同病;内网源两处实测稳定)。
+# 火山体系外构建时换:--build-arg PIP_INDEX_URL=https://mirrors.volces.com/pypi/simple
+# 或官方源 https://pypi.org/simple
+ARG PIP_INDEX_URL=https://mirrors.ivolces.com/pypi/simple
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} PIP_DEFAULT_TIMEOUT=120
 
 # 运维基础件:curl(pod 内探查 OpenAI 端点/健康检查用;slim 镜像默认没有,
