@@ -9,6 +9,12 @@ import argparse
 import os
 import sys
 
+# Daft 引擎自带的终端动画(🗡️🐟 进度条)与 Query ID 行默认关闭(2026-07-28 用户反馈:
+# 交互式终端里它们把本产品的语义化进度行搅成花屏;非 TTY 下 Daft 本就不画,所以
+# 一发直达从未见过)。用 setdefault:要看引擎内部细节,环境变量置 1 即可强制打开。
+os.environ.setdefault("DAFT_PROGRESS_BAR", "0")
+os.environ.setdefault("DAFT_SHOW_QUERY_ID", "0")
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(

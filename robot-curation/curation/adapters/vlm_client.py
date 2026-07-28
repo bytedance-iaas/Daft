@@ -18,14 +18,61 @@ import numpy as np
 # HTTP 计时探针(诊断用,始终累计,开销可忽略)。判读:
 #   Σ请求耗时 / VLM段墙钟 ≈ 有效并发度;≈1 说明请求实际被串行化了。
 #   Σ请求耗时 / 请求数     = 平均单请求延迟;并发下明显变大 = 服务端在排队。
+# 2026-07-28 升级为分桶收集器(同事要定量延时档案):四个调用点各挂静态标签
+# (probe 渐变问询 / endstate 二值复核 / caption 画像 / llm 归纳审计),逐请求
+# 记 (标签, 秒, 成败),run 结束汇总进报告 + details/vlm_latency.csv。
+# 注意口径:这是**客户端视角**延时 = 网络 + 服务端排队 + 推理;并发大时单请求
+# 变慢通常是排队挪到了服务端,不是模型变慢。
 _HTTP_STATS = {"n": 0, "secs": 0.0}
 _HTTP_LOCK = threading.Lock()          # 模块级,不进 UDF 闭包 → 不参与 cloudpickle
+_LAT_ROWS: list = []                   # [(tag, seconds, ok)],latency_reset 清零
 
 
-def _http_record(dt: float) -> None:
+def latency_record(tag: str, dt: float, ok: bool = True) -> None:
     with _HTTP_LOCK:
+        _LAT_ROWS.append((tag, dt, ok))
         _HTTP_STATS["n"] += 1
         _HTTP_STATS["secs"] += dt
+
+
+def latency_reset() -> None:
+    """跑批开始时清零(每个 run 一份独立档案)。"""
+    with _HTTP_LOCK:
+        _LAT_ROWS.clear()
+        _HTTP_STATS["n"] = 0
+        _HTTP_STATS["secs"] = 0.0
+
+
+def latency_rows() -> list:
+    """逐请求明细快照(供 CSV 落盘)。"""
+    with _HTTP_LOCK:
+        return list(_LAT_ROWS)
+
+
+def _pctl(sorted_vals: list, q: float) -> float:
+    """nearest-rank 分位数:ceil(q·n) 名(样本量几十到几千,精细插值无意义)。"""
+    import math
+    i = min(len(sorted_vals) - 1, max(0, math.ceil(q * len(sorted_vals)) - 1))
+    return sorted_vals[i]
+
+
+def latency_summary() -> dict:
+    """按标签汇总:次数/错误/均值/P50/P90/P99/最大(秒,保留2位)。"""
+    rows = latency_rows()
+    out = {}
+    for tag in sorted({t for t, _, _ in rows}):
+        oks = sorted(d for t, d, ok in rows if t == tag and ok)
+        errs = sum(1 for t, _, ok in rows if t == tag and not ok)
+        entry = {"n": len(oks), "errors": errs}
+        if oks:
+            entry.update({
+                "mean_s": round(sum(oks) / len(oks), 2),
+                "p50_s": round(_pctl(oks, 0.50), 2),
+                "p90_s": round(_pctl(oks, 0.90), 2),
+                "p99_s": round(_pctl(oks, 0.99), 2),
+                "max_s": round(oks[-1], 2)})
+        out[tag] = entry
+    return out
 
 
 def http_stats() -> tuple[int, float]:
@@ -241,10 +288,12 @@ def make_vlm_completion(
         payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
                    "messages": [{"role": "user", "content": content}]}
         _t = _time.time()
+        _ok = False
         try:
             resp = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
+            _ok = resp.ok
         finally:
-            _http_record(_time.time() - _t)
+            latency_record("probe", _time.time() - _t, _ok)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
@@ -317,10 +366,16 @@ def make_llm_ask(endpoint: str, model: str, timeout_s: float = 1800.0,
     headers = auth_headers(api_key_env)
 
     def llm_ask(prompt_text: str) -> str:
-        r = requests.post(url, json={"model": model, "temperature": 0.0,
-                                     "max_tokens": max_tokens,
-                                     "messages": [{"role": "user", "content": prompt_text}]},
-                          headers=headers, timeout=timeout_s)
+        _t = _time.time()
+        _ok = False
+        try:
+            r = requests.post(url, json={"model": model, "temperature": 0.0,
+                                         "max_tokens": max_tokens,
+                                         "messages": [{"role": "user", "content": prompt_text}]},
+                              headers=headers, timeout=timeout_s)
+            _ok = r.ok
+        finally:
+            latency_record("llm", _time.time() - _t, _ok)
         r.raise_for_status()
         return strip_reasoning(r.json()["choices"][0]["message"]["content"])
 
@@ -343,10 +398,16 @@ def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0,
         content = [{"type": "text", "text": text}] + [
             {"type": "image_url", "image_url": {"url": _frame_to_data_uri(f)}}
             for f in imgs]
-        r = requests.post(url, json={"model": model, "temperature": 0.0,
-                                     "max_tokens": 2048,
-                                     "messages": [{"role": "user", "content": content}]},
-                          headers=headers, timeout=timeout_s)
+        _t = _time.time()
+        _ok = False
+        try:
+            r = requests.post(url, json={"model": model, "temperature": 0.0,
+                                         "max_tokens": 2048,
+                                         "messages": [{"role": "user", "content": content}]},
+                              headers=headers, timeout=timeout_s)
+            _ok = r.ok
+        finally:
+            latency_record("endstate", _time.time() - _t, _ok)
         r.raise_for_status()
         ans = strip_reasoning(r.json()["choices"][0]["message"]["content"]).strip().lower()
         return "yes" in ans[:8]
