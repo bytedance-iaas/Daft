@@ -109,6 +109,14 @@ def run_pipeline(
         _hint = probe_concurrency_hint(cfg)
         if _hint:
             print(_hint, flush=True)
+        # 模型自动发现(2026-07-28 同事反馈):只给 --vlm-endpoint 时,单模型服务
+        # (自托管 vLLM 常态)从 GET /models 自取;多模型服务(方舟)报错列候选
+        _v = cfg.get("checks", {}).get("task_success", {}).get("vlm", {})
+        if _v.get("endpoint") and not _v.get("model"):
+            from ..adapters.vlm_client import resolve_single_model
+            _v["model"] = resolve_single_model(_v["endpoint"], _v.get("api_key_env"))
+            print(f"[curation] VLM 模型自动发现: {_v['model']} @ {_v['endpoint']}",
+                  flush=True)
 
     # ① 摄入(M1,懒扫描,2026-07-10):构造 DataFrame 零数据读取,数值 parquet 由
     # daft 引擎执行时按 task 流式拉取(ingest/daft_source);caption/报告所需上下文走

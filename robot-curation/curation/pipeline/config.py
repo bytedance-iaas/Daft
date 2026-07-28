@@ -86,6 +86,11 @@ def apply_vlm_direct(cfg: dict, endpoint: str | None = None, model: str | None =
     shown = []
     if endpoint:
         vlm["endpoint"] = endpoint; shown.append(f"endpoint={endpoint}")
+        if not model:
+            # 只给端点不给模型(2026-07-28 同事反馈:单模型服务报模型名是冗余)→
+            # 清掉沿袭自默认配置的旧模型名,交给运行期从 GET /models 自动发现;
+            # 不清会拿着出厂 doubao 模型名去打客户端点,必错。
+            vlm["model"] = ""; shown.append("model=(待自动发现)")
     if model:
         vlm["model"] = model; shown.append(f"model={model}")
     if api_key_env is not None and api_key_env != "":
