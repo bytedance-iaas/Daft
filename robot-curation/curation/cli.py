@@ -65,6 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
     be.add_argument("--timeout", type=float, default=5.0, help="单端点探活超时秒数")
 
+    ui = sub.add_parser("ui", help="质检台 Web UI(Gradio):只读渲染交付目录")
+    ui.add_argument("--delivery", required=True,
+                    help="交付目录(或含多份交付的父目录,如 /mnt/tos/deliveries)")
+    ui.add_argument("--config", default=None,
+                    help="站点配置(仅供「后端状态」tab 探活;缺省读 CURATION_CONFIG)")
+    ui.add_argument("--host", default="0.0.0.0", help="监听地址(默认 0.0.0.0,便于 port-forward)")
+    ui.add_argument("--port", type=int, default=7860, help="监听端口(默认 7860)")
+    ui.add_argument("--timeout", type=float, default=5.0, help="后端探活超时秒数")
+
     return p
 
 
@@ -130,6 +139,16 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "backends":
         return _cmd_backends(args.config, args.timeout)
+    if args.command == "ui":
+        try:
+            import gradio  # noqa: F401
+        except ImportError:
+            print("[curation] ui 需要 gradio:pip install gradio", file=sys.stderr)
+            return 2
+        from .ui.app import launch
+        launch(args.delivery, config_path=args.config, host=args.host,
+               port=args.port, probe_timeout=args.timeout)
+        return 0
     if args.command == "run":
         from .ingest.lerobot_reader import NotADatasetError, OutputExistsError
         from .pipeline.run import run_pipeline

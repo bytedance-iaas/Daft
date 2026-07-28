@@ -29,6 +29,16 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 质检台 UI 字体离线补丁(2026-07-27):gradio 前端在 index.html(preconnect)与
+# Index-*.js(inject_fonts 硬编码)里请求 fonts.googleapis.com——与主题配置无关,
+# 国内网络会把首屏挂起 15s+(实测)。把域名改写为相对路径 → 浏览器打回本服务,
+# 毫秒级 404 完事,页面用系统字体(theme 已设),外观无损。金丝雀测试:
+# tests/test_gradio_offline_fonts.py(装了 gradio 的环境里扫模板目录,残留即红)。
+RUN T=$(python -c "import gradio,os;print(os.path.dirname(gradio.__file__))")/templates \
+    && grep -rl 'fonts\.googleapis\.com\|fonts\.gstatic\.com' $T \
+       | xargs -r sed -i 's|https://fonts.googleapis.com|/offline-fonts|g; s|https://fonts.gstatic.com|/offline-fonts|g' \
+    && [ $(grep -rl 'fonts\.googleapis\.com' $T | wc -l) -eq 0 ]
+
 COPY curation/ ./curation/
 COPY pyproject.toml README.md* ./
 RUN pip install --no-cache-dir --no-deps -e .
