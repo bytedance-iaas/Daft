@@ -11,3 +11,4 @@ PyYAML==6.0.3
 matplotlib==3.10.9      # 同步曲线证据图(可选依赖,缺失时自动跳过绘图)
 huggingface_hub==0.36.2 # 仅下载脚本用;火山上从 hf-mirror.com 拉公开数据集(pod 需 hostNetwork 借节点公网)
 tos==2.9.2              # 火山对象存储 SDK:数据集从 TOS 读入、交付产物写回 TOS(2026-07-19 接入)
+gradio==6.9.0           # 质检台 Web UI(curation ui);字体离线补丁见 Dockerfile(国内网络 googleapis 挂起 15s+)
