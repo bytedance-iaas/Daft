@@ -72,6 +72,28 @@ def list_models(endpoint: str, api_key_env: str | None = None,
         return [m["id"] for m in json.load(r).get("data", [])]
 
 
+def resolve_single_model(endpoint: str, api_key_env: str | None = None,
+                         timeout_s: float = 10.0) -> str:
+    """端点 → 唯一模型名(2026-07-28 同事反馈:单模型服务报模型名是冗余)。
+
+    自托管 vLLM 一服务一模型是常态 → GET /models 恰一个就直接用;
+    托管 MaaS(方舟 130+ 模型)必须显式指定 → 报错并列出候选,给出修法。
+    """
+    try:
+        models = list_models(endpoint, api_key_env, timeout_s=timeout_s)
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"VLM 模型自动发现失败:{endpoint} 的 /models 不可达"
+                         f"({type(e).__name__}: {e})。请确认端点,或显式指定 --vlm-model") from e
+    if len(models) == 1:
+        return models[0]
+    if not models:
+        raise ValueError(f"VLM 模型自动发现失败:{endpoint} 返回空模型列表。"
+                         "请显式指定 --vlm-model")
+    shown = ", ".join(models[:5]) + (f" …(共{len(models)}个)" if len(models) > 5 else "")
+    raise ValueError(f"端点 {endpoint} 有多个模型({shown}),无法自动选择。"
+                     "请显式指定 --vlm-model <模型名>")
+
+
 def auth_headers(api_key_env: str | None) -> dict:
     """按环境变量名取 API Key → OpenAI 兼容的 Bearer 头。
 
