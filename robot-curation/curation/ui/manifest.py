@@ -190,3 +190,129 @@ def discover_deliveries(root: str) -> list[str]:
         if os.path.isdir(d) and os.path.exists(os.path.join(d, "passed.json")):
             out.append(d)
     return out
+
+
+# ───────── 明细表(D1,2026-07-28):details/ 下 CSV 的只读渲染 ─────────
+
+DETAIL_LABELS = {                      # 语义化标签(纪律:界面不出现实现名)
+    "motion_details.csv": "运动质量明细(逐子项)",
+    "visual_details.csv": "视觉质量明细(逐相机)",
+    "kinematic_details.csv": "运动学违规明细",
+    "stuck_details.csv": "卡死事件明细",
+    "vlm_latency.csv": "VLM 调用延时明细(逐请求)",
+}
+
+
+def list_detail_tables(m: dict) -> list[str]:
+    """交付里实际存在的明细 CSV(按 DETAIL_LABELS 顺序;缺的不列)。"""
+    det = os.path.join(m["path"], "details")
+    return [f for f in DETAIL_LABELS if os.path.exists(os.path.join(det, f))]
+
+
+def load_detail_table(m: dict, name: str, cap: int = 2000):
+    """CSV → (表头, 行, 总行数)。行数封顶 cap 防大数据集拖垮页面(总数照报)。"""
+    import csv as _csv
+    path = os.path.join(m["path"], "details", name)
+    if name not in DETAIL_LABELS or not os.path.exists(path):
+        return [], [], 0
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = _csv.reader(f)
+        headers = next(reader, [])
+        rows, total = [], 0
+        for row in reader:
+            total += 1
+            if total <= cap:
+                rows.append(row)
+    return headers, rows, total
+
+
+# ───────── Stuck 时间线(D2,2026-07-28):三态彩条 HTML 渲染 ─────────
+
+TL_COLORS = {"stuck": "#c0392b", "idle": "#f1c40f", "normal": "#1abc9c"}
+TL_LABELS = {"stuck": "stuck(指令在推而不动)", "idle": "idle(无指令静止)",
+             "normal": "正常(在干活)"}
+
+
+def load_timeline(m: dict) -> dict:
+    """details/episodes_timeline.json → {episodes, 口径};无文件返回空(老交付)。"""
+    d = _load_json(os.path.join(m["path"], "details", "episodes_timeline.json"))
+    return {"episodes": d.get("episodes") or {}, "note": d.get("口径", "")}
+
+
+def timeline_html(tl: dict, cap: int = 200, only_flagged: bool = True) -> str:
+    """时间线 → HTML 彩条列表。纯函数(可测)。
+
+    2026-07-28 用户定稿:①默认只列有 stuck 或 idle 的 episode(全绿的不占屏,
+    被藏条数在页脚注明);②段界时间直接标注在条下方(悬停仍有精确起止;标签
+    间距 <4% 条宽的自动跳过防挤,右端时长恒标)。排序:stuck 降序,次 idle 降序。"""
+    eps = tl.get("episodes") or {}
+    if not eps:
+        return ("<p>此交付无时间线数据(episodes_timeline.json)——需要跑过"
+                "运动质量检查的新版交付。</p>")
+    flagged = {e: t for e, t in eps.items()
+               if (t.get("totals", {}).get("stuck", 0) > 0
+                   or t.get("totals", {}).get("idle", 0) > 0)}
+    shown_eps = flagged if only_flagged else eps
+    if not shown_eps:
+        return (f"<p>全部 {len(eps)} 条 episode 均无 stuck/idle——录制卫生良好 ✅</p>")
+    order = sorted(shown_eps, key=lambda e: (-(eps[e].get("totals", {}).get("stuck", 0)),
+                                             -(eps[e].get("totals", {}).get("idle", 0)), e))
+    legend = " ".join(
+        f'<span style="display:inline-block;width:12px;height:12px;'
+        f'background:{TL_COLORS[s]};margin-right:4px;vertical-align:middle"></span>'
+        f'<span style="margin-right:16px">{TL_LABELS[s]}</span>'
+        for s in ("stuck", "idle", "normal"))
+    rows = [f'<div style="margin:6px 0 14px 0">{legend}</div>']
+    for eid in order[:cap]:
+        t = eps[eid]
+        dur = t.get("duration_s") or 0
+        if dur <= 0:
+            continue
+        tot = t.get("totals", {})
+        segs = t.get("segments") or []
+        segs_html = "".join(
+            f'<div title="{TL_LABELS.get(s["state"], s["state"])} '
+            f'{s["start_s"]}–{s["end_s"]}s" '
+            f'style="width:{max(0.2, (s["end_s"] - s["start_s"]) / dur * 100):.2f}%;'
+            f'background:{TL_COLORS.get(s["state"], "#999")}"></div>'
+            for s in segs)
+        # 段界时间标注(2026-07-28 用户二次定稿:全部分界都标;**默认同一水平线
+        # (条下方)**,与同行前一标签间距 <4% 条宽会重叠时,该标签放到 **bar 上方**
+        # 的溢出行;上方也挤则挑更宽松的一行,宁可微叠不丢标)
+        marks_below, marks_above = [], []
+        last_below, last_above = -10.0, -10.0
+        bounds = [0.0] + [seg["end_s"] for seg in segs]
+        for j, b in enumerate(bounds):
+            pct = min(b / dur * 100, 100.0)
+            txt = f"{b:g}s" if j == len(bounds) - 1 else f"{b:g}"
+            pos = ('right:0' if pct > 97 else
+                   f'left:{pct:.2f}%;transform:translateX(-50%)')
+            span = f'<span style="position:absolute;{pos}">{txt}</span>'
+            if pct - last_below >= 4:
+                marks_below.append(span); last_below = pct
+            elif pct - last_above >= 4:
+                marks_above.append(span); last_above = pct
+            elif pct - last_below >= pct - last_above:
+                marks_below.append(span); last_below = pct
+            else:
+                marks_above.append(span); last_above = pct
+        above_html = (f'<div class="tl-above" style="position:relative;height:12px;'
+                      f'font:10px monospace;color:#777">{"".join(marks_above)}</div>'
+                      if marks_above else "")
+        label = (f'{eid} · {dur:.1f}s'
+                 + (f' · stuck {tot.get("stuck", 0)}s' if tot.get("stuck") else "")
+                 + (f' · idle {tot.get("idle", 0)}s' if tot.get("idle") else ""))
+        rows.append(
+            f'<div style="margin:4px 0 10px 0">'
+            f'<div style="font:12px monospace;margin-bottom:2px">{label}</div>'
+            f'{above_html}'
+            f'<div style="display:flex;height:16px;border-radius:3px;'
+            f'overflow:hidden;border:1px solid #ddd">{segs_html}</div>'
+            f'<div style="position:relative;height:13px;font:10px monospace;'
+            f'color:#777">{"".join(marks_below)}</div></div>')
+    if len(order) > cap:
+        rows.append(f"<p>…共 {len(order)} 条,仅显示 stuck/idle 最多的前 {cap} 条</p>")
+    if only_flagged and len(eps) > len(flagged):
+        rows.append(f'<p style="color:#777">另有 {len(eps) - len(flagged)} 条无 '
+                    f'stuck/idle 的干净 episode 未列出(勾选「显示全部」可见)</p>')
+    return "\n".join(rows)

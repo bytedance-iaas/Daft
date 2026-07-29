@@ -144,3 +144,21 @@ def test_app_builds_without_server(delivery):
     from curation.ui.app import build_app
     app = build_app(delivery)
     assert app is not None
+
+
+# ───────── D1 明细表(2026-07-28)─────────
+
+def test_detail_tables_discovery_and_load(delivery):
+    from curation.ui.manifest import list_detail_tables, load_detail_table
+    import os
+    det = os.path.join(delivery, "details")
+    with open(os.path.join(det, "motion_details.csv"), "w") as f:
+        f.write("episode,score\n" + "\n".join(f"ep{i:03d},0.9" for i in range(5)))
+    m = load_delivery(delivery)
+    assert list_detail_tables(m) == ["motion_details.csv"]     # 只列实际存在的
+    headers, rows, total = load_detail_table(m, "motion_details.csv")
+    assert headers == ["episode", "score"] and total == 5 and len(rows) == 5
+    h2, r2, t2 = load_detail_table(m, "motion_details.csv", cap=2)
+    assert t2 == 5 and len(r2) == 2                            # 封顶但总数照报
+    assert load_detail_table(m, "不存在.csv") == ([], [], 0)   # 白名单外/缺失安全
+    assert load_detail_table(m, "../passed.json") == ([], [], 0)  # 路径穿越挡住
