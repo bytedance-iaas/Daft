@@ -12,10 +12,12 @@ from __future__ import annotations
 import json
 import os
 
-from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, EPISODE_HEADERS,
-                       FUNNEL_HEADERS, SKILL_HEADERS, audit_rows, check_rows,
-                       discover_deliveries, episode_rows, funnel_rows,
-                       load_delivery, overview_markdown, skill_rows)
+from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DETAIL_LABELS,
+                       EPISODE_HEADERS, FUNNEL_HEADERS, SKILL_HEADERS,
+                       audit_rows, check_rows, discover_deliveries,
+                       episode_rows, funnel_rows, list_detail_tables,
+                       load_delivery, load_detail_table, load_timeline,
+                       overview_markdown, skill_rows, timeline_html)
 
 
 def _config_yaml(m: dict) -> str:
@@ -71,15 +73,33 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             gallery.append((ep["plot"], "同步曲线"))
         return "\n\n".join(md), check_rows(m, eid), gallery
 
+    def _detail_table_md(m, name):
+        if not m or not name:
+            return "(此交付无明细表)", ["(无)"], []
+        headers, rows, total = load_detail_table(m, name)
+        note = f"**{DETAIL_LABELS.get(name, name)}** · 共 {total} 行" + \
+               (f"(仅显示前 {len(rows)} 行,完整文件见交付目录 details/{name})"
+                if total > len(rows) else "")
+        return note, headers or ["(空)"], rows
+
     def _load(path):
         m = load_delivery(path)
         eids = sorted(m["episodes"].keys())
         first = eids[0] if eids else None
+        tables = list_detail_tables(m)
+        t_first = tables[0] if tables else None
+        note0, h0, r0 = _detail_table_md(m, t_first)
+        tl = load_timeline(m)
+        tl_note0 = f"口径:{tl['note']}" if tl.get("note") else ""
         # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
         return (m, overview_markdown(m), funnel_rows(m), _config_yaml(m),
                 episode_rows(m), gr.update(choices=eids, value=first),
-                skill_rows(m), audit_rows(m), *_detail(m, first))
+                skill_rows(m), audit_rows(m), *_detail(m, first),
+                gr.update(choices=[DETAIL_LABELS[t] for t in tables],
+                          value=(DETAIL_LABELS[t_first] if t_first else None)),
+                note0, gr.update(value=r0, headers=h0),
+                tl_note0, timeline_html(tl))
 
     # 系统字体:默认主题会向 fonts.googleapis.com 拉字体,国内网络挂起 15s+ 才放行
     # 首屏(实测),demo 一开场就是白屏等待——本 UI 场景里无网络字体的理由
@@ -89,7 +109,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         gr.Markdown("# 机器人数据 Curation 质检台")
         with gr.Row():
             picker = gr.Dropdown(choices=choices, value=choices[0], label="交付目录",
-                                 scale=4, interactive=True)
+                                 scale=4, interactive=True, allow_custom_value=True,
+                                 info="可直接输入任意交付目录路径;「重新加载」会重扫列表")
             reload_btn = gr.Button("重新加载", scale=1)
         state = gr.State()
 
@@ -113,16 +134,49 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             au_table = gr.Dataframe(headers=AUDIT_HEADERS, label="标注审计复核队列",
                                     interactive=False)
 
+        with gr.Tab("Stuck 时间线"):
+            gr.Markdown("每条 episode 一根彩条(0 → 结束秒),段界标秒、悬停看精确"
+                        "起止;按 stuck 总时长降序 = 图形化人工复查队列")
+            tl_all = gr.Checkbox(label="显示全部 episode(含无 stuck/idle 的干净条目)",
+                                 value=False)
+            tl_note = gr.Markdown()
+            tl_html = gr.HTML()
+
+        with gr.Tab("明细"):
+            dt_pick = gr.Dropdown(label="选择明细表(交付目录 details/ 下的 CSV)",
+                                  interactive=True)
+            dt_note = gr.Markdown()
+            dt_table = gr.Dataframe(label="明细", interactive=False)
+
         with gr.Tab("后端状态"):
             gr.Markdown("逐预设探活 + 列服务端模型(与 `curation backends` 同源)")
             be_btn = gr.Button("探活")
             be_table = gr.Dataframe(headers=["预设", "状态", "服务端模型"], interactive=False)
 
         outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick, sk_table, au_table,
-                ep_md, ep_checks, ep_gallery]
+                ep_md, ep_checks, ep_gallery, dt_pick, dt_note, dt_table,
+                tl_note, tl_html]
         picker.change(_load, picker, outs)
-        reload_btn.click(_load, picker, outs)
+
+        def _reload(path):
+            # 重扫根目录(2026-07-28 用户问"不能自己设定吗":新交付目录从此免重启;
+            # 手输的路径不在扫描列表里也保留为合法选项)
+            fresh = discover_deliveries(delivery)
+            if path and path not in fresh:
+                fresh = fresh + [path]
+            return (gr.update(choices=fresh, value=path), *_load(path))
+
+        reload_btn.click(_reload, picker, [picker, *outs])
         ep_pick.change(_detail, [state, ep_pick], [ep_md, ep_checks, ep_gallery])
+
+        def _table_change(m, label):
+            name = {v: k for k, v in DETAIL_LABELS.items()}.get(label)
+            note, headers, rows = _detail_table_md(m, name)
+            return note, gr.update(value=rows, headers=headers)
+
+        dt_pick.change(_table_change, [state, dt_pick], [dt_note, dt_table])
+        tl_all.change(lambda m, a: timeline_html(load_timeline(m), only_flagged=not a),
+                      [state, tl_all], tl_html)
         be_btn.click(lambda: _probe_backends(config_path, probe_timeout), None, be_table)
         app.load(_load, picker, outs)
     return app
