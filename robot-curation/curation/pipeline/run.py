@@ -183,8 +183,18 @@ def run_pipeline(
             vcfg0 = cfg["checks"]["task_success"]["vlm"]
             capper = make_vlm_captioner(vcfg0["endpoint"], vcfg0["model"],
                                         api_key_env=vcfg0.get("api_key_env"))
+            # 2026-07-29 用户"卡死"报案破案:此处曾漏传并发与进度——默认串行 1 且
+            # 全程无声,droid 类无标注大户(上百条)会静默爬行个把小时,肉眼与死锁
+            # 无异(单 socket、低 CPU)。并发对齐 caption_concurrency,进度对齐漏斗。
+            from .progress import _progress_init, _progress_tick
+            _cc0 = int(cfg.get("skill_profile", {}).get("caption_concurrency", 8))
+            _pk_cap0 = _progress_init("precap", len(unlabeled),
+                                      f"无标注补 caption({len(unlabeled)} 条,并发 {_cc0})")
             for r, c in zip(unlabeled, caption_episodes(
-                    unlabeled, capper, n_frames=cfg.get("skill_profile", {}).get("n_frames", 8))):
+                    unlabeled, capper,
+                    n_frames=cfg.get("skill_profile", {}).get("n_frames", 8),
+                    max_concurrency=_cc0,
+                    on_progress=lambda: _progress_tick(_pk_cap0))):
                 if c:
                     auto_caps[r["episode_id"]] = c
     desc_of, desc_src_of = {}, {}
@@ -553,6 +563,7 @@ def run_pipeline(
               "spike_isolation", "saturation_gap_ratio", "tail_std", "gripper_flips"]
     mrows, vrows, srows = [], [], []
     stuck_json: dict = {}          # episode → 事件+timeline(权威完整版,JSON)
+    timeline_json: dict = {}       # episode → 三态时间线(D2,UI 彩条数据源)
     for i, e in enumerate(out["episode_id"]):
         for c in check_cols:
             if out[c][i] is None:
@@ -564,6 +575,21 @@ def run_pipeline(
             if c == "check_motion_quality":
                 mrows.append({"episode": e, "score": out[c][i].get("score"),
                               **{k: d.get(k) for k in M_COLS}})
+                # 三态时间线(D2,2026-07-28):全员一条 [0,时长] 的 stuck/idle/normal
+                # 分段 → details/episodes_timeline.json,UI 画横向彩条。装配是纯函数
+                # (export/timeline.py);事件段稍后在 stuck 分支里补挂。
+                _r0t = row_of.get(e, {})
+                _fps_t = float(_r0t.get("fps") or 0) or 1.0
+                _dur_t = (int(_r0t.get("length") or 0)) / _fps_t
+                timeline_json[e] = {
+                    "duration_s": round(_dur_t, 2),
+                    "_idle_head": float(d.get("idle_head_s") or 0),
+                    "_idle_tail": float(d.get("idle_tail_s") or 0),
+                    # 视觉静止段(2026-07-28 ep89 教训):proprio 静止即 idle 底色,
+                    # 不再依赖"双静止"近似——彩条与肉眼同口径
+                    "_event_segs": [{"start_s": seg["start_s"], "end_s": seg["end_s"],
+                                     "state": "idle"}
+                                    for seg in (d.get("still_segments") or [])]}
                 # stuck 明细(二值,不进总分)。三个概念分列(2026-07-15 用户定):
                 # stuck=指令在推而不动(证据段,定罪依据);idle=环绕的无指令静止
                 # (操作员停手);总冻结窗=两者之和(视频观感)。包络重叠的轴合并为
@@ -588,6 +614,9 @@ def run_pipeline(
                         stuck_json[e]["low_confidence_events"] = build_stuck_events(_lc, fps)
                     if not sjs:
                         stuck_json[e]["frozen_axes"] = []
+                    if e in timeline_json:
+                        for ev in events:
+                            timeline_json[e]["_event_segs"].extend(ev.get("timeline") or [])
                     for ev in events:
                         srows.append({"episode": e, "axes": "+".join(ev["axes"]),
                                       **{k: ev[k] for k in (
@@ -661,6 +690,20 @@ def run_pipeline(
         w.writerows(srows)
     # stuck_details.json(2026-07-15 用户定):嵌套真相的权威版——每 episode 一条,
     # 事件内按时间顺序给 idle/stuck 剧本(秒+帧双标);CSV 是同源的摘要版
+    # episodes_timeline.json(D2):全员三态分段,纯函数装配后落盘
+    if timeline_json:
+        from ..export.timeline import build_episode_timeline, timeline_totals
+        _tl_out = {}
+        for e, t in timeline_json.items():
+            segs = build_episode_timeline(t["duration_s"], t["_idle_head"],
+                                          t["_idle_tail"], t["_event_segs"])
+            _tl_out[e] = {"duration_s": t["duration_s"], "segments": segs,
+                          "totals": timeline_totals(segs)}
+        with open(os.path.join(det_dir, "episodes_timeline.json"), "w") as f:
+            json.dump({"口径": "stuck=指令在推而不动(定罪);idle=头尾空闲+事件包络内"
+                             "静止;normal=在干活。中段零星 idle 无位置数据,计入 normal"
+                             "(总秒数见 motion 明细)", "episodes": _tl_out},
+                      f, ensure_ascii=False, indent=1)
     with open(os.path.join(det_dir, "stuck_details.json"), "w") as f:
         json.dump({"数据集": report.get("数据集"), "机器人": report.get("机器人"),
                    "口径": "stuck=指令在推而不动(各轴证据窗并集);idle=静止且指令未推;"

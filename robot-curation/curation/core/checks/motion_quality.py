@@ -497,32 +497,38 @@ def motion_quality(
     if proprio is not None:
         p_all = np.asarray(proprio, dtype=np.float64)
         idle &= _static_mask(np.abs(np.diff(p_all, axis=0)), p_all)
-    if len(idle):
-        min_run = max(3, int(np.ceil(0.15 * fps)))       # <0.15s 的间隙不算停顿
-        # (ceil 不用 round:round(4.5)=4 的银行家舍入曾让 4 帧毛刺恰好逃过闭合)
-        # 闭合:比 min_run 短的"活跃"孤刺并入空闲——so101 实测开录后第1-4帧有舵机
-        # 安定毛刺,单帧尖峰会把 2.5s 的空闲头切碎成"非头段"(<0.15s 的抽动不算动作)
+    def _close_and_segment(mask: np.ndarray, min_run: int) -> list:
+        """毛刺闭合 + ≥min_run 成段 → [(s0,s1)]。
+        (ceil 不用 round:round(4.5)=4 的银行家舍入曾让 4 帧毛刺恰好逃过闭合)
+        闭合:比 min_run 短的"活跃"孤刺并入静止——so101 实测开录后第1-4帧有舵机
+        安定毛刺,单帧尖峰会把 2.5s 的空闲头切碎成"非头段"(<0.15s 的抽动不算动作)"""
+        m = mask.copy()
         t = 0
-        while t < len(idle):
-            if not idle[t]:
+        while t < len(m):
+            if not m[t]:
                 t1 = t
-                while t1 < len(idle) and not idle[t1]:
+                while t1 < len(m) and not m[t1]:
                     t1 += 1
                 if t1 - t < min_run:
-                    idle[t:t1] = True
+                    m[t:t1] = True
                 t = t1
             else:
                 t += 1
-        segs, t0 = [], None
-        for t, v in enumerate(idle):
+        out, t0 = [], None
+        for t, v in enumerate(m):
             if v and t0 is None:
                 t0 = t
             elif not v and t0 is not None:
                 if t - t0 >= min_run:
-                    segs.append((t0, t))
+                    out.append((t0, t))
                 t0 = None
-        if t0 is not None and len(idle) - t0 >= min_run:
-            segs.append((t0, len(idle)))
+        if t0 is not None and len(m) - t0 >= min_run:
+            out.append((t0, len(m)))
+        return out
+
+    if len(idle):
+        min_run = max(3, int(np.ceil(0.15 * fps)))       # <0.15s 的间隙不算停顿
+        segs = _close_and_segment(idle, min_run)
         head_n = tail_n = mid_n = 0
         mid = []
         for s0, s1 in segs:
@@ -549,6 +555,15 @@ def motion_quality(
         detail["idle_mid_total_s"] = round(sum(m["dur_s"] for m in mid), 2)
         if mid:
             detail["idle_mid_segments"] = mid[:20]
+        # 视觉静止段(2026-07-28,ep89 教训):**只看手臂动没动**(proprio 静止即算,
+        # 不管指令)。上面的 idle 要求指令+实际双静止——"指令在动、手臂不动但幅度
+        # 不够 stuck 定罪"的段两头不沾,时间线上曾被画成"正常",与肉眼直接矛盾
+        # (ep89 17.5-20s 实测速度 0.0000 却是绿条)。此口径=视频观感,专供时间线。
+        if proprio is not None:
+            still = _static_mask(np.abs(np.diff(p_all, axis=0)), p_all)
+            detail["still_segments"] = [
+                {"start_s": round(s0 / fps, 2), "end_s": round(s1 / fps, 2)}
+                for s0, s1 in _close_and_segment(still, min_run)][:100]
     else:
         sub["fluency"] = None
 
