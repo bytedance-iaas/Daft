@@ -13,11 +13,22 @@ from __future__ import annotations
 
 def build_episode_timeline(duration_s: float, idle_head_s: float = 0.0,
                            idle_tail_s: float = 0.0,
-                           event_segments: list | None = None) -> list:
+                           event_segments: list | None = None,
+                           tail_gap_s: float = 0.0) -> list:
     """→ [{"start_s","end_s","state"}],首尾相接铺满 [0, duration]。
 
     合并规则:stuck 段优先于 idle 段(重叠时定罪压过停手);其余为 normal;
     相邻同态段自动缝合;所有边界保留 2 位小数。
+
+    tail_gap_s(2026-07-29 用户定,建议传 1/fps):**尾帧无证据区延续前一段**。
+    运动判定做在帧**间隔**上,T 帧只有 T-1 个间隔,而时长是 T/fps——末尾整整
+    一帧没有任何间隔证据,原约定填 normal,于是 idle/stuck 一直顶到结尾的
+    episode 会在末端冒出一小节青绿。bridge ep167(36 帧@5fps)最明显:
+    idle 4.8-7.0s 而时长 7.2s,尾巴 0.2s 画成 normal,边界数字 7 和 7.2 还挤在
+    一起;droid 15fps 只有 0.067s,一直没暴露而已。此处不是"判它在动",是
+    **没有证据**,延续前一段比默认 normal 诚实。
+    只吃"贴着结尾且不超过一帧"的零头:真实的长 normal 尾巴(有帧间隔证据
+    支撑,长度必 >1 帧)原样保留;头部不用处理(首帧有第一个间隔的证据)。
     """
     dur = round(max(0.0, float(duration_s or 0)), 2)
     if dur <= 0:
@@ -52,6 +63,13 @@ def build_episode_timeline(duration_s: float, idle_head_s: float = 0.0,
             out[-1]["end_s"] = round(b, 2)     # 缝合同态相邻段
         else:
             out.append({"start_s": round(a, 2), "end_s": round(b, 2), "state": state})
+    # 尾帧无证据区:并入前一段(0.005=2 位小数的舍入容差,别让 7.2-7.0 的浮点
+    # 尾数 0.19999… 把恰好一帧的零头判成"超过一帧")
+    if (tail_gap_s and tail_gap_s > 0 and len(out) >= 2
+            and out[-1]["state"] == "normal"
+            and (out[-1]["end_s"] - out[-1]["start_s"]) <= float(tail_gap_s) + 0.005):
+        out[-2]["end_s"] = out[-1]["end_s"]
+        out.pop()
     return out
 
 

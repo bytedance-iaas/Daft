@@ -16,6 +16,14 @@ os.environ.setdefault("DAFT_PROGRESS_BAR", "0")
 os.environ.setdefault("DAFT_SHOW_QUERY_ID", "0")
 
 
+def _env_flag(name: str) -> bool:
+    """布尔开关的环境变量缺省值:`CURATION_TERMINAL=1` 与命令行 `--terminal` 等价。
+
+    "假"的写法容忍 0/false/no/off/空(YAML 里手滑写成 "false" 是最常见的一脚)。
+    """
+    return os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="curation",
@@ -79,10 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--host", default="0.0.0.0", help="监听地址(默认 0.0.0.0,便于 port-forward)")
     ui.add_argument("--port", type=int, default=7860, help="监听端口(默认 7860)")
     ui.add_argument("--timeout", type=float, default=5.0, help="后端探活超时秒数")
-    ui.add_argument("--terminal-url", default=os.environ.get("CURATION_TERMINAL_URL"),
-                    help="网页终端(ttyd)地址,如 http://127.0.0.1:7681;"
-                         "传了才多出顶层「终端」页签,缺省(或 CURATION_TERMINAL_URL 未设)"
-                         "则整个终端入口不渲染")
+    ui.add_argument("--terminal", action="store_true", default=_env_flag("CURATION_TERMINAL"),
+                    help="打开顶层「终端」页签(内嵌网页终端:xterm.js + 本服务的 "
+                         "/ws/term,与 UI 同端口同鉴权)。不传(或 CURATION_TERMINAL 未设)"
+                         "则页签不渲染、/ws/term 路由不注册。"
+                         "⚠️ 这是一个真 shell,公网暴露前必须配 "
+                         "CURATION_UI_USER/CURATION_UI_PASSWORD + 网关鉴权")
 
     return p
 
@@ -158,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         from .ui.app import launch
         launch(args.delivery, config_path=args.config, host=args.host,
                port=args.port, probe_timeout=args.timeout,
-               terminal_url=args.terminal_url)
+               terminal=args.terminal)
         return 0
     if args.command == "run":
         from .ingest.lerobot_reader import NotADatasetError, OutputExistsError

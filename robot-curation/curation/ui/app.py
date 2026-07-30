@@ -6,11 +6,17 @@
 
 四 tab:漏斗总览 / Episodes(点选看证据帧+VLM 理由=demo 高光页)/
 技能画像 / 后端状态(复用 backends 探活)。
+
+启动方式(2026-07-29 U4 改):不再 `blocks.launch()`,而是
+`gr.mount_gradio_app(FastAPI(), blocks, "/")` + uvicorn 自跑——因为要在同一个端口上
+挂自定义路由(`/ws/term` 内嵌终端 + `/term-static/` 前端资产 + `/healthz`)。
+外部行为(端口/主题/页签/CSS/allowed_paths)与 launch() 时代逐项一致。
 """
 from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 
 from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DETAIL_LABELS,
@@ -19,6 +25,26 @@ from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DETAIL_LABELS,
                        episode_rows, funnel_rows, list_detail_tables,
                        load_delivery, load_detail_table, load_timeline,
                        overview_markdown, skill_rows, timeline_html)
+
+log = logging.getLogger("curation.ui")
+
+#: vendored 的 xterm.js 资产 + 我们的 term.js,由 `/term-static/` 静态目录服务。
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+#: 终端页签的前端装配:资产从**本服务**取(pod 内无 CDN 通路),只在开了终端时注入。
+_TERMINAL_HEAD = """
+<link rel="stylesheet" href="/term-static/xterm.css" />
+<script src="/term-static/xterm.js"></script>
+<script src="/term-static/addon-fit.js"></script>
+<script src="/term-static/term.js"></script>
+"""
+
+_TERMINAL_CSS = """
+#curation-term-screen {
+  height: 78vh; width: 100%;
+  background: #0b0f17; border-radius: 8px; padding: 8px 6px;
+}
+"""
 
 
 
@@ -84,13 +110,29 @@ def _probe_backends(config_path: str | None, timeout: float) -> list[list]:
     return rows
 
 
+def presentation(terminal: bool = False) -> dict:
+    """theme/css/head 三件套(gradio 6 起只认 launch()/mount_gradio_app() 上的这三个
+    关键字,传给 `gr.Blocks()` 会被静默丢弃——2026-07-29 实测,顺手修掉的老 bug)。"""
+    import gradio as gr
+
+    return {
+        # 系统字体:默认主题会向 fonts.googleapis.com 拉字体,国内网络挂起 15s+ 才放行
+        # 首屏(实测),demo 一开场就是白屏等待——本 UI 场景里无网络字体的理由
+        "theme": gr.themes.Default(font=["system-ui", "sans-serif"],
+                                   font_mono=["ui-monospace", "Menlo", "monospace"]),
+        "css": (_TOPNAV_CSS + _TERMINAL_CSS) if terminal else None,
+        "head": _TERMINAL_HEAD if terminal else None,
+    }
+
+
 def build_app(delivery: str, config_path: str | None = None, probe_timeout: float = 5.0,
-              terminal_url: str | None = None):
+              terminal: bool = False):
     """交付目录(或含多份交付的父目录)→ gr.Blocks。
 
-    terminal_url 非空时套一层顶层导航:「终端」(ttyd 网页终端 iframe)+「质检报告」
-    (= 本文件原有的全部内容),默认选中「质检报告」。缺省 None → 顶层导航整个不渲染,
-    页面与加这层之前逐字一致(客户部署根本看不到终端入口)。
+    terminal=True 时套一层顶层导航:「终端」(内嵌 xterm.js,后端是本服务的
+    `/ws/term`)+「质检报告」(= 本文件原有的全部内容),默认选中「质检报告」。
+    缺省 False → 顶层导航整个不渲染,页面与加这层之前逐字一致(客户部署根本看不到
+    终端入口),`/ws/term` 路由也不注册。
     """
     import gradio as gr
 
@@ -140,24 +182,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 note0, gr.update(value=r0, headers=h0),
                 tl_note0, timeline_html(tl))
 
-    # 系统字体:默认主题会向 fonts.googleapis.com 拉字体,国内网络挂起 15s+ 才放行
-    # 首屏(实测),demo 一开场就是白屏等待——本 UI 场景里无网络字体的理由
-    theme = gr.themes.Default(font=["system-ui", "sans-serif"],
-                              font_mono=["ui-monospace", "Menlo", "monospace"])
-    with gr.Blocks(title="Robot Data Curation", theme=theme,
-               css=(_TOPNAV_CSS if terminal_url else None)) as app:
+    # theme/css/head 不在这里传:gradio 6 把它们从 Blocks() 挪到了 launch()/
+    # mount_gradio_app()(传给 Blocks 只换来一条 UserWarning,值被丢掉)。见 presentation()。
+    with gr.Blocks(title="Robot Data Curation") as app:
         gr.Markdown("# 机器人数据 Curation 质检台")
         # 双层导航(2026-07-28 U3):顶层「终端」在左、「质检报告」在右,但默认落在
-        # 「质检报告」(selected= 指 Tab id)。terminal_url 缺省时 ExitStack 一个上下文
+        # 「质检报告」(selected= 指 Tab id)。terminal 关闭时 ExitStack 一个上下文
         # 都不进 → 页面结构与加这层之前完全一致,客户部署里看不到终端入口。
         with contextlib.ExitStack() as shell:
-            if terminal_url:
+            if terminal:
                 shell.enter_context(gr.Tabs(selected="report", elem_id="topnav"))
                 with gr.Tab("终端", id="term"):
-                    # ttyd 网页终端(pod 内 127.0.0.1:7681),iframe 由**浏览器**解析,
-                    # 所以要能打开必须本机也能访问该地址(port-forward 7681)。
-                    gr.HTML(f'<iframe src="{terminal_url}" style="width:100%;'
-                            f'height:78vh;border:0"></iframe>')
+                    # 内嵌终端(2026-07-29 U4,替代 ttyd iframe):xterm.js 画屏 +
+                    # 本服务的 /ws/term(forkpty 起 bash)。装配全在 term.js 里,
+                    # 这里只放它要挂载的容器 div;term.js 等这个 div **可见**才连,
+                    # 所以不点终端页签就不会在服务端 fork 出 shell。
+                    gr.HTML('<div id="curation-term-screen"></div>')
                 shell.enter_context(gr.Tab("质检报告", id="report"))
             with gr.Row():
                 picker = gr.Dropdown(choices=choices, value=choices[0], label="交付目录",
@@ -234,10 +274,53 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
     return app
 
 
+def create_asgi_app(delivery: str, config_path: str | None = None,
+                    probe_timeout: float = 5.0, terminal: bool = False):
+    """→ FastAPI 应用(gradio 挂在 `/`,自定义路由挂在它前面)。
+
+    为什么不再用 `blocks.launch()`:launch() 自己造 FastAPI + 自己跑 uvicorn,拿不到
+    那个 app 的引用,也就挂不上 `/ws/term`。改成我们造 app、gradio 往上挂,单端口
+    同时提供 UI + 终端 + 静态资产 + 健康检查。
+
+    路由注册顺序有讲究:starlette 按注册顺序匹配,gradio 的 `/` 是 catch-all mount,
+    必须最后挂,否则它会吃掉 `/ws/term` 和 `/term-static/*`。
+    """
+    import gradio as gr
+    from fastapi import FastAPI
+    from fastapi.responses import PlainTextResponse
+    from fastapi.staticfiles import StaticFiles
+
+    from . import auth
+
+    blocks = build_app(delivery, config_path, probe_timeout, terminal=terminal)
+    api = FastAPI()
+
+    # 探针端点(鉴权豁免,见 auth.EXEMPT_PATHS):k8s readinessProbe 现在指 /(整页
+    # 渲染),配了 Basic 之后会被 401 打红 → 留一个不设防的轻量端点给探针用。
+    @api.get("/healthz", response_class=PlainTextResponse)
+    def _healthz() -> str:                     # noqa: ANN202
+        return "ok"
+
+    if terminal:
+        from . import terminal as term
+        api.mount("/term-static", StaticFiles(directory=STATIC_DIR), name="term-static")
+        api.add_api_websocket_route("/ws/term", term.term_endpoint)
+        log.info("终端:已开启(/ws/term,shell=%s,cwd=%s)",
+                 term.resolve_shell(), term.resolve_workdir())
+
+    auth.apply(api, terminal_enabled=terminal)
+    # allowed_paths:允许 Gallery 直读交付目录下的证据文件(gradio 默认只许临时目录)
+    return gr.mount_gradio_app(api, blocks, path="/", allowed_paths=[delivery],
+                               **presentation(terminal))
+
+
 def launch(delivery: str, config_path: str | None = None, host: str = "0.0.0.0",
            port: int = 7860, probe_timeout: float = 5.0,
-           terminal_url: str | None = None) -> None:
-    app = build_app(delivery, config_path, probe_timeout, terminal_url=terminal_url)
-    # 允许 Gallery 直读交付目录下的证据文件(gradio 默认只许临时目录);
-    # 只传三个跨版本稳定的参数(gradio 6.x 删了 show_api 等旧关键字)
-    app.launch(server_name=host, server_port=port, allowed_paths=[delivery])
+           terminal: bool = False) -> None:
+    import uvicorn
+
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    app = create_asgi_app(delivery, config_path, probe_timeout, terminal=terminal)
+    log.info("质检台 UI 监听 http://%s:%s(交付根目录 %s)", host, port, delivery)
+    uvicorn.run(app, host=host, port=port)

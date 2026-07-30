@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 
 import pytest
 
@@ -187,24 +188,28 @@ def test_detail_tables_discovery_and_load(delivery):
     assert load_detail_table(m, "../passed.json") == ([], [], 0)  # 路径穿越挡住
 
 
-# ───────── U3 终端工作区(双层导航,2026-07-28)─────────
+# ───────── U3/U4 终端工作区(双层导航 + 内嵌网页终端)─────────
+#
+# U3(2026-07-28)是 ttyd 旁挂进程 + iframe;U4(2026-07-29)换成内嵌式:终端是 UI
+# 自己的 /ws/term(forkpty bash),前端 xterm.js 从 /term-static/ 取。开关语义也从
+# 「--terminal-url 给不给地址」变成布尔 --terminal(env CURATION_TERMINAL 等价)。
 
-TERM_URL = "http://127.0.0.1:7681"
 
-
-def test_cli_parses_terminal_url(monkeypatch):
-    """`ui --terminal-url` 解析正确;不传时为 None(= 不渲染终端入口)。"""
+def test_cli_parses_terminal_flag(monkeypatch):
+    """`ui --terminal` 是布尔开关;env CURATION_TERMINAL 提供缺省值。"""
     from curation.cli import build_parser
-    monkeypatch.delenv("CURATION_TERMINAL_URL", raising=False)  # 缺省值取自 env,先清干净
-    a = build_parser().parse_args(["ui", "--delivery", "/d", "--terminal-url", "http://x"])
-    assert a.terminal_url == "http://x"
-    b = build_parser().parse_args(["ui", "--delivery", "/d"])
-    assert b.terminal_url is None
-    monkeypatch.setenv("CURATION_TERMINAL_URL", "http://env:7681")
-    c = build_parser().parse_args(["ui", "--delivery", "/d"])
-    assert c.terminal_url == "http://env:7681"   # env 缺省生效
-    d = build_parser().parse_args(["ui", "--delivery", "/d", "--terminal-url", "http://cli"])
-    assert d.terminal_url == "http://cli"        # 命令行压过 env
+    monkeypatch.delenv("CURATION_TERMINAL", raising=False)   # 缺省值取自 env,先清干净
+    assert build_parser().parse_args(["ui", "--delivery", "/d", "--terminal"]).terminal is True
+    assert build_parser().parse_args(["ui", "--delivery", "/d"]).terminal is False
+    monkeypatch.setenv("CURATION_TERMINAL", "1")
+    assert build_parser().parse_args(["ui", "--delivery", "/d"]).terminal is True   # env 生效
+    for falsy in ("0", "false", "no", "off", ""):
+        monkeypatch.setenv("CURATION_TERMINAL", falsy)
+        assert build_parser().parse_args(["ui", "--delivery", "/d"]).terminal is False, falsy
+    # 老开关必须真的没了(别留个被忽略的参数骗人)
+    monkeypatch.delenv("CURATION_TERMINAL", raising=False)
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["ui", "--delivery", "/d", "--terminal-url", "http://x"])
 
 
 def _config_text(app) -> str:
@@ -213,11 +218,12 @@ def _config_text(app) -> str:
 
 
 def test_app_with_terminal_tab(delivery):
-    """带 terminal_url:配置里有「终端」页签 + iframe URL,且「终端」排在「质检报告」前。"""
+    """terminal=True:配置里有「终端」页签 + xterm 容器 div,且「终端」排在「质检报告」前。"""
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
-    cfg = _config_text(build_app(delivery, terminal_url=TERM_URL))
-    assert "终端" in cfg and TERM_URL in cfg and "<iframe" in cfg
+    cfg = _config_text(build_app(delivery, terminal=True))
+    assert "终端" in cfg and "curation-term-screen" in cfg
+    assert "iframe" not in cfg and "7681" not in cfg      # ttyd 时代的痕迹一点不留
     assert "质检报告" in cfg
     assert cfg.index("终端") < cfg.index("质检报告")   # 左终端、右报告
     # 六个子 tab 一个不少
@@ -226,10 +232,163 @@ def test_app_with_terminal_tab(delivery):
 
 
 def test_app_without_terminal_tab_is_unchanged(delivery):
-    """不传 terminal_url:配置里连「终端」二字都没有,六 tab 照旧。"""
+    """terminal=False:配置里连「终端」二字都没有,六 tab 照旧。"""
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(delivery))
-    assert "终端" not in cfg and "质检报告" not in cfg and "iframe" not in cfg
+    assert "终端" not in cfg and "质检报告" not in cfg and "curation-term-screen" not in cfg
     for t in ("漏斗总览", "Episodes", "技能画像", "Stuck 时间线", "明细", "后端状态"):
         assert t in cfg
+
+
+# ───────── U4 内嵌终端:ASGI 应用装配 / 鉴权 / PTY 往返 ─────────
+
+def _paths(app) -> set:
+    return {getattr(r, "path", None) for r in app.routes}
+
+
+@pytest.fixture
+def clean_ui_env(monkeypatch):
+    """UI 的开关全从 env 读缺省值——每个用例先把它们清干净,免得互相串味。"""
+    for k in ("CURATION_TERMINAL", "CURATION_UI_USER", "CURATION_UI_PASSWORD",
+              "CURATION_TERMINAL_WORKDIR", "CURATION_TERMINAL_SHELL"):
+        monkeypatch.delenv(k, raising=False)
+
+
+def test_terminal_off_registers_no_routes(delivery, clean_ui_env):
+    """不开终端:/ws/term 与静态资产整个不存在(404),与「不传就没有」的老行为对齐。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    app = create_asgi_app(delivery, terminal=False)
+    assert "/ws/term" not in _paths(app) and "/term-static" not in _paths(app)
+    with TestClient(app) as c:
+        assert c.get("/").status_code == 200          # 报告页照常
+        assert c.get("/healthz").status_code == 200   # 探针端点始终在
+        assert c.get("/term-static/xterm.js").status_code == 404
+
+
+def test_terminal_on_registers_routes_and_assets(delivery, clean_ui_env):
+    """开终端:/ws/term 路由在,vendored 的 xterm.js/css/addon-fit/term.js 都取得到。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    app = create_asgi_app(delivery, terminal=True)
+    assert "/ws/term" in _paths(app)
+    with TestClient(app) as c:
+        assert c.get("/").status_code == 200
+        for asset in ("xterm.js", "xterm.css", "addon-fit.js", "term.js"):
+            r = c.get(f"/term-static/{asset}")
+            assert r.status_code == 200 and r.content, asset
+        # 前端装配注入到了首页 head(不注入 = 页签打开是块黑板)
+        html = c.get("/").text
+        for asset in ("xterm.css", "xterm.js", "addon-fit.js", "term.js"):
+            assert f"/term-static/{asset}" in html, asset
+
+
+def test_basic_auth_401_then_200(delivery, monkeypatch, clean_ui_env):
+    """配了 CURATION_UI_USER + PASSWORD:全路由 401,凭证对了才 200;/healthz 永远豁免。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    monkeypatch.setenv("CURATION_UI_USER", "demo")
+    monkeypatch.setenv("CURATION_UI_PASSWORD", "s3cret")
+    app = create_asgi_app(delivery, terminal=True)
+    with TestClient(app) as c:
+        r = c.get("/")
+        assert r.status_code == 401 and "Basic" in r.headers.get("www-authenticate", "")
+        assert c.get("/term-static/xterm.js").status_code == 401
+        assert c.get("/healthz").status_code == 200                   # 探针豁免
+        assert c.get("/", auth=("demo", "wrong")).status_code == 401
+        assert c.get("/", auth=("nobody", "s3cret")).status_code == 401
+        assert c.get("/", auth=("demo", "s3cret")).status_code == 200
+        assert c.get("/term-static/term.js", auth=("demo", "s3cret")).status_code == 200
+
+
+def test_basic_auth_covers_websocket(delivery, monkeypatch, clean_ui_env):
+    """鉴权必须**盖住 WS**(/ws/term 是真 shell;BaseHTTPMiddleware 会漏掉它,所以写的裸 ASGI)。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    monkeypatch.setenv("CURATION_UI_USER", "demo")
+    monkeypatch.setenv("CURATION_UI_PASSWORD", "s3cret")
+    app = create_asgi_app(delivery, terminal=True)
+    with TestClient(app) as c:
+        with pytest.raises(Exception):        # 无凭证握手被拒(断连或 401 denial response)
+            with c.websocket_connect("/ws/term"):
+                pass
+
+
+def test_basic_auth_not_enabled_when_half_configured(delivery, monkeypatch, clean_ui_env):
+    """只配用户名不配密码 = 不启用(半配的鉴权最坏:自以为锁了其实没锁)。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    monkeypatch.setenv("CURATION_UI_USER", "demo")
+    app = create_asgi_app(delivery, terminal=False)
+    with TestClient(app) as c:
+        assert c.get("/").status_code == 200
+
+
+def _read_until(ws, needle: bytes, times: int = 1, timeout: float = 20.0) -> bytes:
+    """从 WS 上读二进制帧,直到 needle 累计出现 times 次,返回收到的全部字节。
+
+    TestClient 的 receive 没有超时参数,一旦服务端不吐字节整条测试就挂死 → 用 SIGALRM
+    兜底(pytest 用例跑在主线程,setitimer 可用;macOS 也没有 timeout(1) 可借)。
+    """
+    got = bytearray()
+
+    def _boom(*_):
+        raise TimeoutError(f"{timeout}s 内没等到 {needle!r}×{times},只收到 {bytes(got)[:400]!r}")
+
+    previous = signal.signal(signal.SIGALRM, _boom)
+    signal.setitimer(signal.ITIMER_REAL, timeout)
+    try:
+        while got.count(needle) < times:
+            got += ws.receive_bytes()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    return bytes(got)
+
+
+def test_ws_term_pty_roundtrip(delivery, tmp_path, monkeypatch, clean_ui_env):
+    """真握手 + 真 PTY:发一条 `echo <token>` 的 input 帧,读回 PTY 吐出来的 token。
+
+    顺带验证 CURATION_TERMINAL_WORKDIR:shell 的落脚目录就是它(pwd 打出来对得上)。
+    """
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    workdir = tmp_path / "落脚点"
+    workdir.mkdir()
+    monkeypatch.setenv("CURATION_TERMINAL_WORKDIR", str(workdir))
+    app = create_asgi_app(delivery, terminal=True)
+    with TestClient(app) as c, c.websocket_connect("/ws/term") as ws:
+        # 协议原样复刻同事的实现:控制/输入都是 JSON **文本**帧,回程是二进制帧
+        ws.send_text(json.dumps({"type": "resize", "cols": 100, "rows": 30}))
+        ws.send_text(json.dumps({"type": "input", "data": "echo hello-ws-term-42\n"}))
+        # 终端回显(命令行本身)+ 命令输出 = token 出现两次 → shell 真跑了,不只是回显
+        _read_until(ws, b"hello-ws-term-42", times=2)
+        ws.send_text(json.dumps({"type": "input", "data": "pwd\n"}))
+        assert workdir.name.encode() in _read_until(ws, workdir.name.encode())
+
+
+def test_ws_term_closes_when_shell_exits(delivery, clean_ui_env):
+    """shell 自己 `exit` 之后服务端要主动关连接(不关 = 前端一直转,PTY fd 也漏着)。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from curation.ui.app import create_asgi_app
+    app = create_asgi_app(delivery, terminal=True)
+    with TestClient(app) as c, c.websocket_connect("/ws/term") as ws:
+        ws.send_text(json.dumps({"type": "input", "data": "exit\n"}))
+        with pytest.raises(WebSocketDisconnect):
+            _read_until(ws, "\x00此串永不出现\x00".encode())   # 只会以「对端关闭」告终
