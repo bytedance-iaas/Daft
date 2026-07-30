@@ -595,6 +595,7 @@ def run_pipeline(
                 _dur_t = (int(_r0t.get("length") or 0)) / _fps_t
                 timeline_json[e] = {
                     "duration_s": round(_dur_t, 2),
+                    "_fps": _fps_t,          # 尾帧无证据区宽度=1/fps(见 timeline.py)
                     "_idle_head": float(d.get("idle_head_s") or 0),
                     "_idle_tail": float(d.get("idle_tail_s") or 0),
                     # 视觉静止段(2026-07-28 ep89 教训):proprio 静止即 idle 底色,
@@ -708,7 +709,8 @@ def run_pipeline(
         _tl_out = {}
         for e, t in timeline_json.items():
             segs = build_episode_timeline(t["duration_s"], t["_idle_head"],
-                                          t["_idle_tail"], t["_event_segs"])
+                                          t["_idle_tail"], t["_event_segs"],
+                                          tail_gap_s=1.0 / (t.get("_fps") or 1.0))
             _tl_out[e] = {"duration_s": t["duration_s"], "segments": segs,
                           "totals": timeline_totals(segs)}
         with open(os.path.join(det_dir, "episodes_timeline.json"), "w") as f:

@@ -26,32 +26,17 @@ RUN sed -i "s|http://deb.debian.org|${APT_MIRROR}|g; s|https://deb.debian.org|${
     && apt-get install -y -qq --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 网页终端 ttyd(2026-07-28 U3):质检台 UI 的「终端」页签用 iframe 嵌它,
-# 客户/演示时不用另开 kubectl exec 就能在浏览器里看管线跑批、翻交付目录。
-# 安全约定:ttyd 是**无鉴权的 root shell**,所以 **不建 Service、不进 Ingress**,
-#   外部一律走 kubectl port-forward 访问(拿得到 port-forward 权限的人本来就能 exec,
-#   不新增攻击面)。注意 ttyd 实际 bind 的是 0.0.0.0:7681(启动日志可见),不是回环——
-#   靠的是 pod 独立网络命名空间(本部署版无 hostNetwork)+ 没有 Service 兜着;
-#   要收得更紧可加 -i lo(只听回环,port-forward 仍通,集群内其它 pod 就摸不到了)。
-# 静态二进制(1.7.7,musl 全静态,slim 镜像无依赖直接跑),双源回退:
-#   ① GitHub releases 直连;② ghproxy.net 镜像。**实测(2026-07-28,目标集群 pod)源①
-#   极不稳:一次 SSL unexpected eof 秒断、一次连上后吊着不吐字节、一次 106s 才下完**;
-#   所以必须带 --max-time —— 只给 --connect-timeout 挡不住"连上了不发数据"这一种,
-#   会把整条构建吊死(实测吊了 5 分钟没动静才发现)。
-# 整体覆盖用 --build-arg TTYD_URL=<自建源地址>。
-ARG TTYD_URL=
-ARG TTYD_VERSION=1.7.7
-RUN set -eu; \
-    if [ -n "${TTYD_URL}" ]; then SRC="${TTYD_URL}"; else \
-      SRC="https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64 \
-           https://ghproxy.net/https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"; \
-    fi; \
-    for u in ${SRC}; do \
-      echo "[ttyd] try $u"; \
-      curl -fsSL --retry 1 --connect-timeout 20 --max-time 120 -o /usr/local/bin/ttyd "$u" && break || rm -f /usr/local/bin/ttyd; \
-    done; \
-    chmod +x /usr/local/bin/ttyd; \
-    [ -x /usr/local/bin/ttyd ] && /usr/local/bin/ttyd --version   # 层末断言:装不上就让构建红,别留个空壳
+# (2026-07-29 U4)这里原本有一层"下载 ttyd 静态二进制"——**已整层删除**。
+# 网页终端改成**内嵌式**:终端是质检台 UI 自己的一条 WebSocket 路由(/ws/term,
+# forkpty 起 bash),前端 xterm.js 已 vendored 进 curation/ui/static/。换掉 ttyd 的
+# 三条理由:
+#   ① **单端口** —— 终端与 UI 同一个 7860,不再需要第二个 containerPort/port-forward;
+#   ② **无外部二进制** —— 构建不再依赖 GitHub releases(那一层实测极不稳:SSL 秒断/
+#      连上不吐字节/106s 才下完,靠 --max-time 兜着才没吊死构建),镜像也少一个供应链面;
+#   ③ **鉴权同一套** —— ttyd 是独立进程、独立(无)鉴权;内嵌之后 Basic 中间件与
+#      未来的 APIG 网关一次就把 UI 和终端一起护住(见 curation/ui/auth.py)。
+# 开关:`curation ui --terminal`(或 CURATION_TERMINAL=1);不开则页签不渲染、
+# /ws/term 路由根本不注册。
 
 # 构建上下文=本目录(火山 CI 的 ContextPath 填 robot-curation;本地在包目录下 build)
 WORKDIR /app

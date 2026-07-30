@@ -77,6 +77,52 @@ def test_html_render_and_sort():
     assert "录制卫生良好" in timeline_html(only_clean)       # 全干净的友好提示
 
 
+def test_tail_gap_extends_previous_state():
+    """尾帧无证据区(T 帧只有 T-1 个间隔)延续前一段,不再默认 normal。
+
+    真例 bridge ep167:36 帧@5fps → 时长 7.2s,idle 判到 7.0s,尾巴 0.2s 原先
+    画成 normal(彩条末端一小节青绿 + 边界数字 7 和 7.2 挤在一起)。"""
+    ev = [{"start_s": 4.8, "end_s": 7.0, "state": "idle"}]
+    segs = build_episode_timeline(7.2, event_segments=ev, tail_gap_s=1 / 5)
+    assert segs == [{"start_s": 0.0, "end_s": 4.8, "state": "normal"},
+                    {"start_s": 4.8, "end_s": 7.2, "state": "idle"}]
+    assert timeline_totals(segs)["idle"] == 2.4          # 2.2 + 一帧 0.2
+    assert timeline_totals(segs)["normal"] == 4.8
+    # 不传 tail_gap_s = 旧行为(默认参数 0,老调用方不受影响)
+    assert build_episode_timeline(7.2, event_segments=ev)[-1]["state"] == "normal"
+
+
+def test_tail_gap_extends_stuck_too():
+    """stuck 贴尾同理:延续的是"前一段是什么",不特判态。"""
+    segs = build_episode_timeline(6.2, event_segments=[{"start_s": 3.0, "end_s": 6.0,
+                                                        "state": "stuck"}],
+                                  tail_gap_s=1 / 5)
+    assert segs[-1] == {"start_s": 3.0, "end_s": 6.2, "state": "stuck"}
+    assert timeline_totals(segs)["stuck"] == 3.2
+
+
+def test_tail_gap_keeps_real_normal_tail():
+    """真实的 normal 尾巴(>1 帧,有帧间隔证据)原样保留——语义边界不能越。"""
+    ev = [{"start_s": 2.0, "end_s": 5.0, "state": "idle"}]
+    segs = build_episode_timeline(7.2, event_segments=ev, tail_gap_s=1 / 5)
+    assert segs[-1] == {"start_s": 5.0, "end_s": 7.2, "state": "normal"}
+    assert timeline_totals(segs)["normal"] == 4.2
+    # 贴着边界的另一侧:2.2 帧的尾巴仍是真尾巴
+    segs2 = build_episode_timeline(5.44, event_segments=[{"start_s": 1.0, "end_s": 5.0,
+                                                          "state": "idle"}],
+                                   tail_gap_s=1 / 15)
+    assert segs2[-1] == {"start_s": 5.0, "end_s": 5.44, "state": "normal"}
+
+
+def test_tail_gap_single_normal_episode_untouched():
+    """整条只有一段 normal:没有"前一段"可延续,原样不动(不许被吃成空)。"""
+    assert build_episode_timeline(10.0, tail_gap_s=1 / 5) == [
+        {"start_s": 0.0, "end_s": 10.0, "state": "normal"}]
+    # 极短片(整条不足一帧宽)也不能被吃掉
+    assert build_episode_timeline(0.2, tail_gap_s=1 / 5) == [
+        {"start_s": 0.0, "end_s": 0.2, "state": "normal"}]
+
+
 def test_dataset_note_rendered_only_when_present():
     """数据集注记(2026-07-29):profile 的 extras.note 原样渲染在彩条上方;
     没有注记的数据集(如 droid)一个像素都不占。"""
