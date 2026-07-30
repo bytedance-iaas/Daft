@@ -20,17 +20,31 @@ import numpy as np
 #   Σ请求耗时 / 请求数     = 平均单请求延迟;并发下明显变大 = 服务端在排队。
 # 2026-07-28 升级为分桶收集器(同事要定量延时档案):四个调用点各挂静态标签
 # (probe 渐变问询 / endstate 二值复核 / caption 画像 / llm 归纳审计),逐请求
-# 记 (标签, 秒, 成败),run 结束汇总进报告 + details/vlm_latency.csv。
+# 记 (标签, 秒, 成败, 发出时刻),run 结束汇总进报告 + details/vlm_latency.csv。
 # 注意口径:这是**客户端视角**延时 = 网络 + 服务端排队 + 推理;并发大时单请求
 # 变慢通常是排队挪到了服务端,不是模型变慢。
+#
+# 2026-07-30 增记 started_at(调用发出时刻),为了算**墙钟**(第一次发出 → 最后
+# 一次返回的真实时长)。没有时刻就只能拿"次数 × 均值"当耗时,而我们是并发跑的,
+# 那个数会把 8 分钟的实际耗时说成 8 小时 —— 严重误导,已废弃。
+# 为什么用 time.time()(epoch)而不是 time.monotonic():
+#   monotonic 的零点是**进程私有**的(不同进程、重启后互不可比),而延时行会跨
+#   worker 进程汇总、CSV 还要留档给事后复算;epoch 在所有进程/机器上同一把尺子,
+#   代价只是系统时钟被 NTP 拨动时可能有秒级抖动(相对分钟级的墙钟可以忽略)。
 _HTTP_STATS = {"n": 0, "secs": 0.0}
 _HTTP_LOCK = threading.Lock()          # 模块级,不进 UDF 闭包 → 不参与 cloudpickle
-_LAT_ROWS: list = []                   # [(tag, seconds, ok)],latency_reset 清零
+_LAT_ROWS: list = []                   # [(tag, seconds, ok, started_at)],latency_reset 清零
 
 
-def latency_record(tag: str, dt: float, ok: bool = True) -> None:
+def latency_record(tag: str, dt: float, ok: bool = True,
+                   started_at: float | None = None) -> None:
+    """记一次调用。started_at = 请求发出时刻(time.time() epoch 秒)。
+
+    传 None 表示"没记时刻"(老代码路径/合成数据)——该桶就没有墙钟,
+    上层如实降级,**绝不**拿次数×均值顶替。
+    """
     with _HTTP_LOCK:
-        _LAT_ROWS.append((tag, dt, ok))
+        _LAT_ROWS.append((tag, dt, ok, started_at))
         _HTTP_STATS["n"] += 1
         _HTTP_STATS["secs"] += dt
 
@@ -56,13 +70,22 @@ def _pctl(sorted_vals: list, q: float) -> float:
     return sorted_vals[i]
 
 
-def latency_summary() -> dict:
-    """按标签汇总:次数/错误/均值/P50/P90/P99/最大(秒,保留2位)。"""
-    rows = latency_rows()
+def latency_summary(rows: list | None = None) -> dict:
+    """按标签汇总:次数/错误/均值/P50/P90/P99/最大 + 墙钟(秒,保留2位)。
+
+    rows=None 取当前进程累计的明细;传 rows 可对 CSV 读回的历史明细复算。
+
+    wall_s(墙钟)= 该类调用中 max(发出时刻 + 耗时) − min(发出时刻),即
+    "第一次发出 → 最后一次返回"的真实时长。并发下它远小于 Σ单次耗时,是唯一
+    能回答"这类调用占了多久"的口径。失败的调用**也算**(它同样占了那段时间)。
+    该桶一条 started_at 都没有(三列老 CSV / 老代码)→ 不给 wall_s,上层降级。
+    """
+    rows = latency_rows() if rows is None else list(rows)
     out = {}
-    for tag in sorted({t for t, _, _ in rows}):
-        oks = sorted(d for t, d, ok in rows if t == tag and ok)
-        errs = sum(1 for t, _, ok in rows if t == tag and not ok)
+    for tag in sorted({r[0] for r in rows}):
+        mine = [r for r in rows if r[0] == tag]
+        oks = sorted(r[1] for r in mine if r[2])
+        errs = sum(1 for r in mine if not r[2])
         entry = {"n": len(oks), "errors": errs}
         if oks:
             entry.update({
@@ -71,8 +94,28 @@ def latency_summary() -> dict:
                 "p90_s": round(_pctl(oks, 0.90), 2),
                 "p99_s": round(_pctl(oks, 0.99), 2),
                 "max_s": round(oks[-1], 2)})
+        stamped = [r for r in mine if r[3] is not None]
+        if stamped:
+            entry["wall_s"] = round(max(r[3] + r[1] for r in stamped)
+                                    - min(r[3] for r in stamped), 2)
         out[tag] = entry
     return out
+
+
+def read_latency_csv(path: str) -> list:
+    """details/vlm_latency.csv → rows(供事后复算墙钟/分位数)。
+
+    兼容 2026-07-30 之前的**三列**老 CSV(call_type,seconds,ok):没有
+    started_at 列 → 该行时刻为 None → 复算出来的档案没有墙钟。
+    """
+    import csv as _csv
+    rows = []
+    with open(path, newline="", encoding="utf-8") as f:
+        for r in _csv.DictReader(f):
+            st = (r.get("started_at") or "").strip()
+            rows.append((r["call_type"], float(r["seconds"]),
+                         bool(int(r["ok"])), float(st) if st else None))
+    return rows
 
 
 def http_stats() -> tuple[int, float]:
@@ -293,7 +336,7 @@ def make_vlm_completion(
             resp = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
             _ok = resp.ok
         finally:
-            latency_record("probe", _time.time() - _t, _ok)
+            latency_record("probe", _time.time() - _t, _ok, started_at=_t)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
@@ -375,7 +418,7 @@ def make_llm_ask(endpoint: str, model: str, timeout_s: float = 1800.0,
                               headers=headers, timeout=timeout_s)
             _ok = r.ok
         finally:
-            latency_record("llm", _time.time() - _t, _ok)
+            latency_record("llm", _time.time() - _t, _ok, started_at=_t)
         r.raise_for_status()
         return strip_reasoning(r.json()["choices"][0]["message"]["content"])
 
@@ -407,7 +450,7 @@ def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0,
                               headers=headers, timeout=timeout_s)
             _ok = r.ok
         finally:
-            latency_record("endstate", _time.time() - _t, _ok)
+            latency_record("endstate", _time.time() - _t, _ok, started_at=_t)
         r.raise_for_status()
         ans = strip_reasoning(r.json()["choices"][0]["message"]["content"]).strip().lower()
         return "yes" in ans[:8]

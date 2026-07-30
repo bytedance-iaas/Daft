@@ -86,7 +86,7 @@ def make_vlm_captioner(endpoint: str, model: str, timeout_s: float = 600.0,
                               headers=headers, timeout=timeout_s)
             _ok = r.ok
         finally:
-            latency_record("caption", _time.time() - _t, _ok)
+            latency_record("caption", _time.time() - _t, _ok, started_at=_t)
         r.raise_for_status()
         return strip_reasoning(r.json()["choices"][0]["message"]["content"])
 

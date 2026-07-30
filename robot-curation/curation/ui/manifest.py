@@ -5,7 +5,8 @@
 
 读的文件(U0 盘点定型的交付 schema):
   passed.json   数据集元信息 + dataset 统计 + skills + label_audit +
-                config_effective + 通过条目(checks 含双重编码 detail)
+                config_effective + runtime(后端/硬件/容器配额)+
+                dataset.vlm_latency(分桶延时)+ 通过条目(checks 含双重编码 detail)
   reject.json   被拒条目(+原因)
   review.json   待人工裁决条目 + 标注审计复核队列
   details/evidence/<ep>/*.jpg   task_success probe 证据帧
@@ -84,6 +85,7 @@ def load_delivery(path: str) -> dict:
             "generated_at": p.get("生成时间"), "code_version": p.get("代码版本"),
             "dataset": p.get("dataset") or {},
             "config_effective": p.get("config_effective"),
+            "runtime": p.get("runtime") or {},
             "skills": p.get("skills") or {},
             "label_audit": p.get("label_audit"),
             "audit_queue": v.get("标注审计复核队列") or [],
@@ -328,3 +330,231 @@ def timeline_html(tl: dict, cap: int = 200, only_flagged: bool = True) -> str:
         rows.append(f'<p style="color:#777">另有 {len(eps) - len(flagged)} 条无 '
                     f'stuck/idle 的干净 episode 未列出(勾选「显示全部」可见)</p>')
     return "\n".join(rows)
+
+
+# ───────── 性能剖析(P1,2026-07-30):VLM 后端 / 运行环境 / 延时剖析 ─────────
+#
+# ★ 界面红线:**绝不出现预设代号**(那是机房黑话,客户看不懂也不该看懂)。
+#   后端一律用「服务端点 URL + 模型名 + 服务类型 + 硬件型号」四件套表述。
+#   硬件型号只能来自交付记录本身(runtime.vlm_backend.hardware,源头是站点配置的
+#   vlm_backends.*.hardware)——本模块**没有也不许有**"端点→型号"的硬编码映射表:
+#   那种表会在换机器后继续输出旧型号,拿 A 机的规格解释 B 机的延时。
+
+#: 交付里没记这一项时的统一措辞(老交付走这条)。
+NOT_RECORDED = "未记录(旧版本交付)"
+
+#: VLM 调用类型 → 语义化中文标签。左边是实现内部的埋点标签(vlm_client.latency_record
+#: 的 tag),只作字典键;界面上只出现右边。顺序 = 展示顺序(按漏斗发生的先后)。
+LATENCY_LABELS = {
+    "probe": "任务判定探针",
+    "endstate": "终态复核",
+    "caption": "技能打标",
+    "llm": "体系归纳",
+}
+
+#: 延时口径(一句话,跟着表格一起显示)——不写清楚会被当成服务端推理耗时。
+LATENCY_NOTE = (
+    "口径:**客户端视角**的单次调用耗时(发出请求 → 收完整响应),含网络往返、"
+    "服务端排队与推理。下表统计的是**单次调用**的分布;整类调用实际占了多久,"
+    "看下面的墙钟条形图(并发下多次调用在时间上重叠,把单次耗时乘以次数会严重高估)。")
+
+#: 分位数怎么读(表下小字)。客户不是做性能的,P90 不解释就只是个符号。
+LATENCY_PCTL_NOTE = (
+    "_P50 = 一半的调用不超过此耗时;P90/P99 同理,越靠后越反映最慢的少数调用。_")
+
+#: 四类调用各是干什么的(表下说明,一行一条)。语义化名字必须配得上解释,
+#: 否则"任务判定探针 1583 次"这种数字客户没法判断合不合理。
+LATENCY_KIND_NOTE = "\n".join([
+    "**调用类型说明**",
+    "",
+    "- **任务判定探针**:判断任务是否完成的主力——抽 8 帧打乱后让视觉模型为每帧打"
+    "「完成度」分,排序能还原时间顺序即任务在推进;每帧一次调用,故次数最多。",
+    "- **终态复核**:主判拿不准时的二审——同样抽 8 帧,分成早期组与晚期组对照,"
+    "用两个互为反问的是非题确认任务终态;仅一审未通过的数据触发,最多复核 4 路相机。",
+    "- **技能打标**:视觉模型为每条数据写一句「它在做什么」,供技能画像;每条一次。",
+    "- **体系归纳**:文本大模型通读全部打标,归纳数据集的两级技能体系;"
+    "次数极少、单次长。",
+])
+
+#: 横条图配色(四类各一色;与判决用的红/绿色系错开,避免被误读成"好坏")。
+_BAR_COLORS = {"probe": "#4a7fd4", "endstate": "#7d5ba6",
+               "caption": "#2a9d8f", "llm": "#e08a3c"}
+
+
+def infer_service_type(endpoint: str | None) -> str:
+    """endpoint → 服务类型(仅当交付里没显式声明 service_type 时的兜底)。
+
+    纯字符串判断、零网络。只粗判"部署形态",判不出就老实写「OpenAI 兼容服务」——
+    宁可说不知道,也不编一个具体的服务名。
+    """
+    if not endpoint:
+        return "未记录"
+    from urllib.parse import urlparse
+    host = (urlparse(endpoint).hostname or "").lower()
+    if not host:
+        return "OpenAI 兼容服务"
+    if (host.endswith(".svc.cluster.local") or host in ("localhost", "127.0.0.1")
+            or host.startswith(("10.", "192.168.", "172.16.", "172.17.", "172.18."))):
+        return "自托管推理服务(集群内)"
+    if host.endswith("volces.com"):
+        return "方舟 MaaS(托管服务)"
+    return "OpenAI 兼容服务"
+
+
+def load_perf(m: dict) -> dict:
+    """交付 → 性能剖析三块数据(后端 / 运行环境 / 延时)。纯函数。
+
+    降级策略(老交付):runtime 块是 2026-07-30 之后的新交付才有。缺块时从
+    config_effective **尽力**还原端点/模型/三个并发值(那是配置快照里本来就有的),
+    硬件与运行环境则如实标"未记录"——绝不从端点反查型号。
+    """
+    rt = m.get("runtime") or {}
+    be = dict(rt.get("vlm_backend") or {})
+    env = dict(rt.get("environment") or {})
+    legacy = not be
+    if legacy:                                   # 老交付:退回配置快照能给的部分
+        ce = m.get("config_effective") or {}
+        vlm = ((ce.get("checks") or {}).get("task_success") or {}).get("vlm") or {}
+        be = {"endpoint": vlm.get("endpoint"), "model": vlm.get("model"),
+              "hardware": None, "service_type": None,
+              "episode_concurrency": (ce.get("pipeline") or {}).get("vlm_episode_concurrency"),
+              "frame_concurrency": vlm.get("max_concurrency"),
+              "caption_concurrency": (ce.get("skill_profile") or {}).get("caption_concurrency")}
+    if not be.get("service_type"):
+        be["service_type"] = infer_service_type(be.get("endpoint"))
+    return {"backend": be, "env": env, "legacy": legacy,
+            "latency": (m.get("dataset") or {}).get("vlm_latency") or {}}
+
+
+def _hardware_text(perf: dict) -> str:
+    """硬件型号的展示文本。只有两个来源:交付记录里写了,或托管服务本来就不可见。"""
+    hw = perf["backend"].get("hardware")
+    if hw:
+        return str(hw)
+    st = perf["backend"].get("service_type") or ""
+    # ⚠️「自托管」里含「托管」二字:必须先排除,否则自建的 GPU 服务会被说成
+    # "硬件不可见"(2026-07-30 测试当场抓到的字串陷阱)。
+    if "MaaS" in st or ("托管" in st and "自托管" not in st):
+        return "托管服务,硬件不可见(由服务商调度)"
+    return NOT_RECORDED if perf["legacy"] else "未记录(站点配置未声明 hardware)"
+
+
+def _val(v) -> str:
+    return "未记录" if v in (None, "") else str(v)
+
+
+def perf_backend_md(perf: dict) -> str:
+    """第一块:VLM 后端卡片(Markdown 表)。"""
+    b = perf["backend"]
+    ep = b.get("endpoint")
+    rows = [
+        ("服务端点", f"`{ep}`" if ep else "未记录"),
+        ("模型名", _val(b.get("model"))),
+        ("服务类型", _val(b.get("service_type"))),
+        ("硬件型号", _hardware_text(perf)),
+        ("episode 并发(同时处理几条数据)", _val(b.get("episode_concurrency"))),
+        ("单条内帧并发(一条数据内同时问几帧)", _val(b.get("frame_concurrency"))),
+        ("打标并发(技能打标同时跑几条)", _val(b.get("caption_concurrency"))),
+    ]
+    head = "### VLM 后端\n\n| 项 | 本次运行取值 |\n|---|---|\n"
+    body = "\n".join(f"| {k} | {v} |" for k, v in rows)
+    tail = "\n\n_硬件型号来自本次交付的运行记录(站点配置声明),不是界面推测的。_"
+    return head + body + tail
+
+
+def perf_env_md(perf: dict) -> str:
+    """第二块:运行环境(质检管线所在容器的 CPU 侧)。老交付整块"未记录"。"""
+    env = perf["env"]
+    if not env:
+        return ("### 运行环境(质检管线容器)\n\n" + NOT_RECORDED
+                + "——运行环境是 2026-07-30 之后的新交付才记录的字段,"
+                  "此交付跑批时管线尚未采集。")
+    cpu = env.get("cpu_limit_cores")
+    mem = env.get("memory_limit_bytes")
+    node = env.get("node")
+    src = env.get("node_source")
+    node_txt = _val(node)
+    if node and src == "hostname":
+        node_txt += "(容器 hostname;未注入 NODE_NAME,故非节点名)"
+    elif node and src == "NODE_NAME":
+        node_txt += "(取自调度注入的节点名)"
+    rows = [("CPU 配额", f"{cpu} 核" if cpu else "未记录(非容器环境或未设限)"),
+            ("内存配额", f"{mem / (1 << 30):.1f} GiB" if mem else "未记录(非容器环境或未设限)"),
+            ("运行节点", node_txt)]
+    head = "### 运行环境(质检管线容器)\n\n| 项 | 值 |\n|---|---|\n"
+    tail = ("\n\n_这里是**管线自己**的 CPU 侧资源(抽帧解码/数值检查在此消耗);"
+            "VLM 推理的算力在上面那张卡片的服务端。_")
+    return head + "\n".join(f"| {k} | {v} |" for k, v in rows) + tail
+
+
+LATENCY_HEADERS = ["调用类型", "调用次数", "平均响应时间(秒)",
+                   "P50 响应时间(秒)", "P90 响应时间(秒)", "P99 响应时间(秒)"]
+
+
+def latency_rows(perf: dict) -> list[list]:
+    """第三块:延时表。按 LATENCY_LABELS 顺序,缺的桶不占行;未知标签兜底排在最后。"""
+    lat = perf["latency"]
+    order = [t for t in LATENCY_LABELS if t in lat]
+    order += [t for t in sorted(lat) if t not in LATENCY_LABELS]
+    rows = []
+    for tag in order:
+        s = lat.get(tag) or {}
+        rows.append([LATENCY_LABELS.get(tag, tag), s.get("n", 0),
+                     _val(s.get("mean_s")), _val(s.get("p50_s")),
+                     _val(s.get("p90_s")), _val(s.get("p99_s"))])
+    return rows
+
+
+#: 老交付(2026-07-30 之前)没记调用发出时刻 → 算不出墙钟。此时**不画图**:
+#: 退回"次数 × 均值"那种条形图会把并发跑的 8 分钟说成 8 小时,宁可空着。
+NO_WALL_NOTE = ("此交付未记录调用时刻(旧版本),无法计算墙钟;新交付起提供。")
+
+
+def human_duration(sec: float) -> str:
+    """秒 → 人读的时长。<60s 保留一位小数,再往上按 分/小时 拆(演示要能念出来)。"""
+    if sec < 60:
+        return f"{sec:.1f} 秒"
+    total = int(round(sec))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h} 小时 {m} 分 {s} 秒" if h else f"{m} 分 {s} 秒"
+
+
+def latency_bar_html(perf: dict) -> str:
+    """第三块配图:纯 HTML/CSS 横条图,条长 = 该类调用的**墙钟**。
+
+    ★ 口径只有一个:墙钟 = 第一次发出 → 最后一次返回的真实时长(run 收割时按类
+    算好写进交付,见 vlm_client.latency_summary 的 wall_s)。**不存在**"次数 ×
+    均值"的回退画法:我们是并发跑的,那个乘积是几十倍的高估,画出来就是误导。
+    没有墙钟数据(老交付)= 不画图 + 一句说明。
+    """
+    lat = perf["latency"]
+    if not lat:
+        return ('<p style="color:#777">本次运行没有 VLM 调用(例如只跑了数值类检查),'
+                '因此没有延时数据。</p>')
+    items = [(tag, float(s["wall_s"]), s.get("n") or 0, s.get("errors") or 0)
+             for tag, s in lat.items() if s.get("wall_s") is not None]
+    if not items:
+        return f'<p style="color:#777">{NO_WALL_NOTE}</p>'
+    items.sort(key=lambda x: -x[1])
+    top = max(items[0][1], 1e-9)
+    bars = []
+    for tag, wall, n, errs in items:
+        pct = max(1.0, wall / top * 100)
+        label = LATENCY_LABELS.get(tag, tag)
+        cnt = f"{n} 次调用并发执行" if n > 1 else f"{n} 次调用"
+        err_txt = f' · <span style="color:#c0392b">失败 {errs}</span>' if errs else ""
+        bars.append(
+            f'<div style="margin:8px 0">'
+            f'<div style="font:12px/1.5 system-ui;margin-bottom:2px">{label}'
+            f' — 墙钟 <b>{human_duration(wall)}</b>({cnt}){err_txt}</div>'
+            f'<div style="background:#eceff3;border-radius:4px;overflow:hidden;height:14px">'
+            f'<div style="width:{pct:.2f}%;height:100%;'
+            f'background:{_BAR_COLORS.get(tag, "#888")}"></div></div></div>')
+    return ('<div style="max-width:760px">'
+            '<div style="font:12px system-ui;color:#555;margin-bottom:4px">'
+            '各类调用的墙钟耗时(第一次发出 → 最后一次返回的真实时长)</div>'
+            + "".join(bars)
+            + '<div style="font:12px system-ui;color:#777;margin-top:6px">'
+              '各类调用之间在时间上可能重叠,各条墙钟相加 ≠ 整次运行总时长。</div>'
+            '</div>')

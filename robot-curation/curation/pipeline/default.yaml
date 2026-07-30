@@ -78,17 +78,27 @@ checks:
 #       my-gpu-server:                       # 名字自己起
 #         endpoint: http://10.0.0.5:8000/v1  # 你的推理服务(OpenAI 兼容)
 #         model: Qwen/Qwen2.5-VL-32B-Instruct
+#         hardware: NVIDIA A100 80G          # 可选:纯描述,进交付记录供质检报告展示
+#         service_type: 自托管 vLLM          # 可选:不写则由端点域名兜底推断
 #   也可不用预设,命令行直连:--vlm-endpoint <URL> --vlm-model <名>
 #   (或环境变量 CURATION_VLM_ENDPOINT / CURATION_VLM_MODEL)。
+#
+# ★ hardware / service_type(2026-07-30):**只描述、不参与请求**。质检报告的
+#   「性能剖析」页要回答"这批数据是在什么硬件上判的",而预设名(my-gpu-server 之类)
+#   是内部代号不进界面 → 硬件信息必须由本配置声明并随交付落盘,UI 侧零硬编码映射。
 vlm_backends:
   ark:                             # 方舟 MaaS(豆包)——托管,零运维,任何部署都可用
     endpoint: https://ark.cn-beijing.volces.com/api/v3
     model: doubao-seed-2-0-pro-260215
     api_key_env: ARK_API_KEY
+    hardware: 托管服务,硬件不可见(由服务商调度)
+    service_type: 方舟 MaaS(托管服务)
   self-hosted-example:             # 自托管示例(占位):复制到你的站点文件改名改值
     endpoint: http://YOUR-VLLM-HOST:8000/v1
     model: YOUR/MODEL-NAME
     api_key_env:                   # 自托管通常无鉴权,留空即不发 Bearer 头
+    hardware:                      # 填你的卡型(如 NVIDIA A100 80G);留空 = 界面写"未记录"
+    service_type: 自托管 vLLM
 
 skill_profile:                     # 技能画像:caption 路线(VLM 端点可达时);不可达降级为按原始标注分组
   method: caption

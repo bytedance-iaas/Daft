@@ -86,6 +86,10 @@ def apply_vlm_direct(cfg: dict, endpoint: str | None = None, model: str | None =
     shown = []
     if endpoint:
         vlm["endpoint"] = endpoint; shown.append(f"endpoint={endpoint}")
+        # 换了端点 = 换了机器:预设带来的 hardware/service_type 立刻作废(2026-07-30)。
+        # 留着会让性能剖析页拿旧机器型号解释新端点的延时。
+        for _k in ("hardware", "service_type"):
+            vlm.pop(_k, None)
         if not model:
             # 只给端点不给模型(2026-07-28 同事反馈:单模型服务报模型名是冗余)→
             # 清掉沿袭自默认配置的旧模型名,交给运行期从 GET /models 自动发现;
@@ -169,6 +173,13 @@ def apply_vlm_backend(cfg: dict, name: str | None) -> dict:
     vlm = cfg.setdefault("checks", {}).setdefault("task_success", {}).setdefault("vlm", {})
     for k in ("endpoint", "model", "api_key_env"):
         vlm[k] = p.get(k)          # 三元组整组覆盖(含置空 api_key_env,防止残留旧密钥头)
+    # 描述性字段(2026-07-30):hardware/service_type 只用于交付记录与界面展示,
+    # 不参与任何请求。有则带上、无则**清掉**(整组覆盖语义:换后端不能残留上一台
+    # 机器的型号,那比不显示更糟——会拿 A 机的型号解释 B 机的延时)。
+    for k in ("hardware", "service_type"):
+        vlm.pop(k, None)
+        if p.get(k):
+            vlm[k] = p[k]
     print(f"[curation] VLM 后端 → {name}: {p.get('model')} @ {p.get('endpoint')}")
     return cfg
 

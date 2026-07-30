@@ -392,3 +392,296 @@ def test_ws_term_closes_when_shell_exits(delivery, clean_ui_env):
         ws.send_text(json.dumps({"type": "input", "data": "exit\n"}))
         with pytest.raises(WebSocketDisconnect):
             _read_until(ws, "\x00此串永不出现\x00".encode())   # 只会以「对端关闭」告终
+
+
+# ───────── P1 性能剖析页签(2026-07-30):后端 / 运行环境 / 延时 ─────────
+#
+# ★ 本节最重要的一条不是"渲染对不对",而是**预设代号绝不进界面**:
+#   h20-8b / h20-32b / a30-8b / ark 是机房黑话,客户看不懂也不该看懂。
+#   架构上的保证 = 预设名压根不进交付记录(apply_vlm_backend 只搬字段值),
+#   下面的断言就是给这条保证上锁。
+
+#: 一个"新交付"的 runtime 块,形状与 run.collect_runtime() 的产物一致。
+#: ⚠️ node 必须用 RFC 5737 文档专用段(203.0.113.0/24 等),**不许填真实内网 IP**:
+#: 本文件会随代码包公开,2026-07-30 这里曾误填一台真实节点的内网地址。
+RUNTIME_BLOCK = {
+    "vlm_backend": {
+        "endpoint": "http://vllm-cosmos-8b.curation.svc.cluster.local:8000/v1",
+        "model": "nvidia/Cosmos-Reason2-8B",
+        "hardware": "NVIDIA H20",
+        "service_type": "自托管 vLLM",
+        "episode_concurrency": 32, "frame_concurrency": 8,
+        "caption_concurrency": 32},
+    "environment": {"cpu_limit_cores": 16.0, "memory_limit_bytes": 34359738368,
+                    "node": "203.0.113.5", "node_source": "NODE_NAME"},
+}
+
+#: 新交付的延时块:每桶带 wall_s(墙钟,run 收割时按 started_at 算)。
+#: 注意 wall_s ≪ n×mean_s —— 这正是并发的效果,也是本页只画墙钟的理由。
+LATENCY_BLOCK = {
+    "probe": {"n": 1583, "errors": 0, "mean_s": 20.01, "p50_s": 17.78,
+              "p90_s": 33.47, "p99_s": 63.26, "max_s": 118.58, "wall_s": 2530.0},
+    "endstate": {"n": 114, "errors": 2, "mean_s": 13.59, "p50_s": 12.26,
+                 "p90_s": 20.41, "p99_s": 36.45, "max_s": 40.49, "wall_s": 310.5},
+    "caption": {"n": 200, "errors": 0, "mean_s": 17.29, "p50_s": 15.54,
+                "p90_s": 28.13, "p99_s": 41.21, "max_s": 54.58, "wall_s": 402.7},
+    "llm": {"n": 7, "errors": 0, "mean_s": 50.71, "p50_s": 15.7,
+            "p90_s": 130.03, "p99_s": 130.03, "max_s": 130.03, "wall_s": 129.3},
+}
+
+#: 老交付(2026-07-30 前)的延时块:一个 wall_s 都没有 → 图必须降级成一句说明。
+LATENCY_BLOCK_NO_WALL = {
+    tag: {k: v for k, v in s.items() if k != "wall_s"}
+    for tag, s in LATENCY_BLOCK.items()}
+
+
+def _with_perf(path, runtime=RUNTIME_BLOCK, latency=LATENCY_BLOCK):
+    """往 fixture 交付的 passed.json 里补 runtime / vlm_latency,返回 manifest。"""
+    p = os.path.join(path, "passed.json")
+    with open(p, encoding="utf-8") as f:
+        doc = json.load(f)
+    if runtime is not None:
+        doc["runtime"] = runtime
+    if latency is not None:
+        doc.setdefault("dataset", {})["vlm_latency"] = latency
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(doc, f, ensure_ascii=False)
+    return load_delivery(path)
+
+
+def _render_all(perf) -> str:
+    """三块的**全部渲染输出**拼一起——代号泄漏断言一次盖全页。"""
+    from curation.ui.manifest import (latency_bar_html, latency_rows,
+                                      perf_backend_md, perf_env_md)
+    return "\n".join([perf_backend_md(perf), perf_env_md(perf),
+                      latency_bar_html(perf), json.dumps(latency_rows(perf),
+                                                         ensure_ascii=False)])
+
+
+def test_perf_loads_new_runtime_block(delivery):
+    """新交付:runtime 块原样读出,硬件/服务类型/三个并发都到位。"""
+    from curation.ui.manifest import load_perf
+    perf = load_perf(_with_perf(delivery))
+    assert perf["legacy"] is False
+    b = perf["backend"]
+    assert b["hardware"] == "NVIDIA H20" and b["service_type"] == "自托管 vLLM"
+    assert b["model"] == "nvidia/Cosmos-Reason2-8B"
+    assert (b["episode_concurrency"], b["frame_concurrency"],
+            b["caption_concurrency"]) == (32, 8, 32)
+    assert perf["env"]["cpu_limit_cores"] == 16.0
+    assert set(perf["latency"]) == {"probe", "endstate", "caption", "llm"}
+
+
+def test_perf_backend_card_renders_all_four_facts(delivery):
+    """后端卡片:端点原样 + 模型 + 服务类型 + 硬件 + 三个通俗并发标签。"""
+    from curation.ui.manifest import load_perf, perf_backend_md
+    md = perf_backend_md(load_perf(_with_perf(delivery)))
+    assert "vllm-cosmos-8b.curation.svc.cluster.local:8000/v1" in md   # URL 原样
+    assert "nvidia/Cosmos-Reason2-8B" in md
+    assert "自托管 vLLM" in md and "NVIDIA H20" in md
+    for label in ("episode 并发", "单条内帧并发", "打标并发"):
+        assert label in md, label
+    assert "32" in md and "8" in md
+
+
+def test_perf_env_card_and_legacy_degradation(delivery, tmp_path):
+    """运行环境:新跑有 CPU/内存/节点;老交付整块"未记录",绝不编数字。"""
+    from curation.ui.manifest import NOT_RECORDED, load_perf, perf_env_md
+    md = perf_env_md(load_perf(_with_perf(delivery)))
+    assert "16.0 核" in md and "32.0 GiB" in md and "203.0.113.5" in md
+    assert "取自调度注入的节点名" in md
+    # 老交付(无 runtime 块):整块"未记录",不许把配额编一个出来
+    d2 = tmp_path / "old-perf"
+    d2.mkdir()
+    (d2 / "passed.json").write_text(json.dumps(
+        {"数据集": "old", "episodes": {}}, ensure_ascii=False))
+    perf_old = load_perf(load_delivery(str(d2)))
+    assert perf_old["legacy"] is True and perf_old["env"] == {}
+    assert NOT_RECORDED in perf_env_md(perf_old)
+
+
+def test_perf_legacy_delivery_falls_back_to_config_effective(delivery):
+    """老交付(有 config_effective 无 runtime):端点/模型/并发尽力取,硬件"未记录"。"""
+    from curation.ui.manifest import load_perf, perf_backend_md
+    p = os.path.join(delivery, "passed.json")
+    doc = json.loads(open(p, encoding="utf-8").read())
+    doc["config_effective"] = {
+        "pipeline": {"vlm_episode_concurrency": 32},
+        "skill_profile": {"caption_concurrency": 32},
+        "checks": {"task_success": {"vlm": {
+            "endpoint": "https://ark.cn-beijing.volces.com/api/v3",
+            "model": "doubao-seed-2-0-pro-260215", "max_concurrency": 8}}}}
+    doc.setdefault("dataset", {})["vlm_latency"] = LATENCY_BLOCK
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(doc, f, ensure_ascii=False)
+    perf = load_perf(load_delivery(delivery))
+    assert perf["legacy"] is True
+    b = perf["backend"]
+    assert b["model"] == "doubao-seed-2-0-pro-260215"
+    assert b["episode_concurrency"] == 32 and b["frame_concurrency"] == 8
+    assert b["hardware"] is None                       # 老交付没记 → 不许瞎猜
+    md = perf_backend_md(perf)
+    # 托管服务的硬件本来就不可见,如实标注(而不是写"未记录"让人以为是缺陷)
+    assert "硬件不可见" in md and "方舟 MaaS" in md
+
+
+def test_perf_hardware_never_guessed_for_unknown_selfhosted(tmp_path):
+    """自托管端点但站点配置没声明 hardware → 老实写"未记录",不从端点反查型号。"""
+    from curation.ui.manifest import load_perf, perf_backend_md
+    d = tmp_path / "nohw"
+    d.mkdir()
+    (d / "passed.json").write_text(json.dumps({
+        "数据集": "x", "episodes": {},
+        "runtime": {"vlm_backend": {
+            "endpoint": "http://vllm-cosmos-8b-a30.curation.svc.cluster.local:8000/v1",
+            "model": "nvidia/Cosmos-Reason2-8B", "hardware": None,
+            "service_type": None, "episode_concurrency": 32,
+            "frame_concurrency": 8, "caption_concurrency": 32},
+            "environment": {"cpu_limit_cores": None, "memory_limit_bytes": None,
+                            "node": "pod-abc", "node_source": "hostname"}}},
+        ensure_ascii=False))
+    perf = load_perf(load_delivery(str(d)))
+    assert perf["backend"]["service_type"] == "自托管推理服务(集群内)"   # 域名兜底
+    md = perf_backend_md(perf)
+    assert "未记录" in md and "NVIDIA" not in md         # 一个型号都不许冒出来
+
+
+def test_perf_env_marks_hostname_is_not_node_name(tmp_path):
+    """没注入 NODE_NAME 时显示的是容器 hostname —— 必须当面说清,不能冒充节点名。"""
+    from curation.ui.manifest import load_perf, perf_env_md
+    d = tmp_path / "hn"
+    d.mkdir()
+    (d / "passed.json").write_text(json.dumps({
+        "数据集": "x", "episodes": {},
+        "runtime": {"vlm_backend": {}, "environment": {
+            "cpu_limit_cores": 16.0, "memory_limit_bytes": 34359738368,
+            "node": "robot-curator-77cd94bcd6-bsbdw", "node_source": "hostname"}}},
+        ensure_ascii=False))
+    md = perf_env_md(load_perf(load_delivery(str(d))))
+    assert "robot-curator-77cd94bcd6-bsbdw" in md
+    assert "非节点名" in md
+
+
+def test_latency_table_uses_semantic_labels_in_order(delivery):
+    """延时表:四桶语义化中文标签、固定顺序、五个统计列齐全(实现标签不露头)。"""
+    from curation.ui.manifest import LATENCY_HEADERS, latency_rows, load_perf
+    rows = latency_rows(load_perf(_with_perf(delivery)))
+    assert [r[0] for r in rows] == ["任务判定探针", "终态复核", "技能打标", "体系归纳"]
+    # 表头写全"响应时间",别指望客户认得裸 P50/P90(第二轮反馈)
+    assert LATENCY_HEADERS == ["调用类型", "调用次数", "平均响应时间(秒)",
+                               "P50 响应时间(秒)", "P90 响应时间(秒)",
+                               "P99 响应时间(秒)"]
+    probe = rows[0]
+    assert probe[1] == 1583 and probe[2] == "20.01" and probe[5] == "63.26"
+    flat = json.dumps(rows, ensure_ascii=False)
+    for impl_tag in ("probe", "endstate", "caption", "llm"):
+        assert impl_tag not in flat, impl_tag        # 埋点标签只是字典键,不是界面词
+
+
+def test_latency_bar_chart_is_wall_clock_only(delivery):
+    """横条图:四条、按**墙钟**降序、最长的那条 100%,时长人性化,失败次数带出来。"""
+    from curation.ui.manifest import latency_bar_html, load_perf
+    html = latency_bar_html(load_perf(_with_perf(delivery)))
+    assert html.count("<div style=\"margin:8px 0\">") == 4
+    # probe 墙钟 2530s 最大 → 排第一、宽度 100%、念作 42 分 10 秒
+    assert html.index("任务判定探针") < html.index("技能打标") < html.index("终态复核")
+    assert "width:100.00%" in html
+    assert "墙钟 <b>42 分 10 秒</b>(1583 次调用并发执行)" in html
+    assert "失败 2" in html                                  # endstate 的 errors
+    assert "第一次发出 → 最后一次返回" in html
+    assert "各条墙钟相加 ≠ 整次运行总时长" in html
+
+
+def test_latency_chart_never_falls_back_to_count_times_mean(delivery):
+    """★红线断言:界面上不许出现"次数 × 均值"那个口径(并发下高估几十倍)。
+
+    用户第二轮原话:非常误导——我们有并行机制。所以连"总耗时"字样一起清干净。
+    """
+    from curation.ui.manifest import LATENCY_NOTE, latency_bar_html, load_perf
+    html = latency_bar_html(load_perf(_with_perf(delivery))) + LATENCY_NOTE
+    for banned in ("次数 × 均值", "次数×均值", "总耗时", "×"):
+        assert banned not in html, banned
+    assert "31676" not in html                     # 1583×20.01 的那个乘积
+
+
+def test_latency_chart_degrades_without_wall_clock(delivery):
+    """老交付(延时块没有 wall_s)→ 不画图,只给一句说明。绝不退回均值条形图。"""
+    from curation.ui.manifest import (NO_WALL_NOTE, latency_bar_html,
+                                      latency_rows, load_perf)
+    perf = load_perf(_with_perf(delivery, latency=LATENCY_BLOCK_NO_WALL))
+    html = latency_bar_html(perf)
+    assert NO_WALL_NOTE in html
+    assert "margin:8px 0" not in html and "width:" not in html   # 一根条都没有
+    assert "未记录调用时刻" in html and "新交付起提供" in html
+    assert latency_rows(perf)[0][1] == 1583        # 表格照旧有数(只是没图)
+
+
+def test_latency_kind_notes_explain_all_four_call_types():
+    """四类调用各配一句人话说明——语义化名字不解释,客户仍读不懂 1583 次是什么。"""
+    from curation.ui.manifest import LATENCY_KIND_NOTE, LATENCY_PCTL_NOTE
+    assert "一半的调用不超过此耗时" in LATENCY_PCTL_NOTE
+    for label in ("任务判定探针", "终态复核", "技能打标", "体系归纳"):
+        assert f"**{label}**" in LATENCY_KIND_NOTE, label
+    assert "每帧一次调用" in LATENCY_KIND_NOTE          # 探针次数为何最多
+    assert "仅一审未通过的数据触发" in LATENCY_KIND_NOTE
+    for impl_tag in ("probe", "endstate", "caption", "llm"):
+        assert impl_tag not in LATENCY_KIND_NOTE, impl_tag
+
+
+def test_human_duration_formats():
+    """时长人性化:≥60s 念成 X 分 X 秒,上小时再拆一层。"""
+    from curation.ui.manifest import human_duration
+    assert human_duration(42.4) == "42.4 秒"
+    assert human_duration(2530.0) == "42 分 10 秒"
+    assert human_duration(60) == "1 分 0 秒"
+    assert human_duration(3725) == "1 小时 2 分 5 秒"
+
+
+def test_latency_empty_state(delivery):
+    """只跑数值类检查的运行没有 VLM 调用 → 空态提示,不是空白也不报错。"""
+    from curation.ui.manifest import latency_bar_html, latency_rows, load_perf
+    perf = load_perf(_with_perf(delivery, latency={}))
+    assert latency_rows(perf) == []
+    assert "没有 VLM 调用" in latency_bar_html(perf)
+
+
+def test_perf_render_never_leaks_backend_preset_codenames(delivery):
+    """★红线断言:渲染结果里绝不出现后端预设代号(机房黑话)。
+
+    覆盖新交付与老交付两条路径。"h20-"/"a30-8b" 是任务书点名的两个;
+    顺带把站点文件里现有的预设名全列上,以后加预设也照这个模式加。
+    """
+    from curation.ui.manifest import load_perf
+    for perf in (load_perf(_with_perf(delivery)),
+                 load_perf(load_delivery(delivery))):
+        text = _render_all(perf)
+        for codename in ("h20-", "a30-8b", "h20-8b", "h20-32b",
+                         "self-hosted-example", "vlm_backends"):
+            assert codename not in text, f"预设代号 {codename!r} 漏进界面: {text[:300]}"
+
+
+def test_site_yaml_presets_declare_hardware():
+    """站点配置里每个自托管预设都要声明 hardware —— 漏了界面就只能写"未记录"。"""
+    import yaml
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    site = os.path.join(root, "deploy", "site.yaml")
+    if not os.path.exists(site):                  # 公开代码包里没有站点文件,跳过
+        pytest.skip("无站点文件(公开包)")
+    presets = (yaml.safe_load(open(site, encoding="utf-8")) or {}).get("vlm_backends") or {}
+    assert presets, "site.yaml 应有 vlm_backends"
+    for name, p in presets.items():
+        assert (p or {}).get("hardware"), f"预设 {name} 缺 hardware 描述字段"
+
+
+def test_app_has_perf_tab(delivery):
+    """Gradio 层:「性能剖析」子 tab 在,且七个子 tab 一个不少。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = _config_text(build_app(_with_perf(delivery)["path"]))
+    for t in ("漏斗总览", "Episodes", "技能画像", "Stuck 时间线", "明细",
+              "性能剖析", "后端状态"):
+        assert t in cfg, t
+    assert "延时剖析" in cfg
+    for codename in ("h20-", "a30-8b"):
+        assert codename not in cfg, codename
