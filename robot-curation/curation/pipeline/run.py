@@ -145,6 +145,16 @@ def run_pipeline(
         _rob_str = f"{_rt}(未注册规格表)"
     print(f"[curation] 数据集: {os.path.basename(input_dir.rstrip('/'))} | "
           f"机器人: {_rob_str} | {len(rows)} 条", flush=True)
+    # 数据集注记(2026-07-29 用户定):profile 的 extras.note 是"读数据前必须知道的
+    # 前提"(如 bridge 的 state 由 action 累加合成 → 指令-实际无独立信息,stuck 只能
+    # 弃权)。原样透传进报告/时间线/UI,不判内容、不硬编码数据集名——有就带上,
+    # 没有就整条字段不出现(不占位)。
+    _ds_note = ""
+    try:
+        _ds_note = str(json.loads(str(rows[0].get("semantics_extras") or "{}")
+                                  ).get("note") or "") if rows else ""
+    except Exception:  # noqa: BLE001  extras 缺失/损坏 → 无注记,不影响主流程
+        _ds_note = ""
 
     # ② 漏斗(M4/M5)。默认满血:自动确保 VLM 服务(复用在线的/空闲卡自动拉起);
     #    --lite 精简版:跳过一切 VLM 环节,不碰 GPU。
@@ -438,6 +448,8 @@ def run_pipeline(
             report["dataset"]["camera_audit_note"] = (
                 f"{len(cam_audit)}/{len(keep_rows)} 条存在占位/黑帧相机通道(详见 episodes)")
             report["episodes"]["camera_audit"] = cam_audit
+    if _ds_note:
+        report["dataset"]["dataset_note"] = _ds_note
     if vlm_note:
         report["dataset"]["task_success_note"] = vlm_note
     if profile_note:
@@ -702,7 +714,10 @@ def run_pipeline(
         with open(os.path.join(det_dir, "episodes_timeline.json"), "w") as f:
             json.dump({"口径": "stuck=指令在推而不动(定罪);idle=头尾空闲+事件包络内"
                              "静止;normal=在干活。中段零星 idle 无位置数据,计入 normal"
-                             "(总秒数见 motion 明细)", "episodes": _tl_out},
+                             "(总秒数见 motion 明细)",
+                       # 数据集注记:有才写(UI 在口径下方渲染,无则不占位)
+                       **({"dataset_note": _ds_note} if _ds_note else {}),
+                       "episodes": _tl_out},
                       f, ensure_ascii=False, indent=1)
     with open(os.path.join(det_dir, "stuck_details.json"), "w") as f:
         json.dump({"数据集": report.get("数据集"), "机器人": report.get("机器人"),

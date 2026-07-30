@@ -113,3 +113,7 @@ def test_report_reconciliation():
     assert d["hard_fail_breakdown"] == {"kinematic_limits": 1}
     md = to_markdown(r)
     assert "交付:1 条" in md and "kinematic_limits" in md and "push" in md
+    # 数据集注记(2026-07-29):有才出这行,没有不占位
+    assert "数据集注记" not in md
+    r["dataset"]["dataset_note"] = "state 由 action 累加合成"
+    assert "- **数据集注记**: state 由 action 累加合成" in to_markdown(r)

@@ -75,3 +75,22 @@ def test_html_render_and_sort():
     assert "无时间线数据" in timeline_html({"episodes": {}})  # 老交付优雅降级
     only_clean = {"episodes": {"ep_clean": tl["episodes"]["ep_clean"]}}
     assert "录制卫生良好" in timeline_html(only_clean)       # 全干净的友好提示
+
+
+def test_dataset_note_rendered_only_when_present():
+    """数据集注记(2026-07-29):profile 的 extras.note 原样渲染在彩条上方;
+    没有注记的数据集(如 droid)一个像素都不占。"""
+    eps = {"ep0": {"duration_s": 10.0, "totals": {"stuck": 0, "idle": 1, "normal": 9},
+                   "segments": [{"start_s": 0.0, "end_s": 1.0, "state": "idle"},
+                                {"start_s": 1.0, "end_s": 10.0, "state": "normal"}]}}
+    note = "state 由 action 累加合成,指令-实际无独立信息"
+    html = timeline_html({"episodes": eps, "dataset_note": note})
+    assert f"数据集注记:{note}" in html
+    assert html.index("数据集注记") < html.index("在干活")   # 在图例/彩条之前
+    assert "数据集注记" not in timeline_html({"episodes": eps})          # 无注记不占位
+    assert "数据集注记" not in timeline_html({"episodes": eps, "dataset_note": ""})
+    # 全干净的交付也要带上注记(前提说明与有没有 stuck/idle 无关)
+    clean = {"ep0": {"duration_s": 8.0, "totals": {"stuck": 0, "idle": 0, "normal": 8.0},
+                     "segments": [{"start_s": 0.0, "end_s": 8.0, "state": "normal"}]}}
+    ch = timeline_html({"episodes": clean, "dataset_note": note})
+    assert "数据集注记" in ch and "录制卫生良好" in ch

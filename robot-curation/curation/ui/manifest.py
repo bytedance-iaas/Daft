@@ -234,9 +234,12 @@ TL_LABELS = {"stuck": "stuck(指令在推而不动)", "idle": "idle(无指令静
 
 
 def load_timeline(m: dict) -> dict:
-    """details/episodes_timeline.json → {episodes, 口径};无文件返回空(老交付)。"""
+    """details/episodes_timeline.json → {episodes, 口径, 数据集注记};
+    无文件返回空(老交付)。dataset_note 来自数据集 profile 的 extras.note,原样
+    透传(如 bridge 的 state 由 action 合成),老交付/无注记的数据集为空串。"""
     d = _load_json(os.path.join(m["path"], "details", "episodes_timeline.json"))
-    return {"episodes": d.get("episodes") or {}, "note": d.get("口径", "")}
+    return {"episodes": d.get("episodes") or {}, "note": d.get("口径", ""),
+            "dataset_note": d.get("dataset_note", "")}
 
 
 def timeline_html(tl: dict, cap: int = 200, only_flagged: bool = True) -> str:
@@ -249,12 +252,20 @@ def timeline_html(tl: dict, cap: int = 200, only_flagged: bool = True) -> str:
     if not eps:
         return ("<p>此交付无时间线数据(episodes_timeline.json)——需要跑过"
                 "运动质量检查的新版交付。</p>")
+    # 数据集注记(2026-07-29 用户定):看彩条前必须知道的前提(如 bridge 的 state
+    # 由 action 累加合成 → 指令-实际无独立信息,stuck 只能弃权,黄条的含义随之变)。
+    # 有才渲染,没有不占位;内容原样来自数据集 profile 的 extras.note,UI 不做判断。
+    note_html = (f'<p style="margin:0 0 6px 0;color:#8a6d3b;background:#fcf8e3;'
+                 f'border-left:3px solid #f1c40f;padding:6px 10px">'
+                 f'数据集注记:{tl["dataset_note"]}</p>'
+                 if tl.get("dataset_note") else "")
     flagged = {e: t for e, t in eps.items()
                if (t.get("totals", {}).get("stuck", 0) > 0
                    or t.get("totals", {}).get("idle", 0) > 0)}
     shown_eps = flagged if only_flagged else eps
     if not shown_eps:
-        return (f"<p>全部 {len(eps)} 条 episode 均无 stuck/idle——录制卫生良好 ✅</p>")
+        return (note_html
+                + f"<p>全部 {len(eps)} 条 episode 均无 stuck/idle——录制卫生良好 ✅</p>")
     order = sorted(shown_eps, key=lambda e: (-(eps[e].get("totals", {}).get("stuck", 0)),
                                              -(eps[e].get("totals", {}).get("idle", 0)), e))
     legend = " ".join(
@@ -262,7 +273,8 @@ def timeline_html(tl: dict, cap: int = 200, only_flagged: bool = True) -> str:
         f'background:{TL_COLORS[s]};margin-right:4px;vertical-align:middle"></span>'
         f'<span style="margin-right:16px">{TL_LABELS[s]}</span>'
         for s in ("stuck", "idle", "normal"))
-    rows = [f'<div style="margin:6px 0 14px 0">{legend}</div>']
+    rows = ([note_html] if note_html else []) + [
+        f'<div style="margin:6px 0 14px 0">{legend}</div>']
     for eid in order[:cap]:
         t = eps[eid]
         dur = t.get("duration_s") or 0

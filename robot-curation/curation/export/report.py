@@ -56,6 +56,9 @@ def to_markdown(report: dict) -> str:
         f"- **数据集**: {report.get('数据集', '(未知)')}",
         *([_rb_line] if _rb_line else []),
         f"- 生成时间: {report.get('生成时间', '?')} | 代码版本: {report.get('代码版本', '?')}",
+        # 数据集注记(2026-07-29):数据集 profile 的 extras.note,读数字前必须知道的
+        # 前提(如 bridge 的 state 由 action 累加合成 → stuck 只能弃权)。有才出这行
+        *([f"- **数据集注记**: {d['dataset_note']}"] if d.get("dataset_note") else []),
         "",
         "## 总览",
         f"- 输入 episode:{d['input_episodes']}",
