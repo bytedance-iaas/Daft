@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 
@@ -18,6 +19,38 @@ from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DETAIL_LABELS,
                        episode_rows, funnel_rows, list_detail_tables,
                        load_delivery, load_detail_table, load_timeline,
                        overview_markdown, skill_rows, timeline_html)
+
+
+
+# 顶层导航按钮样式(2026-07-29 用户定:大、明显、立体)。只作用于 elem_id=topnav
+# 的外层两页签,内层六个报告 tab 不受影响。立体感=渐变+外阴影(凸起),选中态=
+# 橙色渐变+内阴影(按下)。选中类名在 gradio 版本间摇摆,selected/aria-selected 双保。
+_TOPNAV_CSS = """
+/* 只杀 gradio 给选中页签画的 ::after 橙色指示条(2px 绝对定位,贴在圆角
+   按钮底部像条怪线);页签条自带的灰色分隔线保留(用户确认好看)。 */
+#topnav > .tab-wrapper button::after,
+#topnav > .tab-container button::after {
+  display: none !important;
+}
+#topnav > .tab-wrapper, #topnav > .tab-container {
+  border-bottom: 1px solid #d9d9d9 !important;   /* 用户确认要的灰色分隔线 */
+}
+#topnav > .tab-container button, #topnav > .tab-wrapper button {
+  font-size: 1.3rem !important; font-weight: 700 !important;
+  padding: 12px 34px !important; margin: 14px 10px 14px 0 !important;
+  border: 1px solid #cfcfcf !important; border-radius: 12px !important;
+  background: linear-gradient(180deg, #ffffff 0%, #e9e9e9 100%) !important;
+  box-shadow: 0 3px 7px rgba(0,0,0,.20), inset 0 1px 0 rgba(255,255,255,.9) !important;
+  color: #444 !important;
+}
+#topnav > .tab-container button.selected,
+#topnav > .tab-wrapper button.selected,
+#topnav button[aria-selected="true"] {
+  background: linear-gradient(180deg, #ffd9b3 0%, #ff9e5e 100%) !important;
+  border-color: #e8722a !important; color: #7c2d12 !important;
+  box-shadow: inset 0 2px 5px rgba(0,0,0,.22) !important;
+}
+"""
 
 
 def _config_yaml(m: dict) -> str:
@@ -51,8 +84,14 @@ def _probe_backends(config_path: str | None, timeout: float) -> list[list]:
     return rows
 
 
-def build_app(delivery: str, config_path: str | None = None, probe_timeout: float = 5.0):
-    """交付目录(或含多份交付的父目录)→ gr.Blocks。"""
+def build_app(delivery: str, config_path: str | None = None, probe_timeout: float = 5.0,
+              terminal_url: str | None = None):
+    """交付目录(或含多份交付的父目录)→ gr.Blocks。
+
+    terminal_url 非空时套一层顶层导航:「终端」(ttyd 网页终端 iframe)+「质检报告」
+    (= 本文件原有的全部内容),默认选中「质检报告」。缺省 None → 顶层导航整个不渲染,
+    页面与加这层之前逐字一致(客户部署根本看不到终端入口)。
+    """
     import gradio as gr
 
     choices = discover_deliveries(delivery)
@@ -105,86 +144,100 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
     # 首屏(实测),demo 一开场就是白屏等待——本 UI 场景里无网络字体的理由
     theme = gr.themes.Default(font=["system-ui", "sans-serif"],
                               font_mono=["ui-monospace", "Menlo", "monospace"])
-    with gr.Blocks(title="Robot Data Curation", theme=theme) as app:
+    with gr.Blocks(title="Robot Data Curation", theme=theme,
+               css=(_TOPNAV_CSS if terminal_url else None)) as app:
         gr.Markdown("# 机器人数据 Curation 质检台")
-        with gr.Row():
-            picker = gr.Dropdown(choices=choices, value=choices[0], label="交付目录",
-                                 scale=4, interactive=True, allow_custom_value=True,
-                                 info="可直接输入任意交付目录路径;「重新加载」会重扫列表")
-            reload_btn = gr.Button("重新加载", scale=1)
-        state = gr.State()
+        # 双层导航(2026-07-28 U3):顶层「终端」在左、「质检报告」在右,但默认落在
+        # 「质检报告」(selected= 指 Tab id)。terminal_url 缺省时 ExitStack 一个上下文
+        # 都不进 → 页面结构与加这层之前完全一致,客户部署里看不到终端入口。
+        with contextlib.ExitStack() as shell:
+            if terminal_url:
+                shell.enter_context(gr.Tabs(selected="report", elem_id="topnav"))
+                with gr.Tab("终端", id="term"):
+                    # ttyd 网页终端(pod 内 127.0.0.1:7681),iframe 由**浏览器**解析,
+                    # 所以要能打开必须本机也能访问该地址(port-forward 7681)。
+                    gr.HTML(f'<iframe src="{terminal_url}" style="width:100%;'
+                            f'height:78vh;border:0"></iframe>')
+                shell.enter_context(gr.Tab("质检报告", id="report"))
+            with gr.Row():
+                picker = gr.Dropdown(choices=choices, value=choices[0], label="交付目录",
+                                     scale=4, interactive=True, allow_custom_value=True,
+                                     info="可直接输入任意交付目录路径;「重新加载」会重扫列表")
+                reload_btn = gr.Button("重新加载", scale=1)
+            state = gr.State()
 
-        with gr.Tab("漏斗总览"):
-            ov_md = gr.Markdown()
-            ov_funnel = gr.Dataframe(headers=FUNNEL_HEADERS, label="漏斗", interactive=False)
-            with gr.Accordion("本次运行生效配置(config_effective)", open=False):
-                ov_cfg = gr.Code(language="yaml")
+            with gr.Tab("漏斗总览"):
+                ov_md = gr.Markdown()
+                ov_funnel = gr.Dataframe(headers=FUNNEL_HEADERS, label="漏斗", interactive=False)
+                with gr.Accordion("本次运行生效配置(config_effective)", open=False):
+                    ov_cfg = gr.Code(language="yaml")
 
-        with gr.Tab("Episodes"):
-            ep_table = gr.Dataframe(headers=EPISODE_HEADERS, label="全部 episode",
-                                    interactive=False)
-            ep_pick = gr.Dropdown(label="查看单条详情", interactive=True)
-            ep_md = gr.Markdown()
-            ep_checks = gr.Dataframe(headers=CHECK_HEADERS, label="各维检查", interactive=False)
-            ep_gallery = gr.Gallery(label="证据(probe 帧 + 同步曲线)", columns=4, height=320)
+            with gr.Tab("Episodes"):
+                ep_table = gr.Dataframe(headers=EPISODE_HEADERS, label="全部 episode",
+                                        interactive=False)
+                ep_pick = gr.Dropdown(label="查看单条详情", interactive=True)
+                ep_md = gr.Markdown()
+                ep_checks = gr.Dataframe(headers=CHECK_HEADERS, label="各维检查", interactive=False)
+                ep_gallery = gr.Gallery(label="证据(probe 帧 + 同步曲线)", columns=4, height=320)
 
-        with gr.Tab("技能画像"):
-            sk_table = gr.Dataframe(headers=SKILL_HEADERS, label="两级技能体系",
-                                    interactive=False)
-            au_table = gr.Dataframe(headers=AUDIT_HEADERS, label="标注审计复核队列",
-                                    interactive=False)
+            with gr.Tab("技能画像"):
+                sk_table = gr.Dataframe(headers=SKILL_HEADERS, label="两级技能体系",
+                                        interactive=False)
+                au_table = gr.Dataframe(headers=AUDIT_HEADERS, label="标注审计复核队列",
+                                        interactive=False)
 
-        with gr.Tab("Stuck 时间线"):
-            gr.Markdown("每条 episode 一根彩条(0 → 结束秒),段界标秒、悬停看精确"
-                        "起止;按 stuck 总时长降序 = 图形化人工复查队列")
-            tl_all = gr.Checkbox(label="显示全部 episode(含无 stuck/idle 的干净条目)",
-                                 value=False)
-            tl_note = gr.Markdown()
-            tl_html = gr.HTML()
+            with gr.Tab("Stuck 时间线"):
+                gr.Markdown("每条 episode 一根彩条(0 → 结束秒),段界标秒、悬停看精确"
+                            "起止;按 stuck 总时长降序 = 图形化人工复查队列")
+                tl_all = gr.Checkbox(label="显示全部 episode(含无 stuck/idle 的干净条目)",
+                                     value=False)
+                tl_note = gr.Markdown()
+                tl_html = gr.HTML()
 
-        with gr.Tab("明细"):
-            dt_pick = gr.Dropdown(label="选择明细表(交付目录 details/ 下的 CSV)",
-                                  interactive=True)
-            dt_note = gr.Markdown()
-            dt_table = gr.Dataframe(label="明细", interactive=False)
+            with gr.Tab("明细"):
+                dt_pick = gr.Dropdown(label="选择明细表(交付目录 details/ 下的 CSV)",
+                                      interactive=True)
+                dt_note = gr.Markdown()
+                dt_table = gr.Dataframe(label="明细", interactive=False)
 
-        with gr.Tab("后端状态"):
-            gr.Markdown("逐预设探活 + 列服务端模型(与 `curation backends` 同源)")
-            be_btn = gr.Button("探活")
-            be_table = gr.Dataframe(headers=["预设", "状态", "服务端模型"], interactive=False)
+            with gr.Tab("后端状态"):
+                gr.Markdown("逐预设探活 + 列服务端模型(与 `curation backends` 同源)")
+                be_btn = gr.Button("探活")
+                be_table = gr.Dataframe(headers=["预设", "状态", "服务端模型"], interactive=False)
 
-        outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick, sk_table, au_table,
-                ep_md, ep_checks, ep_gallery, dt_pick, dt_note, dt_table,
-                tl_note, tl_html]
-        picker.change(_load, picker, outs)
+            outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick, sk_table, au_table,
+                    ep_md, ep_checks, ep_gallery, dt_pick, dt_note, dt_table,
+                    tl_note, tl_html]
+            picker.change(_load, picker, outs)
 
-        def _reload(path):
-            # 重扫根目录(2026-07-28 用户问"不能自己设定吗":新交付目录从此免重启;
-            # 手输的路径不在扫描列表里也保留为合法选项)
-            fresh = discover_deliveries(delivery)
-            if path and path not in fresh:
-                fresh = fresh + [path]
-            return (gr.update(choices=fresh, value=path), *_load(path))
+            def _reload(path):
+                # 重扫根目录(2026-07-28 用户问"不能自己设定吗":新交付目录从此免重启;
+                # 手输的路径不在扫描列表里也保留为合法选项)
+                fresh = discover_deliveries(delivery)
+                if path and path not in fresh:
+                    fresh = fresh + [path]
+                return (gr.update(choices=fresh, value=path), *_load(path))
 
-        reload_btn.click(_reload, picker, [picker, *outs])
-        ep_pick.change(_detail, [state, ep_pick], [ep_md, ep_checks, ep_gallery])
+            reload_btn.click(_reload, picker, [picker, *outs])
+            ep_pick.change(_detail, [state, ep_pick], [ep_md, ep_checks, ep_gallery])
 
-        def _table_change(m, label):
-            name = {v: k for k, v in DETAIL_LABELS.items()}.get(label)
-            note, headers, rows = _detail_table_md(m, name)
-            return note, gr.update(value=rows, headers=headers)
+            def _table_change(m, label):
+                name = {v: k for k, v in DETAIL_LABELS.items()}.get(label)
+                note, headers, rows = _detail_table_md(m, name)
+                return note, gr.update(value=rows, headers=headers)
 
-        dt_pick.change(_table_change, [state, dt_pick], [dt_note, dt_table])
-        tl_all.change(lambda m, a: timeline_html(load_timeline(m), only_flagged=not a),
-                      [state, tl_all], tl_html)
-        be_btn.click(lambda: _probe_backends(config_path, probe_timeout), None, be_table)
-        app.load(_load, picker, outs)
+            dt_pick.change(_table_change, [state, dt_pick], [dt_note, dt_table])
+            tl_all.change(lambda m, a: timeline_html(load_timeline(m), only_flagged=not a),
+                          [state, tl_all], tl_html)
+            be_btn.click(lambda: _probe_backends(config_path, probe_timeout), None, be_table)
+            app.load(_load, picker, outs)
     return app
 
 
 def launch(delivery: str, config_path: str | None = None, host: str = "0.0.0.0",
-           port: int = 7860, probe_timeout: float = 5.0) -> None:
-    app = build_app(delivery, config_path, probe_timeout)
+           port: int = 7860, probe_timeout: float = 5.0,
+           terminal_url: str | None = None) -> None:
+    app = build_app(delivery, config_path, probe_timeout, terminal_url=terminal_url)
     # 允许 Gallery 直读交付目录下的证据文件(gradio 默认只许临时目录);
     # 只传三个跨版本稳定的参数(gradio 6.x 删了 show_api 等旧关键字)
     app.launch(server_name=host, server_port=port, allowed_paths=[delivery])

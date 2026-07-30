@@ -78,12 +78,27 @@ def test_fluency_head_only_is_hygiene_not_skill():
 
 
 def test_fluency_all_idle_no_exec_window():
-    """整条无有效动作:无执行窗可评 → fluency 诚实弃权(None),不给假分。"""
+    """整条无有效动作:无执行窗可评 → fluency 诚实弃权(None),不给假分。
+
+    长片(k=20)全列豁免 = 死录制,必须仍报全程静止——这正是"从未动过"豁免
+    规则的初衷,2026-07-29 短片护栏不许波及(护栏限定 k<20)。"""
     q = np.full((300, 4), 5.0) + np.random.default_rng(0).normal(0, 1e-7, (300, 4))
     d = motion_quality(q, q.copy(), FPS, control_mode="absolute").detail
     assert d["fluency"] is None
     assert "fluency_reason" in d
     assert d["active_ratio"] == 0.0
+
+
+def test_short_pure_noise_makes_no_static_claim():
+    """短片纯噪声:豁免判据本身失真(真运动也够不着 k)→ 零证据不主张静止。
+
+    与上一条互补:同样是"全列豁免",长片可信(死录制)、短片不可信(bridge
+    ep000199 的真运动就落在这里)——分岔靠 k<20。"""
+    q = np.full((21, 4), 5.0) + np.random.default_rng(0).normal(0, 1e-7, (21, 4))
+    d = motion_quality(q, q.copy(), 5.0, control_mode="absolute").detail
+    assert d["active_ratio"] == 1.0
+    assert "fluency_reason" not in d
+    assert not d.get("still_segments")
 
 
 def test_fluency_delta_control():

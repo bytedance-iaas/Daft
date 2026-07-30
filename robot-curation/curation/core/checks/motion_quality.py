@@ -474,29 +474,83 @@ def motion_quality(
                    "velocity": "velocity_dual_scale"}.get(str(control_mode),
                                                           "cmd_delta_vs_pos")
 
-    def _static_mask(sig: np.ndarray, raw: np.ndarray, frac: float = 0.10) -> np.ndarray:
+    def _lag1_rho(d: np.ndarray) -> float:
+        """带符号增量序列的 lag-1 皮尔逊自相关(手算,不引依赖)。
+        传感噪声的增量方向逐帧随机 → ρ≈0(增量本身即噪声,如速度控制),白噪声
+        位置序列差分后甚至 ρ→-0.5(实测 -0.49);真实运动(含小幅往复)增量方向
+        连贯 → ρ=cos(2π/周期),周期≥6 帧时 ≥0.5。两族离得很开,判别余量充足。
+        任一侧方差为 0 → 记 0(常量列无方向信息,不该凭空获得投票权)。"""
+        x, y = d[:-1], d[1:]
+        x = x - x.mean()
+        y = y - y.mean()
+        sx, sy = float(np.sqrt(np.dot(x, x))), float(np.sqrt(np.dot(y, y)))
+        if sx <= 0.0 or sy <= 0.0:
+            return 0.0
+        return float(np.dot(x, y) / (sx * sy))
+
+    def _static_mask(sig: np.ndarray, raw: np.ndarray, frac: float = 0.10,
+                     coh_rho: float = 0.5, coh_span_floor: float = 4.0,
+                     coh_min_steps: int = 8) -> np.ndarray:
         """[T-1, n] 信号 → 每帧'全列静止'掩码。逐列自身尺度(10%×正值中位),
         免跨列量纲问题(夹爪步长天然大)。'从未动过'的列不否决静止——判据:
-        位置量程 < 20×典型步长(真运动的量程是步长的成百上千倍;全静止列的
-        "步长"只是传感噪声,量程仅其 ~5 倍——自尺度阈值在纯噪声上会失效,
-        全静止 episode 曾被判成"全程活跃")。raw: 位置量纲序列(算量程用)。"""
-        cols = []
+        位置量程 < k×典型步长(全静止列的"步长"只是传感噪声,量程仅其 ~2-5
+        倍——自尺度阈值在纯噪声上会失效,全静止 episode 曾被判成"全程活跃")。
+        ⚠️ k 必须随片长收紧(2026-07-29 bridge 教训):匀速运动的 量程/步长
+        比值上限就是步数 T-1,固定 k=20 隐含"真运动量程≫步长"只对长片成立;
+        bridge 每条仅 21 帧(fps=5),真在动的列比值只有 14~20 → 八列全落进
+        豁免,ep000199 被判 0-4.2s 全程 idle/still 而视频里手臂一直在动
+        (active_ratio=0.85)。地板 4.0 = 真静止列的噪声漫游量程;长片 k 仍
+        为 20,行为不变。
+        资格审查是**双路径取或**(2026-07-29 用户定,补幅度判据的盲区):
+        ①幅度路径(上述):量程 ≥ k×中位正步长;
+        ②连贯路径:增量的 lag-1 自相关 ρ ≥ coh_rho(0.5)**且** 量程 ≥
+          coh_span_floor(4.0)×中位正步长。动因:小包络持续往复(擦拭/搅拌类)
+          的量程不随来回次数增长,幅度路径必然误判为噪声弃权,长片上全列如此
+          就会给出"死录制=全程 idle"的冤案(与 bridge 案同构)。
+        常数 why(均属 P5.1 校准清单):ρ 阈 0.5——白噪声下 ρ 的 null 分布
+        ≈N(0, 1/√n),n≈20 时波动 ±0.23,0.5≈2 倍波动,且对应周期 6 帧的往复;
+        幅度地板 4.0——纯噪声列的漫游包络约是步长的 2~5 倍,地板挡住"增量确实
+        相关但只是噪声带内游走"的结构性噪声(如 AR(1) 传感器漂移);
+        样本地板 8 步——n<8 时 ρ 估计不可信(null 波动 >0.35),短片本就有
+        收紧的 k 和"全豁免不主张"护栏兜底,不需要连贯路径。
+        sig: **带符号**增量序列 [T-1, n](需要幅度的地方内部自取 abs);
+        raw: 位置量纲序列(算量程用)。"""
+        # 全豁免的含义按片长分岔(2026-07-29 用户裁决):短片(k<20)的豁免判据
+        # 本身就失真(真运动也够不着 k),此时"没有一列有否决资格"= 零证据,拒绝
+        # 主张静止;长片(k=20)的豁免判据可信,全豁免=整条从未动过的死录制,
+        # 维持旧语义(每列全 True → np.all → 全程静止),这正是豁免规则的初衷。
+        cols, voting = [], 0
+        k = min(20.0, max(4.0, 0.5 * len(sig)))        # len(sig)=T-1=步数
         for c, rc in zip(sig.T, raw.T):
-            pos = c[c > 0]
-            if not len(pos) or (rc.max() - rc.min()) < 20.0 * np.median(pos):
-                cols.append(np.ones(len(c), bool))     # 从未动过/纯噪声:不否决
+            mag = np.abs(c)                            # 幅度判据只看大小
+            pos = mag[mag > 0]
+            if not len(pos):
+                cols.append(np.ones(len(c), bool))     # 从未动过:不否决
+                continue
+            med = float(np.median(pos))
+            span = float(rc.max() - rc.min())
+            ok = span >= k * med                       # ①幅度路径
+            if not ok and len(c) >= coh_min_steps and span >= coh_span_floor * med:
+                ok = _lag1_rho(c) >= coh_rho           # ②连贯路径(带符号增量)
+            if not ok:
+                cols.append(np.ones(len(c), bool))     # 纯噪声/结构性噪声:不否决
             else:
-                cols.append(c < frac * np.median(pos))
-        return np.all(np.column_stack(cols), axis=1) if cols else np.zeros(0, bool)
+                voting += 1
+                cols.append(mag < frac * med)
+        if not cols or (not voting and k < 20.0):
+            return np.zeros(len(sig), bool)       # 短片全豁免:不主张,不诬告
+        return np.all(np.column_stack(cols), axis=1)
 
+    # 传给 _static_mask 的增量一律**带符号**(2026-07-29 连贯路径需要方向信息;
+    # 幅度判据在函数内部自取 abs,数值与旧版逐位相同)
     if strat_f == "cmd_delta_vs_pos":
-        cmd_sig, cmd_raw = np.abs(np.diff(a, axis=0)), a
+        cmd_sig, cmd_raw = np.diff(a, axis=0), a
     else:                                              # delta/velocity:积分成位置量纲
-        cmd_sig, cmd_raw = np.abs(a[1:]), np.cumsum(a, axis=0)
+        cmd_sig, cmd_raw = a[1:], np.cumsum(a, axis=0)
     idle = _static_mask(cmd_sig, cmd_raw)
     if proprio is not None:
         p_all = np.asarray(proprio, dtype=np.float64)
-        idle &= _static_mask(np.abs(np.diff(p_all, axis=0)), p_all)
+        idle &= _static_mask(np.diff(p_all, axis=0), p_all)
     def _close_and_segment(mask: np.ndarray, min_run: int) -> list:
         """毛刺闭合 + ≥min_run 成段 → [(s0,s1)]。
         (ceil 不用 round:round(4.5)=4 的银行家舍入曾让 4 帧毛刺恰好逃过闭合)
@@ -560,7 +614,7 @@ def motion_quality(
         # 不够 stuck 定罪"的段两头不沾,时间线上曾被画成"正常",与肉眼直接矛盾
         # (ep89 17.5-20s 实测速度 0.0000 却是绿条)。此口径=视频观感,专供时间线。
         if proprio is not None:
-            still = _static_mask(np.abs(np.diff(p_all, axis=0)), p_all)
+            still = _static_mask(np.diff(p_all, axis=0), p_all)
             detail["still_segments"] = [
                 {"start_s": round(s0 / fps, 2), "end_s": round(s1 / fps, 2)}
                 for s0, s1 in _close_and_segment(still, min_run)][:100]

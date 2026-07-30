@@ -138,6 +138,29 @@ def test_load_tolerates_legacy_delivery(tmp_path):
     assert funnel_rows(m) == []                                 # 无统计=空表,不炸
 
 
+def test_load_timeline_passes_dataset_note(delivery, tmp_path):
+    """数据集注记(2026-07-29):episodes_timeline.json 顶层的 dataset_note 原样
+    透传给 UI(不判内容);无该字段的交付(droid/老交付)给空串,不占位。"""
+    from curation.ui.manifest import load_timeline
+    tl_dir = os.path.join(delivery, "details")
+    tl = {"口径": "stuck=...", "dataset_note": "state 由 action 累加合成",
+          "episodes": {"ep000000": {"duration_s": 1.0, "segments": [], "totals": {}}}}
+    with open(os.path.join(tl_dir, "episodes_timeline.json"), "w") as f:
+        json.dump(tl, f, ensure_ascii=False)
+    got = load_timeline(load_delivery(delivery))
+    assert got["dataset_note"] == "state 由 action 累加合成"
+    assert got["note"] == "stuck=..." and set(got["episodes"]) == {"ep000000"}
+    del tl["dataset_note"]                                       # 无注记的数据集
+    with open(os.path.join(tl_dir, "episodes_timeline.json"), "w") as f:
+        json.dump(tl, f, ensure_ascii=False)
+    assert load_timeline(load_delivery(delivery))["dataset_note"] == ""
+    # 老交付(整个文件都没有)也不炸
+    old = tmp_path / "old2"
+    (old / "details").mkdir(parents=True)
+    (old / "passed.json").write_text(json.dumps({"数据集": "o", "episodes": {}}))
+    assert load_timeline(load_delivery(str(old)))["dataset_note"] == ""
+
+
 def test_app_builds_without_server(delivery):
     """Gradio 冒烟:四 tab 构造成功即可(不 launch)。无 gradio 环境自动跳过。"""
     pytest.importorskip("gradio")
@@ -162,3 +185,51 @@ def test_detail_tables_discovery_and_load(delivery):
     assert t2 == 5 and len(r2) == 2                            # 封顶但总数照报
     assert load_detail_table(m, "不存在.csv") == ([], [], 0)   # 白名单外/缺失安全
     assert load_detail_table(m, "../passed.json") == ([], [], 0)  # 路径穿越挡住
+
+
+# ───────── U3 终端工作区(双层导航,2026-07-28)─────────
+
+TERM_URL = "http://127.0.0.1:7681"
+
+
+def test_cli_parses_terminal_url(monkeypatch):
+    """`ui --terminal-url` 解析正确;不传时为 None(= 不渲染终端入口)。"""
+    from curation.cli import build_parser
+    monkeypatch.delenv("CURATION_TERMINAL_URL", raising=False)  # 缺省值取自 env,先清干净
+    a = build_parser().parse_args(["ui", "--delivery", "/d", "--terminal-url", "http://x"])
+    assert a.terminal_url == "http://x"
+    b = build_parser().parse_args(["ui", "--delivery", "/d"])
+    assert b.terminal_url is None
+    monkeypatch.setenv("CURATION_TERMINAL_URL", "http://env:7681")
+    c = build_parser().parse_args(["ui", "--delivery", "/d"])
+    assert c.terminal_url == "http://env:7681"   # env 缺省生效
+    d = build_parser().parse_args(["ui", "--delivery", "/d", "--terminal-url", "http://cli"])
+    assert d.terminal_url == "http://cli"        # 命令行压过 env
+
+
+def _config_text(app) -> str:
+    """Blocks 配置(含全部组件的 label/value)拍平成字符串,便于断言与定序。"""
+    return json.dumps(app.get_config_file(), ensure_ascii=False, default=str)
+
+
+def test_app_with_terminal_tab(delivery):
+    """带 terminal_url:配置里有「终端」页签 + iframe URL,且「终端」排在「质检报告」前。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = _config_text(build_app(delivery, terminal_url=TERM_URL))
+    assert "终端" in cfg and TERM_URL in cfg and "<iframe" in cfg
+    assert "质检报告" in cfg
+    assert cfg.index("终端") < cfg.index("质检报告")   # 左终端、右报告
+    # 六个子 tab 一个不少
+    for t in ("漏斗总览", "Episodes", "技能画像", "Stuck 时间线", "明细", "后端状态"):
+        assert t in cfg
+
+
+def test_app_without_terminal_tab_is_unchanged(delivery):
+    """不传 terminal_url:配置里连「终端」二字都没有,六 tab 照旧。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = _config_text(build_app(delivery))
+    assert "终端" not in cfg and "质检报告" not in cfg and "iframe" not in cfg
+    for t in ("漏斗总览", "Episodes", "技能画像", "Stuck 时间线", "明细", "后端状态"):
+        assert t in cfg
