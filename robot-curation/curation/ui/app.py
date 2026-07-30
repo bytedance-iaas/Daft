@@ -20,11 +20,14 @@ import logging
 import os
 
 from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DETAIL_LABELS,
-                       EPISODE_HEADERS, FUNNEL_HEADERS, SKILL_HEADERS,
-                       audit_rows, check_rows, discover_deliveries,
-                       episode_rows, funnel_rows, list_detail_tables,
-                       load_delivery, load_detail_table, load_timeline,
-                       overview_markdown, skill_rows, timeline_html)
+                       EPISODE_HEADERS, FUNNEL_HEADERS, LATENCY_HEADERS,
+                       LATENCY_KIND_NOTE, LATENCY_NOTE, LATENCY_PCTL_NOTE,
+                       SKILL_HEADERS, audit_rows, check_rows,
+                       discover_deliveries, episode_rows, funnel_rows,
+                       latency_bar_html, latency_rows, list_detail_tables,
+                       load_delivery, load_detail_table, load_perf,
+                       load_timeline, overview_markdown, perf_backend_md,
+                       perf_env_md, skill_rows, timeline_html)
 
 log = logging.getLogger("curation.ui")
 
@@ -44,6 +47,27 @@ _TERMINAL_CSS = """
   height: 78vh; width: 100%;
   background: #0b0f17; border-radius: 8px; padding: 8px 6px;
 }
+/* 2026-07-30 用户反馈:终端右侧有一条刺眼的白条——那是 xterm 滚动区
+   (.xterm-viewport)的**浏览器默认滚动条**,白色轨道贴在深色终端上。
+   改成与终端同色系:轨道融入背景,滑块深灰、悬停略亮。Firefox 走
+   scrollbar-color,WebKit 系走 ::-webkit-scrollbar 三件套。 */
+#curation-term-screen .xterm-viewport {
+  scrollbar-color: #3a4556 #0b0f17;
+  scrollbar-width: thin;
+}
+#curation-term-screen .xterm-viewport::-webkit-scrollbar { width: 10px; background: #0b0f17; }
+#curation-term-screen .xterm-viewport::-webkit-scrollbar-track { background: #0b0f17; }
+#curation-term-screen .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #3a4556; border-radius: 5px; border: 2px solid #0b0f17;
+}
+#curation-term-screen .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #55627a; }
+/* "字太淡"的真凶(2026-07-30 JS 实测):gradio 的 `.prose *` 把终端里**每一层**
+   后代(行 div、字符 span)全染成 var(--body-text-color)(rgb(39,39,42) 深灰),
+   压过 xterm 主题的继承——无论前景设什么,默认文字都是深灰。
+   修法必须覆盖**整棵子树**(第一版只改 span 不够:span 的 inherit 会从紧邻的
+   父级行 div 继承,而行 div 还是灰的——继承链断在中间)。带 xterm-fg- 类或
+   内联色的 span 保持 ANSI 原色,不碰。 */
+#curation-term-screen .xterm-rows *:not([class*="xterm-fg-"]) { color: inherit; }
 """
 
 
@@ -172,6 +196,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         note0, h0, r0 = _detail_table_md(m, t_first)
         tl = load_timeline(m)
         tl_note0 = f"口径:{tl['note']}" if tl.get("note") else ""
+        perf = load_perf(m)
         # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
         return (m, overview_markdown(m), funnel_rows(m), _config_yaml(m),
@@ -180,7 +205,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 gr.update(choices=[DETAIL_LABELS[t] for t in tables],
                           value=(DETAIL_LABELS[t_first] if t_first else None)),
                 note0, gr.update(value=r0, headers=h0),
-                tl_note0, timeline_html(tl))
+                tl_note0, timeline_html(tl),
+                perf_backend_md(perf), perf_env_md(perf), LATENCY_NOTE,
+                latency_rows(perf), latency_bar_html(perf))
 
     # theme/css/head 不在这里传:gradio 6 把它们从 Blocks() 挪到了 launch()/
     # mount_gradio_app()(传给 Blocks 只换来一条 UserWarning,值被丢掉)。见 presentation()。
@@ -240,6 +267,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 dt_note = gr.Markdown()
                 dt_table = gr.Dataframe(label="明细", interactive=False)
 
+            with gr.Tab("性能剖析"):
+                # 三块(2026-07-30):① 这次用的什么服务/什么硬件 ② 管线自己跑在
+                # 什么容器里 ③ 时间花在哪一类 VLM 调用上。数据全部来自交付记录,
+                # **界面不出现任何后端预设代号**(那是机房黑话,见 manifest 顶部红线)。
+                perf_backend = gr.Markdown()
+                perf_env = gr.Markdown()
+                gr.Markdown("### 延时剖析")
+                perf_note = gr.Markdown()
+                perf_table = gr.Dataframe(headers=LATENCY_HEADERS, label="分类延时",
+                                          interactive=False)
+                # 两段常量说明(与交付无关,不进 _load 的输出列表):分位数怎么读、
+                # 四类调用各是干什么的。第二轮反馈:光有语义化名字客户仍读不懂。
+                gr.Markdown(LATENCY_PCTL_NOTE)
+                gr.Markdown(LATENCY_KIND_NOTE)
+                perf_bar = gr.HTML()
+
             with gr.Tab("后端状态"):
                 gr.Markdown("逐预设探活 + 列服务端模型(与 `curation backends` 同源)")
                 be_btn = gr.Button("探活")
@@ -247,7 +290,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick, sk_table, au_table,
                     ep_md, ep_checks, ep_gallery, dt_pick, dt_note, dt_table,
-                    tl_note, tl_html]
+                    tl_note, tl_html,
+                    perf_backend, perf_env, perf_note, perf_table, perf_bar]
             picker.change(_load, picker, outs)
 
             def _reload(path):

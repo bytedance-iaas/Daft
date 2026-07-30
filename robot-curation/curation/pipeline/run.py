@@ -39,6 +39,87 @@ def _try_build_vlm(cfg: dict):
         return None, f"VLM 端点不可达({type(e).__name__}),task_success 跳过"
 
 
+def _read_first(*paths) -> str | None:
+    """按顺序试读文件首行内容,全失败返回 None(cgroup 路径 v1/v2 布局不同)。"""
+    for p in paths:
+        try:
+            with open(p) as f:
+                return f.read().strip()
+        except OSError:
+            continue
+    return None
+
+
+def container_limits() -> dict:
+    """容器 CPU/内存配额(cgroup v2 优先,v1 回退)。
+
+    读不到 / 无限制 一律给 None ——宁可界面写"未记录"也不猜:裸机、macOS、
+    非容器环境根本没有"配额"这回事,编一个数字比留空更误导。
+    """
+    cpu = mem = None
+    v2 = _read_first("/sys/fs/cgroup/cpu.max")
+    if v2:
+        parts = v2.split()
+        if len(parts) == 2 and parts[0] != "max":
+            try:
+                cpu = round(int(parts[0]) / int(parts[1]), 2)
+            except (ValueError, ZeroDivisionError):
+                cpu = None
+    else:                                      # cgroup v1
+        q = _read_first("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
+        p = _read_first("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
+        try:
+            if q and p and int(q) > 0 and int(p) > 0:
+                cpu = round(int(q) / int(p), 2)
+        except ValueError:
+            cpu = None
+    raw_mem = _read_first("/sys/fs/cgroup/memory.max",
+                          "/sys/fs/cgroup/memory/memory.limit_in_bytes")
+    if raw_mem and raw_mem != "max":
+        try:
+            v = int(raw_mem)
+            # v1 的"无限制"是个天文数字(2^63 附近);>1PB 一律当没设限
+            mem = v if 0 < v < (1 << 50) else None
+        except ValueError:
+            mem = None
+    return {"cpu_limit_cores": cpu, "memory_limit_bytes": mem}
+
+
+def collect_runtime(cfg: dict) -> dict:
+    """runtime 信息块(2026-07-30 性能剖析页签):这次跑批**用了什么服务、跑在什么机器上**。
+
+    纯粹**新增**字段,报告原有内容一个不动。两条纪律:
+    ① 硬件型号不在代码里——来自生效配置(站点文件 vlm_backends.*.hardware,经
+       apply_vlm_backend 带进 checks.task_success.vlm),读不到就留 None 让 UI 写
+       "未记录";UI 侧绝不许有"端点→型号"的硬编码映射表。
+    ② 节点名优先取下行 API 注入的 NODE_NAME;没注入则退回容器 hostname,并用
+       node_source 如实标明取的是哪个(hostname 在 K8s 里等于 pod 名,不是节点名)。
+    """
+    import socket
+
+    vlm = cfg.get("checks", {}).get("task_success", {}).get("vlm") or {}
+    lim = container_limits()
+    node_env = os.environ.get("NODE_NAME") or ""
+    return {
+        "vlm_backend": {
+            "endpoint": vlm.get("endpoint"),
+            "model": vlm.get("model"),
+            "hardware": vlm.get("hardware"),
+            "service_type": vlm.get("service_type"),
+            # 并发三旋钮(UI 用通俗标签展示;值以生效配置为准,不是默认值)
+            "episode_concurrency": cfg.get("pipeline", {}).get("vlm_episode_concurrency"),
+            "frame_concurrency": vlm.get("max_concurrency"),
+            "caption_concurrency": (cfg.get("skill_profile") or {}).get("caption_concurrency"),
+        },
+        "environment": {
+            "cpu_limit_cores": lim["cpu_limit_cores"],
+            "memory_limit_bytes": lim["memory_limit_bytes"],
+            "node": node_env or socket.gethostname(),
+            "node_source": "NODE_NAME" if node_env else "hostname",
+        },
+    }
+
+
 def run_pipeline(
     config_path: str | None,
     input_dir: str,
@@ -537,19 +618,26 @@ def run_pipeline(
     # 生效配置快照(2026-07-27 U0):UI/复盘要能回答"这次到底用了什么阈值/后端"。
     # 配置里只有 env 变量名(api_key_env),无密钥,可安心入交付件。
     report["config_effective"] = cfg
+    # 运行环境+后端信息(2026-07-30 性能剖析页签):config_effective 里有端点/模型/并发,
+    # 但没有「跑在什么硬件上、容器有多少配额」——那两样只有运行期知道,补这一块。
+    report["runtime"] = collect_runtime(cfg)
     # task_success 证据帧(2026-07-27 U0):被拒/待裁决条目的 probe 帧落 JPEG——
     # detail 里只有帧号,没图人工没法裁决。导出期重解码,不碰漏斗并发路径。
     # VLM 调用延时档案(2026-07-28 同事需求):按类型分桶的分位数进报告,
     # 逐请求明细进 details/vlm_latency.csv(画 CDF/箱线的原料)。
+    # 2026-07-30:每行多记 started_at(发出时刻 epoch),汇总里因此多出 wall_s
+    # ——按类的**墙钟**(首次发出 → 末次返回)。UI 的耗时对比图只认这个口径;
+    # 次数×均值那种"总耗时"在并发下高估几十倍,已从界面彻底移除。
     from ..adapters.vlm_client import latency_rows, latency_summary
     _lat = latency_summary()
     if _lat:
         report["dataset"]["vlm_latency"] = _lat
         with open(os.path.join(det_dir, "vlm_latency.csv"), "w", newline="") as f:
             _w = __import__("csv").writer(f)
-            _w.writerow(["call_type", "seconds", "ok"])
-            for tag, dt, ok in latency_rows():
-                _w.writerow([tag, round(dt, 3), int(ok)])
+            _w.writerow(["call_type", "seconds", "ok", "started_at"])
+            for tag, dt, ok, st in latency_rows():
+                _w.writerow([tag, round(dt, 3), int(ok),
+                             "" if st is None else round(st, 3)])
 
     _ev_mode = str(cfg.get("pipeline", {}).get("evidence_frames", "flagged"))
     if _ev_mode != "off" and videos_of:

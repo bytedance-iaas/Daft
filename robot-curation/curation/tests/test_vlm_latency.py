@@ -13,8 +13,65 @@ import numpy as np
 
 from curation.adapters.vlm_client import (latency_record, latency_reset,
                                           latency_rows, latency_summary,
-                                          make_endstate_judge)
+                                          make_endstate_judge,
+                                          read_latency_csv)
 from curation.export.report import to_markdown
+
+
+def test_wall_clock_beats_sum_when_calls_overlap():
+    """墙钟(2026-07-30):首次发出 → 末次返回。并发重叠时必须 < Σ单次耗时。
+
+    造三次重叠调用:t0 起 10s、t0+1 起 10s、t0+2 起 10s。
+    Σ=30s(旧图会这么画),真实墙钟只有 12s —— 差 2.5 倍,数据集一大就是几十倍。
+    """
+    latency_reset()
+    t0 = 1_700_000_000.0
+    for i in range(3):
+        latency_record("probe", 10.0, started_at=t0 + i)
+    s = latency_summary()["probe"]
+    assert s["wall_s"] == 12.0
+    assert s["wall_s"] < s["n"] * s["mean_s"]          # 严格小于"次数×均值"
+    assert s["wall_s"] >= s["max_s"]                   # 且不可能短于最慢的那一次
+    # 串行(不重叠)时两者相等,是墙钟的上界而非另一套口径
+    latency_reset()
+    for i in range(3):
+        latency_record("caption", 10.0, started_at=t0 + i * 10)
+    assert latency_summary()["caption"]["wall_s"] == 30.0
+    latency_reset()
+
+
+def test_wall_clock_counts_failed_calls_and_needs_timestamps():
+    """失败的调用也占了那段时间 → 算进墙钟;一条时刻都没有 → 干脆不给 wall_s。"""
+    latency_reset()
+    t0 = 1_700_000_000.0
+    latency_record("probe", 5.0, started_at=t0)
+    latency_record("probe", 30.0, ok=False, started_at=t0 + 2)   # 超时也占时间
+    s = latency_summary()["probe"]
+    assert s["n"] == 1 and s["errors"] == 1 and s["wall_s"] == 32.0
+    latency_reset()
+    latency_record("llm", 5.0)                                    # 没传 started_at
+    assert "wall_s" not in latency_summary()["llm"]
+    latency_reset()
+
+
+def test_latency_csv_roundtrip_and_legacy_three_column(tmp_path):
+    """CSV 读回复算:四列有墙钟;**三列老 CSV** 读得进去但没有墙钟(如实降级)。"""
+    new = tmp_path / "new.csv"
+    new.write_text("call_type,seconds,ok,started_at\n"
+                   "probe,10.0,1,1700000000.0\n"
+                   "probe,10.0,1,1700000002.0\n", encoding="utf-8")
+    s = latency_summary(read_latency_csv(str(new)))["probe"]
+    assert s["n"] == 2 and s["wall_s"] == 12.0
+    old = tmp_path / "old.csv"                        # 2026-07-30 之前的交付
+    old.write_text("call_type,seconds,ok\nprobe,10.0,1\nprobe,10.0,1\n",
+                   encoding="utf-8")
+    s_old = latency_summary(read_latency_csv(str(old)))["probe"]
+    assert s_old["n"] == 2 and s_old["mean_s"] == 10.0
+    assert "wall_s" not in s_old
+    # 老 CSV 复算出的档案喂给界面 → 不画图,只给一句说明(绝不退回均值×次数)
+    from curation.ui.manifest import NO_WALL_NOTE, latency_bar_html
+    html = latency_bar_html({"latency": {"probe": s_old}})
+    assert NO_WALL_NOTE in html and "margin:8px 0" not in html
 
 
 def test_summary_percentiles_and_errors():
@@ -57,6 +114,8 @@ def test_endstate_judge_records_tagged_latency():
         s = latency_summary()
         assert "endstate" in s and s["endstate"]["n"] >= 2   # 双问法=至少两请求
         assert s["endstate"]["errors"] == 0
+        # 真调用路径必须把发出时刻记上(否则界面画不出墙钟)
+        assert s["endstate"]["wall_s"] >= s["endstate"]["max_s"]
     finally:
         srv.shutdown()
         latency_reset()

@@ -23,8 +23,12 @@
 
   const TERM_OPTS = {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-    fontSize: 13.5,
-    theme: { background: "#0b0f17", foreground: "#d6deeb", cursor: "#5aa7ff" },
+    // 2026-07-30 用户反馈"字太淡完全看不清":13.5px + 灰蓝前景在黑底上确实弱。
+    // 提字号 + 前景提到近白 + 半粗,黑底终端的可读性以"隔着会议室投影也能看清"为准。
+    fontSize: 15,
+    fontWeight: "500",
+    theme: { background: "#0b0f17", foreground: "#f2f6ff", cursor: "#5aa7ff",
+             selectionBackground: "#2c4a78" },
     cursorBlink: true,
     convertEol: true,
   };
