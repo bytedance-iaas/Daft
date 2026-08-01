@@ -104,9 +104,59 @@ skill_profile:                     # 技能画像:caption 路线(VLM 端点可�
   method: caption
   # 分类判据(2026-07-11 判据显式化):分类维度/颗粒度由这段文字声明,类数由数据
   # 在判据下自然涌现(不设数字范围)。客户可整段替换(如改按物体类型/场景分)。
+  # ⚠️ 与 curation/dataset_level/taxonomy.py 的 DEFAULT_GUIDELINE 保持同文(改一处必改另一处)。
+  # 2026-07-30 粒度改进:族的定义由"动词"改成"交互类型"——旧判据在 droid-200 归出 24 族,
+  #   前四族 Put/Pick/Take/Move 占 72% 却是同一种抓放,11 个族只有 1 条(含互逆对)。
   taxonomy_guideline: |
-    Group by MANIPULATION SKILL = verb + motion pattern (pick, place, push, pour,
-    open, close, fold, sweep, wipe, ...).
+    Group by MANIPULATION SKILL, at TWO levels: family = interaction type,
+    sub-skill = motion-pattern variant.
+    - FAMILY = the TYPE OF PHYSICAL INTERACTION between robot and object (how the
+      robot acts on it), NOT whichever verb a caption happens to use. Typical
+      families, take only what the data needs: grasp-and-transport (grasp / lift /
+      carry / place / release — pick, take, put, move, stack ALL belong here);
+      articulated-object actuation (open, close, unscrew, plug, press, switch);
+      deformable-object manipulation (fold, unfold, bundle, drape); non-prehensile
+      manipulation (push, pull, tip, flip, slide — object never grasped); tool cyclic
+      motion (wipe, stir, sweep, vacuum); pouring / granular transfer.
+    - That list is a REFERENCE, not a closed set. If the data is a different kind of
+      interaction (suturing, cable routing, assembly, ...), name a family after ITS
+      interaction type. Never file an episode into a listed family whose interaction
+      type it does not actually match — a wrong-but-familiar label is worse than a new
+      family.
+    - NEAR-SYNONYM verbs NEVER get their own family: pick / take / grab / lift are
+      ONE family, and put / place / set belong to that SAME family.
+    - INVERSE action pairs stay in the SAME family ONLY IF they share the same CONTACT
+      MODE (fold/unfold, open/close, screw/unscrew — both directions touch and hold the
+      object the same way); for those, direction is a SUB-SKILL difference, never a
+      family difference. push/pull are NOT such a pair: pushing normally never grasps
+      while pulling normally requires a grasp, so file each of them by its actual
+      CONTACT MODE, not by the fact that they are opposites.
+    - SUB-SKILL = verb + motion-pattern variant WITHIN the family: place-onto-surface
+      vs place-into-container vs stack; open vs close; fold vs unfold.
+    - SUB-SKILL granularity is governed as STRICTLY as family granularity. A sub-skill
+      is a RECURRING MOTION PATTERN, not a one-off phrasing. Two candidate sub-skills
+      that differ ONLY by destination, by object identity, or by what the object is
+      attached to / detached from are the SAME sub-skill and must be one.
+    - INVERSE DIRECTIONS must stay SEPARATE sub-skills inside their family: open vs
+      close, fold vs unfold, pour-in vs pour-out, screw vs unscrew are NOT the same
+      skill and must NEVER be merged — the contact is alike but the motion runs the
+      opposite way. Whenever two sub-skills are opposite directions of the same action,
+      they are DIFFERENT skills. Never name a combined group after one direction.
+    - Do NOT open a new sub-skill for a single caption merely because no existing one
+      fits it exactly: if ANY sub-skill already in that family shares its motion
+      pattern, put the caption there. A one-member sub-skill is legitimate ONLY when NO
+      sub-skill in the family shares its motion pattern.
+    - NEAR-SYNONYM verbs never get their own SUB-SKILL either: connect / join /
+      attach / mate / insert / plug describing the SAME contact and the SAME motion
+      path are ONE sub-skill. Before opening a second sub-skill inside a family, ask
+      whether the two differ in the MOTION ITSELF (approach direction, contact mode,
+      release) — if the only difference is which English verb the caption chose, they
+      are the same sub-skill.
+    - The number of sub-skills follows the number of DISTINCT MOTION PATTERNS in the
+      family — no more, no fewer. A family whose episodes all share one motion pattern
+      has exactly ONE sub-skill, and that is correct, not a degenerate failure. A
+      family containing several distinct approach / contact / release patterns must
+      expose all of them. Count is never the criterion; the motion is.
     - Object identity, color, size, brand, and table position are NOT grouping
       criteria: 'move the blue fork to the burner' and 'move the silver pot to the
       burner' are the SAME skill.
@@ -117,11 +167,12 @@ skill_profile:                     # 技能画像:caption 路线(VLM 端点可�
       pattern: place-onto-surface vs place-into-container differ (different approach
       and release motion); blue cube vs red cube do NOT, burner vs tray does NOT.
     - criterion texts must describe MOTION, never colors/object identities/locations.
-    - Family = coarse skill verb; sub-skill = motion-pattern variant within the family.
     - The number of families and sub-skills must EMERGE from the data under this
       criterion: create exactly as many as naturally exist. Do not pad, do not force
       a count. One family holding everything is a failure; one sub-skill per caption
-      is a failure.
+      is a failure. Emitting a family that has NO members is ALSO a failure — the
+      typical families listed above are a VOCABULARY, not a checklist; never output a
+      family you did not actually fill.
   n_frames: 8
   caption_concurrency: 32          # caption 同时处理几条 episode(1=串行,排障基线)。
                                    #   2026-07-22 实测 20 条 DROID(caption 段墙钟):
