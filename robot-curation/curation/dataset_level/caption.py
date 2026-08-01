@@ -32,7 +32,7 @@ def caption_episodes(rows: list[dict], captioner: Captioner,
 
     ⚠️ **保序是正确性要求,不是性能细节**:返回的第 i 条必须对应 rows[i]。下游
     taxonomy.assign / audit_labels / skill_profile_two_level 全都按下标把 caption 与
-    episode 对上——错位一格,整份技能画像和标注审计就全错,而且**不会报错**,
+    episode 对上——错位一格,整份技能画像和标注-画面分歧就全错,而且**不会报错**,
     只会安静地给出一份看起来合理的错报告。用 _map_concurrent(ThreadPoolExecutor.map
     保序),并由 test_caption_concurrency 用"内容可区分的假 captioner"钉死。
     """

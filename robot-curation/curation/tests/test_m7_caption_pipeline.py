@@ -101,8 +101,8 @@ def test_audit_two_tiers():
     out = audit_labels(ids, ins, caps, cfams, TAX, fake_llm)
     ids_high = {f["id"]: f["reason"] for f in out["high"]}
     assert ids_high["ep2"] == "garbage"
-    assert "跨族" in ids_high["ep1"]                       # 开合↔操纵=高对比度,立案
-    # ep3: fold(标注) vs manipulate(画面)——fold 不在等价类 → 也高置信
+    assert "分歧" in ids_high["ep1"]                       # 开合↔操纵=高对比度,立案
+    # ep3: fold(标注) vs manipulate(自产描述)——fold 不在等价类 → 也高置信
     assert "ep3" in ids_high
     assert ids_high.get("ep0") is None                     # 同族不立案
 
@@ -188,3 +188,116 @@ def test_refine_keeps_on_no_or_error():
     def boom(q):
         raise RuntimeError("端点崩了")
     assert len(refine_taxonomy(orig, boom)["families"][0]["subskills"]) == 2
+
+
+# ───────── 分歧措辞中性化 + 打标稳定度定级(2026-07-31)─────────
+#
+# 背景(硬证据,别把措辞改回去):droid ep000143 真实剧本"从洗手池拿毛巾→贴墙擦→
+# 放回台面",原始标注逐字正确,我方 caption 却说成 "Hang the towel on the hook";
+# 且同条 episode 方舟 temperature=0 连打 5 次得到 5 种说法。拿不稳的东西当基准
+# 审判客户 = 产品级缺陷 → reason 只描述分歧、必须标明"自产描述(VLM 生成)"。
+
+def test_audit_reason_is_neutral_no_bare_screen_claim():
+    """reason 不许出现"画面=X"这类裸表述(读起来像客观事实,实际是模型一句猜测)。"""
+    def fake_llm(prompt):
+        return json.dumps({"map": [{"label": "close microwave", "family": "open/close"}]})
+
+    out = audit_labels(["ep1"], ["close microwave"], ["place the cup on the table"],
+                       ["manipulate"], TAX, fake_llm)
+    reason = out["high"][0]["reason"]
+    assert "画面=" not in reason and "标注=" not in reason
+    assert "分歧" in reason and "自产描述(VLM 生成)" in reason and "需人工判定" in reason
+
+
+def _audit_fixture():
+    return {"high": [{"id": "epA", "label": "wipe the wall with the towel",
+                      "caption": "Hang the towel on the hook",
+                      "reason": "分歧:原始标注归为 wipe,自产描述(VLM 生成)归为 place——需人工判定"},
+                     {"id": "epG", "label": "asdkjh", "caption": "x", "reason": "garbage"}],
+            "mid_for_review": []}
+
+
+def test_retier_stable_stays_high():
+    """① N 次重打标同族 → 留在 high 且 caption_stable=True(措辞变了不算不稳)。"""
+    from curation.dataset_level.audit import retier_by_caption_stability
+    fam = {"hang the towel on the hook": "place", "put the towel on the counter": "place",
+           "place towel onto the sink counter": "place"}
+    out = retier_by_caption_stability(
+        _audit_fixture(),
+        {"epA": ["put the towel on the counter", "place towel onto the sink counter",
+                 "put the towel on the counter"]},
+        lambda c: fam.get(c.strip().lower(), "未归类"))
+    a = [e for e in out["high"] if e["id"] == "epA"][0]
+    assert a["caption_stable"] is True and len(a["recaptions"]) == 3
+    assert out["low_caption_unstable"] == []
+    # 乱码档与自产描述无关 → 永不参与降级,也不该被塞进稳定度字段
+    g = [e for e in out["high"] if e["id"] == "epG"][0]
+    assert g == {"id": "epG", "label": "asdkjh", "caption": "x", "reason": "garbage"}
+
+
+def test_retier_unstable_demoted_with_all_recaptions():
+    """② N 次自己就不一致 → 降级出 high,reason 注明我方不稳,N 次原文全留。"""
+    from curation.dataset_level.audit import retier_by_caption_stability
+    fam = {"hang the towel on the hook": "place",
+           "wipe the wall with a towel": "wipe",
+           "put the towel on the sink counter": "place"}
+    recaps = ["wipe the wall with a towel", "put the towel on the sink counter",
+              "wipe the wall with a towel"]
+    out = retier_by_caption_stability(_audit_fixture(), {"epA": recaps},
+                                      lambda c: fam.get(c.strip().lower(), "未归类"))
+    assert [e["id"] for e in out["high"]] == ["epG"]           # epA 已移出 high
+    d = out["low_caption_unstable"][0]
+    assert d["id"] == "epA" and d["caption_stable"] is False
+    assert d["recaptions"] == recaps                           # N 次原文供人看
+    assert "我方画面描述不稳定" in d["reason"] and "不足以质疑标注" in d["reason"]
+    assert "分歧:原始标注归为 wipe" in d["reason"]             # 原始分歧信息不丢
+
+
+def test_retier_disabled_is_bitwise_noop():
+    """③ audit_recheck_n=1(→ 无重打标数据)→ 与改动前逐字一致,零回归。
+
+    这条最重要:默认关掉时,产出必须与不接本机制时一模一样——不多键、不多字段,
+    连归族函数都一次都不许调(调了就是白烧 LLM 额度)。
+    """
+    from curation.dataset_level.audit import retier_by_caption_stability
+
+    def boom(c):
+        raise AssertionError("关闭时不该做归族")
+
+    src = _audit_fixture()
+    out = retier_by_caption_stability(src, {}, boom)
+    assert out == src                       # 键集与每个字段逐字相同(无 low_ 档)
+    assert list(out) == list(src)
+
+
+def test_retier_empty_flagged_set_ok():
+    """④ 被标记条目为空 → 不崩。"""
+    from curation.dataset_level.audit import retier_by_caption_stability
+    empty = {"high": [], "mid_for_review": []}
+    assert retier_by_caption_stability(empty, {}, lambda c: "x") == empty
+    out = retier_by_caption_stability(empty, {"epX": ["a"]}, lambda c: "x")
+    assert out == {"high": [], "mid_for_review": [], "low_caption_unstable": []}
+
+
+def test_retier_failed_recaption_is_conservative():
+    """⑤ 重打标失败(空串)/归族失败 → 证据不足,维持原档,不误伤两边。"""
+    from curation.dataset_level.audit import retier_by_caption_stability
+
+    def boom_family(c):
+        raise RuntimeError("归族端点崩了")
+
+    out = retier_by_caption_stability(_audit_fixture(), {"epA": ["", "  ", ""]},
+                                      lambda c: "place")
+    a = [e for e in out["high"] if e["id"] == "epA"][0]
+    assert a["caption_stable"] is None                 # 未知,不是 True 也不是 False
+    assert out["low_caption_unstable"] == []           # 没被误降级
+    # 归族全失败同理:一条可比样本都没有 → 维持原档
+    out2 = retier_by_caption_stability(_audit_fixture(), {"epA": ["a", "b"]}, boom_family)
+    assert out2["low_caption_unstable"] == []
+    assert [e for e in out2["high"] if e["id"] == "epA"][0]["caption_stable"] is None
+
+
+def test_audit_recheck_n_configured_with_off_switch():
+    """默认 3(开),1=关;site.yaml 不动 → 值从 default.yaml 读得到。"""
+    from curation.pipeline.config import load_config
+    assert load_config()["skill_profile"]["audit_recheck_n"] == 3

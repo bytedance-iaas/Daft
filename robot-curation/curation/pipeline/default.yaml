@@ -174,6 +174,18 @@ skill_profile:                     # 技能画像:caption 路线(VLM 端点可�
       typical families listed above are a VOCABULARY, not a checklist; never output a
       family you did not actually fill.
   n_frames: 8
+  audit_recheck_n: 3               # 标注-画面分歧的**复检轮数**(1 = 关闭本机制)。
+                                   #   why:我方 caption 不可复现——同一条 episode、同一批帧,
+                                   #   方舟 temperature=0 连打 5 次得到 5 种说法(droid ep000143
+                                   #   两次分别是 "put the towel on the sink counter" /
+                                   #   "Hang the towel on the hook",而原始标注逐字正确)。
+                                   #   拿一个不稳的东西当基准去质疑客户标注是产品缺陷,故把
+                                   #   不可复现变成信号:对被标记条目重打标 N 次,N 次(连同原
+                                   #   描述)归到同一族=我方稳→保持高置信;自己就不一致=我们
+                                   #   自己都没看准→降级 low_caption_unstable,不指控标注。
+                                   #   一致性判定在**族**这一层(措辞天然会变,族一致就算稳)。
+                                   #   成本:只对被标记条目重跑,非全量——droid-200 实测约
+                                   #   30-40 条 × 3 次 ≈ 100 次 VLM 调用(全量 caption 的 ~1/2 轮)。
   caption_concurrency: 32          # caption 同时处理几条 episode(1=串行,排障基线)。
                                    #   2026-07-22 实测 20 条 DROID(caption 段墙钟):
                                    #     1 → 312s  1.0×    8 → 66s  4.7×    16 → 37s  8.4×

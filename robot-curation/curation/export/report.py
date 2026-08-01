@@ -183,11 +183,19 @@ def to_markdown(report: dict) -> str:
             lines.append(f"- ⚠️ 欠采样技能: {', '.join(sk['undersampled'])}")
         lines.append("")
     la = report.get("label_audit")
-    if la and (la["high"] or la["mid_for_review"]):
-        lines.append(f"## 标注审计(高置信 {len(la['high'])} / 人工复核 {len(la['mid_for_review'])})")
+    _unst = (la or {}).get("low_caption_unstable") or []
+    if la and (la["high"] or la["mid_for_review"] or _unst):
+        lines.append(f"## 标注-画面分歧(高置信 {len(la['high'])} / 人工复核 "
+                     f"{len(la['mid_for_review'])} / 我方描述不稳 {len(_unst)})")
+        lines.append("> 原始标注与自产描述(VLM 生成)归进了不同技能族。**双方都可能错**:"
+                     "自产描述既可能看错也不一定可复现,这里只给复核队列,不判谁对。")
         for f in la["high"][:20]:
+            _st = "(重打标 N 次同族,我方描述稳定)" if f.get("caption_stable") else ""
             lines.append(f"- [高] {f['id']} {f['reason']}: 标注「{f['label'][:40]}」"
-                         f" vs 画面「{f['caption'][:40]}」")
+                         f" vs 自产描述「{f['caption'][:40]}」{_st}")
+        for f in _unst[:20]:
+            lines.append(f"- [降级·我方描述不稳] {f['id']}: 标注「{f['label'][:40]}」"
+                         f" vs 重打标「{'」「'.join(c[:40] for c in f.get('recaptions', []))}」")
         lines.append("")
     dropped = report["episodes"]["dropped"]
     if dropped:
@@ -293,8 +301,12 @@ def save_report(report: dict, out_dir: str) -> tuple[str, str]:
     review_out = {"数据集": report.get("数据集", ""), "机器人": report.get("机器人"),
                   "待人工裁决总数": len(review_view), "episodes": review_view}
     audit = report.get("label_audit")
-    if audit and audit.get("mid_for_review"):
-        review_out["标注审计复核队列"] = audit["mid_for_review"]
+    if audit and (audit.get("mid_for_review") or audit.get("low_caption_unstable")):
+        # 键名中性化(2026-07-31):不是"审计标注",是标注与自产描述的分歧,双方都可能错。
+        # 降级档(我方描述重打标不稳)也进队列——它仍是待人工判定的分歧,只是嫌疑更低;
+        # 不进来的话 UI 里就看不见了(UI 只渲染这条队列)。
+        review_out["标注-画面分歧复核队列"] = ((audit.get("mid_for_review") or [])
+                                       + (audit.get("low_caption_unstable") or []))
 
     pj = os.path.join(out_dir, "passed.json")
     rj = os.path.join(out_dir, "reject.json")
