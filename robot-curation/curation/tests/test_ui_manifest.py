@@ -687,6 +687,159 @@ def test_app_has_perf_tab(delivery):
         assert codename not in cfg, codename
 
 
+# ───────── 技能分布图(2026-07-30):技能画像页的横条图 ─────────
+#
+# 两种画像形状都要吃:两级(正常路径,VLM caption→LLM 归纳)与扁平(VLM 不可用时
+# 按原始标注分组的降级路径)。红线三条,以下测试逐条钉死:**不截断**、**单色**、
+# **子技能与族条共用全局尺子**。
+
+#: 两级画像(droid 那份的缩样):Put 一家独大且有 3 个子技能,Pick 只有 1 个子技能
+#: (→ 不该折叠),Bundle 只有 1 条数据且在 undersampled 名单里。
+TWO_LEVEL_SKILLS = {
+    "n_episodes": 195, "n_families": 3, "guideline": "按动作意图分族",
+    "undersampled": ["Bundle"],
+    "families": {
+        "Put": {"count": 102, "pct": 52.3, "criterion": "把物体放到目标位置",
+                "subskills": {
+                    "Put A on B": {"count": 80, "pct": 41.0, "criterion": "堆叠"},
+                    "Put in": {"count": 22, "pct": 11.3, "criterion": "放入容器"}}},
+        "Pick": {"count": 15, "pct": 7.7, "criterion": "拿起",
+                 "subskills": {"Pick up": {"count": 15, "pct": 7.7, "criterion": "拿起"}}},
+        "Bundle": {"count": 1, "pct": 0.5, "criterion": "捆扎", "subskills": {}}},
+}
+
+#: 扁平降级画像(bridge 那份的缩样):键是原始指令,没有子技能、没有判据。
+FLAT_SKILLS = {
+    "n_episodes": 200, "n_skills": 3, "undersampled": ["put the pot on the stove"],
+    "skills": {"(无指令)": {"count": 56, "pct": 28.0, "avg_len_s": 8.14},
+               "fold the cloth": {"count": 3, "pct": 1.5, "avg_len_s": 7.0},
+               "put the pot on the stove": {"count": 1, "pct": 0.5, "avg_len_s": 9.2}},
+}
+
+
+def _skills_delivery(tmp_path, skills, name="sk"):
+    """只有 skills 块的最小交付(图不依赖 episodes)。"""
+    d = tmp_path / name
+    d.mkdir()
+    (d / "passed.json").write_text(
+        json.dumps({"数据集": "x", "episodes": {}, "skills": skills},
+                   ensure_ascii=False), encoding="utf-8")
+    return load_delivery(str(d))
+
+
+def _bar_widths(html: str) -> list[float]:
+    """按出现顺序取出每根条的宽度百分比(条 = 填了主色的那个 div)。"""
+    import re
+    from curation.ui.manifest import SKILL_BAR_COLOR
+    return [float(w) for w in re.findall(
+        r'width:([\d.]+)%;height:100%;background:' + SKILL_BAR_COLOR, html)]
+
+
+def test_skill_chart_two_level_drilldown(tmp_path):
+    """两级形状:按条数降序、族条可点开子技能;**只有 ≥2 子技能的族**才做 details。"""
+    from curation.ui.manifest import SKILL_FALLBACK_NOTE, skill_bar_html, skill_chart_items
+    m = _skills_delivery(tmp_path, TWO_LEVEL_SKILLS)
+    shape, items = skill_chart_items(m)
+    assert shape == "two_level"
+    assert [it["name"] for it in items] == ["Put", "Pick", "Bundle"]      # 条数降序
+    html = skill_bar_html(m)
+    # Put 有 2 个子技能 → 唯一一个 details;Pick 只有 1 个 → 普通行,不折叠
+    assert html.count("<details>") == 1
+    assert html.index("Put") < html.index("Pick") < html.index("Bundle")
+    assert "Put A on B" in html and "Put in" in html                      # 子技能条在里面
+    # 下钻零 JavaScript:靠 details/summary + CSS 的 ▸/▾,不许有脚本
+    assert "<script" not in html and "onclick" not in html
+    assert "sk-caret" in html
+    # 悬停详情:条数 / 占比 / 判据
+    assert 'title="Put · 102 条 · 52.3% · 判据:把物体放到目标位置"' in html
+    assert SKILL_FALLBACK_NOTE not in html                                # 正常路径不挂降级注记
+    assert "共 3 个技能族" in html and "覆盖 195 条数据" in html
+
+
+def test_skill_chart_flat_shape_marks_degradation(tmp_path):
+    """扁平形状:必须当面写清是「未经 VLM 审计的原始标注分组」,且一个 details 都没有。"""
+    from curation.ui.manifest import SKILL_FALLBACK_NOTE, skill_bar_html, skill_chart_items
+    m = _skills_delivery(tmp_path, FLAT_SKILLS)
+    shape, items = skill_chart_items(m)
+    assert shape == "flat" and [it["name"] for it in items][0] == "(无指令)"
+    html = skill_bar_html(m)
+    assert SKILL_FALLBACK_NOTE in html and "降级" in html and "仅供参考" in html
+    assert "<details" not in html                     # 无子技能 → 全普通行
+    assert _bar_widths(html) == [100.0, 5.36, 1.79]   # 56/3/1,全局尺子
+
+
+def test_skill_chart_empty_and_missing(tmp_path):
+    """未启用 / 空画像:一句说明,不报错也不占位(不画空坐标轴)。"""
+    from curation.ui.manifest import skill_bar_html, skill_chart_items
+    for skills in ({}, {"n_episodes": 0, "families": {}}, {"skills": {}}):
+        m = _skills_delivery(tmp_path, skills, name=f"e{abs(hash(str(skills)))}")
+        assert skill_chart_items(m)[0] == "empty"
+        html = skill_bar_html(m)
+        assert "未生成技能画像" in html
+        assert "width:" not in html                   # 一根条都没有
+
+
+def test_skill_chart_one_global_scale(tmp_path):
+    """★红线:子技能条与族条共用**全局**尺子,不按族内最大值重缩放。
+
+    构造 Put=100 与只有 2 条数据的 Tiny(子技能各 1 条)。若按族内归一,Tiny 的
+    子技能会画成满格 → 1 条数据看着和 100 条一样长,是骗人的。
+    """
+    from curation.ui.manifest import skill_bar_html
+    m = _skills_delivery(tmp_path, {"families": {
+        "Put": {"count": 100, "pct": 50.0, "subskills": {
+            "Put A on B": {"count": 60}, "Put in": {"count": 40}}},
+        "Tiny": {"count": 2, "pct": 1.0, "subskills": {
+            "Tiny a": {"count": 1}, "Tiny b": {"count": 1}}}}}, name="scale")
+    html = skill_bar_html(m)
+    # 顺序:Put、Put 的两个子技能、Tiny、Tiny 的两个子技能
+    assert _bar_widths(html) == [100.0, 60.0, 40.0, 2.0, 1.0, 1.0]
+    # 子技能条一律不超过父族条(全局尺子的直接后果)
+    assert all(w <= 100.0 for w in _bar_widths(html)[1:3])
+    assert all(w <= 2.0 for w in _bar_widths(html)[4:])
+
+
+def test_skill_chart_undersampled_chip_carries_text(tmp_path):
+    """样本偏少:带**文字**的琥珀 chip(不靠颜色单独表意),且**不换条的填充色**。"""
+    from curation.ui.manifest import SKILL_BAR_COLOR, skill_bar_html
+    html = skill_bar_html(_skills_delivery(tmp_path, TWO_LEVEL_SKILLS, name="chip"))
+    assert html.count("样本偏少") == 2                # 1 个 chip + 1 句出处说明
+    assert "画像自带的名单" in html and "不是本图现算的" in html
+    # 单色红线:条只有这一个填充色,undersampled 的那根也一样(条短已经说明问题)
+    assert html.count(f"background:{SKILL_BAR_COLOR}") == len(_bar_widths(html)) == 5
+    assert SKILL_BAR_COLOR == "#2a78d6"
+
+
+def test_skill_chart_never_truncates(tmp_path):
+    """★红线:全部条目都画。长尾就是画像的信息量,截断会造出"数据很集中"的假象。"""
+    from curation.ui.manifest import skill_bar_html
+    skills = {"n_episodes": 200, "n_skills": 130, "undersampled": [],
+              "skills": {"(无指令)": {"count": 56, "pct": 28.0}}}
+    skills["skills"].update({f"task {i}": {"count": 1, "pct": 0.5} for i in range(129)})
+    html = skill_bar_html(_skills_delivery(tmp_path, skills, name="long"))
+    assert len(_bar_widths(html)) == 130                  # 130 项一根不少
+    assert "task 0" in html and "task 128" in html        # 最尾巴的也在
+    for banned in ("仅显示前", "…共", "其余"):
+        assert banned not in html, banned
+
+
+def test_app_skill_chart_wired_into_tab(delivery):
+    """Gradio 层:技能画像页多了一块 HTML,且 _load 的返回数与输出组件数对得上。
+
+    (输出数对不上是 Gradio 运行期才炸的接线错误,构造冒烟测不出来,这里直接调。)
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    loads = [f for f in app.fns.values() if getattr(f.fn, "__name__", "") == "_load"]
+    assert loads, "找不到 _load 依赖"
+    for f in loads:
+        assert len(f.fn(delivery)) == len(f.outputs)
+    html = [o for f in loads for o in f.outputs
+            if type(o).__name__ == "HTML"]
+    assert html, "技能画像页应有 HTML 组件承载分布图"
+
+
 def test_audit_queue_accepts_both_keys(tmp_path):
     """review.json 键名 2026-07-31 中性化 → 新老两个键 UI 都要认。
 

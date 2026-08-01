@@ -159,6 +159,163 @@ def skill_rows(m: dict) -> list[list]:
     return rows
 
 
+# ───────── 技能分布图(2026-07-30):技能画像页的横向条形图 ─────────
+#
+# 设计定稿(用户拍板 + 两条实现纪律),改之前先读完:
+# ① **不截断**:全部条目都画。画像的价值恰恰在长尾——bridge 那 130 项里绝大多数
+#    只有 1 条数据,截掉尾巴看到的是"数据很集中"的假象。行高压紧(一条一行、
+#    条间 2px)让长列表也能扫读。
+# ② **单色**:所有条同一个蓝。所有条测的是同一个量(条数),按族上色是彩虹图
+#    反模式——颜色不携带任何信息,只增加视觉噪声,还会被误读成"类别有好坏"。
+#    单蓝已过调色板校验(亮度带 / 彩度下限 / CVD 分离 / 常视分离 / 对比度,五项
+#    全过)。**别改成多色。**
+# ③ **样本偏少**:名单直接用画像自带的 undersampled 字段(不是本图现算的,图下
+#    注明出处)。标记方式 = 条尾一枚**带文字**的琥珀 chip,不靠颜色单独表意;
+#    **不换条的填充色**——条本来就短,再变个色是冗余编码。
+# ④ **下钻用原生 <details>/<summary>,零 JavaScript**:族条本身就是 summary
+#    (行首 ▸/▾ 由 CSS 的 details[open] 切换,同样零脚本),展开露出子技能条。
+#    只有 **≥2 个子技能**的族才折叠,单子技能族退化成普通行(点开只看到自己的
+#    复读没有意义);普通行占一个等宽的空箭头位,保证所有条起点对齐。
+# ⑤ **共用全局尺子**:子技能条与族条按**同一个**全局最大 count 归一。若按族内
+#    最大值重缩放,只有 1 条数据的族其子技能会画得和 102 条的 Put 一样长——那是
+#    骗人的。
+#
+#: 唯一的条色(见上 ②)。
+SKILL_BAR_COLOR = "#2a78d6"
+
+#: 形状 B(VLM 不可用 → 退回按原始标注分组)必须挂的前提说明。不写清楚,客户会
+#: 把一堆原始指令当成系统归纳出的技能体系。形状 A 不显示这句。
+SKILL_FALLBACK_NOTE = ("未经 VLM 审计的原始标注分组(VLM 不可用时的降级路径),仅供参考")
+
+#: 悬停详情里判据截断长度(判据是 LLM 写的一整句,全塞进 title 会糊一屏)。
+_SKILL_CRIT_CAP = 60
+
+
+def _esc(s) -> str:
+    """进 HTML 前转义。技能名来自 LLM 归纳或数据集原始指令,不能当可信片段拼。"""
+    import html
+    return html.escape(str(s), quote=True)
+
+
+def skill_chart_items(m: dict) -> tuple[str, list[dict]]:
+    """skills 块 → (形状, 条目列表)。纯数据整形,不产 HTML(方便单测)。
+
+    形状三选一:
+      "two_level" 两级画像(正常路径):families → 每族带 subskills
+      "flat"      扁平降级画像(VLM 不可用,按原始标注分组):skills 一层
+      "empty"     未启用 / 空
+    条目一律按条数降序;子技能同样降序。
+    """
+    sk = m.get("skills") or {}
+    fams = sk.get("families") or {}
+    flat = sk.get("skills") or {}
+    if fams:
+        items = [{"name": name, "count": f.get("count") or 0, "pct": f.get("pct"),
+                  "criterion": f.get("criterion") or "",
+                  "subs": sorted(
+                      ({"name": sn, "count": s.get("count") or 0, "pct": s.get("pct"),
+                        "criterion": s.get("criterion") or "", "subs": []}
+                       for sn, s in (f.get("subskills") or {}).items()),
+                      key=lambda x: (-x["count"], x["name"]))}
+                 for name, f in fams.items()]
+        shape = "two_level"
+    elif flat:
+        items = [{"name": name, "count": s.get("count") or 0, "pct": s.get("pct"),
+                  "criterion": "", "subs": []} for name, s in flat.items()]
+        shape = "flat"
+    else:
+        return "empty", []
+    items.sort(key=lambda x: (-x["count"], x["name"]))
+    return shape, items
+
+
+#: 图内样式:只有"折叠箭头"这一件事非 CSS 不可(纯内联样式写不出 details[open]
+#: 与伪元素)。选择器全部挂在 .sk-chart 下,不污染 Gradio 页面其余部分;零 JS。
+_SKILL_CSS = """<style>
+.sk-chart details > summary{list-style:none;cursor:pointer}
+.sk-chart details > summary::-webkit-details-marker{display:none}
+.sk-chart .sk-caret::before{content:"\\25B8";color:#888}
+.sk-chart details[open] > summary .sk-caret::before{content:"\\25BE"}
+</style>"""
+
+
+def _skill_bar_row(it: dict, top: int, undersampled: set, *,
+                   sub: bool = False, caret: bool = False) -> str:
+    """一根条(族 / 子技能共用)。宽度按**全局** top 归一(见上 ⑤)。"""
+    name, count, pct = it["name"], it["count"], it["pct"]
+    width = max(0.6, count / top * 100) if top else 0.6
+    meta = f"{count} 条" + (f" · {pct}%" if pct is not None else "")
+    title = f"{name} · {meta}"
+    if it.get("criterion"):
+        title += f" · 判据:{str(it['criterion'])[:_SKILL_CRIT_CAP]}"
+    # 「样本偏少」:带文字的 chip,颜色只是陪衬(色盲/黑白打印下仍读得出)。
+    chip = ('<span style="background:#fdf1dc;color:#8a6d3b;border:1px solid #eec98a;'
+            'border-radius:3px;padding:0 4px;margin-left:6px;font-size:10px;'
+            'white-space:nowrap">样本偏少</span>') if name in undersampled else ""
+    return (
+        f'<div title="{_esc(title)}" style="display:flex;align-items:center;gap:8px;'
+        f'margin:1px 0">'
+        f'<span class="{"sk-caret" if caret else ""}" style="flex:0 0 '
+        f'{14 if not sub else 30}px;font-size:11px"></span>'
+        f'<div style="flex:0 0 {204 if sub else 218}px;font:12px/1.4 system-ui;'
+        f'color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+        f'{_esc(name)}</div>'
+        f'<div style="flex:1;min-width:60px;background:#eef1f5;border-radius:4px;'
+        f'height:12px">'
+        f'<div style="width:{width:.2f}%;height:100%;background:{SKILL_BAR_COLOR};'
+        f'border-radius:0 4px 4px 0"></div></div>'
+        f'<div style="flex:0 0 150px;font:11px/1.4 system-ui;color:#666;'
+        f'text-align:right">{_esc(meta)}{chip}</div></div>')
+
+
+def skill_bar_html(m: dict) -> str:
+    """技能画像 → 横向条形图 HTML(自包含、零 JS)。纯函数(可测)。
+
+    两种画像形状都吃(见 skill_chart_items),没画像就一句说明、不占位。
+    """
+    shape, items = skill_chart_items(m)
+    if shape == "empty":
+        return ('<p style="color:#777">此交付未生成技能画像——需要跑过技能画像'
+                '阶段(全员 caption → 归纳技能体系)的交付。</p>')
+    sk = m.get("skills") or {}
+    undersampled = set(sk.get("undersampled") or [])
+    top = max((it["count"] for it in items), default=0) or 1
+    n_eps = sk.get("n_episodes")
+
+    head = []
+    if shape == "flat":
+        head.append(f'<p style="margin:0 0 6px 0;color:#8a6d3b;background:#fcf8e3;'
+                    f'border-left:3px solid #f1c40f;padding:6px 10px">'
+                    f'{SKILL_FALLBACK_NOTE}</p>')
+    unit = "个技能族" if shape == "two_level" else "项技能(按原始标注分组)"
+    n_kind = sk.get("n_families") if shape == "two_level" else sk.get("n_skills")
+    line = (f'共 {n_kind if n_kind is not None else len(items)} {unit}'
+            + (f",覆盖 {n_eps} 条数据" if n_eps is not None else "")
+            + ";按条数降序,全部列出(长尾本身就是画像的信息量,不截断)。")
+    n_drill = sum(1 for it in items if len(it["subs"]) >= 2)
+    if n_drill:
+        line += f"其中 {n_drill} 个族有多个子技能,点族名可展开。"
+    head.append(f'<div style="font:12px/1.6 system-ui;color:#555;margin-bottom:6px">'
+                f'{line}</div>')
+
+    rows = []
+    for it in items:
+        drill = len(it["subs"]) >= 2        # 只有 ≥2 子技能才值得折叠(见上 ④)
+        bar = _skill_bar_row(it, top, undersampled, caret=drill)
+        if drill:
+            subs = "".join(_skill_bar_row(s, top, undersampled, sub=True)
+                           for s in it["subs"])
+            rows.append(f'<details><summary>{bar}</summary>{subs}</details>')
+        else:
+            rows.append(bar)
+
+    foot = ('<div style="font:11px/1.6 system-ui;color:#777;margin-top:8px">'
+            '琥珀「样本偏少」标记来自画像自带的名单(生成画像时判定),不是本图现算的。'
+            '</div>') if undersampled else ""
+    return ('<div class="sk-chart" style="max-width:960px">' + _SKILL_CSS
+            + "".join(head) + "".join(rows) + foot + '</div>')
+
+
 AUDIT_HEADERS = ["episode", "原始标注", "自产描述(VLM 生成)", "分歧说明"]
 
 
