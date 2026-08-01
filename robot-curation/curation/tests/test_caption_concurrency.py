@@ -6,7 +6,7 @@
 
 🔴 **保序是正确性要求,不是性能细节。**
 下游 taxonomy.assign / audit_labels / skill_profile_two_level 全部按**下标**把
-caption 与 episode 对上。错位一格 → 整份技能画像和标注审计全错,**而且不报错**,
+caption 与 episode 对上。错位一格 → 整份技能画像和标注-画面分歧全错,**而且不报错**,
 只会安静地给出一份看起来很合理的错报告。
 
 ⚠️ 本文件的测试桩特意**按内容**产出 caption,不是按到达顺序编号。

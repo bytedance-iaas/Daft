@@ -189,7 +189,7 @@ def test_cli_only_skill_profile_e2e(tmp_path, monkeypatch):
     def _fake_llm(prompt):
         if "taxonomy" in prompt:                       # 归纳两级体系
             return _json.dumps(fake_tax)
-        return _json.dumps({"map": []})                # 标注审计的族映射
+        return _json.dumps({"map": []})                # 标注-画面分歧的族映射
     monkeypatch.setattr(vlm_client, "make_llm_ask",
                         lambda ep, m, **k: _fake_llm)
 

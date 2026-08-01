@@ -685,3 +685,30 @@ def test_app_has_perf_tab(delivery):
     assert "延时剖析" in cfg
     for codename in ("h20-", "a30-8b"):
         assert codename not in cfg, codename
+
+
+def test_audit_queue_accepts_both_keys(tmp_path):
+    """review.json 键名 2026-07-31 中性化 → 新老两个键 UI 都要认。
+
+    老交付(键"标注审计复核队列")由上面的 delivery fixture 覆盖;这里钉新键,
+    以及新档 low_caption_unstable 条目(我方描述重打标不稳,已降级)照样能进队列。
+    """
+    old = tmp_path / "old"
+    new = tmp_path / "new"
+    for d in (old, new):
+        d.mkdir()
+        (d / "passed.json").write_text(json.dumps({"数据集": "ds", "episodes": {}},
+                                                  ensure_ascii=False))
+    (old / "review.json").write_text(json.dumps({
+        "episodes": {}, "标注审计复核队列": [
+            {"id": "ep1", "label": "L", "caption": "C", "reason": "跨族"}]},
+        ensure_ascii=False))
+    (new / "review.json").write_text(json.dumps({
+        "episodes": {}, "标注-画面分歧复核队列": [
+            {"id": "ep2", "label": "L2", "caption": "C2",
+             "reason": "分歧:原始标注归为 wipe,自产描述(VLM 生成)归为 place——需人工判定",
+             "caption_stable": False, "recaptions": ["a", "b"]}]},
+        ensure_ascii=False))
+    assert audit_rows(load_delivery(str(old)))[0][0] == "ep1"       # 老交付打得开
+    row = audit_rows(load_delivery(str(new)))[0]
+    assert row[0] == "ep2" and "自产描述" in row[3] and "画面=" not in row[3]

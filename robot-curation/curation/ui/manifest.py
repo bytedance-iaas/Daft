@@ -8,7 +8,7 @@
                 config_effective + runtime(后端/硬件/容器配额)+
                 dataset.vlm_latency(分桶延时)+ 通过条目(checks 含双重编码 detail)
   reject.json   被拒条目(+原因)
-  review.json   待人工裁决条目 + 标注审计复核队列
+  review.json   待人工裁决条目 + 标注-画面分歧复核队列(旧交付键名:标注审计复核队列)
   details/evidence/<ep>/*.jpg   task_success probe 证据帧
   details/plots/<ep>_sync.png   同步曲线证据图
 """
@@ -88,7 +88,10 @@ def load_delivery(path: str) -> dict:
             "runtime": p.get("runtime") or {},
             "skills": p.get("skills") or {},
             "label_audit": p.get("label_audit"),
-            "audit_queue": v.get("标注审计复核队列") or [],
+            # 双键兼容(2026-07-31 键名中性化):新交付写"标注-画面分歧复核队列",
+            # 老交付写"标注审计复核队列"——两个都认,否则老交付打不开。
+            "audit_queue": (v.get("标注-画面分歧复核队列")
+                            or v.get("标注审计复核队列") or []),
             "episodes": episodes}
 
 
@@ -156,7 +159,7 @@ def skill_rows(m: dict) -> list[list]:
     return rows
 
 
-AUDIT_HEADERS = ["episode", "原始标注", "自产 caption", "存疑原因"]
+AUDIT_HEADERS = ["episode", "原始标注", "自产描述(VLM 生成)", "分歧说明"]
 
 
 def audit_rows(m: dict) -> list[list]:
@@ -179,7 +182,8 @@ def overview_markdown(m: dict) -> str:
     if n_pending:
         lines.append(f"- 待人工裁决 **{n_pending}** 条(见 Episode 页「待裁决」列)")
     if m["audit_queue"]:
-        lines.append(f"- 标注审计复核队列 {len(m['audit_queue'])} 条(见 技能画像 页)")
+        lines.append(f"- 标注-画面分歧复核队列 {len(m['audit_queue'])} 条"
+                     "(见 技能画像 页;双方都可能错,供人工判定)")
     return "\n".join(lines)
 
 
@@ -201,6 +205,8 @@ DETAIL_LABELS = {                      # 语义化标签(纪律:界面不出现�
     "visual_details.csv": "视觉质量明细(逐相机)",
     "kinematic_details.csv": "运动学违规明细",
     "stuck_details.csv": "卡死事件明细",
+    # 老交付没有这张表 → list_detail_tables 只列实际存在的文件,自然降级不报错
+    "skill_assignment.csv": "技能归属明细(逐 episode 属于哪个技能)",
     "vlm_latency.csv": "VLM 调用延时明细(逐请求)",
 }
 

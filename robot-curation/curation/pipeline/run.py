@@ -407,9 +407,11 @@ def run_pipeline(
 
     label_audit = None
     profile_note = None
+    caption_of: dict = {}      # {episode_id: caption};降级路径没 caption,保持空
     if keep_rows and sp_caption_on and vlm_ready:
-        # 技能画像终版:caption→LLM 归纳两级体系→画像+标注审计(8 次迭代定稿)
+        # 技能画像终版:caption→LLM 归纳两级体系→画像+标注-画面分歧检出(8 次迭代定稿)
         from ..adapters.vlm_client import make_llm_ask
+        from ..dataset_level.audit import GARBAGE_REASON as AUDIT_GARBAGE
         from ..dataset_level.audit import audit_labels
         from ..dataset_level.caption import caption_episodes, make_vlm_captioner
         from ..dataset_level.profile import skill_profile_two_level
@@ -460,8 +462,9 @@ def run_pipeline(
         else:
             # 没漏网也要报,否则用户看到 3/5 直接跳 5/5 会以为漏了一步或出错
             phase_step(_G, 4, 5, "补漏:无未归类,跳过", _sp_t0)
-        phase_step(_G, 5, 5, "汇总画像 + 标注审计", _sp_t0)
+        phase_step(_G, 5, 5, "汇总画像 + 标注-画面分歧检出", _sp_t0)
         profile = skill_profile_two_level(keep_rows, fams, subs, caps)
+        caption_of = {r["episode_id"]: c for r, c in zip(keep_rows, caps)}
         # 判据留痕(2026-07-11):guideline + LLM 自述的归类理由进报告,分类可审计
         from ..dataset_level.taxonomy import DEFAULT_GUIDELINE, criteria_of
         fam_c, sub_c = criteria_of(taxonomy)
@@ -475,6 +478,48 @@ def run_pipeline(
         label_audit = audit_labels([r["episode_id"] for r in keep_rows],
                                    [r.get("instruction", "") for r in keep_rows],
                                    caps, fams, taxonomy, llm_ask)
+        # 分歧复检(2026-07-31):我方 caption 不可复现(方舟 temp=0 连打 5 次 5 种说法),
+        # 拿它当基准去质疑客户标注是产品缺陷 → 把不可复现变成信号:**只对被标记条目**
+        # 重打标 N 次,我方描述自己都不稳的分歧降级。重打标必须在这里做(有 rows/帧),
+        # audit.py 是纯文本模块,只收 N 次结果当普通数据。
+        _rn = int(sp_cfg.get("audit_recheck_n", 3) or 1)
+        _flag = [e for tier in ("high", "mid_for_review") for e in label_audit[tier]
+                 if e.get("reason") != AUDIT_GARBAGE]
+        if _rn >= 2 and _flag:
+            _row_of = {r["episode_id"]: r for r in keep_rows}
+            _sub = [_row_of[e["id"]] for e in _flag if e["id"] in _row_of]
+            _recaps: dict = {r["episode_id"]: [] for r in _sub}
+            _rc_t0 = _t.time()
+            for _k in range(_rn):
+                phase_step(_G, 5, 5, f"分歧复检:{len(_sub)} 条重打标 第 {_k + 1}/{_rn} 轮…",
+                           _sp_t0)
+                for _r, _c in zip(_sub, caption_episodes(
+                        _sub, captioner, n_frames=sp_cfg.get("n_frames", 8),
+                        max_concurrency=_cap_conc)):
+                    _recaps[_r["episode_id"]].append(_c)
+            # 归族:精确命中 members 优先,漏网的一批交 LLM 二次指认(复用 taxonomy 能力,
+            # 不在 audit.py 里重新实现归族)
+            from ..dataset_level.audit import retier_by_caption_stability
+            from ..dataset_level.taxonomy import repair_unassigned
+            _fam_map = {c.strip().lower(): f for c, f in zip(caps, fams) if f != "未归类"}
+            _new = sorted({c for v in _recaps.values() for c in v
+                           if c.strip() and c.strip().lower() not in _fam_map})
+            if _new:
+                _f2, _ = assign(_new, taxonomy)
+                _fam_map.update({c.strip().lower(): f for c, f in zip(_new, _f2)
+                                 if f != "未归类"})
+                _miss = [c for c in _new if c.strip().lower() not in _fam_map]
+                if _miss:
+                    for c, (f, _s) in repair_unassigned(_miss, taxonomy, llm_ask).items():
+                        _fam_map[c.strip().lower()] = f
+            _n_calls = sum(len(v) for v in _recaps.values())
+            label_audit = retier_by_caption_stability(
+                label_audit, _recaps,
+                lambda c: _fam_map.get(str(c).strip().lower(), "未归类"))
+            print(f"[curation] 分歧复检:{len(_sub)} 条 × {_rn} 轮 = {_n_calls} 次重打标,"
+                  f"耗时 {_t.time() - _rc_t0:.1f}s;"
+                  f"降级 {len(label_audit.get('low_caption_unstable', []))} 条"
+                  f"(我方描述不稳)", flush=True)
     elif keep_rows and not sp_cfg.get("enable", True):
         # 用户主动未选画像(--only 其它模块 / --skip skill_profile)→ 不画像,如实注明
         profile = {"n_episodes": len(keep_rows), "n_skills": 0, "skills": {},
@@ -744,6 +789,12 @@ def run_pipeline(
             w = _csv.DictWriter(f, fieldnames=vcols, extrasaction="ignore")
             w.writeheader()
             w.writerows(vrows)
+    # 技能归属明细(2026-07-31 用户定):画像只给"每类多少条",答不了"是哪几条"。
+    # 一行一条 episode,列 = episode_id/family/subskill/caption,给客户 pandas 直读。
+    # 行由画像本身反推(profile.skill_assignment_rows)→ 与 report.json 里的画像同源,
+    # 不会漂移。没画像(--skip skill_profile)时不生成空文件:空表会被误读成"0 条数据"。
+    from ..dataset_level.profile import write_skill_assignment_csv
+    write_skill_assignment_csv(det_dir, profile, caption_of)
     # 运动学违规明细(2026-07-14 用户定):被拒必须能定位;硬杀发生在漏斗中途,
     # 明细从 stats.hard_killed 提取(幸存者不会有运动学违规——硬门语义)
     krows = []

@@ -250,7 +250,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             with gr.Tab("技能画像"):
                 sk_table = gr.Dataframe(headers=SKILL_HEADERS, label="两级技能体系",
                                         interactive=False)
-                au_table = gr.Dataframe(headers=AUDIT_HEADERS, label="标注审计复核队列",
+                au_table = gr.Dataframe(headers=AUDIT_HEADERS,
+                                        label="标注-画面分歧复核队列(双方都可能错,供人工判定)",
                                         interactive=False)
 
             with gr.Tab("Stuck 时间线"):
