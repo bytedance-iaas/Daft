@@ -27,7 +27,7 @@ from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DETAIL_LABELS,
                        latency_bar_html, latency_rows, list_detail_tables,
                        load_delivery, load_detail_table, load_perf,
                        load_timeline, overview_markdown, perf_backend_md,
-                       perf_env_md, skill_rows, timeline_html)
+                       perf_env_md, skill_bar_html, skill_rows, timeline_html)
 
 log = logging.getLogger("curation.ui")
 
@@ -201,7 +201,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
         return (m, overview_markdown(m), funnel_rows(m), _config_yaml(m),
                 episode_rows(m), gr.update(choices=eids, value=first),
-                skill_rows(m), audit_rows(m), *_detail(m, first),
+                skill_bar_html(m), skill_rows(m), audit_rows(m), *_detail(m, first),
                 gr.update(choices=[DETAIL_LABELS[t] for t in tables],
                           value=(DETAIL_LABELS[t_first] if t_first else None)),
                 note0, gr.update(value=r0, headers=h0),
@@ -248,6 +248,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 ep_gallery = gr.Gallery(label="证据(probe 帧 + 同步曲线)", columns=4, height=320)
 
             with gr.Tab("技能画像"):
+                # 图在表上方(2026-07-30):先看分布(谁多谁少、长尾有多长),
+                # 再下去查具体判据。表格原样不动。
+                sk_html = gr.HTML()
                 sk_table = gr.Dataframe(headers=SKILL_HEADERS, label="两级技能体系",
                                         interactive=False)
                 au_table = gr.Dataframe(headers=AUDIT_HEADERS,
@@ -289,7 +292,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 be_btn = gr.Button("探活")
                 be_table = gr.Dataframe(headers=["预设", "状态", "服务端模型"], interactive=False)
 
-            outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick, sk_table, au_table,
+            outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick,
+                    sk_html, sk_table, au_table,
                     ep_md, ep_checks, ep_gallery, dt_pick, dt_note, dt_table,
                     tl_note, tl_html,
                     perf_backend, perf_env, perf_note, perf_table, perf_bar]
