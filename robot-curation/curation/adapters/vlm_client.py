@@ -203,14 +203,27 @@ def auth_headers(api_key_env: str | None) -> dict:
 #    但没解决绝对定标(干净/截断终值分布重叠);
 # v4 few-shot 多图(忠实 openGVL):起始帧+标注上下文+8 张打乱评测帧一次问 →
 #    实测(3 模型)仍崩:模型跟踪不了"哪张是哪张",Qwen2.5 18/20 全同预测,VOC 中位≈0;
-# v5 few-shot + 锚定单查询(现行):每请求 = 标注上下文(教标尺)+ 起始帧 + 1 张待评帧
+# v5 few-shot + 锚定单查询:每请求 = 标注上下文(教标尺)+ 起始帧 + 1 张待评帧
 #    (无跟踪/位置问题)。few-shot 解决绝对定标,单查询解决多图跟踪,各治各的病。
 #    上下文在客户端构造期绑定 → 注入接口不变,core/funnel 零改动。
+# v6 物证打分(2026-08-04,105 条人工真值消融定稿):v5 问"How complete"是**瞬时
+#    状态**问题——机械臂做完撤手,末帧分数就掉,真值曲线天然不单调,VOC 的单调性
+#    前提被打破(撤手型成功 VOC 中位 0.587 vs 单调型 0.932,29% 的好数据被冤枉)。
+#    改问**物证**:只按物体/场景状态打分,不看机械臂在不在动作——做了就留痕的任务
+#    真值由此恢复单调,"手臂移开"不再掉分。两面都写死:撤手不扣分/空挥不加分。
 ANCHORED_PROMPT = (
     "Task: {instruction}\n"
-    "Image 1 shows the START of a robot episode (reference, 0% complete).\n"
+    "Image 1 shows the START of a robot episode (reference: nothing accomplished yet).\n"
     "Image 2 is ONE frame from the SAME episode at an unknown time.\n"
-    "How complete is the task in Image 2? Answer ONLY an integer from 0 to 100."
+    "Score how far the task has physically progressed in Image 2, from 0 to 100, "
+    "judging ONLY by the state of the objects and the scene - not by what the robot "
+    "arm is doing.\n"
+    "- 0 = the objects look as they do in Image 1 (starting configuration).\n"
+    "- 100 = the objects are in the goal configuration described by the task.\n"
+    "If the objects are already in the goal configuration, answer 100 even if the arm "
+    "has moved away, is idle, or is out of view. If the objects still look like "
+    "Image 1, answer 0 even if the arm is moving.\n"
+    "Answer ONLY an integer from 0 to 100."
 )
 
 FEWSHOT_SYSTEM = (
@@ -463,14 +476,22 @@ def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0,
         # ⚠️措辞与 funnel 传入的帧集合保持一致:现在传的是**全程帧**(前半段进 start 组、
         # 后半段进 end 组),不再是首尾各一帧,故问"是否曾经完成"而非"仅从末态看"——
         # 阶跃型任务(倒/放/开关)的证据在动作瞬间,末态常看不出来(ep34 消融实证)。
+        # v6(2026-08-04):追加"看物不看手"证据标准——复核在 v6.5 决定表里获得了对
+        # 成功候选的否决权,证据标准必须比打分层苛刻:任务算完成仅当目标物体确实到位;
+        # 夹爪去过/动作像样但物体没动,不算(抓 droid ep131"空夹叶子"型自洽错话)。
         q_done = (f"Task: {task}\nImages 1-{n0}: EARLIER part of a robot episode "
                   f"(possibly multiple camera views). Images {n0+1}-{len(imgs)}: LATER part "
                   "of the same episode. Did the robot COMPLETE the task at any point? "
-                  "Answer ONLY yes or no.")
+                  "Judge by the OBJECTS, not the arm's motions: the task counts as "
+                  "completed only if the target object actually ended up as the task "
+                  "describes. A grasping or placing motion does not count if the object "
+                  "was never actually moved. Answer ONLY yes or no.")
         q_failed = (f"Task: {task}\nImages 1-{n0} are from the earlier part, "
                     f"images {n0+1}-{len(imgs)} from the later part of the same episode. "
-                    "Did the robot FAIL to complete the task (i.e. it never got done)? "
-                    "Answer ONLY yes or no.")
+                    "Did the robot FAIL to complete the task (i.e. the target object "
+                    "never actually ended up as the task describes)? Look closely at "
+                    "the target object across the frames; ignore whether the arm's "
+                    "motions looked correct. Answer ONLY yes or no.")
         try:
             done, failed = _map_concurrent(lambda q: _ask(q, imgs), [q_done, q_failed], 2)
         except Exception:  # noqa: BLE001
