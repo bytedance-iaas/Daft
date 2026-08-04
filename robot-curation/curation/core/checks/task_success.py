@@ -159,15 +159,22 @@ def endstate_review(
 
     def _feed(fr):
         """前半段进 start 组、后半段进 end 组:保留双问法的前后对照语义,
-        同时把中段证据带进来(不再只有首尾两帧)。"""
-        fr = list(fr)[:endstate_frames]
-        mid = max(1, len(fr) // 2)
-        starts.extend(fr[:mid])
-        ends.extend(fr[mid:] or fr[-1:])
+        同时把中段证据带进来(不再只有首尾两帧)。
+
+        抽帧用 linspace **含端点**(_sample_indices 与打分层同款)。⚠️ 别改回
+        步进切片 fr[::step]:那会漏掉末尾最多 ~22% 帧——复核从未见过"任务完成
+        之后"的画面,"做完即停"型演示被系统性否决(2026-08-04 droid ep30 消融
+        实锤:37 帧只看到第 28 帧,而玩具入槽发生在最后一瞬)。"""
+        fr = list(fr)
+        if not fr:
+            return
+        pick = [fr[i] for i in _sample_indices(len(fr), endstate_frames)]
+        mid = max(1, len(pick) // 2)
+        starts.extend(pick[:mid])
+        ends.extend(pick[mid:] or pick[-1:])
 
     if len(primary_frames) > 0:
-        step = max(1, len(primary_frames) // endstate_frames)
-        _feed(primary_frames[::step])
+        _feed(primary_frames)
     if extra_frames_fn is not None:
         for fr in extra_frames_fn():                  # 惰性:仅走到这里才解其余相机
             if len(fr) > 0:

@@ -142,3 +142,16 @@ def test_endstate_frames_cap():
     endstate_review(_res(False), "t", j, _frames(100), endstate_frames=8)
     n_starts, n_ends, _ = j.calls[0]
     assert n_starts + n_ends <= 9    # 100//8=12 步进取 9 帧,截到 8;分组 4+4(容 1 帧余量)
+
+
+def test_material_includes_endpoint_frames():
+    """截尾 bug 回归(droid ep30):复核素材必须含首帧与**真末帧**(linspace 含端点)。"""
+    frames = [np.full((4, 4, 3), i, np.uint8) for i in range(37)]   # 亮度=下标
+    seen = []
+
+    def spy(starts, ends, desc):
+        seen.extend(int(f.mean()) for f in list(starts) + list(ends))
+        return True
+
+    endstate_review(_res(False), "t", spy, frames, endstate_frames=8)
+    assert 0 in seen and 36 in seen, f"素材帧下标 {sorted(seen)} 缺端点(截尾回归!)"
