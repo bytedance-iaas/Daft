@@ -54,7 +54,9 @@ checks:
   task_success:                    # M4c(VLM,唯一语义点;永远垫底)
     enable: true
     gate: hard
-    params: {n_probe: 8, voc_min: 0.3, success_min: 0.45, fail_max: 0.25}
+    # v6.5(2026-08-04,105 条人工真值×三模型校准):voc_min 闸门已废除(拦下的
+    # 全是"做完撤手"的好数据);gap_max=单调契约违约线(物证打分不该冲高又崩回)。
+    params: {n_probe: 8, success_min: 0.45, fail_max: 0.25, gap_max: 0.5}
     vlm:                           # ★ 模型只在这一处配置——换模型=改这里,零代码改动
                                    #   本段同时供 M4c(成败判定/终态复核)与 M7(caption/归纳/审计)
       provider: openai             # openai 兼容端点:自托管 vLLM 与托管 MaaS(方舟)同一套协议
