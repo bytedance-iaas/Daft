@@ -447,13 +447,15 @@ def run_funnel(
             # ep34 三处修正(触发条件/全程帧/相机放开)的消融史见该函数 docstring。
             # 这里只负责框架侧的活:惰性解其余相机的帧(解码失败=少一路视角,不中断)。
             def _extra_cam_frames():
+                # ⚠️ 必须与主相机同款**全程解码**(固定间隔),抽帧交给 endstate_review
+                #   的 linspace(含端点)。旧写法 span/endstate_frames 间隔采样止步于
+                #   ~87% 处,复核看不到片尾(截尾 bug 的另一半,与 ep30 消融同源)。
                 out = []
                 for cam2 in [c for c in sorted(video.keys()) if c != cam][:max_endstate_cams - 1]:
                     v2 = video[cam2]
                     try:
-                        span = max(v2["to_ts"] - v2["from_ts"], 1e-6)
                         fr, _ = decode_window(v2["path"], v2["from_ts"], v2["to_ts"],
-                                              sample_interval_s=span / endstate_frames,
+                                              sample_interval_s=interval,
                                               max_side=max_side)
                         if fr:
                             out.append(fr)
