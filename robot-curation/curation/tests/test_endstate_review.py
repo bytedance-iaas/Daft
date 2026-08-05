@@ -1,190 +1,209 @@
-"""endstate_review(二值复核协议)分支测试(v6.5,2026-08-04)。
+"""endstate_review(逐机位复核 v7.2)分支测试(2026-08-04)。
 
 背景:该协议原长在 funnel 闭包里,无法独立测试;抽成 core 纯函数后本文件把
 **每条判决分支**钉死:漏斗/考卷/单测共用同一份协议。
 
-v6.5 判决矩阵(初判 × 复核 → 终判;救人一签,杀人双签,复核有否决权无处决权):
-    成功候选 × 复核True   → 过(全员复核:成功不再免检,判官必须被调用)
-    成功候选 × 复核False  → 强分数过(标 review_disputed)/ 弱分数弃权进人工
-    成功候选 × 复核矛盾   → 过(标 review_contradictory)
-    失败候选 × 复核True   → 救回 pass
-    失败候选 × 复核False  → **杀**(全表唯一杀格,双签)
-    失败候选 × 复核矛盾   → 弃权(缺第二签)
-    gap契约违约 × 复核True → 弃权(两层打架,谁也不赢——ep143 拦截机制)
-    灰区 × 复核True       → 救回 pass
-    灰区 × 复核False/矛盾 → 弃权
-    判官不可用            → 成功候选过(留痕单判据);失败候选降弃权(废除单方杀)
+v7.2 判决矩阵(初判 × 汇票 → 终判;救人一签、杀人双签、复核有否决权无处决权):
+    成功候选 × yes/split/abstain → 过(split/abstain 留痕)
+    成功候选 × no                → 强分数过(disputed)/ 弱分数弃权进人工
+    失败候选 × yes               → 人工(两层打架:全程无进度 vs 复核说完成)
+    失败候选 × no                → **杀**(全表唯一杀格,双签)
+    失败候选 × split/abstain     → 弃权(缺第二签)
+    gap契约违约 × yes            → 人工(打架;联合打分平滑掉violation时靠灰区版拦)
+    灰区 × yes 且 final≤0.25     → 人工(末态回原点 vs 复核说完成 = 实质矛盾,ep143)
+    score_blind × yes 孤证(<2票) → 人工(打分层零信息,救回也双签,8b ep143)
+    其余 × yes                   → 救回;× 其它 → 弃权
+    投票器不可用                 → 成功候选过(留痕);失败候选降弃权(废除单方杀)
 """
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from curation.core.checks.task_success import endstate_review
+from curation.core.checks.task_success import cam_vote, endstate_review, tally
 from curation.core.contract import CheckResult
 
 
-def _res(passed, verdict="failure", strong=None):
-    detail = {"verdict": verdict, "reason": "voc-orig"}
+def _res(passed, verdict="failure", strong=None, final=None):
+    detail = {"verdict": verdict, "reason": "score-orig"}
     if strong is not None:
         detail["strong_score"] = strong
+    if final is not None:
+        detail["completion_final"] = final
     return CheckResult(name="task_success", passed=passed, detail=detail)
 
 
-def _frames(n=16):
-    return [np.zeros((4, 4, 3), np.uint8) for _ in range(n)]
+def _cams(n_cams=3, n_frames=16):
+    return {f"cam{i}": [np.zeros((4, 4, 3), np.uint8) for _ in range(n_frames)]
+            for i in range(n_cams)}
 
 
-def _judge(answer):
-    """可断言调用情况的假判官。"""
+def _voter(*answers):
+    """按相机顺序依次吐出指定票;记录每次调用的 (帧数, 标签)。"""
+    seq = list(answers)
     calls = []
 
-    def judge(starts, ends, desc):
-        calls.append((len(starts), len(ends), desc))
-        return answer
-    judge.calls = calls
-    return judge
+    def voter(starts, ends, cam_label, desc):
+        calls.append((len(starts), len(ends), cam_label))
+        return seq[len(calls) - 1] if len(calls) <= len(seq) else seq[-1]
+    voter.calls = calls
+    return voter
+
+
+# ───────── 票的合成与汇总(纯函数) ─────────
+
+def test_cam_vote_matrix():
+    assert cam_vote("yes", "no") == "yes"
+    assert cam_vote("no", "yes") == "no"
+    assert cam_vote("unclear", "yes") == "unclear"     # 弃权优先于矛盾
+    assert cam_vote("yes", "unclear") == "unclear"
+    assert cam_vote("yes", "yes") == "contradictory"   # 既完成又失败=胡说
+    assert cam_vote("no", "no") == "contradictory"
+    assert cam_vote("?", "no") == "contradictory"
+
+
+def test_tally_asymmetry():
+    assert tally(["yes", "unclear", "contradictory"]) == "yes"    # 实票 1yes 0no
+    assert tally(["no", "unclear", "unclear"]) == "no"
+    assert tally(["yes", "no", "unclear"]) == "split"             # 证人真打架
+    assert tally(["unclear", "contradictory", "unavail"]) == "abstain"
 
 
 # ───────── 判决矩阵逐格 ─────────
 
 def test_success_is_reviewed_not_short_circuited():
-    """v6.5 核心改动:成功候选**不再免检**——判官必须被调用(否决权的前提)。
-    (旧协议在此短路,ep131"空夹叶子"型自洽错话从免检通道直接溜走)"""
-    j = _judge(True)
-    r = endstate_review(_res(True, "success", strong=True), "t", j, _frames())
-    assert r.passed is True and len(j.calls) == 1
-    assert r.detail["endstate_answer"] == "yes"
+    """成功候选不免检:每个机位都被独立问到(否决权的前提)。"""
+    v = _voter("yes", "yes", "yes")
+    r = endstate_review(_res(True, "success", strong=True), "t", v, _cams())
+    assert r.passed is True and len(v.calls) == 3
+    assert r.detail["review"] == "yes"
 
 
-def test_success_weak_vetoed_to_human():
-    """弱成功候选被复核否决 → 弃权进人工(否决权,非处决权)。"""
-    r = endstate_review(_res(True, "success", strong=False), "t", _judge(False), _frames())
+def test_success_weak_vetoed_by_unanimous_no():
+    r = endstate_review(_res(True, "success", strong=False), "t",
+                        _voter("no", "no", "unclear"), _cams())
     assert r.passed is None
     assert r.detail["verdict"] == "endstate_failure_suspect"
 
 
 def test_success_strong_survives_veto_flagged():
-    """强分数压过否决,带 review_disputed 标签放行(供下游过滤)。"""
-    r = endstate_review(_res(True, "success", strong=True), "t", _judge(False), _frames())
+    r = endstate_review(_res(True, "success", strong=True), "t",
+                        _voter("no", "no", "no"), _cams())
     assert r.passed is True and r.detail.get("review_disputed") is True
 
 
-def test_success_review_contradiction_passes_flagged():
-    r = endstate_review(_res(True, "success", strong=True), "t", _judge(None), _frames())
-    assert r.passed is True and r.detail.get("review_contradictory") is True
-
-
-def test_fail_judge_true_rescues():
-    """ep34 形态:打分层判失败,复核看到完成 → 救回。"""
-    r = endstate_review(_res(False), "t", _judge(True), _frames())
+def test_success_weak_abstain_goes_to_human():
+    """v7.3 钉子:弱成功 + 全体弃权/矛盾 = 纯打分层孤证 → 人工(不可复现性下
+    弱曲线跨 run 漂移,孤证放行是漏径——ep131 冒烟实锤);强成功不受影响。"""
+    r = endstate_review(_res(True, "success", strong=False), "t",
+                        _voter("unclear", "contradictory", "unclear"), _cams())
+    assert r.passed is None and r.detail["verdict"] == "endstate_unconfirmed"
+    r = endstate_review(_res(True, "success", strong=True), "t",
+                        _voter("unclear", "contradictory", "unclear"), _cams())
     assert r.passed is True
-    assert r.detail["verdict"] == "endstate_success"
-    assert "救回" in r.detail["reason"]
 
 
-def test_gray_judge_true_rescues():
-    r = endstate_review(_res(None, "uncertain"), "t", _judge(True), _frames())
-    assert r.passed is True and "救回" in r.detail["reason"]
+def test_success_split_passes_flagged():
+    """split(实票打架)≠否决:有看得清的证人说做成了 → 过,留痕可过滤。"""
+    r = endstate_review(_res(True, "success", strong=False), "t",
+                        _voter("yes", "no", "unclear"), _cams())
+    assert r.passed is True and r.detail.get("review_split") is True
 
 
-def test_fail_judge_false_kills():
-    """全表唯一杀格:失败候选 + 复核未完成 = 双签硬杀。"""
-    r = endstate_review(_res(False), "t", _judge(False), _frames())
-    assert r.passed is False
-    assert r.detail["verdict"] == "failure"
-    assert "双判据一致" in r.detail["reason"]
+def test_fail_unanimous_no_kills():
+    """全表唯一杀格:联合打分全程无进度 + 看得清的证人一致 no。"""
+    r = endstate_review(_res(False), "t", _voter("no", "unclear", "no"), _cams())
+    assert r.passed is False and r.detail["verdict"] == "failure"
 
 
-def test_gray_judge_false_abstains():
-    r = endstate_review(_res(None, "uncertain"), "t", _judge(False), _frames())
-    assert r.passed is None and "进人工" in r.detail["reason"]
-
-
-def test_fail_judge_contradiction_abstains():
-    """失败候选缺第二签(两问矛盾)→ 弃权,不许单方杀(冤杀保险丝)。"""
-    r = endstate_review(_res(False), "t", _judge(None), _frames())
-    assert r.passed is None
-    assert r.detail["endstate"] == "两问法矛盾,不采信"
-    assert "不硬杀" in r.detail["reason"]
-
-
-def test_gray_judge_contradiction_stays_none():
-    r = endstate_review(_res(None, "uncertain"), "t", _judge(None), _frames())
-    assert r.passed is None
-    assert r.detail["endstate"] == "两问法矛盾,不采信"
-    assert r.detail["reason"] == "voc-orig"          # 不改写原 reason
-
-
-def test_gap_violation_vs_judge_true_conflicts():
-    """两层打架:契约违约曲线 + 复核 yes → 弃权(ep143 拦截;ep19 烂机位同型)。"""
-    r = endstate_review(_res(None, "gap_violation"), "t", _judge(True), _frames())
+def test_fail_yes_is_conflict_not_rescue():
+    """v7.1 教训:打分层看不到任何进度、复核却说完成 → 两层打架进人工,不救。"""
+    r = endstate_review(_res(False), "t", _voter("yes", "yes", "yes"), _cams())
     assert r.passed is None and r.detail["verdict"] == "review_conflict"
 
 
-def test_no_judge_fail_candidate_downgrades():
-    """v6.5:判官不可用时失败候选降弃权——杀人永远双签(废除旧'单判据维持硬杀')。"""
-    r = endstate_review(_res(False), "t", None, _frames())
+def test_fail_split_or_abstain_abstains():
+    r = endstate_review(_res(False), "t", _voter("yes", "no", "unclear"), _cams())
     assert r.passed is None
-    assert r.detail["endstate"] == "二值复核不可用,仅打分层单判据"
+    r = endstate_review(_res(False), "t",
+                        _voter("contradictory", "unclear", "unavail"), _cams())
+    assert r.passed is None
 
 
-def test_no_judge_success_passes_with_note():
-    r = endstate_review(_res(True, "success", strong=True), "t", None, _frames())
-    assert r.passed is True
-    assert "单判据" in r.detail["endstate"]
+def test_gap_violation_yes_conflicts():
+    r = endstate_review(_res(None, "gap_violation"), "t",
+                        _voter("yes", "yes", "yes"), _cams())
+    assert r.passed is None and r.detail["verdict"] == "review_conflict"
+
+
+def test_gray_low_final_yes_conflicts():
+    """ep143 拦截钉子:灰区曲线末态回到原点(final≤0.25)+ 复核 yes = 实质矛盾。"""
+    r = endstate_review(_res(None, "uncertain", final=0.25), "t",
+                        _voter("yes", "yes", "yes"), _cams())
+    assert r.passed is None and r.detail["verdict"] == "review_conflict"
+
+
+def test_gray_mid_final_yes_rescues():
+    r = endstate_review(_res(None, "uncertain", final=0.35), "t",
+                        _voter("yes", "unclear", "unclear"), _cams())
+    assert r.passed is True and r.detail["verdict"] == "endstate_success"
+
+
+def test_blind_lone_witness_not_rescued():
+    """8b ep143 钉子:打分层零信息 + 仅 1 张实票 yes → 孤证不救,进人工。"""
+    r = endstate_review(_res(None, "score_blind"), "t",
+                        _voter("yes", "contradictory", "contradictory"), _cams())
+    assert r.passed is None
+
+
+def test_blind_two_witnesses_rescued():
+    r = endstate_review(_res(None, "score_blind"), "t",
+                        _voter("yes", "yes", "unclear"), _cams())
+    assert r.passed is True and r.detail["verdict"] == "endstate_success"
+
+
+def test_no_voter_fail_candidate_downgrades():
+    """投票器不可用:杀人永远双签 → 失败候选降弃权;成功候选过并留痕。"""
+    r = endstate_review(_res(False), "t", None, _cams())
+    assert r.passed is None and "单判据" in r.detail["endstate"]
+    r = endstate_review(_res(True, "success", strong=True), "t", None, _cams())
+    assert r.passed is True and "单判据" in r.detail["endstate"]
 
 
 # ───────── 帧供给语义 ─────────
 
-def test_no_frames_no_judge_call():
-    """极端情形:一帧都没有 → 判官不被调用,原样返回(不许拿空图去问)。"""
-    j = _judge(True)
-    r = endstate_review(_res(False), "t", j, [], extra_frames_fn=lambda: [])
-    assert r.passed is False and not j.calls
+def test_no_frames_no_voter_call():
+    v = _voter("yes")
+    r = endstate_review(_res(False), "t", v, {})
+    assert r.passed is False and not v.calls          # 无帧原样返回(上游另有兜底)
 
 
-def test_extras_fed():
-    """其余相机帧真的进了 starts/ends:主 16 帧→8(4+4),两路各 8→各 4+4 ⇒ 12+12。"""
-    j = _judge(True)
-    called = []
-
-    def extras():
-        called.append(1)
-        return [_frames(8), _frames(8)]
-
-    endstate_review(_res(False), "t", j, _frames(16), extra_frames_fn=extras,
-                    endstate_frames=8)
-    assert called == [1]
-    assert j.calls[0][:2] == (12, 12)
-
-
-def test_frame_split_semantics():
-    """双问法前后对照:帧按中点分 starts/ends;单帧时两组都拿到它。"""
-    j = _judge(True)
-    endstate_review(_res(False), "t", j, _frames(1))
-    assert j.calls[0][:2] == (1, 1)                  # pick[:1] 与 pick[-1:] 都是那一帧
-
-
-def test_endstate_frames_cap():
-    """每路帧数封顶 endstate_frames(图太多干扰模型且涨 token)。"""
-    j = _judge(True)
-    endstate_review(_res(False), "t", j, _frames(100), endstate_frames=8)
-    n_starts, n_ends, _ = j.calls[0]
-    assert n_starts + n_ends <= 8                    # linspace 精确取 8
+def test_each_cam_gets_own_frames_and_label():
+    v = _voter("yes", "yes", "yes")
+    endstate_review(_res(False), "t", v, _cams(3, 16), endstate_frames=8)
+    assert len(v.calls) == 3
+    for n_starts, n_ends, label in v.calls:
+        assert (n_starts, n_ends) == (4, 4)           # 每路 linspace 8 帧对半分
+    assert [c[2] for c in v.calls] == [
+        "camera A (cam0)", "camera B (cam1)", "camera C (cam2)"]
 
 
 def test_material_includes_endpoint_frames():
-    """ep30 截尾 bug 回归:linspace 含端点——首帧与**真末帧**必须都在素材里。"""
-    frames = [np.full((4, 4, 3), i, np.uint8) for i in range(37)]   # 亮度=下标
-    j = _judge(True)
-    endstate_review(_res(False), "t", j, frames, endstate_frames=8)
-    # 通过亮度还原判官实际收到的帧下标
+    """ep30 截尾 bug 回归:每路素材必须含首帧与**真末帧**(linspace 含端点)。"""
+    frames = {"c": [np.full((4, 4, 3), i, np.uint8) for i in range(37)]}
     seen = []
 
-    def spy(starts, ends, desc):
+    def spy(starts, ends, label, desc):
         seen.extend(int(f.mean()) for f in list(starts) + list(ends))
-        return True
+        return "yes"
 
-    endstate_review(_res(False), "t", spy, frames, endstate_frames=8)
+    endstate_review(_res(None, "uncertain", final=0.4), "t", spy, frames,
+                    endstate_frames=8)
     assert 0 in seen and 36 in seen, f"素材帧下标 {sorted(seen)} 缺端点(截尾回归!)"
+
+
+def test_votes_recorded_in_detail():
+    r = endstate_review(_res(True, "success", strong=True), "t",
+                        _voter("yes", "no", "unclear"), _cams())
+    assert r.detail["cam_votes"] == {"cam0": "yes", "cam1": "no", "cam2": "unclear"}
+    assert r.detail["review"] == "split"

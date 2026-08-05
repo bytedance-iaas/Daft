@@ -421,50 +421,50 @@ def run_funnel(
         p_task = cfg["checks"]["task_success"].get("params", {})
         _pk_vlm = _progress_init("vlm", stats["survivors_for_vlm"], "VLM 任务成败判定")
         try:
-            from ..adapters.vlm_client import make_endstate_judge
+            from ..adapters.vlm_client import make_endstate_voter
             vcfg_t = cfg["checks"]["task_success"]["vlm"]
-            endstate_judge = make_endstate_judge(vcfg_t["endpoint"], vcfg_t["model"],
-                                                 api_key_env=vcfg_t.get("api_key_env"))
+            cam_voter = make_endstate_voter(vcfg_t["endpoint"], vcfg_t["model"],
+                                            api_key_env=vcfg_t.get("api_key_env"))
         except Exception as _e:  # noqa: BLE001
-            endstate_judge = None
+            cam_voter = None
             # 不静默:构造失败=配置问题(它不做网络IO,只拼URL/闭包)。若无此提示,
-            # 现场会看到"VOC 判失败→硬杀"一片却不知复核压根没启动。
-            print(f"[curation] ⚠️ 二值复核不可用({type(_e).__name__}:{_e}),"
-                  "task_success 将仅凭 VOC 单判据判定", flush=True)
+            # 现场会看到判定一片弃权却不知复核压根没启动。
+            print(f"[curation] ⚠️ 复核投票器不可用({type(_e).__name__}:{_e}),"
+                  "task_success 将仅凭打分层单判据判定(失败候选降弃权)", flush=True)
 
         def _task_check_sync(video, task_desc, task_src, fps):
             from ..adapters.decode import decode_window
+            from ..core.contract import CheckResult
 
-            cam = sorted(video.keys())[0]
-            v = video[cam]
-            frames, _ = decode_window(v["path"], v["from_ts"], v["to_ts"],
-                                      sample_interval_s=interval, max_side=max_side)
-            res = task_success(frames, task_desc, vlm_completion, **p_task)
+            # v7.2 多视角:全部相机(封顶 max_endstate_cams)一次解码,打分与复核共用。
+            # 打分层帧 = [(相机名, 图), ...](同一时刻各路,标签随数据走,由
+            # make_multiview_completion 消费);复核层逐机位独立投票。
+            cam_frames = {}
+            for cam in sorted(video.keys())[:max_endstate_cams]:
+                v = video[cam]
+                try:
+                    fr, _ = decode_window(v["path"], v["from_ts"], v["to_ts"],
+                                          sample_interval_s=interval, max_side=max_side)
+                    if fr:
+                        cam_frames[cam.split(".")[-1]] = fr    # 标签用短名(去 observation.images. 前缀)
+                except Exception:  # noqa: BLE001
+                    continue                          # 解码失败=少一路视角,不中断
+            if not cam_frames:
+                res = CheckResult(name="task_success", passed=None,
+                                  detail={"reason": "所有相机解码失败,无帧可判"})
+                res.detail["task_desc"] = str(task_desc)[:80]
+                res.detail["task_desc_source"] = str(task_src)
+                _progress_tick(_pk_vlm)
+                return result_to_struct(res)
+            nmin = min(len(f) for f in cam_frames.values())    # 各路对齐到最短(同步误差≤1帧)
+            names = list(cam_frames)
+            mv = [[(n, cam_frames[n][i]) for n in names] for i in range(nmin)]
+            res = task_success(mv, task_desc, vlm_completion, **p_task)
             res.detail["task_desc"] = str(task_desc)[:80]
             res.detail["task_desc_source"] = str(task_src)
-            # ---- 二值复核:协议本体在 core/checks/task_success.endstate_review(纯函数)----
-            # 2026-07-23 从本闭包抽出:考卷/单测/漏斗共用同一份协议,永不分叉。
-            # ep34 三处修正(触发条件/全程帧/相机放开)的消融史见该函数 docstring。
-            # 这里只负责框架侧的活:惰性解其余相机的帧(解码失败=少一路视角,不中断)。
-            def _extra_cam_frames():
-                # ⚠️ 必须与主相机同款**全程解码**(0.5s 间隔),抽帧交给 endstate_review
-                #   的 linspace(含端点)。旧写法 span/endstate_frames 间隔采样止步于
-                #   ~87% 处,复核看不到片尾(2026-08-04 ep30 消融实锤的截尾 bug 之一)。
-                out = []
-                for cam2 in [c for c in sorted(video.keys()) if c != cam][:max_endstate_cams - 1]:
-                    v2 = video[cam2]
-                    try:
-                        fr, _ = decode_window(v2["path"], v2["from_ts"], v2["to_ts"],
-                                              sample_interval_s=interval,
-                                              max_side=max_side)
-                        if fr:
-                            out.append(fr)
-                    except Exception:  # noqa: BLE001
-                        continue
-                return out
-
-            res = endstate_review(res, str(task_desc), endstate_judge, frames,
-                                  extra_frames_fn=_extra_cam_frames,
+            res.detail["cams"] = names
+            # ---- 复核:逐机位独立投票(协议本体在 core.endstate_review 纯函数)----
+            res = endstate_review(res, str(task_desc), cam_voter, cam_frames,
                                   endstate_frames=endstate_frames)
             _progress_tick(_pk_vlm)
             return result_to_struct(res)

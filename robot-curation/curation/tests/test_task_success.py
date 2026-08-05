@@ -137,67 +137,62 @@ def test_shuffle_actually_shuffles():
     assert seen != sorted(seen), "提问顺序仍是时序(未打乱)"
 
 
-# ---------- 复核合成(v6.5 决定表) ----------
+# ---------- 多视角帧(core 零感知) ----------
 
-def _run(vlm, judge, frames=None):
+def test_core_agnostic_to_multiview_frames():
+    """帧元素 = [(相机名, 图), ...] 时 core 原样工作(内容只被注入的 vlm 消费)。"""
+    plain = _progress_frames()
+    mv = [[("camA", f), ("camB", f)] for f in plain]
+
+    def mv_fake_vlm(reference, shuffled, instruction):
+        return [float(fr[0][1].mean() / 255.0) for fr in shuffled]   # 读 camA
+
+    r = task_success(mv, "t", mv_fake_vlm)
+    assert r.passed is True and r.detail["voc"] > 0.9
+
+
+# ---------- 复核合成(v7.2 决定表;逐格矩阵见 test_endstate_review) ----------
+
+def _voter_const(answer):
+    return lambda starts, ends, label, desc: answer
+
+
+def _run(vlm, vote, frames=None):
     frames = frames or _progress_frames()
     res = task_success(frames, "t", vlm)
-    return endstate_review(res, "t", judge, frames)
+    return endstate_review(res, "t", _voter_const(vote), {"cam": frames})
 
 
-def test_review_veto_weak_success(monkeypatch):
-    """抗幻觉新机制:弱成功候选(分数中庸)被复核 no 否决 → 人工,不放行。"""
-    prog = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.5, 0.5]   # final=0.5:过线但弱
+def test_review_veto_weak_success():
+    """抗幻觉主机制:弱成功候选被复核一致 no 否决 → 人工,不放行。"""
+    prog = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.5, 0.5]
     frames = [np.full((32, 32, 3), int(p * 255), dtype=np.uint8) for p in prog]
-    r = _run(_fake_vlm, _judge(False), frames)
+    r = _run(_fake_vlm, "no", frames)
     assert r.passed is None and r.detail["verdict"] == "endstate_failure_suspect"
 
 
 def test_strong_success_survives_veto_with_flag():
-    """强分数(末段高位)压过复核否决,但带 disputed 标签供下游过滤。"""
-    r = _run(_fake_vlm, _judge(False))                # final=1.0 强
+    r = _run(_fake_vlm, "no")                          # final=1.0 强
     assert r.passed is True and r.detail.get("review_disputed") is True
 
 
 def test_kill_needs_double_sign():
-    """杀格唯一:失败候选+复核no=杀;复核缺席/矛盾 → 只能弃权(废除单方杀)。"""
-    short = _progress_frames(final=1.0)[:8]           # 峰值≈0.23 → 失败候选
-    res = task_success(short, "t", _fake_vlm)
-    assert res.passed is False
-    r = endstate_review(task_success(short, "t", _fake_vlm), "t", _judge(False), short)
-    assert r.passed is False                          # 双签 → 真杀
-    r = endstate_review(task_success(short, "t", _fake_vlm), "t", _judge(None), short)
-    assert r.passed is None                           # 两问矛盾 → 弃权
-    r = endstate_review(task_success(short, "t", _fake_vlm), "t", None, short)
-    assert r.passed is None                           # 判官不可用 → 弃权
-
-
-def test_review_rescues_blind():
-    """打分层全瞎 + 复核 yes → 救回(cosmos 系的主要放行通道)。"""
-    frames = [np.zeros((32, 32, 3), dtype=np.uint8)] * 12
-    res = task_success(frames, "t", lambda ref, fs, i: [0.0] * len(fs))
-    r = endstate_review(res, "t", _judge(True), frames)
-    assert r.passed is True and r.detail["verdict"] == "endstate_success"
+    """杀格唯一:失败候选+一致no=杀;票不齐 → 弃权(无单方杀)。"""
+    short = _progress_frames(final=1.0)[:8]            # 峰值≈0.23 → 失败候选
+    assert task_success(short, "t", _fake_vlm).passed is False
+    r = endstate_review(task_success(short, "t", _fake_vlm), "t",
+                        _voter_const("no"), {"cam": short})
+    assert r.passed is False
+    r = endstate_review(task_success(short, "t", _fake_vlm), "t",
+                        _voter_const("contradictory"), {"cam": short})
+    assert r.passed is None
+    r = endstate_review(task_success(short, "t", _fake_vlm), "t", None, {"cam": short})
+    assert r.passed is None
 
 
 def test_gap_violation_vs_review_yes_is_conflict():
-    """两层打架(ep143 拦截机制):契约违约曲线 + 复核 yes → 人工,谁也不赢。"""
+    """两层打架(ep19 烂机位/真回退同型):契约违约曲线 + 复核 yes → 人工。"""
     prog = [0.05, 0.2, 0.9, 1.0, 1.0, 0.1, 0.05, 0.05]
     frames = [np.full((32, 32, 3), int(p * 255), dtype=np.uint8) for p in prog]
-    r = _run(_fake_vlm, _judge(True), frames)
+    r = _run(_fake_vlm, "yes", frames)
     assert r.passed is None and r.detail["verdict"] == "review_conflict"
-
-
-def test_review_material_includes_last_frame():
-    """ep30 截尾 bug 回归:复核素材必须含**真末帧**(linspace 含端点)。"""
-    frames = _progress_frames(n=37)                   # 37 帧,故意选不整除 8 的长度
-    got = []
-
-    def spy_judge(starts, ends, desc):
-        got.extend(float(f.mean()) for f in list(starts) + list(ends))
-        return True
-
-    res = task_success(frames, "t", _fake_vlm)
-    endstate_review(res, "t", spy_judge, frames)
-    assert max(got) == pytest.approx(float(frames[-1].mean()), abs=0.5), \
-        "复核素材缺真末帧——步进切片截尾 bug 回归!"

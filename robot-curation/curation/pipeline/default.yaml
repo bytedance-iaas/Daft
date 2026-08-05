@@ -56,6 +56,8 @@ checks:
     gate: hard
     # v6.5(2026-08-04,105 条人工真值×三模型校准):voc_min 闸门已废除(拦下的
     # 全是"做完撤手"的好数据);gap_max=单调契约违约线(物证打分不该冲高又崩回)。
+    # v7.2 多视角(同日):打分=各相机带标签联合(逐时刻融合感知);复核=逐机位
+    # 独立双问+unclear弃权票再汇票。相机路数沿用 pipeline.max_endstate_cams。
     params: {n_probe: 8, success_min: 0.45, fail_max: 0.25, gap_max: 0.5}
     vlm:                           # ★ 模型只在这一处配置——换模型=改这里,零代码改动
                                    #   本段同时供 M4c(成败判定/终态复核)与 M7(caption/归纳/审计)

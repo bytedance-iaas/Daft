@@ -18,6 +18,10 @@
   gap契约违约    人工(打架) 人工               人工          人工
   灰区/全平/异常 过(救回)   人工               人工          人工
 
+v7.2 多视角(2026-08-04):打分层帧可为 [(相机名, 图), ...](联合感知,由
+adapters.make_multiview_completion 消费,本模块零感知);复核层换逐机位独立
+投票(cam_vote/tally)+ 决定表见 endstate_review docstring。
+
 vlm_call 依赖注入 —— 本模块不关心模型是谁(模型名只在 pipeline YAML 一处,
 换模型零代码改动;测试=确定性假函数)。
 """
@@ -162,113 +166,159 @@ def task_success(
     return CheckResult(name="task_success", passed=None, detail=detail)
 
 
+def cam_vote(done_ans: str, failed_ans: str) -> str:
+    """单机位双问 → 一票(v7.2)。done_ans=完成问答案, failed_ans=失败问答案。
+
+    互补才算数(yes/no 或 no/yes);任一问答 unclear = 该机位诚实弃权
+    ("看不见"≠"没做成");同向回答 = 自相矛盾,证词不采信。
+    """
+    if done_ans == "yes" and failed_ans == "no":
+        return "yes"
+    if done_ans == "no" and failed_ans == "yes":
+        return "no"
+    if "unclear" in (done_ans, failed_ans):
+        return "unclear"
+    return "contradictory"
+
+
+def tally(votes) -> str:
+    """汇票(v7.2):只数实票(yes/no),弃权/矛盾/不可用不计。
+
+    ≥1 yes 且 0 no → yes(有看得清的证人说做成,无人反对);
+    0 yes 且 ≥1 no → no(看得清的证人一致说没做成);
+    并存 → split(证人真打架,异常信号);全弃权 → abstain。
+    """
+    y = sum(1 for v in votes if v == "yes")
+    n = sum(1 for v in votes if v == "no")
+    if y and not n:
+        return "yes"
+    if n and not y:
+        return "no"
+    if y and n:
+        return "split"
+    return "abstain"
+
+
+# task_success 初判 verdict → 决定表行的映射(recovery 是 success 的带注成功)
+_INIT_ROW = {"success": "success_cand", "recovery": "success_cand",
+             "failure": "fail_cand", "uncertain": "gray"}
+
+
 def endstate_review(
     res: CheckResult,
     task_desc: str,
-    endstate_judge: Callable | None,
-    primary_frames: Sequence,
-    extra_frames_fn: Callable[[], list] | None = None,
+    cam_voter: Callable | None,
+    cam_frames: dict,
     endstate_frames: int = 8,
+    blind_rescue_votes: int = 2,
 ) -> CheckResult:
-    """二值复核(v6.5:**全员复核 + 否决权**;多视角全程帧,双问法互检)。
+    """二值复核 v7.2:**逐机位独立投票 + 汇票 + 决定表**(105 条人工真值 × 三模型
+    小考定稿;取代 v6.5 的多机位混问——好机位的清晰证据曾被烂机位稀释)。
 
-    ★ 2026-07-23 从 funnel 闭包抽出为纯函数:漏斗/考卷/单测共用同一份协议。
-    ★ 2026-08-04 v6.5 三处升级(105 条人工真值 × 三模型消融定案):
-     ① **成功候选不再免检**:旧协议 passed=True 直接返回,复核没有否决权——
-        ep131(空夹叶子)/ep143(没挂上)这类"动作像样物体没动"的自洽错话从
-        免检通道直接溜走(豆包真失败拦截 0/3)。现在全员复核:复核 no 时,
-        强分数(detail.strong_score)压过否决带 disputed 标签放行,弱分数打回
-        人工。复核只有否决权没有处决权(3 条失败样本撑不起给它发枪)。
-     ② **抽帧修复**:旧 primary_frames[::step] 步进切片漏掉末尾最多 ~22% 帧,
-        复核从未见过"任务完成之后"的画面,"做完即停"型被系统性否决(ep30
-        消融:37 帧只看到第 28 帧,而玩具入槽在最后一瞬)。改 linspace 含端点。
-     ③ **废除"复核不可用时凭失败候选单方杀"**:杀人永远双签,复核缺席只能弃权。
-     另:gap_violation(冲高崩回)+ 复核 yes = 两层激烈打架(ep143 就靠此拦住:
-     打分层看到回落,复核对错标注答 yes),谁也不赢,进人工。
+    注入接口(框架无关):
+      cam_voter(starts, ends, cam_label, desc) -> 'yes'/'no'/'unclear'/
+        'contradictory'/'unavail';None = 投票器不可用(构造失败)。
+      cam_frames: {相机名: 全程帧列表}(有序 dict;每路 linspace 含端点抽
+        endstate_frames 帧,前半进 starts 后半进 ends——截尾教训见 _sample_indices)。
 
-    注入接口(全部框架无关):
-      endstate_judge(starts, ends, desc) -> True完成 / False未完成 / None两问矛盾;
-        传 None = 判官不可用(构造失败),detail 留痕后按"复核不可用"列合成。
-      primary_frames: 主相机全程帧(VOC 已解码的直接复用)。
-      extra_frames_fn: () -> [各补充相机的**全程**帧列表]。惰性:仅在调用时解码;
-        解码失败的相机由调用方自行跳过。
-    历史(2026-07-21 ep34 消融,三处修正仍有效):触发面放宽/全程帧/相机放开。
+    决定表(初判 × 汇票;救人一签、杀人双签、复核有否决权无处决权):
+                    yes         split      no                abstain
+      成功候选      过          过(留痕)   强过(disputed)/   过(留痕单判据)
+                                           弱→人工(否决)
+      失败候选      人工(打架)  人工       **杀**(唯一杀格)  人工
+      gap契约违约   人工(打架)  人工       人工              人工
+      灰区          过(救回)*   人工       人工              人工
+      score_blind   过(救回)**  人工       人工              人工
+      其余(绊线等)  过(救回)    人工       人工              人工
+      * 灰区×yes 且 final≤fail_max → 人工(末态回原点 vs 复核说完成 = 实质矛盾;
+        联合打分曾把 ep143 的 gap 平滑到违约线下,靠这条拦回)
+      ** blind×yes 需 ≥blind_rescue_votes 张实票(打分层零信息时救回也要双签;
+        8b 全瞎+腕部孤票 yes 曾漏 ep143)
     """
-    init = res.detail.get("verdict", "undecidable")
+    init = _INIT_ROW.get(res.detail.get("verdict"), res.detail.get("verdict", "other"))
     strong = bool(res.detail.get("strong_score"))
+    final = res.detail.get("completion_final")
 
-    if endstate_judge is None:
-        # 复核该跑却没跑(judge 构造失败)→ 按"复核不可用"列合成 + 留痕
-        res.detail["endstate"] = "二值复核不可用,仅打分层单判据"
+    if cam_voter is None:
+        res.detail["endstate"] = "复核投票器不可用,仅打分层单判据"
         if res.passed is False:
-            res.passed = None                         # ③杀人必须双签:单判据不许杀
+            res.passed = None                         # 杀人必须双签
             res.detail["reason"] = "失败候选但复核不可用:不凭单判据硬杀,进人工"
         return res
 
-    # ---- 组复核素材:每路相机 linspace 含端点抽 endstate_frames 帧 ----
-    starts, ends = [], []
-
-    def _feed(fr):
-        """前半段进 start 组、后半段进 end 组:保留双问法的前后对照语义。"""
+    votes = {}
+    for i, (name, fr) in enumerate(cam_frames.items()):
         fr = list(fr)
         if not fr:
-            return
-        pick = [fr[i] for i in _sample_indices(len(fr), endstate_frames)]
+            continue
+        pick = [fr[j] for j in _sample_indices(len(fr), endstate_frames)]
         mid = max(1, len(pick) // 2)
-        starts.extend(pick[:mid])
-        ends.extend(pick[mid:] or pick[-1:])
+        label = f"camera {chr(ord('A') + i)} ({name})"
+        votes[name] = cam_voter(pick[:mid], pick[mid:] or pick[-1:], label,
+                                str(task_desc))
+    if not votes:
+        return res                                    # 无帧可复核,原样返回
 
-    if len(primary_frames) > 0:
-        _feed(primary_frames)
-    if extra_frames_fn is not None:
-        for fr in extra_frames_fn():                  # 惰性:仅走到这里才解其余相机
-            _feed(fr)
-    if not starts:
-        return res                                    # 无帧可复核(极端情形),原样返回
+    review = tally(votes.values())
+    yes_votes = sum(1 for v in votes.values() if v == "yes")
+    res.detail["cam_votes"] = dict(votes)
+    res.detail["review"] = review
 
-    es = endstate_judge(starts, ends, str(task_desc))
-    res.detail["endstate_answer"] = {True: "yes", False: "no", None: "contradictory"}[es]
-
-    if es is True:
-        if init == "gap_violation":
-            # 两层打架:打分层看到崩盘,复核却说完成。要么复核被错标注带偏
-            # (ep143),要么打分层对末态失明(ep19 烂机位)。谁也不赢 → 人工。
-            res.passed = None
-            res.detail["verdict"] = "review_conflict"
-            res.detail["reason"] = "打分层契约违约 vs 复核判完成:两层证据激烈矛盾,进人工"
-        elif res.passed is not True:
-            res.passed = True                         # 救人一签就够
-            res.detail["verdict"] = "endstate_success"
-            res.detail["reason"] = f"打分层{init};多视角全程帧二值复核判完成,救回"
+    if init == "success_cand":
+        if review == "no":
+            if strong:
+                res.detail["review_disputed"] = True
+                res.detail["reason"] = "复核一致判未完成,但打分层强证据压过否决"
+            else:
+                res.passed = None
+                res.detail["verdict"] = "endstate_failure_suspect"
+                res.detail["reason"] = "打分层弱成功证据被逐机位复核一致否决:进人工,不硬杀"
+        elif review == "split":
+            res.detail["review_split"] = True         # 有实票反对,留痕可过滤
+        elif review == "abstain":
+            if strong:
+                res.detail["endstate"] = "全体机位弃权/矛盾,仅打分层单判据(强证据)"
+            else:
+                # v7.3(端到端冒烟实锤):弱分数 + 没有任何够格证人 = 纯打分层孤证。
+                # 不可复现性下弱曲线会跨 run 漂移(ep131 一轮 final 0.25 一轮 0.65),
+                # 孤证放行就是漏径 → 转人工。注意与"投票器不可用"(系统故障态,
+                # cam_voter is None 分支)刻意区分:那是基础设施缺席,不是证据缺席。
+                res.passed = None
+                res.detail["verdict"] = "endstate_unconfirmed"
+                res.detail["reason"] = "打分层弱成功证据且全体机位弃权/矛盾:孤证不放行,进人工"
         return res
 
-    if es is False:
-        if res.passed is True:
-            if strong:
-                # 强分数压过否决:证据链完整的分数 > 一次 no(复核对"做完即停"
-                # 型的误 no 率不可忽略);disputed 标签保留给下游过滤
-                res.detail["verdict"] = res.detail.get("verdict", "success")
-                res.detail["review_disputed"] = True
-                res.detail["reason"] = "复核判未完成,但打分层强证据(末段高位/单调爬升)压过否决"
-            else:
-                res.passed = None                     # 否决:弱分数 + 复核 no → 人工
-                res.detail["verdict"] = "endstate_failure_suspect"
-                res.detail["reason"] = "打分层弱成功证据被多视角二值复核否决:存疑进人工,不硬杀"
-        elif init == "failure":
+    if init == "fail_cand":
+        if review == "no":
             res.passed = False                        # ◆全表唯一杀格:双签
             res.detail["verdict"] = "failure"
-            res.detail["reason"] = "打分层全程无进度且复核判未完成:双判据一致,硬杀"
+            res.detail["reason"] = "联合打分全程无进度且逐机位复核一致判未完成:双签硬杀"
+        elif review == "yes":
+            res.passed = None
+            res.detail["verdict"] = "review_conflict"
+            res.detail["reason"] = "联合打分全程无进度 vs 复核判完成:两层打架,进人工"
         else:
             res.passed = None
-            res.detail["verdict"] = "endstate_failure_suspect"
-            res.detail["reason"] = f"打分层{init}且复核判未完成:证据不足以放行,进人工"
+            res.detail["reason"] = "失败候选但复核无一致结论:缺第二签,不硬杀,进人工"
         return res
 
-    # es is None:两问矛盾 → 复核弃权,不采信
-    res.detail["endstate"] = "两问法矛盾,不采信"
-    if res.passed is True:
-        res.detail["review_contradictory"] = True     # 成功候选维持,留痕
-    elif res.passed is False:
-        res.passed = None                             # 失败候选失去第二签 → 弃权
-        res.detail["reason"] = "失败候选但复核两问矛盾:缺第二签,不硬杀,进人工"
+    if init == "gap_violation":
+        if review == "yes":
+            res.detail["verdict"] = "review_conflict"
+            res.detail["reason"] = "打分层契约违约 vs 复核判完成:两层证据激烈矛盾,进人工"
+        return res                                    # 其余列维持弃权
+
+    # 灰区 / score_blind / voc_tripwire / 调用失败:复核 yes 才可能救回
+    if review == "yes":
+        if init == "gray" and final is not None and final <= 0.25:
+            res.detail["verdict"] = "review_conflict"
+            res.detail["reason"] = "打分层末态回到原点 vs 复核判完成:实质矛盾,进人工"
+            return res
+        if init == "score_blind" and yes_votes < blind_rescue_votes:
+            res.detail["reason"] = (f"打分层无信息且复核仅 {yes_votes} 张实票 yes"
+                                    f"(<{blind_rescue_votes}):孤证不救,进人工")
+            return res
+        res.passed = True
+        res.detail["verdict"] = "endstate_success"
+        res.detail["reason"] = f"打分层{init};逐机位复核判完成,救回"
     return res
