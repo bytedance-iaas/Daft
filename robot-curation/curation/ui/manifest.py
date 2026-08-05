@@ -316,12 +316,17 @@ def skill_bar_html(m: dict) -> str:
             + "".join(head) + "".join(rows) + foot + '</div>')
 
 
-AUDIT_HEADERS = ["episode", "原始标注", "自产描述(VLM 生成)", "分歧说明"]
+AUDIT_HEADERS = ["档位", "episode", "原始标注", "自产描述(VLM 生成)", "成败线判定", "分歧说明", "裁决"]
 
 
 def audit_rows(m: dict) -> list[list]:
-    return [[a.get("id", ""), a.get("label", ""), a.get("caption", ""),
-             a.get("reason", "")] for a in m["audit_queue"]]
+    """档位=重点(成败线同时不利,两线同报警)/参考(成败线放行,多为描述噪声)。
+    裁决列回显 details/label_decisions.csv(空=待人工)。"""
+    dec = load_label_decisions(m)
+    return [[a.get("priority", "参考"), a.get("id", ""), a.get("label", ""),
+             a.get("caption", ""), a.get("task_verdict", ""), a.get("reason", ""),
+             dec.get(a.get("id", ""), {}).get("decision", "")]
+            for a in m["audit_queue"]]
 
 
 def overview_markdown(m: dict) -> str:
@@ -721,3 +726,13 @@ def latency_bar_html(perf: dict) -> str:
             + '<div style="font:12px system-ui;color:#777;margin-top:6px">'
               '各类调用之间在时间上可能重叠,各条墙钟相加 ≠ 整次运行总时长。</div>'
             '</div>')
+
+
+# ── 标注裁决:实现在 dataset_level/decisions.py(与 rejudge 命令共用同一份)──
+from ..dataset_level.decisions import (DECISION_CHOICES, DECISIONS_CSV,  # noqa: F401
+                                       record_label_decision)
+from ..dataset_level.decisions import load_label_decisions as _load_decisions
+
+
+def load_label_decisions(m: dict) -> dict:
+    return _load_decisions(m["path"])

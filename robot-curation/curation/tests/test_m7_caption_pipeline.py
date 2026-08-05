@@ -332,3 +332,76 @@ def test_caption_multiview_groups_and_labels(monkeypatch):
     assert seen["groups"] == [("a_cam", 8), ("b_cam", 8)]      # 排序稳定 + 短名 + 各 8 帧
     assert "Images 1-8: camera A (a_cam)" in seen["sections"]
     assert "Images 9-16: camera B (b_cam)" in seen["sections"]
+
+
+# ---------- 文本对判官(v2 比对器)钉子 ----------
+
+def test_pair_judge_verdict_routing():
+    """判官四种裁决的分流:different→high;unsure→mid;garbage→high;same→不立案。"""
+    def pair_llm(prompt):
+        assert "IRRECONCILABLE" in prompt                  # 走的是判官 prompt(v2 措辞)
+        return json.dumps({"pairs": [
+            {"i": 0, "verdict": "same", "why": ""},
+            {"i": 1, "verdict": "different", "why": "on vs off"},
+            {"i": 2, "verdict": "garbage", "why": ""},
+            {"i": 3, "verdict": "unsure", "why": "object unclear"}]})
+
+    out = audit_labels(["e0", "e1", "e2", "e3"],
+                       ["open the tap", "switch off the cord", "bmbfbb", "slide the mug"],
+                       ["turn on the faucet", "press the switch on", "?", "pick up a cup"],
+                       ["f", "f", "f", "f"], TAX, pair_llm)
+    ids_high = {e["id"]: e["reason"] for e in out["high"]}
+    assert "e1" in ids_high and "on vs off" in ids_high["e1"]
+    assert ids_high["e2"] == "garbage"                    # retier 依赖这个精确字符串
+    assert [e["id"] for e in out["mid_for_review"]] == ["e3"]
+    assert "e0" not in ids_high                           # same 不立案
+
+
+def test_pair_judge_chunking():
+    """超过 _PAIR_CHUNK 的对子分批调用,序号跨批不错位。"""
+    from curation.dataset_level.audit import _PAIR_CHUNK
+    n = _PAIR_CHUNK + 5
+    calls = []
+
+    def pair_llm(prompt):
+        import re as _re
+        idxs = [int(m) for m in _re.findall(r"^(\d+)\. ANNOTATION", prompt, flags=_re.M)]
+        calls.append(len(idxs))
+        return json.dumps({"pairs": [
+            {"i": i, "verdict": "different" if i == n - 1 else "same", "why": "x"}
+            for i in idxs]})
+
+    ids = [f"e{i}" for i in range(n)]
+    out = audit_labels(ids, [f"task {i}" for i in range(n)],
+                       [f"cap {i}" for i in range(n)], ["f"] * n, TAX, pair_llm)
+    assert calls == [_PAIR_CHUNK, 5]
+    assert [e["id"] for e in out["high"]] == [f"e{n-1}"]  # 末批的序号没错位
+
+
+def test_pair_judge_falls_back_to_family_on_bad_shape():
+    """判官回复结构不符 → 整体回退族级比对(降级不断链)。"""
+    def map_llm(prompt):
+        if "IRRECONCILABLE" in prompt:
+            return '{"unexpected": true}'                  # 判官路失败
+        return json.dumps({"map": [{"label": "close microwave", "family": "open/close"}]})
+
+    out = audit_labels(["e1"], ["close microwave"], ["place the cup on the table"],
+                       ["manipulate"], TAX, map_llm)
+    assert len(out["high"]) == 1                           # 族级路仍然立案
+    assert "归为" in out["high"][0]["reason"]              # 族级措辞 = 本次用的尺子可辨认
+
+
+def test_attach_task_context_tiers_and_sorts():
+    """A∧B 分层:成败线不利=重点且排前;放行=参考;成败线缺席=参考(不臆断)。"""
+    from curation.dataset_level.audit import attach_task_context
+    audit = {"high": [{"id": "e1", "label": "a", "caption": "b", "reason": "r"},
+                      {"id": "e2", "label": "c", "caption": "d", "reason": "r"}],
+             "mid_for_review": [{"id": "e3", "label": "x", "caption": "y", "reason": "r"}]}
+    task_of = {"e1": {"passed": True, "verdict": "success"},
+               "e2": {"passed": None, "verdict": "review_conflict"}}
+    out = attach_task_context(audit, task_of)
+    assert [e["id"] for e in out["high"]] == ["e2", "e1"]      # 重点排前
+    assert out["high"][0]["priority"] == "重点"
+    assert out["high"][0]["task_verdict"] == "review_conflict"
+    assert out["high"][1]["priority"] == "参考"
+    assert out["mid_for_review"][0]["priority"] == "参考"       # 成败线缺席=参考

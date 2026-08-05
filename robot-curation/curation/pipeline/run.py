@@ -583,7 +583,19 @@ def run_pipeline(
     if dedup_note:
         report["dataset"]["dedup_note"] = dedup_note
     if label_audit is not None:
-        report["label_audit"] = label_audit
+        # A∧B 分层:分歧条目带上成败线判定(重点=两线同时不利;参考=成败线放行,
+        # 多为难视角 caption 噪声)。纯函数在 audit.attach_task_context,此处只做提取。
+        from ..dataset_level.audit import attach_task_context
+        _task_of = {}
+        for _e, _pe in per_episode.items():
+            _ts = (_pe.get("checks") or {}).get("task_success")
+            if _ts is not None:
+                try:
+                    _v = json.loads(_ts.get("detail") or "{}").get("verdict", "")
+                except Exception:  # noqa: BLE001
+                    _v = ""
+                _task_of[_e] = {"passed": _ts.get("passed"), "verdict": _v}
+        report["label_audit"] = attach_task_context(label_audit, _task_of)
     report["episodes"]["results"] = per_episode
     # 操作流畅度汇总(episode 级明细在 motion detail/CSV;此处给数据集级视图)
     _flu = []
@@ -795,6 +807,11 @@ def run_pipeline(
     # 不会漂移。没画像(--skip skill_profile)时不生成空文件:空表会被误读成"0 条数据"。
     from ..dataset_level.profile import write_skill_assignment_csv
     write_skill_assignment_csv(det_dir, profile, caption_of)
+    # 全量 caption 落盘(2026-08-05):此前 caption 只随审计队列条目存活,测量/审计
+    # 想离线重放就得整轮重跑 VLM。一个 JSON 花几 KB,买到可重放性。空串=未获/弃权。
+    if caption_of:
+        with open(os.path.join(det_dir, "captions.json"), "w", encoding="utf-8") as f:
+            json.dump(caption_of, f, ensure_ascii=False, indent=1)
     # 运动学违规明细(2026-07-14 用户定):被拒必须能定位;硬杀发生在漏斗中途,
     # 明细从 stats.hard_killed 提取(幸存者不会有运动学违规——硬门语义)
     krows = []

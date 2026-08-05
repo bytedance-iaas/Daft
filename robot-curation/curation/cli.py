@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -73,6 +74,13 @@ def build_parser() -> argparse.ArgumentParser:
                           "仍可 --set checks.task_success.vlm.* 微调(--set 后应用,赢)")
     run.add_argument("--report-only", action="store_true",
                      help="只出报告,不导出数据集(单模块快查时省去重编码视频的时间)")
+
+    rj = sub.add_parser("rejudge",
+                        help="按人工裁决(details/label_decisions.csv)重判并更新交付:"
+                             "采纳改标的条目用新标注重跑任务成败检测(带溯源)")
+    rj.add_argument("--delivery", required=True, help="交付目录(含三件套与裁决文件)")
+    rj.add_argument("--input", required=True, help="原始数据集目录(重判需重新解码视频)")
+    rj.add_argument("--config", default=None, help="流水线 YAML(缺省 default.yaml,须与原 run 一致)")
 
     be = sub.add_parser("backends", help="一次列出全部 VLM 后端预设的在线状态与服务端模型")
     be.add_argument("--config", default=None,
@@ -157,6 +165,14 @@ def _parse_episodes(expr: str | None) -> set[int] | None:
 def main(argv: list[str] | None = None) -> int:
     import os
     args = build_parser().parse_args(argv)
+    if args.command == "rejudge":
+        from .pipeline.config import load_config
+        from .pipeline.rejudge import run_rejudge
+        summary = run_rejudge(args.delivery, args.input, load_config(args.config))
+        print(json.dumps(summary, ensure_ascii=False, indent=1)
+              if isinstance(summary, dict) else summary)
+        return 0
+
     if args.command == "backends":
         return _cmd_backends(args.config, args.timeout)
     if args.command == "ui":
