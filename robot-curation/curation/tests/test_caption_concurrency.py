@@ -47,8 +47,8 @@ def _content_captioner(delay_jitter: bool = True):
 
     延迟用 (7 * i) % 5 这种确定性伪随机:既能把完成顺序搅乱,又不引入 flaky。
     """
-    def cap(frames):
-        i = int(frames[0][0, 0, 0])
+    def cap(groups):
+        i = int(groups[0][1][0][0, 0, 0])          # 首路首帧的内容=行号
         if delay_jitter:
             time.sleep(((7 * i) % 5) * 0.01)
         return f"task-{i}"
@@ -79,11 +79,11 @@ def test_stub_can_actually_detect_permutation(fake_decode):
     counter = {"n": 0}
     lock = threading.Lock()
 
-    def completion_order_captioner(frames):
+    def completion_order_captioner(groups):
         # ⚠️ 先延迟再发号:号码由**完成顺序**决定,与内容彻底脱钩。
         #   (第一版把发号写在 sleep 之前,线程仍按提交顺序拿号 → 反向验证自己失效了,
         #    正好又演示了一遍"测试桩写法决定了它能不能抓到 bug"。)
-        time.sleep(((13 * int(frames[0][0, 0, 0])) % 7) * 0.01)
+        time.sleep(((13 * int(groups[0][1][0][0, 0, 0])) % 7) * 0.01)
         with lock:
             counter["n"] += 1
             return f"task-{counter['n'] - 1}"
@@ -123,10 +123,10 @@ def test_precomputed_cache_still_wins_under_concurrency(fake_decode):
     called = []
     lock = threading.Lock()
 
-    def cap(frames):
+    def cap(groups):
         with lock:
-            called.append(int(frames[0][0, 0, 0]))
-        return f"task-{int(frames[0][0, 0, 0])}"
+            called.append(int(groups[0][1][0][0, 0, 0]))
+        return f"task-{int(groups[0][1][0][0, 0, 0])}"
 
     caps = caption_mod.caption_episodes(rows, cap, precomputed={"ep0001": "cached-1"},
                                         max_concurrency=4)
