@@ -402,15 +402,193 @@ def build_linear_context(frames: list[np.ndarray], n: int = 8,
     return [frames[idx[j]] for j in order], [float(rates[j]) for j in order]
 
 
+# ── v7.2 多视角协议(2026-08-04,105 条人工真值 × 三模型小考定稿)──────────
+# 打分层=带标签联合:同一时刻各相机帧一次给齐(带相机身份标签),模型逐时刻融合
+#   感知——盲区是逐时刻变化的,"信看得清的那路"只能由模型在当下决定(droid ep19:
+#   单路外1 VOC -0.11 逐帧掷硬币,外2 +0.76,联合 final 1.0 直接判对)。
+# v5 铁律不破:每请求仍只出一个数(k 张**同时刻**查询帧 ≠ v4 的 8 张异时刻帧,
+#   无跟踪问题)。
+JOINT_SCORE_PROMPT = (
+    "Task: {instruction}\n"
+    "Images 1-{k} show the START of a robot episode, one image per camera, in this "
+    "order: {camlist}. Nothing is accomplished yet at the start.\n"
+    "Images {k1}-{k2} show ONE SAME later moment of the SAME episode, from the same "
+    "cameras in the same order.\n"
+    "Some views may be occluded or unhelpful; rely on the views where the objects "
+    "are clearly visible.\n"
+    "Score how far the task has physically progressed at that moment, from 0 to 100, "
+    "judging ONLY by the state of the objects and the scene - not by what the robot "
+    "arm is doing.\n"
+    "- 0 = the objects are still in their starting configuration.\n"
+    "- 100 = the objects are in the goal configuration described by the task.\n"
+    "If the objects are already in the goal configuration, answer 100 even if the "
+    "arm has moved away, is idle, or is out of view.\n"
+    "Answer ONLY an integer from 0 to 100."
+)
+
+
+def make_multiview_completion(
+    endpoint: str,
+    model: str,
+    *,
+    timeout_s: float = 600.0,
+    temperature: float = 0.0,
+    max_tokens: int = 2048,
+    api_key_env: str | None = None,
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+):
+    """多视角联合打分工厂。**帧 = [(相机名, 图), ...]**(同一时刻各相机,标签随数据走)。
+
+    注入接口不变:vlm(reference, shuffled_frames, instruction) -> list[float],
+    只是 reference 与 shuffled_frames 的元素都是 [(name, img), ...]。
+    单相机数据集 = 单元素列表,自动退化为"单视角带标签"提问,零分支。
+    """
+    import requests
+
+    url = endpoint.rstrip("/") + "/chat/completions"
+    headers = auth_headers(api_key_env)
+
+    def _post(content):
+        payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
+                   "messages": [{"role": "user", "content": content}]}
+        _t = _time.time()
+        _ok = False
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
+            _ok = resp.ok
+        finally:
+            latency_record("probe", _time.time() - _t, _ok, started_at=_t)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+    def _img(frame) -> dict:
+        return {"type": "image_url", "image_url": {"url": _frame_to_data_uri(frame)}}
+
+    def vlm_joint(reference, shuffled_frames, instruction) -> list[float]:
+        names = [n for n, _ in reference]
+        letters = [chr(ord("A") + i) for i in range(len(names))]
+        camlist = ", ".join(f"image {i+1} = camera {letters[i]} ({n})"
+                            for i, n in enumerate(names))
+        k = len(names)
+        text = JOINT_SCORE_PROMPT.format(
+            instruction=instruction or "the robot manipulation task",
+            k=k, camlist=camlist, k1=k + 1, k2=2 * k)
+        refs = [_img(f) for _, f in reference]        # 参考帧编码一次,各请求复用
+
+        def ask(mvframe):                             # 每请求 = 一个时刻,一个数
+            content = [{"type": "text", "text": text}] + refs + \
+                      [_img(f) for _, f in mvframe]
+            return parse_completion(strip_reasoning(_post(content)))
+
+        return _map_concurrent(ask, shuffled_frames, max_concurrency)   # 保序
+
+    return vlm_joint
+
+
+# 复核层=逐机位独立双问 + "unclear"弃权票:被挡的机位可以诚实退场("看不见"≠
+# "没做成"),票数只来自自称看得清的证人;双问矛盾 = 该机位证词不采信。
+Q_DONE_MV = (
+    "Task: {task}\n"
+    "All images are from ONE camera: {cam_label}.\n"
+    "Images 1-{n0}: the EARLIER part of the episode, in chronological order. "
+    "Images {n1}-{n}: the LATER part, in chronological order.\n"
+    "Did the robot COMPLETE the task at any point? Judge by the OBJECTS, not the "
+    "arm's motions: the task counts as completed only if the target object actually "
+    "ended up as the task describes. A grasping or placing motion does not count if "
+    "the object was never actually moved.\n"
+    "If this camera's view does not show the target object clearly enough to tell, "
+    "answer \"unclear\" - do not guess.\n"
+    "Answer ONLY one word: yes, no, or unclear."
+)
+Q_FAILED_MV = (
+    "Task: {task}\n"
+    "All images are from ONE camera: {cam_label}.\n"
+    "Images 1-{n0} are from the earlier part, images {n1}-{n} from the later part, "
+    "both in chronological order.\n"
+    "Did the robot FAIL to complete the task (i.e. the target object never actually "
+    "ended up as the task describes)? Look closely at the target object across the "
+    "frames; ignore whether the arm's motions looked correct.\n"
+    "If this camera's view does not show the target object clearly enough to tell, "
+    "answer \"unclear\" - do not guess.\n"
+    "Answer ONLY one word: yes, no, or unclear."
+)
+
+
+def parse_vote_word(text: str) -> str:
+    """模型回答 → yes/no/unclear;识别不出返回 '?'(调用方按矛盾处理)。"""
+    t = strip_reasoning(text).strip().lower()
+    for w in ("unclear", "yes", "no"):     # unclear 先匹配,避免与 no 的子串歧义
+        if t.startswith(w):
+            return w
+    if "unclear" in t[:40]:
+        return "unclear"
+    if "yes" in t[:8]:
+        return "yes"
+    if "no" in t[:8]:
+        return "no"
+    return "?"
+
+
+def make_endstate_voter(endpoint: str, model: str, timeout_s: float = 600.0,
+                        api_key_env: str | None = None):
+    """逐机位复核投票器(v7.2,取代旧 make_endstate_judge 的多机位混问——旧法
+    24 张图一锅烩一个答案,好机位的清晰证据被烂机位稀释,droid ep19 实锤)。
+
+    voter(start_frames, end_frames, cam_label, instruction) ->
+        'yes' / 'no' / 'unclear' / 'contradictory' / 'unavail'
+    单机位一票;票的合成(cam_vote)与汇总(tally)在 core,本函数只管问与解析。
+    """
+    import requests
+
+    from ..core.checks.task_success import cam_vote
+
+    url = endpoint.rstrip("/") + "/chat/completions"
+    headers = auth_headers(api_key_env)
+
+    def _ask(text, imgs):
+        content = [{"type": "text", "text": text}] + [
+            {"type": "image_url", "image_url": {"url": _frame_to_data_uri(f)}}
+            for f in imgs]
+        _t = _time.time()
+        _ok = False
+        try:
+            r = requests.post(url, json={"model": model, "temperature": 0.0,
+                                         "max_tokens": 2048,
+                                         "messages": [{"role": "user", "content": content}]},
+                              headers=headers, timeout=timeout_s)
+            _ok = r.ok
+        finally:
+            latency_record("endstate", _time.time() - _t, _ok, started_at=_t)
+        r.raise_for_status()
+        return parse_vote_word(r.json()["choices"][0]["message"]["content"])
+
+    def voter(start_frames, end_frames, cam_label, instruction):
+        task = instruction or "the robot manipulation task"
+        imgs = list(start_frames) + list(end_frames)
+        n0 = len(start_frames)
+        fmt = dict(task=task, cam_label=cam_label, n0=n0, n1=n0 + 1, n=len(imgs))
+        try:                                  # 双问并发(互不依赖)
+            a, b = _map_concurrent(lambda q: _ask(q.format(**fmt), imgs),
+                                   [Q_DONE_MV, Q_FAILED_MV], 2)
+        except Exception:  # noqa: BLE001
+            return "unavail"
+        return cam_vote(a, b)
+
+    return voter
+
+
 def vlm_completion_from_config(cfg: dict):
-    """pipeline YAML 的 checks.task_success.vlm 段 → 注入函数(模型只在配置一处)。"""
+    """pipeline YAML 的 checks.task_success.vlm 段 → 注入函数(模型只在配置一处)。
+
+    v7.2 起返回**多视角联合**打分器(帧 = [(相机名, 图), ...],funnel 按此组装;
+    单相机数据集自动退化,零分支)。单视角 make_vlm_completion 保留给探针/考卷。"""
     vlm = cfg["checks"]["task_success"].get("vlm") or {}
     if not vlm.get("endpoint"):
         raise ValueError("配置 checks.task_success.vlm.endpoint 缺失")
-    return make_vlm_completion(vlm["endpoint"], vlm["model"],
-                               api_key_env=vlm.get("api_key_env"),
-                               max_concurrency=int(vlm.get("max_concurrency",
-                                                           DEFAULT_MAX_CONCURRENCY)))
+    return make_multiview_completion(vlm["endpoint"], vlm["model"],
+                                     api_key_env=vlm.get("api_key_env"),
+                                     max_concurrency=int(vlm.get("max_concurrency",
+                                                                 DEFAULT_MAX_CONCURRENCY)))
 
 
 def make_llm_ask(endpoint: str, model: str, timeout_s: float = 1800.0,
@@ -436,69 +614,3 @@ def make_llm_ask(endpoint: str, model: str, timeout_s: float = 1800.0,
         return strip_reasoning(r.json()["choices"][0]["message"]["content"])
 
     return llm_ask
-
-
-def make_endstate_judge(endpoint: str, model: str, timeout_s: float = 600.0,
-                        api_key_env: str | None = None):
-    """终态二值复核(2026-07-08):VOC 渐变问询在真机宽景上常失效(模型给不出逐帧
-    渐变分,droid 全程答0),但"看首末帧答完成与否"的二值问题它答得动。
-    双问法互检(完成了吗/失败了吗)=迷你测谎:两答矛盾 → None(不采信)。
-    judge(start_frames, end_frames, instruction) -> True完成/False失败/None不可信。
-    """
-    import requests
-
-    url = endpoint.rstrip("/") + "/chat/completions"
-    headers = auth_headers(api_key_env)
-
-    def _ask(text, imgs):
-        content = [{"type": "text", "text": text}] + [
-            {"type": "image_url", "image_url": {"url": _frame_to_data_uri(f)}}
-            for f in imgs]
-        _t = _time.time()
-        _ok = False
-        try:
-            r = requests.post(url, json={"model": model, "temperature": 0.0,
-                                         "max_tokens": 2048,
-                                         "messages": [{"role": "user", "content": content}]},
-                              headers=headers, timeout=timeout_s)
-            _ok = r.ok
-        finally:
-            latency_record("endstate", _time.time() - _t, _ok, started_at=_t)
-        r.raise_for_status()
-        ans = strip_reasoning(r.json()["choices"][0]["message"]["content"]).strip().lower()
-        return "yes" in ans[:8]
-
-    def judge(start_frames, end_frames, instruction):
-        task = instruction or "the robot manipulation task"
-        imgs = list(start_frames) + list(end_frames)
-        n0 = len(start_frames)
-        # 双问法互不依赖 → 并发发出(两问各约 8s,串行 16s → 并发 8s)
-        # ⚠️措辞与 funnel 传入的帧集合保持一致:现在传的是**全程帧**(前半段进 start 组、
-        # 后半段进 end 组),不再是首尾各一帧,故问"是否曾经完成"而非"仅从末态看"——
-        # 阶跃型任务(倒/放/开关)的证据在动作瞬间,末态常看不出来(ep34 消融实证)。
-        # v6(2026-08-04):追加"看物不看手"证据标准——复核在 v6.5 决定表里获得了对
-        # 成功候选的否决权,证据标准必须比打分层苛刻:任务算完成仅当目标物体确实到位;
-        # 夹爪去过/动作像样但物体没动,不算(抓 droid ep131"空夹叶子"型自洽错话)。
-        q_done = (f"Task: {task}\nImages 1-{n0}: EARLIER part of a robot episode "
-                  f"(possibly multiple camera views). Images {n0+1}-{len(imgs)}: LATER part "
-                  "of the same episode. Did the robot COMPLETE the task at any point? "
-                  "Judge by the OBJECTS, not the arm's motions: the task counts as "
-                  "completed only if the target object actually ended up as the task "
-                  "describes. A grasping or placing motion does not count if the object "
-                  "was never actually moved. Answer ONLY yes or no.")
-        q_failed = (f"Task: {task}\nImages 1-{n0} are from the earlier part, "
-                    f"images {n0+1}-{len(imgs)} from the later part of the same episode. "
-                    "Did the robot FAIL to complete the task (i.e. the target object "
-                    "never actually ended up as the task describes)? Look closely at "
-                    "the target object across the frames; ignore whether the arm's "
-                    "motions looked correct. Answer ONLY yes or no.")
-        try:
-            done, failed = _map_concurrent(lambda q: _ask(q, imgs), [q_done, q_failed], 2)
-        except Exception:  # noqa: BLE001
-            return None
-        if done and not failed:
-            return True
-        if failed and not done:
-            return False
-        return None                       # 两答矛盾 → 不采信
-    return judge

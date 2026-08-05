@@ -142,13 +142,19 @@ def test_end_to_end_against_stub(stub_server):
 
 
 def test_from_config_single_source_of_truth(stub_server):
-    """模型只在 YAML 一处:从配置构造,端点/模型都来自 vlm: 段。"""
+    """模型只在 YAML 一处:从配置构造,端点/模型都来自 vlm: 段。
+
+    v7.2 起 from_config 返回**多视角联合**打分器:帧 = [(相机名, 图), ...];
+    单相机数据集即单元素列表(自动退化,零分支)。"""
     cfg = {"checks": {"task_success": {"vlm": {"endpoint": stub_server, "model": "m-x"}}}}
     vlm = vlm_completion_from_config(cfg)
     marks = [30, 60]
-    out = vlm(_mark_frame(0), [_mark_frame(m) for m in marks], "t")
+    out = vlm([("cam", _mark_frame(0))], [[("cam", _mark_frame(m))] for m in marks], "t")
     assert out == pytest.approx([m / 100 for m in marks], abs=0.02)
     assert _Stub.seen[-1]["body"]["model"] == "m-x"
+    # 联合 prompt 必须带相机标签(模型据此知道哪张图是哪路)
+    txt = _Stub.seen[-1]["body"]["messages"][0]["content"][0]["text"]
+    assert "camera A (cam)" in txt
 
 
 def test_from_config_reads_max_concurrency(stub_server):
@@ -157,7 +163,7 @@ def test_from_config_reads_max_concurrency(stub_server):
         "endpoint": stub_server, "model": "m-x", "max_concurrency": 1}}}}   # 1=串行
     vlm = vlm_completion_from_config(cfg)
     marks = [10, 20, 30]
-    out = vlm(_mark_frame(0), [_mark_frame(m) for m in marks], "t")
+    out = vlm([("cam", _mark_frame(0))], [[("cam", _mark_frame(m))] for m in marks], "t")
     assert out == pytest.approx([m / 100 for m in marks], abs=0.02)   # 串行也必须对
 
 

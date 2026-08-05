@@ -13,7 +13,7 @@ import numpy as np
 
 from curation.adapters.vlm_client import (latency_record, latency_reset,
                                           latency_rows, latency_summary,
-                                          make_endstate_judge,
+                                          make_endstate_voter,
                                           read_latency_csv)
 from curation.export.report import to_markdown
 
@@ -108,9 +108,9 @@ def test_endstate_judge_records_tagged_latency():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         latency_reset()
-        judge = make_endstate_judge(f"http://127.0.0.1:{srv.server_port}/v1", "m")
+        voter = make_endstate_voter(f"http://127.0.0.1:{srv.server_port}/v1", "m")
         frame = np.zeros((8, 8, 3), dtype=np.uint8)
-        judge([frame], [frame], "task")
+        voter([frame], [frame], "camera A (cam)", "task")
         s = latency_summary()
         assert "endstate" in s and s["endstate"]["n"] >= 2   # 双问法=至少两请求
         assert s["endstate"]["errors"] == 0
