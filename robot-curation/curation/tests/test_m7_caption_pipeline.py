@@ -33,8 +33,8 @@ def test_caption_episodes_with_stub(monkeypatch):
     """captioner 注入;解码失败(path 非视频)→ 空串不崩批。"""
     calls = []
 
-    def fake_captioner(frames):
-        calls.append(len(frames))
+    def fake_captioner(groups):
+        calls.append(sum(len(fr) for _n, fr in groups))
         return "place the cup on the table."
 
     import curation.dataset_level.caption as C
@@ -47,7 +47,7 @@ def test_caption_episodes_with_stub(monkeypatch):
 
 
 def test_caption_failure_isolated():
-    def broken(frames):
+    def broken(groups):
         raise TimeoutError()
 
     caps = caption_episodes(_rows(), broken)              # decode 也会失败(path 非视频)
@@ -301,3 +301,34 @@ def test_audit_recheck_n_configured_with_off_switch():
     """默认 3(开),1=关;site.yaml 不动 → 值从 default.yaml 读得到。"""
     from curation.pipeline.config import load_config
     assert load_config()["skill_profile"]["audit_recheck_n"] == 3
+
+
+def test_caption_unclear_normalized_to_empty(monkeypatch):
+    """unclear 弃权出口:captioner 诚实说看不清 → 归一空串走既有降级,不进审计比对。"""
+    import curation.dataset_level.caption as C
+    monkeypatch.setattr("curation.adapters.decode.decode_window",
+                        lambda *a, **k: ([np.zeros((8, 8, 3), np.uint8)] * 10, np.arange(10)))
+    caps = caption_episodes(_rows(), lambda groups: "Unclear.", n_frames=8)
+    assert caps == ["", "", "", ""]
+
+
+def test_caption_multiview_groups_and_labels(monkeypatch):
+    """多路分组:每路各自 linspace n_frames 帧,组带相机短名;prompt 段落头逐路编号。"""
+    from curation.dataset_level.caption import cam_sections_text
+    import curation.dataset_level.caption as C
+    rows = [{"episode_id": "ep0",
+             "video": {"observation.images.b_cam": {"path": "x", "from_ts": 0, "to_ts": 1},
+                        "observation.images.a_cam": {"path": "x", "from_ts": 0, "to_ts": 1}}}]
+    monkeypatch.setattr("curation.adapters.decode.decode_window",
+                        lambda *a, **k: ([np.zeros((4, 4, 3), np.uint8)] * 12, np.arange(12)))
+    seen = {}
+
+    def spy(groups):
+        seen["groups"] = [(n, len(fr)) for n, fr in groups]
+        seen["sections"] = cam_sections_text(groups)
+        return "do the thing"
+
+    assert caption_episodes(rows, spy, n_frames=8) == ["do the thing"]
+    assert seen["groups"] == [("a_cam", 8), ("b_cam", 8)]      # 排序稳定 + 短名 + 各 8 帧
+    assert "Images 1-8: camera A (a_cam)" in seen["sections"]
+    assert "Images 9-16: camera B (b_cam)" in seen["sections"]
