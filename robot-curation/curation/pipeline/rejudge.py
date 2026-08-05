@@ -1,0 +1,221 @@
+"""标注裁决闭环:`curation rejudge`(③,2026-08-05)。
+
+流程(人工确认卡在 caption 与重判之间 = 自产自证陷阱的断路器):
+  UI/人工在 details/label_decisions.csv 留下三选一裁决 →
+  本命令读裁决:
+    采纳建议改标 → 用**人工确认过的新标注**重跑任务成败检测(多视角 v7.3 全协议),
+                  按新判定把 episode 搬进 passed/review/reject,带完整改标溯源;
+    弃用该条     → 搬进 reject(人工裁决弃用);
+    维持原标注   → 只在分歧队列上标记已裁决(审计误旗,原判定原样)。
+  三件套原地更新 + report.md 追加「标注裁决与重判」节 + details/rejudge_results.json 留档。
+
+架构:apply_decisions() 是**纯数据函数**(只操作已加载的 JSON dict,可严格单测);
+重判本体注入(rerun_fn),生产由 run_rejudge 组装真 VLM,测试注入假函数——
+与 task_success 的依赖注入同一哲学。
+"""
+from __future__ import annotations
+
+import datetime
+import json
+import os
+from typing import Callable
+
+TASK_CN = "任务成败判定"
+
+
+def _state_cn(passed) -> str:
+    return {True: "pass", False: "拒绝", None: "弃权"}[passed]
+
+
+def apply_decisions(passed: dict, review: dict, reject: dict,
+                    decisions: dict, rejudged: dict) -> dict:
+    """按裁决在三件套视图间搬移/标注(**原地修改**传入的 dict)→ 摘要。
+
+    decisions: {eid: {"decision","new_label","note","at"}}(decisions.py schema)
+    rejudged:  {eid: {"passed","verdict","detail"}}(仅"采纳建议改标"条目需要;
+               缺席 = 重判没跑成,该条不动并记入摘要,绝不臆断)
+    """
+    p_eps = passed.setdefault("episodes", {})
+    r_eps = review.setdefault("episodes", {})
+    j_eps = reject.setdefault("episodes", {})
+    queue = review.get("标注-画面分歧复核队列") or []
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    summary = {"adopted_pass": [], "adopted_review": [], "adopted_reject": [],
+               "dropped": [], "kept": [], "skipped": []}
+
+    def _take(eid):
+        """从三件套里取出该 episode 的现有条目(哪边有取哪边)。"""
+        for d in (p_eps, r_eps, j_eps):
+            if eid in d:
+                return d.pop(eid)
+        return {}
+
+    for eid, dec in decisions.items():
+        kind = dec.get("decision")
+        qhit = [q for q in queue if q.get("id") == eid]
+        for q in qhit:
+            q["decision"] = kind                     # 队列标记已裁决(三种裁决都标)
+            q["decided_at"] = dec.get("at") or now
+
+        if kind == "维持原标注":
+            summary["kept"].append(eid)
+            continue
+
+        if kind == "弃用该条":
+            old = _take(eid)
+            j_eps[eid] = {"判决": "拒绝", "原因": "人工裁决弃用(标注-画面分歧复核)",
+                          "综合软分": old.get("综合软分"),
+                          "checks": old.get("checks", {}),
+                          "标注裁决": {"裁决": kind, "备注": dec.get("note", ""),
+                                     "裁决时间": dec.get("at", now)}}
+            summary["dropped"].append(eid)
+            continue
+
+        if kind == "采纳建议改标":
+            rj = rejudged.get(eid)
+            if rj is None:
+                summary["skipped"].append(eid)       # 重判没跑成:原样不动,留待下次
+                continue
+            old = _take(eid)
+            prov = {"裁决": kind, "原标注": dec.get("old_label", ""),
+                    "新标注": dec.get("new_label", ""), "备注": dec.get("note", ""),
+                    "裁决时间": dec.get("at", now), "重判时间": now,
+                    "重判判定": rj.get("verdict", "")}
+            checks = dict(old.get("checks", {}))
+            entry_check = {"结果": _state_cn(rj.get("passed"))}
+            if rj.get("detail"):
+                entry_check["detail"] = rj["detail"]
+            checks[TASK_CN] = entry_check
+            if rj.get("passed") is True:
+                p_eps[eid] = {"判决": "通过(标注修正后)", "综合软分": old.get("综合软分"),
+                              "checks": checks, "标注修正": prov}
+                summary["adopted_pass"].append(eid)
+            elif rj.get("passed") is False:
+                j_eps[eid] = {"判决": "拒绝", "原因": "标注修正后重判仍未完成",
+                              "综合软分": old.get("综合软分"),
+                              "checks": checks, "标注修正": prov}
+                summary["adopted_reject"].append(eid)
+            else:
+                r_eps[eid] = {"当前判决": "通过", "待裁决项": [TASK_CN],
+                              "弃权原因": {TASK_CN: rj.get("verdict", "重判弃权")},
+                              "checks": checks, "标注修正": prov}
+                summary["adopted_review"].append(eid)
+            continue
+
+        summary["skipped"].append(eid)               # 未知裁决词:不动
+
+    # 计数字段与文件同步(有才更,不发明新键)
+    if "待人工裁决总数" in review:
+        review["待人工裁决总数"] = len(r_eps)
+    if "被拒总数" in reject:
+        reject["被拒总数"] = len(j_eps)
+    return summary
+
+
+def run_rejudge(delivery: str, input_dir: str, cfg: dict,
+                rerun_fn: Callable | None = None) -> dict:
+    """读裁决 → 重判(采纳条目)→ 更新交付。rerun_fn 注入(测试用假函数);
+    生产缺省 = _build_rerun(cfg)(多视角 v7.3 全协议,与漏斗同源构件)。"""
+    from ..dataset_level.decisions import load_label_decisions
+
+    decisions = load_label_decisions(delivery)
+    if not decisions:
+        return {"note": "无裁决记录(details/label_decisions.csv 不存在或为空),未做任何事"}
+    adopt = {e: d for e, d in decisions.items()
+             if d.get("decision") == "采纳建议改标" and str(d.get("new_label", "")).strip()}
+
+    rejudged: dict = {}
+    if adopt:
+        if rerun_fn is None:
+            rerun_fn = _build_rerun(cfg)
+        for eid, d in adopt.items():
+            try:
+                rejudged[eid] = rerun_fn(input_dir, eid, d["new_label"])
+            except Exception as e:  # noqa: BLE001  单条重判失败不拖垮整批
+                print(f"[rejudge] ⚠️ {eid} 重判失败({type(e).__name__}: {e}),该条原样不动",
+                      flush=True)
+
+    files = {}
+    for name in ("passed", "review", "reject"):
+        path = os.path.join(delivery, f"{name}.json")
+        with open(path, encoding="utf-8") as f:
+            files[name] = json.load(f)
+    summary = apply_decisions(files["passed"], files["review"], files["reject"],
+                              decisions, rejudged)
+    for name, data in files.items():
+        with open(os.path.join(delivery, f"{name}.json"), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1, default=str)
+
+    det = os.path.join(delivery, "details")
+    os.makedirs(det, exist_ok=True)
+    with open(os.path.join(det, "rejudge_results.json"), "w", encoding="utf-8") as f:
+        json.dump({"at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                   "summary": summary,
+                   "rejudged": {e: {k: v for k, v in r.items() if k != "detail"}
+                                for e, r in rejudged.items()}},
+                  f, ensure_ascii=False, indent=1)
+
+    md = os.path.join(delivery, "report.md")
+    if os.path.exists(md):
+        with open(md, "a", encoding="utf-8") as f:
+            f.write("\n## 标注裁决与重判(curation rejudge)\n")
+            f.write(f"- 执行时间:{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+            f.write(f"- 采纳改标并重判:通过 {len(summary['adopted_pass'])} / "
+                    f"弃权 {len(summary['adopted_review'])} / "
+                    f"仍未完成 {len(summary['adopted_reject'])} 条\n")
+            f.write(f"- 人工弃用:{len(summary['dropped'])} 条;"
+                    f"维持原标注(审计误旗):{len(summary['kept'])} 条\n")
+            for e in summary["adopted_pass"]:
+                f.write(f"  - {e}:标注修正后重判通过,已回归交付(溯源见 passed.json)\n")
+            if summary["skipped"]:
+                f.write(f"- ⚠️ 未处理(重判失败/裁决词不识别):{summary['skipped']}\n")
+    return summary
+
+
+def _build_rerun(cfg: dict) -> Callable:
+    """生产重判器:与漏斗同源的构件组装(多视角联合打分 + 逐机位投票复核)。
+
+    rerun(input_dir, episode_id, new_label) -> {"passed","verdict","detail"}
+    """
+    from ..adapters.decode import decode_window
+    from ..adapters.vlm_client import make_endstate_voter, vlm_completion_from_config
+    from ..core.checks.task_success import endstate_review, task_success
+    from ..ingest.lerobot_reader import read_lerobot_rows
+
+    pcfg = cfg.get("pipeline", {})
+    interval = pcfg.get("frame_sample_interval_s", 0.5)
+    max_side = pcfg.get("frame_max_side", 448)
+    max_cams = pcfg.get("max_endstate_cams", 4)
+    es_frames = pcfg.get("endstate_frames", 8)
+    p_task = cfg["checks"]["task_success"].get("params", {})
+    vcfg = cfg["checks"]["task_success"]["vlm"]
+    vlm = vlm_completion_from_config(cfg)
+    voter = make_endstate_voter(vcfg["endpoint"], vcfg["model"],
+                                api_key_env=vcfg.get("api_key_env"))
+
+    def rerun(input_dir: str, episode_id: str, new_label: str) -> dict:
+        rows = read_lerobot_rows(input_dir, episode_indices={int(episode_id[2:])},
+                                 validate=True)
+        row = next(r for r in rows if r["episode_id"] == episode_id)
+        cam_frames = {}
+        for cam in sorted(row["video"])[:max_cams]:
+            v = row["video"][cam]
+            try:
+                fr, _ = decode_window(v["path"], v["from_ts"], v["to_ts"],
+                                      sample_interval_s=interval, max_side=max_side)
+                if fr:
+                    cam_frames[cam.split(".")[-1]] = fr
+            except Exception:  # noqa: BLE001
+                continue
+        if not cam_frames:
+            raise RuntimeError("所有相机解码失败")
+        nmin = min(len(f) for f in cam_frames.values())
+        names = list(cam_frames)
+        mv = [[(n, cam_frames[n][i]) for n in names] for i in range(nmin)]
+        res = task_success(mv, new_label, vlm, **p_task)
+        res = endstate_review(res, new_label, voter, cam_frames,
+                              endstate_frames=es_frames)
+        return {"passed": res.passed, "verdict": res.detail.get("verdict", ""),
+                "detail": json.dumps(res.detail, ensure_ascii=False, default=str)}
+
+    return rerun

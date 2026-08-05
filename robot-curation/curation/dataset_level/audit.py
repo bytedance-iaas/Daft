@@ -45,13 +45,94 @@ def _canon(family: str) -> str:
     return "manipulate" if any(k in f for k in _EQUIV) else f
 
 
+# v2 比对器(2026-08-05):文本对判官——逐对直接问"这两句话描述的是同一任务吗"。
+# 族级比对(下方 _family_audit)的刻度太粗:on↔off、换物体、换目的地都在同一族里,
+# 105 条真值集上 6 条已知标注错只逮到 2 条,漏的全卡在族粒度。文本对把刻度细化到
+# 词义;容差规则平移自人工真值集判定细则(错别字/同义词/视角指示语不立案)。
+# v2 措辞(2026-08-05 第四轮测量定稿):判断标准从"是否相同"改为"是否**不可调和**"
+# ——caption 只写子动作/更模糊都不算分歧。105 条真值:召回 4/5、误旗 43%→24%;
+# 剩余误旗一半是 captioner 难视角幻觉的噪声地板(比对器管不了),靠报告层的
+# A∧B 分层(与任务成败线不利名单求交)治,不再拧 prompt(跷跷板:再加容差丢真命中)。
+PAIR_JUDGE_PROMPT = (
+    "You compare a dataset ANNOTATION with an independent DESCRIPTION of the same robot "
+    "episode. Decide whether they are COMPATIBLE (could plausibly describe the same "
+    "episode) or IRRECONCILABLE (could not both be true of one episode).\n"
+    "COMPATIBLE (verdict 'same') even if wording differs a lot:\n"
+    "- near-synonymous object names are the SAME object: marker/pen, mug/cup, bowl/plate, "
+    "box/tray/case, cloth/towel/rag, doll/toy, faucet/tap;\n"
+    "- the description covers only PART of the annotated task (e.g. mentions picking up "
+    "but not the final placement, or one sub-step of several) - partial is not a conflict;\n"
+    "- one side is vaguer or more specific (a location named differently, a color omitted);\n"
+    "- typos, viewpoint-dependent words (left/right/towards-you).\n"
+    "IRRECONCILABLE (verdict 'different') ONLY if the two cannot both be true:\n"
+    "- opposite action direction (put-in vs take-out, on vs off, open vs close);\n"
+    "- clearly different object CATEGORY (a leaf vs a paper roll, a sock vs a key);\n"
+    "- clearly different final placement that excludes the other (into the bag vs onto "
+    "the shelf).\n"
+    "If the ANNOTATION text is meaningless (random characters, not a task), the verdict "
+    "is 'garbage'. If the DESCRIPTION is '(none)', judge only the annotation: 'garbage' "
+    "if meaningless, otherwise 'same'. If you cannot tell, verdict 'unsure' (use "
+    "sparingly).\n"
+    'Return STRICT JSON: {{"pairs": [{{"i": int, "verdict": "same|different|unsure|garbage", '
+    '"why": "short reason"}}]}}\n\nPAIRS:\n{pairs}')
+
+_PAIR_CHUNK = 40      # 每次 LLM 调用最多比多少对(防长回复截断)
+
+
+def _judge_pairs(items: list, llm_ask: LlmAsk) -> dict:
+    """items = [(序号, 标注, caption)] → {序号: (verdict, why)}。结构不符即抛(触发回退)。"""
+    out: dict = {}
+    for k in range(0, len(items), _PAIR_CHUNK):
+        chunk = items[k:k + _PAIR_CHUNK]
+        body = "\n".join(
+            f"{i}. ANNOTATION: {lab} /// DESCRIPTION: {cap if cap.strip() else '(none)'}"
+            for i, lab, cap in chunk)
+        raw = llm_ask(PAIR_JUDGE_PROMPT.format(pairs=body))
+        t = re.sub(r"^```(json)?|```$", "", raw.strip(), flags=re.M).strip()
+        for m in json.loads(t)["pairs"]:
+            out[int(m["i"])] = (str(m["verdict"]).strip().lower(),
+                                str(m.get("why", "")).strip())
+    return out
+
+
 def audit_labels(episode_ids: list[str], instructions: list[str], captions: list[str],
                  cap_families: list[str], taxonomy: dict, llm_ask: LlmAsk) -> dict:
-    """→ {"high": [...高置信...], "mid_for_review": [...人工复核...]}。"""
-    fam_names = [f["name"] for f in taxonomy.get("families", [])]
+    """→ {"high": [...高置信...], "mid_for_review": [...人工复核...]}。
+
+    默认走文本对判官;判官整体失败(端点/JSON/结构)→ 回退族级比对(降级不断链,
+    报告可从 reason 措辞看出本次用的哪把尺子)。签名不变:llm_ask 就是判官的注入点。
+    """
     labeled = [(i, instructions[i].strip()) for i in range(len(instructions))
                if instructions[i].strip()]
-    if not labeled or not fam_names:
+    if not labeled:
+        return {"high": [], "mid_for_review": []}
+    try:
+        verdicts = _judge_pairs([(i, lab, str(captions[i] or "")) for i, lab in labeled],
+                                llm_ask)
+        high, mid = [], []
+        for i, lab in labeled:
+            v, why = verdicts.get(i, ("same", ""))
+            entry = {"id": episode_ids[i], "label": lab, "caption": captions[i]}
+            if v == "garbage":
+                high.append({**entry, "reason": GARBAGE_REASON})
+            elif v == "different":
+                high.append({**entry, "reason": f"分歧(文本对判官):{why or '描述的不是同一任务'}"
+                                                "——自产描述由 VLM 生成,需人工判定"})
+            elif v == "unsure":
+                mid.append({**entry, "reason": f"存疑(文本对判官拿不准):{why or '差异不明确'}"
+                                               "——自产描述由 VLM 生成,需人工判定"})
+        return {"high": high, "mid_for_review": mid}
+    except Exception:  # noqa: BLE001  判官失败(端点/截断/结构)→ 回退族级,不断链
+        return _family_audit(episode_ids, instructions, captions, cap_families,
+                             taxonomy, llm_ask, labeled)
+
+
+def _family_audit(episode_ids: list[str], instructions: list[str], captions: list[str],
+                  cap_families: list[str], taxonomy: dict, llm_ask: LlmAsk,
+                  labeled: list) -> dict:
+    """族级比对(v1 比对器,现为降级路径):标注映射进 caption 的族体系,跨族才立案。"""
+    fam_names = [f["name"] for f in taxonomy.get("families", [])]
+    if not fam_names:
         return {"high": [], "mid_for_review": []}
 
     uniq = sorted(set(s for _, s in labeled))
@@ -145,4 +226,37 @@ def retier_by_caption_stability(audit: dict, recaps_by_id: dict[str, list[str]],
                                f"(重打标 {len(recaps)} 次,连同原描述共归入 "
                                f"{'/'.join(seen)}),不足以质疑标注")})
     out[UNSTABLE_TIER] = unstable
+    return out
+
+
+def attach_task_context(audit: dict, task_of: dict) -> dict:
+    """A∧B 分层(2026-08-05,纯数据函数):给每条分歧带上任务成败线的判定。
+
+    task_of: {episode_id: {"passed": True/False/None, "verdict": str}}(调用方从
+    per-episode 结果提取;缺席条目 = 成败线没跑,按"参考"处理,不臆断)。
+
+    档位语义(105 条真值集实测支撑):
+    - **重点**:成败线也不利(passed 非 True)——两条独立证据线在同一条上同时
+      出问题;4/4 被逮到的已知标注错、以及真失败的天然分歧都落这档;
+    - **参考**:成败线放行——分歧多半是难视角 caption 幻觉的噪声地板,降权展示。
+    不改变 high/mid/unstable 既有分层,只是叠加第二维度;不删任何条目。
+    """
+    out = {}
+    for tier, entries in audit.items():
+        if not isinstance(entries, list):
+            out[tier] = entries
+            continue
+        enriched = []
+        for e in entries:
+            t = task_of.get(e.get("id"))
+            if t is None:                     # 成败线没跑这条:无证据,不臆断 → 参考
+                enriched.append({**e, "task_passed": None, "task_verdict": "",
+                                 "priority": "参考"})
+                continue
+            passed = t.get("passed")
+            enriched.append({**e, "task_passed": passed,
+                             "task_verdict": t.get("verdict", ""),
+                             "priority": "重点" if passed is not True else "参考"})
+        # 重点排前:人工从上往下看,先看两线同时报警的
+        out[tier] = sorted(enriched, key=lambda x: x["priority"] != "重点")
     return out

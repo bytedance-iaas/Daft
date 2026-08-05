@@ -19,7 +19,8 @@ import json
 import logging
 import os
 
-from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DETAIL_LABELS,
+from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DECISION_CHOICES,
+                       DETAIL_LABELS, record_label_decision,
                        EPISODE_HEADERS, FUNNEL_HEADERS, LATENCY_HEADERS,
                        LATENCY_KIND_NOTE, LATENCY_NOTE, LATENCY_PCTL_NOTE,
                        SKILL_HEADERS, audit_rows, check_rows,
@@ -199,9 +200,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         perf = load_perf(m)
         # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
+        _au_ids = [a.get("id", "") for a in m["audit_queue"]]
         return (m, overview_markdown(m), funnel_rows(m), _config_yaml(m),
                 episode_rows(m), gr.update(choices=eids, value=first),
-                skill_bar_html(m), skill_rows(m), audit_rows(m), *_detail(m, first),
+                skill_bar_html(m), skill_rows(m), audit_rows(m),
+                gr.update(choices=_au_ids, value=(_au_ids[0] if _au_ids else None)),
+                *_detail(m, first),
                 gr.update(choices=[DETAIL_LABELS[t] for t in tables],
                           value=(DETAIL_LABELS[t_first] if t_first else None)),
                 note0, gr.update(value=r0, headers=h0),
@@ -256,6 +260,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 au_table = gr.Dataframe(headers=AUDIT_HEADERS,
                                         label="标注-画面分歧复核队列(双方都可能错,供人工判定)",
                                         interactive=False)
+                # ── 人工裁决表单(②b):三选一落 details/label_decisions.csv。
+                #    这里只记录人的决定;按裁决重判/搬移交付 = 终端跑 curation rejudge。
+                #    (人工确认卡在 caption 与重判之间 = 自产自证陷阱的断路器)
+                with gr.Accordion("裁决分歧(记录后在命令行跑 curation rejudge 生效)", open=False):
+                    with gr.Row():
+                        au_pick = gr.Dropdown(label="episode", interactive=True, scale=2)
+                        au_dec = gr.Radio(choices=list(DECISION_CHOICES), scale=3,
+                                          label="裁决", value=None)
+                    au_newlab = gr.Textbox(label="修正后标注(仅「采纳建议改标」必填;"
+                                                 "默认预填自产描述,可改)")
+                    au_note = gr.Textbox(label="备注(可选)")
+                    au_save = gr.Button("记录裁决", variant="primary")
+                    au_status = gr.Markdown()
 
             with gr.Tab("Stuck 时间线"):
                 gr.Markdown("每条 episode 一根彩条(0 → 结束秒),段界标秒、悬停看精确"
@@ -293,7 +310,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 be_table = gr.Dataframe(headers=["预设", "状态", "服务端模型"], interactive=False)
 
             outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick,
-                    sk_html, sk_table, au_table,
+                    sk_html, sk_table, au_table, au_pick,
                     ep_md, ep_checks, ep_gallery, dt_pick, dt_note, dt_table,
                     tl_note, tl_html,
                     perf_backend, perf_env, perf_note, perf_table, perf_bar]
@@ -316,6 +333,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 return note, gr.update(value=rows, headers=headers)
 
             dt_pick.change(_table_change, [state, dt_pick], [dt_note, dt_table])
+
+            def _au_prefill(m, eid):
+                cap = next((a.get("caption", "") for a in (m or {}).get("audit_queue", [])
+                            if a.get("id") == eid), "")
+                return gr.update(value=cap)
+
+            def _au_record(m, eid, dec, newlab, note):
+                if not m or not eid or not dec:
+                    return "⚠️ 未记录:请先选 episode 并选择裁决", gr.update()
+                msg = record_label_decision(m["path"], eid, dec, newlab or "", note or "")
+                return msg, gr.update(value=audit_rows(m))   # 裁决列即时回显
+
+            au_pick.change(_au_prefill, [state, au_pick], au_newlab)
+            au_save.click(_au_record, [state, au_pick, au_dec, au_newlab, au_note],
+                          [au_status, au_table])
             tl_all.change(lambda m, a: timeline_html(load_timeline(m), only_flagged=not a),
                           [state, tl_all], tl_html)
             be_btn.click(lambda: _probe_backends(config_path, probe_timeout), None, be_table)

@@ -189,10 +189,18 @@ def to_markdown(report: dict) -> str:
                      f"{len(la['mid_for_review'])} / 我方描述不稳 {len(_unst)})")
         lines.append("> 原始标注与自产描述(VLM 生成)归进了不同技能族。**双方都可能错**:"
                      "自产描述既可能看错也不一定可复现,这里只给复核队列,不判谁对。")
+        _n_focus = sum(1 for t in ("high", "mid_for_review") for x in la.get(t) or []
+                       if x.get("priority") == "重点")
+        if _n_focus:
+            lines.append(f"> **重点档 {_n_focus} 条**(任务成败线同时不利——两条独立证据线"
+                         "同报警,标注错嫌疑最高,建议优先人工);其余为参考档"
+                         "(成败线已放行,分歧多为自产描述噪声)。")
         for f in la["high"][:20]:
             _st = "(重打标 N 次同族,我方描述稳定)" if f.get("caption_stable") else ""
-            lines.append(f"- [高] {f['id']} {f['reason']}: 标注「{f['label'][:40]}」"
-                         f" vs 自产描述「{f['caption'][:40]}」{_st}")
+            _pr = f"[{f.get('priority', '参考')}]"
+            _tv = f"(成败线:{f.get('task_verdict')})" if f.get("task_verdict") else ""
+            lines.append(f"- [高]{_pr} {f['id']} {f['reason']}: 标注「{f['label'][:40]}」"
+                         f" vs 自产描述「{f['caption'][:40]}」{_st}{_tv}")
         for f in _unst[:20]:
             lines.append(f"- [降级·我方描述不稳] {f['id']}: 标注「{f['label'][:40]}」"
                          f" vs 重打标「{'」「'.join(c[:40] for c in f.get('recaptions', []))}」")
@@ -301,12 +309,17 @@ def save_report(report: dict, out_dir: str) -> tuple[str, str]:
     review_out = {"数据集": report.get("数据集", ""), "机器人": report.get("机器人"),
                   "待人工裁决总数": len(review_view), "episodes": review_view}
     audit = report.get("label_audit")
-    if audit and (audit.get("mid_for_review") or audit.get("low_caption_unstable")):
+    if audit and (audit.get("high") or audit.get("mid_for_review")
+                  or audit.get("low_caption_unstable")):
         # 键名中性化(2026-07-31):不是"审计标注",是标注与自产描述的分歧,双方都可能错。
         # 降级档(我方描述重打标不稳)也进队列——它仍是待人工判定的分歧,只是嫌疑更低;
         # 不进来的话 UI 里就看不见了(UI 只渲染这条队列)。
-        review_out["标注-画面分歧复核队列"] = ((audit.get("mid_for_review") or [])
-                                       + (audit.get("low_caption_unstable") or []))
+        # 三层全进队列(2026-08-05 修:high 档此前漏掉,高嫌疑的反而在 UI 看不见);
+        # 重点档排最前(attach_task_context 已在层内排序,层间按嫌疑度排)
+        _q = ((audit.get("high") or []) + (audit.get("mid_for_review") or [])
+              + (audit.get("low_caption_unstable") or []))
+        review_out["标注-画面分歧复核队列"] = sorted(
+            _q, key=lambda x: x.get("priority") != "重点")
 
     pj = os.path.join(out_dir, "passed.json")
     rj = os.path.join(out_dir, "reject.json")
