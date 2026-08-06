@@ -591,7 +591,7 @@ def test_latency_bar_chart_is_wall_clock_only(delivery):
     assert "width:100.00%" in html
     assert "墙钟 <b>42 分 10 秒</b>(1583 次调用并发执行)" in html
     assert "失败 2" in html                                  # endstate 的 errors
-    assert "第一次发出 → 最后一次返回" in html
+    assert "忙碌区间并集" in html          # 口径文案(2026-08-06 随 wall_s 并集口径更新)
     assert "各条墙钟相加 ≠ 整次运行总时长" in html
 
 

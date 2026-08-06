@@ -166,9 +166,18 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 break
 
     rejudged: dict = {}
+    _lat_mark = 0
     if adopt:
         if rerun_fn is None:
             rerun_fn = _build_rerun(cfg)
+        # 重判也要入账:记下当前进程延时明细的水位,重判结束后把增量并进交付
+        # 的 vlm_latency.csv(2026-08-06 用户抓包:四次 rejudge 上百次 VLM 调用
+        # 全没进延时剖析,表上数字永远是原始 run 的快照)
+        try:
+            from ..adapters.vlm_client import latency_rows
+            _lat_mark = len(latency_rows())
+        except Exception:  # noqa: BLE001
+            _lat_mark = -1
 
         def _one(item):
             eid, d = item
@@ -195,6 +204,37 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
 
     det = os.path.join(delivery, "details")
     os.makedirs(det, exist_ok=True)
+
+    # 重判段延时增量入账(整写非追加——FSX 拒绝 O_APPEND)+ 刷新汇总快照
+    if rejudged and _lat_mark >= 0:
+        try:
+            from ..adapters.vlm_client import latency_rows, latency_summary
+            delta = latency_rows()[_lat_mark:]
+            if delta:
+                csv_path = os.path.join(det, "vlm_latency.csv")
+                import csv as _csv
+                rows_all: list = []
+                if os.path.exists(csv_path):
+                    with open(csv_path, newline="", encoding="utf-8") as f:
+                        for r in _csv.DictReader(f):
+                            st = (r.get("started_at") or "").strip()
+                            rows_all.append((r["call_type"], float(r["seconds"]),
+                                             bool(int(r["ok"])),
+                                             float(st) if st else None))
+                rows_all.extend(delta)
+                with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                    w = _csv.writer(f)
+                    w.writerow(["call_type", "seconds", "ok", "started_at"])
+                    for t, s, ok, st in rows_all:
+                        w.writerow([t, s, int(ok), "" if st is None else st])
+                ds = files["passed"].setdefault("dataset", {})
+                ds["vlm_latency"] = latency_summary(rows_all)
+                with open(os.path.join(delivery, "passed.json"), "w",
+                          encoding="utf-8") as f:
+                    json.dump(files["passed"], f, ensure_ascii=False, indent=1,
+                              default=str)
+        except Exception as e:  # noqa: BLE001  入账失败不影响重判结果
+            print(f"[rejudge] ⚠️ 延时入账失败({type(e).__name__}: {e})", flush=True)
     with open(os.path.join(det, "rejudge_results.json"), "w", encoding="utf-8") as f:
         json.dump({"at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                    "summary": summary,

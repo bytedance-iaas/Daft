@@ -765,8 +765,8 @@ def human_duration(sec: float) -> str:
 def latency_bar_html(perf: dict) -> str:
     """第三块配图:纯 HTML/CSS 横条图,条长 = 该类调用的**墙钟**。
 
-    ★ 口径只有一个:墙钟 = 第一次发出 → 最后一次返回的真实时长(run 收割时按类
-    算好写进交付,见 vlm_client.latency_summary 的 wall_s)。**不存在**"次数 ×
+    ★ 口径只有一个:墙钟 = 忙碌区间并集(该类调用真实在飞的净时长,阶段间空档
+    不计;见 vlm_client.latency_summary 的 wall_s)。**不存在**"次数 ×
     均值"的回退画法:我们是并发跑的,那个乘积是几十倍的高估,画出来就是误导。
     没有墙钟数据(老交付)= 不画图 + 一句说明。
     """
@@ -795,7 +795,7 @@ def latency_bar_html(perf: dict) -> str:
             f'background:{_BAR_COLORS.get(tag, "#888")}"></div></div></div>')
     return ('<div style="max-width:760px">'
             '<div style="font:12px system-ui;color:#555;margin-bottom:4px">'
-            '各类调用的墙钟耗时(第一次发出 → 最后一次返回的真实时长)</div>'
+            '各类调用的墙钟耗时(忙碌区间并集:该类调用真实在飞的净时长,空档不计)</div>'
             + "".join(bars)
             + '<div style="font:12px system-ui;color:#777;margin-top:6px">'
               '各类调用之间在时间上可能重叠,各条墙钟相加 ≠ 整次运行总时长。</div>'
