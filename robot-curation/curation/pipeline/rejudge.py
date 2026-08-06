@@ -242,6 +242,48 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                                 for e, r in rejudged.items()}},
                   f, ensure_ascii=False, indent=1)
 
+    # 交付数据集同步(2026-08-06 出数据闭环):裁决不能只改报告——episodes_parquet
+    # 里的 instruction 还是旧标注,弃用条目还躺在数据里,交出去就是脏数据。
+    # 采纳改标 → 改写该条 instruction(溯源=人工裁决改标);弃用 → 整行剔除;
+    # 重判仍失败(adopted_reject)→ 同样剔除。report-only 交付没有 parquet,跳过。
+    pq_dir = os.path.join(delivery, "episodes_parquet")
+    touched = (summary["adopted_pass"] + summary["adopted_review"]
+               + summary["adopted_reject"] + summary["dropped"])
+    if touched and os.path.isdir(pq_dir):
+        try:
+            import daft as _daft
+            df = _daft.read_parquet(pq_dir).to_pydict()
+            n = len(df["episode_id"])
+            rows_pq = [{k: df[k][i] for k in df} for i in range(n)]
+            drop_ids = set(summary["dropped"]) | set(summary["adopted_reject"])
+            relabel = {e: decisions[e]["new_label"] for e in
+                       summary["adopted_pass"] + summary["adopted_review"]
+                       if e in decisions}
+            out_rows = []
+            for r in rows_pq:
+                eid = r["episode_id"]
+                if eid in drop_ids:
+                    continue
+                if eid in relabel:
+                    r["instruction"] = relabel[eid]
+                    if "instruction_source" in r:
+                        r["instruction_source"] = "人工裁决改标"
+                out_rows.append(r)
+            if len(out_rows) != n or relabel:
+                import shutil as _sh
+                _sh.rmtree(pq_dir)
+                cols = {k: [r[k] for r in out_rows] for k in out_rows[0]} if out_rows else {}
+                if cols:
+                    _daft.from_pydict(cols).write_parquet(pq_dir)
+                print(f"[rejudge] 交付数据集已同步:改标 {len(relabel)} 条,"
+                      f"剔除 {n - len(out_rows)} 条(episodes_parquet)", flush=True)
+                if os.path.isdir(os.path.join(delivery, "lerobot_curated")):
+                    print("[rejudge] ⚠️ lerobot_curated 是视频重编码导出,未自动重做;"
+                          "需要最新 LeRobot 包请重跑 curation run(非 report-only)", flush=True)
+        except Exception as e:  # noqa: BLE001  数据集同步失败不吞掉裁决结果
+            print(f"[rejudge] ⚠️ 交付数据集同步失败({type(e).__name__}: {e});"
+                  f"三件套已更新,episodes_parquet 仍是旧标注", flush=True)
+
     # 报告小节用"读全文+整写"而非追加:交付目录在 TOS 的 FSX 挂载上,
     # open(..., "a") 直接 EINVAL(2026-08-06 生产实锤,与 decisions.py 同坑)。
     md = os.path.join(delivery, "report.md")

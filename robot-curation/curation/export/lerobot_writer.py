@@ -52,8 +52,13 @@ def _reencode_concat(src_windows: list[dict], out_path: str, fps: float) -> list
     return bounds
 
 
-def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir: str) -> dict:
-    """源 v3 数据集 + 幸存 episode 序号 → out_dir 下的合法 v3 数据集。返回导出统计。"""
+def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir: str,
+                      task_overrides: dict | None = None) -> dict:
+    """源 v3 数据集 + 幸存 episode 序号 → out_dir 下的合法 v3 数据集。返回导出统计。
+
+    task_overrides: {源 episode_index: 新任务文本}——两类来源(2026-08-06 出数据闭环):
+    ①无标注条目的自产 caption 补标;②人工裁决采纳的改标(rejudge 重导出)。
+    覆写同时作用于任务表、逐帧 task_index 与 meta/episodes 的 tasks 列。"""
     from ..ingest.lerobot_reader import _load_episodes_meta, _load_info
 
     if os.path.exists(out_dir) and os.listdir(out_dir):
@@ -77,10 +82,16 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
         lo, hi = int(ep["dataset_from_index"]), int(ep["dataset_to_index"])
         pieces.append(df.iloc[lo - base: hi - base].copy())
 
-    # 新任务表(保序去重)
+    task_overrides = task_overrides or {}
+
+    def _tasks_of(ep):
+        ov = task_overrides.get(int(ep["episode_index"]))
+        return [ov] if ov else (list(ep["tasks"]) or [""])
+
+    # 新任务表(保序去重;覆写生效后的文本)
     task_strings: list[str] = []
     for _, ep in sel.iterrows():
-        for t in (list(ep["tasks"]) or [""]):
+        for t in _tasks_of(ep):
             if t not in task_strings:
                 task_strings.append(t)
     task_index_of = {t: i for i, t in enumerate(task_strings)}
@@ -88,7 +99,7 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
     new_from, cursor = [], 0
     for new_idx, (piece, (_, ep)) in enumerate(zip(pieces, sel.iterrows())):
         piece["episode_index"] = new_idx
-        primary_task = (list(ep["tasks"]) or [""])[0]
+        primary_task = _tasks_of(ep)[0]
         piece["task_index"] = task_index_of[primary_task]
         piece["index"] = np.arange(cursor, cursor + len(piece), dtype=piece["index"].dtype)
         new_from.append(cursor)
@@ -116,6 +127,8 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
 
     # ---------- meta/episodes:切源行继承 stats,覆写边界/编号 ----------
     new_meta = sel.copy()
+    if task_overrides:
+        new_meta["tasks"] = [_tasks_of(ep) for _, ep in sel.iterrows()]
     new_meta["episode_index"] = np.arange(len(sel))
     new_meta["data/chunk_index"] = 0
     new_meta["data/file_index"] = 0

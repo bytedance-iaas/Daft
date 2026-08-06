@@ -183,3 +183,36 @@ def test_duplicate_entry_purged_across_files(tmp_path):
     assert rev["待人工裁决总数"] == 1
     psd = json.loads((tmp_path / "passed.json").read_text(encoding="utf-8"))
     assert psd["episodes"]["ep000001"]["判决"] == "通过(标注修正后)"
+
+
+def test_export_parquet_synced_on_decisions(tmp_path):
+    """出数据闭环:采纳改标 → parquet 的 instruction 换新+溯源标「人工裁决改标」;
+    弃用 → 整行剔除(裁决只改报告不改数据 = 交出去还是脏数据,2026-08-06 堵上)。"""
+    daft = __import__("pytest").importorskip("daft")
+    import json
+
+    from curation.pipeline.rejudge import run_rejudge
+    det = tmp_path / "details"
+    det.mkdir()
+    (det / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "ep000001,采纳建议改标,corrected label,,2026-08-06 12:00:00\n"
+        "ep000002,弃用该条,,,2026-08-06 12:00:05\n", encoding="utf-8")
+    for n in ("passed", "review", "reject"):
+        (tmp_path / f"{n}.json").write_text(json.dumps({"episodes": {
+            "ep000001": {"判决": "通过"}, "ep000002": {"判决": "通过"},
+            "ep000003": {"判决": "通过"}}} if n == "passed" else {"episodes": {}},
+            ensure_ascii=False), encoding="utf-8")
+    daft.from_pydict({
+        "episode_id": ["ep000001", "ep000002", "ep000003"],
+        "instruction": ["old label", "whatever", "untouched"],
+        "instruction_source": ["原始标注", "原始标注", "原始标注"],
+    }).write_parquet(str(tmp_path / "episodes_parquet"))
+
+    run_rejudge(str(tmp_path), "/unused", {},
+                rerun_fn=lambda i, e, nl: {"passed": True, "verdict": "success"})
+    got = daft.read_parquet(str(tmp_path / "episodes_parquet")).to_pydict()
+    by = dict(zip(got["episode_id"], zip(got["instruction"], got["instruction_source"])))
+    assert "ep000002" not in by, "弃用条目仍在交付数据里"
+    assert by["ep000001"] == ("corrected label", "人工裁决改标")
+    assert by["ep000003"] == ("untouched", "原始标注")

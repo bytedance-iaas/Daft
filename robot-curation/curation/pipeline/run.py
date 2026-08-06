@@ -910,15 +910,35 @@ def run_pipeline(
         keep_full = read_lerobot_rows(
             input_dir, episode_indices={int(e[2:]) for e in keep_ids},
             embodiment_id=embodiment_id, skip_missing=True)
+        # 补标进交付(2026-08-06 出数据闭环):无标注条目把质检用的自产 caption
+        # 写进 instruction(空标注的数据交出去没法训练);溯源列 instruction_source
+        # 让下游分得清"客户原话"与"系统补写"。
+        n_backfill = 0
+        for r in keep_full:
+            eid = r["episode_id"]
+            if (r.get("instruction") or "").strip():
+                r["instruction_source"] = "原始标注"
+            elif desc_of.get(eid, "").strip():
+                r["instruction"] = desc_of[eid]
+                r["instruction_source"] = "自产caption补标"
+                n_backfill += 1
+            else:
+                r["instruction_source"] = "无"
+        if n_backfill:
+            print(f"[curation] 交付补标:{n_backfill} 条无标注 episode 已用自产 caption "
+                  f"写入 instruction(溯源列 instruction_source)", flush=True)
         deliver["episodes_parquet"] = write_episodes_parquet(
             keep_full, os.path.join(output_dir, "episodes_parquet"))
         from ..ingest.lerobot_reader import _load_info
 
         if _load_info(input_dir)["codebase_version"].startswith("v3"):
             keep_src_idx = [int(e.replace("ep", "")) for e in keep_ids]
+            _ov = {int(e[2:]): desc_of[e] for e in keep_ids
+                   if desc_src_of.get(e) == "自产caption" and desc_of.get(e, "").strip()}
             deliver["lerobot_dataset"] = export_lerobot_v3(
                 input_dir, keep_src_idx,
-                os.path.join(output_dir, "lerobot_curated"))["out_dir"]
+                os.path.join(output_dir, "lerobot_curated"),
+                task_overrides=_ov)["out_dir"]
         else:
             report["dataset"]["lerobot_export_note"] = "v2 源的 LeRobot 导出在 V1(先交付 parquet)"
             save_report(report, output_dir)
