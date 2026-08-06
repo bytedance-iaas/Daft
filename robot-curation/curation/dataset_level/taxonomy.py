@@ -215,17 +215,56 @@ def _merged_name(names: list[str]) -> str:
 
 
 def refine_taxonomy(taxonomy: dict, llm_ask: LlmAsk,
-                    guideline: str | None = None) -> dict:
+                    guideline: str | None = None, concurrency: int = 16) -> dict:
     """守规合并:同族子技能两两二值问询,"仅目的地/物体/颜色不同"→ 代码里合并。
 
     为什么不是"让 LLM 审计整棵树重出 JSON":实测(2026-07-11 bridge)模型把
     move-to-burner 原样奉还,开放式审计不服从——与 M4c 的 endstate 教训同源:
     渐变/开放问询失效,**二值问题答得动**。合并动作在代码里做(并查集+成员并集),
     caption 物理上不可能丢;LLM 只回答 yes/no。异常/答非所问 → 视为 no(不合并)。
+
+    并发(2026-08-06):全部候选对(跨族收集)**一波并发问询**,答案齐了再统一
+    并查集合并——判定与逐对串行等价(合并的传递性由并查集给出),墙钟从
+    Σ对数×延时 压到 ~ceil(对数/并发)×延时。droid-30 实测该阶段 605s 净串行,
+    是整个 run 的第二瓶颈。串行版靠"已同组就跳过"省问询数,并行版多问那几对
+    换 20 倍墙钟,划算。
     """
     g = (guideline or DEFAULT_GUIDELINE).strip()
+
+    def _pair_q(subs, i, j):
+        return MERGE_Q_TMPL.format(
+            guideline=g,
+            a=subs[i]["name"], ac=subs[i].get("criterion", ""),
+            am="; ".join(subs[i].get("members", [])[:3]),
+            b=subs[j]["name"], bc=subs[j].get("criterion", ""),
+            bm="; ".join(subs[j].get("members", [])[:3]))
+
+    # 跨族收集全部候选对 → 一波并发
+    tasks = []          # (族序, i, j, prompt)
+    fams = taxonomy.get("families", [])
+    for fi, fam in enumerate(fams):
+        subs = fam.get("subskills", [])
+        for i in range(len(subs)):
+            for j in range(i + 1, len(subs)):
+                tasks.append((fi, i, j, _pair_q(subs, i, j)))
+
+    def _ask(t):
+        try:
+            return "yes" in llm_ask(t[3]).strip().lower()[:8]
+        except Exception:  # noqa: BLE001  问询失败=不合并,宁保守
+            return False
+
+    merges: dict = {}
+    if tasks:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(max(1, concurrency),
+                                                len(tasks))) as ex:
+            for t, yes in zip(tasks, ex.map(_ask, tasks)):
+                if yes:
+                    merges.setdefault(t[0], []).append((t[1], t[2]))
+
     fams_out = []
-    for fam in taxonomy.get("families", []):
+    for fi, fam in enumerate(fams):
         subs = fam.get("subskills", [])
         n = len(subs)
         parent = list(range(n))
@@ -236,22 +275,9 @@ def refine_taxonomy(taxonomy: dict, llm_ask: LlmAsk,
                 i = parent[i]
             return i
 
-        for i in range(n):
-            for j in range(i + 1, n):
-                if find(i) == find(j):
-                    continue
-                q = MERGE_Q_TMPL.format(
-                    guideline=g,
-                    a=subs[i]["name"], ac=subs[i].get("criterion", ""),
-                    am="; ".join(subs[i].get("members", [])[:3]),
-                    b=subs[j]["name"], bc=subs[j].get("criterion", ""),
-                    bm="; ".join(subs[j].get("members", [])[:3]))
-                try:
-                    ans = llm_ask(q).strip().lower()
-                except Exception:  # noqa: BLE001  问询失败=不合并,宁保守
-                    continue
-                if "yes" in ans[:8]:
-                    parent[find(j)] = find(i)
+        for i, j in merges.get(fi, []):
+            if find(i) != find(j):
+                parent[find(j)] = find(i)
         groups: dict[int, list[int]] = {}
         for i in range(n):
             groups.setdefault(find(i), []).append(i)

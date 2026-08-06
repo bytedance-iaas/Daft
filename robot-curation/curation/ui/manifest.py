@@ -610,8 +610,62 @@ def load_perf(m: dict) -> dict:
               "caption_concurrency": (ce.get("skill_profile") or {}).get("caption_concurrency")}
     if not be.get("service_type"):
         be["service_type"] = infer_service_type(be.get("endpoint"))
-    return {"backend": be, "env": env, "legacy": legacy,
-            "latency": (m.get("dataset") or {}).get("vlm_latency") or {}}
+    lat = (m.get("dataset") or {}).get("vlm_latency") or {}
+    fresh = _recompute_latency(os.path.join(m.get("path") or "", "details",
+                                            "vlm_latency.csv"))
+    if fresh:
+        lat = fresh          # 逐请求明细在手就现场复算——快照口径旧了也能自愈
+    return {"backend": be, "env": env, "legacy": legacy, "latency": lat}
+
+
+def _pctl_(xs: list, q: float) -> float:
+    i = max(0, min(len(xs) - 1, int(round(q * (len(xs) - 1)))))
+    return xs[i]
+
+
+def _recompute_latency(csv_path: str) -> dict:
+    """details/vlm_latency.csv → 按类汇总(与 vlm_client.latency_summary 同款算法,
+    在 UI 侧独立实现——UI 不 import 管道的红线;两实现有对拍测试钉住)。
+
+    wall_s = 忙碌区间并集(空档不计):旧快照用"首发→末返"跨度,分段跑的类别
+    (caption 补标+画像两波)会把中间隔的别的阶段全灌进来,条形图严重失真
+    (2026-08-06 droid-30 实锤)。读不到/读坏 CSV → 返回 {},上层退回快照。
+    """
+    import csv as _csv
+    try:
+        rows = []
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for r in _csv.DictReader(f):
+                st = (r.get("started_at") or "").strip()
+                rows.append((r["call_type"], float(r["seconds"]),
+                             bool(int(r["ok"])), float(st) if st else None))
+    except (OSError, KeyError, ValueError):
+        return {}
+    out: dict = {}
+    for tag in sorted({r[0] for r in rows}):
+        mine = [r for r in rows if r[0] == tag]
+        oks = sorted(r[1] for r in mine if r[2])
+        entry = {"n": len(oks), "errors": sum(1 for r in mine if not r[2])}
+        if oks:
+            entry.update({"mean_s": round(sum(oks) / len(oks), 2),
+                          "p50_s": round(_pctl_(oks, 0.50), 2),
+                          "p90_s": round(_pctl_(oks, 0.90), 2),
+                          "p99_s": round(_pctl_(oks, 0.99), 2),
+                          "max_s": round(oks[-1], 2)})
+        stamped = [r for r in mine if r[3] is not None]
+        if stamped:
+            ivs = sorted((r[3], r[3] + r[1]) for r in stamped)
+            busy, cs, ce = 0.0, ivs[0][0], ivs[0][1]
+            for s, e in ivs[1:]:
+                if s > ce:
+                    busy += ce - cs
+                    cs, ce = s, e
+                else:
+                    ce = max(ce, e)
+            busy += ce - cs
+            entry["wall_s"] = round(busy, 2)
+        out[tag] = entry
+    return out
 
 
 def _hardware_text(perf: dict) -> str:

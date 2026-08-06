@@ -121,27 +121,56 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
     decisions = load_label_decisions(delivery)
     if not decisions:
         return {"note": "无裁决记录(details/label_decisions.csv 不存在或为空),未做任何事"}
-    adopt = {e: d for e, d in decisions.items()
-             if d.get("decision") == "采纳建议改标" and str(d.get("new_label", "")).strip()}
-
-    rejudged: dict = {}
-    if adopt:
-        if rerun_fn is None:
-            rerun_fn = _build_rerun(cfg)
-        for eid, d in adopt.items():
-            try:
-                rejudged[eid] = rerun_fn(input_dir, eid, d["new_label"])
-            except Exception as e:  # noqa: BLE001  单条重判失败不拖垮整批
-                print(f"[rejudge] ⚠️ {eid} 重判失败({type(e).__name__}: {e}),该条原样不动",
-                      flush=True)
 
     files = {}
     for name in ("passed", "review", "reject"):
         path = os.path.join(delivery, f"{name}.json")
         with open(path, encoding="utf-8") as f:
             files[name] = json.load(f)
+
+    # 幂等跳过:同一条 episode、同一次裁决(裁决时间+新标注都没变)已经采纳落库的,
+    # 不再重复付 VLM 重判的钱(2026-08-06 用户点名:重跑 rejudge 曾把两条又判了一遍)。
+    # 判据取三件套里的落库溯源,而非旁路文件——以真实交付状态为准。
+    adopt = {e: d for e, d in decisions.items()
+             if d.get("decision") == "采纳建议改标" and str(d.get("new_label", "")).strip()}
+    unchanged: list = []
+    for eid in list(adopt):
+        d = adopt[eid]
+        for name in ("passed", "review", "reject"):
+            entry = files[name].get("episodes", {}).get(eid)
+            if entry:
+                prov = entry.get("标注修正") or {}
+                if (prov.get("裁决时间") == d.get("at")
+                        and prov.get("新标注") == str(d.get("new_label", "")).strip()):
+                    unchanged.append(eid)
+                    adopt.pop(eid)
+                    decisions.pop(eid)      # 整条不再进 apply,交付保持原样
+                break
+
+    rejudged: dict = {}
+    if adopt:
+        if rerun_fn is None:
+            rerun_fn = _build_rerun(cfg)
+
+        def _one(item):
+            eid, d = item
+            try:
+                return eid, rerun_fn(input_dir, eid, d["new_label"])
+            except Exception as e:  # noqa: BLE001  单条重判失败不拖垮整批
+                print(f"[rejudge] ⚠️ {eid} 重判失败({type(e).__name__}: {e}),该条原样不动",
+                      flush=True)
+                return eid, None
+
+        # episode 级并行(重判段 VLM 占 ~100% 墙钟;客户端帧级并发之上再叠 episode 级)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(8, len(adopt))) as ex:
+            for eid, res in ex.map(_one, list(adopt.items())):
+                if res is not None:
+                    rejudged[eid] = res
+
     summary = apply_decisions(files["passed"], files["review"], files["reject"],
                               decisions, rejudged)
+    summary["unchanged"] = unchanged
     for name, data in files.items():
         with open(os.path.join(delivery, f"{name}.json"), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1, default=str)
@@ -155,20 +184,27 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                                 for e, r in rejudged.items()}},
                   f, ensure_ascii=False, indent=1)
 
+    # 报告小节用"读全文+整写"而非追加:交付目录在 TOS 的 FSX 挂载上,
+    # open(..., "a") 直接 EINVAL(2026-08-06 生产实锤,与 decisions.py 同坑)。
     md = os.path.join(delivery, "report.md")
     if os.path.exists(md):
-        with open(md, "a", encoding="utf-8") as f:
-            f.write("\n## 标注裁决与重判(curation rejudge)\n")
-            f.write(f"- 执行时间:{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-            f.write(f"- 采纳改标并重判:通过 {len(summary['adopted_pass'])} / "
-                    f"弃权 {len(summary['adopted_review'])} / "
-                    f"仍未完成 {len(summary['adopted_reject'])} 条\n")
-            f.write(f"- 人工弃用:{len(summary['dropped'])} 条;"
-                    f"维持原标注(审计误旗):{len(summary['kept'])} 条\n")
-            for e in summary["adopted_pass"]:
-                f.write(f"  - {e}:标注修正后重判通过,已回归交付(溯源见 passed.json)\n")
-            if summary["skipped"]:
-                f.write(f"- ⚠️ 未处理(重判失败/裁决词不识别):{summary['skipped']}\n")
+        with open(md, encoding="utf-8") as f:
+            body = f.read()
+        sec = ["\n## 标注裁决与重判(curation rejudge)\n",
+               f"- 执行时间:{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n",
+               f"- 采纳改标并重判:通过 {len(summary['adopted_pass'])} / "
+               f"弃权 {len(summary['adopted_review'])} / "
+               f"仍未完成 {len(summary['adopted_reject'])} 条\n",
+               f"- 人工弃用:{len(summary['dropped'])} 条;"
+               f"维持原标注(审计误旗):{len(summary['kept'])} 条\n"]
+        for e in summary["adopted_pass"]:
+            sec.append(f"  - {e}:标注修正后重判通过,已回归交付(溯源见 passed.json)\n")
+        if summary.get("unchanged"):
+            sec.append(f"- 裁决未变跳过(不重复重判):{len(summary['unchanged'])} 条\n")
+        if summary["skipped"]:
+            sec.append(f"- ⚠️ 未处理(重判失败/裁决词不识别):{summary['skipped']}\n")
+        with open(md, "w", encoding="utf-8") as f:
+            f.write(body + "".join(sec))
     return summary
 
 

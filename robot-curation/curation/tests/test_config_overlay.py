@@ -126,7 +126,10 @@ def test_direct_noop_when_all_none():
 def test_probe_hint_fires_when_misaligned():
     from curation.pipeline.config import probe_concurrency_hint
     cfg = load_config(None)
-    cfg["checks"]["task_success"]["params"]["n_probe"] = 12   # 并发默认 8 → 2 波
+    # 显式制造错位(2026-08-06 出厂默认升到 16 后,12 探针一波装下不再触发——
+    # 这正是升默认的目的;本测试钉的是"错位时要提示"这一行为本身)
+    cfg["checks"]["task_success"]["vlm"]["max_concurrency"] = 8
+    cfg["checks"]["task_success"]["params"]["n_probe"] = 12   # 并发 8 → 2 波
     hint = probe_concurrency_hint(cfg)
     assert hint and "n_probe=12" in hint and "max_concurrency=12" in hint and "2 波" in hint
 
