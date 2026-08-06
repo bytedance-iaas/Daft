@@ -82,6 +82,17 @@ def build_parser() -> argparse.ArgumentParser:
     rj.add_argument("--input", required=True, help="原始数据集目录(重判需重新解码视频)")
     rj.add_argument("--config", default=None, help="流水线 YAML(缺省 default.yaml,须与原 run 一致)")
 
+    rp = sub.add_parser("review-page",
+                        help="生成静态审片站(索引一屏列全量 episode + 逐条多路视频页),"
+                             "落盘持久;由 UI 的 /review 路由服务(pod 重启不丢)")
+    rp.add_argument("--input", required=True, help="数据集目录(LeRobot 格式)")
+    rp.add_argument("--output", required=True,
+                    help="产出目录(建议持久盘,如 /mnt/tos/review/<名字>)")
+    rp.add_argument("--episodes", default=None, metavar="表达式",
+                    help="只做指定 episode(同 run:34,56 或 10-20,可混用);缺省全量")
+    rp.add_argument("--max-episodes", type=int, default=None, help="只做前 N 条")
+    rp.add_argument("--title", default=None, help="页面标题(缺省用数据集目录名)")
+
     be = sub.add_parser("backends", help="一次列出全部 VLM 后端预设的在线状态与服务端模型")
     be.add_argument("--config", default=None,
                     help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
@@ -95,6 +106,9 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--host", default="0.0.0.0", help="监听地址(默认 0.0.0.0,便于 port-forward)")
     ui.add_argument("--port", type=int, default=7860, help="监听端口(默认 7860)")
     ui.add_argument("--timeout", type=float, default=5.0, help="后端探活超时秒数")
+    ui.add_argument("--review-dir", default=os.environ.get("CURATION_REVIEW_DIR"),
+                    help="静态审片站根目录(curation review-page 的产出);给出后挂 /review "
+                         "路由(同端口、Basic 锁覆盖)。也可用环境变量 CURATION_REVIEW_DIR")
     ui.add_argument("--terminal", action="store_true", default=_env_flag("CURATION_TERMINAL"),
                     help="打开顶层「终端」页签(内嵌网页终端:xterm.js + 本服务的 "
                          "/ws/term,与 UI 同端口同鉴权)。不传(或 CURATION_TERMINAL 未设)"
@@ -165,6 +179,26 @@ def _parse_episodes(expr: str | None) -> set[int] | None:
 def main(argv: list[str] | None = None) -> int:
     import os
     args = build_parser().parse_args(argv)
+    if args.command == "review-page":
+        from .export.review_page import build_review_page
+        from .ingest.lerobot_reader import read_lerobot_rows
+        eps = _parse_episodes(args.episodes)
+        rows = read_lerobot_rows(args.input, episode_indices=eps, validate=True)
+        if args.max_episodes:
+            rows = rows[: args.max_episodes]
+        title = args.title or os.path.basename(os.path.normpath(args.input))
+        print(f"[review-page] {len(rows)} 条 → {args.output}(已有片段跳过,幂等)", flush=True)
+        done = [0]
+
+        def _tick():
+            done[0] += 1
+            if done[0] % 10 == 0 or done[0] == len(rows):
+                print(f"[review-page] {done[0]}/{len(rows)}", flush=True)
+
+        n = build_review_page(rows, args.output, title=title, on_progress=_tick)
+        print(f"[review-page] 完成:新编码 {n} 段;入口 {args.output}/index.html", flush=True)
+        return 0
+
     if args.command == "rejudge":
         from .pipeline.config import load_config
         from .pipeline.rejudge import run_rejudge
@@ -184,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         from .ui.app import launch
         launch(args.delivery, config_path=args.config, host=args.host,
                port=args.port, probe_timeout=args.timeout,
-               terminal=args.terminal)
+               terminal=args.terminal, review_dir=args.review_dir)
         return 0
     if args.command == "run":
         from .ingest.lerobot_reader import NotADatasetError, OutputExistsError

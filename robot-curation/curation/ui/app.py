@@ -456,7 +456,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
 
 def create_asgi_app(delivery: str, config_path: str | None = None,
-                    probe_timeout: float = 5.0, terminal: bool = False):
+                    probe_timeout: float = 5.0, terminal: bool = False,
+                    review_dir: str | None = None):
     """→ FastAPI 应用(gradio 挂在 `/`,自定义路由挂在它前面)。
 
     为什么不再用 `blocks.launch()`:launch() 自己造 FastAPI + 自己跑 uvicorn,拿不到
@@ -489,6 +490,16 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
         log.info("终端:已开启(/ws/term,shell=%s,cwd=%s)",
                  term.resolve_shell(), term.resolve_workdir())
 
+    # 静态审片站(curation review-page 的产出):挂在 gradio catch-all 之前。
+    # html=True → /review 直接出 index.html;目录缺失只警告不拦启动(先起 UI 后生成站点
+    # 是合法顺序,StaticFiles 每次请求现场解析路径,后补的目录立即可用)。
+    if review_dir:
+        if not os.path.isdir(review_dir):
+            log.warning("审片站目录尚不存在:%s(生成后无需重启即可访问)", review_dir)
+            os.makedirs(review_dir, exist_ok=True)
+        api.mount("/review", StaticFiles(directory=review_dir, html=True), name="review")
+        log.info("审片站:已挂 /review → %s", review_dir)
+
     auth.apply(api, terminal_enabled=terminal)
     # allowed_paths:允许 Gallery 直读交付目录下的证据文件(gradio 默认只许临时目录)
     return gr.mount_gradio_app(api, blocks, path="/", allowed_paths=[delivery],
@@ -497,11 +508,12 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
 
 def launch(delivery: str, config_path: str | None = None, host: str = "0.0.0.0",
            port: int = 7860, probe_timeout: float = 5.0,
-           terminal: bool = False) -> None:
+           terminal: bool = False, review_dir: str | None = None) -> None:
     import uvicorn
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    app = create_asgi_app(delivery, config_path, probe_timeout, terminal=terminal)
+    app = create_asgi_app(delivery, config_path, probe_timeout, terminal=terminal,
+                          review_dir=review_dir)
     log.info("质检台 UI 监听 http://%s:%s(交付根目录 %s)", host, port, delivery)
     uvicorn.run(app, host=host, port=port)
