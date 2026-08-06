@@ -106,3 +106,70 @@ def _write_jpeg(path: str, frame_rgb) -> bool:
             np.asarray(frame_rgb), cv2.COLOR_RGB2BGR)))
     except Exception:  # noqa: BLE001
         return False
+
+
+def write_audit_clips(flagged_ids: list[str], videos: dict, out_dir: str,
+                      sample_interval_s: float = 0.5, max_side: int = 448,
+                      play_fps: int = 4, max_cams: int = 3) -> int:
+    """标注分歧条目的**视频片段**导出(2026-08-05 用户定:裁决要能直接看视频)。
+
+    每条 flagged episode × 每路相机(≤max_cams)写一个 mp4 到
+    details/audit_clips/<ep>__<cam>.mp4。素材 = 漏斗同参解码帧(0.5s 采样),
+    按 play_fps 回放 ≈ 2 倍速——裁决看的是"干了什么",倍速反而高效。
+    ⚠️ 编码用 PyAV(pod 无 ffmpeg CLI)且 **movflags=faststart**:moov 不在头部
+    的话浏览器 <video> 会无报错地永久转圈(2026-08-03 人工审片工具的血泪)。
+    失败条目静默跳过(少一路视频,不断链);返回成功写出的片段数。
+    """
+    from ..adapters.decode import decode_window
+
+    clip_dir = os.path.join(out_dir, "details", "audit_clips")
+    n_ok = 0
+    for eid in flagged_ids:
+        video = videos.get(eid) or {}
+        for cam in sorted(video)[:max_cams]:
+            v = video[cam]
+            try:
+                frames, _ = decode_window(v["path"], v["from_ts"], v["to_ts"],
+                                          sample_interval_s=sample_interval_s,
+                                          max_side=max_side)
+                if not frames:
+                    continue
+                os.makedirs(clip_dir, exist_ok=True)
+                dst = os.path.join(clip_dir, f"{eid}__{cam.split('.')[-1]}.mp4")
+                # ⚠️ 先编码到本地盘再整体拷贝:faststart 收尾要 seek 把 moov 挪到
+                # 文件头,而 TOS-FSX 挂载不支持 seek 写回(与 aria2 直写同一堵墙,
+                # 2026-08-05 实测:直写产出无 moov 的废 mp4,浏览器永久转圈)。
+                import shutil
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+                    tmp = tf.name
+                try:
+                    _encode_mp4(frames, tmp, play_fps)
+                    shutil.copyfile(tmp, dst)          # 顺序写,FSX 安全
+                    n_ok += 1
+                finally:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+            except Exception:  # noqa: BLE001
+                continue
+    return n_ok
+
+
+def _encode_mp4(frames: list, path: str, fps: int) -> None:
+    """RGB ndarray 序列 → h264 mp4(faststart;宽高裁到偶数,yuv420p 硬要求)。"""
+    import av
+    import numpy as np
+
+    h, w = frames[0].shape[:2]
+    w2, h2 = w - w % 2, h - h % 2
+    with av.open(path, "w", options={"movflags": "faststart"}) as container:
+        stream = container.add_stream("h264", rate=fps)
+        stream.width, stream.height = w2, h2
+        stream.pix_fmt = "yuv420p"
+        for f in frames:
+            frame = av.VideoFrame.from_ndarray(
+                np.ascontiguousarray(f[:h2, :w2]), format="rgb24")
+            for pkt in stream.encode(frame):
+                container.mux(pkt)
+        for pkt in stream.encode():
+            container.mux(pkt)

@@ -316,14 +316,14 @@ def skill_bar_html(m: dict) -> str:
             + "".join(head) + "".join(rows) + foot + '</div>')
 
 
-AUDIT_HEADERS = ["档位", "episode", "原始标注", "自产描述(VLM 生成)", "成败线判定", "分歧说明", "裁决"]
+AUDIT_HEADERS = ["操作", "档位", "episode", "原始标注", "自产描述(VLM 生成)", "成败线判定", "分歧说明", "裁决"]
 
 
 def audit_rows(m: dict) -> list[list]:
     """档位=重点(成败线同时不利,两线同报警)/参考(成败线放行,多为描述噪声)。
     裁决列回显 details/label_decisions.csv(空=待人工)。"""
     dec = load_label_decisions(m)
-    return [[a.get("priority", "参考"), a.get("id", ""), a.get("label", ""),
+    return [["裁决 ▶", a.get("priority", "参考"), a.get("id", ""), a.get("label", ""),
              a.get("caption", ""), a.get("task_verdict", ""), a.get("reason", ""),
              dec.get(a.get("id", ""), {}).get("decision", "")]
             for a in m["audit_queue"]]
@@ -736,3 +736,12 @@ from ..dataset_level.decisions import load_label_decisions as _load_decisions
 
 def load_label_decisions(m: dict) -> dict:
     return _load_decisions(m["path"])
+
+
+def audit_clip_paths(m: dict, episode_id: str) -> list[str]:
+    """该分歧条目的视频片段(details/audit_clips/<ep>__<cam>.mp4,按相机名排序)。"""
+    d = os.path.join(m["path"], "details", "audit_clips")
+    if not os.path.isdir(d):
+        return []
+    return sorted(os.path.join(d, f) for f in os.listdir(d)
+                  if f.startswith(episode_id + "__") and f.endswith(".mp4"))

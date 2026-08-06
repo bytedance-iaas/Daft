@@ -10,6 +10,9 @@ from typing import Callable
 import numpy as np
 
 # 多路带标签 caption(2026-08-05,v7 家族哲学平移:分机位分组+标签、信看得清的
+# 注意力引导句(2026-08-06,ep148 消融):腕部帧里橡皮筋清晰可见但自由生成时被
+# 无视——细物混在夹爪连杆里天然伪装+"瓶口=拧盖"先验抢注意力;定向问一击即中
+# ("是橡皮筋,正撑开套上")。看得见但没看=注意力问题,一句引导即是修复。
 # 视角、意图措辞、unclear 弃权出口)。此前只看 sorted()[0] 单机位——目标太远/被挡时
 # captioner 被迫编故事且三次重打编得一样(droid ep32"空气炸锅"被写成"咖啡机",
 # 审计线 30% 误旗的主要来源;打分层同款病已在 v7 治过)。
@@ -18,6 +21,10 @@ CAPTION_PROMPT = (
     "{cam_sections}"
     "All cameras show the SAME robot episode. Some views may be occluded or too far "
     "away; rely on the views where the manipulated objects are clearly visible.\n"
+    "Pay special attention to any small or thin object held BETWEEN the gripper "
+    "fingers (a rubber band, string, paper, small part) - the manipulated object "
+    "is usually in the gripper, and thin objects are easy to mistake for the "
+    "gripper's own rods or cables.\n"
     "Describe the task the robot is ATTEMPTING in ONE short imperative phrase "
     "(e.g. 'put the cup in the sink'). Describe the attempted goal even if the "
     "attempt fails or the object slips.\n"
