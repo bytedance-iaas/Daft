@@ -44,11 +44,18 @@ def apply_decisions(passed: dict, review: dict, reject: dict,
                "dropped": [], "kept": [], "skipped": []}
 
     def _take(eid):
-        """从三件套里取出该 episode 的现有条目(哪边有取哪边)。"""
+        """从三件套里取出该 episode 的现有条目——**三边都摘**,返回信息最全的一份。
+
+        为什么不是"第一个命中就收手":FSX 改写文件有读延迟,rejudge 连跑时曾读到
+        旧版 review,让已搬走的条目"复活"成双份(2026-08-06 droid-30 实锤:Episodes
+        页签僵尸待裁决)。全量摘除让任何双份在下一次搬移时就地自愈。"""
+        best: dict = {}
         for d in (p_eps, r_eps, j_eps):
             if eid in d:
-                return d.pop(eid)
-        return {}
+                e = d.pop(eid)
+                if not best or ("标注修正" in e or "标注裁决" in e):
+                    best = e
+        return best
 
     for eid, dec in decisions.items():
         kind = dec.get("decision")
@@ -128,6 +135,10 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
         with open(path, encoding="utf-8") as f:
             files[name] = json.load(f)
 
+    # ⚠️ 不做全局"去重清扫":弃权条目**同时**出现在 passed(当前判决=通过)与
+    # review(待裁决视图)是交付格式的设计,不是残留(2026-08-06 误清 14 条实锤,
+    # 靠 passed 的弃权明细重建救回)。只允许**定向**清理:已裁决条目的旧副本。
+
     # 幂等跳过:同一条 episode、同一次裁决(裁决时间+新标注都没变)已经采纳落库的,
     # 不再重复付 VLM 重判的钱(2026-08-06 用户点名:重跑 rejudge 曾把两条又判了一遍)。
     # 判据取三件套里的落库溯源,而非旁路文件——以真实交付状态为准。
@@ -145,6 +156,13 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                     unchanged.append(eid)
                     adopt.pop(eid)
                     decisions.pop(eid)      # 整条不再进 apply,交付保持原样
+                    # 定向清理:裁决已落库,该 episode 在其它文件里的无溯源旧副本
+                    # 即为残留(老 _take 只摘第一处留下的僵尸),就地清掉
+                    for other in ("passed", "review", "reject"):
+                        if other != name:
+                            oe = files[other].get("episodes", {})
+                            if eid in oe and "标注修正" not in oe[eid]                                     and "标注裁决" not in oe[eid]:
+                                oe.pop(eid)
                 break
 
     rejudged: dict = {}
