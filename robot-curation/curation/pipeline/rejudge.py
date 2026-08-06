@@ -166,9 +166,18 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 break
 
     rejudged: dict = {}
+    _lat_mark = 0
     if adopt:
         if rerun_fn is None:
             rerun_fn = _build_rerun(cfg)
+        # 重判也要入账:记下当前进程延时明细的水位,重判结束后把增量并进交付
+        # 的 vlm_latency.csv(2026-08-06 用户抓包:四次 rejudge 上百次 VLM 调用
+        # 全没进延时剖析,表上数字永远是原始 run 的快照)
+        try:
+            from ..adapters.vlm_client import latency_rows
+            _lat_mark = len(latency_rows())
+        except Exception:  # noqa: BLE001
+            _lat_mark = -1
 
         def _one(item):
             eid, d = item
@@ -180,9 +189,18 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 return eid, None
 
         # episode 级并行(重判段 VLM 占 ~100% 墙钟;客户端帧级并发之上再叠 episode 级)
+        import time as _t2
         from concurrent.futures import ThreadPoolExecutor
+        _rj_t0 = _t2.time()
+        print(f"[rejudge] 重判 {len(adopt)} 条(完整多视角协议,并发≤8;"
+              f"方舟每条约 2 分钟,自托管约 30 秒)…", flush=True)
+        _done = 0
         with ThreadPoolExecutor(max_workers=min(8, len(adopt))) as ex:
             for eid, res in ex.map(_one, list(adopt.items())):
+                _done += 1
+                verdict = (res or {}).get("verdict", "失败")
+                print(f"[rejudge] 重判 {_done}/{len(adopt)}:{eid} → {verdict}"
+                      f" | 已用 {int(_t2.time() - _rj_t0)}s", flush=True)
                 if res is not None:
                     rejudged[eid] = res
 
@@ -195,12 +213,104 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
 
     det = os.path.join(delivery, "details")
     os.makedirs(det, exist_ok=True)
+
+    # 重判段延时增量入账(整写非追加——FSX 拒绝 O_APPEND)+ 刷新汇总快照
+    if rejudged and _lat_mark >= 0:
+        try:
+            from ..adapters.vlm_client import latency_rows, latency_summary
+            delta = latency_rows()[_lat_mark:]
+            if delta:
+                csv_path = os.path.join(det, "vlm_latency.csv")
+                import csv as _csv
+                rows_all: list = []
+                if os.path.exists(csv_path):
+                    with open(csv_path, newline="", encoding="utf-8") as f:
+                        for r in _csv.DictReader(f):
+                            st = (r.get("started_at") or "").strip()
+                            rows_all.append((r["call_type"], float(r["seconds"]),
+                                             bool(int(r["ok"])),
+                                             float(st) if st else None))
+                rows_all.extend(delta)
+                with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                    w = _csv.writer(f)
+                    w.writerow(["call_type", "seconds", "ok", "started_at"])
+                    for t, s, ok, st in rows_all:
+                        w.writerow([t, s, int(ok), "" if st is None else st])
+                ds = files["passed"].setdefault("dataset", {})
+                ds["vlm_latency"] = latency_summary(rows_all)
+                with open(os.path.join(delivery, "passed.json"), "w",
+                          encoding="utf-8") as f:
+                    json.dump(files["passed"], f, ensure_ascii=False, indent=1,
+                              default=str)
+        except Exception as e:  # noqa: BLE001  入账失败不影响重判结果
+            print(f"[rejudge] ⚠️ 延时入账失败({type(e).__name__}: {e})", flush=True)
     with open(os.path.join(det, "rejudge_results.json"), "w", encoding="utf-8") as f:
         json.dump({"at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                    "summary": summary,
                    "rejudged": {e: {k: v for k, v in r.items() if k != "detail"}
                                 for e, r in rejudged.items()}},
                   f, ensure_ascii=False, indent=1)
+
+    # 交付数据集同步(2026-08-06 出数据闭环):裁决不能只改报告——episodes_parquet
+    # 里的 instruction 还是旧标注,弃用条目还躺在数据里,交出去就是脏数据。
+    # 采纳改标 → 改写该条 instruction(溯源=人工裁决改标);弃用 → 整行剔除;
+    # 重判仍失败(adopted_reject)→ 同样剔除。report-only 交付没有 parquet,跳过。
+    pq_dir = os.path.join(delivery, "episodes_parquet")
+    touched = (summary["adopted_pass"] + summary["adopted_review"]
+               + summary["adopted_reject"] + summary["dropped"])
+    if touched and os.path.isdir(pq_dir):
+        try:
+            import daft as _daft
+            df = _daft.read_parquet(pq_dir).to_pydict()
+            n = len(df["episode_id"])
+            rows_pq = [{k: df[k][i] for k in df} for i in range(n)]
+            drop_ids = set(summary["dropped"]) | set(summary["adopted_reject"])
+            relabel = {e: decisions[e]["new_label"] for e in
+                       summary["adopted_pass"] + summary["adopted_review"]
+                       if e in decisions}
+            out_rows = []
+            for r in rows_pq:
+                eid = r["episode_id"]
+                if eid in drop_ids:
+                    continue
+                if eid in relabel:
+                    r["instruction"] = relabel[eid]
+                    if "instruction_source" in r:
+                        r["instruction_source"] = "人工裁决改标"
+                out_rows.append(r)
+            if len(out_rows) != n or relabel:
+                import shutil as _sh
+                _sh.rmtree(pq_dir)
+                cols = {k: [r[k] for r in out_rows] for k in out_rows[0]} if out_rows else {}
+                if cols:
+                    _daft.from_pydict(cols).write_parquet(pq_dir)
+                print(f"[rejudge] 交付数据集已同步:改标 {len(relabel)} 条,"
+                      f"剔除 {n - len(out_rows)} 条(episodes_parquet)", flush=True)
+                # LeRobot 包同步:v2 源重导出=纯文件拷贝,便宜到没有理由留给用户
+                # 手动;v3 源要视频重编码,只提醒不擅动。以同步后的 parquet 为唯一
+                # 事实源重建导出参数(终态条目集 + 非原始标注的任务覆写)。
+                curated = os.path.join(delivery, "lerobot_curated")
+                if os.path.isdir(curated):
+                    from ..ingest.lerobot_reader import _load_info
+                    if _load_info(input_dir)["codebase_version"].startswith("v3"):
+                        print("[rejudge] ⚠️ lerobot_curated(v3,视频重编码)未自动重做;"
+                              "需要最新 LeRobot 包请重跑 curation run(非 report-only)",
+                              flush=True)
+                    else:
+                        from ..export.lerobot_writer import export_lerobot_v2
+                        keep_idx = [int(r["episode_id"][2:]) for r in out_rows]
+                        ov = {int(r["episode_id"][2:]): r["instruction"]
+                              for r in out_rows
+                              if r.get("instruction_source") not in (None, "", "原始标注")
+                              and str(r.get("instruction") or "").strip()}
+                        _sh.rmtree(curated)
+                        export_lerobot_v2(input_dir, keep_idx, curated,
+                                          task_overrides=ov)
+                        print(f"[rejudge] lerobot_curated 已重导出(v2 纯拷贝):"
+                              f"{len(keep_idx)} 条,任务覆写 {len(ov)} 条", flush=True)
+        except Exception as e:  # noqa: BLE001  数据集同步失败不吞掉裁决结果
+            print(f"[rejudge] ⚠️ 交付数据集同步失败({type(e).__name__}: {e});"
+                  f"三件套已更新,episodes_parquet 仍是旧标注", flush=True)
 
     # 报告小节用"读全文+整写"而非追加:交付目录在 TOS 的 FSX 挂载上,
     # open(..., "a") 直接 EINVAL(2026-08-06 生产实锤,与 decisions.py 同坑)。
@@ -223,6 +333,18 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
             sec.append(f"- ⚠️ 未处理(重判失败/裁决词不识别):{summary['skipped']}\n")
         with open(md, "w", encoding="utf-8") as f:
             f.write(body + "".join(sec))
+
+    # 落盘回验(与 run 同款,2026-08-06):rejudge 改写的文件在对象存储上有读
+    # 可见延迟,不回验就宣布完成 → 用户立刻刷 UI 看到的还是旧数据(实锤)。
+    from .run import _verify_delivery_visible
+    vis = [(n + ".json", os.path.join(delivery, n + ".json"), "json")
+           for n in ("passed", "review", "reject")]
+    vis.append(("rejudge_results.json",
+                os.path.join(det, "rejudge_results.json"), "json"))
+    pq = os.path.join(delivery, "episodes_parquet")
+    if os.path.isdir(pq):
+        vis.append(("episodes_parquet", pq, "dir"))
+    _verify_delivery_visible(vis, timeout_s=180.0)
     return summary
 
 

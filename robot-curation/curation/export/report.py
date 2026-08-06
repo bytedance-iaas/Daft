@@ -88,6 +88,12 @@ def to_markdown(report: dict) -> str:
         _cn = {"probe": "渐变问询(VOC)", "endstate": "二值复核",
                "caption": "画像 caption", "llm": "归纳/审计 LLM"}
         lines.append("## 模型调用延时(客户端视角,秒)")
+        _tw = (report.get("runtime") or {}).get("total_wall_s")
+        if _tw:
+            _m, _s = divmod(int(_tw), 60)
+            _h, _m = divmod(_m, 60)
+            _txt = f"{_h} 小时 {_m} 分 {_s} 秒" if _h else f"{_m} 分 {_s} 秒"
+            lines.append(f"\n**整次运行总墙钟:{_txt}**(启动 → 交付落盘可用,含全部阶段)\n")
         lines.append("| 调用类型 | 次数 | 错误 | 均值 | P50 | P90 | P99 | 最大 |")
         lines.append("|---|---|---|---|---|---|---|---|")
         for tag, s in lat.items():
