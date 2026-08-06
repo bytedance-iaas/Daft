@@ -115,9 +115,10 @@ def test_skill_audit_overview(delivery):
     sk = skill_rows(m)
     assert sk[0][0] == "Arrange" and sk[0][1] == "Arrange soft goods" and sk[0][2] == 2
     au = audit_rows(m)
-    # v2 行结构:[档位, episode, 原标注, 自产描述, 成败线判定, 分歧说明]
-    assert au[0][1] == "ep000002" and au[0][5] == "跨族"
-    assert au[0][0] in ("重点", "参考")
+    # v3 行结构:[操作, 档位, episode, 原标注, 自产描述, 成败线判定, 分歧说明, 裁决]
+    assert au[0][0] == "裁决 ▶"                       # 可点性操作列
+    assert au[0][2] == "ep000002" and au[0][6] == "跨族"
+    assert au[0][1] in ("重点", "参考")
     md = overview_markdown(m)
     assert "droid_fake" in md and "franka" in md and "待人工裁决 **1** 条" in md
 
@@ -864,10 +865,10 @@ def test_audit_queue_accepts_both_keys(tmp_path):
              "reason": "分歧:原始标注归为 wipe,自产描述(VLM 生成)归为 place——需人工判定",
              "caption_stable": False, "recaptions": ["a", "b"]}]},
         ensure_ascii=False))
-    assert audit_rows(load_delivery(str(old)))[0][1] == "ep1"       # 老交付打得开
+    assert audit_rows(load_delivery(str(old)))[0][2] == "ep1"       # 老交付打得开
     row = audit_rows(load_delivery(str(new)))[0]
-    assert row[1] == "ep2" and "自产描述" in row[5] and "画面=" not in row[5]
-    assert row[0] == "参考"                    # 老数据无 priority 字段 → 默认参考,不崩
+    assert row[2] == "ep2" and "自产描述" in row[6] and "画面=" not in row[6]
+    assert row[1] == "参考"                    # 老数据无 priority 字段 → 默认参考,不崩
 
 
 def test_label_decision_roundtrip(delivery):
@@ -885,7 +886,7 @@ def test_label_decision_roundtrip(delivery):
     record_label_decision(m["path"], "ep000002", "维持原标注")
     assert load_label_decisions(m)["ep000002"]["decision"] == "维持原标注"
     # 裁决列回显进表格
-    row = [r for r in audit_rows(m) if r[1] == "ep000002"][0]
+    row = [r for r in audit_rows(m) if r[2] == "ep000002"][0]
     assert row[-1] == "维持原标注"
 
 
@@ -895,3 +896,19 @@ def test_label_decision_guards(delivery):
     assert "未记录" in record_label_decision(m["path"], "ep1", "采纳建议改标", new_label="  ")
     assert "未记录" in record_label_decision(m["path"], "ep1", "乱写的裁决")
     assert load_label_decisions(m) == {}                       # 守卫拦下的不落盘
+
+
+def test_discover_deliveries_recursive(tmp_path):
+    """递归发现(2026-08-06):嵌套目录里的交付也要被找到;交付内部不再往里钻。"""
+    import json as _json
+    deep = tmp_path / "experiments" / "run1"
+    deep.mkdir(parents=True)
+    (deep / "passed.json").write_text("{}")
+    (deep / "details").mkdir()                      # 交付内部子目录,不该被当交付扫
+    flat = tmp_path / "flat-delivery"
+    flat.mkdir()
+    (flat / "passed.json").write_text("{}")
+    (tmp_path / "empty-dir").mkdir()                # 无 passed.json:不出现
+    found = discover_deliveries(str(tmp_path))
+    assert str(deep) in found and str(flat) in found
+    assert len(found) == 2

@@ -408,6 +408,9 @@ def build_linear_context(frames: list[np.ndarray], n: int = 8,
 #   单路外1 VOC -0.11 逐帧掷硬币,外2 +0.76,联合 final 1.0 直接判对)。
 # v5 铁律不破:每请求仍只出一个数(k 张**同时刻**查询帧 ≠ v4 的 8 张异时刻帧,
 #   无跟踪问题)。
+# v7.4 注意力引导(2026-08-06,ep148 消融 + A/B + 105 全量验证):细小物体在自由
+#   观察下被夹爪连杆伪装+先验抢注意力("看得见但没看");引导句后微小物证族 4/6
+#   走出人工队列(ep148 voc 0.52→0.98),头条 87/15/0 与 3/3 拦截不变,冤杀 0。
 JOINT_SCORE_PROMPT = (
     "Task: {instruction}\n"
     "Images 1-{k} show the START of a robot episode, one image per camera, in this "
@@ -416,6 +419,10 @@ JOINT_SCORE_PROMPT = (
     "cameras in the same order.\n"
     "Some views may be occluded or unhelpful; rely on the views where the objects "
     "are clearly visible.\n"
+    "If the task involves a small or thin object (a band, string, straw, paper, "
+    "small part), look for it between the gripper fingers and at the target "
+    "location before scoring - thin objects are easy to mistake for the "
+    "gripper's own rods.\n"
     "Score how far the task has physically progressed at that moment, from 0 to 100, "
     "judging ONLY by the state of the objects and the scene - not by what the robot "
     "arm is doing.\n"

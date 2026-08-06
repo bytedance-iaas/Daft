@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 import numpy as np
 
 from curation.export.evidence import (flagged_for_evidence, probe_indices,
@@ -119,3 +121,27 @@ def test_render_respects_cap_and_off(tmp_path):
     assert len(got) == 2
     assert render_task_evidence(pes, vids, str(tmp_path), 0.5, 448,
                                 mode="off", decode_fn=_fake_decode) == {}
+
+
+def test_audit_clip_encode_faststart(tmp_path):
+    """片段编码:能写出可开箱的 mp4,且 moov 在文件头部(faststart——moov 在尾部时
+    浏览器 <video> 会无报错地永久转圈,2026-08-03 人工审片工具实锤)。"""
+    pytest.importorskip("av")
+    import numpy as np
+
+    from curation.export.evidence import _encode_mp4
+    frames = [np.full((33, 47, 3), i * 8, dtype=np.uint8) for i in range(12)]  # 奇数宽高
+    dst = tmp_path / "c.mp4"
+    _encode_mp4(frames, str(dst), fps=4)
+    head = dst.read_bytes()[:2048]
+    assert b"moov" in head, "moov 不在头部:faststart 失效,浏览器播不了"
+
+
+def test_write_audit_clips_skips_bad_video(tmp_path):
+    """坏视频指针静默跳过(少一路不断链),好条目照写。"""
+    pytest.importorskip("av")
+    from curation.export.evidence import write_audit_clips
+    n = write_audit_clips(["epX"], {"epX": {"cam": {"path": "/no/such.mp4",
+                                                    "from_ts": 0, "to_ts": 1}}},
+                          str(tmp_path))
+    assert n == 0 and not (tmp_path / "details" / "audit_clips").exists()

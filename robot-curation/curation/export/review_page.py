@@ -1,0 +1,101 @@
+"""静态审片页生成器(2026-08-06,复活并转正原 7862 临时审片工具)。
+
+原工具 = 旧 pod /tmp 里手起的 http.server + 一次性切片,pod 一重启全蒸发。
+转正方案:本模块把 **索引页 + 逐 episode 页 + 视频片段** 生成为纯静态文件
+(落 TOS 持久),由 UI 进程的 `/review` 静态路由服务(见 ui/app.py)——
+UI 是 pod 的 PID 1,重启自动回来;同端口走 Basic 锁,公网 APIG 也可达。
+
+页面形态照抄原工具的长处:索引页一屏列全量 episode(百余条直接扫),点进
+单条页看多路视频(2 倍速片段),prev/next 串场。全部相对路径,挂哪个前缀
+都能用。视频编码复用 evidence._encode_mp4(faststart + 本地盘中转,FSX 安全)。
+"""
+from __future__ import annotations
+
+import html
+import os
+
+_INDEX_CSS = """
+body{font-family:system-ui,sans-serif;margin:1.5rem;background:#fafafa;color:#222}
+table{border-collapse:collapse;width:100%;background:#fff}
+th,td{border:1px solid #ddd;padding:.4rem .6rem;text-align:left;font-size:.92rem}
+tr:hover td{background:#fff3e0}
+a{color:#c60;text-decoration:none} a:hover{text-decoration:underline}
+h1{font-size:1.3rem}
+.small{color:#888;font-size:.85rem}
+"""
+
+_EP_CSS = _INDEX_CSS + """
+.vids{display:flex;gap:.8rem;flex-wrap:wrap}
+video{max-width:32%;min-width:280px;background:#000;border-radius:6px}
+.nav{margin:.8rem 0;display:flex;gap:1.2rem}
+"""
+
+
+def build_review_page(rows: list[dict], out_dir: str, title: str = "人工审片",
+                      sample_interval_s: float = 0.5, max_side: int = 448,
+                      play_fps: int = 4, max_cams: int = 3,
+                      on_progress=None) -> int:
+    """rows(含 episode_id/instruction/video 指针)→ out_dir 下的静态审片站。
+
+    产物:index.html + ep/<id>.html + clips/<id>__<cam>.mp4。
+    已存在片段的 episode 跳过重编码(重跑只补新增,幂等)。返回生成的片段数。
+    """
+    from .evidence import write_audit_clips
+
+    os.makedirs(os.path.join(out_dir, "ep"), exist_ok=True)
+    clip_root = os.path.join(out_dir, "details", "audit_clips")  # 复用同款目录结构
+
+    n_clips = 0
+    items = []
+    for i, r in enumerate(rows):
+        eid = r["episode_id"]
+        cams = sorted(r.get("video") or {})[:max_cams]
+        have = [c for c in cams
+                if os.path.exists(os.path.join(clip_root, f"{eid}__{c.split('.')[-1]}.mp4"))]
+        if len(have) < len(cams):
+            n_clips += write_audit_clips([eid], {eid: r["video"]}, out_dir,
+                                         sample_interval_s=sample_interval_s,
+                                         max_side=max_side, play_fps=play_fps,
+                                         max_cams=max_cams)
+        items.append({"eid": eid, "instruction": str(r.get("instruction") or ""),
+                      "cams": [c.split(".")[-1] for c in cams]})
+        if on_progress is not None:
+            on_progress()
+
+    # 逐 episode 页(prev/next 串场)
+    for i, it in enumerate(items):
+        eid = it["eid"]
+        prev_ep = items[i - 1]["eid"] if i > 0 else None
+        next_ep = items[i + 1]["eid"] if i + 1 < len(items) else None
+        vids = "\n".join(
+            f'<video controls preload="metadata" '
+            f'src="../details/audit_clips/{eid}__{c}.mp4"></video>'
+            for c in it["cams"])
+        nav = '<div class="nav"><a href="../index.html">← 索引</a>'
+        if prev_ep:
+            nav += f'<a href="{prev_ep}.html">← 上一条 {prev_ep}</a>'
+        if next_ep:
+            nav += f'<a href="{next_ep}.html">下一条 {next_ep} →</a>'
+        nav += "</div>"
+        page = (f"<!doctype html><meta charset=utf-8><title>{eid}</title>"
+                f"<style>{_EP_CSS}</style>"
+                f"{nav}<h1>{eid} <span class=small>({i + 1}/{len(items)})</span></h1>"
+                f"<p><b>标注:</b>{html.escape(it['instruction'])}</p>"
+                f'<div class="vids">{vids}</div>{nav}')
+        with open(os.path.join(out_dir, "ep", f"{eid}.html"), "w", encoding="utf-8") as f:
+            f.write(page)
+
+    # 索引页:一屏列全量
+    trs = "\n".join(
+        f'<tr><td><a href="ep/{it["eid"]}.html">{it["eid"]}</a></td>'
+        f"<td>{html.escape(it['instruction'][:90])}</td>"
+        f"<td>{len(it['cams'])} 路</td></tr>"
+        for it in items)
+    index = (f"<!doctype html><meta charset=utf-8><title>{html.escape(title)}</title>"
+             f"<style>{_INDEX_CSS}</style><h1>{html.escape(title)}"
+             f" <span class=small>({len(items)} 条,视频为 {play_fps}fps 倍速片段)"
+             f"</span></h1>"
+             f"<table><tr><th>episode</th><th>标注</th><th>视频</th></tr>{trs}</table>")
+    with open(os.path.join(out_dir, "index.html"), "w", encoding="utf-8") as f:
+        f.write(index)
+    return n_clips

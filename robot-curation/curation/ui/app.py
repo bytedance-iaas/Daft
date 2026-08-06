@@ -20,7 +20,8 @@ import logging
 import os
 
 from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DECISION_CHOICES,
-                       DETAIL_LABELS, record_label_decision,
+                       DETAIL_LABELS, audit_clip_paths, load_label_decisions,
+                       record_label_decision,
                        EPISODE_HEADERS, FUNNEL_HEADERS, LATENCY_HEADERS,
                        LATENCY_KIND_NOTE, LATENCY_NOTE, LATENCY_PCTL_NOTE,
                        SKILL_HEADERS, audit_rows, check_rows,
@@ -135,6 +136,14 @@ def _probe_backends(config_path: str | None, timeout: float) -> list[list]:
     return rows
 
 
+
+# 分歧队列的可点性提示(2026-08-05 用户反馈:怕用户不知道行能点):
+# 悬停变手型 + 行高亮,配合首列「裁决 ▶」操作列,双保险。
+_AUDIT_CSS = """
+#audit-queue tbody tr { cursor: pointer; }
+#audit-queue tbody tr:hover td { background: rgba(255, 140, 0, 0.10) !important; }
+"""
+
 def presentation(terminal: bool = False) -> dict:
     """theme/css/head 三件套(gradio 6 起只认 launch()/mount_gradio_app() 上的这三个
     关键字,传给 `gr.Blocks()` 会被静默丢弃——2026-07-29 实测,顺手修掉的老 bug)。"""
@@ -145,7 +154,7 @@ def presentation(terminal: bool = False) -> dict:
         # 首屏(实测),demo 一开场就是白屏等待——本 UI 场景里无网络字体的理由
         "theme": gr.themes.Default(font=["system-ui", "sans-serif"],
                                    font_mono=["ui-monospace", "Menlo", "monospace"]),
-        "css": (_TOPNAV_CSS + _TERMINAL_CSS) if terminal else None,
+        "css": _AUDIT_CSS + ((_TOPNAV_CSS + _TERMINAL_CSS) if terminal else ""),
         "head": _TERMINAL_HEAD if terminal else None,
     }
 
@@ -188,6 +197,25 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if total > len(rows) else "")
         return note, headers or ["(空)"], rows
 
+    def _au_card_init(m):
+        """切换交付时裁决卡片回到第 0 条(渲染逻辑与面板内 _au_show 同式)。"""
+        q = m.get("audit_queue") or []
+        if not q:
+            return (0, "(无分歧条目)", "", "", "", "",
+                    *[gr.update(value=None, visible=False)] * 3)
+        a = q[0]
+        dec_map = load_label_decisions(m)
+        dec = dec_map.get(a.get("id", ""), {})
+        info = (f"**{a.get('id','')}** · 档位 **{a.get('priority','参考')}** · "
+                f"成败线判定:{a.get('task_verdict') or '—'}"
+                + (f" · 已裁决:**{dec['decision']}**" if dec.get("decision") else "")
+                + f"\n\n分歧说明:{a.get('reason','')}")
+        clips = audit_clip_paths(m, a.get("id", ""))
+        vids = [gr.update(value=(clips[i] if i < len(clips) else None),
+                          visible=(i < len(clips) or not clips)) for i in range(3)]
+        return (0, f"第 1 / {len(q)} 条", info, a.get("label", ""),
+                a.get("caption", ""), "", *vids)
+
     def _load(path):
         m = load_delivery(path)
         eids = sorted(m["episodes"].keys())
@@ -200,11 +228,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         perf = load_perf(m)
         # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
-        _au_ids = [a.get("id", "") for a in m["audit_queue"]]
         return (m, overview_markdown(m), funnel_rows(m), _config_yaml(m),
                 episode_rows(m), gr.update(choices=eids, value=first),
                 skill_bar_html(m), skill_rows(m), audit_rows(m),
-                gr.update(choices=_au_ids, value=(_au_ids[0] if _au_ids else None)),
+                *_au_card_init(m),
                 *_detail(m, first),
                 gr.update(choices=[DETAIL_LABELS[t] for t in tables],
                           value=(DETAIL_LABELS[t_first] if t_first else None)),
@@ -233,7 +260,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             with gr.Row():
                 picker = gr.Dropdown(choices=choices, value=choices[0], label="交付目录",
                                      scale=4, interactive=True, allow_custom_value=True,
-                                     info="可直接输入任意交付目录路径;「重新加载」会重扫列表")
+                                     info="可输入任意**交付目录**或其**父目录**后按回车+「重新加载」:"
+                                          "父目录会自动展开其下全部交付;新跑完的目录点「重新加载」即出现")
                 reload_btn = gr.Button("重新加载", scale=1)
             state = gr.State()
 
@@ -258,20 +286,38 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 sk_table = gr.Dataframe(headers=SKILL_HEADERS, label="两级技能体系",
                                         interactive=False)
                 au_table = gr.Dataframe(headers=AUDIT_HEADERS,
-                                        label="标注-画面分歧复核队列(双方都可能错,供人工判定)",
-                                        interactive=False)
-                # ── 人工裁决表单(②b):三选一落 details/label_decisions.csv。
-                #    这里只记录人的决定;按裁决重判/搬移交付 = 终端跑 curation rejudge。
-                #    (人工确认卡在 caption 与重判之间 = 自产自证陷阱的断路器)
-                with gr.Accordion("裁决分歧(记录后在命令行跑 curation rejudge 生效)", open=False):
+                                        label="标注-画面分歧队列(审计检出;重点档排最前;"
+                                              "点任意一行 → 下方裁决卡片跳到该条)",
+                                        interactive=False, elem_id="audit-queue",
+                                        max_height=420,     # 容器内滚动(表头吸顶),条数多不挤爆页面
+                                        wrap=True,          # 长文本换行显示全文(原始标注/分歧说明不截断)
+                                        column_widths=["7%", "6%", "9%", "24%", "19%",
+                                                       "9%", "18%", "8%"])
+                # ── 裁决标注分歧(逐条翻页卡片,参考 7862 人工审片的形态):
+                #    看视频 → 对照原始标注/建议描述 → 三按钮直接裁决。
+                #    UI 只记录裁决(details/label_decisions.csv);
+                #    重判 = 命令行 curation rejudge(人工确认是自产自证的断路器)。
+                # 默认展开(2026-08-05 用户定:折叠着没人知道能点开)——有分歧队列
+                # 的交付,裁决面板就是这个页签的主工作区,不该藏
+                with gr.Accordion("裁决标注分歧(点按钮=记草稿,可随时改判;"
+                                  "跑 curation rejudge 才生效)", open=True):
+                    au_idx = gr.State(0)
                     with gr.Row():
-                        au_pick = gr.Dropdown(label="episode", interactive=True, scale=2)
-                        au_dec = gr.Radio(choices=list(DECISION_CHOICES), scale=3,
-                                          label="裁决", value=None)
-                    au_newlab = gr.Textbox(label="修正后标注(仅「采纳建议改标」必填;"
-                                                 "默认预填自产描述,可改)")
+                        au_prev = gr.Button("← 上一条", scale=1)
+                        au_pos = gr.Markdown("", elem_id="au-pos")
+                        au_next = gr.Button("下一条 →", scale=1)
+                    au_info = gr.Markdown()
+                    with gr.Row():
+                        au_vids = [gr.Video(label=f"机位 {i+1}", interactive=False,
+                                            autoplay=False, scale=1) for i in range(3)]
+                    au_origlab = gr.Textbox(label="原始标注(只读)", interactive=False)
+                    au_newlab = gr.Textbox(label="修正后标注(可编辑;预填 VLM 建议描述,"
+                                                 "仅「采纳改标」使用)")
                     au_note = gr.Textbox(label="备注(可选)")
-                    au_save = gr.Button("记录裁决", variant="primary")
+                    with gr.Row():
+                        au_adopt = gr.Button("✅ 采纳改标", variant="primary")
+                        au_keep = gr.Button("↩️ 维持原标注")
+                        au_drop = gr.Button("🗑 弃用该条", variant="stop")
                     au_status = gr.Markdown()
 
             with gr.Tab("Stuck 时间线"):
@@ -310,19 +356,29 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 be_table = gr.Dataframe(headers=["预设", "状态", "服务端模型"], interactive=False)
 
             outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick,
-                    sk_html, sk_table, au_table, au_pick,
+                    sk_html, sk_table, au_table,
+                    au_idx, au_pos, au_info, au_origlab, au_newlab, au_note, *au_vids,
                     ep_md, ep_checks, ep_gallery, dt_pick, dt_note, dt_table,
                     tl_note, tl_html,
                     perf_backend, perf_env, perf_note, perf_table, perf_bar]
             picker.change(_load, picker, outs)
 
             def _reload(path):
-                # 重扫根目录(2026-07-28 用户问"不能自己设定吗":新交付目录从此免重启;
-                # 手输的路径不在扫描列表里也保留为合法选项)
+                # 重扫根目录(2026-07-28;2026-08-06 增强):
+                # - 手输的是**交付目录本体** → 保留为选项并加载;
+                # - 手输的是**装着交付的父目录** → 自动展开,把它下面的交付并入列表
+                #   (此前这种输入静默加载失败,看起来像"其它目录无法显示");
+                # - 都不是 → 仍保留输入(可能是尚未跑完的目录),加载报什么算什么。
                 fresh = discover_deliveries(delivery)
-                if path and path not in fresh:
-                    fresh = fresh + [path]
-                return (gr.update(choices=fresh, value=path), *_load(path))
+                sel = path
+                if path and path not in fresh and os.path.isdir(path):
+                    found = discover_deliveries(path)
+                    if found and path not in found:
+                        fresh = fresh + [d for d in found if d not in fresh]
+                        sel = found[0]                    # 父目录 → 跳到其中第一个交付
+                if sel and sel not in fresh:
+                    fresh = fresh + [sel]
+                return (gr.update(choices=fresh, value=sel), *_load(sel))
 
             reload_btn.click(_reload, picker, [picker, *outs])
             ep_pick.change(_detail, [state, ep_pick], [ep_md, ep_checks, ep_gallery])
@@ -334,20 +390,64 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             dt_pick.change(_table_change, [state, dt_pick], [dt_note, dt_table])
 
-            def _au_prefill(m, eid):
-                cap = next((a.get("caption", "") for a in (m or {}).get("audit_queue", [])
-                            if a.get("id") == eid), "")
-                return gr.update(value=cap)
+            def _au_show(m, idx):
+                """渲染第 idx 条分歧卡片(越界回绕)。返回含视频三路(缺路给 None)。"""
+                q = (m or {}).get("audit_queue") or []
+                if not q:
+                    return (idx, "(无分歧条目)", "", "", "", "",
+                            *[gr.update(value=None, visible=False)] * 3)
+                idx = idx % len(q)
+                a = q[idx]
+                dec = load_label_decisions(m).get(a.get("id", ""), {})
+                info = (f"**{a.get('id','')}** · 档位 **{a.get('priority','参考')}** · "
+                        f"成败线判定:{a.get('task_verdict') or '—'}"
+                        + (f" · 已裁决:**{dec['decision']}**" if dec.get("decision") else "")
+                        + f"\n\n分歧说明:{a.get('reason','')}")
+                clips = audit_clip_paths(m, a.get("id", ""))
+                vids = [gr.update(value=(clips[i] if i < len(clips) else None),
+                                  visible=(i < len(clips) or not clips))
+                        for i in range(3)]
+                return (idx, f"第 {idx + 1} / {len(q)} 条", info,
+                        a.get("label", ""), a.get("caption", ""), "", *vids)
 
-            def _au_record(m, eid, dec, newlab, note):
-                if not m or not eid or not dec:
-                    return "⚠️ 未记录:请先选 episode 并选择裁决", gr.update()
-                msg = record_label_decision(m["path"], eid, dec, newlab or "", note or "")
-                return msg, gr.update(value=audit_rows(m))   # 裁决列即时回显
+            _au_outs = [au_idx, au_pos, au_info, au_origlab, au_newlab, au_note, *au_vids]
 
-            au_pick.change(_au_prefill, [state, au_pick], au_newlab)
-            au_save.click(_au_record, [state, au_pick, au_dec, au_newlab, au_note],
-                          [au_status, au_table])
+            def _au_move(m, idx, step):
+                return _au_show(m, (idx or 0) + step)
+
+            au_prev.click(lambda m, i: _au_move(m, i, -1), [state, au_idx], _au_outs)
+            au_next.click(lambda m, i: _au_move(m, i, +1), [state, au_idx], _au_outs)
+
+            def _au_jump(m, evt):
+                """点队列表任意一行 → 卡片跳到该条(挑着裁/回头重看都靠它)。"""
+                return _au_show(m, evt.index[0])
+
+            # gradio 靠注解识别"要注入 SelectData";本文件开了 future annotations,
+            # 字符串注解会在模块全局被 eval(gr 是函数内导入)→ NameError。
+            # 塞真实类对象绕开字符串求值。
+            _au_jump.__annotations__ = {"evt": gr.SelectData}
+
+            au_table.select(_au_jump, state, _au_outs)
+
+            def _au_decide(m, idx, newlab, note, decision):
+                q = (m or {}).get("audit_queue") or []
+                if not q:
+                    return "⚠️ 无条目可裁决", gr.update(), gr.update()
+                a = q[(idx or 0) % len(q)]
+                msg = record_label_decision(m["path"], a.get("id", ""), decision,
+                                            newlab or "", note or "")
+                if msg.startswith("✅"):
+                    msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
+                info = _au_show(m, idx)[2]                   # 卡片头同步"已裁决"状态
+                return msg, gr.update(value=audit_rows(m)), info
+
+            _dec_outs = [au_status, au_table, au_info]
+            au_adopt.click(lambda m, i, nl, nt: _au_decide(m, i, nl, nt, "采纳建议改标"),
+                           [state, au_idx, au_newlab, au_note], _dec_outs)
+            au_keep.click(lambda m, i, nl, nt: _au_decide(m, i, nl, nt, "维持原标注"),
+                          [state, au_idx, au_newlab, au_note], _dec_outs)
+            au_drop.click(lambda m, i, nl, nt: _au_decide(m, i, nl, nt, "弃用该条"),
+                          [state, au_idx, au_newlab, au_note], _dec_outs)
             tl_all.change(lambda m, a: timeline_html(load_timeline(m), only_flagged=not a),
                           [state, tl_all], tl_html)
             be_btn.click(lambda: _probe_backends(config_path, probe_timeout), None, be_table)
@@ -356,7 +456,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
 
 def create_asgi_app(delivery: str, config_path: str | None = None,
-                    probe_timeout: float = 5.0, terminal: bool = False):
+                    probe_timeout: float = 5.0, terminal: bool = False,
+                    review_dir: str | None = None):
     """→ FastAPI 应用(gradio 挂在 `/`,自定义路由挂在它前面)。
 
     为什么不再用 `blocks.launch()`:launch() 自己造 FastAPI + 自己跑 uvicorn,拿不到
@@ -389,6 +490,16 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
         log.info("终端:已开启(/ws/term,shell=%s,cwd=%s)",
                  term.resolve_shell(), term.resolve_workdir())
 
+    # 静态审片站(curation review-page 的产出):挂在 gradio catch-all 之前。
+    # html=True → /review 直接出 index.html;目录缺失只警告不拦启动(先起 UI 后生成站点
+    # 是合法顺序,StaticFiles 每次请求现场解析路径,后补的目录立即可用)。
+    if review_dir:
+        if not os.path.isdir(review_dir):
+            log.warning("审片站目录尚不存在:%s(生成后无需重启即可访问)", review_dir)
+            os.makedirs(review_dir, exist_ok=True)
+        api.mount("/review", StaticFiles(directory=review_dir, html=True), name="review")
+        log.info("审片站:已挂 /review → %s", review_dir)
+
     auth.apply(api, terminal_enabled=terminal)
     # allowed_paths:允许 Gallery 直读交付目录下的证据文件(gradio 默认只许临时目录)
     return gr.mount_gradio_app(api, blocks, path="/", allowed_paths=[delivery],
@@ -397,11 +508,12 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
 
 def launch(delivery: str, config_path: str | None = None, host: str = "0.0.0.0",
            port: int = 7860, probe_timeout: float = 5.0,
-           terminal: bool = False) -> None:
+           terminal: bool = False, review_dir: str | None = None) -> None:
     import uvicorn
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    app = create_asgi_app(delivery, config_path, probe_timeout, terminal=terminal)
+    app = create_asgi_app(delivery, config_path, probe_timeout, terminal=terminal,
+                          review_dir=review_dir)
     log.info("质检台 UI 监听 http://%s:%s(交付根目录 %s)", host, port, delivery)
     uvicorn.run(app, host=host, port=port)

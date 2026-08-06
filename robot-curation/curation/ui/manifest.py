@@ -316,14 +316,14 @@ def skill_bar_html(m: dict) -> str:
             + "".join(head) + "".join(rows) + foot + '</div>')
 
 
-AUDIT_HEADERS = ["档位", "episode", "原始标注", "自产描述(VLM 生成)", "成败线判定", "分歧说明", "裁决"]
+AUDIT_HEADERS = ["操作", "档位", "episode", "原始标注", "自产描述(VLM 生成)", "成败线判定", "分歧说明", "裁决"]
 
 
 def audit_rows(m: dict) -> list[list]:
     """档位=重点(成败线同时不利,两线同报警)/参考(成败线放行,多为描述噪声)。
     裁决列回显 details/label_decisions.csv(空=待人工)。"""
     dec = load_label_decisions(m)
-    return [[a.get("priority", "参考"), a.get("id", ""), a.get("label", ""),
+    return [["裁决 ▶", a.get("priority", "参考"), a.get("id", ""), a.get("label", ""),
              a.get("caption", ""), a.get("task_verdict", ""), a.get("reason", ""),
              dec.get(a.get("id", ""), {}).get("decision", "")]
             for a in m["audit_queue"]]
@@ -349,14 +349,34 @@ def overview_markdown(m: dict) -> str:
     return "\n".join(lines)
 
 
-def discover_deliveries(root: str) -> list[str]:
-    """root 本身是交付目录 → [root];否则扫一层子目录找含 passed.json 的。"""
+def discover_deliveries(root: str, max_depth: int = 3) -> list[str]:
+    """root 本身是交付目录 → [root];否则递归扫子目录(默认 3 层)找含 passed.json 的。
+
+    2026-08-06 从"只扫一层"改递归:用户把交付放在嵌套目录(如 experiments/run1/)
+    时曾整个不可见,看起来像 UI 坏了。找到交付目录即不再往其内部钻(details/ 等
+    子目录里不会再有交付)。"""
+    root = os.path.abspath(root)
     if os.path.exists(os.path.join(root, "passed.json")):
         return [root]
     out = []
-    for d in sorted(glob.glob(os.path.join(root, "*"))):
-        if os.path.isdir(d) and os.path.exists(os.path.join(d, "passed.json")):
-            out.append(d)
+
+    def _walk(d: str, depth: int):
+        if depth > max_depth:
+            return
+        try:
+            subs = sorted(os.listdir(d))
+        except OSError:
+            return
+        for name in subs:
+            p = os.path.join(d, name)
+            if not os.path.isdir(p):
+                continue
+            if os.path.exists(os.path.join(p, "passed.json")):
+                out.append(p)                 # 是交付:收下,不再往里钻
+            else:
+                _walk(p, depth + 1)
+
+    _walk(root, 1)
     return out
 
 
@@ -736,3 +756,12 @@ from ..dataset_level.decisions import load_label_decisions as _load_decisions
 
 def load_label_decisions(m: dict) -> dict:
     return _load_decisions(m["path"])
+
+
+def audit_clip_paths(m: dict, episode_id: str) -> list[str]:
+    """该分歧条目的视频片段(details/audit_clips/<ep>__<cam>.mp4,按相机名排序)。"""
+    d = os.path.join(m["path"], "details", "audit_clips")
+    if not os.path.isdir(d):
+        return []
+    return sorted(os.path.join(d, f) for f in os.listdir(d)
+                  if f.startswith(episode_id + "__") and f.endswith(".mp4"))
