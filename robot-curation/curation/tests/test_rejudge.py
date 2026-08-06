@@ -100,3 +100,86 @@ def test_run_rejudge_no_decisions_is_noop(tmp_path):
     d.mkdir()
     s = run_rejudge(str(d), "/x", {})
     assert "未做任何事" in s["note"]
+
+
+def test_unchanged_adoption_skipped_no_rerun(tmp_path):
+    """同一裁决(裁决时间+新标注未变)已落库:不再调 rerun,交付原样,记 unchanged。"""
+    import json
+
+    from curation.pipeline.rejudge import run_rejudge
+    det = tmp_path / "details"
+    det.mkdir()
+    (det / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "ep000001,采纳建议改标,new text,,2026-08-06 10:00:00\n", encoding="utf-8")
+    (tmp_path / "passed.json").write_text(json.dumps({"episodes": {"ep000001": {
+        "判决": "通过(标注修正后)",
+        "标注修正": {"裁决时间": "2026-08-06 10:00:00", "新标注": "new text"}}}},
+        ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "review.json").write_text('{"episodes": {}}', encoding="utf-8")
+    (tmp_path / "reject.json").write_text('{"episodes": {}}', encoding="utf-8")
+
+    calls = []
+    summary = run_rejudge(str(tmp_path), "/unused", {},
+                          rerun_fn=lambda *a: calls.append(a))
+    assert summary["unchanged"] == ["ep000001"] and calls == []
+    got = json.loads((tmp_path / "passed.json").read_text(encoding="utf-8"))
+    assert got["episodes"]["ep000001"]["判决"] == "通过(标注修正后)"
+
+
+def test_changed_adoption_reruns_in_parallel(tmp_path):
+    """裁决时间变了(改判)→ 重判照跑;多条采纳并行执行且结果不串号。"""
+    import json
+
+    from curation.pipeline.rejudge import run_rejudge
+    det = tmp_path / "details"
+    det.mkdir()
+    (det / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "ep000001,采纳建议改标,label A,,2026-08-06 11:00:00\n"
+        "ep000002,采纳建议改标,label B,,2026-08-06 11:00:05\n", encoding="utf-8")
+    for n in ("passed", "review", "reject"):
+        (tmp_path / f"{n}.json").write_text('{"episodes": {}}', encoding="utf-8")
+
+    def fake_rerun(input_dir, eid, new_label):
+        return {"passed": True, "verdict": f"success:{new_label}"}
+
+    summary = run_rejudge(str(tmp_path), "/unused", {}, rerun_fn=fake_rerun)
+    assert set(summary["adopted_pass"]) == {"ep000001", "ep000002"}
+    got = json.loads((tmp_path / "passed.json").read_text(encoding="utf-8"))
+    assert got["episodes"]["ep000001"]["标注修正"]["重判判定"] == "success:label A"
+    assert got["episodes"]["ep000002"]["标注修正"]["重判判定"] == "success:label B"
+
+
+def test_duplicate_entry_purged_across_files(tmp_path):
+    """已裁决条目在 review 里的无溯源残留 → 定向清掉;**未裁决**的弃权条目
+    双呈现(passed+review)是交付格式设计,必须原样保留(2026-08-06 全局清扫
+    误清 14 条的教训:只许定向,不许通杀)。"""
+    import json
+
+    from curation.pipeline.rejudge import run_rejudge
+    det = tmp_path / "details"
+    det.mkdir()
+    (det / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "ep000001,采纳建议改标,fixed label,,2026-08-06 10:00:00\n", encoding="utf-8")
+    (tmp_path / "passed.json").write_text(json.dumps({"episodes": {"ep000001": {
+        "判决": "通过(标注修正后)",
+        "标注修正": {"裁决时间": "2026-08-06 10:00:00", "新标注": "fixed label"}}}},
+        ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "review.json").write_text(json.dumps({
+        "待人工裁决总数": 2,
+        "episodes": {"ep000001": {"当前判决": "通过", "待裁决项": ["任务成败判定"]},
+                     "ep000009": {"当前判决": "通过", "待裁决项": ["任务成败判定"]}}},
+        ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "reject.json").write_text('{"episodes": {}}', encoding="utf-8")
+
+    summary = run_rejudge(str(tmp_path), "/unused", {},
+                          rerun_fn=lambda *a: (_ for _ in ()).throw(AssertionError("不应重判")))
+    assert summary["unchanged"] == ["ep000001"]
+    rev = json.loads((tmp_path / "review.json").read_text(encoding="utf-8"))
+    assert "ep000001" not in rev["episodes"], "review 里的僵尸副本未被清扫"
+    assert "ep000009" in rev["episodes"], "未裁决的正常待裁决条目被误清(设计上双呈现)"
+    assert rev["待人工裁决总数"] == 1
+    psd = json.loads((tmp_path / "passed.json").read_text(encoding="utf-8"))
+    assert psd["episodes"]["ep000001"]["判决"] == "通过(标注修正后)"

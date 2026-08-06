@@ -197,12 +197,20 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if total > len(rows) else "")
         return note, headers or ["(空)"], rows
 
+    def _au_btns(decision):
+        """三键状态:未裁决=全中性灰;已裁决=只有选中的那个高亮(2026-08-06 用户定:
+        按钮各有颜色时按下没反馈,分不清成没成功;改为"同色待选、选中变色",
+        且翻页/跳行回到已裁决条目时按钮状态跟着该条的落盘裁决走)。"""
+        pick = {"采纳建议改标": 0, "维持原标注": 1, "弃用该条": 2}.get(decision)
+        return [gr.update(variant=("primary" if pick == i else "secondary"))
+                for i in range(3)]
+
     def _au_card_init(m):
         """切换交付时裁决卡片回到第 0 条(渲染逻辑与面板内 _au_show 同式)。"""
         q = m.get("audit_queue") or []
         if not q:
             return (0, "(无分歧条目)", "", "", "", "",
-                    *[gr.update(value=None, visible=False)] * 3)
+                    *[gr.update(value=None, visible=False)] * 3, *_au_btns(None))
         a = q[0]
         dec_map = load_label_decisions(m)
         dec = dec_map.get(a.get("id", ""), {})
@@ -214,7 +222,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         vids = [gr.update(value=(clips[i] if i < len(clips) else None),
                           visible=(i < len(clips) or not clips)) for i in range(3)]
         return (0, f"第 1 / {len(q)} 条", info, a.get("label", ""),
-                a.get("caption", ""), "", *vids)
+                a.get("caption", ""), "", *vids, *_au_btns(dec.get("decision")))
 
     def _load(path):
         m = load_delivery(path)
@@ -315,9 +323,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                                  "仅「采纳改标」使用)")
                     au_note = gr.Textbox(label="备注(可选)")
                     with gr.Row():
-                        au_adopt = gr.Button("✅ 采纳改标", variant="primary")
-                        au_keep = gr.Button("↩️ 维持原标注")
-                        au_drop = gr.Button("🗑 弃用该条", variant="stop")
+                        # 三键同色待选、选中变色(见 _au_btns);语义靠图标与文字
+                        au_adopt = gr.Button("✅ 采纳改标", variant="secondary")
+                        au_keep = gr.Button("↩️ 维持原标注", variant="secondary")
+                        au_drop = gr.Button("🗑 弃用该条", variant="secondary")
                     au_status = gr.Markdown()
 
             with gr.Tab("Stuck 时间线"):
@@ -358,6 +367,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick,
                     sk_html, sk_table, au_table,
                     au_idx, au_pos, au_info, au_origlab, au_newlab, au_note, *au_vids,
+                    au_adopt, au_keep, au_drop,
                     ep_md, ep_checks, ep_gallery, dt_pick, dt_note, dt_table,
                     tl_note, tl_html,
                     perf_backend, perf_env, perf_note, perf_table, perf_bar]
@@ -395,7 +405,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 q = (m or {}).get("audit_queue") or []
                 if not q:
                     return (idx, "(无分歧条目)", "", "", "", "",
-                            *[gr.update(value=None, visible=False)] * 3)
+                            *[gr.update(value=None, visible=False)] * 3,
+                            *_au_btns(None))
                 idx = idx % len(q)
                 a = q[idx]
                 dec = load_label_decisions(m).get(a.get("id", ""), {})
@@ -408,9 +419,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                   visible=(i < len(clips) or not clips))
                         for i in range(3)]
                 return (idx, f"第 {idx + 1} / {len(q)} 条", info,
-                        a.get("label", ""), a.get("caption", ""), "", *vids)
+                        a.get("label", ""), a.get("caption", ""), "", *vids,
+                        *_au_btns(dec.get("decision")))
 
-            _au_outs = [au_idx, au_pos, au_info, au_origlab, au_newlab, au_note, *au_vids]
+            _au_outs = [au_idx, au_pos, au_info, au_origlab, au_newlab, au_note, *au_vids,
+                        au_adopt, au_keep, au_drop]
 
             def _au_move(m, idx, step):
                 return _au_show(m, (idx or 0) + step)
@@ -432,16 +445,20 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             def _au_decide(m, idx, newlab, note, decision):
                 q = (m or {}).get("audit_queue") or []
                 if not q:
-                    return "⚠️ 无条目可裁决", gr.update(), gr.update()
+                    return ("⚠️ 无条目可裁决", gr.update(), gr.update(),
+                            *[gr.update()] * 3)
                 a = q[(idx or 0) % len(q)]
                 msg = record_label_decision(m["path"], a.get("id", ""), decision,
                                             newlab or "", note or "")
                 if msg.startswith("✅"):
                     msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
+                    btns = _au_btns(decision)                # 记录成功才点亮所选键
+                else:
+                    btns = [gr.update()] * 3                 # 校验失败:按钮不动
                 info = _au_show(m, idx)[2]                   # 卡片头同步"已裁决"状态
-                return msg, gr.update(value=audit_rows(m)), info
+                return msg, gr.update(value=audit_rows(m)), info, *btns
 
-            _dec_outs = [au_status, au_table, au_info]
+            _dec_outs = [au_status, au_table, au_info, au_adopt, au_keep, au_drop]
             au_adopt.click(lambda m, i, nl, nt: _au_decide(m, i, nl, nt, "采纳建议改标"),
                            [state, au_idx, au_newlab, au_note], _dec_outs)
             au_keep.click(lambda m, i, nl, nt: _au_decide(m, i, nl, nt, "维持原标注"),

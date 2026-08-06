@@ -912,3 +912,41 @@ def test_discover_deliveries_recursive(tmp_path):
     found = discover_deliveries(str(tmp_path))
     assert str(deep) in found and str(flat) in found
     assert len(found) == 2
+
+
+def test_decision_survives_fsx_visibility_gap(tmp_path):
+    """FSX 新文件 ~45s 读回为空:整写方案若无进程内缓存,连裁两条会把第一条冲掉
+    (2026-08-06 生产 EINVAL 修复的伴生坑)。模拟:第一条落盘后把文件清空(装作
+    还看不见),再裁第二条——两条都必须在。"""
+    from curation.dataset_level.decisions import (load_label_decisions,
+                                                  record_label_decision)
+    d = str(tmp_path)
+    record_label_decision(d, "ep000001", "维持原标注", note="第一条")
+    csv_path = tmp_path / "details" / "label_decisions.csv"
+    csv_path.write_text("")                      # 模拟 FSX 可见延迟:读回是空的
+    record_label_decision(d, "ep000002", "弃用该条", note="第二条")
+    got = load_label_decisions(d)
+    assert set(got) == {"ep000001", "ep000002"}, "延迟窗口内第一条裁决被冲掉"
+
+
+def test_latency_union_wall_and_parity(tmp_path):
+    """墙钟=忙碌区间并集(分段类别不把空档灌进来);UI 复算与管道实现对拍一致。"""
+    import csv
+
+    from curation.adapters.vlm_client import latency_summary
+    from curation.ui.manifest import _recompute_latency
+    # caption 两波:0-10s 与 100-110s(中间 90s 空档);probe 连续 0-20s 两条重叠
+    rows = [("caption", 10.0, True, 0.0), ("caption", 10.0, True, 100.0),
+            ("probe", 20.0, True, 0.0), ("probe", 15.0, True, 5.0)]
+    pipe = latency_summary(rows)
+    assert pipe["caption"]["wall_s"] == 20.0, "空档被灌进墙钟(应为两段各10s)"
+    assert pipe["probe"]["wall_s"] == 20.0
+    p = tmp_path / "vlm_latency.csv"
+    with open(p, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["call_type", "seconds", "ok", "started_at"])
+        for t, s, ok, st in rows:
+            w.writerow([t, s, int(ok), st])
+    ui = _recompute_latency(str(p))
+    for tag in ("caption", "probe"):
+        assert ui[tag] == pipe[tag], f"{tag}: UI 复算与管道实现不一致"

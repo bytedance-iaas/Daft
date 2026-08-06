@@ -75,9 +75,12 @@ def latency_summary(rows: list | None = None) -> dict:
 
     rows=None 取当前进程累计的明细;传 rows 可对 CSV 读回的历史明细复算。
 
-    wall_s(墙钟)= 该类调用中 max(发出时刻 + 耗时) − min(发出时刻),即
-    "第一次发出 → 最后一次返回"的真实时长。并发下它远小于 Σ单次耗时,是唯一
-    能回答"这类调用占了多久"的口径。失败的调用**也算**(它同样占了那段时间)。
+    wall_s(墙钟)= 该类调用**忙碌区间的并集长度**:把每次调用的 [发出, 返回]
+    区间合并去重后求总长。⚠️ 不能用"首发→末返"的跨度——同类调用分多个阶段跑时
+    (caption 在开头补标、中段画像各一波),中间隔着别的阶段,空档会把墙钟灌水
+    到离谱(2026-08-06 droid-30 实锤:caption 实跑 90s 被算成 988s,条形图把它
+    画成头号瓶颈)。并集口径下连续阶段与旧口径一致,分段阶段只算真在飞的时长。
+    失败的调用**也算**(它同样占了那段时间)。
     该桶一条 started_at 都没有(三列老 CSV / 老代码)→ 不给 wall_s,上层降级。
     """
     rows = latency_rows() if rows is None else list(rows)
@@ -96,8 +99,16 @@ def latency_summary(rows: list | None = None) -> dict:
                 "max_s": round(oks[-1], 2)})
         stamped = [r for r in mine if r[3] is not None]
         if stamped:
-            entry["wall_s"] = round(max(r[3] + r[1] for r in stamped)
-                                    - min(r[3] for r in stamped), 2)
+            ivs = sorted((r[3], r[3] + r[1]) for r in stamped)
+            busy, cs, ce = 0.0, ivs[0][0], ivs[0][1]
+            for s, e in ivs[1:]:
+                if s > ce:
+                    busy += ce - cs
+                    cs, ce = s, e
+                else:
+                    ce = max(ce, e)
+            busy += ce - cs
+            entry["wall_s"] = round(busy, 2)
         out[tag] = entry
     return out
 

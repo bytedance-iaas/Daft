@@ -246,7 +246,10 @@ def endstate_review(
             res.detail["reason"] = "失败候选但复核不可用:不凭单判据硬杀,进人工"
         return res
 
-    votes = {}
+    # 各机位投票相互独立 → 并发问询(2026-08-06:droid-30 基准显示复核段是
+    # 判定后的第二大墙钟,单条复核链 3 机位串行 ≈ 3×两问×20s;并发后 ≈ 1×)。
+    # 标签按机位序预先定死(camera A/B/C),并发不改变任何判定输入输出。
+    tasks = []
     for i, (name, fr) in enumerate(cam_frames.items()):
         fr = list(fr)
         if not fr:
@@ -254,8 +257,14 @@ def endstate_review(
         pick = [fr[j] for j in _sample_indices(len(fr), endstate_frames)]
         mid = max(1, len(pick) // 2)
         label = f"camera {chr(ord('A') + i)} ({name})"
-        votes[name] = cam_voter(pick[:mid], pick[mid:] or pick[-1:], label,
-                                str(task_desc))
+        tasks.append((name, pick[:mid], pick[mid:] or pick[-1:], label))
+    votes = {}
+    if tasks:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(tasks)) as ex:
+            results = list(ex.map(
+                lambda t: cam_voter(t[1], t[2], t[3], str(task_desc)), tasks))
+        votes = {t[0]: v for t, v in zip(tasks, results)}
     if not votes:
         return res                                    # 无帧可复核,原样返回
 

@@ -81,6 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
     rj.add_argument("--delivery", required=True, help="交付目录(含三件套与裁决文件)")
     rj.add_argument("--input", required=True, help="原始数据集目录(重判需重新解码视频)")
     rj.add_argument("--config", default=None, help="流水线 YAML(缺省 default.yaml,须与原 run 一致)")
+    rj.add_argument("--vlm-backend", default=None, metavar="预设名",
+                    help="重判用的 VLM 后端预设(同 run,如 ark / h20-32b);缺省跟随配置")
 
     rp = sub.add_parser("review-page",
                         help="生成静态审片站(索引一屏列全量 episode + 逐条多路视频页),"
@@ -202,7 +204,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "rejudge":
         from .pipeline.config import load_config
         from .pipeline.rejudge import run_rejudge
-        summary = run_rejudge(args.delivery, args.input, load_config(args.config))
+        cfg = load_config(args.config)
+        if args.vlm_backend:
+            from .pipeline.config import apply_vlm_backend
+            cfg = apply_vlm_backend(cfg, args.vlm_backend)
+        summary = run_rejudge(args.delivery, args.input, cfg)
         print(json.dumps(summary, ensure_ascii=False, indent=1)
               if isinstance(summary, dict) else summary)
         return 0

@@ -448,7 +448,8 @@ def run_pipeline(
         from ..dataset_level.taxonomy import refine_taxonomy
         phase_step(_G, 3, 5, "自查裁判:按判据复核分类(LLM)…", _sp_t0)
         taxonomy = refine_taxonomy(taxonomy, llm_ask,
-                                   guideline=sp_cfg.get("taxonomy_guideline"))
+                                   guideline=sp_cfg.get("taxonomy_guideline"),
+                                   concurrency=sp_cfg.get("llm_concurrency", 16))
         fams, subs = assign(caps, taxonomy)
         # 补漏回合:LLM 抄 members 会漏(实测),漏网 caption 二次指认到既有子技能
         missed = sorted({c for c, f in zip(caps, fams) if f == "未归类" and c.strip()})
@@ -490,13 +491,16 @@ def run_pipeline(
             _sub = [_row_of[e["id"]] for e in _flag if e["id"] in _row_of]
             _recaps: dict = {r["episode_id"]: [] for r in _sub}
             _rc_t0 = _t.time()
-            for _k in range(_rn):
-                phase_step(_G, 5, 5, f"分歧复检:{len(_sub)} 条重打标 第 {_k + 1}/{_rn} 轮…",
-                           _sp_t0)
-                for _r, _c in zip(_sub, caption_episodes(
-                        _sub, captioner, n_frames=sp_cfg.get("n_frames", 8),
-                        max_concurrency=_cap_conc)):
-                    _recaps[_r["episode_id"]].append(_c)
+            # N 轮重打标是独立同质调用 → 摊平成一次并发批(2026-08-06:逐轮串行时
+            # 3 轮 ×~55s;摊平后一轮墙钟。caption_episodes 保序有测试钉住,
+            # 每条 episode 仍得到 N 次结果,语义不变)
+            phase_step(_G, 5, 5, f"分歧复检:{len(_sub)} 条 × {_rn} 轮并发重打标…",
+                       _sp_t0)
+            _flat = [r for _ in range(_rn) for r in _sub]
+            for _r, _c in zip(_flat, caption_episodes(
+                    _flat, captioner, n_frames=sp_cfg.get("n_frames", 8),
+                    max_concurrency=_cap_conc)):
+                _recaps[_r["episode_id"]].append(_c)
             # 归族:精确命中 members 优先,漏网的一批交 LLM 二次指认(复用 taxonomy 能力,
             # 不在 audit.py 里重新实现归族)
             from ..dataset_level.audit import retier_by_caption_stability
