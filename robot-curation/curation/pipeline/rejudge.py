@@ -189,9 +189,18 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 return eid, None
 
         # episode 级并行(重判段 VLM 占 ~100% 墙钟;客户端帧级并发之上再叠 episode 级)
+        import time as _t2
         from concurrent.futures import ThreadPoolExecutor
+        _rj_t0 = _t2.time()
+        print(f"[rejudge] 重判 {len(adopt)} 条(完整多视角协议,并发≤8;"
+              f"方舟每条约 2 分钟,自托管约 30 秒)…", flush=True)
+        _done = 0
         with ThreadPoolExecutor(max_workers=min(8, len(adopt))) as ex:
             for eid, res in ex.map(_one, list(adopt.items())):
+                _done += 1
+                verdict = (res or {}).get("verdict", "失败")
+                print(f"[rejudge] 重判 {_done}/{len(adopt)}:{eid} → {verdict}"
+                      f" | 已用 {int(_t2.time() - _rj_t0)}s", flush=True)
                 if res is not None:
                     rejudged[eid] = res
 
@@ -324,6 +333,18 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
             sec.append(f"- ⚠️ 未处理(重判失败/裁决词不识别):{summary['skipped']}\n")
         with open(md, "w", encoding="utf-8") as f:
             f.write(body + "".join(sec))
+
+    # 落盘回验(与 run 同款,2026-08-06):rejudge 改写的文件在对象存储上有读
+    # 可见延迟,不回验就宣布完成 → 用户立刻刷 UI 看到的还是旧数据(实锤)。
+    from .run import _verify_delivery_visible
+    vis = [(n + ".json", os.path.join(delivery, n + ".json"), "json")
+           for n in ("passed", "review", "reject")]
+    vis.append(("rejudge_results.json",
+                os.path.join(det, "rejudge_results.json"), "json"))
+    pq = os.path.join(delivery, "episodes_parquet")
+    if os.path.isdir(pq):
+        vis.append(("episodes_parquet", pq, "dir"))
+    _verify_delivery_visible(vis, timeout_s=180.0)
     return summary
 
 

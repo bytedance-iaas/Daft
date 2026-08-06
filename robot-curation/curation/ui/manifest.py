@@ -560,8 +560,10 @@ LATENCY_KIND_NOTE = "\n".join([
     "- **终态复核**:主判拿不准时的二审——同样抽 8 帧,分成早期组与晚期组对照,"
     "用两个互为反问的是非题确认任务终态;仅一审未通过的数据触发,最多复核 4 路相机。",
     "- **技能打标**:视觉模型为每条数据写一句「它在做什么」,供技能画像;每条一次。",
-    "- **体系归纳**:文本大模型通读全部打标,归纳数据集的两级技能体系;"
-    "次数极少、单次长。",
+    "- **体系归纳**:文本大模型把全部打标通读一遍,归纳出这份数据集的两级技能"
+    "分类树(哪些族、每族哪些子技能),并自查合并分错的类。整个数据集只需几次"
+    "调用,但每次都要读完全部打标——所以延时表里它**次数少、单次久**是正常形态,"
+    "不是卡顿。",
 ])
 
 #: 横条图配色(四类各一色;与判决用的红/绿色系错开,避免被误读成"好坏")。
@@ -615,7 +617,8 @@ def load_perf(m: dict) -> dict:
                                             "vlm_latency.csv"))
     if fresh:
         lat = fresh          # 逐请求明细在手就现场复算——快照口径旧了也能自愈
-    return {"backend": be, "env": env, "legacy": legacy, "latency": lat}
+    return {"backend": be, "env": env, "legacy": legacy, "latency": lat,
+            "total_wall_s": rt.get("total_wall_s")}
 
 
 def _pctl_(xs: list, q: float) -> float:
@@ -771,6 +774,11 @@ def latency_bar_html(perf: dict) -> str:
     没有墙钟数据(老交付)= 不画图 + 一句说明。
     """
     lat = perf["latency"]
+    # 总墙钟(2026-08-06 用户点名):整次 run 从启动到交付可用的真实流逝时间,
+    # 含 CPU 检查/VLM/导出/落盘回验——回答"这批到底跑了多久"的唯一口径。
+    tw = perf.get("total_wall_s")
+    total_line = (f"<br>整次运行总墙钟 <b>{human_duration(tw)}</b>"
+                  f"(含全部阶段与交付落盘)" if tw else "")
     if not lat:
         return ('<p style="color:#777">本次运行没有 VLM 调用(例如只跑了数值类检查),'
                 '因此没有延时数据。</p>')
@@ -795,7 +803,8 @@ def latency_bar_html(perf: dict) -> str:
             f'background:{_BAR_COLORS.get(tag, "#888")}"></div></div></div>')
     return ('<div style="max-width:760px">'
             '<div style="font:12px system-ui;color:#555;margin-bottom:4px">'
-            '各类调用的墙钟耗时(忙碌区间并集:该类调用真实在飞的净时长,空档不计)</div>'
+            '各类调用的墙钟耗时(忙碌区间并集:该类调用真实在飞的净时长,空档不计)'
+        + total_line + '</div>'
             + "".join(bars)
             + '<div style="font:12px system-ui;color:#777;margin-top:6px">'
               '各类调用之间在时间上可能重叠,各条墙钟相加 ≠ 整次运行总时长。</div>'

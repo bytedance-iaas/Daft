@@ -85,6 +85,50 @@ def container_limits() -> dict:
     return {"cpu_limit_cores": cpu, "memory_limit_bytes": mem}
 
 
+def _verify_delivery_visible(items: list, timeout_s: float = 300.0) -> None:
+    """交付产物逐个轮询到"读得回来"为止(kind: json=可解析且非空 / text=非空 /
+    dir=列目录非空)。超时只警告不报错——产物已写出,只是对象存储还没追上。"""
+    import json as _json
+    import time as _time
+
+    t0 = _time.time()
+    pending = list(items)
+    total = len(pending)
+    done = 0
+    print(f"[curation] 交付落盘回验({total} 项;对象存储可见延迟约 1 分钟,"
+          f"本阶段结束=交付立即可用)", flush=True)
+    while pending and _time.time() - t0 < timeout_s:
+        still = []
+        for name, path, kind in pending:
+            try:
+                if kind == "dir":
+                    ok = bool(os.listdir(path))
+                elif kind == "json":
+                    with open(path, encoding="utf-8") as f:
+                        ok = bool(_json.load(f))
+                else:
+                    with open(path, encoding="utf-8") as f:
+                        ok = bool(f.read().strip())
+            except (OSError, ValueError):
+                ok = False
+            if ok:
+                done += 1
+                print(f"[curation] 落盘回验 {done}/{total}:{name} ✓"
+                      f"({int(_time.time() - t0)}s)", flush=True)
+            else:
+                still.append((name, path, kind))
+        pending = still
+        if pending:
+            _time.sleep(5)
+    if pending:
+        print(f"[curation] ⚠️ 落盘回验超时({int(timeout_s)}s):"
+              f"{[p[0] for p in pending]} 仍未读回——产物已写出,稍后自会可见",
+              flush=True)
+    else:
+        print(f"[curation] 交付就绪(共 {int(_time.time() - t0)}s):"
+              f"可立即在 UI 加载、裁决、rejudge", flush=True)
+
+
 def collect_runtime(cfg: dict) -> dict:
     """runtime 信息块(2026-07-30 性能剖析页签):这次跑批**用了什么服务、跑在什么机器上**。
 
@@ -138,6 +182,8 @@ def run_pipeline(
     vlm_model: str | None = None,              # 直连模型(CLI --vlm-model / env)
     vlm_api_key_env: str | None = None,        # 直连密钥环境变量名
 ) -> dict:
+    import time as _time0
+    _run_t0 = _time0.time()
     from ..dataset_level.dedup import episode_fingerprint
     from ..dataset_level.profile import instruction_grouping_available, skill_profile
     from ..export.lerobot_writer import export_lerobot_v2, export_lerobot_v3
@@ -941,6 +987,27 @@ def run_pipeline(
                      else export_lerobot_v2)
         deliver["lerobot_dataset"] = _exporter(
             input_dir, keep_src_idx, _curated, task_overrides=_ov)["out_dir"]
+
+    # ── 总墙钟回填 + 交付落盘回验(2026-08-06 用户点名)──
+    # TOS 挂载新写文件有约 20-60s 的读可见延迟:进度条走完≠交付可用,用户跑
+    # rejudge/刷 UI 会撞空。把"回读验证"做成显式的最后一个阶段:逐个关键产物
+    # 轮询到真正读得回来才宣布完成——完成即可用,不再靠口头"等一分钟"。
+    report["runtime"]["total_wall_s"] = round(_time0.time() - _run_t0, 1)
+    save_report(report, output_dir)
+
+    _checks_vis = [("passed.json", jp, "json"),
+                   ("review.json", deliver["review_json"], "json"),
+                   ("reject.json", deliver["reject_json"], "json"),
+                   ("report.md", mp, "text")]
+    if deliver.get("episodes_parquet"):
+        _checks_vis.append(("episodes_parquet", deliver["episodes_parquet"], "dir"))
+    if deliver.get("lerobot_dataset"):
+        _checks_vis.append(("lerobot_curated/meta",
+                            os.path.join(deliver["lerobot_dataset"], "meta", "info.json"),
+                            "json"))
+    _verify_delivery_visible(_checks_vis)
+    report["runtime"]["total_wall_s"] = round(_time0.time() - _run_t0, 1)
+    save_report(report, output_dir)      # 回验耗时也计入总墙钟(它是交付的一部分)
 
     return {"stats": stats, "verdicts": verdicts, "deliverables": deliver,
             "n_delivered": len(keep_rows),
