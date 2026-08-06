@@ -77,4 +77,5 @@ def record_label_decision(delivery_path: str, episode_id: str, decision: str,
     _WRITE_CACHE[key] = list(rows)
     return (f"✅ 已记录:{episode_id} → {decision}"
             + (f"(新标注:{str(new_label).strip()[:40]})" if decision == "采纳建议改标" else "")
-            + ";执行重判请在命令行跑 curation rejudge")
+            + ";执行重判请在命令行跑 curation rejudge"
+              "(裁决文件落 TOS 约需 1 分钟可见,裁完稍候再跑)")
