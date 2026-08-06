@@ -140,7 +140,7 @@ def run_pipeline(
 ) -> dict:
     from ..dataset_level.dedup import episode_fingerprint
     from ..dataset_level.profile import instruction_grouping_available, skill_profile
-    from ..export.lerobot_writer import export_lerobot_v3
+    from ..export.lerobot_writer import export_lerobot_v2, export_lerobot_v3
     from ..export.report import build_report, save_report
     from ..export.writers import write_episodes_parquet
     from ..ingest.daft_source import read_lerobot_lazy
@@ -931,17 +931,16 @@ def run_pipeline(
             keep_full, os.path.join(output_dir, "episodes_parquet"))
         from ..ingest.lerobot_reader import _load_info
 
-        if _load_info(input_dir)["codebase_version"].startswith("v3"):
-            keep_src_idx = [int(e.replace("ep", "")) for e in keep_ids]
-            _ov = {int(e[2:]): desc_of[e] for e in keep_ids
-                   if desc_src_of.get(e) == "自产caption" and desc_of.get(e, "").strip()}
-            deliver["lerobot_dataset"] = export_lerobot_v3(
-                input_dir, keep_src_idx,
-                os.path.join(output_dir, "lerobot_curated"),
-                task_overrides=_ov)["out_dir"]
-        else:
-            report["dataset"]["lerobot_export_note"] = "v2 源的 LeRobot 导出在 V1(先交付 parquet)"
-            save_report(report, output_dir)
+        keep_src_idx = [int(e.replace("ep", "")) for e in keep_ids]
+        _ov = {int(e[2:]): desc_of[e] for e in keep_ids
+               if desc_src_of.get(e) == "自产caption" and desc_of.get(e, "").strip()}
+        # 源是 v2 还是 v3 决定走哪个导出器:v3 要切割+重编码,v2 每条独立文件只需拷贝重编号
+        _curated = os.path.join(output_dir, "lerobot_curated")
+        _exporter = (export_lerobot_v3
+                     if _load_info(input_dir)["codebase_version"].startswith("v3")
+                     else export_lerobot_v2)
+        deliver["lerobot_dataset"] = _exporter(
+            input_dir, keep_src_idx, _curated, task_overrides=_ov)["out_dir"]
 
     return {"stats": stats, "verdicts": verdicts, "deliverables": deliver,
             "n_delivered": len(keep_rows),

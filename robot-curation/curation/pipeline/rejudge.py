@@ -277,9 +277,28 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                     _daft.from_pydict(cols).write_parquet(pq_dir)
                 print(f"[rejudge] 交付数据集已同步:改标 {len(relabel)} 条,"
                       f"剔除 {n - len(out_rows)} 条(episodes_parquet)", flush=True)
-                if os.path.isdir(os.path.join(delivery, "lerobot_curated")):
-                    print("[rejudge] ⚠️ lerobot_curated 是视频重编码导出,未自动重做;"
-                          "需要最新 LeRobot 包请重跑 curation run(非 report-only)", flush=True)
+                # LeRobot 包同步:v2 源重导出=纯文件拷贝,便宜到没有理由留给用户
+                # 手动;v3 源要视频重编码,只提醒不擅动。以同步后的 parquet 为唯一
+                # 事实源重建导出参数(终态条目集 + 非原始标注的任务覆写)。
+                curated = os.path.join(delivery, "lerobot_curated")
+                if os.path.isdir(curated):
+                    from ..ingest.lerobot_reader import _load_info
+                    if _load_info(input_dir)["codebase_version"].startswith("v3"):
+                        print("[rejudge] ⚠️ lerobot_curated(v3,视频重编码)未自动重做;"
+                              "需要最新 LeRobot 包请重跑 curation run(非 report-only)",
+                              flush=True)
+                    else:
+                        from ..export.lerobot_writer import export_lerobot_v2
+                        keep_idx = [int(r["episode_id"][2:]) for r in out_rows]
+                        ov = {int(r["episode_id"][2:]): r["instruction"]
+                              for r in out_rows
+                              if r.get("instruction_source") not in (None, "", "原始标注")
+                              and str(r.get("instruction") or "").strip()}
+                        _sh.rmtree(curated)
+                        export_lerobot_v2(input_dir, keep_idx, curated,
+                                          task_overrides=ov)
+                        print(f"[rejudge] lerobot_curated 已重导出(v2 纯拷贝):"
+                              f"{len(keep_idx)} 条,任务覆写 {len(ov)} 条", flush=True)
         except Exception as e:  # noqa: BLE001  数据集同步失败不吞掉裁决结果
             print(f"[rejudge] ⚠️ 交付数据集同步失败({type(e).__name__}: {e});"
                   f"三件套已更新,episodes_parquet 仍是旧标注", flush=True)

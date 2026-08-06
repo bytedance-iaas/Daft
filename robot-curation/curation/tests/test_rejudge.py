@@ -216,3 +216,47 @@ def test_export_parquet_synced_on_decisions(tmp_path):
     assert "ep000002" not in by, "弃用条目仍在交付数据里"
     assert by["ep000001"] == ("corrected label", "人工裁决改标")
     assert by["ep000003"] == ("untouched", "原始标注")
+
+
+def test_v2_lerobot_curated_reexported_on_decisions(tmp_path):
+    """v2 源的 LeRobot 包在裁决后自动重导出(纯拷贝,便宜):弃用条目消失、
+    改标条目的任务表换新;v3 才留"重跑 run"的提醒。"""
+    pytest = __import__("pytest")
+    pytest.importorskip("pandas")
+    daft = pytest.importorskip("daft")
+    import json
+
+    from curation.pipeline.rejudge import run_rejudge
+    from curation.tests.test_lerobot_v2_export import _write_v2_dataset
+    src = tmp_path / "src_ds"
+    _write_v2_dataset(str(src))                       # 4 条最小 v2 数据集
+    delivery = tmp_path / "dlv"
+    det = delivery / "details"
+    det.mkdir(parents=True)
+    (det / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "ep000001,采纳建议改标,corrected task text,,2026-08-06 13:00:00\n"
+        "ep000002,弃用该条,,,2026-08-06 13:00:05\n", encoding="utf-8")
+    for n in ("passed", "review", "reject"):
+        (delivery / f"{n}.json").write_text(json.dumps({"episodes": {
+            f"ep{i:06d}": {"判决": "通过"} for i in range(4)}}
+            if n == "passed" else {"episodes": {}}, ensure_ascii=False),
+            encoding="utf-8")
+    daft.from_pydict({
+        "episode_id": [f"ep{i:06d}" for i in range(4)],
+        "instruction": ["a", "b", "c", "d"],
+        "instruction_source": ["原始标注"] * 4,
+    }).write_parquet(str(delivery / "episodes_parquet"))
+    # 预置一个假的旧 lerobot_curated(重导出应整体替换它)
+    (delivery / "lerobot_curated").mkdir()
+    (delivery / "lerobot_curated" / "stale").write_text("old")
+
+    run_rejudge(str(delivery), str(src), {},
+                rerun_fn=lambda i, e, nl: {"passed": True, "verdict": "success"})
+    out = delivery / "lerobot_curated"
+    assert not (out / "stale").exists(), "旧包未被替换"
+    eps = [json.loads(l) for l in
+           (out / "meta" / "episodes.jsonl").read_text().splitlines()]
+    assert len(eps) == 3, "弃用条目仍在 LeRobot 包里"
+    tasks = (out / "meta" / "tasks.jsonl").read_text()
+    assert "corrected task text" in tasks, "改标未进任务表"
