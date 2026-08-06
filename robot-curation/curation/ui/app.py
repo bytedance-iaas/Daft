@@ -260,7 +260,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             with gr.Row():
                 picker = gr.Dropdown(choices=choices, value=choices[0], label="交付目录",
                                      scale=4, interactive=True, allow_custom_value=True,
-                                     info="可直接输入任意交付目录路径;「重新加载」会重扫列表")
+                                     info="可输入任意**交付目录**或其**父目录**后按回车+「重新加载」:"
+                                          "父目录会自动展开其下全部交付;新跑完的目录点「重新加载」即出现")
                 reload_btn = gr.Button("重新加载", scale=1)
             state = gr.State()
 
@@ -363,12 +364,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             picker.change(_load, picker, outs)
 
             def _reload(path):
-                # 重扫根目录(2026-07-28 用户问"不能自己设定吗":新交付目录从此免重启;
-                # 手输的路径不在扫描列表里也保留为合法选项)
+                # 重扫根目录(2026-07-28;2026-08-06 增强):
+                # - 手输的是**交付目录本体** → 保留为选项并加载;
+                # - 手输的是**装着交付的父目录** → 自动展开,把它下面的交付并入列表
+                #   (此前这种输入静默加载失败,看起来像"其它目录无法显示");
+                # - 都不是 → 仍保留输入(可能是尚未跑完的目录),加载报什么算什么。
                 fresh = discover_deliveries(delivery)
-                if path and path not in fresh:
-                    fresh = fresh + [path]
-                return (gr.update(choices=fresh, value=path), *_load(path))
+                sel = path
+                if path and path not in fresh and os.path.isdir(path):
+                    found = discover_deliveries(path)
+                    if found and path not in found:
+                        fresh = fresh + [d for d in found if d not in fresh]
+                        sel = found[0]                    # 父目录 → 跳到其中第一个交付
+                if sel and sel not in fresh:
+                    fresh = fresh + [sel]
+                return (gr.update(choices=fresh, value=sel), *_load(sel))
 
             reload_btn.click(_reload, picker, [picker, *outs])
             ep_pick.change(_detail, [state, ep_pick], [ep_md, ep_checks, ep_gallery])

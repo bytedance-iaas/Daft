@@ -349,14 +349,34 @@ def overview_markdown(m: dict) -> str:
     return "\n".join(lines)
 
 
-def discover_deliveries(root: str) -> list[str]:
-    """root 本身是交付目录 → [root];否则扫一层子目录找含 passed.json 的。"""
+def discover_deliveries(root: str, max_depth: int = 3) -> list[str]:
+    """root 本身是交付目录 → [root];否则递归扫子目录(默认 3 层)找含 passed.json 的。
+
+    2026-08-06 从"只扫一层"改递归:用户把交付放在嵌套目录(如 experiments/run1/)
+    时曾整个不可见,看起来像 UI 坏了。找到交付目录即不再往其内部钻(details/ 等
+    子目录里不会再有交付)。"""
+    root = os.path.abspath(root)
     if os.path.exists(os.path.join(root, "passed.json")):
         return [root]
     out = []
-    for d in sorted(glob.glob(os.path.join(root, "*"))):
-        if os.path.isdir(d) and os.path.exists(os.path.join(d, "passed.json")):
-            out.append(d)
+
+    def _walk(d: str, depth: int):
+        if depth > max_depth:
+            return
+        try:
+            subs = sorted(os.listdir(d))
+        except OSError:
+            return
+        for name in subs:
+            p = os.path.join(d, name)
+            if not os.path.isdir(p):
+                continue
+            if os.path.exists(os.path.join(p, "passed.json")):
+                out.append(p)                 # 是交付:收下,不再往里钻
+            else:
+                _walk(p, depth + 1)
+
+    _walk(root, 1)
     return out
 
 

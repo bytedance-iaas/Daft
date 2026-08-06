@@ -896,3 +896,19 @@ def test_label_decision_guards(delivery):
     assert "未记录" in record_label_decision(m["path"], "ep1", "采纳建议改标", new_label="  ")
     assert "未记录" in record_label_decision(m["path"], "ep1", "乱写的裁决")
     assert load_label_decisions(m) == {}                       # 守卫拦下的不落盘
+
+
+def test_discover_deliveries_recursive(tmp_path):
+    """递归发现(2026-08-06):嵌套目录里的交付也要被找到;交付内部不再往里钻。"""
+    import json as _json
+    deep = tmp_path / "experiments" / "run1"
+    deep.mkdir(parents=True)
+    (deep / "passed.json").write_text("{}")
+    (deep / "details").mkdir()                      # 交付内部子目录,不该被当交付扫
+    flat = tmp_path / "flat-delivery"
+    flat.mkdir()
+    (flat / "passed.json").write_text("{}")
+    (tmp_path / "empty-dir").mkdir()                # 无 passed.json:不出现
+    found = discover_deliveries(str(tmp_path))
+    assert str(deep) in found and str(flat) in found
+    assert len(found) == 2
