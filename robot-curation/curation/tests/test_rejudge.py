@@ -7,7 +7,8 @@ import os
 
 import pytest
 
-from curation.pipeline.rejudge import apply_decisions, run_rejudge
+from curation.pipeline.rejudge import (apply_decisions, apply_task_verdicts,
+                                       run_rejudge)
 
 
 def _views():
@@ -260,3 +261,174 @@ def test_v2_lerobot_curated_reexported_on_decisions(tmp_path):
     assert len(eps) == 3, "弃用条目仍在 LeRobot 包里"
     tasks = (out / "meta" / "tasks.jsonl").read_text()
     assert "corrected task text" in tasks, "改标未进任务表"
+
+
+# ───────── 任务成败人工裁决(2026-08-06):不重判,人说了算 ─────────
+
+
+def _abstain_views():
+    """弃权条目的真实形态:**同时**出现在 passed(当前判决=通过,带 checks)与
+    review(待裁决视图)——这是交付格式的设计,不是残留。"""
+    passed = {"episodes": {
+        "epX": {"判决": "通过", "综合软分": 0.8,
+                "checks": {"任务成败判定": {"结果": "弃权",
+                                            "detail": '{"voc": 0.5}'}}},
+        "epY": {"判决": "通过", "综合软分": 0.7,
+                "checks": {"任务成败判定": {"结果": "弃权"}}},
+        "epZ": {"判决": "通过", "综合软分": 0.6,
+                "checks": {"任务成败判定": {"结果": "弃权"}}}}}
+    review = {"待人工裁决总数": 3, "episodes": {
+        e: {"当前判决": "通过", "待裁决项": ["任务成败判定"],
+            "弃权原因": {"任务成败判定": "渐变问询不可判"}}
+        for e in ("epX", "epY", "epZ")}}
+    reject = {"被拒总数": 0, "episodes": {}}
+    return passed, review, reject
+
+
+def test_verdict_pass_returns_to_delivery_with_provenance():
+    """判成功:出待裁决队列、判决改「通过(人工裁决)」、成败检查落 pass、挂溯源;
+    弃权原因不许留着(它说的是"系统判不了",现在有人判了)。"""
+    p, r, j = _abstain_views()
+    s = apply_task_verdicts(p, r, j, {"epX": {"verdict": "判成功", "note": "看了视频",
+                                              "at": "t1"}})
+    assert s["verdict_pass"] == ["epX"]
+    assert "epX" not in r["episodes"] and "epX" not in j["episodes"]
+    e = p["episodes"]["epX"]
+    assert e["判决"] == "通过(人工裁决)" and e["综合软分"] == 0.8
+    assert e["checks"]["任务成败判定"]["结果"] == "pass"
+    assert e["checks"]["任务成败判定"]["detail"] == '{"voc": 0.5}'   # VLM 读数原样留着
+    assert e["人工裁决"] == {"裁决": "判成功", "备注": "看了视频", "裁决时间": "t1"}
+    assert "弃权原因" not in e and "待裁决项" not in e
+    assert r["待人工裁决总数"] == 2                                   # 计数同步
+
+
+def test_verdict_fail_moves_to_reject_and_is_taken_from_all_views():
+    """判失败:三边全摘 → 只在 reject;原因写清是人工裁决,溯源在案。"""
+    p, r, j = _abstain_views()
+    s = apply_task_verdicts(p, r, j, {"epY": {"verdict": "判失败", "note": "没抓起来",
+                                              "at": "t2"}})
+    assert s["verdict_fail"] == ["epY"]
+    assert "epY" not in p["episodes"] and "epY" not in r["episodes"]
+    e = j["episodes"]["epY"]
+    assert e["判决"] == "拒绝" and e["原因"] == "人工裁决判失败(任务未完成)"
+    assert e["checks"]["任务成败判定"]["结果"] == "拒绝"
+    assert e["人工裁决"]["裁决"] == "判失败" and e["人工裁决"]["裁决时间"] == "t2"
+    assert j["被拒总数"] == 1 and r["待人工裁决总数"] == 2
+
+
+def test_verdict_hold_keeps_item_in_queue():
+    """搁置:只记一笔,条目**留在队列里**(它是"待定"不是结论)。"""
+    p, r, j = _abstain_views()
+    s = apply_task_verdicts(p, r, j, {"epZ": {"verdict": "搁置", "note": "看不清",
+                                              "at": "t3"}})
+    assert s["verdict_hold"] == ["epZ"]
+    assert "epZ" in r["episodes"] and "epZ" in p["episodes"]      # 双呈现照旧
+    assert r["episodes"]["epZ"]["人工裁决"]["裁决"] == "搁置"
+    assert r["episodes"]["epZ"]["待裁决项"] == ["任务成败判定"]
+    assert r["待人工裁决总数"] == 3                                # 一条都没走
+
+
+def test_verdict_unknown_word_or_missing_episode_is_skipped():
+    """裁决词不识别 / 交付里根本没这条 → 记 skipped,绝不凭空造条目。"""
+    p, r, j = _abstain_views()
+    s = apply_task_verdicts(p, r, j, {"epX": {"verdict": "大概成功吧", "at": "t"},
+                                      "ep不存在": {"verdict": "判成功", "at": "t"}})
+    assert set(s["verdict_skipped"]) == {"epX", "ep不存在"}
+    assert "ep不存在" not in p["episodes"] and "ep不存在" not in j["episodes"]
+    assert p["episodes"]["epX"]["判决"] == "通过"                  # 原样不动
+
+
+def test_two_decision_lines_do_not_overwrite_each_others_provenance():
+    """同一条 episode 先被改标重判、后被人工判成败:两个溯源键并存,谁也不抹谁。"""
+    p, r, j = _views()
+    apply_decisions(p, r, j,
+                    {"epB": {"decision": "采纳建议改标", "new_label": "x", "at": "t1"}},
+                    {"epB": {"passed": None, "verdict": "重判仍弃权", "detail": "{}"}})
+    assert "epB" in r["episodes"]                                  # 重判后仍弃权
+    apply_task_verdicts(p, r, j, {"epB": {"verdict": "判成功", "at": "t2"}})
+    e = p["episodes"]["epB"]
+    assert e["标注修正"]["新标注"] == "x" and e["人工裁决"]["裁决"] == "判成功"
+    assert e["checks"]["任务成败判定"]["结果"] == "pass"
+
+
+def _write_verdict_delivery(tmp_path, rows, views=None):
+    """交付三件套 + details/task_verdicts.csv 的最小 fixture。"""
+    (tmp_path / "details").mkdir(exist_ok=True)
+    p, r, j = views or _abstain_views()
+    for name, data in [("passed", p), ("review", r), ("reject", j)]:
+        (tmp_path / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False),
+                                               encoding="utf-8")
+    with open(tmp_path / "details" / "task_verdicts.csv", "w", newline="",
+              encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["episode_id", "verdict", "note", "at"])
+        w.writeheader()
+        w.writerows(rows)
+    return tmp_path
+
+
+def test_run_rejudge_consumes_task_verdicts_without_vlm(tmp_path):
+    """端到端:只有成败裁决(没有标注裁决)也要照跑,且**一次 VLM 都不许调**。"""
+    d = _write_verdict_delivery(tmp_path, [
+        {"episode_id": "epX", "verdict": "判成功", "note": "", "at": "t1"},
+        {"episode_id": "epY", "verdict": "判失败", "note": "", "at": "t2"},
+        {"episode_id": "epZ", "verdict": "搁置", "note": "", "at": "t3"}])
+    (d / "report.md").write_text("# 报告\n", encoding="utf-8")
+
+    def _boom(*a):
+        raise AssertionError("成败裁决不该触发重判")
+
+    s = run_rejudge(str(d), "/unused", {}, rerun_fn=_boom)
+    assert s["verdict_pass"] == ["epX"] and s["verdict_fail"] == ["epY"]
+    assert s["verdict_hold"] == ["epZ"]
+    psd = json.loads((d / "passed.json").read_text(encoding="utf-8"))
+    rev = json.loads((d / "review.json").read_text(encoding="utf-8"))
+    rej = json.loads((d / "reject.json").read_text(encoding="utf-8"))
+    assert psd["episodes"]["epX"]["判决"] == "通过(人工裁决)"
+    assert set(rev["episodes"]) == {"epZ"} and rev["待人工裁决总数"] == 1
+    assert rej["episodes"]["epY"]["原因"].startswith("人工裁决判失败")
+    md = (d / "report.md").read_text(encoding="utf-8")
+    assert "任务成败人工裁决" in md and "剩余待人工裁决:1 条" in md
+    res = json.loads((d / "details" / "rejudge_results.json").read_text(encoding="utf-8"))
+    assert res["task_verdicts"] == {"epX": "判成功", "epY": "判失败", "epZ": "搁置"}
+
+
+def test_run_rejudge_task_verdict_is_idempotent(tmp_path):
+    """同一条裁决(裁决词+裁决时间没变)已落库 → 第二趟跳过,记 unchanged。"""
+    d = _write_verdict_delivery(tmp_path, [
+        {"episode_id": "epX", "verdict": "判成功", "note": "", "at": "t1"}])
+    first = run_rejudge(str(d), "/unused", {}, rerun_fn=None)
+    assert first["verdict_pass"] == ["epX"]
+    second = run_rejudge(str(d), "/unused", {}, rerun_fn=None)
+    assert second["unchanged"] == ["epX"] and second["verdict_pass"] == []
+    psd = json.loads((d / "passed.json").read_text(encoding="utf-8"))
+    assert psd["episodes"]["epX"]["判决"] == "通过(人工裁决)"
+    # 改判(裁决时间变了)→ 重新应用
+    with open(d / "details" / "task_verdicts.csv", "a", newline="",
+              encoding="utf-8") as f:
+        csv.writer(f).writerow(["epX", "判失败", "", "t9"])
+    third = run_rejudge(str(d), "/unused", {}, rerun_fn=None)
+    assert third["verdict_fail"] == ["epX"]
+    rej = json.loads((d / "reject.json").read_text(encoding="utf-8"))
+    assert "epX" in rej["episodes"]
+
+
+def test_verdict_fail_drops_row_from_delivered_parquet(tmp_path):
+    """出数据闭环:人工判失败的条目必须从 episodes_parquet 里剔除——
+    只改报告不改数据,交出去还是脏数据。"""
+    daft = __import__("pytest").importorskip("daft")
+    d = _write_verdict_delivery(tmp_path, [
+        {"episode_id": "epY", "verdict": "判失败", "note": "", "at": "t2"},
+        {"episode_id": "epX", "verdict": "判成功", "note": "", "at": "t1"}])
+    daft.from_pydict({
+        "episode_id": ["epX", "epY", "epZ"],
+        "instruction": ["a", "b", "c"],
+        "instruction_source": ["原始标注"] * 3,
+    }).write_parquet(str(d / "episodes_parquet"))
+
+    run_rejudge(str(d), "/unused", {}, rerun_fn=None)
+    got = daft.read_parquet(str(d / "episodes_parquet")).to_pydict()
+    assert "epY" not in got["episode_id"], "人工判失败的条目仍在交付数据里"
+    assert set(got["episode_id"]) == {"epX", "epZ"}
+    # 判成功的条目标注不许被动过(成败裁决不改 instruction)
+    by = dict(zip(got["episode_id"], got["instruction"]))
+    assert by["epX"] == "a"

@@ -898,6 +898,168 @@ def test_label_decision_guards(delivery):
     assert load_label_decisions(m) == {}                       # 守卫拦下的不落盘
 
 
+# ───────── 人工裁决页(2026-08-06):任务成败弃权队列 + 成败裁决落盘 ─────────
+
+
+def test_task_review_queue_only_takes_task_abstentions(delivery, tmp_path):
+    """队列只收「待裁决项含任务成败判定」的条目:别的维度的弃权(如同步)不是
+    人看视频就能拍板的,混进来只会让裁决面板变成杂物间。"""
+    from curation.ui.manifest import task_review_rows
+    m = load_delivery(delivery)
+    q = m["task_review"]
+    assert [t["id"] for t in q] == ["ep000000"]
+    assert q[0]["current"] == "通过" and q[0]["reason"] == "渐变问询不可判"
+    assert q[0]["readings"] == {"voc": 0.87, "末态分": 0.3}   # 从 checks 的 detail 解出
+    rows = task_review_rows(m)
+    # 行结构:[操作, episode, 当前判决, 弃权原因, 关键读数, 裁决]
+    assert rows[0][0] == "裁决 ▶" and rows[0][1] == "ep000000"
+    assert rows[0][2] == "通过" and "渐变问询" in rows[0][3]
+    assert "voc=0.87" in rows[0][4] and "末态分=0.3" in rows[0][4]
+    assert rows[0][5] == ""                                   # 未裁决
+
+    # 另一维度弃权的条目不进队列
+    d2 = tmp_path / "sync-only"
+    d2.mkdir()
+    (d2 / "passed.json").write_text(json.dumps({"数据集": "x", "episodes": {}},
+                                               ensure_ascii=False))
+    (d2 / "review.json").write_text(json.dumps({"episodes": {"ep9": {
+        "当前判决": "通过", "待裁决项": ["视频-动作同步"],
+        "弃权原因": {"视频-动作同步": "信号不足"}}}}, ensure_ascii=False))
+    assert load_delivery(str(d2))["task_review"] == []
+
+
+def test_task_readings_tolerate_double_encoded_detail():
+    """detail 双重编码(JSON 字符串里又套一层)也要解得出读数——只解一层拿到的
+    是 str,读数会静默全丢。解不开的原文不许当成 0 或空读数。"""
+    from curation.ui.manifest import task_readings
+    inner = json.dumps({"voc": 0.5, "completion_final": 0.1})
+    assert task_readings({"detail": {"voc": 0.5}}) == {"voc": 0.5}       # 已是 dict
+    assert task_readings({"detail": inner})["voc"] == 0.5                # 单层
+    assert task_readings({"detail": json.dumps(inner)})["末态分"] == 0.1  # 双层
+    assert task_readings({"detail": "坏字符串"}) == {}                    # 解不开=没读数
+    assert task_readings({}) == {} and task_readings({"detail": None}) == {}
+
+
+def test_task_review_row_uses_review_own_checks(tmp_path):
+    """rejudge 搬移过的条目,checks 只写在 review 里(passed/reject 没有它)——
+    读数得从 review 条目自己的 checks 取,否则重判后队列上的读数全空。"""
+    d = tmp_path / "moved"
+    d.mkdir()
+    (d / "passed.json").write_text(json.dumps({"数据集": "x", "episodes": {}},
+                                              ensure_ascii=False))
+    (d / "review.json").write_text(json.dumps({"episodes": {"ep7": {
+        "当前判决": "通过", "待裁决项": ["任务成败判定"],
+        "弃权原因": {"任务成败判定": "重判仍不可判"},
+        "checks": {"任务成败判定": {"结果": "弃权", "detail": TS_DETAIL}}}}},
+        ensure_ascii=False))
+    q = load_delivery(str(d))["task_review"]
+    assert q[0]["readings"]["voc"] == 0.87 and q[0]["state"] == "弃权"
+
+
+def test_task_verdict_roundtrip_and_override(delivery):
+    """成败裁决落盘/读回/改判;裁决状态回显进队列表。"""
+    from curation.ui.manifest import (load_task_verdicts, record_task_verdict,
+                                      task_review_rows)
+    m = load_delivery(delivery)
+    assert load_task_verdicts(m) == {}
+    msg = record_task_verdict(m["path"], "ep000000", "判成功", note="看了视频,完成了")
+    assert "已记录" in msg and "rejudge" in msg and "1 分钟" in msg
+    got = load_task_verdicts(m)
+    assert got["ep000000"]["verdict"] == "判成功"
+    assert got["ep000000"]["note"] == "看了视频,完成了" and got["ep000000"]["at"]
+    assert task_review_rows(m)[0][5] == "判成功"                # 回显进表格
+    record_task_verdict(m["path"], "ep000000", "搁置")          # 改判=追加,后写覆盖
+    assert load_task_verdicts(m)["ep000000"]["verdict"] == "搁置"
+
+
+def test_task_verdict_guards(delivery):
+    """裁决词只认三选一;没选中 episode 也不落盘(空 id 会写出一行永远对不上的垃圾)。"""
+    from curation.ui.manifest import load_task_verdicts, record_task_verdict
+    m = load_delivery(delivery)
+    assert "未记录" in record_task_verdict(m["path"], "ep1", "判个成功吧")
+    assert "未记录" in record_task_verdict(m["path"], "", "判成功")
+    assert load_task_verdicts(m) == {}
+
+
+def test_task_verdict_survives_fsx_visibility_gap(tmp_path):
+    """与标注裁决同款的 FSX 可见延迟兜底:延迟窗口内连裁两条,一条都不能丢。"""
+    from curation.dataset_level.decisions import (load_task_verdicts,
+                                                  record_task_verdict)
+    d = str(tmp_path)
+    record_task_verdict(d, "ep000001", "判成功", note="第一条")
+    (tmp_path / "details" / "task_verdicts.csv").write_text("")   # 装作还看不见
+    record_task_verdict(d, "ep000002", "判失败", note="第二条")
+    got = load_task_verdicts(d)
+    assert set(got) == {"ep000001", "ep000002"}, "延迟窗口内第一条裁决被冲掉"
+    assert got["ep000002"]["verdict"] == "判失败"
+
+
+def test_verdict_and_label_decisions_do_not_collide(tmp_path):
+    """两条裁决线各写各的表(共用一个进程内写缓存字典,不许串味)。"""
+    from curation.dataset_level.decisions import (load_label_decisions,
+                                                  load_task_verdicts,
+                                                  record_label_decision,
+                                                  record_task_verdict)
+    d = str(tmp_path)
+    record_label_decision(d, "epA", "维持原标注")
+    record_task_verdict(d, "epB", "判失败")
+    assert set(load_label_decisions(d)) == {"epA"}
+    assert set(load_task_verdicts(d)) == {"epB"}
+
+
+def test_pending_counts_and_guidance_text(delivery):
+    """页面上的"还剩几条"与工序引导:裁过的不再催,裁完催办语消失;搁置算未裁。"""
+    from curation.ui.manifest import (WORKFLOW_GUIDE, audit_note_md,
+                                      audit_pending_count, record_label_decision,
+                                      record_task_verdict, task_pending_count,
+                                      task_review_hint_md)
+    m = load_delivery(delivery)
+    assert audit_pending_count(m) == 1 and task_pending_count(m) == 1
+    assert "1" in audit_note_md(m) and "人工裁决" in audit_note_md(m)
+    assert "标注分歧未裁" in task_review_hint_md(m)          # 提示先清标注分歧
+    record_label_decision(m["path"], "ep000002", "维持原标注")
+    assert audit_pending_count(m) == 0
+    assert "标注分歧未裁" not in task_review_hint_md(m)      # 清完了就不再催
+    assert "**1** 条待裁" in task_review_hint_md(m)          # 本块进度照报
+    assert "已全部裁决" in audit_note_md(m)
+    record_task_verdict(m["path"], "ep000000", "搁置")
+    assert task_pending_count(m) == 1, "搁置是待定不是结论,仍算未裁"
+    record_task_verdict(m["path"], "ep000000", "判成功")
+    assert task_pending_count(m) == 0
+    # 工序引导:先标注分歧 → rejudge → 再成败 → 再 rejudge
+    assert WORKFLOW_GUIDE.index("标注分歧") < WORKFLOW_GUIDE.index("任务成败")
+    assert "再跑一次" in WORKFLOW_GUIDE            # 两趟 rejudge,别只跑一次就收工
+    assert WORKFLOW_GUIDE.count("curation rejudge") >= 2
+
+
+def test_app_has_manual_decision_tab(delivery):
+    """Gradio 层:新增「人工裁决」页签,排在 Episodes 与 技能画像 之间;
+    两块裁决面板的文案都在,且技能画像页只剩一行指路(裁决卡片已搬走)。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = _config_text(build_app(delivery))
+    for t in ("漏斗总览", "Episodes", "人工裁决", "技能画像", "Stuck 时间线",
+              "明细", "性能剖析", "后端状态"):
+        assert t in cfg, t
+    assert cfg.index("Episodes") < cfg.index("人工裁决") < cfg.index("技能画像")
+    for txt in ("① 标注分歧", "② 任务成败弃权", "✅ 判成功", "❌ 判失败", "⏸ 搁置",
+                "建议顺序"):
+        assert txt in cfg, txt
+
+
+def test_asgi_app_serves_manual_decision_tab(delivery, clean_ui_env):
+    """整页起得来,且「人工裁决」的文案真出现在首页 HTML 里。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    app = create_asgi_app(delivery, terminal=False)
+    with TestClient(app) as c:
+        r = c.get("/")
+        assert r.status_code == 200
+        assert "人工裁决" in r.text
+
+
 def test_discover_deliveries_recursive(tmp_path):
     """递归发现(2026-08-06):嵌套目录里的交付也要被找到;交付内部不再往里钻。"""
     import json as _json

@@ -76,8 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="只出报告,不导出数据集(单模块快查时省去重编码视频的时间)")
 
     rj = sub.add_parser("rejudge",
-                        help="按人工裁决(details/label_decisions.csv)重判并更新交付:"
-                             "采纳改标的条目用新标注重跑任务成败检测(带溯源)")
+                        help="按人工裁决更新交付(两条线一起消化):标注分歧"
+                             "(details/label_decisions.csv,采纳改标的条目用新标注"
+                             "重跑任务成败检测)+ 任务成败裁决"
+                             "(details/task_verdicts.csv,不重判,以人的结论为准)")
     rj.add_argument("--delivery", required=True, help="交付目录(含三件套与裁决文件)")
     rj.add_argument("--input", required=True, help="原始数据集目录(重判需重新解码视频)")
     rj.add_argument("--config", default=None, help="流水线 YAML(缺省 default.yaml,须与原 run 一致)")
