@@ -163,6 +163,41 @@ def presentation(terminal: bool = False) -> dict:
     }
 
 
+# 「人工裁决」页的视觉件(2026-08-07 用户反馈:页面太平淡,引导和区块头要一眼看到)。
+# 全部内联样式:不依赖主题变量,浅色页面直出;步骤链和区块头是"人要按顺序干活"
+# 的导航件,值得比正文重一个视觉量级。①橙 ②蓝:两块任务性质不同,用色系分开。
+_ADJ_GUIDE_HTML = """
+<div style="background:linear-gradient(135deg,#fff7ed,#ffedd5);border:1px solid #fdba74;
+            border-left:6px solid #ea580c;border-radius:10px;padding:14px 18px;margin:2px 0 6px">
+  <div style="font-weight:700;color:#9a3412;font-size:1.05rem;margin-bottom:9px">
+    📋 建议工作顺序(顺序错了会白裁)</div>
+  <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;font-size:.95rem;color:#431407">
+    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
+      <b style="color:#ea580c">1</b> 裁「标注分歧」</span><span style="color:#c2410c">→</span>
+    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
+      <b style="color:#ea580c">2</b> 跑 <code>curation rejudge</code>
+      <span style="color:#9a3412">(部分弃权自动解决)</span></span><span style="color:#c2410c">→</span>
+    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
+      <b style="color:#ea580c">3</b> 裁剩余「任务成败弃权」</span><span style="color:#c2410c">→</span>
+    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
+      <b style="color:#ea580c">4</b> 再跑一次 <code>rejudge</code> 生效</span>
+  </div>
+  <div style="margin-top:9px;font-size:.86rem;color:#7c2d12">
+    两块都只<b>记录</b>裁决(落交付目录 details/ 下的 CSV),可随时改判;
+    真正修改交付的是命令行的 <code>curation rejudge</code>。</div>
+</div>"""
+
+
+def _adj_section_html(num: str, title: str, subtitle: str, color: str, dark: str) -> str:
+    """区块头:色块序号 + 加粗标题 + 弱化副题,底部同色粗线把区块"框"出来。"""
+    return (f'<div style="display:flex;align-items:baseline;gap:10px;margin:20px 0 4px;'
+            f'padding-bottom:7px;border-bottom:3px solid {color}">'
+            f'<span style="background:{color};color:#fff;font-weight:800;border-radius:8px;'
+            f'padding:2px 13px;font-size:1.05rem">{num}</span>'
+            f'<span style="font-size:1.18rem;font-weight:800;color:{dark}">{title}</span>'
+            f'<span style="color:#78716c;font-size:.9rem">{subtitle}</span></div>')
+
+
 def build_app(delivery: str, config_path: str | None = None, probe_timeout: float = 5.0,
               terminal: bool = False):
     """交付目录(或含多份交付的父目录)→ gr.Blocks。
@@ -329,9 +364,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             #    看见"待裁决"三个字、没有任何下手的地方。位置放在 Episodes 与
             #    技能画像之间 = 看完数据紧接着做决定的自然工序。
             with gr.Tab("人工裁决"):
-                gr.Markdown("## 人工裁决\n\n" + WORKFLOW_GUIDE)
+                # 页签已写「人工裁决」,页内不再重复大标题(2026-08-07 用户定)
+                gr.HTML(_ADJ_GUIDE_HTML)
 
-                gr.Markdown("### ① 标注分歧(原始标注 vs 画面自产描述)")
+                gr.HTML(_adj_section_html("1", "标注分歧",
+                                          "原始标注 vs 画面自产描述",
+                                          "#ea580c", "#9a3412"))
                 au_table = gr.Dataframe(headers=AUDIT_HEADERS,
                                         label="标注-画面分歧队列(审计检出;重点档排最前;"
                                               "点任意一行 → 下方裁决卡片跳到该条)",
@@ -370,7 +408,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 # ── ② 任务成败弃权:系统诚实说"我判不了"的条目。这里**不重判**,
                 #    人看视频直接给结论(判成功/判失败/搁置),rejudge 只负责搬交付。
-                gr.Markdown("### ② 任务成败弃权(系统判不了,等人拍板)")
+                gr.HTML(_adj_section_html("2", "任务成败弃权",
+                                          "系统弃权,需人工审核",
+                                          "#2563eb", "#1e3a8a"))
                 tv_hint = gr.Markdown()
                 tv_table = gr.Dataframe(headers=TASK_REVIEW_HEADERS,
                                         label="任务成败待裁决队列(点任意一行 → "
