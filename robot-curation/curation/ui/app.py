@@ -20,8 +20,10 @@ import logging
 import os
 
 from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DECISION_CHOICES,
-                       DETAIL_LABELS, audit_clip_paths, load_label_decisions,
-                       record_label_decision,
+                       DETAIL_LABELS, TASK_REVIEW_HEADERS, VERDICT_CHOICES,
+                       WORKFLOW_GUIDE, audit_clip_paths, audit_note_md,
+                       load_label_decisions, load_task_verdicts,
+                       record_label_decision, record_task_verdict,
                        EPISODE_HEADERS, FUNNEL_HEADERS, LATENCY_HEADERS,
                        LATENCY_KIND_NOTE, LATENCY_NOTE, LATENCY_PCTL_NOTE,
                        SKILL_HEADERS, audit_rows, check_rows,
@@ -29,7 +31,8 @@ from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DECISION_CHOICES,
                        latency_bar_html, latency_rows, list_detail_tables,
                        load_delivery, load_detail_table, load_perf,
                        load_timeline, overview_markdown, perf_backend_md,
-                       perf_env_md, skill_bar_html, skill_rows, timeline_html)
+                       perf_env_md, readings_text, skill_bar_html, skill_rows,
+                       task_review_hint_md, task_review_rows, timeline_html)
 
 log = logging.getLogger("curation.ui")
 
@@ -140,8 +143,9 @@ def _probe_backends(config_path: str | None, timeout: float) -> list[list]:
 # 分歧队列的可点性提示(2026-08-05 用户反馈:怕用户不知道行能点):
 # 悬停变手型 + 行高亮,配合首列「裁决 ▶」操作列,双保险。
 _AUDIT_CSS = """
-#audit-queue tbody tr { cursor: pointer; }
-#audit-queue tbody tr:hover td { background: rgba(255, 140, 0, 0.10) !important; }
+#audit-queue tbody tr, #task-queue tbody tr { cursor: pointer; }
+#audit-queue tbody tr:hover td,
+#task-queue tbody tr:hover td { background: rgba(255, 140, 0, 0.10) !important; }
 """
 
 def presentation(terminal: bool = False) -> dict:
@@ -157,6 +161,41 @@ def presentation(terminal: bool = False) -> dict:
         "css": _AUDIT_CSS + ((_TOPNAV_CSS + _TERMINAL_CSS) if terminal else ""),
         "head": _TERMINAL_HEAD if terminal else None,
     }
+
+
+# 「人工裁决」页的视觉件(2026-08-07 用户反馈:页面太平淡,引导和区块头要一眼看到)。
+# 全部内联样式:不依赖主题变量,浅色页面直出;步骤链和区块头是"人要按顺序干活"
+# 的导航件,值得比正文重一个视觉量级。①橙 ②蓝:两块任务性质不同,用色系分开。
+_ADJ_GUIDE_HTML = """
+<div style="background:linear-gradient(135deg,#fff7ed,#ffedd5);border:1px solid #fdba74;
+            border-left:6px solid #ea580c;border-radius:10px;padding:14px 18px;margin:2px 0 6px">
+  <div style="font-weight:700;color:#9a3412;font-size:1.05rem;margin-bottom:9px">
+    📋 建议工作顺序(顺序错了会白裁)</div>
+  <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;font-size:.95rem;color:#431407">
+    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
+      <b style="color:#ea580c">1</b> 裁「标注分歧」</span><span style="color:#c2410c">→</span>
+    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
+      <b style="color:#ea580c">2</b> 跑 <code>curation rejudge</code>
+      <span style="color:#9a3412">(部分弃权自动解决)</span></span><span style="color:#c2410c">→</span>
+    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
+      <b style="color:#ea580c">3</b> 裁剩余「任务成败弃权」</span><span style="color:#c2410c">→</span>
+    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
+      <b style="color:#ea580c">4</b> 再跑一次 <code>rejudge</code> 生效</span>
+  </div>
+  <div style="margin-top:9px;font-size:.86rem;color:#7c2d12">
+    两块都只<b>记录</b>裁决(落交付目录 details/ 下的 CSV),可随时改判;
+    真正修改交付的是命令行的 <code>curation rejudge</code>。</div>
+</div>"""
+
+
+def _adj_section_html(num: str, title: str, subtitle: str, color: str, dark: str) -> str:
+    """区块头:色块序号 + 加粗标题 + 弱化副题,底部同色粗线把区块"框"出来。"""
+    return (f'<div style="display:flex;align-items:baseline;gap:10px;margin:20px 0 4px;'
+            f'padding-bottom:7px;border-bottom:3px solid {color}">'
+            f'<span style="background:{color};color:#fff;font-weight:800;border-radius:8px;'
+            f'padding:2px 13px;font-size:1.05rem">{num}</span>'
+            f'<span style="font-size:1.18rem;font-weight:800;color:{dark}">{title}</span>'
+            f'<span style="color:#78716c;font-size:.9rem">{subtitle}</span></div>')
 
 
 def build_app(delivery: str, config_path: str | None = None, probe_timeout: float = 5.0,
@@ -197,32 +236,62 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if total > len(rows) else "")
         return note, headers or ["(空)"], rows
 
-    def _au_btns(decision):
+    # ── 裁决卡片的公共装配(三键状态 / 视频槽 / 逐条渲染):两块裁决面板形态
+    #    完全一样(队列表 + 翻页卡片 + 三键),差别只在字段与裁决词,所以抽在
+    #    这里共用——复制粘贴两份的话,下次改按钮反馈必然只改一边。──
+
+    def _btns(choices, current):
         """三键状态:未裁决=全中性灰;已裁决=只有选中的那个高亮(2026-08-06 用户定:
         按钮各有颜色时按下没反馈,分不清成没成功;改为"同色待选、选中变色",
-        且翻页/跳行回到已裁决条目时按钮状态跟着该条的落盘裁决走)。"""
-        pick = {"采纳建议改标": 0, "维持原标注": 1, "弃用该条": 2}.get(decision)
-        return [gr.update(variant=("primary" if pick == i else "secondary"))
-                for i in range(3)]
+        且翻页/跳行回到已裁决条目时按钮状态跟着该条的落盘裁决走)。
+        choices 的顺序 = 界面上三个按钮的排列顺序。"""
+        return [gr.update(variant=("primary" if c == current else "secondary"))
+                for c in choices]
 
-    def _au_card_init(m):
-        """切换交付时裁决卡片回到第 0 条(渲染逻辑与面板内 _au_show 同式)。"""
-        q = m.get("audit_queue") or []
+    def _au_btns(decision):
+        return _btns(DECISION_CHOICES, decision)
+
+    def _tv_btns(verdict):
+        return _btns(VERDICT_CHOICES, verdict)
+
+    def _vids(m, eid):
+        """三路视频槽:有几路给几路;一路都没有时保留一个可见占位(不然卡片塌掉)。"""
+        clips = audit_clip_paths(m, eid) if eid else []
+        return [gr.update(value=(clips[i] if i < len(clips) else None),
+                          visible=(i < len(clips) or not clips)) for i in range(3)]
+
+    def _au_render(m, idx):
+        """渲染第 idx 条标注分歧卡片(越界回绕)。装配顺序 = _au_outs。"""
+        q = (m or {}).get("audit_queue") or []
         if not q:
-            return (0, "(无分歧条目)", "", "", "", "",
+            return (idx, "(无分歧条目)", "", "", "", "",
                     *[gr.update(value=None, visible=False)] * 3, *_au_btns(None))
-        a = q[0]
-        dec_map = load_label_decisions(m)
-        dec = dec_map.get(a.get("id", ""), {})
+        idx = idx % len(q)
+        a = q[idx]
+        dec = load_label_decisions(m).get(a.get("id", ""), {})
         info = (f"**{a.get('id','')}** · 档位 **{a.get('priority','参考')}** · "
                 f"成败线判定:{a.get('task_verdict') or '—'}"
                 + (f" · 已裁决:**{dec['decision']}**" if dec.get("decision") else "")
                 + f"\n\n分歧说明:{a.get('reason','')}")
-        clips = audit_clip_paths(m, a.get("id", ""))
-        vids = [gr.update(value=(clips[i] if i < len(clips) else None),
-                          visible=(i < len(clips) or not clips)) for i in range(3)]
-        return (0, f"第 1 / {len(q)} 条", info, a.get("label", ""),
-                a.get("caption", ""), "", *vids, *_au_btns(dec.get("decision")))
+        return (idx, f"第 {idx + 1} / {len(q)} 条", info, a.get("label", ""),
+                a.get("caption", ""), "", *_vids(m, a.get("id", "")),
+                *_au_btns(dec.get("decision")))
+
+    def _tv_render(m, idx):
+        """渲染第 idx 条任务成败弃权卡片(越界回绕)。装配顺序 = _tv_outs。"""
+        q = (m or {}).get("task_review") or []
+        if not q:
+            return (idx, "(无待裁决的任务成败弃权条目)", "", "",
+                    *[gr.update(value=None, visible=False)] * 3, *_tv_btns(None))
+        idx = idx % len(q)
+        t = q[idx]
+        v = load_task_verdicts(m).get(t.get("id", ""), {})
+        info = (f"**{t.get('id','')}** · 当前判决:{t.get('current','?')}"
+                + (f" · 已裁决:**{v['verdict']}**" if v.get("verdict") else "")
+                + f"\n\n**系统弃权原因**:{t.get('reason') or '未注明'}")
+        readings = f"关键读数:{readings_text(t.get('readings') or {})}"
+        return (idx, f"第 {idx + 1} / {len(q)} 条", info, readings,
+                *_vids(m, t.get("id", "")), *_tv_btns(v.get("verdict")))
 
     def _load(path):
         m = load_delivery(path)
@@ -238,8 +307,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
         return (m, overview_markdown(m), funnel_rows(m), _config_yaml(m),
                 episode_rows(m), gr.update(choices=eids, value=first),
-                skill_bar_html(m), skill_rows(m), audit_rows(m),
-                *_au_card_init(m),
+                skill_bar_html(m), skill_rows(m), audit_note_md(m),
+                # 两块裁决面板都从第 0 条重新起(换交付不复位 = 停在上一份交付的
+                # 条目上,按钮状态还是旧的,实测踩过)
+                audit_rows(m), *_au_render(m, 0),
+                task_review_hint_md(m), task_review_rows(m), *_tv_render(m, 0),
                 *_detail(m, first),
                 gr.update(choices=[DETAIL_LABELS[t] for t in tables],
                           value=(DETAIL_LABELS[t_first] if t_first else None)),
@@ -287,12 +359,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 ep_checks = gr.Dataframe(headers=CHECK_HEADERS, label="各维检查", interactive=False)
                 ep_gallery = gr.Gallery(label="证据(probe 帧 + 同步曲线)", columns=4, height=320)
 
-            with gr.Tab("技能画像"):
-                # 图在表上方(2026-07-30):先看分布(谁多谁少、长尾有多长),
-                # 再下去查具体判据。表格原样不动。
-                sk_html = gr.HTML()
-                sk_table = gr.Dataframe(headers=SKILL_HEADERS, label="两级技能体系",
-                                        interactive=False)
+            # ── 人工裁决页(2026-08-06):把"人要做决定"的事全收到一处。
+            #    此前分歧裁决藏在技能画像页底部,而任务成败弃权只能在 Episodes 页
+            #    看见"待裁决"三个字、没有任何下手的地方。位置放在 Episodes 与
+            #    技能画像之间 = 看完数据紧接着做决定的自然工序。
+            with gr.Tab("人工裁决"):
+                # 页签已写「人工裁决」,页内不再重复大标题(2026-08-07 用户定)
+                gr.HTML(_ADJ_GUIDE_HTML)
+
+                gr.HTML(_adj_section_html("1", "标注分歧",
+                                          "原始标注 vs 画面自产描述",
+                                          "#ea580c", "#9a3412"))
                 au_table = gr.Dataframe(headers=AUDIT_HEADERS,
                                         label="标注-画面分歧队列(审计检出;重点档排最前;"
                                               "点任意一行 → 下方裁决卡片跳到该条)",
@@ -329,6 +406,49 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         au_drop = gr.Button("🗑 弃用该条", variant="secondary")
                     au_status = gr.Markdown()
 
+                # ── ② 任务成败弃权:系统诚实说"我判不了"的条目。这里**不重判**,
+                #    人看视频直接给结论(判成功/判失败/搁置),rejudge 只负责搬交付。
+                gr.HTML(_adj_section_html("2", "任务成败弃权",
+                                          "系统弃权,需人工审核",
+                                          "#2563eb", "#1e3a8a"))
+                tv_hint = gr.Markdown()
+                tv_table = gr.Dataframe(headers=TASK_REVIEW_HEADERS,
+                                        label="任务成败待裁决队列(点任意一行 → "
+                                              "下方裁决卡片跳到该条)",
+                                        interactive=False, elem_id="task-queue",
+                                        max_height=420, wrap=True,
+                                        column_widths=["7%", "11%", "10%", "38%",
+                                                       "22%", "12%"])
+                with gr.Accordion("裁决任务成败(点按钮=记草稿,可随时改判;"
+                                  "跑 curation rejudge 才生效)", open=True):
+                    tv_idx = gr.State(0)
+                    with gr.Row():
+                        tv_prev = gr.Button("← 上一条", scale=1)
+                        tv_pos = gr.Markdown("", elem_id="tv-pos")
+                        tv_next = gr.Button("下一条 →", scale=1)
+                    tv_info = gr.Markdown()
+                    tv_readings = gr.Markdown()
+                    with gr.Row():
+                        tv_vids = [gr.Video(label=f"机位 {i+1}", interactive=False,
+                                            autoplay=False, scale=1) for i in range(3)]
+                    tv_note = gr.Textbox(label="备注(可选;写清依据,复盘时是唯一线索)")
+                    with gr.Row():
+                        # 顺序与 VERDICT_CHOICES 严格对应(_tv_btns 按序点亮)
+                        tv_pass = gr.Button("✅ 判成功", variant="secondary")
+                        tv_fail = gr.Button("❌ 判失败", variant="secondary")
+                        tv_hold = gr.Button("⏸ 搁置", variant="secondary")
+                    tv_status = gr.Markdown()
+
+            with gr.Tab("技能画像"):
+                # 图在表上方(2026-07-30):先看分布(谁多谁少、长尾有多长),
+                # 再下去查具体判据。表格原样不动。
+                sk_html = gr.HTML()
+                sk_table = gr.Dataframe(headers=SKILL_HEADERS, label="两级技能体系",
+                                        interactive=False)
+                # 分歧队列与裁决卡片 2026-08-06 整体搬去「人工裁决」页,这里只留指路:
+                # 画像页是"看数据"的,裁决是"做决定"的,混在一页两边都做不好。
+                sk_audit_note = gr.Markdown()
+
             with gr.Tab("Stuck 时间线"):
                 gr.Markdown("每条 episode 一根彩条(0 → 结束秒),段界标秒、悬停看精确"
                             "起止;按 stuck 总时长降序 = 图形化人工复查队列")
@@ -364,10 +484,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 be_btn = gr.Button("探活")
                 be_table = gr.Dataframe(headers=["预设", "状态", "服务端模型"], interactive=False)
 
+            # ⚠️ 顺序必须与 _load 的返回值逐项对齐(错位是运行期才炸的接线错误,
+            #    有测试直接比 len(_load(...)) == len(outputs) 钉住)。
             outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick,
-                    sk_html, sk_table, au_table,
+                    sk_html, sk_table, sk_audit_note,
+                    au_table,
                     au_idx, au_pos, au_info, au_origlab, au_newlab, au_note, *au_vids,
                     au_adopt, au_keep, au_drop,
+                    tv_hint, tv_table,
+                    tv_idx, tv_pos, tv_info, tv_readings, *tv_vids,
+                    tv_pass, tv_fail, tv_hold,
                     ep_md, ep_checks, ep_gallery, dt_pick, dt_note, dt_table,
                     tl_note, tl_html,
                     perf_backend, perf_env, perf_note, perf_table, perf_bar]
@@ -400,45 +526,27 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             dt_pick.change(_table_change, [state, dt_pick], [dt_note, dt_table])
 
-            def _au_show(m, idx):
-                """渲染第 idx 条分歧卡片(越界回绕)。返回含视频三路(缺路给 None)。"""
-                q = (m or {}).get("audit_queue") or []
-                if not q:
-                    return (idx, "(无分歧条目)", "", "", "", "",
-                            *[gr.update(value=None, visible=False)] * 3,
-                            *_au_btns(None))
-                idx = idx % len(q)
-                a = q[idx]
-                dec = load_label_decisions(m).get(a.get("id", ""), {})
-                info = (f"**{a.get('id','')}** · 档位 **{a.get('priority','参考')}** · "
-                        f"成败线判定:{a.get('task_verdict') or '—'}"
-                        + (f" · 已裁决:**{dec['decision']}**" if dec.get("decision") else "")
-                        + f"\n\n分歧说明:{a.get('reason','')}")
-                clips = audit_clip_paths(m, a.get("id", ""))
-                vids = [gr.update(value=(clips[i] if i < len(clips) else None),
-                                  visible=(i < len(clips) or not clips))
-                        for i in range(3)]
-                return (idx, f"第 {idx + 1} / {len(q)} 条", info,
-                        a.get("label", ""), a.get("caption", ""), "", *vids,
-                        *_au_btns(dec.get("decision")))
-
+            # ── ① 标注分歧:翻页 / 点行跳转 / 三键裁决 ──
             _au_outs = [au_idx, au_pos, au_info, au_origlab, au_newlab, au_note, *au_vids,
                         au_adopt, au_keep, au_drop]
 
-            def _au_move(m, idx, step):
-                return _au_show(m, (idx or 0) + step)
-
-            au_prev.click(lambda m, i: _au_move(m, i, -1), [state, au_idx], _au_outs)
-            au_next.click(lambda m, i: _au_move(m, i, +1), [state, au_idx], _au_outs)
+            au_prev.click(lambda m, i: _au_render(m, (i or 0) - 1),
+                          [state, au_idx], _au_outs)
+            au_next.click(lambda m, i: _au_render(m, (i or 0) + 1),
+                          [state, au_idx], _au_outs)
 
             def _au_jump(m, evt):
                 """点队列表任意一行 → 卡片跳到该条(挑着裁/回头重看都靠它)。"""
-                return _au_show(m, evt.index[0])
+                return _au_render(m, evt.index[0])
+
+            def _tv_jump(m, evt):
+                return _tv_render(m, evt.index[0])
 
             # gradio 靠注解识别"要注入 SelectData";本文件开了 future annotations,
             # 字符串注解会在模块全局被 eval(gr 是函数内导入)→ NameError。
             # 塞真实类对象绕开字符串求值。
             _au_jump.__annotations__ = {"evt": gr.SelectData}
+            _tv_jump.__annotations__ = {"evt": gr.SelectData}
 
             au_table.select(_au_jump, state, _au_outs)
 
@@ -446,7 +554,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 q = (m or {}).get("audit_queue") or []
                 if not q:
                     return ("⚠️ 无条目可裁决", gr.update(), gr.update(),
-                            *[gr.update()] * 3)
+                            *[gr.update()] * 3, gr.update(), gr.update())
                 a = q[(idx or 0) % len(q)]
                 msg = record_label_decision(m["path"], a.get("id", ""), decision,
                                             newlab or "", note or "")
@@ -455,16 +563,53 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     btns = _au_btns(decision)                # 记录成功才点亮所选键
                 else:
                     btns = [gr.update()] * 3                 # 校验失败:按钮不动
-                info = _au_show(m, idx)[2]                   # 卡片头同步"已裁决"状态
-                return msg, gr.update(value=audit_rows(m)), info, *btns
+                info = _au_render(m, idx)[2]                 # 卡片头同步"已裁决"状态
+                # 顺带刷新两处"还剩几条没裁"的提示(裁完最后一条,催办语就该消失)
+                return (msg, gr.update(value=audit_rows(m)), info, *btns,
+                        task_review_hint_md(m), audit_note_md(m))
 
-            _dec_outs = [au_status, au_table, au_info, au_adopt, au_keep, au_drop]
+            _dec_outs = [au_status, au_table, au_info, au_adopt, au_keep, au_drop,
+                         tv_hint, sk_audit_note]
             au_adopt.click(lambda m, i, nl, nt: _au_decide(m, i, nl, nt, "采纳建议改标"),
                            [state, au_idx, au_newlab, au_note], _dec_outs)
             au_keep.click(lambda m, i, nl, nt: _au_decide(m, i, nl, nt, "维持原标注"),
                           [state, au_idx, au_newlab, au_note], _dec_outs)
             au_drop.click(lambda m, i, nl, nt: _au_decide(m, i, nl, nt, "弃用该条"),
                           [state, au_idx, au_newlab, au_note], _dec_outs)
+
+            # ── ② 任务成败弃权:同一套形态(翻页 / 点行跳转 / 三键裁决)──
+            _tv_outs = [tv_idx, tv_pos, tv_info, tv_readings, *tv_vids,
+                        tv_pass, tv_fail, tv_hold]
+
+            tv_prev.click(lambda m, i: _tv_render(m, (i or 0) - 1),
+                          [state, tv_idx], _tv_outs)
+            tv_next.click(lambda m, i: _tv_render(m, (i or 0) + 1),
+                          [state, tv_idx], _tv_outs)
+            tv_table.select(_tv_jump, state, _tv_outs)
+
+            def _tv_decide(m, idx, note, verdict):
+                q = (m or {}).get("task_review") or []
+                if not q:
+                    return ("⚠️ 无条目可裁决", gr.update(), gr.update(),
+                            *[gr.update()] * 3)
+                t = q[(idx or 0) % len(q)]
+                msg = record_task_verdict(m["path"], t.get("id", ""), verdict,
+                                          note or "")
+                if msg.startswith("✅"):
+                    msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
+                    btns = _tv_btns(verdict)
+                else:
+                    btns = [gr.update()] * 3
+                info = _tv_render(m, idx)[2]
+                return msg, gr.update(value=task_review_rows(m)), info, *btns
+
+            _tv_dec_outs = [tv_status, tv_table, tv_info, tv_pass, tv_fail, tv_hold]
+            tv_pass.click(lambda m, i, nt: _tv_decide(m, i, nt, "判成功"),
+                          [state, tv_idx, tv_note], _tv_dec_outs)
+            tv_fail.click(lambda m, i, nt: _tv_decide(m, i, nt, "判失败"),
+                          [state, tv_idx, tv_note], _tv_dec_outs)
+            tv_hold.click(lambda m, i, nt: _tv_decide(m, i, nt, "搁置"),
+                          [state, tv_idx, tv_note], _tv_dec_outs)
             tl_all.change(lambda m, a: timeline_html(load_timeline(m), only_flagged=not a),
                           [state, tl_all], tl_html)
             be_btn.click(lambda: _probe_backends(config_path, probe_timeout), None, be_table)

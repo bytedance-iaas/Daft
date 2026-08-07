@@ -646,19 +646,27 @@ def run_pipeline(
                     _v = ""
                 _task_of[_e] = {"passed": _ts.get("passed"), "verdict": _v}
         report["label_audit"] = attach_task_context(label_audit, _task_of)
-        # 分歧条目导出视频片段(裁决要能直接看视频,2026-08-05 用户定):
-        # 三层全导(裁决面板逐条翻页,每条都可能被看);量小(通常 <40 条)
-        _flag_ids = [e["id"] for t in ("high", "mid_for_review", "low_caption_unstable")
+    # 人工裁决要看的视频片段(2026-08-05 用户定;2026-08-06 扩到弃权条目):
+    # ① 标注分歧队列三层全导(裁决面板逐条翻页,每条都可能被看);
+    # ② review 队列(系统弃权 = 任务成败等待人工裁决)——UI 的「人工裁决」页
+    #    第二块要靠它看视频判成败,没片段那一页就是三个空播放器。
+    # 两者取并集去重;每条几秒的编码成本,量小(通常 <100 条)。
+    _clip_ids = []
+    if label_audit is not None:
+        _clip_ids = [e["id"] for t in ("high", "mid_for_review", "low_caption_unstable")
                      for e in report["label_audit"].get(t, []) or []]
-        if _flag_ids and videos_of:
-            from ..export.evidence import write_audit_clips
-            _pc = cfg.get("pipeline", {})
-            _nclips = write_audit_clips(
-                _flag_ids, videos_of, output_dir,
-                sample_interval_s=_pc.get("frame_sample_interval_s", 0.5),
-                max_side=_pc.get("frame_max_side", 448))
-            print(f"[curation] 标注分歧视频片段:{_nclips} 段 → details/audit_clips/",
-                  flush=True)
+    for _e, _pe in sorted(per_episode.items()):
+        if _pe.get("undecidable") and _e not in _clip_ids:
+            _clip_ids.append(_e)
+    if _clip_ids and videos_of:
+        from ..export.evidence import write_audit_clips
+        _pc = cfg.get("pipeline", {})
+        _nclips = write_audit_clips(
+            _clip_ids, videos_of, output_dir,
+            sample_interval_s=_pc.get("frame_sample_interval_s", 0.5),
+            max_side=_pc.get("frame_max_side", 448))
+        print(f"[curation] 人工裁决视频片段:{_nclips} 段 / {len(_clip_ids)} 条 "
+              f"→ details/audit_clips/", flush=True)
     report["episodes"]["results"] = per_episode
     # 操作流畅度汇总(episode 级明细在 motion detail/CSV;此处给数据集级视图)
     _flu = []

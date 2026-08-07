@@ -70,6 +70,10 @@ def load_delivery(path: str) -> dict:
                                        "checks": {}})
         ep["pending"] = ve.get("待裁决项") or []
         ep["abstain_reasons"] = ve.get("弃权原因") or {}
+        # review 条目自带 checks 的情况(rejudge 搬移过的条目会写上):只在
+        # passed/reject 那边没有时才用,不覆盖主视图的读数。
+        if not ep.get("checks") and ve.get("checks"):
+            ep["checks"] = _norm_checks(ve.get("checks"))
 
     det = os.path.join(path, "details")
     for eid, ep in episodes.items():
@@ -92,7 +96,72 @@ def load_delivery(path: str) -> dict:
             # 老交付写"标注审计复核队列"——两个都认,否则老交付打不开。
             "audit_queue": (v.get("标注-画面分歧复核队列")
                             or v.get("标注审计复核队列") or []),
+            "task_review": task_review_queue(v, episodes),
             "episodes": episodes}
+
+
+#: 任务成败检查在交付里的中文名(report.py 的 CHECK_CN 单一事实源;此处是读端的
+#: 常量副本——UI 不 import 管道代码的红线,不许 from ..export.report import)。
+TASK_CHECK_CN = "任务成败判定"
+
+#: 任务成败弃权队列里,人要看的那两个读数(VLM 判定的中间量,不是我们现算的)。
+#: voc = 打乱帧排序能否还原时序(任务在不在推进);末态分 = 终态完成度。
+TASK_READING_KEYS = (("voc", "voc"), ("completion_final", "末态分"))
+
+
+def _deep_detail(raw) -> dict:
+    """detail 解码,容忍**双重编码**(JSON 字符串里又套一层 JSON 字符串)。
+
+    交付里 detail 本来就是 JSON 字符串;经过 rejudge 搬移 / 老版本管道时,曾出现
+    再被 json.dumps 一次的条目——只解一层拿到的是 str,读数就全丢了。这里最多剥
+    两层,仍不是 dict 就交给 parse_detail 的原文兜底(不丢信息)。
+    """
+    d = raw
+    for _ in range(2):
+        if isinstance(d, dict):
+            return d
+        if isinstance(d, str) and d.strip():
+            try:
+                d = json.loads(d)
+                continue
+            except Exception:  # noqa: BLE001
+                break
+        break
+    return parse_detail(d if isinstance(d, (dict, str)) else raw)
+
+
+def task_readings(check: dict) -> dict:
+    """任务成败检查条目 → {"voc":…, "末态分":…}(取不到的键不出现)。
+
+    check 既吃 manifest 归一化后的 {"detail": dict},也吃交付原文 {"detail": "…"}。
+    """
+    d = check.get("detail") if isinstance(check, dict) else None
+    d = _deep_detail(d)
+    out = {}
+    for key, label in TASK_READING_KEYS:
+        if d.get(key) is not None:
+            out[label] = d[key]
+    return out
+
+
+def task_review_queue(review_json: dict, episodes: dict) -> list:
+    """review.json + 已合并的 episodes → 任务成败待裁决队列(纯函数)。
+
+    只收**待裁决项含「任务成败判定」**的条目:review 里还有别的维度的弃权
+    (如同步/运动学),那些不是人看视频就能拍板的,不该混进成败裁决面板。
+    """
+    out = []
+    for eid, ve in sorted((review_json.get("episodes") or {}).items()):
+        if TASK_CHECK_CN not in (ve.get("待裁决项") or []):
+            continue
+        ep = episodes.get(eid) or {}
+        check = (ep.get("checks") or {}).get(TASK_CHECK_CN) or {}
+        out.append({"id": eid,
+                    "current": ve.get("当前判决", "?"),
+                    "reason": (ve.get("弃权原因") or {}).get(TASK_CHECK_CN, ""),
+                    "readings": task_readings(check),
+                    "state": check.get("state", "")})
+    return out
 
 
 # ───────── 表格整形(Gradio Dataframe 直接吃)─────────
@@ -329,6 +398,83 @@ def audit_rows(m: dict) -> list[list]:
             for a in m["audit_queue"]]
 
 
+TASK_REVIEW_HEADERS = ["操作", "episode", "当前判决", "弃权原因", "关键读数", "裁决"]
+
+#: 弃权原因是 VLM 写的一整句,表里截断,全文在下方卡片里给。
+_REASON_CAP = 60
+
+
+def readings_text(readings: dict) -> str:
+    """{"voc":0.87,"末态分":0.3} → "voc=0.87 · 末态分=0.3"(没有读数给一句人话)。"""
+    if not readings:
+        return "(无读数)"
+    return " · ".join(f"{k}={v}" for k, v in readings.items())
+
+
+def task_review_rows(m: dict) -> list[list]:
+    """任务成败弃权队列 → 表格行。裁决列回显 details/task_verdicts.csv(空=待人工)。"""
+    dec = load_task_verdicts(m)
+    rows = []
+    for t in m.get("task_review") or []:
+        reason = str(t.get("reason") or "")
+        rows.append(["裁决 ▶", t.get("id", ""), t.get("current", ""),
+                     reason[:_REASON_CAP] + ("…" if len(reason) > _REASON_CAP else ""),
+                     readings_text(t.get("readings") or {}),
+                     dec.get(t.get("id", ""), {}).get("verdict", "")])
+    return rows
+
+
+def audit_pending_count(m: dict) -> int:
+    """标注分歧队列里**还没裁**的条数(裁过的不该再催人去看)。"""
+    dec = load_label_decisions(m)
+    return sum(1 for a in (m.get("audit_queue") or [])
+               if not dec.get(a.get("id", ""), {}).get("decision"))
+
+
+def task_pending_count(m: dict) -> int:
+    """任务成败弃权队列里还没裁的条数(搁置**算未裁**:它是"待定"不是结论)。"""
+    dec = load_task_verdicts(m)
+    return sum(1 for t in (m.get("task_review") or [])
+               if dec.get(t.get("id", ""), {}).get("verdict", "") in ("", "搁置"))
+
+
+#: 「人工裁决」页顶的工序引导。顺序不是洁癖:改标重判会让一部分弃权自动有结论,
+#: 先裁成败等于白裁——这句话就是防止用户白干一遍。
+WORKFLOW_GUIDE = (
+    "**建议顺序**:先裁下方「标注分歧」 → 跑 `curation rejudge`"
+    "(改标重判后,部分任务成败弃权会自动解决)→ 再裁剩余的「任务成败弃权」 → "
+    "再跑一次 `curation rejudge` 生效。\n\n"
+    "_两块都只**记录**裁决(落交付目录 details/ 下的 CSV),可随时改判;"
+    "真正改交付的是命令行的 `curation rejudge`。_")
+
+
+def audit_note_md(m: dict) -> str:
+    """技能画像页留的一行指路(裁决面板已搬去「人工裁决」页)。"""
+    q = m.get("audit_queue") or []
+    if not q:
+        return "_本次未检出标注-画面分歧条目。_"
+    n = audit_pending_count(m)
+    if not n:
+        return (f"标注-画面分歧队列共 **{len(q)}** 条,已全部裁决 → "
+                "详见「**人工裁决**」页")
+    return (f"**{n}** 条标注分歧待裁(队列共 {len(q)} 条)→ "
+            "去「**人工裁决**」页处理")
+
+
+def task_review_hint_md(m: dict) -> str:
+    """区块②标题下的提示:本块进度 + "上面还有标注分歧没裁,建议先清"的工序提醒。"""
+    q = m.get("task_review") or []
+    if not q:
+        return "_本次没有任务成败弃权条目(系统对每条数据都给出了判定)。_"
+    lines = [f"共 **{len(q)}** 条弃权,其中 **{task_pending_count(m)}** 条待裁"
+             "(搁置算待裁:它是「待定」不是结论)。"]
+    n_audit = audit_pending_count(m)
+    if n_audit:
+        lines.append(f"⚠️ 上方还有 **{n_audit}** 条标注分歧未裁,建议先清"
+                     "(改标重判后,部分弃权会自动解决,省得白裁)")
+    return "\n\n".join(lines)
+
+
 def overview_markdown(m: dict) -> str:
     d = m["dataset"]
     ss = d.get("summary_stats") or {}
@@ -342,10 +488,11 @@ def overview_markdown(m: dict) -> str:
         lines.append("- 硬门拒绝:" + ",".join(f"{k} {v} 条" for k, v in hb.items()))
     n_pending = sum(1 for e in m["episodes"].values() if e.get("pending"))
     if n_pending:
-        lines.append(f"- 待人工裁决 **{n_pending}** 条(见 Episode 页「待裁决」列)")
+        lines.append(f"- 待人工裁决 **{n_pending}** 条(见 Episode 页「待裁决」列;"
+                     "任务成败弃权可在「人工裁决」页逐条裁定)")
     if m["audit_queue"]:
         lines.append(f"- 标注-画面分歧复核队列 {len(m['audit_queue'])} 条"
-                     "(见 技能画像 页;双方都可能错,供人工判定)")
+                     "(见「人工裁决」页;双方都可能错,供人工判定)")
     return "\n".join(lines)
 
 
@@ -811,14 +958,21 @@ def latency_bar_html(perf: dict) -> str:
             '</div>')
 
 
-# ── 标注裁决:实现在 dataset_level/decisions.py(与 rejudge 命令共用同一份)──
+# ── 人工裁决:实现在 dataset_level/decisions.py(与 rejudge 命令共用同一份)。
+#    那是纯文件 IO 层,不是管道——UI 不 import 管道的红线在此不破。 ──
 from ..dataset_level.decisions import (DECISION_CHOICES, DECISIONS_CSV,  # noqa: F401
-                                       record_label_decision)
+                                       VERDICT_CHOICES, VERDICTS_CSV,
+                                       record_label_decision, record_task_verdict)
 from ..dataset_level.decisions import load_label_decisions as _load_decisions
+from ..dataset_level.decisions import load_task_verdicts as _load_verdicts
 
 
 def load_label_decisions(m: dict) -> dict:
     return _load_decisions(m["path"])
+
+
+def load_task_verdicts(m: dict) -> dict:
+    return _load_verdicts(m["path"])
 
 
 def audit_clip_paths(m: dict, episode_id: str) -> list[str]:
