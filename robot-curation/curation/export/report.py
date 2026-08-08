@@ -43,6 +43,83 @@ def build_report(
     }
 
 
+def _sync_plot_coverage(d: dict, report: dict) -> list:
+    """曲线画了哪些 —— 覆盖范围必须写明。
+
+    默认配置只给"需要留意"的条目画图,客户翻 details/plots/ 只看到几张,
+    很容易误以为只检查了那几条(2026-08-07 用户在 UI 上问的同一个问题,
+    报告侧同样要答)。
+    """
+    sp = d.get("sync_plots")
+    if not isinstance(sp, dict):
+        return []
+    n_plot = sp.get("生成")
+    if n_plot is None:
+        return []
+    mode = str((((report.get("config_effective") or {}).get("pipeline")) or {})
+               .get("sync_plots") or "")
+    where = sp.get("目录", "details/plots/")
+    if mode == "all":
+        return [f"- **曲线**: 每条被检查的 episode 都出了图,共 {n_plot} 张,见 `{where}`。"]
+    return [f"- **曲线**: 共 {n_plot} 张,见 `{where}`。"
+            f"⚠️ 当前配置 `pipeline.sync_plots = {mode or 'flagged'}` "
+            f"**只为需要留意的条目画图** —— 没有图不等于没检查,"
+            f"逐条结论见上表与下方分节;要逐条都出图请加 "
+            f"`--set pipeline.sync_plots=all` 重跑。"]
+
+
+def _sync_camera_lines(entries: list, cap: int = 30) -> list:
+    """逐条打印"哪条 episode 的哪一路怎么了"。
+
+    **带病因不带黑话**:原来只印 lag/corr/峰宽/主次峰比这堆数字,客户读不出
+    "所以到底是什么毛病、我该怎么办"(2026-08-07 用户:"你得给出正确的诊断啊")。
+    诊断文本与 UI 同源(camera_diagnosis 的产物),两处口径永不分叉。
+    """
+    out: list = []
+    for x in entries[:cap]:
+        for cam, r in (x.get("cameras") or {}).items():
+            dg = r.get("diagnosis") if isinstance(r.get("diagnosis"), dict) else {}
+            lag = "-" if r.get("lag_s") is None else f"{float(r['lag_s']):+.2f}s"
+            corr = ("-" if r.get("corr_peak") is None
+                    else f"{float(r['corr_peak']):.2f}")
+            head = (f"- **{x['episode_id']}** · {cam} · 滞后 {lag} · 相关 {corr}"
+                    + (f" — **{dg['label']}**" if dg.get("label") else ""))
+            out.append(head)
+            if dg.get("text"):
+                out.append(f"  - {dg['text']}")
+            if dg.get("advice"):
+                out.append(f"  - → {dg['advice']}")
+            if not dg and r.get("note"):
+                out.append(f"  - {r['note']}")
+    if len(entries) > cap:
+        out.append(f"- …共 {len(entries)} 条(全量见 json)")
+    return out
+
+
+def _sync_soft_sections(lines: list, sh: dict) -> None:
+    """「疑似错位」与「假峰 / 测不准」两节。
+
+    这两类都**不判废、不进人工裁决队列、不参与综合软分**,但必须在报告里出现:
+    2026-08-07 ep4 就是因为两个都不沾(既非 flagged 也非负滞后),在报告里
+    查无此人 —— 而它恰恰是客户翻曲线时第一个会问的那条。
+    """
+    sus = sh.get("suspect_episodes") or []
+    if sus:
+        lines.append("")
+        lines.append(f"### 疑似错位,证据不足({len(sus)} 条;**不判废、不进人工队列**)")
+        lines.append("> 峰偏离 0 且零滞后已站不住,但峰形不够可信,不足以定论。"
+                     "同一路反复出现时多半是真延时,建议抽查。")
+        lines.extend(_sync_camera_lines(sus, cap=30))
+    noisy = sh.get("noisy_episodes") or []
+    if noisy:
+        lines.append("")
+        lines.append(f"### 假峰 / 测不准({len(noisy)} 条;**不判废、证据偏向对齐**)")
+        lines.append("> 峰虽然偏离 0,但**赢不过 0**(零滞后处的相关与峰值相当)——"
+                     "这是背景有人走动、相机晃动或画面里机械臂占比小造成的假峰,"
+                     "不是错位。数据照常交付;想让这些路也可判,需改善机位。")
+        lines.extend(_sync_camera_lines(noisy, cap=30))
+
+
 def to_markdown(report: dict) -> str:
     d = report["dataset"]
     rb = report.get("机器人") or {}
@@ -130,6 +207,64 @@ def to_markdown(report: dict) -> str:
         lines.append(f"- 清晰度参考线 blur_ref_var: {vp['blur_ref_var']}(绑定分辨率标尺 "
                      f"frame_max_side={vp['frame_max_side']})")
         lines.append(f"- 相机权重: {vp['camera_weights']};总分聚合: {vp['aggregation']}")
+        lines.append("")
+    sh = d.get("sync_health")
+    if sh:
+        # 相机流健康度(2026-08-07 逐相机改造的主要产品):同步检查改为逐相机独立
+        # 测量后,数据集级的问题形状才看得出来——全库同号同量 = 一次标定就能救回
+        # 整批数据;逐条乱跳 = 录制不稳定,只能逐条看。判废仍只发生在"所有可信
+        # 相机一致指向同一个 Δ"这一种情形,本节里的标注**都不影响判决**。
+        lines.append("## 相机流健康度(视频-动作同步,逐相机)")
+        lines.append(f"- **结论倾向**: {sh.get('advice', '')}")
+        # 判定口径写死在报告里:客户最容易误读的就是"标注了是不是就等于坏了"
+        lines.append("- **判废口径**:只有「**所有可信相机一致指向同一个偏移**」"
+                     "才判废整条 episode(那是录制管线的时间轴问题)。"
+                     "本节其余所有标注 —— 单路错位、疑似错位、假峰、测不准 —— "
+                     "**一律不判废、不进人工裁决队列、不参与综合软分**,"
+                     "视频指针一路不删,数据照常交付。")
+        lines.extend(_sync_plot_coverage(d, report))
+        _pc = sh.get("per_camera") or {}
+        if _pc:
+            lines.append("")
+            # 表头一律说人话:客户拿到手的是**报告**不是 UI,"IQR" 这种统计黑话
+            # 留在这里等于没改(2026-08-07 用户点名"四分位距是个啥")。
+            lines.append("| 相机 | 有效读数 | 典型滞后 | 逐条波动 | 疑似错位 "
+                         "| 假峰 | 测不准 | 已标注 |")
+            lines.append("|---|---|---|---|---|---|---|---|")
+            for cam, s in sorted(_pc.items()):
+                med = ("-" if s.get("median_lag_s") is None
+                       else f"{s['median_lag_s']:+.3f}s")
+                iqr = "-" if s.get("iqr_s") is None else f"{s['iqr_s']:.3f}s"
+                lines.append(f"| {cam} | {s.get('n', 0)} | {med} | {iqr} "
+                             f"| {s.get('n_suspect', 0)} | {s.get('n_noisy', 0)} "
+                             f"| {s.get('n_abstained', 0)} | {s.get('n_flagged', 0)} |")
+            lines.append("")
+            lines.append("> **典型滞后**=这一路画面比动作晚多少(>0 画面晚,"
+                         "是相机链路延迟,常见且可标定;<0 画面早于动作,"
+                         "**无良性解释**,只可能是数据装配错误)。"
+                         "**逐条波动**=各条 episode 之间这个数跳得厉不厉害"
+                         "(小=录制稳定,大=时快时慢)。"
+                         "**疑似错位**=峰偏离 0 且 0 已站不住;**假峰**=峰偏离 0 "
+                         "但赢不过 0(画面干扰所致,证据仍偏向对齐);"
+                         "**测不准**=这一路读数不可信的总条数;"
+                         "**已标注**=可信且确实错位、或完全无信号。"
+                         "典型滞后/逐条波动只统计可信读数(测不准的不掺进分布)。")
+        neg = sh.get("negative_lag_episodes") or []
+        if neg:
+            lines.append("")
+            lines.append(f"- ⚠️ **负滞后 {len(neg)} 条**(建议核对转换脚本):")
+            for x in neg[:20]:
+                cams = ", ".join(f"{c} {v:+.2f}s" for c, v in (x.get("cameras") or {}).items())
+                lines.append(f"  - {x['episode_id']}: {cams}")
+            if len(neg) > 20:
+                lines.append(f"  - …共 {len(neg)} 条")
+        fe = sh.get("flagged_episodes") or []
+        if fe:
+            lines.append("")
+            lines.append(f"### 被标注的相机({len(fe)} 条 episode;**只标注不废弃**,"
+                         "视频指针一路不删)")
+            lines.extend(_sync_camera_lines(fe, cap=30))
+        _sync_soft_sections(lines, sh)
         lines.append("")
     if d["hard_fail_breakdown"]:
         lines.append("## 硬门违规分布")

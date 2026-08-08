@@ -427,9 +427,24 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                               for r in out_rows
                               if r.get("instruction_source") not in (None, "", "原始标注")
                               and str(r.get("instruction") or "").strip()}
+                        # 相机流健康度旁挂文件跟着重导出走:整目录 rmtree 之前先读回来,
+                        # 否则裁决一次交付集就把它弄丢了(它不随裁决变化,只是重编号)
+                        _ch = None
+                        _chp = os.path.join(curated, "meta",
+                                            "curation_camera_health.json")
+                        if os.path.exists(_chp):
+                            try:
+                                with open(_chp, encoding="utf-8") as _f:
+                                    _old = json.load(_f)
+                                _ch = {"dataset": _old.get("dataset") or {},
+                                       "episodes": {r["source_episode_id"]: r
+                                                    for r in _old.get("episodes") or []
+                                                    if r.get("source_episode_id")}}
+                            except Exception:  # noqa: BLE001  读不回就不写,不拦裁决
+                                _ch = None
                         _sh.rmtree(curated)
                         export_lerobot_v2(input_dir, keep_idx, curated,
-                                          task_overrides=ov)
+                                          task_overrides=ov, camera_health=_ch)
                         print(f"[rejudge] lerobot_curated 已重导出(v2 纯拷贝):"
                               f"{len(keep_idx)} 条,任务覆写 {len(ov)} 条", flush=True)
         except Exception as e:  # noqa: BLE001  数据集同步失败不吞掉裁决结果

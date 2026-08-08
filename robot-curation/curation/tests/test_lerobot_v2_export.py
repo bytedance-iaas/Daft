@@ -299,3 +299,32 @@ def test_v3_source_rejected_by_v2_exporter(tmp_path):
         "data_path": "", "video_path": "", "features": {}}))
     with pytest.raises(AssertionError):
         export_lerobot_v2(str(root), [0], str(tmp_path / "out_v3ish"))
+
+
+def test_v3_reencode_writes_via_local_tmp(tmp_path, monkeypatch):
+    """v3 视频重编码必须先落本地临时文件再整拷:PyAV 复用编码器要 seek 改写 moov,
+    FSX 挂载拒绝随机写 → EINVAL(2026-08-07 so101 导出实锤)。钉住"交付路径上
+    没有 av.open 直写"这一条。"""
+    pytest = __import__("pytest")
+    pytest.importorskip("av")
+    import numpy as np
+
+    from curation.export import lerobot_writer as lw
+    opened = []
+    real_open = lw and __import__("av").open
+
+    import av
+    def spy_open(path, mode="r", **kw):
+        if mode == "w":
+            opened.append(str(path))
+        return real_open(path, mode, **kw)
+
+    monkeypatch.setattr(av, "open", spy_open)
+    monkeypatch.setattr("curation.adapters.decode.decode_window",
+                        lambda *a, **k: ([np.zeros((32, 32, 3), np.uint8)] * 3, None))
+    dst = tmp_path / "out" / "video.mp4"
+    lw._reencode_concat([{"path": "/no/such.mp4", "from_ts": 0, "to_ts": 1}],
+                        str(dst), 10.0)
+    assert dst.exists(), "产物没落到目标路径"
+    assert opened and not any(str(dst) in p for p in opened), \
+        f"编码器直写了交付路径(FSX 会 EINVAL):{opened}"

@@ -377,6 +377,31 @@ def run_pipeline(
                           "undecidable": verdicts[e].get("undecidable", []),
                           "checks": {c.replace("check_", ""): check_entry(out[c][i])
                                      for c in check_cols if out[c][i] is not None}}
+    # 视频-动作同步:逐条的逐相机读数(2026-08-07 逐相机改造)。攒起来做两件事:
+    # ①数据集级诊断 sync_health(全库 lag 分布 → 整库标定 / 录制不稳定的结论倾向);
+    # ②旁挂进交付集 meta/curation_camera_health.json。判决不受这里影响。
+    sync_details: dict = {}
+    for i, e in enumerate(out["episode_id"]):
+        sc = out.get("check_video_action_sync", [None] * len(out["episode_id"]))[i]
+        if sc is None:
+            continue
+        try:
+            sd = json.loads(sc.get("detail") or "{}")
+        except Exception:  # noqa: BLE001
+            sd = {}
+        if sd.get("per_camera") is not None:
+            sync_details[e] = sd
+    # 被同步硬门杀掉的条目在漏斗中途就被 filter 掉了,不在 out 里——但它们恰恰是
+    # 全库诊断最该看的样本(整库错位长什么样)。从 hard_killed 留档里补回来。
+    for _k in stats.get("hard_killed", []):
+        if _k.get("check") != "video_action_sync":
+            continue
+        try:
+            _sd = json.loads(_k.get("detail") or "{}")
+        except Exception:  # noqa: BLE001
+            continue
+        if _sd.get("per_camera") is not None:
+            sync_details[_k["episode_id"]] = _sd
     # stuck 单列(二值,不进总分):统计被判 stuck 的 episode 数,进报告
     stuck_eps = []
     for i, e in enumerate(out["episode_id"]):
@@ -609,6 +634,16 @@ def run_pipeline(
         "frame_max_side": cfg.get("pipeline", {}).get("frame_max_side", 448),
         "camera_weights": vq.get("camera_weights", {}) or "全部默认 1.0",
         "aggregation": "加权平均(占位黑帧路除外)"}
+    # 相机流健康度(逐相机同步改造的主要产品):全库逐相机 lag 分布 → 结论倾向。
+    # 只在同步检查真跑过时出这一节(--only 别的模块时不占版面)。
+    camera_health = None
+    if sync_details:
+        from ..core.checks.video_action_sync import sync_health as _sync_health
+        _lag_tol = float(cfg["checks"].get("video_action_sync", {})
+                         .get("params", {}).get("lag_tol_s", 0.25))
+        report["dataset"]["sync_health"] = _sync_health(sync_details, lag_tol_s=_lag_tol)
+        camera_health = {"dataset": report["dataset"]["sync_health"],
+                         "episodes": sync_details}
     from ..ingest.validate import stats_prior_warnings
     warns = stats_prior_warnings(input_dir)
     if warns:
@@ -916,7 +951,8 @@ def run_pipeline(
         if _crows:
             report["dataset"]["sync_plots"] = {
                 "生成": len(_pngs), "目录": "details/plots/",
-                "note": ("每张=光流曲线vs速度曲线+滞后扫描;默认只画非'过'条目"
+                "note": ("每张=**逐相机**光流曲线vs速度曲线 + 全相机滞后扫描叠图"
+                         "(含容差带与各路峰位);默认只画有标注/非对齐的条目"
                          "(配置 pipeline.sync_plots: flagged|all|off)"
                          + ("" if _pngs or not _crows else ";matplotlib 缺失,未渲染"))}
             save_report(report, output_dir)     # 报告已写过,补写含图信息的版本
@@ -993,8 +1029,10 @@ def run_pipeline(
         _exporter = (export_lerobot_v3
                      if _load_info(input_dir)["codebase_version"].startswith("v3")
                      else export_lerobot_v2)
+        # camera_health 旁挂进交付集 meta/(不碰 info.json 标准 schema,不删任何视频)
         deliver["lerobot_dataset"] = _exporter(
-            input_dir, keep_src_idx, _curated, task_overrides=_ov)["out_dir"]
+            input_dir, keep_src_idx, _curated, task_overrides=_ov,
+            camera_health=camera_health)["out_dir"]
 
     # ── 总墙钟回填 + 交付落盘回验(2026-08-06 用户点名)──
     # TOS 挂载新写文件有约 20-60s 的读可见延迟:进度条走完≠交付可用,用户跑

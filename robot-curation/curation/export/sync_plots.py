@@ -28,6 +28,20 @@ _CODE_EN = {
     "ambiguous_peak": "lag over tol but peak not prominent",
     "weak_corr_no_kill": "suspected lag, corr too weak to kill",
     "lag_exceeds_tol": "lag exceeds tolerance",
+    # 2026-08-07 逐相机改造新增(契约里的 per_camera.code + 新的测量分支)
+    "misaligned": "trusted lag beyond tolerance",
+    "flat_peak": "peak too wide (no time resolution)",
+    "low_corr": "correlation too weak to read",
+}
+
+# episode 级 verdict → 图上英文短语(中文 reason 只进报告,绝不进图)
+_VERDICT_EN = {
+    "aligned": "all trusted cameras aligned",
+    "misaligned_all": "ALL trusted cameras agree on a nonzero lag -> dropped",
+    "annotated": "annotated only (no drop)",
+    "undecidable": "no trusted reading",
+    # 兼容旧曲线文件里的三态字面量
+    "pass": "aligned", "fail": "lag exceeds tolerance", "abstain": "undecidable",
 }
 
 
@@ -61,8 +75,108 @@ def plot_title(eid: str, verdict: str, det: dict) -> str:
     return _ascii_only(title)
 
 
+def _normalize_curves(c: dict) -> dict:
+    """曲线 JSON → 统一的 {相机短名: {t/flow/speed/...}}。
+
+    兼容两种格式:2026-08-07 起漏斗写的多相机格式(顶层 "cameras"),以及此前的
+    单相机扁平格式(顶层直接 t/flow/speed)——旧输出目录里的曲线文件还得画得出来。
+    """
+    if isinstance(c.get("cameras"), dict):
+        return c["cameras"]
+    if "t" in c:
+        det = c.get("detail") or {}
+        return {"camera": {"t": c["t"], "flow": c["flow"], "speed": c["speed"],
+                           "lag_s": det.get("lag_s"), "corr_peak": det.get("corr_peak"),
+                           "code": det.get("code")}}
+    return {}
+
+
+def camera_panel_title(cam: str, meta: dict, reading: dict) -> str:
+    """单路时域面板的标题(**保证纯 ASCII**:pod 上没有 CJK 字体,中文会渲染成豆腐块)。"""
+    code = str((reading or {}).get("code") or (meta or {}).get("code") or "")
+    trusted = (reading or {}).get("trusted")
+    # 两行:第一行"相机名 · 可信度",第二行读数。改窄版式后单行会横向溢出、
+    # 压到右侧相关图的标题上(2026-08-07 实见),所以拆行且省掉冗长的 code 英文。
+    mark = "" if trusted is None else ("  (trusted)" if trusted else "  (not trusted)")
+    line1 = (_ascii_only(str(cam)) or "camera") + mark
+    bits = []
+    for key, fmt in (("lag_s", "lag {:+.2f}s"), ("corr_peak", "corr {:.2f}"),
+                     ("peak_ratio", "p1/p2 {:.2f}"), ("peak_width_s", "w {:.2f}s")):
+        v = (reading or {}).get(key, (meta or {}).get(key))
+        if v is not None:
+            bits.append(fmt.format(float(v)))
+    line2 = "  ".join(bits)
+    if code and code != "aligned":
+        line2 += ("   " if line2 else "") + _CODE_EN.get(code, code)
+    return _ascii_only(line1 + ("\n" + line2 if line2 else ""))
+
+
+def episode_title(eid: str, c: dict) -> str:
+    """整图标题(**保证纯 ASCII**)。带 verdict 与全票一致的 Δ。"""
+    verdict = str(c.get("verdict", "?"))
+    bits = [str(eid), f"[{verdict}]", _VERDICT_EN.get(verdict, verdict)]
+    if c.get("n_cameras") is not None:
+        bits.append(f"cams={int(c['n_cameras'])} trusted={int(c.get('n_trusted') or 0)}")
+    if c.get("consensus_lag_s") is not None:
+        bits.append(f"consensus={float(c['consensus_lag_s']):+.2f}s")
+    if c.get("flagged_cameras"):
+        bits.append("flagged: " + ",".join(str(x) for x in c["flagged_cameras"]))
+    return _ascii_only("  ".join(bits))
+
+
+#: 配色与坐标轴风格(2026-08-07 用户:"图像 matplotlib 原味,不精美")。
+#: 参照现代图表面板的观感:去掉上/右边框、淡横向网格、克制的三色、无边框图例。
+_C_FLOW = "#2563eb"     # 画面运动(蓝)
+_C_SPEED = "#ef4444"    # 机械臂速度(红)
+_C_OK = "#10b981"       # 容差带(绿)
+
+
+def _style_ax(ax) -> None:
+    """统一坐标轴观感:细边框、淡网格、小字号刻度。"""
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color("#cbd5e1")
+        ax.spines[side].set_linewidth(0.8)
+    ax.grid(True, axis="y", color="#e2e8f0", lw=0.7, alpha=0.9)
+    ax.set_axisbelow(True)
+    ax.tick_params(labelsize=6.8, colors="#64748b", length=3, width=0.8)
+
+
+def _savefig_fsx_safe(fig, dst: str, **kw) -> None:
+    """savefig 到本地临时文件,再顺序整份拷到目的地。
+
+    交付目录在 TOS 的 FSX 挂载上,**savefig 直写会静默产出零填充的坏文件**
+    (2026-08-07 实锤:5 张图坏 3 张,字节数看着正常、PNG 签名却是全零,浏览器
+    一片空白而服务端毫无报错)。matplotlib 写 PNG 期间有多次写+回填,挂载扛不住。
+    同一挂载已经用同一招治过 CSV 追加 / pyarrow parquet / PyAV 转码,这是第五处。
+    坏在"不报错"上——所以这里写完还要**验签名再落地**,坏了直接抛,不留哑弹。
+    """
+    import shutil
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    try:
+        fig.savefig(tmp, **kw)
+        with open(tmp, "rb") as f:
+            if f.read(8) != b"\x89PNG\r\n\x1a\n":
+                raise OSError(f"matplotlib 产出的不是合法 PNG: {dst}")
+        shutil.copyfile(tmp, dst)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 def render_sync_plots(curve_rows: list[tuple], out_dir: str) -> list[str]:
-    """curve_rows: [(episode_id, curves_json_str), ...] → 生成 PNG,返回文件名列表。"""
+    """curve_rows: [(episode_id, curves_json_str), ...] → 生成 PNG,返回文件名列表。
+
+    一条 episode **一张图**(文件名 details/plots/<episode_id>_sync.png 不变,UI 靠它定位):
+    每路相机一格「光流 vs 关节速度」时域图,最后一格是所有相机的「互相关 vs lag」叠图
+    (标出容差带、各路峰位、全票一致的 Δ)。逐相机独立测量的结论必须逐相机看得见——
+    合成一张曲线正是改造前那个"一路代表全条"的病。
+    """
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -77,38 +191,84 @@ def render_sync_plots(curve_rows: list[tuple], out_dir: str) -> list[str]:
     for eid, cj in curve_rows:
         try:
             c = json.loads(cj)
-            t = np.asarray(c["t"], dtype=float)
-            flow = np.asarray(c["flow"], dtype=float)
-            speed = np.asarray(c["speed"], dtype=float)
-            if len(t) < 8:
+            cams = _normalize_curves(c)
+            readings = c.get("per_camera") or {}
+            usable = {k: v for k, v in cams.items() if len(v.get("t") or []) >= 8}
+            if not usable:
                 continue
-            zf = (flow - flow.mean()) / (flow.std() + 1e-9)
-            zs = (speed - speed.mean()) / (speed.std() + 1e-9)
-            det = c.get("detail") or {}
-            verdict = c.get("verdict", "?")
+            names = sorted(usable)
+            n = len(names)
+            tol = float(c.get("lag_tol_s") or 0.25)
 
-            fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12, 3.2), width_ratios=[2.2, 1])
-            ax.plot(t, zf, lw=1.1, label="optical flow (video motion)", color="tab:blue")
-            ax.plot(t, zs, lw=1.1, label="arm speed (proprio)", color="tab:red", alpha=0.75)
-            ax.set_title(plot_title(str(eid), str(verdict), det), fontsize=10, loc="left")
-            ax.set_xlabel("time (s)")
-            ax.legend(fontsize=7, loc="upper right")
+            # 版式(2026-08-07 用户定):原来 13:6 的横幅在任何网格里都两头留白,
+            # 右侧相关图还被压成细条。改成接近 3:2 的卡片——平铺两列刚好,
+            # 相关图拿到近乎一半的宽度。
+            # 扁宽横幅比例(2026-08-07 用户定稿:"比例调到扁扁形状"):每路时域格
+            # 压到 ~1.45in 高,整图约 2.4:1;相关图仍占 46% 宽不许再瘦回去。
+            fig_h = max(1.45 * n + 1.35, 3.0)
+            fig = plt.figure(figsize=(13.8, fig_h))
+            # 底边留 ~1in 绝对高度给相关图挪下来的图例(占比随图高换算,设上下限)
+            bot = min(0.26, max(0.13, 1.0 / fig_h))
+            gs = fig.add_gridspec(n, 2, width_ratios=[1.18, 1.0],
+                                  hspace=0.55, wspace=0.16,
+                                  left=0.05, right=0.985, top=0.88, bottom=bot)
+            ax_xc = fig.add_subplot(gs[:, 1])
+            colors = [_C_FLOW, "#f59e0b", _C_OK, "#8b5cf6"]
 
-            xc = signal.correlate(zf, zs, mode="full") / max(len(zf), 1)
-            dt = float(np.median(np.diff(t))) if len(t) > 1 else 1.0
-            lags = signal.correlation_lags(len(zf), len(zs), mode="full") * dt
-            win = np.abs(lags) <= 2.0
-            if win.any():
-                ax2.plot(lags[win], xc[win], lw=1.1, color="tab:green")
-                ax2.axvline(0, color="gray", ls="--", lw=0.8)
+            for i, cam in enumerate(names):
+                cv = usable[cam]
+                t = np.asarray(cv["t"], dtype=float)
+                flow = np.asarray(cv["flow"], dtype=float)
+                speed = np.asarray(cv["speed"], dtype=float)
+                zf = (flow - flow.mean()) / (flow.std() + 1e-9)
+                zs = (speed - speed.mean()) / (speed.std() + 1e-9)
+                ax = fig.add_subplot(gs[i, 0])
+                ax.plot(t, zf, lw=1.1, label="video motion", color=_C_FLOW)
+                ax.plot(t, zs, lw=1.1, label="arm speed", color=_C_SPEED, alpha=.85)
+                ax.set_title(camera_panel_title(cam, cv, readings.get(cam, {})),
+                             fontsize=7, loc="left", color="#475569", pad=5,
+                             linespacing=1.5)
+                _style_ax(ax)
+                if i == 0:
+                    ax.legend(fontsize=6.8, loc="upper right", frameon=True,
+                              facecolor="white", framealpha=.88, edgecolor="none",
+                              handlelength=1.4, borderaxespad=.2, ncol=2)
+                if i == n - 1:
+                    ax.set_xlabel("time (s)", fontsize=8)
+
+                # 叠图:每路一条互相关曲线 + 星标峰位
+                xc = signal.correlate(zf, zs, mode="full") / max(len(zf), 1)
+                dt = float(np.median(np.diff(t))) if len(t) > 1 else 1.0
+                lags = signal.correlation_lags(len(zf), len(zs), mode="full") * dt
+                win = np.abs(lags) <= 2.0
+                if not win.any():
+                    continue
+                col = colors[i % len(colors)]
                 k = int(np.argmax(xc[win]))
-                ax2.plot(lags[win][k], xc[win][k], "r*", ms=9)
-                ax2.set_title(f"lag scan: corr={xc[win][k]:.2f} @ {lags[win][k]:.2f}s",
-                              fontsize=9)
-            ax2.set_xlabel("lag (s)")
-            fig.tight_layout()
+                ax_xc.plot(lags[win], xc[win], lw=1.5, color=col,
+                           label=_ascii_only(f"{cam} @{lags[win][k]:+.2f}s "
+                                             f"({xc[win][k]:.2f})"))
+                ax_xc.plot(lags[win][k], xc[win][k], "o", ms=5.5, color=col,
+                           mec="white", mew=1.1)
+
+            ax_xc.axvspan(-tol, tol, color=_C_OK, alpha=0.11, lw=0)   # 容差带
+            ax_xc.axvline(0, color="#94a3b8", ls="--", lw=0.9)
+            if c.get("consensus_lag_s") is not None:
+                ax_xc.axvline(float(c["consensus_lag_s"]), color=_C_SPEED, ls=":", lw=1.3)
+            ax_xc.set_xlabel("lag (s)   [>0 = video later]", fontsize=7.5)
+            ax_xc.set_title(f"cross-correlation (tol +/-{tol:.2f}s)",
+                            fontsize=8, loc="left", color="#475569", pad=4)
+            _style_ax(ax_xc)
+            ax_xc.legend(fontsize=6.8, loc="upper center", bbox_to_anchor=(0.5, -0.16),
+                         ncol=2, frameon=False, handlelength=1.6,
+                         borderaxespad=0., labelspacing=.35, columnspacing=1.2)
+
+            fig.suptitle(episode_title(str(eid), c), fontsize=9.5, x=0.012, y=0.985,
+                         ha="left", color="#0f172a", fontweight="bold")
             fname = f"{eid}_sync.png"
-            fig.savefig(os.path.join(out_dir, fname), dpi=100)
+            _savefig_fsx_safe(fig, os.path.join(out_dir, fname), dpi=130,
+                              facecolor="white", bbox_inches="tight",
+                              pad_inches=0.18)
             plt.close(fig)
             written.append(fname)
         except Exception:  # noqa: BLE001  单张失败不拖垮整批

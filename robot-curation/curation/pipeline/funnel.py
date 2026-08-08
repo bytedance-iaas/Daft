@@ -17,9 +17,11 @@ from ..core.checks.kinematics import kinematic_limits
 from ..core.checks.motion_quality import motion_quality
 from ..core.checks.task_success import endstate_review, task_success
 from ..core.checks.video_action_sync import (
+    camera_reading,
     global_lag,
     joint_speed,
     optical_flow_energy,
+    sync_check_result,
     timestamp_check,
 )
 from ..core.checks.visual_quality import visual_quality
@@ -267,7 +269,16 @@ def run_funnel(
     frame_hard: list[str] = []
     if enabled(cfg, "visual_quality") or enabled(cfg, "video_action_sync"):
         pv = cfg["checks"].get("visual_quality", {}).get("params", {})
-        ps = cfg["checks"].get("video_action_sync", {}).get("params", {})
+        _ps_all = dict(cfg["checks"].get("video_action_sync", {}).get("params", {}))
+        # 同步检查的参数分两层:测量层(逐相机 global_lag)与判定层(跨相机 sync_verdict)。
+        # 配置里是平铺的一段 params,这里按名字分派——客户配 kill_lag_min_s 不该炸在
+        # global_lag 的签名上,反之亦然。lag_tol_s 两层都要(容差是同一个概念)。
+        _VERDICT_KEYS = {"spread_tol_s", "kill_lag_min_s", "neg_kill_lag_min_s",
+                         "min_kill_cameras"}
+        ps = {k: v for k, v in _ps_all.items() if k not in _VERDICT_KEYS}
+        pver = {k: v for k, v in _ps_all.items() if k in _VERDICT_KEYS}
+        if "lag_tol_s" in _ps_all:
+            pver["lag_tol_s"] = _ps_all["lag_tol_s"]
         do_visual = enabled(cfg, "visual_quality")
         do_sync = enabled(cfg, "video_action_sync")
         # 同步曲线暂存策略(2026-07-15 用户定,证据附件第一块):flagged=只存
@@ -289,40 +300,98 @@ def run_funnel(
                          proprio_space, embodiment_id):
             from ..adapters.decode import decode_window
 
-            # 取第一个(外部)相机;多相机策略 P5 再扩(M2 cameras 标注 wrist/external)
-            cam = sorted(video.keys())[0]
-            v = video[cam]
-            # ⚠️ 同步检查必须全帧率解码:lag 分辨率=帧间隔,抽稀到 0.5s 会粗于容忍度
-            # (0.25s)→干净数据被量化误差误杀(2026-07-02 e2e 实测)。一次解码两用:
-            # sync 用全帧,visual 从同批帧里按 interval 抽稀。
-            frames, fts = decode_window(v["path"], v["from_ts"], v["to_ts"],
-                                        max_side=max_side)
+            # ── 逐相机一次解码,视觉质量与同步检查共用(2026-08-07 改造)──────────
+            # 改造前同步只算 sorted 的第一路,而视觉质量本来就已经逐相机解码了——
+            # 也就是说"多相机同步"缺的从来不是解码,只是没在同一批帧上多算一次光流。
+            # 现在把两件事并进同一个逐相机循环:**解码成本零增长**,新增的只有
+            # 每路一次 Farneback 光流(全管线最贵的 CPU 计算,故仍是主要成本项:
+            # N 路相机 ≈ N 倍光流)。用户拍板:一路读数代表整条 episode 的风险
+            # (droid ep4:三路 +0.60/−0.07/0.00,只看第一路差点误杀)远大于这份 CPU。
+            #
+            # 逐相机**串行处理并即时释放帧**:同一时刻内存里只有一路的帧,峰值内存
+            # 与改造前持平(改造前 cam0 的帧全程驻留,反而更差)。
+            cams = sorted(video.keys())
+            cam0 = cams[0] if cams else None      # 一路视频都没有 → 循环空转,如实弃权
+            stride = max(1, int(round(interval * fps)))
             out = {"visual": result_to_struct_none(), "sync": result_to_struct_none(),
                    "curves": ""}
-            if do_visual and frames:
-                stride = max(1, int(round(interval * fps)))
-                # 多相机:全部活跃路都检,总分=最差路(平均会让好相机掩护坏相机);
-                # 占位黑帧路(多机构采集集凑 schema 用)只登记不打分,绝不因占位杀数据
-                per_cam = {cam: visual_quality(frames[::stride], **pv)}
-                padded = []
-                for c2 in sorted(video.keys()):
-                    if c2 == cam:
-                        continue
-                    v2 = video[c2]
+
+            # 速度代理只与本体有关,与相机无关 → 循环外算一次
+            speed = None
+            if do_sync and proprio_state is not None:
+                # 速度代理的列选择(2026-07-15 M5a 复诊):全列范数会被两类假信号
+                # 砸烂互相关——①EE 欧拉角 ±π 回绕/万向节假跳变(droid corr 0.12~0.14,
+                # M4b 同款病);②夹爪列 0-100 大摆(so101 corr 0.19~0.28,视觉上几乎
+                # 不可见)。EE → 只用平移三维;关节 → 剔除夹爪列。
+                p_sync = np.asarray(proprio_state)
+                if str(proprio_space) == "ee" and p_sync.shape[1] >= 3:
+                    p_sync = p_sync[:, :3]
+                else:
                     try:
-                        f2, _ = decode_window(v2["path"], v2["from_ts"], v2["to_ts"],
-                                              max_side=max_side)
-                    except Exception:  # noqa: BLE001
-                        padded.append(c2)
-                        continue
-                    if not f2:
-                        padded.append(c2)
-                        continue
-                    head = np.asarray(f2[0], dtype=np.float32)
+                        _gd = set(registry.get(str(embodiment_id)).gripper_dims)
+                        keep = [j for j in range(p_sync.shape[1]) if j not in _gd]
+                        if keep:
+                            p_sync = p_sync[:, keep]
+                    except Exception:  # noqa: BLE001  未知 embodiment → 不剔,保持原样
+                        pass
+                speed = joint_speed(p_sync, fps)
+
+            # 短名(去 observation.images. 前缀):UI/报告/交付里逐相机都用它;
+            # 万一两路短名相同(不同前缀撞车),退回全名保证键唯一
+            _short_of = {}
+            for c in cams:
+                s = c.split(".")[-1]
+                _short_of[c] = c if s in _short_of.values() else s
+
+            per_cam = {}          # 视觉质量:相机全名 → CheckResult
+            padded = []           # 占位黑帧路(只登记不打分)
+            sync_cams = {}        # 同步读数:相机短名 → per_camera 条目
+            sync_curves = {}      # 同步曲线(画图用):相机短名 → {t/flow/speed/...}
+            for c in cams:
+                v = video[c]
+                # ⚠️ 同步检查必须全帧率解码:lag 分辨率=帧间隔,抽稀到 0.5s 会粗于容忍度
+                # (0.25s)→干净数据被量化误差误杀(2026-07-02 e2e 实测)。一次解码两用:
+                # sync 用全帧,visual 从同批帧里按 interval 抽稀。
+                try:
+                    frames, fts = decode_window(v["path"], v["from_ts"], v["to_ts"],
+                                                max_side=max_side)
+                except Exception:  # noqa: BLE001  解码失败=少一路,不中断整条
+                    if c != cam0:
+                        padded.append(c)
+                    continue
+                if not frames:
+                    if c != cam0:
+                        padded.append(c)
+                    continue
+                if c != cam0:
+                    head = np.asarray(frames[0], dtype=np.float32)
                     if head.mean() < 8.0 and head.std() < 2.0:
-                        padded.append(c2)
+                        padded.append(c)          # 占位黑帧:两项检查都跳过
+                        del frames
                         continue
-                    per_cam[c2] = visual_quality(f2[::stride], **pv)
+                # 多相机:全部活跃路都检;占位黑帧路(多机构采集集凑 schema 用)
+                # 只登记不打分,绝不因占位杀数据
+                if do_visual:
+                    per_cam[c] = visual_quality(frames[::stride], **pv)
+                if do_sync and speed is not None and len(frames) >= 8:
+                    flow = optical_flow_energy(frames)
+                    _res = global_lag(flow, fts[1:], speed,
+                                      np.asarray(timestamps)[1:], **ps)
+                    sync_cams[_short_of[c]] = camera_reading(_res)
+                    # 曲线搭质检顺风车暂存(光流是全管线最贵计算,算完就扔=白扔);
+                    # 降采样到 ≤600 点(画图够用,控内存),导出层渲染
+                    _ft2 = np.asarray(fts[1:], dtype=float)
+                    _sp2 = np.interp(_ft2, np.asarray(timestamps)[1:], speed)
+                    _st = max(1, len(flow) // 600)
+                    sync_curves[_short_of[c]] = {
+                        "t": np.round(_ft2[::_st], 3).tolist(),
+                        "flow": np.round(np.asarray(flow)[::_st], 5).tolist(),
+                        "speed": np.round(_sp2[::_st], 6).tolist(),
+                        **{k: _res.detail.get(k) for k in
+                           ("lag_s", "corr_peak", "code", "n_trimmed_static")}}
+                del frames
+
+            if do_visual and per_cam:
                 from ..core.contract import CheckResult as _VCR
 
                 # 多相机聚合=加权平均(2026-07-08 用户定):恒定糊的副相机是本体特征而非
@@ -360,42 +429,36 @@ def run_funnel(
                 out["visual"] = result_to_struct(_VCR(
                     name="visual_quality", passed=None,
                     score=round(score, 4), detail=vdetail))
-            if do_sync and proprio_state is not None and len(frames) >= 8:
-                flow = optical_flow_energy(frames)
-                # 速度代理的列选择(2026-07-15 M5a 复诊):全列范数会被两类假信号
-                # 砸烂互相关——①EE 欧拉角 ±π 回绕/万向节假跳变(droid corr 0.12~0.14,
-                # M4b 同款病);②夹爪列 0-100 大摆(so101 corr 0.19~0.28,视觉上几乎
-                # 不可见)。EE → 只用平移三维;关节 → 剔除夹爪列。
-                p_sync = np.asarray(proprio_state)
-                if str(proprio_space) == "ee" and p_sync.shape[1] >= 3:
-                    p_sync = p_sync[:, :3]
-                else:
-                    try:
-                        _gd = set(registry.get(str(embodiment_id)).gripper_dims)
-                        keep = [j for j in range(p_sync.shape[1]) if j not in _gd]
-                        if keep:
-                            p_sync = p_sync[:, keep]
-                    except Exception:  # noqa: BLE001  未知 embodiment → 不剔,保持原样
-                        pass
-                speed = joint_speed(p_sync, fps)
-                _sync_res = global_lag(flow, fts[1:], speed,
-                                       np.asarray(timestamps)[1:], **ps)
+            if do_sync and sync_cams:
+                # 判定层:逐相机读数 → episode 结论(判废只有"所有可信相机一致指向
+                # 同一个 Δ≠0"这一种情形;单相机永不判废;测不准/矛盾一律 passed=True
+                # + 标注,绝不返回 None——弃权会误进人工裁决队列)
+                _sync_res = sync_check_result(sync_cams, len(sync_cams), **pver)
                 out["sync"] = result_to_struct(_sync_res)
+                _det = _sync_res.detail
                 if (sync_plots_mode == "all"
                         or (sync_plots_mode == "flagged"
-                            and _sync_res.passed is not True)):
-                    # 曲线搭质检顺风车暂存(光流是全管线最贵计算,算完就扔=白扔);
-                    # 降采样到 ≤600 点(画图够用,控内存),导出层渲染
-                    _ft2 = np.asarray(fts[1:], dtype=float)
-                    _sp2 = np.interp(_ft2, np.asarray(timestamps)[1:], speed)
-                    _st = max(1, len(flow) // 600)
+                            and (_det["verdict"] != "aligned"
+                                 or _det["flagged_cameras"]))):
                     out["curves"] = json.dumps({
-                        "t": np.round(_ft2[::_st], 3).tolist(),
-                        "flow": np.round(np.asarray(flow)[::_st], 5).tolist(),
-                        "speed": np.round(_sp2[::_st], 6).tolist(),
-                        "verdict": ("pass" if _sync_res.passed else
-                                    "fail" if _sync_res.passed is False else "abstain"),
-                        "detail": _sync_res.detail})
+                        "cameras": sync_curves,
+                        "verdict": _det["verdict"],
+                        "consensus_lag_s": _det["consensus_lag_s"],
+                        "n_cameras": _det["n_cameras"], "n_trusted": _det["n_trusted"],
+                        "flagged_cameras": _det["flagged_cameras"],
+                        "per_camera": _det["per_camera"],
+                        "lag_tol_s": float(pver.get("lag_tol_s", 0.25))})
+            elif do_sync:
+                # 一路都没测成(无 proprio / 全部解码失败 / 帧太少):如实标注,不判废
+                from ..core.contract import CheckResult as _SCR
+
+                out["sync"] = result_to_struct(_SCR(
+                    name="video_action_sync", passed=True,
+                    detail={"verdict": "undecidable", "per_camera": {},
+                            "flagged_cameras": [], "consensus_lag_s": None,
+                            "n_cameras": 0, "n_trusted": 0,
+                            "reason": ("无可用相机/无 proprio 读数,同步未测量"
+                                       "(不影响判决)")}))
             _progress_tick(_pk_frame)
             return out
 

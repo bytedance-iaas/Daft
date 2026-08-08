@@ -48,9 +48,19 @@ checks:
     params:
       blur_ref_var: 100.0   # 清晰度参考线(lapvar,绑定 frame_max_side=448 标尺;P5.1 按可用性标注校准)
   video_action_sync:               # M5a-L1(抽帧+光流,硬门)
+    # 2026-08-07 逐相机改造:**每路相机各测一遍**(与视觉质量共用同一次解码),
+    # 判废只发生在"所有可信相机一致指向同一个 Δ≠0"这一种情形;单相机数据集永不
+    # 因同步判废;测不准/矛盾/无信号一律 passed + 标注(不进人工裁决队列)。
     enable: true
     gate: hard
-    params: {corr_min: 0.3, lag_tol_s: 0.25}
+    params:
+      corr_min: 0.3                # 测量层:峰值相关低于此 = 这一路测不准
+      lag_tol_s: 0.25              # |lag| 容忍(≈2-3 帧);两层共用
+      # ── 以下为判定层(跨相机)可选覆盖,不写则用代码默认 ──
+      # spread_tol_s: 0.3          # 各路 lag 极差超过此值 = 证据不一致 → 只标注不判废
+      # kill_lag_min_s: 0.5        # 正滞后判废门槛(相机链路延迟有良性解释,门槛抬高)
+      # neg_kill_lag_min_s: 0.25   # 负滞后判废门槛(无良性解释,从严)
+      # min_kill_cameras: 2        # 判废至少要几路可信相机同证(孤证不定罪)
   task_success:                    # M4c(VLM,唯一语义点;永远垫底)
     enable: true
     gate: hard
