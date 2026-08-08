@@ -19,19 +19,24 @@ import json
 import logging
 import os
 
-from .manifest import (AUDIT_HEADERS, CHECK_HEADERS, DECISION_CHOICES,
+from .manifest import (AUDIT_HEADERS, DECISION_CHOICES,
                        DETAIL_LABELS, TASK_REVIEW_HEADERS, VERDICT_CHOICES,
                        WORKFLOW_GUIDE, audit_clip_paths, audit_note_md,
                        load_label_decisions, load_task_verdicts,
                        record_label_decision, record_task_verdict,
-                       EPISODE_HEADERS, FUNNEL_HEADERS, LATENCY_HEADERS,
+                       EPISODE_FILTER_ALL, EPISODE_FILTERS, EPISODE_HEADERS,
+                       FUNNEL_HEADERS, LATENCY_HEADERS,
                        LATENCY_KIND_NOTE, LATENCY_NOTE, LATENCY_PCTL_NOTE,
-                       SKILL_HEADERS, audit_rows, check_rows,
-                       discover_deliveries, episode_rows, funnel_rows,
+                       SKILL_HEADERS, SYNC_FILTER_ALL, SYNC_FILTERS,
+                       audit_rows, check_table_html,
+                       discover_deliveries, episode_card_html, episode_rows,
+                       filter_episode_ids, funnel_rows,
                        latency_bar_html, latency_rows, list_detail_tables,
                        load_delivery, load_detail_table, load_perf,
                        load_timeline, overview_markdown, perf_backend_md,
                        perf_env_md, readings_text, skill_bar_html, skill_rows,
+                       sync_camera_html, sync_conclusion_html, sync_health_html,
+                       sync_view, SYNC_HOWTO,
                        task_review_hint_md, task_review_rows, timeline_html)
 
 log = logging.getLogger("curation.ui")
@@ -143,9 +148,63 @@ def _probe_backends(config_path: str | None, timeout: float) -> list[list]:
 # 分歧队列的可点性提示(2026-08-05 用户反馈:怕用户不知道行能点):
 # 悬停变手型 + 行高亮,配合首列「裁决 ▶」操作列,双保险。
 _AUDIT_CSS = """
-#audit-queue tbody tr, #task-queue tbody tr { cursor: pointer; }
+/* 同步曲线卡片(2026-08-07 三轮反馈后定稿):一行一张(两列会把图压瘦)、
+   卡片之间大间距、内部留白充足;点图在新标签页开原图(gradio 的全屏按钮
+   在本环境不生效,用户实测)。 */
+.sync-cards { display:flex; flex-direction:column; gap:22px; margin:14px 0 8px; }
+/* 卡片整块居中(2026-08-07 用户最终定:靠左"还是不好看");内部曲线在左、诊断框在右 */
+.sync-card { background:#fff; border:1px solid #e8ecf1; border-radius:14px;
+             padding:6px 18px 14px; box-shadow:0 1px 3px rgba(15,23,42,.05);
+             transition:box-shadow .18s ease, border-color .18s ease;
+             max-width:1240px; width:100%; margin:0 auto; }
+.sync-card-body { display:flex; gap:18px; align-items:flex-start; }
+.sync-figure { flex:1 1 auto; min-width:0; display:block; }
+/* 诊断框:定宽不参与压缩,窄屏时整块掉到图下面(flex-wrap 由 body 的换行控制) */
+.sync-diag { flex:0 0 316px; align-self:stretch; border-left:1px solid #eef2f7;
+             padding:2px 0 0 16px; font:12px/1.65 system-ui; color:#334155; }
+.sync-diag-title { font-weight:800; color:#0f172a; font-size:.86rem;
+                   margin:2px 0 8px; }
+.sync-diag-row { padding:8px 0; border-bottom:1px dashed #eef2f7; }
+.sync-diag-row:last-of-type { border-bottom:none; }
+.sync-diag-head { display:flex; align-items:center; gap:7px; }
+.sync-dot { width:8px; height:8px; border-radius:50%; flex:0 0 8px; }
+.sync-diag-lag { margin-left:auto; font:600 .78rem ui-monospace,Menlo,monospace;
+                 color:#475569; }
+.sync-diag-label { font-weight:700; font-size:.78rem; margin:3px 0 2px; }
+.sync-diag-text { color:#475569; }
+.sync-diag-advice { color:#64748b; margin-top:4px; font-style:italic; }
+.sync-diag-foot { margin-top:10px; padding-top:9px; border-top:1px solid #eef2f7;
+                  color:#64748b; font-size:.78rem; }
+@media (max-width:1100px) {
+    .sync-card-body { flex-direction:column; }
+    .sync-diag { flex:1 1 auto; border-left:none; padding:10px 0 0;
+                 border-top:1px solid #eef2f7; }
+}
+.sync-card:hover { box-shadow:0 8px 26px rgba(15,23,42,.09); border-color:#dbe3ec; }
+.sync-card-head { display:flex; align-items:center; gap:12px; padding:12px 0 12px 12px;
+                  margin-bottom:6px; border-bottom:1px solid #f1f5f9; }
+.sync-eid { font:700 .95rem ui-monospace,Menlo,monospace; color:#0f172a; }
+.sync-badge { font:600 .82rem system-ui; }
+.sync-open { margin-left:auto; font:.8rem system-ui; color:#64748b !important;
+             text-decoration:none; border:1px solid #e2e8f0; border-radius:7px;
+             padding:3px 11px; }
+.sync-open:hover { color:#0f172a !important; border-color:#cbd5e1; background:#f8fafc; }
+.sync-img { width:100%; display:block; border-radius:8px; cursor:zoom-in; }
+/* 页内灯箱(纯 CSS):checkbox 选中 → 全屏遮罩显大图;点遮罩(同一 label)即关闭。
+   ⚠️ 祖先若带 transform 会把 position:fixed 变成相对它定位——.sync-card 的
+   hover 效果因此只动阴影不动 transform,别加回来。 */
+.sync-lb-toggle { display:none; }
+.sync-lb { display:none; position:fixed; inset:0; z-index:1000;
+           background:rgba(15,23,42,.86); padding:2.5vh 2.5vw;
+           align-items:center; justify-content:center; cursor:zoom-out; }
+.sync-lb img { max-width:96vw; max-height:95vh; width:auto; height:auto;
+               border-radius:10px; background:#fff; box-shadow:0 24px 80px rgba(0,0,0,.45); }
+.sync-lb-toggle:checked + .sync-lb { display:flex; }
+
+#audit-queue tbody tr, #task-queue tbody tr, #ep-table tbody tr { cursor: pointer; }
 #audit-queue tbody tr:hover td,
-#task-queue tbody tr:hover td { background: rgba(255, 140, 0, 0.10) !important; }
+#task-queue tbody tr:hover td,
+#ep-table tbody tr:hover td { background: rgba(255, 140, 0, 0.10) !important; }
 """
 
 def presentation(terminal: bool = False) -> dict:
@@ -213,19 +272,32 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
     if not choices:
         raise SystemExit(f"目录里找不到交付(无 passed.json):{delivery}")
 
+    def _ep_vids(m, eid):
+        """Episodes 页的视频槽:有几路给几路,一路没有就全隐藏。
+
+        与裁决卡片的 _vids 不同——那边是"必须留个占位不然卡片塌掉",这边绝大多数
+        episode 本来就没切片(只有分歧条目才切),留三个空框子是噪声。
+        """
+        clips = audit_clip_paths(m, eid) if (m and eid) else []
+        return [gr.update(value=(clips[i] if i < len(clips) else None),
+                          visible=i < len(clips)) for i in range(3)]
+
     def _detail(m, eid):
+        """选中 episode → 判决卡 / 检查表 / 逐相机同步 / 证据帧 / 同步曲线 / 切片。
+
+        ⚠️ 证据**分家**(2026-08-07 重做的核心):证据帧走多列画廊,同步曲线走
+        独立的整幅宽度组件。此前两者混在一个 4 列画廊里,超宽的曲线长图被压进
+        四分之一格 → 必然糊成一条,这就是"显示很差"的根因。返回顺序 = _ep_outs。
+        """
         if not m or not eid:
-            return "", [], []
+            return (episode_card_html(m or {}, ""), "", "", [],
+                    gr.update(value=None, visible=False), *_ep_vids(m, None))
         ep = m["episodes"].get(eid) or {}
-        md = [f"### {eid} — {ep.get('verdict', '?')}"]
-        if ep.get("reject_reason"):
-            md.append(f"**拒绝原因**:{ep['reject_reason']}")
-        for chk, why in (ep.get("abstain_reasons") or {}).items():
-            md.append(f"**{chk} 弃权**:{why}")
         gallery = [(f, os.path.basename(f)) for f in ep.get("evidence") or []]
-        if ep.get("plot"):
-            gallery.append((ep["plot"], "同步曲线"))
-        return "\n\n".join(md), check_rows(m, eid), gallery
+        plot = ep.get("plot")
+        return (episode_card_html(m, eid), check_table_html(m, eid),
+                sync_camera_html(m, eid), gallery,
+                gr.update(value=plot, visible=bool(plot)), *_ep_vids(m, eid))
 
     def _detail_table_md(m, name):
         if not m or not name:
@@ -293,9 +365,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         return (idx, f"第 {idx + 1} / {len(q)} 条", info, readings,
                 *_vids(m, t.get("id", "")), *_tv_btns(v.get("verdict")))
 
+    def _sync_view(m, mode, page):
+        """同步曲线页的一屏(装配顺序 = _sy_outs)。分页/筛选逻辑全在 manifest。"""
+        v = sync_view(m or {}, mode or SYNC_FILTER_ALL, page or 0)
+        # items = [(路径, 标题)];逐槽位填充,多出来的槽位隐藏(不留空框)
+        multi = gr.update(visible=v["pages"] > 1)
+        return v["page"], v["note"], v["pos"], multi, multi, v["cards"]
+
     def _load(path):
         m = load_delivery(path)
-        eids = sorted(m["episodes"].keys())
+        eids = filter_episode_ids(m, EPISODE_FILTER_ALL)
         first = eids[0] if eids else None
         tables = list_detail_tables(m)
         t_first = tables[0] if tables else None
@@ -306,7 +385,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
         return (m, overview_markdown(m), funnel_rows(m), _config_yaml(m),
-                episode_rows(m), gr.update(choices=eids, value=first),
+                # 筛选档随交付切换复位:留在「只看被拒」而新交付一条都没被拒,
+                # 看到的是空表 + 一个还亮着的筛选器,等于骗人
+                gr.update(value=EPISODE_FILTER_ALL), episode_rows(m),
+                gr.update(choices=eids, value=first),
                 skill_bar_html(m), skill_rows(m), audit_note_md(m),
                 # 两块裁决面板都从第 0 条重新起(换交付不复位 = 停在上一份交付的
                 # 条目上,按钮状态还是旧的,实测踩过)
@@ -316,6 +398,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 gr.update(choices=[DETAIL_LABELS[t] for t in tables],
                           value=(DETAIL_LABELS[t_first] if t_first else None)),
                 note0, gr.update(value=r0, headers=h0),
+                # 同步曲线页:筛选与页码一起复位(理由同上)
+                gr.update(value=SYNC_FILTER_ALL),
+                *_sync_view(m, SYNC_FILTER_ALL, 0),
+                sync_conclusion_html(m), sync_health_html(m),
                 tl_note0, timeline_html(tl),
                 perf_backend_md(perf), perf_env_md(perf), LATENCY_NOTE,
                 latency_rows(perf), latency_bar_html(perf))
@@ -351,13 +437,32 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 with gr.Accordion("本次运行生效配置(config_effective)", open=False):
                     ov_cfg = gr.Code(language="yaml")
 
+            # ── Episodes 页(2026-08-07 重做被拒展示):判决卡在最上(被拒条目
+            #    第一眼要看到"谁毙的、为什么"),证据帧与同步曲线**分开的两个组件**
+            #    (混排就是"显示很差"的根因,见 _detail 的注释)。
             with gr.Tab("Episodes"):
-                ep_table = gr.Dataframe(headers=EPISODE_HEADERS, label="全部 episode",
-                                        interactive=False)
+                ep_filter = gr.Radio(EPISODE_FILTERS, value=EPISODE_FILTER_ALL,
+                                     label="列表筛选",
+                                     info="被拒条目是重点工作对象:切到「只看被拒」"
+                                          "下方列表与详情下拉都只剩它们")
+                ep_table = gr.Dataframe(headers=EPISODE_HEADERS,
+                                        label="episode 列表(点任意一行 → 下方详情跳到该条)",
+                                        interactive=False, elem_id="ep-table",
+                                        max_height=420)
                 ep_pick = gr.Dropdown(label="查看单条详情", interactive=True)
-                ep_md = gr.Markdown()
-                ep_checks = gr.Dataframe(headers=CHECK_HEADERS, label="各维检查", interactive=False)
-                ep_gallery = gr.Gallery(label="证据(probe 帧 + 同步曲线)", columns=4, height=320)
+                ep_card = gr.HTML()
+                ep_checks = gr.HTML()
+                ep_sync = gr.HTML()
+                ep_gallery = gr.Gallery(label="证据帧(任务判定探针抽的帧;点开放大)",
+                                        columns=4, height=320)
+                # 同步曲线单独占一整幅宽度:它是超宽长图,进画廊格子必糊
+                ep_plot = gr.Image(label="同步曲线(整幅宽度;右上角可全屏放大)",
+                                   visible=False, interactive=False,
+                                   buttons=["fullscreen", "download"], height=380)
+                with gr.Row():
+                    ep_vids = [gr.Video(label=f"审片切片 {i + 1}", interactive=False,
+                                        autoplay=False, visible=False, scale=1)
+                               for i in range(3)]
 
             # ── 人工裁决页(2026-08-06):把"人要做决定"的事全收到一处。
             #    此前分歧裁决藏在技能画像页底部,而任务成败弃权只能在 Episodes 页
@@ -449,6 +554,35 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 画像页是"看数据"的,裁决是"做决定"的,混在一页两边都做不好。
                 sk_audit_note = gr.Markdown()
 
+            # ── 同步曲线页(2026-08-07 新增):details/plots/<ep>_sync.png 的画廊。
+            #    与「Stuck 时间线」相邻 = 两页都是图形化诊断(一个看时间轴、一个看
+            #    相关曲线),放一起找得到。分页而不是懒加载:曲线是宽长图,一屏 24 张
+            #    已经够翻,且分页零 JS(本 UI 一贯做法)。
+            with gr.Tab("同步曲线"):
+                # 结论先行(2026-08-07 用户点名:光有图没有提示)——建议原先埋在
+                # 整页曲线之后,滚不到等于没有。现在顶部先说"这份数据同步得怎么样、
+                # 该怎么办",曲线退居证据位。
+                sy_conclusion = gr.HTML()
+                # 全库逐相机概览紧跟结论(2026-08-07 用户:"建议放到页面开头")——
+                # 它是结论的量化底稿,原先压在整页曲线之后,谁也滚不到。
+                sy_health = gr.HTML()
+                with gr.Accordion("怎么看这些图(展开)", open=False):
+                    gr.Markdown(SYNC_HOWTO)
+                sy_filter = gr.Radio(SYNC_FILTERS, value=SYNC_FILTER_ALL,
+                                     label="筛选")
+                with gr.Row():
+                    # 平铺优先:一页放得下就整排隐藏翻页件(2026-08-07 用户定),
+                    # 只有图多到一页塞不下时才露出来兜底
+                    sy_prev = gr.Button("← 上一页", scale=1, visible=False)
+                    sy_pos = gr.Markdown("")
+                    sy_next = gr.Button("下一页 →", scale=1, visible=False)
+                sy_note = gr.Markdown()
+                # 一张一行、整幅宽度(不用 Gallery:宽幅长图塞进方格必然上下留白,
+                # 中间两张图周围全是空——2026-08-07 用户实见)。固定槽位 + visible
+                # 开关,数量随分页变化;每张自带全屏/下载按钮,点开即原尺寸。
+                sy_cards = gr.HTML()
+                sy_page = gr.State(0)
+
             with gr.Tab("Stuck 时间线"):
                 gr.Markdown("每条 episode 一根彩条(0 → 结束秒),段界标秒、悬停看精确"
                             "起止;按 stuck 总时长降序 = 图形化人工复查队列")
@@ -486,7 +620,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             # ⚠️ 顺序必须与 _load 的返回值逐项对齐(错位是运行期才炸的接线错误,
             #    有测试直接比 len(_load(...)) == len(outputs) 钉住)。
-            outs = [state, ov_md, ov_funnel, ov_cfg, ep_table, ep_pick,
+            # Episodes 详情的六个槽(判决卡 / 检查表 / 逐相机同步 / 证据帧 /
+            # 同步曲线 / 三路切片):_detail 与 _ep_filter 都按这个顺序装配。
+            _ep_outs = [ep_card, ep_checks, ep_sync, ep_gallery, ep_plot, *ep_vids]
+            _sy_outs = [sy_page, sy_note, sy_pos, sy_prev, sy_next, sy_cards]
+
+            outs = [state, ov_md, ov_funnel, ov_cfg, ep_filter, ep_table, ep_pick,
                     sk_html, sk_table, sk_audit_note,
                     au_table,
                     au_idx, au_pos, au_info, au_origlab, au_newlab, au_note, *au_vids,
@@ -494,7 +633,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     tv_hint, tv_table,
                     tv_idx, tv_pos, tv_info, tv_readings, *tv_vids,
                     tv_pass, tv_fail, tv_hold,
-                    ep_md, ep_checks, ep_gallery, dt_pick, dt_note, dt_table,
+                    *_ep_outs, dt_pick, dt_note, dt_table,
+                    sy_filter, *_sy_outs, sy_conclusion, sy_health,
                     tl_note, tl_html,
                     perf_backend, perf_env, perf_note, perf_table, perf_bar]
             picker.change(_load, picker, outs)
@@ -517,7 +657,38 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 return (gr.update(choices=fresh, value=sel), *_load(sel))
 
             reload_btn.click(_reload, picker, [picker, *outs])
-            ep_pick.change(_detail, [state, ep_pick], [ep_md, ep_checks, ep_gallery])
+            ep_pick.change(_detail, [state, ep_pick], _ep_outs)
+
+            def _ep_filter_change(m, mode):
+                """筛选档变了:列表、详情下拉、详情面板一起换(下拉停在被筛掉的
+                旧 eid 上,详情就成了"看不见的那条"的读数——实测最容易骗人)。"""
+                ids = filter_episode_ids(m or {}, mode)
+                first = ids[0] if ids else None
+                return (gr.update(value=episode_rows(m or {}, mode)),
+                        gr.update(choices=ids, value=first), *_detail(m, first))
+
+            ep_filter.change(_ep_filter_change, [state, ep_filter],
+                             [ep_table, ep_pick, *_ep_outs])
+
+            def _ep_jump(m, mode, evt):
+                """点列表任意一行 → 详情跳到该条(比在下拉里翻 200 条快得多)。"""
+                ids = filter_episode_ids(m or {}, mode)
+                i = evt.index[0] if getattr(evt, "index", None) else 0
+                eid = ids[i] if i < len(ids) else None
+                return (gr.update(value=eid), *_detail(m, eid))
+
+            # 同 _au_jump:本文件开了 future annotations,字符串注解会在模块全局
+            # 被 eval(gr 是函数内导入)→ NameError,所以塞真实类对象。
+            _ep_jump.__annotations__ = {"evt": gr.SelectData}
+            ep_table.select(_ep_jump, [state, ep_filter], [ep_pick, *_ep_outs])
+
+            # ── 同步曲线页:筛选换档回第 0 页,翻页越界回绕(与裁决卡片同款) ──
+            sy_filter.change(lambda m, mode: _sync_view(m, mode, 0),
+                             [state, sy_filter], _sy_outs)
+            sy_prev.click(lambda m, mode, p: _sync_view(m, mode, (p or 0) - 1),
+                          [state, sy_filter, sy_page], _sy_outs)
+            sy_next.click(lambda m, mode, p: _sync_view(m, mode, (p or 0) + 1),
+                          [state, sy_filter, sy_page], _sy_outs)
 
             def _table_change(m, label):
                 name = {v: k for k, v in DETAIL_LABELS.items()}.get(label)

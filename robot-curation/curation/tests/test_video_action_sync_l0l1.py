@@ -8,9 +8,11 @@ import numpy as np
 import pytest
 
 from curation.core.checks.video_action_sync import (
+    camera_reading,
     global_lag,
     joint_speed,
     optical_flow_energy,
+    sync_check_result,
     timestamp_check,
 )
 from curation.tests import corrupt
@@ -70,6 +72,19 @@ def test_l1_undecidable_on_static():
     t = np.arange(n) * 0.1
     r = global_lag(np.zeros(n), t, np.zeros(n), t)
     assert r.passed is None                        # 不可判 ≠ 判坏
+    assert r.detail["code"] == "no_motion" and r.detail["trusted"] is False
+
+
+@pytest.mark.parametrize("shift", [-8, -3, 0, 3, 8])
+def test_l1_reading_is_trusted_on_clean_synthetic(shift):
+    """峰可信度判据(2026-08-07 新增)不得误伤干净信号:合成注入位移的峰又高又尖,
+    必须判 trusted——否则新判据会把所有真错位一起打成"测不准",judgement 层就瞎了。"""
+    r = global_lag(*_synthetic_pair(shift))
+    assert r.detail["trusted"] is True, r.detail
+    assert r.detail["peak_ratio"] >= 1.25 and r.detail["peak_width_s"] <= 1.0
+    rd = camera_reading(r)
+    assert rd["code"] == ("aligned" if abs(shift) <= 2 else "misaligned")
+    assert rd["trusted"] is True
 
 
 # ---------- L1 真数据(pusht + shift_video 注入) ----------
@@ -126,3 +141,38 @@ def test_l1_shift_video_detected(pusht_rows, shift):
     assert len(caught) >= 5, "可判样本过少"
     assert np.mean(caught) > 0.9, f"shift={shift} 检出率 {np.mean(caught):.0%}"
     assert np.median(errors) <= 2.0, f"shift={shift} lag 中位误差 {np.median(errors):.1f} 帧"
+
+
+@pusht_needed
+@pytest.mark.parametrize("shift", [5, 10, -5, -10])
+def test_l1_shift_video_episode_level_needs_all_cameras(pusht_rows, shift):
+    """判定层扩展(2026-08-07):**测量**照旧要检出注入位移(上一条已钉),但**判废**
+    现在只发生在"所有可信相机一致指向同一个 Δ"。
+
+    pusht 只有一路相机 → 用同一条 episode 的读数装配两种多机位场景:
+    ① 三路同时移(整库转换错行的样子)→ 必须判废;
+    ② 只有一路移、另两路干净(某一路机位/链路异常)→ 只标注该路,整条照收。
+    """
+    n, agree = 0, 0
+    for row in pusht_rows[:8]:
+        bad, _ = corrupt.shift_video(row, shift_frames=shift)
+        r_bad = camera_reading(_measure_lag(bad))
+        r_ok = camera_reading(_measure_lag(row))
+        if not r_bad["trusted"]:
+            continue                      # 这一路本来就测不准 → 不计入分母(如实报告)
+        n += 1
+        lag = float(r_bad["lag_s"])
+        # 正负不对称:正滞后有良性解释(相机链路延迟)→ 门槛 0.5s;负滞后无良性解释
+        # (数据装配错误)→ 容差量级 0.25s 即定罪。判废期望按该条实测幅度算,
+        # 不按注入帧数硬套(±2 帧的估计误差是方法固有的,已由上一条测试钉住)。
+        bar = 0.25 if lag < 0 else 0.5
+        res3 = sync_check_result({"cam0": r_bad, "cam1": dict(r_bad),
+                                  "cam2": dict(r_bad)}, 3)
+        agree += (res3.passed is False) == (abs(lag) >= bar)
+        # 只有一路移、另两路干净 → 永远只标注该路,整条照收
+        if r_ok["trusted"] and r_ok["code"] == "aligned":
+            res1 = sync_check_result({"cam0": r_bad, "cam1": r_ok, "cam2": dict(r_ok)}, 3)
+            assert res1.passed is True, f"单路异常不得判废(shift={shift})"
+            assert res1.detail["flagged_cameras"] == ["cam0"]
+    assert n >= 5, "可判样本过少"
+    assert agree == n, f"shift={shift} 三路同证的判废与幅度门槛不一致({agree}/{n})"

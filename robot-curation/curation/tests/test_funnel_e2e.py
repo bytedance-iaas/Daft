@@ -49,13 +49,20 @@ def mixed_rows():
 
 
 def _run(rows, cfg, vlm=None):
+    """→ (verdicts, stats, syncs);syncs = {episode_id: 同步检查 detail}(逐相机结构)。"""
     from curation.ingest.lerobot_reader import rows_to_daft
     from curation.pipeline.funnel import run_funnel
 
     df, stats = run_funnel(rows_to_daft(rows), cfg, EmbodimentRegistry(), vlm_completion=vlm)
-    out = df.select("episode_id", "verdict").to_pydict()
+    cols = ["episode_id", "verdict"]
+    if "check_video_action_sync" in df.column_names:
+        cols.append("check_video_action_sync")
+    out = df.select(*cols).to_pydict()
     verdicts = {e: json.loads(v) for e, v in zip(out["episode_id"], out["verdict"])}
-    return verdicts, stats
+    syncs = {e: json.loads((c or {}).get("detail") or "{}")
+             for e, c in zip(out["episode_id"],
+                             out.get("check_video_action_sync", [None] * len(verdicts)))}
+    return verdicts, stats, syncs
 
 
 class SpyVlm:
@@ -68,29 +75,61 @@ class SpyVlm:
 
 
 def test_each_disease_caught_by_its_module(mixed_rows):
+    """三种病各归各的模块。
+
+    ⚠️ 2026-08-07 逐相机改造后,同步那一条的**期望变了**(不是削弱,是改判定层):
+    pusht 是**单相机**数据集,而"单相机永不因同步判废"是用户拍板的红线(孤证不定罪,
+    droid ep4 三路读数天差地别就是教训)。所以注入的视频错位现在不该被杀,而该
+    **被如实标注**:该路读数 misaligned、进 flagged_cameras、verdict=annotated。
+    证据一点没少,只是不再凭一路孤证定罪。"""
     rows, injected = mixed_rows
     vlm = SpyVlm()
-    verdicts, stats = _run(rows, _cfg(), vlm=vlm)
+    verdicts, stats, syncs = _run(rows, _cfg(), vlm=vlm)
 
-    # 注入的 3 条:超限/丢帧在数值段被硬门 filter 掉(不在输出);错位在抽帧段被掉
+    # 超限/丢帧仍在数值段被硬门 filter 掉(不在输出)
     assert stats["input"] == 10
     assert stats["after_numeric_gates"] == 8, f"数值硬门应杀 2 条,stats={stats}"
     surviving_ids = set(verdicts)
     for ep_id, module in injected.items():
-        if module in ("kinematic_limits", "timestamp_check", "video_action_sync"):
+        if module in ("kinematic_limits", "timestamp_check"):
             assert ep_id not in surviving_ids, f"{ep_id}({module})漏网"
-    # 病灶归因唯一:错位那条应死在抽帧段(数值段幸存)
-    assert stats["survivors_for_vlm"] == 7, f"抽帧硬门应再杀 1 条,stats={stats}"
+
+    # 同步:单相机 → 不杀,但必须留下证据(测量层照旧读出错位)
+    shifted = next(e for e, m in injected.items() if m == "video_action_sync")
+    assert shifted in surviving_ids, "单相机数据集不得因同步判废(孤证不定罪)"
+    assert stats["survivors_for_vlm"] == 8, f"抽帧段不该再杀人,stats={stats}"
+    det = syncs.get(shifted, {})
+    assert det.get("n_cameras") == 1
+    cam = next(iter(det.get("per_camera") or {}), None)
+    assert cam is not None, f"同步读数缺失:{det}"
+    reading = det["per_camera"][cam]
+    if reading["trusted"]:                      # 读数可信 → 必须被标注出来
+        assert reading["code"] == "misaligned", f"注入 10 帧错位没读出来:{reading}"
+        assert det["flagged_cameras"] == [cam] and det["verdict"] == "annotated"
+    else:                                        # 读数不可信 → 如实说测不准,同样不杀
+        assert det["verdict"] in ("undecidable", "annotated")
 
     # 干净 7 条全部 keep 或至多 1 条误杀(<5% 量级的小样本宽容)
     keeps = [e for e, v in verdicts.items() if v["verdict"] == "keep"]
     assert len(keeps) >= 6, f"干净集误杀过多: {verdicts}"
 
 
+def test_sync_never_pushes_episodes_into_manual_queue(mixed_rows):
+    """红线回归:同步无论读成什么,都不得再产出 passed=None——那会把条目推进
+    review.json 的人工裁决队列(用户明确否掉)。"""
+    rows, _ = mixed_rows
+    verdicts, _stats, syncs = _run(rows, _cfg())
+    for e, v in verdicts.items():
+        assert "video_action_sync" not in v.get("undecidable", []), f"{e} 进了人工队列"
+    for e, det in syncs.items():
+        assert det.get("verdict") in ("aligned", "annotated", "undecidable",
+                                      "misaligned_all"), f"{e}: {det}"
+
+
 def test_vlm_only_runs_on_survivors(mixed_rows):
     rows, _ = mixed_rows
     vlm = SpyVlm()
-    _, stats = _run(rows, _cfg(), vlm=vlm)
+    _, stats, _syncs = _run(rows, _cfg(), vlm=vlm)
     expected = stats["survivors_for_vlm"]              # 批式协议:每幸存 episode 一次调用
     assert vlm.calls == expected, \
         f"VLM 调用 {vlm.calls} != 幸存者数 {stats['survivors_for_vlm']}(漏斗失效)"
@@ -109,7 +148,7 @@ def test_soft_gate_affects_verdict_not_filter(mixed_rows):
     rows, _ = mixed_rows
     cfg = _cfg()
     cfg["verdict"]["soft_threshold"] = 0.99            # 极端阈值逼出软分 drop
-    verdicts, _ = _run(rows[:2], cfg)
+    verdicts, _stats, _syncs = _run(rows[:2], cfg)
     assert any(v["verdict"] == "drop" and "软分" in v["reason"] for v in verdicts.values())
 
 

@@ -26,15 +26,25 @@ import pandas as pd
 
 
 def _reencode_concat(src_windows: list[dict], out_path: str, fps: float) -> list[tuple]:
-    """把多段 [from_ts,to_ts) 窗口按序重编码进一个 mp4;返回每段新 (from_ts, to_ts)。"""
+    """把多段 [from_ts,to_ts) 窗口按序重编码进一个 mp4;返回每段新 (from_ts, to_ts)。
+
+    ⚠️ 必须**先写本地临时文件再整文件拷贝**:PyAV 复用编码器时要 seek 回文件头
+    改写 moov,而 TOS 的 FSX 挂载拒绝随机写 → EINVAL(2026-08-07 so101 v3 导出
+    实锤;与 evidence._encode_mp4、pyarrow 直写 parquet 同一族)。交付目录只见顺序写。
+    """
+    import shutil
+    import tempfile
+
     import av
 
     from ..adapters.decode import decode_window
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as _tf:
+        tmp_path = _tf.name
     bounds = []
     n_written = 0
-    with av.open(out_path, "w") as out:
+    with av.open(tmp_path, "w") as out:
         stream = None
         for _wi, w in enumerate(src_windows):
             if _wi % 10 == 0 or _wi == len(src_windows) - 1:
@@ -56,6 +66,13 @@ def _reencode_concat(src_windows: list[dict], out_path: str, fps: float) -> list
         if stream is not None:
             for pkt in stream.encode():
                 out.mux(pkt)
+    try:
+        shutil.copyfile(tmp_path, out_path)     # 顺序写落交付,FSX 安全
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
     return bounds
 
 
@@ -99,8 +116,49 @@ def _to_parquet_fsx_safe(df, dst: str, **kw) -> None:
             pass
 
 
+def _write_camera_health(out_dir: str, camera_health: dict | None,
+                         keep_episode_indices: list[int]) -> None:
+    """相机流健康度旁挂 `meta/curation_camera_health.json`(2026-08-07 逐相机改造)。
+
+    为什么旁挂而不进 info.json:info.json 是 LeRobot 的**标准 schema**,官方 loader
+    与全世界的下游脚本都按它解析,往里塞自定义字段是在别人的公共契约上刻字——
+    宁可多一个文件,也不动标准。旁挂文件不认识的工具直接忽略,认识的按名字读。
+
+    内容 = 逐 episode 逐相机的标注与读数 + 数据集级建议。**不删任何视频**:
+    被标注的相机照样在数据集里,这里只是告诉客户"这一路读数可疑/需标定"。
+    交付集重编号了,故每条同时给 源 episode_id 与 新 episode_index,便于对账。
+    """
+    if not camera_health:
+        return
+    eps = camera_health.get("episodes") or {}
+    rows = []
+    for new_idx, src_idx in enumerate(keep_episode_indices):
+        src_id = f"ep{int(src_idx):06d}"
+        det = eps.get(src_id)
+        if not det:
+            continue
+        rows.append({"episode_index": new_idx, "source_episode_id": src_id,
+                     "verdict": det.get("verdict"),
+                     "flagged_cameras": det.get("flagged_cameras") or [],
+                     "consensus_lag_s": det.get("consensus_lag_s"),
+                     "per_camera": det.get("per_camera") or {}})
+    payload = {
+        "说明": ("视频-动作同步的逐相机读数与标注。lag_s > 0 = 画面晚于动作"
+                 "(相机链路延迟,常见且可标定);< 0 = 画面早于动作(无良性解释,"
+                 "疑似数据装配错误)。trusted=false 表示该路读数测不准,不构成结论。"
+                 "**本文件只标注,不代表任何相机被废弃——视频一路未删**。"),
+        "dataset": camera_health.get("dataset") or {},
+        "episodes": rows,
+    }
+    path = os.path.join(out_dir, "meta", "curation_camera_health.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=1, default=str)
+
+
 def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir: str,
-                      task_overrides: dict | None = None) -> dict:
+                      task_overrides: dict | None = None,
+                      camera_health: dict | None = None) -> dict:
     """源 v3 数据集 + 幸存 episode 序号 → out_dir 下的合法 v3 数据集。返回导出统计。
 
     task_overrides: {源 episode_index: 新任务文本}——两类来源(2026-08-06 出数据闭环):
@@ -203,6 +261,7 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
         json.dump(new_info, f, indent=2)
     shutil.copy(os.path.join(dataset_dir, "meta", "stats.json"),
                 os.path.join(out_dir, "meta", "stats.json"))
+    _write_camera_health(out_dir, camera_health, keep)
 
     return {"episodes": len(sel), "frames": int(cursor), "tasks": len(task_strings),
             "video_keys": video_keys, "out_dir": out_dir}
@@ -245,7 +304,8 @@ def _copy_v2_stats(dataset_dir: str, out_dir: str, keep: list[int]) -> None:
 
 
 def export_lerobot_v2(dataset_dir: str, keep_episode_indices: list[int], out_dir: str,
-                      task_overrides: dict | None = None) -> dict:
+                      task_overrides: dict | None = None,
+                      camera_health: dict | None = None) -> dict:
     """源 v2 数据集 + 幸存 episode 序号 → out_dir 下的合法 v2 数据集。返回导出统计。
 
     v2 每条 episode 一个 parquet + 每路相机一个 mp4,**文件边界即 episode 边界**:
@@ -353,6 +413,7 @@ def export_lerobot_v2(dataset_dir: str, keep_episode_indices: list[int], out_dir
     with open(os.path.join(out_dir, "meta", "info.json"), "w", encoding="utf-8") as f:
         json.dump(new_info, f, indent=2, ensure_ascii=False)
     _copy_v2_stats(dataset_dir, out_dir, keep)
+    _write_camera_health(out_dir, camera_health, keep)
 
     return {"episodes": len(sel), "frames": int(n_frames), "tasks": len(task_strings),
             "videos": n_videos, "video_keys": video_keys, "out_dir": out_dir}

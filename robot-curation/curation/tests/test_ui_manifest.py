@@ -1042,9 +1042,12 @@ def test_app_has_manual_decision_tab(delivery):
               "明细", "性能剖析", "后端状态"):
         assert t in cfg, t
     assert cfg.index("Episodes") < cfg.index("人工裁决") < cfg.index("技能画像")
-    for txt in ("① 标注分歧", "② 任务成败弃权", "✅ 判成功", "❌ 判失败", "⏸ 搁置",
-                "建议顺序"):
+    # 区块头 2026-08-07 改成自绘 HTML(色块序号 + 标题),不再是"① 标注分歧"这种
+    # 字面前缀 —— 断言跟着渲染实况走(此前这里钉的是旧文案,一直红着)
+    for txt in ("标注分歧", "任务成败弃权", "✅ 判成功", "❌ 判失败", "⏸ 搁置",
+                "建议工作顺序"):
         assert txt in cfg, txt
+    assert cfg.index("标注分歧") < cfg.index("任务成败弃权")
 
 
 def test_asgi_app_serves_manual_decision_tab(delivery, clean_ui_env):
@@ -1112,3 +1115,455 @@ def test_latency_union_wall_and_parity(tmp_path):
     ui = _recompute_latency(str(p))
     for tag in ("caption", "probe"):
         assert ui[tag] == pipe[tag], f"{tag}: UI 复算与管道实现不一致"
+
+
+# ───────── Episodes 页被拒展示重做 + 同步曲线页(2026-08-07)─────────
+#
+# 重做的根因(用户原话"目前的显示很差"):小尺寸证据帧与**超宽的同步曲线长图**
+# 被塞进同一个 4 列画廊,曲线被压成四分之一格必然糊掉。以下测试钉三件事:
+# ① 判决卡说清"谁毙的、为什么";② 证据帧与曲线是两个组件;
+# ③ 逐相机同步读数在**老交付缺字段时优雅降级**(这条是本轮最容易出线上事故的)。
+
+#: 数据层新契约(逐相机)。两路相机:外部相机1 被标注,腕部相机 测不准。
+SYNC_DETAIL_NEW = {
+    "verdict": "annotated",
+    "per_camera": {
+        "外部相机1": {"lag_s": 0.24, "corr_peak": 0.81, "corr_at_zero": 0.30,
+                      "peak_ratio": 2.7, "peak_width_s": 0.35, "trusted": True,
+                      "code": "lag_beyond_tol", "note": "峰值落在 0.24s,超出容差"},
+        "腕部相机": {"lag_s": None, "corr_peak": 0.11, "corr_at_zero": 0.09,
+                     "peak_ratio": 1.05, "peak_width_s": None, "trusted": False,
+                     "code": "weak_signal", "note": "相关太弱,读数不可信"}},
+    "flagged_cameras": ["外部相机1"],
+    "consensus_lag_s": None, "n_cameras": 2, "n_trusted": 1,
+    "reason": "仅 1 路可信相机报异常,不足以判废,按标注处理",
+}
+
+#: 老交付的同步 detail:只有平铺读数,没有 per_camera / verdict。
+SYNC_DETAIL_OLD = {"lag_s": 0.12, "corr_peak": 0.77}
+
+SYNC_HEALTH = {
+    "per_camera": {"外部相机1": {"n": 3, "median_lag_s": 0.22, "iqr_s": 0.04,
+                                 "n_flagged": 2},
+                   "腕部相机": {"n": 3, "median_lag_s": 0.01, "iqr_s": 0.02,
+                                "n_flagged": 0}},
+    "advice": "外部相机1 整体滞后约 0.22s,建议重新标定采集时钟",
+    "negative_lag_episodes": ["ep000002"],
+}
+
+SYNC_CHECK_CN = "视频-动作同步"          # report.py 的 CHECK_CN 里的名字
+
+
+def _with_sync(path, detail=SYNC_DETAIL_NEW, health=SYNC_HEALTH, state="pass"):
+    """给 fixture 交付的三条 episode 都挂上同步检查 + 数据集级 sync_health。
+
+    ep000001(被拒)那条额外给个 plot(fixture 里本来就有),用来测曲线页。
+    """
+    for fname, key in (("passed.json", "episodes"), ("reject.json", "episodes")):
+        p = os.path.join(path, fname)
+        with open(p, encoding="utf-8") as f:
+            doc = json.load(f)
+        for ep in (doc.get(key) or {}).values():
+            ep.setdefault("checks", {})[SYNC_CHECK_CN] = {
+                "结果": state, "detail": json.dumps(detail, ensure_ascii=False)}
+        if fname == "passed.json" and health is not None:
+            doc.setdefault("dataset", {})["sync_health"] = health
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False)
+    return load_delivery(path)
+
+
+def test_sync_camera_rows_assemble_per_camera_readings(delivery):
+    """逐相机读数:一相机一行、被标注的相机有可视标记、不可信如实写「不可信」。"""
+    from curation.ui.manifest import (SYNC_CAM_HEADERS, sync_camera_rows,
+                                      sync_detail)
+    m = _with_sync(delivery)
+    rows = sync_camera_rows(m, "ep000001")
+    assert len(rows) == 2 and len(rows[0]) == len(SYNC_CAM_HEADERS)
+    by_cam = {r[0]: r for r in rows}
+    assert by_cam["外部相机1"][1] == "⚠ 已标注"        # flagged_cameras 里的那路
+    assert by_cam["腕部相机"][1] == ""                  # 没被标注就不加噪声
+    assert by_cam["外部相机1"][2] == "0.240" and by_cam["外部相机1"][7] == "可信"
+    assert by_cam["腕部相机"][2] == "—"                 # lag_s=None → 「—」,不是 0
+    assert by_cam["腕部相机"][7] == "不可信"
+    assert "相关太弱" in by_cam["腕部相机"][8]
+    assert sync_detail(m, "ep000001")["verdict"] == "annotated"
+
+
+def test_sync_camera_html_states_the_never_discard_semantics(delivery):
+    """展示文案必须与用户拍板的语义一致:标注不判废、弃权不进裁决队列不进软分。"""
+    from curation.ui.manifest import sync_camera_html
+    m = _with_sync(delivery)
+    html = sync_camera_html(m, "ep000001")
+    assert "已标注异常(不判废)" in html
+    assert "永不废弃相机" in html
+    assert "外部相机1" in html and "腕部相机" in html
+    assert "仅 1 路可信相机报异常" in html               # reason 原样露出
+    assert "相机 2 路(可信 1 路)" in html
+    # 判废语义(仅当所有可信相机一致指向同一偏移)也要说得出口
+    m2 = _with_sync(delivery, detail={**SYNC_DETAIL_NEW, "verdict": "misaligned_all"})
+    assert "所有可信相机一致指向同一个偏移" in sync_camera_html(m2, "ep000001")
+    m3 = _with_sync(delivery, detail={**SYNC_DETAIL_NEW, "verdict": "undecidable"})
+    h3 = sync_camera_html(m3, "ep000001")
+    assert "不进人工裁决队列" in h3 and "不参与综合软分" in h3
+
+
+def test_sync_degrades_on_legacy_delivery(delivery):
+    """★红线:老交付没有 per_camera —— 一句人话降级,绝不崩、绝不假装有逐相机数据。"""
+    from curation.ui.manifest import (LEGACY_SYNC_NOTE, sync_camera_html,
+                                      sync_camera_rows, sync_detail)
+    m = _with_sync(delivery, detail=SYNC_DETAIL_OLD, health=None)
+    assert sync_camera_rows(m, "ep000001") == []
+    html = sync_camera_html(m, "ep000001")
+    assert LEGACY_SYNC_NOTE in html
+    assert "0.120" in html                       # 老读数照样摊开(有什么给什么)
+    assert "<table" not in html                  # 没有逐相机就不画空表
+    # detail 是坏字符串 / 缺 verdict 也不许炸
+    broken = _with_sync(delivery, detail={"per_camera": "不是字典"}, health=None)
+    assert sync_camera_rows(broken, "ep000001") == []
+    assert LEGACY_SYNC_NOTE in sync_camera_html(broken, "ep000001")
+    assert sync_detail(broken, "查无此条") == {}
+
+
+def test_sync_block_speaks_up_when_check_never_ran(delivery):
+    """压根没跑同步检查的条目:给一句话,不许空白(空白看起来像页面坏了)。"""
+    from curation.ui.manifest import sync_camera_html, sync_camera_rows, sync_detail
+    m = load_delivery(delivery)                  # fixture 原样,没有同步检查
+    assert sync_camera_rows(m, "ep000000") == [] and sync_detail(m, "ep000000") == {}
+    assert "没有视频-动作同步读数" in sync_camera_html(m, "ep000000")
+
+
+def test_episode_card_names_the_fatal_check(delivery):
+    """判决卡:判决 + 致命项是哪个检查 + 一句人话原因 + 综合软分,四件事都在。"""
+    from curation.ui.manifest import (episode_card_html, episode_reason_text,
+                                      episode_verdict_label, fatal_checks)
+    m = load_delivery(delivery)
+    assert fatal_checks(m, "ep000001") == ["任务成败判定"]
+    assert episode_reason_text(m, "ep000001") == "渐变问询不可判"
+    card = episode_card_html(m, "ep000001")
+    assert "⛔ 拒绝" in card and "ep000001" in card
+    assert "致命项" in card and "任务成败判定" in card
+    assert "渐变问询不可判" in card and "0.940" in card       # 软分
+    # 待裁决优先于当前判决(系统还没定论时先叫人上)
+    assert episode_verdict_label(m["episodes"]["ep000000"]) == "待裁决"
+    card0 = episode_card_html(m, "ep000000")
+    assert "⏳ 待裁决" in card0 and "待裁决项" in card0
+    assert "任务成败判定" in card0
+    # 通过条目:明说没有任何一维投拒绝
+    card2 = episode_card_html(m, "ep000002")
+    assert "✅ 通过" in card2 and "没有任何一维投拒绝" in card2
+    # 没选中 / 老交付无软分:不崩,给引导语
+    assert "选一条 episode" in episode_card_html(m, "")
+    assert "选一条 episode" in episode_card_html(m, "查无此条")
+
+
+def test_episode_card_notes_sync_abstention_is_only_an_annotation(delivery):
+    """同步测不准出现在卡片上时,必须当面写清它不进裁决队列、不进软分。"""
+    from curation.ui.manifest import episode_card_html
+    m = _with_sync(delivery, detail={**SYNC_DETAIL_NEW, "verdict": "undecidable"})
+    card = episode_card_html(m, "ep000002")
+    assert "同步测不准仅作标注" in card
+    assert "不进人工裁决队列" in card and "不参与综合软分" in card
+    # 正常同步的条目不挂这句(不该给每条都加噪声)
+    m2 = _with_sync(delivery, detail={**SYNC_DETAIL_NEW, "verdict": "aligned"})
+    assert "同步测不准" not in episode_card_html(m2, "ep000002")
+
+
+def test_check_table_html_highlights_the_rejected_dimension(delivery):
+    """逐维读数表仍来自 check_rows,但被拒的那一维整行标红(要一眼看得见)。"""
+    from curation.ui.manifest import CHECK_HEADERS, check_rows, check_table_html
+    m = load_delivery(delivery)
+    html = check_table_html(m, "ep000001")
+    for h in CHECK_HEADERS:
+        assert h in html
+    rows = check_rows(m, "ep000001")
+    assert [r[0] for r in rows] == ["任务成败判定"]
+    assert html.count("#fee2e2") == 1                    # 红底只给被拒那一行
+    assert "voc=0.87" in html
+    # 通过条目:一行红都没有
+    assert "#fee2e2" not in check_table_html(m, "ep000002")
+    assert "没有逐维检查读数" in check_table_html(m, "")   # 空态不崩
+
+
+def test_episode_filter_narrows_list_and_ids(delivery):
+    """筛选:只看被拒 / 只看待裁决 / 全部;未知档位退回全部(前端能塞任意值)。"""
+    from curation.ui.manifest import (EPISODE_FILTER_ALL, EPISODE_FILTER_PENDING,
+                                      EPISODE_FILTER_REJECTED, EPISODE_FILTERS,
+                                      episode_rows, filter_episode_ids)
+    m = load_delivery(delivery)
+    assert EPISODE_FILTERS[0] == EPISODE_FILTER_ALL       # 默认档排最前
+    assert filter_episode_ids(m) == ["ep000000", "ep000001", "ep000002"]
+    assert filter_episode_ids(m, EPISODE_FILTER_REJECTED) == ["ep000001"]
+    assert filter_episode_ids(m, EPISODE_FILTER_PENDING) == ["ep000000"]
+    assert filter_episode_ids(m, "乱传的档位") == filter_episode_ids(m)
+    rows = episode_rows(m, EPISODE_FILTER_REJECTED)
+    assert [r[0] for r in rows] == ["ep000001"] and rows[0][1] == "拒绝"
+    assert len(episode_rows(m)) == 3                      # 默认参数行为不变
+
+
+def test_sync_view_gallery_items_carry_episode_and_badge(delivery):
+    """曲线页:每张的标题 = episode 号 + 同步判定徽章;只看有标注/异常可筛。"""
+    from curation.ui.manifest import (SYNC_FILTER_ALL, SYNC_FILTER_FLAGGED,
+                                      sync_plot_items, sync_view)
+    m = _with_sync(delivery)                    # fixture 只有 ep000001 有曲线图
+    items = sync_plot_items(m)
+    assert [it["id"] for it in items] == ["ep000001"]
+    assert items[0]["path"].endswith("ep000001_sync.png")
+    v = sync_view(m, SYNC_FILTER_ALL, 0)
+    assert v["items"] == [(items[0]["path"], "ep000001 · 已标注异常(不判废)")]
+    assert "共 **1** 张曲线" in v["note"] and v["pos"] == ""      # 一页不显示页码
+    # aligned 且无标注相机 → 不算"有标注/异常",筛选后为空并给出指路
+    clean = _with_sync(delivery, detail={"verdict": "aligned", "per_camera": {},
+                                         "flagged_cameras": []})
+    assert sync_plot_items(clean, SYNC_FILTER_FLAGGED) == []
+    assert "切到「全部」" in sync_view(clean, SYNC_FILTER_FLAGGED, 0)["note"]
+    assert sync_view(clean, SYNC_FILTER_ALL, 0)["items"][0][1] == "ep000001 · 同步正常"
+
+
+def test_sync_view_pages_and_wraps(delivery):
+    """图多时分页撑住:每页 page_size 张,页码越界回绕(与裁决卡片同款)。"""
+    from curation.ui.manifest import SYNC_FILTER_ALL, sync_view
+    plots = os.path.join(delivery, "details", "plots")
+    for eid in ("ep000000", "ep000002"):        # ep000001 的图 fixture 里已有 → 共 3 张
+        with open(os.path.join(plots, f"{eid}_sync.png"), "wb") as f:
+            f.write(b"\x89PNGfake")
+    m = _with_sync(delivery)
+    v = sync_view(m, SYNC_FILTER_ALL, 0, page_size=1)
+    assert v["pages"] == 3 and len(v["items"]) == 1 and v["pos"] == "第 1 / 3 页"
+    assert sync_view(m, SYNC_FILTER_ALL, 2, page_size=1)["page"] == 2
+    assert sync_view(m, SYNC_FILTER_ALL, 3, page_size=1)["page"] == 0    # 回绕
+    assert sync_view(m, SYNC_FILTER_ALL, -1, page_size=1)["page"] == 2
+    ids = [c.split(" · ")[0] for _, c in sync_view(m, SYNC_FILTER_ALL, 1,
+                                                   page_size=1)["items"]]
+    assert ids == ["ep000001"]                            # 按 id 升序切页
+
+
+def test_sync_view_empty_state_points_at_the_switch(tmp_path):
+    """交付里没有 plots → 一句友好说明,并点名 pipeline.sync_plots 开关。"""
+    from curation.ui.manifest import NO_PLOTS_NOTE, sync_view
+    d = tmp_path / "noplots"
+    d.mkdir()
+    (d / "passed.json").write_text(json.dumps(
+        {"数据集": "x", "episodes": {"ep0": {"判决": "通过", "checks": {}}}},
+        ensure_ascii=False), encoding="utf-8")
+    v = sync_view(load_delivery(str(d)))
+    assert v["items"] == [] and v["pages"] == 1
+    assert v["note"] == NO_PLOTS_NOTE
+    assert "pipeline.sync_plots" in NO_PLOTS_NOTE
+    for mode in ("flagged", "all", "off"):
+        assert f"`{mode}`" in NO_PLOTS_NOTE
+
+
+def test_sync_health_block_and_legacy_degradation(delivery):
+    """数据集级 lag 分布 + 建议露出一处;老交付整块降级成一句话,不崩。"""
+    from curation.ui.manifest import (LEGACY_SYNC_NOTE, SYNC_HEALTH_HEADERS,
+                                      sync_health_html, sync_health_rows)
+    m = _with_sync(delivery)
+    rows = sync_health_rows(m)
+    assert [r[0] for r in rows] == ["外部相机1", "腕部相机"]
+    # 列序:相机/有效读数/典型滞后/逐条波动/疑似错位/测不准/已标注
+    assert rows[0][1] == 3 and rows[0][2] == "0.220" and rows[0][-1] == 2
+    assert len(rows[0]) == len(SYNC_HEALTH_HEADERS)
+    assert "四分位距" not in " ".join(SYNC_HEALTH_HEADERS)   # 统计黑话不进界面
+    html = sync_health_html(m)
+    for h in SYNC_HEALTH_HEADERS:
+        assert h in html
+    assert "建议:外部相机1 整体滞后约 0.22s" in html          # advice 原样
+    assert "负滞后" in html and "ep000002" in html
+    # 老交付(无 sync_health):一句降级说明,不画空表
+    old = _with_sync(delivery, health=None)
+    old["dataset"].pop("sync_health", None)
+    h2 = sync_health_html(old)
+    assert LEGACY_SYNC_NOTE in h2 and "<table" not in h2
+    assert sync_health_rows(old) == []
+    assert sync_health_rows({"dataset": {"sync_health": {"per_camera": "坏结构"}}}) == []
+
+
+def test_app_has_sync_curve_tab_and_split_evidence(delivery):
+    """Gradio 层:新增「同步曲线」页(挨着 Stuck 时间线),且 Episodes 页的
+    证据帧画廊与同步曲线是**两个组件**——混排正是"显示很差"的根因。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = _config_text(build_app(_with_sync(delivery)["path"]))
+    for t in ("漏斗总览", "Episodes", "人工裁决", "技能画像", "同步曲线",
+              "Stuck 时间线", "明细", "性能剖析", "后端状态"):
+        assert t in cfg, t
+    # 「同步曲线」四个字在 Episodes 页的曲线组件标题里就出现过 → 页签定位用该页
+    # 独有的筛选器文案(否则这条断言量的是 Episodes 页,永远不会红)
+    assert (cfg.index("技能画像") < cfg.index("只看有标注/异常的")
+            < cfg.index("Stuck 时间线"))
+    assert "证据帧" in cfg and "只看被拒" in cfg
+    # 老画廊标题("证据(probe 帧 + 同步曲线)")必须绝迹:那就是混排的证据
+    assert "probe 帧 + 同步曲线" not in cfg
+    # 曲线走独立的 Image 组件(整幅宽度),不再是画廊里的一格
+    assert '"name": "image"' in cfg or '"type": "image"' in cfg
+
+
+def test_asgi_app_serves_sync_curve_tab(delivery, clean_ui_env):
+    """整页起得来,「同步曲线」页签文案真出现在首页 HTML 里。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    app = create_asgi_app(_with_sync(delivery)["path"], terminal=False)
+    with TestClient(app) as c:
+        r = c.get("/")
+        assert r.status_code == 200
+        assert "同步曲线" in r.text and "只看被拒" in r.text
+
+
+def test_app_load_returns_match_outputs_after_rework(delivery):
+    """接线闸门:_load 的返回数 = outputs 组件数(错位是运行期才炸的接线错误)。
+
+    本轮 Episodes 页与同步曲线页新增了一批输出槽,这条断言是它们的唯一保险。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    app = build_app(_with_sync(delivery)["path"])
+    loads = [f for f in app.fns.values() if getattr(f.fn, "__name__", "") == "_load"]
+    assert loads
+    for f in loads:
+        assert len(f.fn(delivery)) == len(f.outputs)
+
+
+def _sync_ep(verdict, flagged=(), state="pass"):
+    import json
+    return {"checks": {"视频-动作同步": {"结果": state, "detail": json.dumps(
+        {"verdict": verdict, "per_camera": {}, "flagged_cameras": list(flagged),
+         "n_cameras": 3, "n_trusted": 2, "reason": ""}, ensure_ascii=False)}},
+        "plot": "/x/p.png"}
+
+
+def test_sync_conclusion_states():
+    """结论横幅四态:全绿 / 有标注 / 测不准 / 负滞后告警。用户点名:光有图没有提示。"""
+    from curation.ui.manifest import sync_conclusion
+    ok = sync_conclusion({"episodes": {"e1": _sync_ep("aligned")}, "dataset": {}})
+    assert ok["level"] == "ok" and "未发现" in ok["title"]
+    assert any("可直接用于" in p for p in ok["points"])
+
+    flag = sync_conclusion({"episodes": {"e1": _sync_ep("annotated", ["cam_a"])},
+                            "dataset": {}})
+    assert flag["level"] == "notice"
+    assert any("视频一路没删" in p for p in flag["points"]), "必须讲明不删相机"
+
+    und = sync_conclusion({"episodes": {"e1": _sync_ep("undecidable")}, "dataset": {}})
+    assert any("不是" in p and "质量问题" in p for p in und["points"])
+
+    neg = sync_conclusion({"episodes": {"e1": _sync_ep("aligned")},
+                           "dataset": {"sync_health": {
+                               "negative_lag_episodes": ["ep000001"]}}})
+    assert neg["level"] == "attention"
+    assert any("装配" in p for p in neg["points"]), "负滞后要指向装配环节"
+
+
+def test_sync_conclusion_html_escapes_and_bolds():
+    from curation.ui.manifest import sync_conclusion_html
+    html = sync_conclusion_html({"episodes": {}, "dataset": {
+        "sync_health": {"advice": "全库中位滞后 <0.1s>"}}})
+    assert "&lt;0.1s&gt;" in html, "文案未转义"
+    assert "<b>" in html and "<ul" in html
+
+
+def test_sync_diag_panel_names_cause_and_survives_legacy():
+    """每张曲线右侧的诊断框:说病因、给建议;老交付无 diagnosis 时退回 note 不崩。"""
+    from curation.ui.manifest import _diag_rows, sync_cards_html, sync_diag_html
+
+    detail = {"per_camera": {
+        "ext1": {"lag_s": 0.6, "trusted": False, "code": "ambiguous_peak",
+                 "diagnosis": {"cause": "false_peak", "label": "测不准 · 画面干扰",
+                               "text": "峰赢不过 0", "advice": "固定相机"}},
+        "wrist": {"lag_s": 0.0, "trusted": True, "code": "aligned",
+                  "diagnosis": {"cause": "aligned", "label": "对齐",
+                                "text": "峰落在 0 附近", "advice": ""}},
+    }}
+    rows = _diag_rows(detail)
+    assert [r["cam"] for r in rows] == ["ext1", "wrist"]
+    assert rows[0]["lag"] == "+0.60s" and rows[0]["label"] == "测不准 · 画面干扰"
+    assert rows[0]["color"] != rows[1]["color"]       # 病因不同,圆点不同色
+    html = sync_diag_html(rows)
+    assert "画面干扰" in html and "固定相机" in html and "对齐" in html
+
+    # 老交付:没有 diagnosis 字段 → 用 note 兜底,不抛
+    legacy = {"per_camera": {"cam": {"lag_s": None, "trusted": False,
+                                     "note": "旧版本读数"}}}
+    assert "旧版本读数" in sync_diag_html(_diag_rows(legacy))
+    assert _diag_rows({}) == [] and sync_diag_html([]) == ""
+
+    # 诊断框必须真的进卡片 HTML,且在图片之后(视觉上位于右侧)
+    card = sync_cards_html([{"id": "ep000004", "path": "/tmp/x.png", "badge": "同步正常",
+                             "color": "#166534", "flagged": False,
+                             "cameras": rows, "reason": "1/3 路可信相机全部对齐"}])
+    assert "sync-diag" in card and "画面干扰" in card
+    assert card.index("sync-img") < card.index("sync-diag-title")
+
+
+def test_sync_filter_catches_diagnosed_but_aligned_episode():
+    """整条判 aligned、可某一路被诊断出毛病的,必须进「只看标注/异常的」。
+
+    2026-08-07 用户在 ep4 上问"应不应该放进去"——应该:结论没问题不等于没有
+    值得复查的东西,那一路的峰肉眼可见地偏了,正是他第一个想点开看的条目。
+    """
+    from curation.ui.manifest import (SYNC_FILTER_FLAGGED, sync_plot_items)
+
+    def _ep(detail):
+        return {"plot": "/tmp/p.png",
+                "checks": {"视频-动作同步": {"state": "pass", "detail": detail}}}
+
+    m = {"episodes": {
+        "ep000000": _ep({"verdict": "aligned", "per_camera": {}}),
+        "ep000004": _ep({"verdict": "aligned", "per_camera": {},
+                         "noisy_cameras": ["ext1"]}),
+        "ep000005": _ep({"verdict": "aligned", "per_camera": {},
+                         "suspect_cameras": ["ext2"]}),
+    }}
+    got = [it["id"] for it in sync_plot_items(m, SYNC_FILTER_FLAGGED)]
+    assert got == ["ep000004", "ep000005"]          # 干净的那条不进
+    assert len(sync_plot_items(m, "全部")) == 3
+
+
+def test_sync_coverage_note_explains_partial_plotting():
+    """只给问题条目画图时,「全部」必须说破 = 全部**已出图**,不是全部 episode。"""
+    from curation.ui.manifest import sync_coverage_note, sync_view
+
+    def _ep(has_plot):
+        e = {"checks": {"视频-动作同步": {"state": "pass",
+                                          "detail": {"verdict": "aligned"}}}}
+        if has_plot:
+            e["plot"] = "/tmp/p.png"
+        return e
+
+    m = {"config_effective": {"pipeline": {"sync_plots": "flagged"}},
+         "episodes": {f"ep{i:06d}": _ep(i < 2) for i in range(7)}}
+    note = sync_coverage_note(m, 2)
+    assert "7 条" in note and "2 条有图" in note and "sync_plots=all" in note
+    assert note in sync_view(m, "全部")["note"]
+
+    # 全画了 → 不啰嗦
+    m2 = {"config_effective": {"pipeline": {"sync_plots": "all"}},
+          "episodes": {f"ep{i:06d}": _ep(True) for i in range(3)}}
+    assert sync_coverage_note(m2, 3) == ""
+    assert "只为需要留意的条目" not in sync_view(m2, "全部")["note"]
+
+
+def test_sync_banner_wording_matches_the_actual_diagnosis():
+    """横幅不许自相矛盾:假峰不是"被标注异常"(2026-08-07 实见标题说正常、
+    条目说有异常)。三种成因各有各的措辞与级别。"""
+    from curation.ui.manifest import sync_conclusion
+
+    def _m(detail):
+        return {"episodes": {"ep0": {"plot": "/tmp/p.png", "checks": {
+            "视频-动作同步": {"state": "pass", "detail": detail}}}}}
+
+    noisy = sync_conclusion(_m({"verdict": "aligned", "noisy_cameras": ["c"]}))
+    assert noisy["level"] == "ok" and "假峰" in " ".join(noisy["points"])
+    assert "测不准" in noisy["title"] and "标注异常" not in noisy["title"]
+
+    flagged = sync_conclusion(_m({"verdict": "annotated", "flagged_cameras": ["c"]}))
+    assert flagged["level"] == "notice" and "标注异常" in flagged["title"]
+
+    suspect = sync_conclusion(_m({"verdict": "annotated", "suspect_cameras": ["c"]}))
+    assert suspect["level"] == "notice" and "疑似错位" in suspect["title"]
+
+    clean = sync_conclusion(_m({"verdict": "aligned"}))
+    assert clean["level"] == "ok" and clean["title"].startswith("同步正常")
+    assert "假峰" not in " ".join(clean["points"])
