@@ -25,18 +25,28 @@ from curation.core.checks.video_action_sync import (  # noqa: F401
 
 
 def _cam(lag=None, code="aligned", trusted=True, corr=0.8, ratio=4.0, width=0.3,
-         zero=None):
+         zero=None, at_edge=False, vis=None):
     """构造一条 per_camera 读数(测量层的产物形状,判定层只认这个)。
 
     zero(零滞后处的相关)默认等于峰值;要构造"峰真的赢了 0"的情形必须显式传低值——
     这个差额正是「假峰」与「疑似错位」的分水岭(见 camera_diagnosis)。
+    at_edge:峰顶是否贴在 ±max_lag_s 扫描窗的边界格点上(噪声曲线的典型归宿)。
+    vis:可见性度量(不传 = 老交付那种没有探针数据的读数,连键都不该有)。
     """
     r = {"lag_s": lag, "corr_peak": corr,
          "corr_at_zero": corr if zero is None else zero,
-         "peak_ratio": ratio, "peak_width_s": width,
+         "peak_ratio": ratio, "peak_width_s": width, "at_scan_edge": at_edge,
          "trusted": trusted, "code": code, "note": ""}
+    if vis is not None:
+        r["visibility"] = vis
     r["diagnosis"] = camera_diagnosis(r)
     return r
+
+
+def _vis(blind=0.3, head=0.0, vis_lag=0.0, vis_corr=0.6, vis_n=100, rev=0.0):
+    return {"blind_frac": blind, "rev_blind_frac": rev, "head_blind_s": head,
+            "vis_lag_s": vis_lag, "vis_corr": vis_corr, "vis_corr0": vis_corr,
+            "vis_n": vis_n}
 
 
 def _mis(lag, **kw):
@@ -174,7 +184,10 @@ def test_droid_ep4_paper_replay_is_not_killed():
     assert "假峰" in r.detail["reason"] and "0.60" not in r.detail["reason"]
     diag = per_cam["exterior_image_1"]["diagnosis"]
     assert diag["cause"] == "false_peak"
-    assert "赢不过 0" in diag["text"] and "0.33" in diag["text"]
+    # 锚点挂在**语义**上不挂修辞:两个数都要摆出来、都要说"错开和不错开一样像"
+    # (2026-08-11 用户点名文案"AI 味太重"后重写,原文"峰赢不过 0"已废)
+    assert "0.44" in diag["text"] and "0.33" in diag["text"]
+    assert "相似度" in diag["text"] and "不错开" in diag["text"]
     assert diag["advice"]                          # 必须给出怎么办
 
 
@@ -192,6 +205,203 @@ def test_real_misalignment_still_called_suspect_when_zero_loses():
     assert det["suspect_cameras"] == ["ext"] and det["noisy_cameras"] == []
     assert det["verdict"] == "annotated"
     assert per_cam["ext"]["diagnosis"]["cause"] == "blurry_motion"
+
+
+def test_droid_ep20_weak_signal_camera_is_not_called_suspect():
+    """droid-200-full ep000020 的 exterior_image_2_left:corr 0.203(低于 0.3 判读门)、
+    lag −2.0s 恰好落在 ±2.0s 扫描窗的边界、corr0 0.177。
+
+    2026-08-11 用户在这条上指出:系统把一个**入画晚/覆盖不足**的相机判成了错位。
+    同一个条目两种口径 —— 逐相机诊断写"测不准 · 信号弱",小节标题却喊"疑似错位"。
+    病根:相关只有 0.20 时"零滞后站不站得住"是句废话,这一路的 lag 本身就是噪声,
+    它作不出「疑似错位」小节前言承诺的那句断言(峰偏离 0 **且**零滞后已站不住)。
+    修法:suspect 准入只留 blurry_motion / rival_lags(它们已过"零点可弃"检验),
+    信号弱照旧只进 abstained。另两路可信对齐 → 整条 aligned,不是 annotated。
+    """
+    per_cam = {
+        "exterior_image_1_left": _ali(0.02, corr=0.55, ratio=3.0, width=0.4),
+        "exterior_image_2_left": _cam(lag=-2.0, code="low_corr", trusted=False,
+                                      corr=0.203, zero=0.177, ratio=1.6, width=0.6,
+                                      at_edge=True),
+        "wrist_image_left": _ali(0.00, corr=0.78, ratio=8.0, width=0.2),
+    }
+    det = sync_check_result(per_cam, 3).detail
+    assert per_cam["exterior_image_2_left"]["diagnosis"]["cause"] == "weak_signal"
+    assert det["suspect_cameras"] == []                       # ← 不许扣错位的帽子
+    assert det["abstained_cameras"] == ["exterior_image_2_left"]   # 但测不准仍立账
+    assert det["verdict"] == "aligned"
+    assert "疑似错位" not in det["reason"]
+
+
+def test_scan_edge_peak_never_carries_a_misalignment_claim():
+    """扫描窗边缘防御:同样是"峰宽超标 + 大 lag"的一路,峰落在窗内才够格叫疑似错位;
+    峰顶贴在 ±max_lag_s 的边界格点上 = 曲线一路爬到边界被截断,是噪声的典型归宿。
+
+    这是 2026-08-11 那次修正的第二道保险(病因收窄之外再加一道),对 blurry_motion /
+    rival_lags 同样生效 —— 否则 droid ep20 那种边界读数换个病因又会溜回 suspect。
+    """
+    inside = {"ext": _cam(lag=0.70, code="flat_peak", trusted=False,
+                          corr=0.75, zero=0.20, ratio=1.1, width=1.4),
+              "wrist": _ali(0.00)}
+    assert sync_verdict(inside, 2)["suspect_cameras"] == ["ext"]
+    assert inside["ext"]["diagnosis"]["cause"] == "blurry_motion"
+
+    at_edge = {"ext": _cam(lag=2.0, code="flat_peak", trusted=False,
+                           corr=0.75, zero=0.20, ratio=1.1, width=1.4, at_edge=True),
+               "wrist": _ali(0.00)}
+    det = sync_verdict(at_edge, 2)
+    assert at_edge["ext"]["diagnosis"]["cause"] == "blurry_motion"   # 病因不变
+    assert det["suspect_cameras"] == [] and det["abstained_cameras"] == ["ext"]
+    assert det["verdict"] == "aligned"
+
+
+def test_false_peak_only_prints_causes_it_actually_measured():
+    """病因不许罗列着印 —— 每一句成因都得有本条实测数据撑着。
+
+    2026-08-11 用户在 droid ep000013 上点名:那条被印了一句"背景有人走动",
+    可它实测的反向盲段(臂不动而画面在动)只有 0.055 —— 纯属栽赃,客户照着
+    改环境是白改。三种形态各钉一条:只有几何证据 / 只有背景证据 / 一条都没有。
+    """
+    # ① ep13 形状:正向盲段 0.134 过线、反向盲段 0.055 不过线 → 只说沿光轴,不提背景
+    geo = _cam(lag=0.6, code="ambiguous_peak", trusted=False, corr=0.44, zero=0.35,
+               ratio=1.7, width=1.1,
+               vis=_vis(blind=0.134, rev=0.055, vis_lag=-0.27, vis_corr=0.5))["diagnosis"]
+    assert geo["cause"] == "false_peak"
+    assert "沿光轴" in geo["text"] and "13%" in geo["text"]
+    assert "背景" not in geo["text"]
+    assert "改善机位" in geo["advice"] and "改善环境" not in geo["advice"]
+
+    # ② 反向盲段 0.4:臂不动画面还在动 —— 这才配说背景有人走动
+    bg = _cam(lag=0.6, code="ambiguous_peak", trusted=False, corr=0.44, zero=0.35,
+              ratio=1.7, width=1.1,
+              vis=_vis(blind=0.02, rev=0.4, vis_lag=-0.27, vis_corr=0.5))["diagnosis"]
+    assert "背景有人走动" in bg["text"] and "40%" in bg["text"]
+    assert "沿光轴" not in bg["text"]
+    assert "改善环境" in bg["advice"] and "改善机位" not in bg["advice"]
+
+    # ③ 两条证据都没有(以及老读数根本没有 visibility)→ 老实说没定位到,不瞎猜
+    for cam in (_cam(lag=0.6, code="ambiguous_peak", trusted=False, corr=0.44,
+                     zero=0.35, ratio=1.7, width=1.1,
+                     vis=_vis(blind=0.02, rev=0.05, vis_lag=-0.27, vis_corr=0.5)),
+                _cam(lag=0.6, code="ambiguous_peak", trusted=False, corr=0.44,
+                     zero=0.35, ratio=1.7, width=1.1)):
+        d = cam["diagnosis"]
+        assert d["cause"] == "false_peak"
+        assert "未能定位具体来源" in d["text"]
+        assert "沿光轴" not in d["text"] and "背景" not in d["text"]
+
+
+def test_diagnosis_text_speaks_plain_language():
+    """诊断文字直接进报告和 UI 给客户看 —— 互相关行话一个都不许漏出去
+    (2026-08-11 用户:"AI 味太重")。这条把六种病因的文案一起钉住。"""
+    cams = [
+        _ali(0.02), _mis(0.9),
+        _cam(lag=0.6, trusted=False, code="ambiguous_peak", corr=0.44, zero=0.35,
+             ratio=1.7, width=1.1),
+        _cam(lag=0.7, trusted=False, code="flat_peak", corr=0.75, zero=0.2,
+             ratio=1.5, width=1.4),
+        _cam(lag=0.6, trusted=False, code="ambiguous_peak", corr=0.7, zero=0.2,
+             ratio=1.02, width=0.5),
+        _cam(lag=0.6, trusted=False, code="low_corr", corr=0.25, zero=0.1),
+        _cam(lag=-2.0, trusted=False, code="low_corr", corr=0.2, zero=0.18,
+             vis=_vis(blind=0.27, head=2.2, vis_corr=0.62, vis_n=75)),
+        _cam(code="no_motion", trusted=False),
+    ]
+    # "正滞后/负滞后"是保留的说法(错位 advice 里解释相机链路延迟用),不在禁词里
+    banned = ("corr", "峰", "互相关", "主峰", "次峰", "赢不过")
+    for cam in cams:
+        d = cam["diagnosis"]
+        for word in banned:
+            assert word not in d["text"], (d["cause"], word, d["text"])
+            assert word not in d["advice"], (d["cause"], word, d["advice"])
+
+
+def test_droid_ep20_gets_a_positive_diagnosis_not_just_an_abstention():
+    """同一条 ep000020/exterior_2,这次要求的不是"别喊错位",而是**说对是什么病**。
+
+    真实读数(2026-08-11 pod 实测):全程 corr 0.203 / lag −2.0s / corr0 0.177,
+    而可见性探针说:盲段占 27%、开头 2.2s 光流静默但臂在动、可见窗 75 样本内
+    corr 0.62 @ 0.00s。全程统计被开头那段"臂还没进画面"整个淹没了——
+    只报"信号弱"等于把原因藏起来,能解释就别喊弱。
+    """
+    cam = _cam(lag=-2.0, code="low_corr", trusted=False, corr=0.203, zero=0.177,
+               ratio=1.6, width=0.6, at_edge=True,
+               vis=_vis(blind=0.2674, head=2.2, vis_lag=0.0, vis_corr=0.6225,
+                        vis_n=75))
+    d = cam["diagnosis"]
+    assert d["cause"] == "partial_visibility" and d["label"] == "测不准 · 覆盖不足"
+    assert "尚未进入画面" in d["text"] and "2.2s" in d["text"]
+    assert "不是错位" in d["text"] and "0.62" in d["text"]
+    assert "完整覆盖任务全程" in d["advice"]
+
+
+def test_partial_visibility_wording_without_a_head_blind_span():
+    """盲段不在开头(中途出画/遮挡)→ 不许硬说"尚未进入画面",改说运动时段占比。"""
+    d = _cam(lag=0.9, code="low_corr", trusted=False, corr=0.22, zero=0.18,
+             vis=_vis(blind=0.35, head=0.0, vis_corr=0.55))["diagnosis"]
+    assert d["cause"] == "partial_visibility"
+    assert "35%" in d["text"] and "运动时段" in d["text"]
+    assert "尚未进入画面" not in d["text"]
+
+
+def test_droid_ep13_geometry_case_is_not_mistaken_for_coverage():
+    """锚点反例:ep000013 的 exterior_2 盲段占比 0.263 已过门槛,但它的**可见段自己
+    也偏**(vis_lag −0.27s)—— 那是投影几何把曲线拧歪,不是相机没拍到。
+
+    "可见段必须对齐"这一条就是为拦住这类病例设的:少了它,覆盖不足会变成一顶
+    比"疑似错位"更能唬人的新帽子(它还自带一句"是机位覆盖问题")。
+    """
+    d = _cam(lag=0.6, code="ambiguous_peak", trusted=False, corr=0.44, zero=0.35,
+             ratio=1.7, width=1.1,
+             vis=_vis(blind=0.263, head=0.0, vis_lag=-0.27, vis_corr=0.5))["diagnosis"]
+    assert d["cause"] == "false_peak"
+
+
+def test_visible_window_must_speak_clearly_enough():
+    """可见段相关 0.30 < 0.40:漏拍是真的,但拍到的部分自己都没说清楚 →
+    只能报信号弱,不许升格成"覆盖不足"(那句"与动作对齐"会变成没有支撑的断言)。"""
+    d = _cam(lag=0.6, code="low_corr", trusted=False, corr=0.25, zero=0.1,
+             vis=_vis(blind=0.5, vis_corr=0.3))["diagnosis"]
+    assert d["cause"] == "weak_signal"
+
+
+def test_partial_visibility_camera_abstains_and_is_never_suspect():
+    """判定层零改动的回归:覆盖不足的病因不在 suspect 准入名单里 → 大 lag 也只进
+    abstained;其余相机可信对齐时整条仍是 aligned。"""
+    per_cam = {
+        "ext1": _ali(0.02, corr=0.55, ratio=3.0, width=0.4),
+        "ext2": _cam(lag=-2.0, code="low_corr", trusted=False, corr=0.203,
+                     zero=0.177, vis=_vis(blind=0.27, head=2.2, vis_corr=0.62,
+                                          vis_n=75)),
+        "wrist": _ali(0.00, corr=0.78, ratio=8.0, width=0.2),
+    }
+    det = sync_check_result(per_cam, 3).detail
+    assert per_cam["ext2"]["diagnosis"]["cause"] == "partial_visibility"
+    assert det["suspect_cameras"] == [] and det["noisy_cameras"] == []
+    assert det["abstained_cameras"] == ["ext2"] and det["verdict"] == "aligned"
+
+
+def test_old_reading_without_visibility_key_still_diagnosed():
+    """老交付读数没有 visibility 键(2026-08-11 才加):不许炸,也不许因为"没数据"
+    就顺手扣一个覆盖不足——证据不足就走原来的病因链。"""
+    cam = _cam(lag=0.6, code="low_corr", trusted=False, corr=0.25, zero=0.1)
+    assert "visibility" not in cam
+    assert cam["diagnosis"]["cause"] == "weak_signal"
+    # 探针跑了但没算出数(可见窗太窄)也一样:键在、值是 None → 不下诊断
+    blank = _cam(lag=0.6, code="low_corr", trusted=False, corr=0.25, zero=0.1,
+                 vis={"blind_frac": 0.9, "head_blind_s": None, "vis_lag_s": None,
+                      "vis_corr": None, "vis_corr0": None, "vis_n": None})
+    assert blank["diagnosis"]["cause"] == "weak_signal"
+
+
+def test_old_reading_without_scan_edge_key_still_works():
+    """老交付的 per_camera 读数没有 at_scan_edge 键(2026-08-11 才加),回放不许炸,
+    且行为与"不在边界"一致 —— 否则历史交付重新渲染时结论会莫名其妙翻掉。"""
+    cam = _cam(lag=0.70, code="flat_peak", trusted=False,
+               corr=0.75, zero=0.20, ratio=1.1, width=1.4)
+    cam.pop("at_scan_edge")
+    det = sync_verdict({"ext": cam, "wrist": _ali(0.00)}, 2)
+    assert det["suspect_cameras"] == ["ext"]
 
 
 def test_diagnosis_names_the_cause_not_a_generic_label():
@@ -328,6 +538,62 @@ def test_peak_width_catches_flat_hill():
     assert width > 1.0 and ratio >= 1.25           # 峰宽判据抓,比值判据不重复定罪
 
 
+def _vis_pair(n=300, head=100, shift=0, seed=5):
+    """合成"开头 head 个样本臂在动、画面却没动静,其后画面跟上"的一对曲线。
+
+    活跃段抬了个底,好让静默判据的边界正好落在 head 上(否则头段长度随机数说了算,
+    断言就只能写得很松,测出来的东西也就跟着松)。shift = 尾段相对动作平移的样本数。
+    """
+    a = _active(n + 40, seed=seed)
+    a = a + 0.35 * float(a.max())
+    t = np.arange(n) * 0.1
+    speed = a[20:20 + n]
+    flow = np.zeros(n)
+    flow[head:] = a[20 + shift:20 + shift + n][head:]
+    return flow, t, speed, t
+
+
+def test_visibility_probe_measures_blind_span_and_visible_window():
+    """可见性度量的三种形态:头盲+尾段对齐 / 尾段整体平移 / 全程都拍到。
+
+    这是「覆盖不足」正诊断的全部证据来源,度量错了后面整条链都是错的。
+    """
+    vis = global_lag(*_vis_pair(head=100)).detail["visibility"]
+    assert vis["head_blind_s"] == pytest.approx(10.0, abs=0.15)  # 100 样本 × 0.1s
+    assert vis["blind_frac"] >= 0.2                              # 头段全是"臂动画面不动"
+    assert vis["vis_n"] == 200                                   # 可见窗 = 其后整段
+    assert vis["vis_lag_s"] == pytest.approx(0.0, abs=0.1)       # 拍到的部分对得上
+    assert vis["vis_corr"] >= 0.8
+
+    # 尾段整体平移:漏拍照旧,但"拍到的部分"自己就是偏的 → 不该被叫覆盖不足
+    off = global_lag(*_vis_pair(head=100, shift=5)).detail["visibility"]
+    assert abs(off["vis_lag_s"]) == pytest.approx(0.5, abs=0.15)
+
+    # 全程都拍到:盲段为 0,头盲为 0(开机静止段两边都静,不算"没拍到")
+    full = global_lag(*_vis_pair(head=0)).detail["visibility"]
+    assert full["blind_frac"] == pytest.approx(0.0, abs=0.02)
+    assert full["head_blind_s"] == 0.0
+
+
+def test_visibility_probe_does_not_recurse():
+    """探针内部会再调一次 global_lag —— 守卫参数必须让那一次不再探针,
+    否则每层切一刀就是一次无限递归(切片越切越短,报错会伪装成"信号过短")。"""
+    inner = global_lag(*_vis_pair(head=100), _probe_visibility=False).detail
+    assert "visibility" not in inner
+
+
+def test_scan_edge_flag_is_measured_not_guessed():
+    """测量层如实记录"峰是不是贴着扫描窗边界":真峰在窗内 → False;把窗收窄到真峰
+    之外,argmax 只能停在边界格点 → True。判定层靠这个标志把噪声读数挡在 suspect 外。
+    """
+    rng = np.random.default_rng(1)
+    base = np.clip(np.convolve(rng.normal(0, 1, 400), np.ones(12) / 12, "same"), 0, None)
+    t = np.arange(300) * 0.1
+    flow, speed = base[42:342] + rng.normal(0, .02, 300), base[50:350]
+    assert global_lag(flow, t, speed, t).detail["at_scan_edge"] is False
+    assert global_lag(flow, t, speed, t, max_lag_s=0.4).detail["at_scan_edge"] is True
+
+
 def test_sharp_peak_is_trusted():
     lags = np.linspace(-2, 2, 161)
     xc = _gauss(lags, 0.0, 0.12, 0.80)
@@ -430,6 +696,9 @@ _CONTRACT_TOP = {"verdict", "per_camera", "flagged_cameras", "suspect_cameras",
                  "n_cameras", "n_trusted", "reason"}
 _CONTRACT_CAM = {"lag_s", "corr_peak", "corr_at_zero", "peak_ratio", "peak_width_s",
                  "trusted", "code", "note", "diagnosis"}
+#: 2026-08-11 之后新增的键:新读数一定有,老交付一定没有 → 只能是可选,
+#: 契约检查两头都要放行(必需集一个不能少,多出来的只准是这些)
+_CONTRACT_CAM_OPT = {"at_scan_edge", "visibility"}
 _CONTRACT_VERDICTS = {"aligned", "misaligned_all", "annotated", "undecidable"}
 _CONTRACT_CODES = {"aligned", "misaligned", "ambiguous_peak", "flat_peak",
                    "low_corr", "no_motion"}
@@ -441,7 +710,7 @@ def test_detail_matches_ui_contract():
     assert set(det) == _CONTRACT_TOP
     assert det["verdict"] in _CONTRACT_VERDICTS
     for r in det["per_camera"].values():
-        assert set(r) == _CONTRACT_CAM
+        assert _CONTRACT_CAM <= set(r) <= _CONTRACT_CAM | _CONTRACT_CAM_OPT
         assert r["code"] in _CONTRACT_CODES
     assert isinstance(det["flagged_cameras"], list)
     assert isinstance(det["n_cameras"], int) and isinstance(det["n_trusted"], int)
@@ -465,9 +734,13 @@ def test_camera_reading_only_emits_contract_codes():
                                 np.arange(300) * .1, base[50:350], np.arange(300) * .1))
     for r in cases:
         rd = camera_reading(r)
-        assert set(rd) == _CONTRACT_CAM
+        assert _CONTRACT_CAM <= set(rd) <= _CONTRACT_CAM | _CONTRACT_CAM_OPT
         assert rd["code"] in _CONTRACT_CODES, rd
         assert isinstance(rd["trusted"], bool) and isinstance(rd["note"], str)
+        assert isinstance(rd["at_scan_edge"], bool)
+        # note 和诊断一样会出现在 UI 的逐相机表里 → 同样不许带互相关行话
+        for word in ("corr", "峰", "互相关", "std"):
+            assert word not in rd["note"], (rd["code"], word, rd["note"])
 
 
 def test_check_display_name_is_pinned():
