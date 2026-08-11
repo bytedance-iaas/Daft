@@ -43,6 +43,136 @@ def build_report(
     }
 
 
+def container_findings(input_format: str, info: dict, robot: dict,
+                       rrd_fps_arg: float | None = None) -> list[dict]:
+    """数据包(容器)完整性体检:文件里带没带管线要用的元信息。
+
+    检的不是数据内容,是容器本身 —— 源数据里本来有、转换/打包时丢了的字段
+    (2026-08-10 同事转的 rrd 三样全丢:robot_type / fps / 任务文本),现在的
+    存在形式是启动时刷一行提示,跑完就没了。报错管拦路,报告管留痕:缺了什么、
+    我们按什么补救的、哪些检查因此受影响,客户和转换方都要能从报告里看到。
+
+    返回 [{"项", "状态", "说明"}];状态 ∈ 正常 / 缺失(已补) / 缺失(已溯源补全)
+    / 降级 / 缺失。「已溯源补全」= 属性里带了原始数据集路径,缺的元数据从源头
+    meta 自动读回(2026-08-10 用户定的三级降级:内嵌/自带 → 溯源 → 人工 → 缺失,
+    只补空缺不覆盖)。LeRobot 输入一切正常时返回 [](info.json 本来就是它的标配,
+    不占版面);RRD 输入永远返回四项 —— "正常"也值得写,因为它是逐数据集变化的。
+    """
+    out: list[dict] = []
+    registry_hit = robot.get("registry_profile") not in (None, "", "(未注册)")
+    emb = str(robot.get("embodiment_id") or "")
+    if input_format == "rrd":
+        rt_src = str(info.get("robot_type_source") or "")
+        file_rt = str(info.get("robot_type_file") or "")
+        if registry_hit and emb != "unknown":
+            if rt_src == "embedded":
+                out.append({"项": "机器人型号", "状态": "正常",
+                            "说明": f"文件属性内嵌 robot_type={emb},规格类检查全自动。"})
+            elif rt_src == "provenance":
+                out.append({"项": "机器人型号", "状态": "缺失(已溯源补全)",
+                            "说明": f"RRD 文件不带 robot_type;已从溯源到的原始数据集"
+                                    f"读回 robot_type={emb},规格类检查照常执行。"})
+            else:                      # flag(或来源信号缺失的老数据):人工指定
+                note = ""
+                if file_rt and file_rt != emb:
+                    note = (f" ⚠️ 但文件派生的型号是 {file_rt},与人工指定不一致 —— "
+                            "已按人工指定为准,请核实哪个才对。")
+                out.append({"项": "机器人型号", "状态": "缺失(已补)",
+                            "说明": f"RRD 文件不带 robot_type 字段;已按 --embodiment "
+                                    f"{emb} 人工指定,规格类检查(关节/速度极限)"
+                                    f"照常执行。{note}"})
+        elif emb and emb != "unknown":
+            out.append({"项": "机器人型号", "状态": "缺失",
+                        "说明": f"型号 {emb} 不在规格库,运动学极限对照按弃权处理。"})
+        else:
+            out.append({"项": "机器人型号", "状态": "缺失",
+                        "说明": "RRD 文件不带 robot_type 字段,又无溯源信息、未指定 "
+                                "--embodiment,运动学极限检查无规格可查。重跑时加 "
+                                "--embodiment <型号>(如 so101),或 "
+                                "--skip kinematic_limits 明确跳过。"})
+        ts = str(info.get("time_source") or "")
+        if ts == "video_timestamps":
+            out.append({"项": "帧时间信息", "状态": "正常",
+                        "说明": "视频帧自带时间戳(VideoFrameReference),时间轴全自动。"})
+        elif ts == "properties":
+            out.append({"项": "帧时间信息", "状态": "正常",
+                        "说明": f"录制属性带 fps={info.get('fps')},按恒定帧率换算时间轴。"})
+        elif ts == "provenance":
+            out.append({"项": "帧时间信息", "状态": "缺失(已溯源补全)",
+                        "说明": f"文件内没有时间信息;已从溯源到的原始数据集读回 "
+                                f"fps={info.get('fps')},按恒定帧率换算时间轴。"})
+        else:
+            _fps = rrd_fps_arg if rrd_fps_arg else info.get("fps")
+            out.append({"项": "帧时间信息", "状态": "缺失(已补)",
+                        "说明": f"文件内没有任何时间信息,已按人工指定的 "
+                                f"ingest.rrd_fps={_fps} 换算时间轴。该值若与真实采集"
+                                "帧率不符,时序/同步类结论会整体失真 —— 请核对。"})
+        task_src = str(info.get("task_source") or "")
+        if not task_src and info.get("has_task_text"):
+            task_src = "task_channel"        # 老信号兼容:只知道"有",按通道自带算
+        if task_src == "task_channel":
+            out.append({"项": "任务文本", "状态": "正常",
+                        "说明": "/task 通道带任务描述,按有标注数据处理。"})
+        elif task_src == "embedded":
+            out.append({"项": "任务文本", "状态": "正常",
+                        "说明": "任务描述内嵌在文件属性里,按有标注数据处理。"})
+        elif task_src == "provenance":
+            out.append({"项": "任务文本", "状态": "缺失(已溯源补全)",
+                        "说明": "RRD 里没有任务文本;已按属性里的源 episode 序号从"
+                                "原始数据集逐条读回,按有标注数据处理。"})
+        else:
+            name = str(info.get("recording_name") or "")
+            hint = (f"录制名「{name}」里疑似混有任务描述,但这不是稳定约定,未采用;"
+                    if name else "")
+            out.append({"项": "任务文本", "状态": "缺失",
+                        "说明": f"RRD 里没有 /task 通道;{hint}"
+                                "按无标注数据处理(任务意图走自产描述补标线)。"})
+        prov = info.get("provenance") or {}
+        if prov.get("source") and prov.get("reachable"):
+            out.append({"项": "溯源信息", "状态": "正常",
+                        "说明": f"属性带原始数据集路径 {prov['source']},可访问 —— "
+                                "缺失元数据可自动回源补全。"})
+        elif prov.get("source"):
+            out.append({"项": "溯源信息", "状态": "降级",
+                        "说明": f"属性带原始数据集路径 {prov['source']},但当前环境"
+                                "访问不到 —— 无法用于补全,按各项实际缺失处理。"})
+        else:
+            out.append({"项": "溯源信息", "状态": "缺失",
+                        "说明": "属性里没有原始数据集路径。建议转换时写入 "
+                                "source_dataset 与 source_episode_index(各一行),"
+                                "此后缺失元数据即可自动回源补全。"})
+    else:
+        rt = str(robot.get("robot_type") or "unknown")
+        if rt == "unknown":
+            out.append({"项": "机器人型号", "状态": "缺失",
+                        "说明": "info.json 未声明 robot_type,运动学极限检查无规格可查;"
+                                "可用 --embodiment <型号> 指定。"})
+        elif not registry_hit:
+            out.append({"项": "机器人型号", "状态": "降级",
+                        "说明": f"型号 {rt} 不在规格库,运动学极限对照按弃权处理"
+                                "(不误杀也不放行);需要支持请提供该机器人的关节规格。"})
+    return out
+
+
+def _container_lines(d: dict) -> list:
+    """「数据包完整性」小节。有 findings 才出,LeRobot 全正常时整节不占位。"""
+    cont = d.get("container")
+    if not isinstance(cont, dict) or not cont.get("findings"):
+        return []
+    _fmt = {"rrd": "RRD(rerun)", "lerobot": "LeRobot"}.get(
+        str(cont.get("format")), str(cont.get("format")))
+    icon = {"正常": "✅ ", "缺失(已补)": "⚠️ ", "缺失(已溯源补全)": "✅ ",
+            "降级": "⚠️ ", "缺失": "❌ "}
+    out = [f"## 数据包完整性({_fmt} 输入)",
+           "> 体检的是数据包本身带没带管线需要的元信息,不是数据内容。"
+           "缺失但已人工补上的项,请核对补的值是否与实际相符。"]
+    for f in cont["findings"]:
+        out.append(f"- **{f.get('项')}** · {icon.get(str(f.get('状态')), '')}"
+                   f"{f.get('状态')} —— {f.get('说明')}")
+    out.append("")
+    return out
+
+
 def _sync_plot_coverage(d: dict, report: dict) -> list:
     """曲线画了哪些 —— 覆盖范围必须写明。
 
@@ -137,6 +267,8 @@ def to_markdown(report: dict) -> str:
         # 前提(如 bridge 的 state 由 action 累加合成 → stuck 只能弃权)。有才出这行
         *([f"- **数据集注记**: {d['dataset_note']}"] if d.get("dataset_note") else []),
         "",
+        # 数据包完整性(2026-08-10):容器缺了什么、按什么补的,放在读任何数字之前
+        *_container_lines(d),
         "## 总览",
         f"- 输入 episode:{d['input_episodes']}",
         f"- 硬门拦截(漏斗中途淘汰):{d['hard_gate_filtered']}",
@@ -144,6 +276,9 @@ def to_markdown(report: dict) -> str:
         f"- 精确去重删除:{d['dedup_removed']}"
         + (f"({d['dedup_note']})" if d.get("dedup_note") else ""),
         f"- **交付:{d['delivered']} 条**",
+        # 交付数据集目录(2026-08-10 RRD 出口):同一份报告要能答"数据在哪个目录、
+        # 什么格式"。有才出这行(--report-only 与老交付都没有,不占位)。
+        *([f"- 交付数据集:{d['交付数据集']}"] if d.get("交付数据集") else []),
         "",
     ]
     ss = d.get("summary_stats")

@@ -11,7 +11,7 @@
    "判不了",再问一次只会得到同样的弃权,人说了算。
     判成功 → 出待裁决队列,判决改「通过(人工裁决)」,成败检查落 pass;
     判失败 → 三边摘除进 reject,并随现有同步机制从 episodes_parquet /
-             lerobot_curated 里剔除(裁决只改报告 = 交出去还是脏数据);
+             lerobot_curated / rrd_curated 里剔除(裁决只改报告 = 交出去还是脏数据);
     搁置   → 只记一笔,队列保留(等更多信息)。
 
   三件套原地更新 + report.md 追加小节 + details/rejudge_results.json 留档。
@@ -19,6 +19,10 @@
 架构:apply_decisions() / apply_task_verdicts() 是**纯数据函数**(只操作已加载的
 JSON dict,可严格单测);重判本体注入(rerun_fn),生产由 run_rejudge 组装真 VLM,
 测试注入假函数——与 task_success 的依赖注入同一哲学。
+
+输入格式(P5,2026-08-10):重判要回源重读画面,而源可能是 LeRobot 也可能是 RRD。
+读这一步走 `_episode_row_reader` 的嗅探分派(与 run.py 同一套),重判本体
+(解码→多视角→终态复核)对格式一无所知。
 """
 from __future__ import annotations
 
@@ -216,7 +220,21 @@ def apply_task_verdicts(passed: dict, review: dict, reject: dict,
 def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 rerun_fn: Callable | None = None) -> dict:
     """读裁决 → 重判(采纳条目)→ 更新交付。rerun_fn 注入(测试用假函数);
-    生产缺省 = _build_rerun(cfg)(多视角 v7.3 全协议,与漏斗同源构件)。"""
+    生产缺省 = _build_rerun(cfg)(多视角 v7.3 全协议,与漏斗同源构件)。
+
+    收尾必清 RRD 的临时视频缓存(P5):RRD 输入的重判要把 .rrd 里的视频字节解成
+    本地 mp4,一条几十 MB 躺在容器可写层;rejudge 是可以被反复调用的命令,不清就是
+    每裁决一轮涨一批(与 run 的 finally 同一道纪律)。LeRobot 输入下这是空操作。
+    """
+    try:
+        return _run_rejudge(delivery, input_dir, cfg, rerun_fn)
+    finally:
+        from ..ingest.rrd_reader import cleanup_video_cache
+        cleanup_video_cache(input_dir)
+
+
+def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
+                 rerun_fn: Callable | None = None) -> dict:
     from ..dataset_level.decisions import (load_label_decisions,
                                            load_task_verdicts)
 
@@ -447,6 +465,31 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                                           task_overrides=ov, camera_health=_ch)
                         print(f"[rejudge] lerobot_curated 已重导出(v2 纯拷贝):"
                               f"{len(keep_idx)} 条,任务覆写 {len(ov)} 条", flush=True)
+                # RRD 包同步(2026-08-10):交付里有 rrd_curated ⇒ 输入是 RRD 源。
+                # 重导出同样便宜(通过条目=字节拷贝,改标条目只重写 /task),没有
+                # 理由留给用户手动。同样以同步后的 parquet 为唯一事实源。
+                # (P5:重判本体已格式无关 —— 见 _episode_row_reader,RRD 输入的
+                #  "采纳改标 → 用新标注重跑成败判定"与 LeRobot 走同一条路。)
+                rrd_curated = os.path.join(delivery, "rrd_curated")
+                if os.path.isdir(rrd_curated):
+                    from ..export.rrd_writer import export_rrd_curated
+                    keep_eids = [r["episode_id"] for r in out_rows]
+                    rrd_ov = {r["episode_id"]: r["instruction"] for r in out_rows
+                              if r.get("instruction_source") not in (None, "", "原始标注")
+                              and str(r.get("instruction") or "").strip()}
+                    rrd_eps = {r["episode_id"]: {
+                        "verdict": "通过",
+                        "instruction": r.get("instruction") or "",
+                        "instruction_source": r.get("instruction_source") or "",
+                    } for r in out_rows}
+                    _sh.rmtree(rrd_curated)
+                    export_rrd_curated(
+                        delivery, input_dir, keep_eids, relabels=rrd_ov,
+                        episodes=rrd_eps,
+                        generated_at=datetime.datetime.now().strftime(
+                            "%Y-%m-%d %H:%M:%S"))
+                    print(f"[rejudge] rrd_curated 已重导出:{len(keep_eids)} 条,"
+                          f"改标 {len(rrd_ov)} 条", flush=True)
         except Exception as e:  # noqa: BLE001  数据集同步失败不吞掉裁决结果
             print(f"[rejudge] ⚠️ 交付数据集同步失败({type(e).__name__}: {e});"
                   f"三件套已更新,episodes_parquet 仍是旧标注", flush=True)
@@ -498,6 +541,43 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
     return summary
 
 
+def _episode_row_reader(input_dir: str, cfg: dict) -> Callable:
+    """"按 episode 号回源重读行"的**格式无关**分派(与 run.py 的输入嗅探同一套)。
+
+    重判必须回源:新标注要配着重新解码的画面一起问 VLM,交付里没有画面。而源可能是
+    LeRobot 也可能是 RRD —— 这里只换"谁来读",返回的函数签名统一为
+    `f(input_dir, episode_indices=..., validate=...) -> rows`,重判本体一个字不用改。
+
+    RRD 的 fps 走与原 run 同一个配置键 `ingest.rrd_fps`(rejudge 的 --config 应与原
+    run 一致);数据里自带时间戳(bridge 那种)时该键留空也读得出来。
+    """
+    from ..ingest.rrd_reader import is_rrd_dataset
+
+    if not is_rrd_dataset(input_dir):
+        from ..ingest.lerobot_reader import read_lerobot_rows
+        return read_lerobot_rows
+
+    from functools import partial
+
+    from ..ingest.lerobot_reader import NotADatasetError
+    from ..ingest.rrd_reader import read_rrd_rows
+
+    base = partial(read_rrd_rows, fps=(cfg.get("ingest") or {}).get("rrd_fps"))
+
+    def read(dataset_dir: str, **kw):
+        try:
+            return base(dataset_dir, **kw)
+        except NotADatasetError as e:
+            # reader 只知道"没有时间信息",给的出路是 run 的 `--set`;rejudge 没有
+            # 这个参数,不补一句的话用户会照抄一条跑不通的命令。
+            raise NotADatasetError(
+                f"{e}\n  ⚠️ rejudge 的 RRD 输入需在配置里给 ingest.rrd_fps"
+                "(与原 run 一致):在 --config 的 YAML 里写 `ingest:\\n  rrd_fps: 30`"
+            ) from e
+
+    return read
+
+
 def _build_rerun(cfg: dict) -> Callable:
     """生产重判器:与漏斗同源的构件组装(多视角联合打分 + 逐机位投票复核)。
 
@@ -506,7 +586,6 @@ def _build_rerun(cfg: dict) -> Callable:
     from ..adapters.decode import decode_window
     from ..adapters.vlm_client import make_endstate_voter, vlm_completion_from_config
     from ..core.checks.task_success import endstate_review, task_success
-    from ..ingest.lerobot_reader import read_lerobot_rows
 
     pcfg = cfg.get("pipeline", {})
     interval = pcfg.get("frame_sample_interval_s", 0.5)
@@ -520,8 +599,11 @@ def _build_rerun(cfg: dict) -> Callable:
                                 api_key_env=vcfg.get("api_key_env"))
 
     def rerun(input_dir: str, episode_id: str, new_label: str) -> dict:
-        rows = read_lerobot_rows(input_dir, episode_indices={int(episode_id[2:])},
-                                 validate=True)
+        # 嗅探放在这里而不是 _build_rerun 顶上:input_dir 是逐次调用才给的参数
+        # (同一个重判器可以喂不同数据集),而嗅探本身只是一次 glob,便宜。
+        read_rows = _episode_row_reader(input_dir, cfg)
+        rows = read_rows(input_dir, episode_indices={int(episode_id[2:])},
+                         validate=True)
         row = next(r for r in rows if r["episode_id"] == episode_id)
         cam_frames = {}
         for cam in sorted(row["video"])[:max_cams]:
