@@ -92,6 +92,11 @@ def optical_flow_energy(frames: list[np.ndarray], max_side: int = 128) -> np.nda
     frames: 按时间序的帧列表(HxWx3 uint8 或 HxW 灰度)。返回长度 len(frames)-1 的能量数组
     (每个值 = 该帧对光流向量模长的均值)。光流贵 → 超过 max_side 先等比降分辨率。
     对应关节速度曲线做互相关即得 video-action lag(L1,P3.4 装配)。
+
+    ⚠️ 定案(2026-08-11):**不要给这里加亮度归一化**。Farneback 对全局亮度变化
+    天然免疫——合成实验:静止纹理场景 +19% 增益的光流能量 0.012,仅为真实 2px
+    平移(2.003)的 0.6%,纯偏置则完全为零;droid ep13 实测逐帧减均值后三路
+    读数纹丝不动。画面曝光台阶不会造成假峰,归一化是零收益带风险,别再提。
     """
     import cv2  # 局部 import:core 只在用到视觉检查时才需要 opencv
 
@@ -214,6 +219,82 @@ def peak_metrics(xc: np.ndarray, lags_s: np.ndarray, k: int, *,
     return round(ratio, 4), round(width, 4)
 
 
+#: 「覆盖不足 / 入画晚」的判据(2026-08-11 在 droid-200-full 全库空跑校准,阈值不是拍的):
+#: 122 路未可信读数里命中 10 路(8%,刻意保守),470 路可信对齐读数**零触碰**。
+#: 命中的典型:ep000020/exterior_2(开头 2.2s 臂还没进画面,可见段 corr 0.62 @ 0.00s)、
+#: ep000059/exterior_2(全程被判信号弱,可见段相关高达 0.82)。
+#: 锚点反例(必须不命中,否则就是把几何病误当覆盖病):ep000013 的两路外景——
+#: ext1 盲段占比 0.134 不够门槛;ext2 盲段 0.263 够了,但它的可见段自己也偏
+#: (vis_lag −0.27s),被"可见段必须对齐"这条挡在门外。
+_VIS_BLIND_MIN = 0.2       # 盲段占比:臂速活跃**且**光流静默的样本 ÷ 臂速活跃样本
+_VIS_MIN_SAMPLES = 8       # 可见窗样本数下限:窗口再窄,读出来的"对齐"是碰运气
+_VIS_CORR_MIN = 0.4        # 可见窗内的相关下限:可见段自己都说不清就不该下这个诊断
+_VIS_HEAD_BLIND_S = 1.0    # 开头盲段多长才配说"尚未进入画面"(短于此只说运动时段占比)
+
+#: 病因**候选清单已废除**:诊断里每印一句成因,都必须有本条实测数据撑着(2026-08-11
+#: 用户在 ep000013 上点名:那条被印了"背景有人走动",实测反向盲段只有 0.055)。
+#: 两条证据线的阈值同样来自 droid-200-full 全库校准:
+#:   反向盲段(臂不动而画面在动)全库 600 路分布 中位 0.15 / p75 0.22 / p90 0.31,
+#:   取 p90 = "显著高于常态"才算数;本库 14 路假峰里 ≥0.3 的为 0 —— 该子句在本库
+#:   零触发,是**预期**:没有背景运动的证据就一个字都不该说。
+_REV_EVIDENCE_MIN = 0.3    # 反向盲段:高于此才敢说"背景有人走动/相机晃动"
+_BLIND_EVIDENCE_MIN = 0.1  # 正向盲段:高于此才敢说"沿光轴/透视失真"(ep13 两路 0.134/0.263)
+
+
+def _visibility_probe(flow: np.ndarray, speed_on_flow: np.ndarray, flow_t: np.ndarray,
+                      speed: np.ndarray, speed_t: np.ndarray, *,
+                      quiet_frac: float, max_lag_s: float, trim_static: bool) -> dict:
+    """全程读数之外再看一眼:这一路**到底有没有拍到**这段动作(供 camera_diagnosis)。
+
+    盲段 = 臂速活跃 **且** 光流静默的样本:臂在动而画面没动静,只有三种解释——
+    机械臂不在画面里、被挡住、或运动沿光轴。可见窗 = 光流非静默的首末样本区间,
+    对这一段单独再跑一次互相关,回答的是"拍到的那部分对不对得上"。
+    两问合起来才构成正诊断:漏了很多 **且** 拍到的部分是对齐的 = 机位覆盖问题。
+
+    ⚠️ 必须用**未剔静止段**的全程曲线:trim_static 剔的正是开头那段(那里光流静默),
+    在剔完的窗口上算盲段,入画晚的证据恰好被自己抹掉。
+    """
+    out = {"blind_frac": None, "rev_blind_frac": None, "head_blind_s": None,
+           "vis_lag_s": None, "vis_corr": None, "vis_corr0": None, "vis_n": None}
+    if len(flow) < 2 or len(flow) != len(speed_on_flow):
+        return out
+    q_flow = _quiet_mask(flow, quiet_frac)
+    q_speed = _quiet_mask(speed_on_flow, quiet_frac)
+    act, flow_act = ~q_speed, ~q_flow
+    n_act, n_flow_act = int(act.sum()), int(flow_act.sum())
+    if n_act == 0:                       # 全程臂就没动过 → 谈不上"漏拍",如实留空
+        return out
+    out["blind_frac"] = round(float((act & q_flow).sum()) / n_act, 4)
+    # 反向盲段:臂不动而画面在动 = 背景运动/相机晃动的指纹。有它才敢在诊断里
+    # 印"背景有人走动",没有就不许印(2026-08-11 用户在 ep000013 上点名:
+    # 那条的反向盲段只有 0.055,却被塞了一句"背景有人走动"——罗列式病因清单是骗人的)
+    if n_flow_act:
+        out["rev_blind_frac"] = round(float((flow_act & q_speed).sum()) / n_flow_act, 4)
+
+    head = 0
+    while head < len(q_flow) and q_flow[head]:
+        head += 1
+    dt = float(np.median(np.diff(flow_t)))
+    # 开头的静默里必须**确实有动作**才叫"臂还没进画面";两边都静=普通的开机静止段
+    out["head_blind_s"] = round(head * dt, 3) if head and act[:head].any() else 0.0
+
+    nz = np.where(~q_flow)[0]
+    if len(nz) < _VIS_MIN_SAMPLES:
+        return out
+    lo, hi = int(nz[0]), int(nz[-1]) + 1
+    if hi - lo < _VIS_MIN_SAMPLES:
+        return out
+    out["vis_n"] = hi - lo
+    # 速度轴传**原始**曲线:切片只切画面这一头,速度由内部重采样对齐,滞后语义不变
+    vd = global_lag(flow[lo:hi], flow_t[lo:hi], speed, speed_t,
+                    quiet_frac=quiet_frac, max_lag_s=max_lag_s,
+                    trim_static=trim_static, _probe_visibility=False).detail
+    out["vis_lag_s"] = vd.get("lag_s")
+    out["vis_corr"] = vd.get("corr_peak")
+    out["vis_corr0"] = vd.get("corr_at_zero")
+    return out
+
+
 def global_lag(
     flow_energy: np.ndarray,
     flow_t: np.ndarray,
@@ -234,6 +315,7 @@ def global_lag(
     min_peak_ratio: float = 1.25,  # 主峰/次高峰:低于此 = 测不准(见 peak_metrics)
     max_peak_width_s: float = 1.0,  # 峰宽上限:超过此 = 时间分辨率不足,不支撑 lag 断言
     peak_sep_s: float = 0.3,
+    _probe_visibility: bool = True,  # 递归守卫:可见窗探针内部会再调本函数,那一次必须关
 ) -> CheckResult:
     """L1:光流能量 × 关节速度 → 重采样公共轴 → scipy 互相关扫全局 lag。**单路相机**。
 
@@ -253,10 +335,13 @@ def global_lag(
     if len(f) < 8 or len(s) < 8:
         return CheckResult(name="video_action_sync", passed=None,
                            detail={"code": "short_signal", "trusted": False,
-                                   "reason": f"信号过短(flow={len(f)}, speed={len(s)})"})
+                                   "reason": f"可用样本太少(画面 {len(f)} 个、动作 {len(s)} 个),读不出结论"})
 
     # 重采样到光流时间轴(通常更稀)
     s_on_f = np.interp(ft, st, s)
+    # 可见性探针要看**未剔静止段**的全程曲线(剔除会把入画晚的证据本身抹掉),
+    # 故在裁剪前先留一份引用
+    f_full, s_full, ft_full = f, s_on_f, ft
 
     # 静止段剔除:首尾"两条曲线同时静止"的整段不进互相关(理由见 trim_static_span)
     n_raw, trimmed = len(f), 0
@@ -267,8 +352,8 @@ def global_lag(
                                detail={"code": "no_motion", "trusted": False,
                                        "n_samples": int(max(hi - lo, 0)),
                                        "n_samples_raw": n_raw,
-                                       "reason": f"剔除首尾静止段后有效样本仅 {max(hi - lo, 0)} "
-                                                 f"(原 {n_raw}),无足够运动信号可判"})
+                                       "reason": f"去掉首尾静止段后只剩 {max(hi - lo, 0)} 个样本"
+                                                 f"(原 {n_raw} 个),运动太少,读不出结论"})
         f, s_on_f, ft = f[lo:hi], s_on_f[lo:hi], ft[lo:hi]
         trimmed = n_raw - (hi - lo)
 
@@ -276,7 +361,7 @@ def global_lag(
         return CheckResult(name="video_action_sync", passed=None,
                            detail={"code": "no_motion", "trusted": False,
                                    "n_samples": len(f), "n_samples_raw": n_raw,
-                                   "reason": "静止段无信号(std≈0)"})
+                                   "reason": "整段几乎没有运动(画面与动作全程静止)"})
     zf = (f - f.mean()) / f.std()
     zs = (s_on_f - s_on_f.mean()) / s_on_f.std()
 
@@ -290,22 +375,37 @@ def global_lag(
     corr_peak = float(xc_win[k])
     corr_zero = float(xc[lags == 0][0])
     peak_ratio, peak_width_s = peak_metrics(xc_win, lags_win, k, peak_sep_s=peak_sep_s)
+    # 峰顶落在扫描窗的第一个/最后一个格点 = 曲线在窗内一路单调爬到边界被截断,
+    # 真峰很可能在窗外、也可能根本不存在。噪声曲线的最大值就爱往边界跑
+    # (droid ep20 exterior_2:corr 0.20 的噪声曲线,峰恰好在 −2.0s = 窗边)。
+    # 这种读数不配承载"疑似错位"的断言(见 sync_verdict 的 suspect 准入)。
+    at_scan_edge = bool(k == 0 or k == len(xc_win) - 1)
 
     detail = {"lag_s": round(lag_s, 4), "corr_peak": round(corr_peak, 4),
               "corr_at_zero": round(corr_zero, 4), "dt": round(dt, 4),
               "n_samples": len(zf), "n_samples_raw": n_raw, "n_trimmed_static": trimmed,
               "peak_ratio": peak_ratio, "peak_width_s": peak_width_s,
+              "at_scan_edge": at_scan_edge,
               "trusted": False}
+    # 可见性度量与判决无关(只喂诊断层),故对每一路无条件计算:同一段数据的
+    # "有没有拍到"不该随它最后被判可信与否而变。成本 = 一次窄窗互相关,
+    # 相对同一路已经付掉的 Farneback 光流可以忽略。
+    if _probe_visibility:
+        detail["visibility"] = _visibility_probe(
+            f_full, s_full, ft_full, s, st,
+            quiet_frac=quiet_frac, max_lag_s=max_lag_s, trim_static=trim_static)
     # 样本量下限(统计正当性):N 个样本的互相关标准差≈1/√N,在 ±K 个滞后点里取最大
     # 值的噪声假峰可达 (1/√N)·√(2lnK)——bridge 25样本实测假峰 lag 0.8-1.8s/corr 0.44。
     # 短序列的滞后估计统计上不可靠 → 硬门诚实弃权(5fps 短片=方法边界,非数据有罪)
     if len(zf) < 60:
         detail["code"] = "short_sequence"
-        detail["reason"] = f"序列过短(n={len(zf)}<60),滞后估计统计上不可靠,不可判"
+        detail["reason"] = (f"有效样本只有 {len(zf)} 个(不足 60),这么短的片段"
+                            f"读出的时间差在统计上站不住,不下结论")
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
     if corr_peak < corr_min:
         detail["code"] = "weak_corr"
-        detail["reason"] = f"corr_peak {corr_peak:.2f} < {corr_min} 不可判"
+        detail["reason"] = (f"相似度只有 {corr_peak:.2f},低于 {corr_min} 的可判门槛,"
+                            f"读不出结论")
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
     # 峰值突出度门控(2026-07-07 评测教训:bridge 26帧@5fps 短序列互相关噪声假峰
     # lag 高达 0.8-1.8s,而 LeRobot 转换数据按构造对齐,真错位不可能存在):
@@ -332,27 +432,29 @@ def global_lag(
         detail["code"] = "aligned"
         detail["trusted"] = peak_ok
         if not peak_ok:
-            detail["reason"] = (f"读数对齐(lag {lag_s:.2f}s)但峰不够可信"
-                                f"(主峰/次高峰 {peak_ratio:.2f},峰宽 {peak_width_s:.2f}s)"
-                                f",本路读数不参与判定")
+            detail["reason"] = (f"读数落在零点附近({lag_s:.2f}s),但证据不够干净"
+                                f"(另一个候选的相似程度只差 {peak_ratio:.2f} 倍;"
+                                f"相似度在 {peak_width_s:.2f} 秒范围内几乎不变),"
+                                f"本路读数不参与判定")
         return CheckResult(name="video_action_sync", passed=True, detail=detail)
     if corr_zero >= corr_peak - prominence:
         detail["code"] = "ambiguous_peak"
-        detail["reason"] = (f"滞后 {lag_s:.2f}s 超容差但峰不突出"
-                            f"(corr0 {corr_zero:.2f}≈peak {corr_peak:.2f}),证据含糊 → 测不准")
+        detail["reason"] = (f"错开 {lag_s:.2f}s 与不错开的相似度几乎一样"
+                            f"({corr_peak:.2f} 对 {corr_zero:.2f}),测不准")
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
     if corr_peak < kill_corr_min:
         detail["code"] = "weak_corr_no_kill"
-        detail["reason"] = (f"疑似滞后 {lag_s:.2f}s 但相关偏弱"
-                            f"(corr {corr_peak:.2f} < {kill_corr_min}),证据不足 → 测不准")
+        detail["reason"] = (f"看着像错开 {lag_s:.2f}s,但相似度只有 {corr_peak:.2f}"
+                            f"(低于定罪所需的 {kill_corr_min}),证据不足 → 测不准")
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
     if not peak_ok:
         detail["code"] = detail["peak_issue"]
         detail["reason"] = (
-            f"疑似滞后 {lag_s:.2f}s,但峰形不支撑该断言"
-            + (f"(主峰/次高峰仅 {peak_ratio:.2f},存在并列的另一个候选滞后)"
+            f"看着像错开 {lag_s:.2f}s,但证据撑不住这个说法"
+            + (f"(另有一个几乎同样像的候选,相似程度只差 {peak_ratio:.2f} 倍)"
                if peak_ratio < min_peak_ratio
-               else f"(峰宽 {peak_width_s:.2f}s > {max_peak_width_s}s,时间分辨率不足)")
+               else f"(相似度在 {peak_width_s:.2f} 秒范围内几乎不变,"
+                    f"超过 {max_peak_width_s}s,分辨不出这么细的时间差)")
             + " → 测不准")
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
     detail["code"] = "lag_exceeds_tol"
@@ -376,11 +478,11 @@ _CONTRACT_CODE = {
 }
 
 _CODE_NOTE = {
-    "aligned": "画面与动作对齐,峰形可信",
-    "misaligned": "峰形可信且滞后超容差:本路读数指向真实错位",
-    "ambiguous_peak": "互相关有并列的第二个候选滞后,读数在掷硬币 → 测不准",
-    "flat_peak": "互相关峰过胖(时间分辨率不足),撑不起 lag 断言 → 测不准",
-    "low_corr": "相关性太弱(画面里机械臂占比小/机位太脏/样本太短)→ 测不准",
+    "aligned": "画面与动作对得上,证据清晰",
+    "misaligned": "证据清晰且错开量超出容差:本路读数指向真实错位",
+    "ambiguous_peak": "另有一个几乎同样像的时间差候选,读数等于掷硬币 → 测不准",
+    "flat_peak": "在很宽的一段范围内怎么错开都差不多像,分辨不出精确时间差 → 测不准",
+    "low_corr": "画面运动与机械臂动作对不上号(占比小/机位太脏/样本太短)→ 测不准",
     "no_motion": "本路几乎没有运动信号(静止段占满/画面冻结)→ 无信号",
 }
 
@@ -391,6 +493,21 @@ _CODE_NOTE = {
 ZERO_PROMINENCE = 0.15
 
 
+def _is_partial_visibility(vis: dict, lag_tol_s: float) -> bool:
+    """四条全中才算"覆盖不足":漏得多 + 可见窗够长 + 可见段对齐 + 可见段自己说得清。
+
+    任一项缺数据(老读数没有 visibility、探针没算出来)一律返回 False ——
+    诚实弃权:证据不足就不下这个诊断,绝不拿默认值凑。
+    """
+    try:
+        return (float(vis["blind_frac"]) >= _VIS_BLIND_MIN
+                and int(vis["vis_n"]) >= _VIS_MIN_SAMPLES
+                and abs(float(vis["vis_lag_s"])) <= lag_tol_s
+                and float(vis["vis_corr"]) >= _VIS_CORR_MIN)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def camera_diagnosis(r: dict, *, lag_tol_s: float = 0.25,
                      min_peak_ratio: float = 1.25,
                      max_peak_width_s: float = 1.0,
@@ -398,14 +515,17 @@ def camera_diagnosis(r: dict, *, lag_tol_s: float = 0.25,
     """单路读数 → {cause, label, text, advice}:**按病因说话,不含糊其辞**。
 
     判别顺序刻意如此:
-      ① 整体相关太弱 → 这一路信号本身不适合做互相关。**必须排最前**:相关只有
-         0.2 时"零滞后也说得通"是句废话(什么都说得通),拿它当结论会把
-         "信号弱"误诊成"假峰";
-      ② 零滞后处相关与峰值相当 → 假峰。数据与"对齐"相容,病在画面(背景运动/
-         相机晃动/机械臂占比小),**不是**错位嫌疑;
+      ⓪ 覆盖不足 → 漏拍会淹没全程统计,排在信号弱之前(理由见下方分支注释);
+      ① 整体相关太弱 → 这一路信号本身不适合做互相关。相关只有 0.2 时"零滞后也
+         说得通"是句废话(什么都说得通),拿它当结论会把"信号弱"误诊成"假峰";
+      ② 零滞后处相关与峰值相当 → 假峰。数据与"对齐"相容,病在画面,**不是**错位嫌疑;
       ③ 峰过胖 → 画面运动不锐利,时间分辨率撑不起 lag 断言;
       ④ 双峰并列 → 两个候选滞后在掷硬币。
     只有"读数偏离 0 **且** 0 已经站不住"才配叫疑似错位(见 sync_verdict 的 suspect)。
+
+    ⚠️ 本函数产出的 text/advice **直接进报告和 UI 给客户看**,所以:
+    ①一律说人话,不许出现互相关行话(峰/corr/主峰次峰之类,2026-08-11 用户:
+      "AI 味太重");②每印一句成因都必须有本条实测数据撑着,候选清单式的罗列已废除。
     """
     code = str(r.get("code") or "")
     lag = float(r.get("lag_s") or 0.0)
@@ -421,43 +541,87 @@ def camera_diagnosis(r: dict, *, lag_tol_s: float = 0.25,
     if r.get("trusted"):
         if code == "misaligned":
             return {"cause": "misaligned", "label": "错位",
-                    "text": (f"峰形可信({peak:.2f},主峰/次峰 {ratio:.2f}),"
-                             f"滞后 {lag:+.2f}s 超出容差 —— 这一路指向真实错位。"),
+                    "text": (f"这一路可靠地测出画面与动作错开了 {lag:+.2f}s(超出容差):"
+                             f"错开这么多时相似度明显最高({peak:.2f}),"
+                             f"其它错开量都明显更差。"),
                     "advice": ("画面晚于动作(正滞后)多为相机链路延迟;画面早于动作"
                                "(负滞后)无良性解释,应回查数据装配环节。")}
         return {"cause": "aligned", "label": "对齐",
-                "text": (f"峰落在 0 附近({lag:+.2f}s)且峰形可信"
-                         f"(相关 {peak:.2f},主峰/次峰 {ratio:.2f})。"),
+                "text": (f"画面与动作对得上:相似度最高的位置就在零点附近"
+                         f"({lag:+.2f}s),且结论清晰可靠(相似度 {peak:.2f})。"),
                 "advice": ""}
 
     # 以下都是"这一路读数不可信"的情形,病因各不相同
+    # 覆盖不足**排在信号弱之前**:重度覆盖缺失会把全程统计整个淹没(ep000020 的
+    # exterior_2 全程 corr 只有 0.20,可见段却有 0.62;ep000059 更极端,0.82),
+    # 先判信号弱就只会说一句"关联太弱",把真正的原因盖住了 —— 能解释就别喊弱。
+    # 反过来也不担心误诊:ep000013 那种"看得见但几何拧歪"的病例,可见段自己照样偏
+    # (vis_lag −0.27s),被"可见段必须对齐"这一条天然拒之门外。
+    vis = r.get("visibility") if isinstance(r.get("visibility"), dict) else {}
+    if _is_partial_visibility(vis, lag_tol_s):
+        blind = float(vis["blind_frac"])
+        head = float(vis.get("head_blind_s") or 0.0)
+        vis_corr, vis_lag = float(vis["vis_corr"]), float(vis["vis_lag_s"])
+        seen = (f"拍到的部分与动作对齐(可见段相似度 {vis_corr:.2f} @ {vis_lag:+.2f}s)"
+                f"——是机位覆盖问题,不是错位。")
+        return {"cause": "partial_visibility", "label": "测不准 · 覆盖不足",
+                "text": (f"开头 {head:.1f}s 机械臂尚未进入画面;{seen}"
+                         if head >= _VIS_HEAD_BLIND_S else
+                         f"约 {int(blind * 100)}% 的运动时段画面中几乎无对应运动"
+                         f"(出画/遮挡/运动沿光轴);{seen}"),
+                "advice": ("这一路只看到了本条的部分动作,结论以其它相机为准。"
+                           "要提升该机位可判性:让相机完整覆盖任务全程(起始位姿就在"
+                           "画面内),避免与主要运动方向同轴。")}
     if peak < min_corr:
         return {"cause": "weak_signal", "label": "测不准 · 信号弱",
-                "text": (f"整体相关只有 {peak:.2f},画面运动与机械臂动作的关联太弱,"
-                         f"任何滞后读数都没有支撑。"),
+                "text": (f"这一路的画面运动与机械臂动作对不上号"
+                         f"(整体相似度只有 {peak:.2f}),给不出可靠的时间差读数。"),
                 "advice": "机位太远、机械臂在画面里占比太小,或本段运动幅度不足。"}
     if abs(lag) > lag_tol_s and zero >= peak - ZERO_PROMINENCE:
+        # 成因**只印有证据的那条**(2026-08-11 用户在 ep000013 上点名):此前这里挂着
+        # 一张候选清单(透视/沿光轴/背景走动/相机晃动/占比小),一次全印——而 ep13
+        # 那条实测反向盲段只有 0.055,"背景有人走动"纯属栽赃。罗列式清单看着周全,
+        # 实则每条都没被验证过,客户照着改机位是白改。
+        # 两条证据线各自独立成句,可叠加;都没有就老实说"未能定位具体来源"。
+        blind = vis.get("blind_frac")
+        rev = vis.get("rev_blind_frac")
+        clues = []
+        if isinstance(blind, (int, float)) and blind >= _BLIND_EVIDENCE_MIN:
+            clues.append(f"本条实测约 {int(blind * 100)}% 的手臂运动时段,这路画面里"
+                         f"几乎看不到相应运动——通常是运动方向正对镜头(沿光轴)"
+                         f"或离镜头太近的透视失真。")
+        if isinstance(rev, (int, float)) and rev >= _REV_EVIDENCE_MIN:
+            clues.append(f"本条实测手臂静止时画面仍有明显运动(占画面活跃时段约 "
+                         f"{int(rev * 100)}%)——通常是背景有人走动或相机晃动。")
+        advice = ("数据其实偏向对齐,不构成错位嫌疑;这一路本次测不准,"
+                  "结论以其它相机为准。")
+        if not clues:
+            clues.append("画面与动作的对应关系受到干扰,本条数据未能定位具体来源。")
+            advice += "想让它可判:固定相机、让机械臂在画面里占更大比例。"
+        else:
+            if isinstance(blind, (int, float)) and blind >= _BLIND_EVIDENCE_MIN:
+                advice += "改善机位:让相机侧对主要运动方向、别离机械臂过近。"
+            if isinstance(rev, (int, float)) and rev >= _REV_EVIDENCE_MIN:
+                advice += "改善环境:减少背景人员走动、固定相机。"
         return {"cause": "false_peak", "label": "测不准 · 画面干扰",
-                "text": (f"峰在 {lag:+.2f}s 但又矮又平(相关只有 {peak:.2f}),"
-                         f"而零滞后处的相关 {zero:.2f} 与它相当 —— "
-                         f"**这个峰赢不过 0**,多半是背景有人走动、相机晃动或画面里"
-                         f"机械臂占比小造成的假峰。"),
-                "advice": ("证据其实偏向对齐,不构成错位嫌疑;这一路本次测不准,"
-                           "结论以其它相机为准。想让它也可判:固定相机、"
-                           "让机械臂在画面里占更大比例。")}
+                "text": (f"测出的偏移({lag:+.2f}s)不可信:把两条曲线错开 "
+                         f"{abs(lag):.2f} 秒和完全不错开,相似度几乎一样"
+                         f"({peak:.2f} 对 {zero:.2f})——数据说明不了画面和动作"
+                         f"没对上。" + "".join(clues)),
+                "advice": advice}
     if width > max_peak_width_s:
         return {"cause": "blurry_motion", "label": "测不准 · 画面不锐利",
-                "text": (f"互相关峰宽 {width:.2f}s(超过 {max_peak_width_s}s)—— "
-                         f"半秒内怎么挪都差不多高,时间分辨率撑不起 {lag:+.2f}s 这个断言。"),
+                "text": (f"这一路测不出精确的时间差:在近 {width:.1f} 秒的范围内"
+                         f"怎么错开相似度都差不多,分辨不出 {lag:+.2f}s 与 0 的区别。"),
                 "advice": "多为机位太远/运动缓慢;换更近的机位或选运动更明显的片段才测得准。"}
     if ratio and ratio < min_peak_ratio:
         return {"cause": "rival_lags", "label": "测不准 · 候选并列",
-                "text": (f"互相关有两个几乎并列的候选滞后(主峰/次峰仅 {ratio:.2f}),"
-                         f"读数在掷硬币。"),
+                "text": (f"出现了两个几乎同样像的时间差候选(相似程度只差 "
+                         f"{ratio:.2f} 倍),读数等于掷硬币,不可采信。"),
                 "advice": "画面里有与机械臂节奏相近的其它运动(人/传送带/晃动)时常见。"}
     return {"cause": "weak_signal", "label": "测不准 · 信号弱",
-            "text": (f"整体相关只有 {peak:.2f},画面运动与机械臂动作的关联太弱,"
-                     f"任何滞后读数都没有支撑。"),
+            "text": (f"这一路的画面运动与机械臂动作对不上号"
+                     f"(整体相似度只有 {peak:.2f}),给不出可靠的时间差读数。"),
             "advice": "机位太远、机械臂在画面里占比太小,或本段运动幅度不足。"}
 
 
@@ -481,10 +645,16 @@ def camera_reading(res: CheckResult) -> dict:
         "corr_at_zero": d.get("corr_at_zero"),
         "peak_ratio": d.get("peak_ratio"),
         "peak_width_s": d.get("peak_width_s"),
+        # 2026-08-11 新增:老交付的读数里没有这个键,读它的地方一律 .get(..., False)
+        "at_scan_edge": bool(d.get("at_scan_edge", False)),
         "trusted": trusted,
         "code": code,
         "note": note[:200],
     }
+    # 可见性度量(2026-08-11 新增):同为可选键,老交付读数里没有,读它的地方
+    # 必须容忍缺席。缺席时**不写空壳**——写了会让"没探针"与"探针说没漏拍"分不清
+    if isinstance(d.get("visibility"), dict):
+        out["visibility"] = d["visibility"]
     # 病因诊断随读数一起落盘:UI 的逐图诊断框直接读它,不在界面层重新推理
     out["diagnosis"] = camera_diagnosis(out)
     return out
@@ -540,11 +710,17 @@ def sync_verdict(
     # 站不住**(corr0 明显低于峰值)。若 0 处的相关与峰值相当,那个偏离的峰赢不过 0,
     # 病因是画面干扰而非错位 —— 那种情况由 diagnosis 的 false_peak 如实说明,
     # 绝不冒充错位嫌疑(否则每个脏机位都会被扣一顶错位的帽子)。
+    # 准入病因只留 blurry_motion / rival_lags:camera_diagnosis 的判别顺序保证走到
+    # 这两支时已经过了"零点可弃"检验(false_peak 排在它们前面拦截),即确有真峰、
+    # 且 0 确实输了。**weak_signal 不在其列**(2026-08-11 用户在 droid ep20
+    # exterior_2 上指出):相关只有 0.20 时"零滞后站不站得住"是句废话,这一路的
+    # lag 本身就是噪声,它作不出小节前言承诺的那句断言 —— 入画晚/覆盖不足的相机
+    # 就是这样被扣上错位帽子的。它照旧进 abstained,数据集级"长期测不准"统计不受影响。
     suspect = sorted(
         c for c, r in per_camera.items()
         if not r.get("trusted")
-        and (r.get("diagnosis") or {}).get("cause") in ("blurry_motion", "rival_lags",
-                                                        "weak_signal")
+        and (r.get("diagnosis") or {}).get("cause") in ("blurry_motion", "rival_lags")
+        and not r.get("at_scan_edge", False)   # 峰贴扫描窗边界 = 噪声的典型归宿
         and abs(float(r.get("lag_s") or 0.0)) > lag_tol_s)
     # 读数看着偏了、但证据其实偏向对齐的路:要能被数出来(用户会盯着曲线问
     # "这个峰明明偏了为什么不说话"),但**不进 suspect**
@@ -590,8 +766,8 @@ def sync_verdict(
                          f"(|lag| ≤ {lag_tol_s}s)")
         if noisy:
             out["reason"] += (
-                f";另 {len(noisy)} 路({', '.join(noisy)})峰偏离 0 但赢不过 0 —— "
-                f"画面干扰造成的假峰,证据仍偏向对齐,不参与判定")
+                f";另 {len(noisy)} 路({', '.join(noisy)})测出的偏移与「完全不错开」"
+                f"几乎同样像 —— 画面干扰造成的假峰,证据仍偏向对齐,不参与判定")
         elif abstained:
             out["reason"] += f";另 {len(abstained)} 路测不准,不参与判定"
         return out
@@ -760,10 +936,10 @@ def sync_health(per_episode: dict, *, lag_tol_s: float = 0.25,
                    "不判废也不进人工队列,但做逐帧对齐敏感的训练时建议对该路降权")
     if noisy_eps:
         worst_n = sorted(out_cams.items(), key=lambda kv: -kv[1]["n_noisy"])[0]
-        advice += (f";{len(noisy_eps)} 条有相机出现**假峰**(峰偏离 0 但赢不过 0,"
-                   f"最多的是 {worst_n[0]},{worst_n[1]['n_noisy']} 条)——"
-                   "成因是背景运动/相机晃动/机械臂占比小,证据仍偏向对齐,"
-                   "不判废;想让这些路也可判需改善机位")
+        advice += (f";{len(noisy_eps)} 条有相机出现**假峰**(测出的偏移与"
+                   f"「完全不错开」几乎同样像,最多的是 {worst_n[0]},"
+                   f"{worst_n[1]['n_noisy']} 条)——证据仍偏向对齐,不判废;"
+                   "具体成因见逐条诊断(只写本条实测到的那条)")
     # 某一路长期给不出可信读数 = 机位本身不适合这套方法,值得单独点名
     n_ep = len(per_episode)
     chronic = sorted(c for c, v in out_cams.items()

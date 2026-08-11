@@ -124,6 +124,71 @@ def episode_title(eid: str, c: dict) -> str:
     return _ascii_only("  ".join(bits))
 
 
+#: 剔完静止段还剩这么少就别剔了(留着不剔的整条画,总比画一段没信息的残渣强)
+_MIN_TRIMMED_SAMPLES = 8
+
+
+def _xcorr_curve(t, flow, speed):
+    """画右侧叠图那条互相关曲线 → (lags 秒, xc)。**与正式判定同一套预处理**。
+
+    ⚠️ 2026-08-11 事故的后半截:圆点改用正式读数之后,droid-200-full ep000013 的
+    蓝点落在 +0.27s,而**画出的蓝曲线顶点还在 +0.13s 附近**——点不在曲线顶上,
+    视觉上依旧自相矛盾。病根和前半截同源:正式判定(global_lag)在互相关前先用
+    trim_static_span 剔掉首尾静止段,这里重算却是"未剔"的近似,静止段把峰压成
+    平台并整体拉偏。故这里直接复用同一个纯函数,曲线与读数从此同源。
+
+    (长 episode 的曲线落盘时降采样到 ≤600 点,这点近似仍在,但平台峰滑动的主因是
+    静止段,不是降采样。)剔完样本太少就退回不剔的整条:画得糙好过画不出来。
+    """
+    import numpy as np
+    from scipy import signal
+
+    from ..core.checks.video_action_sync import trim_static_span
+
+    t = np.asarray(t, dtype=float)
+    flow = np.asarray(flow, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    lo, hi = trim_static_span(flow, speed)
+    if hi - lo >= _MIN_TRIMMED_SAMPLES:
+        t, flow, speed = t[lo:hi], flow[lo:hi], speed[lo:hi]
+    zf = (flow - flow.mean()) / (flow.std() + 1e-9)
+    zs = (speed - speed.mean()) / (speed.std() + 1e-9)
+    xc = signal.correlate(zf, zs, mode="full") / max(len(zf), 1)
+    dt = float(np.median(np.diff(t))) if len(t) > 1 else 1.0
+    lags = signal.correlation_lags(len(zf), len(zs), mode="full") * dt
+    return lags, xc
+
+
+def _peak_marker(cam: str, lags, xc, lag_s, corr_peak):
+    """(画出的互相关曲线, 正式读数) → (圆点 x, 圆点 y, 图例文本);**保证纯 ASCII**。
+
+    ⚠️ 2026-08-11 事故:圆点和图例数字曾取"画图时重算的互相关曲线"的 argmax,而正式
+    判定(global_lag)在互相关前先剔了首尾静止段。峰尖时两者巧合一致,峰是平台时
+    argmax 就滑走——droid-200-full ep000013 的 exterior_image_1_left 表头报
+    lag=+0.27s/corr=0.55,右图圆点却画在 +0.13s/0.59,恰好从容差带外滑进带内,
+    用户看图和看数对不上,等于系统自己出两份账。
+    修法:横坐标一律用落盘的正式读数 lag_s,纵坐标用 np.interp 在画出的曲线上取值
+    (点必须贴着曲线,不能悬空);图例数字也一律用正式读数。重算的曲线本身照画
+    ——它作视觉参考没错,错的只是点位和数字。
+
+    读数缺失(不可判)时不画圆点:宁可图例只写相机名,也不拿重算值冒充读数。
+    """
+    import numpy as np
+
+    if lag_s is None:
+        return None, None, _ascii_only(f"{cam} (no reading)")
+    x = float(lag_s)
+    corr_txt = "n/a" if corr_peak is None else f"{float(corr_peak):.2f}"
+    label = _ascii_only(f"{cam} @{x:+.2f}s ({corr_txt})")
+    lg = np.asarray(lags, dtype=float)
+    if len(lg) == 0 or x < lg.min() or x > lg.max():
+        # 读数落在画出的窗口之外:画点就得靠 interp 端点值把它按在边界上=假位置,
+        # 不画;数字仍照实写在图例里(缺图不缺账)。
+        return None, None, label
+    y = float(np.interp(x, lg, np.asarray(xc, dtype=float)))
+    return x, y, label
+
+
 #: 配色与坐标轴风格(2026-08-07 用户:"图像 matplotlib 原味,不精美")。
 #: 参照现代图表面板的观感:去掉上/右边框、淡横向网格、克制的三色、无边框图例。
 _C_FLOW = "#2563eb"     # 画面运动(蓝)
@@ -182,7 +247,7 @@ def render_sync_plots(curve_rows: list[tuple], out_dir: str) -> list[str]:
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import numpy as np
-        from scipy import signal
+        from scipy import signal  # noqa: F401  只作可用性探针:相关计算在 _xcorr_curve 里
     except Exception:  # noqa: BLE001  可选依赖缺失:不画,调用方在报告注明
         return []
 
@@ -236,20 +301,23 @@ def render_sync_plots(curve_rows: list[tuple], out_dir: str) -> list[str]:
                 if i == n - 1:
                     ax.set_xlabel("time (s)", fontsize=8)
 
-                # 叠图:每路一条互相关曲线 + 星标峰位
-                xc = signal.correlate(zf, zs, mode="full") / max(len(zf), 1)
-                dt = float(np.median(np.diff(t))) if len(t) > 1 else 1.0
-                lags = signal.correlation_lags(len(zf), len(zs), mode="full") * dt
+                # 叠图:每路一条互相关曲线 + 正式读数处的圆点。曲线与读数必须同源
+                # (同一套剔静止段预处理),否则点会落在曲线顶点之外——见 _xcorr_curve
+                lags, xc = _xcorr_curve(t, flow, speed)
                 win = np.abs(lags) <= 2.0
                 if not win.any():
                     continue
                 col = colors[i % len(colors)]
-                k = int(np.argmax(xc[win]))
-                ax_xc.plot(lags[win], xc[win], lw=1.5, color=col,
-                           label=_ascii_only(f"{cam} @{lags[win][k]:+.2f}s "
-                                             f"({xc[win][k]:.2f})"))
-                ax_xc.plot(lags[win][k], xc[win][k], "o", ms=5.5, color=col,
-                           mec="white", mew=1.1)
+                # 点位/数字只认落盘的正式读数(reading 优先,旧扁平格式退回曲线自带),
+                # 绝不用这里重算的 argmax —— 理由见 _peak_marker
+                _rd = readings.get(cam) or {}
+                px, py, plabel = _peak_marker(
+                    cam, lags[win], xc[win],
+                    _rd.get("lag_s", cv.get("lag_s")),
+                    _rd.get("corr_peak", cv.get("corr_peak")))
+                ax_xc.plot(lags[win], xc[win], lw=1.5, color=col, label=plabel)
+                if px is not None:
+                    ax_xc.plot(px, py, "o", ms=5.5, color=col, mec="white", mew=1.1)
 
             ax_xc.axvspan(-tol, tol, color=_C_OK, alpha=0.11, lw=0)   # 容差带
             ax_xc.axvline(0, color="#94a3b8", ls="--", lw=0.9)
