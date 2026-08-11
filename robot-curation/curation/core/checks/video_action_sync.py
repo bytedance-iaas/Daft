@@ -39,8 +39,9 @@ def timestamp_check(
     gap_mult: float = 1.8,        # 间隔超过名义 dt×此倍数 = 空洞(丢帧)
     jitter_tol: float = 0.25,     # 间隔偏离名义 dt 超过 ±25% 记为抖动帧
     jitter_ratio_bad: float = 0.05,
+    min_duration_s: float = 1.0,  # 短于此 = 残段(采集中断碎片),硬杀
 ) -> CheckResult:
-    """L0:时间戳单调/等间隔(几乎免费,纯数值)。硬门:乱序/大空洞判废。"""
+    """L0:时间戳单调/等间隔(几乎免费,纯数值)。硬门:乱序/大空洞/残段判废。"""
     ts = np.asarray(timestamps, dtype=np.float64)
     if len(ts) < 2:
         return CheckResult(name="timestamp_check", passed=False,
@@ -55,6 +56,17 @@ def timestamp_check(
         return CheckResult(name="timestamp_check", passed=False,
                            detail={**detail, "reason": "时间戳非严格递增",
                                    "frame": k, "ts": [float(ts[k]), float(ts[k + 1])]})
+
+    # ①b 最短时长:半秒级碎片没有任务可言,后续一切语义检查只会弃权 → 必须在
+    # 结构层拦死。实证 droid-200 ep000018(8 帧 ≈0.5s,疑似采集中断):时间戳干净,
+    # 原四道判据全放行,同步/VLM 弃权 → 弃权默认"通过"→ 残段溜进交付(2026-08-09
+    # 用户定标时人工发现)。判废责任放结构闸门,不放语义判定,也不靠真值标"失败"。
+    duration = float(ts[-1] - ts[0])
+    detail["duration_s"] = round(duration, 3)
+    if duration < min_duration_s:
+        detail["reason"] = (f"残段:全长 {duration:.2f}s < {min_duration_s}s"
+                            "(疑似采集中断碎片)")
+        return CheckResult(name="timestamp_check", passed=False, detail=detail)
 
     # ② 等间隔:名义 dt 取中位数(比标称 fps 更可信);空洞=丢帧
     dt_nominal = 1.0 / fps if fps else float(np.median(dt))

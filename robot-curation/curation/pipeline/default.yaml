@@ -23,12 +23,19 @@ pipeline:
                                    #   "未完成",带中段的全程8帧怎么问都判"完成"——阶跃型任务
                                    #   (倒/放/开关)证据在动作瞬间(1-2秒),末态看不出。图片数=路数×本值。
 
+ingest:
+  # rerun(.rrd)输入的采集帧率。RRD 里常常只有 frame_index、没有时间线;文件内能推出
+  # 时间(VideoFrameReference 时间戳/录制属性)时以文件为准,推不出才用这里的值。
+  # 留空 = 不替客户猜:推不出时间就报错,让他显式给(--set ingest.rrd_fps=30)。
+  rrd_fps: null
+
 checks:
   # 漏斗顺序按成本:纯数值 → 抽帧 → VLM(垫底只跑幸存者)
   timestamp_check:                 # M5a-L0
     enable: true
     gate: hard
-    params: {}
+    params:
+      min_duration_s: 1.0          # 短于此=残段(采集中断碎片)硬杀;实证 droid ep000018(0.5s/8帧)
   kinematic_limits:                # M5b 核心
     enable: true
     gate: hard

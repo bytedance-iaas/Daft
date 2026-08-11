@@ -12,6 +12,12 @@ matplotlib==3.10.9      # 同步曲线证据图(可选依赖,缺失时自动跳�
 huggingface_hub==0.36.2 # 仅下载脚本用;火山上从 hf-mirror.com 拉公开数据集(pod 需 hostNetwork 借节点公网)
 tos==2.9.2              # 火山对象存储 SDK:数据集从 TOS 读入、交付产物写回 TOS(2026-07-19 接入)
 gradio==6.9.0           # 质检台 Web UI(curation ui);字体离线补丁见 Dockerfile(国内网络 googleapis 挂起 15s+)
+rerun-sdk==0.35.0       # RRD 输入格式的读/写(ingest/rrd_reader + export/rrd_writer)。
+                        # ⚠️ **pin 死到补丁号**:我们用的是 rerun.experimental 下的
+                        # RrdReader/LazyChunkStream/Chunk,experimental = 不受任何 API
+                        # 稳定性承诺保护,且组件列名("Scalars:scalars" 之类)是我们
+                        # 认数据的依据,小版本改名就会静默读错。升级前先跑
+                        # test_rrd_reader.py + test_rrd_writer.py 全绿。
 websockets==15.0.1      # uvicorn 的 WebSocket 实现(内嵌终端 /ws/term 必需)。
                         # ⚠️ gradio 只带 uvicorn 不带它,缺了 uvicorn 会把 Upgrade 请求
                         # 直接判 404("Unsupported upgrade request"),终端页签必黑屏。

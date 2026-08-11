@@ -503,14 +503,29 @@ def task_review_hint_md(m: dict) -> str:
 def overview_markdown(m: dict) -> str:
     d = m["dataset"]
     ss = d.get("summary_stats") or {}
+    # 机器人字段自 2026-07 起是 dict(型号+规格表+质量),概览一直在渲染原始
+    # dict(2026-08-10 发现)——按报告身份行的同款人话格式化;老交付是纯字符串,原样。
+    rb = m.get("robot")
+    if isinstance(rb, dict):
+        _q = f",质量 {rb.get('quality')}" if rb.get("quality") else ""
+        rb = f"{rb.get('robot_type')}(规格表 {rb.get('registry_profile')}{_q})"
     lines = [f"# {m['name']}",
-             f"机器人 **{m['robot']}** · 生成于 {m['generated_at']} · 代码版本 {m['code_version']}",
+             f"机器人 **{rb}** · 生成于 {m['generated_at']} · 代码版本 {m['code_version']}",
              "",
              f"- 交付 **{d.get('delivered', '?')}** / 输入 {d.get('input_episodes', '?')} 条"
              f"(通过率 {ss.get('pass_rate_pct', '?')}%,平均软分 {ss.get('avg_soft_score', '?')})"]
     hb = d.get("hard_fail_breakdown") or {}
     if hb:
         lines.append("- 硬门拒绝:" + ",".join(f"{k} {v} 条" for k, v in hb.items()))
+    # 数据包完整性(2026-08-10):容器缺了什么、按什么补的,概览一行带过,
+    # 详细说明在质检报告的「数据包完整性」节。有 findings 才出,不占位。
+    cf = (d.get("container") or {}).get("findings") or []
+    if cf:
+        _ic = {"正常": "✅", "缺失(已补)": "⚠️", "缺失(已溯源补全)": "✅",
+               "降级": "⚠️", "缺失": "❌"}
+        lines.append("- 数据包完整性:" + ";".join(
+            f"{f.get('项')} {_ic.get(str(f.get('状态')), '')}{f.get('状态')}"
+            for f in cf) + "(缺什么、按什么补的,详见质检报告)")
     n_pending = sum(1 for e in m["episodes"].values() if e.get("pending"))
     if n_pending:
         lines.append(f"- 待人工裁决 **{n_pending}** 条(见 Episode 页「待裁决」列;"

@@ -89,13 +89,18 @@ def build_parser() -> argparse.ArgumentParser:
     rp = sub.add_parser("review-page",
                         help="生成静态审片站(索引一屏列全量 episode + 逐条多路视频页),"
                              "落盘持久;由 UI 的 /review 路由服务(pod 重启不丢)")
-    rp.add_argument("--input", required=True, help="数据集目录(LeRobot 格式)")
+    rp.add_argument("--input", required=True,
+                    help="数据集目录(LeRobot 格式,或 rerun 的 .rrd 目录;自动识别)")
     rp.add_argument("--output", required=True,
                     help="产出目录(建议持久盘,如 /mnt/tos/review/<名字>)")
     rp.add_argument("--episodes", default=None, metavar="表达式",
                     help="只做指定 episode(同 run:34,56 或 10-20,可混用);缺省全量")
     rp.add_argument("--max-episodes", type=int, default=None, help="只做前 N 条")
     rp.add_argument("--title", default=None, help="页面标题(缺省用数据集目录名)")
+    rp.add_argument("--rrd-fps", type=float, default=None, metavar="帧率",
+                    help="仅 RRD 输入:采集帧率。RRD 里没有时间信息时必须给"
+                         "(如 so101 用 30),数据自带帧时间戳时(如 bridge)不用管。"
+                         "等价于 run 的 --set ingest.rrd_fps")
 
     be = sub.add_parser("backends", help="一次列出全部 VLM 后端预设的在线状态与服务端模型")
     be.add_argument("--config", default=None,
@@ -151,11 +156,19 @@ def _cmd_backends(config_path: str | None, timeout: float) -> int:
 
 
 def _list_datasets(parent: str) -> list[str]:
-    """父目录下所有有效 LeRobot 数据集(含 meta/info.json 的子目录)。"""
+    """父目录下所有有效数据集(--batch 的清单)。
+
+    两种格式各有各的"身份证":LeRobot 看 meta/info.json,RRD 看目录里有没有 *.rrd
+    (P5,2026-08-10 补齐 —— 漏斗本身早就两种都吃,只有这份清单还只认 LeRobot,
+    于是客户把 rrd 数据集摆进父目录跑 --batch 会得到"没有有效数据集")。
+    """
     import os
+
+    from .ingest.rrd_reader import is_rrd_dataset
     return sorted(
         name for name in os.listdir(parent)
-        if os.path.exists(os.path.join(parent, name, "meta", "info.json")))
+        if os.path.exists(os.path.join(parent, name, "meta", "info.json"))
+        or is_rrd_dataset(os.path.join(parent, name)))
 
 
 
@@ -185,9 +198,25 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "review-page":
         from .export.review_page import build_review_page
-        from .ingest.lerobot_reader import read_lerobot_rows
+        from .ingest.rrd_reader import cleanup_video_cache, is_rrd_dataset
         eps = _parse_episodes(args.episodes)
-        rows = read_lerobot_rows(args.input, episode_indices=eps, validate=True)
+        # 输入格式嗅探(P5,2026-08-10):与 run 同一套判据。审片站只要
+        # episode_id/标注/视频指针三样,RRD 走**轻量元数据**读法就够——它不做
+        # schema 校验,也就不用逼用户为了看片先报 --embodiment(RRD 无 robot_type)。
+        if is_rrd_dataset(args.input):
+            from .ingest.lerobot_reader import NotADatasetError
+            from .ingest.rrd_reader import read_rrd_meta
+            try:
+                rows = read_rrd_meta(args.input, episode_indices=eps, fps=args.rrd_fps)
+            except NotADatasetError as e:
+                # reader 给的出路是 run 的 `--set`(它不知道是谁在调它);这条命令的
+                # 出路叫 --rrd-fps,补一句免得用户照抄一条跑不通的命令
+                print(f"[输入错误] {e}\n"
+                      f"  (review-page 的写法:--rrd-fps 30)", file=sys.stderr)
+                return 2
+        else:
+            from .ingest.lerobot_reader import read_lerobot_rows
+            rows = read_lerobot_rows(args.input, episode_indices=eps, validate=True)
         if args.max_episodes:
             rows = rows[: args.max_episodes]
         title = args.title or os.path.basename(os.path.normpath(args.input))
@@ -199,7 +228,11 @@ def main(argv: list[str] | None = None) -> int:
             if done[0] % 10 == 0 or done[0] == len(rows):
                 print(f"[review-page] {done[0]}/{len(rows)}", flush=True)
 
-        n = build_review_page(rows, args.output, title=title, on_progress=_tick)
+        try:
+            n = build_review_page(rows, args.output, title=title, on_progress=_tick)
+        finally:
+            # RRD 解出的临时 mp4 只是切片的原料,站点生成完就该消失(几百条能占几个 GB)
+            cleanup_video_cache(args.input)
         print(f"[review-page] 完成:新编码 {n} 段;入口 {args.output}/index.html", flush=True)
         return 0
 
@@ -244,18 +277,25 @@ def main(argv: list[str] | None = None) -> int:
                   f"{sorted(_eps)[:10]}{'…' if len(_eps) > 10 else ''}")
 
         def _run_one(inp, outp):
-            return run_pipeline(args.config, inp, outp,
-                                embodiment_id=args.embodiment_id,
-                                max_episodes=args.max_episodes,
-                                only_checks=args.only, skip_checks=args.skip,
-                                report_only=args.report_only, lite=args.lite,
-                                overwrite=args.overwrite,
-                                set_overrides=args.set_overrides,
-                                episode_indices=_eps,
-                                vlm_backend=args.vlm_backend,
-                                vlm_endpoint=args.vlm_endpoint,
-                                vlm_model=args.vlm_model,
-                                vlm_api_key_env=args.vlm_api_key_env)
+            # finally 清临时视频缓存(P4):run_pipeline 正常收尾时自己会清,这里兜的是
+            # **异常退出**那条路 —— RRD 解出的 mp4 躺在容器可写层,批处理连崩几个数据集
+            # 就能把 /tmp 撑满。幂等,清两次不出错。
+            try:
+                return run_pipeline(args.config, inp, outp,
+                                    embodiment_id=args.embodiment_id,
+                                    max_episodes=args.max_episodes,
+                                    only_checks=args.only, skip_checks=args.skip,
+                                    report_only=args.report_only, lite=args.lite,
+                                    overwrite=args.overwrite,
+                                    set_overrides=args.set_overrides,
+                                    episode_indices=_eps,
+                                    vlm_backend=args.vlm_backend,
+                                    vlm_endpoint=args.vlm_endpoint,
+                                    vlm_model=args.vlm_model,
+                                    vlm_api_key_env=args.vlm_api_key_env)
+            finally:
+                from .ingest.rrd_reader import cleanup_video_cache
+                cleanup_video_cache(inp)
 
         if args.batch:
             datasets = _list_datasets(args.input)

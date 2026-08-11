@@ -45,6 +45,28 @@ def test_l0_disorder_caught():
     assert r.passed is False and "递增" in r.detail["reason"]
 
 
+def test_l0_stub_episode_killed():
+    """残段硬杀(droid-200 ep000018 实证:8 帧 ≈0.5s,时间戳干干净净,原四道判据
+    全放行;同步/VLM 对半秒画面只会弃权,而弃权默认"通过"→ 碎片溜进交付)。
+    判废责任必须在结构层,不靠语义判定、也不靠真值集标"失败"兜底。"""
+    ts = np.arange(8) / 15.0                    # 复刻 ep000018:8 帧 @15fps ≈ 0.47s
+    r = timestamp_check(ts, 15.0)
+    assert r.passed is False
+    assert "残段" in r.detail["reason"]
+    assert r.detail["duration_s"] < 1.0
+
+
+def test_l0_min_duration_configurable_and_boundary():
+    """阈值可配;超过阈值的短条照常通过(1.2s@FPS 干净序列不误杀)。"""
+    ts = np.arange(int(1.2 * FPS) + 1) / FPS    # 1.2s
+    assert timestamp_check(ts, FPS).passed is True
+    # 收紧到 2s:同一条就该被杀,且理由写明阈值
+    r = timestamp_check(ts, FPS, min_duration_s=2.0)
+    assert r.passed is False and "2.0s" in r.detail["reason"]
+    # 放宽到 0.3s:连 8 帧碎片都放行(客户显式要短片段时不拦)
+    assert timestamp_check(np.arange(8) / 15.0, 15.0, min_duration_s=0.3).passed is True
+
+
 # ---------- L1 符号锚定(合成,known shift) ----------
 
 def _synthetic_pair(shift_steps: int, n: int = 300, dt: float = 0.1, seed: int = 0):

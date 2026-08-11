@@ -35,6 +35,28 @@ class OutputExistsError(Exception):
     """输出目录已有上次运行的交付物。提示换目录或 --overwrite。"""
 
 
+def _verify_layout(dataset_dir: str, version: str) -> None:
+    """codebase_version 声明与 meta/ 实际布局对账;不符时指名道姓。
+
+    背景(2026-08-09):doctor 在 so101-v2 上拿 v3 的文件名去找 v2.1 的任务表,
+    产出误导性的红色 FAIL。我们按声明分派本不会犯那个错,但**声明本身写错时**,
+    旧报错只说"找不到 v3 episodes 元数据"——客户会以为我们读不了他的数据,
+    而真相是他的 info.json 标错了。响亮失败还要说清怪谁。
+    """
+    has_v3 = os.path.isdir(os.path.join(dataset_dir, "meta", "episodes"))
+    has_v2 = os.path.exists(os.path.join(dataset_dir, "meta", "episodes.jsonl"))
+    if version.startswith("v3") and not has_v3 and has_v2:
+        raise NotADatasetError(
+            f"info.json 声明 codebase_version={version},但 meta/ 是 v2.x 布局"
+            f"(有 episodes.jsonl、无 episodes/ 目录)。疑似 codebase_version 标错:"
+            f"数据大概率是 v2.x,把 info.json 的 codebase_version 改为实际版本即可读取。")
+    if version.startswith("v2") and not has_v2 and has_v3:
+        raise NotADatasetError(
+            f"info.json 声明 codebase_version={version},但 meta/ 是 v3.x 布局"
+            f"(有 episodes/ 目录、无 episodes.jsonl)。疑似 codebase_version 标错:"
+            f"数据大概率是 v3.x,把 info.json 的 codebase_version 改为实际版本即可读取。")
+
+
 def _load_info(dataset_dir: str) -> dict:
     info_path = os.path.join(dataset_dir, "meta", "info.json")
     if not os.path.exists(info_path):
@@ -340,6 +362,7 @@ def read_lerobot_rows(
     if validate:
         validate_info(info, dataset_dir)
     version = info["codebase_version"]
+    _verify_layout(dataset_dir, version)
     if version.startswith("v3"):
         rows = _episode_rows_v3(dataset_dir, info, max_episodes, start_episode,
                                 episode_indices)
@@ -376,6 +399,7 @@ def read_lerobot_meta(
     """
     info = _load_info(dataset_dir)
     version = info["codebase_version"]
+    _verify_layout(dataset_dir, version)
     metas: list[dict] = []
     skipped: list[int] = []
     if version.startswith("v3"):

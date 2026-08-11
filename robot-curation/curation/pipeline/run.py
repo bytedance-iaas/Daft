@@ -198,12 +198,12 @@ def run_pipeline(
     # 提前检查:输出目录已有上次交付物 → 立即拦(别做完漏斗+VLM才在导出时崩)。
     # overwrite=清理旧交付子目录后重跑;否则友好报错让用户换目录或加 --overwrite。
     from ..ingest.lerobot_reader import OutputExistsError
-    _deliv = ("episodes_parquet", "lerobot_curated", "passed.json")
+    _deliv = ("episodes_parquet", "lerobot_curated", "rrd_curated", "passed.json")
     _existing = [d for d in _deliv if os.path.exists(os.path.join(output_dir, d))]
     if _existing:
         if overwrite:
             import shutil
-            for d in ("episodes_parquet", "lerobot_curated", "details"):
+            for d in ("episodes_parquet", "lerobot_curated", "rrd_curated", "details"):
                 p = os.path.join(output_dir, d)
                 if os.path.isdir(p):
                     shutil.rmtree(p)
@@ -249,16 +249,36 @@ def run_pipeline(
     from ..adapters.vlm_client import latency_reset
     latency_reset()
 
+    # 输入格式嗅探(2026-08-10):meta/info.json → LeRobot;目录里有 *.rrd → rerun 格式。
+    # 两条 reader 产出同一份行契约,所以嗅探只换"谁来读",漏斗以下一个字都不用改。
+    from ..ingest.rrd_reader import is_rrd_dataset
+    input_format = "rrd" if is_rrd_dataset(input_dir) else "lerobot"
+    if input_format == "rrd":
+        from functools import partial
+
+        from ..ingest import rrd_reader as _rrd
+        # RRD 里可能没有任何时间信息(so101 那种只有 frame_index)→ 采集帧率走配置
+        _rrd_fps = (cfg.get("ingest") or {}).get("rrd_fps")
+        read_meta = partial(_rrd.read_rrd_meta, fps=_rrd_fps)
+        read_rows = partial(_rrd.read_rrd_rows, fps=_rrd_fps)
+        read_lazy = partial(_rrd.read_rrd_lazy, fps=_rrd_fps)
+        dataset_info = partial(_rrd.rrd_dataset_info, fps=_rrd_fps,
+                               embodiment_id=embodiment_id)
+    else:
+        read_meta, read_rows, read_lazy = (read_lerobot_meta, read_lerobot_rows,
+                                           read_lerobot_lazy)
+        dataset_info = _load_info
+
     # ① 摄入(M1,懒扫描,2026-07-10):构造 DataFrame 零数据读取,数值 parquet 由
     # daft 引擎执行时按 task 流式拉取(ingest/daft_source);caption/报告所需上下文走
     # 轻量元数据(只读 meta 文件,万条秒级)。skip_missing=True:客户数据/下载缺口是
     # 常态,缺文件跳过并在 stderr 汇报(不崩、不静默),而非碰到一个缺失就整批失败。
-    rows = read_lerobot_meta(input_dir, max_episodes=max_episodes,
-                             episode_indices=episode_indices,
-                             embodiment_id=embodiment_id, skip_missing=True)
+    rows = read_meta(input_dir, max_episodes=max_episodes,
+                     episode_indices=episode_indices,
+                     embodiment_id=embodiment_id, skip_missing=True)
     row_of = {r["episode_id"]: r for r in rows}
     # 身份行(2026-07-15 用户定):终端开跑即亮明数据集+机器人,不用等报告文件
-    _info0 = _load_info(input_dir)
+    _info0 = dataset_info(input_dir)
     _rt = str(_info0.get("robot_type") or "unknown")
     _emb = embodiment_id or _rt
     try:
@@ -272,6 +292,21 @@ def run_pipeline(
         _rob_str = f"{_rt}(未注册规格表)"
     print(f"[curation] 数据集: {os.path.basename(input_dir.rstrip('/'))} | "
           f"机器人: {_rob_str} | {len(rows)} 条", flush=True)
+    if input_format == "rrd" and not embodiment_id and _rt == "unknown":
+        # RRD 标准里没有 robot_type 字段,但属性内嵌/溯源回填后 _rt 可能已有值 ——
+        # 只有三条路都空才提示。提前一行说清出路,别等漏斗里抛"未知 embodiment_id"。
+        print("[curation] ⚠️ RRD 文件不带机器人型号(也无内嵌/溯源可回填):规格类检查"
+              "需要 --embodiment <型号>(如 so101);不指定就用 "
+              "--skip kinematic_limits 跳过", flush=True)
+    # 数据包完整性(2026-08-10 用户定):容器缺什么、按什么补的,不能只活在启动
+    # 提示里 —— 报错管拦路,报告管留痕。此处只收集,渲染在 report.to_markdown。
+    from ..export.report import container_findings
+    _container = None
+    _cf = container_findings(
+        input_format, _info0, _robot,
+        rrd_fps_arg=(cfg.get("ingest") or {}).get("rrd_fps"))
+    if _cf:
+        _container = {"format": input_format, "findings": _cf}
     # 数据集注记(2026-07-29 用户定):profile 的 extras.note 是"读数据前必须知道的
     # 前提"(如 bridge 的 state 由 action 累加合成 → 指令-实际无独立信息,stuck 只能
     # 弃权)。原样透传进报告/时间线/UI,不判内容、不硬编码数据集名——有就带上,
@@ -352,9 +387,9 @@ def run_pipeline(
     def _lookup_desc_src(episode_id: str) -> str:
         return desc_src_of.get(episode_id, "无")
 
-    df0 = read_lerobot_lazy(input_dir, max_episodes=max_episodes,
-                            episode_indices=episode_indices,
-                            embodiment_id=embodiment_id)
+    df0 = read_lazy(input_dir, max_episodes=max_episodes,
+                    episode_indices=episode_indices,
+                    embodiment_id=embodiment_id)
     df0 = df0.with_column("task_desc", _lookup_desc(_daft.col("episode_id")))
     df0 = df0.with_column("task_desc_source", _lookup_desc_src(_daft.col("episode_id")))
     df, stats = run_funnel(df0, cfg, EmbodimentRegistry(), vlm_completion=vlm)
@@ -444,9 +479,9 @@ def run_pipeline(
             print(f"[curation] 去重指纹(第一道 action 哈希): {_i0}/{len(keep_ids)}",
                   flush=True)
         _chunk = {int(e[2:]) for e in keep_ids[_i0:_i0 + 200]}
-        for _row in read_lerobot_rows(input_dir, episode_indices=_chunk,
-                                      embodiment_id=embodiment_id,
-                                      validate=False, skip_missing=True):
+        for _row in read_rows(input_dir, episode_indices=_chunk,
+                              embodiment_id=embodiment_id,
+                              validate=False, skip_missing=True):
             _ah = action_hash(_row)
             _order.append(_row["episode_id"])
             if _ah in _ah_first:
@@ -462,9 +497,9 @@ def run_pipeline(
         for _ah, _eps in _collide.items():
             _idxs = {int(e[2:]) for e in _eps}
             _seen: dict = {}
-            for _row in read_lerobot_rows(input_dir, episode_indices=_idxs,
-                                          embodiment_id=embodiment_id,
-                                          validate=False, skip_missing=True):
+            for _row in read_rows(input_dir, episode_indices=_idxs,
+                                  embodiment_id=embodiment_id,
+                                  validate=False, skip_missing=True):
                 _fp = episode_fingerprint(_row)      # 含视频内容哈希(只对撞车组)
                 if _fp in _seen:
                     dedup_dropped.append({"episode_id": _row["episode_id"],
@@ -661,6 +696,8 @@ def run_pipeline(
             report["episodes"]["camera_audit"] = cam_audit
     if _ds_note:
         report["dataset"]["dataset_note"] = _ds_note
+    if _container:
+        report["dataset"]["container"] = _container
     if vlm_note:
         report["dataset"]["task_success_note"] = vlm_note
     if profile_note:
@@ -997,7 +1034,7 @@ def run_pipeline(
                "details_dir": os.path.join(output_dir, "details")}
     if keep_rows and not report_only:
         # 导出需要数值列 → 只按需重读最终幸存者(QC 一遍全程未整批驻留数值)
-        keep_full = read_lerobot_rows(
+        keep_full = read_rows(
             input_dir, episode_indices={int(e[2:]) for e in keep_ids},
             embodiment_id=embodiment_id, skip_missing=True)
         # 补标进交付(2026-08-06 出数据闭环):无标注条目把质检用的自产 caption
@@ -1026,13 +1063,35 @@ def run_pipeline(
                if desc_src_of.get(e) == "自产caption" and desc_of.get(e, "").strip()}
         # 源是 v2 还是 v3 决定走哪个导出器:v3 要切割+重编码,v2 每条独立文件只需拷贝重编号
         _curated = os.path.join(output_dir, "lerobot_curated")
-        _exporter = (export_lerobot_v3
-                     if _load_info(input_dir)["codebase_version"].startswith("v3")
-                     else export_lerobot_v2)
-        # camera_health 旁挂进交付集 meta/(不碰 info.json 标准 schema,不删任何视频)
-        deliver["lerobot_dataset"] = _exporter(
-            input_dir, keep_src_idx, _curated, task_overrides=_ov,
-            camera_health=camera_health)["out_dir"]
+        if input_format == "rrd":
+            # RRD 交付集(P3,2026-08-10):**按原格式交付**,不强行转成 LeRobot ——
+            # 客户的数据栈本来就吃 rrd,转格式既贵又会丢掉我们没读懂的组件。
+            # 一条 episode 一个自包含 .rrd ⇒ 通过的原样拷、改标的只重写 /task、
+            # 剔除的不拷,文件名保留源编号便于回源对账。
+            from ..export.rrd_writer import export_rrd_curated
+
+            _rrd_eps = {r["episode_id"]: {
+                "verdict": "通过",
+                "instruction": r.get("instruction") or "",
+                "instruction_source": r.get("instruction_source") or "",
+            } for r in keep_full}
+            deliver["rrd_dataset"] = export_rrd_curated(
+                output_dir, input_dir, list(keep_ids),
+                relabels={e: desc_of[e] for e in keep_ids       # 与 _ov 同一批,只是按
+                          if desc_src_of.get(e) == "自产caption"  # episode_id 键给
+                          and desc_of.get(e, "").strip()},
+                episodes=_rrd_eps,
+                generated_at=report.get("生成时间", ""))["out_dir"]
+            report["dataset"]["交付数据集"] = (
+                f"rrd_curated/({len(keep_ids)} 个 .rrd,原格式;清单见 index.json)")
+        else:
+            _exporter = (export_lerobot_v3
+                         if _load_info(input_dir)["codebase_version"].startswith("v3")
+                         else export_lerobot_v2)
+            # camera_health 旁挂进交付集 meta/(不碰 info.json 标准 schema,不删任何视频)
+            deliver["lerobot_dataset"] = _exporter(
+                input_dir, keep_src_idx, _curated, task_overrides=_ov,
+                camera_health=camera_health)["out_dir"]
 
     # ── 总墙钟回填 + 交付落盘回验(2026-08-06 用户点名)──
     # TOS 挂载新写文件有约 20-60s 的读可见延迟:进度条走完≠交付可用,用户跑
@@ -1051,9 +1110,19 @@ def run_pipeline(
         _checks_vis.append(("lerobot_curated/meta",
                             os.path.join(deliver["lerobot_dataset"], "meta", "info.json"),
                             "json"))
+    if deliver.get("rrd_dataset"):
+        from ..export.rrd_writer import INDEX_NAME as _RRD_INDEX
+        _checks_vis.append(("rrd_curated/index.json",
+                            os.path.join(deliver["rrd_dataset"], _RRD_INDEX), "json"))
     _verify_delivery_visible(_checks_vis)
     report["runtime"]["total_wall_s"] = round(_time0.time() - _run_t0, 1)
     save_report(report, output_dir)      # 回验耗时也计入总墙钟(它是交付的一部分)
+
+    # 临时视频缓存清理(P4,2026-08-10):RRD 输入时 reader 把视频解成 /tmp 下的 mp4
+    # (几百条就是几个 GB,容器可写层扛不住);一次 run 的产物到这里全部落盘完毕,
+    # 缓存再无用处。--report-only 同样走到这里,同样要清。幂等,LeRobot 输入时是空操作。
+    from ..ingest.rrd_reader import cleanup_video_cache
+    cleanup_video_cache(input_dir)
 
     return {"stats": stats, "verdicts": verdicts, "deliverables": deliver,
             "n_delivered": len(keep_rows),
