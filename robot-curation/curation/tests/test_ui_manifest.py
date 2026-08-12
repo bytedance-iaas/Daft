@@ -14,7 +14,7 @@ import signal
 import pytest
 
 from curation.ui.manifest import (audit_rows, check_rows, discover_deliveries,
-                                  episode_rows, funnel_rows, load_delivery,
+                                  funnel_rows, load_delivery,
                                   overview_markdown, parse_detail, skill_rows)
 
 TS_DETAIL = json.dumps({"voc": 0.87, "completion_final": 0.3,
@@ -91,14 +91,6 @@ def test_load_discovers_evidence_and_plots(delivery):
     assert m["episodes"]["ep000001"]["plot"].endswith("ep000001_sync.png")
     assert m["episodes"]["ep000002"]["evidence"] == []
     assert m["episodes"]["ep000002"]["plot"] is None
-
-
-def test_episode_rows_shape(delivery):
-    rows = episode_rows(load_delivery(delivery))
-    assert [r[0] for r in rows] == ["ep000000", "ep000001", "ep000002"]
-    r0 = rows[0]
-    assert r0[1] == "通过" and r0[3] == "任务成败判定" and r0[5] == 2   # 2 张证据帧
-    assert rows[1][6] == "有"                                          # 同步图
 
 
 def test_funnel_and_check_rows(delivery):
@@ -1191,7 +1183,7 @@ def test_sync_camera_rows_assemble_per_camera_readings(delivery):
 
 
 def test_sync_camera_html_states_the_never_discard_semantics(delivery):
-    """展示文案必须与用户拍板的语义一致:标注不判废、弃权不进裁决队列不进软分。"""
+    """展示文案必须与用户拍板的语义一致:标注不判废、弃权不进裁决队列不进质量分。"""
     from curation.ui.manifest import sync_camera_html
     m = _with_sync(delivery)
     html = sync_camera_html(m, "ep000001")
@@ -1205,7 +1197,7 @@ def test_sync_camera_html_states_the_never_discard_semantics(delivery):
     assert "所有可信相机一致指向同一个偏移" in sync_camera_html(m2, "ep000001")
     m3 = _with_sync(delivery, detail={**SYNC_DETAIL_NEW, "verdict": "undecidable"})
     h3 = sync_camera_html(m3, "ep000001")
-    assert "不进人工裁决队列" in h3 and "不参与综合软分" in h3
+    assert "不进人工裁决队列" in h3 and "不参与综合质量分" in h3
 
 
 def test_sync_degrades_on_legacy_delivery(delivery):
@@ -1234,7 +1226,7 @@ def test_sync_block_speaks_up_when_check_never_ran(delivery):
 
 
 def test_episode_card_names_the_fatal_check(delivery):
-    """判决卡:判决 + 致命项是哪个检查 + 一句人话原因 + 综合软分,四件事都在。"""
+    """判决卡:大徽章 + 判决 + 一句人话理由,理由里点名是哪一项没过。"""
     from curation.ui.manifest import (episode_card_html, episode_reason_text,
                                       episode_verdict_label, fatal_checks)
     m = load_delivery(delivery)
@@ -1242,28 +1234,25 @@ def test_episode_card_names_the_fatal_check(delivery):
     assert episode_reason_text(m, "ep000001") == "渐变问询不可判"
     card = episode_card_html(m, "ep000001")
     assert "⛔ 拒绝" in card and "ep000001" in card
-    assert "致命项" in card and "任务成败判定" in card
-    assert "渐变问询不可判" in card and "0.940" in card       # 软分
+    # 检查名 + **该检查自己写的人话**:只报检查名会把人带偏(ep000018 教训)
+    assert "未通过「任务成败判定」:渐变问询不可判" in card
+    assert "硬门" not in card and "0.940" in card             # 黑话已清除 · 质量分
     # 待裁决优先于当前判决(系统还没定论时先叫人上)
     assert episode_verdict_label(m["episodes"]["ep000000"]) == "待裁决"
     card0 = episode_card_html(m, "ep000000")
-    assert "⏳ 待裁决" in card0 and "待裁决项" in card0
-    assert "任务成败判定" in card0
-    # 通过条目:明说没有任何一维投拒绝
-    card2 = episode_card_html(m, "ep000002")
-    assert "✅ 通过" in card2 and "没有任何一维投拒绝" in card2
-    # 没选中 / 老交付无软分:不崩,给引导语
+    assert "⏳ 待裁决" in card0 and "「任务成败判定」弃权" in card0
+    # 没选中 / 查无此条:不崩,给引导语
     assert "选一条 episode" in episode_card_html(m, "")
     assert "选一条 episode" in episode_card_html(m, "查无此条")
 
 
 def test_episode_card_notes_sync_abstention_is_only_an_annotation(delivery):
-    """同步测不准出现在卡片上时,必须当面写清它不进裁决队列、不进软分。"""
+    """同步测不准出现在卡片上时,必须当面写清它不进裁决队列、不进质量分。"""
     from curation.ui.manifest import episode_card_html
     m = _with_sync(delivery, detail={**SYNC_DETAIL_NEW, "verdict": "undecidable"})
     card = episode_card_html(m, "ep000002")
     assert "同步测不准仅作标注" in card
-    assert "不进人工裁决队列" in card and "不参与综合软分" in card
+    assert "不进人工裁决队列" in card and "不参与综合质量分" in card
     # 正常同步的条目不挂这句(不该给每条都加噪声)
     m2 = _with_sync(delivery, detail={**SYNC_DETAIL_NEW, "verdict": "aligned"})
     assert "同步测不准" not in episode_card_html(m2, "ep000002")
@@ -1285,20 +1274,22 @@ def test_check_table_html_highlights_the_rejected_dimension(delivery):
     assert "没有逐维检查读数" in check_table_html(m, "")   # 空态不崩
 
 
-def test_episode_filter_narrows_list_and_ids(delivery):
-    """筛选:只看被拒 / 只看待裁决 / 全部;未知档位退回全部(前端能塞任意值)。"""
-    from curation.ui.manifest import (EPISODE_FILTER_ALL, EPISODE_FILTER_PENDING,
-                                      EPISODE_FILTER_REJECTED, EPISODE_FILTERS,
-                                      episode_rows, filter_episode_ids)
+def test_bucket_split_is_exhaustive_and_disjoint(delivery):
+    """三桶:互斥且穷尽,未知桶名退回全部(前端能塞任意值,不该因此给空清单)。"""
+    from curation.ui.manifest import (BUCKET_ALL, BUCKET_PASSED, BUCKET_PENDING,
+                                      BUCKET_REJECTED, bucket_counts, bucket_ids,
+                                      episode_bucket)
     m = load_delivery(delivery)
-    assert EPISODE_FILTERS[0] == EPISODE_FILTER_ALL       # 默认档排最前
-    assert filter_episode_ids(m) == ["ep000000", "ep000001", "ep000002"]
-    assert filter_episode_ids(m, EPISODE_FILTER_REJECTED) == ["ep000001"]
-    assert filter_episode_ids(m, EPISODE_FILTER_PENDING) == ["ep000000"]
-    assert filter_episode_ids(m, "乱传的档位") == filter_episode_ids(m)
-    rows = episode_rows(m, EPISODE_FILTER_REJECTED)
-    assert [r[0] for r in rows] == ["ep000001"] and rows[0][1] == "拒绝"
-    assert len(episode_rows(m)) == 3                      # 默认参数行为不变
+    assert episode_bucket(m, "ep000001") == BUCKET_REJECTED     # 判决拒绝
+    assert episode_bucket(m, "ep000000") == BUCKET_PENDING      # 系统弃权待裁决
+    assert episode_bucket(m, "ep000002") == BUCKET_PENDING      # 在标注分歧队列里
+    c = bucket_counts(m)
+    assert c == {BUCKET_PASSED: 0, BUCKET_REJECTED: 1, BUCKET_PENDING: 2,
+                 BUCKET_ALL: 3}
+    assert bucket_ids(m, BUCKET_REJECTED) == ["ep000001"]
+    assert bucket_ids(m, BUCKET_PENDING) == ["ep000000", "ep000002"]
+    assert bucket_ids(m, "乱传的桶名") == bucket_ids(m, BUCKET_ALL) == \
+        ["ep000000", "ep000001", "ep000002"]
 
 
 def test_sync_view_gallery_items_carry_episode_and_badge(delivery):
@@ -1380,8 +1371,7 @@ def test_sync_health_block_and_legacy_degradation(delivery):
 
 
 def test_app_has_sync_curve_tab_and_split_evidence(delivery):
-    """Gradio 层:新增「同步曲线」页(挨着 Stuck 时间线),且 Episodes 页的
-    证据帧画廊与同步曲线是**两个组件**——混排正是"显示很差"的根因。"""
+    """Gradio 层:「同步曲线」页在(挨着 Stuck 时间线),曲线走独立的整幅宽度组件。"""
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(_with_sync(delivery)["path"]))
@@ -1392,7 +1382,6 @@ def test_app_has_sync_curve_tab_and_split_evidence(delivery):
     # 独有的筛选器文案(否则这条断言量的是 Episodes 页,永远不会红)
     assert (cfg.index("技能画像") < cfg.index("只看有标注/异常的")
             < cfg.index("Stuck 时间线"))
-    assert "证据帧" in cfg and "只看被拒" in cfg
     # 老画廊标题("证据(probe 帧 + 同步曲线)")必须绝迹:那就是混排的证据
     assert "probe 帧 + 同步曲线" not in cfg
     # 曲线走独立的 Image 组件(整幅宽度),不再是画廊里的一格
@@ -1409,7 +1398,7 @@ def test_asgi_app_serves_sync_curve_tab(delivery, clean_ui_env):
     with TestClient(app) as c:
         r = c.get("/")
         assert r.status_code == 200
-        assert "同步曲线" in r.text and "只看被拒" in r.text
+        assert "同步曲线" in r.text and "只看有标注/异常的" in r.text
 
 
 def test_app_load_returns_match_outputs_after_rework(delivery):
@@ -1567,3 +1556,549 @@ def test_sync_banner_wording_matches_the_actual_diagnosis():
     clean = sync_conclusion(_m({"verdict": "aligned"}))
     assert clean["level"] == "ok" and clean["title"].startswith("同步正常")
     assert "假峰" not in " ".join(clean["points"])
+
+
+# ───────── Episodes 页整页改版(2026-08-11):三桶 + 左清单右详情 + 视频区 ─────────
+#
+# 改版起因(用户与其同事拍板):旧页是七列大表 + 三档筛选 + 证据帧画廊 + 曲线 +
+# 三路切片,客户其实只问三件事——哪些过了、哪些被拒、哪些等着人来定。以下测试钉住
+# 三处最容易做错的地方:
+# ① 桶口径(去重删除的条目必须落在**拒绝**桶,理由说"重复"——它画面没毛病,
+#    但确实出局了;把它算进通过桶就是虚报交付量);
+# ② 视频来源链的顺序与**序号换算**(交付集是重编号的,序号猜错 = 播的是别人的
+#    视频,比没有视频更糟 → 定不下来就诚实不给);
+# ③ 措辞:"软分""硬门"是机制黑话,用户点名清除,界面上一个字都不许剩。
+
+
+@pytest.fixture
+def ep_delivery(tmp_path):
+    """五条 episode 覆盖全部三桶:通过 / 拒绝 / 拒绝(去重)/ 弃权待裁 / 标注分歧。"""
+    d = tmp_path / "droid-buckets"
+    (d / "details").mkdir(parents=True)
+    (d / "passed.json").write_text(json.dumps({
+        "数据集": "droid_buckets", "机器人": "franka",
+        "生成时间": "2026-08-11 08:00:00", "代码版本": "abc1234",
+        "dataset": {"input_episodes": 5, "hard_gate_filtered": 1,
+                    "verdict_keep": 4, "verdict_drop": 1, "dedup_removed": 1,
+                    "delivered": 3, "hard_fail_breakdown": {"task_success": 1},
+                    "summary_stats": {"pass_rate_pct": 60.0, "avg_soft_score": 0.9}},
+        "episodes": {
+            "ep000000": {"判决": "通过", "综合软分": 0.93,
+                         "checks": {"运动质量": {"结果": "软分", "score": 0.86}}},
+            "ep000001": {"判决": "通过", "综合软分": 0.88, "checks": {}},
+            "ep000003": {"判决": "通过", "综合软分": 0.9, "checks": {}},
+            "ep000004": {"判决": "通过", "综合软分": 0.91, "checks": {}}},
+    }, ensure_ascii=False), encoding="utf-8")
+    (d / "reject.json").write_text(json.dumps({"被拒总数": 2, "episodes": {
+        "ep000002": {"判决": "拒绝", "原因": "硬门违规: 「任务成败判定」",
+                     "综合软分": 0.4,
+                     "checks": {"任务成败判定": {"结果": "拒绝", "detail": json.dumps(
+                         {"reason": "末态未完成"})}}},
+        "ep000003": {"判决": "拒绝(去重)", "原因": "与 ep000000 字节级完全重复",
+                     "checks": {}}}}, ensure_ascii=False), encoding="utf-8")
+    (d / "review.json").write_text(json.dumps({
+        "待人工裁决总数": 1,
+        "episodes": {"ep000001": {"当前判决": "通过", "待裁决项": ["任务成败判定"],
+                                  "弃权原因": {"任务成败判定": "渐变问询不可判"}}},
+        "标注-画面分歧复核队列": [{"id": "ep000004", "label": "open the door",
+                                   "caption": "put the pot", "reason": "跨族分歧"}]},
+        ensure_ascii=False), encoding="utf-8")
+    return str(d)
+
+
+def _curated(path, *, episodes: int, version: str = "v2.0", cams=("cam_left",),
+             health_map: dict | None = None):
+    """在交付目录里造一个 lerobot_curated(v2 逐条 mp4;health_map 给精确序号映射)。"""
+    root = os.path.join(path, "lerobot_curated")
+    os.makedirs(os.path.join(root, "meta"), exist_ok=True)
+    with open(os.path.join(root, "meta", "info.json"), "w") as f:
+        json.dump({"codebase_version": version, "total_episodes": episodes}, f)
+    for cam in cams:
+        vd = os.path.join(root, "videos", "chunk-000", f"observation.images.{cam}")
+        os.makedirs(vd, exist_ok=True)
+        for i in range(episodes):
+            with open(os.path.join(vd, f"episode_{i:06d}.mp4"), "wb") as f:
+                f.write(b"\x00\x00\x00 ftypisom")
+    hp = os.path.join(root, "meta", "curation_camera_health.json")
+    if health_map:
+        with open(hp, "w") as f:
+            json.dump({"episodes": [{"episode_index": i, "source_episode_id": e}
+                                    for e, i in health_map.items()]}, f)
+    elif os.path.exists(hp):
+        os.remove(hp)              # 重造交付集时别留下上一次的映射(会假阳性)
+    return root
+
+
+def _review_site(root, site, eids, cams=("cam_left", "cam_wrist")):
+    """审片站骨架:<根>/<站名>/details/audit_clips/<ep>__<相机>.mp4。"""
+    d = os.path.join(root, site, "details", "audit_clips")
+    os.makedirs(d, exist_ok=True)
+    for e in eids:
+        for c in cams:
+            with open(os.path.join(d, f"{e}__{c}.mp4"), "wb") as f:
+                f.write(b"\x00\x00\x00 ftypisom")
+    return root
+
+
+def test_buckets_put_dedup_removal_in_the_rejected_pile(ep_delivery):
+    """去重删除的条目属于**拒绝**桶,理由说"重复"——把它算进通过桶就是虚报交付量。"""
+    from curation.ui.manifest import (BUCKET_ALL, BUCKET_PASSED, BUCKET_PENDING,
+                                      BUCKET_REJECTED, bucket_counts, bucket_ids,
+                                      episode_bucket, episode_short_reason,
+                                      is_dedup_drop)
+    m = load_delivery(ep_delivery)
+    assert episode_bucket(m, "ep000003") == BUCKET_REJECTED
+    assert is_dedup_drop(m["episodes"]["ep000003"])
+    assert "重复" in episode_short_reason(m, "ep000003")
+    assert bucket_counts(m) == {BUCKET_PASSED: 1, BUCKET_REJECTED: 2,
+                                BUCKET_PENDING: 2, BUCKET_ALL: 5}
+    assert bucket_ids(m, BUCKET_PASSED) == ["ep000000"]
+    assert bucket_ids(m, BUCKET_REJECTED) == ["ep000002", "ep000003"]
+    assert bucket_ids(m, BUCKET_PENDING) == ["ep000001", "ep000004"]
+
+
+def test_bucket_choices_carry_counts_and_all(ep_delivery):
+    """顶部三桶自带计数(数字是客户最想先看到的),外加「全部」兜底。"""
+    from curation.ui.manifest import BUCKET_ALL, bucket_choices
+    labels = [lab for lab, _ in bucket_choices(load_delivery(ep_delivery))]
+    assert labels == ["✅ 通过 1", "❌ 拒绝 2", "⏳ 待人工 2", "全部 5"]
+    assert bucket_choices(load_delivery(ep_delivery))[-1][1] == BUCKET_ALL
+
+
+def test_episode_list_line_is_id_icon_and_half_a_sentence(ep_delivery):
+    """清单行 = `ep000002 ❌` + 半句人话;**通过条目不写理由**(没什么可解释的)。"""
+    from curation.ui.manifest import (BUCKET_ALL, LIST_REASON_CAP,
+                                      episode_list_choices, episode_list_items)
+    m = load_delivery(ep_delivery)
+    by_id = {it["id"]: it for it in episode_list_items(m, BUCKET_ALL)}
+    assert by_id["ep000000"]["label"] == "ep000000 ✅"          # 通过:只有号和勾
+    assert by_id["ep000002"]["label"] == "ep000002 ❌ 末态未完成"
+    assert "未通过「" not in by_id["ep000002"]["label"]      # 前缀不进清单
+    assert by_id["ep000001"]["label"] == "ep000001 ⏳ 渐变问询不可判"
+    assert "分歧" in by_id["ep000004"]["reason"] or \
+        "不一致" in by_id["ep000004"]["reason"]
+    # 理由截断:一行超过上限就带省略号,清单永远单行可扫
+    assert all(len(it["reason"]) <= LIST_REASON_CAP + 1
+               for it in episode_list_items(m, BUCKET_ALL))
+    assert episode_list_choices(m, BUCKET_ALL)[0][1] == "ep000000"   # 值是 id
+
+
+def test_passed_episode_card_says_nothing_but_passed(ep_delivery):
+    """用户原话:通过条目"就一行 ✅ 通过,别的不说"。"""
+    from curation.ui.manifest import episode_card_html
+    m = load_delivery(ep_delivery)
+    card = episode_card_html(m, "ep000000")
+    assert "✅ 通过" in card and "ep000000" in card
+    for noise in ("质量分", "致命项", "原因", "检查", "弃权"):
+        assert noise not in card, noise
+    # 被拒的那条相反:理由必须当面写清
+    assert "末态未完成" in episode_card_html(m, "ep000002")
+
+
+def test_video_source_chain_prefers_review_site(ep_delivery, tmp_path):
+    """来源链 ①:审片站有片段就用审片站(**全部 episode 都有,含被拒的**)。"""
+    from curation.ui.manifest import (VIDEO_SOURCE_REVIEW, episode_video_html,
+                                      episode_videos)
+    site = _review_site(str(tmp_path / "review"), "droid_buckets",
+                        ["ep000000", "ep000002"])
+    m = load_delivery(ep_delivery)
+    v = episode_videos(m, "ep000002", site)                 # 被拒条目照样有视频
+    assert v["source"] == VIDEO_SOURCE_REVIEW
+    assert [x["camera"] for x in v["videos"]] == ["cam_left", "cam_wrist"]
+    html = episode_video_html(m, "ep000002", site)
+    assert html.count("<video") == 2
+    assert "muted" in html and "loop" in html and 'preload="metadata"' in html
+    assert "autoplay" not in html                            # 进页面不许自己播
+
+
+def test_video_source_chain_falls_back_to_curated_dataset(ep_delivery, tmp_path):
+    """来源链 ②:审片站没有 → 交付集内逐条 mp4(只有交付了的条目才有)。"""
+    from curation.ui.manifest import (VIDEO_SOURCE_CURATED, VIDEO_SOURCE_NONE,
+                                      curated_index_of, episode_videos)
+    _curated(ep_delivery, episodes=3)          # 交付 3 条:ep000000/1/4 按序重编号
+    m = load_delivery(ep_delivery)
+    assert curated_index_of(m, "ep000004") == 2
+    v = episode_videos(m, "ep000004", None)
+    assert v["source"] == VIDEO_SOURCE_CURATED
+    assert v["videos"][0]["path"].endswith("episode_000002.mp4")
+    assert v["videos"][0]["camera"] == "cam_left"           # schema 前缀不露给客户
+    # 被拒条目根本没进交付集 → 落到第三档
+    assert episode_videos(m, "ep000002", None)["source"] == VIDEO_SOURCE_NONE
+
+
+def test_curated_index_uses_recorded_mapping_and_abstains_when_unsure(ep_delivery):
+    """序号换算:有旁挂映射就照抄;条数对不上就**弃权**(猜错=播别人的视频)。"""
+    from curation.ui.manifest import curated_index_of, episode_videos
+    _curated(ep_delivery, episodes=3,
+             health_map={"ep000000": 0, "ep000001": 1, "ep000004": 2})
+    m = load_delivery(ep_delivery)
+    assert curated_index_of(m, "ep000001") == 1              # 来自旁挂映射
+    # 映射文件缺失 + 条数对不上(交付集 9 条 vs 清单 3 条)→ 不猜
+    _curated(ep_delivery, episodes=9)
+    m2 = load_delivery(ep_delivery)
+    assert curated_index_of(m2, "ep000004") is None
+    assert episode_videos(m2, "ep000004", None)["videos"] == []
+
+
+def test_v3_merged_mp4_is_not_a_video_source(ep_delivery):
+    """v3 交付集是**合并大 mp4**(不按条切),不属于本来源——宁可说没有。"""
+    from curation.ui.manifest import VIDEO_SOURCE_NONE, curated_video_paths, episode_videos
+    _curated(ep_delivery, episodes=3, version="v3.0")
+    m = load_delivery(ep_delivery)
+    assert curated_video_paths(m, "ep000000") == []
+    assert episode_videos(m, "ep000000", None)["source"] == VIDEO_SOURCE_NONE
+
+
+def test_no_video_anywhere_tells_how_to_get_them(ep_delivery):
+    """来源链 ③:两处都没有 → 一句"怎么才能有",不空着也不假装。"""
+    from curation.ui.manifest import NO_VIDEO_NOTE, episode_video_html, episode_videos
+    m = load_delivery(ep_delivery)
+    assert episode_videos(m, "ep000000", None)["note"] == NO_VIDEO_NOTE
+    assert "review-page" in episode_video_html(m, "ep000000", None)
+
+
+def test_play_all_button_zeroes_and_plays_every_video(ep_delivery, tmp_path):
+    """「同时播放」= 区内所有 video 归零后一起播,再点变暂停(纯内联 JS:
+    gr.HTML 走 innerHTML 注入,<script> 不执行、内联事件属性执行)。"""
+    from curation.ui.manifest import PAUSE_ALL_TEXT, PLAY_ALL_TEXT, episode_video_html
+    site = _review_site(str(tmp_path / "review"), "droid_buckets", ["ep000000"],
+                        cams=("cam_a", "cam_b", "cam_c"))
+    html = episode_video_html(load_delivery(ep_delivery), "ep000000", site)
+    assert html.count("<video") == 3
+    assert PLAY_ALL_TEXT in html and PAUSE_ALL_TEXT in html
+    assert "querySelectorAll('video')" in html and ".play()" in html
+    assert "currentTime=0" in html and ".pause()" in html
+    assert "ep-video-zone" in html
+    assert "&" not in html                 # 属性里的 & 会被当实体开头,踩过一次
+
+
+def test_manual_hint_only_on_pending_and_points_at_the_decision_page(ep_delivery):
+    """待人工条目在明细上方给醒目提示 + 去「人工裁决」页的指引;别的桶不占位。"""
+    from curation.ui.manifest import manual_hint_html
+    m = load_delivery(ep_delivery)
+    hint = manual_hint_html(m, "ep000001")
+    assert "人工裁决" in hint and "rejudge" in hint
+    assert manual_hint_html(m, "ep000000") == ""
+    assert manual_hint_html(m, "ep000002") == ""
+
+
+def test_episodes_page_text_has_no_mechanism_jargon(ep_delivery, tmp_path):
+    """★红线(2026-08-11 用户点名):"软分""硬门"是机制黑话,界面上一个字不许剩。"""
+    from curation.ui.manifest import (BUCKET_ALL, bucket_choices, check_table_html,
+                                      episode_card_html, episode_list_items,
+                                      episode_video_html, funnel_rows,
+                                      manual_hint_html, overview_markdown)
+    site = _review_site(str(tmp_path / "review"), "droid_buckets", ["ep000000"])
+    m = load_delivery(ep_delivery)
+    seen = [overview_markdown(m), str(funnel_rows(m)), str(bucket_choices(m))]
+    for eid in ("ep000000", "ep000001", "ep000002", "ep000003", "ep000004"):
+        seen += [episode_card_html(m, eid), check_table_html(m, eid),
+                 manual_hint_html(m, eid), episode_video_html(m, eid, site)]
+    seen += [it["label"] for it in episode_list_items(m, BUCKET_ALL)]
+    blob = "\n".join(seen)
+    assert "软分" not in blob and "硬门" not in blob
+    assert "质量分" in blob                       # 换的是叫法,不是把信息删了
+    assert "不合格拦截" in overview_markdown(m)   # 概览行也换成人话
+    assert "未通过「任务成败判定」" in episode_card_html(m, "ep000002")   # 检查名仍在
+
+
+def test_app_episodes_tab_is_buckets_plus_list_and_detail(ep_delivery, tmp_path):
+    """Gradio 层:三桶单选 + 左清单 + 折叠的检查明细都在,证据帧画廊已撤。
+
+    桶与清单的选项是 `_load` 现算的(交付一换就得换),所以这里既看页面骨架,
+    也直接跑一遍 `_load` 看它真发出了带计数的三桶。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    site = _review_site(str(tmp_path / "review"), "droid_buckets", ["ep000000"])
+    app = build_app(ep_delivery, review_dir=site)
+    cfg = _config_text(app)
+    assert "检查明细" in cfg
+    assert "证据帧" not in cfg                     # 静态证据帧整块撤掉(用户原话)
+    assert "只看被拒" not in cfg                   # 旧筛选档已被三桶取代
+    loads = [f for f in app.fns.values() if getattr(f.fn, "__name__", "") == "_load"]
+    blob = str(loads[0].fn(ep_delivery))
+    assert "✅ 通过 1" in blob and "❌ 拒绝 2" in blob and "⏳ 待人工 2" in blob
+    assert "ep000002 ❌ 末态未完成" in blob                 # 左清单那一行
+
+
+# ── 审片站认领(2026-08-11 收紧):只播**本交付这份数据**的片段 ──
+#
+# 起因:站点原先没有身份,UI 只能"谁有这个 episode 号就用谁"。droid-ep13-20-demo
+# 因此借用了 droid200 站的片段——同源同号,那次巧对;换个数据集同号就是给客户放错
+# 视频。现在改成两档认领(site.json 精确 → 站名降级),**认不出就当没有**。
+
+
+def _site_json(root, site, source_dataset):
+    """给站点补一张身份证(生成侧由 review_page.write_site_manifest 写)。"""
+    import os as _os
+    d = _os.path.join(root, site)
+    _os.makedirs(d, exist_ok=True)
+    with open(_os.path.join(d, "site.json"), "w", encoding="utf-8") as f:
+        json.dump({"source_dataset": source_dataset,
+                   "dataset_name": _os.path.basename(source_dataset),
+                   "title": "随便起的标题", "generated_at": "2026-08-11 10:00:00"}, f)
+    return d
+
+
+def test_review_site_claimed_by_site_json_not_by_folder_name(ep_delivery, tmp_path):
+    """站名与数据集名对不上时,site.json 说了算(真实站名常是 droid200 这种昵称)。"""
+    from curation.ui.manifest import VIDEO_SOURCE_REVIEW, episode_videos
+    root = str(tmp_path / "review")
+    _review_site(root, "随便起的站名", ["ep000000"])
+    _site_json(root, "随便起的站名", "/mnt/tos/datasets/droid_buckets")
+    m = load_delivery(ep_delivery)                    # passed.json 里数据集名 = droid_buckets
+    v = episode_videos(m, "ep000000", root)
+    assert v["source"] == VIDEO_SOURCE_REVIEW and len(v["videos"]) == 2
+
+
+def test_review_site_name_match_is_the_legacy_fallback(ep_delivery, tmp_path):
+    """老站点没有 site.json:站名归一化等于数据集名仍认(不然存量站全瞎)。"""
+    from curation.ui.manifest import VIDEO_SOURCE_REVIEW, episode_videos
+    root = _review_site(str(tmp_path / "review"), "droid_buckets", ["ep000000"])
+    v = episode_videos(load_delivery(ep_delivery), "ep000000", root)
+    assert v["source"] == VIDEO_SOURCE_REVIEW
+
+
+def test_unclaimed_site_is_not_borrowed(ep_delivery, tmp_path):
+    """★红线:两档都不中的站点,**片段号对得上也不许用** —— 宁缺勿错。"""
+    from curation.ui.manifest import (NO_VIDEO_NOTE, VIDEO_SOURCE_NONE,
+                                      episode_videos)
+    root = _review_site(str(tmp_path / "review"), "别人家的站", ["ep000000"])
+    _site_json(root, "别人家的站", "/mnt/tos/datasets/bridge_orig_lerobot")
+    v = episode_videos(load_delivery(ep_delivery), "ep000000", root)
+    assert v["source"] == VIDEO_SOURCE_NONE and v["note"] == NO_VIDEO_NOTE
+
+
+def test_two_sites_same_episode_ids_only_the_matching_one_plays(ep_delivery, tmp_path):
+    """串台场景:两个站都有 ep000000 的片段,只有认领成功的那个能出现在页面上。"""
+    from curation.ui.manifest import episode_videos, review_clip_paths
+    root = str(tmp_path / "review")
+    _review_site(root, "aaa_别人家", ["ep000000"])          # 名字排在前面
+    _site_json(root, "aaa_别人家", "/mnt/tos/datasets/bridge_orig_lerobot")
+    _review_site(root, "zzz_我家", ["ep000000"])
+    _site_json(root, "zzz_我家", "/mnt/tos/datasets/droid_buckets")
+    m = load_delivery(ep_delivery)
+    paths = review_clip_paths(root, m, "ep000000")
+    assert paths and all("zzz_我家" in p for p in paths)
+    assert all("aaa_别人家" not in x["path"]
+               for x in episode_videos(m, "ep000000", root)["videos"])
+
+
+def test_site_claim_helpers_are_honest_about_missing_identity(ep_delivery, tmp_path):
+    """辅助函数的边界:没有 site.json = 认不出(不是"匹配成功");站点扫描含根本身。"""
+    from curation.ui.manifest import (delivery_source_dataset, review_sites,
+                                      site_matches_delivery)
+    root = str(tmp_path / "review")
+    d = _review_site(root, "无名站", ["ep000000"])
+    m = load_delivery(ep_delivery)
+    assert delivery_source_dataset(m) == (None, "droid_buckets")   # 交付只记名
+    assert site_matches_delivery(os.path.join(d, "无名站"), m) is False
+    assert review_sites(root)[0] == root                           # 根本身也是候选
+    assert os.path.join(root, "无名站") in review_sites(root)
+    assert review_sites(None) == []
+
+
+# ── 左清单分页 + 片段可播性(2026-08-11 用户两处实见)──
+#
+# ① 两百行单选框一次渲染就到极限 → 每页 50 条,翻页口径抄同步曲线页那一套;
+# ② droid-200-full 的 ep000018 摆了三个**死播放器**:它是 8 帧 0.47 秒的采集残段
+#    (被拒原因就是它),切出的片段只有 1 帧 0.25 秒——文件在、近 10KB、mp4 魔数
+#    俱全,播放器就是放不出东西。所以"存在 + 够大 + 有魔数"三条挡不住它,必须
+#    再看容器头里的帧数/时长。
+
+
+def _many_eps(tmp_path, n=120):
+    """n 条通过条目的交付(只为测分页,内容从简)。"""
+    d = tmp_path / "many"
+    (d / "details").mkdir(parents=True)
+    (d / "passed.json").write_text(json.dumps({
+        "数据集": "many_ds", "dataset": {},
+        "episodes": {f"ep{i:06d}": {"判决": "通过", "综合软分": 0.9, "checks": {}}
+                     for i in range(n)}}, ensure_ascii=False), encoding="utf-8")
+    return load_delivery(str(d))
+
+
+def test_list_paging_bounds_and_wrap(tmp_path):
+    """分页:每页 EPISODE_PAGE_SIZE 条、末页只剩零头、页码越界回绕(同曲线页口径)。"""
+    from curation.ui.manifest import EPISODE_PAGE_SIZE, episode_list_view
+    assert EPISODE_PAGE_SIZE == 50
+    m = _many_eps(tmp_path, 120)
+    v0 = episode_list_view(m, page=0)
+    assert v0["pages"] == 3 and len(v0["choices"]) == 50
+    assert v0["choices"][0][1] == "ep000000" and v0["pos"] == "第 1 / 3 页"
+    assert v0["multi"] is True
+    v2 = episode_list_view(m, page=2)
+    assert len(v2["choices"]) == 20 and v2["choices"][0][1] == "ep000100"
+    assert episode_list_view(m, page=3)["page"] == 0      # 越界回绕到第 1 页
+    assert episode_list_view(m, page=-1)["page"] == 2     # 往回也回绕
+    # 一页放得下时不出翻页件(与曲线页一致:平铺优先)
+    small = episode_list_view(_many_eps(tmp_path / "s", 8))
+    assert small["pages"] == 1 and small["pos"] == "" and small["multi"] is False
+
+
+def test_list_selection_survives_paging(tmp_path):
+    """选中项跨页保持:翻走时清单里没有高亮项,翻回它那页仍是选中态。"""
+    from curation.ui.manifest import episode_list_view
+    m = _many_eps(tmp_path, 120)
+    assert episode_list_view(m, page=0, selected="ep000003")["value"] == "ep000003"
+    assert episode_list_view(m, page=1, selected="ep000003")["value"] is None
+    assert episode_list_view(m, page=0, selected="ep000003")["value"] == "ep000003"
+    # 选中项来自别的桶/已不存在:同样不许乱点亮别人
+    assert episode_list_view(m, page=0, selected="查无此条")["value"] is None
+
+
+def test_bucket_switch_resets_to_first_page(ep_delivery):
+    """切桶回第 1 页(停在旧页码上,看到的是空清单或别人的条目)。"""
+    from curation.ui.manifest import BUCKET_PENDING, BUCKET_REJECTED, episode_list_view
+    m = load_delivery(ep_delivery)
+    v = episode_list_view(m, BUCKET_REJECTED, page=0)
+    assert [c[1] for c in v["choices"]] == ["ep000002", "ep000003"]
+    v2 = episode_list_view(m, BUCKET_PENDING, page=0)
+    assert [c[1] for c in v2["choices"]] == ["ep000001", "ep000004"]
+
+
+def _write_clip(path, size=8192, magic=b"\x00\x00\x00 ftypisom"):
+    with open(path, "wb") as f:
+        f.write(magic + b"\x00" * max(0, size - len(magic)))
+
+
+def test_truncated_or_fake_clips_are_not_playable(ep_delivery, tmp_path, monkeypatch):
+    """存在但没法播的三种形态:文件缺、太小(截断/零填充)、根本不是 mp4。"""
+    from curation.ui import manifest as mf
+    monkeypatch.setattr(mf, "_probe_frames_duration", lambda p: (None, None))
+    mf._PROBE_CACHE.clear()               # 只测"存在/大小/魔数"这一层
+    d = tmp_path / "clips"
+    d.mkdir()
+    ok, tiny, junk = (str(d / f"{n}.mp4") for n in ("ok", "tiny", "junk"))
+    _write_clip(ok)
+    _write_clip(tiny, size=800)
+    _write_clip(junk, magic=b"not an mp4!!")
+    assert mf.clip_is_playable(ok) is True
+    assert mf.clip_is_playable(tiny) is False
+    assert mf.clip_is_playable(junk) is False
+    assert mf.clip_is_playable(str(d / "缺失.mp4")) is False
+
+
+def test_one_frame_clip_is_a_dead_player(tmp_path):
+    """★ ep000018 那一类:mp4 合法、体积够大,但只有 1 帧 —— 摆上去就是死播放器。
+
+    判据只看容器头(帧数/时长),**不解码任何一帧**(FSX 上整读是灾难)。
+    """
+    pytest.importorskip("av")
+    import av
+    import numpy as np
+
+    from curation.ui import manifest as mf
+    mf._PROBE_CACHE.clear()
+
+    def make(path, n_frames):
+        rng = np.random.default_rng(0)
+        with av.open(path, "w", options={"movflags": "faststart"}) as c:
+            st = c.add_stream("h264", rate=4)
+            st.width, st.height, st.pix_fmt = 320, 180, "yuv420p"
+            for _ in range(n_frames):
+                arr = rng.integers(0, 255, (180, 320, 3), dtype=np.uint8)
+                for pkt in st.encode(av.VideoFrame.from_ndarray(arr, format="rgb24")):
+                    c.mux(pkt)
+            for pkt in st.encode():
+                c.mux(pkt)
+
+    dead, good = str(tmp_path / "dead.mp4"), str(tmp_path / "good.mp4")
+    make(dead, 1)
+    make(good, 24)
+    assert mf.clip_probe(dead)["playable"] is False
+    assert mf.clip_probe(dead)["frames"] == 1
+    assert "视频过短" in mf.clip_probe(dead)["why"] and "1 帧" in mf.clip_probe(dead)["why"]
+    assert mf.clip_probe(good)["playable"] is True and mf.clip_probe(good)["why"] == ""
+
+
+def test_unplayable_lanes_keep_their_player_and_explain_why(ep_delivery, tmp_path,
+                                                            monkeypatch):
+    """★ 用户原话:"视频还是要放在那里占位"——放不动的那一路**照摆播放器**,
+    旁边写清"视频过短(N 帧 / X.XX 秒),无法正常播放";被拒条目再补半句
+    "这正是该条被拒的原因"(ep000018 那类残段,片段放不动本身就是被拒的原因)。"""
+    from curation.ui import manifest as mf
+    monkeypatch.setattr(mf, "clip_probe", lambda p: {
+        "playable": False, "frames": 1, "duration_s": 0.25,
+        "why": mf.short_clip_text(1, 0.25)})
+    root = _review_site(str(tmp_path / "review"), "droid_buckets",
+                        ["ep000000", "ep000002"])
+    m = load_delivery(ep_delivery)
+    html = mf.episode_video_html(m, "ep000002", root)          # ep000002 是被拒的
+    assert html.count("<video") == 2                           # 槽位一个没少
+    assert "视频过短(1 帧 / 0.25 秒),无法正常播放" in html
+    assert mf.REJECTED_CLIP_TAIL in html
+    # 通过条目:同样保留播放器与说明,但不拼"被拒原因"那半句
+    assert mf.REJECTED_CLIP_TAIL not in mf.episode_video_html(m, "ep000000", root)
+    # "压根没有视频"仍然是另一回事(那才给纯文字提示)
+    assert mf.episode_videos(m, "ep000001", root)["note"] == mf.NO_VIDEO_NOTE
+
+
+def test_short_clip_text_degrades_without_readings():
+    """读数拿不到(文件截断/不是 mp4)时退回"损坏或过短",不编造帧数。"""
+    from curation.ui.manifest import BROKEN_LANE_TEXT, short_clip_text
+    assert short_clip_text(1, 0.25) == "视频过短(1 帧 / 0.25 秒),无法正常播放"
+    assert short_clip_text(None, 0.4) == "视频过短(0.40 秒),无法正常播放"
+    assert short_clip_text(None, None) == BROKEN_LANE_TEXT
+
+
+def test_source_with_no_playable_lane_falls_through(ep_delivery, tmp_path, monkeypatch):
+    """整档都是死片段 = 这档没给出视频 → 继续往下找(退到交付集内的视频)。"""
+    from curation.ui import manifest as mf
+    root = _review_site(str(tmp_path / "review"), "droid_buckets", ["ep000000"])
+    _curated(ep_delivery, episodes=3)
+    monkeypatch.setattr(mf, "clip_probe", lambda p: {
+        "playable": "review" not in p, "frames": None, "duration_s": None,
+        "why": "" if "review" not in p else mf.BROKEN_LANE_TEXT})
+    v = mf.episode_videos(load_delivery(ep_delivery), "ep000000", root)
+    assert v["source"] == mf.VIDEO_SOURCE_CURATED
+    assert all(x["playable"] for x in v["videos"])
+
+
+# ── 清单行与横幅措辞解耦(2026-08-11 用户定)──
+#
+# 清单列窄 + 单行省略,前二十来字就被截住:带上"未通过「时间戳检查」:"这个前缀,
+# "到底怎么了"就被挤出视野了(ep000018 实见)。所以清单只放**检查自己写的人话**,
+# 横幅保持完整交代。拿不到人话(老交付)才退回带前缀的格式。
+
+
+def _ts_reject(tmp_path, detail_reason="全长只有 0.47 秒(不足 1 秒,疑似采集中断的碎片)"):
+    d = tmp_path / "tsrej"
+    (d / "details").mkdir(parents=True)
+    (d / "passed.json").write_text('{"数据集": "ds", "dataset": {}, "episodes": {}}',
+                                   encoding="utf-8")
+    chk = {"结果": "拒绝"}
+    if detail_reason:
+        chk["detail"] = json.dumps({"reason": detail_reason, "n": 8})
+    (d / "reject.json").write_text(json.dumps({"episodes": {"ep000018": {
+        "判决": "拒绝",
+        "原因": ("未通过「时间戳检查」:" + detail_reason if detail_reason
+                 else "硬门违规: 「时间戳检查」"),
+        "checks": {"时间戳检查": chk}}}}, ensure_ascii=False), encoding="utf-8")
+    return load_delivery(str(d))
+
+
+def test_list_line_drops_the_check_name_prefix(tmp_path):
+    """清单行 = 人话在前:`ep000018 ❌ 全长只有 0.47 秒(…)`,没有"未通过「"前缀。"""
+    from curation.ui.manifest import (BUCKET_ALL, episode_card_html,
+                                      episode_list_items, episode_list_reason)
+    m = _ts_reject(tmp_path)
+    label = episode_list_items(m, BUCKET_ALL)[0]["label"]
+    assert label.startswith("ep000018 ❌ 全长只有 0.47 秒")
+    assert "未通过「" not in label
+    for word in ("全长", "秒"):
+        assert word in label, label
+    assert not episode_list_reason(m, "ep000018").startswith("未通过")
+    # 横幅照旧完整交代"哪一项没过 + 为什么"(两处措辞是解耦的,不是二选一)
+    card = episode_card_html(m, "ep000018")
+    assert "未通过「时间戳检查」:全长只有 0.47 秒" in card
+
+
+def test_list_line_falls_back_when_check_wrote_no_reason(tmp_path):
+    """老交付/检查没写人话:清单退回带检查名的格式 —— 宁可啰嗦,不可空白。"""
+    from curation.ui.manifest import BUCKET_ALL, episode_list_items
+    m = _ts_reject(tmp_path, detail_reason="")
+    label = episode_list_items(m, BUCKET_ALL)[0]["label"]
+    assert label == "ep000018 ❌ 未通过「时间戳检查」"
+    assert "硬门" not in label

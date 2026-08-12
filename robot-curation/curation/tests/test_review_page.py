@@ -113,3 +113,31 @@ def test_no_review_dir_no_route(tmp_path, monkeypatch):
     app = create_asgi_app(str(delivery), terminal=False)
     with TestClient(app) as c:
         assert c.get("/review/").status_code == 404
+
+
+def test_site_json_records_source_dataset(tmp_path, monkeypatch):
+    """站点身份文件(2026-08-11):UI 靠它把交付对上审片站,内容必须是**源数据集**。
+
+    防的事故:审片站原先只有一个自由文本标题,UI 认不出它是谁家的数据,只能
+    "谁有这个 episode 号就用谁"——droid-ep13-20-demo 因此借用了 droid200 的片段
+    (那次同源巧对,换个数据集就是给客户放错视频)。
+    """
+    import json
+    calls = []
+    _fake_clips(monkeypatch, calls)
+    src = tmp_path / "datasets" / "droid_lerobot"
+    src.mkdir(parents=True)
+    site = tmp_path / "review" / "droid200"
+    build_review_page(_rows(1), str(site), title="DROID 200 审片",
+                      source_dataset=str(src))
+    doc = json.loads((site / "site.json").read_text(encoding="utf-8"))
+    assert doc["source_dataset"] == str(src)          # 绝对路径,便于人工对账
+    assert doc["dataset_name"] == "droid_lerobot"     # 交付里记的就是这个名
+    assert doc["title"] == "DROID 200 审片" and doc["generated_at"]
+    # 重跑更新(幂等):时间戳字段在,内容随新参数走
+    build_review_page(_rows(1), str(site), title="改了名", source_dataset=str(src))
+    assert json.loads((site / "site.json").read_text(encoding="utf-8"))["title"] == "改了名"
+    # 不给源数据集就**不写**这个文件:宁可让 UI 走降级,也不写一张存疑的身份证
+    plain = tmp_path / "review" / "plain"
+    build_review_page(_rows(1), str(plain), title="无源")
+    assert not (plain / "site.json").exists()

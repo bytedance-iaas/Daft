@@ -166,46 +166,6 @@ def task_review_queue(review_json: dict, episodes: dict) -> list:
 
 # ───────── 表格整形(Gradio Dataframe 直接吃)─────────
 
-EPISODE_HEADERS = ["episode", "判决", "软分", "待裁决", "拒绝原因", "证据帧", "同步图"]
-
-#: Episodes 页的列表筛选(2026-08-07 用户点名:被拒条目是重点工作对象,得能只看
-#: 它们)。取值直接当界面文案用——再建一层「英文键 → 中文标签」的映射,只会多一处
-#: 能对不上的地方。
-EPISODE_FILTER_ALL = "全部"
-EPISODE_FILTER_REJECTED = "只看被拒"
-EPISODE_FILTER_PENDING = "只看待裁决"
-EPISODE_FILTERS = [EPISODE_FILTER_ALL, EPISODE_FILTER_REJECTED,
-                   EPISODE_FILTER_PENDING]
-
-
-def filter_episode_ids(m: dict, mode: str = EPISODE_FILTER_ALL) -> list[str]:
-    """按筛选档挑 episode id(id 升序,稳定)。
-
-    未知档位一律当「全部」:前端能塞任意字符串进来,不该因为一个陌生值就空表
-    (空表看起来像"这份交付没数据",是最糟的误导)。
-    """
-    eps = m.get("episodes") or {}
-    eids = sorted(eps.keys())
-    if mode == EPISODE_FILTER_REJECTED:
-        return [e for e in eids if (eps[e] or {}).get("verdict") == "拒绝"]
-    if mode == EPISODE_FILTER_PENDING:
-        return [e for e in eids if (eps[e] or {}).get("pending")]
-    return eids
-
-
-def episode_rows(m: dict, mode: str = EPISODE_FILTER_ALL) -> list[list]:
-    rows = []
-    for eid in filter_episode_ids(m, mode):
-        ep = m["episodes"][eid]
-        rows.append([eid, ep["verdict"],
-                     round(ep["soft_score"], 3) if ep.get("soft_score") is not None else "",
-                     "、".join(ep["pending"]) if ep.get("pending") else "",
-                     ep.get("reject_reason") or "",
-                     len(ep.get("evidence") or []),
-                     "有" if ep.get("plot") else ""])
-    return rows
-
-
 FUNNEL_HEADERS = ["阶段", "数量"]
 
 
@@ -213,7 +173,7 @@ def funnel_rows(m: dict) -> list[list]:
     d = m["dataset"]
     fs = d.get("funnel_stats") or {}
     rows = [["输入 episode", d.get("input_episodes", fs.get("input", ""))],
-            ["硬门中途拦截", d.get("hard_gate_filtered", "")],
+            ["不合格拦截(漏斗中途淘汰)", d.get("hard_gate_filtered", "")],
             ["判决 keep", d.get("verdict_keep", "")],
             ["判决 drop", d.get("verdict_drop", "")],
             ["精确去重删除", d.get("dedup_removed", "")],
@@ -222,6 +182,11 @@ def funnel_rows(m: dict) -> list[list]:
 
 
 CHECK_HEADERS = ["检查", "结果", "分数", "要点"]
+
+#: 检查结果的**界面用词**:交付里记的是实现记法,界面只说客户听得懂的话。
+#: 「软分」是内部机制名(可补偿的打分维度),2026-08-11 用户点名统一叫「质量分」。
+#: 没列进来的取值原样透出(拒绝/弃权本来就是人话)。
+CHECK_STATE_TEXT = {"软分": "质量分"}
 
 
 def check_rows(m: dict, eid: str) -> list[list]:
@@ -232,7 +197,8 @@ def check_rows(m: dict, eid: str) -> list[list]:
         gist = d.get("reason") or d.get("verdict") or ""
         if "voc" in d:
             gist = f"voc={d['voc']} 末态={d.get('completion_final')} {gist}"
-        rows.append([name, c["state"],
+        state = c["state"]
+        rows.append([name, CHECK_STATE_TEXT.get(state, state),
                      c["score"] if c["score"] is not None else "", str(gist)[:120]])
     return rows
 
@@ -513,10 +479,10 @@ def overview_markdown(m: dict) -> str:
              f"机器人 **{rb}** · 生成于 {m['generated_at']} · 代码版本 {m['code_version']}",
              "",
              f"- 交付 **{d.get('delivered', '?')}** / 输入 {d.get('input_episodes', '?')} 条"
-             f"(通过率 {ss.get('pass_rate_pct', '?')}%,平均软分 {ss.get('avg_soft_score', '?')})"]
+             f"(通过率 {ss.get('pass_rate_pct', '?')}%,平均质量分 {ss.get('avg_soft_score', '?')})"]
     hb = d.get("hard_fail_breakdown") or {}
     if hb:
-        lines.append("- 硬门拒绝:" + ",".join(f"{k} {v} 条" for k, v in hb.items()))
+        lines.append("- 不合格拦截:" + ",".join(f"{k} {v} 条" for k, v in hb.items()))
     # 数据包完整性(2026-08-10):容器缺了什么、按什么补的,概览一行带过,
     # 详细说明在质检报告的「数据包完整性」节。有 findings 才出,不占位。
     cf = (d.get("container") or {}).get("findings") or []
@@ -1036,7 +1002,7 @@ def audit_clip_paths(m: dict, episode_id: str) -> list[str]:
 # 同步语义(用户拍板,展示文案与之严格一致,别自造说法):
 #   · 同步检查**永不废弃相机** —— 发现异常只**标注**;判废只在 episode 层面,
 #     且仅当"所有可信相机一致指向同一个偏移"(verdict=misaligned_all);
-#   · 弃权/测不准(undecidable)**不进人工裁决队列**、**不参与综合软分**,是个标注。
+#   · 弃权/测不准(undecidable)**不进人工裁决队列**、**不参与综合质量分**,是个标注。
 
 #: 交付里同步检查的中文名。report.py 的 CHECK_CN 写「视频-动作同步」,进度条等处
 #: 出现过无连字符的写法 —— 读端两个都认(UI 不 import 管道,只能在此留常量副本;
@@ -1063,7 +1029,7 @@ SYNC_VERDICT_TEXT = {
                            "有相机的互相关峰明显偏离 0,但峰形不够可信,不足以定论:"
                            "只标注,不判废、不进人工裁决队列。"),
     "undecidable": ("测不准(弃权)", "#3730a3", "#e0e7ff",
-                    "信号不足以判定同步,只作标注:不进人工裁决队列,也不参与综合软分。"),
+                    "信号不足以判定同步,只作标注:不进人工裁决队列,也不参与综合质量分。"),
 }
 
 #: 老交付没有 verdict 字段,只有检查三态 —— 退回讲整体结论,并注明是旧版本。
@@ -1071,7 +1037,7 @@ _SYNC_STATE_TEXT = {
     "pass": ("同步通过", "#166534", "#dcfce7", "旧版本交付只有整体结论。"),
     "拒绝": ("同步不通过", "#991b1b", "#fee2e2", "旧版本交付只有整体结论。"),
     "弃权": ("弃权", "#3730a3", "#e0e7ff",
-             "旧版本交付只有整体结论;弃权不参与综合软分。"),
+             "旧版本交付只有整体结论;弃权不参与综合质量分。"),
 }
 _SYNC_UNKNOWN = ("同步结论未知", "#374151", "#f3f4f6", "此条没有同步检查读数。")
 
@@ -1181,7 +1147,7 @@ def sync_camera_html(m: dict, eid: str) -> str:
     chk = sync_check(m, eid)
     if not chk:
         return ('<p style="color:#777;font:12px/1.6 system-ui">'
-                '此条没有视频-动作同步读数(该检查未启用,或漏斗更早的硬门已短路)。</p>')
+                '此条没有视频-动作同步读数(该检查未启用,或更早的检查已把它拦下)。</p>')
     d = sync_detail(m, eid)
     txt, fg, bg, why = sync_badge(d, chk.get("state", ""))
     bits = []
@@ -1247,60 +1213,45 @@ def episode_reason_text(m: dict, eid: str) -> str:
 
 
 def episode_card_html(m: dict, eid: str) -> str:
-    """选中 episode 的判决卡:判决 / 致命项是哪一维 / 一句人话 / 综合软分。
+    """详情面板第一行:大徽章 + 判决 + 一句人话理由。
 
-    被拒条目的第一屏就该回答"谁毙的、为什么",所以这张卡在证据之前。
+    **通过条目极简**(2026-08-11 用户原话:"就一行 ✅ 通过,别的不说"):过了的
+    数据没有故事,客户点开只是确认一眼;把致命项、弃权说明、读数一股脑堆上来,
+    只会把真正要看的拒绝/待人工条目淹掉。逐维读数一律退到下方折叠的检查明细里。
     """
     ep = (m.get("episodes") or {}).get(eid or "") or {}
     if not eid or not ep:
         return ('<div style="border:1px dashed #cbd5e1;border-radius:10px;padding:14px 18px;'
                 'color:#64748b;font:13px/1.6 system-ui">'
-                '在上方列表里选一条 episode,这里会显示它的判决、致命项与证据。</div>')
+                '在左侧清单里选一条 episode,这里会显示它的判决、理由与视频。</div>')
     label = episode_verdict_label(ep)
     txt, fg, bg, bd = VERDICT_STYLES.get(label, _VERDICT_UNKNOWN)
+    head = (f'<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px">'
+            f'<span style="font-size:1.35rem;font-weight:800;color:{fg}">{_esc(txt)}</span>'
+            f'<span style="font:14px/1.6 ui-monospace,monospace;color:#334155;'
+            f'font-weight:700">{_esc(eid)}</span>')
+    shell = (f'<div style="background:{bg};border:1px solid {bd};border-left:6px solid {fg};'
+             f'border-radius:10px;padding:14px 18px;margin:4px 0 10px">')
+    if episode_bucket(m, eid) == BUCKET_PASSED:
+        return shell + head + "</div></div>"
     score = ep.get("soft_score")
-    score_txt = _fmt_num(score) if score is not None else "未记录"
-    fatal = fatal_checks(m, eid)
-    if fatal:
-        fatal_html = "".join(
-            f'<span style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;'
-            f'border-radius:6px;padding:1px 9px;margin-right:6px;font-weight:700">'
-            f'{_esc(n)}</span>' for n in fatal)
-        fatal_line = f'<b style="color:#991b1b">致命项</b> {fatal_html}'
-    elif label == "待裁决":
-        fatal_line = ('<b style="color:#92400e">待裁决项</b> '
-                      + "".join(
-                          f'<span style="background:#fef3c7;color:#92400e;'
-                          f'border:1px solid #fcd34d;border-radius:6px;padding:1px 9px;'
-                          f'margin-right:6px;font-weight:700">{_esc(n)}</span>'
-                          for n in (ep.get("pending") or [])))
-    else:
-        fatal_line = '<span style="color:#166534">没有任何一维投拒绝(未被硬门拦下)</span>'
-    reason = episode_reason_text(m, eid)
-    reason_html = (f'<div style="margin-top:8px;font:13px/1.7 system-ui;color:#334155">'
-                   f'<b>原因</b>:{_esc(reason)}</div>' if reason else "")
-    abstain = "".join(
-        f'<div style="margin-top:4px;font:12px/1.6 system-ui;color:#78716c">'
-        f'「{_esc(chk)}」弃权:{_esc(why)}</div>'
-        for chk, why in (ep.get("abstain_reasons") or {}).items())
-    # 同步弃权是个标注:它既不进裁决队列也不进软分,卡片上讲一句,免得客户
+    if score is not None:
+        head += (f'<span style="margin-left:auto;background:#fff;border:1px solid #e2e8f0;'
+                 f'border-radius:999px;padding:2px 12px;font:12px/1.8 system-ui;'
+                 f'color:#475569">综合质量分 '
+                 f'<b style="color:#0f172a">{_esc(_fmt_num(score))}</b></span>')
+    head += "</div>"
+    reason = episode_reason_line(m, eid)
+    reason_html = (f'<div style="margin-top:9px;font:13px/1.8 system-ui;color:#334155">'
+                   f'{_esc(reason)}</div>' if reason else "")
+    # 同步弃权是个标注:它既不进裁决队列也不进质量分,卡片上讲一句,免得客户
     # 看到"弃权"二字以为这条数据被扣了分。
     footnote = ""
     if sync_detail(m, eid).get("verdict") == "undecidable":
         footnote = ('<div style="margin-top:8px;font:12px/1.6 system-ui;color:#3730a3;'
                     'background:#eef2ff;border-radius:6px;padding:5px 10px">'
-                    '同步测不准仅作标注:不进人工裁决队列,也不参与综合软分。</div>')
-    return (f'<div style="background:{bg};border:1px solid {bd};border-left:6px solid {fg};'
-            f'border-radius:10px;padding:14px 18px;margin:4px 0 10px">'
-            f'<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px">'
-            f'<span style="font-size:1.25rem;font-weight:800;color:{fg}">{_esc(txt)}</span>'
-            f'<span style="font:14px/1.6 ui-monospace,monospace;color:#334155;'
-            f'font-weight:700">{_esc(eid)}</span>'
-            f'<span style="margin-left:auto;background:#fff;border:1px solid #e2e8f0;'
-            f'border-radius:999px;padding:2px 12px;font:12px/1.8 system-ui;color:#475569">'
-            f'综合软分 <b style="color:#0f172a">{_esc(score_txt)}</b></span></div>'
-            f'<div style="margin-top:9px;font:13px/1.9 system-ui">{fatal_line}</div>'
-            + reason_html + abstain + footnote + '</div>')
+                    '同步测不准仅作标注:不进人工裁决队列,也不参与综合质量分。</div>')
+    return shell + head + reason_html + footnote + "</div>"
 
 
 def check_table_html(m: dict, eid: str) -> str:
@@ -1748,3 +1699,567 @@ def sync_health_html(m: dict) -> str:
                      f'负滞后(画面先于动作)的条目 {len(neg)} 条:{_esc(head)}'
                      + ("…" if len(neg) > 10 else "") + '</div>')
     return "".join(parts)
+
+
+# ───────── Episodes 页整页改版(2026-08-11):三桶 + 左清单右详情 ─────────
+#
+# 起因(用户与其同事拍板):旧页太乱——一张七列大表 + 三个筛选档 + 证据帧画廊 +
+# 曲线 + 三路切片,客户其实只关心三件事:**哪些过了、哪些被拒、哪些还等着人来定**。
+# 骨架照 lerobot visualize_dataset 的"左导航右详情":左边一列清单(每行一句
+# 为什么),右边一屏详情,**视频是详情的主角**。静态证据帧整块撤掉(用户原话:
+# 体验太差);裁决页的证据帧照旧,不动那边。
+#
+# 桶的口径(下面这几个纯函数是唯一事实源,app.py 只做装配):
+#   通过   = 判决通过且已交付,没有任何待人工的事情压着
+#   拒绝   = 被判掉的,**含精确去重删除**(交付里判决写「拒绝(去重)」,理由说"重复")
+#   待人工 = 系统弃权待裁决 ∪ 标注-画面分歧复核队列
+# 三桶互斥,优先级 拒绝 > 待人工 > 通过:被拒的已经出局,不该再催人去裁它;
+# 系统还没定论的排在通过前面,免得客户把"待定"当"已过"。
+
+BUCKET_PASSED = "通过"
+BUCKET_REJECTED = "拒绝"
+BUCKET_PENDING = "待人工"
+BUCKET_ALL = "全部"
+
+#: 三桶的展示顺序与图标(界面上就长这样,别再建第二套映射)。
+BUCKETS = (BUCKET_PASSED, BUCKET_REJECTED, BUCKET_PENDING)
+BUCKET_ICONS = {BUCKET_PASSED: "✅", BUCKET_REJECTED: "❌", BUCKET_PENDING: "⏳"}
+
+#: 清单行里那半句人话的长度上限。清单是用来"扫"的,一行超过这个宽度就开始
+#: 换行,几百条一换行整列就散了。
+LIST_REASON_CAP = 24
+
+
+def humanize_reason(text) -> str:
+    """交付里的原因串 → 界面用词。
+
+    交付记的是实现记法(`硬门违规: 「任务成败判定」`)。"硬门"是机制黑话
+    (2026-08-11 用户点名清除):客户要的是"哪项没过",不是我们内部怎么分类
+    检查的。报告侧的措辞另有工单,这里只管 UI 这一端。
+    """
+    s = str(text or "").strip()
+    for prefix in ("硬门违规: ", "硬门违规:", "硬门违规:"):
+        if s.startswith(prefix):
+            s = "未通过" + s[len(prefix):].strip()
+            break
+    return s.replace("硬门", "不合格拦截")     # 老交付里别的写法也不许漏出去
+
+
+def audit_queue_ids(m: dict) -> set:
+    """标注-画面分歧复核队列里的 episode id(待人工桶的第二个来源)。"""
+    return {a.get("id", "") for a in (m.get("audit_queue") or []) if a.get("id")}
+
+
+def is_dedup_drop(ep: dict) -> bool:
+    """这条是被精确去重删掉的(判决写「拒绝(去重)」)——理由要说"重复"而不是
+    "质量不合格",它的画面一点毛病没有,只是和另一条一模一样。"""
+    return "去重" in str((ep or {}).get("verdict") or "")
+
+
+def episode_bucket(m: dict, eid: str) -> str:
+    """episode → 三桶之一(口径见本节顶部注释)。"""
+    ep = (m.get("episodes") or {}).get(eid or "") or {}
+    if str(ep.get("verdict") or "").startswith("拒绝"):
+        return BUCKET_REJECTED
+    if ep.get("pending") or eid in audit_queue_ids(m):
+        return BUCKET_PENDING
+    return BUCKET_PASSED
+
+
+def bucket_ids(m: dict, bucket: str = BUCKET_ALL) -> list[str]:
+    """该桶里的 episode id(id 升序,稳定)。未知桶名一律当「全部」——前端能塞
+    任意字符串进来,不该因为一个陌生值就给空清单(空清单看起来像交付坏了)。"""
+    eids = sorted((m.get("episodes") or {}).keys())
+    if bucket in BUCKETS:
+        return [e for e in eids if episode_bucket(m, e) == bucket]
+    return eids
+
+
+def bucket_counts(m: dict) -> dict:
+    """{通过: n, 拒绝: n, 待人工: n, 全部: n}。三桶互斥,三者之和 = 全部。"""
+    counts = {b: 0 for b in BUCKETS}
+    for eid in (m.get("episodes") or {}):
+        counts[episode_bucket(m, eid)] += 1
+    counts[BUCKET_ALL] = sum(counts.values())
+    return counts
+
+
+def bucket_choices(m: dict) -> list:
+    """顶部三桶(+全部)的单选项:[(界面标签, 桶名)]。标签自带计数——数字就是
+    客户最想先看到的东西,不该藏在下一屏。"""
+    c = bucket_counts(m)
+    out = [(f"{BUCKET_ICONS[b]} {b} {c[b]}", b) for b in BUCKETS]
+    out.append((f"{BUCKET_ALL} {c[BUCKET_ALL]}", BUCKET_ALL))
+    return out
+
+
+def _first_sentence(text: str) -> str:
+    """取首句(中英句号/分号/换行断句)。理由常是一整段,清单只放第一句。"""
+    s = str(text or "").strip()
+    for sep in ("。", "\n", ";", ";"):
+        i = s.find(sep)
+        if i > 0:
+            s = s[:i]
+    return s.strip()
+
+
+def episode_reason_line(m: dict, eid: str) -> str:
+    """详情面板第一屏那句人话理由(通过条目没有理由——它没什么可解释的)。
+
+    拒绝:优先说"未通过「哪一项」",后面接那项检查自己写的人话;去重条目单说
+    "重复"(它的画面没问题)。待人工:说清是哪一项弃权、弃权原因是什么。
+    """
+    ep = (m.get("episodes") or {}).get(eid or "") or {}
+    bucket = episode_bucket(m, eid)
+    if bucket == BUCKET_PASSED:
+        return ""
+    if bucket == BUCKET_REJECTED:
+        if is_dedup_drop(ep):
+            return humanize_reason(ep.get("reject_reason")) or "与另一条数据完全重复"
+        # 交付里的拒绝原因就是唯一事实源:判决层已按
+        # 「未通过「检查名」:该检查写的人话」拼好(report.hard_fail_reason),
+        # 报告与这里引用同一个串,UI **不再自拼一套**。
+        line = humanize_reason(ep.get("reject_reason"))
+        why = humanize_reason(episode_reason_text(m, eid))
+        # 老交付只写了"硬门违规: 「X」"(没带检查的人话)→ 这里补上,让老交付也读得懂
+        if why and why not in line:
+            line = f"{line}:{why}" if line else why
+        return line
+    bits = []
+    for chk in ep.get("pending") or []:
+        why = str((ep.get("abstain_reasons") or {}).get(chk) or "").strip()
+        bits.append(f"「{chk}」弃权:{why}" if why else f"「{chk}」待人工裁决")
+    if eid in audit_queue_ids(m):
+        why = next((str(a.get("reason") or "") for a in (m.get("audit_queue") or [])
+                    if a.get("id") == eid), "")
+        bits.append("原始标注与画面描述不一致" + (f":{why}" if why else ""))
+    return ";".join(bits)
+
+
+def episode_list_reason(m: dict, eid: str) -> str:
+    """左清单那半句:**人话在前**,不带「未通过「检查名」:」的前缀。
+
+    两处措辞故意解耦(2026-08-11 用户定):清单列窄、单行省略,前二十来个字就被
+    截住,前缀会把"到底怎么了"整句挤出视野;横幅(episode_reason_line)则要完整
+    交代"哪一项没过 + 为什么"。拿不到检查自己写的人话时(老交付)退回横幅那套
+    格式 —— 宁可啰嗦,不可空白。
+    """
+    ep = (m.get("episodes") or {}).get(eid or "") or {}
+    bucket = episode_bucket(m, eid)
+    if bucket == BUCKET_PASSED:
+        return ""
+    if bucket == BUCKET_REJECTED:
+        if is_dedup_drop(ep):
+            return humanize_reason(ep.get("reject_reason")) or "与另一条数据完全重复"
+        # episode_reason_text 优先给致命检查自己写的那句;它拿不到才退回交付里的
+        # 拒绝原因(老交付 = "未通过「X」",正是这里要的兜底)
+        return humanize_reason(episode_reason_text(m, eid)) or episode_reason_line(m, eid)
+    bits = [str((ep.get("abstain_reasons") or {}).get(chk) or "").strip()
+            for chk in (ep.get("pending") or [])]
+    if eid in audit_queue_ids(m):
+        bits.append(next((str(a.get("reason") or "") for a in (m.get("audit_queue") or [])
+                          if a.get("id") == eid), "") or "原始标注与画面描述不一致")
+    bits = [b for b in bits if b]
+    return ";".join(bits) or episode_reason_line(m, eid)
+
+
+def episode_short_reason(m: dict, eid: str) -> str:
+    """清单行右边那半句人话(首句 + 截断)。通过条目返回空串。"""
+    s = _first_sentence(episode_list_reason(m, eid))
+    return s[:LIST_REASON_CAP] + "…" if len(s) > LIST_REASON_CAP else s
+
+
+def episode_list_items(m: dict, bucket: str = BUCKET_ALL) -> list[dict]:
+    """左侧清单的数据行:[{id, icon, reason, label}]。label 即界面上那一行。"""
+    out = []
+    for eid in bucket_ids(m, bucket):
+        b = episode_bucket(m, eid)
+        icon = BUCKET_ICONS[b]
+        reason = episode_short_reason(m, eid)
+        out.append({"id": eid, "bucket": b, "icon": icon, "reason": reason,
+                    "label": f"{eid} {icon} {reason}".rstrip()})
+    return out
+
+
+def episode_list_choices(m: dict, bucket: str = BUCKET_ALL) -> list:
+    """左侧清单的单选项:[(界面标签, episode id)]。"""
+    return [(it["label"], it["id"]) for it in episode_list_items(m, bucket)]
+
+
+#: 左清单每页多少条(2026-08-11 用户实见:两百行单选框一次渲染就到极限了)。
+#: 翻页口径与同步曲线页(SYNC_PAGE_SIZE 一族)保持一致:页码越界回绕、一页放得下
+#: 就把翻页件整排隐藏——不发明第二套翻页。
+EPISODE_PAGE_SIZE = 50
+
+
+def episode_list_view(m: dict, bucket: str = BUCKET_ALL, page: int = 0,
+                      selected: str | None = None,
+                      page_size: int = EPISODE_PAGE_SIZE) -> dict:
+    """左清单的一屏:{page, pages, choices, value, pos, multi}。
+
+    selected(当前正在看的那条)**只在它落在本页时**才回填成选中态:翻到别的页
+    时右侧详情不动、清单里没有高亮项,翻回来它还亮着——这就是"跨页保持"。
+    """
+    items = episode_list_items(m, bucket)
+    pages = max(1, (len(items) + page_size - 1) // page_size)
+    page = (page or 0) % pages
+    shown = items[page * page_size:(page + 1) * page_size]
+    ids = [it["id"] for it in shown]
+    return {"page": page, "pages": pages,
+            "choices": [(it["label"], it["id"]) for it in shown],
+            "value": selected if selected in ids else None,
+            "pos": f"第 {page + 1} / {pages} 页" if pages > 1 else "",
+            "multi": pages > 1}
+
+
+# ── 视频来源链(2026-08-11):同一条 episode 的视频可能在两个地方,顺序固定 ──
+#
+#   ① 审片站(`curation review-page` 的产出,UI 用 --review-dir / 环境变量
+#      CURATION_REVIEW_DIR 指到它):**全部 episode 都有**,含被拒的——被拒条目
+#      恰恰是最该看画面的,所以审片站排第一;
+#   ② 交付内 `lerobot_curated` 的逐条 mp4(v2 布局):**只有通过的条目有**
+#      (被拒的压根没进交付集);v3 源导出的是合并大 mp4,不切分 → 不属于本源;
+#   ③ 两处都没有:说一句"怎么才能有",不空着也不假装。
+
+VIDEO_SOURCE_REVIEW = "审片站"
+VIDEO_SOURCE_CURATED = "交付数据集"
+VIDEO_SOURCE_NONE = "无"
+
+#: 两处都没有视频时的提示。必须点名那条命令,否则客户以为功能坏了。
+NO_VIDEO_NOTE = "运行 review-page 生成审片站后此处可看视频"
+
+_SOURCE_NOTE = {
+    VIDEO_SOURCE_REVIEW: "视频来自审片站(全部 episode 都有,含被拒条目)",
+    VIDEO_SOURCE_CURATED: "视频来自交付数据集 lerobot_curated(只有通过的条目有)",
+}
+
+
+def _camera_label(name: str) -> str:
+    """相机键 → 界面名(去掉 LeRobot 的 observation.images. 前缀,那是 schema 细节)。"""
+    s = str(name)
+    return s.split("observation.images.")[-1] if "observation.images." in s else s
+
+
+def _norm_name(s: str) -> str:
+    return "".join(ch for ch in str(s).lower() if ch.isalnum())
+
+
+#: 审片站的身份文件(review_page.write_site_manifest 写的),记着这个站是从哪个
+#: 数据集生成的。UI 不 import 管道的红线在此照旧:只认文件名与字段,不 import 生成侧。
+SITE_JSON = "site.json"
+
+
+def delivery_source_dataset(m: dict) -> tuple[str | None, str]:
+    """本交付的源数据集 →(绝对路径 or None, 数据集名)。
+
+    交付的 passed.json 目前**只记数据集名**(`数据集` 字段,值就是源目录名),不记
+    源路径 —— 所以匹配审片站时通常只能比名。留 `source_dataset` 这个读法是为了
+    将来交付真记了路径时,路径比对自动生效(路径比名严,能分开同名不同处的数据集)。
+    """
+    return (m.get("source_dataset") or None), str(m.get("name") or "")
+
+
+def review_sites(review_dir: str | None) -> list[str]:
+    """审片站根目录 → 候选站点目录(根本身 + 一级子目录)。
+
+    一站一目录是 `review-page --output <根>/<站名>` 的惯例,但把根直接指到某个站
+    也是合法用法,两种都认。
+    """
+    if not review_dir:
+        return []
+    out = [review_dir]
+    try:
+        out += [os.path.join(review_dir, d) for d in sorted(os.listdir(review_dir))
+                if os.path.isdir(os.path.join(review_dir, d))]
+    except OSError:
+        pass
+    return out
+
+
+def site_matches_delivery(site_dir: str, m: dict) -> bool:
+    """这个站点是不是**本交付那份数据**生成的:只认 site.json 里的源数据集身份。"""
+    site = _load_json(os.path.join(site_dir, SITE_JSON))
+    if not site:
+        return False
+    src_path, src_name = delivery_source_dataset(m)
+    site_path = site.get("source_dataset")
+    if src_path and site_path:              # 两边都有路径 → 比路径(最严)
+        return os.path.normpath(str(src_path)) == os.path.normpath(str(site_path))
+    site_name = site.get("dataset_name") or os.path.basename(
+        os.path.normpath(str(site_path or "")))
+    return bool(src_name) and _norm_name(site_name) == _norm_name(src_name)
+
+
+def review_clip_paths(review_dir: str | None, m: dict, eid: str) -> list[str]:
+    """审片站里**本交付这份数据**的该 episode 片段(按相机名排序;没有 → 空表)。
+
+    认领顺序(2026-08-11 收紧,起因见下):
+      ① 站点 site.json 声明的源数据集与本交付一致 —— 精确认领;
+      ② 站名归一化后等于数据集名 —— 老站点(没 site.json)的降级通道。
+    **没有第三档**。此前还有"随便找第一个带这个 episode 号的站"这一档,实测
+    droid-ep13-20-demo 就借用了 droid200 站的片段:那次同源同号,巧对;换个数据集
+    同号就是给客户放错视频。宁缺勿错 —— 认不出来就当没有,退到交付集内的视频。
+    """
+    if not review_dir or not eid:
+        return []
+    sites = review_sites(review_dir)
+    _, want = delivery_source_dataset(m)
+    ordered = [s for s in sites if site_matches_delivery(s, m)]
+    ordered += [s for s in sites
+                if s not in ordered and want
+                and _norm_name(os.path.basename(os.path.normpath(s))) == _norm_name(want)]
+    for root in ordered:
+        d = os.path.join(root, "details", "audit_clips")
+        if not os.path.isdir(d):
+            continue
+        hits = sorted(os.path.join(d, f) for f in os.listdir(d)
+                      if f.startswith(eid + "__") and f.endswith(".mp4"))
+        if hits:
+            return hits
+    return []
+
+
+def delivered_ids(m: dict) -> list[str]:
+    """进了交付集的 episode(= 判决不是拒绝的,含还在等人裁的那些——它们判决仍是
+    通过、数据照常交付)。顺序 = id 升序 = 导出器重编号的顺序。"""
+    eps = m.get("episodes") or {}
+    return [e for e in sorted(eps) if not str((eps[e] or {}).get("verdict") or ""
+                                              ).startswith("拒绝")]
+
+
+def curated_index_of(m: dict, eid: str) -> int | None:
+    """交付集里这条数据的新序号(交付集是重编号的),定不下来就返回 None。
+
+    两条来路,**都定不下来就诚实弃权**——序号猜错 = 播的是别人的视频:
+      ① `meta/curation_camera_health.json` 逐条记了 源 episode_id ↔ 新 episode_index
+         (逐相机同步旁挂文件,新交付都有),这是精确来路;
+      ② 退路:导出器就是把幸存条目按原序密排重编号的(new_idx = enumerate(keep)),
+         所以序位可以换算——但只有当交付集条数与本清单里的交付条数**严格相等**时
+         才敢用,对不上说明中间还有别的增删,宁可不给视频。
+    """
+    if not eid:
+        return None
+    root = os.path.join(m.get("path") or "", "lerobot_curated")
+    for r in _load_json(os.path.join(root, "meta",
+                                     "curation_camera_health.json")).get("episodes") or []:
+        if r.get("source_episode_id") == eid and r.get("episode_index") is not None:
+            return int(r["episode_index"])
+    kept = delivered_ids(m)
+    total = _load_json(os.path.join(root, "meta", "info.json")).get("total_episodes")
+    if total is not None and eid in kept and len(kept) == int(total):
+        return kept.index(eid)
+    return None
+
+
+def curated_video_paths(m: dict, eid: str) -> list[str]:
+    """交付内 lerobot_curated 的逐条 mp4(v2 布局;v3 是合并大 mp4 → 空表)。"""
+    root = os.path.join(m.get("path") or "", "lerobot_curated")
+    ver = str(_load_json(os.path.join(root, "meta", "info.json")
+                         ).get("codebase_version") or "")
+    if not ver.startswith("v2"):
+        return []                      # v3 合并 mp4 不切分,不属于本来源
+    idx = curated_index_of(m, eid)
+    if idx is None:
+        return []
+    return sorted(glob.glob(os.path.join(root, "videos", "chunk-*", "*",
+                                         f"episode_{idx:06d}.mp4")))
+
+
+# ── 片段可播性(2026-08-11 用户实锤:ep000018 摆了三个"死"播放器)──
+#
+# 那条是 8 帧 0.47 秒的采集残段(被拒原因就是它),切出来的审片片段只有 **1 帧、
+# 0.25 秒**:文件存在、近 10KB、mp4 魔数俱全,播放器就是放不出东西。两类毛病都要
+# 认出来,缺一不可:
+#   ① 缺失 / 过小 / 没有 ftyp 魔数 —— 截断、零填充那一族(FSX 直写坑的常见形态),
+#      只读文件头判定,**不整读**(交付集里的 mp4 可能几十 MB);
+#   ② 容器头里帧数 ≤1 或时长 < 0.5 秒 —— 就是"能开但没得放"的死片段。同样只读头
+#      (av.open 解容器索引,**不解码任何一帧**)。
+# ⚠️ 判出来是为了**说清楚**,不是为了把播放器撤掉(2026-08-11 用户原话:
+#    "视频还是要放在那里占位")—— 槽位照摆,旁边写明白它为什么放不动;
+#    判不了的一律当能播:证据不足时不许替客户把视频藏起来。
+
+MIN_PLAYABLE_BYTES = 4096
+MIN_PLAYABLE_SECONDS = 0.5
+MIN_PLAYABLE_FRAMES = 2
+
+#: 拿不到帧数/时长时的兜底说明(文件缺失、截断、根本不是 mp4)。
+BROKEN_LANE_TEXT = "片段损坏或过短,无法正常播放"
+
+#: 被拒条目的半句话:片段放不动这件事本身往往就是它被拒的原因(残段/坏帧)。
+REJECTED_CLIP_TAIL = "这正是该条被拒的原因"
+
+_PROBE_CACHE: dict = {}
+
+
+def short_clip_text(frames: int | None, duration_s: float | None) -> str:
+    """"视频过短(N 帧 / X.XX 秒),无法正常播放" —— 读数拿得到几个就写几个。"""
+    bits = []
+    if frames:
+        bits.append(f"{frames} 帧")
+    if duration_s:
+        bits.append(f"{duration_s:.2f} 秒")
+    return (f"视频过短({' / '.join(bits)}),无法正常播放" if bits
+            else BROKEN_LANE_TEXT)
+
+
+def clip_probe(path: str) -> dict:
+    """片段 → {playable, frames, duration_s, why}(判据见上)。按 路径+mtime+大小 记忆。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {"playable": False, "frames": None, "duration_s": None,
+                "why": BROKEN_LANE_TEXT}
+    key = (path, int(st.st_mtime), st.st_size)
+    if key in _PROBE_CACHE:
+        return _PROBE_CACHE[key]
+    out = {"playable": True, "frames": None, "duration_s": None, "why": ""}
+    head = b""
+    if st.st_size >= MIN_PLAYABLE_BYTES:
+        try:
+            with open(path, "rb") as f:
+                head = f.read(12)         # 只读文件头:FSX 上整读是灾难
+        except OSError:
+            head = b""
+    if st.st_size < MIN_PLAYABLE_BYTES or b"ftyp" not in head:
+        out = {"playable": False, "frames": None, "duration_s": None,
+               "why": BROKEN_LANE_TEXT}
+    else:
+        frames, dur = _probe_frames_duration(path)
+        out["frames"], out["duration_s"] = frames, dur
+        too_short = ((frames is not None and frames < MIN_PLAYABLE_FRAMES)
+                     or (dur is not None and dur < MIN_PLAYABLE_SECONDS))
+        if too_short:
+            out["playable"] = False
+            out["why"] = short_clip_text(frames, dur)
+    _PROBE_CACHE[key] = out
+    return out
+
+
+def _probe_frames_duration(path: str):
+    """容器头 → (帧数, 时长秒);没有解码库或读不出 → (None, None)= 不下结论。"""
+    try:
+        import av
+    except Exception:  # noqa: BLE001
+        return None, None                 # 没有解码库就不做这层判断,不瞎猜
+    try:
+        with av.open(path) as c:
+            st = c.streams.video[0]
+            frames = int(st.frames or 0) or None
+            dur = (float(c.duration) / 1e6) if c.duration else None
+        return frames, dur
+    except Exception:  # noqa: BLE001
+        # 连容器都开不了 = 确实放不动。读数给 0(而不是 None)才能让上面判成
+        # "不可播";文案那边 0 是假值,自动退回"损坏或过短"的兜底说法。
+        return 0, 0.0
+
+
+def clip_is_playable(path: str) -> bool:
+    """这个片段能不能正常播(clip_probe 的布尔快捷方式)。"""
+    return bool(clip_probe(path)["playable"])
+
+
+def _lane(path: str, eid: str, source: str) -> dict:
+    base = os.path.basename(path)
+    cam = (base[len(eid) + 2:-4] if source == VIDEO_SOURCE_REVIEW
+           else os.path.basename(os.path.dirname(path)))
+    p = clip_probe(path)
+    return {"camera": _camera_label(cam), "path": path,
+            "playable": p["playable"], "frames": p["frames"],
+            "duration_s": p["duration_s"], "why": p["why"]}
+
+
+def episode_videos(m: dict, eid: str, review_dir: str | None = None) -> dict:
+    """该 episode 的全部相机视频 → {source, note, videos:[{camera, path, playable, why…}]}。
+
+    来源链见上;命中哪一档就整档用,不混着拼(混着拼会出现同一路相机两个版本)。
+    一档里**一路能播的都没有**时,先看下一档有没有能播的(有就用下一档);都没有
+    就还用第一档 —— 播不动也照样摆槽位,旁边写清为什么(见上面的 ⚠️)。
+    """
+    cands = [(s, p) for s, p in
+             ((VIDEO_SOURCE_REVIEW, review_clip_paths(review_dir, m, eid)),
+              (VIDEO_SOURCE_CURATED, curated_video_paths(m, eid))) if p]
+    if not cands:
+        return {"source": VIDEO_SOURCE_NONE, "note": NO_VIDEO_NOTE, "videos": []}
+    lanes_by_source = [(s, [_lane(p, eid, s) for p in paths]) for s, paths in cands]
+    source, lanes = next((sl for sl in lanes_by_source
+                          if any(x["playable"] for x in sl[1])), lanes_by_source[0])
+    return {"source": source, "note": _SOURCE_NOTE[source], "videos": lanes}
+
+
+#: 「同时播放」按钮的两个状态文字(切换即暂停)。
+PLAY_ALL_TEXT = "▶ 同时播放"
+PAUSE_ALL_TEXT = "⏸ 暂停"
+
+#: 按钮的行为:把本区内所有 <video> 归零后一起播,再点一次全部暂停。
+#: 走内联事件属性——gr.HTML 是 innerHTML 注入,<script> 标签不执行、内联事件执行
+#: (同步曲线页的 onerror 重试是同一条经验)。**不写 & 字符**:属性值里的 & 会被
+#: HTML 解析器当实体开头,踩过一次不再踩。
+_PLAY_ALL_JS = (
+    "var z=this.closest('.ep-video-zone'),vs=z.querySelectorAll('video');"
+    "if(this.dataset.on==='1'){vs.forEach(function(v){v.pause()});"
+    f"this.dataset.on='0';this.textContent='{PLAY_ALL_TEXT}'}}"
+    "else{vs.forEach(function(v){try{v.currentTime=0}catch(e){}v.play()});"
+    f"this.dataset.on='1';this.textContent='{PAUSE_ALL_TEXT}'}}")
+
+
+def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
+    """详情面板的视频区:一个「同时播放」按钮 + 该条全部相机并排。
+
+    不自动播(客户可能同时开着几路 200KB 的片段,自动播 = 一进页面就抢带宽);
+    静音 + 循环 + preload=metadata:首屏只拉元数据,点了才真下视频。
+    """
+    v = episode_videos(m, eid, review_dir)
+    if not v["videos"]:
+        return ('<div class="ep-video-zone" style="background:#f8fafc;border:1px dashed '
+                '#cbd5e1;border-radius:10px;padding:14px 18px;color:#64748b;'
+                f'font:13px/1.7 system-ui">🎬 此条暂无视频——{_esc(v["note"])}。</div>')
+    # 放不动的那一路**照样摆播放器**(用户原话:"视频还是要放在那里占位"),
+    # 只在槽位下面补一行说明它为什么放不动 —— 一个没有解释的黑框才是最劝退的。
+    cells = "".join(
+        f'<figure style="flex:1 1 260px;min-width:220px;margin:0">'
+        f'<video src="{_file_url(it["path"])}" muted loop playsinline controls '
+        f'preload="metadata" style="width:100%;border-radius:8px;background:#000">'
+        f'</video>'
+        f'<figcaption style="font:11px/1.6 ui-monospace,Menlo,monospace;color:#64748b;'
+        f'margin-top:3px">{_esc(it["camera"])}</figcaption>'
+        + ('' if it.get("playable", True) else
+           f'<div style="font:11px/1.6 system-ui;color:#b45309;background:#fffbeb;'
+           f'border:1px solid #fde68a;border-radius:6px;padding:3px 7px;margin-top:3px">'
+           f'⚠️ {_esc(it.get("why") or BROKEN_LANE_TEXT)}</div>')
+        + '</figure>'
+        for it in v["videos"])
+    bad = [x for x in v["videos"] if not x.get("playable", True)]
+    if bad and len(bad) == len(v["videos"]):
+        tail = (f"({REJECTED_CLIP_TAIL})"
+                if episode_bucket(m, eid) == BUCKET_REJECTED else "")
+        status = f" · 全部 {len(bad)} 路{bad[0].get('why') or BROKEN_LANE_TEXT}{tail}"
+    elif bad:
+        status = f" · 其中 {len(bad)} 路无法正常播放"
+    else:
+        status = ""
+    return ('<div class="ep-video-zone" style="margin:2px 0 10px">'
+            '<div style="display:flex;align-items:center;gap:12px;margin-bottom:7px">'
+            f'<button type="button" data-on="0" onclick="{_PLAY_ALL_JS}" '
+            'style="background:#0f172a;color:#fff;border:none;border-radius:8px;'
+            'padding:6px 16px;font:13px/1.6 system-ui;font-weight:700;cursor:pointer">'
+            f'{PLAY_ALL_TEXT}</button>'
+            f'<span style="font:12px/1.6 system-ui;color:#64748b">'
+            f'{_esc(v["note"])} · 共 {len(v["videos"])} 路相机{_esc(status)}'
+            + '</span></div>'
+            f'<div style="display:flex;flex-wrap:wrap;gap:10px">{cells}</div></div>')
+
+
+#: 待人工条目在检查明细上方的那行醒目提示。Gradio 做不了跨页签跳转(页签切换在
+#: 前端,后端拿不到句柄),所以给文字指引——写清去哪一页、在那儿能干什么。
+MANUAL_HINT_TEXT = ("这条还等着人来定:去顶部「人工裁决」页,看视频后逐条给结论"
+                    "(裁决先记草稿,跑 `curation rejudge` 才生效)。")
+
+
+def manual_hint_html(m: dict, eid: str) -> str:
+    """待人工条目的指路条;其它桶不占位(空串)。"""
+    if not eid or episode_bucket(m, eid) != BUCKET_PENDING:
+        return ""
+    return ('<div style="background:#fffbeb;border:1px solid #f59e0b;'
+            'border-left:6px solid #d97706;border-radius:10px;padding:11px 16px;'
+            'margin:2px 0 8px;font:13px/1.7 system-ui;color:#78350f">'
+            f'<b>⏳ 待人工裁决</b> — {_esc(MANUAL_HINT_TEXT)}</div>')

@@ -12,7 +12,46 @@ UI 是 pod 的 PID 1,重启自动回来;同端口走 Basic 锁,公网 APIG 也�
 from __future__ import annotations
 
 import html
+import json
 import os
+import time
+
+#: 站点身份文件(2026-08-11 新增)。UI 的 Episodes 页要把"这个交付"对上"哪个审片站",
+#: 而站点原先只有一个自由文本标题,对不上——曾出现另一份交付借用了本站片段(同源
+#: 数据集、同 episode 号,那次巧对;换个数据集就是给客户放错视频)。有了它,UI 按
+#: 源数据集精确匹配,匹配不上宁可不给视频。
+SITE_JSON = "site.json"
+
+
+def write_site_manifest(out_dir: str, source_dataset: str | None,
+                        title: str = "") -> str | None:
+    """站点根目录落 site.json(源数据集是谁)。没给源数据集就不写——宁可缺这个
+    文件让 UI 走降级,也不写一个内容存疑的身份证。重跑覆盖(幂等)。
+
+    ⚠️ FSX:审片站一般落 TOS 挂载,库直写咬过五次 → 本地临时文件写完再整文件拷。
+    """
+    if not source_dataset:
+        return None
+    import shutil
+    import tempfile
+    src = os.path.abspath(source_dataset)
+    payload = {"source_dataset": src, "dataset_name": os.path.basename(src),
+               "title": title,
+               "generated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    os.makedirs(out_dir, exist_ok=True)
+    dst = os.path.join(out_dir, SITE_JSON)
+    with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8",
+                                     delete=False) as tmp:
+        json.dump(payload, tmp, ensure_ascii=False, indent=1)
+        tmp_path = tmp.name
+    try:
+        shutil.copyfile(tmp_path, dst)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+    return dst
 
 _INDEX_CSS = """
 body{font-family:system-ui,sans-serif;margin:1.5rem;background:#fafafa;color:#222}
@@ -34,15 +73,17 @@ video{max-width:32%;min-width:280px;background:#000;border-radius:6px}
 def build_review_page(rows: list[dict], out_dir: str, title: str = "人工审片",
                       sample_interval_s: float = 0.5, max_side: int = 448,
                       play_fps: int = 4, max_cams: int = 3,
-                      on_progress=None) -> int:
+                      on_progress=None, source_dataset: str | None = None) -> int:
     """rows(含 episode_id/instruction/video 指针)→ out_dir 下的静态审片站。
 
-    产物:index.html + ep/<id>.html + clips/<id>__<cam>.mp4。
+    产物:site.json + index.html + ep/<id>.html + clips/<id>__<cam>.mp4。
     已存在片段的 episode 跳过重编码(重跑只补新增,幂等)。返回生成的片段数。
+    source_dataset = 源数据集目录,写进 site.json 供 UI 精确认领(见其注释)。
     """
     from .evidence import write_audit_clips
 
     os.makedirs(os.path.join(out_dir, "ep"), exist_ok=True)
+    write_site_manifest(out_dir, source_dataset, title)
     clip_root = os.path.join(out_dir, "details", "audit_clips")  # 复用同款目录结构
 
     n_clips = 0
