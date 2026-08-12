@@ -449,15 +449,18 @@ def run_pipeline(
             sj = None
         if sj:
             stuck_eps.append(e)
-    # 中途被硬门杀的:并入判决与逐条结果(episode 级留档)
+    # 中途被硬门杀的:并入判决与逐条结果(episode 级留档)。理由与判决层同一个
+    # 拼装函数(report.hard_fail_reason)——漏斗中途杀的和最后裁的说法必须一致。
+    from ..export.report import hard_fail_reason
     for k in stats.get("hard_killed", []):
         e = k["episode_id"]
-        verdicts[e] = {"verdict": "drop", "reason": f"硬门违规: {k['check']}",
+        _chk = {k["check"]: {"passed": False, "score": None,
+                             "detail": k.get("detail", "")}}
+        _why = hard_fail_reason([k["check"]], _chk)
+        verdicts[e] = {"verdict": "drop", "reason": _why,
                        "hard_fails": [k["check"]], "soft_score": None}
         per_episode[e] = {"verdict": "drop", "soft_score": None,
-                          "reason": f"硬门违规: {k['check']}",
-                          "checks": {k["check"]: {"passed": False, "score": None,
-                                                  "detail": k.get("detail", "")}}}
+                          "reason": _why, "checks": _chk}
 
     # ③ keep 行 → 去重(M6)→ 画像(M7)
     # 两段式精确去重(2026-07-15):第一道只哈希 action 字节(便宜);action 撞车的

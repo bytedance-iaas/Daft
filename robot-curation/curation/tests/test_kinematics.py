@@ -67,14 +67,16 @@ def test_velocity_violation_detected(reg):
 
 def test_dim_mismatch_is_format_violation(reg):
     r = kinematic_limits(np.zeros((10, 6)), reg.get("franka"), fps=15.0)
-    assert r.passed is False and "dof" in r.detail["reason"]
+    # 理由说人话:关节数对不上,而不是 "维度 7 != dof 6"
+    assert r.passed is False and "关节数" in r.detail["reason"]
+    assert "!=" not in r.detail["reason"]
 
 
 def test_nan_is_violation(reg):
     q = _clean_franka(1)["action"]
     q[5, 2] = np.nan
     r = kinematic_limits(q, reg.get("franka"), fps=15.0)
-    assert r.passed is False and r.detail["reason"] == "含 NaN/Inf"
+    assert r.passed is False and "无效值" in r.detail["reason"]
 
 
 def test_draft_profile_is_undecidable(reg):

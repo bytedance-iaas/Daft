@@ -4,7 +4,7 @@
 不做业务逻辑。gradio 是可选依赖——import 收在函数内,没装 gradio 时
 `curation run`/`backends` 等一切照常。
 
-四 tab:漏斗总览 / Episodes(点选看证据帧+VLM 理由=demo 高光页)/
+四 tab:漏斗总览 / Episodes(三桶 + 左清单右详情,详情以视频为主=demo 高光页)/
 技能画像 / 后端状态(复用 backends 探活)。
 
 启动方式(2026-07-29 U4 改):不再 `blocks.launch()`,而是
@@ -19,21 +19,22 @@ import json
 import logging
 import os
 
-from .manifest import (AUDIT_HEADERS, DECISION_CHOICES,
+from .manifest import (AUDIT_HEADERS, BUCKET_ALL, DECISION_CHOICES,
                        DETAIL_LABELS, TASK_REVIEW_HEADERS, VERDICT_CHOICES,
                        WORKFLOW_GUIDE, audit_clip_paths, audit_note_md,
+                       bucket_choices, bucket_ids,
                        load_label_decisions, load_task_verdicts,
                        record_label_decision, record_task_verdict,
-                       EPISODE_FILTER_ALL, EPISODE_FILTERS, EPISODE_HEADERS,
                        FUNNEL_HEADERS, LATENCY_HEADERS,
                        LATENCY_KIND_NOTE, LATENCY_NOTE, LATENCY_PCTL_NOTE,
                        SKILL_HEADERS, SYNC_FILTER_ALL, SYNC_FILTERS,
                        audit_rows, check_table_html,
-                       discover_deliveries, episode_card_html, episode_rows,
-                       filter_episode_ids, funnel_rows,
+                       discover_deliveries, episode_card_html,
+                       episode_list_view, episode_video_html, funnel_rows,
                        latency_bar_html, latency_rows, list_detail_tables,
                        load_delivery, load_detail_table, load_perf,
-                       load_timeline, overview_markdown, perf_backend_md,
+                       load_timeline, manual_hint_html, overview_markdown,
+                       perf_backend_md,
                        perf_env_md, readings_text, skill_bar_html, skill_rows,
                        sync_camera_html, sync_conclusion_html, sync_health_html,
                        sync_view, SYNC_HOWTO,
@@ -201,10 +202,20 @@ _AUDIT_CSS = """
                border-radius:10px; background:#fff; box-shadow:0 24px 80px rgba(0,0,0,.45); }
 .sync-lb-toggle:checked + .sync-lb { display:flex; }
 
-#audit-queue tbody tr, #task-queue tbody tr, #ep-table tbody tr { cursor: pointer; }
+#audit-queue tbody tr, #task-queue tbody tr { cursor: pointer; }
 #audit-queue tbody tr:hover td,
-#task-queue tbody tr:hover td,
-#ep-table tbody tr:hover td { background: rgba(255, 140, 0, 0.10) !important; }
+#task-queue tbody tr:hover td { background: rgba(255, 140, 0, 0.10) !important; }
+
+/* Episodes 页(2026-08-11 改版):顶部三桶横排大按钮,左侧清单一列可滚。
+   清单是**扫读**用的:等宽字体对齐 episode 号,单行不换行(几百条一换行整列就散),
+   容器内滚动而不是把页面拉到几屏高。 */
+#ep-buckets .wrap { display: flex; flex-direction: row; gap: 10px; flex-wrap: wrap; }
+#ep-buckets label { font-size: 1.02rem !important; font-weight: 700; padding: 7px 16px; }
+#ep-list { max-height: 68vh; overflow-y: auto; }
+#ep-list .wrap { display: flex; flex-direction: column; gap: 1px; }
+#ep-list label { font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 4px 8px;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ep-list label:hover { background: rgba(255, 140, 0, 0.10); }
 """
 
 def presentation(terminal: bool = False) -> dict:
@@ -258,13 +269,16 @@ def _adj_section_html(num: str, title: str, subtitle: str, color: str, dark: str
 
 
 def build_app(delivery: str, config_path: str | None = None, probe_timeout: float = 5.0,
-              terminal: bool = False):
+              terminal: bool = False, review_dir: str | None = None):
     """交付目录(或含多份交付的父目录)→ gr.Blocks。
 
     terminal=True 时套一层顶层导航:「终端」(内嵌 xterm.js,后端是本服务的
     `/ws/term`)+「质检报告」(= 本文件原有的全部内容),默认选中「质检报告」。
     缺省 False → 顶层导航整个不渲染,页面与加这层之前逐字一致(客户部署根本看不到
     终端入口),`/ws/term` 路由也不注册。
+
+    review_dir = 审片站根目录(与 `/review` 静态路由同一个),Episodes 页的视频
+    来源链第一档指着它;不给就只剩交付集内的视频。
     """
     import gradio as gr
 
@@ -272,32 +286,28 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
     if not choices:
         raise SystemExit(f"目录里找不到交付(无 passed.json):{delivery}")
 
-    def _ep_vids(m, eid):
-        """Episodes 页的视频槽:有几路给几路,一路没有就全隐藏。
-
-        与裁决卡片的 _vids 不同——那边是"必须留个占位不然卡片塌掉",这边绝大多数
-        episode 本来就没切片(只有分歧条目才切),留三个空框子是噪声。
-        """
-        clips = audit_clip_paths(m, eid) if (m and eid) else []
-        return [gr.update(value=(clips[i] if i < len(clips) else None),
-                          visible=i < len(clips)) for i in range(3)]
+    def _ep_list(m, bucket, page, selected):
+        """左清单的一屏(装配顺序 = _ep_list_outs)。分页口径全在 manifest。"""
+        v = episode_list_view(m or {}, bucket or BUCKET_ALL, page or 0, selected)
+        multi = gr.update(visible=v["pages"] > 1)
+        return (v["page"], selected,
+                gr.update(choices=v["choices"], value=v["value"]),
+                v["pos"], multi, multi)
 
     def _detail(m, eid):
-        """选中 episode → 判决卡 / 检查表 / 逐相机同步 / 证据帧 / 同步曲线 / 切片。
+        """选中 episode → 判决卡 / 视频区 / 待人工指路 / 检查明细。返回顺序 = _ep_outs。
 
-        ⚠️ 证据**分家**(2026-08-07 重做的核心):证据帧走多列画廊,同步曲线走
-        独立的整幅宽度组件。此前两者混在一个 4 列画廊里,超宽的曲线长图被压进
-        四分之一格 → 必然糊成一条,这就是"显示很差"的根因。返回顺序 = _ep_outs。
+        层级是定死的(2026-08-11 用户拍板):判决与理由在最上,**视频是主角**,
+        逐维读数退到默认折叠的明细里。静态证据帧整块撤掉(用户原话:体验太差)。
         """
         if not m or not eid:
-            return (episode_card_html(m or {}, ""), "", "", [],
-                    gr.update(value=None, visible=False), *_ep_vids(m, None))
-        ep = m["episodes"].get(eid) or {}
-        gallery = [(f, os.path.basename(f)) for f in ep.get("evidence") or []]
-        plot = ep.get("plot")
-        return (episode_card_html(m, eid), check_table_html(m, eid),
-                sync_camera_html(m, eid), gallery,
-                gr.update(value=plot, visible=bool(plot)), *_ep_vids(m, eid))
+            return (episode_card_html(m or {}, ""), "", "", "", "",
+                    gr.update(value=None, visible=False))
+        plot = (m["episodes"].get(eid) or {}).get("plot")
+        return (episode_card_html(m, eid), episode_video_html(m, eid, review_dir),
+                manual_hint_html(m, eid), check_table_html(m, eid),
+                sync_camera_html(m, eid),
+                gr.update(value=plot, visible=bool(plot)))
 
     def _detail_table_md(m, name):
         if not m or not name:
@@ -374,7 +384,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
     def _load(path):
         m = load_delivery(path)
-        eids = filter_episode_ids(m, EPISODE_FILTER_ALL)
+        eids = bucket_ids(m, BUCKET_ALL)
         first = eids[0] if eids else None
         tables = list_detail_tables(m)
         t_first = tables[0] if tables else None
@@ -385,10 +395,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
         return (m, overview_markdown(m), funnel_rows(m), _config_yaml(m),
-                # 筛选档随交付切换复位:留在「只看被拒」而新交付一条都没被拒,
-                # 看到的是空表 + 一个还亮着的筛选器,等于骗人
-                gr.update(value=EPISODE_FILTER_ALL), episode_rows(m),
-                gr.update(choices=eids, value=first),
+                # 桶随交付切换复位到「全部」:停在「拒绝」而新交付一条都没被拒,
+                # 看到的是空清单 + 一个还亮着的桶,等于骗人
+                gr.update(choices=bucket_choices(m), value=BUCKET_ALL),
+                *_ep_list(m, BUCKET_ALL, 0, first),
                 skill_bar_html(m), skill_rows(m), audit_note_md(m),
                 # 两块裁决面板都从第 0 条重新起(换交付不复位 = 停在上一份交付的
                 # 条目上,按钮状态还是旧的,实测踩过)
@@ -437,32 +447,44 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 with gr.Accordion("本次运行生效配置(config_effective)", open=False):
                     ov_cfg = gr.Code(language="yaml")
 
-            # ── Episodes 页(2026-08-07 重做被拒展示):判决卡在最上(被拒条目
-            #    第一眼要看到"谁毙的、为什么"),证据帧与同步曲线**分开的两个组件**
-            #    (混排就是"显示很差"的根因,见 _detail 的注释)。
+            # ── Episodes 页(2026-08-11 整页改版):顶部三桶 + 左清单右详情。
+            #    客户只关心"哪些过了/被拒/待人工",所以三桶就是主导航;骨架照
+            #    lerobot visualize_dataset 的左导航右详情,视频是详情的主角。
+            #    桶口径与清单文案全在 manifest 的纯函数里,这里只摆组件。
             with gr.Tab("Episodes"):
-                ep_filter = gr.Radio(EPISODE_FILTERS, value=EPISODE_FILTER_ALL,
-                                     label="列表筛选",
-                                     info="被拒条目是重点工作对象:切到「只看被拒」"
-                                          "下方列表与详情下拉都只剩它们")
-                ep_table = gr.Dataframe(headers=EPISODE_HEADERS,
-                                        label="episode 列表(点任意一行 → 下方详情跳到该条)",
-                                        interactive=False, elem_id="ep-table",
-                                        max_height=420)
-                ep_pick = gr.Dropdown(label="查看单条详情", interactive=True)
-                ep_card = gr.HTML()
-                ep_checks = gr.HTML()
-                ep_sync = gr.HTML()
-                ep_gallery = gr.Gallery(label="证据帧(任务判定探针抽的帧;点开放大)",
-                                        columns=4, height=320)
-                # 同步曲线单独占一整幅宽度:它是超宽长图,进画廊格子必糊
-                ep_plot = gr.Image(label="同步曲线(整幅宽度;右上角可全屏放大)",
-                                   visible=False, interactive=False,
-                                   buttons=["fullscreen", "download"], height=380)
+                # 选项(带计数)由 _load 现算填入:交付一换,计数就得跟着换
+                ep_bucket = gr.Radio([], label="", elem_id="ep-buckets",
+                                     container=False)
                 with gr.Row():
-                    ep_vids = [gr.Video(label=f"审片切片 {i + 1}", interactive=False,
-                                        autoplay=False, visible=False, scale=1)
-                               for i in range(3)]
+                    with gr.Column(scale=1, min_width=250):
+                        ep_pick = gr.Radio([], label="episode", elem_id="ep-list",
+                                           interactive=True, container=True)
+                        # 分页(2026-08-11):两百行单选框一次渲染就到极限。翻页件
+                        # 一页放得下时整排隐藏(与同步曲线页同一手法)
+                        with gr.Row():
+                            ep_prev = gr.Button("← 上一页", scale=1, visible=False,
+                                                size="sm")
+                            ep_pos = gr.Markdown("")
+                            ep_next = gr.Button("下一页 →", scale=1, visible=False,
+                                                size="sm")
+                        ep_page = gr.State(0)
+                        # 当前正在看的那条:清单翻页后它可能不在本页,右侧详情
+                        # 照旧显示它,翻回来仍是选中态
+                        ep_sel = gr.State(None)
+                    with gr.Column(scale=3):
+                        ep_card = gr.HTML()
+                        ep_video = gr.HTML()
+                        ep_hint = gr.HTML()
+                        # 明细默认折叠(2026-08-11 用户定):看片的人九成不需要读数,
+                        # 但要读时一点就开——不是删掉,是让路
+                        with gr.Accordion("检查明细(逐维读数)", open=False):
+                            ep_checks = gr.HTML()
+                            ep_sync = gr.HTML()
+                            # 同步曲线是超宽长图,给整幅宽度(整页也有专门的曲线页)
+                            ep_plot = gr.Image(label="同步曲线(右上角可全屏放大)",
+                                               visible=False, interactive=False,
+                                               buttons=["fullscreen", "download"],
+                                               height=380)
 
             # ── 人工裁决页(2026-08-06):把"人要做决定"的事全收到一处。
             #    此前分歧裁决藏在技能画像页底部,而任务成败弃权只能在 Episodes 页
@@ -620,12 +642,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             # ⚠️ 顺序必须与 _load 的返回值逐项对齐(错位是运行期才炸的接线错误,
             #    有测试直接比 len(_load(...)) == len(outputs) 钉住)。
-            # Episodes 详情的六个槽(判决卡 / 检查表 / 逐相机同步 / 证据帧 /
-            # 同步曲线 / 三路切片):_detail 与 _ep_filter 都按这个顺序装配。
-            _ep_outs = [ep_card, ep_checks, ep_sync, ep_gallery, ep_plot, *ep_vids]
+            # Episodes 详情的六个槽(判决卡 / 视频区 / 待人工指路 / 检查表 /
+            # 逐相机同步 / 同步曲线):_detail 与 _ep_bucket_change 都按这个顺序装配。
+            _ep_outs = [ep_card, ep_video, ep_hint, ep_checks, ep_sync, ep_plot]
+            # 左清单的六个槽(页码 / 选中项 / 单选框 / 页码文字 / 两个翻页键):
+            # _ep_list 按这个顺序装配
+            _ep_list_outs = [ep_page, ep_sel, ep_pick, ep_pos, ep_prev, ep_next]
             _sy_outs = [sy_page, sy_note, sy_pos, sy_prev, sy_next, sy_cards]
 
-            outs = [state, ov_md, ov_funnel, ov_cfg, ep_filter, ep_table, ep_pick,
+            outs = [state, ov_md, ov_funnel, ov_cfg, ep_bucket, *_ep_list_outs,
                     sk_html, sk_table, sk_audit_note,
                     au_table,
                     au_idx, au_pos, au_info, au_origlab, au_newlab, au_note, *au_vids,
@@ -657,30 +682,34 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 return (gr.update(choices=fresh, value=sel), *_load(sel))
 
             reload_btn.click(_reload, picker, [picker, *outs])
-            ep_pick.change(_detail, [state, ep_pick], _ep_outs)
 
-            def _ep_filter_change(m, mode):
-                """筛选档变了:列表、详情下拉、详情面板一起换(下拉停在被筛掉的
-                旧 eid 上,详情就成了"看不见的那条"的读数——实测最容易骗人)。"""
-                ids = filter_episode_ids(m or {}, mode)
+            def _ep_select(m, eid):
+                """点清单某条 → 记住它 + 换右侧详情。"""
+                return (eid, *_detail(m, eid))
+
+            # 用 .input 不用 .change:后端回填清单(翻页/换桶/换交付)也会改 value,
+            # 走 .change 就会被自己的回填触发一遍——翻页时把详情冲掉,正是"跨页
+            # 保持选中"要防的事。.input 只认用户点击。
+            ep_pick.input(_ep_select, [state, ep_pick], [ep_sel, *_ep_outs])
+
+            def _ep_bucket_change(m, bucket):
+                """点桶 → 左清单换成该桶的条目(回第 1 页),详情跳到该桶第一条。
+
+                清单与详情必须一起换:选中项停在被筛掉的旧 eid 上,右边就成了
+                "清单里看不见的那条"的详情——实测最容易骗人。
+                """
+                ids = bucket_ids(m or {}, bucket or BUCKET_ALL)
                 first = ids[0] if ids else None
-                return (gr.update(value=episode_rows(m or {}, mode)),
-                        gr.update(choices=ids, value=first), *_detail(m, first))
+                return (*_ep_list(m, bucket, 0, first), *_detail(m, first))
 
-            ep_filter.change(_ep_filter_change, [state, ep_filter],
-                             [ep_table, ep_pick, *_ep_outs])
+            ep_bucket.input(_ep_bucket_change, [state, ep_bucket],
+                            [*_ep_list_outs, *_ep_outs])
 
-            def _ep_jump(m, mode, evt):
-                """点列表任意一行 → 详情跳到该条(比在下拉里翻 200 条快得多)。"""
-                ids = filter_episode_ids(m or {}, mode)
-                i = evt.index[0] if getattr(evt, "index", None) else 0
-                eid = ids[i] if i < len(ids) else None
-                return (gr.update(value=eid), *_detail(m, eid))
-
-            # 同 _au_jump:本文件开了 future annotations,字符串注解会在模块全局
-            # 被 eval(gr 是函数内导入)→ NameError,所以塞真实类对象。
-            _ep_jump.__annotations__ = {"evt": gr.SelectData}
-            ep_table.select(_ep_jump, [state, ep_filter], [ep_pick, *_ep_outs])
+            # 翻页只动清单,不动右侧详情(正在看的那条翻页时不该被冲掉)
+            ep_prev.click(lambda m, b, p, s: _ep_list(m, b, (p or 0) - 1, s),
+                          [state, ep_bucket, ep_page, ep_sel], _ep_list_outs)
+            ep_next.click(lambda m, b, p, s: _ep_list(m, b, (p or 0) + 1, s),
+                          [state, ep_bucket, ep_page, ep_sel], _ep_list_outs)
 
             # ── 同步曲线页:筛选换档回第 0 页,翻页越界回绕(与裁决卡片同款) ──
             sy_filter.change(lambda m, mode: _sync_view(m, mode, 0),
@@ -807,7 +836,8 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
 
     from . import auth
 
-    blocks = build_app(delivery, config_path, probe_timeout, terminal=terminal)
+    blocks = build_app(delivery, config_path, probe_timeout, terminal=terminal,
+                       review_dir=review_dir)
     api = FastAPI()
 
     # 探针端点(鉴权豁免,见 auth.EXEMPT_PATHS):k8s readinessProbe 现在指 /(整页
@@ -834,8 +864,10 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
         log.info("审片站:已挂 /review → %s", review_dir)
 
     auth.apply(api, terminal_enabled=terminal)
-    # allowed_paths:允许 Gallery 直读交付目录下的证据文件(gradio 默认只许临时目录)
-    return gr.mount_gradio_app(api, blocks, path="/", allowed_paths=[delivery],
+    # allowed_paths:允许页面直读交付目录下的证据文件(gradio 默认只许临时目录);
+    # 审片站目录同样要放行——Episodes 页的视频第一来源就在那儿,不放行会 403。
+    allowed = [delivery] + ([review_dir] if review_dir else [])
+    return gr.mount_gradio_app(api, blocks, path="/", allowed_paths=allowed,
                                **presentation(terminal))
 
 

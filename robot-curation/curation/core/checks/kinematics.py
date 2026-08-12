@@ -30,17 +30,17 @@ def kinematic_limits(
     # ① 格式硬校验
     if v.ndim != 2:
         return CheckResult(name="kinematic_limits", passed=False,
-                           detail={"reason": f"应为 [T, dof] 二维,got shape={v.shape}"})
+                           detail={"reason": f"关节数据应是「帧 × 关节」的二维表,实际形状是 {v.shape}"})
     if not np.isfinite(v).all():
         bad = np.argwhere(~np.isfinite(v))[:_MAX_VIOLATIONS_IN_DETAIL]
         return CheckResult(name="kinematic_limits", passed=False,
-                           detail={"reason": "含 NaN/Inf",
+                           detail={"reason": "关节数据里有无效值(NaN/Inf)",
                                    "frames": [{"frame": int(f), "joint": int(j)} for f, j in bad]})
     if v.shape[1] != profile.dof:
         return CheckResult(
             name="kinematic_limits", passed=False,
-            detail={"reason": f"维度 {v.shape[1]} != {profile.embodiment_id} 的 dof {profile.dof}"
-                              "(action 若是 EE 空间指令,应传 proprio 关节列或跳过本检查)"})
+            detail={"reason": f"关节数 {v.shape[1]} 与 {profile.embodiment_id} 规格表的 {profile.dof} 个关节对不上"
+                              "(若这列是末端位姿指令,应改传关节读数列,或跳过本检查)"})
 
     # ② draft profile:极限未收集,或表虽有数字但被标记为草稿(未经人工验证/发现过
     # 约定错位)→ 不可判。硬判资格只给 authoritative/approximate 两档。
@@ -124,12 +124,12 @@ def ee_limits(
     v = np.asarray(pose, dtype=np.float64)
     if v.ndim != 2 or v.shape[1] < 6:
         return CheckResult(name="kinematic_limits", passed=False,
-                           detail={"reason": f"EE 位姿应为 [T,≥6],got shape={v.shape}",
+                           detail={"reason": f"末端位姿应是「帧 × 至少 6 维」的二维表,实际形状是 {v.shape}",
                                    "mode": "ee"})
     if not np.isfinite(v[:, :6]).all():
         bad = np.argwhere(~np.isfinite(v[:, :6]))[:_MAX_VIOLATIONS_IN_DETAIL]
         return CheckResult(name="kinematic_limits", passed=False,
-                           detail={"reason": "含 NaN/Inf", "mode": "ee",
+                           detail={"reason": "末端位姿里有无效值(NaN/Inf)", "mode": "ee",
                                    "frames": [{"frame": int(f), "dim": int(j)} for f, j in bad]})
     if not profile.has_ee_limits or profile.quality == "draft":
         return CheckResult(name="kinematic_limits", passed=None,
@@ -145,8 +145,8 @@ def ee_limits(
     d_scale = float(np.percentile(dist, 95))
     if d_scale > 3.0 * reach:
         return CheckResult(name="kinematic_limits", passed=None,
-                           detail={"reason": f"单位疑似错配:EE 距离典型值(p95) {d_scale:.3g}m vs "
-                                             f"臂展 {reach}m,拒绝硬比", "mode": "ee",
+                           detail={"reason": f"单位疑似不一致:末端离基座的典型距离 {d_scale:.3g} 米,"
+                                             f"而这款臂展只有 {reach} 米——不做硬性对照", "mode": "ee",
                                    "unit_mismatch": True})
 
     violations = []

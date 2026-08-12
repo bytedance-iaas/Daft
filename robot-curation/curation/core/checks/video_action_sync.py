@@ -45,7 +45,7 @@ def timestamp_check(
     ts = np.asarray(timestamps, dtype=np.float64)
     if len(ts) < 2:
         return CheckResult(name="timestamp_check", passed=False,
-                           detail={"reason": f"时间戳过短({len(ts)})"})
+                           detail={"reason": f"只有 {len(ts)} 个时间戳,连时长都算不出"})
 
     dt = np.diff(ts)
     detail: dict = {"n": len(ts)}
@@ -54,7 +54,8 @@ def timestamp_check(
     if dt.min() <= 0:
         k = int(np.argmin(dt))
         return CheckResult(name="timestamp_check", passed=False,
-                           detail={**detail, "reason": "时间戳非严格递增",
+                           detail={**detail,
+                                   "reason": f"时间戳出现倒退/重复(第 {k + 1} 帧)",
                                    "frame": k, "ts": [float(ts[k]), float(ts[k + 1])]})
 
     # ①b 最短时长:半秒级碎片没有任务可言,后续一切语义检查只会弃权 → 必须在
@@ -64,8 +65,10 @@ def timestamp_check(
     duration = float(ts[-1] - ts[0])
     detail["duration_s"] = round(duration, 3)
     if duration < min_duration_s:
-        detail["reason"] = (f"残段:全长 {duration:.2f}s < {min_duration_s}s"
-                            "(疑似采集中断碎片)")
+        # 措辞人话化(2026-08-11 用户定):数字保留,数学符号去掉——客户读的是
+        # "这条只有半秒",不是 "0.47s < 1.0s"。
+        detail["reason"] = (f"全长只有 {duration:.2f} 秒"
+                            f"(不足 {min_duration_s:g} 秒,疑似采集中断的碎片)")
         return CheckResult(name="timestamp_check", passed=False, detail=detail)
 
     # ② 等间隔:名义 dt 取中位数(比标称 fps 更可信);空洞=丢帧
@@ -74,7 +77,9 @@ def timestamp_check(
     detail["dt_nominal"] = round(dt_nominal, 6)
     detail["max_dt"] = round(float(dt.max()), 6)
     if len(gaps):
-        detail["reason"] = "时间戳有空洞(丢帧)"
+        _k = int(gaps[0])
+        detail["reason"] = (f"第 {_k + 1} 帧后间隔突增至 {float(dt[_k]):.2f} 秒"
+                            f"(正常约 {dt_nominal:.2f} 秒),疑似丢帧")
         detail["gap_frames"] = [
             {"frame": int(k), "dt": round(float(dt[k]), 4)} for k in gaps[:10]]
         return CheckResult(name="timestamp_check", passed=False, detail=detail)

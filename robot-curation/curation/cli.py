@@ -229,7 +229,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[review-page] {done[0]}/{len(rows)}", flush=True)
 
         try:
-            n = build_review_page(rows, args.output, title=title, on_progress=_tick)
+            n = build_review_page(rows, args.output, title=title, on_progress=_tick,
+                                  source_dataset=args.input)
         finally:
             # RRD 解出的临时 mp4 只是切片的原料,站点生成完就该消失(几百条能占几个 GB)
             cleanup_video_cache(args.input)

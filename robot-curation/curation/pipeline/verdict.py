@@ -35,8 +35,12 @@ def episode_verdict(checks: dict[str, dict], cfg: dict) -> dict:
     out = {"soft_score": soft_score, "hard_fails": hard_fails, "undecidable": undecidable}
 
     if hard_fails:
+        # 拒绝理由带上该检查自己写的人话(单一事实源见 report.hard_fail_reason):
+        # 只报检查名会把人带偏(ep000018 的"未通过「时间戳检查」"被读成同步问题,
+        # 实际是 0.47 秒的采集残段)。函数内导入:避开模块级循环导入。
+        from ..export.report import hard_fail_reason
         out["verdict"] = "drop"
-        out["reason"] = f"硬门违规: {','.join(hard_fails)}"
+        out["reason"] = hard_fail_reason(hard_fails, checks)
     elif soft_score is not None and soft_score < cfg["verdict"]["soft_threshold"]:
         out["verdict"] = "drop"
         out["reason"] = f"软分 {soft_score:.3f} < {cfg['verdict']['soft_threshold']}"

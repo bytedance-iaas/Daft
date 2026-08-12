@@ -34,7 +34,11 @@ def test_l0_drop_frames_caught():
            "proprio_state": None, "video": {}, "timestamps": np.arange(200) / FPS, "fps": FPS}
     bad, _ = corrupt.drop_frames(row, start=90, n=10)
     r = timestamp_check(bad["timestamps"], FPS)
-    assert r.passed is False and "空洞" in r.detail["reason"]
+    # 理由挂语义词 + 数字:客户读的是"第几帧后断了、断了多久"
+    assert r.passed is False
+    for word in ("间隔", "秒", "丢帧"):
+        assert word in r.detail["reason"], r.detail["reason"]
+    assert "89" in r.detail["reason"] or "90" in r.detail["reason"]
     assert r.detail["gap_frames"][0]["frame"] == 89   # 定位到空洞位置
 
 
@@ -42,7 +46,9 @@ def test_l0_disorder_caught():
     ts = np.arange(100) / FPS
     ts[50] = ts[49] - 0.01
     r = timestamp_check(ts, FPS)
-    assert r.passed is False and "递增" in r.detail["reason"]
+    assert r.passed is False
+    for word in ("倒退", "重复", "帧"):
+        assert word in r.detail["reason"], r.detail["reason"]
 
 
 def test_l0_stub_episode_killed():
@@ -52,7 +58,11 @@ def test_l0_stub_episode_killed():
     ts = np.arange(8) / 15.0                    # 复刻 ep000018:8 帧 @15fps ≈ 0.47s
     r = timestamp_check(ts, 15.0)
     assert r.passed is False
-    assert "残段" in r.detail["reason"]
+    # 措辞人话化(2026-08-11 用户定):数字留着,数学符号去掉——"0.47s < 1.0s"
+    # 那种写法客户读不出"这条只有半秒"。锚点挂语义词,不挂修辞。
+    for word in ("全长", "0.47", "秒", "不足"):
+        assert word in r.detail["reason"], r.detail["reason"]
+    assert "<" not in r.detail["reason"]
     assert r.detail["duration_s"] < 1.0
 
 
@@ -62,7 +72,7 @@ def test_l0_min_duration_configurable_and_boundary():
     assert timestamp_check(ts, FPS).passed is True
     # 收紧到 2s:同一条就该被杀,且理由写明阈值
     r = timestamp_check(ts, FPS, min_duration_s=2.0)
-    assert r.passed is False and "2.0s" in r.detail["reason"]
+    assert r.passed is False and "不足 2 秒" in r.detail["reason"]
     # 放宽到 0.3s:连 8 帧碎片都放行(客户显式要短片段时不拦)
     assert timestamp_check(np.arange(8) / 15.0, 15.0, min_duration_s=0.3).passed is True
 
