@@ -519,6 +519,36 @@ CHECK_CN = {"timestamp_check": "时间戳检查", "kinematic_limits": "运动学
             "video_action_sync": "视频-动作同步", "task_success": "任务成败判定"}
 
 
+def check_detail_reason(check: dict) -> str:
+    """检查条目 → 它自己写的那句人话(detail.reason)。拿不到给空串,绝不编。
+
+    detail 在管线里是 JSON 字符串(daft 列),在别处可能已是 dict —— 两种都吃。
+    """
+    d = (check or {}).get("detail")
+    if isinstance(d, str) and d.strip():
+        try:
+            d = json.loads(d)
+        except Exception:  # noqa: BLE001
+            return ""
+    return str((d or {}).get("reason") or "").strip() if isinstance(d, dict) else ""
+
+
+def hard_fail_reason(hard_fails: list, checks: dict) -> str:
+    """被拒理由的**唯一事实源**:未通过「检查名」:<该检查写的那句人话>。
+
+    2026-08-11 用户定:光报检查名会把人带偏 —— ep000018 显示"未通过「时间戳检查」",
+    第一反应是同步出了问题,实际是 0.47 秒的采集残段。所以拼装时必须把检查自己
+    写的 detail.reason 带上;report.md 的淘汰明细、reject.json 的原因、UI 的判决
+    横幅与左清单**全部引用这一个串**,不许各拼各的。
+    """
+    parts = []
+    for name in hard_fails:
+        cn = CHECK_CN.get(name, name)
+        why = check_detail_reason(checks.get(name) or {})
+        parts.append(f"未通过「{cn}」:{why}" if why else f"未通过「{cn}」")
+    return ";".join(parts)
+
+
 def _render_checks(checks: dict) -> dict:
     """passed 三态 → 人话:true='pass',false='拒绝',null='弃权'。"""
     out = {}
