@@ -37,6 +37,48 @@ def _result_dtype():
                             "detail": DataType.string()})
 
 
+def build_arbitration_deps(cfg: dict) -> dict | None:
+    """checks.task_success.arbitration 段 → 取证仲裁链的注入依赖包;关掉返回 None。
+
+    enable: false(或整段留空后显式关)= 完全退回没有仲裁链的行为 —— 返回 None 后
+    管线一行仲裁代码都不会执行,这是规格要求的"逐字节等价"性质的实现方式。
+    构造只拼 URL/闭包不发网络 IO;构造失败=配置问题,由调用方打印警告后按"仲裁
+    不可用"继续(仲裁链的故障永远不许拖垮判定主链)。
+    """
+    acfg = dict(cfg["checks"]["task_success"].get("arbitration") or {})
+    if not acfg.get("enable", True):
+        return None
+    consensus = str(acfg.get("consensus", "strict"))
+    if consensus != "strict":
+        # 实验版还有 majority/confident 口径,生产只落了拍板的 strict;
+        # 配错要炸在这里(被调用方转成警告),不能静默换口径
+        raise ValueError(f"arbitration.consensus 仅支持 strict,got {consensus!r}")
+    from ..adapters.vlm_client import (make_evidence_judge, make_grounder,
+                                      make_intent_comparer, make_question_writer)
+    from ..dataset_level.caption import make_vlm_captioner
+
+    vcfg = cfg["checks"]["task_success"]["vlm"]
+    ep, model, key = vcfg["endpoint"], vcfg["model"], vcfg.get("api_key_env")
+    return {
+        "question_writer": make_question_writer(ep, model, api_key_env=key),
+        "grounder": make_grounder(ep, model, api_key_env=key),
+        "judge": make_evidence_judge(ep, model, api_key_env=key),
+        "same_task": make_intent_comparer(ep, model, api_key_env=key),
+        "captioner": make_vlm_captioner(ep, model, api_key_env=key),
+        "caption_n_frames": int(cfg.get("skill_profile", {}).get("n_frames", 8)),
+        "params": {
+            "kill_min_lines": int(acfg.get("kill_min_lines", 2)),
+            "n_votes": int(acfg.get("n_votes", 3)),
+            "crop_pad": float(acfg.get("crop_pad", 0.15)),
+            "upscale": int(acfg.get("upscale", 3)),
+            "transient_offset_s": float(acfg.get("transient_offset_s", 1.0)),
+            # 取证路数上限:不写默认复用复核层的相机上限(同一批解码帧,同一顶)
+            "max_cams": int(acfg.get("max_cams",
+                                     cfg.get("pipeline", {}).get("max_endstate_cams", 4))),
+        },
+    }
+
+
 # 进度显示已抽到 pipeline/progress.py(M7 在 run.py 里也要用,不该 import funnel 私有名)
 
 # 并发探针(仅 CURATION_DEBUG_CONCURRENCY=1 时启用):量 VLM 段真实在飞条数。
@@ -494,8 +536,70 @@ def run_funnel(
             # 现场会看到判定一片弃权却不知复核压根没启动。
             print(f"[curation] ⚠️ 复核投票器不可用({type(_e).__name__}:{_e}),"
                   "task_success 将仅凭打分层单判据判定(失败候选降弃权)", flush=True)
+        try:
+            arb_deps = build_arbitration_deps(cfg)
+        except Exception as _e:  # noqa: BLE001
+            arb_deps = None
+            # 同复核投票器:构造失败要出声,否则弃权条目静默维持人工,看不出仲裁没启动
+            print(f"[curation] ⚠️ 取证仲裁链不可用({type(_e).__name__}:{_e}),"
+                  "弃权条目维持进人工", flush=True)
 
-        def _task_check_sync(video, task_desc, task_src, fps):
+        def _arbitrate(res, cam_frames, cam_ts, task_desc, task_src,
+                       action, timestamps, embodiment_id):
+            """弃权条目 → 取证仲裁链(判定本体在 core.arbitration_review 纯函数)。
+
+            意图 = 自产 caption:漏斗前为无标注条目补过的直接复用(task_desc 此时
+            本来就是 caption);标注条目在这里现打一条 —— **复用已解码的 cam_frames**,
+            不再碰视频(M7 的 caption 阶段在漏斗之后,此刻还不存在)。
+            仲裁链自身的任何异常只写进留痕,绝不拖垮判定主链。
+            """
+            from ..core.checks.task_success import arbitration_review
+            try:
+                src = str(task_src)
+                if src == "自产caption":
+                    caption, cap_src = str(task_desc), "自产caption(漏斗前)"
+                else:
+                    caption, cap_src = "", "自产caption(仲裁时)"
+                    groups = []
+                    for name, fr in cam_frames.items():
+                        idx = np.unique(np.linspace(0, len(fr) - 1,
+                                                    min(arb_deps["caption_n_frames"],
+                                                        len(fr)), dtype=int))
+                        groups.append((name, [fr[i] for i in idx]))
+                    try:
+                        cap = str(arb_deps["captioner"](groups)).strip().strip('."')
+                        # unclear = captioner 诚实弃权(caption.py 同款归一),留空触发
+                        # arbitration_review 的 no_caption 弃权
+                        if cap and not cap.lower().startswith("unclear"):
+                            caption = cap
+                    except Exception:  # noqa: BLE001
+                        caption = ""
+                annotation = str(task_desc) if src == "原始标注" else ""
+                # 夹爪信号:列下标走 registry 的 gripper_dims(不硬编码数据集布局);
+                # 未知 embodiment / 无夹爪列 → None,core 侧自选兜底帧
+                gr = gts = None
+                try:
+                    gd = registry.get(str(embodiment_id)).gripper_dims
+                    a = np.asarray(action)
+                    dims = tuple(d for d in gd if d < a.shape[1])
+                    if dims:
+                        gr = a[:, dims]
+                        gts = np.asarray(timestamps, dtype=float)
+                except Exception:  # noqa: BLE001
+                    pass
+                arbitration_review(
+                    res, caption=caption, caption_source=cap_src,
+                    annotation=annotation, cam_frames=cam_frames, cam_ts=cam_ts,
+                    gripper=gr, gripper_ts=gts,
+                    question_writer=arb_deps["question_writer"],
+                    grounder=arb_deps["grounder"], judge=arb_deps["judge"],
+                    same_task=arb_deps["same_task"], **arb_deps["params"])
+            except Exception as e:  # noqa: BLE001
+                res.detail["arbitration"] = {
+                    "applied": False, "error": f"{type(e).__name__}: {e}"}
+
+        def _task_check_sync(video, task_desc, task_src, fps,
+                             action, timestamps, embodiment_id):
             from ..adapters.decode import decode_window
             from ..core.contract import CheckResult
 
@@ -503,13 +607,16 @@ def run_funnel(
             # 打分层帧 = [(相机名, 图), ...](同一时刻各路,标签随数据走,由
             # make_multiview_completion 消费);复核层逐机位独立投票。
             cam_frames = {}
+            cam_ts = {}         # 帧相对时间(仲裁链选取证时刻用;同一次解码顺手留下)
             for cam in sorted(video.keys())[:max_endstate_cams]:
                 v = video[cam]
                 try:
-                    fr, _ = decode_window(v["path"], v["from_ts"], v["to_ts"],
-                                          sample_interval_s=interval, max_side=max_side)
+                    fr, fts = decode_window(v["path"], v["from_ts"], v["to_ts"],
+                                            sample_interval_s=interval, max_side=max_side)
                     if fr:
-                        cam_frames[cam.split(".")[-1]] = fr    # 标签用短名(去 observation.images. 前缀)
+                        short = cam.split(".")[-1]    # 标签用短名(去 observation.images. 前缀)
+                        cam_frames[short] = fr
+                        cam_ts[short] = fts
                 except Exception:  # noqa: BLE001
                     continue                          # 解码失败=少一路视角,不中断
             if not cam_frames:
@@ -529,6 +636,11 @@ def run_funnel(
             # ---- 复核:逐机位独立投票(协议本体在 core.endstate_review 纯函数)----
             res = endstate_review(res, str(task_desc), cam_voter, cam_frames,
                                   endstate_frames=endstate_frames)
+            # ---- 取证仲裁链:**仅当打分+复核后仍弃权**才触发(老判决不许翻案),
+            #      复用本函数已解码的 cam_frames,不再解一遍视频 ----
+            if arb_deps is not None and res.passed is None:
+                _arbitrate(res, cam_frames, cam_ts, task_desc, task_src,
+                           action, timestamps, embodiment_id)
             _progress_tick(_pk_vlm)
             return result_to_struct(res)
 
@@ -546,7 +658,8 @@ def run_funnel(
         _INFLIGHT.update(n=0, max=0, t0=time.time())
 
         @daft.func(return_dtype=_result_dtype())
-        async def task_check(video, task_desc, task_src, fps):
+        async def task_check(video, task_desc, task_src, fps,
+                             action, timestamps, embodiment_id):
             import asyncio
             import os
             import sys
@@ -555,7 +668,8 @@ def run_funnel(
             async with _episode_gate(episode_concurrency):
                 if not os.environ.get("CURATION_DEBUG_CONCURRENCY"):
                     return await asyncio.to_thread(
-                        _task_check_sync, video, task_desc, task_src, fps)
+                        _task_check_sync, video, task_desc, task_src, fps,
+                        action, timestamps, embodiment_id)
 
                 from ..adapters.vlm_client import http_stats
 
@@ -564,7 +678,8 @@ def run_funnel(
                 t_in = time.time()
                 try:
                     return await asyncio.to_thread(
-                        _task_check_sync, video, task_desc, task_src, fps)
+                        _task_check_sync, video, task_desc, task_src, fps,
+                        action, timestamps, embodiment_id)
                 finally:
                     _INFLIGHT["n"] -= 1
                     n_req, s_req = http_stats()
@@ -581,8 +696,32 @@ def run_funnel(
             col("task_desc") if "task_desc" in df.column_names else col("instruction"),
             col("task_desc_source") if "task_desc_source" in df.column_names
             else lit("原始标注"),
-            col("fps")))
+            col("fps"), col("action"), col("timestamps"), col("embodiment_id")))
         df = df.collect()                     # ⚡ 物化:task_success(VLM,最贵)只跑一遍
+
+        if arb_deps is not None:
+            # 仲裁触发计数(验收:成本可见,报告里要能看出触发了多少条)。
+            # 纯读已物化的 detail,零重算;enable:false 时不产生这个统计键(逐字节等价)。
+            _arb_cnt = {"triggered": 0, "adopted_success": 0, "adopted_failure": 0,
+                        "abstained": 0, "skipped": 0}
+            for _r in df.select("check_task_success").to_pydict() \
+                        .get("check_task_success", []):
+                try:
+                    _a = json.loads((_r or {}).get("detail") or "{}").get("arbitration")
+                except Exception:  # noqa: BLE001
+                    _a = None
+                if not isinstance(_a, dict):
+                    continue
+                _arb_cnt["triggered"] += 1
+                if _a.get("skipped") or _a.get("error"):
+                    _arb_cnt["skipped"] += 1
+                elif _a.get("final") == "yes":
+                    _arb_cnt["adopted_success"] += 1
+                elif _a.get("final") == "no":
+                    _arb_cnt["adopted_failure"] += 1
+                else:
+                    _arb_cnt["abstained"] += 1
+            stats["arbitration"] = _arb_cnt
 
     # ---------- verdict(daft.func 需固定签名,六个已知检查逐一传,缺的传 None) ----------
     from .config import KNOWN_CHECKS

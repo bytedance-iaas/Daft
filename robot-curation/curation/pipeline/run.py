@@ -663,7 +663,12 @@ def run_pipeline(
                               ).stdout.strip() or "unknown"
     except Exception:  # noqa: BLE001
         _ver = "unknown"
+    # 源数据集**路径**(2026-08-13):此前只记了名字(basename),于是任何"要回源"
+    # 的动作都得靠人再说一遍它在哪 —— rejudge 必须回源重读画面,UI 任务台想替用户
+    # 自动回填就无从谈起;审片站认领也只能按名字模糊比对(同名不同库会错播)。
+    # 记绝对路径,老交付没有这个键的地方一律 .get 兜底。
     report = {"数据集": os.path.basename(input_dir.rstrip("/")), "机器人": _robot,
+              "源数据集路径": os.path.abspath(input_dir),
               "生成时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
               "代码版本": _ver, **report}
     vq = cfg["checks"].get("visual_quality", {})
@@ -865,6 +870,7 @@ def run_pipeline(
               "idle_head_s", "idle_tail_s", "idle_mid_count", "idle_mid_total_s",
               "spike_isolation", "saturation_gap_ratio", "tail_std", "gripper_flips"]
     mrows, vrows, srows = [], [], []
+    task_rows: list = []           # episode → 成败判定的判定痕迹(只记录,不改判)
     stuck_json: dict = {}          # episode → 事件+timeline(权威完整版,JSON)
     timeline_json: dict = {}       # episode → 三态时间线(D2,UI 彩条数据源)
     for i, e in enumerate(out["episode_id"]):
@@ -875,6 +881,14 @@ def run_pipeline(
                 d = json.loads(out[c][i].get("detail") or "{}")
             except Exception:  # noqa: BLE001
                 continue
+            if c == "check_task_success":
+                # 判定痕迹(P5.1 校准的原料):纯读已产出的 detail,一个数不重算。
+                # 标注取 desc_of 的**全文**——detail 里那份为了界面截到了 80 字。
+                from ..export.task_trace import build_task_trace
+                task_rows.append(build_task_trace(
+                    e, out[c][i].get("passed"), d,
+                    instruction=desc_of.get(e, ""),
+                    instruction_source=desc_src_of.get(e, "")))
             if c == "check_motion_quality":
                 mrows.append({"episode": e, "score": out[c][i].get("score"),
                               **{k: d.get(k) for k in M_COLS}})
@@ -939,6 +953,12 @@ def run_pipeline(
             w = _csv.DictWriter(f, fieldnames=["episode", "score"] + M_COLS)
             w.writeheader()
             w.writerows(mrows)
+    # 判定痕迹落盘:没跑成败判定(--lite / 该检查关闭 / 全员被前置硬门拒掉)就
+    # 不产这个文件——空文件会被当成"判定跑了但什么都没测出来"。
+    from ..export.task_trace import write_task_details
+    if write_task_details(det_dir, task_rows, report.get("数据集", "")):
+        print(f"[curation] 判定痕迹:{len(task_rows)} 条 → details/task_details.json",
+              flush=True)
     if vrows:
         vcols = ["episode", "camera", "status", "score", "sharpness", "exposure",
                  "integrity", "blur_var_median", "clip_frac_median",

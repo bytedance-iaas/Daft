@@ -13,6 +13,13 @@
     判失败 → 三边摘除进 reject,并随现有同步机制从 episodes_parquet /
              lerobot_curated / rrd_curated 里剔除(裁决只改报告 = 交出去还是脏数据);
     搁置   → 只记一笔,队列保留(等更多信息)。
+③ 被拒复议(details/reject_appeals.csv)——**语义判定的杀可以被人捞回**,这是
+   "证据够就杀"的保险丝。同样不跑 VLM:系统已经给过结论,人看完视频推翻它。
+    捞回     → 从拒绝翻为通过,回到 passed / 交付数据集(溯源 verdict_source=human_review);
+    维持拒绝 → 只记档,判决一个字不改。
+   ⚠️ 准入只认"拒因归因于任务成败判定"的条目(is_task_success_reject):时间戳/
+   残段/运动学/同步这些物理与结构硬门是终局,不进复议 —— 界面不给入口,这里再
+   校验一次(裁决 CSV 是可以被手改的文件,不能只靠界面把门)。
 
   三件套原地更新 + report.md 追加小节 + details/rejudge_results.json 留档。
 
@@ -38,7 +45,8 @@ TASK_CN = "任务成败判定"
 PROV_LABEL = "标注裁决"
 PROV_RELABEL = "标注修正"
 PROV_TASK = "人工裁决"
-_PROV_KEYS = (PROV_RELABEL, PROV_LABEL, PROV_TASK)
+PROV_APPEAL = "人工复议"
+_PROV_KEYS = (PROV_RELABEL, PROV_LABEL, PROV_TASK, PROV_APPEAL)
 
 
 def _state_cn(passed) -> str:
@@ -199,7 +207,7 @@ def apply_task_verdicts(passed: dict, review: dict, reject: dict,
         # 条目是重建的(弃权原因/待裁决项该随之作废),但**上一条裁决线留下的溯源
         # 必须带走**:同一条 episode 常常先被改标重判、再被人工判成败,把改标履历
         # 抹掉的话,交付里就再也看不出这条的标注被人动过。
-        keep = {k: old[k] for k in (PROV_RELABEL, PROV_LABEL) if k in old}
+        keep = {k: old[k] for k in (PROV_RELABEL, PROV_LABEL, PROV_APPEAL) if k in old}
 
         if kind == "判成功":
             p_eps[eid] = {"判决": "通过(人工裁决)", "综合软分": old.get("综合软分"),
@@ -212,6 +220,84 @@ def apply_task_verdicts(passed: dict, review: dict, reject: dict,
                           "综合软分": old.get("综合软分"),
                           "checks": checks, **keep, PROV_TASK: prov}
             summary["verdict_fail"].append(eid)
+
+    _sync_counts(review, reject, r_eps, j_eps)
+    return summary
+
+
+def apply_reject_appeals(passed: dict, review: dict, reject: dict,
+                         appeals: dict) -> dict:
+    """按**被拒复议**结论在三件套视图间搬移/标注(**原地修改**传入的 dict)→ 摘要。
+
+    appeals: {eid: {"appeal","note","at"}}(decisions.py 的 reject_appeals schema)
+
+    与另两条线的分工:标注线处理"标注写错了"(要重判),成败弃权线处理"机器判不了"
+    (人给结论);这条线处理"机器判了、而且判错了"——人把杀掉的条目捞回来。
+    同样不重判:再问一次 VLM 只会得到同样的结论,人看过画面就是最终事实。
+
+    准入在这里再校验一次(界面已经过滤过一遍):拒因不是任务成败判定的,一律不捞。
+    物理硬门是终局这件事,不能只由界面把门 —— CSV 是人能直接编辑的文件。
+    """
+    p_eps = passed.setdefault("episodes", {})
+    r_eps = review.setdefault("episodes", {})
+    j_eps = reject.setdefault("episodes", {})
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    summary = {"appeal_restored": [], "appeal_upheld": [], "appeal_skipped": []}
+
+    from ..dataset_level.decisions import is_task_success_reject
+
+    for eid, a in appeals.items():
+        kind = a.get("appeal")
+        if kind not in ("捞回", "维持拒绝"):
+            summary["appeal_skipped"].append(eid)      # 未知复议词:不动
+            continue
+        cur = j_eps.get(eid)
+        if not cur or not is_task_success_reject(cur.get("原因")):
+            # 不在拒绝清单里(可能已被上一轮捞回,或裁决文件与交付对不上),
+            # 或者它压根不是语义判定杀的 —— 两种都不动,记一笔让报告说得出话。
+            summary["appeal_skipped"].append(eid)
+            continue
+
+        prov = {"复议结论": kind, "备注": a.get("note", ""),
+                "复议时间": a.get("at", now), "生效时间": now,
+                # 溯源字段用固定英文键:下游(训练侧)按它区分"机器判的"与"人判的",
+                # 与中文展示字段各司其职。
+                "verdict_source": "human_review"}
+
+        if kind == "维持拒绝":
+            cur[PROV_APPEAL] = prov                    # 只记档,判决一个字不改
+            summary["appeal_upheld"].append(eid)
+            continue
+
+        # 同一条 episode 可能在 review 里还有一份副本,记的是**另一个维度**没解决的
+        # 问题(droid-200 ep000023:同步测不准)。复议只推翻成败判定这一条,管不着
+        # 它 —— 跟着三边摘除一起销案的话,一个未决问题就这么无声无息没了。
+        pend = [c for c in ((r_eps.get(eid) or {}).get("待裁决项") or []) if c != TASK_CN]
+        rev_copy = dict(r_eps[eid]) if (eid in r_eps and pend) else None
+        old = _take_entry(p_eps, r_eps, j_eps, eid)
+        # 读数与软分一律以**拒绝条目**(cur)为准,不用 _take_entry 挑的那份:上面那种
+        # 稀疏 review 副本会先被命中,拿它当底,VLM 当时的读数和综合软分就全丢了
+        # (droid-200 ep000023 实锤:捞回后 checks 只剩一个"结果": "pass")。
+        checks = dict(cur.get("checks") or {})
+        entry = dict(checks.get(TASK_CN) or {})
+        # 与成败裁决同款:结果跟着人的结论走,VLM 当时的读数(detail)原样留着,
+        # 谁也没被抹掉 —— 复盘时"机器当时怎么想的"是最重要的线索。
+        entry["结果"] = "pass"
+        checks[TASK_CN] = entry
+        keep = {}
+        for src in (old, cur):                 # cur 是权威那份,后写赢
+            keep.update({k: src[k] for k in (PROV_RELABEL, PROV_LABEL, PROV_TASK)
+                         if k in src})
+        p_eps[eid] = {"判决": "通过(人工复议)", "综合软分": cur.get("综合软分"),
+                      "checks": checks, **keep, PROV_APPEAL: prov}
+        if rev_copy is not None:
+            rev_copy["待裁决项"] = pend
+            rev_copy["弃权原因"] = {k: v for k, v in
+                                    (rev_copy.get("弃权原因") or {}).items()
+                                    if k != TASK_CN}
+            rev_copy["当前判决"] = "通过"      # 判决已翻,视图里的旧值不能留着骗人
+            r_eps[eid] = rev_copy
+        summary["appeal_restored"].append(eid)
 
     _sync_counts(review, reject, r_eps, j_eps)
     return summary
@@ -236,13 +322,16 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
 def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                  rerun_fn: Callable | None = None) -> dict:
     from ..dataset_level.decisions import (load_label_decisions,
+                                           load_reject_appeals,
                                            load_task_verdicts)
 
     decisions = load_label_decisions(delivery)
     verdicts = load_task_verdicts(delivery)
-    if not decisions and not verdicts:
-        return {"note": "无裁决记录(details/label_decisions.csv 与 "
-                        "details/task_verdicts.csv 都不存在或为空),未做任何事"}
+    appeals = load_reject_appeals(delivery)
+    if not decisions and not verdicts and not appeals:
+        return {"note": "无裁决记录(details/ 下的 label_decisions.csv、"
+                        "task_verdicts.csv、reject_appeals.csv 都不存在或为空),"
+                        "未做任何事"}
 
     files = {}
     for name in ("passed", "review", "reject"):
@@ -295,6 +384,21 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                     verdicts.pop(eid)       # 整条不再进 apply,交付保持原样
                 break
 
+    # 复议的幂等(同一套语义):捞回过的条目早已不在拒绝清单里,apply 会自然跳过,
+    # 但"维持拒绝"留在原地,不挡一下就会每跑一次 rejudge 在报告里重数一遍。
+    for eid in list(appeals):
+        a = appeals[eid]
+        for name in ("passed", "review", "reject"):
+            entry = files[name].get("episodes", {}).get(eid)
+            if entry:
+                prov = entry.get(PROV_APPEAL) or {}
+                if (isinstance(prov, dict)
+                        and prov.get("复议时间") == a.get("at")
+                        and prov.get("复议结论") == a.get("appeal")):
+                    unchanged.append(eid)
+                    appeals.pop(eid)        # 整条不再进 apply,交付保持原样
+                break
+
     rejudged: dict = {}
     _lat_mark = 0
     if adopt:
@@ -340,6 +444,11 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     # 此时它已不在待裁决队列里,但人工可能在更早的一轮就给过成败裁决——以人为准。
     summary.update(apply_task_verdicts(files["passed"], files["review"],
                                        files["reject"], verdicts))
+    # 复议最后应用:它的输入是"当前拒绝清单",前两条线可能刚往里放进条目
+    # (改标重判仍未完成 / 人工判失败)。那些是本轮刚判的,拒因不是语义判定
+    # 就进不了复议,顺序在这里只影响"看到的是哪一版拒绝清单"——以最新为准。
+    summary.update(apply_reject_appeals(files["passed"], files["review"],
+                                        files["reject"], appeals))
     summary["unchanged"] = unchanged
     for name, data in files.items():
         with open(os.path.join(delivery, f"{name}.json"), "w", encoding="utf-8") as f:
@@ -386,6 +495,8 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                    # 本次真正应用的成败裁决(幂等跳过的不在此列)
                    "task_verdicts": {e: v.get("verdict", "")
                                      for e, v in verdicts.items()},
+                   "reject_appeals": {e: a.get("appeal", "")
+                                      for e, a in appeals.items()},
                    "待人工裁决总数": len(files["review"].get("episodes") or {})},
                   f, ensure_ascii=False, indent=1)
 
@@ -396,9 +507,11 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     pq_dir = os.path.join(delivery, "episodes_parquet")
     # 成败裁决判失败的条目走**同一段**同步逻辑(只是它不改 instruction,只剔行):
     # 不接进来的话,人判了失败、报告写了拒绝,数据集里那条还在,交出去仍是脏数据。
+    # 复议捞回的条目方向相反:它在原 run 里就被拒了,交付数据集里**根本没有**这一行
+    # (不是改一改,是要回源把它加回来)——所以它也必须触发这段同步。
     touched = (summary["adopted_pass"] + summary["adopted_review"]
                + summary["adopted_reject"] + summary["dropped"]
-               + summary["verdict_fail"])
+               + summary["verdict_fail"] + summary["appeal_restored"])
     if touched and os.path.isdir(pq_dir):
         try:
             import daft as _daft
@@ -420,6 +533,36 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                     if "instruction_source" in r:
                         r["instruction_source"] = "人工裁决改标"
                 out_rows.append(r)
+            n_drop = n - len(out_rows)
+            # 复议捞回是**加行**:这条当初被拒 ⇒ 从来没进过 episodes_parquet,
+            # 改不出来,只能回源重读补进去。读走与重判同一条现成路径
+            # (_episode_row_reader,LeRobot / RRD 一视同仁)。
+            have = {r["episode_id"] for r in out_rows}
+            restore = [e for e in summary["appeal_restored"] if e not in have]
+            n_add = 0
+            if restore:
+                _read_src = _episode_row_reader(input_dir, cfg)
+                src = {r["episode_id"]: r for r in _read_src(
+                    input_dir, episode_indices={int(e[2:]) for e in restore},
+                    validate=False)}
+                for eid in restore:
+                    r = src.get(eid)
+                    if r is None:
+                        print(f"[rejudge] ⚠️ {eid} 回源没读到,交付数据集里补不进这一行"
+                              f"(三件套已按复议翻判)", flush=True)
+                        continue
+                    # 只投影到 parquet 现有列上:多的列不带进去(schema 一变
+                    # from_pydict 就炸),缺的列留 None 由 daft 按列类型处理。
+                    row = {k: r.get(k) for k in df}
+                    if "instruction_source" in df:
+                        # 质检时的自产 caption 补标在这里拿不到 —— 按源数据如实写,
+                        # 宁可写"无"也不给交付编一句描述。
+                        row["instruction_source"] = ("原始标注"
+                                                     if str(r.get("instruction") or "").strip()
+                                                     else "无")
+                    out_rows.append(row)
+                    n_add += 1
+                out_rows.sort(key=lambda x: str(x["episode_id"]))
             if len(out_rows) != n or relabel:
                 import shutil as _sh
                 _sh.rmtree(pq_dir)
@@ -427,7 +570,8 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 if cols:
                     _daft.from_pydict(cols).write_parquet(pq_dir)
                 print(f"[rejudge] 交付数据集已同步:改标 {len(relabel)} 条,"
-                      f"剔除 {n - len(out_rows)} 条(episodes_parquet)", flush=True)
+                      f"剔除 {n_drop} 条,复议捞回补入 {n_add} 条"
+                      f"(episodes_parquet)", flush=True)
                 # LeRobot 包同步:v2 源重导出=纯文件拷贝,便宜到没有理由留给用户
                 # 手动;v3 源要视频重编码,只提醒不擅动。以同步后的 parquet 为唯一
                 # 事实源重建导出参数(终态条目集 + 非原始标注的任务覆写)。
@@ -519,6 +663,19 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
         if summary.get("verdict_skipped"):
             sec.append(f"- ⚠️ 未处理(裁决词不识别/交付里找不到该条):"
                        f"{summary['verdict_skipped']}\n")
+        # 复议小节只在真有复议时出现:没人复议过的交付里,写一行"捞回 0 条"
+        # 只会让人以为系统在这一轮干了什么。
+        if (summary["appeal_restored"] or summary["appeal_upheld"]
+                or summary["appeal_skipped"]):
+            sec.append("\n### 被拒复议(只限「任务成败判定」拒掉的条目)\n")
+            sec.append(f"- 人工复议捞回 {len(summary['appeal_restored'])} 条;"
+                       f"维持拒绝 {len(summary['appeal_upheld'])} 条\n")
+            for e in summary["appeal_restored"]:
+                sec.append(f"  - {e}:人工复议判为可用,已从拒绝清单移除并回归交付"
+                           f"(溯源见 passed.json)\n")
+            if summary["appeal_skipped"]:
+                sec.append(f"- ⚠️ 未处理(不在拒绝清单里/该条的拒绝理由不可复议):"
+                           f"{summary['appeal_skipped']}\n")
         sec.append(f"\n- 剩余待人工裁决:{len(files['review'].get('episodes') or {})} 条\n")
         if summary.get("unchanged"):
             sec.append(f"- 裁决未变跳过(不重复重判):{len(summary['unchanged'])} 条\n")
