@@ -76,10 +76,12 @@ def build_parser() -> argparse.ArgumentParser:
                      help="只出报告,不导出数据集(单模块快查时省去重编码视频的时间)")
 
     rj = sub.add_parser("rejudge",
-                        help="按人工裁决更新交付(两条线一起消化):标注分歧"
+                        help="按人工裁决更新交付(三条线一起消化):标注分歧"
                              "(details/label_decisions.csv,采纳改标的条目用新标注"
                              "重跑任务成败检测)+ 任务成败裁决"
-                             "(details/task_verdicts.csv,不重判,以人的结论为准)")
+                             "(details/task_verdicts.csv,不重判,以人的结论为准)"
+                             "+ 被拒复议(details/reject_appeals.csv,人判可用的"
+                             "条目从拒绝翻回通过并补回交付数据集)")
     rj.add_argument("--delivery", required=True, help="交付目录(含三件套与裁决文件)")
     rj.add_argument("--input", required=True, help="原始数据集目录(重判需重新解码视频)")
     rj.add_argument("--config", default=None, help="流水线 YAML(缺省 default.yaml,须与原 run 一致)")
@@ -118,6 +120,11 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--review-dir", default=os.environ.get("CURATION_REVIEW_DIR"),
                     help="静态审片站根目录(curation review-page 的产出);给出后挂 /review "
                          "路由(同端口、Basic 锁覆盖)。也可用环境变量 CURATION_REVIEW_DIR")
+    ui.add_argument("--data-root", default=os.environ.get("CURATION_DATA_ROOT"),
+                    help="数据集根目录(「任务台」页签只列这个根下的数据集,"
+                         "缺省 /mnt/tos/datasets)。⚠️ 面板**不接受任意路径输入**——"
+                         "自由路径框等于把整个容器的文件系统开给任何拿到 UI 密码的人。"
+                         "也可用环境变量 CURATION_DATA_ROOT")
     ui.add_argument("--terminal", action="store_true", default=_env_flag("CURATION_TERMINAL"),
                     help="打开顶层「终端」页签(内嵌网页终端:xterm.js + 本服务的 "
                          "/ws/term,与 UI 同端口同鉴权)。不传(或 CURATION_TERMINAL 未设)"
@@ -260,7 +267,8 @@ def main(argv: list[str] | None = None) -> int:
         from .ui.app import launch
         launch(args.delivery, config_path=args.config, host=args.host,
                port=args.port, probe_timeout=args.timeout,
-               terminal=args.terminal, review_dir=args.review_dir)
+               terminal=args.terminal, review_dir=args.review_dir,
+               data_root=args.data_root)
         return 0
     if args.command == "run":
         from .ingest.lerobot_reader import NotADatasetError, OutputExistsError

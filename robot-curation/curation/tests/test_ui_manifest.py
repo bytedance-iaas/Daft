@@ -212,28 +212,126 @@ def _config_text(app) -> str:
     return json.dumps(app.get_config_file(), ensure_ascii=False, default=str)
 
 
+def _report_section(app) -> str:
+    """配置里「质检报告」之后的那一段。
+
+    2026-08-13 起顶层多了「任务台」,它的模块多选框用的是同一批语义名
+    (技能画像/精确去重/任务成败判定…),整份配置里 str.index() 会先命中那边。
+    报告页子页签的**顺序**断言因此必须限定在报告段内比——守的还是原来那件事,
+    只是定位更精确了。
+    """
+    cfg = _config_text(app)
+    return cfg[cfg.index("质检报告"):]
+
+
 def test_app_with_terminal_tab(delivery):
-    """terminal=True:配置里有「终端」页签 + xterm 容器 div,且「终端」排在「质检报告」前。"""
+    """terminal=True:有「终端」页签 + xterm 容器 div,且它排在**最右**。
+
+    顺序 2026-08-13 用户定:任务台 / 质检报告 / 终端,默认落地页是任务台 ——
+    终端是我们排障用的,不该占客户第一眼的位置。
+    """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(delivery, terminal=True))
     assert "终端" in cfg and "curation-term-screen" in cfg
     assert "iframe" not in cfg and "7681" not in cfg      # ttyd 时代的痕迹一点不留
     assert "质检报告" in cfg
-    assert cfg.index("终端") < cfg.index("质检报告")   # 左终端、右报告
+    assert cfg.index("质检报告") < cfg.index("终端")   # 终端在最右
+    assert cfg.index("任务台") < cfg.index("质检报告")  # 任务台在最左
     # 六个子 tab 一个不少
-    for t in ("漏斗总览", "Episodes", "技能画像", "Stuck 时间线", "明细", "后端状态"):
+    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细"):
         assert t in cfg
 
 
-def test_app_without_terminal_tab_is_unchanged(delivery):
-    """terminal=False:配置里连「终端」二字都没有,六 tab 照旧。"""
+def test_app_without_terminal_leaves_no_terminal_trace(delivery):
+    """terminal=False:配置里连「终端」二字都没有,报告页那套子页签照旧。
+
+    断言口径 2026-08-13 收窄过:顶层导航此前**只在开终端时**渲染,所以老断言连
+    「质检报告」四个字都不许出现。现在「任务台」与「质检报告」是常驻的顶层两页
+    (用户定:面板是面向客户的那张脸),顶层标题必然出现 —— 本测试真正要守的是
+    "客户部署里看不到终端入口",那一条一个字没松:终端页签、xterm 容器、
+    /ws/term 路由与资产仍然全都不存在(后者见 test_asgi_app_without_terminal)。
+    """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(delivery))
-    assert "终端" not in cfg and "质检报告" not in cfg and "curation-term-screen" not in cfg
-    for t in ("漏斗总览", "Episodes", "技能画像", "Stuck 时间线", "明细", "后端状态"):
+    assert "终端" not in cfg and "curation-term-screen" not in cfg
+    assert "质检报告" in cfg and "任务台" in cfg
+    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细"):
         assert t in cfg
+
+
+def test_task_console_is_top_level_and_report_tabs_untouched(delivery):
+    """任务台与质检报告并列在顶层;报告页那套子页签一个不少、顺序不变。
+
+    用户红线(2026-08-13):UI 改动绝不能影响质检报告那套页签。这条把它钉死。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = _config_text(build_app(delivery))
+    assert cfg.index("任务台") < cfg.index("质检报告")
+    # 报告页九个子页签一个不少。**顺序**由既有的 test_app_has_manual_decision_tab
+    # 等几条守,这里不重复钉 —— 这些词在正文里也出现(技能画像页有一行指向人工
+    # 裁决),硬排序只会造出一条脆测试。
+    rep = _report_section(build_app(delivery))
+    for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "视频-动作同步",
+              "卡顿动作时间线", "明细", "性能剖析"):
+        assert t in rep, t
+    for t in ("跑质检", "执行人工裁决", "任务与日志"):   # 生成视频片段/模型服务已并入别处
+        assert t in cfg, t
+
+
+def test_probe_buttons_are_wired(delivery):
+    """「检测可用性」必须真接了事件。
+
+    2026-08-13 实测:这两个按钮建出来了却谁也没接,客户点了毫无反应,还以为
+    是服务挂了。按钮不接线在界面上看不出来(截图里它长得跟能用的一样),只能
+    靠这条钉住。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    probes = {i for i, c in app.blocks.items()
+              if getattr(c, "value", None) == "检测可用性"}
+    assert probes, "界面上找不到「检测可用性」按钮"
+    wired = {t[0] for fn in app.fns.values() for t in getattr(fn, "targets", [])}
+    assert probes <= wired, "有「检测可用性」按钮没接事件"
+
+
+def test_console_knobs_to_set_overrides():
+    """面板上的旋钮 → --set 列表:**只发用户动过的**,留空一律不发。
+
+    界面不许复制一份默认值 —— 复制了就会出现"改了 default.yaml,界面还在按老值
+    发"的静默不一致。手写的排最后:同键后到者赢,人手写的优先级最高。
+    """
+    from curation.ui.app import CONC_KEYS, PLOT_MODES, _sets
+
+    assert _sets(PLOT_MODES["flagged"], None, None, None, "") == []   # 全默认 = 一条不发
+    assert _sets(PLOT_MODES["all"], None, None, None, "") == ["pipeline.sync_plots=all"]
+    assert _sets(PLOT_MODES["off"], None, None, None, "") == ["pipeline.sync_plots=off"]
+    got = _sets(PLOT_MODES["flagged"], 8, 4, 16, "")
+    assert got == [f"{CONC_KEYS['ep']}=8", f"{CONC_KEYS['fr']}=4",
+                   f"{CONC_KEYS['cap']}=16"]
+    assert _sets(PLOT_MODES["flagged"], 0, "", None, "") == []        # 0/空当没填
+    assert _sets(PLOT_MODES["flagged"], "八", "-3", "  ", "") == []   # 填错也不拦着开跑
+    assert _sets(PLOT_MODES["flagged"], " 12 ", None, None, "") == [f"{CONC_KEYS['ep']}=12"]
+    tail = _sets(PLOT_MODES["all"], 8, None, None, " a.b=1 \n\n c.d=2 ")
+    assert tail[-2:] == ["a.b=1", "c.d=2"]                            # 手写的在最后
+
+
+def test_vlm_involved_decides_concurrency_greying():
+    """并发旋钮只在真调 VLM 时可用;自选模块要按两种语义分别算。"""
+    from curation.ui.app import CUSTOM_SCAN, FULL_SCAN, QUICK_SCAN, _vlm_involved
+
+    assert _vlm_involved(FULL_SCAN, [], "只跑选中") is True
+    assert _vlm_involved(QUICK_SCAN, [], "只跑选中") is False
+    # 只跑选中:选了才算跑
+    assert _vlm_involved(CUSTOM_SCAN, ["task_success"], "只跑选中") is True
+    assert _vlm_involved(CUSTOM_SCAN, ["motion_quality"], "只跑选中") is False
+    # 跳过选中:把两个 VLM 步都跳了才算不跑(只跳一个仍然要调模型)
+    assert _vlm_involved(CUSTOM_SCAN, ["task_success", "skill_profile"],
+                         "跳过选中") is False
+    assert _vlm_involved(CUSTOM_SCAN, ["task_success"], "跳过选中") is True
 
 
 # ───────── U4 内嵌终端:ASGI 应用装配 / 鉴权 / PTY 往返 ─────────
@@ -617,8 +715,8 @@ def test_latency_kind_notes_explain_all_four_call_types():
     assert "一半的调用不超过此耗时" in LATENCY_PCTL_NOTE
     for label in ("任务判定探针", "终态复核", "技能打标", "体系归纳"):
         assert f"**{label}**" in LATENCY_KIND_NOTE, label
-    assert "每帧一次调用" in LATENCY_KIND_NOTE          # 探针次数为何最多
-    assert "仅一审未通过的数据触发" in LATENCY_KIND_NOTE
+    assert "次数最多" in LATENCY_KIND_NOTE              # 探针次数为何最多(措辞 2026-08-13 精简)
+    assert "只对没通过一审的数据跑" in LATENCY_KIND_NOTE
     for impl_tag in ("probe", "endstate", "caption", "llm"):
         assert impl_tag not in LATENCY_KIND_NOTE, impl_tag
 
@@ -674,8 +772,8 @@ def test_app_has_perf_tab(delivery):
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(_with_perf(delivery)["path"]))
-    for t in ("漏斗总览", "Episodes", "技能画像", "Stuck 时间线", "明细",
-              "性能剖析", "后端状态"):
+    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细",
+              "性能剖析"):
         assert t in cfg, t
     assert "延时剖析" in cfg
     for codename in ("h20-", "a30-8b"):
@@ -802,7 +900,7 @@ def test_skill_chart_undersampled_chip_carries_text(tmp_path):
     assert "画像自带的名单" in html and "不是本图现算的" in html
     # 单色红线:条只有这一个填充色,undersampled 的那根也一样(条短已经说明问题)
     assert html.count(f"background:{SKILL_BAR_COLOR}") == len(_bar_widths(html)) == 5
-    assert SKILL_BAR_COLOR == "#2a78d6"
+    assert SKILL_BAR_COLOR == "#165DFF"        # Arco 主色(2026-08-13 全站统一)
 
 
 def test_skill_chart_never_truncates(tmp_path):
@@ -1020,8 +1118,8 @@ def test_pending_counts_and_guidance_text(delivery):
     assert task_pending_count(m) == 0
     # 工序引导:先标注分歧 → rejudge → 再成败 → 再 rejudge
     assert WORKFLOW_GUIDE.index("标注分歧") < WORKFLOW_GUIDE.index("任务成败")
-    assert "再跑一次" in WORKFLOW_GUIDE            # 两趟 rejudge,别只跑一次就收工
-    assert WORKFLOW_GUIDE.count("curation rejudge") >= 2
+    assert "执行人工裁决" in WORKFLOW_GUIDE                 # 指向任务台按钮,不再教敲命令行            # 两趟 rejudge,别只跑一次就收工
+    assert WORKFLOW_GUIDE.count("执行") >= 2
 
 
 def test_app_has_manual_decision_tab(delivery):
@@ -1030,14 +1128,15 @@ def test_app_has_manual_decision_tab(delivery):
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(delivery))
-    for t in ("漏斗总览", "Episodes", "人工裁决", "技能画像", "Stuck 时间线",
-              "明细", "性能剖析", "后端状态"):
+    for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "卡顿动作时间线",
+              "明细", "性能剖析"):
         assert t in cfg, t
-    assert cfg.index("Episodes") < cfg.index("人工裁决") < cfg.index("技能画像")
+    rep = _report_section(build_app(delivery))       # 只在报告段里比顺序(见 _report_section)
+    assert rep.index("Episodes") < rep.index("人工裁决") < rep.index("技能分布")
     # 区块头 2026-08-07 改成自绘 HTML(色块序号 + 标题),不再是"① 标注分歧"这种
     # 字面前缀 —— 断言跟着渲染实况走(此前这里钉的是旧文案,一直红着)
     for txt in ("标注分歧", "任务成败弃权", "✅ 判成功", "❌ 判失败", "⏸ 搁置",
-                "建议工作顺序"):
+                "建议按这个顺序做"):     # 2026-08-13 文案精简后的标题
         assert txt in cfg, txt
     assert cfg.index("标注分歧") < cfg.index("任务成败弃权")
 
@@ -1053,6 +1152,117 @@ def test_asgi_app_serves_manual_decision_tab(delivery, clean_ui_env):
         r = c.get("/")
         assert r.status_code == 200
         assert "人工裁决" in r.text
+
+
+# ───────── 被拒复议区(2026-08-11):语义判定的杀可复议,物理硬门不进这里 ─────────
+
+
+def test_appeal_queue_takes_semantic_kills_only(delivery, tmp_path):
+    """复议区的准入:只收「任务成败判定」拒掉的条目。
+
+    防的是把物理与结构硬门混进复议区——时间戳残段/运动学超限/同步判废都是测出来的
+    事实,给它们开一个"人工捞回"的口子,交出去的就是坏数据。fixture 里 ep000001
+    正是老交付记法(硬门违规: 「任务成败判定」),老交付也必须复议得了。
+    """
+    from curation.ui.manifest import appeal_rows
+    m = load_delivery(delivery)
+    assert [a["id"] for a in m["reject_appeal"]] == ["ep000001"]
+    assert m["reject_appeal"][0]["readings"] == {"voc": 0.87, "末态分": 0.3}
+    rows = appeal_rows(m)
+    # 行结构:[操作, episode, 拒绝原因, 关键读数, 复议结论]
+    assert rows[0][0] == "复议 ▶" and rows[0][1] == "ep000001"
+    assert "未通过" in rows[0][2] and "硬门" not in rows[0][2]   # 界面不出现机制黑话
+    assert "voc=0.87" in rows[0][3] and rows[0][4] == ""          # 未复议
+
+    # 物理硬门拒掉的条目:一条都不许进
+    d2 = tmp_path / "phys-reject"
+    d2.mkdir()
+    (d2 / "passed.json").write_text(json.dumps({"数据集": "x", "episodes": {}},
+                                               ensure_ascii=False))
+    (d2 / "reject.json").write_text(json.dumps({"episodes": {
+        "ep1": {"判决": "拒绝", "原因": "未通过「时间戳检查」:0.47 秒的采集残段"},
+        "ep2": {"判决": "拒绝", "原因": "未通过「运动学极限」:关节 3 超限"},
+        "ep3": {"判决": "拒绝", "原因": "未通过「视频-动作同步」:整体错位 0.4 秒"},
+        "ep4": {"判决": "拒绝(去重)", "原因": "与 ep000007 字节级完全重复"},
+        "ep5": {"判决": "拒绝", "原因": "未通过「任务成败判定」:没完成;"
+                                        "未通过「时间戳检查」:残段"}}},
+        ensure_ascii=False))
+    m2 = load_delivery(str(d2))
+    assert m2["reject_appeal"] == [], "物理/结构硬门的拒绝混进了复议区"
+
+
+def test_appeal_draft_roundtrip_and_guards(delivery):
+    """复议草稿落盘/读回/改判 + 回显进表;复议词只认两选一,空 id 不落盘。"""
+    from curation.ui.manifest import (appeal_pending_count, appeal_rows,
+                                      load_reject_appeals, record_reject_appeal)
+    m = load_delivery(delivery)
+    assert load_reject_appeals(m) == {} and appeal_pending_count(m) == 1
+    msg = record_reject_appeal(m["path"], "ep000001", "捞回", note="看了视频,完成了")
+    assert "已记录" in msg and "rejudge" in msg
+    got = load_reject_appeals(m)
+    assert got["ep000001"]["appeal"] == "捞回"
+    assert got["ep000001"]["note"] == "看了视频,完成了" and got["ep000001"]["at"]
+    assert appeal_rows(m)[0][4] == "捞回" and appeal_pending_count(m) == 0
+    record_reject_appeal(m["path"], "ep000001", "维持拒绝")      # 改判=追加,后写覆盖
+    assert load_reject_appeals(m)["ep000001"]["appeal"] == "维持拒绝"
+    assert "未记录" in record_reject_appeal(m["path"], "ep1", "放它一马")
+    assert "未记录" in record_reject_appeal(m["path"], "", "捞回")
+
+
+def test_appeal_hint_is_empty_when_nothing_to_appeal(delivery, tmp_path):
+    """有条目时提示写清"能复议什么、不能复议什么";一条都没有时给空串
+    (调用侧据此整区不渲染——空区块占位只会让人以为自己漏看了)。"""
+    from curation.ui.manifest import appeal_hint_md
+    m = load_delivery(delivery)
+    hint = appeal_hint_md(m)
+    assert "1" in hint and "捞回" in hint and "终局" in hint
+    d2 = tmp_path / "no-reject"
+    d2.mkdir()
+    (d2 / "passed.json").write_text(json.dumps({"数据集": "x", "episodes": {}},
+                                               ensure_ascii=False))
+    assert appeal_hint_md(load_delivery(str(d2))) == ""
+
+
+def test_appeal_draft_does_not_collide_with_other_decision_lines(tmp_path):
+    """三条裁决线各写各的表:复议按一下,不许把上一轮的成败裁决/标注裁决抹掉。"""
+    from curation.dataset_level.decisions import (load_label_decisions,
+                                                  load_reject_appeals,
+                                                  load_task_verdicts,
+                                                  record_label_decision,
+                                                  record_reject_appeal,
+                                                  record_task_verdict)
+    d = str(tmp_path)
+    record_label_decision(d, "epA", "维持原标注")
+    record_task_verdict(d, "epB", "判失败")
+    record_reject_appeal(d, "epB", "捞回")              # 同一 episode 也不许串表
+    assert set(load_label_decisions(d)) == {"epA"}
+    assert load_task_verdicts(d)["epB"]["verdict"] == "判失败"
+    assert set(load_reject_appeals(d)) == {"epB"}
+
+
+def test_app_has_reject_appeal_section(delivery):
+    """Gradio 层:「被拒复议」区在人工裁决页、排在成败弃权之后;两个按钮文案在位。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = _config_text(build_app(delivery))
+    for txt in ("被拒复议", "🛟 捞回(判为可用)", "❌ 维持拒绝"):
+        assert txt in cfg, txt
+    assert cfg.index("任务成败弃权") < cfg.index("被拒复议")
+
+
+def test_load_callback_wiring_stays_aligned(delivery):
+    """`_load` 的返回值个数必须与它的输出槽位个数逐一对齐。
+
+    这是运行期才炸的接线错误(加一个区块忘了加槽位 → 换交付时整页错位),
+    构造期看不出来,只能靠这条断言钉住。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    fns = [f for f in app.fns.values() if getattr(f.fn, "__name__", "") == "_load"]
+    assert fns, "找不到 _load 回调(gradio 内部结构变了,断言需跟着改)"
+    for f in fns:
+        assert len(f.fn(delivery)) == len(f.outputs)
 
 
 def test_discover_deliveries_recursive(tmp_path):
@@ -1267,10 +1477,10 @@ def test_check_table_html_highlights_the_rejected_dimension(delivery):
         assert h in html
     rows = check_rows(m, "ep000001")
     assert [r[0] for r in rows] == ["任务成败判定"]
-    assert html.count("#fee2e2") == 1                    # 红底只给被拒那一行
+    assert html.count("#FFECE8") == 1                    # 红底只给被拒那一行
     assert "voc=0.87" in html
     # 通过条目:一行红都没有
-    assert "#fee2e2" not in check_table_html(m, "ep000002")
+    assert "#FFECE8" not in check_table_html(m, "ep000002")
     assert "没有逐维检查读数" in check_table_html(m, "")   # 空态不崩
 
 
@@ -1375,13 +1585,14 @@ def test_app_has_sync_curve_tab_and_split_evidence(delivery):
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(_with_sync(delivery)["path"]))
-    for t in ("漏斗总览", "Episodes", "人工裁决", "技能画像", "同步曲线",
-              "Stuck 时间线", "明细", "性能剖析", "后端状态"):
+    for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "视频-动作同步",
+              "卡顿动作时间线", "明细", "性能剖析"):
         assert t in cfg, t
     # 「同步曲线」四个字在 Episodes 页的曲线组件标题里就出现过 → 页签定位用该页
     # 独有的筛选器文案(否则这条断言量的是 Episodes 页,永远不会红)
-    assert (cfg.index("技能画像") < cfg.index("只看有标注/异常的")
-            < cfg.index("Stuck 时间线"))
+    rep = _report_section(build_app(delivery))
+    assert (rep.index("技能分布") < rep.index("只看有标注/异常的")
+            < rep.index("卡顿动作时间线"))
     # 老画廊标题("证据(probe 帧 + 同步曲线)")必须绝迹:那就是混排的证据
     assert "probe 帧 + 同步曲线" not in cfg
     # 曲线走独立的 Image 组件(整幅宽度),不再是画廊里的一格
@@ -1398,7 +1609,7 @@ def test_asgi_app_serves_sync_curve_tab(delivery, clean_ui_env):
     with TestClient(app) as c:
         r = c.get("/")
         assert r.status_code == 200
-        assert "同步曲线" in r.text and "只看有标注/异常的" in r.text
+        assert "视频-动作同步" in r.text and "只看有标注/异常的" in r.text
 
 
 def test_app_load_returns_match_outputs_after_rework(delivery):
@@ -1480,7 +1691,7 @@ def test_sync_diag_panel_names_cause_and_survives_legacy():
 
     # 诊断框必须真的进卡片 HTML,且在图片之后(视觉上位于右侧)
     card = sync_cards_html([{"id": "ep000004", "path": "/tmp/x.png", "badge": "同步正常",
-                             "color": "#166534", "flagged": False,
+                             "color": "#009A29", "flagged": False,
                              "cameras": rows, "reason": "1/3 路可信相机全部对齐"}])
     assert "sync-diag" in card and "画面干扰" in card
     assert card.index("sync-img") < card.index("sync-diag-title")
@@ -1777,7 +1988,7 @@ def test_manual_hint_only_on_pending_and_points_at_the_decision_page(ep_delivery
     from curation.ui.manifest import manual_hint_html
     m = load_delivery(ep_delivery)
     hint = manual_hint_html(m, "ep000001")
-    assert "人工裁决" in hint and "rejudge" in hint
+    assert "人工裁决" in hint and "执行人工裁决" in hint
     assert manual_hint_html(m, "ep000000") == ""
     assert manual_hint_html(m, "ep000002") == ""
 

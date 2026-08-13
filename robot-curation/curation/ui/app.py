@@ -19,15 +19,20 @@ import json
 import logging
 import os
 
-from .manifest import (AUDIT_HEADERS, BUCKET_ALL, DECISION_CHOICES,
+from .manifest import (APPEAL_CHOICES, APPEAL_HEADERS, AUDIT_HEADERS,
+                       BUCKET_ALL, DECISION_CHOICES,
                        DETAIL_LABELS, TASK_REVIEW_HEADERS, VERDICT_CHOICES,
-                       WORKFLOW_GUIDE, audit_clip_paths, audit_note_md,
+                       WORKFLOW_GUIDE, appeal_hint_md, appeal_reason_text,
+                       appeal_rows, audit_clip_paths, audit_note_md,
                        bucket_choices, bucket_ids,
-                       load_label_decisions, load_task_verdicts,
-                       record_label_decision, record_task_verdict,
+                       load_label_decisions, load_reject_appeals,
+                       load_task_verdicts,
+                       record_label_decision, record_reject_appeal,
+                       record_task_verdict,
                        FUNNEL_HEADERS, LATENCY_HEADERS,
                        LATENCY_KIND_NOTE, LATENCY_NOTE, LATENCY_PCTL_NOTE,
                        SKILL_HEADERS, SYNC_FILTER_ALL, SYNC_FILTERS,
+                       TL_FILTERS, TL_SORTS,
                        audit_rows, check_table_html,
                        discover_deliveries, episode_card_html,
                        episode_list_view, episode_video_html, funnel_rows,
@@ -39,11 +44,21 @@ from .manifest import (AUDIT_HEADERS, BUCKET_ALL, DECISION_CHOICES,
                        sync_camera_html, sync_conclusion_html, sync_health_html,
                        sync_view, SYNC_HOWTO,
                        task_review_hint_md, task_review_rows, timeline_html)
+from . import runner            # 任务台执行层(纯新增,报告页那套一个字不动)
 
 log = logging.getLogger("curation.ui")
 
+#: 数据集根目录的出厂默认。面板只列这个根下的数据集,**不接受任意路径输入**——
+#: 一个自由路径输入框等于把整个 pod 文件系统开给任何拿到 UI 密码的人(终端页签
+#: 本来就是 shell 所以无所谓,面向客户的面板性质完全不同)。
+DEFAULT_DATA_ROOT = "/mnt/tos/datasets"
+
 #: vendored 的 xterm.js 资产 + 我们的 term.js,由 `/term-static/` 静态目录服务。
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+#: 标签页图标(Arco 蓝 + 白对勾),见 presentation() 里的说明。
+FAVICON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "assets", "favicon.png")
 
 #: 终端页签的前端装配:资产从**本服务**取(pod 内无 CDN 通路),只在开了终端时注入。
 _TERMINAL_HEAD = """
@@ -53,25 +68,184 @@ _TERMINAL_HEAD = """
 <script src="/term-static/term.js"></script>
 """
 
+#: 同步证据图三挡:界面说法 → 配置值(pipeline.sync_plots)。
+PLOT_MODES = {"flagged": "只给判废/存疑的画(默认)", "all": "每条都画", "off": "不画"}
+
+#: 三个并发旋钮 → 配置路径。留空 = 不发 --set,用生效配置里的值。
+CONC_KEYS = {
+    "ep": "pipeline.vlm_episode_concurrency",
+    "fr": "checks.task_success.vlm.max_concurrency",
+    "cap": "skill_profile.caption_concurrency",
+}
+
+#: 哪几步要调 VLM —— 并发旋钮只对它们有意义,范围里没有它们就整组置灰。
+VLM_CHECKS = ("task_success", "skill_profile")
+
+#: 「质检范围」三挡的界面说法(改名只改这里,判断都比这三个常量)。
+FULL_SCAN = "完整质检"
+QUICK_SCAN = "快速质检"
+CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自己定义模块里查什么"
+                          # (那是以后的事),其实是"从现成模块里挑几个跑"
+
+#: 「快速质检」旁边那个问号里的话。**按实际跑什么写**:--lite 只是跳过要 VLM 的
+#: 三步(任务成败判定 / 打标 / 技能画像),其余检查一步不少。
+QUICK_SCAN_TIP = ("跑不需要模型的那几项:视觉质量、运动质量、运动学极限、"
+                  "视频-动作同步、时间戳与精确去重。"
+                  "不做任务成败判定、打标与技能分布画像 —— 这三项要调 VLM。")
+
+#: 把问号塞进「快速质检」那一项的文字后面。Gradio 的 Radio 选项只吃纯文本
+#: (给 HTML 会被转义),所以只能在前端补;组件重绘后要能自愈,故用
+#: MutationObserver 兜着,而不是只在 load 时跑一次。
+_TIP_JS = """
+<script>
+(function () {
+  function hide() {
+    var box = document.getElementById('qc-tipbox');
+    if (box) box.style.display = 'none';
+  }
+  window.addEventListener('scroll', hide, true);
+  document.addEventListener('click', hide, true);
+  document.addEventListener('visibilitychange', hide);
+
+  function inject() {
+    var box = document.getElementById('qc-scope');
+    if (!box || box.querySelector('.qc-tip')) return;
+    var labels = box.querySelectorAll('label');
+    for (var i = 0; i < labels.length; i++) {
+      var span = labels[i].querySelector('span');
+      if (!span || span.textContent.trim() !== '__NAME__') continue;
+      var q = document.createElement('span');
+      q.className = 'qc-tip';
+      q.textContent = '?';
+      // 浮层做成**单例**并在多个信号上收起(mouseleave / 滚动 / 点击 / 页面
+      // 隐藏)。曾经一次一个 div 地建,遇到组件重绘或没配对的 mouseleave 就留下
+      // 一个悬在屏幕上撤不掉的框(2026-08-13 用户实见)。
+      q.addEventListener('mouseenter', function () {
+        var box = document.getElementById('qc-tipbox');
+        if (!box) {
+          box = document.createElement('div');
+          box.id = 'qc-tipbox';
+          box.className = 'qc-tipbox';
+          document.body.appendChild(box);
+        }
+        box.textContent = '__TIP__';
+        box.style.display = 'block';
+        var r = q.getBoundingClientRect(), b = box.getBoundingClientRect();
+        var left = Math.min(Math.max(8, r.left + r.width / 2 - b.width / 2),
+                            window.innerWidth - b.width - 8);
+        var top = r.top - b.height - 8;              // 上方放不下就翻到下方
+        box.style.left = left + 'px';
+        box.style.top = (top < 8 ? r.bottom + 8 : top) + 'px';
+      });
+      q.addEventListener('mouseleave', hide);
+      span.appendChild(q);
+      return;
+    }
+  }
+  new MutationObserver(inject).observe(document.documentElement,
+                                       { childList: true, subtree: true });
+  document.addEventListener('DOMContentLoaded', inject);
+  inject();
+})();
+</script>
+"""
+
+
+#: 表格列宽可拖(2026-08-13 用户要)。Gradio 6.9 的 Dataframe **没有**这个能力
+#: (前端只有整表右下角那个高度手柄),所以自己加一层:在表头右边缘 6px 内按下
+#: 即进入拖动,拖动期间只改那一列 <th> 的 width/min/max —— 不碰数据、不发请求、
+#: 不改任何布局属性(高度那一刀已经把表压塌过一次,见 _ARCO_CSS 里的告诫)。
+#: 走**捕获阶段 + stopPropagation**:否则这一按会被 Gradio 认成"点表头=排序"。
+#: 重绘(换交付/换明细表/翻页)后宽度回到自动值 —— 有意不持久化:存宽度就得跟着
+#: 它的虚拟滚动与列集合对齐,收益远不抵复杂度。
+_TABLE_JS = """
+<script>
+(function () {
+  var MIN = 60, st = null, seq = 0;
+
+  // ⚠️ Gradio 把一张表渲染成**两张 <table>**(粘性表头一张、表体一张,表体还带
+  // 虚拟滚动)。只改被拖的那个 <th> 的宽度 ⇒ 表头动了表体没动,整表错位
+  // (2026-08-13 用户实见)。所以宽度不写在元素上,而是**写成一条 CSS 规则**,
+  // 作用域挂在这两张表共同的 .block 上,按列序号命中 —— 表头表体一起走,
+  // 虚拟滚动新渲染出来的行也自动带上。
+  function ruleEl(scope, idx) {
+    if (!scope.getAttribute('data-colres')) {
+      scope.setAttribute('data-colres', 'c' + (++seq));
+    }
+    scope._cr = scope._cr || {};
+    if (!scope._cr[idx]) {
+      var e = document.createElement('style');
+      document.head.appendChild(e);
+      scope._cr[idx] = e;
+    }
+    return scope._cr[idx];
+  }
+  function apply(scope, idx, w) {
+    var el = ruleEl(scope, idx);        // 必须先建:属性是它打上去的,
+    var sel = '[data-colres="' + scope.getAttribute('data-colres') +
+              '"] tr > *:nth-child(' + (idx + 1) + ')';
+    el.textContent =
+      sel + '{width:' + w + 'px !important;min-width:' + w +
+      'px !important;max-width:' + w + 'px !important}';
+  }
+  function edge(e) {
+    var th = e.target.closest && e.target.closest('th');
+    if (!th) return null;
+    var r = th.getBoundingClientRect();
+    var d = r.right - e.clientX;
+    return (d <= 6 && d >= -2) ? th : null;
+  }
+  document.addEventListener('mousemove', function (e) {
+    if (st) {
+      apply(st.scope, st.idx, Math.max(MIN, st.w + e.clientX - st.x));
+      e.preventDefault();
+      return;
+    }
+    var th = e.target.closest && e.target.closest('th');
+    if (th) th.style.cursor = edge(e) ? 'col-resize' : '';
+  }, true);
+  document.addEventListener('mousedown', function (e) {
+    var th = edge(e);
+    if (!th) return;
+    var scope = th.closest('.block') || th.closest('table');
+    var idx = Array.prototype.indexOf.call(th.parentElement.children, th);
+    st = { scope: scope, idx: idx, x: e.clientX,
+           w: th.getBoundingClientRect().width };
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+    e.stopPropagation();     // 否则这一按会被 Gradio 当成"点表头 = 排序"
+  }, true);
+  document.addEventListener('mouseup', function () {
+    if (st) { st = null; document.body.style.userSelect = ''; }
+  }, true);
+})();
+</script>
+"""
+
 _TERMINAL_CSS = """
+/* 终端按 Arco 的**暗色面板**来(2026-08-13 用户:终端页还没跟上 Arco):
+   底色走 Arco 暗色中性 #17171A、描边 #2E2E30、圆角与卡片同档 8px。
+   终端本身不做成浅色 —— 深底浅字是终端的通用心智,改浅只会更难读;
+   要统一的是圆角/描边/中性色阶这些"外框语言"。 */
 #curation-term-screen {
   height: 78vh; width: 100%;
-  background: #0b0f17; border-radius: 8px; padding: 8px 6px;
+  background: #17171A; border: 1px solid #2E2E30; border-radius: 8px;
+  padding: 10px 8px;
 }
 /* 2026-07-30 用户反馈:终端右侧有一条刺眼的白条——那是 xterm 滚动区
    (.xterm-viewport)的**浏览器默认滚动条**,白色轨道贴在深色终端上。
    改成与终端同色系:轨道融入背景,滑块深灰、悬停略亮。Firefox 走
    scrollbar-color,WebKit 系走 ::-webkit-scrollbar 三件套。 */
 #curation-term-screen .xterm-viewport {
-  scrollbar-color: #3a4556 #0b0f17;
+  scrollbar-color: #4E5969 #17171A;
   scrollbar-width: thin;
 }
-#curation-term-screen .xterm-viewport::-webkit-scrollbar { width: 10px; background: #0b0f17; }
-#curation-term-screen .xterm-viewport::-webkit-scrollbar-track { background: #0b0f17; }
+#curation-term-screen .xterm-viewport::-webkit-scrollbar { width: 10px; background: #17171A; }
+#curation-term-screen .xterm-viewport::-webkit-scrollbar-track { background: #17171A; }
 #curation-term-screen .xterm-viewport::-webkit-scrollbar-thumb {
-  background: #3a4556; border-radius: 5px; border: 2px solid #0b0f17;
+  background: #4E5969; border-radius: 5px; border: 2px solid #17171A;
 }
-#curation-term-screen .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #55627a; }
+#curation-term-screen .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #86909C; }
 /* "字太淡"的真凶(2026-07-30 JS 实测):gradio 的 `.prose *` 把终端里**每一层**
    后代(行 div、字符 span)全染成 var(--body-text-color)(rgb(39,39,42) 深灰),
    压过 xterm 主题的继承——无论前景设什么,默认文字都是深灰。
@@ -83,33 +257,228 @@ _TERMINAL_CSS = """
 
 
 
+# ── Arco Design 视觉标准(2026-08-13 用户定:整个 UI 按字节自家的 Arco 走)──────
+# Arco 本体是 React,装不进 Gradio ⇒ 这里用 CSS 逼近它的设计语言。**改配色只改这一处**。
+# token **逐个核对过官方发行包**(2026-08-13):从 @arco-design/web-react 的
+# dist/css/arco.min.css 里解出真值比对——arcoblue-6 #165DFF、green-6 #00B42A、
+# orange-6 #FF7D00、red-6 #F53F3F、深字档 -7(#009A29/#D25F00/#CB272D)、
+# 浅底档 -1、边框档 -2(#BEDAFF/#AFF0B5/#FFE4BA/#FDCDC5)、中性 gray-1..10
+# (#F7F8FA/#F2F3F5/#E5E6EB/#C9CDD4/#86909C/#4E5969/#1D2129)、圆角 medium 4px。
+# ⚠️ 曾把 orange-2/red-2 错拿成 -3 档(边框重一档),核对时才发现——
+# 改配色前先去发行包取真值,别凭印象。
+# 关键取向:**小圆角(2/4px)、无渐变、克制阴影、14px 正文、按钮 32px 高**——
+# 此前那套橙色巨型按钮与 8-12px 圆角是逐次需求堆出来的,不是设计体系。
+_ARCO_CSS = """
+:root, .gradio-container {
+  --arco-primary: #165DFF; --arco-primary-hover: #4080FF;
+  --arco-success: #00B42A; --arco-warning: #FF7D00; --arco-danger: #F53F3F;
+  --arco-t1: #1D2129; --arco-t2: #4E5969; --arco-t3: #86909C; --arco-t4: #C9CDD4;
+  --arco-border: #E5E6EB; --arco-fill: #F2F3F5; --arco-fill-1: #F7F8FA;
+  --arco-radius: 4px;
+}
+/* 字号:Arco 规范正文是 14px,**这里刻意走 15px**(2026-08-13 用户两次点名
+   "字太小看着费劲")。屏幕远、看一天报表的场景,可读性压过规范的字面一致;
+   整套只加这一档,层级关系不动。表格与说明文字一并跟上,否则正文变大反衬得
+   数据更小。 */
+/* 层次感(2026-08-13 用户:"白板上画个灰框,文字漂在里面,没有立体感")。
+   做法照 Arco Pro 的控制台版式:**页面底灰、内容白卡、1px 描边 + 一层浅阴影**,
+   靠底色差把卡片"抬"起来,而不是靠重阴影或渐变。全部改 gradio 自己的主题变量,
+   一个布局属性都不碰(动 height/overflow 那类曾把表体压塌,见下方告诫)。 */
+:root, .gradio-container {
+  --body-background-fill: #F2F3F5 !important;
+  --background-fill-primary: #FFFFFF !important;
+  --background-fill-secondary: #F7F8FA !important;
+  --panel-background-fill: #FFFFFF !important;
+  --block-background-fill: #FFFFFF !important;
+  --block-border-color: #E5E6EB !important;
+  --block-border-width: 1px !important;
+  --block-radius: 8px !important;
+  --block-shadow: none !important;
+  --block-label-background-fill: transparent !important;
+  --input-background-fill: #FFFFFF !important;
+  --input-border-color: #E5E6EB !important;
+  --input-radius: 6px !important;
+  --radius-sm: 4px !important; --radius-md: 6px !important;
+  --radius-lg: 8px !important; --radius-xl: 12px !important;
+  --button-large-radius: 6px !important; --button-small-radius: 6px !important;
+}
+/* 抬起来的是**整页内容**,不是每个小块 —— 逐块加阴影会碎成一地发光的白条
+   (试过,更难看)。所以:页签面板 = 一张大白卡,卡内一切保持平的。 */
+.gradio-container .block, .gradio-container .form { box-shadow: none !important; }
+.gradio-container .tabitem {
+  background: #FFFFFF !important; border: 1px solid var(--arco-border) !important;
+  border-radius: 10px !important; padding: 18px 20px !important;
+  box-shadow: 0 1px 3px rgba(29,33,41,.06), 0 8px 20px rgba(29,33,41,.05) !important;
+}
+/* 内层页签(任务台的跑质检/执行人工裁决、明细的四个子页)在大卡里面,
+   再套一层卡就成了"盒中盒"。 */
+.gradio-container .tabitem .tabitem {
+  background: transparent !important; border: none !important;
+  box-shadow: none !important; padding: 6px 0 !important;
+}
+/* 输入类按 Arco 的填充式:浅灰底、无描边,聚焦才变白 + 主色边。
+   白卡上再放白输入框 = 全靠一根灰线区分,正是"没有立体感"的来源。 */
+.gradio-container input[type="text"], .gradio-container input[type="number"],
+.gradio-container textarea, .gradio-container .wrap-inner,
+.gradio-container .secondary-wrap {
+  background: var(--arco-fill) !important; border-color: transparent !important;
+  border-radius: 6px !important;
+}
+.gradio-container input[type="text"]:focus, .gradio-container textarea:focus {
+  background: #FFFFFF !important; border-color: var(--arco-primary) !important;
+}
+.gradio-container {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+               "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif !important;
+  font-size: 15px !important; color: var(--arco-t2) !important;
+}
+.gradio-container h1 { font-size: 22px !important; color: var(--arco-t1) !important;
+                       font-weight: 600 !important; }
+.gradio-container h2 { font-size: 18px !important; color: var(--arco-t1) !important;
+                       font-weight: 600 !important; }
+.gradio-container h3 { font-size: 16px !important; color: var(--arco-t1) !important;
+                       font-weight: 600 !important; }
+.gradio-container p, .gradio-container li, .gradio-container label,
+.gradio-container table { font-size: 15px !important; }
+.gradio-container table th, .gradio-container table td {
+  font-size: 14px !important;      /* 表体略小于正文:一行十几列,再大就全靠横拖 */
+}
+/* 按钮:逐条对齐官方 .arco-btn-size-default —— 高 32px、padding 0 15px、
+   font-size 14px、font-weight 400。**圆角走 6px 不是 Arco 规范的 2px**:
+   用户 2026-08-13 点名"圆角不明显,再做点圆角"——同上,可读观感压过字面规范。
+   primary 的边框是 transparent(不是同色描边);secondary 背景 = color-secondary
+   (中性 2 档 #F2F3F5)、文字 color-text-2。 */
+/* ⚠️ 高度/内边距**只给真正的操作按钮**,绝不写成 `button {height:...}` ——
+   Gradio 的表格内部也拿 <button> 当布局件,给所有按钮强行定高会把表体压塌
+   (2026-08-13 实测:.table-wrap 从 281px 塌到 37px,199 行只渲染出 1 行)。
+   圆角/字号/阴影这类不影响布局高度的,才可以全局给。 */
+.gradio-container button {
+  border-radius: 6px !important; font-size: 14px !important;
+  font-weight: 400 !important; box-shadow: none !important;
+  transition: all .1s cubic-bezier(0,0,1,1) !important;
+}
+.gradio-container button.primary, .gradio-container button.secondary,
+.gradio-container button.stop {
+  min-height: 32px !important; height: 32px !important;
+  padding: 0 15px !important; line-height: 1.5715 !important;
+  font-size: 15px !important;
+}
+/* 页签跟正文同档:它是导航,比数据更该看得清。role=tab 选得准,不会误伤
+   表格内部那些当布局件用的 <button>。 */
+.gradio-container button[role="tab"] { font-size: 15px !important; }
+.gradio-container button.primary, .gradio-container button.lg.primary {
+  background: var(--arco-primary) !important; border: 1px solid transparent !important;
+  color: #fff !important;
+}
+.gradio-container button.primary:hover { background: var(--arco-primary-hover) !important; }
+.gradio-container button.secondary {
+  background: var(--arco-fill) !important; border: 1px solid transparent !important;
+  color: var(--arco-t2) !important;
+}
+.gradio-container button.secondary:hover { background: #E5E6EB !important; }
+/* 危险按钮走 outline 形态(白底红描边红字):Arco 里"停止"这类破坏性动作的常见写法 */
+.gradio-container button.stop {
+  background: #fff !important; border: 1px solid var(--arco-danger) !important;
+  color: var(--arco-danger) !important;
+}
+.gradio-container button.stop:hover { background: #FFECE8 !important; }
+/* 输入/选择/卡片:统一 4px 圆角与 Arco 边框色 */
+.gradio-container input, .gradio-container textarea, .gradio-container select,
+.gradio-container .block, .gradio-container .form {
+  border-radius: var(--arco-radius) !important;
+}
+.gradio-container .block { border-color: var(--arco-border) !important; }
+/* Gradio 自带主题色是橘色(加载动画、排序箭头、选中态、滑块都吃它)。
+   只改我们自己的类盖不住,必须把它的 CSS 变量本身换掉 —— 否则页面上永远
+   飘着几处橘色(2026-08-13 用户在明细表右上角的橘色箭头上点名)。 */
+.gradio-container, :root {
+  --color-accent: #165DFF !important; --color-accent-soft: #E8F3FF !important;
+  --primary-50: #E8F3FF !important; --primary-100: #E8F3FF !important;
+  --primary-200: #BEDAFF !important; --primary-300: #94BFFF !important;
+  --primary-400: #4080FF !important; --primary-500: #165DFF !important;
+  --primary-600: #165DFF !important; --primary-700: #0E42D2 !important;
+  --button-primary-background-fill: #165DFF !important;
+  --button-primary-background-fill-hover: #4080FF !important;
+  --button-primary-border-color: #165DFF !important;
+  --slider-color: #165DFF !important; --loader-color: #165DFF !important;
+  --checkbox-background-color-selected: #165DFF !important;
+  --checkbox-border-color-selected: #165DFF !important;
+  /* ⚠️ 别给 --radio-circle 塞颜色:它是**选中态那个白点的背景图**(一段
+     fill=white 的 svg data-uri),塞成 #165DFF 等于把白点擦掉 —— 蓝底蓝点,
+     看着就是一个实心蓝方块,只在切换的一瞬间闪出白点(2026-08-13 用户实见)。
+     选中色由上面两个变量给足了,这一条不该动。 */
+}
+/* 单选圆、复选方(Arco 如此,也是通用心智);Gradio 默认把两者都做成 4px 圆角方块。 */
+.gradio-container input[type="radio"] { border-radius: 50% !important; }
+/* 带解释的小问号:灰底圆点,悬停出深色浮层(Arco 的 tooltip 是 gray-10 底白字)。
+   文案挂在 data-tip 上,纯 CSS 显示,不引任何组件库。 */
+.qc-tip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin-left: 6px; border-radius: 50%;
+  background: var(--arco-t4); color: #fff; font-size: 11px; font-weight: 600;
+  cursor: help; position: relative; vertical-align: middle;
+}
+.qc-tip:hover { background: var(--arco-t3); }
+/* 并发框置灰要**看得出来**(Gradio 只是 disabled,视觉上毫无变化)。
+   作用域钉死在 .conc-num:日志窗也是 disabled 的,一刀切会把日志文字也刷成浅灰。 */
+.conc-num textarea:disabled, .conc-num input:disabled {
+  background: var(--arco-fill-1) !important; color: var(--arco-t4) !important;
+  cursor: not-allowed !important;
+}
+/* ⚠️ 浮层**不能**用 ::after 挂在问号上:Gradio 的表单块是 overflow:hidden,
+   气泡会被齐刷刷裁掉一半(2026-08-13 实测)。所以由 JS 在 body 上另起一个
+   position:fixed 的框 —— 定位脱离一切祖先,谁也裁不到。 */
+.qc-tipbox {
+  position: fixed; max-width: 340px; background: #FFFFFF; color: var(--arco-t1);
+  border: 1px solid var(--arco-border); font-size: 13px; line-height: 1.7;
+  text-align: left; padding: 10px 12px; border-radius: 6px; z-index: 9999;
+  pointer-events: none; box-shadow: 0 4px 10px rgba(29,33,41,.10);
+}
+/* ⚠️ 别再给表格容器强制 overflow —— Gradio 的 .table-wrap/.table-container 自带
+   滚动与虚拟渲染,外部再压一层 overflow:auto 会让它算不出高度,**表体直接塌成
+   一行**(2026-08-13 实测:table-wrap 高 37px 而表本身 100px,只渲染出 1 行)。
+   列太宽要控,请用 Dataframe 自己的 column_widths / max_height / wrap 参数。 */
+/* 表格:行高与描边按 Arco */
+.gradio-container table thead th {
+  background: var(--arco-fill-1) !important; color: var(--arco-t2) !important;
+  font-weight: 500 !important; border-bottom: 1px solid var(--arco-border) !important;
+}
+.gradio-container table td { border-bottom: 1px solid var(--arco-fill) !important; }
+/* 日志窗:等宽字体。CLI 输出本来就是按列对齐的,用比例字体看就是一团乱
+   (2026-08-13 用户点名"预设/状态/服务端类型没对齐") */
+.mono-log textarea, .mono-log input {
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace !important;
+  font-size: 12px !important; line-height: 1.6 !important; color: var(--arco-t1) !important;
+}
+"""
+
+
 # 顶层导航按钮样式(2026-07-29 用户定:大、明显、立体)。只作用于 elem_id=topnav
 # 的外层两页签,内层六个报告 tab 不受影响。立体感=渐变+外阴影(凸起),选中态=
 # 橙色渐变+内阴影(按下)。选中类名在 gradio 版本间摇摆,selected/aria-selected 双保。
 _TOPNAV_CSS = """
-/* 只杀 gradio 给选中页签画的 ::after 橙色指示条(2px 绝对定位,贴在圆角
-   按钮底部像条怪线);页签条自带的灰色分隔线保留(用户确认好看)。 */
-#topnav > .tab-wrapper button::after,
-#topnav > .tab-container button::after {
+/* 顶层导航(任务台 / 质检报告 / 终端)。2026-08-13 改按 Arco:去掉橙色渐变与
+   立体阴影,改成"选中即主色下划线 + 主色文字"的克制样式。 */
+#topnav > .tab-wrapper button::after, #topnav > .tab-container button::after {
   display: none !important;
 }
 #topnav > .tab-wrapper, #topnav > .tab-container {
-  border-bottom: 1px solid #d9d9d9 !important;   /* 用户确认要的灰色分隔线 */
+  border-bottom: 1px solid #E5E6EB !important;
 }
 #topnav > .tab-container button, #topnav > .tab-wrapper button {
-  font-size: 1.3rem !important; font-weight: 700 !important;
-  padding: 12px 34px !important; margin: 14px 10px 14px 0 !important;
-  border: 1px solid #cfcfcf !important; border-radius: 12px !important;
-  background: linear-gradient(180deg, #ffffff 0%, #e9e9e9 100%) !important;
-  box-shadow: 0 3px 7px rgba(0,0,0,.20), inset 0 1px 0 rgba(255,255,255,.9) !important;
-  color: #444 !important;
+  font-size: 15px !important; font-weight: 500 !important;
+  padding: 10px 20px !important; margin: 4px 6px 0 0 !important;
+  border: none !important; border-bottom: 2px solid transparent !important;
+  border-radius: 0 !important; background: transparent !important;
+  box-shadow: none !important; color: #4E5969 !important; min-height: 40px !important;
 }
-#topnav > .tab-container button.selected,
-#topnav > .tab-wrapper button.selected,
+#topnav > .tab-container button:hover, #topnav > .tab-wrapper button:hover {
+  color: #165DFF !important;
+}
+#topnav > .tab-container button.selected, #topnav > .tab-wrapper button.selected,
 #topnav button[aria-selected="true"] {
-  background: linear-gradient(180deg, #ffd9b3 0%, #ff9e5e 100%) !important;
-  border-color: #e8722a !important; color: #7c2d12 !important;
-  box-shadow: inset 0 2px 5px rgba(0,0,0,.22) !important;
+  background: transparent !important; color: #165DFF !important;
+  border-bottom: 2px solid #165DFF !important; box-shadow: none !important;
 }
 """
 
@@ -154,42 +523,42 @@ _AUDIT_CSS = """
    在本环境不生效,用户实测)。 */
 .sync-cards { display:flex; flex-direction:column; gap:22px; margin:14px 0 8px; }
 /* 卡片整块居中(2026-08-07 用户最终定:靠左"还是不好看");内部曲线在左、诊断框在右 */
-.sync-card { background:#fff; border:1px solid #e8ecf1; border-radius:14px;
+.sync-card { background:#fff; border:1px solid #E5E6EB; border-radius:14px;
              padding:6px 18px 14px; box-shadow:0 1px 3px rgba(15,23,42,.05);
              transition:box-shadow .18s ease, border-color .18s ease;
              max-width:1240px; width:100%; margin:0 auto; }
 .sync-card-body { display:flex; gap:18px; align-items:flex-start; }
 .sync-figure { flex:1 1 auto; min-width:0; display:block; }
 /* 诊断框:定宽不参与压缩,窄屏时整块掉到图下面(flex-wrap 由 body 的换行控制) */
-.sync-diag { flex:0 0 316px; align-self:stretch; border-left:1px solid #eef2f7;
-             padding:2px 0 0 16px; font:12px/1.65 system-ui; color:#334155; }
-.sync-diag-title { font-weight:800; color:#0f172a; font-size:.86rem;
+.sync-diag { flex:0 0 316px; align-self:stretch; border-left:1px solid #F7F8FA;
+             padding:2px 0 0 16px; font:12px/1.65 system-ui; color:#4E5969; }
+.sync-diag-title { font-weight:800; color:#1D2129; font-size:.86rem;
                    margin:2px 0 8px; }
-.sync-diag-row { padding:8px 0; border-bottom:1px dashed #eef2f7; }
+.sync-diag-row { padding:8px 0; border-bottom:1px dashed #F7F8FA; }
 .sync-diag-row:last-of-type { border-bottom:none; }
 .sync-diag-head { display:flex; align-items:center; gap:7px; }
 .sync-dot { width:8px; height:8px; border-radius:50%; flex:0 0 8px; }
 .sync-diag-lag { margin-left:auto; font:600 .78rem ui-monospace,Menlo,monospace;
-                 color:#475569; }
+                 color:#4E5969; }
 .sync-diag-label { font-weight:700; font-size:.78rem; margin:3px 0 2px; }
-.sync-diag-text { color:#475569; }
-.sync-diag-advice { color:#64748b; margin-top:4px; font-style:italic; }
-.sync-diag-foot { margin-top:10px; padding-top:9px; border-top:1px solid #eef2f7;
-                  color:#64748b; font-size:.78rem; }
+.sync-diag-text { color:#4E5969; }
+.sync-diag-advice { color:#86909C; margin-top:4px; font-style:italic; }
+.sync-diag-foot { margin-top:10px; padding-top:9px; border-top:1px solid #F7F8FA;
+                  color:#86909C; font-size:.78rem; }
 @media (max-width:1100px) {
     .sync-card-body { flex-direction:column; }
     .sync-diag { flex:1 1 auto; border-left:none; padding:10px 0 0;
-                 border-top:1px solid #eef2f7; }
+                 border-top:1px solid #F7F8FA; }
 }
-.sync-card:hover { box-shadow:0 8px 26px rgba(15,23,42,.09); border-color:#dbe3ec; }
+.sync-card:hover { box-shadow:0 8px 26px rgba(15,23,42,.09); border-color:#E5E6EB; }
 .sync-card-head { display:flex; align-items:center; gap:12px; padding:12px 0 12px 12px;
-                  margin-bottom:6px; border-bottom:1px solid #f1f5f9; }
-.sync-eid { font:700 .95rem ui-monospace,Menlo,monospace; color:#0f172a; }
+                  margin-bottom:6px; border-bottom:1px solid #F7F8FA; }
+.sync-eid { font:700 .95rem ui-monospace,Menlo,monospace; color:#1D2129; }
 .sync-badge { font:600 .82rem system-ui; }
-.sync-open { margin-left:auto; font:.8rem system-ui; color:#64748b !important;
-             text-decoration:none; border:1px solid #e2e8f0; border-radius:7px;
+.sync-open { margin-left:auto; font:.8rem system-ui; color:#86909C !important;
+             text-decoration:none; border:1px solid #E5E6EB; border-radius:7px;
              padding:3px 11px; }
-.sync-open:hover { color:#0f172a !important; border-color:#cbd5e1; background:#f8fafc; }
+.sync-open:hover { color:#1D2129 !important; border-color:#C9CDD4; background:#F7F8FA; }
 .sync-img { width:100%; display:block; border-radius:8px; cursor:zoom-in; }
 /* 页内灯箱(纯 CSS):checkbox 选中 → 全屏遮罩显大图;点遮罩(同一 label)即关闭。
    ⚠️ 祖先若带 transform 会把 position:fixed 变成相对它定位——.sync-card 的
@@ -218,6 +587,53 @@ _AUDIT_CSS = """
 #ep-list label:hover { background: rgba(255, 140, 0, 0.10); }
 """
 
+
+def _vlm_involved(mode: str, picks, how: str) -> bool:
+    """这次跑批会不会真的调 VLM(决定三个并发旋钮灰不灰)。
+
+    自选模块要按「只跑选中 / 跳过选中」两种语义分别算 —— 一律按"选了就算跑"
+    会把「跳过任务判定」也算成要 VLM,灰不下来。
+    """
+    if mode == QUICK_SCAN:
+        return False
+    if mode != CUSTOM_SCAN or not picks:
+        return True
+    picked = set(picks)
+    if how == "只跑选中":
+        return any(c in picked for c in VLM_CHECKS)
+    return any(c not in picked for c in VLM_CHECKS)
+
+
+def _sets(plots, c_ep, c_fr, c_cap, manual: str) -> list:
+    """界面上的几个旋钮 + 手写的参数覆盖 → `--set 路径=值` 列表。
+
+    只发**用户真的动过**的项:同步图非默认才发,并发留空就不发 —— 界面不复制
+    一份默认值,否则改了 default.yaml 而界面还在按老值发,神不知鬼不觉。
+    手写的放最后:同一个键写两遍时后到者赢,人手写的优先级最高。
+    """
+    out = []
+    key = _label_key(PLOT_MODES, plots, "flagged")
+    if key != "flagged":
+        out.append(f"pipeline.sync_plots={key}")
+    for name, val in (("ep", c_ep), ("fr", c_fr), ("cap", c_cap)):
+        try:                             # 填了看不懂的东西 = 当没填,不拦着开跑
+            n = int(str(val).strip())
+        except (TypeError, ValueError):
+            continue
+        if n >= 1:                       # 0/负数没有意义,同样当没填
+            out.append(f"{CONC_KEYS[name]}={n}")
+    out += [x.strip() for x in (manual or "").splitlines() if x.strip()]
+    return out
+
+
+def _label_key(mapping: dict, label: str, default: str) -> str:
+    """{键: 界面说法} + 界面说法 → 键。选项对不上就退回默认,绝不抛。"""
+    for k, v in mapping.items():
+        if v == label:
+            return k
+    return default
+
+
 def presentation(terminal: bool = False) -> dict:
     """theme/css/head 三件套(gradio 6 起只认 launch()/mount_gradio_app() 上的这三个
     关键字,传给 `gr.Blocks()` 会被静默丢弃——2026-07-29 实测,顺手修掉的老 bug)。"""
@@ -228,33 +644,41 @@ def presentation(terminal: bool = False) -> dict:
         # 首屏(实测),demo 一开场就是白屏等待——本 UI 场景里无网络字体的理由
         "theme": gr.themes.Default(font=["system-ui", "sans-serif"],
                                    font_mono=["ui-monospace", "Menlo", "monospace"]),
-        "css": _AUDIT_CSS + ((_TOPNAV_CSS + _TERMINAL_CSS) if terminal else ""),
-        "head": _TERMINAL_HEAD if terminal else None,
+        "css": _ARCO_CSS + _AUDIT_CSS + _TOPNAV_CSS + (_TERMINAL_CSS if terminal else ""),
+        # ↑ 顶层导航常驻 ⇒ 它的样式也常驻;终端专属样式/资产仍只在开终端时注入
+        "head": (_TABLE_JS
+                 + _TIP_JS.replace("__NAME__", QUICK_SCAN)
+                          .replace("__TIP__", QUICK_SCAN_TIP)
+                 + (_TERMINAL_HEAD if terminal else "")),
+        # 标签页图标:不设就是 Gradio 自带的橘色 logo(用户 2026-08-13 点名)。
+        # 换成 Arco 蓝圆角方块 + 白色漩涡(照 Daft 那枚的手感重画,底色主色化 ⇒
+        # 既认得出这套系统的出身,又和整页的 Arco 蓝一致)。生成脚本
+        # scripts/make_favicon.py,纯 stdlib 画的,改形状重跑即可。
+        # gradio 只收 .png/.gif/.ico(不吃 svg),所以资产是张 64px PNG。
+        "favicon_path": FAVICON,
     }
 
 
 # 「人工裁决」页的视觉件(2026-08-07 用户反馈:页面太平淡,引导和区块头要一眼看到)。
 # 全部内联样式:不依赖主题变量,浅色页面直出;步骤链和区块头是"人要按顺序干活"
-# 的导航件,值得比正文重一个视觉量级。①橙 ②蓝:两块任务性质不同,用色系分开。
+# 的导航件,值得比正文重一个视觉量级。
+# 2026-08-13 用户定:引导框改 Arco 蓝(arcoblue-1 底 / -2 边 / -6 主色 / -7 深字)。
+# 原来那句"这一页只记录你的裁决…"用户点名删掉 —— 步骤链本身已经说明白了。
 _ADJ_GUIDE_HTML = """
-<div style="background:linear-gradient(135deg,#fff7ed,#ffedd5);border:1px solid #fdba74;
-            border-left:6px solid #ea580c;border-radius:10px;padding:14px 18px;margin:2px 0 6px">
-  <div style="font-weight:700;color:#9a3412;font-size:1.05rem;margin-bottom:9px">
-    📋 建议工作顺序(顺序错了会白裁)</div>
-  <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;font-size:.95rem;color:#431407">
-    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
-      <b style="color:#ea580c">1</b> 裁「标注分歧」</span><span style="color:#c2410c">→</span>
-    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
-      <b style="color:#ea580c">2</b> 跑 <code>curation rejudge</code>
-      <span style="color:#9a3412">(部分弃权自动解决)</span></span><span style="color:#c2410c">→</span>
-    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
-      <b style="color:#ea580c">3</b> 裁剩余「任务成败弃权」</span><span style="color:#c2410c">→</span>
-    <span style="background:#fff;border:1px solid #fdba74;border-radius:999px;padding:3px 13px">
-      <b style="color:#ea580c">4</b> 再跑一次 <code>rejudge</code> 生效</span>
+<div style="background:#E8F3FF;border:1px solid #BEDAFF;border-left:3px solid #165DFF;
+            border-radius:4px;padding:12px 16px;margin:2px 0 6px">
+  <div style="font-weight:600;color:#0E42D2;margin-bottom:8px">建议按这个顺序做</div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;color:#4E5969">
+    <span style="background:#fff;border:1px solid #BEDAFF;border-radius:4px;padding:2px 10px">
+      <b style="color:#165DFF">1</b> 裁「标注分歧」</span><span style="color:#86909C">→</span>
+    <span style="background:#fff;border:1px solid #BEDAFF;border-radius:4px;padding:2px 10px">
+      <b style="color:#165DFF">2</b> 到「任务台 · 执行人工裁决」执行一次
+      <span style="color:#86909C">(部分弃权会自动解决)</span></span><span style="color:#86909C">→</span>
+    <span style="background:#fff;border:1px solid #BEDAFF;border-radius:4px;padding:2px 10px">
+      <b style="color:#165DFF">3</b> 裁剩下的「任务成败弃权」</span><span style="color:#86909C">→</span>
+    <span style="background:#fff;border:1px solid #BEDAFF;border-radius:4px;padding:2px 10px">
+      <b style="color:#165DFF">4</b> 再执行一次</span>
   </div>
-  <div style="margin-top:9px;font-size:.86rem;color:#7c2d12">
-    两块都只<b>记录</b>裁决(落交付目录 details/ 下的 CSV),可随时改判;
-    真正修改交付的是命令行的 <code>curation rejudge</code>。</div>
 </div>"""
 
 
@@ -265,11 +689,12 @@ def _adj_section_html(num: str, title: str, subtitle: str, color: str, dark: str
             f'<span style="background:{color};color:#fff;font-weight:800;border-radius:8px;'
             f'padding:2px 13px;font-size:1.05rem">{num}</span>'
             f'<span style="font-size:1.18rem;font-weight:800;color:{dark}">{title}</span>'
-            f'<span style="color:#78716c;font-size:.9rem">{subtitle}</span></div>')
+            f'<span style="color:#86909C;font-size:.9rem">{subtitle}</span></div>')
 
 
 def build_app(delivery: str, config_path: str | None = None, probe_timeout: float = 5.0,
-              terminal: bool = False, review_dir: str | None = None):
+              terminal: bool = False, review_dir: str | None = None,
+              data_root: str | None = None):
     """交付目录(或含多份交付的父目录)→ gr.Blocks。
 
     terminal=True 时套一层顶层导航:「终端」(内嵌 xterm.js,后端是本服务的
@@ -279,6 +704,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
     review_dir = 审片站根目录(与 `/review` 静态路由同一个),Episodes 页的视频
     来源链第一档指着它;不给就只剩交付集内的视频。
+
+    data_root = 数据集根目录(「任务台」页签只列这个根下的数据集)。
+    ⚠️ 任务台是 2026-08-13 **纯新增**的页签,放在全部页签的最后:现有那套质检报告
+    页签(漏斗总览/Episodes/人工裁决/技能画像/同步曲线/Stuck 时间线/明细/性能剖析/
+    后端状态)的顺序、默认落地页、组件与回调**一律不动**(用户红线)。它也不共用
+    `state` 与 `outs`——Episodes 那个"重载级联并发吞掉翻页按钮"的 bug(6bb28b5)
+    就是共享输出列表惹的祸,不重演。
     """
     import gradio as gr
 
@@ -336,6 +768,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
     def _tv_btns(verdict):
         return _btns(VERDICT_CHOICES, verdict)
 
+    def _ap_btns(appeal):
+        return _btns(APPEAL_CHOICES, appeal)
+
     def _vids(m, eid):
         """三路视频槽:有几路给几路;一路都没有时保留一个可见占位(不然卡片塌掉)。"""
         clips = audit_clip_paths(m, eid) if eid else []
@@ -375,6 +810,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         return (idx, f"第 {idx + 1} / {len(q)} 条", info, readings,
                 *_vids(m, t.get("id", "")), *_tv_btns(v.get("verdict")))
 
+    def _ap_render(m, idx):
+        """渲染第 idx 条被拒复议卡片(越界回绕)。装配顺序 = _ap_outs。"""
+        q = (m or {}).get("reject_appeal") or []
+        if not q:
+            return (idx, "(无可复议的被拒条目)", "", "", "", *_ap_btns(None))
+        idx = idx % len(q)
+        a = q[idx]
+        eid = a.get("id", "")
+        d = load_reject_appeals(m).get(eid, {})
+        info = (f"**{eid}** · 系统判决:拒绝"
+                + (f" · 已复议:**{d['appeal']}**" if d.get("appeal") else "")
+                + f"\n\n**拒绝原因**:{appeal_reason_text(m, eid) or '未注明'}")
+        readings = f"关键读数:{readings_text(a.get('readings') or {})}"
+        return (idx, f"第 {idx + 1} / {len(q)} 条", info, readings,
+                episode_video_html(m, eid, review_dir), *_ap_btns(d.get("appeal")))
+
     def _sync_view(m, mode, page):
         """同步曲线页的一屏(装配顺序 = _sy_outs)。分页/筛选逻辑全在 manifest。"""
         v = sync_view(m or {}, mode or SYNC_FILTER_ALL, page or 0)
@@ -404,6 +855,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 条目上,按钮状态还是旧的,实测踩过)
                 audit_rows(m), *_au_render(m, 0),
                 task_review_hint_md(m), task_review_rows(m), *_tv_render(m, 0),
+                # 被拒复议整区:没有可复议条目就整块不渲染
+                gr.update(visible=bool(m.get("reject_appeal"))),
+                appeal_hint_md(m), appeal_rows(m), *_ap_render(m, 0),
                 *_detail(m, first),
                 gr.update(choices=[DETAIL_LABELS[t] for t in tables],
                           value=(DETAIL_LABELS[t_first] if t_first else None)),
@@ -412,6 +866,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 gr.update(value=SYNC_FILTER_ALL),
                 *_sync_view(m, SYNC_FILTER_ALL, 0),
                 sync_conclusion_html(m), sync_health_html(m),
+                # 换交付时筛选/排序一起复位(理由同上:停在上一份的筛选上,
+                # 看到的条数和标题对不上)
+                gr.update(value=TL_FILTERS["both"]), gr.update(value=TL_SORTS["episode"]),
                 tl_note0, timeline_html(tl),
                 perf_backend_md(perf), perf_env_md(perf), LATENCY_NOTE,
                 latency_rows(perf), latency_bar_html(perf))
@@ -420,28 +877,417 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
     # mount_gradio_app()(传给 Blocks 只换来一条 UserWarning,值被丢掉)。见 presentation()。
     with gr.Blocks(title="Robot Data Curation") as app:
         gr.Markdown("# 机器人数据 Curation 质检台")
-        # 双层导航(2026-07-28 U3):顶层「终端」在左、「质检报告」在右,但默认落在
-        # 「质检报告」(selected= 指 Tab id)。terminal 关闭时 ExitStack 一个上下文
-        # 都不进 → 页面结构与加这层之前完全一致,客户部署里看不到终端入口。
+        # 双层导航:顶层从左到右 =「任务台 / 质检报告 / 终端」,默认落在**任务台**
+        # (2026-08-13 用户定:客户进来先看到能干活的面板;终端是排障用的,靠最右)。
+        # terminal 关闭时终端页签整块不建 → 客户部署里看不到终端入口。
         with contextlib.ExitStack() as shell:
-            if terminal:
-                shell.enter_context(gr.Tabs(selected="report", elem_id="topnav"))
-                with gr.Tab("终端", id="term"):
-                    # 内嵌终端(2026-07-29 U4,替代 ttyd iframe):xterm.js 画屏 +
-                    # 本服务的 /ws/term(forkpty 起 bash)。装配全在 term.js 里,
-                    # 这里只放它要挂载的容器 div;term.js 等这个 div **可见**才连,
-                    # 所以不点终端页签就不会在服务端 fork 出 shell。
-                    gr.HTML('<div id="curation-term-screen"></div>')
-                shell.enter_context(gr.Tab("质检报告", id="report"))
+            # 顶层导航(2026-08-13 起**总是**渲染):「任务台」与「质检报告」并列,
+            # 「终端」仍由 --terminal 控制。用户定:面板是面向客户的那张脸,压在
+            # 报告页第十个子页签里等于没做。默认落地页仍是质检报告(selected=report),
+            # 报告页那套子页签的顺序与内容一个字没动。
+            shell.enter_context(gr.Tabs(selected="console", elem_id="topnav"))
+            # ── 任务台(2026-08-13;布局与文案按用户当日反馈重排)──────────
+            # 上半部 = 控制面板(客户来这里干活),下半部 = 任务与日志(干完看这里)。
+            # 界面上**不写**"安全边界""并发配额"这类内部考量:那是我们的实现细节,
+            # 客户只需要知道能点什么(用户点名删掉整段说明文字)。
+            _data_root = data_root or os.environ.get("CURATION_DATA_ROOT") or DEFAULT_DATA_ROOT
+            _deliv_root = runner.deliveries_root_of(delivery)
+            _runs_root = runner.runs_root_of(_deliv_root)
+            _backend_map = runner.vlm_backend_labels(config_path)   # {人话标签: 内部代号}
+            _backends = list(_backend_map)
+
+            def _backend_status() -> dict:
+                """{预设代号: True/False}(探活一次,给下拉标可用性用)。"""
+                return {name: ("在线" in state)
+                        for name, state, _ in _probe_backends(config_path, probe_timeout)}
+
+            def _backend_choices(status: dict | None = None) -> list:
+                """下拉选项:未检测时只给名字;检测过就把状态缀在后面。
+
+                Gradio 的 Dropdown 不支持单个选项置灰(Arco 的 disabled 态在这里
+                做不出来),所以改用**文字标注 + 开跑前拦截**:标注让人一眼看见,
+                拦截保证选了不可用的也不会白等一分钟才在日志里看到连接失败。
+                """
+                out = []
+                for label, code in _backend_map.items():
+                    if status is None or code not in status:
+                        out.append(label)
+                    else:
+                        out.append(f"{label} · {'可用' if status[code] else '暂不可用'}")
+                return out
+
+            def _backend_code(choice: str):
+                """下拉选中项 → 预设代号(容忍带「· 可用/暂不可用」后缀)。"""
+                s = str(choice or "")
+                for suffix in (" · 可用", " · 暂不可用"):
+                    if s.endswith(suffix):
+                        s = s[: -len(suffix)]
+                        break
+                return _backend_map.get(s)
+
+            def _tk_view(msg: str = ""):
+                """当前任务(没有在跑的就显示最近一个)→ 状态条 + 日志尾部 + 提示。"""
+                st = (runner.active_run(_runs_root)
+                      or next(iter(runner.list_runs(_runs_root, limit=1)), None))
+                if not st:
+                    return runner.status_html(None), "", msg
+                logtxt = runner.tail_log(_runs_root, st["run_id"])
+                return (runner.status_html(st, runner.parse_progress(logtxt)),
+                        logtxt, msg)
+
+            def _tk_start(command, label, then_argv=None, **params):
+                """统一的发起入口:拼 argv → 起任务 → 立刻回显状态。
+
+                一切异常都变成界面上的一句话(参数不合法/路径越界/已有任务在跑),
+                绝不让 Gradio 抛红框——那对客户等于什么都没说。
+                """
+                try:
+                    argv = runner.build_argv(command, **params)
+                    runner.start(_runs_root, command, argv, label=label,
+                                 cwd=_deliv_root, then_argv=then_argv)
+                except runner.RunBusyError as e:
+                    return _tk_view(f"⚠️ {e}")
+                except (ValueError, OSError) as e:
+                    return _tk_view(f"⚠️ 没能开始:{e}")
+                return _tk_view("已开始,下面会自动刷新进度")
+
+            with gr.Tab("任务台", id="console"):
+                # ① 控制面板在上
+                with gr.Tabs():
+                    with gr.Tab("跑质检"):
+                        with gr.Row():
+                            rn_ds = gr.Dropdown(choices=runner.list_datasets(_data_root),
+                                                label="数据集", scale=4, interactive=True)
+                            rn_out = gr.Textbox(label="交付名", scale=4,
+                                                placeholder="给这次结果起个名字")
+                        # 「快速质检」原叫「快速冒烟(跳过模型判定)」——"冒烟"是
+                        # 我们的行话,"模型判定"客户也不知道指哪几步(2026-08-13
+                        # 用户点名)。改成大白话,细节挂在旁边的问号上。
+                        rn_mode = gr.Radio([FULL_SCAN, QUICK_SCAN, CUSTOM_SCAN],
+                                           value=FULL_SCAN, label="质检范围",
+                                           elem_id="qc-scope")
+                        rn_pick = gr.CheckboxGroup(
+                            choices=[(v, k) for k, v in runner.CHECK_LABELS.items()],
+                            label="要跑的模块", visible=False)
+                        rn_how = gr.Radio(["只跑选中", "跳过选中"], value="只跑选中",
+                                          label="选中的这些…", visible=False)
+                        with gr.Row():
+                            rn_max = gr.Number(label="只跑前 N 条(留空=全部)",
+                                               value=None, precision=0)
+                            rn_eps = gr.Textbox(label="指定 episode",
+                                                placeholder="34 / 10-20 / 3,10-12")
+                            with gr.Column(scale=2):
+                                rn_backend = gr.Dropdown(choices=_backends, label="模型服务")
+                                rn_probe = gr.Button("检测可用性", size="sm", scale=0)
+                        with gr.Accordion("更多设置", open=False):
+                            rn_cfg = gr.Textbox(label="配置文件(留空=默认)",
+                                                placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
+                            rn_emb = gr.Textbox(label="机器人型号(数据里没写时填,如 so101)")
+                            rn_plots = gr.Radio(list(PLOT_MODES.values()),
+                                                value=PLOT_MODES["flagged"],
+                                                label="视频-动作同步的证据图")
+                            # 三个并发旋钮(2026-08-13 用户要):不预填数值 —— 留空就是
+                            # 用生效配置里的值,界面不做第二套默认值(两套默认必然对不上)。
+                            # 不跑 VLM 的范围下整组置灰:它们只影响 VLM 段。
+                            with gr.Accordion("并发(只影响用模型的那几步)",
+                                              open=False) as rn_conc_box:
+                                # 用 Textbox 不用 Number:gr.Number 把"没填"显示成
+                                # **0**,看着像"并发设成 0"(实际是"用配置里的值")。
+                                # 占位符能把这句话说清楚,Number 没有占位符。
+                                with gr.Row():
+                                    rn_c_ep = gr.Textbox(
+                                        elem_classes=["conc-num"],
+                                        label="episode 并发(同时判定几条)",
+                                        placeholder="留空 = 用配置里的值")
+                                    rn_c_fr = gr.Textbox(
+                                        elem_classes=["conc-num"],
+                                        label="单条内帧并发(一条里同时问几帧)",
+                                        placeholder="留空 = 用配置里的值")
+                                    rn_c_cap = gr.Textbox(
+                                        elem_classes=["conc-num"],
+                                        label="打标并发(技能打标同时跑几条)",
+                                        placeholder="留空 = 用配置里的值")
+                                rn_conc_note = gr.Markdown()
+                            rn_set = gr.Textbox(label="参数覆盖(一行一条)", lines=2,
+                                                placeholder="pipeline.sync_plots=all")
+                            with gr.Row():
+                                rn_batch = gr.Checkbox(label="跑根目录下的全部数据集")
+                                rn_ow = gr.Checkbox(label="覆盖同名结果")
+                                rn_ro = gr.Checkbox(label="只出报告,不导出数据集")
+                        with gr.Row():
+                            rn_go = gr.Button("开始质检", variant="primary", scale=0)
+                        # v3 / rrd 数据集的追问面板(默认隐藏)。Gradio 没有原生模态框,
+                        # 用"默认隐藏的一块 + 两个按钮"代替 —— 语义一样:先问再做。
+                        # 为什么要问:这两种格式盘上没有逐条视频,不切片则 Episodes 页
+                        # 打开某条只有提示语没有画面;而切片要重新编码,几分钟到十几分钟,
+                        # 不该背着用户悄悄花掉。
+                        with gr.Group(visible=False) as rn_ask:
+                            rn_ask_md = gr.Markdown()
+                            with gr.Row():
+                                rn_yes = gr.Button("一起生成", variant="primary", scale=0)
+                                rn_no = gr.Button("这次不用", scale=0)
+
+                    with gr.Tab("执行人工裁决"):
+                        with gr.Row():
+                            rj_deliv = gr.Dropdown(choices=choices, value=choices[0],
+                                                   label="要执行的交付", scale=4)
+                            with gr.Column(scale=2):
+                                rj_backend = gr.Dropdown(choices=_backends, label="模型服务")
+                                rj_probe = gr.Button("检测可用性", size="sm", scale=0)
+                        rj_src = gr.Markdown()
+                        rj_ds = gr.Dropdown(choices=runner.list_datasets(_data_root),
+                                            label="原始数据集", visible=False,
+                                            interactive=True)
+                        with gr.Accordion("更多设置", open=False):
+                            rj_cfg = gr.Textbox(label="配置文件(留空=默认)",
+                                                placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
+                        rj_ok = gr.Checkbox(label="我确认:这会改写该交付的内容")
+                        with gr.Row():
+                            rj_go = gr.Button("执行裁决", variant="primary", scale=0)
+
+                # ② 任务与日志在下(合成一块,分子页签:当前任务 / 历史)
+                gr.Markdown("### 任务与日志")
+                with gr.Tabs():
+                    with gr.Tab("当前任务"):
+                        tk_status = gr.HTML()
+                        tk_msg = gr.Markdown()
+                        tk_log = gr.Textbox(label="日志", lines=14, max_lines=14,
+                                            interactive=False, autoscroll=True,
+                                            elem_classes=["mono-log"])
+                        with gr.Row():
+                            tk_refresh = gr.Button("刷新", scale=0, size="sm")
+                            tk_stop = gr.Button("停止", variant="stop", scale=0,
+                                                size="sm")
+                    with gr.Tab("历史"):
+                        hi_table = gr.Dataframe(headers=runner.HISTORY_HEADERS,
+                                                interactive=False, wrap=True)
+                        hi_pick = gr.Markdown()
+                        hi_log = gr.Textbox(label="这次任务的日志", lines=14,
+                                            max_lines=14, interactive=False,
+                                            elem_classes=["mono-log"])
+                _tk_outs = [tk_status, tk_log, tk_msg]
+
+                # ── 回调(输出只落在任务台自己的组件上)────────────────────
+                def _tk_mode(mode, picks, how):
+                    custom = mode == CUSTOM_SCAN
+                    on = _vlm_involved(mode, picks, how)
+                    note = "" if on else "*这次不跑用模型的步骤,并发调了也没用。*"
+                    return (gr.update(visible=custom), gr.update(visible=custom),
+                            gr.update(interactive=on), gr.update(interactive=on),
+                            gr.update(interactive=on), note)
+
+                _mode_ins = [rn_mode, rn_pick, rn_how]
+                _mode_outs = [rn_pick, rn_how, rn_c_ep, rn_c_fr, rn_c_cap,
+                              rn_conc_note]
+                for _c in _mode_ins:
+                    _c.change(_tk_mode, _mode_ins, _mode_outs)
+
+                def _run_go(ds, name, mode, picks, how, max_n, eps, backend,
+                            cfg, emb, plots, c_ep, c_fr, c_cap, sets, batch, ow, ro,
+                            then_review=None):
+                    if str(backend or '').endswith('暂不可用'):
+                        return _tk_view('⚠️ 选中的模型服务当前不可用,换一个,或把那台服务起起来后点「检测可用性」')
+                    try:
+                        inp = (_data_root if batch
+                               else runner.resolve_under(_data_root, ds or ""))
+                        out = runner.resolve_under(_deliv_root, name or "")
+                        cfg = runner.resolve_tos_path(cfg) if str(cfg or "").strip() else None
+                    except ValueError as e:
+                        return _tk_view(f"⚠️ {e}")
+                    only = skip = None
+                    if mode == CUSTOM_SCAN and picks:
+                        joined = ",".join(picks)
+                        only, skip = ((joined, None) if how == "只跑选中"
+                                      else (None, joined))
+                    then_argv = None
+                    if then_review:
+                        # 切片作为同一任务的第二步:一条日志、一个结果,用户不必知道
+                        # 我们内部跑了两条命令
+                        then_argv = runner.build_argv(
+                            "review-page", input=then_review[0], output=then_review[1])
+                    return _tk_start(
+                        "run",
+                        f"质检 {os.path.basename(inp)} → {os.path.basename(out)}"
+                        + ("(含视频片段)" if then_review else ""),
+                        then_argv=then_argv,
+                        input=inp, output=out, config=cfg,
+                        lite=mode == QUICK_SCAN,
+                        only=only, skip=skip,
+                        max_episodes=int(max_n) if max_n else None,
+                        episodes=eps or None, vlm_backend=_backend_code(backend),
+                        embodiment_id=emb or None, batch=bool(batch),
+                        overwrite=bool(ow), report_only=bool(ro),
+                        set_overrides=_sets(plots, c_ep, c_fr, c_cap, sets))
+
+                rn_args = gr.State({})          # 预检时把这次的参数存下,答完照原样开跑
+
+                def _run_preflight(ds, name, mode, picks, how, max_n, eps, backend,
+                                   cfg, emb, plots, c_ep, c_fr, c_cap, sets,
+                                   batch, ow, ro):
+                    """开跑前先看数据格式:v3/rrd 要先切片才有画面可看,问一句再决定。
+
+                    只在**真需要**时才问(格式认得出、且本实例配了片段目录),其余一律
+                    直接开跑 —— 不拿一个可有可无的对话框挡在客户面前。
+                    """
+                    args = dict(ds=ds, name=name, mode=mode, picks=picks, how=how,
+                                max_n=max_n, eps=eps, backend=backend, cfg=cfg,
+                                emb=emb, plots=plots, c_ep=c_ep, c_fr=c_fr,
+                                c_cap=c_cap, sets=sets, batch=batch, ow=ow, ro=ro)
+                    fmt = {"needs_clips": False}
+                    if not batch and ds:
+                        try:
+                            fmt = runner.dataset_format(
+                                runner.resolve_under(_data_root, ds))
+                        except ValueError:
+                            fmt = {"needs_clips": False}
+                    if fmt.get("needs_clips") and review_dir:
+                        kind = ("这份数据是 LeRobot v3 格式,多条轨迹合并存放在同一个"
+                                "视频文件里" if fmt.get("kind") == "lerobot" else
+                                "这份数据是 rerun(.rrd)格式,视频封装在数据文件内部")
+                        return (*_tk_view(""), args, gr.update(visible=True),
+                                f"**{kind}** —— 质检本身不受影响,但要在 Episodes 页"
+                                f"逐条回看画面,得先切出可播片段。\n\n"
+                                f"要在质检之后顺便生成吗?会多花几分钟到十几分钟"
+                                f"(取决于条数);跳过不影响质检结果,只是 Episodes 页暂时看不到画面。")
+                    return (*_run_go(**args), args, gr.update(visible=False), "")
+
+                def _run_after_ask(args, with_clips):
+                    """答完追问:选了就把切片作为同一个任务的第二步串上去。"""
+                    if not with_clips:
+                        return (*_run_go(**args), gr.update(visible=False), "")
+                    try:
+                        inp = runner.resolve_under(_data_root, args.get("ds") or "")
+                        out = runner.resolve_under(_deliv_root, args.get("name") or "")
+                        site = runner.resolve_under(review_dir, os.path.basename(out))
+                    except ValueError as e:
+                        return (*_tk_view(f"⚠️ {e}"), gr.update(visible=False), "")
+                    return (*_run_go(**args, then_review=(inp, site)),
+                            gr.update(visible=False), "")
+
+                _ask_outs = _tk_outs + [rn_args, rn_ask, rn_ask_md]
+                rn_go.click(_run_preflight,
+                            [rn_ds, rn_out, rn_mode, rn_pick, rn_how, rn_max, rn_eps,
+                             rn_backend, rn_cfg, rn_emb, rn_plots, rn_c_ep, rn_c_fr,
+                             rn_c_cap, rn_set, rn_batch, rn_ow, rn_ro],
+                            _ask_outs)
+                rn_yes.click(lambda a: _run_after_ask(a, True), rn_args,
+                             _tk_outs + [rn_ask, rn_ask_md])
+                rn_no.click(lambda a: _run_after_ask(a, False), rn_args,
+                            _tk_outs + [rn_ask, rn_ask_md])
+
+                def _rj_pick(path):
+                    """选中交付 → 交付里记了原始数据集就自动带出,没记就让用户选。
+
+                    老交付(2026-08-13 之前)没有这个字段 —— 那就老实说没记,让人
+                    自己选,绝不按名字猜(同名不同库会重判错数据)。
+                    """
+                    src = runner.source_dataset_of(path or "")
+                    if src:
+                        return f"原始数据集:`{src}`", gr.update(visible=False)
+                    return "这份交付没记原始数据集,请选:", gr.update(visible=True)
+
+                rj_deliv.input(_rj_pick, rj_deliv, [rj_src, rj_ds])
+
+                def _rj_go(path, ds, backend, cfg, ok):
+                    if str(backend or '').endswith('暂不可用'):
+                        return _tk_view('⚠️ 选中的模型服务当前不可用,换一个,或把那台服务起起来后点「检测可用性」')
+                    if not ok:
+                        return _tk_view("⚠️ 请先勾选确认")
+                    src = runner.source_dataset_of(path or "")
+                    try:
+                        if not src:
+                            src = runner.resolve_under(_data_root, ds or "")
+                        cfg = runner.resolve_tos_path(cfg) if str(cfg or "").strip() else None
+                    except ValueError as e:
+                        return _tk_view(f"⚠️ {e}")
+                    return _tk_start("rejudge",
+                                     f"执行裁决 {os.path.basename(path or '')}",
+                                     delivery=path, input=src, config=cfg,
+                                     vlm_backend=_backend_code(backend))
+
+                rj_go.click(_rj_go, [rj_deliv, rj_ds, rj_backend, rj_cfg, rj_ok],
+                            _tk_outs)
+
+                def _do_probe(cur_run, cur_rj):
+                    """探活一次 → 两个下拉都缀上可用性(它们指的是同一批服务)。
+
+                    ⚠️ 探活**不走任务通道**:`curation backends` 的原始输出里全是内部
+                    预设代号(a30-8b 之类),贴进日志就等于把代号摆到客户面前。这里
+                    直接调探活函数,只把「人话标签 · 可用/暂不可用」写回下拉。
+                    结果不落盘,是当下这一刻的实况 —— 服务起没起随时会变。
+                    """
+                    st = _backend_status()
+                    ch = _backend_choices(st)
+
+                    def _keep(cur):
+                        """保住用户已选的那一项(后缀会变,按标签本体认)。"""
+                        code = _backend_code(cur)
+                        for c in ch:
+                            if _backend_code(c) == code:
+                                return c
+                        return None
+
+                    n_ok = sum(1 for v in st.values() if v)
+                    msg = (f"已检测 {len(st)} 个模型服务:{n_ok} 个可用"
+                           + ("" if n_ok else " —— 一个都连不上,先把服务起起来"))
+                    return (gr.update(choices=ch, value=_keep(cur_run)),
+                            gr.update(choices=ch, value=_keep(cur_rj)), msg)
+
+                for _btn in (rn_probe, rj_probe):
+                    _btn.click(_do_probe, [rn_backend, rj_backend],
+                               [rn_backend, rj_backend, tk_msg])
+
+                tk_refresh.click(lambda: _tk_view(""), None, _tk_outs)
+
+                def _hi_rows():
+                    return runner.history_rows(runner.list_runs(_runs_root, limit=50))
+
+                def _hi_open(evt):
+                    """点历史某一行 → 回看那次任务的日志(行序与 list_runs 一致)。"""
+                    runs = runner.list_runs(_runs_root, limit=50)
+                    idx = (evt.index[0] if evt and getattr(evt, "index", None)
+                           else 0) or 0
+                    if idx >= len(runs):
+                        return "(这一行对应的任务已不在列表里)", ""
+                    r = runs[idx]
+                    state = runner.STATE_STYLES.get(r.get("state"), ("",))[0]
+                    return (f"**{r.get('label') or r.get('command')}** · {state}",
+                            runner.tail_log(_runs_root, r["run_id"]))
+
+                _hi_open.__annotations__ = {"evt": gr.SelectData}
+                hi_table.select(_hi_open, None, [hi_pick, hi_log])
+
+                def _tk_stop_click():
+                    act = runner.active_run(_runs_root)
+                    if not act:
+                        return _tk_view("没有正在跑的任务")
+                    runner.stop(_runs_root, act["run_id"])
+                    return _tk_view("已请求停止。中途停下的结果目录不完整,"
+                                    "重跑时请勾选「覆盖同名结果」")
+
+                tk_stop.click(_tk_stop_click, None, _tk_outs)
+                # 轮询刷新:2 秒一次,只读两个小文件 + 日志尾部,开销可忽略。
+                # 历史表跟着一起刷(任务跑完就该出现在历史里,不该等人点)。
+                if hasattr(gr, "Timer"):
+                    gr.Timer(2.0).tick(lambda: _tk_view(""), None, _tk_outs)
+                    gr.Timer(10.0).tick(_hi_rows, None, hi_table)
+                app.load(lambda: _tk_view(""), None, _tk_outs)
+                app.load(_hi_rows, None, hi_table)
+            # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
+            # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
+            # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。
+            report_ctx = shell.enter_context(contextlib.ExitStack())
+            report_ctx.enter_context(gr.Tab("质检报告", id="report"))
             with gr.Row():
-                picker = gr.Dropdown(choices=choices, value=choices[0], label="交付目录",
-                                     scale=4, interactive=True, allow_custom_value=True,
-                                     info="可输入任意**交付目录**或其**父目录**后按回车+「重新加载」:"
-                                          "父目录会自动展开其下全部交付;新跑完的目录点「重新加载」即出现")
-                reload_btn = gr.Button("重新加载", scale=1)
+                # 文案一句话就够(2026-08-13 用户:"这种文字根本不应该给客户看")。
+                # 「重新加载」按钮已撤:新交付由下面的定时器自动出现在列表里,
+                # 让用户自己点刷新是上个时代的做法。
+                picker = gr.Dropdown(choices=choices, value=choices[0], label="交付",
+                                     scale=1, interactive=True, allow_custom_value=True,
+                                     info="新跑完的交付会自动出现在这里")
             state = gr.State()
 
-            with gr.Tab("漏斗总览"):
+            with gr.Tab("质检总览"):
                 ov_md = gr.Markdown()
                 ov_funnel = gr.Dataframe(headers=FUNNEL_HEADERS, label="漏斗", interactive=False)
                 with gr.Accordion("本次运行生效配置(config_effective)", open=False):
@@ -481,7 +1327,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             ep_checks = gr.HTML()
                             ep_sync = gr.HTML()
                             # 同步曲线是超宽长图,给整幅宽度(整页也有专门的曲线页)
-                            ep_plot = gr.Image(label="同步曲线(右上角可全屏放大)",
+                            ep_plot = gr.Image(label="视频-动作同步曲线(右上角可全屏放大)",
                                                visible=False, interactive=False,
                                                buttons=["fullscreen", "download"],
                                                height=380)
@@ -496,7 +1342,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 gr.HTML(_adj_section_html("1", "标注分歧",
                                           "原始标注 vs 画面自产描述",
-                                          "#ea580c", "#9a3412"))
+                                          "#FF7D00", "#D25F00"))
                 au_table = gr.Dataframe(headers=AUDIT_HEADERS,
                                         label="标注-画面分歧队列(审计检出;重点档排最前;"
                                               "点任意一行 → 下方裁决卡片跳到该条)",
@@ -511,8 +1357,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 #    重判 = 命令行 curation rejudge(人工确认是自产自证的断路器)。
                 # 默认展开(2026-08-05 用户定:折叠着没人知道能点开)——有分歧队列
                 # 的交付,裁决面板就是这个页签的主工作区,不该藏
-                with gr.Accordion("裁决标注分歧(点按钮=记草稿,可随时改判;"
-                                  "跑 curation rejudge 才生效)", open=True):
+                with gr.Accordion("裁决标注分歧(记草稿,可随时改)", open=True):
                     au_idx = gr.State(0)
                     with gr.Row():
                         au_prev = gr.Button("← 上一条", scale=1)
@@ -537,7 +1382,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 #    人看视频直接给结论(判成功/判失败/搁置),rejudge 只负责搬交付。
                 gr.HTML(_adj_section_html("2", "任务成败弃权",
                                           "系统弃权,需人工审核",
-                                          "#2563eb", "#1e3a8a"))
+                                          "#165DFF", "#165DFF"))
                 tv_hint = gr.Markdown()
                 tv_table = gr.Dataframe(headers=TASK_REVIEW_HEADERS,
                                         label="任务成败待裁决队列(点任意一行 → "
@@ -546,8 +1391,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                         max_height=420, wrap=True,
                                         column_widths=["7%", "11%", "10%", "38%",
                                                        "22%", "12%"])
-                with gr.Accordion("裁决任务成败(点按钮=记草稿,可随时改判;"
-                                  "跑 curation rejudge 才生效)", open=True):
+                with gr.Accordion("裁决任务成败(记草稿,可随时改)", open=True):
                     tv_idx = gr.State(0)
                     with gr.Row():
                         tv_prev = gr.Button("← 上一条", scale=1)
@@ -566,7 +1410,42 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         tv_hold = gr.Button("⏸ 搁置", variant="secondary")
                     tv_status = gr.Markdown()
 
-            with gr.Tab("技能画像"):
+                # ── ③ 被拒复议(2026-08-11):任务成败判定**杀掉**的条目在这里
+                #    可看、可捞回 —— 判定从"拿不准就转人工"升级成"证据够就杀"
+                #    之后,这一区就是保险丝。整区在没有可复议条目时**不渲染**
+                #    (visible=False):空区块占着位置只会让人以为自己漏看了什么。
+                #    物理与结构硬门拒掉的条目进不来(准入判据在 decisions.py)。
+                with gr.Column(visible=False) as ap_block:
+                    gr.HTML(_adj_section_html("3", "被拒复议",
+                                              "系统判为任务未完成的条目,人看完可捞回",
+                                              "#CB272D", "#CB272D"))
+                    ap_hint = gr.Markdown()
+                    ap_table = gr.Dataframe(headers=APPEAL_HEADERS,
+                                            label="被拒条目(点任意一行 → "
+                                                  "下方复议卡片跳到该条)",
+                                            interactive=False, elem_id="appeal-queue",
+                                            max_height=420, wrap=True,
+                                            column_widths=["8%", "12%", "45%",
+                                                           "22%", "13%"])
+                    with gr.Accordion("复议被拒条目(记草稿,可随时改)", open=True):
+                        ap_idx = gr.State(0)
+                        with gr.Row():
+                            ap_prev = gr.Button("← 上一条", scale=1)
+                            ap_pos = gr.Markdown("", elem_id="ap-pos")
+                            ap_next = gr.Button("下一条 →", scale=1)
+                        ap_info = gr.Markdown()
+                        ap_readings = gr.Markdown()
+                        # 视频走 Episodes 页那条来源链(审片站 → 交付数据集 → 提示语),
+                        # 不另起一套:被拒条目往往没有裁决片段,只有那条链找得到画面。
+                        ap_video = gr.HTML()
+                        ap_note = gr.Textbox(label="备注(可选;写清依据,复盘时是唯一线索)")
+                        with gr.Row():
+                            # 顺序与 APPEAL_CHOICES 严格对应(_ap_btns 按序点亮)
+                            ap_keep = gr.Button("❌ 维持拒绝", variant="secondary")
+                            ap_back = gr.Button("🛟 捞回(判为可用)", variant="secondary")
+                        ap_status = gr.Markdown()
+
+            with gr.Tab("技能分布"):
                 # 图在表上方(2026-07-30):先看分布(谁多谁少、长尾有多长),
                 # 再下去查具体判据。表格原样不动。
                 sk_html = gr.HTML()
@@ -580,65 +1459,70 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             #    与「Stuck 时间线」相邻 = 两页都是图形化诊断(一个看时间轴、一个看
             #    相关曲线),放一起找得到。分页而不是懒加载:曲线是宽长图,一屏 24 张
             #    已经够翻,且分页零 JS(本 UI 一贯做法)。
-            with gr.Tab("同步曲线"):
-                # 结论先行(2026-08-07 用户点名:光有图没有提示)——建议原先埋在
-                # 整页曲线之后,滚不到等于没有。现在顶部先说"这份数据同步得怎么样、
-                # 该怎么办",曲线退居证据位。
-                sy_conclusion = gr.HTML()
-                # 全库逐相机概览紧跟结论(2026-08-07 用户:"建议放到页面开头")——
-                # 它是结论的量化底稿,原先压在整页曲线之后,谁也滚不到。
-                sy_health = gr.HTML()
-                with gr.Accordion("怎么看这些图(展开)", open=False):
-                    gr.Markdown(SYNC_HOWTO)
-                sy_filter = gr.Radio(SYNC_FILTERS, value=SYNC_FILTER_ALL,
-                                     label="筛选")
-                with gr.Row():
-                    # 平铺优先:一页放得下就整排隐藏翻页件(2026-08-07 用户定),
-                    # 只有图多到一页塞不下时才露出来兜底
-                    sy_prev = gr.Button("← 上一页", scale=1, visible=False)
-                    sy_pos = gr.Markdown("")
-                    sy_next = gr.Button("下一页 →", scale=1, visible=False)
-                sy_note = gr.Markdown()
-                # 一张一行、整幅宽度(不用 Gallery:宽幅长图塞进方格必然上下留白,
-                # 中间两张图周围全是空——2026-08-07 用户实见)。固定槽位 + visible
-                # 开关,数量随分页变化;每张自带全屏/下载按钮,点开即原尺寸。
-                sy_cards = gr.HTML()
-                sy_page = gr.State(0)
-
-            with gr.Tab("Stuck 时间线"):
-                gr.Markdown("每条 episode 一根彩条(0 → 结束秒),段界标秒、悬停看精确"
-                            "起止;按 stuck 总时长降序 = 图形化人工复查队列")
-                tl_all = gr.Checkbox(label="显示全部 episode(含无 stuck/idle 的干净条目)",
-                                     value=False)
-                tl_note = gr.Markdown()
-                tl_html = gr.HTML()
-
+            # 明细页(2026-08-13 用户定):顶层只留五个,诊断与排障类收进这里当子页,
+            # 报告首屏不再一次糊上来九个页签。子页的内容与回调**逐字未动**,
+            # 只是多包了一层 gr.Tabs()。
             with gr.Tab("明细"):
-                dt_pick = gr.Dropdown(label="选择明细表(交付目录 details/ 下的 CSV)",
-                                      interactive=True)
-                dt_note = gr.Markdown()
-                dt_table = gr.Dataframe(label="明细", interactive=False)
+                with gr.Tabs():
+                    with gr.Tab("动作打分明细"):
+                        dt_pick = gr.Dropdown(label="选择明细表(交付目录 details/ 下的 CSV)",
+                                              interactive=True)
+                        dt_note = gr.Markdown()
+                        dt_table = gr.Dataframe(label="明细", interactive=False,
+                                                wrap=False, max_height=560)
 
-            with gr.Tab("性能剖析"):
-                # 三块(2026-07-30):① 这次用的什么服务/什么硬件 ② 管线自己跑在
-                # 什么容器里 ③ 时间花在哪一类 VLM 调用上。数据全部来自交付记录,
-                # **界面不出现任何后端预设代号**(那是机房黑话,见 manifest 顶部红线)。
-                perf_backend = gr.Markdown()
-                perf_env = gr.Markdown()
-                gr.Markdown("### 延时剖析")
-                perf_note = gr.Markdown()
-                perf_table = gr.Dataframe(headers=LATENCY_HEADERS, label="分类延时",
-                                          interactive=False)
-                # 两段常量说明(与交付无关,不进 _load 的输出列表):分位数怎么读、
-                # 四类调用各是干什么的。第二轮反馈:光有语义化名字客户仍读不懂。
-                gr.Markdown(LATENCY_PCTL_NOTE)
-                gr.Markdown(LATENCY_KIND_NOTE)
-                perf_bar = gr.HTML()
+                    with gr.Tab("视频-动作同步"):
+                        # 结论先行(2026-08-07 用户点名:光有图没有提示)——建议原先埋在
+                        # 整页曲线之后,滚不到等于没有。现在顶部先说"这份数据同步得怎么样、
+                        # 该怎么办",曲线退居证据位。
+                        sy_conclusion = gr.HTML()
+                        # 全库逐相机概览紧跟结论(2026-08-07 用户:"建议放到页面开头")——
+                        # 它是结论的量化底稿,原先压在整页曲线之后,谁也滚不到。
+                        sy_health = gr.HTML()
+                        with gr.Accordion("怎么看这些图(展开)", open=False):
+                            gr.Markdown(SYNC_HOWTO)
+                        sy_filter = gr.Radio(SYNC_FILTERS, value=SYNC_FILTER_ALL,
+                                             label="筛选")
+                        with gr.Row():
+                            # 平铺优先:一页放得下就整排隐藏翻页件(2026-08-07 用户定),
+                            # 只有图多到一页塞不下时才露出来兜底
+                            sy_prev = gr.Button("← 上一页", scale=1, visible=False)
+                            sy_pos = gr.Markdown("")
+                            sy_next = gr.Button("下一页 →", scale=1, visible=False)
+                        sy_note = gr.Markdown()
+                        # 一张一行、整幅宽度(不用 Gallery:宽幅长图塞进方格必然上下留白,
+                        # 中间两张图周围全是空——2026-08-07 用户实见)。固定槽位 + visible
+                        # 开关,数量随分页变化;每张自带全屏/下载按钮,点开即原尺寸。
+                        sy_cards = gr.HTML()
+                        sy_page = gr.State(0)
 
-            with gr.Tab("后端状态"):
-                gr.Markdown("逐预设探活 + 列服务端模型(与 `curation backends` 同源)")
-                be_btn = gr.Button("探活")
-                be_table = gr.Dataframe(headers=["预设", "状态", "服务端模型"], interactive=False)
+                    with gr.Tab("卡顿动作时间线"):
+                        # 筛选与排序(2026-08-13 用户定):默认「stuck + idle」+「episode
+                        # 序号」—— 先按录制顺序看,与原始数据条目对得上;要当复查队列
+                        # 用再切「卡顿时长」把最该看的顶上来。说明文字用户点名删了。
+                        with gr.Row():
+                            tl_show = gr.Radio(list(TL_FILTERS.values()),
+                                               value=TL_FILTERS["both"], label="显示")
+                            tl_sort = gr.Radio(list(TL_SORTS.values()),
+                                               value=TL_SORTS["episode"], label="排序")
+                        tl_note = gr.Markdown()
+                        tl_html = gr.HTML()
+
+                    with gr.Tab("性能剖析"):
+                        # 三块(2026-07-30):① 这次用的什么服务/什么硬件 ② 管线自己跑在
+                        # 什么容器里 ③ 时间花在哪一类 VLM 调用上。数据全部来自交付记录,
+                        # **界面不出现任何后端预设代号**(那是机房黑话,见 manifest 顶部红线)。
+                        perf_backend = gr.Markdown()
+                        perf_env = gr.Markdown()
+                        gr.Markdown("### 延时剖析")
+                        perf_note = gr.Markdown()
+                        perf_table = gr.Dataframe(headers=LATENCY_HEADERS, label="分类延时",
+                                                  interactive=False)
+                        # 两段常量说明(与交付无关,不进 _load 的输出列表):分位数怎么读、
+                        # 四类调用各是干什么的。第二轮反馈:光有语义化名字客户仍读不懂。
+                        gr.Markdown(LATENCY_PCTL_NOTE)
+                        gr.Markdown(LATENCY_KIND_NOTE)
+                        perf_bar = gr.HTML()
 
             # ⚠️ 顺序必须与 _load 的返回值逐项对齐(错位是运行期才炸的接线错误,
             #    有测试直接比 len(_load(...)) == len(outputs) 钉住)。
@@ -649,6 +1533,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # _ep_list 按这个顺序装配
             _ep_list_outs = [ep_page, ep_sel, ep_pick, ep_pos, ep_prev, ep_next]
             _sy_outs = [sy_page, sy_note, sy_pos, sy_prev, sy_next, sy_cards]
+            # 复议卡片的七个槽(_ap_render 按这个顺序装配;两个按钮的顺序 =
+            # APPEAL_CHOICES 的顺序)
+            _ap_outs = [ap_idx, ap_pos, ap_info, ap_readings, ap_video,
+                        ap_keep, ap_back]
 
             outs = [state, ov_md, ov_funnel, ov_cfg, ep_bucket, *_ep_list_outs,
                     sk_html, sk_table, sk_audit_note,
@@ -658,30 +1546,28 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     tv_hint, tv_table,
                     tv_idx, tv_pos, tv_info, tv_readings, *tv_vids,
                     tv_pass, tv_fail, tv_hold,
+                    ap_block, ap_hint, ap_table, *_ap_outs,
                     *_ep_outs, dt_pick, dt_note, dt_table,
                     sy_filter, *_sy_outs, sy_conclusion, sy_health,
-                    tl_note, tl_html,
+                    tl_show, tl_sort, tl_note, tl_html,
                     perf_backend, perf_env, perf_note, perf_table, perf_bar]
-            picker.change(_load, picker, outs)
+            # 用 .input 不用 .change(2026-08-12 二次踩的一课):回填下拉值会经
+            # .change 级联再跑一次 _load,与另一批更新并发改同一排组件,翻页按钮的
+            # visible 补丁偶尔被冲掉。.input 只认用户动作,单写者,竞态整类消失。
+            picker.input(_load, picker, outs)
 
-            def _reload(path):
-                # 重扫根目录(2026-07-28;2026-08-06 增强):
-                # - 手输的是**交付目录本体** → 保留为选项并加载;
-                # - 手输的是**装着交付的父目录** → 自动展开,把它下面的交付并入列表
-                #   (此前这种输入静默加载失败,看起来像"其它目录无法显示");
-                # - 都不是 → 仍保留输入(可能是尚未跑完的目录),加载报什么算什么。
+            def _picker_tick(cur):
+                """定时刷新交付列表(**只换选项、不重载内容**)。
+
+                只换选项是刻意的:内容重载会与用户当下的点击并发打架 —— 交付下拉的
+                联动就为此修过一次(6bb28b5:两批更新改同一排组件,翻页按钮偶尔被
+                冲掉)。新交付自动出现在列表里,点它即可查看,不必再点什么"刷新"。
+                手输的自定义路径原样保留在选项里,不会被刷掉。
+                """
                 fresh = discover_deliveries(delivery)
-                sel = path
-                if path and path not in fresh and os.path.isdir(path):
-                    found = discover_deliveries(path)
-                    if found and path not in found:
-                        fresh = fresh + [d for d in found if d not in fresh]
-                        sel = found[0]                    # 父目录 → 跳到其中第一个交付
-                if sel and sel not in fresh:
-                    fresh = fresh + [sel]
-                return (gr.update(choices=fresh, value=sel), *_load(sel))
-
-            reload_btn.click(_reload, picker, [picker, *outs])
+                if cur and cur not in fresh:
+                    fresh = fresh + [cur]
+                return gr.update(choices=fresh, value=cur)
 
             def _ep_select(m, eid):
                 """点清单某条 → 记住它 + 换右侧详情。"""
@@ -810,16 +1696,67 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                           [state, tv_idx, tv_note], _tv_dec_outs)
             tv_hold.click(lambda m, i, nt: _tv_decide(m, i, nt, "搁置"),
                           [state, tv_idx, tv_note], _tv_dec_outs)
-            tl_all.change(lambda m, a: timeline_html(load_timeline(m), only_flagged=not a),
-                          [state, tl_all], tl_html)
-            be_btn.click(lambda: _probe_backends(config_path, probe_timeout), None, be_table)
+
+            # ── ③ 被拒复议:翻页 / 点行跳转 / 两键复议 ──
+            ap_prev.click(lambda m, i: _ap_render(m, (i or 0) - 1),
+                          [state, ap_idx], _ap_outs)
+            ap_next.click(lambda m, i: _ap_render(m, (i or 0) + 1),
+                          [state, ap_idx], _ap_outs)
+
+            def _ap_jump(m, evt):
+                return _ap_render(m, evt.index[0])
+
+            _ap_jump.__annotations__ = {"evt": gr.SelectData}
+            ap_table.select(_ap_jump, state, _ap_outs)
+
+            def _ap_decide(m, idx, note, appeal):
+                q = (m or {}).get("reject_appeal") or []
+                if not q:
+                    return ("⚠️ 无可复议的条目", gr.update(), gr.update(),
+                            *[gr.update()] * 2)
+                a = q[(idx or 0) % len(q)]
+                msg = record_reject_appeal(m["path"], a.get("id", ""), appeal,
+                                           note or "")
+                if msg.startswith("✅"):
+                    msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
+                    btns = _ap_btns(appeal)
+                else:
+                    btns = [gr.update()] * 2
+                info = _ap_render(m, idx)[2]                 # 卡片头同步"已复议"状态
+                return msg, gr.update(value=appeal_rows(m)), info, *btns
+
+            _ap_dec_outs = [ap_status, ap_table, ap_info, ap_keep, ap_back]
+            ap_keep.click(lambda m, i, nt: _ap_decide(m, i, nt, "维持拒绝"),
+                          [state, ap_idx, ap_note], _ap_dec_outs)
+            ap_back.click(lambda m, i, nt: _ap_decide(m, i, nt, "捞回"),
+                          [state, ap_idx, ap_note], _ap_dec_outs)
+            # 筛选/排序都只是重画同一份数据(load_timeline 读的是交付里的
+            # episodes_timeline.json),不重算任何指标。
+            def _tl_view(m, show_label, sort_label):
+                show = _label_key(TL_FILTERS, show_label, "both")
+                srt = _label_key(TL_SORTS, sort_label, "episode")
+                return timeline_html(load_timeline(m), show=show, sort=srt)
+
+            for _c in (tl_show, tl_sort):
+                _c.change(_tl_view, [state, tl_show, tl_sort], tl_html)
             app.load(_load, picker, outs)
+
+            report_ctx.close()          # 报告页到此为止,下面的页签是它的兄弟
+            if terminal:
+                # 内嵌终端(2026-07-29 U4,替代 ttyd iframe):xterm.js 画屏 +
+                # 本服务的 /ws/term(forkpty 起 bash)。装配全在 term.js 里,
+                # 这里只放它要挂载的容器 div;term.js 等这个 div **可见**才连,
+                # 所以不点终端页签就不会在服务端 fork 出 shell。
+                # 位置:**最右**(2026-08-13 用户定)—— 它是我们排障用的,
+                # 不该在客户第一眼看到的位置;默认落地页也从报告改成了任务台。
+                with gr.Tab("终端", id="term"):
+                    gr.HTML('<div id="curation-term-screen"></div>')
     return app
 
 
 def create_asgi_app(delivery: str, config_path: str | None = None,
                     probe_timeout: float = 5.0, terminal: bool = False,
-                    review_dir: str | None = None):
+                    review_dir: str | None = None, data_root: str | None = None):
     """→ FastAPI 应用(gradio 挂在 `/`,自定义路由挂在它前面)。
 
     为什么不再用 `blocks.launch()`:launch() 自己造 FastAPI + 自己跑 uvicorn,拿不到
@@ -837,7 +1774,7 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
     from . import auth
 
     blocks = build_app(delivery, config_path, probe_timeout, terminal=terminal,
-                       review_dir=review_dir)
+                       review_dir=review_dir, data_root=data_root)
     api = FastAPI()
 
     # 探针端点(鉴权豁免,见 auth.EXEMPT_PATHS):k8s readinessProbe 现在指 /(整页
@@ -873,12 +1810,13 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
 
 def launch(delivery: str, config_path: str | None = None, host: str = "0.0.0.0",
            port: int = 7860, probe_timeout: float = 5.0,
-           terminal: bool = False, review_dir: str | None = None) -> None:
+           terminal: bool = False, review_dir: str | None = None,
+           data_root: str | None = None) -> None:
     import uvicorn
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     app = create_asgi_app(delivery, config_path, probe_timeout, terminal=terminal,
-                          review_dir=review_dir)
+                          review_dir=review_dir, data_root=data_root)
     log.info("质检台 UI 监听 http://%s:%s(交付根目录 %s)", host, port, delivery)
     uvicorn.run(app, host=host, port=port)

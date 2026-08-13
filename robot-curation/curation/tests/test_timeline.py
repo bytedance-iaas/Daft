@@ -55,11 +55,22 @@ def test_html_render_and_sort():
         "duration_s": 8.0, "totals": {"stuck": 0, "idle": 0, "normal": 8.0},
         "segments": [{"start_s": 0.0, "end_s": 8.0, "state": "normal"}]}
     html = timeline_html(tl)
-    assert html.index("ep_a") < html.index("ep_b")          # stuck 多的排前
+    assert html.index("ep_a") < html.index("ep_b")          # 默认按 episode 序号
     assert "ep_clean" not in html                            # 默认只列有 stuck/idle 的
-    assert "另有 1 条" in html                               # 被藏条数注明
-    assert "ep_clean" in timeline_html(tl, only_flagged=False)  # 开关放开全列
-    assert "#c0392b" in html and "#f1c40f" in html and "#1abc9c" in html
+    assert "另有 1 条" in html                               # 被筛掉的条数注明
+    assert "ep_clean" in timeline_html(tl, show="all")       # 筛选放开全列
+    # 排序:按卡顿时长时 stuck 多的顶到最前(ep_a 2.0s > ep_b 1.0s,与序号序同向,
+    # 所以再拿一份倒过来的名字来验,免得两种排序看不出差别)
+    rev = {"episodes": {"ep_a": tl["episodes"]["ep_b"], "ep_b": tl["episodes"]["ep_a"]}}
+    assert timeline_html(rev).index("ep_a") < timeline_html(rev).index("ep_b")
+    by_stuck = timeline_html(rev, sort="stuck")
+    assert by_stuck.index("ep_b") < by_stuck.index("ep_a")   # 卡顿长的在前
+    # 只看 idle:ep_b 有 idle、ep_a 没有
+    only_idle = timeline_html(tl, show="idle")
+    assert "ep_b" in only_idle and "ep_a" not in only_idle
+    only_stuck = timeline_html(tl, show="stuck")
+    assert "ep_a" in only_stuck
+    assert "#F53F3F" in html and "#FF7D00" in html and "#00B42A" in html   # Arco 三态色
     assert 'title="stuck(指令在推而不动) 0.0–2.0s"' in html  # 悬停精确起止
     assert ">2</span>" in html and ">1</span>" in html       # 所有分界都标
     assert ">10s</span>" in html                             # 末端带 s 后缀
