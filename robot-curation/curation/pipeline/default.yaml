@@ -76,6 +76,23 @@ checks:
     # v7.2 多视角(同日):打分=各相机带标签联合(逐时刻融合感知);复核=逐机位
     # 独立双问+unclear弃权票再汇票。相机路数沿用 pipeline.max_endstate_cams。
     params: {n_probe: 8, success_min: 0.45, fail_max: 0.25, gap_max: 0.5}
+    # 取证仲裁链(2026-08-13 用户拍板):
+    # 只接管打分+复核后仍**弃权**的条目再判一次(过/杀/继续弃权),没有推翻老判决的
+    # 权力。droid-200 真值实测:人工 50→32(-36%);代价如实写明=冤杀 1→4,靠已交付
+    # 的「被拒复议」轨道兜底(语义判定的杀可人工捞回)。enable: false = 完全退回
+    # 没有仲裁链的行为(逐字节等价),这是必须保证的性质。
+    arbitration:
+      enable: true
+      consensus: strict            # 全部有效路结论一致才采纳,不一致=弃权(仅支持 strict)
+      kill_min_lines: 2            # 🔴 杀需≥2条有效取证路:实测只有一路的杀 5 条全是冤杀
+                                   #   (与生产线 v7.3「杀人双签/孤证不放行」同一条原则)
+      n_votes: 3                   # 每路判官投票次数(方舟 temperature=0 仍不可复现,取多数)
+      crop_pad: 0.15               # 取证裁剪:target+object 两框并集向外扩 15%
+      upscale: 3                   # 裁剪图放大倍数(小/细目标在原图里看不清)
+      transient_offset_s: 1.0     # 瞬态任务(只抓取/举起)取证时刻=最大闭爪时刻+此偏移
+                                   #   (验末帧会犯"松爪即失败"谬误;夹爪列走 registry 的
+                                   #   gripper_dims,不硬编码数据集)
+      # max_cams: 4                # 外部取证路数上限;不写默认复用 pipeline.max_endstate_cams
     vlm:                           # ★ 模型只在这一处配置——换模型=改这里,零代码改动
                                    #   本段同时供 M4c(成败判定/终态复核)与 M7(caption/归纳/审计)
       provider: openai             # openai 兼容端点:自托管 vLLM 与托管 MaaS(方舟)同一套协议

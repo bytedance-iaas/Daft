@@ -432,3 +432,211 @@ def test_verdict_fail_drops_row_from_delivered_parquet(tmp_path):
     # 判成功的条目标注不许被动过(成败裁决不改 instruction)
     by = dict(zip(got["episode_id"], got["instruction"]))
     assert by["epX"] == "a"
+
+
+# ───────── 被拒复议(2026-08-11):语义判定的杀可复议,物理硬门不可 ─────────
+
+
+def _reject_views():
+    """真实形态:三条被拒条目 —— 两条语义判定杀(可复议),一条时间戳残段(终局)。"""
+    passed = {"episodes": {"epOK": {"判决": "通过", "综合软分": 0.9, "checks": {}}}}
+    review = {"待人工裁决总数": 0, "episodes": {}}
+    reject = {"被拒总数": 3, "episodes": {
+        "epK1": {"判决": "拒绝", "原因": "未通过「任务成败判定」:全程没有把杯子拿起来",
+                 "综合软分": 0.8,
+                 "checks": {"任务成败判定": {"结果": "拒绝",
+                                             "detail": '{"voc": 0.2}'}}},
+        # 老交付的记法(硬门违规: 「X」)也必须认得,否则老交付一条都复议不了
+        "epK2": {"判决": "拒绝", "原因": "硬门违规: 「任务成败判定」", "综合软分": 0.7,
+                 "checks": {"任务成败判定": {"结果": "拒绝"}}},
+        "epPhys": {"判决": "拒绝", "原因": "未通过「时间戳检查」:0.47 秒的采集残段",
+                   "综合软分": 0.6,
+                   "checks": {"时间戳检查": {"结果": "拒绝"}}}}}
+    return passed, review, reject
+
+
+def test_appeal_restore_flips_reject_to_pass_with_provenance():
+    """捞回:出拒绝清单、判决改「通过(人工复议)」、成败检查落 pass、溯源在案;
+    VLM 当时的读数(detail)必须原样留着——复盘时那是"机器为什么杀它"的唯一线索。"""
+    from curation.pipeline.rejudge import apply_reject_appeals
+    p, r, j = _reject_views()
+    s = apply_reject_appeals(p, r, j, {"epK1": {"appeal": "捞回", "note": "看了视频,拿起来了",
+                                                "at": "t1"}})
+    assert s["appeal_restored"] == ["epK1"] and "epK1" not in j["episodes"]
+    e = p["episodes"]["epK1"]
+    assert e["判决"] == "通过(人工复议)" and e["综合软分"] == 0.8
+    assert e["checks"]["任务成败判定"]["结果"] == "pass"
+    assert e["checks"]["任务成败判定"]["detail"] == '{"voc": 0.2}'
+    assert e["人工复议"]["复议结论"] == "捞回" and e["人工复议"]["备注"] == "看了视频,拿起来了"
+    assert e["人工复议"]["复议时间"] == "t1"
+    assert e["人工复议"]["verdict_source"] == "human_review"   # 下游按它区分人判/机判
+    assert j["被拒总数"] == 2                                   # 计数同步
+
+
+def test_appeal_restore_keeps_readings_and_other_open_questions():
+    """两件在 droid-200 ep000023 上实测栽过的事:
+
+    ① 同一条 episode 在 review 里还有一份**稀疏副本**(记的是另一个维度的弃权,
+       那条是同步测不准)。三边摘除时先命中的是那份,拿它当底 → 综合软分和 VLM
+       读数(六项 checks)全丢,捞回后交付里只剩一个"结果": "pass";
+    ② 那份副本记的未决问题与复议无关,跟着一起销案 = 一个待人工问题无声消失。
+    """
+    from curation.pipeline.rejudge import apply_reject_appeals
+    p, r, j = _reject_views()
+    j["episodes"]["epK1"]["checks"]["视频-动作同步"] = {"结果": "弃权"}
+    r["episodes"]["epK1"] = {"当前判决": "拒绝", "待裁决项": ["视频-动作同步"],
+                             "弃权原因": {"视频-动作同步": "信号不足,测不准"}}
+    r["待人工裁决总数"] = 1
+    apply_reject_appeals(p, r, j, {"epK1": {"appeal": "捞回", "at": "t1"}})
+    e = p["episodes"]["epK1"]
+    assert e["综合软分"] == 0.8                                   # 软分没丢
+    assert e["checks"]["任务成败判定"]["detail"] == '{"voc": 0.2}'  # 读数没丢
+    assert "视频-动作同步" in e["checks"]                          # 别的维度读数也在
+    assert r["episodes"]["epK1"]["待裁决项"] == ["视频-动作同步"]   # 未决问题仍挂着
+    assert r["episodes"]["epK1"]["当前判决"] == "通过"             # 判决已翻,视图跟上
+    assert r["待人工裁决总数"] == 1
+
+
+def test_appeal_uphold_records_only_and_never_flips():
+    """维持拒绝:只记档,判决/原因一个字不改(它是审计留痕,不是改判)。"""
+    from curation.pipeline.rejudge import apply_reject_appeals
+    p, r, j = _reject_views()
+    s = apply_reject_appeals(p, r, j, {"epK2": {"appeal": "维持拒绝", "note": "确实没完成",
+                                                "at": "t2"}})
+    assert s["appeal_upheld"] == ["epK2"] and s["appeal_restored"] == []
+    e = j["episodes"]["epK2"]
+    assert e["判决"] == "拒绝" and e["原因"] == "硬门违规: 「任务成败判定」"
+    assert e["人工复议"]["复议结论"] == "维持拒绝"
+    assert "epK2" not in p["episodes"] and j["被拒总数"] == 3
+
+
+def test_appeal_refuses_physical_hard_gates_even_if_csv_says_restore():
+    """范围钉死:时间戳/残段这类物理与结构硬门的拒绝**捞不回来**——界面本就不给
+    入口,裁决 CSV 是能被手改的文件,闭环这一侧必须再挡一次。"""
+    from curation.pipeline.rejudge import apply_reject_appeals
+    p, r, j = _reject_views()
+    s = apply_reject_appeals(p, r, j, {"epPhys": {"appeal": "捞回", "at": "t"},
+                                       "ep不存在": {"appeal": "捞回", "at": "t"},
+                                       "epK1": {"appeal": "大概能用吧", "at": "t"}})
+    assert set(s["appeal_skipped"]) == {"epPhys", "ep不存在", "epK1"}
+    assert s["appeal_restored"] == []
+    assert j["episodes"]["epPhys"]["判决"] == "拒绝"          # 原样不动
+    assert "人工复议" not in j["episodes"]["epPhys"]
+    assert "ep不存在" not in p["episodes"]                    # 绝不凭空造条目
+
+
+def test_appeal_reject_reason_scope_is_pinned():
+    """准入判据逐格钉死:同时踩了物理硬门的条目**不算**语义杀(证据不因人的意见消失)。"""
+    from curation.dataset_level.decisions import is_task_success_reject
+    assert is_task_success_reject("未通过「任务成败判定」:没拿起来")
+    assert is_task_success_reject("硬门违规: 「任务成败判定」")
+    assert is_task_success_reject("hard fail: task_success")
+    assert not is_task_success_reject("未通过「时间戳检查」:0.47 秒残段")
+    assert not is_task_success_reject("未通过「任务成败判定」:没拿起来;"
+                                      "未通过「视频-动作同步」:整体错位 0.4 秒")
+    assert not is_task_success_reject("未通过「运动学极限」:关节 3 超限")
+    assert not is_task_success_reject("与 ep000007 字节级完全重复")
+    assert not is_task_success_reject("人工裁决判失败(任务未完成)")
+    assert not is_task_success_reject("") and not is_task_success_reject(None)
+
+
+def _write_appeal_delivery(tmp_path, rows, views=None):
+    """交付三件套 + details/reject_appeals.csv 的最小 fixture。"""
+    (tmp_path / "details").mkdir(exist_ok=True)
+    p, r, j = views or _reject_views()
+    for name, data in [("passed", p), ("review", r), ("reject", j)]:
+        (tmp_path / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False),
+                                               encoding="utf-8")
+    with open(tmp_path / "details" / "reject_appeals.csv", "w", newline="",
+              encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["episode_id", "appeal", "note", "at"])
+        w.writeheader()
+        w.writerows(rows)
+    return tmp_path
+
+
+def test_run_rejudge_consumes_appeals_and_writes_report_section(tmp_path):
+    """端到端:只有复议草稿也要照跑,**一次 VLM 都不许调**;报告出「人工复议捞回」
+    小节并逐条列明,留档记下本轮真正应用的复议。"""
+    d = _write_appeal_delivery(tmp_path, [
+        {"episode_id": "epK1", "appeal": "捞回", "note": "拿起来了", "at": "t1"},
+        {"episode_id": "epK2", "appeal": "维持拒绝", "note": "", "at": "t2"}])
+    (d / "report.md").write_text("# 报告\n", encoding="utf-8")
+
+    def _boom(*a):
+        raise AssertionError("复议不该触发重判")
+
+    s = run_rejudge(str(d), "/unused", {}, rerun_fn=_boom)
+    assert s["appeal_restored"] == ["epK1"] and s["appeal_upheld"] == ["epK2"]
+    psd = json.loads((d / "passed.json").read_text(encoding="utf-8"))
+    rej = json.loads((d / "reject.json").read_text(encoding="utf-8"))
+    assert psd["episodes"]["epK1"]["判决"] == "通过(人工复议)"
+    assert "epK1" not in rej["episodes"] and set(rej["episodes"]) == {"epK2", "epPhys"}
+    md = (d / "report.md").read_text(encoding="utf-8")
+    assert "人工复议捞回 1 条" in md and "维持拒绝 1 条" in md
+    assert "epK1:人工复议判为可用" in md
+    res = json.loads((d / "details" / "rejudge_results.json").read_text(encoding="utf-8"))
+    assert res["reject_appeals"] == {"epK1": "捞回", "epK2": "维持拒绝"}
+
+
+def test_run_rejudge_appeal_is_idempotent(tmp_path):
+    """同一条复议(结论+时间没变)已落库 → 第二趟跳过,报告不再重数一遍。"""
+    d = _write_appeal_delivery(tmp_path, [
+        {"episode_id": "epK2", "appeal": "维持拒绝", "note": "", "at": "t2"}])
+    first = run_rejudge(str(d), "/unused", {}, rerun_fn=None)
+    assert first["appeal_upheld"] == ["epK2"]
+    second = run_rejudge(str(d), "/unused", {}, rerun_fn=None)
+    assert second["unchanged"] == ["epK2"] and second["appeal_upheld"] == []
+    # 改判(复议时间变了)→ 重新应用
+    with open(d / "details" / "reject_appeals.csv", "a", newline="",
+              encoding="utf-8") as f:
+        csv.writer(f).writerow(["epK2", "捞回", "复看后改判", "t9"])
+    third = run_rejudge(str(d), "/unused", {}, rerun_fn=None)
+    assert third["appeal_restored"] == ["epK2"]
+
+
+def test_legacy_delivery_without_appeal_file_still_runs(tmp_path):
+    """老交付根本没有 reject_appeals.csv:照常按另两条线跑完,不许炸。"""
+    d = _write_verdict_delivery(tmp_path, [
+        {"episode_id": "epX", "verdict": "判成功", "note": "", "at": "t1"}])
+    assert not (d / "details" / "reject_appeals.csv").exists()
+    s = run_rejudge(str(d), "/unused", {}, rerun_fn=None)
+    assert s["verdict_pass"] == ["epX"] and s["appeal_restored"] == []
+
+
+def test_appeal_restores_row_into_delivered_dataset(tmp_path):
+    """出数据闭环(反向):被拒条目**从来没进过** episodes_parquet,捞回要回源
+    把这一行加回来,LeRobot 包跟着重导出——只翻报告不补数据,客户拿到的还是少一条。"""
+    pytest = __import__("pytest")
+    pytest.importorskip("pandas")
+    daft = pytest.importorskip("daft")
+    from curation.tests.test_lerobot_v2_export import _write_v2_dataset
+    src = tmp_path / "src_ds"
+    _write_v2_dataset(str(src))                       # 4 条最小 v2 数据集
+    d = tmp_path / "dlv"
+    d.mkdir()
+    views = ({"episodes": {f"ep{i:06d}": {"判决": "通过"} for i in (0, 2, 3)}},
+             {"episodes": {}},
+             {"被拒总数": 1, "episodes": {"ep000001": {
+                 "判决": "拒绝", "原因": "未通过「任务成败判定」:没完成",
+                 "checks": {"任务成败判定": {"结果": "拒绝"}}}}})
+    _write_appeal_delivery(d, [{"episode_id": "ep000001", "appeal": "捞回",
+                                "note": "人看是成功的", "at": "t1"}], views=views)
+    daft.from_pydict({
+        "episode_id": ["ep000000", "ep000002", "ep000003"],
+        "instruction": ["a", "c", "d"],
+        "instruction_source": ["原始标注"] * 3,
+    }).write_parquet(str(d / "episodes_parquet"))
+    (d / "lerobot_curated").mkdir()
+    (d / "lerobot_curated" / "stale").write_text("old")
+
+    run_rejudge(str(d), str(src), {}, rerun_fn=None)
+    got = daft.read_parquet(str(d / "episodes_parquet")).to_pydict()
+    assert "ep000001" in got["episode_id"], "捞回的条目没补回交付数据集"
+    assert got["episode_id"] == sorted(got["episode_id"])       # 补进来仍按号有序
+    by = dict(zip(got["episode_id"], got["instruction_source"]))
+    # 补标只按源数据如实写:质检时的自产 caption 这里拿不到,不许现编一句
+    assert by["ep000001"] in ("原始标注", "无")
+    eps = [json.loads(x) for x in
+           (d / "lerobot_curated" / "meta" / "episodes.jsonl").read_text().splitlines()]
+    assert len(eps) == 4, "LeRobot 包没跟着把捞回的条目导出来"

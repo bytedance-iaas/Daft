@@ -609,6 +609,217 @@ def vlm_completion_from_config(cfg: dict):
                                                                  DEFAULT_MAX_CONCURRENCY)))
 
 
+# ══ 取证仲裁链的提示词与工厂(2026-08-13 定稿)═══════════════════════════════
+# 提示词全部原样承接实验版 arb_bench_b_v2(droid-200 真值上校准过的措辞):
+# - 问题生成三军规(禁加强词/严格度不超指令字面/gripper 不当 target):删一条冤杀就涨;
+# - 判官讲理标准三句(达成即YES/看不见答UNCLEAR绝不猜NO/空间短语按说话人本意):
+#   实验里把冤杀 52→17。改措辞前先回 droid-200 重测,不许手感调优。
+
+ARB_QUESTION_PROMPT = """A robot was instructed to perform this manipulation task:
+"{instruction}"
+
+You are preparing a verification checklist for whether the task succeeded.
+Output strict JSON with exactly these keys:
+- "task_type": "transient" if the task's goal is only to grasp / pick up / lift
+  / hold an object (no placement and no lasting change to the scene);
+  otherwise "persistent".
+- "target_location": short English name of the physical place that decides
+  success (a fixture or container someone could point at in a photo). For a
+  transient task use the object's surroundings.
+- "target_visual": one short phrase describing what target_location looks like
+  in a photo (color / shape / distinctive parts), to help locate it.
+- "object": short English name of the object being manipulated.
+- "verify_question": ONE yes/no question that confirms the task succeeded;
+  mention both the object and the target location.
+
+Rules for verify_question:
+- Its strictness must NOT exceed the instruction's literal wording. Never add
+  intensifiers such as "all", "fully", "completely", "securely", "properly",
+  "firmly", "neatly", "exactly" unless that word is in the instruction itself.
+- For a persistent task, the question is about the FINAL scene and must remain
+  true after the robot releases the object and retreats. Never ask whether the
+  object is in the gripper.
+- For a transient task, ask whether the object is held in the gripper / lifted
+  off its surface (it will be judged at the grasp moment, not the final frame).
+Output only the JSON, nothing else."""
+
+ARB_GROUND_PROMPT = """In this image, locate two things: (1) the ENTIRE {target} unit
+(including its rim and immediate surroundings; looks like: {visual}),
+(2) the {obj}. For each, answer 'NOT VISIBLE' or give a bounding box.
+Reply in this exact format (thousandths of image width/height, image is {w}x{h}):
+TARGET: <bbox>x0 y0 x1 y1</bbox> or NOT VISIBLE
+OBJECT: <bbox>x0 y0 x1 y1</bbox> or NOT VISIBLE"""
+
+ARB_JUDGE_PROMPT = """You are verifying whether a robot manipulation task succeeded.
+Step 1: briefly describe what you see in and around the {target} area — list the
+objects, their spatial relations, and anything covering, lining or partially
+hiding the {target}.
+Step 2: answer this question: {question}
+
+Judging standards:
+- Judge like a reasonable human: if the instruction's evident goal is achieved,
+  answer YES even if the execution is imperfect (slightly misplaced, minor
+  leftovers, untidy result).
+- Interpret spatial phrases the way the instruction's author would. Example: a
+  tap "at the center of the sink" means its spout ends up over the middle of
+  the sink, not inside the basin.
+- If the region that decides the answer is not visible (inside a container,
+  occluded, out of frame), answer UNCLEAR — never guess NO.
+Finish with a single line: VERDICT: YES or VERDICT: NO or VERDICT: UNCLEAR."""
+
+ARB_SAME_INTENT_PROMPT = """Two descriptions of what a robot was asked to do:
+A: "{a}"
+B: "{b}"
+Do they describe the SAME task (same action on the same object, wording
+differences aside)? Answer with exactly one word: SAME or DIFFERENT."""
+
+#: 取证场景 → 判官开场白(core 只传语义化 scene 名,措辞集中在本处)
+_ARB_SCENE_INTRO = {
+    "exterior_final": ("Image 1 is the full scene at the FINAL state of the "
+                       "episode; image 2 is a zoomed view of the {target} area "
+                       "from the same frame. "),
+    "exterior_post_grasp": ("Image 1 is the full scene shortly after the robot "
+                            "grasped the object; image 2 is a zoomed view of the "
+                            "{target} area from the same frame. "),
+    "wrist_grasp": ("These are wrist-camera frames around the moment the robot "
+                    "gripper GRASPED an object, in chronological order. "),
+    "wrist_release": ("These are wrist-camera frames around the moment the robot "
+                      "gripper RELEASED an object, in chronological order. "),
+}
+
+
+def parse_arbitration_boxes(text: str, w: int, h: int) -> list:
+    """TARGET/OBJECT 两行 → 像素框列表。坐标制自适应(0-1 归一化 / 千分制):
+    模型并不总按提示词的千分制回答,数值 ≤1.5 视为归一化坐标。太小的框(<3px)
+    是解析噪声,丢弃。"""
+    boxes = []
+    for line in str(text).splitlines():
+        if "NOT" in line.upper():
+            continue
+        nums = re.findall(r"-?\d+\.?\d*", line)
+        if len(nums) < 4:
+            continue
+        bx = [float(x) for x in nums[-4:]]
+        scale = 1.0 if max(bx) <= 1.5 else 1000.0
+        x0, y0 = bx[0] / scale * w, bx[1] / scale * h
+        x1, y1 = bx[2] / scale * w, bx[3] / scale * h
+        if x1 - x0 >= 3 and y1 - y0 >= 3:
+            boxes.append((x0, y0, x1, y1))
+    return boxes
+
+
+def parse_evidence_verdict(text: str) -> str:
+    """判官回答 → yes/no/unclear。找不到 VERDICT 行=没按协议答,按 unclear 处理
+    (看不懂的证词不能当实票)。"""
+    m = re.search(r"VERDICT:\s*(YES|NO|UNCLEAR)", strip_reasoning(str(text)), re.I)
+    return m.group(1).lower() if m else "unclear"
+
+
+def _make_arb_post(endpoint: str, model: str, timeout_s: float,
+                   api_key_env: str | None, max_tokens: int):
+    """仲裁链共用的一次调用闭包(文本+图,延时记入 arbitration 桶)。"""
+    import requests
+
+    url = endpoint.rstrip("/") + "/chat/completions"
+    headers = auth_headers(api_key_env)
+
+    def _post(text: str, frames: list = ()) -> str:
+        content = [{"type": "text", "text": text}] + [
+            {"type": "image_url", "image_url": {"url": _frame_to_data_uri(f)}}
+            for f in frames]
+        _t = _time.time()
+        _ok = False
+        try:
+            r = requests.post(url, json={"model": model, "temperature": 0.0,
+                                         "max_tokens": max_tokens,
+                                         "messages": [{"role": "user",
+                                                       "content": content}]},
+                              headers=headers, timeout=timeout_s)
+            _ok = r.ok
+        finally:
+            latency_record("arbitration", _time.time() - _t, _ok, started_at=_t)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+
+    return _post
+
+
+def make_question_writer(endpoint: str, model: str, timeout_s: float = 600.0,
+                         api_key_env: str | None = None):
+    """问题生成器工厂:writer(intent) -> 校验过的 spec dict(缺关键键即抛,
+    调用方把整条意图链转弃权——半张检查单没法取证,不硬凑)。"""
+
+    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=400)
+
+    def writer(intent: str) -> dict:
+        import json as _json
+
+        ans = strip_reasoning(_post(ARB_QUESTION_PROMPT.format(instruction=intent)))
+        ans = re.sub(r"^```(json)?|```$", "", ans.strip(), flags=re.M).strip()
+        spec = _json.loads(ans)
+        for key in ("task_type", "target_location", "verify_question"):
+            if not str(spec.get(key) or "").strip():
+                raise ValueError(f"问题生成缺关键字段 {key!r}: {ans[:200]!r}")
+        return spec
+
+    return writer
+
+
+def make_grounder(endpoint: str, model: str, timeout_s: float = 600.0,
+                  api_key_env: str | None = None):
+    """定位器工厂:grounder(img, target, visual, obj) -> 像素框列表(空=不可见)。"""
+
+    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=400)
+
+    def grounder(img, target: str, visual: str, obj: str) -> list:
+        arr = np.asarray(img)
+        h, w = arr.shape[:2]
+        ans = _post(ARB_GROUND_PROMPT.format(target=target, visual=visual,
+                                             obj=obj, w=w, h=h), [arr])
+        return parse_arbitration_boxes(strip_reasoning(ans), w, h)
+
+    return grounder
+
+
+def make_evidence_judge(endpoint: str, model: str, timeout_s: float = 600.0,
+                        api_key_env: str | None = None):
+    """判官工厂:judge(imgs, *, target, question, scene) -> 'yes'/'no'/'unclear'。
+
+    一次调用一票;三票多数在 core(_arb_line_verdict)。scene 是语义化场景名
+    (exterior_final / exterior_post_grasp / wrist_grasp / wrist_release),
+    对应的开场白措辞只在本模块。"""
+
+    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=1024)
+
+    def judge(imgs: list, *, target: str, question: str, scene: str) -> str:
+        intro = _ARB_SCENE_INTRO.get(scene, "")
+        text = (intro.format(target=target)
+                + ARB_JUDGE_PROMPT.format(target=target, question=question))
+        return parse_evidence_verdict(_post(text, list(imgs)))
+
+    return judge
+
+
+def make_intent_comparer(endpoint: str, model: str, timeout_s: float = 600.0,
+                         api_key_env: str | None = None):
+    """意图语义比对工厂:same(a, b) -> True=同一任务(意图打架护栏用)。
+
+    既非 SAME 也非 DIFFERENT 的回答直接抛 —— 调用方按打架从严处理,
+    比"当作相同"少一道护栏安全。"""
+
+    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=8)
+
+    def same(a: str, b: str) -> bool:
+        ans = strip_reasoning(_post(ARB_SAME_INTENT_PROMPT.format(a=a, b=b))).upper()
+        if "DIFFERENT" in ans:
+            return False
+        if "SAME" in ans:
+            return True
+        raise ValueError(f"语义比对回答无法解析: {ans[:80]!r}")
+
+    return same
+
+
 def make_llm_ask(endpoint: str, model: str, timeout_s: float = 1800.0,
                  max_tokens: int = 8192, api_key_env: str | None = None):
     """纯文本 LLM 调用工厂(M7 taxonomy/audit 用;同一端点同一模型,配置一处)。"""
