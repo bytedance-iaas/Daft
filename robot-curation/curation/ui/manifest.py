@@ -97,6 +97,7 @@ def load_delivery(path: str) -> dict:
             "audit_queue": (v.get("标注-画面分歧复核队列")
                             or v.get("标注审计复核队列") or []),
             "task_review": task_review_queue(v, episodes),
+            "reject_appeal": reject_appeal_queue(r, episodes),
             "episodes": episodes}
 
 
@@ -160,6 +161,24 @@ def task_review_queue(review_json: dict, episodes: dict) -> list:
                     "current": ve.get("当前判决", "?"),
                     "reason": (ve.get("弃权原因") or {}).get(TASK_CHECK_CN, ""),
                     "readings": task_readings(check),
+                    "state": check.get("state", "")})
+    return out
+
+
+def reject_appeal_queue(reject_json: dict, episodes: dict) -> list:
+    """reject.json + 已合并的 episodes → 被拒复议队列(纯函数)。
+
+    准入判据只有一条:拒因归因于任务成败判定(is_task_success_reject,与 rejudge
+    的落闭环共用)。物理与结构问题拒掉的条目**绝不出现在这里** —— 时间戳残段、
+    运动学超限、同步判废都是测出来的事实,复议不了。
+    拒因文本不在这里拼:显示时走 episode_reason_line(交付里那个唯一事实源)。
+    """
+    out = []
+    for eid, re_ in sorted((reject_json.get("episodes") or {}).items()):
+        if not is_task_success_reject(re_.get("原因")):
+            continue
+        check = ((episodes.get(eid) or {}).get("checks") or {}).get(TASK_CHECK_CN) or {}
+        out.append({"id": eid, "readings": task_readings(check),
                     "state": check.get("state", "")})
     return out
 
@@ -241,7 +260,7 @@ def skill_rows(m: dict) -> list[list]:
 #    骗人的。
 #
 #: 唯一的条色(见上 ②)。
-SKILL_BAR_COLOR = "#2a78d6"
+SKILL_BAR_COLOR = "#165DFF"
 
 #: 形状 B(VLM 不可用 → 退回按原始标注分组)必须挂的前提说明。不写清楚,客户会
 #: 把一堆原始指令当成系统归纳出的技能体系。形状 A 不显示这句。
@@ -309,22 +328,22 @@ def _skill_bar_row(it: dict, top: int, undersampled: set, *,
     if it.get("criterion"):
         title += f" · 判据:{str(it['criterion'])[:_SKILL_CRIT_CAP]}"
     # 「样本偏少」:带文字的 chip,颜色只是陪衬(色盲/黑白打印下仍读得出)。
-    chip = ('<span style="background:#fdf1dc;color:#8a6d3b;border:1px solid #eec98a;'
-            'border-radius:3px;padding:0 4px;margin-left:6px;font-size:10px;'
+    chip = ('<span style="background:#FFF7E8;color:#D25F00;border:1px solid #FFE4BA;'
+            'border-radius:3px;padding:2px 8px;margin-left:10px;font-size:13px;'
             'white-space:nowrap">样本偏少</span>') if name in undersampled else ""
     return (
-        f'<div title="{_esc(title)}" style="display:flex;align-items:center;gap:8px;'
-        f'margin:1px 0">'
+        f'<div title="{_esc(title)}" style="display:flex;align-items:center;gap:12px;'
+        f'margin:5px 0">'
         f'<span class="{"sk-caret" if caret else ""}" style="flex:0 0 '
-        f'{14 if not sub else 30}px;font-size:11px"></span>'
-        f'<div style="flex:0 0 {204 if sub else 218}px;font:12px/1.4 system-ui;'
+        f'{18 if not sub else 40}px;font-size:15px"></span>'
+        f'<div style="flex:0 0 {300 if sub else 320}px;font:16px/1.5 system-ui;'
         f'color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
         f'{_esc(name)}</div>'
-        f'<div style="flex:1;min-width:60px;background:#eef1f5;border-radius:4px;'
-        f'height:12px">'
+        f'<div style="flex:1;min-width:60px;background:#F7F8FA;border-radius:4px;'
+        f'height:26px">'
         f'<div style="width:{width:.2f}%;height:100%;background:{SKILL_BAR_COLOR};'
         f'border-radius:0 4px 4px 0"></div></div>'
-        f'<div style="flex:0 0 150px;font:11px/1.4 system-ui;color:#666;'
+        f'<div style="flex:0 0 210px;font:15px/1.5 system-ui;color:#666;'
         f'text-align:right">{_esc(meta)}{chip}</div></div>')
 
 
@@ -344,8 +363,8 @@ def skill_bar_html(m: dict) -> str:
 
     head = []
     if shape == "flat":
-        head.append(f'<p style="margin:0 0 6px 0;color:#8a6d3b;background:#fcf8e3;'
-                    f'border-left:3px solid #f1c40f;padding:6px 10px">'
+        head.append(f'<p style="margin:0 0 6px 0;color:#D25F00;background:#FFF7E8;'
+                    f'border-left:3px solid #FF7D00;padding:6px 10px">'
                     f'{SKILL_FALLBACK_NOTE}</p>')
     unit = "个技能族" if shape == "two_level" else "项技能(按原始标注分组)"
     n_kind = sk.get("n_families") if shape == "two_level" else sk.get("n_skills")
@@ -355,7 +374,7 @@ def skill_bar_html(m: dict) -> str:
     n_drill = sum(1 for it in items if len(it["subs"]) >= 2)
     if n_drill:
         line += f"其中 {n_drill} 个族有多个子技能,点族名可展开。"
-    head.append(f'<div style="font:12px/1.6 system-ui;color:#555;margin-bottom:6px">'
+    head.append(f'<div style="font:15px/1.7 system-ui;color:#555;margin-bottom:12px">'
                 f'{line}</div>')
 
     rows = []
@@ -369,10 +388,10 @@ def skill_bar_html(m: dict) -> str:
         else:
             rows.append(bar)
 
-    foot = ('<div style="font:11px/1.6 system-ui;color:#777;margin-top:8px">'
+    foot = ('<div style="font:14px/1.7 system-ui;color:#777;margin-top:14px">'
             '琥珀「样本偏少」标记来自画像自带的名单(生成画像时判定),不是本图现算的。'
             '</div>') if undersampled else ""
-    return ('<div class="sk-chart" style="max-width:960px">' + _SKILL_CSS
+    return ('<div class="sk-chart" style="max-width:1280px">' + _SKILL_CSS
             + "".join(head) + "".join(rows) + foot + '</div>')
 
 
@@ -415,6 +434,28 @@ def task_review_rows(m: dict) -> list[list]:
     return rows
 
 
+APPEAL_HEADERS = ["操作", "episode", "拒绝原因", "关键读数", "复议结论"]
+
+
+def appeal_reason_text(m: dict, eid: str) -> str:
+    """复议区显示的完整拒因 —— 直接引用详情页横幅那一句(单一事实源,不另拼)。"""
+    return episode_reason_line(m, eid)
+
+
+def appeal_rows(m: dict) -> list[list]:
+    """被拒复议队列 → 表格行。复议列回显 details/reject_appeals.csv(空=待人工)。"""
+    dec = load_reject_appeals(m)
+    rows = []
+    for a in m.get("reject_appeal") or []:
+        eid = a.get("id", "")
+        reason = appeal_reason_text(m, eid)
+        rows.append(["复议 ▶", eid,
+                     reason[:_REASON_CAP] + ("…" if len(reason) > _REASON_CAP else ""),
+                     readings_text(a.get("readings") or {}),
+                     dec.get(eid, {}).get("appeal", "")])
+    return rows
+
+
 def audit_pending_count(m: dict) -> int:
     """标注分歧队列里**还没裁**的条数(裁过的不该再催人去看)。"""
     dec = load_label_decisions(m)
@@ -429,14 +470,30 @@ def task_pending_count(m: dict) -> int:
                if dec.get(t.get("id", ""), {}).get("verdict", "") in ("", "搁置"))
 
 
+def appeal_pending_count(m: dict) -> int:
+    """被拒复议区里还没给结论的条数。"""
+    dec = load_reject_appeals(m)
+    return sum(1 for a in (m.get("reject_appeal") or [])
+               if not dec.get(a.get("id", ""), {}).get("appeal"))
+
+
+def appeal_hint_md(m: dict) -> str:
+    """复议区标题下的提示。空队列时返回空串 —— 这一区整块不渲染(调用侧据此隐藏)。"""
+    q = m.get("reject_appeal") or []
+    if not q:
+        return ""
+    n = appeal_pending_count(m)
+    return (f"系统按「任务成败判定」拒掉了 **{len(q)}** 条,其中 **{n}** 条还没人看过。"
+            "看完视频如果觉得系统判错了,点「捞回」就能把它放回交付。\n\n"
+            "_只有这一项拒掉的条目能在这里复议:时间戳/残段/运动学/同步这些"
+            "测出来的问题是终局,不进复议。_")
+
+
 #: 「人工裁决」页顶的工序引导。顺序不是洁癖:改标重判会让一部分弃权自动有结论,
 #: 先裁成败等于白裁——这句话就是防止用户白干一遍。
 WORKFLOW_GUIDE = (
-    "**建议顺序**:先裁下方「标注分歧」 → 跑 `curation rejudge`"
-    "(改标重判后,部分任务成败弃权会自动解决)→ 再裁剩余的「任务成败弃权」 → "
-    "再跑一次 `curation rejudge` 生效。\n\n"
-    "_两块都只**记录**裁决(落交付目录 details/ 下的 CSV),可随时改判;"
-    "真正改交付的是命令行的 `curation rejudge`。_")
+    "**建议顺序**:先裁「标注分歧」→ 到「任务台 · 执行人工裁决」执行一次 → "
+    "再裁剩下的「任务成败弃权」→ 再执行一次。")
 
 
 def audit_note_md(m: dict) -> str:
@@ -571,7 +628,7 @@ def load_detail_table(m: dict, name: str, cap: int = 2000):
 
 # ───────── Stuck 时间线(D2,2026-07-28):三态彩条 HTML 渲染 ─────────
 
-TL_COLORS = {"stuck": "#c0392b", "idle": "#f1c40f", "normal": "#1abc9c"}
+TL_COLORS = {"stuck": "#F53F3F", "idle": "#FF7D00", "normal": "#00B42A"}
 TL_LABELS = {"stuck": "stuck(指令在推而不动)", "idle": "idle(无指令静止)",
              "normal": "正常(在干活)"}
 
@@ -585,12 +642,28 @@ def load_timeline(m: dict) -> dict:
             "dataset_note": d.get("dataset_note", "")}
 
 
-def timeline_html(tl: dict, cap: int = 200, only_flagged: bool = True) -> str:
+#: 时间线的筛选口径 → (界面说法, 判定函数)。默认 both = 有 stuck 或 idle 的都列。
+TL_FILTERS = {
+    "both": "stuck + idle",
+    "stuck": "只看 stuck",
+    "idle": "只看 idle",
+    "all": "全部 episode",
+}
+
+#: 时间线的排序口径 → 界面说法。默认按 episode 序号(录制顺序,便于跟原始数据对照);
+#: 按卡顿时长降序则把最该复查的顶到最前 = 图形化的人工复查队列。
+TL_SORTS = {"episode": "episode 序号", "stuck": "卡顿时长(长的在前)"}
+
+
+def timeline_html(tl: dict, cap: int = 200, show: str = "both",
+                  sort: str = "episode") -> str:
     """时间线 → HTML 彩条列表。纯函数(可测)。
 
-    2026-07-28 用户定稿:①默认只列有 stuck 或 idle 的 episode(全绿的不占屏,
-    被藏条数在页脚注明);②段界时间直接标注在条下方(悬停仍有精确起止;标签
-    间距 <4% 条宽的自动跳过防挤,右端时长恒标)。排序:stuck 降序,次 idle 降序。"""
+    2026-07-28 用户定稿:①段界时间直接标注在条下方(悬停仍有精确起止;标签
+    间距 <4% 条宽的自动跳过防挤,右端时长恒标)。
+    2026-08-13 用户定稿:②筛选与排序都交给用户 —— `show` 见 TL_FILTERS
+    (默认 stuck+idle,全绿的不占屏),`sort` 见 TL_SORTS(**默认 episode 序号**,
+    与原始数据的条目顺序一致;要当复查队列用就切「卡顿时长」)。"""
     eps = tl.get("episodes") or {}
     if not eps:
         return ("<p>此交付无时间线数据(episodes_timeline.json)——需要跑过"
@@ -598,19 +671,27 @@ def timeline_html(tl: dict, cap: int = 200, only_flagged: bool = True) -> str:
     # 数据集注记(2026-07-29 用户定):看彩条前必须知道的前提(如 bridge 的 state
     # 由 action 累加合成 → 指令-实际无独立信息,stuck 只能弃权,黄条的含义随之变)。
     # 有才渲染,没有不占位;内容原样来自数据集 profile 的 extras.note,UI 不做判断。
-    note_html = (f'<p style="margin:0 0 6px 0;color:#8a6d3b;background:#fcf8e3;'
-                 f'border-left:3px solid #f1c40f;padding:6px 10px">'
+    note_html = (f'<p style="margin:0 0 6px 0;color:#D25F00;background:#FFF7E8;'
+                 f'border-left:3px solid #FF7D00;padding:6px 10px">'
                  f'数据集注记:{tl["dataset_note"]}</p>'
                  if tl.get("dataset_note") else "")
-    flagged = {e: t for e, t in eps.items()
-               if (t.get("totals", {}).get("stuck", 0) > 0
-                   or t.get("totals", {}).get("idle", 0) > 0)}
-    shown_eps = flagged if only_flagged else eps
+    def _tot(e: str, k: str) -> float:
+        return eps[e].get("totals", {}).get(k, 0) or 0
+
+    keep = {"both": lambda e: _tot(e, "stuck") > 0 or _tot(e, "idle") > 0,
+            "stuck": lambda e: _tot(e, "stuck") > 0,
+            "idle": lambda e: _tot(e, "idle") > 0,
+            "all": lambda e: True}.get(show, lambda e: True)
+    shown_eps = [e for e in eps if keep(e)]
     if not shown_eps:
-        return (note_html
-                + f"<p>全部 {len(eps)} 条 episode 均无 stuck/idle——录制卫生良好 ✅</p>")
-    order = sorted(shown_eps, key=lambda e: (-(eps[e].get("totals", {}).get("stuck", 0)),
-                                             -(eps[e].get("totals", {}).get("idle", 0)), e))
+        empty = {"stuck": f"全部 {len(eps)} 条 episode 均无 stuck",
+                 "idle": f"全部 {len(eps)} 条 episode 均无 idle"}.get(
+                     show, f"全部 {len(eps)} 条 episode 均无 stuck/idle")
+        return note_html + f"<p>{empty}——录制卫生良好 ✅</p>"
+    if sort == "stuck":
+        order = sorted(shown_eps, key=lambda e: (-_tot(e, "stuck"), -_tot(e, "idle"), e))
+    else:
+        order = sorted(shown_eps)      # episode 序号:id 是零填充的,字典序即序号序
     legend = " ".join(
         f'<span style="display:inline-block;width:12px;height:12px;'
         f'background:{TL_COLORS[s]};margin-right:4px;vertical-align:middle"></span>'
@@ -666,10 +747,10 @@ def timeline_html(tl: dict, cap: int = 200, only_flagged: bool = True) -> str:
             f'<div style="position:relative;height:13px;font:10px monospace;'
             f'color:#777">{"".join(marks_below)}</div></div>')
     if len(order) > cap:
-        rows.append(f"<p>…共 {len(order)} 条,仅显示 stuck/idle 最多的前 {cap} 条</p>")
-    if only_flagged and len(eps) > len(flagged):
-        rows.append(f'<p style="color:#777">另有 {len(eps) - len(flagged)} 条无 '
-                    f'stuck/idle 的干净 episode 未列出(勾选「显示全部」可见)</p>')
+        rows.append(f"<p>…共 {len(order)} 条,按当前排序只显示前 {cap} 条</p>")
+    if len(eps) > len(order):
+        rows.append(f'<p style="color:#777">另有 {len(eps) - len(order)} 条不在'
+                    f'当前筛选范围内(筛选切到「{TL_FILTERS["all"]}」可见)</p>')
     return "\n".join(rows)
 
 
@@ -695,33 +776,27 @@ LATENCY_LABELS = {
 
 #: 延时口径(一句话,跟着表格一起显示)——不写清楚会被当成服务端推理耗时。
 LATENCY_NOTE = (
-    "口径:**客户端视角**的单次调用耗时(发出请求 → 收完整响应),含网络往返、"
-    "服务端排队与推理。下表统计的是**单次调用**的分布;整类调用实际占了多久,"
-    "看下面的墙钟条形图(并发下多次调用在时间上重叠,把单次耗时乘以次数会严重高估)。")
+    "下表是**单次调用**的耗时分布(从发出请求到收完响应,含网络与排队)。"
+    "整类调用实际占了多久看下面的条形图 —— 多个调用在时间上重叠,"
+    "拿次数乘均值会严重高估。")
 
-#: 分位数怎么读(表下小字)。客户不是做性能的,P90 不解释就只是个符号。
 LATENCY_PCTL_NOTE = (
     "_P50 = 一半的调用不超过此耗时;P90/P99 同理,越靠后越反映最慢的少数调用。_")
 
 #: 四类调用各是干什么的(表下说明,一行一条)。语义化名字必须配得上解释,
 #: 否则"任务判定探针 1583 次"这种数字客户没法判断合不合理。
 LATENCY_KIND_NOTE = "\n".join([
-    "**调用类型说明**",
-    "",
-    "- **任务判定探针**:判断任务是否完成的主力——抽 8 帧打乱后让视觉模型为每帧打"
-    "「完成度」分,排序能还原时间顺序即任务在推进;每帧一次调用,故次数最多。",
-    "- **终态复核**:主判拿不准时的二审——同样抽 8 帧,分成早期组与晚期组对照,"
-    "用两个互为反问的是非题确认任务终态;仅一审未通过的数据触发,最多复核 4 路相机。",
-    "- **技能打标**:视觉模型为每条数据写一句「它在做什么」,供技能画像;每条一次。",
-    "- **体系归纳**:文本大模型把全部打标通读一遍,归纳出这份数据集的两级技能"
-    "分类树(哪些族、每族哪些子技能),并自查合并分错的类。整个数据集只需几次"
-    "调用,但每次都要读完全部打标——所以延时表里它**次数少、单次久**是正常形态,"
-    "不是卡顿。",
+    "**这四类调用各是什么**",
+    "- **任务判定探针**:判断任务做没做成的主力,逐帧问画面,所以次数最多。",
+    "- **终态复核**:主判拿不准时的二审,只对没通过一审的数据跑。",
+    "- **技能打标**:给每条数据写一句「它在做什么」,供技能分布用,每条一次。",
+    "- **体系归纳**:通读全部打标,归纳出这份数据的技能分类;整批只跑几次,"
+      "但每次读的内容很长。",
 ])
 
 #: 横条图配色(四类各一色;与判决用的红/绿色系错开,避免被误读成"好坏")。
-_BAR_COLORS = {"probe": "#4a7fd4", "endstate": "#7d5ba6",
-               "caption": "#2a9d8f", "llm": "#e08a3c"}
+_BAR_COLORS = {"probe": "#165DFF", "endstate": "#722ED1",
+               "caption": "#00B42A", "llm": "#FF7D00"}
 
 
 def infer_service_type(endpoint: str | None) -> str:
@@ -946,12 +1021,12 @@ def latency_bar_html(perf: dict) -> str:
         pct = max(1.0, wall / top * 100)
         label = LATENCY_LABELS.get(tag, tag)
         cnt = f"{n} 次调用并发执行" if n > 1 else f"{n} 次调用"
-        err_txt = f' · <span style="color:#c0392b">失败 {errs}</span>' if errs else ""
+        err_txt = f' · <span style="color:#F53F3F">失败 {errs}</span>' if errs else ""
         bars.append(
             f'<div style="margin:8px 0">'
             f'<div style="font:12px/1.5 system-ui;margin-bottom:2px">{label}'
             f' — 墙钟 <b>{human_duration(wall)}</b>({cnt}){err_txt}</div>'
-            f'<div style="background:#eceff3;border-radius:4px;overflow:hidden;height:14px">'
+            f'<div style="background:#E5E6EB;border-radius:4px;overflow:hidden;height:14px">'
             f'<div style="width:{pct:.2f}%;height:100%;'
             f'background:{_BAR_COLORS.get(tag, "#888")}"></div></div></div>')
     return ('<div style="max-width:760px">'
@@ -966,10 +1041,14 @@ def latency_bar_html(perf: dict) -> str:
 
 # ── 人工裁决:实现在 dataset_level/decisions.py(与 rejudge 命令共用同一份)。
 #    那是纯文件 IO 层,不是管道——UI 不 import 管道的红线在此不破。 ──
-from ..dataset_level.decisions import (DECISION_CHOICES, DECISIONS_CSV,  # noqa: F401
+from ..dataset_level.decisions import (APPEAL_CHOICES, APPEALS_CSV,  # noqa: F401
+                                       DECISION_CHOICES, DECISIONS_CSV,
                                        VERDICT_CHOICES, VERDICTS_CSV,
-                                       record_label_decision, record_task_verdict)
+                                       is_task_success_reject,
+                                       record_label_decision, record_reject_appeal,
+                                       record_task_verdict)
 from ..dataset_level.decisions import load_label_decisions as _load_decisions
+from ..dataset_level.decisions import load_reject_appeals as _load_appeals
 from ..dataset_level.decisions import load_task_verdicts as _load_verdicts
 
 
@@ -979,6 +1058,10 @@ def load_label_decisions(m: dict) -> dict:
 
 def load_task_verdicts(m: dict) -> dict:
     return _load_verdicts(m["path"])
+
+
+def load_reject_appeals(m: dict) -> dict:
+    return _load_appeals(m["path"])
 
 
 def audit_clip_paths(m: dict, episode_id: str) -> list[str]:
@@ -1016,39 +1099,39 @@ LEGACY_SYNC_NOTE = "此交付无逐相机同步数据(旧版本)"
 #: 同步判决 → (徽章文字, 主色, 底色, 一句人话)。四态的措辞就是上面那段语义的
 #: 界面化,改这里等于改对客户的承诺,改前先看那段注释。
 SYNC_VERDICT_TEXT = {
-    "aligned": ("同步正常", "#166534", "#dcfce7",
+    "aligned": ("同步正常", "#009A29", "#E8FFEA",
                 "各可信相机与动作时序对齐,未发现异常。"),
-    "misaligned_all": ("整体错位(判废)", "#991b1b", "#fee2e2",
+    "misaligned_all": ("整体错位(判废)", "#CB272D", "#FFECE8",
                        "所有可信相机一致指向同一个偏移 —— 这是判废的唯一条件,"
                        "发生在 episode 层面(不是废掉某个相机)。"),
-    "annotated": ("已标注异常(不判废)", "#92400e", "#fef3c7",
+    "annotated": ("已标注异常(不判废)", "#D25F00", "#FFF7E8",
                   "个别相机读数异常,已标注;同步检查永不废弃相机,也不因此判废这条数据。"),
     # verdict 仍是 annotated,但成因是"疑似错位、证据不足"时换个说法——
     # 用户看曲线时最想区分的正是这两者(2026-08-07)
-    "_annotated_suspect": ("疑似错位(证据不足)", "#92400e", "#fef3c7",
+    "_annotated_suspect": ("疑似错位(证据不足)", "#D25F00", "#FFF7E8",
                            "有相机的互相关峰明显偏离 0,但峰形不够可信,不足以定论:"
                            "只标注,不判废、不进人工裁决队列。"),
-    "undecidable": ("测不准(弃权)", "#3730a3", "#e0e7ff",
+    "undecidable": ("测不准(弃权)", "#165DFF", "#E8F3FF",
                     "信号不足以判定同步,只作标注:不进人工裁决队列,也不参与综合质量分。"),
 }
 
 #: 老交付没有 verdict 字段,只有检查三态 —— 退回讲整体结论,并注明是旧版本。
 _SYNC_STATE_TEXT = {
-    "pass": ("同步通过", "#166534", "#dcfce7", "旧版本交付只有整体结论。"),
-    "拒绝": ("同步不通过", "#991b1b", "#fee2e2", "旧版本交付只有整体结论。"),
-    "弃权": ("弃权", "#3730a3", "#e0e7ff",
+    "pass": ("同步通过", "#009A29", "#E8FFEA", "旧版本交付只有整体结论。"),
+    "拒绝": ("同步不通过", "#CB272D", "#FFECE8", "旧版本交付只有整体结论。"),
+    "弃权": ("弃权", "#165DFF", "#E8F3FF",
              "旧版本交付只有整体结论;弃权不参与综合质量分。"),
 }
-_SYNC_UNKNOWN = ("同步结论未知", "#374151", "#f3f4f6", "此条没有同步检查读数。")
+_SYNC_UNKNOWN = ("同步结论未知", "#86909C", "#F2F3F5", "此条没有同步检查读数。")
 
 #: 判决 → (徽章文字, 主色, 底色, 边色)。绿=通过、红=拒绝、琥珀=待裁决;
 #: 与「人工裁决」页的 ① 橙 ② 蓝区块色错开,不会被误读成同一套分类。
 VERDICT_STYLES = {
-    "通过": ("✅ 通过", "#166534", "#dcfce7", "#86efac"),
-    "拒绝": ("⛔ 拒绝", "#991b1b", "#fee2e2", "#fca5a5"),
-    "待裁决": ("⏳ 待裁决", "#92400e", "#fef3c7", "#fcd34d"),
+    "通过": ("✅ 通过", "#009A29", "#E8FFEA", "#AFF0B5"),
+    "拒绝": ("⛔ 拒绝", "#CB272D", "#FFECE8", "#FDCDC5"),
+    "待裁决": ("⏳ 待裁决", "#D25F00", "#FFF7E8", "#FFE4BA"),
 }
-_VERDICT_UNKNOWN = ("判决未知", "#374151", "#f3f4f6", "#d1d5db")
+_VERDICT_UNKNOWN = ("判决未知", "#86909C", "#F2F3F5", "#C9CDD4")
 
 
 def _fmt_num(v, nd: int = 3) -> str:
@@ -1119,20 +1202,20 @@ def sync_camera_rows(m: dict, eid: str) -> list[list]:
 
 def _cell(txt: str, *, bold: bool = False, color: str = "#333",
           align: str = "left") -> str:
-    return (f'<td style="padding:5px 9px;border-bottom:1px solid #eceff3;color:{color};'
+    return (f'<td style="padding:5px 9px;border-bottom:1px solid #E5E6EB;color:{color};'
             f'text-align:{align}{";font-weight:700" if bold else ""}">{_esc(txt)}</td>')
 
 
 def _table_html(headers: list, rows: list[list], marks: list[bool],
-                mark_color: str = "#fef3c7") -> str:
+                mark_color: str = "#FFF7E8") -> str:
     """通用小表:marks[i] 为真的行整行着色 + 左侧色条(被标注/被拒的那行要跳出来)。"""
     head = "".join(f'<th style="padding:5px 9px;text-align:left;font-weight:700;'
-                   f'color:#475569;border-bottom:2px solid #cbd5e1;white-space:nowrap">'
+                   f'color:#4E5969;border-bottom:2px solid #C9CDD4;white-space:nowrap">'
                    f'{_esc(h)}</th>' for h in headers)
     body = []
     for i, r in enumerate(rows):
         hit = i < len(marks) and marks[i]
-        style = (f'background:{mark_color};box-shadow:inset 3px 0 0 0 #f59e0b'
+        style = (f'background:{mark_color};box-shadow:inset 3px 0 0 0 #FF7D00'
                  if hit else "")
         body.append(f'<tr style="{style}">'
                     + "".join(_cell(c, bold=(hit and j == 0)) for j, c in enumerate(r))
@@ -1171,16 +1254,16 @@ def sync_camera_html(m: dict, eid: str) -> str:
         # 老交付:只有平铺读数(lag_s/corr_peak),照实摊开,并说清为什么没有逐相机
         flat = " · ".join(f"{k}={_fmt_num(d[k])}" for k in ("lag_s", "corr_peak")
                           if d.get(k) is not None)
-        table = (f'<div style="font:12px/1.6 system-ui;color:#777;background:#f8fafc;'
-                 f'border-left:3px solid #cbd5e1;padding:6px 10px;max-width:960px">'
+        table = (f'<div style="font:12px/1.6 system-ui;color:#777;background:#F7F8FA;'
+                 f'border-left:3px solid #C9CDD4;padding:6px 10px;max-width:960px">'
                  f'{LEGACY_SYNC_NOTE}'
                  + (f'。本条整体读数:{_esc(flat)}' if flat else "") + '</div>')
     return ('<div style="margin-top:6px">'
-            '<div style="font:13px/1.6 system-ui;font-weight:700;color:#334155;'
+            '<div style="font:13px/1.6 system-ui;font-weight:700;color:#4E5969;'
             'margin-bottom:4px">视频-动作同步(逐相机读数)</div>'
             f'<span style="background:{bg};color:{fg};border-radius:999px;'
             f'padding:2px 12px;font:12px/1.8 system-ui;font-weight:700">{_esc(txt)}</span>'
-            f'<span style="color:#64748b;font:12px/1.8 system-ui;margin-left:8px">'
+            f'<span style="color:#86909C;font:12px/1.8 system-ui;margin-left:8px">'
             f'{_esc(why)}</span>'
             + summary + table + '</div>')
 
@@ -1221,14 +1304,14 @@ def episode_card_html(m: dict, eid: str) -> str:
     """
     ep = (m.get("episodes") or {}).get(eid or "") or {}
     if not eid or not ep:
-        return ('<div style="border:1px dashed #cbd5e1;border-radius:10px;padding:14px 18px;'
-                'color:#64748b;font:13px/1.6 system-ui">'
+        return ('<div style="border:1px dashed #C9CDD4;border-radius:10px;padding:14px 18px;'
+                'color:#86909C;font:13px/1.6 system-ui">'
                 '在左侧清单里选一条 episode,这里会显示它的判决、理由与视频。</div>')
     label = episode_verdict_label(ep)
     txt, fg, bg, bd = VERDICT_STYLES.get(label, _VERDICT_UNKNOWN)
     head = (f'<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px">'
             f'<span style="font-size:1.35rem;font-weight:800;color:{fg}">{_esc(txt)}</span>'
-            f'<span style="font:14px/1.6 ui-monospace,monospace;color:#334155;'
+            f'<span style="font:14px/1.6 ui-monospace,monospace;color:#4E5969;'
             f'font-weight:700">{_esc(eid)}</span>')
     shell = (f'<div style="background:{bg};border:1px solid {bd};border-left:6px solid {fg};'
              f'border-radius:10px;padding:14px 18px;margin:4px 0 10px">')
@@ -1236,20 +1319,20 @@ def episode_card_html(m: dict, eid: str) -> str:
         return shell + head + "</div></div>"
     score = ep.get("soft_score")
     if score is not None:
-        head += (f'<span style="margin-left:auto;background:#fff;border:1px solid #e2e8f0;'
+        head += (f'<span style="margin-left:auto;background:#fff;border:1px solid #E5E6EB;'
                  f'border-radius:999px;padding:2px 12px;font:12px/1.8 system-ui;'
-                 f'color:#475569">综合质量分 '
-                 f'<b style="color:#0f172a">{_esc(_fmt_num(score))}</b></span>')
+                 f'color:#4E5969">综合质量分 '
+                 f'<b style="color:#1D2129">{_esc(_fmt_num(score))}</b></span>')
     head += "</div>"
     reason = episode_reason_line(m, eid)
-    reason_html = (f'<div style="margin-top:9px;font:13px/1.8 system-ui;color:#334155">'
+    reason_html = (f'<div style="margin-top:9px;font:13px/1.8 system-ui;color:#4E5969">'
                    f'{_esc(reason)}</div>' if reason else "")
     # 同步弃权是个标注:它既不进裁决队列也不进质量分,卡片上讲一句,免得客户
     # 看到"弃权"二字以为这条数据被扣了分。
     footnote = ""
     if sync_detail(m, eid).get("verdict") == "undecidable":
-        footnote = ('<div style="margin-top:8px;font:12px/1.6 system-ui;color:#3730a3;'
-                    'background:#eef2ff;border-radius:6px;padding:5px 10px">'
+        footnote = ('<div style="margin-top:8px;font:12px/1.6 system-ui;color:#165DFF;'
+                    'background:#E8F3FF;border-radius:6px;padding:5px 10px">'
                     '同步测不准仅作标注:不进人工裁决队列,也不参与综合质量分。</div>')
     return shell + head + reason_html + footnote + "</div>"
 
@@ -1265,10 +1348,10 @@ def check_table_html(m: dict, eid: str) -> str:
         return ('<p style="color:#777;font:12px/1.6 system-ui">'
                 '此条没有逐维检查读数(老交付,或漏斗更早阶段已短路)。</p>')
     marks = [r[1] == "拒绝" for r in rows]
-    return ('<div style="font:13px/1.6 system-ui;font-weight:700;color:#334155;'
+    return ('<div style="font:13px/1.6 system-ui;font-weight:700;color:#4E5969;'
             'margin-top:4px">各维检查读数(标红=把这条毙掉的那一维)</div>'
             + _table_html(CHECK_HEADERS, [[str(c) for c in r] for r in rows],
-                          marks, mark_color="#fee2e2"))
+                          marks, mark_color="#FFECE8"))
 
 
 # ── 同步曲线页(2026-08-07 新增):details/plots/<ep>_sync.png 的画廊 ──
@@ -1285,7 +1368,7 @@ SYNC_PAGE_SIZE = 20      # 每页张数:曲线是整幅宽度的长图,平铺往
 
 #: 交付里没有 plots 时的说明。必须点名开关,否则客户会以为功能坏了。
 NO_PLOTS_NOTE = (
-    "此交付没有同步曲线图(`details/plots/` 为空)。曲线画不画由配置 "
+    "此交付没有同步曲线图(`details/plots/` 为空)。画不画由配置 "
     "`pipeline.sync_plots` 控制:`flagged`=只给非「过」的条目画(默认)、"
     "`all`=全画、`off`=不画。")
 
@@ -1311,11 +1394,11 @@ def _sync_flagged(ep: dict, detail: dict, state: str) -> bool:
 
 #: 诊断标签 → 圆点颜色。对齐=绿、错位=红、测不准=琥珀(需注意但不是罪证)、
 #: 无信号=灰。与页面其它徽章同一套语义,不另造配色。
-_DIAG_COLOR = {"aligned": "#16a34a", "misaligned": "#dc2626",
-               "false_peak": "#f59e0b", "blurry_motion": "#f59e0b",
-               "rival_lags": "#f59e0b", "weak_signal": "#f59e0b",
-               "partial_visibility": "#f59e0b",
-               "no_motion": "#94a3b8"}
+_DIAG_COLOR = {"aligned": "#00B42A", "misaligned": "#F53F3F",
+               "false_peak": "#FF7D00", "blurry_motion": "#FF7D00",
+               "rival_lags": "#FF7D00", "weak_signal": "#FF7D00",
+               "partial_visibility": "#FF7D00",
+               "no_motion": "#86909C"}
 
 
 def _diag_rows(detail: dict) -> list[dict]:
@@ -1335,7 +1418,7 @@ def _diag_rows(detail: dict) -> list[dict]:
             "label": str(dg.get("label") or ("对齐" if r.get("trusted") else "测不准")),
             "text": str(dg.get("text") or r.get("note") or ""),
             "advice": str(dg.get("advice") or ""),
-            "color": _DIAG_COLOR.get(cause, "#64748b"),
+            "color": _DIAG_COLOR.get(cause, "#86909C"),
         })
     return rows
 
@@ -1571,9 +1654,9 @@ def sync_conclusion(m: dict) -> dict:
 
 
 _SYNC_LEVEL_STYLE = {
-    "ok": ("#f0fdf4", "#16a34a", "#14532d", "✅"),
-    "notice": ("#fffbeb", "#f59e0b", "#78350f", "🔎"),
-    "attention": ("#fef2f2", "#dc2626", "#7f1d1d", "⚠️"),
+    "ok": ("#E8FFEA", "#00B42A", "#009A29", "✅"),
+    "notice": ("#FFF7E8", "#FF7D00", "#D25F00", "🔎"),
+    "attention": ("#FFECE8", "#F53F3F", "#CB272D", "⚠️"),
 }
 
 
@@ -1646,12 +1729,12 @@ def sync_cards_html(items: list) -> str:
         url = _file_url(it["path"])
         lb = f"sync-lb-{k}"                       # 灯箱开关 id,页内唯一即可
         flag = it.get("flagged")
-        accent = "#f59e0b" if flag else "#e2e8f0"
+        accent = "#FF7D00" if flag else "#E5E6EB"
         out.append(
             f'<div class="sync-card">'
             f'<div class="sync-card-head" style="border-left:4px solid {accent}">'
             f'<span class="sync-eid">{_esc(it["id"])}</span>'
-            f'<span class="sync-badge" style="color:{it.get("color") or "#475569"}">'
+            f'<span class="sync-badge" style="color:{it.get("color") or "#4E5969"}">'
             f'{_esc(it.get("badge") or "")}</span>'
             f'<a class="sync-open" href="{url}" target="_blank" rel="noopener">'
             f"原图 ↗</a></div>"
@@ -1677,9 +1760,9 @@ def sync_health_html(m: dict) -> str:
     if not rows and not h.get("advice"):
         return ('<p style="color:#777;font:12px/1.6 system-ui">'
                 f'{LEGACY_SYNC_NOTE}——数据集级 lag 分布是新版本交付才统计的。</p>')
-    parts = ['<div style="font:13px/1.6 system-ui;font-weight:700;color:#334155;'
+    parts = ['<div style="font:13px/1.6 system-ui;font-weight:700;color:#4E5969;'
              'margin-top:2px">全库逐相机同步概览</div>',
-             '<div style="font:12px/1.7 system-ui;color:#64748b;margin:2px 0 6px">'
+             '<div style="font:12px/1.7 system-ui;color:#86909C;margin:2px 0 6px">'
              '<b>典型滞后</b>=这一路画面比动作晚多少(正=画面晚,负=画面早,'
              '越接近 0 越好);<b>逐条波动</b>=各条 episode 之间这个数跳得厉不厉害'
              '(小=录制稳定,大=时快时慢);<b>疑似错位</b>=峰明显偏了但证据不够硬,'
@@ -1689,9 +1772,9 @@ def sync_health_html(m: dict) -> str:
         parts.append(_table_html(SYNC_HEALTH_HEADERS,
                                  [[str(c) for c in r] for r in rows], marks))
     if h.get("advice"):
-        parts.append('<div style="background:#fcf8e3;border-left:3px solid #f1c40f;'
+        parts.append('<div style="background:#FFF7E8;border-left:3px solid #FF7D00;'
                      'padding:7px 11px;max-width:960px;font:12px/1.7 system-ui;'
-                     'color:#8a6d3b">建议:' + _md_bold(str(h["advice"])) + '</div>')
+                     'color:#D25F00">建议:' + _md_bold(str(h["advice"])) + '</div>')
     neg = h.get("negative_lag_episodes") or []
     if neg:
         head = "、".join(str(e) for e in neg[:10])
@@ -2210,8 +2293,8 @@ def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
     """
     v = episode_videos(m, eid, review_dir)
     if not v["videos"]:
-        return ('<div class="ep-video-zone" style="background:#f8fafc;border:1px dashed '
-                '#cbd5e1;border-radius:10px;padding:14px 18px;color:#64748b;'
+        return ('<div class="ep-video-zone" style="background:#F7F8FA;border:1px dashed '
+                '#C9CDD4;border-radius:10px;padding:14px 18px;color:#86909C;'
                 f'font:13px/1.7 system-ui">🎬 此条暂无视频——{_esc(v["note"])}。</div>')
     # 放不动的那一路**照样摆播放器**(用户原话:"视频还是要放在那里占位"),
     # 只在槽位下面补一行说明它为什么放不动 —— 一个没有解释的黑框才是最劝退的。
@@ -2220,11 +2303,11 @@ def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
         f'<video src="{_file_url(it["path"])}" muted loop playsinline controls '
         f'preload="metadata" style="width:100%;border-radius:8px;background:#000">'
         f'</video>'
-        f'<figcaption style="font:11px/1.6 ui-monospace,Menlo,monospace;color:#64748b;'
+        f'<figcaption style="font:11px/1.6 ui-monospace,Menlo,monospace;color:#86909C;'
         f'margin-top:3px">{_esc(it["camera"])}</figcaption>'
         + ('' if it.get("playable", True) else
-           f'<div style="font:11px/1.6 system-ui;color:#b45309;background:#fffbeb;'
-           f'border:1px solid #fde68a;border-radius:6px;padding:3px 7px;margin-top:3px">'
+           f'<div style="font:11px/1.6 system-ui;color:#D25F00;background:#FFF7E8;'
+           f'border:1px solid #FFE4BA;border-radius:6px;padding:3px 7px;margin-top:3px">'
            f'⚠️ {_esc(it.get("why") or BROKEN_LANE_TEXT)}</div>')
         + '</figure>'
         for it in v["videos"])
@@ -2240,10 +2323,10 @@ def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
     return ('<div class="ep-video-zone" style="margin:2px 0 10px">'
             '<div style="display:flex;align-items:center;gap:12px;margin-bottom:7px">'
             f'<button type="button" data-on="0" onclick="{_PLAY_ALL_JS}" '
-            'style="background:#0f172a;color:#fff;border:none;border-radius:8px;'
+            'style="background:#1D2129;color:#fff;border:none;border-radius:8px;'
             'padding:6px 16px;font:13px/1.6 system-ui;font-weight:700;cursor:pointer">'
             f'{PLAY_ALL_TEXT}</button>'
-            f'<span style="font:12px/1.6 system-ui;color:#64748b">'
+            f'<span style="font:12px/1.6 system-ui;color:#86909C">'
             f'{_esc(v["note"])} · 共 {len(v["videos"])} 路相机{_esc(status)}'
             + '</span></div>'
             f'<div style="display:flex;flex-wrap:wrap;gap:10px">{cells}</div></div>')
@@ -2251,15 +2334,15 @@ def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
 
 #: 待人工条目在检查明细上方的那行醒目提示。Gradio 做不了跨页签跳转(页签切换在
 #: 前端,后端拿不到句柄),所以给文字指引——写清去哪一页、在那儿能干什么。
-MANUAL_HINT_TEXT = ("这条还等着人来定:去顶部「人工裁决」页,看视频后逐条给结论"
-                    "(裁决先记草稿,跑 `curation rejudge` 才生效)。")
+MANUAL_HINT_TEXT = ("这条还等着人来定:去「人工裁决」页,看视频后给结论;"
+                    "裁完到「任务台 · 执行人工裁决」执行一次即生效。")
 
 
 def manual_hint_html(m: dict, eid: str) -> str:
     """待人工条目的指路条;其它桶不占位(空串)。"""
     if not eid or episode_bucket(m, eid) != BUCKET_PENDING:
         return ""
-    return ('<div style="background:#fffbeb;border:1px solid #f59e0b;'
-            'border-left:6px solid #d97706;border-radius:10px;padding:11px 16px;'
-            'margin:2px 0 8px;font:13px/1.7 system-ui;color:#78350f">'
+    return ('<div style="background:#FFF7E8;border:1px solid #FF7D00;'
+            'border-left:6px solid #FF7D00;border-radius:10px;padding:11px 16px;'
+            'margin:2px 0 8px;font:13px/1.7 system-ui;color:#D25F00">'
             f'<b>⏳ 待人工裁决</b> — {_esc(MANUAL_HINT_TEXT)}</div>')

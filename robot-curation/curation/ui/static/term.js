@@ -27,8 +27,10 @@
     // 提字号 + 前景提到近白 + 半粗,黑底终端的可读性以"隔着会议室投影也能看清"为准。
     fontSize: 15,
     fontWeight: "500",
-    theme: { background: "#0b0f17", foreground: "#f2f6ff", cursor: "#5aa7ff",
-             selectionBackground: "#2c4a78" },
+    // 配色跟 Arco 走(2026-08-13):底 = Arco 暗色中性 #17171A、光标与选区用
+    // 主色系(arcoblue-6 / -7),前景仍是近白 —— 终端可读性优先,不改浅底。
+    theme: { background: "#17171A", foreground: "#F2F3F5", cursor: "#165DFF",
+             selectionBackground: "#0E42D2" },
     cursorBlink: true,
     convertEol: true,
   };
