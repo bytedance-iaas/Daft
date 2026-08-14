@@ -17,7 +17,9 @@
   "use strict";
 
   const SCREEN_ID = "curation-term-screen";
-  const WS_PATH = "/ws/term";
+  // 挂载前缀由服务端注入(_terminal_head 里的 window.CURATION_ROOT):UI 住在
+  // /curation 这类前缀下时,WS 路由也在前缀下,写死 /ws/term 会打到别的后端。
+  const WS_PATH = (window.CURATION_ROOT || "") + "/ws/term";
   const wsURL = (p) =>
     (location.protocol === "https:" ? "wss://" : "ws://") + location.host + p;
 
