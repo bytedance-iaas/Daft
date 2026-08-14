@@ -747,8 +747,32 @@ def test_latency_table_uses_semantic_labels_in_order(delivery):
     probe = rows[0]
     assert probe[1] == 1583 and probe[2] == "20.01" and probe[5] == "63.26"
     flat = json.dumps(rows, ensure_ascii=False)
-    for impl_tag in ("probe", "endstate", "caption", "llm"):
+    for impl_tag in ("probe", "endstate", "caption", "llm", "arbitration"):
         assert impl_tag not in flat, impl_tag        # 埋点标签只是字典键,不是界面词
+
+
+def test_every_latency_tag_has_a_chinese_label():
+    """**每一类**埋点都必须有中文名 —— 少一个,界面就直接印英文标签。
+
+    2026-08-14 用户实见:取证仲裁链上线后,延时表最后一行是裸的 `arbitration`。
+    这条把"新增一类调用要同步加标签"钉死:埋点常量在 vlm_client 那边,这里比对。
+    """
+    import pathlib
+    import re as _re
+
+    from curation.ui.manifest import LATENCY_LABELS
+
+    # 埋点标签是各调用点写死的字符串,没有集中常量 —— 那就从源码里扫出来比对,
+    # 这样新增一类调用而忘了配中文名时,是**这条测试**先红,而不是客户先看见。
+    root = pathlib.Path(__file__).resolve().parent.parent
+    tags = set()
+    for py in root.rglob("*.py"):
+        if "tests" in py.parts:
+            continue
+        tags |= set(_re.findall(r'latency_record\(\s*["\']([a-z_]+)["\']', py.read_text(encoding="utf-8")))
+    assert tags, "一个埋点都没扫到 —— 正则该跟着 latency_record 的写法改"
+    missing = sorted(t for t in tags if t not in LATENCY_LABELS)
+    assert not missing, f"这些埋点没有中文名,会在界面上露英文:{missing}"
 
 
 def test_latency_bar_chart_is_wall_clock_only(delivery):
@@ -848,7 +872,7 @@ def test_site_yaml_presets_declare_hardware():
 
 
 def test_app_has_perf_tab(delivery):
-    """Gradio 层:「性能剖析」子 tab 在,且七个子 tab 一个不少。"""
+    """Gradio 层:「性能剖析」在,且报告页那几个页签一个不少。"""
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(_with_perf(delivery)["path"]))
@@ -2456,9 +2480,24 @@ def test_detail_subtabs_order_and_the_new_video_page(delivery):
     # 当初要限定范围是同一个坑,只是又深了一层。
     det = rep[rep.index("动作打分明细"):]
     order = ["动作打分明细", "视频打分明细", "视频-动作同步",
-             "卡顿动作时间线", "性能剖析"]
+             "卡顿动作时间线", "本次运行配置"]
     at = [det.index(t) for t in order]
     assert at == sorted(at), f"明细子页顺序不对:{order} → {at}"
+
+
+def test_perf_tab_is_top_level_right_of_detail(delivery):
+    """「性能剖析」必须是**顶层页签**,且排在「明细」右边(2026-08-13 用户点名)。
+
+    它曾被收进「明细」当子页 —— 结果客户以为这一页没了。它回答的是"这批为什么慢、
+    用的什么服务",是**跑批本身的账**,不是某一维的明细,不该藏在二级里。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    rep = _report_section(build_app(delivery))
+    assert rep.index("明细") < rep.index("性能剖析")
+    # 不在明细的子页里:子页从「动作打分明细」起,到「本次运行配置」止
+    det = rep[rep.index("动作打分明细"):rep.index("本次运行配置")]
+    assert "性能剖析" not in det
 
 
 # ───────── 数据集多选(2026-08-13)─────────
@@ -2741,7 +2780,7 @@ def test_report_overview_tab_is_one_table_without_the_funnel_word(full_delivery)
 
 
 def test_effective_config_moved_under_detail_as_the_last_subtab(full_delivery):
-    """「本次运行配置」从质检总览底部搬到「明细」下,排在性能剖析之后。
+    """「本次运行配置」从质检总览底部搬到「明细」下,是它的最后一个子页。
 
     总览要收敛成一张表,而这份快照是"日后复核这份报告按什么标准出的"的底稿。
     页签名不许写文件里的键名 config_effective —— 那是我们的字段名。
@@ -2750,7 +2789,8 @@ def test_effective_config_moved_under_detail_as_the_last_subtab(full_delivery):
     from curation.ui.app import build_app
     rep = _report_section(build_app(full_delivery))
     assert "本次运行配置" in rep
-    assert rep.index("明细") < rep.index("性能剖析") < rep.index("本次运行配置")
+    det = rep[rep.index("动作打分明细"):]
+    assert det.index("卡顿动作时间线") < det.index("本次运行配置")
     assert "config_effective" not in rep          # 键名不进界面
     assert "本次运行生效配置" not in rep          # 旧标题(挂在总览底部那个)已撤
 
