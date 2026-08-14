@@ -2523,20 +2523,51 @@ PAUSE_ALL_TEXT = "⏸ 暂停"
 #: 按钮的行为:把本区内所有 <video> 归零后一起播,再点一次全部暂停。
 #: 走内联事件属性——gr.HTML 是 innerHTML 注入,<script> 标签不执行、内联事件执行
 #: (同步曲线页的 onerror 重试是同一条经验)。**不写 & 字符**:属性值里的 & 会被
-#: HTML 解析器当实体开头,踩过一次不再踩。
+#: HTML 解析器当实体开头,踩过一次不再踩(所以下面用嵌套 if 而不是 `&&`)。
+#:
+#: 找视频有两种挂法,一条 JS 通吃:
+#: ①`data-zone="<elem_id>"` —— 按钮和视频不在同一个 DOM 子树里(人工裁决的两张卡
+#:   用的是 gr.Video 组件,按钮只能另起一行);②没有 data-zone 就往上找
+#:   `.ep-video-zone`(Episodes 详情页,按钮与视频同属一块 gr.HTML)。
+#:
+#: 播完自动把按钮弹回「同时播放」(2026-08-14 去掉 loop 之后必须做):不然视频早
+#: 停了、按钮还写着「暂停」,再点一下才发现是从头播 —— 白点一次。
 _PLAY_ALL_JS = (
-    "var z=this.closest('.ep-video-zone'),vs=z.querySelectorAll('video');"
-    "if(this.dataset.on==='1'){vs.forEach(function(v){v.pause()});"
-    f"this.dataset.on='0';this.textContent='{PLAY_ALL_TEXT}'}}"
-    "else{vs.forEach(function(v){try{v.currentTime=0}catch(e){}v.play()});"
-    f"this.dataset.on='1';this.textContent='{PAUSE_ALL_TEXT}'}}")
+    "var b=this,t=b.dataset.zone,"
+    "z=t?document.getElementById(t):b.closest('.ep-video-zone'),"
+    "vs=z?z.querySelectorAll('video'):[];"
+    "function fin(){var live=0;vs.forEach(function(v){"
+    "if(v.paused===false){if(v.ended===false){live=1}}});"
+    f"if(live===0){{b.dataset.on='0';b.textContent='{PLAY_ALL_TEXT}'}}}}"
+    "if(b.dataset.on==='1'){vs.forEach(function(v){v.pause()});fin()}"
+    "else{vs.forEach(function(v){v.onended=fin;v.onpause=fin;v.loop=false;"
+    "try{v.currentTime=0}catch(e){}try{v.play()}catch(e){}});"
+    f"b.dataset.on='1';b.textContent='{PAUSE_ALL_TEXT}'}}")
+
+
+def play_all_button_html(note: str = "", zone: str | None = None) -> str:
+    """「同时播放」按钮(+ 右侧一行小字)。两处视频区共用同一个实现。
+
+    `zone` 给 elem_id 时按 id 找视频,不给就在自己所在的 `.ep-video-zone` 里找。
+    """
+    z = f'data-zone="{_esc(zone)}" ' if zone else ""
+    tail = (f'<span style="font:12px/1.6 system-ui;color:#86909C">{note}</span>'
+            if note else "")
+    return ('<div style="display:flex;align-items:center;gap:12px;margin-bottom:7px">'
+            f'<button type="button" data-on="0" {z}onclick="{_PLAY_ALL_JS}" '
+            'style="background:#1D2129;color:#fff;border:none;border-radius:8px;'
+            'padding:6px 16px;font:13px/1.6 system-ui;font-weight:700;cursor:pointer">'
+            f'{PLAY_ALL_TEXT}</button>{tail}</div>')
 
 
 def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
     """详情面板的视频区:一个「同时播放」按钮 + 该条全部相机并排。
 
     不自动播(客户可能同时开着几路 200KB 的片段,自动播 = 一进页面就抢带宽);
-    静音 + 循环 + preload=metadata:首屏只拉元数据,点了才真下视频。
+    静音 + preload=metadata:首屏只拉元数据,点了才真下视频。
+
+    **不循环**(2026-08-14 用户定):裁决是"看一遍下判断"的事,片子自己转圈只会
+    让人分不清看到的是第几遍;要重看点按钮从头播。
     """
     v = episode_videos(m, eid, review_dir)
     if not v["videos"]:
@@ -2547,7 +2578,7 @@ def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
     # 只在槽位下面补一行说明它为什么放不动 —— 一个没有解释的黑框才是最劝退的。
     cells = "".join(
         f'<figure style="flex:1 1 260px;min-width:220px;margin:0">'
-        f'<video src="{_file_url(it["path"])}" muted loop playsinline controls '
+        f'<video src="{_file_url(it["path"])}" muted playsinline controls '
         f'preload="metadata" style="width:100%;border-radius:8px;background:#000">'
         f'</video>'
         f'<figcaption style="font:11px/1.6 ui-monospace,Menlo,monospace;color:#86909C;'
@@ -2567,16 +2598,10 @@ def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
         status = f" · 其中 {len(bad)} 路无法正常播放"
     else:
         status = ""
+    note = (f'{_esc(v["note"])} · 共 {len(v["videos"])} 路相机{_esc(status)}')
     return ('<div class="ep-video-zone" style="margin:2px 0 10px">'
-            '<div style="display:flex;align-items:center;gap:12px;margin-bottom:7px">'
-            f'<button type="button" data-on="0" onclick="{_PLAY_ALL_JS}" '
-            'style="background:#1D2129;color:#fff;border:none;border-radius:8px;'
-            'padding:6px 16px;font:13px/1.6 system-ui;font-weight:700;cursor:pointer">'
-            f'{PLAY_ALL_TEXT}</button>'
-            f'<span style="font:12px/1.6 system-ui;color:#86909C">'
-            f'{_esc(v["note"])} · 共 {len(v["videos"])} 路相机{_esc(status)}'
-            + '</span></div>'
-            f'<div style="display:flex;flex-wrap:wrap;gap:10px">{cells}</div></div>')
+            + play_all_button_html(note)
+            + f'<div style="display:flex;flex-wrap:wrap;gap:10px">{cells}</div></div>')
 
 
 #: 待人工条目在检查明细上方的那行醒目提示。Gradio 做不了跨页签跳转(页签切换在

@@ -28,7 +28,7 @@ from .manifest import (APPEAL_CHOICES, APPEAL_HEADERS, AUDIT_HEADERS,
                        appeal_rows, audit_clip_paths, audit_note_md,
                        bucket_choices, bucket_ids,
                        load_label_decisions, load_reject_appeals,
-                       load_task_verdicts,
+                       load_task_verdicts, play_all_button_html,
                        record_label_decision, record_reject_appeal,
                        record_task_verdict,
                        AUDIT_TERM, LATENCY_HEADERS,
@@ -1621,9 +1621,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         au_pos = gr.Markdown("", elem_id="au-pos")
                         au_next = gr.Button("下一条 →", scale=1)
                     au_info = gr.Markdown()
-                    with gr.Row():
+                    # 「同时播放」按钮**单独占一行**,不进视频那一行:塞进去会把三个
+                    # 播放器挤窄(用户 2026-08-14:"视频 window 大小别变")。按钮靠
+                    # elem_id 找视频,不需要把两者包进同一个容器 —— 少一层容器 =
+                    # 视频区的宽度与间距一个像素都不动。
+                    gr.HTML(play_all_button_html("三路机位从头一起播,播完即停(不循环)",
+                                                 zone="au-vids"))
+                    with gr.Row(elem_id="au-vids"):
                         au_vids = [gr.Video(label=f"机位 {i+1}", interactive=False,
-                                            autoplay=False, scale=1) for i in range(3)]
+                                            autoplay=False, loop=False, scale=1)
+                                   for i in range(3)]
                     au_origlab = gr.Textbox(label="原始标注(只读)", interactive=False)
                     au_newlab = gr.Textbox(label="修正后标注(可编辑;预填 VLM 建议描述,"
                                                  "仅「采纳改标」使用)")
@@ -1656,9 +1663,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         tv_next = gr.Button("下一条 →", scale=1)
                     tv_info = gr.Markdown()
                     tv_readings = gr.Markdown()
-                    with gr.Row():
+                    gr.HTML(play_all_button_html("三路机位从头一起播,播完即停(不循环)",
+                                                 zone="tv-vids"))
+                    with gr.Row(elem_id="tv-vids"):
                         tv_vids = [gr.Video(label=f"机位 {i+1}", interactive=False,
-                                            autoplay=False, scale=1) for i in range(3)]
+                                            autoplay=False, loop=False, scale=1)
+                                   for i in range(3)]
                     tv_note = gr.Textbox(label="备注(可选;写清依据,复盘时是唯一线索)")
                     with gr.Row():
                         # 顺序与 VERDICT_CHOICES 严格对应(_tv_btns 按序点亮)

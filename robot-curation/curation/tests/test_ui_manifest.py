@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 
 import pytest
@@ -2093,6 +2094,48 @@ def test_play_all_button_zeroes_and_plays_every_video(ep_delivery, tmp_path):
     assert "&" not in html                 # 属性里的 & 会被当实体开头,踩过一次
 
 
+def test_clips_do_not_loop(ep_delivery, tmp_path):
+    """片段**不循环**(2026-08-14 用户定)。
+
+    裁决是"看一遍下判断"的事;片子自己转圈,人分不清看到的是第几遍。要重看
+    点「同时播放」从头播。三处都得守住:HTML 播放器不带 `loop` 属性、
+    「同时播放」每次起播前显式关掉 loop、Gradio 组件那两组也不许开(见 app 侧用例)。
+    """
+    from curation.ui.manifest import episode_video_html
+    site = _review_site(str(tmp_path / "review"), "droid_buckets", ["ep000000"],
+                        cams=("cam_a", "cam_b", "cam_c"))
+    html = episode_video_html(load_delivery(ep_delivery), "ep000000", site)
+    for tag in re.findall(r"<video[^>]*>", html):
+        assert " loop" not in tag, f"播放器还开着循环:{tag}"
+    assert "v.loop=false" in html          # 起播前显式关,防外部再打开
+
+
+def test_play_all_button_can_target_a_zone_by_id(ep_delivery, tmp_path):
+    """按钮与视频**不在同一个 DOM 子树**时,靠 elem_id 找视频。
+
+    人工裁决的两张卡用的是 gr.Video 组件,按钮只能另起一行(挤进视频那一行会把
+    播放器压窄 —— 用户明说"视频 window 大小别变"),所以 `closest()` 那条路走不通。
+    """
+    from curation.ui.manifest import play_all_button_html
+    html = play_all_button_html("说明文字", zone="au-vids")
+    assert 'data-zone="au-vids"' in html
+    assert "getElementById(t)" in html
+    assert "closest('.ep-video-zone')" in html   # 另一种挂法照旧可用
+    assert "&" not in html
+
+
+def test_play_all_button_pops_back_when_playback_ends():
+    """播完按钮自己弹回「同时播放」。
+
+    去掉 loop 之后必须做:片子早停了、按钮还写着「暂停」,用户再点一下才发现是
+    从头播 —— 白点一次。
+    """
+    from curation.ui.manifest import PLAY_ALL_TEXT, play_all_button_html
+    html = play_all_button_html()
+    assert "onended=fin" in html and "onpause=fin" in html
+    assert f"textContent='{PLAY_ALL_TEXT}'" in html
+
+
 def test_manual_hint_only_on_pending_and_points_at_the_decision_page(ep_delivery):
     """待人工条目在明细上方给醒目提示 + 去「人工裁决」页的指引;别的桶不占位。"""
     from curation.ui.manifest import manual_hint_html
@@ -2498,6 +2541,51 @@ def test_perf_tab_is_top_level_right_of_detail(delivery):
     # 不在明细的子页里:子页从「动作打分明细」起,到「本次运行配置」止
     det = rep[rep.index("动作打分明细"):rep.index("本次运行配置")]
     assert "性能剖析" not in det
+
+
+def test_adjudication_cards_can_play_every_camera_at_once(delivery):
+    """人工裁决的两张裁决卡各有一个「同时播放」按钮,且视频照旧独占一行。
+
+    2026-08-14 用户要的:几路机位一起播。此前只有 Episodes 详情页有这个按钮,
+    裁决卡(gr.Video 组件)得逐个点开三次,还对不齐时间点。
+
+    同时钉住两件事:
+    · 按钮**不进视频那一行**(挤进去播放器会被压窄,用户明说"视频 window 大小
+      别变")—— 判据是那一行里只有 Video,没有别的东西;
+    · 三个播放器**不循环**(`loop=False`)。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    from curation.ui.manifest import PLAY_ALL_TEXT
+    cfg = json.loads(json.dumps(build_app(delivery).get_config_file(), default=str))
+    by_id = {c["id"]: c for c in cfg["components"]}
+
+    for zone in ("au-vids", "tv-vids"):
+        rows = [c for c in cfg["components"]
+                if c.get("props", {}).get("elem_id") == zone]
+        assert len(rows) == 1, f"{zone} 这一行不在了"
+        kids = [by_id[i]["type"] for i in _children_ids(cfg, rows[0]["id"])]
+        assert kids and set(kids) == {"video"}, \
+            f"{zone} 那一行混进了别的组件,播放器会被挤窄:{kids}"
+        assert all(by_id[i]["props"].get("loop") is False
+                   for i in _children_ids(cfg, rows[0]["id"])), "播放器开着循环"
+        assert any(PLAY_ALL_TEXT in str(c.get("props", {}).get("value") or "")
+                   and f'data-zone="{zone}"' in str(c["props"]["value"])
+                   for c in cfg["components"] if c["type"] == "html"), \
+            f"{zone} 没有「同时播放」按钮"
+
+
+def _children_ids(cfg: dict, parent_id: int) -> list[int]:
+    """在 layout 树里找某个容器的直接子组件 id。"""
+    def walk(node):
+        if node.get("id") == parent_id:
+            return [c["id"] for c in node.get("children", [])]
+        for c in node.get("children", []):
+            got = walk(c)
+            if got:
+                return got
+        return []
+    return walk(cfg["layout"])
 
 
 def test_delivery_picker_is_actually_ticked(delivery):
