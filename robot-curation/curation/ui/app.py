@@ -1774,22 +1774,6 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         tl_note = gr.Markdown()
                         tl_html = gr.HTML()
 
-                    with gr.Tab("性能剖析"):
-                        # 三块(2026-07-30):① 这次用的什么服务/什么硬件 ② 管线自己跑在
-                        # 什么容器里 ③ 时间花在哪一类 VLM 调用上。数据全部来自交付记录,
-                        # **界面不出现任何后端预设代号**(那是机房黑话,见 manifest 顶部红线)。
-                        perf_backend = gr.Markdown()
-                        perf_env = gr.Markdown()
-                        gr.Markdown("### 延时剖析")
-                        perf_note = gr.Markdown()
-                        perf_table = gr.Dataframe(headers=LATENCY_HEADERS, label="分类延时",
-                                                  interactive=False)
-                        # 两段常量说明(与交付无关,不进 _load 的输出列表):分位数怎么读、
-                        # 四类调用各是干什么的。第二轮反馈:光有语义化名字客户仍读不懂。
-                        gr.Markdown(LATENCY_PCTL_NOTE)
-                        gr.Markdown(LATENCY_KIND_NOTE)
-                        perf_bar = gr.HTML()
-
                     # 从质检总览底部搬过来的(2026-08-13):总览要收敛成一张表,
                     # 而这份快照是"日后复核这份报告按什么标准出的"的底稿,属于明细。
                     # 页签名不写文件里的键名 config_effective —— 那是我们的字段名。
@@ -1799,6 +1783,25 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             "本次界面选项合并之后的结果)。只读,用于日后复核这份"
                             "报告是按什么标准出的。")
                         ov_cfg = gr.Code(language="yaml")
+
+            # 性能剖析(2026-08-14 用户点名提回顶层):它回答的是"这批为什么慢、
+            # 用的什么服务",是**跑批本身的账**,不是某一维的明细 —— 收进「明细」
+            # 之后客户找不到它。位置钉在「明细」右边。
+            with gr.Tab("性能剖析"):
+                # 三块(2026-07-30):① 这次用的什么服务/什么硬件 ② 管线自己跑在
+                # 什么容器里 ③ 时间花在哪一类 VLM 调用上。数据全部来自交付记录,
+                # **界面不出现任何后端预设代号**(那是机房黑话,见 manifest 顶部红线)。
+                perf_backend = gr.Markdown()
+                perf_env = gr.Markdown()
+                gr.Markdown("### 延时剖析")
+                perf_note = gr.Markdown()
+                perf_table = gr.Dataframe(headers=LATENCY_HEADERS, label="分类延时",
+                                          interactive=False)
+                # 两段常量说明(与交付无关,不进 _load 的输出列表):分位数怎么读、
+                # 四类调用各是干什么的。第二轮反馈:光有语义化名字客户仍读不懂。
+                gr.Markdown(LATENCY_PCTL_NOTE)
+                gr.Markdown(LATENCY_KIND_NOTE)
+                perf_bar = gr.HTML()
 
             # ⚠️ 顺序必须与 _load 的返回值逐项对齐(错位是运行期才炸的接线错误,
             #    有测试直接比 len(_load(...)) == len(outputs) 钉住)。
