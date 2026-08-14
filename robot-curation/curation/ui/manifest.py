@@ -47,11 +47,53 @@ def _norm_checks(checks: dict) -> dict:
     return out
 
 
+# 路径压根不是一份交付时,manifest 里挂的那句话(渲染侧据此整页只说"读不到")。
+# 2026-08-13 实测的事故:交付下拉允许手输,用户打了半截字("droid")再点选项,
+# 输入框里留下的是那半截字 —— 当相对路径读,三个 JSON 全空,页面渲成一具壳子
+# (机器人 None、交付 ?),看着像系统坏了。读不到就说读不到,不留半空的壳。
+def _load_error(path: str) -> str:
+    return (f"路径 `{path}` 下没有质检结果 —— 它不是一份交付,也不是一次跑批。\n\n"
+            "从上面的下拉里挑一份;要填自己的路径,得填交付目录的**完整路径**"
+            "(只在框里打半截字不算,那是搜索用的)。")
+
+
+def resolve_delivery(value, candidates) -> str:
+    """交付下拉里的值 → 真正要读的目录(纯函数)。
+
+    2026-08-13 实测:下拉是可搜索的(allow_custom_value,手输自定义路径是既有
+    能力,不许砍),而"打了半截字再点选项"之后,输入框里留下的是**打的那串**
+    ("droid-200-full")而不是选中的完整路径 —— 当相对路径读就什么也读不到。
+    这里只补一种情形:那串字**正好等于**某一份已发现交付的目录名,且全库**只有
+    一份**同名。这不是猜(目录名精确相等 + 唯一性验过);对不上、或者有两份同名
+    的,一律原样返回,交给 load_delivery 挂 load_error 明说读不到 —— 绝不从几个
+    候选里挑一个"最像的"塞给用户,那会让人看着别人的报告以为是自己的。
+    """
+    from ..delivery import is_delivery
+    v = str(value or "").strip()
+    if not v or is_delivery(v):
+        return v
+    hits = [c for c in (candidates or [])
+            if os.path.basename(str(c).rstrip("/")) == v]
+    return hits[0] if len(hits) == 1 else v
+
+
 def load_delivery(path: str) -> dict:
-    """一个交付目录 → 统一 manifest。缺文件按空处理(老交付也能打开)。"""
-    p = _load_json(os.path.join(path, "passed.json"))
-    r = _load_json(os.path.join(path, "reject.json"))
-    v = _load_json(os.path.join(path, "review.json"))
+    """一次跑批的目录 → 统一 manifest。缺文件按空处理(老交付也能打开)。
+
+    传交付目录也行:按 `latest` 记的那次(没有记录就取最新的一次)解析 —— 默认
+    打开最近一次只是省一次点击,不含"这份最好"的意思。老布局的交付(三件套直接
+    在交付目录里)解析成它自己,一个字不用改就还能打开。
+
+    ⚠️ 与"老交付缺字段"区别对待:目录里连 passed.json 都没有 = 这根本不是一份
+    交付,挂 `load_error`(见 _load_error),渲染侧据此明说读不到。
+    """
+    from ..delivery import delivery_root_of, resolve_run
+    path = resolve_run(str(path or "").strip())
+    p = _load_json(os.path.join(path, "passed.json")) if path else {}
+    r = _load_json(os.path.join(path, "reject.json")) if path else {}
+    v = _load_json(os.path.join(path, "review.json")) if path else {}
+    err = "" if path and os.path.exists(os.path.join(path, "passed.json")) \
+        else _load_error(path or "(空)")
 
     episodes: dict = {}
     for eid, pe in (p.get("episodes") or {}).items():
@@ -84,6 +126,10 @@ def load_delivery(path: str) -> dict:
         ep["plot"] = plot if os.path.exists(plot) else None
 
     return {"path": path,
+            # 交付根:裁决 CSV 与「运行」列表都挂在它下面(path 是**某一次跑批**)
+            "delivery": delivery_root_of(path) if path else "",
+            "run": os.path.basename(path.rstrip("/")) if path else "",
+            "load_error": err,
             "name": p.get("数据集") or os.path.basename(path.rstrip("/")),
             "robot": p.get("机器人"),
             "generated_at": p.get("生成时间"), "code_version": p.get("代码版本"),
@@ -104,6 +150,14 @@ def load_delivery(path: str) -> dict:
 #: 任务成败检查在交付里的中文名(report.py 的 CHECK_CN 单一事实源;此处是读端的
 #: 常量副本——UI 不 import 管道代码的红线,不许 from ..export.report import)。
 TASK_CHECK_CN = "任务成败判定"
+
+#: 「原始标注 vs 自产描述对不上」这类问题在**界面上的唯一叫法**(2026-08-13 用户
+#: 定)。原来的「标注-画面分歧复核队列」里,复核/队列是我们的流程词,客户读不出
+#: 这到底是什么问题;而「标注可能有误」那类说法先把客户判了有罪 —— 自产描述同样
+#: 会错,两边都是嫌疑人。这句只说"哪两样东西对不上",不带流程词、不偏心。
+#: ⚠️ 只管显示:review.json 里的键名(标注-画面分歧复核队列,以及老交付的
+#: 标注审计复核队列)是数据契约,改一个字老交付就读不出来了。
+AUDIT_TERM = "标注与视频内容分歧"
 
 #: 任务成败弃权队列里,人要看的那两个读数(VLM 判定的中间量,不是我们现算的)。
 #: voc = 打乱帧排序能否还原时序(任务在不在推进);末态分 = 终态完成度。
@@ -185,19 +239,145 @@ def reject_appeal_queue(reject_json: dict, episodes: dict) -> list:
 
 # ───────── 表格整形(Gradio Dataframe 直接吃)─────────
 
-FUNNEL_HEADERS = ["阶段", "数量"]
+OVERVIEW_HEADERS = ["项", "数量"]
+
+#: 判废明细里检查名的中文。report.py 的 CHECK_CN 是单一事实源,这里是读端的常量
+#: 副本(UI 不 import 管道代码的红线,与 TASK_CHECK_CN 同一条纪律)。表里没有的
+#: 键原样透出:宁可显示 `foo_check`,也不按名字猜一个中文名。
+HARD_FAIL_CHECK_CN = {
+    "timestamp_check": "时间戳检查",
+    "kinematic_limits": "运动学极限",
+    "motion_quality": "运动质量",
+    "visual_quality": "视觉质量",
+    "video_action_sync": "视频-动作同步",
+    "task_success": TASK_CHECK_CN,
+}
+
+#: 层级缩进用全角空格:单元格走 HTML 渲染,行首的半角空格会被折叠掉,缩进等于没写。
+_IND = "　"
+
+# ⚠️ 总览表**刻意不列**标注相关的两行(「标注与视频内容分歧」N 条、「标注缺失」
+#    N 条)。2026-08-13 用户定,理由是人工真值集摆出来的数字:客户标注错 6/106
+#    (5.7%),而我们自产描述错 27/94(28.7%)。这轮系统检出的 32 条"分歧"里,
+#    真正是客户标错的只有个位数,其余多半是我们描述不准 —— 把「分歧 32 条」摆在
+#    总览首屏,实际是在展示自家打标不准,还容易被读成"你的标注有 32 条有问题"。
+#    等打标质量改进后再议。**撤的只是总览这两行的展示**:分歧队列在「人工裁决」
+#    页照旧(用户要靠它逐条裁),review.json 的键名与 audit_labels 的产出一律没动。
 
 
-def funnel_rows(m: dict) -> list[list]:
-    d = m["dataset"]
+#: 没有硬门名字的那类判废在表里叫什么。判决层的第二种判废理由是"综合加权分低于
+#: 阈值"(见 pipeline/verdict.py),它不属于任何一项检查,所以子项里没有它的名字。
+#: 措辞用界面既有说法:「软分」是内部机制名,2026-08-11 就统一叫「质量分」了。
+SOFT_DROP_LABEL = "综合质量分不达标"
+
+#: 交付内部标记那一行的名字。表下小字要**只**为它印"不参与加减"那句,所以它得是
+#: 个常量 —— 判废子项在相加大于总数时也用「其中」措辞,两者不能靠字面撞在一起。
+PENDING_ROW_LABEL = "待人工裁决"
+
+
+def drop_breakdown(d: dict) -> tuple[list, str]:
+    """判废的子项 → ([(名字, 条数), …], 模式)。模式 ∈ ""(没子项可列)/
+    "decompose"(能加出总数,摆成 ├/└ 分解式)/ "overlap"(相加大于总数)。
+
+    ⚠️ 为什么不能直接把 hard_fail_breakdown 摆成分解式(2026-08-14 用户点名):
+    判决层有**两种**判废理由 —— 踩中硬门(有检查名),或者综合加权分 < 0.5
+    (没有检查名)。只列前者的话,一条走质量分被判废的 episode 在子项里查无此人,
+    表上就会出现「判废 16,子项 14+1」自己打自己脸。差额补一行 SOFT_DROP_LABEL,
+    等式就重新闭合。(扫过 pod 上全部 49 份交付目前都没踩到,但机制上迟早会。)
+
+    反过来,一条 episode 可能同时踩中两个硬门 —— 那时子项相加**大于**判废总数。
+    这种情况下摆成 ├/└ 的分解式是错的(读者会去加),改用「其中」的措辞,并由
+    overview_note_md 在表下说明"同一条可能同时踩中多项"。
+    """
+    hb = d.get("hard_fail_breakdown")
+    drop = d.get("verdict_drop")
+    if not isinstance(hb, dict) or not isinstance(drop, int):
+        return [], ""                    # 老交付没这个字段 → 不占位、不猜
+    items = [(HARD_FAIL_CHECK_CN.get(k, k), n) for k, n in hb.items()]
+    judged = sum(n for _, n in items if isinstance(n, int))
+    if judged > drop:
+        return items, "overlap"
+    if judged < drop:
+        items = items + [(SOFT_DROP_LABEL, drop - judged)]
+    return (items, "decompose") if items else ([], "")
+
+
+def overview_rows(m: dict) -> list[list]:
+    """交付 → 质检总览那一张表(两列:项 / 数量)。
+
+    2026-08-13 用户点名重做。此前是"上半部几行 bullet + 下半部一张表",同一批
+    数字说两遍,而且两处的「不合格拦截」同名不同义:表里那行只算中途被硬门刷掉的
+    (droid-200-full = 1),bullet 里那句是最终判废的全部(15)。合成一张表之后
+    口径只剩一个,而且能一眼验:
+
+        **输入 = 判废 + 精确去重删除 + 交付**(三者不重不漏)
+
+    带「其中」的行是交付内部的标记(已经在交付里了,只是等着人看一眼),
+    **不参与加减** —— 这句话由 overview_note_md 印在表下,不让人自己猜。
+    老交付缺哪个字段就少哪一行:不占位、不写「?」、不猜默认值。
+    标注相关的行为什么不在这里,见上面那段 ⚠️。
+    """
+    if m.get("load_error"):
+        return []
+    d = m.get("dataset") or {}
+    ss = d.get("summary_stats") or {}
     fs = d.get("funnel_stats") or {}
-    rows = [["输入 episode", d.get("input_episodes", fs.get("input", ""))],
-            ["不合格拦截(漏斗中途淘汰)", d.get("hard_gate_filtered", "")],
-            ["判决 keep", d.get("verdict_keep", "")],
-            ["判决 drop", d.get("verdict_drop", "")],
-            ["精确去重删除", d.get("dedup_removed", "")],
-            ["交付", d.get("delivered", "")]]
-    return [row for row in rows if row[1] != ""]
+    rows: list[list] = []
+
+    def _add(label, value):
+        if value not in (None, ""):
+            rows.append([label, value])
+
+    _add("输入 episode", d.get("input_episodes", fs.get("input", "")))
+    drop = d.get("verdict_drop", "")
+    _add("判废", drop)
+    items, mode = drop_breakdown(d)
+    for i, (label, n) in enumerate(items):
+        if mode == "overlap":
+            # 相加大于总数时不摆分解式:├/└ 是在邀请读者去加,而这里加不得
+            rows.append([f"{_IND}其中 {label}", n])
+        else:
+            glyph = "└" if i == len(items) - 1 else "├"
+            rows.append([f"{_IND}{glyph} {label}", n])
+    _add("精确去重删除", d.get("dedup_removed", ""))
+    delivered = d.get("delivered", "")
+    if delivered not in (None, ""):
+        pct = ss.get("pass_rate_pct")
+        # 通过率与交付条数同格(用户定):它是交付这一行的注脚,另起一行就又变成
+        # "同一件事说两遍"
+        rows.append(["交付", f"{delivered}(通过率 {pct}%)"
+                     if pct is not None else delivered])
+        n_pending = sum(1 for e in (m.get("episodes") or {}).values()
+                        if e.get("pending"))
+        if n_pending:
+            rows.append([f"{_IND}其中 {PENDING_ROW_LABEL}", n_pending])
+    _add("平均质量分", ss.get("avg_soft_score", ""))
+    return rows
+
+
+def overview_note_md(m: dict) -> str:
+    """总览表下那行小字。表里哪几行能相加、哪几行不能,必须写出来别让人猜。"""
+    rows = overview_rows(m)
+    if not rows:
+        return ""
+    labels = {r[0] for r in rows}
+    if not ({"输入 episode", "判废", "交付"} <= labels):
+        return ""                       # 老交付缺行 → 这句口径无从谈起,不硬印
+    # 去重删的那部分既不在判废里也不在交付里,有它就必须写进等式,否则读者会发现
+    # 两边对不上,反而更不信这张表
+    ident = ("输入 = 判废 + 精确去重删除 + 交付"
+             if (m.get("dataset") or {}).get("dedup_removed")
+             else "输入 = 判废 + 交付")
+    # 「其中」那句只在真有这样的行时才印:没有待裁条目的交付上,解释一行不存在的
+    # 东西只会让人回头去找它在哪
+    within = ("带「其中」的行是交付内条目上的标记(数据已经在交付里了),"
+              "**不参与加减**。"
+              if any(PENDING_ROW_LABEL in r[0] for r in rows) else "")
+    # 判废子项相加大于总数时必须当场说明白,否则读者一加就以为表算错了
+    overlap = ("判废子项按检查逐项计数,**同一条可能同时踩中多项**,"
+               "所以子项相加会大于判废总数。"
+               if drop_breakdown(m.get("dataset") or {})[1] == "overlap" else "")
+    return f"_口径:{ident}。{within}{overlap}_"
 
 
 CHECK_HEADERS = ["检查", "结果", "分数", "要点"]
@@ -395,7 +575,8 @@ def skill_bar_html(m: dict) -> str:
             + "".join(head) + "".join(rows) + foot + '</div>')
 
 
-AUDIT_HEADERS = ["操作", "档位", "episode", "原始标注", "自产描述(VLM 生成)", "成败线判定", "分歧说明", "裁决"]
+AUDIT_HEADERS = ["操作", "档位", "episode", "原始标注", "自产描述(VLM 生成)",
+                 "成败线判定", "分歧说明", "裁决"]
 
 
 def audit_rows(m: dict) -> list[list]:
@@ -492,7 +673,7 @@ def appeal_hint_md(m: dict) -> str:
 #: 「人工裁决」页顶的工序引导。顺序不是洁癖:改标重判会让一部分弃权自动有结论,
 #: 先裁成败等于白裁——这句话就是防止用户白干一遍。
 WORKFLOW_GUIDE = (
-    "**建议顺序**:先裁「标注分歧」→ 到「任务台 · 执行人工裁决」执行一次 → "
+    f"**建议顺序**:先裁「{AUDIT_TERM}」→ 到「任务台 · 执行人工裁决」执行一次 → "
     "再裁剩下的「任务成败弃权」→ 再执行一次。")
 
 
@@ -500,12 +681,12 @@ def audit_note_md(m: dict) -> str:
     """技能画像页留的一行指路(裁决面板已搬去「人工裁决」页)。"""
     q = m.get("audit_queue") or []
     if not q:
-        return "_本次未检出标注-画面分歧条目。_"
+        return f"_本次没有「{AUDIT_TERM}」的条目。_"
     n = audit_pending_count(m)
     if not n:
-        return (f"标注-画面分歧队列共 **{len(q)}** 条,已全部裁决 → "
+        return (f"「{AUDIT_TERM}」共 **{len(q)}** 条,已全部裁决 → "
                 "详见「**人工裁决**」页")
-    return (f"**{n}** 条标注分歧待裁(队列共 {len(q)} 条)→ "
+    return (f"**{n}** 条「{AUDIT_TERM}」待裁(共 {len(q)} 条)→ "
             "去「**人工裁决**」页处理")
 
 
@@ -518,14 +699,21 @@ def task_review_hint_md(m: dict) -> str:
              "(搁置算待裁:它是「待定」不是结论)。"]
     n_audit = audit_pending_count(m)
     if n_audit:
-        lines.append(f"⚠️ 上方还有 **{n_audit}** 条标注分歧未裁,建议先清"
+        lines.append(f"⚠️ 上方还有 **{n_audit}** 条「{AUDIT_TERM}」没裁,建议先清"
                      "(改标重判后,部分弃权会自动解决,省得白裁)")
     return "\n\n".join(lines)
 
 
 def overview_markdown(m: dict) -> str:
-    d = m["dataset"]
-    ss = d.get("summary_stats") or {}
+    """总览页表格**之上**的那几行:身份 + 数据包完整性 + 一句导航。
+
+    2026-08-13 起这里**一个数字都不说**:数字全在下面 overview_rows 那张表里。
+    此前上半部是几行 bullet、下半部是一张表,同一批数字说两遍,还两处口径不同 ——
+    用户原话"表格没有显示正确的质检结果信息"。
+    """
+    if m.get("load_error"):
+        return "## 读不到这份交付\n\n" + m["load_error"]
+    d = m.get("dataset") or {}
     # 机器人字段自 2026-07 起是 dict(型号+规格表+质量),概览一直在渲染原始
     # dict(2026-08-10 发现)——按报告身份行的同款人话格式化;老交付是纯字符串,原样。
     rb = m.get("robot")
@@ -534,14 +722,9 @@ def overview_markdown(m: dict) -> str:
         rb = f"{rb.get('robot_type')}(规格表 {rb.get('registry_profile')}{_q})"
     lines = [f"# {m['name']}",
              f"机器人 **{rb}** · 生成于 {m['generated_at']} · 代码版本 {m['code_version']}",
-             "",
-             f"- 交付 **{d.get('delivered', '?')}** / 输入 {d.get('input_episodes', '?')} 条"
-             f"(通过率 {ss.get('pass_rate_pct', '?')}%,平均质量分 {ss.get('avg_soft_score', '?')})"]
-    hb = d.get("hard_fail_breakdown") or {}
-    if hb:
-        lines.append("- 不合格拦截:" + ",".join(f"{k} {v} 条" for k, v in hb.items()))
-    # 数据包完整性(2026-08-10):容器缺了什么、按什么补的,概览一行带过,
-    # 详细说明在质检报告的「数据包完整性」节。有 findings 才出,不占位。
+             ""]
+    # 数据包完整性(2026-08-10):容器缺了什么、按什么补的。它不是数字复读,是另一类
+    # 信息(读任何数字之前该知道的前提),所以这一条留下。有 findings 才出,不占位。
     cf = (d.get("container") or {}).get("findings") or []
     if cf:
         _ic = {"正常": "✅", "缺失(已补)": "⚠️", "缺失(已溯源补全)": "✅",
@@ -549,24 +732,27 @@ def overview_markdown(m: dict) -> str:
         lines.append("- 数据包完整性:" + ";".join(
             f"{f.get('项')} {_ic.get(str(f.get('状态')), '')}{f.get('状态')}"
             for f in cf) + "(缺什么、按什么补的,详见质检报告)")
-    n_pending = sum(1 for e in m["episodes"].values() if e.get("pending"))
-    if n_pending:
-        lines.append(f"- 待人工裁决 **{n_pending}** 条(见 Episode 页「待裁决」列;"
-                     "任务成败弃权可在「人工裁决」页逐条裁定)")
-    if m["audit_queue"]:
-        lines.append(f"- 标注-画面分歧复核队列 {len(m['audit_queue'])} 条"
-                     "(见「人工裁决」页;双方都可能错,供人工判定)")
+    # 唯一保留的导航(不带数字):有活要干才说,没有队列还催人去看等于骗人
+    if any(e.get("pending") for e in (m.get("episodes") or {}).values()) \
+            or m.get("audit_queue"):
+        lines.append("- 需要人看一眼的条目都在「**人工裁决**」页,逐条看视频后裁定。")
     return "\n".join(lines)
 
 
 def discover_deliveries(root: str, max_depth: int = 3) -> list[str]:
-    """root 本身是交付目录 → [root];否则递归扫子目录(默认 3 层)找含 passed.json 的。
+    """root 本身是交付 → [root];否则递归扫子目录(默认 3 层)找出所有交付。
+
+    "是不是一份交付"两种形态都算(2026-08-14 布局变更):新布局 = 目录下有一个或
+    多个时间戳跑批子目录;老布局 = passed.json 直接躺在目录里。**返回的是交付目录,
+    不是某一次跑批** —— 报告页顶部那个下拉列的是交付名,几十次跑批平铺成几十个
+    条目正是这次要改掉的东西。
 
     2026-08-06 从"只扫一层"改递归:用户把交付放在嵌套目录(如 experiments/run1/)
-    时曾整个不可见,看起来像 UI 坏了。找到交付目录即不再往其内部钻(details/ 等
-    子目录里不会再有交付)。"""
+    时曾整个不可见,看起来像 UI 坏了。找到交付即不再往其内部钻(跑批子目录、
+    details/ 里不会再有交付)。"""
+    from ..delivery import is_delivery
     root = os.path.abspath(root)
-    if os.path.exists(os.path.join(root, "passed.json")):
+    if is_delivery(root):
         return [root]
     out = []
 
@@ -581,12 +767,28 @@ def discover_deliveries(root: str, max_depth: int = 3) -> list[str]:
             p = os.path.join(d, name)
             if not os.path.isdir(p):
                 continue
-            if os.path.exists(os.path.join(p, "passed.json")):
+            if is_delivery(p):
                 out.append(p)                 # 是交付:收下,不再往里钻
             else:
                 _walk(p, depth + 1)
 
     _walk(root, 1)
+    return out
+
+
+def delivery_choices(root: str, paths: list | None = None) -> list:
+    """交付下拉的 [(显示名, 目录路径)]。显示名 = 相对扫描根的路径(如 droid-200-full)。
+
+    显示相对路径而不是绝对路径,是因为交付根前缀(/mnt/tos/deliveries/)每一项都
+    一样,占满半个下拉却不提供任何区分度;嵌套摆放的交付显示成 experiments/run1,
+    仍然唯一。值仍是绝对路径 —— 手输完整路径是既有能力,不许砍。
+    """
+    base = os.path.abspath(str(root or "."))
+    out = []
+    for p in (paths if paths is not None else discover_deliveries(root)):
+        ap = os.path.abspath(str(p))
+        rel = os.path.relpath(ap, base) if ap.startswith(base + os.sep) else ap
+        out.append((rel, ap))
     return out
 
 
@@ -603,10 +805,52 @@ DETAIL_LABELS = {                      # 语义化标签(纪律:界面不出现�
 }
 
 
+#: 逐相机的视觉质量表 = 「视频打分明细」子页的全部内容(2026-08-13 用户定)。
+#: 它原先混在明细页那个下拉里,客户根本翻不到 —— 而"每台相机拍得清不清楚"是
+#: 判断这份数据能不能用的直接证据,不该藏在一个要先点开才知道有什么的下拉后面。
+#: 单独成页之后下拉里那一条同时撤掉:同一份数据不留两个入口。
+VIDEO_DETAIL_TABLE = "visual_details.csv"
+
+#: 子页标题一致的说法(下面那行行数说明用它)。DETAIL_LABELS 里那条老标签留着不动
+#: —— load_detail_table 的白名单还认它,而白名单是安全边界。
+VIDEO_DETAIL_TITLE = "视频打分明细(逐相机)"
+
+#: 交付里没有这张表时的空态。**只说交付里缺什么**,不写配置键名 —— NO_PLOTS_NOTE
+#: 那次的教训:开关名是我们的实现细节,客户既不知道去哪改、也不该被要求知道。
+NO_VIDEO_DETAILS_NOTE = ("这次跑批没有视频打分明细(`details/visual_details.csv` "
+                         "不存在)——这次没跑视觉质量检查,或者它是更早版本跑出来的交付。")
+
+
 def list_detail_tables(m: dict) -> list[str]:
     """交付里实际存在的明细 CSV(按 DETAIL_LABELS 顺序;缺的不列)。"""
     det = os.path.join(m["path"], "details")
     return [f for f in DETAIL_LABELS if os.path.exists(os.path.join(det, f))]
+
+
+def detail_table_choices(m: dict) -> list[str]:
+    """明细页那个下拉里该出现哪几张表:实际存在的,**减去已经单独成页的那张**。
+
+    同一份数据不留两个入口:两个入口就是两处要同步维护,迟早对不上(而对不上的
+    那一侧客户还会以为是数据出了问题)。
+    """
+    return [t for t in list_detail_tables(m) if t != VIDEO_DETAIL_TABLE]
+
+
+def video_detail_view(m: dict) -> tuple:
+    """「视频打分明细」子页的三件套 (说明, 表头, 行)。没有这份 CSV → 空态一句话。
+
+    空态照现有写法给一个"(无)"表头:Dataframe 的 headers 传空列表会渲染成一张
+    没有列的空壳,看着像页面坏了。
+    """
+    if not m or not m.get("path"):
+        return NO_VIDEO_DETAILS_NOTE, ["(无)"], []
+    headers, rows, total = load_detail_table(m, VIDEO_DETAIL_TABLE)
+    if not headers:
+        return NO_VIDEO_DETAILS_NOTE, ["(无)"], []
+    note = f"**{VIDEO_DETAIL_TITLE}** · 共 {total} 行" + (
+        f"(仅显示前 {len(rows)} 行,完整文件见本次跑批目录下的 details/{VIDEO_DETAIL_TABLE})"
+        if total > len(rows) else "")
+    return note, headers, rows
 
 
 def load_detail_table(m: dict, name: str, cap: int = 2000):
@@ -1346,7 +1590,7 @@ def check_table_html(m: dict, eid: str) -> str:
     rows = check_rows(m, eid) if eid else []
     if not rows:
         return ('<p style="color:#777;font:12px/1.6 system-ui">'
-                '此条没有逐维检查读数(老交付,或漏斗更早阶段已短路)。</p>')
+                '此条没有逐维检查读数(老交付,或更早的检查已经把后面的步骤短路了)。</p>')
     marks = [r[1] == "拒绝" for r in rows]
     return ('<div style="font:13px/1.6 system-ui;font-weight:700;color:#4E5969;'
             'margin-top:4px">各维检查读数(标红=把这条毙掉的那一维)</div>'
@@ -1366,11 +1610,10 @@ SYNC_PAGE_SIZE = 20      # 每页张数:曲线是整幅宽度的长图,平铺往
                          # (2026-08-07 用户定)。翻页只是"图多到塞不下"时的兜底,
                          # 一页放得下时 UI 会把翻页件整排隐藏
 
-#: 交付里没有 plots 时的说明。必须点名开关,否则客户会以为功能坏了。
-NO_PLOTS_NOTE = (
-    "此交付没有同步曲线图(`details/plots/` 为空)。画不画由配置 "
-    "`pipeline.sync_plots` 控制:`flagged`=只给非「过」的条目画(默认)、"
-    "`all`=全画、`off`=不画。")
+#: 交付里没有 plots 时的说明。2026-08-13 用户点名删掉后面那串开关说明:
+#: `pipeline.sync_plots` 是我们的实现细节,客户既不知道去哪改、也不该被要求知道
+#: (要改的人现在在任务台「更多设置 › 视频-动作同步的证据图」里点就行)。
+NO_PLOTS_NOTE = "此交付没有同步曲线图(`details/plots/` 为空)。"
 
 
 def _sync_flagged(ep: dict, detail: dict, state: str) -> bool:

@@ -1,6 +1,7 @@
 """P4.4 验收:一条命令出三件套;报告与统计对账;导出可回读。"""
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -102,3 +103,32 @@ def test_parse_episodes_rejects_bad_input():
     for bad in ("abc", "1-", "-", "5-3"):                # 非数字/残缺/起止颠倒
         with pytest.raises(ValueError):
             _parse_episodes(bad)
+
+
+def test_broken_log_stream_never_kills_a_run():
+    """写日志失败必须被吞掉:一次跑批的价值在数据,不在日志。
+
+    真事(2026-08-13):任务日志落在 FSX 挂载上,fd 用着用着坏掉,管道里一句普通的
+    print 抛 OSError 把整批 200 条带走,而 traceback 又写不进同一个坏文件,现场
+    什么都没留下。日志已改为先写本地盘,这层是第二道保险。
+    """
+    from curation.cli import _TolerantStream
+
+    class _Broken:
+        encoding = "utf-8"
+
+        def write(self, _data):
+            raise OSError(116, "Stale file handle")
+
+        def flush(self):
+            raise OSError(116, "Stale file handle")
+
+    s = _TolerantStream(_Broken())
+    assert s.write("[curation] 判定痕迹:199 条\n") == len("[curation] 判定痕迹:199 条\n")
+    s.flush()                                   # 不抛就是通过
+    assert s.encoding == "utf-8"                # 其余属性照常透传
+
+    ok = _TolerantStream(io.StringIO())
+    ok.write("正常时一个字节都不能少")
+    ok.flush()
+    assert ok.getvalue() == "正常时一个字节都不能少"

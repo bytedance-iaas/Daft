@@ -79,11 +79,20 @@ PAIR_JUDGE_PROMPT = (
 _PAIR_CHUNK = 40      # 每次 LLM 调用最多比多少对(防长回复截断)
 
 
-def _judge_pairs(items: list, llm_ask: LlmAsk) -> dict:
-    """items = [(序号, 标注, caption)] → {序号: (verdict, why)}。结构不符即抛(触发回退)。"""
+def _judge_pairs(items: list, llm_ask: LlmAsk, on_progress=None) -> dict:
+    """items = [(序号, 标注, caption)] → {序号: (verdict, why)}。结构不符即抛(触发回退)。
+
+    `on_progress(done, total)` 是可选的报进度钩子(与 llm_ask 同样式的注入点,
+    本模块仍是纯文本模块、不 import 任何进度设施)。**必须报**:这一步是按 40 对
+    一批**串行**问 LLM,181 条要问五批、两三分钟里界面一声不吭,看着就像卡死了
+    (2026-08-13 用户实见)。
+    """
     out: dict = {}
+    total = (len(items) + _PAIR_CHUNK - 1) // _PAIR_CHUNK
     for k in range(0, len(items), _PAIR_CHUNK):
         chunk = items[k:k + _PAIR_CHUNK]
+        if on_progress:
+            on_progress(k // _PAIR_CHUNK + 1, total)
         body = "\n".join(
             f"{i}. ANNOTATION: {lab} /// DESCRIPTION: {cap if cap.strip() else '(none)'}"
             for i, lab, cap in chunk)
@@ -96,7 +105,8 @@ def _judge_pairs(items: list, llm_ask: LlmAsk) -> dict:
 
 
 def audit_labels(episode_ids: list[str], instructions: list[str], captions: list[str],
-                 cap_families: list[str], taxonomy: dict, llm_ask: LlmAsk) -> dict:
+                 cap_families: list[str], taxonomy: dict, llm_ask: LlmAsk,
+                 on_progress=None) -> dict:
     """→ {"high": [...高置信...], "mid_for_review": [...人工复核...]}。
 
     默认走文本对判官;判官整体失败(端点/JSON/结构)→ 回退族级比对(降级不断链,
@@ -108,7 +118,7 @@ def audit_labels(episode_ids: list[str], instructions: list[str], captions: list
         return {"high": [], "mid_for_review": []}
     try:
         verdicts = _judge_pairs([(i, lab, str(captions[i] or "")) for i, lab in labeled],
-                                llm_ask)
+                                llm_ask, on_progress)
         high, mid = [], []
         for i, lab in labeled:
             v, why = verdicts.get(i, ("same", ""))

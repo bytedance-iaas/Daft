@@ -184,3 +184,89 @@ def test_caption_progress_counts_failures_and_cache_hits():
                             on_progress=lambda: seen.append(1))
     assert len(seen) == 3, f"应每条各调一次,实得 {len(seen)}"
     assert caps == ["c1", "", "c2"]
+
+
+# ───────── 剩余时间:近段速率而不是全程平均(2026-08-13)─────────
+
+def _replay(samples, total, t0=0.0):
+    """把同一串 (时刻, 已完成数) 采样点喂给新算法,返回最后一次给出的剩余秒数。
+
+    t0 是**阶段起点**,在第一个采样点之前 —— 全程平均那条兜底路径要靠它。
+    """
+    from curation.pipeline.progress import _eta_seconds
+
+    st = {"t0": t0, "hist": []}
+    eta = None
+    for t, n in samples:
+        eta = _eta_seconds(st, t, n, total)
+    return eta
+
+
+def test_eta_uses_the_recent_rate_not_the_lifetime_average():
+    """★ 回归:先快后慢时,剩余估计不能再照着全程平均速率外推。
+
+    用户 2026-08-13 实见「已用 41s | 剩余 ~6s」之后又跑了 40 秒。根因是 VLM 段并发:
+    开头一批同时冲进去、完成得又快又密,把全程平均抬得很高;尾巴上只剩零星几条排队,
+    真实速率掉下来,于是估计一路偏乐观。同一串采样点喂进来,新算法必须明显更保守。
+    """
+    # 前 80 条每条 0.5 秒(并发段冲进去的那一批),之后每条 6 秒(尾巴上零星排队)
+    samples = [(0.5 * n, n) for n in range(5, 81, 5)]
+    samples += [(40.0 + 6.0 * (n - 80), n) for n in (85, 90)]
+    new = _replay(samples, 100)
+    t_last, n_last = samples[-1]
+    old = (t_last - samples[0][0]) / n_last * (100 - n_last)   # 旧公式:全程平均外推
+    assert old < 15, "样本没造出'旧公式偏乐观'的场景,这条测试就白测了"
+    assert new > 3 * old, f"近段速率没生效:新 {new:.1f}s vs 旧 {old:.1f}s"
+
+
+def test_eta_falls_back_to_the_lifetime_average_before_the_window_fills():
+    """窗口里只有一个采样点(刚开跑)→ 退回全程平均,而不是拒答。
+
+    刚起步时给不出近段速率是常态,那时哪怕粗糙的估计也比一片空白有用。
+    """
+    assert _replay([(10.0, 10)], 100) == pytest.approx(90.0, rel=0.01)
+
+
+def test_eta_history_is_bounded():
+    """历史有上限:十万条的阶段也不该在进度状态里攒出一条无限长的列表。"""
+    from curation.pipeline.progress import _RATE_HISTORY_MAX, _eta_seconds
+
+    st = {"t0": 0.0, "hist": []}
+    for n in range(1, 500):
+        _eta_seconds(st, float(n), n, 100000)
+    assert len(st["hist"]) == _RATE_HISTORY_MAX
+
+
+def test_no_zero_eta_before_the_stage_is_actually_done(capsys, monkeypatch):
+    """★ 没结束就不许显示 `~0s`,一律说「收尾中」。
+
+    `~0s` 是"马上就好"的承诺,而并发段的最后几条常常还要磨很久 —— 承诺完再跑 40 秒
+    比不给数字更伤信任。完成行(n==total)则干脆不提剩余:都跑完了还报剩余是废话。
+    """
+    import time
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(time, "time", lambda: clock["t"])
+    k = _progress_init("eta-floor", 10, "抽帧")
+    for _ in range(10):
+        clock["t"] += 0.1                       # 又快又稳 → 剩余算出来远小于 5 秒
+        _progress_tick(k)
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    assert "~0s" not in "\n".join(lines)
+    assert "收尾中" in lines[-2] and "剩余" not in lines[-2]     # 9/10:说收尾中
+    assert "10/10" in lines[-1]
+    assert "收尾中" not in lines[-1] and "剩余" not in lines[-1]  # 完成行:什么都不说
+
+
+def test_eta_is_still_reported_when_there_is_real_time_left(capsys, monkeypatch):
+    """反向:确实还要跑很久时,剩余照报 —— 别把「收尾中」变成万能挡箭牌。"""
+    import time
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(time, "time", lambda: clock["t"])
+    k = _progress_init("eta-real", 100, "VLM 任务成败判定")
+    for _ in range(10):
+        clock["t"] += 6.0
+        _progress_tick(k)
+    last = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()][-1]
+    assert "10/100" in last and "剩余 ~" in last and "收尾中" not in last

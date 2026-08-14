@@ -131,17 +131,43 @@ def test_batch_mode_processes_all(tmp_path):
 
 @pytest.mark.skipif(not os.path.exists("/data03/hao/data/pusht/meta/info.json"),
                     reason="无数据")
-def test_output_exists_fails_fast_then_overwrite(tmp_path):
-    """输出目录已有结果 → 提前拦(OutputExistsError);--overwrite 则清理重跑。"""
-    from curation.cli import main
-    from curation.ingest.lerobot_reader import OutputExistsError
+def test_reruns_go_to_separate_directories(tmp_path):
+    """同名重跑不再覆盖:两次跑批各进各的时间戳子目录,latest 指向后一次。
+
+    这就是 2026-08-14 那次事故的直接防线 —— 旧版第二次跑会 rmtree 掉 details/,
+    人工裁决的三张 CSV 跟着一起没(用户当天亲历)。
+    """
+    from curation.delivery import read_latest
     from curation.pipeline.run import run_pipeline
     out = tmp_path / "o"
     args = dict(embodiment_id="pusht", max_episodes=3, only_checks="visual_quality")
-    run_pipeline(None, "/data03/hao/data/pusht", str(out), **args)      # 首次OK
-    with pytest.raises(OutputExistsError):                              # 再次拦
-        run_pipeline(None, "/data03/hao/data/pusht", str(out), **args)
-    run_pipeline(None, "/data03/hao/data/pusht", str(out), overwrite=True, **args)  # 覆盖OK
+    s1 = run_pipeline(None, "/data03/hao/data/pusht", str(out),
+                      run_name="20260814-074045", **args)
+    s2 = run_pipeline(None, "/data03/hao/data/pusht", str(out),
+                      run_name="20260814-131200", **args)
+    assert s1["run_dir"] != s2["run_dir"]
+    assert os.path.exists(os.path.join(s1["run_dir"], "passed.json"))   # 上一次仍在
+    assert read_latest(str(out)) == "20260814-131200"
+
+
+@pytest.mark.skipif(not os.path.exists("/data03/hao/data/pusht/meta/info.json"),
+                    reason="无数据")
+def test_output_pointing_at_legacy_delivery_is_refused(tmp_path):
+    """--output 指到老布局的一份交付(passed.json 直接在里面)→ 拦下并让人换目录。
+
+    往里再套一层跑批目录会造出半新半老的混合体:报告页看见根上的 passed.json 就当
+    它是老交付,新跑的那次永远不出现在「运行」列表里。
+    """
+    from curation.cli import main
+    from curation.ingest.lerobot_reader import OutputExistsError
+    from curation.pipeline.run import run_pipeline
+    out = tmp_path / "legacy"
+    out.mkdir()
+    (out / "passed.json").write_text("{}")
+    with pytest.raises(OutputExistsError):
+        run_pipeline(None, "/data03/hao/data/pusht", str(out),
+                     embodiment_id="pusht", max_episodes=3,
+                     only_checks="visual_quality")
     assert main(["run", "--input", "/data03/hao/data/pusht", "--output", str(out),
                  "--embodiment-id", "pusht", "--max-episodes", "3",
                  "--only", "visual_quality"]) == 3                      # CLI 退出码3

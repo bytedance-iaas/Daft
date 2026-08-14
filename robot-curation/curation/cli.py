@@ -1,7 +1,10 @@
 """curation 命令行入口。
 
 用法(P3.6 漏斗装配后接通):
-    python -m curation.cli run --config default.yaml --input <数据集目录> --output <输出目录>
+    python -m curation.cli run --config default.yaml --input <数据集目录> --output <交付目录>
+
+`--output` 是**交付目录**,一次跑批的结果落在 `<交付目录>/<时间戳>/`(2026-08-14
+布局变更,理由见 curation/delivery.py);清理历次跑批走 `curation prune`。
 """
 from __future__ import annotations
 
@@ -35,7 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="端到端跑一遍 curation")
     run.add_argument("--config", default=None, help="流水线 YAML 配置(缺省用 default.yaml)")
     run.add_argument("--input", required=True, help="输入数据集目录(LeRobot 格式)")
-    run.add_argument("--output", required=True, help="输出目录(交付三件套)")
+    run.add_argument("--output", required=True,
+                     help="交付目录;本次结果落在 <交付目录>/<时间戳>/ 里"
+                          "(每次跑批各进各的子目录,永不覆盖上一次)")
     run.add_argument("--embodiment-id", default=None,
                      help="人工指定机器人型号(数据集 robot_type 缺失/unknown 时)")
     run.add_argument("--max-episodes", type=int, default=None, help="只处理前 N 条(调试)")
@@ -46,10 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
                      help="只跑这些模块(逗号分隔,如 visual_quality,motion_quality;"
                           "含数据集级模块 skill_profile(技能画像)/dedup(精确去重))")
     run.add_argument("--skip", default=None, help="跳过这些模块(逗号分隔,与 --only 互斥)")
-    run.add_argument("--overwrite", action="store_true",
-                     help="覆盖:输出目录已有结果时,清理旧交付物后重跑(默认拒绝并提示换目录)")
+    run.add_argument("--run-name", default=None, metavar="子目录名",
+                     help="本次跑批的子目录名(缺省按本地时间生成 YYYYMMDD-HHMMSS);"
+                          "任务台发起时传的是那次任务的编号,好让结果与任务对得上")
     run.add_argument("--batch", action="store_true",
-                     help="批处理:--input 指向含多个数据集的父目录,逐个处理到 --output/<数据集名>/")
+                     help="批处理:--input 指向含多个数据集的父目录,"
+                          "逐个处理到 --output/<数据集名>/<时间戳>/")
     run.add_argument("--lite", action="store_true",
                      help="精简版:跳过 VLM 环节(任务判定/caption画像),不碰 GPU,秒级出报告")
     run.add_argument("--set", action="append", dest="set_overrides", metavar="路径=值",
@@ -77,12 +84,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     rj = sub.add_parser("rejudge",
                         help="按人工裁决更新交付(三条线一起消化):标注分歧"
-                             "(details/label_decisions.csv,采纳改标的条目用新标注"
+                             "(human-decisions/label_decisions.csv,采纳改标的条目用新标注"
                              "重跑任务成败检测)+ 任务成败裁决"
-                             "(details/task_verdicts.csv,不重判,以人的结论为准)"
-                             "+ 被拒复议(details/reject_appeals.csv,人判可用的"
+                             "(human-decisions/task_verdicts.csv,不重判,以人的结论为准)"
+                             "+ 被拒复议(human-decisions/reject_appeals.csv,人判可用的"
                              "条目从拒绝翻回通过并补回交付数据集)")
-    rj.add_argument("--delivery", required=True, help="交付目录(含三件套与裁决文件)")
+    rj.add_argument("--delivery", required=True,
+                    help="要更新的那一次跑批目录(<交付目录>/<时间戳>/);"
+                         "只给交付目录时按 latest 记的那次执行")
     rj.add_argument("--input", required=True, help="原始数据集目录(重判需重新解码视频)")
     rj.add_argument("--config", default=None, help="流水线 YAML(缺省 default.yaml,须与原 run 一致)")
     rj.add_argument("--vlm-backend", default=None, metavar="预设名",
@@ -103,6 +112,16 @@ def build_parser() -> argparse.ArgumentParser:
                     help="仅 RRD 输入:采集帧率。RRD 里没有时间信息时必须给"
                          "(如 so101 用 30),数据自带帧时间戳时(如 bridge)不用管。"
                          "等价于 run 的 --set ingest.rrd_fps")
+
+    pr = sub.add_parser("prune",
+                        help="列出一份交付下的历次跑批(时间/条数/占用),"
+                             "并按需删掉旧的几次;**默认只列不删**")
+    pr.add_argument("delivery", help="交付目录(如 /mnt/tos/deliveries/droid-200-full)")
+    pr.add_argument("--keep-latest", type=int, default=None, metavar="N",
+                    help="要删的是哪几次:留最新的 N 次,更早的删掉。"
+                         "latest 记的那次永远保留。不给这个参数就只列出、不删任何东西")
+    pr.add_argument("--yes", action="store_true",
+                    help="真的删(不加就只打印将要删什么;必须同时给 --keep-latest)")
 
     be = sub.add_parser("backends", help="一次列出全部 VLM 后端预设的在线状态与服务端模型")
     be.add_argument("--config", default=None,
@@ -162,6 +181,70 @@ def _cmd_backends(config_path: str | None, timeout: float) -> int:
     return 0
 
 
+def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool) -> int:
+    """`curation prune`:先把历次跑批摆出来,要删得说清删哪几次 + 加 --yes。
+
+    **绝不做"按最新覆盖旧的"那种自动清理**(用户 2026-08-14 点名否掉):1812 跑
+    20 条不能顶掉 0530 跑 200 条的成果 —— 哪一份更值钱只有人知道,系统只负责把
+    事实(时间/条数/占用)摆清楚。human-decisions/ 与 latest 永远不在删除范围内。
+    """
+    import shutil
+
+    from .delivery import is_delivery, prune_plan, size_text
+
+    if not os.path.isdir(delivery):
+        print(f"[输入错误] 目录不存在: {delivery}", file=sys.stderr)
+        return 2
+    if yes and keep_latest is None:
+        # 光有 --yes 不说删哪几次 = 没说清就动手,一律拒绝(哪份该留只有人知道)
+        print("[输入错误] --yes 必须和 --keep-latest N 一起给:得先说清要删哪几次",
+              file=sys.stderr)
+        return 2
+    if not is_delivery(delivery):
+        print(f"[输入错误] {delivery} 不是一份交付(既没有跑批子目录,也没有 passed.json)",
+              file=sys.stderr)
+        return 2
+    try:
+        plan = prune_plan(delivery, keep_latest)
+    except ValueError as e:
+        print(f"[输入错误] {e}", file=sys.stderr)
+        return 2
+    runs = plan["runs"]
+    if not runs:
+        print(f"{delivery}:这是 2026-08-14 之前布局的交付(结果直接在交付目录里),"
+              "没有可清理的跑批子目录")
+        return 0
+    doomed = {f["name"] for f in plan["delete"]}
+    print(f"{delivery} 共 {len(runs)} 次跑批:")
+    for f in runs:
+        mark = "  ← 最近一次" if f["is_latest"] else ""
+        n = f.get("processed")
+        cnt = f"本次处理 {n} 条" if n is not None else "条数未知"
+        total = f.get("dataset_total")
+        if total not in (None, ""):
+            cnt += f"(数据集共 {total} 条)"
+        flag = "删除" if f["name"] in doomed else "保留"
+        print(f"  [{flag}] {f['name']}  {f.get('at') or ''}  {cnt}  "
+              f"{size_text(f['size'])}{mark}")
+    if keep_latest is None:
+        print("\n(默认只列不删。要删:加 --keep-latest N 看将删哪几次,确认后再加 --yes)")
+        return 0
+    if not doomed:
+        print(f"\n留最新 {keep_latest} 次 → 没有要删的")
+        return 0
+    freed = size_text(sum(f["size"] for f in plan["delete"]))
+    if not yes:
+        print(f"\n将删除上面标「删除」的 {len(doomed)} 次跑批,可释放 {freed}。"
+              "确认无误就重跑一遍并加 --yes")
+        return 0
+    for f in plan["delete"]:
+        shutil.rmtree(f["path"])
+        print(f"  已删 {f['name']}")
+    print(f"删除 {len(doomed)} 次跑批,释放 {freed};"
+          "人工裁决(human-decisions/)与其余跑批一个字没动")
+    return 0
+
+
 def _list_datasets(parent: str) -> list[str]:
     """父目录下所有有效数据集(--batch 的清单)。
 
@@ -200,8 +283,46 @@ def _parse_episodes(expr: str | None) -> set[int] | None:
         raise ValueError("未解析出任何 episode 编号")
     return out
 
+class _TolerantStream:
+    """包一层的标准输出/错误:**写日志失败绝不许弄死一次跑批**。
+
+    2026-08-13 实测的死法:任务日志落在 TOS 的 FSX 挂载上,那个 fd 用着用着就坏
+    (Stale file handle),于是管道里一句普通的 `print(...)` 抛 OSError、没人接,
+    一整批 200 条在最后写明细的阶段整个崩掉 —— 而 traceback 又写不进同一个坏文件,
+    现场什么都没留下(退出码 120 = CPython 退出时刷 stdout 失败)。
+
+    跑批的价值在数据,不在日志。日志写不动就丢掉这几行,继续把活干完。
+    (日志已改为先写容器本地盘、结束再归档,本层是第二道保险。)
+    """
+
+    def __init__(self, stream):
+        self._s = stream
+
+    def write(self, data):
+        try:
+            return self._s.write(data)
+        except (OSError, ValueError):      # ValueError = 文件已被关闭
+            return len(data)
+
+    def flush(self):
+        try:
+            self._s.flush()
+        except (OSError, ValueError):
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
+def _tolerate_broken_log() -> None:
+    """把 stdout/stderr 换成容错版。只在 CLI 入口调一次,库代码不受影响。"""
+    sys.stdout = _TolerantStream(sys.stdout)
+    sys.stderr = _TolerantStream(sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     import os
+    _tolerate_broken_log()
     args = build_parser().parse_args(argv)
     if args.command == "review-page":
         from .export.review_page import build_review_page
@@ -244,9 +365,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[review-page] 完成:新编码 {n} 段;入口 {args.output}/index.html", flush=True)
         return 0
 
+    if args.command == "prune":
+        return _cmd_prune(args.delivery, args.keep_latest, args.yes)
+
     if args.command == "rejudge":
+        from .delivery import is_legacy_delivery, resolve_run
         from .pipeline.config import load_config
         from .pipeline.rejudge import run_rejudge
+        # --delivery 指的是**某一次跑批**;只给了交付目录时按 latest 记的那次执行
+        # 并把选中的那次明说出来(裁决是写数据的命令,不许让人猜动了哪一份)。
+        if not is_legacy_delivery(args.delivery):
+            _run = resolve_run(args.delivery)
+            if _run != args.delivery:
+                print(f"[rejudge] 按 latest 记录选中 {os.path.basename(_run)};"
+                      "要执行别的那次,把 --delivery 写到那一次的目录", flush=True)
+            args.delivery = _run
         cfg = load_config(args.config)
         if args.vlm_backend:
             from .pipeline.config import apply_vlm_backend
@@ -285,6 +418,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[curation] 只跑指定 episode({len(_eps)} 条): "
                   f"{sorted(_eps)[:10]}{'…' if len(_eps) > 10 else ''}")
 
+        # 跑批子目录名只算一次:--batch 下几个数据集共用同一个名字,一次点击的
+        # 产物在各自交付里对得上号(`<交付>/<数据集>/20260814-074045/`)。
+        from .delivery import new_run_name
+        run_name = args.run_name or new_run_name()
+
         def _run_one(inp, outp):
             # finally 清临时视频缓存(P4):run_pipeline 正常收尾时自己会清,这里兜的是
             # **异常退出**那条路 —— RRD 解出的 mp4 躺在容器可写层,批处理连崩几个数据集
@@ -295,7 +433,7 @@ def main(argv: list[str] | None = None) -> int:
                                     max_episodes=args.max_episodes,
                                     only_checks=args.only, skip_checks=args.skip,
                                     report_only=args.report_only, lite=args.lite,
-                                    overwrite=args.overwrite,
+                                    run_name=run_name,
                                     set_overrides=args.set_overrides,
                                     episode_indices=_eps,
                                     vlm_backend=args.vlm_backend,
@@ -328,9 +466,10 @@ def main(argv: list[str] | None = None) -> int:
             print("\n===== 批处理汇总 =====")
             for ds, ni, nd in agg:
                 print(f"  {ds}: 输入 {ni} → 交付 {nd}")
-            print(f"  各数据集结果: {args.output}/<数据集名>/")
-            # 批处理汇总文件(2026-07-15 用户定):数据集名 + 机器人型号一览
-            import json as _json
+            print(f"  各数据集结果: {args.output}/<数据集名>/{run_name}/")
+            # 批处理汇总文件(2026-07-15 用户定):数据集名 + 机器人型号一览。
+            # 写法走 safe_write(本地临时文件 + copyfile):`--output` 可能落在
+            # TOS 的 FSX 挂载上,库直写已经咬过六次。
             summary_rows = []
             for i, (ds, ni, nd) in enumerate(agg):
                 rb = robots.get(ds) or {}
@@ -338,9 +477,10 @@ def main(argv: list[str] | None = None) -> int:
                                      "机器人": rb.get("robot_type", "(失败/未知)"),
                                      "规格表": rb.get("registry_profile", "-"),
                                      "输入": ni, "交付": nd})
-            with open(os.path.join(args.output, "batch_summary.json"), "w") as f:
-                _json.dump({"数据集数": len(agg), "datasets": summary_rows},
-                           f, ensure_ascii=False, indent=1)
+            from .export.safe_write import write_json as _write_json
+            from .export.safe_write import write_text as _write_text
+            _write_json(os.path.join(args.output, "batch_summary.json"),
+                        {"数据集数": len(agg), "datasets": summary_rows})
             md = ["# 批处理汇总", "",
                   "| 数据集 | 机器人型号 | 规格表 | 输入 | 交付 |",
                   "|---|---|---|---|---|"]
@@ -348,9 +488,8 @@ def main(argv: list[str] | None = None) -> int:
                 md.append(f"| {r['数据集']} | {r['机器人']} | {r['规格表']} |"
                           f" {r['输入']} | {r['交付']} |")
             md.append("")
-            md.append(f"各数据集完整报告见 <输出目录>/<数据集名>/report.md")
-            with open(os.path.join(args.output, "batch_summary.md"), "w") as f:
-                f.write("\n".join(md))
+            md.append(f"各数据集完整报告见 <输出目录>/<数据集名>/{run_name}/report.md")
+            _write_text(os.path.join(args.output, "batch_summary.md"), "\n".join(md))
             print(f"  汇总清单: {args.output}/batch_summary.md")
             return 0
 
@@ -368,7 +507,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[配置错误] {e}", file=sys.stderr)
                 return 2
             raise
-        print(f"漏斗统计: {summary['stats']}")
+        print(f"质检统计: {summary['stats']}")
+        print(f"本次跑批: {summary['run_dir']}")
         print(f"交付 {summary['n_delivered']} 条;三件套:")
         for k, v in summary["deliverables"].items():
             print(f"  - {k}: {v}")

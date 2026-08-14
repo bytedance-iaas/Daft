@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 import os
 
+from ..export.safe_write import delivery_file  # 交付件一律"本地临时文件+copyfile"
+
 
 def check_entry(res: dict) -> dict:
     """检查结果 struct → 报告条目。detail 有就带(2026-07-27 U0 修正:旧逻辑只在
@@ -87,34 +89,43 @@ def container_limits() -> dict:
 
 def _verify_delivery_visible(items: list, timeout_s: float = 300.0) -> None:
     """交付产物逐个轮询到"读得回来"为止(kind: json=可解析且非空 / text=非空 /
-    dir=列目录非空)。超时只警告不报错——产物已写出,只是对象存储还没追上。"""
-    import json as _json
+    dir=列目录非空)。超时只警告不报错——产物已写出,只是对象存储还没追上。
+
+    判据与写入端共用 safe_write(**含"正文不许有 `\\0`"这一条**):2026-08-14 那份
+    10853 字节全零的 passed.json 之所以能被报成"交付就绪",正是因为这里原来的
+    text/json 判据放它过去(strip 不吃 `\\0`)。读到坏内容当场点名 —— 那是等不好的,
+    继续轮询只会把事故拖成一句"超时"。
+    """
     import time as _time
+
+    from ..export.safe_write import (STATE_CORRUPT, STATE_OK, STATE_UNSEEN,
+                                     content_state)
 
     t0 = _time.time()
     pending = list(items)
     total = len(pending)
     done = 0
+    corrupt: list = []
     print(f"[curation] 交付落盘回验({total} 项;对象存储可见延迟约 1 分钟,"
           f"本阶段结束=交付立即可用)", flush=True)
     while pending and _time.time() - t0 < timeout_s:
         still = []
         for name, path, kind in pending:
-            try:
-                if kind == "dir":
-                    ok = bool(os.listdir(path))
-                elif kind == "json":
-                    with open(path, encoding="utf-8") as f:
-                        ok = bool(_json.load(f))
-                else:
-                    with open(path, encoding="utf-8") as f:
-                        ok = bool(f.read().strip())
-            except (OSError, ValueError):
-                ok = False
-            if ok:
+            if kind == "dir":
+                try:
+                    state = STATE_OK if os.listdir(path) else STATE_UNSEEN
+                except OSError:
+                    state = STATE_UNSEEN
+            else:
+                state = content_state(path, kind)
+            if state == STATE_OK:
                 done += 1
                 print(f"[curation] 落盘回验 {done}/{total}:{name} ✓"
                       f"({int(_time.time() - t0)}s)", flush=True)
+            elif state == STATE_CORRUPT:
+                corrupt.append(name)
+                print(f"[curation] ⚠️ 落盘回验:{name} 读回来是坏的(零填充/解析不了)"
+                      f"—— {path} 不可用,本次交付这一件需要重跑", flush=True)
             else:
                 still.append((name, path, kind))
         pending = still
@@ -123,6 +134,9 @@ def _verify_delivery_visible(items: list, timeout_s: float = 300.0) -> None:
     if pending:
         print(f"[curation] ⚠️ 落盘回验超时({int(timeout_s)}s):"
               f"{[p[0] for p in pending]} 仍未读回——产物已写出,稍后自会可见",
+              flush=True)
+    elif corrupt:
+        print(f"[curation] ⚠️ 落盘回验发现坏文件:{corrupt} —— 其余产物可用",
               flush=True)
     else:
         print(f"[curation] 交付就绪(共 {int(_time.time() - t0)}s):"
@@ -174,7 +188,7 @@ def run_pipeline(
     skip_checks: str | None = None,
     report_only: bool = False,
     lite: bool = False,
-    overwrite: bool = False,
+    run_name: str | None = None,               # 本次跑批的子目录名(缺省现生成)
     set_overrides: list | None = None,
     episode_indices: set[int] | None = None,   # 只跑指定 episode(CLI --episodes)
     vlm_backend: str | None = None,            # VLM 后端预设名(CLI --vlm-backend)
@@ -195,23 +209,24 @@ def run_pipeline(
     from ..pipeline.funnel import run_funnel
     from ..registry.registry import EmbodimentRegistry
 
-    # 提前检查:输出目录已有上次交付物 → 立即拦(别做完漏斗+VLM才在导出时崩)。
-    # overwrite=清理旧交付子目录后重跑;否则友好报错让用户换目录或加 --overwrite。
+    # 目录布局(2026-08-14 用户拍板):`--output` 是**交付目录**,本次结果落在
+    # `<交付>/<时间戳>/` 里,各跑各的互不覆盖 —— 覆盖重跑曾把人工裁决连同旧结果
+    # 一起 rmtree 掉(理由详见 curation/delivery.py)。
+    from ..delivery import (allocate_run_dir, latest_matches, write_latest,
+                            write_run_facts)
     from ..ingest.lerobot_reader import OutputExistsError
-    _deliv = ("episodes_parquet", "lerobot_curated", "rrd_curated", "passed.json")
-    _existing = [d for d in _deliv if os.path.exists(os.path.join(output_dir, d))]
-    if _existing:
-        if overwrite:
-            import shutil
-            for d in ("episodes_parquet", "lerobot_curated", "rrd_curated", "details"):
-                p = os.path.join(output_dir, d)
-                if os.path.isdir(p):
-                    shutil.rmtree(p)
-        else:
-            raise OutputExistsError(
-                f"输出目录 {output_dir} 已有上次运行的结果({', '.join(_existing)})。\n"
-                "  换一个新的 --output 目录,或加 --overwrite 覆盖重跑。")
-    os.makedirs(output_dir, exist_ok=True)
+    delivery_dir = output_dir
+    if os.path.exists(os.path.join(delivery_dir, "passed.json")):
+        # 老布局的交付(三件套直接躺在这个目录里)。往里再套一层跑批目录会造出
+        # 半新半老的混合体:报告页看见根上的 passed.json 就当它是老交付,新跑的
+        # 那次永远不出现在「运行」列表里。宁可拦下,让人换个目录。
+        raise OutputExistsError(
+            f"{delivery_dir} 是 2026-08-14 之前布局的一份交付(passed.json 直接在里面)。\n"
+            "  新版每次跑批各进一个时间戳子目录,不再覆盖;请换一个新的 --output 目录\n"
+            "  (老交付原样留着,报告页照常打得开)。")
+    os.makedirs(delivery_dir, exist_ok=True)
+    output_dir = allocate_run_dir(delivery_dir, run_name)
+    print(f"[curation] 本次跑批目录: {output_dir}", flush=True)
     cfg = load_config(config_path)
     if only_checks or skip_checks:
         from .config import apply_check_selection
@@ -477,10 +492,12 @@ def run_pipeline(
     if not dedup_on:
         dedup_note = "去重未启用(--only/--skip 未选 dedup):交付中可能含字节级重复"
         print(f"[curation] {dedup_note}", flush=True)
+    # 进度:第一道要把每条幸存者的数值列重读一遍(可数、量大),按条报。
+    # 原来是"每 1000 条打一行",少于 1000 条的跑批全程零输出——而它照样在读盘。
+    from .progress import _progress_init, _progress_tick
+    _pk_dedup = _progress_init("dedup_action", len(keep_ids) if dedup_on else 0,
+                               "精确去重·动作指纹", quiet_before_s=3.0)
     for _i0 in range(0, len(keep_ids) if dedup_on else 0, 200):
-        if _i0 and _i0 % 1000 == 0:
-            print(f"[curation] 去重指纹(第一道 action 哈希): {_i0}/{len(keep_ids)}",
-                  flush=True)
         _chunk = {int(e[2:]) for e in keep_ids[_i0:_i0 + 200]}
         for _row in read_rows(input_dir, episode_indices=_chunk,
                               embodiment_id=embodiment_id,
@@ -491,12 +508,18 @@ def run_pipeline(
                 _collide.setdefault(_ah, [_ah_first[_ah]]).append(_row["episode_id"])
             else:
                 _ah_first[_ah] = _row["episode_id"]
+            _progress_tick(_pk_dedup)
     dedup_dropped: list = []
     _dup_ids: set = set()
     if _collide:
         _n_c = sum(len(v) for v in _collide.values())
         print(f"[curation] 去重第二道:{len(_collide)} 组 action 撞车(共 {_n_c} 条),"
               "验视频内容", flush=True)
+        # 这一步要读视频字节做内容哈希(整条视频,比第一道贵得多),撞车组多时
+        # 是分钟级的活。按组报进度;**不并发** —— "谁是首见、谁被判重复"取决于
+        # 遍历顺序,并发会让同一份数据两次跑出不同的 duplicate_of。
+        _pk_dup2 = _progress_init("dedup_video", len(_collide),
+                                  "精确去重·撞车组验视频内容", quiet_before_s=3.0)
         for _ah, _eps in _collide.items():
             _idxs = {int(e[2:]) for e in _eps}
             _seen: dict = {}
@@ -511,6 +534,7 @@ def run_pipeline(
                     _dup_ids.add(_row["episode_id"])
                 else:
                     _seen[_fp] = _row["episode_id"]
+            _progress_tick(_pk_dup2)
     keep_ids = [e for e in _order if e not in _dup_ids]
     keep_rows = [row_of[e] for e in keep_ids]   # 轻量元数据行(视频指针/instruction/长度)
 
@@ -585,9 +609,13 @@ def run_pipeline(
             for sname, s in f.get("subskills", {}).items():
                 if sub_c.get((fname, sname)):
                     s["criterion"] = sub_c[(fname, sname)]
+        # 分歧检出是按 40 对一批**串行**问 LLM 的,181 条要问五批、两三分钟没动静
+        # (2026-08-13 用户实见:界面停在 5/5 一动不动,像卡死)。把批次报出来。
         label_audit = audit_labels([r["episode_id"] for r in keep_rows],
                                    [r.get("instruction", "") for r in keep_rows],
-                                   caps, fams, taxonomy, llm_ask)
+                                   caps, fams, taxonomy, llm_ask,
+                                   on_progress=lambda i, n: phase_step(
+                                       _G, 5, 5, f"标注-画面分歧检出 {i}/{n} 批", _sp_t0))
         # 分歧复检(2026-07-31):我方 caption 不可复现(方舟 temp=0 连打 5 次 5 种说法),
         # 拿它当基准去质疑客户标注是产品缺陷 → 把不可复现变成信号:**只对被标记条目**
         # 重打标 N 次,我方描述自己都不稳的分歧降级。重打标必须在这里做(有 rows/帧),
@@ -671,6 +699,13 @@ def run_pipeline(
               "源数据集路径": os.path.abspath(input_dir),
               "生成时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
               "代码版本": _ver, **report}
+    # 数据集总条数(2026-08-14):跑批清单要说"本次处理 20 条(数据集共 200 条)",
+    # 而"总共多少条"只有跑的时候知道。**只有源数据自己写着才记**(LeRobot 的
+    # info.json 有 total_episodes;RRD 没有这个字段)—— 拿不到就整个键不出现,
+    # 界面那边少说一句,绝不按目录里数出来的文件数编一个总数。
+    _total_eps = _info0.get("total_episodes")
+    if isinstance(_total_eps, int):
+        report["dataset"]["dataset_total_episodes"] = _total_eps
     vq = cfg["checks"].get("visual_quality", {})
     report["dataset"]["visual_qc_params"] = {
         "blur_ref_var": vq.get("params", {}).get("blur_ref_var", 100.0),
@@ -691,17 +726,23 @@ def run_pipeline(
     warns = stats_prior_warnings(input_dir)
     if warns:
         report["dataset"]["ingest_warnings"] = warns
-    if keep_rows:
-        from ..adapters.decode import probe_live_cameras
-        cam_audit = {}
-        for r in keep_rows:
-            pr = probe_live_cameras(r["video"])
-            if pr["dead_or_padded"]:
-                cam_audit[r["episode_id"]] = pr
-        if cam_audit:
-            report["dataset"]["camera_audit_note"] = (
-                f"{len(cam_audit)}/{len(keep_rows)} 条存在占位/黑帧相机通道(详见 episodes)")
-            report["episodes"]["camera_audit"] = cam_audit
+    # 相机体检(占位/黑帧通道):**纯装配** —— 结论在视觉质量那一遍就顺手算好了
+    # (detail.camera_liveness),这里一个数不重算。
+    # 2026-08-14 合并前,这里是"逐条 keep_rows 再解一遍帧"的独立步骤:串行、零输出,
+    # 20 条 ×3 路就明显卡顿,200 条用户实见"像卡死"。它排在最后本来是为了只体检
+    # 通过的条目、省下给判废条目白解一遍的钱,但这笔账算反了:视觉质量本来就逐相机
+    # 解过帧,黑帧判定要的只是那批帧的亮度/方差,顺手就出来了。
+    # ⚠️ 合并带来的口径变化(与老交付的逐条结论未必完全一致):
+    #  ① 判据从"首 0.5 秒的第一帧"变成"该路采样帧的统计中位数"(更稳);
+    #  ② 判废条目也会有体检结论(几乎零成本),分母因此变成"解过帧的条目数";
+    #  ③ 没跑视觉质量(--only 别的检查)就没有这一节 —— 绝不为了出这一节额外解码。
+    from ..export.report import collect_camera_audit
+    cam_audit, _n_audited = collect_camera_audit(per_episode)
+    if cam_audit:
+        report["dataset"]["camera_audit_note"] = (
+            f"{len(cam_audit)}/{_n_audited} 条存在占位/黑帧相机通道(详见 episodes);"
+            "判据=该路采样帧的亮度/方差统计,判废条目同样在内")
+        report["episodes"]["camera_audit"] = cam_audit
     if _ds_note:
         report["dataset"]["dataset_note"] = _ds_note
     if _container:
@@ -741,10 +782,16 @@ def run_pipeline(
     if _clip_ids and videos_of:
         from ..export.evidence import write_audit_clips
         _pc = cfg.get("pipeline", {})
+        # 逐条解码+重编码,一条几秒:几十条就是几分钟。可数 → 报条目式进度;
+        # 片段之间互不影响 → 并发切(不动任何判定)。
+        _pk_clip = _progress_init("audit_clips", len(_clip_ids),
+                                  "人工裁决视频片段", quiet_before_s=3.0)
         _nclips = write_audit_clips(
             _clip_ids, videos_of, output_dir,
             sample_interval_s=_pc.get("frame_sample_interval_s", 0.5),
-            max_side=_pc.get("frame_max_side", 448))
+            max_side=_pc.get("frame_max_side", 448),
+            on_progress=lambda: _progress_tick(_pk_clip),
+            concurrency=int(_pc.get("clip_concurrency", 4)))
         print(f"[curation] 人工裁决视频片段:{_nclips} 段 / {len(_clip_ids)} 条 "
               f"→ details/audit_clips/", flush=True)
     report["episodes"]["results"] = per_episode
@@ -840,7 +887,7 @@ def run_pipeline(
     _lat = latency_summary()
     if _lat:
         report["dataset"]["vlm_latency"] = _lat
-        with open(os.path.join(det_dir, "vlm_latency.csv"), "w", newline="") as f:
+        with delivery_file(os.path.join(det_dir, "vlm_latency.csv"), newline="") as f:
             _w = __import__("csv").writer(f)
             _w.writerow(["call_type", "seconds", "ok", "started_at"])
             for tag, dt, ok, st in latency_rows():
@@ -851,10 +898,15 @@ def run_pipeline(
     if _ev_mode != "off" and videos_of:
         from ..export.evidence import render_task_evidence
         _pcfg2 = cfg.get("pipeline", {})
+        from ..export.evidence import EVIDENCE_CAP, flagged_for_evidence
+        _pk_ev = _progress_init(          # 逐条重解码,可数 → 报进度(慢步骤不许静默)
+            "evidence", len(flagged_for_evidence(per_episode, _ev_mode)[:EVIDENCE_CAP]),
+            "证据帧导出", quiet_before_s=3.0)
         _ev = render_task_evidence(
             per_episode, videos_of, os.path.join(det_dir, "evidence"),
             interval=_pcfg2.get("frame_sample_interval_s", 0.5),
-            max_side=_pcfg2.get("frame_max_side", 448), mode=_ev_mode)
+            max_side=_pcfg2.get("frame_max_side", 448), mode=_ev_mode,
+            on_progress=lambda: _progress_tick(_pk_ev))
         if _ev:
             report["dataset"]["task_evidence"] = {
                 "episodes": len(_ev), "帧数": sum(len(v) for v in _ev.values()),
@@ -949,7 +1001,7 @@ def run_pipeline(
                     vrows.append({"episode": e, "camera": cam.split(".")[-1],
                                   "status": "PAD"})
     if mrows:
-        with open(os.path.join(det_dir, "motion_details.csv"), "w", newline="") as f:
+        with delivery_file(os.path.join(det_dir, "motion_details.csv"), newline="") as f:
             w = _csv.DictWriter(f, fieldnames=["episode", "score"] + M_COLS)
             w.writeheader()
             w.writerows(mrows)
@@ -963,7 +1015,7 @@ def run_pipeline(
         vcols = ["episode", "camera", "status", "score", "sharpness", "exposure",
                  "integrity", "blur_var_median", "clip_frac_median",
                  "gray_std_median", "frozen_ratio"]
-        with open(os.path.join(det_dir, "visual_details.csv"), "w", newline="") as f:
+        with delivery_file(os.path.join(det_dir, "visual_details.csv"), newline="") as f:
             w = _csv.DictWriter(f, fieldnames=vcols, extrasaction="ignore")
             w.writeheader()
             w.writerows(vrows)
@@ -976,7 +1028,7 @@ def run_pipeline(
     # 全量 caption 落盘(2026-08-05):此前 caption 只随审计队列条目存活,测量/审计
     # 想离线重放就得整轮重跑 VLM。一个 JSON 花几 KB,买到可重放性。空串=未获/弃权。
     if caption_of:
-        with open(os.path.join(det_dir, "captions.json"), "w", encoding="utf-8") as f:
+        with delivery_file(os.path.join(det_dir, "captions.json")) as f:
             json.dump(caption_of, f, ensure_ascii=False, indent=1)
     # 运动学违规明细(2026-07-14 用户定):被拒必须能定位;硬杀发生在漏斗中途,
     # 明细从 stats.hard_killed 提取(幸存者不会有运动学违规——硬门语义)
@@ -996,7 +1048,7 @@ def run_pipeline(
             krows.append({"episode": k["episode_id"], "type": "format_or_other",
                           "joint": "", "frame": "", "value": "",
                           "limit": str(kdet.get("reason"))[:80]})
-    with open(os.path.join(det_dir, "kinematic_details.csv"), "w", newline="") as f:
+    with delivery_file(os.path.join(det_dir, "kinematic_details.csv"), newline="") as f:
         w = _csv.DictWriter(f, fieldnames=["episode", "type", "joint", "frame",
                                            "value", "limit"], extrasaction="ignore")
         w.writeheader()
@@ -1007,7 +1059,11 @@ def run_pipeline(
     if out.get("_sync_curves"):
         from ..export.sync_plots import render_sync_plots
         _crows = [(e, cj) for e, cj in zip(out["episode_id"], out["_sync_curves"]) if cj]
-        _pngs = render_sync_plots(_crows, os.path.join(det_dir, "plots"))
+        # 一条一张图,matplotlib 每张几百毫秒 —— 几百条就是几分钟的静默。可数 → 报进度。
+        _pk_plot = _progress_init("sync_plots", len(_crows), "同步诊断图",
+                                  quiet_before_s=3.0)
+        _pngs = render_sync_plots(_crows, os.path.join(det_dir, "plots"),
+                                  on_progress=lambda: _progress_tick(_pk_plot))
         if _crows:
             report["dataset"]["sync_plots"] = {
                 "生成": len(_pngs), "目录": "details/plots/",
@@ -1020,7 +1076,7 @@ def run_pipeline(
     scols = ["episode", "axes", "stuck_start_sec", "stuck_seconds",
              "freeze_start_sec", "freeze_total_seconds",
              "total_frames", "video_file"]
-    with open(os.path.join(det_dir, "stuck_details.csv"), "w", newline="") as f:
+    with delivery_file(os.path.join(det_dir, "stuck_details.csv"), newline="") as f:
         w = _csv.DictWriter(f, fieldnames=scols, extrasaction="ignore")
         w.writeheader()
         w.writerows(srows)
@@ -1036,7 +1092,7 @@ def run_pipeline(
                                           tail_gap_s=1.0 / (t.get("_fps") or 1.0))
             _tl_out[e] = {"duration_s": t["duration_s"], "segments": segs,
                           "totals": timeline_totals(segs)}
-        with open(os.path.join(det_dir, "episodes_timeline.json"), "w") as f:
+        with delivery_file(os.path.join(det_dir, "episodes_timeline.json")) as f:
             json.dump({"口径": "stuck=指令在推而不动(定罪);idle=头尾空闲+事件包络内"
                              "静止;normal=在干活。中段零星 idle 无位置数据,计入 normal"
                              "(总秒数见 motion 明细)",
@@ -1044,7 +1100,7 @@ def run_pipeline(
                        **({"dataset_note": _ds_note} if _ds_note else {}),
                        "episodes": _tl_out},
                       f, ensure_ascii=False, indent=1)
-    with open(os.path.join(det_dir, "stuck_details.json"), "w") as f:
+    with delivery_file(os.path.join(det_dir, "stuck_details.json")) as f:
         json.dump({"数据集": report.get("数据集"), "机器人": report.get("机器人"),
                    "口径": "stuck=指令在推而不动(各轴证据窗并集);idle=静止且指令未推;"
                           "一次事件=包络重叠的轴段合并;timeline 按时间顺序",
@@ -1056,7 +1112,11 @@ def run_pipeline(
                "report_md": mp,
                "details_dir": os.path.join(output_dir, "details")}
     if keep_rows and not report_only:
-        # 导出需要数值列 → 只按需重读最终幸存者(QC 一遍全程未整批驻留数值)
+        # 导出需要数值列 → 只按需重读最终幸存者(QC 一遍全程未整批驻留数值)。
+        # 一次整批读盘,内部没有可数单位(读到哪条外面看不见)→ 按阶段式报一行
+        # 在做什么,**不编百分比**;真正可数的重活(视频切割)由导出器自己报。
+        print(f"[curation] 交付准备:重读 {len(keep_ids)} 条数值列(动作/状态)…",
+              flush=True)
         keep_full = read_rows(
             input_dir, episode_indices={int(e[2:]) for e in keep_ids},
             embodiment_id=embodiment_id, skip_missing=True)
@@ -1077,6 +1137,8 @@ def run_pipeline(
         if n_backfill:
             print(f"[curation] 交付补标:{n_backfill} 条无标注 episode 已用自产 caption "
                   f"写入 instruction(溯源列 instruction_source)", flush=True)
+        print(f"[curation] 交付准备:写 episode 级 parquet({len(keep_full)} 条)…",
+              flush=True)      # 一次整批写盘,同样不可数 → 阶段式一行,不编百分比
         deliver["episodes_parquet"] = write_episodes_parquet(
             keep_full, os.path.join(output_dir, "episodes_parquet"))
         from ..ingest.lerobot_reader import _load_info
@@ -1121,12 +1183,37 @@ def run_pipeline(
     # rejudge/刷 UI 会撞空。把"回读验证"做成显式的最后一个阶段:逐个关键产物
     # 轮询到真正读得回来才宣布完成——完成即可用,不再靠口头"等一分钟"。
     report["runtime"]["total_wall_s"] = round(_time0.time() - _run_t0, 1)
-    save_report(report, output_dir)
+    save_report(report, output_dir, verify=True)
+
+    # 本次跑批的事实卡 + latest 记录,与三件套一起走回验(它们同样落在 FSX 上)。
+    # 事实卡:「选哪一次运行」的列表靠它,不必为了列一行去读几 MB 的 passed.json
+    # (FSX 上一次就是几秒)。只记事实,不记判断——"跑了 20 条"是事实,"这是抽查"
+    # 是我们替用户编的动机。
+    _exported = bool(deliver.get("episodes_parquet") or deliver.get("lerobot_dataset")
+                     or deliver.get("rrd_dataset"))
+    _facts_path = write_run_facts(output_dir, {
+        "跑批": os.path.basename(output_dir), "数据集": report.get("数据集"),
+        "生成时间": report.get("生成时间"),
+        "本次处理条数": (report.get("dataset") or {}).get("input_episodes"),
+        **({"数据集总条数": _total_eps} if isinstance(_total_eps, int) else {}),
+        "导出数据集": _exported})
+    # latest = **一条记录**,不是一个推荐:它只回答"最近跑的是哪一次",报告页拿它
+    # 当默认打开项只是省一次点击(1812 跑 20 条并不比 0530 跑 200 条更该被用)。
+    _run_name = os.path.basename(output_dir)
+    _latest_path = None
+    try:
+        _latest_path = write_latest(delivery_dir, _run_name)
+    except OSError as e:                      # 记录写不了不该让一次跑批算失败
+        print(f"[curation] ⚠️ latest 没写成({e});本次结果仍在 {output_dir}",
+              flush=True)
 
     _checks_vis = [("passed.json", jp, "json"),
                    ("review.json", deliver["review_json"], "json"),
                    ("reject.json", deliver["reject_json"], "json"),
-                   ("report.md", mp, "text")]
+                   ("report.md", mp, "text"),
+                   ("run.json", _facts_path, "json")]
+    if _latest_path:
+        _checks_vis.append(("latest", _latest_path, "text"))
     if deliver.get("episodes_parquet"):
         _checks_vis.append(("episodes_parquet", deliver["episodes_parquet"], "dir"))
     if deliver.get("lerobot_dataset"):
@@ -1138,8 +1225,17 @@ def run_pipeline(
         _checks_vis.append(("rrd_curated/index.json",
                             os.path.join(deliver["rrd_dataset"], _RRD_INDEX), "json"))
     _verify_delivery_visible(_checks_vis)
+    # 回验之后再对一次账:latest 读回来必须就是这次的目录名。回验只保证"读得回来",
+    # 内容对不对是另一回事(FSX 直写坏文件那一家子的教训 —— 别信"写成功")。
+    if _latest_path and not latest_matches(delivery_dir, _run_name):
+        print(f"[curation] ⚠️ latest 回读对不上(应为 {_run_name}):{_latest_path};"
+              "报告页默认打开的可能是别的一次,手动选一下即可,本次结果不受影响",
+              flush=True)
     report["runtime"]["total_wall_s"] = round(_time0.time() - _run_t0, 1)
-    save_report(report, output_dir)      # 回验耗时也计入总墙钟(它是交付的一部分)
+    # 回验耗时也计入总墙钟(它是交付的一部分)。⚠️ 这一遍发生在落盘回验**之后**,
+    # 也就是它有权把刚刚验过的文件重新写坏(2026-08-14 passed.json 全 `\0` 就是
+    # 这一遍干的)—— 所以它必须带 verify:自己写完自己回读,坏了当场重写。
+    save_report(report, output_dir, verify=True)
 
     # 临时视频缓存清理(P4,2026-08-10):RRD 输入时 reader 把视频解成 /tmp 下的 mp4
     # (几百条就是几个 GB,容器可写层扛不住);一次 run 的产物到这里全部落盘完毕,
@@ -1148,5 +1244,6 @@ def run_pipeline(
     cleanup_video_cache(input_dir)
 
     return {"stats": stats, "verdicts": verdicts, "deliverables": deliver,
-            "n_delivered": len(keep_rows),
+            "n_delivered": len(keep_rows), "run_dir": output_dir,
+            "delivery_dir": delivery_dir,
             "dataset_name": os.path.basename(input_dir.rstrip("/")), "robot": _robot}

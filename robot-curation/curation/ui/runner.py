@@ -26,9 +26,20 @@ UI 与管道之间的接口只有两样:argv 与日志文本。这样"UI 只读�
 状态。落盘之后 pod 重启回来能如实标成 `interrupted`,而不是假装还在跑。
 
 **完成态靠退出码文件而不是"进程还在不在"**:子进程由 UI 进程 fork 出来,若不
-reap 会变成僵尸,而僵尸的 `os.kill(pid, 0)` 照样成功——只看进程死活会让任务
-永远显示"运行中"。所以真正开的是 `bash -c '<命令> >> log 2>&1; echo $? > rc'`,
+reap 会变成僵尸。所以真正开的是 `bash -c '<命令> >> log 2>&1; echo $? > rc'`,
 rc 文件在则任务已终结(且重启后依然作数),进程死活只用来判"是不是被打断了"。
+
+⚠️ 2026-08-14 用户实见的事故,把上面这条的两个前提都打穿了,四处一起改才治得住:
+用户点停止 → 状态卡在「正在停止」**七分钟**,两个进程都是 Z(僵尸)且 ppid=1,
+`exit_code` 文件**根本不存在**。
+① 停止时 `killpg` 把外层那个 bash 也砍了,它还没走到 `echo $? > rc` 就没了 ⇒
+   那个"唯一依据"的文件永远不会出现。对策:外层 shell 装 `trap`(见 start)。
+② 本 pod 的 PID 1 就是这个 UI(一个 Python 进程),Python 不会 wait() 领养来的
+   子进程 ⇒ 僵尸**永远不会被回收**,而僵尸的 `kill(pid, 0)` 照样成功。对策:
+   `_alive()` 读 `/proc/<pid>/stat` 的状态位,Z 一律当死。
+③ `stop()` 不能干等一个注定不出现的文件:进程组里没有活着的成员时自己写终态。
+④ 归档回挂载的 `status.json` 那次变成了 164 字节全 `\0` 的坏文件(与 savefig
+   零填充同一家族)⇒ 写完回读校验一次(见 _write_json)。
 
 同一时刻只允许一个任务在跑(见 RunBusyError):VLM 并发已按单跑批调到
 32 × 16,两个批叠加会砸穿方舟配额;同一输出目录更会因 daft 的 write_parquet
@@ -44,13 +55,25 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
+import time
 
 #: 任务目录挂在交付根下。用点开头:交付根同时是 UI 的交付扫描根,`.runs` 不会被
 #: 误当成一份交付(discover_deliveries 找的是 passed.json)。
 RUNS_DIRNAME = ".runs"
+
+#: 活跃期的 run.log 与退出码文件落在**容器本地盘**,不在挂载上。
+#: ⚠️ 为什么(2026-08-13 实测):交付根在 TOS 的 FSX 挂载上,那里"一边追加一边读"
+#: 拿不到内容 —— 任务跑了很久 run.log 仍是 0 字节,手工 `echo hi >> /mnt/tos/x`
+#: 再 cat 直接 `Stale file handle`。结果是 UI 的 2 秒轮询与进度条全程空手,用户
+#: 点了开始只看见"运行中"。_write_json 里"FSX 上只有顺序整写是安全的"这条纪律
+#: 早就写着,漏的是 start() 给 shell 的那句 `>> run.log` 重定向。
+#: 任务结束时再把这两个文件**整份 cp** 回挂载(顺序整写),pod 重启后历史仍在。
+LOCAL_RUNS_ROOT = os.environ.get("CURATION_RUNS_LOCAL", "/tmp/curation-runs")
 
 #: 面板能发起的命令(与 curation/cli.py 的子命令一一对应)。backends 只是探活,
 #: 秒级返回,放进来是为了"CLI 能跑的面板都能跑"这条要求的完整性。
@@ -83,6 +106,10 @@ _PROGRESS_RE = re.compile(
     r"(?:\s*\((?P<pct>\d+)%\))?(?P<rest>.*)$")
 _ELAPSED_RE = re.compile(r"已用\s*(\S+)")
 _ETA_RE = re.compile(r"剩余\s*~?\s*(\S+)")
+
+#: 数据集之间的分隔行(与 cli 的 `--batch` 输出同款)。任务台顺序跑多个数据集时
+#: 每个开跑前打一行,否则三份日志糊成一片分不出谁是谁;进度解析也靠它断句。
+_SECTION_RE = re.compile(r"^={3,}\s*(?P<name>.+?)\s*={3,}$")
 
 #: 命令名 → 该命令在界面上的说法(日志与历史列表用,别让客户看见英文子命令)。
 COMMAND_LABELS = {"run": "质检跑批", "rejudge": "执行裁决",
@@ -199,8 +226,8 @@ def history_rows(runs: list, now: datetime.datetime | None = None) -> list[list]
     out = []
     for r in runs:
         state = STATE_STYLES.get(str(r.get("state")), STATE_STYLES["unknown"])[0]
-        if r.get("state") == "failed" and r.get("exit_code") is not None:
-            state = f"{state}(退出码 {r['exit_code']})"
+        if r.get("state") == "failed":
+            state += failed_suffix(r)
         out.append([r.get("started_at") or "—",
                     r.get("label") or COMMAND_LABELS.get(r.get("command"), "—"),
                     state,
@@ -257,6 +284,58 @@ def dataset_format(dataset_dir: str) -> dict:
     return {"kind": "unknown", "version": "", "needs_clips": False}
 
 
+def datasets_needing_clips(data_root: str, datasets: list) -> list[str]:
+    """选中的这些数据集里,哪几个要先切片才能在 Episodes 页看画面(保持选中顺序)。
+
+    2026-08-14 用户定:多选时**问一次、覆盖全部**。此前只有单数据集才问,多选直接
+    跳过 —— 于是多选跑完的 v3/rrd 交付在 Episodes 页全是"没有画面",而用户压根没
+    被问过。逐个弹窗更糟(选十个弹十次),所以这里只回答"有几个、是哪几个",
+    问句和串步骤由界面那边一次做完。
+    名字过不了校验的直接跳过:那种输入本来就跑不起来,不该在这里先炸一次。
+    """
+    out = []
+    for name in picked_datasets(datasets):
+        try:
+            d = resolve_under(data_root, name)
+        except ValueError:
+            continue
+        if dataset_format(d).get("needs_clips"):
+            out.append(name)
+    return out
+
+
+#: 追问里最多点名几个数据集(再多就折成"…等 N 个",问句不该滚屏)。
+_CLIPS_NAMES_CAP = 6
+
+
+def clips_prompt(names: list, fmt: dict | None = None) -> str:
+    """切片追问的那段话(纯函数,措辞钉在这儿好单测)。
+
+    一个数据集时仍按格式说清**为什么**(v3 是多条合并进同一个 mp4,rrd 是视频封在
+    数据文件内部)—— 那句话本来就在,客户读了才知道不是我们偷懒;多个数据集时改成
+    "这 N 个"的统一问句并点名是哪几个,**只问一次、覆盖全部**(逐个弹窗选十个弹
+    十次,没人会挨个读)。
+    """
+    names = picked_datasets(names)
+    if not names:
+        return ""
+    if len(names) == 1 and fmt:
+        kind = ("这份数据是 LeRobot v3 格式,多条轨迹合并存放在同一个视频文件里"
+                if fmt.get("kind") == "lerobot" else
+                "这份数据是 rerun(.rrd)格式,视频封装在数据文件内部")
+        head = (f"**{kind}** —— 质检本身不受影响,但要在 Episodes 页逐条回看画面,"
+                f"得先切出可播片段。")
+        tail = "跳过不影响质检结果,只是 Episodes 页暂时看不到画面。"
+    else:
+        shown = "、".join(names[:_CLIPS_NAMES_CAP])
+        more = f" 等 {len(names)} 个" if len(names) > _CLIPS_NAMES_CAP else ""
+        head = (f"**这 {len(names)} 个数据集需要先切出可播片段,才能在 Episodes 页"
+                f"看画面**:{shown}{more}。")
+        tail = "跳过不影响质检结果,只是这几份的 Episodes 页暂时看不到画面。"
+    return (f"{head}\n\n要在质检之后一起生成吗?会多花几分钟到十几分钟"
+            f"(取决于条数);{tail}")
+
+
 def suggest_delivery_name(dataset: str, now: datetime.datetime | None = None) -> str:
     """交付名建议:`<数据集名>-<月日>`。重名由 CLI 的输出目录冲突检查兜(它会
     要求换目录或加覆盖),这里不去猜用户想不想覆盖。"""
@@ -277,7 +356,8 @@ _ARG_SPECS: dict[str, dict[str, str | None]] = {
         "episodes": "--episodes", "only": "--only", "skip": "--skip",
         "vlm_backend": "--vlm-backend", "vlm_endpoint": "--vlm-endpoint",
         "vlm_model": "--vlm-model", "vlm_api_key_env": "--vlm-api-key-env",
-        "overwrite": None, "batch": None, "lite": None, "report_only": None,
+        "run_name": "--run-name",
+        "batch": None, "lite": None, "report_only": None,
     },
     "rejudge": {
         "delivery": "--delivery", "input": "--input", "config": "--config",
@@ -291,8 +371,9 @@ _ARG_SPECS: dict[str, dict[str, str | None]] = {
 }
 
 #: 开关参数 → 旗标(单独一张表,因为 None 值在上表里表示"开关")。
-_FLAGS = {"overwrite": "--overwrite", "batch": "--batch", "lite": "--lite",
-          "report_only": "--report-only"}
+#: ⚠️ 2026-08-14 起没有 `--overwrite` 了:每次跑批各进各的时间戳子目录,不存在
+#: 撞车,也就不该有一个"覆盖"开关(覆盖曾把人工裁决一起 rmtree 掉)。
+_FLAGS = {"batch": "--batch", "lite": "--lite", "report_only": "--report-only"}
 
 #: 每条命令的必填项(缺了直接抛,不让用户等到子进程起来才看见报错)。
 _REQUIRED = {"run": ("input", "output"), "rejudge": ("delivery", "input"),
@@ -360,6 +441,132 @@ def build_argv(command: str, **params) -> list[str]:
     return argv
 
 
+# ── 多数据集:一次点击顺序跑几个 ──────────────────────────────────────────
+
+#: 多数据集串跑时,"有失败"这件事最多累计到这个退出码。
+#: ⚠️ 为什么封顶在 125:shell 的退出码只有 0-255,而 126 / 127 / 128+n 是保留语义
+#: (不可执行 / 命令找不到 / 被信号杀)。选了 10 个数据集全挂,退出码要是变成 128
+#: 就会被读成"被信号杀了",与"人点了停止"(143)混在一起,那两件事在界面上必须
+#: 分得开(见 STATE_STYLES 那段)。
+MULTI_RUN_MAX_RC = 125
+
+
+def _sq(s) -> str:
+    """总是加单引号的 shell 转义。
+
+    不用 shlex.quote:它对"看着安全"的串原样返回(`shlex.quote("abc") == "abc"`),
+    而这里要把几段字面量与 `"$_rc"` 拼在一起,少一对引号就会粘成另一个词。
+    """
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+
+def picked_datasets(value) -> list[str]:
+    """下拉的值 → 数据集名列表。multiselect 给 list,单选给字符串,空值给 []。
+
+    界面那边 Gradio 的 Dropdown 在 multiselect 前后返回类型不同,而回调有好几处要
+    用它。归一化放在这里,免得每个回调各写一遍 isinstance 判断(漏一处就是"选了
+    却没跑")。
+    """
+    items = value if isinstance(value, (list, tuple)) else [value]
+    return [str(x).strip() for x in items if str(x or "").strip()]
+
+
+def dataset_selection_error(value, batch: bool = False) -> str:
+    """开跑前的数据集选择校验。通过返回空串,不通过返回给用户看的那句话。
+
+    2026-08-13 数据集下拉改成多选之后**默认一个都没选**。此前是单选、默认落在
+    第一个数据集上,所以"没选"这个状态根本不存在;改多选之后点「开始质检」会一路
+    走到 resolve_under(root, "") —— 那解析出来正好是数据集根目录本身,等于悄悄
+    拿整个根当一份数据集去跑。必须在这里拦住并说清楚。
+    勾了「跑全部」时下拉本来就被忽略(既有行为),不拦。
+    """
+    if batch or picked_datasets(value):
+        return ""
+    return "还没选数据集:在上面的「数据集」里选至少一个,或勾上「跑全部」"
+
+
+def build_run_script(jobs: list[dict]) -> str:
+    """作业表 → 一条 shell 命令串(纯函数;退出码语义就钉在这里)。
+
+    jobs = `[{"title": 分隔行上的名字(可为空), "steps": [argv, argv, …]}, …]`
+
+    两种连接语义,**不是随便挑的**:
+    - **一个 job 内部的多步用 `&&`**:后一步依赖前一步的产出(质检完顺便切片 ——
+      质检没跑成,切片没有意义),前一步失败必须掐断。
+    - **job 与 job 之间是"一个失败不挡后面"**:多数据集场景里一个坏数据集不该
+      让排在后面的都不跑(与 CLI `--batch` 的"单集失败不拖垮整批"同一条道理)。
+
+    **退出码:全成功 = 0;有失败 = 没跑完的数据集个数**(封顶 MULTI_RUN_MAX_RC)。
+    定成个数而不是固定 1,是因为界面上那句"没跑到底(退出码 N)"里的 N 就直接是
+    "几个数据集没跑完",不必再翻日志去数;是哪几个,日志里每个失败的数据集都有
+    一行明说,末尾还有一行汇总。
+
+    单 job 且没有名字(单数据集、含"质检+切片"那种)**一律走老路径**:退出码就是
+    命令自己的。多数据集的语义不该倒灌回单数据集 —— 那是既有行为,报告页、历史
+    列表、`test_start_spawns_bash_with_redirect_and_exit_code` 都按它写着。
+    """
+    if not jobs:
+        raise ValueError("作业表不能为空")
+    steps_of = (lambda job: " && ".join(shlex.join(str(a) for a in step)
+                                        for step in job["steps"]))
+    if len(jobs) == 1 and not str(jobs[0].get("title") or "").strip():
+        return steps_of(jobs[0])
+
+    parts = ["_failed=0"]
+    for job in jobs:
+        title = str(job.get("title") or "").strip()
+        parts.append("echo " + _sq(f"===== {title} ====="))
+        # `A || { …; }`:$? 在这里就是 A 的退出码(取完再自增计数,顺序不能反)
+        parts.append(
+            f"{{ {steps_of(job)}; }} || {{ _rc=$?; _failed=$((_failed+1)); "
+            + "echo " + _sq(f"===== {title} 没跑完(退出码 ") + '"$_rc"'
+            + _sq("),跳过它继续下一个 =====") + "; }")
+    parts.append("echo " + _sq(f"===== {len(jobs)} 个数据集跑完,")
+                 + '"$_failed"' + _sq(" 个没跑完 ====="))
+    # 用子 shell 的 `exit` 而不是直接 `exit`:整串是被 `{ …; } >> 日志` 包着的,
+    # 直接 exit 会把外层 bash 一起带走,后面那句"把退出码写进文件"就再也不执行了
+    # —— 而"退出码文件在不在"正是本模块判定任务终结的唯一依据(见模块 docstring)。
+    parts.append(f"( exit $(( _failed > {MULTI_RUN_MAX_RC} "
+                 f"? {MULTI_RUN_MAX_RC} : _failed )) )")
+    return "; ".join(parts)
+
+
+def build_dataset_jobs(data_root: str, delivery_root: str, datasets: list,
+                       delivery_name: str, *, clips_root: str | None = None,
+                       clips_for: list | None = None, **params) -> list[dict]:
+    """多个数据集 → 作业表(纯函数,路径校验与 argv 装配都在这儿一次做完)。
+
+    落盘形状:**交付名当父文件夹**,每个数据集一份子交付 `<交付名>/<数据集名>/`
+    —— 与 CLI `--batch` 完全一致,报告页的递归发现本来就找得到这种形状,不必为
+    多选再造一套目录约定。
+
+    路径仍然是"只收名字、由这里拼"(resolve_under 那条安全边界一个字没松):
+    数据集名与交付名各过一次校验,子交付再在父目录下拼一次。
+
+    clips_for 里的数据集额外串一步切片(同 job 内用 `&&`:质检没跑成,切片没有
+    意义)。片段站按**数据集名**建目录,不按交付名:站点认领本来就看 site.json 里
+    的源数据集路径(review_clip_paths),按数据集名建的话同一份数据跑第二次交付时
+    还能直接复用,不必重编一遍码。
+    """
+    names = picked_datasets(datasets)
+    if not names:
+        raise ValueError("至少要选一个数据集")
+    want_clips = set(picked_datasets(clips_for or []))
+    if want_clips and not clips_root:
+        raise ValueError("要串切片就得给片段目录(本实例没配 --review-dir)")
+    parent = resolve_under(delivery_root, delivery_name or "")
+    jobs = []
+    for name in names:
+        src = resolve_under(data_root, name)
+        steps = [build_argv("run", input=src, output=resolve_under(parent, name),
+                            **params)]
+        if name in want_clips:
+            steps.append(build_argv("review-page", input=src,
+                                    output=resolve_under(clips_root, name)))
+        jobs.append({"title": name, "steps": steps})
+    return jobs
+
+
 # ── 任务目录:落盘的状态机 ────────────────────────────────────────────────
 
 def runs_root_of(delivery_root: str) -> str:
@@ -369,18 +576,46 @@ def runs_root_of(delivery_root: str) -> str:
 def deliveries_root_of(delivery_arg: str) -> str:
     """`curation ui --delivery` 收的可能是**一份交付**,也可能是**装着多份交付的
     父目录**。新交付与任务目录都该落在父目录下——塞进某一份交付里面,下次扫描就会
-    把它当成那份交付的一部分。"""
+    把它当成那份交付的一部分。
+
+    "一份交付"两种形态都算(2026-08-14 布局变更):三件套直接在里面的老交付,
+    以及底下摆着几次跑批子目录的新交付。判据借 curation/delivery.py 那一份
+    (它是布局契约的单一事实源,不是管道代码,UI 那条红线不破)。
+    """
+    from ..delivery import is_delivery
     p = os.path.abspath(str(delivery_arg or "."))
-    if os.path.exists(os.path.join(p, "passed.json")):
-        return os.path.dirname(p)
-    return p
+    return os.path.dirname(p) if is_delivery(p) else p
 
 
 def _paths(runs_root: str, run_id: str) -> dict:
+    """一个 run 的全部文件路径:挂载那份(存档)+ 本地盘那份(活跃期)。
+
+    两套路径必须在**同一处**算出来,读端、写端、互斥判断才不会各走各的 ——
+    "本地看没有、挂载看有"会让界面显示空闲、一点开始却被拒(更糟的是反过来:
+    两个批同时开跑,砸穿方舟配额)。
+    """
     d = os.path.join(runs_root, run_id)
+    ld = os.path.join(LOCAL_RUNS_ROOT, run_id)
     return {"dir": d, "cmd": os.path.join(d, "cmd.json"),
             "log": os.path.join(d, "run.log"), "status": os.path.join(d, "status.json"),
-            "rc": os.path.join(d, "exit_code")}
+            "rc": os.path.join(d, "exit_code"),
+            "local_dir": ld, "local_cmd": os.path.join(ld, "cmd.json"),
+            "local_log": os.path.join(ld, "run.log"),
+            "local_status": os.path.join(ld, "status.json"),
+            "local_rc": os.path.join(ld, "exit_code")}
+
+
+def _prefer_local(p: dict, key: str) -> str:
+    """读哪一份:本地优先、挂载兜底。
+
+    本地有 = 这个 run 是本机这轮起的,活跃期的日志/退出码只在本地(挂载上那份要
+    等任务结束才归档过去);本地没有 = 历史 run,或换了 pod / 重建了容器,那就读
+    挂载上的存档。两边都有时以本地为准 —— 它是活的那份。
+    """
+    local = p.get("local_" + key)
+    if local and os.path.exists(local):
+        return local
+    return p[key]
 
 
 #: 进程内写缓存 {绝对路径: 刚写下的内容} 与 {runs_root: 本进程起过的 run_id}。
@@ -405,30 +640,152 @@ def _read_json(path: str) -> dict:
     return data
 
 
-def _write_json(path: str, payload: dict) -> None:
+def _copy_text(path: str, blob: str) -> None:
+    """先写容器本地临时文件,再 `shutil.copyfile` 过去。
+
+    ⚠️ 目标可能在 TOS 的 FSX 挂载上,那里**不能被库直写**(已咬过五次;savefig
+    那次静默产出了零填充的坏文件)。临时文件落在系统临时目录 = 容器本地盘。
+    """
+    fd, tmp = tempfile.mkstemp(prefix=".curation-run-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(blob)
+        shutil.copyfile(tmp, path)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _write_json(path: str, payload: dict, *, verify: bool = False) -> None:
     """整文件写。⚠️ 交付根可能在 TOS 的 FSX 挂载上——那里 O_APPEND 直接 EINVAL,
-    多次写/回填也不行,只有"顺序整写"是安全的(与 decisions.py 同一批坑)。"""
+    多次写/回填也不行,只有"顺序整写"是安全的(与 decisions.py 同一批坑)。
+
+    verify=True 用在**归档**那一下(任务落终态时写回挂载的那份):2026-08-14 实测,
+    挂载上的 status.json 变成了 164 字节全 `\\0` 的坏文件,而它正是 pod 重启之后
+    唯一的历史。所以写完回读一次,读不回或解析不了就重写一次,并往 stderr 留一行
+    —— 归档静默坏掉是最不能忍的那种坏法。读取端本来就是本地优先(_prefer_local),
+    这条只为保历史。
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=1)
+    blob = json.dumps(payload, ensure_ascii=False, indent=1)
     _WRITE_CACHE[os.path.abspath(path)] = dict(payload)
+    for attempt in (1, 2):
+        _copy_text(path, blob)
+        if not verify:
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                if json.load(f):
+                    return
+            why = "读回来是空的"
+        except (OSError, ValueError) as e:
+            why = f"{type(e).__name__}: {e}"
+        if attempt == 1:
+            print(f"[curation-ui] 归档到 {path} 后读不回来({why});"
+                  f"可能是挂载可见延迟,也可能是零填充坏文件 —— 重写一次",
+                  file=sys.stderr, flush=True)
+    print(f"[curation-ui] 归档到 {path} 重写后仍读不回来 —— 这个任务的历史"
+          f"目前只在容器本地盘上", file=sys.stderr, flush=True)
+
+
+def _write_state(p: dict, key: str, payload: dict, *, verify: bool = False) -> None:
+    """cmd.json / status.json **两份都写**(挂载 + 本地),都是整文件写。
+
+    为什么两份:①挂载那份是 pod 重启后的历史,不能少;②本地那份给 2 秒一次的
+    轮询和互斥判断读 —— 不必每次都去问 FSX,也不吃它 20-60 秒的可见延迟(那正是
+    _WRITE_CACHE 当初要存在的原因,本地盘把这个窗口彻底关掉)。
+    两份都是顺序整写,FSX 那条纪律一个字没破;写日志才是必须挪走的那个(追加)。
+    verify 只加在挂载那份、且只在归档(落终态)那一下 —— 见 _write_json。
+    """
+    _write_json(p[key], payload, verify=verify)
+    try:
+        _write_json(p["local_" + key], payload)
+    except OSError:
+        pass          # 本地盘写不了不该拖垮任务:挂载那份仍在,读端会兜底
+
+
+def _read_state(p: dict, key: str) -> dict:
+    return _read_json(_prefer_local(p, key))
+
+
+def _local_ids_for(runs_root: str) -> set:
+    """本地盘上属于**这个** runs_root 的 run_id。
+
+    本地目录按 run_id 平铺(不按交付分层),光看目录名分不出谁是谁 —— 同一个 pod
+    上开两份交付时会串味。所以认 cmd.json 里记着的 runs_root,不认目录名。
+    """
+    root = os.path.abspath(runs_root)
+    out: set = set()
+    try:
+        names = os.listdir(LOCAL_RUNS_ROOT)
+    except OSError:
+        return out
+    for rid in names:
+        owner = str(_read_json(os.path.join(LOCAL_RUNS_ROOT, rid,
+                                            "cmd.json")).get("runs_root") or "")
+        if owner and os.path.abspath(owner) == root:
+            out.add(rid)
+    return out
 
 
 def _new_run_id(runs_root: str, command: str, now: datetime.datetime) -> str:
+    """run_id 格式不变。本地目录也要一起查重:两个 run 撞上同一个号会共用一份
+    本地日志,那比挂载上目录重名更难看出来。"""
     base = f"{now.strftime('%Y%m%d-%H%M%S')}-{command}"
     rid, k = base, 2
-    while os.path.exists(os.path.join(runs_root, rid)):
+    while (os.path.exists(os.path.join(runs_root, rid))
+           or os.path.exists(os.path.join(LOCAL_RUNS_ROOT, rid))):
         rid = f"{base}-{k}"
         k += 1
     return rid
 
 
+def new_run_id(runs_root: str, command: str,
+               now: datetime.datetime | None = None) -> str:
+    """预先要一个任务编号(给"跑批目录名要跟任务编号对得上"用)。
+
+    2026-08-14 起 `curation run` 的结果落在 `<交付>/<时间戳>/`,而这个时间戳就取自
+    任务编号的时间戳部分(见 delivery.run_name_of_run_id)—— 于是面板必须**先**拿到
+    编号才能拼 argv,不能等 start() 里再生成。start() 收下这个编号照用。
+    """
+    return _new_run_id(runs_root, command, now or datetime.datetime.now())
+
+
+#: /proc 的根。单独拎成常量只为一个理由:用例里造不出真僵尸,得能把它指到假目录。
+PROC_ROOT = "/proc"
+
+
+def _proc_stat_fields(pid: int) -> list:
+    """`/proc/<pid>/stat` 里 comm 之后的字段(state, ppid, pgrp, …);读不到给 []。
+
+    ⚠️ 第二个字段 comm 是**带括号的进程名,里面可能有空格甚至右括号**,所以只能从
+    **最后一个** `)` 之后开始切,`split()[2]` 那种写法在进程名带空格时会读错位。
+    """
+    try:
+        with open(os.path.join(PROC_ROOT, str(int(pid)), "stat"),
+                  encoding="utf-8", errors="replace") as f:
+            line = f.read()
+    except (OSError, ValueError, TypeError):
+        return []
+    return line[line.rfind(")") + 1:].split()
+
+
 def _alive(pid: int) -> bool:
-    """进程还在不在。⚠️ 只用来判"是不是被打断了" —— 子进程是本进程 fork 出来的,
-    没 reap 时会变僵尸,而僵尸的 kill(pid, 0) 照样成功。完成与否一律以退出码
-    文件为准(见模块 docstring)。"""
+    """进程还在不在。**僵尸(Z)一律算死的。**
+
+    ⚠️ 2026-08-14 事故的第二根支柱:本 pod 的 PID 1 就是这个 UI(一个 Python
+    进程),而 Python 不会 wait() 领养来的子进程 —— 父进程一死,子进程过继给 PID 1
+    之后就**永远是僵尸**(实测重起 UI 也清不掉)。僵尸的 `kill(pid, 0)` 照样成功,
+    于是"停止"按下去之后状态永远停在「正在停止」。
+    读不到 /proc(非 Linux、或没挂 proc)才退回原来的 `kill(pid, 0)`。
+    """
     if not pid:
         return False
+    fields = _proc_stat_fields(pid)
+    if fields:
+        return fields[0].upper() != "Z"
     try:
         os.kill(int(pid), 0)
         return True
@@ -436,15 +793,47 @@ def _alive(pid: int) -> bool:
         return False
 
 
+def _group_alive(pgid: int) -> bool:
+    """这个进程组里还有**活着(非僵尸)**的成员吗。
+
+    停止时判的是"这一刀砍干净了没有":组长可能已经变僵尸,而跑批 fork 出来的解码/
+    VLM 子进程还在烧方舟的钱 —— 只看组长会把"还在跑"读成"已经停了"。
+    /proc 用不了就退回只看组长(_alive 自己还会再退一档到 kill)。
+    """
+    if not pgid:
+        return False
+    try:
+        names = [n for n in os.listdir(PROC_ROOT) if n.isdigit()]
+    except OSError:
+        return _alive(pgid)
+    seen = False
+    for name in names:
+        fields = _proc_stat_fields(int(name))
+        if len(fields) < 3:
+            continue
+        seen = True
+        if fields[0].upper() == "Z":
+            continue
+        try:
+            if int(fields[2]) == int(pgid):
+                return True
+        except ValueError:
+            continue
+    return False if seen else _alive(pgid)
+
+
 def start(runs_root: str, command: str, argv: list, label: str = "", *,
           cwd: str | None = None, now: datetime.datetime | None = None,
           popen=subprocess.Popen, alive=_alive,
-          then_argv: list | None = None) -> str:
+          then_argv: list | None = None,
+          jobs: list | None = None, run_id: str | None = None) -> str:
     """起一个后台任务,返回 run_id。已有任务在跑 → RunBusyError。
 
-    真正 exec 的是 `bash -c '<命令> >> run.log 2>&1; echo $? > exit_code'`:
-    ①日志重定向交给 shell,父进程不必守着管道(UI 是常驻进程,守管道等于自找
-    阻塞);②退出码落盘,任务终结与否在 pod 重启后依然作数(见模块 docstring)。
+    真正 exec 的是 `bash -c '<命令> >> 本地/run.log 2>&1; echo $? > 本地/exit_code;
+    cp 回挂载'`:①日志重定向交给 shell,父进程不必守着管道(UI 是常驻进程,守管道
+    等于自找阻塞);②退出码落盘,任务终结与否在 pod 重启后依然作数(见模块
+    docstring);③重定向**必须指向本地盘**——挂载上追加着写的文件读回来是空的
+    (见 LOCAL_RUNS_ROOT),日志与进度条会全程空手。
     `start_new_session=True` 让它自成进程组——停止时才能整组 kill,不会漏掉
     子孙进程(跑批会 fork 出解码/VLM 线程池)。
     """
@@ -453,28 +842,54 @@ def start(runs_root: str, command: str, argv: list, label: str = "", *,
     active = active_run(runs_root, alive=alive)
     if active:
         raise RunBusyError(active)
-    run_id = _new_run_id(runs_root, command, now)
+    # run_id 可以由调用方预先要好(new_run_id):跑批目录名取的就是它的时间戳部分,
+    # 得在拼 argv 之前定下来。给进来的编号万一已被占用(两个人同时点),照常另取一个。
+    if not run_id or os.path.exists(os.path.join(runs_root, run_id)):
+        run_id = _new_run_id(runs_root, command, now)
     p = _paths(runs_root, run_id)
     os.makedirs(p["dir"], exist_ok=True)
+    os.makedirs(p["local_dir"], exist_ok=True)
     started = now.strftime("%Y-%m-%d %H:%M:%S")
-    _write_json(p["cmd"], {"run_id": run_id, "command": command,
-                           "argv": [str(a) for a in argv],
-                           "label": label or COMMAND_LABELS.get(command, command),
-                           "started_at": started, "cwd": cwd or os.getcwd(),
-                           **({"then_argv": [str(a) for a in then_argv]}
-                              if then_argv else {})})
-    # 串命令(2026-08-13):质检完顺便切视频片段这类"一次点击两步活"用它。
-    # `{ a && b; }` 语义:前一步失败就不做后一步,退出码取整组的——用户看到的仍是
-    # 一个任务、一条日志、一个结果,不必理解我们内部跑了几条命令。
-    steps = [argv] + ([then_argv] if then_argv else [])
-    joined = " && ".join(shlex.join(str(a) for a in step) for step in steps)
-    shell = (f"{{ {joined}; }} >> {shlex.quote(p['log'])} 2>&1; "
-             f"echo $? > {shlex.quote(p['rc'])}")
+    # runs_root 记进 cmd.json:本地目录按 run_id 平铺,靠这个字段认领主(_local_ids_for)
+    _write_state(p, "cmd", {"run_id": run_id, "command": command,
+                            "argv": [str(a) for a in argv],
+                            "label": label or COMMAND_LABELS.get(command, command),
+                            "started_at": started, "cwd": cwd or os.getcwd(),
+                            "runs_root": os.path.abspath(runs_root),
+                            **({"then_argv": [str(a) for a in then_argv]}
+                               if then_argv else {}),
+                            **({"jobs": [{"title": j.get("title") or "",
+                                          "steps": [[str(a) for a in s]
+                                                    for s in j["steps"]]}
+                                         for j in jobs]} if jobs else {})})
+    # 串命令(2026-08-13):一次点击可能是"质检完顺便切视频片段"(两步一个 job),
+    # 也可能是"顺序跑几个数据集"(几个 job)。两种连接语义的差别与理由见
+    # build_run_script —— 用户看到的仍是一个任务、一条日志、一个结果。
+    jobs = jobs or [{"title": "",
+                     "steps": [argv] + ([then_argv] if then_argv else [])}]
+    joined = build_run_script(jobs)
+    # 收尾(写退出码 + 归档回挂载)拎成一个函数,因为它有**两个**入口:正常跑完,
+    # 以及被停止信号打断。归档是整份 cp(顺序整写)不是追加,**先日志后退出码** ——
+    # 退出码文件是"任务已终结"的信号,它在挂载上出现时日志必须已经是完整的。
+    # cp 的报错不吞:它会落到 UI 进程的 stderr(pod 日志),归档失败要看得见。
+    #
+    # ⚠️ trap 是 2026-08-14 那次"永远停不掉"的正解:停止时杀的是整个进程组(跑批会
+    # fork 出解码/VLM 子进程,只杀组长会留下一地孤儿继续烧钱),而外层这个 bash 也
+    # 在组里 —— 没有 trap 它收到 TERM 当场就退,`echo $? > exit_code` 永远执行不到,
+    # 于是那个"任务已终结的唯一依据"永远不出现,界面就卡在「正在停止」。
+    # bash 在等前台子进程时会把信号处理推迟到子进程结束之后,而子进程被同一刀砍掉,
+    # 所以 trap 一定跑得到;跑完显式 exit,不让它接着往下跑下一个数据集。
+    shell = (f"_fin() {{ echo \"$1\" > {shlex.quote(p['local_rc'])}; "
+             f"cp -f {shlex.quote(p['local_log'])} {shlex.quote(p['log'])}; "
+             f"cp -f {shlex.quote(p['local_rc'])} {shlex.quote(p['rc'])}; }}; "
+             f"trap '_fin 143; exit 143' TERM INT; "
+             f"{{ {joined}; }} >> {shlex.quote(p['local_log'])} 2>&1; _fin $?")
     proc = popen(["/bin/bash", "-c", shell], cwd=cwd,
                  stdin=subprocess.DEVNULL, start_new_session=True)
-    _write_json(p["status"], {"state": "running", "pid": int(getattr(proc, "pid", 0) or 0),
-                              "started_at": started, "finished_at": None,
-                              "exit_code": None, "note": ""})
+    _write_state(p, "status", {"state": "running",
+                               "pid": int(getattr(proc, "pid", 0) or 0),
+                               "started_at": started, "finished_at": None,
+                               "exit_code": None, "note": ""})
     # 目录本身在 FSX 上也可能还没可见 → 记一笔,list_runs 会把它并进来。
     # 不记的话:刚发起的任务在列表里查无此人,互斥形同虚设(能连点两次发起)。
     _STARTED.setdefault(os.path.abspath(runs_root), []).append(run_id)
@@ -513,19 +928,23 @@ def status(runs_root: str, run_id: str, *, alive=_alive,
     UI)把跑批带走的样子,如实叫 `interrupted`,不假装还在跑。
     """
     p = _paths(runs_root, run_id)
-    st = _read_json(p["status"])
+    st = _read_state(p, "status")
     if not st:
         return {"run_id": run_id, "state": "unknown", "pid": 0,
                 "started_at": None, "finished_at": None, "exit_code": None,
                 "note": "找不到该任务的状态文件"}
-    cmd = _read_json(p["cmd"])
+    cmd = _read_state(p, "cmd")
+    # n_jobs 透出来,状态条才能把退出码翻成人话(多数据集时退出码 = 没跑完的个数,
+    # 见 build_run_script)。只读不写盘:它是 cmd.json 的事实,不是状态的一部分。
     out = {"run_id": run_id, "command": cmd.get("command", ""),
            "label": cmd.get("label", ""), "argv": cmd.get("argv", []),
+           "n_jobs": len(cmd.get("jobs") or []),
            **st}
     if st.get("state") in ("done", "failed", "stopped", "interrupted"):
         return out                                   # 已固化的终态,不再改写
 
-    rc = _read_rc(p["rc"])
+    rc_path = _prefer_local(p, "rc")
+    rc = _read_rc(rc_path)
     stopping = st.get("state") == "stopping"
     if rc is not None:
         out["state"] = "stopped" if stopping else ("done" if rc == 0 else "failed")
@@ -537,26 +956,35 @@ def status(runs_root: str, run_id: str, *, alive=_alive,
         out["state"] = "stopped" if stopping else "interrupted"
         if not stopping:
             out["note"] = "进程已不在但没有退出码,多半是服务重启把它带走了"
-    out["finished_at"] = (_rc_finished_at(p["rc"]) if rc is not None else None) \
+    out["finished_at"] = (_rc_finished_at(rc_path) if rc is not None else None) \
         or (now or datetime.datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
-    _write_json(p["status"], {k: out[k] for k in
-                              ("state", "pid", "started_at", "finished_at",
-                               "exit_code", "note")})
+    # 落终态 = 归档:这一份是 pod 重启之后唯一的历史,写完必须回读校验一次
+    # (2026-08-14 实测挂载上那份变成了 164 字节全 \0 的坏文件)。
+    _write_state(p, "status", {k: out[k] for k in
+                               ("state", "pid", "started_at", "finished_at",
+                                "exit_code", "note")}, verify=True)
     return out
 
 
 def list_runs(runs_root: str, limit: int = 50, *, alive=_alive) -> list[dict]:
-    """任务列表,新的在前(run_id 以时间戳打头,字典序即时间序)。"""
+    """任务列表,新的在前(run_id 以时间戳打头,字典序即时间序)。
+
+    三个来源并起来:挂载上的目录(历史,含别的 pod 跑的)、本地盘上认领了本
+    runs_root 的目录(本机这轮的,挂载可能还没可见)、本进程起过的(连本地目录
+    都还没落稳的那一瞬)。少任何一路都会出现"任务查无此人",而互斥就是查这张表。
+    """
+    started = _STARTED.get(os.path.abspath(runs_root), [])
+    local_ids = _local_ids_for(runs_root)
     try:
         seen = set(os.listdir(runs_root))
     except OSError:
         seen = set()
-    seen |= set(_STARTED.get(os.path.abspath(runs_root), []))   # 见上:FSX 目录可见延迟
+    seen |= set(started) | local_ids            # 见上:FSX 目录可见延迟
     ids = sorted(seen, reverse=True)
     out = []
     for rid in ids:
         if not (os.path.isdir(os.path.join(runs_root, rid))
-                or rid in _STARTED.get(os.path.abspath(runs_root), [])):
+                or rid in started or rid in local_ids):
             continue
         out.append(status(runs_root, rid, alive=alive))
         if len(out) >= limit:
@@ -574,8 +1002,11 @@ def active_run(runs_root: str, *, alive=_alive) -> dict | None:
 
 def tail_log(runs_root: str, run_id: str, max_bytes: int = 64_000) -> str:
     """日志尾部。**只读尾部**:跑批日志能到几十 MB,整个读进内存会把常驻的 UI
-    进程拖垮(而界面上也只看得下最后几十行)。"""
-    path = _paths(runs_root, run_id)["log"]
+    进程拖垮(而界面上也只看得下最后几十行)。
+
+    活跃期读的是本地盘那份(挂载上的存档要等任务结束才写);历史任务本地没有了,
+    退回读挂载。见 _prefer_local。"""
+    path = _prefer_local(_paths(runs_root, run_id), "log")
     try:
         size = os.path.getsize(path)
         with open(path, "rb") as f:
@@ -588,27 +1019,61 @@ def tail_log(runs_root: str, run_id: str, max_bytes: int = 64_000) -> str:
     return data.decode("utf-8", "replace")
 
 
+#: stop() 发完信号后最多等这么久(秒),等的是**退出码文件出现** —— 那是外层
+#: shell 的 trap 写的,正常情形下一两百毫秒就到。等不到就自己写终态(见 stop)。
+STOP_GRACE_S = 3.0
+_STOP_POLL_S = 0.1
+
+
 def stop(runs_root: str, run_id: str, *, killer=os.killpg,
-         sig: int = signal.SIGTERM) -> dict:
+         sig: int = signal.SIGTERM, group_alive=_group_alive,
+         grace_s: float = STOP_GRACE_S, sleep=time.sleep,
+         now: datetime.datetime | None = None) -> dict:
     """停止任务:杀**整个进程组**(跑批会 fork 出解码/VLM 线程与子进程,只杀
     组长会留下一地孤儿继续烧方舟的钱)。
 
     先落 `stopping`,让随后的 status() 把 bash 写下的退出码(被 TERM 打断通常
     是 143)解读成"人停的"而不是"跑失败了"——这两者在界面上必须分得开。
+
+    ⚠️ **不能干等退出码文件**(2026-08-14 现场:用户点了停止,七分钟后仍是「正在
+    停止」,而 `exit_code` 根本不存在)。外层 shell 现在装了 trap,正常情况下它会
+    把退出码写出来;但那是"应该",不是"保证"——SIGKILL、shell 被 OOM 掉、老版本
+    留下的任务都不会有 trap。所以这里发完信号短暂等一下,**一旦进程组里没有活着的
+    成员就自己写终态**,不指望一个可能永远不出现的文件。
     """
     p = _paths(runs_root, run_id)
-    st = _read_json(p["status"])
+    st = _read_state(p, "status")
     if not st or st.get("state") not in ("running", "stopping"):
         return status(runs_root, run_id)
     st["state"] = "stopping"
     st["note"] = "已请求停止"
-    _write_json(p["status"], st)
+    _write_state(p, "status", st)
     pid = int(st.get("pid") or 0)
     if pid:
         try:
             killer(pid, sig)                   # start_new_session ⇒ pid 即 pgid
         except (OSError, ProcessLookupError):
-            pass                               # 已经自己退了:交给 status() 判定
+            pass                               # 已经自己退了:交给下面判定
+    rc_path = _prefer_local(p, "rc")
+    for _ in range(max(1, int(grace_s / _STOP_POLL_S))):
+        if _read_rc(rc_path) is not None:
+            break                              # trap 写下了退出码:正常路径
+        if not group_alive(pid):
+            sleep(_STOP_POLL_S)                # 再给一拍:组刚散,退出码可能正在落盘
+            break
+        sleep(_STOP_POLL_S)
+    if _read_rc(rc_path) is None and not group_alive(pid):
+        # 进程组已经没有活着的成员,退出码文件却不会再出现了 —— 自己落终态。
+        # exit_code 记 None 而不是补一个 143:没拿到就是没拿到,note 里说清楚
+        # (界面对「已停止(人工)」本来就不显示退出码,补一个数只会是假证据)。
+        finished = (now or datetime.datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+        _write_state(p, "status",
+                     {"state": "stopped", "pid": pid,
+                      "started_at": st.get("started_at"), "finished_at": finished,
+                      "exit_code": None,
+                      "note": "已停止:进程组里已经没有活着的进程了,"
+                              "但这次没留下退出码(停止信号把外层 shell 一起带走了)"},
+                     verify=True)
     return status(runs_root, run_id)
 
 
@@ -621,9 +1086,100 @@ def source_dataset_of(delivery_dir: str) -> str | None:
     输入。管道从 2026-08-13 起把 `源数据集路径` 写进 passed.json;老交付没有这个
     字段 → 返回 None,由界面退回"让用户从数据集下拉里选",绝不猜一个路径。
     """
-    p = _read_json(os.path.join(delivery_dir, "passed.json"))
+    from ..delivery import resolve_run
+    p = _read_json(os.path.join(resolve_run(delivery_dir), "passed.json"))
     src = str(p.get("源数据集路径") or "").strip()
     return src if src and os.path.isdir(src) else None
+
+
+def _config_layers(config_path: str | None = None) -> list[dict]:
+    """生效配置的两层原始数据:出厂 `pipeline/default.yaml`,再叠站点文件
+    (`--config` / `CURATION_CONFIG`),**后者覆盖前者**。
+
+    读的是**配置文件这个数据**,不是 import 管道代码(UI 那条红线)。读不了/解析
+    不了的那层直接跳过 —— 界面宁可少显示一点,也不要因为一个坏 YAML 整个打不开。
+    """
+    import yaml
+
+    out: list[dict] = []
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for path in (os.path.join(here, "pipeline", "default.yaml"),
+                 config_path or os.environ.get("CURATION_CONFIG") or ""):
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except (OSError, ValueError, yaml.YAMLError):
+            continue
+        if isinstance(data, dict):
+            out.append(data)
+    return out
+
+
+#: 三个并发旋钮 → 它们在配置里的位置。界面拿这三个数只做**占位符**("默认 32"),
+#: 不做预填值 —— 预填等于把默认值抄进界面,以后改了 default.yaml 而界面还按老值
+#: 发 `--set`,是静默的不一致(_sets 里"只发用户动过的"是同一条纪律的另一半)。
+CONCURRENCY_PATHS = {
+    "ep": ("pipeline", "vlm_episode_concurrency"),
+    "fr": ("checks", "task_success", "vlm", "max_concurrency"),
+    "cap": ("skill_profile", "caption_concurrency"),
+}
+
+
+def concurrency_defaults(config_path: str | None = None) -> dict:
+    """{"ep"/"fr"/"cap": 生效配置里的并发默认值 | None}。
+
+    读不到就是 None,界面退回"留空 = 用配置里的值"这句话。**绝不硬编码一个数字
+    充数**:界面上印着 32 而配置其实是 8,用户会照着那个数做判断——不显示只是少
+    一条信息,显示错的是给错信息(与"fps 猜 30"同一条禁令)。
+    """
+    out: dict = {k: None for k in CONCURRENCY_PATHS}
+    for data in _config_layers(config_path):
+        for key, path in CONCURRENCY_PATHS.items():
+            node = data
+            for step in path:
+                node = node.get(step) if isinstance(node, dict) else None
+                if node is None:
+                    break
+            if node is None:
+                continue                 # 这一层没给这项 → 保留下层的值(整层覆盖是错的)
+            try:
+                out[key] = int(node)
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+#: 硬件字段当"型号"看的长度上限(去空白后)。最长的真型号也就 `NVIDIA H200 141GB`
+#: 这个量级,超过它的多半是整句描述而不是型号。
+_HARDWARE_MODEL_MAXLEN = 16
+
+#: 整句描述的痕迹:型号里不会有逗号/分号/句号。
+_SENTENCE_MARKS = re.compile(r"[,,。;;]")
+
+
+def hardware_suffix(service_type: str, hardware: str) -> str:
+    """(服务类型, 硬件字段) → 拼进下拉标签的那截硬件文字(不该拼就给空串)。
+
+    声明了硬件就一律拼上(2026-08-13 用户点名:两台 8B 带着卡型、独一份的 32B 不带,
+    同一排下拉里看着像漏了)—— 但**前提是它真是个型号**。方舟那条把
+    `hardware` 写成「托管服务,硬件不可见(由服务商调度)」,直接拼出来就是
+    「方舟 MaaS(托管服务) · doubao-… · 托管服务,硬件不可见(由服务商调度)」:
+    "托管服务"说了两遍,后半句还是整句描述。两条判据各挡一种:
+      ① 去空白后被 service_type 包含 = 只是把服务类型重说一遍;
+      ② 太长 / 带句读 = 整句描述,不是型号。
+    `NVIDIA H20` / `NVIDIA A30` 两条都不触发,照旧拼上 —— 那正是用户要的区分。
+    """
+    h = str(hardware or "").strip()
+    if not h:
+        return ""
+    flat = re.sub(r"\s+", "", h)
+    if flat and flat in re.sub(r"\s+", "", str(service_type or "")):
+        return ""
+    if len(flat) > _HARDWARE_MODEL_MAXLEN or _SENTENCE_MARKS.search(h):
+        return ""
+    return h
 
 
 def vlm_backend_labels(config_path: str | None = None) -> dict:
@@ -638,19 +1194,8 @@ def vlm_backend_labels(config_path: str | None = None) -> dict:
     站点文件(--config / CURATION_CONFIG)一份,后者覆盖同名预设。占位示例
     (endpoint 里带 YOUR-)不进下拉——它注定不可达,列出来只会让人选错。
     """
-    import yaml
-
     presets: dict = {}
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for path in (os.path.join(here, "pipeline", "default.yaml"),
-                 config_path or os.environ.get("CURATION_CONFIG") or ""):
-        if not path or not os.path.exists(path):
-            continue
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-        except (OSError, ValueError, yaml.YAMLError):
-            continue
+    for data in _config_layers(config_path):
         for name, body in (data.get("vlm_backends") or {}).items():
             presets[str(name)] = body or {}
 
@@ -664,15 +1209,8 @@ def vlm_backend_labels(config_path: str | None = None) -> dict:
         hardware = str(body.get("hardware") or "").strip()
         if not kind:                       # 配置没声明就退回端点主机名,仍不暴露代号
             kind = endpoint.split("//")[-1].split("/")[0]
-        label = " · ".join(x for x in (kind, model) if x)
-        if label in out and hardware:
-            # 同类型同模型的两台机器(实测:8B 同时跑在两种卡上)——**用配置声明的
-            # 硬件区分**,而不是加序号或露预设代号。硬件本来就是给界面看的描述字段。
-            label = " · ".join(x for x in (kind, model, hardware) if x)
-            prev = next((k for k in out if k == label.rsplit(" · ", 1)[0]), None)
-            prev_hw = str((presets.get(out[prev]) or {}).get("hardware") or "") if prev else ""
-            if prev and prev_hw:           # 把先来的那条也补上硬件,免得一个带一个不带
-                out[" · ".join((prev, prev_hw))] = out.pop(prev)
+        label = " · ".join(x for x in (kind, model,
+                                       hardware_suffix(kind, hardware)) if x)
         while label in out:                # 仍撞车(硬件也没声明):补空格保序不露代号
             label += " "
         out[label] = name
@@ -681,21 +1219,95 @@ def vlm_backend_labels(config_path: str | None = None) -> dict:
 
 # ── 渲染:给界面用的纯字符串函数(不 import gradio,可单测)──────────────────
 
-#: 状态 → (中文, 主色, 底色)。停止与失败必须一眼分得开:一个是"你自己停的",
-#: 一个是"它崩了",混为一谈会让人以为系统不稳。
+#: 状态 → (中文, 主色, 底色)。人停的与没跑到底必须一眼分得开:一个是"你自己停的",
+#: 一个是"它没跑完",混为一谈会让人以为系统不稳。
+#: ⚠️ 非零退出码写「未完成」而不是「失败」(2026-08-13 用户定):质检这件事只有
+#: 跑完与没跑完,"失败"这个词会让人以为数据判坏了、或者系统崩了 —— 实际最常见的
+#: 情形是外部原因半路断了。颜色仍用红档,严重程度不降。
 STATE_STYLES = {
     "running": ("运行中", "#1d4ed8", "#dbeafe"),
     "stopping": ("正在停止", "#92400e", "#fef3c7"),
     "done": ("已完成", "#166534", "#dcfce7"),
-    "failed": ("失败", "#991b1b", "#fee2e2"),
+    "failed": ("未完成", "#991b1b", "#fee2e2"),
     "stopped": ("已停止(人工)", "#3730a3", "#e0e7ff"),
     "interrupted": ("被中断(服务重启)", "#92400e", "#fef3c7"),
     "unknown": ("未知", "#374151", "#f3f4f6"),
 }
 
 
-def status_html(st: dict | None, progress: dict | None = None) -> str:
-    """当前任务的状态条 + 进度条。没有任务 → 一句提示,不留空白。"""
+#: 进度条配色:进行中的阶段用主色,跑完的淡一档。
+#: 淡一档而不是换个颜色:一列条里"哪根还在动"要一眼看出来,同时已完成的那几根
+#: 也得留在原地 —— 它们就是"已经过了几关"这条信息本身(2026-08-13 用户要的)。
+_BAR_LIVE, _BAR_DONE = "#2563eb", "#93c5fd"
+
+
+def _progress_row(p: dict) -> str:
+    """一个阶段一行:条 + 一行小字。宽高全随内容,不写死行数(阶段有几个画几行)。"""
+    pct, done = p.get("pct"), bool(p.get("done"))
+    if done:
+        width, color, stripe = "100%", _BAR_DONE, ""
+    elif pct is not None:
+        width, color, stripe = f"{max(0, min(100, int(pct)))}%", _BAR_LIVE, ""
+    else:
+        # 无百分比 = 不装样子(phase_step 那种一步一次 LLM 大调用的阶段)
+        width, color, stripe = "100%", _BAR_LIVE, ";opacity:.45"
+    name = " · ".join(x for x in (p.get("section"), p.get("stage")) if x)
+    detail = " · ".join(x for x in (
+        name,
+        f"{p['n']}/{p['total']}" if p.get("total") else None,
+        (f"用时 {p['elapsed']}" if done else f"已用 {p['elapsed']}")
+        if p.get("elapsed") else None,
+        (None if done else (f"剩余 ~{p['eta']}" if p.get("eta") else None))) if x)
+    return (f'<div style="margin-top:8px;height:10px;background:#e2e8f0;'
+            f'border-radius:999px;overflow:hidden">'
+            f'<div style="height:100%;width:{width};background:{color}{stripe}"></div>'
+            f'</div><div style="margin-top:4px;color:#475569;font-size:12px">'
+            f'{_esc(detail)}</div>')
+
+
+def failed_suffix(st: dict) -> str:
+    """历史表「状态」列跟在「未完成」后面的那截括号(纯函数)。
+
+    与状态条的 failed_note 同源同话术:多数据集时退出码**就是**没跑完的数据集
+    个数(build_run_script 定的语义),表里也要说人话 —— 状态条已经改口说「N 个
+    数据集没跑完」,历史表却还写「未完成(退出码 3)」,同一件事两种说法,而"3"
+    在多数据集语境下根本不是个错误码。退出码落在个数区间之外(整串被信号打断
+    之类)时什么都不补:那时它不是个数,编一个出来比不说更糟。
+    """
+    rc = st.get("exit_code")
+    if rc is None:
+        return ""
+    n = int(st.get("n_jobs") or 0)
+    if n > 1:
+        return f"({rc} 个数据集没跑完)" if isinstance(rc, int) and 1 <= rc <= n else ""
+    return f"(退出码 {rc})"
+
+
+def failed_note(st: dict) -> str:
+    """未完成任务的那句说明(纯函数)。
+
+    多数据集串跑时退出码**就是**没跑完的数据集个数(build_run_script 定的语义),
+    可状态条照旧写「没跑到底(退出码 3)」—— 读起来像个神秘错误码,而它其实是
+    条能直接看懂的信息。多数据集就说人话;单数据集维持原样(那里的退出码是
+    CLI 自己的返回值,确实只有排障价值)。
+    退出码落在个数区间之外(整串被信号打断之类)时不硬翻:那时它不是个数,
+    编一个数字出来比留着码更糟。
+    """
+    rc = st.get("exit_code")
+    n = int(st.get("n_jobs") or 0)
+    if n > 1:
+        if isinstance(rc, int) and 1 <= rc <= n:
+            return f"{rc} 个数据集没跑完;是哪几个见下方日志"
+        return "没跑到底;原因见下方日志末尾"
+    return f"没跑到底(退出码 {rc});原因见下方日志末尾"
+
+
+def status_html(st: dict | None, progress=None) -> str:
+    """当前任务的状态条 + **一列**进度条。没有任务 → 一句提示,不留空白。
+
+    progress 收 parse_progress_all 的列表(每个阶段一条);也仍收单个 dict —— 那是
+    parse_progress 的老形状,别处还在用,拆签名换不来任何东西。
+    """
     if not st:
         return ('<div style="padding:10px 12px;border-radius:8px;background:#f3f4f6;'
                 'color:#374151">当前没有任务在跑。在下面选好参数,点「开始」即可。</div>')
@@ -708,22 +1320,9 @@ def status_html(st: dict | None, progress: dict | None = None) -> str:
             f'{_esc(st.get("run_id") or "")}</span>')
     note = str(st.get("note") or "")
     if st.get("state") == "failed" and st.get("exit_code") is not None:
-        note = note or f"退出码 {st['exit_code']};原因见下方日志末尾"
-    bar = ""
-    if progress:
-        pct = progress.get("pct")
-        width = f"{max(0, min(100, int(pct)))}%" if pct is not None else "100%"
-        stripe = "" if pct is not None else ";opacity:.45"      # 无百分比 = 不装样子
-        detail = " · ".join(x for x in (
-            progress.get("stage"),
-            f"{progress['n']}/{progress['total']}" if progress.get("total") else None,
-            f"已用 {progress['elapsed']}" if progress.get("elapsed") else None,
-            f"剩余 ~{progress['eta']}" if progress.get("eta") else None) if x)
-        bar = (f'<div style="margin-top:8px;height:10px;background:#e2e8f0;'
-               f'border-radius:999px;overflow:hidden">'
-               f'<div style="height:100%;width:{width};background:#2563eb{stripe}"></div>'
-               f'</div><div style="margin-top:4px;color:#475569;font-size:12px">'
-               f'{_esc(detail)}</div>')
+        note = note or failed_note(st)
+    items = [progress] if isinstance(progress, dict) else list(progress or [])
+    bar = "".join(_progress_row(p) for p in items if p)
     tail = (f'<div style="margin-top:6px;color:#64748b;font-size:12px">{_esc(note)}</div>'
             if note else "")
     return (f'<div style="padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px">'
@@ -766,3 +1365,65 @@ def parse_progress(log_text: str) -> dict | None:
                 "eta": eta.group(1) if eta else None,
                 "detail": rest.split("|")[0].strip()}
     return best
+
+
+def parse_progress_all(log_text: str) -> list[dict]:
+    """整段日志 → **按出现顺序**的阶段列表(一个阶段一条,同名取最后一次读数)。
+
+    为什么要累积(2026-08-13 用户):只画最后一条进度的话,阶段一换进度条就归零
+    重来 —— 等了半小时的人看到的是一根反复从头爬的条,判断不了"已经过了几关、
+    还值不值得等"。累积之后跑完的阶段留在原地,新阶段追加一行。
+
+    完成判定用两个信号,**硬的优先**:
+    ① 条目式的 `n == total`(这是确定的);
+    ② **后面出现了新阶段** —— 管道是顺序跑的,后一个阶段开打就说明前一个收工了。
+
+    ⚠️ **百分比只认日志里明写的 `(N%)`,绝不由 n/total 反推**:phase_step 那种
+    "一步 = 一次 LLM 大调用"的阶段步数可数、耗时却天差地别,反推等于给它编一条
+    匀速前进的假条(progress.py 顶上那条纪律)。没有百分比的阶段照样占一行、照样
+    显示 n/total,只是条不填色 —— 少说一句话,不说假话。
+
+    分隔行(`===== 数据集名 =====`)当断句:此前的阶段全部收工,同名阶段从此另起
+    一行。不断句的话,第二个数据集的「数值检查」会把第一个那行改回 5%,看着像
+    跑完的活又倒回去了。
+    """
+    out: list[dict] = []
+    index: dict[str, dict] = {}
+    section = ""
+    for raw in str(log_text or "").splitlines():
+        line = raw.strip()
+        sec = _SECTION_RE.match(line)
+        if sec:
+            for e in out:
+                e["done"] = True
+            index, section = {}, sec.group("name")
+            continue
+        m = _PROGRESS_RE.match(line)
+        if not m:
+            continue
+        total = m.group("total")
+        rest = m.group("rest") or ""
+        stage = (m.group("stage") or "").strip(" :·") or m.group("src")
+        n = int(m.group("n"))
+        total_i = int(total) if total.isdigit() else None
+        pct = m.group("pct")
+        el = _ELAPSED_RE.search(rest)
+        eta = _ETA_RE.search(rest)
+        reading = {"stage": stage, "section": section, "n": n, "total": total_i,
+                   "pct": int(pct) if pct is not None else None,
+                   "elapsed": el.group(1) if el else None,
+                   "eta": eta.group(1) if eta else None,
+                   "detail": rest.split("|")[0].strip()}
+        hit = index.get(stage)
+        if hit is None:
+            for e in out:
+                e["done"] = True
+            hit = dict(reading, done=False)
+            out.append(hit)
+            index[stage] = hit
+        else:
+            hit.update(reading)
+        # 一旦满格就永远是完成态:后面若还有同名阶段的读数(重试/再跑一遍),
+        # 也不该把一个已经跑满的条改回半截
+        hit["done"] = hit["done"] or bool(total_i and n >= total_i)
+    return out

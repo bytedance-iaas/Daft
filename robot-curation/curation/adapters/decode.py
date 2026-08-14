@@ -48,21 +48,7 @@ def decode_window(
     return frames, np.asarray(ts)
 
 
-def probe_live_cameras(video: dict, brightness_min: float = 8.0,
-                       std_min: float = 2.0) -> dict:
-    """占位/黑帧通道识别(B3):每路解 1 帧看亮度+方差。
-    Bridge 等多机构采集集为凑 schema 用黑帧视频填充缺失相机位——
-    多相机检查必须先排除占位路,报告也应如实报每条的真实相机数。"""
-    import numpy as np
-
-    live, dead = [], []
-    for cam in sorted(video):
-        v = video[cam]
-        try:
-            fr, _ = decode_window(v["path"], v["from_ts"],
-                                  min(v["to_ts"], v["from_ts"] + 0.5), max_side=224)
-            f = np.asarray(fr[0], dtype=np.float32)
-            (live if (f.mean() > brightness_min or f.std() > std_min) else dead).append(cam)
-        except Exception:  # noqa: BLE001
-            dead.append(cam)
-    return {"live": live, "dead_or_padded": dead}
+# 占位/黑帧通道识别曾经在这里(probe_live_cameras):报告阶段逐条 episode、逐相机
+# **再解一遍帧**,只为看一帧的亮度/方差。2026-08-14 并进视觉质量那一遍(判据搬去
+# core/checks/visual_quality.is_live_channel,数据由 funnel 顺手产出),整整一遍解码
+# 就此省掉,故连同函数一起删掉不留死代码。
