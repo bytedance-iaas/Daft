@@ -101,15 +101,24 @@ BRIDGE = "/data03/hao/data/bridge_orig_lerobot"
 
 
 @pytest.mark.skipif(not os.path.exists(os.path.join(BRIDGE, "meta")), reason="无 bridge 数据")
-def test_b3_probe_live_cameras_on_bridge():
-    """真数据:image_0 恒活,image_3 是黑帧占位。"""
-    from curation.adapters.decode import probe_live_cameras
+def test_live_camera_channels_on_bridge():
+    """真数据:image_0 恒活,image_3 是黑帧占位。
+
+    判据 2026-08-14 从"独立再解一遍帧的相机体检"搬进视觉质量那一遍
+    (is_live_channel 吃的就是那批采样帧),这里改成直接喂帧验同一个结论。
+    """
+    from curation.adapters.decode import decode_window
+    from curation.core.checks.visual_quality import is_live_channel
     from curation.ingest.lerobot_reader import read_lerobot_rows
 
     r = read_lerobot_rows(BRIDGE, max_episodes=1, validate=False)[0]
-    pr = probe_live_cameras(r["video"])
-    assert "observation.images.image_0" in pr["live"]
-    assert "observation.images.image_3" in pr["dead_or_padded"]
+    live = {}
+    for cam, v in sorted(r["video"].items()):
+        fr, _ = decode_window(v["path"], v["from_ts"], v["to_ts"],
+                              sample_interval_s=0.5, max_side=224)
+        live[cam] = is_live_channel(fr)
+    assert live["observation.images.image_0"] is True
+    assert live["observation.images.image_3"] is False
 
 
 @pytest.mark.skipif(not os.path.exists(os.path.join(BRIDGE, "meta")), reason="无 bridge 数据")

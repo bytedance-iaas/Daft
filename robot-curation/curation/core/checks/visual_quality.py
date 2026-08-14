@@ -22,6 +22,35 @@ def _gray(frame: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) if frame.ndim == 3 else frame
 
 
+#: 占位/黑帧相机通道的判据(沿用相机体检的老口径,阈值没动)。
+LIVE_BRIGHTNESS_MIN = 8.0
+LIVE_STD_MIN = 2.0
+
+
+def is_live_channel(frames: list[np.ndarray], *,
+                    brightness_min: float = LIVE_BRIGHTNESS_MIN,
+                    std_min: float = LIVE_STD_MIN) -> bool:
+    """这一路相机是真在拍,还是占位/黑帧?
+
+    Bridge 等多机构采集集为凑 schema 用全黑视频填充缺失的相机位:多相机检查必须
+    先排除这类通道(不能因为占位路把整条数据判坏),报告也要如实报每条的真实相机数。
+
+    判据 = 采样帧的**亮度中位数**或**灰度方差中位数**任一过线就算活的(全黑路两项
+    同时趋 0)。⚠️ 2026-08-14 起看的是一整批采样帧的中位数,而不是首 0.5 秒的
+    第一帧 —— 单帧判定挨着开头的曝光/快门瞬变,偶尔会把活路误判成占位。
+    帧为空(解码失败/窗口内没帧)一律判"不是活的":拿不到画面就不能声称这一路在拍。
+    """
+    if not frames:
+        return False
+    means, stds = [], []
+    for f in frames:
+        a = np.asarray(f)
+        means.append(float(a.mean()))
+        stds.append(float(a.std()))
+    return bool(float(np.median(means)) > brightness_min
+                or float(np.median(stds)) > std_min)
+
+
 def visual_quality(
     frames: list[np.ndarray],
     *,

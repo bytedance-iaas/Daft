@@ -15,6 +15,10 @@ import json
 import os
 
 
+#: 证据帧最多给几条 episode 存(再多也没人逐条看,徒增交付体积与导出时间)。
+EVIDENCE_CAP = 200
+
+
 def flagged_for_evidence(per_episode: dict, mode: str = "flagged") -> list[str]:
     """选出该存证据帧的 episode:task_success 拒绝 or 待裁决(mode=all 时全员)。
 
@@ -52,14 +56,16 @@ def probe_indices(check_entry: dict) -> list[int]:
 
 def render_task_evidence(per_episode: dict, videos: dict, out_dir: str,
                          interval: float, max_side: int,
-                         mode: str = "flagged", cap: int = 200,
-                         decode_fn=None) -> dict:
+                         mode: str = "flagged", cap: int = EVIDENCE_CAP,
+                         decode_fn=None, on_progress=None) -> dict:
     """flagged 条目的 probe 帧 → details/evidence/<ep>/probe<i>_f<帧号>.jpg。
 
     videos: {episode_id: 多相机指针 struct};解码只取首相机(与漏斗
     `sorted(video.keys())[0]` 同一路,证据与判定看的是同一双眼睛)。
     decode_fn 可注入(测试桩);返回 {episode_id: [相对路径,...]},空条目不建目录。
     单条解码失败跳过不中断——证据是附件,不是判决的一部分。
+    on_progress: 每条(含跳过的)处理完调用一次,无参 —— 本步骤要逐条解码,
+      条数多时是十几秒到几分钟的活,调用方拿它报进度(慢步骤不许静默)。
     """
     eids = flagged_for_evidence(per_episode, mode)[:cap]
     if not eids:
@@ -67,22 +73,24 @@ def render_task_evidence(per_episode: dict, videos: dict, out_dir: str,
     if decode_fn is None:
         from ..adapters.decode import decode_window as decode_fn  # noqa: N813
     written: dict = {}
-    for eid in eids:
+
+    def _one(eid: str) -> list:
+        """一条 episode 的证据帧;跳过/失败都返回空,进度由外层 finally 记。"""
         video = videos.get(eid)
         if not video:
-            continue
+            return []
         idx = probe_indices(per_episode[eid]["checks"]["task_success"])
         if not idx:
-            continue
+            return []
         cam = sorted(video.keys())[0]
         v = video[cam]
         try:
             frames, _ = decode_fn(v["path"], v["from_ts"], v["to_ts"],
                                   sample_interval_s=interval, max_side=max_side)
         except Exception:  # noqa: BLE001
-            continue
+            return []
         if not frames:
-            continue
+            return []
         ep_dir = os.path.join(out_dir, eid)
         rels = []
         for i, fi in enumerate(idx):
@@ -92,25 +100,58 @@ def render_task_evidence(per_episode: dict, videos: dict, out_dir: str,
             name = f"probe{i}_f{fi}.jpg"
             if _write_jpeg(os.path.join(ep_dir, name), frames[fi]):
                 rels.append(os.path.join(eid, name))
+        return rels
+
+    for eid in eids:
+        try:
+            rels = _one(eid)
+        finally:
+            # 跳过的、失败的都要计数,否则进度永远到不了 100%,看着像卡死
+            if on_progress is not None:
+                on_progress()
         if rels:
             written[eid] = rels
     return written
 
 
 def _write_jpeg(path: str, frame_rgb) -> bool:
-    """RGB ndarray → JPEG。cv2 吃 BGR,写前翻通道。"""
+    """RGB ndarray → JPEG。cv2 吃 BGR,写前翻通道。
+
+    ⚠️ 先写本地临时文件、验完 JPEG 魔数(FF D8 FF)再整份拷到交付目录:图像库
+    直写 TOS 的 FSX 挂载会**静默产出零填充坏文件**(2026-08-07 savefig 那次 5 张
+    坏 3 张,字节数看着正常、签名全零)。与 sync_plots._savefig_fsx_safe 同一招;
+    这里判坏就返回 False(证据帧是附件,少一张不该中断交付)。
+    """
+    import os
+    import shutil
+    import tempfile
     try:
         import cv2
         import numpy as np
-        return bool(cv2.imwrite(path, cv2.cvtColor(
-            np.asarray(frame_rgb), cv2.COLOR_RGB2BGR)))
+        fd, tmp = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        try:
+            if not cv2.imwrite(tmp, cv2.cvtColor(
+                    np.asarray(frame_rgb), cv2.COLOR_RGB2BGR)):
+                return False
+            with open(tmp, "rb") as f:
+                if f.read(3) != b"\xff\xd8\xff":
+                    return False
+            shutil.copyfile(tmp, path)
+            return True
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     except Exception:  # noqa: BLE001
         return False
 
 
 def write_audit_clips(flagged_ids: list[str], videos: dict, out_dir: str,
                       sample_interval_s: float = 0.5, max_side: int = 448,
-                      play_fps: int = 4, max_cams: int = 3) -> int:
+                      play_fps: int = 4, max_cams: int = 3,
+                      on_progress=None, concurrency: int = 4) -> int:
     """标注分歧条目的**视频片段**导出(2026-08-05 用户定:裁决要能直接看视频)。
 
     每条 flagged episode × 每路相机(≤max_cams)写一个 mp4 到
@@ -119,40 +160,57 @@ def write_audit_clips(flagged_ids: list[str], videos: dict, out_dir: str,
     ⚠️ 编码用 PyAV(pod 无 ffmpeg CLI)且 **movflags=faststart**:moov 不在头部
     的话浏览器 <video> 会无报错地永久转圈(2026-08-03 人工审片工具的血泪)。
     失败条目静默跳过(少一路视频,不断链);返回成功写出的片段数。
+
+    on_progress: 每条 episode 完成后调用一次(无参)。**并发下会被多线程调用**,
+      回调方须自己线程安全(_progress_tick 内部有锁,满足)。
+    concurrency: 同时切几条。解码+编码都在 PyAV 里放开 GIL,条数多时是纯等待
+      CPU 的活;1 = 串行(排障)。片段之间互不影响,并发不动任何判定。
     """
     from ..adapters.decode import decode_window
 
     clip_dir = os.path.join(out_dir, "details", "audit_clips")
-    n_ok = 0
-    for eid in flagged_ids:
+
+    def _one(eid: str) -> int:
+        n = 0
         video = videos.get(eid) or {}
-        for cam in sorted(video)[:max_cams]:
-            v = video[cam]
-            try:
-                frames, _ = decode_window(v["path"], v["from_ts"], v["to_ts"],
-                                          sample_interval_s=sample_interval_s,
-                                          max_side=max_side)
-                if not frames:
-                    continue
-                os.makedirs(clip_dir, exist_ok=True)
-                dst = os.path.join(clip_dir, f"{eid}__{cam.split('.')[-1]}.mp4")
-                # ⚠️ 先编码到本地盘再整体拷贝:faststart 收尾要 seek 把 moov 挪到
-                # 文件头,而 TOS-FSX 挂载不支持 seek 写回(与 aria2 直写同一堵墙,
-                # 2026-08-05 实测:直写产出无 moov 的废 mp4,浏览器永久转圈)。
-                import shutil
-                import tempfile
-                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
-                    tmp = tf.name
+        try:
+            for cam in sorted(video)[:max_cams]:
+                v = video[cam]
                 try:
-                    _encode_mp4(frames, tmp, play_fps)
-                    shutil.copyfile(tmp, dst)          # 顺序写,FSX 安全
-                    n_ok += 1
-                finally:
-                    if os.path.exists(tmp):
-                        os.remove(tmp)
-            except Exception:  # noqa: BLE001
-                continue
-    return n_ok
+                    frames, _ = decode_window(v["path"], v["from_ts"], v["to_ts"],
+                                              sample_interval_s=sample_interval_s,
+                                              max_side=max_side)
+                    if not frames:
+                        continue
+                    os.makedirs(clip_dir, exist_ok=True)
+                    dst = os.path.join(clip_dir, f"{eid}__{cam.split('.')[-1]}.mp4")
+                    # ⚠️ 先编码到本地盘再整体拷贝:faststart 收尾要 seek 把 moov 挪到
+                    # 文件头,而 TOS-FSX 挂载不支持 seek 写回(与 aria2 直写同一堵墙,
+                    # 2026-08-05 实测:直写产出无 moov 的废 mp4,浏览器永久转圈)。
+                    import shutil
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+                        tmp = tf.name
+                    try:
+                        _encode_mp4(frames, tmp, play_fps)
+                        shutil.copyfile(tmp, dst)          # 顺序写,FSX 安全
+                        n += 1
+                    finally:
+                        if os.path.exists(tmp):
+                            os.remove(tmp)
+                except Exception:  # noqa: BLE001
+                    continue
+        finally:
+            if on_progress is not None:      # 失败条也要计数,否则进度停在半截像卡死
+                on_progress()
+        return n
+
+    ids = list(flagged_ids)
+    if concurrency <= 1 or len(ids) <= 1:
+        return sum(_one(e) for e in ids)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(concurrency, len(ids))) as ex:
+        return sum(ex.map(_one, ids))
 
 
 def _encode_mp4(frames: list, path: str, fps: int) -> None:

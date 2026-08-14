@@ -143,11 +143,13 @@ def write_skill_assignment_csv(details_dir: str, profile: dict,
     import csv as _csv
     import os as _os
 
+    from ..export.safe_write import delivery_file
+
     data = skill_assignment_rows(profile, caption_of)
     if not data:
         return None
     path = _os.path.join(details_dir, "skill_assignment.csv")
-    with open(path, "w", newline="", encoding="utf-8") as f:
+    with delivery_file(path, newline="") as f:
         w = _csv.DictWriter(f, fieldnames=SKILL_ASSIGNMENT_COLUMNS, extrasaction="ignore")
         w.writeheader()
         w.writerows(data)

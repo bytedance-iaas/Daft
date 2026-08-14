@@ -2,18 +2,18 @@
 
 两条裁决线,一条命令消化(人工确认卡在 caption 与重判之间 = 自产自证陷阱的断路器):
 
-① 标注分歧(details/label_decisions.csv)
+① 标注分歧(human-decisions/label_decisions.csv)
     采纳建议改标 → 用**人工确认过的新标注**重跑任务成败检测(多视角 v7.3 全协议),
                   按新判定把 episode 搬进 passed/review/reject,带完整改标溯源;
     弃用该条     → 搬进 reject(人工裁决弃用);
     维持原标注   → 只在分歧队列上标记已裁决(审计误旗,原判定原样)。
-② 任务成败弃权(details/task_verdicts.csv)——**不跑 VLM**:系统已经诚实说了
+② 任务成败弃权(human-decisions/task_verdicts.csv)——**不跑 VLM**:系统已经诚实说了
    "判不了",再问一次只会得到同样的弃权,人说了算。
     判成功 → 出待裁决队列,判决改「通过(人工裁决)」,成败检查落 pass;
     判失败 → 三边摘除进 reject,并随现有同步机制从 episodes_parquet /
              lerobot_curated / rrd_curated 里剔除(裁决只改报告 = 交出去还是脏数据);
     搁置   → 只记一笔,队列保留(等更多信息)。
-③ 被拒复议(details/reject_appeals.csv)——**语义判定的杀可以被人捞回**,这是
+③ 被拒复议(human-decisions/reject_appeals.csv)——**语义判定的杀可以被人捞回**,这是
    "证据够就杀"的保险丝。同样不跑 VLM:系统已经给过结论,人看完视频推翻它。
     捞回     → 从拒绝翻为通过,回到 passed / 交付数据集(溯源 verdict_source=human_review);
     维持拒绝 → 只记档,判决一个字不改。
@@ -21,7 +21,8 @@
    残段/运动学/同步这些物理与结构硬门是终局,不进复议 —— 界面不给入口,这里再
    校验一次(裁决 CSV 是可以被手改的文件,不能只靠界面把门)。
 
-  三件套原地更新 + report.md 追加小节 + details/rejudge_results.json 留档。
+  三件套原地更新 + report.md 追加小节 + 该次跑批的 details/rejudge_results.json 留档
+  (裁决 CSV 在交付根 human-decisions/,机器产出仍在被裁决的那一次跑批目录里)。
 
 架构:apply_decisions() / apply_task_verdicts() 是**纯数据函数**(只操作已加载的
 JSON dict,可严格单测);重判本体注入(rerun_fn),生产由 run_rejudge 组装真 VLM,
@@ -37,6 +38,8 @@ import datetime
 import json
 import os
 from typing import Callable
+
+from ..export.safe_write import delivery_file, write_json, write_text
 
 TASK_CN = "任务成败判定"
 
@@ -329,9 +332,10 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     verdicts = load_task_verdicts(delivery)
     appeals = load_reject_appeals(delivery)
     if not decisions and not verdicts and not appeals:
-        return {"note": "无裁决记录(details/ 下的 label_decisions.csv、"
-                        "task_verdicts.csv、reject_appeals.csv 都不存在或为空),"
-                        "未做任何事"}
+        return {"note": "无裁决记录(交付目录 human-decisions/ 下的 "
+                        "label_decisions.csv、task_verdicts.csv、reject_appeals.csv "
+                        "都不存在或为空;2026-08-14 之前的交付也会去老位置 details/ "
+                        "找一遍),未做任何事"}
 
     files = {}
     for name in ("passed", "review", "reject"):
@@ -451,8 +455,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                                         files["reject"], appeals))
     summary["unchanged"] = unchanged
     for name, data in files.items():
-        with open(os.path.join(delivery, f"{name}.json"), "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=1, default=str)
+        write_json(os.path.join(delivery, f"{name}.json"), data, default=str)
 
     det = os.path.join(delivery, "details")
     os.makedirs(det, exist_ok=True)
@@ -474,20 +477,18 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                                              bool(int(r["ok"])),
                                              float(st) if st else None))
                 rows_all.extend(delta)
-                with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                with delivery_file(csv_path, newline="") as f:
                     w = _csv.writer(f)
                     w.writerow(["call_type", "seconds", "ok", "started_at"])
                     for t, s, ok, st in rows_all:
                         w.writerow([t, s, int(ok), "" if st is None else st])
                 ds = files["passed"].setdefault("dataset", {})
                 ds["vlm_latency"] = latency_summary(rows_all)
-                with open(os.path.join(delivery, "passed.json"), "w",
-                          encoding="utf-8") as f:
-                    json.dump(files["passed"], f, ensure_ascii=False, indent=1,
-                              default=str)
+                write_json(os.path.join(delivery, "passed.json"), files["passed"],
+                           default=str)
         except Exception as e:  # noqa: BLE001  入账失败不影响重判结果
             print(f"[rejudge] ⚠️ 延时入账失败({type(e).__name__}: {e})", flush=True)
-    with open(os.path.join(det, "rejudge_results.json"), "w", encoding="utf-8") as f:
+    with delivery_file(os.path.join(det, "rejudge_results.json")) as f:
         json.dump({"at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                    "summary": summary,
                    "rejudged": {e: {k: v for k, v in r.items() if k != "detail"}
@@ -681,8 +682,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
             sec.append(f"- 裁决未变跳过(不重复重判):{len(summary['unchanged'])} 条\n")
         if summary["skipped"]:
             sec.append(f"- ⚠️ 未处理(重判失败/裁决词不识别):{summary['skipped']}\n")
-        with open(md, "w", encoding="utf-8") as f:
-            f.write(body + "".join(sec))
+        write_text(md, body + "".join(sec))
 
     # 落盘回验(与 run 同款,2026-08-06):rejudge 改写的文件在对象存储上有读
     # 可见延迟,不回验就宣布完成 → 用户立刻刷 UI 看到的还是旧数据(实锤)。

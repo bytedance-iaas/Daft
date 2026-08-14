@@ -116,3 +116,62 @@ def test_bridge_real_padded_channels(tmp_path):
         d = json.loads(out["detail"])
         assert "observation.images.image_3" in d["padded_channels"]
         assert out["score"] == 1.0                       # 活跃路都干净
+
+def test_camera_liveness_rides_along_with_visual_quality(tmp_path):
+    """★ 相机体检并进视觉质量那一遍:逐相机 detail 里直接带占位/黑帧结论。
+
+    合并前它是报告阶段**再逐条解一遍帧**的独立步骤(串行零输出,200 条时用户
+    实见"像卡死")。现在判据吃的就是视觉质量那批采样帧,解码零增长。
+    """
+    _score, d = _run(tmp_path, {"cam_a": "sharp", "cam_z": "black"})
+    assert d["camera_liveness"] == {"live": ["cam_a"], "dead_or_padded": ["cam_z"]}
+    assert d["padded_channels"] == ["cam_z"]             # 老键名/老语义原样
+
+
+def test_all_black_first_camera_is_reported_but_still_scored(tmp_path):
+    """首路全黑:体检如实记成占位,但**照常打分**——全黑主相机就该被视觉质量判坏,
+    不能靠"跳过占位路"让它蒙混过关(所以它在 dead_or_padded 里、不在 padded_channels)。
+    """
+    score, d = _run(tmp_path, {"cam_a": "black", "cam_b": "sharp"})
+    assert d["camera_liveness"]["dead_or_padded"] == ["cam_a"]
+    assert d["padded_channels"] == []
+    assert "cam_a" in d["per_camera"] and d["per_camera"]["cam_a"] < 0.1
+    assert score < 0.6                                   # 黑路把加权平均拖下来
+
+
+def test_report_camera_audit_is_pure_assembly():
+    """★ 报告那一步只读已有结论:输入里连视频指针都没有,照样出得了 camera_audit
+    —— 它要是还想解一帧就只能崩,这就是"不重算"的硬证据。
+
+    另外钉两条口径:①判废但解过帧的条目算进分母(合并后它们也有结论);
+    ②相机全活的条目不占版面(与老口径一致)。
+    """
+    from curation.export.report import collect_camera_audit
+
+    def _vq(live, dead):
+        return {"checks": {"visual_quality": {"detail": json.dumps(
+            {"camera_liveness": {"live": live, "dead_or_padded": dead}})}}}
+
+    per_episode = {
+        "ep000000": {"verdict": "keep", **_vq(["cam_a"], ["cam_z"])},
+        "ep000001": {"verdict": "keep", **_vq(["cam_a", "cam_z"], [])},
+        "ep000002": {"verdict": "drop", **_vq([], ["cam_a"])},
+        # 没走到抽帧那一段(被数值硬门提前杀):没有结论,不进分母
+        "ep000003": {"verdict": "drop",
+                     "checks": {"timestamp_check": {"detail": "{}"}}},
+    }
+    audit, n_audited = collect_camera_audit(per_episode)
+    assert n_audited == 3
+    assert set(audit) == {"ep000000", "ep000002"}
+    assert audit["ep000000"] == {"live": ["cam_a"], "dead_or_padded": ["cam_z"]}
+
+
+def test_live_channel_criterion_uses_sampled_frames_not_just_the_first():
+    """判据从"首帧"改成"采样帧统计":开头一帧黑(快门/曝光瞬变)不再把活路误判成占位。"""
+    from curation.core.checks.visual_quality import is_live_channel
+
+    rng = np.random.default_rng(3)
+    bright = [rng.integers(60, 200, (32, 32, 3), dtype=np.uint8) for _ in range(9)]
+    assert is_live_channel([np.zeros((32, 32, 3), np.uint8)] + bright) is True
+    assert is_live_channel([np.zeros((32, 32, 3), np.uint8)] * 10) is False
+    assert is_live_channel([]) is False                  # 解不出帧 = 不能声称在拍

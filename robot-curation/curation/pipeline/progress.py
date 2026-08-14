@@ -19,6 +19,20 @@ from __future__ import annotations
 
 _PROGRESS: dict = {}
 
+#: 近段速率的窗口(秒)与历史条数上限。
+#: ⚠️ 为什么不用全程平均(2026-08-13 用户实见「已用 41s | 剩余 ~6s」之后又跑了 40 秒):
+#: VLM 段是并发的,开头一批同时冲进去、完成得又快又密,把全程平均速率抬得很高;
+#: 尾巴上只剩零星几条排队,真实速率掉下来,于是估计一路偏乐观。近段速率跟着当下的
+#: 节奏走,先快后慢时给出的剩余明显更接近实际。
+#: 历史只在打印时追加(约每 5% 一条),上限是个兜底 —— 跑十万条也不该无限长。
+_RATE_WINDOW_S = 60.0
+_RATE_HISTORY_MAX = 64
+
+#: 剩余小于这个数就不报数字,改说「收尾中」。
+#: ⚠️ 没结束就不许显示 `~0s`:那是"马上就好"的承诺,而并发段的最后几条常常还要
+#: 磨很久,承诺完再跑 40 秒比不给数字更伤信任。
+_ETA_FLOOR_S = 5.0
+
 
 def _progress_init(key: str, total: int, label: str, min_interval_s: float = 20.0,
                    quiet_before_s: float = 0.0) -> str:
@@ -36,8 +50,33 @@ def _progress_init(key: str, total: int, label: str, min_interval_s: float = 20.
     _PROGRESS[key] = {"total": max(int(total), 0), "label": label, "n": 0,
                       "t0": time.time(), "last": 0.0, "min_interval_s": min_interval_s,
                       "quiet_before_s": quiet_before_s,
-                      "step": max(1, max(int(total), 0) // 20), "lock": None}
+                      "step": max(1, max(int(total), 0) // 20), "lock": None,
+                      "hist": []}
     return key
+
+
+def _eta_seconds(st: dict, now: float, n: int, total: int):
+    """剩余秒数,用**最近一个窗口**的速率外推;窗口内样本不够就退回全程平均。
+
+    必须在持锁时调用:它要读写 st["hist"](进度是挂在 daft UDF 上逐条 tick 的,
+    多线程同时进来)。返回 None = 说不出(没有总数,或一条都还没完成)。
+    """
+    hist = st.setdefault("hist", [])       # setdefault:老状态字典里可能还没这个键
+    prev = hist[:]                         # 本次这个点不能拿来跟自己比
+    hist.append((now, n))
+    if len(hist) > _RATE_HISTORY_MAX:
+        del hist[:-_RATE_HISTORY_MAX]
+    if not total or n <= 0 or n >= total:
+        return None
+    elapsed = now - st["t0"]
+    rate = n / elapsed if elapsed > 0 else 0.0        # 兜底:全程平均速率
+    # 窗口内最早的那个采样点;整个窗口里一个点都没有(阶段慢到两次打印隔了一分钟
+    # 以上)就退而取最近的那个 —— 那仍是"近段",比全程平均贴近当下节奏。
+    base = next(((t, k) for t, k in prev if now - t <= _RATE_WINDOW_S),
+                prev[-1] if prev else None)
+    if base and now > base[0] and n > base[1]:
+        rate = (n - base[1]) / (now - base[0])
+    return (total - n) / rate if rate > 0 else None
 
 
 def _progress_tick(key: str) -> None:
@@ -67,10 +106,11 @@ def _progress_tick(key: str) -> None:
             return
         st["last"] = now
         elapsed = now - st["t0"]
+        eta = _eta_seconds(st, now, n, total)      # 历史也在锁里维护
     pct = f" ({n / total * 100:.0f}%)" if total else ""
     msg = f"[curation] {st['label']} {n}/{total or '?'}{pct} | 已用 {_fmt_dur(elapsed)}"
-    if total and n:
-        msg += f" | 剩余 ~{_fmt_dur(elapsed / n * (total - n))}"
+    if eta is not None:
+        msg += (" | 收尾中" if eta < _ETA_FLOOR_S else f" | 剩余 ~{_fmt_dur(eta)}")
     print(msg, flush=True)
 
 

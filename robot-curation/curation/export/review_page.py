@@ -16,6 +16,8 @@ import json
 import os
 import time
 
+from .safe_write import write_text
+
 #: 站点身份文件(2026-08-11 新增)。UI 的 Episodes 页要把"这个交付"对上"哪个审片站",
 #: 而站点原先只有一个自由文本标题,对不上——曾出现另一份交付借用了本站片段(同源
 #: 数据集、同 episode 号,那次巧对;换个数据集就是给客户放错视频)。有了它,UI 按
@@ -123,8 +125,9 @@ def build_review_page(rows: list[dict], out_dir: str, title: str = "人工审片
                 f"{nav}<h1>{eid} <span class=small>({i + 1}/{len(items)})</span></h1>"
                 f"<p><b>标注:</b>{html.escape(it['instruction'])}</p>"
                 f'<div class="vids">{vids}</div>{nav}')
-        with open(os.path.join(out_dir, "ep", f"{eid}.html"), "w", encoding="utf-8") as f:
-            f.write(page)
+        # 逐条页不开回读校验:几百个小文件挨个回读,在挂载的可见性延迟下只会
+        # 刷几百行误报;索引页与三件套走回验足够代表这一批。
+        write_text(os.path.join(out_dir, "ep", f"{eid}.html"), page)
 
     # 索引页:一屏列全量
     trs = "\n".join(
@@ -137,6 +140,5 @@ def build_review_page(rows: list[dict], out_dir: str, title: str = "人工审片
              f" <span class=small>({len(items)} 条,视频为 {play_fps}fps 倍速片段)"
              f"</span></h1>"
              f"<table><tr><th>episode</th><th>标注</th><th>视频</th></tr>{trs}</table>")
-    with open(os.path.join(out_dir, "index.html"), "w", encoding="utf-8") as f:
-        f.write(index)
+    write_text(os.path.join(out_dir, "index.html"), index)
     return n_clips

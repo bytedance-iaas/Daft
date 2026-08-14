@@ -24,7 +24,7 @@ from ..core.checks.video_action_sync import (
     sync_check_result,
     timestamp_check,
 )
-from ..core.checks.visual_quality import visual_quality
+from ..core.checks.visual_quality import is_live_channel, visual_quality
 from .config import enabled
 from .progress import _progress_init, _progress_tick
 from .verdict import episode_verdict
@@ -387,6 +387,11 @@ def run_funnel(
 
             per_cam = {}          # 视觉质量:相机全名 → CheckResult
             padded = []           # 占位黑帧路(只登记不打分)
+            # 相机体检顺带做掉(2026-08-14):判"这一路是不是占位/黑帧"要的只是
+            # 采样帧的亮度/方差,而这一遍本来就逐相机解了帧、也已经在算灰度方差。
+            # 此前它是报告阶段**再逐条解一遍帧**的独立步骤(串行、零输出,20 条 ×3 路
+            # 就明显卡顿,200 条像卡死)—— 为省几乎免费的统计付出整整一遍解码。
+            live_cams, dead_cams = [], []
             sync_cams = {}        # 同步读数:相机短名 → per_camera 条目
             sync_curves = {}      # 同步曲线(画图用):相机短名 → {t/flow/speed/...}
             for c in cams:
@@ -398,23 +403,28 @@ def run_funnel(
                     frames, fts = decode_window(v["path"], v["from_ts"], v["to_ts"],
                                                 max_side=max_side)
                 except Exception:  # noqa: BLE001  解码失败=少一路,不中断整条
+                    dead_cams.append(c)           # 拿不到画面 = 不能声称这一路在拍
                     if c != cam0:
                         padded.append(c)
                     continue
                 if not frames:
+                    dead_cams.append(c)
                     if c != cam0:
                         padded.append(c)
                     continue
-                if c != cam0:
-                    head = np.asarray(frames[0], dtype=np.float32)
-                    if head.mean() < 8.0 and head.std() < 2.0:
-                        padded.append(c)          # 占位黑帧:两项检查都跳过
-                        del frames
-                        continue
+                samp = frames[::stride]
+                live = is_live_channel(samp)
+                (live_cams if live else dead_cams).append(c)
+                if not live and c != cam0:
+                    padded.append(c)              # 占位黑帧:两项检查都跳过
+                    del frames, samp
+                    continue
                 # 多相机:全部活跃路都检;占位黑帧路(多机构采集集凑 schema 用)
-                # 只登记不打分,绝不因占位杀数据
+                # 只登记不打分,绝不因占位杀数据。⚠️ 首路(cam0)即使判成占位也照常
+                # 打分:全黑的主相机就该让视觉质量把这条判坏,不能靠"跳过"让它蒙混
+                # 过关 —— 体检结论仍如实记在 camera_liveness 里。
                 if do_visual:
-                    per_cam[c] = visual_quality(frames[::stride], **pv)
+                    per_cam[c] = visual_quality(samp, **pv)
                 if do_sync and speed is not None and len(frames) >= 8:
                     flow = optical_flow_energy(frames)
                     _res = global_lag(flow, fts[1:], speed,
@@ -431,7 +441,7 @@ def run_funnel(
                         "speed": np.round(_sp2[::_st], 6).tolist(),
                         **{k: _res.detail.get(k) for k in
                            ("lag_s", "corr_peak", "code", "n_trimmed_static")}}
-                del frames
+                del frames, samp
 
             if do_visual and per_cam:
                 from ..core.contract import CheckResult as _VCR
@@ -466,6 +476,11 @@ def run_funnel(
                     "camera_weights": weights,
                     "worst_camera": worst,
                     "padded_channels": padded,
+                    # 相机体检结论(报告的 camera_audit 直接读这里,不重算)。
+                    # 与 padded_channels 的区别只在首路:首路判成占位也照常打分,
+                    # 所以它会出现在 dead_or_padded 里、却不在 padded_channels 里。
+                    "camera_liveness": {"live": live_cams,
+                                        "dead_or_padded": dead_cams},
                     "params": {"blur_ref_var": pv.get("blur_ref_var", 100.0),
                                "frame_max_side": max_side}})
                 out["visual"] = result_to_struct(_VCR(

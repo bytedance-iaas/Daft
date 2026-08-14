@@ -234,8 +234,12 @@ def _savefig_fsx_safe(fig, dst: str, **kw) -> None:
             pass
 
 
-def render_sync_plots(curve_rows: list[tuple], out_dir: str) -> list[str]:
+def render_sync_plots(curve_rows: list[tuple], out_dir: str,
+                      on_progress=None) -> list[str]:
     """curve_rows: [(episode_id, curves_json_str), ...] → 生成 PNG,返回文件名列表。
+
+    on_progress: 每条画完(含跳过/失败)调用一次,无参。一条一张图,几百条就是
+    几分钟的活 —— 可数的慢步骤不许静默。
 
     一条 episode **一张图**(文件名 details/plots/<episode_id>_sync.png 不变,UI 靠它定位):
     每路相机一格「光流 vs 关节速度」时域图,最后一格是所有相机的「互相关 vs lag」叠图
@@ -341,4 +345,8 @@ def render_sync_plots(curve_rows: list[tuple], out_dir: str) -> list[str]:
             written.append(fname)
         except Exception:  # noqa: BLE001  单张失败不拖垮整批
             continue
+        finally:
+            # 画失败的那张也要计数,否则进度停在半截,看着像卡死
+            if on_progress is not None:
+                on_progress()
     return written

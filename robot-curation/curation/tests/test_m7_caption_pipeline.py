@@ -128,6 +128,32 @@ def test_guideline_in_prompt_no_numeric_range():
     assert "按物体类型分类" in seen["prompt"]
     assert "NOT grouping" not in seen["prompt"]              # 默认判据被替换,非叠加
 
+def test_audit_labels_reports_batch_progress():
+    """分歧检出必须报批次进度。
+
+    它是按 40 对一批**串行**问 LLM 的:181 条要问五批、两三分钟里界面一声不吭,
+    用户看到的就是"停在 5/5 卡死了"(2026-08-13 实见)。钩子式注入,audit.py 仍是
+    纯文本模块。
+    """
+    from curation.dataset_level.audit import audit_labels
+
+    n = 95                                   # 40 一批 → 3 批
+    ids = [f"ep{i}" for i in range(n)]
+    ins = ["pick up the cup"] * n
+    caps = ["pick up the cup"] * n
+    cfams = ["grasp-and-transport"] * n
+    seen = []
+
+    def fake_llm(prompt):                    # 判官:一律判"说的是一回事"
+        import re as _re
+        idx = [int(x) for x in _re.findall(r"^(\d+)\. ANNOTATION", prompt, _re.M)]
+        return json.dumps({"pairs": [{"i": i, "verdict": "same", "why": ""} for i in idx]})
+
+    audit_labels(ids, ins, caps, cfams, TAX, fake_llm,
+                 on_progress=lambda i, total: seen.append((i, total)))
+    assert seen == [(1, 3), (2, 3), (3, 3)]   # 每批报一次,分母是总批数
+
+
 
 def test_criterion_propagates():
     """LLM 自述的归类理由(criterion)可提取,进报告可审计。"""

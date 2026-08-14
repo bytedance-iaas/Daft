@@ -13,9 +13,11 @@ import signal
 
 import pytest
 
-from curation.ui.manifest import (audit_rows, check_rows, discover_deliveries,
-                                  funnel_rows, load_delivery,
-                                  overview_markdown, parse_detail, skill_rows)
+from curation.ui.manifest import (AUDIT_TERM, audit_note_md, audit_rows,
+                                  check_rows,
+                                  discover_deliveries, load_delivery,
+                                  overview_markdown, overview_note_md,
+                                  overview_rows, parse_detail, skill_rows)
 
 TS_DETAIL = json.dumps({"voc": 0.87, "completion_final": 0.3,
                         "probe_frames": [0, 4], "verdict": "endstate_failure_suspect",
@@ -93,10 +95,10 @@ def test_load_discovers_evidence_and_plots(delivery):
     assert m["episodes"]["ep000002"]["plot"] is None
 
 
-def test_funnel_and_check_rows(delivery):
+def test_overview_and_check_rows(delivery):
     m = load_delivery(delivery)
-    fr = dict(funnel_rows(m))
-    assert fr["输入 episode"] == 3 and fr["交付"] == 2
+    fr = dict(overview_rows(m))
+    assert fr["输入 episode"] == 3 and fr["交付"] == "2(通过率 66.7%)"
     cr = check_rows(m, "ep000001")
     ts = [r for r in cr if r[0] == "任务成败判定"][0]
     assert ts[1] == "拒绝" and "voc=0.87" in ts[3]
@@ -112,7 +114,9 @@ def test_skill_audit_overview(delivery):
     assert au[0][2] == "ep000002" and au[0][6] == "跨族"
     assert au[0][1] in ("重点", "参考")
     md = overview_markdown(m)
-    assert "droid_fake" in md and "franka" in md and "待人工裁决 **1** 条" in md
+    # 概览顶部只剩身份行 + 一句导航:数字一个不说(2026-08-13 用户点名去重复)
+    assert "droid_fake" in md and "franka" in md and "人工裁决" in md
+    assert "通过率" not in md and "待人工裁决" not in md and "复核队列" not in md
 
 
 def test_discover_deliveries(delivery, tmp_path):
@@ -131,7 +135,8 @@ def test_load_tolerates_legacy_delivery(tmp_path):
     m = load_delivery(str(d))
     assert m["config_effective"] is None
     assert m["episodes"]["ep0"]["evidence"] == []
-    assert funnel_rows(m) == []                                 # 无统计=空表,不炸
+    assert overview_rows(m) == []                               # 无统计=空表,不炸
+    assert overview_note_md(m) == ""                            # 没有表就没有口径小字
 
 
 def test_load_timeline_passes_dataset_note(delivery, tmp_path):
@@ -317,6 +322,81 @@ def test_console_knobs_to_set_overrides():
     assert _sets(PLOT_MODES["flagged"], " 12 ", None, None, "") == [f"{CONC_KEYS['ep']}=12"]
     tail = _sets(PLOT_MODES["all"], 8, None, None, " a.b=1 \n\n c.d=2 ")
     assert tail[-2:] == ["a.b=1", "c.d=2"]                            # 手写的在最后
+
+
+def test_concurrency_defaults_are_shown_as_placeholders_not_prefilled():
+    """并发框把生效配置里的默认值说给用户听,但只放**占位符**。
+
+    2026-08-13 用户要"界面上看得到默认值",而预填 value 等于在界面里存第二份默认
+    值:以后改了 default.yaml,界面还会按老值发 `--set`,静默地把配置改回去。
+    """
+    from curation.ui.app import _conc_placeholder
+
+    assert _conc_placeholder(32) == "默认 32,留空即用它"
+    assert _conc_placeholder(None) == "留空 = 用配置里的值"   # 读不到就不编数字
+
+
+def test_concurrency_boxes_carry_the_default_in_the_placeholder(delivery):
+    """界面这一侧钉死同一件事:占位符里带出厂默认值(32/16/32),value 仍是空。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = json.loads(json.dumps(build_app(delivery).get_config_file(), default=str))
+    boxes = [c for c in cfg["components"]
+             if "conc-num" in (c.get("props", {}).get("elem_classes") or [])]
+    assert len(boxes) == 3
+    for c in boxes:
+        assert c["props"]["placeholder"].startswith("默认 ")
+        assert not c["props"].get("value")            # 一个数都没预填
+
+
+def test_probe_rescan_picks_up_a_backend_added_after_startup():
+    """探活时重读配置:启动之后才加进站点 YAML 的服务也要出现在下拉里,
+    而用户已经选中的那一项不能被刷掉(他可能正要拿它开跑)。"""
+    from curation.ui.app import _reprobe_options
+
+    old = {"方舟 MaaS · doubao-seed": "ark"}
+    new = dict(old, **{"自托管 vLLM · Cosmos-Reason2-32B · H20": "house-32b"})
+    ch, vals, msg = _reprobe_options(old, new, {"ark": True, "house-32b": True},
+                                     ["方舟 MaaS · doubao-seed", None])
+    assert any("Cosmos-Reason2-32B" in c for c in ch)
+    assert vals[0] == "方舟 MaaS · doubao-seed · 可用"     # 原选中项仍在
+    assert vals[1] is None
+    assert "新增" in msg
+
+
+def test_probe_rescan_clears_a_selection_that_left_the_config():
+    """选中的预设从配置里删掉了 → 回到未选状态并说清楚,不留一个指向不存在服务的
+    选项(选了它开跑,要等到连接失败才知道)。提示里只报数目,不露预设代号。"""
+    from curation.ui.app import _reprobe_options
+
+    ch, vals, msg = _reprobe_options({"甲服务": "old-8b"}, {"乙服务": "new-8b"},
+                                     {"new-8b": False}, ["甲服务"])
+    assert ch == ["乙服务 · 暂不可用"] and vals == [None]
+    assert "请重新选" in msg and "一个都连不上" in msg
+    assert "old-8b" not in msg and "new-8b" not in msg     # 代号不进界面
+
+
+def test_probe_button_rereads_the_config_without_restarting_the_ui(delivery, monkeypatch):
+    """客户在站点 YAML 里新加一台自托管服务,不该为了看见它去重启 UI ——
+    重启会杀掉正在跑的批(那些任务是 UI 进程的子进程)。"""
+    pytest.importorskip("gradio")
+    from curation.ui import app as ui_app
+    from curation.ui import runner as ui_runner
+
+    live = {"方舟 MaaS · doubao-seed": "ark"}
+    monkeypatch.setattr(ui_runner, "vlm_backend_labels", lambda cfg=None: dict(live))
+    monkeypatch.setattr(ui_app, "_probe_backends",
+                        lambda cfg, t: [[c, "✅在线", ""] for c in live.values()])
+    app = ui_app.build_app(delivery)
+    live["自托管 vLLM · Cosmos-Reason2-32B · H20"] = "house-32b"   # 启动之后才加的
+
+    probes = {i for i, c in app.blocks.items()
+              if getattr(c, "value", None) == "检测可用性"}
+    fn = next(f for f in app.fns.values()
+              if probes & {t[0] for t in getattr(f, "targets", [])})
+    out = fn.fn("方舟 MaaS · doubao-seed", None)
+    assert any("Cosmos-Reason2-32B" in str(c) for c in out[0]["choices"])
+    assert "方舟" in str(out[0]["value"])
 
 
 def test_vlm_involved_decides_concurrency_greying():
@@ -1077,7 +1157,8 @@ def test_task_verdict_survives_fsx_visibility_gap(tmp_path):
                                                   record_task_verdict)
     d = str(tmp_path)
     record_task_verdict(d, "ep000001", "判成功", note="第一条")
-    (tmp_path / "details" / "task_verdicts.csv").write_text("")   # 装作还看不见
+    # 裁决 CSV 2026-08-14 起住在交付根的 human-decisions/(不再混在 details/ 里)
+    (tmp_path / "human-decisions" / "task_verdicts.csv").write_text("")  # 装作还看不见
     record_task_verdict(d, "ep000002", "判失败", note="第二条")
     got = load_task_verdicts(d)
     assert set(got) == {"ep000001", "ep000002"}, "延迟窗口内第一条裁决被冲掉"
@@ -1106,18 +1187,18 @@ def test_pending_counts_and_guidance_text(delivery):
     m = load_delivery(delivery)
     assert audit_pending_count(m) == 1 and task_pending_count(m) == 1
     assert "1" in audit_note_md(m) and "人工裁决" in audit_note_md(m)
-    assert "标注分歧未裁" in task_review_hint_md(m)          # 提示先清标注分歧
+    assert f"「{AUDIT_TERM}」没裁" in task_review_hint_md(m)  # 提示先清那一块
     record_label_decision(m["path"], "ep000002", "维持原标注")
     assert audit_pending_count(m) == 0
-    assert "标注分歧未裁" not in task_review_hint_md(m)      # 清完了就不再催
+    assert f"「{AUDIT_TERM}」没裁" not in task_review_hint_md(m)   # 清完了就不再催
     assert "**1** 条待裁" in task_review_hint_md(m)          # 本块进度照报
     assert "已全部裁决" in audit_note_md(m)
     record_task_verdict(m["path"], "ep000000", "搁置")
     assert task_pending_count(m) == 1, "搁置是待定不是结论,仍算未裁"
     record_task_verdict(m["path"], "ep000000", "判成功")
     assert task_pending_count(m) == 0
-    # 工序引导:先标注分歧 → rejudge → 再成败 → 再 rejudge
-    assert WORKFLOW_GUIDE.index("标注分歧") < WORKFLOW_GUIDE.index("任务成败")
+    # 工序引导:先裁「标注与画面对不上」→ rejudge → 再成败 → 再 rejudge
+    assert WORKFLOW_GUIDE.index(AUDIT_TERM) < WORKFLOW_GUIDE.index("任务成败")
     assert "执行人工裁决" in WORKFLOW_GUIDE                 # 指向任务台按钮,不再教敲命令行            # 两趟 rejudge,别只跑一次就收工
     assert WORKFLOW_GUIDE.count("执行") >= 2
 
@@ -1135,10 +1216,10 @@ def test_app_has_manual_decision_tab(delivery):
     assert rep.index("Episodes") < rep.index("人工裁决") < rep.index("技能分布")
     # 区块头 2026-08-07 改成自绘 HTML(色块序号 + 标题),不再是"① 标注分歧"这种
     # 字面前缀 —— 断言跟着渲染实况走(此前这里钉的是旧文案,一直红着)
-    for txt in ("标注分歧", "任务成败弃权", "✅ 判成功", "❌ 判失败", "⏸ 搁置",
+    for txt in (AUDIT_TERM, "任务成败弃权", "✅ 判成功", "❌ 判失败", "⏸ 搁置",
                 "建议按这个顺序做"):     # 2026-08-13 文案精简后的标题
         assert txt in cfg, txt
-    assert cfg.index("标注分歧") < cfg.index("任务成败弃权")
+    assert cfg.index(AUDIT_TERM) < cfg.index("任务成败弃权")
 
 
 def test_asgi_app_serves_manual_decision_tab(delivery, clean_ui_env):
@@ -1289,7 +1370,7 @@ def test_decision_survives_fsx_visibility_gap(tmp_path):
                                                   record_label_decision)
     d = str(tmp_path)
     record_label_decision(d, "ep000001", "维持原标注", note="第一条")
-    csv_path = tmp_path / "details" / "label_decisions.csv"
+    csv_path = tmp_path / "human-decisions" / "label_decisions.csv"
     csv_path.write_text("")                      # 模拟 FSX 可见延迟:读回是空的
     record_label_decision(d, "ep000002", "弃用该条", note="第二条")
     got = load_label_decisions(d)
@@ -1539,8 +1620,12 @@ def test_sync_view_pages_and_wraps(delivery):
     assert ids == ["ep000001"]                            # 按 id 升序切页
 
 
-def test_sync_view_empty_state_points_at_the_switch(tmp_path):
-    """交付里没有 plots → 一句友好说明,并点名 pipeline.sync_plots 开关。"""
+def test_sync_view_empty_state_is_one_plain_sentence(tmp_path):
+    """交付里没有 plots → **一句话**说明,不夹带配置开关。
+
+    2026-08-13 用户点名:`pipeline.sync_plots` 是实现细节,客户既不知道去哪改、
+    也不该被要求知道(要改的人在任务台「更多设置」里点)。这条钉住别再加回去。
+    """
     from curation.ui.manifest import NO_PLOTS_NOTE, sync_view
     d = tmp_path / "noplots"
     d.mkdir()
@@ -1550,9 +1635,10 @@ def test_sync_view_empty_state_points_at_the_switch(tmp_path):
     v = sync_view(load_delivery(str(d)))
     assert v["items"] == [] and v["pages"] == 1
     assert v["note"] == NO_PLOTS_NOTE
-    assert "pipeline.sync_plots" in NO_PLOTS_NOTE
+    assert "pipeline.sync_plots" not in NO_PLOTS_NOTE     # 不写配置键名
     for mode in ("flagged", "all", "off"):
-        assert f"`{mode}`" in NO_PLOTS_NOTE
+        assert mode not in NO_PLOTS_NOTE                  # 也不写三挡的英文取值
+    assert NO_PLOTS_NOTE.count("。") == 1                  # 就一句
 
 
 def test_sync_health_block_and_legacy_degradation(delivery):
@@ -1997,11 +2083,11 @@ def test_episodes_page_text_has_no_mechanism_jargon(ep_delivery, tmp_path):
     """★红线(2026-08-11 用户点名):"软分""硬门"是机制黑话,界面上一个字不许剩。"""
     from curation.ui.manifest import (BUCKET_ALL, bucket_choices, check_table_html,
                                       episode_card_html, episode_list_items,
-                                      episode_video_html, funnel_rows,
-                                      manual_hint_html, overview_markdown)
+                                      episode_video_html, manual_hint_html,
+                                      overview_markdown, overview_rows)
     site = _review_site(str(tmp_path / "review"), "droid_buckets", ["ep000000"])
     m = load_delivery(ep_delivery)
-    seen = [overview_markdown(m), str(funnel_rows(m)), str(bucket_choices(m))]
+    seen = [overview_markdown(m), str(overview_rows(m)), str(bucket_choices(m))]
     for eid in ("ep000000", "ep000001", "ep000002", "ep000003", "ep000004"):
         seen += [episode_card_html(m, eid), check_table_html(m, eid),
                  manual_hint_html(m, eid), episode_video_html(m, eid, site)]
@@ -2009,7 +2095,7 @@ def test_episodes_page_text_has_no_mechanism_jargon(ep_delivery, tmp_path):
     blob = "\n".join(seen)
     assert "软分" not in blob and "硬门" not in blob
     assert "质量分" in blob                       # 换的是叫法,不是把信息删了
-    assert "不合格拦截" in overview_markdown(m)   # 概览行也换成人话
+    assert "判废" in str(overview_rows(m))        # 总览表说「判废」,不说「硬门」
     assert "未通过「任务成败判定」" in episode_card_html(m, "ep000002")   # 检查名仍在
 
 
@@ -2313,3 +2399,521 @@ def test_list_line_falls_back_when_check_wrote_no_reason(tmp_path):
     label = episode_list_items(m, BUCKET_ALL)[0]["label"]
     assert label == "ep000018 ❌ 未通过「时间戳检查」"
     assert "硬门" not in label
+
+
+# ───────── 视频打分明细单独成页(2026-08-13)─────────
+
+def test_video_detail_view_reads_the_per_camera_table(delivery):
+    """「视频打分明细」= 逐相机那张表 + 一行行数说明。"""
+    from curation.ui.manifest import video_detail_view
+    import os
+    with open(os.path.join(delivery, "details", "visual_details.csv"), "w") as f:
+        f.write("episode,camera,blur\n" + "\n".join(f"ep{i:03d},cam0,0.8"
+                                                    for i in range(3)))
+    note, headers, rows = video_detail_view(load_delivery(delivery))
+    assert headers == ["episode", "camera", "blur"] and len(rows) == 3
+    assert "共 3 行" in note
+
+
+def test_video_detail_view_empty_state_names_no_config_key(delivery):
+    """老交付/没跑视觉质量 → 一句话空态。
+
+    ⚠️ 空态里**不许出现配置键名**:NO_PLOTS_NOTE 那次的教训 —— 开关名是我们的实现
+    细节,客户既不知道去哪改、也不该被要求知道。只说交付里缺什么。
+    """
+    from curation.ui.manifest import NO_VIDEO_DETAILS_NOTE, video_detail_view
+    note, headers, rows = video_detail_view(load_delivery(delivery))
+    assert note == NO_VIDEO_DETAILS_NOTE and rows == [] and headers == ["(无)"]
+    for key in ("pipeline.", "checks.", "visual_quality:", "--set"):
+        assert key not in note
+    assert video_detail_view({}) == (NO_VIDEO_DETAILS_NOTE, ["(无)"], [])
+
+
+def test_detail_dropdown_no_longer_offers_the_video_table(delivery):
+    """同一份数据不留两个入口:逐相机表单独成页后,下拉里那条撤掉。"""
+    from curation.ui.manifest import detail_table_choices, list_detail_tables
+    import os
+    det = os.path.join(delivery, "details")
+    for name in ("motion_details.csv", "visual_details.csv"):
+        with open(os.path.join(det, name), "w") as f:
+            f.write("a,b\n1,2\n")
+    m = load_delivery(delivery)
+    assert "visual_details.csv" in list_detail_tables(m)      # 文件照样认得出
+    assert detail_table_choices(m) == ["motion_details.csv"]  # 但下拉里没有它
+
+
+def test_detail_subtabs_order_and_the_new_video_page(delivery):
+    """明细页五个子页的顺序钉死,新的「视频打分明细」排在「动作打分明细」之后。
+
+    顺序是用户 2026-08-13 定的:两张打分明细相邻,后面才是三个诊断/排障页。
+    子页顺序在截图里一眼能看出对不对,但改坏了没人会想起来重看 —— 故用测试守。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    rep = _report_section(build_app(delivery))
+    # 从第一个子页处往后切:「视频-动作同步」这几个词在 Episodes 页的正文里也出现
+    # (逐相机同步那块),整份配置里 index() 会先命中那边 —— 与 _report_section
+    # 当初要限定范围是同一个坑,只是又深了一层。
+    det = rep[rep.index("动作打分明细"):]
+    order = ["动作打分明细", "视频打分明细", "视频-动作同步",
+             "卡顿动作时间线", "性能剖析"]
+    at = [det.index(t) for t in order]
+    assert at == sorted(at), f"明细子页顺序不对:{order} → {at}"
+
+
+# ───────── 数据集多选(2026-08-13)─────────
+
+def test_dataset_dropdown_is_multiselect(delivery):
+    """「数据集」下拉必须是多选 —— 一次点击顺序跑几个就靠它。
+
+    此前只有"一个"和"父目录下全部"两档,想跑其中三个得排三轮队(任务台同一时刻
+    只许一个任务在跑)。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = json.loads(json.dumps(build_app(delivery).get_config_file(), default=str))
+    picks = [c for c in cfg["components"]
+             if c.get("props", {}).get("label") == "数据集"]
+    assert picks and all(c["props"].get("multiselect") for c in picks)
+
+
+def test_delivery_name_hint_switches_when_several_datasets_are_picked():
+    """选多个时「交付名」的说明要换成"父文件夹"那句。
+
+    不说明白的话,客户会以为三个数据集的结果互相覆盖 —— 而实际是
+    `<交付名>/<数据集名>/` 各一份(与 CLI --batch 同款)。
+    """
+    from curation.ui.app import OUT_NAME_HINT_MANY, OUT_NAME_HINT_ONE
+    assert "父文件夹" in OUT_NAME_HINT_MANY and "父文件夹" not in OUT_NAME_HINT_ONE
+    assert "M4" not in OUT_NAME_HINT_MANY and "batch" not in OUT_NAME_HINT_MANY
+
+
+# ───────── 下拉浮层跟着页面滚(2026-08-13)─────────
+
+def test_dropdown_overlay_follows_the_page_scroll():
+    """选项浮层要跟手:纯 JS 进不了 pytest,故按字符串钉住那几处要害。
+
+    现象(用户实见,有照片):点开「数据集」下拉、不选、直接滚鼠标,选项表留在原地,
+    和输入框错开老远。根因是 Gradio 6.9 的 `ul.options` 是 position:fixed 且坐标只
+    在打开那一刻算一次,而输入框随页面滚。
+    """
+    from curation.ui.app import _DROPDOWN_JS
+
+    js = _DROPDOWN_JS
+    assert "ul.options" in js and "getBoundingClientRect" in js
+    # 捕获阶段:滚动事件不冒泡到 window,内层容器滚动只有捕获阶段收得到
+    assert "'scroll', reflow, true" in js and "'resize', reflow, true" in js
+    # 列表自己滚动时短路 —— 不短路会自己跟自己打架(重算甚至抖动)
+    assert "closest('ul.options')) return" in js
+    # 保住原来的展开方向:一律按"下方"会把上开的浮层甩到输入框头上盖住它
+    assert "above" in js and "u.height" in js
+    # 锚点是 div.wrap 而不是里面的 input(2026-08-13 真机量的:gradio 自己按 wrap
+    # 算,input 比它窄 60px、右偏 16px)—— 按 input 重排会让浮层横向跳一下
+    assert "closest('.wrap')" in js
+    # 锚点滚出视野就收起:挂在半空的浮层比关掉更糟
+    assert "input.blur()" in js
+
+
+def test_dropdown_overlay_script_is_actually_injected():
+    """脚本得真进 head —— 常量写好了却没接进 presentation(),界面上一点看不出来。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import _DROPDOWN_JS, presentation
+
+    assert _DROPDOWN_JS in presentation()["head"]
+
+
+# ───────── 质检总览合成一张表(2026-08-13 用户点名)─────────
+#
+# 起因(用户原话:"表格没有显示正确的质检结果信息"):总览页上半部是几行 bullet、
+# 下半部是一张表,**同一批数字说两遍**,而且两处的「不合格拦截」同名不同义 ——
+# 表里那行只算中途被硬门刷掉的(droid-200-full = 1),bullet 里那句是最终判废的
+# 全部(15)。下面这几条用真交付(droid-200-full)的数字钉住新口径。
+
+
+@pytest.fixture
+def full_delivery(tmp_path):
+    """按 droid-200-full 的真实分布造:200 进 / 15 判废 / 185 交付,
+    31 条待裁 + 32 条标注与视频内容分歧(都是 185 的子集)。
+
+    分歧那 32 条与 task_details 里的 instruction_source 都**故意造齐**:总览表
+    刻意不显示它们,得有数据在才证得出"不显示"是选择而不是取不到。"""
+    d = tmp_path / "droid-200-full"
+    (d / "details").mkdir(parents=True)
+    passed = {f"ep{i:06d}": {"判决": "通过", "综合软分": 0.93, "checks": {}}
+              for i in range(185)}
+    (d / "passed.json").write_text(json.dumps({
+        "数据集": "droid_batch", "机器人": "franka",
+        "生成时间": "2026-08-12 10:00:00", "代码版本": "abc1234",
+        "dataset": {"input_episodes": 200, "hard_gate_filtered": 1,
+                    "verdict_keep": 185, "verdict_drop": 15, "dedup_removed": 0,
+                    "delivered": 185,
+                    "hard_fail_breakdown": {"task_success": 14,
+                                            "timestamp_check": 1},
+                    "summary_stats": {"pass_rate_pct": 92.5,
+                                      "avg_soft_score": 0.9311}},
+        "episodes": passed}, ensure_ascii=False))
+    (d / "reject.json").write_text(json.dumps({
+        "episodes": {f"ep{900 + i:06d}": {"判决": "拒绝", "原因": "未通过「任务成败判定」"}
+                     for i in range(15)}}, ensure_ascii=False))
+    (d / "review.json").write_text(json.dumps({
+        "episodes": {f"ep{i:06d}": {"当前判决": "通过", "待裁决项": ["任务成败判定"]}
+                     for i in range(31)},
+        "标注-画面分歧复核队列": [{"id": f"ep{i:06d}", "label": "x", "caption": "y",
+                                   "reason": "跨族"} for i in range(32)]},
+        ensure_ascii=False))
+    # 逐条判定记录:交付内 104 原始标注 / 78 自产 caption / 3 无;另有 14 条被判废的
+    # 也在这个文件里(task_details 覆盖的是过了数值门的全部,不只是交付那批)
+    td = {}
+    for i in range(185):
+        src = ("自产caption" if i < 78 else "无" if i < 81 else "原始标注")
+        td[f"ep{i:06d}"] = {"episode_id": f"ep{i:06d}", "instruction_source": src}
+    for i in range(14):
+        td[f"ep{900 + i:06d}"] = {"episode_id": f"ep{900 + i:06d}",
+                                  "instruction_source": "自产caption"}
+    (d / "details" / "task_details.json").write_text(
+        json.dumps({"数据集": "droid_batch", "episodes": td}, ensure_ascii=False))
+    return str(d)
+
+
+def test_overview_rows_are_the_only_place_numbers_appear(full_delivery):
+    """一张表说完全部数字,顶上的 Markdown 一个数字都不说。"""
+    m = load_delivery(full_delivery)
+    rows = dict(overview_rows(m))
+    assert rows["输入 episode"] == 200
+    assert rows["判废"] == 15
+    assert rows["精确去重删除"] == 0
+    assert rows["交付"] == "185(通过率 92.5%)"
+    assert rows["平均质量分"] == 0.9311
+    # 顶上的 Markdown:身份行 + 一句导航,不再复读任何数字
+    md = overview_markdown(m)
+    for n in ("200", "185", "92.5", "15", "31", "32"):
+        assert n not in md, n
+
+
+def test_overview_rows_add_up_input_equals_dropped_plus_delivered(full_delivery):
+    """口径要能一眼验:输入 = 判废 + 交付,而判废逐项列出来的和 = 判废。
+
+    旧表把「不合格拦截」写成"中途淘汰"(1),bullet 里那句却是"最终判废"(15),
+    同一个词两个意思 —— 这条把新口径钉死。
+    """
+    rows = dict(overview_rows(load_delivery(full_delivery)))
+    delivered = int(str(rows["交付"]).split("(")[0])
+    assert rows["输入 episode"] == rows["判废"] + delivered
+    detail = {k.strip("　├└ "): v for k, v in rows.items()
+              if k.startswith("　") and ("├" in k or "└" in k)}
+    assert detail == {"任务成败判定": 14, "时间戳检查": 1}
+    assert sum(detail.values()) == rows["判废"]
+
+
+def test_overview_rows_mark_the_within_delivery_flags(full_delivery):
+    """带「其中」的行是交付内条目上的标记,不参与加减 —— 且**只有**待人工裁决一行。"""
+    rows = dict(overview_rows(load_delivery(full_delivery)))
+    within = {k.replace("　", "").replace("其中 ", ""): v
+              for k, v in rows.items() if "其中" in k}
+    assert within == {"待人工裁决": 31}
+
+
+def test_overview_never_shows_the_label_rows(full_delivery):
+    """★ 总览表**刻意不列**标注相关的行(2026-08-13 用户定,理由见 manifest 里
+    那段 ⚠️):人工真值集里客户标注错 6/106,我们自产描述错 27/94 —— 把「分歧
+    32 条」摆在总览首屏,实际是在展示自家打标不准,还会被读成"你的标注有 32 条
+    有问题"。撤的只是这两行展示,分歧队列本身在「人工裁决」页照旧。
+    """
+    m = load_delivery(full_delivery)
+    blob = str(overview_rows(m)) + overview_note_md(m) + overview_markdown(m)
+    assert AUDIT_TERM not in blob and "标注缺失" not in blob and "分歧" not in blob
+    # 功能没被拆掉:队列还在,人工裁决页还照旧靠它
+    assert len(m["audit_queue"]) == 32
+    assert AUDIT_TERM in audit_note_md(m)
+
+
+def test_overview_note_states_the_arithmetic(full_delivery):
+    """表下小字要把两件事说清:哪几行能相加、「其中」不参与加减。"""
+    note = overview_note_md(load_delivery(full_delivery))
+    assert "输入 = 判废 + 交付" in note
+    assert "不参与加减" in note
+
+
+def test_overview_note_names_dedup_in_the_identity_when_it_removed_anything(full_delivery):
+    """去重真删了东西时,等式必须把它写进去 —— 否则读者一加发现对不上。"""
+    import json as _json
+    p = os.path.join(full_delivery, "passed.json")
+    doc = _json.loads(open(p, encoding="utf-8").read())
+    doc["dataset"]["dedup_removed"] = 4
+    open(p, "w", encoding="utf-8").write(_json.dumps(doc, ensure_ascii=False))
+    note = overview_note_md(load_delivery(full_delivery))
+    assert "输入 = 判废 + 精确去重删除 + 交付" in note
+
+
+def test_overview_note_skips_the_within_clause_when_there_is_no_such_row():
+    """没有「其中」行的交付(全通过、无待裁)不该去解释一行不存在的东西 ——
+    真机上 bridge-rrd-200 就是这样,读者会回头去找那一行在哪。"""
+    m = {"path": "", "load_error": "", "episodes": {}, "audit_queue": [],
+         "dataset": {"input_episodes": 200, "verdict_drop": 0, "delivered": 200,
+                     "dedup_removed": 0,
+                     "summary_stats": {"pass_rate_pct": 100.0}}}
+    assert not any("其中" in r[0] for r in overview_rows(m))
+    note = overview_note_md(m)
+    assert "输入 = 判废 + 交付" in note and "其中" not in note
+
+
+def test_overview_rows_degrade_row_by_row_on_a_legacy_delivery(tmp_path):
+    """老交付缺哪行不显示哪行:不占位、不写「?」、不炸。"""
+    d = tmp_path / "old"
+    d.mkdir()
+    (d / "passed.json").write_text(json.dumps({
+        "数据集": "old", "dataset": {"input_episodes": 7, "delivered": 5},
+        "episodes": {}}, ensure_ascii=False))
+    rows = dict(overview_rows(load_delivery(str(d))))
+    assert rows == {"输入 episode": 7, "交付": 5}      # 无通过率就只有条数
+    assert "?" not in str(rows)
+    assert overview_note_md(load_delivery(str(d))) == ""   # 缺「判废」→ 口径无从谈起
+
+
+def test_overview_never_shows_the_funnel_word(full_delivery):
+    """「漏斗」是内部术语(用户:"用户看不懂啥意思"),总览页一个字不许剩。"""
+    m = load_delivery(full_delivery)
+    blob = overview_markdown(m) + str(overview_rows(m)) + overview_note_md(m)
+    assert "漏斗" not in blob and "硬门" not in blob
+
+
+# ───────── 交付下拉:读不到就说读不到(2026-08-13)─────────
+
+def test_load_delivery_flags_a_path_that_is_not_a_delivery(tmp_path):
+    """交付下拉允许手输,用户打半截字("droid")再点选项时,输入框里留下的是那
+    半截字 —— 当相对路径读,三个 JSON 全空,页面渲成一具壳子(机器人 None、
+    交付 ?),看着像系统坏了。现在挂 load_error,渲染侧明说读不到。"""
+    m = load_delivery(str(tmp_path / "droid"))
+    assert m["load_error"] and "不是一份交付" in m["load_error"]
+    assert "完整路径" in m["load_error"]        # 手输自定义路径的正确用法要讲清楚
+    md = overview_markdown(m)
+    assert "读不到" in md
+    assert "机器人" not in md and "?" not in md   # 半空的壳子一个字不留
+    assert overview_rows(m) == [] and overview_note_md(m) == ""
+
+
+def test_resolve_delivery_recovers_a_typed_directory_name(tmp_path):
+    """打半截字再点选项时输入框里留下的是那串目录名 —— 全库只有一份同名就还原成
+    它。这不是猜:目录名精确相等,唯一性也验过。"""
+    from curation.ui.manifest import resolve_delivery
+    a = str(tmp_path / "a" / "droid-200-full")
+    os.makedirs(a)
+    open(os.path.join(a, "passed.json"), "w").write("{}")
+    assert resolve_delivery("droid-200-full", [a]) == a
+    assert resolve_delivery(a, [a]) == a                 # 完整路径原样通过
+    assert resolve_delivery("  ", [a]) == ""
+
+
+def test_resolve_delivery_refuses_to_pick_when_two_deliveries_share_a_name(tmp_path):
+    """两份交付同名 → 一律不挑,交给上层明说读不到。挑一个"最像的"会让人看着
+    别人的报告以为是自己的。"""
+    from curation.ui.manifest import resolve_delivery
+    one, two = str(tmp_path / "x" / "droid"), str(tmp_path / "y" / "droid")
+    assert resolve_delivery("droid", [one, two]) == "droid"
+    assert resolve_delivery("没这份", [one, two]) == "没这份"
+    assert load_delivery(resolve_delivery("droid", [one, two]))["load_error"]
+
+
+def test_load_delivery_flags_an_empty_picker_value(tmp_path):
+    """空值/None 也不炸(下拉刚清空的一瞬间会走到这里)。"""
+    for bad in ("", "   ", None):
+        assert load_delivery(bad)["load_error"]
+
+
+def test_load_delivery_has_no_error_for_a_real_delivery(delivery):
+    """真交付一切照旧:load_error 是空串,老交付缺字段**不算**读不到。"""
+    assert load_delivery(delivery)["load_error"] == ""
+
+
+# ───────── Gradio 层:总览页 / 明细子页 / 页脚(2026-08-13)─────────
+
+def test_report_overview_tab_is_one_table_without_the_funnel_word(full_delivery):
+    """总览页:表不再顶「漏斗」这个标题,整份界面配置里也不剩这两个字。
+
+    页签本来就写着「质检总览」,表上再顶一个标题既重复又是行话(用户:
+    "用户看不懂啥意思")。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = _config_text(build_app(full_delivery))
+    assert "漏斗" not in cfg
+    assert "质检总览" in cfg
+
+
+def test_effective_config_moved_under_detail_as_the_last_subtab(full_delivery):
+    """「本次运行配置」从质检总览底部搬到「明细」下,排在性能剖析之后。
+
+    总览要收敛成一张表,而这份快照是"日后复核这份报告按什么标准出的"的底稿。
+    页签名不许写文件里的键名 config_effective —— 那是我们的字段名。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    rep = _report_section(build_app(full_delivery))
+    assert "本次运行配置" in rep
+    assert rep.index("明细") < rep.index("性能剖析") < rep.index("本次运行配置")
+    assert "config_effective" not in rep          # 键名不进界面
+    assert "本次运行生效配置" not in rep          # 旧标题(挂在总览底部那个)已撤
+
+
+def test_load_feeds_the_overview_table_and_the_config_page(full_delivery):
+    """_load 的返回值与 outs 一一对齐,且总览那一格发的是新表、不是老的漏斗表。"""
+    pytest.importorskip("gradio")
+    from curation.ui import app as ui_app
+    app = ui_app.build_app(full_delivery)
+    fn = next(f for f in app.fns.values()
+              if getattr(f, "fn", None) and getattr(f.fn, "__name__", "") == "_load")
+    out = fn.fn(full_delivery)
+    assert len(out) == len(fn.outputs)
+    assert out[2] == overview_rows(load_delivery(full_delivery))   # 表
+    assert out[3] == overview_note_md(load_delivery(full_delivery))  # 表下小字
+    assert "checks" in out[4] or "(此交付无" in out[4]              # 生效配置 YAML
+
+
+def test_footer_links_are_off(full_delivery, clean_ui_env):
+    """页脚那排 Use via API / Built with Gradio / Settings 整排去掉。
+
+    第一个会把本服务的接口文档摆给任何打开页面的人;另两个对客户没有用处。
+    走 gradio 自己的 footer_links=[] 而不是 CSS 藏 —— 藏起来的链接照样在 DOM 里、
+    照样可点。
+    """
+    pytest.importorskip("gradio")
+    import re as _re
+
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    with TestClient(create_asgi_app(full_delivery, terminal=False)) as c:
+        html = c.get("/").text
+    hit = _re.search(r'"footer_links"\s*:\s*(\[[^\]]*\])', html)
+    assert hit, "页面配置里找不到 footer_links(gradio 版本变了?去看 mount_gradio_app)"
+    assert json.loads(hit.group(1)) == []
+
+
+def test_start_button_refuses_an_empty_dataset_selection(full_delivery, tmp_path):
+    """数据集多选默认空:点「开始质检」要给一句明确提示,不静默、不抛红框。"""
+    pytest.importorskip("gradio")
+    from curation.ui import app as ui_app
+    data_root = tmp_path / "data"
+    (data_root / "so101" / "meta").mkdir(parents=True)
+    (data_root / "so101" / "meta" / "info.json").write_text("{}")
+    app = ui_app.build_app(full_delivery, data_root=str(data_root))
+    go = {i for i, c in app.blocks.items()
+          if getattr(c, "value", None) == "开始质检"}
+    assert go, "界面上找不到「开始质检」按钮"
+    fn = next(f for f in app.fns.values()
+              if go & {t[0] for t in getattr(f, "targets", [])})
+    # 参数顺序 = rn_go.click 的 inputs;这里只关心第一个(数据集)为空
+    # 参数少了一个:「覆盖同名结果」2026-08-14 随布局改造撤掉(每次跑批各进各的
+    # 时间戳子目录,没有可覆盖的东西)
+    out = fn.fn([], "out", ui_app.FULL_SCAN, [], "只跑选中", None, "", None,
+                "", "", ui_app.PLOT_MODES["flagged"], None, None, None, "",
+                False, False)
+    msg = str(out[2])
+    assert "数据集" in msg and "跑全部" in msg
+
+
+def test_terminal_screen_clips_its_overflow(delivery, clean_ui_env):
+    """终端容器必须 overflow:hidden —— 2026-08-13 用户截图里面板底部那条深色带,
+    就是 xterm 行区(行数 × 行高)比 78vh 容器高出几像素、画到圆角之外形成的。
+    ⚠️ 滚动区 .xterm-viewport 不许跟着加 overflow(那是终端自己的滚动)。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import presentation
+    css = presentation(terminal=True)["css"]
+    block = css[css.index("#curation-term-screen {"):]
+    assert "overflow: hidden" in block[:block.index("}")]
+    vp = css[css.index("#curation-term-screen .xterm-viewport {"):]
+    assert "overflow" not in vp[:vp.index("}")]
+
+
+def test_polling_does_not_wipe_the_validation_message(full_delivery, tmp_path):
+    """两秒一次的轮询必须把当前那句提示**带回去**,不是清空。
+
+    2026-08-13 实测:清空的话,「还没选数据集」这类校验提示活不过一次 tick ——
+    用户点了按钮什么也没看见,和静默失败没有区别。钉法 = 提示那个组件既是这一跳
+    的输入也是它的输出(带回去了),而不是零输入(那就是清空)。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui import app as ui_app
+    app = ui_app.build_app(full_delivery, data_root=str(tmp_path))
+    fn = next(f for f in app.fns.values()
+              if getattr(getattr(f, "fn", None), "__name__", "") == "_tk_tick")
+    assert len(fn.inputs) == 1
+    assert fn.inputs[0] in fn.outputs
+
+
+# ── 判废子项加不出总数时补一行(2026-08-14)────────────────────────────────
+#
+# 判废的子项来自 hard_fail_breakdown,那只统计**踩中硬门**的;而一条 episode 也可能
+# 是综合加权分不达标被判废(见 pipeline/verdict.py),那种没有检查名、进不了这张表。
+# 于是表上会出现「判废 16,子项 14+1」自己打自己脸。扫过 pod 上全部 49 份交付目前
+# 都没踩到,但机制上迟早会。反方向也要防:一条同时踩中两个硬门,子项相加会大于总数。
+
+def _with_drop(delivery_dir, drop, breakdown):
+    """改一份现成交付的判废数字与子项分布(只动 passed.json 的那两个字段)。"""
+    p = os.path.join(delivery_dir, "passed.json")
+    doc = json.loads(open(p, encoding="utf-8").read())
+    doc["dataset"]["verdict_drop"] = drop
+    doc["dataset"]["hard_fail_breakdown"] = breakdown
+    open(p, "w", encoding="utf-8").write(json.dumps(doc, ensure_ascii=False))
+    return load_delivery(delivery_dir)
+
+
+def _detail_rows(rows):
+    return {k.strip("　├└ ").replace("其中 ", ""): v for k, v in rows
+            if k.startswith("　") and "待人工裁决" not in k}
+
+
+def test_overview_adds_a_row_when_the_hard_gates_do_not_add_up(full_delivery):
+    """★ 判废 16、硬门子项只占 15 时,差额补一行「综合质量分不达标」。
+
+    不补的话表上就是「判废 16,子项 14+1」——同一张表里两个数字对不上,读者第一
+    反应是这张表算错了(而它只是漏掉了没有检查名的那一类)。
+    """
+    m = _with_drop(full_delivery, 16, {"task_success": 14, "timestamp_check": 1})
+    rows = overview_rows(m)
+    detail = _detail_rows(rows)
+    assert detail == {"任务成败判定": 14, "时间戳检查": 1, "综合质量分不达标": 1}
+    assert sum(detail.values()) == dict(rows)["判废"] == 16
+    # 措辞用界面既有说法:「软分」是内部机制名,2026-08-11 就统一叫「质量分」了
+    blob = str(rows) + overview_note_md(m)
+    assert "软分" not in blob and "soft" not in blob.lower()
+    # 仍然是分解式(能相加),所以最后一项挂 └
+    assert [k for k, _ in rows if k.startswith("　└")]
+
+
+def test_overview_stops_pretending_it_decomposes_when_items_overlap(full_delivery):
+    """★ 一条同时踩中两个硬门 → 子项相加大于总数,这时不许再摆成 ├/└ 分解式。
+
+    ├/└ 是在邀请读者把子项加起来,而这里加起来就是错的。改用「其中」的措辞,
+    并在表下小字说明"同一条可能同时踩中多项"。
+    """
+    m = _with_drop(full_delivery, 15, {"task_success": 14, "timestamp_check": 2})
+    rows = overview_rows(m)
+    assert _detail_rows(rows) == {"任务成败判定": 14, "时间戳检查": 2}
+    assert not [k for k, _ in rows if "├" in k or "└" in k]
+    assert all("其中" in k for k, _ in rows if k.startswith("　"))
+    note = overview_note_md(m)
+    assert "同一条可能同时踩中多项" in note
+    assert "综合质量分不达标" not in str(rows)      # 相加已经多了,别再往上加
+
+
+def test_overview_keeps_the_plain_decomposition_when_it_already_adds_up(full_delivery):
+    """恰好加得出总数的老样子一个字不变(droid-200-full 就是这种)。"""
+    m = load_delivery(full_delivery)
+    rows = overview_rows(m)
+    assert _detail_rows(rows) == {"任务成败判定": 14, "时间戳检查": 1}
+    assert "综合质量分不达标" not in str(rows)
+    assert "同一条可能同时踩中多项" not in overview_note_md(m)
+    # 「其中」那句仍然只为交付内标记那一行印
+    assert "不参与加减" in overview_note_md(m)
+
+
+def test_overview_never_guesses_when_the_delivery_has_no_breakdown(full_delivery):
+    """老交付没有 hard_fail_breakdown 字段 → 一行子项都不列,不猜、不占位。"""
+    p = os.path.join(full_delivery, "passed.json")
+    doc = json.loads(open(p, encoding="utf-8").read())
+    doc["dataset"].pop("hard_fail_breakdown")
+    open(p, "w", encoding="utf-8").write(json.dumps(doc, ensure_ascii=False))
+    rows = overview_rows(load_delivery(full_delivery))
+    assert _detail_rows(rows) == {}
+    assert dict(rows)["判废"] == 15

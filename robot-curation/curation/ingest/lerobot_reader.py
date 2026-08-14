@@ -32,7 +32,11 @@ class NotADatasetError(Exception):
 
 
 class OutputExistsError(Exception):
-    """输出目录已有上次运行的交付物。提示换目录或 --overwrite。"""
+    """`--output` 指到了一份 2026-08-14 之前布局的交付(passed.json 直接在里面)。
+
+    新布局下每次跑批各进一个时间戳子目录、永不覆盖,所以"输出目录已有结果"本身
+    不再是错;唯一还要拦的是这种新旧混合(见 pipeline/run.py 里的理由)。
+    """
 
 
 def _verify_layout(dataset_dir: str, version: str) -> None:

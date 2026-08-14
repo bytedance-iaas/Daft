@@ -24,6 +24,8 @@ import shutil
 import numpy as np
 import pandas as pd
 
+from .safe_write import write_json, write_text
+
 
 def _reencode_concat(src_windows: list[dict], out_path: str, fps: float) -> list[tuple]:
     """把多段 [from_ts,to_ts) 窗口按序重编码进一个 mp4;返回每段新 (from_ts, to_ts)。
@@ -151,9 +153,7 @@ def _write_camera_health(out_dir: str, camera_health: dict | None,
         "episodes": rows,
     }
     path = os.path.join(out_dir, "meta", "curation_camera_health.json")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=1, default=str)
+    write_json(path, payload, default=str)
 
 
 def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir: str,
@@ -257,8 +257,7 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
     new_info["splits"] = {"train": f"0:{len(sel)}"}
     if "total_videos" in new_info:
         new_info["total_videos"] = len(video_keys)
-    with open(os.path.join(out_dir, "meta", "info.json"), "w") as f:
-        json.dump(new_info, f, indent=2)
+    write_json(os.path.join(out_dir, "meta", "info.json"), new_info, indent=2)
     shutil.copy(os.path.join(dataset_dir, "meta", "stats.json"),
                 os.path.join(out_dir, "meta", "stats.json"))
     _write_camera_health(out_dir, camera_health, keep)
@@ -270,10 +269,8 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
 def _write_jsonl(path: str, records: list[dict]) -> None:
     """一行一条 JSON 写 meta/*.jsonl。ensure_ascii=False:任务文本常是中文,
     转义成 \\uXXXX 客户打开 meta 一片乱码,没法人工核对。"""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        for r in records:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    write_text(path, "".join(json.dumps(r, ensure_ascii=False) + "\n"
+                            for r in records))
 
 
 def _copy_v2_stats(dataset_dir: str, out_dir: str, keep: list[int]) -> None:
@@ -410,8 +407,7 @@ def export_lerobot_v2(dataset_dir: str, keep_episode_indices: list[int], out_dir
     new_info["total_chunks"] = (len(sel) + chunks_size - 1) // chunks_size
     new_info["splits"] = {"train": f"0:{len(sel)}"}
     # codebase_version 原样保留:导出没有升级格式,声称 v2.1 却按 v2.0 写 meta 会骗到 loader
-    with open(os.path.join(out_dir, "meta", "info.json"), "w", encoding="utf-8") as f:
-        json.dump(new_info, f, indent=2, ensure_ascii=False)
+    write_json(os.path.join(out_dir, "meta", "info.json"), new_info, indent=2)
     _copy_v2_stats(dataset_dir, out_dir, keep)
     _write_camera_health(out_dir, camera_health, keep)
 

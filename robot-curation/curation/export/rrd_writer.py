@@ -145,8 +145,8 @@ def export_rrd_curated(delivery_dir: str, input_dir: str, keep_ids: list[str],
                  "/task(其余 chunk 原样)。被剔除的条目不在本目录中。"),
         "episodes": records,
     }
-    with open(os.path.join(out_dir, INDEX_NAME), "w", encoding="utf-8") as f:
-        json.dump(index, f, ensure_ascii=False, indent=1)
+    from .safe_write import write_json
+    write_json(os.path.join(out_dir, INDEX_NAME), index)
 
     return {"episodes": len(keep_ids), "relabeled": n_relabeled,
             "removed": index["n_removed"], "out_dir": out_dir}

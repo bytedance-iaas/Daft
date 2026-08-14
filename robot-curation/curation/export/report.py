@@ -43,6 +43,32 @@ def build_report(
     }
 
 
+def collect_camera_audit(per_episode: dict) -> tuple[dict, int]:
+    """相机体检(占位/黑帧通道)→ (逐条结论, 有结论的条目数)。**纯装配**。
+
+    数据来自视觉质量那一遍顺手产出的 `detail.camera_liveness`(2026-08-14 合并):
+    本函数一帧都不解、一个数不重算。没跑视觉质量的条目自然没有结论,如实不计入
+    分母 —— 编一个"全部相机正常"比留空更误导。
+    只回报**有占位/黑帧路**的条目;全活的不占版面(与老口径一致)。
+    """
+    audit: dict = {}
+    n_audited = 0
+    for eid, pe in sorted(per_episode.items()):
+        vq = (pe.get("checks") or {}).get("visual_quality")
+        if not vq:
+            continue
+        try:
+            liveness = json.loads(vq.get("detail") or "{}").get("camera_liveness")
+        except Exception:  # noqa: BLE001
+            liveness = None
+        if not liveness:
+            continue
+        n_audited += 1
+        if liveness.get("dead_or_padded"):
+            audit[eid] = liveness
+    return audit, n_audited
+
+
 def container_findings(input_format: str, info: dict, robot: dict,
                        rrd_fps_arg: float | None = None) -> list[dict]:
     """数据包(容器)完整性体检:文件里带没带管线要用的元信息。
@@ -154,6 +180,52 @@ def container_findings(input_format: str, info: dict, robot: dict,
     return out
 
 
+#: 报告里给客户看的说法。⚠️ 只换**人看的字**,JSON 的键名与数值口径一个字不动
+#: (passed/reject/review.json 的键是数据契约,`综合软分` 那种键名尤其不许碰)。
+#: 「软分」是内部机制名(可补偿的打分维度),界面 2026-08-11 就统一叫「质量分」了;
+#: 报告是同一批客户看的同一件事,两处说法不该分叉。
+_PLAIN_WORDS = (("软分", "质量分"),)
+
+#: 判废里"没有检查名"的那一类叫什么(判决层的第二种判废理由:综合加权分低于阈值,
+#: 见 pipeline/verdict.py)。与 UI 总览表用同一个说法。
+DROP_SOFT_LABEL = "综合质量分不达标"
+
+#: 判决取值 → 报告里的说法。keep/drop 是实现记法,客户看的是「交付 / 判废」。
+VERDICT_CN = {"keep": "交付", "drop": "判废"}
+
+
+def plain(text) -> str:
+    """把一句人看的话里的内部黑话换成界面同款说法。**只用在 markdown 渲染上。**"""
+    s = str(text if text is not None else "")
+    for bad, good in _PLAIN_WORDS:
+        s = s.replace(bad, good)
+    return s
+
+
+def drop_breakdown(d: dict) -> tuple[list, bool]:
+    """判废子项 → ([(检查中文名, 条数), …], 相加是否大于总数)。
+
+    判决层有**两种**判废理由:踩中硬门(有检查名),或综合加权分 < 阈值(没有检查
+    名)。只列前者的话,子项加不出判废总数 —— 报表上"判废 16、子项 14+1"是自己打
+    自己脸。差额补一行 DROP_SOFT_LABEL 就闭合了。
+    反过来一条 episode 可能同时踩中两个硬门,那时子项相加**大于**总数,只能改口说
+    「其中」并在旁边注明,不能摆成分解式请读者去加。
+    UI 侧 manifest.drop_breakdown 是同一套判据的读端副本(UI 不 import 管道代码)。
+    """
+    hb = d.get("hard_fail_breakdown")
+    drop = d.get("verdict_drop")
+    if not isinstance(hb, dict) or not isinstance(drop, int):
+        return [], False
+    items = [(CHECK_CN.get(k, k), n) for k, n in
+             sorted(hb.items(), key=lambda x: -x[1])]
+    judged = sum(n for _, n in items if isinstance(n, int))
+    if judged > drop:
+        return items, True
+    if judged < drop:
+        items = items + [(DROP_SOFT_LABEL, drop - judged)]
+    return items, False
+
+
 def _container_lines(d: dict) -> list:
     """「数据包完整性」小节。有 findings 才出,LeRobot 全正常时整节不占位。"""
     cont = d.get("container")
@@ -229,7 +301,7 @@ def _sync_camera_lines(entries: list, cap: int = 30) -> list:
 def _sync_soft_sections(lines: list, sh: dict) -> None:
     """「疑似错位」与「假峰 / 测不准」两节。
 
-    这两类都**不判废、不进人工裁决队列、不参与综合软分**,但必须在报告里出现:
+    这两类都**不判废、不进人工裁决队列、不参与综合质量分**,但必须在报告里出现:
     2026-08-07 ep4 就是因为两个都不沾(既非 flagged 也非负滞后),在报告里
     查无此人 —— 而它恰恰是客户翻曲线时第一个会问的那条。
     """
@@ -261,6 +333,9 @@ def to_markdown(report: dict) -> str:
         _rb_line = (f"- **机器人型号**: {rb.get('robot_type')}"
                     f"(规格表: {rb.get('registry_profile')}"
                     f"{',质量 ' + str(rb.get('quality')) if rb.get('quality') else ''})")
+    _drop_items, _drop_overlap = drop_breakdown(d)
+    _identity = ("输入 = 判废 + 精确去重删除 + 交付" if d.get("dedup_removed")
+                 else "输入 = 判废 + 交付")
     lines = [
         "# 数据集质检报告",
         f"- **数据集**: {report.get('数据集', '(未知)')}",
@@ -272,13 +347,22 @@ def to_markdown(report: dict) -> str:
         "",
         # 数据包完整性(2026-08-10):容器缺了什么、按什么补的,放在读任何数字之前
         *_container_lines(d),
+        # 总览的口径与 UI 那张总览表**逐行对齐**(2026-08-14 用户定):一份数据只有
+        # 一个口径,客户不该在界面和报告里读到两套。此前这里还有一行"硬门拦截(漏斗
+        # 中途淘汰)",它与下面的「判废」同名不同义(一个是中途被刷掉的,一个是最终
+        # 判废的全部),正是 UI 那次合表要消灭的那种自相矛盾 —— 数字仍在 json 的
+        # hard_gate_filtered 里,只是不再摆在客户眼前当第二个口径。
         "## 总览",
         f"- 输入 episode:{d['input_episodes']}",
-        f"- 硬门拦截(漏斗中途淘汰):{d['hard_gate_filtered']}",
-        f"- 判决 keep / drop:{d['verdict_keep']} / {d['verdict_drop']}",
+        f"- 判废:{d['verdict_drop']}"
+        + ("(子项按检查逐项计数,**同一条可能同时踩中多项**,相加会大于总数)"
+           if _drop_overlap else ""),
+        *[f"  - {'其中 ' if _drop_overlap else ''}{_n}:{_c}"
+          for _n, _c in _drop_items],
         f"- 精确去重删除:{d['dedup_removed']}"
         + (f"({d['dedup_note']})" if d.get("dedup_note") else ""),
         f"- **交付:{d['delivered']} 条**",
+        f"> 口径:{_identity}(三者不重不漏)。",
         # 交付数据集目录(2026-08-10 RRD 出口):同一份报告要能答"数据在哪个目录、
         # 什么格式"。有才出这行(--report-only 与老交付都没有,不占位)。
         *([f"- 交付数据集:{d['交付数据集']}"] if d.get("交付数据集") else []),
@@ -287,12 +371,17 @@ def to_markdown(report: dict) -> str:
     ss = d.get("summary_stats")
     if ss:
         lines.append("## 汇总统计")
-        lines.append(f"- 通过率: {ss['pass_rate_pct']}%  |  平均软分: {ss['avg_soft_score']}")
+        lines.append(f"- 通过率: {ss['pass_rate_pct']}%  |  平均质量分: {ss['avg_soft_score']}")
         for n, s in ss["per_check"].items():
-            if s["avg_score"] is not None:                      # 软分检查:只报均分
-                lines.append(f"- {n}(软分): 均分 {s['avg_score']}")
-            else:                                               # 硬门:报过/杀/弃权
-                lines.append(f"- {n}(硬门): 过{s['pass']} 杀{s['fail']} 弃权{s['abstain']}")
+            # 检查名也说人话:summary_stats 的键是实现名(json 里照旧),但客户报告里
+            # 印 `timestamp_check` 等于没写 —— 界面从来都是「时间戳检查」
+            cn = CHECK_CN.get(n, n)
+            if s["avg_score"] is not None:            # 可补偿的打分维度:只报均分
+                lines.append(f"- {cn}(质量分): 均分 {s['avg_score']}")
+            else:                                     # 能直接判废的检查:报三态
+                # 「杀」这种词不进客户报告(与「软分/硬门/漏斗」同一批黑话)
+                lines.append(f"- {cn}(判废项): 通过 {s['pass']} · 判废 {s['fail']}"
+                             f" · 弃权 {s['abstain']}")
                 for rsn, cnt in (s.get("abstain_reasons") or {}).items():
                     lines.append(f"  - 弃权原因: {rsn}({cnt} 条)")
         lines.append("")
@@ -301,7 +390,8 @@ def to_markdown(report: dict) -> str:
         # 延时档案(2026-07-28):客户端视角 = 网络+服务端排队+推理。四类调用体质
         # 不同分开报;逐请求明细在 details/vlm_latency.csv。
         _cn = {"probe": "渐变问询(VOC)", "endstate": "二值复核",
-               "caption": "画像 caption", "llm": "归纳/审计 LLM"}
+               "caption": "画像 caption", "llm": "归纳/审计 LLM",
+               "arbitration": "取证仲裁"}
         lines.append("## 模型调用延时(客户端视角,秒)")
         _tw = (report.get("runtime") or {}).get("total_wall_s")
         if _tw:
@@ -323,7 +413,8 @@ def to_markdown(report: dict) -> str:
     if results:
         names = sorted({n for pe in results.values() for n in pe["checks"]})
         lines.append(f"## 每 episode 结果({len(results)} 条)")
-        lines.append("| episode | 判决 | 软分 | " + " | ".join(names) + " |")
+        lines.append("| episode | 判决 | 质量分 | "
+                     + " | ".join(CHECK_CN.get(n, n) for n in names) + " |")
         lines.append("|" + "---|" * (3 + len(names)))
         for e in sorted(results):
             pe = results[e]
@@ -335,9 +426,13 @@ def to_markdown(report: dict) -> str:
                 elif c["score"] is not None:
                     cells.append(f"{c['score']:.2f}")
                 else:
-                    cells.append({True: "过", False: "杀", None: "弃权"}[c["passed"]])
+                    cells.append({True: "通过", False: "判废",
+                                  None: "弃权"}[c["passed"]])
             soft = f"{pe['soft_score']:.2f}" if pe.get("soft_score") is not None else "-"
-            lines.append(f"| {e} | {pe['verdict']} | {soft} | " + " | ".join(cells) + " |")
+            # keep/drop 是实现记法,客户报告里说「交付 / 判废」(与界面同一套词);
+            # ⚠️ 只换这张表里印出来的字,json 里的 verdict 取值一个字不动(数据契约)
+            verdict = VERDICT_CN.get(str(pe["verdict"]), str(pe["verdict"]))
+            lines.append(f"| {e} | {verdict} | {soft} | " + " | ".join(cells) + " |")
         lines.append("")
     vp = d.get("visual_qc_params")
     if vp:
@@ -358,7 +453,7 @@ def to_markdown(report: dict) -> str:
         lines.append("- **判废口径**:只有「**所有可信相机一致指向同一个偏移**」"
                      "才判废整条 episode(那是录制管线的时间轴问题)。"
                      "本节其余所有标注 —— 单路错位、疑似错位、假峰、测不准 —— "
-                     "**一律不判废、不进人工裁决队列、不参与综合软分**,"
+                     "**一律不判废、不进人工裁决队列、不参与综合质量分**,"
                      "视频指针一路不删,数据照常交付。")
         lines.extend(_sync_plot_coverage(d, report))
         _pc = sh.get("per_camera") or {}
@@ -405,11 +500,9 @@ def to_markdown(report: dict) -> str:
             lines.extend(_sync_camera_lines(fe, cap=30))
         _sync_soft_sections(lines, sh)
         lines.append("")
-    if d["hard_fail_breakdown"]:
-        lines.append("## 硬门违规分布")
-        for name, n in sorted(d["hard_fail_breakdown"].items(), key=lambda x: -x[1]):
-            lines.append(f"- {name}: {n}")
-        lines.append("")
+    # 判废的逐项分布已经并进「总览」那几行(用检查中文名、并补上没有检查名的那一类)。
+    # 此前这里还有一节「硬门违规分布」印英文检查名 —— 同一批数字说两遍,而且那遍
+    # 用的是客户看不懂的键名。合并成一处之后口径只剩一个(2026-08-14 用户定)。
     fl = d.get("operator_fluency")
     if fl:
         lines.append("## 操作流畅度(只报不罚)")
@@ -487,10 +580,12 @@ def to_markdown(report: dict) -> str:
         lines.append("")
     dropped = report["episodes"]["dropped"]
     if dropped:
-        lines.append("## 淘汰明细(episode 级)")
+        lines.append("## 判废明细(逐条)")
         results = report["episodes"].get("results") or {}
         for e, v in list(dropped.items())[:50]:
-            lines.append(f"- {e}: {v['reason']}")
+            # 理由本身是判决层拼的那一句(单一事实源,见 hard_fail_reason);这里
+            # 只把里面的内部黑话换成界面同款说法,不重新拼一句
+            lines.append(f"- {e}: {plain(v['reason'])}")
             # 证据直出(2026-07-14 用户定):被拒必须当场看到哪里错,不必翻 reject.json
             for cname, c in (results.get(e, {}).get("checks") or {}).items():
                 if c.get("passed") is not False or not c.get("detail"):
@@ -500,6 +595,7 @@ def to_markdown(report: dict) -> str:
                            else c["detail"]) or {}
                 except Exception:  # noqa: BLE001
                     det = {}
+                cname = CHECK_CN.get(cname, cname)
                 for x in (det.get("violations") or [])[:3]:
                     lines.append(f"  - 证据[{cname}]: {x.get('type')} 关节{x.get('joint')}"
                                  f" 帧{x.get('frame')} 值={x.get('value')} 限={x.get('limit')}")
@@ -538,7 +634,7 @@ def hard_fail_reason(hard_fails: list, checks: dict) -> str:
 
     2026-08-11 用户定:光报检查名会把人带偏 —— ep000018 显示"未通过「时间戳检查」",
     第一反应是同步出了问题,实际是 0.47 秒的采集残段。所以拼装时必须把检查自己
-    写的 detail.reason 带上;report.md 的淘汰明细、reject.json 的原因、UI 的判决
+    写的 detail.reason 带上;report.md 的判废明细、reject.json 的原因、UI 的判决
     横幅与左清单**全部引用这一个串**,不许各拼各的。
     """
     parts = []
@@ -566,9 +662,21 @@ def _render_checks(checks: dict) -> dict:
     return out
 
 
-def save_report(report: dict, out_dir: str) -> tuple[str, str]:
-    """交付三文件:passed.json(通过条目) / reject.json(被拒条目+中文原因+证据) / report.md。"""
+def save_report(report: dict, out_dir: str, verify: bool = False) -> tuple[str, str]:
+    """交付三文件:passed.json(通过条目) / reject.json(被拒条目+中文原因+证据) / report.md。
+
+    ⚠️ 一律走 safe_write(本地临时文件 + copyfile):2026-08-14 e2e 抓到 passed.json
+    落成 10853 字节全 `\\0` —— 这里原本是 `open(...,"w") + json.dump` **直写 FSX
+    挂载**,而一次跑批要对同一路径写三遍(装饰块后、总墙钟回填后、落盘回验后),
+    最后那遍恰好把已经回验通过的文件写坏了,且全程零报错。
+
+    verify=True 给**最后那几遍**用:回读一次,只在读到的内容确实是坏的(零填充/
+    解析不了)时重写并留一行日志。"暂时读不到"不算故障 —— 这张挂载上新文件普遍
+    要 30 秒才可见(pod 实测),那由轮询式落盘回验去确认,不在这里喊狼来了。
+    """
     import os
+
+    from .safe_write import write_json, write_text
 
     os.makedirs(out_dir, exist_ok=True)
     results = report.get("episodes", {}).get("results", {})
@@ -634,14 +742,12 @@ def save_report(report: dict, out_dir: str) -> tuple[str, str]:
     pj = os.path.join(out_dir, "passed.json")
     rj = os.path.join(out_dir, "reject.json")
     mp = os.path.join(out_dir, "report.md")
-    with open(pj, "w") as f:
-        json.dump(passed_view, f, ensure_ascii=False, indent=1, default=str)
-    with open(rj, "w") as f:
-        json.dump({"数据集": ds_name, "机器人": report.get("机器人"),
-                   "被拒总数": len(reject_view), "episodes": reject_view},
-                  f, ensure_ascii=False, indent=1, default=str)
-    with open(os.path.join(out_dir, "review.json"), "w") as f:
-        json.dump(review_out, f, ensure_ascii=False, indent=1, default=str)
-    with open(mp, "w") as f:
-        f.write(to_markdown(report))
+    _v = "json" if verify else None
+    write_json(pj, passed_view, verify=_v, default=str)
+    write_json(rj, {"数据集": ds_name, "机器人": report.get("机器人"),
+                    "被拒总数": len(reject_view), "episodes": reject_view},
+               verify=_v, default=str)
+    write_json(os.path.join(out_dir, "review.json"), review_out,
+               verify=_v, default=str)
+    write_text(mp, to_markdown(report), verify="text" if verify else None)
     return pj, mp
