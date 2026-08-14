@@ -2500,6 +2500,42 @@ def test_perf_tab_is_top_level_right_of_detail(delivery):
     assert "性能剖析" not in det
 
 
+def test_delivery_picker_is_actually_ticked(delivery):
+    """交付下拉的定时补扫**必须真的接了事件**。
+
+    2026-08-14 用户实见:跑完一批,报告页的交付下拉里死活没有它 —— 查下来
+    `_picker_tick` 从写出来那天起就只有定义、没有任何地方 tick 它,交付列表只在
+    页面加载那一刻扫一次。以前"跑完 → 刷新页面 → 看报告"的用法掩盖了这个缺陷;
+    现在跑批就在同一个页面里发起,不接就是必现。
+
+    判据:存在一条事件,**同一个组件既是它的输入又是它的输出** —— 那正是
+    "把当前选中值带进去、把新选项列表带回来"这一跳的形状,全页独一份。
+
+    ⚠️ 光有定时器不算数(同日实测):给 picker 挂上 10 秒 Timer 之后,前端
+    `gradio_config` 里那个 timer 明明 active,函数体里的日志一行都没打出来 ——
+    这层的定时器根本不跳。所以这里还要求补扫**挂在「质检报告」页签的 select 上**:
+    "跑完 → 点到报告页"是用户必然做的动作,不依赖任何计时。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    both = [fn for fn in app.fns.values()
+            if set(i._id for i in (fn.inputs or []))
+            & set(o._id for o in (fn.outputs or []))]
+    assert both, "交付下拉的定时补扫没接上 —— 新交付不会自己出现在列表里"
+
+    def _report_tab_select(fn):
+        for tgt in (getattr(fn, "targets", None) or []):
+            cid, ev = (tgt if isinstance(tgt, tuple) else (tgt.block._id, tgt.event_name))
+            blk = app.blocks.get(cid)
+            if ev == "select" and getattr(blk, "label", None) == "质检报告":
+                return True
+        return False
+
+    assert any(_report_tab_select(fn) for fn in both), \
+        "补扫只挂了定时器 —— 而这层的定时器实测不跳,必须挂在报告页签的 select 上"
+
+
 # ───────── 数据集多选(2026-08-13)─────────
 
 def test_dataset_dropdown_is_multiselect(delivery):

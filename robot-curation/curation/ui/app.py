@@ -1519,10 +1519,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
             # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。
             report_ctx = shell.enter_context(contextlib.ExitStack())
-            report_ctx.enter_context(gr.Tab("质检报告", id="report"))
+            report_tab = report_ctx.enter_context(gr.Tab("质检报告", id="report"))
             with gr.Row():
                 # 文案一句话就够(2026-08-13 用户:"这种文字根本不应该给客户看")。
-                # 「重新加载」按钮已撤:新交付由下面的定时器自动出现在列表里,
+                # 「重新加载」按钮已撤:切到本页就重扫一次盘(见下面的 select),
                 # 让用户自己点刷新是上个时代的做法。
                 picker = gr.Dropdown(choices=delivery_choices(delivery, choices),
                                      value=choices[0], label="交付",
@@ -1853,7 +1853,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             run_pick.input(_load, run_pick, outs)
 
             def _picker_tick(cur):
-                """定时刷新交付列表(**只换选项、不重载内容**)。
+                """重扫交付列表(**只换选项、不重载内容**)。
 
                 只换选项是刻意的:内容重载会与用户当下的点击并发打架 —— 交付下拉的
                 联动就为此修过一次(6bb28b5:两批更新改同一排组件,翻页按钮偶尔被
@@ -1865,6 +1865,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if cur and cur not in fresh:
                     items = items + [(str(cur), cur)]
                 return gr.update(choices=items, value=cur)
+
+            # ⚠️ 这一跳**必须真的接上**:_picker_tick 从写出来那天起就没被 tick 过
+            # (2026-08-14 用户实见:跑完一批,报告页的交付下拉里死活没有它,
+            # 只能刷新整页)。以前"跑完 → 刷新页面 → 看报告"的用法掩盖了它;
+            # 现在跑批就在同一个页面里发起,不接就是必现。
+            # 只换选项、不改选中值:用户正在看别的交付时,列表在背后更新是好事,
+            # 页面被拽走则是坏事 —— 所以**不自动跳到新交付**。
+            #
+            # **主路径是页签切换,不是计时器**(2026-08-14 实测教训):给 picker 挂上
+            # 10 秒 Timer 之后,`window.gradio_config` 里那个 timer 明明 active,函数体里
+            # 的日志却一行都没打出来 —— 定时器在这层压根没跳。而"跑完 → 点到报告页"
+            # 是必然发生的动作,`Tab.select` 是用户真点出来的事件,不依赖任何计时。
+            # 计时器留着当兜底:它若能跳,用户停在报告页也能看到新交付冒出来。
+            report_tab.select(_picker_tick, picker, picker)
+            if hasattr(gr, "Timer"):
+                gr.Timer(10.0).tick(_picker_tick, picker, picker)
 
             def _ep_select(m, eid):
                 """点清单某条 → 记住它 + 换右侧详情。"""
