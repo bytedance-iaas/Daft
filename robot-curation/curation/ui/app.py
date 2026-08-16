@@ -1297,6 +1297,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     _no_ds = runner.dataset_selection_error(ds, bool(batch))
                     if _no_ds:
                         return _tk_view(f"⚠️ {_no_ds}")
+                    # 交付名撞上老布局交付:点按钮之前就判得出来,绝不让任务起来
+                    # 再以「未完成(退出码 3)」收场逼用户翻日志(2026-08-14 实见);
+                    # 消息说「交付名」不说 --output,那是 CLI 的话
+                    _bad_name = runner.delivery_name_error(_deliv_root, name or "",
+                                                           ds, bool(batch))
+                    if _bad_name:
+                        return _tk_view(f"⚠️ {_bad_name}")
                     only = skip = None
                     if mode == CUSTOM_SCAN and picks:
                         joined = ",".join(picks)

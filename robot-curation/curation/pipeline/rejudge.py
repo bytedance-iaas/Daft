@@ -39,7 +39,7 @@ import json
 import os
 from typing import Callable
 
-from ..export.safe_write import delivery_file, write_json, write_text
+from ..export.safe_write import delivery_dir, delivery_file, write_json, write_text
 
 TASK_CN = "任务成败判定"
 
@@ -454,40 +454,44 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     summary.update(apply_reject_appeals(files["passed"], files["review"],
                                         files["reject"], appeals))
     summary["unchanged"] = unchanged
-    for name, data in files.items():
-        write_json(os.path.join(delivery, f"{name}.json"), data, default=str)
 
     det = os.path.join(delivery, "details")
     os.makedirs(det, exist_ok=True)
 
     # 重判段延时增量入账(整写非追加——FSX 拒绝 O_APPEND)+ 刷新汇总快照
+    # ⚠️ 这一段**必须排在下面那遍落盘之前**:它要往 files["passed"] 里塞
+    # vlm_latency,原来放在落盘之后 ⇒ 同一个 passed.json 两秒内被写了两遍。
+    # 2026-08-14 事故:那份 passed.json 最后是 138719 字节全 `\0`(发布那步当时
+    # 还是就地截断,两遍撞上就永久停在中间态)。发布已改成原子改名,写两遍不再
+    # 致命 —— 但"同一个产物一次只落一遍"本身就该是纪律,不靠下游兜底。
     if rejudged and _lat_mark >= 0:
         try:
-            from ..adapters.vlm_client import latency_rows, latency_summary
+            from ..adapters.vlm_client import (LATENCY_CSV_HEADER,
+                                               latency_rows, latency_summary,
+                                               read_latency_csv)
             delta = latency_rows()[_lat_mark:]
             if delta:
                 csv_path = os.path.join(det, "vlm_latency.csv")
                 import csv as _csv
                 rows_all: list = []
                 if os.path.exists(csv_path):
-                    with open(csv_path, newline="", encoding="utf-8") as f:
-                        for r in _csv.DictReader(f):
-                            st = (r.get("started_at") or "").strip()
-                            rows_all.append((r["call_type"], float(r["seconds"]),
-                                             bool(int(r["ok"])),
-                                             float(st) if st else None))
+                    # 读老档走同一份降级读法(三列/四列老 CSV 缺列补默认),
+                    # 别在这里手写第二份解析——2026-08-15 加列时就是靠它免改
+                    rows_all = read_latency_csv(csv_path)
                 rows_all.extend(delta)
                 with delivery_file(csv_path, newline="") as f:
                     w = _csv.writer(f)
-                    w.writerow(["call_type", "seconds", "ok", "started_at"])
-                    for t, s, ok, st in rows_all:
-                        w.writerow([t, s, int(ok), "" if st is None else st])
+                    w.writerow(LATENCY_CSV_HEADER)
+                    for t, s, ok, st, cid, att, fk in rows_all:
+                        w.writerow([t, s, int(ok), "" if st is None else st,
+                                    cid or "", att, fk or ""])
                 ds = files["passed"].setdefault("dataset", {})
                 ds["vlm_latency"] = latency_summary(rows_all)
-                write_json(os.path.join(delivery, "passed.json"), files["passed"],
-                           default=str)
         except Exception as e:  # noqa: BLE001  入账失败不影响重判结果
             print(f"[rejudge] ⚠️ 延时入账失败({type(e).__name__}: {e})", flush=True)
+
+    for name, data in files.items():
+        write_json(os.path.join(delivery, f"{name}.json"), data, default=str)
     with delivery_file(os.path.join(det, "rejudge_results.json")) as f:
         json.dump({"at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                    "summary": summary,
@@ -566,10 +570,17 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 out_rows.sort(key=lambda x: str(x["episode_id"]))
             if len(out_rows) != n or relabel:
                 import shutil as _sh
-                _sh.rmtree(pq_dir)
                 cols = {k: [r[k] for r in out_rows] for k in out_rows[0]} if out_rows else {}
                 if cols:
-                    _daft.from_pydict(cols).write_parquet(pq_dir)
+                    # 曾是 rmtree 再 write_parquet(先删后写,中间零保护):写失败 /
+                    # 进程被杀,客户拿走的数据集就彻底没了。改为 staging 写好再原子
+                    # 换位 —— 新数据落定之前,原目录一个字节都不动。
+                    with delivery_dir(pq_dir) as _staging:
+                        _daft.from_pydict(cols).write_parquet(_staging)
+                else:
+                    # 全部条目被剔:数据集不复存在(与旧行为一致,目录移除)。
+                    # 纯删除没有"删了一半再写"的窗口,rmtree 即是本意。
+                    _sh.rmtree(pq_dir)
                 print(f"[rejudge] 交付数据集已同步:改标 {len(relabel)} 条,"
                       f"剔除 {n_drop} 条,复议捞回补入 {n_add} 条"
                       f"(episodes_parquet)", flush=True)
@@ -752,7 +763,9 @@ def _build_rerun(cfg: dict) -> Callable:
     p_task = cfg["checks"]["task_success"].get("params", {})
     vcfg = cfg["checks"]["task_success"]["vlm"]
     vlm = vlm_completion_from_config(cfg)
+    from ..adapters.vlm_client import timeout_for
     voter = make_endstate_voter(vcfg["endpoint"], vcfg["model"],
+                                timeout_s=timeout_for("endstate", vcfg),
                                 api_key_env=vcfg.get("api_key_env"))
 
     def rerun(input_dir: str, episode_id: str, new_label: str) -> dict:

@@ -212,14 +212,18 @@ def run_pipeline(
     # 目录布局(2026-08-14 用户拍板):`--output` 是**交付目录**,本次结果落在
     # `<交付>/<时间戳>/` 里,各跑各的互不覆盖 —— 覆盖重跑曾把人工裁决连同旧结果
     # 一起 rmtree 掉(理由详见 curation/delivery.py)。
-    from ..delivery import (allocate_run_dir, latest_matches, write_latest,
-                            write_run_facts)
+    from ..delivery import (allocate_run_dir, is_legacy_delivery, latest_matches,
+                            write_latest, write_run_facts)
     from ..ingest.lerobot_reader import OutputExistsError
     delivery_dir = output_dir
-    if os.path.exists(os.path.join(delivery_dir, "passed.json")):
+    # 判据只此一处(delivery.py 是布局契约的事实源):UI 的开跑前校验用的也是它,
+    # 两边各拼一次 passed.json 路径,迟早有一边跟着布局变、另一边没跟上。
+    if is_legacy_delivery(delivery_dir):
         # 老布局的交付(三件套直接躺在这个目录里)。往里再套一层跑批目录会造出
         # 半新半老的混合体:报告页看见根上的 passed.json 就当它是老交付,新跑的
         # 那次永远不出现在「运行」列表里。宁可拦下,让人换个目录。
+        # UI 任务台已在开跑前用 delivery_name_error 拦掉这种情况(那边说「交付名」
+        # 的人话);这里是 CLI 直用者的最后一道,--output 的说法只给 CLI 用户看。
         raise OutputExistsError(
             f"{delivery_dir} 是 2026-08-14 之前布局的一份交付(passed.json 直接在里面)。\n"
             "  新版每次跑批各进一个时间戳子目录,不再覆盖;请换一个新的 --output 目录\n"
@@ -366,15 +370,18 @@ def run_pipeline(
     if vlm is not None:
         unlabeled = [r for r in rows if not (r.get("instruction") or "").strip()]
         if unlabeled:
+            from ..adapters.vlm_client import timeout_for
             from ..dataset_level.caption import caption_episodes, make_vlm_captioner
             vcfg0 = cfg["checks"]["task_success"]["vlm"]
-            capper = make_vlm_captioner(vcfg0["endpoint"], vcfg0["model"],
-                                        api_key_env=vcfg0.get("api_key_env"))
             # 2026-07-29 用户"卡死"报案破案:此处曾漏传并发与进度——默认串行 1 且
             # 全程无声,droid 类无标注大户(上百条)会静默爬行个把小时,肉眼与死锁
             # 无异(单 socket、低 CPU)。并发对齐 caption_concurrency,进度对齐漏斗。
             from .progress import _progress_init, _progress_tick
             _cc0 = int(cfg.get("skill_profile", {}).get("caption_concurrency", 8))
+            capper = make_vlm_captioner(vcfg0["endpoint"], vcfg0["model"],
+                                        timeout_s=timeout_for("caption", vcfg0),
+                                        api_key_env=vcfg0.get("api_key_env"),
+                                        max_in_flight=_cc0)
             _pk_cap0 = _progress_init("precap", len(unlabeled),
                                       f"无标注补 caption({len(unlabeled)} 条,并发 {_cc0})")
             for r, c in zip(unlabeled, caption_episodes(
@@ -551,9 +558,14 @@ def run_pipeline(
         from ..dataset_level.taxonomy import assign, induce_taxonomy
 
         vcfg = cfg["checks"]["task_success"]["vlm"]
+        from ..adapters.vlm_client import timeout_for as _timeout_for
+        _cap_conc = int(sp_cfg.get("caption_concurrency", 8))
         captioner = make_vlm_captioner(vcfg["endpoint"], vcfg["model"],
-                                       api_key_env=vcfg.get("api_key_env"))
+                                       timeout_s=_timeout_for("caption", vcfg),
+                                       api_key_env=vcfg.get("api_key_env"),
+                                       max_in_flight=_cap_conc)
         llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"],
+                               timeout_s=_timeout_for("llm", vcfg),
                                api_key_env=vcfg.get("api_key_env"))
 
         # 进度:本段是"1 个逐条长循环 + 4 个离散 LLM 步",故两种显示混用——
@@ -567,7 +579,6 @@ def run_pipeline(
         _G = "技能画像"
         _pk_cap = _progress_init("caption", len(keep_rows), f"{_G}·逐条 caption",
                                  quiet_before_s=3.0)
-        _cap_conc = int(sp_cfg.get("caption_concurrency", 8))
         phase_step(_G, 1, 5, f"逐条 caption({len(keep_rows)} 条,并发 {_cap_conc})…", _sp_t0)
         caps = caption_episodes(keep_rows, captioner,
                                 n_frames=sp_cfg.get("n_frames", 8),
@@ -883,16 +894,21 @@ def run_pipeline(
     # 2026-07-30:每行多记 started_at(发出时刻 epoch),汇总里因此多出 wall_s
     # ——按类的**墙钟**(首次发出 → 末次返回)。UI 的耗时对比图只认这个口径;
     # 次数×均值那种"总耗时"在并发下高估几十倍,已从界面彻底移除。
-    from ..adapters.vlm_client import latency_rows, latency_summary
+    from ..adapters.vlm_client import (LATENCY_CSV_HEADER, latency_rows,
+                                       latency_summary)
     _lat = latency_summary()
     if _lat:
         report["dataset"]["vlm_latency"] = _lat
         with delivery_file(os.path.join(det_dir, "vlm_latency.csv"), newline="") as f:
             _w = __import__("csv").writer(f)
-            _w.writerow(["call_type", "seconds", "ok", "started_at"])
-            for tag, dt, ok, st in latency_rows():
+            _w.writerow(LATENCY_CSV_HEADER)
+            # 2026-08-15 起多三列:call_id(同一次逻辑调用的两发同号)/ attempt
+            # (0=首发 1=补发)/ fail_kind(为什么没成);老读方按 DictReader 取列,
+            # 缺列降级已有测试钉住
+            for tag, dt, ok, st, cid, att, fk in latency_rows():
                 _w.writerow([tag, round(dt, 3), int(ok),
-                             "" if st is None else round(st, 3)])
+                             "" if st is None else round(st, 3),
+                             cid or "", att, fk or ""])
 
     _ev_mode = str(cfg.get("pipeline", {}).get("evidence_frames", "flagged"))
     if _ev_mode != "off" and videos_of:
@@ -1071,7 +1087,10 @@ def run_pipeline(
                          "(含容差带与各路峰位);默认只画有标注/非对齐的条目"
                          "(配置 pipeline.sync_plots: flagged|all|off)"
                          + ("" if _pngs or not _crows else ";matplotlib 缺失,未渲染"))}
-            save_report(report, output_dir)     # 报告已写过,补写含图信息的版本
+            # 这里原来还补写一遍 save_report("含图信息的版本")—— 纯重复,已删:
+            # sync_plots 这段只是改了内存里的 report dict,交付前的最终那遍
+            # save_report(verify=True)自然会带上;同一路径每多写一遍,就多一次
+            # 撞上并发写的机会(2026-08-14 全零 passed.json 的事故形状)。
     srows.sort(key=lambda x: -(x["stuck_seconds"] or 0))
     scols = ["episode", "axes", "stuck_start_sec", "stuck_seconds",
              "freeze_start_sec", "freeze_total_seconds",

@@ -337,8 +337,10 @@ def clips_prompt(names: list, fmt: dict | None = None) -> str:
 
 
 def suggest_delivery_name(dataset: str, now: datetime.datetime | None = None) -> str:
-    """交付名建议:`<数据集名>-<月日>`。重名由 CLI 的输出目录冲突检查兜(它会
-    要求换目录或加覆盖),这里不去猜用户想不想覆盖。"""
+    """交付名建议:`<数据集名>-<月日>`。只管起名不管占用 —— 撞上老布局交付时由
+    delivery_name_error 在**点按钮之前**拦下,并用 free_delivery_name 给出空闲的
+    替代(此前指望 CLI 的输出目录冲突检查兜底,结果是任务起来几秒就"未完成
+    (退出码 3)",原因埋在日志里,2026-08-14 用户实见)。"""
     now = now or datetime.datetime.now()
     base = re.sub(r"[^A-Za-z0-9._-]", "-", str(dataset or "dataset")).strip("-.") or "dataset"
     return f"{base[:60]}-{now.strftime('%m%d')}"
@@ -565,6 +567,87 @@ def build_dataset_jobs(data_root: str, delivery_root: str, datasets: list,
                                     output=resolve_under(clips_root, name)))
         jobs.append({"title": name, "steps": steps})
     return jobs
+
+
+# ── 开跑前的交付名校验(2026-08-14 布局切换的善后)──────────────────────
+
+def delivery_targets(delivery_root: str, name: str, datasets,
+                     batch: bool = False) -> list[str]:
+    """这次「开始质检」会往哪些交付目录里落结果(纯函数)。
+
+    形状必须与真正要跑的一致:单数据集/勾「跑全部」= 交付名本身;多选 = 交付名当
+    父文件夹,每个数据集一份子交付(与 build_dataset_jobs 拼的 `--output` 逐一
+    对应)。单独拎出来是因为"检查的路径"与"真正写的路径"两套算法各写各的迟早
+    漂移 —— 这里是检查侧的唯一出口,与作业侧的一致性由测试钉死
+    (test_delivery_name_error_multi_select_checks_exactly_the_job_outputs)。
+    """
+    picked = picked_datasets(datasets)
+    if batch or len(picked) <= 1:
+        return [resolve_under(delivery_root, name or "")]
+    parent = resolve_under(delivery_root, name or "")
+    return [resolve_under(parent, n) for n in picked]
+
+
+def free_delivery_name(delivery_root: str, base: str, datasets=None,
+                       batch: bool = False,
+                       now: datetime.datetime | None = None) -> str:
+    """基于 suggest_delivery_name 找一个**当前没被占用**的交付名(用户照抄就能跑)。
+
+    "空闲"从严:这次要落的每一个目标目录都不存在才算(只挑掉老布局还不够 ——
+    建议一个已有内容的名字,等于把用户往另一个意外里送)。同名被占就往后试
+    `-2`、`-3`……;封顶之后退到带时分秒的名字,那基本不可能撞(封顶是为了别让
+    一个病态目录树把界面卡死在死循环里)。
+    """
+    now = now or datetime.datetime.now()
+    first = suggest_delivery_name(base, now)
+    for k in range(1, 100):
+        cand = first if k == 1 else f"{first}-{k}"
+        if not any(os.path.exists(t)
+                   for t in delivery_targets(delivery_root, cand, datasets, batch)):
+            return cand
+    return f"{first}-{now.strftime('%H%M%S')}"
+
+
+def delivery_name_error(delivery_root: str, name: str, datasets,
+                        batch: bool = False) -> str:
+    """开跑前的交付名校验(同 dataset_selection_error:通过返回空串)。
+
+    2026-08-14 用户实见:交付名填了一份老布局交付(passed.json 直接在目录根上),
+    任务真的起来了,几秒后「未完成(退出码 3)」,原因要翻日志才看得到,且说的是
+    `--output` —— 界面上那个框叫「交付名」,用户从没见过这个旗标。这个判断在点
+    按钮之前完全做得出来,就该在这里拦;CLI 里那道同名检查(pipeline/run.py)是
+    CLI 直用者的最后一道,界面这条路走不到它。
+
+    老布局判据借 curation/delivery.py 的 is_legacy_delivery(布局契约的单一事实源,
+    与 deliveries_root_of 同一条口子,不是 import 管道代码)。名字本身不合法时
+    返回空串 —— 那由既有的 argv 校验去报,这里不抢话、不重复造一套措辞。
+    """
+    from ..delivery import is_legacy_delivery
+    try:
+        targets = delivery_targets(delivery_root, name, datasets, batch)
+        parent = resolve_under(delivery_root, name or "")
+    except ValueError:
+        return ""
+    bad = [t for t in targets if is_legacy_delivery(t)]
+    # 多选时 targets 是各个**子**交付,父目录不在其中 —— 但父目录本身要是一份老
+    # 交付,几份新交付就会嵌进它肚子里(报告页把父目录当老交付读,嵌在里面的反倒
+    # 成了它的一部分)。CLI 那道也拦不住:它查的是 `<父>/<数据集>/passed.json`。
+    # 所以这里要**额外**查一次父目录 —— 它不是落盘目标,只是必须干净的容器。
+    parent_bad = len(targets) > 1 and is_legacy_delivery(parent)
+    if not bad and not parent_bad:
+        return ""
+    n = str(name or "").strip()
+    if len(targets) == 1 or parent_bad:
+        what = (f"交付名「{n}」是 2026-08-14 之前老布局的一份交付"
+                f"(结果直接放在目录根上)")
+    else:
+        hit = "、".join(os.path.basename(t) for t in bad)
+        what = (f"交付名「{n}」下的子交付撞上了老布局交付:{hit}"
+                f"(2026-08-14 之前跑出来的,结果直接放在目录根上)")
+    sugg = free_delivery_name(delivery_root, n, datasets, batch)
+    return (f"{what}。新版每次跑批各进一个时间戳子目录,往老交付里跑会和它打架,"
+            f"这次的结果也不会出现在报告页的「运行」列表里。老交付原样留着,"
+            f"报告页照常打得开 —— 换个新交付名即可,比如「{sugg}」。")
 
 
 # ── 任务目录:落盘的状态机 ────────────────────────────────────────────────

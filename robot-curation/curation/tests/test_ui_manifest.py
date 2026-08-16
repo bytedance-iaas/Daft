@@ -737,19 +737,28 @@ def test_perf_env_marks_hostname_is_not_node_name(tmp_path):
 
 
 def test_latency_table_uses_semantic_labels_in_order(delivery):
-    """延时表:四桶语义化中文标签、固定顺序、五个统计列齐全(实现标签不露头)。"""
+    """延时表:语义化中文标签、流程顺序、统计列齐全(实现标签不露头)。
+
+    2026-08-15 改版钉两件事:①显示名换新(「探针」与 probe_endpoint 的探活一词
+    两义、「终态」不准——投票器收的是前后对照帧);②次数列口径 = **发起次数**
+    (含失败发起;此前 n 只数成功,与图上的总数两套口径,用户实见 1192/1194)。
+    """
     from curation.ui.manifest import LATENCY_HEADERS, latency_rows, load_perf
     rows = latency_rows(load_perf(_with_perf(delivery)))
-    assert [r[0] for r in rows] == ["任务判定探针", "终态复核", "技能打标", "体系归纳"]
+    assert [r[0] for r in rows] == ["任务完成度打分", "逐机位复核", "技能打标", "技能归纳"]
     # 表头写全"响应时间",别指望客户认得裸 P50/P90(第二轮反馈)
-    assert LATENCY_HEADERS == ["调用类型", "调用次数", "平均响应时间(秒)",
+    assert LATENCY_HEADERS == ["调用类型", "发起次数", "平均响应时间(秒)",
                                "P50 响应时间(秒)", "P90 响应时间(秒)",
                                "P99 响应时间(秒)"]
     probe = rows[0]
     assert probe[1] == 1583 and probe[2] == "20.01" and probe[5] == "63.26"
+    endstate = rows[1]
+    assert endstate[1] == 116                        # 发起次数 = 成功 114 + 没成 2
     flat = json.dumps(rows, ensure_ascii=False)
     for impl_tag in ("probe", "endstate", "caption", "llm", "arbitration"):
         assert impl_tag not in flat, impl_tag        # 埋点标签只是字典键,不是界面词
+    for old_name in ("任务判定探针", "终态复核", "体系归纳"):
+        assert old_name not in flat, old_name        # 旧显示名不许回潮
 
 
 def test_every_latency_tag_has_a_chinese_label():
@@ -765,29 +774,77 @@ def test_every_latency_tag_has_a_chinese_label():
 
     # 埋点标签是各调用点写死的字符串,没有集中常量 —— 那就从源码里扫出来比对,
     # 这样新增一类调用而忘了配中文名时,是**这条测试**先红,而不是客户先看见。
+    # 2026-08-15 对冲改造后调用点写法变成 hedged_request(..., tag="probe"),
+    # 两种写法都扫(直接 latency_record 的老写法仍可能出现)。
     root = pathlib.Path(__file__).resolve().parent.parent
     tags = set()
     for py in root.rglob("*.py"):
         if "tests" in py.parts:
             continue
-        tags |= set(_re.findall(r'latency_record\(\s*["\']([a-z_]+)["\']', py.read_text(encoding="utf-8")))
-    assert tags, "一个埋点都没扫到 —— 正则该跟着 latency_record 的写法改"
+        src = py.read_text(encoding="utf-8")
+        tags |= set(_re.findall(r'latency_record\(\s*["\']([a-z_]+)["\']', src))
+        tags |= set(_re.findall(r'\btag=["\']([a-z_]+)["\']', src))
+    assert tags, "一个埋点都没扫到 —— 正则该跟着 latency_record/hedged_request 的写法改"
     missing = sorted(t for t in tags if t not in LATENCY_LABELS)
     assert not missing, f"这些埋点没有中文名,会在界面上露英文:{missing}"
 
 
 def test_latency_bar_chart_is_wall_clock_only(delivery):
-    """横条图:四条、按**墙钟**降序、最长的那条 100%,时长人性化,失败次数带出来。"""
+    """横条图:四条、按**流程顺序**排列、最长的那条 100%,时长人性化。
+
+    2026-08-15 排序从"墙钟降序"改为流程顺序(用户选方案 B):谁最费时靠条长看。
+    fixture 里 caption 墙钟(402.7)> endstate(310.5),若有人改回按墙钟排,
+    复核就会掉到打标后面 —— 下面的顺序断言当场变红。
+    """
     from curation.ui.manifest import latency_bar_html, load_perf
     html = latency_bar_html(load_perf(_with_perf(delivery)))
     assert html.count("<div style=\"margin:8px 0\">") == 4
-    # probe 墙钟 2530s 最大 → 排第一、宽度 100%、念作 42 分 10 秒
-    assert html.index("任务判定探针") < html.index("技能打标") < html.index("终态复核")
+    assert (html.index("任务完成度打分") < html.index("逐机位复核")
+            < html.index("技能打标") < html.index("技能归纳"))
+    # probe 墙钟 2530s 最大 → 宽度 100%、念作 42 分 10 秒;次数是**发起次数**
     assert "width:100.00%" in html
-    assert "墙钟 <b>42 分 10 秒</b>(1583 次调用并发执行)" in html
-    assert "失败 2" in html                                  # endstate 的 errors
+    assert "墙钟 <b>42 分 10 秒</b>(发起 1583 次,并发执行)" in html
     assert "忙碌区间并集" in html          # 口径文案(2026-08-06 随 wall_s 并集口径更新)
     assert "各条墙钟相加 ≠ 整次运行总时长" in html
+
+
+def test_latency_bar_failures_reworded_and_not_red(delivery):
+    """红色「失败 N」下岗(2026-08-15 用户点名):超时补发是正常兜底,不是失败。
+
+    钉四件事:①「失败」二字与错误红 #F53F3F 不出现在这块;②老快照(没有对冲
+    字段)把 errors 如实说成「没拿到结果」,不编原因;③新口径快照能说出
+    「N 次超时后补发,均已拿到结果」和补发数(补发率是判断服务端质量的唯一线索,
+    不该被"救回来了"藏掉);④真有没拿到结果的调用时,补一句"少一票只会更保守"。
+    """
+    from curation.ui.manifest import latency_bar_html, load_perf
+    # 老快照:endstate errors=2,无对冲字段
+    html = latency_bar_html(load_perf(_with_perf(delivery)))
+    assert "失败" not in html and "#F53F3F" not in html
+    assert "2 次没拿到结果" in html
+    assert "少一票" in html and "不会因此错杀" in html      # 后果句(有没成的调用才出现)
+    # 新口径快照:超时补发全救回 + 一次两发都没等到回应
+    lat_new = {
+        "probe": {"n": 1592, "errors": 3, "attempts": 1595, "hedged": 3,
+                  "retried": 0, "unanswered": 0, "unanswered_timeout": 0,
+                  "mean_s": 20.0, "p50_s": 18.0, "p90_s": 30.0, "p99_s": 50.0,
+                  "max_s": 60.0, "wall_s": 1000.0},
+        "llm": {"n": 6, "errors": 2, "attempts": 8, "hedged": 1, "retried": 0,
+                "unanswered": 1, "unanswered_timeout": 1, "mean_s": 50.0,
+                "p50_s": 40.0, "p90_s": 100.0, "p99_s": 120.0, "max_s": 130.0,
+                "wall_s": 300.0}}
+    html2 = latency_bar_html(load_perf(_with_perf(delivery, latency=lat_new)))
+    assert "失败" not in html2 and "#F53F3F" not in html2
+    assert "3 次超时后补发,均已拿到结果" in html2
+    assert "发起 1595 次" in html2                          # 口径 = 发起次数
+    assert "1 次没等到回应" in html2                        # 两发都没回来的才这么说
+    assert "少一票" in html2
+    # 全部顺利(无补发无失败)→ 一句多余的话都不说,后果句也不出现
+    lat_clean = {"probe": {"n": 10, "errors": 0, "attempts": 10, "hedged": 0,
+                           "retried": 0, "unanswered": 0, "unanswered_timeout": 0,
+                           "mean_s": 5.0, "p50_s": 5.0, "p90_s": 6.0,
+                           "p99_s": 7.0, "max_s": 8.0, "wall_s": 50.0}}
+    html3 = latency_bar_html(load_perf(_with_perf(delivery, latency=lat_clean)))
+    assert "少一票" not in html3 and "补发" not in html3 and "失败" not in html3
 
 
 def test_latency_chart_never_falls_back_to_count_times_mean(delivery):
@@ -814,15 +871,22 @@ def test_latency_chart_degrades_without_wall_clock(delivery):
     assert latency_rows(perf)[0][1] == 1583        # 表格照旧有数(只是没图)
 
 
-def test_latency_kind_notes_explain_all_four_call_types():
-    """四类调用各配一句人话说明——语义化名字不解释,客户仍读不懂 1583 次是什么。"""
+def test_latency_kind_notes_explain_all_five_call_types():
+    """五类调用各配一句人话说明——语义化名字不解释,客户仍读不懂 1583 次是什么。
+
+    2026-08-15 改版:解释文案与报告共用 vlm_call_kinds 单一事实源,且旧文案的
+    两处事实错误(复核"只对没通过一审的跑"/打分"逐帧问")不许回潮 —— 事实
+    本身的钉死在 test_call_kind_wording.py,这里钉界面确实用的是那份文案。
+    """
     from curation.ui.manifest import LATENCY_KIND_NOTE, LATENCY_PCTL_NOTE
+    from curation.vlm_call_kinds import CALL_KIND_LABELS, CALL_KIND_NOTES
     assert "一半的调用不超过此耗时" in LATENCY_PCTL_NOTE
-    for label in ("任务判定探针", "终态复核", "技能打标", "体系归纳"):
+    for tag, label in CALL_KIND_LABELS.items():
         assert f"**{label}**" in LATENCY_KIND_NOTE, label
-    assert "次数最多" in LATENCY_KIND_NOTE              # 探针次数为何最多(措辞 2026-08-13 精简)
-    assert "只对没通过一审的数据跑" in LATENCY_KIND_NOTE
-    for impl_tag in ("probe", "endstate", "caption", "llm"):
+        assert CALL_KIND_NOTES[tag] in LATENCY_KIND_NOTE, tag   # 同一份文案,不是抄一遍
+    assert "次数最多" in LATENCY_KIND_NOTE              # 打分次数为何最多
+    assert "只对没通过一审的数据跑" not in LATENCY_KIND_NOTE   # 错误事实不许回潮
+    for impl_tag in ("probe", "endstate", "caption", "llm", "arbitration"):
         assert impl_tag not in LATENCY_KIND_NOTE, impl_tag
 
 

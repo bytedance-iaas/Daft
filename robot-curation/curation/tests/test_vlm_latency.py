@@ -122,6 +122,8 @@ def test_endstate_judge_records_tagged_latency():
 
 
 def test_report_renders_latency_table():
+    """报告延时表:显示名走 vlm_call_kinds 单一事实源;老快照(无对冲字段)按
+    「发起次数 = n+errors、补发未记录标 -、没等到回应 = errors」降级,不编数。"""
     report = {"数据集": "x", "dataset": {
         "input_episodes": 1, "hard_gate_filtered": 0, "verdict_keep": 1,
         "verdict_drop": 0, "dedup_removed": 0, "delivered": 1,
@@ -133,8 +135,14 @@ def test_report_renders_latency_table():
         "episodes": {"dropped": []}, "skills": {"n_episodes": 1, "families": {}}}
     md = to_markdown(report)
     assert "## 模型调用延时" in md
-    assert "渐变问询(VOC)" in md and "21.4" in md
-    assert "| 画像 caption | 0 | 3 |" in md                 # 全错误的桶也可见
+    assert "任务完成度打分" in md and "21.4" in md
+    assert "| 技能打标 | 3 | - | 3 | - | - | - | - | - |" in md   # 全错误的桶也可见
+    # 新口径快照:发起次数含补发,补发数与没等到回应各占一列
+    report["dataset"]["vlm_latency"]["probe"].update(
+        {"attempts": 515, "hedged": 2, "retried": 1, "unanswered": 0,
+         "unanswered_timeout": 0})
+    md2 = to_markdown(report)
+    assert "| 任务完成度打分 | 515 | 3 | 0 |" in md2
 
 
 def test_cli_import_quiets_daft_terminal_noise(monkeypatch):

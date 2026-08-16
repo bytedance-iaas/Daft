@@ -15,6 +15,7 @@ import datetime
 import itertools
 import json
 import os
+import re
 import shutil
 import time
 
@@ -1125,6 +1126,125 @@ def test_dataset_selection_error_lets_real_selections_and_batch_through():
     assert runner.dataset_selection_error(["so101"], batch=False) == ""
     assert runner.dataset_selection_error("so101", batch=False) == ""
     assert runner.dataset_selection_error([], batch=True) == ""
+
+
+# ── 开跑前的交付名校验(2026-08-14 用户实见:老布局交付名等到退出码 3 才报)──
+
+def _legacy_delivery(root, name):
+    """造一份老布局交付:passed.json 直接躺在目录根上(2026-08-14 之前的形状)。"""
+    d = root / name
+    d.mkdir(parents=True)
+    (d / "passed.json").write_text("{}")
+    return d
+
+
+def test_delivery_name_error_lets_free_and_new_layout_names_through(tmp_path):
+    """交付名空闲,或指向**新布局**交付(时间戳子目录、根上没有 passed.json)→ 不拦。
+
+    新布局同名续跑本来就是正常用法(每次各进一个时间戳子目录,互不覆盖),拦了
+    等于把 2026-08-14 布局变更的意义又收回去。
+    """
+    root = tmp_path / "deliv"
+    root.mkdir()
+    assert runner.delivery_name_error(str(root), "fresh", ["so101"]) == ""
+    run = root / "droid-0814" / "20260814-120000"
+    run.mkdir(parents=True)
+    (run / "passed.json").write_text("{}")
+    assert runner.delivery_name_error(str(root), "droid-0814", ["so101"]) == ""
+
+
+def test_delivery_name_error_blocks_a_legacy_delivery_and_speaks_ui_language(tmp_path):
+    """2026-08-14 用户实见:交付名填了老布局交付,任务真起来了,几秒后「未完成
+    (退出码 3)」,原因埋在日志里而且说的是 --output —— 界面上那个框叫「交付名」,
+    用户从没见过那个旗标。开跑前就得拦下,消息只说界面上的话。
+    """
+    root = tmp_path / "deliv"
+    _legacy_delivery(root, "droid-200-full")
+    msg = runner.delivery_name_error(str(root), "droid-200-full", ["so101"])
+    assert msg and "交付名" in msg
+    assert "output" not in msg                      # CLI 的话一个词都不许漏进界面
+    assert "原样留着" in msg                        # 别让人以为要动老交付
+
+
+def test_delivery_name_error_suggests_a_name_that_actually_works(tmp_path):
+    """消息里给的建议名必须真空闲:用户照抄再点一次就能跑,而不是换一个错误。
+    连日期后缀的建议也被占时要往后试 -2/-3……直到空闲(此前的态度是"重名由 CLI
+    兜",正是这次要纠正的图省事)。
+    """
+    root = tmp_path / "deliv"
+    _legacy_delivery(root, "droid-200-full")
+    _legacy_delivery(root, runner.suggest_delivery_name("droid-200-full"))
+    msg = runner.delivery_name_error(str(root), "droid-200-full", ["so101"])
+    m = re.search(r"比如「([^」]+)」", msg)
+    assert m, msg
+    sugg = m.group(1)
+    runner.safe_name(sugg)                          # 建议名必须过名字白名单
+    assert runner.delivery_name_error(str(root), sugg, ["so101"]) == ""
+    assert not (root / sugg).exists()               # 空闲 = 目录根本不存在
+
+
+def test_delivery_name_error_multi_select_checks_exactly_the_job_outputs(tmp_path):
+    """多选时逐个子交付检查(<交付名>/<数据集名>/),有一个是老布局就拦;并且
+    检查的路径集合 == build_dataset_jobs 各 job 真正的 --output 路径集合 ——
+    两套路径算法一旦漂移("检查的不是要写的"),这条立刻变红。
+    """
+    root = tmp_path / "deliv"
+    root.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+    ds = ["so101", "bridge", "droid"]
+    _legacy_delivery(root / "batch-0814", "bridge")
+    msg = runner.delivery_name_error(str(root), "batch-0814", ds)
+    assert msg and "bridge" in msg and "交付名" in msg
+    checked = set(runner.delivery_targets(str(root), "batch-0814", ds))
+    jobs = runner.build_dataset_jobs(str(data), str(root), ds, "batch-0814")
+    outs = {j["steps"][0][j["steps"][0].index("--output") + 1] for j in jobs}
+    assert checked == outs
+
+
+def test_multi_select_also_blocks_when_the_parent_itself_is_a_legacy_delivery(tmp_path):
+    """★ 多选时**父目录**本身是老交付,同样要拦。
+
+    多选的落盘目标是 `<交付名>/<数据集名>/`,所以逐个子交付查得再干净,也漏掉了
+    交付名自己 —— 那几份新交付会嵌进一份老交付的肚子里(报告页把父目录当老交付
+    读,嵌在里面的反倒成了它的一部分)。CLI 那道也拦不住:它查的是
+    `<父>/<数据集>/passed.json`。父目录不是落盘目标,但它必须是干净的容器。
+    """
+    root = tmp_path / "deliv"
+    root.mkdir()
+    _legacy_delivery(root, "old-batch")            # 父目录自己就是老交付
+    ds = ["so101", "bridge"]
+    msg = runner.delivery_name_error(str(root), "old-batch", ds)
+    assert msg and "交付名" in msg and "--output" not in msg
+    # 建议名照旧要真空闲
+    import re as _re
+    sugg = _re.search(r"比如「(.+?)」", msg).group(1)
+    assert runner.delivery_name_error(str(root), sugg, ds) == ""
+    # 单选那条路本来就查得到,不许因为这次改动退化
+    assert runner.delivery_name_error(str(root), "old-batch", ["so101"])
+
+
+def test_app_blocks_legacy_delivery_name_before_starting_a_task(tmp_path):
+    """app 层:用老布局交付名点「开始质检」,任务根本不该被起起来 —— 任务目录
+    零新增,界面直接回「交付名…」那句话,而不是让用户等退出码 3 再翻日志。
+    (2026-08-14 用户实见的完整链路,这条钉住"拦在点按钮之前"。)
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+
+    deliv = tmp_path / "deliveries"
+    _legacy_delivery(deliv, "droid-200-full")
+    (tmp_path / "data" / "so101").mkdir(parents=True)
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    fns = [f.fn for f in app.fns.values()
+           if getattr(f.fn, "__name__", "") == "_run_preflight"]
+    assert fns, "任务台的开跑回调没找到"
+    out = fns[0](["so101"], "droid-200-full", "", [], "", None, "", None, "",
+                 "", None, None, None, None, "", False, False)
+    flat = json.dumps([str(x) for x in out], ensure_ascii=False)
+    assert "交付名" in flat and "output" not in flat
+    runs = runner.runs_root_of(str(deliv))
+    assert not os.path.isdir(runs) or not os.listdir(runs)
 
 
 # ── 「停止」按下去永远卡在「正在停止」(2026-08-14 用户实见)───────────────

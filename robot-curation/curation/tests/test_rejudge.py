@@ -434,6 +434,29 @@ def test_verdict_fail_drops_row_from_delivered_parquet(tmp_path):
     assert by["epX"] == "a"
 
 
+def test_parquet_sync_leaves_no_staging_dirs_in_delivery(tmp_path):
+    """重判同步交付数据集之后,交付目录里不许留下任何临时目录。
+
+    episodes_parquet 的换新走"同级 staging 写好再原子换位"(先删后写曾是丢整份
+    数据集的隐患,见 test_delivery_write_safety):staging / 移到一边的旧目录都
+    落在交付目录里,忘了清,客户 ls 交付目录就会把半成品当交付物拷走。
+    """
+    daft = pytest.importorskip("daft")
+    d = _write_verdict_delivery(tmp_path, [
+        {"episode_id": "epY", "verdict": "判失败", "note": "", "at": "t2"}])
+    daft.from_pydict({
+        "episode_id": ["epX", "epY"],
+        "instruction": ["a", "b"],
+        "instruction_source": ["原始标注"] * 2,
+    }).write_parquet(str(d / "episodes_parquet"))
+
+    run_rejudge(str(d), "/unused", {}, rerun_fn=None)
+    leftovers = [n for n in os.listdir(d) if n.startswith(".curation-")]
+    assert leftovers == [], f"交付目录里残留了临时目录:{leftovers}"
+    got = daft.read_parquet(str(d / "episodes_parquet")).to_pydict()
+    assert got["episode_id"] == ["epX"]
+
+
 # ───────── 被拒复议(2026-08-11):语义判定的杀可复议,物理硬门不可 ─────────
 
 
@@ -640,3 +663,27 @@ def test_appeal_restores_row_into_delivered_dataset(tmp_path):
     eps = [json.loads(x) for x in
            (d / "lerobot_curated" / "meta" / "episodes.jsonl").read_text().splitlines()]
     assert len(eps) == 4, "LeRobot 包没跟着把捞回的条目导出来"
+
+
+def test_rejudge_lands_passed_json_exactly_once(tmp_path, monkeypatch):
+    """★ 一次重判只许落一遍 passed.json。
+
+    2026-08-14 事故:延时入账那段排在落盘**之后**,于是同一个 passed.json 两秒内
+    被写了两遍;当时的发布方式是就地截断,第二遍撞进第一遍的中间态,文件最后停在
+    138719 字节全 `\0`,整份交付作废。发布已改成原子改名(见
+    test_delivery_write_safety),但"同一个产物一次只落一遍"是纪律本身,不靠
+    下游兜底 —— 靠下游兜底的东西,下次换个写法就又漏了。
+    """
+    from curation.pipeline import rejudge as rj
+
+    d = _write_appeal_delivery(tmp_path, [
+        {"episode_id": "epK1", "appeal": "捞回", "note": "拿起来了", "at": "t1"}])
+    (d / "report.md").write_text("# 报告\n", encoding="utf-8")
+
+    lands: list[str] = []
+    real = rj.write_json
+    monkeypatch.setattr(rj, "write_json",
+                        lambda dst, *a, **k: (lands.append(os.path.basename(dst)),
+                                              real(dst, *a, **k))[1])
+    run_rejudge(str(d), "/unused", {}, rerun_fn=None)
+    assert lands.count("passed.json") == 1, f"passed.json 落了 {lands.count('passed.json')} 遍:{lands}"
