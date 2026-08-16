@@ -212,14 +212,18 @@ def run_pipeline(
     # 目录布局(2026-08-14 用户拍板):`--output` 是**交付目录**,本次结果落在
     # `<交付>/<时间戳>/` 里,各跑各的互不覆盖 —— 覆盖重跑曾把人工裁决连同旧结果
     # 一起 rmtree 掉(理由详见 curation/delivery.py)。
-    from ..delivery import (allocate_run_dir, latest_matches, write_latest,
-                            write_run_facts)
+    from ..delivery import (allocate_run_dir, is_legacy_delivery, latest_matches,
+                            write_latest, write_run_facts)
     from ..ingest.lerobot_reader import OutputExistsError
     delivery_dir = output_dir
-    if os.path.exists(os.path.join(delivery_dir, "passed.json")):
+    # 判据只此一处(delivery.py 是布局契约的事实源):UI 的开跑前校验用的也是它,
+    # 两边各拼一次 passed.json 路径,迟早有一边跟着布局变、另一边没跟上。
+    if is_legacy_delivery(delivery_dir):
         # 老布局的交付(三件套直接躺在这个目录里)。往里再套一层跑批目录会造出
         # 半新半老的混合体:报告页看见根上的 passed.json 就当它是老交付,新跑的
         # 那次永远不出现在「运行」列表里。宁可拦下,让人换个目录。
+        # UI 任务台已在开跑前用 delivery_name_error 拦掉这种情况(那边说「交付名」
+        # 的人话);这里是 CLI 直用者的最后一道,--output 的说法只给 CLI 用户看。
         raise OutputExistsError(
             f"{delivery_dir} 是 2026-08-14 之前布局的一份交付(passed.json 直接在里面)。\n"
             "  新版每次跑批各进一个时间戳子目录,不再覆盖;请换一个新的 --output 目录\n"
