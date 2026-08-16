@@ -150,6 +150,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "则页签不渲染、/ws/term 路由不注册。"
                          "⚠️ 这是一个真 shell,公网暴露前必须配 "
                          "CURATION_UI_USER/CURATION_UI_PASSWORD + 网关鉴权")
+    ui.add_argument("--root-path", default=os.environ.get("CURATION_UI_ROOT_PATH", ""),
+                    help="UI 挂载前缀(如 /curation):与别的服务共用一个网关域名、"
+                         "按路径分流时用;网关不剥前缀,全部路由都注册在前缀下。"
+                         "缺省挂根路径。也可用环境变量 CURATION_UI_ROOT_PATH")
 
     return p
 
@@ -401,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
         launch(args.delivery, config_path=args.config, host=args.host,
                port=args.port, probe_timeout=args.timeout,
                terminal=args.terminal, review_dir=args.review_dir,
-               data_root=args.data_root)
+               data_root=args.data_root, root_path=args.root_path)
         return 0
     if args.command == "run":
         from .ingest.lerobot_reader import NotADatasetError, OutputExistsError

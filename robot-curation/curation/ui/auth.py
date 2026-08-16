@@ -42,10 +42,12 @@ def credentials_from_env() -> tuple[str, str]:
 class BasicAuthMiddleware:
     """裸 ASGI 中间件:http 与 websocket 两种 scope 都拦。"""
 
-    def __init__(self, app, user: str, password: str) -> None:
+    def __init__(self, app, user: str, password: str,
+                 exempt: frozenset = EXEMPT_PATHS) -> None:
         self.app = app
         self.user = user
         self.password = password
+        self.exempt = exempt
 
     def _authorized(self, scope) -> bool:
         for key, value in scope.get("headers") or ():
@@ -66,7 +68,7 @@ class BasicAuthMiddleware:
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] not in ("http", "websocket") \
-                or scope.get("path") in EXEMPT_PATHS \
+                or scope.get("path") in self.exempt \
                 or self._authorized(scope):
             await self.app(scope, receive, send)
             return
@@ -102,11 +104,16 @@ async def _deny_websocket(scope, send) -> None:
         await send({"type": "websocket.close", "code": 1008})   # 1008 = policy violation
 
 
-def apply(app, *, terminal_enabled: bool):
-    """配了凭证就给 `app` 套上鉴权;没配则只打日志。返回 app 本身,便于链式调用。"""
+def apply(app, *, terminal_enabled: bool, extra_exempt: tuple = ()):
+    """配了凭证就给 `app` 套上鉴权;没配则只打日志。返回 app 本身,便于链式调用。
+
+    extra_exempt:EXEMPT_PATHS 之外再豁免的路径。带挂载前缀部署时传 `{root}/healthz`
+    —— 网关那侧的健康检查只能带着前缀进来,探针直连容器端口仍走 `/healthz`。
+    """
     user, password = credentials_from_env()
     if user and password:
-        app.add_middleware(BasicAuthMiddleware, user=user, password=password)
+        app.add_middleware(BasicAuthMiddleware, user=user, password=password,
+                           exempt=EXEMPT_PATHS | frozenset(extra_exempt))
         log.info("鉴权:单用户 HTTP Basic 已启用(user=%s)", user)
     elif terminal_enabled:
         # 参考实现的做法:终端是真 shell,没鉴权就得在日志里喊一嗓子
