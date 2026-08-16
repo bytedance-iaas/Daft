@@ -14,6 +14,7 @@ verify 的那几遍会重写,最终落地的是能解析的好文件。
 from __future__ import annotations
 
 import json
+import os
 import shutil
 
 import pytest
@@ -99,8 +100,69 @@ def test_rendering_goes_to_a_local_temp_file_not_the_target(tmp_path, monkeypatc
     with safe_write.delivery_file(dst, newline="") as f:
         assert f.name != dst, "拿到的文件对象直指交付路径 = 又在直写挂载"
         f.write("a,b\n1,2\n")
-    assert [d for _, d in copies] == [dst]                # 目标只被整份写一次
+    # 目标只被整份写一次 —— 但落点是**同目录下的临时名**,再改名到位(见下一条用例)
+    assert len(copies) == 1
+    staged = copies[0][1]
+    assert staged != dst and os.path.dirname(staged) == os.path.dirname(dst)
     assert (tmp_path / "details" / "x.csv").read_text(encoding="utf-8") == "a,b\n1,2\n"
+
+
+def test_publish_is_an_atomic_rename_never_truncate_in_place(tmp_path, monkeypatch):
+    """★ 发布必须是**原子改名**,不许对着目标就地截断再写。
+
+    2026-08-14 第七次事故的根因:发布那步是 `copyfile(tmp, dst)`,也就是把目标
+    截断再从头写 —— 存在一段"文件已经在那儿、内容还不是它"的中间态。同一个
+    passed.json 一次跑批要写四遍(save_report 在 run.py 里被调 4 次)、重判再写
+    两遍,中间态被下一遍撞上,文件就永久停在 **138719 字节全 `\\0`**。
+
+    判据两条:拷贝的落点是同目录下的临时名(不是目标本身);目标是被 `os.replace`
+    改名换上去的。改名在同一挂载内是原子的:读者要么看到旧的整份,要么看到新的整份。
+    """
+    renames: list = []
+    real_replace = os.replace
+    monkeypatch.setattr(safe_write.os, "replace",
+                        lambda s, d: (renames.append((s, d)), real_replace(s, d))[1])
+    dst = str(tmp_path / "passed.json")
+    safe_write.write_json(dst, {"n": 1})
+    assert len(renames) == 1, "发布没走改名"
+    staged, final = renames[0]
+    assert final == dst
+    assert os.path.dirname(staged) == os.path.dirname(dst), "临时名必须与目标同目录"
+    assert not os.path.exists(staged), "改名之后临时名不该还在"
+
+
+def test_same_path_written_many_times_stays_intact(tmp_path):
+    """★ 同一路径连写多遍后仍完整,且**每一遍中途都读得到完整的上一版**。
+
+    这正是事故的形状:passed.json 在一次跑批里被写四遍。原来的发布方式下,
+    第二遍开始写的瞬间目标就被截断了 —— 此刻的读者看到的是零填充。
+    现在每遍都是"写好再改名",所以任何时刻读到的都是某一版的完整内容。
+    """
+    dst = str(tmp_path / "passed.json")
+    seen: list = []
+
+    class _Watcher:
+        """每次改名之前偷看一眼目标现在是什么(模拟并发读者)。"""
+
+        def __init__(self, real):
+            self.real = real
+
+        def __call__(self, src, d):
+            if os.path.exists(d):
+                seen.append(safe_write.content_state(d, "json"))
+            return self.real(src, d)
+
+    real_replace = os.replace
+    safe_write.os.replace = _Watcher(real_replace)
+    try:
+        for i in range(4):
+            safe_write.write_json(dst, {"轮次": i, "pad": "x" * 5000})
+    finally:
+        safe_write.os.replace = real_replace
+
+    assert json.load(open(dst, encoding="utf-8"))["轮次"] == 3
+    assert seen == [safe_write.STATE_OK] * 3, \
+        f"中途读到过不完整的目标:{seen} —— 发布不是原子的"
 
 
 def test_zero_filled_file_counts_as_corrupt_not_merely_absent(tmp_path):
@@ -129,6 +191,82 @@ def test_no_half_written_file_when_rendering_fails(tmp_path):
             f.write('{"a":')
             raise ValueError("渲染炸了")
     assert not (tmp_path / "half.json").exists()
+
+
+# ───────── 目录级交付(episodes_parquet 这类"一个目录=一份数据集")─────────
+
+
+def _dataset(d, **files):
+    """最小"数据集目录":几个文件当 parquet 分片使。"""
+    os.makedirs(d, exist_ok=True)
+    for name, blob in files.items():
+        with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+            f.write(blob)
+
+
+def _listing(d):
+    return {n: open(os.path.join(d, n), encoding="utf-8").read()
+            for n in sorted(os.listdir(d))}
+
+
+def test_dir_publish_never_touches_old_dataset_while_writing(tmp_path):
+    """★ 目录级发布不许"先删后写"。
+
+    2026-08-14 全零 passed.json 复盘时捎出来的同族隐患:rejudge 同步交付数据集
+    是 `rmtree(pq_dir)` 再 `write_parquet(pq_dir)` —— 写失败 / 进程被杀 / pod
+    被驱逐,客户真正拿走的那份数据集就**彻底没了**(连个坏文件都不剩)。
+    判据:往 staging 写到一半的任意时刻,原目录读到的都还是旧内容整份。
+    """
+    from curation.export.safe_write import delivery_dir
+
+    dst = str(tmp_path / "episodes_parquet")
+    _dataset(dst, **{"part-0.parquet": "旧分片0", "part-1.parquet": "旧分片1"})
+    with delivery_dir(dst) as staging:
+        # staging 必须与目标同级 —— 同一挂载,rename 才是原子的
+        assert os.path.dirname(staging) == str(tmp_path)
+        _dataset(staging, **{"part-0.parquet": "新分片,只写了一半"})
+        assert _listing(dst) == {"part-0.parquet": "旧分片0",
+                                 "part-1.parquet": "旧分片1"}, \
+            "新数据还没写完,原目录已经被动了 —— 这就是先删后写"
+    assert _listing(dst) == {"part-0.parquet": "新分片,只写了一半"}
+
+
+def test_dir_publish_failure_leaves_old_dataset_intact_and_no_litter(tmp_path):
+    """写者抛异常 ⇒ 旧数据集一字未变,交付目录里也不留 staging 残骸。"""
+    from curation.export.safe_write import delivery_dir
+
+    dst = str(tmp_path / "episodes_parquet")
+    _dataset(dst, **{"part-0.parquet": "旧分片"})
+    with pytest.raises(RuntimeError):
+        with delivery_dir(dst) as staging:
+            _dataset(staging, **{"part-0.parquet": "写到一半"})
+            raise RuntimeError("写炸了")
+    assert _listing(dst) == {"part-0.parquet": "旧分片"}
+    assert sorted(os.listdir(tmp_path)) == ["episodes_parquet"], \
+        "staging 残骸留在交付目录里,客户 ls 会当成交付物"
+
+
+def test_dir_publish_success_swaps_content_and_cleans_up(tmp_path):
+    """成功发布:内容整体换新,交付目录里没有残留的 staging / 旧目录。"""
+    from curation.export.safe_write import delivery_dir
+
+    dst = str(tmp_path / "episodes_parquet")
+    _dataset(dst, **{"part-0.parquet": "旧0", "part-1.parquet": "旧1"})
+    with delivery_dir(dst) as staging:
+        _dataset(staging, **{"part-0.parquet": "新0"})
+    assert _listing(dst) == {"part-0.parquet": "新0"}, "旧分片不许混进新数据集"
+    assert sorted(os.listdir(tmp_path)) == ["episodes_parquet"]
+
+
+def test_dir_publish_works_for_first_time_export(tmp_path):
+    """目标原本不存在(首次导出)也要能发布 —— 别把原子换位做成只会替换。"""
+    from curation.export.safe_write import delivery_dir
+
+    dst = str(tmp_path / "episodes_parquet")
+    with delivery_dir(dst) as staging:
+        _dataset(staging, **{"part-0.parquet": "首份"})
+    assert _listing(dst) == {"part-0.parquet": "首份"}
+    assert sorted(os.listdir(tmp_path)) == ["episodes_parquet"]
 
 
 def test_save_report_survives_a_corrupting_mount(tmp_path, monkeypatch):

@@ -1071,7 +1071,10 @@ def run_pipeline(
                          "(含容差带与各路峰位);默认只画有标注/非对齐的条目"
                          "(配置 pipeline.sync_plots: flagged|all|off)"
                          + ("" if _pngs or not _crows else ";matplotlib 缺失,未渲染"))}
-            save_report(report, output_dir)     # 报告已写过,补写含图信息的版本
+            # 这里原来还补写一遍 save_report("含图信息的版本")—— 纯重复,已删:
+            # sync_plots 这段只是改了内存里的 report dict,交付前的最终那遍
+            # save_report(verify=True)自然会带上;同一路径每多写一遍,就多一次
+            # 撞上并发写的机会(2026-08-14 全零 passed.json 的事故形状)。
     srows.sort(key=lambda x: -(x["stuck_seconds"] or 0))
     scols = ["episode", "axes", "stuck_start_sec", "stuck_seconds",
              "freeze_start_sec", "freeze_total_seconds",
