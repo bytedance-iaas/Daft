@@ -1009,18 +1009,17 @@ def timeline_html(tl: dict, cap: int = 200, show: str = "both",
 #: 交付里没记这一项时的统一措辞(老交付走这条)。
 NOT_RECORDED = "未记录(旧版本交付)"
 
-#: VLM 调用类型 → 语义化中文标签。左边是实现内部的埋点标签(vlm_client.latency_record
-#: 的 tag),只作字典键;界面上只出现右边。顺序 = 展示顺序(按漏斗发生的先后)。
-LATENCY_LABELS = {
-    "probe": "任务判定探针",
-    "endstate": "终态复核",
-    # 2026-08-14:取证仲裁链上线后多出这一类调用,而这张表漏了它的中文名 ——
-    # 界面上就直接印出内部标签 `arbitration`(用户实见)。新增一类调用时,
-    # **这张表要跟着加**,否则兜底逻辑会把英文原样透出来。
-    "arbitration": "取证仲裁",
-    "caption": "技能打标",
-    "llm": "体系归纳",
-}
+#: VLM 调用类型 → 语义化中文标签。2026-08-15 起与客户报告共用 vlm_call_kinds
+#: 单一事实源(此前界面/报告各一套名字,报告那套还是中英夹杂的内部说法)。
+#: 那是零依赖常量模块,不破"UI 不 import 管道"红线(先例:dataset_level/decisions)。
+#: 保留 LATENCY_LABELS 这个名字作别名:模块内多处及测试按此引用。
+#: dict 顺序 = 流程顺序(方案 B):条形图与解释都按漏斗发生的先后排。
+#: ⚠️ 新增一类调用时要加进 vlm_call_kinds,否则兜底逻辑把英文标签原样透出
+#: (2026-08-14 arbitration 实翻过车)。
+from ..vlm_call_kinds import (CALL_KIND_LABELS, CALL_KIND_NOTES,  # noqa: E402
+                              CALL_KIND_ORDER)
+
+LATENCY_LABELS = CALL_KIND_LABELS
 
 #: 延时口径(一句话,跟着表格一起显示)——不写清楚会被当成服务端推理耗时。
 LATENCY_NOTE = (
@@ -1031,20 +1030,19 @@ LATENCY_NOTE = (
 LATENCY_PCTL_NOTE = (
     "_P50 = 一半的调用不超过此耗时;P90/P99 同理,越靠后越反映最慢的少数调用。_")
 
-#: 四类调用各是干什么的(表下说明,一行一条)。语义化名字必须配得上解释,
-#: 否则"任务判定探针 1583 次"这种数字客户没法判断合不合理。
-LATENCY_KIND_NOTE = "\n".join([
-    "**这四类调用各是什么**",
-    "- **任务判定探针**:判断任务做没做成的主力,逐帧问画面,所以次数最多。",
-    "- **终态复核**:主判拿不准时的二审,只对没通过一审的数据跑。",
-    "- **技能打标**:给每条数据写一句「它在做什么」,供技能分布用,每条一次。",
-    "- **体系归纳**:通读全部打标,归纳出这份数据的技能分类;整批只跑几次,"
-      "但每次读的内容很长。",
-])
+#: 五类调用各是干什么的(表下说明,一行一条;文案在 vlm_call_kinds,与报告同一份)。
+#: 语义化名字必须配得上解释,否则"任务完成度打分 1583 次"客户没法判断合不合理。
+LATENCY_KIND_NOTE = "\n".join(
+    ["**这五类调用各是什么**(按流程先后)"]
+    + [f"- **{CALL_KIND_LABELS[t]}**:{CALL_KIND_NOTES[t]}" for t in CALL_KIND_ORDER])
 
-#: 横条图配色(四类各一色;与判决用的红/绿色系错开,避免被误读成"好坏")。
-_BAR_COLORS = {"probe": "#165DFF", "endstate": "#722ED1",
+#: 横条图配色(五类各一色;与判决用的红/绿色系错开,避免被误读成"好坏")。
+_BAR_COLORS = {"probe": "#165DFF", "endstate": "#722ED1", "arbitration": "#14C9C9",
                "caption": "#00B42A", "llm": "#FF7D00"}
+
+#: 说明文字用 Arco 次要文字灰。⚠️ 不用错误红 #F53F3F(2026-08-15 用户点名):
+#: 超时补发是系统在正常兜底,红色"失败 N"读着像这一步整个失败了。
+_MUTED = "#86909C"
 
 
 def infer_service_type(endpoint: str | None) -> str:
@@ -1116,15 +1114,41 @@ def _recompute_latency(csv_path: str) -> dict:
         with open(csv_path, newline="", encoding="utf-8") as f:
             for r in _csv.DictReader(f):
                 st = (r.get("started_at") or "").strip()
+                cid = (r.get("call_id") or "").strip()
+                att = (r.get("attempt") or "").strip()
                 rows.append((r["call_type"], float(r["seconds"]),
-                             bool(int(r["ok"])), float(st) if st else None))
+                             bool(int(r["ok"])), float(st) if st else None,
+                             cid or None, int(att) if att else 0,
+                             (r.get("fail_kind") or "").strip()))
     except (OSError, KeyError, ValueError):
         return {}
     out: dict = {}
     for tag in sorted({r[0] for r in rows}):
         mine = [r for r in rows if r[0] == tag]
         oks = sorted(r[1] for r in mine if r[2])
-        entry = {"n": len(oks), "errors": sum(1 for r in mine if not r[2])}
+        entry = {"n": len(oks), "errors": sum(1 for r in mine if not r[2]),
+                 "attempts": len(mine)}
+        # 对冲口径(2026-08-15,与 vlm_client.latency_summary 同款算法):
+        # 同 call_id 的两发 = 一次逻辑调用;老 CSV 没有 call_id → 每行自成一组,
+        # 此时 unanswered==errors,老交付数字不变
+        groups: dict = {}
+        for i, r in enumerate(mine):
+            groups.setdefault(r[4] if r[4] is not None else f"_row{i}", []).append(r)
+        hedged = retried = unanswered = unanswered_timeout = 0
+        for g in groups.values():
+            first = min(g, key=lambda r: r[5])
+            if any(r[5] > 0 for r in g):
+                if first[2] or first[6] == "timeout":
+                    hedged += 1
+                else:
+                    retried += 1
+            if not any(r[2] for r in g):
+                unanswered += 1
+                if all(r[6] == "timeout" for r in g):
+                    unanswered_timeout += 1
+        entry.update({"hedged": hedged, "retried": retried,
+                      "unanswered": unanswered,
+                      "unanswered_timeout": unanswered_timeout})
         if oks:
             entry.update({"mean_s": round(sum(oks) / len(oks), 2),
                           "p50_s": round(_pctl_(oks, 0.50), 2),
@@ -1208,19 +1232,27 @@ def perf_env_md(perf: dict) -> str:
     return head + "\n".join(f"| {k} | {v} |" for k, v in rows) + tail
 
 
-LATENCY_HEADERS = ["调用类型", "调用次数", "平均响应时间(秒)",
+#: 次数列口径 = **发起次数**(每一次真实发出的请求,含失败与补发)。2026-08-15
+#: 前这里用 n(只数成功),与图上的总数对不上——同一页两套口径,用户实见 1192/1194。
+LATENCY_HEADERS = ["调用类型", "发起次数", "平均响应时间(秒)",
                    "P50 响应时间(秒)", "P90 响应时间(秒)", "P99 响应时间(秒)"]
 
 
+def _attempts_of(s: dict) -> int:
+    """发起次数;老快照没有 attempts 字段 → 成功数+失败数(同一口径的降级还原)。"""
+    return s.get("attempts", (s.get("n") or 0) + (s.get("errors") or 0))
+
+
 def latency_rows(perf: dict) -> list[list]:
-    """第三块:延时表。按 LATENCY_LABELS 顺序,缺的桶不占行;未知标签兜底排在最后。"""
+    """第三块:延时表。按流程顺序(LATENCY_LABELS 的 dict 序),缺的桶不占行;
+    未知标签兜底排在最后。"""
     lat = perf["latency"]
     order = [t for t in LATENCY_LABELS if t in lat]
     order += [t for t in sorted(lat) if t not in LATENCY_LABELS]
     rows = []
     for tag in order:
         s = lat.get(tag) or {}
-        rows.append([LATENCY_LABELS.get(tag, tag), s.get("n", 0),
+        rows.append([LATENCY_LABELS.get(tag, tag), _attempts_of(s),
                      _val(s.get("mean_s")), _val(s.get("p50_s")),
                      _val(s.get("p90_s")), _val(s.get("p99_s"))])
     return rows
@@ -1258,30 +1290,64 @@ def latency_bar_html(perf: dict) -> str:
     if not lat:
         return ('<p style="color:#777">本次运行没有 VLM 调用(例如只跑了数值类检查),'
                 '因此没有延时数据。</p>')
-    items = [(tag, float(s["wall_s"]), s.get("n") or 0, s.get("errors") or 0)
-             for tag, s in lat.items() if s.get("wall_s") is not None]
+    # 条形顺序 = 流程顺序(2026-08-15 用户选方案 B):不再按墙钟从长到短排,
+    # 谁最费时靠条长看;未知标签兜底排最后
+    _flow = [t for t in LATENCY_LABELS if t in lat] + \
+            [t for t in sorted(lat) if t not in LATENCY_LABELS]
+    items = [(tag, float(lat[tag]["wall_s"]), lat[tag]) for tag in _flow
+             if lat[tag].get("wall_s") is not None]
     if not items:
         return f'<p style="color:#777">{NO_WALL_NOTE}</p>'
-    items.sort(key=lambda x: -x[1])
-    top = max(items[0][1], 1e-9)
+    top = max(max(w for _, w, _s in items), 1e-9)
     bars = []
-    for tag, wall, n, errs in items:
+    total_unanswered = 0
+    for tag, wall, s in items:
         pct = max(1.0, wall / top * 100)
         label = LATENCY_LABELS.get(tag, tag)
-        cnt = f"{n} 次调用并发执行" if n > 1 else f"{n} 次调用"
-        err_txt = f' · <span style="color:#F53F3F">失败 {errs}</span>' if errs else ""
+        att = _attempts_of(s)
+        cnt = f"发起 {att} 次,并发执行" if att > 1 else f"发起 {att} 次"
+        # 补发/没拿到结果的说明(2026-08-15 用户定):按对冲口径说人话,不再用
+        # "失败 N"的红字——超时补发是系统在正常兜底,不是这一步失败了。
+        # 补发次数必须可见:它是判断服务端质量的唯一线索(补发率 3%→30% = 服务
+        # 在恶化,不该被"反正救回来了"藏掉)。
+        hedged, retried = s.get("hedged", 0), s.get("retried", 0)
+        unans = s.get("unanswered", s.get("errors") or 0)
+        total_unanswered += unans
+        parts = []
+        if hedged:
+            parts.append(f"{hedged} 次超时后补发")
+        if retried:
+            parts.append(f"{retried} 次服务报错后重发")
+        if parts and not unans:
+            parts.append("均已拿到结果")
+        if unans:
+            # 失败原因全是超时才说"没等到回应";原因未记录(旧交付)/混有服务报错
+            # 时只说"没拿到结果",不编原因
+            known_all_timeout = ("unanswered" in s
+                                 and s.get("unanswered_timeout", 0) == unans)
+            parts.append(f"{unans} 次{'没等到回应' if known_all_timeout else '没拿到结果'}")
+        note_txt = (f' · <span style="color:{_MUTED}">{",".join(parts)}</span>'
+                    if parts else "")
         bars.append(
             f'<div style="margin:8px 0">'
             f'<div style="font:12px/1.5 system-ui;margin-bottom:2px">{label}'
-            f' — 墙钟 <b>{human_duration(wall)}</b>({cnt}){err_txt}</div>'
+            f' — 墙钟 <b>{human_duration(wall)}</b>({cnt}){note_txt}</div>'
             f'<div style="background:#E5E6EB;border-radius:4px;overflow:hidden;height:14px">'
             f'<div style="width:{pct:.2f}%;height:100%;'
             f'background:{_BAR_COLORS.get(tag, "#888")}"></div></div></div>')
+    # 后果说明只在真有没拿到结果的调用时出现(2026-08-15 用户点名):
+    # 少一票只会让判定更保守,不会因此错杀 —— 铁律"救人一签、杀人双签"不因超时而变
+    tail_unans = ('<div style="font:12px system-ui;color:' + _MUTED + ';margin-top:6px">'
+                  '没拿到结果的调用 = 相应判定少一票:判定只会更保守'
+                  '(拿不准就弃权进人工复核),不会因此错杀。</div>'
+                  if total_unanswered else "")
     return ('<div style="max-width:760px">'
             '<div style="font:12px system-ui;color:#555;margin-bottom:4px">'
-            '各类调用的墙钟耗时(忙碌区间并集:该类调用真实在飞的净时长,空档不计)'
+            '各类调用的墙钟耗时(忙碌区间并集:该类调用真实在飞的净时长,空档不计;'
+            '按流程顺序排列)'
         + total_line + '</div>'
             + "".join(bars)
+            + tail_unans
             + '<div style="font:12px system-ui;color:#777;margin-top:6px">'
               '各类调用之间在时间上可能重叠,各条墙钟相加 ≠ 整次运行总时长。</div>'
             '</div>')

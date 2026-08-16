@@ -466,25 +466,25 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     # 致命 —— 但"同一个产物一次只落一遍"本身就该是纪律,不靠下游兜底。
     if rejudged and _lat_mark >= 0:
         try:
-            from ..adapters.vlm_client import latency_rows, latency_summary
+            from ..adapters.vlm_client import (LATENCY_CSV_HEADER,
+                                               latency_rows, latency_summary,
+                                               read_latency_csv)
             delta = latency_rows()[_lat_mark:]
             if delta:
                 csv_path = os.path.join(det, "vlm_latency.csv")
                 import csv as _csv
                 rows_all: list = []
                 if os.path.exists(csv_path):
-                    with open(csv_path, newline="", encoding="utf-8") as f:
-                        for r in _csv.DictReader(f):
-                            st = (r.get("started_at") or "").strip()
-                            rows_all.append((r["call_type"], float(r["seconds"]),
-                                             bool(int(r["ok"])),
-                                             float(st) if st else None))
+                    # 读老档走同一份降级读法(三列/四列老 CSV 缺列补默认),
+                    # 别在这里手写第二份解析——2026-08-15 加列时就是靠它免改
+                    rows_all = read_latency_csv(csv_path)
                 rows_all.extend(delta)
                 with delivery_file(csv_path, newline="") as f:
                     w = _csv.writer(f)
-                    w.writerow(["call_type", "seconds", "ok", "started_at"])
-                    for t, s, ok, st in rows_all:
-                        w.writerow([t, s, int(ok), "" if st is None else st])
+                    w.writerow(LATENCY_CSV_HEADER)
+                    for t, s, ok, st, cid, att, fk in rows_all:
+                        w.writerow([t, s, int(ok), "" if st is None else st,
+                                    cid or "", att, fk or ""])
                 ds = files["passed"].setdefault("dataset", {})
                 ds["vlm_latency"] = latency_summary(rows_all)
         except Exception as e:  # noqa: BLE001  入账失败不影响重判结果
@@ -763,7 +763,9 @@ def _build_rerun(cfg: dict) -> Callable:
     p_task = cfg["checks"]["task_success"].get("params", {})
     vcfg = cfg["checks"]["task_success"]["vlm"]
     vlm = vlm_completion_from_config(cfg)
+    from ..adapters.vlm_client import timeout_for
     voter = make_endstate_voter(vcfg["endpoint"], vcfg["model"],
+                                timeout_s=timeout_for("endstate", vcfg),
                                 api_key_env=vcfg.get("api_key_env"))
 
     def rerun(input_dir: str, episode_id: str, new_label: str) -> dict:

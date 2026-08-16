@@ -109,18 +109,27 @@ def caption_episodes(rows: list[dict], captioner: Captioner,
     return list(_map_concurrent(_one, rows, max_concurrency))
 
 
-def make_vlm_captioner(endpoint: str, model: str, timeout_s: float = 600.0,
-                       api_key_env: str | None = None) -> Captioner:
-    """openai 兼容端点 → captioner(生产用;模型/端点来自 YAML)。"""
+def make_vlm_captioner(endpoint: str, model: str, timeout_s: float | None = None,
+                       api_key_env: str | None = None,
+                       max_in_flight: int = 8) -> Captioner:
+    """openai 兼容端点 → captioner(生产用;模型/端点来自 YAML)。
+
+    timeout_s=None 用分类型出厂默认(caption 60s);请求走 hedged_request
+    (超时对冲,语义见 vlm_client)。max_in_flight = 对冲闸门容量,应传
+    调用方的结构并发(caption_concurrency 或仲裁链的 episode 并发);
+    ⚠️ 不许低于结构并发,否则把原本并行的打标串行化。"""
+    import threading
+
     import requests
 
-    import time as _time
-
-    from ..adapters.vlm_client import (_frame_to_data_uri, auth_headers,
-                                       latency_record, strip_reasoning)
+    from ..adapters.vlm_client import (DEFAULT_TIMEOUTS_S, _frame_to_data_uri,
+                                       auth_headers, hedged_request,
+                                       strip_reasoning)
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
+    timeout_s = DEFAULT_TIMEOUTS_S["caption"] if timeout_s is None else timeout_s
+    gate = threading.Semaphore(max(1, max_in_flight))
 
     def captioner(groups: list) -> str:
         text = CAPTION_PROMPT.format(cam_sections=cam_sections_text(groups))
@@ -129,15 +138,11 @@ def make_vlm_captioner(endpoint: str, model: str, timeout_s: float = 600.0,
             for f in frames:
                 content.append({"type": "image_url",
                                 "image_url": {"url": _frame_to_data_uri(np.asarray(f))}})
-        _t = _time.time()
-        _ok = False
-        try:
-            r = requests.post(url, json={"model": model, "temperature": 0.0, "max_tokens": 512,
-                                         "messages": [{"role": "user", "content": content}]},
-                              headers=headers, timeout=timeout_s)
-            _ok = r.ok
-        finally:
-            latency_record("caption", _time.time() - _t, _ok, started_at=_t)
+        payload = {"model": model, "temperature": 0.0, "max_tokens": 512,
+                   "messages": [{"role": "user", "content": content}]}
+        r = hedged_request(
+            lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
+            tag="caption", timeout_s=timeout_s, gate=gate)
         r.raise_for_status()
         return strip_reasoning(r.json()["choices"][0]["message"]["content"])
 

@@ -387,11 +387,12 @@ def to_markdown(report: dict) -> str:
         lines.append("")
     lat = report.get("dataset", {}).get("vlm_latency")
     if lat:
-        # 延时档案(2026-07-28):客户端视角 = 网络+服务端排队+推理。四类调用体质
+        # 延时档案(2026-07-28):客户端视角 = 网络+服务端排队+推理。五类调用体质
         # 不同分开报;逐请求明细在 details/vlm_latency.csv。
-        _cn = {"probe": "渐变问询(VOC)", "endstate": "二值复核",
-               "caption": "画像 caption", "llm": "归纳/审计 LLM",
-               "arbitration": "取证仲裁"}
+        # 显示名/顺序/解释与界面共用 vlm_call_kinds 单一事实源(2026-08-15:此前
+        # 这里是第三套名字「渐变问询(VOC)」等中英夹杂内部说法,直接印给了客户)。
+        from ..vlm_call_kinds import (CALL_KIND_LABELS, CALL_KIND_NOTES,
+                                      CALL_KIND_ORDER)
         lines.append("## 模型调用延时(客户端视角,秒)")
         _tw = (report.get("runtime") or {}).get("total_wall_s")
         if _tw:
@@ -399,15 +400,32 @@ def to_markdown(report: dict) -> str:
             _h, _m = divmod(_m, 60)
             _txt = f"{_h} 小时 {_m} 分 {_s} 秒" if _h else f"{_m} 分 {_s} 秒"
             lines.append(f"\n**整次运行总墙钟:{_txt}**(启动 → 交付落盘可用,含全部阶段)\n")
-        lines.append("| 调用类型 | 次数 | 错误 | 均值 | P50 | P90 | P99 | 最大 |")
-        lines.append("|---|---|---|---|---|---|---|---|")
-        for tag, s in lat.items():
+        # 口径与界面统一(2026-08-15):发起次数 = 每一次真实发出的请求(含失败与
+        # 补发);没等到回应 = 补发也没救回来的逻辑调用(它只让判定少一票、更保守)。
+        # 老交付快照没有新口径字段 → 发起次数 = n+errors、没等到回应 = errors,
+        # 补发数如实标"-"(未记录),不硬编。
+        lines.append("| 调用类型 | 发起次数 | 补发 | 没等到回应 | 均值 | P50 | P90 | P99 | 最大 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
+        _order = [t for t in CALL_KIND_ORDER if t in lat]
+        _order += [t for t in lat if t not in CALL_KIND_ORDER]
+        for tag in _order:
+            s = lat[tag]
+            att = s.get("attempts", (s.get("n") or 0) + (s.get("errors") or 0))
+            resend = ("-" if "hedged" not in s
+                      else (s.get("hedged", 0) + s.get("retried", 0)))
+            unans = s.get("unanswered", s.get("errors") or 0)
+            name = CALL_KIND_LABELS.get(tag, tag)
             if s.get("n"):
-                lines.append(f"| {_cn.get(tag, tag)} | {s['n']} | {s['errors']} | "
+                lines.append(f"| {name} | {att} | {resend} | {unans} | "
                              f"{s['mean_s']} | {s['p50_s']} | {s['p90_s']} | "
                              f"{s['p99_s']} | {s['max_s']} |")
             else:
-                lines.append(f"| {_cn.get(tag, tag)} | 0 | {s['errors']} | - | - | - | - | - |")
+                lines.append(f"| {name} | {att} | {resend} | {unans} | - | - | - | - | - |")
+        lines.append("")
+        lines.append("这几类调用各是什么(按流程先后):")
+        for tag in CALL_KIND_ORDER:
+            if tag in lat:
+                lines.append(f"- **{CALL_KIND_LABELS[tag]}**:{CALL_KIND_NOTES[tag]}")
         lines.append("")
     results = report["episodes"].get("results")
     if results:

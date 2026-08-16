@@ -53,18 +53,32 @@ def build_arbitration_deps(cfg: dict) -> dict | None:
         # 实验版还有 majority/confident 口径,生产只落了拍板的 strict;
         # 配错要炸在这里(被调用方转成警告),不能静默换口径
         raise ValueError(f"arbitration.consensus 仅支持 strict,got {consensus!r}")
+    import threading as _threading
+
     from ..adapters.vlm_client import (make_evidence_judge, make_grounder,
-                                      make_intent_comparer, make_question_writer)
+                                      make_intent_comparer, make_question_writer,
+                                      timeout_for)
     from ..dataset_level.caption import make_vlm_captioner
 
     vcfg = cfg["checks"]["task_success"]["vlm"]
     ep, model, key = vcfg["endpoint"], vcfg["model"], vcfg.get("api_key_env")
+    # 仲裁链的对冲闸门:一条 episode 内链是串行的 ⇒ 结构并发 = episode 并发;
+    # 四个工厂共享同一个闸门(各建一闸会让补发在四类间叠加,在飞总数超结构并发)
+    _epc = int(cfg.get("pipeline", {}).get("vlm_episode_concurrency", 8))
+    arb_gate = _threading.Semaphore(max(1, _epc))
+    t_arb = timeout_for("arbitration", vcfg)
     return {
-        "question_writer": make_question_writer(ep, model, api_key_env=key),
-        "grounder": make_grounder(ep, model, api_key_env=key),
-        "judge": make_evidence_judge(ep, model, api_key_env=key),
-        "same_task": make_intent_comparer(ep, model, api_key_env=key),
-        "captioner": make_vlm_captioner(ep, model, api_key_env=key),
+        "question_writer": make_question_writer(ep, model, timeout_s=t_arb,
+                                                api_key_env=key, gate=arb_gate),
+        "grounder": make_grounder(ep, model, timeout_s=t_arb,
+                                  api_key_env=key, gate=arb_gate),
+        "judge": make_evidence_judge(ep, model, timeout_s=t_arb,
+                                     api_key_env=key, gate=arb_gate),
+        "same_task": make_intent_comparer(ep, model, timeout_s=t_arb,
+                                          api_key_env=key, gate=arb_gate),
+        "captioner": make_vlm_captioner(ep, model,
+                                        timeout_s=timeout_for("caption", vcfg),
+                                        api_key_env=key, max_in_flight=_epc),
         "caption_n_frames": int(cfg.get("skill_profile", {}).get("n_frames", 8)),
         "params": {
             "kill_min_lines": int(acfg.get("kill_min_lines", 2)),
@@ -541,10 +555,14 @@ def run_funnel(
         p_task = cfg["checks"]["task_success"].get("params", {})
         _pk_vlm = _progress_init("vlm", stats["survivors_for_vlm"], "VLM 任务成败判定")
         try:
-            from ..adapters.vlm_client import make_endstate_voter
+            from ..adapters.vlm_client import make_endstate_voter, timeout_for
             vcfg_t = cfg["checks"]["task_success"]["vlm"]
+            # 对冲闸门容量 = 结构并发(episode 并发 × 每机位双问 2),不许更低
+            _epc_es = int(cfg.get("pipeline", {}).get("vlm_episode_concurrency", 8))
             cam_voter = make_endstate_voter(vcfg_t["endpoint"], vcfg_t["model"],
-                                            api_key_env=vcfg_t.get("api_key_env"))
+                                            timeout_s=timeout_for("endstate", vcfg_t),
+                                            api_key_env=vcfg_t.get("api_key_env"),
+                                            max_in_flight=max(2, _epc_es * 2))
         except Exception as _e:  # noqa: BLE001
             cam_voter = None
             # 不静默:构造失败=配置问题(它不做网络IO,只拼URL/闭包)。若无此提示,

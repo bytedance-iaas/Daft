@@ -370,15 +370,18 @@ def run_pipeline(
     if vlm is not None:
         unlabeled = [r for r in rows if not (r.get("instruction") or "").strip()]
         if unlabeled:
+            from ..adapters.vlm_client import timeout_for
             from ..dataset_level.caption import caption_episodes, make_vlm_captioner
             vcfg0 = cfg["checks"]["task_success"]["vlm"]
-            capper = make_vlm_captioner(vcfg0["endpoint"], vcfg0["model"],
-                                        api_key_env=vcfg0.get("api_key_env"))
             # 2026-07-29 用户"卡死"报案破案:此处曾漏传并发与进度——默认串行 1 且
             # 全程无声,droid 类无标注大户(上百条)会静默爬行个把小时,肉眼与死锁
             # 无异(单 socket、低 CPU)。并发对齐 caption_concurrency,进度对齐漏斗。
             from .progress import _progress_init, _progress_tick
             _cc0 = int(cfg.get("skill_profile", {}).get("caption_concurrency", 8))
+            capper = make_vlm_captioner(vcfg0["endpoint"], vcfg0["model"],
+                                        timeout_s=timeout_for("caption", vcfg0),
+                                        api_key_env=vcfg0.get("api_key_env"),
+                                        max_in_flight=_cc0)
             _pk_cap0 = _progress_init("precap", len(unlabeled),
                                       f"无标注补 caption({len(unlabeled)} 条,并发 {_cc0})")
             for r, c in zip(unlabeled, caption_episodes(
@@ -555,9 +558,14 @@ def run_pipeline(
         from ..dataset_level.taxonomy import assign, induce_taxonomy
 
         vcfg = cfg["checks"]["task_success"]["vlm"]
+        from ..adapters.vlm_client import timeout_for as _timeout_for
+        _cap_conc = int(sp_cfg.get("caption_concurrency", 8))
         captioner = make_vlm_captioner(vcfg["endpoint"], vcfg["model"],
-                                       api_key_env=vcfg.get("api_key_env"))
+                                       timeout_s=_timeout_for("caption", vcfg),
+                                       api_key_env=vcfg.get("api_key_env"),
+                                       max_in_flight=_cap_conc)
         llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"],
+                               timeout_s=_timeout_for("llm", vcfg),
                                api_key_env=vcfg.get("api_key_env"))
 
         # 进度:本段是"1 个逐条长循环 + 4 个离散 LLM 步",故两种显示混用——
@@ -571,7 +579,6 @@ def run_pipeline(
         _G = "技能画像"
         _pk_cap = _progress_init("caption", len(keep_rows), f"{_G}·逐条 caption",
                                  quiet_before_s=3.0)
-        _cap_conc = int(sp_cfg.get("caption_concurrency", 8))
         phase_step(_G, 1, 5, f"逐条 caption({len(keep_rows)} 条,并发 {_cap_conc})…", _sp_t0)
         caps = caption_episodes(keep_rows, captioner,
                                 n_frames=sp_cfg.get("n_frames", 8),
@@ -887,16 +894,21 @@ def run_pipeline(
     # 2026-07-30:每行多记 started_at(发出时刻 epoch),汇总里因此多出 wall_s
     # ——按类的**墙钟**(首次发出 → 末次返回)。UI 的耗时对比图只认这个口径;
     # 次数×均值那种"总耗时"在并发下高估几十倍,已从界面彻底移除。
-    from ..adapters.vlm_client import latency_rows, latency_summary
+    from ..adapters.vlm_client import (LATENCY_CSV_HEADER, latency_rows,
+                                       latency_summary)
     _lat = latency_summary()
     if _lat:
         report["dataset"]["vlm_latency"] = _lat
         with delivery_file(os.path.join(det_dir, "vlm_latency.csv"), newline="") as f:
             _w = __import__("csv").writer(f)
-            _w.writerow(["call_type", "seconds", "ok", "started_at"])
-            for tag, dt, ok, st in latency_rows():
+            _w.writerow(LATENCY_CSV_HEADER)
+            # 2026-08-15 起多三列:call_id(同一次逻辑调用的两发同号)/ attempt
+            # (0=首发 1=补发)/ fail_kind(为什么没成);老读方按 DictReader 取列,
+            # 缺列降级已有测试钉住
+            for tag, dt, ok, st, cid, att, fk in latency_rows():
                 _w.writerow([tag, round(dt, 3), int(ok),
-                             "" if st is None else round(st, 3)])
+                             "" if st is None else round(st, 3),
+                             cid or "", att, fk or ""])
 
     _ev_mode = str(cfg.get("pipeline", {}).get("evidence_frames", "flagged"))
     if _ev_mode != "off" and videos_of:

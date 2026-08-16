@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import base64
 import os
+import queue as _queue
 import re
 import threading
 import time as _time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -33,18 +35,25 @@ import numpy as np
 #   代价只是系统时钟被 NTP 拨动时可能有秒级抖动(相对分钟级的墙钟可以忽略)。
 _HTTP_STATS = {"n": 0, "secs": 0.0}
 _HTTP_LOCK = threading.Lock()          # 模块级,不进 UDF 闭包 → 不参与 cloudpickle
-_LAT_ROWS: list = []                   # [(tag, seconds, ok, started_at)],latency_reset 清零
+#: 每行 = (tag, seconds, ok, started_at, call_id, attempt, fail_kind),latency_reset 清零。
+#: 2026-08-15 从 4 元组扩到 7 元组(对冲补发上线):call_id 把同一次**逻辑调用**的
+#: 两发钩在一起(否则明细回答不了"补发有没有救回来");attempt 0=首发 1=补发;
+#: fail_kind 区分"为什么没成"(timeout/http_error/connect_error,成功为空串)。
+_LAT_ROWS: list = []
 
 
 def latency_record(tag: str, dt: float, ok: bool = True,
-                   started_at: float | None = None) -> None:
-    """记一次调用。started_at = 请求发出时刻(time.time() epoch 秒)。
+                   started_at: float | None = None, *,
+                   call_id: str | None = None, attempt: int = 0,
+                   fail_kind: str = "") -> None:
+    """记一次真实发出的 HTTP 请求。started_at = 请求发出时刻(time.time() epoch 秒)。
 
-    传 None 表示"没记时刻"(老代码路径/合成数据)——该桶就没有墙钟,
+    started_at 传 None 表示"没记时刻"(老代码路径/合成数据)——该桶就没有墙钟,
     上层如实降级,**绝不**拿次数×均值顶替。
+    call_id 传 None 表示"没有逻辑调用分组"(老代码路径)——汇总时该行自成一组。
     """
     with _HTTP_LOCK:
-        _LAT_ROWS.append((tag, dt, ok, started_at))
+        _LAT_ROWS.append((tag, dt, ok, started_at, call_id, int(attempt), fail_kind))
         _HTTP_STATS["n"] += 1
         _HTTP_STATS["secs"] += dt
 
@@ -75,6 +84,13 @@ def latency_summary(rows: list | None = None) -> dict:
 
     rows=None 取当前进程累计的明细;传 rows 可对 CSV 读回的历史明细复算。
 
+    2026-08-15 增补对冲口径(界面/报告说人话的原料):
+      attempts    = 发起次数(含失败与补发的每一次真实 HTTP 请求);
+      hedged      = 超时线后补发的逻辑调用数;retried = 快速报错后串行重发的;
+      unanswered  = 两发都没拿到结果的逻辑调用数(老数据没有分组 → 即 errors);
+      unanswered_timeout = 其中失败原因全是超时的(界面据此选「没等到回应」措辞)。
+    n/errors/分位数的口径**不变**(n 只数成功请求,分位数只算成功请求)。
+
     wall_s(墙钟)= 该类调用**忙碌区间的并集长度**:把每次调用的 [发出, 返回]
     区间合并去重后求总长。⚠️ 不能用"首发→末返"的跨度——同类调用分多个阶段跑时
     (caption 在开头补标、中段画像各一波),中间隔着别的阶段,空档会把墙钟灌水
@@ -84,12 +100,37 @@ def latency_summary(rows: list | None = None) -> dict:
     该桶一条 started_at 都没有(三列老 CSV / 老代码)→ 不给 wall_s,上层降级。
     """
     rows = latency_rows() if rows is None else list(rows)
+    # 兼容 4 元组老行(外部代码/历史 CSV 读出):补齐 call_id/attempt/fail_kind 默认值
+    rows = [tuple(r) + (None, 0, "")[len(r) - 4:] if len(r) < 7 else tuple(r)
+            for r in rows]
     out = {}
     for tag in sorted({r[0] for r in rows}):
         mine = [r for r in rows if r[0] == tag]
         oks = sorted(r[1] for r in mine if r[2])
         errs = sum(1 for r in mine if not r[2])
-        entry = {"n": len(oks), "errors": errs}
+        entry = {"n": len(oks), "errors": errs, "attempts": len(mine)}
+        # ── 逻辑调用分组(2026-08-15 对冲补发):同 call_id 的两发算一次逻辑调用;
+        # 没有 call_id 的行(老 CSV/散记)每行自成一组 —— 此时 unanswered==errors,
+        # 老交付的汇总数字因此一个不变。
+        groups: dict = {}
+        for i, r in enumerate(mine):
+            groups.setdefault(r[4] if r[4] is not None else f"_row{i}", []).append(r)
+        hedged = retried = unanswered = unanswered_timeout = 0
+        for g in groups.values():
+            first = min(g, key=lambda r: r[5])
+            if any(r[5] > 0 for r in g):
+                # 首发超时线上还挂着(或最终成功)= 对冲补发;首发快速报错 = 串行重发
+                if first[2] or first[6] == "timeout":
+                    hedged += 1
+                else:
+                    retried += 1
+            if not any(r[2] for r in g):
+                unanswered += 1
+                if g and all(r[6] == "timeout" for r in g):
+                    unanswered_timeout += 1
+        entry.update({"hedged": hedged, "retried": retried,
+                      "unanswered": unanswered,
+                      "unanswered_timeout": unanswered_timeout})
         if oks:
             entry.update({
                 "mean_s": round(sum(oks) / len(oks), 2),
@@ -116,17 +157,28 @@ def latency_summary(rows: list | None = None) -> dict:
 def read_latency_csv(path: str) -> list:
     """details/vlm_latency.csv → rows(供事后复算墙钟/分位数)。
 
-    兼容 2026-07-30 之前的**三列**老 CSV(call_type,seconds,ok):没有
-    started_at 列 → 该行时刻为 None → 复算出来的档案没有墙钟。
+    兼容两代老 CSV,缺列按默认值降级(老交付的剖析页照常算、数字不变):
+    - 2026-07-30 之前的**三列**(call_type,seconds,ok):无 started_at → 无墙钟;
+    - 2026-08-15 之前的**四列**:无 call_id/attempt/fail_kind → 每行自成一次
+      逻辑调用、全按首发、失败原因未知(界面措辞据此降级,不硬编原因)。
     """
     import csv as _csv
     rows = []
     with open(path, newline="", encoding="utf-8") as f:
         for r in _csv.DictReader(f):
             st = (r.get("started_at") or "").strip()
+            cid = (r.get("call_id") or "").strip()
+            att = (r.get("attempt") or "").strip()
             rows.append((r["call_type"], float(r["seconds"]),
-                         bool(int(r["ok"])), float(st) if st else None))
+                         bool(int(r["ok"])), float(st) if st else None,
+                         cid or None, int(att) if att else 0,
+                         (r.get("fail_kind") or "").strip()))
     return rows
+
+
+#: vlm_latency.csv 的列头(run.py 与 rejudge.py 落盘共用;前四列是老契约不动)
+LATENCY_CSV_HEADER = ["call_type", "seconds", "ok", "started_at",
+                      "call_id", "attempt", "fail_kind"]
 
 
 def http_stats() -> tuple[int, float]:
@@ -142,6 +194,143 @@ def http_stats() -> tuple[int, float]:
 #    2026-07-22 端到端实测均延迟 ~21s(且到总并发 64 仍平坦)。凡拿裸 HTTP 小请求外推
 #    真实吞吐,都会高估拐点——定并发必须用真实 payload 量(教训见 progress 2026-07-22)。
 DEFAULT_MAX_CONCURRENCY = 8
+
+# ── 分类型超时 + 对冲补发(2026-08-15,droid-200 实测定案)──────────────────
+# 旧默认 600s(llm 1800s)的代价:6 次失败全是超时、其中 5 次恰好耗时 600.1s
+# ——卡在超时线上白等;打分那步本可 18.1 分钟干完,被拖到 23.3 分钟。而各类正常
+# 调用 p95 都在 60s 内(probe 51.7 / endstate 47.0 / arbitration 57.5),llm 长
+# 输入体质特殊(p99 139.9s)单独给 120s。慢调用不集中在某一批(按分钟稳定在
+# 1.6%-7%)⇒ 是服务端排队的随机抖动,补发大概率落进快的那堆,这是对冲的立论。
+DEFAULT_TIMEOUTS_S = {"probe": 60.0, "endstate": 60.0, "arbitration": 60.0,
+                      "caption": 60.0, "llm": 120.0}
+
+
+def timeout_for(kind: str, vlm_cfg: dict | None) -> float:
+    """分类型超时:站点配置 checks.task_success.vlm.timeouts_s.<kind> 可覆盖
+    (走既有 default.yaml 深合并那条路,不新造读配置机制),没配用出厂默认。"""
+    t = ((vlm_cfg or {}).get("timeouts_s") or {}).get(kind)
+    return float(t) if t is not None else DEFAULT_TIMEOUTS_S[kind]
+
+
+def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
+    """带对冲补发的一次**逻辑调用**。send(hard_timeout_s) -> requests.Response。
+
+    唯一不变量(2026-08-15 用户拍板,好解释也好测):**从首发发出算起,整次
+    逻辑调用最多 2×timeout_s 内返回或作废**。时间线:
+    - 首发硬超时 = 2T;到超时线 T 它还挂着 → 补发一次(硬超时 = 剩余预算 ≤ T),
+      谁先拿到成功响应用谁,不等慢的那个;
+    - 首发在超时线前**快速报错**:5xx / 连接类网络错 → 立即**串行**重发一次
+      (这不是对冲,是抢救该拿的那票;仍受闸门与 2T 总预算约束);
+      4xx 一律不重发(400/401/403/404/429 都是我们自己的问题,429 尤其
+      不许重发 —— 服务端明说"你太快了",再发是火上浇油);
+    - 共至多两发;两发都没成 → 原样抛异常/交回错误响应,调用方既有 except
+      分支照旧走"少一票"(判定逻辑一个字不动:救人一签、杀人双签不变)。
+
+    ⚠️ 如实说明:落败那一发**取消不了**(HTTP 没有取消语义,服务端照样在算),
+    本函数只是不再等它;其线程最晚在 2T 预算线上退出,期间继续持有闸门许可
+    ——补发多的那一小段时间里有效并发容量会下降,这是**故意的**(在飞请求
+    总数绝不翻倍),不是 bug。
+
+    gate = threading.Semaphore,**首发和补发都要拿许可**(许可持有 = 该 HTTP
+    请求真在飞)。容量由工厂按自身结构并发传入;⚠️ 容量不许低于该类的结构并发,
+    否则等于把原本并行的调用串行化 —— 最容易悄悄拖慢整批的坑。
+
+    两发跑在**守护线程**上(2026-08-15 主会话实测教训):此前用 per-call
+    ThreadPoolExecutor,其工作线程非守护,CPython 在解释器退出时会把它们全部
+    join —— 跑批全部干完、报告落盘后,进程还要陪落败那发挂最多 2T(120 秒)才
+    退出,任务台只认退出码文件,界面就多显示两分钟「运行中」(正是本项目明令
+    禁止的"静默慢步骤")。守护线程在解释器退出时直接丢弃,对已经放弃的那一发
+    这正是要的语义(结果本来就不要了);顺带省掉每次逻辑调用建一个线程池的
+    开销(4000 次调用 = 4000 个池)。落败发的生命周期从此只由自身硬超时封顶,
+    不再牵连进程生命周期。
+    """
+    import requests as _rq
+
+    call_id = uuid.uuid4().hex[:12]     # 不用进程内自增:rejudge 增量并档会跨进程撞号
+    deadline = _time.time() + 2.0 * timeout_s
+    settled = threading.Event()         # 赢家已定 → 还没发出去的补发不再发(纯浪费)
+    results: _queue.Queue = _queue.Queue()   # 每发恰好投一条 (attempt_no, "resp"/"exc", 载荷)
+
+    def _attempt(attempt_no: int):
+        budget = deadline - _time.time()
+        if budget <= 0:
+            raise _rq.exceptions.Timeout(f"{tag}: 2×timeout 总预算已耗尽,不再发起")
+        if gate is not None and not gate.acquire(timeout=budget):
+            raise _rq.exceptions.Timeout(f"{tag}: 等待并发闸门许可超出 2×timeout 总预算")
+        try:
+            if settled.is_set():
+                return None
+            hard = deadline - _time.time()
+            if hard <= 0:
+                raise _rq.exceptions.Timeout(f"{tag}: 2×timeout 总预算已耗尽,不再发起")
+            t1 = _time.time()
+            ok, kind = False, "connect_error"
+            try:
+                resp = send(hard)
+                ok = bool(resp.ok)
+                kind = "" if ok else "http_error"
+                return resp
+            except Exception as e:
+                if isinstance(e, _rq.exceptions.Timeout):
+                    kind = "timeout"
+                raise
+            finally:
+                latency_record(tag, _time.time() - t1, ok, started_at=t1,
+                               call_id=call_id, attempt=attempt_no, fail_kind=kind)
+        finally:
+            if gate is not None:
+                gate.release()
+
+    def _spawn(attempt_no: int) -> None:
+        def _run():
+            try:
+                results.put((attempt_no, "resp", _attempt(attempt_no)))
+            except Exception as e:  # noqa: BLE001
+                results.put((attempt_no, "exc", e))
+        threading.Thread(target=_run, daemon=True,
+                         name=f"vlm-hedge-{tag}-{attempt_no}").start()
+
+    try:
+        _spawn(0)
+        try:
+            _no, kind, payload = results.get(timeout=timeout_s)
+        except _queue.Empty:
+            payload = None              # 超时线上还挂着 → 对冲
+        else:
+            if kind == "exc":
+                if isinstance(payload, _rq.exceptions.Timeout):
+                    raise payload       # 读超时=预算已烧到头,没有重发空间
+                return _attempt(1)      # 快速网络错(连接拒绝/复位等)→ 立即串行重发
+            if payload.ok or payload.status_code < 500:
+                return payload          # 成功,或 4xx(429 在内):原样交回,不重发
+            resp0 = payload
+            try:
+                return _attempt(1)      # 5xx → 立即串行重发一次
+            except Exception:  # noqa: BLE001
+                return resp0            # 重发也没成:保留服务端第一句原话给调用方
+        _spawn(1)
+        best_resp, last_exc = None, None
+        for _ in range(2):              # 两发各投恰一条结果
+            try:                        # 双保险超时:两发本就在 deadline 前自我了断
+                _no, kind, payload = results.get(
+                    timeout=max(0.1, deadline - _time.time() + 5.0))
+            except _queue.Empty:
+                break
+            if kind == "exc":
+                last_exc = payload
+                continue
+            if payload is None:         # 补发被跳过(赢家已定)
+                continue
+            if payload.ok:
+                return payload
+            best_resp = payload
+        if best_resp is not None:
+            return best_resp            # 两发都是错误响应:交回,调用方 raise_for_status 走原路
+        if last_exc is not None:
+            raise last_exc
+        raise _rq.exceptions.Timeout(f"{tag}: 两发均未在 2×timeout 预算内返回")
+    finally:
+        settled.set()                   # 守护线程自会在 2T 预算线上退出,不 join 不等
 
 
 def _map_concurrent(fn, items: list, max_concurrency: int) -> list:
@@ -334,7 +523,7 @@ def make_vlm_completion(
     model: str,
     *,
     context: tuple[list[np.ndarray], list[float]] | None = None,  # v4:上下文帧+完成度标注(0-1)
-    timeout_s: float = 600.0,
+    timeout_s: float = DEFAULT_TIMEOUTS_S["probe"],
     temperature: float = 0.0,
     max_tokens: int = 2048,       # 推理模型(Cosmos-Reason)的 CoT 需要余量
     api_key_env: str | None = None,   # 托管端点(方舟 MaaS)鉴权;自托管 vLLM 留空
@@ -345,22 +534,21 @@ def make_vlm_completion(
     context 给出 → v4 few-shot 协议(单会话多图,忠实 openGVL);否则 → v3 锚定单查询。
     上下文在构造期绑定 → 注入接口不变,core/funnel 零改动。
     endpoint: openai 兼容根路径(如 http://localhost:8000/v1)。
+    请求走 hedged_request(超时对冲,语义见其 docstring);闸门容量 = max_concurrency
+    (与 _map_concurrent 的线程数同源,首发永不等闸,补发不突破在飞上限)。
     """
     import requests
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
+    gate = threading.Semaphore(max(1, max_concurrency))
 
     def _post(content: list) -> str:
         payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
                    "messages": [{"role": "user", "content": content}]}
-        _t = _time.time()
-        _ok = False
-        try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
-            _ok = resp.ok
-        finally:
-            latency_record("probe", _time.time() - _t, _ok, started_at=_t)
+        resp = hedged_request(
+            lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
+            tag="probe", timeout_s=timeout_s, gate=gate)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
@@ -449,7 +637,7 @@ def make_multiview_completion(
     endpoint: str,
     model: str,
     *,
-    timeout_s: float = 600.0,
+    timeout_s: float = DEFAULT_TIMEOUTS_S["probe"],
     temperature: float = 0.0,
     max_tokens: int = 2048,
     api_key_env: str | None = None,
@@ -460,22 +648,20 @@ def make_multiview_completion(
     注入接口不变:vlm(reference, shuffled_frames, instruction) -> list[float],
     只是 reference 与 shuffled_frames 的元素都是 [(name, img), ...]。
     单相机数据集 = 单元素列表,自动退化为"单视角带标签"提问,零分支。
+    请求走 hedged_request(超时对冲);闸门容量 = max_concurrency(同上一工厂)。
     """
     import requests
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
+    gate = threading.Semaphore(max(1, max_concurrency))
 
     def _post(content):
         payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
                    "messages": [{"role": "user", "content": content}]}
-        _t = _time.time()
-        _ok = False
-        try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
-            _ok = resp.ok
-        finally:
-            latency_record("probe", _time.time() - _t, _ok, started_at=_t)
+        resp = hedged_request(
+            lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
+            tag="probe", timeout_s=timeout_s, gate=gate)
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
@@ -547,14 +733,18 @@ def parse_vote_word(text: str) -> str:
     return "?"
 
 
-def make_endstate_voter(endpoint: str, model: str, timeout_s: float = 600.0,
-                        api_key_env: str | None = None):
+def make_endstate_voter(endpoint: str, model: str,
+                        timeout_s: float = DEFAULT_TIMEOUTS_S["endstate"],
+                        api_key_env: str | None = None,
+                        max_in_flight: int = 16):
     """逐机位复核投票器(v7.2,取代旧 make_endstate_judge 的多机位混问——旧法
     24 张图一锅烩一个答案,好机位的清晰证据被烂机位稀释,droid ep19 实锤)。
 
     voter(start_frames, end_frames, cam_label, instruction) ->
         'yes' / 'no' / 'unclear' / 'contradictory' / 'unavail'
     单机位一票;票的合成(cam_vote)与汇总(tally)在 core,本函数只管问与解析。
+    max_in_flight = 对冲闸门容量,应传结构并发(vlm_episode_concurrency × 双问 2);
+    ⚠️ 不许低于结构并发,否则把原本并行的复核串行化。
     """
     import requests
 
@@ -562,21 +752,17 @@ def make_endstate_voter(endpoint: str, model: str, timeout_s: float = 600.0,
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
+    gate = threading.Semaphore(max(1, max_in_flight))
 
     def _ask(text, imgs):
         content = [{"type": "text", "text": text}] + [
             {"type": "image_url", "image_url": {"url": _frame_to_data_uri(f)}}
             for f in imgs]
-        _t = _time.time()
-        _ok = False
-        try:
-            r = requests.post(url, json={"model": model, "temperature": 0.0,
-                                         "max_tokens": 2048,
-                                         "messages": [{"role": "user", "content": content}]},
-                              headers=headers, timeout=timeout_s)
-            _ok = r.ok
-        finally:
-            latency_record("endstate", _time.time() - _t, _ok, started_at=_t)
+        payload = {"model": model, "temperature": 0.0, "max_tokens": 2048,
+                   "messages": [{"role": "user", "content": content}]}
+        r = hedged_request(
+            lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
+            tag="endstate", timeout_s=timeout_s, gate=gate)
         r.raise_for_status()
         return parse_vote_word(r.json()["choices"][0]["message"]["content"])
 
@@ -605,6 +791,7 @@ def vlm_completion_from_config(cfg: dict):
         raise ValueError("配置 checks.task_success.vlm.endpoint 缺失")
     return make_multiview_completion(vlm["endpoint"], vlm["model"],
                                      api_key_env=vlm.get("api_key_env"),
+                                     timeout_s=timeout_for("probe", vlm),
                                      max_concurrency=int(vlm.get("max_concurrency",
                                                                  DEFAULT_MAX_CONCURRENCY)))
 
@@ -716,40 +903,42 @@ def parse_evidence_verdict(text: str) -> str:
 
 
 def _make_arb_post(endpoint: str, model: str, timeout_s: float,
-                   api_key_env: str | None, max_tokens: int):
-    """仲裁链共用的一次调用闭包(文本+图,延时记入 arbitration 桶)。"""
+                   api_key_env: str | None, max_tokens: int, gate=None):
+    """仲裁链共用的一次调用闭包(文本+图,延时记入 arbitration 桶)。
+
+    gate:仲裁链四个工厂共享**同一个**对冲闸门(build_arbitration_deps 建一次
+    传四份)——链内每条 episode 是串行的,结构并发 = episode 并发;若四厂各建
+    一闸,补发能在四类间叠加,把在飞总数推到结构并发之上。不传时自建(独立
+    使用/测试场景)。"""
     import requests
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
+    gate = gate if gate is not None else threading.Semaphore(DEFAULT_MAX_CONCURRENCY)
 
     def _post(text: str, frames: list = ()) -> str:
         content = [{"type": "text", "text": text}] + [
             {"type": "image_url", "image_url": {"url": _frame_to_data_uri(f)}}
             for f in frames]
-        _t = _time.time()
-        _ok = False
-        try:
-            r = requests.post(url, json={"model": model, "temperature": 0.0,
-                                         "max_tokens": max_tokens,
-                                         "messages": [{"role": "user",
-                                                       "content": content}]},
-                              headers=headers, timeout=timeout_s)
-            _ok = r.ok
-        finally:
-            latency_record("arbitration", _time.time() - _t, _ok, started_at=_t)
+        payload = {"model": model, "temperature": 0.0, "max_tokens": max_tokens,
+                   "messages": [{"role": "user", "content": content}]}
+        r = hedged_request(
+            lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
+            tag="arbitration", timeout_s=timeout_s, gate=gate)
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]
 
     return _post
 
 
-def make_question_writer(endpoint: str, model: str, timeout_s: float = 600.0,
-                         api_key_env: str | None = None):
+def make_question_writer(endpoint: str, model: str,
+                         timeout_s: float = DEFAULT_TIMEOUTS_S["arbitration"],
+                         api_key_env: str | None = None, gate=None):
     """问题生成器工厂:writer(intent) -> 校验过的 spec dict(缺关键键即抛,
     调用方把整条意图链转弃权——半张检查单没法取证,不硬凑)。"""
 
-    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=400)
+    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=400,
+                           gate=gate)
 
     def writer(intent: str) -> dict:
         import json as _json
@@ -765,11 +954,13 @@ def make_question_writer(endpoint: str, model: str, timeout_s: float = 600.0,
     return writer
 
 
-def make_grounder(endpoint: str, model: str, timeout_s: float = 600.0,
-                  api_key_env: str | None = None):
+def make_grounder(endpoint: str, model: str,
+                  timeout_s: float = DEFAULT_TIMEOUTS_S["arbitration"],
+                  api_key_env: str | None = None, gate=None):
     """定位器工厂:grounder(img, target, visual, obj) -> 像素框列表(空=不可见)。"""
 
-    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=400)
+    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=400,
+                           gate=gate)
 
     def grounder(img, target: str, visual: str, obj: str) -> list:
         arr = np.asarray(img)
@@ -781,15 +972,17 @@ def make_grounder(endpoint: str, model: str, timeout_s: float = 600.0,
     return grounder
 
 
-def make_evidence_judge(endpoint: str, model: str, timeout_s: float = 600.0,
-                        api_key_env: str | None = None):
+def make_evidence_judge(endpoint: str, model: str,
+                        timeout_s: float = DEFAULT_TIMEOUTS_S["arbitration"],
+                        api_key_env: str | None = None, gate=None):
     """判官工厂:judge(imgs, *, target, question, scene) -> 'yes'/'no'/'unclear'。
 
     一次调用一票;三票多数在 core(_arb_line_verdict)。scene 是语义化场景名
     (exterior_final / exterior_post_grasp / wrist_grasp / wrist_release),
     对应的开场白措辞只在本模块。"""
 
-    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=1024)
+    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=1024,
+                           gate=gate)
 
     def judge(imgs: list, *, target: str, question: str, scene: str) -> str:
         intro = _ARB_SCENE_INTRO.get(scene, "")
@@ -800,14 +993,16 @@ def make_evidence_judge(endpoint: str, model: str, timeout_s: float = 600.0,
     return judge
 
 
-def make_intent_comparer(endpoint: str, model: str, timeout_s: float = 600.0,
-                         api_key_env: str | None = None):
+def make_intent_comparer(endpoint: str, model: str,
+                         timeout_s: float = DEFAULT_TIMEOUTS_S["arbitration"],
+                         api_key_env: str | None = None, gate=None):
     """意图语义比对工厂:same(a, b) -> True=同一任务(意图打架护栏用)。
 
     既非 SAME 也非 DIFFERENT 的回答直接抛 —— 调用方按打架从严处理,
     比"当作相同"少一道护栏安全。"""
 
-    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=8)
+    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=8,
+                           gate=gate)
 
     def same(a: str, b: str) -> bool:
         ans = strip_reasoning(_post(ARB_SAME_INTENT_PROMPT.format(a=a, b=b))).upper()
@@ -820,25 +1015,26 @@ def make_intent_comparer(endpoint: str, model: str, timeout_s: float = 600.0,
     return same
 
 
-def make_llm_ask(endpoint: str, model: str, timeout_s: float = 1800.0,
+def make_llm_ask(endpoint: str, model: str,
+                 timeout_s: float = DEFAULT_TIMEOUTS_S["llm"],
                  max_tokens: int = 8192, api_key_env: str | None = None):
-    """纯文本 LLM 调用工厂(M7 taxonomy/audit 用;同一端点同一模型,配置一处)。"""
+    """纯文本 LLM 调用工厂(M7 taxonomy/audit 用;同一端点同一模型,配置一处)。
+
+    闸门容量固定 2(2026-08-15 用户批准):归纳步是串行大调用,结构并发 = 1,
+    闸门给 1 的话首发攥着唯一许可、补发永远等不到 —— 对冲对最需要它的这一类
+    (llm p99 139.9s)直接失效。2 = "1 首发 + 1 补发",绝对量极小不构成压力。"""
     import requests
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
+    gate = threading.Semaphore(2)
 
     def llm_ask(prompt_text: str) -> str:
-        _t = _time.time()
-        _ok = False
-        try:
-            r = requests.post(url, json={"model": model, "temperature": 0.0,
-                                         "max_tokens": max_tokens,
-                                         "messages": [{"role": "user", "content": prompt_text}]},
-                              headers=headers, timeout=timeout_s)
-            _ok = r.ok
-        finally:
-            latency_record("llm", _time.time() - _t, _ok, started_at=_t)
+        payload = {"model": model, "temperature": 0.0, "max_tokens": max_tokens,
+                   "messages": [{"role": "user", "content": prompt_text}]}
+        r = hedged_request(
+            lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
+            tag="llm", timeout_s=timeout_s, gate=gate)
         r.raise_for_status()
         return strip_reasoning(r.json()["choices"][0]["message"]["content"])
 
