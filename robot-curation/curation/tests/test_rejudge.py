@@ -665,6 +665,218 @@ def test_appeal_restores_row_into_delivered_dataset(tmp_path):
     assert len(eps) == 4, "LeRobot 包没跟着把捞回的条目导出来"
 
 
+# ───────── 技能画像同步(2026-08-16 标注优先方针③)─────────
+#
+# 防的事故(droid-200-new):26 条被错 caption 归错格子,人工裁决完(维持原标注/
+# 采纳改标/弃用)画像却纹丝不动——技能分布里继续数着已被剔除的数据、错格子的
+# 条目继续错,报告在骗人。这组测试钉死:三种裁决 + 判失败/捞回对画像的动作,
+# 以及**绝不重跑 caption / 绝不重新归纳体系**(纯文本对既有体系再分配)。
+
+_WIPE = "wipe the table with the yellow towel"
+_FOLD = "fold the yellow towel"
+_CUP = "pick up the cup"
+
+
+def _profile_fixture():
+    def sub(eps, caps):
+        return {"count": len(eps), "pct": 33.33, "episodes": eps,
+                "captions_top": caps, "raw_labels_top": []}
+    return {"n_episodes": 3, "n_families": 3,
+            "families": {
+                "wiping": {"count": 1, "pct": 33.33, "criterion": "cyclic wipe",
+                           "subskills": {"wipe-surface": sub(["ep000001"], [_WIPE])}},
+                "folding": {"count": 1, "pct": 33.33,
+                            "subskills": {"fold-cloth": sub(["ep000002"], [_FOLD])}},
+                "grasping": {"count": 1, "pct": 33.33,
+                             "subskills": {"pick-up": sub(["ep000003"], [_CUP])}}},
+            "undersampled": [], "guideline": "G"}
+
+
+def _write_profile_delivery(tmp_path):
+    """带两级画像的交付:ep000002 有标注但被错 caption 归进 folding(老口径)。"""
+    det = tmp_path / "details"
+    det.mkdir(parents=True, exist_ok=True)
+    passed = {"skills": _profile_fixture(), "episodes": {
+        "ep000001": {"判决": "通过", "综合软分": 0.9,
+                     "checks": {"任务成败判定": {"结果": "pass"}}},
+        "ep000002": {"判决": "通过", "综合软分": 0.8,
+                     "checks": {"任务成败判定": {"结果": "pass"}}},
+        "ep000003": {"判决": "通过", "综合软分": 0.7,
+                     "checks": {"任务成败判定": {"结果": "pass"}}}}}
+    review = {"待人工裁决总数": 0, "episodes": {},
+              "标注-画面分歧复核队列": [
+                  {"id": "ep000002", "label": _WIPE, "caption": _FOLD}]}
+    reject = {"被拒总数": 1, "episodes": {
+        "ep000009": {"判决": "拒绝", "原因": "未通过「任务成败判定」:没擦",
+                     "综合软分": 0.5,
+                     "checks": {"任务成败判定": {"结果": "拒绝"}}}}}
+    for name, data in [("passed", passed), ("review", review), ("reject", reject)]:
+        (tmp_path / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False),
+                                               encoding="utf-8")
+    with open(det / "skill_assignment.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["episode_id", "family", "subskill", "caption"])   # 老四列交付
+        w.writerows([["ep000001", "wiping", "wipe-surface", _WIPE],
+                     ["ep000002", "folding", "fold-cloth", _FOLD],
+                     ["ep000003", "grasping", "pick-up", _CUP]])
+    (det / "captions.json").write_text(json.dumps(
+        {"ep000001": _WIPE, "ep000002": _FOLD, "ep000003": _CUP}), encoding="utf-8")
+    (det / "task_details.json").write_text(json.dumps({"episodes": {
+        "ep000002": {"episode_id": "ep000002", "instruction": _WIPE,
+                     "instruction_source": "原始标注"},
+        "ep000009": {"episode_id": "ep000009", "instruction": _WIPE,
+                     "instruction_source": "原始标注"},
+    }}, ensure_ascii=False), encoding="utf-8")
+    return tmp_path
+
+
+def _csv_by_ep(tmp_path):
+    with open(tmp_path / "details" / "skill_assignment.csv", newline="",
+              encoding="utf-8") as f:
+        return {r["episode_id"]: r for r in csv.DictReader(f)}
+
+
+def _profile_episodes(tmp_path):
+    prof = json.loads((tmp_path / "passed.json").read_text(encoding="utf-8"))["skills"]
+    return {e: (fn, sn) for fn, fam in prof["families"].items()
+            for sn, s in fam["subskills"].items() for e in s["episodes"]}
+
+
+def test_rejudge_keep_decision_regroups_by_original_label_idempotently(tmp_path,
+                                                                       monkeypatch):
+    """维持原标注 → 按**原始标注**重归类(把老交付错 caption 归的搬回正确格子);
+    幂等:再跑一次结果逐字节相同;全程不重跑 caption、不重新归纳体系。"""
+    import curation.dataset_level.caption as C
+    import curation.dataset_level.taxonomy as T
+
+    def boom(*a, **k):
+        raise AssertionError("rejudge 画像同步不许重跑 caption / 重新归纳体系")
+
+    monkeypatch.setattr(T, "induce_taxonomy", boom)
+    monkeypatch.setattr(T, "refine_taxonomy", boom)
+    monkeypatch.setattr(C, "caption_episodes", boom)
+    d = _write_profile_delivery(tmp_path)
+    (d / "details" / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "ep000002,维持原标注,,,2026-08-16 10:00:00\n", encoding="utf-8")
+    s = run_rejudge(str(d), "/unused", {})
+    assert "ep000002" in s["profile_sync"]["reassigned"]
+    assert _profile_episodes(d)["ep000002"] == ("wiping", "wipe-surface")
+    by = _csv_by_ep(d)
+    assert by["ep000002"]["family"] == "wiping"
+    assert by["ep000002"]["grouping_text"] == _WIPE
+    assert by["ep000002"]["grouping_text_source"] == "原始标注"
+    assert by["ep000002"]["caption"] == _FOLD          # caption 照旧陈列,不被抹掉
+    # 幂等:同一裁决再消化一遍,画像与 CSV 逐字节不变
+    csv1 = (d / "details" / "skill_assignment.csv").read_text(encoding="utf-8")
+    skills1 = json.loads((d / "passed.json").read_text(encoding="utf-8"))["skills"]
+    run_rejudge(str(d), "/unused", {})
+    assert (d / "details" / "skill_assignment.csv").read_text(encoding="utf-8") == csv1
+    assert json.loads((d / "passed.json").read_text(
+        encoding="utf-8"))["skills"] == skills1
+
+
+def test_rejudge_adopt_relabel_regroups_with_new_label(tmp_path):
+    """采纳改标(重判通过)→ 用**新标注**重归类;成败线判定照旧由重判决定。"""
+    d = _write_profile_delivery(tmp_path)
+    (d / "details" / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        f"ep000002,采纳建议改标,{_WIPE},,2026-08-16 10:00:00\n", encoding="utf-8")
+    s = run_rejudge(str(d), "/unused", {},
+                    rerun_fn=lambda i, e, nl: {"passed": True, "verdict": "success",
+                                               "detail": "{}"})
+    assert s["adopted_pass"] == ["ep000002"]
+    assert _profile_episodes(d)["ep000002"] == ("wiping", "wipe-surface")
+    by = _csv_by_ep(d)
+    assert by["ep000002"]["grouping_text"] == _WIPE
+    assert by["ep000002"]["grouping_text_source"] == "原始标注"
+
+
+def test_rejudge_adopt_relabel_rejudged_fail_removed_from_profile(tmp_path):
+    """采纳改标但重判仍失败 → 条目进 reject,同款从画像与 CSV 移除
+    (画像描述的是"我们交付的那批数据",Q1 判据)。"""
+    d = _write_profile_delivery(tmp_path)
+    (d / "details" / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        f"ep000002,采纳建议改标,{_WIPE},,2026-08-16 10:00:00\n", encoding="utf-8")
+    s = run_rejudge(str(d), "/unused", {},
+                    rerun_fn=lambda i, e, nl: {"passed": False, "verdict": "failure",
+                                               "detail": "{}"})
+    assert s["adopted_reject"] == ["ep000002"]
+    assert "ep000002" not in _profile_episodes(d)
+    assert "ep000002" not in _csv_by_ep(d)
+
+
+def test_rejudge_drop_and_verdict_fail_removed_untouched_intact(tmp_path):
+    """弃用该条 + 成败裁决判失败 → 双双移出画像与 CSV(已被剔出交付,继续数着
+    = 技能分布是事实错误);未被裁决条目的成败判定字段逐字节不变(护栏二)。"""
+    d = _write_profile_delivery(tmp_path)
+    before = json.loads((d / "passed.json").read_text(
+        encoding="utf-8"))["episodes"]["ep000001"]
+    (d / "details" / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "ep000002,弃用该条,,,2026-08-16 10:00:00\n", encoding="utf-8")
+    (d / "details" / "task_verdicts.csv").write_text(
+        "episode_id,verdict,note,at\n"
+        "ep000003,判失败,,2026-08-16 10:00:01\n", encoding="utf-8")
+    s = run_rejudge(str(d), "/unused", {})
+    assert set(s["profile_sync"]["removed"]) == {"ep000002", "ep000003"}
+    eps = _profile_episodes(d)
+    assert "ep000002" not in eps and "ep000003" not in eps
+    by = _csv_by_ep(d)
+    assert "ep000002" not in by and "ep000003" not in by and "ep000001" in by
+    after = json.loads((d / "passed.json").read_text(
+        encoding="utf-8"))["episodes"]["ep000001"]
+    assert after == before                     # 未裁决条目的判定一个字没动
+
+
+def test_rejudge_appeal_restore_regroups_by_label_never_recaptions(tmp_path):
+    """复议捞回 → 有原始标注按标注归类补回画像;**绝不为它重跑 VLM caption**
+    (被拒条目当初没进画像、没有 caption——一条捞回触发一次 VLM 是烧钱设计)。"""
+    d = _write_profile_delivery(tmp_path)
+    (d / "details" / "reject_appeals.csv").write_text(
+        "episode_id,appeal,note,at\n"
+        "ep000009,捞回,,2026-08-16 10:00:00\n", encoding="utf-8")
+    s = run_rejudge(str(d), "/unused", {})
+    assert s["appeal_restored"] == ["ep000009"]
+    assert "ep000009" in s["profile_sync"]["restored"]
+    assert _profile_episodes(d)["ep000009"] == ("wiping", "wipe-surface")
+    assert _csv_by_ep(d)["ep000009"]["grouping_text_source"] == "原始标注"
+
+
+def test_rejudge_appeal_restore_without_label_stays_unassigned(tmp_path):
+    """复议捞回但取不到原始标注(task_details 里没这条)→ 留「未归类」如实报数,
+    不猜、不重跑 caption。"""
+    d = _write_profile_delivery(tmp_path)
+    det = d / "details"
+    td = json.loads((det / "task_details.json").read_text(encoding="utf-8"))
+    td["episodes"].pop("ep000009")
+    (det / "task_details.json").write_text(json.dumps(td, ensure_ascii=False),
+                                           encoding="utf-8")
+    (det / "reject_appeals.csv").write_text(
+        "episode_id,appeal,note,at\n"
+        "ep000009,捞回,,2026-08-16 10:00:00\n", encoding="utf-8")
+    s = run_rejudge(str(d), "/unused", {})
+    assert "ep000009" in s["profile_sync"]["unassigned"]
+    assert _profile_episodes(d)["ep000009"][0] == "未归类"
+
+
+def test_rejudge_profile_sync_degrades_without_profile(tmp_path):
+    """老交付没画像/CSV → 画像同步如实注明跳过(体系不重新归纳),裁决本体照常。"""
+    d = tmp_path
+    (d / "details").mkdir()
+    p, r, j = _views()
+    for name, data in [("passed", p), ("review", r), ("reject", j)]:
+        (d / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False),
+                                        encoding="utf-8")
+    (d / "details" / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "epB,维持原标注,,,2026-08-16 10:00:00\n", encoding="utf-8")
+    s = run_rejudge(str(d), "/unused", {})
+    assert s["kept"] == ["epB"]
+    assert "note" in s["profile_sync"]         # 注明未同步,而不是硬造画像
+
+
 def test_rejudge_lands_passed_json_exactly_once(tmp_path, monkeypatch):
     """★ 一次重判只许落一遍 passed.json。
 

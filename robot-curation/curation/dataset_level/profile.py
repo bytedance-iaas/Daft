@@ -8,7 +8,13 @@ from __future__ import annotations
 import numpy as np
 
 #: details/skill_assignment.csv 的列(英文小写下划线,与 kinematic_details.csv 等一致)。
-SKILL_ASSIGNMENT_COLUMNS = ["episode_id", "family", "subskill", "caption"]
+#: ⚠️ 前四列是客户直读的契约(pandas 脚本按名取列):只许在尾部加列,不许改名/删列。
+#: 2026-08-16 标注优先方针补两列:grouping_text=归类实际用的文本(标注优先,
+#: instruction.strip() or caption),grouping_text_source=该文本的来源
+#: (原始标注 / 自产caption / 无,与 task_desc_source 同词表)。caption 列语义不变:
+#: 仍是自产 VLM caption——它不再是归类输入,但还是分歧检出的一端,照旧陈列。
+SKILL_ASSIGNMENT_COLUMNS = ["episode_id", "family", "subskill", "caption",
+                            "grouping_text", "grouping_text_source"]
 
 
 def _episode_ids(rows: list[dict], idx: list[int]) -> list[str]:
@@ -102,7 +108,9 @@ def skill_profile(
     return out
 
 
-def skill_assignment_rows(profile: dict, caption_of: dict | None = None) -> list[dict]:
+def skill_assignment_rows(profile: dict, caption_of: dict | None = None,
+                          grouping_text_of: dict | None = None,
+                          grouping_source_of: dict | None = None) -> list[dict]:
     """画像 → 逐 episode 归属行(details/skill_assignment.csv 的原料),按 id 排序。
 
     **从画像本身反推**而不是另攒一份数据:CSV 与 JSON 同源,不可能漂移。
@@ -112,28 +120,39 @@ def skill_assignment_rows(profile: dict, caption_of: dict | None = None) -> list
         不拿子技能名冒充族名,免得下游误以为这份交付有两级体系。
       - caption 由 caption_of({episode_id: caption})提供;降级路径没有 caption
         (根本没调 VLM)→ 留空串。
+      - grouping_text/grouping_text_source(2026-08-16 标注优先方针)同样由调用方
+        逐 episode 提供;老调用方不传 → 留空串(老交付本来就没有这个信息,
+        不臆造"当时是按什么归的")。
     """
     cap = caption_of or {}
+    gt = grouping_text_of or {}
+    gs = grouping_source_of or {}
+
+    def _row(e, fam, sub):
+        return {"episode_id": e, "family": fam, "subskill": sub,
+                "caption": cap.get(e, ""),
+                "grouping_text": gt.get(e, ""),
+                "grouping_text_source": gs.get(e, "")}
+
     rows: list[dict] = []
     for fam, f in (profile.get("families") or {}).items():
         for sub, s in (f.get("subskills") or {}).items():
             for e in (s.get("episodes") or []):
-                rows.append({"episode_id": e, "family": fam, "subskill": sub,
-                             "caption": cap.get(e, "")})
+                rows.append(_row(e, fam, sub))
         for e in (f.get("episodes") or []):          # 族无子技能的兜底成员
-            rows.append({"episode_id": e, "family": fam, "subskill": "",
-                         "caption": cap.get(e, "")})
+            rows.append(_row(e, fam, ""))
     if not profile.get("families"):
         for skill, s in (profile.get("skills") or {}).items():
             for e in (s.get("episodes") or []):
-                rows.append({"episode_id": e, "family": "", "subskill": skill,
-                             "caption": cap.get(e, "")})
+                rows.append(_row(e, "", skill))
     rows.sort(key=lambda r: r["episode_id"])
     return rows
 
 
 def write_skill_assignment_csv(details_dir: str, profile: dict,
-                               caption_of: dict | None = None) -> str | None:
+                               caption_of: dict | None = None,
+                               grouping_text_of: dict | None = None,
+                               grouping_source_of: dict | None = None) -> str | None:
     """逐 episode 归属 → `<details_dir>/skill_assignment.csv`,返回路径(没归属则 None)。
 
     与画像同源(见 skill_assignment_rows),所以 CSV 与 report.json 不会漂移。
@@ -145,7 +164,8 @@ def write_skill_assignment_csv(details_dir: str, profile: dict,
 
     from ..export.safe_write import delivery_file
 
-    data = skill_assignment_rows(profile, caption_of)
+    data = skill_assignment_rows(profile, caption_of,
+                                 grouping_text_of, grouping_source_of)
     if not data:
         return None
     path = _os.path.join(details_dir, "skill_assignment.csv")
