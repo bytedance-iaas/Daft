@@ -5,6 +5,9 @@
 ① 标注分歧(human-decisions/label_decisions.csv)
     采纳建议改标 → 用**人工确认过的新标注**重跑任务成败检测(多视角 v7.3 全协议),
                   按新判定把 episode 搬进 passed/review/reject,带完整改标溯源;
+                  **例外**(2026-08-16):同一条 episode 人工还给了成败结论
+                  (判成功/判失败)→ 不重判,直接采信人的结论(理由与溯源纪律
+                  见 apply_decisions 的 docstring);
     弃用该条     → 搬进 reject(人工裁决弃用);
     维持原标注   → 只在分歧队列上标记已裁决(审计误旗,原判定原样)。
 ② 任务成败弃权(human-decisions/task_verdicts.csv)——**不跑 VLM**:系统已经诚实说了
@@ -76,12 +79,20 @@ def _take_entry(p_eps: dict, r_eps: dict, j_eps: dict, eid: str) -> dict:
 
 
 def apply_decisions(passed: dict, review: dict, reject: dict,
-                    decisions: dict, rejudged: dict) -> dict:
+                    decisions: dict, rejudged: dict,
+                    human_concluded=frozenset()) -> dict:
     """按裁决在三件套视图间搬移/标注(**原地修改**传入的 dict)→ 摘要。
 
     decisions: {eid: {"decision","new_label","note","at"}}(decisions.py schema)
     rejudged:  {eid: {"passed","verdict","detail"}}(仅"采纳建议改标"条目需要;
                缺席 = 重判没跑成,该条不动并记入摘要,绝不臆断)
+    human_concluded: 这些 episode 的「采纳建议改标」**不重判**(人工已给成败
+               结论:判成功/判失败)。这是对「改标必须重判」铁律的**有意例外**
+               (2026-08-16 用户拍板):人正看着视频给出的结论,他就是 ground
+               truth;让机器去复核人刚给的结论,是把断路器装反了 —— 断路器防的
+               是"机器自产自证",不是防人。这里只在现存条目上落改标溯源(写明
+               重判被跳过),搬移交给 apply_task_verdicts 按人的结论做;溯源两处
+               都写人工(「标注修正」+「人工裁决」),**绝不伪装成机器判的**。
     """
     p_eps = passed.setdefault("episodes", {})
     r_eps = review.setdefault("episodes", {})
@@ -89,7 +100,7 @@ def apply_decisions(passed: dict, review: dict, reject: dict,
     queue = review.get("标注-画面分歧复核队列") or []
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary = {"adopted_pass": [], "adopted_review": [], "adopted_reject": [],
-               "dropped": [], "kept": [], "skipped": []}
+               "adopted_human": [], "dropped": [], "kept": [], "skipped": []}
 
     def _take(eid):
         return _take_entry(p_eps, r_eps, j_eps, eid)
@@ -116,6 +127,26 @@ def apply_decisions(passed: dict, review: dict, reject: dict,
             continue
 
         if kind == "采纳建议改标":
+            if eid in human_concluded:
+                # 人工已给成败结论 → 只落改标溯源,不搬移不重判(见函数 docstring
+                # 的例外说明)。只写**第一份**现存副本:弃权条目在 passed 与
+                # review 双呈现,两份都写的话 _take_entry 的 best 选择会被后一份
+                # 稀疏 review 副本抢走(它没有 checks/综合软分),人的结论落库时
+                # VLM 读数就丢了;apply_task_verdicts 搬移时会经 keep 带走这份溯源。
+                prov = {"裁决": kind, "原标注": dec.get("old_label", ""),
+                        "新标注": dec.get("new_label", ""),
+                        "备注": dec.get("note", ""),
+                        "裁决时间": dec.get("at", now),
+                        "重判": "跳过 —— 人工已给成败结论,以人的结论为准"}
+                hit = False
+                for d in (p_eps, r_eps, j_eps):
+                    if eid in d:
+                        d[eid][PROV_RELABEL] = prov
+                        hit = True
+                        break
+                # 三件套里查无此条(裁决文件与交付对不上)= 应用不了,记 skipped
+                (summary["adopted_human"] if hit else summary["skipped"]).append(eid)
+                continue
             rj = rejudged.get(eid)
             if rj is None:
                 summary["skipped"].append(eid)       # 重判没跑成:原样不动,留待下次
@@ -422,6 +453,17 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
             unchanged.append(eid)
             appeals.pop(eid)                # 整条不再进 apply,交付保持原样
 
+    # 「改标 + 人工成败结论」→ 跳过 VLM 重判,直接采信人的结论(2026-08-16 用户
+    # 拍板的有意例外,理由见 apply_decisions 的 docstring)。判据看**全量** CSV
+    # 快照而不是幂等剩下的工作字典:成败结论可能是此前某轮裁的、本轮被幂等跳过,
+    # 但它仍是人的结论 —— 机器不该复核它。搁置不算(它是「待定」不是结论),
+    # 只改标、没给结论的条目**完全维持今天的行为**(照旧走下面的 VLM 重判)。
+    human_concluded = {e for e in adopt
+                       if all_lines[1].get(e, {}).get("verdict")
+                       in ("判成功", "判失败")}
+    for e in human_concluded:
+        adopt.pop(e)
+
     rejudged: dict = {}
     _lat_mark = 0
     if adopt:
@@ -462,7 +504,8 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                     rejudged[eid] = res
 
     summary = apply_decisions(files["passed"], files["review"], files["reject"],
-                              decisions, rejudged)
+                              decisions, rejudged,
+                              human_concluded=human_concluded)
     # 成败裁决后于标注裁决应用:改标重判可能刚把某条从弃权变成了 pass/reject,
     # 此时它已不在待裁决队列里,但人工可能在更早的一轮就给过成败裁决——以人为准。
     summary.update(apply_task_verdicts(files["passed"], files["review"],
@@ -473,6 +516,19 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     summary.update(apply_reject_appeals(files["passed"], files["review"],
                                         files["reject"], appeals))
     summary["unchanged"] = unchanged
+
+    # 收尾报账(2026-08-16 用户点名):改标重判后仍判不出的条目会掉回「待你裁决」
+    # 队列 —— 这里不明说,用户下次打开界面才自己发现还有第二轮。
+    n_applied = len(decisions) + len(verdicts) + len(appeals)
+    still = list(summary["adopted_review"])
+    closing = f"本轮处理 {n_applied} 条裁决"
+    if still:
+        closing += (f",其中 {len(still)} 条重判后仍判不出,已进入「待你裁决」队列"
+                    f"({'、'.join(still)})—— 需要到「人工裁决 · 待你裁决」"
+                    "补个成败结论,再执行一次")
+    else:
+        closing += ",没有重判后仍判不出的条目"
+    summary["closing"] = closing
 
     det = os.path.join(delivery, "details")
     os.makedirs(det, exist_ok=True)
@@ -541,9 +597,15 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     # 不接进来的话,人判了失败、报告写了拒绝,数据集里那条还在,交出去仍是脏数据。
     # 复议捞回的条目方向相反:它在原 run 里就被拒了,交付数据集里**根本没有**这一行
     # (不是改一改,是要回源把它加回来)——所以它也必须触发这段同步。
+    # 「改标 + 人工成败结论」条目里仍在交付的那部分(人工判成功/结论早已应用):
+    # 新标注要写进交付数据集;人工判失败的那部分走 verdict_fail 的剔行,不在此列。
+    human_kept = [e for e in summary.get("adopted_human", [])
+                  if e in (files["passed"].get("episodes") or {})
+                  or e in (files["review"].get("episodes") or {})]
     touched = (summary["adopted_pass"] + summary["adopted_review"]
                + summary["adopted_reject"] + summary["dropped"]
-               + summary["verdict_fail"] + summary["appeal_restored"])
+               + summary["verdict_fail"] + summary["appeal_restored"]
+               + human_kept)
     if touched and os.path.isdir(pq_dir):
         try:
             import daft as _daft
@@ -554,6 +616,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                         | set(summary["verdict_fail"]))
             relabel = {e: decisions[e]["new_label"] for e in
                        summary["adopted_pass"] + summary["adopted_review"]
+                       + human_kept
                        if e in decisions}
             out_rows = []
             for r in rows_pq:
@@ -691,6 +754,10 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                f"仍未完成 {len(summary['adopted_reject'])} 条\n",
                f"- 人工弃用:{len(summary['dropped'])} 条;"
                f"维持原标注(审计误旗):{len(summary['kept'])} 条\n"]
+        if summary.get("adopted_human"):
+            sec.append(f"- 采纳改标且人工已给成败结论:{len(summary['adopted_human'])} 条"
+                       "(跳过重判,以人的结论为准;标注与成败溯源分别见条目上的"
+                       "「标注修正」与「人工裁决」)\n")
         for e in summary["adopted_pass"]:
             sec.append(f"  - {e}:标注修正后重判通过,已回归交付(溯源见 passed.json)\n")
         sec.append("\n### 任务成败人工裁决(不重判,以人的结论为准)\n")
@@ -751,6 +818,8 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     if os.path.isdir(pq):
         vis.append(("episodes_parquet", pq, "dir"))
     _verify_delivery_visible(vis, timeout_s=180.0)
+    # 收尾报账放在最后一行打印:回验之后才宣布,数字与用户马上会在界面看到的一致
+    print(f"[rejudge] {summary['closing']}", flush=True)
     return summary
 
 
@@ -781,9 +850,15 @@ def _sync_profile(delivery: str, files: dict, summary: dict,
 
     removals = set(summary.get("dropped", []) + summary.get("adopted_reject", [])
                    + summary.get("verdict_fail", []))
+    # 「改标 + 人工成败结论」条目(adopted_human)只取仍在交付里的:人工判失败的
+    # 已进 reject,再按新标注归进画像就是在数一条不存在的数据
+    human_kept = [e for e in summary.get("adopted_human", [])
+                  if e in ((files.get("passed") or {}).get("episodes") or {})
+                  or e in ((files.get("review") or {}).get("episodes") or {})]
     relabel = {e: str(decisions[e].get("new_label", "")).strip()
                for e in (summary.get("adopted_pass", [])
-                         + summary.get("adopted_review", [])) if e in decisions}
+                         + summary.get("adopted_review", [])
+                         + human_kept) if e in decisions}
     kept = list(summary.get("kept", []))
     restored = list(summary.get("appeal_restored", []))
     if not removals and not relabel and not kept and not restored:

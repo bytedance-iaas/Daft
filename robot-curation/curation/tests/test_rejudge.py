@@ -412,6 +412,139 @@ def test_run_rejudge_task_verdict_is_idempotent(tmp_path):
     assert "epX" in rej["episodes"]
 
 
+# ───────── 改标 + 人工成败结论 → 跳过 VLM 重判(2026-08-16 有意例外)─────────
+#
+# 铁律「改标必须重判」防的是机器自产自证(caption 改标 → 机器自己确认自己),
+# 不是防人:用户在合并卡片上采纳改标的同时给了成败结论,他正看着视频,他就是
+# ground truth —— 让机器去复核人刚给的结论,是把断路器装反了。以下测试钉三件事:
+# ① 有人工结论就一次 VLM 都不许调;② 溯源两处都写人工(标注修正 + 人工裁决),
+# 绝不伪装成机器判的;③ 只改标、没给结论(含搁置)→ 完全维持今天的重判行为。
+
+
+def _write_both_lines_delivery(tmp_path, label_rows, verdict_rows, views=None):
+    """标注裁决 + 成败裁决两张 CSV 同时在场的最小交付 fixture。"""
+    d = _write_verdict_delivery(tmp_path, verdict_rows, views=views)
+    with open(d / "details" / "label_decisions.csv", "w", newline="",
+              encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["episode_id", "decision", "new_label",
+                                          "note", "at"])
+        w.writeheader()
+        w.writerows(label_rows)
+    return d
+
+
+def test_apply_decisions_human_concluded_writes_relabel_prov_in_place():
+    """纯函数层:human_concluded 的采纳改标不搬移、不要求 rejudged 结果,只在
+    现存条目上落「标注修正」溯源(写明重判被跳过);搬移由 apply_task_verdicts
+    按人的结论做,两个溯源键并存。"""
+    p, r, j = _views()
+    s = apply_decisions(p, r, j,
+                        {"epB": {"decision": "采纳建议改标", "new_label": "fixed",
+                                 "at": "t1"}},
+                        {}, human_concluded={"epB"})
+    assert s["adopted_human"] == ["epB"] and s["skipped"] == []
+    e = r["episodes"]["epB"]                      # 没搬移:还在 review 原地
+    prov = e["标注修正"]
+    assert prov["新标注"] == "fixed" and prov["裁决时间"] == "t1"
+    assert "跳过" in prov["重判"]                  # 明写重判被跳过
+    assert "重判判定" not in prov, "伪装成机器判的了"
+    s2 = apply_task_verdicts(p, r, j, {"epB": {"verdict": "判成功", "at": "t2"}})
+    assert s2["verdict_pass"] == ["epB"]
+    e2 = p["episodes"]["epB"]
+    assert e2["判决"] == "通过(人工裁决)"
+    assert e2["标注修正"]["新标注"] == "fixed"     # 改标溯源随搬移带走
+    assert e2["人工裁决"]["裁决"] == "判成功"      # 成败溯源 = 人工,两处都在
+
+
+def test_run_rejudge_adopt_with_human_verdict_never_calls_vlm(tmp_path):
+    """端到端:改标 + 人工判成功 → 重判函数一次都不许被调;交付条目同时带
+    「标注修正」(重判=跳过)与「人工裁决」两处人工溯源。"""
+    d = _write_both_lines_delivery(
+        tmp_path,
+        [{"episode_id": "epX", "decision": "采纳建议改标",
+          "new_label": "put the cup in the sink", "note": "", "at": "t1"}],
+        [{"episode_id": "epX", "verdict": "判成功", "note": "亲眼看的", "at": "t2"}])
+    (d / "report.md").write_text("# 报告\n", encoding="utf-8")
+    calls = []
+    s = run_rejudge(str(d), "/unused", {},
+                    rerun_fn=lambda *a: calls.append(a))
+    assert calls == [], "人工已给成败结论,VLM 重判仍被调用了"
+    assert s["adopted_human"] == ["epX"] and s["verdict_pass"] == ["epX"]
+    psd = json.loads((d / "passed.json").read_text(encoding="utf-8"))
+    e = psd["episodes"]["epX"]
+    assert e["判决"] == "通过(人工裁决)"
+    assert e["标注修正"]["新标注"] == "put the cup in the sink"
+    assert "跳过" in e["标注修正"]["重判"] and "重判判定" not in e["标注修正"]
+    assert e["人工裁决"]["裁决"] == "判成功"
+    assert "epX" not in json.loads((d / "review.json").read_text(encoding="utf-8"))["episodes"]
+    assert "跳过重判" in (d / "report.md").read_text(encoding="utf-8")
+
+
+def test_run_rejudge_adopt_with_human_fail_goes_to_reject_without_vlm(tmp_path):
+    """改标 + 人工判失败:同样不调 VLM,条目进 reject 且两处人工溯源都在 ——
+    改标履历不许因为判失败被抹掉(交付里要看得出这条的标注被人动过)。"""
+    d = _write_both_lines_delivery(
+        tmp_path,
+        [{"episode_id": "epY", "decision": "采纳建议改标",
+          "new_label": "wipe the table", "note": "", "at": "t1"}],
+        [{"episode_id": "epY", "verdict": "判失败", "note": "", "at": "t2"}])
+
+    def _boom(*a):
+        raise AssertionError("人工已给成败结论,不该触发重判")
+
+    s = run_rejudge(str(d), "/unused", {}, rerun_fn=_boom)
+    assert s["adopted_human"] == ["epY"] and s["verdict_fail"] == ["epY"]
+    rej = json.loads((d / "reject.json").read_text(encoding="utf-8"))
+    e = rej["episodes"]["epY"]
+    assert e["原因"].startswith("人工裁决判失败")
+    assert e["标注修正"]["新标注"] == "wipe the table"
+    assert e["人工裁决"]["裁决"] == "判失败"
+
+
+def test_run_rejudge_adopt_with_hold_still_reruns(tmp_path):
+    """搁置是「待定」不是结论:改标 + 搁置 → **完全维持今天的行为**,照旧调
+    VLM 按新标注重判(这条防的是把例外扩大化 —— 例外只认人真给了结论)。"""
+    d = _write_both_lines_delivery(
+        tmp_path,
+        [{"episode_id": "epZ", "decision": "采纳建议改标",
+          "new_label": "fold the towel", "note": "", "at": "t1"}],
+        [{"episode_id": "epZ", "verdict": "搁置", "note": "", "at": "t2"}])
+    calls = []
+
+    def fake(inp, eid, lab):
+        calls.append((eid, lab))
+        return {"passed": True, "verdict": "success", "detail": "{}"}
+
+    s = run_rejudge(str(d), "/unused", {}, rerun_fn=fake)
+    assert calls == [("epZ", "fold the towel")], "搁置不是结论,重判不该被跳过"
+    assert s["adopted_pass"] == ["epZ"] and s["adopted_human"] == []
+
+
+def test_run_rejudge_closing_reports_second_round(tmp_path):
+    """收尾报账:改标重判后仍判不出的条目掉回「待你裁决」队列,rejudge 结束时
+    必须明说条数 —— 不说,用户下次打开界面才自己发现还有第二轮。"""
+    det = tmp_path / "details"
+    det.mkdir()
+    (det / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "epB,采纳建议改标,new text,,t1\n", encoding="utf-8")
+    p, r, j = _views()
+    for name, data in [("passed", p), ("review", r), ("reject", j)]:
+        (tmp_path / f"{name}.json").write_text(json.dumps(data, ensure_ascii=False),
+                                               encoding="utf-8")
+    fake = lambda inp, eid, lab: {"passed": None, "verdict": "重判仍弃权",
+                                  "detail": "{}"}
+    s = run_rejudge(str(tmp_path), "/unused", {}, rerun_fn=fake)
+    assert s["adopted_review"] == ["epB"]
+    assert "本轮处理 1 条" in s["closing"]
+    assert "1 条重判后仍判不出" in s["closing"] and "待你裁决" in s["closing"]
+    # 没有第二轮时也要报账,但不许喊狼来了
+    s2 = run_rejudge(str(tmp_path), "/unused", {},
+                     rerun_fn=lambda *a: {"passed": True, "verdict": "s",
+                                          "detail": "{}"})
+    assert "本轮处理" in s2["closing"] and "仍判不出,已进入" not in s2["closing"]
+
+
 def test_verdict_fail_drops_row_from_delivered_parquet(tmp_path):
     """出数据闭环:人工判失败的条目必须从 episodes_parquet 里剔除——
     只改报告不改数据,交出去还是脏数据。"""

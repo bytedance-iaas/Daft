@@ -681,17 +681,168 @@ def appeal_hint_md(m: dict) -> str:
     if not q:
         return ""
     n = appeal_pending_count(m)
-    return (f"系统按「任务成败判定」拒掉了 **{len(q)}** 条,其中 **{n}** 条还没人看过。"
-            "看完视频如果觉得系统判错了,点「捞回」就能把它放回交付。\n\n"
-            "_只有这一项拒掉的条目能在这里复议:时间戳/残段/运动学/同步这些"
-            "测出来的问题是终局,不进复议。_")
+    # 措辞两处按 2026-08-16 用户定的改:①不用"捞回"这种口语,说"恢复为可用";
+    # ②"只有这一项能复议"的范围说明不在正文重复 —— 页签名「任务失败复议」已经
+    # 承担了这层意思,详细解释放在页内那个默认收起的折叠条里。
+    return (f"系统按「任务成败判定」拒掉了 **{len(q)}** 条,其中 **{n}** 条还没人复核。"
+            "看完视频如果认为判定有误,可将该条恢复为可用。")
 
 
-#: 「人工裁决」页顶的工序引导。顺序不是洁癖:改标重判会让一部分弃权自动有结论,
-#: 先裁成败等于白裁——这句话就是防止用户白干一遍。
+#: 「待你裁决」页顶的工序引导(2026-08-16 合并队列重构后重写)。此前教的是
+#: "先裁标注 → 执行 → 再裁成败 → 再执行"的两趟工序 —— 那是分区制的产物;
+#: 现在两个问题在同一张卡上一次答完,rejudge 对"改标 + 人工成败结论"也不再重判,
+#: 引导只需要防一件事:只改标、留空成败的条目重判后可能仍判不出,会回到队列
+#: (第二轮),这句话让用户知道那不是系统坏了。
 WORKFLOW_GUIDE = (
-    f"**建议顺序**:先裁「{AUDIT_TERM}」→ 到「任务台 · 执行人工裁决」执行一次 → "
-    "再裁剩下的「任务成败弃权」→ 再执行一次。")
+    "**怎么做**:逐条看视频,把该条的问题一次答完(标注与成败在同一张卡)→ "
+    "到「任务台 · 执行人工裁决」执行一次。改标时顺手给了成败结论的,机器直接采信;"
+    "只改标、留空成败的,机器按新标注重判 —— 重判后仍判不出的会回到这里,"
+    "补个结论再执行一次。")
+
+
+# ───────── 「待你裁决」合并队列(2026-08-16 重构)─────────
+#
+# 起因(用户实见):「人工裁决」页按问题类型分三区,而人的工作是**按 episode
+# 展开**的 —— 一条视频看一遍、该答的问题一次答完。droid-200-new 实测:标注分歧
+# 29 条、成败弃权 37 条,7 条同时在两个队列里,用户要在两张不同卡片里各找一次、
+# 各看一遍视频。分区是我们的实现方便,不是用户的工作方式。
+
+MERGE_FILTER_ALL = "全部"
+MERGE_FILTER_LABEL = "只看标注问题"
+MERGE_FILTER_TASK = "只看成败问题"
+MERGE_FILTERS = (MERGE_FILTER_ALL, MERGE_FILTER_LABEL, MERGE_FILTER_TASK)
+
+
+def merged_review_queue(m: dict) -> list[dict]:
+    """标注分歧队列 × 成败弃权队列 → 按 episode 合并去重的「待你裁决」清单。
+
+    每条 = {"id", "audit": 分歧队列条目|None, "task": 弃权队列条目|None};
+    重叠的 episode 只出现一次,两个问题都挂在同一条上。
+    顺序稳定:先按分歧队列原序(重点档排最前,与产出一致 —— 分区时代的顺序
+    承诺不变),只有成败问题的条目按弃权队列原序(episode 升序)接在后面。
+    """
+    items: list[dict] = []
+    seen: dict = {}
+    for a in m.get("audit_queue") or []:
+        it = {"id": a.get("id", ""), "audit": a, "task": None}
+        items.append(it)
+        seen[it["id"]] = it
+    for t in m.get("task_review") or []:
+        eid = t.get("id", "")
+        if eid in seen:
+            seen[eid]["task"] = t
+        else:
+            items.append({"id": eid, "audit": None, "task": t})
+    return items
+
+
+def merged_queue_view(m: dict, mode: str) -> list[dict]:
+    """按筛选档过滤后的合并队列。重叠条目在两个单项档里都出现(它确实两种问题
+    都有),但任何一档里都只出现一次 —— 去重是按 episode,不是按问题。"""
+    q = merged_review_queue(m)
+    if mode == MERGE_FILTER_LABEL:
+        return [it for it in q if it["audit"] is not None]
+    if mode == MERGE_FILTER_TASK:
+        return [it for it in q if it["task"] is not None]
+    return q
+
+
+def merged_filter_choices(m: dict) -> list[str]:
+    """筛选器三档的显示标签(带各档计数)。第一项是默认档「全部」。
+    计数 = 队列规模(交付定死),不随裁决进度变 —— 进度在 merged_hint_md 里报。"""
+    q = merged_review_queue(m)
+    n_label = sum(1 for it in q if it["audit"] is not None)
+    n_task = sum(1 for it in q if it["task"] is not None)
+    return [f"{MERGE_FILTER_ALL}({len(q)})",
+            f"{MERGE_FILTER_LABEL}({n_label})",
+            f"{MERGE_FILTER_TASK}({n_task})"]
+
+
+def merge_filter_mode(label) -> str:
+    """筛选器显示标签(带计数后缀)→ 档位常量。认不出的值按「全部」处理:
+    筛选器只影响看哪些卡,宽档是唯一不会藏内容的降级。"""
+    s = str(label or "")
+    for mode in (MERGE_FILTER_LABEL, MERGE_FILTER_TASK):
+        if s.startswith(mode):
+            return mode
+    return MERGE_FILTER_ALL
+
+
+def merged_pending_count(m: dict) -> int:
+    """合并队列里还有问题没答完的卡数(任一问题未裁即算;搁置算未裁)。"""
+    dec = load_label_decisions(m)
+    ver = load_task_verdicts(m)
+    n = 0
+    for it in merged_review_queue(m):
+        a_pending = (it["audit"] is not None
+                     and not dec.get(it["id"], {}).get("decision"))
+        t_pending = (it["task"] is not None
+                     and ver.get(it["id"], {}).get("verdict", "") in ("", "搁置"))
+        if a_pending or t_pending:
+            n += 1
+    return n
+
+
+def merged_hint_md(m: dict) -> str:
+    """「待你裁决」标题下的进度行。空队列时明说没有,不留一块空白让人猜。"""
+    q = merged_review_queue(m)
+    if not q:
+        return "_本次没有待你裁决的条目(标注与成败,系统都给出了结论)。_"
+    n_both = sum(1 for it in q if it["audit"] is not None
+                 and it["task"] is not None)
+    lines = [f"共 **{len(q)}** 条需要你看,其中 **{merged_pending_count(m)}** 条"
+             "还有问题没答(搁置算没答:它是「待定」不是结论)。"]
+    if n_both:
+        lines.append(f"其中 {n_both} 条标注与成败两个问题都有 —— 在同一张卡上"
+                     "一起答,视频只用看一遍。")
+    return "\n\n".join(lines)
+
+
+#: 合并卡片上成败问题(②)的档位 → (说明文案, 按钮是否可用)。
+#: hidden 档不在表里:整块不渲染,无文案可言。
+SUCCESS_MODES = {
+    "required": ("系统判不出这条的成败,**需要你给结论**。", True),
+    "optional": ("你采纳了改标,**可以顺手给成败结论**(机器直接采信,不再重判);"
+                 "留空则由机器按新标注重判。", True),
+    "blocked": ("你在上面选了「弃用该条」—— 弃用的条目不再判成败"
+                "(「这条不要了 + 判它成功」是自相矛盾的裁决)。"
+                "要判成败,先把上面的裁决改掉。", False),
+}
+
+
+def success_block_mode(item: dict, label_decision: str) -> str:
+    """成败问题(②)在合并卡片上的显隐档位(纯函数,UI 只照着渲染)。
+
+    三条规矩 + 一条矛盾拦截(2026-08-16 用户定):
+    - 机器弃权(条目在成败弃权队列里)→ required:必答,今天就是这样;
+      ① 选了「维持原标注」也不降档 —— 标注没动,机器照旧判不出,问题还在;
+    - 只有标注问题的条目,① 选了「采纳建议改标」→ optional:默认展开、可留空。
+      留空 = 交给机器按新标注重判;答了 = 机器直接采信(rejudge 的对应规则),
+      防的是第二轮:重判可能又判不出,用户下次还得重看同一段视频;
+    - ① 选「维持原标注」/「弃用该条」或还没裁 → hidden:没有成败问题可答;
+    - 矛盾拦截:① 选「弃用该条」时 ② 一律不可用。机器弃权的条目给 blocked
+      (说明照显、按钮禁用)而不是 hidden —— 必答的问题凭空消失,用户会以为
+      页面坏了。
+    """
+    if label_decision == "弃用该条":
+        return "blocked" if item.get("task") is not None else "hidden"
+    if item.get("task") is not None:
+        return "required"
+    if label_decision == "采纳建议改标":
+        return "optional"
+    return "hidden"
+
+
+def record_task_verdict_checked(m: dict, episode_id: str, verdict: str,
+                                note: str = "") -> str:
+    """成败裁决落盘前的矛盾拦截。界面按钮已按 success_block_mode 禁用,这里再把
+    一次门:按钮态是渲染出来的,连点竞态/陈旧页面都可能绕过它,而「弃用 + 判它
+    成功」这种自相矛盾的裁决一旦落盘,rejudge 就会各按各的执行。"""
+    dec = load_label_decisions(m).get(episode_id, {}).get("decision", "")
+    if dec == "弃用该条":
+        return (f"⚠️ 未记录:{episode_id} 已裁「弃用该条」,弃用的条目不再判成败"
+                "(自相矛盾)。要判成败,先在标注问题里改掉「弃用」。")
+    return record_task_verdict(m["path"], episode_id, verdict, note)
 
 
 def audit_note_md(m: dict) -> str:
@@ -707,18 +858,8 @@ def audit_note_md(m: dict) -> str:
             "去「**人工裁决**」页处理")
 
 
-def task_review_hint_md(m: dict) -> str:
-    """区块②标题下的提示:本块进度 + "上面还有标注分歧没裁,建议先清"的工序提醒。"""
-    q = m.get("task_review") or []
-    if not q:
-        return "_本次没有任务成败弃权条目(系统对每条数据都给出了判定)。_"
-    lines = [f"共 **{len(q)}** 条弃权,其中 **{task_pending_count(m)}** 条待裁"
-             "(搁置算待裁:它是「待定」不是结论)。"]
-    n_audit = audit_pending_count(m)
-    if n_audit:
-        lines.append(f"⚠️ 上方还有 **{n_audit}** 条「{AUDIT_TERM}」没裁,建议先清"
-                     "(改标重判后,部分弃权会自动解决,省得白裁)")
-    return "\n\n".join(lines)
+# (task_review_hint_md 已删,2026-08-16:分区制的"先清标注再裁成败"工序提醒随
+#  合并队列一起退役 —— 两个问题在同一张卡上一次答完,进度行见 merged_hint_md。)
 
 
 def overview_markdown(m: dict) -> str:
@@ -2718,8 +2859,8 @@ PAUSE_ALL_TEXT = "⏸ 暂停"
 #: HTML 解析器当实体开头,踩过一次不再踩(所以下面用嵌套 if 而不是 `&&`)。
 #:
 #: 找视频有两种挂法,一条 JS 通吃:
-#: ①`data-zone="<elem_id>"` —— 按钮和视频不在同一个 DOM 子树里(人工裁决的两张卡
-#:   用的是 gr.Video 组件,按钮只能另起一行);②没有 data-zone 就往上找
+#: ①`data-zone="<elem_id>"` —— 按钮和视频不在同一个 DOM 子树里(「待你裁决」的
+#:   合并裁决卡用的是 gr.Video 组件,按钮只能另起一行);②没有 data-zone 就往上找
 #:   `.ep-video-zone`(Episodes 详情页,按钮与视频同属一块 gr.HTML)。
 #:
 #: 播完自动把按钮弹回「同时播放」(2026-08-14 去掉 loop 之后必须做):不然视频早
