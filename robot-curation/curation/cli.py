@@ -97,6 +97,21 @@ def build_parser() -> argparse.ArgumentParser:
     rj.add_argument("--vlm-backend", default=None, metavar="预设名",
                     help="重判用的 VLM 后端预设(同 run,如 ark / h20-32b);缺省跟随配置")
 
+    rpf = sub.add_parser("reprofile",
+                         help="按「标注优先」方针重算一份交付的技能画像:归类文本改为"
+                              "原始标注优先(instruction 优先,无标注才用自产 caption),"
+                              "对交付里**已有的**技能体系纯文本重新分配。"
+                              "不重跑任何 VLM caption、不重新归纳体系、"
+                              "不碰任何成败判定结论;连跑两次第二次应报 0 条变化")
+    rpf.add_argument("--delivery", required=True,
+                     help="要重算的那一次跑批目录(<交付目录>/<时间戳>/);"
+                          "只给交付目录时按 latest 记的那次执行(同 rejudge)")
+    rpf.add_argument("--config", default=None,
+                     help="流水线 YAML(仅用于「归不进体系时问一次 LLM 补漏」;"
+                          "没配 VLM 端点就诚实留「未归类」)")
+    rpf.add_argument("--vlm-backend", default=None, metavar="预设名",
+                     help="补漏用的 LLM 后端预设(同 run,如 ark / h20-32b);缺省跟随配置")
+
     rp = sub.add_parser("review-page",
                         help="生成静态审片站(索引一屏列全量 episode + 逐条多路视频页),"
                              "落盘持久;由 UI 的 /review 路由服务(pod 重启不丢)")
@@ -150,10 +165,6 @@ def build_parser() -> argparse.ArgumentParser:
                          "则页签不渲染、/ws/term 路由不注册。"
                          "⚠️ 这是一个真 shell,公网暴露前必须配 "
                          "CURATION_UI_USER/CURATION_UI_PASSWORD + 网关鉴权")
-    ui.add_argument("--root-path", default=os.environ.get("CURATION_UI_ROOT_PATH", ""),
-                    help="UI 挂载前缀(如 /curation):与别的服务共用一个网关域名、"
-                         "按路径分流时用;网关不剥前缀,全部路由都注册在前缀下。"
-                         "缺省挂根路径。也可用环境变量 CURATION_UI_ROOT_PATH")
 
     return p
 
@@ -393,6 +404,26 @@ def main(argv: list[str] | None = None) -> int:
               if isinstance(summary, dict) else summary)
         return 0
 
+    if args.command == "reprofile":
+        from .delivery import is_legacy_delivery, resolve_run
+        from .pipeline.config import load_config
+        from .pipeline.reprofile import run_reprofile
+        # 与 rejudge 同一套选运行语义:reprofile 也是写数据的命令,动了哪一份要明说
+        if not is_legacy_delivery(args.delivery):
+            _run = resolve_run(args.delivery)
+            if _run != args.delivery:
+                print(f"[reprofile] 按 latest 记录选中 {os.path.basename(_run)};"
+                      "要重算别的那次,把 --delivery 写到那一次的目录", flush=True)
+            args.delivery = _run
+        cfg = load_config(args.config)
+        if args.vlm_backend:
+            from .pipeline.config import apply_vlm_backend
+            cfg = apply_vlm_backend(cfg, args.vlm_backend)
+        summary = run_reprofile(args.delivery, cfg=cfg)
+        if summary.get("note"):
+            print(f"[reprofile] {summary['note']}")
+        return 0
+
     if args.command == "backends":
         return _cmd_backends(args.config, args.timeout)
     if args.command == "ui":
@@ -405,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
         launch(args.delivery, config_path=args.config, host=args.host,
                port=args.port, probe_timeout=args.timeout,
                terminal=args.terminal, review_dir=args.review_dir,
-               data_root=args.data_root, root_path=args.root_path)
+               data_root=args.data_root)
         return 0
     if args.command == "run":
         from .ingest.lerobot_reader import NotADatasetError, OutputExistsError

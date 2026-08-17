@@ -178,6 +178,161 @@ def collect_runtime(cfg: dict) -> dict:
     }
 
 
+def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
+                         auto_caps: dict) -> tuple:
+    """技能画像段(caption→LLM 归纳两级体系→分配→画像→分歧检出→复检,8 次迭代定稿)。
+
+    2026-08-16 从 run_pipeline 抽出:归类输入从"全员 caption"改成**标注优先**,
+    这个输入选择必须能被单测钉死(埋在千行函数里只能靠 e2e 撞运气)。
+    captioner / llm_ask 注入式(与 M4c 同哲学),测试不需要任何端点。
+    返回 (profile, caption_of, grouping_text_of, grouping_source_of, label_audit)。
+
+    归类文本 = instruction.strip() or caption(2026-08-16 用户定,**权宜之计**):
+    droid-200-new 分歧队列 29 条人工复核,26 条是我方 caption 错、客户原始标注对
+    (90%,如 "Open the airfryer" 被写成"放咖啡胶囊")。有标注按标注归类,无标注才
+    用自产 caption。**caption 照旧全员生成**:它仍是标注-画面分歧检出的一端,只是
+    不再当归类输入;等 caption 准确率上去后回退点就在下面 grouping_text_and_source
+    那一处。
+    """
+    from ..dataset_level.audit import GARBAGE_REASON as AUDIT_GARBAGE
+    from ..dataset_level.audit import audit_labels
+    from ..dataset_level.caption import caption_episodes
+    from ..dataset_level.profile import skill_profile_two_level
+    from ..dataset_level.reassign import grouping_text_and_source
+    from ..dataset_level.taxonomy import (assign, induce_taxonomy,
+                                          refine_taxonomy, repair_unassigned)
+
+    sp_cfg = cfg.get("skill_profile", {})
+    _cap_conc = int(sp_cfg.get("caption_concurrency", 8))
+
+    # 进度:本段是"1 个逐条长循环 + 4 个离散 LLM 步",故两种显示混用——
+    # caption 有明确总数 → 条目式进度条;后四步各是一次 LLM 大调用,既无可数单位
+    # 又不可预测耗时 → 阶段式只报"第几步/在做什么"。给不可预测的步骤编百分比是
+    # 骗人:卡住时用户还以为在动。详见 pipeline/progress.py 的模块注释。
+    import time as _t
+
+    from .progress import _progress_init, _progress_tick, phase_step
+    _sp_t0 = _t.time()
+    _G = "技能画像"
+    _pk_cap = _progress_init("caption", len(keep_rows), f"{_G}·逐条 caption",
+                             quiet_before_s=3.0)
+    phase_step(_G, 1, 5, f"逐条 caption({len(keep_rows)} 条,并发 {_cap_conc})…", _sp_t0)
+    caps = caption_episodes(keep_rows, captioner,
+                            n_frames=sp_cfg.get("n_frames", 8),
+                            precomputed=auto_caps,
+                            on_progress=lambda: _progress_tick(_pk_cap),
+                            max_concurrency=_cap_conc)
+    # 归类文本(标注优先)与来源:体系归纳/自查合并/分配/补漏四个环节从这里起
+    # 全部吃 gtexts,不再吃 caps;来源留痕进 CSV 的 grouping_text_source。
+    gtexts, gsrcs = [], []
+    for r, c in zip(keep_rows, caps):
+        t, s = grouping_text_and_source(r.get("instruction"), c)
+        gtexts.append(t)
+        gsrcs.append(s)
+    phase_step(_G, 2, 5, "归纳技能体系(LLM)…", _sp_t0)
+    taxonomy = induce_taxonomy(gtexts, llm_ask,
+                               guideline=sp_cfg.get("taxonomy_guideline"))
+    # 自查裁判回合:LLM 对照判据审自己的分类,合并"按目的地/物体分"的违规类
+    phase_step(_G, 3, 5, "自查裁判:按判据复核分类(LLM)…", _sp_t0)
+    taxonomy = refine_taxonomy(taxonomy, llm_ask,
+                               guideline=sp_cfg.get("taxonomy_guideline"),
+                               concurrency=sp_cfg.get("llm_concurrency", 16))
+    fams, subs = assign(gtexts, taxonomy)
+    # 补漏回合:LLM 抄 members 会漏(实测),漏网文本二次指认到既有子技能
+    missed = sorted({t for t, f in zip(gtexts, fams) if f == "未归类" and t.strip()})
+    if missed:
+        phase_step(_G, 4, 5, f"补漏:{len(missed)} 条未归类重新指认(LLM)…", _sp_t0)
+        fix = repair_unassigned(missed, taxonomy, llm_ask)
+        for i, t in enumerate(gtexts):
+            if fams[i] == "未归类" and t in fix:
+                fams[i], subs[i] = fix[t]
+    else:
+        # 没漏网也要报,否则用户看到 3/5 直接跳 5/5 会以为漏了一步或出错
+        phase_step(_G, 4, 5, "补漏:无未归类,跳过", _sp_t0)
+    phase_step(_G, 5, 5, "汇总画像 + 标注-画面分歧检出", _sp_t0)
+    profile = skill_profile_two_level(keep_rows, fams, subs, caps)
+    caption_of = {r["episode_id"]: c for r, c in zip(keep_rows, caps)}
+    grouping_text_of = {r["episode_id"]: t for r, t in zip(keep_rows, gtexts)}
+    grouping_source_of = {r["episode_id"]: s for r, s in zip(keep_rows, gsrcs)}
+    # 判据留痕(2026-07-11):guideline + LLM 自述的归类理由进报告,分类可审计
+    from ..dataset_level.taxonomy import DEFAULT_GUIDELINE, criteria_of
+    fam_c, sub_c = criteria_of(taxonomy)
+    profile["guideline"] = (sp_cfg.get("taxonomy_guideline") or DEFAULT_GUIDELINE).strip()
+    for fname, f in profile.get("families", {}).items():
+        if fam_c.get(fname):
+            f["criterion"] = fam_c[fname]
+        for sname, s in f.get("subskills", {}).items():
+            if sub_c.get((fname, sname)):
+                s["criterion"] = sub_c[(fname, sname)]
+    # caption 口径的归族(分歧检出的族级回退路 + 复检要用):体系现在由标注文本
+    # 归纳,caption 不再天然是成员 —— 先精确分配,归不进去的整批问一次 LLM 补漏。
+    # 省掉这一步,族级回退比对会大面积跳过有标注条目 ⇒ 分歧检出被静默削弱
+    # (2026-08-16 护栏:分歧队列是人工裁决流程的入口,少报一条 = 一条错 caption
+    # 永远没人看见)。主路径(文本对判官)只比文本,本来就不受归类输入影响。
+    cap_fams, _ = assign(caps, taxonomy)
+    _cap_missed = sorted({c for c, f in zip(caps, cap_fams)
+                          if f == "未归类" and c.strip()})
+    if _cap_missed:
+        phase_step(_G, 5, 5, f"caption 归族补漏 {len(_cap_missed)} 条(LLM)…", _sp_t0)
+        _fix_cap = repair_unassigned(_cap_missed, taxonomy, llm_ask)
+        cap_fams = [_fix_cap[c][0] if (f == "未归类" and c in _fix_cap) else f
+                    for c, f in zip(caps, cap_fams)]
+    # 分歧检出是按 40 对一批**串行**问 LLM 的,181 条要问五批、两三分钟没动静
+    # (2026-08-13 用户实见:界面停在 5/5 一动不动,像卡死)。把批次报出来。
+    label_audit = audit_labels([r["episode_id"] for r in keep_rows],
+                               [r.get("instruction", "") for r in keep_rows],
+                               caps, cap_fams, taxonomy, llm_ask,
+                               on_progress=lambda i, n: phase_step(
+                                   _G, 5, 5, f"标注-画面分歧检出 {i}/{n} 批", _sp_t0))
+    # 分歧复检(2026-07-31):我方 caption 不可复现(方舟 temp=0 连打 5 次 5 种说法),
+    # 拿它当基准去质疑客户标注是产品缺陷 → 把不可复现变成信号:**只对被标记条目**
+    # 重打标 N 次,我方描述自己都不稳的分歧降级。重打标必须在这里做(有 rows/帧),
+    # audit.py 是纯文本模块,只收 N 次结果当普通数据。
+    _rn = int(sp_cfg.get("audit_recheck_n", 3) or 1)
+    _flag = [e for tier in ("high", "mid_for_review") for e in label_audit[tier]
+             if e.get("reason") != AUDIT_GARBAGE]
+    if _rn >= 2 and _flag:
+        _row_of = {r["episode_id"]: r for r in keep_rows}
+        _sub = [_row_of[e["id"]] for e in _flag if e["id"] in _row_of]
+        _recaps: dict = {r["episode_id"]: [] for r in _sub}
+        _rc_t0 = _t.time()
+        # N 轮重打标是独立同质调用 → 摊平成一次并发批(2026-08-06:逐轮串行时
+        # 3 轮 ×~55s;摊平后一轮墙钟。caption_episodes 保序有测试钉住,
+        # 每条 episode 仍得到 N 次结果,语义不变)
+        phase_step(_G, 5, 5, f"分歧复检:{len(_sub)} 条 × {_rn} 轮并发重打标…",
+                   _sp_t0)
+        _flat = [r for _ in range(_rn) for r in _sub]
+        for _r, _c in zip(_flat, caption_episodes(
+                _flat, captioner, n_frames=sp_cfg.get("n_frames", 8),
+                max_concurrency=_cap_conc)):
+            _recaps[_r["episode_id"]].append(_c)
+        # 归族:一律 caption 口径(cap_fams 已含补漏结果)——稳定度比的是
+        # "我方描述自己稳不稳",与归类输入换没换标注无关。漏网的重打标文本
+        # 仍走 精确分配→LLM 二次指认(复用 taxonomy 能力,不在 audit.py 重实现)。
+        from ..dataset_level.audit import retier_by_caption_stability
+        _fam_map = {c.strip().lower(): f for c, f in zip(caps, cap_fams)
+                    if f != "未归类"}
+        _new = sorted({c for v in _recaps.values() for c in v
+                       if c.strip() and c.strip().lower() not in _fam_map})
+        if _new:
+            _f2, _ = assign(_new, taxonomy)
+            _fam_map.update({c.strip().lower(): f for c, f in zip(_new, _f2)
+                             if f != "未归类"})
+            _miss = [c for c in _new if c.strip().lower() not in _fam_map]
+            if _miss:
+                for c, (f, _s) in repair_unassigned(_miss, taxonomy, llm_ask).items():
+                    _fam_map[c.strip().lower()] = f
+        _n_calls = sum(len(v) for v in _recaps.values())
+        label_audit = retier_by_caption_stability(
+            label_audit, _recaps,
+            lambda c: _fam_map.get(str(c).strip().lower(), "未归类"))
+        print(f"[curation] 分歧复检:{len(_sub)} 条 × {_rn} 轮 = {_n_calls} 次重打标,"
+              f"耗时 {_t.time() - _rc_t0:.1f}s;"
+              f"降级 {len(label_audit.get('low_caption_unstable', []))} 条"
+              f"(我方描述不稳)", flush=True)
+    return profile, caption_of, grouping_text_of, grouping_source_of, label_audit
+
+
 def run_pipeline(
     config_path: str | None,
     input_dir: str,
@@ -548,17 +703,17 @@ def run_pipeline(
     label_audit = None
     profile_note = None
     caption_of: dict = {}      # {episode_id: caption};降级路径没 caption,保持空
+    grouping_text_of: dict = {}    # {episode_id: 归类实际用的文本}(标注优先方针)
+    grouping_source_of: dict = {}  # {episode_id: 原始标注/自产caption/无}
     if keep_rows and sp_caption_on and vlm_ready:
-        # 技能画像终版:caption→LLM 归纳两级体系→画像+标注-画面分歧检出(8 次迭代定稿)
+        # 技能画像终版(caption→体系→分配→画像→分歧检出→复检):本体抽在
+        # _skill_profile_stage(2026-08-16,归类输入改标注优先时抽出,便于单测钉死
+        # 输入选择);这里只负责用 YAML 里的端点组装 captioner / llm_ask。
         from ..adapters.vlm_client import make_llm_ask
-        from ..dataset_level.audit import GARBAGE_REASON as AUDIT_GARBAGE
-        from ..dataset_level.audit import audit_labels
-        from ..dataset_level.caption import caption_episodes, make_vlm_captioner
-        from ..dataset_level.profile import skill_profile_two_level
-        from ..dataset_level.taxonomy import assign, induce_taxonomy
+        from ..adapters.vlm_client import timeout_for as _timeout_for
+        from ..dataset_level.caption import make_vlm_captioner
 
         vcfg = cfg["checks"]["task_success"]["vlm"]
-        from ..adapters.vlm_client import timeout_for as _timeout_for
         _cap_conc = int(sp_cfg.get("caption_concurrency", 8))
         captioner = make_vlm_captioner(vcfg["endpoint"], vcfg["model"],
                                        timeout_s=_timeout_for("caption", vcfg),
@@ -567,111 +722,9 @@ def run_pipeline(
         llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"],
                                timeout_s=_timeout_for("llm", vcfg),
                                api_key_env=vcfg.get("api_key_env"))
-
-        # 进度:本段是"1 个逐条长循环 + 4 个离散 LLM 步",故两种显示混用——
-        # caption 有明确总数 → 条目式进度条;后四步各是一次 LLM 大调用,既无可数单位
-        # 又不可预测耗时 → 阶段式只报"第几步/在做什么"。给不可预测的步骤编百分比是
-        # 骗人:卡住时用户还以为在动。详见 pipeline/progress.py 的模块注释。
-        import time as _t
-
-        from .progress import _progress_init, _progress_tick, phase_step
-        _sp_t0 = _t.time()
-        _G = "技能画像"
-        _pk_cap = _progress_init("caption", len(keep_rows), f"{_G}·逐条 caption",
-                                 quiet_before_s=3.0)
-        phase_step(_G, 1, 5, f"逐条 caption({len(keep_rows)} 条,并发 {_cap_conc})…", _sp_t0)
-        caps = caption_episodes(keep_rows, captioner,
-                                n_frames=sp_cfg.get("n_frames", 8),
-                                precomputed=auto_caps,
-                                on_progress=lambda: _progress_tick(_pk_cap),
-                                max_concurrency=_cap_conc)
-        phase_step(_G, 2, 5, "归纳技能体系(LLM)…", _sp_t0)
-        taxonomy = induce_taxonomy(caps, llm_ask,
-                                   guideline=sp_cfg.get("taxonomy_guideline"))
-        # 自查裁判回合:LLM 对照判据审自己的分类,合并"按目的地/物体分"的违规类
-        from ..dataset_level.taxonomy import refine_taxonomy
-        phase_step(_G, 3, 5, "自查裁判:按判据复核分类(LLM)…", _sp_t0)
-        taxonomy = refine_taxonomy(taxonomy, llm_ask,
-                                   guideline=sp_cfg.get("taxonomy_guideline"),
-                                   concurrency=sp_cfg.get("llm_concurrency", 16))
-        fams, subs = assign(caps, taxonomy)
-        # 补漏回合:LLM 抄 members 会漏(实测),漏网 caption 二次指认到既有子技能
-        missed = sorted({c for c, f in zip(caps, fams) if f == "未归类" and c.strip()})
-        if missed:
-            from ..dataset_level.taxonomy import repair_unassigned
-            phase_step(_G, 4, 5, f"补漏:{len(missed)} 条未归类重新指认(LLM)…", _sp_t0)
-            fix = repair_unassigned(missed, taxonomy, llm_ask)
-            for i, c in enumerate(caps):
-                if fams[i] == "未归类" and c in fix:
-                    fams[i], subs[i] = fix[c]
-        else:
-            # 没漏网也要报,否则用户看到 3/5 直接跳 5/5 会以为漏了一步或出错
-            phase_step(_G, 4, 5, "补漏:无未归类,跳过", _sp_t0)
-        phase_step(_G, 5, 5, "汇总画像 + 标注-画面分歧检出", _sp_t0)
-        profile = skill_profile_two_level(keep_rows, fams, subs, caps)
-        caption_of = {r["episode_id"]: c for r, c in zip(keep_rows, caps)}
-        # 判据留痕(2026-07-11):guideline + LLM 自述的归类理由进报告,分类可审计
-        from ..dataset_level.taxonomy import DEFAULT_GUIDELINE, criteria_of
-        fam_c, sub_c = criteria_of(taxonomy)
-        profile["guideline"] = (sp_cfg.get("taxonomy_guideline") or DEFAULT_GUIDELINE).strip()
-        for fname, f in profile.get("families", {}).items():
-            if fam_c.get(fname):
-                f["criterion"] = fam_c[fname]
-            for sname, s in f.get("subskills", {}).items():
-                if sub_c.get((fname, sname)):
-                    s["criterion"] = sub_c[(fname, sname)]
-        # 分歧检出是按 40 对一批**串行**问 LLM 的,181 条要问五批、两三分钟没动静
-        # (2026-08-13 用户实见:界面停在 5/5 一动不动,像卡死)。把批次报出来。
-        label_audit = audit_labels([r["episode_id"] for r in keep_rows],
-                                   [r.get("instruction", "") for r in keep_rows],
-                                   caps, fams, taxonomy, llm_ask,
-                                   on_progress=lambda i, n: phase_step(
-                                       _G, 5, 5, f"标注-画面分歧检出 {i}/{n} 批", _sp_t0))
-        # 分歧复检(2026-07-31):我方 caption 不可复现(方舟 temp=0 连打 5 次 5 种说法),
-        # 拿它当基准去质疑客户标注是产品缺陷 → 把不可复现变成信号:**只对被标记条目**
-        # 重打标 N 次,我方描述自己都不稳的分歧降级。重打标必须在这里做(有 rows/帧),
-        # audit.py 是纯文本模块,只收 N 次结果当普通数据。
-        _rn = int(sp_cfg.get("audit_recheck_n", 3) or 1)
-        _flag = [e for tier in ("high", "mid_for_review") for e in label_audit[tier]
-                 if e.get("reason") != AUDIT_GARBAGE]
-        if _rn >= 2 and _flag:
-            _row_of = {r["episode_id"]: r for r in keep_rows}
-            _sub = [_row_of[e["id"]] for e in _flag if e["id"] in _row_of]
-            _recaps: dict = {r["episode_id"]: [] for r in _sub}
-            _rc_t0 = _t.time()
-            # N 轮重打标是独立同质调用 → 摊平成一次并发批(2026-08-06:逐轮串行时
-            # 3 轮 ×~55s;摊平后一轮墙钟。caption_episodes 保序有测试钉住,
-            # 每条 episode 仍得到 N 次结果,语义不变)
-            phase_step(_G, 5, 5, f"分歧复检:{len(_sub)} 条 × {_rn} 轮并发重打标…",
-                       _sp_t0)
-            _flat = [r for _ in range(_rn) for r in _sub]
-            for _r, _c in zip(_flat, caption_episodes(
-                    _flat, captioner, n_frames=sp_cfg.get("n_frames", 8),
-                    max_concurrency=_cap_conc)):
-                _recaps[_r["episode_id"]].append(_c)
-            # 归族:精确命中 members 优先,漏网的一批交 LLM 二次指认(复用 taxonomy 能力,
-            # 不在 audit.py 里重新实现归族)
-            from ..dataset_level.audit import retier_by_caption_stability
-            from ..dataset_level.taxonomy import repair_unassigned
-            _fam_map = {c.strip().lower(): f for c, f in zip(caps, fams) if f != "未归类"}
-            _new = sorted({c for v in _recaps.values() for c in v
-                           if c.strip() and c.strip().lower() not in _fam_map})
-            if _new:
-                _f2, _ = assign(_new, taxonomy)
-                _fam_map.update({c.strip().lower(): f for c, f in zip(_new, _f2)
-                                 if f != "未归类"})
-                _miss = [c for c in _new if c.strip().lower() not in _fam_map]
-                if _miss:
-                    for c, (f, _s) in repair_unassigned(_miss, taxonomy, llm_ask).items():
-                        _fam_map[c.strip().lower()] = f
-            _n_calls = sum(len(v) for v in _recaps.values())
-            label_audit = retier_by_caption_stability(
-                label_audit, _recaps,
-                lambda c: _fam_map.get(str(c).strip().lower(), "未归类"))
-            print(f"[curation] 分歧复检:{len(_sub)} 条 × {_rn} 轮 = {_n_calls} 次重打标,"
-                  f"耗时 {_t.time() - _rc_t0:.1f}s;"
-                  f"降级 {len(label_audit.get('low_caption_unstable', []))} 条"
-                  f"(我方描述不稳)", flush=True)
+        (profile, caption_of, grouping_text_of, grouping_source_of,
+         label_audit) = _skill_profile_stage(keep_rows, cfg, captioner, llm_ask,
+                                             auto_caps)
     elif keep_rows and not sp_cfg.get("enable", True):
         # 用户主动未选画像(--only 其它模块 / --skip skill_profile)→ 不画像,如实注明
         profile = {"n_episodes": len(keep_rows), "n_skills": 0, "skills": {},
@@ -681,6 +734,12 @@ def run_pipeline(
         # 降级:按原始标注分组(未经审计,报告注明)——仅当画像被要求但 VLM 不可用
         skills = [r["instruction"].strip() or "(无指令)" for r in keep_rows]
         profile = skill_profile(keep_rows, skills)
+        # 降级路本来就是按标注分组:归类文本=标注,如实进 CSV 新列(没 caption 可兜)
+        from ..dataset_level.reassign import grouping_text_and_source as _gts
+        for r in keep_rows:
+            _t0, _s0 = _gts(r.get("instruction"), "")
+            grouping_text_of[r["episode_id"]] = _t0
+            grouping_source_of[r["episode_id"]] = _s0
         if sp_caption_on:
             profile_note = "技能画像降级:VLM 不可用,按原始标注分组(碎片化、未经审计)"
             print(f"[curation] ⚠️ {profile_note}", flush=True)
@@ -1040,7 +1099,8 @@ def run_pipeline(
     # 行由画像本身反推(profile.skill_assignment_rows)→ 与 report.json 里的画像同源,
     # 不会漂移。没画像(--skip skill_profile)时不生成空文件:空表会被误读成"0 条数据"。
     from ..dataset_level.profile import write_skill_assignment_csv
-    write_skill_assignment_csv(det_dir, profile, caption_of)
+    write_skill_assignment_csv(det_dir, profile, caption_of,
+                               grouping_text_of, grouping_source_of)
     # 全量 caption 落盘(2026-08-05):此前 caption 只随审计队列条目存活,测量/审计
     # 想离线重放就得整轮重跑 VLM。一个 JSON 花几 KB,买到可重放性。空串=未获/弃权。
     if caption_of:

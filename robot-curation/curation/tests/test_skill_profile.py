@@ -89,8 +89,10 @@ def test_assignment_rows_flat_family_blank():
     rows = _rows(["pick", "place"])
     prof = skill_profile(rows, [r["instruction"] for r in rows])
     got = skill_assignment_rows(prof)
-    assert got == [{"episode_id": "ep0", "family": "", "subskill": "pick", "caption": ""},
-                   {"episode_id": "ep1", "family": "", "subskill": "place", "caption": ""}]
+    assert got == [{"episode_id": "ep0", "family": "", "subskill": "pick", "caption": "",
+                    "grouping_text": "", "grouping_text_source": ""},
+                   {"episode_id": "ep1", "family": "", "subskill": "place", "caption": "",
+                    "grouping_text": "", "grouping_text_source": ""}]
 
 
 def _read_csv(path):
@@ -105,8 +107,11 @@ def test_assignment_csv_matches_profile(tmp_path):
     cap_of = {r["episode_id"]: c for r, c in zip(rows, CAPS)}
     p = write_skill_assignment_csv(str(tmp_path), prof, cap_of)
     headers, got = _read_csv(p)
-    assert headers == SKILL_ASSIGNMENT_COLUMNS == [
-        "episode_id", "family", "subskill", "caption"]
+    # 前四列是客户直读的契约,名字与顺序永远不动;2026-08-16 标注优先方针只在
+    # 尾部加了两列(归类实际用的文本 + 该文本来源)——改名/删列/插列都算破坏契约
+    assert headers == SKILL_ASSIGNMENT_COLUMNS
+    assert headers[:4] == ["episode_id", "family", "subskill", "caption"]
+    assert headers[4:] == ["grouping_text", "grouping_text_source"]
     assert len(got) == len(rows) == prof["n_episodes"]           # 一行一条,不多不少
     assert [g["episode_id"] for g in got] == sorted(r["episode_id"] for r in rows)
     # 逐行回到画像里核对归属(CSV 说的族/子技能,画像里该条必须真在那个名单上)
@@ -141,13 +146,37 @@ def test_assignment_edge_cases(tmp_path):
     assert one["families"]["抓取"]["subskills"]["拿起放下"]["episodes"] == ["ep0"]
     assert skill_assignment_rows(one, {"ep0": "pick it up"}) == [
         {"episode_id": "ep0", "family": "抓取", "subskill": "拿起放下",
-         "caption": "pick it up"}]
+         "caption": "pick it up", "grouping_text": "", "grouping_text_source": ""}]
 
     # 边界:族有成员但一个子技能都没有(兜底分支)→ 成员不能凭空消失,子技能留空
     odd = {"n_episodes": 1, "families": {"抓取": {"count": 1, "pct": 100.0,
                                                   "subskills": {}, "episodes": ["ep0"]}}}
     assert skill_assignment_rows(odd) == [
-        {"episode_id": "ep0", "family": "抓取", "subskill": "", "caption": ""}]
+        {"episode_id": "ep0", "family": "抓取", "subskill": "", "caption": "",
+         "grouping_text": "", "grouping_text_source": ""}]
+
+
+def test_assignment_csv_grouping_columns_semantics(tmp_path):
+    """新两列语义(2026-08-16 标注优先方针):grouping_text=归类实际用的文本,
+    grouping_text_source=来源(原始标注/自产caption)。
+
+    防的事故:droid-200-new 里 26 条被错 caption 归错格子后,客户从 CSV 看不出
+    "这条到底是按什么文本归的"——错归无从排查。caption 列语义不变(仍是自产
+    VLM caption,照旧陈列),两列并存才能一眼看出"标注说 A、caption 说 B、按 A 归"。
+    """
+    rows, prof = _two_level()
+    cap_of = {r["episode_id"]: c for r, c in zip(rows, CAPS)}
+    gt_of = {"ep0": "wipe the table", "ep1": "pick up the block"}
+    gs_of = {"ep0": "原始标注", "ep1": "自产caption"}
+    _, got = _read_csv(write_skill_assignment_csv(str(tmp_path), prof, cap_of,
+                                                  gt_of, gs_of))
+    by = {g["episode_id"]: g for g in got}
+    assert by["ep0"]["grouping_text"] == "wipe the table"
+    assert by["ep0"]["grouping_text_source"] == "原始标注"
+    assert by["ep0"]["caption"] == "pick up the cup"          # caption 列语义不变
+    assert by["ep1"]["grouping_text_source"] == "自产caption"
+    assert by["ep2"]["grouping_text"] == ""                    # 没给的条目留空不臆造
+    assert by["ep2"]["grouping_text_source"] == ""
 
 
 def test_old_delivery_without_episodes_degrades():

@@ -1268,28 +1268,173 @@ def test_verdict_and_label_decisions_do_not_collide(tmp_path):
 
 
 def test_pending_counts_and_guidance_text(delivery):
-    """页面上的"还剩几条"与工序引导:裁过的不再催,裁完催办语消失;搁置算未裁。"""
+    """页面上的"还剩几条"与工序引导:裁过的不再催,裁完催办语消失;搁置算未裁。
+
+    2026-08-16 合并队列重构后改写:分区制的"先清标注再裁成败"工序提醒退役
+    (两个问题在同一张卡上一次答完),进度行换成 merged_hint_md 按**卡**计数 ——
+    fixture 里 ep000002(标注)与 ep000000(成败)是两张卡,任一问题没答完,
+    对应那张卡就算待裁。
+    """
     from curation.ui.manifest import (WORKFLOW_GUIDE, audit_note_md,
-                                      audit_pending_count, record_label_decision,
-                                      record_task_verdict, task_pending_count,
-                                      task_review_hint_md)
+                                      audit_pending_count, merged_hint_md,
+                                      merged_pending_count,
+                                      record_label_decision,
+                                      record_task_verdict, task_pending_count)
     m = load_delivery(delivery)
     assert audit_pending_count(m) == 1 and task_pending_count(m) == 1
+    assert merged_pending_count(m) == 2                     # 两张卡各有问题没答
     assert "1" in audit_note_md(m) and "人工裁决" in audit_note_md(m)
-    assert f"「{AUDIT_TERM}」没裁" in task_review_hint_md(m)  # 提示先清那一块
+    assert "**2** 条" in merged_hint_md(m)
     record_label_decision(m["path"], "ep000002", "维持原标注")
     assert audit_pending_count(m) == 0
-    assert f"「{AUDIT_TERM}」没裁" not in task_review_hint_md(m)   # 清完了就不再催
-    assert "**1** 条待裁" in task_review_hint_md(m)          # 本块进度照报
+    assert merged_pending_count(m) == 1                     # 标注卡答完,成败卡还在
     assert "已全部裁决" in audit_note_md(m)
     record_task_verdict(m["path"], "ep000000", "搁置")
     assert task_pending_count(m) == 1, "搁置是待定不是结论,仍算未裁"
+    assert merged_pending_count(m) == 1
     record_task_verdict(m["path"], "ep000000", "判成功")
     assert task_pending_count(m) == 0
-    # 工序引导:先裁「标注与画面对不上」→ rejudge → 再成败 → 再 rejudge
-    assert WORKFLOW_GUIDE.index(AUDIT_TERM) < WORKFLOW_GUIDE.index("任务成败")
-    assert "执行人工裁决" in WORKFLOW_GUIDE                 # 指向任务台按钮,不再教敲命令行            # 两趟 rejudge,别只跑一次就收工
-    assert WORKFLOW_GUIDE.count("执行") >= 2
+    assert merged_pending_count(m) == 0
+    # 工序引导:一次答完 → 执行;只改标留空成败的会有第二轮,提前说明白
+    assert "一次答完" in WORKFLOW_GUIDE
+    assert "执行人工裁决" in WORKFLOW_GUIDE                 # 指向任务台按钮,不再教敲命令行
+    assert "重判" in WORKFLOW_GUIDE and "再执行一次" in WORKFLOW_GUIDE
+
+
+# ───────── 「待你裁决」合并队列(2026-08-16 重构)─────────
+#
+# 起因(用户实见):裁决页按问题类型分区,而人的工作按 episode 展开 —— 一条视频
+# 看一遍、该答的问题一次答完。droid-200-new 实测 7 条同时在两个队列里,用户要在
+# 两张卡片里各找一次、各看一遍视频。以下测试钉住:合并去重、筛选三档、②的显隐
+# 三条规矩、矛盾拦截、裁决 CSV 契约冻结。
+
+
+def _overlap_delivery(tmp_path):
+    """epA=只有标注问题(重点档,排最前),epB=两个问题都有(重叠),
+    epC=只有成败问题。合并后应为三张卡,epB 只出现一次。"""
+    d = tmp_path / "overlap-fake"
+    d.mkdir()
+    (d / "passed.json").write_text(json.dumps({"数据集": "x", "episodes": {
+        "epB": {"判决": "通过", "checks": {
+            "任务成败判定": {"结果": "弃权", "detail": TS_DETAIL}}},
+        "epC": {"判决": "通过", "checks": {
+            "任务成败判定": {"结果": "弃权", "detail": TS_DETAIL}}}}},
+        ensure_ascii=False))
+    (d / "review.json").write_text(json.dumps({
+        "episodes": {
+            "epB": {"当前判决": "通过", "待裁决项": ["任务成败判定"],
+                    "弃权原因": {"任务成败判定": "复核分裂"}},
+            "epC": {"当前判决": "通过", "待裁决项": ["任务成败判定"],
+                    "弃权原因": {"任务成败判定": "渐变问询不可判"}}},
+        "标注-画面分歧复核队列": [
+            {"id": "epA", "priority": "重点", "label": "open the door",
+             "caption": "close the door", "reason": "方向相反"},
+            {"id": "epB", "priority": "参考", "label": "pick cup",
+             "caption": "pick bottle", "reason": "对象不一致"}]},
+        ensure_ascii=False))
+    return load_delivery(str(d))
+
+
+def test_merged_queue_dedupes_overlap_into_one_card(tmp_path):
+    """防的事故(droid-200-new 实见):同一条 episode 在标注分歧与成败弃权两个
+    队列里各占一张卡,用户要各找一次、各看一遍视频。合并后:重叠条目只出一张卡
+    且两个问题都在;非重叠的各出一张;顺序 = 分歧队列原序(重点档在前)+
+    只有成败问题的接在后面。"""
+    from curation.ui.manifest import merged_review_queue
+    q = merged_review_queue(_overlap_delivery(tmp_path))
+    assert [it["id"] for it in q] == ["epA", "epB", "epC"]   # epB 只出现一次
+    by_id = {it["id"]: it for it in q}
+    assert by_id["epA"]["audit"] is not None and by_id["epA"]["task"] is None
+    assert by_id["epB"]["audit"] is not None and by_id["epB"]["task"] is not None
+    assert by_id["epC"]["audit"] is None and by_id["epC"]["task"] is not None
+    assert by_id["epB"]["audit"]["label"] == "pick cup"      # 两个问题的数据都全
+    assert by_id["epB"]["task"]["reason"] == "复核分裂"
+
+
+def test_merged_filter_sets_and_counts(tmp_path):
+    """筛选三档:集合正确、计数正确;重叠条目在两个单项档里都出现(它确实两种
+    问题都有),但每档内仍只有一次;带计数的显示标签能还原回档位。"""
+    from curation.ui.manifest import (MERGE_FILTER_ALL, MERGE_FILTER_LABEL,
+                                      MERGE_FILTER_TASK, merge_filter_mode,
+                                      merged_filter_choices, merged_queue_view)
+    m = _overlap_delivery(tmp_path)
+    assert [it["id"] for it in merged_queue_view(m, MERGE_FILTER_ALL)] \
+        == ["epA", "epB", "epC"]
+    assert [it["id"] for it in merged_queue_view(m, MERGE_FILTER_LABEL)] \
+        == ["epA", "epB"]
+    assert [it["id"] for it in merged_queue_view(m, MERGE_FILTER_TASK)] \
+        == ["epB", "epC"]
+    choices = merged_filter_choices(m)
+    assert choices == ["全部(3)", "只看标注问题(2)", "只看成败问题(2)"]
+    assert merge_filter_mode(choices[0]) == MERGE_FILTER_ALL
+    assert merge_filter_mode(choices[1]) == MERGE_FILTER_LABEL
+    assert merge_filter_mode(choices[2]) == MERGE_FILTER_TASK
+    assert merge_filter_mode(None) == MERGE_FILTER_ALL       # 认不出=宽档,不藏卡
+
+
+def test_success_block_mode_three_rules(tmp_path):
+    """②的显隐三条规矩 + 矛盾拦截(2026-08-16 用户定的表):
+    机器弃权=必答;①采纳改标(纯标注条目)=可选;①维持/弃用或未裁=不显示;
+    ①弃用时②一律不可用 —— 机器弃权的条目给 blocked 而不是 hidden,必答的问题
+    凭空消失会让人以为页面坏了。"""
+    from curation.ui.manifest import success_block_mode
+    task_item = {"id": "e", "audit": None, "task": {"id": "e"}}
+    both_item = {"id": "e", "audit": {"id": "e"}, "task": {"id": "e"}}
+    audit_item = {"id": "e", "audit": {"id": "e"}, "task": None}
+    # 机器弃权 → 必答;①怎么裁(除弃用)都不降档 —— 维持原标注不解决机器判不出
+    for dec in ("", "维持原标注", "采纳建议改标"):
+        assert success_block_mode(task_item, dec) == "required"
+        assert success_block_mode(both_item, dec) == "required"
+    # 纯标注条目:采纳改标 → 可选(留空=交给机器重判);其余 → 不显示
+    assert success_block_mode(audit_item, "采纳建议改标") == "optional"
+    for dec in ("", "维持原标注"):
+        assert success_block_mode(audit_item, dec) == "hidden"
+    # 矛盾拦截:弃用 → 机器弃权的给 blocked(可见但禁用),纯标注的直接隐藏
+    assert success_block_mode(task_item, "弃用该条") == "blocked"
+    assert success_block_mode(both_item, "弃用该条") == "blocked"
+    assert success_block_mode(audit_item, "弃用该条") == "hidden"
+
+
+def test_verdict_recording_blocked_after_drop_decision(tmp_path):
+    """矛盾拦截的落盘那道门:①裁了「弃用该条」之后,②的结论不许被记下来 ——
+    「这条不要了 + 判它成功」落进 CSV,rejudge 就会各按各的执行,交付自相矛盾。
+    按钮禁用是渲染层的事,连点竞态/陈旧页面都可能绕过,落盘前必须再查一次。"""
+    from curation.dataset_level.decisions import load_task_verdicts
+    from curation.ui.manifest import (record_label_decision,
+                                      record_task_verdict_checked)
+    m = _overlap_delivery(tmp_path)
+    record_label_decision(m["path"], "epB", "弃用该条")
+    msg = record_task_verdict_checked(m, "epB", "判成功")
+    assert "未记录" in msg and "弃用" in msg
+    assert load_task_verdicts(m["path"]) == {}, "矛盾裁决被落盘了"
+    # 改掉「弃用」之后照常可裁
+    record_label_decision(m["path"], "epB", "维持原标注")
+    assert "已记录" in record_task_verdict_checked(m, "epB", "判成功")
+    assert load_task_verdicts(m["path"])["epB"]["verdict"] == "判成功"
+
+
+def test_decision_csv_schema_is_frozen(tmp_path):
+    """裁决 CSV 的字段与语义一个字节不许变:老交付回放、rejudge 幂等跳过、
+    「沿用」判定全靠这三张表的既有列名与列序。表头变一个字,存量裁决就读不回。"""
+    import csv as _csv
+
+    from curation.dataset_level.decisions import (record_label_decision,
+                                                  record_reject_appeal,
+                                                  record_task_verdict)
+    d = str(tmp_path)
+    record_label_decision(d, "ep1", "采纳建议改标", new_label="new", note="n")
+    record_task_verdict(d, "ep2", "判成功", note="n")
+    record_reject_appeal(d, "ep3", "捞回", note="n")
+    hd = tmp_path / "human-decisions"
+    expect = {"label_decisions.csv": ["episode_id", "decision", "new_label",
+                                      "note", "at"],
+              "task_verdicts.csv": ["episode_id", "verdict", "note", "at"],
+              "reject_appeals.csv": ["episode_id", "appeal", "note", "at"]}
+    for name, fields in expect.items():
+        with open(hd / name, newline="", encoding="utf-8") as f:
+            rows = list(_csv.reader(f))
+        assert rows[0] == fields, f"{name} 表头变了"
+        assert len(rows) == 2 and len(rows[1]) == len(fields)
 
 
 def test_app_has_manual_decision_tab(delivery):
@@ -1303,11 +1448,16 @@ def test_app_has_manual_decision_tab(delivery):
         assert t in cfg, t
     rep = _report_section(build_app(delivery))       # 只在报告段里比顺序(见 _report_section)
     assert rep.index("Episodes") < rep.index("人工裁决") < rep.index("技能分布")
-    # 区块头 2026-08-07 改成自绘 HTML(色块序号 + 标题),不再是"① 标注分歧"这种
-    # 字面前缀 —— 断言跟着渲染实况走(此前这里钉的是旧文案,一直红着)
-    for txt in (AUDIT_TERM, "任务成败弃权", "✅ 判成功", "❌ 判失败", "⏸ 搁置",
-                "建议按这个顺序做"):     # 2026-08-13 文案精简后的标题
+    # 2026-08-16 合并队列重构:人工裁决页 = 两个子页签(「待你裁决」+「任务失败复议」),
+    # 「待你裁决」一条 episode 一张卡,标注问题与成败问题挂同一张卡。两个子页签名
+    # 都是用户定的:别改回行话「待裁决」,也别改回「被拒复议」——后者的名字要自己
+    # 说清范围(只管任务成败判定拒掉的),正文才好不重复解释一遍。
+    for txt in (AUDIT_TERM, "待你裁决", "任务失败复议", "任务成败弃权",
+                "标注问题", "成败问题",
+                "✅ 判成功", "❌ 判失败", "⏸ 搁置",
+                "怎么用这一页"):
         assert txt in cfg, txt
+    assert cfg.index("待你裁决") < cfg.index("任务失败复议")
     assert cfg.index(AUDIT_TERM) < cfg.index("任务成败弃权")
 
 
@@ -1380,12 +1530,18 @@ def test_appeal_draft_roundtrip_and_guards(delivery):
 
 
 def test_appeal_hint_is_empty_when_nothing_to_appeal(delivery, tmp_path):
-    """有条目时提示写清"能复议什么、不能复议什么";一条都没有时给空串
-    (调用侧据此整区不渲染——空区块占位只会让人以为自己漏看了)。"""
+    """有条目时提示说清"有几条、还剩几条没复核、能做什么";一条都没有时给空串
+    (调用侧据此整区不渲染——空区块占位只会让人以为自己漏看了)。
+
+    2026-08-16 用户改措辞:①不用"捞回"这种口语,说"恢复为可用";②"哪些拒因不能
+    复议"的范围说明不在正文重复 —— 页签名「任务失败复议」已承担这层意思,详细
+    解释挪进页内默认收起的折叠条。所以这里**反过来钉**:那两种旧说法不许回潮。
+    """
     from curation.ui.manifest import appeal_hint_md
     m = load_delivery(delivery)
     hint = appeal_hint_md(m)
-    assert "1" in hint and "捞回" in hint and "终局" in hint
+    assert "1" in hint and "恢复为可用" in hint
+    assert "捞回" not in hint and "终局" not in hint
     d2 = tmp_path / "no-reject"
     d2.mkdir()
     (d2 / "passed.json").write_text(json.dumps({"数据集": "x", "episodes": {}},
@@ -1411,13 +1567,20 @@ def test_appeal_draft_does_not_collide_with_other_decision_lines(tmp_path):
 
 
 def test_app_has_reject_appeal_section(delivery):
-    """Gradio 层:「被拒复议」区在人工裁决页、排在成败弃权之后;两个按钮文案在位。"""
+    """Gradio 层:「任务失败复议」子页签在位,两个按钮文案在位。
+
+    2026-08-16 改名与改措辞(用户定):页签名自己说清范围,按钮上的字改成
+    「恢复为可用」。⚠️ **只改显示**:落进 reject_appeals.csv 的值仍是 "捞回" ——
+    那是数据契约(老交付的裁决记录、rejudge 的匹配、幂等判据都认它),
+    这条由 decisions 那侧的 schema 测试守着,这里只管界面文案不回潮。
+    """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(delivery))
-    for txt in ("被拒复议", "🛟 捞回(判为可用)", "❌ 维持拒绝"):
+    for txt in ("任务失败复议", "🛟 恢复为可用", "❌ 维持拒绝",
+                "为什么有的被拒条目不在这里?"):
         assert txt in cfg, txt
-    assert cfg.index("任务成败弃权") < cfg.index("被拒复议")
+    assert "🛟 捞回(判为可用)" not in cfg
 
 
 def test_load_callback_wiring_stays_aligned(delivery):
@@ -2608,15 +2771,14 @@ def test_perf_tab_is_top_level_right_of_detail(delivery):
 
 
 def test_adjudication_cards_can_play_every_camera_at_once(delivery):
-    """人工裁决的两张裁决卡各有一个「同时播放」按钮,且视频照旧独占一行。
+    """「待你裁决」的合并裁决卡有「同时播放」按钮,且视频照旧独占一行。
 
-    2026-08-14 用户要的:几路机位一起播。此前只有 Episodes 详情页有这个按钮,
-    裁决卡(gr.Video 组件)得逐个点开三次,还对不齐时间点。
-
-    同时钉住两件事:
+    2026-08-14 用户要的:几路机位一起播。2026-08-16 合并队列重构后两张裁决卡
+    并成一张(zone 从 au-vids/tv-vids 并成 mg-vids),这三条既有交互原样保留:
     · 按钮**不进视频那一行**(挤进去播放器会被压窄,用户明说"视频 window 大小
       别变")—— 判据是那一行里只有 Video,没有别的东西;
-    · 三个播放器**不循环**(`loop=False`)。
+    · 三个播放器**不循环**(`loop=False`);
+    · 「同时播放」按钮在位且指着视频那一行的 zone。
     """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
@@ -2624,7 +2786,7 @@ def test_adjudication_cards_can_play_every_camera_at_once(delivery):
     cfg = json.loads(json.dumps(build_app(delivery).get_config_file(), default=str))
     by_id = {c["id"]: c for c in cfg["components"]}
 
-    for zone in ("au-vids", "tv-vids"):
+    for zone in ("mg-vids",):
         rows = [c for c in cfg["components"]
                 if c.get("props", {}).get("elem_id") == zone]
         assert len(rows) == 1, f"{zone} 这一行不在了"

@@ -10,9 +10,15 @@ UI 的裁决表单与 `curation rejudge` 命令共用本模块——同一份 sc
 ③ 单独一张表而不是并进 ②:两者的对象完全不同(② 是系统弃权的条目,③ 是系统已经
 杀掉的条目),同一条 episode 理论上可以先后落在两张表里,合表会按 episode_id 互相
 覆盖 —— 那就成了"复议一按,把上一轮的成败裁决抹了"。
+
+2026-08-16 起本模块还是「裁决落库了没有 / 是不是沿用自此前」判据的**单一事实源**
+(*_applied_in / decisions_view):rejudge 的幂等跳过与 UI 的已应用/未应用计数都
+必须走这几个函数 —— 两边各写一套比对的话,迟早一边说"已应用"一边说"没应用"。
 """
 from __future__ import annotations
 
+import datetime
+import json
 import os
 import re
 
@@ -226,3 +232,246 @@ def record_label_decision(delivery_path: str, episode_id: str, decision: str,
             + (f"(新标注:{str(new_label).strip()[:40]})" if decision == "采纳建议改标" else "")
             + ";执行重判请在命令行跑 curation rejudge"
               "(裁决文件落 TOS 约需 1 分钟可见,裁完稍候再跑)")
+
+
+# ═════════ 裁决落库与新旧的判据(rejudge 幂等跳过 & UI 计数的同一套)═════════
+#
+# 判据一句话:**以三件套里落库的溯源为准,不看旁路文件**。一条裁决"应用了没有" =
+# 条目(或分歧队列)上是否已有与 CSV 这一行完全一致的溯源(裁决时间 + 内容);
+# "是不是沿用" = 裁决时间是否早于本次跑批开始(裁决 CSV 在交付根跨跑批共用,新跑
+# 一批之后老裁决会被 rejudge 自动再应用 —— 不标出来,用户会以为这批全是机器判的)。
+
+#: 三件套条目上的人工溯源键(单一事实源;pipeline/rejudge.py 从这里 import,
+#: 别在别处再写一遍字面量)。标注线两个键、成败线一个、复议线一个,互不覆盖。
+PROV_LABEL = "标注裁决"
+PROV_RELABEL = "标注修正"
+PROV_TASK = "人工裁决"
+PROV_APPEAL = "人工复议"
+
+#: 分歧队列在 review.json 里的两个键名(新交付 / 老交付),读端都认。
+QUEUE_KEYS = ("标注-画面分歧复核队列", "标注审计复核队列")
+
+#: 改变交付结果的裁决词 vs 只留痕不改数据的裁决词。计数必须分开报(用户点名):
+#: 把 38 条混成一个数,读者会以为 38 条结论被人动过,而实际只有其中改结果的那几条。
+RESULT_CHANGING = ("采纳建议改标", "弃用该条", "判成功", "判失败", "捞回")
+MARK_ONLY = ("维持原标注", "搁置", "维持拒绝")
+
+
+def _entries(files: dict, eid: str):
+    """三件套里该 episode 的全部现存副本。**三边都看**而不是首个命中即收手:
+    FSX 改写延迟造出过"无溯源僵尸副本在前、真身在后"的排列(2026-08-06 droid-30),
+    只看第一份会把已落库的裁决误判成没应用。"""
+    for name in ("passed", "review", "reject"):
+        entry = ((files.get(name) or {}).get("episodes") or {}).get(eid)
+        if isinstance(entry, dict):
+            yield name, entry
+
+
+def label_decision_applied_in(files: dict, eid: str, dec: dict) -> str:
+    """标注裁决这一行落库了没有 → 落在哪个文件("passed"/"review"/"reject",
+    没落库返回空串)。files = {"passed":…, "review":…, "reject":…}(已加载的 JSON)。
+
+    三种裁决词三种落库形态,判据都是「裁决时间 + 内容」逐字相等:
+    - 采纳建议改标:条目上的「标注修正」溯源(时间 + 新标注都没变才算,改了标注
+      文本必须重新重判 —— 这正是 rejudge 不重复付 VLM 钱的那道幂等);
+    - 弃用该条:reject 条目上的「标注裁决」溯源;
+    - 维持原标注:它不搬条目,只在分歧队列上留 decision/decided_at 标记,以队列
+      标记为落库证据(没有更强的了)。
+    """
+    kind = dec.get("decision")
+    at = dec.get("at")
+    if kind == "采纳建议改标":
+        new_label = str(dec.get("new_label", "")).strip()
+        if not new_label:
+            return ""                    # 没给新标注的采纳压根应用不了,谈不上落库
+        for name, entry in _entries(files, eid):
+            prov = entry.get(PROV_RELABEL) or {}
+            if (isinstance(prov, dict) and prov.get("裁决时间") == at
+                    and prov.get("新标注") == new_label):
+                return name
+        return ""
+    if kind == "弃用该条":
+        for name, entry in _entries(files, eid):
+            prov = entry.get(PROV_LABEL) or {}
+            if (isinstance(prov, dict) and prov.get("裁决时间") == at
+                    and prov.get("裁决") == kind):
+                return name
+        return ""
+    if kind == "维持原标注":
+        review = files.get("review") or {}
+        for key in QUEUE_KEYS:
+            for q in review.get(key) or []:
+                if (q.get("id") == eid and q.get("decision") == kind
+                        and q.get("decided_at") == at):
+                    return "review"
+        return ""
+    return ""                            # 未知裁决词:应用不了,自然也没落库
+
+
+def task_verdict_applied_in(files: dict, eid: str, v: dict) -> str:
+    """成败裁决这一行落库了没有(判据同上:条目上「人工裁决」溯源的时间 + 裁决词)。"""
+    for name, entry in _entries(files, eid):
+        prov = entry.get(PROV_TASK) or {}
+        if (isinstance(prov, dict) and prov.get("裁决时间") == v.get("at")
+                and prov.get("裁决") == v.get("verdict")):
+            return name
+    return ""
+
+
+def reject_appeal_applied_in(files: dict, eid: str, a: dict) -> str:
+    """复议这一行落库了没有(条目上「人工复议」溯源的时间 + 结论)。"""
+    for name, entry in _entries(files, eid):
+        prov = entry.get(PROV_APPEAL) or {}
+        if (isinstance(prov, dict) and prov.get("复议时间") == a.get("at")
+                and prov.get("复议结论") == a.get("appeal")):
+            return name
+    return ""
+
+
+#: 裁决时间的两种合法写法:CSV 里的钟面时间(2026-08-15 05:29:43,分钟精度也认,
+#: 老手写记录有过),与跑批目录名的紧凑时间戳(20260815-052943)。
+_CLOCK_TIME_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?")
+_COMPACT_TIME_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")
+
+
+def parse_decision_time(s) -> datetime.datetime | None:
+    """裁决时间/跑批时间戳 → datetime;认不出**返回 None,绝不猜**(测试 fixture
+    里的 "t1" 这类占位串必须判成"无法判定",不能悄悄当成某个时刻)。"""
+    text = str(s or "").strip()
+    for rx in (_CLOCK_TIME_RE, _COMPACT_TIME_RE):
+        m = rx.match(text)
+        if m:
+            try:
+                return datetime.datetime(*[int(x or 0) for x in m.groups()])
+            except ValueError:
+                return None
+    return None
+
+
+def run_started_at(run_path: str) -> datetime.datetime | None:
+    """一次跑批的开始时间。权威来源优先:事实卡 run.json 的「跑批」字段(= 跑批
+    开局分配的目录名),缺了退目录名本身的时间戳;都解析不出 → None,由调用方
+    如实降级为「无法判定新旧」。老布局交付(目录名不是时间戳)天然是 None。"""
+    from ..delivery import RUN_FACTS_NAME
+    name = ""
+    try:
+        with open(os.path.join(str(run_path or ""), RUN_FACTS_NAME),
+                  encoding="utf-8") as f:
+            facts = json.load(f)
+        if isinstance(facts, dict):
+            name = str(facts.get("跑批") or "")
+    except (OSError, ValueError):
+        name = ""
+    t = parse_decision_time(name)
+    if t is not None:
+        return t
+    return parse_decision_time(os.path.basename(str(run_path or "").rstrip("/")))
+
+
+def decisions_view(files: dict, decisions: dict, verdicts: dict, appeals: dict,
+                   run_started: datetime.datetime | None = None) -> list[dict]:
+    """三张裁决表 × 三件套落库溯源 → 逐条状态(纯函数,报告小节与 UI 计数共用)。
+
+    每条 = {"line","id","kind","at","applied_in","status","when","changes_result"}:
+    - status:applied(已落库)/ unapplied(还没执行 rejudge)/ orphaned(该
+      episode 压根不在本次跑批里 —— 硬门早杀 / 只跑了前 N 条,**无处可施**;
+      单独一类,混进 unapplied 那个数字就永远消不掉,变成狼来了);
+    - when:carryover(裁决时间早于本次跑批开始 = 沿用此前的裁决)/ fresh(本轮
+      新裁)/ unknown(两个时间有一个解析不出,如实降级不猜)。
+    """
+    present: set = set()
+    for name in ("passed", "review", "reject"):
+        present |= set(((files.get(name) or {}).get("episodes") or {}))
+    for key in QUEUE_KEYS:
+        present |= {q.get("id") for q in (files.get("review") or {}).get(key) or []
+                    if q.get("id")}
+
+    out: list[dict] = []
+
+    def _add(line: str, eid: str, kind: str, at, applied_in: str) -> None:
+        status = ("applied" if applied_in
+                  else ("unapplied" if eid in present else "orphaned"))
+        t = parse_decision_time(at)
+        when = ("unknown" if (run_started is None or t is None)
+                else ("carryover" if t < run_started else "fresh"))
+        out.append({"line": line, "id": eid, "kind": kind, "at": str(at or ""),
+                    "applied_in": applied_in, "status": status, "when": when,
+                    "changes_result": kind in RESULT_CHANGING})
+
+    for eid, d in sorted((decisions or {}).items()):
+        _add("label", eid, str(d.get("decision") or ""), d.get("at"),
+             label_decision_applied_in(files, eid, d))
+    for eid, v in sorted((verdicts or {}).items()):
+        _add("verdict", eid, str(v.get("verdict") or ""), v.get("at"),
+             task_verdict_applied_in(files, eid, v))
+    for eid, a in sorted((appeals or {}).items()):
+        _add("appeal", eid, str(a.get("appeal") or ""), a.get("at"),
+             reject_appeal_applied_in(files, eid, a))
+    return out
+
+
+def application_counts(records: list) -> dict:
+    """decisions_view 的输出 → 各类计数(改变结果的与仅标记的**分开数**)。"""
+    applied = [r for r in records if r["status"] == "applied"]
+    carry = [r for r in applied if r["when"] == "carryover"]
+    return {"total": len(records),
+            "applied": len(applied),
+            "unapplied": sum(1 for r in records if r["status"] == "unapplied"),
+            "orphaned": sum(1 for r in records if r["status"] == "orphaned"),
+            "carryover": len(carry),
+            "carryover_changed": sum(1 for r in carry if r["changes_result"]),
+            "fresh": sum(1 for r in applied if r["when"] == "fresh"),
+            "undated": sum(1 for r in applied if r["when"] == "unknown")}
+
+
+#: run_decision_records 的进程内缓存 {跑批目录绝对路径: (文件签名, records)}。
+#: 任务台的状态条 2 秒轮询一次,passed.json 在 FSX 上有几 MB,不缓存等于每两秒
+#: 拖一次挂载;签名 = 六个相关文件的 mtime+size(外加写缓存行数 —— CSV 刚写完
+#: 在 FSX 上有可见延迟,文件没变不代表裁决没变)。
+_RECORDS_CACHE: dict = {}
+
+
+def run_decision_records(run_path: str) -> list[dict]:
+    """跑批目录 → decisions_view 的逐条状态(读盘版,带 mtime 签名缓存)。
+
+    给拿不到 manifest 的场景用(任务台的下拉旁计数、跑完的任务卡片);报告页
+    走 manifest 的 prov_files,不重复读大 JSON。读不到的文件按空处理,不炸。
+    """
+    run_path = str(run_path or "")
+    if not run_path:
+        return []
+    json_paths = [os.path.join(run_path, n + ".json")
+                  for n in ("passed", "review", "reject")]
+    csv_paths = [_read_path(run_path, f)
+                 for f in (DECISIONS_CSV, VERDICTS_CSV, APPEALS_CSV)]
+
+    def _sig(p):
+        try:
+            st = os.stat(p)
+            return (p, st.st_mtime_ns, st.st_size)
+        except OSError:
+            return (p, None, None)
+
+    sig = (tuple(_sig(p) for p in json_paths + csv_paths)
+           + tuple(len(_WRITE_CACHE.get(os.path.abspath(c), ()))
+                   for c in csv_paths))
+    key = os.path.abspath(run_path)
+    hit = _RECORDS_CACHE.get(key)
+    if hit and hit[0] == sig:
+        return hit[1]
+    files = {}
+    for name, p in zip(("passed", "review", "reject"), json_paths):
+        try:
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            files[name] = d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            files[name] = {}
+    records = decisions_view(files,
+                             load_label_decisions(run_path),
+                             load_task_verdicts(run_path),
+                             load_reject_appeals(run_path),
+                             run_started=run_started_at(run_path))
+    _RECORDS_CACHE[key] = (sig, records)
+    return records
