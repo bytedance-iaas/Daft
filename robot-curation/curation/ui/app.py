@@ -72,12 +72,19 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FAVICON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "assets", "favicon.png")
 
-#: 终端页签的前端装配:资产从**本服务**取(pod 内无 CDN 通路),只在开了终端时注入。
-_TERMINAL_HEAD = """
-<link rel="stylesheet" href="/term-static/xterm.css" />
-<script src="/term-static/xterm.js"></script>
-<script src="/term-static/addon-fit.js"></script>
-<script src="/term-static/term.js"></script>
+def _terminal_head(root: str) -> str:
+    """终端页签的前端装配:资产从**本服务**取(pod 内无 CDN 通路),只在开了终端时注入。
+
+    root = UI 挂载前缀(如 "/curation";挂根路径传 "")。资产路径必须带上前缀:
+    APIG 按路径分流时**不剥前缀**,写死 `/term-static/*` 会被网关分给别的后端。
+    `window.CURATION_ROOT` 让 term.js 用同一个前缀拼 `/ws/term`。
+    """
+    return f"""
+<script>window.CURATION_ROOT = {json.dumps(root)};</script>
+<link rel="stylesheet" href="{root}/term-static/xterm.css" />
+<script src="{root}/term-static/xterm.js"></script>
+<script src="{root}/term-static/addon-fit.js"></script>
+<script src="{root}/term-static/term.js"></script>
 """
 
 #: 同步证据图三挡:界面说法 → 配置值(pipeline.sync_plots)。
@@ -813,7 +820,7 @@ def _label_key(mapping: dict, label: str, default: str) -> str:
     return default
 
 
-def presentation(terminal: bool = False) -> dict:
+def presentation(terminal: bool = False, root: str = "") -> dict:
     """theme/css/head 三件套(gradio 6 起只认 launch()/mount_gradio_app() 上的这三个
     关键字,传给 `gr.Blocks()` 会被静默丢弃——2026-07-29 实测,顺手修掉的老 bug)。"""
     import gradio as gr
@@ -828,7 +835,7 @@ def presentation(terminal: bool = False) -> dict:
         "head": (_TABLE_JS + _DROPDOWN_JS
                  + _TIP_JS.replace("__NAME__", QUICK_SCAN)
                           .replace("__TIP__", QUICK_SCAN_TIP)
-                 + (_TERMINAL_HEAD if terminal else "")),
+                 + (_terminal_head(root) if terminal else "")),
         # 标签页图标:不设就是 Gradio 自带的橘色 logo(用户 2026-08-13 点名)。
         # 换成 Arco 蓝圆角方块 + 白色漩涡(照 Daft 那枚的手感重画,底色主色化 ⇒
         # 既认得出这套系统的出身,又和整页的 Arco 蓝一致)。生成脚本
@@ -1623,6 +1630,38 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     gr.Timer(10.0).tick(_hi_rows, None, hi_table)
                 app.load(lambda: _tk_view(""), None, _tk_outs)
                 app.load(_hi_rows, None, hi_table)
+
+                # 深链预填(2026-08-14,rerun 联动):rerun viewer 的「Diagnose」按钮
+                # 带 ?dataset=<数据集名> 跳过来,这里把「跑质检」的数据集下拉预选上,
+                # 用户点「开始质检」即可 —— **只预填不自动开跑**(自动开跑 = 刷新一次
+                # 页面就重复拉起一个吃 CPU 的任务)。
+                # 参数值只拿来和 list_datasets 扫出的名字**对表**,不当路径用 ——
+                # 不破坏「面板不接受任意路径输入」的边界(见 --data-root 的说明)。
+                def _prefill_from_query(request):
+                    qp = getattr(request, "query_params", None) or {}
+                    raws = (qp.getlist("dataset") if hasattr(qp, "getlist")
+                            else [qp.get("dataset", "")])
+                    wanted = [s.strip() for raw in raws
+                              for s in str(raw or "").split(",") if s.strip()]
+                    if not wanted:
+                        return gr.update()
+                    fresh = runner.list_datasets(_data_root)
+                    hits = [n for n in wanted if n in fresh]
+                    missing = [n for n in wanted if n not in fresh]
+                    if missing:
+                        gr.Warning("链接里的数据集在本站找不到:"
+                                   f"{', '.join(missing)}(数据集根 {_data_root})")
+                    if not hits:
+                        return gr.update()
+                    gr.Info(f"已按链接选中数据集:{', '.join(hits)}。"
+                            "确认参数后点「开始质检」。")
+                    return gr.update(choices=fresh, value=hits)
+
+                # gr.Request 靠注解注入;`from __future__ import annotations` 下字符串
+                # 注解会在 gradio 里被 eval,而 `gr` 只在函数内可见 → 直接挂真对象
+                # (同 _hi_open 的手法)。
+                _prefill_from_query.__annotations__ = {"request": gr.Request}
+                app.load(_prefill_from_query, None, rn_ds)
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
             # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
             # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。
@@ -2248,17 +2287,33 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
     return app
 
 
+def normalize_root_path(root_path: str | None) -> str:
+    """挂载前缀归一:"" 或 "/xx"(无尾斜杠),别的写法("curation"、"/curation/")都收拢。
+
+    归一后的值可以直接 f"{root}/term-static" 拼路径 —— 根路径("")拼出来
+    就是老写法,带前缀时拼出来不重斜杠。
+    """
+    s = (root_path or "").strip().strip("/")
+    return f"/{s}" if s else ""
+
+
 def create_asgi_app(delivery: str, config_path: str | None = None,
                     probe_timeout: float = 5.0, terminal: bool = False,
-                    review_dir: str | None = None, data_root: str | None = None):
-    """→ FastAPI 应用(gradio 挂在 `/`,自定义路由挂在它前面)。
+                    review_dir: str | None = None, data_root: str | None = None,
+                    root_path: str | None = None):
+    """→ FastAPI 应用(gradio 挂在 `{root}/`,自定义路由挂在它前面)。
 
     为什么不再用 `blocks.launch()`:launch() 自己造 FastAPI + 自己跑 uvicorn,拿不到
     那个 app 的引用,也就挂不上 `/ws/term`。改成我们造 app、gradio 往上挂,单端口
     同时提供 UI + 终端 + 静态资产 + 健康检查。
 
-    路由注册顺序有讲究:starlette 按注册顺序匹配,gradio 的 `/` 是 catch-all mount,
+    路由注册顺序有讲究:starlette 按注册顺序匹配,gradio 的挂载是 catch-all mount,
     必须最后挂,否则它会吃掉 `/ws/term` 和 `/term-static/*`。
+
+    root_path(2026-08-14,与 rerun 同域名分流):UI 要住在网关的一个路径前缀下
+    (`/curation` → 本服务,`/` → rerun viewer),而 APIG 分流**不剥前缀**,请求原样
+    带着 `/curation/...` 打过来 —— 所以是把全部路由注册在前缀下,而不是设 ASGI
+    root_path(那是给"网关剥前缀"的场景准备的,两者相反)。
     """
     import gradio as gr
     from fastapi import FastAPI
@@ -2267,22 +2322,30 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
 
     from . import auth
 
+    root = normalize_root_path(root_path)
     blocks = build_app(delivery, config_path, probe_timeout, terminal=terminal,
                        review_dir=review_dir, data_root=data_root)
     api = FastAPI()
 
     # 探针端点(鉴权豁免,见 auth.EXEMPT_PATHS):k8s readinessProbe 现在指 /(整页
     # 渲染),配了 Basic 之后会被 401 打红 → 留一个不设防的轻量端点给探针用。
+    # 带前缀部署时两个路径都留:探针直连容器端口用 /healthz 就好,网关侧健康检查
+    # 只能带前缀进来。
     @api.get("/healthz", response_class=PlainTextResponse)
     def _healthz() -> str:                     # noqa: ANN202
         return "ok"
 
+    if root:
+        api.add_api_route(f"{root}/healthz", _healthz, methods=["GET"],
+                          response_class=PlainTextResponse)
+
     if terminal:
         from . import terminal as term
-        api.mount("/term-static", StaticFiles(directory=STATIC_DIR), name="term-static")
-        api.add_api_websocket_route("/ws/term", term.term_endpoint)
-        log.info("终端:已开启(/ws/term,shell=%s,cwd=%s)",
-                 term.resolve_shell(), term.resolve_workdir())
+        api.mount(f"{root}/term-static", StaticFiles(directory=STATIC_DIR),
+                  name="term-static")
+        api.add_api_websocket_route(f"{root}/ws/term", term.term_endpoint)
+        log.info("终端:已开启(%s/ws/term,shell=%s,cwd=%s)",
+                 root, term.resolve_shell(), term.resolve_workdir())
 
     # 静态审片站(curation review-page 的产出):挂在 gradio catch-all 之前。
     # html=True → /review 直接出 index.html;目录缺失只警告不拦启动(先起 UI 后生成站点
@@ -2291,29 +2354,34 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
         if not os.path.isdir(review_dir):
             log.warning("审片站目录尚不存在:%s(生成后无需重启即可访问)", review_dir)
             os.makedirs(review_dir, exist_ok=True)
-        api.mount("/review", StaticFiles(directory=review_dir, html=True), name="review")
-        log.info("审片站:已挂 /review → %s", review_dir)
+        api.mount(f"{root}/review", StaticFiles(directory=review_dir, html=True),
+                  name="review")
+        log.info("审片站:已挂 %s/review → %s", root, review_dir)
 
-    auth.apply(api, terminal_enabled=terminal)
+    auth.apply(api, terminal_enabled=terminal,
+               extra_exempt=(f"{root}/healthz",) if root else ())
     # allowed_paths:允许页面直读交付目录下的证据文件(gradio 默认只许临时目录);
     # 审片站目录同样要放行——Episodes 页的视频第一来源就在那儿,不放行会 403。
     allowed = [delivery] + ([review_dir] if review_dir else [])
     # footer_links=[]:整排页脚(Use via API / Built with Gradio / Settings)去掉。
     # 头一个会把本服务的接口文档摆给任何打开页面的人看,另两个对客户毫无用处。
     # 用 gradio 自己的开关而不是 CSS 藏 —— 藏起来的链接照样可点、照样在 DOM 里。
-    return gr.mount_gradio_app(api, blocks, path="/", allowed_paths=allowed,
-                               footer_links=[], **presentation(terminal))
+    return gr.mount_gradio_app(api, blocks, path=root or "/", allowed_paths=allowed,
+                               footer_links=[], **presentation(terminal, root))
 
 
 def launch(delivery: str, config_path: str | None = None, host: str = "0.0.0.0",
            port: int = 7860, probe_timeout: float = 5.0,
            terminal: bool = False, review_dir: str | None = None,
-           data_root: str | None = None) -> None:
+           data_root: str | None = None, root_path: str | None = None) -> None:
     import uvicorn
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     app = create_asgi_app(delivery, config_path, probe_timeout, terminal=terminal,
-                          review_dir=review_dir, data_root=data_root)
-    log.info("质检台 UI 监听 http://%s:%s(交付根目录 %s)", host, port, delivery)
+                          review_dir=review_dir, data_root=data_root,
+                          root_path=root_path)
+    root = normalize_root_path(root_path)
+    log.info("质检台 UI 监听 http://%s:%s%s/(交付根目录 %s)",
+             host, port, root, delivery)
     uvicorn.run(app, host=host, port=port)
