@@ -125,11 +125,29 @@ def load_delivery(path: str) -> dict:
         plot = os.path.join(det, "plots", f"{eid}_sync.png")
         ep["plot"] = plot if os.path.exists(plot) else None
 
+    # 人工溯源的瘦快照(2026-08-16):「裁决落库了没有 / 是不是沿用」的判据要比对
+    # 三件套条目上的溯源块,而上面归一化的 episodes 把它丢了。只留四个溯源键 +
+    # 条目在场证明(空 dict 也留 —— "该 episode 在不在本次跑批里"靠它),几百条
+    # 也只有几 KB,判据函数(dataset_level/decisions.py)吃的就是这个形状。
+    def _prov_slim(doc: dict) -> dict:
+        keys = (_dec.PROV_RELABEL, _dec.PROV_LABEL, _dec.PROV_TASK,
+                _dec.PROV_APPEAL)
+        return {"episodes": {eid: {k: e[k] for k in keys
+                                   if isinstance(e, dict) and k in e}
+                             for eid, e in (doc.get("episodes") or {}).items()}}
+
+    audit_queue = (v.get("标注-画面分歧复核队列")
+                   or v.get("标注审计复核队列") or [])
+    prov_files = {"passed": _prov_slim(p), "reject": _prov_slim(r),
+                  "review": {**_prov_slim(v),
+                             "标注-画面分歧复核队列": audit_queue}}
+
     return {"path": path,
             # 交付根:裁决 CSV 与「运行」列表都挂在它下面(path 是**某一次跑批**)
             "delivery": delivery_root_of(path) if path else "",
             "run": os.path.basename(path.rstrip("/")) if path else "",
             "load_error": err,
+            "prov_files": prov_files,
             "name": p.get("数据集") or os.path.basename(path.rstrip("/")),
             "robot": p.get("机器人"),
             "generated_at": p.get("生成时间"), "code_version": p.get("代码版本"),
@@ -140,8 +158,7 @@ def load_delivery(path: str) -> dict:
             "label_audit": p.get("label_audit"),
             # 双键兼容(2026-07-31 键名中性化):新交付写"标注-画面分歧复核队列",
             # 老交付写"标注审计复核队列"——两个都认,否则老交付打不开。
-            "audit_queue": (v.get("标注-画面分歧复核队列")
-                            or v.get("标注审计复核队列") or []),
+            "audit_queue": audit_queue,
             "task_review": task_review_queue(v, episodes),
             "reject_appeal": reject_appeal_queue(r, episodes),
             "episodes": episodes}
@@ -1355,6 +1372,7 @@ def latency_bar_html(perf: dict) -> str:
 
 # ── 人工裁决:实现在 dataset_level/decisions.py(与 rejudge 命令共用同一份)。
 #    那是纯文件 IO 层,不是管道——UI 不 import 管道的红线在此不破。 ──
+from ..dataset_level import decisions as _dec
 from ..dataset_level.decisions import (APPEAL_CHOICES, APPEALS_CSV,  # noqa: F401
                                        DECISION_CHOICES, DECISIONS_CSV,
                                        VERDICT_CHOICES, VERDICTS_CSV,
@@ -1376,6 +1394,114 @@ def load_task_verdicts(m: dict) -> dict:
 
 def load_reject_appeals(m: dict) -> dict:
     return _load_appeals(m["path"])
+
+
+# ── 裁决的已应用/未应用与沿用(2026-08-16)──────────────────────────────
+#
+# 判据全部走 dataset_level/decisions.py 的 decisions_view(与 rejudge 的幂等跳过
+# **同源**,不许在 UI 里另写一套比对);本段只做措辞。三处显示的共同纪律:
+# 无裁决时一律返回空串 —— 空提示占着位置只会让人以为自己漏看了什么。
+
+def decision_status(m: dict) -> dict:
+    """当前 manifest 指着的那次跑批 → 裁决逐条状态 + 计数。
+
+    **每次调用现读三张裁决 CSV**(几十行的小文件):裁决卡片上点一下就落一行新
+    裁决,靠 manifest 里的缓存必然陈旧;溯源快照(prov_files)倒是随 manifest
+    走 —— 三件套只有 rejudge 会改,改完界面本来就要重载。
+    """
+    if m.get("load_error") or not m.get("path"):
+        return {"records": [], "counts": _dec.application_counts([])}
+    files = m.get("prov_files") or {}
+    records = _dec.decisions_view(files,
+                                  _load_decisions(m["path"]),
+                                  _load_verdicts(m["path"]),
+                                  _load_appeals(m["path"]),
+                                  run_started=_dec.run_started_at(m["path"]))
+    return {"records": records, "counts": _dec.application_counts(records)}
+
+
+def unapplied_banner_md(m: dict) -> str:
+    """质检报告页顶部的「有裁决尚未应用」提醒(没有未应用的 → 空串,不占位)。
+
+    防的事故:跑完新一批忘了点「执行人工裁决」,交出去的就是把人的决定全丢掉的
+    数据,而报告不会吭声。措辞分两档:一条都没应用时才说「纯机器结论」——
+    部分应用时那句就是假话。
+    """
+    c = decision_status(m)["counts"]
+    if not c["unapplied"]:
+        return ""
+    if c["applied"]:
+        return (f"⚠️ 这份交付有 **{c['unapplied']}** 条人工裁决尚未应用到本次跑批"
+                f"(另有 {c['applied']} 条已应用)。"
+                "去「任务台 · 执行人工裁决」执行一次。")
+    return (f"⚠️ 这份交付有 **{c['unapplied']}** 条人工裁决,本次跑批尚未应用 —— "
+            "当前看到的是纯机器结论。去「任务台 · 执行人工裁决」执行一次。")
+
+
+def carryover_note_md(m: dict) -> str:
+    """质检总览表**下方**小字区的沿用计数一行(零沿用 → 空串)。
+
+    ⚠️ 绝不进那张对账表:表的口径是「输入 = 判废 + 精确去重删除 + 交付」,
+    加一行沿用就把等式搅了。改变结果的条数单独点出来(用户点名):把仅标记的
+    (维持原标注/搁置/维持拒绝)混进去,读者会以为那么多结论都被人动过。
+    """
+    c = decision_status(m)["counts"]
+    if not c["carryover"]:
+        return ""
+    return (f"_本次结果沿用了此前(早于本次跑批)的人工裁决 **{c['carryover']}** 条,"
+            f"其中 **{c['carryover_changed']}** 条改变了结果(其余为仅标记);"
+            "逐条见 report.md 的「沿用自此前的人工裁决」小节。_")
+
+
+#: 裁决卡片溯源行的状态措辞(applied 之外的两种也要说清,别让人对着一条
+#: 落空的裁决反复点「执行」)。
+_TRACE_WORDING = {"unapplied": "尚未应用 —— 去「任务台 · 执行人工裁决」执行一次",
+                  "orphaned": "该 episode 不在本次跑批里,无处可施"}
+
+
+def decision_trace_md(m: dict, line: str, eid: str) -> str:
+    """裁决卡片上的溯源一行,如「你在 2026-08-14 21:30 裁过:采纳建议改标
+    (本次沿用)」。line ∈ label/verdict/appeal;没裁过 → 空串。"""
+    for r in decision_status(m)["records"]:
+        if r["line"] != line or r["id"] != eid or not r["kind"]:
+            continue
+        if r["status"] == "applied":
+            state = {"carryover": "本次沿用", "fresh": "本轮已应用"}.get(
+                r["when"], "已应用")
+        else:
+            state = _TRACE_WORDING[r["status"]]
+        when_txt = f"在 {r['at']} " if r["at"] else ""
+        return f"你{when_txt}裁过:**{r['kind']}**({state})"
+    return ""
+
+
+def application_counts_md(run_path: str) -> str:
+    """任务台「执行人工裁决」下拉旁的计数行(没有任何裁决 → 空串)。
+
+    落空的(该 episode 不在选中的这次跑批里)单独说,**不计入未应用** ——
+    混进去那个数字永远消不掉,提醒就成了狼来了。
+    """
+    c = _dec.application_counts(_dec.run_decision_records(run_path))
+    if not c["total"]:
+        return ""
+    s = (f"人工裁决:共 {c['total']} 条 / 已应用 {c['applied']} 条 / "
+         f"未应用 {c['unapplied']} 条")
+    if c["orphaned"]:
+        s += f";另有 {c['orphaned']} 条无处可施(该 episode 不在这次跑批里)"
+    return s
+
+
+def unapplied_card_note(run_path: str) -> str:
+    """跑批完成的任务卡片上的那句提醒(没有未应用的 → 空串)。
+
+    放在任务卡片上是因为那是离「忘记执行」最近的时刻:跑完一批,老裁决对新结果
+    全都处于未应用态,此刻不提,下一次想起来就是交付之后。
+    """
+    c = _dec.application_counts(_dec.run_decision_records(run_path))
+    if not c["unapplied"]:
+        return ""
+    return (f"⚠️ 这份交付记有 {c['unapplied']} 条人工裁决,尚未应用到这次结果 —— "
+            "去「执行人工裁决」页执行一次。")
 
 
 def audit_clip_paths(m: dict, episode_id: str) -> list[str]:

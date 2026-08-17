@@ -25,10 +25,13 @@ from .manifest import (APPEAL_CHOICES, APPEAL_HEADERS, AUDIT_HEADERS,
                        BUCKET_ALL, DECISION_CHOICES,
                        DETAIL_LABELS, TASK_REVIEW_HEADERS, VERDICT_CHOICES,
                        WORKFLOW_GUIDE, appeal_hint_md, appeal_reason_text,
-                       appeal_rows, audit_clip_paths, audit_note_md,
-                       bucket_choices, bucket_ids,
+                       appeal_rows, application_counts_md, audit_clip_paths,
+                       audit_note_md,
+                       bucket_choices, bucket_ids, carryover_note_md,
+                       decision_trace_md,
                        load_label_decisions, load_reject_appeals,
                        load_task_verdicts, play_all_button_html,
+                       unapplied_banner_md, unapplied_card_note,
                        record_label_decision, record_reject_appeal,
                        record_task_verdict,
                        AUDIT_TERM, LATENCY_HEADERS,
@@ -65,19 +68,12 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FAVICON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "assets", "favicon.png")
 
-def _terminal_head(root: str) -> str:
-    """终端页签的前端装配:资产从**本服务**取(pod 内无 CDN 通路),只在开了终端时注入。
-
-    root = UI 挂载前缀(如 "/curation";挂根路径传 "")。资产路径必须带上前缀:
-    APIG 按路径分流时**不剥前缀**,写死 `/term-static/*` 会被网关分给别的后端。
-    `window.CURATION_ROOT` 让 term.js 用同一个前缀拼 `/ws/term`。
-    """
-    return f"""
-<script>window.CURATION_ROOT = {json.dumps(root)};</script>
-<link rel="stylesheet" href="{root}/term-static/xterm.css" />
-<script src="{root}/term-static/xterm.js"></script>
-<script src="{root}/term-static/addon-fit.js"></script>
-<script src="{root}/term-static/term.js"></script>
+#: 终端页签的前端装配:资产从**本服务**取(pod 内无 CDN 通路),只在开了终端时注入。
+_TERMINAL_HEAD = """
+<link rel="stylesheet" href="/term-static/xterm.css" />
+<script src="/term-static/xterm.js"></script>
+<script src="/term-static/addon-fit.js"></script>
+<script src="/term-static/term.js"></script>
 """
 
 #: 同步证据图三挡:界面说法 → 配置值(pipeline.sync_plots)。
@@ -813,7 +809,7 @@ def _label_key(mapping: dict, label: str, default: str) -> str:
     return default
 
 
-def presentation(terminal: bool = False, root: str = "") -> dict:
+def presentation(terminal: bool = False) -> dict:
     """theme/css/head 三件套(gradio 6 起只认 launch()/mount_gradio_app() 上的这三个
     关键字,传给 `gr.Blocks()` 会被静默丢弃——2026-07-29 实测,顺手修掉的老 bug)。"""
     import gradio as gr
@@ -828,7 +824,7 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
         "head": (_TABLE_JS + _DROPDOWN_JS
                  + _TIP_JS.replace("__NAME__", QUICK_SCAN)
                           .replace("__TIP__", QUICK_SCAN_TIP)
-                 + (_terminal_head(root) if terminal else "")),
+                 + (_TERMINAL_HEAD if terminal else "")),
         # 标签页图标:不设就是 Gradio 自带的橘色 logo(用户 2026-08-13 点名)。
         # 换成 Arco 蓝圆角方块 + 白色漩涡(照 Daft 那枚的手感重画,底色主色化 ⇒
         # 既认得出这套系统的出身,又和整页的 Arco 蓝一致)。生成脚本
@@ -965,10 +961,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         idx = idx % len(q)
         a = q[idx]
         dec = load_label_decisions(m).get(a.get("id", ""), {})
+        # 溯源一行(2026-08-16):裁决跨跑批沿用,卡片上不写清"哪天裁的、这次
+        # 是沿用还是没应用",用户会把三周前的人工结论当成本轮机器判的
+        trace = decision_trace_md(m, "label", a.get("id", ""))
         info = (f"**{a.get('id','')}** · 档位 **{a.get('priority','参考')}** · "
                 f"成败线判定:{a.get('task_verdict') or '—'}"
                 + (f" · 已裁决:**{dec['decision']}**" if dec.get("decision") else "")
-                + f"\n\n分歧说明:{a.get('reason','')}")
+                + f"\n\n分歧说明:{a.get('reason','')}"
+                + (f"\n\n{trace}" if trace else ""))
         return (idx, f"第 {idx + 1} / {len(q)} 条", info, a.get("label", ""),
                 a.get("caption", ""), "", *_vids(m, a.get("id", "")),
                 *_au_btns(dec.get("decision")))
@@ -982,9 +982,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         idx = idx % len(q)
         t = q[idx]
         v = load_task_verdicts(m).get(t.get("id", ""), {})
+        trace = decision_trace_md(m, "verdict", t.get("id", ""))
         info = (f"**{t.get('id','')}** · 当前判决:{t.get('current','?')}"
                 + (f" · 已裁决:**{v['verdict']}**" if v.get("verdict") else "")
-                + f"\n\n**系统弃权原因**:{t.get('reason') or '未注明'}")
+                + f"\n\n**系统弃权原因**:{t.get('reason') or '未注明'}"
+                + (f"\n\n{trace}" if trace else ""))
         readings = f"关键读数:{readings_text(t.get('readings') or {})}"
         return (idx, f"第 {idx + 1} / {len(q)} 条", info, readings,
                 *_vids(m, t.get("id", "")), *_tv_btns(v.get("verdict")))
@@ -998,9 +1000,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         a = q[idx]
         eid = a.get("id", "")
         d = load_reject_appeals(m).get(eid, {})
+        trace = decision_trace_md(m, "appeal", eid)
         info = (f"**{eid}** · 系统判决:拒绝"
                 + (f" · 已复议:**{d['appeal']}**" if d.get("appeal") else "")
-                + f"\n\n**拒绝原因**:{appeal_reason_text(m, eid) or '未注明'}")
+                + f"\n\n**拒绝原因**:{appeal_reason_text(m, eid) or '未注明'}"
+                + (f"\n\n{trace}" if trace else ""))
         readings = f"关键读数:{readings_text(a.get('readings') or {})}"
         return (idx, f"第 {idx + 1} / {len(q)} 条", info, readings,
                 episode_video_html(m, eid, review_dir), *_ap_btns(d.get("appeal")))
@@ -1026,9 +1030,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         tl = load_timeline(m)
         tl_note0 = f"口径:{tl['note']}" if tl.get("note") else ""
         perf = load_perf(m)
+        # 沿用计数进表下小字区(2026-08-16 用户拍板):**绝不往对账表里加行** ——
+        # 那张表的口径是「输入 = 判废 + 精确去重删除 + 交付」,加一行就破了对账。
+        # 零沿用时是空串,口径小字保持原样一个字不多。
+        ov_note = overview_note_md(m)
+        carry = carryover_note_md(m)
+        if carry:
+            ov_note = f"{ov_note}\n\n{carry}" if ov_note else carry
         # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
-        return (m, overview_markdown(m), overview_rows(m), overview_note_md(m),
+        return (m, overview_markdown(m), overview_rows(m), ov_note,
                 _config_yaml(m),
                 # 桶随交付切换复位到「全部」:停在「拒绝」而新交付一条都没被拒,
                 # 看到的是空清单 + 一个还亮着的桶,等于骗人
@@ -1056,7 +1067,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 gr.update(value=TL_FILTERS["both"]), gr.update(value=TL_SORTS["episode"]),
                 tl_note0, timeline_html(tl),
                 perf_backend_md(perf), perf_env_md(perf), LATENCY_NOTE,
-                latency_rows(perf), latency_bar_html(perf))
+                latency_rows(perf), latency_bar_html(perf),
+                # 顶部「有裁决尚未应用」提醒(排在 outs 末尾 = 纯新增,不动老槽位)
+                unapplied_banner_md(m))
 
     # theme/css/head 不在这里传:gradio 6 把它们从 Blocks() 挪到了 launch()/
     # mount_gradio_app()(传给 Blocks 只换来一条 UserWarning,值被丢掉)。见 presentation()。
@@ -1097,6 +1110,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 """下拉选中项 → 预设代号(容忍带「· 可用/暂不可用」后缀)。"""
                 return _backend_map.get(_backend_label_of(choice))
 
+            def _done_run_note(st) -> str:
+                """跑批**成功结束**的任务卡片上,"还有裁决没应用"的那句提醒。
+
+                那是离「忘记执行裁决」最近的时刻(2026-08-16 用户点名)。计数走
+                run_decision_records(带 mtime 缓存 —— 本函数在 2 秒轮询里,不能
+                每跳都去 FSX 读几 MB 的 passed.json)。这句提醒是锦上添花,算不出
+                来(目录还没可见/结构意外)就闭嘴,绝不能把整个轮询拖炸。
+                """
+                if not st or st.get("state") != "done":
+                    return ""
+                try:
+                    run_dir = runner.run_output_dir(st)
+                    return unapplied_card_note(run_dir) if run_dir else ""
+                except Exception:  # noqa: BLE001  见上:提醒挂了不许连累状态条
+                    return ""
+
             def _tk_view(msg: str = ""):
                 """当前任务(没有在跑的就显示最近一个)→ 状态条 + 日志尾部 + 提示。"""
                 st = (runner.active_run(_runs_root)
@@ -1106,7 +1135,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 logtxt = runner.tail_log(_runs_root, st["run_id"])
                 # 累积进度(2026-08-13 用户):跑完的阶段留在原地,新阶段追加一根条 ——
                 # 只画最后一条时,阶段一换就归零重来,等着的人看不出"已经过了几关"
-                return (runner.status_html(st, runner.parse_progress_all(logtxt)),
+                return (runner.status_html(st, runner.parse_progress_all(logtxt),
+                                           extra=_done_run_note(st)),
                         logtxt, msg)
 
             def _tk_start(command, label, then_argv=None, *, jobs=None,
@@ -1421,11 +1451,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                     老交付(2026-08-13 之前)没有这个字段 —— 那就老实说没记,让人
                     自己选,绝不按名字猜(同名不同库会重判错数据)。
+                    顺带报这次跑批的裁决应用计数(2026-08-16):共几条 / 已应用 /
+                    未应用,落空的(episode 不在这次跑批里)单独说 —— 用户就是在
+                    这里决定"要不要点执行",不给数字等于让他盲点。
                     """
                     src = runner.source_dataset_of(path or "")
-                    if src:
-                        return f"原始数据集:`{src}`", gr.update(visible=False)
-                    return "这份交付没记原始数据集,请选:", gr.update(visible=True)
+                    text = (f"原始数据集:`{src}`" if src
+                            else "这份交付没记原始数据集,请选:")
+                    stat = application_counts_md(path or "")
+                    if stat:
+                        text += f"\n\n{stat}"
+                    return text, gr.update(visible=not src)
 
                 def _rj_pick(path):
                     """换交付 → 重列它的历次跑批,预选 latest 那次,再带出源数据集。"""
@@ -1437,6 +1473,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 rj_deliv.input(_rj_pick, rj_deliv, [rj_run, rj_src, rj_ds])
                 rj_run.input(_rj_src, rj_run, [rj_src, rj_ds])
+                # 打开页面就把预选那次的源数据集与裁决计数带出来:此前这块要等
+                # 用户动一次下拉才渲染,而"有几条裁决没应用"正是没人动下拉时
+                # 最需要看见的信息
+                app.load(_rj_src, rj_run, [rj_src, rj_ds])
 
                 def _rj_go(path, ds, backend, cfg, ok):
                     if str(backend or '').endswith(BACKEND_BAD):
@@ -1529,38 +1569,6 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     gr.Timer(10.0).tick(_hi_rows, None, hi_table)
                 app.load(lambda: _tk_view(""), None, _tk_outs)
                 app.load(_hi_rows, None, hi_table)
-
-                # 深链预填(2026-08-14,rerun 联动):rerun viewer 的「Diagnose」按钮
-                # 带 ?dataset=<数据集名> 跳过来,这里把「跑质检」的数据集下拉预选上,
-                # 用户点「开始质检」即可 —— **只预填不自动开跑**(自动开跑 = 刷新一次
-                # 页面就重复拉起一个吃 CPU 的任务)。
-                # 参数值只拿来和 list_datasets 扫出的名字**对表**,不当路径用 ——
-                # 不破坏「面板不接受任意路径输入」的边界(见 --data-root 的说明)。
-                def _prefill_from_query(request):
-                    qp = getattr(request, "query_params", None) or {}
-                    raws = (qp.getlist("dataset") if hasattr(qp, "getlist")
-                            else [qp.get("dataset", "")])
-                    wanted = [s.strip() for raw in raws
-                              for s in str(raw or "").split(",") if s.strip()]
-                    if not wanted:
-                        return gr.update()
-                    fresh = runner.list_datasets(_data_root)
-                    hits = [n for n in wanted if n in fresh]
-                    missing = [n for n in wanted if n not in fresh]
-                    if missing:
-                        gr.Warning("链接里的数据集在本站找不到:"
-                                   f"{', '.join(missing)}(数据集根 {_data_root})")
-                    if not hits:
-                        return gr.update()
-                    gr.Info(f"已按链接选中数据集:{', '.join(hits)}。"
-                            "确认参数后点「开始质检」。")
-                    return gr.update(choices=fresh, value=hits)
-
-                # gr.Request 靠注解注入;`from __future__ import annotations` 下字符串
-                # 注解会在 gradio 里被 eval,而 `gr` 只在函数内可见 → 直接挂真对象
-                # (同 _hi_open 的手法)。
-                _prefill_from_query.__annotations__ = {"request": gr.Request}
-                app.load(_prefill_from_query, None, rn_ds)
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
             # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
             # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。
@@ -1582,6 +1590,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                        value=resolve_run(choices[0]), label="运行",
                                        scale=1, interactive=True,
                                        info="每次跑批各存一份,默认打开最近一次")
+            # 「有裁决尚未应用」提醒(2026-08-16 纯新增):裁决 CSV 跨跑批共用,
+            # 跑完新一批忘了执行 rejudge,看到的就全是机器结论而人毫不知情。
+            # 无未应用裁决时是空串,Markdown 不占位。
+            pending_banner = gr.Markdown()
             state = gr.State()
 
             # 2026-08-13 重做:上半部那几行 bullet 与下半部的表在说同一批数字
@@ -1885,7 +1897,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     *_ep_outs, dt_pick, dt_note, dt_table, vd_note, vd_table,
                     sy_filter, *_sy_outs, sy_conclusion, sy_health,
                     tl_show, tl_sort, tl_note, tl_html,
-                    perf_backend, perf_env, perf_note, perf_table, perf_bar]
+                    perf_backend, perf_env, perf_note, perf_table, perf_bar,
+                    pending_banner]
 
             def _pick_delivery(path):
                 """换交付 → 重列该交付的历次跑批 + 打开其中一次。
@@ -2123,33 +2136,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
     return app
 
 
-def normalize_root_path(root_path: str | None) -> str:
-    """挂载前缀归一:"" 或 "/xx"(无尾斜杠),别的写法("curation"、"/curation/")都收拢。
-
-    归一后的值可以直接 f"{root}/term-static" 拼路径 —— 根路径("")拼出来
-    就是老写法,带前缀时拼出来不重斜杠。
-    """
-    s = (root_path or "").strip().strip("/")
-    return f"/{s}" if s else ""
-
-
 def create_asgi_app(delivery: str, config_path: str | None = None,
                     probe_timeout: float = 5.0, terminal: bool = False,
-                    review_dir: str | None = None, data_root: str | None = None,
-                    root_path: str | None = None):
-    """→ FastAPI 应用(gradio 挂在 `{root}/`,自定义路由挂在它前面)。
+                    review_dir: str | None = None, data_root: str | None = None):
+    """→ FastAPI 应用(gradio 挂在 `/`,自定义路由挂在它前面)。
 
     为什么不再用 `blocks.launch()`:launch() 自己造 FastAPI + 自己跑 uvicorn,拿不到
     那个 app 的引用,也就挂不上 `/ws/term`。改成我们造 app、gradio 往上挂,单端口
     同时提供 UI + 终端 + 静态资产 + 健康检查。
 
-    路由注册顺序有讲究:starlette 按注册顺序匹配,gradio 的挂载是 catch-all mount,
+    路由注册顺序有讲究:starlette 按注册顺序匹配,gradio 的 `/` 是 catch-all mount,
     必须最后挂,否则它会吃掉 `/ws/term` 和 `/term-static/*`。
-
-    root_path(2026-08-14,与 rerun 同域名分流):UI 要住在网关的一个路径前缀下
-    (`/curation` → 本服务,`/` → rerun viewer),而 APIG 分流**不剥前缀**,请求原样
-    带着 `/curation/...` 打过来 —— 所以是把全部路由注册在前缀下,而不是设 ASGI
-    root_path(那是给"网关剥前缀"的场景准备的,两者相反)。
     """
     import gradio as gr
     from fastapi import FastAPI
@@ -2158,30 +2155,22 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
 
     from . import auth
 
-    root = normalize_root_path(root_path)
     blocks = build_app(delivery, config_path, probe_timeout, terminal=terminal,
                        review_dir=review_dir, data_root=data_root)
     api = FastAPI()
 
     # 探针端点(鉴权豁免,见 auth.EXEMPT_PATHS):k8s readinessProbe 现在指 /(整页
     # 渲染),配了 Basic 之后会被 401 打红 → 留一个不设防的轻量端点给探针用。
-    # 带前缀部署时两个路径都留:探针直连容器端口用 /healthz 就好,网关侧健康检查
-    # 只能带前缀进来。
     @api.get("/healthz", response_class=PlainTextResponse)
     def _healthz() -> str:                     # noqa: ANN202
         return "ok"
 
-    if root:
-        api.add_api_route(f"{root}/healthz", _healthz, methods=["GET"],
-                          response_class=PlainTextResponse)
-
     if terminal:
         from . import terminal as term
-        api.mount(f"{root}/term-static", StaticFiles(directory=STATIC_DIR),
-                  name="term-static")
-        api.add_api_websocket_route(f"{root}/ws/term", term.term_endpoint)
-        log.info("终端:已开启(%s/ws/term,shell=%s,cwd=%s)",
-                 root, term.resolve_shell(), term.resolve_workdir())
+        api.mount("/term-static", StaticFiles(directory=STATIC_DIR), name="term-static")
+        api.add_api_websocket_route("/ws/term", term.term_endpoint)
+        log.info("终端:已开启(/ws/term,shell=%s,cwd=%s)",
+                 term.resolve_shell(), term.resolve_workdir())
 
     # 静态审片站(curation review-page 的产出):挂在 gradio catch-all 之前。
     # html=True → /review 直接出 index.html;目录缺失只警告不拦启动(先起 UI 后生成站点
@@ -2190,34 +2179,29 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
         if not os.path.isdir(review_dir):
             log.warning("审片站目录尚不存在:%s(生成后无需重启即可访问)", review_dir)
             os.makedirs(review_dir, exist_ok=True)
-        api.mount(f"{root}/review", StaticFiles(directory=review_dir, html=True),
-                  name="review")
-        log.info("审片站:已挂 %s/review → %s", root, review_dir)
+        api.mount("/review", StaticFiles(directory=review_dir, html=True), name="review")
+        log.info("审片站:已挂 /review → %s", review_dir)
 
-    auth.apply(api, terminal_enabled=terminal,
-               extra_exempt=(f"{root}/healthz",) if root else ())
+    auth.apply(api, terminal_enabled=terminal)
     # allowed_paths:允许页面直读交付目录下的证据文件(gradio 默认只许临时目录);
     # 审片站目录同样要放行——Episodes 页的视频第一来源就在那儿,不放行会 403。
     allowed = [delivery] + ([review_dir] if review_dir else [])
     # footer_links=[]:整排页脚(Use via API / Built with Gradio / Settings)去掉。
     # 头一个会把本服务的接口文档摆给任何打开页面的人看,另两个对客户毫无用处。
     # 用 gradio 自己的开关而不是 CSS 藏 —— 藏起来的链接照样可点、照样在 DOM 里。
-    return gr.mount_gradio_app(api, blocks, path=root or "/", allowed_paths=allowed,
-                               footer_links=[], **presentation(terminal, root))
+    return gr.mount_gradio_app(api, blocks, path="/", allowed_paths=allowed,
+                               footer_links=[], **presentation(terminal))
 
 
 def launch(delivery: str, config_path: str | None = None, host: str = "0.0.0.0",
            port: int = 7860, probe_timeout: float = 5.0,
            terminal: bool = False, review_dir: str | None = None,
-           data_root: str | None = None, root_path: str | None = None) -> None:
+           data_root: str | None = None) -> None:
     import uvicorn
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     app = create_asgi_app(delivery, config_path, probe_timeout, terminal=terminal,
-                          review_dir=review_dir, data_root=data_root,
-                          root_path=root_path)
-    root = normalize_root_path(root_path)
-    log.info("质检台 UI 监听 http://%s:%s%s/(交付根目录 %s)",
-             host, port, root, delivery)
+                          review_dir=review_dir, data_root=data_root)
+    log.info("质检台 UI 监听 http://%s:%s(交付根目录 %s)", host, port, delivery)
     uvicorn.run(app, host=host, port=port)

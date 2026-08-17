@@ -39,16 +39,19 @@ import json
 import os
 from typing import Callable
 
+from ..dataset_level import decisions as human
 from ..export.safe_write import delivery_dir, delivery_file, write_json, write_text
 
 TASK_CN = "任务成败判定"
 
 #: 三件套条目上的人工溯源键。标注线与成败线各一个,互不覆盖(同一条 episode
 #: 可能先被改标重判、后又被人工判成败),排查时一眼看得出是哪条线动的。
-PROV_LABEL = "标注裁决"
-PROV_RELABEL = "标注修正"
-PROV_TASK = "人工裁决"
-PROV_APPEAL = "人工复议"
+#: 单一事实源在 dataset_level/decisions.py(UI 的已应用/未应用计数与这里的幂等
+#: 跳过必须认同一套键);此处留同名别名,rejudge.PROV_* 的老引用不破。
+PROV_LABEL = human.PROV_LABEL
+PROV_RELABEL = human.PROV_RELABEL
+PROV_TASK = human.PROV_TASK
+PROV_APPEAL = human.PROV_APPEAL
 _PROV_KEYS = (PROV_RELABEL, PROV_LABEL, PROV_TASK, PROV_APPEAL)
 
 
@@ -306,6 +309,40 @@ def apply_reject_appeals(passed: dict, review: dict, reject: dict,
     return summary
 
 
+def _carryover_section(records: list) -> list:
+    """report.md 的「沿用」小节行(纯函数;records = decisions_view 的输出)。
+
+    只统计**已落库**的裁决:没应用的决定还没进任何结论,谈不上沿用(它有自己的
+    「未应用」提醒,在 UI)。计数把「改变结果的」与「仅标记的」分开报(用户点名:
+    混成一个数会让人以为 38 条结论全被人动过,而实际只有其中十几条改了结果)。
+    没有任何沿用、且新旧可判时返回空列表 —— 整节不出现,不制造噪音;时间解析
+    不出(老布局交付/手写占位时间)则如实写「无法判定新旧」,不许猜。
+    """
+    applied = [r for r in records if r["status"] == "applied"]
+    carry = [r for r in applied if r["when"] == "carryover"]
+    undated = [r for r in applied if r["when"] == "unknown"]
+    fresh = [r for r in applied if r["when"] == "fresh"]
+    if not carry and not undated:
+        return []
+    sec = ["\n### 沿用自此前的人工裁决\n",
+           "人工裁决记录在交付根 human-decisions/ 下跨跑批共用:裁决时间早于本次"
+           "跑批开始的,是此前人工裁过、本次自动沿用的结论。\n"]
+    if carry:
+        n_chg = sum(1 for r in carry if r["changes_result"])
+        sec.append(f"- 沿用 {len(carry)} 条:改变结果的 {n_chg} 条"
+                   f"(采纳改标/弃用/判成功/判失败/捞回),"
+                   f"仅标记的 {len(carry) - n_chg} 条"
+                   f"(维持原标注/搁置/维持拒绝,不改变任何数据)\n")
+        sec.append(f"- 本轮新裁 {len(fresh)} 条\n")
+        sec.append("\n| episode | 裁决 | 裁决时间 |\n|---|---|---|\n")
+        for r in carry:
+            sec.append(f"| {r['id']} | {r['kind']} | {r['at']} |\n")
+    if undated:
+        sec.append(f"- ⚠️ {len(undated)} 条已应用的裁决无法判定新旧"
+                   f"(裁决时间或本次跑批开始时间解析不出),不区分沿用与新裁\n")
+    return sec
+
+
 def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 rerun_fn: Callable | None = None) -> dict:
     """读裁决 → 重判(采纳条目)→ 更新交付。rerun_fn 注入(测试用假函数);
@@ -324,13 +361,12 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
 
 def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                  rerun_fn: Callable | None = None) -> dict:
-    from ..dataset_level.decisions import (load_label_decisions,
-                                           load_reject_appeals,
-                                           load_task_verdicts)
-
-    decisions = load_label_decisions(delivery)
-    verdicts = load_task_verdicts(delivery)
-    appeals = load_reject_appeals(delivery)
+    decisions = human.load_label_decisions(delivery)
+    verdicts = human.load_task_verdicts(delivery)
+    appeals = human.load_reject_appeals(delivery)
+    # 快照留给报告的「沿用」小节:下面的幂等跳过会从工作字典里 pop,而沿用统计
+    # 要看**全量**(跳过的那些正是"此前裁过、本次仍生效"的主力)。
+    all_lines = (dict(decisions), dict(verdicts), dict(appeals))
     if not decisions and not verdicts and not appeals:
         return {"note": "无裁决记录(交付目录 human-decisions/ 下的 "
                         "label_decisions.csv、task_verdicts.csv、reject_appeals.csv "
@@ -347,61 +383,44 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     # review(待裁决视图)是交付格式的设计,不是残留(2026-08-06 误清 14 条实锤,
     # 靠 passed 的弃权明细重建救回)。只允许**定向**清理:已裁决条目的旧副本。
 
-    # 幂等跳过:同一条 episode、同一次裁决(裁决时间+新标注都没变)已经采纳落库的,
-    # 不再重复付 VLM 重判的钱(2026-08-06 用户点名:重跑 rejudge 曾把两条又判了一遍)。
-    # 判据取三件套里的落库溯源,而非旁路文件——以真实交付状态为准。
+    # 幂等跳过:同一条裁决(裁决时间+内容都没变)已经落库的,整条不再进 apply ——
+    # 采纳改标那条线还省下重复付 VLM 重判的钱(2026-08-06 用户点名:重跑 rejudge
+    # 曾把两条又判了一遍);弃用/维持/搁置/维持拒绝虽然便宜,重复应用会在报告里
+    # 把同一件事反复计数。判据取三件套里的落库溯源,而非旁路文件——以真实交付
+    # 状态为准。⚠️ 判据本体在 dataset_level/decisions.py(*_applied_in),与 UI 的
+    # 已应用/未应用计数**同源**;不许在这里另写一套比对,两套判据迟早说两种话
+    # (有测试用替换共享判据的方式钉死这条调用链,改回内联写法就红)。
     adopt = {e: d for e, d in decisions.items()
              if d.get("decision") == "采纳建议改标" and str(d.get("new_label", "")).strip()}
     unchanged: list = []
-    for eid in list(adopt):
-        d = adopt[eid]
-        for name in ("passed", "review", "reject"):
-            entry = files[name].get("episodes", {}).get(eid)
-            if entry:
-                prov = entry.get("标注修正") or {}
-                if (prov.get("裁决时间") == d.get("at")
-                        and prov.get("新标注") == str(d.get("new_label", "")).strip()):
-                    unchanged.append(eid)
-                    adopt.pop(eid)
-                    decisions.pop(eid)      # 整条不再进 apply,交付保持原样
-                    # 定向清理:裁决已落库,该 episode 在其它文件里的无溯源旧副本
-                    # 即为残留(老 _take 只摘第一处留下的僵尸),就地清掉
-                    for other in ("passed", "review", "reject"):
-                        if other != name:
-                            oe = files[other].get("episodes", {})
-                            if eid in oe and "标注修正" not in oe[eid]                                     and "标注裁决" not in oe[eid]:
-                                oe.pop(eid)
-                break
+    for eid in list(decisions):
+        d = decisions[eid]
+        hit = human.label_decision_applied_in(files, eid, d)
+        if not hit:
+            continue
+        unchanged.append(eid)
+        decisions.pop(eid)                  # 整条不再进 apply,交付保持原样
+        if adopt.pop(eid, None) is not None:
+            # 定向清理(只有采纳改标有跨文件搬移史):裁决已落库,该 episode 在
+            # 其它文件里的无溯源旧副本即为残留(老 _take 只摘第一处留下的僵尸),
+            # 就地清掉
+            for other in ("passed", "review", "reject"):
+                if other != hit:
+                    oe = files[other].get("episodes", {})
+                    if (eid in oe and PROV_RELABEL not in oe[eid]
+                            and PROV_LABEL not in oe[eid]):
+                        oe.pop(eid)
 
-    # 成败裁决的幂等(同样以落库溯源为判据,与上面同一套语义,合流进 unchanged):
-    # 这条线不花 VLM 的钱,但重复应用会把"搁置"当成新事件反复计数,报告里越滚越多。
+    # 成败裁决与复议的幂等(同一套判据,合流进 unchanged):这两条线不花 VLM 的钱,
+    # 但重复应用会把"搁置"/"维持拒绝"当成新事件在报告里反复计数,越滚越多。
     for eid in list(verdicts):
-        v = verdicts[eid]
-        for name in ("passed", "review", "reject"):
-            entry = files[name].get("episodes", {}).get(eid)
-            if entry:
-                prov = entry.get(PROV_TASK) or {}
-                if (isinstance(prov, dict)
-                        and prov.get("裁决时间") == v.get("at")
-                        and prov.get("裁决") == v.get("verdict")):
-                    unchanged.append(eid)
-                    verdicts.pop(eid)       # 整条不再进 apply,交付保持原样
-                break
-
-    # 复议的幂等(同一套语义):捞回过的条目早已不在拒绝清单里,apply 会自然跳过,
-    # 但"维持拒绝"留在原地,不挡一下就会每跑一次 rejudge 在报告里重数一遍。
+        if human.task_verdict_applied_in(files, eid, verdicts[eid]):
+            unchanged.append(eid)
+            verdicts.pop(eid)               # 整条不再进 apply,交付保持原样
     for eid in list(appeals):
-        a = appeals[eid]
-        for name in ("passed", "review", "reject"):
-            entry = files[name].get("episodes", {}).get(eid)
-            if entry:
-                prov = entry.get(PROV_APPEAL) or {}
-                if (isinstance(prov, dict)
-                        and prov.get("复议时间") == a.get("at")
-                        and prov.get("复议结论") == a.get("appeal")):
-                    unchanged.append(eid)
-                    appeals.pop(eid)        # 整条不再进 apply,交付保持原样
-                break
+        if human.reject_appeal_applied_in(files, eid, appeals[eid]):
+            unchanged.append(eid)
+            appeals.pop(eid)                # 整条不再进 apply,交付保持原样
 
     rejudged: dict = {}
     _lat_mark = 0
@@ -696,6 +715,12 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
             if summary["appeal_skipped"]:
                 sec.append(f"- ⚠️ 未处理(不在拒绝清单里/该条的拒绝理由不可复议):"
                            f"{summary['appeal_skipped']}\n")
+        # 裁决沿用要看得见(2026-08-16 用户拍板):裁决 CSV 住在交付根、跨跑批
+        # 共用,新跑一批之后 rejudge 会把三周前的人工裁决自动再应用上来 —— 报告
+        # 不说,读者会以为这批结论全是机器判的。判据与幂等跳过同源(decisions_view
+        # 内部走同一批 *_applied_in),沿用/新裁按「裁决时间 vs 本次跑批开始」分。
+        sec.extend(_carryover_section(human.decisions_view(
+            files, *all_lines, run_started=human.run_started_at(delivery))))
         _psx = summary.get("profile_sync")
         if _psx and "note" not in _psx:
             sec.append("\n### 技能画像同步(标注优先方针,不重跑 caption/不重归纳体系)\n")

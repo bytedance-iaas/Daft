@@ -1162,6 +1162,37 @@ def stop(runs_root: str, run_id: str, *, killer=os.killpg,
 
 # ── 进度:解析管道自己打的那些行 ──────────────────────────────────────────
 
+def run_output_dir(st: dict) -> str | None:
+    """已结束的质检跑批任务 → 它产出的那次跑批目录(argv 里的 --output/--run-name)。
+
+    给「跑完提醒还有裁决没应用」用:拿不准(老任务没记 --run-name、目录还没
+    可见)就返回 None —— 宁可不提醒,也不能对着别的跑批说话。多数据集串跑时
+    argv 是第一个作业的,提醒也只覆盖它:部分覆盖仍比闭嘴强,但绝不指错目录。
+    """
+    if str((st or {}).get("command") or "") != "run":
+        return None
+    argv = [str(x) for x in (st or {}).get("argv") or []]
+
+    def _val(flag: str) -> str:
+        try:
+            return argv[argv.index(flag) + 1]
+        except (ValueError, IndexError):
+            return ""
+
+    out = _val("--output")
+    if not out:
+        return None
+    run_name = _val("--run-name")
+    cand = os.path.join(out, run_name) if run_name else ""
+    if cand and os.path.isdir(cand):
+        return cand
+    # run_name 撞车加了后缀 / 老布局交付:退回 latest 语义(任务刚 done,latest
+    # 记的就是它);连 passed.json 都没有说明目录还没落稳,不提醒。
+    from ..delivery import resolve_run
+    p = resolve_run(out)
+    return p if p and os.path.exists(os.path.join(p, "passed.json")) else None
+
+
 def source_dataset_of(delivery_dir: str) -> str | None:
     """交付目录 → 它是从哪个源数据集跑出来的(绝对路径)。
 
@@ -1385,11 +1416,13 @@ def failed_note(st: dict) -> str:
     return f"没跑到底(退出码 {rc});原因见下方日志末尾"
 
 
-def status_html(st: dict | None, progress=None) -> str:
+def status_html(st: dict | None, progress=None, extra: str = "") -> str:
     """当前任务的状态条 + **一列**进度条。没有任务 → 一句提示,不留空白。
 
     progress 收 parse_progress_all 的列表(每个阶段一条);也仍收单个 dict —— 那是
     parse_progress 的老形状,别处还在用,拆签名换不来任何东西。
+    extra = 卡片末尾追加的一句提醒(2026-08-16:跑完还有人工裁决没应用时用),
+    缺省空串 ⇒ 老调用一个字不变。
     """
     if not st:
         return ('<div style="padding:10px 12px;border-radius:8px;background:#f3f4f6;'
@@ -1408,8 +1441,11 @@ def status_html(st: dict | None, progress=None) -> str:
     bar = "".join(_progress_row(p) for p in items if p)
     tail = (f'<div style="margin-top:6px;color:#64748b;font-size:12px">{_esc(note)}</div>'
             if note else "")
+    # 提醒用琥珀色与 note 的灰区分开:note 是状态陈述,这句是要人去做一件事
+    more = (f'<div style="margin-top:6px;color:#92400e;font-size:12px">{_esc(extra)}</div>'
+            if extra else "")
     return (f'<div style="padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px">'
-            f'{head}{bar}{tail}</div>')
+            f'{head}{bar}{tail}{more}</div>')
 
 
 def _esc(s) -> str:
