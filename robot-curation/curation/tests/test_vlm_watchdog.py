@@ -115,8 +115,8 @@ def test_watchdog_real_process_integration(tmp_path):
         wd = subprocess.Popen(
             [sys.executable, "-m", "curation.adapters.vlm_watchdog",
              "http://127.0.0.1:59999/v1", str(dummy.pid), "6", "2"],
-            stdout=lf, stderr=lf, cwd="/data03/hao/curation-project",
-            env=dict(os.environ, PYTHONPATH="/data03/hao/curation-project"))
+            stdout=lf, stderr=lf, cwd=repo,
+            env=dict(os.environ, PYTHONPATH=repo))
     try:
         wd.wait(timeout=40)
         deadline = time.time() + 10

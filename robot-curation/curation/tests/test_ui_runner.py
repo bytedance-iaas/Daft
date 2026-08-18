@@ -1239,8 +1239,9 @@ def test_app_blocks_legacy_delivery_name_before_starting_a_task(tmp_path):
     fns = [f.fn for f in app.fns.values()
            if getattr(f.fn, "__name__", "") == "_run_preflight"]
     assert fns, "任务台的开跑回调没找到"
-    out = fns[0](["so101"], "droid-200-full", "", [], "", None, "", None, "",
-                 "", None, None, None, None, "", False, False)
+    # 首参是 TOS 桶的内部标识(2026-08-17 多 TOS 桶;单桶合成的那桶叫「默认」)
+    out = fns[0]("默认", ["so101"], "droid-200-full", "", [], "", None, "", None,
+                 "", "", None, None, None, None, "", False, False)
     flat = json.dumps([str(x) for x in out], ensure_ascii=False)
     assert "交付名" in flat and "output" not in flat
     runs = runner.runs_root_of(str(deliv))

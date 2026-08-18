@@ -236,16 +236,19 @@ def history_rows(runs: list, now: datetime.datetime | None = None) -> list[list]
     return out
 
 
-def list_datasets(data_root: str) -> list[str]:
-    """数据集根下**一层**里的有效数据集名(不是路径)。
+def _scan_dataset_root(data_root: str) -> tuple[str, list[str]]:
+    """扫一遍数据集根 → (状态, 有效数据集名列表)。状态三态:
+    "unmounted"(目录不存在/读不了)/ "empty"(读得了但没有有效数据集)/ "ok"。
 
-    判据与 cli._list_datasets 同款:有 `meta/info.json`(LeRobot)或目录里有
-    `*.rrd`(rerun)。目录不存在/读不了 → 空列表(界面显示"没扫到",不崩)。
+    为什么要分三态(2026-08-17):此前不存在和空目录都返回 [],界面上一律表现
+    为"数据集下拉是空的"—— 前者是**部署事故**(FSX 没挂上),后者是正常状态,
+    分不出来就没人去查部署。判据与 cli._list_datasets 同款:有 `meta/info.json`
+    (LeRobot)或目录里有 `*.rrd`(rerun)。
     """
     try:
         names = os.listdir(data_root)
     except OSError:
-        return []
+        return "unmounted", []
     out = []
     for name in names:
         d = os.path.join(data_root, name)
@@ -259,7 +262,66 @@ def list_datasets(data_root: str) -> list[str]:
                 out.append(name)
         except OSError:
             continue
-    return sorted(out)
+    return ("ok" if out else "empty"), sorted(out)
+
+
+def list_datasets(data_root: str) -> list[str]:
+    """数据集根下**一层**里的有效数据集名(不是路径)。
+
+    目录不存在/读不了 → 空列表(界面显示"没扫到",不崩);"没挂上"和"空的"
+    的区分交给 probe_dataset_root / dataset_root_note(本函数的老调用方只要
+    名字清单,不该被迫改签名)。
+    """
+    return _scan_dataset_root(data_root)[1]
+
+
+#: 根目录探测的缓存:{路径: (打点时刻, 状态)}。对象存储挂载上 stat/listdir 不
+#: 便宜,而探测结果会出现在每次下拉渲染里 —— 不缓存等于每次渲染都去打 FSX。
+#: 60 秒足够短:挂载修好后一分钟内界面自愈,不用重启。
+_ROOT_PROBE_TTL = 60.0
+_root_probe_cache: dict[str, tuple[float, str]] = {}
+
+
+def probe_dataset_root(path: str, *, ttl: float = _ROOT_PROBE_TTL) -> str:
+    """数据集根目录的三态探测(带 TTL 缓存):"ok" / "empty" / "unmounted"。
+
+    ⚠️ 探测失败绝不抛:未挂载是要**标出来**的状态,不是要让 UI 崩的异常 ——
+    别的桶可能是好的,炸掉整个界面是过度反应(与旧配置键那条"响亮报错"不同,
+    这里的错误随时可能自愈)。测试要绕缓存就传 ttl=0。
+    """
+    key = str(path or "")
+    now = time.monotonic()
+    hit = _root_probe_cache.get(key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    status = _scan_dataset_root(key)[0]
+    _root_probe_cache[key] = (now, status)
+    return status
+
+
+def dataset_root_note(path: str, *, ttl: float = _ROOT_PROBE_TTL) -> str:
+    """选中某个根目录时,「数据集」下拉底下那句状态说明(正常时空串不打扰)。
+
+    防的事故(2026-08-17):FSX 没挂上时界面只是"下拉是空的",和"目录确实还
+    没数据"长得一模一样 —— 部署事故被当成正常状态,没人去查。
+    """
+    status = probe_dataset_root(path, ttl=ttl)
+    if status == "unmounted":
+        return "⚠️ 这个根目录没挂上,请检查部署(目录不存在或读不了)"
+    if status == "empty":
+        return "挂载正常,里面还没有数据集"
+    return ""
+
+
+def log_unmounted_roots(buckets: list) -> None:
+    """启动时把没挂上的根目录逐个点名到日志(部署事故要在日志里留痕,不能只
+    藏在界面的一个 ⚠️ 角标里)。只点名不抛错:别的桶可能是好的。"""
+    for b in buckets:
+        path = b.get("datasets_path") or ""
+        if probe_dataset_root(path) == "unmounted":
+            print(f"[curation-ui] 数据集根目录没挂上:{path}"
+                  f"(TOS 桶 {b.get('bucket') or '未声明'})—— 目录不存在或"
+                  "读不了,请检查 FSX 挂载/部署", file=sys.stderr)
 
 
 def dataset_format(dataset_dir: str) -> dict:
@@ -344,6 +406,508 @@ def suggest_delivery_name(dataset: str, now: datetime.datetime | None = None) ->
     now = now or datetime.datetime.now()
     base = re.sub(r"[^A-Za-z0-9._-]", "-", str(dataset or "dataset")).strip("-.") or "dataset"
     return f"{base[:60]}-{now.strftime('%m%d')}"
+
+
+# ── 多 TOS 桶 + 深链解析(2026-08-17)──────────────────────────────────────
+#
+# 背景(测试同事提出、用户拍板):「数据集」下拉只扫一个 --data-root,它落在唯一
+# 挂载的 TOS 桶里;而 rerun 深链传来的本是完整 tos://桶/前缀/数据集 URL,桶名被
+# 丢掉只剩最后一段 —— 两个桶各有一个同名数据集时,会在默认桶里找到同名的那个、
+# 一声不响跑错数据(不报错不提示,最坏的一类 bug)。这一节做两件事:
+# ① TOS 桶从站点配置的白名单里选(tos_buckets/bucket_path):界面只传桶的内部
+#    标识,永不传路径,resolve_under 那条安全边界一个字不松;
+# ② 深链解析保留桶名并严格对表(parse_dataset_ref/prefill_plan):桶对不上就
+#    明说,**绝不回落到默认桶里找同名的**。
+# 目前只有一个桶,挂载层不动:配置没写 tos_buckets 时合成单桶,单桶部署的界面
+# 与行为和只有 --data-root 的今天一致。
+# 叫法演进(2026-08-17 用户两次当面纠偏,都别回退):
+# ① 「数据源」→「TOS 桶」:抽象过头零信息量;配置键同步改 tos_buckets
+#   (当天新加、尚未部署,零迁移成本;旧键 data_sources 出现要明确报错,不静默)。
+# ② 「TOS 桶」→「数据集根目录」(界面标签):下拉实际选的是"到哪个根目录下去
+#   列数据集",桶名含在显示串里;配置键 **tos_buckets 不再改** —— 那一段声明的
+#   确实是桶及其数据集根,键名按声明对象命名、界面标签按用户所选对象命名。
+
+
+def _bucket_label(alias: str, bucket, prefix, path: str) -> str:
+    """「数据集根目录」下拉的显示文本(2026-08-17 用户两次纠偏,别回退:
+    ① 显示「默认」零信息量,要看见数据在哪;② 早先的 `桶名:本地挂载路径` 把
+    两套地址空间混成一串 —— `curation` 是桶、`datasets` 是桶内前缀,而
+    `/mnt/tos/datasets` 是容器内挂载路径,冒号拼一起等于说 datasets 是桶名)。
+    规则:
+    - 基底 = `tos://桶名/桶内前缀`(前缀空 = 挂桶根,只印 `tos://桶名`);
+      本地挂载路径**不进显示串**,它挪到下拉底下的只读说明行里;
+    - 桶名声明了但前缀推导不出(配置缺 mount_root/tos_prefix)→ 如实写
+      `tos://桶名(桶内前缀未知)`,绝不编一个前缀顶上(诚实弃权);
+    - 桶名没声明 → 沿用 `(未声明桶):本地目录`:tos:// 地址一半都凑不出来,
+      本地目录是唯一真话;
+    - 别名只在带**额外信息量**时前缀成 `别名 · 基底`,三种情况不印:
+      ① 配置没显式给 name(名是从路径末段推导的,零增量);
+      ② 别名等于桶名(大小写不敏感,重复);
+      ③ 别名是「默认」/「default」这类占位词(零信息,正是用户吐槽的那个)。
+    显示文本**永远不当选中标识用**:下拉的 value 走 name,白名单查表在
+    bucket_path —— 显示串传进去会被当伪造标识拒掉,这是有意的。"""
+    if not bucket:
+        base = f"(未声明桶):{path}"
+    elif prefix is None:
+        base = f"tos://{bucket}(桶内前缀未知)"
+    else:
+        base = f"tos://{bucket}/{prefix}" if prefix else f"tos://{bucket}"
+    a = str(alias or "").strip()
+    if (not a or (bucket and a.casefold() == str(bucket).casefold())
+            or a.casefold() in {"默认", "default"}):
+        return base
+    return f"{a} · {base}"
+
+
+def _bucket_prefix(item: dict, path: str) -> tuple:
+    """一条 tos_buckets 配置 → (桶内前缀|None, 启动日志要点名的警告|None)。
+
+    优先级(2026-08-17 定):① 显式 `tos_prefix`;② 由 `datasets_path` 相对
+    `mount_root` 推导 —— 推导优于再写一遍,两处各写一份迟早漂移;③ 都没有 →
+    None(前缀**未知**,不许猜:深链对表对它按"没法核对"拒,见 prefill_plan)。
+    datasets_path 不在 mount_root 之下 = 配置写错 → 同样按未知处理并点名,
+    别算出个负数层级的鬼东西。纯字符串比较,不碰文件系统(配置解析要能在
+    没挂载的机器上跑)。
+    """
+    if "tos_prefix" in item:
+        return str(item.get("tos_prefix") or "").strip().strip("/"), None
+    mount = str(item.get("mount_root") or "").strip().rstrip("/")
+    if not mount:
+        return None, None
+    p = str(path or "").rstrip("/")
+    if p == mount:
+        return "", None
+    if p.startswith(mount + "/"):
+        return p[len(mount) + 1:].strip("/"), None
+    return None, (f"datasets_path {path!r} 不在 mount_root {mount!r} 之下,"
+                  "推导不出桶内前缀 —— 按前缀未知处理,请改配置")
+
+
+def bucket_info_line(b: dict) -> str:
+    """根目录下拉底下的只读说明,两行(\\n 分隔,界面负责换行渲染):
+    `端点:主机名` 与 `挂载路径:本地目录`。
+
+    - 「(内网)/(公网)」标注已删(2026-08-17 用户实机点名):它描述的是
+      **pod→TOS 的读取路径**,不是用户→界面的连接方式 —— 用户的浏览器根本
+      不碰这个端点,看到「内网」会误以为在说自己怎么连的界面,回答了一个
+      没人问的问题。别"顺手补全"再加回来。
+    - 端点那行保留(2026-08-17 用户拍板):它是 tos://桶/前缀
+      里唯一缺的那半截信息 —— 地域(主机名里含着 cn-beijing),挂载路径答
+      不了"数据物理上从哪个地域读"。地域不单存字段:端点主机名已是事实来源,
+      再存一份就是第二真相。
+    - 端点**不做成可选下拉**(现在不需要,不是永远不):挂载是 PV 在 pod
+      启动前定死的,运行时换端点不生效 —— 一个点了没用的控件比没有更糟
+      (rerun 那边做成可选,是因为它每次现连 TOS 流式播放)。等做了"下载
+      数据集"这类真在运行时发请求的功能,端点才变成真的选项,到时再改。
+    - 配置没给 endpoint → 只印挂载那行(挂载路径始终是真话),**不编端点**
+      (tos:// 里不含地域,没有就是没有);连挂载路径都没有 → 整段空。
+    """
+    ep = str(b.get("endpoint") or "").strip()
+    mount = str(b.get("datasets_path") or "").strip()
+    lines = []
+    if ep:
+        host = ep.split("://", 1)[-1].split("/", 1)[0]
+        lines.append(f"端点:{host}")
+    if mount:
+        lines.append(f"挂载路径:{mount}")
+    return "\n".join(lines)
+
+
+def bucket_dropdown_choices(buckets: list) -> list[tuple]:
+    """「数据集根目录」下拉的 (显示文本, 内部标识) 清单。
+
+    没挂上的根在显示文本末尾标「⚠️ 未挂载」—— 部署事故要在选择时就看得见,
+    不能等选中后发现下拉空了才猜。探测走 probe_dataset_root(带缓存)。
+    """
+    out = []
+    for b in buckets:
+        label = bucket_label(b)
+        if probe_dataset_root(b.get("datasets_path") or "") == "unmounted":
+            label += " ⚠️ 未挂载"
+        out.append((label, b.get("name")))
+    return out
+
+
+def bucket_label(b: dict) -> str:
+    """给人看的显示文本;字典没带 label(手搓的测试夹具/旧数据)回落 name。"""
+    return str(b.get("label") or b.get("name") or "")
+
+
+def tos_buckets(config_path: str | None = None, fallback_root: str | None = None,
+                given_root: str | None = None) -> list[dict]:
+    """站点配置的 `tos_buckets` 段 →
+    [{"name", "bucket", "datasets_path", "tos_prefix", "endpoint", "label"}, …]。
+
+    命名(2026-08-17 定,别再折腾):**键名按声明对象命名、界面标签按用户所选
+    对象命名** —— 这一段声明的确实是"桶及其数据集根",键叫 tos_buckets 没错;
+    而下拉实际选的是"到哪个根目录下去列数据集",界面标签叫「数据集根目录」。
+    两个名字各说各的对象,不是不一致。
+
+    tos_prefix = 桶内前缀(推导规则见 _bucket_prefix;None = 未知,深链对表
+    对它不放行)。endpoint 只读展示用(bucket_info_line),不参与任何请求。
+
+    配置没写这段 → 用 fallback_root 合成单桶(内部标识「默认」—— 那是 key
+    不是给人看的,显示走 label)。合成桶的 bucket=None:桶名我们**不知道**,
+    深链的 tos:// 校验对它按"认不出这个桶"处理并如实说明 —— 绝不假装挂载的
+    就是链接里那个桶(诚实弃权,不硬猜)。
+
+    第一个桶就是「默认桶」:裸名字深链与报告页兜底都落在它上面。
+    given_root = 调用方显式给的 --data-root / CURATION_DATA_ROOT;配置里同时
+    声明了 tos_buckets 时以配置为准,但两边对不上要在启动日志里点名 ——
+    静默吃掉用户显式给的参数是另一种事故(只补空缺不覆盖那条纪律的镜像面)。
+
+    旧键 `data_sources` 出现直接抛错点名新键名:静默当没配置会退化成合成单桶,
+    进而让所有 tos:// 深链被拒为"未接入",那种错最难查(2026-08-17 改名时定)。
+    """
+    section = None
+    for data in _config_layers(config_path):
+        if "data_sources" in data:
+            raise ValueError(
+                "配置里出现旧键 data_sources:该段已改名 tos_buckets(2026-08-17),"
+                "请改键名后重试 —— 不做静默兼容,旧键被当没配置会让所有 tos:// "
+                "深链被拒,那种错最难查")
+        if isinstance(data.get("tos_buckets"), list):
+            section = data["tos_buckets"]        # 站点文件整段覆盖出厂(若有)
+    out: list[dict] = []
+    seen: set = set()
+    for i, item in enumerate(section or []):
+        if not isinstance(item, dict):
+            print(f"[curation-ui] tos_buckets 第 {i + 1} 项不是键值映射,跳过",
+                  file=sys.stderr)
+            continue
+        path = str(item.get("datasets_path") or "").strip()
+        if not path:
+            print(f"[curation-ui] tos_buckets 第 {i + 1} 项缺 datasets_path,跳过",
+                  file=sys.stderr)
+            continue
+        alias = str(item.get("name") or "").strip()
+        name = (alias or os.path.basename(path.rstrip("/")) or f"TOS 桶 {i + 1}")
+        base, k = name, 2
+        while name in seen:            # 名字是下拉的选中标识,必须唯一
+            name, k = f"{base} ({k})", k + 1
+        seen.add(name)
+        bucket = str(item.get("bucket") or "").strip() or None
+        prefix, warn = _bucket_prefix(item, path)
+        if warn:
+            print(f"[curation-ui] tos_buckets 第 {i + 1} 项:{warn}",
+                  file=sys.stderr)
+        endpoint = str(item.get("endpoint") or "").strip() or None
+        out.append({"name": name, "bucket": bucket, "datasets_path": path,
+                    "tos_prefix": prefix, "endpoint": endpoint,
+                    "label": _bucket_label(alias, bucket, prefix, path)})
+    if not out:
+        root = str(fallback_root or "")
+        return [{"name": "默认", "bucket": None, "datasets_path": root,
+                 "tos_prefix": None, "endpoint": None,
+                 "label": _bucket_label("", None, None, root)}]
+    if given_root and given_root not in {b["datasets_path"] for b in out}:
+        print(f"[curation-ui] 配置声明了 tos_buckets,而 --data-root/"
+              f"CURATION_DATA_ROOT 给的 {given_root!r} 不在其中 —— 以配置为准,"
+              f"该参数这次不生效", file=sys.stderr)
+    return out
+
+
+def bucket_path(buckets: list, name) -> str:
+    """TOS 桶内部标识 → 该桶的 datasets_path。**这是安全边界**:界面传的是配置
+    白名单里的标识,不是路径 —— 伪造成路径(`../../etc` 之类)或把下拉的显示
+    文本当 key 传,在这里都对不上表,直接拒;数据集名照旧过 safe_name,路径仍
+    由 resolve_under 拼。"""
+    key = str(name or "").strip()
+    for b in buckets:
+        if b.get("name") == key:
+            return b["datasets_path"]
+    raise ValueError(f"未知 TOS 桶:{key!r}(只能从配置声明的清单里选)")
+
+
+#: 深链认的 query 键,**全部走同一条解析路径**(裸名字 / 完整 tos:// URL 都吃)。
+#: 只认 `dataset` 一个键太脆:rerun 侧换个键名,这边就一声不响什么都不做,
+#: "深链没生效"和"深链生效但选错"一样难查。
+DEEPLINK_KEYS = ("dataset", "dataset_url", "url")
+
+
+def deeplink_values(qp) -> tuple:
+    """query 参数 → (要预选的字符串列表, 有没有出现深链键)。
+
+    多键并存时**按 DEEPLINK_KEYS 的顺序合并去重**,不是取其一 —— 取一丢一在
+    两键并存时必丢信息,合并是唯一不丢东西的确定规则。第二个返回值给"不许
+    静默无动作"用:键出现了(哪怕值是空的)界面就必须给出下文。
+    qp 兼容 starlette 的 QueryParams(getlist)与普通 dict(测试用)。
+    """
+    out: list[str] = []
+    present = False
+    for key in DEEPLINK_KEYS:
+        vals = (qp.getlist(key) if hasattr(qp, "getlist")
+                else ([qp[key]] if key in qp else []))
+        if vals:
+            present = True
+        for raw in vals:
+            for s in str(raw or "").split(","):
+                s = s.strip()
+                if s and s not in out:
+                    out.append(s)
+    return out, present
+
+
+#: 深链的端点键(2026-08-17 用户拍板:rerun 侧把「Open from Volcengine TOS」
+#: 对话框里选的端点一并传过来)。认两个键名,教训同 DEEPLINK_KEYS:只认一个,
+#: 对方换个写法这边就静默什么都不做 ——"深链没生效"和"深链选错"一样难查。
+#: 可选参数:带不带都要能跑(rerun 侧什么时候加都不会坏这边)。
+ENDPOINT_KEYS = ("endpoint", "tos_endpoint")
+
+#: 消毒后主机名的字符集:字母数字与 . -,首尾必须字母数字(主机名合法字符,
+#: 全小写后比)。长度上限 253 = DNS 主机名上限。
+_ENDPOINT_HOST_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?")
+
+#: 主机名里认得出的地域段:cn-<xxx>(可带序号,如 cn-north-1)与
+#: ap/us/eu-<xxx>-<n> 这类。认不出就是 None,调用方**跳过地域比对**,不许硬凑。
+_REGION_RE = re.compile(
+    r"(?<![a-z0-9])((?:cn|ap|us|eu)-[a-z]+(?:-\d+)?)(?![a-z0-9])")
+
+
+def sanitize_endpoint(raw) -> str | None:
+    """不可信的端点串 → 干净的主机名;消不干净返回 None(当没给)。
+
+    ⚠️ 这个值来自 URL query,是**不可信输入**,且下游的提示语走 Markdown 组件
+    渲染 —— 原样回显就是注入面。所以入界即消毒:只取主机名(丢 scheme/凭据/
+    端口/路径/query),全小写,长度 ≤253,字符集只允许主机名合法字符;任何一步
+    过不了都返回 None,**绝不把原样串透传出去**。
+
+    ⚠️ 消毒后的主机名也**只用于显示与诊断,绝不用于读取任何数据**:本系统的
+    读取路径只有"已挂载的本地目录"这一条(resolve_under 白名单拼路径)。谁要
+    把这个值接进任何 fetch/请求,等于让 URL 参数指挥我们去连任意主机(SSRF),
+    停手。
+    """
+    s = str(raw or "").strip()
+    if not s or len(s) > 1024:          # 先掐总长,别拿超长串喂解析器
+        return None
+    from urllib.parse import urlsplit
+    try:
+        # 没写 scheme 的裸 host(rerun 端点下拉里就是裸主机名)补 // 走同一条
+        # netloc 解析;.hostname 顺手丢掉 user:pass@ 与 :端口
+        host = urlsplit(s if "://" in s else "//" + s).hostname
+    except ValueError:                  # 形如 [x](… 的串会被当坏 IPv6 字面量
+        return None
+    host = str(host or "").strip().lower()
+    if not host or len(host) > 253 or not _ENDPOINT_HOST_RE.fullmatch(host):
+        return None
+    return host
+
+
+def endpoint_region(host) -> str | None:
+    """主机名 → 地域段(如 tos-cn-beijing.ivolces.com → cn-beijing);认不出
+    返回 None。宽容且不猜:只认 _REGION_RE 那几族写法,别的形态一律 None。"""
+    m = _REGION_RE.search(str(host or "").lower())
+    return m.group(1) if m else None
+
+
+def deeplink_endpoint(qp) -> tuple:
+    """query 参数 → (消毒后的端点主机名|None, 有没有出现端点键)。
+
+    端点是标量不是清单,多键/多值并存时按 ENDPOINT_KEYS 的顺序取**第一个消得
+    干净的** —— 确定规则,且前面的值脏、后面的干净时不丢可用信息。第二个返回
+    值给界面提示"链接里的端点看不懂,已忽略"用(键出现了就不许静默无动作)。
+    qp 兼容 starlette 的 QueryParams(getlist)与普通 dict(测试用)。
+    """
+    present = False
+    for key in ENDPOINT_KEYS:
+        vals = (qp.getlist(key) if hasattr(qp, "getlist")
+                else ([qp[key]] if key in qp else []))
+        if vals:
+            present = True
+        for raw in vals:
+            host = sanitize_endpoint(raw)
+            if host:
+                return host, True
+    return None, present
+
+
+def _endpoint_conflict_note(src: dict, link_host: str) -> str | None:
+    """链接端点 vs 本实例配置端点的地域比对;没矛盾(或没法比)返回 None。
+
+    - 桶名全局唯一,同名桶不可能在两个地域 → 地域不同 = 链接与本站配置**必有
+      一错**,要点名并把两个地域都印出来;但**只提示,不改变选中行为**;
+    - 同地域只是内外网域不同(volces vs ivolces)是良性的:同一个桶、同一份
+      数据,只是网络路径不同,不提示;
+    - 任一侧地域认不出(endpoint_region → None)→ 跳过比对,不硬凑。
+    """
+    cfg_host = sanitize_endpoint(src.get("endpoint"))
+    if not cfg_host or cfg_host == link_host:
+        return None
+    link_region, cfg_region = endpoint_region(link_host), endpoint_region(cfg_host)
+    if not link_region or not cfg_region or link_region == cfg_region:
+        return None
+    return (f"链接给的端点({link_host},地域 {link_region})与本实例配置的"
+            f"端点({cfg_host},地域 {cfg_region})不在同一地域 —— 桶名全局"
+            "唯一,同名桶不可能同时在两个地域,链接和本站配置必有一处有误。"
+            "本次仍按本实例配置读取,预选不受影响")
+
+
+def parse_dataset_ref(raw: str) -> dict:
+    """深链里的一个数据集引用 → {"bucket": 桶名|None, "prefix": 桶内前缀|None,
+    "dataset": 名} 或 {"error": 给用户看的那句话}。
+
+    两种写法都吃(rerun 侧改造前后各一种):裸名字(桶未知 → 回默认桶找,
+    兼容今天的行为;prefix 一并 None)与完整 `tos://桶/前缀/数据集`。
+    解析要稳且**不许猜**:
+    - 桶名按 URL host 规则大小写不敏感(统一小写再比);前缀与数据集名大小写
+      敏感(对象存储的 key 就是大小写敏感的);
+    - prefix = 去掉最后一段后的中间路径,规范化成无首尾斜杠;数据集直接放在
+      桶根时是空串 —— 空串是"确知在桶根",None 是"根本没给 URL",两回事;
+    - 结尾多斜杠容忍(rerun 发来的就是带尾斜杠的;最后一个非空段才是数据集名);
+    - %20 之类的 URL 编码先解码;解码后过不了 safe_name(空格、藏进来的 `/`)
+      一律当无法解析并如实提示 —— 绝不猜一个"差不多"的名字。
+    """
+    s = str(raw or "").strip()
+    if "://" not in s:
+        return {"bucket": None, "prefix": None, "dataset": s}
+    if not s.lower().startswith("tos://"):
+        return {"error": f"只认识 tos:// 开头的数据集链接,这个解析不了:{s}"}
+    from urllib.parse import unquote, urlsplit
+    try:
+        parts = urlsplit(s)
+    except ValueError:
+        return {"error": f"数据集链接解析不了:{s}"}
+    bucket = unquote(parts.netloc or "").strip().lower()
+    if not bucket:
+        return {"error": f"链接里没有桶名,解析不了:{s}"}
+    segs = [unquote(x).strip() for x in (parts.path or "").split("/") if x.strip()]
+    if not segs:
+        return {"error": f"链接只有桶名、没有数据集段,不知道要选哪个数据集:{s}"}
+    name = segs[-1]
+    try:
+        safe_name(name)
+    except ValueError as e:
+        return {"error": f"链接里的数据集名不合法({e}),这个链接不处理:{s}"}
+    return {"bucket": bucket, "prefix": "/".join(segs[:-1]), "dataset": name}
+
+
+def prefill_plan(wanted: list, sources: list, lister=list_datasets,
+                 link_endpoint: str | None = None) -> dict:
+    """深链参数 → 预选计划(纯函数,界面只照着渲染)。sources = tos_buckets()
+    的产出(参数名保留 sources:对本函数它就是"可选中的清单")。
+
+    返回 {"source": 桶内部标识|None, "datasets": 预选列表, "choices": 该桶的
+    最新数据集列表, "info": 预选成功的提示语, "notices": 逐条如实说明的警告}。
+    文案里的桶一律用显示文本(bucket_label)—— 用户在下拉里看见的就是它,
+    提示里印内部标识会对不上号。
+
+    三条铁律:
+    ① **桶不认识绝不回落到默认桶里找同名的** —— 本函数存在的理由:两个桶各有
+       一个同名数据集时,静默跑错数据是最坏的一类 bug;
+    ② 裸名字按今天的行为回默认桶(第一个)找,措辞逐字不变(兼容红线);
+    ③ 没预选上任何东西时 notices 必不为空(不许静默无动作)。
+    比对是**桶 + 桶内前缀两级**(2026-08-17 补第二级):只比桶时,
+    `tos://curation/raw/x` 会静默匹配到我们挂的 `datasets/x` —— 和"桶不认识
+    就回落"是同一族的错,只低一层(客户桶里 raw/ 与 curated/ 同名数据集很
+    常见)。本实例前缀未知(配置缺 mount_root/tos_prefix)同样不放行:那是
+    **本站配置不全**,不许因为"不知道"就当对上了。
+    引用分属不同桶时同样不预选并明说:一个下拉一次只能停在一个桶上,
+    替用户挑其中一个就是猜。
+
+    link_endpoint(2026-08-17 加,可选,rerun 深链可能带 `endpoint`/
+    `tos_endpoint`):**必须是 sanitize_endpoint 消毒过的主机名**,且只进提示
+    文案 —— 绝不用于读取任何数据(读取路径只有已挂载的本地目录一条,见
+    sanitize_endpoint 的 SSRF 注记)。三条语义:① 不带 → 措辞与旧版逐字
+    一致;② 桶已接入且与本实例端点地域不同 → 补一条矛盾提示(只提示,不改
+    选中);③ 桶未接入 → "未接入"那句后面补上链接给的端点,让人知道该去哪儿
+    要权限。说明行的「端点:」永远印本实例配置的(bucket_info_line),链接的
+    端点只出现在这两种提示里 —— 那一行回答的是"**我们**从哪儿读",链接给的是
+    "**他们**从哪儿读",混淆就是新的一类假信息。
+    """
+    notices: list[str] = []
+    if not sources:
+        return {"source": None, "datasets": [], "choices": [], "info": "",
+                "notices": ["本站没有配置任何 TOS 桶,链接无法预选"]}
+    listing_cache: dict = {}
+
+    def _list(i: int) -> list:
+        if i not in listing_cache:
+            listing_cache[i] = lister(sources[i]["datasets_path"])
+        return listing_cache[i]
+
+    pairs: list[tuple] = []              # (桶下标, 数据集名)
+    bare_missing: list[str] = []
+    endpoint_checked: set = set()        # 已做过端点地域比对的桶下标
+    for raw in wanted:
+        ref = parse_dataset_ref(raw)
+        if ref.get("error"):
+            notices.append(ref["error"])
+            continue
+        if ref["bucket"] is None:
+            if ref["dataset"] in _list(0):
+                pairs.append((0, ref["dataset"]))
+            else:
+                bare_missing.append(ref["dataset"])
+            continue
+        idx = next((i for i, s in enumerate(sources)
+                    if str(s.get("bucket") or "").strip().lower() == ref["bucket"]),
+                   None)
+        if idx is None:
+            note = (f"链接指向的桶「{ref['bucket']}」未接入本实例,没有预选"
+                    f"「{ref['dataset']}」(不会在默认桶里找同名数据集)")
+            if link_endpoint:
+                # 未接入 + 链接给了端点:补上它,让人知道该去哪个地域要权限。
+                # 没给端点时上面那句逐字不变(兼容红线)。
+                note += f";链接标注的端点是 {link_endpoint}"
+            notices.append(note)
+            continue
+        if link_endpoint and idx not in endpoint_checked:
+            # 桶已接入:链接端点与本实例端点的地域比对,每个桶只提一次
+            # (一条链接带多个同桶数据集时,矛盾是桶级的,不逐条刷屏)
+            endpoint_checked.add(idx)
+            conflict = _endpoint_conflict_note(sources[idx], link_endpoint)
+            if conflict:
+                notices.append(conflict)
+        # 第二级对表:桶内前缀(空串=桶根也是一个明确的前缀,照比)
+        cfg_prefix = sources[idx].get("tos_prefix")
+        _p = lambda p: (f"{p}/" if p else "桶根")   # noqa: E731  文案里的前缀写法
+        if cfg_prefix is None:
+            notices.append(
+                f"桶「{ref['bucket']}」已接入本实例,但本站配置没写清它的桶内"
+                "前缀(tos_buckets 缺 mount_root 或 tos_prefix),没法核对链接"
+                f"指向的「{_p(ref['prefix'])}」—— 没有预选「{ref['dataset']}」。"
+                "这是本站配置不全,请补配置")
+            continue
+        if ref["prefix"] != cfg_prefix:
+            notices.append(
+                f"桶「{ref['bucket']}」已接入本实例,但只接入了"
+                f"「{_p(cfg_prefix)}」,链接指向的「{_p(ref['prefix'])}」没有"
+                f"接入 —— 没有预选「{ref['dataset']}」")
+            continue
+        if ref["dataset"] not in _list(idx):
+            notices.append(f"桶「{ref['bucket']}」的数据集目录里没有"
+                           f"「{ref['dataset']}」(TOS 桶「{bucket_label(sources[idx])}」)")
+            continue
+        pairs.append((idx, ref["dataset"]))
+    if bare_missing:
+        # 裸名字找不到的措辞与旧版逐字一致(数据集根 = 默认桶的目录)
+        notices.append("链接里的数据集在本站找不到:"
+                       f"{', '.join(bare_missing)}"
+                       f"(数据集根 {sources[0]['datasets_path']})")
+    picked = sorted({i for i, _ in pairs})
+    if len(picked) > 1:
+        span = "、".join(bucket_label(sources[i]) for i in picked)
+        notices.append(f"链接里的数据集分属不同 TOS 桶({span}),一次只能预选"
+                       "一个桶 —— 这次没有预选,请手动选择")
+        pairs, picked = [], []
+    if not pairs:
+        if not notices:                  # 兜底:键出现了就不许一声不吭
+            notices.append("链接带了数据集参数但没有可用的值,没有预选")
+        return {"source": None, "datasets": [], "choices": [], "info": "",
+                "notices": notices}
+    idx = picked[0]
+    hits: list[str] = []
+    for _i, n in pairs:
+        if n not in hits:
+            hits.append(n)
+    if idx == 0:                          # 默认桶:提示语与旧版逐字一致
+        info = (f"已按链接选中数据集:{', '.join(hits)}。"
+                "确认参数后点「开始质检」。")
+    else:
+        info = (f"已按链接选中 TOS 桶「{bucket_label(sources[idx])}」的数据集:"
+                f"{', '.join(hits)}。确认参数后点「开始质检」。")
+    return {"source": sources[idx]["name"], "datasets": hits,
+            "choices": _list(idx), "info": info, "notices": notices}
 
 
 # ── argv 构造:面板参数 → CLI 命令行 ──────────────────────────────────────

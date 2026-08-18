@@ -110,11 +110,11 @@ CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自�
 #: 客户会以为三个数据集的结果会互相覆盖(2026-08-13 用户提多选时点名要说明白)。
 #: 多选时的落盘形状与 CLI `--batch` 一致(`<交付名>/<数据集名>/`),报告页的递归
 #: 发现本来就找得到。
-OUT_NAME_HINT_ONE = ("*结果放进交付根下这个名字的目录里,本次跑批各自成一个"
-                     "时间戳子目录 —— 同名再跑不会覆盖上一次。*")
-OUT_NAME_HINT_MANY = ("*选了多个数据集:这个名字当**父文件夹**,每个数据集各出一份"
-                      "子交付 `<交付名>/<数据集名>/`,按选中的顺序一个接一个跑;"
-                      "中间某个没跑成,后面的照跑。*")
+OUT_NAME_HINT_ONE = "跑批会被放进以时间戳命名的子目录"
+# 2026-08-18 精简:原句四小句挤在窄列里要折三四行。只留"这个名字当什么用"
+# 这一件事(它回答的就是交付名的含义),执行顺序与容错("按序跑、一个没跑成
+# 后面照跑")挪出说明行 —— 那是任务台的进度区本来就看得见的事实。
+OUT_NAME_HINT_MANY = "多选:这个名字当**父文件夹**,每个数据集各出一份子交付"
 
 #: 「快速质检」旁边那个问号里的话。**按实际跑什么写**:--lite 只是跳过要 VLM 的
 #: 三步(任务成败判定 / 打标 / 技能画像),其余检查一步不少。
@@ -572,6 +572,54 @@ _ARCO_CSS = """
 .mono-log textarea, .mono-log input {
   font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace !important;
   font-size: 12px !important; line-height: 1.6 !important; color: var(--arco-t1) !important;
+}
+/* 控件下方的说明行(2026-08-17):说明不再走 Dropdown 的 info= —— 它被渲染在
+   标签和控件**之间**,谁有说明谁的控件就被往下推,三列对不齐(用户实机点名)。
+   改为控件下一行的独立 Markdown。这里只管长相:比正文小一号的灰字(对齐原来
+   info 的观感),负 margin 把它从主题默认行距里拉回控件底下,否则看着像一段
+   无关文字。为空时组件本身零内容零高度,负 margin 也不会把别的内容顶歪。 */
+.gradio-container .field-note,
+.gradio-container .field-note p,
+.gradio-container .field-note span {
+  /* ⚠️ 必须连 p/span 一起写:只写外层时实测外层拿到了 #86909C/13px,而真正
+     显示文字的 <p> 仍是 rgb(39,39,42)/15px —— gradio 的 prose 规则直接命中
+     p,颜色继承打不过一条更具体的规则(用户实见:"怎么能用黑色字平铺描述")。
+     字号/颜色照 Arco:辅助说明用 text-3(#86909C),行高 1.5715 是 Arco 的
+     标准值(见 .arco-tabs-header-title)。 */
+  color: var(--arco-t3) !important; font-size: 12px !important;
+  line-height: 1.5715 !important;
+}
+.gradio-container .field-note p { margin: 0 !important; }
+/* 左内边距 13px = 实测的错位量:说明行在控件面板之外,默认贴到面板左沿,比
+   字段标签还靠左 13px,看着像跟上面那组控件没关系。
+   ⚠️ 不许用负 margin 往上拉:上面那块控件面板是不透明白底,-6px 会把这行的
+   字顶进面板底下**被切掉半截**(用户实见:"端点那一行被盖住了")。要贴近就
+   靠正的小间距,别靠负值。 */
+.gradio-container .field-note { margin-top: 2px !important; padding-left: 13px; }
+
+/* 任务台子页签按 Arco 的 line 型(实测自 arco.css):
+   .arco-tabs-header-title = 14px / text-2 / **无边框无背景**;
+   active = 主色 + font-weight 500,选中态靠底部那条 ink 下划线表达。
+   gradio 默认给的是 6px 圆角方框 + 选中时蓝色边框(用户实见:"太难看了"）。
+   2026-08-18 用户放宽了"报告页页签不许动"那条红线(仅限外观统一),于是规则
+   放开成全局。**顶层导航为何不受影响**:#topnav 那组用的是 ID 选择器
+   (#topnav > .tab-container button),特异性高于本规则,且它设的属性与本规则
+   完全重合 —— 逐条都被它盖回去,不会漏出半套样式。 */
+.gradio-container button[role="tab"] {
+  background: transparent !important; border: none !important;
+  border-bottom: 2px solid transparent !important; border-radius: 0 !important;
+  box-shadow: none !important; color: var(--arco-t2) !important;
+  font-weight: 400 !important;
+  padding: 6px 0 !important; margin-right: 24px !important;
+}
+/* ⚠️ 这里**不设 font-size**:上面那条 `button[role="tab"] { font-size: 15px }`
+   是有意的("页签跟正文同档"),而本 UI 正文就是 15px。Arco 规范写 14px 是
+   因为它正文也是 14px —— 该照搬的是"页签=正文同档"这个关系,不是绝对数字。 */
+.gradio-container button[role="tab"]:hover { color: var(--arco-primary) !important; }
+.gradio-container button[role="tab"][aria-selected="true"],
+.gradio-container button[role="tab"].selected {
+  color: var(--arco-primary) !important; font-weight: 500 !important;
+  border-bottom-color: var(--arco-primary) !important;
 }
 """
 
@@ -1149,7 +1197,25 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # 上半部 = 控制面板(客户来这里干活),下半部 = 任务与日志(干完看这里)。
             # 界面上**不写**"安全边界""并发配额"这类内部考量:那是我们的实现细节,
             # 客户只需要知道能点什么(用户点名删掉整段说明文字)。
-            _data_root = data_root or os.environ.get("CURATION_DATA_ROOT") or DEFAULT_DATA_ROOT
+            # 多 TOS 桶(2026-08-17):桶清单来自站点配置的 tos_buckets 段
+            # (桶名 / 数据集目录 / 可选别名);没配就用 --data-root 合成单桶,
+            # 跑批用的路径/argv 与今天完全一致(界面**有意**多一个「数据集根目录」
+            # 下拉,单桶时也显示 —— 用户 2026-08-17 拍板:要随时看得见数据来自
+            # 哪个桶,且与以后多桶时长得一模一样;标签叫「数据集根目录」也是他
+            # 拍板:下拉实际选的就是"到哪个根目录下去列数据集",桶名含在里头)。
+            # 下拉用 (显示文本, 内部标识) 成对:显示 = tos://桶/桶内前缀
+            # (本地挂载路径不进显示串,挪到下拉底下的只读说明行;没挂上的根
+            # 标 ⚠️ 未挂载),value = name(白名单查表的 key)—— 显示串永远
+            # 不当标识用。
+            # _data_root 保留 = **默认桶**的目录:裸名字深链与初始列表都落在它上。
+            _given_root = data_root or os.environ.get("CURATION_DATA_ROOT")
+            _buckets = runner.tos_buckets(config_path,
+                                          _given_root or DEFAULT_DATA_ROOT,
+                                          given_root=_given_root)
+            runner.log_unmounted_roots(_buckets)   # 部署事故启动即点名进日志
+            _bkt_ids = [b["name"] for b in _buckets]
+            _bkt_choices = runner.bucket_dropdown_choices(_buckets)
+            _data_root = _buckets[0]["datasets_path"]
             _deliv_root = runner.deliveries_root_of(delivery)
             _runs_root = runner.runs_root_of(_deliv_root)
             # {人话标签: 内部代号}。**原地更新**(不重新绑名字):探活时会重读配置
@@ -1225,9 +1291,27 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             with gr.Tab("任务台", id="console"):
                 # ① 控制面板在上
-                with gr.Tabs():
+                # elem_id 是为了让 CSS **只**够得着任务台这两个子页签 —— 报告页
+                # 那套页签是红线(任何改动不许波及),所以不能用通用的
+                # button[role=tab] 选择器一刀切。
+                with gr.Tabs(elem_id="task-subtabs"):
                     with gr.Tab("跑质检"):
                         with gr.Row():
+                            # 「数据集根目录」排在「数据集」前面(2026-08-17 多桶
+                            # 框架);**始终显示,单桶也不隐藏**(用户拍板:随时
+                            # 看得见数据来自哪个桶,与以后多桶时长得一模一样)。
+                            # 回调统一走 bucket_path 白名单查表,不分单双桶两条路。
+                            # scale=3 而不是 1:显示串是「tos://桶/前缀」,
+                            # 1/9 行宽会把它截断 —— 截断的地址等于没显示,
+                            # 这一列的存在意义就是让人看全它。
+                            # ⚠️ 这一行的下拉**不许再用 info=**(2026-08-17 用户
+                            # 实机点名三列没对齐):Gradio 把 info 渲染在标签和
+                            # 控件之间,谁有说明谁的控件就被往下推,而别的列停在
+                            # 原位 → 错位。说明全部挪到下面独立的说明行。
+                            rn_src = gr.Dropdown(choices=_bkt_choices,
+                                                 value=_bkt_ids[0],
+                                                 label="数据集根目录", scale=3,
+                                                 interactive=True)
                             # 多选(2026-08-13 用户):此前只有"一个"或"父目录下全部"
                             # 两档,想跑其中三个得排三轮队(任务台同一时刻只许一个
                             # 任务在跑)。多选 = 一次点击顺序跑选中的这几个。
@@ -1236,7 +1320,38 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                                 multiselect=True, interactive=True)
                             rn_out = gr.Textbox(label="交付名", scale=4,
                                                 placeholder="给这次结果起个名字")
-                        rn_out_hint = gr.Markdown(OUT_NAME_HINT_ONE)
+                        # 说明行(2026-08-17 从 info= 挪出):第二行按与控件行
+                        # **相同的 scale(3/4/4)**分三列,说明各自落在自己那列
+                        # 底下,第三列留空占位(交付名没有说明)。gr.Markdown
+                        # 不收 scale,所以套 Column;min_width 与上一行控件默认
+                        # 值一致,否则窄屏时两行列宽算不齐。
+                        # 说明为空时不留空白的判据:gr.Markdown 空串在前端渲染
+                        # 零高度(同 pending_banner 的先例"空串不占位"),行高
+                        # 跟着最高的那列走 —— 第一列的「挂载:」几乎永远在
+                        # (datasets_path 是桶配置的必填项),右列为空不塌行。
+                        with gr.Row():
+                            with gr.Column(scale=3, min_width=160):
+                                # 读取端点 + 挂载路径两行(runner.bucket_info_line
+                                # 产出 \n 分隔,line_breaks=True 让它换行)
+                                rn_src_note = gr.Markdown(
+                                    runner.bucket_info_line(_buckets[0]),
+                                    line_breaks=True, elem_id="rn-src-note",
+                                    elem_classes=["field-note"])
+                            with gr.Column(scale=4, min_width=160):
+                                # 根目录三态说明(没挂上/挂了但空/正常时空串不打扰)
+                                # —— "下拉是空的"必须能分清是部署事故还是确实没数据
+                                rn_ds_note = gr.Markdown(
+                                    runner.dataset_root_note(_data_root),
+                                    elem_id="rn-ds-note",
+                                    elem_classes=["field-note"])
+                            with gr.Column(scale=4, min_width=160):
+                                # 交付名的说明(2026-08-18 用户点名):原来它独占
+                                # 一整行、还用 *斜体* 冒充弱化,位置和另两条说明
+                                # 对不上。挪进第三列 = 每条说明都落在自己那列的
+                                # 控件底下,样式统一走 .field-note 的灰小字。
+                                rn_out_hint = gr.Markdown(
+                                    OUT_NAME_HINT_ONE, elem_id="rn-out-note",
+                                    elem_classes=["field-note"])
                         # 「快速质检」原叫「快速冒烟(跳过模型判定)」——"冒烟"是
                         # 我们的行话,"模型判定"客户也不知道指哪几步(2026-08-13
                         # 用户点名)。改成大白话,细节挂在旁边的问号上。
@@ -1325,9 +1440,28 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                              value=resolve_run(choices[0]),
                                              label="哪一次运行", interactive=True)
                         rj_src = gr.Markdown()
+                        # 裁决侧的「数据集根目录」(2026-08-17):显隐与 rj_ds 完全
+                        # 同步(单桶也显示,用户拍板)—— 交付记了源路径时连数据集
+                        # 下拉都不出现,这时也摆一个不起作用的桶下拉反而是误导。
+                        # 这一侧竖排全宽,本没有对齐问题,但说明同样不走 info=
+                        # (与跑质检侧一个做法:两处行为不一致早晚有人只改一处;
+                        # info= 的 None/空串坑也不想再踩第二遍),改控件下方的
+                        # 独立 Markdown,显隐与各自的下拉完全同步。
+                        rj_src_dd = gr.Dropdown(choices=_bkt_choices,
+                                                value=_bkt_ids[0],
+                                                label="数据集根目录",
+                                                visible=False,
+                                                interactive=True)
+                        rj_src_note = gr.Markdown(
+                            runner.bucket_info_line(_buckets[0]),
+                            line_breaks=True, visible=False,
+                            elem_id="rj-src-note", elem_classes=["field-note"])
                         rj_ds = gr.Dropdown(choices=runner.list_datasets(_data_root),
                                             label="原始数据集", visible=False,
                                             interactive=True)
+                        rj_ds_note = gr.Markdown(
+                            runner.dataset_root_note(_data_root), visible=False,
+                            elem_id="rj-ds-note", elem_classes=["field-note"])
                         with gr.Accordion("更多设置", open=False):
                             rj_cfg = gr.Textbox(label="配置文件(留空=默认)",
                                                 placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
@@ -1337,7 +1471,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 # ② 任务与日志在下(合成一块,分子页签:当前任务 / 历史)
                 gr.Markdown("### 任务与日志")
-                with gr.Tabs():
+                # 与 #task-subtabs 同一套 Arco line 型页签:它就在跑质检面板
+                # 下面,两组页签长得不一样比都难看更糟。
+                with gr.Tabs(elem_id="task-logtabs"):
                     with gr.Tab("当前任务"):
                         tk_status = gr.HTML()
                         tk_msg = gr.Markdown()
@@ -1379,15 +1515,52 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 rn_ds.change(_ds_hint, [rn_ds, rn_batch], rn_out_hint)
                 rn_batch.change(_ds_hint, [rn_ds, rn_batch], rn_out_hint)
 
+                def _src_datasets(src, multi_pick: bool):
+                    """切数据集根目录 → (根那列的说明, 数据集下拉, 数据集那列的
+                    说明)。旧选中值清掉(它属于上一个根,留着等于把 A 桶的名字
+                    拿去 B 桶跑)。说明两处都要跟着换:端点/挂载是每个根各自的,
+                    三态探测结果也是(没挂上 vs 挂了但空,dataset_root_note)。
+                    查不到标识就原样不动 —— 下拉的选项本来就出自白名单,查不到
+                    只可能是伪造请求。
+
+                    ⚠️ 说明"该为空"时必须返回**空串,不许 None / 不许 gr.update()
+                    跳过**:2026-08-17 实机踩过 gradio 把 None 当"这个字段不用改"
+                    的坑 —— 切到未配端点的根,仍残留上一个根的端点;切回正常根,
+                    仍挂着「⚠️没挂上」。界面拿旧信息冒充当前状态,正是要消灭的
+                    那类错。说明如今是独立 Markdown(不再是 info=),空串直接就
+                    是"清掉"的写法,单测钉在"返回值就是空串"上防回退。"""
+                    try:
+                        b = next(x for x in _buckets if x["name"] == str(src or ""))
+                    except StopIteration:
+                        return gr.update(), gr.update(), gr.update()
+                    root = b["datasets_path"]
+                    return (runner.bucket_info_line(b),
+                            gr.update(choices=runner.list_datasets(root),
+                                      value=[] if multi_pick else None),
+                            runner.dataset_root_note(root))
+
+                # 用 .input 不用 .change:深链预选会从后端改这个下拉的值,.change
+                # 对程序性赋值也触发,会紧接着把预选好的数据集列表冲掉
+                rn_src.input(lambda s: _src_datasets(s, True), rn_src,
+                             [rn_src_note, rn_ds, rn_ds_note])
+                rj_src_dd.input(lambda s: _src_datasets(s, False), rj_src_dd,
+                                [rj_src_note, rj_ds, rj_ds_note])
+
                 _mode_ins = [rn_mode, rn_pick, rn_how]
                 _mode_outs = [rn_pick, rn_how, rn_c_ep, rn_c_fr, rn_c_cap,
                               rn_conc_note]
                 for _c in _mode_ins:
                     _c.change(_tk_mode, _mode_ins, _mode_outs)
 
-                def _run_go(ds, name, mode, picks, how, max_n, eps, backend,
+                def _run_go(src, ds, name, mode, picks, how, max_n, eps, backend,
                             cfg, emb, plots, c_ep, c_fr, c_cap, sets, batch, ro,
                             with_clips=False):
+                    # 桶标识先过白名单查表(2026-08-17):界面传的是配置里的
+                    # 内部标识不是路径,伪造的(含把显示文本当 key)在这里就被拒
+                    try:
+                        _root = runner.bucket_path(_buckets, src)
+                    except ValueError as e:
+                        return _tk_view(f"⚠️ {e}")
                     if str(backend or '').endswith(BACKEND_BAD):
                         return _tk_view('⚠️ 选中的模型服务当前不可用,换一个,或把那台服务起起来后点「检测可用性」')
                     # 多选下拉默认一个都没选 → 必须先拦(否则空选会一路走到
@@ -1427,18 +1600,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         if not batch and len(chosen) > 1:
                             # 答了「一起生成」就给**每个需要的**数据集都串上切片:
                             # 追问只问一次,覆盖的是全部选中项(2026-08-14 用户定)
-                            clips = (runner.datasets_needing_clips(_data_root, chosen)
+                            clips = (runner.datasets_needing_clips(_root, chosen)
                                      if with_clips else [])
                             jobs = runner.build_dataset_jobs(
-                                _data_root, _deliv_root, chosen, name or "",
+                                _root, _deliv_root, chosen, name or "",
                                 clips_root=review_dir, clips_for=clips,
                                 config=cfg, **common)
                             return _tk_start(
                                 "run", f"质检 {len(jobs)} 个数据集 → {name}"
                                 + (f"(含 {len(clips)} 份视频片段)" if clips else ""),
                                 jobs=jobs, run_id=run_id)
-                        inp = (_data_root if batch else
-                               runner.resolve_under(_data_root,
+                        inp = (_root if batch else
+                               runner.resolve_under(_root,
                                                     chosen[0] if chosen else ""))
                         out = runner.resolve_under(_deliv_root, name or "")
                         then_argv = None
@@ -1461,9 +1634,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 rn_args = gr.State({})          # 预检时把这次的参数存下,答完照原样开跑
 
-                def _run_preflight(ds, name, mode, picks, how, max_n, eps, backend,
-                                   cfg, emb, plots, c_ep, c_fr, c_cap, sets,
-                                   batch, ro):
+                def _run_preflight(src, ds, name, mode, picks, how, max_n, eps,
+                                   backend, cfg, emb, plots, c_ep, c_fr, c_cap,
+                                   sets, batch, ro):
                     """开跑前先看数据格式:v3/rrd 要先切片才有画面可看,问一句再决定。
 
                     只在**真需要**时才问(格式认得出、且本实例配了片段目录),其余一律
@@ -1474,18 +1647,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     做法是**问一次、覆盖全部** —— 统计选中项里有几个需要切片,答"一起
                     生成"就给每个需要的都串上,绝不逐个弹窗。
                     """
-                    args = dict(ds=ds, name=name, mode=mode, picks=picks, how=how,
-                                max_n=max_n, eps=eps, backend=backend, cfg=cfg,
-                                emb=emb, plots=plots, c_ep=c_ep, c_fr=c_fr,
-                                c_cap=c_cap, sets=sets, batch=batch, ro=ro)
+                    args = dict(src=src, ds=ds, name=name, mode=mode, picks=picks,
+                                how=how, max_n=max_n, eps=eps, backend=backend,
+                                cfg=cfg, emb=emb, plots=plots, c_ep=c_ep,
+                                c_fr=c_fr, c_cap=c_cap, sets=sets, batch=batch,
+                                ro=ro)
+                    try:
+                        _root = runner.bucket_path(_buckets, src)
+                    except ValueError as e:
+                        return (*_tk_view(f"⚠️ {e}"), args,
+                                gr.update(visible=False), "")
                     chosen = runner.picked_datasets(ds)
                     # 勾了「跑全部」时下拉本来就被忽略,跑的是根目录下的全部数据集,
                     # 交付目录由 CLI 自己定 —— 那条路径不在本次范围里,维持不问。
                     needing = ([] if batch else
-                               runner.datasets_needing_clips(_data_root, chosen))
+                               runner.datasets_needing_clips(_root, chosen))
                     if needing and review_dir:
                         fmt = (runner.dataset_format(
-                            runner.resolve_under(_data_root, chosen[0]))
+                            runner.resolve_under(_root, chosen[0]))
                             if len(chosen) == 1 else None)
                         return (*_tk_view(""), args, gr.update(visible=True),
                                 runner.clips_prompt(needing, fmt))
@@ -1498,9 +1677,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 _ask_outs = _tk_outs + [rn_args, rn_ask, rn_ask_md]
                 rn_go.click(_run_preflight,
-                            [rn_ds, rn_out, rn_mode, rn_pick, rn_how, rn_max, rn_eps,
-                             rn_backend, rn_cfg, rn_emb, rn_plots, rn_c_ep, rn_c_fr,
-                             rn_c_cap, rn_set, rn_batch, rn_ro],
+                            [rn_src, rn_ds, rn_out, rn_mode, rn_pick, rn_how,
+                             rn_max, rn_eps, rn_backend, rn_cfg, rn_emb, rn_plots,
+                             rn_c_ep, rn_c_fr, rn_c_cap, rn_set, rn_batch, rn_ro],
                             _ask_outs)
                 rn_yes.click(lambda a: _run_after_ask(a, True), rn_args,
                              _tk_outs + [rn_ask, rn_ask_md])
@@ -1522,7 +1701,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     stat = application_counts_md(path or "")
                     if stat:
                         text += f"\n\n{stat}"
-                    return text, gr.update(visible=not src)
+                    # 「数据集根目录」下拉随"要用户自己选数据集"一起露面;两条
+                    # 说明 Markdown 跟各自的下拉同显隐 —— 下拉藏了说明还亮着,
+                    # 等于对着一个不存在的控件报状态
+                    # 四个 update 各建各的:gradio 处理 update dict 时会就地
+                    # pop 键,共用同一个实例会让后面的输出拿到被掏空的壳
+                    return (text, *(gr.update(visible=not src) for _ in range(4)))
 
                 def _rj_pick(path):
                     """换交付 → 重列它的历次跑批,预选 latest 那次,再带出源数据集。"""
@@ -1532,14 +1716,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         sel = rc[0][1]
                     return (gr.update(choices=rc, value=sel), *_rj_src(sel))
 
-                rj_deliv.input(_rj_pick, rj_deliv, [rj_run, rj_src, rj_ds])
-                rj_run.input(_rj_src, rj_run, [rj_src, rj_ds])
+                rj_deliv.input(_rj_pick, rj_deliv,
+                               [rj_run, rj_src, rj_ds, rj_src_dd,
+                                rj_src_note, rj_ds_note])
+                rj_run.input(_rj_src, rj_run,
+                             [rj_src, rj_ds, rj_src_dd, rj_src_note, rj_ds_note])
                 # 打开页面就把预选那次的源数据集与裁决计数带出来:此前这块要等
                 # 用户动一次下拉才渲染,而"有几条裁决没应用"正是没人动下拉时
                 # 最需要看见的信息
-                app.load(_rj_src, rj_run, [rj_src, rj_ds])
+                app.load(_rj_src, rj_run,
+                         [rj_src, rj_ds, rj_src_dd, rj_src_note, rj_ds_note])
 
-                def _rj_go(path, ds, backend, cfg, ok):
+                def _rj_go(path, src_name, ds, backend, cfg, ok):
                     if str(backend or '').endswith(BACKEND_BAD):
                         return _tk_view('⚠️ 选中的模型服务当前不可用,换一个,或把那台服务起起来后点「检测可用性」')
                     if not ok:
@@ -1547,7 +1735,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     src = runner.source_dataset_of(path or "")
                     try:
                         if not src:
-                            src = runner.resolve_under(_data_root, ds or "")
+                            # 用户自己选数据集时,根取**选中的数据集根目录**
+                            # (bucket_path 白名单查表,与跑质检那侧同一条边界)
+                            src = runner.resolve_under(
+                                runner.bucket_path(_buckets, src_name), ds or "")
                         cfg = runner.resolve_tos_path(cfg) if str(cfg or "").strip() else None
                     except ValueError as e:
                         return _tk_view(f"⚠️ {e}")
@@ -1560,7 +1751,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                      delivery=path, input=src, config=cfg,
                                      vlm_backend=_backend_code(backend))
 
-                rj_go.click(_rj_go, [rj_run, rj_ds, rj_backend, rj_cfg, rj_ok],
+                rj_go.click(_rj_go,
+                            [rj_run, rj_src_dd, rj_ds, rj_backend, rj_cfg, rj_ok],
                             _tk_outs)
 
                 def _do_probe(cur_run, cur_rj):
@@ -1631,37 +1823,54 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 app.load(lambda: _tk_view(""), None, _tk_outs)
                 app.load(_hi_rows, None, hi_table)
 
-                # 深链预填(2026-08-14,rerun 联动):rerun viewer 的「Diagnose」按钮
-                # 带 ?dataset=<数据集名> 跳过来,这里把「跑质检」的数据集下拉预选上,
-                # 用户点「开始质检」即可 —— **只预填不自动开跑**(自动开跑 = 刷新一次
-                # 页面就重复拉起一个吃 CPU 的任务)。
-                # 参数值只拿来和 list_datasets 扫出的名字**对表**,不当路径用 ——
-                # 不破坏「面板不接受任意路径输入」的边界(见 --data-root 的说明)。
+                # 深链预填(2026-08-14 rerun 联动;2026-08-17 重做):rerun viewer 的
+                # 「Diagnose」按钮带 ?dataset= / ?dataset_url= / ?url= 跳过来,这里把
+                # 「跑质检」的数据集根目录+数据集预选上,用户点「开始质检」即可 ——
+                # **只预填不自动开跑**(自动开跑 = 刷新一次页面就重复拉起任务)。
+                # 裸名字与完整 tos:// URL 都吃;解析/对表/措辞全在 runner.prefill_plan
+                # (纯函数,可单测),这里只渲染。三条铁律见那边 docstring,其中最硬
+                # 的一条:**桶不认识绝不回落到默认桶里找同名的**(两个桶各有一个同名
+                # 数据集时,静默跑错数据是最坏的一类 bug)。键出现了就必有下文
+                # (预选成功 or 逐条警告),不许静默无动作。
+                # 参数值仍只拿来与配置白名单/list_datasets 扫出的名字**对表**,
+                # 不当路径用 —— 「面板不接受任意路径输入」的边界一个字不破。
                 def _prefill_from_query(request):
                     qp = getattr(request, "query_params", None) or {}
-                    raws = (qp.getlist("dataset") if hasattr(qp, "getlist")
-                            else [qp.get("dataset", "")])
-                    wanted = [s.strip() for raw in raws
-                              for s in str(raw or "").split(",") if s.strip()]
-                    if not wanted:
-                        return gr.update()
-                    fresh = runner.list_datasets(_data_root)
-                    hits = [n for n in wanted if n in fresh]
-                    missing = [n for n in wanted if n not in fresh]
-                    if missing:
-                        gr.Warning("链接里的数据集在本站找不到:"
-                                   f"{', '.join(missing)}(数据集根 {_data_root})")
-                    if not hits:
-                        return gr.update()
-                    gr.Info(f"已按链接选中数据集:{', '.join(hits)}。"
-                            "确认参数后点「开始质检」。")
-                    return gr.update(choices=fresh, value=hits)
+                    wanted, present = runner.deeplink_values(qp)
+                    if not present:
+                        return gr.update(), gr.update(), gr.update(), gr.update()
+                    # 可选的 endpoint/tos_endpoint(2026-08-17 用户拍板让 rerun
+                    # 侧把端点一并传来):不可信输入,入界即消毒(只留主机名),
+                    # 且**只进提示文案、绝不进任何读取路径**(SSRF 注记见
+                    # runner.sanitize_endpoint)。消不干净 → 当没给,但要说一声
+                    # (原样串一个字不回显 —— 提示是 Markdown 组件,回显即注入面)
+                    ep_host, ep_present = runner.deeplink_endpoint(qp)
+                    if ep_present and not ep_host:
+                        gr.Warning("链接里的端点参数看不懂,已忽略(不影响预选)")
+                    plan = runner.prefill_plan(wanted, _buckets,
+                                               link_endpoint=ep_host)
+                    for note in plan["notices"]:
+                        gr.Warning(note)
+                    if not plan["datasets"]:
+                        return gr.update(), gr.update(), gr.update(), gr.update()
+                    gr.Info(plan["info"])
+                    # 两列说明(端点/挂载 + 根目录三态)要跟着切过去的那个根走,
+                    # 不然下拉的值换了、底下的说明还是上一个根的,两处自相矛盾
+                    _b = next((x for x in _buckets
+                               if x["name"] == plan["source"]), None)
+                    return (gr.update(value=plan["source"]),
+                            gr.update(choices=plan["choices"],
+                                      value=plan["datasets"]),
+                            runner.bucket_info_line(_b) if _b else gr.update(),
+                            runner.dataset_root_note(_b["datasets_path"])
+                            if _b else gr.update())
 
                 # gr.Request 靠注解注入;`from __future__ import annotations` 下字符串
                 # 注解会在 gradio 里被 eval,而 `gr` 只在函数内可见 → 直接挂真对象
                 # (同 _hi_open 的手法)。
                 _prefill_from_query.__annotations__ = {"request": gr.Request}
-                app.load(_prefill_from_query, None, rn_ds)
+                app.load(_prefill_from_query, None,
+                         [rn_src, rn_ds, rn_src_note, rn_ds_note])
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
             # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
             # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。

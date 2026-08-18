@@ -3192,11 +3192,11 @@ def test_start_button_refuses_an_empty_dataset_selection(full_delivery, tmp_path
     assert go, "界面上找不到「开始质检」按钮"
     fn = next(f for f in app.fns.values()
               if go & {t[0] for t in getattr(f, "targets", [])})
-    # 参数顺序 = rn_go.click 的 inputs;这里只关心第一个(数据集)为空
-    # 参数少了一个:「覆盖同名结果」2026-08-14 随布局改造撤掉(每次跑批各进各的
-    # 时间戳子目录,没有可覆盖的东西)
-    out = fn.fn([], "out", ui_app.FULL_SCAN, [], "只跑选中", None, "", None,
-                "", "", ui_app.PLOT_MODES["flagged"], None, None, None, "",
+    # 参数顺序 = rn_go.click 的 inputs;这里只关心「数据集」为空
+    # (2026-08-17 多 TOS 桶:第一个参数变成桶的内部标识,单桶部署它叫「默认」;
+    # 「覆盖同名结果」2026-08-14 随布局改造撤掉,每次跑批各进各的时间戳子目录)
+    out = fn.fn("默认", [], "out", ui_app.FULL_SCAN, [], "只跑选中", None, "",
+                None, "", "", ui_app.PLOT_MODES["flagged"], None, None, None, "",
                 False, False)
     msg = str(out[2])
     assert "数据集" in msg and "跑全部" in msg
