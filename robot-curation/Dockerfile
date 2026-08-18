@@ -4,8 +4,12 @@
 #   ②daft 用 pip 官方发行版,绝不从源码构建(可复现性纪律)。
 #
 # 基础镜像可换源(火山 CI 拉 Docker Hub 慢/不通时):
-#   --build-arg BASE_IMAGE=hub-cache-cn-beijing.cr.volces.com/library/python:3.10-slim
-ARG BASE_IMAGE=python:3.10-slim
+#   --build-arg BASE_IMAGE=hub-cache-cn-beijing.cr.volces.com/library/python:3.10-slim-bookworm
+# ⚠️ 底座钉死 bookworm(2026-08-18):数据拉取通道用的 onion-ai-data 包只在
+#   bookworm/bullseye/buster 的火山 extra-tools 源里有,trixie 源实测不存在
+#   (dists/trixie 只有一个 irqbalance-ng)—— 裸 python:3.10-slim 会随上游漂到
+#   trixie,装不上。
+ARG BASE_IMAGE=python:3.10-slim-bookworm
 FROM ${BASE_IMAGE}
 
 # PyPI 源可换(2026-07-17 火山构建集群→官方 PyPI 实测 17kB/s+超时):
@@ -18,13 +22,40 @@ ENV PIP_INDEX_URL=${PIP_INDEX_URL} PIP_DEFAULT_TIMEOUT=120
 
 # 运维基础件:curl(pod 内探查 OpenAI 端点/健康检查用;slim 镜像默认没有,
 # 以前靠 pod 里临时 apt 装,一重建就丢——2026-07-26 进镜像固化)。
-# apt 也走火山镜像:deb.debian.org 公网在部分节点/构建机极慢(同 init 容器的教训)。
+# apt 走火山镜像:deb.debian.org 实测慢到卡死(pod 内 apt install curl 十几分钟
+# 没动静,换火山源秒装)。bookworm 的源声明在
+# /etc/apt/sources.list.d/debian.sources(deb822 格式),不是 sources.list,
+# sed 直接改该文件里的 URIs。
+# ⚠️ 缺省必须用**公网可达**的 mirrors.volces.com:本文件要推公开仓,而内网变体
+#    mirrors.ivolces.com 在火山网络外**解析不了**(Mac 上实测 000),且这一层
+#    **不受 NO_MIRROR 闸门保护** —— 改成内网域等于让公开 CI 构建直接失败。
+#    在火山内网构建想更快(实测 0.014s vs 0.33s),显式传:
+#      --build-arg APT_MIRROR=http://mirrors.ivolces.com
 ARG APT_MIRROR=https://mirrors.volces.com
 RUN sed -i "s|http://deb.debian.org|${APT_MIRROR}|g; s|https://deb.debian.org|${APT_MIRROR}|g" \
         /etc/apt/sources.list.d/debian.sources 2>/dev/null || true \
     && apt-get update -qq \
     && apt-get install -y -qq --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
+
+# 数据拉取通道(curation fetch,2026-08-18):从火山 extra-tools 源装 onion-ai-data,
+# 它提供 oniond —— 内网 HF 镜像缓存桶(ai-infra)的下载器;依赖 aria2-byted/jq/wget
+# 由 apt 自动解决,不需要手动解包 deb(aria2c_byted 二进制在 bookworm 上实测能跑)。
+# NO_MIRROR=1 时整层跳过(照抄 RLinf 的闸门):内网源只在火山网络可达,公开 CI
+# 构建 --build-arg NO_MIRROR=1 要能过;跳过后镜像照常能跑,只是 fetch 子命令
+# 会因缺下载器而失败。gnupg 只为导入源签名(slim 没自带 gpg)。
+ARG NO_MIRROR=
+RUN if [ "$NO_MIRROR" != "1" ]; then \
+      apt-get update -qq \
+      && apt-get install -y -qq --no-install-recommends gnupg \
+      && curl -fsSL http://mirrors.ivolces.com/extra-tools/debian/GPG-KEY-system \
+        | gpg --dearmor -o /etc/apt/trusted.gpg.d/volc-extra-tools.gpg \
+      && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/trusted.gpg.d/volc-extra-tools.gpg] http://mirrors.ivolces.com/extra-tools/debian bookworm main" \
+        > /etc/apt/sources.list.d/volctools.list \
+      && apt-get update -qq \
+      && apt-get install -y -qq --no-install-recommends onion-ai-data \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # (2026-07-29 U4)这里原本有一层"下载 ttyd 静态二进制"——**已整层删除**。
 # 网页终端改成**内嵌式**:终端是质检台 UI 自己的一条 WebSocket 路由(/ws/term,

@@ -164,6 +164,19 @@ checks:
 #                                           #   (地域含在主机名里,不单存 region 字段)
 #         tos_prefix: datasets              # 可选;仅挂载布局推不出前缀时显式覆盖
 #         name: 客户A                       # 可选别名;真有信息量才显示(「默认」这类占位不印)
+# ★ 数据来源(curation fetch,2026-08-18,可选段):`curation fetch --source <名>`
+#   从哪个镜像站拉公开数据集。配置不写本段时用出厂默认 —— 只有一个来源 ai-infra
+#   (内网 HF 镜像缓存桶,经 oniond 下载,同区直连),值在 curation/fetch.py 的
+#   FACTORY_FETCH_SOURCES(⚠️ 与下方示例保持同值,改一处必改另一处)。
+#   base_url = 逐文件 HEAD 量**真实体积**用的对象存储前缀:镜像站 inspect 报的
+#   Used Storage 高报可达 1200 倍(2026-08-18 实测),体积只认逐文件 HEAD;
+#   端点将来会变、curation/ 要推公开仓,所以它必须写在配置里,不写死在业务逻辑。
+#   站点文件示例:
+#     fetch_sources:
+#       ai-infra:
+#         display_name: 内网 HF 镜像缓存桶
+#         bucket: ai-infra                  # 镜像所在 TOS 桶(传给下载器的 BUCKET)
+#         base_url: https://ai-infra.tos-cn-beijing.volces.com/dataset  # 数据集对象前缀
 vlm_backends:
   ark:                             # 方舟 MaaS(豆包)——托管,零运维,任何部署都可用
     endpoint: https://ark.cn-beijing.volces.com/api/v3

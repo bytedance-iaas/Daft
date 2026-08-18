@@ -138,6 +138,28 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--yes", action="store_true",
                     help="真的删(不加就只打印将要删什么;必须同时给 --keep-latest)")
 
+    fe = sub.add_parser("fetch",
+                        help="从数据来源站拉公开数据集进本站数据集根,下完即可直接跑质检"
+                             "(本地暂存下载 → 逐文件校验 → 顺序拷入,绝不让下载器直写 TOS)")
+    fe.add_argument("--source", required=True, metavar="来源",
+                    help="数据来源。目前可选:ai-infra  内网 HF 镜像缓存桶"
+                         "(经 oniond 下载,同区直连);清单可在站点配置 fetch_sources 段扩充")
+    fe.add_argument("--ref", required=True, metavar="源站名",
+                    help="数据集在源站上的名字(如 libero)")
+    fe.add_argument("--include", action="append", metavar="模式",
+                    help="只下匹配这些模式的文件(可重复,如 --include 'meta/*');"
+                         "不给 = 下整个数据集。部分拉取的数据不完整,不会被当作"
+                         "可用数据集列出;要可用数据集请完整拉取")
+    fe.add_argument("--into", default=None, metavar="数据集根",
+                    help="落到哪个数据集根目录;缺省用配置里第一个 tos_buckets 的 "
+                         "datasets_path")
+    fe.add_argument("--name", default=None, metavar="落地名",
+                    help="落地目录名(缺省与 --ref 同名)")
+    fe.add_argument("--overwrite", action="store_true",
+                    help="同名数据集已存在时覆盖重下(缺省跳过并说明)")
+    fe.add_argument("--config", default=None,
+                    help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
+
     be = sub.add_parser("backends", help="一次列出全部 VLM 后端预设的在线状态与服务端模型")
     be.add_argument("--config", default=None,
                     help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
@@ -427,6 +449,13 @@ def main(argv: list[str] | None = None) -> int:
         if summary.get("note"):
             print(f"[reprofile] {summary['note']}")
         return 0
+
+    if args.command == "fetch":
+        from .fetch import run_fetch
+        from .pipeline.config import load_config
+        return run_fetch(load_config(args.config), args.source, args.ref,
+                         into=args.into, name=args.name, includes=args.include,
+                         overwrite=args.overwrite)
 
     if args.command == "backends":
         return _cmd_backends(args.config, args.timeout)

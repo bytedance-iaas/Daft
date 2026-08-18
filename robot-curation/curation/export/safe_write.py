@@ -138,6 +138,16 @@ def _publish(local_tmp: str, dst: str) -> None:
         raise
 
 
+def publish_file(local_path: str, dst: str) -> str:
+    """本地盘上**已经写好的现成文件** → 原子发布到挂载(`curation fetch` 入库
+    这类"文件先落本地暂存、校验完再上挂载"的场景)。与 delivery_file 走同一条
+    发布通道(_publish:目标目录内临时名 + os.replace),同一条 FSX 纪律 ——
+    读者要么看到旧的整份、要么看到新的整份,没有中间态。"""
+    os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
+    _publish(local_path, dst)
+    return dst
+
+
 @contextlib.contextmanager
 def delivery_dir(dst_dir: str):
     """目录级交付件("一个目录=一份数据集",episodes_parquet 这类)的原子发布。
