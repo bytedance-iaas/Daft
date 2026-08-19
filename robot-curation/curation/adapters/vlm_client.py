@@ -212,6 +212,52 @@ def timeout_for(kind: str, vlm_cfg: dict | None) -> float:
     return float(t) if t is not None else DEFAULT_TIMEOUTS_S[kind]
 
 
+# 惰性建真信号量的原因:threading.Semaphore 内含 _thread.lock,cloudpickle 序列化
+# 不了 —— 2026-08-18 生产回归实锤:各工厂把裸 Semaphore 关进闭包,闭包一路进了
+# task_check 这个 daft UDF,daft 的 check_serializable 直接把完整质检炸死在起跑线
+# (只有 --lite 能跑)。此类共享状态要么放模块级(_HTTP_LOCK 那样),要么像这里:
+# 实例只携带容量,真锁头等第一次 acquire 才建,__getstate__ 时丢弃。
+_GATE_BUILD_LOCK = threading.Lock()    # 模块级,只用于惰性建锁的双检,不进实例状态
+
+
+class SharedGate:
+    """对冲闸门:接口对齐 threading.Semaphore(acquire(timeout=)/release),但可进
+    cloudpickle —— 序列化只带容量,真正的 Semaphore 在目标进程首次 acquire 时重建。
+
+    共享语义:同一实例传给多个工厂 = 这些工厂共用一副在飞许可(pickle 的 memo 机制
+    保证一次 dumps 里同一实例反序列化后仍是同一实例,共享不因序列化而裂开)。
+    ⚠️ 跨进程各自重建各自的信号量,闸门只在进程内生效 —— 与裸 Semaphore 的语义一致
+    (它本来就锁不住别的进程),不是退化。容量在构造期定死:每次 run_funnel 按当时
+    配置新建实例,同进程内改配置重跑并发度即生效;跑到一半改配置不生效是有意的
+    (在飞许可换容量没有安全语义)。
+    """
+
+    def __init__(self, capacity: int):
+        self.capacity = max(1, int(capacity))
+        self._sem: threading.Semaphore | None = None
+
+    def _semaphore(self) -> threading.Semaphore:
+        # 双检惰性建:acquire 可能同时从多条对冲线程进来,不能建出两副许可
+        if self._sem is None:
+            with _GATE_BUILD_LOCK:
+                if self._sem is None:
+                    self._sem = threading.Semaphore(self.capacity)
+        return self._sem
+
+    def acquire(self, blocking: bool = True, timeout: float | None = None) -> bool:
+        return self._semaphore().acquire(blocking, timeout)
+
+    def release(self) -> None:
+        self._semaphore().release()
+
+    def __getstate__(self) -> dict:
+        return {"capacity": self.capacity}          # 锁头不过网:目标侧惰性重建
+
+    def __setstate__(self, state: dict) -> None:
+        self.capacity = state["capacity"]
+        self._sem = None
+
+
 def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
     """带对冲补发的一次**逻辑调用**。send(hard_timeout_s) -> requests.Response。
 
@@ -231,7 +277,7 @@ def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
     ——补发多的那一小段时间里有效并发容量会下降,这是**故意的**(在飞请求
     总数绝不翻倍),不是 bug。
 
-    gate = threading.Semaphore,**首发和补发都要拿许可**(许可持有 = 该 HTTP
+    gate = SharedGate(语义即共享信号量),**首发和补发都要拿许可**(许可持有 = 该 HTTP
     请求真在飞)。容量由工厂按自身结构并发传入;⚠️ 容量不许低于该类的结构并发,
     否则等于把原本并行的调用串行化 —— 最容易悄悄拖慢整批的坑。
 
@@ -541,7 +587,7 @@ def make_vlm_completion(
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
-    gate = threading.Semaphore(max(1, max_concurrency))
+    gate = SharedGate(max_concurrency)
 
     def _post(content: list) -> str:
         payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
@@ -654,7 +700,7 @@ def make_multiview_completion(
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
-    gate = threading.Semaphore(max(1, max_concurrency))
+    gate = SharedGate(max_concurrency)
 
     def _post(content):
         payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
@@ -752,7 +798,7 @@ def make_endstate_voter(endpoint: str, model: str,
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
-    gate = threading.Semaphore(max(1, max_in_flight))
+    gate = SharedGate(max_in_flight)
 
     def _ask(text, imgs):
         content = [{"type": "text", "text": text}] + [
@@ -914,7 +960,7 @@ def _make_arb_post(endpoint: str, model: str, timeout_s: float,
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
-    gate = gate if gate is not None else threading.Semaphore(DEFAULT_MAX_CONCURRENCY)
+    gate = gate if gate is not None else SharedGate(DEFAULT_MAX_CONCURRENCY)
 
     def _post(text: str, frames: list = ()) -> str:
         content = [{"type": "text", "text": text}] + [
@@ -1027,7 +1073,7 @@ def make_llm_ask(endpoint: str, model: str,
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
-    gate = threading.Semaphore(2)
+    gate = SharedGate(2)
 
     def llm_ask(prompt_text: str) -> str:
         payload = {"model": model, "temperature": 0.0, "max_tokens": max_tokens,
