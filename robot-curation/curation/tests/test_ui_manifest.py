@@ -2852,29 +2852,31 @@ def test_delivery_picker_is_actually_ticked(delivery):
 
 # ───────── 数据集多选(2026-08-13)─────────
 
-def test_dataset_dropdown_is_multiselect(delivery):
-    """「数据集」下拉必须是多选 —— 一次点击顺序跑几个就靠它。
+def test_dataset_dropdown_retired_with_mount_ui(delivery):
+    """「数据集」多选下拉已随挂载 UI 整体退役(2026-08-19 纯 TOS 直连):
+    跑质检的输入是 tos:// 路径,不再扫本地根目录列数据集。
 
-    此前只有"一个"和"父目录下全部"两档,想跑其中三个得排三轮队(任务台同一时刻
-    只许一个任务在跑)。
+    钉住"不再出现"防回潮 —— 它一回来,挂载(部署细节)就又见客了。
+    (裁决侧的数据集选择叫「原始数据集」,不受影响。)
     """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = json.loads(json.dumps(build_app(delivery).get_config_file(), default=str))
-    picks = [c for c in cfg["components"]
-             if c.get("props", {}).get("label") == "数据集"]
-    assert picks and all(c["props"].get("multiselect") for c in picks)
+    labels = {c.get("props", {}).get("label") for c in cfg["components"]}
+    assert "数据集" not in labels
+    assert "数据集 TOS 路径" in labels
 
 
-def test_delivery_name_hint_switches_when_several_datasets_are_picked():
-    """选多个时「交付名」的说明要换成"父文件夹"那句。
-
-    不说明白的话,客户会以为三个数据集的结果互相覆盖 —— 而实际是
-    `<交付名>/<数据集名>/` 各一份(与 CLI --batch 同款)。
+def test_delivery_layout_note_present_on_run_tab(delivery):
+    """「跑质检」页上要有一句说清落盘形状:输出路径/<交付名>/<时间戳>/,
+    每次跑批各进各的子目录、永不覆盖 —— 不说明白,客户会以为同名重跑会
+    覆盖上一次(2026-08-14 布局变更以来的老承诺,纯 TOS 直连版照样要说)。
     """
-    from curation.ui.app import OUT_NAME_HINT_MANY, OUT_NAME_HINT_ONE
-    assert "父文件夹" in OUT_NAME_HINT_MANY and "父文件夹" not in OUT_NAME_HINT_ONE
-    assert "M4" not in OUT_NAME_HINT_MANY and "batch" not in OUT_NAME_HINT_MANY
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    cfg = json.dumps(json.loads(json.dumps(
+        build_app(delivery).get_config_file(), default=str)), ensure_ascii=False)
+    assert "<交付名>/<时间戳>" in cfg and "永不覆盖" in cfg
 
 
 # ───────── 下拉浮层跟着页面滚(2026-08-13)─────────
@@ -3179,27 +3181,26 @@ def test_footer_links_are_off(full_delivery, clean_ui_env):
     assert json.loads(hit.group(1)) == []
 
 
-def test_start_button_refuses_an_empty_dataset_selection(full_delivery, tmp_path):
-    """数据集多选默认空:点「开始质检」要给一句明确提示,不静默、不抛红框。"""
+def test_start_button_refuses_an_empty_tos_path(full_delivery, tmp_path):
+    """「数据集 TOS 路径」为空点「开始质检」:一句明确提示,不静默、不抛红框。
+    (前身是"数据集多选默认空"那条 —— 纯 TOS 直连后,"还没说要质检什么"
+    的形态从空多选变成了空 URL,拦截的纪律不变。)"""
     pytest.importorskip("gradio")
     from curation.ui import app as ui_app
-    data_root = tmp_path / "data"
-    (data_root / "so101" / "meta").mkdir(parents=True)
-    (data_root / "so101" / "meta" / "info.json").write_text("{}")
-    app = ui_app.build_app(full_delivery, data_root=str(data_root))
+    app = ui_app.build_app(full_delivery, data_root=str(tmp_path / "data"))
     go = {i for i, c in app.blocks.items()
           if getattr(c, "value", None) == "开始质检"}
     assert go, "界面上找不到「开始质检」按钮"
     fn = next(f for f in app.fns.values()
               if go & {t[0] for t in getattr(f, "targets", [])})
-    # 参数顺序 = rn_go.click 的 inputs;这里只关心「数据集」为空
-    # (2026-08-17 多 TOS 桶:第一个参数变成桶的内部标识,单桶部署它叫「默认」;
-    # 「覆盖同名结果」2026-08-14 随布局改造撤掉,每次跑批各进各的时间戳子目录)
-    out = fn.fn("默认", [], "out", ui_app.FULL_SCAN, [], "只跑选中", None, "",
-                None, "", "", ui_app.PLOT_MODES["flagged"], None, None, None, "",
-                False, False)
+    # 参数顺序 = rn_go.click 的 inputs:(tin, tin_rg, tout, tout_rg, name,
+    # mode, picks, how, max_n, eps, backend, cfg, emb, plots, c_ep, c_fr,
+    # c_cap, sets, ro)
+    out = fn.fn("", "cn-beijing", "", "cn-beijing", "out", ui_app.FULL_SCAN,
+                [], "只跑选中", None, "", None, "",
+                "", ui_app.PLOT_MODES["flagged"], None, None, None, "", False)
     msg = str(out[2])
-    assert "数据集" in msg and "跑全部" in msg
+    assert "数据集 TOS 路径" in msg
 
 
 def test_terminal_screen_clips_its_overflow(delivery, clean_ui_env):
@@ -3307,3 +3308,16 @@ def test_overview_never_guesses_when_the_delivery_has_no_breakdown(full_delivery
     rows = overview_rows(load_delivery(full_delivery))
     assert _detail_rows(rows) == {}
     assert dict(rows)["判废"] == 15
+
+
+def test_build_app_bootstraps_empty_delivery_root(tmp_path):
+    """交付根为空不再拒绝启动(2026-08-19 云上纯 TOS 直连:结果都上传到用户
+    指定的桶,本地交付根空着是常态,SystemExit 会让 pod 就地 crashloop)。
+    自动放一份占位交付让报告页有东西可渲染;目录不存在也一并建出来。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+
+    root = tmp_path / "empty-deliv"          # 连目录都还没有
+    app = build_app(str(root))
+    assert app is not None
+    assert (root / "welcome" / "20260101-000000" / "passed.json").exists()

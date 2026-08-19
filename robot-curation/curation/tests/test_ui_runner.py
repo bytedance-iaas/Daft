@@ -1224,10 +1224,11 @@ def test_multi_select_also_blocks_when_the_parent_itself_is_a_legacy_delivery(tm
     assert runner.delivery_name_error(str(root), "old-batch", ["so101"])
 
 
-def test_app_blocks_legacy_delivery_name_before_starting_a_task(tmp_path):
-    """app 层:用老布局交付名点「开始质检」,任务根本不该被起起来 —— 任务目录
-    零新增,界面直接回「交付名…」那句话,而不是让用户等退出码 3 再翻日志。
-    (2026-08-14 用户实见的完整链路,这条钉住"拦在点按钮之前"。)
+def test_app_blocks_bad_tos_inputs_before_starting_a_task(tmp_path):
+    """app 层:输入不完整/交付名不合法时点「开始质检」,任务根本不该被起起来
+    —— 任务目录零新增,界面直接把缺什么说清,而不是让任务失败后翻日志。
+    (2026-08-14「拦在点按钮之前」的纪律,2026-08-19 纯 TOS 直连版:三样必填
+    = 数据集 TOS 路径、输出 TOS 路径、交付名,交付名仍走 safe_name。)
     """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
@@ -1237,13 +1238,23 @@ def test_app_blocks_legacy_delivery_name_before_starting_a_task(tmp_path):
     (tmp_path / "data" / "so101").mkdir(parents=True)
     app = build_app(str(deliv), data_root=str(tmp_path / "data"))
     fns = [f.fn for f in app.fns.values()
-           if getattr(f.fn, "__name__", "") == "_run_preflight"]
+           if getattr(f.fn, "__name__", "") == "_run_go"]
     assert fns, "任务台的开跑回调没找到"
-    # 首参是 TOS 桶的内部标识(2026-08-17 多 TOS 桶;单桶合成的那桶叫「默认」)
-    out = fns[0]("默认", ["so101"], "droid-200-full", "", [], "", None, "", None,
-                 "", "", None, None, None, None, "", False, False)
-    flat = json.dumps([str(x) for x in out], ensure_ascii=False)
-    assert "交付名" in flat and "output" not in flat
+
+    def go(tin, tout, name):
+        # 签名:(tin, tin_rg, tout, tout_rg, name, mode, picks, how, max_n,
+        #        eps, backend, cfg, emb, plots, c_ep, c_fr, c_cap, sets, ro)
+        return fns[0](tin, "cn-beijing", tout, "cn-beijing", name, "", [], "",
+                      None, "", None, "", "", None, None, None, None, "", False)
+
+    def flat(out):
+        return json.dumps([str(x) for x in out], ensure_ascii=False)
+
+    assert "数据集 TOS 路径" in flat(go("", "tos://dst-bkt/deliveries", "d1"))
+    assert "输出 TOS 路径" in flat(go("tos://src-bkt/ds", "", "d1"))
+    assert "桶名不合法" in flat(go("tos://BAD/ds", "tos://dst-bkt/x", "d1"))
+    assert "交付名不合法" in flat(
+        go("tos://src-bkt/ds", "tos://dst-bkt/deliveries", "../escape"))
     runs = runner.runs_root_of(str(deliv))
     assert not os.path.isdir(runs) or not os.listdir(runs)
 
