@@ -118,18 +118,18 @@ def make_vlm_captioner(endpoint: str, model: str, timeout_s: float | None = None
     (超时对冲,语义见 vlm_client)。max_in_flight = 对冲闸门容量,应传
     调用方的结构并发(caption_concurrency 或仲裁链的 episode 并发);
     ⚠️ 不许低于结构并发,否则把原本并行的打标串行化。"""
-    import threading
-
     import requests
 
-    from ..adapters.vlm_client import (DEFAULT_TIMEOUTS_S, _frame_to_data_uri,
-                                       auth_headers, hedged_request,
-                                       strip_reasoning)
+    from ..adapters.vlm_client import (DEFAULT_TIMEOUTS_S, SharedGate,
+                                       _frame_to_data_uri, auth_headers,
+                                       hedged_request, strip_reasoning)
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
     timeout_s = DEFAULT_TIMEOUTS_S["caption"] if timeout_s is None else timeout_s
-    gate = threading.Semaphore(max(1, max_in_flight))
+    # SharedGate 而非裸 Semaphore:captioner 闭包会经 arb_deps 进 daft UDF,裸锁不可
+    # cloudpickle(2026-08-18 完整质检生产回归的同族坑)
+    gate = SharedGate(max_in_flight)
 
     def captioner(groups: list) -> str:
         text = CAPTION_PROMPT.format(cam_sections=cam_sections_text(groups))

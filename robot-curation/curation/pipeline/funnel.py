@@ -53,19 +53,20 @@ def build_arbitration_deps(cfg: dict) -> dict | None:
         # 实验版还有 majority/confident 口径,生产只落了拍板的 strict;
         # 配错要炸在这里(被调用方转成警告),不能静默换口径
         raise ValueError(f"arbitration.consensus 仅支持 strict,got {consensus!r}")
-    import threading as _threading
-
-    from ..adapters.vlm_client import (make_evidence_judge, make_grounder,
-                                      make_intent_comparer, make_question_writer,
-                                      timeout_for)
+    from ..adapters.vlm_client import (SharedGate, make_evidence_judge,
+                                      make_grounder, make_intent_comparer,
+                                      make_question_writer, timeout_for)
     from ..dataset_level.caption import make_vlm_captioner
 
     vcfg = cfg["checks"]["task_success"]["vlm"]
     ep, model, key = vcfg["endpoint"], vcfg["model"], vcfg.get("api_key_env")
     # 仲裁链的对冲闸门:一条 episode 内链是串行的 ⇒ 结构并发 = episode 并发;
-    # 四个工厂共享同一个闸门(各建一闸会让补发在四类间叠加,在飞总数超结构并发)
+    # 四个工厂共享同一个闸门(各建一闸会让补发在四类间叠加,在飞总数超结构并发)。
+    # ⚠️ 必须是 SharedGate 不能是裸 threading.Semaphore:这四个闭包最终进 task_check
+    # 这个 daft UDF,裸锁不可 cloudpickle —— 2026-08-18 生产完整质检因此直接崩在
+    # check_serializable(--lite 探测不到,e2e 单测又被 ignore,故漏到线上)。
     _epc = int(cfg.get("pipeline", {}).get("vlm_episode_concurrency", 8))
-    arb_gate = _threading.Semaphore(max(1, _epc))
+    arb_gate = SharedGate(_epc)
     t_arb = timeout_for("arbitration", vcfg)
     return {
         "question_writer": make_question_writer(ep, model, timeout_s=t_arb,
