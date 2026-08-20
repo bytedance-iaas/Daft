@@ -776,14 +776,40 @@ def mount_root_for_url(url: str, buckets: list) -> str | None:
     return None
 
 
+def tos_mount_root() -> str:
+    """本实例 TOS 桶的挂载点(部署决定;缺省 /mnt/tos)。"""
+    return (os.environ.get("CURATION_TOS_MOUNT", "").strip() or "/mnt/tos").rstrip("/")
+
+
+def is_mount_backed(path: str) -> bool:
+    """这个本地路径是不是"挂载的桶"的一部分:在挂载点之下且目录真的在。
+
+    部署感知默认值的唯一判据(2026-08-20,同事纯直连部署撞出来的):我们的实例
+    把桶挂在 /mnt/tos,交付根/数据集根都在它下面,写本地 = 写桶;她的实例没挂载,
+    交付根 /data/deliveries 只是 pod 本地盘 —— 再按挂载语义推默认值,界面上显示
+    着桶地址、实际写进本地盘,pod 一重启全没,是静默丢结果。
+    """
+    p = os.path.abspath(str(path or "")).rstrip("/")
+    m = tos_mount_root()
+    return bool(p) and (p == m or p.startswith(m + "/")) and os.path.isdir(p)
+
+
 def bucket_url(b: dict) -> str:
-    """配置桶 → 显示在「数据集 TOS 路径」框里的值:桶名+前缀齐全给
-    `tos://桶/前缀`,不全(合成单桶)退回 datasets_path 原样 —— 那是白名单里
-    的已知路径,resolve_root_input 按精确匹配放行,不算自由路径。"""
+    """配置桶 → 显示在「数据集 TOS 路径」框里的值。
+
+    - 桶名+前缀齐全 → `tos://桶/前缀`(挂载快路径,对表能认);
+    - 合成单桶(没配 tos_buckets):目录在 → datasets_path 原样(白名单精确匹配
+      放行,不算自由路径);**目录不在且部署给了 TOS_BUCKET → `tos://TOS_BUCKET/
+      datasets` 走直连**(没挂载的实例,2026-08-20);两样都没有 → 原样。
+    """
     if b.get("bucket") and b.get("tos_prefix") is not None:
         p = str(b["tos_prefix"]).strip("/")
         return f"tos://{b['bucket']}/{p}" if p else f"tos://{b['bucket']}"
-    return str(b.get("datasets_path") or "")
+    path = str(b.get("datasets_path") or "")
+    bucket = os.environ.get("TOS_BUCKET", "").strip()
+    if path and not os.path.isdir(path) and bucket:
+        return f"tos://{bucket}/datasets"
+    return path
 
 
 def resolve_root_input(value: str, buckets: list) -> dict:
@@ -827,13 +853,28 @@ def home_output_url(deliv_root: str) -> str:
     resolve_output_input 按精确匹配放行。
     """
     bucket = os.environ.get("TOS_BUCKET", "").strip()
-    mount = (os.environ.get("CURATION_TOS_MOUNT", "").strip() or "/mnt/tos")
     root = str(deliv_root or "").rstrip("/")
-    m = mount.rstrip("/")
+    m = tos_mount_root()
     if bucket and root.startswith(m + "/"):
         rel = root[len(m) + 1:]
-        return f"tos://{bucket}/{rel}"
+        return f"tos://{bucket}/{rel}"          # 挂载承载:写本地 = 写桶
+    if bucket:
+        # 没挂载的实例(2026-08-20):交付根只是 pod 本地盘,默认目标改成桶里
+        # 同名前缀,走直连 stage_out —— 绝不把本地盘伪装成桶地址
+        return f"tos://{bucket}/{os.path.basename(root) or 'deliveries'}"
     return root
+
+
+def deployment_shape_note(deliv_root: str, data_root: str) -> str:
+    """本实例的存储形态一句话(启动日志 + 界面说明行共用;挂载实例返回空串)。"""
+    bucket = os.environ.get("TOS_BUCKET", "").strip()
+    if is_mount_backed(deliv_root) and is_mount_backed(data_root):
+        return ""
+    if bucket:
+        return (f"本实例未挂载 TOS 桶(挂载点 {tos_mount_root()} 下没有交付根/数据集根):"
+                f"默认走 TOS 直连 tos://{bucket}/…,跑批结果落桶,pod 本地不留")
+    return ("本实例未挂载 TOS 桶,也没有 TOS_BUCKET:路径框请填 tos://桶/前缀,"
+            "本地交付根只做任务工作区")
 
 
 def resolve_output_input(value: str, deliv_root: str) -> dict:
@@ -848,8 +889,14 @@ def resolve_output_input(value: str, deliv_root: str) -> dict:
         raise ValueError("还没填输出 TOS 路径(tos://桶名/交付根前缀)")
     home = home_output_url(deliv_root).rstrip("/")
     droot = str(deliv_root or "").rstrip("/")
-    if s in (home, droot) or (not s.startswith("tos://") and droot
-                              and os.path.realpath(s) == os.path.realpath(droot)):
+    mount_backed = is_mount_backed(droot)
+    # 交付根本身(或它的挂载承载写法)→ 本地直写:挂载实例 = 写桶;没挂载的实例
+    # 只有用户**明填**本地交付根才走这里(那是运营配置的路径,不是自由路径),
+    # 默认值不会再指向它(home_output_url 已改成直连桶地址)
+    if s == droot or (not s.startswith("tos://") and droot
+                      and os.path.realpath(s) == os.path.realpath(droot)):
+        return {"kind": "mount", "path": deliv_root}
+    if s == home and mount_backed:
         return {"kind": "mount", "path": deliv_root}
     if s.startswith("tos://"):
         err = tos_url_error(s, "输出 TOS 路径")
@@ -895,8 +942,10 @@ def mirror_cache_root() -> str:
 
 def tos_list_deliveries(root_url: str, region: str | None = None, *,
                         store=None) -> list[str]:
-    """陌生桶交付根下的交付名(一层 common prefix,排序)。网络调用。"""
-    return tos_list_datasets(root_url, region, store=store)
+    """陌生桶交付根下的交付名(一层 common prefix,排序)。网络调用。
+    点开头的目录(.runs 任务目录、.probe_* 探针残留)不是交付,滤掉。"""
+    return [n for n in tos_list_datasets(root_url, region, store=store)
+            if not n.startswith(".")]
 
 
 def tos_run_choices(delivery_url: str, region: str | None = None, *,

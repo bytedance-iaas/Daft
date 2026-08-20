@@ -370,6 +370,8 @@ def test_single_source_still_shows_source_dropdown(delivery, tmp_path):
     """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
+    (tmp_path / "ds").mkdir()       # 目录在 → 合成单桶按原样路径;不在且有
+    # TOS_BUCKET 会切到直连默认(见 test_ui_perf 的部署感知用例)
     app = build_app(delivery, data_root=str(tmp_path / "ds"))
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     tin = [c["props"] for c in cfg["components"]
