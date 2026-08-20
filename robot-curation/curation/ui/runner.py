@@ -874,6 +874,143 @@ def tos_list_datasets(root_url: str, region: str | None = None, *,
     return sorted(set(st.iter_common_prefixes(bucket, prefix)))
 
 
+# ── 报告页读端直连(2026-08-20 阶段4,懒镜像):交付在哪个桶,报告页就在哪看。
+#    交付根/交付/批次都用完整 tos:// URL 当下拉值流经现有管线;打开批次时把
+#    该批次目录**除大件外**镜像到本地缓存,现有 manifest 加载代码原样吃缓存
+#    路径 —— 读端代码零改动是懒镜像相对"到处插存储抽象层"的决定性优势。──
+
+#: 镜像时跳过的大件目录(数据集本体,几百 MB~GB 级):报告/裁决用不到它们的
+#: 字节;Episodes 页视频四档来源落空时的提示语本来就在。
+MIRROR_SKIP_DIRS = ("episodes_parquet/", "lerobot_curated/", "rrd_curated/")
+
+#: 镜像来源的身份证文件名(落在缓存的**交付根**):裁决 CSV 写回、以及"这份
+#: 缓存是从哪儿来的"的唯一事实源。
+TOS_ORIGIN_NAME = ".tos-origin.json"
+
+
+def mirror_cache_root() -> str:
+    from ..tos_store import cache_root
+    return os.path.join(cache_root(), "reports")
+
+
+def tos_list_deliveries(root_url: str, region: str | None = None, *,
+                        store=None) -> list[str]:
+    """陌生桶交付根下的交付名(一层 common prefix,排序)。网络调用。"""
+    return tos_list_datasets(root_url, region, store=store)
+
+
+def tos_run_choices(delivery_url: str, region: str | None = None, *,
+                    store=None) -> list[tuple]:
+    """`tos://…/<交付>` 下的批次 → [(批次名, 完整 tos:// URL)],新的在前。
+
+    label 只用批次名不读 run.json(每读一个是一次网络往返;本地那套富 label
+    是挂载价);human-decisions 不是批次,滤掉。
+    """
+    names = tos_list_datasets(delivery_url, region, store=store)
+    out = [(n, delivery_url.rstrip("/") + "/" + n)
+           for n in names if n != "human-decisions"]
+    out.sort(key=lambda t: t[0], reverse=True)
+    return out
+
+
+def mirror_run(run_url: str, region: str | None = None, *,
+               store=None) -> str:
+    """把一个批次目录(除大件)+ 交付根的 human-decisions// latest 镜像到本地
+    缓存,返回缓存里的批次路径 —— 直接喂给现有的 load_delivery。
+
+    文件级续传按「本地大小 == 远端大小」跳过(与 tos_store.stage_in 同判据);
+    CSV/JSON 这类会变的小文件大小一变自然重下,同大小不同内容的窗口对裁决
+    CSV(追加式)不成立。镜像完写 .tos-origin.json(裁决写回靠它找回家路)。
+    """
+    import json as _json
+
+    from .. import tos_store as _ts
+    bucket, run_prefix = _ts.parse_tos_url(run_url)
+    st = store or _ts.make_store(region)
+    deliv_prefix = "/".join(run_prefix.split("/")[:-1])
+    local_deliv = os.path.join(mirror_cache_root(), bucket,
+                               *deliv_prefix.split("/"))
+    run_name = run_prefix.split("/")[-1]
+    n = 0
+    for src_prefix, sub in ((run_prefix, run_name),
+                            (deliv_prefix + "/human-decisions",
+                             "human-decisions")):
+        p = src_prefix.strip("/") + "/"
+        for key, size in st.iter_objects(bucket, p):
+            rel = key[len(p):]
+            if not rel or rel.endswith("/"):
+                continue
+            if sub == run_name and any(rel.startswith(sk)
+                                       for sk in MIRROR_SKIP_DIRS):
+                continue
+            dst = os.path.join(local_deliv, sub, *rel.split("/"))
+            try:
+                if os.path.getsize(dst) == size:
+                    continue
+            except OSError:
+                pass
+            st.download(bucket, key, dst, size=size)
+            n += 1
+    # latest 是单文件不是前缀,单独取(没有就算了 —— 老交付可能没写)
+    try:
+        st.download(bucket, deliv_prefix + "/latest",
+                    os.path.join(local_deliv, "latest"))
+    except Exception:  # noqa: BLE001 可选文件,缺席不算错
+        pass
+    origin = {"root_url": f"tos://{bucket}/" + "/".join(
+                  deliv_prefix.split("/")[:-1]),
+              "delivery_url": f"tos://{bucket}/{deliv_prefix}",
+              "run": run_name, "region": region or ""}
+    with open(os.path.join(local_deliv, TOS_ORIGIN_NAME), "w",
+              encoding="utf-8") as f:
+        _json.dump(origin, f, ensure_ascii=False, indent=1)
+    return os.path.join(local_deliv, run_name)
+
+
+def tos_origin_of(run_path: str) -> dict | None:
+    """缓存批次路径 → 镜像来源(不是镜像的返回 None)。"""
+    import json as _json
+    p = os.path.join(os.path.dirname(str(run_path or "").rstrip("/")),
+                     TOS_ORIGIN_NAME)
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = _json.load(f)
+        return d if isinstance(d, dict) and d.get("delivery_url") else None
+    except (OSError, ValueError):
+        return None
+
+
+def push_decisions(run_path: str, *, store=None) -> str:
+    """镜像交付的裁决 CSV 写回源桶;返回给界面看的一句话(空串=不是镜像/没啥可推)。
+
+    只推 human-decisions/ 下的小文件(三张 CSV),逐个上传 —— 裁决是人工产出,
+    留在缓存里等于丢(缓存目录可清)。失败要说出来,不许静默:人以为裁决记上了,
+    实际只活在本地缓存,是"静默丢人工判断"级别的事故。
+    """
+    from .. import tos_store as _ts
+    origin = tos_origin_of(run_path)
+    if not origin:
+        return ""
+    hd = os.path.join(os.path.dirname(str(run_path).rstrip("/")),
+                      "human-decisions")
+    if not os.path.isdir(hd):
+        return ""
+    try:
+        st = store or _ts.make_store(origin.get("region") or None)
+        bucket, deliv_prefix = _ts.parse_tos_url(origin["delivery_url"])
+        pushed = 0
+        for fn in sorted(os.listdir(hd)):
+            fp = os.path.join(hd, fn)
+            if os.path.isfile(fp):
+                st.upload(fp, bucket, f"{deliv_prefix}/human-decisions/{fn}")
+                pushed += 1
+        return f"(已同步回 {origin['delivery_url']})" if pushed else ""
+    except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
+        return (f"⚠️ 裁决已记在本地,但写回 {origin.get('delivery_url', '源桶')} "
+                f"失败:{type(e).__name__}: {str(e)[:120]} —— 修好网络后再裁一条"
+                "即可一并补推")
+
+
 #: 深链的端点键(2026-08-17 用户拍板:rerun 侧把「Open from Volcengine TOS」
 #: 对话框里选的端点一并传过来)。认两个键名,教训同 DEEPLINK_KEYS:只认一个,
 #: 对方换个写法这边就静默什么都不做 ——"深链没生效"和"深链选错"一样难查。
