@@ -18,6 +18,7 @@ import contextlib
 import json
 import logging
 import os
+import sys
 
 from ..delivery import (delivery_root_of, resolve_run, run_choices,
                         run_name_of_run_id)
@@ -1376,6 +1377,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             _bkt_choices = runner.bucket_dropdown_choices(_buckets)
             _data_root = _buckets[0]["datasets_path"]
             _deliv_root = runner.deliveries_root_of(delivery)
+            # 存储形态自检(2026-08-20):没挂载的实例在启动日志里说清默认走直连,
+            # 别让人从"交付怎么没了"反推
+            _shape = runner.deployment_shape_note(_deliv_root, _data_root)
+            if _shape:
+                print(f"[curation-ui] {_shape}", file=sys.stderr)
             _runs_root = runner.runs_root_of(_deliv_root)
             # {人话标签: 内部代号}。**原地更新**(不重新绑名字):探活时会重读配置
             # 刷新它,下面那几个闭包要跟着一起看见新的表。
@@ -1468,8 +1474,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # ① 控制面板在上
                 # 头部两行三件套(2026-08-20 用户定稿,融合公开 PR#65 的
                 # 「允许填桶路径」思路但不丢我们的下拉):
-                #   [数据集 TOS 路径][数据集 ▼多选][数据集地区 ▼]
-                #   [输出 TOS 路径][交付名][输出地区 ▼]
+                #   [数据集目录][数据集 ▼多选][地区 ▼]
+                #   [交付目录][交付名][地区 ▼]
                 # 路径框默认预填本实例配置桶的 tos:// 写法 → 默认体验与
                 # 之前的「数据集根目录」下拉逐字节等价(挂载零预下载直读);
                 # 改填陌生桶 = 走 stage_in/stage_out 直连。红线口径
@@ -1481,9 +1487,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _rg0 = runner.default_tos_region()
                 _rg_choices = runner.tos_region_choices()
                 with gr.Row():
-                    rn_tin = gr.Textbox(label="数据集 TOS 路径", scale=4,
+                    rn_tin = gr.Textbox(label="数据集目录", scale=4,
                                         value=runner.bucket_url(_buckets[0]),
-                                        placeholder="tos://桶名/数据集前缀")
+                                        placeholder="tos://桶名/目录")
                     # 多选(2026-08-13 用户):一次点击顺序跑选中的这几个。
                     rn_ds = gr.Dropdown(choices=runner.list_datasets(_data_root),
                                         label="数据集", scale=4,
@@ -1491,17 +1497,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 地区下拉与 rerun 的 OpenTosModal 同值同序;列表可能落后
                     # 于新地区,允许自由输入
                     rn_tin_rg = gr.Dropdown(choices=_rg_choices, value=_rg0,
-                                            label="数据集地区", scale=2,
+                                            label="地区", scale=2,
                                             allow_custom_value=True,
                                             interactive=True)
                 with gr.Row():
-                    rn_tout = gr.Textbox(label="输出 TOS 路径", scale=4,
+                    rn_tout = gr.Textbox(label="交付目录", scale=4,
                                          value=runner.home_output_url(_deliv_root),
-                                         placeholder="tos://桶名/交付根前缀")
+                                         placeholder="tos://桶名/目录")
                     rn_out = gr.Textbox(label="交付名", scale=4,
                                         placeholder="给这次结果起个名字")
                     rn_tout_rg = gr.Dropdown(choices=_rg_choices, value=_rg0,
-                                             label="输出地区", scale=2,
+                                             label="地区", scale=2,
                                              allow_custom_value=True,
                                              interactive=True)
                 # 说明行(2026-08-17 从 info= 挪出):第二行按与控件行
@@ -1728,6 +1734,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # blur 与 submit 都接(填完点别处/回车都算"填完了");直连时
                 # 切地区也要重列(端点跟着地区走)。用 .input 不用 .change:
                 # 深链预填会程序性改值,.change 会紧接着把预选冲掉
+                # 没挂载的实例默认值是直连地址(2026-08-20):建页面时列不到
+                # 数据集(目录不存在),开门就列一次,让下拉别空着等人按回车
+                if str(runner.bucket_url(_buckets[0])).startswith("tos://") \
+                        and not runner.is_mount_backed(_data_root):
+                    app.load(_root_changed, [rn_tin, rn_tin_rg],
+                             [rn_src_note, rn_ds, rn_ds_note])
                 rn_tin.blur(_root_changed, [rn_tin, rn_tin_rg],
                             [rn_src_note, rn_ds, rn_ds_note])
                 rn_tin.submit(_root_changed, [rn_tin, rn_tin_rg],
@@ -2122,9 +2134,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             #    ⚠️ 红线自查:报告页那套子页签零改动,这行在页签外的选择区。──
             _rp_src = {"region": ""}     # 直连地区,懒镜像与列表共用(闭包态)
             with gr.Row():
-                rp_root = gr.Textbox(label="交付根 TOS 路径", scale=4,
+                rp_root = gr.Textbox(label="交付目录", scale=4,
                                      value=runner.home_output_url(_deliv_root),
-                                     placeholder="tos://桶名/交付根前缀")
+                                     placeholder="tos://桶名/目录")
                 rp_rg = gr.Dropdown(choices=runner.tos_region_choices(),
                                     value=runner.default_tos_region(),
                                     label="地区", scale=1,
@@ -2639,14 +2651,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _rp_src["region"] = str(region or "").strip()
                 s = str(url or "").strip().rstrip("/")
                 home = runner.home_output_url(_deliv_root).rstrip("/")
-                if not s or s in (home, str(_deliv_root).rstrip("/")):
+                # 默认地址只在**挂载承载**时才等于本地交付根;没挂载的实例
+                # (2026-08-20)默认地址是桶里的直连前缀,得真去桶里列
+                if not s or s == str(_deliv_root).rstrip("/") \
+                        or (s == home and runner.is_mount_backed(_deliv_root)):
                     fresh = discover_deliveries(delivery)
                     return (gr.update(choices=delivery_choices(delivery, fresh),
                                       value=None), "")
                 if not s.startswith("tos://"):
                     return (gr.update(), "⚠️ 只认 tos://桶/前缀 形式的地址"
                             "(或本实例的交付根)")
-                err = runner.tos_url_error(s, "交付根 TOS 路径")
+                err = runner.tos_url_error(s, "交付目录")
                 if err:
                     return gr.update(), f"⚠️ {err}"
                 try:
@@ -2663,18 +2678,45 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         f"TOS 直连:{s}(打开一份交付时把报告与明细镜像到本地,"
                         "数据集本体不下载)")
 
+            if not runner.is_mount_backed(_deliv_root) \
+                    and runner.home_output_url(_deliv_root).startswith("tos://"):
+                # 没挂载的实例:交付默认在桶里,开门先把桶里的交付列出来
+                app.load(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
             rp_root.blur(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
             rp_root.submit(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
             rp_rg.input(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
 
-            def _picker_tick(cur):
+            def _rp_is_direct(url) -> bool:
+                """交付根框当前指向的是不是直连桶(而非本实例交付根)。"""
+                s = str(url or "").strip().rstrip("/")
+                if not s.startswith("tos://"):
+                    return False
+                home = runner.home_output_url(_deliv_root).rstrip("/")
+                return not (s == home and runner.is_mount_backed(_deliv_root))
+
+            def _picker_tick(cur, url=None, region=None):
                 """重扫交付列表(**只换选项、不重载内容**)。
 
                 只换选项是刻意的:内容重载会与用户当下的点击并发打架 —— 交付下拉的
                 联动就为此修过一次(6bb28b5:两批更新改同一排组件,翻页按钮偶尔被
                 冲掉)。新交付自动出现在列表里,点它即可查看,不必再点什么"刷新"。
                 手输的自定义路径原样保留在选项里,不会被刷掉。
+
+                交付根指向直连桶时(2026-08-20 7862 模拟实例真机抓到):这里必须
+                去**桶里**重列,不能扫本地 —— 否则切一次页签就把桶清单盖回本地的
+                占位交付。网络失败原样不动(gr.update()),别把已有清单清空。
                 """
+                if _rp_is_direct(url):
+                    s = str(url).strip().rstrip("/")
+                    try:
+                        names = runner.tos_list_deliveries(
+                            s, str(region or "").strip() or None)
+                    except Exception:  # noqa: BLE001 网络/SDK 异常:保留旧清单
+                        return gr.update()
+                    items = [(n, s + "/" + n) for n in names]
+                    if cur and cur not in [v for _l, v in items]:
+                        items = items + [(str(cur), cur)]
+                    return gr.update(choices=items, value=cur)
                 fresh = discover_deliveries(delivery)
                 items = delivery_choices(delivery, fresh)
                 if cur and cur not in fresh:
@@ -2693,9 +2735,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # 的日志却一行都没打出来 —— 定时器在这层压根没跳。而"跑完 → 点到报告页"
             # 是必然发生的动作,`Tab.select` 是用户真点出来的事件,不依赖任何计时。
             # 计时器留着当兜底:它若能跳,用户停在报告页也能看到新交付冒出来。
-            report_tab.select(_picker_tick, picker, picker)
+            report_tab.select(_picker_tick, [picker, rp_root, rp_rg], picker)
             if hasattr(gr, "Timer"):
-                gr.Timer(10.0).tick(_picker_tick, picker, picker)
+                gr.Timer(10.0).tick(_picker_tick, [picker, rp_root, rp_rg], picker)
 
             def _ep_select(m, eid):
                 """点清单某条 → 记住它 + 换右侧详情。"""

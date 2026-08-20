@@ -363,17 +363,19 @@ def _src_dropdowns(app):
 
 
 def test_single_source_still_shows_source_dropdown(delivery, tmp_path):
-    """★单桶部署:跑质检侧是「数据集 TOS 路径」文本框(2026-08-20 融合改版,
+    """★单桶部署:跑质检侧是「数据集目录」文本框(2026-08-20 融合改版,
     取代原「数据集根目录」下拉),始终可见、默认预填本桶地址 —— "随时看得见
     数据来自哪个桶"(2026-08-17 用户拍板)这条以"框里永远写着地址"的形态延续。
     裁决侧仍是「数据集根目录」下拉(它选的是本地源数据集,不收 URL)。
     """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
+    (tmp_path / "ds").mkdir()       # 目录在 → 合成单桶按原样路径;不在且有
+    # TOS_BUCKET 会切到直连默认(见 test_ui_perf 的部署感知用例)
     app = build_app(delivery, data_root=str(tmp_path / "ds"))
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     tin = [c["props"] for c in cfg["components"]
-           if c["props"].get("label") == "数据集 TOS 路径"]
+           if c["props"].get("label") == "数据集目录"]
     assert len(tin) == 1 and tin[0].get("visible", True)
     # 合成单桶(桶名未知)→ 默认值退回 datasets_path 原样(白名单精确匹配放行)
     assert str(tin[0].get("value") or "").endswith("ds")
@@ -394,7 +396,7 @@ def test_multi_source_shows_dropdown_and_wires_it(delivery, tmp_path):
     app = build_app(delivery, config_path=cfg_path)
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     tin = [c["props"] for c in cfg["components"]
-           if c["props"].get("label") == "数据集 TOS 路径"]
+           if c["props"].get("label") == "数据集目录"]
     assert len(tin) == 1
     assert tin[0].get("value") == "tos://curation/datasets"   # 第一桶
     # 第二桶地址对表到它的挂载(快路径),陌生地址走直连
@@ -403,10 +405,10 @@ def test_multi_source_shows_dropdown_and_wires_it(delivery, tmp_path):
         == {"kind": "mount", "path": srcs[1]["datasets_path"], "bucket": bks[1]}
     assert runner.resolve_root_input("tos://strange/prefix", bks)["kind"] == "tos"
     tin_ids = {i for i, c in app.blocks.items()
-               if getattr(c, "label", None) == "数据集 TOS 路径"}
+               if getattr(c, "label", None) == "数据集目录"}
     used = {getattr(c, "_id", None) for fn in app.fns.values()
             for c in (getattr(fn, "inputs", []) or [])}
-    assert tin_ids and tin_ids <= used, "「数据集 TOS 路径」框没接进任何回调"
+    assert tin_ids and tin_ids <= used, "「数据集目录」框没接进任何回调"
 
 
 def test_deeplink_switches_source_dropdown_to_matching_bucket(delivery, tmp_path,
@@ -440,7 +442,7 @@ def test_deeplink_switches_source_dropdown_to_matching_bucket(delivery, tmp_path
            if not (getattr(f, "inputs", []) or [])
            and [getattr(c, "label", None)
                 for c in (getattr(f, "outputs", []) or [])][:3]
-           == ["数据集 TOS 路径", "数据集", "数据集地区"]
+           == ["数据集目录", "数据集", "地区"]
            and len(getattr(f, "outputs", []) or []) == 5]
     assert len(fns) == 1, "应恰有一个输出为(路径框, 数据集, 地区, 两列说明)的预填回调"
 
@@ -701,7 +703,7 @@ def test_dataset_pickers_carry_no_info_and_notes_moved_below(delivery, tmp_path)
     app = build_app(delivery, config_path=cfg_path)
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     picked = [c["props"] for c in cfg["components"]
-              if c["props"].get("label") in {"数据集 TOS 路径", "数据集根目录",
+              if c["props"].get("label") in {"数据集目录", "数据集根目录",
                                              "数据集", "原始数据集"}]
     assert len(picked) == 4      # 跑质检(路径框+数据集)+ 裁决(根+原始数据集)
     assert all(not p.get("info") for p in picked), "下拉不许再带 info="
@@ -1053,7 +1055,7 @@ def test_info_line_endpoint_always_instance_config_not_link(delivery, tmp_path,
            if not (getattr(f, "inputs", []) or [])
            and [getattr(c, "label", None)
                 for c in (getattr(f, "outputs", []) or [])][:3]
-           == ["数据集 TOS 路径", "数据集", "数据集地区"]
+           == ["数据集目录", "数据集", "地区"]
            and len(getattr(f, "outputs", []) or []) == 5]
     assert len(fns) == 1
 

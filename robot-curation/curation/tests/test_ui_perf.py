@@ -183,3 +183,172 @@ def test_build_app_fails_loudly_when_root_unwritable(tmp_path, monkeypatch):
                         lambda r: (_ for _ in ()).throw(PermissionError("ro")))
     with pytest.raises((SystemExit, PermissionError)):
         ui_app.build_app(str(root), data_root=str(tmp_path / "data"))
+
+
+# ── 部署感知默认值(2026-08-20,同事纯直连部署:/data/deliveries 无挂载)────────
+
+def test_mount_backed_requires_under_mount_root_and_existing(tmp_path, monkeypatch):
+    from curation.ui import runner
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
+    (tmp_path / "mnt" / "deliveries").mkdir(parents=True)
+    assert runner.is_mount_backed(str(tmp_path / "mnt" / "deliveries"))
+    assert not runner.is_mount_backed(str(tmp_path / "mnt" / "missing"))   # 不在
+    (tmp_path / "data" / "deliveries").mkdir(parents=True)
+    assert not runner.is_mount_backed(str(tmp_path / "data" / "deliveries"))  # 不在挂载下
+
+
+def test_home_output_url_goes_direct_when_not_mounted(tmp_path, monkeypatch):
+    """没挂载 + 有 TOS_BUCKET → 默认输出是桶里的直连地址,绝不把本地盘伪装成桶。"""
+    from curation.ui import runner
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
+    monkeypatch.setenv("TOS_BUCKET", "herbucket")
+    local = str(tmp_path / "data" / "deliveries")
+    assert runner.home_output_url(local) == "tos://herbucket/deliveries"
+    spec = runner.resolve_output_input("tos://herbucket/deliveries", local)
+    assert spec["kind"] == "tos", "没挂载时默认地址必须走直连 stage_out,不许按挂载直写本地盘"
+    # 挂载承载的实例行为不变
+    mounted = tmp_path / "mnt" / "deliveries"
+    mounted.mkdir(parents=True)
+    assert runner.home_output_url(str(mounted)) == "tos://herbucket/deliveries"
+    assert runner.resolve_output_input("tos://herbucket/deliveries", str(mounted))["kind"] == "mount"
+    # 用户明填本地交付根仍放行(运营配置的路径,不是自由路径)
+    assert runner.resolve_output_input(local, local)["kind"] == "mount"
+
+
+def test_home_output_url_without_bucket_falls_back_to_path(tmp_path, monkeypatch):
+    from curation.ui import runner
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
+    monkeypatch.delenv("TOS_BUCKET", raising=False)
+    local = str(tmp_path / "data" / "deliveries")
+    assert runner.home_output_url(local) == local
+
+
+def test_bucket_url_goes_direct_when_synthesized_root_missing(tmp_path, monkeypatch):
+    from curation.ui import runner
+    monkeypatch.setenv("TOS_BUCKET", "herbucket")
+    synth = {"name": "默认", "bucket": None, "tos_prefix": None,
+             "datasets_path": str(tmp_path / "nope")}
+    assert runner.bucket_url(synth) == "tos://herbucket/datasets"
+    (tmp_path / "yes").mkdir()
+    synth["datasets_path"] = str(tmp_path / "yes")
+    assert runner.bucket_url(synth) == str(tmp_path / "yes")     # 目录在:原样白名单
+    monkeypatch.delenv("TOS_BUCKET", raising=False)
+    synth["datasets_path"] = str(tmp_path / "nope")
+    assert runner.bucket_url(synth) == str(tmp_path / "nope")    # 没桶:原样(说明行会报没挂上)
+
+
+def test_deployment_shape_note(tmp_path, monkeypatch):
+    from curation.ui import runner
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
+    for d in ("deliveries", "datasets"):
+        (tmp_path / "mnt" / d).mkdir(parents=True)
+    monkeypatch.setenv("TOS_BUCKET", "b")
+    assert runner.deployment_shape_note(str(tmp_path / "mnt" / "deliveries"),
+                                        str(tmp_path / "mnt" / "datasets")) == ""
+    note = runner.deployment_shape_note(str(tmp_path / "data" / "deliveries"),
+                                        str(tmp_path / "mnt" / "datasets"))
+    assert "未挂载" in note and "tos://b/" in note
+    monkeypatch.delenv("TOS_BUCKET", raising=False)
+    assert "TOS_BUCKET" in runner.deployment_shape_note(str(tmp_path / "x"), str(tmp_path / "y"))
+
+
+def test_unmounted_instance_defaults_and_autolist_wiring(tmp_path, monkeypatch):
+    """同事的部署形态整体过一遍:交付根在本地盘、数据集根不存在、TOS_BUCKET 有。
+    两个路径框默认都是直连地址,且 app.load 上挂了自动列表(不让下拉空着等回车)。"""
+    pytest.importorskip("gradio")
+    import gradio as gr
+    from curation.ui.app import build_app
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
+    monkeypatch.setenv("TOS_BUCKET", "herbucket")
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    root = tmp_path / "data" / "deliveries"
+    root.mkdir(parents=True)
+    app = build_app(str(root), data_root=str(tmp_path / "data" / "datasets"))
+    cfg = json.loads(json.dumps(app.get_config_file(), default=str))
+    vals = {c["props"].get("label"): c["props"].get("value") for c in cfg["components"]
+            if c["props"].get("label") in {"数据集目录", "交付目录", "交付目录"}}
+    assert vals["数据集目录"] == "tos://herbucket/datasets"
+    assert vals["交付目录"] == "tos://herbucket/deliveries"
+    assert vals["交付目录"] == "tos://herbucket/deliveries"
+    loads = [f for f in app.fns.values()
+             if any(t[1] == "load" for t in getattr(f, "targets", []))]
+    names = {getattr(f.fn, "__name__", "") for f in loads}
+    assert "_root_changed" in names and "_rp_root_changed" in names, \
+        "没挂载时开门必须自动列一次(跑质检页数据集 + 报告页交付)"
+
+
+def test_mounted_instance_keeps_old_defaults_and_no_autolist(tmp_path, monkeypatch):
+    """我们自己的形态(挂载承载)逐字节不变:默认值同前、不挂自动列表。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
+    monkeypatch.setenv("TOS_BUCKET", "curation")
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    root = tmp_path / "mnt" / "deliveries"; root.mkdir(parents=True)
+    ds = tmp_path / "mnt" / "datasets"; ds.mkdir()
+    app = build_app(str(root), data_root=str(ds))
+    cfg = json.loads(json.dumps(app.get_config_file(), default=str))
+    vals = {c["props"].get("label"): c["props"].get("value") for c in cfg["components"]
+            if c["props"].get("label") in {"数据集目录", "交付目录"}}
+    assert vals["数据集目录"] == str(ds)                   # 合成单桶、目录在:原样
+    assert vals["交付目录"] == "tos://curation/deliveries"  # 挂载承载写法
+    loads = [getattr(f.fn, "__name__", "") for f in app.fns.values()
+             if any(t[1] == "load" for t in getattr(f, "targets", []))]
+    assert "_root_changed" not in loads and "_rp_root_changed" not in loads
+
+
+def test_report_root_default_lists_bucket_when_not_mounted(tmp_path, monkeypatch):
+    """没挂载的实例:报告页交付根默认地址 = 桶里前缀,开门/回车要**真去桶里列**,
+    不许因为"等于默认值"就退回本地目录(那只会列出占位交付 welcome)。"""
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
+    monkeypatch.setenv("TOS_BUCKET", "herbucket")
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    calls = []
+    monkeypatch.setattr(runner, "tos_list_deliveries",
+                        lambda url, region=None, **k: (calls.append(url), ["d1", "d2"])[1])
+    root = tmp_path / "data" / "deliveries"
+    root.mkdir(parents=True)
+    app = build_app(str(root), data_root=str(tmp_path / "data" / "datasets"))
+    fn = next(f.fn for f in app.fns.values()
+              if getattr(f.fn, "__name__", "") == "_rp_root_changed")
+    upd, note = fn("tos://herbucket/deliveries", "cn-beijing")
+    assert calls == ["tos://herbucket/deliveries"], "默认地址没去桶里列"
+    assert [v for _l, v in upd["choices"]] == ["tos://herbucket/deliveries/d1",
+                                               "tos://herbucket/deliveries/d2"]
+    assert "TOS 直连" in note
+
+
+def test_picker_tick_relists_bucket_in_direct_mode(tmp_path, monkeypatch):
+    """切到报告页签的补扫在直连模式下要去桶里重列,不许扫本地把桶清单盖回去
+    (7862 模拟实例真机抓到:切一次页签,下拉就从桶清单退回本地占位 welcome)。"""
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
+    monkeypatch.setenv("TOS_BUCKET", "herbucket")
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    monkeypatch.setattr(runner, "tos_list_deliveries",
+                        lambda url, region=None, **k: ["d1", ".runs", "d2"][::2])
+    root = tmp_path / "data" / "deliveries"
+    root.mkdir(parents=True)
+    app = build_app(str(root), data_root=str(tmp_path / "data" / "datasets"))
+    tick = next(f.fn for f in app.fns.values()
+                if getattr(f.fn, "__name__", "") == "_picker_tick")
+    upd = tick("tos://herbucket/deliveries/d1", "tos://herbucket/deliveries", "cn-beijing")
+    assert [l for l, _v in upd["choices"]] == ["d1", "d2"]
+    assert upd["value"] == "tos://herbucket/deliveries/d1"      # 当前选中值带回去
+    # 本地模式原样:挂载实例 / 明填本地根 → 扫本地
+    upd2 = tick(None, str(root), "")
+    assert any("welcome" in str(l) for l, _v in upd2["choices"])
+
+
+def test_tos_list_deliveries_hides_dot_dirs():
+    from curation.ui import runner
+
+    class _S:
+        def iter_common_prefixes(self, b, p):
+            yield from [".runs", ".probe_details", "aloha-10", "debug"]
+    assert runner.tos_list_deliveries("tos://bkt/deliveries", store=_S()) == ["aloha-10", "debug"]
