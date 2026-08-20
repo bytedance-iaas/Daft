@@ -240,7 +240,9 @@ def test_app_with_terminal_tab(delivery):
     from curation.ui.app import build_app, build_console_app
     cfg = _config_text(build_console_app(delivery, terminal=True))
     assert "终端" in cfg and "curation-term-screen" in cfg
-    assert "iframe" not in cfg and "7681" not in cfg      # ttyd 时代的痕迹一点不留
+    # ttyd 时代的痕迹一点不留(裸 "iframe" 不能再当判据:2026-08-19 起
+    # 「质检报告」页签的合法内嵌就是 iframe,只钉 ttyd 的端口与名字)
+    assert "7681" not in cfg and "ttyd" not in cfg
     assert cfg.index("任务台") < cfg.index("终端")        # 终端在最右
     # 报告应用里没有终端(terminal 参数已退役,传了也不建)
     assert "curation-term-screen" not in _config_text(build_app(delivery,
@@ -3329,9 +3331,10 @@ def test_build_app_bootstraps_empty_delivery_root(tmp_path):
 
 
 def test_console_home_prefetches_reports_in_background(delivery, clean_ui_env):
-    """首页 head 里带报告预热脚本(隐藏 iframe,load 后延时挂、onload 后移除)
-    —— 拆分的下半句"首页快速显示,别的后台继续"。报告页自己不许带(它预热
-    自己等于递归)。"""
+    """首页三 tab 观感 + 后台加载(2026-08-19 用户定):「质检报告」页签内嵌
+    iframe(id=reports-frame),地址放 data-src 不放 src(直接写 src 会和首页
+    引导抢资源),由 head 脚本在首页 load 后延时注入 —— 用户点过来时页面已经
+    加载好;抢先点页签则点击瞬间注入。报告页自己不许带这段脚本(递归预热)。"""
     pytest.importorskip("gradio")
     from starlette.testclient import TestClient
 
@@ -3339,7 +3342,9 @@ def test_console_home_prefetches_reports_in_background(delivery, clean_ui_env):
     with TestClient(create_asgi_app(delivery, terminal=False)) as c:
         home = c.get("/").text
         # ⚠️ 匹配用无引号哨兵:gradio 6 把 head 以 JSON 内嵌进页面,引号被
-        # 转义成 ',带引号的子串在源码里认不出(2026-08-19 实测踩过)
+        # 转义,带引号的子串在源码里认不出(2026-08-19 实测踩过)
         assert "reports-prefetch" in home and "/reports/" in home
-        assert "f.remove()" in home, "预热 iframe 用完必须移除,否则后台一直打 SSE"
+        assert "reports-frame" in home and "data-src" in home
+        assert 'src="/reports/"' not in home, \
+            "iframe 不许直接写 src(会和首页引导抢资源,由脚本延时注入)"
         assert "reports-prefetch" not in c.get("/reports/").text

@@ -859,24 +859,34 @@ def _label_key(mapping: dict, label: str, default: str) -> str:
 
 
 def reports_prefetch_head(reports_href: str) -> str:
-    """首页空闲后**后台预热**报告应用的一段 head 脚本(2026-08-19 拆分的下半句:
-    "首页快速显示,别的后台继续")。
+    """首页空闲后**后台加载**「质检报告」页签里的内嵌 iframe(2026-08-19 拆分的
+    下半句:"首页快速显示,别的后台继续")。
 
-    做法:首页 load 完再等 4 秒(绝不和首页自己的引导抢带宽/CPU),挂一个隐藏
-    iframe 加载报告页 —— 它会把报告应用的 HTML/config/全部 JS chunk 灌进浏览器
-    HTTP 缓存;iframe onload 后再留 15 秒让分块 JS 拉完,然后**移除 iframe**:
-    不移除的话它的轮询定时器会一直在后台打 SSE,白吃服务端连接。
-    效果边界(如实):预热省的是**下载**,用户点开报告时渲染/水合仍要现场做。
+    iframe 就摆在「质检报告」页签里(id=reports-frame),但 src 放在 data-src:
+    直接写 src 会让它和首页自己的引导抢带宽/CPU,等于回到"首屏一起加载全部"
+    的老路。这段脚本做两件事,谁先到谁生效:
+      ① 首页 load 完再等 4 秒 → 注入 src,报告在后台悄悄加载完,用户点过来
+         时页面已经就绪;
+      ② 用户抢在预热前就点了「质检报告」页签 → 点击瞬间注入,最差退回
+         "现场加载一次"。
+    iframe 是正式 UI 不是一次性预热品,**不移除** —— 它的轮询(交付列表 10s
+    一刷)就是报告页本来的行为。reports_href 未用留参:iframe 的地址在
+    data-src 里由 build_console_app 渲染,脚本只负责扣扳机。
     """
+    del reports_href
     # /*reports-prefetch*/ 哨兵给测试认脚本用:gradio 6 把 head 以 JSON 内嵌
-    # 进页面(引号转义成 '),含引号的子串在页面源码里认不出来。
+    # 进页面(引号被转义),含引号的子串在页面源码里认不出来;页签按钮文本
+    # 「质检报告」同理按 \u 转义串匹配。
     return ("<script>/*reports-prefetch*/"
-            "(function(){window.addEventListener('load',function(){"
-            "setTimeout(function(){var f=document.createElement('iframe');"
-            f"f.src='{reports_href}';f.style.display='none';"
-            "f.setAttribute('aria-hidden','true');"
-            "f.onload=function(){setTimeout(function(){f.remove();},15000);};"
-            "document.body.appendChild(f);},4000);});})();</script>")
+            "(function(){"
+            "function arm(){var f=document.getElementById('reports-frame');"
+            "if(f&&!f.getAttribute('src')){f.src=f.dataset.src;}}"
+            "window.addEventListener('load',function(){setTimeout(arm,4000);});"
+            "document.addEventListener('click',function(e){"
+            "var b=e.target&&e.target.closest&&e.target.closest('button');"
+            "if(b&&b.textContent&&"
+            "b.textContent.indexOf('\u8d28\u68c0\u62a5\u544a')>-1){arm();}"
+            "},true);})();</script>")
 
 
 def presentation(terminal: bool = False, root: str = "") -> dict:
@@ -992,9 +1002,6 @@ def build_console_app(delivery: str, config_path: str | None = None,
 
     with gr.Blocks(title="Robot Data Curation") as app:
         gr.Markdown("# 机器人数据 Curation 质检台")
-        # 报告在独立子应用(见 docstring),这里只放一个普通链接过去。
-        gr.Markdown(f"[查看质检报告 →]({reports_href})",
-                    elem_id="reports-link")
         with contextlib.ExitStack() as shell:
             shell.enter_context(gr.Tabs(selected="console", elem_id="topnav"))
             # ── 任务台(2026-08-13;布局与文案按用户当日反馈重排)──────────
@@ -1561,6 +1568,20 @@ def build_console_app(delivery: str, config_path: str | None = None,
                 # (同 _hi_open 的手法)。
                 _prefill_from_query.__annotations__ = {"request": gr.Request}
                 app.load(_prefill_from_query, None, [rn_tin, rn_tin_rg])
+            # ── 质检报告页签(2026-08-19 用户定的形态):顶层三 tab 的观感不变,
+            # 报告内容以 iframe 内嵌独立的报告子应用。iframe 的 src **不直接写**
+            # (那等于回到"首屏一起加载全部"的老路),放在 data-src 里,由
+            # reports_prefetch_head 的脚本在首页 load 完延时注入 —— 后台加载,
+            # 用户点过来时页面已经就绪;万一用户抢在预热前点了页签,脚本也
+            # 监听 tab 点击立即注入,最差退回"现场加载一次"。
+            with gr.Tab("质检报告", id="report"):
+                gr.Markdown(f"[在新窗口打开质检报告 ↗]({reports_href})",
+                            elem_id="reports-link")
+                gr.HTML(
+                    f'<iframe id="reports-frame" data-src="{reports_href}" '
+                    'style="width:100%;height:calc(100vh - 180px);'
+                    'border:none;border-radius:8px;background:transparent;">'
+                    "</iframe>")
             if terminal:
                 # 内嵌终端(2026-07-29 U4,替代 ttyd iframe):xterm.js 画屏 +
                 # 本服务的 /ws/term(forkpty 起 bash)。装配全在 term.js 里,
