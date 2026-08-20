@@ -280,3 +280,95 @@ def test_save_report_survives_a_corrupting_mount(tmp_path, monkeypatch):
     for name in ("reject.json", "review.json"):
         json.loads((tmp_path / name).read_text(encoding="utf-8"))
     assert (tmp_path / "report.md").read_text(encoding="utf-8").startswith("#")
+
+
+# ───────── 记账件的发布通道 + 分级落盘回验(2026-08-20)─────────
+# 起因:一次 20 条的跑批在「落盘回验」上为一张 run.json 硬等了 285 秒。
+# 病根不是存储发脾气,是 write_run_facts / write_latest 还在用 copyfile 发布
+# ——safe_write._publish 的实测早写明白:copyfile 发布的文件要 30-90s 以上才
+# 读得回来,os.replace 发布的立刻可读。2026-08-14 修 _publish 时这两处漏了,
+# 因为它们各自抄了一份(与 runner._copy_text 第八例同病;此为第九、十例)。
+
+
+def test_run_facts_and_latest_go_through_the_atomic_publish_channel(
+        tmp_path, monkeypatch):
+    """🔴 记账件必须走 safe_write 的原子发布通道,不许自己 copyfile 了事。
+
+    ⚠️ 判据钉"走那条通道"而不是"写完内容对":本地盘上 copyfile 内容照样对
+    (退回去照样绿=假绿);真正的区分点(读回可见性/不许就地覆盖)只在 TOS
+    后端上出现,单测造不出来——"别再各写一份实现"本身就是要守的不变量。
+    """
+    from curation.delivery import write_latest, write_run_facts
+    from curation.export import safe_write
+
+    seen = []
+    real = safe_write._publish
+
+    def spy(local_tmp, dst):
+        seen.append(os.path.basename(dst))
+        return real(local_tmp, dst)
+
+    monkeypatch.setattr(safe_write, "_publish", spy)
+    write_run_facts(str(tmp_path), {"跑批": "x"})
+    write_latest(str(tmp_path), "20260820-000000")
+    assert "run.json" in seen, "run.json 没走原子发布通道(第九例会复发)"
+    assert "latest" in seen, "latest 没走原子发布通道(第十例会复发)"
+    # 内容照旧要对
+    assert json.loads((tmp_path / "run.json").read_text(encoding="utf-8")) \
+        == {"跑批": "x"}
+    assert (tmp_path / "latest").read_text(encoding="utf-8").strip() \
+        == "20260820-000000"
+
+
+def _fake_clock(monkeypatch):
+    """把 time.time/time.sleep 换成假钟:sleep 只拨表不真等。"""
+    import time as _t
+    clock = {"t": 0.0}
+    monkeypatch.setattr(_t, "time", lambda: clock["t"])
+    monkeypatch.setattr(_t, "sleep",
+                        lambda s: clock.__setitem__("t", clock["t"] + s))
+    return clock
+
+
+def test_record_items_are_deferred_after_grace_and_republished_once(
+        tmp_path, monkeypatch, capsys):
+    """记账件超过宽限期:重发布一次 → 挂账放行,**不陪等到整体上限**。
+
+    为一张记账条扣住整批交付的完成宣告 4 分 45 秒,是设计错误(2026-08-20
+    用户拍板):它晚到的唯一后果是"选哪一次"的下拉晚几分钟看到本次,
+    run_facts 读不到还会回落读 passed.json,UI 自愈。
+    """
+    from curation.pipeline.run import _verify_delivery_visible
+    clock = _fake_clock(monkeypatch)
+    ok = tmp_path / "passed.json"
+    ok.write_text('{"a": 1}', encoding="utf-8")
+    republished = []
+    deferred = _verify_delivery_visible(
+        [("passed.json", str(ok), "json"),
+         ("run.json", str(tmp_path / "run.json"), "json", "record",
+          lambda: republished.append(1))],
+        timeout_s=300.0, record_grace_s=30.0)
+    assert deferred == ["run.json"], "记账件没有挂账放行"
+    assert republished == [1], "到点必须重发布恰好一次(免费保险,救'刷新被丢')"
+    assert clock["t"] < 60, f"挂账后还在陪等({clock['t']}s)——放行没生效"
+    out = capsys.readouterr().out
+    assert "挂账放行" in out and "数据件全部确认" in out
+
+
+def test_data_items_are_never_deferred_and_wait_prints_heartbeat(
+        tmp_path, monkeypatch, capsys):
+    """数据件绝不挂账(交付本体,承诺押在它身上),等待期间必须有心跳。
+
+    心跳治的是误判:真干活不吭声,人只能判断"卡住了"(2026-08-20 用户就是
+    被 4 分 45 秒的死寂逼来问的;静默慢步骤=bug)。
+    """
+    from curation.pipeline.run import _verify_delivery_visible
+    clock = _fake_clock(monkeypatch)
+    deferred = _verify_delivery_visible(
+        [("passed.json", str(tmp_path / "never.json"), "json")],
+        timeout_s=120.0, record_grace_s=30.0)
+    assert deferred == [], "数据件被挂账了——它是交付本体,只能等或超时警告"
+    assert clock["t"] >= 120, "数据件没等到整体上限就放弃了"
+    out = capsys.readouterr().out
+    assert "回验超时" in out
+    assert "还差" in out and "正常等待" in out, "等待期间没有心跳"

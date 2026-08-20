@@ -662,10 +662,11 @@ def audit_pending_count(m: dict) -> int:
 
 
 def task_pending_count(m: dict) -> int:
-    """任务成败弃权队列里还没裁的条数(搁置**算未裁**:它是"待定"不是结论)。"""
+    """任务成败弃权队列里还没裁的条数(「拿不准」**算未裁**:它是"待定"不是结论)。"""
     dec = load_task_verdicts(m)
     return sum(1 for t in (m.get("task_review") or [])
-               if dec.get(t.get("id", ""), {}).get("verdict", "") in ("", "搁置"))
+               if dec.get(t.get("id", ""), {}).get("verdict", "")
+               in ("", VERDICT_HOLD))
 
 
 def appeal_pending_count(m: dict) -> int:
@@ -695,7 +696,7 @@ def appeal_hint_md(m: dict) -> str:
 #: (第二轮),这句话让用户知道那不是系统坏了。
 WORKFLOW_GUIDE = (
     "**怎么做**:逐条看视频,把该条的问题一次答完(标注与成败在同一张卡)→ "
-    "到「任务台 · 执行人工裁决」执行一次。改标时顺手给了成败结论的,机器直接采信;"
+    "在本页底部点「执行裁决」。改标时顺手给了成败结论的,机器直接采信;"
     "只改标、留空成败的,机器按新标注重判 —— 重判后仍判不出的会回到这里,"
     "补个结论再执行一次。")
 
@@ -769,7 +770,7 @@ def merge_filter_mode(label) -> str:
 
 
 def merged_pending_count(m: dict) -> int:
-    """合并队列里还有问题没答完的卡数(任一问题未裁即算;搁置算未裁)。"""
+    """合并队列里还有问题没答完的卡数(任一问题未裁即算;「拿不准」算未裁)。"""
     dec = load_label_decisions(m)
     ver = load_task_verdicts(m)
     n = 0
@@ -777,7 +778,8 @@ def merged_pending_count(m: dict) -> int:
         a_pending = (it["audit"] is not None
                      and not dec.get(it["id"], {}).get("decision"))
         t_pending = (it["task"] is not None
-                     and ver.get(it["id"], {}).get("verdict", "") in ("", "搁置"))
+                     and ver.get(it["id"], {}).get("verdict", "")
+                     in ("", VERDICT_HOLD))
         if a_pending or t_pending:
             n += 1
     return n
@@ -791,7 +793,7 @@ def merged_hint_md(m: dict) -> str:
     n_both = sum(1 for it in q if it["audit"] is not None
                  and it["task"] is not None)
     lines = [f"共 **{len(q)}** 条需要你看,其中 **{merged_pending_count(m)}** 条"
-             "还有问题没答(搁置算没答:它是「待定」不是结论)。"]
+             "还有问题没答(「拿不准」算没答:它是「待定」不是结论)。"]
     if n_both:
         lines.append(f"其中 {n_both} 条标注与成败两个问题都有 —— 在同一张卡上"
                      "一起答,视频只用看一遍。")
@@ -1516,7 +1518,8 @@ def latency_bar_html(perf: dict) -> str:
 from ..dataset_level import decisions as _dec
 from ..dataset_level.decisions import (APPEAL_CHOICES, APPEALS_CSV,  # noqa: F401
                                        DECISION_CHOICES, DECISIONS_CSV,
-                                       VERDICT_CHOICES, VERDICTS_CSV,
+                                       VERDICT_CHOICES, VERDICT_HOLD,
+                                       VERDICTS_CSV,
                                        is_task_success_reject,
                                        record_label_decision, record_reject_appeal,
                                        record_task_verdict)
@@ -1564,7 +1567,7 @@ def decision_status(m: dict) -> dict:
 def unapplied_banner_md(m: dict) -> str:
     """质检报告页顶部的「有裁决尚未应用」提醒(没有未应用的 → 空串,不占位)。
 
-    防的事故:跑完新一批忘了点「执行人工裁决」,交出去的就是把人的决定全丢掉的
+    防的事故:跑完新一批忘了点「执行裁决」,交出去的就是把人的决定全丢掉的
     数据,而报告不会吭声。措辞分两档:一条都没应用时才说「纯机器结论」——
     部分应用时那句就是假话。
     """
@@ -1574,9 +1577,9 @@ def unapplied_banner_md(m: dict) -> str:
     if c["applied"]:
         return (f"⚠️ 这份交付有 **{c['unapplied']}** 条人工裁决尚未应用到本次跑批"
                 f"(另有 {c['applied']} 条已应用)。"
-                "去「任务台 · 执行人工裁决」执行一次。")
+                "去「人工裁决」页点「执行裁决」。")
     return (f"⚠️ 这份交付有 **{c['unapplied']}** 条人工裁决,本次跑批尚未应用 —— "
-            "当前看到的是纯机器结论。去「任务台 · 执行人工裁决」执行一次。")
+            "当前看到的是纯机器结论。去「人工裁决」页点「执行裁决」。")
 
 
 def carryover_note_md(m: dict) -> str:
@@ -1596,7 +1599,7 @@ def carryover_note_md(m: dict) -> str:
 
 #: 裁决卡片溯源行的状态措辞(applied 之外的两种也要说清,别让人对着一条
 #: 落空的裁决反复点「执行」)。
-_TRACE_WORDING = {"unapplied": "尚未应用 —— 去「任务台 · 执行人工裁决」执行一次",
+_TRACE_WORDING = {"unapplied": "尚未应用 —— 到本页底部点「执行裁决」",
                   "orphaned": "该 episode 不在本次跑批里,无处可施"}
 
 
@@ -1617,7 +1620,7 @@ def decision_trace_md(m: dict, line: str, eid: str) -> str:
 
 
 def application_counts_md(run_path: str) -> str:
-    """任务台「执行人工裁决」下拉旁的计数行(没有任何裁决 → 空串)。
+    """「人工裁决」页执行入口的计数行(没有任何裁决 → 空串)。
 
     落空的(该 episode 不在选中的这次跑批里)单独说,**不计入未应用** ——
     混进去那个数字永远消不掉,提醒就成了狼来了。
@@ -1642,7 +1645,7 @@ def unapplied_card_note(run_path: str) -> str:
     if not c["unapplied"]:
         return ""
     return (f"⚠️ 这份交付记有 {c['unapplied']} 条人工裁决,尚未应用到这次结果 —— "
-            "去「执行人工裁决」页执行一次。")
+            "去「质检报告 · 人工裁决」页点「执行裁决」。")
 
 
 def audit_clip_paths(m: dict, episode_id: str) -> list[str]:
@@ -2586,14 +2589,25 @@ def episode_list_view(m: dict, bucket: str = BUCKET_ALL, page: int = 0,
 
 VIDEO_SOURCE_REVIEW = "审片站"
 VIDEO_SOURCE_CURATED = "交付数据集"
+#: ④ **源数据集**(2026-08-19 用户实机点名:「在 episode 页面不管过没过都应该
+#: 显示视频」)。前三个来源全是**产物**,而产物天然带偏:交付集只装通过的、
+#: 裁决片段只装进了队列的、审片站要另外生成。于是**被拒的条目往往一路都没有**
+#: —— 可它恰恰是最该被看见的那一条:系统自己把"被拒复议"定义成"证据够就杀"的
+#: 保险丝,而看不见画面的复议就是走过场。
+#: 源数据集对通过与否一视同仁,是唯一天然全覆盖的来源,所以垫在最后兜底。
+VIDEO_SOURCE_SOURCE = "源数据集"
 VIDEO_SOURCE_NONE = "无"
 
-#: 两处都没有视频时的提示。必须点名那条命令,否则客户以为功能坏了。
-NO_VIDEO_NOTE = "运行 review-page 生成审片站后此处可看视频"
+#: 四处都没有视频时的提示。
+#: ⚠️ 措辞别再写成"运行 review-page"(那是行话,客户不知道去哪运行):先说清
+#: **为什么没有**,再说出路。
+NO_VIDEO_NOTE = ("这条找不到画面:交付里没有它的视频,也没找到源数据集。"
+                 "源数据集还在的话,重新打开这份交付即可;或用 review-page 生成审片站")
 
 _SOURCE_NOTE = {
     VIDEO_SOURCE_REVIEW: "视频来自审片站(全部 episode 都有,含被拒条目)",
     VIDEO_SOURCE_CURATED: "视频来自交付数据集 lerobot_curated(只有通过的条目有)",
+    VIDEO_SOURCE_SOURCE: "视频来自源数据集(不分通过与否,原样的那一条)",
 }
 
 
@@ -2728,6 +2742,43 @@ def curated_video_paths(m: dict, eid: str) -> list[str]:
                                          f"episode_{idx:06d}.mp4")))
 
 
+def source_video_paths(m: dict, eid: str,
+                       data_root: str | None = None) -> list[str]:
+    """**源数据集**里这条 episode 的逐路 mp4(v2 布局)。
+
+    与另外三个来源的关键差别:它**不分通过与否**——被拒的、弃权的、通过的都在,
+    因为它就是客户交进来的原始数据。这也是它垫在最后的理由:前三档命中就用前三档
+    (那才是"我们交付的那一份"),前三档没有时,至少让人看得见画面。
+
+    ⚠️ 用 **eid 的原始序号**直接拼路径,不做任何重编号映射:源数据集的
+    episode_NNNNNN 就是原始序号,而交付集才是重编过的(curated_index_of 是给那边
+    用的)。这两套编号混用会放出**另一条 episode 的画面** —— 人对着错的证据做裁决,
+    比没有画面更糟。
+    ⚠️ v3 源是合并大 mp4(一个文件装多条),切不出单条 → 返回空表,与
+    curated_video_paths 同一条规矩。
+    """
+    root, name = delivery_source_dataset(m)
+    # ⚠️ 交付的 run.json/passed.json **只记数据集名**、不记路径(见
+    # delivery_source_dataset 的注释),所以光靠交付自己解析不出源目录 ——
+    # 那样这条兜底路对绝大多数交付都是空的,等于没做(2026-08-19 实测:
+    # debug 交付的 source_dataset 就是 None)。
+    # 用界面已知的「数据集根目录」把名字还原成路径:名字就是源目录名。
+    if (not root or not os.path.isdir(root)) and data_root and name:
+        cand = os.path.join(str(data_root), name)
+        root = cand if os.path.isdir(cand) else root
+    if not root or not os.path.isdir(root):
+        return []
+    ver = str(_load_json(os.path.join(root, "meta", "info.json")
+                         ).get("codebase_version") or "")
+    if not ver.startswith("v2"):
+        return []
+    num = "".join(ch for ch in str(eid) if ch.isdigit())
+    if not num:
+        return []
+    return sorted(glob.glob(os.path.join(root, "videos", "chunk-*", "*",
+                                         f"episode_{int(num):06d}.mp4")))
+
+
 # ── 片段可播性(2026-08-11 用户实锤:ep000018 摆了三个"死"播放器)──
 #
 # 那条是 8 帧 0.47 秒的采集残段(被拒原因就是它),切出来的审片片段只有 **1 帧、
@@ -2831,7 +2882,8 @@ def _lane(path: str, eid: str, source: str) -> dict:
             "duration_s": p["duration_s"], "why": p["why"]}
 
 
-def episode_videos(m: dict, eid: str, review_dir: str | None = None) -> dict:
+def episode_videos(m: dict, eid: str, review_dir: str | None = None,
+                   data_root: str | None = None) -> dict:
     """该 episode 的全部相机视频 → {source, note, videos:[{camera, path, playable, why…}]}。
 
     来源链见上;命中哪一档就整档用,不混着拼(混着拼会出现同一路相机两个版本)。
@@ -2840,7 +2892,9 @@ def episode_videos(m: dict, eid: str, review_dir: str | None = None) -> dict:
     """
     cands = [(s, p) for s, p in
              ((VIDEO_SOURCE_REVIEW, review_clip_paths(review_dir, m, eid)),
-              (VIDEO_SOURCE_CURATED, curated_video_paths(m, eid))) if p]
+              (VIDEO_SOURCE_CURATED, curated_video_paths(m, eid)),
+              # ④ 源数据集垫底:前三档全是产物,天然漏掉被拒条目(2026-08-19)
+              (VIDEO_SOURCE_SOURCE, source_video_paths(m, eid, data_root))) if p]
     if not cands:
         return {"source": VIDEO_SOURCE_NONE, "note": NO_VIDEO_NOTE, "videos": []}
     lanes_by_source = [(s, [_lane(p, eid, s) for p in paths]) for s, paths in cands]
@@ -2893,7 +2947,8 @@ def play_all_button_html(note: str = "", zone: str | None = None) -> str:
             f'{PLAY_ALL_TEXT}</button>{tail}</div>')
 
 
-def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
+def episode_video_html(m: dict, eid: str, review_dir: str | None = None,
+                       data_root: str | None = None) -> str:
     """详情面板的视频区:一个「同时播放」按钮 + 该条全部相机并排。
 
     不自动播(客户可能同时开着几路 200KB 的片段,自动播 = 一进页面就抢带宽);
@@ -2902,7 +2957,7 @@ def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
     **不循环**(2026-08-14 用户定):裁决是"看一遍下判断"的事,片子自己转圈只会
     让人分不清看到的是第几遍;要重看点按钮从头播。
     """
-    v = episode_videos(m, eid, review_dir)
+    v = episode_videos(m, eid, review_dir, data_root)
     if not v["videos"]:
         return ('<div class="ep-video-zone" style="background:#F7F8FA;border:1px dashed '
                 '#C9CDD4;border-radius:10px;padding:14px 18px;color:#86909C;'
@@ -2940,7 +2995,7 @@ def episode_video_html(m: dict, eid: str, review_dir: str | None = None) -> str:
 #: 待人工条目在检查明细上方的那行醒目提示。Gradio 做不了跨页签跳转(页签切换在
 #: 前端,后端拿不到句柄),所以给文字指引——写清去哪一页、在那儿能干什么。
 MANUAL_HINT_TEXT = ("这条还等着人来定:去「人工裁决」页,看视频后给结论;"
-                    "裁完到「任务台 · 执行人工裁决」执行一次即生效。")
+                    "裁完在同一页点「执行裁决」即生效。")
 
 
 def manual_hint_html(m: dict, eid: str) -> str:

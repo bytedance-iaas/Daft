@@ -155,16 +155,17 @@ def read_latest(delivery: str) -> str:
 def write_latest(delivery: str, name: str) -> str:
     """记下最近一次跑批的目录名,返回写好的文件路径。
 
-    ⚠️ 写法是"本地临时文件 + copyfile":交付根在 TOS 的 FSX 挂载上,库直写已经
-    咬过五次(savefig 静默产出零填充坏文件那次最典型)。文件才十几字节也照做 ——
-    坏的 latest 会让报告页默认打开一份不存在的跑批。
+    写法 = 本地临时文件 + safe_write 原子发布(2026-08-20 改,FSX 直写坑家族
+    第十例):此前是 copyfile,而 safe_write._publish 的实测早写明白了 ——
+    **copyfile 发布的文件要 30-90s 以上才读得回来,os.replace 发布的立刻可读**。
+    2026-08-14 修 _publish 时这里漏了,因为它自己抄了一份(与 runner._copy_text
+    第八例同病);落盘回验里 latest/run.json 独慢那 10s~285s,病根就是它。
 
-    ⚠️ 这里**不做立即回读校验**(2026-08-14 实测):FSX 上新写的文件有 20-60s
-    读不回来(第一次这么写时,回读拿到空串直接把一次成功的跑批报成了失败)。
-    "读得回来且内容对"这件事仍然要验,只是必须**轮询着验** —— 由调用方连同三件套
-    一起走落盘回验那一关(见 pipeline/run.py 的 _verify_delivery_visible),
-    latest_matches() 是那关之后的最终对账。
+    仍不做立即回读校验:"读得回来且内容对"由调用方连同三件套一起走落盘回验
+    (pipeline/run.py 的 _verify_delivery_visible),latest_matches() 是那关
+    之后的最终对账。
     """
+    from .export.safe_write import publish_file
     name = str(name or "").strip()
     if not name:
         raise ValueError("latest 要写的跑批目录名不能为空")
@@ -174,7 +175,7 @@ def write_latest(delivery: str, name: str) -> str:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(name + "\n")
-        shutil.copyfile(tmp, dst)
+        publish_file(tmp, dst)
     finally:
         try:
             os.unlink(tmp)
@@ -248,14 +249,18 @@ def write_run_facts(run_path: str, facts: dict) -> str:
     """把这次跑批的事实卡写进跑批目录(条数/是否导出数据集/生成时间)。
 
     存在的理由是**列清单要快**:没有它,"选哪一次"的下拉得逐个去读几 MB 的
-    passed.json,FSX 上一次就是几秒。写法同 latest(临时文件 + copyfile)。
+    passed.json,FSX 上一次就是几秒。写法同 latest(临时文件 + safe_write
+    原子发布;2026-08-20 前是 copyfile —— FSX 直写坑家族第九例,copyfile 发布
+    的文件要 30-90s 以上才读得回来,2026-08-20 那次落盘回验等 run.json 等了
+    285 秒,病根就是它,详见 write_latest 的 docstring)。
     """
+    from .export.safe_write import publish_file
     dst = os.path.join(run_path, RUN_FACTS_NAME)
     fd, tmp = tempfile.mkstemp(prefix="runfacts-", suffix=".json")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(facts, f, ensure_ascii=False, indent=1)
-        shutil.copyfile(tmp, dst)
+        publish_file(tmp, dst)
     finally:
         try:
             os.unlink(tmp)

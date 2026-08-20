@@ -317,13 +317,16 @@ def test_verdict_fail_moves_to_reject_and_is_taken_from_all_views():
 
 
 def test_verdict_hold_keeps_item_in_queue():
-    """搁置:只记一笔,条目**留在队列里**(它是"待定"不是结论)。"""
+    """拿不准:只记一笔,条目**留在队列里**(它是"待定"不是结论)。
+    ⚠️ 输入故意用老值「搁置」:2026-08-19 改名后老交付的 CSV 里还是它,
+    读不动等于把人已经做过的判断悄悄抹掉。存下来的应是现行词。"""
     p, r, j = _abstain_views()
     s = apply_task_verdicts(p, r, j, {"epZ": {"verdict": "搁置", "note": "看不清",
                                               "at": "t3"}})
     assert s["verdict_hold"] == ["epZ"]
     assert "epZ" in r["episodes"] and "epZ" in p["episodes"]      # 双呈现照旧
-    assert r["episodes"]["epZ"]["人工裁决"]["裁决"] == "搁置"
+    assert r["episodes"]["epZ"]["人工裁决"]["裁决"] == "拿不准", \
+        "老值「搁置」没被归一成现行词"
     assert r["episodes"]["epZ"]["待裁决项"] == ["任务成败判定"]
     assert r["待人工裁决总数"] == 3                                # 一条都没走
 
@@ -389,7 +392,8 @@ def test_run_rejudge_consumes_task_verdicts_without_vlm(tmp_path):
     md = (d / "report.md").read_text(encoding="utf-8")
     assert "任务成败人工裁决" in md and "剩余待人工裁决:1 条" in md
     res = json.loads((d / "details" / "rejudge_results.json").read_text(encoding="utf-8"))
-    assert res["task_verdicts"] == {"epX": "判成功", "epY": "判失败", "epZ": "搁置"}
+    assert res["task_verdicts"] == {"epX": "判成功", "epY": "判失败",
+                                    "epZ": "拿不准"}
 
 
 def test_run_rejudge_task_verdict_is_idempotent(tmp_path):
@@ -502,7 +506,7 @@ def test_run_rejudge_adopt_with_human_fail_goes_to_reject_without_vlm(tmp_path):
 
 
 def test_run_rejudge_adopt_with_hold_still_reruns(tmp_path):
-    """搁置是「待定」不是结论:改标 + 搁置 → **完全维持今天的行为**,照旧调
+    """拿不准是「待定」不是结论:改标 + 拿不准 → **完全维持今天的行为**,照旧调
     VLM 按新标注重判(这条防的是把例外扩大化 —— 例外只认人真给了结论)。"""
     d = _write_both_lines_delivery(
         tmp_path,
@@ -516,7 +520,7 @@ def test_run_rejudge_adopt_with_hold_still_reruns(tmp_path):
         return {"passed": True, "verdict": "success", "detail": "{}"}
 
     s = run_rejudge(str(d), "/unused", {}, rerun_fn=fake)
-    assert calls == [("epZ", "fold the towel")], "搁置不是结论,重判不该被跳过"
+    assert calls == [("epZ", "fold the towel")], "拿不准不是结论,重判不该被跳过"
     assert s["adopted_pass"] == ["epZ"] and s["adopted_human"] == []
 
 

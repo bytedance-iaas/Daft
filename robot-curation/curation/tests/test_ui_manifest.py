@@ -221,7 +221,7 @@ def _config_text(app) -> str:
 def _report_section(app) -> str:
     """配置里「质检报告」之后的那一段。
 
-    2026-08-13 起顶层多了「任务台」,它的模块多选框用的是同一批语义名
+    2026-08-13 起顶层多了「跑质检」(原名「任务台」),它的模块多选框用的是同一批语义名
     (技能画像/精确去重/任务成败判定…),整份配置里 str.index() 会先命中那边。
     报告页子页签的**顺序**断言因此必须限定在报告段内比——守的还是原来那件事,
     只是定位更精确了。
@@ -231,27 +231,29 @@ def _report_section(app) -> str:
 
 
 def test_app_with_terminal_tab(delivery):
-    """terminal=True:「终端」页签 + xterm 容器 div 在**任务台应用**里,排最右。
+    """terminal=True:有「终端」页签 + xterm 容器 div,且它排在**最右**。
 
-    2026-08-19 拆分后终端跟着任务台走(它是操作面的排障工具);报告应用永远
-    没有终端。顺序:任务台在左、终端在最右(2026-08-13 用户定的位置不变)。
+    顺序 2026-08-13 用户定:任务台 / 质检报告 / 终端,默认落地页是任务台 ——
+    终端是我们排障用的,不该占客户第一眼的位置。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app, build_console_app
-    cfg = _config_text(build_console_app(delivery, terminal=True))
+    from curation.ui.app import build_app
+    cfg = _config_text(build_app(delivery, terminal=True))
     assert "终端" in cfg and "curation-term-screen" in cfg
-    assert "7681" not in cfg and "ttyd" not in cfg     # ttyd 时代的痕迹一点不留
-    assert cfg.index("任务台") < cfg.index("终端")     # 终端在最右
-    # 报告应用里没有终端(terminal 参数已退役,传了也不建)
-    assert "curation-term-screen" not in _config_text(build_app(delivery,
-                                                                terminal=True))
+    assert "iframe" not in cfg and "7681" not in cfg      # ttyd 时代的痕迹一点不留
+    assert "质检报告" in cfg
+    assert cfg.index("质检报告") < cfg.index("终端")   # 终端在最右
+    assert cfg.index("跑质检") < cfg.index("质检报告")  # 跑质检在最左
+    # 六个子 tab 一个不少
+    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细"):
+        assert t in cfg
 
 
 def test_app_without_terminal_leaves_no_terminal_trace(delivery):
     """terminal=False:配置里连「终端」二字都没有,报告页那套子页签照旧。
 
     断言口径 2026-08-13 收窄过:顶层导航此前**只在开终端时**渲染,所以老断言连
-    「质检报告」四个字都不许出现。现在「任务台」与「质检报告」是常驻的顶层两页
+    「质检报告」四个字都不许出现。现在「跑质检」与「质检报告」是常驻的顶层两页
     (用户定:面板是面向客户的那张脸),顶层标题必然出现 —— 本测试真正要守的是
     "客户部署里看不到终端入口",那一条一个字没松:终端页签、xterm 容器、
     /ws/term 路由与资产仍然全都不存在(后者见 test_asgi_app_without_terminal)。
@@ -260,30 +262,33 @@ def test_app_without_terminal_leaves_no_terminal_trace(delivery):
     from curation.ui.app import build_app
     cfg = _config_text(build_app(delivery))
     assert "终端" not in cfg and "curation-term-screen" not in cfg
-    assert "质检报告" in cfg and "任务台" in cfg
+    assert "质检报告" in cfg and "跑质检" in cfg
     for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细"):
         assert t in cfg
 
 
-def test_console_and_reports_are_separate_apps(delivery):
-    """2026-08-19 拆分契约:任务台与报告是**两个独立应用**——首屏(任务台)的
-    组件量就是它快的原因,报告页签一旦回流首页,首屏引导立刻回到 10 秒时代。
-    任务台的「质检报告」页签只是一个整页跳转的壳(内容一句话);报告应用
-    那套子页签一个不少(红线照旧),且不含任务台的表单组件。
+def test_task_console_is_top_level_and_report_tabs_untouched(delivery):
+    """「跑质检」与质检报告并列在顶层;报告页那套子页签一个不少、顺序不变。
+
+    用户红线(2026-08-13):UI 改动绝不能影响质检报告那套页签。这条把它钉死。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app, build_console_app
-    con = _config_text(build_console_app(delivery))
-    for t in ("跑质检", "执行人工裁决", "任务与日志", "正在打开质检报告"):
-        assert t in con, t
-    assert "质检总览" not in con and "性能剖析" not in con, \
-        "报告页签不许回流任务台应用(首屏减重是拆分的目的本身)"
+    from curation.ui.app import build_app
+    cfg = _config_text(build_app(delivery))
+    assert cfg.index("跑质检") < cfg.index("质检报告")
+    # 报告页九个子页签一个不少。**顺序**由既有的 test_app_has_manual_decision_tab
+    # 等几条守,这里不重复钉 —— 这些词在正文里也出现(技能画像页有一行指向人工
+    # 裁决),硬排序只会造出一条脆测试。
     rep = _report_section(build_app(delivery))
     for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "视频-动作同步",
               "卡顿动作时间线", "明细", "性能剖析"):
         assert t in rep, t
-    assert "跑质检" not in _config_text(build_app(delivery)), \
-        "任务台不许回流报告应用"
+    for t in ("跑质检", "任务与日志"):   # 生成视频片段/模型服务已并入别处
+        assert t in cfg, t
+    # 「执行人工裁决」页签 2026-08-19 整个删掉(决策与执行合到报告页),
+    # 执行入口只剩报告页「人工裁决」里的「执行裁决」按钮
+    assert "执行人工裁决" not in cfg
+    assert "执行裁决" in rep
 
 
 def test_probe_buttons_are_wired(delivery):
@@ -294,8 +299,8 @@ def test_probe_buttons_are_wired(delivery):
     靠这条钉住。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_console_app
-    app = build_console_app(delivery)
+    from curation.ui.app import build_app
+    app = build_app(delivery)
     probes = {i for i, c in app.blocks.items()
               if getattr(c, "value", None) == "检测可用性"}
     assert probes, "界面上找不到「检测可用性」按钮"
@@ -339,8 +344,8 @@ def test_concurrency_defaults_are_shown_as_placeholders_not_prefilled():
 def test_concurrency_boxes_carry_the_default_in_the_placeholder(delivery):
     """界面这一侧钉死同一件事:占位符里带出厂默认值(32/16/32),value 仍是空。"""
     pytest.importorskip("gradio")
-    from curation.ui.app import build_console_app
-    cfg = json.loads(json.dumps(build_console_app(delivery).get_config_file(), default=str))
+    from curation.ui.app import build_app
+    cfg = json.loads(json.dumps(build_app(delivery).get_config_file(), default=str))
     boxes = [c for c in cfg["components"]
              if "conc-num" in (c.get("props", {}).get("elem_classes") or [])]
     assert len(boxes) == 3
@@ -387,7 +392,7 @@ def test_probe_button_rereads_the_config_without_restarting_the_ui(delivery, mon
     monkeypatch.setattr(ui_runner, "vlm_backend_labels", lambda cfg=None: dict(live))
     monkeypatch.setattr(ui_app, "_probe_backends",
                         lambda cfg, t: [[c, "✅在线", ""] for c in live.values()])
-    app = ui_app.build_console_app(delivery)
+    app = ui_app.build_app(delivery)
     live["自托管 vLLM · Cosmos-Reason2-32B · H20"] = "house-32b"   # 启动之后才加的
 
     probes = {i for i, c in app.blocks.items()
@@ -1226,8 +1231,9 @@ def test_task_verdict_roundtrip_and_override(delivery):
     assert got["ep000000"]["verdict"] == "判成功"
     assert got["ep000000"]["note"] == "看了视频,完成了" and got["ep000000"]["at"]
     assert task_review_rows(m)[0][5] == "判成功"                # 回显进表格
+    # 写老值「搁置」照收(2026-08-19 改名后的兼容),读回来是现行词
     record_task_verdict(m["path"], "ep000000", "搁置")          # 改判=追加,后写覆盖
-    assert load_task_verdicts(m)["ep000000"]["verdict"] == "搁置"
+    assert load_task_verdicts(m)["ep000000"]["verdict"] == "拿不准"
 
 
 def test_task_verdict_guards(delivery):
@@ -1267,7 +1273,7 @@ def test_verdict_and_label_decisions_do_not_collide(tmp_path):
 
 
 def test_pending_counts_and_guidance_text(delivery):
-    """页面上的"还剩几条"与工序引导:裁过的不再催,裁完催办语消失;搁置算未裁。
+    """页面上的"还剩几条"与工序引导:裁过的不再催,裁完催办语消失;拿不准算未裁。
 
     2026-08-16 合并队列重构后改写:分区制的"先清标注再裁成败"工序提醒退役
     (两个问题在同一张卡上一次答完),进度行换成 merged_hint_md 按**卡**计数 ——
@@ -1288,15 +1294,17 @@ def test_pending_counts_and_guidance_text(delivery):
     assert audit_pending_count(m) == 0
     assert merged_pending_count(m) == 1                     # 标注卡答完,成败卡还在
     assert "已全部裁决" in audit_note_md(m)
-    record_task_verdict(m["path"], "ep000000", "搁置")
-    assert task_pending_count(m) == 1, "搁置是待定不是结论,仍算未裁"
+    record_task_verdict(m["path"], "ep000000", "拿不准")
+    assert task_pending_count(m) == 1, "拿不准是待定不是结论,仍算未裁"
     assert merged_pending_count(m) == 1
     record_task_verdict(m["path"], "ep000000", "判成功")
     assert task_pending_count(m) == 0
     assert merged_pending_count(m) == 0
     # 工序引导:一次答完 → 执行;只改标留空成败的会有第二轮,提前说明白
     assert "一次答完" in WORKFLOW_GUIDE
-    assert "执行人工裁决" in WORKFLOW_GUIDE                 # 指向任务台按钮,不再教敲命令行
+    # 2026-08-19 执行入口搬进本页底部:引导指向「执行裁决」按钮,绝不再把人
+    # 支到已删掉的「任务台 · 执行人工裁决」页签(指路指向不存在的地方 = 死链)
+    assert "执行裁决" in WORKFLOW_GUIDE and "任务台" not in WORKFLOW_GUIDE
     assert "重判" in WORKFLOW_GUIDE and "再执行一次" in WORKFLOW_GUIDE
 
 
@@ -1451,11 +1459,21 @@ def test_app_has_manual_decision_tab(delivery):
     # 「待你裁决」一条 episode 一张卡,标注问题与成败问题挂同一张卡。两个子页签名
     # 都是用户定的:别改回行话「待裁决」,也别改回「被拒复议」——后者的名字要自己
     # 说清范围(只管任务成败判定拒掉的),正文才好不重复解释一遍。
+    # 2026-08-19 用户拍板的三处措辞,一并钉住:
+    #  · 「搁置」→「拿不准」——前者是系统视角(说条目被怎么处理),后者是人的视角
+    #    (说我为什么判不了);两块并排后同样位置的第三个键必须同词同义。
+    #  · 「弃用该条」从标注块里提出来,成为卡片级的「其它原因-整条弃用」——
+    #    "这条数据要不要"和"标注 vs caption 谁错"是两个正交维度(用户点破)。
+    #  · 措辞用「其它原因」而不是「看不清」:弃用原因不止一种(录漏/撞了/没做完),
+    #    而它会写进 reject.json 当证据,焊死一个原因等于让记录说谎。
     for txt in (AUDIT_TERM, "待你裁决", "任务失败复议", "任务成败弃权",
                 "标注问题", "成败问题",
-                "✅ 判成功", "❌ 判失败", "⏸ 搁置",
+                "✅ 判成功", "❌ 判失败", "🤔 拿不准",
+                "其它原因-整条弃用",
                 "怎么用这一页"):
         assert txt in cfg, txt
+    assert "搁置" not in cfg, "界面上还留着旧词「搁置」"
+    assert "🗑 弃用该条" not in cfg, "「弃用该条」还摆在标注块里当第三个选项"
     assert cfg.index("待你裁决") < cfg.index("任务失败复议")
     assert cfg.index(AUDIT_TERM) < cfg.index("任务成败弃权")
 
@@ -1936,25 +1954,17 @@ def test_app_has_sync_curve_tab_and_split_evidence(delivery):
     assert '"name": "image"' in cfg or '"type": "image"' in cfg
 
 
-def test_asgi_app_serves_console_home_and_reports_subpath(delivery, clean_ui_env):
-    """双挂载(2026-08-19 拆分):`/` = 轻量任务台(含跑质检表单 + 一次性预热
-    脚本),`/reports/` = 报告应用(含同步曲线页签)。两个都要 200 且内容
-    各归各;预热脚本只在首页(报告页自己带 = 递归预热)。"""
+def test_asgi_app_serves_sync_curve_tab(delivery, clean_ui_env):
+    """整页起得来,「同步曲线」页签文案真出现在首页 HTML 里。"""
     pytest.importorskip("gradio")
     from starlette.testclient import TestClient
 
     from curation.ui.app import create_asgi_app
     app = create_asgi_app(_with_sync(delivery)["path"], terminal=False)
     with TestClient(app) as c:
-        home = c.get("/").text
-        assert "数据集 TOS 路径" in home
-        # ⚠️ 预热脚本用无引号哨兵匹配:gradio 6 把 head 以 JSON 内嵌进页面,
-        # 引号被转义,带引号的子串在源码里认不出(2026-08-19 实测踩过)
-        assert "reports-prefetch" in home and "/reports/" in home
-        assert "只看有标注/异常的" not in home        # 报告组件不进首页
-        rep = c.get("/reports/").text
-        assert "视频-动作同步" in rep and "只看有标注/异常的" in rep
-        assert "reports-prefetch" not in rep
+        r = c.get("/")
+        assert r.status_code == 200
+        assert "视频-动作同步" in r.text and "只看有标注/异常的" in r.text
 
 
 def test_app_load_returns_match_outputs_after_rework(delivery):
@@ -2375,7 +2385,9 @@ def test_manual_hint_only_on_pending_and_points_at_the_decision_page(ep_delivery
     from curation.ui.manifest import manual_hint_html
     m = load_delivery(ep_delivery)
     hint = manual_hint_html(m, "ep000001")
-    assert "人工裁决" in hint and "执行人工裁决" in hint
+    # 2026-08-19 起执行入口就在「人工裁决」页底部,指路不再指向任务台
+    assert "人工裁决" in hint and "执行裁决" in hint
+    assert "执行人工裁决" not in hint and "任务台" not in hint
     assert manual_hint_html(m, "ep000000") == ""
     assert manual_hint_html(m, "ep000002") == ""
 
@@ -2857,33 +2869,313 @@ def test_delivery_picker_is_actually_ticked(delivery):
         "补扫只挂了定时器 —— 而这层的定时器实测不跳,必须挂在报告页签的 select 上"
 
 
+# ───────── 报告页「执行裁决」(2026-08-19 决策与执行合到一处)─────────
+#
+# 起因(用户原话:"非常不合理。其实'执行人工裁决'也就是一个按钮的事情"):
+# 决策在报告页、执行在任务台,用户刚对着某份交付的某次运行裁完,还要到另一个
+# 页签把同样的上下文再选一遍。定案 = 把执行搬到证据旁边(报告页「人工裁决」页
+# 底部),任务台的「执行人工裁决」页签整个删掉。以下测试钉住四件事:
+# ① 作用对象 = 当前加载的交付与运行(state),不是任何下拉的值;
+# ② 确认块不点「确定」绝不发起任务(防"按钮即执行");
+# ③ 有任务在跑时点执行 → 明确告知,不发起、不失败、不排队;
+# ④ 报告页页签的增删为零(红线)。
+
+
+def _btn_fn(app, value, event="click"):
+    """按按钮文字找它接的那条事件回调(测试直接调 fn.fn,不起服务器)。"""
+    bids = {i for i, c in app.blocks.items()
+            if getattr(c, "value", None) == value}
+    assert bids, f"界面上找不到按钮 {value!r}"
+    for fn in app.fns.values():
+        for tgt in (getattr(fn, "targets", None) or []):
+            cid, ev = (tgt if isinstance(tgt, tuple)
+                       else (tgt.block._id, tgt.event_name))
+            if cid in bids and ev == event:
+                return fn
+    raise AssertionError(f"按钮 {value!r} 没接 {event} 事件")
+
+
+def test_execute_confirm_targets_loaded_run_not_dropdowns(delivery, tmp_path,
+                                                          monkeypatch):
+    """★「执行裁决」作用的是**当前报告页加载的那份交付与运行**,不是下拉的值。
+
+    防的正是老页签的病根复活:两边不通气,用户在报告页看着 A 交付裁完,执行时
+    却跑了下拉里残留的 B。判据:给「确定」的回调塞一堆胡乱的下拉值,捕获
+    runner.start 收到的 argv —— --delivery 必须是 state 里加载的那次运行,
+    --input 必须是交付里记的源数据集,下拉的胡话一个字不进 argv;且命令走的是
+    runner.start(与跑质检同一套任务机器:状态落 .runs/、可停止、关页面不丢)。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    calls = []
+    monkeypatch.setattr(runner, "start",
+                        lambda root, cmd, argv, **kw: calls.append((cmd, argv)))
+    src_dir = str(tmp_path / "src-ds")
+    monkeypatch.setattr(runner, "source_dataset_of", lambda p: src_dir)
+    fn = _btn_fn(app, "确定")
+    m = {"path": delivery}
+    out = fn.fn(m, "bogus-bucket", "bogus-dataset", None, "")
+    assert len(calls) == 1
+    cmd, argv = calls[0]
+    assert cmd == "rejudge"
+    assert argv[argv.index("--delivery") + 1] == delivery
+    assert argv[argv.index("--input") + 1] == src_dir
+    assert "bogus-dataset" not in " ".join(argv)
+    # 起动成功 → 视图切到任务台看进度(进度数据源 = 任务台,不另造浮层)
+    assert getattr(out[0], "selected", None) == "console"
+
+
+def test_execute_button_only_asks_and_never_starts(delivery, monkeypatch):
+    """★确认块不点「确定」绝不发起任务(防"按钮即执行")。
+
+    「执行裁决」会改写交付,旧页签靠一个确认勾选框把关 —— 太容易顺手勾过去。
+    现在点主按钮只弹确认块;runner.start 若在这一步被调到,就是把断路器接短了。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    calls = []
+    monkeypatch.setattr(runner, "start",
+                        lambda *a, **kw: calls.append(a))
+    fn = _btn_fn(app, "执行裁决")
+    out = fn.fn({"path": delivery})
+    assert not calls, "点「执行裁决」不许直接起任务 —— 必须先过确认块"
+    assert out[0].get("visible") is True, "确认块该弹出来"
+    assert "改写" in out[1], "确认文案必须说清这会改写交付"
+    # 「取消」只收起确认块,同样不许碰 runner.start
+    out_no = _btn_fn(app, "取消").fn()
+    assert not calls
+    assert out_no.get("visible") is False
+
+
+def test_execute_refuses_and_says_so_while_a_task_is_running(delivery,
+                                                             monkeypatch):
+    """★有任务在跑时点执行:**明说**在等谁,不发起、不失败也不排队。
+
+    拦是对的(rejudge 改写交付,与正在写它的跑批撞车是灾难),但不说出来,
+    按钮就像坏了。两道门都要拦:主按钮那一步拦住不弹确认;确认块已经弹出来、
+    任务恰好在这时插进来的竞态,点「确定」那一步还要再拦一次。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    calls = []
+    monkeypatch.setattr(runner, "start",
+                        lambda *a, **kw: calls.append(a))
+    monkeypatch.setattr(runner, "active_run",
+                        lambda *a, **kw: {"run_id": "run-1",
+                                          "label": "质检 droid → debug",
+                                          "command": "run", "state": "running"})
+    ask = _btn_fn(app, "执行裁决").fn({"path": delivery})
+    assert ask[0].get("visible") is False, "有任务在跑不该弹确认块"
+    assert "有任务在跑" in ask[2] and "质检 droid → debug" in ask[2]
+    go = _btn_fn(app, "确定").fn({"path": delivery}, None, None, None, "")
+    assert "有任务在跑" in go[2]
+    assert not calls, "有任务在跑时绝不发起(也不排队)"
+
+
+def test_report_page_tab_set_is_frozen(delivery):
+    """★红线:报告页现有页签的增删必须为零。
+
+    本次改版只允许两个动作:任务台删掉「执行人工裁决」页签、报告页「人工裁决」
+    **页内**新增执行入口(按钮 + 确认块,不是页签)。整个应用的 Tab 清单钉死在
+    这里 —— 谁多建或少建一个页签,这条就响。
+    """
+    pytest.importorskip("gradio")
+    import gradio as gr
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    labels = sorted(str(b.label) for b in app.blocks.values()
+                    if isinstance(b, gr.Tab))
+    assert labels == sorted([
+        # 「任务台」2026-08-19 改名「跑质检」并拍平(原来下面只剩一个
+        # 「跑质检」子页签,套一层纯属多余)——顶层一个名字,子页签层删掉
+        "跑质检", "当前任务", "历史",
+        "质检报告", "质检总览", "Episodes", "人工裁决", "待你裁决",
+        "任务失败复议", "技能分布", "明细", "动作打分明细", "视频打分明细",
+        "视频-动作同步", "卡顿动作时间线", "本次运行配置", "性能剖析"])
+
+
+def test_dropdown_arrow_click_is_delegated_to_the_input(delivery):
+    """点下拉右边的箭头必须能展开列表(issue #53,同事 2026-08-19 报)。
+
+    实机量出来的根因:**单选与多选是两个组件,箭头做法没对齐**。
+      · 单选 `.icon-wrap` 是 pointer-events:none 且压在 input 上面
+        (箭头中心 505 < input 右边界 519)⇒ 点击穿透到 input → 聚焦 → 展开;
+      · 多选 `.icon-wrap` 是 pointer-events:**auto** 且整个落在 input 右边之外
+        (箭头中心 1157 > input 右边界 1144)⇒ 点击命中 SVG 的 <path>,被吃掉。
+    于是「数据集」(唯一的多选下拉)点箭头没反应,只有点文字区才展开。
+
+    ⚠️ 只加 CSS pointer-events:none 不够(实测穿透后命中 .secondary-wrap
+    而非 input);`input.focus()` 才是展开的开关(实测 focus 后 8 个选项立刻出来)。
+
+    这是形状测试:真交互靠人点,这里只钉住"那段委托还在、且是给 input 焦点"——
+    删掉或改成别的写法就变红。
+    """
+    import re as _re
+
+    from curation.ui.app import _DROPDOWN_JS
+
+    # ⚠️ 去掉**所有空白**再比对,别只去空格:JS 里有换行,而按"某个片段之后 N 个
+    # 字符里有没有 true)"来判捕获阶段会被注释坑到 —— 第一版就是这么写的,锚点
+    # 字符串在上面的注释里也出现了一次,切在了注释上,当场自己红给自己看。
+    js = _re.sub(r"\s+", "", _DROPDOWN_JS)
+
+    # 一条断言同时钉三件事:委托认的是箭头、给的是 input 焦点、走捕获阶段。
+    # 连在一起写才不会被"注释里也有同名字符串"骗到。
+    assert "varicon=(t&&t.closest)?t.closest('.icon-wrap'):null;" in js, \
+        "下拉箭头的点击委托没了 —— 多选下拉点箭头又会没反应(issue #53)"
+    assert "inp.focus();},true);" in js, \
+        ("委托要么没给 input 焦点、要么没走捕获阶段 —— "
+         "只挪走点击不给焦点列表照样不展开;不走捕获阶段则 Gradio 重建节点后失效")
+
+
+def test_confirm_box_is_a_real_modal_not_an_inline_panel(delivery):
+    """🔴 「人工裁决结果会改写交付」那个确认框必须是**跳出来的对话框**,
+    不是排在页面流里的平铺框(2026-08-19 用户点名:「我说过要跳出来成一个
+    对话框,你怎么跳出来成了一个平铺框?」)。
+
+    为什么这不是审美问题:这个动作**会改写交付**。平铺框长在页面下方,用户
+    很可能根本没滚到、或者没意识到那是在问他 —— 那就等于没问。模态把页面其余
+    部分挡住、答一句才能继续,才是"当面问一句"。
+
+    判据分两层,缺一不可:
+      · 组件上挂了 modal-dialog 这个 class(渲染成什么由 CSS 决定);
+      · CSS 里那条规则确实是 position:fixed + 高 z-index + 遮罩 —— 光挂 class
+        而样式是平铺的,等于没改。
+    """
+    pytest.importorskip("gradio")
+    import re as _re
+
+    import gradio as gr
+
+    from curation.ui.app import _ARCO_CSS, build_app
+    app = build_app(delivery)
+
+    hit = [b for b in app.blocks.values()
+           if "modal-dialog" in (getattr(b, "elem_classes", None) or [])]
+    assert hit, "确认框没挂 modal-dialog —— 它还是个平铺框"
+    # ⚠️ 第三层判据(2026-08-19 真 DOM 打脸后加):容器不许是 gr.Group ——
+    # gradio 6.9 渲染 Group 时把 elem_id/elem_classes 整个丢掉,class 在组件树里
+    # 挂得好好的,页面上却什么都没有。本测试的前两层判据全查 Python 侧,查不出
+    # 这种"前端丢弃",只能把已知会丢的容器类型钉死在这里。
+    assert not any(isinstance(b, gr.Group) for b in hit), (
+        "modal-dialog 挂在 gr.Group 上 —— gradio 6.9 渲染 Group 时丢弃 "
+        "elem_id/elem_classes,浏览器里它仍是平铺框(2026-08-19 实测);换 gr.Column")
+
+    css = _re.sub(r"\s+", "", _ARCO_CSS)
+    rule = css.split(".modal-dialog{")[1].split("}")[0]
+    assert "position:fixed!important" in rule, "模态框不是 fixed,还会跟着页面流走"
+    assert "z-index:10000!important" in rule, "模态框没抬到页面之上"
+    # 遮罩 = box-shadow 大扩散(0 0 0 200vmax)。⚠️ 不许退回 position:fixed 的
+    # ::before:对话框自己带 transform,fixed 伪元素会改为相对它定位,inset:0
+    # 只盖住对话框自己 —— 框内发灰、页面四周不变暗(2026-08-19 真机实测)。
+    assert "000200vmax" in rule, \
+        "没有铺满视口的遮罩(box-shadow 200vmax 段) —— 页面不变暗就不像在'当面问一句'"
+    assert ".modal-dialog::before{" not in css, (
+        "遮罩退回了 fixed ::before —— transform 祖先会把它按到对话框自己身上,"
+        "全屏遮罩变成框内灰蒙(2026-08-19 实测)")
+
+
+def test_the_two_review_queues_sit_side_by_side_in_one_block(delivery):
+    """两个待裁决队列(标注分歧 / 成败弃权)**并列成一个区块**
+    (2026-08-19 用户拍板)。
+
+    竖着排的毛病:它们是同一件事的两类问题,上下排会被当成先后两步;更糟的是
+    往下滚正好撞上「执行裁决」,用户被引导着点了本该最后才点的按钮
+    —— 用户原话「使得用户不至于茫然被引导到执行裁决」。
+
+    判据:两张表在**同一个 Row** 里(并列),且这个 Row 就是 #adj-queues。
+    """
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+
+    row = next((b for b in app.blocks.values()
+                if getattr(b, "elem_id", None) == "adj-queues"), None)
+    assert row is not None, "两个队列没有被并列的容器包起来"
+    ids = {getattr(c, "elem_id", None) for c in _descendants(row)}
+    assert {"audit-queue", "task-queue"} <= ids, \
+        f"标注队列与成败队列没同在并列区块里:{sorted(x for x in ids if x)}"
+
+
+def _descendants(block):
+    """一个容器下的全部子组件(Gradio 的 children 是嵌套的)。"""
+    out = []
+    for c in (getattr(block, "children", None) or []):
+        out.append(c)
+        out.extend(_descendants(c))
+    return out
+
+
+def test_rejected_episode_still_has_video_from_the_source_dataset(tmp_path):
+    """🔴 Episodes 页**不管过没过都要有画面**(2026-08-19 用户实机点名)。
+
+    原来的三个来源全是**产物**,天生带偏:交付集只装通过的、裁决片段只装进了
+    队列的、审片站要另外生成。于是审片站没生成时,**被拒的条目一路都没有**——
+    可它恰恰最该被看见:系统自己把"被拒复议"定义成「证据够就杀」的保险丝,
+    看不见画面的复议就是走过场。
+
+    第四来源=源数据集,对通过与否一视同仁。这条钉的就是它:一个**被拒**的
+    episode,在没有审片站、也不在交付集里的情况下,照样取得到画面。
+    """
+    src = tmp_path / "ds"
+    (src / "meta").mkdir(parents=True)
+    (src / "meta" / "info.json").write_text('{"codebase_version": "v2.0"}',
+                                            encoding="utf-8")
+    for cam in ("observation.images.top", "observation.images.wrist"):
+        d = src / "videos" / "chunk-000" / cam
+        d.mkdir(parents=True)
+        (d / "episode_000007.mp4").write_bytes(b"\x00" * 24 + b"ftyp" + b"\x00" * 9000)
+
+    m = {"path": str(tmp_path / "deliv"), "source_dataset": str(src),
+         "name": "ds", "episodes": {"ep000007": {"verdict": "拒绝"}}}
+    from curation.ui.manifest import (VIDEO_SOURCE_SOURCE, source_video_paths)
+    got = source_video_paths(m, "ep000007")
+    assert len(got) == 2, f"被拒条目没能从源数据集取到画面:{got}"
+    assert all("episode_000007.mp4" in p for p in got)
+
+    # ⚠️ **用原始序号,不做重编号映射**:交付集才是重编过的。两套编号混用会放出
+    # 另一条 episode 的画面 —— 人对着错的证据做裁决,比没有画面更糟。
+    assert not source_video_paths(m, "ep000000"), \
+        "拿了不存在的序号还返回路径 —— 编号一旦错位就会放错画面"
+
+    # v3 源是合并大 mp4,切不出单条 → 空表(与 curated_video_paths 同一条规矩)
+    (src / "meta" / "info.json").write_text('{"codebase_version": "v3.0"}',
+                                            encoding="utf-8")
+    assert source_video_paths(m, "ep000007") == []
+    assert VIDEO_SOURCE_SOURCE == "源数据集"
+
+
 # ───────── 数据集多选(2026-08-13)─────────
 
-def test_dataset_dropdown_retired_with_mount_ui(delivery):
-    """「数据集」多选下拉已随挂载 UI 整体退役(2026-08-19 纯 TOS 直连):
-    跑质检的输入是 tos:// 路径,不再扫本地根目录列数据集。
+def test_dataset_dropdown_is_multiselect(delivery):
+    """「数据集」下拉必须是多选 —— 一次点击顺序跑几个就靠它。
 
-    钉住"不再出现"防回潮 —— 它一回来,挂载(部署细节)就又见客了。
-    (裁决侧的数据集选择叫「原始数据集」,不受影响。)
+    此前只有"一个"和"父目录下全部"两档,想跑其中三个得排三轮队(任务台同一时刻
+    只许一个任务在跑)。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_console_app
-    cfg = json.loads(json.dumps(build_console_app(delivery).get_config_file(), default=str))
-    labels = {c.get("props", {}).get("label") for c in cfg["components"]}
-    assert "数据集" not in labels
-    assert "数据集 TOS 路径" in labels
+    from curation.ui.app import build_app
+    cfg = json.loads(json.dumps(build_app(delivery).get_config_file(), default=str))
+    picks = [c for c in cfg["components"]
+             if c.get("props", {}).get("label") == "数据集"]
+    assert picks and all(c["props"].get("multiselect") for c in picks)
 
 
-def test_delivery_layout_note_present_on_run_tab(delivery):
-    """「跑质检」页上要有一句说清落盘形状:输出路径/<交付名>/<时间戳>/,
-    每次跑批各进各的子目录、永不覆盖 —— 不说明白,客户会以为同名重跑会
-    覆盖上一次(2026-08-14 布局变更以来的老承诺,纯 TOS 直连版照样要说)。
+def test_delivery_name_hint_switches_when_several_datasets_are_picked():
+    """选多个时「交付名」的说明要换成"父文件夹"那句。
+
+    不说明白的话,客户会以为三个数据集的结果互相覆盖 —— 而实际是
+    `<交付名>/<数据集名>/` 各一份(与 CLI --batch 同款)。
     """
-    pytest.importorskip("gradio")
-    from curation.ui.app import build_console_app
-    cfg = json.dumps(json.loads(json.dumps(
-        build_console_app(delivery).get_config_file(), default=str)), ensure_ascii=False)
-    assert "<交付名>/<时间戳>" in cfg and "永不覆盖" in cfg
+    from curation.ui.app import OUT_NAME_HINT_MANY, OUT_NAME_HINT_ONE
+    assert "父文件夹" in OUT_NAME_HINT_MANY and "父文件夹" not in OUT_NAME_HINT_ONE
+    assert "M4" not in OUT_NAME_HINT_MANY and "batch" not in OUT_NAME_HINT_MANY
 
 
 # ───────── 下拉浮层跟着页面滚(2026-08-13)─────────
@@ -3188,26 +3480,27 @@ def test_footer_links_are_off(full_delivery, clean_ui_env):
     assert json.loads(hit.group(1)) == []
 
 
-def test_start_button_refuses_an_empty_tos_path(full_delivery, tmp_path):
-    """「数据集 TOS 路径」为空点「开始质检」:一句明确提示,不静默、不抛红框。
-    (前身是"数据集多选默认空"那条 —— 纯 TOS 直连后,"还没说要质检什么"
-    的形态从空多选变成了空 URL,拦截的纪律不变。)"""
+def test_start_button_refuses_an_empty_dataset_selection(full_delivery, tmp_path):
+    """数据集多选默认空:点「开始质检」要给一句明确提示,不静默、不抛红框。"""
     pytest.importorskip("gradio")
     from curation.ui import app as ui_app
-    app = ui_app.build_console_app(full_delivery, data_root=str(tmp_path / "data"))
+    data_root = tmp_path / "data"
+    (data_root / "so101" / "meta").mkdir(parents=True)
+    (data_root / "so101" / "meta" / "info.json").write_text("{}")
+    app = ui_app.build_app(full_delivery, data_root=str(data_root))
     go = {i for i, c in app.blocks.items()
           if getattr(c, "value", None) == "开始质检"}
     assert go, "界面上找不到「开始质检」按钮"
     fn = next(f for f in app.fns.values()
               if go & {t[0] for t in getattr(f, "targets", [])})
-    # 参数顺序 = rn_go.click 的 inputs:(tin, tin_rg, tout, tout_rg, name,
-    # mode, picks, how, max_n, eps, backend, cfg, emb, plots, c_ep, c_fr,
-    # c_cap, sets, ro)
-    out = fn.fn("", "cn-beijing", "", "cn-beijing", "out", ui_app.FULL_SCAN,
-                [], "只跑选中", None, "", None, "",
-                "", ui_app.PLOT_MODES["flagged"], None, None, None, "", False)
+    # 参数顺序 = rn_go.click 的 inputs;这里只关心「数据集」为空
+    # (2026-08-17 多 TOS 桶:第一个参数变成桶的内部标识,单桶部署它叫「默认」;
+    # 「覆盖同名结果」2026-08-14 随布局改造撤掉,每次跑批各进各的时间戳子目录)
+    out = fn.fn("默认", [], "out", ui_app.FULL_SCAN, [], "只跑选中", None, "",
+                None, "", "", ui_app.PLOT_MODES["flagged"], None, None, None, "",
+                False, False)
     msg = str(out[2])
-    assert "数据集 TOS 路径" in msg
+    assert "数据集" in msg and "跑全部" in msg
 
 
 def test_terminal_screen_clips_its_overflow(delivery, clean_ui_env):
@@ -3232,7 +3525,7 @@ def test_polling_does_not_wipe_the_validation_message(full_delivery, tmp_path):
     """
     pytest.importorskip("gradio")
     from curation.ui import app as ui_app
-    app = ui_app.build_console_app(full_delivery, data_root=str(tmp_path))
+    app = ui_app.build_app(full_delivery, data_root=str(tmp_path))
     fn = next(f for f in app.fns.values()
               if getattr(getattr(f, "fn", None), "__name__", "") == "_tk_tick")
     assert len(fn.inputs) == 1
@@ -3317,14 +3610,77 @@ def test_overview_never_guesses_when_the_delivery_has_no_breakdown(full_delivery
     assert dict(rows)["判废"] == 15
 
 
-def test_build_app_bootstraps_empty_delivery_root(tmp_path):
-    """交付根为空不再拒绝启动(2026-08-19 云上纯 TOS 直连:结果都上传到用户
-    指定的桶,本地交付根空着是常态,SystemExit 会让 pod 就地 crashloop)。
-    自动放一份占位交付让报告页有东西可渲染;目录不存在也一并建出来。"""
-    pytest.importorskip("gradio")
-    from curation.ui.app import build_app
+def test_source_video_falls_back_to_data_root_when_path_not_recorded(tmp_path):
+    """🔴 交付**只记数据集名、不记路径**(run.json 里就是 `数据集: droid_lerobot`),
+    所以源数据集这条兜底路光靠交付自己解析不出目录 —— 不补这一手,它对绝大多数
+    交付都是空的,等于没做(2026-08-19 实测:debug 交付的 source_dataset 就是 None)。
 
-    root = tmp_path / "empty-deliv"          # 连目录都还没有
-    app = build_app(str(root))
-    assert app is not None
-    assert (root / "welcome" / "20260101-000000" / "passed.json").exists()
+    用界面已知的「数据集根目录」把名字还原成路径:名字就是源目录名。
+    """
+    root = tmp_path / "datasets"
+    src = root / "droid_lerobot"
+    (src / "meta").mkdir(parents=True)
+    (src / "meta" / "info.json").write_text('{"codebase_version": "v2.0"}',
+                                            encoding="utf-8")
+    d = src / "videos" / "chunk-000" / "observation.images.top"
+    d.mkdir(parents=True)
+    (d / "episode_000003.mp4").write_bytes(b"\x00" * 24 + b"ftyp" + b"\x00" * 9000)
+
+    from curation.ui.manifest import source_video_paths
+    # 交付没记路径(source_dataset 缺席),只有名字
+    m = {"path": str(tmp_path / "deliv"), "name": "droid_lerobot",
+         "episodes": {"ep000003": {"verdict": "拒绝"}}}
+    assert source_video_paths(m, "ep000003") == [], "没给 data_root 时不该凭空猜路径"
+    got = source_video_paths(m, "ep000003", str(root))
+    assert len(got) == 1 and "episode_000003.mp4" in got[0], \
+        f"给了数据集根目录还是找不到源视频:{got}"
+
+
+def test_start_button_state_rides_every_status_refresh(delivery):
+    """issue #55:「开始质检」有任务在跑时置灰,任务结束自动回蓝。
+
+    钉的是接线不变量:**每一条**刷新任务状态区(日志框)的路,都必须同时刷新
+    「开始质检」按钮 —— 点击、2 秒轮询、手动刷新、停止、app.load,一条不漏。
+    按钮若走单独的刷新链,早晚和状态条各说各话:状态条写着"运行中"而按钮还
+    蓝着,就是同事在 issue #55 里看到的那个界面(点了才挨一句"已有任务在跑")。
+    """
+    pytest.importorskip("gradio")
+    import gradio as gr
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    tk_log = next(b for b in app.blocks.values()
+                  if isinstance(b, gr.Textbox) and b.label == "日志")
+    rn_go = next(b for b in app.blocks.values()
+                 if isinstance(b, gr.Button)
+                 and str(b.value) == "开始质检")
+    riders = [f for f in app.fns.values()
+              if any(getattr(o, "_id", None) == tk_log._id
+                     for o in (f.outputs or []))]
+    assert len(riders) >= 5, "状态区的刷新路少得不对劲,接线怕是被改过"
+    for f in riders:
+        out_ids = {getattr(o, "_id", None) for o in (f.outputs or [])}
+        assert rn_go._id in out_ids, (
+            f"{getattr(f.fn, '__name__', f)} 刷新了任务状态区却没带上「开始质检」"
+            "按钮 —— 按钮状态和状态条会各说各话(issue #55 复发)")
+
+
+def test_execute_button_state_refreshes_on_returning_to_report_page(delivery):
+    """issue #55 同族:「执行裁决」的可点性在回到报告页时重算。
+
+    报告页没有 2 秒轮询,可靠的真事件只有 app.load 和 Tab.select(gr.Timer 在
+    这层实测不跳,见 _picker_tick)。主流程是「确定 → 自动切去跑质检页看进度 →
+    回来时重算」,这两跳断了按钮就会死在灰色上。
+    """
+    pytest.importorskip("gradio")
+    import gradio as gr
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    ex_go = next(b for b in app.blocks.values()
+                 if isinstance(b, gr.Button) and str(b.value) == "执行裁决")
+    updaters = [f for f in app.fns.values()
+                if any(getattr(o, "_id", None) == ex_go._id
+                       for o in (f.outputs or []))
+                and getattr(f.fn, "__name__", "") == "_ex_btn_state"]
+    events = {t[1] for f in updaters for t in getattr(f, "targets", [])}
+    assert "select" in events, "回到报告页那一跳没接上 —— 按钮会死在灰色上"
+    assert "load" in events, "app.load 初始化那一跳没接上"

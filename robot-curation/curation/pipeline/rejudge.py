@@ -8,14 +8,20 @@
                   **例外**(2026-08-16):同一条 episode 人工还给了成败结论
                   (判成功/判失败)→ 不重判,直接采信人的结论(理由与溯源纪律
                   见 apply_decisions 的 docstring);
-    弃用该条     → 搬进 reject(人工裁决弃用);
-    维持原标注   → 只在分歧队列上标记已裁决(审计误旗,原判定原样)。
+    维持原标注   → 只在分歧队列上标记已裁决(审计误旗,原判定原样);
+    拿不准       → 只记一笔,队列保留(2026-08-19 新增,与成败线同词同义:
+                  "我判不了" ≠ "我判了,原标注对");
+    弃用该条     → 搬进 reject。界面上它**不在标注块里**,而是卡片级的
+                  「其它原因-整条弃用」——"这条数据要不要"和"标注 vs caption
+                  谁错"是两个正交维度,弃用不是后者的第三个答案(用户点破)。
+                  🔴 它**压过成败裁决**:点了就弃用,不管另一块点了什么
+                  (拦截在 run_rejudge 里,见那处注释)。
 ② 任务成败弃权(human-decisions/task_verdicts.csv)——**不跑 VLM**:系统已经诚实说了
    "判不了",再问一次只会得到同样的弃权,人说了算。
     判成功 → 出待裁决队列,判决改「通过(人工裁决)」,成败检查落 pass;
     判失败 → 三边摘除进 reject,并随现有同步机制从 episodes_parquet /
              lerobot_curated / rrd_curated 里剔除(裁决只改报告 = 交出去还是脏数据);
-    搁置   → 只记一笔,队列保留(等更多信息)。
+    拿不准 → 只记一笔,队列保留(等更多信息;2026-08-19 由「搁置」改名)。
 ③ 被拒复议(human-decisions/reject_appeals.csv)——**语义判定的杀可以被人捞回**,这是
    "证据够就杀"的保险丝。同样不跑 VLM:系统已经给过结论,人看完视频推翻它。
     捞回     → 从拒绝翻为通过,回到 passed / 交付数据集(溯源 verdict_source=human_review);
@@ -100,7 +106,8 @@ def apply_decisions(passed: dict, review: dict, reject: dict,
     queue = review.get("标注-画面分歧复核队列") or []
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary = {"adopted_pass": [], "adopted_review": [], "adopted_reject": [],
-               "adopted_human": [], "dropped": [], "kept": [], "skipped": []}
+               "adopted_human": [], "dropped": [], "kept": [], "held": [],
+               "skipped": []}
 
     def _take(eid):
         return _take_entry(p_eps, r_eps, j_eps, eid)
@@ -114,6 +121,15 @@ def apply_decisions(passed: dict, review: dict, reject: dict,
 
         if kind == "维持原标注":
             summary["kept"].append(eid)
+            continue
+
+        if kind == _hold():
+            # 标注线的「拿不准」(2026-08-19 新增,与成败线同词同义):**只留痕**,
+            # 判定一个字不动,队列保留 —— 它是"待定"不是结论。
+            # 与「维持原标注」的区别是语义而非后果:那个是"我判了,原标注对";
+            # 这个是"我判不了"。两者混成一个的话,报告里"人已确认原标注无误"
+            # 的条数会把"人还没想好"的也算进去,那是假的确信。
+            summary["held"].append(eid)
             continue
 
         if kind == "弃用该条":
@@ -191,6 +207,12 @@ def _sync_counts(review: dict, reject: dict, r_eps: dict, j_eps: dict) -> None:
         reject["被拒总数"] = len(j_eps)
 
 
+def _hold() -> str:
+    """「拿不准」的现行词(单一事实源在 decisions,别在这儿再写一遍字面量)。"""
+    from ..dataset_level.decisions import VERDICT_HOLD
+    return VERDICT_HOLD
+
+
 def apply_task_verdicts(passed: dict, review: dict, reject: dict,
                         verdicts: dict) -> dict:
     """按**任务成败**人工裁决在三件套视图间搬移/标注(**原地修改**传入的 dict)→ 摘要。
@@ -209,11 +231,20 @@ def apply_task_verdicts(passed: dict, review: dict, reject: dict,
                "verdict_skipped": []}
 
     for eid, v in verdicts.items():
-        kind = v.get("verdict")
+        # 老值「搁置」在这儿也认(2026-08-19 改名):本函数是**纯数据函数**,
+        # 调用方可能直接喂 CSV 原始行而没过 load_task_verdicts 的归一。
+        kind = human.normalize_verdict(v.get("verdict"))
+        # ⚠️ 认不出的裁决词**一律不动**,不能往下走 —— 下面那句
+        # `"pass" if kind == "判成功" else "拒绝"` 会把任何不认识的词当成"拒绝",
+        # 也就是**把一条数据悄悄扔掉**。裁决 CSV 是可以被手改的文件,拼错一个字
+        # 就丢数据,这个代价不对等(2026-08-19 改名时顺手堵上)。
+        if kind not in human.VERDICT_CHOICES:
+            summary["verdict_skipped"].append(eid)
+            continue
         prov = {"裁决": kind, "备注": v.get("note", ""),
                 "裁决时间": v.get("at", now)}
 
-        if kind == "搁置":
+        if kind == _hold():
             # 队列保留(还没想好,不是结论)——只在**所有**现存副本上留一笔,
             # 让 UI/报告都能看出"这条有人看过了,先挂着",不搬不改判。
             hit = False
@@ -443,7 +474,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                         oe.pop(eid)
 
     # 成败裁决与复议的幂等(同一套判据,合流进 unchanged):这两条线不花 VLM 的钱,
-    # 但重复应用会把"搁置"/"维持拒绝"当成新事件在报告里反复计数,越滚越多。
+    # 但重复应用会把"拿不准"/"维持拒绝"当成新事件在报告里反复计数,越滚越多。
     for eid in list(verdicts):
         if human.task_verdict_applied_in(files, eid, verdicts[eid]):
             unchanged.append(eid)
@@ -508,8 +539,19 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                               human_concluded=human_concluded)
     # 成败裁决后于标注裁决应用:改标重判可能刚把某条从弃权变成了 pass/reject,
     # 此时它已不在待裁决队列里,但人工可能在更早的一轮就给过成败裁决——以人为准。
+    #
+    # 🔴 **整条弃用压过成败裁决**(2026-08-19 用户定义的语义:「一旦点了这个按钮,
+    # 不管打标还是成败点了什么,这条都弃用」)。不挡的话顺序就要了命:弃用在
+    # apply_decisions 里已经把它搬进 reject,而这里的「判成功」会**原地重建条目
+    # 写回 passed** —— 弃用被无声翻掉,人点的最重的那个动作反而最不算数。
+    # 挡在入口而不是改 apply_task_verdicts:那是个纯数据函数,让它去关心"别的线
+    # 干了什么"就把两条线耦上了;这里过滤一次,两个函数各自还是只管自己那摊。
+    _dropped = set(summary.get("dropped") or ())
+    _verdicts = {e: v for e, v in verdicts.items() if e not in _dropped}
+    summary["verdict_overridden_by_drop"] = sorted(
+        e for e in verdicts if e in _dropped)
     summary.update(apply_task_verdicts(files["passed"], files["review"],
-                                       files["reject"], verdicts))
+                                       files["reject"], _verdicts))
     # 复议最后应用:它的输入是"当前拒绝清单",前两条线可能刚往里放进条目
     # (改标重判仍未完成 / 人工判失败)。那些是本轮刚判的,拒因不是语义判定
     # 就进不了复议,顺序在这里只影响"看到的是哪一版拒绝清单"——以最新为准。
@@ -753,7 +795,8 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                f"弃权 {len(summary['adopted_review'])} / "
                f"仍未完成 {len(summary['adopted_reject'])} 条\n",
                f"- 人工弃用:{len(summary['dropped'])} 条;"
-               f"维持原标注(审计误旗):{len(summary['kept'])} 条\n"]
+               f"维持原标注(审计误旗):{len(summary['kept'])} 条\n"
+               f"标注拿不准(仍在待裁决队列):{len(summary.get('held') or [])} 条\n"]
         if summary.get("adopted_human"):
             sec.append(f"- 采纳改标且人工已给成败结论:{len(summary['adopted_human'])} 条"
                        "(跳过重判,以人的结论为准;标注与成败溯源分别见条目上的"
@@ -763,7 +806,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
         sec.append("\n### 任务成败人工裁决(不重判,以人的结论为准)\n")
         sec.append(f"- 判成功回归交付:{len(summary['verdict_pass'])} 条;"
                    f"判失败剔除:{len(summary['verdict_fail'])} 条;"
-                   f"搁置(仍在待裁决队列):{len(summary['verdict_hold'])} 条\n")
+                   f"拿不准(仍在待裁决队列):{len(summary['verdict_hold'])} 条\n")
         for e in summary["verdict_fail"]:
             sec.append(f"  - {e}:人工判失败,已移出交付数据集(溯源见 reject.json)\n")
         if summary.get("verdict_skipped"):
