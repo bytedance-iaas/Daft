@@ -37,10 +37,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="端到端跑一遍 curation")
     run.add_argument("--config", default=None, help="流水线 YAML 配置(缺省用 default.yaml)")
-    run.add_argument("--input", required=True, help="输入数据集目录(LeRobot 格式)")
+    run.add_argument("--input", required=True,
+                     help="输入数据集:本地目录,或 tos://桶/前缀(TOS 直连,"
+                          "先下到本地缓存再跑;地区用 --input-region)")
     run.add_argument("--output", required=True,
-                     help="交付目录;本次结果落在 <交付目录>/<时间戳>/ 里"
-                          "(每次跑批各进各的子目录,永不覆盖上一次)")
+                     help="交付目录:本地目录,或 tos://桶/前缀(TOS 直连,本地跑完"
+                          "整树上传,完整性标志最后传;地区用 --output-region);"
+                          "本次结果落在 <交付>/<时间戳>/ 里,永不覆盖上一次")
+    run.add_argument("--input-region", default=None, metavar="地区",
+                     help="--input 为 tos:// 时的桶地区(如 cn-beijing / ap-southeast-1);"
+                          "缺省读 TOS_REGION,再从 TOS_ENDPOINT 推导")
+    run.add_argument("--output-region", default=None, metavar="地区",
+                     help="--output 为 tos:// 时的桶地区;缺省规则同 --input-region")
     run.add_argument("--embodiment-id", default=None,
                      help="人工指定机器人型号(数据集 robot_type 缺失/unknown 时)")
     run.add_argument("--max-episodes", type=int, default=None, help="只处理前 N 条(调试)")
@@ -491,6 +499,59 @@ def main(argv: list[str] | None = None) -> int:
         from .delivery import new_run_name
         run_name = args.run_name or new_run_name()
 
+        # ── tos:// 直连(2026-08-20 融合自公开 PR#65):桶与前缀是运行时输入。
+        # 输入先整体下到本地缓存;输出先落本地、跑完整树上传,完整性标志最后传
+        # (细节与 MVP 限制见 curation/tos_store.py 模块头)。
+        # ⚠️ 挂载快路径优先:UI 侧对认识的桶直接传挂载路径过来,根本走不进这段;
+        # 这段只服务"陌生桶"与手写 tos:// 的 CLI 用户。
+        inp_root, out_root = args.input, args.output
+        tos_in = str(args.input or "").startswith("tos://")
+        tos_out = str(args.output or "").startswith("tos://")
+        if tos_in or tos_out:
+            from . import tos_store
+            if args.batch:
+                # MVP 限制(比 PR#65 收得更紧:输入或输出任一 tos:// 都拒):
+                # batch 分支里 args.output 被拼进 <output>/<数据集名> 与两份
+                # 汇总文件,staging 改写不彻底会把半套产物写去错的地方。
+                print("[输入错误] --batch 暂不支持 tos:// 输入/输出(MVP 限制):"
+                      "请对每个数据集单独跑一条 run", file=sys.stderr)
+                return 2
+            try:
+                if tos_out:
+                    # URL 不合法要在跑批**前**炸,不能等几小时算完再发现传不上去。
+                    # 本地产出根按 桶/前缀 固定:上传中断后重跑同一条命令,
+                    # stage_out 能按远端对账续传。
+                    _b, _p = tos_store.parse_tos_url(args.output)
+                    out_root = os.path.join(tos_store.cache_root(), "out",
+                                            _b, _p or "_root")
+                if tos_in:
+                    inp_root = tos_store.stage_in(args.input, args.input_region)
+            except (tos_store.TosUrlError, tos_store.TosConfigError) as e:
+                print(f"[输入错误] {e}", file=sys.stderr)
+                return 2
+            except tos_store.TosStageError as e:
+                print(f"[tos 失败] {e}", file=sys.stderr)
+                return 1
+
+        def _upload_if_tos() -> int:
+            """跑批成功后把本地产出树上传到 --output 指的 tos:// 前缀;
+            失败保留本地产出并明说怎么续传。返回退出码(0 = 无事/成功)。"""
+            if not tos_out:
+                return 0
+            from . import tos_store
+            try:
+                n = tos_store.stage_out(out_root, args.output, args.output_region)
+            except (tos_store.TosUrlError, tos_store.TosConfigError) as e:
+                print(f"[输入错误] {e}", file=sys.stderr)
+                return 2
+            except tos_store.TosStageError as e:
+                print(f"[tos 失败] {e}\n  本地产出保留在 {out_root},修好后重跑"
+                      "同一条命令即可续传(已传部分按远端对账跳过)",
+                      file=sys.stderr)
+                return 1
+            print(f"[tos] 交付已上传:{args.output}(本次 {n} 个文件)")
+            return 0
+
         def _run_one(inp, outp):
             # finally 清临时视频缓存(P4):run_pipeline 正常收尾时自己会清,这里兜的是
             # **异常退出**那条路 —— RRD 解出的 mp4 躺在容器可写层,批处理连崩几个数据集
@@ -562,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         try:
-            summary = _run_one(args.input, args.output)
+            summary = _run_one(inp_root, out_root)
         except NotADatasetError as e:
             print(f"[输入错误] {e}", file=sys.stderr)
             return 2
@@ -580,6 +641,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"交付 {summary['n_delivered']} 条;三件套:")
         for k, v in summary["deliverables"].items():
             print(f"  - {k}: {v}")
+        rc = _upload_if_tos()
+        if rc:
+            return rc
     return 0
 
 

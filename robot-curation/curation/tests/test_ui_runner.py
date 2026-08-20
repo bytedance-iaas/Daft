@@ -1239,8 +1239,10 @@ def test_app_blocks_legacy_delivery_name_before_starting_a_task(tmp_path):
     fns = [f.fn for f in app.fns.values()
            if getattr(f.fn, "__name__", "") == "_run_preflight"]
     assert fns, "任务台的开跑回调没找到"
-    # 首参是 TOS 桶的内部标识(2026-08-17 多 TOS 桶;单桶合成的那桶叫「默认」)
-    out = fns[0]("默认", ["so101"], "droid-200-full", "", [], "", None, "", None,
+    # 前四参 = 数据集路径/地区、输出路径/地区(2026-08-20 融合改版;单桶合成
+    # 部署时路径框的值就是 data_root/交付根本身,白名单精确匹配放行)
+    out = fns[0](str(tmp_path / "data"), "", str(deliv), "", ["so101"],
+                 "droid-200-full", "", [], "", None, "", None,
                  "", "", None, None, None, None, "", False, False)
     flat = json.dumps([str(x) for x in out], ensure_ascii=False)
     assert "交付名" in flat and "output" not in flat

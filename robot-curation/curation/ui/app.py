@@ -1217,6 +1217,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         return v["page"], v["note"], v["pos"], multi, multi, v["cards"]
 
     def _load(path):
+        # 直连批次(2026-08-20 阶段4):值是完整 tos:// URL → 先懒镜像到本地
+        # 缓存(报告/明细/裁决片段,数据集本体不下载),再让下面的加载原样吃
+        # 缓存路径 —— 读端代码零改动。镜像失败落到 load_error 那条路,整页
+        # 明说读不到,不静默
+        if str(path or "").startswith("tos://"):
+            try:
+                path = runner.mirror_run(str(path),
+                                         _rp_src["region"] or None)
+            except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
+                gr.Warning(f"镜像这份交付失败:{type(e).__name__}: "
+                           f"{str(e)[:120]}")
+                path = ""
         # 先把下拉里的值还原成真正的目录(手输半截字的情形,见 resolve_delivery);
         # 还原不了的照旧交给 load_delivery,它会挂 load_error 让整页明说读不到
         m = load_delivery(resolve_delivery(path, discover_deliveries(delivery)))
@@ -1410,30 +1422,44 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 内容提到顶层)。id 仍是 console:报告页「执行裁决」确认后要
                 # gr.Tabs(selected="console") 切过来看进度,改名不改锚点。
                 # ① 控制面板在上
+                # 头部两行三件套(2026-08-20 用户定稿,融合公开 PR#65 的
+                # 「允许填桶路径」思路但不丢我们的下拉):
+                #   [数据集 TOS 路径][数据集 ▼多选][数据集地区 ▼]
+                #   [输出 TOS 路径][交付名][输出地区 ▼]
+                # 路径框默认预填本实例配置桶的 tos:// 写法 → 默认体验与
+                # 之前的「数据集根目录」下拉逐字节等价(挂载零预下载直读);
+                # 改填陌生桶 = 走 stage_in/stage_out 直连。红线口径
+                # (2026-08-20 拍板):允许自由填 tos:// URL,**本地自由
+                # 路径仍然禁止**(resolve_root_input 一句话拒)。
+                # 两行 scale 逐列相同(4/4/2),路径框和地区下拉上下对齐。
+                # ⚠️ 控件不用 info=(2026-08-17 实机:info 会把带说明的列
+                # 往下推,三列错位),说明全在下面独立说明行。
+                _rg0 = runner.default_tos_region()
+                _rg_choices = runner.tos_region_choices()
                 with gr.Row():
-                    # 「数据集根目录」排在「数据集」前面(2026-08-17 多桶
-                    # 框架);**始终显示,单桶也不隐藏**(用户拍板:随时
-                    # 看得见数据来自哪个桶,与以后多桶时长得一模一样)。
-                    # 回调统一走 bucket_path 白名单查表,不分单双桶两条路。
-                    # scale=3 而不是 1:显示串是「tos://桶/前缀」,
-                    # 1/9 行宽会把它截断 —— 截断的地址等于没显示,
-                    # 这一列的存在意义就是让人看全它。
-                    # ⚠️ 这一行的下拉**不许再用 info=**(2026-08-17 用户
-                    # 实机点名三列没对齐):Gradio 把 info 渲染在标签和
-                    # 控件之间,谁有说明谁的控件就被往下推,而别的列停在
-                    # 原位 → 错位。说明全部挪到下面独立的说明行。
-                    rn_src = gr.Dropdown(choices=_bkt_choices,
-                                         value=_bkt_ids[0],
-                                         label="数据集根目录", scale=3,
-                                         interactive=True)
-                    # 多选(2026-08-13 用户):此前只有"一个"或"父目录下全部"
-                    # 两档,想跑其中三个得排三轮队(任务台同一时刻只许一个
-                    # 任务在跑)。多选 = 一次点击顺序跑选中的这几个。
+                    rn_tin = gr.Textbox(label="数据集 TOS 路径", scale=4,
+                                        value=runner.bucket_url(_buckets[0]),
+                                        placeholder="tos://桶名/数据集前缀")
+                    # 多选(2026-08-13 用户):一次点击顺序跑选中的这几个。
                     rn_ds = gr.Dropdown(choices=runner.list_datasets(_data_root),
                                         label="数据集", scale=4,
                                         multiselect=True, interactive=True)
+                    # 地区下拉与 rerun 的 OpenTosModal 同值同序;列表可能落后
+                    # 于新地区,允许自由输入
+                    rn_tin_rg = gr.Dropdown(choices=_rg_choices, value=_rg0,
+                                            label="数据集地区", scale=2,
+                                            allow_custom_value=True,
+                                            interactive=True)
+                with gr.Row():
+                    rn_tout = gr.Textbox(label="输出 TOS 路径", scale=4,
+                                         value=runner.home_output_url(_deliv_root),
+                                         placeholder="tos://桶名/交付根前缀")
                     rn_out = gr.Textbox(label="交付名", scale=4,
                                         placeholder="给这次结果起个名字")
+                    rn_tout_rg = gr.Dropdown(choices=_rg_choices, value=_rg0,
+                                             label="输出地区", scale=2,
+                                             allow_custom_value=True,
+                                             interactive=True)
                 # 说明行(2026-08-17 从 info= 挪出):第二行按与控件行
                 # **相同的 scale(3/4/4)**分三列,说明各自落在自己那列
                 # 底下,第三列留空占位(交付名没有说明)。gr.Markdown
@@ -1444,9 +1470,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 跟着最高的那列走 —— 第一列的「挂载:」几乎永远在
                 # (datasets_path 是桶配置的必填项),右列为空不塌行。
                 with gr.Row():
-                    with gr.Column(scale=3, min_width=160):
+                    with gr.Column(scale=4, min_width=160):
                         # 读取端点 + 挂载路径两行(runner.bucket_info_line
-                        # 产出 \n 分隔,line_breaks=True 让它换行)
+                        # 产出 \n 分隔,line_breaks=True 让它换行);填陌生
+                        # 桶时这里换成直连说明(_root_changed 负责)
                         rn_src_note = gr.Markdown(
                             runner.bucket_info_line(_buckets[0]),
                             line_breaks=True, elem_id="rn-src-note",
@@ -1458,14 +1485,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             runner.dataset_root_note(_data_root),
                             elem_id="rn-ds-note",
                             elem_classes=["field-note"])
+                    with gr.Column(scale=2, min_width=120):
+                        # 交付名的说明挪到第二列下面放不下了,跟着交付名走
+                        # 到第二行;地区列不需要说明,空串占位
+                        gr.Markdown("", elem_classes=["field-note"])
+                with gr.Row():
                     with gr.Column(scale=4, min_width=160):
-                        # 交付名的说明(2026-08-18 用户点名):原来它独占
-                        # 一整行、还用 *斜体* 冒充弱化,位置和另两条说明
-                        # 对不上。挪进第三列 = 每条说明都落在自己那列的
-                        # 控件底下,样式统一走 .field-note 的灰小字。
+                        gr.Markdown("", elem_classes=["field-note"])
+                    with gr.Column(scale=4, min_width=160):
                         rn_out_hint = gr.Markdown(
                             OUT_NAME_HINT_ONE, elem_id="rn-out-note",
                             elem_classes=["field-note"])
+                    with gr.Column(scale=2, min_width=120):
+                        gr.Markdown("", elem_classes=["field-note"])
                 # 「快速质检」原叫「快速冒烟(跳过模型判定)」——"冒烟"是
                 # 我们的行话,"模型判定"客户也不知道指哪几步(2026-08-13
                 # 用户点名)。改成大白话,细节挂在旁边的问号上。
@@ -1619,10 +1651,47 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 # 用 .input 不用 .change:深链预选会从后端改这个下拉的值,.change
                 # 对程序性赋值也触发,会紧接着把预选好的数据集列表冲掉
-                rn_src.input(lambda s: _src_datasets(s, True), rn_src,
-                             [rn_src_note, rn_ds, rn_ds_note])
-                # 报告页「执行裁决」的源数据集兜底下拉(ex_src_dd)也接同一个
-                # 回调,接线在那侧组件建出来之后(见「人工裁决」页底部)
+                def _root_changed(url, region):
+                    """路径框失焦/回车、或直连时切地区 → (根说明, 数据集下拉,
+                    数据集说明)。旧选中值清掉(它属于上一个根)。
+
+                    直连列表是网络调用:异常一律变成说明行里的一句话,绝不让
+                    Gradio 抛红框(客户看红框等于什么都没看见)。
+                    """
+                    try:
+                        spec = runner.resolve_root_input(url, _buckets)
+                    except ValueError as e:
+                        return (f"⚠️ {e}", gr.update(choices=[], value=[]), "")
+                    if spec["kind"] == "mount":
+                        root = spec["path"]
+                        return (runner.bucket_info_line(spec["bucket"]),
+                                gr.update(choices=runner.list_datasets(root),
+                                          value=[]),
+                                runner.dataset_root_note(root))
+                    try:
+                        names = runner.tos_list_datasets(
+                            spec["url"], str(region or "").strip() or None)
+                        note = ("" if names else
+                                "该前缀下没有列出任何数据集(前缀打错?或桶里"
+                                "确实是空的)")
+                    except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
+                        names, note = [], (f"⚠️ 列不出该前缀下的数据集:"
+                                           f"{type(e).__name__}: {str(e)[:120]}")
+                    return (f"TOS 直连:{spec['url']}(跑批先整体暂存到本地,"
+                            "大数据集受容器盘限制)",
+                            gr.update(choices=names, value=[]), note)
+
+                # blur 与 submit 都接(填完点别处/回车都算"填完了");直连时
+                # 切地区也要重列(端点跟着地区走)。用 .input 不用 .change:
+                # 深链预填会程序性改值,.change 会紧接着把预选冲掉
+                rn_tin.blur(_root_changed, [rn_tin, rn_tin_rg],
+                            [rn_src_note, rn_ds, rn_ds_note])
+                rn_tin.submit(_root_changed, [rn_tin, rn_tin_rg],
+                              [rn_src_note, rn_ds, rn_ds_note])
+                rn_tin_rg.input(_root_changed, [rn_tin, rn_tin_rg],
+                                [rn_src_note, rn_ds, rn_ds_note])
+                # 报告页「执行裁决」的源数据集兜底下拉(ex_src_dd)仍用桶下拉
+                # 那套(_src_datasets),接线在那侧组件建出来之后
 
                 _mode_ins = [rn_mode, rn_pick, rn_how]
                 _mode_outs = [rn_pick, rn_how, rn_c_ep, rn_c_fr, rn_c_cap,
@@ -1630,29 +1699,47 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 for _c in _mode_ins:
                     _c.change(_tk_mode, _mode_ins, _mode_outs)
 
-                def _run_go(src, ds, name, mode, picks, how, max_n, eps, backend,
-                            cfg, emb, plots, c_ep, c_fr, c_cap, sets, batch, ro,
-                            with_clips=False):
-                    # 桶标识先过白名单查表(2026-08-17):界面传的是配置里的
-                    # 内部标识不是路径,伪造的(含把显示文本当 key)在这里就被拒
+                def _run_go(tin, tin_rg, tout, tout_rg, ds, name, mode, picks,
+                            how, max_n, eps, backend, cfg, emb, plots, c_ep,
+                            c_fr, c_cap, sets, batch, ro, with_clips=False):
+                    # 路径框先解析(2026-08-20 融合):对上配置桶 → 挂载直读
+                    # (与之前的下拉白名单同一条安全边界);合法 tos:// 陌生桶
+                    # → 直连;本地自由路径在 resolve_root_input 里被一句话拒
                     try:
-                        _root = runner.bucket_path(_buckets, src)
+                        _spec = runner.resolve_root_input(tin, _buckets)
+                        _ospec = runner.resolve_output_input(tout, _deliv_root)
                     except ValueError as e:
                         return _tk_view(f"⚠️ {e}")
+                    _root = _spec.get("path")            # mount 才有;tos 为 None
                     if str(backend or '').endswith(BACKEND_BAD):
                         return _tk_view('⚠️ 选中的模型服务当前不可用,换一个,或把那台服务起起来后点「检测可用性」')
+                    if _spec["kind"] == "tos" and batch:
+                        return _tk_view("⚠️ TOS 直连暂不支持「跑全部」——"
+                                        "直连桶请在下拉里点名要跑的数据集")
                     # 多选下拉默认一个都没选 → 必须先拦(否则空选会一路走到
                     # resolve_under(root, "") = 拿整个数据集根当一份数据跑)
                     _no_ds = runner.dataset_selection_error(ds, bool(batch))
                     if _no_ds:
                         return _tk_view(f"⚠️ {_no_ds}")
+                    chosen_pre = runner.picked_datasets(ds)
+                    if _spec["kind"] == "tos" and len(chosen_pre) > 1:
+                        # MVP 限制(如实说,不静默跑第一个):多选顺序跑走的是
+                        # 挂载路径的 jobs 装配,直连桶的多数据集串跑下一轮做
+                        return _tk_view("⚠️ TOS 直连暂一次只能跑一个数据集,"
+                                        "多选请分几次发起(挂载桶不受限)")
                     # 交付名撞上老布局交付:点按钮之前就判得出来,绝不让任务起来
                     # 再以「未完成(退出码 3)」收场逼用户翻日志(2026-08-14 实见);
-                    # 消息说「交付名」不说 --output,那是 CLI 的话
-                    _bad_name = runner.delivery_name_error(_deliv_root, name or "",
-                                                           ds, bool(batch))
-                    if _bad_name:
-                        return _tk_view(f"⚠️ {_bad_name}")
+                    # 消息说「交付名」不说 --output,那是 CLI 的话。
+                    # 只有写到本实例交付根才判得了(陌生桶远端撞名靠时间戳批次
+                    # 天然隔开,不冒充能判)
+                    if _ospec["kind"] == "mount":
+                        _bad_name = runner.delivery_name_error(
+                            _deliv_root, name or "", ds, bool(batch))
+                        if _bad_name:
+                            return _tk_view(f"⚠️ {_bad_name}")
+                    elif not runner.safe_name(name or ""):
+                        return _tk_view("⚠️ 交付名只收字母数字与 . _ -,"
+                                        "它要当目录名用")
                     only = skip = None
                     if mode == CUSTOM_SCAN and picks:
                         joined = ",".join(picks)
@@ -1671,11 +1758,23 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                   run_name=run_name_of_run_id(run_id),
                                   report_only=bool(ro),
                                   set_overrides=_sets(plots, c_ep, c_fr, c_cap, sets))
+                    # 输出侧的两条路(2026-08-20):挂载 → resolve_under 老路;
+                    # 陌生桶 → `tos://…/<交付名>` 交给 CLI stage_out,并把地区
+                    # 一起传(时间戳批次子目录由管道自己建,两条路布局一致)
+                    if _ospec["kind"] == "tos":
+                        common["output_region"] = (str(tout_rg or "").strip()
+                                                   or None)
+                    if _spec["kind"] == "tos":
+                        common["input_region"] = (str(tin_rg or "").strip()
+                                                  or None)
                     try:
                         cfg = runner.resolve_tos_path(cfg) if str(cfg or "").strip() else None
                         # 勾了「跑全部」就忽略下拉的选择(既有行为,别改坏);其余
-                        # 情况下选了几个跑几个,选一个 = 一直以来的那条路径
-                        if not batch and len(chosen) > 1:
+                        # 情况下选了几个跑几个,选一个 = 一直以来的那条路径。
+                        # 多选顺序跑(jobs 装配)只在双挂载时可用 —— 前面已把
+                        # tos 侧的多选拦下并明说
+                        if not batch and len(chosen) > 1 and _spec["kind"] == "mount" \
+                                and _ospec["kind"] == "mount":
                             # 答了「一起生成」就给**每个需要的**数据集都串上切片:
                             # 追问只问一次,覆盖的是全部选中项(2026-08-14 用户定)
                             clips = (runner.datasets_needing_clips(_root, chosen)
@@ -1688,14 +1787,27 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 "run", f"质检 {len(jobs)} 个数据集 → {name}"
                                 + (f"(含 {len(clips)} 份视频片段)" if clips else ""),
                                 jobs=jobs, run_id=run_id)
-                        inp = (_root if batch else
-                               runner.resolve_under(_root,
-                                                    chosen[0] if chosen else ""))
-                        out = runner.resolve_under(_deliv_root, name or "")
+                        if not batch and len(chosen) > 1:
+                            # 挂载读 + 陌生桶写的多选:jobs 装配的输出侧还没长
+                            # tos 腿,如实拦(下一轮解)
+                            return _tk_view("⚠️ 输出到 TOS 直连桶时暂一次只能"
+                                            "跑一个数据集,多选请分几次发起")
+                        if _spec["kind"] == "tos":
+                            inp = (_spec["url"].rstrip("/") + "/"
+                                   + (chosen[0] if chosen else ""))
+                        else:
+                            inp = (_root if batch else
+                                   runner.resolve_under(_root,
+                                                        chosen[0] if chosen else ""))
+                        out = (_ospec["url"].rstrip("/") + "/" + (name or "")
+                               if _ospec["kind"] == "tos" else
+                               runner.resolve_under(_deliv_root, name or ""))
                         then_argv = None
-                        if with_clips and review_dir and not batch:
+                        if with_clips and review_dir and not batch \
+                                and _spec["kind"] == "mount":
                             # 切片作为同一任务的第二步:一条日志、一个结果,用户不必
-                            # 知道我们内部跑了两条命令
+                            # 知道我们内部跑了两条命令。tos 输入没有这一步:切片
+                            # 要读本地数据集,直连输入的缓存路径开跑前不可知
                             then_argv = runner.build_argv(
                                 "review-page", input=inp,
                                 output=runner.resolve_under(
@@ -1704,7 +1816,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         return _tk_view(f"⚠️ {e}")
                     return _tk_start(
                         "run",
-                        f"质检 {os.path.basename(inp)} → {os.path.basename(out)}"
+                        f"质检 {os.path.basename(inp)} → "
+                        f"{os.path.basename(out.rstrip('/'))}"
                         + ("(含视频片段)" if then_argv else ""),
                         then_argv=then_argv, run_id=run_id,
                         input=inp, output=out, config=cfg, batch=bool(batch),
@@ -1712,9 +1825,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 rn_args = gr.State({})          # 预检时把这次的参数存下,答完照原样开跑
 
-                def _run_preflight(src, ds, name, mode, picks, how, max_n, eps,
-                                   backend, cfg, emb, plots, c_ep, c_fr, c_cap,
-                                   sets, batch, ro):
+                def _run_preflight(tin, tin_rg, tout, tout_rg, ds, name,
+                                   mode, picks, how, max_n, eps, backend, cfg,
+                                   emb, plots, c_ep, c_fr, c_cap, sets, batch,
+                                   ro):
                     """开跑前先看数据格式:v3/rrd 要先切片才有画面可看,问一句再决定。
 
                     只在**真需要**时才问(格式认得出、且本实例配了片段目录),其余一律
@@ -1725,20 +1839,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     做法是**问一次、覆盖全部** —— 统计选中项里有几个需要切片,答"一起
                     生成"就给每个需要的都串上,绝不逐个弹窗。
                     """
-                    args = dict(src=src, ds=ds, name=name, mode=mode, picks=picks,
-                                how=how, max_n=max_n, eps=eps, backend=backend,
-                                cfg=cfg, emb=emb, plots=plots, c_ep=c_ep,
-                                c_fr=c_fr, c_cap=c_cap, sets=sets, batch=batch,
-                                ro=ro)
+                    args = dict(tin=tin, tin_rg=tin_rg, tout=tout,
+                                tout_rg=tout_rg, ds=ds, name=name, mode=mode,
+                                picks=picks, how=how, max_n=max_n, eps=eps,
+                                backend=backend, cfg=cfg, emb=emb, plots=plots,
+                                c_ep=c_ep, c_fr=c_fr, c_cap=c_cap, sets=sets,
+                                batch=batch, ro=ro)
                     try:
-                        _root = runner.bucket_path(_buckets, src)
+                        _spec = runner.resolve_root_input(tin, _buckets)
                     except ValueError as e:
                         return (*_tk_view(f"⚠️ {e}"), args,
                                 gr.update(visible=False), "")
+                    _root = _spec.get("path")
                     chosen = runner.picked_datasets(ds)
                     # 勾了「跑全部」时下拉本来就被忽略,跑的是根目录下的全部数据集,
                     # 交付目录由 CLI 自己定 —— 那条路径不在本次范围里,维持不问。
-                    needing = ([] if batch else
+                    # tos 直连输入也不问:切片要读本地数据集,直连的缓存路径
+                    # 开跑前不可知(_run_go 里同款判断,两处一致)。
+                    needing = ([] if (batch or _spec["kind"] == "tos") else
                                runner.datasets_needing_clips(_root, chosen))
                     if needing and review_dir:
                         fmt = (runner.dataset_format(
@@ -1755,7 +1873,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 _ask_outs = _tk_outs + [rn_args, rn_ask, rn_ask_md]
                 rn_go.click(_run_preflight,
-                            [rn_src, rn_ds, rn_out, rn_mode, rn_pick, rn_how,
+                            [rn_tin, rn_tin_rg, rn_tout, rn_tout_rg, rn_ds,
+                             rn_out, rn_mode, rn_pick, rn_how,
                              rn_max, rn_eps, rn_backend, rn_cfg, rn_emb, rn_plots,
                              rn_c_ep, rn_c_fr, rn_c_cap, rn_set, rn_batch, rn_ro],
                             _ask_outs)
@@ -1846,30 +1965,97 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 def _prefill_from_query(request):
                     qp = getattr(request, "query_params", None) or {}
                     wanted, present = runner.deeplink_values(qp)
+                    hold = (gr.update(),) * 5
                     if not present:
-                        return gr.update(), gr.update(), gr.update(), gr.update()
-                    # 可选的 endpoint/tos_endpoint(2026-08-17 用户拍板让 rerun
-                    # 侧把端点一并传来):不可信输入,入界即消毒(只留主机名),
-                    # 且**只进提示文案、绝不进任何读取路径**(SSRF 注记见
-                    # runner.sanitize_endpoint)。消不干净 → 当没给,但要说一声
-                    # (原样串一个字不回显 —— 提示是 Markdown 组件,回显即注入面)
+                        return hold
+                    # 新契约(rerun PR#29,2026-08-19 起线上在发):
+                    # ?dataset=tos://桶/前缀/数据集名&region=地区。region 是
+                    # URL 来的不可信输入,deeplink_region 只认地区字符集,
+                    # 过不了当没给 —— 它只预选下拉,绝不进请求路径。
+                    region, _rg_present = runner.deeplink_region(qp)
+                    # 旧契约兼容:endpoint/tos_endpoint 消毒后只进提示文案
                     ep_host, ep_present = runner.deeplink_endpoint(qp)
                     if ep_present and not ep_host:
                         gr.Warning("链接里的端点参数看不懂,已忽略(不影响预选)")
-                    plan = runner.prefill_plan(wanted, _buckets,
+                    urls = [w for w in wanted if str(w).startswith("tos://")]
+                    bare = [w for w in wanted if not str(w).startswith("tos://")]
+                    if urls:
+                        # 末段规则拆「根前缀 + 数据集名」,根填路径框、名预选下拉
+                        try:
+                            root, _n0 = runner.split_dataset_url(urls[0])
+                        except ValueError as e:
+                            gr.Warning(f"链接里的数据集地址解析不了:{e}")
+                            return hold
+                        names = []
+                        for u in urls:
+                            try:
+                                r2, n2 = runner.split_dataset_url(u)
+                            except ValueError:
+                                gr.Warning(f"链接里的地址解析不了,已忽略:{u}")
+                                continue
+                            if r2 == root and n2 and n2 not in names:
+                                names.append(n2)
+                            elif r2 != root:
+                                gr.Warning(f"链接带了多个不同前缀,只认第一个"
+                                           f"({root});已忽略 {u}")
+                        try:
+                            spec = runner.resolve_root_input(root, _buckets)
+                        except ValueError as e:
+                            gr.Warning(f"链接里的数据集地址不可用:{e}")
+                            return hold
+                        if spec["kind"] == "mount":
+                            choices = runner.list_datasets(spec["path"])
+                            src_note = runner.bucket_info_line(spec["bucket"])
+                            ds_note = runner.dataset_root_note(spec["path"])
+                            # 旧契约的端点矛盾提示照发(链接的端点 vs 本实例
+                            # 配置的端点地域对不上要点名;链接值只进提示,
+                            # 绝不进说明行 —— 那行回答"我们从哪儿读")
+                            if ep_host:
+                                _c = runner._endpoint_conflict_note(
+                                    spec["bucket"], ep_host)
+                                if _c:
+                                    gr.Warning(_c)
+                        else:
+                            try:
+                                choices = runner.tos_list_datasets(root, region)
+                                ds_note = ("" if choices else
+                                           "该前缀下没有列出任何数据集")
+                            except Exception as e:  # noqa: BLE001
+                                choices = []
+                                ds_note = (f"⚠️ 列不出该前缀下的数据集:"
+                                           f"{type(e).__name__}: {str(e)[:120]}")
+                            src_note = f"TOS 直连:{root}"
+                        # 预选与选项**同一次回调里算**:value 不在 choices 里
+                        # 会被 Gradio 静默丢弃,分两跳必踩
+                        sel = [n for n in names if n in choices]
+                        for n in names:
+                            if n not in choices:
+                                gr.Warning(f"链接指的数据集「{n}」在该前缀下"
+                                           "没找到 —— 前缀或名字可能变了")
+                        if sel:
+                            gr.Info("已按链接预选:" + ", ".join(sel)
+                                    + " —— 点「开始质检」即可")
+                        return (gr.update(value=root),
+                                gr.update(choices=choices, value=sel),
+                                (gr.update(value=region) if region
+                                 else gr.update()),
+                                src_note, ds_note)
+                    # 旧契约(裸名字):对表预选,行为与 2026-08-17 版一致 ——
+                    # **桶不认识绝不回落到默认桶里找同名的**
+                    plan = runner.prefill_plan(bare, _buckets,
                                                link_endpoint=ep_host)
                     for note in plan["notices"]:
                         gr.Warning(note)
                     if not plan["datasets"]:
-                        return gr.update(), gr.update(), gr.update(), gr.update()
+                        return hold
                     gr.Info(plan["info"])
-                    # 两列说明(端点/挂载 + 根目录三态)要跟着切过去的那个根走,
-                    # 不然下拉的值换了、底下的说明还是上一个根的,两处自相矛盾
                     _b = next((x for x in _buckets
                                if x["name"] == plan["source"]), None)
-                    return (gr.update(value=plan["source"]),
+                    return ((gr.update(value=runner.bucket_url(_b))
+                             if _b else gr.update()),
                             gr.update(choices=plan["choices"],
                                       value=plan["datasets"]),
+                            gr.update(),
                             runner.bucket_info_line(_b) if _b else gr.update(),
                             runner.dataset_root_note(_b["datasets_path"])
                             if _b else gr.update())
@@ -1879,12 +2065,28 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # (同 _hi_open 的手法)。
                 _prefill_from_query.__annotations__ = {"request": gr.Request}
                 app.load(_prefill_from_query, None,
-                         [rn_src, rn_ds, rn_src_note, rn_ds_note])
+                         [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note])
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
             # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
             # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。
             report_ctx = shell.enter_context(contextlib.ExitStack())
             report_tab = report_ctx.enter_context(gr.Tab("质检报告", id="report"))
+            # ── 交付根直连(2026-08-20 阶段4,纯新增一行;用户拍板:交付在哪个
+            #    桶,报告页就在哪看 —— 报告和交付不焊死在本实例的桶上)。默认
+            #    预填本实例交付根的 tos:// 写法 → 默认体验与之前逐字节等价
+            #    (挂载直读);改填陌生桶 → 列交付/批次,打开时懒镜像到本地缓存。
+            #    ⚠️ 红线自查:报告页那套子页签零改动,这行在页签外的选择区。──
+            _rp_src = {"region": ""}     # 直连地区,懒镜像与列表共用(闭包态)
+            with gr.Row():
+                rp_root = gr.Textbox(label="交付根 TOS 路径", scale=4,
+                                     value=runner.home_output_url(_deliv_root),
+                                     placeholder="tos://桶名/交付根前缀")
+                rp_rg = gr.Dropdown(choices=runner.tos_region_choices(),
+                                    value=runner.default_tos_region(),
+                                    label="地区", scale=1,
+                                    allow_custom_value=True, interactive=True)
+                with gr.Column(scale=7, min_width=160):
+                    rp_note = gr.Markdown("", elem_classes=["field-note"])
             with gr.Row():
                 # 文案一句话就够(2026-08-13 用户:"这种文字根本不应该给客户看")。
                 # 「重新加载」按钮已撤:切到本页就重扫一次盘(见下面的 select),
@@ -2357,6 +2559,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 是 2026-08-14 改布局时的硬要求,别人的旧交付不许因为我们改了目录形状
                 就打不开。
                 """
+                if str(path or "").startswith("tos://"):
+                    # 直连交付(2026-08-20 阶段4):批次列表走 tos 一层列,
+                    # 值 = 完整 tos:// URL,_load 收到后自己懒镜像
+                    try:
+                        rc = runner.tos_run_choices(
+                            str(path), _rp_src["region"] or None)
+                    except Exception as e:  # noqa: BLE001
+                        gr.Warning(f"列不出该交付下的批次:"
+                                   f"{type(e).__name__}: {str(e)[:120]}")
+                        rc = []
+                    sel = rc[0][1] if rc else ""
+                    return (gr.update(choices=rc, value=sel or None),
+                            *_load(sel))
                 d = resolve_delivery(path, discover_deliveries(delivery))
                 rc = run_choices(d)
                 sel = resolve_run(d)
@@ -2369,6 +2584,44 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # visible 补丁偶尔被冲掉。.input 只认用户动作,单写者,竞态整类消失。
             picker.input(_pick_delivery, picker, [run_pick, *outs])
             run_pick.input(_load, run_pick, outs)
+
+            def _rp_root_changed(url, region):
+                """交付根失焦/回车/切地区 → (交付下拉, 说明)。
+
+                本实例交付根(挂载)→ 现有扫描,行为与之前逐字节等价;陌生桶 →
+                tos 一层列交付。**只换选项不自动加载**(与 _picker_tick 同一条
+                纪律:内容重载会与用户当下的点击并发打架),用户点中哪份再镜像。
+                """
+                _rp_src["region"] = str(region or "").strip()
+                s = str(url or "").strip().rstrip("/")
+                home = runner.home_output_url(_deliv_root).rstrip("/")
+                if not s or s in (home, str(_deliv_root).rstrip("/")):
+                    fresh = discover_deliveries(delivery)
+                    return (gr.update(choices=delivery_choices(delivery, fresh),
+                                      value=None), "")
+                if not s.startswith("tos://"):
+                    return (gr.update(), "⚠️ 只认 tos://桶/前缀 形式的地址"
+                            "(或本实例的交付根)")
+                err = runner.tos_url_error(s, "交付根 TOS 路径")
+                if err:
+                    return gr.update(), f"⚠️ {err}"
+                try:
+                    names = runner.tos_list_deliveries(
+                        s, _rp_src["region"] or None)
+                except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
+                    return (gr.update(), f"⚠️ 列不出该前缀下的交付:"
+                            f"{type(e).__name__}: {str(e)[:120]}")
+                if not names:
+                    return (gr.update(choices=[], value=None),
+                            "该前缀下没有列出任何交付(前缀打错?或桶里确实是空的)")
+                return (gr.update(choices=[(n, s + "/" + n) for n in names],
+                                  value=None),
+                        f"TOS 直连:{s}(打开一份交付时把报告与明细镜像到本地,"
+                        "数据集本体不下载)")
+
+            rp_root.blur(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
+            rp_root.submit(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
+            rp_rg.input(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
 
             def _picker_tick(cur):
                 """重扫交付列表(**只换选项、不重载内容**)。
@@ -2507,6 +2760,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 14)
                 msg = record_label_decision(m["path"], it["id"], decision,
                                             newlab or "", note or "")
+                # 镜像交付(2026-08-20 阶段4):裁决 CSV 即时写回源桶 —— 留在
+                # 本地缓存等于丢(缓存可清),失败也要说出来,不许静默
+                if msg.startswith("✅"):
+                    msg += " " + runner.push_decisions(m["path"])
                 if msg.startswith("✅"):
                     msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _au_btns(decision)                # 记录成功才点亮所选键
@@ -2546,6 +2803,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return ("⚠️ 这条现在没有成败问题要答", *[gr.update()] * 7)
                 msg = record_task_verdict_checked(m, it["id"], verdict, note or "")
                 if msg.startswith("✅"):
+                    msg += " " + runner.push_decisions(m["path"])
+                if msg.startswith("✅"):
                     msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _tv_btns(verdict)
                 else:
@@ -2583,6 +2842,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 a = q[(idx or 0) % len(q)]
                 msg = record_reject_appeal(m["path"], a.get("id", ""), appeal,
                                            note or "")
+                if msg.startswith("✅"):
+                    msg += " " + runner.push_decisions(m["path"])
                 if msg.startswith("✅"):
                     msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _ap_btns(appeal)
