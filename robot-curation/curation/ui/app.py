@@ -3034,6 +3034,36 @@ def normalize_root_path(root_path: str | None) -> str:
     return f"/{s}" if s else ""
 
 
+class _ImmutableAssetsMiddleware:
+    """纯 ASGI 中间件:静态资产(路径前缀匹配、200 响应)加
+    `Cache-Control: public, max-age=31536000, immutable`。
+
+    只认 /assets/(gradio 前端分片,文件名含内容哈希,改内容必改名);其余路径
+    一个头都不加 —— 动态内容被缓存是另一类事故。不用 BaseHTTPMiddleware:它会
+    把 SSE 流整个缓冲起来。
+    """
+
+    def __init__(self, app, prefix: str = "/assets/"):
+        self.app = app
+        self.prefix = prefix
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or not str(scope.get("path", "")).startswith(self.prefix):
+            await self.app(scope, receive, send)
+            return
+
+        async def _send(message):
+            if message.get("type") == "http.response.start" and message.get("status") == 200:
+                headers = [(k, v) for k, v in message.get("headers", [])
+                           if k.lower() != b"cache-control"]
+                headers.append((b"cache-control",
+                                b"public, max-age=31536000, immutable"))
+                message = dict(message, headers=headers)
+            await send(message)
+
+        await self.app(scope, receive, _send)
+
+
 def create_asgi_app(delivery: str, config_path: str | None = None,
                     probe_timeout: float = 5.0, terminal: bool = False,
                     review_dir: str | None = None, data_root: str | None = None,
@@ -3097,6 +3127,16 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
 
     auth.apply(api, terminal_enabled=terminal,
                extra_exempt=(f"{root}/healthz",) if root else ())
+    # ── 公网链路的两道送分题(2026-08-20 APIG 实测:HTML 532 KB + config 259 KB
+    #    **未压缩**穿网关,139 个 JS 分片没有缓存头)──
+    # ① gzip:动态响应(/ 与 /config 占 780 KB)压到 ~86 KB。starlette 0.52 的
+    #    GZipMiddleware 默认排除 text/event-stream,gradio 的 SSE 事件流不受
+    #    影响(压缩缓冲会把事件憋住,那是绝不能碰的)。
+    # ② /assets/* 文件名带内容哈希,永不变 → immutable 一年:再次打开一个分片
+    #    请求都不发。只盖静态资产,动态路由一律不缓存。
+    from starlette.middleware.gzip import GZipMiddleware
+    api.add_middleware(GZipMiddleware, minimum_size=1024)
+    api.add_middleware(_ImmutableAssetsMiddleware, prefix=f"{root}/assets/")
     # allowed_paths:允许页面直读交付目录下的证据文件(gradio 默认只许临时目录);
     # 审片站目录同样要放行——Episodes 页的视频第一来源就在那儿,不放行会 403。
     allowed = [delivery] + ([review_dir] if review_dir else [])
