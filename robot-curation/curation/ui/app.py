@@ -858,6 +858,29 @@ def _label_key(mapping: dict, label: str, default: str) -> str:
     return default
 
 
+def reports_prefetch_head(reports_href: str) -> str:
+    """首页空闲后**一次性预热**报告页的 head 脚本("首页快速显示,别的后台
+    继续"的下半句)。
+
+    首页 load 完再等 4 秒(不抢首页自己引导的带宽/CPU),挂一个隐藏 iframe
+    加载报告页 —— 把它的 HTML/config/全部 JS chunk 灌进浏览器 HTTP 缓存;
+    iframe onload 后再留 15 秒让分块 JS 拉完,然后**移除**:不移除的话它的
+    轮询会一直在后台打 SSE,白吃服务端连接。之后用户点「质检报告」页签整页
+    跳转时,下载成本已付讫,只剩报告自己的渲染。
+    (为什么不是常驻 iframe 内嵌:第一版试过,连环踩坑,见 build_console_app
+    docstring;一次性预热没有那些活动部件。)
+    """
+    # /*reports-prefetch*/ 哨兵给测试认脚本用:gradio 6 把 head 以 JSON 内嵌
+    # 进页面(引号被转义),含引号的子串在页面源码里认不出来。
+    return ("<script>/*reports-prefetch*/"
+            "(function(){window.addEventListener('load',function(){"
+            "setTimeout(function(){var f=document.createElement('iframe');"
+            f"f.src='{reports_href}';f.style.display='none';"
+            "f.setAttribute('aria-hidden','true');"
+            "f.onload=function(){setTimeout(function(){f.remove();},15000);};"
+            "document.body.appendChild(f);},4000);});})();</script>")
+
+
 def presentation(terminal: bool = False, root: str = "") -> dict:
     """theme/css/head 三件套(gradio 6 起只认 launch()/mount_gradio_app() 上的这三个
     关键字,传给 `gr.Blocks()` 会被静默丢弃——2026-07-29 实测,顺手修掉的老 bug)。"""
@@ -945,275 +968,38 @@ def _bootstrap_empty_delivery(root: str) -> None:
             os.unlink(tmp)
 
 
-def build_app(delivery: str, config_path: str | None = None, probe_timeout: float = 5.0,
-              terminal: bool = False, review_dir: str | None = None,
-              data_root: str | None = None):
-    """交付目录(或含多份交付的父目录)→ gr.Blocks。
+def build_console_app(delivery: str, config_path: str | None = None,
+                      probe_timeout: float = 5.0, terminal: bool = False,
+                      review_dir: str | None = None, data_root: str | None = None,
+                      reports_href: str = "/reports/"):
+    """任务台(跑质检 + 任务与日志 + 裁决发起 + 可选终端)→ 轻量 gr.Blocks。
 
-    terminal=True 时套一层顶层导航:「终端」(内嵌 xterm.js,后端是本服务的
-    `/ws/term`)+「质检报告」(= 本文件原有的全部内容),默认选中「质检报告」。
-    缺省 False → 顶层导航整个不渲染,页面与加这层之前逐字一致(客户部署根本看不到
-    终端入口),`/ws/term` 路由也不注册。
+    2026-08-19 拆分(治首屏,第二版):任务台和报告全家桶挤在同一个 Blocks 里
+    时首屏要渲染几百个组件,前端引导 10-14 秒(服务端五个启动回调实测只要
+    0.07s,时间全耗在前端渲染/水合,组件数是主导因子)。按"操作面/阅读面"
+    切成两个应用:本函数 = 首页(约 90 个组件,Diagnose 深链落点);报告全家
+    桶原样住在 build_app,由 create_asgi_app 挂到 {root}/reports。
 
-    review_dir = 审片站根目录(与 `/review` 静态路由同一个),Episodes 页的视频
-    来源链第一档指着它;不给就只剩交付集内的视频。
-
-    data_root = 数据集根目录(「任务台」页签只列这个根下的数据集)。
-    ⚠️ 任务台是 2026-08-13 **纯新增**的页签,放在全部页签的最后:现有那套质检报告
-    页签(质检总览/Episodes/人工裁决/技能画像/同步曲线/Stuck 时间线/明细/性能剖析/
-    后端状态)的顺序、默认落地页、组件与回调**一律不动**(用户红线)。它也不共用
-    `state` 与 `outs`——Episodes 那个"重载级联并发吞掉翻页按钮"的 bug(6bb28b5)
-    就是共享输出列表惹的祸,不重演。
+    「质检报告」页签 = **整页跳转**(Tab.select 的 js 钩子直接 location.href):
+    第一版曾把报告以常驻 iframe 内嵌进页签,连环踩坑 —— iframe 放进页签 DOM
+    被 gradio 切页签搬动而整页重载;挂 body 外加覆盖层后又得注 CSS 隐藏报告
+    页眉,选择器误伤子页签(gradio 页签容器类名嵌套与直觉不符)。跳转方案
+    没有这些活动部件:配合 reports_prefetch_head 的一次性预热,跳过去时
+    JS/CSS 全命中缓存,只付报告自己的渲染成本。
     """
     import gradio as gr
 
     choices = discover_deliveries(delivery)
     if not choices:
-        # 云上纯 TOS 直连部署(2026-08-19):交付根是**本地空目录**是常态 ——
-        # 结果都直接上传到用户指定的桶,pod 起来时这里什么都还没有;原先的
-        # SystemExit 会让这种部署就地 crashloop。放一份占位交付(空 episodes)
-        # 让报告页有东西可渲染,「任务台」不受影响;真跑出交付后它排在列表末尾,
-        # 不碍事。只有占位都写不进去(目录只读)才仍然拒绝启动。
+        # 空交付根自举占位(与 build_app 同一段纪律,注释见那边)
         _bootstrap_empty_delivery(delivery)
         choices = discover_deliveries(delivery)
     if not choices:
         raise SystemExit(f"交付目录不可写,连占位交付都放不进去:{delivery}")
 
-    def _ep_list(m, bucket, page, selected):
-        """左清单的一屏(装配顺序 = _ep_list_outs)。分页口径全在 manifest。"""
-        v = episode_list_view(m or {}, bucket or BUCKET_ALL, page or 0, selected)
-        multi = gr.update(visible=v["pages"] > 1)
-        return (v["page"], selected,
-                gr.update(choices=v["choices"], value=v["value"]),
-                v["pos"], multi, multi)
-
-    def _detail(m, eid):
-        """选中 episode → 判决卡 / 视频区 / 待人工指路 / 检查明细。返回顺序 = _ep_outs。
-
-        层级是定死的(2026-08-11 用户拍板):判决与理由在最上,**视频是主角**,
-        逐维读数退到默认折叠的明细里。静态证据帧整块撤掉(用户原话:体验太差)。
-        """
-        if not m or not eid:
-            return (episode_card_html(m or {}, ""), "", "", "", "",
-                    gr.update(value=None, visible=False))
-        plot = (m["episodes"].get(eid) or {}).get("plot")
-        return (episode_card_html(m, eid), episode_video_html(m, eid, review_dir),
-                manual_hint_html(m, eid), check_table_html(m, eid),
-                sync_camera_html(m, eid),
-                gr.update(value=plot, visible=bool(plot)))
-
-    def _detail_table_md(m, name):
-        if not m or not name:
-            return "(此交付无明细表)", ["(无)"], []
-        headers, rows, total = load_detail_table(m, name)
-        note = f"**{DETAIL_LABELS.get(name, name)}** · 共 {total} 行" + \
-               (f"(仅显示前 {len(rows)} 行,完整文件见本次跑批目录下的 details/{name})"
-                if total > len(rows) else "")
-        return note, headers or ["(空)"], rows
-
-    # ── 裁决卡片的公共装配(三键状态 / 视频槽 / 逐条渲染):两块裁决面板形态
-    #    完全一样(队列表 + 翻页卡片 + 三键),差别只在字段与裁决词,所以抽在
-    #    这里共用——复制粘贴两份的话,下次改按钮反馈必然只改一边。──
-
-    def _btns(choices, current):
-        """三键状态:未裁决=全中性灰;已裁决=只有选中的那个高亮(2026-08-06 用户定:
-        按钮各有颜色时按下没反馈,分不清成没成功;改为"同色待选、选中变色",
-        且翻页/跳行回到已裁决条目时按钮状态跟着该条的落盘裁决走)。
-        choices 的顺序 = 界面上三个按钮的排列顺序。"""
-        return [gr.update(variant=("primary" if c == current else "secondary"))
-                for c in choices]
-
-    def _au_btns(decision):
-        return _btns(DECISION_CHOICES, decision)
-
-    def _tv_btns(verdict):
-        return _btns(VERDICT_CHOICES, verdict)
-
-    def _ap_btns(appeal):
-        return _btns(APPEAL_CHOICES, appeal)
-
-    def _vids(m, eid):
-        """三路视频槽:有几路给几路;一路都没有时保留一个可见占位(不然卡片塌掉)。"""
-        clips = audit_clip_paths(m, eid) if eid else []
-        return [gr.update(value=(clips[i] if i < len(clips) else None),
-                          visible=(i < len(clips) or not clips)) for i in range(3)]
-
-    # ── 「待你裁决」合并卡片(2026-08-16):一条 episode 一张卡,标注问题(①)
-    #    与成败问题(②)挂在同一张卡上,视频只看一遍。队列合并/筛选/②显隐档位
-    #    全在 manifest(纯函数,可单测),这里只装配。──
-
-    def _mg_au_info(m, it):
-        """① 标注问题的卡片头(已裁状态 + 溯源一行)。
-
-        溯源一行(2026-08-16):裁决跨跑批沿用,卡片上不写清"哪天裁的、这次
-        是沿用还是没应用",用户会把三周前的人工结论当成本轮机器判的。
-        """
-        a = it["audit"]
-        dec = load_label_decisions(m).get(it["id"], {})
-        trace = decision_trace_md(m, "label", it["id"])
-        return (f"档位 **{a.get('priority', '参考')}** · "
-                f"成败线判定:{a.get('task_verdict') or '—'}"
-                + (f" · 已裁决:**{dec['decision']}**" if dec.get("decision") else "")
-                + f"\n\n分歧说明:{a.get('reason', '')}"
-                + (f"\n\n{trace}" if trace else ""))
-
-    def _mg_tv_section(m, it, label_decision):
-        """② 成败问题那一块的装配(显隐档位 + 文案 + 三键)。
-        返回 (整块可见性, 档位说明, 卡片头, 读数行, 三键更新×3)。"""
-        mode = success_block_mode(it, label_decision or "")
-        if mode == "hidden":
-            return (gr.update(visible=False), "", "", "",
-                    *[gr.update(interactive=True)] * 3)
-        note, enabled = SUCCESS_MODES[mode]
-        v = load_task_verdicts(m).get(it["id"], {})
-        trace = decision_trace_md(m, "verdict", it["id"])
-        t = it.get("task")
-        if t is not None:
-            info = (f"当前判决:{t.get('current', '?')}"
-                    + (f" · 已裁决:**{v['verdict']}**" if v.get("verdict") else "")
-                    + f"\n\n**系统弃权原因**:{t.get('reason') or '未注明'}"
-                    + (f"\n\n{trace}" if trace else ""))
-            readings = f"关键读数:{readings_text(t.get('readings') or {})}"
-        else:
-            # 只有标注问题的条目:② 因「采纳改标」而出现,机器没弃权,没有弃权
-            # 原因和读数可讲 —— 只回显已有裁决与溯源,不硬凑读数
-            info = ((f"已裁决:**{v['verdict']}**" if v.get("verdict") else "")
-                    + (f"\n\n{trace}" if trace else ""))
-            readings = ""
-        btns = [gr.update(variant=("primary" if c == v.get("verdict")
-                                   else "secondary"), interactive=enabled)
-                for c in VERDICT_CHOICES]
-        return (gr.update(visible=True), note, info, readings, *btns)
-
-    def _mg_render(m, filt, idx):
-        """渲染合并队列第 idx 张卡(越界回绕)。装配顺序 = _mg_outs。"""
-        q = merged_queue_view(m or {}, merge_filter_mode(filt))
-        if not q:
-            return (0, "(本档没有待你裁决的条目)", "",
-                    *[gr.update(value=None, visible=(i == 0)) for i in range(3)],
-                    gr.update(visible=False), "", "", "", "",
-                    *_au_btns(None),
-                    gr.update(visible=False), "", "", "", "",
-                    *[gr.update(variant="secondary", interactive=True)] * 3)
-        idx = idx % len(q)
-        it = q[idx]
-        eid = it["id"]
-        dec = load_label_decisions(m).get(eid, {})
-        tags = ([] if it["audit"] is None else ["① 标注问题"]) \
-            + ([] if it["task"] is None else ["② 成败问题"])
-        tag_txt = " + ".join(tags)
-        info = f"**{eid}** · 本条要答:{tag_txt}"
-        if it["audit"] is not None:
-            au_vis = gr.update(visible=True)
-            au_info = _mg_au_info(m, it)
-            origlab = it["audit"].get("label", "")
-            newlab = it["audit"].get("caption", "")
-        else:
-            au_vis, au_info, origlab, newlab = gr.update(visible=False), "", "", ""
-        tv_sec = _mg_tv_section(m, it, dec.get("decision", ""))
-        return (idx, f"第 {idx + 1} / {len(q)} 条", info, *_vids(m, eid),
-                au_vis, au_info, origlab, newlab, "",
-                *_au_btns(dec.get("decision")),
-                tv_sec[0], tv_sec[1], tv_sec[2], tv_sec[3], "",
-                *tv_sec[4:])
-
-    def _ap_render(m, idx):
-        """渲染第 idx 条被拒复议卡片(越界回绕)。装配顺序 = _ap_outs。"""
-        q = (m or {}).get("reject_appeal") or []
-        if not q:
-            return (idx, "(无可复议的被拒条目)", "", "", "", *_ap_btns(None))
-        idx = idx % len(q)
-        a = q[idx]
-        eid = a.get("id", "")
-        d = load_reject_appeals(m).get(eid, {})
-        trace = decision_trace_md(m, "appeal", eid)
-        info = (f"**{eid}** · 系统判决:拒绝"
-                + (f" · 已复议:**{d['appeal']}**" if d.get("appeal") else "")
-                + f"\n\n**拒绝原因**:{appeal_reason_text(m, eid) or '未注明'}"
-                + (f"\n\n{trace}" if trace else ""))
-        readings = f"关键读数:{readings_text(a.get('readings') or {})}"
-        return (idx, f"第 {idx + 1} / {len(q)} 条", info, readings,
-                episode_video_html(m, eid, review_dir), *_ap_btns(d.get("appeal")))
-
-    def _sync_view(m, mode, page):
-        """同步曲线页的一屏(装配顺序 = _sy_outs)。分页/筛选逻辑全在 manifest。"""
-        v = sync_view(m or {}, mode or SYNC_FILTER_ALL, page or 0)
-        # items = [(路径, 标题)];逐槽位填充,多出来的槽位隐藏(不留空框)
-        multi = gr.update(visible=v["pages"] > 1)
-        return v["page"], v["note"], v["pos"], multi, multi, v["cards"]
-
-    def _load(path):
-        # 先把下拉里的值还原成真正的目录(手输半截字的情形,见 resolve_delivery);
-        # 还原不了的照旧交给 load_delivery,它会挂 load_error 让整页明说读不到
-        m = load_delivery(resolve_delivery(path, discover_deliveries(delivery)))
-        eids = bucket_ids(m, BUCKET_ALL)
-        first = eids[0] if eids else None
-        # 视觉质量那张表单独成页了 → 从下拉里撤掉(同一份数据不给两个入口)
-        tables = detail_table_choices(m)
-        t_first = tables[0] if tables else None
-        note0, h0, r0 = _detail_table_md(m, t_first)
-        vnote, vh, vr = video_detail_view(m)
-        tl = load_timeline(m)
-        tl_note0 = f"口径:{tl['note']}" if tl.get("note") else ""
-        perf = load_perf(m)
-        # 沿用计数进表下小字区(2026-08-16 用户拍板):**绝不往对账表里加行** ——
-        # 那张表的口径是「输入 = 判废 + 精确去重删除 + 交付」,加一行就破了对账。
-        # 零沿用时是空串,口径小字保持原样一个字不多。
-        ov_note = overview_note_md(m)
-        carry = carryover_note_md(m)
-        if carry:
-            ov_note = f"{ov_note}\n\n{carry}" if ov_note else carry
-        # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
-        # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
-        return (m, overview_markdown(m), overview_rows(m), ov_note,
-                _config_yaml(m),
-                # 桶随交付切换复位到「全部」:停在「拒绝」而新交付一条都没被拒,
-                # 看到的是空清单 + 一个还亮着的桶,等于骗人
-                gr.update(choices=bucket_choices(m), value=BUCKET_ALL),
-                *_ep_list(m, BUCKET_ALL, 0, first),
-                skill_bar_html(m), skill_rows(m), audit_note_md(m),
-                # 「待你裁决」从「全部」档第 0 条重新起(换交付不复位 = 停在
-                # 上一份交付的条目上,按钮状态还是旧的,实测踩过)
-                gr.update(choices=merged_filter_choices(m),
-                          value=merged_filter_choices(m)[0]),
-                merged_hint_md(m),
-                audit_rows(m), task_review_rows(m),
-                *_mg_render(m, MERGE_FILTER_ALL, 0),
-                # 被拒复议:没有可复议条目就整块不渲染;子页签藏不掉,空着一片
-                # 会像页面坏了,所以空态时换一句说明顶上
-                gr.update(visible=bool(m.get("reject_appeal"))),
-                gr.update(visible=not m.get("reject_appeal")),
-                appeal_hint_md(m), appeal_rows(m), *_ap_render(m, 0),
-                *_detail(m, first),
-                gr.update(choices=[DETAIL_LABELS[t] for t in tables],
-                          value=(DETAIL_LABELS[t_first] if t_first else None)),
-                note0, gr.update(value=r0, headers=h0),
-                vnote, gr.update(value=vr, headers=vh),
-                # 同步曲线页:筛选与页码一起复位(理由同上)
-                gr.update(value=SYNC_FILTER_ALL),
-                *_sync_view(m, SYNC_FILTER_ALL, 0),
-                sync_conclusion_html(m), sync_health_html(m),
-                # 换交付时筛选/排序一起复位(理由同上:停在上一份的筛选上,
-                # 看到的条数和标题对不上)
-                gr.update(value=TL_FILTERS["both"]), gr.update(value=TL_SORTS["episode"]),
-                tl_note0, timeline_html(tl),
-                perf_backend_md(perf), perf_env_md(perf), LATENCY_NOTE,
-                latency_rows(perf), latency_bar_html(perf),
-                # 顶部「有裁决尚未应用」提醒(排在 outs 末尾 = 纯新增,不动老槽位)
-                unapplied_banner_md(m))
-
-    # theme/css/head 不在这里传:gradio 6 把它们从 Blocks() 挪到了 launch()/
-    # mount_gradio_app()(传给 Blocks 只换来一条 UserWarning,值被丢掉)。见 presentation()。
     with gr.Blocks(title="Robot Data Curation") as app:
         gr.Markdown("# 机器人数据 Curation 质检台")
-        # 双层导航:顶层从左到右 =「任务台 / 质检报告 / 终端」,默认落在**任务台**
-        # (2026-08-13 用户定:客户进来先看到能干活的面板;终端是排障用的,靠最右)。
-        # terminal 关闭时终端页签整块不建 → 客户部署里看不到终端入口。
         with contextlib.ExitStack() as shell:
-            # 顶层导航(2026-08-13 起**总是**渲染):「任务台」与「质检报告」并列,
-            # 「终端」仍由 --terminal 控制。用户定:面板是面向客户的那张脸,压在
-            # 报告页第十个子页签里等于没做。默认落地页仍是质检报告(selected=report),
-            # 报告页那套子页签的顺序与内容一个字没动。
             shell.enter_context(gr.Tabs(selected="console", elem_id="topnav"))
             # ── 任务台(2026-08-13;布局与文案按用户当日反馈重排)──────────
             # 上半部 = 控制面板(客户来这里干活),下半部 = 任务与日志(干完看这里)。
@@ -1779,6 +1565,293 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # (同 _hi_open 的手法)。
                 _prefill_from_query.__annotations__ = {"request": gr.Request}
                 app.load(_prefill_from_query, None, [rn_tin, rn_tin_rg])
+            # ── 质检报告页签 = 整页跳转(方案取舍见本函数 docstring)。
+            # href 用绝对路径:首页地址常是无尾斜杠的 /curation,相对路径会被
+            # 浏览器解析到根下,带前缀部署必跳丢。js-only 事件(fn=None),
+            # 服务端零参与。页签内容只是跳转瞬间的一句交代。
+            with gr.Tab("质检报告", id="report") as _rep_jump:
+                gr.Markdown("正在打开质检报告…", elem_id="reports-jump-note")
+            _rep_jump.select(
+                None, None, None,
+                js=f"() => {{ window.location.href = '{reports_href}'; }}")
+            if terminal:
+                # 内嵌终端(2026-07-29 U4,替代 ttyd iframe):xterm.js 画屏 +
+                # 本服务的 /ws/term(forkpty 起 bash)。装配全在 term.js 里,
+                # 这里只放它要挂载的容器 div;term.js 等这个 div **可见**才连,
+                # 所以不点终端页签就不会在服务端 fork 出 shell。
+                # 位置:**最右**(2026-08-13 用户定)—— 它是我们排障用的,
+                # 不该在客户第一眼看到的位置;默认落地页也从报告改成了任务台。
+                with gr.Tab("终端", id="term"):
+                    gr.HTML('<div id="curation-term-screen"></div>')
+    return app
+
+
+def build_app(delivery: str, config_path: str | None = None, probe_timeout: float = 5.0,
+              terminal: bool = False, review_dir: str | None = None,
+              data_root: str | None = None, console_href: str | None = None):
+    """质检报告应用(交付目录 → gr.Blocks)。
+
+    2026-08-19 拆分(治首屏,分工与方案取舍见 build_console_app docstring):
+    任务台与终端搬去了轻量的 build_console_app,本函数只剩报告全家桶,由
+    create_asgi_app 挂在 {root}/reports,整页访问 —— 页眉/顶层壳/页签 select
+    触发器都**原样保留**(它是独立页面,页眉合理;picker 补扫挂在页签 select
+    上是有实测背书的既有行为,不动)。报告页那套子页签的顺序、默认落地页、
+    组件与回调仍一律不动(用户红线)。
+
+    review_dir = 审片站根目录(与 `/review` 静态路由同一个),Episodes 页的视频
+    来源链第一档指着它;不给就只剩交付集内的视频。
+    console_href = 页眉「← 返回任务台」链接(create_asgi_app 传;不给不渲染)。
+    terminal / data_root:已随任务台迁走,参数保留只为老调用方不炸,值被忽略。
+    """
+    import gradio as gr
+
+    choices = discover_deliveries(delivery)
+    if not choices:
+        # 云上纯 TOS 直连部署(2026-08-19):交付根是**本地空目录**是常态 ——
+        # 结果都直接上传到用户指定的桶,pod 起来时这里什么都还没有;原先的
+        # SystemExit 会让这种部署就地 crashloop。放一份占位交付(空 episodes)
+        # 让报告页有东西可渲染,「任务台」不受影响;真跑出交付后它排在列表末尾,
+        # 不碍事。只有占位都写不进去(目录只读)才仍然拒绝启动。
+        _bootstrap_empty_delivery(delivery)
+        choices = discover_deliveries(delivery)
+    if not choices:
+        raise SystemExit(f"交付目录不可写,连占位交付都放不进去:{delivery}")
+
+    def _ep_list(m, bucket, page, selected):
+        """左清单的一屏(装配顺序 = _ep_list_outs)。分页口径全在 manifest。"""
+        v = episode_list_view(m or {}, bucket or BUCKET_ALL, page or 0, selected)
+        multi = gr.update(visible=v["pages"] > 1)
+        return (v["page"], selected,
+                gr.update(choices=v["choices"], value=v["value"]),
+                v["pos"], multi, multi)
+
+    def _detail(m, eid):
+        """选中 episode → 判决卡 / 视频区 / 待人工指路 / 检查明细。返回顺序 = _ep_outs。
+
+        层级是定死的(2026-08-11 用户拍板):判决与理由在最上,**视频是主角**,
+        逐维读数退到默认折叠的明细里。静态证据帧整块撤掉(用户原话:体验太差)。
+        """
+        if not m or not eid:
+            return (episode_card_html(m or {}, ""), "", "", "", "",
+                    gr.update(value=None, visible=False))
+        plot = (m["episodes"].get(eid) or {}).get("plot")
+        return (episode_card_html(m, eid), episode_video_html(m, eid, review_dir),
+                manual_hint_html(m, eid), check_table_html(m, eid),
+                sync_camera_html(m, eid),
+                gr.update(value=plot, visible=bool(plot)))
+
+    def _detail_table_md(m, name):
+        if not m or not name:
+            return "(此交付无明细表)", ["(无)"], []
+        headers, rows, total = load_detail_table(m, name)
+        note = f"**{DETAIL_LABELS.get(name, name)}** · 共 {total} 行" + \
+               (f"(仅显示前 {len(rows)} 行,完整文件见本次跑批目录下的 details/{name})"
+                if total > len(rows) else "")
+        return note, headers or ["(空)"], rows
+
+    # ── 裁决卡片的公共装配(三键状态 / 视频槽 / 逐条渲染):两块裁决面板形态
+    #    完全一样(队列表 + 翻页卡片 + 三键),差别只在字段与裁决词,所以抽在
+    #    这里共用——复制粘贴两份的话,下次改按钮反馈必然只改一边。──
+
+    def _btns(choices, current):
+        """三键状态:未裁决=全中性灰;已裁决=只有选中的那个高亮(2026-08-06 用户定:
+        按钮各有颜色时按下没反馈,分不清成没成功;改为"同色待选、选中变色",
+        且翻页/跳行回到已裁决条目时按钮状态跟着该条的落盘裁决走)。
+        choices 的顺序 = 界面上三个按钮的排列顺序。"""
+        return [gr.update(variant=("primary" if c == current else "secondary"))
+                for c in choices]
+
+    def _au_btns(decision):
+        return _btns(DECISION_CHOICES, decision)
+
+    def _tv_btns(verdict):
+        return _btns(VERDICT_CHOICES, verdict)
+
+    def _ap_btns(appeal):
+        return _btns(APPEAL_CHOICES, appeal)
+
+    def _vids(m, eid):
+        """三路视频槽:有几路给几路;一路都没有时保留一个可见占位(不然卡片塌掉)。"""
+        clips = audit_clip_paths(m, eid) if eid else []
+        return [gr.update(value=(clips[i] if i < len(clips) else None),
+                          visible=(i < len(clips) or not clips)) for i in range(3)]
+
+    # ── 「待你裁决」合并卡片(2026-08-16):一条 episode 一张卡,标注问题(①)
+    #    与成败问题(②)挂在同一张卡上,视频只看一遍。队列合并/筛选/②显隐档位
+    #    全在 manifest(纯函数,可单测),这里只装配。──
+
+    def _mg_au_info(m, it):
+        """① 标注问题的卡片头(已裁状态 + 溯源一行)。
+
+        溯源一行(2026-08-16):裁决跨跑批沿用,卡片上不写清"哪天裁的、这次
+        是沿用还是没应用",用户会把三周前的人工结论当成本轮机器判的。
+        """
+        a = it["audit"]
+        dec = load_label_decisions(m).get(it["id"], {})
+        trace = decision_trace_md(m, "label", it["id"])
+        return (f"档位 **{a.get('priority', '参考')}** · "
+                f"成败线判定:{a.get('task_verdict') or '—'}"
+                + (f" · 已裁决:**{dec['decision']}**" if dec.get("decision") else "")
+                + f"\n\n分歧说明:{a.get('reason', '')}"
+                + (f"\n\n{trace}" if trace else ""))
+
+    def _mg_tv_section(m, it, label_decision):
+        """② 成败问题那一块的装配(显隐档位 + 文案 + 三键)。
+        返回 (整块可见性, 档位说明, 卡片头, 读数行, 三键更新×3)。"""
+        mode = success_block_mode(it, label_decision or "")
+        if mode == "hidden":
+            return (gr.update(visible=False), "", "", "",
+                    *[gr.update(interactive=True)] * 3)
+        note, enabled = SUCCESS_MODES[mode]
+        v = load_task_verdicts(m).get(it["id"], {})
+        trace = decision_trace_md(m, "verdict", it["id"])
+        t = it.get("task")
+        if t is not None:
+            info = (f"当前判决:{t.get('current', '?')}"
+                    + (f" · 已裁决:**{v['verdict']}**" if v.get("verdict") else "")
+                    + f"\n\n**系统弃权原因**:{t.get('reason') or '未注明'}"
+                    + (f"\n\n{trace}" if trace else ""))
+            readings = f"关键读数:{readings_text(t.get('readings') or {})}"
+        else:
+            # 只有标注问题的条目:② 因「采纳改标」而出现,机器没弃权,没有弃权
+            # 原因和读数可讲 —— 只回显已有裁决与溯源,不硬凑读数
+            info = ((f"已裁决:**{v['verdict']}**" if v.get("verdict") else "")
+                    + (f"\n\n{trace}" if trace else ""))
+            readings = ""
+        btns = [gr.update(variant=("primary" if c == v.get("verdict")
+                                   else "secondary"), interactive=enabled)
+                for c in VERDICT_CHOICES]
+        return (gr.update(visible=True), note, info, readings, *btns)
+
+    def _mg_render(m, filt, idx):
+        """渲染合并队列第 idx 张卡(越界回绕)。装配顺序 = _mg_outs。"""
+        q = merged_queue_view(m or {}, merge_filter_mode(filt))
+        if not q:
+            return (0, "(本档没有待你裁决的条目)", "",
+                    *[gr.update(value=None, visible=(i == 0)) for i in range(3)],
+                    gr.update(visible=False), "", "", "", "",
+                    *_au_btns(None),
+                    gr.update(visible=False), "", "", "", "",
+                    *[gr.update(variant="secondary", interactive=True)] * 3)
+        idx = idx % len(q)
+        it = q[idx]
+        eid = it["id"]
+        dec = load_label_decisions(m).get(eid, {})
+        tags = ([] if it["audit"] is None else ["① 标注问题"]) \
+            + ([] if it["task"] is None else ["② 成败问题"])
+        tag_txt = " + ".join(tags)
+        info = f"**{eid}** · 本条要答:{tag_txt}"
+        if it["audit"] is not None:
+            au_vis = gr.update(visible=True)
+            au_info = _mg_au_info(m, it)
+            origlab = it["audit"].get("label", "")
+            newlab = it["audit"].get("caption", "")
+        else:
+            au_vis, au_info, origlab, newlab = gr.update(visible=False), "", "", ""
+        tv_sec = _mg_tv_section(m, it, dec.get("decision", ""))
+        return (idx, f"第 {idx + 1} / {len(q)} 条", info, *_vids(m, eid),
+                au_vis, au_info, origlab, newlab, "",
+                *_au_btns(dec.get("decision")),
+                tv_sec[0], tv_sec[1], tv_sec[2], tv_sec[3], "",
+                *tv_sec[4:])
+
+    def _ap_render(m, idx):
+        """渲染第 idx 条被拒复议卡片(越界回绕)。装配顺序 = _ap_outs。"""
+        q = (m or {}).get("reject_appeal") or []
+        if not q:
+            return (idx, "(无可复议的被拒条目)", "", "", "", *_ap_btns(None))
+        idx = idx % len(q)
+        a = q[idx]
+        eid = a.get("id", "")
+        d = load_reject_appeals(m).get(eid, {})
+        trace = decision_trace_md(m, "appeal", eid)
+        info = (f"**{eid}** · 系统判决:拒绝"
+                + (f" · 已复议:**{d['appeal']}**" if d.get("appeal") else "")
+                + f"\n\n**拒绝原因**:{appeal_reason_text(m, eid) or '未注明'}"
+                + (f"\n\n{trace}" if trace else ""))
+        readings = f"关键读数:{readings_text(a.get('readings') or {})}"
+        return (idx, f"第 {idx + 1} / {len(q)} 条", info, readings,
+                episode_video_html(m, eid, review_dir), *_ap_btns(d.get("appeal")))
+
+    def _sync_view(m, mode, page):
+        """同步曲线页的一屏(装配顺序 = _sy_outs)。分页/筛选逻辑全在 manifest。"""
+        v = sync_view(m or {}, mode or SYNC_FILTER_ALL, page or 0)
+        # items = [(路径, 标题)];逐槽位填充,多出来的槽位隐藏(不留空框)
+        multi = gr.update(visible=v["pages"] > 1)
+        return v["page"], v["note"], v["pos"], multi, multi, v["cards"]
+
+    def _load(path):
+        # 先把下拉里的值还原成真正的目录(手输半截字的情形,见 resolve_delivery);
+        # 还原不了的照旧交给 load_delivery,它会挂 load_error 让整页明说读不到
+        m = load_delivery(resolve_delivery(path, discover_deliveries(delivery)))
+        eids = bucket_ids(m, BUCKET_ALL)
+        first = eids[0] if eids else None
+        # 视觉质量那张表单独成页了 → 从下拉里撤掉(同一份数据不给两个入口)
+        tables = detail_table_choices(m)
+        t_first = tables[0] if tables else None
+        note0, h0, r0 = _detail_table_md(m, t_first)
+        vnote, vh, vr = video_detail_view(m)
+        tl = load_timeline(m)
+        tl_note0 = f"口径:{tl['note']}" if tl.get("note") else ""
+        perf = load_perf(m)
+        # 沿用计数进表下小字区(2026-08-16 用户拍板):**绝不往对账表里加行** ——
+        # 那张表的口径是「输入 = 判废 + 精确去重删除 + 交付」,加一行就破了对账。
+        # 零沿用时是空串,口径小字保持原样一个字不多。
+        ov_note = overview_note_md(m)
+        carry = carryover_note_md(m)
+        if carry:
+            ov_note = f"{ov_note}\n\n{carry}" if ov_note else carry
+        # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
+        # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
+        return (m, overview_markdown(m), overview_rows(m), ov_note,
+                _config_yaml(m),
+                # 桶随交付切换复位到「全部」:停在「拒绝」而新交付一条都没被拒,
+                # 看到的是空清单 + 一个还亮着的桶,等于骗人
+                gr.update(choices=bucket_choices(m), value=BUCKET_ALL),
+                *_ep_list(m, BUCKET_ALL, 0, first),
+                skill_bar_html(m), skill_rows(m), audit_note_md(m),
+                # 「待你裁决」从「全部」档第 0 条重新起(换交付不复位 = 停在
+                # 上一份交付的条目上,按钮状态还是旧的,实测踩过)
+                gr.update(choices=merged_filter_choices(m),
+                          value=merged_filter_choices(m)[0]),
+                merged_hint_md(m),
+                audit_rows(m), task_review_rows(m),
+                *_mg_render(m, MERGE_FILTER_ALL, 0),
+                # 被拒复议:没有可复议条目就整块不渲染;子页签藏不掉,空着一片
+                # 会像页面坏了,所以空态时换一句说明顶上
+                gr.update(visible=bool(m.get("reject_appeal"))),
+                gr.update(visible=not m.get("reject_appeal")),
+                appeal_hint_md(m), appeal_rows(m), *_ap_render(m, 0),
+                *_detail(m, first),
+                gr.update(choices=[DETAIL_LABELS[t] for t in tables],
+                          value=(DETAIL_LABELS[t_first] if t_first else None)),
+                note0, gr.update(value=r0, headers=h0),
+                vnote, gr.update(value=vr, headers=vh),
+                # 同步曲线页:筛选与页码一起复位(理由同上)
+                gr.update(value=SYNC_FILTER_ALL),
+                *_sync_view(m, SYNC_FILTER_ALL, 0),
+                sync_conclusion_html(m), sync_health_html(m),
+                # 换交付时筛选/排序一起复位(理由同上:停在上一份的筛选上,
+                # 看到的条数和标题对不上)
+                gr.update(value=TL_FILTERS["both"]), gr.update(value=TL_SORTS["episode"]),
+                tl_note0, timeline_html(tl),
+                perf_backend_md(perf), perf_env_md(perf), LATENCY_NOTE,
+                latency_rows(perf), latency_bar_html(perf),
+                # 顶部「有裁决尚未应用」提醒(排在 outs 末尾 = 纯新增,不动老槽位)
+                unapplied_banner_md(m))
+
+    # theme/css/head 不在这里传:gradio 6 把它们从 Blocks() 挪到了 launch()/
+    # mount_gradio_app()(传给 Blocks 只换来一条 UserWarning,值被丢掉)。见 presentation()。
+    with gr.Blocks(title="Robot Data Curation") as app:
+        gr.Markdown("# 机器人数据 Curation 质检报告")
+        if console_href:
+            # 回任务台的普通链接(2026-08-19 拆分后两个页面间只靠链接/跳转往来)
+            gr.Markdown(f"[← 返回任务台]({console_href})", elem_id="console-link")
+        with contextlib.ExitStack() as shell:
+            # 顶层壳原样保留(#topnav 样式、report_tab.select 触发器都锚着它),
+            # 只是本应用里只剩「质检报告」一个页签 —— 任务台与终端 2026-08-19
+            # 搬去了 build_console_app;报告页子页签的顺序与内容一个字没动。
+            shell.enter_context(gr.Tabs(selected="report", elem_id="topnav"))
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
             # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
             # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。
@@ -2392,15 +2465,6 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             app.load(_pick_delivery, picker, [run_pick, *outs])
 
             report_ctx.close()          # 报告页到此为止,下面的页签是它的兄弟
-            if terminal:
-                # 内嵌终端(2026-07-29 U4,替代 ttyd iframe):xterm.js 画屏 +
-                # 本服务的 /ws/term(forkpty 起 bash)。装配全在 term.js 里,
-                # 这里只放它要挂载的容器 div;term.js 等这个 div **可见**才连,
-                # 所以不点终端页签就不会在服务端 fork 出 shell。
-                # 位置:**最右**(2026-08-13 用户定)—— 它是我们排障用的,
-                # 不该在客户第一眼看到的位置;默认落地页也从报告改成了任务台。
-                with gr.Tab("终端", id="term"):
-                    gr.HTML('<div id="curation-term-screen"></div>')
     return app
 
 
@@ -2440,8 +2504,15 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
     from . import auth
 
     root = normalize_root_path(root_path)
-    blocks = build_app(delivery, config_path, probe_timeout, terminal=terminal,
-                       review_dir=review_dir, data_root=data_root)
+    _reports_href = f"{root}/reports/" if root else "/reports/"
+    # 两个子应用(2026-08-19 拆分,治首屏;分工见 build_console_app docstring):
+    # 首页 = 轻量任务台(Diagnose 深链落点),{root}/reports = 报告全家桶。
+    console = build_console_app(delivery, config_path, probe_timeout,
+                                terminal=terminal, review_dir=review_dir,
+                                data_root=data_root, reports_href=_reports_href)
+    blocks = build_app(delivery, config_path, probe_timeout,
+                       review_dir=review_dir,
+                       console_href=f"{root}/" if root else "/")
     api = FastAPI()
 
     # 探针端点(鉴权豁免,见 auth.EXEMPT_PATHS):k8s readinessProbe 现在指 /(整页
@@ -2483,8 +2554,16 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
     # footer_links=[]:整排页脚(Use via API / Built with Gradio / Settings)去掉。
     # 头一个会把本服务的接口文档摆给任何打开页面的人看,另两个对客户毫无用处。
     # 用 gradio 自己的开关而不是 CSS 藏 —— 藏起来的链接照样可点、照样在 DOM 里。
-    return gr.mount_gradio_app(api, blocks, path=root or "/", allowed_paths=allowed,
-                               footer_links=[], **presentation(terminal, root))
+    # ⚠️ 挂载顺序:报告先、首页后 —— starlette 按注册顺序匹配,首页挂在 {root}
+    # 是 catch-all,先挂它会把 {root}/reports 一并吃掉。
+    api = gr.mount_gradio_app(api, blocks, path=f"{root}/reports",
+                              allowed_paths=allowed, footer_links=[],
+                              **presentation(False, root))
+    # 首页 head 追加一次性预热脚本(见 reports_prefetch_head)。
+    pres = presentation(terminal, root)
+    pres["head"] += reports_prefetch_head(_reports_href)
+    return gr.mount_gradio_app(api, console, path=root or "/",
+                               allowed_paths=allowed, footer_links=[], **pres)
 
 
 def launch(delivery: str, config_path: str | None = None, host: str = "0.0.0.0",

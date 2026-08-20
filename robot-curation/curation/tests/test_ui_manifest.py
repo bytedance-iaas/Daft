@@ -231,22 +231,20 @@ def _report_section(app) -> str:
 
 
 def test_app_with_terminal_tab(delivery):
-    """terminal=True:有「终端」页签 + xterm 容器 div,且它排在**最右**。
+    """terminal=True:「终端」页签 + xterm 容器 div 在**任务台应用**里,排最右。
 
-    顺序 2026-08-13 用户定:任务台 / 质检报告 / 终端,默认落地页是任务台 ——
-    终端是我们排障用的,不该占客户第一眼的位置。
+    2026-08-19 拆分后终端跟着任务台走(它是操作面的排障工具);报告应用永远
+    没有终端。顺序:任务台在左、终端在最右(2026-08-13 用户定的位置不变)。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
-    cfg = _config_text(build_app(delivery, terminal=True))
+    from curation.ui.app import build_app, build_console_app
+    cfg = _config_text(build_console_app(delivery, terminal=True))
     assert "终端" in cfg and "curation-term-screen" in cfg
-    assert "iframe" not in cfg and "7681" not in cfg      # ttyd 时代的痕迹一点不留
-    assert "质检报告" in cfg
-    assert cfg.index("质检报告") < cfg.index("终端")   # 终端在最右
-    assert cfg.index("任务台") < cfg.index("质检报告")  # 任务台在最左
-    # 六个子 tab 一个不少
-    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细"):
-        assert t in cfg
+    assert "7681" not in cfg and "ttyd" not in cfg     # ttyd 时代的痕迹一点不留
+    assert cfg.index("任务台") < cfg.index("终端")     # 终端在最右
+    # 报告应用里没有终端(terminal 参数已退役,传了也不建)
+    assert "curation-term-screen" not in _config_text(build_app(delivery,
+                                                                terminal=True))
 
 
 def test_app_without_terminal_leaves_no_terminal_trace(delivery):
@@ -267,24 +265,25 @@ def test_app_without_terminal_leaves_no_terminal_trace(delivery):
         assert t in cfg
 
 
-def test_task_console_is_top_level_and_report_tabs_untouched(delivery):
-    """任务台与质检报告并列在顶层;报告页那套子页签一个不少、顺序不变。
-
-    用户红线(2026-08-13):UI 改动绝不能影响质检报告那套页签。这条把它钉死。
+def test_console_and_reports_are_separate_apps(delivery):
+    """2026-08-19 拆分契约:任务台与报告是**两个独立应用**——首屏(任务台)的
+    组件量就是它快的原因,报告页签一旦回流首页,首屏引导立刻回到 10 秒时代。
+    任务台的「质检报告」页签只是一个整页跳转的壳(内容一句话);报告应用
+    那套子页签一个不少(红线照旧),且不含任务台的表单组件。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
-    cfg = _config_text(build_app(delivery))
-    assert cfg.index("任务台") < cfg.index("质检报告")
-    # 报告页九个子页签一个不少。**顺序**由既有的 test_app_has_manual_decision_tab
-    # 等几条守,这里不重复钉 —— 这些词在正文里也出现(技能画像页有一行指向人工
-    # 裁决),硬排序只会造出一条脆测试。
+    from curation.ui.app import build_app, build_console_app
+    con = _config_text(build_console_app(delivery))
+    for t in ("跑质检", "执行人工裁决", "任务与日志", "正在打开质检报告"):
+        assert t in con, t
+    assert "质检总览" not in con and "性能剖析" not in con, \
+        "报告页签不许回流任务台应用(首屏减重是拆分的目的本身)"
     rep = _report_section(build_app(delivery))
     for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "视频-动作同步",
               "卡顿动作时间线", "明细", "性能剖析"):
         assert t in rep, t
-    for t in ("跑质检", "执行人工裁决", "任务与日志"):   # 生成视频片段/模型服务已并入别处
-        assert t in cfg, t
+    assert "跑质检" not in _config_text(build_app(delivery)), \
+        "任务台不许回流报告应用"
 
 
 def test_probe_buttons_are_wired(delivery):
@@ -295,8 +294,8 @@ def test_probe_buttons_are_wired(delivery):
     靠这条钉住。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
-    app = build_app(delivery)
+    from curation.ui.app import build_console_app
+    app = build_console_app(delivery)
     probes = {i for i, c in app.blocks.items()
               if getattr(c, "value", None) == "检测可用性"}
     assert probes, "界面上找不到「检测可用性」按钮"
@@ -340,8 +339,8 @@ def test_concurrency_defaults_are_shown_as_placeholders_not_prefilled():
 def test_concurrency_boxes_carry_the_default_in_the_placeholder(delivery):
     """界面这一侧钉死同一件事:占位符里带出厂默认值(32/16/32),value 仍是空。"""
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
-    cfg = json.loads(json.dumps(build_app(delivery).get_config_file(), default=str))
+    from curation.ui.app import build_console_app
+    cfg = json.loads(json.dumps(build_console_app(delivery).get_config_file(), default=str))
     boxes = [c for c in cfg["components"]
              if "conc-num" in (c.get("props", {}).get("elem_classes") or [])]
     assert len(boxes) == 3
@@ -388,7 +387,7 @@ def test_probe_button_rereads_the_config_without_restarting_the_ui(delivery, mon
     monkeypatch.setattr(ui_runner, "vlm_backend_labels", lambda cfg=None: dict(live))
     monkeypatch.setattr(ui_app, "_probe_backends",
                         lambda cfg, t: [[c, "✅在线", ""] for c in live.values()])
-    app = ui_app.build_app(delivery)
+    app = ui_app.build_console_app(delivery)
     live["自托管 vLLM · Cosmos-Reason2-32B · H20"] = "house-32b"   # 启动之后才加的
 
     probes = {i for i, c in app.blocks.items()
@@ -1937,17 +1936,25 @@ def test_app_has_sync_curve_tab_and_split_evidence(delivery):
     assert '"name": "image"' in cfg or '"type": "image"' in cfg
 
 
-def test_asgi_app_serves_sync_curve_tab(delivery, clean_ui_env):
-    """整页起得来,「同步曲线」页签文案真出现在首页 HTML 里。"""
+def test_asgi_app_serves_console_home_and_reports_subpath(delivery, clean_ui_env):
+    """双挂载(2026-08-19 拆分):`/` = 轻量任务台(含跑质检表单 + 一次性预热
+    脚本),`/reports/` = 报告应用(含同步曲线页签)。两个都要 200 且内容
+    各归各;预热脚本只在首页(报告页自己带 = 递归预热)。"""
     pytest.importorskip("gradio")
     from starlette.testclient import TestClient
 
     from curation.ui.app import create_asgi_app
     app = create_asgi_app(_with_sync(delivery)["path"], terminal=False)
     with TestClient(app) as c:
-        r = c.get("/")
-        assert r.status_code == 200
-        assert "视频-动作同步" in r.text and "只看有标注/异常的" in r.text
+        home = c.get("/").text
+        assert "数据集 TOS 路径" in home
+        # ⚠️ 预热脚本用无引号哨兵匹配:gradio 6 把 head 以 JSON 内嵌进页面,
+        # 引号被转义,带引号的子串在源码里认不出(2026-08-19 实测踩过)
+        assert "reports-prefetch" in home and "/reports/" in home
+        assert "只看有标注/异常的" not in home        # 报告组件不进首页
+        rep = c.get("/reports/").text
+        assert "视频-动作同步" in rep and "只看有标注/异常的" in rep
+        assert "reports-prefetch" not in rep
 
 
 def test_app_load_returns_match_outputs_after_rework(delivery):
@@ -2860,8 +2867,8 @@ def test_dataset_dropdown_retired_with_mount_ui(delivery):
     (裁决侧的数据集选择叫「原始数据集」,不受影响。)
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
-    cfg = json.loads(json.dumps(build_app(delivery).get_config_file(), default=str))
+    from curation.ui.app import build_console_app
+    cfg = json.loads(json.dumps(build_console_app(delivery).get_config_file(), default=str))
     labels = {c.get("props", {}).get("label") for c in cfg["components"]}
     assert "数据集" not in labels
     assert "数据集 TOS 路径" in labels
@@ -2873,9 +2880,9 @@ def test_delivery_layout_note_present_on_run_tab(delivery):
     覆盖上一次(2026-08-14 布局变更以来的老承诺,纯 TOS 直连版照样要说)。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
+    from curation.ui.app import build_console_app
     cfg = json.dumps(json.loads(json.dumps(
-        build_app(delivery).get_config_file(), default=str)), ensure_ascii=False)
+        build_console_app(delivery).get_config_file(), default=str)), ensure_ascii=False)
     assert "<交付名>/<时间戳>" in cfg and "永不覆盖" in cfg
 
 
@@ -3187,7 +3194,7 @@ def test_start_button_refuses_an_empty_tos_path(full_delivery, tmp_path):
     的形态从空多选变成了空 URL,拦截的纪律不变。)"""
     pytest.importorskip("gradio")
     from curation.ui import app as ui_app
-    app = ui_app.build_app(full_delivery, data_root=str(tmp_path / "data"))
+    app = ui_app.build_console_app(full_delivery, data_root=str(tmp_path / "data"))
     go = {i for i, c in app.blocks.items()
           if getattr(c, "value", None) == "开始质检"}
     assert go, "界面上找不到「开始质检」按钮"
@@ -3225,7 +3232,7 @@ def test_polling_does_not_wipe_the_validation_message(full_delivery, tmp_path):
     """
     pytest.importorskip("gradio")
     from curation.ui import app as ui_app
-    app = ui_app.build_app(full_delivery, data_root=str(tmp_path))
+    app = ui_app.build_console_app(full_delivery, data_root=str(tmp_path))
     fn = next(f for f in app.fns.values()
               if getattr(getattr(f, "fn", None), "__name__", "") == "_tk_tick")
     assert len(fn.inputs) == 1

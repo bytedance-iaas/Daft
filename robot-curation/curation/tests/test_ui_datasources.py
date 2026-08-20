@@ -196,8 +196,8 @@ def test_run_tab_is_pure_tos_no_mount_dropdown(delivery, tmp_path):
     「数据集根目录」只允许在裁决侧存在(交付没记源路径时用户得自己选)。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
-    app = build_app(delivery, data_root=str(tmp_path / "ds"))
+    from curation.ui.app import build_console_app
+    app = build_console_app(delivery, data_root=str(tmp_path / "ds"))
     assert len(_src_dropdowns(app)) == 1, "「数据集根目录」只该剩裁决侧那一个"
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     labels = {c["props"].get("label") for c in cfg["components"]}
@@ -213,8 +213,8 @@ def test_region_dropdowns_match_rerun_list_and_allow_custom(delivery, tmp_path):
     防:两个产品各养一份地区清单,用户在深链间来回跳看到两套地区。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
-    app = build_app(delivery, data_root=str(tmp_path / "ds"))
+    from curation.ui.app import build_console_app
+    app = build_console_app(delivery, data_root=str(tmp_path / "ds"))
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     rgs = [c["props"] for c in cfg["components"]
            if c["props"].get("label") in ("数据集地区", "输出地区")]
@@ -254,11 +254,11 @@ def test_deeplink_prefills_tos_url_for_any_bucket(delivery, tmp_path,
     """
     pytest.importorskip("gradio")
     import gradio as gr
-    from curation.ui.app import build_app
+    from curation.ui.app import build_console_app
     warned = []
     monkeypatch.setattr(gr, "Info", lambda *a, **k: None)
     monkeypatch.setattr(gr, "Warning", lambda msg, *a, **k: warned.append(msg))
-    app = build_app(delivery, data_root=str(tmp_path / "ds"))
+    app = build_console_app(delivery, data_root=str(tmp_path / "ds"))
     fn = _prefill_fn(app)
 
     class Req:                                   # 只需 query_params 一个属性
@@ -282,11 +282,11 @@ def test_single_source_dataset_choices_match_old_data_root(delivery, tmp_path):
     —— 向后兼容的判据是**跑批用的路径与数据集清单不变**;界面多出的「TOS 桶」
     下拉是有意的(见 test_single_source_still_shows_source_dropdown)。"""
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
+    from curation.ui.app import build_console_app
     root = tmp_path / "ds"
     (root / "old_one" / "meta").mkdir(parents=True)
     (root / "old_one" / "meta" / "info.json").write_text("{}")
-    app = build_app(delivery, data_root=str(root))
+    app = build_console_app(delivery, data_root=str(root))
     cfg = json.dumps(json.loads(json.dumps(app.get_config_file(), default=str)),
                      ensure_ascii=False)
     assert "old_one" in cfg
@@ -494,9 +494,9 @@ def test_dataset_pickers_carry_no_info_and_notes_moved_below(delivery, tmp_path)
     (rn-src-note / rn-ds-note)在配置里**必须不存在**,防回潮。
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
+    from curation.ui.app import build_console_app
     cfg_path = _site_yaml(tmp_path, _two_sources(tmp_path))
-    app = build_app(delivery, config_path=cfg_path)
+    app = build_console_app(delivery, config_path=cfg_path)
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     picked = [c["props"] for c in cfg["components"]
               if c["props"].get("label") in {"数据集根目录", "数据集", "原始数据集"}]
@@ -566,10 +566,10 @@ def test_unmounted_root_is_marked_in_choices_and_does_not_crash_ui(delivery,
     assert choices[1][0].endswith("⚠️ 未挂载")
     # Gradio 层:同样的配置建 app 不炸,且标记随显示文本进了下拉
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
+    from curation.ui.app import build_console_app
     runner._root_probe_cache.clear()             # 上面探测过的路径别吃旧缓存
     cfg_path = _site_yaml(tmp_path, sources)
-    app = build_app(delivery, config_path=cfg_path)
+    app = build_console_app(delivery, config_path=cfg_path)
     labels = [lab for props in _src_dropdowns(app)
               for lab, _v in (tuple(c) for c in props["choices"])]
     assert any(lab.endswith("⚠️ 未挂载") for lab in labels)
@@ -591,11 +591,11 @@ def test_switching_root_clears_stale_notes_instead_of_leaving_them(delivery,
     (2026-08-19 起跑质检侧无挂载 UI,这个回调只剩裁决侧一处,判据不变。)
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
+    from curation.ui.app import build_console_app
     srcs = _two_sources(tmp_path)
     srcs[0]["endpoint"] = "https://tos-s3-cn-beijing.ivolces.com"   # 有端点
     srcs[1].pop("endpoint", None)                                    # 没端点
-    app = build_app(delivery, config_path=_site_yaml(tmp_path, srcs))
+    app = build_console_app(delivery, config_path=_site_yaml(tmp_path, srcs))
     fns = [f for f in app.fns.values()
            if (getattr(f, "inputs", []) or [])
            and [getattr(c, "elem_id", None)
@@ -627,11 +627,11 @@ def test_deeplink_region_param_presets_region_and_sanitizes(delivery, tmp_path,
     """
     pytest.importorskip("gradio")
     import gradio as gr
-    from curation.ui.app import build_app
+    from curation.ui.app import build_console_app
     warned = []
     monkeypatch.setattr(gr, "Info", lambda *a, **k: None)
     monkeypatch.setattr(gr, "Warning", lambda msg, *a, **k: warned.append(msg))
-    app = build_app(delivery, data_root=str(tmp_path / "ds"))
+    app = build_console_app(delivery, data_root=str(tmp_path / "ds"))
     fn = _prefill_fn(app)
 
     class Req:                       # 合法地区 → 下拉预选到它
