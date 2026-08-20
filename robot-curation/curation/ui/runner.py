@@ -647,6 +647,233 @@ def deeplink_values(qp) -> tuple:
     return out, present
 
 
+# ── TOS 直连(2026-08-20 融合自公开 PR#65,作者 chenqianfzh;与我们的桶对表
+#    **共存**而非替换):tos:// URL 是运行时输入,不过 resolve_under 的本地
+#    白名单——它不是容器路径,寻址不到 pod 的文件系统;安全边界是
+#    tos_store.parse_tos_url 的桶名/前缀语法,可达范围由部署凭证的桶权限决定。
+#    与她 PR 的分歧:她删掉了对表("不再替用户圈定接入了哪些桶"),我们保留——
+#    URL 对上配置桶就走挂载零预下载直读(200GB 级数据集只有这条路能跑),
+#    对不上才走 stage_in 整树暂存。快慢分流的判据 = mount_root_for_url。──
+
+_TOS_REGION_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
+
+#: 地区下拉的选项,与 rerun viewer 的 OpenTosModal 完全同值同序
+#: (rerun `open_tos_modal.rs` 的 TOS_REGIONS,抄的是火山控制台建桶页的地区
+#: 列表)。两个产品的用户在深链间来回跳,不该看到两份地区清单。
+#: 列表可能落后于新开的地区,所以下拉允许自由输入(allow_custom_value)。
+TOS_REGIONS = ("cn-beijing", "ap-southeast-1", "ap-southeast-3",
+               "cn-guangzhou", "cn-hongkong", "cn-shanghai")
+
+#: 地区的中文名 = 火山控制台建桶页的叫法。下拉显示「中文名 (代码)」,
+#: **值仍是代码** —— 后端/CLI/深链/日志全用代码,中文只进眼睛不进数据。
+TOS_REGION_NAMES = {
+    "cn-beijing": "华北2(北京)",
+    "ap-southeast-1": "亚太东南(柔佛)",
+    "ap-southeast-3": "亚太东南(雅加达)",
+    "cn-guangzhou": "华南1(广州)",
+    "cn-hongkong": "中国香港",
+    "cn-shanghai": "华东2(上海)",
+}
+
+
+def tos_region_choices() -> list:
+    """地区下拉的 (显示文本, 值) 列表。没有中文名的代码(将来新地区经自由输入
+    进来)原样显示,不编中文。"""
+    return [(f"{TOS_REGION_NAMES[r]} ({r})" if r in TOS_REGION_NAMES else r, r)
+            for r in TOS_REGIONS]
+
+
+def default_tos_region() -> str:
+    """地区下拉的缺省值 = 部署所在地区(与 rerun 同规则:TOS_REGION 显式声明
+    优先,否则从部署端点 TOS_ENDPOINT 的主机名推导,都没有按 cn-beijing)。"""
+    explicit = os.environ.get("TOS_REGION", "").strip()
+    if explicit:
+        return explicit
+    from ..tos_store import region_from_endpoint
+    return (region_from_endpoint(os.environ.get("TOS_ENDPOINT", ""))
+            or "cn-beijing")
+
+
+def tos_url_error(url: str, field: str) -> str:
+    """tos:// URL 的开跑前校验;通过返回空串,不通过返回给用户看的那句话。"""
+    try:
+        from ..tos_store import parse_tos_url
+        parse_tos_url(url)
+    except ValueError as e:                    # TosUrlError 是 ValueError 子类
+        return f"{field}:{e}"
+    return ""
+
+
+def tos_region_error(region: str, field: str) -> str:
+    """地区写法校验;空串合法(按部署端点 / TOS_REGION 推导)。"""
+    s = str(region or "").strip()
+    if s and not _TOS_REGION_RE.match(s):
+        return f"{field}的地区写法不对:{s!r}(形如 cn-beijing / ap-southeast-1)"
+    return ""
+
+
+#: 深链的地区键(2026-08-19 rerun 侧定的契约,rerun PR#29 已上线):Diagnose
+#: 按钮带 `?dataset=tos://…&region=cn-beijing` 跳过来,dataset 与 region 一一
+#: 对应。旧的 endpoint/tos_endpoint 键继续兼容(见 ENDPOINT_KEYS)。
+REGION_KEY = "region"
+
+
+def deeplink_region(qp) -> tuple:
+    """query 参数 → (合法的地区串|None, 有没有出现 region 键)。
+
+    地区是标量,多值时取第一个合法的(确定规则)。值来自 URL,是不可信输入:
+    只认 _TOS_REGION_RE 的字符集,过不了就当没给 —— 它只用来预选地区下拉,
+    绝不进任何请求路径,坏值也回显不到界面上。
+    """
+    vals = (qp.getlist(REGION_KEY) if hasattr(qp, "getlist")
+            else ([qp[REGION_KEY]] if REGION_KEY in qp else []))
+    for raw in vals:
+        s = str(raw or "").strip().lower()
+        if s and _TOS_REGION_RE.match(s):
+            return s, True
+    return None, bool(vals)
+
+
+def split_dataset_url(url: str) -> tuple[str, str]:
+    """`tos://桶/前缀…/数据集名` → (根前缀 URL, 数据集名)。**末段规则**:最后
+    一个路径段当数据集名,其余当根前缀 —— rerun 深链带的是数据集本体的地址,
+    界面上要拆开填「数据集 TOS 路径」框 + 「数据集」下拉两处。
+
+    只有桶没有前缀(tos://bucket/name)时根前缀就是桶本身;连数据集段都没有
+    (tos://bucket)按"整个 URL 就是根前缀、数据集名为空"处理——调用方看到
+    空名就只填根、不预选,让用户自己挑,不硬猜。
+    """
+    from ..tos_store import parse_tos_url
+    bucket, prefix = parse_tos_url(url)        # 语法不合法在这里就抛
+    parts = [p for p in prefix.split("/") if p]
+    if not parts:
+        return f"tos://{bucket}", ""
+    name = parts[-1]
+    root = "/".join(parts[:-1])
+    return (f"tos://{bucket}/{root}" if root else f"tos://{bucket}"), name
+
+
+def mount_root_for_url(url: str, buckets: list) -> str | None:
+    """tos:// 根前缀 URL → 配置桶的挂载路径;认不出返回 None。**快慢分流的
+    唯一判据**:返回路径 → 挂载零预下载直读(与今天逐字节同路);None →
+    tos_store.stage_in 整树暂存。
+
+    对表条件 = 桶名相同 且 前缀相同(配置项的 bucket/tos_prefix,两者任一
+    未知即不放行 —— 诚实弃权,绝不把陌生 URL 硬凑到默认桶上,同名不同库
+    跑错数据是最坏的一类事故,parse_dataset_ref 那条铁律原样适用)。
+    """
+    try:
+        from ..tos_store import parse_tos_url
+        bucket, prefix = parse_tos_url(url)
+    except ValueError:
+        return None
+    prefix = prefix.strip("/")
+    for b in buckets or []:
+        if not b.get("bucket") or b.get("tos_prefix") is None:
+            continue
+        if b["bucket"] == bucket and str(b["tos_prefix"]).strip("/") == prefix:
+            return b["datasets_path"]
+    return None
+
+
+def bucket_url(b: dict) -> str:
+    """配置桶 → 显示在「数据集 TOS 路径」框里的值:桶名+前缀齐全给
+    `tos://桶/前缀`,不全(合成单桶)退回 datasets_path 原样 —— 那是白名单里
+    的已知路径,resolve_root_input 按精确匹配放行,不算自由路径。"""
+    if b.get("bucket") and b.get("tos_prefix") is not None:
+        p = str(b["tos_prefix"]).strip("/")
+        return f"tos://{b['bucket']}/{p}" if p else f"tos://{b['bucket']}"
+    return str(b.get("datasets_path") or "")
+
+
+def resolve_root_input(value: str, buckets: list) -> dict:
+    """「数据集 TOS 路径」框的值 → 读取方案(2026-08-20 融合定案的红线口径:
+    **允许自由填 tos:// URL,本地自由路径仍然禁止**)。
+
+    → {"kind": "mount", "path", "bucket"}:值对上配置桶(tos:// URL 经
+      mount_root_for_url 对表,或与某桶的 datasets_path 精确相等)→ 挂载
+      零预下载直读,与今天逐字节同路;
+    → {"kind": "tos", "url"}:合法 tos:// URL 但对不上任何配置桶 → stage_in;
+    → 其余(空串/本地自由路径/坏 URL)抛 ValueError,一句话说清。
+    """
+    s = str(value or "").strip().rstrip("/")
+    if not s:
+        raise ValueError("还没填数据集 TOS 路径(tos://桶名/数据集前缀)")
+    if s.startswith("tos://"):
+        mp = mount_root_for_url(s, buckets)
+        if mp is not None:
+            b = next(x for x in buckets
+                     if x.get("datasets_path") == mp)
+            return {"kind": "mount", "path": mp, "bucket": b}
+        err = tos_url_error(s, "数据集 TOS 路径")
+        if err:
+            raise ValueError(err)
+        return {"kind": "tos", "url": s}
+    for b in buckets or []:
+        bp = str(b.get("datasets_path") or "").rstrip("/")
+        if bp and (s == bp
+                   or os.path.realpath(s) == os.path.realpath(bp)):
+            return {"kind": "mount", "path": b["datasets_path"], "bucket": b}
+    raise ValueError("只认识 tos://桶/前缀 形式的地址(或本实例配置里的数据集"
+                     "根目录);任意本地路径不收 —— 那等于把容器文件系统开给"
+                     "任何拿到界面密码的人")
+
+
+def home_output_url(deliv_root: str) -> str:
+    """交付根的 tos:// 写法(「输出 TOS 路径」框的默认值)。
+
+    推导 = 部署桶(TOS_BUCKET)+ 交付根相对挂载根(CURATION_TOS_MOUNT,缺省
+    /mnt/tos)的相对路径。推不出来(没挂载/没桶名)退回 deliv_root 原样 ——
+    resolve_output_input 按精确匹配放行。
+    """
+    bucket = os.environ.get("TOS_BUCKET", "").strip()
+    mount = (os.environ.get("CURATION_TOS_MOUNT", "").strip() or "/mnt/tos")
+    root = str(deliv_root or "").rstrip("/")
+    m = mount.rstrip("/")
+    if bucket and root.startswith(m + "/"):
+        rel = root[len(m) + 1:]
+        return f"tos://{bucket}/{rel}"
+    return root
+
+
+def resolve_output_input(value: str, deliv_root: str) -> dict:
+    """「输出 TOS 路径」框的值 → 写出方案。规则与 resolve_root_input 同族:
+    → {"kind": "mount", "path": deliv_root}:值 == 交付根的 tos:// 写法或
+      交付根路径本身 → 挂载直写(裁决闭环全功能,与今天一致);
+    → {"kind": "tos", "url"}:别的合法 tos:// URL → CLI 走 stage_out;
+    → 其余抛 ValueError。
+    """
+    s = str(value or "").strip().rstrip("/")
+    if not s:
+        raise ValueError("还没填输出 TOS 路径(tos://桶名/交付根前缀)")
+    home = home_output_url(deliv_root).rstrip("/")
+    droot = str(deliv_root or "").rstrip("/")
+    if s in (home, droot) or (not s.startswith("tos://") and droot
+                              and os.path.realpath(s) == os.path.realpath(droot)):
+        return {"kind": "mount", "path": deliv_root}
+    if s.startswith("tos://"):
+        err = tos_url_error(s, "输出 TOS 路径")
+        if err:
+            raise ValueError(err)
+        return {"kind": "tos", "url": s}
+    raise ValueError("输出只认 tos://桶/前缀 形式的地址(或本实例的交付根);"
+                     "任意本地路径不收")
+
+
+def tos_list_datasets(root_url: str, region: str | None = None, *,
+                      store=None) -> list[str]:
+    """陌生桶的数据集清单:root_url 前缀下第一层子目录名(排序去重)。
+
+    只列名字不深验 —— 结构对不对留到开跑时校验;列表阶段为每个候选去读 meta
+    会把一次 list 变成几十次 GET。网络调用:调用方负责把异常变成界面上的
+    一句话(不许让 Gradio 抛红框)。store 注入供单测。
+    """
+    from .. import tos_store as _ts
+    bucket, prefix = _ts.parse_tos_url(root_url)
+    st = store or _ts.make_store(region)
+    return sorted(set(st.iter_common_prefixes(bucket, prefix)))
+
+
 #: 深链的端点键(2026-08-17 用户拍板:rerun 侧把「Open from Volcengine TOS」
 #: 对话框里选的端点一并传过来)。认两个键名,教训同 DEEPLINK_KEYS:只认一个,
 #: 对方换个写法这边就静默什么都不做 ——"深链没生效"和"深链选错"一样难查。
@@ -917,6 +1144,7 @@ def prefill_plan(wanted: list, sources: list, lister=list_datasets,
 _ARG_SPECS: dict[str, dict[str, str | None]] = {
     "run": {
         "config": "--config", "input": "--input", "output": "--output",
+        "input_region": "--input-region", "output_region": "--output-region",
         "embodiment_id": "--embodiment-id", "max_episodes": "--max-episodes",
         "episodes": "--episodes", "only": "--only", "skip": "--skip",
         "vlm_backend": "--vlm-backend", "vlm_endpoint": "--vlm-endpoint",

@@ -363,85 +363,108 @@ def _src_dropdowns(app):
 
 
 def test_single_source_still_shows_source_dropdown(delivery, tmp_path):
-    """★单桶部署也**始终显示**「数据集根目录」下拉,只有一项且默认选中它。
-
-    2026-08-17 用户拍板(推翻同日早先的"单源隐藏"方案):要在界面上随时看得见
-    数据来自哪个桶,且与以后多桶时长得一模一样。防:好心帮用户"省掉"这个下拉,
-    单/多源两副面孔,演示时看不到二级选择。
-    (裁决侧那个例外:它与 rj_ds 同步显隐 —— 交付记了源路径时连数据集下拉都
-    不出现,这时摆一个不起作用的桶下拉反而误导。)
+    """★单桶部署:跑质检侧是「数据集 TOS 路径」文本框(2026-08-20 融合改版,
+    取代原「数据集根目录」下拉),始终可见、默认预填本桶地址 —— "随时看得见
+    数据来自哪个桶"(2026-08-17 用户拍板)这条以"框里永远写着地址"的形态延续。
+    裁决侧仍是「数据集根目录」下拉(它选的是本地源数据集,不收 URL)。
     """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
-    props = _src_dropdowns(build_app(delivery, data_root=str(tmp_path / "ds")))
-    assert len(props) == 2                       # 跑质检 + 裁决各一个,都建了
-    shown = [p for p in props if p.get("visible", True)]
-    assert shown, "跑质检侧的「数据集根目录」下拉必须始终可见"
-    assert all(p.get("value") == "默认" for p in props)   # 默认选中唯一那项
+    app = build_app(delivery, data_root=str(tmp_path / "ds"))
+    cfg = json.loads(json.dumps(app.get_config_file(), default=str))
+    tin = [c["props"] for c in cfg["components"]
+           if c["props"].get("label") == "数据集 TOS 路径"]
+    assert len(tin) == 1 and tin[0].get("visible", True)
+    # 合成单桶(桶名未知)→ 默认值退回 datasets_path 原样(白名单精确匹配放行)
+    assert str(tin[0].get("value") or "").endswith("ds")
+    assert len(_src_dropdowns(app)) == 1          # 裁决侧那个还在
 
 
 def test_multi_source_shows_dropdown_and_wires_it(delivery, tmp_path):
-    """配了多个 TOS 桶 → 跑质检那侧的「数据集根目录」下拉在(裁决侧仍等"要用户自己
-    选数据集"时才随 rj_ds 露面),且两处下拉都真接进了回调的输入。
+    """配了多个 TOS 桶(2026-08-20 融合改版):路径框默认预填第一桶的
+    tos:// 地址,第二桶的地址经 resolve_root_input 对表到它的挂载 —— 多桶
+    能力以"换个地址就换桶"的形态延续;路径框真接进了回调的输入。
 
-    防:下拉摆出来了却没接线(同 test_probe_buttons_are_wired 那次:截图里
-    它长得跟能用的一样,选了却不生效)。
+    防:控件摆出来了却没接线(同 test_probe_buttons_are_wired 那次)。
     """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
-    cfg_path = _site_yaml(tmp_path, _two_sources(tmp_path))
+    srcs = _two_sources(tmp_path)
+    cfg_path = _site_yaml(tmp_path, srcs)
     app = build_app(delivery, config_path=cfg_path)
-    props = _src_dropdowns(app)
-    assert len(props) == 2
-    assert any(p.get("visible") for p in props)          # 跑质检那侧露出来了
-    names = json.dumps(props, ensure_ascii=False)
-    assert "备用桶" in names and "默认" in names
-    src_ids = {i for i, c in app.blocks.items()
-               if getattr(c, "label", None) == "数据集根目录"}
+    cfg = json.loads(json.dumps(app.get_config_file(), default=str))
+    tin = [c["props"] for c in cfg["components"]
+           if c["props"].get("label") == "数据集 TOS 路径"]
+    assert len(tin) == 1
+    assert tin[0].get("value") == "tos://curation/datasets"   # 第一桶
+    # 第二桶地址对表到它的挂载(快路径),陌生地址走直连
+    bks = runner.tos_buckets(cfg_path, "/x")
+    assert runner.resolve_root_input("tos://bucketa/prefix", bks) \
+        == {"kind": "mount", "path": srcs[1]["datasets_path"], "bucket": bks[1]}
+    assert runner.resolve_root_input("tos://strange/prefix", bks)["kind"] == "tos"
+    tin_ids = {i for i, c in app.blocks.items()
+               if getattr(c, "label", None) == "数据集 TOS 路径"}
     used = {getattr(c, "_id", None) for fn in app.fns.values()
             for c in (getattr(fn, "inputs", []) or [])}
-    assert src_ids and src_ids <= used, "有「数据集根目录」下拉没接进任何回调"
+    assert tin_ids and tin_ids <= used, "「数据集 TOS 路径」框没接进任何回调"
 
 
 def test_deeplink_switches_source_dropdown_to_matching_bucket(delivery, tmp_path,
                                                               monkeypatch):
-    """★深链预选要同时落到**两级**:命中 TOS 桶 B 的数据集时,「TOS 桶」下拉的值
-    也切到 B,不只是选中数据集。
+    """★深链(tos:// 完整地址)要同时落到**三处**:路径框切到根前缀、数据集
+    下拉预选、说明行跟着换 —— 不许"数据集选上了、路径框还停在默认桶"
+    (界面显示的桶和实际要跑的桶对不上,2026-08-17 用户点名要咬住的静默错)。
 
-    防:数据集选上了、TOS 桶下拉还停在默认 —— 界面显示的桶和实际要跑的桶对不上,
-    是新的一类静默错(用户 2026-08-17 点名要咬住)。
-    直接调 app.load 上挂的那个预填回调(按输出组件 = 根下拉+数据集+两列说明、
-    且**无输入组件**定位:切根目录的 .input 回调有输入,只有预填是挂在
-    app.load 上零输入的),不起服务器;gr.Info/Warning 替换成空操作。
+    2026-08-20 融合改版:known 桶 → 路径框=根前缀 URL、挂载清单;陌生桶不再
+    整链拒绝(允许直连是本次融合的拍板),路径框照样切过去、清单走网络列
+    (测试环境没凭证 → 列表失败落到说明行的 ⚠️ 一句话,数据集下拉为空+警告
+    点名没找到 —— 全程无红框、无静默)。
+    直接调 app.load 上挂的预填回调(零输入、输出 5 个:路径框/数据集/地区/
+    两列说明),不起服务器;gr.Info/Warning 替换成记录器。
     """
     pytest.importorskip("gradio")
     import gradio as gr
     from curation.ui.app import build_app
+    warned = []
     monkeypatch.setattr(gr, "Info", lambda *a, **k: None)
-    monkeypatch.setattr(gr, "Warning", lambda *a, **k: None)
+    monkeypatch.setattr(gr, "Warning", lambda m, *a, **k: warned.append(str(m)))
+    # ⚠️ 单测不许碰真网络:pod 上 TOS 凭证 env 齐全,不拦的话陌生桶那条分支
+    # 会真去 list 一个不存在的桶 —— 网络一抖整个测试文件吊死(实测 5 分钟)。
+    # 换成确定性假件:直连列表一律"列不出",正好也是无凭证环境的真实归宿。
+    monkeypatch.setattr(runner, "tos_list_datasets",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            RuntimeError("单测环境不出网")))
     cfg_path = _site_yaml(tmp_path, _two_sources(tmp_path))
     app = build_app(delivery, config_path=cfg_path)
     fns = [f for f in app.fns.values()
            if not (getattr(f, "inputs", []) or [])
            and [getattr(c, "label", None)
-                for c in (getattr(f, "outputs", []) or [])][:2]
-           == ["数据集根目录", "数据集"]
-           and len(getattr(f, "outputs", []) or []) == 4]
-    assert len(fns) == 1, "应恰有一个输出为(根下拉, 数据集, 两列说明)的预填回调"
+                for c in (getattr(f, "outputs", []) or [])][:3]
+           == ["数据集 TOS 路径", "数据集", "数据集地区"]
+           and len(getattr(f, "outputs", []) or []) == 5]
+    assert len(fns) == 1, "应恰有一个输出为(路径框, 数据集, 地区, 两列说明)的预填回调"
 
-    class Req:                                   # 只需 query_params 一个属性
-        query_params = {"dataset": "tos://bucketa/prefix/only_b"}
+    class Req:                                   # 新契约:完整地址 + 地区
+        query_params = {"dataset": "tos://bucketa/prefix/only_b",
+                        "region": "cn-beijing"}
 
-    src_upd, ds_upd, src_note, _ds_note = fns[0].fn(Req())
-    assert src_upd.get("value") == "备用桶"       # TOS 桶那一级切过去了
+    tin_upd, ds_upd, rg_upd, src_note, _ds_note = fns[0].fn(Req())
+    assert tin_upd.get("value") == "tos://bucketa/prefix"     # 路径框切过去了
     assert ds_upd.get("value") == ["only_b"]
-    # 两列说明跟着切过去的根走:值换了、说明还是上一个根的 = 两处自相矛盾
-    assert src_note == f"挂载路径:{runner.tos_buckets(cfg_path, '/x')[1]['datasets_path']}"
-    # 桶不认识时两级都不动(且上面的 Warning 已被替换,真实现里必有提示可发)
-    class Req2:
+    assert rg_upd.get("value") == "cn-beijing"
+    # 说明行跟着切过去的根走(备用桶只配了挂载,没配端点)
+    assert src_note == ("挂载路径:"
+                        f"{runner.tos_buckets(cfg_path, '/x')[1]['datasets_path']}")
+
+    class Req2:                                  # 陌生桶:切过去 + 直连说明
         query_params = {"dataset": "tos://strange/prefix/demo_v2"}
-    src2, ds2, note2, _n2 = fns[0].fn(Req2())
-    assert "value" not in src2 and "value" not in ds2 and "value" not in note2
+    warned.clear()
+    tin2, ds2, _rg2, note2, ds_note2 = fns[0].fn(Req2())
+    assert tin2.get("value") == "tos://strange/prefix"
+    assert str(note2).startswith("TOS 直连:")
+    assert ds2.get("value") == [] and ds2.get("choices") == []
+    assert any("demo_v2" in w for w in warned), "链接指的名字没找到必须点名"
+    assert "⚠️" in str(ds_note2), "列不出清单要落到说明行,不许静默"
 
 
 def test_single_source_dataset_choices_match_old_data_root(delivery, tmp_path):
@@ -678,8 +701,9 @@ def test_dataset_pickers_carry_no_info_and_notes_moved_below(delivery, tmp_path)
     app = build_app(delivery, config_path=cfg_path)
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     picked = [c["props"] for c in cfg["components"]
-              if c["props"].get("label") in {"数据集根目录", "数据集", "原始数据集"}]
-    assert len(picked) == 4          # 跑质检(根+数据集)+ 裁决(根+原始数据集)
+              if c["props"].get("label") in {"数据集 TOS 路径", "数据集根目录",
+                                             "数据集", "原始数据集"}]
+    assert len(picked) == 4      # 跑质检(路径框+数据集)+ 裁决(根+原始数据集)
     assert all(not p.get("info") for p in picked), "下拉不许再带 info="
     notes = {c["props"].get("elem_id"): c["props"] for c in cfg["components"]
              if c["props"].get("elem_id") in {"rn-src-note", "rn-ds-note",
@@ -781,13 +805,13 @@ def test_switching_root_clears_stale_notes_instead_of_leaving_them(delivery,
            and [getattr(c, "elem_id", None)
                 for c in (getattr(f, "outputs", []) or [])]
            == ["rn-src-note", None, "rn-ds-note"]]
-    assert fns, "没找到切根目录的回调(输出应为 根说明/数据集下拉/数据集说明)"
-    fn = fns[0].fn
+    assert fns, "没找到切根路径的回调(输出应为 根说明/数据集下拉/数据集说明)"
+    fn = fns[0].fn                       # 2026-08-20 起 = _root_changed(url, region)
 
-    note_a, _ds_a, ds_note_a = fn("默认")
+    note_a, _ds_a, ds_note_a = fn("tos://curation/datasets", "")
     assert "端点:" in note_a and "挂载路径:" in note_a, "配了端点的根该印两行"
 
-    note_b, _ds_b, ds_note_b = fn("备用桶")
+    note_b, _ds_b, ds_note_b = fn("tos://bucketa/prefix", "")
     assert isinstance(note_b, str) and "读取端点" not in note_b, \
         "没配端点的根:端点那行必须消失,不许残留上一个根的"
     assert note_b == f"挂载路径:{srcs[1]['datasets_path']}"
@@ -1028,17 +1052,18 @@ def test_info_line_endpoint_always_instance_config_not_link(delivery, tmp_path,
     fns = [f for f in app.fns.values()
            if not (getattr(f, "inputs", []) or [])
            and [getattr(c, "label", None)
-                for c in (getattr(f, "outputs", []) or [])][:2]
-           == ["数据集根目录", "数据集"]
-           and len(getattr(f, "outputs", []) or []) == 4]
+                for c in (getattr(f, "outputs", []) or [])][:3]
+           == ["数据集 TOS 路径", "数据集", "数据集地区"]
+           and len(getattr(f, "outputs", []) or []) == 5]
     assert len(fns) == 1
 
-    class Req:                       # 深链带了另一地域的端点
+    class Req:                       # 深链带了另一地域的端点(旧契约键,仍兼容)
         query_params = {"dataset": "tos://bucketa/prefix/only_b",
                         "endpoint": "tos-ap-southeast-1.volces.com"}
 
-    src_upd, ds_upd, src_note, _ = fns[0].fn(Req())
-    assert src_upd.get("value") == "备用桶" and ds_upd.get("value") == ["only_b"]
+    src_upd, ds_upd, _rg, src_note, _ = fns[0].fn(Req())
+    assert src_upd.get("value") == "tos://bucketa/prefix"
+    assert ds_upd.get("value") == ["only_b"]
     # 说明行 = 本实例配置的端点 + 挂载路径;链接的端点一个字不进说明行
     assert src_note == ("端点:tos-cn-beijing.ivolces.com\n"
                         f"挂载路径:{srcs[1]['datasets_path']}")
