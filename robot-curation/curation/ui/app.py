@@ -878,7 +878,15 @@ def reports_prefetch_head(reports_href: str) -> str:
             f"f.src='{reports_href}';f.style.display='none';"
             "f.setAttribute('aria-hidden','true');"
             "f.onload=function(){setTimeout(function(){f.remove();},15000);};"
-            "document.body.appendChild(f);},4000);});})();</script>")
+            "document.body.appendChild(f);},4000);});"
+            # 报告页的「终端」跳转壳带 #term 锚点过来:落地后自动选中终端页签
+            # (按钮文本按 \u 转义匹配,原因同哨兵注释)
+            "if(location.hash==='#term'){window.addEventListener('load',"
+            "function(){setTimeout(function(){"
+            "var bs=document.querySelectorAll('#topnav button');"
+            "for(var i=0;i<bs.length;i++){if(bs[i].textContent.trim()==="
+            "'\u7ec8\u7aef'){bs[i].click();break;}}},300);});}"
+            "})();</script>")
 
 
 def presentation(terminal: bool = False, root: str = "") -> dict:
@@ -1601,7 +1609,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
     review_dir = 审片站根目录(与 `/review` 静态路由同一个),Episodes 页的视频
     来源链第一档指着它;不给就只剩交付集内的视频。
     console_href = 页眉「← 返回任务台」链接(create_asgi_app 传;不给不渲染)。
-    terminal / data_root:已随任务台迁走,参数保留只为老调用方不炸,值被忽略。
+    terminal = 是否渲染「终端」跳转页签(终端本体在任务台应用里)。
+    data_root:已随任务台迁走,参数保留只为老调用方不炸,值被忽略。
     """
     import gradio as gr
 
@@ -1843,15 +1852,20 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
     # theme/css/head 不在这里传:gradio 6 把它们从 Blocks() 挪到了 launch()/
     # mount_gradio_app()(传给 Blocks 只换来一条 UserWarning,值被丢掉)。见 presentation()。
     with gr.Blocks(title="Robot Data Curation") as app:
-        gr.Markdown("# 机器人数据 Curation 质检报告")
-        if console_href:
-            # 回任务台的普通链接(2026-08-19 拆分后两个页面间只靠链接/跳转往来)
-            gr.Markdown(f"[← 返回任务台]({console_href})", elem_id="console-link")
+        # 标题与首页逐字相同:两个页面要长得像同一套 UI(2026-08-19 用户定),
+        # 区别只在顶层页签的高亮位置,导航靠页签自己,不放"返回xx"的文字链接。
+        gr.Markdown("# 机器人数据 Curation 质检台")
         with contextlib.ExitStack() as shell:
-            # 顶层壳原样保留(#topnav 样式、report_tab.select 触发器都锚着它),
-            # 只是本应用里只剩「质检报告」一个页签 —— 任务台与终端 2026-08-19
-            # 搬去了 build_console_app;报告页子页签的顺序与内容一个字没动。
+            # 顶层壳原样保留(#topnav 样式、report_tab.select 触发器都锚着它)。
+            # 三个页签与首页一一对应:「任务台」「终端」是整页跳转的壳(js
+            # 钩子,与首页的「质检报告」页签同一手法),「质检报告」是本体。
             shell.enter_context(gr.Tabs(selected="report", elem_id="topnav"))
+            if console_href:
+                with gr.Tab("任务台", id="console") as _con_jump:
+                    gr.Markdown("正在打开任务台…")
+                _con_jump.select(
+                    None, None, None,
+                    js=f"() => {{ window.location.href = '{console_href}'; }}")
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
             # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
             # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。
@@ -2465,6 +2479,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             app.load(_pick_delivery, picker, [run_pick, *outs])
 
             report_ctx.close()          # 报告页到此为止,下面的页签是它的兄弟
+            if terminal and console_href:
+                # 终端住在任务台应用里;这里只是同名跳转壳,#term 锚点让首页
+                # 落地后自动选中终端页签(首页 head 脚本认这个锚点)。
+                with gr.Tab("终端", id="term") as _term_jump:
+                    gr.Markdown("正在打开终端…")
+                _term_jump.select(
+                    None, None, None,
+                    js=f"() => {{ window.location.href = '{console_href}#term'; }}")
     return app
 
 
@@ -2511,7 +2533,7 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
                                 terminal=terminal, review_dir=review_dir,
                                 data_root=data_root, reports_href=_reports_href)
     blocks = build_app(delivery, config_path, probe_timeout,
-                       review_dir=review_dir,
+                       terminal=terminal, review_dir=review_dir,
                        console_href=f"{root}/" if root else "/")
     api = FastAPI()
 
