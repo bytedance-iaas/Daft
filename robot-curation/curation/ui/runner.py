@@ -415,11 +415,10 @@ def suggest_delivery_name(dataset: str, now: datetime.datetime | None = None) ->
 # 丢掉只剩最后一段 —— 两个桶各有一个同名数据集时,会在默认桶里找到同名的那个、
 # 一声不响跑错数据(不报错不提示,最坏的一类 bug)。这一节做两件事:
 # ① TOS 桶从站点配置的白名单里选(tos_buckets/bucket_path):界面只传桶的内部
-#    标识,永不传路径,resolve_under 那条安全边界一个字不松;
-# ② 深链解析保留桶名并严格对表(parse_dataset_ref/prefill_plan):桶对不上就
-#    明说,**绝不回落到默认桶里找同名的**。
-# 目前只有一个桶,挂载层不动:配置没写 tos_buckets 时合成单桶,单桶部署的界面
-# 与行为和只有 --data-root 的今天一致。
+#    标识,永不传路径,resolve_under 那条安全边界一个字不松。
+# 2026-08-19 纯 TOS 直连后,本节只剩「执行人工裁决」页在用(交付没记源路径时
+# 让用户从本地根目录里选);跑质检页与深链都改走 tos:// URL,不再对表。
+# 配置没写 tos_buckets 时合成单桶,行为与只有 --data-root 时一致。
 # 叫法演进(2026-08-17 用户两次当面纠偏,都别回退):
 # ① 「数据源」→「TOS 桶」:抽象过头零信息量;配置键同步改 tos_buckets
 #   (当天新加、尚未部署,零迁移成本;旧键 data_sources 出现要明确报错,不静默)。
@@ -464,7 +463,7 @@ def _bucket_prefix(item: dict, path: str) -> tuple:
 
     优先级(2026-08-17 定):① 显式 `tos_prefix`;② 由 `datasets_path` 相对
     `mount_root` 推导 —— 推导优于再写一遍,两处各写一份迟早漂移;③ 都没有 →
-    None(前缀**未知**,不许猜:深链对表对它按"没法核对"拒,见 prefill_plan)。
+    None(前缀**未知**,不许猜;如今只影响下拉的显示文本)。
     datasets_path 不在 mount_root 之下 = 配置写错 → 同样按未知处理并点名,
     别算出个负数层级的鬼东西。纯字符串比较,不碰文件系统(配置解析要能在
     没挂载的机器上跑)。
@@ -648,266 +647,28 @@ def deeplink_values(qp) -> tuple:
     return out, present
 
 
-#: 深链的端点键(2026-08-17 用户拍板:rerun 侧把「Open from Volcengine TOS」
-#: 对话框里选的端点一并传过来)。认两个键名,教训同 DEEPLINK_KEYS:只认一个,
-#: 对方换个写法这边就静默什么都不做 ——"深链没生效"和"深链选错"一样难查。
-#: 可选参数:带不带都要能跑(rerun 侧什么时候加都不会坏这边)。
-ENDPOINT_KEYS = ("endpoint", "tos_endpoint")
-
-#: 消毒后主机名的字符集:字母数字与 . -,首尾必须字母数字(主机名合法字符,
-#: 全小写后比)。长度上限 253 = DNS 主机名上限。
-_ENDPOINT_HOST_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?")
-
-#: 主机名里认得出的地域段:cn-<xxx>(可带序号,如 cn-north-1)与
-#: ap/us/eu-<xxx>-<n> 这类。认不出就是 None,调用方**跳过地域比对**,不许硬凑。
-_REGION_RE = re.compile(
-    r"(?<![a-z0-9])((?:cn|ap|us|eu)-[a-z]+(?:-\d+)?)(?![a-z0-9])")
+#: 深链的地区键(2026-08-19 与 rerun 侧同步定的契约):rerun 的 Diagnose 按钮
+#: 带 `?dataset=tos://…&region=cn-beijing` 跳过来,dataset 与 region 一一对应。
+#: 旧的 endpoint/tos_endpoint 参数与「桶接入对表」(parse_dataset_ref/
+#: prefill_plan/sanitize_endpoint 一族)已随静态挂载一起退役:纯 TOS 直连下
+#: 没有"接入了哪些桶"的概念,URL 直接进输入框,可达性由部署凭证决定。
+REGION_KEY = "region"
 
 
-def sanitize_endpoint(raw) -> str | None:
-    """不可信的端点串 → 干净的主机名;消不干净返回 None(当没给)。
+def deeplink_region(qp) -> tuple:
+    """query 参数 → (合法的地区串|None, 有没有出现 region 键)。
 
-    ⚠️ 这个值来自 URL query,是**不可信输入**,且下游的提示语走 Markdown 组件
-    渲染 —— 原样回显就是注入面。所以入界即消毒:只取主机名(丢 scheme/凭据/
-    端口/路径/query),全小写,长度 ≤253,字符集只允许主机名合法字符;任何一步
-    过不了都返回 None,**绝不把原样串透传出去**。
-
-    ⚠️ 消毒后的主机名也**只用于显示与诊断,绝不用于读取任何数据**:本系统的
-    读取路径只有"已挂载的本地目录"这一条(resolve_under 白名单拼路径)。谁要
-    把这个值接进任何 fetch/请求,等于让 URL 参数指挥我们去连任意主机(SSRF),
-    停手。
+    地区是标量,多值时取第一个合法的(确定规则)。值来自 URL,是不可信输入:
+    只认 _TOS_REGION_RE 的字符集(小写字母数字与中划线),过不了就当没给 ——
+    它只用来预选地区下拉,绝不进任何请求路径,坏值也回显不到界面上。
     """
-    s = str(raw or "").strip()
-    if not s or len(s) > 1024:          # 先掐总长,别拿超长串喂解析器
-        return None
-    from urllib.parse import urlsplit
-    try:
-        # 没写 scheme 的裸 host(rerun 端点下拉里就是裸主机名)补 // 走同一条
-        # netloc 解析;.hostname 顺手丢掉 user:pass@ 与 :端口
-        host = urlsplit(s if "://" in s else "//" + s).hostname
-    except ValueError:                  # 形如 [x](… 的串会被当坏 IPv6 字面量
-        return None
-    host = str(host or "").strip().lower()
-    if not host or len(host) > 253 or not _ENDPOINT_HOST_RE.fullmatch(host):
-        return None
-    return host
-
-
-def endpoint_region(host) -> str | None:
-    """主机名 → 地域段(如 tos-cn-beijing.ivolces.com → cn-beijing);认不出
-    返回 None。宽容且不猜:只认 _REGION_RE 那几族写法,别的形态一律 None。"""
-    m = _REGION_RE.search(str(host or "").lower())
-    return m.group(1) if m else None
-
-
-def deeplink_endpoint(qp) -> tuple:
-    """query 参数 → (消毒后的端点主机名|None, 有没有出现端点键)。
-
-    端点是标量不是清单,多键/多值并存时按 ENDPOINT_KEYS 的顺序取**第一个消得
-    干净的** —— 确定规则,且前面的值脏、后面的干净时不丢可用信息。第二个返回
-    值给界面提示"链接里的端点看不懂,已忽略"用(键出现了就不许静默无动作)。
-    qp 兼容 starlette 的 QueryParams(getlist)与普通 dict(测试用)。
-    """
-    present = False
-    for key in ENDPOINT_KEYS:
-        vals = (qp.getlist(key) if hasattr(qp, "getlist")
-                else ([qp[key]] if key in qp else []))
-        if vals:
-            present = True
-        for raw in vals:
-            host = sanitize_endpoint(raw)
-            if host:
-                return host, True
-    return None, present
-
-
-def _endpoint_conflict_note(src: dict, link_host: str) -> str | None:
-    """链接端点 vs 本实例配置端点的地域比对;没矛盾(或没法比)返回 None。
-
-    - 桶名全局唯一,同名桶不可能在两个地域 → 地域不同 = 链接与本站配置**必有
-      一错**,要点名并把两个地域都印出来;但**只提示,不改变选中行为**;
-    - 同地域只是内外网域不同(volces vs ivolces)是良性的:同一个桶、同一份
-      数据,只是网络路径不同,不提示;
-    - 任一侧地域认不出(endpoint_region → None)→ 跳过比对,不硬凑。
-    """
-    cfg_host = sanitize_endpoint(src.get("endpoint"))
-    if not cfg_host or cfg_host == link_host:
-        return None
-    link_region, cfg_region = endpoint_region(link_host), endpoint_region(cfg_host)
-    if not link_region or not cfg_region or link_region == cfg_region:
-        return None
-    return (f"链接给的端点({link_host},地域 {link_region})与本实例配置的"
-            f"端点({cfg_host},地域 {cfg_region})不在同一地域 —— 桶名全局"
-            "唯一,同名桶不可能同时在两个地域,链接和本站配置必有一处有误。"
-            "本次仍按本实例配置读取,预选不受影响")
-
-
-def parse_dataset_ref(raw: str) -> dict:
-    """深链里的一个数据集引用 → {"bucket": 桶名|None, "prefix": 桶内前缀|None,
-    "dataset": 名} 或 {"error": 给用户看的那句话}。
-
-    两种写法都吃(rerun 侧改造前后各一种):裸名字(桶未知 → 回默认桶找,
-    兼容今天的行为;prefix 一并 None)与完整 `tos://桶/前缀/数据集`。
-    解析要稳且**不许猜**:
-    - 桶名按 URL host 规则大小写不敏感(统一小写再比);前缀与数据集名大小写
-      敏感(对象存储的 key 就是大小写敏感的);
-    - prefix = 去掉最后一段后的中间路径,规范化成无首尾斜杠;数据集直接放在
-      桶根时是空串 —— 空串是"确知在桶根",None 是"根本没给 URL",两回事;
-    - 结尾多斜杠容忍(rerun 发来的就是带尾斜杠的;最后一个非空段才是数据集名);
-    - %20 之类的 URL 编码先解码;解码后过不了 safe_name(空格、藏进来的 `/`)
-      一律当无法解析并如实提示 —— 绝不猜一个"差不多"的名字。
-    """
-    s = str(raw or "").strip()
-    if "://" not in s:
-        return {"bucket": None, "prefix": None, "dataset": s}
-    if not s.lower().startswith("tos://"):
-        return {"error": f"只认识 tos:// 开头的数据集链接,这个解析不了:{s}"}
-    from urllib.parse import unquote, urlsplit
-    try:
-        parts = urlsplit(s)
-    except ValueError:
-        return {"error": f"数据集链接解析不了:{s}"}
-    bucket = unquote(parts.netloc or "").strip().lower()
-    if not bucket:
-        return {"error": f"链接里没有桶名,解析不了:{s}"}
-    segs = [unquote(x).strip() for x in (parts.path or "").split("/") if x.strip()]
-    if not segs:
-        return {"error": f"链接只有桶名、没有数据集段,不知道要选哪个数据集:{s}"}
-    name = segs[-1]
-    try:
-        safe_name(name)
-    except ValueError as e:
-        return {"error": f"链接里的数据集名不合法({e}),这个链接不处理:{s}"}
-    return {"bucket": bucket, "prefix": "/".join(segs[:-1]), "dataset": name}
-
-
-def prefill_plan(wanted: list, sources: list, lister=list_datasets,
-                 link_endpoint: str | None = None) -> dict:
-    """深链参数 → 预选计划(纯函数,界面只照着渲染)。sources = tos_buckets()
-    的产出(参数名保留 sources:对本函数它就是"可选中的清单")。
-
-    返回 {"source": 桶内部标识|None, "datasets": 预选列表, "choices": 该桶的
-    最新数据集列表, "info": 预选成功的提示语, "notices": 逐条如实说明的警告}。
-    文案里的桶一律用显示文本(bucket_label)—— 用户在下拉里看见的就是它,
-    提示里印内部标识会对不上号。
-
-    三条铁律:
-    ① **桶不认识绝不回落到默认桶里找同名的** —— 本函数存在的理由:两个桶各有
-       一个同名数据集时,静默跑错数据是最坏的一类 bug;
-    ② 裸名字按今天的行为回默认桶(第一个)找,措辞逐字不变(兼容红线);
-    ③ 没预选上任何东西时 notices 必不为空(不许静默无动作)。
-    比对是**桶 + 桶内前缀两级**(2026-08-17 补第二级):只比桶时,
-    `tos://curation/raw/x` 会静默匹配到我们挂的 `datasets/x` —— 和"桶不认识
-    就回落"是同一族的错,只低一层(客户桶里 raw/ 与 curated/ 同名数据集很
-    常见)。本实例前缀未知(配置缺 mount_root/tos_prefix)同样不放行:那是
-    **本站配置不全**,不许因为"不知道"就当对上了。
-    引用分属不同桶时同样不预选并明说:一个下拉一次只能停在一个桶上,
-    替用户挑其中一个就是猜。
-
-    link_endpoint(2026-08-17 加,可选,rerun 深链可能带 `endpoint`/
-    `tos_endpoint`):**必须是 sanitize_endpoint 消毒过的主机名**,且只进提示
-    文案 —— 绝不用于读取任何数据(读取路径只有已挂载的本地目录一条,见
-    sanitize_endpoint 的 SSRF 注记)。三条语义:① 不带 → 措辞与旧版逐字
-    一致;② 桶已接入且与本实例端点地域不同 → 补一条矛盾提示(只提示,不改
-    选中);③ 桶未接入 → "未接入"那句后面补上链接给的端点,让人知道该去哪儿
-    要权限。说明行的「端点:」永远印本实例配置的(bucket_info_line),链接的
-    端点只出现在这两种提示里 —— 那一行回答的是"**我们**从哪儿读",链接给的是
-    "**他们**从哪儿读",混淆就是新的一类假信息。
-    """
-    notices: list[str] = []
-    if not sources:
-        return {"source": None, "datasets": [], "choices": [], "info": "",
-                "notices": ["本站没有配置任何 TOS 桶,链接无法预选"]}
-    listing_cache: dict = {}
-
-    def _list(i: int) -> list:
-        if i not in listing_cache:
-            listing_cache[i] = lister(sources[i]["datasets_path"])
-        return listing_cache[i]
-
-    pairs: list[tuple] = []              # (桶下标, 数据集名)
-    bare_missing: list[str] = []
-    endpoint_checked: set = set()        # 已做过端点地域比对的桶下标
-    for raw in wanted:
-        ref = parse_dataset_ref(raw)
-        if ref.get("error"):
-            notices.append(ref["error"])
-            continue
-        if ref["bucket"] is None:
-            if ref["dataset"] in _list(0):
-                pairs.append((0, ref["dataset"]))
-            else:
-                bare_missing.append(ref["dataset"])
-            continue
-        idx = next((i for i, s in enumerate(sources)
-                    if str(s.get("bucket") or "").strip().lower() == ref["bucket"]),
-                   None)
-        if idx is None:
-            note = (f"链接指向的桶「{ref['bucket']}」未接入本实例,没有预选"
-                    f"「{ref['dataset']}」(不会在默认桶里找同名数据集)")
-            if link_endpoint:
-                # 未接入 + 链接给了端点:补上它,让人知道该去哪个地域要权限。
-                # 没给端点时上面那句逐字不变(兼容红线)。
-                note += f";链接标注的端点是 {link_endpoint}"
-            notices.append(note)
-            continue
-        if link_endpoint and idx not in endpoint_checked:
-            # 桶已接入:链接端点与本实例端点的地域比对,每个桶只提一次
-            # (一条链接带多个同桶数据集时,矛盾是桶级的,不逐条刷屏)
-            endpoint_checked.add(idx)
-            conflict = _endpoint_conflict_note(sources[idx], link_endpoint)
-            if conflict:
-                notices.append(conflict)
-        # 第二级对表:桶内前缀(空串=桶根也是一个明确的前缀,照比)
-        cfg_prefix = sources[idx].get("tos_prefix")
-        _p = lambda p: (f"{p}/" if p else "桶根")   # noqa: E731  文案里的前缀写法
-        if cfg_prefix is None:
-            notices.append(
-                f"桶「{ref['bucket']}」已接入本实例,但本站配置没写清它的桶内"
-                "前缀(tos_buckets 缺 mount_root 或 tos_prefix),没法核对链接"
-                f"指向的「{_p(ref['prefix'])}」—— 没有预选「{ref['dataset']}」。"
-                "这是本站配置不全,请补配置")
-            continue
-        if ref["prefix"] != cfg_prefix:
-            notices.append(
-                f"桶「{ref['bucket']}」已接入本实例,但只接入了"
-                f"「{_p(cfg_prefix)}」,链接指向的「{_p(ref['prefix'])}」没有"
-                f"接入 —— 没有预选「{ref['dataset']}」")
-            continue
-        if ref["dataset"] not in _list(idx):
-            notices.append(f"桶「{ref['bucket']}」的数据集目录里没有"
-                           f"「{ref['dataset']}」(TOS 桶「{bucket_label(sources[idx])}」)")
-            continue
-        pairs.append((idx, ref["dataset"]))
-    if bare_missing:
-        # 裸名字找不到的措辞与旧版逐字一致(数据集根 = 默认桶的目录)
-        notices.append("链接里的数据集在本站找不到:"
-                       f"{', '.join(bare_missing)}"
-                       f"(数据集根 {sources[0]['datasets_path']})")
-    picked = sorted({i for i, _ in pairs})
-    if len(picked) > 1:
-        span = "、".join(bucket_label(sources[i]) for i in picked)
-        notices.append(f"链接里的数据集分属不同 TOS 桶({span}),一次只能预选"
-                       "一个桶 —— 这次没有预选,请手动选择")
-        pairs, picked = [], []
-    if not pairs:
-        if not notices:                  # 兜底:键出现了就不许一声不吭
-            notices.append("链接带了数据集参数但没有可用的值,没有预选")
-        return {"source": None, "datasets": [], "choices": [], "info": "",
-                "notices": notices}
-    idx = picked[0]
-    hits: list[str] = []
-    for _i, n in pairs:
-        if n not in hits:
-            hits.append(n)
-    if idx == 0:                          # 默认桶:提示语与旧版逐字一致
-        info = (f"已按链接选中数据集:{', '.join(hits)}。"
-                "确认参数后点「开始质检」。")
-    else:
-        info = (f"已按链接选中 TOS 桶「{bucket_label(sources[idx])}」的数据集:"
-                f"{', '.join(hits)}。确认参数后点「开始质检」。")
-    return {"source": sources[idx]["name"], "datasets": hits,
-            "choices": _list(idx), "info": info, "notices": notices}
+    vals = (qp.getlist(REGION_KEY) if hasattr(qp, "getlist")
+            else ([qp[REGION_KEY]] if REGION_KEY in qp else []))
+    for raw in vals:
+        s = str(raw or "").strip().lower()
+        if s and _TOS_REGION_RE.match(s):
+            return s, True
+    return None, bool(vals)
 
 
 # ── argv 构造:面板参数 → CLI 命令行 ──────────────────────────────────────
@@ -918,6 +679,7 @@ def prefill_plan(wanted: list, sources: list, lister=list_datasets,
 _ARG_SPECS: dict[str, dict[str, str | None]] = {
     "run": {
         "config": "--config", "input": "--input", "output": "--output",
+        "input_region": "--input-region", "output_region": "--output-region",
         "embodiment_id": "--embodiment-id", "max_episodes": "--max-episodes",
         "episodes": "--episodes", "only": "--only", "skip": "--skip",
         "vlm_backend": "--vlm-backend", "vlm_endpoint": "--vlm-endpoint",
@@ -944,6 +706,71 @@ _FLAGS = {"batch": "--batch", "lite": "--lite", "report_only": "--report-only"}
 #: 每条命令的必填项(缺了直接抛,不让用户等到子进程起来才看见报错)。
 _REQUIRED = {"run": ("input", "output"), "rejudge": ("delivery", "input"),
              "review-page": ("input", "output"), "backends": ()}
+
+
+# ── TOS 直连(2026-08-19 云产品化 MVP)────────────────────────────────────
+#
+# tos:// URL 是**运行时输入**,不过 resolve_under 的本地白名单:它不是容器路径,
+# 寻址不到 pod 的文件系统;安全边界是 tos_store.parse_tos_url 的桶名/前缀语法
+# (拒 '..'、反斜杠),可达范围由部署凭证的桶权限决定。界面不再替用户圈定
+# "接入了哪些桶" —— 这正是要去掉的静态绑定。
+
+_TOS_REGION_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
+
+#: 地区下拉的选项,与 rerun viewer 的 OpenTosModal 完全同值同序
+#: (rerun `open_tos_modal.rs` 的 TOS_REGIONS,抄的是火山控制台建桶页的地区
+#: 列表,2026-08-18)。两个产品的用户在深链间来回跳,不该看到两份地区清单。
+#: 列表可能落后于新开的地区,所以下拉允许自由输入(allow_custom_value)。
+TOS_REGIONS = ("cn-beijing", "ap-southeast-1", "ap-southeast-3",
+               "cn-guangzhou", "cn-hongkong", "cn-shanghai")
+
+#: 地区的中文名 = 火山控制台建桶页的叫法(2026-08-19 用户给的截图逐字对照)。
+#: 下拉显示「中文名 (代码)」,**值仍是代码** —— 后端/CLI/深链/日志全用代码,
+#: 中文只进眼睛不进数据。
+TOS_REGION_NAMES = {
+    "cn-beijing": "华北2(北京)",
+    "ap-southeast-1": "亚太东南(柔佛)",
+    "ap-southeast-3": "亚太东南(雅加达)",
+    "cn-guangzhou": "华南1(广州)",
+    "cn-hongkong": "中国香港",
+    "cn-shanghai": "华东2(上海)",
+}
+
+
+def tos_region_choices() -> list:
+    """地区下拉的 (显示文本, 值) 列表。没有中文名的代码(将来新地区经自由输入
+    进来)原样显示,不编中文。"""
+    return [(f"{TOS_REGION_NAMES[r]} ({r})" if r in TOS_REGION_NAMES else r, r)
+            for r in TOS_REGIONS]
+
+
+def default_tos_region() -> str:
+    """地区下拉的缺省值 = 部署所在地区(与 rerun 同规则:TOS_REGION 显式声明
+    优先,否则从部署端点 TOS_ENDPOINT 的主机名推导,都没有按 cn-beijing)。"""
+    explicit = os.environ.get("TOS_REGION", "").strip()
+    if explicit:
+        return explicit
+    from ..tos_store import region_from_endpoint
+    return (region_from_endpoint(os.environ.get("TOS_ENDPOINT", ""))
+            or "cn-beijing")
+
+
+def tos_url_error(url: str, field: str) -> str:
+    """tos:// URL 的开跑前校验;通过返回空串,不通过返回给用户看的那句话。"""
+    try:
+        from ..tos_store import parse_tos_url
+        parse_tos_url(url)
+    except ValueError as e:                    # TosUrlError 是 ValueError 子类
+        return f"{field}:{e}"
+    return ""
+
+
+def tos_region_error(region: str, field: str) -> str:
+    """地区写法校验;空串合法(按部署端点 / TOS_REGION 推导)。"""
+    s = str(region or "").strip()
+    if s and not _TOS_REGION_RE.match(s):
+        return f"{field}的地区写法不对:{s!r}(形如 cn-beijing / ap-southeast-1)"
+    return ""
 
 
 def _check_module_list(value: str, field: str) -> str:
