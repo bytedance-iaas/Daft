@@ -1217,6 +1217,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         return v["page"], v["note"], v["pos"], multi, multi, v["cards"]
 
     def _load(path):
+        # 直连批次(2026-08-20 阶段4):值是完整 tos:// URL → 先懒镜像到本地
+        # 缓存(报告/明细/裁决片段,数据集本体不下载),再让下面的加载原样吃
+        # 缓存路径 —— 读端代码零改动。镜像失败落到 load_error 那条路,整页
+        # 明说读不到,不静默
+        if str(path or "").startswith("tos://"):
+            try:
+                path = runner.mirror_run(str(path),
+                                         _rp_src["region"] or None)
+            except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
+                gr.Warning(f"镜像这份交付失败:{type(e).__name__}: "
+                           f"{str(e)[:120]}")
+                path = ""
         # 先把下拉里的值还原成真正的目录(手输半截字的情形,见 resolve_delivery);
         # 还原不了的照旧交给 load_delivery,它会挂 load_error 让整页明说读不到
         m = load_delivery(resolve_delivery(path, discover_deliveries(delivery)))
@@ -2059,6 +2071,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。
             report_ctx = shell.enter_context(contextlib.ExitStack())
             report_tab = report_ctx.enter_context(gr.Tab("质检报告", id="report"))
+            # ── 交付根直连(2026-08-20 阶段4,纯新增一行;用户拍板:交付在哪个
+            #    桶,报告页就在哪看 —— 报告和交付不焊死在本实例的桶上)。默认
+            #    预填本实例交付根的 tos:// 写法 → 默认体验与之前逐字节等价
+            #    (挂载直读);改填陌生桶 → 列交付/批次,打开时懒镜像到本地缓存。
+            #    ⚠️ 红线自查:报告页那套子页签零改动,这行在页签外的选择区。──
+            _rp_src = {"region": ""}     # 直连地区,懒镜像与列表共用(闭包态)
+            with gr.Row():
+                rp_root = gr.Textbox(label="交付根 TOS 路径", scale=4,
+                                     value=runner.home_output_url(_deliv_root),
+                                     placeholder="tos://桶名/交付根前缀")
+                rp_rg = gr.Dropdown(choices=runner.tos_region_choices(),
+                                    value=runner.default_tos_region(),
+                                    label="地区", scale=1,
+                                    allow_custom_value=True, interactive=True)
+                with gr.Column(scale=7, min_width=160):
+                    rp_note = gr.Markdown("", elem_classes=["field-note"])
             with gr.Row():
                 # 文案一句话就够(2026-08-13 用户:"这种文字根本不应该给客户看")。
                 # 「重新加载」按钮已撤:切到本页就重扫一次盘(见下面的 select),
@@ -2531,6 +2559,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 是 2026-08-14 改布局时的硬要求,别人的旧交付不许因为我们改了目录形状
                 就打不开。
                 """
+                if str(path or "").startswith("tos://"):
+                    # 直连交付(2026-08-20 阶段4):批次列表走 tos 一层列,
+                    # 值 = 完整 tos:// URL,_load 收到后自己懒镜像
+                    try:
+                        rc = runner.tos_run_choices(
+                            str(path), _rp_src["region"] or None)
+                    except Exception as e:  # noqa: BLE001
+                        gr.Warning(f"列不出该交付下的批次:"
+                                   f"{type(e).__name__}: {str(e)[:120]}")
+                        rc = []
+                    sel = rc[0][1] if rc else ""
+                    return (gr.update(choices=rc, value=sel or None),
+                            *_load(sel))
                 d = resolve_delivery(path, discover_deliveries(delivery))
                 rc = run_choices(d)
                 sel = resolve_run(d)
@@ -2543,6 +2584,44 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # visible 补丁偶尔被冲掉。.input 只认用户动作,单写者,竞态整类消失。
             picker.input(_pick_delivery, picker, [run_pick, *outs])
             run_pick.input(_load, run_pick, outs)
+
+            def _rp_root_changed(url, region):
+                """交付根失焦/回车/切地区 → (交付下拉, 说明)。
+
+                本实例交付根(挂载)→ 现有扫描,行为与之前逐字节等价;陌生桶 →
+                tos 一层列交付。**只换选项不自动加载**(与 _picker_tick 同一条
+                纪律:内容重载会与用户当下的点击并发打架),用户点中哪份再镜像。
+                """
+                _rp_src["region"] = str(region or "").strip()
+                s = str(url or "").strip().rstrip("/")
+                home = runner.home_output_url(_deliv_root).rstrip("/")
+                if not s or s in (home, str(_deliv_root).rstrip("/")):
+                    fresh = discover_deliveries(delivery)
+                    return (gr.update(choices=delivery_choices(delivery, fresh),
+                                      value=None), "")
+                if not s.startswith("tos://"):
+                    return (gr.update(), "⚠️ 只认 tos://桶/前缀 形式的地址"
+                            "(或本实例的交付根)")
+                err = runner.tos_url_error(s, "交付根 TOS 路径")
+                if err:
+                    return gr.update(), f"⚠️ {err}"
+                try:
+                    names = runner.tos_list_deliveries(
+                        s, _rp_src["region"] or None)
+                except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
+                    return (gr.update(), f"⚠️ 列不出该前缀下的交付:"
+                            f"{type(e).__name__}: {str(e)[:120]}")
+                if not names:
+                    return (gr.update(choices=[], value=None),
+                            "该前缀下没有列出任何交付(前缀打错?或桶里确实是空的)")
+                return (gr.update(choices=[(n, s + "/" + n) for n in names],
+                                  value=None),
+                        f"TOS 直连:{s}(打开一份交付时把报告与明细镜像到本地,"
+                        "数据集本体不下载)")
+
+            rp_root.blur(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
+            rp_root.submit(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
+            rp_rg.input(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
 
             def _picker_tick(cur):
                 """重扫交付列表(**只换选项、不重载内容**)。
@@ -2681,6 +2760,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 14)
                 msg = record_label_decision(m["path"], it["id"], decision,
                                             newlab or "", note or "")
+                # 镜像交付(2026-08-20 阶段4):裁决 CSV 即时写回源桶 —— 留在
+                # 本地缓存等于丢(缓存可清),失败也要说出来,不许静默
+                if msg.startswith("✅"):
+                    msg += " " + runner.push_decisions(m["path"])
                 if msg.startswith("✅"):
                     msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _au_btns(decision)                # 记录成功才点亮所选键
@@ -2720,6 +2803,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return ("⚠️ 这条现在没有成败问题要答", *[gr.update()] * 7)
                 msg = record_task_verdict_checked(m, it["id"], verdict, note or "")
                 if msg.startswith("✅"):
+                    msg += " " + runner.push_decisions(m["path"])
+                if msg.startswith("✅"):
                     msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _tv_btns(verdict)
                 else:
@@ -2757,6 +2842,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 a = q[(idx or 0) % len(q)]
                 msg = record_reject_appeal(m["path"], a.get("id", ""), appeal,
                                            note or "")
+                if msg.startswith("✅"):
+                    msg += " " + runner.push_decisions(m["path"])
                 if msg.startswith("✅"):
                     msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _ap_btns(appeal)
