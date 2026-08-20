@@ -1224,37 +1224,26 @@ def test_multi_select_also_blocks_when_the_parent_itself_is_a_legacy_delivery(tm
     assert runner.delivery_name_error(str(root), "old-batch", ["so101"])
 
 
-def test_app_blocks_bad_tos_inputs_before_starting_a_task(tmp_path):
-    """app 层:输入不完整/交付名不合法时点「开始质检」,任务根本不该被起起来
-    —— 任务目录零新增,界面直接把缺什么说清,而不是让任务失败后翻日志。
-    (2026-08-14「拦在点按钮之前」的纪律,2026-08-19 纯 TOS 直连版:三样必填
-    = 数据集 TOS 路径、输出 TOS 路径、交付名,交付名仍走 safe_name。)
+def test_app_blocks_legacy_delivery_name_before_starting_a_task(tmp_path):
+    """app 层:用老布局交付名点「开始质检」,任务根本不该被起起来 —— 任务目录
+    零新增,界面直接回「交付名…」那句话,而不是让用户等退出码 3 再翻日志。
+    (2026-08-14 用户实见的完整链路,这条钉住"拦在点按钮之前"。)
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_console_app
+    from curation.ui.app import build_app
 
     deliv = tmp_path / "deliveries"
     _legacy_delivery(deliv, "droid-200-full")
     (tmp_path / "data" / "so101").mkdir(parents=True)
-    app = build_console_app(str(deliv), data_root=str(tmp_path / "data"))
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
     fns = [f.fn for f in app.fns.values()
-           if getattr(f.fn, "__name__", "") == "_run_go"]
+           if getattr(f.fn, "__name__", "") == "_run_preflight"]
     assert fns, "任务台的开跑回调没找到"
-
-    def go(tin, tout, name):
-        # 签名:(tin, tin_rg, tout, tout_rg, name, mode, picks, how, max_n,
-        #        eps, backend, cfg, emb, plots, c_ep, c_fr, c_cap, sets, ro)
-        return fns[0](tin, "cn-beijing", tout, "cn-beijing", name, "", [], "",
-                      None, "", None, "", "", None, None, None, None, "", False)
-
-    def flat(out):
-        return json.dumps([str(x) for x in out], ensure_ascii=False)
-
-    assert "数据集 TOS 路径" in flat(go("", "tos://dst-bkt/deliveries", "d1"))
-    assert "输出 TOS 路径" in flat(go("tos://src-bkt/ds", "", "d1"))
-    assert "桶名不合法" in flat(go("tos://BAD/ds", "tos://dst-bkt/x", "d1"))
-    assert "交付名不合法" in flat(
-        go("tos://src-bkt/ds", "tos://dst-bkt/deliveries", "../escape"))
+    # 首参是 TOS 桶的内部标识(2026-08-17 多 TOS 桶;单桶合成的那桶叫「默认」)
+    out = fns[0]("默认", ["so101"], "droid-200-full", "", [], "", None, "", None,
+                 "", "", None, None, None, None, "", False, False)
+    flat = json.dumps([str(x) for x in out], ensure_ascii=False)
+    assert "交付名" in flat and "output" not in flat
     runs = runner.runs_root_of(str(deliv))
     assert not os.path.isdir(runs) or not os.listdir(runs)
 
@@ -1549,3 +1538,110 @@ def test_multi_dataset_clips_need_a_review_dir():
     with pytest.raises(ValueError):
         runner.build_dataset_jobs("/data", "/deliv", ["droid"], "out",
                                   clips_for=["droid"])
+
+
+# ───────── 归档写不下去不许拖垮界面(2026-08-19,issue #57)─────────
+
+def test_run_state_goes_through_the_shared_atomic_publish_channel(tmp_path,
+                                                                  monkeypatch):
+    """🔴 状态文件必须走 `export/safe_write` 那条**原子发布**通道,不许自己
+    `shutil.copyfile` 了事。
+
+    FSX 直写家族的第八例(2026-08-19)。copyfile 用 `'wb'` 打开目标 = **就地截断
+    再从头写**,而 TOS 的对象不支持就地覆盖 —— 第一次创建成功、之后每次更新都
+    `PermissionError: [Errno 1] Operation not permitted`。现场是
+    `/mnt/tos/deliveries/.runs/*/status.json`,异常一路冒到任务面板的定时刷新里
+    把它打死,界面永远停在最后一帧(同事报的 issue #57)。
+    2026-08-14 第七次事故时 `safe_write._publish` 已经改对,**runner 这处漏了**
+    —— 因为它自己抄了一份。
+
+    ⚠️ 判据钉的是"**走那条通道**",不是"写完内容对":内容对这件事 copyfile 在
+    本地盘上同样满足(第一版测试就是这么写的,退回 copyfile 照样绿 —— 假绿)。
+    真正的区分点(不许就地覆盖)只在 TOS 那种后端上才出现,单测里造不出来;
+    而"别再各写一份实现"本身就是本次要守的不变量,直接钉它更诚实。
+    """
+    from curation.export import safe_write
+
+    seen = []
+    real = safe_write._publish
+
+    def spy(local_tmp, dst):
+        seen.append(dst)
+        return real(local_tmp, dst)
+
+    monkeypatch.setattr(safe_write, "_publish", spy)
+    dst = tmp_path / "status.json"
+    runner._copy_text(str(dst), '{"a": 1}')
+    assert seen == [str(dst)], \
+        "状态文件没走 safe_write 的原子发布通道 —— FSX 家族第八例会复发"
+    assert json.loads(dst.read_text(encoding="utf-8")) == {"a": 1}
+
+    # 反复覆盖写要次次成功、内容次次对(归档每落一次终态就写一遍)
+    for i in range(3):
+        runner._copy_text(str(dst), '{"a": %d}' % i)
+        assert json.loads(dst.read_text(encoding="utf-8")) == {"a": i}
+    leftovers = [f.name for f in tmp_path.iterdir() if f.name != "status.json"]
+    assert not leftovers, f"发布后留下了临时文件:{leftovers}"
+
+
+def test_archive_write_failure_never_breaks_reading_status(tmp_path, monkeypatch,
+                                                           capsys):
+    """🔴 **归档写不下去,绝不能让人看不见当前状态**(issue #57 的真因)。
+
+    `status()` 在任务落终态时会写一次归档,而它是被**读**路径调用的:任务面板
+    2 秒一跳 → `active_run` → `list_runs` → `status`。原来挂载那份的写没有兜,
+    异常一路冒到 `_tk_tick` 把刷新函数打死 —— 面板永远停在最后一帧,界面表现
+    就是「一直停在运行中」。
+
+    判据:挂载那份写失败时,`status()` 照常返回正确的终态,并且**往 stderr
+    留一行**(兜住不等于咽掉 —— 归档静默坏掉是最不能忍的坏法)。
+
+    ⚠️ 夹具**故意不写 `note` 字段**:`start()` 现在写的是全字段,但老版本留下的、
+    或写了一半的状态文件不该有能力把界面弄哑 —— 顺带钉住 `status()` 归档那一下
+    用 `.get` 而不是 `[]`(同一类失败,症状同样是「一直停在运行中」)。
+    """
+    runs_root = tmp_path / "runs"
+    p = runner._paths(str(runs_root), "20260819-000000-run")
+    os.makedirs(os.path.dirname(p["status"]), exist_ok=True)
+    os.makedirs(os.path.dirname(p["local_status"]), exist_ok=True)
+    runner._write_state(p, "status", {"state": "running", "pid": 999999,
+                                      "started_at": "2026-08-19 00:00:00"})
+    with open(runner._prefer_local(p, "rc"), "w", encoding="utf-8") as f:
+        f.write("0\n")
+
+    real = runner._write_json
+
+    def boom(path, payload, *, verify=False):
+        if str(path) == str(p["status"]):        # 只让**挂载那份**炸
+            raise PermissionError(1, "Operation not permitted")
+        return real(path, payload, verify=verify)
+
+    monkeypatch.setattr(runner, "_write_json", boom)
+    st = runner.status(str(runs_root), "20260819-000000-run",
+                       alive=lambda _pid: False)
+    assert st["state"] == "done", "归档写不下去就读不出终态了 —— 面板会永远停住"
+    assert st["exit_code"] == 0
+    err = capsys.readouterr().err
+    assert "归档" in err and "只在容器本地盘" in err, \
+        "兜住了但没吭声 —— 归档静默坏掉是最不能忍的坏法"
+
+
+# ───────── 发起按钮的判忙(issue #55,2026-08-19)─────────
+
+def test_is_busy_state_only_running_and_stopping_count():
+    """「开始质检」置灰的判据:只有 running/stopping 算忙 —— done/failed/stopped
+    是"跑道已空",按钮必须回蓝,不然任务结束后没人能再开工。"""
+    from curation.ui.runner import is_busy_state
+    assert is_busy_state({"state": "running"})
+    assert is_busy_state({"state": "stopping"})
+    for s in ("done", "failed", "stopped", "", None):
+        assert not is_busy_state({"state": s}), s
+
+
+def test_is_busy_state_fails_open_on_garbage():
+    """⚠️ fail-open:状态读出来是垃圾(None/非 dict/缺键)一律算不忙。
+    误禁比误放贵得多:误放最多被 start 的互斥闸拦下拿到一句黄字;误禁是按钮
+    死在灰色上,没有任何一条路能救活它(#57 那条读路径断过一次,别再押命)。"""
+    from curation.ui.runner import is_busy_state
+    for garbage in (None, {}, [], "running", 42, object()):
+        assert not is_busy_state(garbage), repr(garbage)

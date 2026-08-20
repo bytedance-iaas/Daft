@@ -87,9 +87,24 @@ def container_limits() -> dict:
     return {"cpu_limit_cores": cpu, "memory_limit_bytes": mem}
 
 
-def _verify_delivery_visible(items: list, timeout_s: float = 300.0) -> None:
+def _verify_delivery_visible(items: list, timeout_s: float = 300.0,
+                             record_grace_s: float = 30.0) -> list:
     """交付产物逐个轮询到"读得回来"为止(kind: json=可解析且非空 / text=非空 /
-    dir=列目录非空)。超时只警告不报错——产物已写出,只是对象存储还没追上。
+    dir=列目录非空)。返回**挂账放行**的记账件名单(空=全部确认)。
+
+    **分级(2026-08-20 用户拍板,起因=为一张记账条硬等 285 秒)**:
+    - 数据件(三件套/报告/数据集,item 为 3 元组):交付本体,必须等到读回,
+      "本阶段结束=交付立即可用"的承诺押在它们身上——实测走 safe_write 发布的
+      产物 0-10s 全过,这份等待几乎不花钱。超时(整体上限)只警告不报错。
+    - 记账件(run.json/latest,item 为 5 元组 (name, path, kind, "record",
+      republish)):只等 record_grace_s;到点先**重发布一次**(内容还在内存里,
+      幂等、KB 级、几乎免费——万一是"刷新被丢"的罕见故障它能自救),然后
+      **挂账放行**不再陪等。晚到的唯一后果是"选哪一次运行"的下拉晚几分钟看到
+      本次(run_facts 读不到事实卡会回落读 passed.json,UI 自愈),不值得任何人等。
+      ⚠️ 重发布只许对着 KB 级记录件——数据目录重来=重导出几个 GB,预期收益为零。
+
+    等待期间每 ~30s 一行心跳(在等谁/等了多久/上限多少)——真干活不吭声,
+    人只能判断"卡住了"(2026-08-20 用户就是这么被逼来问的;静默慢步骤=bug)。
 
     判据与写入端共用 safe_write(**含"正文不许有 `\\0`"这一条**):2026-08-14 那份
     10853 字节全零的 passed.json 之所以能被报成"交付就绪",正是因为这里原来的
@@ -101,23 +116,27 @@ def _verify_delivery_visible(items: list, timeout_s: float = 300.0) -> None:
     from ..export.safe_write import (STATE_CORRUPT, STATE_OK, STATE_UNSEEN,
                                      content_state)
 
+    def _state(path, kind):
+        if kind == "dir":
+            try:
+                return STATE_OK if os.listdir(path) else STATE_UNSEEN
+            except OSError:
+                return STATE_UNSEEN
+        return content_state(path, kind)
+
     t0 = _time.time()
-    pending = list(items)
+    pending = [(it if len(it) >= 5 else (*it, "data", None)) for it in items]
     total = len(pending)
     done = 0
     corrupt: list = []
+    deferred: list = []          # 挂账放行的记账件名
+    last_beat = t0
     print(f"[curation] 交付落盘回验({total} 项;对象存储可见延迟约 1 分钟,"
           f"本阶段结束=交付立即可用)", flush=True)
     while pending and _time.time() - t0 < timeout_s:
         still = []
-        for name, path, kind in pending:
-            if kind == "dir":
-                try:
-                    state = STATE_OK if os.listdir(path) else STATE_UNSEEN
-                except OSError:
-                    state = STATE_UNSEEN
-            else:
-                state = content_state(path, kind)
+        for name, path, kind, tier, republish in pending:
+            state = _state(path, kind)
             if state == STATE_OK:
                 done += 1
                 print(f"[curation] 落盘回验 {done}/{total}:{name} ✓"
@@ -127,9 +146,34 @@ def _verify_delivery_visible(items: list, timeout_s: float = 300.0) -> None:
                 print(f"[curation] ⚠️ 落盘回验:{name} 读回来是坏的(零填充/解析不了)"
                       f"—— {path} 不可用,本次交付这一件需要重跑", flush=True)
             else:
-                still.append((name, path, kind))
+                still.append((name, path, kind, tier, republish))
         pending = still
+        now = _time.time()
+        if now - t0 >= record_grace_s:
+            keep = []
+            for name, path, kind, tier, republish in pending:
+                if tier != "record":
+                    keep.append((name, path, kind, tier, republish))
+                    continue
+                # 记账件到点:重发布一次(能救"刷新被丢",救不了可见性慢——
+                # 那个等就是了,只是不再由这里陪等),然后挂账放行
+                if republish is not None:
+                    try:
+                        republish()
+                    except OSError as e:
+                        print(f"[curation] ⚠️ 落盘回验:{name} 重发布没写成({e})",
+                              flush=True)
+                deferred.append(name)
+                print(f"[curation] 落盘回验:{name} 超过 {int(record_grace_s)}s "
+                      f"未见,已重发布一次并挂账放行 —— 它是记账件,晚到只是界面"
+                      f"晚几分钟看到本次运行,不值得等", flush=True)
+            pending = keep
         if pending:
+            if now - last_beat >= 30:
+                last_beat = now
+                print(f"[curation] 落盘回验:还差 {[p[0] for p in pending]},"
+                      f"已等 {int(now - t0)}s(上限 {int(timeout_s)}s)——"
+                      f"对象存储可见延迟,正常等待", flush=True)
             _time.sleep(5)
     if pending:
         print(f"[curation] ⚠️ 落盘回验超时({int(timeout_s)}s):"
@@ -138,9 +182,14 @@ def _verify_delivery_visible(items: list, timeout_s: float = 300.0) -> None:
     elif corrupt:
         print(f"[curation] ⚠️ 落盘回验发现坏文件:{corrupt} —— 其余产物可用",
               flush=True)
+    elif deferred:
+        print(f"[curation] 交付就绪(共 {int(_time.time() - t0)}s,数据件全部"
+              f"确认):记账件 {deferred} 在途,稍后自动可见 —— 可立即在 UI "
+              f"加载、裁决、rejudge", flush=True)
     else:
         print(f"[curation] 交付就绪(共 {int(_time.time() - t0)}s):"
               f"可立即在 UI 加载、裁决、rejudge", flush=True)
+    return deferred
 
 
 def collect_runtime(cfg: dict) -> dict:
@@ -1270,12 +1319,13 @@ def run_pipeline(
     # 是我们替用户编的动机。
     _exported = bool(deliver.get("episodes_parquet") or deliver.get("lerobot_dataset")
                      or deliver.get("rrd_dataset"))
-    _facts_path = write_run_facts(output_dir, {
+    _facts = {
         "跑批": os.path.basename(output_dir), "数据集": report.get("数据集"),
         "生成时间": report.get("生成时间"),
         "本次处理条数": (report.get("dataset") or {}).get("input_episodes"),
         **({"数据集总条数": _total_eps} if isinstance(_total_eps, int) else {}),
-        "导出数据集": _exported})
+        "导出数据集": _exported}
+    _facts_path = write_run_facts(output_dir, _facts)
     # latest = **一条记录**,不是一个推荐:它只回答"最近跑的是哪一次",报告页拿它
     # 当默认打开项只是省一次点击(1812 跑 20 条并不比 0530 跑 200 条更该被用)。
     _run_name = os.path.basename(output_dir)
@@ -1286,13 +1336,18 @@ def run_pipeline(
         print(f"[curation] ⚠️ latest 没写成({e});本次结果仍在 {output_dir}",
               flush=True)
 
+    # 记账件(run.json/latest)标 record 档:只等 30s,到点重发布一次后挂账放行
+    # (它们不是数据,晚到只是界面晚几分钟看到本次;run_facts 读不到会回落读
+    # passed.json,UI 自愈)。数据件维持"必须等到读回"。
     _checks_vis = [("passed.json", jp, "json"),
                    ("review.json", deliver["review_json"], "json"),
                    ("reject.json", deliver["reject_json"], "json"),
                    ("report.md", mp, "text"),
-                   ("run.json", _facts_path, "json")]
+                   ("run.json", _facts_path, "json", "record",
+                    lambda: write_run_facts(output_dir, _facts))]
     if _latest_path:
-        _checks_vis.append(("latest", _latest_path, "text"))
+        _checks_vis.append(("latest", _latest_path, "text", "record",
+                            lambda: write_latest(delivery_dir, _run_name)))
     if deliver.get("episodes_parquet"):
         _checks_vis.append(("episodes_parquet", deliver["episodes_parquet"], "dir"))
     if deliver.get("lerobot_dataset"):
@@ -1303,10 +1358,12 @@ def run_pipeline(
         from ..export.rrd_writer import INDEX_NAME as _RRD_INDEX
         _checks_vis.append(("rrd_curated/index.json",
                             os.path.join(deliver["rrd_dataset"], _RRD_INDEX), "json"))
-    _verify_delivery_visible(_checks_vis)
+    _deferred = _verify_delivery_visible(_checks_vis)
     # 回验之后再对一次账:latest 读回来必须就是这次的目录名。回验只保证"读得回来",
     # 内容对不对是另一回事(FSX 直写坏文件那一家子的教训 —— 别信"写成功")。
-    if _latest_path and not latest_matches(delivery_dir, _run_name):
+    # latest 挂账在途时跳过——还没到就对账,必假报"对不上"吓人一跳。
+    if _latest_path and "latest" not in _deferred \
+            and not latest_matches(delivery_dir, _run_name):
         print(f"[curation] ⚠️ latest 回读对不上(应为 {_run_name}):{_latest_path};"
               "报告页默认打开的可能是别的一次,手动选一下即可,本次结果不受影响",
               flush=True)

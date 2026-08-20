@@ -26,14 +26,36 @@ import re
 # 人工对分歧队列的三选一裁决,落 human-decisions/label_decisions.csv(追加式,后写覆盖前写)。
 # 这是人工产生的新数据,不是对管线产物的改写;真正按裁决重判/搬移交付由
 # `curation rejudge` 命令完成(UI 不 import 管道的红线不破)。
+#: 「拿不准」= 证据够但判断本身有歧义,**留在队列里等更多信息**(换个人看、
+#: 口径定清楚)。2026-08-19 由「搁置」改名:那是系统视角的词(说条目被怎么处理),
+#: 「拿不准」是人的视角(说我为什么判不了)——同一条"说人话"的纪律。
+#: ⚠️ 证据不够(看不清/录漏)不属于这一档:它**等不到**更多信息,再挂也判不了,
+#: 归宿是「其它原因-整条弃用」。
+VERDICT_HOLD = "拿不准"
+#: 老交付的 CSV 里写的是「搁置」,读的时候当别名认掉 —— 改个词不该让历史裁决
+#: 变成"未记录"(那等于把人已经做过的判断悄悄抹掉)。
+VERDICT_ALIASES = {"搁置": VERDICT_HOLD}
+VERDICT_CHOICES = ("判成功", "判失败", VERDICT_HOLD)
+
 DECISIONS_CSV = "label_decisions.csv"
-DECISION_CHOICES = ("采纳建议改标", "维持原标注", "弃用该条")
+#: 「拿不准」与成败线共用同一个词(2026-08-19):同一张卡片上两块并排,同样位置
+#: 的按钮语义必须一样,否则用户得记住"左边的第三个"和"右边的第三个"不是一回事。
+#: 「弃用该条」仍在选项里 —— 它是**卡片级**操作「其它原因-整条弃用」落库时用的
+#: 裁决词,只是界面上不再摆在标注块里当第三个选项(用户点破:"这条数据要不要"
+#: 和"标注 vs caption 谁错"是两个正交维度)。
+DECISION_CHOICES = ("采纳建议改标", "维持原标注", VERDICT_HOLD, "弃用该条")
 
 # 人工对"任务成败弃权"条目的三选一裁决,落 human-decisions/task_verdicts.csv。
 # 与标注裁决的关键差别:**成败裁决不重判**——系统已经诚实说了"我判不了",
 # 再问一次 VLM 只会得到同样的弃权;人说了算,rejudge 只负责按裁决搬交付。
 VERDICTS_CSV = "task_verdicts.csv"
-VERDICT_CHOICES = ("判成功", "判失败", "搁置")
+
+
+
+def normalize_verdict(verdict: str) -> str:
+    """CSV 里读出来的裁决词 → 现行词(老值走别名表)。"""
+    v = str(verdict or "").strip()
+    return VERDICT_ALIASES.get(v, v)
 
 # 人工对"已被任务成败判定拒掉"条目的二选一复议,落 human-decisions/reject_appeals.csv。
 # 存在意义 = 保险丝:判定从"拿不准就转人工"升级成"证据够就杀"之后,杀错的那几条
@@ -153,7 +175,9 @@ def load_task_verdicts(delivery_path: str) -> dict:
     path = _read_path(delivery_path, VERDICTS_CSV)
     out: dict = {}
     for r in _read_rows(path, fields):
-        out[r["episode_id"]] = {"verdict": r.get("verdict", ""),
+        # 老交付里写的是「搁置」,读进来统一成现行词 —— 改个词不该让历史裁决
+        # 变成"未记录"(见 VERDICT_ALIASES)
+        out[r["episode_id"]] = {"verdict": normalize_verdict(r.get("verdict", "")),
                                 "note": r.get("note", ""), "at": r.get("at", "")}
     return out
 
@@ -197,6 +221,7 @@ def record_task_verdict(delivery_path: str, episode_id: str, verdict: str,
     原因见 record_label_decision 的注释——同一块挂载,同一批坑。
     """
     import datetime as _dt
+    verdict = normalize_verdict(verdict)   # 老值「搁置」照收,存现行词
     if verdict not in VERDICT_CHOICES:
         return f"⚠️ 未记录:裁决必须是 {'/'.join(VERDICT_CHOICES)}"
     if not str(episode_id).strip():
@@ -254,7 +279,7 @@ QUEUE_KEYS = ("标注-画面分歧复核队列", "标注审计复核队列")
 #: 改变交付结果的裁决词 vs 只留痕不改数据的裁决词。计数必须分开报(用户点名):
 #: 把 38 条混成一个数,读者会以为 38 条结论被人动过,而实际只有其中改结果的那几条。
 RESULT_CHANGING = ("采纳建议改标", "弃用该条", "判成功", "判失败", "捞回")
-MARK_ONLY = ("维持原标注", "搁置", "维持拒绝")
+MARK_ONLY = ("维持原标注", VERDICT_HOLD, "维持拒绝")
 
 
 def _entries(files: dict, eid: str):
