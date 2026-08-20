@@ -1231,12 +1231,12 @@ def test_app_blocks_bad_tos_inputs_before_starting_a_task(tmp_path):
     = 数据集 TOS 路径、输出 TOS 路径、交付名,交付名仍走 safe_name。)
     """
     pytest.importorskip("gradio")
-    from curation.ui.app import build_app
+    from curation.ui.app import build_console_app
 
     deliv = tmp_path / "deliveries"
     _legacy_delivery(deliv, "droid-200-full")
     (tmp_path / "data" / "so101").mkdir(parents=True)
-    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    app = build_console_app(str(deliv), data_root=str(tmp_path / "data"))
     fns = [f.fn for f in app.fns.values()
            if getattr(f.fn, "__name__", "") == "_run_go"]
     assert fns, "任务台的开跑回调没找到"
