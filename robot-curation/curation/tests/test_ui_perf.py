@@ -138,3 +138,48 @@ def test_sse_stream_is_excluded_from_gzip():
     src = inspect.getsource(ui_app.create_asgi_app)
     assert "GZipMiddleware" in src and "excluded" not in src.split("GZipMiddleware", 1)[1].split("\n", 1)[0], \
         "不许给 GZipMiddleware 自定义排除表——会把 SSE 的默认排除盖掉"
+
+
+# ── 空交付根自举(2026-08-20 同事全新部署撞上的启动即退)────────────────────
+
+def test_build_app_bootstraps_an_empty_delivery_root(tmp_path, monkeypatch):
+    """交付根一份交付都没有 → 自动放占位交付,UI 照常起来;占位走 safe_write
+    发布通道;再起一次不重写(幂等)。"""
+    pytest.importorskip("gradio")
+    from curation.export import safe_write
+    from curation.ui import app as ui_app
+
+    seen = []
+    real = safe_write._publish
+    monkeypatch.setattr(safe_write, "_publish",
+                        lambda t, d: (seen.append(d), real(t, d))[1])
+    root = tmp_path / "empty"
+    root.mkdir()
+    app = ui_app.build_app(str(root), data_root=str(tmp_path / "data"))
+    assert app is not None
+    ph = root / ui_app.WELCOME_DELIVERY / ui_app.WELCOME_RUN / "passed.json"
+    assert ph.is_file(), "空根没放占位交付,UI 会启动即退(同事部署现场)"
+    assert seen == [str(ph)], "占位交付没走 safe_write 发布通道"
+    payload = json.loads(ph.read_text(encoding="utf-8"))
+    assert "跑质检" in payload["数据集"] and payload["episodes"] == {}
+    # 占位交付能被报告页正常加载(不崩、空表)
+    m = M.load_delivery(str(ph.parent))
+    assert not m.get("load_error")
+    # 幂等:再建一次 app 不重写占位
+    seen.clear()
+    ui_app.build_app(str(root), data_root=str(tmp_path / "data"))
+    assert seen == []
+
+
+def test_build_app_fails_loudly_when_root_unwritable(tmp_path, monkeypatch):
+    """占位都放不进去 = 交付根不可写的部署问题,必须响亮失败、话说清。"""
+    pytest.importorskip("gradio")
+    import os as _os
+
+    from curation.ui import app as ui_app
+    root = tmp_path / "ro"
+    root.mkdir()
+    monkeypatch.setattr(ui_app, "_bootstrap_empty_delivery",
+                        lambda r: (_ for _ in ()).throw(PermissionError("ro")))
+    with pytest.raises((SystemExit, PermissionError)):
+        ui_app.build_app(str(root), data_root=str(tmp_path / "data"))

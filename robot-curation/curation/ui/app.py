@@ -21,7 +21,8 @@ import os
 
 from ..delivery import (delivery_root_of, resolve_run, run_choices,
                         run_name_of_run_id)
-from .manifest import (APPEAL_CHOICES, APPEAL_HEADERS, AUDIT_HEADERS,
+from .manifest import (clear_discover_cache,  # noqa: F401
+                       APPEAL_CHOICES, APPEAL_HEADERS, AUDIT_HEADERS,
                        BUCKET_ALL, DECISION_CHOICES,
                        DETAIL_LABELS, MERGE_FILTER_ALL, SUCCESS_MODES,
                        TASK_REVIEW_HEADERS, VERDICT_CHOICES,
@@ -1018,6 +1019,39 @@ def _adj_section_html(num: str, title: str, subtitle: str, color: str, dark: str
             f'<span style="color:#86909C;font-size:.9rem">{subtitle}</span></div>')
 
 
+#: 空交付根的占位交付名与占位跑批名(跑批名要过 is_run_name:时间戳格式)
+WELCOME_DELIVERY = "welcome"
+WELCOME_RUN = "20260101-000000"
+
+
+def _bootstrap_empty_delivery(root: str) -> None:
+    """空交付根 → 放一份占位交付 `welcome/20260101-000000/passed.json`。
+
+    目录建不了/写不进就让异常抛给调用方 —— 那是"交付根不可写"的部署问题,
+    该响亮失败。写法走 safe_write.publish_file(目标目录内临时名 + os.replace):
+    交付根在 TOS 挂载上的部署不怕直写坑。幂等:已有占位就不重写。
+    """
+    import tempfile
+
+    from ..export.safe_write import publish_file
+    run_dir = os.path.join(root, WELCOME_DELIVERY, WELCOME_RUN)
+    dst = os.path.join(run_dir, "passed.json")
+    if os.path.exists(dst):
+        return
+    os.makedirs(run_dir, exist_ok=True)
+    payload = {"生成时间": "",
+               "数据集": "(还没有交付 —— 到「跑质检」页跑第一次质检)",
+               "dataset": {}, "episodes": {}}
+    fd, tmp = tempfile.mkstemp(prefix="curation-welcome-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=1)
+        publish_file(tmp, dst)
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
+
 def build_app(delivery: str, config_path: str | None = None, probe_timeout: float = 5.0,
               terminal: bool = False, review_dir: str | None = None,
               data_root: str | None = None):
@@ -1042,7 +1076,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
     choices = discover_deliveries(delivery)
     if not choices:
-        raise SystemExit(f"目录里找不到任何交付(既无跑批子目录也无 passed.json):{delivery}")
+        # 全新部署的交付根是空的(2026-08-20 同事在 rerun 侧部署 e3307fb2 时
+        # 撞上:/data/deliveries 里一份交付都没有,UI 启动即退)。空根不是错,
+        # 是"还没跑过" —— 放一份占位交付让页面能起来,第一次质检跑完它就
+        # 被真交付挤到后面。思路来自公开 PR#65 的 _bootstrap_empty_delivery,
+        # 写法改走 safe_write(交付根可能在挂载上,copyfile 是直写坑家族)。
+        _bootstrap_empty_delivery(delivery)
+        clear_discover_cache()
+        choices = discover_deliveries(delivery)
+    if not choices:
+        raise SystemExit(f"交付根不可写,连占位交付都放不进去:{delivery}"
+                         "(检查 --delivery 指向的目录是否存在且可写)")
 
     def _ep_list(m, bucket, page, selected):
         """左清单的一屏(装配顺序 = _ep_list_outs)。分页口径全在 manifest。"""
