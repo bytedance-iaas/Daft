@@ -859,34 +859,43 @@ def _label_key(mapping: dict, label: str, default: str) -> str:
 
 
 def reports_prefetch_head(reports_href: str) -> str:
-    """首页空闲后**后台加载**「质检报告」页签里的内嵌 iframe(2026-08-19 拆分的
-    下半句:"首页快速显示,别的后台继续")。
+    """「质检报告」页签的常驻 iframe 装配脚本(2026-08-19,两条教训各管一半):
 
-    iframe 就摆在「质检报告」页签里(id=reports-frame),但 src 放在 data-src:
-    直接写 src 会让它和首页自己的引导抢带宽/CPU,等于回到"首屏一起加载全部"
-    的老路。这段脚本做两件事,谁先到谁生效:
-      ① 首页 load 完再等 4 秒 → 注入 src,报告在后台悄悄加载完,用户点过来
-         时页面已经就绪;
-      ② 用户抢在预热前就点了「质检报告」页签 → 点击瞬间注入,最差退回
-         "现场加载一次"。
-    iframe 是正式 UI 不是一次性预热品,**不移除** —— 它的轮询(交付列表 10s
-    一刷)就是报告页本来的行为。reports_href 未用留参:iframe 的地址在
-    data-src 里由 build_console_app 渲染,脚本只负责扣扳机。
+    ① iframe **必须建在 document.body 上**,绝不放进页签 DOM —— gradio 切页签
+       会重建/搬动页签内容,iframe 一被搬动浏览器就整页重载(用户实见:每次
+       打开都空白重 load,后台预热全白做)。挂在 body 上就只加载这一次,切
+       页签只是 display 开关,内容原地保留。
+    ② 首页 load 完等 4 秒才后台创建并加载(不抢首页引导的带宽/CPU);用户抢
+       先点页签则当场创建,最差退回"现场加载一次"。
+    显示逻辑:报告页签选中(占位标记 reports-tab-marker 可见)→ iframe 以
+    fixed 覆盖到顶层导航条以下的整个视口;切走 → display:none(不卸载)。
     """
-    del reports_href
     # /*reports-prefetch*/ 哨兵给测试认脚本用:gradio 6 把 head 以 JSON 内嵌
-    # 进页面(引号被转义),含引号的子串在页面源码里认不出来;页签按钮文本
-    # 「质检报告」同理按 \u 转义串匹配。
-    return ("<script>/*reports-prefetch*/"
-            "(function(){"
-            "function arm(){var f=document.getElementById('reports-frame');"
-            "if(f&&!f.getAttribute('src')){f.src=f.dataset.src;}}"
-            "window.addEventListener('load',function(){setTimeout(arm,4000);});"
-            "document.addEventListener('click',function(e){"
-            "var b=e.target&&e.target.closest&&e.target.closest('button');"
-            "if(b&&b.textContent&&"
-            "b.textContent.indexOf('\u8d28\u68c0\u62a5\u544a')>-1){arm();}"
-            "},true);})();</script>")
+    # 进页面(引号被转义),含引号的子串在页面源码里认不出来。
+    return ("<script>/*reports-prefetch*/(function(){"
+            f"var HREF='{reports_href}';"
+            "function frame(){var f=document.getElementById('reports-frame');"
+            "if(!f){f=document.createElement('iframe');f.id='reports-frame';"
+            "f.src=HREF;f.style.cssText='position:fixed;left:0;right:0;bottom:0;"
+            "top:120px;width:100%;border:none;display:none;z-index:30;"
+            "background:var(--body-background-fill,#fff)';"
+            "document.body.appendChild(f);}return f;}"
+            "function bar(){var t=document.getElementById('topnav');"
+            "if(!t)return null;return t.querySelector('.tab-container')"
+            "||t.querySelector('.tab-wrapper')||t.querySelector('[role=tablist]')||t;}"
+            "function sync(){var m=document.getElementById('reports-tab-marker');"
+            "var active=m&&m.offsetParent!==null;"
+            "if(active){var f=frame();var b=bar();"
+            "f.style.top=(b?b.getBoundingClientRect().bottom+6:120)+'px';"
+            "f.style.display='block';}"
+            "else{var g=document.getElementById('reports-frame');"
+            "if(g){g.style.display='none';}}}"
+            "window.addEventListener('load',function(){"
+            "setTimeout(function(){frame();sync();},4000);});"
+            "document.addEventListener('click',function(){"
+            "requestAnimationFrame(function(){setTimeout(sync,60);});},true);"
+            "window.addEventListener('resize',sync);"
+            "})();</script>")
 
 
 def presentation(terminal: bool = False, root: str = "") -> dict:
@@ -978,8 +987,7 @@ def _bootstrap_empty_delivery(root: str) -> None:
 
 def build_console_app(delivery: str, config_path: str | None = None,
                       probe_timeout: float = 5.0, terminal: bool = False,
-                      review_dir: str | None = None, data_root: str | None = None,
-                      reports_href: str = "reports/"):
+                      review_dir: str | None = None, data_root: str | None = None):
     """任务台(跑质检 + 任务与日志 + 裁决发起 + 可选终端)→ 轻量 gr.Blocks。
 
     2026-08-19 拆分(治首屏):原来任务台和报告全家桶挤在同一个 Blocks 里,
@@ -1575,13 +1583,12 @@ def build_console_app(delivery: str, config_path: str | None = None,
             # 用户点过来时页面已经就绪;万一用户抢在预热前点了页签,脚本也
             # 监听 tab 点击立即注入,最差退回"现场加载一次"。
             with gr.Tab("质检报告", id="report"):
-                gr.Markdown(f"[在新窗口打开质检报告 ↗]({reports_href})",
-                            elem_id="reports-link")
-                gr.HTML(
-                    f'<iframe id="reports-frame" data-src="{reports_href}" '
-                    'style="width:100%;height:calc(100vh - 180px);'
-                    'border:none;border-radius:8px;background:transparent;">'
-                    "</iframe>")
+                # 页签本体只有一个占位标记:真正的报告 iframe 由 head 脚本建在
+                # document.body 上、按页签选中状态覆盖显示 —— iframe 放进页签
+                # DOM 的话,gradio 每次切页签都会重建/搬动它,iframe 一被搬动就
+                # 整页重载(2026-08-19 用户实见:每次打开都空白重 load,预热
+                # 全白做)。脚本靠这个标记的可见性判断"报告页签是否选中"。
+                gr.HTML('<div id="reports-tab-marker"></div>')
             if terminal:
                 # 内嵌终端(2026-07-29 U4,替代 ttyd iframe):xterm.js 画屏 +
                 # 本服务的 /ws/term(forkpty 起 bash)。装配全在 term.js 里,
@@ -2515,9 +2522,7 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
     # 首页 = 轻量任务台(Diagnose 深链落点),{root}/reports = 报告全家桶。
     console = build_console_app(delivery, config_path, probe_timeout,
                                 terminal=terminal, review_dir=review_dir,
-                                data_root=data_root,
-                                reports_href=f"{root}/reports/" if root
-                                else "/reports/")
+                                data_root=data_root)
     blocks = build_app(delivery, config_path, probe_timeout,
                        review_dir=review_dir,
                        console_href=f"{root}/" if root else "/")

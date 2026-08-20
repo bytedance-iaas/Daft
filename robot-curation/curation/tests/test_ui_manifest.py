@@ -3331,10 +3331,13 @@ def test_build_app_bootstraps_empty_delivery_root(tmp_path):
 
 
 def test_console_home_prefetches_reports_in_background(delivery, clean_ui_env):
-    """首页三 tab 观感 + 后台加载(2026-08-19 用户定):「质检报告」页签内嵌
-    iframe(id=reports-frame),地址放 data-src 不放 src(直接写 src 会和首页
-    引导抢资源),由 head 脚本在首页 load 后延时注入 —— 用户点过来时页面已经
-    加载好;抢先点页签则点击瞬间注入。报告页自己不许带这段脚本(递归预热)。"""
+    """「质检报告」页签的装配契约(2026-08-19 两轮返工后的形态):
+    ① 页签 DOM 里只有占位标记 reports-tab-marker,**没有 iframe** —— iframe
+      放进页签会被 gradio 切页签时搬动而整页重载(用户实见:每次打开都空白
+      重 load,预热全白做);
+    ② iframe 由 head 脚本(哨兵 reports-prefetch)建在 document.body 上,
+      首页 load 后延时后台加载,切页签只切 display,内容一次加载终身保留;
+    ③ 报告页自己不许带这段脚本(递归预热)。"""
     pytest.importorskip("gradio")
     from starlette.testclient import TestClient
 
@@ -3344,7 +3347,7 @@ def test_console_home_prefetches_reports_in_background(delivery, clean_ui_env):
         # ⚠️ 匹配用无引号哨兵:gradio 6 把 head 以 JSON 内嵌进页面,引号被
         # 转义,带引号的子串在源码里认不出(2026-08-19 实测踩过)
         assert "reports-prefetch" in home and "/reports/" in home
-        assert "reports-frame" in home and "data-src" in home
-        assert 'src="/reports/"' not in home, \
-            "iframe 不许直接写 src(会和首页引导抢资源,由脚本延时注入)"
+        assert "reports-tab-marker" in home
+        assert "<iframe" not in home, \
+            "iframe 不许进 gradio 组件树(切页签被搬动 = 整页重载),只许脚本建"
         assert "reports-prefetch" not in c.get("/reports/").text
