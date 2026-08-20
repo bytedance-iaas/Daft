@@ -352,3 +352,15 @@ def test_tos_list_deliveries_hides_dot_dirs():
         def iter_common_prefixes(self, b, p):
             yield from [".runs", ".probe_details", "aloha-10", "debug"]
     assert runner.tos_list_deliveries("tos://bkt/deliveries", store=_S()) == ["aloha-10", "debug"]
+
+
+def test_radio_groups_are_one_frame_not_per_option_pills():
+    """issue #54 / #59-1:单选(多选)组按 Arco——选项不各自成框,整组一个框。
+    钉 CSS 形状:组容器 .wrap 有边框,选项 label 去边框。"""
+    from curation.ui.app import _ARCO_CSS
+    css = "".join(_ARCO_CSS.split())
+    assert '.wrap:has(>label>input[type="radio"])' in css
+    grp = css.split('.wrap:has(>label>input[type="radio"])', 1)[1]
+    assert "border:1pxsolidvar(--arco-border)!important" in grp.split("}", 1)[0]
+    opt = css.split('.wrap>label:has(>input[type="radio"])', 1)[1].split("}", 1)[0]
+    assert "border:none!important" in opt and "background:transparent!important" in opt

@@ -529,6 +529,30 @@ _ARCO_CSS = """
 }
 /* 单选圆、复选方(Arco 如此,也是通用心智);Gradio 默认把两者都做成 4px 圆角方块。 */
 .gradio-container input[type="radio"] { border-radius: 50% !important; }
+/* 单选/多选组按 Arco RadioGroup/CheckboxGroup(issue #54、#59 第 1 条,2026-08-20):
+   gradio 默认把**每个选项**画成一个带边框的药丸,四个圈各自成框、外面却没有
+   "组"的框(#ep-buckets 还是 hide-container)。Arco 的做法相反:选项本身不带框,
+   选中态靠实心圆点表达;整组装进一个框。选项去框 + .wrap 补组框,两条规则全站
+   生效(质检范围 / Episodes 三桶筛选 / episode 列表 / 自选模块多选 同一套)。 */
+.gradio-container .wrap:has(> label > input[type="radio"]),
+.gradio-container .wrap:has(> label > input[type="checkbox"]) {
+  border: 1px solid var(--arco-border) !important; border-radius: 4px !important;
+  background: #FFFFFF !important; padding: 6px 12px !important;
+  gap: 4px 20px !important;
+}
+.gradio-container .wrap > label:has(> input[type="radio"]),
+.gradio-container .wrap > label:has(> input[type="checkbox"]) {
+  border: none !important; background: transparent !important;
+  box-shadow: none !important; padding: 2px 0 !important;
+}
+/* episode 列表(#ep-list)外面本来就是带标题的框,里面不再套一层组框 */
+#ep-list .wrap:has(> label > input[type="radio"]) {
+  border: none !important; padding: 0 !important; background: transparent !important;
+}
+.gradio-container .wrap > label:has(> input[type="radio"]):hover,
+.gradio-container .wrap > label:has(> input[type="checkbox"]):hover {
+  background: transparent !important;
+}
 /* 带解释的小问号:灰底圆点,悬停出深色浮层(Arco 的 tooltip 是 gray-10 底白字)。
    文案挂在 data-tip 上,纯 CSS 显示,不引任何组件库。 */
 .qc-tip {
