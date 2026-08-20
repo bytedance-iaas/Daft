@@ -266,10 +266,10 @@ def test_unmounted_instance_defaults_and_autolist_wiring(tmp_path, monkeypatch):
     app = build_app(str(root), data_root=str(tmp_path / "data" / "datasets"))
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     vals = {c["props"].get("label"): c["props"].get("value") for c in cfg["components"]
-            if c["props"].get("label") in {"数据集 TOS 路径", "输出 TOS 路径", "交付根 TOS 路径"}}
-    assert vals["数据集 TOS 路径"] == "tos://herbucket/datasets"
-    assert vals["输出 TOS 路径"] == "tos://herbucket/deliveries"
-    assert vals["交付根 TOS 路径"] == "tos://herbucket/deliveries"
+            if c["props"].get("label") in {"数据集目录", "交付目录", "交付目录"}}
+    assert vals["数据集目录"] == "tos://herbucket/datasets"
+    assert vals["交付目录"] == "tos://herbucket/deliveries"
+    assert vals["交付目录"] == "tos://herbucket/deliveries"
     loads = [f for f in app.fns.values()
              if any(t[1] == "load" for t in getattr(f, "targets", []))]
     names = {getattr(f.fn, "__name__", "") for f in loads}
@@ -289,9 +289,9 @@ def test_mounted_instance_keeps_old_defaults_and_no_autolist(tmp_path, monkeypat
     app = build_app(str(root), data_root=str(ds))
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     vals = {c["props"].get("label"): c["props"].get("value") for c in cfg["components"]
-            if c["props"].get("label") in {"数据集 TOS 路径", "输出 TOS 路径"}}
-    assert vals["数据集 TOS 路径"] == str(ds)                   # 合成单桶、目录在:原样
-    assert vals["输出 TOS 路径"] == "tos://curation/deliveries"  # 挂载承载写法
+            if c["props"].get("label") in {"数据集目录", "交付目录"}}
+    assert vals["数据集目录"] == str(ds)                   # 合成单桶、目录在:原样
+    assert vals["交付目录"] == "tos://curation/deliveries"  # 挂载承载写法
     loads = [getattr(f.fn, "__name__", "") for f in app.fns.values()
              if any(t[1] == "load" for t in getattr(f, "targets", []))]
     assert "_root_changed" not in loads and "_rp_root_changed" not in loads

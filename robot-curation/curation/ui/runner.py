@@ -737,7 +737,7 @@ def deeplink_region(qp) -> tuple:
 def split_dataset_url(url: str) -> tuple[str, str]:
     """`tos://桶/前缀…/数据集名` → (根前缀 URL, 数据集名)。**末段规则**:最后
     一个路径段当数据集名,其余当根前缀 —— rerun 深链带的是数据集本体的地址,
-    界面上要拆开填「数据集 TOS 路径」框 + 「数据集」下拉两处。
+    界面上要拆开填「数据集目录」框 + 「数据集」下拉两处。
 
     只有桶没有前缀(tos://bucket/name)时根前缀就是桶本身;连数据集段都没有
     (tos://bucket)按"整个 URL 就是根前缀、数据集名为空"处理——调用方看到
@@ -795,7 +795,7 @@ def is_mount_backed(path: str) -> bool:
 
 
 def bucket_url(b: dict) -> str:
-    """配置桶 → 显示在「数据集 TOS 路径」框里的值。
+    """配置桶 → 显示在「数据集目录」框里的值。
 
     - 桶名+前缀齐全 → `tos://桶/前缀`(挂载快路径,对表能认);
     - 合成单桶(没配 tos_buckets):目录在 → datasets_path 原样(白名单精确匹配
@@ -813,7 +813,7 @@ def bucket_url(b: dict) -> str:
 
 
 def resolve_root_input(value: str, buckets: list) -> dict:
-    """「数据集 TOS 路径」框的值 → 读取方案(2026-08-20 融合定案的红线口径:
+    """「数据集目录」框的值 → 读取方案(2026-08-20 融合定案的红线口径:
     **允许自由填 tos:// URL,本地自由路径仍然禁止**)。
 
     → {"kind": "mount", "path", "bucket"}:值对上配置桶(tos:// URL 经
@@ -824,14 +824,14 @@ def resolve_root_input(value: str, buckets: list) -> dict:
     """
     s = str(value or "").strip().rstrip("/")
     if not s:
-        raise ValueError("还没填数据集 TOS 路径(tos://桶名/数据集前缀)")
+        raise ValueError("还没填数据集目录(tos://桶名/目录)")
     if s.startswith("tos://"):
         mp = mount_root_for_url(s, buckets)
         if mp is not None:
             b = next(x for x in buckets
                      if x.get("datasets_path") == mp)
             return {"kind": "mount", "path": mp, "bucket": b}
-        err = tos_url_error(s, "数据集 TOS 路径")
+        err = tos_url_error(s, "数据集目录")
         if err:
             raise ValueError(err)
         return {"kind": "tos", "url": s}
@@ -846,7 +846,7 @@ def resolve_root_input(value: str, buckets: list) -> dict:
 
 
 def home_output_url(deliv_root: str) -> str:
-    """交付根的 tos:// 写法(「输出 TOS 路径」框的默认值)。
+    """交付根的 tos:// 写法(「交付目录」框的默认值)。
 
     推导 = 部署桶(TOS_BUCKET)+ 交付根相对挂载根(CURATION_TOS_MOUNT,缺省
     /mnt/tos)的相对路径。推不出来(没挂载/没桶名)退回 deliv_root 原样 ——
@@ -878,7 +878,7 @@ def deployment_shape_note(deliv_root: str, data_root: str) -> str:
 
 
 def resolve_output_input(value: str, deliv_root: str) -> dict:
-    """「输出 TOS 路径」框的值 → 写出方案。规则与 resolve_root_input 同族:
+    """「交付目录」框的值 → 写出方案。规则与 resolve_root_input 同族:
     → {"kind": "mount", "path": deliv_root}:值 == 交付根的 tos:// 写法或
       交付根路径本身 → 挂载直写(裁决闭环全功能,与今天一致);
     → {"kind": "tos", "url"}:别的合法 tos:// URL → CLI 走 stage_out;
@@ -886,7 +886,7 @@ def resolve_output_input(value: str, deliv_root: str) -> dict:
     """
     s = str(value or "").strip().rstrip("/")
     if not s:
-        raise ValueError("还没填输出 TOS 路径(tos://桶名/交付根前缀)")
+        raise ValueError("还没填交付目录(tos://桶名/目录)")
     home = home_output_url(deliv_root).rstrip("/")
     droot = str(deliv_root or "").rstrip("/")
     mount_backed = is_mount_backed(droot)
@@ -899,7 +899,7 @@ def resolve_output_input(value: str, deliv_root: str) -> dict:
     if s == home and mount_backed:
         return {"kind": "mount", "path": deliv_root}
     if s.startswith("tos://"):
-        err = tos_url_error(s, "输出 TOS 路径")
+        err = tos_url_error(s, "交付目录")
         if err:
             raise ValueError(err)
         return {"kind": "tos", "url": s}

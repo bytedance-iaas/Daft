@@ -1474,8 +1474,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # ① 控制面板在上
                 # 头部两行三件套(2026-08-20 用户定稿,融合公开 PR#65 的
                 # 「允许填桶路径」思路但不丢我们的下拉):
-                #   [数据集 TOS 路径][数据集 ▼多选][数据集地区 ▼]
-                #   [输出 TOS 路径][交付名][输出地区 ▼]
+                #   [数据集目录][数据集 ▼多选][地区 ▼]
+                #   [交付目录][交付名][地区 ▼]
                 # 路径框默认预填本实例配置桶的 tos:// 写法 → 默认体验与
                 # 之前的「数据集根目录」下拉逐字节等价(挂载零预下载直读);
                 # 改填陌生桶 = 走 stage_in/stage_out 直连。红线口径
@@ -1487,9 +1487,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _rg0 = runner.default_tos_region()
                 _rg_choices = runner.tos_region_choices()
                 with gr.Row():
-                    rn_tin = gr.Textbox(label="数据集 TOS 路径", scale=4,
+                    rn_tin = gr.Textbox(label="数据集目录", scale=4,
                                         value=runner.bucket_url(_buckets[0]),
-                                        placeholder="tos://桶名/数据集前缀")
+                                        placeholder="tos://桶名/目录")
                     # 多选(2026-08-13 用户):一次点击顺序跑选中的这几个。
                     rn_ds = gr.Dropdown(choices=runner.list_datasets(_data_root),
                                         label="数据集", scale=4,
@@ -1497,17 +1497,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 地区下拉与 rerun 的 OpenTosModal 同值同序;列表可能落后
                     # 于新地区,允许自由输入
                     rn_tin_rg = gr.Dropdown(choices=_rg_choices, value=_rg0,
-                                            label="数据集地区", scale=2,
+                                            label="地区", scale=2,
                                             allow_custom_value=True,
                                             interactive=True)
                 with gr.Row():
-                    rn_tout = gr.Textbox(label="输出 TOS 路径", scale=4,
+                    rn_tout = gr.Textbox(label="交付目录", scale=4,
                                          value=runner.home_output_url(_deliv_root),
-                                         placeholder="tos://桶名/交付根前缀")
+                                         placeholder="tos://桶名/目录")
                     rn_out = gr.Textbox(label="交付名", scale=4,
                                         placeholder="给这次结果起个名字")
                     rn_tout_rg = gr.Dropdown(choices=_rg_choices, value=_rg0,
-                                             label="输出地区", scale=2,
+                                             label="地区", scale=2,
                                              allow_custom_value=True,
                                              interactive=True)
                 # 说明行(2026-08-17 从 info= 挪出):第二行按与控件行
@@ -2134,9 +2134,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             #    ⚠️ 红线自查:报告页那套子页签零改动,这行在页签外的选择区。──
             _rp_src = {"region": ""}     # 直连地区,懒镜像与列表共用(闭包态)
             with gr.Row():
-                rp_root = gr.Textbox(label="交付根 TOS 路径", scale=4,
+                rp_root = gr.Textbox(label="交付目录", scale=4,
                                      value=runner.home_output_url(_deliv_root),
-                                     placeholder="tos://桶名/交付根前缀")
+                                     placeholder="tos://桶名/目录")
                 rp_rg = gr.Dropdown(choices=runner.tos_region_choices(),
                                     value=runner.default_tos_region(),
                                     label="地区", scale=1,
@@ -2661,7 +2661,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if not s.startswith("tos://"):
                     return (gr.update(), "⚠️ 只认 tos://桶/前缀 形式的地址"
                             "(或本实例的交付根)")
-                err = runner.tos_url_error(s, "交付根 TOS 路径")
+                err = runner.tos_url_error(s, "交付目录")
                 if err:
                     return gr.update(), f"⚠️ {err}"
                 try:
