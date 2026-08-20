@@ -899,6 +899,19 @@ def overview_markdown(m: dict) -> str:
     return "\n".join(lines)
 
 
+#: discover_deliveries 的结果缓存:(根, 深度) → (过期时刻, 根目录 mtime_ns, 结果)。
+#: 2026-08-20 公网实测:一次页面加载调它两遍(选交付一遍、加载内容又一遍),FSX 上
+#: 55 份交付每遍 2.0-2.5 秒 —— 首屏那 5.5 秒的 SSE 流全耗在这。短 TTL + 根目录
+#: mtime 双判据:顶层新交付一落盘 mtime 就变、立刻可见;嵌套交付最多晚 TTL 秒。
+_DISCOVER_TTL_S = 5.0
+_DISCOVER_CACHE: dict = {}
+
+
+def clear_discover_cache() -> None:
+    """清掉交付扫描缓存(测试夹具用;生产不需要——TTL 与 mtime 自己会失效)。"""
+    _DISCOVER_CACHE.clear()
+
+
 def discover_deliveries(root: str, max_depth: int = 3) -> list[str]:
     """root 本身是交付 → [root];否则递归扫子目录(默认 3 层)找出所有交付。
 
@@ -909,30 +922,65 @@ def discover_deliveries(root: str, max_depth: int = 3) -> list[str]:
 
     2026-08-06 从"只扫一层"改递归:用户把交付放在嵌套目录(如 experiments/run1/)
     时曾整个不可见,看起来像 UI 坏了。找到交付即不再往其内部钻(跑批子目录、
-    details/ 里不会再有交付)。"""
-    from ..delivery import is_delivery
+    details/ 里不会再有交付)。
+
+    2026-08-20 两处提速(公网首屏实测 5.5 秒的病根):①结果按 TTL+根 mtime 缓存
+    (见 _DISCOVER_CACHE);②每个候选目录只 listdir 一次,用这份清单判老布局/
+    新布局,跑批子目录**从新到旧**逐个验 passed.json、命中即停 —— 原来是
+    isdir + exists(passed.json) 逐个 stat,FSX 上几百次元数据往返。
+    """
+    import time as _time
+
+    from ..delivery import MARKER, is_run_name
     root = os.path.abspath(root)
-    if is_delivery(root):
-        return [root]
-    out = []
+    try:
+        root_mt = os.stat(root).st_mtime_ns
+    except OSError:
+        root_mt = None
+    key = (root, max_depth)
+    now = _time.monotonic()
+    hit = _DISCOVER_CACHE.get(key)
+    if hit and hit[0] > now and hit[1] == root_mt:
+        return list(hit[2])
 
-    def _walk(d: str, depth: int):
-        if depth > max_depth:
-            return
+    def _is_delivery_listing(d: str, names: list) -> bool:
+        if MARKER in names:
+            return True
+        for n in sorted((x for x in names if is_run_name(x)), reverse=True):
+            if os.path.exists(os.path.join(d, n, MARKER)):
+                return True
+        return False
+
+    def _listing(d: str):
         try:
-            subs = sorted(os.listdir(d))
+            with os.scandir(d) as it:
+                return [(e.name, e.is_dir()) for e in it]
         except OSError:
-            return
-        for name in subs:
-            p = os.path.join(d, name)
-            if not os.path.isdir(p):
-                continue
-            if is_delivery(p):
-                out.append(p)                 # 是交付:收下,不再往里钻
-            else:
-                _walk(p, depth + 1)
+            return None
 
-    _walk(root, 1)
+    top = _listing(root)
+    if top is not None and _is_delivery_listing(root, [n for n, _ in top]):
+        out = [root]
+    else:
+        out = []
+
+        def _walk(d: str, entries, depth: int):
+            if depth > max_depth or entries is None:
+                return
+            for name, isdir in sorted(entries):
+                if not isdir:
+                    continue
+                p = os.path.join(d, name)
+                sub = _listing(p)
+                if sub is None:
+                    continue
+                if _is_delivery_listing(p, [n for n, _ in sub]):
+                    out.append(p)             # 是交付:收下,不再往里钻
+                else:
+                    _walk(p, sub, depth + 1)
+
+        _walk(root, top, 1)
+    _DISCOVER_CACHE[key] = (now + _DISCOVER_TTL_S, root_mt, list(out))
     return out
 
 
