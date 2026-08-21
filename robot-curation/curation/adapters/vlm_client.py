@@ -428,6 +428,18 @@ def probe_failure_reason(e: BaseException, api_key_env: str | None = None) -> st
     return f"服务不可达({type(e).__name__})"
 
 
+def short_reason(detail: str) -> str:
+    """长原因 → 下拉里放得下的短语(2026-08-21 用户:别啰嗦):
+    密钥未配置 / 密钥无效 / 需要鉴权 / HTTP 502 / 服务不可达。"""
+    s = str(detail or "").strip()
+    if s.startswith("服务返回 HTTP"):
+        return s.replace("服务返回 ", "", 1)
+    for sep in (":", "(", "("):
+        if sep in s:
+            s = s.split(sep, 1)[0]
+    return s.strip()
+
+
 def resolve_single_model(endpoint: str, api_key_env: str | None = None,
                          timeout_s: float = 10.0) -> str:
     """端点 → 唯一模型名(2026-07-28 同事反馈:单模型服务报模型名是冗余)。

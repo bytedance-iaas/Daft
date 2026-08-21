@@ -1517,8 +1517,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             _conc_defaults = runner.concurrency_defaults(config_path)
 
             def _backend_status() -> dict:
-                """{预设代号: (在线?, 不可用原因)}(探活一次,带 60s 缓存,给下拉标可用性用)。"""
-                return {name: (("在线" in state), "" if "在线" in state else detail)
+                """{预设代号: (在线?, 不可用短原因)}(探活一次,带 60s 缓存,给下拉标可用性用)。
+                下拉里只放短语(密钥未配置 / 服务不可达 …),长原因留给 `curation backends`。"""
+                from ..adapters.vlm_client import short_reason
+                return {name: (("在线" in state), "" if "在线" in state else short_reason(detail))
                         for name, state, detail
                         in _probe_backends_cached(config_path, probe_timeout)}
 
@@ -1716,7 +1718,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     with gr.Column(scale=2):
                         # 「检测可用性」按钮已撤(2026-08-21 用户:可用性该系统自己查):
                         # 开页与切到本页时自动探活,结果直接缀在选项上(含不可用原因)
-                        rn_backend = gr.Dropdown(choices=_backends, label="模型服务")
+                        # allow_custom_value(2026-08-21):探活会把选项改成带「· 可用/暂不可用」
+                        # 后缀的,同时在飞的事件若带着旧值回来,Gradio 6 会以"值不在选项里"
+                        # 报红;旧值经 _backend_code 剥后缀照样解析到同一个预设,放行无害
+                        rn_backend = gr.Dropdown(choices=_backends, label="模型服务",
+                                                 allow_custom_value=True)
                 with gr.Accordion("更多设置", open=False):
                     rn_cfg = gr.Textbox(label="配置文件(留空=默认)",
                                         placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
@@ -2679,7 +2685,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 收进折叠区,留空就用生效配置里的值。
                 with gr.Accordion("更多设置", open=False):
                     with gr.Row():
-                        ex_backend = gr.Dropdown(choices=_backends, label="模型服务")
+                        ex_backend = gr.Dropdown(choices=_backends, label="模型服务", allow_custom_value=True)
                         pass   # 「检测可用性」按钮已撤(自动探活,见 _do_probe)
                     ex_cfg = gr.Textbox(label="配置文件(留空=默认)",
                                         placeholder=f"{runner.TOS_ROOT}/…/site.yaml")

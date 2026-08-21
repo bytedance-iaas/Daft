@@ -30,9 +30,9 @@ def test_dropdown_labels_carry_reason_and_strip_back():
     from curation.ui.app import (BACKEND_BAD, BACKEND_OK, _backend_label_of,
                                  _backend_options, _reprobe_options)
     labels = {"方舟 MaaS · doubao": "ark", "自托管 · 32B": "house-32b"}
-    status = {"ark": (False, "密钥未配置:环境变量 ARK_API_KEY 未设置"), "house-32b": (True, "")}
+    status = {"ark": (False, "密钥未配置"), "house-32b": (True, "")}
     opts = _backend_options(labels, status)
-    assert opts[0] == "方舟 MaaS · doubao" + BACKEND_BAD + "(密钥未配置:环境变量 ARK_API_KEY 未设置)"
+    assert opts[0] == "方舟 MaaS · doubao" + BACKEND_BAD + "(密钥未配置)"
     assert opts[1] == "自托管 · 32B" + BACKEND_OK
     assert _backend_label_of(opts[0]) == "方舟 MaaS · doubao"
     assert _backend_label_of(opts[1]) == "自托管 · 32B"
@@ -58,3 +58,38 @@ def test_probe_cache_avoids_refetch_within_window(monkeypatch):
     ui_app._probe_backends_cached("cfg.yaml", 3, now=1000 + ui_app.PROBE_CACHE_S + 1)
     assert calls["n"] == 2
     ui_app._PROBE_CACHE.clear()
+
+
+def test_backend_dropdowns_tolerate_stale_values(tmp_path, monkeypatch):
+    """探活改了选项后缀后,在飞的事件可能带着旧值回来 —— 两个「模型服务」下拉必须
+    allow_custom_value,否则 Gradio 6 在 preprocess 就报红(2026-08-21 7861 实见)。"""
+    pytest.importorskip("gradio")
+    import gradio as gr
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    from curation.ui.app import build_app
+    root = tmp_path / "d"; root.mkdir()
+    app = build_app(str(root), data_root=str(tmp_path / "x"))
+    dds = [b for b in app.blocks.values() if isinstance(b, gr.Dropdown) and b.label == "模型服务"]
+    assert len(dds) == 2 and all(d.allow_custom_value for d in dds)
+
+
+def test_short_reason_for_dropdown():
+    from curation.adapters.vlm_client import short_reason
+    assert short_reason("密钥未配置:环境变量 ARK_API_KEY 未设置") == "密钥未配置"
+    assert short_reason("密钥无效(HTTP 401):环境变量 ARK_API_KEY 的值不被接受") == "密钥无效"
+    assert short_reason("需要鉴权(HTTP 403),但预设没配 api_key_env") == "需要鉴权"
+    assert short_reason("服务返回 HTTP 502") == "HTTP 502"
+    assert short_reason("服务不可达(URLError)") == "服务不可达"
+
+
+def test_backend_dropdowns_tolerate_stale_values(tmp_path, monkeypatch):
+    """探活改了选项后缀后,在飞的事件可能带着旧值回来 —— 两个「模型服务」下拉必须
+    allow_custom_value,否则 Gradio 6 在 preprocess 就报红(2026-08-21 7861 实见)。"""
+    pytest.importorskip("gradio")
+    import gradio as gr
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    from curation.ui.app import build_app
+    root = tmp_path / "d"; root.mkdir()
+    app = build_app(str(root), data_root=str(tmp_path / "x"))
+    dds = [b for b in app.blocks.values() if isinstance(b, gr.Dropdown) and b.label == "模型服务"]
+    assert len(dds) == 2 and all(d.allow_custom_value for d in dds)
