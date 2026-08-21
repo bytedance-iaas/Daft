@@ -474,7 +474,9 @@ def run_pipeline(
 
     # 输入格式嗅探(2026-08-10):meta/info.json → LeRobot;目录里有 *.rrd → rerun 格式。
     # 两条 reader 产出同一份行契约,所以嗅探只换"谁来读",漏斗以下一个字都不用改。
+    from ..ingest.rrd_reader import apply_config as _rrd_apply_config
     from ..ingest.rrd_reader import is_rrd_dataset
+    _rrd_apply_config(cfg)           # ingest.rrd_enabled(默认关)
     input_format = "rrd" if is_rrd_dataset(input_dir) else "lerobot"
     if input_format == "rrd":
         from functools import partial

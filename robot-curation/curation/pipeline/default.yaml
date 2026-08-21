@@ -24,6 +24,10 @@ pipeline:
                                    #   (倒/放/开关)证据在动作瞬间(1-2秒),末态看不出。图片数=路数×本值。
 
 ingest:
+  # rerun(.rrd)格式总开关(2026-08-21):release 只对外支持 LeRobot v2/v3,默认关。
+  # 关着时 .rrd 目录会被明确拒绝("RRD 质检暂未开放");打开即恢复全部 RRD 能力
+  # (六维质检/裁决闭环/审片/rrd_curated 交付,黄金对账与浸泡都验过)。
+  rrd_enabled: false
   # rerun(.rrd)输入的采集帧率。RRD 里常常只有 frame_index、没有时间线;文件内能推出
   # 时间(VideoFrameReference 时间戳/录制属性)时以文件为准,推不出才用这里的值。
   # 留空 = 不替客户猜:推不出时间就报错,让他显式给(--set ingest.rrd_fps=30)。

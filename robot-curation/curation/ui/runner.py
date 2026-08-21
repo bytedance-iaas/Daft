@@ -266,11 +266,17 @@ def _scan_dataset_root(data_root: str) -> tuple[str, list[str]]:
             out.append(name)
             continue
         try:
-            if any(f.endswith(".rrd") for f in os.listdir(d)):
+            if _rrd_enabled() and any(f.endswith(".rrd") for f in os.listdir(d)):
                 out.append(name)
         except OSError:
             continue
     return ("ok" if out else "empty"), sorted(out)
+
+
+def _rrd_enabled() -> bool:
+    """RRD 总开关(默认关,2026-08-21):关着时数据集清单与格式嗅探都当 .rrd 目录不存在。"""
+    from ..ingest.rrd_reader import rrd_enabled
+    return rrd_enabled()
 
 
 def list_datasets(data_root: str) -> list[str]:
@@ -355,7 +361,7 @@ def dataset_format(dataset_dir: str) -> dict:
         return {"kind": "lerobot", "version": ver,
                 "needs_clips": ver.startswith("v3")}
     try:
-        if any(f.endswith(".rrd") for f in dsfs.listdir(dataset_dir)):
+        if _rrd_enabled() and any(f.endswith(".rrd") for f in dsfs.listdir(dataset_dir)):
             return {"kind": "rrd", "version": "", "needs_clips": True}
     except Exception:  # noqa: BLE001
         pass

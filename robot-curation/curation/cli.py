@@ -132,7 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="生成静态审片站(索引一屏列全量 episode + 逐条多路视频页),"
                              "落盘持久;由 UI 的 /review 路由服务(pod 重启不丢)")
     rp.add_argument("--input", required=True,
-                    help="数据集目录(LeRobot 格式,或 rerun 的 .rrd 目录;自动识别)")
+                    help="数据集目录(LeRobot v2/v3;RRD 本版本未开放)")
     rp.add_argument("--output", required=True,
                     help="产出目录(建议持久盘,如 /mnt/tos/review/<名字>)")
     rp.add_argument("--episodes", default=None, metavar="表达式",
@@ -140,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--max-episodes", type=int, default=None, help="只做前 N 条")
     rp.add_argument("--title", default=None, help="页面标题(缺省用数据集目录名)")
     rp.add_argument("--rrd-fps", type=float, default=None, metavar="帧率",
-                    help="仅 RRD 输入:采集帧率。RRD 里没有时间信息时必须给"
+                    help="仅 RRD 输入(本版本未开放):采集帧率。RRD 里没有时间信息时必须给"
                          "(如 so101 用 30),数据自带帧时间戳时(如 bridge)不用管。"
                          "等价于 run 的 --set ingest.rrd_fps")
 
@@ -491,6 +491,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.vlm_backend:
             from .pipeline.config import apply_vlm_backend
             cfg = apply_vlm_backend(cfg, args.vlm_backend)
+        from .ingest.rrd_reader import apply_config as _rrd_apply_config
+        _rrd_apply_config(cfg)
         summary = run_rejudge(args.delivery, args.input, cfg)
         print(json.dumps(summary, ensure_ascii=False, indent=1)
               if isinstance(summary, dict) else summary)
