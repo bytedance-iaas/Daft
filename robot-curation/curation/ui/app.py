@@ -108,9 +108,9 @@ VLM_CHECKS = ("task_success", "skill_profile")
 
 #: 「质检范围」三挡的界面说法(改名只改这里,判断都比这三个常量)。
 FULL_SCAN = "完整质检"
-#: 「数据来源」单选(2026-08-21):公共数据集只在站点配置了 public_datasets 时出现
-SRC_TOS = "TOS 地址"
-SRC_PUBLIC = "公共数据集"
+#: 「数据集目录」标签旁的勾选框(2026-08-21 用户定稿):勾上 = 读公共镜像桶,目录框与地区
+#: 置灰只看不填,只剩「数据集」下拉可选;交付目录一概不动。没配置 public_datasets 不出现。
+PUBLIC_BOX = "公共桶"
 QUICK_SCAN = "快速质检"
 CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自己定义模块里查什么"
                           # (那是以后的事),其实是"从现成模块里挑几个跑"
@@ -775,6 +775,46 @@ _ARCO_CSS = """
    字顶进面板底下**被切掉半截**(用户实见:"端点那一行被盖住了")。要贴近就
    靠正的小间距,别靠负值。 */
 .gradio-container .field-note { margin-top: 2px !important; padding-left: 13px; }
+
+/* 「数据集目录」自画标题行(2026-08-21):Markdown 标签 + 紧挨着的「公共桶」勾选框,
+   观感对齐 gradio 原生 block 标签(同字号/同灰/同下间距),右边列的原生标签才不会
+   跟它错行。勾选框 container=False 只剩 input + 文字,行高压到与标签一致。 */
+/* 这一列自己当卡片:gradio 只把**连续的表单控件**合进一张 .form 卡,中间插了
+   Markdown 标签就散成三块各带边框(实机:勾选框掉到下一行自成一框)。做法 = 列外框
+   画成 .form 的样子,里面的 .form/.block 全部去框去内边距。 */
+#rn-tin-col { border: 1px solid var(--arco-border) !important;
+              border-radius: var(--arco-radius) !important;
+              background: var(--block-background-fill, #fff) !important;
+              padding: var(--block-padding, 10px 12px) !important; gap: 0 !important; }
+#rn-tin-col .form, #rn-tin-col .block {
+  border: none !important; background: transparent !important;
+  padding: 0 !important; box-shadow: none !important; min-height: 0 !important;
+}
+#rn-tin-head { align-items: center !important; justify-content: flex-start !important;
+               gap: 14px !important; flex-wrap: nowrap !important;
+               margin-bottom: var(--spacing-sm, 4px) !important; min-height: 0 !important; }
+#rn-tin-head .field-label, #rn-tin-head .field-label p {
+  font-size: var(--block-title-text-size, 14px) !important;
+  color: var(--block-title-text-color, var(--arco-t2)) !important;
+  font-weight: var(--block-title-text-weight, 400) !important;
+  line-height: 1.4 !important; margin: 0 !important; padding: 0 !important;
+}
+/* gradio 给每个 .block 写死 width:100%,flex 行里两个"自适应宽"的块会各占满一行
+   (实机:勾选框被顶出卡片外)—— 标题行里的块按内容定宽 */
+#rn-tin-head > .block, #rn-tin-head .field-label, #rn-pub {
+  width: auto !important; flex: 0 0 auto !important; min-width: 0 !important;
+  /* gradio 的 .auto-margin 给块 margin:auto,flex 行里它会把剩余宽度全吃成左外边距
+     (实测勾选框被推远 200px,计算样式却报 0px) */
+  margin: 0 !important;
+}
+#rn-pub label { padding: 0 !important; gap: 6px !important; }
+#rn-pub label span { font-size: 13px !important; color: var(--arco-t2) !important; }
+/* 置灰的输入框(interactive=False → disabled):内容用 Arco 的 text-3 灰,一眼看出
+   "这是给你看的,不是让你填的"(2026-08-21 用户:勾上公共桶后目录/地区要灰) */
+.gradio-container textarea:disabled, .gradio-container input:disabled {
+  color: var(--arco-t3) !important; -webkit-text-fill-color: var(--arco-t3) !important;
+  opacity: 1 !important;
+}
 
 /* 内层子页签按 Arco 的 line 型(实测自 arco.css):
    .arco-tabs-header-title = 14px / text-2 / **无边框无背景**;
@@ -1638,16 +1678,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 往下推,三列错位),说明全在下面独立说明行。
                 _rg0 = runner.default_tos_region()
                 _rg_choices = runner.tos_region_choices()
-                # 数据来源(2026-08-21):默认「TOS 地址」= 下面两行照旧;切「公共
-                # 数据集」→ 路径框/地区填上镜像桶并置灰(桶名永远可见,只是不用
-                # 填),数据集下拉只列镜像里 LeRobot 格式的那几个。没配置就不出现。
-                rn_src = gr.Radio([SRC_TOS, SRC_PUBLIC], value=SRC_TOS,
-                                  label="数据来源", elem_id="rn-src",
-                                  visible=bool(_public_cfg))
-                with gr.Row():
-                    rn_tin = gr.Textbox(label="数据集目录", scale=4,
-                                        value=runner.bucket_url(_buckets[0]),
-                                        placeholder="tos://桶名/目录")
+                with gr.Row(equal_height=True):
+                    # 「数据集目录」的标题行自己画(2026-08-21 用户定稿):标签右边
+                    # 紧挨着一个「公共桶」勾选框 —— gradio 的原生标签里塞不进控件,
+                    # 所以标签用 Markdown 画、Textbox 自己的标签藏起来(label 仍叫
+                    # 「数据集目录」,测试与深链按它定位)。勾上:目录框/地区填镜像桶
+                    # 并置灰,只剩数据集下拉可选;交付目录一概不动。没配置就不出现。
+                    with gr.Column(scale=4, min_width=160, elem_id="rn-tin-col"):
+                        with gr.Row(elem_id="rn-tin-head"):
+                            gr.Markdown("数据集目录", elem_classes=["field-label"])
+                            rn_pub = gr.Checkbox(label=PUBLIC_BOX, value=False,
+                                                 container=False, elem_id="rn-pub",
+                                                 visible=bool(_public_cfg),
+                                                 scale=0, min_width=80)
+                        rn_tin = gr.Textbox(label="数据集目录", show_label=False,
+                                            value=runner.bucket_url(_buckets[0]),
+                                            placeholder="tos://桶名/目录")
                     # 多选(2026-08-13 用户):一次点击顺序跑选中的这几个。
                     rn_ds = gr.Dropdown(choices=runner.list_datasets(_data_root),
                                         label="数据集", scale=4,
@@ -1684,12 +1730,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # (datasets_path 是桶配置的必填项),右列为空不塌行。
                 with gr.Row():
                     with gr.Column(scale=4, min_width=160):
-                        # 读取端点 + 挂载路径两行(runner.bucket_info_line
-                        # 产出 \n 分隔,line_breaks=True 让它换行);填陌生
-                        # 桶时这里换成直连说明(_root_changed 负责)
+                        # 根目录的说明行:挂载桶时**空着**(2026-08-21 用户:端点/
+                        # 挂载路径两行删掉,界面不印读取细节);填陌生桶时这里换成
+                        # 直连说明,出错时放原因(_root_changed 负责)
                         rn_src_note = gr.Markdown(
-                            runner.bucket_info_line(_buckets[0]),
-                            line_breaks=True, elem_id="rn-src-note",
+                            "", line_breaks=True, elem_id="rn-src-note",
                             elem_classes=["field-note"])
                     with gr.Column(scale=4, min_width=160):
                         # 根目录三态说明(没挂上/挂了但空/正常时空串不打扰)
@@ -1880,7 +1925,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     except StopIteration:
                         return gr.update(), gr.update(), gr.update()
                     root = b["datasets_path"]
-                    return (runner.bucket_info_line(b),
+                    return ("",
                             gr.update(choices=runner.list_datasets(root),
                                       value=[] if multi_pick else None),
                             runner.dataset_root_note(root))
@@ -1900,7 +1945,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         return (f"⚠️ {e}", gr.update(choices=[], value=[]), "")
                     if spec["kind"] == "mount":
                         root = spec["path"]
-                        return (runner.bucket_info_line(spec["bucket"]),
+                        return ("",
                                 gr.update(choices=runner.list_datasets(root),
                                           value=[]),
                                 runner.dataset_root_note(root))
@@ -1911,8 +1956,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         except Exception as e:  # noqa: BLE001
                             return (f"⚠️ {type(e).__name__}: {str(e)[:160]}",
                                     gr.update(choices=[], value=[]), "")
-                        return (public_catalog.summary_line(len(ch)),
-                                gr.update(choices=ch, value=[]),
+                        return ("", gr.update(choices=ch, value=[]),
                                 "" if ch else "镜像里目前没有 LeRobot 格式的数据集")
                     try:
                         names = runner.tos_list_datasets(
@@ -2009,36 +2053,25 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 out_ask_ok.click(lambda: ("", gr.update(visible=False), ""),
                                  None, [rn_tout, out_ask, rn_tout_note])
 
-                def _src_changed(src, tout, auto):
-                    """「数据来源」切换 → 路径框/地区/数据集下拉/两行说明/交付目录
-                    一起换。公共数据集:路径框与地区填镜像桶并置灰,下拉只列清单
-                    里 LeRobot 格式的;交付目录**绝不借公共桶**(只读)—— 有自己桶
-                    的实例照用自己的,没桶的留空 + 一句原因。切回 TOS 地址:恢复
-                    本实例默认桶,与刚打开页面时一致。用户手改过的交付框不碰。"""
-                    keep_out = (not auto) and bool(str(tout or "").strip())
-                    if src == SRC_PUBLIC and public_catalog.configured():
+                def _pub_changed(checked):
+                    """「公共桶」勾选 → (目录框, 地区, 数据集下拉, 根说明, 数据集说明)。
+                    勾上:目录框/地区填镜像桶并置灰(桶名照样可见,只是不用填),下拉
+                    只列清单里 LeRobot 格式的;取消:恢复本实例默认桶、可编辑、重列。
+                    交付目录一概不碰(2026-08-21 用户:勾不勾都不该重载它)。"""
+                    if checked and public_catalog.configured():
                         root, rg = public_catalog.root_url(), public_catalog.region()
                         note, ds, ds_note = _root_changed(root, rg)
-                        out, onote = runner.public_output_default(_deliv_root)
                         return (gr.update(value=root, interactive=False),
                                 gr.update(value=rg or _rg0, interactive=False),
-                                ds, note, ds_note,
-                                gr.update() if keep_out else gr.update(value=out),
-                                gr.update() if keep_out else onote,
-                                auto if keep_out else True)
+                                ds, note, ds_note)
                     home_url = runner.bucket_url(_buckets[0])
                     note, ds, ds_note = _root_changed(home_url, _rg0)
                     return (gr.update(value=home_url, interactive=True),
                             gr.update(value=_rg0, interactive=True),
-                            ds, note, ds_note,
-                            gr.update() if keep_out else gr.update(value=_out_default),
-                            gr.update() if keep_out else "",
-                            auto if keep_out else True)
+                            ds, note, ds_note)
 
-                _src_outs = [rn_tin, rn_tin_rg, rn_ds, rn_src_note, rn_ds_note,
-                             rn_tout, rn_tout_note, rn_tout_auto]
-                rn_src.input(_src_changed, [rn_src, rn_tout, rn_tout_auto],
-                             _src_outs).then(_borrow_output, _bo_in, _bo_out)
+                rn_pub.input(_pub_changed, rn_pub,
+                             [rn_tin, rn_tin_rg, rn_ds, rn_src_note, rn_ds_note])
                 # 报告页「执行裁决」的源数据集兜底下拉(ex_src_dd)仍用桶下拉
                 # 那套(_src_datasets),接线在那侧组件建出来之后
 
@@ -2392,11 +2425,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             except Exception as e:  # noqa: BLE001
                                 choices = []
                                 ds_note = f"⚠️ {type(e).__name__}: {str(e)[:120]}"
-                            src_note = public_catalog.summary_line(len(choices))
+                            src_note = ""
                             region = public_catalog.region() or region
                         elif spec["kind"] == "mount":
                             choices = runner.list_datasets(spec["path"])
-                            src_note = runner.bucket_info_line(spec["bucket"])
+                            src_note = ""
                             ds_note = runner.dataset_root_note(spec["path"])
                             # 旧契约的端点矛盾提示照发(链接的端点 vs 本实例
                             # 配置的端点地域对不上要点名;链接值只进提示,
@@ -2433,7 +2466,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 (gr.update(value=region, interactive=not is_pub)
                                  if region else gr.update(interactive=not is_pub)),
                                 src_note, ds_note,
-                                gr.update(value=SRC_PUBLIC if is_pub else SRC_TOS))
+                                gr.update(value=bool(is_pub)))
                     # 旧契约(裸名字):对表预选,行为与 2026-08-17 版一致 ——
                     # **桶不认识绝不回落到默认桶里找同名的**
                     plan = runner.prefill_plan(bare, _buckets,
@@ -2450,10 +2483,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             gr.update(choices=plan["choices"],
                                       value=plan["datasets"]),
                             gr.update(),
-                            runner.bucket_info_line(_b) if _b else gr.update(),
+                            "" if _b else gr.update(),
                             runner.dataset_root_note(_b["datasets_path"])
                             if _b else gr.update(),
-                            gr.update())
+                            gr.update(value=False))
 
                 # gr.Request 靠注解注入;`from __future__ import annotations` 下字符串
                 # 注解会在 gradio 里被 eval,而 `gr` 只在函数内可见 → 直接挂真对象
@@ -2461,7 +2494,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _prefill_from_query.__annotations__ = {"request": gr.Request}
                 _prefill_evt = app.load(
                     _prefill_from_query, None,
-                    [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note, rn_src])
+                    [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note, rn_pub])
                 # 深链带来的数据集桶 → 交付目录也借它(没自己桶的实例)
                 _prefill_evt.then(_borrow_output, _bo_in, _bo_out)
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进

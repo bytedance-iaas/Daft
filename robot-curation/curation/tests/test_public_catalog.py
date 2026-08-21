@@ -263,9 +263,9 @@ def test_runner_tos_list_datasets_on_public_root_uses_catalog():
 
 # ── 界面 ────────────────────────────────────────────────────────────────────
 
-def _radio(app, label):
+def _checkbox(app, label):
     import gradio as gr
-    return next(b for b in app.blocks.values() if isinstance(b, gr.Radio) and b.label == label)
+    return next(b for b in app.blocks.values() if isinstance(b, gr.Checkbox) and b.label == label)
 
 
 def _fn_on(app, block, event="input"):
@@ -293,19 +293,22 @@ def _build(tmp_path, config_path=None):
                      data_root=str(tmp_path / "datasets"))
 
 
-def test_source_radio_hidden_without_config_and_visible_with(tmp_path, site):
+def test_public_box_hidden_without_config_and_visible_with(tmp_path, site):
     from curation.ui import app as ui_app
     app = _build(tmp_path)
-    assert _radio(app, "数据来源").visible is False
+    assert _checkbox(app, ui_app.PUBLIC_BOX).visible is False
     assert pc.configured() is None
     app2 = _build(tmp_path, site)
-    r = _radio(app2, "数据来源")
-    assert r.visible is True and r.choices and [c[1] for c in r.choices] == [ui_app.SRC_TOS, ui_app.SRC_PUBLIC]
-    assert r.value == ui_app.SRC_TOS
+    box = _checkbox(app2, ui_app.PUBLIC_BOX)
+    assert box.visible is True and box.value is False
     assert tos_store.is_anonymous_bucket(BKT), "建界面时就把公共桶登记成匿名读"
+    import gradio as gr
+    tin = next(b for b in app2.blocks.values() if isinstance(b, gr.Textbox) and b.label == "数据集目录")
+    assert tin.show_label is False, "标题行自己画(标签 + 勾选框),原生标签藏起来"
 
 
-def test_switching_source_greys_root_and_region_and_lists_catalog(tmp_path, site, monkeypatch):
+def test_ticking_public_box_greys_root_and_region_lists_catalog_and_leaves_output_alone(
+        tmp_path, site, monkeypatch):
     from curation.ui import app as ui_app
     monkeypatch.setattr(pc, "catalog", lambda **kw: [
         {"name": "libero", "id": "HuggingFaceVLA/libero", "version": "v3.0",
@@ -313,26 +316,22 @@ def test_switching_source_greys_root_and_region_and_lists_catalog(tmp_path, site
     monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
     monkeypatch.delenv("TOS_BUCKET", raising=False)
     app = _build(tmp_path, site)
-    fn = _fn_on(app, _radio(app, "数据来源")).fn
-    out = fn(ui_app.SRC_PUBLIC, "", True)
-    tin, rg, ds, note, ds_note, tout, tout_note, auto = out
+    ev = _fn_on(app, _checkbox(app, ui_app.PUBLIC_BOX))
+    labels = [getattr(o, "label", None) for o in ev.outputs]
+    assert labels[:3] == ["数据集目录", "地区", "数据集"] and len(labels) == 5
+    assert "交付目录" not in labels, "勾不勾公共桶都不许碰交付目录(2026-08-21 用户)"
+    tin, rg, ds, note, ds_note = ev.fn(True)
     assert tin["value"] == f"tos://{BKT}/dataset" and tin["interactive"] is False, \
         "桶名照样显示,只是置灰不用填"
     assert rg["value"] == "cn-beijing" and rg["interactive"] is False
     assert ds["choices"] == [("HuggingFaceVLA/libero · v3.0 · 1693 条", "libero")] and ds["value"] == []
-    assert "1 个 LeRobot 数据集" in note and ds_note == ""
-    assert tout["value"] == "" and "只读" in tout_note and auto is True, "没桶的实例:交付留空 + 原因"
-    # 用户手改过交付框 → 不碰
-    out2 = fn(ui_app.SRC_PUBLIC, "tos://mine/deliveries", False)
-    assert out2[5] == {"__type__": "update"} or out2[5].get("value") is None
-    assert out2[7] is False
-    # 切回 TOS 地址:路径框恢复可编辑
-    back = fn(ui_app.SRC_TOS, "", True)
+    assert note == "" and ds_note == ""
+    back = ev.fn(False)
     assert back[0]["interactive"] is True and back[1]["interactive"] is True
+    assert back[0]["value"] != f"tos://{BKT}/dataset"
 
 
-def test_public_deeplink_preselects_and_switches_source(tmp_path, site, monkeypatch):
-    from curation.ui import app as ui_app
+def test_public_deeplink_preselects_and_ticks_box(tmp_path, site, monkeypatch):
     monkeypatch.setattr(pc, "catalog", lambda **kw: [
         {"name": "libero", "id": "HuggingFaceVLA/libero", "version": "v3.0",
          "episodes": 1693, "files": 3, "url": f"tos://{BKT}/dataset/libero"}])
@@ -344,16 +343,16 @@ def test_public_deeplink_preselects_and_switches_source(tmp_path, site, monkeypa
     assert out[0]["value"] == f"tos://{BKT}/dataset" and out[0]["interactive"] is False
     assert out[1]["value"] == ["libero"]
     assert out[2]["value"] == "cn-beijing"
-    assert out[5]["value"] == ui_app.SRC_PUBLIC
+    assert out[5]["value"] is True, "第 6 个输出 = 「公共桶」勾选框"
     # 完整 tos:// 地址的老契约指到公共桶,同样识别
     out = fn(SimpleNamespace(query_params={"dataset": f"tos://{BKT}/dataset/libero"}))
-    assert out[1]["value"] == ["libero"] and out[5]["value"] == ui_app.SRC_PUBLIC
-    # 只带 source=public:切来源、不预选
+    assert out[1]["value"] == ["libero"] and out[5]["value"] is True
+    # 只带 source=public:勾上、不预选
     out = fn(SimpleNamespace(query_params={"source": "public"}))
-    assert out[1]["value"] == [] and out[5]["value"] == ui_app.SRC_PUBLIC
-    # 普通深链把来源单选钉回「TOS 地址」(深链总在页面刚开时到,值本来就是它)
+    assert out[1]["value"] == [] and out[5]["value"] is True
+    # 普通深链把勾选框钉回未勾(深链总在页面刚开时到,值本来就是它)
     out = fn(SimpleNamespace(query_params={"dataset": "tos://other-bkt/datasets/x"}))
-    assert out[5]["value"] == ui_app.SRC_TOS and out[0]["interactive"] is True
+    assert out[5]["value"] is False and out[0]["interactive"] is True
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
