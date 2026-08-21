@@ -234,7 +234,10 @@ def _cmd_backends(config_path: str | None, timeout: float) -> int:
             extra = f" …(共{len(ids)}个)" if len(ids) > 3 else ""
             print(f"{name:<24}{'✅在线':<10}{', '.join(ids[:3])}{extra}")
         except Exception as e:  # noqa: BLE001  单预设失败照常列完其余
-            print(f"{name:<24}{'❌不可达':<10}({type(e).__name__})")
+            from .adapters.vlm_client import probe_failure_reason
+            reason = probe_failure_reason(e, p_.get("api_key_env"))
+            state = "❌密钥问题" if ("密钥" in reason or "鉴权" in reason) else "❌不可达"
+            print(f"{name:<24}{state:<10}{reason}")
     return 0
 
 

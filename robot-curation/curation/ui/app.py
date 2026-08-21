@@ -851,13 +851,33 @@ def _probe_backends(config_path: str | None, timeout: float) -> list[list]:
         cfg = load_config(config_path)
     except Exception as e:  # noqa: BLE001
         return [["(配置加载失败)", str(e), ""]]
+    from ..adapters.vlm_client import probe_failure_reason
     for name, b in sorted((cfg.get("vlm_backends") or {}).items()):
         try:
             models = list_models(b["endpoint"], b.get("api_key_env"), timeout_s=timeout)
             shown = ", ".join(models[:3]) + (f" …(共{len(models)}个)" if len(models) > 3 else "")
             rows.append([name, "✅在线", shown])
         except Exception as e:  # noqa: BLE001
-            rows.append([name, "❌不可达", type(e).__name__])
+            # 原因分三类说(密钥/HTTP/网络),别把 401 说成"不可达"(2026-08-21)
+            reason = probe_failure_reason(e, b.get("api_key_env"))
+            state = "❌密钥问题" if "密钥" in reason or "鉴权" in reason else "❌不可达"
+            rows.append([name, state, reason])
+    return rows
+
+
+#: 探活结果缓存(秒):自动探活挂在开页/切页签上,一分钟内反复切页不必每次都出网
+PROBE_CACHE_S = 60
+_PROBE_CACHE: dict = {}
+
+
+def _probe_backends_cached(config_path, timeout: float, *, now=None) -> list[list]:
+    import time as _t
+    t = now if now is not None else _t.time()
+    hit = _PROBE_CACHE.get(config_path)
+    if hit and t - hit[0] < PROBE_CACHE_S:
+        return hit[1]
+    rows = _probe_backends(config_path, timeout)
+    _PROBE_CACHE[config_path] = (t, rows)
     return rows
 
 
@@ -952,19 +972,37 @@ BACKEND_OK, BACKEND_BAD = " · 可用", " · 暂不可用"
 
 
 def _backend_label_of(choice) -> str:
-    """下拉选中项 → 标签本体(容忍带「· 可用/暂不可用」后缀)。"""
+    """下拉选中项 → 标签本体(容忍带「· 可用」/「· 暂不可用(原因)」后缀)。"""
     s = str(choice or "")
     for suffix in (BACKEND_OK, BACKEND_BAD):
-        if s.endswith(suffix):
-            return s[: -len(suffix)]
+        i = s.find(suffix)
+        if i >= 0:
+            return s[:i]
     return s
 
 
+def _status_ok(v) -> bool:
+    """探活状态值:True/False,或 (是否在线, 原因)。"""
+    return bool(v[0]) if isinstance(v, tuple) else bool(v)
+
+
+def _status_reason(v) -> str:
+    return str(v[1] or "") if isinstance(v, tuple) and len(v) > 1 else ""
+
+
 def _backend_options(labels: dict, status: dict | None = None) -> list:
-    """{标签: 预设代号} + {代号: 是否在线} → 下拉选项。未检测的只给标签。"""
-    return [label + ("" if status is None or code not in status
-                     else (BACKEND_OK if status[code] else BACKEND_BAD))
-            for label, code in labels.items()]
+    """{标签: 预设代号} + {代号: 在线?|(在线?, 原因)} → 下拉选项。未检测的只给标签;
+    不可用的把原因缀在括号里 —— 「暂不可用」三个字让人去查网络,而多数时候是密钥没注入。"""
+    out = []
+    for label, code in labels.items():
+        if status is None or code not in status:
+            out.append(label)
+        elif _status_ok(status[code]):
+            out.append(label + BACKEND_OK)
+        else:
+            r = _status_reason(status[code])
+            out.append(label + BACKEND_BAD + (f"({r})" if r else ""))
+    return out
 
 
 def _reprobe_options(old_labels: dict, labels: dict, status: dict,
@@ -985,7 +1023,7 @@ def _reprobe_options(old_labels: dict, labels: dict, status: dict,
         hit = next((c for c in choices if _backend_label_of(c) == want), None)
         values.append(hit)
         lost = lost or bool(want and hit is None)
-    n_ok = sum(1 for v in status.values() if v)
+    n_ok = sum(1 for v in status.values() if _status_ok(v))
     msg = (f"已检测 {len(status)} 个模型服务:{n_ok} 个可用"
            + ("" if n_ok else " —— 一个都连不上,先把服务起起来"))
     added = len(set(labels.values()) - set(old_labels.values()))
@@ -1479,9 +1517,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             _conc_defaults = runner.concurrency_defaults(config_path)
 
             def _backend_status() -> dict:
-                """{预设代号: True/False}(探活一次,给下拉标可用性用)。"""
-                return {name: ("在线" in state)
-                        for name, state, _ in _probe_backends(config_path, probe_timeout)}
+                """{预设代号: (在线?, 不可用原因)}(探活一次,带 60s 缓存,给下拉标可用性用)。"""
+                return {name: (("在线" in state), "" if "在线" in state else detail)
+                        for name, state, detail
+                        in _probe_backends_cached(config_path, probe_timeout)}
 
             def _backend_choices(status: dict | None = None) -> list:
                 """下拉选项:未检测时只给名字;检测过就把状态缀在后面。"""
@@ -1560,7 +1599,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return _tk_view(f"⚠️ 没能开始:{e}")
                 return _tk_view("已开始,下面会自动刷新进度")
 
-            with gr.Tab("跑质检", id="console"):
+            with gr.Tab("跑质检", id="console") as console_tab:
                 # 顶层直接叫「跑质检」(2026-08-19 用户拍板:原「任务台」下面
                 # 只剩这一页,没必要再套一层子页签 —— 原「跑质检」子页签删掉,
                 # 内容提到顶层)。id 仍是 console:报告页「执行裁决」确认后要
@@ -1675,8 +1714,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     rn_eps = gr.Textbox(label="指定 episode",
                                         placeholder="34 / 10-20 / 3,10-12")
                     with gr.Column(scale=2):
+                        # 「检测可用性」按钮已撤(2026-08-21 用户:可用性该系统自己查):
+                        # 开页与切到本页时自动探活,结果直接缀在选项上(含不可用原因)
                         rn_backend = gr.Dropdown(choices=_backends, label="模型服务")
-                        rn_probe = gr.Button("检测可用性", size="sm", scale=0)
                 with gr.Accordion("更多设置", open=False):
                     rn_cfg = gr.Textbox(label="配置文件(留空=默认)",
                                         placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
@@ -1958,7 +1998,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         if not _ok:
                             return _tk_view(f"⚠️ 交付目录写不进去:{_why}")
                     if str(backend or '').endswith(BACKEND_BAD):
-                        return _tk_view('⚠️ 选中的模型服务当前不可用,换一个,或把那台服务起起来后点「检测可用性」')
+                        return _tk_view('⚠️ 选中的模型服务当前不可用(原因见选项后的括号),换一个,或把它修好后切回本页自动重检')
                     # 多选下拉默认一个都没选 → 必须先拦(否则空选会一路走到
                     # resolve_under(root, "") = 拿整个数据集根当一份数据跑)
                     _no_ds = runner.dataset_selection_error(ds, bool(batch))
@@ -2134,6 +2174,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 def _do_probe(cur_run, cur_ex):
                     """探活一次 → 两个下拉都缀上可用性(它们指的是同一批服务)。
+                    2026-08-21 起没有按钮了:挂在 app.load 与两个页签的 select 上自动跑
+                    (60s 缓存,切页不反复出网);不再回提示语,结果就在选项上。
 
                     ⚠️ 探活**不走任务通道**:`curation backends` 的原始输出里全是内部
                     预设代号(a30-8b 之类),贴进日志就等于把代号摆到客户面前。这里
@@ -2145,10 +2187,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     old = dict(_backend_map)
                     _backend_map.clear()
                     _backend_map.update(runner.vlm_backend_labels(config_path))
-                    ch, vals, msg = _reprobe_options(
+                    ch, vals, _msg = _reprobe_options(
                         old, _backend_map, _backend_status(), [cur_run, cur_ex])
                     return (gr.update(choices=ch, value=vals[0]),
-                            gr.update(choices=ch, value=vals[1]), msg)
+                            gr.update(choices=ch, value=vals[1]))
 
                 # 两个「检测可用性」按钮(跑质检侧 + 报告页执行裁决侧)的接线在
                 # 报告页那侧的组件建出来之后统一挂(见「人工裁决」页底部)——
@@ -2638,7 +2680,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 with gr.Accordion("更多设置", open=False):
                     with gr.Row():
                         ex_backend = gr.Dropdown(choices=_backends, label="模型服务")
-                        ex_probe = gr.Button("检测可用性", size="sm", scale=0)
+                        pass   # 「检测可用性」按钮已撤(自动探活,见 _do_probe)
                     ex_cfg = gr.Textbox(label="配置文件(留空=默认)",
                                         placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
                 with gr.Row():
@@ -3252,7 +3294,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if str(backend or "").endswith(BACKEND_BAD):
                     return (gr.update(), hide,
                             "⚠️ 选中的模型服务当前不可用,换一个,或把那台服务"
-                            "起起来后点「检测可用性」", *hold)
+                            "修好后切回本页自动重检", *hold)
                 src = runner.source_dataset_of(path)
                 try:
                     if not src:
@@ -3317,13 +3359,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             app.load(_ex_btn_state, None, ex_go)
             ex_src_dd.input(lambda s: _src_datasets(s, False), ex_src_dd,
                             [ex_src_note, ex_ds, ex_ds_note])
-            # 两个「检测可用性」共用一次探活(_do_probe 同时刷新两处下拉 ——
-            # 它们指的是同一批服务,只刷一处另一处就挂着陈旧状态撒谎);
-            # 提示各回各页:从报告页点的,提示写回任务台没人看得见。
-            rn_probe.click(_do_probe, [rn_backend, ex_backend],
-                           [rn_backend, ex_backend, tk_msg])
-            ex_probe.click(_do_probe, [rn_backend, ex_backend],
-                           [rn_backend, ex_backend, ex_msg])
+            # 自动探活(2026-08-21 用户:可用性该系统自己查,不该让人点按钮):
+            # 开页一次 + 切到跑质检/报告页各一次(真事件),同时刷新两处下拉 ——
+            # 它们指的是同一批服务,只刷一处另一处就挂着陈旧状态撒谎。60s 缓存。
+            app.load(_do_probe, [rn_backend, ex_backend], [rn_backend, ex_backend])
+            console_tab.select(_do_probe, [rn_backend, ex_backend], [rn_backend, ex_backend])
+            report_tab.select(_do_probe, [rn_backend, ex_backend], [rn_backend, ex_backend])
             # 筛选/排序都只是重画同一份数据(load_timeline 读的是交付里的
             # episodes_timeline.json),不重算任何指标。
             def _tl_view(m, show_label, sort_label):

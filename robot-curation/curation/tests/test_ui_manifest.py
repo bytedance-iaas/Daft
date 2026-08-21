@@ -291,21 +291,22 @@ def test_task_console_is_top_level_and_report_tabs_untouched(delivery):
     assert "执行裁决" in rep
 
 
-def test_probe_buttons_are_wired(delivery):
-    """「检测可用性」必须真接了事件。
-
-    2026-08-13 实测:这两个按钮建出来了却谁也没接,客户点了毫无反应,还以为
-    是服务挂了。按钮不接线在界面上看不出来(截图里它长得跟能用的一样),只能
-    靠这条钉住。
-    """
+def test_backend_probe_is_automatic(delivery):
+    """2026-08-21 用户:可用性该系统自己查。没有「检测可用性」按钮;探活挂在
+    app.load 与两个页签的 select 上,且每次同时刷新两处模型服务下拉。"""
     pytest.importorskip("gradio")
+    import gradio as gr
     from curation.ui.app import build_app
     app = build_app(delivery)
-    probes = {i for i, c in app.blocks.items()
-              if getattr(c, "value", None) == "检测可用性"}
-    assert probes, "界面上找不到「检测可用性」按钮"
-    wired = {t[0] for fn in app.fns.values() for t in getattr(fn, "targets", [])}
-    assert probes <= wired, "有「检测可用性」按钮没接事件"
+    assert not any(getattr(c, "value", None) == "检测可用性" for c in app.blocks.values())
+    dds = [b for b in app.blocks.values() if isinstance(b, gr.Dropdown) and b.label == "模型服务"]
+    assert len(dds) == 2
+    probes = [f for f in app.fns.values() if getattr(f.fn, "__name__", "") == "_do_probe"]
+    events = sorted((t[1] if isinstance(t, tuple) else t.event_name)
+                    for f in probes for t in (f.targets or []))
+    assert events == ["load", "select", "select"], events
+    for f in probes:
+        assert {d._id for d in dds} <= {getattr(o, "_id", None) for o in (f.outputs or [])}
 
 
 def test_console_knobs_to_set_overrides():
@@ -395,10 +396,8 @@ def test_probe_button_rereads_the_config_without_restarting_the_ui(delivery, mon
     app = ui_app.build_app(delivery)
     live["自托管 vLLM · Cosmos-Reason2-32B · H20"] = "house-32b"   # 启动之后才加的
 
-    probes = {i for i, c in app.blocks.items()
-              if getattr(c, "value", None) == "检测可用性"}
-    fn = next(f for f in app.fns.values()
-              if probes & {t[0] for t in getattr(f, "targets", [])})
+    ui_app._PROBE_CACHE.clear()
+    fn = next(f for f in app.fns.values() if getattr(f.fn, "__name__", "") == "_do_probe")
     out = fn.fn("方舟 MaaS · doubao-seed", None)
     assert any("Cosmos-Reason2-32B" in str(c) for c in out[0]["choices"])
     assert "方舟" in str(out[0]["value"])
