@@ -589,12 +589,8 @@ def probe_writable(url: str, region: str | None = None, *,
     try:
         st.head_prefix(bucket, p + "/" if p else "")
     except Exception as e:  # noqa: BLE001 SDK 异常族杂,按状态码分
-        code = _http_status(e)
-        if code in (404, 301):          # NoSuchBucket / 桶在别的地区(PermanentRedirect)
-            return {"kind": "missing", "detail": _err_text(e)}
-        if code == 403:
-            return {"kind": "forbidden", "detail": _err_text(e)}
-        return {"kind": "error", "detail": _err_text(e)}
+        kind, detail = classify_list_error(e)
+        return {"kind": kind, "detail": detail}
     try:
         st.put_empty(bucket, key)
     except Exception as e:  # noqa: BLE001
@@ -606,6 +602,57 @@ def probe_writable(url: str, region: str | None = None, *,
     except Exception as e:  # noqa: BLE001
         return {"kind": "leftover", "detail": _err_text(e)}
     return {"kind": "ok", "detail": ""}
+
+
+def classify_list_error(e: BaseException) -> tuple[str, str]:
+    """list 失败的异常 → (kind, detail):missing(404/301:桶不存在或不在这个地区 ——
+    ⚠️ 真机事实:地区填错时 TOS 也答 404 NoSuchBucket,与桶名写错**无法区分**,措辞必须
+    两种可能都点到)/ forbidden(403)/ error(其余)。"""
+    code = _http_status(e)
+    if code in (404, 301):
+        return "missing", _err_text(e)
+    if code == 403:
+        return "forbidden", _err_text(e)
+    return "error", _err_text(e)
+
+
+def probe_readable(url: str, region: str | None = None, *,
+                   store: TosStore | None = None) -> dict:
+    """`tos://桶/前缀` 能不能列(读侧探针,一次 list)→ {"kind", "detail"}:
+    ok / missing / forbidden / error(含义同 classify_list_error)。"""
+    bucket, prefix = parse_tos_url(url)
+    st = store or make_store_for(bucket, region)
+    p = prefix.strip("/")
+    try:
+        st.head_prefix(bucket, p + "/" if p else "")
+    except Exception as e:  # noqa: BLE001
+        kind, detail = classify_list_error(e)
+        return {"kind": kind, "detail": detail}
+    return {"kind": "ok", "detail": ""}
+
+
+def locate_bucket(bucket: str, candidates, *, skip: str | None = None,
+                  make=None) -> str | None:
+    """404 之后到别的地区找这个桶:逐个地区 list 一次(内网几十毫秒一次),找到就回地区名,
+    都没有回 None。给界面把"桶不存在或地区不对"说成"桶在 cn-shanghai,把地区改过来"用。
+    make(bucket, region) 注入供单测;匿名桶绕开登记地区,否则永远探的是同一个端点。"""
+    for rg in candidates:
+        if not rg or rg == skip:
+            continue
+        try:
+            if make is not None:
+                st = make(bucket, rg)
+            elif is_anonymous_bucket(bucket):
+                st = make_store(rg, anonymous=True)
+            else:
+                st = make_store(rg)
+            st.head_prefix(bucket, "")
+            return rg
+        except Exception as e:  # noqa: BLE001 不在这个地区就看下一个
+            if _http_status(e) == 403:
+                return rg          # 403 = 桶在这儿,只是没权限 —— 地区这件事已经答了
+            continue
+    return None
 
 
 # ── 桶里的交付:镜像到本地 → 本地改 → 改动写回(2026-08-21,rejudge/reprofile 接 tos://)──

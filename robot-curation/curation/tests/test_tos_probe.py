@@ -145,3 +145,75 @@ def test_no_bucket_instance_leaves_output_boxes_empty_and_has_modal(tmp_path, mo
     ids = {c["props"].get("elem_id") for c in cfg["components"]}
     assert {"out-ask", "out-ask-btns", "rn-tout-note"} <= ids
     assert "#out-ask-btns" in ui_app._ARCO_CSS
+
+
+# ── 读侧探针 + 地区找桶(2026-08-21 用户问"桶地址和地区对不上会不会跳出来提示")────────
+
+@pytest.mark.parametrize("kw, kind", [
+    ({}, "ok"), ({"list_status": 404}, "missing"), ({"list_status": 301}, "missing"),
+    ({"list_status": 403}, "forbidden"), ({"list_status": 500}, "error"),
+])
+def test_probe_readable_classifies_list_only(kw, kind):
+    st = _store(**kw)
+    assert tos_store.probe_readable("tos://bkt/p", store=st)["kind"] == kind
+    assert st._c.put_keys == [], "读侧探针绝不写"
+
+
+def test_locate_bucket_tries_other_regions_and_skips_current():
+    seen = []
+
+    def make(bucket, rg):
+        seen.append(rg)
+        return tos_store.TosStore("ep", rg, client=_FakeClient(
+            list_status=None if rg == "cn-shanghai" else 404))
+    assert tos_store.locate_bucket("bkt", ("cn-beijing", "cn-shanghai", "cn-guangzhou"),
+                                   skip="cn-beijing", make=make) == "cn-shanghai"
+    assert seen == ["cn-shanghai"], "当前地区跳过,找到就停"
+    forb = lambda b, r: tos_store.TosStore("ep", r, client=_FakeClient(list_status=403))  # noqa: E731
+    assert tos_store.locate_bucket("bkt", ("a", "b"), make=forb) == "a", "403 = 桶在这个地区(只是没权限)"
+    assert tos_store.locate_bucket("bkt", ("a", "b"), make=lambda b, r: (_ for _ in ()).throw(RuntimeError("x"))) is None
+
+
+def test_missing_bucket_text_names_the_region_it_found():
+    from curation.ui import runner
+    t = runner.missing_bucket_text("bkt", "cn-beijing", "NoSuchBucket",
+                                   locate=lambda b, skip: "cn-shanghai")
+    assert "不在 cn-beijing" in t and "它在 cn-shanghai" in t and "改成 cn-shanghai" in t
+    t2 = runner.missing_bucket_text("bkt", "cn-beijing", locate=lambda b, skip: None)
+    assert "不存在" in t2 and "不在 cn-beijing" in t2 and "其他地区也没找到" in t2
+    t3 = runner.missing_bucket_text("bkt", "cn-beijing")          # 没给 locate:不出网,也不瞎说
+    assert "不存在" in t3 and "其他地区" not in t3
+
+    def boom(b, skip):
+        raise RuntimeError("no creds")
+    assert "不存在" in runner.missing_bucket_text("bkt", None, locate=boom)
+
+
+def test_readable_and_writable_verdicts_share_region_hint():
+    from curation.ui import runner
+    loc = lambda b, skip: "ap-southeast-1"  # noqa: E731
+    ok, why = runner.readable_verdict("tos://bkt/ds", "cn-beijing",
+                                      probe=lambda u, r: {"kind": "missing", "detail": "d"}, locate=loc)
+    assert ok is False and "它在 ap-southeast-1" in why
+    ok, why = runner.writable_verdict("tos://bkt/out", "cn-beijing",
+                                      probe=lambda u, r: {"kind": "missing", "detail": "d"}, locate=loc)
+    assert ok is False and "它在 ap-southeast-1" in why
+    ok, why = runner.readable_verdict("tos://bkt/ds", probe=lambda u, r: {"kind": "forbidden", "detail": "d"})
+    assert ok is False and "读权限" in why
+    assert runner.readable_verdict("tos://bkt/ds", probe=lambda u, r: {"kind": "ok", "detail": ""}) == (True, "")
+    assert runner.readable_verdict("not-a-url")[0] is False
+
+
+def test_run_page_has_unreadable_root_dialog(tmp_path, monkeypatch):
+    pytest.importorskip("gradio")
+    from curation.ui import app as ui_app
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    root = tmp_path / "data" / "deliveries"
+    root.mkdir(parents=True)
+    app = ui_app.build_app(str(root), data_root=str(tmp_path / "data" / "datasets"))
+    cfg = json.loads(json.dumps(app.get_config_file(), default=str))
+    ids = {c["props"].get("elem_id") for c in cfg["components"]}
+    assert {"in-ask", "in-ask-btns", "in-ask-ok"} <= ids
+    assert "#in-ask-btns" in ui_app._ARCO_CSS
+    assert any(c["props"].get("label") == "交付名" and c["type"] == "dropdown"
+               for c in cfg["components"]), "报告页的交付下拉叫「交付名」(与跑质检页同名)"
