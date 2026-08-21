@@ -32,6 +32,8 @@ from concurrent.futures import ThreadPoolExecutor
 CONFIG_KEY = "public_datasets"
 DEFAULT_PREFIX = "dataset"
 DEFAULT_MANIFEST = "dataset_files.json"
+#: 界面上这个来源的叫法(站点配置 public_datasets.label 可改)
+DEFAULT_LABEL = "字节 HuggingFace 镜像"
 
 #: 清单 ETag 多久复查一次(HEAD 一次 0.1s,但下拉每次打开都查也没必要)
 RECHECK_S = 60.0
@@ -63,7 +65,8 @@ def apply_config(cfg: dict | None) -> dict | None:
     region = str(sec.get("region") or "").strip() or None
     val = {"bucket": bucket, "region": region,
            "prefix": str(sec.get("prefix") or DEFAULT_PREFIX).strip().strip("/"),
-           "manifest": str(sec.get("manifest") or DEFAULT_MANIFEST).strip()}
+           "manifest": str(sec.get("manifest") or DEFAULT_MANIFEST).strip(),
+           "label": str(sec.get("label") or DEFAULT_LABEL).strip()}
     tos_store.register_anonymous_bucket(bucket, region)   # 桶名不合法在这儿抛
     if _CFG["value"] != val:
         _CACHE.update(etag=None, entries=[], checked=0.0)
@@ -113,6 +116,12 @@ def root_url() -> str:
 def region() -> str | None:
     c = configured()
     return c["region"] if c else None
+
+
+def source_label() -> str:
+    """界面上这个来源的名字(没配置时也给缺省名,控件要先建出来再决定显不显示)。"""
+    c = configured()
+    return c["label"] if c else DEFAULT_LABEL
 
 
 def is_public_root(url: str) -> bool:

@@ -108,9 +108,10 @@ VLM_CHECKS = ("task_success", "skill_profile")
 
 #: 「质检范围」三挡的界面说法(改名只改这里,判断都比这三个常量)。
 FULL_SCAN = "完整质检"
-#: 「数据集目录」标签旁的勾选框(2026-08-21 用户定稿):勾上 = 读公共镜像桶,目录框与地区
-#: 置灰只看不填,只剩「数据集」下拉可选;交付目录一概不动。没配置 public_datasets 不出现。
-PUBLIC_BOX = "公有TOS桶"
+#: 「数据集目录」标签旁的二选一(2026-08-21 同事看图后定稿):「私有」(默认)= 填自己的桶;
+#: 选镜像 = 目录框与地区填上公共镜像桶并置灰只看不填,只剩「数据集」下拉可选;交付目录一概
+#: 不动。镜像那项的名字来自 public_datasets.label(缺省「字节 HuggingFace 镜像」);没配置不出现。
+SRC_PRIVATE = "私有"
 QUICK_SCAN = "快速质检"
 CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自己定义模块里查什么"
                           # (那是以后的事),其实是"从现成模块里挑几个跑"
@@ -776,9 +777,9 @@ _ARCO_CSS = """
    靠正的小间距,别靠负值。 */
 .gradio-container .field-note { margin-top: 2px !important; padding-left: 13px; }
 
-/* 「数据集目录」自画标题行(2026-08-21):Markdown 标签 + 紧挨着的「公有TOS桶」勾选框,
+/* 「数据集目录」自画标题行(2026-08-21):Markdown 标签 + 紧挨着的「私有 / 镜像」二选一,
    观感对齐 gradio 原生 block 标签(同字号/同灰/同下间距),右边列的原生标签才不会
-   跟它错行。勾选框 container=False 只剩 input + 文字,行高压到与标签一致。 */
+   跟它错行。单选 container=False 只剩选项,组框/内边距全去掉,行高压到与标签一致。 */
 /* 这一列自己当卡片:gradio 只把**连续的表单控件**合进一张 .form 卡,中间插了
    Markdown 标签就散成三块各带边框(实机:勾选框掉到下一行自成一框)。做法 = 列外框
    画成 .form 的样子,里面的 .form/.block 全部去框去内边距。 */
@@ -807,10 +808,12 @@ _ARCO_CSS = """
      (实测勾选框被推远 200px,计算样式却报 0px) */
   margin: 0 !important;
 }
+#rn-pub .wrap { border: none !important; padding: 0 !important; background: transparent !important;
+                gap: 0 16px !important; min-height: 0 !important; }
 #rn-pub label { padding: 0 !important; gap: 6px !important; }
 #rn-pub label span { font-size: 13px !important; color: var(--arco-t2) !important; }
 /* 置灰的输入框(interactive=False → disabled):内容用 Arco 的 text-3 灰,一眼看出
-   "这是给你看的,不是让你填的"(2026-08-21 用户:勾上公有TOS桶后目录/地区要灰) */
+   "这是给你看的,不是让你填的"(2026-08-21 用户:选了镜像后目录/地区要灰) */
 .gradio-container textarea:disabled, .gradio-container input:disabled {
   color: var(--arco-t3) !important; -webkit-text-fill-color: var(--arco-t3) !important;
   opacity: 1 !important;
@@ -1680,17 +1683,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _rg_choices = runner.tos_region_choices()
                 with gr.Row(equal_height=True):
                     # 「数据集目录」的标题行自己画(2026-08-21 用户定稿):标签右边
-                    # 紧挨着一个「公有TOS桶」勾选框 —— gradio 的原生标签里塞不进控件,
+                    # 紧挨着「私有 / 镜像」二选一 —— gradio 的原生标签里塞不进控件,
                     # 所以标签用 Markdown 画、Textbox 自己的标签藏起来(label 仍叫
                     # 「数据集目录」,测试与深链按它定位)。勾上:目录框/地区填镜像桶
                     # 并置灰,只剩数据集下拉可选;交付目录一概不动。没配置就不出现。
+                    _src_public = public_catalog.source_label()
                     with gr.Column(scale=4, min_width=160, elem_id="rn-tin-col"):
                         with gr.Row(elem_id="rn-tin-head"):
                             gr.Markdown("数据集目录", elem_classes=["field-label"])
-                            rn_pub = gr.Checkbox(label=PUBLIC_BOX, value=False,
-                                                 container=False, elem_id="rn-pub",
-                                                 visible=bool(_public_cfg),
-                                                 scale=0, min_width=80)
+                            rn_pub = gr.Radio([SRC_PRIVATE, _src_public],
+                                              value=SRC_PRIVATE, show_label=False,
+                                              container=False, elem_id="rn-pub",
+                                              visible=bool(_public_cfg),
+                                              scale=0, min_width=80)
                         rn_tin = gr.Textbox(label="数据集目录", show_label=False,
                                             value=runner.bucket_url(_buckets[0]),
                                             placeholder="tos://桶名/目录")
@@ -2053,12 +2058,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 out_ask_ok.click(lambda: ("", gr.update(visible=False), ""),
                                  None, [rn_tout, out_ask, rn_tout_note])
 
-                def _pub_changed(checked):
-                    """「公有TOS桶」勾选 → (目录框, 地区, 数据集下拉, 根说明, 数据集说明)。
-                    勾上:目录框/地区填镜像桶并置灰(桶名照样可见,只是不用填),下拉
-                    只列清单里 LeRobot 格式的;取消:恢复本实例默认桶、可编辑、重列。
-                    交付目录一概不碰(2026-08-21 用户:勾不勾都不该重载它)。"""
-                    if checked and public_catalog.configured():
+                def _pub_changed(src):
+                    """来源二选一 → (目录框, 地区, 数据集下拉, 根说明, 数据集说明)。
+                    选镜像:目录框/地区填镜像桶并置灰(桶名照样可见,只是不用填),下拉
+                    只列清单里 LeRobot 格式的;选私有:恢复本实例默认桶、可编辑、重列。
+                    交付目录一概不碰(2026-08-21 用户:切来切去都不该重载它)。"""
+                    if src == _src_public and public_catalog.configured():
                         root, rg = public_catalog.root_url(), public_catalog.region()
                         note, ds, ds_note = _root_changed(root, rg)
                         return (gr.update(value=root, interactive=False),
@@ -2466,7 +2471,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 (gr.update(value=region, interactive=not is_pub)
                                  if region else gr.update(interactive=not is_pub)),
                                 src_note, ds_note,
-                                gr.update(value=bool(is_pub)))
+                                gr.update(value=_src_public if is_pub else SRC_PRIVATE))
                     # 旧契约(裸名字):对表预选,行为与 2026-08-17 版一致 ——
                     # **桶不认识绝不回落到默认桶里找同名的**
                     plan = runner.prefill_plan(bare, _buckets,
@@ -2486,7 +2491,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             "" if _b else gr.update(),
                             runner.dataset_root_note(_b["datasets_path"])
                             if _b else gr.update(),
-                            gr.update(value=False))
+                            gr.update(value=SRC_PRIVATE))
 
                 # gr.Request 靠注解注入;`from __future__ import annotations` 下字符串
                 # 注解会在 gradio 里被 eval,而 `gr` 只在函数内可见 → 直接挂真对象
