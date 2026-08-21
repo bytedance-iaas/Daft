@@ -39,6 +39,11 @@ def configure(region: str | None = None) -> None:
     _STORES.clear()
 
 
+def current_region() -> str:
+    """远端读取实际用的地区(configure 的,否则部署的 TOS_REGION;都没有给空串)。"""
+    return _REGION["value"] or os.environ.get("TOS_REGION", "").strip()
+
+
 def is_remote(path) -> bool:
     return str(path or "").startswith(TOS_PREFIX)
 
@@ -71,6 +76,25 @@ def _store():
     return _STORES[key]
 
 
+RETRY_ATTEMPTS = 3
+_RETRY_SLEEP_S = (1.0, 3.0)
+
+
+def _retry(what: str, fn):
+    """远端读的瞬断兜底:列清单/取对象失败重试两次(1s、3s),最后一次原样抛。
+    凭证/桶名这类确定性错误也会重试两次 —— 代价是几秒,换来的是不用在这里分辨
+    SDK 几十种异常哪些算瞬断。"""
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 SDK/网络异常族杂
+            if attempt == RETRY_ATTEMPTS:
+                raise
+            print(f"[curation] TOS {what}失败(第 {attempt}/{RETRY_ATTEMPTS} 次):"
+                  f"{type(e).__name__}: {str(e)[:100]} —— 重试", flush=True)
+            time.sleep(_RETRY_SLEEP_S[min(attempt - 1, len(_RETRY_SLEEP_S) - 1)])
+
+
 class _Listing:
     """一个数据集根下的对象清单:key → (size, etag),外加全部"目录"前缀。"""
 
@@ -99,10 +123,14 @@ def prefetch(root_url: str, *, store=None, quiet: bool = False) -> int:
     if (bucket, root) in _LISTINGS:
         return len(_LISTINGS[(bucket, root)].files)
     st = store or _store()
-    lst = _Listing(bucket, root)
     t0 = time.time()
-    for key, size, etag in st.iter_object_meta(bucket, root + "/" if root else ""):
-        lst.add(key, size, etag)
+
+    def _list():
+        lst = _Listing(bucket, root)
+        for key, size, etag in st.iter_object_meta(bucket, root + "/" if root else ""):
+            lst.add(key, size, etag)
+        return lst
+    lst = _retry(f"列清单 {root_url}", _list)
     _LISTINGS[(bucket, root)] = lst
     if not quiet and (len(lst.files) > 1000 or time.time() - t0 > 2):
         print(f"[curation] 列出 {root_url} 的对象清单:{len(lst.files)} 个文件"
@@ -129,16 +157,19 @@ def _listing_for(bucket: str, key: str) -> _Listing | None:
 def _probe(bucket: str, key: str) -> tuple[str | None, int, str]:
     """没预取过的路径:一次 list 判断是文件还是目录 → (kind, size, etag)。"""
     st = _store()
-    kind, size, etag = None, 0, ""
-    for k, s, e in st.iter_object_meta(bucket, key):
-        if k == key:
-            kind, size, etag = "file", s, e
-            break
-        if k.startswith(key + "/"):
-            kind = "dir"
-            break
-        # 同前缀的别的文件(a/b 与 a/bc):继续看下一条
-    return kind, size, etag
+
+    def _look():
+        kind, size, etag = None, 0, ""
+        for k, s, e in st.iter_object_meta(bucket, key):
+            if k == key:
+                kind, size, etag = "file", s, e
+                break
+            if k.startswith(key + "/"):
+                kind = "dir"
+                break
+            # 同前缀的别的文件(a/b 与 a/bc):继续看下一条
+        return kind, size, etag
+    return _retry(f"探测 {key}", _look)
 
 
 def _stat(url: str) -> tuple[str | None, int, str]:
@@ -223,7 +254,7 @@ def read_bytes(path: str) -> bytes:
         with open(path, "rb") as f:
             return f.read()
     bucket, key = _split(path)
-    return _store().get_bytes(bucket, key)
+    return _retry(f"取对象 {key}", lambda: _store().get_bytes(bucket, key))
 
 
 def open_text(path: str, encoding: str = "utf-8"):
@@ -279,4 +310,5 @@ def copy_to_local(path: str, dst: str) -> None:
         return
     bucket, key = _split(path)
     kind, size, _etag = _stat(path)
-    _store().download(bucket, key, dst, size=size if kind == "file" else None)
+    _retry(f"下载 {key}", lambda: _store().download(
+        bucket, key, dst, size=size if kind == "file" else None))

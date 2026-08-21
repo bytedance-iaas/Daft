@@ -225,3 +225,53 @@ def test_dedup_fingerprint_uses_etag_for_remote(bucket):
     assert fp_r == [episode_fingerprint(r) for r in rem], "指纹稳定"
     assert not any(k.endswith(".mp4") for k in client.gets), "远端指纹靠 etag,不拉视频"
     _ = loc
+
+
+# ── 可靠性:瞬断重试 / 远端解码重开 ──────────────────────────────────────────
+
+def test_remote_read_retries_transient_errors(bucket, monkeypatch):
+    root, client = bucket
+    _v2(root)
+    monkeypatch.setattr(dsfs, "_RETRY_SLEEP_S", (0.0, 0.0))
+    orig = client.get_object
+    fails = {"n": 1}
+
+    def flaky(bucket_, key):
+        if fails["n"]:
+            fails["n"] -= 1
+            raise ConnectionError("reset by peer")
+        return orig(bucket_, key)
+    monkeypatch.setattr(client, "get_object", flaky)
+    assert dsfs.read_json("tos://bkt/datasets/arm/meta/info.json")["codebase_version"] == "v2.0"
+    # 连续失败 RETRY_ATTEMPTS 次才放弃
+    fails["n"] = 99
+    with pytest.raises(ConnectionError):
+        dsfs.read_bytes("tos://bkt/datasets/arm/meta/info.json")
+    assert fails["n"] == 99 - dsfs.RETRY_ATTEMPTS
+
+
+def test_remote_decode_reopens_with_fresh_signature(monkeypatch):
+    from curation.adapters import decode
+    calls = {"sign": 0, "open": 0}
+    monkeypatch.setattr(dsfs, "media_source",
+                        lambda p: (calls.__setitem__("sign", calls["sign"] + 1) or f"https://u/{calls['sign']}"))
+
+    def once(src, a, b, **kw):
+        calls["open"] += 1
+        assert kw.get("options") == decode.REMOTE_OPEN_OPTIONS, "远端必须带断线重连选项"
+        if calls["open"] == 1:
+            raise OSError("Connection reset")
+        return ([np.zeros((2, 2, 3), np.uint8)], np.asarray([0.0]))
+    monkeypatch.setattr(decode, "_decode_once", once)
+    frames, ts = decode.decode_window("tos://bkt/v.mp4", 0.0, 1.0)
+    assert len(frames) == 1 and calls["open"] == 2 and calls["sign"] == 2, "重开要重新签名"
+    # 本地路径:不签名、不带远端选项、不重试
+    calls.update(sign=0, open=0)
+
+    def local_once(src, a, b, **kw):
+        calls["open"] += 1
+        assert kw.get("options") is None and src == "/x.mp4"
+        return ([], np.asarray([]))
+    monkeypatch.setattr(decode, "_decode_once", local_once)
+    decode.decode_window("/x.mp4", 0.0, 1.0)
+    assert calls == {"sign": 0, "open": 1}

@@ -1924,20 +1924,26 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             return _tk_view(f"⚠️ 交付目录写不进去:{_why}")
                     if str(backend or '').endswith(BACKEND_BAD):
                         return _tk_view('⚠️ 选中的模型服务当前不可用,换一个,或把那台服务起起来后点「检测可用性」')
-                    if _spec["kind"] == "tos" and batch:
-                        return _tk_view("⚠️ TOS 直连暂不支持「跑全部」——"
-                                        "直连桶请在下拉里点名要跑的数据集")
                     # 多选下拉默认一个都没选 → 必须先拦(否则空选会一路走到
                     # resolve_under(root, "") = 拿整个数据集根当一份数据跑)
                     _no_ds = runner.dataset_selection_error(ds, bool(batch))
                     if _no_ds:
                         return _tk_view(f"⚠️ {_no_ds}")
                     chosen_pre = runner.picked_datasets(ds)
-                    if _spec["kind"] == "tos" and len(chosen_pre) > 1:
-                        # MVP 限制(如实说,不静默跑第一个):多选顺序跑走的是
-                        # 挂载路径的 jobs 装配,直连桶的多数据集串跑下一轮做
-                        return _tk_view("⚠️ TOS 直连暂一次只能跑一个数据集,"
-                                        "多选请分几次发起(挂载桶不受限)")
+                    _tos_all = False
+                    if _spec["kind"] == "tos" and batch:
+                        # 直连桶的「跑全部」(2026-08-21):CLI --batch 不收 tos://,
+                        # 这里把前缀下的数据集列出来,按多选的作业表逐个跑 ——
+                        # 落盘形状与挂载的 --batch 一致(交付名当父目录)
+                        try:
+                            chosen_pre = runner.tos_list_datasets(
+                                _spec["url"], str(tin_rg or "").strip() or None)
+                        except Exception as e:  # noqa: BLE001
+                            return _tk_view(f"⚠️ 列不出该前缀下的数据集:"
+                                            f"{type(e).__name__}: {str(e)[:120]}")
+                        if not chosen_pre:
+                            return _tk_view("⚠️ 该前缀下没有列出任何数据集")
+                        _tos_all, batch = True, False
                     # 交付名撞上老布局交付:点按钮之前就判得出来,绝不让任务起来
                     # 再以「未完成(退出码 3)」收场逼用户翻日志(2026-08-14 实见);
                     # 消息说「交付名」不说 --output,那是 CLI 的话。
@@ -1956,7 +1962,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         joined = ",".join(picks)
                         only, skip = ((joined, None) if how == "只跑选中"
                                       else (None, joined))
-                    chosen = runner.picked_datasets(ds)
+                    chosen = chosen_pre
                     # 跑批目录名 = 这次任务编号的时间戳部分:结果目录与任务/日志天然
                     # 对得上号("哪次跑批产生了这份结果"不必再翻日志)。多数据集时几份
                     # 交付共用同一个名字,一次点击的产物在各自交付里也对得上。
@@ -1982,27 +1988,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         cfg = runner.resolve_tos_path(cfg) if str(cfg or "").strip() else None
                         # 勾了「跑全部」就忽略下拉的选择(既有行为,别改坏);其余
                         # 情况下选了几个跑几个,选一个 = 一直以来的那条路径。
-                        # 多选顺序跑(jobs 装配)只在双挂载时可用 —— 前面已把
-                        # tos 侧的多选拦下并明说
-                        if not batch and len(chosen) > 1 and _spec["kind"] == "mount" \
-                                and _ospec["kind"] == "mount":
+                        # 多选顺序跑(jobs 装配):两侧各自可以是挂载或桶
+                        # (2026-08-21 读端会说 tos:// 之后,作业表两侧都收 URL);
+                        # 切片只在挂载输入上串(片段站按本地数据集名建目录)
+                        if (not batch and len(chosen) > 1) or _tos_all:
                             # 答了「一起生成」就给**每个需要的**数据集都串上切片:
                             # 追问只问一次,覆盖的是全部选中项(2026-08-14 用户定)
                             clips = (runner.datasets_needing_clips(_root, chosen)
-                                     if with_clips else [])
+                                     if with_clips and _spec["kind"] == "mount" else [])
                             jobs = runner.build_dataset_jobs(
-                                _root, _deliv_root, chosen, name or "",
+                                _root or _spec["url"],
+                                _deliv_root if _ospec["kind"] == "mount" else _ospec["url"],
+                                chosen, name or "",
                                 clips_root=review_dir, clips_for=clips,
                                 config=cfg, **common)
                             return _tk_start(
                                 "run", f"质检 {len(jobs)} 个数据集 → {name}"
                                 + (f"(含 {len(clips)} 份视频片段)" if clips else ""),
                                 jobs=jobs, run_id=run_id)
-                        if not batch and len(chosen) > 1:
-                            # 挂载读 + 陌生桶写的多选:jobs 装配的输出侧还没长
-                            # tos 腿,如实拦(下一轮解)
-                            return _tk_view("⚠️ 输出到 TOS 直连桶时暂一次只能"
-                                            "跑一个数据集,多选请分几次发起")
                         if _spec["kind"] == "tos":
                             inp = (_spec["url"].rstrip("/") + "/"
                                    + (chosen[0] if chosen else ""))
@@ -3225,11 +3228,23 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return (gr.update(), hide, f"⚠️ {e}", *hold)
                 deliv = os.path.basename(delivery_root_of(path))
                 run = os.path.basename(str(path).rstrip("/"))
+                # 镜像交付(2026-08-21):本地只是报告页的部分镜像,裁决要改交付数据集
+                # → 把桶里的批次地址交给 CLI,它自己全量镜像、执行、写回
+                _origin = runner.tos_origin_of(path)
+                _extra = {}
+                if _origin:
+                    path = f"{_origin['delivery_url']}/{run}"
+                    if _origin.get("region"):
+                        _extra["delivery_region"] = _origin["region"]
+                if str(src or "").startswith("tos://"):
+                    _rg = runner.source_region_of((m or {}).get("path") or "")
+                    if _rg:
+                        _extra["input_region"] = _rg
                 view = _tk_start("rejudge",
                                  "执行裁决 " + deliv
                                  + (f" / {run}" if run != deliv else ""),
                                  delivery=path, input=src, config=cfg,
-                                 vlm_backend=_backend_code(backend))
+                                 vlm_backend=_backend_code(backend), **_extra)
                 if str(view[2] or "").startswith("⚠️"):
                     # 没起来(拼参失败/被别的任务抢了先手):留在本页把话说清,
                     # 不切视图 —— 切过去却什么都没开始,比不动更迷惑

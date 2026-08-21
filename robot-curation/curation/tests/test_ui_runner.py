@@ -1647,3 +1647,19 @@ def test_is_busy_state_fails_open_on_garbage():
     from curation.ui.runner import is_busy_state
     for garbage in (None, {}, [], "running", 42, object()):
         assert not is_busy_state(garbage), repr(garbage)
+
+
+def test_build_dataset_jobs_accepts_tos_roots_on_either_side():
+    """2026-08-21:多选/跑全部的作业表两侧都可以是桶;名字仍过 safe_name。"""
+    from curation.ui import runner
+    jobs = runner.build_dataset_jobs("tos://b/datasets", "tos://o/deliveries",
+                                     ["so101", "bridge"], "out",
+                                     input_region="cn-beijing", output_region="cn-beijing")
+    assert [j["title"] for j in jobs] == ["so101", "bridge"]
+    argv = jobs[1]["steps"][0]
+    assert "tos://b/datasets/bridge" in argv and "tos://o/deliveries/out/bridge" in argv
+    assert "--input-region" in argv and "--output-region" in argv
+    mixed = runner.build_dataset_jobs("/data", "tos://o/deliveries", ["so101"], "out")
+    assert mixed[0]["steps"][0][mixed[0]["steps"][0].index("--output") + 1] == "tos://o/deliveries/out/so101"
+    with pytest.raises(ValueError):
+        runner.build_dataset_jobs("tos://b/datasets", "/deliv", ["../etc"], "out")

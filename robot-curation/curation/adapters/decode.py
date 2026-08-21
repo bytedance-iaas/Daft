@@ -9,6 +9,13 @@ from __future__ import annotations
 import numpy as np
 
 
+#: 远端视频(HTTP)交给 ffmpeg 的网络选项:断线自动重连、单次读超时 30s —— 没有
+#: 这两条,TOS 侧一次抖动就是整条 episode 解码失败。
+REMOTE_OPEN_OPTIONS = {"reconnect": "1", "reconnect_streamed": "1",
+                       "reconnect_delay_max": "4", "rw_timeout": "30000000"}
+REMOTE_ATTEMPTS = 3
+
+
 def decode_window(
     path: str,
     from_ts: float,
@@ -17,18 +24,42 @@ def decode_window(
     sample_interval_s: float | None = None,
     max_side: int | None = None,
 ) -> tuple[list[np.ndarray], np.ndarray]:
-    """解码 [from_ts, to_ts) 内的帧;返回 (帧列表 RGB, episode 内相对时间)。"""
+    """解码 [from_ts, to_ts) 内的帧;返回 (帧列表 RGB, episode 内相对时间)。
+
+    tos:// 指针 → 预签名 URL,PyAV 按 HTTP Range 顺序读(2026-08-21 实测可行);本地
+    路径原样。所有视频解码都从这儿进,8 个调用方因此一个字不用改。远端整段失败
+    (连接被掐/签名过期)重开最多 REMOTE_ATTEMPTS 次,每次**重新签名**。
+    """
+    from ..ingest import dsfs
+
+    if not dsfs.is_remote(path):
+        return _decode_once(path, from_ts, to_ts, sample_interval_s=sample_interval_s,
+                            max_side=max_side)
+    last: Exception | None = None
+    for attempt in range(1, REMOTE_ATTEMPTS + 1):
+        try:
+            return _decode_once(dsfs.media_source(path), from_ts, to_ts,
+                                sample_interval_s=sample_interval_s, max_side=max_side,
+                                options=REMOTE_OPEN_OPTIONS)
+        except Exception as e:  # noqa: BLE001 网络/容器异常族杂
+            last = e
+            if attempt == REMOTE_ATTEMPTS:
+                raise
+            print(f"[curation] 远端视频解码失败(第 {attempt}/{REMOTE_ATTEMPTS} 次)"
+                  f" {path}:{type(e).__name__}: {str(e)[:100]} —— 重新签名重开", flush=True)
+    raise last  # pragma: no cover —— 循环里要么 return 要么 raise
+
+
+def _decode_once(src: str, from_ts: float, to_ts: float, *,
+                 sample_interval_s: float | None, max_side: int | None,
+                 options: dict | None = None) -> tuple[list[np.ndarray], np.ndarray]:
     import av
     import cv2
-
-    from ..ingest import dsfs
 
     frames: list[np.ndarray] = []
     ts: list[float] = []
     next_keep = from_ts
-    # tos:// 指针 → 预签名 URL,PyAV 按 HTTP Range 顺序读(2026-08-21 实测可行);
-    # 本地路径原样。所有视频解码都从这儿进,8 个调用方因此一个字不用改。
-    with av.open(dsfs.media_source(path)) as container:
+    with av.open(src, options=options) as container:
         stream = container.streams.video[0]
         # seek 到窗口前的最近关键帧,再向后解码丢弃到 from_ts
         container.seek(int(from_ts / stream.time_base), stream=stream, any_frame=False)

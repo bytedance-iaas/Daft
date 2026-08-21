@@ -817,6 +817,10 @@ def run_pipeline(
     report = {"数据集": os.path.basename(input_dir.rstrip("/")), "机器人": _robot,
               "源数据集路径": (input_dir if str(input_dir).startswith("tos://")
                           else os.path.abspath(input_dir)),
+              # 直读桶时 rejudge 回源要同一个地区(2026-08-21);本地源留空
+              "源数据集地区": (__import__("curation.ingest.dsfs", fromlist=["x"])
+                          .current_region() if str(input_dir).startswith("tos://")
+                          else ""),
               "生成时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
               "代码版本": _ver, **report}
     # 数据集总条数(2026-08-14):跑批清单要说"本次处理 20 条(数据集共 200 条)",

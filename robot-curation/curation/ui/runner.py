@@ -147,6 +147,15 @@ def safe_name(name: str) -> str:
     return s
 
 
+def under(root: str, name: str) -> str:
+    """<root>/<name>:root 是 tos:// 就按 URL 拼(名字仍过 safe_name —— 桶地址也
+    不收 `..`/分隔符),本地走 resolve_under 的 realpath 复核。2026-08-21 起多选/
+    跑全部的作业表两侧都可能是桶。"""
+    if str(root or "").startswith("tos://"):
+        return str(root).rstrip("/") + "/" + safe_name(name)
+    return resolve_under(root, name)
+
+
 def resolve_under(root: str, name: str) -> str:
     """<root>/<name> 的绝对路径。名字先过 safe_name,拼完再用 realpath 复核。
 
@@ -1018,56 +1027,11 @@ def tos_run_choices(delivery_url: str, region: str | None = None, *,
 
 def mirror_run(run_url: str, region: str | None = None, *,
                store=None) -> str:
-    """把一个批次目录(除大件)+ 交付根的 human-decisions// latest 镜像到本地
-    缓存,返回缓存里的批次路径 —— 直接喂给现有的 load_delivery。
-
-    文件级续传按「本地大小 == 远端大小」跳过(与 tos_store.stage_in 同判据);
-    CSV/JSON 这类会变的小文件大小一变自然重下,同大小不同内容的窗口对裁决
-    CSV(追加式)不成立。镜像完写 .tos-origin.json(裁决写回靠它找回家路)。
-    """
-    import json as _json
-
+    """报告页的懒镜像:批次目录(除大件)+ 交付根的 human-decisions/latest → 本地缓存,
+    返回缓存里的批次路径(直接喂给现有 load_delivery)。本体在 tos_store.mirror_run
+    (2026-08-21 起与 CLI rejudge/reprofile 的全量镜像共用同一棵缓存树)。"""
     from .. import tos_store as _ts
-    bucket, run_prefix = _ts.parse_tos_url(run_url)
-    st = store or _ts.make_store(region)
-    deliv_prefix = "/".join(run_prefix.split("/")[:-1])
-    local_deliv = os.path.join(mirror_cache_root(), bucket,
-                               *deliv_prefix.split("/"))
-    run_name = run_prefix.split("/")[-1]
-    n = 0
-    for src_prefix, sub in ((run_prefix, run_name),
-                            (deliv_prefix + "/human-decisions",
-                             "human-decisions")):
-        p = src_prefix.strip("/") + "/"
-        for key, size in st.iter_objects(bucket, p):
-            rel = key[len(p):]
-            if not rel or rel.endswith("/"):
-                continue
-            if sub == run_name and any(rel.startswith(sk)
-                                       for sk in MIRROR_SKIP_DIRS):
-                continue
-            dst = os.path.join(local_deliv, sub, *rel.split("/"))
-            try:
-                if os.path.getsize(dst) == size:
-                    continue
-            except OSError:
-                pass
-            st.download(bucket, key, dst, size=size)
-            n += 1
-    # latest 是单文件不是前缀,单独取(没有就算了 —— 老交付可能没写)
-    try:
-        st.download(bucket, deliv_prefix + "/latest",
-                    os.path.join(local_deliv, "latest"))
-    except Exception:  # noqa: BLE001 可选文件,缺席不算错
-        pass
-    origin = {"root_url": f"tos://{bucket}/" + "/".join(
-                  deliv_prefix.split("/")[:-1]),
-              "delivery_url": f"tos://{bucket}/{deliv_prefix}",
-              "run": run_name, "region": region or ""}
-    with open(os.path.join(local_deliv, TOS_ORIGIN_NAME), "w",
-              encoding="utf-8") as f:
-        _json.dump(origin, f, ensure_ascii=False, indent=1)
-    return os.path.join(local_deliv, run_name)
+    return _ts.mirror_run(run_url, region, skip_dirs=MIRROR_SKIP_DIRS, store=store)
 
 
 def tos_origin_of(run_path: str) -> dict | None:
@@ -1395,6 +1359,7 @@ _ARG_SPECS: dict[str, dict[str, str | None]] = {
     "rejudge": {
         "delivery": "--delivery", "input": "--input", "config": "--config",
         "vlm_backend": "--vlm-backend",
+        "delivery_region": "--delivery-region", "input_region": "--input-region",
     },
     "review-page": {
         "input": "--input", "output": "--output", "episodes": "--episodes",
@@ -1587,11 +1552,11 @@ def build_dataset_jobs(data_root: str, delivery_root: str, datasets: list,
     want_clips = set(picked_datasets(clips_for or []))
     if want_clips and not clips_root:
         raise ValueError("要串切片就得给片段目录(本实例没配 --review-dir)")
-    parent = resolve_under(delivery_root, delivery_name or "")
+    parent = under(delivery_root, delivery_name or "")
     jobs = []
     for name in names:
-        src = resolve_under(data_root, name)
-        steps = [build_argv("run", input=src, output=resolve_under(parent, name),
+        src = under(data_root, name)
+        steps = [build_argv("run", input=src, output=under(parent, name),
                             **params)]
         if name in want_clips:
             steps.append(build_argv("review-page", input=src,
@@ -2279,7 +2244,16 @@ def source_dataset_of(delivery_dir: str) -> str | None:
     from ..delivery import resolve_run
     p = _read_json(os.path.join(resolve_run(delivery_dir), "passed.json"))
     src = str(p.get("源数据集路径") or "").strip()
+    if src.startswith("tos://"):
+        return src                      # 直读桶(2026-08-21):读端自己会读,不用在本地
     return src if src and os.path.isdir(src) else None
+
+
+def source_region_of(delivery_dir: str) -> str | None:
+    """源数据集是 tos:// 时跑批记下的地区(没记返回 None → 按部署默认)。"""
+    from ..delivery import resolve_run
+    p = _read_json(os.path.join(resolve_run(delivery_dir), "passed.json"))
+    return str(p.get("源数据集地区") or "").strip() or None
 
 
 def _config_layers(config_path: str | None = None) -> list[dict]:

@@ -100,7 +100,13 @@ def build_parser() -> argparse.ArgumentParser:
     rj.add_argument("--delivery", required=True,
                     help="要更新的那一次跑批目录(<交付目录>/<时间戳>/);"
                          "只给交付目录时按 latest 记的那次执行")
-    rj.add_argument("--input", required=True, help="原始数据集目录(重判需重新解码视频)")
+    rj.add_argument("--input", required=True,
+                    help="原始数据集目录或 tos://桶/前缀(重判需重新解码视频)")
+    rj.add_argument("--input-region", default=None, metavar="地区",
+                    help="--input 为 tos:// 时的桶地区;缺省按部署的 TOS_REGION")
+    rj.add_argument("--delivery-region", default=None, metavar="地区",
+                    help="--delivery 为 tos:// 时的桶地区(交付在桶里:先镜像到本地"
+                         "执行,改动同步回桶;缺省按部署的 TOS_REGION)")
     rj.add_argument("--config", default=None, help="流水线 YAML(缺省 default.yaml,须与原 run 一致)")
     rj.add_argument("--vlm-backend", default=None, metavar="预设名",
                     help="重判用的 VLM 后端预设(同 run,如 ark / h20-32b);缺省跟随配置")
@@ -114,6 +120,8 @@ def build_parser() -> argparse.ArgumentParser:
     rpf.add_argument("--delivery", required=True,
                      help="要重算的那一次跑批目录(<交付目录>/<时间戳>/);"
                           "只给交付目录时按 latest 记的那次执行(同 rejudge)")
+    rpf.add_argument("--delivery-region", default=None, metavar="地区",
+                     help="--delivery 为 tos:// 时的桶地区(同 rejudge)")
     rpf.add_argument("--config", default=None,
                      help="流水线 YAML(仅用于「归不进体系时问一次 LLM 补漏」;"
                           "没配 VLM 端点就诚实留「未归类」)")
@@ -369,6 +377,48 @@ def _tolerate_broken_log() -> None:
     sys.stderr = _TolerantStream(sys.stderr)
 
 
+def _stage_tos_delivery(args, tag: str):
+    """--delivery 是 tos:// → 解析到批次、全量镜像到本地缓存,并把 args.delivery 改成
+    本地路径;返回 (本地批次, 批次 URL, 地区) 供跑完写回。不是 tos:// 返回 ()。
+    失败打印原因返回 None(调用方退出码 1)。"""
+    d = str(getattr(args, "delivery", "") or "")
+    if not d.startswith("tos://"):
+        return ()
+    from . import tos_store
+    region = getattr(args, "delivery_region", None)
+    try:
+        url = tos_store.resolve_run_url(d, region)
+        print(f"[{tag}] 交付在桶里:{url} → 先全量镜像到本地执行,改动再同步回桶", flush=True)
+        local = tos_store.mirror_run(url, region)
+    except (tos_store.TosUrlError, tos_store.TosConfigError) as e:
+        print(f"[输入错误] {e}", file=sys.stderr)
+        return None
+    except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
+        print(f"[tos 失败] 镜像 {d} 失败:{type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
+        return None
+    args.delivery = local
+    return (local, url, region)
+
+
+def _sync_tos_delivery(sync, tag: str) -> int:
+    """跑完把本地镜像的改动写回桶;返回退出码。写回失败要说清本地留在哪(人工判断
+    不能静默丢)。"""
+    if not sync:
+        return 0
+    local, url, region = sync
+    from . import tos_store
+    try:
+        r = tos_store.sync_back(local, url, region)
+    except Exception as e:  # noqa: BLE001
+        print(f"[tos 失败] 写回 {url} 失败:{type(e).__name__}: {str(e)[:200]}\n"
+              f"  改动保留在本地 {local},修好网络后重跑同一条命令即可续传",
+              file=sys.stderr)
+        return 1
+    print(f"[{tag}] 已同步回 {url}:上传 {r['uploaded']} 个,删除 {r['deleted']} 个,"
+          f"未变 {r['skipped']} 个", flush=True)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     import os
     _tolerate_broken_log()
@@ -421,6 +471,14 @@ def main(argv: list[str] | None = None) -> int:
         from .delivery import is_legacy_delivery, resolve_run
         from .pipeline.config import load_config
         from .pipeline.rejudge import run_rejudge
+        # 交付在桶里(2026-08-21):先把那次跑批全量镜像到本地缓存,在本地执行,
+        # 最后把改动写回桶(改过的传、剔掉的删、完整性标志最后传)
+        _sync = _stage_tos_delivery(args, "rejudge")
+        if _sync is None and str(args.delivery).startswith("tos://"):
+            return 1
+        if str(args.input or "").startswith("tos://"):
+            from .ingest import dsfs
+            dsfs.configure(args.input_region)
         # --delivery 指的是**某一次跑批**;只给了交付目录时按 latest 记的那次执行
         # 并把选中的那次明说出来(裁决是写数据的命令,不许让人猜动了哪一份)。
         if not is_legacy_delivery(args.delivery):
@@ -436,12 +494,15 @@ def main(argv: list[str] | None = None) -> int:
         summary = run_rejudge(args.delivery, args.input, cfg)
         print(json.dumps(summary, ensure_ascii=False, indent=1)
               if isinstance(summary, dict) else summary)
-        return 0
+        return _sync_tos_delivery(_sync, "rejudge")
 
     if args.command == "reprofile":
         from .delivery import is_legacy_delivery, resolve_run
         from .pipeline.config import load_config
         from .pipeline.reprofile import run_reprofile
+        _sync = _stage_tos_delivery(args, "reprofile")
+        if _sync is None and str(args.delivery).startswith("tos://"):
+            return 1
         # 与 rejudge 同一套选运行语义:reprofile 也是写数据的命令,动了哪一份要明说
         if not is_legacy_delivery(args.delivery):
             _run = resolve_run(args.delivery)
@@ -456,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = run_reprofile(args.delivery, cfg=cfg)
         if summary.get("note"):
             print(f"[reprofile] {summary['note']}")
-        return 0
+        return _sync_tos_delivery(_sync, "reprofile")
 
     if args.command == "fetch":
         from .fetch import run_fetch
