@@ -207,6 +207,31 @@ class TosStore:
                 return
             token = out.next_continuation_token
 
+    def iter_object_meta(self, bucket: str, prefix: str):
+        """前缀下全部对象 → (key, size, etag)。ingest.dsfs 的清单预取用(etag 当
+        内容身份,省掉为算哈希把整段视频拉回来)。"""
+        token = None
+        while True:
+            out = self._c.list_objects_type2(
+                bucket, prefix=prefix, continuation_token=token,
+                max_keys=_LIST_PAGE)
+            for obj in out.contents or []:
+                yield obj.key, int(obj.size), str(getattr(obj, "etag", "") or "")
+            if not getattr(out, "is_truncated", False):
+                return
+            token = out.next_continuation_token
+
+    def get_bytes(self, bucket: str, key: str) -> bytes:
+        """整对象取回内存(KB~几百 MB 的 meta/parquet;视频不走这里)。"""
+        out = self._c.get_object(bucket, key)
+        return out.read()
+
+    def presign(self, bucket: str, key: str, expires: int = 3600) -> str:
+        """GET 预签名 URL(本地 HMAC,不出网):PyAV 直接按 Range 读视频。"""
+        import tos
+        return self._c.pre_signed_url(tos.HttpMethodType.Http_Method_Get, bucket,
+                                      key, expires=expires).signed_url
+
     def iter_common_prefixes(self, bucket: str, prefix: str):
         """前缀下**第一层**「子目录」名(delimiter="/" 的 common prefix)。
 

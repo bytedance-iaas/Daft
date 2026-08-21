@@ -21,10 +21,14 @@ def decode_window(
     import av
     import cv2
 
+    from ..ingest import dsfs
+
     frames: list[np.ndarray] = []
     ts: list[float] = []
     next_keep = from_ts
-    with av.open(path) as container:
+    # tos:// 指针 → 预签名 URL,PyAV 按 HTTP Range 顺序读(2026-08-21 实测可行);
+    # 本地路径原样。所有视频解码都从这儿进,8 个调用方因此一个字不用改。
+    with av.open(dsfs.media_source(path)) as container:
         stream = container.streams.video[0]
         # seek 到窗口前的最近关键帧,再向后解码丢弃到 from_ts
         container.seek(int(from_ts / stream.time_base), stream=stream, any_frame=False)

@@ -37,7 +37,14 @@ def episode_fingerprint(row: dict) -> str:
     for cam in sorted((row.get("video") or {})):
         v = row["video"][cam]
         h.update(cam.encode())
-        if os.path.exists(v["path"]):
+        if str(v["path"]).startswith("tos://"):
+            # 远端视频:用对象的 etag+size 当内容身份,不为算哈希把整段视频拉回来
+            from ..ingest import dsfs
+            try:
+                h.update(dsfs.content_identity(v["path"]).encode())
+            except FileNotFoundError:
+                h.update(v["path"].encode())
+        elif os.path.exists(v["path"]):
             h.update(_file_sha256(v["path"]).encode())
         else:
             h.update(v["path"].encode())      # 文件缺失时退化为路径(validate 会另行报)

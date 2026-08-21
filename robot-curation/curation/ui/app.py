@@ -1809,8 +1809,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
                         names, note = [], (f"⚠️ 列不出该前缀下的数据集:"
                                            f"{type(e).__name__}: {str(e)[:120]}")
-                    return (f"TOS 直连:{spec['url']}(跑批先整体暂存到本地,"
-                            "大数据集受容器盘限制)",
+                    return (f"TOS 直连:{spec['url']}(直接从桶里读,不落本地盘)",
                             gr.update(choices=names, value=[]), note)
 
                 # blur 与 submit 都接(填完点别处/回车都算"填完了");直连时

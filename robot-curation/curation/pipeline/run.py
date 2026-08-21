@@ -815,7 +815,8 @@ def run_pipeline(
     # 自动回填就无从谈起;审片站认领也只能按名字模糊比对(同名不同库会错播)。
     # 记绝对路径,老交付没有这个键的地方一律 .get 兜底。
     report = {"数据集": os.path.basename(input_dir.rstrip("/")), "机器人": _robot,
-              "源数据集路径": os.path.abspath(input_dir),
+              "源数据集路径": (input_dir if str(input_dir).startswith("tos://")
+                          else os.path.abspath(input_dir)),
               "生成时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
               "代码版本": _ver, **report}
     # 数据集总条数(2026-08-14):跑批清单要说"本次处理 20 条(数据集共 200 条)",

@@ -38,8 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="端到端跑一遍 curation")
     run.add_argument("--config", default=None, help="流水线 YAML 配置(缺省用 default.yaml)")
     run.add_argument("--input", required=True,
-                     help="输入数据集:本地目录,或 tos://桶/前缀(TOS 直连,"
-                          "先下到本地缓存再跑;地区用 --input-region)")
+                     help="输入数据集:本地目录,或 tos://桶/前缀(TOS 直读:LeRobot 数据集"
+                          "不落本地盘,RRD 先暂存;地区用 --input-region)")
     run.add_argument("--output", required=True,
                      help="交付目录:本地目录,或 tos://桶/前缀(TOS 直连,本地跑完"
                           "整树上传,完整性标志最后传;地区用 --output-region);"
@@ -525,7 +525,17 @@ def main(argv: list[str] | None = None) -> int:
                     out_root = os.path.join(tos_store.cache_root(), "out",
                                             _b, _p or "_root")
                 if tos_in:
-                    inp_root = tos_store.stage_in(args.input, args.input_region)
+                    # 2026-08-21 起 LeRobot 桶**直读**(读端会说 tos://):meta/parquet
+                    # 按需取回内存,视频走预签名 URL 顺序读,pod 不落一个字节,数据集
+                    # 多大都不受容器盘限制。RRD 仍整包暂存(rerun SDK 只吃本地文件)。
+                    from .ingest import dsfs
+                    dsfs.configure(args.input_region)
+                    if dsfs.exists(dsfs.join(args.input, "meta", "info.json")):
+                        inp_root = args.input
+                        print(f"[curation] 输入 {args.input}:TOS 直读(不暂存到本地盘)",
+                              flush=True)
+                    else:
+                        inp_root = tos_store.stage_in(args.input, args.input_region)
             except (tos_store.TosUrlError, tos_store.TosConfigError) as e:
                 print(f"[输入错误] {e}", file=sys.stderr)
                 return 2

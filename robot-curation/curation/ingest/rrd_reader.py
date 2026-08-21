@@ -96,7 +96,8 @@ def _rrd_reader_cls():
 def is_rrd_dataset(dataset_dir: str) -> bool:
     """目录下有 *.rrd 即认作 RRD 数据集(管线的格式嗅探入口)。"""
     try:
-        return bool(glob.glob(os.path.join(dataset_dir, "*.rrd")))
+        from . import dsfs
+        return bool(dsfs.glob(dsfs.join(dataset_dir, "*.rrd")))
     except OSError:
         return False
 

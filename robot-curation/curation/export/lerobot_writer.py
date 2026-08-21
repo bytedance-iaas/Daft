@@ -164,6 +164,7 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
     task_overrides: {源 episode_index: 新任务文本}——两类来源(2026-08-06 出数据闭环):
     ①无标注条目的自产 caption 补标;②人工裁决采纳的改标(rejudge 重导出)。
     覆写同时作用于任务表、逐帧 task_index 与 meta/episodes 的 tasks 列。"""
+    from ..ingest import dsfs
     from ..ingest.lerobot_reader import _load_episodes_meta, _load_info
 
     _refuse_nonempty(out_dir)
@@ -179,9 +180,9 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
     # ---------- data:按边界切源 parquet ----------
     pieces = []
     for _, ep in sel.iterrows():
-        src = os.path.join(dataset_dir, info["data_path"].format(
+        src = dsfs.join(dataset_dir, info["data_path"].format(
             chunk_index=int(ep["data/chunk_index"]), file_index=int(ep["data/file_index"])))
-        df = pd.read_parquet(src)
+        df = dsfs.read_parquet(src)
         base = int(df["index"].iloc[0])
         lo, hi = int(ep["dataset_from_index"]), int(ep["dataset_to_index"])
         pieces.append(df.iloc[lo - base: hi - base].copy())
@@ -214,7 +215,7 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
     video_bounds: dict[str, list[tuple]] = {}
     for vk in video_keys:
         windows = [{
-            "path": os.path.join(dataset_dir, info["video_path"].format(
+            "path": dsfs.join(dataset_dir, info["video_path"].format(
                 video_key=vk, chunk_index=int(ep[f"videos/{vk}/chunk_index"]),
                 file_index=int(ep[f"videos/{vk}/file_index"]))),
             "from_ts": float(ep[f"videos/{vk}/from_timestamp"]),
@@ -258,8 +259,9 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
     if "total_videos" in new_info:
         new_info["total_videos"] = len(video_keys)
     write_json(os.path.join(out_dir, "meta", "info.json"), new_info, indent=2)
-    shutil.copy(os.path.join(dataset_dir, "meta", "stats.json"),
-                os.path.join(out_dir, "meta", "stats.json"))
+    _src_stats = dsfs.join(dataset_dir, "meta", "stats.json")
+    if dsfs.exists(_src_stats):            # 统计缺失不影响加载(与 v2 导出同一口径)
+        dsfs.copy_to_local(_src_stats, os.path.join(out_dir, "meta", "stats.json"))
     _write_camera_health(out_dir, camera_health, keep)
 
     return {"episodes": len(sel), "frames": int(cursor), "tasks": len(task_strings),
@@ -277,14 +279,15 @@ def _copy_v2_stats(dataset_dir: str, out_dir: str, keep: list[int]) -> None:
     """统计文件跟着走:v2.0 是全局 meta/stats.json(与子集无关,原样拷);
     v2.1 是逐条 meta/episodes_stats.jsonl(按选中条目过滤并重编号,否则新旧编号错位)。
     两个都没有也不报错——统计缺失不影响加载,交付照常。"""
+    from ..ingest import dsfs
     os.makedirs(os.path.join(out_dir, "meta"), exist_ok=True)
-    src_stats = os.path.join(dataset_dir, "meta", "stats.json")
-    if os.path.exists(src_stats):
-        shutil.copyfile(src_stats, os.path.join(out_dir, "meta", "stats.json"))
-    src_ep_stats = os.path.join(dataset_dir, "meta", "episodes_stats.jsonl")
-    if os.path.exists(src_ep_stats):
+    src_stats = dsfs.join(dataset_dir, "meta", "stats.json")
+    if dsfs.exists(src_stats):
+        dsfs.copy_to_local(src_stats, os.path.join(out_dir, "meta", "stats.json"))
+    src_ep_stats = dsfs.join(dataset_dir, "meta", "episodes_stats.jsonl")
+    if dsfs.exists(src_ep_stats):
         by_index = {}
-        with open(src_ep_stats, encoding="utf-8") as f:
+        with dsfs.open_text(src_ep_stats) as f:
             for line in f:
                 if line.strip():
                     rec = json.loads(line)
@@ -313,6 +316,7 @@ def export_lerobot_v2(dataset_dir: str, keep_episode_indices: list[int], out_dir
     替换成这一条文本),同时作用于 meta/episodes.jsonl 的 tasks、meta/tasks.jsonl 任务表
     与 parquet 的 task_index 三处,三者必须一致否则下游按 task_index 取文本会错。
     """
+    from ..ingest import dsfs
     from ..ingest.lerobot_reader import _load_info, _v2_episode_list, _v2_episode_paths
 
     _refuse_nonempty(out_dir)
@@ -348,7 +352,7 @@ def export_lerobot_v2(dataset_dir: str, keep_episode_indices: list[int], out_dir
         src_data, src_videos = _v2_episode_paths(dataset_dir, info, ep)
         out_chunk = new_idx // chunks_size
 
-        df = pd.read_parquet(src_data)
+        df = dsfs.read_parquet(src_data)
         tasks = _tasks_of(ep)
         df["episode_index"] = new_idx
         if "task_index" in df.columns:
@@ -365,7 +369,7 @@ def export_lerobot_v2(dataset_dir: str, keep_episode_indices: list[int], out_dir
 
         for vk in video_keys:
             src_mp4 = src_videos[vk]["path"]
-            if not os.path.exists(src_mp4):
+            if not dsfs.exists(src_mp4):
                 # 缺某路视频是 v2 社区转换集的常态(如 DROID 部分条目缺腕部相机):
                 # 有多少拷多少,末尾如实汇报,不因一路缺失丢掉整条 episode
                 missing_videos.append(f"ep{src_idx:06d}/{vk}")
@@ -373,7 +377,7 @@ def export_lerobot_v2(dataset_dir: str, keep_episode_indices: list[int], out_dir
             out_mp4 = os.path.join(out_dir, info["video_path"].format(
                 episode_chunk=out_chunk, video_key=vk, episode_index=new_idx))
             os.makedirs(os.path.dirname(out_mp4), exist_ok=True)
-            shutil.copyfile(src_mp4, out_mp4)   # 顺序整文件拷贝:挂载盘上比随机写安全
+            dsfs.copy_to_local(src_mp4, out_mp4)   # 顺序整文件拷贝:挂载盘上比随机写安全
             n_videos += 1
 
         # 源行的其它列(如社区转换集自带的额外字段)原样继承,只覆写编号/任务/长度
