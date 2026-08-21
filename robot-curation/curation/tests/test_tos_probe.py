@@ -217,3 +217,18 @@ def test_run_page_has_unreadable_root_dialog(tmp_path, monkeypatch):
     assert "#in-ask-btns" in ui_app._ARCO_CSS
     assert any(c["props"].get("label") == "交付名" and c["type"] == "dropdown"
                for c in cfg["components"]), "报告页的交付下拉叫「交付名」(与跑质检页同名)"
+
+
+def test_mounted_bucket_region_and_mismatch_text(monkeypatch):
+    from curation.ui import runner
+    monkeypatch.delenv("TOS_REGION", raising=False)
+    monkeypatch.delenv("TOS_ENDPOINT", raising=False)
+    assert runner.mounted_bucket_region({"endpoint": "https://tos-s3-cn-beijing.ivolces.com"}) == "cn-beijing"
+    assert runner.mounted_bucket_region({}) is None, "推不出就不硬猜"
+    monkeypatch.setenv("TOS_REGION", "cn-shanghai")
+    assert runner.mounted_bucket_region({}) == "cn-shanghai"
+    t = runner.mount_region_mismatch("curation", "cn-beijing", "cn-guangzhou")
+    assert "curation 在 cn-beijing" in t and "不在 cn-guangzhou" in t and "改回 cn-beijing" in t
+    assert runner.mount_region_mismatch("curation", "cn-beijing", "cn-beijing") == ""
+    assert runner.mount_region_mismatch("curation", None, "cn-guangzhou") == ""
+    assert runner.mount_region_mismatch("curation", "cn-beijing", None) == ""

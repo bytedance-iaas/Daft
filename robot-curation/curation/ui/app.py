@@ -121,7 +121,8 @@ CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自�
 #: 客户会以为三个数据集的结果会互相覆盖(2026-08-13 用户提多选时点名要说明白)。
 #: 多选时的落盘形状与 CLI `--batch` 一致(`<交付名>/<数据集名>/`),报告页的递归
 #: 发现本来就找得到。
-OUT_NAME_HINT_ONE = "跑批会被放进以时间戳命名的子目录"
+#: 单选时交付名下面不再写说明(2026-08-21 用户:删掉,界面要简洁);多选时那句还在
+OUT_NAME_HINT_ONE = ""
 # 2026-08-18 精简:原句四小句挤在窄列里要折三四行。只留"这个名字当什么用"
 # 这一件事(它回答的就是交付名的含义),执行顺序与容错("按序跑、一个没跑成
 # 后面照跑")挪出说明行 —— 那是任务台的进度区本来就看得见的事实。
@@ -2045,7 +2046,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         spec = runner.resolve_root_input(url, _buckets)
                     except ValueError:
                         return hide, ""
-                    if spec["kind"] != "tos" or public_catalog.is_public_root(spec["url"]):
+                    if spec["kind"] == "mount":
+                        # 挂载桶不出网:地区与配置里的端点地区比对即可
+                        bname = str(spec["bucket"].get("bucket") or spec["bucket"].get("name") or "")
+                        why = runner.mount_region_mismatch(
+                            bname, runner.mounted_bucket_region(spec["bucket"]),
+                            str(region or "").strip() or None)
+                        if not why:
+                            return hide, ""
+                        return (gr.update(visible=True),
+                                f"**地区选错了**\n\n{why}")
+                    if public_catalog.is_public_root(spec["url"]):
                         return hide, ""
                     ok, why = runner.readable_verdict(
                         spec["url"], str(region or "").strip() or None,
@@ -2071,7 +2082,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     except ValueError as e:
                         return hide, gr.update(), f"⚠️ {e}"
                     if spec["kind"] == "mount":
-                        return hide, gr.update(), ""
+                        why = runner.mount_region_mismatch(
+                            os.environ.get("TOS_BUCKET", "").strip() or "本实例",
+                            runner.default_tos_region(), str(tout_rg or "").strip() or None)
+                        if not why:
+                            return hide, gr.update(), ""
+                        return (gr.update(visible=True), f"**地区选错了**\n\n{why}",
+                                f"⚠️ {why}")
                     ok, why = runner.writable_verdict(
                         spec["url"], str(tout_rg or "").strip() or None,
                         locate=runner.region_of_bucket)
@@ -2167,6 +2184,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             locate=runner.region_of_bucket)
                         if not _ok:
                             return _tk_view(f"⚠️ 交付目录写不进去:{_why}")
+                    if _ospec["kind"] == "mount":
+                        _why = runner.mount_region_mismatch(
+                            os.environ.get("TOS_BUCKET", "").strip() or "本实例",
+                            runner.default_tos_region(), str(tout_rg or "").strip() or None)
+                        if _why:
+                            return _tk_view(f"⚠️ 交付目录的地区选错了:{_why}")
+                    if _spec["kind"] == "mount":
+                        _b = _spec["bucket"]
+                        _why = runner.mount_region_mismatch(
+                            str(_b.get("bucket") or _b.get("name") or ""),
+                            runner.mounted_bucket_region(_b), str(tin_rg or "").strip() or None)
+                        if _why:
+                            return _tk_view(f"⚠️ 数据集目录的地区选错了:{_why}")
                     if _spec["kind"] == "tos" and not public_catalog.is_public_root(_spec["url"]):
                         # 读侧同样开跑前再探一次:桶名/地区对不上,任务不该起来才在列清单那步炸
                         _ok, _why = runner.readable_verdict(
