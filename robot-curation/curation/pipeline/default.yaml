@@ -309,3 +309,4 @@ public_datasets:
   region: null                    # 桶所在地区(如 cn-beijing)
   prefix: dataset                 # 数据集都在这个前缀下
   manifest: dataset_files.json    # 桶根清单的对象名
+  label: 字节 HuggingFace 镜像       # 界面「数据集目录」旁二选一里这个来源的叫法

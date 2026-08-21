@@ -966,12 +966,88 @@ def public_output_default(deliv_root: str) -> tuple[str, str]:
     return "", PUBLIC_READONLY_NOTE
 
 
+def mounted_bucket_region(b: dict | None) -> str | None:
+    """配置桶(挂载)所在的地区:配置的 endpoint 主机名里带着(tos-s3-<region>),
+    没写端点就按部署地区(TOS_REGION / TOS_ENDPOINT);都推不出 → None(不硬猜)。"""
+    from ..tos_store import region_from_endpoint
+    ep = str((b or {}).get("endpoint") or "").strip()
+    found = region_from_endpoint(ep) if ep else None
+    if found:
+        return found
+    explicit = os.environ.get("TOS_REGION", "").strip()
+    return explicit or region_from_endpoint(os.environ.get("TOS_ENDPOINT", "")) or None
+
+
+def mount_region_mismatch(bucket_name: str, known: str | None, chosen: str | None) -> str:
+    """挂载桶 + 用户选的地区 → 对不上时的一句人话,对得上/不知道桶在哪 → 空串。
+    挂载读写根本不走地区,但地区选错了还是要说(2026-08-21 用户:"没给我报错"):
+    这个值会随交付记录落盘、会传给深链和 CLI,错着带出去迟早坑人。"""
+    k = str(known or "").strip()
+    c = str(chosen or "").strip()
+    if not k or not c or k == c:
+        return ""
+    return f"桶 {bucket_name} 在 {k}(本实例接入的桶),不在 {c} —— 把地区改回 {k}"
+
+
+def region_of_bucket(bucket: str, skip: str | None = None) -> str | None:
+    """到地区清单里的其他地区找这个桶(网络调用,404 之后才值得做)。"""
+    from .. import tos_store as _ts
+    return _ts.locate_bucket(bucket, TOS_REGIONS, skip=skip)
+
+
+def _effective_region(region: str | None) -> str:
+    return region or os.environ.get("TOS_REGION", "").strip() or "默认地区"
+
+
+def missing_bucket_text(bucket: str, region: str | None, detail: str = "", *,
+                        locate=None) -> str:
+    """404 的人话。⚠️ 地区填错和桶名写错在 TOS 眼里都是 NoSuchBucket(2026-08-21 真机),
+    所以光说"不存在"会把人引向改桶名;给了 locate 就去别的地区找一圈,找到了直接说
+    "它在 cn-shanghai,把地区改过来"。locate(bucket, skip_region) → 地区名|None。"""
+    rg = _effective_region(region)
+    found = None
+    if locate is not None:
+        try:
+            found = locate(bucket, rg)
+        except Exception:  # noqa: BLE001 找不到就按找不到说
+            found = None
+    # detail(NoSuchBucket 的英文原话)不进这句:它对"桶名错还是地区错"没有任何信息量,
+    # 只会把一句人话拖长(2026-08-21 用户对冗长措辞的一贯口味)
+    if found:
+        return f"桶 {bucket} 不在 {rg},它在 {found} —— 把地区改成 {found} 再试"
+    scope = "(其他地区也没找到)" if locate is not None else ""
+    return f"桶 {bucket} 不存在,或不在 {rg}{scope} —— 检查桶名和地区"
+
+
+def readable_verdict(url: str, region: str | None = None, *,
+                     probe=None, locate=None) -> tuple[bool, str]:
+    """数据集目录能不能读,给界面看的一句人话:(能读?, 原因)。与 writable_verdict 同族,
+    只探 list 不写。probe/locate 注入供单测(真探针要出网)。"""
+    from .. import tos_store as _ts
+    try:
+        bucket, _p = _ts.parse_tos_url(url)
+    except ValueError as e:
+        return False, str(e)
+    try:
+        r = (probe or _ts.probe_readable)(url, region)
+    except Exception as e:  # noqa: BLE001 凭证缺失/网络不通
+        return False, f"探不到 {url}:{type(e).__name__}: {str(e)[:120]}"
+    kind, detail = r.get("kind"), r.get("detail", "")
+    if kind == "ok":
+        return True, ""
+    if kind == "missing":
+        return False, missing_bucket_text(bucket, region, detail, locate=locate)
+    if kind == "forbidden":
+        return False, (f"本实例的密钥没有桶 {bucket} 的读权限 —— 找桶的管理员授权({detail})")
+    return False, f"探测桶 {bucket} 时出错:{detail}"
+
+
 def writable_verdict(url: str, region: str | None = None, *,
-                     probe=None) -> tuple[bool, str]:
+                     probe=None, locate=None) -> tuple[bool, str]:
     """交付目录能不能写,给界面看的一句人话:(能写?, 原因/提示)。
     能写且干净 → (True, "");能写但探针删不掉 → (True, 提示);不能写 → (False, 原因)。
     原因分三种话:桶不存在/地区不对、密钥没权限(连读都不行)、只读 —— 用户才知道
-    该改地址还是找管理员。probe 注入供单测(真探针要出网)。
+    该改地址还是找管理员。probe/locate 注入供单测(真探针要出网)。
     """
     from .. import tos_store as _ts
     try:
@@ -983,14 +1059,13 @@ def writable_verdict(url: str, region: str | None = None, *,
     except Exception as e:  # noqa: BLE001 凭证缺失/网络不通
         return False, f"探不到 {url}:{type(e).__name__}: {str(e)[:120]}"
     kind, detail = r.get("kind"), r.get("detail", "")
-    rg = region or os.environ.get("TOS_REGION", "").strip() or "默认地区"
     if kind == "ok":
         return True, ""
     if kind == "leftover":
         return True, (f"桶 {bucket} 能写但删不掉探针文件,{url} 下留了一个 0 字节的 "
                       f"{_ts.PROBE_NAME}({detail})")
     if kind == "missing":
-        return False, f"桶 {bucket} 不存在,或不在 {rg} —— 检查桶名和地区({detail})"
+        return False, missing_bucket_text(bucket, region, detail, locate=locate)
     if kind == "forbidden":
         return False, (f"本实例的密钥没有桶 {bucket} 的权限,连读都不行 —— "
                        f"找桶的管理员授权({detail})")

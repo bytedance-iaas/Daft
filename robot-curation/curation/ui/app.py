@@ -63,6 +63,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
 from . import runner            # 任务执行层(任务台跑批 + 报告页「执行裁决」共用)
 # 公共数据集目录(2026-08-21):只读一份清单、登记匿名桶,不 import 管道
 from ..ingest import public_catalog
+from .. import tos_store   # 只用纯函数:parse_tos_url / classify_list_error
 
 log = logging.getLogger("curation.ui")
 
@@ -108,9 +109,10 @@ VLM_CHECKS = ("task_success", "skill_profile")
 
 #: 「质检范围」三挡的界面说法(改名只改这里,判断都比这三个常量)。
 FULL_SCAN = "完整质检"
-#: 「数据集目录」标签旁的勾选框(2026-08-21 用户定稿):勾上 = 读公共镜像桶,目录框与地区
-#: 置灰只看不填,只剩「数据集」下拉可选;交付目录一概不动。没配置 public_datasets 不出现。
-PUBLIC_BOX = "公有TOS桶"
+#: 「数据集目录」标签旁的二选一(2026-08-21 同事看图后定稿):「私有」(默认)= 填自己的桶;
+#: 选镜像 = 目录框与地区填上公共镜像桶并置灰只看不填,只剩「数据集」下拉可选;交付目录一概
+#: 不动。镜像那项的名字来自 public_datasets.label(缺省「字节 HuggingFace 镜像」);没配置不出现。
+SRC_PRIVATE = "私有"
 QUICK_SCAN = "快速质检"
 CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自己定义模块里查什么"
                           # (那是以后的事),其实是"从现成模块里挑几个跑"
@@ -119,7 +121,8 @@ CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自�
 #: 客户会以为三个数据集的结果会互相覆盖(2026-08-13 用户提多选时点名要说明白)。
 #: 多选时的落盘形状与 CLI `--batch` 一致(`<交付名>/<数据集名>/`),报告页的递归
 #: 发现本来就找得到。
-OUT_NAME_HINT_ONE = "跑批会被放进以时间戳命名的子目录"
+#: 单选时交付名下面不再写说明(2026-08-21 用户:删掉,界面要简洁);多选时那句还在
+OUT_NAME_HINT_ONE = ""
 # 2026-08-18 精简:原句四小句挤在窄列里要折三四行。只留"这个名字当什么用"
 # 这一件事(它回答的就是交付名的含义),执行顺序与容错("按序跑、一个没跑成
 # 后面照跑")挪出说明行 —— 那是任务台的进度区本来就看得见的事实。
@@ -669,8 +672,8 @@ _ARCO_CSS = """
 }
 /* 对话框按钮:居中、定宽(2026-08-19 用户点名)。不居中的根因:Row 默认
    flex-start,而 Button 的 min-width 让 scale=0 也铺成大宽条。 */
-#ex-ask-btns, #out-ask-btns { justify-content: center !important; gap: 12px !important; }
-#ex-ask-btns button, #out-ask-btns button {
+#ex-ask-btns, #out-ask-btns, #in-ask-btns { justify-content: center !important; gap: 12px !important; }
+#ex-ask-btns button, #out-ask-btns button, #in-ask-btns button {
   flex: 0 0 auto !important; width: 120px !important; min-width: 0 !important;
 }
 /* 两个待裁决队列并列(2026-08-19 用户拍板)。窄屏时 Gradio 的 Row 自己会换行成
@@ -776,9 +779,9 @@ _ARCO_CSS = """
    靠正的小间距,别靠负值。 */
 .gradio-container .field-note { margin-top: 2px !important; padding-left: 13px; }
 
-/* 「数据集目录」自画标题行(2026-08-21):Markdown 标签 + 紧挨着的「公有TOS桶」勾选框,
+/* 「数据集目录」自画标题行(2026-08-21):Markdown 标签 + 紧挨着的「私有 / 镜像」二选一,
    观感对齐 gradio 原生 block 标签(同字号/同灰/同下间距),右边列的原生标签才不会
-   跟它错行。勾选框 container=False 只剩 input + 文字,行高压到与标签一致。 */
+   跟它错行。单选 container=False 只剩选项,组框/内边距全去掉,行高压到与标签一致。 */
 /* 这一列自己当卡片:gradio 只把**连续的表单控件**合进一张 .form 卡,中间插了
    Markdown 标签就散成三块各带边框(实机:勾选框掉到下一行自成一框)。做法 = 列外框
    画成 .form 的样子,里面的 .form/.block 全部去框去内边距。 */
@@ -807,10 +810,17 @@ _ARCO_CSS = """
      (实测勾选框被推远 200px,计算样式却报 0px) */
   margin: 0 !important;
 }
+#rn-pub .wrap { border: none !important; padding: 0 !important; background: transparent !important;
+                gap: 0 16px !important; min-height: 0 !important; }
 #rn-pub label { padding: 0 !important; gap: 6px !important; }
 #rn-pub label span { font-size: 13px !important; color: var(--arco-t2) !important; }
+/* 单选下拉的箭头是绝对定位压在 input 右端上的(见 _DROPDOWN_JS 的注释):input 文字
+   要给它让出位置,窄列时末尾按省略号截,不许被箭头盖住(2026-08-21 用户实见) */
+.gradio-container .wrap .secondary-wrap input {
+  padding-right: 28px !important; text-overflow: ellipsis !important;
+}
 /* 置灰的输入框(interactive=False → disabled):内容用 Arco 的 text-3 灰,一眼看出
-   "这是给你看的,不是让你填的"(2026-08-21 用户:勾上公有TOS桶后目录/地区要灰) */
+   "这是给你看的,不是让你填的"(2026-08-21 用户:选了镜像后目录/地区要灰) */
 .gradio-container textarea:disabled, .gradio-container input:disabled {
   color: var(--arco-t3) !important; -webkit-text-fill-color: var(--arco-t3) !important;
   opacity: 1 !important;
@@ -1680,17 +1690,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _rg_choices = runner.tos_region_choices()
                 with gr.Row(equal_height=True):
                     # 「数据集目录」的标题行自己画(2026-08-21 用户定稿):标签右边
-                    # 紧挨着一个「公有TOS桶」勾选框 —— gradio 的原生标签里塞不进控件,
+                    # 紧挨着「私有 / 镜像」二选一 —— gradio 的原生标签里塞不进控件,
                     # 所以标签用 Markdown 画、Textbox 自己的标签藏起来(label 仍叫
                     # 「数据集目录」,测试与深链按它定位)。勾上:目录框/地区填镜像桶
                     # 并置灰,只剩数据集下拉可选;交付目录一概不动。没配置就不出现。
+                    _src_public = public_catalog.source_label()
                     with gr.Column(scale=4, min_width=160, elem_id="rn-tin-col"):
                         with gr.Row(elem_id="rn-tin-head"):
                             gr.Markdown("数据集目录", elem_classes=["field-label"])
-                            rn_pub = gr.Checkbox(label=PUBLIC_BOX, value=False,
-                                                 container=False, elem_id="rn-pub",
-                                                 visible=bool(_public_cfg),
-                                                 scale=0, min_width=80)
+                            rn_pub = gr.Radio([SRC_PRIVATE, _src_public],
+                                              value=SRC_PRIVATE, show_label=False,
+                                              container=False, elem_id="rn-pub",
+                                              visible=bool(_public_cfg),
+                                              scale=0, min_width=80)
                         rn_tin = gr.Textbox(label="数据集目录", show_label=False,
                                             value=runner.bucket_url(_buckets[0]),
                                             placeholder="tos://桶名/目录")
@@ -1701,7 +1713,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 地区下拉与 rerun 的 OpenTosModal 同值同序;列表可能落后
                     # 于新地区,允许自由输入
                     rn_tin_rg = gr.Dropdown(choices=_rg_choices, value=_rg0,
-                                            label="地区", scale=2,
+                                            label="地区", scale=2, min_width=240,
                                             allow_custom_value=True,
                                             interactive=True)
                 # 交付目录默认值(2026-08-21 用户定):永远是个 tos:// 地址 —— 本实例
@@ -1716,7 +1728,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     rn_out = gr.Textbox(label="交付名", scale=4,
                                         placeholder="给这次结果起个名字")
                     rn_tout_rg = gr.Dropdown(choices=_rg_choices, value=_rg0,
-                                             label="地区", scale=2,
+                                             label="地区", scale=2, min_width=240,
                                              allow_custom_value=True,
                                              interactive=True)
                 # 说明行(2026-08-17 从 info= 挪出):第二行按与控件行
@@ -1767,6 +1779,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     with gr.Row(elem_id="out-ask-btns"):
                         out_ask_ok = gr.Button("确定", variant="primary", scale=0,
                                                elem_id="out-ask-ok")
+                # 数据集目录读不到时的对话框(2026-08-21 用户问"地址和地区对不上会不会
+                # 跳出来提示":会,与交付目录同一套;「确定」只关窗不清空 —— 读侧多半是
+                # 地区选错,值留着让人改地区就行)
+                with gr.Column(visible=False, elem_id="in-ask",
+                               elem_classes=["modal-dialog"]) as in_ask:
+                    in_ask_md = gr.Markdown()
+                    with gr.Row(elem_id="in-ask-btns"):
+                        in_ask_ok = gr.Button("确定", variant="primary", scale=0,
+                                              elem_id="in-ask-ok")
                 # 「快速质检」原叫「快速冒烟(跳过模型判定)」——"冒烟"是
                 # 我们的行话,"模型判定"客户也不知道指哪几步(2026-08-13
                 # 用户点名)。改成大白话,细节挂在旁边的问号上。
@@ -1965,8 +1986,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 "该前缀下没有列出任何数据集(前缀打错?或桶里"
                                 "确实是空的)")
                     except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
-                        names, note = [], (f"⚠️ 列不出该前缀下的数据集:"
-                                           f"{type(e).__name__}: {str(e)[:120]}")
+                        # 404 对 TOS 来说"桶名错"和"地区错"一个样(2026-08-21 真机),
+                        # 措辞两头都点到,并到别的地区找一圈,找到了直接说在哪
+                        _kind, _detail = tos_store.classify_list_error(e)
+                        _bkt = tos_store.parse_tos_url(spec["url"])[0]
+                        _rg = str(region or "").strip() or None
+                        if _kind == "missing":
+                            why = runner.missing_bucket_text(
+                                _bkt, _rg, _detail, locate=runner.region_of_bucket)
+                        elif _kind == "forbidden":
+                            why = f"本实例的密钥没有桶 {_bkt} 的读权限({_detail})"
+                        else:
+                            why = f"{type(e).__name__}: {str(e)[:120]}"
+                        names, note = [], f"⚠️ 列不出该前缀下的数据集:{why}"
                     return (f"TOS 直连:{spec['url']}(直接从桶里读,不落本地盘)",
                             gr.update(choices=names, value=[]), note)
 
@@ -1992,7 +2024,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     if url == _home_out:          # 自己的桶:挂载直写/部署桶,不探
                         return gr.update(value=url), gr.update(), "", True
                     ok, why = runner.writable_verdict(
-                        url, str(tin_rg or "").strip() or None)
+                        url, str(tin_rg or "").strip() or None,
+                        locate=runner.region_of_bucket)
                     if ok:
                         return (gr.update(value=url),
                                 gr.update(value=str(tin_rg or "").strip() or None),
@@ -2004,6 +2037,38 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 _bo_in = [rn_tin, rn_tin_rg, rn_tout, rn_tout_auto]
                 _bo_out = [rn_tout, rn_tout_rg, rn_tout_note, rn_tout_auto]
+
+                def _in_check(url, region):
+                    """数据集目录填完/切地区 → 直连桶探一次可读,读不到就弹窗说原因
+                    (桶名错 / 地区错 / 没权限);挂载桶与公共镜像桶不探。"""
+                    hide = gr.update(visible=False)
+                    try:
+                        spec = runner.resolve_root_input(url, _buckets)
+                    except ValueError:
+                        return hide, ""
+                    if spec["kind"] == "mount":
+                        # 挂载桶不出网:地区与配置里的端点地区比对即可
+                        bname = str(spec["bucket"].get("bucket") or spec["bucket"].get("name") or "")
+                        why = runner.mount_region_mismatch(
+                            bname, runner.mounted_bucket_region(spec["bucket"]),
+                            str(region or "").strip() or None)
+                        if not why:
+                            return hide, ""
+                        return (gr.update(visible=True),
+                                f"**地区选错了**\n\n{why}")
+                    if public_catalog.is_public_root(spec["url"]):
+                        return hide, ""
+                    ok, why = runner.readable_verdict(
+                        spec["url"], str(region or "").strip() or None,
+                        locate=runner.region_of_bucket)
+                    if ok:
+                        return hide, ""
+                    return (gr.update(visible=True),
+                            f"**这个数据集目录读不到**\n\n{why}\n\n"
+                            "请核对桶名与地区后再试。")
+
+                _ic_out = [in_ask, in_ask_md]
+                in_ask_ok.click(lambda: gr.update(visible=False), None, in_ask)
 
                 def _out_changed(tout, tout_rg):
                     """交付目录失焦/回车/切地区 → 真写一下探可写;写不进去立刻弹窗
@@ -2017,9 +2082,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     except ValueError as e:
                         return hide, gr.update(), f"⚠️ {e}"
                     if spec["kind"] == "mount":
-                        return hide, gr.update(), ""
+                        why = runner.mount_region_mismatch(
+                            os.environ.get("TOS_BUCKET", "").strip() or "本实例",
+                            runner.default_tos_region(), str(tout_rg or "").strip() or None)
+                        if not why:
+                            return hide, gr.update(), ""
+                        return (gr.update(visible=True), f"**地区选错了**\n\n{why}",
+                                f"⚠️ {why}")
                     ok, why = runner.writable_verdict(
-                        spec["url"], str(tout_rg or "").strip() or None)
+                        spec["url"], str(tout_rg or "").strip() or None,
+                        locate=runner.region_of_bucket)
                     if ok:
                         return (hide, gr.update(),
                                 f"TOS 直连:跑完上传到 {spec['url']}"
@@ -2036,15 +2108,25 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     app.load(_root_changed, [rn_tin, rn_tin_rg],
                              [rn_src_note, rn_ds, rn_ds_note]
                              ).then(_borrow_output, _bo_in, _bo_out)
-                rn_tin.blur(_root_changed, [rn_tin, rn_tin_rg],
-                            [rn_src_note, rn_ds, rn_ds_note]
-                            ).then(_borrow_output, _bo_in, _bo_out)
-                rn_tin.submit(_root_changed, [rn_tin, rn_tin_rg],
-                              [rn_src_note, rn_ds, rn_ds_note]
-                              ).then(_borrow_output, _bo_in, _bo_out)
-                rn_tin_rg.input(_root_changed, [rn_tin, rn_tin_rg],
-                                [rn_src_note, rn_ds, rn_ds_note]
-                                ).then(_borrow_output, _bo_in, _bo_out)
+                # ⚠️ 三条链排成串行 + 地区链取消在飞的目录链(2026-08-21 实机):点地区下拉
+                # 时文本框先失焦触发一条链(旧地区 → "能读 → 关窗"),选完地区又触发一条
+                # ("读不到 → 弹窗");两条并行跑,哪条后落地哪条赢,弹窗时有时无。
+                # concurrency_id 让它们不并行;cancels 让"选地区"把还在飞的失焦/回车链
+                # 整个掐掉 —— 界面状态永远对应用户最后一次操作。
+                _ROOT_Q = "rn-root"
+                _b1 = rn_tin.blur(_root_changed, [rn_tin, rn_tin_rg],
+                                  [rn_src_note, rn_ds, rn_ds_note], concurrency_id=_ROOT_Q)
+                _b2 = _b1.then(_borrow_output, _bo_in, _bo_out, concurrency_id=_ROOT_Q)
+                _b3 = _b2.then(_in_check, [rn_tin, rn_tin_rg], _ic_out, concurrency_id=_ROOT_Q)
+                _s1 = rn_tin.submit(_root_changed, [rn_tin, rn_tin_rg],
+                                    [rn_src_note, rn_ds, rn_ds_note], concurrency_id=_ROOT_Q)
+                _s2 = _s1.then(_borrow_output, _bo_in, _bo_out, concurrency_id=_ROOT_Q)
+                _s3 = _s2.then(_in_check, [rn_tin, rn_tin_rg], _ic_out, concurrency_id=_ROOT_Q)
+                _r1 = rn_tin_rg.input(_root_changed, [rn_tin, rn_tin_rg],
+                                      [rn_src_note, rn_ds, rn_ds_note], concurrency_id=_ROOT_Q,
+                                      cancels=[_b1, _b2, _b3, _s1, _s2, _s3])
+                _r2 = _r1.then(_borrow_output, _bo_in, _bo_out, concurrency_id=_ROOT_Q)
+                _r2.then(_in_check, [rn_tin, rn_tin_rg], _ic_out, concurrency_id=_ROOT_Q)
                 # 用户亲手改交付框 → 以后不再代填(.input 只认用户动作)
                 rn_tout.input(lambda: False, None, rn_tout_auto)
                 rn_tout.blur(_out_changed, [rn_tout, rn_tout_rg], _oc_out)
@@ -2053,12 +2135,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 out_ask_ok.click(lambda: ("", gr.update(visible=False), ""),
                                  None, [rn_tout, out_ask, rn_tout_note])
 
-                def _pub_changed(checked):
-                    """「公有TOS桶」勾选 → (目录框, 地区, 数据集下拉, 根说明, 数据集说明)。
-                    勾上:目录框/地区填镜像桶并置灰(桶名照样可见,只是不用填),下拉
-                    只列清单里 LeRobot 格式的;取消:恢复本实例默认桶、可编辑、重列。
-                    交付目录一概不碰(2026-08-21 用户:勾不勾都不该重载它)。"""
-                    if checked and public_catalog.configured():
+                def _pub_changed(src):
+                    """来源二选一 → (目录框, 地区, 数据集下拉, 根说明, 数据集说明)。
+                    选镜像:目录框/地区填镜像桶并置灰(桶名照样可见,只是不用填),下拉
+                    只列清单里 LeRobot 格式的;选私有:恢复本实例默认桶、可编辑、重列。
+                    交付目录一概不碰(2026-08-21 用户:切来切去都不该重载它)。"""
+                    if src == _src_public and public_catalog.configured():
                         root, rg = public_catalog.root_url(), public_catalog.region()
                         note, ds, ds_note = _root_changed(root, rg)
                         return (gr.update(value=root, interactive=False),
@@ -2071,7 +2153,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             ds, note, ds_note)
 
                 rn_pub.input(_pub_changed, rn_pub,
-                             [rn_tin, rn_tin_rg, rn_ds, rn_src_note, rn_ds_note])
+                             [rn_tin, rn_tin_rg, rn_ds, rn_src_note, rn_ds_note],
+                             concurrency_id=_ROOT_Q)
                 # 报告页「执行裁决」的源数据集兜底下拉(ex_src_dd)仍用桶下拉
                 # 那套(_src_datasets),接线在那侧组件建出来之后
 
@@ -2097,9 +2180,30 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 失焦那次探针可能被绕过(粘贴完直接点开始):开跑前再探一次,
                         # 绝不让任务起来后才在上传那步失败
                         _ok, _why = runner.writable_verdict(
-                            _ospec["url"], str(tout_rg or "").strip() or None)
+                            _ospec["url"], str(tout_rg or "").strip() or None,
+                            locate=runner.region_of_bucket)
                         if not _ok:
                             return _tk_view(f"⚠️ 交付目录写不进去:{_why}")
+                    if _ospec["kind"] == "mount":
+                        _why = runner.mount_region_mismatch(
+                            os.environ.get("TOS_BUCKET", "").strip() or "本实例",
+                            runner.default_tos_region(), str(tout_rg or "").strip() or None)
+                        if _why:
+                            return _tk_view(f"⚠️ 交付目录的地区选错了:{_why}")
+                    if _spec["kind"] == "mount":
+                        _b = _spec["bucket"]
+                        _why = runner.mount_region_mismatch(
+                            str(_b.get("bucket") or _b.get("name") or ""),
+                            runner.mounted_bucket_region(_b), str(tin_rg or "").strip() or None)
+                        if _why:
+                            return _tk_view(f"⚠️ 数据集目录的地区选错了:{_why}")
+                    if _spec["kind"] == "tos" and not public_catalog.is_public_root(_spec["url"]):
+                        # 读侧同样开跑前再探一次:桶名/地区对不上,任务不该起来才在列清单那步炸
+                        _ok, _why = runner.readable_verdict(
+                            _spec["url"], str(tin_rg or "").strip() or None,
+                            locate=runner.region_of_bucket)
+                        if not _ok:
+                            return _tk_view(f"⚠️ 数据集目录读不到:{_why}")
                     if str(backend or '').endswith(BACKEND_BAD):
                         return _tk_view('⚠️ 选中的模型服务当前不可用(原因见选项后的括号),换一个,或把它修好后切回本页自动重检')
                     # 多选下拉默认一个都没选 → 必须先拦(否则空选会一路走到
@@ -2466,7 +2570,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 (gr.update(value=region, interactive=not is_pub)
                                  if region else gr.update(interactive=not is_pub)),
                                 src_note, ds_note,
-                                gr.update(value=bool(is_pub)))
+                                gr.update(value=_src_public if is_pub else SRC_PRIVATE))
                     # 旧契约(裸名字):对表预选,行为与 2026-08-17 版一致 ——
                     # **桶不认识绝不回落到默认桶里找同名的**
                     plan = runner.prefill_plan(bare, _buckets,
@@ -2486,7 +2590,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             "" if _b else gr.update(),
                             runner.dataset_root_note(_b["datasets_path"])
                             if _b else gr.update(),
-                            gr.update(value=False))
+                            gr.update(value=SRC_PRIVATE))
 
                 # gr.Request 靠注解注入;`from __future__ import annotations` 下字符串
                 # 注解会在 gradio 里被 eval,而 `gr` 只在函数内可见 → 直接挂真对象
@@ -2512,18 +2616,20 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 rp_root = gr.Textbox(label="交付目录", scale=4,
                                      value=_out_default,   # 同跑质检页:没桶留空
                                      placeholder="tos://桶名/目录")
+                # 地区列 scale=2(2026-08-21 用户实见:scale=1 时「华北2(北京) (cn-beijing)」
+                # 被下拉箭头压住末尾);说明列相应让出 1 份,总份数不变
                 rp_rg = gr.Dropdown(choices=runner.tos_region_choices(),
                                     value=runner.default_tos_region(),
-                                    label="地区", scale=1,
+                                    label="地区", scale=2, min_width=240,
                                     allow_custom_value=True, interactive=True)
-                with gr.Column(scale=7, min_width=160):
+                with gr.Column(scale=6, min_width=160):
                     rp_note = gr.Markdown("", elem_classes=["field-note"])
             with gr.Row():
                 # 文案一句话就够(2026-08-13 用户:"这种文字根本不应该给客户看")。
                 # 「重新加载」按钮已撤:切到本页就重扫一次盘(见下面的 select),
                 # 让用户自己点刷新是上个时代的做法。
                 picker = gr.Dropdown(choices=delivery_choices(delivery, choices),
-                                     value=choices[0], label="交付",
+                                     value=choices[0], label="交付名",
                                      scale=1, interactive=True, allow_custom_value=True,
                                      info="新跑完的交付会自动出现在这里")
                 # 「运行」= 这份交付跑过的哪一次(2026-08-14 布局变更:每次跑批各进
