@@ -135,6 +135,34 @@ FULL_SCAN_TIP = ("全部六项检查:时间戳、运动学极限、运动质量�
 #: 问号表:选项文字 → 悬停提示。加一项只改这里。
 SCAN_TIPS = {FULL_SCAN: FULL_SCAN_TIP, QUICK_SCAN: QUICK_SCAN_TIP}
 
+#: 任务面板的自动刷新(issue #57,2026-08-21):页面脚本按节奏点「刷新」按钮。
+#: 节奏:任务在跑(状态条里有「运行中」/「正在停止」)2 秒一次;没在跑 10 秒一次
+#: (别的标签页/命令行起了任务也能在 10 秒内出现);切回页面立刻补点一次。
+TASK_POLL_ACTIVE_MS = 2000
+TASK_POLL_IDLE_MS = 10000
+_TASK_POLL_JS = """<script>(function(){
+  var BUSY = ['运行中', '正在停止'];
+  var ACTIVE_MS = __ACTIVE__, IDLE_MS = __IDLE__, last = 0;
+  function busy(){
+    var s = document.getElementById('tk-status');
+    var t = s ? (s.innerText || '') : '';
+    return BUSY.some(function(k){ return t.indexOf(k) >= 0; });
+  }
+  function refresh(){
+    var b = document.getElementById('tk-refresh');
+    if (b && !b.disabled) { last = Date.now(); b.click(); }
+  }
+  // 不按 visibilityState 拦:浏览器本来就把后台标签页的定时器压到每秒/每分钟一次,
+  // 再拦一道只会让"切回来那一瞬"多等;切回来那一下由 visibilitychange 补一次
+  setInterval(function(){
+    var gap = busy() ? ACTIVE_MS : IDLE_MS;
+    if (Date.now() - last >= gap) refresh();
+  }, 500);
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') refresh();
+  });
+})();</script>""".replace("__ACTIVE__", str(TASK_POLL_ACTIVE_MS)).replace("__IDLE__", str(TASK_POLL_IDLE_MS))
+
 
 def readonly_block_msg(m) -> str:
     """镜像自只读桶的交付:裁决记了也写不回去 → 三个记录入口一律拒,返回这句话;
@@ -1027,6 +1055,7 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
         # ↑ 顶层导航常驻 ⇒ 它的样式也常驻;终端专属样式/资产仍只在开终端时注入
         "head": (_TABLE_JS + _DROPDOWN_JS
                  + _TIP_JS.replace("__TIPS__", json.dumps(SCAN_TIPS, ensure_ascii=False))
+                 + _TASK_POLL_JS
                  + (_terminal_head(root) if terminal else "")),
         # 标签页图标:不设就是 Gradio 自带的橘色 logo(用户 2026-08-13 点名)。
         # 换成 Arco 蓝圆角方块 + 白色漩涡(照 Daft 那枚的手感重画,底色主色化 ⇒
@@ -1495,19 +1524,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return gr.update(interactive=False, value="有任务在跑")
                 return gr.update(interactive=True, value="开始质检")
 
+            def _stop_btn(st):
+                """「停止」只在有任务在跑/正在停时可点(issue #56)。判忙同 _run_btn。"""
+                return gr.update(interactive=runner.is_busy_state(st))
+
             def _tk_view(msg: str = ""):
                 """当前任务(没有在跑的就显示最近一个)→ 状态条 + 日志尾部 + 提示
                 + 「开始质检」按钮状态(issue #55:按钮与状态条同源,永不各说各话)。"""
                 st = (runner.active_run(_runs_root)
                       or next(iter(runner.list_runs(_runs_root, limit=1)), None))
                 if not st:
-                    return runner.status_html(None), "", msg, _run_btn(None)
+                    return (runner.status_html(None), "", msg, _run_btn(None),
+                            _stop_btn(None))
                 logtxt = runner.tail_log(_runs_root, st["run_id"])
                 # 累积进度(2026-08-13 用户):跑完的阶段留在原地,新阶段追加一根条 ——
                 # 只画最后一条时,阶段一换就归零重来,等着的人看不出"已经过了几关"
                 return (runner.status_html(st, runner.parse_progress_all(logtxt),
                                            extra=_done_run_note(st)),
-                        logtxt, msg, _run_btn(st))
+                        logtxt, msg, _run_btn(st), _stop_btn(st))
 
             def _tk_start(command, label, then_argv=None, *, jobs=None,
                           run_id=None, **params):
@@ -1714,15 +1748,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 下面,两组页签长得不一样比都难看更糟。
                 with gr.Tabs(elem_id="task-logtabs"):
                     with gr.Tab("当前任务"):
-                        tk_status = gr.HTML()
+                        tk_status = gr.HTML(elem_id="tk-status")
                         tk_msg = gr.Markdown()
                         tk_log = gr.Textbox(label="日志", lines=14, max_lines=14,
                                             interactive=False, autoscroll=True,
                                             elem_classes=["mono-log"])
                         with gr.Row():
-                            tk_refresh = gr.Button("刷新", scale=0, size="sm")
+                            tk_refresh = gr.Button("刷新", scale=0, size="sm",
+                                                   elem_id="tk-refresh")
+                            # 停止只在有任务时可点(issue #56,2026-08-21):任务已经
+                            # 落终态还亮着一个红按钮,点了"没反应"是必然的
                             tk_stop = gr.Button("停止", variant="stop", scale=0,
-                                                size="sm")
+                                                size="sm", elem_id="tk-stop",
+                                                interactive=False)
                     with gr.Tab("历史"):
                         hi_table = gr.Dataframe(headers=runner.HISTORY_HEADERS,
                                                 interactive=False, wrap=True)
@@ -1733,7 +1771,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # rn_go 挂在末尾(issue #55):每一条会刷新状态条的路(点击/轮询/
                 # 手动刷新/app.load)同时刷新「开始质检」的可点性 —— 单独一条刷新
                 # 链早晚和状态条各说各话。
-                _tk_outs = [tk_status, tk_log, tk_msg, rn_go]
+                # tk_stop 同样挂在末尾(issue #56):停止按钮的可点性与状态条同源
+                _tk_outs = [tk_status, tk_log, tk_msg, rn_go, tk_stop]
 
                 # ── 回调(输出只落在任务台自己的组件上)────────────────────
                 def _tk_mode(mode, picks, how):
@@ -2119,8 +2158,6 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 报告页那侧的组件建出来之后统一挂(见「人工裁决」页底部)——
                 # 一次探活要同时刷新两处下拉,另一处不刷就挂着陈旧的可用性撒谎。
 
-                tk_refresh.click(lambda: _tk_view(""), None, _tk_outs)
-
                 def _hi_rows():
                     return runner.history_rows(runner.list_runs(_runs_root, limit=50))
 
@@ -2151,17 +2188,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 轮询刷新:2 秒一次,只读两个小文件 + 日志尾部,开销可忽略。
                 # 历史表跟着一起刷(任务跑完就该出现在历史里,不该等人点)。
                 def _tk_tick(msg):
-                    """轮询的那一跳:刷新状态与日志,**当前那句提示原样带回去**。
+                    """刷新的那一跳(手点「刷新」与页面脚本的自动刷新走同一条):刷新
+                    状态与日志,**当前那句提示原样带回去**,历史表顺手一起刷。
 
                     2026-08-13 实测:原来这里传的是空串,于是「还没选数据集」这类
                     校验提示活不过两秒就被下一跳抹掉 —— 用户点了按钮什么也没看见,
-                    和静默失败没有区别。提示由下一次真正的动作覆盖,不由计时器清。
-                    """
-                    return _tk_view(msg or "")
+                    和静默失败没有区别。提示由下一次真正的动作覆盖,不由刷新清。
 
-                if hasattr(gr, "Timer"):
-                    gr.Timer(2.0).tick(_tk_tick, tk_msg, _tk_outs)
-                    gr.Timer(10.0).tick(_hi_rows, None, hi_table)
+                    为什么不用 gr.Timer(2026-08-21,issue #57「一直停在运行中」):
+                    Timer 在这套部署里不可靠(active 却不跳,报告页 2026-08-13 就实测过),
+                    状态条就停在最后一次手动刷新的样子。改成页面脚本 _TASK_POLL_JS
+                    每 2 秒点一次「刷新」按钮 —— 走的是按钮那条真事件,页面不可见时
+                    不点,任务不在跑时降到 10 秒一次。
+                    """
+                    return (*_tk_view(msg or ""), _hi_rows())
+
+                tk_refresh.click(_tk_tick, tk_msg, _tk_outs + [hi_table])
                 app.load(lambda: _tk_view(""), None, _tk_outs)
                 app.load(_hi_rows, None, hi_table)
 
@@ -3204,7 +3246,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 """
                 path = (m or {}).get("path") or ""
                 hide = gr.update(visible=False)
-                hold = [gr.update() for _ in range(4)]   # _tk_outs 现在含 rn_go
+                hold = [gr.update() for _ in range(5)]   # _tk_outs 含 rn_go + tk_stop
                 if not path or (m or {}).get("load_error"):
                     return (gr.update(), hide,
                             "⚠️ 先在上方打开一份能读到的交付", *hold)
