@@ -65,8 +65,9 @@ def validate_episode_row(row: dict) -> None:
         raise IngestValidationError(
             f"{eid}: proprio_state 帧数({len(state)}) != action 帧数({len(action)})")
 
+    from . import dsfs
     for cam, v in (row.get("video") or {}).items():
-        if not os.path.exists(v["path"]):
+        if not dsfs.exists(v["path"]):
             raise IngestValidationError(f"{eid}: 视频文件不存在: {cam} → {v['path']}")
         if not (0.0 <= v["from_ts"] < v["to_ts"]):
             raise IngestValidationError(
@@ -93,15 +94,14 @@ def validate_rows(rows: list[dict]) -> None:
 def stats_prior_warnings(dataset_dir: str, dark_mean: float = 0.05) -> list[str]:
     """零成本先验预警(B4):读 meta/stats.json(v2 全局统计),图像通道均值近黑
     → 疑似占位/死相机。仅提示进报告,不判决(判决走逐条检查)。"""
-    import json
-    import os
+    from . import dsfs
 
-    p = os.path.join(dataset_dir, "meta", "stats.json")
-    if not os.path.exists(p):
+    p = dsfs.join(dataset_dir, "meta", "stats.json")
+    if not dsfs.exists(p):
         return []
     warns = []
     try:
-        stats = json.load(open(p))
+        stats = dsfs.read_json(p)
     except Exception:  # noqa: BLE001
         return [f"meta/stats.json 无法解析"]
     for key, v in stats.items():

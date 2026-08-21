@@ -277,8 +277,11 @@ def test_stage_out_empty_dir_errors(tmp_path):
 
 
 def test_cli_run_tos_roundtrip(tmp_path, monkeypatch, capsys):
-    """--input/--output 都给 tos:// 时:先 stage_in,跑本地,成功后 stage_out。"""
+    """--input/--output 都给 tos:// 时:输入不是 LeRobot(没 meta/info.json,如 RRD)
+    → 先 stage_in,跑本地,成功后 stage_out。"""
     from curation import cli
+    from curation.ingest import dsfs
+    monkeypatch.setattr(dsfs, "exists", lambda p: False)      # 桶里没有 meta/info.json
 
     staged = tmp_path / "staged-ds"
     staged.mkdir()
@@ -318,6 +321,37 @@ def test_cli_run_tos_roundtrip(tmp_path, monkeypatch, capsys):
     # 输出根固定在缓存下的 桶/前缀(重跑可续传)
     assert calls["out"][0] == os.path.join(str(tmp_path / "cache"), "out",
                                            "dst", "deliveries/pusht")
+
+
+def test_cli_run_tos_direct_read_for_lerobot(tmp_path, monkeypatch, capsys):
+    """2026-08-21 读端会说 tos://:输入桶里有 meta/info.json → **不 stage_in**,
+    管道直接拿 tos:// URL;地区通过 dsfs.configure 传进去;输出照旧 stage_out。"""
+    from curation import cli
+    from curation.ingest import dsfs
+    calls = {}
+    monkeypatch.setattr(dsfs, "exists",
+                        lambda p: p == "tos://src/datasets/pusht/meta/info.json")
+    monkeypatch.setattr(dsfs, "configure", lambda region=None: calls.setdefault("rg", region))
+    monkeypatch.setattr(tos_store, "stage_in",
+                        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("LeRobot 桶不该暂存")))
+    monkeypatch.setattr(tos_store, "stage_out", lambda local_root, url, region=None, **kw: 1)
+
+    def fake_run_pipeline(config, inp, outp, **kw):
+        assert inp == "tos://src/datasets/pusht"      # 管道直接拿桶地址
+        os.makedirs(outp, exist_ok=True)
+        calls["run"] = inp
+        return {"stats": {"input": 1}, "run_dir": outp, "n_delivered": 1,
+                "deliverables": {}, "robot": {}}
+
+    monkeypatch.setenv(tos_store.CACHE_ENV, str(tmp_path / "cache"))
+    import curation.pipeline.run as pr
+    monkeypatch.setattr(pr, "run_pipeline", fake_run_pipeline)
+    rc = cli.main(["run", "--input", "tos://src/datasets/pusht",
+                   "--output", "tos://dst/deliveries/pusht",
+                   "--input-region", "cn-beijing", "--lite"])
+    assert rc == 0 and calls["run"] == "tos://src/datasets/pusht"
+    assert calls["rg"] == "cn-beijing"
+    assert "TOS 直读" in capsys.readouterr().out
 
 
 def test_cli_run_bad_tos_output_fails_before_run(tmp_path, monkeypatch, capsys):

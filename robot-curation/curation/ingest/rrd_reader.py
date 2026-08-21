@@ -93,10 +93,60 @@ def _rrd_reader_cls():
     return RrdReader
 
 
-def is_rrd_dataset(dataset_dir: str) -> bool:
-    """目录下有 *.rrd 即认作 RRD 数据集(管线的格式嗅探入口)。"""
+#: RRD 总开关(2026-08-21 用户定:release 不对外开放 RRD,首批客户只有 LeRobot)。
+#: **默认关**。关着时 is_rrd_dataset 一律 False → 所有分派都走 LeRobot,LeRobot 读取器
+#: 碰到只有 .rrd 的目录会给一句明确的"本版本未开放"(lerobot_reader._load_info)。
+#: 代码与 25+ 个测试原样保留(黄金对账 47/47、bridge-200 浸泡都是验过的),开法两种:
+#: 配置 `ingest.rrd_enabled: true`(apply_config)或环境变量 CURATION_RRD_ENABLED=1。
+_ENABLED: bool | None = None      # set_enabled(测试/进程内强设),优先级最高
+_CFG_FLAG: bool | None = None     # apply_config(流水线配置 ingest.rrd_enabled)
+RRD_DISABLED_MSG = ("这是 rerun(.rrd)格式的数据集;本版本只支持 LeRobot v2/v3,"
+                    "RRD 质检暂未开放(需要时在配置里打开 ingest.rrd_enabled: true)")
+
+
+def set_enabled(flag: bool | None) -> None:
+    """进程级开关:True/False 直接定;None 退回"按环境变量/默认关"。"""
+    global _ENABLED
+    _ENABLED = None if flag is None else bool(flag)
+
+
+def apply_config(cfg: dict | None) -> None:
+    """从流水线配置读 ingest.rrd_enabled(没写 = 不改当前状态)。"""
+    global _CFG_FLAG
+    v = ((cfg or {}).get("ingest") or {}).get("rrd_enabled")
+    if v is not None:
+        _CFG_FLAG = bool(v)
+
+
+def rrd_enabled() -> bool:
+    """优先级:set_enabled 强设 > 环境变量 CURATION_RRD_ENABLED(运维显式覆盖)>
+    配置 ingest.rrd_enabled > 默认关。"""
+    if _ENABLED is not None:
+        return _ENABLED
+    env = os.environ.get("CURATION_RRD_ENABLED", "").strip().lower()
+    if env:
+        return env in ("1", "true", "yes", "on")
+    if _CFG_FLAG is not None:
+        return _CFG_FLAG
+    return False
+
+
+def has_rrd_files(dataset_dir: str) -> bool:
+    """目录下有没有 *.rrd(不看开关;报错措辞与清单排除用)。"""
     try:
-        return bool(glob.glob(os.path.join(dataset_dir, "*.rrd")))
+        from . import dsfs
+        return bool(dsfs.glob(dsfs.join(dataset_dir, "*.rrd")))
+    except Exception:  # noqa: BLE001 远端列不到 = 没有
+        return False
+
+
+def is_rrd_dataset(dataset_dir: str) -> bool:
+    """目录下有 *.rrd **且开关打开**才认作 RRD 数据集(管线的格式嗅探入口)。"""
+    if not rrd_enabled():
+        return False
+    try:
+        from . import dsfs
+        return bool(dsfs.glob(dsfs.join(dataset_dir, "*.rrd")))
     except OSError:
         return False
 

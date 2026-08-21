@@ -57,6 +57,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        perf_env_md, readings_text, skill_bar_html, skill_rows,
                        sync_camera_html, sync_conclusion_html, sync_health_html,
                        sync_view, SYNC_HOWTO,
+                       task_question_md, task_reference_html, task_reference_md,
                        task_review_rows, timeline_html,
                        video_detail_view)
 from . import runner            # 任务执行层(任务台跑批 + 报告页「执行裁决」共用)
@@ -125,6 +126,62 @@ QUICK_SCAN_TIP = ("跑不需要模型的那几项:视觉质量、运动质量、
                   "视频-动作同步、时间戳与精确去重。"
                   "不做任务成败判定、打标与技能分布画像 —— 这三项要调 VLM。")
 
+#: 「完整质检」旁边那个问号(2026-08-20 用户要:和快速质检一样能悬停看包含什么)。
+#: 同样按实际流水线写,顺序就是漏斗顺序。
+FULL_SCAN_TIP = ("全部六项检查:时间戳、运动学极限、运动质量、视觉质量、"
+                 "视频-动作同步,以及要调模型的任务成败判定;"
+                 "随后精确去重、打标与技能分布画像,导出清洗后的数据集。"
+                 "耗时大头在模型调用。")
+
+#: 问号表:选项文字 → 悬停提示。加一项只改这里。
+SCAN_TIPS = {FULL_SCAN: FULL_SCAN_TIP, QUICK_SCAN: QUICK_SCAN_TIP}
+
+#: 任务面板的自动刷新(issue #57,2026-08-21):页面脚本按节奏点「刷新」按钮。
+#: 节奏:任务在跑(状态条里有「运行中」/「正在停止」)2 秒一次;没在跑 10 秒一次
+#: (别的标签页/命令行起了任务也能在 10 秒内出现);切回页面立刻补点一次。
+TASK_POLL_ACTIVE_MS = 2000
+TASK_POLL_IDLE_MS = 10000
+_TASK_POLL_JS = """<script>(function(){
+  var BUSY = ['运行中', '正在停止'];
+  var ACTIVE_MS = __ACTIVE__, IDLE_MS = __IDLE__, last = 0;
+  function busy(){
+    var s = document.getElementById('tk-status');
+    var t = s ? (s.innerText || '') : '';
+    return BUSY.some(function(k){ return t.indexOf(k) >= 0; });
+  }
+  function refresh(){
+    var b = document.getElementById('tk-refresh');
+    if (b && !b.disabled) { last = Date.now(); b.click(); }
+  }
+  // 不按 visibilityState 拦:浏览器本来就把后台标签页的定时器压到每秒/每分钟一次,
+  // 再拦一道只会让"切回来那一瞬"多等;切回来那一下由 visibilitychange 补一次
+  setInterval(function(){
+    var gap = busy() ? ACTIVE_MS : IDLE_MS;
+    if (Date.now() - last >= gap) refresh();
+  }, 500);
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') refresh();
+  });
+})();</script>""".replace("__ACTIVE__", str(TASK_POLL_ACTIVE_MS)).replace("__IDLE__", str(TASK_POLL_IDLE_MS))
+
+
+def readonly_block_msg(m) -> str:
+    """镜像自只读桶的交付:裁决记了也写不回去 → 三个记录入口一律拒,返回这句话;
+    不是只读返回空串。宁可锁:人以为记上了、实际只活在本地缓存,是"静默丢人工判断"
+    级别的事故(2026-08-21 用户定)。看报告/看片段不受影响。"""
+    ro = (m or {}).get("tos_readonly") if isinstance(m, dict) else ""
+    if not ro:
+        return ""
+    return f"⚠️ 未记录:这份交付所在的桶只读,裁决写不回去 —— {ro}"
+
+
+def readonly_banner_md(m) -> str:
+    """「待你裁决」顶部的锁提示(与 readonly_block_msg 同一个判据)。"""
+    ro = (m or {}).get("tos_readonly") if isinstance(m, dict) else ""
+    if not ro:
+        return ""
+    return f"🔒 **这份交付所在的桶只读,裁决无法回写,本页只能看不能记。** {ro}\n\n"
+
 #: 把问号塞进「快速质检」那一项的文字后面。Gradio 的 Radio 选项只吃纯文本
 #: (给 HTML 会被转义),所以只能在前端补;组件重绘后要能自愈,故用
 #: MutationObserver 兜着,而不是只在 load 时跑一次。
@@ -139,13 +196,8 @@ _TIP_JS = """
   document.addEventListener('click', hide, true);
   document.addEventListener('visibilitychange', hide);
 
-  function inject() {
-    var box = document.getElementById('qc-scope');
-    if (!box || box.querySelector('.qc-tip')) return;
-    var labels = box.querySelectorAll('label');
-    for (var i = 0; i < labels.length; i++) {
-      var span = labels[i].querySelector('span');
-      if (!span || span.textContent.trim() !== '__NAME__') continue;
+  var TIPS = __TIPS__;   // 选项文字 → 提示(Python 端 SCAN_TIPS 注入)
+  function attach(span, tip) {
       var q = document.createElement('span');
       q.className = 'qc-tip';
       q.textContent = '?';
@@ -160,7 +212,7 @@ _TIP_JS = """
           box.className = 'qc-tipbox';
           document.body.appendChild(box);
         }
-        box.textContent = '__TIP__';
+        box.textContent = tip;
         box.style.display = 'block';
         var r = q.getBoundingClientRect(), b = box.getBoundingClientRect();
         var left = Math.min(Math.max(8, r.left + r.width / 2 - b.width / 2),
@@ -171,7 +223,16 @@ _TIP_JS = """
       });
       q.addEventListener('mouseleave', hide);
       span.appendChild(q);
-      return;
+  }
+  function inject() {
+    var box = document.getElementById('qc-scope');
+    if (!box) return;
+    var labels = box.querySelectorAll('label');
+    for (var i = 0; i < labels.length; i++) {
+      var span = labels[i].querySelector('span');
+      if (!span || span.querySelector('.qc-tip')) continue;
+      var tip = TIPS[span.textContent.trim()];
+      if (tip) attach(span, tip);
     }
   }
   new MutationObserver(inject).observe(document.documentElement,
@@ -529,6 +590,30 @@ _ARCO_CSS = """
 }
 /* 单选圆、复选方(Arco 如此,也是通用心智);Gradio 默认把两者都做成 4px 圆角方块。 */
 .gradio-container input[type="radio"] { border-radius: 50% !important; }
+/* 单选/多选组按 Arco RadioGroup/CheckboxGroup(issue #54、#59 第 1 条,2026-08-20):
+   gradio 默认把**每个选项**画成一个带边框的药丸,四个圈各自成框、外面却没有
+   "组"的框(#ep-buckets 还是 hide-container)。Arco 的做法相反:选项本身不带框,
+   选中态靠实心圆点表达;整组装进一个框。选项去框 + .wrap 补组框,两条规则全站
+   生效(质检范围 / Episodes 三桶筛选 / episode 列表 / 自选模块多选 同一套)。 */
+.gradio-container .wrap:has(> label > input[type="radio"]),
+.gradio-container .wrap:has(> label > input[type="checkbox"]) {
+  border: 1px solid var(--arco-border) !important; border-radius: 4px !important;
+  background: #FFFFFF !important; padding: 6px 12px !important;
+  gap: 4px 20px !important;
+}
+.gradio-container .wrap > label:has(> input[type="radio"]),
+.gradio-container .wrap > label:has(> input[type="checkbox"]) {
+  border: none !important; background: transparent !important;
+  box-shadow: none !important; padding: 2px 0 !important;
+}
+/* episode 列表(#ep-list)外面本来就是带标题的框,里面不再套一层组框 */
+#ep-list .wrap:has(> label > input[type="radio"]) {
+  border: none !important; padding: 0 !important; background: transparent !important;
+}
+.gradio-container .wrap > label:has(> input[type="radio"]):hover,
+.gradio-container .wrap > label:has(> input[type="checkbox"]):hover {
+  background: transparent !important;
+}
 /* 带解释的小问号:灰底圆点,悬停出深色浮层(Arco 的 tooltip 是 gray-10 底白字)。
    文案挂在 data-tip 上,纯 CSS 显示,不引任何组件库。 */
 .qc-tip {
@@ -579,8 +664,8 @@ _ARCO_CSS = """
 }
 /* 对话框按钮:居中、定宽(2026-08-19 用户点名)。不居中的根因:Row 默认
    flex-start,而 Button 的 min-width 让 scale=0 也铺成大宽条。 */
-#ex-ask-btns { justify-content: center !important; gap: 12px !important; }
-#ex-ask-btns button {
+#ex-ask-btns, #out-ask-btns { justify-content: center !important; gap: 12px !important; }
+#ex-ask-btns button, #out-ask-btns button {
   flex: 0 0 auto !important; width: 120px !important; min-width: 0 !important;
 }
 /* 两个待裁决队列并列(2026-08-19 用户拍板)。窄屏时 Gradio 的 Row 自己会换行成
@@ -970,8 +1055,8 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
         "css": _ARCO_CSS + _AUDIT_CSS + _TOPNAV_CSS + (_TERMINAL_CSS if terminal else ""),
         # ↑ 顶层导航常驻 ⇒ 它的样式也常驻;终端专属样式/资产仍只在开终端时注入
         "head": (_TABLE_JS + _DROPDOWN_JS
-                 + _TIP_JS.replace("__NAME__", QUICK_SCAN)
-                          .replace("__TIP__", QUICK_SCAN_TIP)
+                 + _TIP_JS.replace("__TIPS__", json.dumps(SCAN_TIPS, ensure_ascii=False))
+                 + _TASK_POLL_JS
                  + (_terminal_head(root) if terminal else "")),
         # 标签页图标:不设就是 Gradio 自带的橘色 logo(用户 2026-08-13 点名)。
         # 换成 Arco 蓝圆角方块 + 白色漩涡(照 Daft 那枚的手感重画,底色主色化 ⇒
@@ -989,22 +1074,6 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
 # 再执行"两趟工序是分区制的产物;现在一条 episode 一张卡、问题一次答完,引导
 # 只剩一件要防的事 —— 只改标、留空成败的条目重判后可能仍判不出会回到队列,
 # 提前说明白,免得用户以为系统坏了。
-_ADJ_GUIDE_HTML = ("""
-<div style="background:#E8F3FF;border:1px solid #BEDAFF;border-left:3px solid #165DFF;
-            border-radius:4px;padding:12px 16px;margin:2px 0 6px">
-  <div style="font-weight:600;color:#0E42D2;margin-bottom:8px">怎么用这一页</div>
-  <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;color:#4E5969">
-    <span style="background:#fff;border:1px solid #BEDAFF;border-radius:4px;padding:2px 10px">
-      <b style="color:#165DFF">1</b> 逐条看视频,把该条的问题一次答完
-      <span style="color:#86909C">(标注 + 成败在同一张卡)</span></span><span style="color:#86909C">→</span>
-    <span style="background:#fff;border:1px solid #BEDAFF;border-radius:4px;padding:2px 10px">
-      <b style="color:#165DFF">2</b> 在本页底部点「执行裁决」</span><span style="color:#86909C">→</span>
-    <span style="background:#fff;border:1px solid #BEDAFF;border-radius:4px;padding:2px 10px">
-      <b style="color:#165DFF">3</b> 只改标、留空成败的条目重判后若仍判不出,
-      会回到这里 —— 补个结论再执行一次</span>
-  </div>
-</div>""")
-
 
 def _adj_section_html(num: str, title: str, subtitle: str, color: str, dark: str) -> str:
     """区块头:色块序号 + 加粗标题 + 弱化副题,底部同色粗线把区块"框"出来。
@@ -1185,7 +1254,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # 由机器按新标注重判"是**解释性文字**,用户反复说过界面上不要(2026-08-19
         # 再次点名)。行为不变,只是不写在脸上:留空由机器重判这件事,用户点了才
         # 会知道,而知道它的时机是"我要不要点",不是"我在读一段说明"。
-        note = ""
+        # 这里唯一留的一句是**判断的依据**(2026-08-21 用户定):任务文本放在三个
+        # 按钮正上方 —— 没有它,"完成了吗"无从判起;采纳改标后这句跟着换新标注。
+        note = task_question_md(m, it["id"], load_label_decisions(m).get(it["id"]))
         v = load_task_verdicts(m).get(it["id"], {})
         trace = decision_trace_md(m, "verdict", it["id"])
         t = it.get("task")
@@ -1204,6 +1275,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 for c in VERDICT_CHOICES]
         return (gr.update(visible=True), note, info, readings, *btns)
 
+    def _mg_head(m, it):
+        """卡头两行:episode 与要答的问题;**任务标注常驻第二行**(2026-08-21 用户定:
+        只判成败的卡此前看不到任务是什么,等于对着视频猜题)。"""
+        # "本条要答:① + ②" 已删(2026-08-21 用户点名多余:两个问题块各自就在下面);
+        # 任务标注用醒目块,episode 号只留一行小字
+        eid = it["id"]
+        return (f"**{eid}**\n\n"
+                + task_reference_html(m, eid, load_label_decisions(m).get(eid)))
+
     def _mg_render(m, filt, idx):
         """渲染合并队列第 idx 张卡(越界回绕)。装配顺序 = _mg_outs。"""
         q = merged_queue_view(m or {}, merge_filter_mode(filt))
@@ -1218,10 +1298,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         it = q[idx]
         eid = it["id"]
         dec = load_label_decisions(m).get(eid, {})
-        tags = ([] if it["audit"] is None else ["① 标注问题"]) \
-            + ([] if it["task"] is None else ["② 成败问题"])
-        tag_txt = " + ".join(tags)
-        info = f"**{eid}** · 本条要答:{tag_txt}"
+        info = _mg_head(m, it)
         if it["audit"] is not None:
             au_vis = gr.update(visible=True)
             au_info = _mg_au_info(m, it)
@@ -1248,6 +1325,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         trace = decision_trace_md(m, "appeal", eid)
         info = (f"**{eid}** · 系统判决:拒绝"
                 + (f" · 已复议:**{d['appeal']}**" if d.get("appeal") else "")
+                + f"\n\n{task_reference_html(m, eid)}"
                 + f"\n\n**拒绝原因**:{appeal_reason_text(m, eid) or '未注明'}"
                 + (f"\n\n{trace}" if trace else ""))
         readings = f"关键读数:{readings_text(a.get('readings') or {})}"
@@ -1274,9 +1352,20 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 gr.Warning(f"镜像这份交付失败:{type(e).__name__}: "
                            f"{str(e)[:120]}")
                 path = ""
+        # 镜像交付:打开时顺手探一次源桶可写(2026-08-21)。只读 → 裁决记了也写
+        # 不回去,给 m 打上 tos_readonly,人工裁决页按它上锁;看报告不受影响
+        ro_why = ""
+        origin = runner.tos_origin_of(path) if path else None
+        if origin:
+            ok, why = runner.writable_verdict(
+                origin["delivery_url"] + "/human-decisions",
+                origin.get("region") or None)
+            ro_why = "" if ok else why
         # 先把下拉里的值还原成真正的目录(手输半截字的情形,见 resolve_delivery);
         # 还原不了的照旧交给 load_delivery,它会挂 load_error 让整页明说读不到
         m = load_delivery(resolve_delivery(path, discover_deliveries(delivery)))
+        if ro_why and isinstance(m, dict):
+            m["tos_readonly"] = ro_why
         eids = bucket_ids(m, BUCKET_ALL)
         first = eids[0] if eids else None
         # 视觉质量那张表单独成页了 → 从下拉里撤掉(同一份数据不给两个入口)
@@ -1307,7 +1396,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 上一份交付的条目上,按钮状态还是旧的,实测踩过)
                 gr.update(choices=merged_filter_choices(m),
                           value=merged_filter_choices(m)[0]),
-                merged_hint_md(m),
+                readonly_banner_md(m) + (merged_hint_md(m) or ""),
                 audit_rows(m), task_review_rows(m),
                 *_mg_render(m, MERGE_FILTER_ALL, 0),
                 # 被拒复议:没有可复议条目就整块不渲染;子页签藏不掉,空着一片
@@ -1429,19 +1518,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return gr.update(interactive=False, value="有任务在跑")
                 return gr.update(interactive=True, value="开始质检")
 
+            def _stop_btn(st):
+                """「停止」只在有任务在跑/正在停时可点(issue #56)。判忙同 _run_btn。"""
+                return gr.update(interactive=runner.is_busy_state(st))
+
             def _tk_view(msg: str = ""):
                 """当前任务(没有在跑的就显示最近一个)→ 状态条 + 日志尾部 + 提示
                 + 「开始质检」按钮状态(issue #55:按钮与状态条同源,永不各说各话)。"""
                 st = (runner.active_run(_runs_root)
                       or next(iter(runner.list_runs(_runs_root, limit=1)), None))
                 if not st:
-                    return runner.status_html(None), "", msg, _run_btn(None)
+                    return (runner.status_html(None), "", msg, _run_btn(None),
+                            _stop_btn(None))
                 logtxt = runner.tail_log(_runs_root, st["run_id"])
                 # 累积进度(2026-08-13 用户):跑完的阶段留在原地,新阶段追加一根条 ——
                 # 只画最后一条时,阶段一换就归零重来,等着的人看不出"已经过了几关"
                 return (runner.status_html(st, runner.parse_progress_all(logtxt),
                                            extra=_done_run_note(st)),
-                        logtxt, msg, _run_btn(st))
+                        logtxt, msg, _run_btn(st), _stop_btn(st))
 
             def _tk_start(command, label, then_argv=None, *, jobs=None,
                           run_id=None, **params):
@@ -1500,9 +1594,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                             label="地区", scale=2,
                                             allow_custom_value=True,
                                             interactive=True)
+                # 交付目录默认值(2026-08-21 用户定):永远是个 tos:// 地址 —— 本实例
+                # 有桶就用自己的;没桶的实例先留空(占位符),数据集目录定下来后借它
+                # 的桶(_borrow_output)。绝不再把本地盘路径摆在这儿冒充交付目录。
+                _home_out = runner.home_output_url(_deliv_root)
+                _out_default = _home_out if _home_out.startswith("tos://") else ""
                 with gr.Row():
                     rn_tout = gr.Textbox(label="交付目录", scale=4,
-                                         value=runner.home_output_url(_deliv_root),
+                                         value=_out_default,
                                          placeholder="tos://桶名/目录")
                     rn_out = gr.Textbox(label="交付名", scale=4,
                                         placeholder="给这次结果起个名字")
@@ -1541,13 +1640,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         gr.Markdown("", elem_classes=["field-note"])
                 with gr.Row():
                     with gr.Column(scale=4, min_width=160):
-                        gr.Markdown("", elem_classes=["field-note"])
+                        # 交付目录的说明:借了谁的桶 / 写不进去的原因
+                        rn_tout_note = gr.Markdown("", elem_id="rn-tout-note",
+                                                   elem_classes=["field-note"])
                     with gr.Column(scale=4, min_width=160):
                         rn_out_hint = gr.Markdown(
                             OUT_NAME_HINT_ONE, elem_id="rn-out-note",
                             elem_classes=["field-note"])
                     with gr.Column(scale=2, min_width=120):
                         gr.Markdown("", elem_classes=["field-note"])
+                # 交付目录写不进去时的对话框(2026-08-21 用户定:填完瞬间弹窗,点
+                # 「确定」交付目录清空只剩占位符)。样式复用「执行裁决」的 modal-dialog。
+                rn_tout_auto = gr.State(True)   # 交付框还是系统代填的?(用户手改过就不再代填)
+                with gr.Column(visible=False, elem_id="out-ask",
+                               elem_classes=["modal-dialog"]) as out_ask:
+                    out_ask_md = gr.Markdown()
+                    with gr.Row(elem_id="out-ask-btns"):
+                        out_ask_ok = gr.Button("确定", variant="primary", scale=0,
+                                               elem_id="out-ask-ok")
                 # 「快速质检」原叫「快速冒烟(跳过模型判定)」——"冒烟"是
                 # 我们的行话,"模型判定"客户也不知道指哪几步(2026-08-13
                 # 用户点名)。改成大白话,细节挂在旁边的问号上。
@@ -1632,15 +1742,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 下面,两组页签长得不一样比都难看更糟。
                 with gr.Tabs(elem_id="task-logtabs"):
                     with gr.Tab("当前任务"):
-                        tk_status = gr.HTML()
+                        tk_status = gr.HTML(elem_id="tk-status")
                         tk_msg = gr.Markdown()
                         tk_log = gr.Textbox(label="日志", lines=14, max_lines=14,
                                             interactive=False, autoscroll=True,
                                             elem_classes=["mono-log"])
                         with gr.Row():
-                            tk_refresh = gr.Button("刷新", scale=0, size="sm")
-                            tk_stop = gr.Button("停止", variant="stop", scale=0,
-                                                size="sm")
+                            tk_refresh = gr.Button("刷新", scale=0, size="sm",
+                                                   elem_id="tk-refresh")
+                            # 停止只在有任务时可点(issue #56,2026-08-21):任务已经
+                            # 落终态还亮着一个红按钮,点了"没反应"是必然的
+                            # 与「刷新」同款(2026-08-21 用户点名:两个按钮一个带边框
+                            # 一个不带,不统一);可点/不可点由状态驱动,不靠颜色喊
+                            tk_stop = gr.Button("停止", variant="secondary", scale=0,
+                                                size="sm", elem_id="tk-stop",
+                                                interactive=False)
                     with gr.Tab("历史"):
                         hi_table = gr.Dataframe(headers=runner.HISTORY_HEADERS,
                                                 interactive=False, wrap=True)
@@ -1651,7 +1767,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # rn_go 挂在末尾(issue #55):每一条会刷新状态条的路(点击/轮询/
                 # 手动刷新/app.load)同时刷新「开始质检」的可点性 —— 单独一条刷新
                 # 链早晚和状态条各说各话。
-                _tk_outs = [tk_status, tk_log, tk_msg, rn_go]
+                # tk_stop 同样挂在末尾(issue #56):停止按钮的可点性与状态条同源
+                _tk_outs = [tk_status, tk_log, tk_msg, rn_go, tk_stop]
 
                 # ── 回调(输出只落在任务台自己的组件上)────────────────────
                 def _tk_mode(mode, picks, how):
@@ -1727,8 +1844,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
                         names, note = [], (f"⚠️ 列不出该前缀下的数据集:"
                                            f"{type(e).__name__}: {str(e)[:120]}")
-                    return (f"TOS 直连:{spec['url']}(跑批先整体暂存到本地,"
-                            "大数据集受容器盘限制)",
+                    return (f"TOS 直连:{spec['url']}(直接从桶里读,不落本地盘)",
                             gr.update(choices=names, value=[]), note)
 
                 # blur 与 submit 都接(填完点别处/回车都算"填完了");直连时
@@ -1736,16 +1852,83 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 深链预填会程序性改值,.change 会紧接着把预选冲掉
                 # 没挂载的实例默认值是直连地址(2026-08-20):建页面时列不到
                 # 数据集(目录不存在),开门就列一次,让下拉别空着等人按回车
+                def _borrow_output(tin, tin_rg, tout, auto):
+                    """数据集目录定下来后给交付目录代填(2026-08-21 用户定)。
+
+                    有自己桶的实例:代填自己的桶;没桶的实例:借数据集所在的桶
+                    (tos://那个桶/deliveries),**借之前先探一下可写** —— 只读桶
+                    不填,留占位符 + 一句原因(先填再弹窗是戏弄人)。用户手改过
+                    交付框(auto=False 且非空)一律不碰。
+                    """
+                    hold = (gr.update(), gr.update(), gr.update(), auto)
+                    if not auto and str(tout or "").strip():
+                        return hold
+                    url = runner.borrowed_output_url(tin, _deliv_root)
+                    if not url:
+                        return hold
+                    if url == _home_out:          # 自己的桶:挂载直写/部署桶,不探
+                        return gr.update(value=url), gr.update(), "", True
+                    ok, why = runner.writable_verdict(
+                        url, str(tin_rg or "").strip() or None)
+                    if ok:
+                        return (gr.update(value=url),
+                                gr.update(value=str(tin_rg or "").strip() or None),
+                                f"交付目录默认借数据集所在的桶:{url}(可改)"
+                                + (f";⚠️ {why}" if why else ""), True)
+                    return (gr.update(value=""), gr.update(),
+                            f"⚠️ 数据集所在的桶不能当交付目录:{why}。"
+                            "请另填一个可写的 tos://桶名/目录", True)
+
+                _bo_in = [rn_tin, rn_tin_rg, rn_tout, rn_tout_auto]
+                _bo_out = [rn_tout, rn_tout_rg, rn_tout_note, rn_tout_auto]
+
+                def _out_changed(tout, tout_rg):
+                    """交付目录失焦/回车/切地区 → 真写一下探可写;写不进去立刻弹窗
+                    (→ 确定后清空)。本实例交付根(挂载直写)不探。"""
+                    hide = gr.update(visible=False)
+                    s = str(tout or "").strip()
+                    if not s:
+                        return hide, gr.update(), ""
+                    try:
+                        spec = runner.resolve_output_input(s, _deliv_root)
+                    except ValueError as e:
+                        return hide, gr.update(), f"⚠️ {e}"
+                    if spec["kind"] == "mount":
+                        return hide, gr.update(), ""
+                    ok, why = runner.writable_verdict(
+                        spec["url"], str(tout_rg or "").strip() or None)
+                    if ok:
+                        return (hide, gr.update(),
+                                f"TOS 直连:跑完上传到 {spec['url']}"
+                                + (f"(⚠️ {why})" if why else ""))
+                    return (gr.update(visible=True),
+                            f"**这个交付目录写不进去**\n\n{why}\n\n"
+                            "点「确定」后交付目录会清空,请另填一个可写的桶。",
+                            f"⚠️ {why}")
+
+                _oc_out = [out_ask, out_ask_md, rn_tout_note]
+
                 if str(runner.bucket_url(_buckets[0])).startswith("tos://") \
                         and not runner.is_mount_backed(_data_root):
                     app.load(_root_changed, [rn_tin, rn_tin_rg],
-                             [rn_src_note, rn_ds, rn_ds_note])
+                             [rn_src_note, rn_ds, rn_ds_note]
+                             ).then(_borrow_output, _bo_in, _bo_out)
                 rn_tin.blur(_root_changed, [rn_tin, rn_tin_rg],
-                            [rn_src_note, rn_ds, rn_ds_note])
+                            [rn_src_note, rn_ds, rn_ds_note]
+                            ).then(_borrow_output, _bo_in, _bo_out)
                 rn_tin.submit(_root_changed, [rn_tin, rn_tin_rg],
-                              [rn_src_note, rn_ds, rn_ds_note])
+                              [rn_src_note, rn_ds, rn_ds_note]
+                              ).then(_borrow_output, _bo_in, _bo_out)
                 rn_tin_rg.input(_root_changed, [rn_tin, rn_tin_rg],
-                                [rn_src_note, rn_ds, rn_ds_note])
+                                [rn_src_note, rn_ds, rn_ds_note]
+                                ).then(_borrow_output, _bo_in, _bo_out)
+                # 用户亲手改交付框 → 以后不再代填(.input 只认用户动作)
+                rn_tout.input(lambda: False, None, rn_tout_auto)
+                rn_tout.blur(_out_changed, [rn_tout, rn_tout_rg], _oc_out)
+                rn_tout.submit(_out_changed, [rn_tout, rn_tout_rg], _oc_out)
+                rn_tout_rg.input(_out_changed, [rn_tout, rn_tout_rg], _oc_out)
+                out_ask_ok.click(lambda: ("", gr.update(visible=False), ""),
+                                 None, [rn_tout, out_ask, rn_tout_note])
                 # 报告页「执行裁决」的源数据集兜底下拉(ex_src_dd)仍用桶下拉
                 # 那套(_src_datasets),接线在那侧组件建出来之后
 
@@ -1767,22 +1950,35 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     except ValueError as e:
                         return _tk_view(f"⚠️ {e}")
                     _root = _spec.get("path")            # mount 才有;tos 为 None
+                    if _ospec["kind"] == "tos":
+                        # 失焦那次探针可能被绕过(粘贴完直接点开始):开跑前再探一次,
+                        # 绝不让任务起来后才在上传那步失败
+                        _ok, _why = runner.writable_verdict(
+                            _ospec["url"], str(tout_rg or "").strip() or None)
+                        if not _ok:
+                            return _tk_view(f"⚠️ 交付目录写不进去:{_why}")
                     if str(backend or '').endswith(BACKEND_BAD):
                         return _tk_view('⚠️ 选中的模型服务当前不可用,换一个,或把那台服务起起来后点「检测可用性」')
-                    if _spec["kind"] == "tos" and batch:
-                        return _tk_view("⚠️ TOS 直连暂不支持「跑全部」——"
-                                        "直连桶请在下拉里点名要跑的数据集")
                     # 多选下拉默认一个都没选 → 必须先拦(否则空选会一路走到
                     # resolve_under(root, "") = 拿整个数据集根当一份数据跑)
                     _no_ds = runner.dataset_selection_error(ds, bool(batch))
                     if _no_ds:
                         return _tk_view(f"⚠️ {_no_ds}")
                     chosen_pre = runner.picked_datasets(ds)
-                    if _spec["kind"] == "tos" and len(chosen_pre) > 1:
-                        # MVP 限制(如实说,不静默跑第一个):多选顺序跑走的是
-                        # 挂载路径的 jobs 装配,直连桶的多数据集串跑下一轮做
-                        return _tk_view("⚠️ TOS 直连暂一次只能跑一个数据集,"
-                                        "多选请分几次发起(挂载桶不受限)")
+                    _tos_all = False
+                    if _spec["kind"] == "tos" and batch:
+                        # 直连桶的「跑全部」(2026-08-21):CLI --batch 不收 tos://,
+                        # 这里把前缀下的数据集列出来,按多选的作业表逐个跑 ——
+                        # 落盘形状与挂载的 --batch 一致(交付名当父目录)
+                        try:
+                            chosen_pre = runner.tos_list_datasets(
+                                _spec["url"], str(tin_rg or "").strip() or None)
+                        except Exception as e:  # noqa: BLE001
+                            return _tk_view(f"⚠️ 列不出该前缀下的数据集:"
+                                            f"{type(e).__name__}: {str(e)[:120]}")
+                        if not chosen_pre:
+                            return _tk_view("⚠️ 该前缀下没有列出任何数据集")
+                        _tos_all, batch = True, False
                     # 交付名撞上老布局交付:点按钮之前就判得出来,绝不让任务起来
                     # 再以「未完成(退出码 3)」收场逼用户翻日志(2026-08-14 实见);
                     # 消息说「交付名」不说 --output,那是 CLI 的话。
@@ -1801,7 +1997,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         joined = ",".join(picks)
                         only, skip = ((joined, None) if how == "只跑选中"
                                       else (None, joined))
-                    chosen = runner.picked_datasets(ds)
+                    chosen = chosen_pre
                     # 跑批目录名 = 这次任务编号的时间戳部分:结果目录与任务/日志天然
                     # 对得上号("哪次跑批产生了这份结果"不必再翻日志)。多数据集时几份
                     # 交付共用同一个名字,一次点击的产物在各自交付里也对得上。
@@ -1827,27 +2023,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         cfg = runner.resolve_tos_path(cfg) if str(cfg or "").strip() else None
                         # 勾了「跑全部」就忽略下拉的选择(既有行为,别改坏);其余
                         # 情况下选了几个跑几个,选一个 = 一直以来的那条路径。
-                        # 多选顺序跑(jobs 装配)只在双挂载时可用 —— 前面已把
-                        # tos 侧的多选拦下并明说
-                        if not batch and len(chosen) > 1 and _spec["kind"] == "mount" \
-                                and _ospec["kind"] == "mount":
+                        # 多选顺序跑(jobs 装配):两侧各自可以是挂载或桶
+                        # (2026-08-21 读端会说 tos:// 之后,作业表两侧都收 URL);
+                        # 切片只在挂载输入上串(片段站按本地数据集名建目录)
+                        if (not batch and len(chosen) > 1) or _tos_all:
                             # 答了「一起生成」就给**每个需要的**数据集都串上切片:
                             # 追问只问一次,覆盖的是全部选中项(2026-08-14 用户定)
-                            clips = (runner.datasets_needing_clips(_root, chosen)
-                                     if with_clips else [])
+                            clips = (runner.datasets_needing_clips(
+                                _root or _spec["url"], chosen) if with_clips else [])
                             jobs = runner.build_dataset_jobs(
-                                _root, _deliv_root, chosen, name or "",
+                                _root or _spec["url"],
+                                _deliv_root if _ospec["kind"] == "mount" else _ospec["url"],
+                                chosen, name or "",
                                 clips_root=review_dir, clips_for=clips,
                                 config=cfg, **common)
                             return _tk_start(
                                 "run", f"质检 {len(jobs)} 个数据集 → {name}"
                                 + (f"(含 {len(clips)} 份视频片段)" if clips else ""),
                                 jobs=jobs, run_id=run_id)
-                        if not batch and len(chosen) > 1:
-                            # 挂载读 + 陌生桶写的多选:jobs 装配的输出侧还没长
-                            # tos 腿,如实拦(下一轮解)
-                            return _tk_view("⚠️ 输出到 TOS 直连桶时暂一次只能"
-                                            "跑一个数据集,多选请分几次发起")
                         if _spec["kind"] == "tos":
                             inp = (_spec["url"].rstrip("/") + "/"
                                    + (chosen[0] if chosen else ""))
@@ -1859,11 +2052,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                if _ospec["kind"] == "tos" else
                                runner.resolve_under(_deliv_root, name or ""))
                         then_argv = None
-                        if with_clips and review_dir and not batch \
-                                and _spec["kind"] == "mount":
+                        if with_clips and review_dir and not batch:
                             # 切片作为同一任务的第二步:一条日志、一个结果,用户不必
-                            # 知道我们内部跑了两条命令。tos 输入没有这一步:切片
-                            # 要读本地数据集,直连输入的缓存路径开跑前不可知
+                            # 知道我们内部跑了两条命令。直连输入同样可切
+                            # (2026-08-21:审片站读桶里的数据集与读挂载一样)
                             then_argv = runner.build_argv(
                                 "review-page", input=inp,
                                 output=runner.resolve_under(
@@ -1910,13 +2102,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     chosen = runner.picked_datasets(ds)
                     # 勾了「跑全部」时下拉本来就被忽略,跑的是根目录下的全部数据集,
                     # 交付目录由 CLI 自己定 —— 那条路径不在本次范围里,维持不问。
-                    # tos 直连输入也不问:切片要读本地数据集,直连的缓存路径
-                    # 开跑前不可知(_run_go 里同款判断,两处一致)。
-                    needing = ([] if (batch or _spec["kind"] == "tos") else
-                               runner.datasets_needing_clips(_root, chosen))
+                    # 直连输入也问(2026-08-21 读端会说 tos://):切片站读桶里的
+                    # 数据集与读挂载一样,不必再等"本地缓存路径"
+                    _src_root = _root or _spec.get("url")
+                    needing = ([] if batch else
+                               runner.datasets_needing_clips(_src_root, chosen))
                     if needing and review_dir:
                         fmt = (runner.dataset_format(
-                            runner.resolve_under(_root, chosen[0]))
+                            runner.under(_src_root, chosen[0]))
                             if len(chosen) == 1 else None)
                         return (*_tk_view(""), args, gr.update(visible=True),
                                 runner.clips_prompt(needing, fmt))
@@ -1961,8 +2154,6 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 报告页那侧的组件建出来之后统一挂(见「人工裁决」页底部)——
                 # 一次探活要同时刷新两处下拉,另一处不刷就挂着陈旧的可用性撒谎。
 
-                tk_refresh.click(lambda: _tk_view(""), None, _tk_outs)
-
                 def _hi_rows():
                     return runner.history_rows(runner.list_runs(_runs_root, limit=50))
 
@@ -1993,17 +2184,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 轮询刷新:2 秒一次,只读两个小文件 + 日志尾部,开销可忽略。
                 # 历史表跟着一起刷(任务跑完就该出现在历史里,不该等人点)。
                 def _tk_tick(msg):
-                    """轮询的那一跳:刷新状态与日志,**当前那句提示原样带回去**。
+                    """刷新的那一跳(手点「刷新」与页面脚本的自动刷新走同一条):刷新
+                    状态与日志,**当前那句提示原样带回去**,历史表顺手一起刷。
 
                     2026-08-13 实测:原来这里传的是空串,于是「还没选数据集」这类
                     校验提示活不过两秒就被下一跳抹掉 —— 用户点了按钮什么也没看见,
-                    和静默失败没有区别。提示由下一次真正的动作覆盖,不由计时器清。
-                    """
-                    return _tk_view(msg or "")
+                    和静默失败没有区别。提示由下一次真正的动作覆盖,不由刷新清。
 
-                if hasattr(gr, "Timer"):
-                    gr.Timer(2.0).tick(_tk_tick, tk_msg, _tk_outs)
-                    gr.Timer(10.0).tick(_hi_rows, None, hi_table)
+                    为什么不用 gr.Timer(2026-08-21,issue #57「一直停在运行中」):
+                    Timer 在这套部署里不可靠(active 却不跳,报告页 2026-08-13 就实测过),
+                    状态条就停在最后一次手动刷新的样子。改成页面脚本 _TASK_POLL_JS
+                    每 2 秒点一次「刷新」按钮 —— 走的是按钮那条真事件,页面不可见时
+                    不点,任务不在跑时降到 10 秒一次。
+                    """
+                    return (*_tk_view(msg or ""), _hi_rows())
+
+                tk_refresh.click(_tk_tick, tk_msg, _tk_outs + [hi_table])
                 app.load(lambda: _tk_view(""), None, _tk_outs)
                 app.load(_hi_rows, None, hi_table)
 
@@ -2120,8 +2316,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 注解会在 gradio 里被 eval,而 `gr` 只在函数内可见 → 直接挂真对象
                 # (同 _hi_open 的手法)。
                 _prefill_from_query.__annotations__ = {"request": gr.Request}
-                app.load(_prefill_from_query, None,
-                         [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note])
+                _prefill_evt = app.load(
+                    _prefill_from_query, None,
+                    [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note])
+                # 深链带来的数据集桶 → 交付目录也借它(没自己桶的实例)
+                _prefill_evt.then(_borrow_output, _bo_in, _bo_out)
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
             # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
             # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。
@@ -2135,7 +2334,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             _rp_src = {"region": ""}     # 直连地区,懒镜像与列表共用(闭包态)
             with gr.Row():
                 rp_root = gr.Textbox(label="交付目录", scale=4,
-                                     value=runner.home_output_url(_deliv_root),
+                                     value=_out_default,   # 同跑质检页:没桶留空
                                      placeholder="tos://桶名/目录")
                 rp_rg = gr.Dropdown(choices=runner.tos_region_choices(),
                                     value=runner.default_tos_region(),
@@ -2227,7 +2426,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     #    droid-200-new 实测 7 条同时在两个队列里 —— 分区制让用户
                     #    在两张卡片里各找一次、各看一遍视频,这次改掉。
                     with gr.Tab("待你裁决"):
-                        gr.HTML(_ADJ_GUIDE_HTML)
+                        # 「怎么用这一页」流程条已删(2026-08-21 用户点名:UI 要简洁)
                         mg_filter = gr.Radio([], label="筛选(重叠条目在两个单项档里都出现)")
                         mg_hint = gr.Markdown()
                         # 两个队列**并列成一个区块**(2026-08-19 用户拍板,明确
@@ -2240,8 +2439,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 并列 + 区块头 + 下面执行区换配色 = 一眼能分出"这里是
                         # 记决定"和"那里是落地执行"。
                         gr.HTML(_adj_section_html(
-                            "", "待裁决队列",
-                            "两类问题并列;点任意一行 → 下方卡片跳到该条",
+                            "", "待裁决队列", "",     # 副标题已删(2026-08-21 用户点名多余)
                             "#86909C", "#1D2129"))
                         with gr.Row(elem_id="adj-queues"):
                             with gr.Column(scale=1, min_width=320):
@@ -2267,7 +2465,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         #    UI 只记录裁决(human-decisions/ 三张 CSV);
                         #    执行 = 本页底部的「执行裁决」(确认框是自产自证的断路器)。
                         # 默认展开(2026-08-05 用户定:折叠着没人知道能点开)
-                        with gr.Accordion("逐条裁决(一条 episode 一张卡;记草稿,可随时改)",
+                        with gr.Accordion("逐条裁决",
                                           open=True):
                             mg_idx = gr.State(0)
                             with gr.Row():
@@ -2470,7 +2668,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 不抢伸缩,Row 默认 flex-start + 按钮自带 min-width 仍是左对齐
                     # 大宽条 —— 居中与定宽在 CSS #ex-ask-btns(见 _ARCO_CSS)。
                     with gr.Row(elem_id="ex-ask-btns"):
-                        ex_yes = gr.Button("确定", variant="primary", scale=0)
+                        ex_yes = gr.Button("确定", variant="primary", scale=0,
+                                           elem_id="ex-yes")
                         ex_no = gr.Button("取消", scale=0)
 
             with gr.Tab("技能分布"):
@@ -2686,6 +2885,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             rp_root.submit(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
             rp_rg.input(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
 
+            def _borrow_report_root(tin, tin_rg, cur):
+                """没桶的实例收到深链:报告页的交付目录也借数据集所在的桶,并顺手
+                列一次交付。报告页是**读**的入口,只读桶照样要能看 —— 这里不探可写
+                (2026-08-21 用户定:写的检查只在人工裁决记录那一刻)。"""
+                if str(cur or "").strip():
+                    return gr.update(), gr.update(), gr.update(), gr.update()
+                url = runner.borrowed_output_url(tin, _deliv_root)
+                if not url or url == runner.home_output_url(_deliv_root):
+                    return gr.update(), gr.update(), gr.update(), gr.update()
+                rg = str(tin_rg or "").strip() or None
+                pk, note = _rp_root_changed(url, rg)
+                return gr.update(value=url), gr.update(value=rg), pk, note
+
+            _prefill_evt.then(_borrow_report_root, [rn_tin, rn_tin_rg, rp_root],
+                              [rp_root, rp_rg, picker, rp_note])
+
             def _rp_is_direct(url) -> bool:
                 """交付根框当前指向的是不是直连桶(而非本实例交付根)。"""
                 s = str(url or "").strip().rstrip("/")
@@ -2841,9 +3056,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 跟着 ① 的新裁决即时联动(采纳→展开可选;弃用→矛盾拦截)。"""
                 it = _mg_item(m, filt, idx)
                 if it is None:
-                    return ("⚠️ 无条目可裁决", *[gr.update()] * 14)
+                    return ("⚠️ 无条目可裁决", *[gr.update()] * 15)
+                if readonly_block_msg(m):
+                    return (readonly_block_msg(m), *[gr.update()] * 15)
                 if it["audit"] is None:
-                    return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 14)
+                    return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 15)
                 msg = record_label_decision(m["path"], it["id"], decision,
                                             newlab or "", note or "")
                 # 镜像交付(2026-08-20 阶段4):裁决 CSV 即时写回源桶 —— 留在
@@ -2860,13 +3077,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         .get("decision", "")
                 tv_sec = _mg_tv_section(m, it, dec_now)
                 # 顺带刷新进度提示(裁完最后一条,催办语就该消失)
+                # 卡头跟着刷(2026-08-21):采纳改标后第二行立刻换成新标注
                 return (msg, gr.update(value=audit_rows(m)), _mg_au_info(m, it),
-                        *btns, *tv_sec, merged_hint_md(m), audit_note_md(m))
+                        *btns, *tv_sec,
+                        readonly_banner_md(m) + (merged_hint_md(m) or ""),
+                        audit_note_md(m), _mg_head(m, it))
 
             _dec_outs = [au_status, au_table, au_info, au_adopt, au_keep, au_hold,
                          mg_tv_block, tv_mode_note, tv_info, tv_readings,
                          tv_pass, tv_fail, tv_hold,
-                         mg_hint, sk_audit_note]
+                         mg_hint, sk_audit_note, mg_info]
             au_adopt.click(lambda m, f, i, nl, nt: _mg_au_decide(m, f, i, nl, nt, "采纳建议改标"),
                            [state, mg_filter, mg_idx, au_newlab, au_note], _dec_outs)
             au_keep.click(lambda m, f, i, nl, nt: _mg_au_decide(m, f, i, nl, nt, "维持原标注"),
@@ -2884,6 +3104,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 it = _mg_item(m, filt, idx)
                 if it is None:
                     return ("⚠️ 无条目可裁决", *[gr.update()] * 7)
+                if readonly_block_msg(m):
+                    return (readonly_block_msg(m), *[gr.update()] * 7)
                 dec = load_label_decisions(m).get(it["id"], {}).get("decision", "")
                 if success_block_mode(it, dec) == "hidden":
                     return ("⚠️ 这条现在没有成败问题要答", *[gr.update()] * 7)
@@ -2897,7 +3119,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     btns = [gr.update()] * 3
                 tv_sec = _mg_tv_section(m, it, dec)
                 return (msg, gr.update(value=task_review_rows(m)),
-                        tv_sec[2], tv_sec[3], *btns, merged_hint_md(m))
+                        tv_sec[2], tv_sec[3], *btns,
+                        readonly_banner_md(m) + (merged_hint_md(m) or ""))
 
             _tv_dec_outs = [tv_status, tv_table, tv_info, tv_readings,
                             tv_pass, tv_fail, tv_hold, mg_hint]
@@ -2926,6 +3149,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return ("⚠️ 无可复议的条目", gr.update(), gr.update(),
                             *[gr.update()] * 2)
                 a = q[(idx or 0) % len(q)]
+                if readonly_block_msg(m):
+                    return (readonly_block_msg(m), gr.update(), gr.update(),
+                            *[gr.update()] * 2)
                 msg = record_reject_appeal(m["path"], a.get("id", ""), appeal,
                                            note or "")
                 if msg.startswith("✅"):
@@ -3016,7 +3242,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 """
                 path = (m or {}).get("path") or ""
                 hide = gr.update(visible=False)
-                hold = [gr.update() for _ in range(4)]   # _tk_outs 现在含 rn_go
+                hold = [gr.update() for _ in range(5)]   # _tk_outs 含 rn_go + tk_stop
                 if not path or (m or {}).get("load_error"):
                     return (gr.update(), hide,
                             "⚠️ 先在上方打开一份能读到的交付", *hold)
@@ -3040,11 +3266,23 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return (gr.update(), hide, f"⚠️ {e}", *hold)
                 deliv = os.path.basename(delivery_root_of(path))
                 run = os.path.basename(str(path).rstrip("/"))
+                # 镜像交付(2026-08-21):本地只是报告页的部分镜像,裁决要改交付数据集
+                # → 把桶里的批次地址交给 CLI,它自己全量镜像、执行、写回
+                _origin = runner.tos_origin_of(path)
+                _extra = {}
+                if _origin:
+                    path = f"{_origin['delivery_url']}/{run}"
+                    if _origin.get("region"):
+                        _extra["delivery_region"] = _origin["region"]
+                if str(src or "").startswith("tos://"):
+                    _rg = runner.source_region_of((m or {}).get("path") or "")
+                    if _rg:
+                        _extra["input_region"] = _rg
                 view = _tk_start("rejudge",
                                  "执行裁决 " + deliv
                                  + (f" / {run}" if run != deliv else ""),
                                  delivery=path, input=src, config=cfg,
-                                 vlm_backend=_backend_code(backend))
+                                 vlm_backend=_backend_code(backend), **_extra)
                 if str(view[2] or "").startswith("⚠️"):
                     # 没起来(拼参失败/被别的任务抢了先手):留在本页把话说清,
                     # 不切视图 —— 切过去却什么都没开始,比不动更迷惑

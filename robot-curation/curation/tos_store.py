@@ -207,6 +207,31 @@ class TosStore:
                 return
             token = out.next_continuation_token
 
+    def iter_object_meta(self, bucket: str, prefix: str):
+        """前缀下全部对象 → (key, size, etag)。ingest.dsfs 的清单预取用(etag 当
+        内容身份,省掉为算哈希把整段视频拉回来)。"""
+        token = None
+        while True:
+            out = self._c.list_objects_type2(
+                bucket, prefix=prefix, continuation_token=token,
+                max_keys=_LIST_PAGE)
+            for obj in out.contents or []:
+                yield obj.key, int(obj.size), str(getattr(obj, "etag", "") or "")
+            if not getattr(out, "is_truncated", False):
+                return
+            token = out.next_continuation_token
+
+    def get_bytes(self, bucket: str, key: str) -> bytes:
+        """整对象取回内存(KB~几百 MB 的 meta/parquet;视频不走这里)。"""
+        out = self._c.get_object(bucket, key)
+        return out.read()
+
+    def presign(self, bucket: str, key: str, expires: int = 3600) -> str:
+        """GET 预签名 URL(本地 HMAC,不出网):PyAV 直接按 Range 读视频。"""
+        import tos
+        return self._c.pre_signed_url(tos.HttpMethodType.Http_Method_Get, bucket,
+                                      key, expires=expires).signed_url
+
     def iter_common_prefixes(self, bucket: str, prefix: str):
         """前缀下**第一层**「子目录」名(delimiter="/" 的 common prefix)。
 
@@ -256,6 +281,17 @@ class TosStore:
                                 checkpoint_file=_ckpt_path("ul", bucket, key))
         else:
             self._c.put_object_from_file(bucket, key, local_path)
+
+    # ── 可写探针用的三个最小动作(2026-08-21):列一下 / 放一个空对象 / 删掉 ──
+    def head_prefix(self, bucket: str, prefix: str) -> None:
+        """前缀能不能列(桶在不在、有没有读权限);不行就让 SDK 的异常原样出来。"""
+        self._c.list_objects_type2(bucket, prefix=prefix, max_keys=1)
+
+    def put_empty(self, bucket: str, key: str) -> None:
+        self._c.put_object(bucket, key, content=b"")
+
+    def delete(self, bucket: str, key: str) -> None:
+        self._c.delete_object(bucket, key)
 
 
 def make_store(region: str | None = None, client=None) -> TosStore:
@@ -336,9 +372,9 @@ def stage_in(url: str, region: str | None = None, *, store: TosStore | None = No
     """`tos://桶/前缀` 的数据集 → 本地缓存目录(下完/续传完返回本地路径)。
 
     体积预检:总量必须装得进本地缓存可写预算(缺省 fetch.staging_capacity 的
-    容器限额口径)—— 装不下就拒绝并明说差多少。这是 MVP 的**已知限制**:
-    数据集必须整体落得进本地盘;按需分批/直读是后续版本的事,先把口径说清,
-    不静默把 pod 写死。
+    容器限额口径)—— 装不下就拒绝并明说差多少。
+    2026-08-21 起 LeRobot 数据集**不再走这里**(ingest/dsfs 直读桶,不落本地盘);
+    只剩 RRD 这类必须是本地文件的输入还整包暂存,体积口径照旧说清,不静默把 pod 写死。
     """
     bucket, prefix = parse_tos_url(url)
     store = store or make_store(region)
@@ -448,3 +484,204 @@ def stage_out(local_root: str, url: str, region: str | None = None, *,
         if i % 50 == 0 or i == len(plan):
             print(f"[tos] 已传 {i}/{len(plan)}", flush=True)
     return len(plan)
+
+
+# ── 可写探针(2026-08-21 用户定:只读桶填进交付目录要"瞬间"知道)──────────────
+#: 探针对象名。TOS 没有"问一下能不能写"的接口,权限接口查出来的与实际能不能写常对
+#: 不上 —— 唯一可靠的判据是真写一下:放一个 0 字节对象,成功立刻删掉。
+PROBE_NAME = ".curation-write-probe"
+
+
+def _http_status(e: BaseException) -> int | None:
+    for attr in ("status_code", "status"):
+        v = getattr(e, attr, None)
+        if isinstance(v, int):
+            return v
+    return None
+
+
+def _err_text(e: BaseException) -> str:
+    """给人看的一句错误:优先 SDK 的错误码 + message(NoSuchBucket: The specified
+    bucket does not exist.),没有才退到异常类名 + str(e);request_id 之类不进界面。"""
+    code = getattr(e, "code", None) or type(e).__name__
+    msg = getattr(e, "message", None)
+    if not isinstance(msg, str) or not msg.strip():
+        msg = str(e)
+    return f"{code}: {msg.strip()[:100]}"
+
+
+def probe_writable(url: str, region: str | None = None, *,
+                   store: TosStore | None = None) -> dict:
+    """`tos://桶/前缀` 能不能写 → {"kind", "detail"}。kind 六态:
+    ok(能写能删)/ leftover(能写不能删:留了个 0 字节探针,要说出来)/
+    missing(桶不存在或不在这个地区)/ forbidden(连列都不让:密钥没这个桶的权限)/
+    readonly(能列不能写)/ error(别的错,detail 里是原话)。
+    只读桶**不是错误**:读报告合法,只是不能当交付目录 —— 分类交给调用方措辞。
+    """
+    bucket, prefix = parse_tos_url(url)
+    st = store or make_store(region)
+    p = prefix.strip("/")
+    key = (p + "/" if p else "") + PROBE_NAME
+    try:
+        st.head_prefix(bucket, p + "/" if p else "")
+    except Exception as e:  # noqa: BLE001 SDK 异常族杂,按状态码分
+        code = _http_status(e)
+        if code in (404, 301):          # NoSuchBucket / 桶在别的地区(PermanentRedirect)
+            return {"kind": "missing", "detail": _err_text(e)}
+        if code == 403:
+            return {"kind": "forbidden", "detail": _err_text(e)}
+        return {"kind": "error", "detail": _err_text(e)}
+    try:
+        st.put_empty(bucket, key)
+    except Exception as e:  # noqa: BLE001
+        if _http_status(e) == 403:
+            return {"kind": "readonly", "detail": _err_text(e)}
+        return {"kind": "error", "detail": _err_text(e)}
+    try:
+        st.delete(bucket, key)
+    except Exception as e:  # noqa: BLE001
+        return {"kind": "leftover", "detail": _err_text(e)}
+    return {"kind": "ok", "detail": ""}
+
+
+# ── 桶里的交付:镜像到本地 → 本地改 → 改动写回(2026-08-21,rejudge/reprofile 接 tos://)──
+#: 只看报告时不必下的大件(UI 懒镜像跳过它们);rejudge 要改交付数据集,得全量。
+MIRROR_SKIP_DIRS_LIGHT = ("episodes_parquet/", "lerobot_curated/", "rrd_curated/")
+#: 镜像来源的身份证文件名(落在缓存的**交付根**):写回靠它找回家路。
+ORIGIN_NAME = ".tos-origin.json"
+
+
+def mirror_cache_root() -> str:
+    return os.path.join(cache_root(), "reports")
+
+
+def resolve_run_url(url: str, region: str | None = None, *,
+                    store: TosStore | None = None) -> str:
+    """`tos://桶/交付` 或 `tos://桶/交付/批次` → 批次 URL。只给交付时按 latest 记的那次
+    (与本地 delivery.resolve_run 同一语义:写数据的命令不许让人猜动了哪一份)。"""
+    bucket, prefix = parse_tos_url(url)
+    st = store or make_store(region)
+    p = prefix.strip("/")
+    names = set()
+    for key, _s, _e in st.iter_object_meta(bucket, p + "/" if p else ""):
+        rel = key[len(p) + 1:] if p else key
+        if rel in ("passed.json", "latest"):
+            names.add(rel)
+    if "passed.json" in names:
+        return f"tos://{bucket}/{p}"
+    if "latest" in names:
+        run = st.get_bytes(bucket, f"{p}/latest" if p else "latest").decode("utf-8").strip()
+        run = run.splitlines()[0].strip() if run else ""
+        if run:
+            return f"tos://{bucket}/{p}/{run}"
+    raise TosStageError(f"{url} 既不是一次跑批(没有 passed.json),也不是交付目录"
+                        f"(没有 latest):检查地址,或这份交付还没跑完")
+
+
+def mirror_run(run_url: str, region: str | None = None, *,
+               skip_dirs: tuple = (), store: TosStore | None = None) -> str:
+    """批次目录 + 交付根的 human-decisions/ 与 latest → 本地缓存;返回缓存里的批次路径。
+
+    文件级续传按「本地大小 == 远端大小」跳过;latest 是会变的小文件每次重取。
+    缓存布局 reports/<桶>/<交付前缀>/…,UI 的懒镜像与 CLI 的全量镜像共用同一棵树
+    (skip_dirs 不同而已),谁先到谁下,后来的只补缺。镜完写 ORIGIN_NAME。
+    """
+    import json as _json
+    bucket, run_prefix = parse_tos_url(run_url)
+    run_prefix = run_prefix.strip("/")
+    st = store or make_store(region)
+    deliv_prefix = "/".join(run_prefix.split("/")[:-1])
+    local_deliv = os.path.join(mirror_cache_root(), bucket, *deliv_prefix.split("/"))
+    run_name = run_prefix.split("/")[-1]
+    n = 0
+    for src_prefix, sub in ((run_prefix, run_name),
+                            (deliv_prefix + "/human-decisions", "human-decisions")):
+        p = src_prefix.strip("/") + "/"
+        for key, size in st.iter_objects(bucket, p):
+            rel = key[len(p):]
+            if not rel or rel.endswith("/"):
+                continue
+            if sub == run_name and any(rel.startswith(sk) for sk in skip_dirs):
+                continue
+            dst = os.path.join(local_deliv, sub, *rel.split("/"))
+            try:
+                if os.path.getsize(dst) == size:
+                    continue
+            except OSError:
+                pass
+            _with_retry("下载", rel, lambda: st.download(bucket, key, dst, size=size))
+            n += 1
+    try:
+        st.download(bucket, deliv_prefix + "/latest", os.path.join(local_deliv, "latest"))
+    except Exception:  # noqa: BLE001 可选文件,缺席不算错
+        pass
+    origin = {"root_url": f"tos://{bucket}/" + "/".join(deliv_prefix.split("/")[:-1]),
+              "delivery_url": f"tos://{bucket}/{deliv_prefix}",
+              "run": run_name, "region": region or ""}
+    os.makedirs(local_deliv, exist_ok=True)
+    with open(os.path.join(local_deliv, ORIGIN_NAME), "w", encoding="utf-8") as f:
+        _json.dump(origin, f, ensure_ascii=False, indent=1)
+    return os.path.join(local_deliv, run_name)
+
+
+def _md5_file(path: str, chunk: int = 1 << 20) -> str:
+    import hashlib
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(chunk)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
+def sync_back(local_run: str, run_url: str, region: str | None = None, *,
+              store: TosStore | None = None, delete_orphans: bool = True) -> dict:
+    """本地镜像里改过的批次写回桶:批次目录 + 交付根 human-decisions/。
+
+    判"改没改"= 大小相等且 md5 == etag(分片上传的 etag 带 '-',退化为只比大小);
+    完整性标志(passed.json / latest / meta/info.json)永远重传且最后传。批次目录下
+    远端有、本地没有的对象删掉(rejudge 剔条目会让交付数据集的文件消失;不删就是
+    把脏数据留给客户)—— 只删批次前缀下的,human-decisions 只增不删。
+    """
+    bucket, run_prefix = parse_tos_url(run_url)
+    run_prefix = run_prefix.strip("/")
+    st = store or make_store(region)
+    deliv_prefix = "/".join(run_prefix.split("/")[:-1])
+    local_deliv = os.path.dirname(os.path.abspath(local_run).rstrip("/"))
+    targets = ((os.path.abspath(local_run), run_prefix, True),
+               (os.path.join(local_deliv, "human-decisions"),
+                deliv_prefix + "/human-decisions", False))
+    out = {"uploaded": 0, "deleted": 0, "skipped": 0}
+    for local_root, prefix, may_delete in targets:
+        if not os.path.isdir(local_root):
+            continue
+        remote: dict[str, tuple[int, str]] = {}
+        for key, size, etag in st.iter_object_meta(bucket, prefix + "/"):
+            rel = key[len(prefix) + 1:]
+            if rel and not rel.endswith("/"):
+                remote[rel] = (size, etag.strip('"').lower())
+        rels = []
+        for cur, _d, names in os.walk(local_root):
+            for nme in names:
+                if nme.startswith(".curation-"):
+                    continue
+                rels.append(os.path.relpath(os.path.join(cur, nme), local_root)
+                            .replace(os.sep, "/"))
+        have = set(rels)
+        for rel in upload_plan(rels):
+            lp = os.path.join(local_root, rel)
+            r = remote.get(rel)
+            if r is not None and not is_marker(rel):
+                rsize, retag = r
+                if rsize == os.path.getsize(lp) and ("-" in retag or retag == _md5_file(lp)):
+                    out["skipped"] += 1
+                    continue
+            _with_retry("写回", rel, lambda: st.upload(lp, bucket, f"{prefix}/{rel}"))
+            out["uploaded"] += 1
+        if may_delete and delete_orphans:
+            for rel in sorted(set(remote) - have):
+                _with_retry("删除", rel, lambda: st.delete(bucket, f"{prefix}/{rel}"))
+                out["deleted"] += 1
+    return out

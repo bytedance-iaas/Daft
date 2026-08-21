@@ -147,6 +147,15 @@ def safe_name(name: str) -> str:
     return s
 
 
+def under(root: str, name: str) -> str:
+    """<root>/<name>:root 是 tos:// 就按 URL 拼(名字仍过 safe_name —— 桶地址也
+    不收 `..`/分隔符),本地走 resolve_under 的 realpath 复核。2026-08-21 起多选/
+    跑全部的作业表两侧都可能是桶。"""
+    if str(root or "").startswith("tos://"):
+        return str(root).rstrip("/") + "/" + safe_name(name)
+    return resolve_under(root, name)
+
+
 def resolve_under(root: str, name: str) -> str:
     """<root>/<name> 的绝对路径。名字先过 safe_name,拼完再用 realpath 复核。
 
@@ -257,11 +266,17 @@ def _scan_dataset_root(data_root: str) -> tuple[str, list[str]]:
             out.append(name)
             continue
         try:
-            if any(f.endswith(".rrd") for f in os.listdir(d)):
+            if _rrd_enabled() and any(f.endswith(".rrd") for f in os.listdir(d)):
                 out.append(name)
         except OSError:
             continue
     return ("ok" if out else "empty"), sorted(out)
+
+
+def _rrd_enabled() -> bool:
+    """RRD 总开关(默认关,2026-08-21):关着时数据集清单与格式嗅探都当 .rrd 目录不存在。"""
+    from ..ingest.rrd_reader import rrd_enabled
+    return rrd_enabled()
 
 
 def list_datasets(data_root: str) -> list[str]:
@@ -332,15 +347,23 @@ def dataset_format(dataset_dir: str) -> dict:
     - LeRobot v2:每条本来就是独立 mp4,交付集里直接能播 → 不要。
     认不出格式一律 False —— 不给用户弹一个我们自己都没把握的询问框。
     """
-    data = _read_json(os.path.join(dataset_dir, "meta", "info.json"))
-    ver = str(data.get("codebase_version") or "")
+    from ..ingest import dsfs
+    if dsfs.is_remote(dataset_dir):
+        # 直连桶(2026-08-21):同一套判据,只是 info.json 从桶里取;取不到 = 认不出
+        try:
+            data = dsfs.read_json(dsfs.join(dataset_dir, "meta", "info.json"))
+        except Exception:  # noqa: BLE001 网络/不存在/不是 JSON 一律"认不出"
+            data = {}
+    else:
+        data = _read_json(os.path.join(dataset_dir, "meta", "info.json"))
+    ver = str((data or {}).get("codebase_version") or "")
     if ver:
         return {"kind": "lerobot", "version": ver,
                 "needs_clips": ver.startswith("v3")}
     try:
-        if any(f.endswith(".rrd") for f in os.listdir(dataset_dir)):
+        if _rrd_enabled() and any(f.endswith(".rrd") for f in dsfs.listdir(dataset_dir)):
             return {"kind": "rrd", "version": "", "needs_clips": True}
-    except OSError:
+    except Exception:  # noqa: BLE001
         pass
     return {"kind": "unknown", "version": "", "needs_clips": False}
 
@@ -357,7 +380,7 @@ def datasets_needing_clips(data_root: str, datasets: list) -> list[str]:
     out = []
     for name in picked_datasets(datasets):
         try:
-            d = resolve_under(data_root, name)
+            d = under(data_root, name)
         except ValueError:
             continue
         if dataset_format(d).get("needs_clips"):
@@ -907,6 +930,60 @@ def resolve_output_input(value: str, deliv_root: str) -> dict:
                      "任意本地路径不收")
 
 
+def borrowed_output_url(dataset_url: str, deliv_root: str) -> str:
+    """「交付目录」该默认成什么(2026-08-21 用户定:任何 TOS 实例都显示桶名)。
+
+    本实例有自己的桶(挂载或 TOS_BUCKET)→ 用自己的(home_output_url);
+    没桶的实例 → 借数据集所在的桶:tos://那个桶/deliveries;
+    数据集也不是 tos:// → 空串(界面留占位符,绝不摆本地盘路径冒充)。
+    """
+    home = home_output_url(deliv_root)
+    if home.startswith("tos://"):
+        return home
+    s = str(dataset_url or "").strip()
+    if not s.startswith("tos://"):
+        return ""
+    from .. import tos_store as _ts
+    try:
+        bucket, _prefix = _ts.parse_tos_url(s)
+    except ValueError:
+        return ""
+    return f"tos://{bucket}/deliveries"
+
+
+def writable_verdict(url: str, region: str | None = None, *,
+                     probe=None) -> tuple[bool, str]:
+    """交付目录能不能写,给界面看的一句人话:(能写?, 原因/提示)。
+    能写且干净 → (True, "");能写但探针删不掉 → (True, 提示);不能写 → (False, 原因)。
+    原因分三种话:桶不存在/地区不对、密钥没权限(连读都不行)、只读 —— 用户才知道
+    该改地址还是找管理员。probe 注入供单测(真探针要出网)。
+    """
+    from .. import tos_store as _ts
+    try:
+        bucket, _p = _ts.parse_tos_url(url)
+    except ValueError as e:
+        return False, str(e)
+    try:
+        r = (probe or _ts.probe_writable)(url, region)
+    except Exception as e:  # noqa: BLE001 凭证缺失/网络不通
+        return False, f"探不到 {url}:{type(e).__name__}: {str(e)[:120]}"
+    kind, detail = r.get("kind"), r.get("detail", "")
+    rg = region or os.environ.get("TOS_REGION", "").strip() or "默认地区"
+    if kind == "ok":
+        return True, ""
+    if kind == "leftover":
+        return True, (f"桶 {bucket} 能写但删不掉探针文件,{url} 下留了一个 0 字节的 "
+                      f"{_ts.PROBE_NAME}({detail})")
+    if kind == "missing":
+        return False, f"桶 {bucket} 不存在,或不在 {rg} —— 检查桶名和地区({detail})"
+    if kind == "forbidden":
+        return False, (f"本实例的密钥没有桶 {bucket} 的权限,连读都不行 —— "
+                       f"找桶的管理员授权({detail})")
+    if kind == "readonly":
+        return False, f"桶 {bucket} 对本实例只读,写不进去 —— 换一个可写的桶({detail})"
+    return False, f"探测桶 {bucket} 时出错:{detail}"
+
+
 def tos_list_datasets(root_url: str, region: str | None = None, *,
                       store=None) -> list[str]:
     """陌生桶的数据集清单:root_url 前缀下第一层子目录名(排序去重)。
@@ -964,56 +1041,11 @@ def tos_run_choices(delivery_url: str, region: str | None = None, *,
 
 def mirror_run(run_url: str, region: str | None = None, *,
                store=None) -> str:
-    """把一个批次目录(除大件)+ 交付根的 human-decisions// latest 镜像到本地
-    缓存,返回缓存里的批次路径 —— 直接喂给现有的 load_delivery。
-
-    文件级续传按「本地大小 == 远端大小」跳过(与 tos_store.stage_in 同判据);
-    CSV/JSON 这类会变的小文件大小一变自然重下,同大小不同内容的窗口对裁决
-    CSV(追加式)不成立。镜像完写 .tos-origin.json(裁决写回靠它找回家路)。
-    """
-    import json as _json
-
+    """报告页的懒镜像:批次目录(除大件)+ 交付根的 human-decisions/latest → 本地缓存,
+    返回缓存里的批次路径(直接喂给现有 load_delivery)。本体在 tos_store.mirror_run
+    (2026-08-21 起与 CLI rejudge/reprofile 的全量镜像共用同一棵缓存树)。"""
     from .. import tos_store as _ts
-    bucket, run_prefix = _ts.parse_tos_url(run_url)
-    st = store or _ts.make_store(region)
-    deliv_prefix = "/".join(run_prefix.split("/")[:-1])
-    local_deliv = os.path.join(mirror_cache_root(), bucket,
-                               *deliv_prefix.split("/"))
-    run_name = run_prefix.split("/")[-1]
-    n = 0
-    for src_prefix, sub in ((run_prefix, run_name),
-                            (deliv_prefix + "/human-decisions",
-                             "human-decisions")):
-        p = src_prefix.strip("/") + "/"
-        for key, size in st.iter_objects(bucket, p):
-            rel = key[len(p):]
-            if not rel or rel.endswith("/"):
-                continue
-            if sub == run_name and any(rel.startswith(sk)
-                                       for sk in MIRROR_SKIP_DIRS):
-                continue
-            dst = os.path.join(local_deliv, sub, *rel.split("/"))
-            try:
-                if os.path.getsize(dst) == size:
-                    continue
-            except OSError:
-                pass
-            st.download(bucket, key, dst, size=size)
-            n += 1
-    # latest 是单文件不是前缀,单独取(没有就算了 —— 老交付可能没写)
-    try:
-        st.download(bucket, deliv_prefix + "/latest",
-                    os.path.join(local_deliv, "latest"))
-    except Exception:  # noqa: BLE001 可选文件,缺席不算错
-        pass
-    origin = {"root_url": f"tos://{bucket}/" + "/".join(
-                  deliv_prefix.split("/")[:-1]),
-              "delivery_url": f"tos://{bucket}/{deliv_prefix}",
-              "run": run_name, "region": region or ""}
-    with open(os.path.join(local_deliv, TOS_ORIGIN_NAME), "w",
-              encoding="utf-8") as f:
-        _json.dump(origin, f, ensure_ascii=False, indent=1)
-    return os.path.join(local_deliv, run_name)
+    return _ts.mirror_run(run_url, region, skip_dirs=MIRROR_SKIP_DIRS, store=store)
 
 
 def tos_origin_of(run_path: str) -> dict | None:
@@ -1341,6 +1373,7 @@ _ARG_SPECS: dict[str, dict[str, str | None]] = {
     "rejudge": {
         "delivery": "--delivery", "input": "--input", "config": "--config",
         "vlm_backend": "--vlm-backend",
+        "delivery_region": "--delivery-region", "input_region": "--input-region",
     },
     "review-page": {
         "input": "--input", "output": "--output", "episodes": "--episodes",
@@ -1533,11 +1566,11 @@ def build_dataset_jobs(data_root: str, delivery_root: str, datasets: list,
     want_clips = set(picked_datasets(clips_for or []))
     if want_clips and not clips_root:
         raise ValueError("要串切片就得给片段目录(本实例没配 --review-dir)")
-    parent = resolve_under(delivery_root, delivery_name or "")
+    parent = under(delivery_root, delivery_name or "")
     jobs = []
     for name in names:
-        src = resolve_under(data_root, name)
-        steps = [build_argv("run", input=src, output=resolve_under(parent, name),
+        src = under(data_root, name)
+        steps = [build_argv("run", input=src, output=under(parent, name),
                             **params)]
         if name in want_clips:
             steps.append(build_argv("review-page", input=src,
@@ -2225,7 +2258,16 @@ def source_dataset_of(delivery_dir: str) -> str | None:
     from ..delivery import resolve_run
     p = _read_json(os.path.join(resolve_run(delivery_dir), "passed.json"))
     src = str(p.get("源数据集路径") or "").strip()
+    if src.startswith("tos://"):
+        return src                      # 直读桶(2026-08-21):读端自己会读,不用在本地
     return src if src and os.path.isdir(src) else None
+
+
+def source_region_of(delivery_dir: str) -> str | None:
+    """源数据集是 tos:// 时跑批记下的地区(没记返回 None → 按部署默认)。"""
+    from ..delivery import resolve_run
+    p = _read_json(os.path.join(resolve_run(delivery_dir), "passed.json"))
+    return str(p.get("源数据集地区") or "").strip() or None
 
 
 def _config_layers(config_path: str | None = None) -> list[dict]:

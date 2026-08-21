@@ -474,7 +474,9 @@ def run_pipeline(
 
     # 输入格式嗅探(2026-08-10):meta/info.json → LeRobot;目录里有 *.rrd → rerun 格式。
     # 两条 reader 产出同一份行契约,所以嗅探只换"谁来读",漏斗以下一个字都不用改。
+    from ..ingest.rrd_reader import apply_config as _rrd_apply_config
     from ..ingest.rrd_reader import is_rrd_dataset
+    _rrd_apply_config(cfg)           # ingest.rrd_enabled(默认关)
     input_format = "rrd" if is_rrd_dataset(input_dir) else "lerobot"
     if input_format == "rrd":
         from functools import partial
@@ -815,7 +817,12 @@ def run_pipeline(
     # 自动回填就无从谈起;审片站认领也只能按名字模糊比对(同名不同库会错播)。
     # 记绝对路径,老交付没有这个键的地方一律 .get 兜底。
     report = {"数据集": os.path.basename(input_dir.rstrip("/")), "机器人": _robot,
-              "源数据集路径": os.path.abspath(input_dir),
+              "源数据集路径": (input_dir if str(input_dir).startswith("tos://")
+                          else os.path.abspath(input_dir)),
+              # 直读桶时 rejudge 回源要同一个地区(2026-08-21);本地源留空
+              "源数据集地区": (__import__("curation.ingest.dsfs", fromlist=["x"])
+                          .current_region() if str(input_dir).startswith("tos://")
+                          else ""),
               "生成时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
               "代码版本": _ver, **report}
     # 数据集总条数(2026-08-14):跑批清单要说"本次处理 20 条(数据集共 200 条)",

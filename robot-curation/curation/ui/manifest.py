@@ -600,13 +600,15 @@ def audit_rows(m: dict) -> list[list]:
     """档位=重点(成败线同时不利,两线同报警)/参考(成败线放行,多为描述噪声)。
     裁决列回显 details/label_decisions.csv(空=待人工)。"""
     dec = load_label_decisions(m)
-    return [["裁决 ▶", a.get("priority", "参考"), a.get("id", ""), a.get("label", ""),
+    return [["裁决", a.get("priority", "参考"), a.get("id", ""), a.get("label", ""),
              a.get("caption", ""), a.get("task_verdict", ""), a.get("reason", ""),
              dec.get(a.get("id", ""), {}).get("decision", "")]
             for a in m["audit_queue"]]
 
 
-TASK_REVIEW_HEADERS = ["操作", "episode", "当前判决", "弃权原因", "关键读数", "裁决"]
+# 「关键读数」列已删(2026-08-21 用户点名:新协议下几乎全是"(无读数)",而弃权原因那句
+# 话本身已把数字说了);操作列不带三角(▶ 只是噪音,点任意一格都能跳到卡片)。
+TASK_REVIEW_HEADERS = ["操作", "episode", "任务标注", "当前判决", "弃权原因", "裁决"]
 
 #: 弃权原因是 VLM 写的一整句,表里截断,全文在下方卡片里给。
 _REASON_CAP = 60
@@ -625,9 +627,9 @@ def task_review_rows(m: dict) -> list[list]:
     rows = []
     for t in m.get("task_review") or []:
         reason = str(t.get("reason") or "")
-        rows.append(["裁决 ▶", t.get("id", ""), t.get("current", ""),
+        rows.append(["裁决", t.get("id", ""), task_text_short(m, t.get("id", "")),
+                     t.get("current", ""),
                      reason[:_REASON_CAP] + ("…" if len(reason) > _REASON_CAP else ""),
-                     readings_text(t.get("readings") or {}),
                      dec.get(t.get("id", ""), {}).get("verdict", "")])
     return rows
 
@@ -647,7 +649,7 @@ def appeal_rows(m: dict) -> list[list]:
     for a in m.get("reject_appeal") or []:
         eid = a.get("id", "")
         reason = appeal_reason_text(m, eid)
-        rows.append(["复议 ▶", eid,
+        rows.append(["复议", eid,
                      reason[:_REASON_CAP] + ("…" if len(reason) > _REASON_CAP else ""),
                      readings_text(a.get("readings") or {}),
                      dec.get(eid, {}).get("appeal", "")])
@@ -735,6 +737,121 @@ def merged_review_queue(m: dict) -> list[dict]:
         else:
             items.append({"id": eid, "audit": None, "task": t})
     return items
+
+
+# ── 每张裁决卡的任务标注(2026-08-21 用户定:标注是每张卡的第一行,不是某个问题块的字段)──
+#
+# 只判成败的卡此前不显示任务文本 —— 等于让人对着视频猜题。数据现成:details/task_details.json
+# 记着判定时用的那句 instruction 与来源(成败弃权队列的条目全部跑过判定,必有);兜底依次是
+# 分歧队列里的原始标注、captions.json 的自产描述。都没有就明说"没记录",不猜。
+
+_DETAILS_JSON_CACHE: dict = {}
+
+
+def _details_json(run_path: str, name: str) -> dict:
+    """details/<name> 的 JSON(按 mtime 缓存一份:每次渲染卡片都读几百 KB 不划算)。"""
+    p = os.path.join(str(run_path or ""), "details", name)
+    try:
+        key = (p, os.path.getmtime(p))
+    except OSError:
+        return {}
+    if key not in _DETAILS_JSON_CACHE:
+        _DETAILS_JSON_CACHE.clear()                 # 只留最近一份,防内存积累
+        try:
+            _DETAILS_JSON_CACHE[key] = _load_json(p) or {}
+        except Exception:  # noqa: BLE001 坏 JSON 按没有处理,不让卡片炸
+            _DETAILS_JSON_CACHE[key] = {}
+    d = _DETAILS_JSON_CACHE[key]
+    return d if isinstance(d, dict) else {}
+
+
+TASK_SOURCE_LABEL = "原始标注"
+TASK_SOURCE_CAPTION = "自产描述(VLM)"
+TASK_SOURCE_RELABEL = "人工改标"
+
+
+def _task_source_label(src) -> str:
+    """交付里的来源字样 → 界面叫法(内部写法五花八门:自产caption / caption / 原始标注…)。"""
+    s = str(src or "").strip()
+    if not s:
+        return ""
+    low = s.lower()
+    if "caption" in low or "自产" in s or "描述" in s:
+        return TASK_SOURCE_CAPTION
+    if "人工" in s or "改标" in s:
+        return TASK_SOURCE_RELABEL
+    return TASK_SOURCE_LABEL
+
+
+def episode_task_text(m: dict, eid: str) -> tuple[str, str]:
+    """一条 episode 的任务文本 → (文本, 来源叫法);交付里没记录 → ("", "")。"""
+    path = (m or {}).get("path") or ""
+    e = ((_details_json(path, "task_details.json").get("episodes") or {}).get(eid)
+         or {})
+    text = str(e.get("instruction") or "").strip()
+    if text:
+        return text, (_task_source_label(e.get("instruction_source")) or TASK_SOURCE_LABEL)
+    for a in (m or {}).get("audit_queue") or []:
+        if a.get("id") == eid and str(a.get("label") or "").strip():
+            return str(a["label"]).strip(), TASK_SOURCE_LABEL
+    cap = _details_json(path, "captions.json").get(eid)
+    if str(cap or "").strip():
+        return str(cap).strip(), TASK_SOURCE_CAPTION
+    return "", ""
+
+
+def _adopted_label(decision) -> str:
+    """已采纳改标 → 改后的文本;否则空串。"""
+    d = decision or {}
+    if d.get("decision") == "采纳建议改标":
+        return str(d.get("new_label") or "").strip()
+    return ""
+
+
+def task_text_short(m: dict, eid: str, n: int = 40) -> str:
+    t = episode_task_text(m, eid)[0]
+    return t if len(t) <= n else t[: n - 1] + "…"
+
+
+def task_reference_md(m: dict, eid: str, decision: dict | None = None) -> str:
+    """卡头那行:`任务:「…」· 来源:原始标注`。采纳改标后立刻换成改后的文本并标明,
+    ② 判成败时看到的就是新标注(与 rejudge 按新标注重判的口径一致)。"""
+    new = _adopted_label(decision)
+    if new:
+        return f"任务:「{new}」 · 来源:{TASK_SOURCE_RELABEL}(已改标)"
+    text, src = episode_task_text(m, eid)
+    if not text:
+        return "任务:(交付里没有记录这条的任务文本)"
+    return f"任务:「{text}」" + (f" · 来源:{src}" if src else "")
+
+
+def task_reference_html(m: dict, eid: str, decision: dict | None = None) -> str:
+    """卡头的任务标注**醒目版**(2026-08-21 用户点名:要 standout):Arco 蓝底左色条的
+    提示块,任务文本加大加粗,来源灰小字。文案与 task_reference_md 同源。"""
+    new = _adopted_label(decision)
+    if new:
+        text, src = new, f"{TASK_SOURCE_RELABEL}(已改标)"
+    else:
+        text, src = episode_task_text(m, eid)
+    if not text:
+        return ('<div style="background:#FFF7E8;border-left:4px solid #FF7D00;border-radius:6px;'
+                'padding:10px 14px;margin:6px 0 10px;font:14px/1.6 system-ui;color:#4E5969">'
+                '任务:交付里没有记录这条的任务文本,请结合画面判断</div>')
+    return ('<div style="background:#E8F3FF;border-left:4px solid #165DFF;border-radius:6px;'
+            'padding:10px 14px;margin:6px 0 10px;font:14px/1.6 system-ui">'
+            '<span style="color:#4E5969;margin-right:8px">任务</span>'
+            f'<span style="font-size:17px;font-weight:700;color:#1D2129">「{_esc(text)}」</span>'
+            + (f'<span style="margin-left:12px;font-size:12px;color:#86909C">来源:{_esc(src)}</span>'
+               if src else "")
+            + '</div>')
+
+
+def task_question_md(m: dict, eid: str, decision: dict | None = None) -> str:
+    """② 三个按钮正上方那一句:把任务文本放在判断的正上方,眼睛不用在卡头和按钮之间来回跳。"""
+    text = _adopted_label(decision) or episode_task_text(m, eid)[0]
+    if text:
+        return f"按任务「{text}」看,这条完成了吗?"
+    return "这条完成了它的任务吗?(交付里没有记录任务文本,请结合画面判断)"
 
 
 def merged_queue_view(m: dict, mode: str) -> list[dict]:

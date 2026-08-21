@@ -352,3 +352,29 @@ def test_tos_list_deliveries_hides_dot_dirs():
         def iter_common_prefixes(self, b, p):
             yield from [".runs", ".probe_details", "aloha-10", "debug"]
     assert runner.tos_list_deliveries("tos://bkt/deliveries", store=_S()) == ["aloha-10", "debug"]
+
+
+def test_radio_groups_are_one_frame_not_per_option_pills():
+    """issue #54 / #59-1:单选(多选)组按 Arco——选项不各自成框,整组一个框。
+    钉 CSS 形状:组容器 .wrap 有边框,选项 label 去边框。"""
+    from curation.ui.app import _ARCO_CSS
+    css = "".join(_ARCO_CSS.split())
+    assert '.wrap:has(>label>input[type="radio"])' in css
+    grp = css.split('.wrap:has(>label>input[type="radio"])', 1)[1]
+    assert "border:1pxsolidvar(--arco-border)!important" in grp.split("}", 1)[0]
+    opt = css.split('.wrap>label:has(>input[type="radio"])', 1)[1].split("}", 1)[0]
+    assert "border:none!important" in opt and "background:transparent!important" in opt
+
+
+def test_scan_radio_tips_cover_full_and_quick():
+    """「完整质检」与「快速质检」都带悬停问号(2026-08-20 用户要);提示按实际流水线写,
+    加一项只改 SCAN_TIPS。页面 head 里注入的是整张表,不再是单个名字。"""
+    pytest.importorskip("gradio")
+    from curation.ui import app as ui_app
+    assert set(ui_app.SCAN_TIPS) == {ui_app.FULL_SCAN, ui_app.QUICK_SCAN}
+    full = ui_app.SCAN_TIPS[ui_app.FULL_SCAN]
+    for kw in ("时间戳", "运动学", "运动质量", "视觉质量", "同步", "任务成败", "去重", "技能"):
+        assert kw in full, f"完整质检提示漏了「{kw}」"
+    head = ui_app.presentation()["head"]
+    assert json.dumps(ui_app.SCAN_TIPS, ensure_ascii=False) in head
+    assert "__TIPS__" not in head and "__NAME__" not in head

@@ -16,12 +16,13 @@ fan-out:一个数据集目录 → N 行(每 episode 一行);video 只存路径+�
 """
 from __future__ import annotations
 
-import glob
 import json
 import os
 
 import numpy as np
 import pandas as pd
+
+from . import dsfs   # 本地路径与 tos:// 同一套读法(2026-08-21 读端会说 tos://)
 
 # 语义多数票采样条数:控制模式是数据集级约定,前 N 条足够;懒/急两路同一常数保证一致
 SEMANTICS_VOTE_EPISODES = 100
@@ -47,8 +48,8 @@ def _verify_layout(dataset_dir: str, version: str) -> None:
     旧报错只说"找不到 v3 episodes 元数据"——客户会以为我们读不了他的数据,
     而真相是他的 info.json 标错了。响亮失败还要说清怪谁。
     """
-    has_v3 = os.path.isdir(os.path.join(dataset_dir, "meta", "episodes"))
-    has_v2 = os.path.exists(os.path.join(dataset_dir, "meta", "episodes.jsonl"))
+    has_v3 = dsfs.isdir(dsfs.join(dataset_dir, "meta", "episodes"))
+    has_v2 = dsfs.exists(dsfs.join(dataset_dir, "meta", "episodes.jsonl"))
     if version.startswith("v3") and not has_v3 and has_v2:
         raise NotADatasetError(
             f"info.json 声明 codebase_version={version},但 meta/ 是 v2.x 布局"
@@ -62,26 +63,34 @@ def _verify_layout(dataset_dir: str, version: str) -> None:
 
 
 def _load_info(dataset_dir: str) -> dict:
-    info_path = os.path.join(dataset_dir, "meta", "info.json")
-    if not os.path.exists(info_path):
+    if dsfs.is_remote(dataset_dir):
+        # 远端:先把数据集根下的对象清单一次列进内存,之后 exists/glob 全是字典查找
+        # (v2 社区集逐条 exists 若每次出网就是几十万次调用)。幂等,谁先到谁列。
+        dsfs.prefetch(dataset_dir)
+    info_path = dsfs.join(dataset_dir, "meta", "info.json")
+    if not dsfs.exists(info_path):
+        # RRD 开关关着时(2026-08-21 默认):只有 .rrd 的目录给明确的话,不让客户
+        # 拿着"缺 meta/info.json"去怀疑自己的数据
+        from .rrd_reader import RRD_DISABLED_MSG, has_rrd_files, rrd_enabled
+        if not rrd_enabled() and has_rrd_files(dataset_dir):
+            raise NotADatasetError(RRD_DISABLED_MSG)
         # 友好报错:是不是指到了"装多个数据集的父目录"?列出其中的有效数据集
         subs = []
         try:
-            for name in sorted(os.listdir(dataset_dir)):
-                if os.path.exists(os.path.join(dataset_dir, name, "meta", "info.json")):
+            for name in dsfs.listdir(dataset_dir):
+                if dsfs.exists(dsfs.join(dataset_dir, name, "meta", "info.json")):
                     subs.append(name)
-        except (NotADirectoryError, FileNotFoundError):
+        except (NotADirectoryError, FileNotFoundError, OSError):
             raise NotADatasetError(f"路径不存在或不是目录: {dataset_dir}")
         if subs:
-            hint = "\n".join(f"    --input {os.path.join(dataset_dir, s)}" for s in subs)
+            hint = "\n".join(f"    --input {dsfs.join(dataset_dir, s)}" for s in subs)
             raise NotADatasetError(
                 f"'{dataset_dir}' 不是单个数据集,而是包含 {len(subs)} 个数据集的目录。\n"
                 f"请指定其中一个(--input 指向具体数据集):\n{hint}")
         raise NotADatasetError(
             f"'{dataset_dir}' 不是有效的 LeRobot 数据集(缺 meta/info.json)。\n"
             "  应指向单个数据集目录,其结构为: <数据集>/meta/info.json + data/ + videos/")
-    with open(info_path) as f:
-        return json.load(f)
+    return dsfs.read_json(info_path)
 
 
 _EE_NAMES = {"x", "y", "z", "roll", "pitch", "yaw"}
@@ -113,10 +122,10 @@ def _infer_action_space(info: dict) -> str:
 
 def _load_episodes_meta(dataset_dir: str) -> pd.DataFrame:
     """meta/episodes/chunk-*/file-*.parquet → 每 episode 一行的边界表。"""
-    paths = sorted(glob.glob(os.path.join(dataset_dir, "meta", "episodes", "chunk-*", "file-*.parquet")))
+    paths = dsfs.glob(dsfs.join(dataset_dir, "meta", "episodes", "chunk-*", "file-*.parquet"))
     if not paths:
         raise FileNotFoundError(f"找不到 v3 episodes 元数据: {dataset_dir}/meta/episodes/")
-    return pd.concat([pd.read_parquet(p) for p in paths], ignore_index=True)
+    return pd.concat([dsfs.read_parquet(p) for p in paths], ignore_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -127,14 +136,14 @@ def _v2_episode_paths(dataset_dir: str, info: dict, ep: dict) -> tuple[str, dict
     """一条 v2 episode → (data parquet 路径, video 指针 dict)。纯路径推导,不碰磁盘。"""
     idx = int(ep["episode_index"])
     chunk = idx // int(info["chunks_size"])
-    data_path = os.path.join(
+    data_path = dsfs.join(
         dataset_dir, info["data_path"].format(episode_chunk=chunk, episode_index=idx))
     fps = float(info["fps"])
     length_s = int(ep["length"]) / fps
     video_keys = [k for k, v in info["features"].items() if v["dtype"] == "video"]
     videos = {
         vk: {
-            "path": os.path.join(dataset_dir, info["video_path"].format(
+            "path": dsfs.join(dataset_dir, info["video_path"].format(
                 episode_chunk=chunk, video_key=vk, episode_index=idx)),
             "from_ts": 0.0,          # v2 独立 mp4:边界即整个文件
             "to_ts": length_s,
@@ -145,8 +154,8 @@ def _v2_episode_paths(dataset_dir: str, info: dict, ep: dict) -> tuple[str, dict
 
 
 def _v2_missing(data_path: str, videos: dict) -> bool:
-    return (not os.path.exists(data_path)
-            or any(not os.path.exists(v["path"]) for v in videos.values()))
+    return (not dsfs.exists(data_path)
+            or any(not dsfs.exists(v["path"]) for v in videos.values()))
 
 
 def _row_v2(dataset_dir: str, info: dict, ep: dict) -> dict:
@@ -154,7 +163,7 @@ def _row_v2(dataset_dir: str, info: dict, ep: dict) -> dict:
     idx = int(ep["episode_index"])
     data_path, videos = _v2_episode_paths(dataset_dir, info, ep)
     state_key = "observation.state" if "observation.state" in info["features"] else None
-    df = pd.read_parquet(data_path)
+    df = dsfs.read_parquet(data_path)
     if len(df) != int(ep["length"]):
         raise ValueError(
             f"episode {idx}: parquet 帧数 {len(df)} != episodes.jsonl length {ep['length']}")
@@ -184,11 +193,11 @@ def _v2_episode_list(dataset_dir: str, max_episodes: int | None = None,
 
     解析结果按 (路径, mtime) 缓存:droid 清单 9.2 万行,去重阶段分批重读幸存者
     时曾每批重复解析(50 批×2秒,2026-07-15 实测浪费)。"""
-    jp = os.path.join(dataset_dir, "meta", "episodes.jsonl")
-    key = (jp, os.path.getmtime(jp))
+    jp = dsfs.join(dataset_dir, "meta", "episodes.jsonl")
+    key = (jp, dsfs.mtime_key(jp))
     if key not in _JSONL_CACHE:
         _JSONL_CACHE.clear()                       # 只留最近一个数据集,防内存积累
-        with open(jp) as f:
+        with dsfs.open_text(jp) as f:
             _JSONL_CACHE[key] = [json.loads(line) for line in f if line.strip()]
     eps = list(_JSONL_CACHE[key])
     if episode_indices is not None:
@@ -243,7 +252,7 @@ def _v3_video_pointers(dataset_dir: str, info: dict, ep) -> dict:
     videos = {}
     for vk in [k for k, v in info["features"].items() if v["dtype"] == "video"]:
         videos[vk] = {
-            "path": os.path.join(dataset_dir, info["video_path"].format(
+            "path": dsfs.join(dataset_dir, info["video_path"].format(
                 video_key=vk,
                 chunk_index=int(ep[f"videos/{vk}/chunk_index"]),
                 file_index=int(ep[f"videos/{vk}/file_index"]),
@@ -258,9 +267,9 @@ def _rows_v3_group(dataset_dir: str, info: dict, grp: pd.DataFrame) -> list[dict
     """同一 (chunk,file) 的一组 episode → 行列表(读一个 data parquet)。"""
     chunk = int(grp["data/chunk_index"].iloc[0])
     file = int(grp["data/file_index"].iloc[0])
-    data_path = os.path.join(
+    data_path = dsfs.join(
         dataset_dir, info["data_path"].format(chunk_index=chunk, file_index=file))
-    df = pd.read_parquet(data_path)
+    df = dsfs.read_parquet(data_path)
     state_key = "observation.state" if "observation.state" in info["features"] else None
 
     rows: list[dict] = []
