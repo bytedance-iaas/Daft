@@ -443,8 +443,8 @@ def test_deeplink_switches_source_dropdown_to_matching_bucket(delivery, tmp_path
            and [getattr(c, "label", None)
                 for c in (getattr(f, "outputs", []) or [])][:3]
            == ["数据集目录", "数据集", "地区"]
-           and len(getattr(f, "outputs", []) or []) == 6]   # 2026-08-21 起第 6 个是「公共桶」勾选框
-    assert len(fns) == 1, "应恰有一个输出为(路径框, 数据集, 地区, 两列说明, 公共桶勾选)的预填回调"
+           and len(getattr(f, "outputs", []) or []) == 6]   # 2026-08-21 起第 6 个是「公有TOS桶」勾选框
+    assert len(fns) == 1, "应恰有一个输出为(路径框, 数据集, 地区, 两列说明, 公有TOS桶勾选)的预填回调"
 
     class Req:                                   # 新契约:完整地址 + 地区
         query_params = {"dataset": "tos://bucketa/prefix/only_b",
@@ -1054,7 +1054,7 @@ def test_info_line_endpoint_always_instance_config_not_link(delivery, tmp_path,
            and [getattr(c, "label", None)
                 for c in (getattr(f, "outputs", []) or [])][:3]
            == ["数据集目录", "数据集", "地区"]
-           and len(getattr(f, "outputs", []) or []) == 6]   # 2026-08-21 起第 6 个是「公共桶」勾选框
+           and len(getattr(f, "outputs", []) or []) == 6]   # 2026-08-21 起第 6 个是「公有TOS桶」勾选框
     assert len(fns) == 1
 
     class Req:                       # 深链带了另一地域的端点(旧契约键,仍兼容)

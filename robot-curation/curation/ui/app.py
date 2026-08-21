@@ -110,7 +110,7 @@ VLM_CHECKS = ("task_success", "skill_profile")
 FULL_SCAN = "完整质检"
 #: 「数据集目录」标签旁的勾选框(2026-08-21 用户定稿):勾上 = 读公共镜像桶,目录框与地区
 #: 置灰只看不填,只剩「数据集」下拉可选;交付目录一概不动。没配置 public_datasets 不出现。
-PUBLIC_BOX = "公共桶"
+PUBLIC_BOX = "公有TOS桶"
 QUICK_SCAN = "快速质检"
 CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自己定义模块里查什么"
                           # (那是以后的事),其实是"从现成模块里挑几个跑"
@@ -776,7 +776,7 @@ _ARCO_CSS = """
    靠正的小间距,别靠负值。 */
 .gradio-container .field-note { margin-top: 2px !important; padding-left: 13px; }
 
-/* 「数据集目录」自画标题行(2026-08-21):Markdown 标签 + 紧挨着的「公共桶」勾选框,
+/* 「数据集目录」自画标题行(2026-08-21):Markdown 标签 + 紧挨着的「公有TOS桶」勾选框,
    观感对齐 gradio 原生 block 标签(同字号/同灰/同下间距),右边列的原生标签才不会
    跟它错行。勾选框 container=False 只剩 input + 文字,行高压到与标签一致。 */
 /* 这一列自己当卡片:gradio 只把**连续的表单控件**合进一张 .form 卡,中间插了
@@ -810,7 +810,7 @@ _ARCO_CSS = """
 #rn-pub label { padding: 0 !important; gap: 6px !important; }
 #rn-pub label span { font-size: 13px !important; color: var(--arco-t2) !important; }
 /* 置灰的输入框(interactive=False → disabled):内容用 Arco 的 text-3 灰,一眼看出
-   "这是给你看的,不是让你填的"(2026-08-21 用户:勾上公共桶后目录/地区要灰) */
+   "这是给你看的,不是让你填的"(2026-08-21 用户:勾上公有TOS桶后目录/地区要灰) */
 .gradio-container textarea:disabled, .gradio-container input:disabled {
   color: var(--arco-t3) !important; -webkit-text-fill-color: var(--arco-t3) !important;
   opacity: 1 !important;
@@ -1680,7 +1680,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _rg_choices = runner.tos_region_choices()
                 with gr.Row(equal_height=True):
                     # 「数据集目录」的标题行自己画(2026-08-21 用户定稿):标签右边
-                    # 紧挨着一个「公共桶」勾选框 —— gradio 的原生标签里塞不进控件,
+                    # 紧挨着一个「公有TOS桶」勾选框 —— gradio 的原生标签里塞不进控件,
                     # 所以标签用 Markdown 画、Textbox 自己的标签藏起来(label 仍叫
                     # 「数据集目录」,测试与深链按它定位)。勾上:目录框/地区填镜像桶
                     # 并置灰,只剩数据集下拉可选;交付目录一概不动。没配置就不出现。
@@ -2054,7 +2054,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                  None, [rn_tout, out_ask, rn_tout_note])
 
                 def _pub_changed(checked):
-                    """「公共桶」勾选 → (目录框, 地区, 数据集下拉, 根说明, 数据集说明)。
+                    """「公有TOS桶」勾选 → (目录框, 地区, 数据集下拉, 根说明, 数据集说明)。
                     勾上:目录框/地区填镜像桶并置灰(桶名照样可见,只是不用填),下拉
                     只列清单里 LeRobot 格式的;取消:恢复本实例默认桶、可编辑、重列。
                     交付目录一概不碰(2026-08-21 用户:勾不勾都不该重载它)。"""

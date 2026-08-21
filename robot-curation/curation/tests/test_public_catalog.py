@@ -319,7 +319,7 @@ def test_ticking_public_box_greys_root_and_region_lists_catalog_and_leaves_outpu
     ev = _fn_on(app, _checkbox(app, ui_app.PUBLIC_BOX))
     labels = [getattr(o, "label", None) for o in ev.outputs]
     assert labels[:3] == ["数据集目录", "地区", "数据集"] and len(labels) == 5
-    assert "交付目录" not in labels, "勾不勾公共桶都不许碰交付目录(2026-08-21 用户)"
+    assert "交付目录" not in labels, "勾不勾公有TOS桶都不许碰交付目录(2026-08-21 用户)"
     tin, rg, ds, note, ds_note = ev.fn(True)
     assert tin["value"] == f"tos://{BKT}/dataset" and tin["interactive"] is False, \
         "桶名照样显示,只是置灰不用填"
@@ -343,7 +343,7 @@ def test_public_deeplink_preselects_and_ticks_box(tmp_path, site, monkeypatch):
     assert out[0]["value"] == f"tos://{BKT}/dataset" and out[0]["interactive"] is False
     assert out[1]["value"] == ["libero"]
     assert out[2]["value"] == "cn-beijing"
-    assert out[5]["value"] is True, "第 6 个输出 = 「公共桶」勾选框"
+    assert out[5]["value"] is True, "第 6 个输出 = 「公有TOS桶」勾选框"
     # 完整 tos:// 地址的老契约指到公共桶,同样识别
     out = fn(SimpleNamespace(query_params={"dataset": f"tos://{BKT}/dataset/libero"}))
     assert out[1]["value"] == ["libero"] and out[5]["value"] is True
