@@ -621,6 +621,12 @@ def main(argv: list[str] | None = None) -> int:
                       file=sys.stderr)
                 return 1
             print(f"[tos] 交付已上传:{args.output}(本次 {n} 个文件)")
+            # 全部在桶里了 → 本地产出树清掉(2026-08-21):不清的话每跑一次直连就往
+            # 容器可写层堆一份交付,几次就把 pod 的临时盘顶满(kubelet 直接驱逐)。
+            # 失败那条路不清:续传要靠它。
+            import shutil
+            shutil.rmtree(out_root, ignore_errors=True)
+            print(f"[tos] 本地产出已清理:{out_root}", flush=True)
             return 0
 
         def _run_one(inp, outp):

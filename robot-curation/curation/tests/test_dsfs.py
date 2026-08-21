@@ -275,3 +275,13 @@ def test_remote_decode_reopens_with_fresh_signature(monkeypatch):
     monkeypatch.setattr(decode, "_decode_once", local_once)
     decode.decode_window("/x.mp4", 0.0, 1.0)
     assert calls == {"sign": 0, "open": 1}
+
+
+def test_dataset_format_and_clip_need_on_tos(bucket):
+    from curation.ui import runner
+    root, _ = bucket
+    _v2(root)
+    assert runner.dataset_format("tos://bkt/datasets/arm") == {
+        "kind": "lerobot", "version": "v2.0", "needs_clips": False}
+    assert runner.dataset_format("tos://bkt/datasets/nope")["kind"] == "unknown"
+    assert runner.datasets_needing_clips("tos://bkt/datasets", ["arm"]) == []

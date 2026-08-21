@@ -1994,8 +1994,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         if (not batch and len(chosen) > 1) or _tos_all:
                             # 答了「一起生成」就给**每个需要的**数据集都串上切片:
                             # 追问只问一次,覆盖的是全部选中项(2026-08-14 用户定)
-                            clips = (runner.datasets_needing_clips(_root, chosen)
-                                     if with_clips and _spec["kind"] == "mount" else [])
+                            clips = (runner.datasets_needing_clips(
+                                _root or _spec["url"], chosen) if with_clips else [])
                             jobs = runner.build_dataset_jobs(
                                 _root or _spec["url"],
                                 _deliv_root if _ospec["kind"] == "mount" else _ospec["url"],
@@ -2017,11 +2017,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                if _ospec["kind"] == "tos" else
                                runner.resolve_under(_deliv_root, name or ""))
                         then_argv = None
-                        if with_clips and review_dir and not batch \
-                                and _spec["kind"] == "mount":
+                        if with_clips and review_dir and not batch:
                             # 切片作为同一任务的第二步:一条日志、一个结果,用户不必
-                            # 知道我们内部跑了两条命令。tos 输入没有这一步:切片
-                            # 要读本地数据集,直连输入的缓存路径开跑前不可知
+                            # 知道我们内部跑了两条命令。直连输入同样可切
+                            # (2026-08-21:审片站读桶里的数据集与读挂载一样)
                             then_argv = runner.build_argv(
                                 "review-page", input=inp,
                                 output=runner.resolve_under(
@@ -2068,13 +2067,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     chosen = runner.picked_datasets(ds)
                     # 勾了「跑全部」时下拉本来就被忽略,跑的是根目录下的全部数据集,
                     # 交付目录由 CLI 自己定 —— 那条路径不在本次范围里,维持不问。
-                    # tos 直连输入也不问:切片要读本地数据集,直连的缓存路径
-                    # 开跑前不可知(_run_go 里同款判断,两处一致)。
-                    needing = ([] if (batch or _spec["kind"] == "tos") else
-                               runner.datasets_needing_clips(_root, chosen))
+                    # 直连输入也问(2026-08-21 读端会说 tos://):切片站读桶里的
+                    # 数据集与读挂载一样,不必再等"本地缓存路径"
+                    _src_root = _root or _spec.get("url")
+                    needing = ([] if batch else
+                               runner.datasets_needing_clips(_src_root, chosen))
                     if needing and review_dir:
                         fmt = (runner.dataset_format(
-                            runner.resolve_under(_root, chosen[0]))
+                            runner.under(_src_root, chosen[0]))
                             if len(chosen) == 1 else None)
                         return (*_tk_view(""), args, gr.update(visible=True),
                                 runner.clips_prompt(needing, fmt))

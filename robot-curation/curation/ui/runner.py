@@ -341,15 +341,23 @@ def dataset_format(dataset_dir: str) -> dict:
     - LeRobot v2:每条本来就是独立 mp4,交付集里直接能播 → 不要。
     认不出格式一律 False —— 不给用户弹一个我们自己都没把握的询问框。
     """
-    data = _read_json(os.path.join(dataset_dir, "meta", "info.json"))
-    ver = str(data.get("codebase_version") or "")
+    from ..ingest import dsfs
+    if dsfs.is_remote(dataset_dir):
+        # 直连桶(2026-08-21):同一套判据,只是 info.json 从桶里取;取不到 = 认不出
+        try:
+            data = dsfs.read_json(dsfs.join(dataset_dir, "meta", "info.json"))
+        except Exception:  # noqa: BLE001 网络/不存在/不是 JSON 一律"认不出"
+            data = {}
+    else:
+        data = _read_json(os.path.join(dataset_dir, "meta", "info.json"))
+    ver = str((data or {}).get("codebase_version") or "")
     if ver:
         return {"kind": "lerobot", "version": ver,
                 "needs_clips": ver.startswith("v3")}
     try:
-        if any(f.endswith(".rrd") for f in os.listdir(dataset_dir)):
+        if any(f.endswith(".rrd") for f in dsfs.listdir(dataset_dir)):
             return {"kind": "rrd", "version": "", "needs_clips": True}
-    except OSError:
+    except Exception:  # noqa: BLE001
         pass
     return {"kind": "unknown", "version": "", "needs_clips": False}
 
@@ -366,7 +374,7 @@ def datasets_needing_clips(data_root: str, datasets: list) -> list[str]:
     out = []
     for name in picked_datasets(datasets):
         try:
-            d = resolve_under(data_root, name)
+            d = under(data_root, name)
         except ValueError:
             continue
         if dataset_format(d).get("needs_clips"):
