@@ -812,6 +812,11 @@ _ARCO_CSS = """
                 gap: 0 16px !important; min-height: 0 !important; }
 #rn-pub label { padding: 0 !important; gap: 6px !important; }
 #rn-pub label span { font-size: 13px !important; color: var(--arco-t2) !important; }
+/* 单选下拉的箭头是绝对定位压在 input 右端上的(见 _DROPDOWN_JS 的注释):input 文字
+   要给它让出位置,窄列时末尾按省略号截,不许被箭头盖住(2026-08-21 用户实见) */
+.gradio-container .wrap .secondary-wrap input {
+  padding-right: 28px !important; text-overflow: ellipsis !important;
+}
 /* 置灰的输入框(interactive=False → disabled):内容用 Arco 的 text-3 灰,一眼看出
    "这是给你看的,不是让你填的"(2026-08-21 用户:选了镜像后目录/地区要灰) */
 .gradio-container textarea:disabled, .gradio-container input:disabled {
@@ -1706,7 +1711,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 地区下拉与 rerun 的 OpenTosModal 同值同序;列表可能落后
                     # 于新地区,允许自由输入
                     rn_tin_rg = gr.Dropdown(choices=_rg_choices, value=_rg0,
-                                            label="地区", scale=2,
+                                            label="地区", scale=2, min_width=240,
                                             allow_custom_value=True,
                                             interactive=True)
                 # 交付目录默认值(2026-08-21 用户定):永远是个 tos:// 地址 —— 本实例
@@ -1721,7 +1726,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     rn_out = gr.Textbox(label="交付名", scale=4,
                                         placeholder="给这次结果起个名字")
                     rn_tout_rg = gr.Dropdown(choices=_rg_choices, value=_rg0,
-                                             label="地区", scale=2,
+                                             label="地区", scale=2, min_width=240,
                                              allow_custom_value=True,
                                              interactive=True)
                 # 说明行(2026-08-17 从 info= 挪出):第二行按与控件行
@@ -2517,11 +2522,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 rp_root = gr.Textbox(label="交付目录", scale=4,
                                      value=_out_default,   # 同跑质检页:没桶留空
                                      placeholder="tos://桶名/目录")
+                # 地区列 scale=2(2026-08-21 用户实见:scale=1 时「华北2(北京) (cn-beijing)」
+                # 被下拉箭头压住末尾);说明列相应让出 1 份,总份数不变
                 rp_rg = gr.Dropdown(choices=runner.tos_region_choices(),
                                     value=runner.default_tos_region(),
-                                    label="地区", scale=1,
+                                    label="地区", scale=2, min_width=240,
                                     allow_custom_value=True, interactive=True)
-                with gr.Column(scale=7, min_width=160):
+                with gr.Column(scale=6, min_width=160):
                     rp_note = gr.Markdown("", elem_classes=["field-note"])
             with gr.Row():
                 # 文案一句话就够(2026-08-13 用户:"这种文字根本不应该给客户看")。
