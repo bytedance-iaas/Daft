@@ -125,6 +125,34 @@ QUICK_SCAN_TIP = ("跑不需要模型的那几项:视觉质量、运动质量、
                   "视频-动作同步、时间戳与精确去重。"
                   "不做任务成败判定、打标与技能分布画像 —— 这三项要调 VLM。")
 
+#: 「完整质检」旁边那个问号(2026-08-20 用户要:和快速质检一样能悬停看包含什么)。
+#: 同样按实际流水线写,顺序就是漏斗顺序。
+FULL_SCAN_TIP = ("全部六项检查:时间戳、运动学极限、运动质量、视觉质量、"
+                 "视频-动作同步,以及要调模型的任务成败判定;"
+                 "随后精确去重、打标与技能分布画像,导出清洗后的数据集。"
+                 "耗时大头在模型调用。")
+
+#: 问号表:选项文字 → 悬停提示。加一项只改这里。
+SCAN_TIPS = {FULL_SCAN: FULL_SCAN_TIP, QUICK_SCAN: QUICK_SCAN_TIP}
+
+
+def readonly_block_msg(m) -> str:
+    """镜像自只读桶的交付:裁决记了也写不回去 → 三个记录入口一律拒,返回这句话;
+    不是只读返回空串。宁可锁:人以为记上了、实际只活在本地缓存,是"静默丢人工判断"
+    级别的事故(2026-08-21 用户定)。看报告/看片段不受影响。"""
+    ro = (m or {}).get("tos_readonly") if isinstance(m, dict) else ""
+    if not ro:
+        return ""
+    return f"⚠️ 未记录:这份交付所在的桶只读,裁决写不回去 —— {ro}"
+
+
+def readonly_banner_md(m) -> str:
+    """「待你裁决」顶部的锁提示(与 readonly_block_msg 同一个判据)。"""
+    ro = (m or {}).get("tos_readonly") if isinstance(m, dict) else ""
+    if not ro:
+        return ""
+    return f"🔒 **这份交付所在的桶只读,裁决无法回写,本页只能看不能记。** {ro}\n\n"
+
 #: 把问号塞进「快速质检」那一项的文字后面。Gradio 的 Radio 选项只吃纯文本
 #: (给 HTML 会被转义),所以只能在前端补;组件重绘后要能自愈,故用
 #: MutationObserver 兜着,而不是只在 load 时跑一次。
@@ -139,13 +167,8 @@ _TIP_JS = """
   document.addEventListener('click', hide, true);
   document.addEventListener('visibilitychange', hide);
 
-  function inject() {
-    var box = document.getElementById('qc-scope');
-    if (!box || box.querySelector('.qc-tip')) return;
-    var labels = box.querySelectorAll('label');
-    for (var i = 0; i < labels.length; i++) {
-      var span = labels[i].querySelector('span');
-      if (!span || span.textContent.trim() !== '__NAME__') continue;
+  var TIPS = __TIPS__;   // 选项文字 → 提示(Python 端 SCAN_TIPS 注入)
+  function attach(span, tip) {
       var q = document.createElement('span');
       q.className = 'qc-tip';
       q.textContent = '?';
@@ -160,7 +183,7 @@ _TIP_JS = """
           box.className = 'qc-tipbox';
           document.body.appendChild(box);
         }
-        box.textContent = '__TIP__';
+        box.textContent = tip;
         box.style.display = 'block';
         var r = q.getBoundingClientRect(), b = box.getBoundingClientRect();
         var left = Math.min(Math.max(8, r.left + r.width / 2 - b.width / 2),
@@ -171,7 +194,16 @@ _TIP_JS = """
       });
       q.addEventListener('mouseleave', hide);
       span.appendChild(q);
-      return;
+  }
+  function inject() {
+    var box = document.getElementById('qc-scope');
+    if (!box) return;
+    var labels = box.querySelectorAll('label');
+    for (var i = 0; i < labels.length; i++) {
+      var span = labels[i].querySelector('span');
+      if (!span || span.querySelector('.qc-tip')) continue;
+      var tip = TIPS[span.textContent.trim()];
+      if (tip) attach(span, tip);
     }
   }
   new MutationObserver(inject).observe(document.documentElement,
@@ -529,6 +561,30 @@ _ARCO_CSS = """
 }
 /* 单选圆、复选方(Arco 如此,也是通用心智);Gradio 默认把两者都做成 4px 圆角方块。 */
 .gradio-container input[type="radio"] { border-radius: 50% !important; }
+/* 单选/多选组按 Arco RadioGroup/CheckboxGroup(issue #54、#59 第 1 条,2026-08-20):
+   gradio 默认把**每个选项**画成一个带边框的药丸,四个圈各自成框、外面却没有
+   "组"的框(#ep-buckets 还是 hide-container)。Arco 的做法相反:选项本身不带框,
+   选中态靠实心圆点表达;整组装进一个框。选项去框 + .wrap 补组框,两条规则全站
+   生效(质检范围 / Episodes 三桶筛选 / episode 列表 / 自选模块多选 同一套)。 */
+.gradio-container .wrap:has(> label > input[type="radio"]),
+.gradio-container .wrap:has(> label > input[type="checkbox"]) {
+  border: 1px solid var(--arco-border) !important; border-radius: 4px !important;
+  background: #FFFFFF !important; padding: 6px 12px !important;
+  gap: 4px 20px !important;
+}
+.gradio-container .wrap > label:has(> input[type="radio"]),
+.gradio-container .wrap > label:has(> input[type="checkbox"]) {
+  border: none !important; background: transparent !important;
+  box-shadow: none !important; padding: 2px 0 !important;
+}
+/* episode 列表(#ep-list)外面本来就是带标题的框,里面不再套一层组框 */
+#ep-list .wrap:has(> label > input[type="radio"]) {
+  border: none !important; padding: 0 !important; background: transparent !important;
+}
+.gradio-container .wrap > label:has(> input[type="radio"]):hover,
+.gradio-container .wrap > label:has(> input[type="checkbox"]):hover {
+  background: transparent !important;
+}
 /* 带解释的小问号:灰底圆点,悬停出深色浮层(Arco 的 tooltip 是 gray-10 底白字)。
    文案挂在 data-tip 上,纯 CSS 显示,不引任何组件库。 */
 .qc-tip {
@@ -579,8 +635,8 @@ _ARCO_CSS = """
 }
 /* 对话框按钮:居中、定宽(2026-08-19 用户点名)。不居中的根因:Row 默认
    flex-start,而 Button 的 min-width 让 scale=0 也铺成大宽条。 */
-#ex-ask-btns { justify-content: center !important; gap: 12px !important; }
-#ex-ask-btns button {
+#ex-ask-btns, #out-ask-btns { justify-content: center !important; gap: 12px !important; }
+#ex-ask-btns button, #out-ask-btns button {
   flex: 0 0 auto !important; width: 120px !important; min-width: 0 !important;
 }
 /* 两个待裁决队列并列(2026-08-19 用户拍板)。窄屏时 Gradio 的 Row 自己会换行成
@@ -970,8 +1026,7 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
         "css": _ARCO_CSS + _AUDIT_CSS + _TOPNAV_CSS + (_TERMINAL_CSS if terminal else ""),
         # ↑ 顶层导航常驻 ⇒ 它的样式也常驻;终端专属样式/资产仍只在开终端时注入
         "head": (_TABLE_JS + _DROPDOWN_JS
-                 + _TIP_JS.replace("__NAME__", QUICK_SCAN)
-                          .replace("__TIP__", QUICK_SCAN_TIP)
+                 + _TIP_JS.replace("__TIPS__", json.dumps(SCAN_TIPS, ensure_ascii=False))
                  + (_terminal_head(root) if terminal else "")),
         # 标签页图标:不设就是 Gradio 自带的橘色 logo(用户 2026-08-13 点名)。
         # 换成 Arco 蓝圆角方块 + 白色漩涡(照 Daft 那枚的手感重画,底色主色化 ⇒
@@ -1274,9 +1329,20 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 gr.Warning(f"镜像这份交付失败:{type(e).__name__}: "
                            f"{str(e)[:120]}")
                 path = ""
+        # 镜像交付:打开时顺手探一次源桶可写(2026-08-21)。只读 → 裁决记了也写
+        # 不回去,给 m 打上 tos_readonly,人工裁决页按它上锁;看报告不受影响
+        ro_why = ""
+        origin = runner.tos_origin_of(path) if path else None
+        if origin:
+            ok, why = runner.writable_verdict(
+                origin["delivery_url"] + "/human-decisions",
+                origin.get("region") or None)
+            ro_why = "" if ok else why
         # 先把下拉里的值还原成真正的目录(手输半截字的情形,见 resolve_delivery);
         # 还原不了的照旧交给 load_delivery,它会挂 load_error 让整页明说读不到
         m = load_delivery(resolve_delivery(path, discover_deliveries(delivery)))
+        if ro_why and isinstance(m, dict):
+            m["tos_readonly"] = ro_why
         eids = bucket_ids(m, BUCKET_ALL)
         first = eids[0] if eids else None
         # 视觉质量那张表单独成页了 → 从下拉里撤掉(同一份数据不给两个入口)
@@ -1307,7 +1373,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 上一份交付的条目上,按钮状态还是旧的,实测踩过)
                 gr.update(choices=merged_filter_choices(m),
                           value=merged_filter_choices(m)[0]),
-                merged_hint_md(m),
+                readonly_banner_md(m) + (merged_hint_md(m) or ""),
                 audit_rows(m), task_review_rows(m),
                 *_mg_render(m, MERGE_FILTER_ALL, 0),
                 # 被拒复议:没有可复议条目就整块不渲染;子页签藏不掉,空着一片
@@ -1500,9 +1566,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                             label="地区", scale=2,
                                             allow_custom_value=True,
                                             interactive=True)
+                # 交付目录默认值(2026-08-21 用户定):永远是个 tos:// 地址 —— 本实例
+                # 有桶就用自己的;没桶的实例先留空(占位符),数据集目录定下来后借它
+                # 的桶(_borrow_output)。绝不再把本地盘路径摆在这儿冒充交付目录。
+                _home_out = runner.home_output_url(_deliv_root)
+                _out_default = _home_out if _home_out.startswith("tos://") else ""
                 with gr.Row():
                     rn_tout = gr.Textbox(label="交付目录", scale=4,
-                                         value=runner.home_output_url(_deliv_root),
+                                         value=_out_default,
                                          placeholder="tos://桶名/目录")
                     rn_out = gr.Textbox(label="交付名", scale=4,
                                         placeholder="给这次结果起个名字")
@@ -1541,13 +1612,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         gr.Markdown("", elem_classes=["field-note"])
                 with gr.Row():
                     with gr.Column(scale=4, min_width=160):
-                        gr.Markdown("", elem_classes=["field-note"])
+                        # 交付目录的说明:借了谁的桶 / 写不进去的原因
+                        rn_tout_note = gr.Markdown("", elem_id="rn-tout-note",
+                                                   elem_classes=["field-note"])
                     with gr.Column(scale=4, min_width=160):
                         rn_out_hint = gr.Markdown(
                             OUT_NAME_HINT_ONE, elem_id="rn-out-note",
                             elem_classes=["field-note"])
                     with gr.Column(scale=2, min_width=120):
                         gr.Markdown("", elem_classes=["field-note"])
+                # 交付目录写不进去时的对话框(2026-08-21 用户定:填完瞬间弹窗,点
+                # 「确定」交付目录清空只剩占位符)。样式复用「执行裁决」的 modal-dialog。
+                rn_tout_auto = gr.State(True)   # 交付框还是系统代填的?(用户手改过就不再代填)
+                with gr.Column(visible=False, elem_id="out-ask",
+                               elem_classes=["modal-dialog"]) as out_ask:
+                    out_ask_md = gr.Markdown()
+                    with gr.Row(elem_id="out-ask-btns"):
+                        out_ask_ok = gr.Button("确定", variant="primary", scale=0,
+                                               elem_id="out-ask-ok")
                 # 「快速质检」原叫「快速冒烟(跳过模型判定)」——"冒烟"是
                 # 我们的行话,"模型判定"客户也不知道指哪几步(2026-08-13
                 # 用户点名)。改成大白话,细节挂在旁边的问号上。
@@ -1736,16 +1818,83 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 深链预填会程序性改值,.change 会紧接着把预选冲掉
                 # 没挂载的实例默认值是直连地址(2026-08-20):建页面时列不到
                 # 数据集(目录不存在),开门就列一次,让下拉别空着等人按回车
+                def _borrow_output(tin, tin_rg, tout, auto):
+                    """数据集目录定下来后给交付目录代填(2026-08-21 用户定)。
+
+                    有自己桶的实例:代填自己的桶;没桶的实例:借数据集所在的桶
+                    (tos://那个桶/deliveries),**借之前先探一下可写** —— 只读桶
+                    不填,留占位符 + 一句原因(先填再弹窗是戏弄人)。用户手改过
+                    交付框(auto=False 且非空)一律不碰。
+                    """
+                    hold = (gr.update(), gr.update(), gr.update(), auto)
+                    if not auto and str(tout or "").strip():
+                        return hold
+                    url = runner.borrowed_output_url(tin, _deliv_root)
+                    if not url:
+                        return hold
+                    if url == _home_out:          # 自己的桶:挂载直写/部署桶,不探
+                        return gr.update(value=url), gr.update(), "", True
+                    ok, why = runner.writable_verdict(
+                        url, str(tin_rg or "").strip() or None)
+                    if ok:
+                        return (gr.update(value=url),
+                                gr.update(value=str(tin_rg or "").strip() or None),
+                                f"交付目录默认借数据集所在的桶:{url}(可改)"
+                                + (f";⚠️ {why}" if why else ""), True)
+                    return (gr.update(value=""), gr.update(),
+                            f"⚠️ 数据集所在的桶不能当交付目录:{why}。"
+                            "请另填一个可写的 tos://桶名/目录", True)
+
+                _bo_in = [rn_tin, rn_tin_rg, rn_tout, rn_tout_auto]
+                _bo_out = [rn_tout, rn_tout_rg, rn_tout_note, rn_tout_auto]
+
+                def _out_changed(tout, tout_rg):
+                    """交付目录失焦/回车/切地区 → 真写一下探可写;写不进去立刻弹窗
+                    (→ 确定后清空)。本实例交付根(挂载直写)不探。"""
+                    hide = gr.update(visible=False)
+                    s = str(tout or "").strip()
+                    if not s:
+                        return hide, gr.update(), ""
+                    try:
+                        spec = runner.resolve_output_input(s, _deliv_root)
+                    except ValueError as e:
+                        return hide, gr.update(), f"⚠️ {e}"
+                    if spec["kind"] == "mount":
+                        return hide, gr.update(), ""
+                    ok, why = runner.writable_verdict(
+                        spec["url"], str(tout_rg or "").strip() or None)
+                    if ok:
+                        return (hide, gr.update(),
+                                f"TOS 直连:跑完上传到 {spec['url']}"
+                                + (f"(⚠️ {why})" if why else ""))
+                    return (gr.update(visible=True),
+                            f"**这个交付目录写不进去**\n\n{why}\n\n"
+                            "点「确定」后交付目录会清空,请另填一个可写的桶。",
+                            f"⚠️ {why}")
+
+                _oc_out = [out_ask, out_ask_md, rn_tout_note]
+
                 if str(runner.bucket_url(_buckets[0])).startswith("tos://") \
                         and not runner.is_mount_backed(_data_root):
                     app.load(_root_changed, [rn_tin, rn_tin_rg],
-                             [rn_src_note, rn_ds, rn_ds_note])
+                             [rn_src_note, rn_ds, rn_ds_note]
+                             ).then(_borrow_output, _bo_in, _bo_out)
                 rn_tin.blur(_root_changed, [rn_tin, rn_tin_rg],
-                            [rn_src_note, rn_ds, rn_ds_note])
+                            [rn_src_note, rn_ds, rn_ds_note]
+                            ).then(_borrow_output, _bo_in, _bo_out)
                 rn_tin.submit(_root_changed, [rn_tin, rn_tin_rg],
-                              [rn_src_note, rn_ds, rn_ds_note])
+                              [rn_src_note, rn_ds, rn_ds_note]
+                              ).then(_borrow_output, _bo_in, _bo_out)
                 rn_tin_rg.input(_root_changed, [rn_tin, rn_tin_rg],
-                                [rn_src_note, rn_ds, rn_ds_note])
+                                [rn_src_note, rn_ds, rn_ds_note]
+                                ).then(_borrow_output, _bo_in, _bo_out)
+                # 用户亲手改交付框 → 以后不再代填(.input 只认用户动作)
+                rn_tout.input(lambda: False, None, rn_tout_auto)
+                rn_tout.blur(_out_changed, [rn_tout, rn_tout_rg], _oc_out)
+                rn_tout.submit(_out_changed, [rn_tout, rn_tout_rg], _oc_out)
+                rn_tout_rg.input(_out_changed, [rn_tout, rn_tout_rg], _oc_out)
+                out_ask_ok.click(lambda: ("", gr.update(visible=False), ""),
+                                 None, [rn_tout, out_ask, rn_tout_note])
                 # 报告页「执行裁决」的源数据集兜底下拉(ex_src_dd)仍用桶下拉
                 # 那套(_src_datasets),接线在那侧组件建出来之后
 
@@ -1767,6 +1916,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     except ValueError as e:
                         return _tk_view(f"⚠️ {e}")
                     _root = _spec.get("path")            # mount 才有;tos 为 None
+                    if _ospec["kind"] == "tos":
+                        # 失焦那次探针可能被绕过(粘贴完直接点开始):开跑前再探一次,
+                        # 绝不让任务起来后才在上传那步失败
+                        _ok, _why = runner.writable_verdict(
+                            _ospec["url"], str(tout_rg or "").strip() or None)
+                        if not _ok:
+                            return _tk_view(f"⚠️ 交付目录写不进去:{_why}")
                     if str(backend or '').endswith(BACKEND_BAD):
                         return _tk_view('⚠️ 选中的模型服务当前不可用,换一个,或把那台服务起起来后点「检测可用性」')
                     if _spec["kind"] == "tos" and batch:
@@ -2120,8 +2276,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 注解会在 gradio 里被 eval,而 `gr` 只在函数内可见 → 直接挂真对象
                 # (同 _hi_open 的手法)。
                 _prefill_from_query.__annotations__ = {"request": gr.Request}
-                app.load(_prefill_from_query, None,
-                         [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note])
+                _prefill_evt = app.load(
+                    _prefill_from_query, None,
+                    [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note])
+                # 深链带来的数据集桶 → 交付目录也借它(没自己桶的实例)
+                _prefill_evt.then(_borrow_output, _bo_in, _bo_out)
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
             # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
             # 交给 shell 托管 ⇒ 中途抛异常也不会漏关。
@@ -2135,7 +2294,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             _rp_src = {"region": ""}     # 直连地区,懒镜像与列表共用(闭包态)
             with gr.Row():
                 rp_root = gr.Textbox(label="交付目录", scale=4,
-                                     value=runner.home_output_url(_deliv_root),
+                                     value=_out_default,   # 同跑质检页:没桶留空
                                      placeholder="tos://桶名/目录")
                 rp_rg = gr.Dropdown(choices=runner.tos_region_choices(),
                                     value=runner.default_tos_region(),
@@ -2470,7 +2629,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 不抢伸缩,Row 默认 flex-start + 按钮自带 min-width 仍是左对齐
                     # 大宽条 —— 居中与定宽在 CSS #ex-ask-btns(见 _ARCO_CSS)。
                     with gr.Row(elem_id="ex-ask-btns"):
-                        ex_yes = gr.Button("确定", variant="primary", scale=0)
+                        ex_yes = gr.Button("确定", variant="primary", scale=0,
+                                           elem_id="ex-yes")
                         ex_no = gr.Button("取消", scale=0)
 
             with gr.Tab("技能分布"):
@@ -2686,6 +2846,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             rp_root.submit(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
             rp_rg.input(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
 
+            def _borrow_report_root(tin, tin_rg, cur):
+                """没桶的实例收到深链:报告页的交付目录也借数据集所在的桶,并顺手
+                列一次交付。报告页是**读**的入口,只读桶照样要能看 —— 这里不探可写
+                (2026-08-21 用户定:写的检查只在人工裁决记录那一刻)。"""
+                if str(cur or "").strip():
+                    return gr.update(), gr.update(), gr.update(), gr.update()
+                url = runner.borrowed_output_url(tin, _deliv_root)
+                if not url or url == runner.home_output_url(_deliv_root):
+                    return gr.update(), gr.update(), gr.update(), gr.update()
+                rg = str(tin_rg or "").strip() or None
+                pk, note = _rp_root_changed(url, rg)
+                return gr.update(value=url), gr.update(value=rg), pk, note
+
+            _prefill_evt.then(_borrow_report_root, [rn_tin, rn_tin_rg, rp_root],
+                              [rp_root, rp_rg, picker, rp_note])
+
             def _rp_is_direct(url) -> bool:
                 """交付根框当前指向的是不是直连桶(而非本实例交付根)。"""
                 s = str(url or "").strip().rstrip("/")
@@ -2842,6 +3018,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 it = _mg_item(m, filt, idx)
                 if it is None:
                     return ("⚠️ 无条目可裁决", *[gr.update()] * 14)
+                if readonly_block_msg(m):
+                    return (readonly_block_msg(m), *[gr.update()] * 14)
                 if it["audit"] is None:
                     return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 14)
                 msg = record_label_decision(m["path"], it["id"], decision,
@@ -2861,7 +3039,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 tv_sec = _mg_tv_section(m, it, dec_now)
                 # 顺带刷新进度提示(裁完最后一条,催办语就该消失)
                 return (msg, gr.update(value=audit_rows(m)), _mg_au_info(m, it),
-                        *btns, *tv_sec, merged_hint_md(m), audit_note_md(m))
+                        *btns, *tv_sec,
+                        readonly_banner_md(m) + (merged_hint_md(m) or ""),
+                        audit_note_md(m))
 
             _dec_outs = [au_status, au_table, au_info, au_adopt, au_keep, au_hold,
                          mg_tv_block, tv_mode_note, tv_info, tv_readings,
@@ -2884,6 +3064,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 it = _mg_item(m, filt, idx)
                 if it is None:
                     return ("⚠️ 无条目可裁决", *[gr.update()] * 7)
+                if readonly_block_msg(m):
+                    return (readonly_block_msg(m), *[gr.update()] * 7)
                 dec = load_label_decisions(m).get(it["id"], {}).get("decision", "")
                 if success_block_mode(it, dec) == "hidden":
                     return ("⚠️ 这条现在没有成败问题要答", *[gr.update()] * 7)
@@ -2897,7 +3079,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     btns = [gr.update()] * 3
                 tv_sec = _mg_tv_section(m, it, dec)
                 return (msg, gr.update(value=task_review_rows(m)),
-                        tv_sec[2], tv_sec[3], *btns, merged_hint_md(m))
+                        tv_sec[2], tv_sec[3], *btns,
+                        readonly_banner_md(m) + (merged_hint_md(m) or ""))
 
             _tv_dec_outs = [tv_status, tv_table, tv_info, tv_readings,
                             tv_pass, tv_fail, tv_hold, mg_hint]
@@ -2926,6 +3109,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return ("⚠️ 无可复议的条目", gr.update(), gr.update(),
                             *[gr.update()] * 2)
                 a = q[(idx or 0) % len(q)]
+                if readonly_block_msg(m):
+                    return (readonly_block_msg(m), gr.update(), gr.update(),
+                            *[gr.update()] * 2)
                 msg = record_reject_appeal(m["path"], a.get("id", ""), appeal,
                                            note or "")
                 if msg.startswith("✅"):

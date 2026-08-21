@@ -907,6 +907,60 @@ def resolve_output_input(value: str, deliv_root: str) -> dict:
                      "任意本地路径不收")
 
 
+def borrowed_output_url(dataset_url: str, deliv_root: str) -> str:
+    """「交付目录」该默认成什么(2026-08-21 用户定:任何 TOS 实例都显示桶名)。
+
+    本实例有自己的桶(挂载或 TOS_BUCKET)→ 用自己的(home_output_url);
+    没桶的实例 → 借数据集所在的桶:tos://那个桶/deliveries;
+    数据集也不是 tos:// → 空串(界面留占位符,绝不摆本地盘路径冒充)。
+    """
+    home = home_output_url(deliv_root)
+    if home.startswith("tos://"):
+        return home
+    s = str(dataset_url or "").strip()
+    if not s.startswith("tos://"):
+        return ""
+    from .. import tos_store as _ts
+    try:
+        bucket, _prefix = _ts.parse_tos_url(s)
+    except ValueError:
+        return ""
+    return f"tos://{bucket}/deliveries"
+
+
+def writable_verdict(url: str, region: str | None = None, *,
+                     probe=None) -> tuple[bool, str]:
+    """交付目录能不能写,给界面看的一句人话:(能写?, 原因/提示)。
+    能写且干净 → (True, "");能写但探针删不掉 → (True, 提示);不能写 → (False, 原因)。
+    原因分三种话:桶不存在/地区不对、密钥没权限(连读都不行)、只读 —— 用户才知道
+    该改地址还是找管理员。probe 注入供单测(真探针要出网)。
+    """
+    from .. import tos_store as _ts
+    try:
+        bucket, _p = _ts.parse_tos_url(url)
+    except ValueError as e:
+        return False, str(e)
+    try:
+        r = (probe or _ts.probe_writable)(url, region)
+    except Exception as e:  # noqa: BLE001 凭证缺失/网络不通
+        return False, f"探不到 {url}:{type(e).__name__}: {str(e)[:120]}"
+    kind, detail = r.get("kind"), r.get("detail", "")
+    rg = region or os.environ.get("TOS_REGION", "").strip() or "默认地区"
+    if kind == "ok":
+        return True, ""
+    if kind == "leftover":
+        return True, (f"桶 {bucket} 能写但删不掉探针文件,{url} 下留了一个 0 字节的 "
+                      f"{_ts.PROBE_NAME}({detail})")
+    if kind == "missing":
+        return False, f"桶 {bucket} 不存在,或不在 {rg} —— 检查桶名和地区({detail})"
+    if kind == "forbidden":
+        return False, (f"本实例的密钥没有桶 {bucket} 的权限,连读都不行 —— "
+                       f"找桶的管理员授权({detail})")
+    if kind == "readonly":
+        return False, f"桶 {bucket} 对本实例只读,写不进去 —— 换一个可写的桶({detail})"
+    return False, f"探测桶 {bucket} 时出错:{detail}"
+
+
 def tos_list_datasets(root_url: str, region: str | None = None, *,
                       store=None) -> list[str]:
     """陌生桶的数据集清单:root_url 前缀下第一层子目录名(排序去重)。

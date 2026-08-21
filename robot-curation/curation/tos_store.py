@@ -257,6 +257,17 @@ class TosStore:
         else:
             self._c.put_object_from_file(bucket, key, local_path)
 
+    # ── 可写探针用的三个最小动作(2026-08-21):列一下 / 放一个空对象 / 删掉 ──
+    def head_prefix(self, bucket: str, prefix: str) -> None:
+        """前缀能不能列(桶在不在、有没有读权限);不行就让 SDK 的异常原样出来。"""
+        self._c.list_objects_type2(bucket, prefix=prefix, max_keys=1)
+
+    def put_empty(self, bucket: str, key: str) -> None:
+        self._c.put_object(bucket, key, content=b"")
+
+    def delete(self, bucket: str, key: str) -> None:
+        self._c.delete_object(bucket, key)
+
 
 def make_store(region: str | None = None, client=None) -> TosStore:
     """按「用户地区 + 部署凭证/端点」组一个客户端。
@@ -448,3 +459,61 @@ def stage_out(local_root: str, url: str, region: str | None = None, *,
         if i % 50 == 0 or i == len(plan):
             print(f"[tos] 已传 {i}/{len(plan)}", flush=True)
     return len(plan)
+
+
+# ── 可写探针(2026-08-21 用户定:只读桶填进交付目录要"瞬间"知道)──────────────
+#: 探针对象名。TOS 没有"问一下能不能写"的接口,权限接口查出来的与实际能不能写常对
+#: 不上 —— 唯一可靠的判据是真写一下:放一个 0 字节对象,成功立刻删掉。
+PROBE_NAME = ".curation-write-probe"
+
+
+def _http_status(e: BaseException) -> int | None:
+    for attr in ("status_code", "status"):
+        v = getattr(e, attr, None)
+        if isinstance(v, int):
+            return v
+    return None
+
+
+def _err_text(e: BaseException) -> str:
+    """给人看的一句错误:优先 SDK 的错误码 + message(NoSuchBucket: The specified
+    bucket does not exist.),没有才退到异常类名 + str(e);request_id 之类不进界面。"""
+    code = getattr(e, "code", None) or type(e).__name__
+    msg = getattr(e, "message", None)
+    if not isinstance(msg, str) or not msg.strip():
+        msg = str(e)
+    return f"{code}: {msg.strip()[:100]}"
+
+
+def probe_writable(url: str, region: str | None = None, *,
+                   store: TosStore | None = None) -> dict:
+    """`tos://桶/前缀` 能不能写 → {"kind", "detail"}。kind 六态:
+    ok(能写能删)/ leftover(能写不能删:留了个 0 字节探针,要说出来)/
+    missing(桶不存在或不在这个地区)/ forbidden(连列都不让:密钥没这个桶的权限)/
+    readonly(能列不能写)/ error(别的错,detail 里是原话)。
+    只读桶**不是错误**:读报告合法,只是不能当交付目录 —— 分类交给调用方措辞。
+    """
+    bucket, prefix = parse_tos_url(url)
+    st = store or make_store(region)
+    p = prefix.strip("/")
+    key = (p + "/" if p else "") + PROBE_NAME
+    try:
+        st.head_prefix(bucket, p + "/" if p else "")
+    except Exception as e:  # noqa: BLE001 SDK 异常族杂,按状态码分
+        code = _http_status(e)
+        if code in (404, 301):          # NoSuchBucket / 桶在别的地区(PermanentRedirect)
+            return {"kind": "missing", "detail": _err_text(e)}
+        if code == 403:
+            return {"kind": "forbidden", "detail": _err_text(e)}
+        return {"kind": "error", "detail": _err_text(e)}
+    try:
+        st.put_empty(bucket, key)
+    except Exception as e:  # noqa: BLE001
+        if _http_status(e) == 403:
+            return {"kind": "readonly", "detail": _err_text(e)}
+        return {"kind": "error", "detail": _err_text(e)}
+    try:
+        st.delete(bucket, key)
+    except Exception as e:  # noqa: BLE001
+        return {"kind": "leftover", "detail": _err_text(e)}
+    return {"kind": "ok", "detail": ""}

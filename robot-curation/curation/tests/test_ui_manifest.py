@@ -2881,10 +2881,12 @@ def test_delivery_picker_is_actually_ticked(delivery):
 # ④ 报告页页签的增删为零(红线)。
 
 
-def _btn_fn(app, value, event="click"):
-    """按按钮文字找它接的那条事件回调(测试直接调 fn.fn,不起服务器)。"""
+def _btn_fn(app, value, event="click", elem_id=None):
+    """按按钮文字找它接的那条事件回调(测试直接调 fn.fn,不起服务器)。
+    同名按钮不止一个时(两个对话框都有「确定」)用 elem_id 点名。"""
     bids = {i for i, c in app.blocks.items()
-            if getattr(c, "value", None) == value}
+            if getattr(c, "value", None) == value
+            and (elem_id is None or getattr(c, "elem_id", None) == elem_id)}
     assert bids, f"界面上找不到按钮 {value!r}"
     for fn in app.fns.values():
         for tgt in (getattr(fn, "targets", None) or []):
@@ -2914,7 +2916,7 @@ def test_execute_confirm_targets_loaded_run_not_dropdowns(delivery, tmp_path,
                         lambda root, cmd, argv, **kw: calls.append((cmd, argv)))
     src_dir = str(tmp_path / "src-ds")
     monkeypatch.setattr(runner, "source_dataset_of", lambda p: src_dir)
-    fn = _btn_fn(app, "确定")
+    fn = _btn_fn(app, "确定", elem_id="ex-yes")
     m = {"path": delivery}
     out = fn.fn(m, "bogus-bucket", "bogus-dataset", None, "")
     assert len(calls) == 1
@@ -2973,7 +2975,7 @@ def test_execute_refuses_and_says_so_while_a_task_is_running(delivery,
     ask = _btn_fn(app, "执行裁决").fn({"path": delivery})
     assert ask[0].get("visible") is False, "有任务在跑不该弹确认块"
     assert "有任务在跑" in ask[2] and "质检 droid → debug" in ask[2]
-    go = _btn_fn(app, "确定").fn({"path": delivery}, None, None, None, "")
+    go = _btn_fn(app, "确定", elem_id="ex-yes").fn({"path": delivery}, None, None, None, "")
     assert "有任务在跑" in go[2]
     assert not calls, "有任务在跑时绝不发起(也不排队)"
 
