@@ -82,7 +82,7 @@ def bucket(tmp_path, monkeypatch):
     root.mkdir()
     client = _FakeClient(str(root))
     st = tos_store.TosStore("ep", "cn-beijing", client=client)
-    monkeypatch.setattr(dsfs, "_store", lambda: st)
+    monkeypatch.setattr(dsfs, "_store", lambda bucket=None: st)   # _store 按桶挑客户端(2026-08-21)
     dsfs.forget()
     yield root, client
     dsfs.forget()

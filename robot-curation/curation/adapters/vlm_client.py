@@ -408,6 +408,38 @@ def list_models(endpoint: str, api_key_env: str | None = None,
         return [m["id"] for m in json.load(r).get("data", [])]
 
 
+def probe_failure_reason(e: BaseException, api_key_env: str | None = None) -> str:
+    """探活失败 → 一句人话(2026-08-21:同事的实例把 401 当"不可达"去查了半天网络)。
+
+    三类分开说:密钥问题(401/403,端点其实通了)/ 服务返回别的 HTTP 码 / 真连不上。
+    密钥问题再分"环境变量没注入"与"注入了但无效" —— 修法完全不同。
+    """
+    import os
+    code = getattr(e, "code", None) or getattr(e, "status", None)
+    if code in (401, 403):
+        env = str(api_key_env or "").strip()
+        if env and not os.environ.get(env, "").strip():
+            return f"密钥未配置:环境变量 {env} 未设置"
+        if env:
+            return f"密钥无效(HTTP {code}):环境变量 {env} 的值不被接受"
+        return f"需要鉴权(HTTP {code}),但预设没配 api_key_env"
+    if code:
+        return f"服务返回 HTTP {code}"
+    return f"服务不可达({type(e).__name__})"
+
+
+def short_reason(detail: str) -> str:
+    """长原因 → 下拉里放得下的短语(2026-08-21 用户:别啰嗦):
+    密钥未配置 / 密钥无效 / 需要鉴权 / HTTP 502 / 服务不可达。"""
+    s = str(detail or "").strip()
+    if s.startswith("服务返回 HTTP"):
+        return s.replace("服务返回 ", "", 1)
+    for sep in (":", "(", "("):
+        if sep in s:
+            s = s.split(sep, 1)[0]
+    return s.strip()
+
+
 def resolve_single_model(endpoint: str, api_key_env: str | None = None,
                          timeout_s: float = 10.0) -> str:
     """端点 → 唯一模型名(2026-07-28 同事反馈:单模型服务报模型名是冗余)。

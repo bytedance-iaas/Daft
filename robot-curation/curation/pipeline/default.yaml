@@ -300,3 +300,12 @@ skill_profile:                     # 技能画像:caption 路线(VLM 端点可�
 
 verdict:
   soft_threshold: 0.5              # 软分加权低于此 → drop(P5.1 校准)
+
+# 公共数据集镜像(2026-08-21):一个匿名可读的 TOS 桶,HF 数据集按 <prefix>/<名字>/ 镜像,
+# 桶根有 {名字: [对象 key…]} 的清单。配了桶名,界面「数据来源」多出「公共数据集」一项、
+# CLI 多出 `curation public`;不配 = 功能整个不出现。桶名/地区是部署常量,写站点配置。
+public_datasets:
+  bucket: null                    # 镜像桶名(null = 关闭)
+  region: null                    # 桶所在地区(如 cn-beijing)
+  prefix: dataset                 # 数据集都在这个前缀下
+  manifest: dataset_files.json    # 桶根清单的对象名

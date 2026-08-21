@@ -443,25 +443,24 @@ def test_deeplink_switches_source_dropdown_to_matching_bucket(delivery, tmp_path
            and [getattr(c, "label", None)
                 for c in (getattr(f, "outputs", []) or [])][:3]
            == ["数据集目录", "数据集", "地区"]
-           and len(getattr(f, "outputs", []) or []) == 5]
-    assert len(fns) == 1, "应恰有一个输出为(路径框, 数据集, 地区, 两列说明)的预填回调"
+           and len(getattr(f, "outputs", []) or []) == 6]   # 2026-08-21 起第 6 个是「公有TOS桶」勾选框
+    assert len(fns) == 1, "应恰有一个输出为(路径框, 数据集, 地区, 两列说明, 公有TOS桶勾选)的预填回调"
 
     class Req:                                   # 新契约:完整地址 + 地区
         query_params = {"dataset": "tos://bucketa/prefix/only_b",
                         "region": "cn-beijing"}
 
-    tin_upd, ds_upd, rg_upd, src_note, _ds_note = fns[0].fn(Req())
+    tin_upd, ds_upd, rg_upd, src_note, _ds_note, _src = fns[0].fn(Req())
     assert tin_upd.get("value") == "tos://bucketa/prefix"     # 路径框切过去了
     assert ds_upd.get("value") == ["only_b"]
     assert rg_upd.get("value") == "cn-beijing"
-    # 说明行跟着切过去的根走(备用桶只配了挂载,没配端点)
-    assert src_note == ("挂载路径:"
-                        f"{runner.tos_buckets(cfg_path, '/x')[1]['datasets_path']}")
+    # 挂载桶的说明行空着(2026-08-21 用户:跑质检页不印端点/挂载路径)
+    assert src_note == ""
 
     class Req2:                                  # 陌生桶:切过去 + 直连说明
         query_params = {"dataset": "tos://strange/prefix/demo_v2"}
     warned.clear()
-    tin2, ds2, _rg2, note2, ds_note2 = fns[0].fn(Req2())
+    tin2, ds2, _rg2, note2, ds_note2, _src = fns[0].fn(Req2())
     assert tin2.get("value") == "tos://strange/prefix"
     assert str(note2).startswith("TOS 直连:")
     assert ds2.get("value") == [] and ds2.get("choices") == []
@@ -711,8 +710,8 @@ def test_dataset_pickers_carry_no_info_and_notes_moved_below(delivery, tmp_path)
              if c["props"].get("elem_id") in {"rn-src-note", "rn-ds-note",
                                               "rj-src-note", "rj-ds-note"}}
     assert set(notes) == {"rn-src-note", "rn-ds-note", "rj-src-note", "rj-ds-note"}
-    # 根目录那列的说明初值 = 挂载路径(本夹具没配端点 → 只有挂载那行)
-    assert str(notes["rn-src-note"].get("value") or "").startswith("挂载路径:")
+    # 根目录那列的说明初值空着(2026-08-21 用户:端点/挂载路径两行删掉)
+    assert not notes["rn-src-note"].get("value")
 
 
 # ───────── 根目录三态探测(没挂上 ≠ 挂了但空)─────────
@@ -811,12 +810,11 @@ def test_switching_root_clears_stale_notes_instead_of_leaving_them(delivery,
     fn = fns[0].fn                       # 2026-08-20 起 = _root_changed(url, region)
 
     note_a, _ds_a, ds_note_a = fn("tos://curation/datasets", "")
-    assert "端点:" in note_a and "挂载路径:" in note_a, "配了端点的根该印两行"
+    assert note_a == "", "挂载桶的说明行空着(2026-08-21 用户:不印端点/挂载路径)"
 
     note_b, _ds_b, ds_note_b = fn("tos://bucketa/prefix", "")
-    assert isinstance(note_b, str) and "读取端点" not in note_b, \
-        "没配端点的根:端点那行必须消失,不许残留上一个根的"
-    assert note_b == f"挂载路径:{srcs[1]['datasets_path']}"
+    assert note_b == "" and "读取端点" not in str(note_b), \
+        "没配端点的根同样空着,不许残留上一个根的"
     assert ds_note_b == "", "根目录正常:状态提示必须是空串,不能 None/跳过"
 
 
@@ -1056,19 +1054,18 @@ def test_info_line_endpoint_always_instance_config_not_link(delivery, tmp_path,
            and [getattr(c, "label", None)
                 for c in (getattr(f, "outputs", []) or [])][:3]
            == ["数据集目录", "数据集", "地区"]
-           and len(getattr(f, "outputs", []) or []) == 5]
+           and len(getattr(f, "outputs", []) or []) == 6]   # 2026-08-21 起第 6 个是「公有TOS桶」勾选框
     assert len(fns) == 1
 
     class Req:                       # 深链带了另一地域的端点(旧契约键,仍兼容)
         query_params = {"dataset": "tos://bucketa/prefix/only_b",
                         "endpoint": "tos-ap-southeast-1.volces.com"}
 
-    src_upd, ds_upd, _rg, src_note, _ = fns[0].fn(Req())
+    src_upd, ds_upd, _rg, src_note, _, _src = fns[0].fn(Req())
     assert src_upd.get("value") == "tos://bucketa/prefix"
     assert ds_upd.get("value") == ["only_b"]
-    # 说明行 = 本实例配置的端点 + 挂载路径;链接的端点一个字不进说明行
-    assert src_note == ("端点:tos-cn-beijing.ivolces.com\n"
-                        f"挂载路径:{srcs[1]['datasets_path']}")
+    # 说明行空着(2026-08-21 起不印端点);链接的端点更不许出现在这儿
+    assert src_note == "" and "ap-southeast-1" not in str(src_note)
     # 矛盾提示照发(两个地域都点名),但只以 Warning 形态出现
     assert any("cn-beijing" in w and "ap-southeast-1" in w for w in warned)
 

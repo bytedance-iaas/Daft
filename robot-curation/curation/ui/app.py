@@ -61,6 +61,8 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        task_review_rows, timeline_html,
                        video_detail_view)
 from . import runner            # 任务执行层(任务台跑批 + 报告页「执行裁决」共用)
+# 公共数据集目录(2026-08-21):只读一份清单、登记匿名桶,不 import 管道
+from ..ingest import public_catalog
 
 log = logging.getLogger("curation.ui")
 
@@ -106,6 +108,9 @@ VLM_CHECKS = ("task_success", "skill_profile")
 
 #: 「质检范围」三挡的界面说法(改名只改这里,判断都比这三个常量)。
 FULL_SCAN = "完整质检"
+#: 「数据集目录」标签旁的勾选框(2026-08-21 用户定稿):勾上 = 读公共镜像桶,目录框与地区
+#: 置灰只看不填,只剩「数据集」下拉可选;交付目录一概不动。没配置 public_datasets 不出现。
+PUBLIC_BOX = "公有TOS桶"
 QUICK_SCAN = "快速质检"
 CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自己定义模块里查什么"
                           # (那是以后的事),其实是"从现成模块里挑几个跑"
@@ -771,6 +776,46 @@ _ARCO_CSS = """
    靠正的小间距,别靠负值。 */
 .gradio-container .field-note { margin-top: 2px !important; padding-left: 13px; }
 
+/* 「数据集目录」自画标题行(2026-08-21):Markdown 标签 + 紧挨着的「公有TOS桶」勾选框,
+   观感对齐 gradio 原生 block 标签(同字号/同灰/同下间距),右边列的原生标签才不会
+   跟它错行。勾选框 container=False 只剩 input + 文字,行高压到与标签一致。 */
+/* 这一列自己当卡片:gradio 只把**连续的表单控件**合进一张 .form 卡,中间插了
+   Markdown 标签就散成三块各带边框(实机:勾选框掉到下一行自成一框)。做法 = 列外框
+   画成 .form 的样子,里面的 .form/.block 全部去框去内边距。 */
+#rn-tin-col { border: 1px solid var(--arco-border) !important;
+              border-radius: var(--arco-radius) !important;
+              background: var(--block-background-fill, #fff) !important;
+              padding: var(--block-padding, 10px 12px) !important; gap: 0 !important; }
+#rn-tin-col .form, #rn-tin-col .block {
+  border: none !important; background: transparent !important;
+  padding: 0 !important; box-shadow: none !important; min-height: 0 !important;
+}
+#rn-tin-head { align-items: center !important; justify-content: flex-start !important;
+               gap: 14px !important; flex-wrap: nowrap !important;
+               margin-bottom: var(--spacing-sm, 4px) !important; min-height: 0 !important; }
+#rn-tin-head .field-label, #rn-tin-head .field-label p {
+  font-size: var(--block-title-text-size, 14px) !important;
+  color: var(--block-title-text-color, var(--arco-t2)) !important;
+  font-weight: var(--block-title-text-weight, 400) !important;
+  line-height: 1.4 !important; margin: 0 !important; padding: 0 !important;
+}
+/* gradio 给每个 .block 写死 width:100%,flex 行里两个"自适应宽"的块会各占满一行
+   (实机:勾选框被顶出卡片外)—— 标题行里的块按内容定宽 */
+#rn-tin-head > .block, #rn-tin-head .field-label, #rn-pub {
+  width: auto !important; flex: 0 0 auto !important; min-width: 0 !important;
+  /* gradio 的 .auto-margin 给块 margin:auto,flex 行里它会把剩余宽度全吃成左外边距
+     (实测勾选框被推远 200px,计算样式却报 0px) */
+  margin: 0 !important;
+}
+#rn-pub label { padding: 0 !important; gap: 6px !important; }
+#rn-pub label span { font-size: 13px !important; color: var(--arco-t2) !important; }
+/* 置灰的输入框(interactive=False → disabled):内容用 Arco 的 text-3 灰,一眼看出
+   "这是给你看的,不是让你填的"(2026-08-21 用户:勾上公有TOS桶后目录/地区要灰) */
+.gradio-container textarea:disabled, .gradio-container input:disabled {
+  color: var(--arco-t3) !important; -webkit-text-fill-color: var(--arco-t3) !important;
+  opacity: 1 !important;
+}
+
 /* 内层子页签按 Arco 的 line 型(实测自 arco.css):
    .arco-tabs-header-title = 14px / text-2 / **无边框无背景**;
    active = 主色 + font-weight 500,选中态靠底部那条 ink 下划线表达。
@@ -851,13 +896,33 @@ def _probe_backends(config_path: str | None, timeout: float) -> list[list]:
         cfg = load_config(config_path)
     except Exception as e:  # noqa: BLE001
         return [["(配置加载失败)", str(e), ""]]
+    from ..adapters.vlm_client import probe_failure_reason
     for name, b in sorted((cfg.get("vlm_backends") or {}).items()):
         try:
             models = list_models(b["endpoint"], b.get("api_key_env"), timeout_s=timeout)
             shown = ", ".join(models[:3]) + (f" …(共{len(models)}个)" if len(models) > 3 else "")
             rows.append([name, "✅在线", shown])
         except Exception as e:  # noqa: BLE001
-            rows.append([name, "❌不可达", type(e).__name__])
+            # 原因分三类说(密钥/HTTP/网络),别把 401 说成"不可达"(2026-08-21)
+            reason = probe_failure_reason(e, b.get("api_key_env"))
+            state = "❌密钥问题" if "密钥" in reason or "鉴权" in reason else "❌不可达"
+            rows.append([name, state, reason])
+    return rows
+
+
+#: 探活结果缓存(秒):自动探活挂在开页/切页签上,一分钟内反复切页不必每次都出网
+PROBE_CACHE_S = 60
+_PROBE_CACHE: dict = {}
+
+
+def _probe_backends_cached(config_path, timeout: float, *, now=None) -> list[list]:
+    import time as _t
+    t = now if now is not None else _t.time()
+    hit = _PROBE_CACHE.get(config_path)
+    if hit and t - hit[0] < PROBE_CACHE_S:
+        return hit[1]
+    rows = _probe_backends(config_path, timeout)
+    _PROBE_CACHE[config_path] = (t, rows)
     return rows
 
 
@@ -952,19 +1017,37 @@ BACKEND_OK, BACKEND_BAD = " · 可用", " · 暂不可用"
 
 
 def _backend_label_of(choice) -> str:
-    """下拉选中项 → 标签本体(容忍带「· 可用/暂不可用」后缀)。"""
+    """下拉选中项 → 标签本体(容忍带「· 可用」/「· 暂不可用(原因)」后缀)。"""
     s = str(choice or "")
     for suffix in (BACKEND_OK, BACKEND_BAD):
-        if s.endswith(suffix):
-            return s[: -len(suffix)]
+        i = s.find(suffix)
+        if i >= 0:
+            return s[:i]
     return s
 
 
+def _status_ok(v) -> bool:
+    """探活状态值:True/False,或 (是否在线, 原因)。"""
+    return bool(v[0]) if isinstance(v, tuple) else bool(v)
+
+
+def _status_reason(v) -> str:
+    return str(v[1] or "") if isinstance(v, tuple) and len(v) > 1 else ""
+
+
 def _backend_options(labels: dict, status: dict | None = None) -> list:
-    """{标签: 预设代号} + {代号: 是否在线} → 下拉选项。未检测的只给标签。"""
-    return [label + ("" if status is None or code not in status
-                     else (BACKEND_OK if status[code] else BACKEND_BAD))
-            for label, code in labels.items()]
+    """{标签: 预设代号} + {代号: 在线?|(在线?, 原因)} → 下拉选项。未检测的只给标签;
+    不可用的把原因缀在括号里 —— 「暂不可用」三个字让人去查网络,而多数时候是密钥没注入。"""
+    out = []
+    for label, code in labels.items():
+        if status is None or code not in status:
+            out.append(label)
+        elif _status_ok(status[code]):
+            out.append(label + BACKEND_OK)
+        else:
+            r = _status_reason(status[code])
+            out.append(label + BACKEND_BAD + (f"({r})" if r else ""))
+    return out
 
 
 def _reprobe_options(old_labels: dict, labels: dict, status: dict,
@@ -985,7 +1068,7 @@ def _reprobe_options(old_labels: dict, labels: dict, status: dict,
         hit = next((c for c in choices if _backend_label_of(c) == want), None)
         values.append(hit)
         lost = lost or bool(want and hit is None)
-    n_ok = sum(1 for v in status.values() if v)
+    n_ok = sum(1 for v in status.values() if _status_ok(v))
     msg = (f"已检测 {len(status)} 个模型服务:{n_ok} 个可用"
            + ("" if n_ok else " —— 一个都连不上,先把服务起起来"))
     added = len(set(labels.values()) - set(old_labels.values()))
@@ -1466,6 +1549,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             _bkt_choices = runner.bucket_dropdown_choices(_buckets)
             _data_root = _buckets[0]["datasets_path"]
             _deliv_root = runner.deliveries_root_of(delivery)
+            # 公共数据集(2026-08-21):站点配置 public_datasets 有桶 → 「数据来源」
+            # 多一项,桶同时登记成匿名读(读端/探针/列目录自动换不签名的客户端)。
+            # 配置层按出厂→站点顺序套用,后者赢;读坏了一律当没配,只在日志里点名。
+            _public_cfg = None
+            for _layer in runner._config_layers(config_path):
+                if isinstance(_layer, dict) and public_catalog.CONFIG_KEY in _layer:
+                    try:
+                        _public_cfg = public_catalog.apply_config(_layer)
+                    except Exception as e:  # noqa: BLE001 坏配置不该让界面打不开
+                        print(f"[curation-ui] public_datasets 配置不可用,忽略:{e}",
+                              file=sys.stderr)
+                        _public_cfg = None
             # 存储形态自检(2026-08-20):没挂载的实例在启动日志里说清默认走直连,
             # 别让人从"交付怎么没了"反推
             _shape = runner.deployment_shape_note(_deliv_root, _data_root)
@@ -1479,9 +1574,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             _conc_defaults = runner.concurrency_defaults(config_path)
 
             def _backend_status() -> dict:
-                """{预设代号: True/False}(探活一次,给下拉标可用性用)。"""
-                return {name: ("在线" in state)
-                        for name, state, _ in _probe_backends(config_path, probe_timeout)}
+                """{预设代号: (在线?, 不可用短原因)}(探活一次,带 60s 缓存,给下拉标可用性用)。
+                下拉里只放短语(密钥未配置 / 服务不可达 …),长原因留给 `curation backends`。"""
+                from ..adapters.vlm_client import short_reason
+                return {name: (("在线" in state), "" if "在线" in state else short_reason(detail))
+                        for name, state, detail
+                        in _probe_backends_cached(config_path, probe_timeout)}
 
             def _backend_choices(status: dict | None = None) -> list:
                 """下拉选项:未检测时只给名字;检测过就把状态缀在后面。"""
@@ -1560,7 +1658,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return _tk_view(f"⚠️ 没能开始:{e}")
                 return _tk_view("已开始,下面会自动刷新进度")
 
-            with gr.Tab("跑质检", id="console"):
+            with gr.Tab("跑质检", id="console") as console_tab:
                 # 顶层直接叫「跑质检」(2026-08-19 用户拍板:原「任务台」下面
                 # 只剩这一页,没必要再套一层子页签 —— 原「跑质检」子页签删掉,
                 # 内容提到顶层)。id 仍是 console:报告页「执行裁决」确认后要
@@ -1580,10 +1678,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 往下推,三列错位),说明全在下面独立说明行。
                 _rg0 = runner.default_tos_region()
                 _rg_choices = runner.tos_region_choices()
-                with gr.Row():
-                    rn_tin = gr.Textbox(label="数据集目录", scale=4,
-                                        value=runner.bucket_url(_buckets[0]),
-                                        placeholder="tos://桶名/目录")
+                with gr.Row(equal_height=True):
+                    # 「数据集目录」的标题行自己画(2026-08-21 用户定稿):标签右边
+                    # 紧挨着一个「公有TOS桶」勾选框 —— gradio 的原生标签里塞不进控件,
+                    # 所以标签用 Markdown 画、Textbox 自己的标签藏起来(label 仍叫
+                    # 「数据集目录」,测试与深链按它定位)。勾上:目录框/地区填镜像桶
+                    # 并置灰,只剩数据集下拉可选;交付目录一概不动。没配置就不出现。
+                    with gr.Column(scale=4, min_width=160, elem_id="rn-tin-col"):
+                        with gr.Row(elem_id="rn-tin-head"):
+                            gr.Markdown("数据集目录", elem_classes=["field-label"])
+                            rn_pub = gr.Checkbox(label=PUBLIC_BOX, value=False,
+                                                 container=False, elem_id="rn-pub",
+                                                 visible=bool(_public_cfg),
+                                                 scale=0, min_width=80)
+                        rn_tin = gr.Textbox(label="数据集目录", show_label=False,
+                                            value=runner.bucket_url(_buckets[0]),
+                                            placeholder="tos://桶名/目录")
                     # 多选(2026-08-13 用户):一次点击顺序跑选中的这几个。
                     rn_ds = gr.Dropdown(choices=runner.list_datasets(_data_root),
                                         label="数据集", scale=4,
@@ -1620,12 +1730,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # (datasets_path 是桶配置的必填项),右列为空不塌行。
                 with gr.Row():
                     with gr.Column(scale=4, min_width=160):
-                        # 读取端点 + 挂载路径两行(runner.bucket_info_line
-                        # 产出 \n 分隔,line_breaks=True 让它换行);填陌生
-                        # 桶时这里换成直连说明(_root_changed 负责)
+                        # 根目录的说明行:挂载桶时**空着**(2026-08-21 用户:端点/
+                        # 挂载路径两行删掉,界面不印读取细节);填陌生桶时这里换成
+                        # 直连说明,出错时放原因(_root_changed 负责)
                         rn_src_note = gr.Markdown(
-                            runner.bucket_info_line(_buckets[0]),
-                            line_breaks=True, elem_id="rn-src-note",
+                            "", line_breaks=True, elem_id="rn-src-note",
                             elem_classes=["field-note"])
                     with gr.Column(scale=4, min_width=160):
                         # 根目录三态说明(没挂上/挂了但空/正常时空串不打扰)
@@ -1675,8 +1784,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     rn_eps = gr.Textbox(label="指定 episode",
                                         placeholder="34 / 10-20 / 3,10-12")
                     with gr.Column(scale=2):
-                        rn_backend = gr.Dropdown(choices=_backends, label="模型服务")
-                        rn_probe = gr.Button("检测可用性", size="sm", scale=0)
+                        # 「检测可用性」按钮已撤(2026-08-21 用户:可用性该系统自己查):
+                        # 开页与切到本页时自动探活,结果直接缀在选项上(含不可用原因)
+                        # allow_custom_value(2026-08-21):探活会把选项改成带「· 可用/暂不可用」
+                        # 后缀的,同时在飞的事件若带着旧值回来,Gradio 6 会以"值不在选项里"
+                        # 报红;旧值经 _backend_code 剥后缀照样解析到同一个预设,放行无害
+                        rn_backend = gr.Dropdown(choices=_backends, label="模型服务",
+                                                 allow_custom_value=True)
                 with gr.Accordion("更多设置", open=False):
                     rn_cfg = gr.Textbox(label="配置文件(留空=默认)",
                                         placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
@@ -1811,7 +1925,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     except StopIteration:
                         return gr.update(), gr.update(), gr.update()
                     root = b["datasets_path"]
-                    return (runner.bucket_info_line(b),
+                    return ("",
                             gr.update(choices=runner.list_datasets(root),
                                       value=[] if multi_pick else None),
                             runner.dataset_root_note(root))
@@ -1831,10 +1945,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         return (f"⚠️ {e}", gr.update(choices=[], value=[]), "")
                     if spec["kind"] == "mount":
                         root = spec["path"]
-                        return (runner.bucket_info_line(spec["bucket"]),
+                        return ("",
                                 gr.update(choices=runner.list_datasets(root),
                                           value=[]),
                                 runner.dataset_root_note(root))
+                    if public_catalog.is_public_root(spec["url"]):
+                        # 公共镜像桶:下拉显示「全名 · 版本 · 集数」,值仍是目录名
+                        try:
+                            ch = public_catalog.choices()
+                        except Exception as e:  # noqa: BLE001
+                            return (f"⚠️ {type(e).__name__}: {str(e)[:160]}",
+                                    gr.update(choices=[], value=[]), "")
+                        return ("", gr.update(choices=ch, value=[]),
+                                "" if ch else "镜像里目前没有 LeRobot 格式的数据集")
                     try:
                         names = runner.tos_list_datasets(
                             spec["url"], str(region or "").strip() or None)
@@ -1929,6 +2052,26 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 rn_tout_rg.input(_out_changed, [rn_tout, rn_tout_rg], _oc_out)
                 out_ask_ok.click(lambda: ("", gr.update(visible=False), ""),
                                  None, [rn_tout, out_ask, rn_tout_note])
+
+                def _pub_changed(checked):
+                    """「公有TOS桶」勾选 → (目录框, 地区, 数据集下拉, 根说明, 数据集说明)。
+                    勾上:目录框/地区填镜像桶并置灰(桶名照样可见,只是不用填),下拉
+                    只列清单里 LeRobot 格式的;取消:恢复本实例默认桶、可编辑、重列。
+                    交付目录一概不碰(2026-08-21 用户:勾不勾都不该重载它)。"""
+                    if checked and public_catalog.configured():
+                        root, rg = public_catalog.root_url(), public_catalog.region()
+                        note, ds, ds_note = _root_changed(root, rg)
+                        return (gr.update(value=root, interactive=False),
+                                gr.update(value=rg or _rg0, interactive=False),
+                                ds, note, ds_note)
+                    home_url = runner.bucket_url(_buckets[0])
+                    note, ds, ds_note = _root_changed(home_url, _rg0)
+                    return (gr.update(value=home_url, interactive=True),
+                            gr.update(value=_rg0, interactive=True),
+                            ds, note, ds_note)
+
+                rn_pub.input(_pub_changed, rn_pub,
+                             [rn_tin, rn_tin_rg, rn_ds, rn_src_note, rn_ds_note])
                 # 报告页「执行裁决」的源数据集兜底下拉(ex_src_dd)仍用桶下拉
                 # 那套(_src_datasets),接线在那侧组件建出来之后
 
@@ -1958,7 +2101,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         if not _ok:
                             return _tk_view(f"⚠️ 交付目录写不进去:{_why}")
                     if str(backend or '').endswith(BACKEND_BAD):
-                        return _tk_view('⚠️ 选中的模型服务当前不可用,换一个,或把那台服务起起来后点「检测可用性」')
+                        return _tk_view('⚠️ 选中的模型服务当前不可用(原因见选项后的括号),换一个,或把它修好后切回本页自动重检')
                     # 多选下拉默认一个都没选 → 必须先拦(否则空选会一路走到
                     # resolve_under(root, "") = 拿整个数据集根当一份数据跑)
                     _no_ds = runner.dataset_selection_error(ds, bool(batch))
@@ -2134,6 +2277,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 def _do_probe(cur_run, cur_ex):
                     """探活一次 → 两个下拉都缀上可用性(它们指的是同一批服务)。
+                    2026-08-21 起没有按钮了:挂在 app.load 与两个页签的 select 上自动跑
+                    (60s 缓存,切页不反复出网);不再回提示语,结果就在选项上。
 
                     ⚠️ 探活**不走任务通道**:`curation backends` 的原始输出里全是内部
                     预设代号(a30-8b 之类),贴进日志就等于把代号摆到客户面前。这里
@@ -2145,10 +2290,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     old = dict(_backend_map)
                     _backend_map.clear()
                     _backend_map.update(runner.vlm_backend_labels(config_path))
-                    ch, vals, msg = _reprobe_options(
+                    ch, vals, _msg = _reprobe_options(
                         old, _backend_map, _backend_status(), [cur_run, cur_ex])
                     return (gr.update(choices=ch, value=vals[0]),
-                            gr.update(choices=ch, value=vals[1]), msg)
+                            gr.update(choices=ch, value=vals[1]))
 
                 # 两个「检测可用性」按钮(跑质检侧 + 报告页执行裁决侧)的接线在
                 # 报告页那侧的组件建出来之后统一挂(见「人工裁决」页底部)——
@@ -2217,7 +2362,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 def _prefill_from_query(request):
                     qp = getattr(request, "query_params", None) or {}
                     wanted, present = runner.deeplink_values(qp)
-                    hold = (gr.update(),) * 5
+                    hold = (gr.update(),) * 6
+                    # ?source=public[&dataset=名字]:公共数据集深链(2026-08-21)。
+                    # 裸名字补成镜像桶里的完整地址,之后与 tos:// 深链同一条路
+                    _src_q = str((qp.get("source") if hasattr(qp, "get") else "")
+                                 or "").strip().lower()
+                    if _src_q == "public" and public_catalog.configured():
+                        present = True
+                        wanted = [w if str(w).startswith("tos://")
+                                  else public_catalog.dataset_url(w)
+                                  for w in wanted if str(w).strip()]
+                        if not wanted:
+                            wanted = [public_catalog.root_url() + "/"]
                     if not present:
                         return hold
                     # 新契约(rerun PR#29,2026-08-19 起线上在发):
@@ -2238,8 +2394,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         except ValueError as e:
                             gr.Warning(f"链接里的数据集地址解析不了:{e}")
                             return hold
+                        _root_only = (_src_q == "public" and urls[0].rstrip("/")
+                                      == public_catalog.root_url())
+                        if _root_only:
+                            root, _n0 = public_catalog.root_url(), ""   # 只切来源不预选
                         names = []
-                        for u in urls:
+                        for u in ([] if _root_only else urls):
                             try:
                                 r2, n2 = runner.split_dataset_url(u)
                             except ValueError:
@@ -2255,9 +2415,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         except ValueError as e:
                             gr.Warning(f"链接里的数据集地址不可用:{e}")
                             return hold
-                        if spec["kind"] == "mount":
+                        is_pub = public_catalog.is_public_root(root)
+                        if is_pub:
+                            # 公共镜像桶:按清单过滤、带全名/版本/集数的显示串
+                            try:
+                                choices = public_catalog.choices()
+                                ds_note = ("" if choices else
+                                           "镜像里目前没有 LeRobot 格式的数据集")
+                            except Exception as e:  # noqa: BLE001
+                                choices = []
+                                ds_note = f"⚠️ {type(e).__name__}: {str(e)[:120]}"
+                            src_note = ""
+                            region = public_catalog.region() or region
+                        elif spec["kind"] == "mount":
                             choices = runner.list_datasets(spec["path"])
-                            src_note = runner.bucket_info_line(spec["bucket"])
+                            src_note = ""
                             ds_note = runner.dataset_root_note(spec["path"])
                             # 旧契约的端点矛盾提示照发(链接的端点 vs 本实例
                             # 配置的端点地域对不上要点名;链接值只进提示,
@@ -2279,19 +2451,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             src_note = f"TOS 直连:{root}"
                         # 预选与选项**同一次回调里算**:value 不在 choices 里
                         # 会被 Gradio 静默丢弃,分两跳必踩
-                        sel = [n for n in names if n in choices]
+                        _vals = [c[1] if isinstance(c, (tuple, list)) else c
+                                 for c in choices]
+                        sel = [n for n in names if n in _vals]
                         for n in names:
-                            if n not in choices:
+                            if n not in _vals:
                                 gr.Warning(f"链接指的数据集「{n}」在该前缀下"
                                            "没找到 —— 前缀或名字可能变了")
                         if sel:
                             gr.Info("已按链接预选:" + ", ".join(sel)
                                     + " —— 点「开始质检」即可")
-                        return (gr.update(value=root),
+                        return (gr.update(value=root, interactive=not is_pub),
                                 gr.update(choices=choices, value=sel),
-                                (gr.update(value=region) if region
-                                 else gr.update()),
-                                src_note, ds_note)
+                                (gr.update(value=region, interactive=not is_pub)
+                                 if region else gr.update(interactive=not is_pub)),
+                                src_note, ds_note,
+                                gr.update(value=bool(is_pub)))
                     # 旧契约(裸名字):对表预选,行为与 2026-08-17 版一致 ——
                     # **桶不认识绝不回落到默认桶里找同名的**
                     plan = runner.prefill_plan(bare, _buckets,
@@ -2308,9 +2483,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             gr.update(choices=plan["choices"],
                                       value=plan["datasets"]),
                             gr.update(),
-                            runner.bucket_info_line(_b) if _b else gr.update(),
+                            "" if _b else gr.update(),
                             runner.dataset_root_note(_b["datasets_path"])
-                            if _b else gr.update())
+                            if _b else gr.update(),
+                            gr.update(value=False))
 
                 # gr.Request 靠注解注入;`from __future__ import annotations` 下字符串
                 # 注解会在 gradio 里被 eval,而 `gr` 只在函数内可见 → 直接挂真对象
@@ -2318,7 +2494,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _prefill_from_query.__annotations__ = {"request": gr.Request}
                 _prefill_evt = app.load(
                     _prefill_from_query, None,
-                    [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note])
+                    [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note, rn_pub])
                 # 深链带来的数据集桶 → 交付目录也借它(没自己桶的实例)
                 _prefill_evt.then(_borrow_output, _bo_in, _bo_out)
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
@@ -2637,8 +2813,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 收进折叠区,留空就用生效配置里的值。
                 with gr.Accordion("更多设置", open=False):
                     with gr.Row():
-                        ex_backend = gr.Dropdown(choices=_backends, label="模型服务")
-                        ex_probe = gr.Button("检测可用性", size="sm", scale=0)
+                        ex_backend = gr.Dropdown(choices=_backends, label="模型服务", allow_custom_value=True)
+                        pass   # 「检测可用性」按钮已撤(自动探活,见 _do_probe)
                     ex_cfg = gr.Textbox(label="配置文件(留空=默认)",
                                         placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
                 with gr.Row():
@@ -3252,7 +3428,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if str(backend or "").endswith(BACKEND_BAD):
                     return (gr.update(), hide,
                             "⚠️ 选中的模型服务当前不可用,换一个,或把那台服务"
-                            "起起来后点「检测可用性」", *hold)
+                            "修好后切回本页自动重检", *hold)
                 src = runner.source_dataset_of(path)
                 try:
                     if not src:
@@ -3317,13 +3493,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             app.load(_ex_btn_state, None, ex_go)
             ex_src_dd.input(lambda s: _src_datasets(s, False), ex_src_dd,
                             [ex_src_note, ex_ds, ex_ds_note])
-            # 两个「检测可用性」共用一次探活(_do_probe 同时刷新两处下拉 ——
-            # 它们指的是同一批服务,只刷一处另一处就挂着陈旧状态撒谎);
-            # 提示各回各页:从报告页点的,提示写回任务台没人看得见。
-            rn_probe.click(_do_probe, [rn_backend, ex_backend],
-                           [rn_backend, ex_backend, tk_msg])
-            ex_probe.click(_do_probe, [rn_backend, ex_backend],
-                           [rn_backend, ex_backend, ex_msg])
+            # 自动探活(2026-08-21 用户:可用性该系统自己查,不该让人点按钮):
+            # 开页一次 + 切到跑质检/报告页各一次(真事件),同时刷新两处下拉 ——
+            # 它们指的是同一批服务,只刷一处另一处就挂着陈旧状态撒谎。60s 缓存。
+            app.load(_do_probe, [rn_backend, ex_backend], [rn_backend, ex_backend])
+            console_tab.select(_do_probe, [rn_backend, ex_backend], [rn_backend, ex_backend])
+            report_tab.select(_do_probe, [rn_backend, ex_backend], [rn_backend, ex_backend])
             # 筛选/排序都只是重画同一份数据(load_timeline 读的是交付里的
             # episodes_timeline.json),不重算任何指标。
             def _tl_view(m, show_label, sort_label):
