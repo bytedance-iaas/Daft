@@ -716,43 +716,49 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 print(f"[rejudge] 交付数据集已同步:改标 {len(relabel)} 条,"
                       f"剔除 {n_drop} 条,复议捞回补入 {n_add} 条"
                       f"(episodes_parquet)", flush=True)
-                # LeRobot 包同步:v2 源重导出=纯文件拷贝,便宜到没有理由留给用户
-                # 手动;v3 源要视频重编码,只提醒不擅动。以同步后的 parquet 为唯一
-                # 事实源重建导出参数(终态条目集 + 非原始标注的任务覆写)。
+                # LeRobot 包同步:v2 源重导出=纯文件拷贝;v3 源要把通过的轨迹视频重新
+                # 剪切编码(2026-08-21 用户定:这是 bug 不是限制 —— 之前只打印"请重跑 run",
+                # 而 run 不会应用人工裁决,v3 客户永远拿不到落实了裁决的成品包)。两代
+                # 导出器签名相同,以同步后的 parquet 为唯一事实源重建导出参数(终态条目集
+                # + 非原始标注的任务覆写);新包在同级临时目录写好再原子换位。
                 curated = os.path.join(delivery, "lerobot_curated")
                 if os.path.isdir(curated):
+                    from ..export import lerobot_writer as _lw
                     from ..ingest.lerobot_reader import _load_info
-                    if _load_info(input_dir)["codebase_version"].startswith("v3"):
-                        print("[rejudge] ⚠️ lerobot_curated(v3,视频重编码)未自动重做;"
-                              "需要最新 LeRobot 包请重跑 curation run(非 report-only)",
-                              flush=True)
+                    is_v3 = str(_load_info(input_dir).get("codebase_version", "")).startswith("v3")
+                    exporter = _lw.export_lerobot_v3 if is_v3 else _lw.export_lerobot_v2
+                    keep_idx = [int(r["episode_id"][2:]) for r in out_rows]
+                    ov = {int(r["episode_id"][2:]): r["instruction"]
+                          for r in out_rows
+                          if r.get("instruction_source") not in (None, "", "原始标注")
+                          and str(r.get("instruction") or "").strip()}
+                    # 相机流健康度旁挂文件跟着重导出走:换位之前先读回来,
+                    # 否则裁决一次交付集就把它弄丢了(它不随裁决变化,只是重编号)
+                    _ch = None
+                    _chp = os.path.join(curated, "meta",
+                                        "curation_camera_health.json")
+                    if os.path.exists(_chp):
+                        try:
+                            with open(_chp, encoding="utf-8") as _f:
+                                _old = json.load(_f)
+                            _ch = {"dataset": _old.get("dataset") or {},
+                                   "episodes": {r["source_episode_id"]: r
+                                                for r in _old.get("episodes") or []
+                                                if r.get("source_episode_id")}}
+                        except Exception:  # noqa: BLE001  读不回就不写,不拦裁决
+                            _ch = None
+                    if is_v3:
+                        print(f"[rejudge] lerobot_curated(v3)重导出:{len(keep_idx)} 条的"
+                              "视频需重新编码,耗时与首轮导出相当,请稍候", flush=True)
+                    if keep_idx:
+                        with delivery_dir(curated) as _staging:
+                            exporter(input_dir, keep_idx, _staging,
+                                     task_overrides=ov, camera_health=_ch)
                     else:
-                        from ..export.lerobot_writer import export_lerobot_v2
-                        keep_idx = [int(r["episode_id"][2:]) for r in out_rows]
-                        ov = {int(r["episode_id"][2:]): r["instruction"]
-                              for r in out_rows
-                              if r.get("instruction_source") not in (None, "", "原始标注")
-                              and str(r.get("instruction") or "").strip()}
-                        # 相机流健康度旁挂文件跟着重导出走:整目录 rmtree 之前先读回来,
-                        # 否则裁决一次交付集就把它弄丢了(它不随裁决变化,只是重编号)
-                        _ch = None
-                        _chp = os.path.join(curated, "meta",
-                                            "curation_camera_health.json")
-                        if os.path.exists(_chp):
-                            try:
-                                with open(_chp, encoding="utf-8") as _f:
-                                    _old = json.load(_f)
-                                _ch = {"dataset": _old.get("dataset") or {},
-                                       "episodes": {r["source_episode_id"]: r
-                                                    for r in _old.get("episodes") or []
-                                                    if r.get("source_episode_id")}}
-                            except Exception:  # noqa: BLE001  读不回就不写,不拦裁决
-                                _ch = None
-                        _sh.rmtree(curated)
-                        export_lerobot_v2(input_dir, keep_idx, curated,
-                                          task_overrides=ov, camera_health=_ch)
-                        print(f"[rejudge] lerobot_curated 已重导出(v2 纯拷贝):"
-                              f"{len(keep_idx)} 条,任务覆写 {len(ov)} 条", flush=True)
+                        _sh.rmtree(curated)        # 全部剔除:成品包不复存在
+                    print(f"[rejudge] lerobot_curated 已重导出"
+                          f"({'v3 视频重编码' if is_v3 else 'v2 纯拷贝'}):"
+                          f"{len(keep_idx)} 条,任务覆写 {len(ov)} 条", flush=True)
                 # RRD 包同步(2026-08-10):交付里有 rrd_curated ⇒ 输入是 RRD 源。
                 # 重导出同样便宜(通过条目=字节拷贝,改标条目只重写 /task),没有
                 # 理由留给用户手动。同样以同步后的 parquet 为唯一事实源。

@@ -221,7 +221,7 @@ def test_export_parquet_synced_on_decisions(tmp_path):
 
 def test_v2_lerobot_curated_reexported_on_decisions(tmp_path):
     """v2 源的 LeRobot 包在裁决后自动重导出(纯拷贝,便宜):弃用条目消失、
-    改标条目的任务表换新;v3 才留"重跑 run"的提醒。"""
+    改标条目的任务表换新;v3 同样自动重导出(视频重编码),见下一条用例。"""
     pytest = __import__("pytest")
     pytest.importorskip("pandas")
     daft = pytest.importorskip("daft")
@@ -1036,3 +1036,70 @@ def test_rejudge_lands_passed_json_exactly_once(tmp_path, monkeypatch):
                                               real(dst, *a, **k))[1])
     run_rejudge(str(d), "/unused", {}, rerun_fn=None)
     assert lands.count("passed.json") == 1, f"passed.json 落了 {lands.count('passed.json')} 遍:{lands}"
+
+
+def test_v3_lerobot_curated_reexported_on_decisions(tmp_path, monkeypatch):
+    """v3 源的 LeRobot 包在裁决后同样自动重导出(2026-08-21 用户定:之前只提醒
+    "重跑 run"是 bug —— run 不应用裁决,v3 客户永远拿不到落实裁决的成品包)。
+    导出器打桩:只验接线(终态条目集、改标覆写、旧包被整体替换、写到临时目录再换位)。"""
+    pytest = __import__("pytest")
+    pytest.importorskip("pandas")
+    daft = pytest.importorskip("daft")
+    import json
+    import os
+
+    from curation.export import lerobot_writer as lw
+    from curation.pipeline.rejudge import run_rejudge
+    src = tmp_path / "src_v3"
+    (src / "meta").mkdir(parents=True)
+    (src / "meta" / "info.json").write_text(json.dumps(
+        {"codebase_version": "v3.0", "total_episodes": 4, "fps": 30}), encoding="utf-8")
+    delivery = tmp_path / "dlv"
+    det = delivery / "details"
+    det.mkdir(parents=True)
+    (det / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "ep000001,采纳建议改标,corrected task text,,2026-08-21 13:00:00\n"
+        "ep000002,弃用该条,,,2026-08-21 13:00:05\n", encoding="utf-8")
+    for n in ("passed", "review", "reject"):
+        (delivery / f"{n}.json").write_text(json.dumps({"episodes": {
+            f"ep{i:06d}": {"判决": "通过"} for i in range(4)}}
+            if n == "passed" else {"episodes": {}}, ensure_ascii=False),
+            encoding="utf-8")
+    daft.from_pydict({
+        "episode_id": [f"ep{i:06d}" for i in range(4)],
+        "instruction": ["a", "b", "c", "d"],
+        "instruction_source": ["原始标注"] * 4,
+    }).write_parquet(str(delivery / "episodes_parquet"))
+    curated = delivery / "lerobot_curated"
+    (curated / "meta").mkdir(parents=True)
+    (curated / "stale").write_text("old")
+    (curated / "meta" / "curation_camera_health.json").write_text(json.dumps(
+        {"dataset": {"k": 1}, "episodes": [{"source_episode_id": "ep000000", "x": 1}]}))
+
+    calls = []
+
+    def fake_v3(dataset_dir, keep, out_dir, task_overrides=None, camera_health=None):
+        assert os.path.isdir(out_dir) and not os.listdir(out_dir), "必须写进同级空临时目录"
+        assert os.path.dirname(out_dir) == str(delivery), "临时目录要与交付同级(同一挂载才能原子换位)"
+        assert (curated / "stale").exists(), "新包写完之前旧包一个字节都不能动"
+        os.makedirs(os.path.join(out_dir, "meta"))
+        with open(os.path.join(out_dir, "meta", "info.json"), "w") as f:
+            json.dump({"codebase_version": "v3.0", "total_episodes": len(keep)}, f)
+        calls.append((dataset_dir, list(keep), dict(task_overrides or {}), camera_health))
+        return {"out_dir": out_dir}
+
+    def boom(*a, **k):
+        raise AssertionError("v3 源不该走 v2 导出器")
+    monkeypatch.setattr(lw, "export_lerobot_v3", fake_v3)
+    monkeypatch.setattr(lw, "export_lerobot_v2", boom)
+
+    run_rejudge(str(delivery), str(src), {},
+                rerun_fn=lambda i, e, nl: {"passed": True, "verdict": "success"})
+    assert len(calls) == 1, "v3 分支必须真的重导出,不能只打印提醒"
+    ds, keep, ov, ch = calls[0]
+    assert ds == str(src) and keep == [0, 1, 3], "弃用的 ep000002 要从终态条目集里剔掉"
+    assert ov == {1: "corrected task text"}, "采纳的改标要作为任务覆写传给导出器"
+    assert ch["dataset"] == {"k": 1} and "ep000000" in ch["episodes"], "相机健康度旁挂文件要跟着走"
+    assert not (curated / "stale").exists(), "旧包未被替换"
+    assert json.load(open(curated / "meta" / "info.json"))["total_episodes"] == 3
