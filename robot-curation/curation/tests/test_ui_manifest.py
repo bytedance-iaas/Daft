@@ -111,7 +111,7 @@ def test_skill_audit_overview(delivery):
     assert sk[0][0] == "Arrange" and sk[0][1] == "Arrange soft goods" and sk[0][2] == 2
     au = audit_rows(m)
     # v3 行结构:[操作, 档位, episode, 原标注, 自产描述, 成败线判定, 分歧说明, 裁决]
-    assert au[0][0] == "裁决 ▶"                       # 可点性操作列
+    assert au[0][0] == "裁决"                         # 可点性操作列(不带三角)
     assert au[0][2] == "ep000002" and au[0][6] == "跨族"
     assert au[0][1] in ("重点", "参考")
     md = overview_markdown(m)
@@ -1174,10 +1174,9 @@ def test_task_review_queue_only_takes_task_abstentions(delivery, tmp_path):
     assert q[0]["current"] == "通过" and q[0]["reason"] == "渐变问询不可判"
     assert q[0]["readings"] == {"voc": 0.87, "末态分": 0.3}   # 从 checks 的 detail 解出
     rows = task_review_rows(m)
-    # 行结构:[操作, episode, 当前判决, 弃权原因, 关键读数, 裁决]
-    assert rows[0][0] == "裁决 ▶" and rows[0][1] == "ep000000"
-    assert rows[0][2] == "通过" and "渐变问询" in rows[0][3]
-    assert "voc=0.87" in rows[0][4] and "末态分=0.3" in rows[0][4]
+    # 行结构:[操作, episode, 任务标注, 当前判决, 弃权原因, 裁决](关键读数列已删)
+    assert rows[0][0] == "裁决" and rows[0][1] == "ep000000"
+    assert rows[0][3] == "通过" and "渐变问询" in rows[0][4]
     assert rows[0][5] == ""                                   # 未裁决
 
     # 另一维度弃权的条目不进队列
@@ -1469,9 +1468,10 @@ def test_app_has_manual_decision_tab(delivery):
     for txt in (AUDIT_TERM, "待你裁决", "任务失败复议", "任务成败弃权",
                 "标注问题", "成败问题",
                 "✅ 判成功", "❌ 判失败", "🤔 拿不准",
-                "其它原因-整条弃用",
-                "怎么用这一页"):
+                "其它原因-整条弃用"):
         assert txt in cfg, txt
+    assert "怎么用这一页" not in cfg, "流程条已删(2026-08-21 用户:UI 要简洁)"
+    assert "两类问题并列" not in cfg and "裁决 ▶" not in cfg
     assert "搁置" not in cfg, "界面上还留着旧词「搁置」"
     assert "🗑 弃用该条" not in cfg, "「弃用该条」还摆在标注块里当第三个选项"
     assert cfg.index("待你裁决") < cfg.index("任务失败复议")
@@ -1507,7 +1507,7 @@ def test_appeal_queue_takes_semantic_kills_only(delivery, tmp_path):
     assert m["reject_appeal"][0]["readings"] == {"voc": 0.87, "末态分": 0.3}
     rows = appeal_rows(m)
     # 行结构:[操作, episode, 拒绝原因, 关键读数, 复议结论]
-    assert rows[0][0] == "复议 ▶" and rows[0][1] == "ep000001"
+    assert rows[0][0] == "复议" and rows[0][1] == "ep000001"
     assert "未通过" in rows[0][2] and "硬门" not in rows[0][2]   # 界面不出现机制黑话
     assert "voc=0.87" in rows[0][3] and rows[0][4] == ""          # 未复议
 

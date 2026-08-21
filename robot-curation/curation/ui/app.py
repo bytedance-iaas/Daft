@@ -57,6 +57,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        perf_env_md, readings_text, skill_bar_html, skill_rows,
                        sync_camera_html, sync_conclusion_html, sync_health_html,
                        sync_view, SYNC_HOWTO,
+                       task_question_md, task_reference_html, task_reference_md,
                        task_review_rows, timeline_html,
                        video_detail_view)
 from . import runner            # 任务执行层(任务台跑批 + 报告页「执行裁决」共用)
@@ -1073,22 +1074,6 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
 # 再执行"两趟工序是分区制的产物;现在一条 episode 一张卡、问题一次答完,引导
 # 只剩一件要防的事 —— 只改标、留空成败的条目重判后可能仍判不出会回到队列,
 # 提前说明白,免得用户以为系统坏了。
-_ADJ_GUIDE_HTML = ("""
-<div style="background:#E8F3FF;border:1px solid #BEDAFF;border-left:3px solid #165DFF;
-            border-radius:4px;padding:12px 16px;margin:2px 0 6px">
-  <div style="font-weight:600;color:#0E42D2;margin-bottom:8px">怎么用这一页</div>
-  <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;color:#4E5969">
-    <span style="background:#fff;border:1px solid #BEDAFF;border-radius:4px;padding:2px 10px">
-      <b style="color:#165DFF">1</b> 逐条看视频,把该条的问题一次答完
-      <span style="color:#86909C">(标注 + 成败在同一张卡)</span></span><span style="color:#86909C">→</span>
-    <span style="background:#fff;border:1px solid #BEDAFF;border-radius:4px;padding:2px 10px">
-      <b style="color:#165DFF">2</b> 在本页底部点「执行裁决」</span><span style="color:#86909C">→</span>
-    <span style="background:#fff;border:1px solid #BEDAFF;border-radius:4px;padding:2px 10px">
-      <b style="color:#165DFF">3</b> 只改标、留空成败的条目重判后若仍判不出,
-      会回到这里 —— 补个结论再执行一次</span>
-  </div>
-</div>""")
-
 
 def _adj_section_html(num: str, title: str, subtitle: str, color: str, dark: str) -> str:
     """区块头:色块序号 + 加粗标题 + 弱化副题,底部同色粗线把区块"框"出来。
@@ -1269,7 +1254,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # 由机器按新标注重判"是**解释性文字**,用户反复说过界面上不要(2026-08-19
         # 再次点名)。行为不变,只是不写在脸上:留空由机器重判这件事,用户点了才
         # 会知道,而知道它的时机是"我要不要点",不是"我在读一段说明"。
-        note = ""
+        # 这里唯一留的一句是**判断的依据**(2026-08-21 用户定):任务文本放在三个
+        # 按钮正上方 —— 没有它,"完成了吗"无从判起;采纳改标后这句跟着换新标注。
+        note = task_question_md(m, it["id"], load_label_decisions(m).get(it["id"]))
         v = load_task_verdicts(m).get(it["id"], {})
         trace = decision_trace_md(m, "verdict", it["id"])
         t = it.get("task")
@@ -1288,6 +1275,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 for c in VERDICT_CHOICES]
         return (gr.update(visible=True), note, info, readings, *btns)
 
+    def _mg_head(m, it):
+        """卡头两行:episode 与要答的问题;**任务标注常驻第二行**(2026-08-21 用户定:
+        只判成败的卡此前看不到任务是什么,等于对着视频猜题)。"""
+        # "本条要答:① + ②" 已删(2026-08-21 用户点名多余:两个问题块各自就在下面);
+        # 任务标注用醒目块,episode 号只留一行小字
+        eid = it["id"]
+        return (f"**{eid}**\n\n"
+                + task_reference_html(m, eid, load_label_decisions(m).get(eid)))
+
     def _mg_render(m, filt, idx):
         """渲染合并队列第 idx 张卡(越界回绕)。装配顺序 = _mg_outs。"""
         q = merged_queue_view(m or {}, merge_filter_mode(filt))
@@ -1302,10 +1298,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         it = q[idx]
         eid = it["id"]
         dec = load_label_decisions(m).get(eid, {})
-        tags = ([] if it["audit"] is None else ["① 标注问题"]) \
-            + ([] if it["task"] is None else ["② 成败问题"])
-        tag_txt = " + ".join(tags)
-        info = f"**{eid}** · 本条要答:{tag_txt}"
+        info = _mg_head(m, it)
         if it["audit"] is not None:
             au_vis = gr.update(visible=True)
             au_info = _mg_au_info(m, it)
@@ -1332,6 +1325,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         trace = decision_trace_md(m, "appeal", eid)
         info = (f"**{eid}** · 系统判决:拒绝"
                 + (f" · 已复议:**{d['appeal']}**" if d.get("appeal") else "")
+                + f"\n\n{task_reference_html(m, eid)}"
                 + f"\n\n**拒绝原因**:{appeal_reason_text(m, eid) or '未注明'}"
                 + (f"\n\n{trace}" if trace else ""))
         readings = f"关键读数:{readings_text(a.get('readings') or {})}"
@@ -1758,7 +1752,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                                    elem_id="tk-refresh")
                             # 停止只在有任务时可点(issue #56,2026-08-21):任务已经
                             # 落终态还亮着一个红按钮,点了"没反应"是必然的
-                            tk_stop = gr.Button("停止", variant="stop", scale=0,
+                            # 与「刷新」同款(2026-08-21 用户点名:两个按钮一个带边框
+                            # 一个不带,不统一);可点/不可点由状态驱动,不靠颜色喊
+                            tk_stop = gr.Button("停止", variant="secondary", scale=0,
                                                 size="sm", elem_id="tk-stop",
                                                 interactive=False)
                     with gr.Tab("历史"):
@@ -2430,7 +2426,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     #    droid-200-new 实测 7 条同时在两个队列里 —— 分区制让用户
                     #    在两张卡片里各找一次、各看一遍视频,这次改掉。
                     with gr.Tab("待你裁决"):
-                        gr.HTML(_ADJ_GUIDE_HTML)
+                        # 「怎么用这一页」流程条已删(2026-08-21 用户点名:UI 要简洁)
                         mg_filter = gr.Radio([], label="筛选(重叠条目在两个单项档里都出现)")
                         mg_hint = gr.Markdown()
                         # 两个队列**并列成一个区块**(2026-08-19 用户拍板,明确
@@ -2443,8 +2439,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 并列 + 区块头 + 下面执行区换配色 = 一眼能分出"这里是
                         # 记决定"和"那里是落地执行"。
                         gr.HTML(_adj_section_html(
-                            "", "待裁决队列",
-                            "两类问题并列;点任意一行 → 下方卡片跳到该条",
+                            "", "待裁决队列", "",     # 副标题已删(2026-08-21 用户点名多余)
                             "#86909C", "#1D2129"))
                         with gr.Row(elem_id="adj-queues"):
                             with gr.Column(scale=1, min_width=320):
@@ -2470,7 +2465,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         #    UI 只记录裁决(human-decisions/ 三张 CSV);
                         #    执行 = 本页底部的「执行裁决」(确认框是自产自证的断路器)。
                         # 默认展开(2026-08-05 用户定:折叠着没人知道能点开)
-                        with gr.Accordion("逐条裁决(一条 episode 一张卡;记草稿,可随时改)",
+                        with gr.Accordion("逐条裁决",
                                           open=True):
                             mg_idx = gr.State(0)
                             with gr.Row():
@@ -3061,11 +3056,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 跟着 ① 的新裁决即时联动(采纳→展开可选;弃用→矛盾拦截)。"""
                 it = _mg_item(m, filt, idx)
                 if it is None:
-                    return ("⚠️ 无条目可裁决", *[gr.update()] * 14)
+                    return ("⚠️ 无条目可裁决", *[gr.update()] * 15)
                 if readonly_block_msg(m):
-                    return (readonly_block_msg(m), *[gr.update()] * 14)
+                    return (readonly_block_msg(m), *[gr.update()] * 15)
                 if it["audit"] is None:
-                    return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 14)
+                    return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 15)
                 msg = record_label_decision(m["path"], it["id"], decision,
                                             newlab or "", note or "")
                 # 镜像交付(2026-08-20 阶段4):裁决 CSV 即时写回源桶 —— 留在
@@ -3082,15 +3077,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         .get("decision", "")
                 tv_sec = _mg_tv_section(m, it, dec_now)
                 # 顺带刷新进度提示(裁完最后一条,催办语就该消失)
+                # 卡头跟着刷(2026-08-21):采纳改标后第二行立刻换成新标注
                 return (msg, gr.update(value=audit_rows(m)), _mg_au_info(m, it),
                         *btns, *tv_sec,
                         readonly_banner_md(m) + (merged_hint_md(m) or ""),
-                        audit_note_md(m))
+                        audit_note_md(m), _mg_head(m, it))
 
             _dec_outs = [au_status, au_table, au_info, au_adopt, au_keep, au_hold,
                          mg_tv_block, tv_mode_note, tv_info, tv_readings,
                          tv_pass, tv_fail, tv_hold,
-                         mg_hint, sk_audit_note]
+                         mg_hint, sk_audit_note, mg_info]
             au_adopt.click(lambda m, f, i, nl, nt: _mg_au_decide(m, f, i, nl, nt, "采纳建议改标"),
                            [state, mg_filter, mg_idx, au_newlab, au_note], _dec_outs)
             au_keep.click(lambda m, f, i, nl, nt: _mg_au_decide(m, f, i, nl, nt, "维持原标注"),
