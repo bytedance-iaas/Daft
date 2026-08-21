@@ -948,7 +948,22 @@ def borrowed_output_url(dataset_url: str, deliv_root: str) -> str:
         bucket, _prefix = _ts.parse_tos_url(s)
     except ValueError:
         return ""
+    if _ts.is_anonymous_bucket(bucket):
+        return ""          # 公共(匿名只读)桶:借不得,留空让用户填自己的
     return f"tos://{bucket}/deliveries"
+
+
+#: 公共数据集来源下交付目录留空时的那句话
+PUBLIC_READONLY_NOTE = "公共数据集只读,交付目录请填你有写权限的 tos://桶名/目录"
+
+
+def public_output_default(deliv_root: str) -> tuple[str, str]:
+    """数据来源切到「公共数据集」时交付目录该是什么 → (值, 说明)。
+    有自己桶的实例照用自己的;没桶的实例留空 + 说明(公共桶借不得)。"""
+    home = home_output_url(deliv_root)
+    if home.startswith("tos://"):
+        return home, ""
+    return "", PUBLIC_READONLY_NOTE
 
 
 def writable_verdict(url: str, region: str | None = None, *,
@@ -993,8 +1008,12 @@ def tos_list_datasets(root_url: str, region: str | None = None, *,
     一句话(不许让 Gradio 抛红框)。store 注入供单测。
     """
     from .. import tos_store as _ts
+    from ..ingest import public_catalog
+    if public_catalog.is_public_root(root_url):
+        # 公共镜像桶:几百个 HF 数据集里只有个位数是 LeRobot,按清单过滤后的才算
+        return public_catalog.names(store=store)
     bucket, prefix = _ts.parse_tos_url(root_url)
-    st = store or _ts.make_store(region)
+    st = store or _ts.make_store_for(bucket, region)
     return sorted(set(st.iter_common_prefixes(bucket, prefix)))
 
 
@@ -1077,8 +1096,8 @@ def push_decisions(run_path: str, *, store=None) -> str:
     if not os.path.isdir(hd):
         return ""
     try:
-        st = store or _ts.make_store(origin.get("region") or None)
         bucket, deliv_prefix = _ts.parse_tos_url(origin["delivery_url"])
+        st = store or _ts.make_store_for(bucket, origin.get("region") or None)
         pushed = 0
         for fn in sorted(os.listdir(hd)):
             fp = os.path.join(hd, fn)

@@ -62,6 +62,34 @@ _BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 #: 端点主机名里的地区标签:tos-s3-<region> 或 tos-<region>。
 _HOST_REGION_RE = re.compile(r"^tos(?:-s3)?-([a-z0-9-]+)$")
 
+#: 匿名可读的桶(2026-08-21 公共数据集):注册进来的桶一律用**不签名**的客户端。
+#: 真机事实(生产 pod 实测):公共镜像桶对匿名请求开放读,而用本实例密钥**签名**
+#: 的请求反而 AccessDenied —— 跨账号的签名请求还要过密钥所属账号的 IAM,匿名
+#: 只看桶策略。所以"有密钥"不等于"能读公共桶",得按桶挑客户端。
+#: 值 = 桶所在地区(None = 跟部署/调用方给的地区走)。
+_ANON_BUCKETS: dict = {}
+
+
+def register_anonymous_bucket(bucket: str, region: str | None = None) -> None:
+    """登记一个匿名可读的桶(站点配置 public_datasets 用)。桶名不合法直接抛。"""
+    b = str(bucket or "").strip()
+    if not _BUCKET_RE.match(b):
+        raise TosUrlError(f"桶名不合法:{b!r}(3-63 位小写字母/数字/中划线)")
+    _ANON_BUCKETS[b] = str(region or "").strip() or None
+
+
+def is_anonymous_bucket(bucket: str) -> bool:
+    return str(bucket or "").strip() in _ANON_BUCKETS
+
+
+def anonymous_region(bucket: str) -> str | None:
+    """登记时给的地区(没给返回 None)。"""
+    return _ANON_BUCKETS.get(str(bucket or "").strip())
+
+
+def clear_anonymous_buckets() -> None:
+    _ANON_BUCKETS.clear()
+
 
 class TosUrlError(ValueError):
     """tos:// URL 写法不合法(桶名/前缀问题)。"""
@@ -185,9 +213,12 @@ class TosStore:
     """薄封装:分页 list / 下载 / 上传。方法名与用途一一对应,不藏语义。"""
 
     def __init__(self, endpoint: str, region: str, ak: str = "", sk: str = "",
-                 security_token: str | None = None, client=None):
+                 security_token: str | None = None, client=None,
+                 anonymous: bool = False):
         self.endpoint = endpoint
         self.region = region
+        #: 匿名客户端(公共桶):不签名;presign 退化成裸的公网 URL
+        self.anonymous = bool(anonymous)
         if client is None:
             import tos  # 懒导入:离线单测注入假客户端,不碰这里
             client = tos.TosClientV2(ak, sk, endpoint, region,
@@ -227,10 +258,28 @@ class TosStore:
         return out.read()
 
     def presign(self, bucket: str, key: str, expires: int = 3600) -> str:
-        """GET 预签名 URL(本地 HMAC,不出网):PyAV 直接按 Range 读视频。"""
+        """GET 预签名 URL(本地 HMAC,不出网):PyAV 直接按 Range 读视频。
+        匿名客户端没有密钥可签,给裸的公网 URL(公共桶本来就匿名可读)。"""
+        if self.anonymous:
+            return self.public_url(bucket, key)
         import tos
         return self._c.pre_signed_url(tos.HttpMethodType.Http_Method_Get, bucket,
                                       key, expires=expires).signed_url
+
+    def public_url(self, bucket: str, key: str) -> str:
+        """`https://<桶>.<端点主机>/<key>`(虚拟主机风格,key 做 URL 编码)。"""
+        from urllib.parse import quote
+        ep = str(self.endpoint or "")
+        m = re.match(r"^([a-z]+)://", ep)
+        scheme = m.group(1) if m else "https"
+        host = re.sub(r"^[a-z]+://", "", ep).split("/", 1)[0]
+        return f"{scheme}://{bucket}.{host}/{quote(str(key).lstrip('/'))}"
+
+    def head(self, bucket: str, key: str) -> tuple[int, str]:
+        """单对象的 (大小, etag);不存在让 SDK 的异常原样出来。"""
+        out = self._c.head_object(bucket, key)
+        return (int(getattr(out, "content_length", 0) or 0),
+                str(getattr(out, "etag", "") or "").strip('"'))
 
     def iter_common_prefixes(self, bucket: str, prefix: str):
         """前缀下**第一层**「子目录」名(delimiter="/" 的 common prefix)。
@@ -294,17 +343,21 @@ class TosStore:
         self._c.delete_object(bucket, key)
 
 
-def make_store(region: str | None = None, client=None) -> TosStore:
+def make_store(region: str | None = None, client=None, *,
+               anonymous: bool = False) -> TosStore:
     """按「用户地区 + 部署凭证/端点」组一个客户端。
+
+    anonymous=True(公共桶,见 register_anonymous_bucket):不要凭证、不签名;
+    地区仍按下面的规则推(调用方一般传登记时的地区)。
 
     凭证只认环境变量(TOS_ACCESS_KEY / TOS_SECRET_KEY,可选 TOS_SESSION_TOKEN),
     与 Daft TosConfig.from_env 同名 —— helm 把 secrets.tosAccessKey/tosSecretKey
     以这组名字注入即可,两边(本层 / daft 引擎)共用一份配置。
     缺凭证是**部署问题**,报错点名环境变量与 helm 值,不让用户猜。
     """
-    ak = os.environ.get("TOS_ACCESS_KEY", "").strip()
-    sk = os.environ.get("TOS_SECRET_KEY", "").strip()
-    if client is None and (not ak or not sk):
+    ak = "" if anonymous else os.environ.get("TOS_ACCESS_KEY", "").strip()
+    sk = "" if anonymous else os.environ.get("TOS_SECRET_KEY", "").strip()
+    if client is None and not anonymous and (not ak or not sk):
         raise TosConfigError(
             "缺少 TOS 凭证:环境变量 TOS_ACCESS_KEY / TOS_SECRET_KEY 未注入。"
             "云上部署由 helm 的 secrets.tosAccessKey / tosSecretKey 提供;"
@@ -315,8 +368,19 @@ def make_store(region: str | None = None, client=None) -> TosStore:
     want = str(region or "").strip() or dep_region
     endpoint = endpoint_for_region(want, dep_endpoint)
     return TosStore(endpoint, want, ak, sk,
-                    security_token=os.environ.get("TOS_SESSION_TOKEN") or None,
-                    client=client)
+                    security_token=(None if anonymous
+                                    else os.environ.get("TOS_SESSION_TOKEN") or None),
+                    client=client, anonymous=anonymous)
+
+
+def make_store_for(bucket: str, region: str | None = None, client=None) -> TosStore:
+    """按桶挑客户端:登记为匿名的桶 → 不签名(地区优先用登记值);其余 → 部署凭证。
+    所有"已知桶名"的调用点都该走这里,别直接 make_store —— 公共桶用签名客户端
+    会被 AccessDenied,报错还长得像"密钥没权限",极其误导。"""
+    if is_anonymous_bucket(bucket):
+        return make_store(anonymous_region(bucket) or region, client,
+                          anonymous=True)
+    return make_store(region, client)
 
 
 # ── stage in / out ───────────────────────────────────────────────────────
@@ -377,7 +441,7 @@ def stage_in(url: str, region: str | None = None, *, store: TosStore | None = No
     只剩 RRD 这类必须是本地文件的输入还整包暂存,体积口径照旧说清,不静默把 pod 写死。
     """
     bucket, prefix = parse_tos_url(url)
-    store = store or make_store(region)
+    store = store or make_store_for(bucket, region)
     sizes = _list_prefix(store, bucket, prefix)
     if not sizes:
         raise TosStageError(f"{url} 下没有对象:桶/前缀写错,或该地区"
@@ -444,7 +508,7 @@ def stage_out(local_root: str, url: str, region: str | None = None, *,
     下次按「远端大小 == 本地大小」跳过(marker 永不跳过,理由见 is_marker)。
     """
     bucket, prefix = parse_tos_url(url)
-    store = store or make_store(region)
+    store = store or make_store_for(bucket, region)
     root = os.path.abspath(local_root)
     rels = []
     for cur, _dirs, names in os.walk(root):
@@ -519,7 +583,7 @@ def probe_writable(url: str, region: str | None = None, *,
     只读桶**不是错误**:读报告合法,只是不能当交付目录 —— 分类交给调用方措辞。
     """
     bucket, prefix = parse_tos_url(url)
-    st = store or make_store(region)
+    st = store or make_store_for(bucket, region)
     p = prefix.strip("/")
     key = (p + "/" if p else "") + PROBE_NAME
     try:
@@ -560,7 +624,7 @@ def resolve_run_url(url: str, region: str | None = None, *,
     """`tos://桶/交付` 或 `tos://桶/交付/批次` → 批次 URL。只给交付时按 latest 记的那次
     (与本地 delivery.resolve_run 同一语义:写数据的命令不许让人猜动了哪一份)。"""
     bucket, prefix = parse_tos_url(url)
-    st = store or make_store(region)
+    st = store or make_store_for(bucket, region)
     p = prefix.strip("/")
     names = set()
     for key, _s, _e in st.iter_object_meta(bucket, p + "/" if p else ""):
@@ -589,7 +653,7 @@ def mirror_run(run_url: str, region: str | None = None, *,
     import json as _json
     bucket, run_prefix = parse_tos_url(run_url)
     run_prefix = run_prefix.strip("/")
-    st = store or make_store(region)
+    st = store or make_store_for(bucket, region)
     deliv_prefix = "/".join(run_prefix.split("/")[:-1])
     local_deliv = os.path.join(mirror_cache_root(), bucket, *deliv_prefix.split("/"))
     run_name = run_prefix.split("/")[-1]
@@ -647,7 +711,7 @@ def sync_back(local_run: str, run_url: str, region: str | None = None, *,
     """
     bucket, run_prefix = parse_tos_url(run_url)
     run_prefix = run_prefix.strip("/")
-    st = store or make_store(region)
+    st = store or make_store_for(bucket, region)
     deliv_prefix = "/".join(run_prefix.split("/")[:-1])
     local_deliv = os.path.dirname(os.path.abspath(local_run).rstrip("/"))
     targets = ((os.path.abspath(local_run), run_prefix, True),

@@ -477,6 +477,8 @@ def run_pipeline(
     from ..ingest.rrd_reader import apply_config as _rrd_apply_config
     from ..ingest.rrd_reader import is_rrd_dataset
     _rrd_apply_config(cfg)           # ingest.rrd_enabled(默认关)
+    from ..ingest.public_catalog import apply_config as _public_apply_config
+    _public_apply_config(cfg)        # public_datasets:公共桶登记成匿名读
     input_format = "rrd" if is_rrd_dataset(input_dir) else "lerobot"
     if input_format == "rrd":
         from functools import partial

@@ -181,6 +181,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
     be.add_argument("--timeout", type=float, default=5.0, help="单端点探活超时秒数")
 
+    pb = sub.add_parser("public", help="列出可直接质检的公共数据集(站点配置 public_datasets 指的镜像桶)")
+    pb.add_argument("--config", default=None,
+                    help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
+    pb.add_argument("--json", action="store_true", help="按 JSON 输出(给脚本用)")
+    pb.add_argument("--refresh", action="store_true", help="忽略缓存,重读清单")
+
     ui = sub.add_parser("ui", help="质检台 Web UI(Gradio):只读渲染交付目录")
     ui.add_argument("--delivery", required=True,
                     help="交付目录(或含多份交付的父目录,如 /mnt/tos/deliveries)")
@@ -238,6 +244,44 @@ def _cmd_backends(config_path: str | None, timeout: float) -> int:
             reason = probe_failure_reason(e, p_.get("api_key_env"))
             state = "❌密钥问题" if ("密钥" in reason or "鉴权" in reason) else "❌不可达"
             print(f"{name:<24}{state:<10}{reason}")
+    return 0
+
+
+def _cmd_public(config_path: str | None, *, as_json: bool = False,
+                refresh: bool = False) -> int:
+    """`curation public`:公共数据集清单。每行一个数据集:名字、全名、版本、集数、
+    直接能喂给 `run --input` 的 tos:// 地址与地区。"""
+    from .ingest import public_catalog
+    from .pipeline.config import load_config
+    public_catalog.apply_config(load_config(config_path))
+    if not public_catalog.configured():
+        print("本实例没有配置公共数据集(站点配置 public_datasets.bucket 为空)",
+              file=sys.stderr)
+        return 2
+    try:
+        entries = public_catalog.catalog(force=refresh)
+    except public_catalog.PublicCatalogError as e:
+        print(f"[curation] {e}", file=sys.stderr)
+        return 1
+    if as_json:
+        print(json.dumps({"root": public_catalog.root_url(),
+                          "region": public_catalog.region(),
+                          "count": len(entries), "datasets": entries},
+                         ensure_ascii=False, indent=1))
+        return 0
+    print(public_catalog.summary_line(len(entries)))
+    if not entries:
+        print("(镜像里目前没有 LeRobot 格式的数据集)")
+        return 0
+    w = max(len(e["name"]) for e in entries)
+    for e in entries:
+        eps = f"{e['episodes']} 条" if e.get("episodes") is not None else "-"
+        warn = f"  ⚠️ {e['warning']}" if e.get("warning") else ""
+        print(f"  {e['name']:<{w}}  {e.get('version') or '-':<6} {eps:>8}  {e['id']}{warn}")
+    rg = public_catalog.region()
+    print(f"跑法:curation run --input {public_catalog.root_url()}/<名字>"
+          + (f" --input-region {rg}" if rg else "")
+          + " --output tos://你的桶/deliveries/<交付名>")
     return 0
 
 
@@ -496,6 +540,8 @@ def main(argv: list[str] | None = None) -> int:
             cfg = apply_vlm_backend(cfg, args.vlm_backend)
         from .ingest.rrd_reader import apply_config as _rrd_apply_config
         _rrd_apply_config(cfg)
+        from .ingest.public_catalog import apply_config as _public_apply_config
+        _public_apply_config(cfg)
         summary = run_rejudge(args.delivery, args.input, cfg)
         print(json.dumps(summary, ensure_ascii=False, indent=1)
               if isinstance(summary, dict) else summary)
@@ -519,6 +565,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.vlm_backend:
             from .pipeline.config import apply_vlm_backend
             cfg = apply_vlm_backend(cfg, args.vlm_backend)
+        from .ingest.public_catalog import apply_config as _public_apply_config
+        _public_apply_config(cfg)
         summary = run_reprofile(args.delivery, cfg=cfg)
         if summary.get("note"):
             print(f"[reprofile] {summary['note']}")
@@ -533,6 +581,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "backends":
         return _cmd_backends(args.config, args.timeout)
+    if args.command == "public":
+        return _cmd_public(args.config, as_json=args.json, refresh=args.refresh)
     if args.command == "ui":
         try:
             import gradio  # noqa: F401
@@ -575,6 +625,11 @@ def main(argv: list[str] | None = None) -> int:
         tos_out = str(args.output or "").startswith("tos://")
         if tos_in or tos_out:
             from . import tos_store
+            # 公共(匿名读)桶要在第一次碰桶之前登记好,否则签名请求被拒还长得像
+            # "密钥没权限"(2026-08-21);只读配置里这一段,不动别的
+            from .ingest.public_catalog import apply_config as _public_apply_config
+            from .pipeline.config import load_config as _load_config
+            _public_apply_config(_load_config(args.config))
             if args.batch:
                 # MVP 限制(比 PR#65 收得更紧:输入或输出任一 tos:// 都拒):
                 # batch 分支里 args.output 被拼进 <output>/<数据集名> 与两份

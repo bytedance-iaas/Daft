@@ -443,14 +443,14 @@ def test_deeplink_switches_source_dropdown_to_matching_bucket(delivery, tmp_path
            and [getattr(c, "label", None)
                 for c in (getattr(f, "outputs", []) or [])][:3]
            == ["数据集目录", "数据集", "地区"]
-           and len(getattr(f, "outputs", []) or []) == 5]
-    assert len(fns) == 1, "应恰有一个输出为(路径框, 数据集, 地区, 两列说明)的预填回调"
+           and len(getattr(f, "outputs", []) or []) == 6]   # 2026-08-21 起第 6 个是「数据来源」单选
+    assert len(fns) == 1, "应恰有一个输出为(路径框, 数据集, 地区, 两列说明, 数据来源)的预填回调"
 
     class Req:                                   # 新契约:完整地址 + 地区
         query_params = {"dataset": "tos://bucketa/prefix/only_b",
                         "region": "cn-beijing"}
 
-    tin_upd, ds_upd, rg_upd, src_note, _ds_note = fns[0].fn(Req())
+    tin_upd, ds_upd, rg_upd, src_note, _ds_note, _src = fns[0].fn(Req())
     assert tin_upd.get("value") == "tos://bucketa/prefix"     # 路径框切过去了
     assert ds_upd.get("value") == ["only_b"]
     assert rg_upd.get("value") == "cn-beijing"
@@ -461,7 +461,7 @@ def test_deeplink_switches_source_dropdown_to_matching_bucket(delivery, tmp_path
     class Req2:                                  # 陌生桶:切过去 + 直连说明
         query_params = {"dataset": "tos://strange/prefix/demo_v2"}
     warned.clear()
-    tin2, ds2, _rg2, note2, ds_note2 = fns[0].fn(Req2())
+    tin2, ds2, _rg2, note2, ds_note2, _src = fns[0].fn(Req2())
     assert tin2.get("value") == "tos://strange/prefix"
     assert str(note2).startswith("TOS 直连:")
     assert ds2.get("value") == [] and ds2.get("choices") == []
@@ -1056,14 +1056,14 @@ def test_info_line_endpoint_always_instance_config_not_link(delivery, tmp_path,
            and [getattr(c, "label", None)
                 for c in (getattr(f, "outputs", []) or [])][:3]
            == ["数据集目录", "数据集", "地区"]
-           and len(getattr(f, "outputs", []) or []) == 5]
+           and len(getattr(f, "outputs", []) or []) == 6]   # 2026-08-21 起第 6 个是「数据来源」单选
     assert len(fns) == 1
 
     class Req:                       # 深链带了另一地域的端点(旧契约键,仍兼容)
         query_params = {"dataset": "tos://bucketa/prefix/only_b",
                         "endpoint": "tos-ap-southeast-1.volces.com"}
 
-    src_upd, ds_upd, _rg, src_note, _ = fns[0].fn(Req())
+    src_upd, ds_upd, _rg, src_note, _, _src = fns[0].fn(Req())
     assert src_upd.get("value") == "tos://bucketa/prefix"
     assert ds_upd.get("value") == ["only_b"]
     # 说明行 = 本实例配置的端点 + 挂载路径;链接的端点一个字不进说明行

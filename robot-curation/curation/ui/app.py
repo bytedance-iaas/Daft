@@ -61,6 +61,8 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        task_review_rows, timeline_html,
                        video_detail_view)
 from . import runner            # 任务执行层(任务台跑批 + 报告页「执行裁决」共用)
+# 公共数据集目录(2026-08-21):只读一份清单、登记匿名桶,不 import 管道
+from ..ingest import public_catalog
 
 log = logging.getLogger("curation.ui")
 
@@ -106,6 +108,9 @@ VLM_CHECKS = ("task_success", "skill_profile")
 
 #: 「质检范围」三挡的界面说法(改名只改这里,判断都比这三个常量)。
 FULL_SCAN = "完整质检"
+#: 「数据来源」单选(2026-08-21):公共数据集只在站点配置了 public_datasets 时出现
+SRC_TOS = "TOS 地址"
+SRC_PUBLIC = "公共数据集"
 QUICK_SCAN = "快速质检"
 CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自己定义模块里查什么"
                           # (那是以后的事),其实是"从现成模块里挑几个跑"
@@ -1504,6 +1509,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             _bkt_choices = runner.bucket_dropdown_choices(_buckets)
             _data_root = _buckets[0]["datasets_path"]
             _deliv_root = runner.deliveries_root_of(delivery)
+            # 公共数据集(2026-08-21):站点配置 public_datasets 有桶 → 「数据来源」
+            # 多一项,桶同时登记成匿名读(读端/探针/列目录自动换不签名的客户端)。
+            # 配置层按出厂→站点顺序套用,后者赢;读坏了一律当没配,只在日志里点名。
+            _public_cfg = None
+            for _layer in runner._config_layers(config_path):
+                if isinstance(_layer, dict) and public_catalog.CONFIG_KEY in _layer:
+                    try:
+                        _public_cfg = public_catalog.apply_config(_layer)
+                    except Exception as e:  # noqa: BLE001 坏配置不该让界面打不开
+                        print(f"[curation-ui] public_datasets 配置不可用,忽略:{e}",
+                              file=sys.stderr)
+                        _public_cfg = None
             # 存储形态自检(2026-08-20):没挂载的实例在启动日志里说清默认走直连,
             # 别让人从"交付怎么没了"反推
             _shape = runner.deployment_shape_note(_deliv_root, _data_root)
@@ -1621,6 +1638,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 往下推,三列错位),说明全在下面独立说明行。
                 _rg0 = runner.default_tos_region()
                 _rg_choices = runner.tos_region_choices()
+                # 数据来源(2026-08-21):默认「TOS 地址」= 下面两行照旧;切「公共
+                # 数据集」→ 路径框/地区填上镜像桶并置灰(桶名永远可见,只是不用
+                # 填),数据集下拉只列镜像里 LeRobot 格式的那几个。没配置就不出现。
+                rn_src = gr.Radio([SRC_TOS, SRC_PUBLIC], value=SRC_TOS,
+                                  label="数据来源", elem_id="rn-src",
+                                  visible=bool(_public_cfg))
                 with gr.Row():
                     rn_tin = gr.Textbox(label="数据集目录", scale=4,
                                         value=runner.bucket_url(_buckets[0]),
@@ -1881,6 +1904,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 gr.update(choices=runner.list_datasets(root),
                                           value=[]),
                                 runner.dataset_root_note(root))
+                    if public_catalog.is_public_root(spec["url"]):
+                        # 公共镜像桶:下拉显示「全名 · 版本 · 集数」,值仍是目录名
+                        try:
+                            ch = public_catalog.choices()
+                        except Exception as e:  # noqa: BLE001
+                            return (f"⚠️ {type(e).__name__}: {str(e)[:160]}",
+                                    gr.update(choices=[], value=[]), "")
+                        return (public_catalog.summary_line(len(ch)),
+                                gr.update(choices=ch, value=[]),
+                                "" if ch else "镜像里目前没有 LeRobot 格式的数据集")
                     try:
                         names = runner.tos_list_datasets(
                             spec["url"], str(region or "").strip() or None)
@@ -1975,6 +2008,37 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 rn_tout_rg.input(_out_changed, [rn_tout, rn_tout_rg], _oc_out)
                 out_ask_ok.click(lambda: ("", gr.update(visible=False), ""),
                                  None, [rn_tout, out_ask, rn_tout_note])
+
+                def _src_changed(src, tout, auto):
+                    """「数据来源」切换 → 路径框/地区/数据集下拉/两行说明/交付目录
+                    一起换。公共数据集:路径框与地区填镜像桶并置灰,下拉只列清单
+                    里 LeRobot 格式的;交付目录**绝不借公共桶**(只读)—— 有自己桶
+                    的实例照用自己的,没桶的留空 + 一句原因。切回 TOS 地址:恢复
+                    本实例默认桶,与刚打开页面时一致。用户手改过的交付框不碰。"""
+                    keep_out = (not auto) and bool(str(tout or "").strip())
+                    if src == SRC_PUBLIC and public_catalog.configured():
+                        root, rg = public_catalog.root_url(), public_catalog.region()
+                        note, ds, ds_note = _root_changed(root, rg)
+                        out, onote = runner.public_output_default(_deliv_root)
+                        return (gr.update(value=root, interactive=False),
+                                gr.update(value=rg or _rg0, interactive=False),
+                                ds, note, ds_note,
+                                gr.update() if keep_out else gr.update(value=out),
+                                gr.update() if keep_out else onote,
+                                auto if keep_out else True)
+                    home_url = runner.bucket_url(_buckets[0])
+                    note, ds, ds_note = _root_changed(home_url, _rg0)
+                    return (gr.update(value=home_url, interactive=True),
+                            gr.update(value=_rg0, interactive=True),
+                            ds, note, ds_note,
+                            gr.update() if keep_out else gr.update(value=_out_default),
+                            gr.update() if keep_out else "",
+                            auto if keep_out else True)
+
+                _src_outs = [rn_tin, rn_tin_rg, rn_ds, rn_src_note, rn_ds_note,
+                             rn_tout, rn_tout_note, rn_tout_auto]
+                rn_src.input(_src_changed, [rn_src, rn_tout, rn_tout_auto],
+                             _src_outs).then(_borrow_output, _bo_in, _bo_out)
                 # 报告页「执行裁决」的源数据集兜底下拉(ex_src_dd)仍用桶下拉
                 # 那套(_src_datasets),接线在那侧组件建出来之后
 
@@ -2265,7 +2329,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 def _prefill_from_query(request):
                     qp = getattr(request, "query_params", None) or {}
                     wanted, present = runner.deeplink_values(qp)
-                    hold = (gr.update(),) * 5
+                    hold = (gr.update(),) * 6
+                    # ?source=public[&dataset=名字]:公共数据集深链(2026-08-21)。
+                    # 裸名字补成镜像桶里的完整地址,之后与 tos:// 深链同一条路
+                    _src_q = str((qp.get("source") if hasattr(qp, "get") else "")
+                                 or "").strip().lower()
+                    if _src_q == "public" and public_catalog.configured():
+                        present = True
+                        wanted = [w if str(w).startswith("tos://")
+                                  else public_catalog.dataset_url(w)
+                                  for w in wanted if str(w).strip()]
+                        if not wanted:
+                            wanted = [public_catalog.root_url() + "/"]
                     if not present:
                         return hold
                     # 新契约(rerun PR#29,2026-08-19 起线上在发):
@@ -2286,8 +2361,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         except ValueError as e:
                             gr.Warning(f"链接里的数据集地址解析不了:{e}")
                             return hold
+                        _root_only = (_src_q == "public" and urls[0].rstrip("/")
+                                      == public_catalog.root_url())
+                        if _root_only:
+                            root, _n0 = public_catalog.root_url(), ""   # 只切来源不预选
                         names = []
-                        for u in urls:
+                        for u in ([] if _root_only else urls):
                             try:
                                 r2, n2 = runner.split_dataset_url(u)
                             except ValueError:
@@ -2303,7 +2382,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         except ValueError as e:
                             gr.Warning(f"链接里的数据集地址不可用:{e}")
                             return hold
-                        if spec["kind"] == "mount":
+                        is_pub = public_catalog.is_public_root(root)
+                        if is_pub:
+                            # 公共镜像桶:按清单过滤、带全名/版本/集数的显示串
+                            try:
+                                choices = public_catalog.choices()
+                                ds_note = ("" if choices else
+                                           "镜像里目前没有 LeRobot 格式的数据集")
+                            except Exception as e:  # noqa: BLE001
+                                choices = []
+                                ds_note = f"⚠️ {type(e).__name__}: {str(e)[:120]}"
+                            src_note = public_catalog.summary_line(len(choices))
+                            region = public_catalog.region() or region
+                        elif spec["kind"] == "mount":
                             choices = runner.list_datasets(spec["path"])
                             src_note = runner.bucket_info_line(spec["bucket"])
                             ds_note = runner.dataset_root_note(spec["path"])
@@ -2327,19 +2418,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             src_note = f"TOS 直连:{root}"
                         # 预选与选项**同一次回调里算**:value 不在 choices 里
                         # 会被 Gradio 静默丢弃,分两跳必踩
-                        sel = [n for n in names if n in choices]
+                        _vals = [c[1] if isinstance(c, (tuple, list)) else c
+                                 for c in choices]
+                        sel = [n for n in names if n in _vals]
                         for n in names:
-                            if n not in choices:
+                            if n not in _vals:
                                 gr.Warning(f"链接指的数据集「{n}」在该前缀下"
                                            "没找到 —— 前缀或名字可能变了")
                         if sel:
                             gr.Info("已按链接预选:" + ", ".join(sel)
                                     + " —— 点「开始质检」即可")
-                        return (gr.update(value=root),
+                        return (gr.update(value=root, interactive=not is_pub),
                                 gr.update(choices=choices, value=sel),
-                                (gr.update(value=region) if region
-                                 else gr.update()),
-                                src_note, ds_note)
+                                (gr.update(value=region, interactive=not is_pub)
+                                 if region else gr.update(interactive=not is_pub)),
+                                src_note, ds_note,
+                                gr.update(value=SRC_PUBLIC if is_pub else SRC_TOS))
                     # 旧契约(裸名字):对表预选,行为与 2026-08-17 版一致 ——
                     # **桶不认识绝不回落到默认桶里找同名的**
                     plan = runner.prefill_plan(bare, _buckets,
@@ -2358,7 +2452,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             gr.update(),
                             runner.bucket_info_line(_b) if _b else gr.update(),
                             runner.dataset_root_note(_b["datasets_path"])
-                            if _b else gr.update())
+                            if _b else gr.update(),
+                            gr.update())
 
                 # gr.Request 靠注解注入;`from __future__ import annotations` 下字符串
                 # 注解会在 gradio 里被 eval,而 `gr` 只在函数内可见 → 直接挂真对象
@@ -2366,7 +2461,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _prefill_from_query.__annotations__ = {"request": gr.Request}
                 _prefill_evt = app.load(
                     _prefill_from_query, None,
-                    [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note])
+                    [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note, rn_src])
                 # 深链带来的数据集桶 → 交付目录也借它(没自己桶的实例)
                 _prefill_evt.then(_borrow_output, _bo_in, _bo_out)
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进

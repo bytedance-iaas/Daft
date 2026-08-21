@@ -68,8 +68,14 @@ def _split(url: str) -> tuple[str, str]:
     return bucket, prefix.strip("/")
 
 
-def _store():
+def _store(bucket: str | None = None):
+    """按桶挑客户端:公共(匿名)桶不签名、地区用登记值;其余用部署凭证 + 调用方地区。"""
     from .. import tos_store
+    if bucket and tos_store.is_anonymous_bucket(bucket):
+        key = ("anon", bucket)
+        if key not in _STORES:
+            _STORES[key] = tos_store.make_store_for(bucket, _REGION["value"])
+        return _STORES[key]
     key = _REGION["value"] or ""
     if key not in _STORES:
         _STORES[key] = tos_store.make_store(_REGION["value"])
@@ -122,7 +128,7 @@ def prefetch(root_url: str, *, store=None, quiet: bool = False) -> int:
     bucket, root = _split(root_url)
     if (bucket, root) in _LISTINGS:
         return len(_LISTINGS[(bucket, root)].files)
-    st = store or _store()
+    st = store or _store(bucket)
     t0 = time.time()
 
     def _list():
@@ -156,7 +162,7 @@ def _listing_for(bucket: str, key: str) -> _Listing | None:
 
 def _probe(bucket: str, key: str) -> tuple[str | None, int, str]:
     """没预取过的路径:一次 list 判断是文件还是目录 → (kind, size, etag)。"""
-    st = _store()
+    st = _store(bucket)
 
     def _look():
         kind, size, etag = None, 0, ""
@@ -217,7 +223,7 @@ def listdir(path: str) -> list[str]:
             if k.startswith(pre) and k != key:
                 names.add(k[len(pre):].split("/", 1)[0])
     else:
-        st = _store()
+        st = _store(bucket)
         names.update(st.iter_common_prefixes(bucket, key))
         pre = key + "/" if key else ""
         for k, _s, _e in st.iter_object_meta(bucket, pre):
@@ -254,7 +260,7 @@ def read_bytes(path: str) -> bytes:
         with open(path, "rb") as f:
             return f.read()
     bucket, key = _split(path)
-    return _retry(f"取对象 {key}", lambda: _store().get_bytes(bucket, key))
+    return _retry(f"取对象 {key}", lambda: _store(bucket).get_bytes(bucket, key))
 
 
 def open_text(path: str, encoding: str = "utf-8"):
@@ -299,7 +305,7 @@ def media_source(path: str) -> str:
     if not is_remote(path):
         return path
     bucket, key = _split(path)
-    return _store().presign(bucket, key, expires=PRESIGN_EXPIRES_S)
+    return _store(bucket).presign(bucket, key, expires=PRESIGN_EXPIRES_S)
 
 
 def copy_to_local(path: str, dst: str) -> None:
@@ -310,5 +316,5 @@ def copy_to_local(path: str, dst: str) -> None:
         return
     bucket, key = _split(path)
     kind, size, _etag = _stat(path)
-    _retry(f"下载 {key}", lambda: _store().download(
+    _retry(f"下载 {key}", lambda: _store(bucket).download(
         bucket, key, dst, size=size if kind == "file" else None))
