@@ -136,7 +136,6 @@ K8s Secret; 公网入口经 APIG 网关 + Basic 认证。隔离靠部署——**
 
 - rerun(`.rrd`)格式的质检本版本默认关闭(`ingest.rrd_enabled: false`)
 - 命令行 `--batch` 暂不接受 `tos://` 地址(界面上的「跑全部」支持直连桶)
-- 直连桶的交付先落在实例本地盘、跑完整体上传, 交付体积受实例本地盘容量限制
 
 ## License
 
