@@ -1311,9 +1311,12 @@ def run_pipeline(
                          if _load_info(input_dir)["codebase_version"].startswith("v3")
                          else export_lerobot_v2)
             # camera_health 旁挂进交付集 meta/(不碰 info.json 标准 schema,不删任何视频)
+            _exp_cfg = cfg.get("export") or {}
             deliver["lerobot_dataset"] = _exporter(
                 input_dir, keep_src_idx, _curated, task_overrides=_ov,
-                camera_health=camera_health)["out_dir"]
+                camera_health=camera_health,
+                video_file_mb=_exp_cfg.get("video_file_mb"),
+                data_file_mb=_exp_cfg.get("data_file_mb"))["out_dir"]
 
     # ── 总墙钟回填 + 交付落盘回验(2026-08-06 用户点名)──
     # TOS 挂载新写文件有约 20-60s 的读可见延迟:进度条走完≠交付可用,用户跑
