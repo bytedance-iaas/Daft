@@ -693,19 +693,29 @@ def main(argv: list[str] | None = None) -> int:
             # finally 清临时视频缓存(P4):run_pipeline 正常收尾时自己会清,这里兜的是
             # **异常退出**那条路 —— RRD 解出的 mp4 躺在容器可写层,批处理连崩几个数据集
             # 就能把 /tmp 撑满。幂等,清两次不出错。
+            # 直连输出(2026-08-21 方案 1):激活发布器,导出的文件封口即传、传完即删;
+            # 收尾 finish() 等传完,失败在这儿就炸(远端还没有任何完整性标志)。
+            from .export import publish as _publish
+            _pub = (_publish.Publisher(outp, args.output, args.output_region)
+                    if tos_out else None)
             try:
-                return run_pipeline(args.config, inp, outp,
-                                    embodiment_id=args.embodiment_id,
-                                    max_episodes=args.max_episodes,
-                                    only_checks=args.only, skip_checks=args.skip,
-                                    report_only=args.report_only, lite=args.lite,
-                                    run_name=run_name,
-                                    set_overrides=args.set_overrides,
-                                    episode_indices=_eps,
-                                    vlm_backend=args.vlm_backend,
-                                    vlm_endpoint=args.vlm_endpoint,
-                                    vlm_model=args.vlm_model,
-                                    vlm_api_key_env=args.vlm_api_key_env)
+                with _publish.activate(_pub):
+                    summary = run_pipeline(args.config, inp, outp,
+                                           embodiment_id=args.embodiment_id,
+                                           max_episodes=args.max_episodes,
+                                           only_checks=args.only, skip_checks=args.skip,
+                                           report_only=args.report_only, lite=args.lite,
+                                           run_name=run_name,
+                                           set_overrides=args.set_overrides,
+                                           episode_indices=_eps,
+                                           vlm_backend=args.vlm_backend,
+                                           vlm_endpoint=args.vlm_endpoint,
+                                           vlm_model=args.vlm_model,
+                                           vlm_api_key_env=args.vlm_api_key_env)
+                    if _pub is not None:
+                        _pub.finish()
+                        print(f"[tos] {_pub.summary()}", flush=True)
+                    return summary
             finally:
                 from .ingest.rrd_reader import cleanup_video_cache
                 cleanup_video_cache(inp)
@@ -772,6 +782,10 @@ def main(argv: list[str] | None = None) -> int:
             if isinstance(e, ConfigError):
                 print(f"[配置错误] {e}", file=sys.stderr)
                 return 2
+            from . import tos_store as _ts
+            if isinstance(e, _ts.TosStageError):
+                print(f"[tos 失败] {e}", file=sys.stderr)
+                return 1
             raise
         print(f"质检统计: {summary['stats']}")
         print(f"本次跑批: {summary['run_dir']}")

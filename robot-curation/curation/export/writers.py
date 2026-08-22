@@ -21,4 +21,6 @@ def write_episodes_parquet(rows: list[dict], out_dir: str) -> str:
     # 的中间态(daft 多文件写目录,写一半被打断就是这种形状)。
     with delivery_dir(out_dir) as staging:
         rows_to_daft(rows).write_parquet(staging)
+    from . import publish
+    publish.dir_done(out_dir)          # 直连交付:写完即传、传完即删(2026-08-21 方案 1)
     return out_dir

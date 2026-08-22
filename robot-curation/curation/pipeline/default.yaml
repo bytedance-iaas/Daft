@@ -310,3 +310,10 @@ public_datasets:
   prefix: dataset                 # 数据集都在这个前缀下
   manifest: dataset_files.json    # 桶根清单的对象名
   label: 字节 HuggingFace 镜像       # 界面「数据集目录」旁二选一里这个来源的叫法
+
+# 交付数据集导出(2026-08-21 方案 1:边出边传)。v3 源的 data / 视频按大小滚动分文件,
+# 文件封口即上传(直连交付)、传完即删 —— pod 本地盘占用与数据集大小无关。
+# 阈值留空 = 取源 info.json 的 data_files_size_in_mb / video_files_size_in_mb(缺省 100 / 200)。
+export:
+  video_file_mb: null
+  data_file_mb: null
