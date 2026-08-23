@@ -154,40 +154,50 @@ def criteria_of(taxonomy: dict) -> tuple[dict, dict]:
     return fam_c, sub_c
 
 
+# 一次一条(2026-08-23):漏网 caption 的指认是互相独立的判断,曾把全部漏网条目列进一条
+# prompt 让 LLM 逐条回抄+指认——同一序列里的邻居会互相带偏(标注判官 40 对一批实测
+# 13/29 对翻转,单对单 9/29),而且要求回抄 caption 原文对号、抄错一字就丢。现在每条
+# caption 一个请求、并发,回答只要 (族, 子技能),不再回抄。
 REPAIR_PROMPT_TMPL = (
     "An existing two-level skill taxonomy (family -> sub-skills):\n{tree}\n\n"
-    "The captions below were left out of it. Assign EACH to exactly one EXISTING "
-    "sub-skill from the taxonomy above (do not invent new names). Return STRICT "
-    'JSON: {{"map": [{{"caption": str, "family": str, "subskill": str}}]}}\n\n'
-    "CAPTIONS:\n")
+    "Assign the caption below to exactly one EXISTING sub-skill from the taxonomy "
+    "above (do not invent new names). Return STRICT JSON: "
+    '{{"family": str, "subskill": str}}\n\n'
+    "CAPTION: {caption}")
 
 
-def repair_unassigned(captions: list[str], taxonomy: dict, llm_ask: LlmAsk) -> dict:
+def repair_unassigned(captions: list[str], taxonomy: dict, llm_ask: LlmAsk, *,
+                      concurrency: int = 16) -> dict:
     """漏抄补齐:members 里被 LLM 漏掉的 caption,二次指认到既有子技能。
 
-    (实测 verbatim 抄写不可靠——bridge 20 条连续两轮漏抄同一条 → 归"未归类"。
-    修复回合只允许指认既有类,乱指(名字不存在)一律拒收,宁缺毋滥。)
+    每条 caption 一个请求(互相独立的判断不共享上下文),并发;修复回合只允许指认
+    既有类,乱指(名字不存在)一律拒收,宁缺毋滥;单条失败只丢那一条。
     返回 {caption: (族名, 子技能名)},只含合法指认。
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     valid = {(f["name"], s["name"])
              for f in taxonomy.get("families", []) for s in f.get("subskills", [])}
+    captions = [c for c in captions if c.strip()]
     if not captions or not valid:
         return {}
     tree = "\n".join(f"- {f['name']}: " + ", ".join(s["name"] for s in f.get("subskills", []))
                      for f in taxonomy.get("families", []))
-    try:
-        raw = _parse_json(llm_ask(REPAIR_PROMPT_TMPL.format(tree=tree)
-                                  + "\n".join(f"- {c}" for c in captions)))
-    except Exception:  # noqa: BLE001  修复失败不致命,保持未归类
-        return {}
-    out = {}
-    ask = {c.strip().lower(): c for c in captions}
-    for m in raw.get("map", []):
-        cap = str(m.get("caption", "")).strip().lower()
-        pair = (str(m.get("family", "")), str(m.get("subskill", "")))
-        if cap in ask and pair in valid:
-            out[ask[cap]] = pair
-    return out
+
+    def _one(c: str):
+        try:
+            raw = _parse_json(llm_ask(REPAIR_PROMPT_TMPL.format(tree=tree, caption=c)))
+            pair = (str(raw.get("family", "")), str(raw.get("subskill", "")))
+            return pair if pair in valid else None
+        except Exception:  # noqa: BLE001  单条失败不致命,该条保持未归类
+            return None
+
+    if concurrency <= 1 or len(captions) <= 1:
+        pairs = [_one(c) for c in captions]
+    else:
+        with ThreadPoolExecutor(max_workers=min(int(concurrency), len(captions))) as ex:
+            pairs = list(ex.map(_one, captions))
+    return {c: p for c, p in zip(captions, pairs) if p is not None}
 
 
 MERGE_Q_TMPL = (

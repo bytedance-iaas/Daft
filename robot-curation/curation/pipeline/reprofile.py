@@ -41,9 +41,11 @@ def build_llm_ask_from_cfg(cfg: dict | None) -> Callable | None:
         if not vcfg.get("endpoint") or not vcfg.get("model"):
             return None
         from ..adapters.vlm_client import make_llm_ask, timeout_for
+        sp = (cfg or {}).get("skill_profile") or {}
         return make_llm_ask(vcfg["endpoint"], vcfg["model"],
                             timeout_s=timeout_for("llm", vcfg),
-                            api_key_env=vcfg.get("api_key_env"))
+                            api_key_env=vcfg.get("api_key_env"),
+                            max_in_flight=int(sp.get("llm_concurrency", 16)))
     except Exception:  # noqa: BLE001  配置残缺=没配,诚实降级而不是炸命令
         return None
 

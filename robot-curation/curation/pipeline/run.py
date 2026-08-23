@@ -291,7 +291,8 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
     missed = sorted({t for t, f in zip(gtexts, fams) if f == "未归类" and t.strip()})
     if missed:
         phase_step(_G, 4, 5, f"补漏:{len(missed)} 条未归类重新指认(LLM)…", _sp_t0)
-        fix = repair_unassigned(missed, taxonomy, llm_ask)
+        fix = repair_unassigned(missed, taxonomy, llm_ask,
+                                concurrency=int(sp_cfg.get("llm_concurrency", 16)))
         for i, t in enumerate(gtexts):
             if fams[i] == "未归类" and t in fix:
                 fams[i], subs[i] = fix[t]
@@ -323,7 +324,8 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
                           if f == "未归类" and c.strip()})
     if _cap_missed:
         phase_step(_G, 5, 5, f"caption 归族补漏 {len(_cap_missed)} 条(LLM)…", _sp_t0)
-        _fix_cap = repair_unassigned(_cap_missed, taxonomy, llm_ask)
+        _fix_cap = repair_unassigned(_cap_missed, taxonomy, llm_ask,
+                                     concurrency=int(sp_cfg.get("llm_concurrency", 16)))
         cap_fams = [_fix_cap[c][0] if (f == "未归类" and c in _fix_cap) else f
                     for c, f in zip(caps, cap_fams)]
     # 分歧检出是按 40 对一批**串行**问 LLM 的,181 条要问五批、两三分钟没动静
@@ -370,7 +372,9 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
                              if f != "未归类"})
             _miss = [c for c in _new if c.strip().lower() not in _fam_map]
             if _miss:
-                for c, (f, _s) in repair_unassigned(_miss, taxonomy, llm_ask).items():
+                for c, (f, _s) in repair_unassigned(
+                        _miss, taxonomy, llm_ask,
+                        concurrency=int(sp_cfg.get("llm_concurrency", 16))).items():
                     _fam_map[c.strip().lower()] = f
         _n_calls = sum(len(v) for v in _recaps.values())
         label_audit = retier_by_caption_stability(

@@ -165,9 +165,8 @@ def test_reprofile_unmatched_label_repaired_once_with_llm(tmp_path):
 
     def llm(prompt):
         calls.append(prompt)
-        assert "left out" in prompt                     # 只走补漏,不走归纳
-        return json.dumps({"map": [{"caption": "Open the airfryer",
-                                    "family": "grasping", "subskill": "pick-up"}]})
+        assert "CAPTION: Open the airfryer" in prompt   # 只走补漏(一次一条),不走归纳
+        return json.dumps({"family": "grasping", "subskill": "pick-up"})
 
     s = run_reprofile(str(d), llm_ask=llm)
     assert len(calls) == 1 and s["n_unassigned"] == 0
