@@ -332,7 +332,8 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
                                [r.get("instruction", "") for r in keep_rows],
                                caps, cap_fams, taxonomy, llm_ask,
                                on_progress=lambda i, n: phase_step(
-                                   _G, 5, 5, f"标注-画面分歧检出 {i}/{n} 批", _sp_t0))
+                                   _G, 5, 5, f"标注-画面分歧检出 {i}/{n}", _sp_t0),
+                               judge_concurrency=int(sp_cfg.get("audit_concurrency", 16)))
     # 分歧复检(2026-07-31):我方 caption 不可复现(方舟 temp=0 连打 5 次 5 种说法),
     # 拿它当基准去质疑客户标注是产品缺陷 → 把不可复现变成信号:**只对被标记条目**
     # 重打标 N 次,我方描述自己都不稳的分歧降级。重打标必须在这里做(有 rows/帧),
@@ -772,9 +773,12 @@ def run_pipeline(
                                        timeout_s=_timeout_for("caption", vcfg),
                                        api_key_env=vcfg.get("api_key_env"),
                                        max_in_flight=_cap_conc)
+        # 闸门按文本调用里最大的结构并发给(守规合并 / 标注判官都从多线程调它)
         llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"],
                                timeout_s=_timeout_for("llm", vcfg),
-                               api_key_env=vcfg.get("api_key_env"))
+                               api_key_env=vcfg.get("api_key_env"),
+                               max_in_flight=max(int(sp_cfg.get("llm_concurrency", 16)),
+                                                 int(sp_cfg.get("audit_concurrency", 16))))
         (profile, caption_of, grouping_text_of, grouping_source_of,
          label_audit) = _skill_profile_stage(keep_rows, cfg, captioner, llm_ask,
                                              auto_caps)
