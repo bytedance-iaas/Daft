@@ -207,15 +207,47 @@ def test_repair_unassigned():
     tax = {"families": [{"name": "place", "subskills": [
         {"name": "place-onto-surface", "members": ["put a on b"]}]}]}
 
-    def llm(prompt):
-        return _j.dumps({"map": [
-            {"caption": "move pot to burner", "family": "place",
-             "subskill": "place-onto-surface"},                     # 合法
-            {"caption": "fold towel", "family": "编造族",
-             "subskill": "编造子技能"}]})                            # 乱指 → 拒收
+    seen = []
+
+    def llm(prompt):                         # 一次只来一条 caption,各答各的
+        assert prompt.count("CAPTION:") == 1
+        cap = prompt.rsplit("CAPTION:", 1)[1].strip()
+        seen.append(cap)
+        if cap == "move pot to burner":
+            return _j.dumps({"family": "place", "subskill": "place-onto-surface"})   # 合法
+        return _j.dumps({"family": "编造族", "subskill": "编造子技能"})               # 乱指 → 拒收
 
     fix = repair_unassigned(["move pot to burner", "fold towel"], tax, llm)
     assert fix == {"move pot to burner": ("place", "place-onto-surface")}
+    assert sorted(seen) == ["fold towel", "move pot to burner"], "每条一个请求"
+
+
+def test_repair_unassigned_concurrent_one_failure_only_drops_that_one():
+    """并发下结果按 caption 对号;单条失败只丢那一条。"""
+    import json as _j
+    import threading
+    import time as _t
+    from curation.dataset_level.taxonomy import repair_unassigned
+    tax = {"families": [{"name": "f", "subskills": [{"name": f"s{i}", "members": []}
+                                                    for i in range(6)]}]}
+    peak = [0]; cur = [0]; lock = threading.Lock()
+
+    def llm(prompt):
+        cap = prompt.rsplit("CAPTION:", 1)[1].strip()
+        i = int(cap[-1])
+        with lock:
+            cur[0] += 1; peak[0] = max(peak[0], cur[0])
+        _t.sleep(0.03 if i % 2 else 0.01)
+        with lock:
+            cur[0] -= 1
+        if i == 3:
+            return "不是JSON"
+        return _j.dumps({"family": "f", "subskill": f"s{i}"})
+
+    caps = [f"cap {i}" for i in range(6)]
+    fix = repair_unassigned(caps, tax, llm, concurrency=4)
+    assert fix == {f"cap {i}": ("f", f"s{i}") for i in range(6) if i != 3}
+    assert peak[0] > 1, "没真并发"
 
 
 def test_repair_llm_failure_not_fatal():

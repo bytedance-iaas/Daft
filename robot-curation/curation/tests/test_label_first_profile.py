@@ -46,9 +46,8 @@ def _make_llm(seen, judge="pair"):
         seen.append(prompt)
         if "Build a TWO-LEVEL skill taxonomy" in prompt:
             return json.dumps(TAX)
-        if "were left out of it" in prompt:               # caption 归族补漏
-            return json.dumps({"map": [{"caption": WRONG_CAP, "family": "folding",
-                                        "subskill": "fold-cloth"}]})
+        if "CAPTION:" in prompt:                           # caption 归族补漏(一次一条)
+            return json.dumps({"family": "folding", "subskill": "fold-cloth"})
         if "IRRECONCILABLE" in prompt:                    # 文本对判官
             if judge != "pair":
                 return "不是JSON"                          # 逼它走族级回退路
