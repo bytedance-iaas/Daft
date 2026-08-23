@@ -2448,7 +2448,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     """
                     return (*_tk_view(msg or ""), _hi_rows())
 
-                tk_refresh.click(_tk_tick, tk_msg, _tk_outs + [hi_table])
+                # show_progress="hidden"(2026-08-22 用户实见):跑任务时每 2 秒刷一次,Gradio 默认
+                # 先把日志框/状态卡打成"加载中"再填结果,一次刷新闪两下,看着像一秒一刷。
+                # 关掉加载态,数据照更新、界面不闪。
+                tk_refresh.click(_tk_tick, tk_msg, _tk_outs + [hi_table],
+                                 show_progress="hidden")
                 app.load(lambda: _tk_view(""), None, _tk_outs)
                 app.load(_hi_rows, None, hi_table)
 
