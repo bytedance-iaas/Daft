@@ -291,7 +291,8 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
     missed = sorted({t for t, f in zip(gtexts, fams) if f == "未归类" and t.strip()})
     if missed:
         phase_step(_G, 4, 5, f"补漏:{len(missed)} 条未归类重新指认(LLM)…", _sp_t0)
-        fix = repair_unassigned(missed, taxonomy, llm_ask)
+        fix = repair_unassigned(missed, taxonomy, llm_ask,
+                                concurrency=int(sp_cfg.get("llm_concurrency", 16)))
         for i, t in enumerate(gtexts):
             if fams[i] == "未归类" and t in fix:
                 fams[i], subs[i] = fix[t]
@@ -323,7 +324,8 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
                           if f == "未归类" and c.strip()})
     if _cap_missed:
         phase_step(_G, 5, 5, f"caption 归族补漏 {len(_cap_missed)} 条(LLM)…", _sp_t0)
-        _fix_cap = repair_unassigned(_cap_missed, taxonomy, llm_ask)
+        _fix_cap = repair_unassigned(_cap_missed, taxonomy, llm_ask,
+                                     concurrency=int(sp_cfg.get("llm_concurrency", 16)))
         cap_fams = [_fix_cap[c][0] if (f == "未归类" and c in _fix_cap) else f
                     for c, f in zip(caps, cap_fams)]
     # 分歧检出是按 40 对一批**串行**问 LLM 的,181 条要问五批、两三分钟没动静
@@ -332,7 +334,8 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
                                [r.get("instruction", "") for r in keep_rows],
                                caps, cap_fams, taxonomy, llm_ask,
                                on_progress=lambda i, n: phase_step(
-                                   _G, 5, 5, f"标注-画面分歧检出 {i}/{n} 批", _sp_t0))
+                                   _G, 5, 5, f"标注-画面分歧检出 {i}/{n}", _sp_t0),
+                               judge_concurrency=int(sp_cfg.get("audit_concurrency", 16)))
     # 分歧复检(2026-07-31):我方 caption 不可复现(方舟 temp=0 连打 5 次 5 种说法),
     # 拿它当基准去质疑客户标注是产品缺陷 → 把不可复现变成信号:**只对被标记条目**
     # 重打标 N 次,我方描述自己都不稳的分歧降级。重打标必须在这里做(有 rows/帧),
@@ -369,7 +372,9 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
                              if f != "未归类"})
             _miss = [c for c in _new if c.strip().lower() not in _fam_map]
             if _miss:
-                for c, (f, _s) in repair_unassigned(_miss, taxonomy, llm_ask).items():
+                for c, (f, _s) in repair_unassigned(
+                        _miss, taxonomy, llm_ask,
+                        concurrency=int(sp_cfg.get("llm_concurrency", 16))).items():
                     _fam_map[c.strip().lower()] = f
         _n_calls = sum(len(v) for v in _recaps.values())
         label_audit = retier_by_caption_stability(
@@ -772,9 +777,12 @@ def run_pipeline(
                                        timeout_s=_timeout_for("caption", vcfg),
                                        api_key_env=vcfg.get("api_key_env"),
                                        max_in_flight=_cap_conc)
+        # 闸门按文本调用里最大的结构并发给(守规合并 / 标注判官都从多线程调它)
         llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"],
                                timeout_s=_timeout_for("llm", vcfg),
-                               api_key_env=vcfg.get("api_key_env"))
+                               api_key_env=vcfg.get("api_key_env"),
+                               max_in_flight=max(int(sp_cfg.get("llm_concurrency", 16)),
+                                                 int(sp_cfg.get("audit_concurrency", 16))))
         (profile, caption_of, grouping_text_of, grouping_source_of,
          label_audit) = _skill_profile_stage(keep_rows, cfg, captioner, llm_ask,
                                              auto_caps)
@@ -1361,7 +1369,16 @@ def run_pipeline(
         _checks_vis.append(("latest", _latest_path, "text", "record",
                             lambda: write_latest(delivery_dir, _run_name)))
     if deliver.get("episodes_parquet"):
-        _checks_vis.append(("episodes_parquet", deliver["episodes_parquet"], "dir"))
+        # 直连交付(2026-08-22 实见回归):发布器把 parquet 传完即删,本地目录是空的,按"目录非空"
+        # 回验会干等 300s 超时。发布器说传上去了 = 就绪,本地不再回验这一项。
+        from ..export import publish as _publish
+        _pub = _publish.active()
+        _n_up = _pub.uploaded_under(deliver["episodes_parquet"]) if _pub else 0
+        if _n_up:
+            print(f"[curation] 落盘回验:episodes_parquet 已随产随传({_n_up} 个文件),跳过本地回验",
+                  flush=True)
+        else:
+            _checks_vis.append(("episodes_parquet", deliver["episodes_parquet"], "dir"))
     if deliver.get("lerobot_dataset"):
         _checks_vis.append(("lerobot_curated/meta",
                             os.path.join(deliver["lerobot_dataset"], "meta", "info.json"),

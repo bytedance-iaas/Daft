@@ -129,15 +129,15 @@ def test_guideline_in_prompt_no_numeric_range():
     assert "NOT grouping" not in seen["prompt"]              # 默认判据被替换,非叠加
 
 def test_audit_labels_reports_batch_progress():
-    """分歧检出必须报批次进度。
+    """分歧检出必须报进度。
 
-    它是按 40 对一批**串行**问 LLM 的:181 条要问五批、两三分钟里界面一声不吭,
-    用户看到的就是"停在 5/5 卡死了"(2026-08-13 实见)。钩子式注入,audit.py 仍是
-    纯文本模块。
+    逐对问 LLM,181 条几分钟,界面一声不吭用户看到的就是"停在 5/5 卡死了"
+    (2026-08-13 实见)。钩子式注入,audit.py 仍是纯文本模块。串行时每对报一次,
+    分母是总对数。
     """
     from curation.dataset_level.audit import audit_labels
 
-    n = 95                                   # 40 一批 → 3 批
+    n = 5
     ids = [f"ep{i}" for i in range(n)]
     ins = ["pick up the cup"] * n
     caps = ["pick up the cup"] * n
@@ -147,12 +147,43 @@ def test_audit_labels_reports_batch_progress():
     def fake_llm(prompt):                    # 判官:一律判"说的是一回事"
         import re as _re
         idx = [int(x) for x in _re.findall(r"^(\d+)\. ANNOTATION", prompt, _re.M)]
+        assert len(idx) == 1, "默认单对单问"
         return json.dumps({"pairs": [{"i": i, "verdict": "same", "why": ""} for i in idx]})
 
     audit_labels(ids, ins, caps, cfams, TAX, fake_llm,
                  on_progress=lambda i, total: seen.append((i, total)))
-    assert seen == [(1, 3), (2, 3), (3, 3)]   # 每批报一次,分母是总批数
+    assert seen == [(i, n) for i in range(1, n + 1)]
 
+
+def test_pair_judge_concurrent_keeps_ids_and_reports_progress():
+    """并发单对单:完成顺序乱也不串号;进度按完成数报到 total/total。"""
+    import threading
+    import time as _t
+    from curation.dataset_level.audit import audit_labels
+
+    n = 12
+    ids = [f"ep{i}" for i in range(n)]
+    in_flight = [0]; peak = [0]; lock = threading.Lock()
+    seen = []
+
+    def fake_llm(prompt):
+        import re as _re
+        i = int(_re.search(r"^(\d+)\. ANNOTATION: task (\d+)", prompt, _re.M).group(2))
+        with lock:
+            in_flight[0] += 1; peak[0] = max(peak[0], in_flight[0])
+        _t.sleep(0.05 if i % 2 else 0.01)       # 故意让完成顺序与提交顺序不同
+        with lock:
+            in_flight[0] -= 1
+        return json.dumps({"pairs": [{"i": i, "verdict": "different" if i in (3, 10) else "same",
+                                      "why": f"pair {i}"}]})
+
+    out = audit_labels(ids, [f"task {i}" for i in range(n)], [f"cap {i}" for i in range(n)],
+                       ["f"] * n, TAX, fake_llm, judge_concurrency=4,
+                       on_progress=lambda i, total: seen.append((i, total)))
+    assert [e["id"] for e in out["high"]] == ["ep3", "ep10"]
+    assert all("pair 3" in e["reason"] or "pair 10" in e["reason"] for e in out["high"])
+    assert peak[0] > 1, "没真并发"
+    assert sorted(seen) == [(i, n) for i in range(1, n + 1)]
 
 
 def test_criterion_propagates():
@@ -176,15 +207,47 @@ def test_repair_unassigned():
     tax = {"families": [{"name": "place", "subskills": [
         {"name": "place-onto-surface", "members": ["put a on b"]}]}]}
 
-    def llm(prompt):
-        return _j.dumps({"map": [
-            {"caption": "move pot to burner", "family": "place",
-             "subskill": "place-onto-surface"},                     # 合法
-            {"caption": "fold towel", "family": "编造族",
-             "subskill": "编造子技能"}]})                            # 乱指 → 拒收
+    seen = []
+
+    def llm(prompt):                         # 一次只来一条 caption,各答各的
+        assert prompt.count("CAPTION:") == 1
+        cap = prompt.rsplit("CAPTION:", 1)[1].strip()
+        seen.append(cap)
+        if cap == "move pot to burner":
+            return _j.dumps({"family": "place", "subskill": "place-onto-surface"})   # 合法
+        return _j.dumps({"family": "编造族", "subskill": "编造子技能"})               # 乱指 → 拒收
 
     fix = repair_unassigned(["move pot to burner", "fold towel"], tax, llm)
     assert fix == {"move pot to burner": ("place", "place-onto-surface")}
+    assert sorted(seen) == ["fold towel", "move pot to burner"], "每条一个请求"
+
+
+def test_repair_unassigned_concurrent_one_failure_only_drops_that_one():
+    """并发下结果按 caption 对号;单条失败只丢那一条。"""
+    import json as _j
+    import threading
+    import time as _t
+    from curation.dataset_level.taxonomy import repair_unassigned
+    tax = {"families": [{"name": "f", "subskills": [{"name": f"s{i}", "members": []}
+                                                    for i in range(6)]}]}
+    peak = [0]; cur = [0]; lock = threading.Lock()
+
+    def llm(prompt):
+        cap = prompt.rsplit("CAPTION:", 1)[1].strip()
+        i = int(cap[-1])
+        with lock:
+            cur[0] += 1; peak[0] = max(peak[0], cur[0])
+        _t.sleep(0.03 if i % 2 else 0.01)
+        with lock:
+            cur[0] -= 1
+        if i == 3:
+            return "不是JSON"
+        return _j.dumps({"family": "f", "subskill": f"s{i}"})
+
+    caps = [f"cap {i}" for i in range(6)]
+    fix = repair_unassigned(caps, tax, llm, concurrency=4)
+    assert fix == {f"cap {i}": ("f", f"s{i}") for i in range(6) if i != 3}
+    assert peak[0] > 1, "没真并发"
 
 
 def test_repair_llm_failure_not_fatal():
@@ -384,9 +447,9 @@ def test_pair_judge_verdict_routing():
 
 
 def test_pair_judge_chunking():
-    """超过 _PAIR_CHUNK 的对子分批调用,序号跨批不错位。"""
-    from curation.dataset_level.audit import _PAIR_CHUNK
-    n = _PAIR_CHUNK + 5
+    """显式要求多对一批时,超过批量的对子分批调用,序号跨批不错位(默认已是单对单)。"""
+    chunk = 40
+    n = chunk + 5
     calls = []
 
     def pair_llm(prompt):
@@ -399,8 +462,9 @@ def test_pair_judge_chunking():
 
     ids = [f"e{i}" for i in range(n)]
     out = audit_labels(ids, [f"task {i}" for i in range(n)],
-                       [f"cap {i}" for i in range(n)], ["f"] * n, TAX, pair_llm)
-    assert calls == [_PAIR_CHUNK, 5]
+                       [f"cap {i}" for i in range(n)], ["f"] * n, TAX, pair_llm,
+                       judge_chunk=chunk)
+    assert calls == [chunk, 5]
     assert [e["id"] for e in out["high"]] == [f"e{n-1}"]  # 末批的序号没错位
 
 

@@ -141,3 +141,17 @@ def test_v2_export_hands_every_file_to_publisher(tmp_path):
     assert not any(p.endswith(".parquet") for p in
                    [os.path.join(dp, f) for dp, _, fs in os.walk(out / "data") for f in fs]), \
         "data 文件传完应已从本地删除"
+
+
+def test_uploaded_under_counts_published_files(tmp_path):
+    """跑批收尾的落盘回验靠它判"传走即就绪"(2026-08-22 实见:发布器删了本地 parquet,
+    按目录非空回验干等 300s)。"""
+    root = tmp_path / "out"
+    st = _FakeStore()
+    pub = publish.Publisher(str(root), "tos://bkt/d", store=st)
+    _mk(root, "episodes_parquet/a.parquet"); _mk(root, "episodes_parquet/b.parquet"); _mk(root, "other.bin")
+    pub.dir_done(str(root)); pub.finish()
+    assert pub.uploaded_under(str(root / "episodes_parquet")) == 2
+    assert pub.uploaded_under(str(root / "other.bin")) == 1
+    assert pub.uploaded_under(str(root / "nope")) == 0
+    assert pub.uploaded_under(str(tmp_path / "elsewhere")) == 0

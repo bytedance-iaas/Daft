@@ -76,37 +76,64 @@ PAIR_JUDGE_PROMPT = (
     'Return STRICT JSON: {{"pairs": [{{"i": int, "verdict": "same|different|unsure|garbage", '
     '"why": "short reason"}}]}}\n\nPAIRS:\n{pairs}')
 
-_PAIR_CHUNK = 40      # 每次 LLM 调用最多比多少对(防长回复截断)
+# 每次 LLM 调用比多少对。曾是 40(防长回复截断),2026-08-22 量化判官抖动后改 1:
+# droid-200 人工裁决过的 29 对 × 5 遍(顺序打乱),40 对一批时 13 对翻转、每遍打旗数
+# 17~26 条不等、对人工裁决的符合数 5~15;单对单判时 9 对翻转、每遍 13~16 条、符合
+# 16~19(116 对全集:一致 77→89)。同批里的邻居会把判官带偏(同一对在不同邻居下
+# "子步骤可并存"/"类别不同"两种理由来回切)。单对单多花的只是每对重复一遍规则
+# 文本,纯文本调用便宜;代价在墙钟,靠 concurrency 并发抵掉。
+_PAIR_CHUNK = 1
 
 
-def _judge_pairs(items: list, llm_ask: LlmAsk, on_progress=None) -> dict:
+def _judge_pairs(items: list, llm_ask: LlmAsk, on_progress=None, *,
+                 chunk: int = _PAIR_CHUNK, concurrency: int = 1) -> dict:
     """items = [(序号, 标注, caption)] → {序号: (verdict, why)}。结构不符即抛(触发回退)。
 
     `on_progress(done, total)` 是可选的报进度钩子(与 llm_ask 同样式的注入点,
-    本模块仍是纯文本模块、不 import 任何进度设施)。**必须报**:这一步是按 40 对
-    一批**串行**问 LLM,181 条要问五批、两三分钟里界面一声不吭,看着就像卡死了
-    (2026-08-13 用户实见)。
+    本模块仍是纯文本模块、不 import 任何进度设施)。**必须报**:181 条逐对问 LLM
+    几分钟,界面一声不吭看着就像卡死了(2026-08-13 用户实见)。并发时按完成数报,
+    分母是总调用数。
     """
-    out: dict = {}
-    total = (len(items) + _PAIR_CHUNK - 1) // _PAIR_CHUNK
-    for k in range(0, len(items), _PAIR_CHUNK):
-        chunk = items[k:k + _PAIR_CHUNK]
-        if on_progress:
-            on_progress(k // _PAIR_CHUNK + 1, total)
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    chunk = max(1, int(chunk))
+    batches = [items[k:k + chunk] for k in range(0, len(items), chunk)]
+    total = len(batches)
+    done = [0]
+    lock = threading.Lock()
+
+    def _one(batch: list) -> dict:
         body = "\n".join(
             f"{i}. ANNOTATION: {lab} /// DESCRIPTION: {cap if cap.strip() else '(none)'}"
-            for i, lab, cap in chunk)
+            for i, lab, cap in batch)
         raw = llm_ask(PAIR_JUDGE_PROMPT.format(pairs=body))
         t = re.sub(r"^```(json)?|```$", "", raw.strip(), flags=re.M).strip()
-        for m in json.loads(t)["pairs"]:
-            out[int(m["i"])] = (str(m["verdict"]).strip().lower(),
-                                str(m.get("why", "")).strip())
+        got = {int(m["i"]): (str(m["verdict"]).strip().lower(),
+                             str(m.get("why", "")).strip())
+               for m in json.loads(t)["pairs"]}
+        if on_progress:
+            with lock:
+                done[0] += 1
+                n = done[0]
+            on_progress(n, total)
+        return got
+
+    out: dict = {}
+    if concurrency <= 1 or total <= 1:
+        for b in batches:
+            out.update(_one(b))
+        return out
+    with ThreadPoolExecutor(max_workers=min(int(concurrency), total)) as ex:
+        for got in ex.map(_one, batches):     # 序号在每批回复里自带,完成顺序无关紧要
+            out.update(got)
     return out
 
 
 def audit_labels(episode_ids: list[str], instructions: list[str], captions: list[str],
                  cap_families: list[str], taxonomy: dict, llm_ask: LlmAsk,
-                 on_progress=None) -> dict:
+                 on_progress=None, *, judge_chunk: int = _PAIR_CHUNK,
+                 judge_concurrency: int = 1) -> dict:
     """→ {"high": [...高置信...], "mid_for_review": [...人工复核...]}。
 
     默认走文本对判官;判官整体失败(端点/JSON/结构)→ 回退族级比对(降级不断链,
@@ -118,7 +145,8 @@ def audit_labels(episode_ids: list[str], instructions: list[str], captions: list
         return {"high": [], "mid_for_review": []}
     try:
         verdicts = _judge_pairs([(i, lab, str(captions[i] or "")) for i, lab in labeled],
-                                llm_ask, on_progress)
+                                llm_ask, on_progress, chunk=judge_chunk,
+                                concurrency=judge_concurrency)
         high, mid = [], []
         for i, lab in labeled:
             v, why = verdicts.get(i, ("same", ""))

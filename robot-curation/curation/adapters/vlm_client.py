@@ -1095,17 +1095,21 @@ def make_intent_comparer(endpoint: str, model: str,
 
 def make_llm_ask(endpoint: str, model: str,
                  timeout_s: float = DEFAULT_TIMEOUTS_S["llm"],
-                 max_tokens: int = 8192, api_key_env: str | None = None):
+                 max_tokens: int = 8192, api_key_env: str | None = None,
+                 max_in_flight: int = 2):
     """纯文本 LLM 调用工厂(M7 taxonomy/audit 用;同一端点同一模型,配置一处)。
 
-    闸门容量固定 2(2026-08-15 用户批准):归纳步是串行大调用,结构并发 = 1,
-    闸门给 1 的话首发攥着唯一许可、补发永远等不到 —— 对冲对最需要它的这一类
-    (llm p99 139.9s)直接失效。2 = "1 首发 + 1 补发",绝对量极小不构成压力。"""
+    max_in_flight = 对冲闸门容量,应传调用方的结构并发(下限 2)。默认 2 的来历
+    (2026-08-15 用户批准):归纳步是串行大调用,结构并发 = 1,闸门给 1 的话首发攥着
+    唯一许可、补发永远等不到 —— 对冲对最需要它的这一类(llm p99 139.9s)直接失效。
+    ⚠️ 但同一个 llm_ask 还被守规合并(llm_concurrency 16)和标注判官(audit_concurrency)
+    从多线程调用,闸门 2 会把它们悄悄压回 2 路 —— 2026-08-22 判官改单对单并发时发现,
+    run.py 按最大结构并发传。"""
     import requests
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
-    gate = SharedGate(2)
+    gate = SharedGate(max(2, int(max_in_flight)))
 
     def llm_ask(prompt_text: str) -> str:
         payload = {"model": model, "temperature": 0.0, "max_tokens": max_tokens,
