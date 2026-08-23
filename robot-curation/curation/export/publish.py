@@ -142,6 +142,15 @@ class Publisher:
                 "完整性标志尚未上传,远端不会把这份半成品当完整交付列出,重跑即可续传")
         return len(self.uploaded)
 
+    def uploaded_under(self, path: str) -> int:
+        """产出根下某目录 / 文件已经传上去了几个(跑批收尾的落盘回验用:传走即就绪,本地空目录不是事故)。"""
+        try:
+            rel = self._rel(path)
+        except ValueError:
+            return 0
+        with self._lock:
+            return sum(1 for r in self.uploaded if r == rel or r.startswith(rel + "/"))
+
     def summary(self) -> str:
         mb = self.bytes_uploaded / (1024 * 1024)
         return (f"边出边传:{len(self.uploaded)} 个文件 {mb:.0f} MB 已随产随传并清理本地,"
