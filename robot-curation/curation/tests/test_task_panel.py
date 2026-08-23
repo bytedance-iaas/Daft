@@ -83,3 +83,10 @@ def test_refresh_is_driven_by_page_script_not_gr_timer(app):
                 cid = tgt[0] if isinstance(tgt, tuple) else tgt.block._id
                 assert cid not in timers, "任务面板不许再押在 gr.Timer 上"
     assert _btn(app, "刷新").elem_id == "tk-refresh"
+
+
+def test_refresh_does_not_flash_loading_state(app):
+    """轮询刷新不许带 Gradio 的加载态(2026-08-22 用户实见"一秒一闪"):每 2 秒把日志框 /
+    状态卡打成灰色再填回来,看着像不停刷新。show_progress 必须是 hidden。"""
+    fn = _fn_on(app, _btn(app, "刷新"))
+    assert str(getattr(fn, "show_progress", "")) == "hidden", getattr(fn, "show_progress", None)
