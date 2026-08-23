@@ -1361,7 +1361,16 @@ def run_pipeline(
         _checks_vis.append(("latest", _latest_path, "text", "record",
                             lambda: write_latest(delivery_dir, _run_name)))
     if deliver.get("episodes_parquet"):
-        _checks_vis.append(("episodes_parquet", deliver["episodes_parquet"], "dir"))
+        # 直连交付(2026-08-22 实见回归):发布器把 parquet 传完即删,本地目录是空的,按"目录非空"
+        # 回验会干等 300s 超时。发布器说传上去了 = 就绪,本地不再回验这一项。
+        from ..export import publish as _publish
+        _pub = _publish.active()
+        _n_up = _pub.uploaded_under(deliver["episodes_parquet"]) if _pub else 0
+        if _n_up:
+            print(f"[curation] 落盘回验:episodes_parquet 已随产随传({_n_up} 个文件),跳过本地回验",
+                  flush=True)
+        else:
+            _checks_vis.append(("episodes_parquet", deliver["episodes_parquet"], "dir"))
     if deliver.get("lerobot_dataset"):
         _checks_vis.append(("lerobot_curated/meta",
                             os.path.join(deliver["lerobot_dataset"], "meta", "info.json"),
