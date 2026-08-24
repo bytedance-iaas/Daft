@@ -213,6 +213,14 @@ def run_reprofile(run_dir: str, cfg: dict | None = None,
                   for eid in old}
         instr_render = {eid: (instr_of or {}).get(eid, "") for eid in old}
         new_profile = rebuild_profile(assignment, profile, cap_of, instr_render)
+        if llm_ask is not None:
+            # 老画像的 name_zh 已按名移植;这里只补新出现的名字,失败回落英文
+            from ..dataset_level.taxonomy import apply_name_zh, translate_names
+            if any(not f.get("name_zh") or any(not s.get("name_zh")
+                                               for s in (f.get("subskills") or {}).values())
+                   for fn, f in (new_profile.get("families") or {}).items()
+                   if fn != "未归类"):
+                apply_name_zh(new_profile, translate_names(new_profile, llm_ask))
         # ⚠️ 只动 skills 段:成败判定结论(episodes/判决/checks)一个字不碰。
         passed["skills"] = new_profile
         write_json(passed_path, passed, default=str)

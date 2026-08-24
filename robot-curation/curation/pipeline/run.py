@@ -314,6 +314,10 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
         for sname, s in f.get("subskills", {}).items():
             if sub_c.get((fname, sname)):
                 s["criterion"] = sub_c[(fname, sname)]
+    # 技能名中文显示(2026-08-24 用户拍板):英文 slug 仍是标识,中文只是 name_zh
+    # 显示字段;一次调用整套翻,失败回落英文,不阻塞跑批。
+    from ..dataset_level.taxonomy import apply_name_zh, translate_names
+    apply_name_zh(profile, translate_names(profile, llm_ask))
     # caption 口径的归族(分歧检出的族级回退路 + 复检要用):体系现在由标注文本
     # 归纳,caption 不再天然是成员 —— 先精确分配,归不进去的整批问一次 LLM 补漏。
     # 省掉这一步,族级回退比对会大面积跳过有标注条目 ⇒ 分歧检出被静默削弱

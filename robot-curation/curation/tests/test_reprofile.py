@@ -165,11 +165,14 @@ def test_reprofile_unmatched_label_repaired_once_with_llm(tmp_path):
 
     def llm(prompt):
         calls.append(prompt)
+        if "Translate the following" in prompt:          # 技能名中文化(2026-08-24)另有专测
+            return json.dumps({"families": []})
         assert "CAPTION: Open the airfryer" in prompt   # 只走补漏(一次一条),不走归纳
         return json.dumps({"family": "grasping", "subskill": "pick-up"})
 
     s = run_reprofile(str(d), llm_ask=llm)
-    assert len(calls) == 1 and s["n_unassigned"] == 0
+    repair_calls = [p for p in calls if "CAPTION:" in p]
+    assert len(repair_calls) == 1 and s["n_unassigned"] == 0
     assert _read_csv(det / "skill_assignment.csv")["ep000002"]["family"] == "grasping"
 
 

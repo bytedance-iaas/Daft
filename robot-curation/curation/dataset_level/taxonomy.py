@@ -302,3 +302,60 @@ def refine_taxonomy(taxonomy: dict, llm_ask: LlmAsk,
                 "members": [m for i in idxs for m in subs[i].get("members", [])]})
         fams_out.append({**fam, "subskills": new_subs})
     return {**taxonomy, "families": fams_out}
+
+
+# ── 技能名中文化(2026-08-24 用户拍板:UI 与报告显示中文;英文 slug 仍是内部标识,
+#    归类匹配/CSV/跨跑批连续性不变)。翻译是联合任务(要术语一致),一次调用整套翻;
+#    名字对不上号的丢弃、失败整体放弃 —— 显示层回落英文,画像数据不因此受损。
+#    风格与既定术语来自用户 2026-08-23 审定的 droid-200-full 样张。──
+TRANSLATE_PROMPT_TMPL = (
+    "Translate the following robot-manipulation skill names from English to Chinese "
+    "for a data quality report. Rules:\n"
+    "- Every name is a verb phrase: translate as 动作+对象 (e.g. place-onto-surface -> "
+    "将物体放置到台面上; remove-from-enclosure -> 从容器/封闭空间中取出物体). "
+    "NEVER a bare verb like 打开 or 叠.\n"
+    "- Fixed terminology: articulated-object-actuation -> 活动部件操作; articulated -> 活动部件; deformable -> 柔性物; "
+    "non-prehensile -> 非抓握; granular/pouring -> 散料/倾倒; "
+    "grasp-and-transport -> 抓取搬运; tool cyclic motion -> 手持工具往复操作.\n"
+    "- When the English term implies a category, add a short parenthetical gloss "
+    "(e.g. open-articulated-object -> 打开带活动部件的物体(门/盖/抽屉)).\n"
+    "- Keep names concise and terminology consistent across the whole list.\n"
+    'Return STRICT JSON: {{"families": [{{"name": str, "zh": str, '
+    '"subskills": [{{"name": str, "zh": str}}]}}]}}\n\nNAMES:\n{names}')
+
+
+def translate_names(profile: dict, llm_ask: LlmAsk) -> dict:
+    """两级画像的英文技能名 → {(族,): 中文, (族, 子技能): 中文}。失败/对不上号 → 缺项。"""
+    fams = profile.get("families") or {}
+    todo = {f: sorted((v.get("subskills") or {}).keys())
+            for f, v in fams.items() if f != "未归类"}
+    if not todo:
+        return {}
+    body = "\n".join(f"- {f}: " + (", ".join(subs) or "(no subskills)")
+                     for f, subs in todo.items())
+    try:
+        raw = _parse_json(llm_ask(TRANSLATE_PROMPT_TMPL.format(names=body)))
+    except Exception:  # noqa: BLE001  翻译失败不致命:显示层回落英文
+        return {}
+    out: dict = {}
+    for f in raw.get("families", []) or []:
+        fn = str(f.get("name", ""))
+        if fn not in todo:
+            continue
+        if str(f.get("zh") or "").strip():
+            out[(fn,)] = str(f["zh"]).strip()
+        for sd in f.get("subskills", []) or []:
+            sn = str(sd.get("name", ""))
+            if sn in todo[fn] and str(sd.get("zh") or "").strip():
+                out[(fn, sn)] = str(sd["zh"]).strip()
+    return out
+
+
+def apply_name_zh(profile: dict, zh: dict) -> None:
+    """把 translate_names 的结果写进画像(只补,不覆盖已有 name_zh)。"""
+    for fname, f in (profile.get("families") or {}).items():
+        if zh.get((fname,)) and not f.get("name_zh"):
+            f["name_zh"] = zh[(fname,)]
+        for sname, sd in (f.get("subskills") or {}).items():
+            if zh.get((fname, sname)) and not sd.get("name_zh"):
+                sd["name_zh"] = zh[(fname, sname)]
