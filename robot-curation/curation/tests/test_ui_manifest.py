@@ -17,7 +17,7 @@ import pytest
 from curation.ui.manifest import (AUDIT_TERM, audit_note_md, merged_queue_rows,
                                   check_rows,
                                   discover_deliveries, load_delivery,
-                                  overview_markdown, overview_note_md,
+                                  overview_markdown,
                                   overview_rows, parse_detail, skill_rows)
 
 TS_DETAIL = json.dumps({"voc": 0.87, "completion_final": 0.3,
@@ -137,7 +137,6 @@ def test_load_tolerates_legacy_delivery(tmp_path):
     assert m["config_effective"] is None
     assert m["episodes"]["ep0"]["evidence"] == []
     assert overview_rows(m) == []                               # 无统计=空表,不炸
-    assert overview_note_md(m) == ""                            # 没有表就没有口径小字
 
 
 def test_load_timeline_passes_dataset_note(delivery, tmp_path):
@@ -3305,41 +3304,11 @@ def test_overview_never_shows_the_label_rows(full_delivery):
     有问题"。撤的只是这两行展示,分歧队列本身在「人工裁决」页照旧。
     """
     m = load_delivery(full_delivery)
-    blob = str(overview_rows(m)) + overview_note_md(m) + overview_markdown(m)
+    blob = str(overview_rows(m)) + overview_markdown(m)
     assert AUDIT_TERM not in blob and "标注缺失" not in blob and "分歧" not in blob
     # 功能没被拆掉:队列还在,人工裁决页还照旧靠它
     assert len(m["audit_queue"]) == 32
     assert AUDIT_TERM in audit_note_md(m)
-
-
-def test_overview_note_states_the_arithmetic(full_delivery):
-    """表下小字要把两件事说清:哪几行能相加、「其中」不参与加减。"""
-    note = overview_note_md(load_delivery(full_delivery))
-    assert "输入 = 判废 + 交付" in note
-    assert "不参与加减" in note
-
-
-def test_overview_note_names_dedup_in_the_identity_when_it_removed_anything(full_delivery):
-    """去重真删了东西时,等式必须把它写进去 —— 否则读者一加发现对不上。"""
-    import json as _json
-    p = os.path.join(full_delivery, "passed.json")
-    doc = _json.loads(open(p, encoding="utf-8").read())
-    doc["dataset"]["dedup_removed"] = 4
-    open(p, "w", encoding="utf-8").write(_json.dumps(doc, ensure_ascii=False))
-    note = overview_note_md(load_delivery(full_delivery))
-    assert "输入 = 判废 + 精确去重删除 + 交付" in note
-
-
-def test_overview_note_skips_the_within_clause_when_there_is_no_such_row():
-    """没有「其中」行的交付(全通过、无待裁)不该去解释一行不存在的东西 ——
-    真机上 bridge-rrd-200 就是这样,读者会回头去找那一行在哪。"""
-    m = {"path": "", "load_error": "", "episodes": {}, "audit_queue": [],
-         "dataset": {"input_episodes": 200, "verdict_drop": 0, "delivered": 200,
-                     "dedup_removed": 0,
-                     "summary_stats": {"pass_rate_pct": 100.0}}}
-    assert not any("其中" in r[0] for r in overview_rows(m))
-    note = overview_note_md(m)
-    assert "输入 = 判废 + 交付" in note and "其中" not in note
 
 
 def test_overview_rows_degrade_row_by_row_on_a_legacy_delivery(tmp_path):
@@ -3352,13 +3321,12 @@ def test_overview_rows_degrade_row_by_row_on_a_legacy_delivery(tmp_path):
     rows = dict(overview_rows(load_delivery(str(d))))
     assert rows == {"输入 episode": 7, "交付": 5}      # 无通过率就只有条数
     assert "?" not in str(rows)
-    assert overview_note_md(load_delivery(str(d))) == ""   # 缺「判废」→ 口径无从谈起
 
 
 def test_overview_never_shows_the_funnel_word(full_delivery):
     """「漏斗」是内部术语(用户:"用户看不懂啥意思"),总览页一个字不许剩。"""
     m = load_delivery(full_delivery)
-    blob = overview_markdown(m) + str(overview_rows(m)) + overview_note_md(m)
+    blob = overview_markdown(m) + str(overview_rows(m))
     assert "漏斗" not in blob and "硬门" not in blob
 
 
@@ -3374,7 +3342,7 @@ def test_load_delivery_flags_a_path_that_is_not_a_delivery(tmp_path):
     md = overview_markdown(m)
     assert "读不到" in md
     assert "机器人" not in md and "?" not in md   # 半空的壳子一个字不留
-    assert overview_rows(m) == [] and overview_note_md(m) == ""
+    assert overview_rows(m) == []
 
 
 def test_resolve_delivery_recovers_a_typed_directory_name(tmp_path):
@@ -3451,7 +3419,7 @@ def test_load_feeds_the_overview_table_and_the_config_page(full_delivery):
     out = fn.fn(full_delivery)
     assert len(out) == len(fn.outputs)
     assert out[2] == overview_rows(load_delivery(full_delivery))   # 表
-    assert out[3] == overview_note_md(load_delivery(full_delivery))  # 表下小字
+    assert out[3] == ''  # 表下小字只剩沿用一行(本夹具无沿用=空)
     assert "checks" in out[4] or "(此交付无" in out[4]              # 生效配置 YAML
 
 
@@ -3565,7 +3533,7 @@ def test_overview_adds_a_row_when_the_hard_gates_do_not_add_up(full_delivery):
     assert detail == {"任务成败判定": 14, "时间戳检查": 1, "综合质量分不达标": 1}
     assert sum(detail.values()) == dict(rows)["判废"] == 16
     # 措辞用界面既有说法:「软分」是内部机制名,2026-08-11 就统一叫「质量分」了
-    blob = str(rows) + overview_note_md(m)
+    blob = str(rows)
     assert "软分" not in blob and "soft" not in blob.lower()
     # 仍然是分解式(能相加),所以最后一项挂 └
     assert [k for k, _ in rows if k.startswith("　└")]
@@ -3582,8 +3550,6 @@ def test_overview_stops_pretending_it_decomposes_when_items_overlap(full_deliver
     assert _detail_rows(rows) == {"任务成败判定": 14, "时间戳检查": 2}
     assert not [k for k, _ in rows if "├" in k or "└" in k]
     assert all("其中" in k for k, _ in rows if k.startswith("　"))
-    note = overview_note_md(m)
-    assert "同一条可能同时踩中多项" in note
     assert "综合质量分不达标" not in str(rows)      # 相加已经多了,别再往上加
 
 
@@ -3593,9 +3559,7 @@ def test_overview_keeps_the_plain_decomposition_when_it_already_adds_up(full_del
     rows = overview_rows(m)
     assert _detail_rows(rows) == {"任务成败判定": 14, "时间戳检查": 1}
     assert "综合质量分不达标" not in str(rows)
-    assert "同一条可能同时踩中多项" not in overview_note_md(m)
-    # 「其中」那句仍然只为交付内标记那一行印
-    assert "不参与加减" in overview_note_md(m)
+    # 表下解释小字已删(2026-08-23 用户),没有别的东西可断言
 
 
 def test_overview_never_guesses_when_the_delivery_has_no_breakdown(full_delivery):

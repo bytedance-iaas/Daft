@@ -371,31 +371,8 @@ def overview_rows(m: dict) -> list[list]:
     _add("平均质量分", ss.get("avg_soft_score", ""))
     return rows
 
-
-def overview_note_md(m: dict) -> str:
-    """总览表下那行小字。表里哪几行能相加、哪几行不能,必须写出来别让人猜。"""
-    rows = overview_rows(m)
-    if not rows:
-        return ""
-    labels = {r[0] for r in rows}
-    if not ({"输入 episode", "判废", "交付"} <= labels):
-        return ""                       # 老交付缺行 → 这句口径无从谈起,不硬印
-    # 去重删的那部分既不在判废里也不在交付里,有它就必须写进等式,否则读者会发现
-    # 两边对不上,反而更不信这张表
-    ident = ("输入 = 判废 + 精确去重删除 + 交付"
-             if (m.get("dataset") or {}).get("dedup_removed")
-             else "输入 = 判废 + 交付")
-    # 「其中」那句只在真有这样的行时才印:没有待裁条目的交付上,解释一行不存在的
-    # 东西只会让人回头去找它在哪
-    within = ("带「其中」的行是交付内条目上的标记(数据已经在交付里了),"
-              "**不参与加减**。"
-              if any(PENDING_ROW_LABEL in r[0] for r in rows) else "")
-    # 判废子项相加大于总数时必须当场说明白,否则读者一加就以为表算错了
-    overlap = ("判废子项按检查逐项计数,**同一条可能同时踩中多项**,"
-               "所以子项相加会大于判废总数。"
-               if drop_breakdown(m.get("dataset") or {})[1] == "overlap" else "")
-    # issue #58:"口径"是行话 → 说人话
-    return f"_这张表的加减法:{ident}。{within}{overlap}_"
+# 表下的口径/加减法小字 2026-08-23 用户点名整个删掉(没必要说这么详细,客户懂);
+# 表本身仍按「输入 = 判废 + 去重删除 + 交付」对账,只是不再印解释。
 
 
 CHECK_HEADERS = ["检查", "结果", "分数", "要点"]
@@ -1743,18 +1720,15 @@ def unapplied_banner_md(m: dict) -> str:
     """质检报告页顶部的「有裁决尚未应用」提醒(没有未应用的 → 空串,不占位)。
 
     防的事故:跑完新一批忘了点「执行裁决」,交出去的就是把人的决定全丢掉的
-    数据,而报告不会吭声。措辞分两档:一条都没应用时才说「纯机器结论」——
-    部分应用时那句就是假话。
+    数据,而报告不会吭声。2026-08-23 用户定版式:三个数一次说清——已裁(记录数)、
+    待裁(队列里还有问题没答的条目数)、未应用(已裁里没落地的)。只在有未应用
+    时出现:它是警报不是仪表盘,待裁多少队列页自己会说。
     """
     c = decision_status(m)["counts"]
     if not c["unapplied"]:
         return ""
-    if c["applied"]:
-        return (f"⚠️ 这份交付有 **{c['unapplied']}** 条人工裁决尚未应用到本次跑批"
-                f"(另有 {c['applied']} 条已应用)。"
-                "去「人工裁决」页点「执行裁决」。")
-    return (f"⚠️ 这份交付有 **{c['unapplied']}** 条人工裁决,本次跑批尚未应用 —— "
-            "当前看到的是纯机器结论。去「人工裁决」页点「执行裁决」。")
+    return (f"⚠️ 人工裁决:已裁 {c['total']} 条 · 待裁 {merged_pending_count(m)} 条 · "
+            f"**{c['unapplied']}** 条尚未应用于交付 —— 去「人工裁决」页点「执行裁决」。")
 
 
 def carryover_note_md(m: dict) -> str:

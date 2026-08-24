@@ -275,22 +275,23 @@ def test_all_three_displays_silent_without_decisions(tmp_path):
     assert unapplied_card_note(run) == ""
 
 
-def test_banner_wording_pure_machine_vs_partially_applied(tmp_path):
-    """报告页顶部提醒:一条都没应用才说「纯机器结论」;应用了一部分再那么说
-    就是假话,改说还差几条。"""
+def test_banner_three_counts(tmp_path):
+    """报告页顶部提醒(2026-08-23 用户定版式):已裁 / 待裁 / 未应用三个数一行;
+    全应用了提醒整个消失;数字必须跟着裁决档案走。"""
     from curation.ui.manifest import unapplied_banner_md
     run = _mk_run(tmp_path, verdict_rows=f"epX,判成功,,{AT_OLD}\n")
     banner = unapplied_banner_md(_manifest(run))
-    assert "尚未应用" in banner and "纯机器结论" in banner and "1" in banner
+    assert "已裁 1 条" in banner and "待裁 1 条" in banner   # 队列 epX/epY,epX 已裁 → 待裁只剩 epY
+    assert "**1** 条尚未应用于交付" in banner and "执行裁决" in banner
     run_rejudge(run, "/unused", {}, rerun_fn=None)      # 应用掉 → 提醒消失
     assert unapplied_banner_md(_manifest(run)) == ""
-    # 应用了一部分、又添了新裁决:不许再说「纯机器结论」,改说还差几条
+    # 应用了一部分、又添了新裁决:已裁 2 / 未应用 1,数字各归各
     hd = tmp_path / "deliv" / "human-decisions"
     old = (hd / "task_verdicts.csv").read_text(encoding="utf-8")
     (hd / "task_verdicts.csv").write_text(old + f"epY,判失败,,{AT_NEW}\n",
                                           encoding="utf-8")
     mixed = unapplied_banner_md(_manifest(run))
-    assert "尚未应用" in mixed and "已应用" in mixed and "纯机器结论" not in mixed
+    assert "已裁 2 条" in mixed and "**1** 条尚未应用于交付" in mixed
 
 
 def test_overview_reconciliation_table_gains_no_row(tmp_path):
@@ -298,21 +299,18 @@ def test_overview_reconciliation_table_gains_no_row(tmp_path):
     「输入 = 判废 + 精确去重删除 + 交付」,加一行沿用就破了对账。
     钉法:同一份交付,有沿用与把裁决记录整个拿走之后,表与口径小字逐字相同 ——
     沿用信息只活在 carryover_note_md 那一行小字里。"""
-    from curation.ui.manifest import (carryover_note_md, overview_note_md,
-                                      overview_rows)
+    from curation.ui.manifest import carryover_note_md, overview_rows
     run = _mk_run(tmp_path, verdict_rows=f"epX,判成功,,{AT_OLD}\n")
     run_rejudge(run, "/unused", {}, rerun_fn=None)      # 裁决落库(= 沿用出现)
     m = _manifest(run)
     carry = carryover_note_md(m)
     assert "沿用" in carry and "**1** 条" in carry and "改变了结果" in carry
-    rows_with, note_with = overview_rows(m), overview_note_md(m)
+    rows_with = overview_rows(m)
     assert all("沿用" not in str(c) for row in rows_with for c in row)
-    assert "沿用" not in note_with
     os.remove(tmp_path / "deliv" / "human-decisions" / "task_verdicts.csv")
     m2 = _manifest(run)                                  # 沿用消失……
     assert carryover_note_md(m2) == ""
     assert overview_rows(m2) == rows_with                # ……表却一行未动
-    assert overview_note_md(m2) == note_with
 
 
 def test_card_trace_line_wording(tmp_path):
