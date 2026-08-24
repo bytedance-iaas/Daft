@@ -52,7 +52,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        latency_bar_html, latency_rows,
                        load_delivery, load_detail_table, load_perf,
                        load_timeline, manual_hint_html, resolve_delivery,
-                       OVERVIEW_HEADERS, overview_markdown, overview_note_md,
+                       OVERVIEW_HEADERS, overview_markdown,
                        overview_rows, perf_backend_md,
                        perf_env_md, readings_text, skill_bar_html, skill_rows,
                        sync_camera_html, sync_conclusion_html, sync_health_html,
@@ -1459,11 +1459,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         perf = load_perf(m)
         # 沿用计数进表下小字区(2026-08-16 用户拍板):**绝不往对账表里加行** ——
         # 那张表的口径是「输入 = 判废 + 精确去重删除 + 交付」,加一行就破了对账。
-        # 零沿用时是空串,口径小字保持原样一个字不多。
-        ov_note = overview_note_md(m)
-        carry = carryover_note_md(m)
-        if carry:
-            ov_note = f"{ov_note}\n\n{carry}" if ov_note else carry
+        # 加减法解释小字 2026-08-23 用户点名删掉;这里只剩沿用一行(零沿用=空串)。
+        ov_note = carryover_note_md(m)
         # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
         return (m, overview_markdown(m), overview_rows(m), ov_note,
@@ -3314,11 +3311,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 跟着 ① 的新裁决即时联动(采纳→展开可选;弃用→矛盾拦截)。"""
                 it = _mg_item(m, filt, idx)
                 if it is None:
-                    return ("⚠️ 无条目可裁决", *[gr.update()] * 15)
+                    return ("⚠️ 无条目可裁决", *[gr.update()] * 16)
                 if readonly_block_msg(m):
-                    return (readonly_block_msg(m), *[gr.update()] * 15)
+                    return (readonly_block_msg(m), *[gr.update()] * 16)
                 if it["audit"] is None:
-                    return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 15)
+                    return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 16)
                 msg = record_label_decision(m["path"], it["id"], decision,
                                             newlab or "", note or "")
                 # 镜像交付(2026-08-20 阶段4):裁决 CSV 即时写回源桶 —— 留在
@@ -3339,12 +3336,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 return (msg, gr.update(value=merged_queue_rows(m)), _mg_au_info(m, it),
                         *btns, *tv_sec,
                         readonly_banner_md(m) + (merged_hint_md(m) or ""),
-                        audit_note_md(m), _mg_head(m, it))
+                        audit_note_md(m), _mg_head(m, it),
+                        unapplied_banner_md(m))   # 顶部提醒横幅跟着每次裁决动
 
             _dec_outs = [au_status, qu_table, au_info, au_adopt, au_keep, au_hold,
                          mg_tv_block, tv_mode_note, tv_info, tv_readings,
                          tv_pass, tv_fail, tv_hold,
-                         mg_hint, sk_audit_note, mg_info]
+                         mg_hint, sk_audit_note, mg_info, pending_banner]
             au_adopt.click(lambda m, f, i, nl, nt: _mg_au_decide(m, f, i, nl, nt, "采纳建议改标"),
                            [state, mg_filter, mg_idx, au_newlab, au_note], _dec_outs)
             au_keep.click(lambda m, f, i, nl, nt: _mg_au_decide(m, f, i, nl, nt, "维持原标注"),
@@ -3361,12 +3359,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 record_task_verdict_checked 落盘前还会再查一次 ① 的「弃用该条」。"""
                 it = _mg_item(m, filt, idx)
                 if it is None:
-                    return ("⚠️ 无条目可裁决", *[gr.update()] * 7)
+                    return ("⚠️ 无条目可裁决", *[gr.update()] * 8)
                 if readonly_block_msg(m):
-                    return (readonly_block_msg(m), *[gr.update()] * 7)
+                    return (readonly_block_msg(m), *[gr.update()] * 8)
                 dec = load_label_decisions(m).get(it["id"], {}).get("decision", "")
                 if success_block_mode(it, dec) == "hidden":
-                    return ("⚠️ 这条现在没有成败问题要答", *[gr.update()] * 7)
+                    return ("⚠️ 这条现在没有成败问题要答", *[gr.update()] * 8)
                 msg = record_task_verdict_checked(m, it["id"], verdict, note or "")
                 if msg.startswith("✅"):
                     msg += " " + runner.push_decisions(m["path"])
@@ -3378,10 +3376,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 tv_sec = _mg_tv_section(m, it, dec)
                 return (msg, gr.update(value=merged_queue_rows(m)),
                         tv_sec[2], tv_sec[3], *btns,
-                        readonly_banner_md(m) + (merged_hint_md(m) or ""))
+                        readonly_banner_md(m) + (merged_hint_md(m) or ""),
+                        unapplied_banner_md(m))
 
             _tv_dec_outs = [tv_status, qu_table, tv_info, tv_readings,
-                            tv_pass, tv_fail, tv_hold, mg_hint]
+                            tv_pass, tv_fail, tv_hold, mg_hint, pending_banner]
             tv_pass.click(lambda m, f, i, nt: _mg_tv_decide(m, f, i, nt, "判成功"),
                           [state, mg_filter, mg_idx, tv_note], _tv_dec_outs)
             tv_fail.click(lambda m, f, i, nt: _mg_tv_decide(m, f, i, nt, "判失败"),
@@ -3405,11 +3404,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 q = (m or {}).get("reject_appeal") or []
                 if not q:
                     return ("⚠️ 无可复议的条目", gr.update(), gr.update(),
-                            *[gr.update()] * 2)
+                            *[gr.update()] * 3)
                 a = q[(idx or 0) % len(q)]
                 if readonly_block_msg(m):
                     return (readonly_block_msg(m), gr.update(), gr.update(),
-                            *[gr.update()] * 2)
+                            *[gr.update()] * 3)
                 msg = record_reject_appeal(m["path"], a.get("id", ""), appeal,
                                            note or "")
                 if msg.startswith("✅"):
@@ -3420,9 +3419,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 else:
                     btns = [gr.update()] * 2
                 info = _ap_render(m, idx)[2]                 # 卡片头同步"已复议"状态
-                return msg, gr.update(value=appeal_rows(m)), info, *btns
+                return (msg, gr.update(value=appeal_rows(m)), info, *btns,
+                        unapplied_banner_md(m))
 
-            _ap_dec_outs = [ap_status, ap_table, ap_info, ap_keep, ap_back]
+            _ap_dec_outs = [ap_status, ap_table, ap_info, ap_keep, ap_back,
+                            pending_banner]
             ap_keep.click(lambda m, i, nt: _ap_decide(m, i, nt, "维持拒绝"),
                           [state, ap_idx, ap_note], _ap_dec_outs)
             ap_back.click(lambda m, i, nt: _ap_decide(m, i, nt, "捞回"),
