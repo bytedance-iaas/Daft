@@ -43,7 +43,7 @@ def episode_verdict(checks: dict[str, dict], cfg: dict) -> dict:
         out["reason"] = hard_fail_reason(hard_fails, checks)
     elif soft_score is not None and soft_score < cfg["verdict"]["soft_threshold"]:
         out["verdict"] = "drop"
-        out["reason"] = f"软分 {soft_score:.3f} < {cfg['verdict']['soft_threshold']}"
+        out["reason"] = f"综合质量分 {soft_score:.3f} 低于阈值 {cfg['verdict']['soft_threshold']}"
     else:
         out["verdict"] = "keep"
         out["reason"] = ""

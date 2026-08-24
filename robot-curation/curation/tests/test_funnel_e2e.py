@@ -149,7 +149,7 @@ def test_soft_gate_affects_verdict_not_filter(mixed_rows):
     cfg = _cfg()
     cfg["verdict"]["soft_threshold"] = 0.99            # 极端阈值逼出软分 drop
     verdicts, _stats, _syncs = _run(rows[:2], cfg)
-    assert any(v["verdict"] == "drop" and "软分" in v["reason"] for v in verdicts.values())
+    assert any(v["verdict"] == "drop" and "质量分" in v["reason"] for v in verdicts.values())
 
 
 # ---------- verdict 纯函数单测 ----------

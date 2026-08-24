@@ -1857,16 +1857,6 @@ _SYNC_STATE_TEXT = {
 }
 _SYNC_UNKNOWN = ("同步结论未知", "#86909C", "#F2F3F5", "此条没有同步检查读数。")
 
-#: 判决 → (徽章文字, 主色, 底色, 边色)。绿=通过、红=拒绝、琥珀=待裁决;
-#: 与「人工裁决」页的 ① 橙 ② 蓝区块色错开,不会被误读成同一套分类。
-VERDICT_STYLES = {
-    "通过": ("✅ 通过", "#009A29", "#E8FFEA", "#AFF0B5"),
-    "拒绝": ("⛔ 拒绝", "#CB272D", "#FFECE8", "#FDCDC5"),
-    "待裁决": ("⏳ 待裁决", "#D25F00", "#FFF7E8", "#FFE4BA"),
-}
-_VERDICT_UNKNOWN = ("判决未知", "#86909C", "#F2F3F5", "#C9CDD4")
-
-
 def _fmt_num(v, nd: int = 3) -> str:
     """读数格式化。缺测 → 「—」;**不写 0**:0 是个有意义的滞后值,与"没测出来"
     是两回事,混在一起会让人以为对齐得很好。"""
@@ -1963,7 +1953,7 @@ def sync_camera_html(m: dict, eid: str) -> str:
     chk = sync_check(m, eid)
     if not chk:
         return ('<p style="color:#777;font:12px/1.6 system-ui">'
-                '此条没有视频-动作同步读数(该检查未启用,或更早的检查已把它拦下)。</p>')
+                '这条没有同步读数:该检查未启用,或这条在更早的检查就被拦下,没跑到这一步。</p>')
     d = sync_detail(m, eid)
     txt, fg, bg, why = sync_badge(d, chk.get("state", ""))
     bits = []
@@ -2040,8 +2030,7 @@ def episode_card_html(m: dict, eid: str) -> str:
         return ('<div style="border:1px dashed #C9CDD4;border-radius:10px;padding:14px 18px;'
                 'color:#86909C;font:13px/1.6 system-ui">'
                 '在左侧清单里选一条 episode,这里会显示它的判决、理由与视频。</div>')
-    label = episode_verdict_label(ep)
-    txt, fg, bg, bd = VERDICT_STYLES.get(label, _VERDICT_UNKNOWN)
+    txt, fg, bg, bd = _BUCKET_STYLES[episode_bucket(m, eid)]
     head = (f'<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px">'
             f'<span style="font-size:1.35rem;font-weight:800;color:{fg}">{_esc(txt)}</span>'
             f'<span style="font:14px/1.6 ui-monospace,monospace;color:#4E5969;'
@@ -2079,7 +2068,7 @@ def check_table_html(m: dict, eid: str) -> str:
     rows = check_rows(m, eid) if eid else []
     if not rows:
         return ('<p style="color:#777;font:12px/1.6 system-ui">'
-                '此条没有逐维检查读数(老交付,或更早的检查已经把后面的步骤短路了)。</p>')
+                '这条没有记录逐维读数:更早的检查判废后就不再往下跑;旧版本生成的交付也没有这份记录。</p>')
     marks = [r[1] == "拒绝" for r in rows]
     return ('<div style="font:13px/1.6 system-ui;font-weight:700;color:#4E5969;'
             'margin-top:4px">各维检查读数(标红=把这条毙掉的那一维)</div>'
@@ -2540,6 +2529,15 @@ BUCKET_ALL = "全部"
 BUCKETS = (BUCKET_PASSED, BUCKET_REJECTED, BUCKET_PENDING)
 BUCKET_ICONS = {BUCKET_PASSED: "✅", BUCKET_REJECTED: "❌", BUCKET_PENDING: "⏳"}
 
+#: 三桶 → (徽章图标, 主色, 底色, 边色)。绿=通过、红=拒绝、琥珀=待人工;只留图标不留字
+#: (issue #59:颜色+图标已说明一切)。样式按**桶**取,不按当前判决取——
+#: 只因标注分歧进待人工桶的条目当前判决是"通过",按判决取会给它挂 ✅(实见的张冠李戴)。
+_BUCKET_STYLES = {
+    BUCKET_PASSED: ("✅", "#009A29", "#E8FFEA", "#AFF0B5"),
+    BUCKET_REJECTED: ("⛔", "#CB272D", "#FFECE8", "#FDCDC5"),
+    BUCKET_PENDING: ("⏳", "#D25F00", "#FFF7E8", "#FFE4BA"),
+}
+
 #: 清单行里那半句人话的长度上限。清单是用来"扫"的,一行超过这个宽度就开始
 #: 换行,几百条一换行整列就散了。
 LIST_REASON_CAP = 24
@@ -2557,7 +2555,11 @@ def humanize_reason(text) -> str:
         if s.startswith(prefix):
             s = "未通过" + s[len(prefix):].strip()
             break
-    return s.replace("硬门", "不合格拦截")     # 老交付里别的写法也不许漏出去
+    for bad, good in (("硬门", "不合格拦截"), ("软分", "质量分"),
+                      ("双签硬杀", "两类证据相互印证,判废"), ("路双签", "路相互印证"),
+                      ("硬杀", "判废"), ("孤证", "单一证据")):
+        s = s.replace(bad, good)   # 老交付里的行话不许漏出去(issue #59 追加三个词)
+    return s
 
 
 def audit_queue_ids(m: dict) -> set:
@@ -2603,8 +2605,9 @@ def bucket_choices(m: dict) -> list:
     """顶部三桶(+全部)的单选项:[(界面标签, 桶名)]。标签自带计数——数字就是
     客户最想先看到的东西,不该藏在下一屏。"""
     c = bucket_counts(m)
-    out = [(f"{BUCKET_ICONS[b]} {b} {c[b]}", b) for b in BUCKETS]
-    out.append((f"{BUCKET_ALL} {c[BUCKET_ALL]}", BUCKET_ALL))
+    # 计数带括号(issue #59 第 2 条:「通过 50」读起来像一个词,有歧义)
+    out = [(f"{BUCKET_ICONS[b]} {b} ({c[b]})", b) for b in BUCKETS]
+    out.append((f"{BUCKET_ALL} ({c[BUCKET_ALL]})", BUCKET_ALL))
     return out
 
 
@@ -2640,14 +2643,11 @@ def episode_reason_line(m: dict, eid: str) -> str:
         if why and why not in line:
             line = f"{line}:{why}" if line else why
         return line
-    bits = []
-    for chk in ep.get("pending") or []:
-        why = str((ep.get("abstain_reasons") or {}).get(chk) or "").strip()
-        bits.append(f"「{chk}」弃权:{why}" if why else f"「{chk}」待人工裁决")
+    # 同 episode_list_reason:high-level,不携带读数细节(2026-08-23 用户定)
+    bits = [f"「{chk}」证据不足,系统拿不准——需要人看视频给结论"
+            for chk in ep.get("pending") or []]
     if eid in audit_queue_ids(m):
-        why = next((str(a.get("reason") or "") for a in (m.get("audit_queue") or [])
-                    if a.get("id") == eid), "")
-        bits.append("原始标注与画面描述不一致" + (f":{why}" if why else ""))
+        bits.append("原始标注与画面描述不一致,需人工确认")
     return ";".join(bits)
 
 
@@ -2669,11 +2669,11 @@ def episode_list_reason(m: dict, eid: str) -> str:
         # episode_reason_text 优先给致命检查自己写的那句;它拿不到才退回交付里的
         # 拒绝原因(老交付 = "未通过「X」",正是这里要的兜底)
         return humanize_reason(episode_reason_text(m, eid)) or episode_reason_line(m, eid)
-    bits = [str((ep.get("abstain_reasons") or {}).get(chk) or "").strip()
-            for chk in (ep.get("pending") or [])]
+    # 2026-08-23 用户定:待人工的理由在 UI 只说 high-level,"0.15 在灰区(0.25~0.45)"
+    # 这类数字细节用户不 care;全文仍在报告与下方「检查明细」里。
+    bits = [f"「{chk}」拿不准" for chk in (ep.get("pending") or [])]
     if eid in audit_queue_ids(m):
-        bits.append(next((str(a.get("reason") or "") for a in (m.get("audit_queue") or [])
-                          if a.get("id") == eid), "") or "原始标注与画面描述不一致")
+        bits.append("标注与画面不一致")
     bits = [b for b in bits if b]
     return ";".join(bits) or episode_reason_line(m, eid)
 
@@ -2751,7 +2751,7 @@ VIDEO_SOURCE_NONE = "无"
 #: ⚠️ 措辞别再写成"运行 review-page"(那是行话,客户不知道去哪运行):先说清
 #: **为什么没有**,再说出路。
 NO_VIDEO_NOTE = ("这条找不到画面:交付里没有它的视频,也没找到源数据集。"
-                 "源数据集还在的话,重新打开这份交付即可;或用 review-page 生成审片站")
+                 "源数据集还在的话,重新打开这份交付即可")
 
 _SOURCE_NOTE = {
     VIDEO_SOURCE_REVIEW: "视频来自审片站(全部 episode 都有,含被拒条目)",
