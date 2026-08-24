@@ -43,7 +43,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        VERDICT_HOLD as _HOLD,
                        AUDIT_TERM, LATENCY_HEADERS,
                        LATENCY_KIND_NOTE, LATENCY_NOTE, LATENCY_PCTL_NOTE,
-                       SKILL_HEADERS, SYNC_FILTER_ALL, SYNC_FILTERS,
+                       SYNC_FILTER_ALL, SYNC_FILTERS,
                        TL_FILTERS, TL_SORTS,
                        merged_queue_rows, merged_review_queue, check_table_html, delivery_choices,
                        detail_table_choices,
@@ -54,7 +54,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        load_timeline, manual_hint_html, resolve_delivery,
                        OVERVIEW_HEADERS, overview_markdown,
                        overview_rows, perf_backend_md,
-                       perf_env_md, readings_text, skill_bar_html, skill_rows,
+                       perf_env_md, readings_text, skill_bar_html, skill_table_html,
                        sync_camera_html, sync_conclusion_html, sync_health_html,
                        sync_view, SYNC_HOWTO,
                        task_question_md, task_reference_html, task_reference_md,
@@ -1474,7 +1474,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 看到的是空清单 + 一个还亮着的桶,等于骗人
                 gr.update(choices=bucket_choices(m), value=BUCKET_ALL),
                 *_ep_list(m, BUCKET_ALL, 0, first),
-                skill_bar_html(m), skill_rows(m), audit_note_md(m),
+                skill_bar_html(m), skill_table_html(m), audit_note_md(m),
                 # 「待你裁决」从「全部」档第 0 条重新起(换交付不复位 = 停在
                 # 上一份交付的条目上,按钮状态还是旧的,实测踩过)
                 gr.update(choices=merged_filter_choices(m),
@@ -2944,8 +2944,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 图在表上方(2026-07-30):先看分布(谁多谁少、长尾有多长),
                 # 再下去查具体判据。表格原样不动。
                 sk_html = gr.HTML()
-                sk_table = gr.Dataframe(headers=SKILL_HEADERS, label="两级技能体系",
-                                        interactive=False)
+                # 自绘 HTML 表(2026-08-23 用户提议按族淡色分块;Dataframe 无按行上色)
+                sk_table = gr.HTML()
                 # 分歧队列与裁决卡片 2026-08-06 整体搬去「人工裁决」页,这里只留指路:
                 # 画像页是"看数据"的,裁决是"做决定"的,混在一页两边都做不好。
                 sk_audit_note = gr.Markdown()

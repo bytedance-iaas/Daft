@@ -105,6 +105,43 @@ def test_overview_and_check_rows(delivery):
     assert ts[1] == "拒绝" and "voc=0.87" in ts[3]
 
 
+def test_skill_table_html_tints_rows_by_family(tmp_path):
+    """两级体系表按族淡色分块(2026-08-23 用户提议):同族同色、异族异色、未归类灰。"""
+    import re
+    from curation.ui.manifest import skill_table_html
+    sk = dict(TWO_LEVEL_SKILLS)
+    m = _skills_delivery(tmp_path, sk, name="tint")
+    html = skill_table_html(m)
+    colors = re.findall(r'<tr style="background:(#[0-9A-F]{6})"', html)
+    rows_fam = [r[0] for r in __import__("curation.ui.manifest", fromlist=["skill_rows"]).skill_rows(m)]
+    assert len(colors) == len(rows_fam)
+    by_fam = {}
+    for f, c in zip(rows_fam, colors):
+        by_fam.setdefault(f, set()).add(c)
+    assert all(len(v) == 1 for v in by_fam.values()), "同族必须同色"
+    fams = list(by_fam)
+    assert len({next(iter(by_fam[f])) for f in fams}) == len(fams), "异族必须异色"
+    assert "两级技能体系" in html and "<script" not in html
+
+
+def test_skill_rows_episodes_column(tmp_path):
+    """两级体系表第五列 = 落在该子类的 episode(去 ep 前缀;2026-08-23 用户点名换掉「判据」)。
+    老交付没有 skill_assignment.csv → 列空,不炸。"""
+    import csv as _csv
+    from curation.ui.manifest import SKILL_HEADERS, skill_rows
+    assert SKILL_HEADERS[-1] == "episodes" and "判据" not in SKILL_HEADERS
+    m = _skills_delivery(tmp_path, TWO_LEVEL_SKILLS, name="members")
+    assert all(r[4] == "" for r in skill_rows(m))          # 没 csv → 空列
+    det = tmp_path / "members" / "details"
+    det.mkdir()
+    with open(det / "skill_assignment.csv", "w", encoding="utf-8", newline="") as f:
+        w = _csv.writer(f); w.writerow(["episode_id", "family", "subskill", "caption"])
+        w.writerow(["ep000004", "Put", "Put A on B", "c1"])
+        w.writerow(["ep000011", "Put", "Put A on B", "c2"])
+    row = [r for r in skill_rows(m) if r[1] == "Put A on B"][0]
+    assert row[4] == "4, 11"
+
+
 def test_skill_audit_overview(delivery):
     m = load_delivery(delivery)
     sk = skill_rows(m)
@@ -1017,7 +1054,6 @@ def test_skill_chart_two_level_drilldown(tmp_path):
     # 悬停详情:条数 / 占比 / 判据
     assert 'title="Put · 102 条 · 52.3% · 判据:把物体放到目标位置"' in html
     assert SKILL_FALLBACK_NOTE not in html                                # 正常路径不挂降级注记
-    assert "共 3 个技能族" in html and "覆盖 195 条数据" in html
 
 
 def test_skill_chart_flat_shape_marks_degradation(tmp_path):
@@ -1067,8 +1103,7 @@ def test_skill_chart_undersampled_chip_carries_text(tmp_path):
     """样本偏少:带**文字**的琥珀 chip(不靠颜色单独表意),且**不换条的填充色**。"""
     from curation.ui.manifest import SKILL_BAR_COLOR, skill_bar_html
     html = skill_bar_html(_skills_delivery(tmp_path, TWO_LEVEL_SKILLS, name="chip"))
-    assert html.count("样本偏少") == 2                # 1 个 chip + 1 句出处说明
-    assert "画像自带的名单" in html and "不是本图现算的" in html
+    assert html.count("样本偏少") == 1                # chip 本身;出处脚注已删(2026-08-23 用户)
     # 单色红线:条只有这一个填充色,undersampled 的那根也一样(条短已经说明问题)
     assert html.count(f"background:{SKILL_BAR_COLOR}") == len(_bar_widths(html)) == 5
     assert SKILL_BAR_COLOR == "#165DFF"        # Arco 主色(2026-08-13 全站统一)

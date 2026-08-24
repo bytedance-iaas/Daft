@@ -397,20 +397,80 @@ def check_rows(m: dict, eid: str) -> list[list]:
     return rows
 
 
-SKILL_HEADERS = ["技能族", "子技能", "条数", "占比%", "判据"]
+# 「判据」列 2026-08-23 用户点名撤下,换「episodes」:哪些条落在该子类,比归纳判据
+# 有用得多(判据在分布图的悬浮提示里仍看得到)。episode 号去 ep 前缀,与裁决队列同款。
+SKILL_HEADERS = ["技能族", "子技能", "条数", "占比%", "episodes"]
+
+
+def _skill_members(m: dict) -> dict:
+    """details/skill_assignment.csv → {(族, 子技能): "1, 4, 27…"}。老交付没这份文件给空。"""
+    import csv
+    path = os.path.join(str(m.get("path") or ""), "details", "skill_assignment.csv")
+    out: dict = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                out.setdefault((r.get("family", ""), r.get("subskill", "")), []).append(
+                    _ep_num(r.get("episode_id", "")))
+    except OSError:
+        return {}
+    return {k: ", ".join(v) for k, v in out.items()}
 
 
 def skill_rows(m: dict) -> list[list]:
+    members = _skill_members(m)
     rows = []
     for fam, f in (m["skills"].get("families") or {}).items():
         subs = f.get("subskills") or {}
         if not subs:
             rows.append([fam, "", f.get("count", ""), f.get("pct", ""),
-                        str(f.get("criterion", ""))[:100]])
+                        members.get((fam, "-"), members.get((fam, ""), ""))])
         for sub, s in subs.items():
             rows.append([fam, sub, s.get("count", ""), s.get("pct", ""),
-                        str(s.get("criterion", ""))[:100]])
+                        members.get((fam, sub), "")])
     return rows
+
+
+#: 按技能族轮换的极淡底色(2026-08-23 用户提议:大类分块,一眼分得开)。
+#: 只做背景提示,不承载语义;未归类固定灰。Gradio Dataframe 做不了按行上色,
+#: 这张表改自绘 HTML(与检查明细同一路数)。
+_SKILL_ROW_TINTS = ["#F2F7FF", "#F1FAF3", "#FFF9EE", "#F7F4FF", "#EFFAF9", "#FDF3F7"]
+
+
+def skill_table_html(m: dict) -> str:
+    """两级技能体系表(HTML 版):同族的行同一淡底色,族间颜色轮换。"""
+    rows = skill_rows(m)
+    if not rows:
+        return ""
+    fams: list = []
+    for r in rows:
+        if r[0] not in fams:
+            fams.append(r[0])
+    tint = {f: ("#F5F6F7" if f == "未归类" else _SKILL_ROW_TINTS[i % len(_SKILL_ROW_TINTS)])
+            for i, f in enumerate(fams)}
+    head = "".join('<th style="padding:6px 10px;text-align:left;font-weight:700;'
+                   'color:#4E5969;border-bottom:2px solid #C9CDD4;white-space:nowrap">'
+                   f"{_esc(h)}</th>" for h in SKILL_HEADERS)
+    body = []
+    for i, r in enumerate(rows):
+        # 分隔线要压得住淡底色(2026-08-23 用户实见:淡灰线在色块上看不出来):
+        # 族内行间用 Arco 边框灰,族与族交界加粗一档
+        last_in_fam = i + 1 >= len(rows) or rows[i + 1][0] != r[0]
+        line = "2px solid #A9AEB8" if last_in_fam else "1px solid #C9CDD4"
+        tds = []
+        for j, c in enumerate(r):
+            # 族/子技能列给足最小宽度,常规名字一行放得下,超长的才换行
+            extra = ("min-width:200px;" if j == 0 else
+                     "min-width:240px;" if j == 1 else
+                     "white-space:nowrap;" if j in (2, 3) else "")
+            mono = "font:12px/1.6 ui-monospace,Menlo,monospace;color:#4E5969;" if j == 4 else ""
+            tds.append(f'<td style="padding:5px 10px;border-bottom:{line};'
+                       f'vertical-align:top;{extra}{mono}">{_esc(c)}</td>')
+        body.append(f'<tr style="background:{tint[r[0]]}">' + "".join(tds) + "</tr>")
+    return ('<div style="font:13px/1.7 system-ui;font-weight:700;color:#4E5969;'
+            'margin:10px 0 4px">两级技能体系</div>'
+            '<table style="border-collapse:collapse;width:100%;font:13px/1.7 system-ui">'
+            f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table>")
 
 
 # ───────── 技能分布图(2026-07-30):技能画像页的横向条形图 ─────────
@@ -541,16 +601,7 @@ def skill_bar_html(m: dict) -> str:
         head.append(f'<p style="margin:0 0 6px 0;color:#D25F00;background:#FFF7E8;'
                     f'border-left:3px solid #FF7D00;padding:6px 10px">'
                     f'{SKILL_FALLBACK_NOTE}</p>')
-    unit = "个技能族" if shape == "two_level" else "项技能(按原始标注分组)"
-    n_kind = sk.get("n_families") if shape == "two_level" else sk.get("n_skills")
-    line = (f'共 {n_kind if n_kind is not None else len(items)} {unit}'
-            + (f",覆盖 {n_eps} 条数据" if n_eps is not None else "")
-            + ";按条数降序,全部列出(长尾本身就是画像的信息量,不截断)。")
-    n_drill = sum(1 for it in items if len(it["subs"]) >= 2)
-    if n_drill:
-        line += f"其中 {n_drill} 个族有多个子技能,点族名可展开。"
-    head.append(f'<div style="font:15px/1.7 system-ui;color:#555;margin-bottom:12px">'
-                f'{line}</div>')
+    # 顶部“共 N 个技能族…点族名可展开”说明句 2026-08-23 用户红框点名删除
 
     rows = []
     for it in items:
@@ -563,11 +614,9 @@ def skill_bar_html(m: dict) -> str:
         else:
             rows.append(bar)
 
-    foot = ('<div style="font:14px/1.7 system-ui;color:#777;margin-top:14px">'
-            '琥珀「样本偏少」标记来自画像自带的名单(生成画像时判定),不是本图现算的。'
-            '</div>') if undersampled else ""
+    # 底部“「样本偏少」标记来自画像自带的名单…”脚注 2026-08-23 用户红框点名删除
     return ('<div class="sk-chart" style="max-width:1280px">' + _SKILL_CSS
-            + "".join(head) + "".join(rows) + foot + '</div>')
+            + "".join(head) + "".join(rows) + '</div>')
 
 
 # 待裁决队列单表(2026-08-23 用户拍板:分歧表 × 弃权表合一,一条 episode 一行)。
