@@ -558,10 +558,14 @@ def to_markdown(report: dict) -> str:
             c = str(d.get("criterion") or "").strip()
             return f"  ——{c[:120]}{'…' if len(c) > 120 else ''}" if c else ""
 
+        def _nm(d, en):                      # 中文显示名(2026-08-24),英文 slug 括注可对号
+            zh = str(d.get("name_zh") or "").strip()
+            return f"{zh}({en})" if zh else en
+
         for name, f in sorted(sk["families"].items(), key=lambda x: -x[1]["count"]):
-            lines.append(f"- **{name}**: {f['count']} 条({f['pct']:.2f}%){_crit(f)}")
+            lines.append(f"- **{_nm(f, name)}**: {f['count']} 条({f['pct']:.2f}%){_crit(f)}")
             for sub, s in sorted(f["subskills"].items(), key=lambda x: -x[1]["count"]):
-                lines.append(f"  - {sub}: {s['count']} 条({s['pct']:.2f}%){_crit(s)}")
+                lines.append(f"  - {_nm(s, sub)}: {s['count']} 条({s['pct']:.2f}%){_crit(s)}")
                 for lab in s.get("raw_labels_top", [])[:2]:
                     lines.append(f"    - [原始标注] {lab}")
         if sk.get("undersampled"):

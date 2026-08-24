@@ -417,17 +417,23 @@ def _skill_members(m: dict) -> dict:
     return {k: ", ".join(v) for k, v in out.items()}
 
 
+def _skill_name(entry, en: str) -> str:
+    """显示名:交付里带中文名(2026-08-24 起生成)就用中文,老交付回落英文。"""
+    return str((entry or {}).get("name_zh") or en)
+
+
 def skill_rows(m: dict) -> list[list]:
-    members = _skill_members(m)
+    members = _skill_members(m)          # ⚠️ 成员映射按英文 slug 对号,显示才换中文
     rows = []
     for fam, f in (m["skills"].get("families") or {}).items():
         subs = f.get("subskills") or {}
         if not subs:
-            rows.append([fam, "", f.get("count", ""), f.get("pct", ""),
+            rows.append([_skill_name(f, fam), "", f.get("count", ""), f.get("pct", ""),
                         members.get((fam, "-"), members.get((fam, ""), ""))])
         for sub, s in subs.items():
-            rows.append([fam, sub, s.get("count", ""), s.get("pct", ""),
-                        members.get((fam, sub), "")])
+            rows.append([_skill_name(f, fam), _skill_name(s, sub),
+                         s.get("count", ""), s.get("pct", ""),
+                         members.get((fam, sub), "")])
     return rows
 
 
@@ -524,10 +530,12 @@ def skill_chart_items(m: dict) -> tuple[str, list[dict]]:
     fams = sk.get("families") or {}
     flat = sk.get("skills") or {}
     if fams:
-        items = [{"name": name, "count": f.get("count") or 0, "pct": f.get("pct"),
+        items = [{"name": name, "zh": f.get("name_zh") or "",
+                  "count": f.get("count") or 0, "pct": f.get("pct"),
                   "criterion": f.get("criterion") or "",
                   "subs": sorted(
-                      ({"name": sn, "count": s.get("count") or 0, "pct": s.get("pct"),
+                      ({"name": sn, "zh": s.get("name_zh") or "",
+                        "count": s.get("count") or 0, "pct": s.get("pct"),
                         "criterion": s.get("criterion") or "", "subs": []}
                        for sn, s in (f.get("subskills") or {}).items()),
                       key=lambda x: (-x["count"], x["name"]))}
@@ -557,6 +565,7 @@ def _skill_bar_row(it: dict, top: int, undersampled: set, *,
                    sub: bool = False, caret: bool = False) -> str:
     """一根条(族 / 子技能共用)。宽度按**全局** top 归一(见上 ⑤)。"""
     name, count, pct = it["name"], it["count"], it["pct"]
+    shown = it.get("zh") or name             # 显示中文,英文 slug 留在悬浮提示里可对号
     width = max(0.6, count / top * 100) if top else 0.6
     meta = f"{count} 条" + (f" · {pct}%" if pct is not None else "")
     title = f"{name} · {meta}"
@@ -573,7 +582,7 @@ def _skill_bar_row(it: dict, top: int, undersampled: set, *,
         f'{18 if not sub else 40}px;font-size:15px"></span>'
         f'<div style="flex:0 0 {300 if sub else 320}px;font:16px/1.5 system-ui;'
         f'color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-        f'{_esc(name)}</div>'
+        f'{_esc(shown)}</div>'
         f'<div style="flex:1;min-width:60px;background:#F7F8FA;border-radius:4px;'
         f'height:26px">'
         f'<div style="width:{width:.2f}%;height:100%;background:{SKILL_BAR_COLOR};'

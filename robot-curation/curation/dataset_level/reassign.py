@@ -128,8 +128,12 @@ def rebuild_profile(assignment: dict, old_profile: dict, caption_of: dict,
         of = old_f.get(fname) or {}
         if of.get("criterion"):
             f["criterion"] = of["criterion"]
+        if of.get("name_zh"):
+            f["name_zh"] = of["name_zh"]
         for sname, s in f["subskills"].items():
             osub = (of.get("subskills") or {}).get(sname) or {}
             if osub.get("criterion"):
                 s["criterion"] = osub["criterion"]
+            if osub.get("name_zh"):
+                s["name_zh"] = osub["name_zh"]
     return prof

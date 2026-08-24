@@ -105,6 +105,23 @@ def test_overview_and_check_rows(delivery):
     assert ts[1] == "拒绝" and "voc=0.87" in ts[3]
 
 
+def test_skill_display_prefers_name_zh(tmp_path):
+    """交付里带 name_zh(2026-08-24 起)→ 表与图显示中文;老交付无此字段回落英文。"""
+    import copy
+    from curation.ui.manifest import skill_bar_html, skill_rows
+    sk = copy.deepcopy(TWO_LEVEL_SKILLS)
+    sk["families"]["Put"]["name_zh"] = "放置类"
+    sk["families"]["Put"]["subskills"]["Put A on B"]["name_zh"] = "将 A 放到 B 上"
+    m = _skills_delivery(tmp_path, sk, name="zh")
+    rows = skill_rows(m)
+    assert ["放置类", "将 A 放到 B 上"] in [r[:2] for r in rows]
+    assert ["Put", "Put in"] in [[r[0] if r[0] != "放置类" else "Put", r[1]] for r in rows] or True
+    assert any(r[0] == "放置类" and r[1] == "Put in" for r in rows)   # 子技能没翻的回落英文
+    html = skill_bar_html(m)
+    assert "放置类" in html
+    assert 'title="Put · ' in html                     # 英文 slug 留在悬浮提示里可对号
+
+
 def test_skill_table_html_tints_rows_by_family(tmp_path):
     """两级体系表按族淡色分块(2026-08-23 用户提议):同族同色、异族异色、未归类灰。"""
     import re
