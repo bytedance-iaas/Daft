@@ -23,10 +23,10 @@ import sys
 from ..delivery import (delivery_root_of, resolve_run, run_choices,
                         run_name_of_run_id)
 from .manifest import (clear_discover_cache,  # noqa: F401
-                       APPEAL_CHOICES, APPEAL_HEADERS, AUDIT_HEADERS,
+                       APPEAL_CHOICES, APPEAL_HEADERS, QUEUE_HEADERS,
                        BUCKET_ALL, DECISION_CHOICES,
                        DETAIL_LABELS, MERGE_FILTER_ALL, SUCCESS_MODES,
-                       TASK_REVIEW_HEADERS, VERDICT_CHOICES,
+                       VERDICT_CHOICES,
                        appeal_hint_md, appeal_reason_text,
                        appeal_rows, application_counts_md, audit_clip_paths,
                        audit_note_md,
@@ -45,7 +45,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        LATENCY_KIND_NOTE, LATENCY_NOTE, LATENCY_PCTL_NOTE,
                        SKILL_HEADERS, SYNC_FILTER_ALL, SYNC_FILTERS,
                        TL_FILTERS, TL_SORTS,
-                       audit_rows, check_table_html, delivery_choices,
+                       merged_queue_rows, merged_review_queue, check_table_html, delivery_choices,
                        detail_table_choices,
                        discover_deliveries, episode_card_html,
                        episode_list_view, episode_video_html,
@@ -58,7 +58,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        sync_camera_html, sync_conclusion_html, sync_health_html,
                        sync_view, SYNC_HOWTO,
                        task_question_md, task_reference_html, task_reference_md,
-                       task_review_rows, timeline_html,
+                       timeline_html,
                        video_detail_view)
 from . import runner            # 任务执行层(任务台跑批 + 报告页「执行裁决」共用)
 # 公共数据集目录(2026-08-21):只读一份清单、登记匿名桶,不 import 管道
@@ -676,20 +676,9 @@ _ARCO_CSS = """
 #ex-ask-btns button, #out-ask-btns button, #in-ask-btns button {
   flex: 0 0 auto !important; width: 120px !important; min-width: 0 !important;
 }
-/* 两个待裁决队列并列(2026-08-19 用户拍板)。窄屏时 Gradio 的 Row 自己会换行成
-   上下排,这里只保证并列时两列不互相挤 —— 表格内部本来就有横向滚动。
-   ⚠️ 两列**等高**(用户点名"太难看了"):Row 默认按各自内容高度长,两张表条数
-   不同就一高一矮。stretch + 表格容器撑满 = 齐平。 */
-/* ⚠️ 光靠 align-items: stretch **不够**(2026-08-19 用户实机点名"太难看了"):
-   stretch 撑的是外层 Column,而 Dataframe 的滚动容器仍按内容高度长 —— 左表一行
-   文字换行成十行、右表只有一行,两边就差出一大截。
-   直接把两张表的滚动容器钉成同一个高度(与 max_height=420 对齐):高度一定,
-   条数多少都不影响外观,内部各自滚动。 */
-#adj-queues { gap: 16px !important; align-items: stretch !important; }
-#adj-queues > div { display: flex !important; flex-direction: column !important; }
-#audit-queue .table-wrap, #task-queue .table-wrap,
-#audit-queue .svelte-virtual-table-viewport,
-#task-queue .svelte-virtual-table-viewport {
+/* 待裁决队列单表(2026-08-23 用户拍板:两表合一)。滚动容器钉死高度,
+   条数多少不影响外观,内部滚动(表头吸顶)。 */
+#audit-queue .table-wrap, #audit-queue .svelte-virtual-table-viewport {
   height: 420px !important; max-height: 420px !important;
 }
 
@@ -993,9 +982,8 @@ _AUDIT_CSS = """
                border-radius:10px; background:#fff; box-shadow:0 24px 80px rgba(0,0,0,.45); }
 .sync-lb-toggle:checked + .sync-lb { display:flex; }
 
-#audit-queue tbody tr, #task-queue tbody tr { cursor: pointer; }
-#audit-queue tbody tr:hover td,
-#task-queue tbody tr:hover td { background: rgba(255, 140, 0, 0.10) !important; }
+#audit-queue tbody tr { cursor: pointer; }
+#audit-queue tbody tr:hover td { background: rgba(255, 140, 0, 0.10) !important; }
 
 /* Episodes 页(2026-08-11 改版):顶部三桶横排大按钮,左侧清单一列可滚。
    清单是**扫读**用的:等宽字体对齐 episode 号,单行不换行(几百条一换行整列就散),
@@ -1490,7 +1478,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 gr.update(choices=merged_filter_choices(m),
                           value=merged_filter_choices(m)[0]),
                 readonly_banner_md(m) + (merged_hint_md(m) or ""),
-                audit_rows(m), task_review_rows(m),
+                merged_queue_rows(m),
                 *_mg_render(m, MERGE_FILTER_ALL, 0),
                 # 被拒复议:没有可复议条目就整块不渲染;子页签藏不掉,空着一片
                 # 会像页面坏了,所以空态时换一句说明顶上
@@ -2727,24 +2715,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         gr.HTML(_adj_section_html(
                             "", "待裁决队列", "",     # 副标题已删(2026-08-21 用户点名多余)
                             "#86909C", "#1D2129"))
-                        with gr.Row(elem_id="adj-queues"):
-                            with gr.Column(scale=1, min_width=320):
-                                au_table = gr.Dataframe(
-                                    headers=AUDIT_HEADERS,
-                                    label=f"{AUDIT_TERM}的条目(重点档排最前)",
-                                    interactive=False, elem_id="audit-queue",
-                                    max_height=420,  # 容器内滚动(表头吸顶),条数多不挤爆页面
-                                    wrap=True,       # 长文本换行显示全文(原始标注/分歧说明不截断)
-                                    column_widths=["7%", "6%", "9%", "24%", "19%",
-                                                   "9%", "18%", "8%"])
-                            with gr.Column(scale=1, min_width=320):
-                                tv_table = gr.Dataframe(
-                                    headers=TASK_REVIEW_HEADERS,
-                                    label="任务成败弃权的条目",
-                                    interactive=False, elem_id="task-queue",
-                                    max_height=420, wrap=True,
-                                    column_widths=["7%", "11%", "10%", "38%",
-                                                   "22%", "12%"])
+                        # 单表(2026-08-23 用户拍板):分歧 × 弃权按 episode 合一,
+                        # 一条一行;点任意一格跳到下方卡片。列删到只剩能回答
+                        # "哪条、什么问题、标注、系统看到什么、裁了没"的五列。
+                        qu_table = gr.Dataframe(
+                            headers=QUEUE_HEADERS, show_label=False,
+                            interactive=False, elem_id="audit-queue",
+                            max_height=420,  # 容器内滚动(表头吸顶),条数多不挤爆页面
+                            wrap=True,       # 长文本换行显示全文,不截断
+                            column_widths=["8%", "11%", "34%", "34%", "13%"])
                         # ── 合并裁决卡片(逐条翻页,翻页按 episode 走不再按队列走):
                         #    看一遍视频 → ① 标注问题(有分歧才出现)→ ② 成败问题
                         #    (显隐档位见 manifest.success_block_mode)。
@@ -3082,7 +3061,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             outs = [state, ov_md, ov_table, ov_note, ov_cfg, ep_bucket, *_ep_list_outs,
                     sk_html, sk_table, sk_audit_note,
-                    mg_filter, mg_hint, au_table, tv_table,
+                    mg_filter, mg_hint, qu_table,
                     *_mg_outs,
                     ap_block, ap_empty, ap_hint, ap_table, *_ap_outs,
                     *_ep_outs, dt_pick, dt_note, dt_table, vd_note, vd_table,
@@ -3307,29 +3286,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 i = ids_all.index(eid) if eid in ids_all else 0
                 return (gr.update(value=all_label), *_mg_render(m, all_label, i))
 
-            def _au_jump(m, filt, evt):
-                """点分歧队列表任意一行 → 合并卡片跳到该 episode。"""
-                q = (m or {}).get("audit_queue") or []
+            def _q_jump(m, filt, evt):
+                """点待裁决队列表任意一行 → 合并卡片跳到该 episode(行序与
+                merged_review_queue 一致,按下标对号)。"""
+                q = merged_review_queue(m or {})
                 row = evt.index[0]
-                eid = q[row].get("id", "") if row < len(q) else ""
-                return _mg_jump_to(m, filt, eid)
-
-            def _tv_jump(m, filt, evt):
-                """点弃权队列表任意一行 → 合并卡片跳到该 episode。"""
-                q = (m or {}).get("task_review") or []
-                row = evt.index[0]
-                eid = q[row].get("id", "") if row < len(q) else ""
+                eid = q[row]["id"] if row < len(q) else ""
                 return _mg_jump_to(m, filt, eid)
 
             # gradio 靠注解识别"要注入 SelectData";本文件开了 future annotations,
             # 字符串注解会在模块全局被 eval(gr 是函数内导入)→ NameError。
             # 塞真实类对象绕开字符串求值。
-            _au_jump.__annotations__ = {"evt": gr.SelectData}
-            _tv_jump.__annotations__ = {"evt": gr.SelectData}
+            _q_jump.__annotations__ = {"evt": gr.SelectData}
 
             _mg_jump_outs = [mg_filter, *_mg_outs]
-            au_table.select(_au_jump, [state, mg_filter], _mg_jump_outs)
-            tv_table.select(_tv_jump, [state, mg_filter], _mg_jump_outs)
+            qu_table.select(_q_jump, [state, mg_filter], _mg_jump_outs)
 
             def _mg_item(m, filt, idx):
                 """当前卡片指着的合并队列条目(空队列返回 None)。"""
@@ -3364,12 +3335,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 tv_sec = _mg_tv_section(m, it, dec_now)
                 # 顺带刷新进度提示(裁完最后一条,催办语就该消失)
                 # 卡头跟着刷(2026-08-21):采纳改标后第二行立刻换成新标注
-                return (msg, gr.update(value=audit_rows(m)), _mg_au_info(m, it),
+                return (msg, gr.update(value=merged_queue_rows(m)), _mg_au_info(m, it),
                         *btns, *tv_sec,
                         readonly_banner_md(m) + (merged_hint_md(m) or ""),
                         audit_note_md(m), _mg_head(m, it))
 
-            _dec_outs = [au_status, au_table, au_info, au_adopt, au_keep, au_hold,
+            _dec_outs = [au_status, qu_table, au_info, au_adopt, au_keep, au_hold,
                          mg_tv_block, tv_mode_note, tv_info, tv_readings,
                          tv_pass, tv_fail, tv_hold,
                          mg_hint, sk_audit_note, mg_info]
@@ -3404,11 +3375,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 else:
                     btns = [gr.update()] * 3
                 tv_sec = _mg_tv_section(m, it, dec)
-                return (msg, gr.update(value=task_review_rows(m)),
+                return (msg, gr.update(value=merged_queue_rows(m)),
                         tv_sec[2], tv_sec[3], *btns,
                         readonly_banner_md(m) + (merged_hint_md(m) or ""))
 
-            _tv_dec_outs = [tv_status, tv_table, tv_info, tv_readings,
+            _tv_dec_outs = [tv_status, qu_table, tv_info, tv_readings,
                             tv_pass, tv_fail, tv_hold, mg_hint]
             tv_pass.click(lambda m, f, i, nt: _mg_tv_decide(m, f, i, nt, "判成功"),
                           [state, mg_filter, mg_idx, tv_note], _tv_dec_outs)

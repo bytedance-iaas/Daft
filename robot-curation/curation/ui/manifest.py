@@ -592,25 +592,45 @@ def skill_bar_html(m: dict) -> str:
             + "".join(head) + "".join(rows) + foot + '</div>')
 
 
-AUDIT_HEADERS = ["操作", "档位", "episode", "原始标注", "自产描述(VLM 生成)",
-                 "成败线判定", "分歧说明", "裁决"]
+# 待裁决队列单表(2026-08-23 用户拍板:分歧表 × 弃权表合一,一条 episode 一行)。
+# 档位/成败线/分歧说明/弃权原因/当前判决/操作列全部不进表(同日用户点名删):
+# 表只回答"哪条、什么问题、标注写了什么、系统看到什么、裁了没",细节在下方卡片;
+# 点任意一格跳到该条的卡片。重点档仍排最前(顺序即档位,不再单列)。
+QUEUE_HEADERS = ["episode", "待裁问题", "原始标注", "自产描述(VLM 生成)", "裁决结果"]
 
 
-def audit_rows(m: dict) -> list[list]:
-    """档位=重点(成败线同时不利,两线同报警)/参考(成败线放行,多为描述噪声)。
-    裁决列回显 details/label_decisions.csv(空=待人工)。"""
-    dec = load_label_decisions(m)
-    return [["裁决", a.get("priority", "参考"), a.get("id", ""), a.get("label", ""),
-             a.get("caption", ""), a.get("task_verdict", ""), a.get("reason", ""),
-             dec.get(a.get("id", ""), {}).get("decision", "")]
-            for a in m["audit_queue"]]
+def _ep_num(eid: str) -> str:
+    """"ep000017" → "17"(表里省掉 ep 前缀与前导零;认不出的原样给)。"""
+    tail = eid[2:] if str(eid).startswith("ep") else str(eid)
+    return str(int(tail)) if tail.isdigit() else str(eid)
 
 
-# 「关键读数」列已删(2026-08-21 用户点名:新协议下几乎全是"(无读数)",而弃权原因那句
-# 话本身已把数字说了);操作列不带三角(▶ 只是噪音,点任意一格都能跳到卡片)。
-TASK_REVIEW_HEADERS = ["操作", "episode", "任务标注", "当前判决", "弃权原因", "裁决"]
+def merged_queue_rows(m: dict) -> list[list]:
+    """待裁决队列 → 表格行。行序与 merged_review_queue 一致(点行按下标对号跳卡片);
+    裁决结果回显两类裁决 CSV(空=待人工),两个问题都裁了就并排显示。
 
-#: 弃权原因是 VLM 写的一整句,表里截断,全文在下方卡片里给。
+    只判成败的条目,判定时用的任务文本可能是原始标注、也可能是自产 caption
+    (没标注的条目拿自产描述顶上,task_details 记着来源)——按来源分列,
+    自产的绝不冒充「原始标注」(2026-08-23 用户点名要区分)。"""
+    ldec = load_label_decisions(m)
+    tdec = load_task_verdicts(m)
+    rows = []
+    for it in merged_review_queue(m):
+        eid, a, t = it["id"], it["audit"], it["task"]
+        kind = "标注+成败" if (a and t) else ("标注分歧" if a else "成败弃权")
+        if a:
+            label, cap = a.get("label", ""), a.get("caption", "")
+        else:
+            text, src = episode_task_text(m, eid)
+            text = text if len(text) <= 120 else text[:119] + "…"
+            label, cap = ("", text) if src == TASK_SOURCE_CAPTION else (text, "")
+        got = [d for d in (ldec.get(eid, {}).get("decision", ""),
+                           tdec.get(eid, {}).get("verdict", "")) if d]
+        rows.append([_ep_num(eid), kind, label, cap, " · ".join(got)])
+    return rows
+
+
+#: 弃权原因是 VLM 写的一整句,表里已不列;复议表仍截断用,全文在卡片里给。
 _REASON_CAP = 60
 
 
@@ -619,19 +639,6 @@ def readings_text(readings: dict) -> str:
     if not readings:
         return "(无读数)"
     return " · ".join(f"{k}={v}" for k, v in readings.items())
-
-
-def task_review_rows(m: dict) -> list[list]:
-    """任务成败弃权队列 → 表格行。裁决列回显 details/task_verdicts.csv(空=待人工)。"""
-    dec = load_task_verdicts(m)
-    rows = []
-    for t in m.get("task_review") or []:
-        reason = str(t.get("reason") or "")
-        rows.append(["裁决", t.get("id", ""), task_text_short(m, t.get("id", "")),
-                     t.get("current", ""),
-                     reason[:_REASON_CAP] + ("…" if len(reason) > _REASON_CAP else ""),
-                     dec.get(t.get("id", ""), {}).get("verdict", "")])
-    return rows
 
 
 APPEAL_HEADERS = ["操作", "episode", "拒绝原因", "关键读数", "复议结论"]
