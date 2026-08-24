@@ -718,8 +718,7 @@ _ARCO_CSS = """
 }
 .gradio-container button.label-wrap > span:first-child { flex: 0 0 auto !important; }
 .gradio-container button.label-wrap > span.icon {
-  margin-left: auto !important; color: var(--arco-primary) !important;
-  font-size: 12px !important; opacity: 1 !important;
+  display: none !important;   /* issue #59 第 5 条:两个三角留一个,左边那个会转 */
 }
 .gradio-container button.label-wrap::before {
   content: ""; flex: 0 0 auto; width: 0; height: 0;
@@ -995,6 +994,12 @@ _AUDIT_CSS = """
 #ep-list label { font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 4px 8px;
                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #ep-list label:hover { background: rgba(255, 140, 0, 0.10); }
+/* issue #59 第 3 条:清单是"点谁看谁",不是表单,单选圆圈是噪音。
+   圆圈藏掉,选中态改整行 Arco 蓝底(比圆点醒目,也符合左导航的通用心智)。 */
+#ep-list label input[type="radio"] { display: none !important; }
+#ep-list label:has(> input[type="radio"]:checked) {
+  background: #E8F3FF !important; color: #165DFF !important; font-weight: 700;
+}
 """
 
 

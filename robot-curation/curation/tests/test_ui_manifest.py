@@ -1780,7 +1780,7 @@ def test_sync_block_speaks_up_when_check_never_ran(delivery):
     from curation.ui.manifest import sync_camera_html, sync_camera_rows, sync_detail
     m = load_delivery(delivery)                  # fixture 原样,没有同步检查
     assert sync_camera_rows(m, "ep000000") == [] and sync_detail(m, "ep000000") == {}
-    assert "没有视频-动作同步读数" in sync_camera_html(m, "ep000000")
+    assert "没有同步读数" in sync_camera_html(m, "ep000000")
 
 
 def test_episode_card_names_the_fatal_check(delivery):
@@ -1791,14 +1791,16 @@ def test_episode_card_names_the_fatal_check(delivery):
     assert fatal_checks(m, "ep000001") == ["任务成败判定"]
     assert episode_reason_text(m, "ep000001") == "渐变问询不可判"
     card = episode_card_html(m, "ep000001")
-    assert "⛔ 拒绝" in card and "ep000001" in card
+    assert "⛔" in card and "ep000001" in card
+    assert "⛔ 拒绝" not in card                       # issue #59:徽章只留图标
     # 检查名 + **该检查自己写的人话**:只报检查名会把人带偏(ep000018 教训)
     assert "未通过「任务成败判定」:渐变问询不可判" in card
     assert "硬门" not in card and "0.940" in card             # 黑话已清除 · 质量分
     # 待裁决优先于当前判决(系统还没定论时先叫人上)
     assert episode_verdict_label(m["episodes"]["ep000000"]) == "待裁决"
     card0 = episode_card_html(m, "ep000000")
-    assert "⏳ 待裁决" in card0 and "「任务成败判定」弃权" in card0
+    assert "⏳" in card0 and "待裁决" not in card0    # 按桶取样式:判决"通过"但待人工 → ⏳ 不是 ✅
+    assert "✅" not in card0 and "拿不准" in card0
     # 没选中 / 查无此条:不崩,给引导语
     assert "选一条 episode" in episode_card_html(m, "")
     assert "选一条 episode" in episode_card_html(m, "查无此条")
@@ -1829,7 +1831,7 @@ def test_check_table_html_highlights_the_rejected_dimension(delivery):
     assert "voc=0.87" in html
     # 通过条目:一行红都没有
     assert "#FFECE8" not in check_table_html(m, "ep000002")
-    assert "没有逐维检查读数" in check_table_html(m, "")   # 空态不崩
+    assert "没有记录逐维读数" in check_table_html(m, "")   # 空态不崩
 
 
 def test_bucket_split_is_exhaustive_and_disjoint(delivery):
@@ -2225,7 +2227,7 @@ def test_bucket_choices_carry_counts_and_all(ep_delivery):
     """顶部三桶自带计数(数字是客户最想先看到的),外加「全部」兜底。"""
     from curation.ui.manifest import BUCKET_ALL, bucket_choices
     labels = [lab for lab, _ in bucket_choices(load_delivery(ep_delivery))]
-    assert labels == ["✅ 通过 1", "❌ 拒绝 2", "⏳ 待人工 2", "全部 5"]
+    assert labels == ["✅ 通过 (1)", "❌ 拒绝 (2)", "⏳ 待人工 (2)", "全部 (5)"]
     assert bucket_choices(load_delivery(ep_delivery))[-1][1] == BUCKET_ALL
 
 
@@ -2238,7 +2240,7 @@ def test_episode_list_line_is_id_icon_and_half_a_sentence(ep_delivery):
     assert by_id["ep000000"]["label"] == "ep000000 ✅"          # 通过:只有号和勾
     assert by_id["ep000002"]["label"] == "ep000002 ❌ 末态未完成"
     assert "未通过「" not in by_id["ep000002"]["label"]      # 前缀不进清单
-    assert by_id["ep000001"]["label"] == "ep000001 ⏳ 渐变问询不可判"
+    assert by_id["ep000001"]["label"] == "ep000001 ⏳ 「任务成败判定」拿不准"   # 数字细节不进清单
     assert "分歧" in by_id["ep000004"]["reason"] or \
         "不一致" in by_id["ep000004"]["reason"]
     # 理由截断:一行超过上限就带省略号,清单永远单行可扫
@@ -2252,7 +2254,8 @@ def test_passed_episode_card_says_nothing_but_passed(ep_delivery):
     from curation.ui.manifest import episode_card_html
     m = load_delivery(ep_delivery)
     card = episode_card_html(m, "ep000000")
-    assert "✅ 通过" in card and "ep000000" in card
+    assert "✅" in card and "ep000000" in card
+    assert "通过" not in card    # issue #59:绿底+✅ 足矣,"通过"二字不再印
     for noise in ("质量分", "致命项", "原因", "检查", "弃权"):
         assert noise not in card, noise
     # 被拒的那条相反:理由必须当面写清
@@ -2318,7 +2321,8 @@ def test_no_video_anywhere_tells_how_to_get_them(ep_delivery):
     from curation.ui.manifest import NO_VIDEO_NOTE, episode_video_html, episode_videos
     m = load_delivery(ep_delivery)
     assert episode_videos(m, "ep000000", None)["note"] == NO_VIDEO_NOTE
-    assert "review-page" in episode_video_html(m, "ep000000", None)
+    assert "review-page" not in episode_video_html(m, "ep000000", None)  # 行话不进界面(issue #59)
+    assert "找不到画面" in episode_video_html(m, "ep000000", None)
 
 
 def test_play_all_button_zeroes_and_plays_every_video(ep_delivery, tmp_path):
@@ -2426,7 +2430,7 @@ def test_app_episodes_tab_is_buckets_plus_list_and_detail(ep_delivery, tmp_path)
     assert "只看被拒" not in cfg                   # 旧筛选档已被三桶取代
     loads = [f for f in app.fns.values() if getattr(f.fn, "__name__", "") == "_load"]
     blob = str(loads[0].fn(ep_delivery))
-    assert "✅ 通过 1" in blob and "❌ 拒绝 2" in blob and "⏳ 待人工 2" in blob
+    assert "✅ 通过 (1)" in blob and "❌ 拒绝 (2)" in blob and "⏳ 待人工 (2)" in blob
     assert "ep000002 ❌ 末态未完成" in blob                 # 左清单那一行
 
 
