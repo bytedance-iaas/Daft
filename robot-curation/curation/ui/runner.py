@@ -341,7 +341,7 @@ def log_unmounted_roots(buckets: list) -> None:
 def dataset_format(dataset_dir: str) -> dict:
     """数据集格式 → {kind, version, needs_clips}。**只读 meta 文件,不碰视频。**
 
-    needs_clips = 这份数据"要在 Episodes 页逐条回看画面,得先切出片段吗":
+    needs_clips = 这份数据"要在 「轨迹」页逐条回看画面,得先切出片段吗":
     - LeRobot **v3**:多条 episode 合并进同一个 mp4,盘上没有逐条文件 → 要;
     - **rrd**:视频字节封在 .rrd 里,同样没有逐条 mp4 → 要;
     - LeRobot v2:每条本来就是独立 mp4,交付集里直接能播 → 不要。
@@ -369,10 +369,10 @@ def dataset_format(dataset_dir: str) -> dict:
 
 
 def datasets_needing_clips(data_root: str, datasets: list) -> list[str]:
-    """选中的这些数据集里,哪几个要先切片才能在 Episodes 页看画面(保持选中顺序)。
+    """选中的这些数据集里,哪几个要先切片才能在 「轨迹」页看画面(保持选中顺序)。
 
     2026-08-14 用户定:多选时**问一次、覆盖全部**。此前只有单数据集才问,多选直接
-    跳过 —— 于是多选跑完的 v3/rrd 交付在 Episodes 页全是"没有画面",而用户压根没
+    跳过 —— 于是多选跑完的 v3/rrd 交付在 「轨迹」页全是"没有画面",而用户压根没
     被问过。逐个弹窗更糟(选十个弹十次),所以这里只回答"有几个、是哪几个",
     问句和串步骤由界面那边一次做完。
     名字过不了校验的直接跳过:那种输入本来就跑不起来,不该在这里先炸一次。
@@ -407,15 +407,15 @@ def clips_prompt(names: list, fmt: dict | None = None) -> str:
         kind = ("这份数据是 LeRobot v3 格式,多条轨迹合并存放在同一个视频文件里"
                 if fmt.get("kind") == "lerobot" else
                 "这份数据是 rerun(.rrd)格式,视频封装在数据文件内部")
-        head = (f"**{kind}** —— 质检本身不受影响,但要在 Episodes 页逐条回看画面,"
+        head = (f"**{kind}** —— 质检本身不受影响,但要在 「轨迹」页逐条回看画面,"
                 f"得先切出可播片段。")
-        tail = "跳过不影响质检结果,只是 Episodes 页暂时看不到画面。"
+        tail = "跳过不影响质检结果,只是 「轨迹」页暂时看不到画面。"
     else:
         shown = "、".join(names[:_CLIPS_NAMES_CAP])
         more = f" 等 {len(names)} 个" if len(names) > _CLIPS_NAMES_CAP else ""
-        head = (f"**这 {len(names)} 个数据集需要先切出可播片段,才能在 Episodes 页"
+        head = (f"**这 {len(names)} 个数据集需要先切出可播片段,才能在 「轨迹」页"
                 f"看画面**:{shown}{more}。")
-        tail = "跳过不影响质检结果,只是这几份的 Episodes 页暂时看不到画面。"
+        tail = "跳过不影响质检结果,只是这几份的 「轨迹」页暂时看不到画面。"
     return (f"{head}\n\n要在质检之后一起生成吗?会多花几分钟到十几分钟"
             f"(取决于条数);{tail}")
 
@@ -1098,7 +1098,7 @@ def tos_list_datasets(root_url: str, region: str | None = None, *,
 #    路径 —— 读端代码零改动是懒镜像相对"到处插存储抽象层"的决定性优势。──
 
 #: 镜像时跳过的大件目录(数据集本体,几百 MB~GB 级):报告/裁决用不到它们的
-#: 字节;Episodes 页视频四档来源落空时的提示语本来就在。
+#: 字节;「轨迹」页视频四档来源落空时的提示语本来就在。
 MIRROR_SKIP_DIRS = ("episodes_parquet/", "lerobot_curated/", "rrd_curated/")
 
 #: 镜像来源的身份证文件名(落在缓存的**交付根**):裁决 CSV 写回、以及"这份
