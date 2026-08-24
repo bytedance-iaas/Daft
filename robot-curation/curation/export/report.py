@@ -184,7 +184,8 @@ def container_findings(input_format: str, info: dict, robot: dict,
 #: (passed/reject/review.json 的键是数据契约,`综合软分` 那种键名尤其不许碰)。
 #: 「软分」是内部机制名(可补偿的打分维度),界面 2026-08-11 就统一叫「质量分」了;
 #: 报告是同一批客户看的同一件事,两处说法不该分叉。
-_PLAIN_WORDS = (("软分", "质量分"),)
+_PLAIN_WORDS = (("软分", "质量分"), ("双签硬杀", "两类证据相互印证,判废"),
+                ("路双签", "路相互印证"), ("硬杀", "判废"), ("孤证", "单一证据"))
 
 #: 判废里"没有检查名"的那一类叫什么(判决层的第二种判废理由:综合加权分低于阈值,
 #: 见 pipeline/verdict.py)。与 UI 总览表用同一个说法。
@@ -557,10 +558,14 @@ def to_markdown(report: dict) -> str:
             c = str(d.get("criterion") or "").strip()
             return f"  ——{c[:120]}{'…' if len(c) > 120 else ''}" if c else ""
 
+        def _nm(d, en):                      # 中文显示名(2026-08-24),英文 slug 括注可对号
+            zh = str(d.get("name_zh") or "").strip()
+            return f"{zh}({en})" if zh else en
+
         for name, f in sorted(sk["families"].items(), key=lambda x: -x[1]["count"]):
-            lines.append(f"- **{name}**: {f['count']} 条({f['pct']:.2f}%){_crit(f)}")
+            lines.append(f"- **{_nm(f, name)}**: {f['count']} 条({f['pct']:.2f}%){_crit(f)}")
             for sub, s in sorted(f["subskills"].items(), key=lambda x: -x[1]["count"]):
-                lines.append(f"  - {sub}: {s['count']} 条({s['pct']:.2f}%){_crit(s)}")
+                lines.append(f"  - {_nm(s, sub)}: {s['count']} 条({s['pct']:.2f}%){_crit(s)}")
                 for lab in s.get("raw_labels_top", [])[:2]:
                     lines.append(f"    - [原始标注] {lab}")
         if sk.get("undersampled"):

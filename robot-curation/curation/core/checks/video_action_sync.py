@@ -804,7 +804,7 @@ def sync_verdict(
         return out
     if n_cams < 2 or len(trusted) < min_kill_cameras:
         out["reason"] = (f"仅 {len(trusted)} 路可信相机报一致滞后 {consensus:+.2f}s;"
-                         f"单相机(或孤证)永不因同步判废 → 只标注,建议人工确认")
+                         f"只有单路相机,单一证据不因同步判废 → 只标注,建议人工确认")
         return out
     thr = neg_kill_lag_min_s if consensus < 0 else kill_lag_min_s
     if abs(consensus) < thr:

@@ -172,7 +172,7 @@ def task_success(
         # 全程从未有过进度,才有资格谈失败(复核 no 双签后才真杀)
         detail["verdict"] = "failure"
         _rule(detail, "fail_candidate_no_progress")
-        detail["reason"] = f"全程物证进度峰值 {peak:.2f} ≤ {fail_max}:失败候选(待复核双签)"
+        detail["reason"] = f"全程物证进度峰值 {peak:.2f} ≤ {fail_max}:疑似未完成(待逐机位复核确认)"
         return CheckResult(name="task_success", passed=False, detail=detail)
 
     if gap >= gap_max:
@@ -272,7 +272,7 @@ def endstate_review(
         _rule(res.detail, "voter_unavailable")
         if res.passed is False:
             res.passed = None                         # 杀人必须双签
-            res.detail["reason"] = "失败候选但复核不可用:不凭单判据硬杀,进人工"
+            res.detail["reason"] = "疑似未完成但复核不可用:只有一路证据,不下判废结论,转人工"
             _rule(res.detail, "kill_downgraded_no_second_signature")
         return res
 
@@ -317,7 +317,7 @@ def endstate_review(
             else:
                 res.passed = None
                 res.detail["verdict"] = "endstate_failure_suspect"
-                res.detail["reason"] = "打分层弱成功证据被逐机位复核一致否决:进人工,不硬杀"
+                res.detail["reason"] = "进度证据较弱,且各机位复核一致不认可:转人工,不直接判废"
                 _rule(res.detail, "weak_success_vetoed_by_review")
         elif review == "split":
             res.detail["review_split"] = True         # 有实票反对,留痕可过滤
@@ -333,7 +333,7 @@ def endstate_review(
                 # cam_voter is None 分支)刻意区分:那是基础设施缺席,不是证据缺席。
                 res.passed = None
                 res.detail["verdict"] = "endstate_unconfirmed"
-                res.detail["reason"] = "打分层弱成功证据且全体机位弃权/矛盾:孤证不放行,进人工"
+                res.detail["reason"] = "进度证据较弱,各机位复核也没有一致结论:单一证据不足以放行,转人工"
                 _rule(res.detail, "weak_success_uncorroborated")
         return res
 
@@ -341,7 +341,7 @@ def endstate_review(
         if review == "no":
             res.passed = False                        # ◆全表唯一杀格:双签
             res.detail["verdict"] = "failure"
-            res.detail["reason"] = "联合打分全程无进度且逐机位复核一致判未完成:双签硬杀"
+            res.detail["reason"] = "全程看不到任务进展,且各机位复核一致判未完成:两类证据相互印证,判废"
             _rule(res.detail, "double_signed_kill")
         elif review == "yes":
             res.passed = None
@@ -350,7 +350,7 @@ def endstate_review(
             _rule(res.detail, "arms_conflict_fail_vs_done")
         else:
             res.passed = None
-            res.detail["reason"] = "失败候选但复核无一致结论:缺第二签,不硬杀,进人工"
+            res.detail["reason"] = "疑似未完成但复核没有一致结论:缺少第二路证据印证,转人工"
             _rule(res.detail, "kill_missing_second_signature")
         return res
 
@@ -373,8 +373,8 @@ def endstate_review(
             _rule(res.detail, "gray_final_zero_vs_review_done")
             return res
         if init == "score_blind" and yes_votes < blind_rescue_votes:
-            res.detail["reason"] = (f"打分层无信息且复核仅 {yes_votes} 张实票 yes"
-                                    f"(<{blind_rescue_votes}):孤证不救,进人工")
+            res.detail["reason"] = (f"进度打分无信息,复核仅 {yes_votes} 张实票 yes"
+                                    f"(<{blind_rescue_votes}):单一证据不足以放行,转人工")
             _rule(res.detail, "blind_rescue_needs_two_votes")
             return res
         res.passed = True
@@ -729,7 +729,7 @@ def arbitration_review(
         res.passed = False
         res.detail["verdict"] = "arbitration_failure"
         res.detail["reason"] = (f"取证仲裁:{n_eff} 条有效取证路一致判未完成"
-                                f"(≥{kill_min_lines} 路双签)"
+                                f"(≥{kill_min_lines} 路相互印证)"
                                 + ("(双意图结论一致)" if arb["intent_conflict"] else ""))
         _rule(res.detail, "arbitration_kill_double_signed")
         arb["applied"] = True

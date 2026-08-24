@@ -199,6 +199,33 @@ def test_criterion_propagates():
     fam_c2, _ = criteria_of({"families": [{"name": "X", "subskills": []}]})
     assert fam_c2["X"] == ""
 
+def test_translate_names_maps_and_survives_garbage():
+    """技能名翻译:一次调用整套翻;对不上号的丢、坏 JSON 整体放弃(显示层回落英文)。"""
+    from curation.dataset_level.taxonomy import apply_name_zh, translate_names
+    prof = {"families": {
+        "grasp-and-transport": {"subskills": {"pick-object": {}, "place-onto-surface": {}}},
+        "未归类": {"subskills": {"-": {}}}}}
+
+    def llm(prompt):
+        assert "grasp-and-transport" in prompt and "未归类" not in prompt
+        return json.dumps({"families": [
+            {"name": "grasp-and-transport", "zh": "抓取搬运", "subskills": [
+                {"name": "pick-object", "zh": "拿起物体"},
+                {"name": "编造的", "zh": "不该被采纳"}]}]})
+
+    zh = translate_names(prof, llm)
+    assert zh == {("grasp-and-transport",): "抓取搬运",
+                  ("grasp-and-transport", "pick-object"): "拿起物体"}
+    apply_name_zh(prof, zh)
+    f = prof["families"]["grasp-and-transport"]
+    assert f["name_zh"] == "抓取搬运"
+    assert f["subskills"]["pick-object"]["name_zh"] == "拿起物体"
+    assert "name_zh" not in f["subskills"]["place-onto-surface"]   # 缺项=回落英文
+    assert translate_names(prof2 := {"families": {"f": {"subskills": {}}}},
+                           lambda p: "不是JSON") == {}
+    assert prof2 == {"families": {"f": {"subskills": {}}}}
+
+
 
 def test_repair_unassigned():
     """漏抄补齐:漏网 caption 二次指认;乱指(类名不存在)拒收。"""

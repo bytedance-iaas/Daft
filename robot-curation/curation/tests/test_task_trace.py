@@ -165,7 +165,7 @@ def test_decision_is_bit_for_bit_unchanged_without_trace_keys():
         "probe_frames": [0, 1, 2, 3, 4, 5, 6, 7],
         "strong_score": False, "verdict": "endstate_failure_suspect",
         "cam_votes": {"cam": "no"}, "review": "no",
-        "reason": "打分层弱成功证据被逐机位复核一致否决:进人工,不硬杀"}
+        "reason": "进度证据较弱,且各机位复核一致不认可:转人工,不直接判废"}
 
 
 def test_trace_never_touches_the_verdict_matrix():
