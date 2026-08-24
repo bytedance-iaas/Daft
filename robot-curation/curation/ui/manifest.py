@@ -371,30 +371,8 @@ def overview_rows(m: dict) -> list[list]:
     _add("平均质量分", ss.get("avg_soft_score", ""))
     return rows
 
-
-def overview_note_md(m: dict) -> str:
-    """总览表下那行小字。表里哪几行能相加、哪几行不能,必须写出来别让人猜。"""
-    rows = overview_rows(m)
-    if not rows:
-        return ""
-    labels = {r[0] for r in rows}
-    if not ({"输入 episode", "判废", "交付"} <= labels):
-        return ""                       # 老交付缺行 → 这句口径无从谈起,不硬印
-    # 去重删的那部分既不在判废里也不在交付里,有它就必须写进等式,否则读者会发现
-    # 两边对不上,反而更不信这张表
-    ident = ("输入 = 判废 + 精确去重删除 + 交付"
-             if (m.get("dataset") or {}).get("dedup_removed")
-             else "输入 = 判废 + 交付")
-    # 「其中」那句只在真有这样的行时才印:没有待裁条目的交付上,解释一行不存在的
-    # 东西只会让人回头去找它在哪
-    within = ("带「其中」的行是交付内条目上的标记(数据已经在交付里了),"
-              "**不参与加减**。"
-              if any(PENDING_ROW_LABEL in r[0] for r in rows) else "")
-    # 判废子项相加大于总数时必须当场说明白,否则读者一加就以为表算错了
-    overlap = ("判废子项按检查逐项计数,**同一条可能同时踩中多项**,"
-               "所以子项相加会大于判废总数。"
-               if drop_breakdown(m.get("dataset") or {})[1] == "overlap" else "")
-    return f"_口径:{ident}。{within}{overlap}_"
+# 表下的口径/加减法小字 2026-08-23 用户点名整个删掉(没必要说这么详细,客户懂);
+# 表本身仍按「输入 = 判废 + 去重删除 + 交付」对账,只是不再印解释。
 
 
 CHECK_HEADERS = ["检查", "结果", "分数", "要点"]
@@ -419,20 +397,86 @@ def check_rows(m: dict, eid: str) -> list[list]:
     return rows
 
 
-SKILL_HEADERS = ["技能族", "子技能", "条数", "占比%", "判据"]
+# 「判据」列 2026-08-23 用户点名撤下,换「episodes」:哪些条落在该子类,比归纳判据
+# 有用得多(判据在分布图的悬浮提示里仍看得到)。episode 号去 ep 前缀,与裁决队列同款。
+SKILL_HEADERS = ["技能族", "子技能", "条数", "占比%", "episodes"]
+
+
+def _skill_members(m: dict) -> dict:
+    """details/skill_assignment.csv → {(族, 子技能): "1, 4, 27…"}。老交付没这份文件给空。"""
+    import csv
+    path = os.path.join(str(m.get("path") or ""), "details", "skill_assignment.csv")
+    out: dict = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                out.setdefault((r.get("family", ""), r.get("subskill", "")), []).append(
+                    _ep_num(r.get("episode_id", "")))
+    except OSError:
+        return {}
+    return {k: ", ".join(v) for k, v in out.items()}
+
+
+def _skill_name(entry, en: str) -> str:
+    """显示名:交付里带中文名(2026-08-24 起生成)就用中文,老交付回落英文。"""
+    return str((entry or {}).get("name_zh") or en)
 
 
 def skill_rows(m: dict) -> list[list]:
+    members = _skill_members(m)          # ⚠️ 成员映射按英文 slug 对号,显示才换中文
     rows = []
     for fam, f in (m["skills"].get("families") or {}).items():
         subs = f.get("subskills") or {}
         if not subs:
-            rows.append([fam, "", f.get("count", ""), f.get("pct", ""),
-                        str(f.get("criterion", ""))[:100]])
+            rows.append([_skill_name(f, fam), "", f.get("count", ""), f.get("pct", ""),
+                        members.get((fam, "-"), members.get((fam, ""), ""))])
         for sub, s in subs.items():
-            rows.append([fam, sub, s.get("count", ""), s.get("pct", ""),
-                        str(s.get("criterion", ""))[:100]])
+            rows.append([_skill_name(f, fam), _skill_name(s, sub),
+                         s.get("count", ""), s.get("pct", ""),
+                         members.get((fam, sub), "")])
     return rows
+
+
+#: 按技能族轮换的极淡底色(2026-08-23 用户提议:大类分块,一眼分得开)。
+#: 只做背景提示,不承载语义;未归类固定灰。Gradio Dataframe 做不了按行上色,
+#: 这张表改自绘 HTML(与检查明细同一路数)。
+_SKILL_ROW_TINTS = ["#F2F7FF", "#F1FAF3", "#FFF9EE", "#F7F4FF", "#EFFAF9", "#FDF3F7"]
+
+
+def skill_table_html(m: dict) -> str:
+    """两级技能体系表(HTML 版):同族的行同一淡底色,族间颜色轮换。"""
+    rows = skill_rows(m)
+    if not rows:
+        return ""
+    fams: list = []
+    for r in rows:
+        if r[0] not in fams:
+            fams.append(r[0])
+    tint = {f: ("#F5F6F7" if f == "未归类" else _SKILL_ROW_TINTS[i % len(_SKILL_ROW_TINTS)])
+            for i, f in enumerate(fams)}
+    head = "".join('<th style="padding:6px 10px;text-align:left;font-weight:700;'
+                   'color:#4E5969;border-bottom:2px solid #C9CDD4;white-space:nowrap">'
+                   f"{_esc(h)}</th>" for h in SKILL_HEADERS)
+    body = []
+    for i, r in enumerate(rows):
+        # 分隔线要压得住淡底色(2026-08-23 用户实见:淡灰线在色块上看不出来):
+        # 族内行间用 Arco 边框灰,族与族交界加粗一档
+        last_in_fam = i + 1 >= len(rows) or rows[i + 1][0] != r[0]
+        line = "2px solid #A9AEB8" if last_in_fam else "1px solid #C9CDD4"
+        tds = []
+        for j, c in enumerate(r):
+            # 族/子技能列给足最小宽度,常规名字一行放得下,超长的才换行
+            extra = ("min-width:200px;" if j == 0 else
+                     "min-width:240px;" if j == 1 else
+                     "white-space:nowrap;" if j in (2, 3) else "")
+            mono = "font:12px/1.6 ui-monospace,Menlo,monospace;color:#4E5969;" if j == 4 else ""
+            tds.append(f'<td style="padding:5px 10px;border-bottom:{line};'
+                       f'vertical-align:top;{extra}{mono}">{_esc(c)}</td>')
+        body.append(f'<tr style="background:{tint[r[0]]}">' + "".join(tds) + "</tr>")
+    return ('<div style="font:13px/1.7 system-ui;font-weight:700;color:#4E5969;'
+            'margin:10px 0 4px">两级技能体系</div>'
+            '<table style="border-collapse:collapse;width:100%;font:13px/1.7 system-ui">'
+            f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table>")
 
 
 # ───────── 技能分布图(2026-07-30):技能画像页的横向条形图 ─────────
@@ -486,10 +530,12 @@ def skill_chart_items(m: dict) -> tuple[str, list[dict]]:
     fams = sk.get("families") or {}
     flat = sk.get("skills") or {}
     if fams:
-        items = [{"name": name, "count": f.get("count") or 0, "pct": f.get("pct"),
+        items = [{"name": name, "zh": f.get("name_zh") or "",
+                  "count": f.get("count") or 0, "pct": f.get("pct"),
                   "criterion": f.get("criterion") or "",
                   "subs": sorted(
-                      ({"name": sn, "count": s.get("count") or 0, "pct": s.get("pct"),
+                      ({"name": sn, "zh": s.get("name_zh") or "",
+                        "count": s.get("count") or 0, "pct": s.get("pct"),
                         "criterion": s.get("criterion") or "", "subs": []}
                        for sn, s in (f.get("subskills") or {}).items()),
                       key=lambda x: (-x["count"], x["name"]))}
@@ -519,6 +565,7 @@ def _skill_bar_row(it: dict, top: int, undersampled: set, *,
                    sub: bool = False, caret: bool = False) -> str:
     """一根条(族 / 子技能共用)。宽度按**全局** top 归一(见上 ⑤)。"""
     name, count, pct = it["name"], it["count"], it["pct"]
+    shown = it.get("zh") or name             # 显示中文,英文 slug 留在悬浮提示里可对号
     width = max(0.6, count / top * 100) if top else 0.6
     meta = f"{count} 条" + (f" · {pct}%" if pct is not None else "")
     title = f"{name} · {meta}"
@@ -535,7 +582,7 @@ def _skill_bar_row(it: dict, top: int, undersampled: set, *,
         f'{18 if not sub else 40}px;font-size:15px"></span>'
         f'<div style="flex:0 0 {300 if sub else 320}px;font:16px/1.5 system-ui;'
         f'color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-        f'{_esc(name)}</div>'
+        f'{_esc(shown)}</div>'
         f'<div style="flex:1;min-width:60px;background:#F7F8FA;border-radius:4px;'
         f'height:26px">'
         f'<div style="width:{width:.2f}%;height:100%;background:{SKILL_BAR_COLOR};'
@@ -563,16 +610,7 @@ def skill_bar_html(m: dict) -> str:
         head.append(f'<p style="margin:0 0 6px 0;color:#D25F00;background:#FFF7E8;'
                     f'border-left:3px solid #FF7D00;padding:6px 10px">'
                     f'{SKILL_FALLBACK_NOTE}</p>')
-    unit = "个技能族" if shape == "two_level" else "项技能(按原始标注分组)"
-    n_kind = sk.get("n_families") if shape == "two_level" else sk.get("n_skills")
-    line = (f'共 {n_kind if n_kind is not None else len(items)} {unit}'
-            + (f",覆盖 {n_eps} 条数据" if n_eps is not None else "")
-            + ";按条数降序,全部列出(长尾本身就是画像的信息量,不截断)。")
-    n_drill = sum(1 for it in items if len(it["subs"]) >= 2)
-    if n_drill:
-        line += f"其中 {n_drill} 个族有多个子技能,点族名可展开。"
-    head.append(f'<div style="font:15px/1.7 system-ui;color:#555;margin-bottom:12px">'
-                f'{line}</div>')
+    # 顶部“共 N 个技能族…点族名可展开”说明句 2026-08-23 用户红框点名删除
 
     rows = []
     for it in items:
@@ -585,32 +623,50 @@ def skill_bar_html(m: dict) -> str:
         else:
             rows.append(bar)
 
-    foot = ('<div style="font:14px/1.7 system-ui;color:#777;margin-top:14px">'
-            '琥珀「样本偏少」标记来自画像自带的名单(生成画像时判定),不是本图现算的。'
-            '</div>') if undersampled else ""
+    # 底部“「样本偏少」标记来自画像自带的名单…”脚注 2026-08-23 用户红框点名删除
     return ('<div class="sk-chart" style="max-width:1280px">' + _SKILL_CSS
-            + "".join(head) + "".join(rows) + foot + '</div>')
+            + "".join(head) + "".join(rows) + '</div>')
 
 
-AUDIT_HEADERS = ["操作", "档位", "episode", "原始标注", "自产描述(VLM 生成)",
-                 "成败线判定", "分歧说明", "裁决"]
+# 待裁决队列单表(2026-08-23 用户拍板:分歧表 × 弃权表合一,一条 episode 一行)。
+# 档位/成败线/分歧说明/弃权原因/当前判决/操作列全部不进表(同日用户点名删):
+# 表只回答"哪条、什么问题、标注写了什么、系统看到什么、裁了没",细节在下方卡片;
+# 点任意一格跳到该条的卡片。重点档仍排最前(顺序即档位,不再单列)。
+QUEUE_HEADERS = ["episode", "待裁问题", "原始标注", "自产描述(VLM 生成)", "裁决结果"]
 
 
-def audit_rows(m: dict) -> list[list]:
-    """档位=重点(成败线同时不利,两线同报警)/参考(成败线放行,多为描述噪声)。
-    裁决列回显 details/label_decisions.csv(空=待人工)。"""
-    dec = load_label_decisions(m)
-    return [["裁决", a.get("priority", "参考"), a.get("id", ""), a.get("label", ""),
-             a.get("caption", ""), a.get("task_verdict", ""), a.get("reason", ""),
-             dec.get(a.get("id", ""), {}).get("decision", "")]
-            for a in m["audit_queue"]]
+def _ep_num(eid: str) -> str:
+    """"ep000017" → "17"(表里省掉 ep 前缀与前导零;认不出的原样给)。"""
+    tail = eid[2:] if str(eid).startswith("ep") else str(eid)
+    return str(int(tail)) if tail.isdigit() else str(eid)
 
 
-# 「关键读数」列已删(2026-08-21 用户点名:新协议下几乎全是"(无读数)",而弃权原因那句
-# 话本身已把数字说了);操作列不带三角(▶ 只是噪音,点任意一格都能跳到卡片)。
-TASK_REVIEW_HEADERS = ["操作", "episode", "任务标注", "当前判决", "弃权原因", "裁决"]
+def merged_queue_rows(m: dict) -> list[list]:
+    """待裁决队列 → 表格行。行序与 merged_review_queue 一致(点行按下标对号跳卡片);
+    裁决结果回显两类裁决 CSV(空=待人工),两个问题都裁了就并排显示。
 
-#: 弃权原因是 VLM 写的一整句,表里截断,全文在下方卡片里给。
+    只判成败的条目,判定时用的任务文本可能是原始标注、也可能是自产 caption
+    (没标注的条目拿自产描述顶上,task_details 记着来源)——按来源分列,
+    自产的绝不冒充「原始标注」(2026-08-23 用户点名要区分)。"""
+    ldec = load_label_decisions(m)
+    tdec = load_task_verdicts(m)
+    rows = []
+    for it in merged_review_queue(m):
+        eid, a, t = it["id"], it["audit"], it["task"]
+        kind = "标注+成败" if (a and t) else ("标注分歧" if a else "成败弃权")
+        if a:
+            label, cap = a.get("label", ""), a.get("caption", "")
+        else:
+            text, src = episode_task_text(m, eid)
+            text = text if len(text) <= 120 else text[:119] + "…"
+            label, cap = ("", text) if src == TASK_SOURCE_CAPTION else (text, "")
+        got = [d for d in (ldec.get(eid, {}).get("decision", ""),
+                           tdec.get(eid, {}).get("verdict", "")) if d]
+        rows.append([_ep_num(eid), kind, label, cap, " · ".join(got)])
+    return rows
+
+
+#: 弃权原因是 VLM 写的一整句,表里已不列;复议表仍截断用,全文在卡片里给。
 _REASON_CAP = 60
 
 
@@ -619,19 +675,6 @@ def readings_text(readings: dict) -> str:
     if not readings:
         return "(无读数)"
     return " · ".join(f"{k}={v}" for k, v in readings.items())
-
-
-def task_review_rows(m: dict) -> list[list]:
-    """任务成败弃权队列 → 表格行。裁决列回显 details/task_verdicts.csv(空=待人工)。"""
-    dec = load_task_verdicts(m)
-    rows = []
-    for t in m.get("task_review") or []:
-        reason = str(t.get("reason") or "")
-        rows.append(["裁决", t.get("id", ""), task_text_short(m, t.get("id", "")),
-                     t.get("current", ""),
-                     reason[:_REASON_CAP] + ("…" if len(reason) > _REASON_CAP else ""),
-                     dec.get(t.get("id", ""), {}).get("verdict", "")])
-    return rows
 
 
 APPEAL_HEADERS = ["操作", "episode", "拒绝原因", "关键读数", "复议结论"]
@@ -997,8 +1040,10 @@ def overview_markdown(m: dict) -> str:
     if isinstance(rb, dict):
         _q = f",质量 {rb.get('quality')}" if rb.get("quality") else ""
         rb = f"{rb.get('robot_type')}(规格表 {rb.get('registry_profile')}{_q})"
-    lines = [f"# {m['name']}",
-             f"机器人 **{rb}** · 生成于 {m['generated_at']} · 代码版本 {m['code_version']}",
+    # issue #58:裸数据集名不知道是什么 → 标题写明"数据集";"生成于"与
+    # 「质检批次」下拉重复 → 删;"代码版本"没人看得懂 → 「质检程序版本」。
+    lines = [f"# 数据集 {m['name']}",
+             f"机器人 **{rb}** · 质检程序版本 {m['code_version']}",
              ""]
     # 数据包完整性(2026-08-10):容器缺了什么、按什么补的。它不是数字复读,是另一类
     # 信息(读任何数字之前该知道的前提),所以这一条留下。有 findings 才出,不占位。
@@ -1733,18 +1778,15 @@ def unapplied_banner_md(m: dict) -> str:
     """质检报告页顶部的「有裁决尚未应用」提醒(没有未应用的 → 空串,不占位)。
 
     防的事故:跑完新一批忘了点「执行裁决」,交出去的就是把人的决定全丢掉的
-    数据,而报告不会吭声。措辞分两档:一条都没应用时才说「纯机器结论」——
-    部分应用时那句就是假话。
+    数据,而报告不会吭声。2026-08-23 用户定版式:三个数一次说清——已裁(记录数)、
+    待裁(队列里还有问题没答的条目数)、未应用(已裁里没落地的)。只在有未应用
+    时出现:它是警报不是仪表盘,待裁多少队列页自己会说。
     """
     c = decision_status(m)["counts"]
     if not c["unapplied"]:
         return ""
-    if c["applied"]:
-        return (f"⚠️ 这份交付有 **{c['unapplied']}** 条人工裁决尚未应用到本次跑批"
-                f"(另有 {c['applied']} 条已应用)。"
-                "去「人工裁决」页点「执行裁决」。")
-    return (f"⚠️ 这份交付有 **{c['unapplied']}** 条人工裁决,本次跑批尚未应用 —— "
-            "当前看到的是纯机器结论。去「人工裁决」页点「执行裁决」。")
+    return (f"⚠️ 人工裁决:已裁 {c['total']} 条 · 待裁 {merged_pending_count(m)} 条 · "
+            f"**{c['unapplied']}** 条尚未应用于交付 —— 去「人工裁决」页点「执行裁决」。")
 
 
 def carryover_note_md(m: dict) -> str:
@@ -1873,16 +1915,6 @@ _SYNC_STATE_TEXT = {
 }
 _SYNC_UNKNOWN = ("同步结论未知", "#86909C", "#F2F3F5", "此条没有同步检查读数。")
 
-#: 判决 → (徽章文字, 主色, 底色, 边色)。绿=通过、红=拒绝、琥珀=待裁决;
-#: 与「人工裁决」页的 ① 橙 ② 蓝区块色错开,不会被误读成同一套分类。
-VERDICT_STYLES = {
-    "通过": ("✅ 通过", "#009A29", "#E8FFEA", "#AFF0B5"),
-    "拒绝": ("⛔ 拒绝", "#CB272D", "#FFECE8", "#FDCDC5"),
-    "待裁决": ("⏳ 待裁决", "#D25F00", "#FFF7E8", "#FFE4BA"),
-}
-_VERDICT_UNKNOWN = ("判决未知", "#86909C", "#F2F3F5", "#C9CDD4")
-
-
 def _fmt_num(v, nd: int = 3) -> str:
     """读数格式化。缺测 → 「—」;**不写 0**:0 是个有意义的滞后值,与"没测出来"
     是两回事,混在一起会让人以为对齐得很好。"""
@@ -1979,7 +2011,7 @@ def sync_camera_html(m: dict, eid: str) -> str:
     chk = sync_check(m, eid)
     if not chk:
         return ('<p style="color:#777;font:12px/1.6 system-ui">'
-                '此条没有视频-动作同步读数(该检查未启用,或更早的检查已把它拦下)。</p>')
+                '这条没有同步读数:该检查未启用,或这条在更早的检查就被拦下,没跑到这一步。</p>')
     d = sync_detail(m, eid)
     txt, fg, bg, why = sync_badge(d, chk.get("state", ""))
     bits = []
@@ -2056,8 +2088,7 @@ def episode_card_html(m: dict, eid: str) -> str:
         return ('<div style="border:1px dashed #C9CDD4;border-radius:10px;padding:14px 18px;'
                 'color:#86909C;font:13px/1.6 system-ui">'
                 '在左侧清单里选一条 episode,这里会显示它的判决、理由与视频。</div>')
-    label = episode_verdict_label(ep)
-    txt, fg, bg, bd = VERDICT_STYLES.get(label, _VERDICT_UNKNOWN)
+    txt, fg, bg, bd = _BUCKET_STYLES[episode_bucket(m, eid)]
     head = (f'<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px">'
             f'<span style="font-size:1.35rem;font-weight:800;color:{fg}">{_esc(txt)}</span>'
             f'<span style="font:14px/1.6 ui-monospace,monospace;color:#4E5969;'
@@ -2095,7 +2126,7 @@ def check_table_html(m: dict, eid: str) -> str:
     rows = check_rows(m, eid) if eid else []
     if not rows:
         return ('<p style="color:#777;font:12px/1.6 system-ui">'
-                '此条没有逐维检查读数(老交付,或更早的检查已经把后面的步骤短路了)。</p>')
+                '这条没有记录逐维读数:更早的检查判废后就不再往下跑;旧版本生成的交付也没有这份记录。</p>')
     marks = [r[1] == "拒绝" for r in rows]
     return ('<div style="font:13px/1.6 system-ui;font-weight:700;color:#4E5969;'
             'margin-top:4px">各维检查读数(标红=把这条毙掉的那一维)</div>'
@@ -2556,6 +2587,15 @@ BUCKET_ALL = "全部"
 BUCKETS = (BUCKET_PASSED, BUCKET_REJECTED, BUCKET_PENDING)
 BUCKET_ICONS = {BUCKET_PASSED: "✅", BUCKET_REJECTED: "❌", BUCKET_PENDING: "⏳"}
 
+#: 三桶 → (徽章图标, 主色, 底色, 边色)。绿=通过、红=拒绝、琥珀=待人工;只留图标不留字
+#: (issue #59:颜色+图标已说明一切)。样式按**桶**取,不按当前判决取——
+#: 只因标注分歧进待人工桶的条目当前判决是"通过",按判决取会给它挂 ✅(实见的张冠李戴)。
+_BUCKET_STYLES = {
+    BUCKET_PASSED: ("✅", "#009A29", "#E8FFEA", "#AFF0B5"),
+    BUCKET_REJECTED: ("⛔", "#CB272D", "#FFECE8", "#FDCDC5"),
+    BUCKET_PENDING: ("⏳", "#D25F00", "#FFF7E8", "#FFE4BA"),
+}
+
 #: 清单行里那半句人话的长度上限。清单是用来"扫"的,一行超过这个宽度就开始
 #: 换行,几百条一换行整列就散了。
 LIST_REASON_CAP = 24
@@ -2573,7 +2613,11 @@ def humanize_reason(text) -> str:
         if s.startswith(prefix):
             s = "未通过" + s[len(prefix):].strip()
             break
-    return s.replace("硬门", "不合格拦截")     # 老交付里别的写法也不许漏出去
+    for bad, good in (("硬门", "不合格拦截"), ("软分", "质量分"),
+                      ("双签硬杀", "两类证据相互印证,判废"), ("路双签", "路相互印证"),
+                      ("硬杀", "判废"), ("孤证", "单一证据")):
+        s = s.replace(bad, good)   # 老交付里的行话不许漏出去(issue #59 追加三个词)
+    return s
 
 
 def audit_queue_ids(m: dict) -> set:
@@ -2619,8 +2663,9 @@ def bucket_choices(m: dict) -> list:
     """顶部三桶(+全部)的单选项:[(界面标签, 桶名)]。标签自带计数——数字就是
     客户最想先看到的东西,不该藏在下一屏。"""
     c = bucket_counts(m)
-    out = [(f"{BUCKET_ICONS[b]} {b} {c[b]}", b) for b in BUCKETS]
-    out.append((f"{BUCKET_ALL} {c[BUCKET_ALL]}", BUCKET_ALL))
+    # 计数带括号(issue #59 第 2 条:「通过 50」读起来像一个词,有歧义)
+    out = [(f"{BUCKET_ICONS[b]} {b} ({c[b]})", b) for b in BUCKETS]
+    out.append((f"{BUCKET_ALL} ({c[BUCKET_ALL]})", BUCKET_ALL))
     return out
 
 
@@ -2656,14 +2701,11 @@ def episode_reason_line(m: dict, eid: str) -> str:
         if why and why not in line:
             line = f"{line}:{why}" if line else why
         return line
-    bits = []
-    for chk in ep.get("pending") or []:
-        why = str((ep.get("abstain_reasons") or {}).get(chk) or "").strip()
-        bits.append(f"「{chk}」弃权:{why}" if why else f"「{chk}」待人工裁决")
+    # 同 episode_list_reason:high-level,不携带读数细节(2026-08-23 用户定)
+    bits = [f"「{chk}」证据不足,系统拿不准——需要人看视频给结论"
+            for chk in ep.get("pending") or []]
     if eid in audit_queue_ids(m):
-        why = next((str(a.get("reason") or "") for a in (m.get("audit_queue") or [])
-                    if a.get("id") == eid), "")
-        bits.append("原始标注与画面描述不一致" + (f":{why}" if why else ""))
+        bits.append("原始标注与画面描述不一致,需人工确认")
     return ";".join(bits)
 
 
@@ -2685,11 +2727,11 @@ def episode_list_reason(m: dict, eid: str) -> str:
         # episode_reason_text 优先给致命检查自己写的那句;它拿不到才退回交付里的
         # 拒绝原因(老交付 = "未通过「X」",正是这里要的兜底)
         return humanize_reason(episode_reason_text(m, eid)) or episode_reason_line(m, eid)
-    bits = [str((ep.get("abstain_reasons") or {}).get(chk) or "").strip()
-            for chk in (ep.get("pending") or [])]
+    # 2026-08-23 用户定:待人工的理由在 UI 只说 high-level,"0.15 在灰区(0.25~0.45)"
+    # 这类数字细节用户不 care;全文仍在报告与下方「检查明细」里。
+    bits = [f"「{chk}」拿不准" for chk in (ep.get("pending") or [])]
     if eid in audit_queue_ids(m):
-        bits.append(next((str(a.get("reason") or "") for a in (m.get("audit_queue") or [])
-                          if a.get("id") == eid), "") or "原始标注与画面描述不一致")
+        bits.append("标注与画面不一致")
     bits = [b for b in bits if b]
     return ";".join(bits) or episode_reason_line(m, eid)
 
@@ -2767,7 +2809,7 @@ VIDEO_SOURCE_NONE = "无"
 #: ⚠️ 措辞别再写成"运行 review-page"(那是行话,客户不知道去哪运行):先说清
 #: **为什么没有**,再说出路。
 NO_VIDEO_NOTE = ("这条找不到画面:交付里没有它的视频,也没找到源数据集。"
-                 "源数据集还在的话,重新打开这份交付即可;或用 review-page 生成审片站")
+                 "源数据集还在的话,重新打开这份交付即可")
 
 _SOURCE_NOTE = {
     VIDEO_SOURCE_REVIEW: "视频来自审片站(全部 episode 都有,含被拒条目)",

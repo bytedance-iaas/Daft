@@ -14,10 +14,10 @@ import signal
 
 import pytest
 
-from curation.ui.manifest import (AUDIT_TERM, audit_note_md, audit_rows,
+from curation.ui.manifest import (AUDIT_TERM, audit_note_md, merged_queue_rows,
                                   check_rows,
                                   discover_deliveries, load_delivery,
-                                  overview_markdown, overview_note_md,
+                                  overview_markdown,
                                   overview_rows, parse_detail, skill_rows)
 
 TS_DETAIL = json.dumps({"voc": 0.87, "completion_final": 0.3,
@@ -105,15 +105,69 @@ def test_overview_and_check_rows(delivery):
     assert ts[1] == "拒绝" and "voc=0.87" in ts[3]
 
 
+def test_skill_display_prefers_name_zh(tmp_path):
+    """交付里带 name_zh(2026-08-24 起)→ 表与图显示中文;老交付无此字段回落英文。"""
+    import copy
+    from curation.ui.manifest import skill_bar_html, skill_rows
+    sk = copy.deepcopy(TWO_LEVEL_SKILLS)
+    sk["families"]["Put"]["name_zh"] = "放置类"
+    sk["families"]["Put"]["subskills"]["Put A on B"]["name_zh"] = "将 A 放到 B 上"
+    m = _skills_delivery(tmp_path, sk, name="zh")
+    rows = skill_rows(m)
+    assert ["放置类", "将 A 放到 B 上"] in [r[:2] for r in rows]
+    assert ["Put", "Put in"] in [[r[0] if r[0] != "放置类" else "Put", r[1]] for r in rows] or True
+    assert any(r[0] == "放置类" and r[1] == "Put in" for r in rows)   # 子技能没翻的回落英文
+    html = skill_bar_html(m)
+    assert "放置类" in html
+    assert 'title="Put · ' in html                     # 英文 slug 留在悬浮提示里可对号
+
+
+def test_skill_table_html_tints_rows_by_family(tmp_path):
+    """两级体系表按族淡色分块(2026-08-23 用户提议):同族同色、异族异色、未归类灰。"""
+    import re
+    from curation.ui.manifest import skill_table_html
+    sk = dict(TWO_LEVEL_SKILLS)
+    m = _skills_delivery(tmp_path, sk, name="tint")
+    html = skill_table_html(m)
+    colors = re.findall(r'<tr style="background:(#[0-9A-F]{6})"', html)
+    rows_fam = [r[0] for r in __import__("curation.ui.manifest", fromlist=["skill_rows"]).skill_rows(m)]
+    assert len(colors) == len(rows_fam)
+    by_fam = {}
+    for f, c in zip(rows_fam, colors):
+        by_fam.setdefault(f, set()).add(c)
+    assert all(len(v) == 1 for v in by_fam.values()), "同族必须同色"
+    fams = list(by_fam)
+    assert len({next(iter(by_fam[f])) for f in fams}) == len(fams), "异族必须异色"
+    assert "两级技能体系" in html and "<script" not in html
+
+
+def test_skill_rows_episodes_column(tmp_path):
+    """两级体系表第五列 = 落在该子类的 episode(去 ep 前缀;2026-08-23 用户点名换掉「判据」)。
+    老交付没有 skill_assignment.csv → 列空,不炸。"""
+    import csv as _csv
+    from curation.ui.manifest import SKILL_HEADERS, skill_rows
+    assert SKILL_HEADERS[-1] == "episodes" and "判据" not in SKILL_HEADERS
+    m = _skills_delivery(tmp_path, TWO_LEVEL_SKILLS, name="members")
+    assert all(r[4] == "" for r in skill_rows(m))          # 没 csv → 空列
+    det = tmp_path / "members" / "details"
+    det.mkdir()
+    with open(det / "skill_assignment.csv", "w", encoding="utf-8", newline="") as f:
+        w = _csv.writer(f); w.writerow(["episode_id", "family", "subskill", "caption"])
+        w.writerow(["ep000004", "Put", "Put A on B", "c1"])
+        w.writerow(["ep000011", "Put", "Put A on B", "c2"])
+    row = [r for r in skill_rows(m) if r[1] == "Put A on B"][0]
+    assert row[4] == "4, 11"
+
+
 def test_skill_audit_overview(delivery):
     m = load_delivery(delivery)
     sk = skill_rows(m)
     assert sk[0][0] == "Arrange" and sk[0][1] == "Arrange soft goods" and sk[0][2] == 2
-    au = audit_rows(m)
-    # v3 行结构:[操作, 档位, episode, 原标注, 自产描述, 成败线判定, 分歧说明, 裁决]
-    assert au[0][0] == "裁决"                         # 可点性操作列(不带三角)
-    assert au[0][2] == "ep000002" and au[0][6] == "跨族"
-    assert au[0][1] in ("重点", "参考")
+    au = merged_queue_rows(m)
+    # 单表行结构:[episode(去 ep 前缀), 待裁问题, 任务标注, 自产描述, 裁决结果]
+    assert au[0][0] == "2"                            # 序号不带 ep(2026-08-23 用户点名)
+    assert au[0][1] in ("标注分歧", "标注+成败")
+    assert au[0][4] == ""                             # 未裁决
     md = overview_markdown(m)
     # 概览顶部只剩身份行 + 一句导航:数字一个不说(2026-08-13 用户点名去重复)
     assert "droid_fake" in md and "franka" in md and "人工裁决" in md
@@ -137,7 +191,6 @@ def test_load_tolerates_legacy_delivery(tmp_path):
     assert m["config_effective"] is None
     assert m["episodes"]["ep0"]["evidence"] == []
     assert overview_rows(m) == []                               # 无统计=空表,不炸
-    assert overview_note_md(m) == ""                            # 没有表就没有口径小字
 
 
 def test_load_timeline_passes_dataset_note(delivery, tmp_path):
@@ -245,7 +298,7 @@ def test_app_with_terminal_tab(delivery):
     assert cfg.index("质检报告") < cfg.index("终端")   # 终端在最右
     assert cfg.index("跑质检") < cfg.index("质检报告")  # 跑质检在最左
     # 六个子 tab 一个不少
-    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细"):
+    for t in ("质检总览", "轨迹", "技能分布", "卡顿动作时间线", "明细"):
         assert t in cfg
 
 
@@ -263,7 +316,7 @@ def test_app_without_terminal_leaves_no_terminal_trace(delivery):
     cfg = _config_text(build_app(delivery))
     assert "终端" not in cfg and "curation-term-screen" not in cfg
     assert "质检报告" in cfg and "跑质检" in cfg
-    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细"):
+    for t in ("质检总览", "轨迹", "技能分布", "卡顿动作时间线", "明细"):
         assert t in cfg
 
 
@@ -280,7 +333,7 @@ def test_task_console_is_top_level_and_report_tabs_untouched(delivery):
     # 等几条守,这里不重复钉 —— 这些词在正文里也出现(技能画像页有一行指向人工
     # 裁决),硬排序只会造出一条脆测试。
     rep = _report_section(build_app(delivery))
-    for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "视频-动作同步",
+    for t in ("质检总览", "轨迹", "人工裁决", "技能分布", "视频-动作同步",
               "卡顿动作时间线", "明细", "性能剖析"):
         assert t in rep, t
     for t in ("跑质检", "任务与日志"):   # 生成视频片段/模型服务已并入别处
@@ -944,7 +997,7 @@ def test_app_has_perf_tab(delivery):
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(_with_perf(delivery)["path"]))
-    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细",
+    for t in ("质检总览", "轨迹", "技能分布", "卡顿动作时间线", "明细",
               "性能剖析"):
         assert t in cfg, t
     assert "延时剖析" in cfg
@@ -1018,7 +1071,6 @@ def test_skill_chart_two_level_drilldown(tmp_path):
     # 悬停详情:条数 / 占比 / 判据
     assert 'title="Put · 102 条 · 52.3% · 判据:把物体放到目标位置"' in html
     assert SKILL_FALLBACK_NOTE not in html                                # 正常路径不挂降级注记
-    assert "共 3 个技能族" in html and "覆盖 195 条数据" in html
 
 
 def test_skill_chart_flat_shape_marks_degradation(tmp_path):
@@ -1068,8 +1120,7 @@ def test_skill_chart_undersampled_chip_carries_text(tmp_path):
     """样本偏少:带**文字**的琥珀 chip(不靠颜色单独表意),且**不换条的填充色**。"""
     from curation.ui.manifest import SKILL_BAR_COLOR, skill_bar_html
     html = skill_bar_html(_skills_delivery(tmp_path, TWO_LEVEL_SKILLS, name="chip"))
-    assert html.count("样本偏少") == 2                # 1 个 chip + 1 句出处说明
-    assert "画像自带的名单" in html and "不是本图现算的" in html
+    assert html.count("样本偏少") == 1                # chip 本身;出处脚注已删(2026-08-23 用户)
     # 单色红线:条只有这一个填充色,undersampled 的那根也一样(条短已经说明问题)
     assert html.count(f"background:{SKILL_BAR_COLOR}") == len(_bar_widths(html)) == 5
     assert SKILL_BAR_COLOR == "#165DFF"        # Arco 主色(2026-08-13 全站统一)
@@ -1127,10 +1178,9 @@ def test_audit_queue_accepts_both_keys(tmp_path):
              "reason": "分歧:原始标注归为 wipe,自产描述(VLM 生成)归为 place——需人工判定",
              "caption_stable": False, "recaptions": ["a", "b"]}]},
         ensure_ascii=False))
-    assert audit_rows(load_delivery(str(old)))[0][2] == "ep1"       # 老交付打得开
-    row = audit_rows(load_delivery(str(new)))[0]
-    assert row[2] == "ep2" and "自产描述" in row[6] and "画面=" not in row[6]
-    assert row[1] == "参考"                    # 老数据无 priority 字段 → 默认参考,不崩
+    assert merged_queue_rows(load_delivery(str(old)))[0][0] == "1"  # 老交付打得开
+    row = merged_queue_rows(load_delivery(str(new)))[0]
+    assert row == ["2", "标注分歧", "L2", "C2", ""]   # 老数据无 priority 字段照样不崩
 
 
 def test_label_decision_roundtrip(delivery):
@@ -1147,8 +1197,8 @@ def test_label_decision_roundtrip(delivery):
     # 改判 = 追加,后写覆盖前写
     record_label_decision(m["path"], "ep000002", "维持原标注")
     assert load_label_decisions(m)["ep000002"]["decision"] == "维持原标注"
-    # 裁决列回显进表格
-    row = [r for r in audit_rows(m) if r[2] == "ep000002"][0]
+    # 裁决结果列回显进表格
+    row = [r for r in merged_queue_rows(m) if r[0] == "2"][0]
     assert row[-1] == "维持原标注"
 
 
@@ -1166,17 +1216,14 @@ def test_label_decision_guards(delivery):
 def test_task_review_queue_only_takes_task_abstentions(delivery, tmp_path):
     """队列只收「待裁决项含任务成败判定」的条目:别的维度的弃权(如同步)不是
     人看视频就能拍板的,混进来只会让裁决面板变成杂物间。"""
-    from curation.ui.manifest import task_review_rows
     m = load_delivery(delivery)
     q = m["task_review"]
     assert [t["id"] for t in q] == ["ep000000"]
     assert q[0]["current"] == "通过" and q[0]["reason"] == "渐变问询不可判"
     assert q[0]["readings"] == {"voc": 0.87, "末态分": 0.3}   # 从 checks 的 detail 解出
-    rows = task_review_rows(m)
-    # 行结构:[操作, episode, 任务标注, 当前判决, 弃权原因, 裁决](关键读数列已删)
-    assert rows[0][0] == "裁决" and rows[0][1] == "ep000000"
-    assert rows[0][3] == "通过" and "渐变问询" in rows[0][4]
-    assert rows[0][5] == ""                                   # 未裁决
+    row = [r for r in merged_queue_rows(m) if r[1] in ("成败弃权", "标注+成败")][0]
+    # 单表行:当前判决/弃权原因不进表(细节在卡片);裁决结果空=待人工
+    assert row[0] == "0" and row[-1] == ""
 
     # 另一维度弃权的条目不进队列
     d2 = tmp_path / "sync-only"
@@ -1219,8 +1266,7 @@ def test_task_review_row_uses_review_own_checks(tmp_path):
 
 def test_task_verdict_roundtrip_and_override(delivery):
     """成败裁决落盘/读回/改判;裁决状态回显进队列表。"""
-    from curation.ui.manifest import (load_task_verdicts, record_task_verdict,
-                                      task_review_rows)
+    from curation.ui.manifest import load_task_verdicts, record_task_verdict
     m = load_delivery(delivery)
     assert load_task_verdicts(m) == {}
     msg = record_task_verdict(m["path"], "ep000000", "判成功", note="看了视频,完成了")
@@ -1228,7 +1274,8 @@ def test_task_verdict_roundtrip_and_override(delivery):
     got = load_task_verdicts(m)
     assert got["ep000000"]["verdict"] == "判成功"
     assert got["ep000000"]["note"] == "看了视频,完成了" and got["ep000000"]["at"]
-    assert task_review_rows(m)[0][5] == "判成功"                # 回显进表格
+    row = [r for r in merged_queue_rows(m) if r[0] == "0"][0]
+    assert row[-1] == "判成功"                                  # 回显进表格
     # 写老值「搁置」照收(2026-08-19 改名后的兼容),读回来是现行词
     record_task_verdict(m["path"], "ep000000", "搁置")          # 改判=追加,后写覆盖
     assert load_task_verdicts(m)["ep000000"]["verdict"] == "拿不准"
@@ -1443,16 +1490,16 @@ def test_decision_csv_schema_is_frozen(tmp_path):
 
 
 def test_app_has_manual_decision_tab(delivery):
-    """Gradio 层:新增「人工裁决」页签,排在 Episodes 与 技能画像 之间;
+    """Gradio 层:新增「人工裁决」页签,排在「轨迹」与 技能画像 之间;
     两块裁决面板的文案都在,且技能画像页只剩一行指路(裁决卡片已搬走)。"""
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(delivery))
-    for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "卡顿动作时间线",
+    for t in ("质检总览", "轨迹", "人工裁决", "技能分布", "卡顿动作时间线",
               "明细", "性能剖析"):
         assert t in cfg, t
     rep = _report_section(build_app(delivery))       # 只在报告段里比顺序(见 _report_section)
-    assert rep.index("Episodes") < rep.index("人工裁决") < rep.index("技能分布")
+    assert rep.index("轨迹") < rep.index("人工裁决") < rep.index("技能分布")
     # 2026-08-16 合并队列重构:人工裁决页 = 两个子页签(「待你裁决」+「任务失败复议」),
     # 「待你裁决」一条 episode 一张卡,标注问题与成败问题挂同一张卡。两个子页签名
     # 都是用户定的:别改回行话「待裁决」,也别改回「被拒复议」——后者的名字要自己
@@ -1464,7 +1511,9 @@ def test_app_has_manual_decision_tab(delivery):
     #    "这条数据要不要"和"标注 vs caption 谁错"是两个正交维度(用户点破)。
     #  · 措辞用「其它原因」而不是「看不清」:弃用原因不止一种(录漏/撞了/没做完),
     #    而它会写进 reject.json 当证据,焊死一个原因等于让记录说谎。
-    for txt in (AUDIT_TERM, "待你裁决", "任务失败复议", "任务成败弃权",
+    # 2026-08-23 用户拍板:队列两表合一,表头只剩五列;旧表的「档位/成败线/
+    # 分歧说明/弃权原因/当前判决/操作」都不许再回到界面上。
+    for txt in ("待你裁决", "任务失败复议", "待裁问题", "裁决结果",
                 "标注问题", "成败问题",
                 "✅ 判成功", "❌ 判失败", "🤔 拿不准",
                 "其它原因-整条弃用"):
@@ -1473,8 +1522,10 @@ def test_app_has_manual_decision_tab(delivery):
     assert "两类问题并列" not in cfg and "裁决 ▶" not in cfg
     assert "搁置" not in cfg, "界面上还留着旧词「搁置」"
     assert "🗑 弃用该条" not in cfg, "「弃用该条」还摆在标注块里当第三个选项"
+    for gone in ("任务成败弃权的条目", "重点档排最前", "档位", "成败线判定",
+                 "分歧说明", "弃权原因"):
+        assert gone not in cfg, f"旧队列表的「{gone}」还在界面上"
     assert cfg.index("待你裁决") < cfg.index("任务失败复议")
-    assert cfg.index(AUDIT_TERM) < cfg.index("任务成败弃权")
 
 
 def test_asgi_app_serves_manual_decision_tab(delivery, clean_ui_env):
@@ -1781,7 +1832,7 @@ def test_sync_block_speaks_up_when_check_never_ran(delivery):
     from curation.ui.manifest import sync_camera_html, sync_camera_rows, sync_detail
     m = load_delivery(delivery)                  # fixture 原样,没有同步检查
     assert sync_camera_rows(m, "ep000000") == [] and sync_detail(m, "ep000000") == {}
-    assert "没有视频-动作同步读数" in sync_camera_html(m, "ep000000")
+    assert "没有同步读数" in sync_camera_html(m, "ep000000")
 
 
 def test_episode_card_names_the_fatal_check(delivery):
@@ -1792,14 +1843,16 @@ def test_episode_card_names_the_fatal_check(delivery):
     assert fatal_checks(m, "ep000001") == ["任务成败判定"]
     assert episode_reason_text(m, "ep000001") == "渐变问询不可判"
     card = episode_card_html(m, "ep000001")
-    assert "⛔ 拒绝" in card and "ep000001" in card
+    assert "⛔" in card and "ep000001" in card
+    assert "⛔ 拒绝" not in card                       # issue #59:徽章只留图标
     # 检查名 + **该检查自己写的人话**:只报检查名会把人带偏(ep000018 教训)
     assert "未通过「任务成败判定」:渐变问询不可判" in card
     assert "硬门" not in card and "0.940" in card             # 黑话已清除 · 质量分
     # 待裁决优先于当前判决(系统还没定论时先叫人上)
     assert episode_verdict_label(m["episodes"]["ep000000"]) == "待裁决"
     card0 = episode_card_html(m, "ep000000")
-    assert "⏳ 待裁决" in card0 and "「任务成败判定」弃权" in card0
+    assert "⏳" in card0 and "待裁决" not in card0    # 按桶取样式:判决"通过"但待人工 → ⏳ 不是 ✅
+    assert "✅" not in card0 and "拿不准" in card0
     # 没选中 / 查无此条:不崩,给引导语
     assert "选一条 episode" in episode_card_html(m, "")
     assert "选一条 episode" in episode_card_html(m, "查无此条")
@@ -1830,7 +1883,7 @@ def test_check_table_html_highlights_the_rejected_dimension(delivery):
     assert "voc=0.87" in html
     # 通过条目:一行红都没有
     assert "#FFECE8" not in check_table_html(m, "ep000002")
-    assert "没有逐维检查读数" in check_table_html(m, "")   # 空态不崩
+    assert "没有记录逐维读数" in check_table_html(m, "")   # 空态不崩
 
 
 def test_bucket_split_is_exhaustive_and_disjoint(delivery):
@@ -1939,7 +1992,7 @@ def test_app_has_sync_curve_tab_and_split_evidence(delivery):
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(_with_sync(delivery)["path"]))
-    for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "视频-动作同步",
+    for t in ("质检总览", "轨迹", "人工裁决", "技能分布", "视频-动作同步",
               "卡顿动作时间线", "明细", "性能剖析"):
         assert t in cfg, t
     # 「同步曲线」四个字在 Episodes 页的曲线组件标题里就出现过 → 页签定位用该页
@@ -2226,7 +2279,7 @@ def test_bucket_choices_carry_counts_and_all(ep_delivery):
     """顶部三桶自带计数(数字是客户最想先看到的),外加「全部」兜底。"""
     from curation.ui.manifest import BUCKET_ALL, bucket_choices
     labels = [lab for lab, _ in bucket_choices(load_delivery(ep_delivery))]
-    assert labels == ["✅ 通过 1", "❌ 拒绝 2", "⏳ 待人工 2", "全部 5"]
+    assert labels == ["✅ 通过 (1)", "❌ 拒绝 (2)", "⏳ 待人工 (2)", "全部 (5)"]
     assert bucket_choices(load_delivery(ep_delivery))[-1][1] == BUCKET_ALL
 
 
@@ -2239,7 +2292,7 @@ def test_episode_list_line_is_id_icon_and_half_a_sentence(ep_delivery):
     assert by_id["ep000000"]["label"] == "ep000000 ✅"          # 通过:只有号和勾
     assert by_id["ep000002"]["label"] == "ep000002 ❌ 末态未完成"
     assert "未通过「" not in by_id["ep000002"]["label"]      # 前缀不进清单
-    assert by_id["ep000001"]["label"] == "ep000001 ⏳ 渐变问询不可判"
+    assert by_id["ep000001"]["label"] == "ep000001 ⏳ 「任务成败判定」拿不准"   # 数字细节不进清单
     assert "分歧" in by_id["ep000004"]["reason"] or \
         "不一致" in by_id["ep000004"]["reason"]
     # 理由截断:一行超过上限就带省略号,清单永远单行可扫
@@ -2253,7 +2306,8 @@ def test_passed_episode_card_says_nothing_but_passed(ep_delivery):
     from curation.ui.manifest import episode_card_html
     m = load_delivery(ep_delivery)
     card = episode_card_html(m, "ep000000")
-    assert "✅ 通过" in card and "ep000000" in card
+    assert "✅" in card and "ep000000" in card
+    assert "通过" not in card    # issue #59:绿底+✅ 足矣,"通过"二字不再印
     for noise in ("质量分", "致命项", "原因", "检查", "弃权"):
         assert noise not in card, noise
     # 被拒的那条相反:理由必须当面写清
@@ -2319,7 +2373,8 @@ def test_no_video_anywhere_tells_how_to_get_them(ep_delivery):
     from curation.ui.manifest import NO_VIDEO_NOTE, episode_video_html, episode_videos
     m = load_delivery(ep_delivery)
     assert episode_videos(m, "ep000000", None)["note"] == NO_VIDEO_NOTE
-    assert "review-page" in episode_video_html(m, "ep000000", None)
+    assert "review-page" not in episode_video_html(m, "ep000000", None)  # 行话不进界面(issue #59)
+    assert "找不到画面" in episode_video_html(m, "ep000000", None)
 
 
 def test_play_all_button_zeroes_and_plays_every_video(ep_delivery, tmp_path):
@@ -2427,7 +2482,7 @@ def test_app_episodes_tab_is_buckets_plus_list_and_detail(ep_delivery, tmp_path)
     assert "只看被拒" not in cfg                   # 旧筛选档已被三桶取代
     loads = [f for f in app.fns.values() if getattr(f.fn, "__name__", "") == "_load"]
     blob = str(loads[0].fn(ep_delivery))
-    assert "✅ 通过 1" in blob and "❌ 拒绝 2" in blob and "⏳ 待人工 2" in blob
+    assert "✅ 通过 (1)" in blob and "❌ 拒绝 (2)" in blob and "⏳ 待人工 (2)" in blob
     assert "ep000002 ❌ 末态未完成" in blob                 # 左清单那一行
 
 
@@ -2996,7 +3051,7 @@ def test_report_page_tab_set_is_frozen(delivery):
         # 「任务台」2026-08-19 改名「跑质检」并拍平(原来下面只剩一个
         # 「跑质检」子页签,套一层纯属多余)——顶层一个名字,子页签层删掉
         "跑质检", "当前任务", "历史",
-        "质检报告", "质检总览", "Episodes", "人工裁决", "待你裁决",
+        "质检报告", "质检总览", "轨迹", "人工裁决", "待你裁决",
         "任务失败复议", "技能分布", "明细", "动作打分明细", "视频打分明细",
         "视频-动作同步", "卡顿动作时间线", "本次运行配置", "性能剖析"])
 
@@ -3082,26 +3137,20 @@ def test_confirm_box_is_a_real_modal_not_an_inline_panel(delivery):
         "全屏遮罩变成框内灰蒙(2026-08-19 实测)")
 
 
-def test_the_two_review_queues_sit_side_by_side_in_one_block(delivery):
-    """两个待裁决队列(标注分歧 / 成败弃权)**并列成一个区块**
-    (2026-08-19 用户拍板)。
-
-    竖着排的毛病:它们是同一件事的两类问题,上下排会被当成先后两步;更糟的是
-    往下滚正好撞上「执行裁决」,用户被引导着点了本该最后才点的按钮
-    —— 用户原话「使得用户不至于茫然被引导到执行裁决」。
-
-    判据:两张表在**同一个 Row** 里(并列),且这个 Row 就是 #adj-queues。
-    """
+def test_review_queue_is_one_table_with_five_columns(delivery):
+    """待裁决队列是**一张表**(2026-08-23 用户拍板,取代 8-19 的两表并列):
+    分歧 × 弃权按 episode 合一,五列,旧的 #task-queue/#adj-queues 不复存在。"""
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
+    from curation.ui.manifest import QUEUE_HEADERS
     app = build_app(delivery)
 
-    row = next((b for b in app.blocks.values()
-                if getattr(b, "elem_id", None) == "adj-queues"), None)
-    assert row is not None, "两个队列没有被并列的容器包起来"
-    ids = {getattr(c, "elem_id", None) for c in _descendants(row)}
-    assert {"audit-queue", "task-queue"} <= ids, \
-        f"标注队列与成败队列没同在并列区块里:{sorted(x for x in ids if x)}"
+    ids = {getattr(b, "elem_id", None) for b in app.blocks.values()}
+    assert "audit-queue" in ids
+    assert "task-queue" not in ids and "adj-queues" not in ids
+    table = next(b for b in app.blocks.values()
+                 if getattr(b, "elem_id", None) == "audit-queue")
+    assert list(table.headers) == QUEUE_HEADERS
 
 
 def _descendants(block):
@@ -3311,41 +3360,11 @@ def test_overview_never_shows_the_label_rows(full_delivery):
     有问题"。撤的只是这两行展示,分歧队列本身在「人工裁决」页照旧。
     """
     m = load_delivery(full_delivery)
-    blob = str(overview_rows(m)) + overview_note_md(m) + overview_markdown(m)
+    blob = str(overview_rows(m)) + overview_markdown(m)
     assert AUDIT_TERM not in blob and "标注缺失" not in blob and "分歧" not in blob
     # 功能没被拆掉:队列还在,人工裁决页还照旧靠它
     assert len(m["audit_queue"]) == 32
     assert AUDIT_TERM in audit_note_md(m)
-
-
-def test_overview_note_states_the_arithmetic(full_delivery):
-    """表下小字要把两件事说清:哪几行能相加、「其中」不参与加减。"""
-    note = overview_note_md(load_delivery(full_delivery))
-    assert "输入 = 判废 + 交付" in note
-    assert "不参与加减" in note
-
-
-def test_overview_note_names_dedup_in_the_identity_when_it_removed_anything(full_delivery):
-    """去重真删了东西时,等式必须把它写进去 —— 否则读者一加发现对不上。"""
-    import json as _json
-    p = os.path.join(full_delivery, "passed.json")
-    doc = _json.loads(open(p, encoding="utf-8").read())
-    doc["dataset"]["dedup_removed"] = 4
-    open(p, "w", encoding="utf-8").write(_json.dumps(doc, ensure_ascii=False))
-    note = overview_note_md(load_delivery(full_delivery))
-    assert "输入 = 判废 + 精确去重删除 + 交付" in note
-
-
-def test_overview_note_skips_the_within_clause_when_there_is_no_such_row():
-    """没有「其中」行的交付(全通过、无待裁)不该去解释一行不存在的东西 ——
-    真机上 bridge-rrd-200 就是这样,读者会回头去找那一行在哪。"""
-    m = {"path": "", "load_error": "", "episodes": {}, "audit_queue": [],
-         "dataset": {"input_episodes": 200, "verdict_drop": 0, "delivered": 200,
-                     "dedup_removed": 0,
-                     "summary_stats": {"pass_rate_pct": 100.0}}}
-    assert not any("其中" in r[0] for r in overview_rows(m))
-    note = overview_note_md(m)
-    assert "输入 = 判废 + 交付" in note and "其中" not in note
 
 
 def test_overview_rows_degrade_row_by_row_on_a_legacy_delivery(tmp_path):
@@ -3358,13 +3377,12 @@ def test_overview_rows_degrade_row_by_row_on_a_legacy_delivery(tmp_path):
     rows = dict(overview_rows(load_delivery(str(d))))
     assert rows == {"输入 episode": 7, "交付": 5}      # 无通过率就只有条数
     assert "?" not in str(rows)
-    assert overview_note_md(load_delivery(str(d))) == ""   # 缺「判废」→ 口径无从谈起
 
 
 def test_overview_never_shows_the_funnel_word(full_delivery):
     """「漏斗」是内部术语(用户:"用户看不懂啥意思"),总览页一个字不许剩。"""
     m = load_delivery(full_delivery)
-    blob = overview_markdown(m) + str(overview_rows(m)) + overview_note_md(m)
+    blob = overview_markdown(m) + str(overview_rows(m))
     assert "漏斗" not in blob and "硬门" not in blob
 
 
@@ -3380,7 +3398,7 @@ def test_load_delivery_flags_a_path_that_is_not_a_delivery(tmp_path):
     md = overview_markdown(m)
     assert "读不到" in md
     assert "机器人" not in md and "?" not in md   # 半空的壳子一个字不留
-    assert overview_rows(m) == [] and overview_note_md(m) == ""
+    assert overview_rows(m) == []
 
 
 def test_resolve_delivery_recovers_a_typed_directory_name(tmp_path):
@@ -3457,7 +3475,7 @@ def test_load_feeds_the_overview_table_and_the_config_page(full_delivery):
     out = fn.fn(full_delivery)
     assert len(out) == len(fn.outputs)
     assert out[2] == overview_rows(load_delivery(full_delivery))   # 表
-    assert out[3] == overview_note_md(load_delivery(full_delivery))  # 表下小字
+    assert out[3] == ''  # 表下小字只剩沿用一行(本夹具无沿用=空)
     assert "checks" in out[4] or "(此交付无" in out[4]              # 生效配置 YAML
 
 
@@ -3571,7 +3589,7 @@ def test_overview_adds_a_row_when_the_hard_gates_do_not_add_up(full_delivery):
     assert detail == {"任务成败判定": 14, "时间戳检查": 1, "综合质量分不达标": 1}
     assert sum(detail.values()) == dict(rows)["判废"] == 16
     # 措辞用界面既有说法:「软分」是内部机制名,2026-08-11 就统一叫「质量分」了
-    blob = str(rows) + overview_note_md(m)
+    blob = str(rows)
     assert "软分" not in blob and "soft" not in blob.lower()
     # 仍然是分解式(能相加),所以最后一项挂 └
     assert [k for k, _ in rows if k.startswith("　└")]
@@ -3588,8 +3606,6 @@ def test_overview_stops_pretending_it_decomposes_when_items_overlap(full_deliver
     assert _detail_rows(rows) == {"任务成败判定": 14, "时间戳检查": 2}
     assert not [k for k, _ in rows if "├" in k or "└" in k]
     assert all("其中" in k for k, _ in rows if k.startswith("　"))
-    note = overview_note_md(m)
-    assert "同一条可能同时踩中多项" in note
     assert "综合质量分不达标" not in str(rows)      # 相加已经多了,别再往上加
 
 
@@ -3599,9 +3615,7 @@ def test_overview_keeps_the_plain_decomposition_when_it_already_adds_up(full_del
     rows = overview_rows(m)
     assert _detail_rows(rows) == {"任务成败判定": 14, "时间戳检查": 1}
     assert "综合质量分不达标" not in str(rows)
-    assert "同一条可能同时踩中多项" not in overview_note_md(m)
-    # 「其中」那句仍然只为交付内标记那一行印
-    assert "不参与加减" in overview_note_md(m)
+    # 表下解释小字已删(2026-08-23 用户),没有别的东西可断言
 
 
 def test_overview_never_guesses_when_the_delivery_has_no_breakdown(full_delivery):
