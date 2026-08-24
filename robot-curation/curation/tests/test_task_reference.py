@@ -65,10 +65,21 @@ def test_review_table_has_task_column_truncated(run):
     open(os.path.join(run, "details", "task_details.json"), "w", encoding="utf-8").write(json.dumps(td))
     os.utime(os.path.join(run, "details", "task_details.json"), None)
     mf._DETAILS_JSON_CACHE.clear()
-    rows = mf.task_review_rows(m)
-    assert mf.TASK_REVIEW_HEADERS[2] == "任务标注"
-    assert rows[0][2].endswith("…") and len(rows[0][2]) == 40
-    assert rows[0][3] == "通过" and len(rows[0]) == len(mf.TASK_REVIEW_HEADERS)
+    rows = mf.merged_queue_rows(m)
+    assert mf.QUEUE_HEADERS[2] == "原始标注"
+    assert rows[0][2] == long                    # 标注来自 task_details(120 内不截断)
+    assert rows[0][1] == "成败弃权" and len(rows[0]) == len(mf.QUEUE_HEADERS)
+    # 判定用的是自产 caption 的条目:文本进「自产描述」列,不冒充原始标注
+    td = json.loads(open(os.path.join(run, "details", "task_details.json"),
+                         encoding="utf-8").read())
+    td["episodes"]["ep000001"]["instruction"] = "put cup on plate"
+    td["episodes"]["ep000001"]["instruction_source"] = "自产caption"
+    open(os.path.join(run, "details", "task_details.json"), "w",
+         encoding="utf-8").write(json.dumps(td))
+    os.utime(os.path.join(run, "details", "task_details.json"), None)
+    mf._DETAILS_JSON_CACHE.clear()
+    row = mf.merged_queue_rows(m)[0]
+    assert row[2] == "" and row[3] == "put cup on plate"
 
 
 def test_missing_or_broken_details_never_raise(tmp_path):

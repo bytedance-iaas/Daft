@@ -14,7 +14,7 @@ import signal
 
 import pytest
 
-from curation.ui.manifest import (AUDIT_TERM, audit_note_md, audit_rows,
+from curation.ui.manifest import (AUDIT_TERM, audit_note_md, merged_queue_rows,
                                   check_rows,
                                   discover_deliveries, load_delivery,
                                   overview_markdown, overview_note_md,
@@ -109,11 +109,11 @@ def test_skill_audit_overview(delivery):
     m = load_delivery(delivery)
     sk = skill_rows(m)
     assert sk[0][0] == "Arrange" and sk[0][1] == "Arrange soft goods" and sk[0][2] == 2
-    au = audit_rows(m)
-    # v3 行结构:[操作, 档位, episode, 原标注, 自产描述, 成败线判定, 分歧说明, 裁决]
-    assert au[0][0] == "裁决"                         # 可点性操作列(不带三角)
-    assert au[0][2] == "ep000002" and au[0][6] == "跨族"
-    assert au[0][1] in ("重点", "参考")
+    au = merged_queue_rows(m)
+    # 单表行结构:[episode(去 ep 前缀), 待裁问题, 任务标注, 自产描述, 裁决结果]
+    assert au[0][0] == "2"                            # 序号不带 ep(2026-08-23 用户点名)
+    assert au[0][1] in ("标注分歧", "标注+成败")
+    assert au[0][4] == ""                             # 未裁决
     md = overview_markdown(m)
     # 概览顶部只剩身份行 + 一句导航:数字一个不说(2026-08-13 用户点名去重复)
     assert "droid_fake" in md and "franka" in md and "人工裁决" in md
@@ -1127,10 +1127,9 @@ def test_audit_queue_accepts_both_keys(tmp_path):
              "reason": "分歧:原始标注归为 wipe,自产描述(VLM 生成)归为 place——需人工判定",
              "caption_stable": False, "recaptions": ["a", "b"]}]},
         ensure_ascii=False))
-    assert audit_rows(load_delivery(str(old)))[0][2] == "ep1"       # 老交付打得开
-    row = audit_rows(load_delivery(str(new)))[0]
-    assert row[2] == "ep2" and "自产描述" in row[6] and "画面=" not in row[6]
-    assert row[1] == "参考"                    # 老数据无 priority 字段 → 默认参考,不崩
+    assert merged_queue_rows(load_delivery(str(old)))[0][0] == "1"  # 老交付打得开
+    row = merged_queue_rows(load_delivery(str(new)))[0]
+    assert row == ["2", "标注分歧", "L2", "C2", ""]   # 老数据无 priority 字段照样不崩
 
 
 def test_label_decision_roundtrip(delivery):
@@ -1147,8 +1146,8 @@ def test_label_decision_roundtrip(delivery):
     # 改判 = 追加,后写覆盖前写
     record_label_decision(m["path"], "ep000002", "维持原标注")
     assert load_label_decisions(m)["ep000002"]["decision"] == "维持原标注"
-    # 裁决列回显进表格
-    row = [r for r in audit_rows(m) if r[2] == "ep000002"][0]
+    # 裁决结果列回显进表格
+    row = [r for r in merged_queue_rows(m) if r[0] == "2"][0]
     assert row[-1] == "维持原标注"
 
 
@@ -1166,17 +1165,14 @@ def test_label_decision_guards(delivery):
 def test_task_review_queue_only_takes_task_abstentions(delivery, tmp_path):
     """队列只收「待裁决项含任务成败判定」的条目:别的维度的弃权(如同步)不是
     人看视频就能拍板的,混进来只会让裁决面板变成杂物间。"""
-    from curation.ui.manifest import task_review_rows
     m = load_delivery(delivery)
     q = m["task_review"]
     assert [t["id"] for t in q] == ["ep000000"]
     assert q[0]["current"] == "通过" and q[0]["reason"] == "渐变问询不可判"
     assert q[0]["readings"] == {"voc": 0.87, "末态分": 0.3}   # 从 checks 的 detail 解出
-    rows = task_review_rows(m)
-    # 行结构:[操作, episode, 任务标注, 当前判决, 弃权原因, 裁决](关键读数列已删)
-    assert rows[0][0] == "裁决" and rows[0][1] == "ep000000"
-    assert rows[0][3] == "通过" and "渐变问询" in rows[0][4]
-    assert rows[0][5] == ""                                   # 未裁决
+    row = [r for r in merged_queue_rows(m) if r[1] in ("成败弃权", "标注+成败")][0]
+    # 单表行:当前判决/弃权原因不进表(细节在卡片);裁决结果空=待人工
+    assert row[0] == "0" and row[-1] == ""
 
     # 另一维度弃权的条目不进队列
     d2 = tmp_path / "sync-only"
@@ -1219,8 +1215,7 @@ def test_task_review_row_uses_review_own_checks(tmp_path):
 
 def test_task_verdict_roundtrip_and_override(delivery):
     """成败裁决落盘/读回/改判;裁决状态回显进队列表。"""
-    from curation.ui.manifest import (load_task_verdicts, record_task_verdict,
-                                      task_review_rows)
+    from curation.ui.manifest import load_task_verdicts, record_task_verdict
     m = load_delivery(delivery)
     assert load_task_verdicts(m) == {}
     msg = record_task_verdict(m["path"], "ep000000", "判成功", note="看了视频,完成了")
@@ -1228,7 +1223,8 @@ def test_task_verdict_roundtrip_and_override(delivery):
     got = load_task_verdicts(m)
     assert got["ep000000"]["verdict"] == "判成功"
     assert got["ep000000"]["note"] == "看了视频,完成了" and got["ep000000"]["at"]
-    assert task_review_rows(m)[0][5] == "判成功"                # 回显进表格
+    row = [r for r in merged_queue_rows(m) if r[0] == "0"][0]
+    assert row[-1] == "判成功"                                  # 回显进表格
     # 写老值「搁置」照收(2026-08-19 改名后的兼容),读回来是现行词
     record_task_verdict(m["path"], "ep000000", "搁置")          # 改判=追加,后写覆盖
     assert load_task_verdicts(m)["ep000000"]["verdict"] == "拿不准"
@@ -1464,7 +1460,9 @@ def test_app_has_manual_decision_tab(delivery):
     #    "这条数据要不要"和"标注 vs caption 谁错"是两个正交维度(用户点破)。
     #  · 措辞用「其它原因」而不是「看不清」:弃用原因不止一种(录漏/撞了/没做完),
     #    而它会写进 reject.json 当证据,焊死一个原因等于让记录说谎。
-    for txt in (AUDIT_TERM, "待你裁决", "任务失败复议", "任务成败弃权",
+    # 2026-08-23 用户拍板:队列两表合一,表头只剩五列;旧表的「档位/成败线/
+    # 分歧说明/弃权原因/当前判决/操作」都不许再回到界面上。
+    for txt in ("待你裁决", "任务失败复议", "待裁问题", "裁决结果",
                 "标注问题", "成败问题",
                 "✅ 判成功", "❌ 判失败", "🤔 拿不准",
                 "其它原因-整条弃用"):
@@ -1473,8 +1471,10 @@ def test_app_has_manual_decision_tab(delivery):
     assert "两类问题并列" not in cfg and "裁决 ▶" not in cfg
     assert "搁置" not in cfg, "界面上还留着旧词「搁置」"
     assert "🗑 弃用该条" not in cfg, "「弃用该条」还摆在标注块里当第三个选项"
+    for gone in ("任务成败弃权的条目", "重点档排最前", "档位", "成败线判定",
+                 "分歧说明", "弃权原因"):
+        assert gone not in cfg, f"旧队列表的「{gone}」还在界面上"
     assert cfg.index("待你裁决") < cfg.index("任务失败复议")
-    assert cfg.index(AUDIT_TERM) < cfg.index("任务成败弃权")
 
 
 def test_asgi_app_serves_manual_decision_tab(delivery, clean_ui_env):
@@ -3082,26 +3082,20 @@ def test_confirm_box_is_a_real_modal_not_an_inline_panel(delivery):
         "全屏遮罩变成框内灰蒙(2026-08-19 实测)")
 
 
-def test_the_two_review_queues_sit_side_by_side_in_one_block(delivery):
-    """两个待裁决队列(标注分歧 / 成败弃权)**并列成一个区块**
-    (2026-08-19 用户拍板)。
-
-    竖着排的毛病:它们是同一件事的两类问题,上下排会被当成先后两步;更糟的是
-    往下滚正好撞上「执行裁决」,用户被引导着点了本该最后才点的按钮
-    —— 用户原话「使得用户不至于茫然被引导到执行裁决」。
-
-    判据:两张表在**同一个 Row** 里(并列),且这个 Row 就是 #adj-queues。
-    """
+def test_review_queue_is_one_table_with_five_columns(delivery):
+    """待裁决队列是**一张表**(2026-08-23 用户拍板,取代 8-19 的两表并列):
+    分歧 × 弃权按 episode 合一,五列,旧的 #task-queue/#adj-queues 不复存在。"""
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
+    from curation.ui.manifest import QUEUE_HEADERS
     app = build_app(delivery)
 
-    row = next((b for b in app.blocks.values()
-                if getattr(b, "elem_id", None) == "adj-queues"), None)
-    assert row is not None, "两个队列没有被并列的容器包起来"
-    ids = {getattr(c, "elem_id", None) for c in _descendants(row)}
-    assert {"audit-queue", "task-queue"} <= ids, \
-        f"标注队列与成败队列没同在并列区块里:{sorted(x for x in ids if x)}"
+    ids = {getattr(b, "elem_id", None) for b in app.blocks.values()}
+    assert "audit-queue" in ids
+    assert "task-queue" not in ids and "adj-queues" not in ids
+    table = next(b for b in app.blocks.values()
+                 if getattr(b, "elem_id", None) == "audit-queue")
+    assert list(table.headers) == QUEUE_HEADERS
 
 
 def _descendants(block):
