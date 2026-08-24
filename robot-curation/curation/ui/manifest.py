@@ -394,7 +394,8 @@ def overview_note_md(m: dict) -> str:
     overlap = ("判废子项按检查逐项计数,**同一条可能同时踩中多项**,"
                "所以子项相加会大于判废总数。"
                if drop_breakdown(m.get("dataset") or {})[1] == "overlap" else "")
-    return f"_口径:{ident}。{within}{overlap}_"
+    # issue #58:"口径"是行话 → 说人话
+    return f"_这张表的加减法:{ident}。{within}{overlap}_"
 
 
 CHECK_HEADERS = ["检查", "结果", "分数", "要点"]
@@ -1004,8 +1005,10 @@ def overview_markdown(m: dict) -> str:
     if isinstance(rb, dict):
         _q = f",质量 {rb.get('quality')}" if rb.get("quality") else ""
         rb = f"{rb.get('robot_type')}(规格表 {rb.get('registry_profile')}{_q})"
-    lines = [f"# {m['name']}",
-             f"机器人 **{rb}** · 生成于 {m['generated_at']} · 代码版本 {m['code_version']}",
+    # issue #58:裸数据集名不知道是什么 → 标题写明"数据集";"生成于"与
+    # 「质检批次」下拉重复 → 删;"代码版本"没人看得懂 → 「质检程序版本」。
+    lines = [f"# 数据集 {m['name']}",
+             f"机器人 **{rb}** · 质检程序版本 {m['code_version']}",
              ""]
     # 数据包完整性(2026-08-10):容器缺了什么、按什么补的。它不是数字复读,是另一类
     # 信息(读任何数字之前该知道的前提),所以这一条留下。有 findings 才出,不占位。

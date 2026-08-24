@@ -2624,12 +2624,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                      value=choices[0], label="交付名",
                                      scale=1, interactive=True, allow_custom_value=True,
                                      info="新跑完的交付会自动出现在这里")
-                # 「运行」= 这份交付跑过的哪一次(2026-08-14 布局变更:每次跑批各进
-                # 各的时间戳子目录,互不覆盖)。默认选中 latest 记的那次 **只是省一次
+                # 「质检批次」= 这份交付跑过的哪一次(每次跑批各进各的时间戳子目录,
+                # 互不覆盖)。曾叫「运行」,issue #58:动词像个启动按钮,
+                # 名词才是"选哪一份"。默认选中 latest 记的那次 **只是省一次
                 # 点击** —— 它不是"推荐用这份",条目上也只写事实(时间/本次处理条数/
                 # 有没有导出数据集),不写"抽查""完整"这种替客户下的判断。
                 run_pick = gr.Dropdown(choices=run_choices(choices[0]),
-                                       value=resolve_run(choices[0]), label="运行",
+                                       value=resolve_run(choices[0]), label="质检批次",
                                        scale=1, interactive=True,
                                        info="每次跑批各存一份,默认打开最近一次")
             # 「有裁决尚未应用」提醒(2026-08-16 纯新增):裁决 CSV 跨跑批共用,
@@ -2653,7 +2654,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             #    客户只关心"哪些过了/被拒/待人工",所以三桶就是主导航;骨架照
             #    lerobot visualize_dataset 的左导航右详情,视频是详情的主角。
             #    桶口径与清单文案全在 manifest 的纯函数里,这里只摆组件。
-            with gr.Tab("Episodes"):
+            with gr.Tab("轨迹"):    # 曾叫 Episodes,issue #58:界面用中文
                 # 选项(带计数)由 _load 现算填入:交付一换,计数就得跟着换
                 ep_bucket = gr.Radio([], label="", elem_id="ep-buckets",
                                      container=False)

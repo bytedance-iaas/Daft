@@ -245,7 +245,7 @@ def test_app_with_terminal_tab(delivery):
     assert cfg.index("质检报告") < cfg.index("终端")   # 终端在最右
     assert cfg.index("跑质检") < cfg.index("质检报告")  # 跑质检在最左
     # 六个子 tab 一个不少
-    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细"):
+    for t in ("质检总览", "轨迹", "技能分布", "卡顿动作时间线", "明细"):
         assert t in cfg
 
 
@@ -263,7 +263,7 @@ def test_app_without_terminal_leaves_no_terminal_trace(delivery):
     cfg = _config_text(build_app(delivery))
     assert "终端" not in cfg and "curation-term-screen" not in cfg
     assert "质检报告" in cfg and "跑质检" in cfg
-    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细"):
+    for t in ("质检总览", "轨迹", "技能分布", "卡顿动作时间线", "明细"):
         assert t in cfg
 
 
@@ -280,7 +280,7 @@ def test_task_console_is_top_level_and_report_tabs_untouched(delivery):
     # 等几条守,这里不重复钉 —— 这些词在正文里也出现(技能画像页有一行指向人工
     # 裁决),硬排序只会造出一条脆测试。
     rep = _report_section(build_app(delivery))
-    for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "视频-动作同步",
+    for t in ("质检总览", "轨迹", "人工裁决", "技能分布", "视频-动作同步",
               "卡顿动作时间线", "明细", "性能剖析"):
         assert t in rep, t
     for t in ("跑质检", "任务与日志"):   # 生成视频片段/模型服务已并入别处
@@ -944,7 +944,7 @@ def test_app_has_perf_tab(delivery):
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(_with_perf(delivery)["path"]))
-    for t in ("质检总览", "Episodes", "技能分布", "卡顿动作时间线", "明细",
+    for t in ("质检总览", "轨迹", "技能分布", "卡顿动作时间线", "明细",
               "性能剖析"):
         assert t in cfg, t
     assert "延时剖析" in cfg
@@ -1439,16 +1439,16 @@ def test_decision_csv_schema_is_frozen(tmp_path):
 
 
 def test_app_has_manual_decision_tab(delivery):
-    """Gradio 层:新增「人工裁决」页签,排在 Episodes 与 技能画像 之间;
+    """Gradio 层:新增「人工裁决」页签,排在「轨迹」与 技能画像 之间;
     两块裁决面板的文案都在,且技能画像页只剩一行指路(裁决卡片已搬走)。"""
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(delivery))
-    for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "卡顿动作时间线",
+    for t in ("质检总览", "轨迹", "人工裁决", "技能分布", "卡顿动作时间线",
               "明细", "性能剖析"):
         assert t in cfg, t
     rep = _report_section(build_app(delivery))       # 只在报告段里比顺序(见 _report_section)
-    assert rep.index("Episodes") < rep.index("人工裁决") < rep.index("技能分布")
+    assert rep.index("轨迹") < rep.index("人工裁决") < rep.index("技能分布")
     # 2026-08-16 合并队列重构:人工裁决页 = 两个子页签(「待你裁决」+「任务失败复议」),
     # 「待你裁决」一条 episode 一张卡,标注问题与成败问题挂同一张卡。两个子页签名
     # 都是用户定的:别改回行话「待裁决」,也别改回「被拒复议」——后者的名字要自己
@@ -1939,7 +1939,7 @@ def test_app_has_sync_curve_tab_and_split_evidence(delivery):
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     cfg = _config_text(build_app(_with_sync(delivery)["path"]))
-    for t in ("质检总览", "Episodes", "人工裁决", "技能分布", "视频-动作同步",
+    for t in ("质检总览", "轨迹", "人工裁决", "技能分布", "视频-动作同步",
               "卡顿动作时间线", "明细", "性能剖析"):
         assert t in cfg, t
     # 「同步曲线」四个字在 Episodes 页的曲线组件标题里就出现过 → 页签定位用该页
@@ -2996,7 +2996,7 @@ def test_report_page_tab_set_is_frozen(delivery):
         # 「任务台」2026-08-19 改名「跑质检」并拍平(原来下面只剩一个
         # 「跑质检」子页签,套一层纯属多余)——顶层一个名字,子页签层删掉
         "跑质检", "当前任务", "历史",
-        "质检报告", "质检总览", "Episodes", "人工裁决", "待你裁决",
+        "质检报告", "质检总览", "轨迹", "人工裁决", "待你裁决",
         "任务失败复议", "技能分布", "明细", "动作打分明细", "视频打分明细",
         "视频-动作同步", "卡顿动作时间线", "本次运行配置", "性能剖析"])
 
