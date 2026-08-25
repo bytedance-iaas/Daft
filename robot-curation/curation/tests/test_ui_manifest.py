@@ -3905,3 +3905,41 @@ def test_kill_seals_episode_and_other_dim_abstain_stays(tmp_path):
     record_label_decision(m["path"], "ep000001", "弃用该条")
     assert episode_bucket(m, "ep000001") == BUCKET_PASSED      # 封条,不欠了
     assert episode_bucket(m, "ep000002") == BUCKET_PENDING     # 没人能替它答
+
+
+def test_queue_kind_keeps_task_dimension_after_apply(tmp_path):
+    """待裁问题列如实(2026-08-25 用户实报):两类问题都有的条目,成败线裁决
+    执行(办结进台账)后名册行仍要标「标注+成败」,不许缩成「标注分歧」。"""
+    from curation.ui.manifest import merged_table_queue
+    m = _ledger_delivery(tmp_path)
+    # ep000002 既在分歧名册又有成败台账 → 造一个这样的交付
+    d = tmp_path / "both"
+    d.mkdir()
+    (d / "passed.json").write_text(json.dumps({
+        "数据集": "x", "episodes": {
+            "ep000017": {"判决": "通过(人工裁决)", "checks": {},
+                         "人工裁决": {"裁决": "判成功", "裁决时间": "t"}}}},
+        ensure_ascii=False))
+    (d / "review.json").write_text(json.dumps({
+        "episodes": {},
+        "标注-画面分歧复核队列": [{"id": "ep000017", "label": "a",
+                                   "caption": "b"}]}, ensure_ascii=False))
+    m2 = load_delivery(str(d))
+    it = [i for i in merged_table_queue(m2) if i["id"] == "ep000017"][0]
+    assert it["kind"] == "标注+成败"
+
+
+def test_merged_card_deck_mirrors_table(tmp_path):
+    """卡片清单与队列表同源同序(2026-08-25 用户定:点哪行显示哪条):
+    台账条目也有卡(audit/task 皆 None + resolved 事件),下标一一对应。"""
+    from curation.ui.manifest import merged_card_deck, merged_table_queue
+    m = _ledger_delivery(tmp_path)
+    deck = merged_card_deck(m)
+    assert [d["id"] for d in deck] == [i["id"] for i in merged_table_queue(m)]
+    by = {d["id"]: d for d in deck}
+    assert by["ep000000"]["task"] is not None            # 待办条目原样
+    assert by["ep000005"]["audit"] is None and by["ep000005"]["task"] is None
+    assert by["ep000005"]["resolved"]["结论"] == "判成功"  # 台账卡带当时结论
+    # 类型档过滤与表一致
+    only_label = merged_card_deck(m, "只看标注问题(1)")
+    assert [d["id"] for d in only_label] == ["ep000002"]

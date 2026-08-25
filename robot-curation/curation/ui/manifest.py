@@ -789,10 +789,16 @@ def merged_table_queue(m: dict, status: str = QUEUE_STATUS_ALL,
     undecided: list = []
     decided: list = []
     pending_ids: set = set()
+    arc_all = m.get("adjudication_archive") or {}
     for it in merged_review_queue(m):
         eid, a, t = it["id"], it["audit"], it["task"]
         pending_ids.add(eid)
-        kind = "标注+成败" if (a and t) else ("标注分歧" if a else "成败弃权")
+        # 待裁问题列要如实反映这条历史上有哪几类问题(2026-08-25 用户实报:
+        # ep17 两个问题都有,成败线办结进台账后 task 侧变 None,列里「成败」
+        # 就丢了)—— 台账里有它的成败/补判记录,就把「成败」补回来
+        arc_task = arc_all.get(eid, {}).get("线") in ("成败", "补判")
+        kind = ("标注+成败" if (a and (t or arc_task))
+                else ("标注分歧" if a else "成败弃权"))
         if a:
             label, cap = a.get("label", ""), a.get("caption", "")
         else:
@@ -833,6 +839,23 @@ def merged_table_queue(m: dict, status: str = QUEUE_STATUS_ALL,
     elif mode == MERGE_FILTER_TASK:
         items = [i for i in items if "成败" in i["kind"]]
     return items
+
+
+def merged_card_deck(m: dict, mode: str = MERGE_FILTER_ALL) -> list[dict]:
+    """逐条裁决的卡片清单 = 队列表同源同序(2026-08-25 用户定:点表格任何一行,
+    下面都要显示那一条——台账行也不例外)。待办条目原样来自 merged_review_queue;
+    台账条目 audit/task 皆 None(两个问题块自然隐藏,裁决入口被既有守卫拦),
+    附 resolved=台账事件供卡头显示当时的结论。行序、类型档过滤与表格共用
+    merged_table_queue,点行按下标对号永不错位。"""
+    by_id = {it["id"]: it for it in merged_review_queue(m)}
+    arc = m.get("adjudication_archive") or {}
+    deck = []
+    for row in merged_table_queue(m, QUEUE_STATUS_ALL, mode):
+        it = by_id.get(row["id"])
+        deck.append(it if it is not None else
+                    {"id": row["id"], "audit": None, "task": None,
+                     "resolved": arc.get(row["id"]) or {}})
+    return deck
 
 
 def merged_queue_rows(m: dict, status: str = QUEUE_STATUS_ALL,
