@@ -1171,3 +1171,126 @@ def test_overview_breakdown_lists_human_drop_row():
                                 "hard_fail_breakdown": {"task_success": 5,
                                                         "timestamp_check": 1}})
     assert all(lbl != "人工裁决" for lbl, _n in items2)
+
+
+# ═════════ 弃权补判(2026-08-25 复盘 ⑩)═════════
+
+def _retry_views():
+    """弃权双呈现的最小三件套:epT/epN 调用失败类弃权,epG 真弃权(全平低位)。"""
+    fail_reason = "VLM 调用/解析失败: Timeout: probe: 等待并发闸门许可超时"
+    passed = {"episodes": {
+        "epT": {"判决": "通过", "综合软分": 0.9,
+                "checks": {"任务成败判定": {"结果": "弃权"}}},
+        "epN": {"判决": "通过", "综合软分": 0.8,
+                "checks": {"任务成败判定": {"结果": "弃权"}}},
+        "epG": {"判决": "通过", "综合软分": 0.7,
+                "checks": {"任务成败判定": {"结果": "弃权"}}}}}
+    review = {"待人工裁决总数": 3, "episodes": {
+        "epT": {"当前判决": "通过", "待裁决项": ["任务成败判定"],
+                "弃权原因": {"任务成败判定": fail_reason}},
+        "epN": {"当前判决": "通过", "待裁决项": ["任务成败判定"],
+                "弃权原因": {"任务成败判定": fail_reason}},
+        "epG": {"当前判决": "通过", "待裁决项": ["任务成败判定"],
+                "弃权原因": {"任务成败判定":
+                             "逐帧分数全平于低位:打分层无信息(非失败证据)"}}},
+        "标注-画面分歧复核队列": []}
+    reject = {"被拒总数": 0, "episodes": {}}
+    return passed, review, reject
+
+
+def test_retryable_abstains_only_call_failures():
+    """只挑「VLM 调用/解析失败」类;模型真答"判不了"的(全平低位)不重试。"""
+    from curation.pipeline.rejudge import retryable_abstains
+    p, r, j = _retry_views()
+    got = retryable_abstains({"passed": p, "review": r, "reject": j})
+    assert got == ["epN", "epT"]            # epG(真弃权)不在列
+
+
+def test_apply_abstain_retries_three_routes():
+    """补判三去向:转正只留 passed;判失败进 reject 且拒因可复议;仍弃权恢复双呈现。"""
+    from curation.dataset_level.decisions import is_task_success_reject
+    from curation.pipeline.rejudge import apply_abstain_retries
+    p, r, j = _retry_views()
+    s = apply_abstain_retries(p, r, j, {
+        "epT": {"passed": True, "verdict": "success", "detail": "{}"},
+        "epN": {"passed": False, "verdict": "failure", "detail": "{}"},
+        "epG": {"passed": None, "verdict": "score_blind", "detail": "{}"},
+    }, {"epT": "put x", "epN": "put y", "epG": "put z"})
+    # 转正:review 副本摘除,passed 转正带溯源
+    assert s["retry_pass"] == ["epT"] and "epT" not in r["episodes"]
+    assert p["episodes"]["epT"]["判决"] == "通过"
+    assert p["episodes"]["epT"]["弃权补判"]["任务文本"] == "put x"
+    assert "原弃权原因" in p["episodes"]["epT"]["弃权补判"]
+    # 判失败:三边只剩 reject,拒因带「任务成败判定」引号 → 可复议
+    assert s["retry_fail"] == ["epN"]
+    assert "epN" not in p["episodes"] and "epN" not in r["episodes"]
+    assert is_task_success_reject(j["episodes"]["epN"]["原因"])
+    # 仍弃权:双呈现恢复,弃权原因换成这次的说法
+    assert s["retry_abstain"] == ["epG"]
+    assert "epG" in p["episodes"] and "epG" in r["episodes"]
+    assert r["episodes"]["epG"]["弃权原因"]["任务成败判定"] == "score_blind"
+    # 计数同步
+    assert r["待人工裁决总数"] == 1 and j["被拒总数"] == 1
+
+
+def test_apply_abstain_retries_none_result_keeps_entry():
+    """补判本身又失败(res=None):原样不动,双呈现保留,不丢条目。"""
+    from curation.pipeline.rejudge import apply_abstain_retries
+    p, r, j = _retry_views()
+    s = apply_abstain_retries(p, r, j, {"epT": None}, {"epT": "t"})
+    assert s["retry_skipped"] == ["epT"]
+    assert "epT" in p["episodes"] and "epT" in r["episodes"]
+
+
+def test_run_rejudge_retry_only_no_decisions(tmp_path):
+    """--retry-abstained 单独可跑(无任何人工裁决):补判落库+账本平账。"""
+    import json as _json
+    from curation.pipeline.rejudge import run_rejudge
+    p, r, j = _retry_views()
+    p["dataset"] = {"input_episodes": 5, "dedup_removed": 0,
+                    "verdict_drop": 2, "delivered": 3,
+                    "hard_fail_breakdown": {"task_success": 2},
+                    "summary_stats": {"pass_rate_pct": 60.0}}
+    d = tmp_path / "dlv" / "20260825-000000"
+    (d / "details").mkdir(parents=True)
+    for name, doc in (("passed", p), ("review", r), ("reject", j)):
+        (d / f"{name}.json").write_text(_json.dumps(doc, ensure_ascii=False))
+    (d / "details" / "captions.json").write_text(_json.dumps(
+        {"epT": "put x", "epN": "put y", "epG": "put z"}))
+    calls = []
+
+    def fake_rerun(input_dir, eid, label):
+        calls.append((eid, label))
+        return {"passed": eid == "epT", "verdict": "success" if eid == "epT"
+                else "failure", "detail": "{}"}
+
+    out = run_rejudge(str(d), str(tmp_path / "src"), {"checks": {}},
+                      rerun_fn=fake_rerun, retry_abstains=True)
+    # 只补判调用失败类两条,真弃权 epG 一次都没被重试
+    assert sorted(e for e, _t in calls) == ["epN", "epT"]
+    assert all(t for _e, t in calls)         # 任务文本来自 captions.json,非空
+    assert out["retry_pass"] == ["epT"] and out["retry_fail"] == ["epN"]
+    got_p = _json.loads((d / "passed.json").read_text())
+    got_j = _json.loads((d / "reject.json").read_text())
+    assert got_p["episodes"]["epT"]["判决"] == "通过"
+    assert got_j["episodes"]["epN"]["判决"] == "拒绝"
+    # 账本平账(①的机制对补判同样生效):5 输入 - 0 去重 - 2 交付 = 3 判废
+    ds = got_p["dataset"]
+    assert ds["delivered"] == 2 and ds["verdict_drop"] == 3
+    assert "弃权补判" in out.get("closing", "") or out.get("retry_pass")
+
+
+def test_run_rejudge_without_flag_never_retries(tmp_path):
+    """反向:不带 flag,弃权条目一条都不许被重判(默认行为零变化)。"""
+    import json as _json
+    from curation.pipeline.rejudge import run_rejudge
+    p, r, j = _retry_views()
+    d = tmp_path / "dlv" / "20260825-000000"
+    (d / "details").mkdir(parents=True)
+    for name, doc in (("passed", p), ("review", r), ("reject", j)):
+        (d / f"{name}.json").write_text(_json.dumps(doc, ensure_ascii=False))
+    out = run_rejudge(str(d), str(tmp_path / "src"), {"checks": {}},
+                      rerun_fn=lambda *a: (_ for _ in ()).throw(AssertionError("不许重判")))
+    assert "note" in out                     # 无裁决无 flag = 原样退出
+    got_r = _json.loads((d / "review.json").read_text())
+    assert len(got_r["episodes"]) == 3

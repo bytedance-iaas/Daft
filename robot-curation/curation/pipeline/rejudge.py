@@ -405,6 +405,106 @@ def _carryover_section(records: list) -> list:
     return sec
 
 
+#: 可补判的弃权前缀:**只有基础设施故障**(超时/网络/解析)值得再问一次模型。
+#: 「全平低位/单调契约违约」这类弃权是模型看了给出的真实"判不了",重试大概率
+#: 同答案,白烧钱还延迟人工介入 —— 它们的归宿是人工裁决,不是重试。
+ABSTAIN_RETRY_PREFIX = "VLM 调用/解析失败"
+
+
+def retryable_abstains(files: dict) -> list:
+    """当前还挂在待裁队列里、且弃权原因是调用失败的条目(2026-08-25 复盘 ⑩)。
+
+    在人工裁决**应用之后**调用:人已给结论的条目那时已搬出 review,天然不在
+    此列 —— 人的结论永远压过重试。
+    """
+    out = []
+    for eid, e in (files.get("review", {}).get("episodes") or {}).items():
+        if TASK_CN not in (e.get("待裁决项") or []):
+            continue
+        reason = str((e.get("弃权原因") or {}).get(TASK_CN) or "")
+        if reason.startswith(ABSTAIN_RETRY_PREFIX):
+            out.append(eid)
+    return sorted(out)
+
+
+def apply_abstain_retries(passed: dict, review: dict, reject: dict,
+                          retried: dict, texts: dict) -> dict:
+    """弃权补判结果落库(纯数据函数,与 apply_decisions 同族,可严格单测)。
+
+    三种去向与流水线同语义:判成 → passed 转正(弃权双呈现的 review 副本一并
+    摘除);判败 → reject(拒因带「任务成败判定」引号 ⇒ 可复议,与流水线的杀
+    同一待遇);仍弃权 → 双呈现原样重建,弃权原因换成这次的说法,留给人工。
+    溯源块「弃权补判」记录时间/判定/所用任务文本,与其它裁决线同纪律。
+    """
+    p_eps = passed.setdefault("episodes", {})
+    r_eps = review.setdefault("episodes", {})
+    j_eps = reject.setdefault("episodes", {})
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    summary = {"retry_pass": [], "retry_fail": [], "retry_abstain": [],
+               "retry_skipped": []}
+    for eid, rj in sorted(retried.items()):
+        if rj is None:                        # 补判本身又失败:原样不动,留给人工
+            summary["retry_skipped"].append(eid)
+            continue
+        old_reason = str(((r_eps.get(eid) or {}).get("弃权原因") or {})
+                         .get(TASK_CN) or "")
+        old = _take_entry(p_eps, r_eps, j_eps, eid)
+        checks = dict(old.get("checks", {}))
+        entry_check = {"结果": _state_cn(rj.get("passed"))}
+        if rj.get("detail"):
+            entry_check["detail"] = rj["detail"]
+        checks[TASK_CN] = entry_check
+        prov = {"补判时间": now, "补判判定": rj.get("verdict", ""),
+                "原弃权原因": old_reason, "任务文本": texts.get(eid, "")}
+        base = {"综合软分": old.get("综合软分"), "checks": checks,
+                "弃权补判": prov}
+        if rj.get("passed") is True:
+            p_eps[eid] = {"判决": "通过", **base}
+            summary["retry_pass"].append(eid)
+        elif rj.get("passed") is False:
+            j_eps[eid] = {"判决": "拒绝",
+                          "原因": "未通过「任务成败判定」(弃权补判):"
+                                  + str(rj.get("verdict", "")),
+                          **base}
+            summary["retry_fail"].append(eid)
+        else:                                 # 仍弃权:恢复双呈现,原因换新
+            p_eps[eid] = {"判决": "通过", **base}
+            r_eps[eid] = {"当前判决": "通过", "待裁决项": [TASK_CN],
+                          "弃权原因": {TASK_CN: rj.get("verdict", "补判仍弃权")},
+                          "checks": checks, "弃权补判": prov}
+            summary["retry_abstain"].append(eid)
+    _sync_counts(review, reject, r_eps, j_eps)
+    return summary
+
+
+def _delivery_task_texts(delivery: str, eids: list) -> dict:
+    """补判用的任务文本:episodes_parquet 的 instruction 列(它是运行期的**生效
+    文本** —— 无标注补的 caption、人工改标都已同步进去);report-only 交付没有
+    parquet,退 details/captions.json。两处都没有的条目不补判(没题目没法判)。"""
+    texts: dict = {}
+    pq = os.path.join(delivery, "episodes_parquet")
+    if os.path.isdir(pq):
+        try:
+            import daft as _daft
+            df = _daft.read_parquet(pq).to_pydict()
+            ids, ins = df.get("episode_id") or [], df.get("instruction") or []
+            texts = {e: str(t or "").strip() for e, t in zip(ids, ins)}
+        except Exception as e:  # noqa: BLE001
+            print(f"[rejudge] ⚠️ 读 episodes_parquet 取任务文本失败"
+                  f"({type(e).__name__}: {e}),退 captions.json", flush=True)
+    if not texts:
+        cap = os.path.join(delivery, "details", "captions.json")
+        if os.path.exists(cap):
+            try:
+                with open(cap, encoding="utf-8") as f:
+                    d = json.load(f)
+                texts = {e: str((v or {}).get("caption") if isinstance(v, dict)
+                                else v or "").strip() for e, v in d.items()}
+            except Exception:  # noqa: BLE001
+                texts = {}
+    return {e: texts.get(e, "") for e in eids}
+
+
 def _sync_dataset_summary(files: dict) -> None:
     """裁决应用后,把 passed.json 的 dataset 汇总块对回真实条目数。
 
@@ -449,7 +549,8 @@ def _sync_dataset_summary(files: dict) -> None:
 
 
 def run_rejudge(delivery: str, input_dir: str, cfg: dict,
-                rerun_fn: Callable | None = None) -> dict:
+                rerun_fn: Callable | None = None,
+                retry_abstains: bool = False) -> dict:
     """读裁决 → 重判(采纳条目)→ 更新交付。rerun_fn 注入(测试用假函数);
     生产缺省 = _build_rerun(cfg)(多视角 v7.3 全协议,与漏斗同源构件)。
 
@@ -458,21 +559,23 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
     每裁决一轮涨一批(与 run 的 finally 同一道纪律)。LeRobot 输入下这是空操作。
     """
     try:
-        return _run_rejudge(delivery, input_dir, cfg, rerun_fn)
+        return _run_rejudge(delivery, input_dir, cfg, rerun_fn,
+                            retry_abstains=retry_abstains)
     finally:
         from ..ingest.rrd_reader import cleanup_video_cache
         cleanup_video_cache(input_dir)
 
 
 def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
-                 rerun_fn: Callable | None = None) -> dict:
+                 rerun_fn: Callable | None = None,
+                 retry_abstains: bool = False) -> dict:
     decisions = human.load_label_decisions(delivery)
     verdicts = human.load_task_verdicts(delivery)
     appeals = human.load_reject_appeals(delivery)
     # 快照留给报告的「沿用」小节:下面的幂等跳过会从工作字典里 pop,而沿用统计
     # 要看**全量**(跳过的那些正是"此前裁过、本次仍生效"的主力)。
     all_lines = (dict(decisions), dict(verdicts), dict(appeals))
-    if not decisions and not verdicts and not appeals:
+    if not decisions and not verdicts and not appeals and not retry_abstains:
         return {"note": "无裁决记录(交付目录 human-decisions/ 下的 "
                         "label_decisions.csv、task_verdicts.csv、reject_appeals.csv "
                         "都不存在或为空;2026-08-14 之前的交付也会去老位置 details/ "
@@ -540,17 +643,17 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
 
     rejudged: dict = {}
     _lat_mark = 0
+    if adopt or retry_abstains:               # 补判的 VLM 调用同样要进延时剖析
+        try:
+            from ..adapters.vlm_client import latency_rows as _lr0
+            _lat_mark = len(_lr0())
+        except Exception:  # noqa: BLE001
+            _lat_mark = -1
     if adopt:
         if rerun_fn is None:
             rerun_fn = _build_rerun(cfg)
-        # 重判也要入账:记下当前进程延时明细的水位,重判结束后把增量并进交付
-        # 的 vlm_latency.csv(2026-08-06 用户抓包:四次 rejudge 上百次 VLM 调用
-        # 全没进延时剖析,表上数字永远是原始 run 的快照)
-        try:
-            from ..adapters.vlm_client import latency_rows
-            _lat_mark = len(latency_rows())
-        except Exception:  # noqa: BLE001
-            _lat_mark = -1
+        # 延时水位已在上面统一记(重判/补判的 VLM 调用都要并进 vlm_latency.csv,
+        # 2026-08-06 用户抓包:四次 rejudge 上百次调用全没进延时剖析)
 
         def _one(item):
             eid, d = item
@@ -602,11 +705,69 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                                         files["reject"], appeals))
     summary["unchanged"] = unchanged
 
+    # ── 弃权补判(2026-08-25 复盘 ⑩,--retry-abstained 才走)──────────────
+    # 排在三条人工线**应用之后**:人已给结论的条目已搬出 review,天然不重试 ——
+    # 人的结论永远压过机器重试。只重试「VLM 调用/解析失败」类弃权(基础设施
+    # 故障);模型真答"判不了"的那些,重试大概率同答案,归宿是人工不是重烧钱。
+    retried: dict = {}
+    if retry_abstains:
+        retry_ids = retryable_abstains(files)
+        if not retry_ids:
+            summary["retry_note"] = "没有可补判的弃权条目(调用失败类)"
+            print("[rejudge] 弃权补判:没有可补判的条目(调用失败类弃权为 0)",
+                  flush=True)
+        else:
+            texts = _delivery_task_texts(delivery, retry_ids)
+            no_text = [e for e in retry_ids if not texts.get(e)]
+            for e in no_text:
+                print(f"[rejudge] ⚠️ {e} 找不到任务文本(parquet/captions 都没有),"
+                      "跳过补判", flush=True)
+            retry_ids = [e for e in retry_ids if texts.get(e)]
+        if retry_ids:
+            if rerun_fn is None:
+                rerun_fn = _build_rerun(cfg)
+
+            def _retry_one(eid):
+                try:
+                    return eid, rerun_fn(input_dir, eid, texts[eid])
+                except Exception as e:  # noqa: BLE001 单条失败不拖垮整批
+                    print(f"[rejudge] ⚠️ {eid} 补判失败({type(e).__name__}: {e}),"
+                          "该条原样不动", flush=True)
+                    return eid, None
+
+            import time as _t3
+            from concurrent.futures import ThreadPoolExecutor
+            _rt_t0 = _t3.time()
+            print(f"[rejudge] 弃权补判 {len(retry_ids)} 条(完整多视角协议,"
+                  f"并发≤8)…", flush=True)
+            _rt_done = 0
+            with ThreadPoolExecutor(max_workers=min(8, len(retry_ids))) as ex:
+                for eid, res in ex.map(_retry_one, retry_ids):
+                    _rt_done += 1
+                    v = (res or {}).get("verdict", "失败")
+                    print(f"[rejudge] 补判 {_rt_done}/{len(retry_ids)}:{eid} → {v}"
+                          f" | 已用 {int(_t3.time() - _rt_t0)}s", flush=True)
+                    retried[eid] = res
+            summary.update(apply_abstain_retries(
+                files["passed"], files["review"], files["reject"],
+                retried, texts))
+            print(f"[rejudge] 补判落库:转正 {len(summary.get('retry_pass', []))} 条,"
+                  f"判失败 {len(summary.get('retry_fail', []))} 条,"
+                  f"仍弃权 {len(summary.get('retry_abstain', []))} 条,"
+                  f"没跑成 {len(summary.get('retry_skipped', []))} 条", flush=True)
+
     # 收尾报账(2026-08-16 用户点名):改标重判后仍判不出的条目会掉回「待你裁决」
     # 队列 —— 这里不明说,用户下次打开界面才自己发现还有第二轮。
     n_applied = len(decisions) + len(verdicts) + len(appeals)
     still = list(summary["adopted_review"])
     closing = f"本轮处理 {n_applied} 条裁决"
+    if retried:
+        _n_undone = (len(summary.get("retry_abstain", []))
+                     + len(summary.get("retry_skipped", [])))
+        closing += (f";弃权补判 {len(retried)} 条"
+                    f"(转正 {len(summary.get('retry_pass', []))}"
+                    f" / 判失败 {len(summary.get('retry_fail', []))}"
+                    f" / 仍待人工 {_n_undone})")
     if still:
         closing += (f",其中 {len(still)} 条重判后仍判不出,已进入「待你裁决」队列"
                     f"({'、'.join(still)})—— 需要到「人工裁决 · 待你裁决」"
@@ -632,7 +793,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     # 2026-08-14 事故:那份 passed.json 最后是 138719 字节全 `\0`(发布那步当时
     # 还是就地截断,两遍撞上就永久停在中间态)。发布已改成原子改名,写两遍不再
     # 致命 —— 但"同一个产物一次只落一遍"本身就该是纪律,不靠下游兜底。
-    if rejudged and _lat_mark >= 0:
+    if (rejudged or retried) and _lat_mark >= 0:   # 重判/补判的调用都入账
         try:
             from ..adapters.vlm_client import (LATENCY_CSV_HEADER,
                                                latency_rows, latency_summary,
@@ -669,6 +830,9 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                    # 本次真正应用的成败裁决(幂等跳过的不在此列)
                    "task_verdicts": {e: v.get("verdict", "")
                                      for e, v in verdicts.items()},
+                   # 弃权补判的逐条判定(--retry-abstained 才有内容)
+                   "abstain_retries": {e: (r or {}).get("verdict", "补判失败")
+                                       for e, r in retried.items()},
                    "reject_appeals": {e: a.get("appeal", "")
                                       for e, a in appeals.items()},
                    "待人工裁决总数": len(files["review"].get("episodes") or {})},
@@ -691,6 +855,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
     touched = (summary["adopted_pass"] + summary["adopted_review"]
                + summary["adopted_reject"] + summary["dropped"]
                + summary["verdict_fail"] + summary["appeal_restored"]
+               + summary.get("retry_fail", [])         # 补判判失败 → 数据集剔行
                + human_kept)
     if touched and os.path.isdir(pq_dir):
         try:
@@ -699,7 +864,8 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
             n = len(df["episode_id"])
             rows_pq = [{k: df[k][i] for k in df} for i in range(n)]
             drop_ids = (set(summary["dropped"]) | set(summary["adopted_reject"])
-                        | set(summary["verdict_fail"]))
+                        | set(summary["verdict_fail"])
+                        | set(summary.get("retry_fail", [])))
             relabel = {e: decisions[e]["new_label"] for e in
                        summary["adopted_pass"] + summary["adopted_review"]
                        + human_kept
@@ -942,7 +1108,8 @@ def _sync_profile(delivery: str, files: dict, summary: dict,
                                           taxonomy_from_profile)
 
     removals = set(summary.get("dropped", []) + summary.get("adopted_reject", [])
-                   + summary.get("verdict_fail", []))
+                   + summary.get("verdict_fail", [])
+                   + summary.get("retry_fail", []))    # 弃权补判判失败的同样出画像
     # 「改标 + 人工成败结论」条目(adopted_human)只取仍在交付里的:人工判失败的
     # 已进 reject,再按新标注归进画像就是在数一条不存在的数据
     human_kept = [e for e in summary.get("adopted_human", [])

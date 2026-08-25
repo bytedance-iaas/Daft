@@ -110,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
     rj.add_argument("--config", default=None, help="流水线 YAML(缺省 default.yaml,须与原 run 一致)")
     rj.add_argument("--vlm-backend", default=None, metavar="预设名",
                     help="重判用的 VLM 后端预设(同 run,如 ark / h20-32b);缺省跟随配置")
+    rj.add_argument("--retry-abstained", action="store_true",
+                    help="补判弃权条目:只对「VLM 调用/解析失败」类弃权重跑成败判定"
+                         "(超时/网络故障的廉价补救,免整批重跑);模型真答\"判不了\"的"
+                         "弃权不重试(重试大概率同答案),仍走人工裁决。人工已裁的"
+                         "以人为准,不重试")
 
     rpf = sub.add_parser("reprofile",
                          help="按「标注优先」方针重算一份交付的技能画像:归类文本改为"
@@ -542,7 +547,8 @@ def main(argv: list[str] | None = None) -> int:
         _rrd_apply_config(cfg)
         from .ingest.public_catalog import apply_config as _public_apply_config
         _public_apply_config(cfg)
-        summary = run_rejudge(args.delivery, args.input, cfg)
+        summary = run_rejudge(args.delivery, args.input, cfg,
+                              retry_abstains=getattr(args, "retry_abstained", False))
         print(json.dumps(summary, ensure_ascii=False, indent=1)
               if isinstance(summary, dict) else summary)
         return _sync_tos_delivery(_sync, "rejudge")

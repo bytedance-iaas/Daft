@@ -2937,6 +2937,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                         placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
                 with gr.Row():
                     ex_go = gr.Button("执行裁决", variant="primary", scale=0)
+                    # 弃权补判(2026-08-25 复盘 ⑩):超时/网络故障类弃权此前只有
+                    # 两条路 —— 逐条人工看视频,或整批重跑全烧一遍。勾上这个,
+                    # 执行时顺带只对「调用失败」类弃权重跑成败判定;模型真答
+                    # "判不了"的弃权不重试(重试大概率同答案),人工已裁的以人为准。
+                    ex_retry = gr.Checkbox(
+                        label="同时补判弃权条目(只重试模型调用失败的那些)",
+                        value=False, scale=1)
                 ex_msg = gr.Markdown()
                 # 确认框:**真模态对话框**(2026-08-19 用户点名 ——「我说过要跳出来
                 # 成一个对话框,你怎么跳出来成了一个平铺框?」)。
@@ -3546,7 +3553,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             ex_go.click(_ex_hold, state, [ex_ask, ex_ask_md, ex_msg, *_ex_outs])
 
-            def _ex_run(m, src_name, ds, backend, cfg):
+            def _ex_run(m, src_name, ds, backend, cfg, retry):
                 """「确定」→ 起 rejudge 任务。
 
                 🔴 不另造进度浮层(2026-08-19 定案):走 runner.start,与跑质检
@@ -3593,9 +3600,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     _rg = runner.source_region_of((m or {}).get("path") or "")
                     if _rg:
                         _extra["input_region"] = _rg
+                if retry:
+                    _extra["retry_abstained"] = True
                 view = _tk_start("rejudge",
                                  "执行裁决 " + deliv
-                                 + (f" / {run}" if run != deliv else ""),
+                                 + (f" / {run}" if run != deliv else "")
+                                 + (" +补判弃权" if retry else ""),
                                  delivery=path, input=src, config=cfg,
                                  vlm_backend=_backend_code(backend), **_extra)
                 if str(view[2] or "").startswith("⚠️"):
@@ -3606,7 +3616,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         "已开始执行,进度在「跑质检 · 当前任务」"
                         "(可停止;关掉页面不影响执行)", *view)
 
-            ex_yes.click(_ex_run, [state, ex_src_dd, ex_ds, ex_backend, ex_cfg],
+            ex_yes.click(_ex_run,
+                         [state, ex_src_dd, ex_ds, ex_backend, ex_cfg, ex_retry],
                          [topnav, ex_ask, ex_msg, *_tk_outs])
             ex_no.click(lambda: gr.update(visible=False), None, ex_ask)
 
