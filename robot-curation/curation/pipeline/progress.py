@@ -28,6 +28,14 @@ _PROGRESS: dict = {}
 _RATE_WINDOW_S = 60.0
 _RATE_HISTORY_MAX = 64
 
+#: ETA 预热:完成量不足总数 10%(下限 3 条、上限 50 条)时不报剩余。
+#: ⚠️ 2026-08-25 droid-50 实测:并发段头几条的完成时刻近乎随机,全程平均速率
+#: 严重失真 —— 1/49 时报「剩余 ~57min」,4/49 掉到 ~14min,实际尾巴 4 分钟,
+#: 数字一路跳水比不给更伤信任。预热期只报 n/total 与已用时长,都是实话。
+_ETA_WARMUP_FRAC_DEN = 10          # 总数的 1/10
+_ETA_WARMUP_MIN_N = 3
+_ETA_WARMUP_MAX_N = 50             # 十万条也不该等到一万条才开口
+
 #: 剩余小于这个数就不报数字,改说「收尾中」。
 #: ⚠️ 没结束就不许显示 `~0s`:那是"马上就好"的承诺,而并发段的最后几条常常还要
 #: 磨很久,承诺完再跑 40 秒比不给数字更伤信任。
@@ -68,6 +76,10 @@ def _eta_seconds(st: dict, now: float, n: int, total: int):
         del hist[:-_RATE_HISTORY_MAX]
     if not total or n <= 0 or n >= total:
         return None
+    if n < min(max(_ETA_WARMUP_MIN_N,
+                   (total + _ETA_WARMUP_FRAC_DEN - 1) // _ETA_WARMUP_FRAC_DEN),
+               _ETA_WARMUP_MAX_N):
+        return None                        # 预热期:样本太少,估了也是瞎估
     elapsed = now - st["t0"]
     rate = n / elapsed if elapsed > 0 else 0.0        # 兜底:全程平均速率
     # 窗口内最早的那个采样点;整个窗口里一个点都没有(阶段慢到两次打印隔了一分钟

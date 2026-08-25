@@ -1270,7 +1270,10 @@ def test_task_verdict_roundtrip_and_override(delivery):
     m = load_delivery(delivery)
     assert load_task_verdicts(m) == {}
     msg = record_task_verdict(m["path"], "ep000000", "判成功", note="看了视频,完成了")
-    assert "已记录" in msg and "rejudge" in msg and "1 分钟" in msg
+    # 文案 2026-08-25 改口(复盘 ④):首选指界面「执行裁决」按钮,CLI 放括号里;
+    # 不再对界面用户报"落 TOS 约 1 分钟"这类存储内部细节
+    assert "已记录" in msg and "执行裁决" in msg and "rejudge" in msg
+    assert "1 分钟" not in msg
     got = load_task_verdicts(m)
     assert got["ep000000"]["verdict"] == "判成功"
     assert got["ep000000"]["note"] == "看了视频,完成了" and got["ep000000"]["at"]
@@ -2972,7 +2975,7 @@ def test_execute_confirm_targets_loaded_run_not_dropdowns(delivery, tmp_path,
     monkeypatch.setattr(runner, "source_dataset_of", lambda p: src_dir)
     fn = _btn_fn(app, "确定", elem_id="ex-yes")
     m = {"path": delivery}
-    out = fn.fn(m, "bogus-bucket", "bogus-dataset", None, "")
+    out = fn.fn(m, "bogus-bucket", "bogus-dataset", None, "", False)  # retry=False
     assert len(calls) == 1
     cmd, argv = calls[0]
     assert cmd == "rejudge"
@@ -3029,7 +3032,7 @@ def test_execute_refuses_and_says_so_while_a_task_is_running(delivery,
     ask = _btn_fn(app, "执行裁决").fn({"path": delivery})
     assert ask[0].get("visible") is False, "有任务在跑不该弹确认块"
     assert "有任务在跑" in ask[2] and "质检 droid → debug" in ask[2]
-    go = _btn_fn(app, "确定", elem_id="ex-yes").fn({"path": delivery}, None, None, None, "")
+    go = _btn_fn(app, "确定", elem_id="ex-yes").fn({"path": delivery}, None, None, None, "", False)
     assert "有任务在跑" in go[2]
     assert not calls, "有任务在跑时绝不发起(也不排队)"
 
@@ -3703,3 +3706,23 @@ def test_execute_button_state_refreshes_on_returning_to_report_page(delivery):
     events = {t[1] for f in updaters for t in getattr(f, "targets", [])}
     assert "select" in events, "回到报告页那一跳没接上 —— 按钮会死在灰色上"
     assert "load" in events, "app.load 初始化那一跳没接上"
+
+
+def test_execute_with_retry_checkbox_passes_flag(tmp_path, monkeypatch, delivery):
+    """复盘 ⑩ 接线:勾「同时补判弃权条目」→ rejudge 命令带 --retry-abstained;
+    不勾则不带(默认行为零变化)。"""
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    app = build_app(delivery)
+    calls = []
+    monkeypatch.setattr(runner, "start",
+                        lambda root, cmd, argv, **kw: calls.append((cmd, argv)))
+    monkeypatch.setattr(runner, "source_dataset_of",
+                        lambda p: str(tmp_path / "src"))
+    fn = _btn_fn(app, "确定", elem_id="ex-yes")
+    fn.fn({"path": delivery}, None, None, None, "", True)
+    fn.fn({"path": delivery}, None, None, None, "", False)
+    assert len(calls) == 2
+    assert "--retry-abstained" in calls[0][1]
+    assert "--retry-abstained" not in calls[1][1]
