@@ -821,6 +821,11 @@ def merged_table_queue(m: dict, status: str = QUEUE_STATUS_ALL,
         res = ev.get("结论", "")
         if line == "补判" and ev.get("补判判定"):
             res = f"{res}({ev['补判判定']})"
+        # 执行后改判(方向 A):新草稿还没应用时,列里以草稿为准(带「(未应用)」
+        # 后缀),不然表里还挂着旧结论,人会以为没记上
+        draft = _part("verdict", eid, tdec.get(eid, {}).get("verdict", ""))
+        if draft.endswith("(未应用)"):
+            res = draft
         archived.append({"id": eid, "kind": _ARCHIVE_KIND[line],
                          "label": label, "cap": cap, "result": res,
                          "pending": False})
@@ -852,9 +857,17 @@ def merged_card_deck(m: dict, mode: str = MERGE_FILTER_ALL) -> list[dict]:
     deck = []
     for row in merged_table_queue(m, QUEUE_STATUS_ALL, mode):
         it = by_id.get(row["id"])
-        deck.append(it if it is not None else
-                    {"id": row["id"], "audit": None, "task": None,
-                     "resolved": arc.get(row["id"]) or {}})
+        if it is not None:
+            deck.append(it)
+            continue
+        eid = row["id"]
+        # 台账条目也带 ② 成败问题(2026-08-25 用户定方向 A:执行后允许直接
+        # 改判,改完再点「执行裁决」按新结论重调交付)——task 给个最小条目,
+        # 渲染层照 required 档走,按钮高亮回显裁决 CSV 里最后一次的结论
+        deck.append({"id": eid, "audit": None,
+                     "task": {"id": eid, "current": "", "reason": "",
+                              "readings": {}, "state": ""},
+                     "resolved": arc.get(eid) or {}})
     return deck
 
 
@@ -1257,12 +1270,15 @@ def overview_markdown(m: dict) -> str:
     # dict(2026-08-10 发现)——按报告身份行的同款人话格式化;老交付是纯字符串,原样。
     rb = m.get("robot")
     if isinstance(rb, dict):
-        _q = f",质量 {rb.get('quality')}" if rb.get("quality") else ""
-        rb = f"{rb.get('robot_type')}(规格表 {rb.get('registry_profile')}{_q})"
-    # issue #58:裸数据集名不知道是什么 → 标题写明"数据集";"生成于"与
-    # 「质检批次」下拉重复 → 删;"代码版本"没人看得懂 → 「质检程序版本」。
+        # 2026-08-25 用户点名精简:规格表名与机器人名重复、"质量 authoritative"
+        # 是规格档案的内部分级(行话)、"质检程序版本 unknown"取不到值还占位 ——
+        # 全删,只留机器人名 = 源数据集 info.json 自己声明的 robot_type(如
+        # franka,随数据集自动变)。不做 franka→Panda 美化表:源数据没声明
+        # 型号,替它写型号可能错(FR3 采的数据多半也声明 franka)
+        rb = rb.get("robot_type") or rb.get("registry_profile") or "?"
+    # issue #58:裸数据集名不知道是什么 → 标题写明"数据集"
     lines = [f"# 数据集 {m['name']}",
-             f"机器人 **{rb}** · 质检程序版本 {m['code_version']}",
+             f"机器人 **{rb}**",
              ""]
     # 数据包完整性(2026-08-10):容器缺了什么、按什么补的。它不是数字复读,是另一类
     # 信息(读任何数字之前该知道的前提),所以这一条留下。有 findings 才出,不占位。
