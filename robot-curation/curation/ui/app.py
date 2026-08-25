@@ -35,7 +35,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        load_label_decisions, load_reject_appeals,
                        load_task_verdicts, merge_filter_mode,
                        merged_filter_choices, merged_hint_md,
-                       merged_queue_view, play_all_button_html,
+                       merged_queue_view, merged_card_deck, play_all_button_html,
                        success_block_mode,
                        unapplied_banner_md, unapplied_card_note,
                        record_label_decision, record_reject_appeal,
@@ -47,7 +47,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        TL_FILTERS, TL_SORTS,
                        merged_queue_rows, merged_review_queue, merged_table_queue,
                        QUEUE_STATUS_ALL, QUEUE_STATUS_CHOICES, MERGE_FILTERS,
-                       queue_status_choices, queue_status_mode,
+                       queue_status_choices, queue_status_mode, _ep_num,
                        check_table_html, delivery_choices,
                        detail_table_choices,
                        discover_deliveries, episode_card_html,
@@ -343,6 +343,75 @@ _DROPDOWN_JS = """
 #: 走**捕获阶段 + stopPropagation**:否则这一按会被 Gradio 认成"点表头=排序"。
 #: 重绘(换交付/换明细表/翻页)后宽度回到自动值 —— 有意不持久化:存宽度就得跟着
 #: 它的虚拟滚动与列集合对齐,收益远不抵复杂度。
+#: 人工裁决队列/复议表的「点行跳卡」自建通路(2026-08-25):gradio 升到 6.9 后
+#: 非交互 Dataframe 的 select 事件前端不再发(实测点击只走焦点不走事件),
+#: 点行跳卡整体失效。修法沿用 _TABLE_JS 的 head 脚本模式:文档级委托监听,
+#: 点进 #audit-queue 取行首格(episode 号)、点进 #appeal-queue 取第二格
+#: (episode id),写入隐藏 Textbox 并点隐藏 Button,由后端照常跳卡。
+#: ⚠️ 不按 DOM 行号:gradio 的表是"粘性表头 + 虚拟滚动表体"两张 <table>,
+#: 行号在长表上会漂,单元格文本才是稳的。
+_QJUMP_JS = """
+<script>
+(function () {
+  function relay(box_id, btn_id, val) {
+    var box = document.querySelector('#' + box_id + ' textarea, #' + box_id + ' input');
+    var btn = document.querySelector('#' + btn_id + ' button, button#' + btn_id) ||
+              document.getElementById(btn_id);
+    if (!box || !btn) return;
+    box.value = val;
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    btn.click();
+  }
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var zone = t.closest('#audit-queue, #appeal-queue');
+    if (!zone) return;
+    var tr = t.closest('tr');
+    if (!tr || !tr.cells || !tr.cells.length || tr.querySelector('th')) return;
+    if (zone.id === 'audit-queue') {
+      var num = (tr.cells[0].innerText || '').trim();
+      if (num) relay('qjump-row', 'qjump-go', num);
+    } else {
+      var eid = ((tr.cells[1] || {}).innerText || '').trim();
+      if (eid) relay('apjump-row', 'apjump-go', eid);
+    }
+  }, true);
+})();
+</script>
+"""
+
+#: 表格当前行高亮(2026-08-25 用户定):表格高亮行 = 下方卡片正在显示的
+#: episode,任何时刻同步(初载/点行/上一条下一条翻页都跟)。服务端每次渲染
+#: 卡片把 episode 写进隐藏标记(#mg-cur/#ap-cur),页面定时器对表上色 ——
+#: 用 setInterval 不用 rAF(后台标签页 rAF 冻结,定时器只是降频照跑),
+#: 表格被 gradio 重渲染后下一拍自动补上,不用追踪 DOM 替换。
+_CURROW_JS = """
+<script>
+(function () {
+  function mark(curId, tableId, cellIdx) {
+    var zone = document.getElementById(tableId);
+    if (!zone) return;
+    var cur = document.getElementById(curId);
+    var want = '';
+    if (cur) {
+      var sp = cur.querySelector('[data-ep]');
+      want = sp ? (sp.getAttribute('data-ep') || '') : '';
+    }
+    zone.querySelectorAll('tr').forEach(function (tr) {
+      if (!tr.cells || !tr.cells.length || tr.querySelector('th')) return;
+      var v = ((tr.cells[cellIdx] || {}).innerText || '').trim();
+      tr.classList.toggle('cur-row', !!want && v === want);
+    });
+  }
+  setInterval(function () {
+    mark('mg-cur', 'audit-queue', 0);
+    mark('ap-cur', 'appeal-queue', 1);
+  }, 400);
+})();
+</script>
+"""
+
 _TABLE_JS = """
 <script>
 (function () {
@@ -680,11 +749,10 @@ _ARCO_CSS = """
 #ex-ask-btns button, #out-ask-btns button, #in-ask-btns button {
   flex: 0 0 auto !important; width: 120px !important; min-width: 0 !important;
 }
-/* 待裁决队列单表(2026-08-23 用户拍板:两表合一)。滚动容器钉死高度,
-   条数多少不影响外观,内部滚动(表头吸顶)。 */
-#audit-queue .table-wrap, #audit-queue .svelte-virtual-table-viewport {
-  height: 420px !important; max-height: 420px !important;
-}
+/* 人工裁决队列表格高度:曾在这里把滚动容器钉死 420px(2026-08-23,
+   gradio 4.x 时代)。gradio 6.9 下这条规则压过组件的 max_height=980,
+   且新结构外层多了个 overflow:hidden 的包裹,表被剪裁又无滚动条
+   (2026-08-25 用户实报 ep14 只露一半)—— 删除,高度交回组件参数。 */
 
 /* ①标注问题 ‖ ②成败问题 并排(2026-08-19 用户拍板)。同样要等高:两块的表单
    项数不同,不撑齐的话右边那块的按钮行会吊在半空。 */
@@ -932,21 +1000,17 @@ def _probe_backends_cached(config_path, timeout: float, *, now=None) -> list[lis
 # 分歧队列的可点性提示(2026-08-05 用户反馈:怕用户不知道行能点):
 # 悬停变手型 + 行高亮,配合首列「裁决 ▶」操作列,双保险。
 _AUDIT_CSS = """
-/* 人工裁决队列的两组筛选(2026-08-25 用户嫌不好看):Arco 风药丸单选 ——
-   隐掉圆点,选项变成描边小胶囊,选中态主色描边 + 浅蓝底。只作用在这两个
-   elem_id 上,别的 Radio(跑质检页等)一个像素不动。 */
-#mg-filter .wrap, #mg-status .wrap { gap:8px; }
-#mg-filter label, #mg-status label {
-  border:1px solid #E5E6EB; border-radius:999px; background:#FFFFFF;
-  padding:3px 16px; margin:0; font-size:13px; color:#4E5969;
-  transition:border-color .15s ease, background .15s ease; cursor:pointer; }
-#mg-filter label:hover, #mg-status label:hover { border-color:#94BFFF; }
-#mg-filter label:has(input:checked), #mg-status label:has(input:checked) {
-  border-color:#165DFF; background:#E8F3FF; color:#165DFF; font-weight:600; }
-#mg-filter input[type="radio"], #mg-status input[type="radio"] {
-  display:none; }
+/* (2026-08-25:曾给这两组筛选做过药丸样式,用户看过实物否掉 ——
+   "同 group 的按钮不能这么搞",单选组外观必须与全站其它 Radio 一致,
+   保持 gradio 默认;此处不再留任何针对 #mg-filter/#mg-status 的规则。) */
 /* 底部翻页的位置提示与顶部同款居中 */
 #mg-pos2 { text-align:center; align-self:center; color:#86909C; }
+/* 点行跳卡的隐藏中转控件(_QJUMP_JS 的落点),永不显示 */
+#qjump-hide, #apjump-hide { display:none !important; }
+/* 表格当前行 = 下方卡片正在显示的那条(_CURROW_JS 上色),Arco 浅蓝 */
+#audit-queue tr.cur-row > td, #appeal-queue tr.cur-row > td {
+  background:#E8F3FF !important; }
+#mg-cur, #ap-cur { display:none !important; }
 """
 
 _AUDIT_CSS += """
@@ -1162,7 +1226,7 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
                                    font_mono=["ui-monospace", "Menlo", "monospace"]),
         "css": _ARCO_CSS + _AUDIT_CSS + _TOPNAV_CSS + (_TERMINAL_CSS if terminal else ""),
         # ↑ 顶层导航常驻 ⇒ 它的样式也常驻;终端专属样式/资产仍只在开终端时注入
-        "head": (_TABLE_JS + _DROPDOWN_JS
+        "head": (_TABLE_JS + _QJUMP_JS + _CURROW_JS + _DROPDOWN_JS
                  + _TIP_JS.replace("__TIPS__", json.dumps(SCAN_TIPS, ensure_ascii=False))
                  + _TASK_POLL_JS
                  + (_terminal_head(root) if terminal else "")),
@@ -1389,12 +1453,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # "本条要答:① + ②" 已删(2026-08-21 用户点名多余:两个问题块各自就在下面);
         # 任务标注用醒目块,episode 号只留一行小字
         eid = it["id"]
-        return (f"**{eid}**\n\n"
+        head = (f"**{eid}**\n\n"
                 + task_reference_html(m, eid, load_label_decisions(m).get(eid)))
+        ev = it.get("resolved")
+        if ev:
+            when = ev.get("裁决时间") or ev.get("应用时间") or ""
+            head += (f"\n\n✅ **已办结**:{ev.get('结论', '')}"
+                     + (f" · {ev.get('去向', '')}" if ev.get("去向") else "")
+                     + (f"({when})" if when else "")
+                     + ";这条不再需要你裁决,仅供回看。")
+        return head
 
     def _mg_render(m, filt, idx):
-        """渲染合并队列第 idx 张卡(越界回绕)。装配顺序 = _mg_outs。"""
-        q = merged_queue_view(m or {}, merge_filter_mode(filt))
+        """渲染卡片清单第 idx 张卡(越界回绕)。装配顺序 = _mg_outs。
+        清单与队列表同源同序(merged_card_deck),台账条目也有卡(只读)。"""
+        q = merged_card_deck(m or {}, merge_filter_mode(filt))
         if not q:
             return (0, "(本档没有待你裁决的条目)", "",
                     *[gr.update(value=None, visible=(i == 0)) for i in range(3)],
@@ -1402,7 +1475,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     *_au_btns(None),
                     gr.update(visible=False), "", "", "", "",
                     *[gr.update(variant="secondary", interactive=True)] * 3,
-                    "")
+                    "", "")
         idx = idx % len(q)
         it = q[idx]
         eid = it["id"]
@@ -1421,13 +1494,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 au_vis, au_info, origlab, newlab, "",
                 *_au_btns(dec.get("decision")),
                 tv_sec[0], tv_sec[1], tv_sec[2], tv_sec[3], "",
-                *tv_sec[4:], pos)
+                *tv_sec[4:], pos,
+                f'<span data-ep="{_ep_num(eid)}"></span>')
 
     def _ap_render(m, idx):
         """渲染第 idx 条被拒复议卡片(越界回绕)。装配顺序 = _ap_outs。"""
         q = (m or {}).get("reject_appeal") or []
         if not q:
-            return (idx, "(无可复议的被拒条目)", "", "", "", *_ap_btns(None))
+            return (idx, "(无可复议的被拒条目)", "", "", "",
+                    *_ap_btns(None), "")
         idx = idx % len(q)
         a = q[idx]
         eid = a.get("id", "")
@@ -1440,7 +1515,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 + (f"\n\n{trace}" if trace else ""))
         readings = f"关键读数:{readings_text(a.get('readings') or {})}"
         return (idx, f"第 {idx + 1} / {len(q)} 条", info, readings,
-                episode_video_html(m, eid, review_dir, data_root), *_ap_btns(d.get("appeal")))
+                episode_video_html(m, eid, review_dir, data_root),
+                *_ap_btns(d.get("appeal")),
+                f'<span data-ep="{eid}"></span>')
 
     def _sync_view(m, mode, page):
         """同步曲线页的一屏(装配顺序 = _sy_outs)。分页/筛选逻辑全在 manifest。"""
@@ -2793,6 +2870,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             max_height=980,
                             wrap=True,       # 长文本换行显示全文,不截断
                             column_widths=["8%", "11%", "34%", "34%", "13%"])
+                        # 点行跳卡的自建通路落点(_QJUMP_JS 往这里写/点;CSS 藏)
+                        with gr.Row(elem_id="qjump-hide"):
+                            qjump_row = gr.Textbox(elem_id="qjump-row")
+                            qjump_go = gr.Button("跳", elem_id="qjump-go")
                         # ── 合并裁决卡片(逐条翻页,翻页按 episode 走不再按队列走):
                         #    看一遍视频 → ① 标注问题(有分歧才出现)→ ② 成败问题
                         #    (显隐档位见 manifest.success_block_mode)。
@@ -2882,6 +2963,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 mg_prev2 = gr.Button("← 上一条", scale=1)
                                 mg_pos2 = gr.Markdown("", elem_id="mg-pos2")
                                 mg_next2 = gr.Button("下一条 →", scale=1)
+                            # 当前卡 episode 标记(_CURROW_JS 读它给表上色;CSS 藏)
+                            mg_cur = gr.HTML("", elem_id="mg-cur")
 
                     # ── 被拒复议(2026-08-11;2026-08-16 原样搬进子页签):任务成败
                     #    判定**杀掉**的条目在这里可看、可捞回 —— 判定从"拿不准就转
@@ -2921,6 +3004,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                                     max_height=980, wrap=True,  # 同 qu_table(复盘 ⑨)
                                                     column_widths=["8%", "12%", "45%",
                                                                    "22%", "13%"])
+                            # 点行跳卡自建通路(同 qu_table,见 _QJUMP_JS)
+                            with gr.Row(elem_id="apjump-hide"):
+                                apjump_row = gr.Textbox(elem_id="apjump-row")
+                                apjump_go = gr.Button("跳", elem_id="apjump-go")
+                            ap_cur = gr.HTML("", elem_id="ap-cur")
                             with gr.Accordion("复议被拒条目(记草稿,可随时改)", open=True):
                                 ap_idx = gr.State(0)
                                 with gr.Row():
@@ -3134,7 +3222,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # 复议卡片的七个槽(_ap_render 按这个顺序装配;两个按钮的顺序 =
             # APPEAL_CHOICES 的顺序)
             _ap_outs = [ap_idx, ap_pos, ap_info, ap_readings, ap_video,
-                        ap_keep, ap_back]
+                        ap_keep, ap_back,
+                        ap_cur]      # 当前卡 episode 标记(复议表高亮同步源)
             # 合并裁决卡片的 22 个槽(_mg_render 按这个顺序装配):卡头三件 +
             # 三路视频 + ① 区五件三键 + ② 区五件三键
             _mg_outs = [mg_idx, mg_pos, mg_info, *mg_vids,
@@ -3142,7 +3231,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         au_adopt, au_keep, au_hold,
                         mg_tv_block, tv_mode_note, tv_info, tv_readings, tv_note,
                         tv_pass, tv_fail, tv_hold,
-                        mg_pos2]     # 底部翻页行的位置提示(与 mg_pos 同文案)
+                        mg_pos2,     # 底部翻页行的位置提示(与 mg_pos 同文案)
+                        mg_cur]      # 当前卡 episode 标记(表格高亮同步源)
 
             outs = [state, ov_md, ov_table, ov_note, ov_cfg, ep_bucket, *_ep_list_outs,
                     sk_html, sk_table, sk_audit_note,
@@ -3393,35 +3483,52 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 标注表)就切回「全部」再跳 —— 绝不在看不见的档里静默定位。
                 回退档的标签必须按**当前状态档**的计数拼(选项集是按它建的,
                 值不在选项集会被 gradio 静默丢弃 —— 老坑)。"""
-                q = merged_queue_view(m or {}, merge_filter_mode(filt))
+                q = merged_card_deck(m or {}, merge_filter_mode(filt))
                 ids = [it["id"] for it in q]
                 if eid in ids:
                     return (gr.update(), *_mg_render(m, filt, ids.index(eid)))
                 all_label = merged_filter_choices(m or {}, status)[0]
                 ids_all = [it["id"] for it in
-                           merged_queue_view(m or {}, MERGE_FILTER_ALL)]
+                           merged_card_deck(m or {}, MERGE_FILTER_ALL)]
                 i = ids_all.index(eid) if eid in ids_all else 0
                 return (gr.update(value=all_label), *_mg_render(m, all_label, i))
 
+            def _q_jump_to_eid(m, filt, status, eid):
+                """点人工裁决队列表任意一行 → 下方卡片跳到该 episode。
+                台账行也有只读卡(2026-08-25 用户定:点哪行显示哪条),
+                与表同源的 merged_card_deck 里都能找到。"""
+                if eid and any(q["id"] == eid
+                               for q in merged_card_deck(m or {})):
+                    return (*_mg_jump_to(m, filt, eid, status), gr.update())
+                return (gr.update(), *[gr.update() for _ in _mg_outs], gr.update())
+
             def _q_jump(m, filt, status, evt):
-                """点人工裁决队列表任意一行 → 合并卡片跳到该 episode(行序与
-                merged_table_queue(当前状态档)一致,按下标取 episode)。
-                台账行(办结离队,卡片清单里没有)点了保持当前卡不动。"""
+                """select 事件通路(gradio 6.9 前端已不发,保留不碍事)。"""
                 items = merged_table_queue(m or {}, status or QUEUE_STATUS_ALL,
                                            filt)
                 row = evt.index[0]
                 eid = items[row]["id"] if row < len(items) else ""
-                if eid and any(q["id"] == eid for q in merged_review_queue(m or {})):
-                    return _mg_jump_to(m, filt, eid, status)
-                return (gr.update(), *[gr.update() for _ in _mg_outs])
+                return _q_jump_to_eid(m, filt, status, eid)
+
+            def _q_jump_by_num(m, filt, status, num):
+                """自建通路(_QJUMP_JS):按行首格的 episode 号找条目再跳。
+                gradio 6.9 非交互 Dataframe 的 select 前端不发事件,这条是
+                点行跳卡的实际生效路径。"""
+                num = str(num or "").strip()
+                items = merged_table_queue(m or {}, status or QUEUE_STATUS_ALL,
+                                           filt)
+                eid = next((i["id"] for i in items if _ep_num(i["id"]) == num), "")
+                return _q_jump_to_eid(m, filt, status, eid)
 
             # gradio 靠注解识别"要注入 SelectData";本文件开了 future annotations,
             # 字符串注解会在模块全局被 eval(gr 是函数内导入)→ NameError。
             # 塞真实类对象绕开字符串求值。
             _q_jump.__annotations__ = {"evt": gr.SelectData}
 
-            _mg_jump_outs = [mg_filter, *_mg_outs]
+            _mg_jump_outs = [mg_filter, *_mg_outs, mg_hint]
             qu_table.select(_q_jump, [state, mg_filter, mg_status], _mg_jump_outs)
+            qjump_go.click(_q_jump_by_num, [state, mg_filter, mg_status, qjump_row],
+                           _mg_jump_outs)
 
             def _filter_updates(m, filt, status):
                 """两组筛选档的联动重建:类型档计数按当前状态档算,值按档位换
@@ -3446,8 +3553,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             [state, mg_filter, mg_status], qu_table)
 
             def _mg_item(m, filt, idx):
-                """当前卡片指着的合并队列条目(空队列返回 None)。"""
-                q = merged_queue_view(m or {}, merge_filter_mode(filt))
+                """当前卡片指着的清单条目(空清单返回 None)。台账条目
+                audit/task 皆 None,落裁决的入口被两问题块的既有守卫拦。"""
+                q = merged_card_deck(m or {}, merge_filter_mode(filt))
                 return q[(idx or 0) % len(q)] if q else None
 
             def _mg_au_decide(m, filt, status, idx, newlab, note, decision):
@@ -3459,6 +3567,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return ("⚠️ 无条目可裁决", *[gr.update()] * 18)
                 if readonly_block_msg(m):
                     return (readonly_block_msg(m), *[gr.update()] * 18)
+                if it.get("resolved"):
+                    return ("⚠️ 这条已办结,仅供回看,不能再裁决",
+                            *[gr.update()] * 18)
                 if it["audit"] is None:
                     return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 18)
                 msg = record_label_decision(m["path"], it["id"], decision,
@@ -3560,6 +3671,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             _ap_jump.__annotations__ = {"evt": gr.SelectData}
             ap_table.select(_ap_jump, [state, ap_idx], _ap_outs)
+
+            def _ap_jump_by_id(m, idx, eid):
+                """复议表点行的自建通路:按第二格的 episode id 找在案条目;
+                台账行(已捞回,不在案)保持当前卡。"""
+                eid = str(eid or "").strip()
+                for i, a in enumerate((m or {}).get("reject_appeal") or []):
+                    if a.get("id") == eid:
+                        return _ap_render(m, i)
+                return _ap_render(m, idx or 0)
+
+            apjump_go.click(_ap_jump_by_id, [state, ap_idx, apjump_row], _ap_outs)
 
             def _ap_decide(m, idx, note, appeal):
                 q = (m or {}).get("reject_appeal") or []
