@@ -485,3 +485,23 @@ def test_backend_dropdown_announces_probing_then_probe_clears_it(tmp_path):
     assert probe
     upd = probe[0](None, None)
     assert upd[0].get("info", "sentinel") is None   # 探活回来必须摘掉「正在检测」
+
+
+def test_adjudication_queue_title_and_status_radio(tmp_path, monkeypatch):
+    """人工裁决队列(2026-08-25 用户改名)+ 两组筛选(问题类型 × 状态)——
+    表是台账,裁决执行后条目留底可见;两组选项带计数、随交付在 _load 里
+    动态重建(构建期为空,与 mg_filter 同款),elem_id 挂着药丸样式。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    root = tmp_path / "deliveries"; root.mkdir()
+    app = build_app(str(root), data_root=str(tmp_path / "data"))
+    cfg = json.loads(json.dumps(app.get_config_file(), default=str))
+    html = " ".join(str(c["props"].get("value", ""))
+                    for c in cfg["components"] if c["type"] == "html")
+    assert "人工裁决队列" in html and "待裁决队列" not in html
+    radios = [c["props"] for c in cfg["components"] if c["type"] == "radio"]
+    by_id = {r.get("elem_id"): r for r in radios}
+    assert by_id["mg-status"]["label"] == "状态"
+    assert by_id["mg-filter"]["label"] == "问题类型"     # 长解释句已删(要简洁)
+    assert by_id["mg-status"]["choices"] == []           # 选项随交付在 _load 重建

@@ -35,7 +35,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        load_label_decisions, load_reject_appeals,
                        load_task_verdicts, merge_filter_mode,
                        merged_filter_choices, merged_hint_md,
-                       merged_queue_view, play_all_button_html,
+                       merged_queue_view, merged_card_deck, play_all_button_html,
                        success_block_mode,
                        unapplied_banner_md, unapplied_card_note,
                        record_label_decision, record_reject_appeal,
@@ -45,7 +45,10 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        LATENCY_KIND_NOTE, LATENCY_NOTE, LATENCY_PCTL_NOTE,
                        SYNC_FILTER_ALL, SYNC_FILTERS,
                        TL_FILTERS, TL_SORTS,
-                       merged_queue_rows, merged_review_queue, check_table_html, delivery_choices,
+                       merged_queue_rows, merged_review_queue, merged_table_queue,
+                       QUEUE_STATUS_ALL, QUEUE_STATUS_CHOICES, MERGE_FILTERS,
+                       queue_status_choices, queue_status_mode, _ep_num,
+                       check_table_html, delivery_choices,
                        detail_table_choices,
                        discover_deliveries, episode_card_html,
                        episode_list_view, episode_video_html,
@@ -59,6 +62,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        sync_camera_html, sync_conclusion_html, sync_health_html,
                        sync_view, SYNC_HOWTO,
                        task_question_md, task_reference_html, task_reference_md,
+                       episode_task_text, _adopted_label,
                        timeline_html,
                        video_detail_view)
 from . import runner            # 任务执行层(任务台跑批 + 报告页「执行裁决」共用)
@@ -340,6 +344,75 @@ _DROPDOWN_JS = """
 #: 走**捕获阶段 + stopPropagation**:否则这一按会被 Gradio 认成"点表头=排序"。
 #: 重绘(换交付/换明细表/翻页)后宽度回到自动值 —— 有意不持久化:存宽度就得跟着
 #: 它的虚拟滚动与列集合对齐,收益远不抵复杂度。
+#: 人工裁决队列/复议表的「点行跳卡」自建通路(2026-08-25):gradio 升到 6.9 后
+#: 非交互 Dataframe 的 select 事件前端不再发(实测点击只走焦点不走事件),
+#: 点行跳卡整体失效。修法沿用 _TABLE_JS 的 head 脚本模式:文档级委托监听,
+#: 点进 #audit-queue 取行首格(episode 号)、点进 #appeal-queue 取第二格
+#: (episode id),写入隐藏 Textbox 并点隐藏 Button,由后端照常跳卡。
+#: ⚠️ 不按 DOM 行号:gradio 的表是"粘性表头 + 虚拟滚动表体"两张 <table>,
+#: 行号在长表上会漂,单元格文本才是稳的。
+_QJUMP_JS = """
+<script>
+(function () {
+  function relay(box_id, btn_id, val) {
+    var box = document.querySelector('#' + box_id + ' textarea, #' + box_id + ' input');
+    var btn = document.querySelector('#' + btn_id + ' button, button#' + btn_id) ||
+              document.getElementById(btn_id);
+    if (!box || !btn) return;
+    box.value = val;
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    btn.click();
+  }
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var zone = t.closest('#audit-queue, #appeal-queue');
+    if (!zone) return;
+    var tr = t.closest('tr');
+    if (!tr || !tr.cells || !tr.cells.length || tr.querySelector('th')) return;
+    if (zone.id === 'audit-queue') {
+      var num = (tr.cells[0].innerText || '').trim();
+      if (num) relay('qjump-row', 'qjump-go', num);
+    } else {
+      var eid = ((tr.cells[1] || {}).innerText || '').trim();
+      if (eid) relay('apjump-row', 'apjump-go', eid);
+    }
+  }, true);
+})();
+</script>
+"""
+
+#: 表格当前行高亮(2026-08-25 用户定):表格高亮行 = 下方卡片正在显示的
+#: episode,任何时刻同步(初载/点行/上一条下一条翻页都跟)。服务端每次渲染
+#: 卡片把 episode 写进隐藏标记(#mg-cur/#ap-cur),页面定时器对表上色 ——
+#: 用 setInterval 不用 rAF(后台标签页 rAF 冻结,定时器只是降频照跑),
+#: 表格被 gradio 重渲染后下一拍自动补上,不用追踪 DOM 替换。
+_CURROW_JS = """
+<script>
+(function () {
+  function mark(curId, tableId, cellIdx) {
+    var zone = document.getElementById(tableId);
+    if (!zone) return;
+    var cur = document.getElementById(curId);
+    var want = '';
+    if (cur) {
+      var sp = cur.querySelector('[data-ep]');
+      want = sp ? (sp.getAttribute('data-ep') || '') : '';
+    }
+    zone.querySelectorAll('tr').forEach(function (tr) {
+      if (!tr.cells || !tr.cells.length || tr.querySelector('th')) return;
+      var v = ((tr.cells[cellIdx] || {}).innerText || '').trim();
+      tr.classList.toggle('cur-row', !!want && v === want);
+    });
+  }
+  setInterval(function () {
+    mark('mg-cur', 'audit-queue', 0);
+    mark('ap-cur', 'appeal-queue', 1);
+  }, 400);
+})();
+</script>
+"""
+
 _TABLE_JS = """
 <script>
 (function () {
@@ -673,15 +746,19 @@ _ARCO_CSS = """
 }
 /* 对话框按钮:居中、定宽(2026-08-19 用户点名)。不居中的根因:Row 默认
    flex-start,而 Button 的 min-width 让 scale=0 也铺成大宽条。 */
-#ex-ask-btns, #out-ask-btns, #in-ask-btns { justify-content: center !important; gap: 12px !important; }
-#ex-ask-btns button, #out-ask-btns button, #in-ask-btns button {
+#ex-ask-btns, #out-ask-btns, #in-ask-btns, #fix-ask-btns { justify-content: center !important; gap: 12px !important; }
+/* 「标注错了」按钮与任务问句同排:问句列可收缩换行(min-width:0),按钮
+   定宽不参与压缩 —— caption 再长也只会让问句多折几行,永不与按钮重叠 */
+#tv-q-row { align-items: flex-start !important; gap: 10px !important; flex-wrap: nowrap !important; }
+#tv-q-row > div:first-child { flex: 1 1 auto !important; min-width: 0 !important; }
+#tv-fixlab { flex: 0 0 auto !important; white-space: nowrap; }
+#ex-ask-btns button, #out-ask-btns button, #in-ask-btns button, #fix-ask-btns button {
   flex: 0 0 auto !important; width: 120px !important; min-width: 0 !important;
 }
-/* 待裁决队列单表(2026-08-23 用户拍板:两表合一)。滚动容器钉死高度,
-   条数多少不影响外观,内部滚动(表头吸顶)。 */
-#audit-queue .table-wrap, #audit-queue .svelte-virtual-table-viewport {
-  height: 420px !important; max-height: 420px !important;
-}
+/* 人工裁决队列表格高度:曾在这里把滚动容器钉死 420px(2026-08-23,
+   gradio 4.x 时代)。gradio 6.9 下这条规则压过组件的 max_height=980,
+   且新结构外层多了个 overflow:hidden 的包裹,表被剪裁又无滚动条
+   (2026-08-25 用户实报 ep14 只露一半)—— 删除,高度交回组件参数。 */
 
 /* ①标注问题 ‖ ②成败问题 并排(2026-08-19 用户拍板)。同样要等高:两块的表单
    项数不同,不撑齐的话右边那块的按钮行会吊在半空。 */
@@ -929,6 +1006,20 @@ def _probe_backends_cached(config_path, timeout: float, *, now=None) -> list[lis
 # 分歧队列的可点性提示(2026-08-05 用户反馈:怕用户不知道行能点):
 # 悬停变手型 + 行高亮,配合首列「裁决 ▶」操作列,双保险。
 _AUDIT_CSS = """
+/* (2026-08-25:曾给这两组筛选做过药丸样式,用户看过实物否掉 ——
+   "同 group 的按钮不能这么搞",单选组外观必须与全站其它 Radio 一致,
+   保持 gradio 默认;此处不再留任何针对 #mg-filter/#mg-status 的规则。) */
+/* 底部翻页的位置提示与顶部同款居中 */
+#mg-pos2 { text-align:center; align-self:center; color:#86909C; }
+/* 点行跳卡的隐藏中转控件(_QJUMP_JS 的落点),永不显示 */
+#qjump-hide, #apjump-hide { display:none !important; }
+/* 表格当前行 = 下方卡片正在显示的那条(_CURROW_JS 上色),Arco 浅蓝 */
+#audit-queue tr.cur-row > td, #appeal-queue tr.cur-row > td {
+  background:#E8F3FF !important; }
+#mg-cur, #ap-cur { display:none !important; }
+"""
+
+_AUDIT_CSS += """
 /* 同步曲线卡片(2026-08-07 三轮反馈后定稿):一行一张(两列会把图压瘦)、
    卡片之间大间距、内部留白充足;点图在新标签页开原图(gradio 的全屏按钮
    在本环境不生效,用户实测)。 */
@@ -1141,7 +1232,7 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
                                    font_mono=["ui-monospace", "Menlo", "monospace"]),
         "css": _ARCO_CSS + _AUDIT_CSS + _TOPNAV_CSS + (_TERMINAL_CSS if terminal else ""),
         # ↑ 顶层导航常驻 ⇒ 它的样式也常驻;终端专属样式/资产仍只在开终端时注入
-        "head": (_TABLE_JS + _DROPDOWN_JS
+        "head": (_TABLE_JS + _QJUMP_JS + _CURROW_JS + _DROPDOWN_JS
                  + _TIP_JS.replace("__TIPS__", json.dumps(SCAN_TIPS, ensure_ascii=False))
                  + _TASK_POLL_JS
                  + (_terminal_head(root) if terminal else "")),
@@ -1368,19 +1459,30 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # "本条要答:① + ②" 已删(2026-08-21 用户点名多余:两个问题块各自就在下面);
         # 任务标注用醒目块,episode 号只留一行小字
         eid = it["id"]
-        return (f"**{eid}**\n\n"
+        head = (f"**{eid}**\n\n"
                 + task_reference_html(m, eid, load_label_decisions(m).get(eid)))
+        ev = it.get("resolved")
+        if ev:
+            when = ev.get("裁决时间") or ev.get("应用时间") or ""
+            # 不带任何对号图标(用户两次点名:判失败配绿勾语义打架)
+            head += (f"\n\n**已办结**:{ev.get('结论', '')}"
+                     + (f" · {ev.get('去向', '')}" if ev.get("去向") else "")
+                     + (f"({when})" if when else "")
+                     + ";改判直接点下方按钮,改完点「执行裁决」生效。")
+        return head
 
     def _mg_render(m, filt, idx):
-        """渲染合并队列第 idx 张卡(越界回绕)。装配顺序 = _mg_outs。"""
-        q = merged_queue_view(m or {}, merge_filter_mode(filt))
+        """渲染卡片清单第 idx 张卡(越界回绕)。装配顺序 = _mg_outs。
+        清单与队列表同源同序(merged_card_deck),台账条目也有卡(只读)。"""
+        q = merged_card_deck(m or {}, merge_filter_mode(filt))
         if not q:
             return (0, "(本档没有待你裁决的条目)", "",
                     *[gr.update(value=None, visible=(i == 0)) for i in range(3)],
                     gr.update(visible=False), "", "", "", "",
                     *_au_btns(None),
                     gr.update(visible=False), "", "", "", "",
-                    *[gr.update(variant="secondary", interactive=True)] * 3)
+                    *[gr.update(variant="secondary", interactive=True)] * 3,
+                    "", "", gr.update(visible=False))
         idx = idx % len(q)
         it = q[idx]
         eid = it["id"]
@@ -1394,17 +1496,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         else:
             au_vis, au_info, origlab, newlab = gr.update(visible=False), "", "", ""
         tv_sec = _mg_tv_section(m, it, dec.get("decision", ""))
-        return (idx, f"第 {idx + 1} / {len(q)} 条", info, *_vids(m, eid),
+        pos = f"第 {idx + 1} / {len(q)} 条"
+        # 「标注错了」:②区在显 + 没有①区(名册条目①自带修正框,不重复给入口)
+        fix_vis = (it["audit"] is None
+                   and success_block_mode(it, dec.get("decision", "")) != "hidden")
+        return (idx, pos, info, *_vids(m, eid),
                 au_vis, au_info, origlab, newlab, "",
                 *_au_btns(dec.get("decision")),
                 tv_sec[0], tv_sec[1], tv_sec[2], tv_sec[3], "",
-                *tv_sec[4:])
+                *tv_sec[4:], pos,
+                f'<span data-ep="{_ep_num(eid)}"></span>',
+                gr.update(visible=fix_vis))
 
     def _ap_render(m, idx):
         """渲染第 idx 条被拒复议卡片(越界回绕)。装配顺序 = _ap_outs。"""
         q = (m or {}).get("reject_appeal") or []
         if not q:
-            return (idx, "(无可复议的被拒条目)", "", "", "", *_ap_btns(None))
+            return (idx, "(无可复议的被拒条目)", "", "", "",
+                    *_ap_btns(None), "")
         idx = idx % len(q)
         a = q[idx]
         eid = a.get("id", "")
@@ -1417,7 +1526,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 + (f"\n\n{trace}" if trace else ""))
         readings = f"关键读数:{readings_text(a.get('readings') or {})}"
         return (idx, f"第 {idx + 1} / {len(q)} 条", info, readings,
-                episode_video_html(m, eid, review_dir, data_root), *_ap_btns(d.get("appeal")))
+                episode_video_html(m, eid, review_dir, data_root),
+                *_ap_btns(d.get("appeal")),
+                f'<span data-ep="{eid}"></span>')
 
     def _sync_view(m, mode, page):
         """同步曲线页的一屏(装配顺序 = _sy_outs)。分页/筛选逻辑全在 manifest。"""
@@ -1507,7 +1618,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 unapplied_banner_md(m),
                 # 「人工裁决 · 执行裁决」的状态行与源数据集兜底(2026-08-19,
                 # 同样只在末尾追加,不动老槽位)
-                *_ex_view(m))
+                *_ex_view(m),
+                # 队列状态档复位(理由同桶复位:停在「仅待裁决」而新交付全裁完,
+                # 看到的是空表 + 一个还亮着的档);选项连计数一起按新交付重建
+                gr.update(choices=queue_status_choices(m),
+                          value=queue_status_choices(m)[0]))
 
     # theme/css/head 不在这里传:gradio 6 把它们从 Blocks() 挪到了 launch()/
     # mount_gradio_app()(传给 Blocks 只换来一条 UserWarning,值被丢掉)。见 presentation()。
@@ -2727,7 +2842,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     #    在两张卡片里各找一次、各看一遍视频,这次改掉。
                     with gr.Tab("待你裁决"):
                         # 「怎么用这一页」流程条已删(2026-08-21 用户点名:UI 要简洁)
-                        mg_filter = gr.Radio([], label="筛选(重叠条目在两个单项档里都出现)")
+                        with gr.Row():
+                            # 标签只留两个词(2026-08-25 用户嫌"不好看";"重叠条目
+                            # 两档都出现"那句解释删掉 —— UI 要简洁的既有口径)
+                            mg_filter = gr.Radio(
+                                [], label="问题类型", scale=3,
+                                elem_id="mg-filter")
+                            # 状态筛选(2026-08-25 用户定):默认全部——表是台账,
+                            # 裁决/执行后条目留在表里;只看欠的活或只翻旧账再切档。
+                            # 两组联动(同日用户点名):类型档计数跟着状态档算
+                            mg_status = gr.Radio(
+                                [], label="状态", scale=2,
+                                elem_id="mg-status")
                         mg_hint = gr.Markdown()
                         # 两个队列**并列成一个区块**(2026-08-19 用户拍板,明确
                         # 授权改这一页的布局 —— 与「报告页布局不许动」那条长期
@@ -2739,7 +2865,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 并列 + 区块头 + 下面执行区换配色 = 一眼能分出"这里是
                         # 记决定"和"那里是落地执行"。
                         gr.HTML(_adj_section_html(
-                            "", "待裁决队列", "",     # 副标题已删(2026-08-21 用户点名多余)
+                            # 2026-08-25 用户改名:这张表是台账(待办 + 已办结),
+                            # 不再叫「待裁决」
+                            "", "人工裁决队列", "",   # 副标题已删(2026-08-21 用户点名多余)
                             "#86909C", "#1D2129"))
                         # 单表(2026-08-23 用户拍板):分歧 × 弃权按 episode 合一,
                         # 一条一行;点任意一格跳到下方卡片。列删到只剩能回答
@@ -2753,6 +2881,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             max_height=980,
                             wrap=True,       # 长文本换行显示全文,不截断
                             column_widths=["8%", "11%", "34%", "34%", "13%"])
+                        # 点行跳卡的自建通路落点(_QJUMP_JS 往这里写/点;CSS 藏)
+                        with gr.Row(elem_id="qjump-hide"):
+                            qjump_row = gr.Textbox(elem_id="qjump-row")
+                            qjump_go = gr.Button("跳", elem_id="qjump-go")
                         # ── 合并裁决卡片(逐条翻页,翻页按 episode 走不再按队列走):
                         #    看一遍视频 → ① 标注问题(有分歧才出现)→ ② 成败问题
                         #    (显隐档位见 manifest.success_block_mode)。
@@ -2810,7 +2942,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                  gr.HTML(_adj_section_html("2", "成败问题",
                                                            "这条任务到底完成了没有",
                                                            "#165DFF", "#165DFF"))
-                                 tv_mode_note = gr.Markdown()
+                                 with gr.Row(elem_id="tv-q-row"):
+                                     tv_mode_note = gr.Markdown()
+                                     # 「标注错了」只在没有①区的卡上出现
+                                     # (2026-08-25 用户定):看着问句里的标注
+                                     # 就能顺手改;名册条目①区自带修正框,不重复
+                                     mg_fixlab = gr.Button(
+                                         "标注错了", variant="secondary",
+                                         scale=0, visible=False,
+                                         elem_id="tv-fixlab")
                                  tv_info = gr.Markdown()
                                  tv_readings = gr.Markdown()
                                  tv_note = gr.Textbox(label="备注(可选;写清依据,复盘时是唯一线索)")
@@ -2834,6 +2974,26 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 mg_kill = gr.Button("其它原因-整条弃用",
                                                     variant="secondary", scale=0)
                             mg_kill_status = gr.Markdown()
+                            # 底部再放一套翻页(2026-08-25 用户提议):鼠标已经在
+                            # 下面点完裁决按钮,翻下一条不该再滚回卡顶。与顶部那
+                            # 套完全同源(同 handler 同 outs),中间的位置提示由
+                            # _mg_render 一起喂
+                            with gr.Row():
+                                mg_prev2 = gr.Button("← 上一条", scale=1)
+                                mg_pos2 = gr.Markdown("", elem_id="mg-pos2")
+                                mg_next2 = gr.Button("下一条 →", scale=1)
+                            # 当前卡 episode 标记(_CURROW_JS 读它给表上色;CSS 藏)
+                            mg_cur = gr.HTML("", elem_id="mg-cur")
+                            # 「标注错了」的对话框:落的是标注线的「采纳建议改标」
+                            # (与①区同一条管道:执行后写进交付数据集/画像重归类;
+                            # 只改标不给成败结论的,机器按新标注重判)
+                            with gr.Column(visible=False,
+                                           elem_classes=["modal-dialog"]) as fix_ask:
+                                gr.Markdown("**修正任务标注**")
+                                fix_text = gr.Textbox(label="修正后标注")
+                                with gr.Row(elem_id="fix-ask-btns"):
+                                    fix_save = gr.Button("保存", variant="primary")
+                                    fix_cancel = gr.Button("取消")
 
                     # ── 被拒复议(2026-08-11;2026-08-16 原样搬进子页签):任务成败
                     #    判定**杀掉**的条目在这里可看、可捞回 —— 判定从"拿不准就转
@@ -2873,6 +3033,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                                     max_height=980, wrap=True,  # 同 qu_table(复盘 ⑨)
                                                     column_widths=["8%", "12%", "45%",
                                                                    "22%", "13%"])
+                            # 点行跳卡自建通路(同 qu_table,见 _QJUMP_JS)
+                            with gr.Row(elem_id="apjump-hide"):
+                                apjump_row = gr.Textbox(elem_id="apjump-row")
+                                apjump_go = gr.Button("跳", elem_id="apjump-go")
+                            ap_cur = gr.HTML("", elem_id="ap-cur")
                             with gr.Accordion("复议被拒条目(记草稿,可随时改)", open=True):
                                 ap_idx = gr.State(0)
                                 with gr.Row():
@@ -3086,14 +3251,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # 复议卡片的七个槽(_ap_render 按这个顺序装配;两个按钮的顺序 =
             # APPEAL_CHOICES 的顺序)
             _ap_outs = [ap_idx, ap_pos, ap_info, ap_readings, ap_video,
-                        ap_keep, ap_back]
+                        ap_keep, ap_back,
+                        ap_cur]      # 当前卡 episode 标记(复议表高亮同步源)
             # 合并裁决卡片的 22 个槽(_mg_render 按这个顺序装配):卡头三件 +
             # 三路视频 + ① 区五件三键 + ② 区五件三键
             _mg_outs = [mg_idx, mg_pos, mg_info, *mg_vids,
                         mg_au_block, au_info, au_origlab, au_newlab, au_note,
                         au_adopt, au_keep, au_hold,
                         mg_tv_block, tv_mode_note, tv_info, tv_readings, tv_note,
-                        tv_pass, tv_fail, tv_hold]
+                        tv_pass, tv_fail, tv_hold,
+                        mg_pos2,     # 底部翻页行的位置提示(与 mg_pos 同文案)
+                        mg_cur,      # 当前卡 episode 标记(表格高亮同步源)
+                        mg_fixlab]   # 「标注错了」只在没有①区的卡上亮
 
             outs = [state, ov_md, ov_table, ov_note, ov_cfg, ep_bucket, *_ep_list_outs,
                     sk_html, sk_table, sk_audit_note,
@@ -3105,7 +3274,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     tl_show, tl_sort, tl_note, tl_html,
                     perf_backend, perf_env, perf_note, perf_table, perf_bar,
                     pending_banner,
-                    ex_info, ex_ds, ex_src_dd, ex_src_note, ex_ds_note]
+                    ex_info, ex_ds, ex_src_dd, ex_src_note, ex_ds_note,
+                    mg_status]      # 状态档随交付切换复位(纯新增,挂末尾)
 
             def _pick_delivery(path):
                 """换交付 → 重列该交付的历次跑批 + 打开其中一次。
@@ -3333,60 +3503,115 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                           [state, mg_filter, mg_idx], _mg_outs)
             mg_next.click(lambda m, f, i: _mg_render(m, f, (i or 0) + 1),
                           [state, mg_filter, mg_idx], _mg_outs)
+            mg_prev2.click(lambda m, f, i: _mg_render(m, f, (i or 0) - 1),
+                           [state, mg_filter, mg_idx], _mg_outs)
+            mg_next2.click(lambda m, f, i: _mg_render(m, f, (i or 0) + 1),
+                           [state, mg_filter, mg_idx], _mg_outs)
 
-            def _mg_jump_to(m, filt, eid):
+            def _mg_jump_to(m, filt, eid, status=QUEUE_STATUS_ALL):
                 """卡片跳到指定 episode。当前筛选档看不见它(筛着「只看成败」点了
-                标注表)就切回「全部」再跳 —— 绝不在看不见的档里静默定位。"""
-                q = merged_queue_view(m or {}, merge_filter_mode(filt))
+                标注表)就切回「全部」再跳 —— 绝不在看不见的档里静默定位。
+                回退档的标签必须按**当前状态档**的计数拼(选项集是按它建的,
+                值不在选项集会被 gradio 静默丢弃 —— 老坑)。"""
+                q = merged_card_deck(m or {}, merge_filter_mode(filt))
                 ids = [it["id"] for it in q]
                 if eid in ids:
                     return (gr.update(), *_mg_render(m, filt, ids.index(eid)))
-                all_label = merged_filter_choices(m or {})[0]
+                all_label = merged_filter_choices(m or {}, status)[0]
                 ids_all = [it["id"] for it in
-                           merged_queue_view(m or {}, MERGE_FILTER_ALL)]
+                           merged_card_deck(m or {}, MERGE_FILTER_ALL)]
                 i = ids_all.index(eid) if eid in ids_all else 0
                 return (gr.update(value=all_label), *_mg_render(m, all_label, i))
 
-            def _q_jump(m, filt, evt):
-                """点待裁决队列表任意一行 → 合并卡片跳到该 episode(行序与
-                merged_review_queue 一致,按下标对号)。"""
-                q = merged_review_queue(m or {})
+            def _q_jump_to_eid(m, filt, status, eid):
+                """点人工裁决队列表任意一行 → 下方卡片跳到该 episode。
+                台账行也有只读卡(2026-08-25 用户定:点哪行显示哪条),
+                与表同源的 merged_card_deck 里都能找到。"""
+                if eid and any(q["id"] == eid
+                               for q in merged_card_deck(m or {})):
+                    return (*_mg_jump_to(m, filt, eid, status), gr.update())
+                return (gr.update(), *[gr.update() for _ in _mg_outs], gr.update())
+
+            def _q_jump(m, filt, status, evt):
+                """select 事件通路(gradio 6.9 前端已不发,保留不碍事)。"""
+                items = merged_table_queue(m or {}, status or QUEUE_STATUS_ALL,
+                                           filt)
                 row = evt.index[0]
-                eid = q[row]["id"] if row < len(q) else ""
-                return _mg_jump_to(m, filt, eid)
+                eid = items[row]["id"] if row < len(items) else ""
+                return _q_jump_to_eid(m, filt, status, eid)
+
+            def _q_jump_by_num(m, filt, status, num):
+                """自建通路(_QJUMP_JS):按行首格的 episode 号找条目再跳。
+                gradio 6.9 非交互 Dataframe 的 select 前端不发事件,这条是
+                点行跳卡的实际生效路径。"""
+                num = str(num or "").strip()
+                items = merged_table_queue(m or {}, status or QUEUE_STATUS_ALL,
+                                           filt)
+                eid = next((i["id"] for i in items if _ep_num(i["id"]) == num), "")
+                return _q_jump_to_eid(m, filt, status, eid)
 
             # gradio 靠注解识别"要注入 SelectData";本文件开了 future annotations,
             # 字符串注解会在模块全局被 eval(gr 是函数内导入)→ NameError。
             # 塞真实类对象绕开字符串求值。
             _q_jump.__annotations__ = {"evt": gr.SelectData}
 
-            _mg_jump_outs = [mg_filter, *_mg_outs]
-            qu_table.select(_q_jump, [state, mg_filter], _mg_jump_outs)
+            _mg_jump_outs = [mg_filter, *_mg_outs, mg_hint]
+            qu_table.select(_q_jump, [state, mg_filter, mg_status], _mg_jump_outs)
+            qjump_go.click(_q_jump_by_num, [state, mg_filter, mg_status, qjump_row],
+                           _mg_jump_outs)
+
+            def _filter_updates(m, filt, status):
+                """两组筛选档的联动重建:类型档计数按当前状态档算,值按档位换
+                成新标签(值不在选项集会被 gradio 静默丢弃 —— 老坑)。"""
+                fch = merged_filter_choices(m or {}, status)
+                sch = queue_status_choices(m or {})
+                fv = fch[MERGE_FILTERS.index(merge_filter_mode(filt))]
+                sv = sch[list(QUEUE_STATUS_CHOICES).index(queue_status_mode(status))]
+                return (gr.update(choices=fch, value=fv),
+                        gr.update(choices=sch, value=sv))
+
+            def _mg_status_change(m, filt, status):
+                # 状态档只管表格显示,不动下方卡片(卡片永远翻待办清单)
+                return (_filter_updates(m, filt, status)[0],
+                        gr.update(value=merged_queue_rows(m or {}, status, filt)))
+
+            mg_status.input(_mg_status_change, [state, mg_filter, mg_status],
+                            [mg_filter, qu_table])
+            # 类型档切换除了翻卡(下面挂的 _mg_render),表也跟着过滤
+            mg_filter.input(lambda m, f, st:
+                            gr.update(value=merged_queue_rows(m or {}, st, f)),
+                            [state, mg_filter, mg_status], qu_table)
 
             def _mg_item(m, filt, idx):
-                """当前卡片指着的合并队列条目(空队列返回 None)。"""
-                q = merged_queue_view(m or {}, merge_filter_mode(filt))
+                """当前卡片指着的清单条目(空清单返回 None)。台账条目
+                audit/task 皆 None,落裁决的入口被两问题块的既有守卫拦。"""
+                q = merged_card_deck(m or {}, merge_filter_mode(filt))
                 return q[(idx or 0) % len(q)] if q else None
 
-            def _mg_au_decide(m, filt, idx, newlab, note, decision):
+            def _mg_au_decide(m, filt, status, idx, newlab, note, decision):
                 """① 落一条标注裁决。不整卡重渲染:重渲染会把用户手改的「修正后
                 标注」冲回预填值、把视频重载 —— 只更新受影响的槽位,②的显隐
                 跟着 ① 的新裁决即时联动(采纳→展开可选;弃用→矛盾拦截)。"""
                 it = _mg_item(m, filt, idx)
                 if it is None:
-                    return ("⚠️ 无条目可裁决", *[gr.update()] * 16)
+                    return ("⚠️ 无条目可裁决", *[gr.update()] * 18)
                 if readonly_block_msg(m):
-                    return (readonly_block_msg(m), *[gr.update()] * 16)
-                if it["audit"] is None:
-                    return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 16)
+                    return (readonly_block_msg(m), *[gr.update()] * 18)
+                # 「标注错了」对话框走的就是这条线:采纳建议改标 + 用户给了
+                # 新文本 → 放行(卡上没有①区不等于标注不能修,2026-08-25 用户定)
+                modal_relabel = (decision == "采纳建议改标"
+                                 and str(newlab or "").strip())
+                if it.get("resolved") and not modal_relabel:
+                    return ("⚠️ 已办结条目支持改判成败(点 ② 的按钮);"
+                            "「整条弃用」暂不支持", *[gr.update()] * 18)
+                if it["audit"] is None and not modal_relabel:
+                    return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 18)
                 msg = record_label_decision(m["path"], it["id"], decision,
                                             newlab or "", note or "")
                 # 镜像交付(2026-08-20 阶段4):裁决 CSV 即时写回源桶 —— 留在
                 # 本地缓存等于丢(缓存可清),失败也要说出来,不许静默
-                if msg.startswith("✅"):
+                if msg.startswith("已记录"):
                     msg += " " + runner.push_decisions(m["path"])
-                if msg.startswith("✅"):
-                    msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _au_btns(decision)                # 记录成功才点亮所选键
                     dec_now = decision
                 else:
@@ -3396,60 +3621,92 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 tv_sec = _mg_tv_section(m, it, dec_now)
                 # 顺带刷新进度提示(裁完最后一条,催办语就该消失)
                 # 卡头跟着刷(2026-08-21):采纳改标后第二行立刻换成新标注
-                return (msg, gr.update(value=merged_queue_rows(m)), _mg_au_info(m, it),
+                return (msg, gr.update(value=merged_queue_rows(m, status, filt)),
+                        _mg_au_info(m, it),
                         *btns, *tv_sec,
                         readonly_banner_md(m) + (merged_hint_md(m) or ""),
                         audit_note_md(m), _mg_head(m, it),
-                        unapplied_banner_md(m))   # 顶部提醒横幅跟着每次裁决动
+                        unapplied_banner_md(m),   # 顶部提醒横幅跟着每次裁决动
+                        # 两组筛选档计数随进度动(待裁-1/已裁+1)
+                        *_filter_updates(m, filt, status))
 
             _dec_outs = [au_status, qu_table, au_info, au_adopt, au_keep, au_hold,
                          mg_tv_block, tv_mode_note, tv_info, tv_readings,
                          tv_pass, tv_fail, tv_hold,
-                         mg_hint, sk_audit_note, mg_info, pending_banner]
-            au_adopt.click(lambda m, f, i, nl, nt: _mg_au_decide(m, f, i, nl, nt, "采纳建议改标"),
-                           [state, mg_filter, mg_idx, au_newlab, au_note], _dec_outs)
-            au_keep.click(lambda m, f, i, nl, nt: _mg_au_decide(m, f, i, nl, nt, "维持原标注"),
-                          [state, mg_filter, mg_idx, au_newlab, au_note], _dec_outs)
-            au_hold.click(lambda m, f, i, nl, nt: _mg_au_decide(m, f, i, nl, nt, _HOLD),
-                          [state, mg_filter, mg_idx, au_newlab, au_note], _dec_outs)
+                         mg_hint, sk_audit_note, mg_info, pending_banner,
+                         mg_filter, mg_status]
+            def _fixlab_open(m, filt, idx):
+                it = _mg_item(m, filt, idx)
+                if it is None:
+                    return gr.update(visible=False), gr.update()
+                text = (_adopted_label(load_label_decisions(m).get(it["id"]))
+                        or episode_task_text(m, it["id"])[0])
+                return gr.update(visible=True), gr.update(value=text)
+
+            mg_fixlab.click(_fixlab_open, [state, mg_filter, mg_idx],
+                            [fix_ask, fix_text])
+            fix_cancel.click(lambda: gr.update(visible=False), None, fix_ask)
+
+            _dec_ins = [state, mg_filter, mg_status, mg_idx, au_newlab, au_note]
+            au_adopt.click(lambda m, f, st, i, nl, nt:
+                           _mg_au_decide(m, f, st, i, nl, nt, "采纳建议改标"),
+                           _dec_ins, _dec_outs)
+            au_keep.click(lambda m, f, st, i, nl, nt:
+                          _mg_au_decide(m, f, st, i, nl, nt, "维持原标注"),
+                          _dec_ins, _dec_outs)
+            au_hold.click(lambda m, f, st, i, nl, nt:
+                          _mg_au_decide(m, f, st, i, nl, nt, _HOLD),
+                          _dec_ins, _dec_outs)
             # 卡片级弃用:落的仍是标注线的「弃用该条」(后端语义与溯源一个字没动),
             # 只是入口从标注块里提到了卡片级 —— 见按钮定义处的理由。
-            mg_kill.click(lambda m, f, i, nl, nt: _mg_au_decide(m, f, i, nl, nt, "弃用该条"),
-                          [state, mg_filter, mg_idx, au_newlab, au_note], _dec_outs)
+            mg_kill.click(lambda m, f, st, i, nl, nt:
+                          _mg_au_decide(m, f, st, i, nl, nt, "弃用该条"),
+                          _dec_ins, _dec_outs)
 
-            def _mg_tv_decide(m, filt, idx, note, verdict):
+            def _fixlab_save(m, filt, status, idx, newlab):
+                res = _mg_au_decide(m, filt, status, idx, newlab,
+                                    "在成败卡上修正标注(原文本有误)",
+                                    "采纳建议改标")
+                return (*res, gr.update(visible=False))
+
+            fix_save.click(_fixlab_save,
+                           [state, mg_filter, mg_status, mg_idx, fix_text],
+                           [*_dec_outs, fix_ask])
+
+            def _mg_tv_decide(m, filt, status, idx, note, verdict):
                 """② 落一条成败裁决。矛盾拦截两道门:按钮禁用(渲染层)之外,
                 record_task_verdict_checked 落盘前还会再查一次 ① 的「弃用该条」。"""
                 it = _mg_item(m, filt, idx)
                 if it is None:
-                    return ("⚠️ 无条目可裁决", *[gr.update()] * 8)
+                    return ("⚠️ 无条目可裁决", *[gr.update()] * 10)
                 if readonly_block_msg(m):
-                    return (readonly_block_msg(m), *[gr.update()] * 8)
+                    return (readonly_block_msg(m), *[gr.update()] * 10)
                 dec = load_label_decisions(m).get(it["id"], {}).get("decision", "")
                 if success_block_mode(it, dec) == "hidden":
-                    return ("⚠️ 这条现在没有成败问题要答", *[gr.update()] * 8)
+                    return ("⚠️ 这条现在没有成败问题要答", *[gr.update()] * 10)
                 msg = record_task_verdict_checked(m, it["id"], verdict, note or "")
-                if msg.startswith("✅"):
+                if msg.startswith("已记录"):
                     msg += " " + runner.push_decisions(m["path"])
-                if msg.startswith("✅"):
-                    msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _tv_btns(verdict)
                 else:
                     btns = [gr.update()] * 3
                 tv_sec = _mg_tv_section(m, it, dec)
-                return (msg, gr.update(value=merged_queue_rows(m)),
+                return (msg, gr.update(value=merged_queue_rows(m, status, filt)),
                         tv_sec[2], tv_sec[3], *btns,
                         readonly_banner_md(m) + (merged_hint_md(m) or ""),
-                        unapplied_banner_md(m))
+                        unapplied_banner_md(m),
+                        *_filter_updates(m, filt, status))
 
             _tv_dec_outs = [tv_status, qu_table, tv_info, tv_readings,
-                            tv_pass, tv_fail, tv_hold, mg_hint, pending_banner]
-            tv_pass.click(lambda m, f, i, nt: _mg_tv_decide(m, f, i, nt, "判成功"),
-                          [state, mg_filter, mg_idx, tv_note], _tv_dec_outs)
-            tv_fail.click(lambda m, f, i, nt: _mg_tv_decide(m, f, i, nt, "判失败"),
-                          [state, mg_filter, mg_idx, tv_note], _tv_dec_outs)
-            tv_hold.click(lambda m, f, i, nt: _mg_tv_decide(m, f, i, nt, _HOLD),
-                          [state, mg_filter, mg_idx, tv_note], _tv_dec_outs)
+                            tv_pass, tv_fail, tv_hold, mg_hint, pending_banner,
+                            mg_filter, mg_status]
+            _tv_dec_ins = [state, mg_filter, mg_status, mg_idx, tv_note]
+            tv_pass.click(lambda m, f, st, i, nt: _mg_tv_decide(m, f, st, i, nt, "判成功"),
+                          _tv_dec_ins, _tv_dec_outs)
+            tv_fail.click(lambda m, f, st, i, nt: _mg_tv_decide(m, f, st, i, nt, "判失败"),
+                          _tv_dec_ins, _tv_dec_outs)
+            tv_hold.click(lambda m, f, st, i, nt: _mg_tv_decide(m, f, st, i, nt, _HOLD),
+                          _tv_dec_ins, _tv_dec_outs)
 
             # ── ③ 被拒复议:翻页 / 点行跳转 / 两键复议 ──
             ap_prev.click(lambda m, i: _ap_render(m, (i or 0) - 1),
@@ -3457,11 +3714,26 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             ap_next.click(lambda m, i: _ap_render(m, (i or 0) + 1),
                           [state, ap_idx], _ap_outs)
 
-            def _ap_jump(m, evt):
-                return _ap_render(m, evt.index[0])
+            def _ap_jump(m, idx, evt):
+                # 表尾的捞回台账行没有对应卡片(条目已回交付),点了留在当前卡
+                row = evt.index[0]
+                if row >= len((m or {}).get("reject_appeal") or []):
+                    return _ap_render(m, idx or 0)
+                return _ap_render(m, row)
 
             _ap_jump.__annotations__ = {"evt": gr.SelectData}
-            ap_table.select(_ap_jump, state, _ap_outs)
+            ap_table.select(_ap_jump, [state, ap_idx], _ap_outs)
+
+            def _ap_jump_by_id(m, idx, eid):
+                """复议表点行的自建通路:按第二格的 episode id 找在案条目;
+                台账行(已捞回,不在案)保持当前卡。"""
+                eid = str(eid or "").strip()
+                for i, a in enumerate((m or {}).get("reject_appeal") or []):
+                    if a.get("id") == eid:
+                        return _ap_render(m, i)
+                return _ap_render(m, idx or 0)
+
+            apjump_go.click(_ap_jump_by_id, [state, ap_idx, apjump_row], _ap_outs)
 
             def _ap_decide(m, idx, note, appeal):
                 q = (m or {}).get("reject_appeal") or []
@@ -3474,10 +3746,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             *[gr.update()] * 3)
                 msg = record_reject_appeal(m["path"], a.get("id", ""), appeal,
                                            note or "")
-                if msg.startswith("✅"):
+                if msg.startswith("已记录"):
                     msg += " " + runner.push_decisions(m["path"])
-                if msg.startswith("✅"):
-                    msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _ap_btns(appeal)
                 else:
                     btns = [gr.update()] * 2
