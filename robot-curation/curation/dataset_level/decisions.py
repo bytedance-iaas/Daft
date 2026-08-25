@@ -63,6 +63,13 @@ def normalize_verdict(verdict: str) -> str:
 APPEALS_CSV = "reject_appeals.csv"
 APPEAL_CHOICES = ("维持拒绝", "捞回")
 
+#: 「已记录」文案的统一收尾:告诉人下一步在哪里生效。之前这句写的是
+#: "请在命令行跑 curation rejudge" 并附带"落 TOS 约需 1 分钟"——对着界面用户
+#: 指挥命令行,还把存储内部细节端给客户(2026-08-25 droid-50 实战复盘 ④)。
+#: 界面上就有「执行裁决」按钮,首选说它;CLI 等价物放括号里给高级用户。
+#: (2026-08-25 用户精简状态行后,三条记录消息不再拼提示;常量保留给报告/CLI 场景)
+APPLY_HINT = ";裁完在「人工裁决」页点「执行裁决」应用到交付(命令行等价:curation rejudge)"
+
 # 可复议的边界(用户 2026-08-11 拍板):**只有语义判定的杀可以复议**。
 # 时间戳/残段/运动学极限/同步判废这些物理与结构问题是终局 —— 它们是测出来的事实,
 # 不因人的意见而消失;放进复议区就等于给"物理证据"开后门。
@@ -208,9 +215,7 @@ def record_reject_appeal(delivery_path: str, episode_id: str, appeal: str,
     _append_row(path, ["episode_id", "appeal", "note", "at"],
                 {"episode_id": episode_id, "appeal": appeal, "note": note,
                  "at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-    return (f"✅ 已记录:{episode_id} → {appeal}"
-            ";执行生效请在命令行跑 curation rejudge"
-            "(裁决文件落 TOS 约需 1 分钟可见,裁完稍候再跑)")
+    return "已记录(随时可改判)"
 
 
 def record_task_verdict(delivery_path: str, episode_id: str, verdict: str,
@@ -230,9 +235,7 @@ def record_task_verdict(delivery_path: str, episode_id: str, verdict: str,
     _append_row(path, ["episode_id", "verdict", "note", "at"],
                 {"episode_id": episode_id, "verdict": verdict, "note": note,
                  "at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-    return (f"✅ 已记录:{episode_id} → {verdict}"
-            ";执行生效请在命令行跑 curation rejudge"
-            "(裁决文件落 TOS 约需 1 分钟可见,裁完稍候再跑)")
+    return "已记录(随时可改判)"
 
 
 def record_label_decision(delivery_path: str, episode_id: str, decision: str,
@@ -253,10 +256,9 @@ def record_label_decision(delivery_path: str, episode_id: str, decision: str,
                 {"episode_id": episode_id, "decision": decision,
                  "new_label": str(new_label).strip(), "note": note,
                  "at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-    return (f"✅ 已记录:{episode_id} → {decision}"
-            + (f"(新标注:{str(new_label).strip()[:40]})" if decision == "采纳建议改标" else "")
-            + ";执行重判请在命令行跑 curation rejudge"
-              "(裁决文件落 TOS 约需 1 分钟可见,裁完稍候再跑)")
+    # 状态行只说这一句(2026-08-25 用户点名"很啰嗦"):episode 号/裁决内容
+    # 按钮高亮和表格都在回显,去哪执行页面底部就有,不在这重复
+    return "已记录(随时可改判)"
 
 
 # ═════════ 裁决落库与新旧的判据(rejudge 幂等跳过 & UI 计数的同一套)═════════

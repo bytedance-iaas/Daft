@@ -1468,6 +1468,7 @@ _ARG_SPECS: dict[str, dict[str, str | None]] = {
         "delivery": "--delivery", "input": "--input", "config": "--config",
         "vlm_backend": "--vlm-backend",
         "delivery_region": "--delivery-region", "input_region": "--input-region",
+        "retry_abstained": None,           # 开关:弃权补判(复盘 ⑩)
     },
     "review-page": {
         "input": "--input", "output": "--output", "episodes": "--episodes",
@@ -1479,7 +1480,8 @@ _ARG_SPECS: dict[str, dict[str, str | None]] = {
 #: 开关参数 → 旗标(单独一张表,因为 None 值在上表里表示"开关")。
 #: ⚠️ 2026-08-14 起没有 `--overwrite` 了:每次跑批各进各的时间戳子目录,不存在
 #: 撞车,也就不该有一个"覆盖"开关(覆盖曾把人工裁决一起 rmtree 掉)。
-_FLAGS = {"batch": "--batch", "lite": "--lite", "report_only": "--report-only"}
+_FLAGS = {"batch": "--batch", "lite": "--lite", "report_only": "--report-only",
+          "retry_abstained": "--retry-abstained"}
 
 #: 每条命令的必填项(缺了直接抛,不让用户等到子进程起来才看见报错)。
 _REQUIRED = {"run": ("input", "output"), "rejudge": ("delivery", "input"),

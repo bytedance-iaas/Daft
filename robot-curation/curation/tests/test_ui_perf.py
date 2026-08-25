@@ -339,7 +339,10 @@ def test_picker_tick_relists_bucket_in_direct_mode(tmp_path, monkeypatch):
                 if getattr(f.fn, "__name__", "") == "_picker_tick")
     upd = tick("tos://herbucket/deliveries/d1", "tos://herbucket/deliveries", "cn-beijing")
     assert [l for l, _v in upd["choices"]] == ["d1", "d2"]
-    assert upd["value"] == "tos://herbucket/deliveries/d1"      # 当前选中值带回去
+    # ⚠️ 补扫**不许回写 value**(2026-08-25 复盘 ③):cur 是事件发起时的前端快照,
+    # 兜底 Timer 的迟到响应会带着旧值把用户刚选的交付拽回去(显示与内容脱节,实测)。
+    # 只换 choices,选中值靠"不动它"保留;cur 只用于把自定义路径补进选项列表。
+    assert "value" not in upd
     # 本地模式原样:挂载实例 / 明填本地根 → 扫本地
     upd2 = tick(None, str(root), "")
     assert any("welcome" in str(l) for l, _v in upd2["choices"])
@@ -378,3 +381,127 @@ def test_scan_radio_tips_cover_full_and_quick():
     head = ui_app.presentation()["head"]
     assert json.dumps(ui_app.SCAN_TIPS, ensure_ascii=False) in head
     assert "__TIPS__" not in head and "__NAME__" not in head
+
+
+def test_data_sig_tracks_file_changes(tmp_path):
+    """数据指纹:关键文件一动就变,不动就稳定;缺文件按 (0,0) 记,从无到有也算变化。"""
+    from curation.ui.manifest import data_sig
+    run = tmp_path / "d" / "20260825-000000"
+    run.mkdir(parents=True)
+    (run / "passed.json").write_text("{}")
+    s1 = data_sig(str(run), str(tmp_path / "d"))
+    assert s1 == data_sig(str(run), str(tmp_path / "d"))     # 稳定
+    import os
+    os.utime(run / "passed.json", ns=(1, 1))
+    s2 = data_sig(str(run), str(tmp_path / "d"))
+    assert s2 != s1                                          # mtime 变 → 指纹变
+    hd = tmp_path / "d" / "human-decisions"
+    hd.mkdir()
+    (hd / "task_verdicts.csv").write_text("episode_id\n")
+    assert data_sig(str(run), str(tmp_path / "d")) != s2     # 裁决 CSV 出现 → 变
+
+
+def test_report_tab_reloads_when_data_changed_on_disk(tmp_path):
+    """切回报告页要能发现盘上数据变了(2026-08-25 复盘 ②):存在挂在事件上的
+    _stale_reload,指纹没变全 no-op,变了返回整套重载(与 _load 同一批输出)。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    root = tmp_path / "deliveries"
+    root.mkdir()
+    app = build_app(str(root), data_root=str(tmp_path / "datasets"))
+    fns = [f.fn for f in app.fns.values()
+           if getattr(f.fn, "__name__", "") == "_stale_reload"]
+    assert fns, "报告页没接失效重载 —— CLI rejudge 后页面只能 ⌘R 才更新"
+    reload_fn = fns[0]
+    # 空 state(还没打开任何交付)→ 全 no-op,不抛
+    out = reload_fn(None)
+    assert isinstance(out, tuple) and out[0] is None
+
+
+def _mk_delivery(root, name, run, marker_files=("passed.json",)):
+    d = root / name / run
+    d.mkdir(parents=True)
+    for f in marker_files:
+        (d / f).write_text('{"episodes": {}}')
+    return root / name
+
+
+def test_most_recent_delivery_wins_by_latest_run(tmp_path):
+    """复盘 ⑥:报告页默认选**最近跑过**的交付,不是字母序第一个。"""
+    from curation.ui.manifest import most_recent_delivery
+    root = tmp_path
+    _mk_delivery(root, "aloha-10", "20260701-000000")
+    newest = _mk_delivery(root, "zz-later-name-but-old", "20260702-000000")
+    newest2 = _mk_delivery(root, "droid-50-guide", "20260825-015215")
+    got = most_recent_delivery(str(root), [str(root / n) for n in
+                                           ("aloha-10", "droid-50-guide",
+                                            "zz-later-name-but-old")])
+    assert got == str(newest2)
+    del newest
+
+
+def test_report_picker_defaults_to_most_recent(tmp_path):
+    """⑥ 接线:build_app 后 picker 的初值 = 最近跑批的交付(不是 choices[0])。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    root = tmp_path / "deliveries"
+    _mk_delivery(root, "aaa-old", "20260101-000000")
+    fresh = _mk_delivery(root, "zzz-fresh", "20260825-120000")
+    app = build_app(str(root), data_root=str(tmp_path / "datasets"))
+    pickers = [b for b in app.blocks.values()
+               if b.__class__.__name__ == "Dropdown"
+               and getattr(b, "label", "") == "交付名"]   # 跑质检页有同名 Textbox,按类型滤
+    assert pickers and pickers[0].value == str(fresh)
+
+
+def test_queue_tables_tall_enough_to_avoid_scroll_hijack(tmp_path):
+    """复盘 ⑨:两张裁决队列表 max_height ≥ 980 —— 420 时鼠标悬在表上滚轮只滚
+    表内,页面滚动被劫持;典型队列十几二十条本可整表放下。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    root = tmp_path / "deliveries"
+    _mk_delivery(root, "d1", "20260825-000000")
+    app = build_app(str(root), data_root=str(tmp_path / "datasets"))
+    hs = {getattr(b, "elem_id", ""): getattr(b, "max_height", None)
+          for b in app.blocks.values()
+          if getattr(b, "elem_id", "") in ("audit-queue", "appeal-queue")}
+    assert hs.get("audit-queue", 0) >= 980 and hs.get("appeal-queue", 0) >= 980
+
+
+def test_backend_dropdown_announces_probing_then_probe_clears_it(tmp_path):
+    """复盘 ⑤:模型服务下拉首屏 info=「正在检测…」(探活要出网 1-4s,空框不说话
+    像坏了);_do_probe 的更新把 info 摘掉(结果已缀在选项上)。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    root = tmp_path / "deliveries"
+    _mk_delivery(root, "d1", "20260825-000000")
+    app = build_app(str(root), data_root=str(tmp_path / "datasets"))
+    dds = [b for b in app.blocks.values()
+           if b.__class__.__name__ == "Dropdown"
+           and getattr(b, "label", "") == "模型服务"]
+    assert dds and any("正在检测" in str(getattr(b, "info", "")) for b in dds)
+    probe = [f.fn for f in app.fns.values()
+             if getattr(f.fn, "__name__", "") == "_do_probe"]
+    assert probe
+    upd = probe[0](None, None)
+    assert upd[0].get("info", "sentinel") is None   # 探活回来必须摘掉「正在检测」
+
+
+def test_adjudication_queue_title_and_status_radio(tmp_path, monkeypatch):
+    """人工裁决队列(2026-08-25 用户改名)+ 两组筛选(问题类型 × 状态)——
+    表是台账,裁决执行后条目留底可见;两组选项带计数、随交付在 _load 里
+    动态重建(构建期为空,与 mg_filter 同款),elem_id 挂着药丸样式。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    root = tmp_path / "deliveries"; root.mkdir()
+    app = build_app(str(root), data_root=str(tmp_path / "data"))
+    cfg = json.loads(json.dumps(app.get_config_file(), default=str))
+    html = " ".join(str(c["props"].get("value", ""))
+                    for c in cfg["components"] if c["type"] == "html")
+    assert "人工裁决队列" in html and "待裁决队列" not in html
+    radios = [c["props"] for c in cfg["components"] if c["type"] == "radio"]
+    by_id = {r.get("elem_id"): r for r in radios}
+    assert by_id["mg-status"]["label"] == "状态"
+    assert by_id["mg-filter"]["label"] == "问题类型"     # 长解释句已删(要简洁)
+    assert by_id["mg-status"]["choices"] == []           # 选项随交付在 _load 重建
