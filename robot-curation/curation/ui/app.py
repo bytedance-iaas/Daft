@@ -62,6 +62,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        sync_camera_html, sync_conclusion_html, sync_health_html,
                        sync_view, SYNC_HOWTO,
                        task_question_md, task_reference_html, task_reference_md,
+                       episode_task_text, _adopted_label,
                        timeline_html,
                        video_detail_view)
 from . import runner            # 任务执行层(任务台跑批 + 报告页「执行裁决」共用)
@@ -745,8 +746,13 @@ _ARCO_CSS = """
 }
 /* 对话框按钮:居中、定宽(2026-08-19 用户点名)。不居中的根因:Row 默认
    flex-start,而 Button 的 min-width 让 scale=0 也铺成大宽条。 */
-#ex-ask-btns, #out-ask-btns, #in-ask-btns { justify-content: center !important; gap: 12px !important; }
-#ex-ask-btns button, #out-ask-btns button, #in-ask-btns button {
+#ex-ask-btns, #out-ask-btns, #in-ask-btns, #fix-ask-btns { justify-content: center !important; gap: 12px !important; }
+/* 「标注错了」按钮与任务问句同排:问句列可收缩换行(min-width:0),按钮
+   定宽不参与压缩 —— caption 再长也只会让问句多折几行,永不与按钮重叠 */
+#tv-q-row { align-items: flex-start !important; gap: 10px !important; flex-wrap: nowrap !important; }
+#tv-q-row > div:first-child { flex: 1 1 auto !important; min-width: 0 !important; }
+#tv-fixlab { flex: 0 0 auto !important; white-space: nowrap; }
+#ex-ask-btns button, #out-ask-btns button, #in-ask-btns button, #fix-ask-btns button {
   flex: 0 0 auto !important; width: 120px !important; min-width: 0 !important;
 }
 /* 人工裁决队列表格高度:曾在这里把滚动容器钉死 420px(2026-08-23,
@@ -1458,10 +1464,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         ev = it.get("resolved")
         if ev:
             when = ev.get("裁决时间") or ev.get("应用时间") or ""
-            head += (f"\n\n✅ **已办结**:{ev.get('结论', '')}"
+            # 不带任何对号图标(用户两次点名:判失败配绿勾语义打架)
+            head += (f"\n\n**已办结**:{ev.get('结论', '')}"
                      + (f" · {ev.get('去向', '')}" if ev.get("去向") else "")
                      + (f"({when})" if when else "")
-                     + ";这条不再需要你裁决,仅供回看。")
+                     + ";改判直接点下方按钮,改完点「执行裁决」生效。")
         return head
 
     def _mg_render(m, filt, idx):
@@ -1475,7 +1482,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     *_au_btns(None),
                     gr.update(visible=False), "", "", "", "",
                     *[gr.update(variant="secondary", interactive=True)] * 3,
-                    "", "")
+                    "", "", gr.update(visible=False))
         idx = idx % len(q)
         it = q[idx]
         eid = it["id"]
@@ -1490,12 +1497,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             au_vis, au_info, origlab, newlab = gr.update(visible=False), "", "", ""
         tv_sec = _mg_tv_section(m, it, dec.get("decision", ""))
         pos = f"第 {idx + 1} / {len(q)} 条"
+        # 「标注错了」:②区在显 + 没有①区(名册条目①自带修正框,不重复给入口)
+        fix_vis = (it["audit"] is None
+                   and success_block_mode(it, dec.get("decision", "")) != "hidden")
         return (idx, pos, info, *_vids(m, eid),
                 au_vis, au_info, origlab, newlab, "",
                 *_au_btns(dec.get("decision")),
                 tv_sec[0], tv_sec[1], tv_sec[2], tv_sec[3], "",
                 *tv_sec[4:], pos,
-                f'<span data-ep="{_ep_num(eid)}"></span>')
+                f'<span data-ep="{_ep_num(eid)}"></span>',
+                gr.update(visible=fix_vis))
 
     def _ap_render(m, idx):
         """渲染第 idx 条被拒复议卡片(越界回绕)。装配顺序 = _ap_outs。"""
@@ -2931,7 +2942,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                  gr.HTML(_adj_section_html("2", "成败问题",
                                                            "这条任务到底完成了没有",
                                                            "#165DFF", "#165DFF"))
-                                 tv_mode_note = gr.Markdown()
+                                 with gr.Row(elem_id="tv-q-row"):
+                                     tv_mode_note = gr.Markdown()
+                                     # 「标注错了」只在没有①区的卡上出现
+                                     # (2026-08-25 用户定):看着问句里的标注
+                                     # 就能顺手改;名册条目①区自带修正框,不重复
+                                     mg_fixlab = gr.Button(
+                                         "标注错了", variant="secondary",
+                                         scale=0, visible=False,
+                                         elem_id="tv-fixlab")
                                  tv_info = gr.Markdown()
                                  tv_readings = gr.Markdown()
                                  tv_note = gr.Textbox(label="备注(可选;写清依据,复盘时是唯一线索)")
@@ -2965,6 +2984,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 mg_next2 = gr.Button("下一条 →", scale=1)
                             # 当前卡 episode 标记(_CURROW_JS 读它给表上色;CSS 藏)
                             mg_cur = gr.HTML("", elem_id="mg-cur")
+                            # 「标注错了」的对话框:落的是标注线的「采纳建议改标」
+                            # (与①区同一条管道:执行后写进交付数据集/画像重归类;
+                            # 只改标不给成败结论的,机器按新标注重判)
+                            with gr.Column(visible=False,
+                                           elem_classes=["modal-dialog"]) as fix_ask:
+                                gr.Markdown("**修正任务标注**")
+                                fix_text = gr.Textbox(label="修正后标注")
+                                with gr.Row(elem_id="fix-ask-btns"):
+                                    fix_save = gr.Button("保存", variant="primary")
+                                    fix_cancel = gr.Button("取消")
 
                     # ── 被拒复议(2026-08-11;2026-08-16 原样搬进子页签):任务成败
                     #    判定**杀掉**的条目在这里可看、可捞回 —— 判定从"拿不准就转
@@ -3232,7 +3261,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         mg_tv_block, tv_mode_note, tv_info, tv_readings, tv_note,
                         tv_pass, tv_fail, tv_hold,
                         mg_pos2,     # 底部翻页行的位置提示(与 mg_pos 同文案)
-                        mg_cur]      # 当前卡 episode 标记(表格高亮同步源)
+                        mg_cur,      # 当前卡 episode 标记(表格高亮同步源)
+                        mg_fixlab]   # 「标注错了」只在没有①区的卡上亮
 
             outs = [state, ov_md, ov_table, ov_note, ov_cfg, ep_bucket, *_ep_list_outs,
                     sk_html, sk_table, sk_audit_note,
@@ -3567,19 +3597,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return ("⚠️ 无条目可裁决", *[gr.update()] * 18)
                 if readonly_block_msg(m):
                     return (readonly_block_msg(m), *[gr.update()] * 18)
-                if it.get("resolved"):
-                    return ("⚠️ 这条已办结,仅供回看,不能再裁决",
-                            *[gr.update()] * 18)
-                if it["audit"] is None:
+                # 「标注错了」对话框走的就是这条线:采纳建议改标 + 用户给了
+                # 新文本 → 放行(卡上没有①区不等于标注不能修,2026-08-25 用户定)
+                modal_relabel = (decision == "采纳建议改标"
+                                 and str(newlab or "").strip())
+                if it.get("resolved") and not modal_relabel:
+                    return ("⚠️ 已办结条目支持改判成败(点 ② 的按钮);"
+                            "「整条弃用」暂不支持", *[gr.update()] * 18)
+                if it["audit"] is None and not modal_relabel:
                     return ("⚠️ 这条没有标注问题(只有成败问题)", *[gr.update()] * 18)
                 msg = record_label_decision(m["path"], it["id"], decision,
                                             newlab or "", note or "")
                 # 镜像交付(2026-08-20 阶段4):裁决 CSV 即时写回源桶 —— 留在
                 # 本地缓存等于丢(缓存可清),失败也要说出来,不许静默
-                if msg.startswith("✅"):
+                if msg.startswith("已记录"):
                     msg += " " + runner.push_decisions(m["path"])
-                if msg.startswith("✅"):
-                    msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _au_btns(decision)                # 记录成功才点亮所选键
                     dec_now = decision
                 else:
@@ -3603,6 +3635,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                          tv_pass, tv_fail, tv_hold,
                          mg_hint, sk_audit_note, mg_info, pending_banner,
                          mg_filter, mg_status]
+            def _fixlab_open(m, filt, idx):
+                it = _mg_item(m, filt, idx)
+                if it is None:
+                    return gr.update(visible=False), gr.update()
+                text = (_adopted_label(load_label_decisions(m).get(it["id"]))
+                        or episode_task_text(m, it["id"])[0])
+                return gr.update(visible=True), gr.update(value=text)
+
+            mg_fixlab.click(_fixlab_open, [state, mg_filter, mg_idx],
+                            [fix_ask, fix_text])
+            fix_cancel.click(lambda: gr.update(visible=False), None, fix_ask)
+
             _dec_ins = [state, mg_filter, mg_status, mg_idx, au_newlab, au_note]
             au_adopt.click(lambda m, f, st, i, nl, nt:
                            _mg_au_decide(m, f, st, i, nl, nt, "采纳建议改标"),
@@ -3619,6 +3663,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                           _mg_au_decide(m, f, st, i, nl, nt, "弃用该条"),
                           _dec_ins, _dec_outs)
 
+            def _fixlab_save(m, filt, status, idx, newlab):
+                res = _mg_au_decide(m, filt, status, idx, newlab,
+                                    "在成败卡上修正标注(原文本有误)",
+                                    "采纳建议改标")
+                return (*res, gr.update(visible=False))
+
+            fix_save.click(_fixlab_save,
+                           [state, mg_filter, mg_status, mg_idx, fix_text],
+                           [*_dec_outs, fix_ask])
+
             def _mg_tv_decide(m, filt, status, idx, note, verdict):
                 """② 落一条成败裁决。矛盾拦截两道门:按钮禁用(渲染层)之外,
                 record_task_verdict_checked 落盘前还会再查一次 ① 的「弃用该条」。"""
@@ -3631,10 +3685,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if success_block_mode(it, dec) == "hidden":
                     return ("⚠️ 这条现在没有成败问题要答", *[gr.update()] * 10)
                 msg = record_task_verdict_checked(m, it["id"], verdict, note or "")
-                if msg.startswith("✅"):
+                if msg.startswith("已记录"):
                     msg += " " + runner.push_decisions(m["path"])
-                if msg.startswith("✅"):
-                    msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _tv_btns(verdict)
                 else:
                     btns = [gr.update()] * 3
@@ -3694,10 +3746,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             *[gr.update()] * 3)
                 msg = record_reject_appeal(m["path"], a.get("id", ""), appeal,
                                            note or "")
-                if msg.startswith("✅"):
+                if msg.startswith("已记录"):
                     msg += " " + runner.push_decisions(m["path"])
-                if msg.startswith("✅"):
-                    msg = msg.replace("✅ 已记录:", "✅ 已记录(草稿,可随时改判):")
                     btns = _ap_btns(appeal)
                 else:
                     btns = [gr.update()] * 2

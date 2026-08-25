@@ -1190,7 +1190,8 @@ def test_label_decision_roundtrip(delivery):
     assert load_label_decisions(m) == {}                       # 初始无裁决
     msg = record_label_decision(m["path"], "ep000002", "采纳建议改标",
                                 new_label="wipe the table", note="核对过视频")
-    assert "已记录" in msg and "rejudge" in msg
+    # 状态行 2026-08-25 用户精简:只说一句,不带 episode/裁决内容/去哪执行
+    assert msg.startswith("已记录(随时可改判)")
     dec = load_label_decisions(m)
     assert dec["ep000002"]["decision"] == "采纳建议改标"
     assert dec["ep000002"]["new_label"] == "wipe the table"
@@ -1270,9 +1271,8 @@ def test_task_verdict_roundtrip_and_override(delivery):
     m = load_delivery(delivery)
     assert load_task_verdicts(m) == {}
     msg = record_task_verdict(m["path"], "ep000000", "判成功", note="看了视频,完成了")
-    # 文案 2026-08-25 改口(复盘 ④):首选指界面「执行裁决」按钮,CLI 放括号里;
-    # 不再对界面用户报"落 TOS 约 1 分钟"这类存储内部细节
-    assert "已记录" in msg and "执行裁决" in msg and "rejudge" in msg
+    # 状态行 2026-08-25 用户再精简(嫌啰嗦):只说一句;不报存储内部细节
+    assert msg.startswith("已记录(随时可改判)")
     assert "1 分钟" not in msg
     got = load_task_verdicts(m)
     assert got["ep000000"]["verdict"] == "判成功"
@@ -1588,7 +1588,7 @@ def test_appeal_draft_roundtrip_and_guards(delivery):
     m = load_delivery(delivery)
     assert load_reject_appeals(m) == {} and appeal_pending_count(m) == 1
     msg = record_reject_appeal(m["path"], "ep000001", "捞回", note="看了视频,完成了")
-    assert "已记录" in msg and "rejudge" in msg
+    assert msg.startswith("已记录(随时可改判)")   # 2026-08-25 用户精简状态行
     got = load_reject_appeals(m)
     assert got["ep000001"]["appeal"] == "捞回"
     assert got["ep000001"]["note"] == "看了视频,完成了" and got["ep000001"]["at"]
@@ -3938,8 +3938,26 @@ def test_merged_card_deck_mirrors_table(tmp_path):
     assert [d["id"] for d in deck] == [i["id"] for i in merged_table_queue(m)]
     by = {d["id"]: d for d in deck}
     assert by["ep000000"]["task"] is not None            # 待办条目原样
-    assert by["ep000005"]["audit"] is None and by["ep000005"]["task"] is None
+    # 台账卡:audit 无(标注线不裁),task 给最小条目 —— 方向 A(2026-08-25):
+    # 执行后允许改判,② 成败问题照 required 渲染,按钮可点
+    assert by["ep000005"]["audit"] is None
+    assert by["ep000005"]["task"] == {"id": "ep000005", "current": "",
+                                      "reason": "", "readings": {}, "state": ""}
     assert by["ep000005"]["resolved"]["结论"] == "判成功"  # 台账卡带当时结论
     # 类型档过滤与表一致
     only_label = merged_card_deck(m, "只看标注问题(1)")
     assert [d["id"] for d in only_label] == ["ep000002"]
+
+
+def test_archived_row_result_prefers_unapplied_redecision(tmp_path):
+    """执行后改判(方向 A):台账行有未应用的新草稿时,「裁决结果」列以草稿
+    为准(带「(未应用)」后缀)——不然表里挂着旧结论,人以为没记上。"""
+    from curation.dataset_level.decisions import record_task_verdict
+    from curation.ui.manifest import merged_table_queue
+    m = _ledger_delivery(tmp_path)
+    it = [i for i in merged_table_queue(m) if i["id"] == "ep000005"][0]
+    assert it["result"] == "判成功"                       # 无草稿:显示台账结论
+    record_task_verdict(m["path"], "ep000005", "判失败", note="看错了,改判")
+    m = load_delivery(m["path"])
+    it = [i for i in merged_table_queue(m) if i["id"] == "ep000005"][0]
+    assert it["result"] == "判失败(未应用)"

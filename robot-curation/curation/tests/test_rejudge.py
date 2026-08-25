@@ -1368,3 +1368,105 @@ def test_abstain_retry_writes_archive_with_verdict():
     assert arc["epT"]["原弃权原因"].startswith("VLM 调用/解析失败")
     assert arc["epN"]["结论"] == "补判判失败" and arc["epN"]["去向"] == "进拒绝"
     assert "epG" not in arc and "epG" in r["episodes"]
+
+
+# ───────── 执行后改判(2026-08-25 用户定方向 A):执行不是终点 ─────────
+
+
+def test_verdict_flip_after_apply_moves_entry_both_ways():
+    """裁决 CSV 后写覆盖前写,应用后再改判 → 条目按最新结论在三件套间再搬:
+    成功→失败进拒绝、失败→成功回交付;台账同 id 覆盖为最新结论与去向。"""
+    p, r, j = _views()
+    apply_task_verdicts(p, r, j, {"epB": {"verdict": "判成功", "at": "t1"}})
+    assert "epB" in p["episodes"]
+    apply_task_verdicts(p, r, j, {"epB": {"verdict": "判失败", "at": "t2"}})
+    assert "epB" in j["episodes"] and "epB" not in p["episodes"]
+    arc = r["已裁决存档"]["epB"]
+    assert arc["结论"] == "判失败" and arc["去向"] == "进拒绝"
+    apply_task_verdicts(p, r, j, {"epB": {"verdict": "判成功", "at": "t3"}})
+    assert "epB" in p["episodes"] and "epB" not in j["episodes"]
+    assert r["已裁决存档"]["epB"]["结论"] == "判成功"
+
+
+def test_verdict_flip_restores_row_into_delivered_dataset(tmp_path):
+    """出数据闭环:此前人工判失败已执行(条目在拒绝清单、已从交付数据集剔行),
+    现在改判成功再执行 → 条目回交付,数据集回源补行,LeRobot 包跟着导出。
+    只翻报告不补数据的话,客户拿到的还是少一条。"""
+    pytest = __import__("pytest")
+    pytest.importorskip("pandas")
+    daft = pytest.importorskip("daft")
+    from curation.tests.test_lerobot_v2_export import _write_v2_dataset
+    src = tmp_path / "src_ds"
+    _write_v2_dataset(str(src))
+    views = ({"episodes": {f"ep{i:06d}": {"判决": "通过"} for i in (0, 2, 3)}},
+             {"episodes": {},
+              "已裁决存档": {"ep000001": {
+                  "线": "成败", "结论": "判失败", "去向": "进拒绝",
+                  "裁决时间": "t1", "应用时间": "t1"}}},
+             {"被拒总数": 1, "episodes": {"ep000001": {
+                 "判决": "拒绝", "原因": "人工裁决判失败(任务未完成)",
+                 "checks": {"任务成败判定": {"结果": "拒绝"}},
+                 "人工裁决": {"裁决": "判失败", "裁决时间": "t1"}}}})
+    d = _write_verdict_delivery(
+        tmp_path,
+        [{"episode_id": "ep000001", "verdict": "判失败", "note": "", "at": "t1"},
+         {"episode_id": "ep000001", "verdict": "判成功",
+          "note": "又看了一遍,其实完成了", "at": "t2"}],
+        views=views)
+    daft.from_pydict({
+        "episode_id": ["ep000000", "ep000002", "ep000003"],
+        "instruction": ["a", "c", "d"],
+        "instruction_source": ["原始标注"] * 3,
+    }).write_parquet(str(d / "episodes_parquet"))
+    (d / "lerobot_curated").mkdir()
+    (d / "lerobot_curated" / "stale").write_text("old")
+
+    s = run_rejudge(str(d), str(src), {}, rerun_fn=None)
+    assert s["verdict_pass"] == ["ep000001"]
+    psd = json.loads((d / "passed.json").read_text(encoding="utf-8"))
+    assert psd["episodes"]["ep000001"]["判决"] == "通过(人工裁决)"
+    rej = json.loads((d / "reject.json").read_text(encoding="utf-8"))
+    assert "ep000001" not in rej["episodes"]
+    got = daft.read_parquet(str(d / "episodes_parquet")).to_pydict()
+    assert "ep000001" in got["episode_id"], "改判成功的条目没补回交付数据集"
+    assert got["episode_id"] == sorted(got["episode_id"])
+    eps = [json.loads(x) for x in
+           (d / "lerobot_curated" / "meta" / "episodes.jsonl").read_text().splitlines()]
+    assert len(eps) == 4, "LeRobot 包没跟着把改判的条目导出来"
+
+
+# ───────── 成败卡上修正标注(2026-08-25:「标注错了」按钮走标注线)─────────
+
+
+def test_adopt_relabel_on_non_roster_abstention_entry():
+    """不在分歧名册的成败弃权条目也能吃「采纳建议改标」:重判通过 → 回交付,
+    「标注修正」溯源在案 —— captioner 打错标导致判不出的条目,人改对文本后
+    机器按新文本重判,这条路必须通。"""
+    p, r, j = _retry_views()                       # epT 弃权,不在分歧名册
+    s = apply_decisions(p, r, j,
+                        {"epT": {"decision": "采纳建议改标",
+                                 "new_label": "hang the cloth on the rack",
+                                 "note": "caption 错了", "at": "t1"}},
+                        {"epT": {"passed": True, "verdict": "success",
+                                 "detail": "{}"}})
+    assert s["adopted_pass"] == ["epT"] and "epT" not in r["episodes"]
+    e = p["episodes"]["epT"]
+    assert e["标注修正"]["新标注"] == "hang the cloth on the rack"
+    assert e["checks"]["任务成败判定"]["结果"] == "pass"
+
+
+def test_adopt_relabel_on_resolved_entry_keeps_prior_human_verdict():
+    """已办结条目(人工判成功已应用)只改标注:human_concluded 原地落「标注修正」,
+    此前的人工成败结论原样保留、不再重判 —— 两处溯源并存。"""
+    p, r, j = _views()
+    apply_task_verdicts(p, r, j, {"epB": {"verdict": "判成功", "at": "t1"}})
+    assert "epB" in p["episodes"]
+    s = apply_decisions(p, r, j,
+                        {"epB": {"decision": "采纳建议改标",
+                                 "new_label": "right text", "at": "t2"}},
+                        {}, human_concluded={"epB"})
+    assert s["adopted_human"] == ["epB"]
+    e = p["episodes"]["epB"]
+    assert e["标注修正"]["新标注"] == "right text"
+    assert e["人工裁决"]["裁决"] == "判成功"        # 先前的人工结论没被动
+    assert e["判决"] == "通过(人工裁决)"

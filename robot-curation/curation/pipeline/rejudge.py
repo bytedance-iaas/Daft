@@ -891,6 +891,10 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                + summary["adopted_reject"] + summary["dropped"]
                + summary["verdict_fail"] + summary["appeal_restored"]
                + summary.get("retry_fail", [])         # 补判判失败 → 数据集剔行
+               # 判成功/补判转正也进 touched(2026-08-25 方向 A:执行后允许改判,
+               # "此前判失败已剔行 → 现在改判成功"要回源补行;正常路径下这行
+               # 本来就在数据集里,下面的 have 过滤会把它滤成无事发生)
+               + summary["verdict_pass"] + summary.get("retry_pass", [])
                + human_kept)
     if touched and os.path.isdir(pq_dir):
         try:
@@ -920,7 +924,13 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
             # 改不出来,只能回源重读补进去。读走与重判同一条现成路径
             # (_episode_row_reader,LeRobot / RRD 一视同仁)。
             have = {r["episode_id"] for r in out_rows}
-            restore = [e for e in summary["appeal_restored"] if e not in have]
+            # 补行名单 = 判进交付却不在数据集里的:复议捞回(从来没进过)+
+            # 改判翻案的判成功/补判转正(上一轮判失败时被剔行)。正常判成功的
+            # 条目本来就在(双呈现暂留),被 have 滤掉,零开销
+            restore = [e for e in (summary["appeal_restored"]
+                                   + summary["verdict_pass"]
+                                   + summary.get("retry_pass", []))
+                       if e not in have]
             n_add = 0
             if restore:
                 _read_src = _episode_row_reader(input_dir, cfg)
@@ -1155,7 +1165,9 @@ def _sync_profile(delivery: str, files: dict, summary: dict,
                          + summary.get("adopted_review", [])
                          + human_kept) if e in decisions}
     kept = list(summary.get("kept", []))
-    restored = list(summary.get("appeal_restored", []))
+    restored = list(dict.fromkeys(summary.get("appeal_restored", [])
+                                  + summary.get("verdict_pass", [])
+                                  + summary.get("retry_pass", [])))
     if not removals and not relabel and not kept and not restored:
         return None
 
