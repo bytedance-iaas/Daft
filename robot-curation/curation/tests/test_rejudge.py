@@ -1294,3 +1294,77 @@ def test_run_rejudge_without_flag_never_retries(tmp_path):
     assert "note" in out                     # 无裁决无 flag = 原样退出
     got_r = _json.loads((d / "review.json").read_text())
     assert len(got_r["episodes"]) == 3
+
+
+# ───────── 已裁决台账(2026-08-25 用户定):裁决执行后 review.json 双堆留底 ─────────
+
+
+def test_task_verdicts_write_archive_ledger_both_directions():
+    """成败裁决执行后,条目离开待裁清单但在「已裁决存档」留底:结论/去向/备注/
+    原弃权原因全在 —— 这张台账就是 UI「人工裁决队列」已裁段的数据源。"""
+    p, r, j = _views()
+    r["episodes"]["epB"]["弃权原因"] = {"任务成败判定": "渐变问询不可判"}
+    apply_task_verdicts(p, r, j,
+                        {"epB": {"verdict": "判成功", "note": "n1", "at": "t1"},
+                         "epC": {"verdict": "判失败", "at": "t2"}})
+    arc = r["已裁决存档"]
+    b, c = arc["epB"], arc["epC"]
+    assert b["线"] == "成败" and b["结论"] == "判成功" and b["去向"] == "回交付"
+    assert b["裁决时间"] == "t1" and b["备注"] == "n1"
+    assert b["原弃权原因"] == "渐变问询不可判"
+    assert c["结论"] == "判失败" and c["去向"] == "进拒绝"
+    # 待裁清单(episodes)仍只剩未办结的 —— 所有按它计数的消费方一个不用改
+    assert "epB" not in r["episodes"] and "epC" not in r["episodes"]
+
+
+def test_task_verdict_hold_or_skip_writes_no_archive():
+    """搁置不是结论、对不上号的裁决被跳过 —— 都不算办结,台账不许有它们。"""
+    p, r, j = _views()
+    apply_task_verdicts(p, r, j, {"epB": {"verdict": "搁置", "at": "t"},
+                                  "ep404": {"verdict": "判成功", "at": "t"}})
+    assert not r.get("已裁决存档")
+
+
+def test_task_verdict_archive_is_idempotent_by_overwrite():
+    """同一条重复执行(rejudge 幂等重跑)= 台账同 id 覆盖,不越积越多。"""
+    p, r, j = _views()
+    apply_task_verdicts(p, r, j, {"epB": {"verdict": "判成功", "at": "t1"}})
+    # 重复执行(rejudge 幂等重跑会再走一遍同一份 CSV):台账同 id 覆盖,
+    # 保持一条,内容以最后一次执行为准
+    apply_task_verdicts(p, r, j, {"epB": {"verdict": "判成功", "at": "t9"}})
+    assert list(r["已裁决存档"]) == ["epB"]
+    assert r["已裁决存档"]["epB"]["裁决时间"] == "t9"
+
+
+def test_appeal_restore_writes_archive_entry_uphold_does_not():
+    """复议线:捞回 = 办结进台账(线=复议,供复议表垫底留底);维持拒绝只记录
+    不搬移,不算办结。"""
+    from curation.pipeline.rejudge import apply_reject_appeals
+    p, r, j = _reject_views()
+    apply_reject_appeals(p, r, j,
+                         {"epK1": {"appeal": "捞回", "note": "看了视频", "at": "t1"},
+                          "epK2": {"appeal": "维持拒绝", "at": "t2"}})
+    arc = r["已裁决存档"]
+    ev = arc["epK1"]
+    assert ev["线"] == "复议" and ev["结论"] == "捞回" and ev["去向"] == "回交付"
+    assert ev["裁决时间"] == "t1" and ev["备注"] == "看了视频"
+    assert "epK2" not in arc
+
+
+def test_abstain_retry_writes_archive_with_verdict():
+    """补判线:转正/判失败进台账并带补判判定与原弃权原因;仍弃权 = 没办结,
+    条目还在待裁清单里,不进台账。"""
+    from curation.pipeline.rejudge import apply_abstain_retries
+    p, r, j = _retry_views()
+    apply_abstain_retries(
+        p, r, j,
+        {"epT": {"passed": True, "verdict": "success", "detail": "{}"},
+         "epN": {"passed": False, "verdict": "failure", "detail": "{}"},
+         "epG": {"passed": None, "verdict": "补判仍弃权", "detail": "{}"}},
+        {"epT": "t", "epN": "t", "epG": "t"})
+    arc = r["已裁决存档"]
+    assert arc["epT"]["线"] == "补判" and arc["epT"]["结论"] == "补判转正"
+    assert arc["epT"]["补判判定"] == "success" and arc["epT"]["去向"] == "回交付"
+    assert arc["epT"]["原弃权原因"].startswith("VLM 调用/解析失败")
+    assert arc["epN"]["结论"] == "补判判失败" and arc["epN"]["去向"] == "进拒绝"
+    assert "epG" not in arc and "epG" in r["episodes"]

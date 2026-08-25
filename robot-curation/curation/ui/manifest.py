@@ -164,6 +164,48 @@ def load_delivery(path: str) -> dict:
 
     audit_queue = (v.get("标注-画面分歧复核队列")
                    or v.get("标注审计复核队列") or [])
+
+    # 已裁决台账(2026-08-25 用户定):新交付读 review.json 的「已裁决存档」堆;
+    # 老交付(存档机制之前被 rejudge 搬走的条目)从 passed/reject 条目上的裁决
+    # 溯源块**派生**出等价记录兜底 —— droid-50 那批不用重跑就能看全台账。
+    # 存档为准,派生只补缺(同 id 不覆盖存档)。
+    archive = dict(v.get("已裁决存档") or {})
+    for eid, e in (p.get("episodes") or {}).items():
+        if eid in archive or not isinstance(e, dict):
+            continue
+        tp = e.get("人工裁决") or {}
+        bp = e.get("弃权补判") or {}
+        ap = e.get("人工复议") or {}
+        if tp.get("裁决") == "判成功":
+            archive[eid] = {"线": "成败", "结论": "判成功", "去向": "回交付",
+                            "备注": tp.get("备注", ""),
+                            "裁决时间": tp.get("裁决时间", ""), "应用时间": "",
+                            "_derived": True}
+        elif bp:
+            archive[eid] = {"线": "补判", "结论": "补判转正", "去向": "回交付",
+                            "补判判定": bp.get("补判判定", ""),
+                            "裁决时间": bp.get("补判时间", ""), "应用时间": "",
+                            "_derived": True}
+        elif ap.get("复议结论") == "捞回":
+            archive[eid] = {"线": "复议", "结论": "捞回", "去向": "回交付",
+                            "备注": ap.get("备注", ""),
+                            "裁决时间": ap.get("复议时间", ""), "应用时间": "",
+                            "_derived": True}
+    for eid, e in (r.get("episodes") or {}).items():
+        if eid in archive or not isinstance(e, dict):
+            continue
+        tp = e.get("人工裁决") or {}
+        bp = e.get("弃权补判") or {}
+        if tp.get("裁决") == "判失败":
+            archive[eid] = {"线": "成败", "结论": "判失败", "去向": "进拒绝",
+                            "备注": tp.get("备注", ""),
+                            "裁决时间": tp.get("裁决时间", ""), "应用时间": "",
+                            "_derived": True}
+        elif bp:
+            archive[eid] = {"线": "补判", "结论": "补判判失败", "去向": "进拒绝",
+                            "补判判定": bp.get("补判判定", ""),
+                            "裁决时间": bp.get("补判时间", ""), "应用时间": "",
+                            "_derived": True}
     prov_files = {"passed": _prov_slim(p), "reject": _prov_slim(r),
                   "review": {**_prov_slim(v),
                              "标注-画面分歧复核队列": audit_queue}}
@@ -189,6 +231,7 @@ def load_delivery(path: str) -> dict:
             # 双键兼容(2026-07-31 键名中性化):新交付写"标注-画面分歧复核队列",
             # 老交付写"标注审计复核队列"——两个都认,否则老交付打不开。
             "audit_queue": audit_queue,
+            "adjudication_archive": archive,
             "task_review": task_review_queue(v, episodes),
             "reject_appeal": reject_appeal_queue(r, episodes),
             "episodes": episodes}
@@ -677,29 +720,127 @@ def _ep_num(eid: str) -> str:
     return str(int(tail)) if tail.isdigit() else str(eid)
 
 
-def merged_queue_rows(m: dict) -> list[list]:
-    """待裁决队列 → 表格行。行序与 merged_review_queue 一致(点行按下标对号跳卡片);
-    裁决结果回显两类裁决 CSV(空=待人工),两个问题都裁了就并排显示。
+#: 人工裁决队列的状态筛选(2026-08-25 用户定):默认全量 —— 队列是台账不是
+#: 办完即焚的待办;裁决后条目留在表里,想只看欠的活或只翻旧账再切档。
+MERGE_FILTER_ALL = "全部"
+MERGE_FILTER_LABEL = "只看标注问题"
+MERGE_FILTER_TASK = "只看成败问题"
+MERGE_FILTERS = (MERGE_FILTER_ALL, MERGE_FILTER_LABEL, MERGE_FILTER_TASK)
 
-    只判成败的条目,判定时用的任务文本可能是原始标注、也可能是自产 caption
-    (没标注的条目拿自产描述顶上,task_details 记着来源)——按来源分列,
-    自产的绝不冒充「原始标注」(2026-08-23 用户点名要区分)。"""
+QUEUE_STATUS_ALL = "全部"
+QUEUE_STATUS_PENDING = "仅待裁决"
+QUEUE_STATUS_DONE = "仅已裁决"
+QUEUE_STATUS_CHOICES = (QUEUE_STATUS_ALL, QUEUE_STATUS_PENDING, QUEUE_STATUS_DONE)
+
+#: 台账「线」→ 表格「待裁问题」列的叫法(台账条目已办结,列名沿用问题类型)。
+_ARCHIVE_KIND = {"成败": "成败弃权", "补判": "成败弃权"}
+
+
+def queue_status_mode(label) -> str:
+    """状态档显示标签(带计数后缀)→ 档位常量;认不出按「全部」(不藏内容)。"""
+    s = str(label or "")
+    for mode in (QUEUE_STATUS_PENDING, QUEUE_STATUS_DONE):
+        if s.startswith(mode):
+            return mode
+    return QUEUE_STATUS_ALL
+
+
+def queue_status_choices(m: dict) -> list[str]:
+    """状态档三项的显示标签(带计数):全部(N)/仅待裁决(n)/仅已裁决(N-n)。
+    计数不随类型筛选变(单向联动:类型计数跟状态走,反过来不跟 —— 双向就
+    循环了);随裁决进度变,落一条草稿两头的数就动。"""
+    items = merged_table_queue(m)
+    n_pend = sum(1 for i in items if i["pending"])
+    return [f"{QUEUE_STATUS_ALL}({len(items)})",
+            f"{QUEUE_STATUS_PENDING}({n_pend})",
+            f"{QUEUE_STATUS_DONE}({len(items) - n_pend})"]
+
+
+def _queue_task_text(m: dict, eid: str) -> tuple[str, str]:
+    """成败条目在表里的两列文本(原始标注 / 自产描述,按来源分列不冒充)。"""
+    text, src = episode_task_text(m, eid)
+    text = text if len(text) <= 120 else text[:119] + "…"
+    return ("", text) if src == TASK_SOURCE_CAPTION else (text, "")
+
+
+def merged_table_queue(m: dict, status: str = QUEUE_STATUS_ALL,
+                       mode: str = MERGE_FILTER_ALL) -> list[dict]:
+    """人工裁决队列的表格条目(2026-08-25 重做:待办 + 台账两堆合一)。
+
+    每条 = {"id","kind","label","cap","result","pending"}。构成与顺序:
+    ①待裁的(还有问题没答)按原队列序置顶 —— 打开表第一眼是还欠的活;
+    ②已裁的待办条目(草稿/已应用但还挂在队列,如分歧名册)按原序跟上;
+    ③台账条目(办结离队的,存档堆 + 老交付溯源派生)按 episode 序垫底。
+    裁决结果列纯文字:草稿带「(未应用)」后缀(判据=decisions_view,与横幅
+    同源);台账条目显示办结结论,不带任何图标(2026-08-25 用户否掉打勾:
+    判失败给绿勾是语义打架)。"""
     ldec = load_label_decisions(m)
     tdec = load_task_verdicts(m)
-    rows = []
+    q_left = question_pending_ids(m)
+    st_map = {(r["line"], r["id"]): r["status"]
+              for r in decision_status(m)["records"]}
+
+    def _part(line: str, eid: str, text: str) -> str:
+        if not text:
+            return ""
+        return text + ("(未应用)" if st_map.get((line, eid)) == "unapplied"
+                       else "")
+
+    undecided: list = []
+    decided: list = []
+    pending_ids: set = set()
     for it in merged_review_queue(m):
         eid, a, t = it["id"], it["audit"], it["task"]
+        pending_ids.add(eid)
         kind = "标注+成败" if (a and t) else ("标注分歧" if a else "成败弃权")
         if a:
             label, cap = a.get("label", ""), a.get("caption", "")
         else:
-            text, src = episode_task_text(m, eid)
-            text = text if len(text) <= 120 else text[:119] + "…"
-            label, cap = ("", text) if src == TASK_SOURCE_CAPTION else (text, "")
-        got = [d for d in (ldec.get(eid, {}).get("decision", ""),
-                           tdec.get(eid, {}).get("verdict", "")) if d]
-        rows.append([_ep_num(eid), kind, label, cap, " · ".join(got)])
-    return rows
+            label, cap = _queue_task_text(m, eid)
+        parts = [_part("label", eid, ldec.get(eid, {}).get("decision", "")),
+                 _part("verdict", eid, tdec.get(eid, {}).get("verdict", ""))]
+        got = [p for p in parts if p]
+        # "待裁"判据 = question_pending_ids(单一事实源,轨迹 ⏳ 桶同款):
+        # 拿不准不算结论;弃用该条封整条
+        item = {"id": eid, "kind": kind, "label": label, "cap": cap,
+                "result": " · ".join(got), "pending": eid in q_left}
+        (undecided if item["pending"] else decided).append(item)
+
+    archived: list = []
+    for eid, ev in sorted((m.get("adjudication_archive") or {}).items()):
+        line = ev.get("线", "")
+        if eid in pending_ids or line not in _ARCHIVE_KIND:
+            continue                     # 还挂在队列的以待办条目为准;复议进复议表
+        label, cap = _queue_task_text(m, eid)
+        res = ev.get("结论", "")
+        if line == "补判" and ev.get("补判判定"):
+            res = f"{res}({ev['补判判定']})"
+        archived.append({"id": eid, "kind": _ARCHIVE_KIND[line],
+                         "label": label, "cap": cap, "result": res,
+                         "pending": False})
+
+    items = undecided + decided + archived
+    status = queue_status_mode(status)
+    if status == QUEUE_STATUS_PENDING:
+        items = [i for i in items if i["pending"]]
+    elif status == QUEUE_STATUS_DONE:
+        items = [i for i in items if not i["pending"]]
+    # 类型档与状态档取交集(2026-08-25 用户点名两组筛选要联动):
+    # 「标注+成败」两个单项档里都算
+    mode = merge_filter_mode(mode)
+    if mode == MERGE_FILTER_LABEL:
+        items = [i for i in items if "标注" in i["kind"]]
+    elif mode == MERGE_FILTER_TASK:
+        items = [i for i in items if "成败" in i["kind"]]
+    return items
+
+
+def merged_queue_rows(m: dict, status: str = QUEUE_STATUS_ALL,
+                      mode: str = MERGE_FILTER_ALL) -> list[list]:
+    """人工裁决队列 → 表格行(行序与 merged_table_queue 一致,点行按下标取
+    episode 再跳卡片;台账行没有对应卡片,点了保持当前卡)。"""
+    return [[_ep_num(i["id"]), i["kind"], i["label"], i["cap"], i["result"]]
+            for i in merged_table_queue(m, status, mode)]
 
 
 #: 弃权原因是 VLM 写的一整句,表里已不列;复议表仍截断用,全文在卡片里给。
@@ -722,16 +863,26 @@ def appeal_reason_text(m: dict, eid: str) -> str:
 
 
 def appeal_rows(m: dict) -> list[list]:
-    """被拒复议队列 → 表格行。复议列回显 details/reject_appeals.csv(空=待人工)。"""
+    """被拒复议队列 → 表格行。复议列回显 details/reject_appeals.csv(空=待人工)。
+
+    2026-08-25 起台账同款:被捞回的条目(已离开拒绝清单)从「已裁决存档」补进
+    表尾留底 —— 此前捞回一执行,这张表就当它没存在过。行序 = 在案被拒条目
+    原序 + 捞回台账(episode 序);点行跳卡只对前一段有效(台账行保持当前卡)。"""
     dec = load_reject_appeals(m)
     rows = []
+    seen = set()
     for a in m.get("reject_appeal") or []:
         eid = a.get("id", "")
+        seen.add(eid)
         reason = appeal_reason_text(m, eid)
         rows.append(["复议", eid,
                      reason[:_REASON_CAP] + ("…" if len(reason) > _REASON_CAP else ""),
                      readings_text(a.get("readings") or {}),
                      dec.get(eid, {}).get("appeal", "")])
+    for eid, ev in sorted((m.get("adjudication_archive") or {}).items()):
+        if ev.get("线") != "复议" or eid in seen:
+            continue
+        rows.append(["复议", eid, "(已捞回,条目已回交付)", "", ev.get("结论", "捞回")])
     return rows
 
 
@@ -789,10 +940,7 @@ WORKFLOW_GUIDE = (
 # 29 条、成败弃权 37 条,7 条同时在两个队列里,用户要在两张不同卡片里各找一次、
 # 各看一遍视频。分区是我们的实现方便,不是用户的工作方式。
 
-MERGE_FILTER_ALL = "全部"
-MERGE_FILTER_LABEL = "只看标注问题"
-MERGE_FILTER_TASK = "只看成败问题"
-MERGE_FILTERS = (MERGE_FILTER_ALL, MERGE_FILTER_LABEL, MERGE_FILTER_TASK)
+# (类型档常量上移至状态档常量旁 —— merged_table_queue 的默认参数用到)
 
 
 def merged_review_queue(m: dict) -> list[dict]:
@@ -944,13 +1092,14 @@ def merged_queue_view(m: dict, mode: str) -> list[dict]:
     return q
 
 
-def merged_filter_choices(m: dict) -> list[str]:
-    """筛选器三档的显示标签(带各档计数)。第一项是默认档「全部」。
-    计数 = 队列规模(交付定死),不随裁决进度变 —— 进度在 merged_hint_md 里报。"""
-    q = merged_review_queue(m)
-    n_label = sum(1 for it in q if it["audit"] is not None)
-    n_task = sum(1 for it in q if it["task"] is not None)
-    return [f"{MERGE_FILTER_ALL}({len(q)})",
+def merged_filter_choices(m: dict, status: str = QUEUE_STATUS_ALL) -> list[str]:
+    """类型档三项的显示标签(带计数)。第一项是默认档「全部」。
+    2026-08-25 起计数 = 当前状态档下的表行数(用户点名要与状态档联动:切到
+    「仅已裁决」还报待办数,成败问题明明满表台账却写 0)。"""
+    items = merged_table_queue(m, status)
+    n_label = sum(1 for i in items if "标注" in i["kind"])
+    n_task = sum(1 for i in items if "成败" in i["kind"])
+    return [f"{MERGE_FILTER_ALL}({len(items)})",
             f"{MERGE_FILTER_LABEL}({n_label})",
             f"{MERGE_FILTER_TASK}({n_task})"]
 
@@ -965,20 +1114,31 @@ def merge_filter_mode(label) -> str:
     return MERGE_FILTER_ALL
 
 
-def merged_pending_count(m: dict) -> int:
-    """合并队列里还有问题没答完的卡数(任一问题未裁即算;「拿不准」算未裁)。"""
+def question_pending_ids(m: dict) -> set:
+    """还欠人工结论的 episode id(**单一判据**,2026-08-25 用户点名对齐:
+    轨迹页 ⏳ 桶与人工裁决队列的待/已分档都以它为准 —— 名叫「待人工」就得
+    真还欠着人)。「拿不准」不是结论;「弃用该条」封了整条(② 被矛盾拦截),
+    啥都不欠。"""
     dec = load_label_decisions(m)
     ver = load_task_verdicts(m)
-    n = 0
+    out = set()
     for it in merged_review_queue(m):
-        a_pending = (it["audit"] is not None
-                     and not dec.get(it["id"], {}).get("decision"))
+        eid = it["id"]
+        d = dec.get(eid, {}).get("decision", "")
+        if d == "弃用该条":
+            continue
+        a_pending = it["audit"] is not None and d in ("", VERDICT_HOLD)
         t_pending = (it["task"] is not None
-                     and ver.get(it["id"], {}).get("verdict", "")
+                     and ver.get(eid, {}).get("verdict", "")
                      in ("", VERDICT_HOLD))
         if a_pending or t_pending:
-            n += 1
-    return n
+            out.add(eid)
+    return out
+
+
+def merged_pending_count(m: dict) -> int:
+    """合并队列里还有问题没答完的卡数(判据 = question_pending_ids,单一事实源)。"""
+    return len(question_pending_ids(m))
 
 
 def merged_hint_md(m: dict) -> str:
@@ -2695,14 +2855,23 @@ def is_dedup_drop(ep: dict) -> bool:
     return "去重" in str((ep or {}).get("verdict") or "")
 
 
-def episode_bucket(m: dict, eid: str) -> str:
-    """episode → 三桶之一(口径见本节顶部注释)。"""
+def episode_bucket(m: dict, eid: str, _left: set | None = None) -> str:
+    """episode → 三桶之一(口径见本节顶部注释)。
+
+    2026-08-25 用户点名:名叫「待人工」就得真还欠着人 —— 分歧/成败弃权条目
+    人工已给全结论(草稿即可)就离开 ⏳ 桶,判据与人工裁决队列同源
+    (question_pending_ids)。其它维度的弃权(如同步)人工裁决页管不了,
+    没人能替它给结论,照旧 ⏳。批量调用把算好的集合从 _left 传进来
+    (逐条各读一遍裁决 CSV,两百行清单就是四百次文件读)。"""
     ep = (m.get("episodes") or {}).get(eid or "") or {}
     if str(ep.get("verdict") or "").startswith("拒绝"):
         return BUCKET_REJECTED
-    if ep.get("pending") or eid in audit_queue_ids(m):
+    if [q for q in (ep.get("pending") or []) if q != TASK_CHECK_CN]:
         return BUCKET_PENDING
-    return BUCKET_PASSED
+    if not (ep.get("pending") or eid in audit_queue_ids(m)):
+        return BUCKET_PASSED
+    left = question_pending_ids(m) if _left is None else _left
+    return BUCKET_PENDING if eid in left else BUCKET_PASSED
 
 
 def bucket_ids(m: dict, bucket: str = BUCKET_ALL) -> list[str]:
@@ -2710,15 +2879,17 @@ def bucket_ids(m: dict, bucket: str = BUCKET_ALL) -> list[str]:
     任意字符串进来,不该因为一个陌生值就给空清单(空清单看起来像交付坏了)。"""
     eids = sorted((m.get("episodes") or {}).keys())
     if bucket in BUCKETS:
-        return [e for e in eids if episode_bucket(m, e) == bucket]
+        left = question_pending_ids(m)
+        return [e for e in eids if episode_bucket(m, e, left) == bucket]
     return eids
 
 
 def bucket_counts(m: dict) -> dict:
     """{通过: n, 拒绝: n, 待人工: n, 全部: n}。三桶互斥,三者之和 = 全部。"""
     counts = {b: 0 for b in BUCKETS}
+    left = question_pending_ids(m)
     for eid in (m.get("episodes") or {}):
-        counts[episode_bucket(m, eid)] += 1
+        counts[episode_bucket(m, eid, left)] += 1
     counts[BUCKET_ALL] = sum(counts.values())
     return counts
 
@@ -2809,8 +2980,9 @@ def episode_short_reason(m: dict, eid: str) -> str:
 def episode_list_items(m: dict, bucket: str = BUCKET_ALL) -> list[dict]:
     """左侧清单的数据行:[{id, icon, reason, label}]。label 即界面上那一行。"""
     out = []
+    left = question_pending_ids(m)
     for eid in bucket_ids(m, bucket):
-        b = episode_bucket(m, eid)
+        b = episode_bucket(m, eid, left)
         icon = BUCKET_ICONS[b]
         reason = episode_short_reason(m, eid)
         out.append({"id": eid, "bucket": b, "icon": icon, "reason": reason,
@@ -3270,10 +3442,26 @@ MANUAL_HINT_TEXT = ("这条还等着人来定:去「人工裁决」页,看视频
 
 
 def manual_hint_html(m: dict, eid: str) -> str:
-    """待人工条目的指路条;其它桶不占位(空串)。"""
-    if not eid or episode_bucket(m, eid) != BUCKET_PENDING:
+    """待人工条目的指路条;其它桶不占位(空串)。
+
+    2026-08-25 起多一档:结论给全了但还没「执行裁决」的条目离开 ⏳ 桶
+    (用户点名:名叫待人工就得真欠着),这里换蓝条说明"裁了、待应用"——
+    不然刚裁完的条目在轨迹页什么都不显示,像裁决没记上。判据与顶部横幅
+    同源(decision_status)。"""
+    if not eid:
         return ""
-    return ('<div style="background:#FFF7E8;border:1px solid #FF7D00;'
-            'border-left:6px solid #FF7D00;border-radius:10px;padding:11px 16px;'
-            'margin:2px 0 8px;font:13px/1.7 system-ui;color:#D25F00">'
-            f'<b>⏳ 待人工裁决</b> — {_esc(MANUAL_HINT_TEXT)}</div>')
+    if episode_bucket(m, eid) == BUCKET_PENDING:
+        return ('<div style="background:#FFF7E8;border:1px solid #FF7D00;'
+                'border-left:6px solid #FF7D00;border-radius:10px;'
+                'padding:11px 16px;'
+                'margin:2px 0 8px;font:13px/1.7 system-ui;color:#D25F00">'
+                f'<b>⏳ 待人工裁决</b> — {_esc(MANUAL_HINT_TEXT)}</div>')
+    if any(r["id"] == eid and r["status"] == "unapplied"
+           for r in decision_status(m)["records"]):
+        return ('<div style="background:#E8F3FF;border:1px solid #165DFF;'
+                'border-left:6px solid #165DFF;border-radius:10px;'
+                'padding:11px 16px;'
+                'margin:2px 0 8px;font:13px/1.7 system-ui;color:#165DFF">'
+                '<b>已裁决(未应用)</b> — 结论已记录:'
+                '在「人工裁决」页点「执行裁决」即生效。</div>')
+    return ""

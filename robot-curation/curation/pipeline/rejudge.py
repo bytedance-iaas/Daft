@@ -213,6 +213,23 @@ def _hold() -> str:
     return VERDICT_HOLD
 
 
+#: review.json 的已裁决存档键(2026-08-25 用户定):条目办结离开待裁清单时在
+#: 这里留底 —— review.json 从"待办清单"升级为"待办 + 台账"两堆。`episodes`
+#: 语义不变(纯待裁,全部计数消费者零改动),本堆只增不删,幂等靠按 id 覆盖。
+ARCHIVE_KEY = "已裁决存档"
+
+
+def _archive_resolution(review: dict, eid: str, line: str, conclusion: str,
+                        decided_at: str, applied_at: str, dest: str,
+                        note: str = "", extra: dict | None = None) -> None:
+    """一条裁决办结 → 台账留底。line ∈ 成败/补判/复议;dest = 回交付/进拒绝。"""
+    ev = {"线": line, "结论": conclusion, "备注": note or "",
+          "裁决时间": decided_at or "", "应用时间": applied_at, "去向": dest}
+    if extra:
+        ev.update(extra)
+    review.setdefault(ARCHIVE_KEY, {})[eid] = ev
+
+
 def apply_task_verdicts(passed: dict, review: dict, reject: dict,
                         verdicts: dict) -> dict:
     """按**任务成败**人工裁决在三件套视图间搬移/标注(**原地修改**传入的 dict)→ 摘要。
@@ -259,6 +276,8 @@ def apply_task_verdicts(passed: dict, review: dict, reject: dict,
             summary["verdict_skipped"].append(eid)   # 未知裁决词:不动
             continue
 
+        old_reason = str(((r_eps.get(eid) or {}).get("弃权原因") or {})
+                         .get(TASK_CN) or "")
         old = _take_entry(p_eps, r_eps, j_eps, eid)
         if not old:
             # 三件套里根本没这条(裁决文件与交付对不上,如换了交付目录):
@@ -283,11 +302,19 @@ def apply_task_verdicts(passed: dict, review: dict, reject: dict,
             # 弃权原因/待裁决项随条目重建自然清空:它说的是"系统判不了",
             # 现在有人判了,再留着就是过期信息。
             summary["verdict_pass"].append(eid)
+            _archive_resolution(review, eid, "成败", kind,
+                                v.get("at", now), now, "回交付",
+                                v.get("note", ""),
+                                {"原弃权原因": old_reason})
         else:
             j_eps[eid] = {"判决": "拒绝", "原因": "人工裁决判失败(任务未完成)",
                           "综合软分": old.get("综合软分"),
                           "checks": checks, **keep, PROV_TASK: prov}
             summary["verdict_fail"].append(eid)
+            _archive_resolution(review, eid, "成败", kind,
+                                v.get("at", now), now, "进拒绝",
+                                v.get("note", ""),
+                                {"原弃权原因": old_reason})
 
     _sync_counts(review, reject, r_eps, j_eps)
     return summary
@@ -366,6 +393,8 @@ def apply_reject_appeals(passed: dict, review: dict, reject: dict,
             rev_copy["当前判决"] = "通过"      # 判决已翻,视图里的旧值不能留着骗人
             r_eps[eid] = rev_copy
         summary["appeal_restored"].append(eid)
+        _archive_resolution(review, eid, "复议", "捞回",
+                            a.get("at", now), now, "回交付", a.get("note", ""))
 
     _sync_counts(review, reject, r_eps, j_eps)
     return summary
@@ -461,12 +490,18 @@ def apply_abstain_retries(passed: dict, review: dict, reject: dict,
         if rj.get("passed") is True:
             p_eps[eid] = {"判决": "通过", **base}
             summary["retry_pass"].append(eid)
+            _archive_resolution(review, eid, "补判", "补判转正", now, now,
+                                "回交付", extra={"补判判定": rj.get("verdict", ""),
+                                                "原弃权原因": old_reason})
         elif rj.get("passed") is False:
             j_eps[eid] = {"判决": "拒绝",
                           "原因": "未通过「任务成败判定」(弃权补判):"
                                   + str(rj.get("verdict", "")),
                           **base}
             summary["retry_fail"].append(eid)
+            _archive_resolution(review, eid, "补判", "补判判失败", now, now,
+                                "进拒绝", extra={"补判判定": rj.get("verdict", ""),
+                                                "原弃权原因": old_reason})
         else:                                 # 仍弃权:恢复双呈现,原因换新
             p_eps[eid] = {"判决": "通过", **base}
             r_eps[eid] = {"当前判决": "通过", "待裁决项": [TASK_CN],
