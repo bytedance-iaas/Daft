@@ -405,6 +405,49 @@ def _carryover_section(records: list) -> list:
     return sec
 
 
+def _sync_dataset_summary(files: dict) -> None:
+    """裁决应用后,把 passed.json 的 dataset 汇总块对回真实条目数。
+
+    2026-08-25 droid-50 实战复盘 ①:rejudge 剔了 5 条、passed.episodes 只剩
+    39,可 dataset.delivered 还写着 44 —— 报告页总览读的正是这个块,客户刚点完
+    执行回头一看数字没动,像没生效。汇总块是交付的活账本,谁改条目谁就得平账;
+    report.md 不动(它是那次跑批的历史快照,该保持原样)。
+
+    全部**从当前条目重算**而非增量加减 —— rejudge 可反复执行,幂等靠重算。
+    老交付没有 dataset 块/没有 delivered 字段就整个跳过:不占位、不猜。
+    「人工裁决」类的判废量取 reject 条目 `原因` 以「人工裁决」开头的计数
+    (弃用/判失败两条线落库时写的就是这个前缀);改标重判失败的条目原因是
+    机器判定文案,归机器类,不算在这里。
+    """
+    p = files.get("passed") or {}
+    d = p.get("dataset")
+    if not isinstance(d, dict) or "delivered" not in d:
+        return
+    delivered = len(p.get("episodes") or {})
+    if d.get("delivered") == delivered and not d.get("human_drop"):
+        return                                  # 没动过条目,账本原样
+    d["delivered"] = delivered
+    n_input = d.get("input_episodes")
+    dedup = d.get("dedup_removed") or 0
+    if isinstance(n_input, int):
+        d["verdict_drop"] = n_input - (dedup if isinstance(dedup, int) else 0)             - delivered
+    n_human = sum(1 for e in (files.get("reject", {}).get("episodes") or {}).values()
+                  if str((e or {}).get("原因") or "").startswith("人工裁决"))
+    if n_human:
+        d["human_drop"] = n_human
+    else:
+        d.pop("human_drop", None)
+    ss = d.get("summary_stats")
+    if isinstance(ss, dict):
+        if "pass_rate_pct" in ss and isinstance(n_input, int) and n_input:
+            ss["pass_rate_pct"] = round(delivered * 100.0 / n_input, 1)
+        if "avg_soft_score" in ss:
+            scores = [e.get("综合软分") for e in (p.get("episodes") or {}).values()
+                      if isinstance(e.get("综合软分"), (int, float))]
+            if scores:
+                ss["avg_soft_score"] = round(sum(scores) / len(scores), 4)
+
+
 def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 rerun_fn: Callable | None = None) -> dict:
     """读裁决 → 重判(采纳条目)→ 更新交付。rerun_fn 注入(测试用假函数);
@@ -615,6 +658,7 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
         except Exception as e:  # noqa: BLE001  入账失败不影响重判结果
             print(f"[rejudge] ⚠️ 延时入账失败({type(e).__name__}: {e})", flush=True)
 
+    _sync_dataset_summary(files)
     for name, data in files.items():
         write_json(os.path.join(delivery, f"{name}.json"), data, default=str)
     with delivery_file(os.path.join(det, "rejudge_results.json")) as f:
