@@ -270,3 +270,39 @@ def test_eta_is_still_reported_when_there_is_real_time_left(capsys, monkeypatch)
         _progress_tick(k)
     last = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()][-1]
     assert "10/100" in last and "剩余 ~" in last and "收尾中" not in last
+
+
+def test_eta_suppressed_during_warmup(monkeypatch, capsys):
+    """复盘 ⑧:完成量不足总数 10%(下限 3)时不报「剩余」——并发段头几条的
+    全程平均速率严重失真(实测 1/49 报 ~57min,真实尾巴 4 分钟)。"""
+    from curation.pipeline import progress as pg
+    t = [1000.0]
+    monkeypatch.setattr(pg.time, "time", lambda: t[0]) if hasattr(pg, "time") else None
+    key = pg._progress_init("warmup-test", 49, "VLM 任务成败判定",
+                            min_interval_s=0.0)
+    st = pg._PROGRESS[key]
+    st["step"] = 1                          # 每条都打,便于断言
+    for n in range(1, 5):                   # 1..4 < ceil(49/10)=5 → 预热期
+        pg._progress_tick(key)
+    out = capsys.readouterr().out
+    assert out.count("已用") == 4 and "剩余" not in out and "收尾中" not in out
+    # 过了预热线(第 5 条起)就该报剩余(速率可算的前提下)
+    import time as _time
+    st["t0"] = _time.time() - 60            # 制造已用时长,速率>0
+    pg._progress_tick(key)
+    out2 = capsys.readouterr().out
+    assert "5/49" in out2 and ("剩余 ~" in out2 or "收尾中" in out2)
+
+
+def test_eta_warmup_floor_for_small_totals(capsys):
+    """总数小(10 条)时预热下限 3 条:1-2 条不报,第 3 条起报。"""
+    from curation.pipeline import progress as pg
+    import time as _time
+    key = pg._progress_init("warmup-small", 10, "小批", min_interval_s=0.0)
+    st = pg._PROGRESS[key]; st["step"] = 1
+    pg._progress_tick(key); pg._progress_tick(key)
+    assert "剩余" not in capsys.readouterr().out
+    st["t0"] = _time.time() - 30
+    pg._progress_tick(key)
+    out = capsys.readouterr().out
+    assert "剩余 ~" in out or "收尾中" in out   # 第 3 条起恢复报数(近段速率快时说收尾中)

@@ -1270,7 +1270,10 @@ def test_task_verdict_roundtrip_and_override(delivery):
     m = load_delivery(delivery)
     assert load_task_verdicts(m) == {}
     msg = record_task_verdict(m["path"], "ep000000", "判成功", note="看了视频,完成了")
-    assert "已记录" in msg and "rejudge" in msg and "1 分钟" in msg
+    # 文案 2026-08-25 改口(复盘 ④):首选指界面「执行裁决」按钮,CLI 放括号里;
+    # 不再对界面用户报"落 TOS 约 1 分钟"这类存储内部细节
+    assert "已记录" in msg and "执行裁决" in msg and "rejudge" in msg
+    assert "1 分钟" not in msg
     got = load_task_verdicts(m)
     assert got["ep000000"]["verdict"] == "判成功"
     assert got["ep000000"]["note"] == "看了视频,完成了" and got["ep000000"]["at"]

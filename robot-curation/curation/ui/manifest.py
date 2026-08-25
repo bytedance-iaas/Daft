@@ -77,6 +77,32 @@ def resolve_delivery(value, candidates) -> str:
     return hits[0] if len(hits) == 1 else v
 
 
+def data_sig(run_path: str, delivery_root: str = "") -> str:
+    """这次跑批的数据指纹:关键文件的 (mtime_ns, size) 串。
+
+    给「切回报告页要不要整页重载」当判据(2026-08-25 droid-50 实战复盘 ②):
+    CLI rejudge / 另一个会话改了交付后,页面里的 manifest 还是旧的,此前只能
+    ⌘R 整页刷新。指纹只 stat 不读内容,十来个文件微秒级,页签切换随手一算。
+    盖到的面 = manifest 会变的全部来源:三件套 JSON、三张裁决 CSV(新位置)、
+    技能归属 CSV(rejudge 的画像同步会改它)。文件不存在记 (0,0) —— "从无到有"
+    也是变化。
+    """
+    names = [os.path.join(run_path or "", n)
+             for n in ("passed.json", "review.json", "reject.json")]
+    names.append(os.path.join(run_path or "", "details", "skill_assignment.csv"))
+    hd = os.path.join(delivery_root or "", "human-decisions")
+    names += [os.path.join(hd, n) for n in
+              ("label_decisions.csv", "task_verdicts.csv", "reject_appeals.csv")]
+    parts = []
+    for p in names:
+        try:
+            st = os.stat(p)
+            parts.append(f"{st.st_mtime_ns}:{st.st_size}")
+        except OSError:
+            parts.append("0:0")
+    return ";".join(parts)
+
+
 def load_delivery(path: str) -> dict:
     """一次跑批的目录 → 统一 manifest。缺文件按空处理(老交付也能打开)。
 
@@ -142,9 +168,13 @@ def load_delivery(path: str) -> dict:
                   "review": {**_prov_slim(v),
                              "标注-画面分歧复核队列": audit_queue}}
 
+    _droot = delivery_root_of(path) if path else ""
     return {"path": path,
             # 交付根:裁决 CSV 与「运行」列表都挂在它下面(path 是**某一次跑批**)
-            "delivery": delivery_root_of(path) if path else "",
+            "delivery": _droot,
+            # 数据指纹:加载那一刻关键文件的 stat 快照,页签切换时对一下就知道
+            # 盘上变没变(见 data_sig)
+            "data_sig": data_sig(path, _droot) if path else "",
             "run": os.path.basename(path.rstrip("/")) if path else "",
             "load_error": err,
             "prov_files": prov_files,
@@ -311,6 +341,12 @@ def drop_breakdown(d: dict) -> tuple[list, str]:
     if not isinstance(hb, dict) or not isinstance(drop, int):
         return [], ""                    # 老交付没这个字段 → 不占位、不猜
     items = [(HARD_FAIL_CHECK_CN.get(k, k), n) for k, n in hb.items()]
+    # 人工裁决剔除的量(rejudge 平账时写回,见 pipeline/rejudge.py
+    # _sync_dataset_summary):不列这一行的话,人工剔掉的条数会落进下面的
+    # 差额兜底行,被冠上「质量分」的名头(2026-08-25 复盘 ①)。
+    hd = d.get("human_drop")
+    if isinstance(hd, int) and hd > 0:
+        items.append(("人工裁决", hd))
     judged = sum(n for _, n in items if isinstance(n, int))
     if judged > drop:
         return items, "overlap"
@@ -1144,6 +1180,34 @@ def discover_deliveries(root: str, max_depth: int = 3) -> list[str]:
         _walk(root, top, 1)
     _DISCOVER_CACHE[key] = (now + _DISCOVER_TTL_S, root_mt, list(out))
     return out
+
+
+def most_recent_delivery(root: str, paths: list | None = None) -> str:
+    """这些交付里最近跑过的那份(报告页下拉的默认选中,2026-08-25 复盘 ⑥)。
+
+    此前默认取扫描序第一个 = 字母序(aloha-10 永远排前),交付一多,用户每次
+    进报告页都要手动找刚跑完的那份。「质检批次」维度早已默认最近一次,交付
+    维度同理。新旧判据 = 最新跑批子目录名(时间戳串,字典序即时间序);老布局
+    (三件套直接在目录里)退回目录 mtime。只 listdir 一轮,几十份交付毫秒级。
+    """
+    from ..delivery import is_run_name
+    best, best_key = "", ("", 0.0)
+    for p in (paths if paths is not None else discover_deliveries(root)):
+        p = str(p)
+        try:
+            runs = [n for n in os.listdir(p) if is_run_name(n)]
+        except OSError:
+            continue
+        if runs:
+            key = (max(runs), 0.0)
+        else:
+            try:
+                key = ("", os.stat(p).st_mtime)
+            except OSError:
+                continue
+        if key > best_key:
+            best, best_key = p, key
+    return best
 
 
 def delivery_choices(root: str, paths: list | None = None) -> list:

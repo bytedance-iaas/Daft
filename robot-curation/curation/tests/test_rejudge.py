@@ -1103,3 +1103,71 @@ def test_v3_lerobot_curated_reexported_on_decisions(tmp_path, monkeypatch):
     assert ch["dataset"] == {"k": 1} and "ep000000" in ch["episodes"], "相机健康度旁挂文件要跟着走"
     assert not (curated / "stale").exists(), "旧包未被替换"
     assert json.load(open(curated / "meta" / "info.json"))["total_episodes"] == 3
+
+
+# ═════════ dataset 汇总块平账(2026-08-25 droid-50 实战复盘 ①)═════════
+
+def test_sync_dataset_summary_rebalances_after_drops():
+    """剔条目后 delivered/verdict_drop/human_drop/通过率全部对回真实条目数。"""
+    from curation.pipeline.rejudge import _sync_dataset_summary
+    files = {
+        "passed": {"dataset": {"input_episodes": 50, "dedup_removed": 0,
+                               "verdict_drop": 6, "delivered": 44,
+                               "hard_fail_breakdown": {"task_success": 5,
+                                                       "timestamp_check": 1},
+                               "summary_stats": {"pass_rate_pct": 88.0,
+                                                 "avg_soft_score": 0.9307}},
+                   "episodes": {f"ep{i:06d}": {"综合软分": 0.9}
+                                for i in range(39)}},
+        "review": {"episodes": {}},
+        "reject": {"episodes": {
+            **{f"epX{i}": {"原因": "人工裁决判失败(任务未完成)"} for i in range(4)},
+            "epY0": {"原因": "人工裁决弃用(标注-画面分歧复核)"},
+            "epZ0": {"原因": "未通过「任务成败判定」:取证仲裁"},
+        }},
+    }
+    _sync_dataset_summary(files)
+    d = files["passed"]["dataset"]
+    assert d["delivered"] == 39
+    assert d["verdict_drop"] == 11          # 50 - 0 - 39,账重新闭合
+    assert d["human_drop"] == 5             # 只数「人工裁决」前缀,机器判废不算
+    assert d["summary_stats"]["pass_rate_pct"] == 78.0
+    assert d["summary_stats"]["avg_soft_score"] == 0.9
+    # 幂等:重跑一遍数字一个不变(rejudge 可反复执行,平账靠重算不靠加减)
+    import copy
+    snap = copy.deepcopy(files["passed"]["dataset"])
+    _sync_dataset_summary(files)
+    assert files["passed"]["dataset"] == snap
+
+
+def test_sync_dataset_summary_skips_legacy_and_untouched():
+    """老交付(没有 dataset 块)整个跳过;没动过条目的交付账本原样。"""
+    from curation.pipeline.rejudge import _sync_dataset_summary
+    legacy = {"passed": {"episodes": {"a": {}}}, "review": {}, "reject": {}}
+    _sync_dataset_summary(legacy)
+    assert "dataset" not in legacy["passed"]
+    untouched = {"passed": {"dataset": {"input_episodes": 3, "verdict_drop": 1,
+                                        "delivered": 2},
+                            "episodes": {"a": {}, "b": {}}},
+                 "review": {}, "reject": {"episodes": {}}}
+    import copy
+    snap = copy.deepcopy(untouched)
+    _sync_dataset_summary(untouched)
+    assert untouched == snap
+
+
+def test_overview_breakdown_lists_human_drop_row():
+    """总览分解式带「人工裁决」行且等式闭合 —— 不列这行的话人工剔除量会落进
+    差额兜底行、被冠上「质量分」的名头(2026-08-25 复盘 ①)。"""
+    from curation.ui.manifest import drop_breakdown
+    d = {"verdict_drop": 11, "human_drop": 5,
+         "hard_fail_breakdown": {"task_success": 5, "timestamp_check": 1}}
+    items, mode = drop_breakdown(d)
+    assert mode == "decompose"
+    assert ("人工裁决", 5) in items
+    assert sum(n for _, n in items) == 11   # 机器 6 + 人工 5,不再有兜底差额行
+    # 反向:没有 human_drop 字段时不出现这一行(老交付/未裁决交付)
+    items2, _ = drop_breakdown({"verdict_drop": 6,
+                                "hard_fail_breakdown": {"task_success": 5,
+                                                        "timestamp_check": 1}})
+    assert all(lbl != "人工裁决" for lbl, _n in items2)

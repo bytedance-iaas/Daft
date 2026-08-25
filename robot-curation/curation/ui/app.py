@@ -31,7 +31,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        appeal_rows, application_counts_md, audit_clip_paths,
                        audit_note_md,
                        bucket_choices, bucket_ids, carryover_note_md,
-                       decision_trace_md,
+                       data_sig, decision_trace_md,
                        load_label_decisions, load_reject_appeals,
                        load_task_verdicts, merge_filter_mode,
                        merged_filter_choices, merged_hint_md,
@@ -51,7 +51,8 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        episode_list_view, episode_video_html,
                        latency_bar_html, latency_rows,
                        load_delivery, load_detail_table, load_perf,
-                       load_timeline, manual_hint_html, resolve_delivery,
+                       load_timeline, manual_hint_html, most_recent_delivery,
+                       resolve_delivery,
                        OVERVIEW_HEADERS, overview_markdown,
                        overview_rows, perf_backend_md,
                        perf_env_md, readings_text, skill_bar_html, skill_table_html,
@@ -1741,8 +1742,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     with gr.Column(scale=4, min_width=160):
                         # 根目录三态说明(没挂上/挂了但空/正常时空串不打扰)
                         # —— "下拉是空的"必须能分清是部署事故还是确实没数据
+                        # 直连桶实例首屏先说「正在扫描」(2026-08-25 复盘 ⑤):
+                        # 数据集清单要等 app.load 去桶里列,空窗期不说话像部署
+                        # 事故;挂载实例清单是启动时现成的,照旧走三态说明。
+                        # 覆盖它的 _root_changed 挂在下面的 app.load 上(同条件)。
+                        _direct0 = (str(runner.bucket_url(_buckets[0]))
+                                    .startswith("tos://")
+                                    and not runner.is_mount_backed(_data_root))
                         rn_ds_note = gr.Markdown(
-                            runner.dataset_root_note(_data_root),
+                            "正在扫描桶里的数据集…" if _direct0
+                            else runner.dataset_root_note(_data_root),
                             elem_id="rn-ds-note",
                             elem_classes=["field-note"])
                     with gr.Column(scale=2, min_width=120):
@@ -1800,7 +1809,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # allow_custom_value(2026-08-21):探活会把选项改成带「· 可用/暂不可用」
                         # 后缀的,同时在飞的事件若带着旧值回来,Gradio 6 会以"值不在选项里"
                         # 报红;旧值经 _backend_code 剥后缀照样解析到同一个预设,放行无害
+                        # 初始 info 挂「正在检测」(2026-08-25 复盘 ⑤):探活要
+                        # 出网 1-4s,此前这个框空着又不说话,首屏像坏了。探活回来
+                        # _do_probe 会连 info 一起换掉。
                         rn_backend = gr.Dropdown(choices=_backends, label="模型服务",
+                                                 info="正在检测各服务可用性…",
                                                  allow_custom_value=True)
                 with gr.Accordion("更多设置", open=False):
                     rn_cfg = gr.Textbox(label="配置文件(留空=默认)",
@@ -2386,8 +2399,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     _backend_map.update(runner.vlm_backend_labels(config_path))
                     ch, vals, _msg = _reprobe_options(
                         old, _backend_map, _backend_status(), [cur_run, cur_ex])
-                    return (gr.update(choices=ch, value=vals[0]),
-                            gr.update(choices=ch, value=vals[1]))
+                    # info=None:把首屏的「正在检测…」摘掉(结果已缀在选项上,
+                    # 说明行留着就是过时信息)
+                    return (gr.update(choices=ch, value=vals[0], info=None),
+                            gr.update(choices=ch, value=vals[1], info=None))
 
                 # 两个「检测可用性」按钮(跑质检侧 + 报告页执行裁决侧)的接线在
                 # 报告页那侧的组件建出来之后统一挂(见「人工裁决」页底部)——
@@ -2416,8 +2431,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     if not act:
                         return _tk_view("没有正在跑的任务")
                     runner.stop(_runs_root, act["run_id"])
-                    return _tk_view("已请求停止。中途停下的结果目录不完整,"
-                                    "重跑时请勾选「覆盖同名结果」")
+                    # 「覆盖同名结果」勾选框 2026-08-14 已撤(每次跑批各进各的
+                    # 时间戳子目录),这句提示却一直指着它(2026-08-25 droid-50
+                    # 实战复盘 ④):重跑根本不需要勾任何东西。
+                    return _tk_view("已请求停止。中途停下的这次跑批不完整;"
+                                    "直接同名重跑即可(每次跑批各存一份,互不覆盖),"
+                                    "清理不完整的旧批次可用 curation prune")
 
                 tk_stop.click(_tk_stop_click, None, _tk_outs)
                 # 轮询刷新:2 秒一次,只读两个小文件 + 日志尾部,开销可忽略。
@@ -2622,8 +2641,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 文案一句话就够(2026-08-13 用户:"这种文字根本不应该给客户看")。
                 # 「重新加载」按钮已撤:切到本页就重扫一次盘(见下面的 select),
                 # 让用户自己点刷新是上个时代的做法。
+                # 默认选中**最近跑过的**交付(2026-08-25 复盘 ⑥):字母序第一个
+                # (aloha-10 之类)与"用户此刻关心哪份"毫无关系;「质检批次」维度
+                # 早已默认最近一次,交付维度同理。
+                _pick0 = most_recent_delivery(delivery, choices) or choices[0]
                 picker = gr.Dropdown(choices=delivery_choices(delivery, choices),
-                                     value=choices[0], label="交付名",
+                                     value=_pick0, label="交付名",
                                      scale=1, interactive=True, allow_custom_value=True,
                                      info="新跑完的交付会自动出现在这里")
                 # 「质检批次」= 这份交付跑过的哪一次(每次跑批各进各的时间戳子目录,
@@ -2631,8 +2654,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 名词才是"选哪一份"。默认选中 latest 记的那次 **只是省一次
                 # 点击** —— 它不是"推荐用这份",条目上也只写事实(时间/本次处理条数/
                 # 有没有导出数据集),不写"抽查""完整"这种替客户下的判断。
-                run_pick = gr.Dropdown(choices=run_choices(choices[0]),
-                                       value=resolve_run(choices[0]), label="质检批次",
+                run_pick = gr.Dropdown(choices=run_choices(_pick0),
+                                       value=resolve_run(_pick0), label="质检批次",
                                        scale=1, interactive=True,
                                        info="每次跑批各存一份,默认打开最近一次")
             # 「有裁决尚未应用」提醒(2026-08-16 纯新增):裁决 CSV 跨跑批共用,
@@ -2724,7 +2747,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         qu_table = gr.Dataframe(
                             headers=QUEUE_HEADERS, show_label=False,
                             interactive=False, elem_id="audit-queue",
-                            max_height=420,  # 容器内滚动(表头吸顶),条数多不挤爆页面
+                            # 420→980(2026-08-25 复盘 ⑨):鼠标悬在表上滚轮只滚
+                            # 表内,页面滚动被劫持,典型队列(十几二十条)本可整表
+                            # 放下。980 够 ~16 行换行文本;超长队列仍内滚兜底。
+                            max_height=980,
                             wrap=True,       # 长文本换行显示全文,不截断
                             column_widths=["8%", "11%", "34%", "34%", "13%"])
                         # ── 合并裁决卡片(逐条翻页,翻页按 episode 走不再按队列走):
@@ -2844,7 +2870,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                                     label="被拒条目(点任意一行 → "
                                                           "下方复议卡片跳到该条)",
                                                     interactive=False, elem_id="appeal-queue",
-                                                    max_height=420, wrap=True,
+                                                    max_height=980, wrap=True,  # 同 qu_table(复盘 ⑨)
                                                     column_widths=["8%", "12%", "45%",
                                                                    "22%", "13%"])
                             with gr.Accordion("复议被拒条目(记草稿,可随时改)", open=True):
@@ -3185,6 +3211,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 冲掉)。新交付自动出现在列表里,点它即可查看,不必再点什么"刷新"。
                 手输的自定义路径原样保留在选项里,不会被刷掉。
 
+                ⚠️ **绝不回写 value**(2026-08-25 droid-50 实战复盘 ③):这里的
+                `cur` 是事件发起那一刻的前端快照。10 秒兜底 Timer 的请求在飞时
+                用户恰好换了交付,迟到的响应带着旧值落地,就把下拉显示拽回上一个
+                交付——内容已切、显示还停在旧名字,实测骗过一次。只更 choices,
+                value 一个字不碰,当前选中天然保留(allow_custom_value 下即使
+                不在新列表里也不丢)。
+
                 交付根指向直连桶时(2026-08-20 7862 模拟实例真机抓到):这里必须
                 去**桶里**重列,不能扫本地 —— 否则切一次页签就把桶清单盖回本地的
                 占位交付。网络失败原样不动(gr.update()),别把已有清单清空。
@@ -3199,12 +3232,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     items = [(n, s + "/" + n) for n in names]
                     if cur and cur not in [v for _l, v in items]:
                         items = items + [(str(cur), cur)]
-                    return gr.update(choices=items, value=cur)
+                    return gr.update(choices=items)
                 fresh = discover_deliveries(delivery)
                 items = delivery_choices(delivery, fresh)
                 if cur and cur not in fresh:
                     items = items + [(str(cur), cur)]
-                return gr.update(choices=items, value=cur)
+                return gr.update(choices=items)
 
             # ⚠️ 这一跳**必须真的接上**:_picker_tick 从写出来那天起就没被 tick 过
             # (2026-08-14 用户实见:跑完一批,报告页的交付下拉里死活没有它,
@@ -3221,6 +3254,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             report_tab.select(_picker_tick, [picker, rp_root, rp_rg], picker)
             if hasattr(gr, "Timer"):
                 gr.Timer(10.0).tick(_picker_tick, [picker, rp_root, rp_rg], picker)
+
+            def _stale_reload(m):
+                """切回报告页时对一下数据指纹,盘上变了就整页重载。
+
+                2026-08-25 droid-50 实战复盘 ②:CLI rejudge(或另一个会话)改了
+                交付,页面里还是旧账 —— 横幅说「尚未应用」、总览是旧数字,此前
+                只能 ⌘R 整页刷新。指纹(manifest.data_sig,只 stat 不读内容)
+                没变时全 no-op(state 槽回填原对象,别的槽 gr.update() 不动),
+                变了才走一遍 _load。与同一事件上的 _picker_tick 各管各的组件
+                (它只动 picker 的 choices,outs 里没有 picker),互不冲突。
+                """
+                if not isinstance(m, dict) or not m.get("path")                         or m.get("load_error"):
+                    return (m, *[gr.update() for _ in range(len(outs) - 1)])
+                if data_sig(m["path"], m.get("delivery", "")) == m.get("data_sig"):
+                    return (m, *[gr.update() for _ in range(len(outs) - 1)])
+                return _load(m["path"])
+
+            report_tab.select(_stale_reload, state, outs)
 
             def _ep_select(m, eid):
                 """点清单某条 → 记住它 + 换右侧详情。"""
