@@ -1197,9 +1197,9 @@ def test_label_decision_roundtrip(delivery):
     # 改判 = 追加,后写覆盖前写
     record_label_decision(m["path"], "ep000002", "维持原标注")
     assert load_label_decisions(m)["ep000002"]["decision"] == "维持原标注"
-    # 裁决结果列回显进表格
+    # 裁决结果列回显进表格(草稿带「(未应用)」后缀,2026-08-25 台账批次起)
     row = [r for r in merged_queue_rows(m) if r[0] == "2"][0]
-    assert row[-1] == "维持原标注"
+    assert row[-1] == "维持原标注(未应用)"
 
 
 def test_label_decision_guards(delivery):
@@ -1278,7 +1278,7 @@ def test_task_verdict_roundtrip_and_override(delivery):
     assert got["ep000000"]["verdict"] == "判成功"
     assert got["ep000000"]["note"] == "看了视频,完成了" and got["ep000000"]["at"]
     row = [r for r in merged_queue_rows(m) if r[0] == "0"][0]
-    assert row[-1] == "判成功"                                  # 回显进表格
+    assert row[-1] == "判成功(未应用)"    # 回显进表格,草稿后缀(2026-08-25)
     # 写老值「搁置」照收(2026-08-19 改名后的兼容),读回来是现行词
     record_task_verdict(m["path"], "ep000000", "搁置")          # 改判=追加,后写覆盖
     assert load_task_verdicts(m)["ep000000"]["verdict"] == "拿不准"
@@ -3726,3 +3726,182 @@ def test_execute_with_retry_checkbox_passes_flag(tmp_path, monkeypatch, delivery
     assert len(calls) == 2
     assert "--retry-abstained" in calls[0][1]
     assert "--retry-abstained" not in calls[1][1]
+
+
+# ───────── 人工裁决队列台账(2026-08-25 用户定):待办 + 已办结两堆合一 ─────────
+
+
+def _ledger_delivery(tmp_path):
+    """待办两条(ep0 成败弃权 / ep2 标注分歧)+ 台账两条(ep5 溯源派生 /
+    ep9 存档直存)+ 复议台账一条(ep7,不进主队列)。"""
+    d = tmp_path / "ledger"
+    d.mkdir()
+    (d / "passed.json").write_text(json.dumps({
+        "数据集": "x", "episodes": {
+            "ep000000": {"判决": "通过", "checks": {
+                "任务成败判定": {"结果": "弃权"}}},
+            "ep000002": {"判决": "通过", "checks": {}},
+            # 老交付形态:存档机制之前被 rejudge 搬走的条目,只有溯源块
+            "ep000005": {"判决": "通过(人工裁决)", "checks": {},
+                         "人工裁决": {"裁决": "判成功", "备注": "亲眼看的",
+                                      "裁决时间": "t5"}},
+            "ep000007": {"判决": "通过(人工复议)", "checks": {},
+                         "人工复议": {"复议结论": "捞回", "复议时间": "t7"}}}},
+        ensure_ascii=False))
+    (d / "review.json").write_text(json.dumps({
+        "待人工裁决总数": 1,
+        "episodes": {"ep000000": {"当前判决": "通过",
+                                  "待裁决项": ["任务成败判定"],
+                                  "弃权原因": {"任务成败判定": "渐变问询不可判"}}},
+        "标注-画面分歧复核队列": [{"id": "ep000002", "label": "open the door",
+                                   "caption": "close the door"}],
+        "已裁决存档": {"ep000009": {"线": "补判", "结论": "补判判失败",
+                                    "补判判定": "failure", "去向": "进拒绝",
+                                    "裁决时间": "t9", "应用时间": "t9"}}},
+        ensure_ascii=False))
+    (d / "reject.json").write_text(json.dumps({"被拒总数": 1, "episodes": {
+        "ep000009": {"判决": "拒绝", "原因": "未通过「任务成败判定」(弃权补判)",
+                     "checks": {}}}}, ensure_ascii=False))
+    return load_delivery(str(d))
+
+
+def test_adjudication_archive_merges_stored_and_derived(tmp_path):
+    """新交付读「已裁决存档」堆;老交付从 passed/reject 溯源块派生兜底
+    (droid-50 那批不重跑也能看全台账);同 id 存档为准。"""
+    m = _ledger_delivery(tmp_path)
+    arc = m["adjudication_archive"]
+    assert arc["ep000009"]["线"] == "补判" and "_derived" not in arc["ep000009"]
+    assert arc["ep000005"]["线"] == "成败" and arc["ep000005"]["_derived"] is True
+    assert arc["ep000005"]["结论"] == "判成功"
+    assert arc["ep000007"]["线"] == "复议" and arc["ep000007"]["结论"] == "捞回"
+    assert "ep000000" not in arc                    # 待裁的不算台账
+
+
+def test_merged_table_queue_orders_pending_then_archive(tmp_path):
+    """全部档行序:待裁置顶(原队列序)→ 台账垫底(episode 序);台账行纯文字
+    结论,复议线不进主队列(那是复议表的台账)。"""
+    from curation.ui.manifest import merged_table_queue
+    m = _ledger_delivery(tmp_path)
+    items = merged_table_queue(m)
+    assert [i["id"] for i in items] == ["ep000002", "ep000000",
+                                        "ep000005", "ep000009"]
+    assert [i["pending"] for i in items] == [True, True, False, False]
+    by = {i["id"]: i for i in items}
+    assert by["ep000005"]["result"] == "判成功"
+    assert by["ep000005"]["kind"] == "成败弃权"
+    assert by["ep000009"]["result"] == "补判判失败(failure)"
+    assert "ep000007" not in by                     # 复议台账不进主队列
+
+
+def test_merged_table_queue_status_filters(tmp_path):
+    """「仅待裁决 / 仅已裁决」两档:一档只剩欠结论的,另一档只剩办结的。"""
+    from curation.ui.manifest import (QUEUE_STATUS_DONE, QUEUE_STATUS_PENDING,
+                                      merged_queue_rows, merged_table_queue)
+    m = _ledger_delivery(tmp_path)
+    pend = merged_table_queue(m, QUEUE_STATUS_PENDING)
+    done = merged_table_queue(m, QUEUE_STATUS_DONE)
+    assert [i["id"] for i in pend] == ["ep000002", "ep000000"]
+    assert [i["id"] for i in done] == ["ep000005", "ep000009"]
+    assert [r[0] for r in merged_queue_rows(m, QUEUE_STATUS_DONE)] == ["5", "9"]
+
+
+def test_merged_table_queue_draft_gets_unapplied_suffix(tmp_path):
+    """草稿(已裁未执行)与办结的文字区分 =「(未应用)」后缀(判据与顶部横幅
+    同源 decisions_view;2026-08-25 用户否掉图标方案,只留文字)。裁完全部
+    问题的草稿条目归"已裁决"档但仍在待办清单(卡片还能改判)。"""
+    from curation.dataset_level.decisions import record_task_verdict
+    from curation.ui.manifest import (QUEUE_STATUS_DONE, QUEUE_STATUS_PENDING,
+                                      merged_table_queue)
+    m = _ledger_delivery(tmp_path)
+    record_task_verdict(m["path"], "ep000000", "判成功", note="")
+    m = load_delivery(m["path"])
+    it = [i for i in merged_table_queue(m) if i["id"] == "ep000000"][0]
+    assert it["result"] == "判成功(未应用)" and it["pending"] is False
+    assert "ep000000" not in [i["id"] for i in
+                              merged_table_queue(m, QUEUE_STATUS_PENDING)]
+    assert "ep000000" in [i["id"] for i in
+                          merged_table_queue(m, QUEUE_STATUS_DONE)]
+
+
+def test_appeal_rows_append_restored_ledger(tmp_path):
+    """复议表尾补捞回台账:在案被拒条目在前,台账行(条目已回交付)垫底留痕。"""
+    from curation.ui.manifest import appeal_rows
+    m = _ledger_delivery(tmp_path)
+    rows = appeal_rows(m)
+    assert rows and rows[-1][1] == "ep000007" and rows[-1][-1] == "捞回"
+
+
+def test_queue_filters_compose_and_counts_follow_status(tmp_path):
+    """两组筛选联动(2026-08-25 用户点名):①类型档计数 = 当前状态档下的表行数
+    (此前按待办卡片算,切「仅已裁决」还写 0);②表行 = 类型 × 状态交集;
+    ③带计数的显示标签直接传回也认(界面上值就是带计数的)。"""
+    from curation.ui.manifest import (QUEUE_STATUS_DONE, merged_filter_choices,
+                                      merged_table_queue, queue_status_choices,
+                                      queue_status_mode)
+    m = _ledger_delivery(tmp_path)
+    # 台账里 3 条成败线(ep5 派生/ep9 存档;ep7 复议不进主队列)+ 待办 2 条
+    assert merged_filter_choices(m) == ["全部(4)", "只看标注问题(1)",
+                                        "只看成败问题(3)"]
+    assert merged_filter_choices(m, QUEUE_STATUS_DONE) == \
+        ["全部(2)", "只看标注问题(0)", "只看成败问题(2)"]
+    assert queue_status_choices(m) == ["全部(4)", "仅待裁决(2)", "仅已裁决(2)"]
+    got = merged_table_queue(m, "仅已裁决(2)", "只看成败问题(2)")
+    assert [i["id"] for i in got] == ["ep000005", "ep000009"]
+    only_label = merged_table_queue(m, "全部(4)", "只看标注问题(1)")
+    assert [i["id"] for i in only_label] == ["ep000002"]
+    assert queue_status_mode("仅已裁决(2)") == QUEUE_STATUS_DONE
+    assert queue_status_mode("看不懂的") == "全部"
+
+
+def test_pending_bucket_reflects_recorded_conclusions(delivery):
+    """轨迹 ⏳ 桶如实(2026-08-25 用户点名:名叫「待人工」就得真欠着人):
+    给全结论(草稿即可)就离开 ⏳;「拿不准」不是结论;换成蓝条「已裁决
+    (未应用)」说明,不许一声不吭。判据与人工裁决队列同源。"""
+    from curation.ui.manifest import (BUCKET_PASSED, BUCKET_PENDING,
+                                      bucket_counts, episode_bucket,
+                                      manual_hint_html, question_pending_ids,
+                                      record_label_decision,
+                                      record_task_verdict)
+    m = load_delivery(delivery)
+    assert episode_bucket(m, "ep000000") == BUCKET_PENDING     # 成败弃权
+    assert episode_bucket(m, "ep000002") == BUCKET_PENDING     # 标注分歧
+    assert "待人工裁决" in manual_hint_html(m, "ep000000")
+    record_task_verdict(m["path"], "ep000000", "拿不准")        # 不是结论
+    assert episode_bucket(m, "ep000000") == BUCKET_PENDING
+    record_task_verdict(m["path"], "ep000000", "判成功")
+    record_label_decision(m["path"], "ep000002", "维持原标注")
+    assert episode_bucket(m, "ep000000") == BUCKET_PASSED
+    assert episode_bucket(m, "ep000002") == BUCKET_PASSED
+    assert bucket_counts(m)[BUCKET_PENDING] == 0
+    assert question_pending_ids(m) == set()
+    h = manual_hint_html(m, "ep000000")
+    assert "已裁决(未应用)" in h and "执行裁决" in h
+
+
+def test_kill_seals_episode_and_other_dim_abstain_stays(tmp_path):
+    """「弃用该条」封整条(② 被矛盾拦截,不再欠结论);其它维度的弃权
+    (同步等)人工裁决页管不了,给了成败结论也照旧 ⏳。"""
+    from curation.ui.manifest import (BUCKET_PASSED, BUCKET_PENDING,
+                                      episode_bucket, record_label_decision)
+    d = tmp_path / "seal"
+    d.mkdir()
+    (d / "passed.json").write_text(json.dumps({
+        "数据集": "x", "episodes": {
+            "ep000001": {"判决": "通过", "checks": {
+                "任务成败判定": {"结果": "弃权"}}},
+            "ep000002": {"判决": "通过", "checks": {
+                "视频-动作同步": {"结果": "弃权"}}}}}, ensure_ascii=False))
+    (d / "review.json").write_text(json.dumps({
+        "episodes": {
+            "ep000001": {"当前判决": "通过", "待裁决项": ["任务成败判定"],
+                         "弃权原因": {"任务成败判定": "渐变问询不可判"}},
+            "ep000002": {"当前判决": "通过", "待裁决项": ["视频-动作同步"],
+                         "弃权原因": {"视频-动作同步": "信号不足"}}},
+        "标注-画面分歧复核队列": [{"id": "ep000001", "label": "a",
+                                   "caption": "b"}]}, ensure_ascii=False))
+    m = load_delivery(str(d))
+    assert episode_bucket(m, "ep000001") == BUCKET_PENDING
+    assert episode_bucket(m, "ep000002") == BUCKET_PENDING
+    record_label_decision(m["path"], "ep000001", "弃用该条")
+    assert episode_bucket(m, "ep000001") == BUCKET_PASSED      # 封条,不欠了
+    assert episode_bucket(m, "ep000002") == BUCKET_PENDING     # 没人能替它答
