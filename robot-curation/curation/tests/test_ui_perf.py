@@ -234,7 +234,9 @@ def test_bucket_url_goes_direct_when_synthesized_root_missing(tmp_path, monkeypa
     assert runner.bucket_url(synth) == str(tmp_path / "yes")     # 目录在:原样白名单
     monkeypatch.delenv("TOS_BUCKET", raising=False)
     synth["datasets_path"] = str(tmp_path / "nope")
-    assert runner.bucket_url(synth) == str(tmp_path / "nope")    # 没桶:原样(说明行会报没挂上)
+    assert runner.bucket_url(synth) == ""    # 没桶+目录不在:留空(rerun 侧裸进入,2026-08-26)
+    synth["datasets_path"] = "tos://mybkt/ds"
+    assert runner.bucket_url(synth) == "tos://mybkt/ds"          # 显式 tos:// 原样保留
 
 
 def test_deployment_shape_note(tmp_path, monkeypatch):
@@ -505,3 +507,24 @@ def test_adjudication_queue_title_and_status_radio(tmp_path, monkeypatch):
     assert by_id["mg-status"]["label"] == "状态"
     assert by_id["mg-filter"]["label"] == "问题类型"     # 长解释句已删(要简洁)
     assert by_id["mg-status"]["choices"] == []           # 选项随交付在 _load 重建
+
+
+def test_rerun_shape_dead_path_default_left_empty(tmp_path, monkeypatch):
+    """rerun 侧的部署形态(2026-08-26 实测):helm 传了 --data-root /data/datasets
+    而 pod 里没这目录、TOS_BUCKET 也没有 → 裸进入「数据集目录」不许糊死路径,
+    值留空、placeholder 说话;深链填框逻辑独立不受影响。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    monkeypatch.delenv("TOS_BUCKET", raising=False)
+    monkeypatch.delenv("CURATION_TOS_MOUNT", raising=False)
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    monkeypatch.delenv("CURATION_DATA_ROOT", raising=False)
+    root = tmp_path / "deliveries"
+    root.mkdir()
+    app = build_app(str(root), data_root=str(tmp_path / "no" / "such" / "dir"))
+    cfg = json.loads(json.dumps(app.get_config_file(), default=str))
+    tin = next(c["props"] for c in cfg["components"]
+               if c["props"].get("label") == "数据集目录")
+    assert tin.get("value") in ("", None), \
+        f"死路径被糊进默认值:{tin.get('value')!r}"
+    assert tin.get("placeholder"), "值留空后 placeholder 必须在,不然框空得莫名其妙"

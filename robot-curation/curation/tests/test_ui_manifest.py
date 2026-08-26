@@ -1337,7 +1337,7 @@ def test_pending_counts_and_guidance_text(delivery):
     assert audit_pending_count(m) == 1 and task_pending_count(m) == 1
     assert merged_pending_count(m) == 2                     # 两张卡各有问题没答
     assert "1" in audit_note_md(m) and "人工裁决" in audit_note_md(m)
-    assert "**2** 条" in merged_hint_md(m)
+    assert merged_hint_md(m) == ""      # 进度行 2026-08-25 用户点名退役
     record_label_decision(m["path"], "ep000002", "维持原标注")
     assert audit_pending_count(m) == 0
     assert merged_pending_count(m) == 1                     # 标注卡答完,成败卡还在
@@ -3961,3 +3961,30 @@ def test_archived_row_result_prefers_unapplied_redecision(tmp_path):
     m = load_delivery(m["path"])
     it = [i for i in merged_table_queue(m) if i["id"] == "ep000005"][0]
     assert it["result"] == "判失败(未应用)"
+
+
+def test_banner_counts_episodes_and_items_separately(tmp_path):
+    """条/项双报(2026-08-25 用户定):双问题条目裁完 = 1 条(2 项),
+    横幅两级计数各归各,不再把项数冒充轨迹数。"""
+    from curation.dataset_level.decisions import (record_label_decision,
+                                                  record_task_verdict)
+    from curation.ui.manifest import unapplied_banner_md
+    d = tmp_path / "both2"
+    d.mkdir()
+    (d / "passed.json").write_text(json.dumps({
+        "数据集": "x", "episodes": {
+            "ep000007": {"判决": "通过", "checks": {
+                "任务成败判定": {"结果": "弃权"}}}}}, ensure_ascii=False))
+    (d / "review.json").write_text(json.dumps({
+        "episodes": {"ep000007": {"当前判决": "通过",
+                                  "待裁决项": ["任务成败判定"],
+                                  "弃权原因": {"任务成败判定": "r"}}},
+        "标注-画面分歧复核队列": [{"id": "ep000007", "label": "a",
+                                   "caption": "b"}]}, ensure_ascii=False))
+    m = load_delivery(str(d))
+    record_label_decision(m["path"], "ep000007", "采纳建议改标", new_label="b")
+    record_task_verdict(m["path"], "ep000007", "判成功")
+    banner = unapplied_banner_md(load_delivery(str(d)))
+    assert "已裁 1 条(2 项)" in banner
+    assert "待裁 0 条(0 项)" in banner
+    assert "**1 条(2 项)**尚未应用于交付" in banner

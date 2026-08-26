@@ -70,6 +70,32 @@
     term.onData((d) => {
       if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "input", data: d }));
     });
+    // mac 惯用快捷键(2026-08-27 用户要求):Cmd+←/→ 行首行尾、Opt+←/→ 按词跳、
+    // Cmd+Backspace 删到行首、Opt+Backspace 删一个词、Cmd+K 清屏。发的是 readline
+    // 控制序列,光标动作由 bash 完成。preventDefault 必须做:Cmd+← 的浏览器默认
+    // 动作是"后退",不拦会直接离开质检平台页面。
+    term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type !== "keydown") return true;
+      const cmd = ev.metaKey && !ev.ctrlKey && !ev.altKey;
+      const opt = ev.altKey && !ev.ctrlKey && !ev.metaKey;
+      if (cmd && (ev.key === "k" || ev.key === "K")) {
+        ev.preventDefault(); term.clear(); return false;
+      }
+      const seq =
+        cmd && ev.key === "ArrowLeft"  ? "\x01"  :   // 行首(Ctrl+A)
+        cmd && ev.key === "ArrowRight" ? "\x05"  :   // 行尾(Ctrl+E)
+        opt && ev.key === "ArrowLeft"  ? "\x1bb" :   // 左跳一词(ESC b)
+        opt && ev.key === "ArrowRight" ? "\x1bf" :   // 右跳一词(ESC f)
+        cmd && ev.key === "Backspace"  ? "\x15"  :   // 删到行首(Ctrl+U)
+        opt && ev.key === "Backspace"  ? "\x17"  :   // 删一个词(Ctrl+W)
+        null;
+      if (seq !== null) {
+        ev.preventDefault();
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "input", data: seq }));
+        return false;
+      }
+      return true;
+    });
     connect();
     window.addEventListener("resize", refit);
     // 页签来回切:容器宽度 0 ↔ N 的变化由 ResizeObserver 捕获 → 重新 fit + 上报尺寸

@@ -64,9 +64,34 @@ def _set_winsize(fd: int, rows: int, cols: int) -> None:
         pass
 
 
+#: 提示符配色:user@host 绿、路径蓝(仿 Ubuntu 默认;2026-08-26 用户要求
+#: 终端里 root@pod 一眼可辨)。
+PROMPT_PS1 = r"\[\e[1;32m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ "
+
+_rcfile_path: str | None = None
+
+
+def _rcfile() -> str:
+    """bash 的 --rcfile(进程内建一次,连接间复用):先照常吃系统/个人 rc,
+    最后定住彩色 PS1 —— rc 文件会无条件重设 PS1,只 export 会被盖掉。
+    /etc/profile 一并補上(不再用 -l 登录壳,由这里保平)。"""
+    global _rcfile_path
+    if _rcfile_path is None or not os.path.exists(_rcfile_path):
+        import tempfile
+        fd, path = tempfile.mkstemp(prefix="curation-term-rc.", suffix=".sh")
+        with os.fdopen(fd, "w") as f:
+            f.write("[ -f /etc/profile ] && . /etc/profile\n"
+                    "[ -f ~/.bashrc ] && . ~/.bashrc\n"
+                    f"PS1='{PROMPT_PS1}'\n")
+        _rcfile_path = path
+    return _rcfile_path
+
+
 def _spawn_pty() -> tuple[int, int]:
     """forkpty 起一个交互式 shell,返回 (子进程 pid, PTY master fd)。"""
     shell, workdir = resolve_shell(), resolve_workdir()
+    argv = ([shell, "--rcfile", _rcfile()] if shell.endswith("bash")
+            else [shell])                           # rcfile 要在 fork 前写好
     pid, master_fd = os.forkpty()
     if pid == 0:                                    # 子进程:立刻 exec 掉,不碰父进程状态
         try:
@@ -75,7 +100,7 @@ def _spawn_pty() -> tuple[int, int]:
             pass
         os.environ.setdefault("TERM", "xterm-256color")
         try:
-            os.execvp(shell, [shell, "-l"] if shell.endswith("bash") else [shell])
+            os.execvp(shell, argv)
         except Exception:                           # noqa: BLE001 — exec 失败必须直接死
             pass
         os._exit(127)
