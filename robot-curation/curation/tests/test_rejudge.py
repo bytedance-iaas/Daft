@@ -540,7 +540,7 @@ def test_run_rejudge_closing_reports_second_round(tmp_path):
                                   "detail": "{}"}
     s = run_rejudge(str(tmp_path), "/unused", {}, rerun_fn=fake)
     assert s["adopted_review"] == ["epB"]
-    assert "本轮处理 1 条" in s["closing"]
+    assert "本轮处理 1 条轨迹的 1 项裁决" in s["closing"]   # 条/项双报(2026-08-26)
     assert "1 条重判后仍判不出" in s["closing"] and "待你裁决" in s["closing"]
     # 没有第二轮时也要报账,但不许喊狼来了
     s2 = run_rejudge(str(tmp_path), "/unused", {},

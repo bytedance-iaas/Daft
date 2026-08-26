@@ -793,9 +793,12 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
 
     # 收尾报账(2026-08-16 用户点名):改标重判后仍判不出的条目会掉回「待你裁决」
     # 队列 —— 这里不明说,用户下次打开界面才自己发现还有第二轮。
+    # 条 = episode,项 = 裁决记录(2026-08-26 与横幅同口径:一条轨迹可有多项
+    # 裁决,此前只报"19 条裁决"会被读成 19 条轨迹 —— 用户点破的单位混用)
     n_applied = len(decisions) + len(verdicts) + len(appeals)
+    n_eps = len(set(decisions) | set(verdicts) | set(appeals))
     still = list(summary["adopted_review"])
-    closing = f"本轮处理 {n_applied} 条裁决"
+    closing = f"本轮处理 {n_eps} 条轨迹的 {n_applied} 项裁决"
     if retried:
         _n_undone = (len(summary.get("retry_abstain", []))
                      + len(summary.get("retry_skipped", [])))

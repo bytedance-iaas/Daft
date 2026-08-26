@@ -1155,9 +1155,17 @@ def question_pending_ids(m: dict) -> set:
     轨迹页 ⏳ 桶与人工裁决队列的待/已分档都以它为准 —— 名叫「待人工」就得
     真还欠着人)。「拿不准」不是结论;「弃用该条」封了整条(② 被矛盾拦截),
     啥都不欠。"""
+    return question_pending_scan(m)[0]
+
+
+def question_pending_scan(m: dict) -> tuple:
+    """(还欠结论的 episode 集合, 还没答的问题项数)。判据同 question_pending_ids
+    的 docstring;「项」= 一条 episode 上的一个问题的一个结论(2026-08-25 用户定:
+    条/项两级计数都要说清,一条 episode 可以有多项)。"""
     dec = load_label_decisions(m)
     ver = load_task_verdicts(m)
     out = set()
+    n_q = 0
     for it in merged_review_queue(m):
         eid = it["id"]
         d = dec.get(eid, {}).get("decision", "")
@@ -1169,7 +1177,8 @@ def question_pending_ids(m: dict) -> set:
                      in ("", VERDICT_HOLD))
         if a_pending or t_pending:
             out.add(eid)
-    return out
+            n_q += int(bool(a_pending)) + int(bool(t_pending))
+    return out, n_q
 
 
 def merged_pending_count(m: dict) -> int:
@@ -1178,18 +1187,12 @@ def merged_pending_count(m: dict) -> int:
 
 
 def merged_hint_md(m: dict) -> str:
-    """「待你裁决」标题下的进度行。空队列时明说没有,不留一块空白让人猜。"""
-    q = merged_review_queue(m)
-    if not q:
-        return "_本次没有待你裁决的条目(标注与成败,系统都给出了结论)。_"
-    n_both = sum(1 for it in q if it["audit"] is not None
-                 and it["task"] is not None)
-    lines = [f"共 **{len(q)}** 条需要你看,其中 **{merged_pending_count(m)}** 条"
-             "还有问题没答(「拿不准」算没答:它是「待定」不是结论)。"]
-    if n_both:
-        lines.append(f"其中 {n_both} 条标注与成败两个问题都有 —— 在同一张卡上"
-                     "一起答,视频只用看一遍。")
-    return "\n\n".join(lines)
+    """(退役,恒返回空串)曾是「待你裁决」标题下的进度行。2026-08-25 用户点名
+    删除:台账改版后它拿分歧名册的常驻人数当"需要你看的条数"念(名册条目裁完
+    也留册,4 条裁完仍报"共 4 条需要你看"),而待/已计数「状态」筛选档自带,
+    双问题合卡「待裁问题」列自带 —— 整行都是重复噪音。函数留壳:三处调用点
+    还拼着只读横幅,削发不削头。"""
+    return ""
 
 
 #: 合并卡片上成败问题(②)的档位 → (说明文案, 按钮是否可用)。
@@ -2045,11 +2048,20 @@ def unapplied_banner_md(m: dict) -> str:
     待裁(队列里还有问题没答的条目数)、未应用(已裁里没落地的)。只在有未应用
     时出现:它是警报不是仪表盘,待裁多少队列页自己会说。
     """
-    c = decision_status(m)["counts"]
+    st = decision_status(m)
+    c = st["counts"]
     if not c["unapplied"]:
         return ""
-    return (f"⚠️ 人工裁决:已裁 {c['total']} 条 · 待裁 {merged_pending_count(m)} 条 · "
-            f"**{c['unapplied']}** 条尚未应用于交付 —— 去「人工裁决」页点「执行裁决」。")
+    # 条 = episode 数,项 = 裁决记录/问题数(2026-08-25 用户定:两级都说清——
+    # 一条 episode 可有多项裁决,此前两种单位都叫"条",19 项被读成 19 条轨迹)
+    recs = st["records"]
+    done_eps = len({r["id"] for r in recs})
+    un_eps = len({r["id"] for r in recs if r["status"] == "unapplied"})
+    pend_eps, pend_q = question_pending_scan(m)
+    return (f"⚠️ 人工裁决:已裁 {done_eps} 条({c['total']} 项) · "
+            f"待裁 {len(pend_eps)} 条({pend_q} 项) · "
+            f"**{un_eps} 条({c['unapplied']} 项)**尚未应用于交付 —— "
+            f"去「人工裁决」页点「执行裁决」。")
 
 
 def carryover_note_md(m: dict) -> str:
