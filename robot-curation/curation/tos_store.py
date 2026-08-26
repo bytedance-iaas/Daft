@@ -281,6 +281,32 @@ class TosStore:
         return (int(getattr(out, "content_length", 0) or 0),
                 str(getattr(out, "etag", "") or "").strip('"'))
 
+    def list_dir(self, bucket: str, prefix: str):
+        """前缀下的**一层**内容 → (子目录名列表, [(文件名, 大小)])。
+
+        delimiter="/" 一次列一层(翻页翻到底),绝不递归枚举 —— 数据集根下
+        可能有几十万个对象。`curation ls` 用(2026-08-26):直连形态数据集
+        不落盘,终端里看源桶 / 交付桶就靠它。"""
+        p = prefix.strip("/") + "/" if prefix.strip("/") else ""
+        dirs: list = []
+        files: list = []
+        token = None
+        while True:
+            out = self._c.list_objects_type2(bucket, prefix=p, delimiter="/",
+                                             continuation_token=token,
+                                             max_keys=_LIST_PAGE)
+            for cp in getattr(out, "common_prefixes", None) or []:
+                name = str(getattr(cp, "prefix", ""))[len(p):].strip("/")
+                if name:
+                    dirs.append(name)
+            for obj in out.contents or []:
+                name = obj.key[len(p):]
+                if name:
+                    files.append((name, int(obj.size)))
+            if not getattr(out, "is_truncated", False):
+                return dirs, files
+            token = out.next_continuation_token
+
     def iter_common_prefixes(self, bucket: str, prefix: str):
         """前缀下**第一层**「子目录」名(delimiter="/" 的 common prefix)。
 

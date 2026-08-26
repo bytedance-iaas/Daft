@@ -10,7 +10,9 @@ import sys
 import pytest
 import yaml
 
-PUSHT = "/data03/hao/data/pusht"
+from curation.tests.conftest import real_dataset
+
+PUSHT = real_dataset("pusht")
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 pusht_needed = pytest.mark.skipif(
@@ -36,7 +38,12 @@ def cli_output(tmp_path_factory):
         capture_output=True, text=True, cwd=PROJECT_ROOT,
         env={**os.environ, "HF_HOME": "/data03/hao/.hf_home"})
     assert r.returncode == 0, f"CLI 失败:\n{r.stderr[-2000:]}"
-    return out_dir, r.stdout
+    # 2026-08-14 布局变更:产物落 <交付>/<时间戳>/;测试沉睡期间没跟上,
+    # 2026-08-26 复活时修正 —— 从 stdout 解析批次目录,三件套都在它下面
+    import re
+    m = re.search(r"本次跑批目录: (\S+)", r.stdout)
+    assert m, f"stdout 里找不到批次目录:\n{r.stdout[-1000:]}"
+    return m.group(1), r.stdout
 
 
 @pusht_needed

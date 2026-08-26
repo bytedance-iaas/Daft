@@ -28,15 +28,185 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no", "off")
 
 
+def _disp_w(s: str) -> int:
+    """终端显示宽度:东亚宽字符(中文/全角)按 2 列算。argparse 按字符数折行,
+    中文文案会被它低估一半宽度,窄终端下溢出硬折 —— 折行必须按这个宽度来。"""
+    import unicodedata
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in s)
+
+
+def _wrap_disp(text: str, width: int) -> list:
+    """按显示宽度贪心折行:中文逐字可断,英文单词/路径/URL 不拦腰断。"""
+    import re
+    out = []
+    for para in text.split("\n"):
+        line, lw = "", 0
+        # token = 连续 ASCII 可见串(单词/路径/选项名)| 空白 | 单个宽字符
+        for tok in re.findall(r"[\x21-\x7e]+|\s+|.", para):
+            tw = _disp_w(tok)
+            if lw + tw > width and line:
+                out.append(line.rstrip())
+                line, lw = "", 0
+                if tok.isspace():
+                    continue
+            line += tok
+            lw += tw
+        out.append(line.rstrip())
+    return out
+
+
+class _CjkHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """帮助文案的折行按显示宽度算(中文双宽);description/epilog 保留手工换行。
+    宽度跟终端走、顶格铺满,不设上限(2026-08-26 用户口味,别再加封顶)。"""
+
+    def _split_lines(self, text, width):
+        return [l for l in _wrap_disp(text, width) if l or len(_wrap_disp(text, width)) == 1]
+
+    def _fill_text(self, text, width, indent):
+        return "\n".join(indent + l for l in _wrap_disp(text, width - _disp_w(indent)))
+
+    def _format_action(self, action):
+        # 抄自 argparse.HelpFormatter._format_action,只把对齐改按显示宽度:
+        # 中文 metavar(如 --episodes 表达式)按字符数对齐会让右列漂几格、
+        # 尾巴溢出终端。放不下对齐列的,help 从下一行起头,永远对齐。
+        help_position = min(self._action_max_length + 2, self._max_help_position)
+        help_width = max(self._width - help_position, 11)
+        action_width = help_position - self._current_indent - 2
+        action_header = self._format_action_invocation(action)
+        if not action.help:
+            action_header = "%*s%s\n" % (self._current_indent, "", action_header)
+            indent_first = 0
+        elif _disp_w(action_header) <= action_width:
+            pad = action_width - _disp_w(action_header)
+            action_header = "%*s%s%*s  " % (self._current_indent, "",
+                                            action_header, pad, "")
+            indent_first = 0
+        else:
+            action_header = "%*s%s\n" % (self._current_indent, "", action_header)
+            indent_first = help_position
+        parts = [action_header]
+        if action.help and action.help.strip():
+            help_lines = self._split_lines(self._expand_help(action), help_width)
+            if help_lines:
+                parts.append("%*s%s\n" % (indent_first, "", help_lines[0]))
+                for line in help_lines[1:]:
+                    parts.append("%*s%s\n" % (help_position, "", line))
+        elif not action_header.endswith("\n"):
+            parts.append("\n")
+        for subaction in self._iter_indented_subactions(action):
+            parts.append(self._format_action(subaction))
+        return self._join_parts(parts)
+
+
+def _human_size(n: float) -> str:
+    for u in ("B", "KB", "MB", "GB"):
+        if n < 1024 or u == "GB":
+            return f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}"
+        n /= 1024
+    return f"{n:.1f} GB"
+
+
+#: ls 一层最多列多少个文件(目录不设限):交付/数据集目录一层几百个文件是常态,
+#: 几十万是事故,截断要说出省略了多少
+_LS_FILE_CAP = 200
+
+
+def _tos_err_line(e: Exception) -> str:
+    """TOS SDK 异常一行化说人话:SDK 的 str(e) 是整个响应字典(带 header/
+    request_id),终端上没法读。取 code/message,常见错配人话。"""
+    d = e.args[0] if getattr(e, "args", None) and isinstance(e.args[0], dict) else {}
+    code = getattr(e, "code", None) or d.get("code") or ""
+    msg = getattr(e, "message", None) or d.get("message") or ""
+    plain = {"NoSuchBucket": "桶不存在",
+             "AccessDenied": "本实例的 TOS 密钥没有这个桶的权限",
+             "NoSuchKey": "对象不存在"}.get(code)
+    if plain:
+        return f"{plain}({code})"
+    if code or msg:
+        return f"{code}{':' if code and msg else ''}{msg}"
+    return str(e)[:200]
+
+
+def _cmd_ls(path: str, region: str | None) -> int:
+    """列一层内容:tos:// 走直连 delimiter 列举,本地走 scandir。输出先目录后文件。"""
+    if str(path).startswith("tos://"):
+        from . import tos_store
+        try:
+            bucket, prefix = tos_store.parse_tos_url(path)
+        except Exception as e:  # noqa: BLE001 — URL 写法错要按输入错误报
+            print(f"[输入错误] {e}", file=sys.stderr)
+            return 2
+        try:
+            dirs, files = tos_store.make_store_for(bucket, region).list_dir(bucket, prefix)
+        except Exception as e:  # noqa: BLE001 — 网络/权限/桶名,统一如实报
+            print(f"[TOS 错误] 列不动 {path}:{_tos_err_line(e)}", file=sys.stderr)
+            return 1
+    else:
+        if not os.path.isdir(path):
+            print(f"[输入错误] {path} 不是目录", file=sys.stderr)
+            return 2
+        dirs, files = [], []
+        for e in sorted(os.scandir(path), key=lambda x: x.name):
+            if e.is_dir():
+                dirs.append(e.name)
+            else:
+                files.append((e.name, e.stat().st_size))
+    if not dirs and not files:
+        print("(空)")
+        return 0
+    for d in sorted(dirs):
+        print(d + "/")
+    for name, size in files[:_LS_FILE_CAP]:
+        print(f"{name}  {_human_size(size)}")
+    if len(files) > _LS_FILE_CAP:
+        print(f"……还有 {len(files) - _LS_FILE_CAP} 个文件未列出")
+    tail = f"共 {len(dirs)} 个目录、{len(files)} 个文件"
+    if files:
+        tail += f",文件合计 {_human_size(sum(s for _, s in files))}"
+    print(tail)
+    return 0
+
+
+def _dist_version() -> str:
+    """安装包的版本号(pyproject 单一来源,不另抄数字;开发树未安装时如实说不知道)。"""
+    try:
+        from importlib.metadata import version
+        return version("curation")
+    except Exception:
+        return "unknown"
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="curation",
-        description="机器人数据 curation 流水线:质检/清洗/组织,交付干净数据集+质检报告+技能画像",
+        description="机器人数据质检流水线:质检/清洗/组织,交付干净数据集+质检报告+技能画像",
+        epilog="每个子命令有详细帮助:curation <命令> --help\n"
+               "典型流程:curation run(质检)→ 界面上人工裁决 → curation rejudge(执行裁决)",
+        formatter_class=_CjkHelpFormatter,
+        add_help=False,
     )
+    p.add_argument("-h", "--help", action="help", help="显示本帮助并退出")
+    p.add_argument("--version", action="version", help="显示版本号并退出",
+                   version=f"curation {_dist_version()}")
     sub = p.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="端到端跑一遍 curation")
-    run.add_argument("--config", default=None, help="流水线 YAML 配置(缺省用 default.yaml)")
+    def _cmd(name: str, one_liner: str, detail: str | None = None):
+        # 顶层 help 是"选命令的目录",一条一句话;细节住在各命令自己的 --help 里
+        sp = sub.add_parser(name, help=one_liner, description=detail or one_liner,
+                            add_help=False,
+                            formatter_class=_CjkHelpFormatter)
+        sp.add_argument("-h", "--help", action="help", help="显示本命令的帮助并退出")
+        return sp
+
+    run = _cmd("run", "对一个数据集跑质检,产出交付数据集、质检报告与技能画像",
+               "对一个数据集端到端跑质检:六维检查、字节级精确去重、技能画像、"
+               "标注审计,产出交付数据集、质检报告与三份判决清单"
+               "(通过 / 拒绝 / 待裁决)。\n"
+               "每跑一次,在交付目录下新建一个以时间戳命名的批次目录"
+               "存放本次结果;之前的批次原样保留。")
+    run.add_argument("--config", default=None,
+                     help="这一次用你自己的流水线 YAML(叠加到出厂默认)。缺省读环境"
+                          "变量 CURATION_CONFIG 指的站点配置,部署里已配好,平时不用给")
     run.add_argument("--input", required=True,
                      help="输入数据集:本地目录,或 tos://桶/前缀(TOS 直读:LeRobot 数据集"
                           "不落本地盘,RRD 先暂存;地区用 --input-region)")
@@ -59,9 +229,12 @@ def build_parser() -> argparse.ArgumentParser:
                      help="只跑这些模块(逗号分隔,如 visual_quality,motion_quality;"
                           "含数据集级模块 skill_profile(技能画像)/dedup(精确去重))")
     run.add_argument("--skip", default=None, help="跳过这些模块(逗号分隔,与 --only 互斥)")
+    # UI 任务台的内部通道(「跑质检」页把任务编号传进来,让结果与任务对得上),
+    # 不是给人手填的 → help 藏起来(2026-08-26 参数审计):自由名(如 b1)会写出
+    # prune/latest/交付发现都不认的"幽灵批次"(_RUN_NAME_RE 只认时间戳打头),
+    # 下面在入口校验堵死这坑。原说明:本次跑批的子目录名,缺省按本地时间生成。
     run.add_argument("--run-name", default=None, metavar="子目录名",
-                     help="本次跑批的子目录名(缺省按本地时间生成 YYYYMMDD-HHMMSS);"
-                          "「跑质检」页发起时传的是那次任务的编号,好让结果与任务对得上")
+                     help=argparse.SUPPRESS)
     run.add_argument("--batch", action="store_true",
                      help="批处理:--input 指向含多个数据集的父目录,"
                           "逐个处理到 --output/<数据集名>/<时间戳>/")
@@ -81,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
                           "缺省读环境变量 CURATION_VLM_MODEL")
     run.add_argument("--vlm-api-key-env", default=os.environ.get("CURATION_VLM_API_KEY_ENV"),
                      metavar="环境变量名",
-                     help="存放 API Key 的环境变量**名**(托管端点用;密钥本身绝不进命令行)。"
+                     help="存放 API Key 的环境变量名(托管端点用;密钥本身不进命令行)。"
                           "缺省读 CURATION_VLM_API_KEY_ENV")
     run.add_argument("--vlm-backend", default=None, metavar="预设名",
                      help="一键切换 VLM 后端(端点/模型/密钥三元组整组换),预设定义在 "
@@ -90,13 +263,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--report-only", action="store_true",
                      help="只出报告,不导出数据集(单模块快查时省去重编码视频的时间)")
 
-    rj = sub.add_parser("rejudge",
-                        help="按人工裁决更新交付(三条线一起消化):标注分歧"
-                             "(human-decisions/label_decisions.csv,采纳改标的条目用新标注"
-                             "重跑任务成败检测)+ 任务成败裁决"
-                             "(human-decisions/task_verdicts.csv,不重判,以人的结论为准)"
-                             "+ 被拒复议(human-decisions/reject_appeals.csv,人判可用的"
-                             "条目从拒绝翻回通过并补回交付数据集)")
+    rj = _cmd("rejudge", "执行人工裁决:按裁决记录重判并落实到交付",
+              "按人工裁决更新交付,三类裁决一次消化:\n"
+              "· 标注分歧(human-decisions/label_decisions.csv):采纳改标的条目"
+              "用新标注重跑任务成败检测;\n"
+              "· 任务成败裁决(human-decisions/task_verdicts.csv):不重判,"
+              "以人的结论为准;\n"
+              "· 被拒复议(human-decisions/reject_appeals.csv):人判可用的条目"
+              "从“拒绝”翻回“通过”,并补回交付数据集。\n"
+              "技能画像只重排被裁决的这几条;要在已有技能体系里对全部轨迹"
+              "重新分类,用 reprofile。")
     rj.add_argument("--delivery", required=True,
                     help="要更新的那一次跑批目录(<交付目录>/<时间戳>/);"
                          "只给交付目录时按 latest 记的那次执行")
@@ -107,7 +283,9 @@ def build_parser() -> argparse.ArgumentParser:
     rj.add_argument("--delivery-region", default=None, metavar="地区",
                     help="--delivery 为 tos:// 时的桶地区(交付在桶里:先镜像到本地"
                          "执行,改动同步回桶;缺省按部署的 TOS_REGION)")
-    rj.add_argument("--config", default=None, help="流水线 YAML(缺省 default.yaml,须与原 run 一致)")
+    rj.add_argument("--config", default=None,
+                    help="流水线 YAML,须与原 run 一致(叠加到出厂默认;缺省读环境"
+                         "变量 CURATION_CONFIG 指的站点配置)")
     rj.add_argument("--vlm-backend", default=None, metavar="预设名",
                     help="重判用的 VLM 后端预设(同 run,如 ark / h20-32b);缺省跟随配置")
     rj.add_argument("--retry-abstained", action="store_true",
@@ -116,26 +294,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "弃权不重试(重试大概率同答案),仍走人工裁决。人工已裁的"
                          "以人为准,不重试")
 
-    rpf = sub.add_parser("reprofile",
-                         help="按「标注优先」方针重算一份交付的技能画像:归类文本改为"
-                              "原始标注优先(instruction 优先,无标注才用自产 caption),"
-                              "对交付里**已有的**技能体系纯文本重新分配。"
-                              "不重跑任何 VLM caption、不重新归纳体系、"
-                              "不碰任何成败判定结论;连跑两次第二次应报 0 条变化")
-    rpf.add_argument("--delivery", required=True,
-                     help="要重算的那一次跑批目录(<交付目录>/<时间戳>/);"
-                          "只给交付目录时按 latest 记的那次执行(同 rejudge)")
-    rpf.add_argument("--delivery-region", default=None, metavar="地区",
-                     help="--delivery 为 tos:// 时的桶地区(同 rejudge)")
-    rpf.add_argument("--config", default=None,
-                     help="流水线 YAML(仅用于「归不进体系时问一次 LLM 补漏」;"
-                          "没配 VLM 端点就诚实留「未归类」)")
-    rpf.add_argument("--vlm-backend", default=None, metavar="预设名",
-                     help="补漏用的 LLM 后端预设(同 run,如 ark / h20-32b);缺省跟随配置")
-
-    rp = sub.add_parser("review-page",
-                        help="生成静态审片站(索引一屏列全量 episode + 逐条多路视频页),"
-                             "落盘持久;由 UI 的 /review 路由服务(pod 重启不丢)")
+    rp = _cmd("review-page", "生成静态审片站(索引页 + 逐条多路视频页)",
+              "生成静态审片站:索引一屏列全量 episode,逐条页多路视频同看。"
+              "产物落盘持久,由质检平台的 /review 路由提供访问,服务重启不丢。")
     rp.add_argument("--input", required=True,
                     help="数据集目录(LeRobot v2/v3;RRD 本版本未开放)")
     rp.add_argument("--output", required=True,
@@ -144,14 +305,16 @@ def build_parser() -> argparse.ArgumentParser:
                     help="只做指定 episode(同 run:34,56 或 10-20,可混用);缺省全量")
     rp.add_argument("--max-episodes", type=int, default=None, help="只做前 N 条")
     rp.add_argument("--title", default=None, help="页面标题(缺省用数据集目录名)")
+    # RRD 能力 release 默认关(ingest.rrd_enabled),对普通用户这个参数是一堵墙
+    # → help 里藏起来(功能保留,开了 RRD 的部署照用);--help 只亮可靠的
+    # (2026-08-26 用户定的纪律)。原说明:采集帧率,RRD 无时间信息时必须给
+    # (如 so101 用 30);等价于 run 的 --set ingest.rrd_fps。
     rp.add_argument("--rrd-fps", type=float, default=None, metavar="帧率",
-                    help="仅 RRD 输入(本版本未开放):采集帧率。RRD 里没有时间信息时必须给"
-                         "(如 so101 用 30),数据自带帧时间戳时(如 bridge)不用管。"
-                         "等价于 run 的 --set ingest.rrd_fps")
+                    help=argparse.SUPPRESS)
 
-    pr = sub.add_parser("prune",
-                        help="列出一份交付下的历次跑批(时间/条数/占用),"
-                             "并按需删掉旧的几次;**默认只列不删**")
+    pr = _cmd("prune", "列出并按需清理一份交付下的历次跑批(默认只列不删)",
+              "列出一份交付下的历次跑批(时间 / 条数 / 占用),并按需删掉旧的几次。"
+              "默认只列不删;真删需要同时给 --keep-latest 与 --yes。")
     pr.add_argument("delivery", help="交付目录(如 /mnt/tos/deliveries/droid-200-full)")
     pr.add_argument("--keep-latest", type=int, default=None, metavar="N",
                     help="要删的是哪几次:留最新的 N 次,更早的删掉。"
@@ -159,9 +322,18 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--yes", action="store_true",
                     help="真的删(不加就只打印将要删什么;必须同时给 --keep-latest)")
 
-    fe = sub.add_parser("fetch",
-                        help="从数据来源站拉公开数据集进本站数据集根,下完即可直接跑质检"
-                             "(本地暂存下载 → 逐文件校验 → 顺序拷入,绝不让下载器直写 TOS)")
+    lsp = _cmd("ls", "列一个目录或 tos:// 地址下有什么(数据集桶 / 交付桶都能看)",
+               "列出本地目录或 tos://桶/前缀 下的一层内容:先目录后文件,文件带大小。"
+               "直连形态下数据集不落本地盘,在终端里看源数据集桶、交付桶里有什么,"
+               "就用它。凭证用本实例的 TOS 密钥,读不读得到由密钥权限决定。")
+    lsp.add_argument("path", metavar="地址", help="本地目录,或 tos://桶/前缀")
+    lsp.add_argument("--region", default=None, metavar="地区",
+                     help="tos:// 地址的桶地区(如 cn-beijing;缺省读 TOS_REGION,"
+                          "再从 TOS_ENDPOINT 推导)")
+
+    fe = _cmd("fetch", "从数据来源站拉公开数据集到本站数据集根",
+              "从数据来源站拉公开数据集进本站数据集根,下完即可直接跑质检。"
+              "下载先落本地暂存、逐文件校验后再顺序拷入,不直写 TOS。")
     fe.add_argument("--source", required=True, metavar="来源",
                     help="数据来源。目前可选:ai-infra  内网 HF 镜像缓存桶"
                          "(经 oniond 下载,同区直连);清单可在站点配置 fetch_sources 段扩充")
@@ -181,18 +353,21 @@ def build_parser() -> argparse.ArgumentParser:
     fe.add_argument("--config", default=None,
                     help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
 
-    be = sub.add_parser("backends", help="一次列出全部 VLM 后端预设的在线状态与服务端模型")
+    be = _cmd("backends", "列出全部模型服务预设的在线状态与服务端模型")
     be.add_argument("--config", default=None,
                     help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
     be.add_argument("--timeout", type=float, default=5.0, help="单端点探活超时秒数")
 
-    pb = sub.add_parser("public", help="列出可直接质检的公共数据集(站点配置 public_datasets 指的镜像桶)")
+    pb = _cmd("public", "列出可直接质检的公共数据集",
+              "列出可直接质检的公共数据集(站点配置 public_datasets 指的镜像桶)。")
     pb.add_argument("--config", default=None,
                     help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
     pb.add_argument("--json", action="store_true", help="按 JSON 输出(给脚本用)")
-    pb.add_argument("--refresh", action="store_true", help="忽略缓存,重读清单")
+    # 零测试零真机使用记录 → 藏(同上纪律);原说明:忽略缓存,重读清单。
+    pb.add_argument("--refresh", action="store_true", help=argparse.SUPPRESS)
 
-    ui = sub.add_parser("ui", help="质检台 Web UI(Gradio):只读渲染交付目录")
+    ui = _cmd("ui", "启动质检平台 Web 界面",
+              "启动质检平台 Web 界面:跑质检、看质检报告、人工裁决、执行裁决都在这里。")
     ui.add_argument("--delivery", required=True,
                     help="交付目录(或含多份交付的父目录,如 /mnt/tos/deliveries)")
     ui.add_argument("--config", default=None,
@@ -205,8 +380,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "路由(同端口、Basic 锁覆盖)。也可用环境变量 CURATION_REVIEW_DIR")
     ui.add_argument("--data-root", default=os.environ.get("CURATION_DATA_ROOT"),
                     help="数据集根目录(「跑质检」页只列这个根下的数据集,"
-                         "缺省 /mnt/tos/datasets)。⚠️ 面板**不接受任意路径输入**——"
-                         "自由路径框等于把整个容器的文件系统开给任何拿到 UI 密码的人。"
+                         "缺省 /mnt/tos/datasets)。面板只在这个根下选数据集,"
+                         "不接受任意路径输入(安全边界)。"
                          "也可用环境变量 CURATION_DATA_ROOT")
     ui.add_argument("--terminal", action="store_true", default=_env_flag("CURATION_TERMINAL"),
                     help="打开顶层「终端」页签(内嵌网页终端:xterm.js + 本服务的 "
@@ -471,10 +646,46 @@ def _sync_tos_delivery(sync, tag: str) -> int:
     return 0
 
 
+def _reprofile_parser() -> argparse.ArgumentParser:
+    """reprofile 的独立 parser(2026-08-27 用户定:对客户隐藏)。
+
+    它是方针变更日的运维工具:客户的正常闭环(质检→裁决→rejudge)走完后
+    reprofile 恒报 0 条变化,亮在 --help 里只会制造困惑 → 主 parser 里不注册
+    (help / usage / 错误提示的候选列表都不出现),main 入口按第一个词拦截,
+    功能与帮助原样保留(curation reprofile --help 仍有完整说明)。"""
+    p = argparse.ArgumentParser(
+        prog="curation reprofile",
+        description="在已有的技能体系里,按当前归类方针对交付的全部轨迹重新分配归属"
+                    "(归类文本标注优先:有原始标注用标注,没有才用已生成的 caption)。"
+                    "不重新生成 caption、不重新归纳体系、不改交付数据集、不碰成败"
+                    "判定;连跑两次,第二次报 0 条变化。\n"
+                    "与 rejudge 的区别一句话:rejudge 只重排被人工裁决的那几条"
+                    "(并把裁决落实到数据集);reprofile 无需裁决,对全部轨迹重排一遍。",
+        formatter_class=_CjkHelpFormatter, add_help=False)
+    p.add_argument("-h", "--help", action="help", help="显示本命令的帮助并退出")
+    p.add_argument("--delivery", required=True,
+                   help="要重算的那一次跑批目录(<交付目录>/<时间戳>/);"
+                        "只给交付目录时按 latest 记的那次执行(同 rejudge)")
+    p.add_argument("--delivery-region", default=None, metavar="地区",
+                   help="--delivery 为 tos:// 时的桶地区(同 rejudge)")
+    p.add_argument("--config", default=None,
+                   help="流水线 YAML(缺省读环境变量 CURATION_CONFIG;仅用于"
+                        "「归不进体系时问一次 LLM 补漏」,没配 VLM 端点就诚实留"
+                        "「未归类」)")
+    p.add_argument("--vlm-backend", default=None, metavar="预设名",
+                   help="补漏用的 LLM 后端预设(同 run,如 ark / h20-32b);缺省跟随配置")
+    return p
+
+
 def main(argv: list[str] | None = None) -> int:
     import os
     _tolerate_broken_log()
-    args = build_parser().parse_args(argv)
+    _argv = list(sys.argv[1:] if argv is None else argv)
+    if _argv[:1] == ["reprofile"]:
+        args = _reprofile_parser().parse_args(_argv[1:])
+        args.command = "reprofile"
+    else:
+        args = build_parser().parse_args(_argv)
     if args.command == "review-page":
         from .export.review_page import build_review_page
         from .ingest.rrd_reader import cleanup_video_cache, is_rrd_dataset
@@ -578,6 +789,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[reprofile] {summary['note']}")
         return _sync_tos_delivery(_sync, "reprofile")
 
+    if args.command == "ls":
+        return _cmd_ls(args.path, args.region)
+
     if args.command == "fetch":
         from .fetch import run_fetch
         from .pipeline.config import load_config
@@ -618,7 +832,12 @@ def main(argv: list[str] | None = None) -> int:
 
         # 跑批子目录名只算一次:--batch 下几个数据集共用同一个名字,一次点击的
         # 产物在各自交付里对得上号(`<交付>/<数据集>/20260814-074045/`)。
-        from .delivery import new_run_name
+        from .delivery import is_run_name, new_run_name
+        if args.run_name and not is_run_name(args.run_name):
+            print(f"[输入错误] --run-name {args.run_name!r} 不是合法批次名:必须以"
+                  "时间戳打头(YYYYMMDD-HHMMSS,可带 -后缀),否则清理/最新批次"
+                  "解析都不认它。留空即自动生成。", file=sys.stderr)
+            return 2
         run_name = args.run_name or new_run_name()
 
         # ── tos:// 直连(2026-08-20 融合自公开 PR#65):桶与前缀是运行时输入。
