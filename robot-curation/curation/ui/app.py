@@ -1626,8 +1626,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
     # theme/css/head 不在这里传:gradio 6 把它们从 Blocks() 挪到了 launch()/
     # mount_gradio_app()(传给 Blocks 只换来一条 UserWarning,值被丢掉)。见 presentation()。
-    with gr.Blocks(title="Robot Data Curation") as app:
-        gr.Markdown("# 机器人数据 Curation 质检台")
+    with gr.Blocks(title="机器人数据质检(Curation)平台") as app:
+        gr.Markdown("# 机器人数据质检(Curation)平台")
         # 顶层导航从左到右 =「跑质检 / 质检报告 / 终端」,默认落在**跑质检**
         # (2026-08-13 用户定:客户进来先看到能干活的面板;终端是排障用的,靠最右)。
         # terminal 关闭时终端页签整块不建 → 客户部署里看不到终端入口。
@@ -4006,6 +4006,17 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
     from fastapi.responses import PlainTextResponse
     from fastapi.staticfiles import StaticFiles
 
+    class _NoHeuristicCacheStatic(StaticFiles):
+        """term-static 必须带 no-cache(协商缓存):裸响应没有 Cache-Control 时
+        Chrome 走"启发式缓存",普通刷新可能根本不发请求——前端修了 bug 用户
+        刷新也拿不到(2026-08-27 快捷键上线时踩实)。no-cache ≠ 不缓存:每次
+        带 etag 问一声,没变走 304,变了才重下。"""
+
+        def file_response(self, *args, **kwargs):
+            resp = super().file_response(*args, **kwargs)
+            resp.headers["Cache-Control"] = "no-cache"
+            return resp
+
     from . import auth
 
     root = normalize_root_path(root_path)
@@ -4027,7 +4038,7 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
 
     if terminal:
         from . import terminal as term
-        api.mount(f"{root}/term-static", StaticFiles(directory=STATIC_DIR),
+        api.mount(f"{root}/term-static", _NoHeuristicCacheStatic(directory=STATIC_DIR),
                   name="term-static")
         api.add_api_websocket_route(f"{root}/ws/term", term.term_endpoint)
         log.info("终端:已开启(%s/ws/term,shell=%s,cwd=%s)",
@@ -4078,6 +4089,6 @@ def launch(delivery: str, config_path: str | None = None, host: str = "0.0.0.0",
                           review_dir=review_dir, data_root=data_root,
                           root_path=root_path)
     root = normalize_root_path(root_path)
-    log.info("质检台 UI 监听 http://%s:%s%s/(交付根目录 %s)",
+    log.info("质检平台 UI 监听 http://%s:%s%s/(交付根目录 %s)",
              host, port, root, delivery)
     uvicorn.run(app, host=host, port=port)

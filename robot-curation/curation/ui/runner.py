@@ -823,16 +823,23 @@ def bucket_url(b: dict) -> str:
     - 桶名+前缀齐全 → `tos://桶/前缀`(挂载快路径,对表能认);
     - 合成单桶(没配 tos_buckets):目录在 → datasets_path 原样(白名单精确匹配
       放行,不算自由路径);**目录不在且部署给了 TOS_BUCKET → `tos://TOS_BUCKET/
-      datasets` 走直连**(没挂载的实例,2026-08-20);两样都没有 → 原样。
+      datasets` 走直连**(没挂载的实例,2026-08-20);目录不在、桶也没有 →
+      **留空**(2026-08-26 用户定:rerun 侧实例裸进入实测——她的 helm 传了
+      `--data-root /data/datasets` 而 pod 里没这目录,把启动参数里的死路径
+      糊进框只会让人莫名其妙;留空让 placeholder 说话,深链填框逻辑独立不受
+      影响)。datasets_path 本身是 tos:// 的原样保留(那是用户显式给的直连
+      地址,不是死路径)。
     """
     if b.get("bucket") and b.get("tos_prefix") is not None:
         p = str(b["tos_prefix"]).strip("/")
         return f"tos://{b['bucket']}/{p}" if p else f"tos://{b['bucket']}"
     path = str(b.get("datasets_path") or "")
+    if path.startswith("tos://") or (path and os.path.isdir(path)):
+        return path
     bucket = os.environ.get("TOS_BUCKET", "").strip()
-    if path and not os.path.isdir(path) and bucket:
+    if path and bucket:
         return f"tos://{bucket}/datasets"
-    return path
+    return ""
 
 
 def resolve_root_input(value: str, buckets: list) -> dict:

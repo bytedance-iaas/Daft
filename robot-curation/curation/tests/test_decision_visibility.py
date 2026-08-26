@@ -281,8 +281,10 @@ def test_banner_three_counts(tmp_path):
     from curation.ui.manifest import unapplied_banner_md
     run = _mk_run(tmp_path, verdict_rows=f"epX,判成功,,{AT_OLD}\n")
     banner = unapplied_banner_md(_manifest(run))
-    assert "已裁 1 条" in banner and "待裁 1 条" in banner   # 队列 epX/epY,epX 已裁 → 待裁只剩 epY
-    assert "**1** 条尚未应用于交付" in banner and "执行裁决" in banner
+    # 2026-08-25 用户定版式升级:条(episode)与项(裁决记录/问题)双报——
+    # 一条 episode 可有多项裁决,单说"条"会把 19 项读成 19 条轨迹
+    assert "已裁 1 条(1 项)" in banner and "待裁 1 条(1 项)" in banner
+    assert "**1 条(1 项)**尚未应用于交付" in banner and "执行裁决" in banner
     run_rejudge(run, "/unused", {}, rerun_fn=None)      # 应用掉 → 提醒消失
     assert unapplied_banner_md(_manifest(run)) == ""
     # 应用了一部分、又添了新裁决:已裁 2 / 未应用 1,数字各归各
@@ -291,7 +293,7 @@ def test_banner_three_counts(tmp_path):
     (hd / "task_verdicts.csv").write_text(old + f"epY,判失败,,{AT_NEW}\n",
                                           encoding="utf-8")
     mixed = unapplied_banner_md(_manifest(run))
-    assert "已裁 2 条" in mixed and "**1** 条尚未应用于交付" in mixed
+    assert "已裁 2 条(2 项)" in mixed and "**1 条(1 项)**尚未应用于交付" in mixed
 
 
 def test_overview_reconciliation_table_gains_no_row(tmp_path):
