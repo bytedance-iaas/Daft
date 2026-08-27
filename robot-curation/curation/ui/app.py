@@ -1861,12 +1861,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 数据集清单要等 app.load 去桶里列,空窗期不说话像部署
                         # 事故;挂载实例清单是启动时现成的,照旧走三态说明。
                         # 覆盖它的 _root_changed 挂在下面的 app.load 上(同条件)。
-                        _direct0 = (str(runner.bucket_url(_buckets[0]))
-                                    .startswith("tos://")
+                        _burl0 = str(runner.bucket_url(_buckets[0]))
+                        _direct0 = (_burl0.startswith("tos://")
                                     and not runner.is_mount_backed(_data_root))
+                        # 留空形态(合成桶死路径,bucket_url 已判为空,2026-08-27):
+                        # 这种实例本来就没有本地目录,拿内部 fallback 路径去三态
+                        # 探测会报「没挂上,请检查部署」——对纯直连部署是错误诊断
+                        # (rerun 侧实例用户实报"莫名其妙")。改成指导语。
                         rn_ds_note = gr.Markdown(
                             "正在扫描桶里的数据集…" if _direct0
-                            else runner.dataset_root_note(_data_root),
+                            else ("填入 tos://桶名/目录 后回车,即可列出数据集"
+                                  if not _burl0
+                                  else runner.dataset_root_note(_data_root)),
                             elem_id="rn-ds-note",
                             elem_classes=["field-note"])
                     with gr.Column(scale=2, min_width=120):
@@ -2077,7 +2083,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                     直连列表是网络调用:异常一律变成说明行里的一句话,绝不让
                     Gradio 抛红框(客户看红框等于什么都没看见)。
+
+                    空值单独放行(2026-08-27 用户:7861 上清空框失焦就挨
+                    「⚠️还没填」——太敏感):空是编辑瞬态不是错误,给不带
+                    警告号的指导语;"没填就点开始质检"另有守门,不靠这里吓人。
                     """
+                    if not str(url or "").strip():
+                        return ("", gr.update(choices=[], value=[]),
+                                "填入 tos://桶名/目录 后回车,即可列出数据集")
                     try:
                         spec = runner.resolve_root_input(url, _buckets)
                     except ValueError as e:
@@ -2514,10 +2527,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     _backend_map.update(runner.vlm_backend_labels(config_path))
                     ch, vals, _msg = _reprobe_options(
                         old, _backend_map, _backend_status(), [cur_run, cur_ex])
-                    # info=None:把首屏的「正在检测…」摘掉(结果已缀在选项上,
-                    # 说明行留着就是过时信息)
-                    return (gr.update(choices=ch, value=vals[0], info=None),
-                            gr.update(choices=ch, value=vals[1], info=None))
+                    # info="" 摘掉首屏的「正在检测…」(结果已缀在选项上,说明行
+                    # 留着就是过时信息)。⚠️ 必须空串不能 None:gradio 6.9 把
+                    # update(info=None) 当"此字段不更新",提示永远摘不掉
+                    # (2026-08-27 用户截图抓出:选项已带「可用」而提示还挂着)
+                    return (gr.update(choices=ch, value=vals[0], info=""),
+                            gr.update(choices=ch, value=vals[1], info=""))
 
                 # 两个「检测可用性」按钮(跑质检侧 + 报告页执行裁决侧)的接线在
                 # 报告页那侧的组件建出来之后统一挂(见「人工裁决」页底部)——
@@ -3311,13 +3326,23 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             picker.input(_pick_delivery, picker, [run_pick, *outs])
             run_pick.input(_load, run_pick, outs)
 
-            def _rp_root_changed(url, region):
+            def _rp_root_changed(url, region, cur=None):
                 """交付根失焦/回车/切地区 → (交付下拉, 说明)。
 
                 本实例交付根(挂载)→ 现有扫描,行为与之前逐字节等价;陌生桶 →
                 tos 一层列交付。**只换选项不自动加载**(与 _picker_tick 同一条
                 纪律:内容重载会与用户当下的点击并发打架),用户点中哪份再镜像。
+
+                cur = 当前选中的交付(2026-08-27 用户实报:点了一下交付目录框
+                再点走,blur 触发重列,选中的交付名"消失"——每条路径都
+                value=None 是祸根)。重列后 cur 仍在新选项里就保住,不在才清。
                 """
+
+                def _keep(choices):
+                    vals = {c[1] if isinstance(c, (tuple, list)) else c
+                            for c in choices}
+                    return cur if cur in vals else None
+
                 _rp_src["region"] = str(region or "").strip()
                 s = str(url or "").strip().rstrip("/")
                 home = runner.home_output_url(_deliv_root).rstrip("/")
@@ -3326,8 +3351,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if not s or s == str(_deliv_root).rstrip("/") \
                         or (s == home and runner.is_mount_backed(_deliv_root)):
                     fresh = discover_deliveries(delivery)
-                    return (gr.update(choices=delivery_choices(delivery, fresh),
-                                      value=None), "")
+                    ch = delivery_choices(delivery, fresh)
+                    return gr.update(choices=ch, value=_keep(ch)), ""
                 if not s.startswith("tos://"):
                     return (gr.update(), "⚠️ 只认 tos://桶/前缀 形式的地址"
                             "(或本实例的交付根)")
@@ -3343,8 +3368,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if not names:
                     return (gr.update(choices=[], value=None),
                             "该前缀下没有列出任何交付(前缀打错?或桶里确实是空的)")
-                return (gr.update(choices=[(n, s + "/" + n) for n in names],
-                                  value=None),
+                ch = [(n, s + "/" + n) for n in names]
+                return (gr.update(choices=ch, value=_keep(ch)),
                         f"TOS 直连:{s}(打开一份交付时把报告与明细镜像到本地,"
                         "数据集本体不下载)")
 
@@ -3352,9 +3377,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     and runner.home_output_url(_deliv_root).startswith("tos://"):
                 # 没挂载的实例:交付默认在桶里,开门先把桶里的交付列出来
                 app.load(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
-            rp_root.blur(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
-            rp_root.submit(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
-            rp_rg.input(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
+            rp_root.blur(_rp_root_changed, [rp_root, rp_rg, picker], [picker, rp_note])
+            rp_root.submit(_rp_root_changed, [rp_root, rp_rg, picker], [picker, rp_note])
+            rp_rg.input(_rp_root_changed, [rp_root, rp_rg, picker], [picker, rp_note])
 
             def _borrow_report_root(tin, tin_rg, cur):
                 """没桶的实例收到深链:报告页的交付目录也借数据集所在的桶,并顺手

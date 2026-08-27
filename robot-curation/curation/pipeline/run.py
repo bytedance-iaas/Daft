@@ -391,6 +391,25 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
     return profile, caption_of, grouping_text_of, grouping_source_of, label_audit
 
 
+def _portable_source_path(input_dir: str) -> str:
+    """交付元数据里的「源数据集路径」:记**可移植坐标**,不记产地门牌号。
+
+    2026-08-27(rerun 侧实报后的写端根治):挂载实例上 --input 传的是
+    /mnt/tos/datasets/x 这种本地挂载路径,原样记进交付 → 换一台没有这块盘的
+    实例打开,回源(视频/rejudge)全断。挂载点之下且部署声明了挂载桶
+    (TOS_BUCKET)→ 记规范 tos://<桶>/<相对路径>;其余照旧记绝对路径。
+    读取端另有历史交付的映射兜底(ui/runner、ui/manifest)。"""
+    s = str(input_dir)
+    if s.startswith("tos://"):
+        return s
+    p = os.path.abspath(s)
+    mount = (os.environ.get("CURATION_TOS_MOUNT") or "/mnt/tos").rstrip("/")
+    bucket = (os.environ.get("TOS_BUCKET") or "").strip()
+    if bucket and p.startswith(mount + "/"):
+        return f"tos://{bucket}/{p[len(mount) + 1:]}"
+    return p
+
+
 def run_pipeline(
     config_path: str | None,
     input_dir: str,
@@ -830,12 +849,13 @@ def run_pipeline(
     # 的动作都得靠人再说一遍它在哪 —— rejudge 必须回源重读画面,UI 任务台想替用户
     # 自动回填就无从谈起;审片站认领也只能按名字模糊比对(同名不同库会错播)。
     # 记绝对路径,老交付没有这个键的地方一律 .get 兜底。
+    _src_path = _portable_source_path(input_dir)
     report = {"数据集": os.path.basename(input_dir.rstrip("/")), "机器人": _robot,
-              "源数据集路径": (input_dir if str(input_dir).startswith("tos://")
-                          else os.path.abspath(input_dir)),
-              # 直读桶时 rejudge 回源要同一个地区(2026-08-21);本地源留空
+              "源数据集路径": _src_path,
+              # 直读桶时 rejudge 回源要同一个地区(2026-08-21);本地源留空。
+              # 判据看**映射后的值**:挂载路径映射成 tos:// 的也要把地区记上
               "源数据集地区": (__import__("curation.ingest.dsfs", fromlist=["x"])
-                          .current_region() if str(input_dir).startswith("tos://")
+                          .current_region() if _src_path.startswith("tos://")
                           else ""),
               "生成时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
               "代码版本": _ver, **report}
