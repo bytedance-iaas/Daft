@@ -22,7 +22,8 @@
 "回调只 put 进队列 + 单个发送协程顺序出队",顺序有保证。
 
 ⚠️ 这是**一个真 shell**(与 `kubectl exec` 等价的权限)。路由只在 `--terminal`
-打开时才注册;公网暴露前必须配 Basic 鉴权(CURATION_UI_USER/PASSWORD)+ 网关鉴权。
+打开时才注册;公网暴露前必须配 Basic 鉴权(CURATION_UI_HTPASSWD_FILE 或
+CURATION_UI_USER/PASSWORD,见 auth.py)+ 网关鉴权。
 """
 from __future__ import annotations
 

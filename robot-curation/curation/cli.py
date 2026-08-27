@@ -387,8 +387,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="打开顶层「终端」页签(内嵌网页终端:xterm.js + 本服务的 "
                          "/ws/term,与 UI 同端口同鉴权)。不传(或 CURATION_TERMINAL 未设)"
                          "则页签不渲染、/ws/term 路由不注册。"
-                         "⚠️ 这是一个真 shell,公网暴露前必须配 "
-                         "CURATION_UI_USER/CURATION_UI_PASSWORD + 网关鉴权")
+                         "⚠️ 这是一个真 shell,公网暴露前必须配鉴权:"
+                         "CURATION_UI_HTPASSWD_FILE(htpasswd 多用户,推荐)或 "
+                         "CURATION_UI_USER/CURATION_UI_PASSWORD(单用户),"
+                         "并在网关上再加一层")
     ui.add_argument("--root-path", default=os.environ.get("CURATION_UI_ROOT_PATH", ""),
                     help="UI 挂载前缀(如 /curation):与别的服务共用一个网关域名、"
                          "按路径分流时用;网关不剥前缀,全部路由都注册在前缀下。"

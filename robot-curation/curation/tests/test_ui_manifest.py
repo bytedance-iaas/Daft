@@ -481,6 +481,7 @@ def _paths(app) -> set:
 def clean_ui_env(monkeypatch):
     """UI 的开关全从 env 读缺省值——每个用例先把它们清干净,免得互相串味。"""
     for k in ("CURATION_TERMINAL", "CURATION_UI_USER", "CURATION_UI_PASSWORD",
+              "CURATION_UI_HTPASSWD_FILE",
               "CURATION_TERMINAL_WORKDIR", "CURATION_TERMINAL_SHELL"):
         monkeypatch.delenv(k, raising=False)
 
@@ -563,6 +564,80 @@ def test_basic_auth_not_enabled_when_half_configured(delivery, monkeypatch, clea
     app = create_asgi_app(delivery, terminal=False)
     with TestClient(app) as c:
         assert c.get("/").status_code == 200
+
+
+def _write_htpasswd(tmp_path, entries) -> str:
+    """entries: (user, password) 列表,apr1 哈希(纯标准库,测试不依赖 openssl/bcrypt)。"""
+    from curation.ui.auth import _apr1
+    lines = [f"{u}:{_apr1(p, 'saltsalt')}" for u, p in entries]
+    f = tmp_path / "htpasswd"
+    f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(f)
+
+
+def test_htpasswd_auth_multiuser(delivery, tmp_path, monkeypatch, clean_ui_env):
+    """htpasswd 模式:同一份账号表多用户皆可登录,错密码/陌生用户 401,/healthz 豁免。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    monkeypatch.setenv("CURATION_UI_HTPASSWD_FILE",
+                       _write_htpasswd(tmp_path, [("alice", "pwd123"), ("bob", "pwd456")]))
+    app = create_asgi_app(delivery, terminal=False)
+    with TestClient(app) as c:
+        assert c.get("/").status_code == 401
+        assert c.get("/healthz").status_code == 200
+        assert c.get("/", auth=("alice", "pwd123")).status_code == 200
+        assert c.get("/", auth=("bob", "pwd456")).status_code == 200
+        assert c.get("/", auth=("alice", "pwd456")).status_code == 401   # 串号
+        assert c.get("/", auth=("carol", "pwd123")).status_code == 401   # 不在表里
+
+
+def test_htpasswd_bcrypt_hash(delivery, tmp_path, monkeypatch, clean_ui_env):
+    """bcrypt 哈希($2y$,htpasswd -B 的缺省)也认 —— 生产账号表就是这种。"""
+    pytest.importorskip("gradio")
+    bcrypt = pytest.importorskip("bcrypt")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    hashed = bcrypt.hashpw(b"pwd123", bcrypt.gensalt(rounds=4)).decode()
+    f = tmp_path / "htpasswd"
+    f.write_text(f"alice:{hashed}\n", encoding="utf-8")
+    monkeypatch.setenv("CURATION_UI_HTPASSWD_FILE", str(f))
+    app = create_asgi_app(delivery, terminal=False)
+    with TestClient(app) as c:
+        assert c.get("/", auth=("alice", "pwd123")).status_code == 200
+        assert c.get("/", auth=("alice", "wrong")).status_code == 401
+
+
+def test_htpasswd_wins_over_single_user_env(delivery, tmp_path, monkeypatch, clean_ui_env):
+    """两种模式都配时 htpasswd 优先:旧的单用户凭证不再放行(一套账号表说了算)。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    monkeypatch.setenv("CURATION_UI_HTPASSWD_FILE",
+                       _write_htpasswd(tmp_path, [("alice", "pwd123")]))
+    monkeypatch.setenv("CURATION_UI_USER", "demo")
+    monkeypatch.setenv("CURATION_UI_PASSWORD", "s3cret")
+    app = create_asgi_app(delivery, terminal=False)
+    with TestClient(app) as c:
+        assert c.get("/", auth=("demo", "s3cret")).status_code == 401
+        assert c.get("/", auth=("alice", "pwd123")).status_code == 200
+
+
+def test_htpasswd_fail_closed_on_bad_file(delivery, tmp_path, monkeypatch, clean_ui_env):
+    """配了 htpasswd 但文件缺失/无可用行 = 锁死全部请求(探针除外),绝不静默裸奔。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    from curation.ui.app import create_asgi_app
+    monkeypatch.setenv("CURATION_UI_HTPASSWD_FILE", str(tmp_path / "no-such-file"))
+    app = create_asgi_app(delivery, terminal=False)
+    with TestClient(app) as c:
+        assert c.get("/").status_code == 401
+        assert c.get("/", auth=("alice", "pwd123")).status_code == 401
+        assert c.get("/healthz").status_code == 200
 
 
 def _read_until(ws, needle: bytes, times: int = 1, timeout: float = 20.0) -> bytes:
@@ -3263,6 +3338,20 @@ def test_dropdown_overlay_script_is_actually_injected():
     from curation.ui.app import _DROPDOWN_JS, presentation
 
     assert _DROPDOWN_JS in presentation()["head"]
+
+
+def test_favicon_link_injected_with_root_prefix():
+    """icon 的 <link> 必须自己注入且带挂载前缀 —— gradio 只服务 {root}/favicon.ico
+    不写 link 标签,浏览器会回退取域名根的 /favicon.ico,共享域名下那是 rerun
+    viewer 的图标(2026-08-27 线上实测,标签页顶着别家 logo)。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import presentation
+
+    assert '<link rel="icon" type="image/png" href="/curation/favicon.ico">' \
+        in presentation(root="/curation")["head"]
+    # 挂根路径时前缀为空,href 正好落在域名根,与浏览器回退路径重合,无害
+    assert '<link rel="icon" type="image/png" href="/favicon.ico">' \
+        in presentation()["head"]
 
 
 # ───────── 质检总览合成一张表(2026-08-13 用户点名)─────────

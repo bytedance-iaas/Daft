@@ -21,3 +21,5 @@ rerun-sdk==0.35.0       # RRD 输入格式的读/写(ingest/rrd_reader + export/
 websockets==15.0.1      # uvicorn 的 WebSocket 实现(内嵌终端 /ws/term 必需)。
                         # ⚠️ gradio 只带 uvicorn 不带它,缺了 uvicorn 会把 Upgrade 请求
                         # 直接判 404("Unsupported upgrade request"),终端页签必黑屏。
+bcrypt==4.3.0           # UI 鉴权的 htpasswd 多用户模式:核验 bcrypt 哈希($2y$,
+                        # htpasswd -B 的缺省输出)。apr1 是纯标准库实现,不需要它。
