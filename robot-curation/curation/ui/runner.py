@@ -2363,7 +2363,42 @@ def source_dataset_of(delivery_dir: str) -> str | None:
     src = str(p.get("源数据集路径") or "").strip()
     if src.startswith("tos://"):
         return src                      # 直读桶(2026-08-21):读端自己会读,不用在本地
+    if src and not os.path.isdir(src):
+        # 跨机可移植回退(2026-08-27,rerun 侧实报):挂载实例产的交付记的是
+        # 本地挂载路径(/mnt/tos/datasets/x),直连实例打开时该路径不存在,
+        # 被拒条目回源取视频全军覆没。交付若是从桶镜像来的(缓存根有
+        # .tos-origin.json),按同桶映射试 tos://<来源桶>/<挂载点后的相对路径>,
+        # meta/info.json 真读得到才用 —— 验不过维持"找不到",绝不猜。
+        cand = _bucket_mapped_source(delivery_dir, src)
+        if cand:
+            return cand
     return src if src and os.path.isdir(src) else None
+
+
+def _bucket_mapped_source(delivery_dir: str, src: str) -> str | None:
+    """本地源路径 → 来源桶里的对应 tos:// 地址(验证过存在才返回)。"""
+    from ..delivery import delivery_root_of
+    from ..tos_store import parse_tos_url
+    origin = _read_json(os.path.join(delivery_root_of(delivery_dir),
+                                     TOS_ORIGIN_NAME))
+    durl = str((origin or {}).get("delivery_url") or "")
+    if not durl.startswith("tos://"):
+        return None
+    try:
+        bucket, _ = parse_tos_url(durl)
+    except Exception:  # noqa: BLE001 origin 文件坏了按没有算
+        return None
+    mount = (os.environ.get("CURATION_TOS_MOUNT") or "/mnt/tos").rstrip("/")
+    if not src.startswith(mount + "/"):
+        return None
+    cand = f"tos://{bucket}/{src[len(mount) + 1:]}"
+    try:
+        from ..ingest import dsfs
+        if dsfs.exists(dsfs.join(cand, "meta", "info.json")):
+            return cand
+    except Exception:  # noqa: BLE001 网络/权限失败=验不过
+        return None
+    return None
 
 
 def source_region_of(delivery_dir: str) -> str | None:

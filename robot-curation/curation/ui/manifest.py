@@ -2743,9 +2743,15 @@ def _file_url(path: str) -> str:
     带 ?v=<mtime> 版本号:重画曲线是原地重写同名 PNG,FSX 重写有短暂读不到的
     空窗,页面赶上空窗会把破图缓存住(2026-08-07 用户实见 ep1/ep2 空白)。
     mtime 进 URL 后,文件一变 URL 就变,缓存天然失效。
+
+    tos:// 路径(2026-08-27 源数据集档跨机可移植)→ 现签预签名 https,
+    浏览器直连桶取流,不过 gradio 文件路由(也就天然不吃网关前缀的路由亏)。
     """
     from urllib.parse import quote
     p = str(path)
+    if p.startswith("tos://"):
+        from ..ingest import dsfs
+        return dsfs.media_source(p)
     try:
         ver = f"?v={int(os.stat(p).st_mtime)}"
     except OSError:
@@ -3252,25 +3258,74 @@ def source_video_paths(m: dict, eid: str,
     curated_video_paths 同一条规矩。
     """
     root, name = delivery_source_dataset(m)
-    # ⚠️ 交付的 run.json/passed.json **只记数据集名**、不记路径(见
-    # delivery_source_dataset 的注释),所以光靠交付自己解析不出源目录 ——
-    # 那样这条兜底路对绝大多数交付都是空的,等于没做(2026-08-19 实测:
-    # debug 交付的 source_dataset 就是 None)。
     # 用界面已知的「数据集根目录」把名字还原成路径:名字就是源目录名。
     if (not root or not os.path.isdir(root)) and data_root and name:
         cand = os.path.join(str(data_root), name)
         root = cand if os.path.isdir(cand) else root
     if not root or not os.path.isdir(root):
+        # 跨机可移植(2026-08-27,rerun 侧实报"所有条目都没视频"):直连打开
+        # 的交付,交付内视频被懒镜像刻意跳过、本机又没有源数据集目录 ——
+        # 交付自己记的「源数据集路径」是最后的线索:本机存在直接用;是产地
+        # 挂载路径且交付来自桶镜像(缓存根有 .tos-origin.json)→ 按同桶映射
+        # 成 tos://,meta 验证过才用。
+        root = _portable_source_root(m) or root
+    if not root:
+        return []
+    num = "".join(ch for ch in str(eid) if ch.isdigit())
+    if not num:
+        return []
+    if str(root).startswith("tos://"):
+        from ..ingest import dsfs
+        ver = str((dsfs.read_json(dsfs.join(root, "meta", "info.json"))
+                   or {}).get("codebase_version") or "")
+        if not ver.startswith("v2"):
+            return []
+        return sorted(dsfs.glob(dsfs.join(root, "videos", "chunk-*", "*",
+                                          f"episode_{int(num):06d}.mp4")))
+    if not os.path.isdir(root):
         return []
     ver = str(_load_json(os.path.join(root, "meta", "info.json")
                          ).get("codebase_version") or "")
     if not ver.startswith("v2"):
         return []
-    num = "".join(ch for ch in str(eid) if ch.isdigit())
-    if not num:
-        return []
     return sorted(glob.glob(os.path.join(root, "videos", "chunk-*", "*",
                                          f"episode_{int(num):06d}.mp4")))
+
+
+def _portable_source_root(m: dict) -> str | None:
+    """交付记录的「源数据集路径」→ 本机可用的源根(本地路径或 tos:// URL)。
+
+    与 runner._bucket_mapped_source 同一套判据(那边给 rejudge 回填用,这边
+    给视频档用;manifest 不 import runner,方向相反)。验不过返回 None,不猜。
+    """
+    src = str(_load_json(os.path.join(m.get("path") or "", "passed.json")
+                         ).get("源数据集路径") or "").strip()
+    if not src:
+        return None
+    if src.startswith("tos://") or os.path.isdir(src):
+        return src
+    from ..delivery import delivery_root_of
+    from ..tos_store import ORIGIN_NAME, parse_tos_url
+    origin = _load_json(os.path.join(delivery_root_of(m.get("path") or ""),
+                                     ORIGIN_NAME))
+    durl = str((origin or {}).get("delivery_url") or "")
+    if not durl.startswith("tos://"):
+        return None
+    try:
+        bucket, _ = parse_tos_url(durl)
+    except Exception:  # noqa: BLE001 origin 坏了按没有算
+        return None
+    mount = (os.environ.get("CURATION_TOS_MOUNT") or "/mnt/tos").rstrip("/")
+    if not src.startswith(mount + "/"):
+        return None
+    cand = f"tos://{bucket}/{src[len(mount) + 1:]}"
+    try:
+        from ..ingest import dsfs
+        if dsfs.exists(dsfs.join(cand, "meta", "info.json")):
+            return cand
+    except Exception:  # noqa: BLE001 网络/权限失败=验不过
+        return None
+    return None
 
 
 # ── 片段可播性(2026-08-11 用户实锤:ep000018 摆了三个"死"播放器)──
@@ -3370,6 +3425,12 @@ def _lane(path: str, eid: str, source: str) -> dict:
     base = os.path.basename(path)
     cam = (base[len(eid) + 2:-4] if source == VIDEO_SOURCE_REVIEW
            else os.path.basename(os.path.dirname(path)))
+    if str(path).startswith("tos://"):
+        # 远端源(2026-08-27):文件头探测是本地 os.stat/av.open,对桶对象
+        # 做不了;按"判不了的一律当能播"原则直接摆播放器
+        return {"camera": _camera_label(cam), "path": path,
+                "playable": True, "frames": None, "duration_s": None,
+                "why": None}
     p = clip_probe(path)
     return {"camera": _camera_label(cam), "path": path,
             "playable": p["playable"], "frames": p["frames"],

@@ -486,7 +486,9 @@ def test_backend_dropdown_announces_probing_then_probe_clears_it(tmp_path):
              if getattr(f.fn, "__name__", "") == "_do_probe"]
     assert probe
     upd = probe[0](None, None)
-    assert upd[0].get("info", "sentinel") is None   # 探活回来必须摘掉「正在检测」
+    # 摘「正在检测」必须用空串:gradio 6.9 把 update(info=None) 当"此字段
+    # 不更新",None 摘不掉(2026-08-27 用户截图抓出,修复即此断言)
+    assert upd[0].get("info", "sentinel") == ""
 
 
 def test_adjudication_queue_title_and_status_radio(tmp_path, monkeypatch):
@@ -528,3 +530,114 @@ def test_rerun_shape_dead_path_default_left_empty(tmp_path, monkeypatch):
     assert tin.get("value") in ("", None), \
         f"死路径被糊进默认值:{tin.get('value')!r}"
     assert tin.get("placeholder"), "值留空后 placeholder 必须在,不然框空得莫名其妙"
+    # 三态说明行同形态配套(2026-08-27 用户实报):留空形态不许拿内部死路径
+    # 报「没挂上,请检查部署」,要给指导语
+    note = next(c["props"] for c in cfg["components"]
+                if c["props"].get("elem_id") == "rn-ds-note")
+    assert "没挂上" not in str(note.get("value", "")), "留空形态报了部署事故警告"
+    assert "tos://" in str(note.get("value", "")), "留空形态该给填写指导语"
+
+
+def test_rp_root_refresh_keeps_valid_selection(tmp_path, monkeypatch):
+    """交付下拉刷新保值(2026-08-27 用户实报:点一下交付目录框再点走,
+    选中的交付名"消失"):重列后现值仍有效就保住,失效才清。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    root = tmp_path / "deliv"
+    root.mkdir()
+    a = _new_delivery(root, "keepme")
+    app = build_app(str(root), data_root=str(tmp_path / "data"))
+    fns = [f.fn for f in app.fns.values()
+           if getattr(f.fn, "__name__", "") == "_rp_root_changed"]
+    assert fns
+    upd, _note = fns[0]("", "", cur=a)
+    assert upd.get("value") == a, "现值仍在选项里,却被清掉了"
+    upd2, _ = fns[0]("", "", cur=str(root / "gone"))
+    assert upd2.get("value") is None, "失效的值必须清"
+
+
+def test_bucket_mapped_source_fallback(tmp_path, monkeypatch):
+    """源数据集路径跨机回退(2026-08-27 rerun 侧实报):挂载实例产的交付记
+    /mnt/tos/... 本地路径,直连实例打开时按 .tos-origin.json 映射回桶,
+    验证 meta/info.json 存在才用;验不过 / 没 origin → 维持"找不到"。"""
+    import json as _json
+
+    from curation.ui import runner
+
+    droot = tmp_path / "cache" / "droid-50"
+    run = droot / "20260825-015215"
+    run.mkdir(parents=True)
+    (run / "passed.json").write_text(_json.dumps(
+        {"episodes": {}, "源数据集路径": "/mnt/tos/datasets/no-such-ds-portability-test"}),
+        encoding="utf-8")
+    (droot / "latest").write_text("20260825-015215", encoding="utf-8")
+    monkeypatch.setenv("CURATION_TOS_MOUNT", "/mnt/tos")
+
+    # 没 origin:找不到(不猜)
+    assert runner.source_dataset_of(str(droot)) is None
+
+    (droot / runner.TOS_ORIGIN_NAME).write_text(_json.dumps(
+        {"delivery_url": "tos://curation/deliveries/droid-50-guide",
+         "run": "20260825-015215", "region": "cn-beijing"}), encoding="utf-8")
+    from curation.ingest import dsfs
+    monkeypatch.setattr(dsfs, "exists", lambda p: "no-such-ds-portability-test" in str(p))
+    assert (runner.source_dataset_of(str(droot))
+            == "tos://curation/datasets/no-such-ds-portability-test")
+    # 桶里验不过 → 维持找不到
+    monkeypatch.setattr(dsfs, "exists", lambda p: False)
+    assert runner.source_dataset_of(str(droot)) is None
+
+
+def test_source_video_lane_speaks_tos(tmp_path, monkeypatch):
+    """轨迹页视频源档跨机可移植(2026-08-27 rerun 侧实报:所有条目都没视频):
+    交付内视频被懒镜像跳过、本机没有源目录时,按交付记录的源路径 + origin
+    桶映射走 tos://,文件经 dsfs 列举、播放走预签名 https。"""
+    import json as _json
+
+    from curation.ingest import dsfs
+    from curation.ui import manifest as M
+
+    droot = tmp_path / "cache" / "droid-50"
+    run = droot / "20260825-015215"
+    run.mkdir(parents=True)
+    (run / "passed.json").write_text(_json.dumps(
+        {"episodes": {}, "源数据集路径": "/mnt/tos/datasets/no-such-src"}),
+        encoding="utf-8")
+    (droot / "latest").write_text("20260825-015215", encoding="utf-8")
+    (droot / ".tos-origin.json").write_text(_json.dumps(
+        {"delivery_url": "tos://curation/deliveries/droid-50-guide"}),
+        encoding="utf-8")
+    monkeypatch.setenv("CURATION_TOS_MOUNT", "/mnt/tos")
+    monkeypatch.setattr(dsfs, "exists", lambda p: True)
+    monkeypatch.setattr(dsfs, "read_json",
+                        lambda p: {"codebase_version": "v2.0"})
+    monkeypatch.setattr(dsfs, "glob", lambda pat: [
+        "tos://curation/datasets/no-such-src/videos/chunk-000/cam_a/episode_000003.mp4"])
+    m = {"path": str(run)}
+    paths = M.source_video_paths(m, "ep000003", data_root=None)
+    assert paths == ["tos://curation/datasets/no-such-src/videos/chunk-000/"
+                     "cam_a/episode_000003.mp4"]
+    # _lane:远端免探测,按能播摆槽位
+    lane = M._lane(paths[0], "ep000003", M.VIDEO_SOURCE_SOURCE)
+    assert lane["playable"] is True and lane["camera"]
+    # _file_url:tos:// → 预签名 https 直连桶
+    monkeypatch.setattr(dsfs, "media_source",
+                        lambda p: "https://signed.example/" + p.split("/")[-1])
+    assert M._file_url(paths[0]).startswith("https://signed.example/")
+
+
+def test_delivery_records_portable_source_path(monkeypatch):
+    """写端根治(2026-08-27):挂载实例产交付,「源数据集路径」记 tos:// 规范
+    坐标而不是产地挂载路径;非挂载路径与 tos:// 输入原样。"""
+    from curation.pipeline.run import _portable_source_path
+
+    monkeypatch.setenv("CURATION_TOS_MOUNT", "/mnt/tos")
+    monkeypatch.setenv("TOS_BUCKET", "curation")
+    assert (_portable_source_path("/mnt/tos/datasets/droid_lerobot")
+            == "tos://curation/datasets/droid_lerobot")
+    assert _portable_source_path("tos://b/x") == "tos://b/x"
+    assert _portable_source_path("/data/other") == "/data/other"
+    monkeypatch.delenv("TOS_BUCKET")
+    assert (_portable_source_path("/mnt/tos/datasets/x")
+            == "/mnt/tos/datasets/x")   # 不知道桶名就不硬猜
