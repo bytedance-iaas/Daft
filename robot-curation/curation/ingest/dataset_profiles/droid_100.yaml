@@ -1,0 +1,19 @@
+# 官方 lerobot/droid_100(v3):与 IPEC droid_lerobot 同源同语义,但元数据残缺
+# (robot_type=unknown、names=motor_0..6),robot/names 两把钥匙全废 → 按目录名
+# 登记。语义与 droid.yaml 一致,2026-08-27 桶上实测指纹:state=EE 绝对位姿
+# [x,y,z,roll,pitch,yaw,gripper](xyz 0.1-0.7m、roll ±π、gripper 0-1),
+# action=分位数归一化笛卡尔速度 ±1 零均值 + 夹爪,corr(action,Δstate)~0.3
+# 与 droid 档案的经验系数同量级。
+match: {dataset_name: droid_100}
+suggest_embodiment: franka   # meta 的 robot_type=unknown,对话框推荐用
+action:
+  space: ee
+  control_mode: velocity
+  unit: normalized
+  gripper_dims: [6]
+  angle_dims: [3, 4, 5]
+  euler_triplet: true
+  stuck_strategy: velocity_dual_scale
+state: {space: ee}
+extras:
+  note: "同 droid.yaml;官方 v3 转换,state 7 维(无 pad 列)"

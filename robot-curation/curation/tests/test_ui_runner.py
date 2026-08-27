@@ -1234,7 +1234,11 @@ def test_app_blocks_legacy_delivery_name_before_starting_a_task(tmp_path):
 
     deliv = tmp_path / "deliveries"
     _legacy_delivery(deliv, "droid-200-full")
-    (tmp_path / "data" / "so101").mkdir(parents=True)
+    (tmp_path / "data" / "so101" / "meta").mkdir(parents=True)
+    # robot_type 写上:不写会先触发 2026-08-27 的「机器人型号」追问,
+    # 把本测试要钉的交付名校验挡在后面(那是另一条链路,另有测试)
+    (tmp_path / "data" / "so101" / "meta" / "info.json").write_text(
+        json.dumps({"robot_type": "so101"}), encoding="utf-8")
     app = build_app(str(deliv), data_root=str(tmp_path / "data"))
     fns = [f.fn for f in app.fns.values()
            if getattr(f.fn, "__name__", "") == "_run_preflight"]
@@ -1507,16 +1511,17 @@ def test_clips_prompt_asks_once_for_the_whole_selection():
     """
     md = runner.clips_prompt(["droid", "so101"])
     assert "这 2 个数据集" in md and "droid" in md and "so101" in md
-    assert "一起生成" in md or "要在质检之后一起生成" in md
-    assert "这几份" in md
+    # 2026-08-27 用户定稿:一句话收口,选择交给按钮;客户可见文案不暴露 rrd
+    assert "要切分吗" in md
+    assert "rrd" not in md and "rerun" not in md
 
 
 def test_clips_prompt_keeps_the_format_explanation_for_a_single_dataset():
     """单数据集仍按格式说清为什么要切 —— 那句话本来就在,别为了统一把它删了。"""
     v3 = runner.clips_prompt(["droid"], {"kind": "lerobot", "needs_clips": True})
-    assert "LeRobot v3" in v3
+    assert "LeRobot v3" in v3 and "时间窗" in v3 and "要切分吗" in v3
     rrd = runner.clips_prompt(["so101"], {"kind": "rrd", "needs_clips": True})
-    assert "rerun" in rrd
+    assert "rerun" in rrd and "时间窗" not in rrd   # rrd 没有时间窗,不许撒谎
     assert runner.clips_prompt([]) == ""
 
 

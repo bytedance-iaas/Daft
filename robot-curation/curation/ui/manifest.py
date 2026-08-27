@@ -2748,15 +2748,15 @@ def _file_url(path: str) -> str:
     浏览器直连桶取流,不过 gradio 文件路由(也就天然不吃网关前缀的路由亏)。
     """
     from urllib.parse import quote
-    p = str(path)
+    p, frag = _split_frag(path)
     if p.startswith("tos://"):
         from ..ingest import dsfs
-        return dsfs.media_source(p)
+        return dsfs.media_source(p) + frag
     try:
         ver = f"?v={int(os.stat(p).st_mtime)}"
     except OSError:
         ver = ""
-    return "/gradio_api/file=" + quote(p) + ver
+    return "/gradio_api/file=" + quote(p) + ver + frag
 
 # 传输抖动自愈:失败后退避重试,最多 8 次(≈9s)。只改 ?v= 的值,不引入 & 字符
 # ——属性里的 & 会被 HTML 解析器当实体开头,踩过一次不再踩。
@@ -3228,15 +3228,56 @@ def curated_index_of(m: dict, eid: str) -> int | None:
     return None
 
 
+#: v3 episodes 元数据表按数据集根缓存(表小;报告页逐条点击别每次重读远端 parquet)
+_V3_META_CACHE: dict = {}
+
+
+def _v3_episode_windows(root: str, ep_index: int) -> list[str]:
+    """v3 合并布局:episode 序号 → 逐路相机的「时间窗播放地址」
+    `<合并mp4路径>#t=<from>,<to>`(2026-08-27 时间窗直播,免审片站预切)。
+
+    指针口径**完全复用管道读取端**(lerobot_reader._v3_video_pointers:
+    info.video_path 模板 + meta/episodes 边界表),不自己再抄一份约定——
+    抄出偏差会放出别条画面。找不到该条 / 元数据缺 → 空表,不猜。"""
+    from ..ingest import dsfs
+    from ..ingest.lerobot_reader import _load_episodes_meta, _v3_video_pointers
+    try:
+        meta = _V3_META_CACHE.get(root)
+        if meta is None:
+            meta = _load_episodes_meta(root)
+            _V3_META_CACHE[root] = meta
+        row = meta[meta["episode_index"].astype(int) == int(ep_index)]
+        if row.empty:
+            return []
+        info = dsfs.read_json(dsfs.join(root, "meta", "info.json")) or {}
+        ptrs = _v3_video_pointers(root, info, row.iloc[0])
+    except Exception:  # noqa: BLE001 元数据读不动=没有这档,别让详情页崩
+        return []
+    return [f'{p["path"]}#t={float(p["from_ts"]):.3f},{float(p["to_ts"]):.3f}'
+            for _vk, p in sorted(ptrs.items())]
+
+
+def _split_frag(path: str) -> tuple[str, str]:
+    """`路径#t=a,b` → (纯路径, "#t=a,b");无片段返回 ("", 原路径不动)形态。"""
+    p = str(path)
+    if "#t=" in p:
+        body, _, tail = p.partition("#")
+        return body, "#" + tail
+    return p, ""
+
+
 def curated_video_paths(m: dict, eid: str) -> list[str]:
     """交付内 lerobot_curated 的逐条 mp4(v2 布局;v3 是合并大 mp4 → 空表)。"""
     root = os.path.join(m.get("path") or "", "lerobot_curated")
     ver = str(_load_json(os.path.join(root, "meta", "info.json")
                          ).get("codebase_version") or "")
-    if not ver.startswith("v2"):
-        return []                      # v3 合并 mp4 不切分,不属于本来源
     idx = curated_index_of(m, eid)
     if idx is None:
+        return []
+    if ver.startswith("v3"):
+        # v3 合并 mp4:时间窗直播(2026-08-27),交付集按**重编号**查边界表
+        return _v3_episode_windows(root, idx)
+    if not ver.startswith("v2"):
         return []
     return sorted(glob.glob(os.path.join(root, "videos", "chunk-*", "*",
                                          f"episode_{idx:06d}.mp4")))
@@ -3278,6 +3319,8 @@ def source_video_paths(m: dict, eid: str,
         from ..ingest import dsfs
         ver = str((dsfs.read_json(dsfs.join(root, "meta", "info.json"))
                    or {}).get("codebase_version") or "")
+        if ver.startswith("v3"):
+            return _v3_episode_windows(root, int(num))    # 源集按原始序号
         if not ver.startswith("v2"):
             return []
         return sorted(dsfs.glob(dsfs.join(root, "videos", "chunk-*", "*",
@@ -3286,6 +3329,8 @@ def source_video_paths(m: dict, eid: str,
         return []
     ver = str(_load_json(os.path.join(root, "meta", "info.json")
                          ).get("codebase_version") or "")
+    if ver.startswith("v3"):
+        return _v3_episode_windows(root, int(num))
     if not ver.startswith("v2"):
         return []
     return sorted(glob.glob(os.path.join(root, "videos", "chunk-*", "*",
@@ -3422,16 +3467,23 @@ def clip_is_playable(path: str) -> bool:
 
 
 def _lane(path: str, eid: str, source: str) -> dict:
-    base = os.path.basename(path)
-    cam = (base[len(eid) + 2:-4] if source == VIDEO_SOURCE_REVIEW
-           else os.path.basename(os.path.dirname(path)))
-    if str(path).startswith("tos://"):
+    body, _frag = _split_frag(path)
+    base = os.path.basename(body)
+    dir1 = os.path.basename(os.path.dirname(body))
+    if source == VIDEO_SOURCE_REVIEW:
+        cam = base[len(eid) + 2:-4]
+    elif dir1.startswith("chunk-"):
+        # v3 合并布局 videos/<相机>/chunk-*/file-*.mp4:相机名在上一级
+        cam = os.path.basename(os.path.dirname(os.path.dirname(body)))
+    else:
+        cam = dir1
+    if body.startswith("tos://"):
         # 远端源(2026-08-27):文件头探测是本地 os.stat/av.open,对桶对象
         # 做不了;按"判不了的一律当能播"原则直接摆播放器
         return {"camera": _camera_label(cam), "path": path,
                 "playable": True, "frames": None, "duration_s": None,
                 "why": None}
-    p = clip_probe(path)
+    p = clip_probe(body)
     return {"camera": _camera_label(cam), "path": path,
             "playable": p["playable"], "frames": p["frames"],
             "duration_s": p["duration_s"], "why": p["why"]}
@@ -3483,7 +3535,7 @@ _PLAY_ALL_JS = (
     f"if(live===0){{b.dataset.on='0';b.textContent='{PLAY_ALL_TEXT}'}}}}"
     "if(b.dataset.on==='1'){vs.forEach(function(v){v.pause()});fin()}"
     "else{vs.forEach(function(v){v.onended=fin;v.onpause=fin;v.loop=false;"
-    "try{v.currentTime=0}catch(e){}try{v.play()}catch(e){}});"
+    "try{v.currentTime=+(v.dataset.t0||0)}catch(e){}try{v.play()}catch(e){}});"
     f"b.dataset.on='1';b.textContent='{PAUSE_ALL_TEXT}'}}")
 
 
@@ -3500,6 +3552,47 @@ def play_all_button_html(note: str = "", zone: str | None = None) -> str:
             'style="background:#1D2129;color:#fff;border:none;border-radius:8px;'
             'padding:6px 16px;font:13px/1.6 system-ui;font-weight:700;cursor:pointer">'
             f'{PLAY_ALL_TEXT}</button>{tail}</div>')
+
+
+def _window_bounds(path: str) -> tuple:
+    """`#t=a,b` → (a, b);没有片段 → (None, None)。"""
+    _, frag = _split_frag(path)
+    if not frag:
+        return None, None
+    try:
+        a, b = frag[len("#t="):].split(",")
+        return float(a), float(b)
+    except ValueError:
+        return None, None
+
+
+#: 拖动钳制(2026-08-27 用户定,v1 就带):合并大 mp4 的进度条是整个文件的,
+#: 拖出本条窗口会放出**相邻轨迹**的画面——"人对着错的证据做裁决,比没有画面
+#: 更糟"(源档同款纪律)。onseeking 拖出即拉回窗口起点;ontimeupdate 越过
+#: 终点补一脚暂停(浏览器 #t= 自身会停,这里兜"拖后再播越界"的路)。
+#: 不写 & 字符(属性值里 & 被当实体开头,老坑),条件全用嵌套 if。
+_CLAMP_JS = (
+    "var a=+this.dataset.t0,b=+this.dataset.t1;"
+    "if(this.currentTime<a){this.currentTime=a}"
+    "if(this.currentTime>b){this.currentTime=a}")
+_STOP_JS = (
+    "var b=+this.dataset.t1;"
+    "if(this.currentTime>b){this.pause();this.currentTime=b}")
+
+
+def _window_attrs(path: str) -> str:
+    t0, t1 = _window_bounds(path)
+    if t0 is None:
+        return ""
+    return (f'data-t0="{t0:.3f}" data-t1="{t1:.3f}" '
+            f'onseeking="{_CLAMP_JS}" ontimeupdate="{_STOP_JS}" ')
+
+
+def _window_caption(path: str) -> str:
+    t0, t1 = _window_bounds(path)
+    if t0 is None:
+        return ""
+    return _esc(f" · 片段 {t0:.1f}–{t1:.1f}s")
 
 
 def episode_video_html(m: dict, eid: str, review_dir: str | None = None,
@@ -3522,10 +3615,11 @@ def episode_video_html(m: dict, eid: str, review_dir: str | None = None,
     cells = "".join(
         f'<figure style="flex:1 1 260px;min-width:220px;margin:0">'
         f'<video src="{_file_url(it["path"])}" muted playsinline controls '
-        f'preload="metadata" style="width:100%;border-radius:8px;background:#000">'
+        + _window_attrs(it["path"])
+        + f'preload="metadata" style="width:100%;border-radius:8px;background:#000">'
         f'</video>'
         f'<figcaption style="font:11px/1.6 ui-monospace,Menlo,monospace;color:#86909C;'
-        f'margin-top:3px">{_esc(it["camera"])}</figcaption>'
+        f'margin-top:3px">{_esc(it["camera"])}{_window_caption(it["path"])}</figcaption>'
         + ('' if it.get("playable", True) else
            f'<div style="font:11px/1.6 system-ui;color:#D25F00;background:#FFF7E8;'
            f'border:1px solid #FFE4BA;border-radius:6px;padding:3px 7px;margin-top:3px">'

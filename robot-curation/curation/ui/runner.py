@@ -127,22 +127,25 @@ class RunBusyError(RuntimeError):
 
 # ── 路径:名字进,绝对路径出 ────────────────────────────────────────────────
 
-def safe_name(name: str) -> str:
+def safe_name(name: str, what: str = "名字") -> str:
     """校验一个"名字"(数据集名/交付名/审片站名)。不合法就抛,消息说人话。
+
+    what = 界面上那个框叫什么(「交付名」等)。2026-08-27 用户实见:只说
+    "名字…"不点名字段,用户不知道该改哪个框 —— 报错第一个词必须是字段名。
 
     这是安全边界不是易用性:面板只收名字,路径由 resolve_under 拼。任何带路径
     分隔符、`..`、以点开头的输入一律拒绝——它们的存在本身就说明有人在试探。
     """
     s = str(name or "").strip()
     if not s:
-        raise ValueError("名字不能为空")
+        raise ValueError(f"{what}不能为空")
     if "/" in s or "\\" in s:
-        raise ValueError(f"名字里不能带路径分隔符:{s!r}(只填名字,目录由系统拼)")
+        raise ValueError(f"{what}里不能带路径分隔符:{s!r}(只填名字,目录由系统拼)")
     if s in (".", "..") or s.startswith("."):
-        raise ValueError(f"名字不能以点开头:{s!r}")
+        raise ValueError(f"{what}不能以点开头:{s!r}")
     if not _NAME_RE.match(s):
         raise ValueError(
-            f"名字只能用字母、数字、点、下划线、连字符,且以字母或数字开头,"
+            f"{what}只能用字母、数字、点、下划线、连字符,且以字母或数字开头,"
             f"最长 80 个字符:{s!r}")
     return s
 
@@ -403,21 +406,149 @@ def clips_prompt(names: list, fmt: dict | None = None) -> str:
     names = picked_datasets(names)
     if not names:
         return ""
+    # 2026-08-27 时间窗直播上线 + 用户定稿精简:v3 不切也能播(#t= 时间窗),
+    # 切了体验更好;rrd 必须切才有画面(客户可见文案不提 rrd —— release 默认
+    # 关,多选尾句也不提)。选择由按钮承担,正文一句话收口「要切分吗?」。
     if len(names) == 1 and fmt:
-        kind = ("这份数据是 LeRobot v3 格式,多条轨迹合并存放在同一个视频文件里"
-                if fmt.get("kind") == "lerobot" else
-                "这份数据是 rerun(.rrd)格式,视频封装在数据文件内部")
-        head = (f"**{kind}** —— 质检本身不受影响,但要在 「轨迹」页逐条回看画面,"
-                f"得先切出可播片段。")
-        tail = "跳过不影响质检结果,只是 「轨迹」页暂时看不到画面。"
-    else:
-        shown = "、".join(names[:_CLIPS_NAMES_CAP])
-        more = f" 等 {len(names)} 个" if len(names) > _CLIPS_NAMES_CAP else ""
-        head = (f"**这 {len(names)} 个数据集需要先切出可播片段,才能在 「轨迹」页"
-                f"看画面**:{shown}{more}。")
-        tail = "跳过不影响质检结果,只是这几份的 「轨迹」页暂时看不到画面。"
-    return (f"{head}\n\n要在质检之后一起生成吗?会多花几分钟到十几分钟"
-            f"(取决于条数);{tail}")
+        if fmt.get("kind") == "lerobot":
+            return ("LeRobot v3 格式:多条轨迹合并存放,不切分也能按时间窗"
+                    "播放;切分后播放体验更好。要切分吗?")
+        return ("rerun 格式:视频封装在数据文件内部,切分后才能在「轨迹」页"
+                "回看。要切分吗?")
+    shown = "、".join(names[:_CLIPS_NAMES_CAP])
+    more = f" 等 {len(names)} 个" if len(names) > _CLIPS_NAMES_CAP else ""
+    return (f"这 {len(names)} 个数据集切分后「轨迹」页播放体验更好:"
+            f"{shown}{more}。要切分吗?")
+
+
+#: embodiment 注册表数据目录(只读 YAML 数据,不 import 管道 —— UI 红线)
+_EMB_PROFILE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "registry", "profiles")
+
+
+def embodiment_choices() -> list[str]:
+    """全部已注册机器人型号(给「机器人型号」对话框的下拉)。"""
+    import glob as _glob
+    return sorted(os.path.splitext(os.path.basename(p))[0]
+                  for p in _glob.glob(os.path.join(_EMB_PROFILE_DIR, "*.yaml")))
+
+
+def dataset_robot_type(root: str, name: str) -> str:
+    """数据集声明的 robot_type(读 meta,读不到按空)。root 认本地与 tos://。"""
+    from ..ingest import dsfs
+    try:
+        info = dsfs.read_json(dsfs.join(str(root), name, "meta", "info.json")) or {}
+    except Exception:  # noqa: BLE001 读不动按"没声明",让上层去问
+        return ""
+    return str(info.get("robot_type") or "").strip()
+
+
+def suggest_embodiments(root: str, name: str) -> list[dict]:
+    """数据集没声明机器人型号时的「疑似型号」推荐(2026-08-27 用户定,两层):
+
+    ① 数据集语义档案(dataset_profiles,按名/元数据认领)带 `suggest_embodiment`
+       → 档案登记的准答案,直接置顶;
+    ② 注册表试穿:拿 9 份规格表逐一"试穿"一小段 state 样本 —— 维度必须对上
+       (dof 或 dof+夹爪列),数值再看两条:按关节角落极限表的比例、按末端位姿
+       p95 距离对臂展。哪张表容得下,哪个就是疑似,附一句依据。
+    谁都不像(分数全低)→ 空表:对话框只给空下拉,**绝不硬猜**。
+    """
+    from ..ingest import dsfs
+    ds_root = dsfs.join(str(root), name)
+    try:
+        info = dsfs.read_json(dsfs.join(ds_root, "meta", "info.json")) or {}
+    except Exception:  # noqa: BLE001
+        return []
+    # ① 档案层
+    try:
+        from ..ingest.dataset_semantics import resolve_semantics
+        sem = resolve_semantics(info, None, name)
+        if sem.source == "profile" and sem.profile_name:
+            import yaml as _yaml
+            prof_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "ingest", "dataset_profiles", sem.profile_name)
+            prof = _yaml.safe_load(open(prof_path, encoding="utf-8")) or {}
+            sid = str(prof.get("suggest_embodiment") or "").strip()
+            if sid:
+                return [{"id": sid, "reason": "数据集档案登记"}]
+    except Exception:  # noqa: BLE001 档案层失灵不挡试穿层
+        pass
+    # ② 试穿层
+    return _tryon_embodiments(ds_root)
+
+
+def _tryon_embodiments(ds_root: str, sample_rows: int = 800) -> list[dict]:
+    """注册表试穿(纯数值):返回 [{'id','reason'}],分数 ≥0.9 的前两名。"""
+    import glob as _glob
+
+    import numpy as np
+    import yaml as _yaml
+
+    from ..ingest import dsfs
+    try:
+        files = dsfs.glob(dsfs.join(ds_root, "data", "*", "*.parquet"))
+        if not files:
+            files = dsfs.glob(dsfs.join(ds_root, "data", "*", "*", "*.parquet"))
+        if not files:
+            return []
+        t = dsfs.read_parquet(sorted(files)[0])
+        col = "observation.state" if "observation.state" in t.columns else None
+        if col is None:
+            return []
+        arr = np.stack(t[col].head(sample_rows).to_list()).astype(np.float64)
+    except Exception:  # noqa: BLE001 样本读不动就不推荐,不挡对话框
+        return []
+    if arr.ndim != 2 or not np.isfinite(arr).all():
+        return []
+    d = arr.shape[1]
+    out = []
+    for p in sorted(_glob.glob(os.path.join(_EMB_PROFILE_DIR, "*.yaml"))):
+        try:
+            prof = _yaml.safe_load(open(p, encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001 坏档跳过
+            continue
+        pid = str(prof.get("embodiment_id") or "")
+        dof = int(prof.get("dof") or 0)
+        if not pid or not dof or d not in (dof, dof + 1):
+            continue
+        score, why = 0.0, ""
+        limits = prof.get("joint_limits") or []
+        if len(limits) == dof:
+            lo = np.array([float(x[0]) for x in limits]) - 0.05
+            hi = np.array([float(x[1]) for x in limits]) + 0.05
+            # 占用率判据:数据活动范围远小于限宽(如米制位姿落在 ±180° 的宽表
+            # 里)= "相容"不足为证 —— 宽表谁都容,假阳性一票否决
+            occ = float(np.median(
+                (arr[:, :dof].max(0) - arr[:, :dof].min(0))
+                / np.maximum(hi - lo, 1e-9)))
+            ratio = float(np.mean((arr[:, :dof] >= lo) & (arr[:, :dof] <= hi)))
+            if occ >= 0.15 and ratio > score:
+                # 封顶 0.93:关节相容是弱证据,不许压过 EE 的量纲级命中
+                score = min(ratio, 0.93)
+                why = f"{d} 维,数值范围与 {pid} 关节规格相容 {ratio:.0%}"
+        reach = prof.get("ee_reach_m")
+        if reach and d >= 3:
+            p95 = float(np.percentile(np.linalg.norm(arr[:, :3], axis=1), 95))
+            if 0.15 * float(reach) <= p95 <= 1.05 * float(reach):
+                # EE 命中是米制距离对臂展的窄区间匹配,证据强于宽松关节限
+                if 0.95 > score:
+                    score, why = 0.95, (f"{d} 维,末端位置分布(典型 {p95:.2f}m)"
+                                        f"在 {pid} 臂展 {reach}m 之内")
+        if score >= 0.9:
+            out.append({"id": pid, "reason": why, "score": score})
+    out.sort(key=lambda x: -x["score"])
+    return [{"id": x["id"], "reason": x["reason"]} for x in out[:2]]
+
+
+def embodiment_ask_md(name: str, suggestions: list) -> str:
+    """「机器人型号」对话框正文(纯函数好单测)。"""
+    head = f"数据集 {name} 没有登记机器人型号,运动学检查需要知道型号才能查规格表。"
+    if suggestions:
+        lines = "\n".join(f"- 疑似 **{s['id']}**({s['reason']})"
+                           for s in suggestions)
+        return f"{head}\n\n{lines}\n\n请确认型号,或跳过运动学检查继续。"
+    return f"{head}\n\n请选择型号,或跳过运动学检查继续。"
 
 
 def suggest_delivery_name(dataset: str, now: datetime.datetime | None = None) -> str:

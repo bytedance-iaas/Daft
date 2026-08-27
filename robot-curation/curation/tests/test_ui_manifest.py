@@ -2465,7 +2465,7 @@ def test_play_all_button_zeroes_and_plays_every_video(ep_delivery, tmp_path):
     assert html.count("<video") == 3
     assert PLAY_ALL_TEXT in html and PAUSE_ALL_TEXT in html
     assert "querySelectorAll('video')" in html and ".play()" in html
-    assert "currentTime=0" in html and ".pause()" in html
+    assert "currentTime=+(v.dataset.t0||0)" in html and ".pause()" in html
     assert "ep-video-zone" in html
     assert "&" not in html                 # 属性里的 & 会被当实体开头,踩过一次
 

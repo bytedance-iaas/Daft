@@ -641,3 +641,253 @@ def test_delivery_records_portable_source_path(monkeypatch):
     monkeypatch.delenv("TOS_BUCKET")
     assert (_portable_source_path("/mnt/tos/datasets/x")
             == "/mnt/tos/datasets/x")   # 不知道桶名就不硬猜
+
+
+def test_droid_100_semantics_profile_matches_by_name():
+    """元数据残缺数据集按目录名认领语义档案(2026-08-27):官方 droid_100 的
+    robot_type=unknown、names=motor_*,若不按名认领会被当关节角误杀运动学。"""
+    from curation.ingest.dataset_semantics import resolve_semantics
+
+    info = {"codebase_version": "v3.0", "robot_type": "unknown",
+            "features": {"action": {"shape": [7], "names": {
+                "motors": [f"motor_{i}" for i in range(7)]}}}}
+    sem = resolve_semantics(info, None, "droid_100")
+    assert sem.source == "profile" and sem.profile_name == "droid_100.yaml"
+    assert sem.action_space == "ee" and sem.proprio_space == "ee"
+    # 不带名字 / 别的名字:不误配
+    assert resolve_semantics(info, None).source == "inferred"
+    assert resolve_semantics(info, None, "droid_999").source == "inferred"
+
+
+def test_v3_time_window_lane(tmp_path, monkeypatch):
+    """v3 时间窗直播(2026-08-27 用户定'立即修'):合并 mp4 免审片站预切,
+    源档/交付档给 `路径#t=from,to`,播放 URL 保片段,拖动钳制属性上标签。"""
+    pd = pytest.importorskip("pandas")
+    from curation.ingest import dsfs, lerobot_reader
+    from curation.ui import manifest as M
+
+    meta = pd.DataFrame([{
+        "episode_index": 3,
+        "videos/observation.images.cam_a/chunk_index": 0,
+        "videos/observation.images.cam_a/file_index": 0,
+        "videos/observation.images.cam_a/from_timestamp": 12.5,
+        "videos/observation.images.cam_a/to_timestamp": 18.25,
+    }])
+    monkeypatch.setattr(lerobot_reader, "_load_episodes_meta", lambda d: meta)
+    monkeypatch.setattr(dsfs, "read_json", lambda p: {
+        "codebase_version": "v3.0",
+        "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+        "features": {"observation.images.cam_a": {"dtype": "video"}}})
+    M._V3_META_CACHE.clear()
+    root = "tos://somebucket/datasets/x"
+    wins = M._v3_episode_windows(root, 3)
+    assert wins == [root + "/videos/observation.images.cam_a/chunk-000/"
+                    "file-000.mp4#t=12.500,18.250"]
+    assert M._v3_episode_windows(root, 99) == []      # 查无此条不猜
+
+    # _lane:v3 路径的相机名取 videos/<cam>/ 段;远端免探;path 保片段
+    lane = M._lane(wins[0], "ep000003", M.VIDEO_SOURCE_SOURCE)
+    assert lane["playable"] is True and "cam a" in lane["camera"].lower().replace("_", " ")
+    assert lane["path"].endswith("#t=12.500,18.250")
+
+    # _file_url:远端 → 预签名 + 片段;本地 → gradio 文件 URL + 片段
+    monkeypatch.setattr(dsfs, "media_source", lambda p: "https://signed/" + p.split("/")[-1])
+    u = M._file_url(wins[0])
+    assert u.startswith("https://signed/") and u.endswith("#t=12.500,18.250")
+    local = tmp_path / "file-000.mp4"
+    local.write_bytes(b"x")
+    u2 = M._file_url(str(local) + "#t=1.000,2.000")
+    assert u2.startswith("/gradio_api/file=") and u2.endswith("#t=1.000,2.000")
+    assert "%23" not in u2, "片段号被 URL 转义吞掉了"
+
+    # 视频标签:钳制属性 + 片段说明,& 字符禁入属性
+    attrs = M._window_attrs(wins[0])
+    assert 'data-t0="12.500"' in attrs and "onseeking=" in attrs and "&" not in attrs
+    assert "12.5–18.2" in M._window_caption(wins[0]).replace("&#183;", "·") or \
+           "片段" in M._window_caption(wins[0])
+
+
+def test_embodiment_suggestion_engine(monkeypatch):
+    """机器人型号推荐两层(2026-08-27):档案登记直接置顶;试穿层维度+值域,
+    谁都不像给空表绝不硬猜。"""
+    np = pytest.importorskip("numpy")
+    from curation.ingest import dsfs
+    from curation.ui import runner
+
+    # 档案层:droid_100 档案登记 franka
+    monkeypatch.setattr(dsfs, "read_json", lambda p: {
+        "codebase_version": "v3.0", "robot_type": "unknown",
+        "features": {"action": {"shape": [7], "names": {
+            "motors": [f"motor_{i}" for i in range(7)]}}}})
+    sug = runner.suggest_embodiments("tos://b/dataset", "droid_100")
+    assert sug and sug[0]["id"] == "franka" and "档案" in sug[0]["reason"]
+
+    # 试穿层:EE 位姿样本(xyz ~0.5m)→ franka 臂展命中;7 维筛掉 6/14 dof
+    class _T:
+        columns = ["observation.state"]
+        def __getitem__(self, k):
+            class _S:
+                def head(self, n): return self
+                def to_list(self):
+                    return [[0.5, 0.1, 0.4, 3.0, 0.2, 0.3, 0.5]] * 50
+            return _S()
+    monkeypatch.setattr(dsfs, "glob", lambda p: ["x.parquet"])
+    monkeypatch.setattr(dsfs, "read_parquet", lambda p: _T())
+    got = runner._tryon_embodiments("whatever")
+    assert any(x["id"] == "franka" for x in got), got
+    assert all(x["id"] not in ("so100", "aloha") for x in got)   # 维度不符不入围
+
+    # 谁都不像:3 维怪数据 → 空表
+    class _T3(_T):
+        def __getitem__(self, k):
+            class _S:
+                def head(self, n): return self
+                def to_list(self): return [[9.9, 9.9, 9.9]] * 50
+            return _S()
+    monkeypatch.setattr(dsfs, "read_parquet", lambda p: _T3())
+    assert runner._tryon_embodiments("whatever") == []
+
+
+def test_embodiment_ask_md_and_robot_type(monkeypatch):
+    from curation.ingest import dsfs
+    from curation.ui import runner
+
+    md = runner.embodiment_ask_md("droid_100", [{"id": "franka", "reason": "试穿"}])
+    assert "droid_100" in md and "franka" in md and "跳过运动学" in md
+    assert "没有登记机器人型号" in runner.embodiment_ask_md("x", [])
+    monkeypatch.setattr(dsfs, "read_json", lambda p: {"robot_type": "unknown"})
+    assert runner.dataset_robot_type("tos://b/d", "x") == "unknown"
+    monkeypatch.setattr(dsfs, "read_json",
+                        lambda p: (_ for _ in ()).throw(OSError("x")))
+    assert runner.dataset_robot_type("tos://b/d", "x") == ""
+
+
+def test_preflight_pops_embodiment_ask_for_unknown_robot(tmp_path, monkeypatch):
+    """robot_type 没登记且表单没填型号 → 开跑前弹「机器人型号」模态,
+    疑似型号预选;不是十条 traceback 灌日志(2026-08-27 用户实报)。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+
+    deliv = tmp_path / "deliveries"
+    (deliv / "d1" / "20260827-000001").mkdir(parents=True)
+    (deliv / "d1" / "20260827-000001" / "passed.json").write_text(
+        _json.dumps({"数据集": "d1", "episodes": {}}), encoding="utf-8")
+    ds = tmp_path / "data" / "mystery"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(
+        _json.dumps({"robot_type": "unknown"}), encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    fns = [f.fn for f in app.fns.values()
+           if getattr(f.fn, "__name__", "") == "_run_preflight"]
+    out = fns[0](str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
+                 "newname", "", [], "", None, "", None,
+                 "", "", None, None, None, None, "", False, False)
+    import json as _j
+    flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
+    assert "没有登记机器人型号" in flat, "该弹型号追问没弹"
+    assert "'visible': True" in flat or '"visible": true' in flat.lower()
+
+
+def test_cli_interactive_preflight(tmp_path, monkeypatch):
+    """CLI 的两问(2026-08-27 用户定):TTY 下问型号与 v3 切分;非 TTY 绝不问
+    (UI 任务台子进程停下等键盘=任务吊死)。"""
+    import json as _json
+    import sys as _sys
+    import types
+
+    from curation import cli
+
+    ds = tmp_path / "mystery"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(_json.dumps(
+        {"robot_type": "unknown", "codebase_version": "v3.0"}), encoding="utf-8")
+    args = types.SimpleNamespace(input=str(ds), output=str(tmp_path / "out"),
+                                 embodiment_id=None, only=None, skip=None,
+                                 batch=False)
+    # 非 TTY:一个问题都不问,args 原样
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: False)
+    assert cli._interactive_run_preflight(args) is None
+    assert args.embodiment_id is None and args.skip is None
+    # TTY:回车吃疑似型号(monkeypatch 推荐器),y 切分
+    monkeypatch.setattr(_sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(_sys.stdout, "isatty", lambda: True)
+    from curation.ui import runner as _r
+    monkeypatch.setattr(_r, "suggest_embodiments",
+                        lambda root, name: [{"id": "franka", "reason": "试穿"}])
+    answers = iter(["", "y"])
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers))
+    clip_out = cli._interactive_run_preflight(args)
+    assert args.embodiment_id == "franka"
+    assert clip_out and clip_out.endswith("/review/mystery")
+    # TTY + skip:跳过运动学
+    args2 = types.SimpleNamespace(input=str(ds), output="tos://b/deliveries/x",
+                                  embodiment_id=None, only=None, skip=None,
+                                  batch=False)
+    answers2 = iter(["skip", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers2))
+    assert cli._interactive_run_preflight(args2) is None
+    assert args2.skip == "kinematic_limits" and args2.embodiment_id is None
+
+
+def test_preflight_rejects_bad_name_before_any_modal(tmp_path, monkeypatch):
+    """交付名非法 → 弹任何模态之前拦下(2026-08-27 用户实见:名字错却先弹
+    切片框,答完才报错,人被锁在框里);两个模态都有「取消」退路。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    import gradio as gr
+    from curation.ui.app import build_app
+
+    deliv = tmp_path / "deliveries"
+    (deliv / "d1" / "20260827-000001").mkdir(parents=True)
+    (deliv / "d1" / "20260827-000001" / "passed.json").write_text(
+        _json.dumps({"数据集": "d1", "episodes": {}}), encoding="utf-8")
+    ds = tmp_path / "data" / "mystery"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(_json.dumps(
+        {"robot_type": "unknown", "codebase_version": "v3.0"}), encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    fns = [f.fn for f in app.fns.values()
+           if getattr(f.fn, "__name__", "") == "_run_preflight"]
+    out = fns[0](str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
+                 "test=_0827", "", [], "", None, "", None,
+                 "", "", None, None, None, None, "", False, False)
+    import json as _j
+    flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
+    assert "⚠️" in flat and "交付名只能用" in flat, \
+        "报错第一个词必须点名「交付名」(2026-08-27 用户:只说'名字'不知改哪个框)"
+    assert "'visible': True" not in flat, "非法名不许弹任何模态"
+    # 报错要贴在「交付名」框下方的说明位(红字),不能只落远处的任务区
+    assert "note-err" in str(out[-1]) and "交付名" in str(out[-1]), \
+        "字段下方要出现红字报错(任务区太远,用户注意不到)"
+    # 取消按钮存在
+    labels = [b.value for b in app.blocks.values() if isinstance(b, gr.Button)]
+    assert labels.count("返回") >= 2, "两个模态都要有返回退路"
+
+
+def test_module_pick_change_does_not_rerender_itself(tmp_path):
+    """自选模块里每勾一个,勾选框闪一下(2026-08-27 用户实见):勾选自身的
+    change 回调不许把 visible= 回写给勾选框/只跑跳过——可见性由模式单选独占。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+
+    (tmp_path / "data").mkdir()
+    app = build_app(str(tmp_path / "deliveries"),
+                    data_root=str(tmp_path / "data"))
+    picks_fns = [f for f in app.fns.values()
+                 if getattr(f.fn, "__name__", "") == "_tk_picks"]
+    assert len(picks_fns) == 2, "勾选与只跑跳过都该走 _tk_picks"
+    for f in picks_fns:
+        out_labels = [getattr(c, "label", "") for c in f.outputs]
+        assert "要跑的模块" not in out_labels, \
+            "勾选回调把勾选框列为输出=每勾一下重渲染闪一次"
+        for got in f.fn("自选模块", ["visual_quality"], "只跑选中"):
+            assert "visible" not in str(got), "勾选变化不许动可见性"
+    mode_fns = [f for f in app.fns.values()
+                if getattr(f.fn, "__name__", "") == "_tk_mode"]
+    assert mode_fns, "模式单选的回调还在"
+    assert "要跑的模块" in [getattr(c, "label", "")
+                           for c in mode_fns[0].outputs], \
+        "模式切换仍要负责勾选框的显隐"

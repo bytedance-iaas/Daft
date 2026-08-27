@@ -320,14 +320,16 @@ def _episode_rows_v3(dataset_dir: str, info: dict, max_episodes: int | None = No
 # 语义解析(懒/急共用)
 # ---------------------------------------------------------------------------
 
-def resolve_dataset_semantics(info: dict, sample_rows: list[dict]):
+def resolve_dataset_semantics(info: dict, sample_rows: list[dict],
+                              dataset_name: str = ""):
     """数据集语义:profile 命中→权威声明;否则数值指纹推断+采样多数票。
 
     sample_rows: 用于指纹/多数票的样本行(前 SEMANTICS_VOTE_EPISODES 条足够——
     控制模式是数据集级约定;懒/急两路用同一采样规则保证结果一致)。
     """
     from .dataset_semantics import infer_control_mode_majority, resolve_semantics
-    sem = resolve_semantics(info, sample_rows[0]["action"] if sample_rows else None)
+    sem = resolve_semantics(info, sample_rows[0]["action"] if sample_rows else None,
+                            dataset_name)
     if sem.source == "inferred":
         sem.control_mode = infer_control_mode_majority(
             sample_rows[:SEMANTICS_VOTE_EPISODES])
@@ -387,7 +389,8 @@ def read_lerobot_rows(
 
     # 数据集语义:profile 命中→权威声明;否则数值指纹推断(见 dataset_semantics)。
     # control_mode 是数据集约定(非单条属性),profile 未命中时用采样多数票兜底。
-    sem = resolve_dataset_semantics(info, rows)
+    sem = resolve_dataset_semantics(
+        info, rows, os.path.basename(str(dataset_dir).rstrip("/")))
     _attach_semantics(rows, sem, embodiment_id)
     if validate:
         validate_rows(rows)
@@ -456,7 +459,8 @@ def read_lerobot_meta(
                     if max_episodes else SEMANTICS_VOTE_EPISODES)
         sample = read_lerobot_rows(dataset_dir, max_episodes=n_sample,
                                    validate=False, skip_missing=skip_missing)
-    sem = resolve_dataset_semantics(info, sample)
+    sem = resolve_dataset_semantics(
+        info, sample, os.path.basename(str(dataset_dir).rstrip("/")))
     _attach_semantics(metas, sem, embodiment_id)
     return metas
 

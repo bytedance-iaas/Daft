@@ -679,6 +679,72 @@ def _reprofile_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _interactive_run_preflight(args) -> str | None:
+    """TTY 下 run 的开跑前交互(2026-08-27 用户定:UI 弹框问的,CLI 也要问)。
+
+    两问与 UI 同源:① 数据集没登记机器人型号 → 给疑似型号(档案登记/注册表
+    试穿),可确认可跳过运动学;② LeRobot v3 → 问要不要切分逐条片段(不切
+    也能按时间窗播放)。返回切分输出目录(答"切"时),否则 None。
+
+    ⚠️ 只在 stdin/stdout 都是 TTY 时提问 —— UI 任务台子进程 / 脚本 / CI 里
+    停下等键盘会把任务吊死;非 TTY 保持原行为(型号缺失照旧响亮报错)。
+    """
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return None
+    if getattr(args, "batch", False):
+        return None
+    inp = str(args.input or "").rstrip("/")
+    from .ingest import dsfs
+    try:
+        info = dsfs.read_json(dsfs.join(inp, "meta", "info.json")) or {}
+    except Exception:  # noqa: BLE001 读不动交给管道自己报,这里不拦
+        info = {}
+    if not info:
+        return None
+    # ① 机器人型号
+    if (not args.embodiment_id
+            and str(info.get("robot_type") or "").strip() in ("", "unknown")):
+        from .ui.runner import embodiment_choices, suggest_embodiments
+        root = os.path.dirname(inp) or "."
+        name = os.path.basename(inp)
+        sug = suggest_embodiments(root, name)
+        print("这个数据集没有登记机器人型号,运动学检查需要知道型号才能查规格表。")
+        for x in sug:
+            print(f"  疑似:{x['id']}({x['reason']})")
+        default = sug[0]["id"] if sug else ""
+        tip = f"回车用 {default}" if default else "回车跳过运动学检查"
+        ans = input(f"型号({' / '.join(embodiment_choices())};{tip},"
+                    f"输 skip 跳过运动学): ").strip()
+        if ans == "skip" or (not ans and not default):
+            if args.only:
+                kept = [x for x in str(args.only).split(",")
+                        if x != "kinematic_limits"]
+                args.only = ",".join(kept) or None
+                if args.only is None:
+                    args.skip = "kinematic_limits"
+            else:
+                args.skip = ",".join(filter(None,
+                                            [args.skip, "kinematic_limits"]))
+            print("[curation] 未指定型号:本次跳过运动学极限检查")
+        else:
+            args.embodiment_id = ans or default
+            print(f"[curation] 机器人型号:{args.embodiment_id}")
+    # ② LeRobot v3 切分(rrd 由总开关管,不在此问)
+    ver = str(info.get("codebase_version") or "")
+    if ver.startswith("v3"):
+        ans = input("LeRobot v3 格式:多条轨迹合并存放,不切分也能按时间窗"
+                    "播放;切分后播放体验更好。要切分吗?[y/N]: ").strip().lower()
+        if ans in ("y", "yes"):
+            out = str(args.output or "").rstrip("/")
+            clip_out = (f"{out}/review/{os.path.basename(inp)}"
+                        if not out.startswith("tos://")
+                        else os.path.join("/tmp/curation-review",
+                                          os.path.basename(inp)))
+            print(f"[curation] 质检完成后将切分逐条片段 → {clip_out}")
+            return clip_out
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     import os
     _tolerate_broken_log()
@@ -834,6 +900,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # 跑批子目录名只算一次:--batch 下几个数据集共用同一个名字,一次点击的
         # 产物在各自交付里对得上号(`<交付>/<数据集>/20260814-074045/`)。
+        _then_clips = _interactive_run_preflight(args)
         from .delivery import is_run_name, new_run_name
         if args.run_name and not is_run_name(args.run_name):
             print(f"[输入错误] --run-name {args.run_name!r} 不是合法批次名:必须以"
@@ -1022,6 +1089,17 @@ def main(argv: list[str] | None = None) -> int:
         rc = _upload_if_tos()
         if rc:
             return rc
+        if _then_clips:
+            # 交互答了「切分」:同一条命令里接着跑审片站(main 自递归,与 UI
+            # 任务台串第二条命令同一哲学);切分失败不改质检的成功退出码,
+            # 明说重跑哪条命令即可补切
+            print(f"[curation] 质检完成,开始切分逐条片段 → {_then_clips}")
+            rc2 = main(["review-page", "--input", args.input,
+                        "--output", _then_clips])
+            if rc2:
+                print(f"[curation] 切分未完成(退出码 {rc2}):质检结果不受影响,"
+                      f"补切可单独跑 curation review-page --input {args.input} "
+                      f"--output {_then_clips}", file=sys.stderr)
     return 0
 
 

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import contextlib
+import html as _html
 import json
 import logging
 import os
@@ -80,7 +81,7 @@ DEFAULT_DATA_ROOT = "/mnt/tos/datasets"
 #: vendored 的 xterm.js 资产 + 我们的 term.js,由 `/term-static/` 静态目录服务。
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
-#: 标签页图标(Arco 蓝 + 白对勾),见 presentation() 里的说明。
+#: 标签页图标(Arco 蓝 + Daft 白漩涡),见 presentation() 里的说明。
 FAVICON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "assets", "favicon.png")
 
@@ -844,6 +845,10 @@ _ARCO_CSS = """
    字顶进面板底下**被切掉半截**(用户实见:"端点那一行被盖住了")。要贴近就
    靠正的小间距,别靠负值。 */
 .gradio-container .field-note { margin-top: 2px !important; padding-left: 13px; }
+/* 字段级报错(2026-08-27 用户:报错落在任务区离「交付名」太远,根本注意不到):
+   错误就写在该字段下方的说明位里,红字盖过说明的灰(选择器带 .note-err 比上面
+   的 span 规则更具体,同为 !important 时后写的更具体者赢)。红=Arco danger。 */
+.gradio-container .field-note span.note-err { color: #F53F3F !important; }
 
 /* 「数据集目录」自画标题行(2026-08-21):Markdown 标签 + 紧挨着的「私有 / 镜像」二选一,
    观感对齐 gradio 原生 block 标签(同字号/同灰/同下间距),右边列的原生标签才不会
@@ -1985,16 +1990,37 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         rn_ro = gr.Checkbox(label="只出报告,不导出数据集")
                 with gr.Row():
                     rn_go = gr.Button("开始质检", variant="primary", scale=0)
-                # v3 / rrd 数据集的追问面板(默认隐藏)。Gradio 没有原生模态框,
-                # 用"默认隐藏的一块 + 两个按钮"代替 —— 语义一样:先问再做。
+                # v3 / rrd 数据集的追问(默认隐藏)。2026-08-27 用户定:从页内
+                # 平铺块改成跳出的对话框 —— 样式复用 modal-dialog(交付目录确认
+                # 框同款:fixed 居中 + box-shadow 遮罩),事件接线不动。
                 # 为什么要问:这两种格式盘上没有逐条视频,不切片则 Episodes 页
                 # 打开某条只有提示语没有画面;而切片要重新编码,几分钟到十几分钟,
                 # 不该背着用户悄悄花掉。
-                with gr.Group(visible=False) as rn_ask:
+                with gr.Column(visible=False, elem_id="clips-ask",
+                               elem_classes=["modal-dialog"]) as rn_ask:
                     rn_ask_md = gr.Markdown()
-                    with gr.Row():
+                    with gr.Row(elem_id="clips-ask-btns"):
                         rn_yes = gr.Button("一起生成", variant="primary", scale=0)
                         rn_no = gr.Button("这次不用", scale=0)
+                        # 「返回」= 关框回表单,不开跑(2026-08-27 用户:填错了
+                        # 参数想回去检查,没有退路就被锁在对话框里)。不叫
+                        # 「取消」:执行裁决对话框已有同名按钮,测试按文字找回调
+                        rn_ask_cancel = gr.Button("返回", scale=0)
+
+                # 机器人型号追问(2026-08-27 用户定):数据集 robot_type 没登记
+                # 且表单没填型号时,开跑前弹框 —— 疑似型号预选(档案登记/注册表
+                # 试穿),用户可改;或诚实跳过运动学(没型号本来就没法查规格)。
+                # 不弹直接跑的旧行为 = 十条 daft traceback 灌进任务日志。
+                with gr.Column(visible=False, elem_id="emb-ask",
+                               elem_classes=["modal-dialog"]) as rn_emb_ask:
+                    rn_emb_ask_md = gr.Markdown()
+                    rn_emb_pick = gr.Dropdown(choices=runner.embodiment_choices(),
+                                              label="机器人型号")
+                    with gr.Row(elem_id="emb-ask-btns"):
+                        rn_emb_ok = gr.Button("用这个型号继续", variant="primary",
+                                              scale=0)
+                        rn_emb_skip = gr.Button("跳过运动学检查", scale=0)
+                        rn_emb_cancel = gr.Button("返回", scale=0)
 
                 # 「执行人工裁决」页签 2026-08-19 整个删掉:决策在报告页、执行在
                 # 任务台,两边不通气,几乎每个控件都在让用户把系统已知的上下文再
@@ -2044,6 +2070,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             gr.update(interactive=on), gr.update(interactive=on),
                             gr.update(interactive=on), note)
 
+                def _tk_picks(mode, picks, how):
+                    """勾选/只跑跳过变化时**只**动并发开关与说明。可见性由模式
+                    单选独占:往刚触发事件的 CheckboxGroup 回写 visible= 会让
+                    整个框重渲染,每勾一下闪一下(2026-08-27 用户实见)。"""
+                    on = _vlm_involved(mode, picks, how)
+                    note = "" if on else "*这次不跑用模型的步骤,并发调了也没用。*"
+                    return (gr.update(interactive=on), gr.update(interactive=on),
+                            gr.update(interactive=on), note)
+
                 def _ds_hint(ds, batch):
                     """选了几个数据集 → 「交付名」那行说明换一句。
 
@@ -2056,6 +2091,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 rn_ds.change(_ds_hint, [rn_ds, rn_batch], rn_out_hint)
                 rn_batch.change(_ds_hint, [rn_ds, rn_batch], rn_out_hint)
+
+                def _name_err(e) -> str:
+                    """交付名报错就写在「交付名」框正下方的说明位(2026-08-27
+                    用户:只落任务区太远,根本注意不到)。红字见 .note-err。"""
+                    return (f'<span class="note-err">⚠️ '
+                            f'{_html.escape(str(e))}</span>')
+
+                # 一改名字就把字段下的红字收走(改了=在改正,旧错误别赖着;
+                # 对不对等下次点「开始质检」再判)
+                rn_out.change(_ds_hint, [rn_ds, rn_batch], rn_out_hint)
 
                 def _src_datasets(src, multi_pick: bool):
                     """切数据集根目录 → (根那列的说明, 数据集下拉, 数据集那列的
@@ -2296,14 +2341,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 那套(_src_datasets),接线在那侧组件建出来之后
 
                 _mode_ins = [rn_mode, rn_pick, rn_how]
-                _mode_outs = [rn_pick, rn_how, rn_c_ep, rn_c_fr, rn_c_cap,
-                              rn_conc_note]
-                for _c in _mode_ins:
-                    _c.change(_tk_mode, _mode_ins, _mode_outs)
+                # 只有模式单选驱动勾选框/只跑跳过的可见性;勾选自身的变化走
+                # _tk_picks(不回写可见性,免得勾一下闪一下)
+                rn_mode.change(_tk_mode, _mode_ins,
+                               [rn_pick, rn_how, rn_c_ep, rn_c_fr, rn_c_cap,
+                                rn_conc_note])
+                for _c in (rn_pick, rn_how):
+                    _c.change(_tk_picks, _mode_ins,
+                              [rn_c_ep, rn_c_fr, rn_c_cap, rn_conc_note])
 
                 def _run_go(tin, tin_rg, tout, tout_rg, ds, name, mode, picks,
                             how, max_n, eps, backend, cfg, emb, plots, c_ep,
-                            c_fr, c_cap, sets, batch, ro, with_clips=False):
+                            c_fr, c_cap, sets, batch, ro, with_clips=False,
+                            skip_kin=False):
                     # 路径框先解析(2026-08-20 融合):对上配置桶 → 挂载直读
                     # (与之前的下拉白名单同一条安全边界);合法 tos:// 陌生桶
                     # → 直连;本地自由路径在 resolve_root_input 里被一句话拒
@@ -2373,14 +2423,30 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             _deliv_root, name or "", ds, bool(batch))
                         if _bad_name:
                             return _tk_view(f"⚠️ {_bad_name}")
-                    elif not runner.safe_name(name or ""):
-                        return _tk_view("⚠️ 交付名只收字母数字与 . _ -,"
-                                        "它要当目录名用")
+                    else:
+                        try:
+                            runner.safe_name(name or "", what="交付名")
+                        except ValueError as e:
+                            # 裸抛会变成 gradio 的 Error toast(2026-08-27 用户
+                            # 截图),错误要落在任务区说人话
+                            return _tk_view(f"⚠️ {e}")
                     only = skip = None
                     if mode == CUSTOM_SCAN and picks:
                         joined = ",".join(picks)
                         only, skip = ((joined, None) if how == "只跑选中"
                                       else (None, joined))
+                    if skip_kin:
+                        # 「不指定型号,跳过运动学」:没规格表这项检不了,与其
+                        # 十条 traceback 不如如实不检(报告里该模块整节不出现)
+                        if only:
+                            kept = [x for x in only.split(",")
+                                    if x != "kinematic_limits"]
+                            only = ",".join(kept) or None
+                            if only is None:
+                                skip = "kinematic_limits"
+                        else:
+                            skip = ",".join(filter(None,
+                                                   [skip, "kinematic_limits"]))
                     chosen = chosen_pre
                     # 跑批目录名 = 这次任务编号的时间戳部分:结果目录与任务/日志天然
                     # 对得上号("哪次跑批产生了这份结果"不必再翻日志)。多数据集时几份
@@ -2481,7 +2547,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         _spec = runner.resolve_root_input(tin, _buckets)
                     except ValueError as e:
                         return (*_tk_view(f"⚠️ {e}"), args,
-                                gr.update(visible=False), "")
+                                gr.update(visible=False), "",
+                                gr.update(visible=False), "", gr.update(),
+                                gr.update())
                     _root = _spec.get("path")
                     chosen = runner.picked_datasets(ds)
                     # 勾了「跑全部」时下拉本来就被忽略,跑的是根目录下的全部数据集,
@@ -2489,7 +2557,58 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 直连输入也问(2026-08-21 读端会说 tos://):切片站读桶里的
                     # 数据集与读挂载一样,不必再等"本地缓存路径"
                     _src_root = _root or _spec.get("url")
-                    needing = ([] if batch else
+                    # 交付名先行校验(2026-08-27 用户实见:名字非法却先弹了
+                    # 切片框,答完才报错,人被锁在对话框里)——非法/占用在
+                    # 弹任何模态之前拦下,错误落任务区不落 toast,**同时**红字
+                    # 写在「交付名」框正下方(任务区太远,用户注意不到)。判据
+                    # 与 _run_go 同源:本实例交付根按占用校验,其余按名字合法性
+                    try:
+                        if not batch:
+                            runner.safe_name(name or "", what="交付名")
+                        _out_s = str(tout or "").strip().rstrip("/")
+                        _home0 = runner.home_output_url(_deliv_root).rstrip("/")
+                        if (not _out_s or _out_s == str(_deliv_root).rstrip("/")
+                                or (_out_s == _home0
+                                    and runner.is_mount_backed(_deliv_root))):
+                            _bad0 = runner.delivery_name_error(
+                                _deliv_root, name or "", ds, bool(batch))
+                            if _bad0:
+                                raise ValueError(_bad0)
+                    except ValueError as e:
+                        return (*_tk_view(f"⚠️ {e}"), args,
+                                gr.update(visible=False), "",
+                                gr.update(visible=False), "", gr.update(),
+                                _name_err(e))
+                    # 机器人型号追问(2026-08-27):在切片追问**之前**——没型号
+                    # 连运动学都跑不起来,先解决要不要型号,再谈要不要切片。
+                    # 多选时任一数据集没登记就问一次(型号本来就是整跑全局参数)。
+                    if not str(args.get("emb") or "").strip() and not batch:
+                        unk = [c for c in chosen
+                               if runner.dataset_robot_type(_src_root, c)
+                               in ("", "unknown")]
+                        if unk:
+                            sug = runner.suggest_embodiments(_src_root, unk[0])
+                            return (*_tk_view(""), args,
+                                    gr.update(visible=False), "",
+                                    gr.update(visible=True),
+                                    runner.embodiment_ask_md("、".join(unk), sug),
+                                    gr.update(value=(sug[0]["id"] if sug
+                                                     else None)),
+                                    _ds_hint(ds, batch))
+                    return (*_clips_or_go(args),
+                            gr.update(visible=False), "", gr.update(),
+                            _ds_hint(ds, batch))
+
+                def _clips_or_go(args):
+                    """型号已定(或不需要)之后的下一站:该问切片问切片,否则开跑。"""
+                    try:
+                        _spec = runner.resolve_root_input(args["tin"], _buckets)
+                    except ValueError as e:
+                        return (*_tk_view(f"⚠️ {e}"), args,
+                                gr.update(visible=False), "")
+                    _src_root = _spec.get("path") or _spec.get("url")
+                    chosen = runner.picked_datasets(args["ds"])
+                    needing = ([] if args.get("batch") else
                                runner.datasets_needing_clips(_src_root, chosen))
                     if needing and review_dir:
                         fmt = (runner.dataset_format(
@@ -2504,13 +2623,42 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return (*_run_go(**args, with_clips=bool(with_clips)),
                             gr.update(visible=False), "")
 
-                _ask_outs = _tk_outs + [rn_args, rn_ask, rn_ask_md]
+                def _emb_after_ask(args, pick, use):
+                    """答完型号追问:用型号 → 填进参数;跳过 → 附带跳过运动学。
+                    然后进下一站(切片追问或直接开跑)。"""
+                    if use:
+                        args = dict(args, emb=str(pick or "").strip())
+                        if not args["emb"]:
+                            return (*_tk_view("⚠️ 还没选型号——从下拉里选一个,"
+                                              "或点「不指定,跳过运动学检查」"),
+                                    args, gr.update(), "",
+                                    gr.update(visible=True))
+                    else:
+                        args = dict(args, skip_kin=True)
+                    return (*_clips_or_go(args), gr.update(visible=False))
+
+                _ask_outs = (_tk_outs + [rn_args, rn_ask, rn_ask_md,
+                                         rn_emb_ask, rn_emb_ask_md, rn_emb_pick,
+                                         rn_out_hint])
                 rn_go.click(_run_preflight,
                             [rn_tin, rn_tin_rg, rn_tout, rn_tout_rg, rn_ds,
                              rn_out, rn_mode, rn_pick, rn_how,
                              rn_max, rn_eps, rn_backend, rn_cfg, rn_emb, rn_plots,
                              rn_c_ep, rn_c_fr, rn_c_cap, rn_set, rn_batch, rn_ro],
                             _ask_outs)
+                rn_ask_cancel.click(
+                    lambda: (gr.update(visible=False), ""),
+                    None, [rn_ask, rn_ask_md])
+                rn_emb_cancel.click(
+                    lambda: gr.update(visible=False), None, [rn_emb_ask])
+                rn_emb_ok.click(lambda a, p: _emb_after_ask(a, p, True),
+                                [rn_args, rn_emb_pick],
+                                _tk_outs + [rn_args, rn_ask, rn_ask_md,
+                                            rn_emb_ask])
+                rn_emb_skip.click(lambda a: _emb_after_ask(a, None, False),
+                                  rn_args,
+                                  _tk_outs + [rn_args, rn_ask, rn_ask_md,
+                                              rn_emb_ask])
                 rn_yes.click(lambda a: _run_after_ask(a, True), rn_args,
                              _tk_outs + [rn_ask, rn_ask_md])
                 rn_no.click(lambda a: _run_after_ask(a, False), rn_args,
