@@ -70,13 +70,20 @@ def _action_names(info: dict, key: str = "action") -> list[str]:
     return [str(n).lower() for n in names]
 
 
-def _match_profile(info: dict, profiles: list[dict]) -> dict | None:
-    """按 match 段匹配:robot_type / action_names / codebase_version 全命中才算。"""
+def _match_profile(info: dict, profiles: list[dict],
+                   dataset_name: str = "") -> dict | None:
+    """按 match 段匹配:robot_type / action_names / codebase_version /
+    dataset_name 全命中才算。dataset_name(2026-08-27):官方 lerobot/droid_100
+    的 robot_type=unknown、names=motor_*,前两把钥匙全废 —— 目录名是这类
+    元数据残缺数据集唯一可靠的身份。"""
     robot = str(info.get("robot_type", "")).lower()
     anames = _action_names(info)
     version = str(info.get("codebase_version", ""))
     for prof in profiles:
         m = prof.get("match", {})
+        if "dataset_name" in m and str(m["dataset_name"]).lower() \
+                != str(dataset_name or "").lower():
+            continue
         if "robot_type" in m and str(m["robot_type"]).lower() != robot:
             continue
         if "action_names" in m and [str(x).lower() for x in m["action_names"]] != anames:
@@ -89,7 +96,8 @@ def _match_profile(info: dict, profiles: list[dict]) -> dict | None:
     return None
 
 
-def resolve_semantics(info: dict, sample_action: np.ndarray | None = None) -> DatasetSemantics:
+def resolve_semantics(info: dict, sample_action: np.ndarray | None = None,
+                      dataset_name: str = "") -> DatasetSemantics:
     """解析数据集语义:先 profile 命中,否则数值指纹推断。
 
     info: meta/info.json;sample_action: 一条 action(用于指纹推断,可空)。
@@ -99,7 +107,7 @@ def resolve_semantics(info: dict, sample_action: np.ndarray | None = None) -> Da
     is_ee = bool(set(anames) & _EE_NAMES)
     prop_ee = bool(set(pnames) & _EE_NAMES)
 
-    prof = _match_profile(info, _load_profiles())
+    prof = _match_profile(info, _load_profiles(), dataset_name)
     if prof is not None:
         act = prof.get("action", {})
         st = prof.get("state", {})

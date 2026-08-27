@@ -83,14 +83,15 @@ class LeRobotDataSource(DataSource):
     # ---- 语义:profile 命中零数据读;inferred 采样(与急切路同一规则) ----
     def _resolve_semantics(self):
         from .dataset_semantics import resolve_semantics
-        if resolve_semantics(self._info, None).source == "profile":
-            return resolve_dataset_semantics(self._info, [])
+        _name = os.path.basename(str(self._dir).rstrip("/"))
+        if resolve_semantics(self._info, None, _name).source == "profile":
+            return resolve_dataset_semantics(self._info, [], _name)
         from .lerobot_reader import read_lerobot_rows
         n = (min(SEMANTICS_VOTE_EPISODES, self._max) if self._max
              else SEMANTICS_VOTE_EPISODES)
         sample = read_lerobot_rows(self._dir, max_episodes=n, validate=False,
                                    skip_missing=self._skip_missing)
-        return resolve_dataset_semantics(self._info, sample)
+        return resolve_dataset_semantics(self._info, sample, _name)
 
     # ---- schema:显式构造(与 rows_to_daft 产物一致,金对齐测试锚定) ----
     def _build_schema(self):
