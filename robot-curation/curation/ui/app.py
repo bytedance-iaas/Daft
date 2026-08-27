@@ -1232,7 +1232,13 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
                                    font_mono=["ui-monospace", "Menlo", "monospace"]),
         "css": _ARCO_CSS + _AUDIT_CSS + _TOPNAV_CSS + (_TERMINAL_CSS if terminal else ""),
         # ↑ 顶层导航常驻 ⇒ 它的样式也常驻;终端专属样式/资产仍只在开终端时注入
-        "head": (_TABLE_JS + _QJUMP_JS + _CURROW_JS + _DROPDOWN_JS
+        # icon 的 <link> 必须自己注入:gradio 6.9 把 favicon_path 服务在
+        # {root}/favicon.ico 却不往页面 head 写 link 标签,浏览器于是回退去取
+        # **域名根**的 /favicon.ico —— 共享域名按路径分流时那是 rerun viewer 的
+        # 图标(2026-08-27 线上实测),标签页就顶着别家 logo。带上 root 前缀,
+        # 网关不剥前缀,理由同 _terminal_head。
+        "head": (f'<link rel="icon" type="image/png" href="{root}/favicon.ico">'
+                 + _TABLE_JS + _QJUMP_JS + _CURROW_JS + _DROPDOWN_JS
                  + _TIP_JS.replace("__TIPS__", json.dumps(SCAN_TIPS, ensure_ascii=False))
                  + _TASK_POLL_JS
                  + (_terminal_head(root) if terminal else "")),

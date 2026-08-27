@@ -3340,6 +3340,20 @@ def test_dropdown_overlay_script_is_actually_injected():
     assert _DROPDOWN_JS in presentation()["head"]
 
 
+def test_favicon_link_injected_with_root_prefix():
+    """icon 的 <link> 必须自己注入且带挂载前缀 —— gradio 只服务 {root}/favicon.ico
+    不写 link 标签,浏览器会回退取域名根的 /favicon.ico,共享域名下那是 rerun
+    viewer 的图标(2026-08-27 线上实测,标签页顶着别家 logo)。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import presentation
+
+    assert '<link rel="icon" type="image/png" href="/curation/favicon.ico">' \
+        in presentation(root="/curation")["head"]
+    # 挂根路径时前缀为空,href 正好落在域名根,与浏览器回退路径重合,无害
+    assert '<link rel="icon" type="image/png" href="/favicon.ico">' \
+        in presentation()["head"]
+
+
 # ───────── 质检总览合成一张表(2026-08-13 用户点名)─────────
 #
 # 起因(用户原话:"表格没有显示正确的质检结果信息"):总览页上半部是几行 bullet、
