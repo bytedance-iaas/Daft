@@ -250,3 +250,26 @@ def test_prune_delivery_clips_local_and_remote(tmp_path, monkeypatch):
                      .read_text(encoding="utf-8"))
     assert idx == {"ep000000": ["cam_a"]}
     assert prune_delivery_clips(str(b), ["ep000000"]) == 0
+
+
+def test_cli_review_page_configures_input_region(tmp_path, monkeypatch, capsys):
+    """CLI 直连输入桶要吃 --input-region(2026-08-28 用户点名:此前这条命令
+    根本没有这个参数,非默认地区的输入桶必 404,只能靠自愈兜底)。"""
+    from curation import cli
+    from curation.ingest import dsfs
+    seen = {}
+    monkeypatch.setattr(dsfs, "configure", lambda region=None: seen.setdefault("rg", region))
+
+    def _boom(*a, **kw):
+        raise SystemExit(0)          # 配好地区就够了,不真读数据
+    import curation.ingest.lerobot_reader as lr
+    import curation.ingest.rrd_reader as rr
+    monkeypatch.setattr(rr, "is_rrd_dataset", lambda p: False)
+    monkeypatch.setattr(lr, "read_lerobot_rows", _boom)
+    try:
+        cli.main(["review-page", "--input", "tos://sh-bkt/ds",
+                  "--input-region", "cn-shanghai",
+                  "--into-delivery", str(tmp_path)])
+    except SystemExit:
+        pass
+    assert seen.get("rg") == "cn-shanghai"

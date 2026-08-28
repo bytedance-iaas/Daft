@@ -77,9 +77,10 @@ def _store(bucket: str | None = None):
             _STORES[key] = tos_store.make_store_for(bucket, _REGION["value"])
         return _STORES[key]
     # 按桶取登记地区(2026-08-28):没有登记才退回全局 configure 的地区。
-    # 异地桶(如上海交付桶)用默认地区签名 = URL 指向不存在的坐标,视频全黑
+    # 异地桶(如上海交付桶)用默认地区签名 = URL 指向不存在的坐标,视频全黑。
+    # 缓存键 = 解析后的地区:签名客户端只分地区不分桶,同地区各桶复用一个
     reg = (tos_store.bucket_region(bucket) if bucket else None) or _REGION["value"]
-    key = (bucket or "", reg or "")
+    key = ("signed", reg or "")
     if key not in _STORES:
         _STORES[key] = tos_store.make_store(reg)
     return _STORES[key]
@@ -89,15 +90,47 @@ RETRY_ATTEMPTS = 3
 _RETRY_SLEEP_S = (1.0, 3.0)
 
 
-def _retry(what: str, fn):
+from .. import tos_store as tos_store_mod  # noqa: E402 自愈/登记用
+
+
+def _tos_code(e) -> str:
+    """SDK 异常的错误码(NoSuchBucket 之类);拿不到给空串。"""
+    d = e.args[0] if getattr(e, "args", None) and isinstance(e.args[0], dict) else {}
+    return str(getattr(e, "code", None) or d.get("code") or "")
+
+
+def _relocate(bucket: str) -> bool:
+    """NoSuchBucket 自愈:到各地区实探这个桶,找到就登记正确地区并清掉旧客户端。
+
+    TOS 对"地区填错"和"桶名写错"都答 404,无法区分 —— 实探一圈是唯一分辨法
+    (内网几十毫秒一次)。找到 = 用户地区说错,自动改用并记住;找不到 = 桶真
+    不存在,让原异常如实抛。"""
+    from .. import tos_store
+    cur = tos_store.bucket_region(bucket) or _REGION["value"] or None
+    rg = tos_store.locate_bucket(bucket, tos_store.REGION_CANDIDATES, skip=cur)
+    if not rg:
+        return False
+    tos_store.register_bucket_region(bucket, rg)
+    # 签名客户端按解析地区取键,登记更新后自然指到新客户端,不用清;
+    # 匿名客户端按桶取键,得清掉旧的
+    _STORES.pop(("anon", bucket), None)
+    print(f"[curation] 桶 {bucket} 不在地区 {cur or '(默认)'},实探到它在 {rg}"
+          f" —— 已自动改用并记住", flush=True)
+    return True
+
+
+def _retry(what: str, fn, bucket: str | None = None):
     """远端读的瞬断兜底:列清单/取对象失败重试两次(1s、3s),最后一次原样抛。
     凭证/桶名这类确定性错误也会重试两次 —— 代价是几秒,换来的是不用在这里分辨
-    SDK 几十种异常哪些算瞬断。"""
+    SDK 几十种异常哪些算瞬断。给了 bucket 的调用,最后再多一层 NoSuchBucket
+    自愈(_relocate):地区说错不该是死路(2026-08-28 dataverse 实见)。"""
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
             return fn()
         except Exception as e:  # noqa: BLE001 SDK/网络异常族杂
             if attempt == RETRY_ATTEMPTS:
+                if bucket and _tos_code(e) == "NoSuchBucket" and _relocate(bucket):
+                    return fn()          # 客户端已换对地区,再来一次
                 raise
             print(f"[curation] TOS {what}失败(第 {attempt}/{RETRY_ATTEMPTS} 次):"
                   f"{type(e).__name__}: {str(e)[:100]} —— 重试", flush=True)
@@ -131,16 +164,18 @@ def prefetch(root_url: str, *, store=None, quiet: bool = False) -> int:
     bucket, root = _split(root_url)
     if (bucket, root) in _LISTINGS:
         return len(_LISTINGS[(bucket, root)].files)
-    st = store or _store(bucket)
     t0 = time.time()
 
     def _list():
+        st = store or _store(bucket)     # 每次现取:自愈换过客户端才吃得到
         lst = _Listing(bucket, root)
         for key, size, etag in st.iter_object_meta(bucket, root + "/" if root else ""):
             lst.add(key, size, etag)
         return lst
-    lst = _retry(f"列清单 {root_url}", _list)
+    lst = _retry(f"列清单 {root_url}", _list, bucket=None if store else bucket)
     _LISTINGS[(bucket, root)] = lst
+    if store is None and not tos_store_mod.is_anonymous_bucket(bucket):
+        tos_store_mod.register_bucket_region(bucket, _store(bucket).region)
     if not quiet and (len(lst.files) > 1000 or time.time() - t0 > 2):
         print(f"[curation] 列出 {root_url} 的对象清单:{len(lst.files)} 个文件"
               f"({time.time() - t0:.1f}s)", flush=True)
@@ -165,9 +200,8 @@ def _listing_for(bucket: str, key: str) -> _Listing | None:
 
 def _probe(bucket: str, key: str) -> tuple[str | None, int, str]:
     """没预取过的路径:一次 list 判断是文件还是目录 → (kind, size, etag)。"""
-    st = _store(bucket)
-
     def _look():
+        st = _store(bucket)              # 每次现取:自愈换过客户端才吃得到
         kind, size, etag = None, 0, ""
         for k, s, e in st.iter_object_meta(bucket, key):
             if k == key:
@@ -178,7 +212,7 @@ def _probe(bucket: str, key: str) -> tuple[str | None, int, str]:
                 break
             # 同前缀的别的文件(a/b 与 a/bc):继续看下一条
         return kind, size, etag
-    return _retry(f"探测 {key}", _look)
+    return _retry(f"探测 {key}", _look, bucket=bucket)
 
 
 def _stat(url: str) -> tuple[str | None, int, str]:
@@ -263,7 +297,8 @@ def read_bytes(path: str) -> bytes:
         with open(path, "rb") as f:
             return f.read()
     bucket, key = _split(path)
-    return _retry(f"取对象 {key}", lambda: _store(bucket).get_bytes(bucket, key))
+    return _retry(f"取对象 {key}", lambda: _store(bucket).get_bytes(bucket, key),
+                  bucket=bucket)
 
 
 def open_text(path: str, encoding: str = "utf-8"):
@@ -330,5 +365,5 @@ def copy_to_local(path: str, dst: str) -> None:
         return
     bucket, key = _split(path)
     kind, size, _etag = _stat(path)
-    _retry(f"下载 {key}", lambda: _store(bucket).download(
+    _retry(f"下载 {key}", bucket=bucket, fn=lambda: _store(bucket).download(
         bucket, key, dst, size=size if kind == "file" else None))

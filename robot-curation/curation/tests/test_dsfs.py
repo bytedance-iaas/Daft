@@ -316,3 +316,64 @@ def test_store_uses_registered_bucket_region_over_global(monkeypatch):
     tos_store.clear_bucket_regions()
     dsfs.forget()
     dsfs.configure(None)
+
+
+def test_no_such_bucket_self_heals_via_locate(monkeypatch):
+    """NoSuchBucket 自愈:按错误地区读到 404 → locate_bucket 实探出正确地区
+    → 登记 + 换客户端 + 重试成功。找不到桶则原样抛,不吞。"""
+    from curation import tos_store
+
+    class _Boom(Exception):
+        code = "NoSuchBucket"
+
+    calls = {"n": 0}
+
+    class _Wrong:
+        region = "cn-beijing"
+
+        def get_bytes(self, bucket, key):
+            calls["n"] += 1
+            raise _Boom({"code": "NoSuchBucket"})
+
+    class _Right:
+        region = "cn-shanghai"
+
+        def get_bytes(self, bucket, key):
+            return b'{"ok": 1}'
+
+    def fake_make_store(region=None, client=None, anonymous=False):
+        return _Right() if region == "cn-shanghai" else _Wrong()
+
+    monkeypatch.setattr(tos_store, "make_store", fake_make_store)
+    monkeypatch.setattr(tos_store, "locate_bucket",
+                        lambda bucket, cands, skip=None, make=None: "cn-shanghai")
+    monkeypatch.setattr(dsfs, "_RETRY_SLEEP_S", (0, 0))
+    tos_store.clear_bucket_regions()
+    dsfs.forget()
+    dsfs.configure(None)
+    assert dsfs.read_json("tos://mystery-bkt/a/b.json") == {"ok": 1}
+    assert calls["n"] == dsfs.RETRY_ATTEMPTS, "先按原地区重试满,再自愈"
+    assert tos_store.bucket_region("mystery-bkt") == "cn-shanghai", "实探结果记入通讯录"
+    # 通讯录已修正:后续读取直接走对,不再撞 404
+    assert dsfs.read_json("tos://mystery-bkt/a/b.json") == {"ok": 1}
+    # 真不存在的桶:locate 也找不到 → 原样抛
+    monkeypatch.setattr(tos_store, "locate_bucket",
+                        lambda bucket, cands, skip=None, make=None: None)
+    tos_store.clear_bucket_regions()
+    dsfs.forget()
+    import pytest as _pytest
+    with _pytest.raises(_Boom):
+        dsfs.read_bytes("tos://ghost-bkt/x")
+    tos_store.clear_bucket_regions()
+    dsfs.forget()
+
+
+def test_prefetch_success_registers_bucket_region(bucket, monkeypatch):
+    """列清单成功 = 地区被事实验证 → 登记(签名/播放端从此按桶拿对)。"""
+    from curation import tos_store
+    tos_store.clear_bucket_regions()
+    root, client = bucket
+    _v2(root)
+    dsfs.prefetch("tos://bkt/datasets/arm")
+    assert tos_store.bucket_region("bkt") == "cn-beijing"
+    tos_store.clear_bucket_regions()

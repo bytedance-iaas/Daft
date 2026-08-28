@@ -1546,10 +1546,13 @@ def test_multi_dataset_clips_chain_without_review_dir():
     直连交付(tos:// 输出)把地区一并带给切片步。"""
     jobs = runner.build_dataset_jobs(
         "tos://b/datasets", "tos://b/deliv", ["droid"], "n",
-        clips_for=["droid"], output_region="cn-beijing", max_episodes=2)
+        clips_for=["droid"], output_region="cn-beijing",
+        input_region="cn-shanghai", max_episodes=2)
     clip = jobs[0]["steps"][1]
     assert "--into-delivery" in clip and "tos://b/deliv/n/droid" in clip
     assert "--delivery-region" in clip and "cn-beijing" in clip
+    # 输入桶的地区也要带给切片步(2026-08-28 用户点名:CLI 非北京输入桶)
+    assert "--input-region" in clip and "cn-shanghai" in clip
     # 范围跟跑批走(2026-08-28 真机实见:前 2 条的跑批把 100 条全切了)
     assert "--max-episodes" in clip and "2" in clip
 
@@ -1730,3 +1733,32 @@ def test_mirror_skips_batch_clips_dir():
     """轻镜像绝不下载逐条片段(大):review_clips/ 在跳过表里,
     索引(details/ 下的小 json)不受影响照常镜像。"""
     assert "review_clips/" in runner.MIRROR_SKIP_DIRS
+
+
+def test_listing_success_registers_bucket_region(monkeypatch):
+    """列举成功 = 地区被事实验证 → 登记;签名端(dsfs)按桶拿对。
+    注入 store 的调用(单测/内部复用)不登记,不替别人做主。"""
+    from curation import tos_store
+
+    class _St:
+        region = "cn-shanghai"
+
+        def iter_common_prefixes(self, bucket, prefix):
+            return ["d1", "d2"]
+
+    tos_store.clear_bucket_regions()
+    monkeypatch.setattr(tos_store, "make_store_for",
+                        lambda bucket, region=None, **kw: _St())
+    assert runner.tos_list_datasets("tos://sh-bkt/deliveries") == ["d1", "d2"]
+    assert tos_store.bucket_region("sh-bkt") == "cn-shanghai"
+    tos_store.clear_bucket_regions()
+    runner.tos_list_datasets("tos://sh-bkt/deliveries", store=_St())
+    assert tos_store.bucket_region("sh-bkt") is None
+    tos_store.clear_bucket_regions()
+
+
+def test_region_switch_note_wording():
+    """自动切换的那句话:中文地区名 + 代码;没登记中文名的地区原样给代码。"""
+    assert runner.region_switch_note("b", "cn-shanghai") == \
+        "该桶在 华东2(上海) (cn-shanghai),已自动切换"
+    assert "cn-new-region" in runner.region_switch_note("b", "cn-new-region")
