@@ -4078,4 +4078,4 @@ def test_banner_counts_episodes_and_items_separately(tmp_path):
     banner = unapplied_banner_md(load_delivery(str(d)))
     assert "已裁 1 条(2 项)" in banner
     assert "待裁 0 条(0 项)" in banner
-    assert "**1 条(2 项)**尚未应用于交付" in banner
+    assert "<b>1 条(2 项)</b>尚未应用于交付" in banner
