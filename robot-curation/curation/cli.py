@@ -636,6 +636,14 @@ def _tolerate_broken_log() -> None:
     sys.stderr = _TolerantStream(sys.stderr)
 
 
+#: rejudge 的镜像/写回跳过表(2026-08-28 零下载):重导出的素材是**源数据集**,
+#: 镜像交付里的视频从来就是白下载;跳过的前缀写回时对账也跳过,远端新旧交替由
+#: rejudge 里的 _finalize_remote_curated 按产物清单点名做。rrd_curated 不跳:
+#: RRD 重导出仍走本地全量 + sync_back(release 默认关,真用到再改)。
+REJUDGE_SKIP_DIRS = ("lerobot_curated/", "review_clips/",
+                     "details/audit_clips/", "details/evidence/",
+                     "details/plots/")
+
 #: reprofile 的镜像/写回跳过表:它只动画像(passed.json 的 skills 段、
 #: skill_assignment.csv、报告),视频/证据帧/曲线一个字节不读不写 ——
 #: 半镜像 + 写回对称跳过,pod 盘上只有 json/parquet 级小文件。
@@ -863,9 +871,9 @@ def main(argv: list[str] | None = None) -> int:
         from .delivery import is_legacy_delivery, resolve_run
         from .pipeline.config import load_config
         from .pipeline.rejudge import run_rejudge
-        # 交付在桶里(2026-08-21):先把那次跑批全量镜像到本地缓存,在本地执行,
-        # 最后把改动写回桶(改过的传、剔掉的删、完整性标志最后传)
-        _sync = _stage_tos_delivery(args, "rejudge")
+        # 交付在桶里(2026-08-21;2026-08-28 起按需镜像):小文件镜像到本地
+        # 执行,视频零下载;改动写回桶,重导出的成品包随导随传
+        _sync = _stage_tos_delivery(args, "rejudge", skip_dirs=REJUDGE_SKIP_DIRS)
         if _sync is None and str(args.delivery).startswith("tos://"):
             return 1
         if str(args.input or "").startswith("tos://"):
@@ -887,8 +895,26 @@ def main(argv: list[str] | None = None) -> int:
         _rrd_apply_config(cfg)
         from .ingest.public_catalog import apply_config as _public_apply_config
         _public_apply_config(cfg)
+        _cur_pub = ((f"{_sync[1]}/lerobot_curated", _sync[2]) if _sync else None)
         summary = run_rejudge(args.delivery, args.input, cfg,
-                              retry_abstains=getattr(args, "retry_abstained", False))
+                              retry_abstains=getattr(args, "retry_abstained", False),
+                              curated_publish=_cur_pub)
+        # 剔除条目的逐条片段清理:索引改本地(随 sync_back 回桶),片段本体
+        # 点名删(它被镜像/写回双向跳过)。放在 sync_back 之前,索引才搭得上车
+        from .export.review_page import prune_delivery_clips
+        try:
+            with open(os.path.join(args.delivery, "passed.json"),
+                      encoding="utf-8") as _f:
+                _kept = list((json.load(_f).get("episodes") or {}))
+        except Exception:  # noqa: BLE001 passed.json 读不动就不清,别拦裁决
+            _kept = None
+        if _kept is not None:
+            _n = prune_delivery_clips(args.delivery, _kept,
+                                      remote_url=(f"{_sync[1]}" if _sync else None),
+                                      region=(_sync[2] if _sync else None))
+            if _n:
+                print(f"[rejudge] 逐条片段清理:剔除条目的 {_n} 条片段已删,"
+                      "索引同步", flush=True)
         print(json.dumps(summary, ensure_ascii=False, indent=1)
               if isinstance(summary, dict) else summary)
         return _sync_tos_delivery(_sync, "rejudge")

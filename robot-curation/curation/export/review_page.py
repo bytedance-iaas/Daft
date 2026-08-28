@@ -257,3 +257,44 @@ def build_delivery_clips(rows: list[dict], delivery: str, *, region: str | None 
     if dirty or changed:
         _flush(idx)
     return n_new, where
+
+
+def prune_delivery_clips(batch_dir: str, keep_eids, *, remote_url: str | None = None,
+                         region: str | None = None) -> int:
+    """剔除条目的逐条片段清理(rejudge 收尾用):索引减行 + 片段文件删除。
+
+    索引在 details/ 下,改本地那份即可(直连交付由 sync_back 一并写回);
+    片段本体被镜像/写回**双向跳过**,得点名删 —— 本地有就删本地,remote_url
+    给了就顺带删桶里的。返回剔掉的 episode 数;没有索引 = 没切过,0。
+    """
+    idx_p = os.path.join(batch_dir, CLIPS_INDEX_RELPATH)
+    try:
+        with open(idx_p, encoding="utf-8") as f:
+            idx = json.load(f)
+    except Exception:  # noqa: BLE001 没切过片段
+        return 0
+    keep = {str(e) for e in keep_eids}
+    drop = [e for e in idx if e not in keep]
+    if not drop:
+        return 0
+    st = bucket = prefix = None
+    if remote_url:
+        from .. import tos_store
+        bucket, prefix = tos_store.parse_tos_url(remote_url)
+        prefix = prefix.strip("/")
+        st = tos_store.make_store_for(bucket, region)
+    for eid in drop:
+        for cam in idx.get(eid) or []:
+            fname = f"{eid}__{cam}.mp4"
+            lp = os.path.join(batch_dir, CLIPS_DIRNAME, fname)
+            if os.path.exists(lp):
+                os.remove(lp)
+            if st is not None:
+                try:
+                    st.delete(bucket, f"{prefix}/{CLIPS_DIRNAME}/{fname}")
+                except Exception:  # noqa: BLE001 远端本来就没有 → 目的已达成
+                    pass
+        idx.pop(eid, None)
+    from .safe_write import write_json
+    write_json(idx_p, idx, ensure_ascii=False)
+    return len(drop)

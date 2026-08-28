@@ -778,6 +778,11 @@ def mirror_run(run_url: str, region: str | None = None, *,
             if not rel or rel.endswith("/"):
                 continue
             if sub == run_name and any(rel.startswith(sk) for sk in skip_dirs):
+                # 跳过下载,但给首段留一个**空目录路标**(只给远端真有对象的
+                # 前缀留):rejudge 的重导出分支按 isdir 判"这份交付有没有这种
+                # 成品包"——没有路标,半镜像会让它静默不干活(2026-08-28)
+                os.makedirs(os.path.join(local_deliv, sub, rel.split("/", 1)[0]),
+                            exist_ok=True)
                 continue
             dst = os.path.join(local_deliv, sub, *rel.split("/"))
             try:

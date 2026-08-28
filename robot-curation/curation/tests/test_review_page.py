@@ -215,3 +215,38 @@ def test_cli_review_page_requires_exactly_one_target(tmp_path, capsys):
     from curation.cli import main
     assert main(["review-page", "--input", str(tmp_path)]) == 2
     assert "二选一" in capsys.readouterr().err
+
+
+def test_prune_delivery_clips_local_and_remote(tmp_path, monkeypatch):
+    """rejudge 剔条目后清片段:索引减行、本地文件删、远端(给了 URL)点名删;
+    没剔任何在册条目 = 0 且索引不动。"""
+    import json
+
+    from curation.export.review_page import prune_delivery_clips
+    b = _batch(tmp_path)
+    (b / "review_clips").mkdir()
+    for eid, cams in (("ep000000", ["cam_a"]), ("ep000001", ["cam_a", "cam_b"])):
+        for c in cams:
+            (b / "review_clips" / f"{eid}__{c}.mp4").write_bytes(b"x")
+    (b / "details" / "review_clips_index.json").write_text(json.dumps(
+        {"ep000000": ["cam_a"], "ep000001": ["cam_a", "cam_b"]}), encoding="utf-8")
+
+    deletes = []
+
+    class _St:
+        def delete(self, bucket, key):
+            deletes.append((bucket, key))
+    from curation import tos_store
+    monkeypatch.setattr(tos_store, "make_store_for",
+                        lambda bucket, region=None, **kw: _St())
+    n = prune_delivery_clips(str(b), ["ep000000"],
+                             remote_url="tos://bkt/d/RUN", region=None)
+    assert n == 1
+    assert (b / "review_clips" / "ep000000__cam_a.mp4").exists()
+    assert not (b / "review_clips" / "ep000001__cam_a.mp4").exists()
+    assert ("bkt", "d/RUN/review_clips/ep000001__cam_a.mp4") in deletes
+    assert ("bkt", "d/RUN/review_clips/ep000001__cam_b.mp4") in deletes
+    idx = json.loads((b / "details" / "review_clips_index.json")
+                     .read_text(encoding="utf-8"))
+    assert idx == {"ep000000": ["cam_a"]}
+    assert prune_delivery_clips(str(b), ["ep000000"]) == 0

@@ -74,7 +74,9 @@ def test_mirror_full_vs_light_share_one_cache_tree(tmp_path, monkeypatch):
     light = tos_store.mirror_run(f"tos://bkt/{RUN}", store=st,
                                  skip_dirs=tos_store.MIRROR_SKIP_DIRS_LIGHT)
     assert os.path.isfile(os.path.join(light, "report.md"))
-    assert not os.path.exists(os.path.join(light, "lerobot_curated")), "轻镜像不下大件"
+    lc = os.path.join(light, "lerobot_curated")
+    assert os.path.isdir(lc) and not os.listdir(lc), \
+        "轻镜像不下大件;只留空目录路标(rejudge 重导出分支按 isdir 判包型)"
     deliv = os.path.dirname(light)
     assert os.path.isfile(os.path.join(deliv, "human-decisions", "label_decisions.csv"))
     assert os.path.isfile(os.path.join(deliv, "latest"))
@@ -163,7 +165,7 @@ def test_sync_back_skip_dirs_preserves_unmirrored_remote(tmp_path, monkeypatch):
     skip = ("lerobot_curated/",)
     st = _store(OBJS)
     local = tos_store.mirror_run(f"tos://bkt/{RUN}", store=st, skip_dirs=skip)
-    assert not os.path.exists(os.path.join(local, "lerobot_curated"))
+    assert not os.listdir(os.path.join(local, "lerobot_curated")), "跳过=零下载"
     open(os.path.join(local, "report.md"), "wb").write(b"# r2")
     r = tos_store.sync_back(local, f"tos://bkt/{RUN}", store=st, skip_dirs=skip)
     c = st._c
@@ -229,3 +231,36 @@ def test_cli_prune_tos_end_to_end(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "已删 20260825-000000" in out and "human-decisions" in out
     assert st._c.deletes == ["deliveries/d2/20260825-000000/passed.json"]
+
+
+def test_cli_rejudge_tos_uses_lazy_mirror_and_curated_publish(tmp_path, monkeypatch):
+    """rejudge 直连交付(2026-08-28 零下载):镜像带 REJUDGE_SKIP_DIRS,
+    重导出直传地址(<批次>/lerobot_curated)与地区一起进 run_rejudge。"""
+    import json as _j
+
+    from curation import cli
+    calls = {}
+    monkeypatch.setattr(tos_store, "resolve_run_url",
+                        lambda url, region=None, **kw: f"tos://bkt/{RUN}")
+    local = tmp_path / "cache" / "reports" / "bkt" / "deliveries" / "d1" / "20260821-000000"
+    local.mkdir(parents=True)
+    (local / "passed.json").write_text(_j.dumps({"episodes": {}}))
+
+    def fake_mirror(url, region=None, **kw):
+        calls["skip"] = kw.get("skip_dirs")
+        return str(local)
+    monkeypatch.setattr(tos_store, "mirror_run", fake_mirror)
+    monkeypatch.setattr(tos_store, "sync_back",
+                        lambda *a, **kw: {"uploaded": 0, "deleted": 0, "skipped": 0})
+    import curation.pipeline.rejudge as rj
+
+    def fake_run(delivery, inp, cfg, **kw):
+        calls["curated_publish"] = kw.get("curated_publish")
+        return {"ok": 1}
+    monkeypatch.setattr(rj, "run_rejudge", fake_run)
+    rc = cli.main(["rejudge", "--delivery", "tos://bkt/deliveries/d1",
+                   "--input", str(tmp_path), "--delivery-region", "cn-beijing"])
+    assert rc == 0
+    assert calls["skip"] == cli.REJUDGE_SKIP_DIRS
+    assert calls["curated_publish"] == (f"tos://bkt/{RUN}/lerobot_curated",
+                                        "cn-beijing")

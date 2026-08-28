@@ -583,9 +583,46 @@ def _sync_dataset_summary(files: dict) -> None:
                 ss["avg_soft_score"] = round(sum(scores) / len(scores), 4)
 
 
+def _finalize_remote_curated(curated_dir: str, curated_publish: tuple,
+                             pub) -> None:
+    """直连重导出的远端收尾:①删远端里**不在新产物清单**上的旧对象(剔除/挪号
+    留下的孤儿 —— sync_back 对这个前缀跳过,不会替我们删);②把发布器押后的
+    完整性标志(meta/info.json)在数据全就位之后最后传。顺序是刻意的:
+    先清孤儿再落标志,中途挂掉时远端没有新标志,不会把混着旧文件的半成品
+    当完整数据集背书。"""
+    from .. import tos_store
+    url, region = curated_publish
+    bucket, prefix = tos_store.parse_tos_url(url)
+    prefix = prefix.strip("/")
+    st = tos_store.make_store_for(bucket, region)
+    produced = set(pub.uploaded) | set(pub.deferred)
+    stale = [key for key, _size in st.iter_objects(bucket, prefix + "/")
+             if key[len(prefix) + 1:] not in produced]
+    for key in stale:
+        tos_store._with_retry("删除", key, lambda k=key: st.delete(bucket, k))
+    for rel in sorted(pub.deferred, key=lambda r: r.endswith("info.json")):
+        tos_store._with_retry("上传", rel, lambda r=rel: st.upload(
+            os.path.join(curated_dir, r), bucket, f"{prefix}/{r}"))
+    print(f"[rejudge] lerobot_curated 已直传:{len(pub.uploaded)} 个文件"
+          f"随导随传,清掉远端旧对象 {len(stale)} 个,完整性标志最后落",
+          flush=True)
+
+
+def _delete_remote_prefix(curated_publish: tuple) -> None:
+    """全部剔除时,远端的成品包也一并删干净(sync_back 对该前缀跳过)。"""
+    from .. import tos_store
+    url, region = curated_publish
+    bucket, prefix = tos_store.parse_tos_url(url)
+    prefix = prefix.strip("/")
+    st = tos_store.make_store_for(bucket, region)
+    for key, _size in list(st.iter_objects(bucket, prefix + "/")):
+        tos_store._with_retry("删除", key, lambda k=key: st.delete(bucket, k))
+
+
 def run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 rerun_fn: Callable | None = None,
-                retry_abstains: bool = False) -> dict:
+                retry_abstains: bool = False,
+                curated_publish: tuple | None = None) -> dict:
     """读裁决 → 重判(采纳条目)→ 更新交付。rerun_fn 注入(测试用假函数);
     生产缺省 = _build_rerun(cfg)(多视角 v7.3 全协议,与漏斗同源构件)。
 
@@ -595,7 +632,8 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
     """
     try:
         return _run_rejudge(delivery, input_dir, cfg, rerun_fn,
-                            retry_abstains=retry_abstains)
+                            retry_abstains=retry_abstains,
+                            curated_publish=curated_publish)
     finally:
         from ..ingest.rrd_reader import cleanup_video_cache
         cleanup_video_cache(input_dir)
@@ -603,7 +641,8 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
 
 def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                  rerun_fn: Callable | None = None,
-                 retry_abstains: bool = False) -> dict:
+                 retry_abstains: bool = False,
+                 curated_publish: tuple | None = None) -> dict:
     decisions = human.load_label_decisions(delivery)
     verdicts = human.load_task_verdicts(delivery)
     appeals = human.load_reject_appeals(delivery)
@@ -1009,11 +1048,32 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                         print(f"[rejudge] lerobot_curated(v3)重导出:{len(keep_idx)} 条的"
                               "视频需重新编码,耗时与首轮导出相当,请稍候", flush=True)
                     if keep_idx:
+                        _pub = None
                         with delivery_dir(curated) as _staging:
-                            exporter(input_dir, keep_idx, _staging,
-                                     task_overrides=ov, camera_health=_ch)
+                            if curated_publish:
+                                # 直连交付(2026-08-28 零下载):导出的文件封口
+                                # 即传、传完即删本地 —— pod 盘上同时只有在写的
+                                # 几个文件,与数据集大小无关。sync_back 对
+                                # lerobot_curated/ 前缀视而不见,远端的新旧对账
+                                # 在下面 _finalize_remote_curated 里按产物清单做
+                                from ..export import publish as _publish
+                                _pub = _publish.Publisher(_staging,
+                                                          curated_publish[0],
+                                                          curated_publish[1])
+                                with _publish.activate(_pub):
+                                    exporter(input_dir, keep_idx, _staging,
+                                             task_overrides=ov, camera_health=_ch)
+                                _pub.finish()
+                            else:
+                                exporter(input_dir, keep_idx, _staging,
+                                         task_overrides=ov, camera_health=_ch)
+                        if _pub is not None:
+                            _finalize_remote_curated(curated, curated_publish,
+                                                     _pub)
                     else:
                         _sh.rmtree(curated)        # 全部剔除:成品包不复存在
+                        if curated_publish:
+                            _delete_remote_prefix(curated_publish)
                     print(f"[rejudge] lerobot_curated 已重导出"
                           f"({'v3 视频重编码' if is_v3 else 'v2 纯拷贝'}):"
                           f"{len(keep_idx)} 条,任务覆写 {len(ov)} 条", flush=True)
