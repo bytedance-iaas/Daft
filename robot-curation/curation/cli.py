@@ -322,7 +322,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr = _cmd("prune", "列出并按需清理一份交付下的历次跑批(默认只列不删)",
               "列出一份交付下的历次跑批(时间 / 条数 / 占用),并按需删掉旧的几次。"
               "默认只列不删;真删需要同时给 --keep-latest 与 --yes。")
-    pr.add_argument("delivery", help="交付目录(如 /mnt/tos/deliveries/droid-200-full)")
+    pr.add_argument("delivery", help="交付目录(本地路径或 tos://桶/前缀 都行)")
+    pr.add_argument("--region", default=None, metavar="地区",
+                    help="交付是 tos:// 时桶的地区(如 cn-beijing)")
     pr.add_argument("--keep-latest", type=int, default=None, metavar="N",
                     help="要删的是哪几次:留最新的 N 次,更早的删掉。"
                          "latest 记的那次永远保留。不给这个参数就只列出、不删任何东西")
@@ -474,34 +476,50 @@ def _cmd_public(config_path: str | None, *, as_json: bool = False,
     return 0
 
 
-def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool) -> int:
+def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool,
+               region: str | None = None) -> int:
     """`curation prune`:先把历次跑批摆出来,要删得说清删哪几次 + 加 --yes。
 
     **绝不做"按最新覆盖旧的"那种自动清理**(用户 2026-08-14 点名否掉):1812 跑
     20 条不能顶掉 0530 跑 200 条的成果 —— 哪一份更值钱只有人知道,系统只负责把
     事实(时间/条数/占用)摆清楚。human-decisions/ 与 latest 永远不在删除范围内。
+
+    交付在桶里(tos://)同样能列能删(2026-08-28 去挂载依赖):清单与保留口径
+    与本地一字不差,删除走远端逐对象删,字节不过 pod。
     """
     import shutil
 
     from .delivery import is_delivery, prune_plan, size_text
 
-    if not os.path.isdir(delivery):
-        print(f"[输入错误] 目录不存在: {delivery}", file=sys.stderr)
-        return 2
+    remote = str(delivery).startswith("tos://")
     if yes and keep_latest is None:
         # 光有 --yes 不说删哪几次 = 没说清就动手,一律拒绝(哪份该留只有人知道)
         print("[输入错误] --yes 必须和 --keep-latest N 一起给:得先说清要删哪几次",
               file=sys.stderr)
         return 2
-    if not is_delivery(delivery):
-        print(f"[输入错误] {delivery} 不是一份交付(既没有跑批子目录,也没有 passed.json)",
-              file=sys.stderr)
-        return 2
-    try:
-        plan = prune_plan(delivery, keep_latest)
-    except ValueError as e:
-        print(f"[输入错误] {e}", file=sys.stderr)
-        return 2
+    if remote:
+        from . import tos_store
+        try:
+            plan = tos_store.prune_plan_url(delivery, region, keep_latest)
+        except (tos_store.TosUrlError, tos_store.TosConfigError) as e:
+            print(f"[输入错误] {e}", file=sys.stderr)
+            return 2
+        except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
+            print(f"[TOS 错误] 列不动 {delivery}:{_tos_err_line(e)}", file=sys.stderr)
+            return 1
+    else:
+        if not os.path.isdir(delivery):
+            print(f"[输入错误] 目录不存在: {delivery}", file=sys.stderr)
+            return 2
+        if not is_delivery(delivery):
+            print(f"[输入错误] {delivery} 不是一份交付(既没有跑批子目录,也没有 passed.json)",
+                  file=sys.stderr)
+            return 2
+        try:
+            plan = prune_plan(delivery, keep_latest)
+        except ValueError as e:
+            print(f"[输入错误] {e}", file=sys.stderr)
+            return 2
     runs = plan["runs"]
     if not runs:
         print(f"{delivery}:这是 2026-08-14 之前布局的交付(结果直接在交付目录里),"
@@ -531,8 +549,13 @@ def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool) -> int:
               "确认无误就重跑一遍并加 --yes")
         return 0
     for f in plan["delete"]:
-        shutil.rmtree(f["path"])
-        print(f"  已删 {f['name']}")
+        if remote:
+            from . import tos_store
+            n_del = tos_store.delete_run_url(delivery, f["name"], region)
+            print(f"  已删 {f['name']}({n_del} 个对象)")
+        else:
+            shutil.rmtree(f["path"])
+            print(f"  已删 {f['name']}")
     print(f"删除 {len(doomed)} 次跑批,释放 {freed};"
           "人工裁决(human-decisions/)与其余跑批一个字没动")
     return 0
@@ -833,7 +856,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "prune":
-        return _cmd_prune(args.delivery, args.keep_latest, args.yes)
+        return _cmd_prune(args.delivery, args.keep_latest, args.yes,
+                          region=args.region)
 
     if args.command == "rejudge":
         from .delivery import is_legacy_delivery, resolve_run

@@ -869,3 +869,97 @@ def sync_back(local_run: str, run_url: str, region: str | None = None, *,
                 _with_retry("删除", rel, lambda: st.delete(bucket, f"{prefix}/{rel}"))
                 out["deleted"] += 1
     return out
+
+
+def prune_plan_url(url: str, region: str | None = None,
+                   keep_latest: int | None = None, *,
+                   store: TosStore | None = None) -> dict:
+    """桶里交付的 prune 清单,与 delivery.prune_plan 同一副形状与保留口径:
+    `--keep-latest N` 留最新 N 次,latest 记的那次**永远保留**;human-decisions/
+    从不进清单。只算不删(删除动作在 CLI,且要 --yes)。
+
+    一次列举顺便把每次跑批的对象数/字节数攒出来;耗时字段读各批次的 run.json
+    (185B 级小对象),读不到就 None —— 渲染侧决定不说,绝不编数字。
+    """
+    import json as _json
+    import re as _re
+
+    from .delivery import is_run_name
+
+    bucket, prefix = parse_tos_url(url)
+    prefix = prefix.strip("/")
+    st = store or make_store_for(bucket, region)
+    runs: dict[str, dict] = {}
+    top_files: set[str] = set()
+    for key, size in st.iter_objects(bucket, prefix + "/" if prefix else ""):
+        rel = key[len(prefix) + 1:] if prefix else key
+        if not rel or rel.endswith("/"):
+            continue
+        head = rel.split("/", 1)[0]
+        if "/" not in rel:
+            top_files.add(rel)
+            continue
+        if is_run_name(head):
+            r = runs.setdefault(head, {"size": 0, "files": 0})
+            r["size"] += int(size)
+            r["files"] += 1
+    if not runs and "passed.json" in top_files:
+        # 2026-08-14 之前的老布局:结果直接在交付目录里,没有批次可清
+        return {"delivery": url, "runs": [], "delete": [], "keep": [],
+                "latest": ""}
+    if not runs:
+        raise TosUrlError(f"{url} 不是一份交付(没有跑批子目录,也没有 passed.json)")
+    latest = ""
+    if "latest" in top_files:
+        try:
+            latest = st.get_bytes(bucket, f"{prefix}/latest" if prefix else
+                                  "latest").decode("utf-8").strip().splitlines()[0]
+        except Exception:  # noqa: BLE001 指针坏了按没有算,别拦着列清单
+            latest = ""
+    rows = []
+    for name in sorted(runs, reverse=True):                  # 新的在前
+        at, processed, exported = "", None, None
+        try:
+            f = _json.loads(st.get_bytes(
+                bucket, f"{prefix}/{name}/run.json" if prefix
+                else f"{name}/run.json").decode("utf-8"))
+            at = str(f.get("生成时间") or "")
+            processed = f.get("本次处理条数")
+            exported = f.get("导出数据集")
+        except Exception:  # noqa: BLE001 老批次没有事实卡
+            pass
+        rows.append({"name": name, "path": f"{url.rstrip('/')}/{name}",
+                     "at": at, "processed": processed, "dataset_total": None,
+                     "exported": exported, "size": runs[name]["size"],
+                     "files": runs[name]["files"],
+                     "is_latest": name == latest})
+    delete: list = []
+    if keep_latest is not None:
+        if keep_latest < 1:
+            raise TosUrlError("--keep-latest 至少是 1(不允许把一份交付删空)")
+        for i, f in enumerate(rows):
+            if i >= keep_latest and not f["is_latest"]:
+                delete.append(f)
+    doomed = {f["name"] for f in delete}
+    return {"delivery": url, "runs": rows, "delete": delete,
+            "keep": [f for f in rows if f["name"] not in doomed],
+            "latest": latest}
+
+
+def delete_run_url(url: str, run_name: str, region: str | None = None, *,
+                   store: TosStore | None = None) -> int:
+    """删掉交付 URL 下的一次跑批(整个批次前缀);返回删除的对象数。
+    只认跑批名(is_run_name),别的名字一律拒 —— human-decisions/ 与 latest
+    永远不在删除范围内,这里再挡一道。"""
+    from .delivery import is_run_name
+    if not is_run_name(run_name):
+        raise TosUrlError(f"{run_name!r} 不是跑批目录名,拒绝删除")
+    bucket, prefix = parse_tos_url(url)
+    prefix = prefix.strip("/")
+    st = store or make_store_for(bucket, region)
+    p = f"{prefix}/{run_name}/" if prefix else f"{run_name}/"
+    n = 0
+    for key, _size in list(st.iter_objects(bucket, p)):
+        _with_retry("删除", key, lambda k=key: st.delete(bucket, k))
+        n += 1
+    return n

@@ -171,3 +171,61 @@ def test_sync_back_skip_dirs_preserves_unmirrored_remote(tmp_path, monkeypatch):
     assert f"{RUN}/report.md" in c.puts
     assert not any(k.startswith(f"{RUN}/lerobot_curated/") for k in c.puts)
     assert r["deleted"] == 0
+
+
+def _prune_objs():
+    """三次跑批 + latest 指向最老那次(考验 latest 永远保留)。"""
+    import json as _j
+    facts = _j.dumps({"生成时间": "2026-08-20", "本次处理条数": 5},
+                     ensure_ascii=False).encode("utf-8")
+    return {
+        "deliveries/d2/latest": b"20260820-000000",
+        "deliveries/d2/human-decisions/label_decisions.csv": b"a,b\n",
+        "deliveries/d2/20260820-000000/passed.json": b"{}",
+        "deliveries/d2/20260820-000000/run.json": facts,
+        "deliveries/d2/20260820-000000/lerobot_curated/v.mp4": b"v" * 10,
+        "deliveries/d2/20260825-000000/passed.json": b"{}",
+        "deliveries/d2/20260826-000000/passed.json": b"{}",
+        "deliveries/d2/20260826-000000/details/k.csv": b"k",
+    }
+
+
+def test_prune_plan_url_lists_and_protects_latest():
+    st = _store(_prune_objs())
+    plan = tos_store.prune_plan_url("tos://bkt/deliveries/d2", store=st,
+                                    keep_latest=1)
+    assert [r["name"] for r in plan["runs"]] == \
+        ["20260826-000000", "20260825-000000", "20260820-000000"]
+    assert plan["latest"] == "20260820-000000"
+    assert plan["runs"][2]["processed"] == 5 and "2026-08-20" in plan["runs"][2]["at"]
+    # keep-latest 1:留最新一次 + latest 记的那次,只删中间那次
+    assert [f["name"] for f in plan["delete"]] == ["20260825-000000"]
+    # human-decisions 从不进清单
+    assert all("human-decisions" not in f["name"] for f in plan["runs"])
+
+
+def test_prune_delete_run_url_only_run_names():
+    st = _store(_prune_objs())
+    n = tos_store.delete_run_url("tos://bkt/deliveries/d2", "20260825-000000",
+                                 store=st)
+    assert n == 1 and st._c.deletes == ["deliveries/d2/20260825-000000/passed.json"]
+    with pytest.raises(tos_store.TosUrlError):
+        tos_store.delete_run_url("tos://bkt/deliveries/d2", "human-decisions",
+                                 store=st)
+
+
+def test_cli_prune_tos_end_to_end(monkeypatch, capsys):
+    """CLI:tos:// 交付列清单/删除;--yes 不带 --keep-latest 照旧拒。"""
+    from curation import cli
+    st = _store(_prune_objs())
+    monkeypatch.setattr(tos_store, "make_store_for",
+                        lambda bucket, region=None, **kw: st)
+    assert cli.main(["prune", "tos://bkt/deliveries/d2"]) == 0
+    out = capsys.readouterr().out
+    assert "共 3 次跑批" in out and "只列不删" in out
+    assert cli.main(["prune", "tos://bkt/deliveries/d2", "--yes"]) == 2
+    assert cli.main(["prune", "tos://bkt/deliveries/d2",
+                     "--keep-latest", "1", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "已删 20260825-000000" in out and "human-decisions" in out
+    assert st._c.deletes == ["deliveries/d2/20260825-000000/passed.json"]
