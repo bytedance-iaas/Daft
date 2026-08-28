@@ -502,3 +502,52 @@ def test_big_files_use_multipart_small_files_do_not(tmp_path, monkeypatch):
     stage_out(str(local), "tos://dst/d", store=st2)
     assert any(d == "ul" for d, _k in st2._c.multipart)
     assert all("ckpt" not in k for _d, k in st2._c.multipart)
+
+
+# ── browser_url:给浏览器的预签名必须公网端点(2026-08-28 dataverse 实见)──
+
+
+class _Signer:
+    """只管签名的假客户端:记录调用,URL 带上自己的主机名以便断言归属。"""
+
+    def __init__(self, host):
+        self.host = host
+        self.calls = []
+
+    def pre_signed_url(self, method, bucket, key, expires=None):
+        self.calls.append((bucket, key, expires))
+        r = type("R", (), {})()
+        r.signed_url = f"https://{bucket}.{self.host}/{key}?X-Tos-Signature=s"
+        return r
+
+
+def test_browser_url_resigns_on_public_endpoint_when_internal():
+    """端点是内网(*.ivolces.com)时:浏览器 URL 换公网端点客户端重签;
+    pod 面的 presign 不动,仍走内网 —— 两个受众各签各的。"""
+    st = TosStore("https://tos-cn-beijing.ivolces.com", "cn-beijing",
+                  client=_Signer("tos-cn-beijing.ivolces.com"),
+                  browser_client=_Signer("tos-cn-beijing.volces.com"))
+    url = st.browser_url("bkt", "videos/x.mp4")
+    assert "ivolces" not in url and ".tos-cn-beijing.volces.com/" in url
+    assert st._cb.calls == [("bkt", "videos/x.mp4", 3600)]
+    pod = st.presign("bkt", "videos/x.mp4")
+    assert "ivolces" in pod and st._c.calls
+    assert st.browser_endpoint() == "https://tos-cn-beijing.volces.com"
+
+
+def test_browser_url_public_endpoint_reuses_main_client():
+    main = _Signer("tos-cn-beijing.volces.com")
+    st = TosStore("https://tos-cn-beijing.volces.com", "cn-beijing", client=main)
+    url = st.browser_url("bkt", "k.mp4", expires=60)
+    assert ".tos-cn-beijing.volces.com/" in url
+    assert main.calls == [("bkt", "k.mp4", 60)] and st._cb is None, \
+        "公网端点没必要建第二个客户端"
+
+
+def test_browser_url_anonymous_forces_public_host():
+    st = TosStore("https://tos-cn-beijing.ivolces.com", "cn-beijing",
+                  client=object(), anonymous=True)
+    url = st.browser_url("pub", "a b.mp4")
+    assert url == "https://pub.tos-cn-beijing.volces.com/a%20b.mp4"
+    # 匿名桶 pod 面的裸 URL 仍按自己的端点走(内网读得更快)
+    assert "ivolces" in st.public_url("pub", "a.mp4")

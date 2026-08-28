@@ -2611,7 +2611,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 情况下选了几个跑几个,选一个 = 一直以来的那条路径。
                         # 多选顺序跑(jobs 装配):两侧各自可以是挂载或桶
                         # (2026-08-21 读端会说 tos:// 之后,作业表两侧都收 URL);
-                        # 切片只在挂载输入上串(片段站按本地数据集名建目录)
+                        # 切片进各自子交付的批次(2026-08-28,两侧挂载/直连均可)
                         if (not batch and len(chosen) > 1) or _tos_all:
                             # 答了「一起生成」就给**每个需要的**数据集都串上切片:
                             # 追问只问一次,覆盖的是全部选中项(2026-08-14 用户定)
@@ -2621,7 +2621,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 _root or _spec["url"],
                                 _deliv_root if _ospec["kind"] == "mount" else _ospec["url"],
                                 chosen, name or "",
-                                clips_root=review_dir, clips_for=clips,
+                                clips_for=clips,
                                 config=cfg, **common)
                             return _tk_start(
                                 "run", f"质检 {len(jobs)} 个数据集 → {name}"
@@ -2638,14 +2638,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                if _ospec["kind"] == "tos" else
                                runner.resolve_under(_deliv_root, name or ""))
                         then_argv = None
-                        if with_clips and review_dir and not batch:
+                        if with_clips and not batch:
                             # 切片作为同一任务的第二步:一条日志、一个结果,用户不必
-                            # 知道我们内部跑了两条命令。直连输入同样可切
-                            # (2026-08-21:审片站读桶里的数据集与读挂载一样)
+                            # 知道我们内部跑了两条命令。片段进交付批次
+                            # (2026-08-28 去挂载依赖):直连/挂载交付都一样落
                             then_argv = runner.build_argv(
-                                "review-page", input=inp,
-                                output=runner.resolve_under(
-                                    review_dir, os.path.basename(out)))
+                                "review-page", input=inp, into_delivery=out,
+                                delivery_region=common.get("output_region"),
+                                # 切片范围必须跟跑批走(2026-08-28 真机实见:
+                                # 前 2 条的跑批把 100 条全切了)——交付里只有
+                                # 这几条,片段也只该有这几条
+                                max_episodes=common.get("max_episodes"),
+                                episodes=common.get("episodes"))
                     except ValueError as e:
                         return _tk_view(f"⚠️ {e}")
                     return _tk_start(
@@ -2754,7 +2758,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     chosen = runner.picked_datasets(args["ds"])
                     needing = ([] if args.get("batch") else
                                runner.datasets_needing_clips(_src_root, chosen))
-                    if needing and review_dir:
+                    # 落点=交付批次自身(2026-08-28 切片入交付):v3 需要切片就问,
+                    # 与本实例配没配审片站目录无关 —— 没挂载的直连实例同样能切
+                    if needing:
                         fmt = (runner.dataset_format(
                             runner.under(_src_root, chosen[0]))
                             if len(chosen) == 1 else None)

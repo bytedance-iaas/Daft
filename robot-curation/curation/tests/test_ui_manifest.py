@@ -293,7 +293,12 @@ def test_app_with_terminal_tab(delivery):
     from curation.ui.app import build_app
     cfg = _config_text(build_app(delivery, terminal=True))
     assert "终端" in cfg and "curation-term-screen" in cfg
-    assert "iframe" not in cfg and "7681" not in cfg      # ttyd 时代的痕迹一点不留
+    # ttyd 时代的痕迹一点不留。⚠️ 别裸查 "7681"/"iframe":全量套件跑到这里
+    # gradio 的组件自增 id 会真的数到 7681(2026-08-28 pod 实见,单跑就绿),
+    # 钉的是"有个 iframe 指向 7681 端口"这件事本身
+    import re as _re
+    assert "ttyd" not in cfg
+    assert not _re.search(r"iframe[^\"]*7681|7681[^\"]*iframe", cfg)
     assert "质检报告" in cfg
     assert cfg.index("质检报告") < cfg.index("终端")   # 终端在最右
     assert cfg.index("跑质检") < cfg.index("质检报告")  # 跑质检在最左
@@ -4078,4 +4083,68 @@ def test_banner_counts_episodes_and_items_separately(tmp_path):
     banner = unapplied_banner_md(load_delivery(str(d)))
     assert "已裁 1 条(2 项)" in banner
     assert "待裁 0 条(0 项)" in banner
-    assert "**1 条(2 项)**尚未应用于交付" in banner
+    assert "<b>1 条(2 项)</b>尚未应用于交付" in banner
+
+
+# ── 批次自带片段(batch_clip_paths,2026-08-28 切片入交付)────────────────
+
+
+def _clips_batch(tmp_path, with_files=(), origin_url=None):
+    b = tmp_path / "deliv" / "20260828-000000"
+    (b / "details").mkdir(parents=True)
+    (b / "details" / "review_clips_index.json").write_text(
+        json.dumps({"ep000001": ["cam_a", "cam_b"]}), encoding="utf-8")
+    for f in with_files:
+        (b / "review_clips").mkdir(exist_ok=True)
+        (b / "review_clips" / f).write_bytes(b"x")
+    if origin_url:
+        from curation.tos_store import ORIGIN_NAME
+        (tmp_path / "deliv" / ORIGIN_NAME).write_text(
+            json.dumps({"delivery_url": origin_url}), encoding="utf-8")
+    return b
+
+
+def test_batch_clip_paths_prefers_local_files(tmp_path):
+    from curation.ui.manifest import batch_clip_paths
+    b = _clips_batch(tmp_path,
+                     with_files=("ep000001__cam_a.mp4", "ep000001__cam_b.mp4"))
+    got = batch_clip_paths({"path": str(b)}, "ep000001")
+    assert [os.path.basename(p) for p in got] == \
+        ["ep000001__cam_a.mp4", "ep000001__cam_b.mp4"]
+    assert all(os.path.isabs(p) for p in got)
+    assert batch_clip_paths({"path": str(b)}, "ep000099") == []
+
+
+def test_batch_clip_paths_falls_back_to_origin_url(tmp_path):
+    """直连交付:片段被轻镜像跳过,本地没有 → 按 .tos-origin.json 拼批次
+    tos:// URL(播放端现签公网预签名);没有 origin → 空表,不乱猜。"""
+    from curation.ui.manifest import batch_clip_paths
+    b = _clips_batch(tmp_path, origin_url="tos://bkt/deliveries/x")
+    got = batch_clip_paths({"path": str(b)}, "ep000001")
+    assert got == [
+        "tos://bkt/deliveries/x/20260828-000000/review_clips/ep000001__cam_a.mp4",
+        "tos://bkt/deliveries/x/20260828-000000/review_clips/ep000001__cam_b.mp4"]
+    b2 = _clips_batch(tmp_path / "n2")
+    assert batch_clip_paths({"path": str(b2)}, "ep000001") == []
+
+
+def test_terminal_workdir_falls_back_mount_then_cache(tmp_path, monkeypatch):
+    """终端落脚目录(2026-08-28 去挂载依赖):环境变量点名 > 挂载根 >
+    TOS 缓存根 > 进程 cwd;首行说明文案与落点同源。"""
+    from curation.ui import terminal as T
+    monkeypatch.delenv("CURATION_TERMINAL_WORKDIR", raising=False)
+    mount = tmp_path / "mnt"
+    mount.mkdir()
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(mount))
+    assert T.resolve_workdir() == str(mount) and "挂载根" in T.workdir_note()
+    # 没挂载 → 缓存根
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "nope"))
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    import curation.tos_store as ts
+    monkeypatch.setenv(ts.CACHE_ENV, str(cache))
+    assert T.resolve_workdir() == str(cache) and "缓存根" in T.workdir_note()
+    # 环境变量最优先
+    monkeypatch.setenv("CURATION_TERMINAL_WORKDIR", str(tmp_path))
+    assert T.resolve_workdir() == str(tmp_path)
+    assert "部署指定" in T.workdir_note()

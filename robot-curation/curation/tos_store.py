@@ -214,7 +214,7 @@ class TosStore:
 
     def __init__(self, endpoint: str, region: str, ak: str = "", sk: str = "",
                  security_token: str | None = None, client=None,
-                 anonymous: bool = False):
+                 anonymous: bool = False, browser_client=None):
         self.endpoint = endpoint
         self.region = region
         #: 匿名客户端(公共桶):不签名;presign 退化成裸的公网 URL
@@ -224,6 +224,11 @@ class TosStore:
             client = tos.TosClientV2(ak, sk, endpoint, region,
                                      security_token=security_token)
         self._c = client
+        # 浏览器面第二客户端(懒建):端点是内网时,给浏览器的预签名必须换
+        # 公网端点重签(主机名签进签名里,不能事后改域名)。凭证留在实例上,
+        # 只为这一个用途;测试注入 browser_client 即可离线验。
+        self._creds = (ak, sk, security_token)
+        self._cb = browser_client
 
     def iter_objects(self, bucket: str, prefix: str):
         """前缀下全部对象 → (key, size) 迭代;游标翻页翻到底。"""
@@ -257,23 +262,56 @@ class TosStore:
         out = self._c.get_object(bucket, key)
         return out.read()
 
+    @staticmethod
+    def _presign_get(client, bucket: str, key: str, expires: int) -> str:
+        """在给定客户端上做 GET 预签名;离线单测的假客户端不看 method 参数。"""
+        try:
+            import tos
+            method = tos.HttpMethodType.Http_Method_Get
+        except ImportError:
+            method = "GET"
+        return client.pre_signed_url(method, bucket, key,
+                                     expires=expires).signed_url
+
     def presign(self, bucket: str, key: str, expires: int = 3600) -> str:
         """GET 预签名 URL(本地 HMAC,不出网):PyAV 直接按 Range 读视频。
         匿名客户端没有密钥可签,给裸的公网 URL(公共桶本来就匿名可读)。"""
         if self.anonymous:
             return self.public_url(bucket, key)
-        import tos
-        return self._c.pre_signed_url(tos.HttpMethodType.Http_Method_Get, bucket,
-                                      key, expires=expires).signed_url
+        return self._presign_get(self._c, bucket, key, expires)
 
-    def public_url(self, bucket: str, key: str) -> str:
+    def public_url(self, bucket: str, key: str, endpoint: str | None = None) -> str:
         """`https://<桶>.<端点主机>/<key>`(虚拟主机风格,key 做 URL 编码)。"""
         from urllib.parse import quote
-        ep = str(self.endpoint or "")
+        ep = str(endpoint or self.endpoint or "")
         m = re.match(r"^([a-z]+)://", ep)
         scheme = m.group(1) if m else "https"
         host = re.sub(r"^[a-z]+://", "", ep).split("/", 1)[0]
         return f"{scheme}://{bucket}.{host}/{quote(str(key).lstrip('/'))}"
+
+    def browser_endpoint(self) -> str:
+        """给浏览器用的**公网**端点(原生协议)。与 self.endpoint 的差别只在
+        内外网:`*.ivolces.com` 只在火山 VPC 内可达,发给浏览器就是死链。"""
+        return f"https://tos-{self.region}.volces.com"
+
+    def browser_url(self, bucket: str, key: str, expires: int = 3600) -> str:
+        """给**浏览器**的媒体 URL:一律公网端点。
+
+        pod 自己读桶保内网端点(快、不计公网流量),但预签名把主机名签进
+        签名里,不能签完换域名 —— 端点是内网时必须用公网端点客户端**重签**
+        (2026-08-28 dataverse 实见:内网预签名发给浏览器,视频永远转圈)。
+        匿名桶不签名,直接给公网裸 URL。
+        """
+        if self.anonymous:
+            return self.public_url(bucket, key, endpoint=self.browser_endpoint())
+        if ".ivolces.com" not in str(self.endpoint or ""):
+            return self.presign(bucket, key, expires)  # 本来就是公网端点
+        if self._cb is None:
+            import tos
+            ak, sk, token = self._creds
+            self._cb = tos.TosClientV2(ak, sk, self.browser_endpoint(),
+                                       self.region, security_token=token)
+        return self._presign_get(self._cb, bucket, key, expires)
 
     def head(self, bucket: str, key: str) -> tuple[int, str]:
         """单对象的 (大小, etag);不存在让 SDK 的异常原样出来。"""
@@ -683,7 +721,8 @@ def locate_bucket(bucket: str, candidates, *, skip: str | None = None,
 
 # ── 桶里的交付:镜像到本地 → 本地改 → 改动写回(2026-08-21,rejudge/reprofile 接 tos://)──
 #: 只看报告时不必下的大件(UI 懒镜像跳过它们);rejudge 要改交付数据集,得全量。
-MIRROR_SKIP_DIRS_LIGHT = ("episodes_parquet/", "lerobot_curated/", "rrd_curated/")
+MIRROR_SKIP_DIRS_LIGHT = ("episodes_parquet/", "lerobot_curated/", "rrd_curated/",
+                          "review_clips/")
 #: 镜像来源的身份证文件名(落在缓存的**交付根**):写回靠它找回家路。
 ORIGIN_NAME = ".tos-origin.json"
 
@@ -739,6 +778,11 @@ def mirror_run(run_url: str, region: str | None = None, *,
             if not rel or rel.endswith("/"):
                 continue
             if sub == run_name and any(rel.startswith(sk) for sk in skip_dirs):
+                # 跳过下载,但给首段留一个**空目录路标**(只给远端真有对象的
+                # 前缀留):rejudge 的重导出分支按 isdir 判"这份交付有没有这种
+                # 成品包"——没有路标,半镜像会让它静默不干活(2026-08-28)
+                os.makedirs(os.path.join(local_deliv, sub, rel.split("/", 1)[0]),
+                            exist_ok=True)
                 continue
             dst = os.path.join(local_deliv, sub, *rel.split("/"))
             try:
@@ -774,13 +818,18 @@ def _md5_file(path: str, chunk: int = 1 << 20) -> str:
 
 
 def sync_back(local_run: str, run_url: str, region: str | None = None, *,
-              store: TosStore | None = None, delete_orphans: bool = True) -> dict:
+              store: TosStore | None = None, delete_orphans: bool = True,
+              skip_dirs: tuple = ()) -> dict:
     """本地镜像里改过的批次写回桶:批次目录 + 交付根 human-decisions/。
 
     判"改没改"= 大小相等且 md5 == etag(分片上传的 etag 带 '-',退化为只比大小);
     完整性标志(passed.json / latest / meta/info.json)永远重传且最后传。批次目录下
     远端有、本地没有的对象删掉(rejudge 剔条目会让交付数据集的文件消失;不删就是
     把脏数据留给客户)—— 只删批次前缀下的,human-decisions 只增不删。
+
+    skip_dirs:与 mirror_run 的 skip_dirs **必须成对使用**——镜像时跳过的前缀,
+    写回时既不上传也**绝不当孤儿删**(半镜像喂给全量对账,就是把没镜像的远端
+    文件全判成"本地删了",一把删光交付视频)。
     """
     bucket, run_prefix = parse_tos_url(run_url)
     run_prefix = run_prefix.strip("/")
@@ -797,8 +846,11 @@ def sync_back(local_run: str, run_url: str, region: str | None = None, *,
         remote: dict[str, tuple[int, str]] = {}
         for key, size, etag in st.iter_object_meta(bucket, prefix + "/"):
             rel = key[len(prefix) + 1:]
-            if rel and not rel.endswith("/"):
-                remote[rel] = (size, etag.strip('"').lower())
+            if not rel or rel.endswith("/"):
+                continue
+            if may_delete and any(rel.startswith(sk) for sk in skip_dirs):
+                continue                      # 没镜像的区域:视而不见,原样保留
+            remote[rel] = (size, etag.strip('"').lower())
         rels = []
         for cur, _d, names in os.walk(local_root):
             for nme in names:
@@ -822,3 +874,97 @@ def sync_back(local_run: str, run_url: str, region: str | None = None, *,
                 _with_retry("删除", rel, lambda: st.delete(bucket, f"{prefix}/{rel}"))
                 out["deleted"] += 1
     return out
+
+
+def prune_plan_url(url: str, region: str | None = None,
+                   keep_latest: int | None = None, *,
+                   store: TosStore | None = None) -> dict:
+    """桶里交付的 prune 清单,与 delivery.prune_plan 同一副形状与保留口径:
+    `--keep-latest N` 留最新 N 次,latest 记的那次**永远保留**;human-decisions/
+    从不进清单。只算不删(删除动作在 CLI,且要 --yes)。
+
+    一次列举顺便把每次跑批的对象数/字节数攒出来;耗时字段读各批次的 run.json
+    (185B 级小对象),读不到就 None —— 渲染侧决定不说,绝不编数字。
+    """
+    import json as _json
+    import re as _re
+
+    from .delivery import is_run_name
+
+    bucket, prefix = parse_tos_url(url)
+    prefix = prefix.strip("/")
+    st = store or make_store_for(bucket, region)
+    runs: dict[str, dict] = {}
+    top_files: set[str] = set()
+    for key, size in st.iter_objects(bucket, prefix + "/" if prefix else ""):
+        rel = key[len(prefix) + 1:] if prefix else key
+        if not rel or rel.endswith("/"):
+            continue
+        head = rel.split("/", 1)[0]
+        if "/" not in rel:
+            top_files.add(rel)
+            continue
+        if is_run_name(head):
+            r = runs.setdefault(head, {"size": 0, "files": 0})
+            r["size"] += int(size)
+            r["files"] += 1
+    if not runs and "passed.json" in top_files:
+        # 2026-08-14 之前的老布局:结果直接在交付目录里,没有批次可清
+        return {"delivery": url, "runs": [], "delete": [], "keep": [],
+                "latest": ""}
+    if not runs:
+        raise TosUrlError(f"{url} 不是一份交付(没有跑批子目录,也没有 passed.json)")
+    latest = ""
+    if "latest" in top_files:
+        try:
+            latest = st.get_bytes(bucket, f"{prefix}/latest" if prefix else
+                                  "latest").decode("utf-8").strip().splitlines()[0]
+        except Exception:  # noqa: BLE001 指针坏了按没有算,别拦着列清单
+            latest = ""
+    rows = []
+    for name in sorted(runs, reverse=True):                  # 新的在前
+        at, processed, exported = "", None, None
+        try:
+            f = _json.loads(st.get_bytes(
+                bucket, f"{prefix}/{name}/run.json" if prefix
+                else f"{name}/run.json").decode("utf-8"))
+            at = str(f.get("生成时间") or "")
+            processed = f.get("本次处理条数")
+            exported = f.get("导出数据集")
+        except Exception:  # noqa: BLE001 老批次没有事实卡
+            pass
+        rows.append({"name": name, "path": f"{url.rstrip('/')}/{name}",
+                     "at": at, "processed": processed, "dataset_total": None,
+                     "exported": exported, "size": runs[name]["size"],
+                     "files": runs[name]["files"],
+                     "is_latest": name == latest})
+    delete: list = []
+    if keep_latest is not None:
+        if keep_latest < 1:
+            raise TosUrlError("--keep-latest 至少是 1(不允许把一份交付删空)")
+        for i, f in enumerate(rows):
+            if i >= keep_latest and not f["is_latest"]:
+                delete.append(f)
+    doomed = {f["name"] for f in delete}
+    return {"delivery": url, "runs": rows, "delete": delete,
+            "keep": [f for f in rows if f["name"] not in doomed],
+            "latest": latest}
+
+
+def delete_run_url(url: str, run_name: str, region: str | None = None, *,
+                   store: TosStore | None = None) -> int:
+    """删掉交付 URL 下的一次跑批(整个批次前缀);返回删除的对象数。
+    只认跑批名(is_run_name),别的名字一律拒 —— human-decisions/ 与 latest
+    永远不在删除范围内,这里再挡一道。"""
+    from .delivery import is_run_name
+    if not is_run_name(run_name):
+        raise TosUrlError(f"{run_name!r} 不是跑批目录名,拒绝删除")
+    bucket, prefix = parse_tos_url(url)
+    prefix = prefix.strip("/")
+    st = store or make_store_for(bucket, region)
+    p = f"{prefix}/{run_name}/" if prefix else f"{run_name}/"
+    n = 0
+    for key, _size in list(st.iter_objects(bucket, p)):
+        _with_retry("删除", key, lambda k=key: st.delete(bucket, k))
+        n += 1
+    return n

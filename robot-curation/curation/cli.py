@@ -299,8 +299,15 @@ def build_parser() -> argparse.ArgumentParser:
               "产物落盘持久,由质检平台的 /review 路由提供访问,服务重启不丢。")
     rp.add_argument("--input", required=True,
                     help="数据集目录(LeRobot v2/v3;RRD 本版本未开放)")
-    rp.add_argument("--output", required=True,
-                    help="产出目录(建议持久盘,如 /mnt/tos/review/<名字>)")
+    rp.add_argument("--output", default=None,
+                    help="静态站产出目录(建议持久盘,如 /mnt/tos/review/<名字>);"
+                         "与 --into-delivery 二选一")
+    rp.add_argument("--into-delivery", default=None, metavar="交付目录",
+                    help="逐条片段进交付批次(本地路径或 tos:// 都行,写进最近一次"
+                         "跑批的 review_clips/;质检平台轨迹页直接用)。与 --output "
+                         "二选一")
+    rp.add_argument("--delivery-region", default=None, metavar="地区",
+                    help="--into-delivery 是 tos:// 时交付桶的地区(如 cn-beijing)")
     rp.add_argument("--episodes", default=None, metavar="表达式",
                     help="只做指定 episode(同 run:34,56 或 10-20,可混用);缺省全量")
     rp.add_argument("--max-episodes", type=int, default=None, help="只做前 N 条")
@@ -315,7 +322,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr = _cmd("prune", "列出并按需清理一份交付下的历次跑批(默认只列不删)",
               "列出一份交付下的历次跑批(时间 / 条数 / 占用),并按需删掉旧的几次。"
               "默认只列不删;真删需要同时给 --keep-latest 与 --yes。")
-    pr.add_argument("delivery", help="交付目录(如 /mnt/tos/deliveries/droid-200-full)")
+    pr.add_argument("delivery", help="交付目录(本地路径或 tos://桶/前缀 都行)")
+    pr.add_argument("--region", default=None, metavar="地区",
+                    help="交付是 tos:// 时桶的地区(如 cn-beijing)")
     pr.add_argument("--keep-latest", type=int, default=None, metavar="N",
                     help="要删的是哪几次:留最新的 N 次,更早的删掉。"
                          "latest 记的那次永远保留。不给这个参数就只列出、不删任何东西")
@@ -467,34 +476,50 @@ def _cmd_public(config_path: str | None, *, as_json: bool = False,
     return 0
 
 
-def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool) -> int:
+def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool,
+               region: str | None = None) -> int:
     """`curation prune`:先把历次跑批摆出来,要删得说清删哪几次 + 加 --yes。
 
     **绝不做"按最新覆盖旧的"那种自动清理**(用户 2026-08-14 点名否掉):1812 跑
     20 条不能顶掉 0530 跑 200 条的成果 —— 哪一份更值钱只有人知道,系统只负责把
     事实(时间/条数/占用)摆清楚。human-decisions/ 与 latest 永远不在删除范围内。
+
+    交付在桶里(tos://)同样能列能删(2026-08-28 去挂载依赖):清单与保留口径
+    与本地一字不差,删除走远端逐对象删,字节不过 pod。
     """
     import shutil
 
     from .delivery import is_delivery, prune_plan, size_text
 
-    if not os.path.isdir(delivery):
-        print(f"[输入错误] 目录不存在: {delivery}", file=sys.stderr)
-        return 2
+    remote = str(delivery).startswith("tos://")
     if yes and keep_latest is None:
         # 光有 --yes 不说删哪几次 = 没说清就动手,一律拒绝(哪份该留只有人知道)
         print("[输入错误] --yes 必须和 --keep-latest N 一起给:得先说清要删哪几次",
               file=sys.stderr)
         return 2
-    if not is_delivery(delivery):
-        print(f"[输入错误] {delivery} 不是一份交付(既没有跑批子目录,也没有 passed.json)",
-              file=sys.stderr)
-        return 2
-    try:
-        plan = prune_plan(delivery, keep_latest)
-    except ValueError as e:
-        print(f"[输入错误] {e}", file=sys.stderr)
-        return 2
+    if remote:
+        from . import tos_store
+        try:
+            plan = tos_store.prune_plan_url(delivery, region, keep_latest)
+        except (tos_store.TosUrlError, tos_store.TosConfigError) as e:
+            print(f"[输入错误] {e}", file=sys.stderr)
+            return 2
+        except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
+            print(f"[TOS 错误] 列不动 {delivery}:{_tos_err_line(e)}", file=sys.stderr)
+            return 1
+    else:
+        if not os.path.isdir(delivery):
+            print(f"[输入错误] 目录不存在: {delivery}", file=sys.stderr)
+            return 2
+        if not is_delivery(delivery):
+            print(f"[输入错误] {delivery} 不是一份交付(既没有跑批子目录,也没有 passed.json)",
+                  file=sys.stderr)
+            return 2
+        try:
+            plan = prune_plan(delivery, keep_latest)
+        except ValueError as e:
+            print(f"[输入错误] {e}", file=sys.stderr)
+            return 2
     runs = plan["runs"]
     if not runs:
         print(f"{delivery}:这是 2026-08-14 之前布局的交付(结果直接在交付目录里),"
@@ -524,8 +549,13 @@ def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool) -> int:
               "确认无误就重跑一遍并加 --yes")
         return 0
     for f in plan["delete"]:
-        shutil.rmtree(f["path"])
-        print(f"  已删 {f['name']}")
+        if remote:
+            from . import tos_store
+            n_del = tos_store.delete_run_url(delivery, f["name"], region)
+            print(f"  已删 {f['name']}({n_del} 个对象)")
+        else:
+            shutil.rmtree(f["path"])
+            print(f"  已删 {f['name']}")
     print(f"删除 {len(doomed)} 次跑批,释放 {freed};"
           "人工裁决(human-decisions/)与其余跑批一个字没动")
     return 0
@@ -606,19 +636,39 @@ def _tolerate_broken_log() -> None:
     sys.stderr = _TolerantStream(sys.stderr)
 
 
-def _stage_tos_delivery(args, tag: str):
-    """--delivery 是 tos:// → 解析到批次、全量镜像到本地缓存,并把 args.delivery 改成
-    本地路径;返回 (本地批次, 批次 URL, 地区) 供跑完写回。不是 tos:// 返回 ()。
-    失败打印原因返回 None(调用方退出码 1)。"""
+#: rejudge 的镜像/写回跳过表(2026-08-28 零下载):重导出的素材是**源数据集**,
+#: 镜像交付里的视频从来就是白下载;跳过的前缀写回时对账也跳过,远端新旧交替由
+#: rejudge 里的 _finalize_remote_curated 按产物清单点名做。rrd_curated 不跳:
+#: RRD 重导出仍走本地全量 + sync_back(release 默认关,真用到再改)。
+REJUDGE_SKIP_DIRS = ("lerobot_curated/", "review_clips/",
+                     "details/audit_clips/", "details/evidence/",
+                     "details/plots/")
+
+#: reprofile 的镜像/写回跳过表:它只动画像(passed.json 的 skills 段、
+#: skill_assignment.csv、报告),视频/证据帧/曲线一个字节不读不写 ——
+#: 半镜像 + 写回对称跳过,pod 盘上只有 json/parquet 级小文件。
+REPROFILE_SKIP_DIRS = ("lerobot_curated/", "rrd_curated/", "review_clips/",
+                       "details/audit_clips/", "details/evidence/",
+                       "details/plots/")
+
+
+def _stage_tos_delivery(args, tag: str, skip_dirs: tuple = ()):
+    """--delivery 是 tos:// → 解析到批次、镜像到本地缓存,并把 args.delivery 改成
+    本地路径;返回 (本地批次, 批次 URL, 地区, skip_dirs) 供跑完写回。不是 tos://
+    返回 ()。失败打印原因返回 None(调用方退出码 1)。
+
+    skip_dirs 镜像与写回**必须同一份**(见 tos_store.sync_back 的警告):跳过的
+    前缀两头都当不存在,远端原样保留。"""
     d = str(getattr(args, "delivery", "") or "")
     if not d.startswith("tos://"):
         return ()
     from . import tos_store
     region = getattr(args, "delivery_region", None)
+    how = "按需镜像(跳过视频等大文件)" if skip_dirs else "先全量镜像"
     try:
         url = tos_store.resolve_run_url(d, region)
-        print(f"[{tag}] 交付在桶里:{url} → 先全量镜像到本地执行,改动再同步回桶", flush=True)
-        local = tos_store.mirror_run(url, region)
+        print(f"[{tag}] 交付在桶里:{url} → {how}到本地执行,改动再同步回桶", flush=True)
+        local = tos_store.mirror_run(url, region, skip_dirs=skip_dirs)
     except (tos_store.TosUrlError, tos_store.TosConfigError) as e:
         print(f"[输入错误] {e}", file=sys.stderr)
         return None
@@ -626,7 +676,7 @@ def _stage_tos_delivery(args, tag: str):
         print(f"[tos 失败] 镜像 {d} 失败:{type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
         return None
     args.delivery = local
-    return (local, url, region)
+    return (local, url, region, skip_dirs)
 
 
 def _sync_tos_delivery(sync, tag: str) -> int:
@@ -634,10 +684,10 @@ def _sync_tos_delivery(sync, tag: str) -> int:
     不能静默丢)。"""
     if not sync:
         return 0
-    local, url, region = sync
+    local, url, region, skip_dirs = sync
     from . import tos_store
     try:
-        r = tos_store.sync_back(local, url, region)
+        r = tos_store.sync_back(local, url, region, skip_dirs=skip_dirs)
     except Exception as e:  # noqa: BLE001
         print(f"[tos 失败] 写回 {url} 失败:{type(e).__name__}: {str(e)[:200]}\n"
               f"  改动保留在本地 {local},修好网络后重跑同一条命令即可续传",
@@ -755,8 +805,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         args = build_parser().parse_args(_argv)
     if args.command == "review-page":
-        from .export.review_page import build_review_page
+        from .export.review_page import build_delivery_clips, build_review_page
         from .ingest.rrd_reader import cleanup_video_cache, is_rrd_dataset
+        if bool(args.output) == bool(args.into_delivery):
+            print("[输入错误] --output(静态审片站)与 --into-delivery(片段进交付)"
+                  "二选一,必须且只能给一个", file=sys.stderr)
+            return 2
         eps = _parse_episodes(args.episodes)
         # 输入格式嗅探(P5,2026-08-10):与 run 同一套判据。审片站只要
         # episode_id/标注/视频指针三样,RRD 走**轻量元数据**读法就够——它不做
@@ -778,7 +832,6 @@ def main(argv: list[str] | None = None) -> int:
         if args.max_episodes:
             rows = rows[: args.max_episodes]
         title = args.title or os.path.basename(os.path.normpath(args.input))
-        print(f"[review-page] {len(rows)} 条 → {args.output}(已有片段跳过,幂等)", flush=True)
         done = [0]
 
         def _tick():
@@ -786,6 +839,21 @@ def main(argv: list[str] | None = None) -> int:
             if done[0] % 10 == 0 or done[0] == len(rows):
                 print(f"[review-page] {done[0]}/{len(rows)}", flush=True)
 
+        if args.into_delivery:
+            # 片段进交付批次(2026-08-28 去挂载依赖):落点跟着交付走,桶交付
+            # 逐条上传即删本地,轨迹页按索引现签播放
+            print(f"[review-page] {len(rows)} 条逐条片段 → 交付 {args.into_delivery}"
+                  f"(已有的跳过,幂等)", flush=True)
+            try:
+                n, where = build_delivery_clips(rows, args.into_delivery,
+                                                region=args.delivery_region,
+                                                on_progress=_tick)
+            finally:
+                cleanup_video_cache(args.input)
+            print(f"[review-page] 完成:新编码 {n} 段 → {where}/review_clips",
+                  flush=True)
+            return 0
+        print(f"[review-page] {len(rows)} 条 → {args.output}(已有片段跳过,幂等)", flush=True)
         try:
             n = build_review_page(rows, args.output, title=title, on_progress=_tick,
                                   source_dataset=args.input)
@@ -796,15 +864,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "prune":
-        return _cmd_prune(args.delivery, args.keep_latest, args.yes)
+        return _cmd_prune(args.delivery, args.keep_latest, args.yes,
+                          region=args.region)
 
     if args.command == "rejudge":
         from .delivery import is_legacy_delivery, resolve_run
         from .pipeline.config import load_config
         from .pipeline.rejudge import run_rejudge
-        # 交付在桶里(2026-08-21):先把那次跑批全量镜像到本地缓存,在本地执行,
-        # 最后把改动写回桶(改过的传、剔掉的删、完整性标志最后传)
-        _sync = _stage_tos_delivery(args, "rejudge")
+        # 交付在桶里(2026-08-21;2026-08-28 起按需镜像):小文件镜像到本地
+        # 执行,视频零下载;改动写回桶,重导出的成品包随导随传
+        _sync = _stage_tos_delivery(args, "rejudge", skip_dirs=REJUDGE_SKIP_DIRS)
         if _sync is None and str(args.delivery).startswith("tos://"):
             return 1
         if str(args.input or "").startswith("tos://"):
@@ -826,8 +895,26 @@ def main(argv: list[str] | None = None) -> int:
         _rrd_apply_config(cfg)
         from .ingest.public_catalog import apply_config as _public_apply_config
         _public_apply_config(cfg)
+        _cur_pub = ((f"{_sync[1]}/lerobot_curated", _sync[2]) if _sync else None)
         summary = run_rejudge(args.delivery, args.input, cfg,
-                              retry_abstains=getattr(args, "retry_abstained", False))
+                              retry_abstains=getattr(args, "retry_abstained", False),
+                              curated_publish=_cur_pub)
+        # 剔除条目的逐条片段清理:索引改本地(随 sync_back 回桶),片段本体
+        # 点名删(它被镜像/写回双向跳过)。放在 sync_back 之前,索引才搭得上车
+        from .export.review_page import prune_delivery_clips
+        try:
+            with open(os.path.join(args.delivery, "passed.json"),
+                      encoding="utf-8") as _f:
+                _kept = list((json.load(_f).get("episodes") or {}))
+        except Exception:  # noqa: BLE001 passed.json 读不动就不清,别拦裁决
+            _kept = None
+        if _kept is not None:
+            _n = prune_delivery_clips(args.delivery, _kept,
+                                      remote_url=(f"{_sync[1]}" if _sync else None),
+                                      region=(_sync[2] if _sync else None))
+            if _n:
+                print(f"[rejudge] 逐条片段清理:剔除条目的 {_n} 条片段已删,"
+                      "索引同步", flush=True)
         print(json.dumps(summary, ensure_ascii=False, indent=1)
               if isinstance(summary, dict) else summary)
         return _sync_tos_delivery(_sync, "rejudge")
@@ -836,7 +923,7 @@ def main(argv: list[str] | None = None) -> int:
         from .delivery import is_legacy_delivery, resolve_run
         from .pipeline.config import load_config
         from .pipeline.reprofile import run_reprofile
-        _sync = _stage_tos_delivery(args, "reprofile")
+        _sync = _stage_tos_delivery(args, "reprofile", skip_dirs=REPROFILE_SKIP_DIRS)
         if _sync is None and str(args.delivery).startswith("tos://"):
             return 1
         # 与 rejudge 同一套选运行语义:reprofile 也是写数据的命令,动了哪一份要明说

@@ -1470,3 +1470,73 @@ def test_adopt_relabel_on_resolved_entry_keeps_prior_human_verdict():
     assert e["标注修正"]["新标注"] == "right text"
     assert e["人工裁决"]["裁决"] == "判成功"        # 先前的人工结论没被动
     assert e["判决"] == "通过(人工裁决)"
+
+
+def test_v2_reexport_streams_to_bucket_and_prunes_stale(tmp_path, monkeypatch):
+    """直连交付的重导出(2026-08-28 零下载):文件随导随传、传完即删本地;
+    远端旧对象按新产物清单点名删;meta/info.json 押到最后传。"""
+    pytest = __import__("pytest")
+    pytest.importorskip("pandas")
+    daft = pytest.importorskip("daft")
+    import json
+
+    from curation import tos_store
+    from curation.pipeline.rejudge import run_rejudge
+    from curation.tests.test_lerobot_v2_export import _write_v2_dataset
+    src = tmp_path / "src_ds"
+    _write_v2_dataset(str(src))
+    delivery = tmp_path / "dlv"
+    det = delivery / "details"
+    det.mkdir(parents=True)
+    (det / "label_decisions.csv").write_text(
+        "episode_id,decision,new_label,note,at\n"
+        "ep000002,弃用该条,,,2026-08-06 13:00:05\n", encoding="utf-8")
+    for n in ("passed", "review", "reject"):
+        (delivery / f"{n}.json").write_text(json.dumps({"episodes": {
+            f"ep{i:06d}": {"判决": "通过"} for i in range(4)}}
+            if n == "passed" else {"episodes": {}}, ensure_ascii=False),
+            encoding="utf-8")
+    daft.from_pydict({
+        "episode_id": [f"ep{i:06d}" for i in range(4)],
+        "instruction": ["a", "b", "c", "d"],
+        "instruction_source": ["原始标注"] * 4,
+    }).write_parquet(str(delivery / "episodes_parquet"))
+    (delivery / "lerobot_curated").mkdir()             # 半镜像留下的空目录路标
+
+    class _St:
+        def __init__(self):
+            self.uploads: list[str] = []
+            self.deletes: list[str] = []
+            self.objs = {"d/RUN/lerobot_curated/videos/stale_episode.mp4": 1}
+
+        def upload(self, local, bucket, key):
+            assert os.path.exists(local)
+            self.uploads.append(key)
+            self.objs[key] = 1
+
+        def delete(self, bucket, key):
+            self.deletes.append(key)
+            self.objs.pop(key, None)
+
+        def iter_objects(self, bucket, prefix):
+            for k in sorted(self.objs):
+                if k.startswith(prefix):
+                    yield k, self.objs[k]
+
+    st = _St()
+    monkeypatch.setattr(tos_store, "make_store_for",
+                        lambda bucket, region=None, **kw: st)
+    run_rejudge(str(delivery), str(src), {},
+                rerun_fn=lambda i, e, nl: {"passed": True, "verdict": "success"},
+                curated_publish=("tos://bkt/d/RUN/lerobot_curated", None))
+    # 数据文件都传了,marker 最后一条
+    assert any(k.endswith(".mp4") or "/data/" in k for k in st.uploads)
+    assert st.uploads[-1] == "d/RUN/lerobot_curated/meta/info.json"
+    # 远端孤儿(旧包残留)被点名删
+    assert "d/RUN/lerobot_curated/videos/stale_episode.mp4" in st.deletes
+    # 本地不留数据文件(随传随删),留下的只有押后的完整性标志
+    left = []
+    for cur, _d, names in os.walk(delivery / "lerobot_curated"):
+        left += [os.path.relpath(os.path.join(cur, n),
+                                 delivery / "lerobot_curated") for n in names]
+    assert left == ["meta/info.json"], left

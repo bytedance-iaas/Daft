@@ -74,7 +74,9 @@ def test_mirror_full_vs_light_share_one_cache_tree(tmp_path, monkeypatch):
     light = tos_store.mirror_run(f"tos://bkt/{RUN}", store=st,
                                  skip_dirs=tos_store.MIRROR_SKIP_DIRS_LIGHT)
     assert os.path.isfile(os.path.join(light, "report.md"))
-    assert not os.path.exists(os.path.join(light, "lerobot_curated")), "轻镜像不下大件"
+    lc = os.path.join(light, "lerobot_curated")
+    assert os.path.isdir(lc) and not os.listdir(lc), \
+        "轻镜像不下大件;只留空目录路标(rejudge 重导出分支按 isdir 判包型)"
     deliv = os.path.dirname(light)
     assert os.path.isfile(os.path.join(deliv, "human-decisions", "label_decisions.csv"))
     assert os.path.isfile(os.path.join(deliv, "latest"))
@@ -154,3 +156,111 @@ def test_source_dataset_of_accepts_tos_and_region(tmp_path):
     (tmp_path / "d" / "latest").write_text("20260821-000000")
     assert runner.source_dataset_of(str(tmp_path / "d")) == "tos://src/datasets/x"
     assert runner.source_region_of(str(tmp_path / "d")) == "cn-beijing"
+
+
+def test_sync_back_skip_dirs_preserves_unmirrored_remote(tmp_path, monkeypatch):
+    """半镜像写回(2026-08-28 reprofile 按需镜像):跳过的前缀既不上传也绝不
+    当孤儿删 —— 没镜像的远端大件必须原样保留。不跳过时照旧删(对照)。"""
+    monkeypatch.setenv(tos_store.CACHE_ENV, str(tmp_path / "cache"))
+    skip = ("lerobot_curated/",)
+    st = _store(OBJS)
+    local = tos_store.mirror_run(f"tos://bkt/{RUN}", store=st, skip_dirs=skip)
+    assert not os.listdir(os.path.join(local, "lerobot_curated")), "跳过=零下载"
+    open(os.path.join(local, "report.md"), "wb").write(b"# r2")
+    r = tos_store.sync_back(local, f"tos://bkt/{RUN}", store=st, skip_dirs=skip)
+    c = st._c
+    assert c.deletes == [], "跳过的前缀不许删"
+    assert f"{RUN}/report.md" in c.puts
+    assert not any(k.startswith(f"{RUN}/lerobot_curated/") for k in c.puts)
+    assert r["deleted"] == 0
+
+
+def _prune_objs():
+    """三次跑批 + latest 指向最老那次(考验 latest 永远保留)。"""
+    import json as _j
+    facts = _j.dumps({"生成时间": "2026-08-20", "本次处理条数": 5},
+                     ensure_ascii=False).encode("utf-8")
+    return {
+        "deliveries/d2/latest": b"20260820-000000",
+        "deliveries/d2/human-decisions/label_decisions.csv": b"a,b\n",
+        "deliveries/d2/20260820-000000/passed.json": b"{}",
+        "deliveries/d2/20260820-000000/run.json": facts,
+        "deliveries/d2/20260820-000000/lerobot_curated/v.mp4": b"v" * 10,
+        "deliveries/d2/20260825-000000/passed.json": b"{}",
+        "deliveries/d2/20260826-000000/passed.json": b"{}",
+        "deliveries/d2/20260826-000000/details/k.csv": b"k",
+    }
+
+
+def test_prune_plan_url_lists_and_protects_latest():
+    st = _store(_prune_objs())
+    plan = tos_store.prune_plan_url("tos://bkt/deliveries/d2", store=st,
+                                    keep_latest=1)
+    assert [r["name"] for r in plan["runs"]] == \
+        ["20260826-000000", "20260825-000000", "20260820-000000"]
+    assert plan["latest"] == "20260820-000000"
+    assert plan["runs"][2]["processed"] == 5 and "2026-08-20" in plan["runs"][2]["at"]
+    # keep-latest 1:留最新一次 + latest 记的那次,只删中间那次
+    assert [f["name"] for f in plan["delete"]] == ["20260825-000000"]
+    # human-decisions 从不进清单
+    assert all("human-decisions" not in f["name"] for f in plan["runs"])
+
+
+def test_prune_delete_run_url_only_run_names():
+    st = _store(_prune_objs())
+    n = tos_store.delete_run_url("tos://bkt/deliveries/d2", "20260825-000000",
+                                 store=st)
+    assert n == 1 and st._c.deletes == ["deliveries/d2/20260825-000000/passed.json"]
+    with pytest.raises(tos_store.TosUrlError):
+        tos_store.delete_run_url("tos://bkt/deliveries/d2", "human-decisions",
+                                 store=st)
+
+
+def test_cli_prune_tos_end_to_end(monkeypatch, capsys):
+    """CLI:tos:// 交付列清单/删除;--yes 不带 --keep-latest 照旧拒。"""
+    from curation import cli
+    st = _store(_prune_objs())
+    monkeypatch.setattr(tos_store, "make_store_for",
+                        lambda bucket, region=None, **kw: st)
+    assert cli.main(["prune", "tos://bkt/deliveries/d2"]) == 0
+    out = capsys.readouterr().out
+    assert "共 3 次跑批" in out and "只列不删" in out
+    assert cli.main(["prune", "tos://bkt/deliveries/d2", "--yes"]) == 2
+    assert cli.main(["prune", "tos://bkt/deliveries/d2",
+                     "--keep-latest", "1", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "已删 20260825-000000" in out and "human-decisions" in out
+    assert st._c.deletes == ["deliveries/d2/20260825-000000/passed.json"]
+
+
+def test_cli_rejudge_tos_uses_lazy_mirror_and_curated_publish(tmp_path, monkeypatch):
+    """rejudge 直连交付(2026-08-28 零下载):镜像带 REJUDGE_SKIP_DIRS,
+    重导出直传地址(<批次>/lerobot_curated)与地区一起进 run_rejudge。"""
+    import json as _j
+
+    from curation import cli
+    calls = {}
+    monkeypatch.setattr(tos_store, "resolve_run_url",
+                        lambda url, region=None, **kw: f"tos://bkt/{RUN}")
+    local = tmp_path / "cache" / "reports" / "bkt" / "deliveries" / "d1" / "20260821-000000"
+    local.mkdir(parents=True)
+    (local / "passed.json").write_text(_j.dumps({"episodes": {}}))
+
+    def fake_mirror(url, region=None, **kw):
+        calls["skip"] = kw.get("skip_dirs")
+        return str(local)
+    monkeypatch.setattr(tos_store, "mirror_run", fake_mirror)
+    monkeypatch.setattr(tos_store, "sync_back",
+                        lambda *a, **kw: {"uploaded": 0, "deleted": 0, "skipped": 0})
+    import curation.pipeline.rejudge as rj
+
+    def fake_run(delivery, inp, cfg, **kw):
+        calls["curated_publish"] = kw.get("curated_publish")
+        return {"ok": 1}
+    monkeypatch.setattr(rj, "run_rejudge", fake_run)
+    rc = cli.main(["rejudge", "--delivery", "tos://bkt/deliveries/d1",
+                   "--input", str(tmp_path), "--delivery-region", "cn-beijing"])
+    assert rc == 0
+    assert calls["skip"] == cli.REJUDGE_SKIP_DIRS
+    assert calls["curated_publish"] == (f"tos://bkt/{RUN}/lerobot_curated",
+                                        "cn-beijing")

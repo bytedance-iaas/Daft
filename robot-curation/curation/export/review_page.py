@@ -142,3 +142,159 @@ def build_review_page(rows: list[dict], out_dir: str, title: str = "人工审片
              f"<table><tr><th>episode</th><th>标注</th><th>视频</th></tr>{trs}</table>")
     write_text(os.path.join(out_dir, "index.html"), index)
     return n_clips
+
+
+# ── 切片入交付(2026-08-28,去挂载依赖)─────────────────────────────────
+
+#: 批次里逐条片段的目录名。报告页轻镜像**刻意跳过**它(大文件),播放端按
+#: 下面的索引现签 URL;别改名 —— runner.MIRROR_SKIP_DIRS 与 manifest 的
+#: batch_clip_paths 都按这个字面量对齐。
+CLIPS_DIRNAME = "review_clips"
+
+#: 片段索引(批次内相对路径):{episode_id: [相机短名,…]}。落在 details/ 下
+#: 是有意的 —— details/ 会进轻镜像,播放端不用为了"有没有片段"去列桶。
+CLIPS_INDEX_RELPATH = "details/review_clips_index.json"
+
+
+def build_delivery_clips(rows: list[dict], delivery: str, *, region: str | None = None,
+                         sample_interval_s: float = 0.5, max_side: int = 448,
+                         play_fps: int = 4, max_cams: int = 3,
+                         on_progress=None) -> tuple[int, str]:
+    """逐条片段进**交付批次**:<批次>/review_clips/<ep>__<cam>.mp4 + 索引。
+
+    落点跟着交付走,与挂载无关:本地/挂载交付直接落批次目录;桶交付逐条
+    上传、传完即删本地 —— pod 盘上同时只有正在切的这一条,与数据集大小无关。
+    幂等按索引:已记录的相机不重编码,重跑只补新增。
+    返回 (新编码段数, 批次位置)。
+    """
+    import shutil
+    import tempfile
+
+    from .evidence import write_audit_clips
+
+    if str(delivery).startswith("tos://"):
+        from .. import tos_store
+        run_url = tos_store.resolve_run_url(str(delivery), region)
+        bucket, run_prefix = tos_store.parse_tos_url(run_url)
+        st = tos_store.make_store_for(bucket, region)
+
+        def _read_index() -> dict:
+            try:
+                return json.loads(st.get_bytes(
+                    bucket, f"{run_prefix}/{CLIPS_INDEX_RELPATH}").decode("utf-8"))
+            except Exception:  # noqa: BLE001 没有索引 = 还没切过
+                return {}
+
+        def _put_clip(local: str, fname: str) -> None:
+            st.upload(local, bucket, f"{run_prefix}/{CLIPS_DIRNAME}/{fname}")
+            os.remove(local)
+
+        def _flush(idx: dict) -> None:
+            tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                              encoding="utf-8")
+            json.dump(idx, tmp, ensure_ascii=False, indent=0)
+            tmp.close()
+            st.upload(tmp.name, bucket, f"{run_prefix}/{CLIPS_INDEX_RELPATH}")
+            os.remove(tmp.name)
+
+        where = run_url
+    else:
+        from ..delivery import resolve_run
+        from .safe_write import write_json
+        run_dir = resolve_run(str(delivery))
+
+        def _read_index() -> dict:
+            try:
+                with open(os.path.join(run_dir, CLIPS_INDEX_RELPATH),
+                          encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:  # noqa: BLE001
+                return {}
+
+        def _put_clip(local: str, fname: str) -> None:
+            dst = os.path.join(run_dir, CLIPS_DIRNAME, fname)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(local, dst)
+
+        def _flush(idx: dict) -> None:
+            write_json(os.path.join(run_dir, CLIPS_INDEX_RELPATH), idx,
+                       ensure_ascii=False)
+
+        where = run_dir
+
+    idx = _read_index()
+    n_new = 0
+    dirty = False
+    changed = False
+    for i, r in enumerate(rows):
+        eid = str(r["episode_id"])
+        cams = sorted(r.get("video") or {})[:max_cams]
+        short = {c.split(".")[-1] for c in cams}
+        if short and short <= set(idx.get(eid) or []):
+            if on_progress is not None:
+                on_progress()
+            continue
+        with tempfile.TemporaryDirectory(prefix="clips-") as td:
+            n_new += write_audit_clips([eid], {eid: r.get("video") or {}}, td,
+                                       sample_interval_s=sample_interval_s,
+                                       max_side=max_side, play_fps=play_fps,
+                                       max_cams=max_cams)
+            produced_dir = os.path.join(td, "details", "audit_clips")
+            produced = (sorted(os.listdir(produced_dir))
+                        if os.path.isdir(produced_dir) else [])
+            for fn in produced:
+                _put_clip(os.path.join(produced_dir, fn), fn)
+            got = [fn[len(eid) + 2:-4] for fn in produced
+                   if fn.startswith(eid + "__") and fn.endswith(".mp4")]
+            if got:
+                idx[eid] = sorted(set(idx.get(eid) or []) | set(got))
+                dirty = changed = True
+        if dirty and (i + 1) % 10 == 0:
+            _flush(idx)
+            dirty = False
+        if on_progress is not None:
+            on_progress()
+    if dirty or changed:
+        _flush(idx)
+    return n_new, where
+
+
+def prune_delivery_clips(batch_dir: str, keep_eids, *, remote_url: str | None = None,
+                         region: str | None = None) -> int:
+    """剔除条目的逐条片段清理(rejudge 收尾用):索引减行 + 片段文件删除。
+
+    索引在 details/ 下,改本地那份即可(直连交付由 sync_back 一并写回);
+    片段本体被镜像/写回**双向跳过**,得点名删 —— 本地有就删本地,remote_url
+    给了就顺带删桶里的。返回剔掉的 episode 数;没有索引 = 没切过,0。
+    """
+    idx_p = os.path.join(batch_dir, CLIPS_INDEX_RELPATH)
+    try:
+        with open(idx_p, encoding="utf-8") as f:
+            idx = json.load(f)
+    except Exception:  # noqa: BLE001 没切过片段
+        return 0
+    keep = {str(e) for e in keep_eids}
+    drop = [e for e in idx if e not in keep]
+    if not drop:
+        return 0
+    st = bucket = prefix = None
+    if remote_url:
+        from .. import tos_store
+        bucket, prefix = tos_store.parse_tos_url(remote_url)
+        prefix = prefix.strip("/")
+        st = tos_store.make_store_for(bucket, region)
+    for eid in drop:
+        for cam in idx.get(eid) or []:
+            fname = f"{eid}__{cam}.mp4"
+            lp = os.path.join(batch_dir, CLIPS_DIRNAME, fname)
+            if os.path.exists(lp):
+                os.remove(lp)
+            if st is not None:
+                try:
+                    st.delete(bucket, f"{prefix}/{CLIPS_DIRNAME}/{fname}")
+                except Exception:  # noqa: BLE001 远端本来就没有 → 目的已达成
+                    pass
+        idx.pop(eid, None)
+    from .safe_write import write_json
+    write_json(idx_p, idx, ensure_ascii=False)
+    return len(drop)
