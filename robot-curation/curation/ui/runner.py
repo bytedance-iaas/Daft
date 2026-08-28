@@ -1323,8 +1323,8 @@ def tos_dataset_listing(root_url: str, region: str | None = None, *,
 
 #: 镜像时跳过的大件目录(数据集本体,几百 MB~GB 级):报告/裁决用不到它们的
 #: 字节;「轨迹」页视频四档来源落空时的提示语本来就在。
-MIRROR_SKIP_DIRS = ("episodes_parquet/", "lerobot_curated/", "rrd_curated/",
-                    "review_clips/")
+#: 轻镜像跳过表 = tos_store 那份的别名(单一事实源,两处漂移过一次就够了)
+from ..tos_store import MIRROR_SKIP_DIRS_LIGHT as MIRROR_SKIP_DIRS  # noqa: E402
 
 #: 镜像来源的身份证文件名(落在缓存的**交付根**):裁决 CSV 写回、以及"这份
 #: 缓存是从哪儿来的"的唯一事实源。

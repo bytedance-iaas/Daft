@@ -613,19 +613,31 @@ def _tolerate_broken_log() -> None:
     sys.stderr = _TolerantStream(sys.stderr)
 
 
-def _stage_tos_delivery(args, tag: str):
-    """--delivery 是 tos:// → 解析到批次、全量镜像到本地缓存,并把 args.delivery 改成
-    本地路径;返回 (本地批次, 批次 URL, 地区) 供跑完写回。不是 tos:// 返回 ()。
-    失败打印原因返回 None(调用方退出码 1)。"""
+#: reprofile 的镜像/写回跳过表:它只动画像(passed.json 的 skills 段、
+#: skill_assignment.csv、报告),视频/证据帧/曲线一个字节不读不写 ——
+#: 半镜像 + 写回对称跳过,pod 盘上只有 json/parquet 级小文件。
+REPROFILE_SKIP_DIRS = ("lerobot_curated/", "rrd_curated/", "review_clips/",
+                       "details/audit_clips/", "details/evidence/",
+                       "details/plots/")
+
+
+def _stage_tos_delivery(args, tag: str, skip_dirs: tuple = ()):
+    """--delivery 是 tos:// → 解析到批次、镜像到本地缓存,并把 args.delivery 改成
+    本地路径;返回 (本地批次, 批次 URL, 地区, skip_dirs) 供跑完写回。不是 tos://
+    返回 ()。失败打印原因返回 None(调用方退出码 1)。
+
+    skip_dirs 镜像与写回**必须同一份**(见 tos_store.sync_back 的警告):跳过的
+    前缀两头都当不存在,远端原样保留。"""
     d = str(getattr(args, "delivery", "") or "")
     if not d.startswith("tos://"):
         return ()
     from . import tos_store
     region = getattr(args, "delivery_region", None)
+    how = "按需镜像(跳过视频等大文件)" if skip_dirs else "先全量镜像"
     try:
         url = tos_store.resolve_run_url(d, region)
-        print(f"[{tag}] 交付在桶里:{url} → 先全量镜像到本地执行,改动再同步回桶", flush=True)
-        local = tos_store.mirror_run(url, region)
+        print(f"[{tag}] 交付在桶里:{url} → {how}到本地执行,改动再同步回桶", flush=True)
+        local = tos_store.mirror_run(url, region, skip_dirs=skip_dirs)
     except (tos_store.TosUrlError, tos_store.TosConfigError) as e:
         print(f"[输入错误] {e}", file=sys.stderr)
         return None
@@ -633,7 +645,7 @@ def _stage_tos_delivery(args, tag: str):
         print(f"[tos 失败] 镜像 {d} 失败:{type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
         return None
     args.delivery = local
-    return (local, url, region)
+    return (local, url, region, skip_dirs)
 
 
 def _sync_tos_delivery(sync, tag: str) -> int:
@@ -641,10 +653,10 @@ def _sync_tos_delivery(sync, tag: str) -> int:
     不能静默丢)。"""
     if not sync:
         return 0
-    local, url, region = sync
+    local, url, region, skip_dirs = sync
     from . import tos_store
     try:
-        r = tos_store.sync_back(local, url, region)
+        r = tos_store.sync_back(local, url, region, skip_dirs=skip_dirs)
     except Exception as e:  # noqa: BLE001
         print(f"[tos 失败] 写回 {url} 失败:{type(e).__name__}: {str(e)[:200]}\n"
               f"  改动保留在本地 {local},修好网络后重跑同一条命令即可续传",
@@ -861,7 +873,7 @@ def main(argv: list[str] | None = None) -> int:
         from .delivery import is_legacy_delivery, resolve_run
         from .pipeline.config import load_config
         from .pipeline.reprofile import run_reprofile
-        _sync = _stage_tos_delivery(args, "reprofile")
+        _sync = _stage_tos_delivery(args, "reprofile", skip_dirs=REPROFILE_SKIP_DIRS)
         if _sync is None and str(args.delivery).startswith("tos://"):
             return 1
         # 与 rejudge 同一套选运行语义:reprofile 也是写数据的命令,动了哪一份要明说

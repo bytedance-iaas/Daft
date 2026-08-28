@@ -721,7 +721,8 @@ def locate_bucket(bucket: str, candidates, *, skip: str | None = None,
 
 # ── 桶里的交付:镜像到本地 → 本地改 → 改动写回(2026-08-21,rejudge/reprofile 接 tos://)──
 #: 只看报告时不必下的大件(UI 懒镜像跳过它们);rejudge 要改交付数据集,得全量。
-MIRROR_SKIP_DIRS_LIGHT = ("episodes_parquet/", "lerobot_curated/", "rrd_curated/")
+MIRROR_SKIP_DIRS_LIGHT = ("episodes_parquet/", "lerobot_curated/", "rrd_curated/",
+                          "review_clips/")
 #: 镜像来源的身份证文件名(落在缓存的**交付根**):写回靠它找回家路。
 ORIGIN_NAME = ".tos-origin.json"
 
@@ -812,13 +813,18 @@ def _md5_file(path: str, chunk: int = 1 << 20) -> str:
 
 
 def sync_back(local_run: str, run_url: str, region: str | None = None, *,
-              store: TosStore | None = None, delete_orphans: bool = True) -> dict:
+              store: TosStore | None = None, delete_orphans: bool = True,
+              skip_dirs: tuple = ()) -> dict:
     """本地镜像里改过的批次写回桶:批次目录 + 交付根 human-decisions/。
 
     判"改没改"= 大小相等且 md5 == etag(分片上传的 etag 带 '-',退化为只比大小);
     完整性标志(passed.json / latest / meta/info.json)永远重传且最后传。批次目录下
     远端有、本地没有的对象删掉(rejudge 剔条目会让交付数据集的文件消失;不删就是
     把脏数据留给客户)—— 只删批次前缀下的,human-decisions 只增不删。
+
+    skip_dirs:与 mirror_run 的 skip_dirs **必须成对使用**——镜像时跳过的前缀,
+    写回时既不上传也**绝不当孤儿删**(半镜像喂给全量对账,就是把没镜像的远端
+    文件全判成"本地删了",一把删光交付视频)。
     """
     bucket, run_prefix = parse_tos_url(run_url)
     run_prefix = run_prefix.strip("/")
@@ -835,8 +841,11 @@ def sync_back(local_run: str, run_url: str, region: str | None = None, *,
         remote: dict[str, tuple[int, str]] = {}
         for key, size, etag in st.iter_object_meta(bucket, prefix + "/"):
             rel = key[len(prefix) + 1:]
-            if rel and not rel.endswith("/"):
-                remote[rel] = (size, etag.strip('"').lower())
+            if not rel or rel.endswith("/"):
+                continue
+            if may_delete and any(rel.startswith(sk) for sk in skip_dirs):
+                continue                      # 没镜像的区域:视而不见,原样保留
+            remote[rel] = (size, etag.strip('"').lower())
         rels = []
         for cur, _d, names in os.walk(local_root):
             for nme in names:

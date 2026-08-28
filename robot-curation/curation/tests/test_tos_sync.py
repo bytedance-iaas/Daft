@@ -154,3 +154,20 @@ def test_source_dataset_of_accepts_tos_and_region(tmp_path):
     (tmp_path / "d" / "latest").write_text("20260821-000000")
     assert runner.source_dataset_of(str(tmp_path / "d")) == "tos://src/datasets/x"
     assert runner.source_region_of(str(tmp_path / "d")) == "cn-beijing"
+
+
+def test_sync_back_skip_dirs_preserves_unmirrored_remote(tmp_path, monkeypatch):
+    """半镜像写回(2026-08-28 reprofile 按需镜像):跳过的前缀既不上传也绝不
+    当孤儿删 —— 没镜像的远端大件必须原样保留。不跳过时照旧删(对照)。"""
+    monkeypatch.setenv(tos_store.CACHE_ENV, str(tmp_path / "cache"))
+    skip = ("lerobot_curated/",)
+    st = _store(OBJS)
+    local = tos_store.mirror_run(f"tos://bkt/{RUN}", store=st, skip_dirs=skip)
+    assert not os.path.exists(os.path.join(local, "lerobot_curated"))
+    open(os.path.join(local, "report.md"), "wb").write(b"# r2")
+    r = tos_store.sync_back(local, f"tos://bkt/{RUN}", store=st, skip_dirs=skip)
+    c = st._c
+    assert c.deletes == [], "跳过的前缀不许删"
+    assert f"{RUN}/report.md" in c.puts
+    assert not any(k.startswith(f"{RUN}/lerobot_curated/") for k in c.puts)
+    assert r["deleted"] == 0
