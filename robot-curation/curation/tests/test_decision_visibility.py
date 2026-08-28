@@ -284,7 +284,7 @@ def test_banner_three_counts(tmp_path):
     # 2026-08-25 用户定版式升级:条(episode)与项(裁决记录/问题)双报——
     # 一条 episode 可有多项裁决,单说"条"会把 19 项读成 19 条轨迹
     assert "已裁 1 条(1 项)" in banner and "待裁 1 条(1 项)" in banner
-    assert "**1 条(1 项)**尚未应用于交付" in banner and "执行裁决" in banner
+    assert "<b>1 条(1 项)</b>尚未应用于交付" in banner and "执行裁决" in banner
     run_rejudge(run, "/unused", {}, rerun_fn=None)      # 应用掉 → 提醒消失
     assert unapplied_banner_md(_manifest(run)) == ""
     # 应用了一部分、又添了新裁决:已裁 2 / 未应用 1,数字各归各
@@ -293,7 +293,7 @@ def test_banner_three_counts(tmp_path):
     (hd / "task_verdicts.csv").write_text(old + f"epY,判失败,,{AT_NEW}\n",
                                           encoding="utf-8")
     mixed = unapplied_banner_md(_manifest(run))
-    assert "已裁 2 条(2 项)" in mixed and "**1 条(1 项)**尚未应用于交付" in mixed
+    assert "已裁 2 条(2 项)" in mixed and "<b>1 条(1 项)</b>尚未应用于交付" in mixed
 
 
 def test_overview_reconciliation_table_gains_no_row(tmp_path):

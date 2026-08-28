@@ -2058,9 +2058,11 @@ def unapplied_banner_md(m: dict) -> str:
     done_eps = len({r["id"] for r in recs})
     un_eps = len({r["id"] for r in recs if r["status"] == "unapplied"})
     pend_eps, pend_q = question_pending_scan(m)
+    # 加粗用 <b> 不用 **:CommonMark 的分隔符规则撞上全角括号贴着 ** 时
+    # 不识别(2026-08-28 实见星号原样露出);gr.Markdown 吃内联 HTML
     return (f"⚠️ 人工裁决:已裁 {done_eps} 条({c['total']} 项) · "
             f"待裁 {len(pend_eps)} 条({pend_q} 项) · "
-            f"**{un_eps} 条({c['unapplied']} 项)**尚未应用于交付 —— "
+            f"<b>{un_eps} 条({c['unapplied']} 项)</b>尚未应用于交付 —— "
             f"去「人工裁决」页点「执行裁决」。")
 
 

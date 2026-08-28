@@ -877,6 +877,14 @@ _ARCO_CSS = """
    错误就写在该字段下方的说明位里,红字盖过说明的灰(选择器带 .note-err 比上面
    的 span 规则更具体,同为 !important 时后写的更具体者赢)。红=Arco danger。 */
 .gradio-container .field-note span.note-err { color: #F53F3F !important; }
+/* 裁决卡①②区与「标注错了」的显隐(2026-08-28 三连实锤):这仨在
+   子页签+折叠条的深嵌套里,gradio 6.9 前端收到 visible= 不应用(SSE 抓包
+   有 false、DOM 不动),JS 改 style 又被 svelte 的 style 绑定 1 秒内改回。
+   唯一打得赢的是纯 CSS:mg-cur 标记是**值更新**(百分百落地),:has()
+   按标记选择,!important 压过 svelte 的 flex。 */
+body:has(#mg-cur [data-au="0"]) #adj-blocks > div:nth-child(1) { display: none !important; }
+body:has(#mg-cur [data-tv="0"]) #adj-blocks > div:nth-child(2) { display: none !important; }
+body:has(#mg-cur [data-fix="0"]) #tv-fixlab { display: none !important; }
 
 /* 「数据集目录」自画标题行(2026-08-21):Markdown 标签 + 紧挨着的「私有 / 镜像」二选一,
    观感对齐 gradio 原生 block 标签(同字号/同灰/同下间距),右边列的原生标签才不会
@@ -1533,7 +1541,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     *_au_btns(None),
                     gr.update(visible=False), "", "", "", "",
                     *[gr.update(variant="secondary", interactive=True)] * 3,
-                    "", "", gr.update(visible=False),
+                    "", '<span data-ep="" data-au="0" data-tv="0" data-fix="0"></span>',
+                    gr.update(visible=False),
                     gr.update(visible=False), "_本档没有待你裁决的条目。_")
         idx = idx % len(q)
         it = q[idx]
@@ -1552,12 +1561,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # 「标注错了」:②区在显 + 没有①区(名册条目①自带修正框,不重复给入口)
         fix_vis = (it["audit"] is None
                    and success_block_mode(it, dec.get("decision", "")) != "hidden")
+        # 显隐三位随 mg_cur 标记走(2026-08-28 实锤:①②区/「标注错了」在
+        # 子页签+折叠条的深嵌套里,gradio 6.9 前端收到 visible= 却不应用 ——
+        # SSE 载荷抓包确认有 false、DOM 纹丝不动;而**值更新百分百落地**。
+        # 页面脚本(_CURROW_JS 巡检)按标记切 display,服务端 visible= 照发
+        # 作双保险)。
+        _au_on = "1" if (au_vis or {}).get("visible") else "0"
+        _tv_on = "1" if (tv_sec[0] or {}).get("visible", True) else "0"
         return (idx, pos, info, *_vids(m, eid),
                 au_vis, au_info, origlab, newlab, "",
                 *_au_btns(dec.get("decision")),
                 tv_sec[0], tv_sec[1], tv_sec[2], tv_sec[3], "",
                 *tv_sec[4:], pos,
-                f'<span data-ep="{_ep_num(eid)}"></span>',
+                f'<span data-ep="{_ep_num(eid)}" data-au="{_au_on}" '
+                f'data-tv="{_tv_on}" data-fix="{"1" if fix_vis else "0"}">'
+                '</span>',
                 gr.update(visible=fix_vis),
                 gr.update(visible=True), "")
 
@@ -1980,8 +1998,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 rn_how = gr.Radio(["只跑选中", "跳过选中"], value="只跑选中",
                                   label="选中的这些…", visible=False)
                 with gr.Row():
-                    rn_max = gr.Number(label="只跑前 N 条(留空=全部)",
-                                       value=None, precision=0)
+                    # ⚠️ 不用 gr.Number:服务端 value=None,gradio 6.9 前端却把
+                    # None 画成 0 —— 标签写着「留空=全部」框里顶着个 0,自相矛盾
+                    # 还吓人(2026-08-28 用户实见,像要跑 0 条)。Textbox 才能真空白;
+                    # 输入合法性在 _run_go 里校验(非正整数一句话打回)。
+                    rn_max = gr.Textbox(label="只跑前 N 条(留空=全部)",
+                                        placeholder="全部")
                     rn_eps = gr.Textbox(label="指定 episode",
                                         placeholder="34 / 10-20 / 3,10-12")
                     with gr.Column(scale=2):
@@ -2559,9 +2581,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 跑批目录名 = 这次任务编号的时间戳部分:结果目录与任务/日志天然
                     # 对得上号("哪次跑批产生了这份结果"不必再翻日志)。多数据集时几份
                     # 交付共用同一个名字,一次点击的产物在各自交付里也对得上。
+                    # 「只跑前 N 条」现在是文本框:空串=全部;填了就必须是正整数
+                    # (0 也拒 —— 跑 0 条没有意义,多半是手滑)
+                    _mx = str(max_n or "").strip()
+                    if _mx and (not _mx.isdigit() or int(_mx) == 0):
+                        return _tk_view(f"⚠️ 「只跑前 N 条」要填正整数,"
+                                        f"现在是:{_mx};留空表示全部")
                     run_id = runner.new_run_id(_runs_root, "run")
                     common = dict(lite=mode == QUICK_SCAN, only=only, skip=skip,
-                                  max_episodes=int(max_n) if max_n else None,
+                                  max_episodes=int(_mx) if _mx else None,
                                   episodes=eps or None,
                                   vlm_backend=_backend_code(backend),
                                   embodiment_id=emb or None,
@@ -3216,8 +3244,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                     # 才点的按钮。并排之后两块结构也对称了 —— 各自两个结论
                                     # 加一个「拿不准」,同样位置的按钮语义一样。
                                     with gr.Row(elem_id="adj-blocks"):
-                                     # ① 标注问题:该条在分歧队列里才渲染
-                                     with gr.Column(visible=False) as mg_au_block:
+                                     # ① 标注问题:该条在分歧队列里才显示。
+                                     # ⚠️ 生来 visible=True(gradio-hidden-modal-poison:born-hidden
+                                     # 容器收过更新后显隐会失灵,2026-08-28 实见 ep52 纯弃权条目
+                                     # ①区赖着不走);首次渲染立刻纠正
+                                     with gr.Column(visible=True) as mg_au_block:
                                          gr.HTML(_adj_section_html("1", "标注问题",
                                                                    "数据自带的标注 vs 系统看画面写的描述",
                                                                    "#FF7D00", "#D25F00"))
@@ -3239,7 +3270,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                      # ② 成败问题:机器弃权时必答;「采纳改标」后可选(留空=
                                      #    交给机器重判);「弃用该条」时不可用(矛盾拦截)——
                                      #    档位判定在 manifest.success_block_mode,这里只渲染。
-                                     with gr.Column(visible=False) as mg_tv_block:
+                                     with gr.Column(visible=True) as mg_tv_block:  # 同上,生来可见
                                          gr.HTML(_adj_section_html("2", "成败问题",
                                                                    "这条任务到底完成了没有",
                                                                    "#165DFF", "#165DFF"))
@@ -3250,7 +3281,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                              # 就能顺手改;名册条目①区自带修正框,不重复
                                              mg_fixlab = gr.Button(
                                                  "标注错了", variant="secondary",
-                                                 scale=0, visible=False,
+                                                 scale=0, visible=True,   # 同上,生来可见
                                                  elem_id="tv-fixlab")
                                          tv_info = gr.Markdown()
                                          tv_readings = gr.Markdown()
