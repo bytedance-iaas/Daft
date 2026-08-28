@@ -1893,7 +1893,10 @@ def build_dataset_jobs(data_root: str, delivery_root: str, datasets: list,
         steps = [build_argv("run", input=src, output=out, **params)]
         if name in want_clips:
             steps.append(build_argv("review-page", input=src, into_delivery=out,
-                                    delivery_region=params.get("output_region")))
+                                    delivery_region=params.get("output_region"),
+                                    # 范围跟跑批走:交付里有哪些条,片段才切哪些条
+                                    max_episodes=params.get("max_episodes"),
+                                    episodes=params.get("episodes")))
         jobs.append({"title": name, "steps": steps})
     return jobs
 

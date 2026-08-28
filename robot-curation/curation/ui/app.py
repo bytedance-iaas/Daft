@@ -2644,7 +2644,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             # (2026-08-28 去挂载依赖):直连/挂载交付都一样落
                             then_argv = runner.build_argv(
                                 "review-page", input=inp, into_delivery=out,
-                                delivery_region=common.get("output_region"))
+                                delivery_region=common.get("output_region"),
+                                # 切片范围必须跟跑批走(2026-08-28 真机实见:
+                                # 前 2 条的跑批把 100 条全切了)——交付里只有
+                                # 这几条,片段也只该有这几条
+                                max_episodes=common.get("max_episodes"),
+                                episodes=common.get("episodes"))
                     except ValueError as e:
                         return _tk_view(f"⚠️ {e}")
                     return _tk_start(

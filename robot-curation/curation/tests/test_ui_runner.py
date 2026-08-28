@@ -1546,10 +1546,12 @@ def test_multi_dataset_clips_chain_without_review_dir():
     直连交付(tos:// 输出)把地区一并带给切片步。"""
     jobs = runner.build_dataset_jobs(
         "tos://b/datasets", "tos://b/deliv", ["droid"], "n",
-        clips_for=["droid"], output_region="cn-beijing")
+        clips_for=["droid"], output_region="cn-beijing", max_episodes=2)
     clip = jobs[0]["steps"][1]
     assert "--into-delivery" in clip and "tos://b/deliv/n/droid" in clip
     assert "--delivery-region" in clip and "cn-beijing" in clip
+    # 范围跟跑批走(2026-08-28 真机实见:前 2 条的跑批把 100 条全切了)
+    assert "--max-episodes" in clip and "2" in clip
 
 def test_run_state_goes_through_the_shared_atomic_publish_channel(tmp_path,
                                                                   monkeypatch):
