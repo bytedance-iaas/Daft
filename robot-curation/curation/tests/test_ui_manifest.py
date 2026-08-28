@@ -293,7 +293,12 @@ def test_app_with_terminal_tab(delivery):
     from curation.ui.app import build_app
     cfg = _config_text(build_app(delivery, terminal=True))
     assert "终端" in cfg and "curation-term-screen" in cfg
-    assert "iframe" not in cfg and "7681" not in cfg      # ttyd 时代的痕迹一点不留
+    # ttyd 时代的痕迹一点不留。⚠️ 别裸查 "7681"/"iframe":全量套件跑到这里
+    # gradio 的组件自增 id 会真的数到 7681(2026-08-28 pod 实见,单跑就绿),
+    # 钉的是"有个 iframe 指向 7681 端口"这件事本身
+    import re as _re
+    assert "ttyd" not in cfg
+    assert not _re.search(r"iframe[^\"]*7681|7681[^\"]*iframe", cfg)
     assert "质检报告" in cfg
     assert cfg.index("质检报告") < cfg.index("终端")   # 终端在最右
     assert cfg.index("跑质检") < cfg.index("质检报告")  # 跑质检在最左

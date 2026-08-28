@@ -205,12 +205,17 @@ def test_overview_markdown_silent_when_absent():
 
 
 def test_overview_robot_dict_renders_human_readable():
-    """机器人字段是 dict 时不能把原始 dict 打在页面上(2026-08-10 发现的存量毛病)。"""
+    """机器人字段是 dict 时不能把原始 dict 打在页面上(2026-08-10 发现的存量毛病)。
+
+    2026-08-25 用户点名精简:概览只留机器人名,规格表/质量括注全删(与名字重复、
+    行话)——本用例当时漏更,钉的还是括注版(2026-08-28 pod 全量跑出来才现形)。
+    现在钉两件事:不漏原始 dict,名字在。"""
     m = {"name": "d", "generated_at": "t", "code_version": "v",
          "robot": {"robot_type": "so101", "embodiment_id": "so101",
                    "registry_profile": "so101", "quality": "approximate"},
          "dataset": {"delivered": 1, "input_episodes": 1},
          "episodes": {}, "audit_queue": []}
     md = overview_markdown(m)
-    assert "{" not in md
-    assert "so101(规格表 so101,质量 approximate)" in md
+    assert "{" not in md and "robot_type" not in md
+    assert "so101" in md
+    assert "规格表" not in md and "approximate" not in md
