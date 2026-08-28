@@ -1263,6 +1263,59 @@ def tos_list_datasets(root_url: str, region: str | None = None, *,
     return sorted(set(st.iter_common_prefixes(bucket, prefix)))
 
 
+def tos_dataset_listing(root_url: str, region: str | None = None, *,
+                        store=None) -> dict:
+    """跑质检页直连根的数据集清单(issue #98:下拉不再混入非数据集目录)。
+
+    与挂载路径 _scan_dataset_root 同一条身份证:目录下有 meta/info.json
+    (RRD 开着时目录里有 *.rrd 也算)。返回两种形态:
+    - {"kind": "dataset", "name", "parent"}:输入本身就是一个数据集 ——
+      界面把目录退到上层并预选它(用户填深了一层,替他纠正,不为难人);
+    - {"kind": "list", "names", "junk"}:一层子目录过滤后的名单;junk =
+      没过身份证的前几个名字,只在名单为空时当诊断词料用(2026-08-28 用户
+      定:名单非空时不提被滤掉多少)。
+    验证成本:每个候选一次 head(线程池并发),几十个子目录亚秒级;公共
+    缓存桶照旧走 public_catalog(那边早就按清单过滤)。tos_list_datasets
+    保持"一层前缀不深验"原义 —— 交付根/批次清单还靠它。
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .. import tos_store as _ts
+    from ..ingest import public_catalog
+    if public_catalog.is_public_root(root_url):
+        return {"kind": "list", "names": public_catalog.names(store=store),
+                "junk": []}
+    bucket, prefix = _ts.parse_tos_url(root_url)
+    st = store or _ts.make_store_for(bucket, region)
+
+    def _is_ds(pfx: str) -> bool:
+        key = (pfx.strip("/") + "/meta/info.json").lstrip("/")
+        try:
+            st.head(bucket, key)
+            return True
+        except Exception:  # noqa: BLE001 不存在/无权限都算"不是数据集"
+            pass
+        if not _rrd_enabled():
+            return False
+        try:
+            _dirs, files = st.list_dir(bucket, pfx)
+            return any(str(n).endswith(".rrd") for n, _sz in files)
+        except Exception:  # noqa: BLE001
+            return False
+
+    if prefix and _is_ds(prefix):
+        parent = prefix.rsplit("/", 1)[0] if "/" in prefix else ""
+        return {"kind": "dataset", "name": prefix.rsplit("/", 1)[-1],
+                "parent": f"tos://{bucket}/{parent}".rstrip("/")}
+    children = tos_list_datasets(root_url, region, store=store)
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        flags = list(ex.map(
+            lambda n: _is_ds(f"{prefix.strip('/')}/{n}".strip("/")), children))
+    return {"kind": "list",
+            "names": [n for n, ok in zip(children, flags) if ok],
+            "junk": [n for n, ok in zip(children, flags) if not ok][:5]}
+
+
 # ── 报告页读端直连(2026-08-20 阶段4,懒镜像):交付在哪个桶,报告页就在哪看。
 #    交付根/交付/批次都用完整 tos:// URL 当下拉值流经现有管线;打开批次时把
 #    该批次目录**除大件外**镜像到本地缓存,现有 manifest 加载代码原样吃缓存
@@ -1928,6 +1981,32 @@ def delivery_name_error(delivery_root: str, name: str, datasets,
 
 
 # ── 任务目录:落盘的状态机 ────────────────────────────────────────────────
+
+def latest_run_delivery(runs_root: str) -> dict | None:
+    """最近一次**成功跑完的质检批**(command=run)把交付写到了哪:
+    {"run_id", "output", "region"};没有 → None。
+
+    报告页「跟着最新跑批走」用(2026-08-28 用户实报:交付写进了别的桶,
+    报告页的交付下拉里根本没有它,他拿着旧交付当新结果看了半天)。"""
+    for st in list_runs(runs_root, limit=30):
+        if st.get("state") != "done" or str(st.get("exit_code")) != "0":
+            continue
+        cmd = _read_json(os.path.join(runs_root, str(st.get("run_id") or ""),
+                                      "cmd.json")) or {}
+        if cmd.get("command") != "run":
+            continue
+        argv = [str(a) for a in (cmd.get("argv") or [])]
+        out = (argv[argv.index("--output") + 1]
+               if "--output" in argv and argv.index("--output") + 1 < len(argv)
+               else "")
+        if not out:
+            continue
+        rg = (argv[argv.index("--output-region") + 1]
+              if "--output-region" in argv
+              and argv.index("--output-region") + 1 < len(argv) else "")
+        return {"run_id": str(st.get("run_id")), "output": out, "region": rg}
+    return None
+
 
 def runs_root_of(delivery_root: str) -> str:
     return os.path.join(delivery_root, RUNS_DIRNAME)

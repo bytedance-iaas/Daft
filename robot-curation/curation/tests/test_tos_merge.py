@@ -227,3 +227,51 @@ def test_push_decisions_uploads_csvs_back_and_says_so(tmp_path, monkeypatch):
 def test_push_decisions_is_silent_noop_for_local_deliveries(tmp_path):
     """挂载交付(没有 .tos-origin)→ 空串:裁决提示语一个字不多。"""
     assert runner.push_decisions(str(tmp_path / "deliv" / "run1")) == ""
+
+
+# ── tos_dataset_listing:下拉只列真数据集(issue #98)─────────────────────
+
+class _DsStore:
+    """假 store:head 认 meta/info.json 的键;list_dir/iter_common_prefixes 按表回。"""
+
+    def __init__(self, children, dataset_prefixes):
+        self.children = children              # 一层子目录名
+        self.ds = set(dataset_prefixes)       # 哪些前缀算数据集(有 meta/info.json)
+
+    def iter_common_prefixes(self, bucket, prefix):
+        yield from self.children
+
+    def head(self, bucket, key):
+        assert key.endswith("meta/info.json")
+        pfx = key[: -len("/meta/info.json")]
+        if pfx in self.ds:
+            return (10, "etag")
+        raise KeyError(key)
+
+    def list_dir(self, bucket, prefix):
+        return ([], [])
+
+
+def test_tos_dataset_listing_filters_non_datasets():
+    """混杂目录:deliveries/review 之类不进下拉;junk 留作空清单诊断词料。"""
+    st = _DsStore(["droid_100", "deliveries", "review", "aloha"],
+                  {"datasets/droid_100", "datasets/aloha"})
+    out = runner.tos_dataset_listing("tos://bkt/datasets", store=st)
+    assert out["kind"] == "list"
+    assert out["names"] == ["aloha", "droid_100"]
+    assert set(out["junk"]) == {"deliveries", "review"}
+
+
+def test_tos_dataset_listing_recognizes_dataset_itself():
+    """用户把数据集本身填进目录框 → 退层预选,不列 meta/data/videos 当数据集。"""
+    st = _DsStore(["meta", "data", "videos"], {"dataset/droid_100"})
+    out = runner.tos_dataset_listing("tos://bkt/dataset/droid_100", store=st)
+    assert out == {"kind": "dataset", "name": "droid_100",
+                   "parent": "tos://bkt/dataset"}
+
+
+def test_tos_dataset_listing_all_junk_keeps_diagnostic_names():
+    st = _DsStore(["misc", "logs"], set())
+    out = runner.tos_dataset_listing("tos://bkt/stuff", store=st)
+    assert out["kind"] == "list" and out["names"] == []
+    assert out["junk"] == ["logs", "misc"]

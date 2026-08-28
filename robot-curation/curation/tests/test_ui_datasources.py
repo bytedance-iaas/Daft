@@ -436,6 +436,9 @@ def test_deeplink_switches_source_dropdown_to_matching_bucket(delivery, tmp_path
     monkeypatch.setattr(runner, "tos_list_datasets",
                         lambda *a, **k: (_ for _ in ()).throw(
                             RuntimeError("单测环境不出网")))
+    monkeypatch.setattr(runner, "tos_dataset_listing",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            RuntimeError("单测环境不出网")))
     cfg_path = _site_yaml(tmp_path, _two_sources(tmp_path))
     app = build_app(delivery, config_path=cfg_path)
     fns = [f for f in app.fns.values()
@@ -462,7 +465,7 @@ def test_deeplink_switches_source_dropdown_to_matching_bucket(delivery, tmp_path
     warned.clear()
     tin2, ds2, _rg2, note2, ds_note2, _src = fns[0].fn(Req2())
     assert tin2.get("value") == "tos://strange/prefix"
-    assert str(note2).startswith("TOS 直连:")
+    assert str(note2) == ""      # 「TOS 直连:…」整行删(issue #98)
     assert ds2.get("value") == [] and ds2.get("choices") == []
     assert any("demo_v2" in w for w in warned), "链接指的名字没找到必须点名"
     assert "⚠️" in str(ds_note2), "列不出清单要落到说明行,不许静默"
@@ -804,15 +807,15 @@ def test_switching_root_clears_stale_notes_instead_of_leaving_them(delivery,
     fns = [f for f in app.fns.values()
            if (getattr(f, "inputs", []) or [])
            and [getattr(c, "elem_id", None)
-                for c in (getattr(f, "outputs", []) or [])]
+                for c in (getattr(f, "outputs", []) or [])][:3]
            == ["rn-src-note", None, "rn-ds-note"]]
-    assert fns, "没找到切根路径的回调(输出应为 根说明/数据集下拉/数据集说明)"
+    assert fns, "没找到切根路径的回调(输出应为 根说明/数据集下拉/数据集说明[/目录框])"
     fn = fns[0].fn                       # 2026-08-20 起 = _root_changed(url, region)
 
-    note_a, _ds_a, ds_note_a = fn("tos://curation/datasets", "")
+    note_a, _ds_a, ds_note_a, _tin_a = fn("tos://curation/datasets", "")
     assert note_a == "", "挂载桶的说明行空着(2026-08-21 用户:不印端点/挂载路径)"
 
-    note_b, _ds_b, ds_note_b = fn("tos://bucketa/prefix", "")
+    note_b, _ds_b, ds_note_b, _tin_b = fn("tos://bucketa/prefix", "")
     assert note_b == "" and "读取端点" not in str(note_b), \
         "没配端点的根同样空着,不许残留上一个根的"
     assert ds_note_b == "", "根目录正常:状态提示必须是空串,不能 None/跳过"

@@ -15,5 +15,6 @@ action:
   euler_triplet: true
   stuck_strategy: velocity_dual_scale
 state: {space: ee}
-extras:
-  note: "同 droid.yaml;官方 v3 转换,state 7 维(无 pad 列)"
+# 注记(extras.note)不写:它会原文出现在报告与卡顿时间线页,「同 droid.yaml;
+# 官方 v3 转换…」是给维护者看的行话,用户看不懂(2026-08-28 点名删)。真要写
+# 注记只写用户读得懂的前提(参照 droid.yaml 的量纲说明)。

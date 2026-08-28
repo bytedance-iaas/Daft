@@ -904,3 +904,50 @@ def test_module_pick_change_does_not_rerender_itself(tmp_path):
     assert "要跑的模块" in [getattr(c, "label", "")
                            for c in mode_fns[0].outputs], \
         "模式切换仍要负责勾选框的显隐"
+
+
+def test_mirror_cache_files_are_servable(tmp_path, monkeypatch):
+    """直连交付的懒镜像缓存必须在 gradio 的文件放行名单里(2026-08-28 用户实见:
+    同步曲线图镜像到了本地却 403 不显示;裁决卡证据帧同族)。"""
+    pytest.importorskip("gradio")
+    from starlette.testclient import TestClient
+
+    monkeypatch.delenv("CURATION_UI_USER", raising=False)
+    monkeypatch.delenv("CURATION_UI_PASSWORD", raising=False)
+    monkeypatch.setenv("CURATION_TOS_CACHE", str(tmp_path / "cache"))
+    plot = (tmp_path / "cache" / "reports" / "b" / "deliveries" / "d" / "r"
+            / "details" / "plots" / "ep000001_sync.png")
+    plot.parent.mkdir(parents=True)
+    plot.write_bytes(b"\x89PNG\r\n\x1a\n0000")
+    from curation.ui.app import create_asgi_app
+    root = tmp_path / "deliv"
+    root.mkdir()
+    _new_delivery(root, "d1")
+    app = create_asgi_app(str(root), data_root=str(tmp_path / "data"))
+    with TestClient(app) as c:
+        r = c.get(f"/gradio_api/file={plot}")
+        assert r.status_code == 200, "镜像缓存里的证据文件被 403,同步图显示不出来"
+
+
+def test_empty_adjudication_deck_collapses_card_block(tmp_path):
+    """裁决队列为空时整个卡片区收起(2026-08-28 用户点名:机位框/翻页按钮空摆着
+    像"有东西没显示出来"),只留一句说明;有条目时反向。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui.app import build_app
+
+    deliv = tmp_path / "deliveries"
+    run = deliv / "d1" / "20260828-000001"
+    run.mkdir(parents=True)
+    (run / "passed.json").write_text(_json.dumps({"数据集": "d1", "episodes": {}}),
+                                     encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    fns = [f.fn for f in app.fns.values()
+           if getattr(f.fn, "__name__", "") == "<lambda>"
+           and "_mg_render" in (f.fn.__code__.co_freevars or ())]
+    assert fns, "翻页/筛选回调该闭包引用 _mg_render"
+    out = fns[0]({"episodes": {}, "audit_queue": [], "path": str(run)}, "全部")
+    blk, note = out[-2], out[-1]
+    assert blk.get("visible") is False, "空队列必须整块收起"
+    assert "没有待你裁决" in str(note), "收起后要顶一句说明"
