@@ -2752,8 +2752,10 @@ def _file_url(path: str) -> str:
     from urllib.parse import quote
     p, frag = _split_frag(path)
     if p.startswith("tos://"):
+        # 受众是浏览器:必须公网端点预签名。pod 面的内网端点在这儿是死链
+        # (2026-08-28 dataverse 实见,TOS_ENDPOINT=内网 → 视频永远转圈)
         from ..ingest import dsfs
-        return dsfs.media_source(p) + frag
+        return dsfs.browser_media_source(p) + frag
     try:
         ver = f"?v={int(os.stat(p).st_mtime)}"
     except OSError:

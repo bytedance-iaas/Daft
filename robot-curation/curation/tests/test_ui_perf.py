@@ -629,7 +629,7 @@ def test_source_video_lane_speaks_tos(tmp_path, monkeypatch):
     lane = M._lane(paths[0], "ep000003", M.VIDEO_SOURCE_SOURCE)
     assert lane["playable"] is True and lane["camera"]
     # _file_url:tos:// → 预签名 https 直连桶
-    monkeypatch.setattr(dsfs, "media_source",
+    monkeypatch.setattr(dsfs, "browser_media_source",
                         lambda p: "https://signed.example/" + p.split("/")[-1])
     assert M._file_url(paths[0]).startswith("https://signed.example/")
 
@@ -698,7 +698,7 @@ def test_v3_time_window_lane(tmp_path, monkeypatch):
     assert lane["path"].endswith("#t=12.500,18.250")
 
     # _file_url:远端 → 预签名 + 片段;本地 → gradio 文件 URL + 片段
-    monkeypatch.setattr(dsfs, "media_source", lambda p: "https://signed/" + p.split("/")[-1])
+    monkeypatch.setattr(dsfs, "browser_media_source", lambda p: "https://signed/" + p.split("/")[-1])
     u = M._file_url(wins[0])
     assert u.startswith("https://signed/") and u.endswith("#t=12.500,18.250")
     local = tmp_path / "file-000.mp4"

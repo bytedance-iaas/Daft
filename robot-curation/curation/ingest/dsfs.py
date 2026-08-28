@@ -308,6 +308,17 @@ def media_source(path: str) -> str:
     return _store(bucket).presign(bucket, key, expires=PRESIGN_EXPIRES_S)
 
 
+def browser_media_source(path: str) -> str:
+    """给**浏览器** `<video src>` 的媒体源:本地路径原样;远端 = 公网端点预签名。
+
+    与 media_source 只差受众:PyAV 跑在 pod 里,内网端点又快又省;浏览器在
+    公网,内网端点(*.ivolces.com)不可达 —— 两边必须各签各的。"""
+    if not is_remote(path):
+        return path
+    bucket, key = _split(path)
+    return _store(bucket).browser_url(bucket, key, expires=PRESIGN_EXPIRES_S)
+
+
 def copy_to_local(path: str, dst: str) -> None:
     """整文件拷到本地(导出时拷 stats.json / v2 mp4 用):顺序写,与 FSX 安全写法一致。"""
     os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)

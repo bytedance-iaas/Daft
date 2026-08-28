@@ -214,7 +214,7 @@ class TosStore:
 
     def __init__(self, endpoint: str, region: str, ak: str = "", sk: str = "",
                  security_token: str | None = None, client=None,
-                 anonymous: bool = False):
+                 anonymous: bool = False, browser_client=None):
         self.endpoint = endpoint
         self.region = region
         #: 匿名客户端(公共桶):不签名;presign 退化成裸的公网 URL
@@ -224,6 +224,11 @@ class TosStore:
             client = tos.TosClientV2(ak, sk, endpoint, region,
                                      security_token=security_token)
         self._c = client
+        # 浏览器面第二客户端(懒建):端点是内网时,给浏览器的预签名必须换
+        # 公网端点重签(主机名签进签名里,不能事后改域名)。凭证留在实例上,
+        # 只为这一个用途;测试注入 browser_client 即可离线验。
+        self._creds = (ak, sk, security_token)
+        self._cb = browser_client
 
     def iter_objects(self, bucket: str, prefix: str):
         """前缀下全部对象 → (key, size) 迭代;游标翻页翻到底。"""
@@ -257,23 +262,56 @@ class TosStore:
         out = self._c.get_object(bucket, key)
         return out.read()
 
+    @staticmethod
+    def _presign_get(client, bucket: str, key: str, expires: int) -> str:
+        """在给定客户端上做 GET 预签名;离线单测的假客户端不看 method 参数。"""
+        try:
+            import tos
+            method = tos.HttpMethodType.Http_Method_Get
+        except ImportError:
+            method = "GET"
+        return client.pre_signed_url(method, bucket, key,
+                                     expires=expires).signed_url
+
     def presign(self, bucket: str, key: str, expires: int = 3600) -> str:
         """GET 预签名 URL(本地 HMAC,不出网):PyAV 直接按 Range 读视频。
         匿名客户端没有密钥可签,给裸的公网 URL(公共桶本来就匿名可读)。"""
         if self.anonymous:
             return self.public_url(bucket, key)
-        import tos
-        return self._c.pre_signed_url(tos.HttpMethodType.Http_Method_Get, bucket,
-                                      key, expires=expires).signed_url
+        return self._presign_get(self._c, bucket, key, expires)
 
-    def public_url(self, bucket: str, key: str) -> str:
+    def public_url(self, bucket: str, key: str, endpoint: str | None = None) -> str:
         """`https://<桶>.<端点主机>/<key>`(虚拟主机风格,key 做 URL 编码)。"""
         from urllib.parse import quote
-        ep = str(self.endpoint or "")
+        ep = str(endpoint or self.endpoint or "")
         m = re.match(r"^([a-z]+)://", ep)
         scheme = m.group(1) if m else "https"
         host = re.sub(r"^[a-z]+://", "", ep).split("/", 1)[0]
         return f"{scheme}://{bucket}.{host}/{quote(str(key).lstrip('/'))}"
+
+    def browser_endpoint(self) -> str:
+        """给浏览器用的**公网**端点(原生协议)。与 self.endpoint 的差别只在
+        内外网:`*.ivolces.com` 只在火山 VPC 内可达,发给浏览器就是死链。"""
+        return f"https://tos-{self.region}.volces.com"
+
+    def browser_url(self, bucket: str, key: str, expires: int = 3600) -> str:
+        """给**浏览器**的媒体 URL:一律公网端点。
+
+        pod 自己读桶保内网端点(快、不计公网流量),但预签名把主机名签进
+        签名里,不能签完换域名 —— 端点是内网时必须用公网端点客户端**重签**
+        (2026-08-28 dataverse 实见:内网预签名发给浏览器,视频永远转圈)。
+        匿名桶不签名,直接给公网裸 URL。
+        """
+        if self.anonymous:
+            return self.public_url(bucket, key, endpoint=self.browser_endpoint())
+        if ".ivolces.com" not in str(self.endpoint or ""):
+            return self.presign(bucket, key, expires)  # 本来就是公网端点
+        if self._cb is None:
+            import tos
+            ak, sk, token = self._creds
+            self._cb = tos.TosClientV2(ak, sk, self.browser_endpoint(),
+                                       self.region, security_token=token)
+        return self._presign_get(self._cb, bucket, key, expires)
 
     def head(self, bucket: str, key: str) -> tuple[int, str]:
         """单对象的 (大小, etag);不存在让 SDK 的异常原样出来。"""
