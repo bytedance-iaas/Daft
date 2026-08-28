@@ -1980,8 +1980,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 rn_how = gr.Radio(["只跑选中", "跳过选中"], value="只跑选中",
                                   label="选中的这些…", visible=False)
                 with gr.Row():
-                    rn_max = gr.Number(label="只跑前 N 条(留空=全部)",
-                                       value=None, precision=0)
+                    # ⚠️ 不用 gr.Number:服务端 value=None,gradio 6.9 前端却把
+                    # None 画成 0 —— 标签写着「留空=全部」框里顶着个 0,自相矛盾
+                    # 还吓人(2026-08-28 用户实见,像要跑 0 条)。Textbox 才能真空白;
+                    # 输入合法性在 _run_go 里校验(非正整数一句话打回)。
+                    rn_max = gr.Textbox(label="只跑前 N 条(留空=全部)",
+                                        placeholder="全部")
                     rn_eps = gr.Textbox(label="指定 episode",
                                         placeholder="34 / 10-20 / 3,10-12")
                     with gr.Column(scale=2):
@@ -2559,9 +2563,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 跑批目录名 = 这次任务编号的时间戳部分:结果目录与任务/日志天然
                     # 对得上号("哪次跑批产生了这份结果"不必再翻日志)。多数据集时几份
                     # 交付共用同一个名字,一次点击的产物在各自交付里也对得上。
+                    # 「只跑前 N 条」现在是文本框:空串=全部;填了就必须是正整数
+                    # (0 也拒 —— 跑 0 条没有意义,多半是手滑)
+                    _mx = str(max_n or "").strip()
+                    if _mx and (not _mx.isdigit() or int(_mx) == 0):
+                        return _tk_view(f"⚠️ 「只跑前 N 条」要填正整数,"
+                                        f"现在是:{_mx};留空表示全部")
                     run_id = runner.new_run_id(_runs_root, "run")
                     common = dict(lite=mode == QUICK_SCAN, only=only, skip=skip,
-                                  max_episodes=int(max_n) if max_n else None,
+                                  max_episodes=int(_mx) if _mx else None,
                                   episodes=eps or None,
                                   vlm_backend=_backend_code(backend),
                                   embodiment_id=emb or None,

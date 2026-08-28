@@ -951,3 +951,19 @@ def test_empty_adjudication_deck_collapses_card_block(tmp_path):
     blk, note = out[-2], out[-1]
     assert blk.get("visible") is False, "空队列必须整块收起"
     assert "没有待你裁决" in str(note), "收起后要顶一句说明"
+
+
+def test_max_episodes_field_is_blank_textbox(tmp_path):
+    """「只跑前 N 条(留空=全部)」必须真空白:gr.Number 的 None 会被 gradio 6.9
+    前端画成 0(2026-08-28 用户实见,像要跑 0 条)——钉住它是 Textbox 且无默认值。"""
+    pytest.importorskip("gradio")
+    import gradio as gr
+    from curation.ui.app import build_app
+
+    (tmp_path / "data").mkdir()
+    app = build_app(str(tmp_path / "deliveries"),
+                    data_root=str(tmp_path / "data"))
+    boxes = [b for b in app.blocks.values()
+             if getattr(b, "label", "") == "只跑前 N 条(留空=全部)"]
+    assert boxes and isinstance(boxes[0], gr.Textbox), "必须是 Textbox 不是 Number"
+    assert not (boxes[0].value or ""), "默认必须空白"
