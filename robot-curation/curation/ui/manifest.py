@@ -3635,7 +3635,13 @@ def episode_video_html(m: dict, eid: str, review_dir: str | None = None,
         status = f" · 其中 {len(bad)} 路无法正常播放"
     else:
         status = ""
-    note = (f'{_esc(v["note"])} · 共 {len(v["videos"])} 路相机{_esc(status)}')
+    # 头行显示**任务标注**而不是视频来源(2026-08-28 用户定:「视频来自审片站
+    # (全部 episode 都有…)· 共 N 路相机」删掉,标注才有信息量)。数据链与
+    # 裁决卡同源(task_details → 分歧队列原始标注 → captions);没标注不硬凑,
+    # 播放异常的 ⚠️ 说明照留 —— 那是诊断,不是被删的那类来源废话。
+    _task, _tsrc = episode_task_text(m, eid)
+    note = ((f'标注:{_esc(_task)}' + (f'({_esc(_tsrc)})' if _tsrc else ''))
+            if _task else '') + _esc(status)
     return ('<div class="ep-video-zone" style="margin:2px 0 10px">'
             + play_all_button_html(note)
             + f'<div style="display:flex;flex-wrap:wrap;gap:10px">{cells}</div></div>')

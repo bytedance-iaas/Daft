@@ -2406,6 +2406,8 @@ def test_video_source_chain_prefers_review_site(ep_delivery, tmp_path):
     assert html.count("<video") == 2
     assert "muted" in html and "loop" in html and 'preload="metadata"' in html
     assert "autoplay" not in html                            # 进页面不许自己播
+    # 头行 = 任务标注,不再是视频来源(2026-08-28 用户定:来源那句没信息量)
+    assert "视频来自审片站" not in html and "路相机" not in html
 
 
 def test_video_source_chain_falls_back_to_curated_dataset(ep_delivery, tmp_path):

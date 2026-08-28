@@ -1691,3 +1691,32 @@ def test_embodiment_hints_cached(tmp_path, monkeypatch):
     assert h2 is h1 and calls["n"] == 1, "第二次必须走缓存"
     # 预热接口:守护线程跑完后缓存同样命中,不抛不阻塞
     runner.prewarm_embodiment_hints(str(tmp_path), ["d"])
+
+
+def test_latest_run_delivery_reads_newest_successful_run(tmp_path):
+    """报告页「跟着最新跑批走」的取数:最新一条成功的 run 命令 → 交付去向;
+    失败的/非 run 命令(rejudge 等)跳过;没有可用记录 → None。"""
+    import json as _json
+    rr = tmp_path / ".runs"
+
+    def _mk(rid, command, output, code=0):
+        d = rr / rid
+        d.mkdir(parents=True)
+        argv = ["python", "-m", "curation.cli", command]
+        if output:
+            argv += ["--output", output, "--output-region", "cn-beijing"]
+        (d / "cmd.json").write_text(_json.dumps(
+            {"run_id": rid, "command": command, "argv": argv,
+             "runs_root": str(rr)}), encoding="utf-8")
+        (d / "status.json").write_text(_json.dumps(
+            {"state": "done", "exit_code": code, "pid": 1}), encoding="utf-8")
+
+    assert runner.latest_run_delivery(str(rr)) is None          # 目录还没有
+    _mk("20260828-000001-run", "run", "tos://b/deliveries/old")
+    _mk("20260828-000002-run", "rejudge", "")                    # 非 run 跳过
+    _mk("20260828-000003-run", "run", "tos://b/deliveries/bad", code=3)  # 失败跳过
+    got = runner.latest_run_delivery(str(rr))
+    assert got == {"run_id": "20260828-000001-run",
+                   "output": "tos://b/deliveries/old", "region": "cn-beijing"}
+    _mk("20260828-000004-run", "run", "tos://c/deliveries/new")
+    assert runner.latest_run_delivery(str(rr))["output"] == "tos://c/deliveries/new"

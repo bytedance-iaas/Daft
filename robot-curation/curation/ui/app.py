@@ -1527,13 +1527,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         清单与队列表同源同序(merged_card_deck),台账条目也有卡(只读)。"""
         q = merged_card_deck(m or {}, merge_filter_mode(filt))
         if not q:
-            return (0, "(本档没有待你裁决的条目)", "",
+            return (0, "", "",
                     *[gr.update(value=None, visible=(i == 0)) for i in range(3)],
                     gr.update(visible=False), "", "", "", "",
                     *_au_btns(None),
                     gr.update(visible=False), "", "", "", "",
                     *[gr.update(variant="secondary", interactive=True)] * 3,
-                    "", "", gr.update(visible=False))
+                    "", "", gr.update(visible=False),
+                    gr.update(visible=False), "_本档没有待你裁决的条目。_")
         idx = idx % len(q)
         it = q[idx]
         eid = it["id"]
@@ -1557,7 +1558,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 tv_sec[0], tv_sec[1], tv_sec[2], tv_sec[3], "",
                 *tv_sec[4:], pos,
                 f'<span data-ep="{_ep_num(eid)}"></span>',
-                gr.update(visible=fix_vis))
+                gr.update(visible=fix_vis),
+                gr.update(visible=True), "")
 
     def _ap_render(m, idx):
         """渲染第 idx 条被拒复议卡片(越界回绕)。装配顺序 = _ap_outs。"""
@@ -1629,6 +1631,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # 那张表的口径是「输入 = 判废 + 精确去重删除 + 交付」,加一行就破了对账。
         # 加减法解释小字 2026-08-23 用户点名删掉;这里只剩沿用一行(零沿用=空串)。
         ov_note = carryover_note_md(m)
+        # 有没有任何可裁条目(含台账;与「待你裁决」卡片清单同一判据)
+        _has_cards = bool(merged_card_deck(m, merge_filter_mode(MERGE_FILTER_ALL)))
         # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
         return (m, overview_markdown(m), overview_rows(m), ov_note,
@@ -1673,7 +1677,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 队列状态档复位(理由同桶复位:停在「仅待裁决」而新交付全裁完,
                 # 看到的是空表 + 一个还亮着的档);选项连计数一起按新交付重建
                 gr.update(choices=queue_status_choices(m),
-                          value=queue_status_choices(m)[0]))
+                          value=queue_status_choices(m)[0]),
+                # 裁决整签/执行区空态(2026-08-28 用户点名):没有任何可裁条目
+                # (含台账)整签收起只留一句;两签都无事可裁时执行区一并收起
+                gr.update(visible=_has_cards),
+                ("" if _has_cards else "_本份交付没有需要人工裁决的条目。_"),
+                gr.update(visible=_has_cards or bool(m.get("reject_appeal"))))
 
     # theme/css/head 不在这里传:gradio 6 把它们从 Blocks() 挪到了 launch()/
     # mount_gradio_app()(传给 Blocks 只换来一条 UserWarning,值被丢掉)。见 presentation()。
@@ -2185,7 +2194,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 对程序性赋值也触发,会紧接着把预选好的数据集列表冲掉
                 def _root_changed(url, region):
                     """路径框失焦/回车、或直连时切地区 → (根说明, 数据集下拉,
-                    数据集说明)。旧选中值清掉(它属于上一个根)。
+                    数据集说明, 目录框)。旧选中值清掉(它属于上一个根)。
+
+                    第 4 个输出(目录框)只在一种情况下真的写值:用户把**数据集
+                    本身**填进了目录框(issue #98)——把目录退到上层并预选该
+                    数据集,替他纠层级;其余路径一律空更新。
 
                     直连列表是网络调用:异常一律变成说明行里的一句话,绝不让
                     Gradio 抛红框(客户看红框等于什么都没看见)。
@@ -2196,32 +2209,51 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     """
                     if not str(url or "").strip():
                         return ("", gr.update(choices=[], value=[]),
-                                "填入 tos://桶名/目录 后回车,即可列出数据集")
+                                "填入 tos://桶名/目录 后回车,即可列出数据集",
+                                gr.update())
                     try:
                         spec = runner.resolve_root_input(url, _buckets)
                     except ValueError as e:
-                        return (f"⚠️ {e}", gr.update(choices=[], value=[]), "")
+                        return (f"⚠️ {e}", gr.update(choices=[], value=[]), "",
+                                gr.update())
                     if spec["kind"] == "mount":
                         root = spec["path"]
                         return ("",
                                 gr.update(choices=runner.list_datasets(root),
                                           value=[]),
-                                runner.dataset_root_note(root))
+                                runner.dataset_root_note(root), gr.update())
                     if public_catalog.is_public_root(spec["url"]):
-                        # 公共镜像桶:下拉显示「全名 · 版本 · 集数」,值仍是目录名
+                        # 公共缓存桶:下拉显示「全名 · 版本 · 集数」,值仍是目录名
                         try:
                             ch = public_catalog.choices()
                         except Exception as e:  # noqa: BLE001
                             return (f"⚠️ {type(e).__name__}: {str(e)[:160]}",
-                                    gr.update(choices=[], value=[]), "")
+                                    gr.update(choices=[], value=[]), "",
+                                    gr.update())
                         return ("", gr.update(choices=ch, value=[]),
-                                "" if ch else "镜像里目前没有 LeRobot 格式的数据集")
+                                "" if ch else "缓存里目前没有 LeRobot 格式的数据集",
+                                gr.update())
                     try:
-                        names = runner.tos_list_datasets(
+                        # issue #98:只列真数据集;输入本身是数据集则退层预选
+                        lst = runner.tos_dataset_listing(
                             spec["url"], str(region or "").strip() or None)
-                        note = ("" if names else
-                                "该前缀下没有列出任何数据集(前缀打错?或桶里"
-                                "确实是空的)")
+                        if lst["kind"] == "dataset":
+                            return ("",
+                                    gr.update(choices=[lst["name"]],
+                                              value=[lst["name"]]),
+                                    f"你填的是数据集「{lst['name']}」本身,"
+                                    "已退到上层目录并选中它",
+                                    gr.update(value=lst["parent"]))
+                        names = lst["names"]
+                        if names:
+                            note = ""
+                        elif lst["junk"]:
+                            note = ("这里没有找到数据集(数据集 = 含 "
+                                    "meta/info.json 的子目录);该目录下是:"
+                                    + "、".join(lst["junk"]) + "…")
+                        else:
+                            note = ("该前缀下没有列出任何数据集(前缀打错?"
+                                    "或桶里确实是空的)")
                     except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
                         # 404 对 TOS 来说"桶名错"和"地区错"一个样(2026-08-21 真机),
                         # 措辞两头都点到,并到别的地区找一圈,找到了直接说在哪
@@ -2236,8 +2268,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         else:
                             why = f"{type(e).__name__}: {str(e)[:120]}"
                         names, note = [], f"⚠️ 列不出该前缀下的数据集:{why}"
-                    return (f"TOS 直连:{spec['url']}(直接从桶里读,不落本地盘)",
-                            gr.update(choices=names, value=[]), note)
+                    # 「TOS 直连:…不落本地盘」那行说明整行删(issue #98,
+                    # 2026-08-28 用户定:没信息量;有话说的只剩报错与诊断)
+                    return ("", gr.update(choices=names, value=[]), note,
+                            gr.update())
 
                 # blur 与 submit 都接(填完点别处/回车都算"填完了");直连时
                 # 切地区也要重列(端点跟着地区走)。用 .input 不用 .change:
@@ -2264,10 +2298,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         url, str(tin_rg or "").strip() or None,
                         locate=runner.region_of_bucket)
                     if ok:
+                        # 「默认借数据集所在的桶(可改)」那句删(issue #98:
+                        # 没信息量);桶只读之类的 ⚠️ 才值得占一行
                         return (gr.update(value=url),
                                 gr.update(value=str(tin_rg or "").strip() or None),
-                                f"交付目录默认借数据集所在的桶:{url}(可改)"
-                                + (f";⚠️ {why}" if why else ""), True)
+                                (f"⚠️ {why}" if why else ""), True)
                     return (gr.update(value=""), gr.update(),
                             f"⚠️ 数据集所在的桶不能当交付目录:{why}。"
                             "请另填一个可写的 tos://桶名/目录", True)
@@ -2349,7 +2384,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if str(runner.bucket_url(_buckets[0])).startswith("tos://") \
                         and not runner.is_mount_backed(_data_root):
                     app.load(_root_changed, [rn_tin, rn_tin_rg],
-                             [rn_src_note, rn_ds, rn_ds_note]
+                             [rn_src_note, rn_ds, rn_ds_note, rn_tin]
                              ).then(_borrow_output, _bo_in, _bo_out)
                 # ⚠️ 三条链排成串行 + 地区链取消在飞的目录链(2026-08-21 实机):点地区下拉
                 # 时文本框先失焦触发一条链(旧地区 → "能读 → 关窗"),选完地区又触发一条
@@ -2358,15 +2393,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 整个掐掉 —— 界面状态永远对应用户最后一次操作。
                 _ROOT_Q = "rn-root"
                 _b1 = rn_tin.blur(_root_changed, [rn_tin, rn_tin_rg],
-                                  [rn_src_note, rn_ds, rn_ds_note], concurrency_id=_ROOT_Q)
+                                  [rn_src_note, rn_ds, rn_ds_note, rn_tin],
+                                  concurrency_id=_ROOT_Q)
                 _b2 = _b1.then(_borrow_output, _bo_in, _bo_out, concurrency_id=_ROOT_Q)
                 _b3 = _b2.then(_in_check, [rn_tin, rn_tin_rg], _ic_out, concurrency_id=_ROOT_Q)
                 _s1 = rn_tin.submit(_root_changed, [rn_tin, rn_tin_rg],
-                                    [rn_src_note, rn_ds, rn_ds_note], concurrency_id=_ROOT_Q)
+                                    [rn_src_note, rn_ds, rn_ds_note, rn_tin],
+                                    concurrency_id=_ROOT_Q)
                 _s2 = _s1.then(_borrow_output, _bo_in, _bo_out, concurrency_id=_ROOT_Q)
                 _s3 = _s2.then(_in_check, [rn_tin, rn_tin_rg], _ic_out, concurrency_id=_ROOT_Q)
                 _r1 = rn_tin_rg.input(_root_changed, [rn_tin, rn_tin_rg],
-                                      [rn_src_note, rn_ds, rn_ds_note], concurrency_id=_ROOT_Q,
+                                      [rn_src_note, rn_ds, rn_ds_note, rn_tin],
+                                      concurrency_id=_ROOT_Q,
                                       cancels=[_b1, _b2, _b3, _s1, _s2, _s3])
                 _r2 = _r1.then(_borrow_output, _bo_in, _bo_out, concurrency_id=_ROOT_Q)
                 _r2.then(_in_check, [rn_tin, rn_tin_rg], _ic_out, concurrency_id=_ROOT_Q)
@@ -2385,12 +2423,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     交付目录一概不碰(2026-08-21 用户:切来切去都不该重载它)。"""
                     if src == _src_public and public_catalog.configured():
                         root, rg = public_catalog.root_url(), public_catalog.region()
-                        note, ds, ds_note = _root_changed(root, rg)
+                        note, ds, ds_note, _tin = _root_changed(root, rg)
                         return (gr.update(value=root, interactive=False),
                                 gr.update(value=rg or _rg0, interactive=False),
                                 ds, note, ds_note)
                     home_url = runner.bucket_url(_buckets[0])
-                    note, ds, ds_note = _root_changed(home_url, _rg0)
+                    note, ds, ds_note, _tin = _root_changed(home_url, _rg0)
                     return (gr.update(value=home_url, interactive=True),
                             gr.update(value=_rg0, interactive=True),
                             ds, note, ds_note)
@@ -2466,13 +2504,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 这里把前缀下的数据集列出来,按多选的作业表逐个跑 ——
                         # 落盘形状与挂载的 --batch 一致(交付名当父目录)
                         try:
-                            chosen_pre = runner.tos_list_datasets(
+                            # 与下拉同一条身份证(issue #98):跑全部绝不去啃
+                            # 非数据集目录;根本身是数据集 → 说清该怎么填
+                            _lst = runner.tos_dataset_listing(
                                 _spec["url"], str(tin_rg or "").strip() or None)
                         except Exception as e:  # noqa: BLE001
                             return _tk_view(f"⚠️ 列不出该前缀下的数据集:"
                                             f"{type(e).__name__}: {str(e)[:120]}")
+                        if _lst["kind"] == "dataset":
+                            return _tk_view(
+                                f"⚠️ 这个地址本身是数据集「{_lst['name']}」,"
+                                "不是装着数据集的目录 —— 取消「跑全部」直接"
+                                f"选它,或把目录改成 {_lst['parent']}")
+                        chosen_pre = _lst["names"]
                         if not chosen_pre:
-                            return _tk_view("⚠️ 该前缀下没有列出任何数据集")
+                            return _tk_view("⚠️ 该前缀下没有找到数据集"
+                                            "(数据集 = 含 meta/info.json 的子目录)")
                         _tos_all, batch = True, False
                     # 交付名撞上老布局交付:点按钮之前就判得出来,绝不让任务起来
                     # 再以「未完成(退出码 3)」收场逼用户翻日志(2026-08-14 实见);
@@ -2911,14 +2958,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                     gr.Warning(_c)
                         else:
                             try:
-                                choices = runner.tos_list_datasets(root, region)
+                                # 深链的陌生桶同样只列真数据集(issue #98)
+                                _lst = runner.tos_dataset_listing(root, region)
+                                choices = (_lst["names"]
+                                           if _lst["kind"] == "list"
+                                           else [_lst["name"]])
                                 ds_note = ("" if choices else
                                            "该前缀下没有列出任何数据集")
                             except Exception as e:  # noqa: BLE001
                                 choices = []
                                 ds_note = (f"⚠️ 列不出该前缀下的数据集:"
                                            f"{type(e).__name__}: {str(e)[:120]}")
-                            src_note = f"TOS 直连:{root}"
+                            src_note = ""      # 「TOS 直连:…」整行删(issue #98)
                         # 预选与选项**同一次回调里算**:value 不在 choices 里
                         # 会被 Gradio 静默丢弃,分两跳必踩
                         _vals = [c[1] if isinstance(c, (tuple, list)) else c
@@ -3080,158 +3131,170 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     #    在两张卡片里各找一次、各看一遍视频,这次改掉。
                     with gr.Tab("待你裁决"):
                         # 「怎么用这一页」流程条已删(2026-08-21 用户点名:UI 要简洁)
-                        with gr.Row():
-                            # 标签只留两个词(2026-08-25 用户嫌"不好看";"重叠条目
-                            # 两档都出现"那句解释删掉 —— UI 要简洁的既有口径)
-                            mg_filter = gr.Radio(
-                                [], label="问题类型", scale=3,
-                                elem_id="mg-filter")
-                            # 状态筛选(2026-08-25 用户定):默认全部——表是台账,
-                            # 裁决/执行后条目留在表里;只看欠的活或只翻旧账再切档。
-                            # 两组联动(同日用户点名):类型档计数跟着状态档算
-                            mg_status = gr.Radio(
-                                [], label="状态", scale=2,
-                                elem_id="mg-status")
-                        mg_hint = gr.Markdown()
-                        # 两个队列**并列成一个区块**(2026-08-19 用户拍板,明确
-                        # 授权改这一页的布局 —— 与「报告页布局不许动」那条长期
-                        # 红线冲突时以本次口头授权为准)。
-                        # 为什么并列:它们是**同一件事的两类问题**(标注有分歧 /
-                        # 成败弃权),竖着排会让人以为是先后两步,滚到第二张表时
-                        # 已经忘了第一张;更糟的是往下滚正好撞上「执行裁决」,
-                        # 用户被引导着去点了一个本该最后才点的按钮。
-                        # 并列 + 区块头 + 下面执行区换配色 = 一眼能分出"这里是
-                        # 记决定"和"那里是落地执行"。
-                        gr.HTML(_adj_section_html(
-                            # 2026-08-25 用户改名:这张表是台账(待办 + 已办结),
-                            # 不再叫「待裁决」
-                            "", "人工裁决队列", "",   # 副标题已删(2026-08-21 用户点名多余)
-                            "#86909C", "#1D2129"))
-                        # 单表(2026-08-23 用户拍板):分歧 × 弃权按 episode 合一,
-                        # 一条一行;点任意一格跳到下方卡片。列删到只剩能回答
-                        # "哪条、什么问题、标注、系统看到什么、裁了没"的五列。
-                        qu_table = gr.Dataframe(
-                            headers=QUEUE_HEADERS, show_label=False,
-                            interactive=False, elem_id="audit-queue",
-                            # 420→980(2026-08-25 复盘 ⑨):鼠标悬在表上滚轮只滚
-                            # 表内,页面滚动被劫持,典型队列(十几二十条)本可整表
-                            # 放下。980 够 ~16 行换行文本;超长队列仍内滚兜底。
-                            max_height=980,
-                            wrap=True,       # 长文本换行显示全文,不截断
-                            column_widths=["8%", "11%", "34%", "34%", "13%"])
-                        # 点行跳卡的自建通路落点(_QJUMP_JS 往这里写/点;CSS 藏)
-                        with gr.Row(elem_id="qjump-hide"):
-                            qjump_row = gr.Textbox(elem_id="qjump-row")
-                            qjump_go = gr.Button("跳", elem_id="qjump-go")
-                        # ── 合并裁决卡片(逐条翻页,翻页按 episode 走不再按队列走):
-                        #    看一遍视频 → ① 标注问题(有分歧才出现)→ ② 成败问题
-                        #    (显隐档位见 manifest.success_block_mode)。
-                        #    UI 只记录裁决(human-decisions/ 三张 CSV);
-                        #    执行 = 本页底部的「执行裁决」(确认框是自产自证的断路器)。
-                        # 默认展开(2026-08-05 用户定:折叠着没人知道能点开)
-                        with gr.Accordion("逐条裁决",
-                                          open=True):
-                            mg_idx = gr.State(0)
+                        # 整签空态(2026-08-28 用户点名:队列全空时表头/筛选/翻页按钮还
+                        # 空摆着,像"有东西没显示出来"):没有任何可裁条目(含台账)时
+                        # 整签收起,只留 adj_empty 一句话。外层生来 visible=True,开关
+                        # 不踩未挂载容器的毒(gradio-hidden-modal-poison)。
+                        adj_empty = gr.Markdown("")
+                        with gr.Column(visible=True) as adj_block:
                             with gr.Row():
-                                mg_prev = gr.Button("← 上一条", scale=1)
-                                mg_pos = gr.Markdown("", elem_id="mg-pos")
-                                mg_next = gr.Button("下一条 →", scale=1)
-                            mg_info = gr.Markdown()
-                            # 「同时播放」按钮**单独占一行**,不进视频那一行:塞进去会把
-                            # 三个播放器挤窄(用户 2026-08-14:"视频 window 大小别变")。
-                            # 按钮靠 elem_id 找视频,不需要把两者包进同一个容器 ——
-                            # 少一层容器 = 视频区的宽度与间距一个像素都不动。
-                            gr.HTML(play_all_button_html("三路机位从头一起播,播完即停(不循环)",
-                                                         zone="mg-vids"))
-                            with gr.Row(elem_id="mg-vids"):
-                                mg_vids = [gr.Video(label=f"机位 {i+1}", interactive=False,
-                                                    autoplay=False, loop=False, scale=1)
-                                           for i in range(3)]
-                            # ①② **左右并排**(2026-08-19 用户拍板):它们是同一条
-                            # episode 的两类问题,上下排会被当成先后两步;更糟的是
-                            # 往下滚正好撞上「执行裁决」,人被引导着点了本该最后
-                            # 才点的按钮。并排之后两块结构也对称了 —— 各自两个结论
-                            # 加一个「拿不准」,同样位置的按钮语义一样。
-                            with gr.Row(elem_id="adj-blocks"):
-                             # ① 标注问题:该条在分歧队列里才渲染
-                             with gr.Column(visible=False) as mg_au_block:
-                                 gr.HTML(_adj_section_html("1", "标注问题",
-                                                           "数据自带的标注 vs 系统看画面写的描述",
-                                                           "#FF7D00", "#D25F00"))
-                                 au_info = gr.Markdown()
-                                 au_origlab = gr.Textbox(label="原始标注(只读)", interactive=False)
-                                 au_newlab = gr.Textbox(label="修正后标注(可编辑;预填 VLM 建议描述,"
-                                                              "仅「采纳改标」使用)")
-                                 au_note = gr.Textbox(label="备注(可选)")
-                                 with gr.Row():
-                                     # 三键同色待选、选中变色(见 _au_btns);语义靠图标与文字。
-                                     # 2026-08-19 结构对齐成败块:两个结论 + 一个「拿不准」。
-                                     # 「弃用该条」提出去做卡片级操作(见下面 mg_kill)——
-                                     # 用户点破的逻辑错:"这条数据要不要"和"标注 vs caption
-                                     # 谁错"是两个正交的维度,弃用根本不是这个问题的第三个答案。
-                                     au_adopt = gr.Button("✅ 采纳改标", variant="secondary")
-                                     au_keep = gr.Button("↩️ 维持原标注", variant="secondary")
-                                     au_hold = gr.Button("🤔 拿不准", variant="secondary")
-                                 au_status = gr.Markdown()
-                             # ② 成败问题:机器弃权时必答;「采纳改标」后可选(留空=
-                             #    交给机器重判);「弃用该条」时不可用(矛盾拦截)——
-                             #    档位判定在 manifest.success_block_mode,这里只渲染。
-                             with gr.Column(visible=False) as mg_tv_block:
-                                 gr.HTML(_adj_section_html("2", "成败问题",
-                                                           "这条任务到底完成了没有",
-                                                           "#165DFF", "#165DFF"))
-                                 with gr.Row(elem_id="tv-q-row"):
-                                     tv_mode_note = gr.Markdown()
-                                     # 「标注错了」只在没有①区的卡上出现
-                                     # (2026-08-25 用户定):看着问句里的标注
-                                     # 就能顺手改;名册条目①区自带修正框,不重复
-                                     mg_fixlab = gr.Button(
-                                         "标注错了", variant="secondary",
-                                         scale=0, visible=False,
-                                         elem_id="tv-fixlab")
-                                 tv_info = gr.Markdown()
-                                 tv_readings = gr.Markdown()
-                                 tv_note = gr.Textbox(label="备注(可选;写清依据,复盘时是唯一线索)")
-                                 with gr.Row():
-                                     # 顺序与 VERDICT_CHOICES 严格对应(按序点亮)
-                                     tv_pass = gr.Button("✅ 判成功", variant="secondary")
-                                     tv_fail = gr.Button("❌ 判失败", variant="secondary")
-                                     tv_hold = gr.Button("🤔 拿不准", variant="secondary")
-                                 tv_status = gr.Markdown()
+                                # 标签只留两个词(2026-08-25 用户嫌"不好看";"重叠条目
+                                # 两档都出现"那句解释删掉 —— UI 要简洁的既有口径)
+                                mg_filter = gr.Radio(
+                                    [], label="问题类型", scale=3,
+                                    elem_id="mg-filter")
+                                # 状态筛选(2026-08-25 用户定):默认全部——表是台账,
+                                # 裁决/执行后条目留在表里;只看欠的活或只翻旧账再切档。
+                                # 两组联动(同日用户点名):类型档计数跟着状态档算
+                                mg_status = gr.Radio(
+                                    [], label="状态", scale=2,
+                                    elem_id="mg-status")
+                            mg_hint = gr.Markdown()
+                            # 两个队列**并列成一个区块**(2026-08-19 用户拍板,明确
+                            # 授权改这一页的布局 —— 与「报告页布局不许动」那条长期
+                            # 红线冲突时以本次口头授权为准)。
+                            # 为什么并列:它们是**同一件事的两类问题**(标注有分歧 /
+                            # 成败弃权),竖着排会让人以为是先后两步,滚到第二张表时
+                            # 已经忘了第一张;更糟的是往下滚正好撞上「执行裁决」,
+                            # 用户被引导着去点了一个本该最后才点的按钮。
+                            # 并列 + 区块头 + 下面执行区换配色 = 一眼能分出"这里是
+                            # 记决定"和"那里是落地执行"。
+                            gr.HTML(_adj_section_html(
+                                # 2026-08-25 用户改名:这张表是台账(待办 + 已办结),
+                                # 不再叫「待裁决」
+                                "", "人工裁决队列", "",   # 副标题已删(2026-08-21 用户点名多余)
+                                "#86909C", "#1D2129"))
+                            # 单表(2026-08-23 用户拍板):分歧 × 弃权按 episode 合一,
+                            # 一条一行;点任意一格跳到下方卡片。列删到只剩能回答
+                            # "哪条、什么问题、标注、系统看到什么、裁了没"的五列。
+                            qu_table = gr.Dataframe(
+                                headers=QUEUE_HEADERS, show_label=False,
+                                interactive=False, elem_id="audit-queue",
+                                # 420→980(2026-08-25 复盘 ⑨):鼠标悬在表上滚轮只滚
+                                # 表内,页面滚动被劫持,典型队列(十几二十条)本可整表
+                                # 放下。980 够 ~16 行换行文本;超长队列仍内滚兜底。
+                                max_height=980,
+                                wrap=True,       # 长文本换行显示全文,不截断
+                                column_widths=["8%", "11%", "34%", "34%", "13%"])
+                            # 点行跳卡的自建通路落点(_QJUMP_JS 往这里写/点;CSS 藏)
+                            with gr.Row(elem_id="qjump-hide"):
+                                qjump_row = gr.Textbox(elem_id="qjump-row")
+                                qjump_go = gr.Button("跳", elem_id="qjump-go")
+                            # ── 合并裁决卡片(逐条翻页,翻页按 episode 走不再按队列走):
+                            #    看一遍视频 → ① 标注问题(有分歧才出现)→ ② 成败问题
+                            #    (显隐档位见 manifest.success_block_mode)。
+                            #    UI 只记录裁决(human-decisions/ 三张 CSV);
+                            #    执行 = 本页底部的「执行裁决」(确认框是自产自证的断路器)。
+                            # 默认展开(2026-08-05 用户定:折叠着没人知道能点开)
+                            with gr.Accordion("逐条裁决",
+                                              open=True):
+                                mg_idx = gr.State(0)
+                                # 空队列时整块收起(2026-08-28 用户点名:机位框/翻页按钮空摆着,
+                                # 像"有东西没显示出来"——其实就是没东西);说明改由 mg_empty 顶一句。
+                                # 外层生来 visible=True(挂载即在场),之后随便开关,不踩「未挂载容器
+                                # 发过更新会毒掉首开」那口锅(gradio-hidden-modal-poison)。
+                                mg_empty = gr.Markdown("")
+                                with gr.Column(visible=True) as mg_block:
+                                    with gr.Row():
+                                        mg_prev = gr.Button("← 上一条", scale=1)
+                                        mg_pos = gr.Markdown("", elem_id="mg-pos")
+                                        mg_next = gr.Button("下一条 →", scale=1)
+                                    mg_info = gr.Markdown()
+                                    # 「同时播放」按钮**单独占一行**,不进视频那一行:塞进去会把
+                                    # 三个播放器挤窄(用户 2026-08-14:"视频 window 大小别变")。
+                                    # 按钮靠 elem_id 找视频,不需要把两者包进同一个容器 ——
+                                    # 少一层容器 = 视频区的宽度与间距一个像素都不动。
+                                    gr.HTML(play_all_button_html("三路机位从头一起播,播完即停(不循环)",
+                                                                 zone="mg-vids"))
+                                    with gr.Row(elem_id="mg-vids"):
+                                        mg_vids = [gr.Video(label=f"机位 {i+1}", interactive=False,
+                                                            autoplay=False, loop=False, scale=1)
+                                                   for i in range(3)]
+                                    # ①② **左右并排**(2026-08-19 用户拍板):它们是同一条
+                                    # episode 的两类问题,上下排会被当成先后两步;更糟的是
+                                    # 往下滚正好撞上「执行裁决」,人被引导着点了本该最后
+                                    # 才点的按钮。并排之后两块结构也对称了 —— 各自两个结论
+                                    # 加一个「拿不准」,同样位置的按钮语义一样。
+                                    with gr.Row(elem_id="adj-blocks"):
+                                     # ① 标注问题:该条在分歧队列里才渲染
+                                     with gr.Column(visible=False) as mg_au_block:
+                                         gr.HTML(_adj_section_html("1", "标注问题",
+                                                                   "数据自带的标注 vs 系统看画面写的描述",
+                                                                   "#FF7D00", "#D25F00"))
+                                         au_info = gr.Markdown()
+                                         au_origlab = gr.Textbox(label="原始标注(只读)", interactive=False)
+                                         au_newlab = gr.Textbox(label="修正后标注(可编辑;预填 VLM 建议描述,"
+                                                                      "仅「采纳改标」使用)")
+                                         au_note = gr.Textbox(label="备注(可选)")
+                                         with gr.Row():
+                                             # 三键同色待选、选中变色(见 _au_btns);语义靠图标与文字。
+                                             # 2026-08-19 结构对齐成败块:两个结论 + 一个「拿不准」。
+                                             # 「弃用该条」提出去做卡片级操作(见下面 mg_kill)——
+                                             # 用户点破的逻辑错:"这条数据要不要"和"标注 vs caption
+                                             # 谁错"是两个正交的维度,弃用根本不是这个问题的第三个答案。
+                                             au_adopt = gr.Button("✅ 采纳改标", variant="secondary")
+                                             au_keep = gr.Button("↩️ 维持原标注", variant="secondary")
+                                             au_hold = gr.Button("🤔 拿不准", variant="secondary")
+                                         au_status = gr.Markdown()
+                                     # ② 成败问题:机器弃权时必答;「采纳改标」后可选(留空=
+                                     #    交给机器重判);「弃用该条」时不可用(矛盾拦截)——
+                                     #    档位判定在 manifest.success_block_mode,这里只渲染。
+                                     with gr.Column(visible=False) as mg_tv_block:
+                                         gr.HTML(_adj_section_html("2", "成败问题",
+                                                                   "这条任务到底完成了没有",
+                                                                   "#165DFF", "#165DFF"))
+                                         with gr.Row(elem_id="tv-q-row"):
+                                             tv_mode_note = gr.Markdown()
+                                             # 「标注错了」只在没有①区的卡上出现
+                                             # (2026-08-25 用户定):看着问句里的标注
+                                             # 就能顺手改;名册条目①区自带修正框,不重复
+                                             mg_fixlab = gr.Button(
+                                                 "标注错了", variant="secondary",
+                                                 scale=0, visible=False,
+                                                 elem_id="tv-fixlab")
+                                         tv_info = gr.Markdown()
+                                         tv_readings = gr.Markdown()
+                                         tv_note = gr.Textbox(label="备注(可选;写清依据,复盘时是唯一线索)")
+                                         with gr.Row():
+                                             # 顺序与 VERDICT_CHOICES 严格对应(按序点亮)
+                                             tv_pass = gr.Button("✅ 判成功", variant="secondary")
+                                             tv_fail = gr.Button("❌ 判失败", variant="secondary")
+                                             tv_hold = gr.Button("🤔 拿不准", variant="secondary")
+                                         tv_status = gr.Markdown()
 
-                            # 卡片级「整条弃用」(2026-08-19 用户拍板):它不隶属于
-                            # 上面任何一个问题 —— "这条数据要不要"和"标注 vs
-                            # caption 谁错"是两个正交维度(用户点破我的逻辑错)。
-                            # 措辞用「其它原因」而不是「看不清」:弃用的原因不止一种
-                            # (录漏、机械臂撞了、任务根本没做完),而**弃用原因会写进
-                            # reject.json 和报告**,是"这条为什么被扔掉"的证据 ——
-                            # 把某一个原因焊死在按钮上,记录下来的证据就会说谎。
-                            # 🔴 语义:点了它,**不管上面两块点了什么,这条都弃用**
-                            # (优先级拦截在 rejudge.run_rejudge,见那处注释)。
-                            with gr.Row(elem_id="adj-kill"):
-                                mg_kill = gr.Button("其它原因-整条弃用",
-                                                    variant="secondary", scale=0)
-                            mg_kill_status = gr.Markdown()
-                            # 底部再放一套翻页(2026-08-25 用户提议):鼠标已经在
-                            # 下面点完裁决按钮,翻下一条不该再滚回卡顶。与顶部那
-                            # 套完全同源(同 handler 同 outs),中间的位置提示由
-                            # _mg_render 一起喂
-                            with gr.Row():
-                                mg_prev2 = gr.Button("← 上一条", scale=1)
-                                mg_pos2 = gr.Markdown("", elem_id="mg-pos2")
-                                mg_next2 = gr.Button("下一条 →", scale=1)
-                            # 当前卡 episode 标记(_CURROW_JS 读它给表上色;CSS 藏)
-                            mg_cur = gr.HTML("", elem_id="mg-cur")
-                            # 「标注错了」的对话框:落的是标注线的「采纳建议改标」
-                            # (与①区同一条管道:执行后写进交付数据集/画像重归类;
-                            # 只改标不给成败结论的,机器按新标注重判)
-                            with gr.Column(visible=False,
-                                           elem_classes=["modal-dialog"]) as fix_ask:
-                                gr.Markdown("**修正任务标注**")
-                                fix_text = gr.Textbox(label="修正后标注")
-                                with gr.Row(elem_id="fix-ask-btns"):
-                                    fix_save = gr.Button("保存", variant="primary")
-                                    fix_cancel = gr.Button("取消")
+                                    # 卡片级「整条弃用」(2026-08-19 用户拍板):它不隶属于
+                                    # 上面任何一个问题 —— "这条数据要不要"和"标注 vs
+                                    # caption 谁错"是两个正交维度(用户点破我的逻辑错)。
+                                    # 措辞用「其它原因」而不是「看不清」:弃用的原因不止一种
+                                    # (录漏、机械臂撞了、任务根本没做完),而**弃用原因会写进
+                                    # reject.json 和报告**,是"这条为什么被扔掉"的证据 ——
+                                    # 把某一个原因焊死在按钮上,记录下来的证据就会说谎。
+                                    # 🔴 语义:点了它,**不管上面两块点了什么,这条都弃用**
+                                    # (优先级拦截在 rejudge.run_rejudge,见那处注释)。
+                                    with gr.Row(elem_id="adj-kill"):
+                                        mg_kill = gr.Button("其它原因-整条弃用",
+                                                            variant="secondary", scale=0)
+                                    mg_kill_status = gr.Markdown()
+                                    # 底部再放一套翻页(2026-08-25 用户提议):鼠标已经在
+                                    # 下面点完裁决按钮,翻下一条不该再滚回卡顶。与顶部那
+                                    # 套完全同源(同 handler 同 outs),中间的位置提示由
+                                    # _mg_render 一起喂
+                                    with gr.Row():
+                                        mg_prev2 = gr.Button("← 上一条", scale=1)
+                                        mg_pos2 = gr.Markdown("", elem_id="mg-pos2")
+                                        mg_next2 = gr.Button("下一条 →", scale=1)
+                                    # 当前卡 episode 标记(_CURROW_JS 读它给表上色;CSS 藏)
+                                    mg_cur = gr.HTML("", elem_id="mg-cur")
+                                # 「标注错了」的对话框:落的是标注线的「采纳建议改标」
+                                # (与①区同一条管道:执行后写进交付数据集/画像重归类;
+                                # 只改标不给成败结论的,机器按新标注重判)
+                                with gr.Column(visible=False,
+                                               elem_classes=["modal-dialog"]) as fix_ask:
+                                    gr.Markdown("**修正任务标注**")
+                                    fix_text = gr.Textbox(label="修正后标注")
+                                    with gr.Row(elem_id="fix-ask-btns"):
+                                        fix_save = gr.Button("保存", variant="primary")
+                                        fix_cancel = gr.Button("取消")
 
                     # ── 被拒复议(2026-08-11;2026-08-16 原样搬进子页签):任务成败
                     #    判定**杀掉**的条目在这里可看、可捞回 —— 判定从"拿不准就转
@@ -3312,42 +3375,46 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # ex_info 组件保留但恒为空串(它在 _load 的输出槽里;删组件要同步
                 # 改 outs,而输出槽对不齐会让八条测试一起红 —— 今天刚踩过)。
                 # 空串的 gr.Markdown 在前端渲染零高度,不占版面。
-                ex_info = gr.Markdown()
-                # 源数据集兜底:交付没记「源数据集路径」(2026-08-13 之前的老交付)
-                # 时才露面让用户选,绝不按名字猜(同名不同库会重判错数据);记了就
-                # 一个字都不问。显隐/说明的做法与跑质检侧同款(说明不走 info=,
-                # elem_id 沿用 rj-* —— 它们仍是 rejudge 专属的说明行)。
-                ex_src_dd = gr.Dropdown(choices=_bkt_choices, value=_bkt_ids[0],
-                                        label="数据集根目录", visible=False,
+                # 执行区空态(同上):两个子签都无事可裁时,「执行裁决」/更多设置
+                # 一并收起 —— 没有裁决可执行,按钮就是摆设。确认框(ex_ask)留在
+                # 外面:模态自带显隐,不跟着这层走。
+                with gr.Column(visible=True) as ex_zone:
+                    ex_info = gr.Markdown()
+                    # 源数据集兜底:交付没记「源数据集路径」(2026-08-13 之前的老交付)
+                    # 时才露面让用户选,绝不按名字猜(同名不同库会重判错数据);记了就
+                    # 一个字都不问。显隐/说明的做法与跑质检侧同款(说明不走 info=,
+                    # elem_id 沿用 rj-* —— 它们仍是 rejudge 专属的说明行)。
+                    ex_src_dd = gr.Dropdown(choices=_bkt_choices, value=_bkt_ids[0],
+                                            label="数据集根目录", visible=False,
+                                            interactive=True)
+                    ex_src_note = gr.Markdown(runner.bucket_info_line(_buckets[0]),
+                                              line_breaks=True, visible=False,
+                                              elem_id="rj-src-note",
+                                              elem_classes=["field-note"])
+                    ex_ds = gr.Dropdown(choices=runner.list_datasets(_data_root),
+                                        label="原始数据集", visible=False,
                                         interactive=True)
-                ex_src_note = gr.Markdown(runner.bucket_info_line(_buckets[0]),
-                                          line_breaks=True, visible=False,
-                                          elem_id="rj-src-note",
-                                          elem_classes=["field-note"])
-                ex_ds = gr.Dropdown(choices=runner.list_datasets(_data_root),
-                                    label="原始数据集", visible=False,
-                                    interactive=True)
-                ex_ds_note = gr.Markdown(runner.dataset_root_note(_data_root),
-                                         visible=False, elem_id="rj-ds-note",
-                                         elem_classes=["field-note"])
-                # 「默认值就好,不要求用户动」(用户拍板)—— 模型服务与配置文件
-                # 收进折叠区,留空就用生效配置里的值。
-                with gr.Accordion("更多设置", open=False):
+                    ex_ds_note = gr.Markdown(runner.dataset_root_note(_data_root),
+                                             visible=False, elem_id="rj-ds-note",
+                                             elem_classes=["field-note"])
+                    # 「默认值就好,不要求用户动」(用户拍板)—— 模型服务与配置文件
+                    # 收进折叠区,留空就用生效配置里的值。
+                    with gr.Accordion("更多设置", open=False):
+                        with gr.Row():
+                            ex_backend = gr.Dropdown(choices=_backends, label="模型服务", allow_custom_value=True)
+                            pass   # 「检测可用性」按钮已撤(自动探活,见 _do_probe)
+                        ex_cfg = gr.Textbox(label="配置文件(留空=默认)",
+                                            placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
                     with gr.Row():
-                        ex_backend = gr.Dropdown(choices=_backends, label="模型服务", allow_custom_value=True)
-                        pass   # 「检测可用性」按钮已撤(自动探活,见 _do_probe)
-                    ex_cfg = gr.Textbox(label="配置文件(留空=默认)",
-                                        placeholder=f"{runner.TOS_ROOT}/…/site.yaml")
-                with gr.Row():
-                    ex_go = gr.Button("执行裁决", variant="primary", scale=0)
-                    # 弃权补判(2026-08-25 复盘 ⑩):超时/网络故障类弃权此前只有
-                    # 两条路 —— 逐条人工看视频,或整批重跑全烧一遍。勾上这个,
-                    # 执行时顺带只对「调用失败」类弃权重跑成败判定;模型真答
-                    # "判不了"的弃权不重试(重试大概率同答案),人工已裁的以人为准。
-                    ex_retry = gr.Checkbox(
-                        label="同时补判弃权条目(只重试模型调用失败的那些)",
-                        value=False, scale=1)
-                ex_msg = gr.Markdown()
+                        ex_go = gr.Button("执行裁决", variant="primary", scale=0)
+                        # 弃权补判(2026-08-25 复盘 ⑩):超时/网络故障类弃权此前只有
+                        # 两条路 —— 逐条人工看视频,或整批重跑全烧一遍。勾上这个,
+                        # 执行时顺带只对「调用失败」类弃权重跑成败判定;模型真答
+                        # "判不了"的弃权不重试(重试大概率同答案),人工已裁的以人为准。
+                        ex_retry = gr.Checkbox(
+                            label="同时补判弃权条目(只重试模型调用失败的那些)",
+                            value=False, scale=1)
+                    ex_msg = gr.Markdown()
                 # 确认框:**真模态对话框**(2026-08-19 用户点名 ——「我说过要跳出来
                 # 成一个对话框,你怎么跳出来成了一个平铺框?」)。
                 # Gradio 没有原生模态框,但"模态"这件事不需要它原生支持:一个
@@ -3491,7 +3558,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             _ap_outs = [ap_idx, ap_pos, ap_info, ap_readings, ap_video,
                         ap_keep, ap_back,
                         ap_cur]      # 当前卡 episode 标记(复议表高亮同步源)
-            # 合并裁决卡片的 22 个槽(_mg_render 按这个顺序装配):卡头三件 +
+            # 合并裁决卡片的 24 个槽(_mg_render 按这个顺序装配):卡头三件 +
             # 三路视频 + ① 区五件三键 + ② 区五件三键
             _mg_outs = [mg_idx, mg_pos, mg_info, *mg_vids,
                         mg_au_block, au_info, au_origlab, au_newlab, au_note,
@@ -3500,7 +3567,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         tv_pass, tv_fail, tv_hold,
                         mg_pos2,     # 底部翻页行的位置提示(与 mg_pos 同文案)
                         mg_cur,      # 当前卡 episode 标记(表格高亮同步源)
-                        mg_fixlab]   # 「标注错了」只在没有①区的卡上亮
+                        mg_fixlab,   # 「标注错了」只在没有①区的卡上亮
+                        mg_block, mg_empty]  # 空队列整块收起 + 顶一句说明
 
             outs = [state, ov_md, ov_table, ov_note, ov_cfg, ep_bucket, *_ep_list_outs,
                     sk_html, sk_table, sk_audit_note,
@@ -3513,7 +3581,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     perf_backend, perf_env, perf_note, perf_table, perf_bar,
                     pending_banner,
                     ex_info, ex_ds, ex_src_dd, ex_src_note, ex_ds_note,
-                    mg_status]      # 状态档随交付切换复位(纯新增,挂末尾)
+                    mg_status,      # 状态档随交付切换复位(纯新增,挂末尾)
+                    adj_block, adj_empty, ex_zone]  # 裁决整签/执行区空态(2026-08-28)
 
             def _pick_delivery(path):
                 """换交付 → 重列该交付的历次跑批 + 打开其中一次。
@@ -3596,6 +3665,86 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         f"TOS 直连:{s}(打开一份交付时把报告与明细镜像到本地,"
                         "数据集本体不下载)")
 
+            # ── 报告页跟着最新跑批走(2026-08-28 用户实报:交付写进别的桶,
+            #    下拉里根本没有它,他拿着旧交付 test_0826 当新结果看了半天)。
+            #    只在出现**新完成的跑批**时切一次(rp_follow 记上次跟过的
+            #    run_id),之后用户手动换目录不会被反复拽回。──
+            rp_follow = gr.State("")
+
+            def _follow_latest(url, rg, cur, seen):
+                hold = (gr.update(), gr.update(), gr.update(), gr.update(),
+                        seen, False)
+                try:
+                    info = runner.latest_run_delivery(_runs_root)
+                except Exception:  # noqa: BLE001 读不动就维持现状,不打扰
+                    return hold
+                if not info or info["run_id"] == seen:
+                    return hold
+                out = str(info["output"]).rstrip("/")
+                name = out.rsplit("/", 1)[-1]
+                if out.startswith("tos://"):
+                    root = out.rsplit("/", 1)[0]
+                    rgn = info.get("region") or ""
+                    pk, _note = _rp_root_changed(root, rgn)
+                    ch = (pk or {}).get("choices") or []
+                    val = next((v for _l, v in ch
+                                if str(v).rstrip("/").endswith("/" + name)),
+                               None)
+                    if val is None:               # 列不出就不硬跳,下次再试
+                        return hold[:4] + (info["run_id"], False)
+                    return (gr.update(value=root),
+                            gr.update(value=rgn or None),
+                            gr.update(choices=ch, value=val),
+                            f"已切到最近一次跑批的交付:{name}",
+                            info["run_id"], True)
+                # 本地/挂载交付:目录不动,只在现有清单里选中它
+                pk, _note = _rp_root_changed("", rg)
+                ch = (pk or {}).get("choices") or []
+                val = next((v for _l, v in ch
+                            if os.path.basename(str(v).rstrip("/")) == name),
+                           None)
+                if val is None:
+                    return hold[:4] + (info["run_id"], False)
+                return (gr.update(), gr.update(),
+                        gr.update(choices=ch, value=val), gr.update(),
+                        info["run_id"], True)
+
+            _fl_in = [rp_root, rp_rg, picker, rp_follow]
+
+            def _follow_or_tick(url, rg, cur, seen):
+                """页签切入版:有新完成的跑批 → 切目录+选交付+直接打开;
+                没有 → 退化为 _picker_tick 的选项刷新(不重载内容,免得和用户
+                当下的点击打架)。picker 是 .input 接线,程序性赋值不触发加载,
+                所以"打开"必须在同一事件里自己做。
+                ⚠️ 真凶复盘(2026-08-28,三次真机复现):最初"正文不跟着切"
+                不是 .then 的锅,是**另一条 app.load(_pick_delivery, …) 在按
+                构建期旧 picker 值加载同一批输出** —— 两个写者赛跑,后落地的
+                把正文盖回旧交付。同一批输出只许一个写者(开门加载已并进
+                _follow_or_open)。"""
+                base = _follow_latest(url, rg, cur, seen)
+                go, pick = base[5], (base[2] or {}).get("value")
+                if go and pick:
+                    return (*base[:5], *_pick_delivery(pick))
+                return (gr.update(), gr.update(),
+                        _picker_tick(cur, url, rg), gr.update(), base[4],
+                        *(gr.update(),) * (1 + len(outs)))
+
+            def _follow_or_open(url, rg, cur, seen):
+                """开门版:没有新跑批要跟时,打开当前默认交付(接替原来那条
+                app.load(_pick_delivery, …) —— 两个 load 各写一遍 outs 会赛跑,
+                后落地的把正文盖回旧交付,必须只留一个写者)。"""
+                base = _follow_latest(url, rg, cur, seen)
+                go, pick = base[5], (base[2] or {}).get("value")
+                if go and pick:
+                    return (*base[:5], *_pick_delivery(pick))
+                if cur:
+                    return (*base[:5], *_pick_delivery(cur))
+                return (*base[:5], *(gr.update(),) * (1 + len(outs)))
+
+            _fo_outs = [rp_root, rp_rg, picker, rp_note, rp_follow,
+                        run_pick, *outs]
+            app.load(_follow_or_open, _fl_in, _fo_outs)
+
             if not runner.is_mount_backed(_deliv_root) \
                     and runner.home_output_url(_deliv_root).startswith("tos://"):
                 # 没挂载的实例:交付默认在桶里,开门先把桶里的交付列出来
@@ -3676,7 +3825,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # 的日志却一行都没打出来 —— 定时器在这层压根没跳。而"跑完 → 点到报告页"
             # 是必然发生的动作,`Tab.select` 是用户真点出来的事件,不依赖任何计时。
             # 计时器留着当兜底:它若能跳,用户停在报告页也能看到新交付冒出来。
-            report_tab.select(_picker_tick, [picker, rp_root, rp_rg], picker)
+            report_tab.select(_follow_or_tick, _fl_in, _fo_outs)
             if hasattr(gr, "Timer"):
                 gr.Timer(10.0).tick(_picker_tick, [picker, rp_root, rp_rg], picker)
 
@@ -4176,7 +4325,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             for _c in (tl_show, tl_sort):
                 _c.change(_tl_view, [state, tl_show, tl_sort], tl_html)
-            app.load(_pick_delivery, picker, [run_pick, *outs])
+            # 开门加载已并进 _follow_or_tick 的 app.load(2026-08-28):这里原来
+            # 有一条 app.load(_pick_delivery, picker, …),与「跟着最新跑批走」
+            # 是**同一批输出的两个赛跑者** —— 它按构建期旧 picker 值加载,后落地
+            # 就把正文盖回旧交付(真机三次复现:目录/说明切了,正文还是旧的)。
 
             report_ctx.close()          # 报告页到此为止,下面的页签是它的兄弟
             if terminal:
@@ -4317,7 +4469,11 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
     api.add_middleware(_ImmutableAssetsMiddleware, prefix=f"{root}/assets/")
     # allowed_paths:允许页面直读交付目录下的证据文件(gradio 默认只许临时目录);
     # 审片站目录同样要放行——Episodes 页的视频第一来源就在那儿,不放行会 403。
-    allowed = [delivery] + ([review_dir] if review_dir else [])
+    # 直连交付的懒镜像缓存也要放行(2026-08-28 用户实见:同步曲线图镜像到了
+    # 本地却 403 不显示)——裁决卡证据帧/同步图在桶交付形态下全从这棵缓存树读。
+    from .. import tos_store as _ts
+    allowed = ([delivery] + ([review_dir] if review_dir else [])
+               + [os.path.join(_ts.cache_root(), "reports")])
     # footer_links=[]:整排页脚(Use via API / Built with Gradio / Settings)去掉。
     # 头一个会把本服务的接口文档摆给任何打开页面的人看,另两个对客户毫无用处。
     # 用 gradio 自己的开关而不是 CSS 藏 —— 藏起来的链接照样可点、照样在 DOM 里。
