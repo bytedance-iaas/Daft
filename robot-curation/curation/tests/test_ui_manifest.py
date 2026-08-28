@@ -4148,3 +4148,20 @@ def test_terminal_workdir_falls_back_mount_then_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("CURATION_TERMINAL_WORKDIR", str(tmp_path))
     assert T.resolve_workdir() == str(tmp_path)
     assert "部署指定" in T.workdir_note()
+
+
+def test_batch_origin_url_registers_region_for_playback(tmp_path):
+    """读 .tos-origin.json 顺手登记桶地区:异地(上海)交付镜像重开进程后,
+    播放端签名照样拿对地区,不依赖本次会话谁先调过 make_store_for。"""
+    from curation import tos_store
+    from curation.ui.manifest import _batch_origin_url
+    tos_store.clear_bucket_regions()
+    b = tmp_path / "d" / "20260828-000000"
+    b.mkdir(parents=True)
+    (tmp_path / "d" / ".tos-origin.json").write_text(json.dumps(
+        {"delivery_url": "tos://sh-deliv-bkt/so101/x",
+         "region": "cn-shanghai"}), encoding="utf-8")
+    url = _batch_origin_url({"path": str(b)})
+    assert url == "tos://sh-deliv-bkt/so101/x/20260828-000000"
+    assert tos_store.bucket_region("sh-deliv-bkt") == "cn-shanghai"
+    tos_store.clear_bucket_regions()

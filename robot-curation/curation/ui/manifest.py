@@ -3173,14 +3173,20 @@ def site_matches_delivery(site_dir: str, m: dict) -> bool:
 
 def _batch_origin_url(m: dict) -> str | None:
     """本批次在桶里的 URL(交付根 .tos-origin.json 的 delivery_url + 批次名)。
-    交付不是从桶镜像来的 → None。"""
+    交付不是从桶镜像来的 → None。顺手把 origin 记的地区登记给这个桶——
+    播放端(dsfs)按桶取地区签名,异地桶(如上海)才签得对(2026-08-28)。"""
     from ..delivery import delivery_root_of
-    from ..tos_store import ORIGIN_NAME
+    from ..tos_store import ORIGIN_NAME, parse_tos_url, register_bucket_region
     origin = _load_json(os.path.join(delivery_root_of(m.get("path") or ""),
                                      ORIGIN_NAME))
     durl = str((origin or {}).get("delivery_url") or "").rstrip("/")
     if not durl.startswith("tos://"):
         return None
+    try:
+        register_bucket_region(parse_tos_url(durl)[0],
+                               str((origin or {}).get("region") or ""))
+    except Exception:  # noqa: BLE001 origin 坏了不拦播放,交给下游如实报
+        pass
     batch = os.path.basename(os.path.normpath(m.get("path") or ""))
     return f"{durl}/{batch}" if batch else None
 
@@ -3397,7 +3403,8 @@ def _portable_source_root(m: dict) -> str | None:
     if src.startswith("tos://") or os.path.isdir(src):
         return src
     from ..delivery import delivery_root_of
-    from ..tos_store import ORIGIN_NAME, parse_tos_url
+    from ..tos_store import (ORIGIN_NAME, parse_tos_url,
+                             register_bucket_region)
     origin = _load_json(os.path.join(delivery_root_of(m.get("path") or ""),
                                      ORIGIN_NAME))
     durl = str((origin or {}).get("delivery_url") or "")
@@ -3405,6 +3412,7 @@ def _portable_source_root(m: dict) -> str | None:
         return None
     try:
         bucket, _ = parse_tos_url(durl)
+        register_bucket_region(bucket, str((origin or {}).get("region") or ""))
     except Exception:  # noqa: BLE001 origin 坏了按没有算
         return None
     mount = (os.environ.get("CURATION_TOS_MOUNT") or "/mnt/tos").rstrip("/")

@@ -551,3 +551,26 @@ def test_browser_url_anonymous_forces_public_host():
     assert url == "https://pub.tos-cn-beijing.volces.com/a%20b.mp4"
     # 匿名桶 pod 面的裸 URL 仍按自己的端点走(内网读得更快)
     assert "ivolces" in st.public_url("pub", "a.mp4")
+
+
+# ── 桶→地区登记表(2026-08-28:上海交付桶,轨迹页视频全黑)──────────────
+
+
+def test_bucket_region_registry_feeds_paramless_callers(monkeypatch):
+    """make_store_for 拿到明确地区就登记;后来的无参调用按桶取到同一地区。
+    调用方明确给的地区永远优先(并刷新登记)。"""
+    monkeypatch.setenv("TOS_ACCESS_KEY", "ak")
+    monkeypatch.setenv("TOS_SECRET_KEY", "sk")
+    tos_store.clear_bucket_regions()
+    st = tos_store.make_store_for("sh-bkt", "cn-shanghai", client=object())
+    assert st.region == "cn-shanghai"
+    assert tos_store.bucket_region("sh-bkt") == "cn-shanghai"
+    # 无参调用(dsfs 这类离参数最远的签名端)按登记走,不再落默认北京
+    st2 = tos_store.make_store_for("sh-bkt", client=object())
+    assert st2.region == "cn-shanghai"
+    assert "tos-cn-shanghai" in st2.browser_endpoint()
+    # 明确参数优先并刷新登记
+    st3 = tos_store.make_store_for("sh-bkt", "cn-guangzhou", client=object())
+    assert st3.region == "cn-guangzhou"
+    assert tos_store.bucket_region("sh-bkt") == "cn-guangzhou"
+    tos_store.clear_bucket_regions()

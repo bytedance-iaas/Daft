@@ -76,9 +76,12 @@ def _store(bucket: str | None = None):
         if key not in _STORES:
             _STORES[key] = tos_store.make_store_for(bucket, _REGION["value"])
         return _STORES[key]
-    key = _REGION["value"] or ""
+    # 按桶取登记地区(2026-08-28):没有登记才退回全局 configure 的地区。
+    # 异地桶(如上海交付桶)用默认地区签名 = URL 指向不存在的坐标,视频全黑
+    reg = (tos_store.bucket_region(bucket) if bucket else None) or _REGION["value"]
+    key = (bucket or "", reg or "")
     if key not in _STORES:
-        _STORES[key] = tos_store.make_store(_REGION["value"])
+        _STORES[key] = tos_store.make_store(reg)
     return _STORES[key]
 
 
