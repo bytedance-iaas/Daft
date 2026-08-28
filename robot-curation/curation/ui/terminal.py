@@ -42,7 +42,7 @@ from starlette.websockets import WebSocket
 
 log = logging.getLogger("curation.ui.terminal")
 
-#: 终端里 bash 的落脚目录。缺省 = UI 进程的 cwd(pod 里就是 /app)。
+#: 终端里 bash 的落脚目录。缺省按用处找:挂载根 → TOS 缓存根 → 进程 cwd。
 WORKDIR_ENV = "CURATION_TERMINAL_WORKDIR"
 #: 覆盖 shell(缺省找 bash,没有就 /bin/sh)。
 SHELL_ENV = "CURATION_TERMINAL_SHELL"
@@ -51,11 +51,46 @@ _READ_CHUNK = 65536
 
 
 def resolve_workdir() -> str:
-    return os.environ.get(WORKDIR_ENV) or os.getcwd()
+    """终端落脚目录,按用处排:环境变量点名 > 挂载根 > TOS 缓存根 > 进程 cwd。
+
+    直连实例(零挂载)此前落在 /app —— 一个只有代码的目录,用户 ls 一眼空白
+    (2026-08-28 去挂载依赖):缓存根是直连实例上唯一"肉眼可查有东西"的地方
+    (报告轻镜像、跑批产出的本地缓存都在这棵树上)。
+    """
+    env = os.environ.get(WORKDIR_ENV)
+    if env:
+        return env
+    mount = (os.environ.get("CURATION_TOS_MOUNT") or "/mnt/tos").rstrip("/")
+    if os.path.isdir(mount):
+        return mount
+    try:
+        from ..tos_store import cache_root
+        cr = cache_root()
+        if os.path.isdir(cr):
+            return cr
+    except Exception:  # noqa: BLE001 缓存根算不出来就退回 cwd,别拦终端
+        pass
+    return os.getcwd()
 
 
 def resolve_shell() -> str:
     return os.environ.get(SHELL_ENV) or shutil.which("bash") or "/bin/sh"
+
+
+def workdir_note() -> str:
+    """落脚目录是哪来的,一句话(终端首行打给用户,免得对着空目录发懵)。"""
+    if os.environ.get(WORKDIR_ENV):
+        return "部署指定的工作目录"
+    mount = (os.environ.get("CURATION_TOS_MOUNT") or "/mnt/tos").rstrip("/")
+    if os.path.isdir(mount):
+        return "TOS 挂载根"
+    try:
+        from ..tos_store import cache_root
+        if os.path.isdir(cache_root()):
+            return "TOS 缓存根:报告与跑批的本地缓存都在这棵树上"
+    except Exception:  # noqa: BLE001
+        pass
+    return "服务进程目录"
 
 
 def _set_winsize(fd: int, rows: int, cols: int) -> None:
@@ -83,7 +118,10 @@ def _rcfile() -> str:
         with os.fdopen(fd, "w") as f:
             f.write("[ -f /etc/profile ] && . /etc/profile\n"
                     "[ -f ~/.bashrc ] && . ~/.bashrc\n"
-                    f"PS1='{PROMPT_PS1}'\n")
+                    f"PS1='{PROMPT_PS1}'\n"
+                    # 首行说清落脚点(直连实例没挂载,落在缓存根;不说的话
+                    # 用户对着一个陌生目录只会觉得"很奇怪")
+                    f"echo '当前目录:{resolve_workdir()}({workdir_note()})'\n")
         _rcfile_path = path
     return _rcfile_path
 

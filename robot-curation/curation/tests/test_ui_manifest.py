@@ -4121,3 +4121,25 @@ def test_batch_clip_paths_falls_back_to_origin_url(tmp_path):
         "tos://bkt/deliveries/x/20260828-000000/review_clips/ep000001__cam_b.mp4"]
     b2 = _clips_batch(tmp_path / "n2")
     assert batch_clip_paths({"path": str(b2)}, "ep000001") == []
+
+
+def test_terminal_workdir_falls_back_mount_then_cache(tmp_path, monkeypatch):
+    """终端落脚目录(2026-08-28 去挂载依赖):环境变量点名 > 挂载根 >
+    TOS 缓存根 > 进程 cwd;首行说明文案与落点同源。"""
+    from curation.ui import terminal as T
+    monkeypatch.delenv("CURATION_TERMINAL_WORKDIR", raising=False)
+    mount = tmp_path / "mnt"
+    mount.mkdir()
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(mount))
+    assert T.resolve_workdir() == str(mount) and "挂载根" in T.workdir_note()
+    # 没挂载 → 缓存根
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "nope"))
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    import curation.tos_store as ts
+    monkeypatch.setenv(ts.CACHE_ENV, str(cache))
+    assert T.resolve_workdir() == str(cache) and "缓存根" in T.workdir_note()
+    # 环境变量最优先
+    monkeypatch.setenv("CURATION_TERMINAL_WORKDIR", str(tmp_path))
+    assert T.resolve_workdir() == str(tmp_path)
+    assert "部署指定" in T.workdir_note()
