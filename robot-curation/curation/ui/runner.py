@@ -848,8 +848,7 @@ _TOS_REGION_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 #: (rerun `open_tos_modal.rs` 的 TOS_REGIONS,抄的是火山控制台建桶页的地区
 #: 列表)。两个产品的用户在深链间来回跳,不该看到两份地区清单。
 #: 列表可能落后于新开的地区,所以下拉允许自由输入(allow_custom_value)。
-TOS_REGIONS = ("cn-beijing", "ap-southeast-1", "ap-southeast-3",
-               "cn-guangzhou", "cn-hongkong", "cn-shanghai")
+from ..tos_store import REGION_CANDIDATES as TOS_REGIONS  # noqa: E402 单一事实源
 
 #: 地区的中文名 = 火山控制台建桶页的叫法。下拉显示「中文名 (代码)」,
 #: **值仍是代码** —— 后端/CLI/深链/日志全用代码,中文只进眼睛不进数据。
@@ -1166,6 +1165,12 @@ def region_of_bucket(bucket: str, skip: str | None = None) -> str | None:
     return _ts.locate_bucket(bucket, TOS_REGIONS, skip=skip)
 
 
+def region_switch_note(bucket: str, region: str) -> str:
+    """404 后实探到桶的真实地区、替用户切换时的那句话(纯函数,措辞钉在这)。"""
+    name = TOS_REGION_NAMES.get(region, region)
+    return f"该桶在 {name} ({region}),已自动切换"
+
+
 def _effective_region(region: str | None) -> str:
     return region or os.environ.get("TOS_REGION", "").strip() or "默认地区"
 
@@ -1260,7 +1265,12 @@ def tos_list_datasets(root_url: str, region: str | None = None, *,
         return public_catalog.names(store=store)
     bucket, prefix = _ts.parse_tos_url(root_url)
     st = store or _ts.make_store_for(bucket, region)
-    return sorted(set(st.iter_common_prefixes(bucket, prefix)))
+    out = sorted(set(st.iter_common_prefixes(bucket, prefix)))
+    if store is None:
+        # 列举成功 = 地区被事实验证(TOS 对错地区一律 404)→ 登记,
+        # 签名/播放端(dsfs)从此按桶拿对(2026-08-28 只记验证过的组合)
+        _ts.register_bucket_region(bucket, st.region)
+    return out
 
 
 def tos_dataset_listing(root_url: str, region: str | None = None, *,
@@ -1304,6 +1314,8 @@ def tos_dataset_listing(root_url: str, region: str | None = None, *,
             return False
 
     if prefix and _is_ds(prefix):
+        if store is None:
+            _ts.register_bucket_region(bucket, st.region)  # head 成功=地区验证过
         parent = prefix.rsplit("/", 1)[0] if "/" in prefix else ""
         return {"kind": "dataset", "name": prefix.rsplit("/", 1)[-1],
                 "parent": f"tos://{bucket}/{parent}".rstrip("/")}
@@ -1699,6 +1711,7 @@ _ARG_SPECS: dict[str, dict[str, str | None]] = {
         "input": "--input", "output": "--output", "episodes": "--episodes",
         "max_episodes": "--max-episodes", "title": "--title", "rrd_fps": "--rrd-fps",
         "into_delivery": "--into-delivery", "delivery_region": "--delivery-region",
+        "input_region": "--input-region",
     },
     "backends": {"config": "--config", "timeout": "--timeout"},
 }
@@ -1894,6 +1907,7 @@ def build_dataset_jobs(data_root: str, delivery_root: str, datasets: list,
         if name in want_clips:
             steps.append(build_argv("review-page", input=src, into_delivery=out,
                                     delivery_region=params.get("output_region"),
+                                    input_region=params.get("input_region"),
                                     # 范围跟跑批走:交付里有哪些条,片段才切哪些条
                                     max_episodes=params.get("max_episodes"),
                                     episodes=params.get("episodes")))

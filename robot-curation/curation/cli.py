@@ -299,6 +299,9 @@ def build_parser() -> argparse.ArgumentParser:
               "产物落盘持久,由质检平台的 /review 路由提供访问,服务重启不丢。")
     rp.add_argument("--input", required=True,
                     help="数据集目录(LeRobot v2/v3;RRD 本版本未开放)")
+    rp.add_argument("--input-region", default=None, metavar="地区",
+                    help="--input 是 tos:// 时数据集桶的地区(如 cn-shanghai);"
+                         "不给按部署地区,找不到桶会自动到各地区实探")
     rp.add_argument("--output", default=None,
                     help="静态站产出目录(建议持久盘,如 /mnt/tos/review/<名字>);"
                          "与 --into-delivery 二选一")
@@ -807,6 +810,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "review-page":
         from .export.review_page import build_delivery_clips, build_review_page
         from .ingest.rrd_reader import cleanup_video_cache, is_rrd_dataset
+        if str(args.input or "").startswith("tos://"):
+            from .ingest import dsfs
+            dsfs.configure(args.input_region)
         if bool(args.output) == bool(args.into_delivery):
             print("[输入错误] --output(静态审片站)与 --into-delivery(片段进交付)"
                   "二选一,必须且只能给一个", file=sys.stderr)

@@ -91,14 +91,21 @@ def clear_anonymous_buckets() -> None:
     _ANON_BUCKETS.clear()
 
 
+#: 火山 TOS 的地区清单(与控制台建桶页/rerun viewer 同值同序;界面下拉允许
+#: 自由输入,清单落后于新地区时不挡路)。locate_bucket 自愈按它扫。
+REGION_CANDIDATES = ("cn-beijing", "ap-southeast-1", "ap-southeast-3",
+                     "cn-guangzhou", "cn-hongkong", "cn-shanghai")
+
 #: 桶 → 所在地区。签名端(dsfs 全局单例)离"人说了地区"的参数最远,拿默认地区
 #: 给异地桶签名 = URL 指向不存在的坐标(2026-08-28 用户实见:上海交付桶,
-#: 轨迹页视频全黑)。凡是 (桶, 地区) 成对出现的调用点都会登记进来。
+#: 轨迹页视频全黑)。⚠️ 只登记**被事实验证过**的组合(操作成功之后 / origin
+#: 文件 / locate_bucket 找到):曾经"见到参数就登记",用户在界面把地区切到
+#: 上海的一瞬间就把 (北京桶, 上海) 毒进了表,源数据集全体 404(dataverse 实见)。
 _BUCKET_REGIONS: dict = {}
 
 
 def register_bucket_region(bucket: str, region: str | None) -> None:
-    """登记一个桶所在的地区(空地区 = 不登记,不覆盖已知值)。"""
+    """登记一个桶所在的地区(空地区 = 不登记)。调用方限"验证过"的场合,见上。"""
     b, r = str(bucket or "").strip(), str(region or "").strip()
     if b and r:
         _BUCKET_REGIONS[b] = r
@@ -463,13 +470,12 @@ def make_store_for(bucket: str, region: str | None = None, client=None) -> TosSt
     所有"已知桶名"的调用点都该走这里,别直接 make_store —— 公共桶用签名客户端
     会被 AccessDenied,报错还长得像"密钥没权限",极其误导。
 
-    地区:调用方明确给了就用(并顺手登记给这个桶,后来的无参调用方受益);
-    没给按桶查登记表 —— dsfs 这类离参数最远的签名端全靠它拿对异地桶的地区。"""
+    地区:调用方明确给了就用;没给按桶查登记表 —— dsfs 这类离参数最远的签名端
+    全靠它拿对异地桶的地区。**这里不登记**:参数只是"调用方以为",登记要等
+    操作成功(mirror/prefetch/resolve 收尾)或 locate_bucket 实探。"""
     if is_anonymous_bucket(bucket):
         return make_store(anonymous_region(bucket) or region, client,
                           anonymous=True)
-    if str(region or "").strip():
-        register_bucket_region(bucket, region)
     return make_store(region or bucket_region(bucket), client)
 
 
@@ -769,6 +775,8 @@ def resolve_run_url(url: str, region: str | None = None, *,
         rel = key[len(p) + 1:] if p else key
         if rel in ("passed.json", "latest"):
             names.add(rel)
+    if names:
+        register_bucket_region(bucket, st.region)   # list 成功 = 地区验证过
     if "passed.json" in names:
         return f"tos://{bucket}/{p}"
     if "latest" in names:
@@ -824,7 +832,10 @@ def mirror_run(run_url: str, region: str | None = None, *,
         pass
     origin = {"root_url": f"tos://{bucket}/" + "/".join(deliv_prefix.split("/")[:-1]),
               "delivery_url": f"tos://{bucket}/{deliv_prefix}",
-              "run": run_name, "region": region or ""}
+              "run": run_name,
+              "region": region or getattr(st, "region", "") or ""}
+    # 镜像成功 = 地区验证过(注入的假 store 可能没有 region 属性,单测不背锅)
+    register_bucket_region(bucket, region or getattr(st, "region", None))
     os.makedirs(local_deliv, exist_ok=True)
     with open(os.path.join(local_deliv, ORIGIN_NAME), "w", encoding="utf-8") as f:
         _json.dump(origin, f, ensure_ascii=False, indent=1)

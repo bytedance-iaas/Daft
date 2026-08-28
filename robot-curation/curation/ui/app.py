@@ -2232,18 +2232,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     if not str(url or "").strip():
                         return ("", gr.update(choices=[], value=[]),
                                 "填入 tos://桶名/目录 后回车,即可列出数据集",
-                                gr.update())
+                                gr.update(), gr.update())
                     try:
                         spec = runner.resolve_root_input(url, _buckets)
                     except ValueError as e:
                         return (f"⚠️ {e}", gr.update(choices=[], value=[]), "",
-                                gr.update())
+                                gr.update(), gr.update())
                     if spec["kind"] == "mount":
                         root = spec["path"]
                         return ("",
                                 gr.update(choices=runner.list_datasets(root),
                                           value=[]),
-                                runner.dataset_root_note(root), gr.update())
+                                runner.dataset_root_note(root), gr.update(),
+                                gr.update())
                     if public_catalog.is_public_root(spec["url"]):
                         # 公共缓存桶:下拉显示「全名 · 版本 · 集数」,值仍是目录名
                         try:
@@ -2251,24 +2252,43 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         except Exception as e:  # noqa: BLE001
                             return (f"⚠️ {type(e).__name__}: {str(e)[:160]}",
                                     gr.update(choices=[], value=[]), "",
-                                    gr.update())
+                                    gr.update(), gr.update())
                         return ("", gr.update(choices=ch, value=[]),
                                 "" if ch else "缓存里目前没有 LeRobot 格式的数据集",
-                                gr.update())
+                                gr.update(), gr.update())
+                    _bkt = tos_store.parse_tos_url(spec["url"])[0]
+                    _rg = str(region or "").strip() or None
+                    _switched = None      # 404 后实探出的真实地区(自动切换)
                     try:
                         # issue #98:只列真数据集;输入本身是数据集则退层预选
-                        lst = runner.tos_dataset_listing(
-                            spec["url"], str(region or "").strip() or None)
+                        try:
+                            lst = runner.tos_dataset_listing(spec["url"], _rg)
+                        except Exception as e:  # noqa: BLE001 先看是不是地区错
+                            # 填写顺序不该有讲究(2026-08-28 用户点名):先填桶
+                            # 后选地区时,默认地区必 404 —— 实探出桶的真实地区
+                            # 就替用户把地区切过去,而不是朝他喊"错了"
+                            _kind, _ = tos_store.classify_list_error(e)
+                            _found = (runner.region_of_bucket(_bkt, skip=_rg)
+                                      if _kind == "missing" else None)
+                            if not _found:
+                                raise
+                            lst = runner.tos_dataset_listing(spec["url"], _found)
+                            _switched = _found
+                        _rg_upd = (gr.update(value=_switched) if _switched
+                                   else gr.update())
+                        _sw_note = (runner.region_switch_note(_bkt, _switched)
+                                    if _switched else "")
                         if lst["kind"] == "dataset":
                             return ("",
                                     gr.update(choices=[lst["name"]],
                                               value=[lst["name"]]),
-                                    f"你填的是数据集「{lst['name']}」本身,"
+                                    (_sw_note + ";" if _sw_note else "")
+                                    + f"你填的是数据集「{lst['name']}」本身,"
                                     "已退到上层目录并选中它",
-                                    gr.update(value=lst["parent"]))
+                                    gr.update(value=lst["parent"]), _rg_upd)
                         names = lst["names"]
                         if names:
-                            note = ""
+                            note = _sw_note
                         elif lst["junk"]:
                             note = ("这里没有找到数据集(数据集 = 含 "
                                     "meta/info.json 的子目录);该目录下是:"
@@ -2276,12 +2296,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         else:
                             note = ("该前缀下没有列出任何数据集(前缀打错?"
                                     "或桶里确实是空的)")
+                        if _sw_note and not names:
+                            note = _sw_note + ";" + note
                     except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
-                        # 404 对 TOS 来说"桶名错"和"地区错"一个样(2026-08-21 真机),
-                        # 措辞两头都点到,并到别的地区找一圈,找到了直接说在哪
+                        # 404 对 TOS 来说"桶名错"和"地区错"一个样(2026-08-21 真机);
+                        # 能自动纠的在上面已经纠了,走到这儿 = 各地区都没有或权限问题
                         _kind, _detail = tos_store.classify_list_error(e)
-                        _bkt = tos_store.parse_tos_url(spec["url"])[0]
-                        _rg = str(region or "").strip() or None
                         if _kind == "missing":
                             why = runner.missing_bucket_text(
                                 _bkt, _rg, _detail, locate=runner.region_of_bucket)
@@ -2289,11 +2309,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             why = f"本实例的密钥没有桶 {_bkt} 的读权限({_detail})"
                         else:
                             why = f"{type(e).__name__}: {str(e)[:120]}"
-                        names, note = [], f"⚠️ 列不出该前缀下的数据集:{why}"
+                        return ("", gr.update(choices=[], value=[]),
+                                f"⚠️ 列不出该前缀下的数据集:{why}",
+                                gr.update(), gr.update())
                     # 「TOS 直连:…不落本地盘」那行说明整行删(issue #98,
                     # 2026-08-28 用户定:没信息量;有话说的只剩报错与诊断)
                     return ("", gr.update(choices=names, value=[]), note,
-                            gr.update())
+                            gr.update(), _rg_upd)
 
                 # blur 与 submit 都接(填完点别处/回车都算"填完了");直连时
                 # 切地区也要重列(端点跟着地区走)。用 .input 不用 .change:
@@ -2415,17 +2437,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 整个掐掉 —— 界面状态永远对应用户最后一次操作。
                 _ROOT_Q = "rn-root"
                 _b1 = rn_tin.blur(_root_changed, [rn_tin, rn_tin_rg],
-                                  [rn_src_note, rn_ds, rn_ds_note, rn_tin],
+                                  [rn_src_note, rn_ds, rn_ds_note, rn_tin, rn_tin_rg],
                                   concurrency_id=_ROOT_Q)
                 _b2 = _b1.then(_borrow_output, _bo_in, _bo_out, concurrency_id=_ROOT_Q)
                 _b3 = _b2.then(_in_check, [rn_tin, rn_tin_rg], _ic_out, concurrency_id=_ROOT_Q)
                 _s1 = rn_tin.submit(_root_changed, [rn_tin, rn_tin_rg],
-                                    [rn_src_note, rn_ds, rn_ds_note, rn_tin],
+                                    [rn_src_note, rn_ds, rn_ds_note, rn_tin, rn_tin_rg],
                                     concurrency_id=_ROOT_Q)
                 _s2 = _s1.then(_borrow_output, _bo_in, _bo_out, concurrency_id=_ROOT_Q)
                 _s3 = _s2.then(_in_check, [rn_tin, rn_tin_rg], _ic_out, concurrency_id=_ROOT_Q)
                 _r1 = rn_tin_rg.input(_root_changed, [rn_tin, rn_tin_rg],
-                                      [rn_src_note, rn_ds, rn_ds_note, rn_tin],
+                                      [rn_src_note, rn_ds, rn_ds_note, rn_tin, rn_tin_rg],
                                       concurrency_id=_ROOT_Q,
                                       cancels=[_b1, _b2, _b3, _s1, _s2, _s3])
                 _r2 = _r1.then(_borrow_output, _bo_in, _bo_out, concurrency_id=_ROOT_Q)
@@ -2645,6 +2667,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             then_argv = runner.build_argv(
                                 "review-page", input=inp, into_delivery=out,
                                 delivery_region=common.get("output_region"),
+                                input_region=common.get("input_region"),
                                 # 切片范围必须跟跑批走(2026-08-28 真机实见:
                                 # 前 2 条的跑批把 100 条全切了)——交付里只有
                                 # 这几条,片段也只该有这几条
@@ -3681,26 +3704,55 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         or (s == home and runner.is_mount_backed(_deliv_root)):
                     fresh = discover_deliveries(delivery)
                     ch = delivery_choices(delivery, fresh)
-                    return gr.update(choices=ch, value=_keep(ch)), ""
+                    return gr.update(choices=ch, value=_keep(ch)), "", gr.update()
                 if not s.startswith("tos://"):
                     return (gr.update(), "⚠️ 只认 tos://桶/前缀 形式的地址"
-                            "(或本实例的交付根)")
+                            "(或本实例的交付根)", gr.update())
                 err = runner.tos_url_error(s, "交付目录")
                 if err:
-                    return gr.update(), f"⚠️ {err}"
+                    return gr.update(), f"⚠️ {err}", gr.update()
+                _bkt = tos_store.parse_tos_url(s)[0]
+                _switched = None
                 try:
-                    names = runner.tos_list_deliveries(
-                        s, _rp_src["region"] or None)
+                    try:
+                        names = runner.tos_list_deliveries(
+                            s, _rp_src["region"] or None)
+                    except Exception as e:  # noqa: BLE001 先看是不是地区错
+                        # 填写顺序不该有讲究(2026-08-28 用户点名):先填桶后选
+                        # 地区必撞 404 —— 实探出真实地区就替用户切过去
+                        _kind, _ = tos_store.classify_list_error(e)
+                        _found = (runner.region_of_bucket(
+                            _bkt, skip=_rp_src["region"] or None)
+                            if _kind == "missing" else None)
+                        if not _found:
+                            raise
+                        names = runner.tos_list_deliveries(s, _found)
+                        _rp_src["region"] = _found
+                        _switched = _found
                 except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
-                    return (gr.update(), f"⚠️ 列不出该前缀下的交付:"
-                            f"{type(e).__name__}: {str(e)[:120]}")
+                    _kind, _detail = tos_store.classify_list_error(e)
+                    if _kind == "missing":
+                        why = runner.missing_bucket_text(
+                            _bkt, _rp_src["region"] or None, _detail,
+                            locate=runner.region_of_bucket)
+                    elif _kind == "forbidden":
+                        why = f"本实例的密钥没有桶 {_bkt} 的读权限({_detail})"
+                    else:
+                        why = f"{type(e).__name__}: {str(e)[:120]}"
+                    return (gr.update(),
+                            f"⚠️ 列不出该前缀下的交付:{why}", gr.update())
+                _rg_upd = (gr.update(value=_switched) if _switched
+                           else gr.update())
+                _sw = (runner.region_switch_note(_bkt, _switched) + ";"
+                       if _switched else "")
                 if not names:
-                    return (gr.update(choices=[], value=None),
-                            "该前缀下没有列出任何交付(前缀打错?或桶里确实是空的)")
+                    return (gr.update(choices=[], value=None), _sw
+                            + "该前缀下没有列出任何交付(前缀打错?或桶里确实是空的)",
+                            _rg_upd)
                 ch = [(n, s + "/" + n) for n in names]
-                return (gr.update(choices=ch, value=_keep(ch)),
-                        f"TOS 直连:{s}(打开一份交付时把报告与明细镜像到本地,"
-                        "数据集本体不下载)")
+                return (gr.update(choices=ch, value=_keep(ch)), _sw
+                        + f"TOS 直连:{s}(打开一份交付时把报告与明细镜像到本地,"
+                        "数据集本体不下载)", _rg_upd)
 
             # ── 报告页跟着最新跑批走(2026-08-28 用户实报:交付写进别的桶,
             #    下拉里根本没有它,他拿着旧交付 test_0826 当新结果看了半天)。
@@ -3722,7 +3774,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if out.startswith("tos://"):
                     root = out.rsplit("/", 1)[0]
                     rgn = info.get("region") or ""
-                    pk, _note = _rp_root_changed(root, rgn)
+                    pk, _note, _rgu = _rp_root_changed(root, rgn)
                     ch = (pk or {}).get("choices") or []
                     val = next((v for _l, v in ch
                                 if str(v).rstrip("/").endswith("/" + name)),
@@ -3735,7 +3787,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             f"已切到最近一次跑批的交付:{name}",
                             info["run_id"], True)
                 # 本地/挂载交付:目录不动,只在现有清单里选中它
-                pk, _note = _rp_root_changed("", rg)
+                pk, _note, _rgu = _rp_root_changed("", rg)
                 ch = (pk or {}).get("choices") or []
                 val = next((v for _l, v in ch
                             if os.path.basename(str(v).rstrip("/")) == name),
@@ -3785,10 +3837,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             if not runner.is_mount_backed(_deliv_root) \
                     and runner.home_output_url(_deliv_root).startswith("tos://"):
                 # 没挂载的实例:交付默认在桶里,开门先把桶里的交付列出来
-                app.load(_rp_root_changed, [rp_root, rp_rg], [picker, rp_note])
-            rp_root.blur(_rp_root_changed, [rp_root, rp_rg, picker], [picker, rp_note])
-            rp_root.submit(_rp_root_changed, [rp_root, rp_rg, picker], [picker, rp_note])
-            rp_rg.input(_rp_root_changed, [rp_root, rp_rg, picker], [picker, rp_note])
+                app.load(_rp_root_changed, [rp_root, rp_rg],
+                         [picker, rp_note, rp_rg])
+            rp_root.blur(_rp_root_changed, [rp_root, rp_rg, picker],
+                         [picker, rp_note, rp_rg])
+            rp_root.submit(_rp_root_changed, [rp_root, rp_rg, picker],
+                           [picker, rp_note, rp_rg])
+            rp_rg.input(_rp_root_changed, [rp_root, rp_rg, picker],
+                        [picker, rp_note, rp_rg])
 
             def _borrow_report_root(tin, tin_rg, cur):
                 """没桶的实例收到深链:报告页的交付目录也借数据集所在的桶,并顺手
@@ -3800,7 +3856,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 if not url or url == runner.home_output_url(_deliv_root):
                     return gr.update(), gr.update(), gr.update(), gr.update()
                 rg = str(tin_rg or "").strip() or None
-                pk, note = _rp_root_changed(url, rg)
+                pk, note, _rgu = _rp_root_changed(url, rg)
                 return gr.update(value=url), gr.update(value=rg), pk, note
 
             _prefill_evt.then(_borrow_report_root, [rn_tin, rn_tin_rg, rp_root],

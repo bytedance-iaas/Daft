@@ -316,7 +316,7 @@ def test_report_root_default_lists_bucket_when_not_mounted(tmp_path, monkeypatch
     app = build_app(str(root), data_root=str(tmp_path / "data" / "datasets"))
     fn = next(f.fn for f in app.fns.values()
               if getattr(f.fn, "__name__", "") == "_rp_root_changed")
-    upd, note = fn("tos://herbucket/deliveries", "cn-beijing")
+    upd, note, _rgu = fn("tos://herbucket/deliveries", "cn-beijing")
     assert calls == ["tos://herbucket/deliveries"], "默认地址没去桶里列"
     assert [v for _l, v in upd["choices"]] == ["tos://herbucket/deliveries/d1",
                                                "tos://herbucket/deliveries/d2"]
@@ -558,9 +558,9 @@ def test_rp_root_refresh_keeps_valid_selection(tmp_path, monkeypatch):
     fns = [f.fn for f in app.fns.values()
            if getattr(f.fn, "__name__", "") == "_rp_root_changed"]
     assert fns
-    upd, _note = fns[0]("", "", cur=a)
+    upd, _note, _rgu = fns[0]("", "", cur=a)
     assert upd.get("value") == a, "现值仍在选项里,却被清掉了"
-    upd2, _ = fns[0]("", "", cur=str(root / "gone"))
+    upd2, _, _ = fns[0]("", "", cur=str(root / "gone"))
     assert upd2.get("value") is None, "失效的值必须清"
 
 

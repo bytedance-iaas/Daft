@@ -556,21 +556,24 @@ def test_browser_url_anonymous_forces_public_host():
 # ── 桶→地区登记表(2026-08-28:上海交付桶,轨迹页视频全黑)──────────────
 
 
-def test_bucket_region_registry_feeds_paramless_callers(monkeypatch):
-    """make_store_for 拿到明确地区就登记;后来的无参调用按桶取到同一地区。
-    调用方明确给的地区永远优先(并刷新登记)。"""
+def test_make_store_for_never_learns_from_params(monkeypatch):
+    """🔴 毒化回归(2026-08-28 dataverse 实见):调用方传的 (桶, 地区) 只当次
+    生效,**绝不写进登记表** —— 用户在界面把地区切到上海的一瞬间,交付目录还是
+    北京桶,那个瞬时错误组合曾被登记,毒翻后续全部源数据集读取。
+    登记只发生在操作成功之后(mirror/prefetch/resolve)或 locate_bucket 实探。"""
     monkeypatch.setenv("TOS_ACCESS_KEY", "ak")
     monkeypatch.setenv("TOS_SECRET_KEY", "sk")
     tos_store.clear_bucket_regions()
-    st = tos_store.make_store_for("sh-bkt", "cn-shanghai", client=object())
-    assert st.region == "cn-shanghai"
-    assert tos_store.bucket_region("sh-bkt") == "cn-shanghai"
-    # 无参调用(dsfs 这类离参数最远的签名端)按登记走,不再落默认北京
+    st = tos_store.make_store_for("bj-bkt", "cn-shanghai", client=object())
+    assert st.region == "cn-shanghai", "参数当次照常生效"
+    assert tos_store.bucket_region("bj-bkt") is None, "但通讯录一个字不许写"
+    # 登记表里已验证的条目,喂给无参调用方(dsfs 这类离参数最远的签名端)
+    tos_store.register_bucket_region("sh-bkt", "cn-shanghai")
     st2 = tos_store.make_store_for("sh-bkt", client=object())
     assert st2.region == "cn-shanghai"
     assert "tos-cn-shanghai" in st2.browser_endpoint()
-    # 明确参数优先并刷新登记
+    # 明确参数仍优先于登记(用户当场选的算数),且同样不回写
     st3 = tos_store.make_store_for("sh-bkt", "cn-guangzhou", client=object())
     assert st3.region == "cn-guangzhou"
-    assert tos_store.bucket_region("sh-bkt") == "cn-guangzhou"
+    assert tos_store.bucket_region("sh-bkt") == "cn-shanghai"
     tos_store.clear_bucket_regions()
