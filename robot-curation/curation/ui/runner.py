@@ -1323,7 +1323,8 @@ def tos_dataset_listing(root_url: str, region: str | None = None, *,
 
 #: 镜像时跳过的大件目录(数据集本体,几百 MB~GB 级):报告/裁决用不到它们的
 #: 字节;「轨迹」页视频四档来源落空时的提示语本来就在。
-MIRROR_SKIP_DIRS = ("episodes_parquet/", "lerobot_curated/", "rrd_curated/")
+MIRROR_SKIP_DIRS = ("episodes_parquet/", "lerobot_curated/", "rrd_curated/",
+                    "review_clips/")
 
 #: 镜像来源的身份证文件名(落在缓存的**交付根**):裁决 CSV 写回、以及"这份
 #: 缓存是从哪儿来的"的唯一事实源。
@@ -1697,6 +1698,7 @@ _ARG_SPECS: dict[str, dict[str, str | None]] = {
     "review-page": {
         "input": "--input", "output": "--output", "episodes": "--episodes",
         "max_episodes": "--max-episodes", "title": "--title", "rrd_fps": "--rrd-fps",
+        "into_delivery": "--into-delivery", "delivery_region": "--delivery-region",
     },
     "backends": {"config": "--config", "timeout": "--timeout"},
 }
@@ -1709,7 +1711,7 @@ _FLAGS = {"batch": "--batch", "lite": "--lite", "report_only": "--report-only",
 
 #: 每条命令的必填项(缺了直接抛,不让用户等到子进程起来才看见报错)。
 _REQUIRED = {"run": ("input", "output"), "rejudge": ("delivery", "input"),
-             "review-page": ("input", "output"), "backends": ()}
+             "review-page": ("input",), "backends": ()}
 
 
 def _check_module_list(value: str, field: str) -> str:
@@ -1864,7 +1866,7 @@ def build_run_script(jobs: list[dict]) -> str:
 
 
 def build_dataset_jobs(data_root: str, delivery_root: str, datasets: list,
-                       delivery_name: str, *, clips_root: str | None = None,
+                       delivery_name: str, *,
                        clips_for: list | None = None, **params) -> list[dict]:
     """多个数据集 → 作业表(纯函数,路径校验与 argv 装配都在这儿一次做完)。
 
@@ -1876,25 +1878,22 @@ def build_dataset_jobs(data_root: str, delivery_root: str, datasets: list,
     数据集名与交付名各过一次校验,子交付再在父目录下拼一次。
 
     clips_for 里的数据集额外串一步切片(同 job 内用 `&&`:质检没跑成,切片没有
-    意义)。片段站按**数据集名**建目录,不按交付名:站点认领本来就看 site.json 里
-    的源数据集路径(review_clip_paths),按数据集名建的话同一份数据跑第二次交付时
-    还能直接复用,不必重编一遍码。
+    意义)。片段进**各自子交付的批次目录**(--into-delivery,2026-08-28 去挂载
+    依赖):落点跟着交付走,挂载/直连一个样,不再需要实例配片段目录。
     """
     names = picked_datasets(datasets)
     if not names:
         raise ValueError("至少要选一个数据集")
     want_clips = set(picked_datasets(clips_for or []))
-    if want_clips and not clips_root:
-        raise ValueError("要串切片就得给片段目录(本实例没配 --review-dir)")
     parent = under(delivery_root, delivery_name or "")
     jobs = []
     for name in names:
         src = under(data_root, name)
-        steps = [build_argv("run", input=src, output=under(parent, name),
-                            **params)]
+        out = under(parent, name)
+        steps = [build_argv("run", input=src, output=out, **params)]
         if name in want_clips:
-            steps.append(build_argv("review-page", input=src,
-                                    output=resolve_under(clips_root, name)))
+            steps.append(build_argv("review-page", input=src, into_delivery=out,
+                                    delivery_region=params.get("output_region")))
         jobs.append({"title": name, "steps": steps})
     return jobs
 

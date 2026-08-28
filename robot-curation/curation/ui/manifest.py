@@ -3171,6 +3171,49 @@ def site_matches_delivery(site_dir: str, m: dict) -> bool:
     return bool(src_name) and _norm_name(site_name) == _norm_name(src_name)
 
 
+def _batch_origin_url(m: dict) -> str | None:
+    """本批次在桶里的 URL(交付根 .tos-origin.json 的 delivery_url + 批次名)。
+    交付不是从桶镜像来的 → None。"""
+    from ..delivery import delivery_root_of
+    from ..tos_store import ORIGIN_NAME
+    origin = _load_json(os.path.join(delivery_root_of(m.get("path") or ""),
+                                     ORIGIN_NAME))
+    durl = str((origin or {}).get("delivery_url") or "").rstrip("/")
+    if not durl.startswith("tos://"):
+        return None
+    batch = os.path.basename(os.path.normpath(m.get("path") or ""))
+    return f"{durl}/{batch}" if batch else None
+
+
+def batch_clip_paths(m: dict, eid: str) -> list[str]:
+    """本批次自带的逐条片段(<批次>/review_clips/,2026-08-28 切片入交付)。
+
+    寻址走 details/review_clips_index.json(小,轻镜像会带上);片段本体大,
+    轻镜像刻意跳过 —— 本地有文件用本地(挂载/本地交付),没有且交付来自桶
+    → 拼批次的 tos:// URL,播放端现签公网预签名。索引没这条 → 空表。
+    """
+    root = m.get("path") or ""
+    idx = _load_json(os.path.join(root, "details", "review_clips_index.json"))
+    cams = idx.get(str(eid)) or []
+    if not cams:
+        return []
+    out: list[str] = []
+    remote_base: str | None = None
+    probed = False
+    for cam in sorted(cams):
+        f = f"{eid}__{cam}.mp4"
+        local = os.path.join(root, "review_clips", f)
+        if os.path.exists(local):
+            out.append(local)
+            continue
+        if not probed:
+            remote_base = _batch_origin_url(m)
+            probed = True
+        if remote_base:
+            out.append(f"{remote_base}/review_clips/{f}")
+    return out
+
+
 def review_clip_paths(review_dir: str | None, m: dict, eid: str) -> list[str]:
     """审片站里**本交付这份数据**的该 episode 片段(按相机名排序;没有 → 空表)。
 
@@ -3502,7 +3545,8 @@ def episode_videos(m: dict, eid: str, review_dir: str | None = None,
     就还用第一档 —— 播不动也照样摆槽位,旁边写清为什么(见上面的 ⚠️)。
     """
     cands = [(s, p) for s, p in
-             ((VIDEO_SOURCE_REVIEW, review_clip_paths(review_dir, m, eid)),
+             ((VIDEO_SOURCE_REVIEW, (batch_clip_paths(m, eid)
+                                     or review_clip_paths(review_dir, m, eid))),
               (VIDEO_SOURCE_CURATED, curated_video_paths(m, eid)),
               # ④ 源数据集垫底:前三档全是产物,天然漏掉被拒条目(2026-08-19)
               (VIDEO_SOURCE_SOURCE, source_video_paths(m, eid, data_root))) if p]

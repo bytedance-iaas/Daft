@@ -4079,3 +4079,45 @@ def test_banner_counts_episodes_and_items_separately(tmp_path):
     assert "已裁 1 条(2 项)" in banner
     assert "待裁 0 条(0 项)" in banner
     assert "<b>1 条(2 项)</b>尚未应用于交付" in banner
+
+
+# ── 批次自带片段(batch_clip_paths,2026-08-28 切片入交付)────────────────
+
+
+def _clips_batch(tmp_path, with_files=(), origin_url=None):
+    b = tmp_path / "deliv" / "20260828-000000"
+    (b / "details").mkdir(parents=True)
+    (b / "details" / "review_clips_index.json").write_text(
+        json.dumps({"ep000001": ["cam_a", "cam_b"]}), encoding="utf-8")
+    for f in with_files:
+        (b / "review_clips").mkdir(exist_ok=True)
+        (b / "review_clips" / f).write_bytes(b"x")
+    if origin_url:
+        from curation.tos_store import ORIGIN_NAME
+        (tmp_path / "deliv" / ORIGIN_NAME).write_text(
+            json.dumps({"delivery_url": origin_url}), encoding="utf-8")
+    return b
+
+
+def test_batch_clip_paths_prefers_local_files(tmp_path):
+    from curation.ui.manifest import batch_clip_paths
+    b = _clips_batch(tmp_path,
+                     with_files=("ep000001__cam_a.mp4", "ep000001__cam_b.mp4"))
+    got = batch_clip_paths({"path": str(b)}, "ep000001")
+    assert [os.path.basename(p) for p in got] == \
+        ["ep000001__cam_a.mp4", "ep000001__cam_b.mp4"]
+    assert all(os.path.isabs(p) for p in got)
+    assert batch_clip_paths({"path": str(b)}, "ep000099") == []
+
+
+def test_batch_clip_paths_falls_back_to_origin_url(tmp_path):
+    """直连交付:片段被轻镜像跳过,本地没有 → 按 .tos-origin.json 拼批次
+    tos:// URL(播放端现签公网预签名);没有 origin → 空表,不乱猜。"""
+    from curation.ui.manifest import batch_clip_paths
+    b = _clips_batch(tmp_path, origin_url="tos://bkt/deliveries/x")
+    got = batch_clip_paths({"path": str(b)}, "ep000001")
+    assert got == [
+        "tos://bkt/deliveries/x/20260828-000000/review_clips/ep000001__cam_a.mp4",
+        "tos://bkt/deliveries/x/20260828-000000/review_clips/ep000001__cam_b.mp4"]
+    b2 = _clips_batch(tmp_path / "n2")
+    assert batch_clip_paths({"path": str(b2)}, "ep000001") == []

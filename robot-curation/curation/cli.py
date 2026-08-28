@@ -299,8 +299,15 @@ def build_parser() -> argparse.ArgumentParser:
               "产物落盘持久,由质检平台的 /review 路由提供访问,服务重启不丢。")
     rp.add_argument("--input", required=True,
                     help="数据集目录(LeRobot v2/v3;RRD 本版本未开放)")
-    rp.add_argument("--output", required=True,
-                    help="产出目录(建议持久盘,如 /mnt/tos/review/<名字>)")
+    rp.add_argument("--output", default=None,
+                    help="静态站产出目录(建议持久盘,如 /mnt/tos/review/<名字>);"
+                         "与 --into-delivery 二选一")
+    rp.add_argument("--into-delivery", default=None, metavar="交付目录",
+                    help="逐条片段进交付批次(本地路径或 tos:// 都行,写进最近一次"
+                         "跑批的 review_clips/;质检平台轨迹页直接用)。与 --output "
+                         "二选一")
+    rp.add_argument("--delivery-region", default=None, metavar="地区",
+                    help="--into-delivery 是 tos:// 时交付桶的地区(如 cn-beijing)")
     rp.add_argument("--episodes", default=None, metavar="表达式",
                     help="只做指定 episode(同 run:34,56 或 10-20,可混用);缺省全量")
     rp.add_argument("--max-episodes", type=int, default=None, help="只做前 N 条")
@@ -755,8 +762,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         args = build_parser().parse_args(_argv)
     if args.command == "review-page":
-        from .export.review_page import build_review_page
+        from .export.review_page import build_delivery_clips, build_review_page
         from .ingest.rrd_reader import cleanup_video_cache, is_rrd_dataset
+        if bool(args.output) == bool(args.into_delivery):
+            print("[输入错误] --output(静态审片站)与 --into-delivery(片段进交付)"
+                  "二选一,必须且只能给一个", file=sys.stderr)
+            return 2
         eps = _parse_episodes(args.episodes)
         # 输入格式嗅探(P5,2026-08-10):与 run 同一套判据。审片站只要
         # episode_id/标注/视频指针三样,RRD 走**轻量元数据**读法就够——它不做
@@ -778,7 +789,6 @@ def main(argv: list[str] | None = None) -> int:
         if args.max_episodes:
             rows = rows[: args.max_episodes]
         title = args.title or os.path.basename(os.path.normpath(args.input))
-        print(f"[review-page] {len(rows)} 条 → {args.output}(已有片段跳过,幂等)", flush=True)
         done = [0]
 
         def _tick():
@@ -786,6 +796,21 @@ def main(argv: list[str] | None = None) -> int:
             if done[0] % 10 == 0 or done[0] == len(rows):
                 print(f"[review-page] {done[0]}/{len(rows)}", flush=True)
 
+        if args.into_delivery:
+            # 片段进交付批次(2026-08-28 去挂载依赖):落点跟着交付走,桶交付
+            # 逐条上传即删本地,轨迹页按索引现签播放
+            print(f"[review-page] {len(rows)} 条逐条片段 → 交付 {args.into_delivery}"
+                  f"(已有的跳过,幂等)", flush=True)
+            try:
+                n, where = build_delivery_clips(rows, args.into_delivery,
+                                                region=args.delivery_region,
+                                                on_progress=_tick)
+            finally:
+                cleanup_video_cache(args.input)
+            print(f"[review-page] 完成:新编码 {n} 段 → {where}/review_clips",
+                  flush=True)
+            return 0
+        print(f"[review-page] {len(rows)} 条 → {args.output}(已有片段跳过,幂等)", flush=True)
         try:
             n = build_review_page(rows, args.output, title=title, on_progress=_tick,
                                   source_dataset=args.input)

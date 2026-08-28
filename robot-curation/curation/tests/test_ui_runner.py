@@ -1528,26 +1528,28 @@ def test_clips_prompt_keeps_the_format_explanation_for_a_single_dataset():
 def test_multi_dataset_jobs_chain_clips_only_for_the_ones_that_need_them():
     """答"一起生成"就给**每个需要的**数据集串上切片,不需要的一个字不加。
 
-    片段站按数据集名建目录:站点认领看的是 site.json 里的源数据集路径
-    (manifest.review_clip_paths),按数据集名建的话同一份数据换个交付还能直接复用。
+    片段进各自子交付的批次目录(--into-delivery):落点跟着交付走,
+    与实例配没配审片站目录无关(2026-08-28 去挂载依赖)。
     """
     jobs = runner.build_dataset_jobs(
         "/data", "/deliv", ["droid", "bridge", "so101"], "0814-batch",
-        clips_root="/review", clips_for=["droid", "so101"], lite=True)
+        clips_for=["droid", "so101"], lite=True)
     assert [len(j["steps"]) for j in jobs] == [2, 1, 2]
     clip = jobs[0]["steps"][1]
-    assert "review-page" in clip and "/data/droid" in clip and "/review/droid" in clip
-    assert "/review/so101" in jobs[2]["steps"][1]
+    assert "review-page" in clip and "/data/droid" in clip
+    assert "--into-delivery" in clip and "/deliv/0814-batch/droid" in clip
+    assert "/deliv/0814-batch/so101" in jobs[2]["steps"][1]
 
 
-def test_multi_dataset_clips_need_a_review_dir():
-    """没配片段目录就别假装能切:说清楚,不要拼出一个 None 路径去跑。"""
-    with pytest.raises(ValueError):
-        runner.build_dataset_jobs("/data", "/deliv", ["droid"], "out",
-                                  clips_for=["droid"])
-
-
-# ───────── 归档写不下去不许拖垮界面(2026-08-19,issue #57)─────────
+def test_multi_dataset_clips_chain_without_review_dir():
+    """切片落点=交付批次自身(2026-08-28):不再依赖实例的片段目录;
+    直连交付(tos:// 输出)把地区一并带给切片步。"""
+    jobs = runner.build_dataset_jobs(
+        "tos://b/datasets", "tos://b/deliv", ["droid"], "n",
+        clips_for=["droid"], output_region="cn-beijing")
+    clip = jobs[0]["steps"][1]
+    assert "--into-delivery" in clip and "tos://b/deliv/n/droid" in clip
+    assert "--delivery-region" in clip and "cn-beijing" in clip
 
 def test_run_state_goes_through_the_shared_atomic_publish_channel(tmp_path,
                                                                   monkeypatch):
@@ -1720,3 +1722,9 @@ def test_latest_run_delivery_reads_newest_successful_run(tmp_path):
                    "output": "tos://b/deliveries/old", "region": "cn-beijing"}
     _mk("20260828-000004-run", "run", "tos://c/deliveries/new")
     assert runner.latest_run_delivery(str(rr))["output"] == "tos://c/deliveries/new"
+
+
+def test_mirror_skips_batch_clips_dir():
+    """轻镜像绝不下载逐条片段(大):review_clips/ 在跳过表里,
+    索引(details/ 下的小 json)不受影响照常镜像。"""
+    assert "review_clips/" in runner.MIRROR_SKIP_DIRS
