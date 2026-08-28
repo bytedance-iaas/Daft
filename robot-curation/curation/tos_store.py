@@ -91,6 +91,27 @@ def clear_anonymous_buckets() -> None:
     _ANON_BUCKETS.clear()
 
 
+#: 桶 → 所在地区。签名端(dsfs 全局单例)离"人说了地区"的参数最远,拿默认地区
+#: 给异地桶签名 = URL 指向不存在的坐标(2026-08-28 用户实见:上海交付桶,
+#: 轨迹页视频全黑)。凡是 (桶, 地区) 成对出现的调用点都会登记进来。
+_BUCKET_REGIONS: dict = {}
+
+
+def register_bucket_region(bucket: str, region: str | None) -> None:
+    """登记一个桶所在的地区(空地区 = 不登记,不覆盖已知值)。"""
+    b, r = str(bucket or "").strip(), str(region or "").strip()
+    if b and r:
+        _BUCKET_REGIONS[b] = r
+
+
+def bucket_region(bucket: str) -> str | None:
+    return _BUCKET_REGIONS.get(str(bucket or "").strip())
+
+
+def clear_bucket_regions() -> None:
+    _BUCKET_REGIONS.clear()
+
+
 class TosUrlError(ValueError):
     """tos:// URL 写法不合法(桶名/前缀问题)。"""
 
@@ -440,11 +461,16 @@ def make_store(region: str | None = None, client=None, *,
 def make_store_for(bucket: str, region: str | None = None, client=None) -> TosStore:
     """按桶挑客户端:登记为匿名的桶 → 不签名(地区优先用登记值);其余 → 部署凭证。
     所有"已知桶名"的调用点都该走这里,别直接 make_store —— 公共桶用签名客户端
-    会被 AccessDenied,报错还长得像"密钥没权限",极其误导。"""
+    会被 AccessDenied,报错还长得像"密钥没权限",极其误导。
+
+    地区:调用方明确给了就用(并顺手登记给这个桶,后来的无参调用方受益);
+    没给按桶查登记表 —— dsfs 这类离参数最远的签名端全靠它拿对异地桶的地区。"""
     if is_anonymous_bucket(bucket):
         return make_store(anonymous_region(bucket) or region, client,
                           anonymous=True)
-    return make_store(region, client)
+    if str(region or "").strip():
+        register_bucket_region(bucket, region)
+    return make_store(region or bucket_region(bucket), client)
 
 
 # ── stage in / out ───────────────────────────────────────────────────────

@@ -296,3 +296,23 @@ def test_browser_media_source_passes_local_and_signs_remote(bucket):
     assert src.startswith("https://") and "x.mp4" in src
     assert dsfs.browser_media_source("/mnt/tos/a.mp4") == "/mnt/tos/a.mp4"
     assert client.gets == [], "视频绝不整段取回内存"
+
+
+def test_store_uses_registered_bucket_region_over_global(monkeypatch):
+    """播放/读取端按桶取登记地区:全局 configure 是北京、桶登记是上海时,
+    这个桶的客户端必须是上海的(2026-08-28 上海交付桶视频全黑的病根)。"""
+    from curation import tos_store
+    monkeypatch.setenv("TOS_ACCESS_KEY", "ak")
+    monkeypatch.setenv("TOS_SECRET_KEY", "sk")
+    monkeypatch.setattr(tos_store, "make_store",
+                        lambda region=None, client=None, anonymous=False:
+                        ("store", region))
+    tos_store.clear_bucket_regions()
+    dsfs.forget()
+    dsfs.configure("cn-beijing")
+    tos_store.register_bucket_region("sh-bkt", "cn-shanghai")
+    assert dsfs._store("sh-bkt") == ("store", "cn-shanghai")
+    assert dsfs._store("other-bkt") == ("store", "cn-beijing")
+    tos_store.clear_bucket_regions()
+    dsfs.forget()
+    dsfs.configure(None)
