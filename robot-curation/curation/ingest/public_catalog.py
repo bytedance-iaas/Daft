@@ -33,7 +33,7 @@ CONFIG_KEY = "public_datasets"
 DEFAULT_PREFIX = "dataset"
 DEFAULT_MANIFEST = "dataset_files.json"
 #: 界面上这个来源的叫法(站点配置 public_datasets.label 可改)
-DEFAULT_LABEL = "字节 HuggingFace 镜像"
+DEFAULT_LABEL = "HuggingFace 缓存桶"
 
 #: 清单 ETag 多久复查一次(HEAD 一次 0.1s,但下拉每次打开都查也没必要)
 RECHECK_S = 60.0

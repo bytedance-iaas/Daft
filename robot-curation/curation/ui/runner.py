@@ -478,6 +478,39 @@ def suggest_embodiments(root: str, name: str) -> list[dict]:
     return _tryon_embodiments(ds_root)
 
 
+#: (root,name) → {"robot_type","suggest"}。冷路径要从桶里下一段真数据算指纹
+#: (直连数据集秒级),追问对话框不该弹出来还转圈(2026-08-28 用户实见 7.5s)。
+_EMB_HINT_CACHE: dict = {}
+
+
+def embodiment_hints(root: str, name: str) -> dict:
+    """dataset_robot_type + suggest_embodiments 合一,按 (root,name) 进程内缓存。
+
+    型号是数据集的静态事实,进程存活期内不会变;算一次就够。robot_type 已登记
+    的数据集不做试穿(反正不弹框)。"""
+    key = (str(root or "").rstrip("/"), str(name))
+    hit = _EMB_HINT_CACHE.get(key)
+    if hit is None:
+        rt = dataset_robot_type(root, name)
+        sug = suggest_embodiments(root, name) if rt in ("", "unknown") else []
+        hit = _EMB_HINT_CACHE[key] = {"robot_type": rt, "suggest": sug}
+    return hit
+
+
+def prewarm_embodiment_hints(root: str, names) -> None:
+    """后台预热:下拉一选中就开算,等用户点「开始质检」时缓存已就位。
+    守护线程、只读、吞异常 —— 预热失败顶多退回点按钮时现算。"""
+    import threading
+
+    def _one(n):
+        try:
+            embodiment_hints(root, n)
+        except Exception:  # noqa: BLE001
+            pass
+    for n in list(names or []):
+        threading.Thread(target=_one, args=(n,), daemon=True).start()
+
+
 def _tryon_embodiments(ds_root: str, sample_rows: int = 800) -> list[dict]:
     """注册表试穿(纯数值):返回 [{'id','reason'}],分数 ≥0.9 的前两名。"""
     import glob as _glob

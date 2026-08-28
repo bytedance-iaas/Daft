@@ -1668,3 +1668,26 @@ def test_build_dataset_jobs_accepts_tos_roots_on_either_side():
     assert mixed[0]["steps"][0][mixed[0]["steps"][0].index("--output") + 1] == "tos://o/deliveries/out/so101"
     with pytest.raises(ValueError):
         runner.build_dataset_jobs("tos://b/datasets", "/deliv", ["../etc"], "out")
+
+
+def test_embodiment_hints_cached(tmp_path, monkeypatch):
+    """型号提示按 (root,name) 进程内缓存:第二次不再读盘/读桶(2026-08-28
+    用户实见追问框弹出转 7.5s —— 冷路径在下真数据算指纹,只该算一次,
+    且由下拉选中时的预热线程提前算)。"""
+    calls = {"n": 0}
+    real = runner.dataset_robot_type
+
+    def counting(root, name):
+        calls["n"] += 1
+        return real(root, name)
+
+    monkeypatch.setattr(runner, "dataset_robot_type", counting)
+    meta = tmp_path / "d" / "meta"
+    meta.mkdir(parents=True)
+    (meta / "info.json").write_text('{"robot_type": "franka"}', encoding="utf-8")
+    h1 = runner.embodiment_hints(str(tmp_path), "d")
+    h2 = runner.embodiment_hints(str(tmp_path), "d")
+    assert h1["robot_type"] == "franka" and h1["suggest"] == []   # 已登记不试穿
+    assert h2 is h1 and calls["n"] == 1, "第二次必须走缓存"
+    # 预热接口:守护线程跑完后缓存同样命中,不抛不阻塞
+    runner.prewarm_embodiment_hints(str(tmp_path), ["d"])

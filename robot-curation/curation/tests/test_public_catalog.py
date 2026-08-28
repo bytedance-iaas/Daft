@@ -301,8 +301,8 @@ def test_source_radio_hidden_without_config_and_visible_with(tmp_path, site):
     app2 = _build(tmp_path, site)
     box = _src_radio(app2)
     assert box.visible is True and box.value == ui_app.SRC_PRIVATE == "私有"
-    assert [c[1] for c in box.choices] == ["私有", "字节 HuggingFace 镜像"]
-    assert pc.source_label() == "字节 HuggingFace 镜像"
+    assert [c[1] for c in box.choices] == ["私有", "HuggingFace 缓存桶"]
+    assert pc.source_label() == "HuggingFace 缓存桶"
     assert tos_store.is_anonymous_bucket(BKT), "建界面时就把公共桶登记成匿名读"
     import gradio as gr
     tin = next(b for b in app2.blocks.values() if isinstance(b, gr.Textbox) and b.label == "数据集目录")
