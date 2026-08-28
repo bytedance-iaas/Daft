@@ -335,7 +335,7 @@ def build_parser() -> argparse.ArgumentParser:
               "从数据来源站拉公开数据集进本站数据集根,下完即可直接跑质检。"
               "下载先落本地暂存、逐文件校验后再顺序拷入,不直写 TOS。")
     fe.add_argument("--source", required=True, metavar="来源",
-                    help="数据来源。目前可选:ai-infra  内网 HF 镜像缓存桶"
+                    help="数据来源。目前可选:ai-infra  内网 HuggingFace 缓存桶"
                          "(经 oniond 下载,同区直连);清单可在站点配置 fetch_sources 段扩充")
     fe.add_argument("--ref", required=True, metavar="源站名",
                     help="数据集在源站上的名字(如 libero)")
@@ -359,7 +359,7 @@ def build_parser() -> argparse.ArgumentParser:
     be.add_argument("--timeout", type=float, default=5.0, help="单端点探活超时秒数")
 
     pb = _cmd("public", "列出可直接质检的公共数据集",
-              "列出可直接质检的公共数据集(站点配置 public_datasets 指的镜像桶)。")
+              "列出可直接质检的公共数据集(站点配置 public_datasets 指的 HuggingFace 缓存桶)。")
     pb.add_argument("--config", default=None,
                     help="站点配置(叠加到出厂默认;缺省读环境变量 CURATION_CONFIG)")
     pb.add_argument("--json", action="store_true", help="按 JSON 输出(给脚本用)")
@@ -453,7 +453,7 @@ def _cmd_public(config_path: str | None, *, as_json: bool = False,
         return 0
     print(public_catalog.summary_line(len(entries)))
     if not entries:
-        print("(镜像里目前没有 LeRobot 格式的数据集)")
+        print("(缓存桶里目前没有 LeRobot 格式的数据集)")
         return 0
     w = max(len(e["name"]) for e in entries)
     for e in entries:

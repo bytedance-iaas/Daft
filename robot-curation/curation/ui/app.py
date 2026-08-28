@@ -117,7 +117,7 @@ VLM_CHECKS = ("task_success", "skill_profile")
 FULL_SCAN = "完整质检"
 #: 「数据集目录」标签旁的二选一(2026-08-21 同事看图后定稿):「私有」(默认)= 填自己的桶;
 #: 选镜像 = 目录框与地区填上公共镜像桶并置灰只看不填,只剩「数据集」下拉可选;交付目录一概
-#: 不动。镜像那项的名字来自 public_datasets.label(缺省「字节 HuggingFace 镜像」);没配置不出现。
+#: 不动。缓存桶那项的名字来自 public_datasets.label(缺省「HuggingFace 缓存桶」);没配置不出现。
 SRC_PRIVATE = "私有"
 QUICK_SCAN = "快速质检"
 CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自己定义模块里查什么"
@@ -147,7 +147,16 @@ FULL_SCAN_TIP = ("全部六项检查:时间戳、运动学极限、运动质量�
                  "随后精确去重、打标与技能分布画像,导出清洗后的数据集。"
                  "耗时大头在模型调用。")
 
-#: 问号表:选项文字 → 悬停提示。加一项只改这里。
+#: 「HuggingFace 缓存桶」旁边那个问号(2026-08-28 同事+用户定稿):它是缓存不是
+#: 全量镜像站,预期要在悬停里说破——HF 官网有的这里未必有,不是 bug。
+#: 键是 source_label()(label 可配,配了别名问号跟着走),所以进不了下面的静态表,
+#: 在 presentation() 里动态并进去。
+PUBLIC_SOURCE_TIP = ("HuggingFace 热门模型和数据集的下载缓存,托管在火山引擎"
+                     "北京的 TOS 服务器上。已缓存不少常用数据集与模型,"
+                     "但不是完整的镜像站;此处只列出缓存中 LeRobot v2/v3 "
+                     "格式的数据集。")
+
+#: 问号表:选项文字 → 悬停提示。加一项只改这里(label 动态的例外见上)。
 SCAN_TIPS = {FULL_SCAN: FULL_SCAN_TIP, QUICK_SCAN: QUICK_SCAN_TIP}
 
 #: 任务面板的自动刷新(issue #57,2026-08-21):页面脚本按节奏点「刷新」按钮。
@@ -207,7 +216,11 @@ _TIP_JS = """
     if (box) box.style.display = 'none';
   }
   window.addEventListener('scroll', hide, true);
-  document.addEventListener('click', hide, true);
+  // 只认真人点击:任务面板的自动刷新是脚本模拟点「刷新」(isTrusted=false),
+  // 悬停中的浮层被它每 10s 收一次,用户以为挂了计时器(2026-08-28 实报)
+  document.addEventListener('click', function (e) {
+    if (e.isTrusted) hide();
+  }, true);
   document.addEventListener('visibilitychange', hide);
 
   var TIPS = __TIPS__;   // 选项文字 → 提示(Python 端 SCAN_TIPS 注入)
@@ -239,14 +252,19 @@ _TIP_JS = """
       span.appendChild(q);
   }
   function inject() {
-    var box = document.getElementById('qc-scope');
-    if (!box) return;
-    var labels = box.querySelectorAll('label');
-    for (var i = 0; i < labels.length; i++) {
-      var span = labels[i].querySelector('span');
-      if (!span || span.querySelector('.qc-tip')) continue;
-      var tip = TIPS[span.textContent.trim()];
-      if (tip) attach(span, tip);
+    // 两个挂点:质检范围(完整/快速/自选)与数据来源(私有/缓存桶)。
+    // 都是"选项文字命中 TIPS 表才挂",没配置的来源 radio 不渲染=自然不挂。
+    var ids = ['qc-scope', 'rn-pub'];
+    for (var k = 0; k < ids.length; k++) {
+      var box = document.getElementById(ids[k]);
+      if (!box) continue;
+      var labels = box.querySelectorAll('label');
+      for (var i = 0; i < labels.length; i++) {
+        var span = labels[i].querySelector('span');
+        if (!span || span.querySelector('.qc-tip')) continue;
+        var tip = TIPS[span.textContent.trim()];
+        if (tip) attach(span, tip);
+      }
     }
   }
   new MutationObserver(inject).observe(document.documentElement,
@@ -748,6 +766,16 @@ _ARCO_CSS = """
 /* 对话框按钮:居中、定宽(2026-08-19 用户点名)。不居中的根因:Row 默认
    flex-start,而 Button 的 min-width 让 scale=0 也铺成大宽条。 */
 #ex-ask-btns, #out-ask-btns, #in-ask-btns, #fix-ask-btns { justify-content: center !important; gap: 12px !important; }
+/* 切片/型号追问的按钮行(2026-08-28 用户截图:「返回」被挤到下一行):这两行
+   当初没进上面的名单,按钮被 gradio 的 min-width 铺成大宽条、一行装不下就 wrap。
+   三个按钮一行排齐、12px 等距、按内容定宽,禁止换行。 */
+#clips-ask-btns, #emb-ask-btns {
+  justify-content: center !important; gap: 12px !important;
+  flex-wrap: nowrap !important;
+}
+#clips-ask-btns button, #emb-ask-btns button {
+  flex: 0 0 auto !important; width: auto !important; min-width: 112px !important;
+}
 /* 「标注错了」按钮与任务问句同排:问句列可收缩换行(min-width:0),按钮
    定宽不参与压缩 —— caption 再长也只会让问句多折几行,永不与按钮重叠 */
 #tv-q-row { align-items: flex-start !important; gap: 10px !important; flex-wrap: nowrap !important; }
@@ -885,6 +913,13 @@ _ARCO_CSS = """
                 gap: 0 16px !important; min-height: 0 !important; }
 #rn-pub label { padding: 0 !important; gap: 6px !important; }
 #rn-pub label span { font-size: 13px !important; color: var(--arco-t2) !important; }
+/* 缓存桶问号(2026-08-28 用户截图两连):上面那条 ID 权重规则会把 .qc-tip 的
+   白字 11px 盖成深灰 13px("问号是黑色的"),圆点随之被撑高 1px,而 gradio 的
+   fieldset 自带 overflow:auto,1px 溢出就冒出 macOS 滚动条滑块 —— 截图里那个
+   "灰胶囊"就是它(不是 DOM 元素,elementFromPoint 摸不到)。两手都按住:
+   问号样式与 qc-scope 的对齐,fieldset 溢出改 visible。 */
+#rn-pub { overflow: visible !important; }
+#rn-pub label span.qc-tip { font-size: 11px !important; color: #fff !important; }
 /* 单选下拉的箭头是绝对定位压在 input 右端上的(见 _DROPDOWN_JS 的注释):input 文字
    要给它让出位置,窄列时末尾按省略号截,不许被箭头盖住(2026-08-21 用户实见) */
 .gradio-container .wrap .secondary-wrap input {
@@ -1244,7 +1279,12 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
         # 网关不剥前缀,理由同 _terminal_head。
         "head": (f'<link rel="icon" type="image/png" href="{root}/favicon.ico">'
                  + _TABLE_JS + _QJUMP_JS + _CURROW_JS + _DROPDOWN_JS
-                 + _TIP_JS.replace("__TIPS__", json.dumps(SCAN_TIPS, ensure_ascii=False))
+                 # 问号表:静态两项 + 数据来源一项(键=source_label(),label
+                 # 站点可配,所以只能在这儿现取,不能进模块级常量表)
+                 + _TIP_JS.replace("__TIPS__", json.dumps(
+                     {**SCAN_TIPS,
+                      public_catalog.source_label(): PUBLIC_SOURCE_TIP},
+                     ensure_ascii=False))
                  + _TASK_POLL_JS
                  + (_terminal_head(root) if terminal else "")),
         # 标签页图标:不设就是 Gradio 自带的橘色 logo(用户 2026-08-13 点名)。
@@ -2092,6 +2132,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 rn_ds.change(_ds_hint, [rn_ds, rn_batch], rn_out_hint)
                 rn_batch.change(_ds_hint, [rn_ds, rn_batch], rn_out_hint)
 
+                def _emb_prewarm(tin, ds):
+                    """数据集一选中就后台预热型号提示(读 meta + 一段真数据算
+                    指纹,直连数据集冷路径秒级)——等到点「开始质检」弹追问框
+                    时缓存已就位,对话框不再转圈(2026-08-28 用户实见 7.5s)。
+                    只读、守护线程、吞异常;深链代填也会触发 change,同样预热。"""
+                    try:
+                        _spec = runner.resolve_root_input(tin, _buckets)
+                        runner.prewarm_embodiment_hints(
+                            _spec.get("path") or _spec.get("url"),
+                            runner.picked_datasets(ds))
+                    except Exception:  # noqa: BLE001 预热失败=退回点按钮时现算
+                        pass
+
+                rn_ds.change(_emb_prewarm, [rn_tin, rn_ds], None)
+
                 def _name_err(e) -> str:
                     """交付名报错就写在「交付名」框正下方的说明位(2026-08-27
                     用户:只落任务区太远,根本注意不到)。红字见 .note-err。"""
@@ -2222,8 +2277,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 def _in_check(url, region):
                     """数据集目录填完/切地区 → 直连桶探一次可读,读不到就弹窗说原因
-                    (桶名错 / 地区错 / 没权限);挂载桶与公共镜像桶不探。"""
-                    hide = gr.update(visible=False)
+                    (桶名错 / 地区错 / 没权限);挂载桶与公共镜像桶不探。
+
+                    hide 是**空更新**不是 visible=False:这些路径上弹窗必然没开着
+                    (开着时有遮罩,字段碰不到),而 gradio 6.9 给从未挂载的隐藏
+                    容器发过 visible=False 后,下一次 visible=True 会挂载成隐藏态
+                    (型号追问框 2026-08-28 实锤的同款毒;关窗由「确定」按钮负责)。"""
+                    hide = gr.update()
                     try:
                         spec = runner.resolve_root_input(url, _buckets)
                     except ValueError:
@@ -2254,8 +2314,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
                 def _out_changed(tout, tout_rg):
                     """交付目录失焦/回车/切地区 → 真写一下探可写;写不进去立刻弹窗
-                    (→ 确定后清空)。本实例交付根(挂载直写)不探。"""
-                    hide = gr.update(visible=False)
+                    (→ 确定后清空)。本实例交付根(挂载直写)不探。
+                    hide=空更新,理由见 _in_check(未挂载容器不许发 visible=False)。"""
+                    hide = gr.update()
                     s = str(tout or "").strip()
                     if not s:
                         return hide, gr.update(), ""
@@ -2546,9 +2607,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     try:
                         _spec = runner.resolve_root_input(tin, _buckets)
                     except ValueError as e:
+                        # ⚠️ 两个模态此刻必然没开着:发 gr.update() 空更新,绝不发
+                        # visible=False —— gradio 6.9 给**从未挂载**的隐藏容器发过
+                        # 更新后,它下一次 visible=True 会挂载成隐藏态(用户实见
+                        # "第一次点没反应,得再来一遍";浏览器实验已复现+证伪)
                         return (*_tk_view(f"⚠️ {e}"), args,
-                                gr.update(visible=False), "",
-                                gr.update(visible=False), "", gr.update(),
+                                gr.update(), gr.update(),
+                                gr.update(), gr.update(), gr.update(),
                                 gr.update())
                     _root = _spec.get("path")
                     chosen = runner.picked_datasets(ds)
@@ -2576,27 +2641,30 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 raise ValueError(_bad0)
                     except ValueError as e:
                         return (*_tk_view(f"⚠️ {e}"), args,
-                                gr.update(visible=False), "",
-                                gr.update(visible=False), "", gr.update(),
+                                gr.update(), gr.update(),
+                                gr.update(), gr.update(), gr.update(),
                                 _name_err(e))
                     # 机器人型号追问(2026-08-27):在切片追问**之前**——没型号
                     # 连运动学都跑不起来,先解决要不要型号,再谈要不要切片。
                     # 多选时任一数据集没登记就问一次(型号本来就是整跑全局参数)。
                     if not str(args.get("emb") or "").strip() and not batch:
+                        # 走 embodiment_hints 缓存:下拉选中时已预热,点按钮
+                        # 不再现场下数据算指纹(2026-08-28 用户实见弹框转 7.5s)
                         unk = [c for c in chosen
-                               if runner.dataset_robot_type(_src_root, c)
-                               in ("", "unknown")]
+                               if runner.embodiment_hints(_src_root, c)
+                               ["robot_type"] in ("", "unknown")]
                         if unk:
-                            sug = runner.suggest_embodiments(_src_root, unk[0])
+                            sug = runner.embodiment_hints(
+                                _src_root, unk[0])["suggest"]
                             return (*_tk_view(""), args,
-                                    gr.update(visible=False), "",
+                                    gr.update(), gr.update(),
                                     gr.update(visible=True),
                                     runner.embodiment_ask_md("、".join(unk), sug),
                                     gr.update(value=(sug[0]["id"] if sug
                                                      else None)),
                                     _ds_hint(ds, batch))
                     return (*_clips_or_go(args),
-                            gr.update(visible=False), "", gr.update(),
+                            gr.update(), gr.update(), gr.update(),
                             _ds_hint(ds, batch))
 
                 def _clips_or_go(args):
@@ -2604,8 +2672,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     try:
                         _spec = runner.resolve_root_input(args["tin"], _buckets)
                     except ValueError as e:
+                        # 切片框没开着 → 空更新(未挂载容器不许碰,见 preflight 注释)
                         return (*_tk_view(f"⚠️ {e}"), args,
-                                gr.update(visible=False), "")
+                                gr.update(), gr.update())
                     _src_root = _spec.get("path") or _spec.get("url")
                     chosen = runner.picked_datasets(args["ds"])
                     needing = ([] if args.get("batch") else
@@ -2616,7 +2685,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             if len(chosen) == 1 else None)
                         return (*_tk_view(""), args, gr.update(visible=True),
                                 runner.clips_prompt(needing, fmt))
-                    return (*_run_go(**args), args, gr.update(visible=False), "")
+                    return (*_run_go(**args), args, gr.update(), gr.update())
 
                 def _run_after_ask(args, with_clips):
                     """答完追问:选了就把切片作为同一个任务的第二步串上去。"""
@@ -2631,7 +2700,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         if not args["emb"]:
                             return (*_tk_view("⚠️ 还没选型号——从下拉里选一个,"
                                               "或点「不指定,跳过运动学检查」"),
-                                    args, gr.update(), "",
+                                    args, gr.update(), gr.update(),
                                     gr.update(visible=True))
                     else:
                         args = dict(args, skip_kin=True)

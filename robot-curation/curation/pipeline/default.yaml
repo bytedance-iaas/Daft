@@ -313,7 +313,7 @@ public_datasets:
   region: null                    # 桶所在地区(如 cn-beijing)
   prefix: dataset                 # 数据集都在这个前缀下
   manifest: dataset_files.json    # 桶根清单的对象名
-  label: 字节 HuggingFace 镜像       # 界面「数据集目录」旁二选一里这个来源的叫法
+  label: HuggingFace 缓存桶          # 界面「数据集目录」旁二选一里这个来源的叫法
 
 # 交付数据集导出(2026-08-21 方案 1:边出边传)。v3 源的 data / 视频按大小滚动分文件,
 # 文件封口即上传(直连交付)、传完即删 —— pod 本地盘占用与数据集大小无关。

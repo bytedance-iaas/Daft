@@ -381,7 +381,14 @@ def test_scan_radio_tips_cover_full_and_quick():
     for kw in ("时间戳", "运动学", "运动质量", "视觉质量", "同步", "任务成败", "去重", "技能"):
         assert kw in full, f"完整质检提示漏了「{kw}」"
     head = ui_app.presentation()["head"]
-    assert json.dumps(ui_app.SCAN_TIPS, ensure_ascii=False) in head
+    # 注入的是合并表:静态两项 + 数据来源一项(2026-08-28,键=source_label())
+    from curation.ingest import public_catalog
+    for key, tip in {**ui_app.SCAN_TIPS,
+                     public_catalog.source_label():
+                         ui_app.PUBLIC_SOURCE_TIP}.items():
+        assert json.dumps(key, ensure_ascii=False) in head, f"问号表缺键「{key}」"
+        assert json.dumps(tip, ensure_ascii=False) in head, f"问号表缺「{key}」的文案"
+    assert "不是完整的镜像站" in ui_app.PUBLIC_SOURCE_TIP   # 同事点名的预期管理
     assert "__TIPS__" not in head and "__NAME__" not in head
 
 
@@ -788,6 +795,8 @@ def test_preflight_pops_embodiment_ask_for_unknown_robot(tmp_path, monkeypatch):
     flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
     assert "没有登记机器人型号" in flat, "该弹型号追问没弹"
     assert "'visible': True" in flat or '"visible": true' in flat.lower()
+    # 弹型号框的同一响应里,切片框(没开着)只许空更新,见 bad-name 用例的注释
+    assert "'visible': False" not in flat, "切片框没开着,不许发 visible=False"
 
 
 def test_cli_interactive_preflight(tmp_path, monkeypatch):
@@ -859,6 +868,10 @@ def test_preflight_rejects_bad_name_before_any_modal(tmp_path, monkeypatch):
     assert "⚠️" in flat and "交付名只能用" in flat, \
         "报错第一个词必须点名「交付名」(2026-08-27 用户:只说'名字'不知改哪个框)"
     assert "'visible': True" not in flat, "非法名不许弹任何模态"
+    # gradio 6.9:给从未挂载的隐藏容器发过 visible=False,它下一次 visible=True
+    # 会挂载成隐藏态(2026-08-28 用户实见"第一次点没反应") —— 没开着的模态
+    # 只许发 gr.update() 空更新
+    assert "'visible': False" not in flat, "没开着的模态不许发 visible=False"
     # 报错要贴在「交付名」框下方的说明位(红字),不能只落远处的任务区
     assert "note-err" in str(out[-1]) and "交付名" in str(out[-1]), \
         "字段下方要出现红字报错(任务区太远,用户注意不到)"
