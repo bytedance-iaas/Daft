@@ -87,10 +87,12 @@ CHECK_LABELS = {
     "motion_quality": "运动质量",
     "visual_quality": "视觉质量",
     "video_action_sync": "视频-动作同步",
+    "dedup": "精确去重",
     "task_success": "任务成败判定",
     "skill_profile": "技能画像",
-    "dedup": "精确去重",
 }
+# ↑ 表序=界面序(自选模块勾选框、质检范围问号 bullet 同源):去重排在两个
+#   VLM 功能之前(2026-08-29 用户定稿:非模型项在前,调 VLM 的两个收尾)
 
 #: 要调 VLM 的模块 =「快速质检」(--lite)跳过的那两个(run.py:lite 关
 #: task_success、vlm_ready=False 连带技能画像整段不跑,其余 6 项一步不少)。

@@ -383,22 +383,28 @@ def test_scan_radio_tips_cover_full_and_quick():
                                      "指定 episode"}
     full = ui_app.SCAN_TIPS[ui_app.FULL_SCAN]
     quick = ui_app.SCAN_TIPS[ui_app.QUICK_SCAN]
-    # 完整 = 全部模块,总数与自选模块清单一致且写进文案
-    assert f"全部 {len(_runner.CHECK_LABELS)} 个模块" in full
-    for label in _runner.CHECK_LABELS.values():
-        assert label in full, f"完整质检提示漏了「{label}」"
-    # 快速 = 全集减 VLM 那两个:非 VLM 全在,VLM 两个只出现在"跳过"从句里
-    vlm = {_runner.CHECK_LABELS[k] for k in _runner.VLM_CHECKS}
-    for label in _runner.CHECK_LABELS.values():
-        assert label in quick, f"快速质检提示该提到「{label}」(跑或跳都要说)"
-    skip_clause = quick.split("跳过")[1]
+    # 2026-08-29 用户逐条定稿:8 个「功能」逐条 bullet+白话解释;
+    # 解释表键集与模块表一一对应(两表拼装,增删模块自动跟上)
+    assert set(ui_app.CHECK_BRIEFS) == set(_runner.CHECK_LABELS)
+    assert full.startswith(f"跑全部 {len(_runner.CHECK_LABELS)} 个功能:\n")
+    for k, label in _runner.CHECK_LABELS.items():
+        vlm_mark = "(调 VLM)" if k in _runner.VLM_CHECKS else ""
+        assert f"• {label}{vlm_mark}:{ui_app.CHECK_BRIEFS[k]}" in full, \
+            f"完整质检缺「{label}」的 bullet(或 VLM 标注位置不对)"
+    # 用户点名删掉的措辞不许回潮
+    for banned in ("同一张清单", "耗时大头", "个模块", "语义去重", "补一句"):
+        assert banned not in full, f"「{banned}」已被用户删除,不许回潮"
+    # 去重排在两个 VLM 功能之前(非模型项在前,调 VLM 的收尾)
+    assert full.index("精确去重") < full.index("任务成败判定")
+    # 收尾一行:补标注是两家共用的前置,单独说一次
+    assert full.rstrip().endswith(
+        "缺标注的轨迹会先自动补标注(调 VLM),成败判定与技能画像都用它。")
+    # 快速 = 只说差集:跳过的两个点名,其余给数字
+    vlm = [_runner.CHECK_LABELS[k] for k in _runner.VLM_CHECKS]
+    assert quick.startswith(f"跳过要调 VLM 的 {len(vlm)} 个功能:")
     for label in vlm:
-        assert label in skip_clause, f"「{label}」该在跳过从句里"
-    for label in set(_runner.CHECK_LABELS.values()) - vlm:
-        assert label not in skip_clause, f"「{label}」不该被说成跳过"
-    # 两边计数自洽:跑的 + 跳的 = 自选模块总数
-    assert (f"{len(_runner.CHECK_LABELS) - len(vlm)} 个" in quick
-            and f"{len(vlm)} 个" in quick)
+        assert label in quick, f"「{label}」该被点名跳过"
+    assert f"其余 {len(_runner.CHECK_LABELS) - len(vlm)} 个照常跑" in quick
     # VLM 归属单一事实源:表里的键都真实存在
     assert set(_runner.VLM_CHECKS) <= set(_runner.CHECK_LABELS)
     head = ui_app.presentation()["head"]

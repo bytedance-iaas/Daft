@@ -134,19 +134,38 @@ OUT_NAME_HINT_ONE = ""
 # 后面照跑")挪出说明行 —— 那是任务台的进度区本来就看得见的事实。
 OUT_NAME_HINT_MANY = "多选:这个名字当**父文件夹**,每个数据集各出一份子交付"
 
-#: 「质检范围」两个问号里的话(issue #101,2026-08-29 定案):口径统一到
-#: 「自选模块」那张表(runner.CHECK_LABELS,唯一从代码生成不会说谎的清单)。
-#: 完整 = 全部 8 个;快速 = 8 减去要调 VLM 的 2 个 —— 两边一一对应、加起来
-#: 正好是自选模块的总数。文案从表生成,模块增删自动跟上,不再手写漂移。
-_VLM_LABELS = [runner.CHECK_LABELS[k] for k in runner.VLM_CHECKS]
-_FAST_LABELS = [v for k, v in runner.CHECK_LABELS.items()
-                if k not in runner.VLM_CHECKS]
-FULL_SCAN_TIP = (f"跑全部 {len(runner.CHECK_LABELS)} 个模块(与「自选模块」"
-                 f"同一张清单):{'、'.join(runner.CHECK_LABELS.values())}。"
-                 f"其中{'、'.join(_VLM_LABELS)}要调 VLM,耗时大头在此。")
-QUICK_SCAN_TIP = (f"只跑其中不需要模型的 {len(_FAST_LABELS)} 个:"
-                  f"{'、'.join(_FAST_LABELS)};跳过要调 VLM 的 "
-                  f"{len(_VLM_LABELS)} 个:{'、'.join(_VLM_LABELS)}。")
+#: 「质检范围」两个问号里的话(issue #101;2026-08-29 用户逐条定稿):完整=
+#: 8 个功能逐条 bullet+一句白话解释,快速=只说差集。文案从 CHECK_LABELS +
+#: 下面的解释表拼装,模块增删自动跟上,不再手写漂移;键集与 CHECK_LABELS
+#: 一一对应有测试钉死。解释按代码实况写(电机卡死=stuck 维;"静止"不是
+#: 独立检测项,故不写),别顺手加系统没做的承诺。
+CHECK_BRIEFS = {
+    "timestamp_check": "每帧的采集时间戳有无乱序、重复或空洞",
+    "kinematic_limits": "关节位置和速度是否超出机器人规格",
+    "motion_quality": "动作是否平滑,有无抖动、速度尖刺、电机卡死不响应",
+    "visual_quality": "画面是否模糊、曝光异常,有无全黑全白、冻结的坏帧",
+    "video_action_sync": "画面里的运动与关节速度曲线在时间上是否错位",
+    "dedup": "按字节精确比对,只剔除完全一致的重复数据",
+    "task_success": "判断任务是否完成",
+    "skill_profile": "归纳整个数据集的技能分布",
+}
+#: 补标注是成败判定与技能画像共用的前置(漏斗前给无标注轨迹补 caption 当
+#: 意图,画像归类兜底也吃它)⇒ 不塞进任一条 bullet,收尾单独一行说清
+_CAPTION_NOTE = "缺标注的轨迹会先自动补标注(调 VLM),成败判定与技能画像都用它。"
+
+
+def _check_bullet(key: str) -> str:
+    vlm = "(调 VLM)" if key in runner.VLM_CHECKS else ""
+    return f"• {runner.CHECK_LABELS[key]}{vlm}:{CHECK_BRIEFS[key]}"
+
+
+FULL_SCAN_TIP = (f"跑全部 {len(runner.CHECK_LABELS)} 个功能:\n"
+                 + "\n".join(_check_bullet(k) for k in runner.CHECK_LABELS)
+                 + "\n" + _CAPTION_NOTE)
+QUICK_SCAN_TIP = (f"跳过要调 VLM 的 {len(runner.VLM_CHECKS)} 个功能:"
+                  f"{'、'.join(runner.CHECK_LABELS[k] for k in runner.VLM_CHECKS)};\n"
+                  f"其余 {len(runner.CHECK_LABELS) - len(runner.VLM_CHECKS)} "
+                  "个照常跑。")
 
 #: 「指定 episode」旁边那个问号(issue #108):与「只跑前 N 条」的组合规则
 #: 早已实现(CLI:先按表达式选出,再截断前 N 条),只是界面没说 —— 说在这。
@@ -763,6 +782,7 @@ _ARCO_CSS = """
   border: 1px solid var(--arco-border); font-size: 13px; line-height: 1.7;
   text-align: left; padding: 10px 12px; border-radius: 6px; z-index: 9999;
   pointer-events: none; box-shadow: 0 4px 10px rgba(29,33,41,.10);
+  white-space: pre-line;   /* bullet 文案带 \n(issue #101 定稿),按行渲染 */
 }
 /* 真模态对话框(2026-08-19 用户点名:确认框必须"跳出来",不能是平铺框)。
    Gradio 没有原生模态框,但模态不需要它原生支持 —— fixed 居中 + 一层遮罩即可,
