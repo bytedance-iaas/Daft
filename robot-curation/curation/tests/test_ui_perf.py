@@ -864,6 +864,15 @@ def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
     app = build_app(str(deliv), data_root=str(tmp_path / "data"))
     fns = [f.fn for f in app.fns.values()
            if getattr(f.fn, "__name__", "") == "_run_preflight"]
+    # 弹窗臂不许重算任务区:0.5s 里 0.516s 是挂载盘 listdir(2026-08-28
+    # profile),直接决定对话框"几秒才出来"还是"立即出来"(用户点名)
+    from curation.ui import runner as _runner
+
+    def _boom(*a, **kw):
+        raise AssertionError("弹窗臂碰了任务区重算(list_runs/active_run)")
+
+    monkeypatch.setattr(_runner, "active_run", _boom)
+    monkeypatch.setattr(_runner, "list_runs", _boom)
     import json as _j
     for bad, expect in [("test=_0827", "交付名只能用"),
                         ("", "交付名不能为空")]:
@@ -873,7 +882,9 @@ def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
         flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
         # 报错第一个词必须点名「交付名」(2026-08-27:只说'名字'不知改哪个框)
         assert expect in str(out[-1]), f"模态文案要说清病因:{expect}"
-        assert str(out[-1]).startswith("**这个交付名还用不了**")
+        # 2026-08-28 用户定稿:标题「交付名不可用」,不带"改好再点"的尾巴
+        assert str(out[-1]).startswith("**交付名不可用**")
+        assert "再点「开始质检」" not in str(out[-1])
         # 唯一亮起的模态 = out-ask(倒数第二槽);切片/型号模态不许开
         assert flat.count("'visible': True") == 1, "只许亮 out-ask 一扇窗"
         assert "'visible': True" in str(out[-2])
@@ -1028,6 +1039,12 @@ def test_preflight_gate_opens_dialog_and_never_clears_path(tmp_path, monkeypatch
     monkeypatch.setattr(runner, "writable_verdict",
                         lambda url, region=None, **kw:
                         (False, "桶 b 不在 cn-beijing,它在 cn-shanghai —— 把地区改成 cn-shanghai 再试"))
+    # 弹窗臂不许重算任务区(挂载盘 listdir 0.5s,见 bad-name 用例)
+    def _boom(*a, **kw):
+        raise AssertionError("弹窗臂碰了任务区重算(list_runs/active_run)")
+
+    monkeypatch.setattr(runner, "active_run", _boom)
+    monkeypatch.setattr(runner, "list_runs", _boom)
     fn = _fn_by_name(app, "_run_preflight")
     out = fn(str(tmp_path / "data"), "", "tos://sh-bkt/deliveries", "cn-beijing",
              ["d1"], "n1", "", [], "", None, "", None,

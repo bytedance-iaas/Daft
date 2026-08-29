@@ -1847,6 +1847,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                            extra=_done_run_note(st)),
                         logtxt, msg, _run_btn(st), _stop_btn(st))
 
+            def _tk_keep():
+                """任务区五个槽全发空更新。弹对话框的臂用这个,不用 _tk_view("")
+                ——后者要在交付根上重列跑批目录+读日志尾(挂载盘上实测 0.5s+,
+                2026-08-28 profile:一次点击 0.549s 里 0.516s 是 listdir),而
+                对话框根本不改任务区;这 0.5s 直接决定弹窗"几秒才出来"还是
+                "立即出来"(用户点名)。"""
+                return tuple(gr.update() for _ in range(5))
+
             def _tk_start(command, label, then_argv=None, *, jobs=None,
                           run_id=None, **params):
                 """统一的发起入口:拼 argv → 起任务 → 立刻回显状态。
@@ -2444,7 +2452,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     输入的交付目录——旧版点确定连路径带说明一起抹,是设计事故。"""
                     return gr.update(visible=False)
 
-                out_ask_ok.click(_out_ask_close, None, out_ask)
+                out_ask_ok.click(_out_ask_close, None, out_ask,
+                                 show_progress="hidden")
 
                 def _pub_changed(src):
                     """来源二选一 → (目录框, 地区, 数据集下拉, 根说明, 数据集说明)。
@@ -2733,12 +2742,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 时人在等"发生点什么",页面某处安静变一行字接不住这个
                         # 注意力)。复用「交付目录还用不了」那扇窗:单「确定」
                         # 关窗即止,所有输入原样保留;小红字退役
-                        return (*_tk_view(""), args,
+                        return (*_tk_keep(), args,
                                 gr.update(), gr.update(),
                                 gr.update(), gr.update(), gr.update(),
                                 gr.update(), gr.update(visible=True),
-                                f"**这个交付名还用不了**\n\n{e}\n\n"
-                                "改好交付名后,再点「开始质检」。")
+                                f"**交付名不可用**\n\n{e}")
                     # 开跑硬闸(2026-08-28 用户定版):填表阶段桶/地区问题只在
                     # 字段下红字提醒;点了「开始质检」才用模态拦一道。模态只有
                     # 「确定」,关窗即止,**绝不清空**用户输入的路径。
@@ -2759,7 +2767,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     except ValueError as e:
                         _gate_why = str(e)
                     if _gate_why:
-                        return (*_tk_view(""), args,
+                        return (*_tk_keep(), args,
                                 gr.update(), gr.update(), gr.update(),
                                 gr.update(), gr.update(), gr.update(),
                                 gr.update(visible=True),
@@ -2777,7 +2785,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         if unk:
                             sug = runner.embodiment_hints(
                                 _src_root, unk[0])["suggest"]
-                            return (*_tk_view(""), args,
+                            return (*_tk_keep(), args,
                                     gr.update(), gr.update(),
                                     gr.update(visible=True),
                                     runner.embodiment_ask_md("、".join(unk), sug),
@@ -2807,7 +2815,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         fmt = (runner.dataset_format(
                             runner.under(_src_root, chosen[0]))
                             if len(chosen) == 1 else None)
-                        return (*_tk_view(""), args, gr.update(visible=True),
+                        return (*_tk_keep(), args, gr.update(visible=True),
                                 runner.clips_prompt(needing, fmt))
                     return (*_run_go(**args), args, gr.update(), gr.update())
 
@@ -2833,12 +2841,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _ask_outs = (_tk_outs + [rn_args, rn_ask, rn_ask_md,
                                          rn_emb_ask, rn_emb_ask_md, rn_emb_pick,
                                          rn_out_hint, out_ask, out_ask_md])
+                # show_progress="hidden":默认遮罩会把任务区和弹窗糊上一层灰
+                # "loading"(2026-08-28 用户:对话框要 load 几秒才清晰)——这条
+                # 链的反馈要么是对话框要么是任务区文字,遮罩只添堵
                 rn_go.click(_run_preflight,
                             [rn_tin, rn_tin_rg, rn_tout, rn_tout_rg, rn_ds,
                              rn_out, rn_mode, rn_pick, rn_how,
                              rn_max, rn_eps, rn_backend, rn_cfg, rn_emb, rn_plots,
                              rn_c_ep, rn_c_fr, rn_c_cap, rn_set, rn_batch, rn_ro],
-                            _ask_outs)
+                            _ask_outs, show_progress="hidden")
                 rn_ask_cancel.click(
                     lambda: (gr.update(visible=False), ""),
                     None, [rn_ask, rn_ask_md])
@@ -4153,9 +4164,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         or episode_task_text(m, it["id"])[0])
                 return gr.update(visible=True), gr.update(value=text)
 
+            # show_progress="hidden":开/关对话框不糊灰罩(2026-08-28 用户:
+            # 对话框要 load 几秒;这窗的真开销是裁决 CSV 现读,那是新鲜度
+            # 纪律省不得,灰罩是纯添堵)
             mg_fixlab.click(_fixlab_open, [state, mg_filter, mg_idx],
-                            [fix_ask, fix_text])
-            fix_cancel.click(lambda: gr.update(visible=False), None, fix_ask)
+                            [fix_ask, fix_text], show_progress="hidden")
+            fix_cancel.click(lambda: gr.update(visible=False), None, fix_ask,
+                             show_progress="hidden")
 
             _dec_ins = [state, mg_filter, mg_status, mg_idx, au_newlab, au_note]
             au_adopt.click(lambda m, f, st, i, nl, nt:
@@ -4331,7 +4346,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         f"人工裁决结果会**改写这份交付的内容**({target}),要继续吗?",
                         "", *fresh)
 
-            ex_go.click(_ex_hold, state, [ex_ask, ex_ask_md, ex_msg, *_ex_outs])
+            # show_progress="hidden" 同上;active_run 忙碌检查是语义必需,保留
+            ex_go.click(_ex_hold, state, [ex_ask, ex_ask_md, ex_msg, *_ex_outs],
+                        show_progress="hidden")
 
             def _ex_run(m, src_name, ds, backend, cfg, retry):
                 """「确定」→ 起 rejudge 任务。
@@ -4399,7 +4416,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             ex_yes.click(_ex_run,
                          [state, ex_src_dd, ex_ds, ex_backend, ex_cfg, ex_retry],
                          [topnav, ex_ask, ex_msg, *_tk_outs])
-            ex_no.click(lambda: gr.update(visible=False), None, ex_ask)
+            ex_no.click(lambda: gr.update(visible=False), None, ex_ask,
+                        show_progress="hidden")
 
             def _ex_btn_state():
                 """「执行裁决」按钮的可点性(issue #55 同族):有任务在跑就置灰。
