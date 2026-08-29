@@ -841,9 +841,12 @@ def test_cli_interactive_preflight(tmp_path, monkeypatch):
     assert args2.skip == "kinematic_limits" and args2.embodiment_id is None
 
 
-def test_preflight_rejects_bad_name_before_any_modal(tmp_path, monkeypatch):
-    """交付名非法 → 弹任何模态之前拦下(2026-08-27 用户实见:名字错却先弹
-    切片框,答完才报错,人被锁在框里);两个模态都有「取消」退路。"""
+def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
+                                                             monkeypatch):
+    """交付名非法/为空 → 开跑闸模态,不是小红字(2026-08-28 用户 manager 实见:
+    点了「开始质检」没看见字段下的红字)。仍要在切片/型号模态**之前**拦下
+    (2026-08-27:名字错却先弹切片框,人被锁在框里),所以唯一亮起的模态
+    必须是 out-ask 那扇;单「确定」关窗即止,输入不清。"""
     import json as _json
 
     pytest.importorskip("gradio")
@@ -861,22 +864,25 @@ def test_preflight_rejects_bad_name_before_any_modal(tmp_path, monkeypatch):
     app = build_app(str(deliv), data_root=str(tmp_path / "data"))
     fns = [f.fn for f in app.fns.values()
            if getattr(f.fn, "__name__", "") == "_run_preflight"]
-    out = fns[0](str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
-                 "test=_0827", "", [], "", None, "", None,
-                 "", "", None, None, None, None, "", False, False)
     import json as _j
-    flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
-    assert "⚠️" in flat and "交付名只能用" in flat, \
-        "报错第一个词必须点名「交付名」(2026-08-27 用户:只说'名字'不知改哪个框)"
-    assert "'visible': True" not in flat, "非法名不许弹任何模态"
-    # gradio 6.9:给从未挂载的隐藏容器发过 visible=False,它下一次 visible=True
-    # 会挂载成隐藏态(2026-08-28 用户实见"第一次点没反应") —— 没开着的模态
-    # 只许发 gr.update() 空更新
-    assert "'visible': False" not in flat, "没开着的模态不许发 visible=False"
-    # 报错要贴在「交付名」框下方的说明位(红字),不能只落远处的任务区
-    # 2026-08-28 起输出尾部多了开跑闸的 out-ask 两槽,交付名红字位在倒数第三
-    assert "note-err" in str(out[-3]) and "交付名" in str(out[-3]), \
-        "字段下方要出现红字报错(任务区太远,用户注意不到)"
+    for bad, expect in [("test=_0827", "交付名只能用"),
+                        ("", "交付名不能为空")]:
+        out = fns[0](str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
+                     bad, "", [], "", None, "", None,
+                     "", "", None, None, None, None, "", False, False)
+        flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
+        # 报错第一个词必须点名「交付名」(2026-08-27:只说'名字'不知改哪个框)
+        assert expect in str(out[-1]), f"模态文案要说清病因:{expect}"
+        assert str(out[-1]).startswith("**这个交付名还用不了**")
+        # 唯一亮起的模态 = out-ask(倒数第二槽);切片/型号模态不许开
+        assert flat.count("'visible': True") == 1, "只许亮 out-ask 一扇窗"
+        assert "'visible': True" in str(out[-2])
+        # gradio 6.9:给从未挂载的隐藏容器发过 visible=False,它下一次
+        # visible=True 会挂载成隐藏态 —— 没开着的模态只许发 gr.update()
+        assert "'visible': False" not in flat, "没开着的模态不许发 visible=False"
+        # 小红字退役:交付名说明位(倒数第三槽)保持空更新,不写 note-err
+        assert "note-err" not in flat, "交付名报错不再走小红字"
+        # 模态之外不再重复报错:任务区安静(错误只在窗里说一遍)
     # 取消按钮存在
     labels = [b.value for b in app.blocks.values() if isinstance(b, gr.Button)]
     assert labels.count("返回") >= 2, "两个模态都要有返回退路"

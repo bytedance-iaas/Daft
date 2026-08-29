@@ -2183,14 +2183,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return (f'<span class="note-err">⚠️ '
                             f'{_html.escape(str(why))}</span>')
 
-                def _name_err(e) -> str:
-                    """交付名报错就写在「交付名」框正下方的说明位(2026-08-27
-                    用户:只落任务区太远,根本注意不到)。红字见 .note-err。"""
-                    return (f'<span class="note-err">⚠️ '
-                            f'{_html.escape(str(e))}</span>')
-
-                # 一改名字就把字段下的红字收走(改了=在改正,旧错误别赖着;
-                # 对不对等下次点「开始质检」再判)
+                # (2026-08-28 起交付名报错走开跑闸模态,不再往这个说明位写
+                # 红字;改名后照常按数据集选择刷新说明文案)
                 rn_out.change(_ds_hint, [rn_ds, rn_batch], rn_out_hint)
 
                 def _src_datasets(src, multi_pick: bool):
@@ -2701,9 +2695,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     _src_root = _root or _spec.get("url")
                     # 交付名先行校验(2026-08-27 用户实见:名字非法却先弹了
                     # 切片框,答完才报错,人被锁在对话框里)——非法/占用在
-                    # 弹任何模态之前拦下,错误落任务区不落 toast,**同时**红字
-                    # 写在「交付名」框正下方(任务区太远,用户注意不到)。判据
-                    # 与 _run_go 同源:本实例交付根按占用校验,其余按名字合法性
+                    # 弹切片/型号模态之前拦下。判据与 _run_go 同源:本实例
+                    # 交付根按占用校验,其余按名字合法性
                     try:
                         if not batch:
                             runner.safe_name(name or "", what="交付名")
@@ -2717,10 +2710,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             if _bad0:
                                 raise ValueError(_bad0)
                     except ValueError as e:
-                        return (*_tk_view(f"⚠️ {e}"), args,
+                        # 交付名问题也走开跑闸的模态(2026-08-28 用户 manager
+                        # 实见:点了「开始质检」却没看见字段下的小红字——点按钮
+                        # 时人在等"发生点什么",页面某处安静变一行字接不住这个
+                        # 注意力)。复用「交付目录还用不了」那扇窗:单「确定」
+                        # 关窗即止,所有输入原样保留;小红字退役
+                        return (*_tk_view(""), args,
                                 gr.update(), gr.update(),
                                 gr.update(), gr.update(), gr.update(),
-                                _name_err(e), gr.update(), gr.update())
+                                gr.update(), gr.update(visible=True),
+                                f"**这个交付名还用不了**\n\n{e}\n\n"
+                                "改好交付名后,再点「开始质检」。")
                     # 开跑硬闸(2026-08-28 用户定版):填表阶段桶/地区问题只在
                     # 字段下红字提醒;点了「开始质检」才用模态拦一道。模态只有
                     # 「确定」,关窗即止,**绝不清空**用户输入的路径。
