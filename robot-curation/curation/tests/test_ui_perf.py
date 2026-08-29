@@ -874,16 +874,21 @@ def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
     monkeypatch.setattr(_runner, "active_run", _boom)
     monkeypatch.setattr(_runner, "list_runs", _boom)
     import json as _j
-    for bad, expect in [("test=_0827", "交付名只能用"),
-                        ("", "交付名不能为空")]:
-        out = fns[0](str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
+    for ds_pick, bad, expect in [
+            (["mystery"], "test=_0827", "交付名只能用"),
+            (["mystery"], "", "交付名不能为空"),
+            # 没选数据集同款弹窗(2026-08-29 用户:灰字与弹窗风格不符)
+            ([], "goodname", "还没选数据集")]:
+        out = fns[0](str(tmp_path / "data"), "", str(deliv), "", ds_pick,
                      bad, "", [], "", None, "", None,
                      "", "", None, None, None, None, "", False, False)
         flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
         # 报错第一个词必须点名「交付名」(2026-08-27:只说'名字'不知改哪个框)
         assert expect in str(out[-1]), f"模态文案要说清病因:{expect}"
-        # 2026-08-28 用户定稿:标题「交付名不可用」,不带"改好再点"的尾巴
-        assert str(out[-1]).startswith("**交付名不可用**")
+        # 2026-08-28 用户定稿:交付名病例标题「交付名不可用」,不带"改好再点"
+        # 的尾巴;没选数据集病例标题即病因本身
+        title = "**交付名不可用**" if ds_pick else "**还没选数据集**"
+        assert str(out[-1]).startswith(title)
         assert "再点「开始质检」" not in str(out[-1])
         # 唯一亮起的模态 = out-ask(倒数第二槽);切片/型号模态不许开
         assert flat.count("'visible': True") == 1, "只许亮 out-ask 一扇窗"
@@ -1015,7 +1020,13 @@ def test_out_changed_mismatch_is_red_note_not_dialog(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "writable_verdict",
                         lambda url, region=None, **kw: (True, ""))
     note2, red2 = fn("tos://sh-bkt/deliveries", "cn-shanghai")
-    assert red2 == "" and "TOS 直连" in note2
+    # 2026-08-29 用户:「TOS 直连:跑完上传到…」成功行是废话,通过时整行沉默
+    assert red2 == "" and note2 == ""
+    # 可写但带告诫 → 只说告诫
+    monkeypatch.setattr(runner, "writable_verdict",
+                        lambda url, region=None, **kw: (True, "桶只读兜底"))
+    note3, red3 = fn("tos://sh-bkt/deliveries", "cn-shanghai")
+    assert red3 == "" and note3 == "⚠️ 桶只读兜底"
     # 空值 = 编辑瞬态:两头都清,不吓人
     assert fn("", "") == ("", "")
 

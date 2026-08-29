@@ -2301,8 +2301,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                     "meta/info.json 的子目录);该目录下是:"
                                     + "、".join(lst["junk"]) + "…")
                         else:
-                            note = ("该前缀下没有列出任何数据集(前缀打错?"
-                                    "或桶里确实是空的)")
+                            # 空桶不再灰字唠叨(2026-08-29 用户:没必要显示);
+                            # 真错误(桶/地区不对)另有红字与开跑闸兜着
+                            note = ""
                     except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
                         # 404 对 TOS 来说"桶名错"和"地区错"一个样(2026-08-21 真机)
                         # → 实探一圈把话说准;红字贴在地区下拉正下方,不弹窗、
@@ -2408,8 +2409,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         spec["url"], str(tout_rg or "").strip() or None,
                         locate=runner.region_of_bucket)
                     if ok:
-                        return (f"TOS 直连:跑完上传到 {spec['url']}"
-                                + (f"(⚠️ {why})" if why else ""), "")
+                        # 「TOS 直连:跑完上传到…」成功行删(2026-08-29 用户:
+                        # 没必要显示);可写但带告诫的才说话
+                        return (f"⚠️ {why}" if why else ""), ""
                     return "", _rg_red(why)
 
                 _oc_out = [rn_tout_note, rn_tout_rg_err]
@@ -2720,6 +2722,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 直连输入也问(2026-08-21 读端会说 tos://):切片站读桶里的
                     # 数据集与读挂载一样,不必再等"本地缓存路径"
                     _src_root = _root or _spec.get("url")
+                    # 没选数据集 → 同一扇开跑闸模态(2026-08-29 用户:之前只在
+                    # 任务区灰字报错,与其它硬闸的弹窗风格不符)。判据与 _run_go
+                    # 的第二道防线同源(dataset_selection_error:勾了「跑根目录
+                    # 下的全部数据集」时下拉本来就被忽略,不拦),文案按模态定式
+                    if runner.dataset_selection_error(ds, bool(batch)):
+                        return (*_tk_keep(), args,
+                                gr.update(), gr.update(),
+                                gr.update(), gr.update(), gr.update(),
+                                gr.update(), gr.update(visible=True),
+                                "**还没选数据集**\n\n在「数据集」下拉里选一个,"
+                                "或勾选「跑根目录下的全部数据集」。")
                     # 交付名先行校验(2026-08-27 用户实见:名字非法却先弹了
                     # 切片框,答完才报错,人被锁在对话框里)——非法/占用在
                     # 弹切片/型号模态之前拦下。判据与 _run_go 同源:本实例
@@ -3050,8 +3063,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 choices = (_lst["names"]
                                            if _lst["kind"] == "list"
                                            else [_lst["name"]])
-                                ds_note = ("" if choices else
-                                           "该前缀下没有列出任何数据集")
+                                ds_note = ""   # 空桶不唠叨(2026-08-29,同上)
                             except Exception as e:  # noqa: BLE001
                                 choices = []
                                 ds_note = (f"⚠️ 列不出该前缀下的数据集:"
