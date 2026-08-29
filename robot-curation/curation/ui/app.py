@@ -134,18 +134,43 @@ OUT_NAME_HINT_ONE = ""
 # 后面照跑")挪出说明行 —— 那是任务台的进度区本来就看得见的事实。
 OUT_NAME_HINT_MANY = "多选:这个名字当**父文件夹**,每个数据集各出一份子交付"
 
-#: 「快速质检」旁边那个问号里的话。**按实际跑什么写**:--lite 只是跳过要 VLM 的
-#: 三步(任务成败判定 / 打标 / 技能画像),其余检查一步不少。
-QUICK_SCAN_TIP = ("跑不需要模型的那几项:视觉质量、运动质量、运动学极限、"
-                  "视频-动作同步、时间戳与精确去重。"
-                  "不做任务成败判定、打标与技能分布画像 —— 这三项要调 VLM。")
+#: 「质检范围」两个问号里的话(issue #101;2026-08-29 用户逐条定稿):完整=
+#: 8 个功能逐条 bullet+一句白话解释,快速=只说差集。文案从 CHECK_LABELS +
+#: 下面的解释表拼装,模块增删自动跟上,不再手写漂移;键集与 CHECK_LABELS
+#: 一一对应有测试钉死。解释按代码实况写(电机卡死=stuck 维;"静止"不是
+#: 独立检测项,故不写),别顺手加系统没做的承诺。
+CHECK_BRIEFS = {
+    "timestamp_check": "每帧的采集时间戳有无乱序、重复或空洞",
+    "kinematic_limits": "关节位置和速度是否超出机器人规格",
+    "motion_quality": "动作是否平滑,有无抖动、速度尖刺、电机卡死不响应",
+    "visual_quality": "画面是否模糊、曝光异常,有无全黑全白、冻结的坏帧",
+    "video_action_sync": "画面里的运动与关节速度曲线在时间上是否错位",
+    "dedup": "按字节精确比对,只剔除完全一致的重复数据",
+    "task_success": "判断任务是否完成",
+    "skill_profile": "归纳整个数据集的技能分布",
+}
+#: 补标注是成败判定与技能画像共用的前置(漏斗前给无标注轨迹补 caption 当
+#: 意图,画像归类兜底也吃它)⇒ 不塞进任一条 bullet,收尾单独一行说清
+_CAPTION_NOTE = "缺标注的轨迹会先自动补标注(调 VLM),成败判定与技能画像都用它。"
 
-#: 「完整质检」旁边那个问号(2026-08-20 用户要:和快速质检一样能悬停看包含什么)。
-#: 同样按实际流水线写,顺序就是漏斗顺序。
-FULL_SCAN_TIP = ("全部六项检查:时间戳、运动学极限、运动质量、视觉质量、"
-                 "视频-动作同步,以及要调模型的任务成败判定;"
-                 "随后精确去重、打标与技能分布画像,导出清洗后的数据集。"
-                 "耗时大头在模型调用。")
+
+def _check_bullet(key: str) -> str:
+    vlm = "(调 VLM)" if key in runner.VLM_CHECKS else ""
+    return f"• {runner.CHECK_LABELS[key]}{vlm}:{CHECK_BRIEFS[key]}"
+
+
+FULL_SCAN_TIP = (f"跑全部 {len(runner.CHECK_LABELS)} 个功能:\n"
+                 + "\n".join(_check_bullet(k) for k in runner.CHECK_LABELS)
+                 + "\n" + _CAPTION_NOTE)
+QUICK_SCAN_TIP = (f"跳过要调 VLM 的 {len(runner.VLM_CHECKS)} 个功能:"
+                  f"{'、'.join(runner.CHECK_LABELS[k] for k in runner.VLM_CHECKS)};\n"
+                  f"其余 {len(runner.CHECK_LABELS) - len(runner.VLM_CHECKS)} "
+                  "个照常跑。")
+
+#: 「指定 episode」旁边那个问号(issue #108):与「只跑前 N 条」的组合规则
+#: 早已实现(CLI:先按表达式选出,再截断前 N 条),只是界面没说 —— 说在这。
+EPS_TIP = ("只跑列出的这些条:单个 34;区间 10-20;可混用 3,10-12。"
+           "与「只跑前 N 条」同时填时,先按这里选出,再截取前 N 条。")
 
 #: 「HuggingFace 缓存桶」旁边那个问号(2026-08-28 同事+用户定稿):它是缓存不是
 #: 全量镜像站,预期要在悬停里说破——HF 官网有的这里未必有,不是 bug。
@@ -157,7 +182,8 @@ PUBLIC_SOURCE_TIP = ("HuggingFace 热门模型和数据集的下载缓存,托管
                      "格式的数据集。")
 
 #: 问号表:选项文字 → 悬停提示。加一项只改这里(label 动态的例外见上)。
-SCAN_TIPS = {FULL_SCAN: FULL_SCAN_TIP, QUICK_SCAN: QUICK_SCAN_TIP}
+SCAN_TIPS = {FULL_SCAN: FULL_SCAN_TIP, QUICK_SCAN: QUICK_SCAN_TIP,
+             "指定 episode": EPS_TIP}
 
 #: 强制浅色主题(issue #114,2026-08-28):gradio 会跟随系统的暗色模式把自家
 #: 文字/底色换成暗色变量,而本 UI 的 Arco 样式全按浅色写死 ⇒ 暗色系统下两层
@@ -269,9 +295,10 @@ _TIP_JS = """
       span.appendChild(q);
   }
   function inject() {
-    // 两个挂点:质检范围(完整/快速/自选)与数据来源(私有/缓存桶)。
-    // 都是"选项文字命中 TIPS 表才挂",没配置的来源 radio 不渲染=自然不挂。
-    var ids = ['qc-scope', 'rn-pub'];
+    // 挂点:质检范围(完整/快速/自选)、数据来源(私有/缓存桶)、指定 episode
+    // (issue #108:与前 N 条的组合规则说在问号里)。都是"标签文字命中 TIPS
+    // 表才挂",没配置的来源 radio 不渲染=自然不挂。
+    var ids = ['qc-scope', 'rn-pub', 'rn-eps'];
     for (var k = 0; k < ids.length; k++) {
       var box = document.getElementById(ids[k]);
       if (!box) continue;
@@ -755,6 +782,7 @@ _ARCO_CSS = """
   border: 1px solid var(--arco-border); font-size: 13px; line-height: 1.7;
   text-align: left; padding: 10px 12px; border-radius: 6px; z-index: 9999;
   pointer-events: none; box-shadow: 0 4px 10px rgba(29,33,41,.10);
+  white-space: pre-line;   /* bullet 文案带 \n(issue #101 定稿),按行渲染 */
 }
 /* 真模态对话框(2026-08-19 用户点名:确认框必须"跳出来",不能是平铺框)。
    Gradio 没有原生模态框,但模态不需要它原生支持 —— fixed 居中 + 一层遮罩即可,
@@ -2027,7 +2055,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 输入合法性在 _run_go 里校验(非正整数一句话打回)。
                     rn_max = gr.Textbox(label="只跑前 N 条(留空=全部)",
                                         placeholder="全部")
-                    rn_eps = gr.Textbox(label="指定 episode",
+                    rn_eps = gr.Textbox(label="指定 episode", elem_id="rn-eps",
                                         placeholder="34 / 10-20 / 3,10-12")
                     with gr.Column(scale=2):
                         # 「检测可用性」按钮已撤(2026-08-21 用户:可用性该系统自己查):
