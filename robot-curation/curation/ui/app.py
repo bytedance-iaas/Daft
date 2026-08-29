@@ -3100,17 +3100,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                     value=runner.default_tos_region(),
                                     label="地区", scale=2, min_width=240,
                                     allow_custom_value=True, interactive=True)
-                with gr.Column(scale=6, min_width=160):
-                    rp_note = gr.Markdown("", elem_classes=["field-note"])
+            # 右侧不再有说明区(2026-08-28 用户:「TOS 直连:…镜像到本地」这类
+            # 全是废话)。有话说的只剩问题:路径类落「交付目录」下方,桶/地区类
+            # 落「地区」下方,行与上一行同比例分列对齐
             with gr.Row():
-                # 红字行与上一行同比例分列,红字正落在「地区」正下方
                 with gr.Column(scale=4, min_width=160):
-                    gr.Markdown("", elem_classes=["field-note"])
+                    rp_root_err = gr.Markdown("", elem_id="rp-root-err",
+                                              elem_classes=["field-note"])
                 with gr.Column(scale=2, min_width=240):
                     rp_rg_err = gr.Markdown("", elem_id="rp-rg-err",
                                             elem_classes=["field-note"])
-                with gr.Column(scale=6, min_width=160):
-                    gr.Markdown("", elem_classes=["field-note"])
             with gr.Row():
                 # 文案一句话就够(2026-08-13 用户:"这种文字根本不应该给客户看")。
                 # 「重新加载」按钮已撤:切到本页就重扫一次盘(见下面的 select),
@@ -3725,11 +3724,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     ch = delivery_choices(delivery, fresh)
                     return gr.update(choices=ch, value=_keep(ch)), "", ""
                 if not s.startswith("tos://"):
-                    return (gr.update(), "⚠️ 只认 tos://桶/前缀 形式的地址"
-                            "(或本实例的交付根)", "")
+                    return (gr.update(), _rp_red("只认 tos://桶/前缀 形式的地址"
+                            "(或本实例的交付根)"), "")
                 err = runner.tos_url_error(s, "交付目录")
                 if err:
-                    return gr.update(), f"⚠️ {err}", ""
+                    return gr.update(), _rp_red(err), ""
                 _bkt = tos_store.parse_tos_url(s)[0]
                 try:
                     names = runner.tos_list_deliveries(
@@ -3752,9 +3751,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             "该前缀下没有列出任何交付(前缀打错?或桶里确实是空的)",
                             "")
                 ch = [(n, s + "/" + n) for n in names]
-                return (gr.update(choices=ch, value=_keep(ch)),
-                        f"TOS 直连:{s}(打开一份交付时把报告与明细镜像到本地,"
-                        "数据集本体不下载)", "")
+                # 成功不说话(2026-08-28 用户:右侧那句"TOS 直连…"是废话)
+                return gr.update(choices=ch, value=_keep(ch)), "", ""
 
             # ── 报告页跟着最新跑批走(2026-08-28 用户实报:交付写进别的桶,
             #    下拉里根本没有它,他拿着旧交付 test_0826 当新结果看了半天)。
@@ -3834,7 +3832,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return (*base[:5], *_pick_delivery(cur))
                 return (*base[:5], *(gr.update(),) * (1 + len(outs)))
 
-            _fo_outs = [rp_root, rp_rg, picker, rp_note, rp_follow,
+            _fo_outs = [rp_root, rp_rg, picker, rp_root_err, rp_follow,
                         run_pick, *outs]
             app.load(_follow_or_open, _fl_in, _fo_outs)
 
@@ -3842,13 +3840,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     and runner.home_output_url(_deliv_root).startswith("tos://"):
                 # 没挂载的实例:交付默认在桶里,开门先把桶里的交付列出来
                 app.load(_rp_root_changed, [rp_root, rp_rg],
-                         [picker, rp_note, rp_rg_err])
+                         [picker, rp_root_err, rp_rg_err])
             rp_root.blur(_rp_root_changed, [rp_root, rp_rg, picker],
-                         [picker, rp_note, rp_rg_err])
+                         [picker, rp_root_err, rp_rg_err])
             rp_root.submit(_rp_root_changed, [rp_root, rp_rg, picker],
-                           [picker, rp_note, rp_rg_err])
+                           [picker, rp_root_err, rp_rg_err])
             rp_rg.input(_rp_root_changed, [rp_root, rp_rg, picker],
-                        [picker, rp_note, rp_rg_err])
+                        [picker, rp_root_err, rp_rg_err])
 
             def _borrow_report_root(tin, tin_rg, cur):
                 """没桶的实例收到深链:报告页的交付目录也借数据集所在的桶,并顺手
@@ -3864,7 +3862,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 return gr.update(value=url), gr.update(value=rg), pk, note
 
             _prefill_evt.then(_borrow_report_root, [rn_tin, rn_tin_rg, rp_root],
-                              [rp_root, rp_rg, picker, rp_note])
+                              [rp_root, rp_rg, picker, rp_root_err])
 
             def _rp_is_direct(url) -> bool:
                 """交付根框当前指向的是不是直连桶(而非本实例交付根)。"""

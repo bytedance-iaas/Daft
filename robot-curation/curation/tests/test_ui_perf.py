@@ -320,7 +320,8 @@ def test_report_root_default_lists_bucket_when_not_mounted(tmp_path, monkeypatch
     assert calls == ["tos://herbucket/deliveries"], "默认地址没去桶里列"
     assert [v for _l, v in upd["choices"]] == ["tos://herbucket/deliveries/d1",
                                                "tos://herbucket/deliveries/d2"]
-    assert "TOS 直连" in note
+    # 2026-08-28 用户定:列举成功右侧不说话("TOS 直连…镜像到本地"是废话)
+    assert note == ""
 
 
 def test_picker_tick_relists_bucket_in_direct_mode(tmp_path, monkeypatch):
