@@ -543,7 +543,9 @@ def test_rerun_shape_dead_path_default_left_empty(tmp_path, monkeypatch):
     note = next(c["props"] for c in cfg["components"]
                 if c["props"].get("elem_id") == "rn-ds-note")
     assert "没挂上" not in str(note.get("value", "")), "留空形态报了部署事故警告"
-    assert "tos://" in str(note.get("value", "")), "留空形态该给填写指导语"
+    # 2026-08-29 用户:「填入 tos://…」指导灰字删除,留空形态说明行整行沉默
+    # (格式由 placeholder 教;没填就点开始质检由开跑闸模态守门)
+    assert str(note.get("value") or "") == "", "留空形态说明行该沉默"
 
 
 def test_rp_root_refresh_keeps_valid_selection(tmp_path, monkeypatch):
@@ -902,6 +904,48 @@ def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
     # 取消按钮存在
     labels = [b.value for b in app.blocks.values() if isinstance(b, gr.Button)]
     assert labels.count("返回") >= 2, "两个模态都要有返回退路"
+
+
+def test_preflight_empty_root_and_output_open_gate_dialog(tmp_path,
+                                                          monkeypatch):
+    """数据集目录/交付目录没填 → 同一扇开跑闸模态(2026-08-29 用户:任务区
+    灰字看不见,风格与其它硬闸统一)。公共镜像模式的目录框永远被程序填成
+    镜像桶地址,所以私有空目录这条臂就是两种模式共用的守门。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner as _runner
+    from curation.ui.app import build_app
+
+    deliv = tmp_path / "deliveries"
+    deliv.mkdir()
+    ds = tmp_path / "data" / "d1"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(
+        _json.dumps({"robot_type": "so101"}), encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+
+    def _boom(*a, **kw):
+        raise AssertionError("弹窗臂碰了任务区重算(list_runs/active_run)")
+
+    monkeypatch.setattr(_runner, "active_run", _boom)
+    monkeypatch.setattr(_runner, "list_runs", _boom)
+    fn = _fn_by_name(app, "_run_preflight")
+    for args, title, why in [
+            # 数据集目录空(HuggingFace 镜像模式下该框恒有值,走不到这)
+            (("", "", str(deliv), ""), "**数据集目录不可用**", "还没填数据集目录"),
+            # 交付目录空
+            ((str(tmp_path / "data"), "", "", ""), "**交付目录不可用**",
+             "还没填交付目录")]:
+        out = fn(*args, ["d1"], "n1", "", [], "", None, "", None,
+                 "", "", None, None, None, None, "", False, False)
+        flat = _json.dumps([str(x) for x in out], ensure_ascii=False)
+        assert str(out[-1]).startswith(title), f"该弹 {title}"
+        assert why in str(out[-1])
+        assert flat.count("'visible': True") == 1, "只许亮 out-ask 一扇窗"
+        assert "'visible': True" in str(out[-2])
+        assert "'visible': False" not in flat
+        assert "note-err" not in flat
 
 
 def test_module_pick_change_does_not_rerender_itself(tmp_path):

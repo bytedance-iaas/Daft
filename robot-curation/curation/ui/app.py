@@ -1973,9 +1973,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 探测会报「没挂上,请检查部署」——对纯直连部署是错误诊断
                         # (rerun 侧实例用户实报"莫名其妙")。改成指导语。
                         rn_ds_note = gr.Markdown(
+                            # 空桶形态不再印「填入 tos://…」指导灰字(2026-08-29
+                            # 用户:没必要显示;占位符已经教了格式)
                             "正在扫描桶里的数据集…" if _direct0
-                            else ("填入 tos://桶名/目录 后回车,即可列出数据集"
-                                  if not _burl0
+                            else ("" if not _burl0
                                   else runner.dataset_root_note(_data_root)),
                             elem_id="rn-ds-note",
                             elem_classes=["field-note"])
@@ -2251,12 +2252,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     Gradio 抛红框(客户看红框等于什么都没看见)。
 
                     空值单独放行(2026-08-27 用户:7861 上清空框失焦就挨
-                    「⚠️还没填」——太敏感):空是编辑瞬态不是错误,给不带
-                    警告号的指导语;"没填就点开始质检"另有守门,不靠这里吓人。
+                    「⚠️还没填」——太敏感):空是编辑瞬态不是错误,一律安静
+                    (2026-08-29 用户:「填入 tos://…」指导灰字也删,占位符已
+                    教格式);"没填就点开始质检"由开跑闸模态守门,不靠这里吓人。
                     """
                     if not str(url or "").strip():
-                        return ("", gr.update(choices=[], value=[]),
-                                "填入 tos://桶名/目录 后回车,即可列出数据集",
+                        return ("", gr.update(choices=[], value=[]), "",
                                 gr.update(), "")
                     try:
                         spec = runner.resolve_root_input(url, _buckets)
@@ -2707,14 +2708,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     try:
                         _spec = runner.resolve_root_input(tin, _buckets)
                     except ValueError as e:
-                        # ⚠️ 两个模态此刻必然没开着:发 gr.update() 空更新,绝不发
-                        # visible=False —— gradio 6.9 给**从未挂载**的隐藏容器发过
-                        # 更新后,它下一次 visible=True 会挂载成隐藏态(用户实见
-                        # "第一次点没反应,得再来一遍";浏览器实验已复现+证伪)
-                        return (*_tk_view(f"⚠️ {e}"), args,
+                        # 数据集目录没填/不合法 → 同一扇开跑闸模态(2026-08-29
+                        # 用户:任务区灰字看不见,风格要与其它硬闸一致)。
+                        # ⚠️ 切片/型号模态此刻必然没开着:发 gr.update() 空更新,
+                        # 绝不发 visible=False —— gradio 6.9 给**从未挂载**的隐藏
+                        # 容器发过更新后,它下一次 visible=True 会挂载成隐藏态
+                        # (用户实见"第一次点没反应";浏览器实验已复现+证伪)
+                        return (*_tk_keep(), args,
                                 gr.update(), gr.update(),
                                 gr.update(), gr.update(), gr.update(),
-                                gr.update(), gr.update(), gr.update())
+                                gr.update(), gr.update(visible=True),
+                                f"**数据集目录不可用**\n\n{e}")
                     _root = _spec.get("path")
                     chosen = runner.picked_datasets(ds)
                     # 勾了「跑全部」时下拉本来就被忽略,跑的是根目录下的全部数据集,
