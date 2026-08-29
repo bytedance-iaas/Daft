@@ -1755,10 +1755,3 @@ def test_listing_success_registers_bucket_region(monkeypatch):
     runner.tos_list_datasets("tos://sh-bkt/deliveries", store=_St())
     assert tos_store.bucket_region("sh-bkt") is None
     tos_store.clear_bucket_regions()
-
-
-def test_region_switch_note_wording():
-    """自动切换的那句话:中文地区名 + 代码;没登记中文名的地区原样给代码。"""
-    assert runner.region_switch_note("b", "cn-shanghai") == \
-        "该桶在 华东2(上海) (cn-shanghai),已自动切换"
-    assert "cn-new-region" in runner.region_switch_note("b", "cn-new-region")

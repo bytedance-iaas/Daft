@@ -204,7 +204,10 @@ def test_readable_and_writable_verdicts_share_region_hint():
     assert runner.readable_verdict("not-a-url")[0] is False
 
 
-def test_run_page_has_unreadable_root_dialog(tmp_path, monkeypatch):
+def test_run_page_region_red_notes_replace_fill_time_dialogs(tmp_path, monkeypatch):
+    """2026-08-28 用户定版:填表阶段桶/地区问题一律红字贴在地区下拉正下方,
+    读侧对话框(in-ask)退役;交付目录对话框(out-ask)保留但只在点「开始
+    质检」时出场。三个红字位都在。"""
     pytest.importorskip("gradio")
     from curation.ui import app as ui_app
     monkeypatch.delenv("CURATION_CONFIG", raising=False)
@@ -213,8 +216,9 @@ def test_run_page_has_unreadable_root_dialog(tmp_path, monkeypatch):
     app = ui_app.build_app(str(root), data_root=str(tmp_path / "data" / "datasets"))
     cfg = json.loads(json.dumps(app.get_config_file(), default=str))
     ids = {c["props"].get("elem_id") for c in cfg["components"]}
-    assert {"in-ask", "in-ask-btns", "in-ask-ok"} <= ids
-    assert "#in-ask-btns" in ui_app._ARCO_CSS
+    assert "in-ask" not in ids, "读侧填表对话框已退役"
+    assert {"out-ask", "out-ask-ok"} <= ids, "开跑闸的对话框还在"
+    assert {"rn-tin-rg-err", "rn-tout-rg-err", "rp-rg-err"} <= ids
     assert any(c["props"].get("label") == "交付名" and c["type"] == "dropdown"
                for c in cfg["components"]), "报告页的交付下拉叫「交付名」(与跑质检页同名)"
 

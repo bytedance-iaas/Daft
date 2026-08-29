@@ -1165,12 +1165,6 @@ def region_of_bucket(bucket: str, skip: str | None = None) -> str | None:
     return _ts.locate_bucket(bucket, TOS_REGIONS, skip=skip)
 
 
-def region_switch_note(bucket: str, region: str) -> str:
-    """404 后实探到桶的真实地区、替用户切换时的那句话(纯函数,措辞钉在这)。"""
-    name = TOS_REGION_NAMES.get(region, region)
-    return f"该桶在 {name} ({region}),已自动切换"
-
-
 def _effective_region(region: str | None) -> str:
     return region or os.environ.get("TOS_REGION", "").strip() or "默认地区"
 

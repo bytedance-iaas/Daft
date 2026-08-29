@@ -320,7 +320,8 @@ def test_report_root_default_lists_bucket_when_not_mounted(tmp_path, monkeypatch
     assert calls == ["tos://herbucket/deliveries"], "默认地址没去桶里列"
     assert [v for _l, v in upd["choices"]] == ["tos://herbucket/deliveries/d1",
                                                "tos://herbucket/deliveries/d2"]
-    assert "TOS 直连" in note
+    # 2026-08-28 用户定:列举成功右侧不说话("TOS 直连…镜像到本地"是废话)
+    assert note == ""
 
 
 def test_picker_tick_relists_bucket_in_direct_mode(tmp_path, monkeypatch):
@@ -873,7 +874,8 @@ def test_preflight_rejects_bad_name_before_any_modal(tmp_path, monkeypatch):
     # 只许发 gr.update() 空更新
     assert "'visible': False" not in flat, "没开着的模态不许发 visible=False"
     # 报错要贴在「交付名」框下方的说明位(红字),不能只落远处的任务区
-    assert "note-err" in str(out[-1]) and "交付名" in str(out[-1]), \
+    # 2026-08-28 起输出尾部多了开跑闸的 out-ask 两槽,交付名红字位在倒数第三
+    assert "note-err" in str(out[-3]) and "交付名" in str(out[-3]), \
         "字段下方要出现红字报错(任务区太远,用户注意不到)"
     # 取消按钮存在
     labels = [b.value for b in app.blocks.values() if isinstance(b, gr.Button)]
@@ -967,3 +969,114 @@ def test_max_episodes_field_is_blank_textbox(tmp_path):
              if getattr(b, "label", "") == "只跑前 N 条(留空=全部)"]
     assert boxes and isinstance(boxes[0], gr.Textbox), "必须是 Textbox 不是 Number"
     assert not (boxes[0].value or ""), "默认必须空白"
+
+
+# ── 三条线统一红字(2026-08-28 用户定版)────────────────────────────────
+
+
+def _fn_by_name(app, name):
+    return next(f.fn for f in app.fns.values()
+                if getattr(f.fn, "__name__", "") == name)
+
+
+def test_out_changed_mismatch_is_red_note_not_dialog(tmp_path, monkeypatch):
+    """交付目录探测:桶/地区问题 = 地区下拉正下方红字;填表阶段不弹窗;
+    通过时红字清空、说明照旧。"""
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    root = tmp_path / "deliv"
+    root.mkdir()
+    app = build_app(str(root), data_root=str(tmp_path / "data"))
+    fn = _fn_by_name(app, "_out_changed")
+    monkeypatch.setattr(runner, "writable_verdict",
+                        lambda url, region=None, **kw:
+                        (False, "桶 b 不在 cn-beijing,它在 cn-shanghai —— 把地区改成 cn-shanghai 再试"))
+    note, red = fn("tos://sh-bkt/deliveries", "cn-beijing")
+    assert note == "" and "note-err" in red and "cn-shanghai" in red
+    monkeypatch.setattr(runner, "writable_verdict",
+                        lambda url, region=None, **kw: (True, ""))
+    note2, red2 = fn("tos://sh-bkt/deliveries", "cn-shanghai")
+    assert red2 == "" and "TOS 直连" in note2
+    # 空值 = 编辑瞬态:两头都清,不吓人
+    assert fn("", "") == ("", "")
+
+
+def test_preflight_gate_opens_dialog_and_never_clears_path(tmp_path, monkeypatch):
+    """开跑硬闸:交付目录用不了 → 弹 out-ask 模态说原因;响应里除模态外
+    不许有 visible=False(隐藏容器毒);「确定」只关窗,不碰任何输入框。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    deliv = tmp_path / "deliveries"
+    deliv.mkdir()
+    ds = tmp_path / "data" / "d1"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(
+        _json.dumps({"robot_type": "so101"}), encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    monkeypatch.setattr(runner, "writable_verdict",
+                        lambda url, region=None, **kw:
+                        (False, "桶 b 不在 cn-beijing,它在 cn-shanghai —— 把地区改成 cn-shanghai 再试"))
+    fn = _fn_by_name(app, "_run_preflight")
+    out = fn(str(tmp_path / "data"), "", "tos://sh-bkt/deliveries", "cn-beijing",
+             ["d1"], "n1", "", [], "", None, "", None,
+             "", "", None, None, None, None, "", False, False)
+    flat = _json.dumps([str(x) for x in out], ensure_ascii=False)
+    assert "这个交付目录还用不了" in flat and "cn-shanghai" in flat
+    assert flat.count("'visible': True") == 1, "只开交付目录那一个模态"
+    assert "'visible': False" not in flat, "没开着的容器只许空更新"
+    # 「确定」只关窗:单输出 visible=False,输入框一个不碰
+    close = _fn_by_name(app, "_out_ask_close")()
+    assert close == {"__type__": "update", "visible": False}
+
+
+def test_root_changed_mismatch_red_note_and_keeps_input(tmp_path, monkeypatch):
+    """数据集目录:桶/地区问题红字化;目录框与地区下拉都不被改写。"""
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    root = tmp_path / "deliv"
+    root.mkdir()
+    app = build_app(str(root), data_root=str(tmp_path / "data"))
+    monkeypatch.setattr(runner, "tos_dataset_listing",
+                        lambda url, region=None, **kw:
+                        (_ for _ in ()).throw(RuntimeError({"code": "NoSuchBucket", "status_code": 404})))
+    monkeypatch.setattr(runner, "missing_bucket_text",
+                        lambda b, r, d, locate=None:
+                        f"桶 {b} 不在 cn-beijing,它在 cn-shanghai —— 把地区改成 cn-shanghai 再试")
+    from curation import tos_store
+    monkeypatch.setattr(tos_store, "classify_list_error",
+                        lambda e: ("missing", "d"))
+    fn = _fn_by_name(app, "_root_changed")
+    src_note, ds_upd, ds_note, tin_upd, red = fn("tos://sh-b/datasets", "cn-beijing")
+    assert "note-err" in red and "cn-shanghai" in red
+    assert ds_note == "" and src_note == ""
+    assert "value" not in tin_upd or tin_upd.get("value") is None, "目录框不许被改写"
+
+
+def test_rp_root_changed_mismatch_red_note(tmp_path, monkeypatch):
+    """报告页交付目录:同一套红字;交付下拉不动、说明区不再放桶/地区报错。"""
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    root = tmp_path / "deliv"
+    root.mkdir()
+    app = build_app(str(root), data_root=str(tmp_path / "data"))
+    monkeypatch.setattr(runner, "tos_list_deliveries",
+                        lambda url, region=None, **kw:
+                        (_ for _ in ()).throw(RuntimeError({"code": "NoSuchBucket"})))
+    monkeypatch.setattr(runner, "missing_bucket_text",
+                        lambda b, r, d, locate=None: f"桶 {b} 它在 cn-shanghai")
+    from curation import tos_store
+    monkeypatch.setattr(tos_store, "classify_list_error",
+                        lambda e: ("missing", "d"))
+    fn = _fn_by_name(app, "_rp_root_changed")
+    upd, note, red = fn("tos://sh-b/x", "cn-beijing")
+    assert note == "" and "note-err" in red and "cn-shanghai" in red
