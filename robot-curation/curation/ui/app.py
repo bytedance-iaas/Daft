@@ -159,6 +159,23 @@ PUBLIC_SOURCE_TIP = ("HuggingFace 热门模型和数据集的下载缓存,托管
 #: 问号表:选项文字 → 悬停提示。加一项只改这里(label 动态的例外见上)。
 SCAN_TIPS = {FULL_SCAN: FULL_SCAN_TIP, QUICK_SCAN: QUICK_SCAN_TIP}
 
+#: 强制浅色主题(issue #114,2026-08-28):gradio 会跟随系统的暗色模式把自家
+#: 文字/底色换成暗色变量,而本 UI 的 Arco 样式全按浅色写死 ⇒ 暗色系统下两层
+#: 皮各刷各的,浅灰字贴白卡、深色字贴黑底,整页没法读。官方通道是 URL 参数
+#: `__theme=light`(服务端照它渲染),所以在 head 里第一时间检查、缺了就补上
+#: 原地重载:用 location.replace 不留历史记录(回退键不会弹回来),其余查询
+#: 参数(深链 ?dataset=…&source=…)原样保留。真做暗色适配=56 处硬编码色全改
+#: 变量+双主题回归,不值当——Arco 视觉就是按浅色定的。
+_FORCE_LIGHT_JS = """<script>(function () {
+  try {
+    var u = new URL(window.location.href);
+    if (u.searchParams.get('__theme') !== 'light') {
+      u.searchParams.set('__theme', 'light');
+      window.location.replace(u.href);
+    }
+  } catch (e) {}
+})();</script>"""
+
 #: 任务面板的自动刷新(issue #57,2026-08-21):页面脚本按节奏点「刷新」按钮。
 #: 节奏:任务在跑(状态条里有「运行中」/「正在停止」)2 秒一次;没在跑 10 秒一次
 #: (别的标签页/命令行起了任务也能在 10 秒内出现);切回页面立刻补点一次。
@@ -1285,7 +1302,8 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
         # **域名根**的 /favicon.ico —— 共享域名按路径分流时那是 rerun viewer 的
         # 图标(2026-08-27 线上实测),标签页就顶着别家 logo。带上 root 前缀,
         # 网关不剥前缀,理由同 _terminal_head。
-        "head": (f'<link rel="icon" type="image/png" href="{root}/favicon.ico">'
+        "head": (_FORCE_LIGHT_JS  # 放最前:越早重载,暗色闪现越短
+                 + f'<link rel="icon" type="image/png" href="{root}/favicon.ico">'
                  + _TABLE_JS + _QJUMP_JS + _CURROW_JS + _DROPDOWN_JS
                  # 问号表:静态两项 + 数据来源一项(键=source_label(),label
                  # 站点可配,所以只能在这儿现取,不能进模块级常量表)
@@ -1829,6 +1847,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                            extra=_done_run_note(st)),
                         logtxt, msg, _run_btn(st), _stop_btn(st))
 
+            def _tk_keep():
+                """任务区五个槽全发空更新。弹对话框的臂用这个,不用 _tk_view("")
+                ——后者要在交付根上重列跑批目录+读日志尾(挂载盘上实测 0.5s+,
+                2026-08-28 profile:一次点击 0.549s 里 0.516s 是 listdir),而
+                对话框根本不改任务区;这 0.5s 直接决定弹窗"几秒才出来"还是
+                "立即出来"(用户点名)。"""
+                return tuple(gr.update() for _ in range(5))
+
             def _tk_start(command, label, then_argv=None, *, jobs=None,
                           run_id=None, **params):
                 """统一的发起入口:拼 argv → 起任务 → 立刻回显状态。
@@ -1947,9 +1973,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 探测会报「没挂上,请检查部署」——对纯直连部署是错误诊断
                         # (rerun 侧实例用户实报"莫名其妙")。改成指导语。
                         rn_ds_note = gr.Markdown(
+                            # 空桶形态不再印「填入 tos://…」指导灰字(2026-08-29
+                            # 用户:没必要显示;占位符已经教了格式)
                             "正在扫描桶里的数据集…" if _direct0
-                            else ("填入 tos://桶名/目录 后回车,即可列出数据集"
-                                  if not _burl0
+                            else ("" if not _burl0
                                   else runner.dataset_root_note(_data_root)),
                             elem_id="rn-ds-note",
                             elem_classes=["field-note"])
@@ -2183,14 +2210,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     return (f'<span class="note-err">⚠️ '
                             f'{_html.escape(str(why))}</span>')
 
-                def _name_err(e) -> str:
-                    """交付名报错就写在「交付名」框正下方的说明位(2026-08-27
-                    用户:只落任务区太远,根本注意不到)。红字见 .note-err。"""
-                    return (f'<span class="note-err">⚠️ '
-                            f'{_html.escape(str(e))}</span>')
-
-                # 一改名字就把字段下的红字收走(改了=在改正,旧错误别赖着;
-                # 对不对等下次点「开始质检」再判)
+                # (2026-08-28 起交付名报错走开跑闸模态,不再往这个说明位写
+                # 红字;改名后照常按数据集选择刷新说明文案)
                 rn_out.change(_ds_hint, [rn_ds, rn_batch], rn_out_hint)
 
                 def _src_datasets(src, multi_pick: bool):
@@ -2231,12 +2252,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     Gradio 抛红框(客户看红框等于什么都没看见)。
 
                     空值单独放行(2026-08-27 用户:7861 上清空框失焦就挨
-                    「⚠️还没填」——太敏感):空是编辑瞬态不是错误,给不带
-                    警告号的指导语;"没填就点开始质检"另有守门,不靠这里吓人。
+                    「⚠️还没填」——太敏感):空是编辑瞬态不是错误,一律安静
+                    (2026-08-29 用户:「填入 tos://…」指导灰字也删,占位符已
+                    教格式);"没填就点开始质检"由开跑闸模态守门,不靠这里吓人。
                     """
                     if not str(url or "").strip():
-                        return ("", gr.update(choices=[], value=[]),
-                                "填入 tos://桶名/目录 后回车,即可列出数据集",
+                        return ("", gr.update(choices=[], value=[]), "",
                                 gr.update(), "")
                     try:
                         spec = runner.resolve_root_input(url, _buckets)
@@ -2281,8 +2302,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                     "meta/info.json 的子目录);该目录下是:"
                                     + "、".join(lst["junk"]) + "…")
                         else:
-                            note = ("该前缀下没有列出任何数据集(前缀打错?"
-                                    "或桶里确实是空的)")
+                            # 空桶不再灰字唠叨(2026-08-29 用户:没必要显示);
+                            # 真错误(桶/地区不对)另有红字与开跑闸兜着
+                            note = ""
                     except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
                         # 404 对 TOS 来说"桶名错"和"地区错"一个样(2026-08-21 真机)
                         # → 实探一圈把话说准;红字贴在地区下拉正下方,不弹窗、
@@ -2388,8 +2410,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         spec["url"], str(tout_rg or "").strip() or None,
                         locate=runner.region_of_bucket)
                     if ok:
-                        return (f"TOS 直连:跑完上传到 {spec['url']}"
-                                + (f"(⚠️ {why})" if why else ""), "")
+                        # 「TOS 直连:跑完上传到…」成功行删(2026-08-29 用户:
+                        # 没必要显示);可写但带告诫的才说话
+                        return (f"⚠️ {why}" if why else ""), ""
                     return "", _rg_red(why)
 
                 _oc_out = [rn_tout_note, rn_tout_rg_err]
@@ -2432,7 +2455,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     输入的交付目录——旧版点确定连路径带说明一起抹,是设计事故。"""
                     return gr.update(visible=False)
 
-                out_ask_ok.click(_out_ask_close, None, out_ask)
+                out_ask_ok.click(_out_ask_close, None, out_ask,
+                                 show_progress="hidden")
 
                 def _pub_changed(src):
                     """来源二选一 → (目录框, 地区, 数据集下拉, 根说明, 数据集说明)。
@@ -2684,14 +2708,17 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     try:
                         _spec = runner.resolve_root_input(tin, _buckets)
                     except ValueError as e:
-                        # ⚠️ 两个模态此刻必然没开着:发 gr.update() 空更新,绝不发
-                        # visible=False —— gradio 6.9 给**从未挂载**的隐藏容器发过
-                        # 更新后,它下一次 visible=True 会挂载成隐藏态(用户实见
-                        # "第一次点没反应,得再来一遍";浏览器实验已复现+证伪)
-                        return (*_tk_view(f"⚠️ {e}"), args,
+                        # 数据集目录没填/不合法 → 同一扇开跑闸模态(2026-08-29
+                        # 用户:任务区灰字看不见,风格要与其它硬闸一致)。
+                        # ⚠️ 切片/型号模态此刻必然没开着:发 gr.update() 空更新,
+                        # 绝不发 visible=False —— gradio 6.9 给**从未挂载**的隐藏
+                        # 容器发过更新后,它下一次 visible=True 会挂载成隐藏态
+                        # (用户实见"第一次点没反应";浏览器实验已复现+证伪)
+                        return (*_tk_keep(), args,
                                 gr.update(), gr.update(),
                                 gr.update(), gr.update(), gr.update(),
-                                gr.update(), gr.update(), gr.update())
+                                gr.update(), gr.update(visible=True),
+                                f"**数据集目录不可用**\n\n{e}")
                     _root = _spec.get("path")
                     chosen = runner.picked_datasets(ds)
                     # 勾了「跑全部」时下拉本来就被忽略,跑的是根目录下的全部数据集,
@@ -2699,11 +2726,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 直连输入也问(2026-08-21 读端会说 tos://):切片站读桶里的
                     # 数据集与读挂载一样,不必再等"本地缓存路径"
                     _src_root = _root or _spec.get("url")
+                    # 没选数据集 → 同一扇开跑闸模态(2026-08-29 用户:之前只在
+                    # 任务区灰字报错,与其它硬闸的弹窗风格不符)。判据与 _run_go
+                    # 的第二道防线同源(dataset_selection_error:勾了「跑根目录
+                    # 下的全部数据集」时下拉本来就被忽略,不拦),文案按模态定式
+                    if runner.dataset_selection_error(ds, bool(batch)):
+                        return (*_tk_keep(), args,
+                                gr.update(), gr.update(),
+                                gr.update(), gr.update(), gr.update(),
+                                gr.update(), gr.update(visible=True),
+                                "**还没选数据集**\n\n在「数据集」下拉里选一个,"
+                                "或勾选「跑根目录下的全部数据集」。")
                     # 交付名先行校验(2026-08-27 用户实见:名字非法却先弹了
                     # 切片框,答完才报错,人被锁在对话框里)——非法/占用在
-                    # 弹任何模态之前拦下,错误落任务区不落 toast,**同时**红字
-                    # 写在「交付名」框正下方(任务区太远,用户注意不到)。判据
-                    # 与 _run_go 同源:本实例交付根按占用校验,其余按名字合法性
+                    # 弹切片/型号模态之前拦下。判据与 _run_go 同源:本实例
+                    # 交付根按占用校验,其余按名字合法性
                     try:
                         if not batch:
                             runner.safe_name(name or "", what="交付名")
@@ -2717,10 +2754,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             if _bad0:
                                 raise ValueError(_bad0)
                     except ValueError as e:
-                        return (*_tk_view(f"⚠️ {e}"), args,
+                        # 交付名问题也走开跑闸的模态(2026-08-28 用户 manager
+                        # 实见:点了「开始质检」却没看见字段下的小红字——点按钮
+                        # 时人在等"发生点什么",页面某处安静变一行字接不住这个
+                        # 注意力)。复用「交付目录还用不了」那扇窗:单「确定」
+                        # 关窗即止,所有输入原样保留;小红字退役
+                        return (*_tk_keep(), args,
                                 gr.update(), gr.update(),
                                 gr.update(), gr.update(), gr.update(),
-                                _name_err(e), gr.update(), gr.update())
+                                gr.update(), gr.update(visible=True),
+                                f"**交付名不可用**\n\n{e}")
                     # 开跑硬闸(2026-08-28 用户定版):填表阶段桶/地区问题只在
                     # 字段下红字提醒;点了「开始质检」才用模态拦一道。模态只有
                     # 「确定」,关窗即止,**绝不清空**用户输入的路径。
@@ -2741,12 +2784,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     except ValueError as e:
                         _gate_why = str(e)
                     if _gate_why:
-                        return (*_tk_view(""), args,
+                        return (*_tk_keep(), args,
                                 gr.update(), gr.update(), gr.update(),
                                 gr.update(), gr.update(), gr.update(),
                                 gr.update(visible=True),
-                                f"**这个交付目录还用不了**\n\n{_gate_why}\n\n"
-                                "改好地区或换个目录后,再点「开始质检」。")
+                                f"**交付目录不可用**\n\n{_gate_why}")
                     # 机器人型号追问(2026-08-27):在切片追问**之前**——没型号
                     # 连运动学都跑不起来,先解决要不要型号,再谈要不要切片。
                     # 多选时任一数据集没登记就问一次(型号本来就是整跑全局参数)。
@@ -2759,7 +2801,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         if unk:
                             sug = runner.embodiment_hints(
                                 _src_root, unk[0])["suggest"]
-                            return (*_tk_view(""), args,
+                            return (*_tk_keep(), args,
                                     gr.update(), gr.update(),
                                     gr.update(visible=True),
                                     runner.embodiment_ask_md("、".join(unk), sug),
@@ -2789,7 +2831,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         fmt = (runner.dataset_format(
                             runner.under(_src_root, chosen[0]))
                             if len(chosen) == 1 else None)
-                        return (*_tk_view(""), args, gr.update(visible=True),
+                        return (*_tk_keep(), args, gr.update(visible=True),
                                 runner.clips_prompt(needing, fmt))
                     return (*_run_go(**args), args, gr.update(), gr.update())
 
@@ -2815,12 +2857,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _ask_outs = (_tk_outs + [rn_args, rn_ask, rn_ask_md,
                                          rn_emb_ask, rn_emb_ask_md, rn_emb_pick,
                                          rn_out_hint, out_ask, out_ask_md])
+                # show_progress="hidden":默认遮罩会把任务区和弹窗糊上一层灰
+                # "loading"(2026-08-28 用户:对话框要 load 几秒才清晰)——这条
+                # 链的反馈要么是对话框要么是任务区文字,遮罩只添堵
                 rn_go.click(_run_preflight,
                             [rn_tin, rn_tin_rg, rn_tout, rn_tout_rg, rn_ds,
                              rn_out, rn_mode, rn_pick, rn_how,
                              rn_max, rn_eps, rn_backend, rn_cfg, rn_emb, rn_plots,
                              rn_c_ep, rn_c_fr, rn_c_cap, rn_set, rn_batch, rn_ro],
-                            _ask_outs)
+                            _ask_outs, show_progress="hidden")
                 rn_ask_cancel.click(
                     lambda: (gr.update(visible=False), ""),
                     None, [rn_ask, rn_ask_md])
@@ -3022,8 +3067,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 choices = (_lst["names"]
                                            if _lst["kind"] == "list"
                                            else [_lst["name"]])
-                                ds_note = ("" if choices else
-                                           "该前缀下没有列出任何数据集")
+                                ds_note = ""   # 空桶不唠叨(2026-08-29,同上)
                             except Exception as e:  # noqa: BLE001
                                 choices = []
                                 ds_note = (f"⚠️ 列不出该前缀下的数据集:"
@@ -4135,9 +4179,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         or episode_task_text(m, it["id"])[0])
                 return gr.update(visible=True), gr.update(value=text)
 
+            # show_progress="hidden":开/关对话框不糊灰罩(2026-08-28 用户:
+            # 对话框要 load 几秒;这窗的真开销是裁决 CSV 现读,那是新鲜度
+            # 纪律省不得,灰罩是纯添堵)
             mg_fixlab.click(_fixlab_open, [state, mg_filter, mg_idx],
-                            [fix_ask, fix_text])
-            fix_cancel.click(lambda: gr.update(visible=False), None, fix_ask)
+                            [fix_ask, fix_text], show_progress="hidden")
+            fix_cancel.click(lambda: gr.update(visible=False), None, fix_ask,
+                             show_progress="hidden")
 
             _dec_ins = [state, mg_filter, mg_status, mg_idx, au_newlab, au_note]
             au_adopt.click(lambda m, f, st, i, nl, nt:
@@ -4313,7 +4361,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         f"人工裁决结果会**改写这份交付的内容**({target}),要继续吗?",
                         "", *fresh)
 
-            ex_go.click(_ex_hold, state, [ex_ask, ex_ask_md, ex_msg, *_ex_outs])
+            # show_progress="hidden" 同上;active_run 忙碌检查是语义必需,保留
+            ex_go.click(_ex_hold, state, [ex_ask, ex_ask_md, ex_msg, *_ex_outs],
+                        show_progress="hidden")
 
             def _ex_run(m, src_name, ds, backend, cfg, retry):
                 """「确定」→ 起 rejudge 任务。
@@ -4381,7 +4431,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             ex_yes.click(_ex_run,
                          [state, ex_src_dd, ex_ds, ex_backend, ex_cfg, ex_retry],
                          [topnav, ex_ask, ex_msg, *_tk_outs])
-            ex_no.click(lambda: gr.update(visible=False), None, ex_ask)
+            ex_no.click(lambda: gr.update(visible=False), None, ex_ask,
+                        show_progress="hidden")
 
             def _ex_btn_state():
                 """「执行裁决」按钮的可点性(issue #55 同族):有任务在跑就置灰。

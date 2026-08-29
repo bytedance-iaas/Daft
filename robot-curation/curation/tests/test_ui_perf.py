@@ -543,7 +543,9 @@ def test_rerun_shape_dead_path_default_left_empty(tmp_path, monkeypatch):
     note = next(c["props"] for c in cfg["components"]
                 if c["props"].get("elem_id") == "rn-ds-note")
     assert "没挂上" not in str(note.get("value", "")), "留空形态报了部署事故警告"
-    assert "tos://" in str(note.get("value", "")), "留空形态该给填写指导语"
+    # 2026-08-29 用户:「填入 tos://…」指导灰字删除,留空形态说明行整行沉默
+    # (格式由 placeholder 教;没填就点开始质检由开跑闸模态守门)
+    assert str(note.get("value") or "") == "", "留空形态说明行该沉默"
 
 
 def test_rp_root_refresh_keeps_valid_selection(tmp_path, monkeypatch):
@@ -841,9 +843,12 @@ def test_cli_interactive_preflight(tmp_path, monkeypatch):
     assert args2.skip == "kinematic_limits" and args2.embodiment_id is None
 
 
-def test_preflight_rejects_bad_name_before_any_modal(tmp_path, monkeypatch):
-    """交付名非法 → 弹任何模态之前拦下(2026-08-27 用户实见:名字错却先弹
-    切片框,答完才报错,人被锁在框里);两个模态都有「取消」退路。"""
+def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
+                                                             monkeypatch):
+    """交付名非法/为空 → 开跑闸模态,不是小红字(2026-08-28 用户 manager 实见:
+    点了「开始质检」没看见字段下的红字)。仍要在切片/型号模态**之前**拦下
+    (2026-08-27:名字错却先弹切片框,人被锁在框里),所以唯一亮起的模态
+    必须是 out-ask 那扇;单「确定」关窗即止,输入不清。"""
     import json as _json
 
     pytest.importorskip("gradio")
@@ -861,25 +866,86 @@ def test_preflight_rejects_bad_name_before_any_modal(tmp_path, monkeypatch):
     app = build_app(str(deliv), data_root=str(tmp_path / "data"))
     fns = [f.fn for f in app.fns.values()
            if getattr(f.fn, "__name__", "") == "_run_preflight"]
-    out = fns[0](str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
-                 "test=_0827", "", [], "", None, "", None,
-                 "", "", None, None, None, None, "", False, False)
+    # 弹窗臂不许重算任务区:0.5s 里 0.516s 是挂载盘 listdir(2026-08-28
+    # profile),直接决定对话框"几秒才出来"还是"立即出来"(用户点名)
+    from curation.ui import runner as _runner
+
+    def _boom(*a, **kw):
+        raise AssertionError("弹窗臂碰了任务区重算(list_runs/active_run)")
+
+    monkeypatch.setattr(_runner, "active_run", _boom)
+    monkeypatch.setattr(_runner, "list_runs", _boom)
     import json as _j
-    flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
-    assert "⚠️" in flat and "交付名只能用" in flat, \
-        "报错第一个词必须点名「交付名」(2026-08-27 用户:只说'名字'不知改哪个框)"
-    assert "'visible': True" not in flat, "非法名不许弹任何模态"
-    # gradio 6.9:给从未挂载的隐藏容器发过 visible=False,它下一次 visible=True
-    # 会挂载成隐藏态(2026-08-28 用户实见"第一次点没反应") —— 没开着的模态
-    # 只许发 gr.update() 空更新
-    assert "'visible': False" not in flat, "没开着的模态不许发 visible=False"
-    # 报错要贴在「交付名」框下方的说明位(红字),不能只落远处的任务区
-    # 2026-08-28 起输出尾部多了开跑闸的 out-ask 两槽,交付名红字位在倒数第三
-    assert "note-err" in str(out[-3]) and "交付名" in str(out[-3]), \
-        "字段下方要出现红字报错(任务区太远,用户注意不到)"
+    for ds_pick, bad, expect in [
+            (["mystery"], "test=_0827", "交付名只能用"),
+            (["mystery"], "", "交付名不能为空"),
+            # 没选数据集同款弹窗(2026-08-29 用户:灰字与弹窗风格不符)
+            ([], "goodname", "还没选数据集")]:
+        out = fns[0](str(tmp_path / "data"), "", str(deliv), "", ds_pick,
+                     bad, "", [], "", None, "", None,
+                     "", "", None, None, None, None, "", False, False)
+        flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
+        # 报错第一个词必须点名「交付名」(2026-08-27:只说'名字'不知改哪个框)
+        assert expect in str(out[-1]), f"模态文案要说清病因:{expect}"
+        # 2026-08-28 用户定稿:交付名病例标题「交付名不可用」,不带"改好再点"
+        # 的尾巴;没选数据集病例标题即病因本身
+        title = "**交付名不可用**" if ds_pick else "**还没选数据集**"
+        assert str(out[-1]).startswith(title)
+        assert "再点「开始质检」" not in str(out[-1])
+        # 唯一亮起的模态 = out-ask(倒数第二槽);切片/型号模态不许开
+        assert flat.count("'visible': True") == 1, "只许亮 out-ask 一扇窗"
+        assert "'visible': True" in str(out[-2])
+        # gradio 6.9:给从未挂载的隐藏容器发过 visible=False,它下一次
+        # visible=True 会挂载成隐藏态 —— 没开着的模态只许发 gr.update()
+        assert "'visible': False" not in flat, "没开着的模态不许发 visible=False"
+        # 小红字退役:交付名说明位(倒数第三槽)保持空更新,不写 note-err
+        assert "note-err" not in flat, "交付名报错不再走小红字"
+        # 模态之外不再重复报错:任务区安静(错误只在窗里说一遍)
     # 取消按钮存在
     labels = [b.value for b in app.blocks.values() if isinstance(b, gr.Button)]
     assert labels.count("返回") >= 2, "两个模态都要有返回退路"
+
+
+def test_preflight_empty_root_and_output_open_gate_dialog(tmp_path,
+                                                          monkeypatch):
+    """数据集目录/交付目录没填 → 同一扇开跑闸模态(2026-08-29 用户:任务区
+    灰字看不见,风格与其它硬闸统一)。公共镜像模式的目录框永远被程序填成
+    镜像桶地址,所以私有空目录这条臂就是两种模式共用的守门。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner as _runner
+    from curation.ui.app import build_app
+
+    deliv = tmp_path / "deliveries"
+    deliv.mkdir()
+    ds = tmp_path / "data" / "d1"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(
+        _json.dumps({"robot_type": "so101"}), encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+
+    def _boom(*a, **kw):
+        raise AssertionError("弹窗臂碰了任务区重算(list_runs/active_run)")
+
+    monkeypatch.setattr(_runner, "active_run", _boom)
+    monkeypatch.setattr(_runner, "list_runs", _boom)
+    fn = _fn_by_name(app, "_run_preflight")
+    for args, title, why in [
+            # 数据集目录空(HuggingFace 镜像模式下该框恒有值,走不到这)
+            (("", "", str(deliv), ""), "**数据集目录不可用**", "还没填数据集目录"),
+            # 交付目录空
+            ((str(tmp_path / "data"), "", "", ""), "**交付目录不可用**",
+             "还没填交付目录")]:
+        out = fn(*args, ["d1"], "n1", "", [], "", None, "", None,
+                 "", "", None, None, None, None, "", False, False)
+        flat = _json.dumps([str(x) for x in out], ensure_ascii=False)
+        assert str(out[-1]).startswith(title), f"该弹 {title}"
+        assert why in str(out[-1])
+        assert flat.count("'visible': True") == 1, "只许亮 out-ask 一扇窗"
+        assert "'visible': True" in str(out[-2])
+        assert "'visible': False" not in flat
+        assert "note-err" not in flat
 
 
 def test_module_pick_change_does_not_rerender_itself(tmp_path):
@@ -998,7 +1064,13 @@ def test_out_changed_mismatch_is_red_note_not_dialog(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "writable_verdict",
                         lambda url, region=None, **kw: (True, ""))
     note2, red2 = fn("tos://sh-bkt/deliveries", "cn-shanghai")
-    assert red2 == "" and "TOS 直连" in note2
+    # 2026-08-29 用户:「TOS 直连:跑完上传到…」成功行是废话,通过时整行沉默
+    assert red2 == "" and note2 == ""
+    # 可写但带告诫 → 只说告诫
+    monkeypatch.setattr(runner, "writable_verdict",
+                        lambda url, region=None, **kw: (True, "桶只读兜底"))
+    note3, red3 = fn("tos://sh-bkt/deliveries", "cn-shanghai")
+    assert red3 == "" and note3 == "⚠️ 桶只读兜底"
     # 空值 = 编辑瞬态:两头都清,不吓人
     assert fn("", "") == ("", "")
 
@@ -1022,12 +1094,21 @@ def test_preflight_gate_opens_dialog_and_never_clears_path(tmp_path, monkeypatch
     monkeypatch.setattr(runner, "writable_verdict",
                         lambda url, region=None, **kw:
                         (False, "桶 b 不在 cn-beijing,它在 cn-shanghai —— 把地区改成 cn-shanghai 再试"))
+    # 弹窗臂不许重算任务区(挂载盘 listdir 0.5s,见 bad-name 用例)
+    def _boom(*a, **kw):
+        raise AssertionError("弹窗臂碰了任务区重算(list_runs/active_run)")
+
+    monkeypatch.setattr(runner, "active_run", _boom)
+    monkeypatch.setattr(runner, "list_runs", _boom)
     fn = _fn_by_name(app, "_run_preflight")
     out = fn(str(tmp_path / "data"), "", "tos://sh-bkt/deliveries", "cn-beijing",
              ["d1"], "n1", "", [], "", None, "", None,
              "", "", None, None, None, None, "", False, False)
     flat = _json.dumps([str(x) for x in out], ensure_ascii=False)
-    assert "这个交付目录还用不了" in flat and "cn-shanghai" in flat
+    # 2026-08-28 用户定稿:标题「交付目录不可用」,与交付名那扇同款;
+    # "改好地区或换个目录…"的尾巴全系统筛掉
+    assert "交付目录不可用" in flat and "cn-shanghai" in flat
+    assert "再点「开始质检」" not in flat
     assert flat.count("'visible': True") == 1, "只开交付目录那一个模态"
     assert "'visible': False" not in flat, "没开着的容器只许空更新"
     # 「确定」只关窗:单输出 visible=False,输入框一个不碰
