@@ -159,6 +159,23 @@ PUBLIC_SOURCE_TIP = ("HuggingFace 热门模型和数据集的下载缓存,托管
 #: 问号表:选项文字 → 悬停提示。加一项只改这里(label 动态的例外见上)。
 SCAN_TIPS = {FULL_SCAN: FULL_SCAN_TIP, QUICK_SCAN: QUICK_SCAN_TIP}
 
+#: 强制浅色主题(issue #114,2026-08-28):gradio 会跟随系统的暗色模式把自家
+#: 文字/底色换成暗色变量,而本 UI 的 Arco 样式全按浅色写死 ⇒ 暗色系统下两层
+#: 皮各刷各的,浅灰字贴白卡、深色字贴黑底,整页没法读。官方通道是 URL 参数
+#: `__theme=light`(服务端照它渲染),所以在 head 里第一时间检查、缺了就补上
+#: 原地重载:用 location.replace 不留历史记录(回退键不会弹回来),其余查询
+#: 参数(深链 ?dataset=…&source=…)原样保留。真做暗色适配=56 处硬编码色全改
+#: 变量+双主题回归,不值当——Arco 视觉就是按浅色定的。
+_FORCE_LIGHT_JS = """<script>(function () {
+  try {
+    var u = new URL(window.location.href);
+    if (u.searchParams.get('__theme') !== 'light') {
+      u.searchParams.set('__theme', 'light');
+      window.location.replace(u.href);
+    }
+  } catch (e) {}
+})();</script>"""
+
 #: 任务面板的自动刷新(issue #57,2026-08-21):页面脚本按节奏点「刷新」按钮。
 #: 节奏:任务在跑(状态条里有「运行中」/「正在停止」)2 秒一次;没在跑 10 秒一次
 #: (别的标签页/命令行起了任务也能在 10 秒内出现);切回页面立刻补点一次。
@@ -1285,7 +1302,8 @@ def presentation(terminal: bool = False, root: str = "") -> dict:
         # **域名根**的 /favicon.ico —— 共享域名按路径分流时那是 rerun viewer 的
         # 图标(2026-08-27 线上实测),标签页就顶着别家 logo。带上 root 前缀,
         # 网关不剥前缀,理由同 _terminal_head。
-        "head": (f'<link rel="icon" type="image/png" href="{root}/favicon.ico">'
+        "head": (_FORCE_LIGHT_JS  # 放最前:越早重载,暗色闪现越短
+                 + f'<link rel="icon" type="image/png" href="{root}/favicon.ico">'
                  + _TABLE_JS + _QJUMP_JS + _CURROW_JS + _DROPDOWN_JS
                  # 问号表:静态两项 + 数据来源一项(键=source_label(),label
                  # 站点可配,所以只能在这儿现取,不能进模块级常量表)

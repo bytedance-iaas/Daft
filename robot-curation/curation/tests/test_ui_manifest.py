@@ -3361,6 +3361,21 @@ def test_favicon_link_injected_with_root_prefix():
         in presentation()["head"]
 
 
+def test_force_light_theme_script_injected():
+    """暗色系统下整页没法读(issue #114):Arco 样式全按浅色写死,gradio 却会跟随
+    系统换暗色变量。钉死三件事:脚本真进 head、走 __theme=light 官方通道、用
+    location.replace 原地重载(不污染历史,其余深链参数原样保留)。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import _FORCE_LIGHT_JS, presentation
+
+    head = presentation()["head"]
+    assert _FORCE_LIGHT_JS in head
+    assert "__theme" in _FORCE_LIGHT_JS and "'light'" in _FORCE_LIGHT_JS
+    assert "location.replace" in _FORCE_LIGHT_JS
+    # 放在 head 最前:越早重载,暗色闪现越短
+    assert head.startswith(_FORCE_LIGHT_JS)
+
+
 # ───────── 质检总览合成一张表(2026-08-13 用户点名)─────────
 #
 # 起因(用户原话:"表格没有显示正确的质检结果信息"):总览页上半部是几行 bullet、
