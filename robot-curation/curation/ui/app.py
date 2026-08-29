@@ -134,18 +134,24 @@ OUT_NAME_HINT_ONE = ""
 # 后面照跑")挪出说明行 —— 那是任务台的进度区本来就看得见的事实。
 OUT_NAME_HINT_MANY = "多选:这个名字当**父文件夹**,每个数据集各出一份子交付"
 
-#: 「快速质检」旁边那个问号里的话。**按实际跑什么写**:--lite 只是跳过要 VLM 的
-#: 三步(任务成败判定 / 打标 / 技能画像),其余检查一步不少。
-QUICK_SCAN_TIP = ("跑不需要模型的那几项:视觉质量、运动质量、运动学极限、"
-                  "视频-动作同步、时间戳与精确去重。"
-                  "不做任务成败判定、打标与技能分布画像 —— 这三项要调 VLM。")
+#: 「质检范围」两个问号里的话(issue #101,2026-08-29 定案):口径统一到
+#: 「自选模块」那张表(runner.CHECK_LABELS,唯一从代码生成不会说谎的清单)。
+#: 完整 = 全部 8 个;快速 = 8 减去要调 VLM 的 2 个 —— 两边一一对应、加起来
+#: 正好是自选模块的总数。文案从表生成,模块增删自动跟上,不再手写漂移。
+_VLM_LABELS = [runner.CHECK_LABELS[k] for k in runner.VLM_CHECKS]
+_FAST_LABELS = [v for k, v in runner.CHECK_LABELS.items()
+                if k not in runner.VLM_CHECKS]
+FULL_SCAN_TIP = (f"跑全部 {len(runner.CHECK_LABELS)} 个模块(与「自选模块」"
+                 f"同一张清单):{'、'.join(runner.CHECK_LABELS.values())}。"
+                 f"其中{'、'.join(_VLM_LABELS)}要调 VLM,耗时大头在此。")
+QUICK_SCAN_TIP = (f"只跑其中不需要模型的 {len(_FAST_LABELS)} 个:"
+                  f"{'、'.join(_FAST_LABELS)};跳过要调 VLM 的 "
+                  f"{len(_VLM_LABELS)} 个:{'、'.join(_VLM_LABELS)}。")
 
-#: 「完整质检」旁边那个问号(2026-08-20 用户要:和快速质检一样能悬停看包含什么)。
-#: 同样按实际流水线写,顺序就是漏斗顺序。
-FULL_SCAN_TIP = ("全部六项检查:时间戳、运动学极限、运动质量、视觉质量、"
-                 "视频-动作同步,以及要调模型的任务成败判定;"
-                 "随后精确去重、打标与技能分布画像,导出清洗后的数据集。"
-                 "耗时大头在模型调用。")
+#: 「指定 episode」旁边那个问号(issue #108):与「只跑前 N 条」的组合规则
+#: 早已实现(CLI:先按表达式选出,再截断前 N 条),只是界面没说 —— 说在这。
+EPS_TIP = ("只跑列出的这些条:单个 34;区间 10-20;可混用 3,10-12。"
+           "与「只跑前 N 条」同时填时,先按这里选出,再截取前 N 条。")
 
 #: 「HuggingFace 缓存桶」旁边那个问号(2026-08-28 同事+用户定稿):它是缓存不是
 #: 全量镜像站,预期要在悬停里说破——HF 官网有的这里未必有,不是 bug。
@@ -157,7 +163,8 @@ PUBLIC_SOURCE_TIP = ("HuggingFace 热门模型和数据集的下载缓存,托管
                      "格式的数据集。")
 
 #: 问号表:选项文字 → 悬停提示。加一项只改这里(label 动态的例外见上)。
-SCAN_TIPS = {FULL_SCAN: FULL_SCAN_TIP, QUICK_SCAN: QUICK_SCAN_TIP}
+SCAN_TIPS = {FULL_SCAN: FULL_SCAN_TIP, QUICK_SCAN: QUICK_SCAN_TIP,
+             "指定 episode": EPS_TIP}
 
 #: 强制浅色主题(issue #114,2026-08-28):gradio 会跟随系统的暗色模式把自家
 #: 文字/底色换成暗色变量,而本 UI 的 Arco 样式全按浅色写死 ⇒ 暗色系统下两层
@@ -269,9 +276,10 @@ _TIP_JS = """
       span.appendChild(q);
   }
   function inject() {
-    // 两个挂点:质检范围(完整/快速/自选)与数据来源(私有/缓存桶)。
-    // 都是"选项文字命中 TIPS 表才挂",没配置的来源 radio 不渲染=自然不挂。
-    var ids = ['qc-scope', 'rn-pub'];
+    // 挂点:质检范围(完整/快速/自选)、数据来源(私有/缓存桶)、指定 episode
+    // (issue #108:与前 N 条的组合规则说在问号里)。都是"标签文字命中 TIPS
+    // 表才挂",没配置的来源 radio 不渲染=自然不挂。
+    var ids = ['qc-scope', 'rn-pub', 'rn-eps'];
     for (var k = 0; k < ids.length; k++) {
       var box = document.getElementById(ids[k]);
       if (!box) continue;
@@ -2027,7 +2035,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 输入合法性在 _run_go 里校验(非正整数一句话打回)。
                     rn_max = gr.Textbox(label="只跑前 N 条(留空=全部)",
                                         placeholder="全部")
-                    rn_eps = gr.Textbox(label="指定 episode",
+                    rn_eps = gr.Textbox(label="指定 episode", elem_id="rn-eps",
                                         placeholder="34 / 10-20 / 3,10-12")
                     with gr.Column(scale=2):
                         # 「检测可用性」按钮已撤(2026-08-21 用户:可用性该系统自己查):

@@ -373,14 +373,34 @@ def test_radio_groups_are_one_frame_not_per_option_pills():
 
 
 def test_scan_radio_tips_cover_full_and_quick():
-    """「完整质检」与「快速质检」都带悬停问号(2026-08-20 用户要);提示按实际流水线写,
-    加一项只改 SCAN_TIPS。页面 head 里注入的是整张表,不再是单个名字。"""
+    """「完整质检」「快速质检」「指定 episode」都带悬停问号;文案口径统一到
+    自选模块那张表并**从表生成**(issue #101,2026-08-29:三处手写各自为政,
+    "六项检查"对不上 8 个模块)。页面 head 里注入的是整张表。"""
     pytest.importorskip("gradio")
     from curation.ui import app as ui_app
-    assert set(ui_app.SCAN_TIPS) == {ui_app.FULL_SCAN, ui_app.QUICK_SCAN}
+    from curation.ui import runner as _runner
+    assert set(ui_app.SCAN_TIPS) == {ui_app.FULL_SCAN, ui_app.QUICK_SCAN,
+                                     "指定 episode"}
     full = ui_app.SCAN_TIPS[ui_app.FULL_SCAN]
-    for kw in ("时间戳", "运动学", "运动质量", "视觉质量", "同步", "任务成败", "去重", "技能"):
-        assert kw in full, f"完整质检提示漏了「{kw}」"
+    quick = ui_app.SCAN_TIPS[ui_app.QUICK_SCAN]
+    # 完整 = 全部模块,总数与自选模块清单一致且写进文案
+    assert f"全部 {len(_runner.CHECK_LABELS)} 个模块" in full
+    for label in _runner.CHECK_LABELS.values():
+        assert label in full, f"完整质检提示漏了「{label}」"
+    # 快速 = 全集减 VLM 那两个:非 VLM 全在,VLM 两个只出现在"跳过"从句里
+    vlm = {_runner.CHECK_LABELS[k] for k in _runner.VLM_CHECKS}
+    for label in _runner.CHECK_LABELS.values():
+        assert label in quick, f"快速质检提示该提到「{label}」(跑或跳都要说)"
+    skip_clause = quick.split("跳过")[1]
+    for label in vlm:
+        assert label in skip_clause, f"「{label}」该在跳过从句里"
+    for label in set(_runner.CHECK_LABELS.values()) - vlm:
+        assert label not in skip_clause, f"「{label}」不该被说成跳过"
+    # 两边计数自洽:跑的 + 跳的 = 自选模块总数
+    assert (f"{len(_runner.CHECK_LABELS) - len(vlm)} 个" in quick
+            and f"{len(vlm)} 个" in quick)
+    # VLM 归属单一事实源:表里的键都真实存在
+    assert set(_runner.VLM_CHECKS) <= set(_runner.CHECK_LABELS)
     head = ui_app.presentation()["head"]
     # 注入的是合并表:静态两项 + 数据来源一项(2026-08-28,键=source_label())
     from curation.ingest import public_catalog

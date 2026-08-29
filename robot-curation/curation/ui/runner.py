@@ -92,6 +92,12 @@ CHECK_LABELS = {
     "dedup": "精确去重",
 }
 
+#: 要调 VLM 的模块 =「快速质检」(--lite)跳过的那两个(run.py:lite 关
+#: task_success、vlm_ready=False 连带技能画像整段不跑,其余 6 项一步不少)。
+#: 「质检范围」的问号说明从本表+CHECK_LABELS 生成(issue #101:三处手写
+#: 口径各自为政数不对齐);模块增删或归属变动只改这两张表,文案自动跟上。
+VLM_CHECKS = ("task_success", "skill_profile")
+
 #: 名字白名单:字母数字打头,其后允许字母数字与 . _ -,最长 80。
 #: 刻意不允许空格与中文——这些名字会变成目录名,还要进 shell 命令行。
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
