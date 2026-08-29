@@ -1050,7 +1050,10 @@ def test_preflight_gate_opens_dialog_and_never_clears_path(tmp_path, monkeypatch
              ["d1"], "n1", "", [], "", None, "", None,
              "", "", None, None, None, None, "", False, False)
     flat = _json.dumps([str(x) for x in out], ensure_ascii=False)
-    assert "这个交付目录还用不了" in flat and "cn-shanghai" in flat
+    # 2026-08-28 用户定稿:标题「交付目录不可用」,与交付名那扇同款;
+    # "改好地区或换个目录…"的尾巴全系统筛掉
+    assert "交付目录不可用" in flat and "cn-shanghai" in flat
+    assert "再点「开始质检」" not in flat
     assert flat.count("'visible': True") == 1, "只开交付目录那一个模态"
     assert "'visible': False" not in flat, "没开着的容器只许空更新"
     # 「确定」只关窗:单输出 visible=False,输入框一个不碰

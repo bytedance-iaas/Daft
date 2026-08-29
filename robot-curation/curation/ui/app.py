@@ -2771,8 +2771,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 gr.update(), gr.update(), gr.update(),
                                 gr.update(), gr.update(), gr.update(),
                                 gr.update(visible=True),
-                                f"**这个交付目录还用不了**\n\n{_gate_why}\n\n"
-                                "改好地区或换个目录后,再点「开始质检」。")
+                                f"**交付目录不可用**\n\n{_gate_why}")
                     # 机器人型号追问(2026-08-27):在切片追问**之前**——没型号
                     # 连运动学都跑不起来,先解决要不要型号,再谈要不要切片。
                     # 多选时任一数据集没登记就问一次(型号本来就是整跑全局参数)。
