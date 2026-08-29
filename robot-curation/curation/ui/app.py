@@ -3093,18 +3093,24 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                      value=_out_default,   # 同跑质检页:没桶留空
                                      placeholder="tos://桶名/目录")
                 # 地区列 scale=2(2026-08-21 用户实见:scale=1 时「华北2(北京) (cn-beijing)」
-                # 被下拉箭头压住末尾);说明列相应让出 1 份,总份数不变
+                # 被下拉箭头压住末尾);说明列相应让出 1 份,总份数不变。
+                # ⚠️ 直挂 Row,不包 Column:包了会把「交付目录|地区」拆成两张
+                # 卡片(2026-08-28 用户实见点名要同框)
+                rp_rg = gr.Dropdown(choices=runner.tos_region_choices(),
+                                    value=runner.default_tos_region(),
+                                    label="地区", scale=2, min_width=240,
+                                    allow_custom_value=True, interactive=True)
+                with gr.Column(scale=6, min_width=160):
+                    rp_note = gr.Markdown("", elem_classes=["field-note"])
+            with gr.Row():
+                # 红字行与上一行同比例分列,红字正落在「地区」正下方
+                with gr.Column(scale=4, min_width=160):
+                    gr.Markdown("", elem_classes=["field-note"])
                 with gr.Column(scale=2, min_width=240):
-                    rp_rg = gr.Dropdown(choices=runner.tos_region_choices(),
-                                        value=runner.default_tos_region(),
-                                        label="地区",
-                                        allow_custom_value=True,
-                                        interactive=True)
-                    # 地区正下方的红字位(桶/地区不匹配;2026-08-28 用户定版)
                     rp_rg_err = gr.Markdown("", elem_id="rp-rg-err",
                                             elem_classes=["field-note"])
                 with gr.Column(scale=6, min_width=160):
-                    rp_note = gr.Markdown("", elem_classes=["field-note"])
+                    gr.Markdown("", elem_classes=["field-note"])
             with gr.Row():
                 # 文案一句话就够(2026-08-13 用户:"这种文字根本不应该给客户看")。
                 # 「重新加载」按钮已撤:切到本页就重扫一次盘(见下面的 select),
@@ -3777,10 +3783,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                None)
                     if val is None:               # 列不出就不硬跳,下次再试
                         return hold[:4] + (info["run_id"], False)
+                    # 跟随本身不吭声(2026-08-28 用户:那句"已切到最近一次
+                    # 跑批的交付"是废话)——界面状态自己会说话
                     return (gr.update(value=root),
                             gr.update(value=rgn or None),
                             gr.update(choices=ch, value=val),
-                            f"已切到最近一次跑批的交付:{name}",
+                            gr.update(),
                             info["run_id"], True)
                 # 本地/挂载交付:目录不动,只在现有清单里选中它
                 pk, _note, _rgu = _rp_root_changed("", rg)
