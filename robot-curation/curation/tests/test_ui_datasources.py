@@ -812,10 +812,10 @@ def test_switching_root_clears_stale_notes_instead_of_leaving_them(delivery,
     assert fns, "没找到切根路径的回调(输出应为 根说明/数据集下拉/数据集说明[/目录框])"
     fn = fns[0].fn                       # 2026-08-20 起 = _root_changed(url, region)
 
-    note_a, _ds_a, ds_note_a, _tin_a = fn("tos://curation/datasets", "")
+    note_a, _ds_a, ds_note_a, _tin_a, _rge_a = fn("tos://curation/datasets", "")
     assert note_a == "", "挂载桶的说明行空着(2026-08-21 用户:不印端点/挂载路径)"
 
-    note_b, _ds_b, ds_note_b, _tin_b = fn("tos://bucketa/prefix", "")
+    note_b, _ds_b, ds_note_b, _tin_b, _rge_b = fn("tos://bucketa/prefix", "")
     assert note_b == "" and "读取端点" not in str(note_b), \
         "没配端点的根同样空着,不许残留上一个根的"
     assert ds_note_b == "", "根目录正常:状态提示必须是空串,不能 None/跳过"

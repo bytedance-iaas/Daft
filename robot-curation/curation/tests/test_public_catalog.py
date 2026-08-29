@@ -320,9 +320,10 @@ def test_choosing_mirror_greys_root_and_region_lists_catalog_and_leaves_output_a
     app = _build(tmp_path, site)
     ev = _fn_on(app, _src_radio(app))
     labels = [getattr(o, "label", None) for o in ev.outputs]
-    assert labels[:3] == ["数据集目录", "地区", "数据集"] and len(labels) == 5
+    assert labels[:3] == ["数据集目录", "地区", "数据集"] and len(labels) == 6, \
+        "2026-08-28 起第 6 槽=地区红字位(rn-tin-rg-err)"
     assert "交付目录" not in labels, "来源切来切去都不许碰交付目录(2026-08-21 用户)"
-    tin, rg, ds, note, ds_note = ev.fn(pc.source_label())
+    tin, rg, ds, note, ds_note, _rge = ev.fn(pc.source_label())
     assert tin["value"] == f"tos://{BKT}/dataset" and tin["interactive"] is False, \
         "桶名照样显示,只是置灰不用填"
     assert rg["value"] == "cn-beijing" and rg["interactive"] is False

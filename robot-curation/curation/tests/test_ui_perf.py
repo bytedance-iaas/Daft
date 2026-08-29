@@ -873,7 +873,8 @@ def test_preflight_rejects_bad_name_before_any_modal(tmp_path, monkeypatch):
     # 只许发 gr.update() 空更新
     assert "'visible': False" not in flat, "没开着的模态不许发 visible=False"
     # 报错要贴在「交付名」框下方的说明位(红字),不能只落远处的任务区
-    assert "note-err" in str(out[-1]) and "交付名" in str(out[-1]), \
+    # 2026-08-28 起输出尾部多了开跑闸的 out-ask 两槽,交付名红字位在倒数第三
+    assert "note-err" in str(out[-3]) and "交付名" in str(out[-3]), \
         "字段下方要出现红字报错(任务区太远,用户注意不到)"
     # 取消按钮存在
     labels = [b.value for b in app.blocks.values() if isinstance(b, gr.Button)]
@@ -991,11 +992,11 @@ def test_out_changed_mismatch_is_red_note_not_dialog(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "writable_verdict",
                         lambda url, region=None, **kw:
                         (False, "桶 b 不在 cn-beijing,它在 cn-shanghai —— 把地区改成 cn-shanghai 再试"))
-    note, red = fn("tos://b/deliveries", "cn-beijing")
+    note, red = fn("tos://sh-bkt/deliveries", "cn-beijing")
     assert note == "" and "note-err" in red and "cn-shanghai" in red
     monkeypatch.setattr(runner, "writable_verdict",
                         lambda url, region=None, **kw: (True, ""))
-    note2, red2 = fn("tos://b/deliveries", "cn-shanghai")
+    note2, red2 = fn("tos://sh-bkt/deliveries", "cn-shanghai")
     assert red2 == "" and "TOS 直连" in note2
     # 空值 = 编辑瞬态:两头都清,不吓人
     assert fn("", "") == ("", "")
@@ -1021,7 +1022,7 @@ def test_preflight_gate_opens_dialog_and_never_clears_path(tmp_path, monkeypatch
                         lambda url, region=None, **kw:
                         (False, "桶 b 不在 cn-beijing,它在 cn-shanghai —— 把地区改成 cn-shanghai 再试"))
     fn = _fn_by_name(app, "_run_preflight")
-    out = fn(str(tmp_path / "data"), "", "tos://b/deliveries", "cn-beijing",
+    out = fn(str(tmp_path / "data"), "", "tos://sh-bkt/deliveries", "cn-beijing",
              ["d1"], "n1", "", [], "", None, "", None,
              "", "", None, None, None, None, "", False, False)
     flat = _json.dumps([str(x) for x in out], ensure_ascii=False)
