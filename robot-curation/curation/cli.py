@@ -581,26 +581,17 @@ def _list_datasets(parent: str) -> list[str]:
 
 
 
-def _parse_episodes(expr: str | None) -> set[int] | None:
-    """"34" / "34,56" / "10-20" / "3,10-12" → {int};非法表达式抛 ValueError 由调用方友好报错。"""
-    if not expr:
-        return None
-    out: set[int] = set()
-    for part in str(expr).split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if "-" in part.lstrip("-"):          # 区间(不把负号当分隔)
-            lo, hi = part.split("-", 1)
-            lo_i, hi_i = int(lo), int(hi)
-            if hi_i < lo_i:
-                raise ValueError(f"区间起止颠倒: {part}")
-            out.update(range(lo_i, hi_i + 1))
-        else:
-            out.add(int(part))
-    if not out:
-        raise ValueError("未解析出任何 episode 编号")
-    return out
+from .episode_select import parse_episodes as _parse_episodes  # noqa: E402
+from .episode_select import EpisodesOutOfRange, reconcile_episodes  # noqa: E402
+
+
+def _bad_max_episodes(n) -> str:
+    """--max-episodes 的手滑校验(run 与 review-page 同判据,issue #110 审计):
+    0 在 run 里曾静默空跑、在 review-page 里曾被真值判断当"没给",负数落进
+    iloc[:-N] 变成"去掉末尾 N 条"的意外语义 —— 一律拒。通过返回空串。"""
+    if n is None or n >= 1:
+        return ""
+    return (f"--max-episodes 必须是正整数(≥1),现在是 {n};不给该参数=全部")
 
 class _TolerantStream:
     """包一层的标准输出/错误:**写日志失败绝不许弄死一次跑批**。
@@ -817,7 +808,18 @@ def main(argv: list[str] | None = None) -> int:
             print("[输入错误] --output(静态审片站)与 --into-delivery(片段进交付)"
                   "二选一,必须且只能给一个", file=sys.stderr)
             return 2
-        eps = _parse_episodes(args.episodes)
+        _bad_n = _bad_max_episodes(args.max_episodes)
+        if _bad_n:
+            print(f"[输入错误] {_bad_n}", file=sys.stderr)
+            return 2
+        try:
+            eps = _parse_episodes(args.episodes)
+        except ValueError as e:
+            # 此前语法错误在这条命令里会裸 traceback(issue #110 审计顺手修)
+            print(f"[输入错误] --episodes {args.episodes!r} 解析失败:{e}\n"
+                  "  用法:单条 34 / 多条 34,56,78 / 区间 10-20 / 混用 3,10-12",
+                  file=sys.stderr)
+            return 2
         # 输入格式嗅探(P5,2026-08-10):与 run 同一套判据。审片站只要
         # episode_id/标注/视频指针三样,RRD 走**轻量元数据**读法就够——它不做
         # schema 校验,也就不用逼用户为了看片先报 --embodiment(RRD 无 robot_type)。
@@ -832,8 +834,30 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[输入错误] {e}\n"
                       f"  (review-page 的写法:--rrd-fps 30)", file=sys.stderr)
                 return 2
+            # RRD 的对账走"读完再看":read_rrd_meta 本就是轻量读,筛完为空
+            # =全超界;有 meta 但比请求少=部分超界,印实跑数(issue #110)
+            if eps is not None:
+                if not rows:
+                    print(f"[输入错误] 指定的 episode 在该 RRD 数据集里一条也"
+                          f"不存在:{sorted(eps)[:8]}…", file=sys.stderr)
+                    return 2
+                if len(rows) < len(eps):
+                    print(f"[review-page] ⚠️ 指定的 {len(eps)} 条里只有 "
+                          f"{len(rows)} 条存在,只做这些")
         else:
             from .ingest.lerobot_reader import read_lerobot_rows
+            if eps is not None:
+                # 先对账再读(与 run 同一个纯函数;元数据轻扫,万条秒级)
+                from .ingest.lerobot_reader import read_lerobot_meta
+                _avail = {int(str(r["episode_id"])[2:])
+                          for r in read_lerobot_meta(args.input)}
+                try:
+                    eps, _ep_warn = reconcile_episodes(eps, _avail, what="数据集")
+                except EpisodesOutOfRange as e:
+                    print(f"[输入错误] {e}", file=sys.stderr)
+                    return 2
+                if _ep_warn:
+                    print(f"[review-page] ⚠️ {_ep_warn}")
             rows = read_lerobot_rows(args.input, episode_indices=eps, validate=True)
         if args.max_episodes:
             rows = rows[: args.max_episodes]
@@ -843,7 +867,10 @@ def main(argv: list[str] | None = None) -> int:
         def _tick():
             done[0] += 1
             if done[0] % 10 == 0 or done[0] == len(rows):
-                print(f"[review-page] {done[0]}/{len(rows)}", flush=True)
+                # 中文阶段名(2026-08-30 用户:界面上冒出 "review-page" 没人看
+                # 得懂 —— 子命令名不进用户视野,行话红线的漏网)
+                print(f"[review-page] 切割逐条片段 {done[0]}/{len(rows)}",
+                      flush=True)
 
         if args.into_delivery:
             # 片段进交付批次(2026-08-28 去挂载依赖):落点跟着交付走,桶交付
@@ -980,6 +1007,10 @@ def main(argv: list[str] | None = None) -> int:
         from .ingest.lerobot_reader import NotADatasetError, OutputExistsError
         from .pipeline.run import run_pipeline
 
+        _bad_n = _bad_max_episodes(args.max_episodes)
+        if _bad_n:
+            print(f"[输入错误] {_bad_n}", file=sys.stderr)
+            return 2
         try:
             _eps = _parse_episodes(args.episodes)
         except ValueError as e:
@@ -988,8 +1019,11 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             return 2
         if _eps:
-            print(f"[curation] 只跑指定 episode({len(_eps)} 条): "
-                  f"{sorted(_eps)[:10]}{'…' if len(_eps) > 10 else ''}")
+            # 实跑数以管道内与数据集的对账为准(issue #110:这里印的是
+            # 请求数,曾被误读成实跑数)
+            print(f"[curation] 指定 episode:表达式解析出 {len(_eps)} 条 "
+                  f"({sorted(_eps)[:10]}{'…' if len(_eps) > 10 else ''}),"
+                  "与数据集对账后按实有交集跑")
 
         # 跑批子目录名只算一次:--batch 下几个数据集共用同一个名字,一次点击的
         # 产物在各自交付里对得上号(`<交付>/<数据集>/20260814-074045/`)。
@@ -1158,6 +1192,10 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             summary = _run_one(inp_root, out_root)
+        except EpisodesOutOfRange as e:
+            # 全超界:绝不产出标着成功的空交付(issue #110)
+            print(f"[输入错误] {e}", file=sys.stderr)
+            return 2
         except NotADatasetError as e:
             print(f"[输入错误] {e}", file=sys.stderr)
             return 2

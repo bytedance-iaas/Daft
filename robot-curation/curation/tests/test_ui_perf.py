@@ -932,6 +932,200 @@ def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
     assert labels.count("返回") >= 2, "两个模态都要有返回退路"
 
 
+def test_modal_centers_without_transform_so_dropdowns_anchor():
+    """型号追问框里的下拉浮层飞到页面左上/塌高(2026-08-29 用户实拍+真机
+    复现):ul.options 是 position:fixed,而 .modal-dialog 若用 transform 居中
+    会劫持 fixed 后代的坐标系(CSS 规范)。根治=居中改 inset:0+margin:auto+
+    height:fit-content,transform 从模态规则里退役;JS 端保留 fixedBase 换算
+    作通用保险。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import _ARCO_CSS, _DROPDOWN_JS
+
+    import re as _re
+    seg = _ARCO_CSS.split(".modal-dialog {")[1].split("}")[0]
+    seg = _re.sub(r"/\*.*?\*/", "", seg, flags=_re.S)   # 注释里提 transform 无罪
+    assert "transform" not in seg, "模态居中不许再用 transform(劫持 fixed 后代)"
+    assert "inset: 0" in seg and "margin: auto" in seg
+    assert "fit-content" in seg
+    assert "fixedBase" in _DROPDOWN_JS and "MutationObserver" in _DROPDOWN_JS
+
+
+def test_emb_ask_puts_suggestion_first(tmp_path, monkeypatch):
+    """型号追问的候选把建议排最前(2026-08-29 用户实拍:全量字母序看着像
+    一堆无关候选);默认值与选项同一条判据——只预选真在清单里的建议。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner as _runner
+    from curation.ui.app import build_app
+
+    deliv = tmp_path / "deliveries"
+    deliv.mkdir()
+    ds = tmp_path / "data" / "mystery"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(_json.dumps(
+        {"robot_type": "unknown", "codebase_version": "v3.0"}),
+        encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    # suggest 的字段契约 = id + reason(embodiment_ask_md 渲染两者都要)
+    monkeypatch.setattr(_runner, "embodiment_hints",
+                        lambda root, name: {"robot_type": "unknown",
+                                            "suggest": [{"id": "ur5",
+                                                         "reason": "测试建议"}]})
+    fn = _fn_by_name(app, "_run_preflight")
+    out = fn(str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
+             "okname", "", [], "", None, "", None,
+             "", "", None, None, None, None, "", False, False)
+    pick = out[-4]
+    assert pick.get("value") == "ur5"
+    ch = [c[1] if isinstance(c, (list, tuple)) else c
+          for c in pick.get("choices") or []]
+    assert ch and ch[0] == "ur5", "建议的型号要排最前"
+    assert set(ch) == set(_runner.embodiment_choices()), "其余候选一个不少"
+
+
+def test_preflight_bad_episode_selection_opens_gate_dialog(tmp_path,
+                                                           monkeypatch):
+    """episode 选择守门走开跑闸模态(issue #110 洞⑧+洞①前哨):N=0、表达式
+    非法、全超界三病例都在点「开始质检」那一刻弹「episode 选择不可用」;
+    判据与 CLI 同源(episode_select),部分超界放行交给管道跑交集。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner as _runner
+    from curation.ui.app import build_app
+
+    deliv = tmp_path / "deliveries"
+    deliv.mkdir()
+    ds = tmp_path / "data" / "d1"
+    (ds / "meta").mkdir(parents=True)
+    # robot_type 故意 unknown:部分超界那一例放行后,流程要安全停在型号追问,
+    # 不能一路冲到 _run_go 真起进程
+    (ds / "meta" / "info.json").write_text(_json.dumps(
+        {"robot_type": "unknown", "total_episodes": 2}), encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+
+    def _boom(*a, **kw):
+        raise AssertionError("弹窗臂碰了任务区重算")
+
+    monkeypatch.setattr(_runner, "active_run", _boom)
+    monkeypatch.setattr(_runner, "list_runs", _boom)
+    fn = _fn_by_name(app, "_run_preflight")
+    import json as _j
+    for max_n, eps, kw in (("0", "", "只跑前 N 条"),
+                           (None, "-5", "解析失败"),
+                           (None, "10-20", "一条也不存在")):
+        out = fn(str(tmp_path / "data"), "", str(deliv), "", ["d1"],
+                 "n1", "", [], "", max_n, eps, None,
+                 "", "", None, None, None, None, "", False, False)
+        flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
+        assert str(out[-1]).startswith("**episode 选择不可用**"), f"病例 {eps or max_n}"
+        assert kw in str(out[-1])
+        assert flat.count("'visible': True") == 1
+        assert "'visible': False" not in flat
+    # 部分超界放行:total=2,要 1-5 → 不弹 episode 那扇窗(交给管道交集+
+    # 警告),流程继续走到下一站 = 型号追问
+    out = fn(str(tmp_path / "data"), "", str(deliv), "", ["d1"],
+             "n1", "", [], "", None, "1-5", None,
+             "", "", None, None, None, None, "", False, False)
+    flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
+    assert not str(out[-1]).startswith("**episode 选择不可用**")
+    assert "没有登记机器人型号" in flat, "部分超界该放行到型号追问这一站"
+
+
+def test_history_renamed_and_report_jump(tmp_path, monkeypatch):
+    """issue #102 定案(2026-08-30):历史不搬家 ——「历史」改名「执行历史」
+    消歧;已完成且找得到跑批目录的任务亮「查看报告」,一键切报告页并预选
+    那次交付+批次;点行走 _QJUMP 通路(6.9 非交互表的 select 前端不发,
+    原 select 接线一直是死的)。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner as _runner
+    from curation.ui.app import _QJUMP_JS, build_app
+
+    assert "#hi-table" in _QJUMP_JS and "hijump-row" in _QJUMP_JS, \
+        "执行历史点行要走 _QJUMP 自建通路"
+    deliv = tmp_path / "deliveries"
+    run_dir = deliv / "d1" / "20260830-000001"
+    run_dir.mkdir(parents=True)
+    (run_dir / "passed.json").write_text(
+        _json.dumps({"数据集": "d1", "episodes": {}}), encoding="utf-8")
+    (deliv / "d1" / "latest").write_text("20260830-000001", encoding="utf-8")
+    (tmp_path / "data").mkdir()
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    cfg = _json.dumps(app.get_config_file(), default=str, ensure_ascii=False)
+    assert "执行历史" in cfg, "页签改名「执行历史」(一词消歧,历史不搬家)"
+
+    st = {"run_id": "r1", "state": "done", "command": "run", "label": "质检 d1",
+          "argv": ["x", "--output", str(deliv / "d1"),
+                   "--run-name", "20260830-000001"]}
+    monkeypatch.setattr(_runner, "list_runs", lambda *a, **k: [st])
+    monkeypatch.setattr(_runner, "tail_log", lambda *a, **k: "log")
+    open_fn = _fn_by_name(app, "_hi_open_by_id")
+    title, _log, sel, btn = open_fn("r1")
+    assert "质检 d1" in str(title) and sel == "r1"
+    assert btn.get("visible") is True, "已完成+目录在 → 亮「查看报告」"
+    # 直连输出/目录已清理:不亮按钮(宁可少个按钮也不指错地方)
+    st2 = dict(st, run_id="r2", argv=["x", "--output", "tos://b/x"])
+    monkeypatch.setattr(_runner, "list_runs", lambda *a, **k: [st2])
+    assert open_fn("r2")[3].get("visible") is False
+    # 跳转(本地交付):切报告页签 + 批次预选那次跑批 + 槽位与接线逐项对齐
+    monkeypatch.setattr(_runner, "list_runs", lambda *a, **k: [st])
+    jump = next(f for f in app.fns.values()
+                if getattr(f.fn, "__name__", "") == "_hi_report_jump")
+    out = jump.fn("r1")
+    assert len(out) == len(jump.outputs), "输出槽必须与接线逐项对齐"
+    assert getattr(out[0], "selected", None) == "report"
+    assert out[3].get("value") == str(run_dir)
+    # 跳转(直连桶交付,dataverse/近期跑批常态):交付根进 rp_root、批次从桶
+    # 现列并精确对号;列表里对不上号 → 全程空更新,绝不冒充别的批次
+    st3 = dict(st, run_id="r3",
+               argv=["x", "--output", "tos://sh-deliv/deliveries/t1",
+                     "--output-region", "cn-beijing",
+                     "--run-name", "20260830-000002"])
+    monkeypatch.setattr(_runner, "list_runs", lambda *a, **k: [st3])
+    url = "tos://sh-deliv/deliveries/t1/20260830-000002"
+    monkeypatch.setattr(_runner, "tos_run_choices",
+                        lambda *a, **k: [("t1 / 20260830-000002", url)])
+    monkeypatch.setattr(_runner, "mirror_run",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            RuntimeError("单测不出网")))
+    import gradio as gr
+    monkeypatch.setattr(gr, "Warning", lambda *a, **k: None)
+    out = jump.fn("r3")
+    assert getattr(out[0], "selected", None) == "report"
+    assert out[2].get("value") == "tos://sh-deliv/deliveries/t1"
+    assert out[3].get("value") == url
+    # 亮灯判据同源:tos 输出的已完成任务也该亮「查看报告」
+    assert open_fn("r3")[3].get("visible") is True
+    monkeypatch.setattr(_runner, "tos_run_choices", lambda *a, **k: [])
+    out = jump.fn("r3")
+    assert all("'value'" not in str(x) or x.get("value") is None
+               for x in out[:4] if isinstance(x, dict)), "对不上号必须全空更新"
+
+
+def test_toasts_are_tamed():
+    """issue #107(用户吐槽:toast 太吓人+倒计时几秒就没):
+    ① gr.Info 全退役(成功不旁白,字段填上就是证明);
+    ② 深链问题句全部迁「数据集」说明位常驻红字(源里不再有深链 gr.Warning);
+    ③ 仅存的 gr.Warning(报告页两处,88 槽对齐动不得)必须 duration=None 常驻;
+    ④ CSS 把倒计时进度条整根藏掉(兜底异常 toast 也不再闪倒计时)。"""
+    import re
+    from pathlib import Path
+
+    pytest.importorskip("gradio")
+    from curation.ui import app as ui_app
+    src = Path(ui_app.__file__).read_text(encoding="utf-8")
+    assert "gr.Info(" not in src, "gr.Info 已整体退役,不许回潮"
+    calls = re.findall(r"gr\.Warning\((?:[^()]|\([^()]*\))*\)", src, re.S)
+    assert len(calls) == 2, f"gr.Warning 只留报告页两处,现有 {len(calls)}"
+    for c in calls:
+        assert "duration=None" in c, f"toast 必须常驻(duration=None):{c[:60]}"
+    css = ui_app.presentation()["css"]
+    assert ".timer { display: none !important; }" in css, "倒计时条要藏掉"
+
+
 def test_preflight_empty_root_and_output_open_gate_dialog(tmp_path,
                                                           monkeypatch):
     """数据集目录/交付目录没填 → 同一扇开跑闸模态(2026-08-29 用户:任务区

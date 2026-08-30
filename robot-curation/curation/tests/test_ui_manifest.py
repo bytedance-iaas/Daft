@@ -3135,7 +3135,9 @@ def test_report_page_tab_set_is_frozen(delivery):
     assert labels == sorted([
         # 「任务台」2026-08-19 改名「跑质检」并拍平(原来下面只剩一个
         # 「跑质检」子页签,套一层纯属多余)——顶层一个名字,子页签层删掉
-        "跑质检", "当前任务", "历史",
+        # 「历史」2026-08-30 改名「执行历史」(issue #102 定案:历史不搬家,
+        # 一词消歧 —— 它装的是跑批动作的流水账,不是质检结果)
+        "跑质检", "当前任务", "执行历史",
         "质检报告", "质检总览", "轨迹", "人工裁决", "待你裁决",
         "任务失败复议", "技能分布", "明细", "动作打分明细", "视频打分明细",
         "视频-动作同步", "卡顿动作时间线", "本次运行配置", "性能剖析"])
@@ -3636,8 +3638,11 @@ def test_start_button_refuses_an_empty_dataset_selection(full_delivery, tmp_path
                 ui_app.FULL_SCAN, [], "只跑选中", None, "",
                 None, "", "", ui_app.PLOT_MODES["flagged"], None, None, None, "",
                 False, False)
-    msg = str(out[2])
-    assert "数据集" in msg and "跑全部" in msg
+    # 2026-08-29 起没选数据集走开跑闸模态(不再是任务区文字):唯一亮的窗
+    # = out-ask,文案点名「数据集」与「跑全部」的出路
+    assert str(out[-1]).startswith("**还没选数据集**")
+    assert "跑根目录下的全部数据集" in str(out[-1])
+    assert "'visible': True" in str(out[-2])
 
 
 def test_terminal_screen_clips_its_overflow(delivery, clean_ui_env):

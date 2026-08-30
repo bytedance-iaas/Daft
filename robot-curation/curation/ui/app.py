@@ -350,6 +350,18 @@ _TIP_JS = """
 _DROPDOWN_JS = """
 <script>
 (function () {
+  function fixedBase(el) {
+    // fixed 定位的真实包含块:最近的带 transform/perspective/filter 的祖先
+    // (CSS 规范)。模态框 .modal-dialog 用 translate(-50%,-50%) 居中,正好
+    // 命中 —— 浮层坐标必须换算到它的坐标系,否则整块飞到页面左上
+    // (2026-08-29 用户实拍:型号追问框里的下拉脱锚)。
+    for (var p = el.parentElement; p; p = p.parentElement) {
+      var cs = getComputedStyle(p);
+      if (cs.transform !== 'none' || cs.perspective !== 'none'
+          || (cs.filter && cs.filter !== 'none')) return p;
+    }
+    return null;
+  }
   function place(ul) {
     var wrap = ul.closest('.wrap') || ul.parentElement;   // gradio 自己的锚点
     if (!wrap) return;
@@ -361,9 +373,16 @@ _DROPDOWN_JS = """
       if (input) input.blur();           // 锚点已滚出视野:收起,别挂在半空
       return;
     }
+    var bx = 0, by = 0, base = fixedBase(ul);
+    if (base) {
+      var b = base.getBoundingClientRect();
+      bx = b.left; by = b.top;
+    }
     // 开在上方时 ul.top 必然小于 wrap.top;开在下方时 ul.top == wrap.bottom
     var above = u.top < w.top;
-    ul.style.top = (above ? w.top - u.height : w.bottom) + 'px';
+    ul.style.top = ((above ? w.top - u.height : w.bottom) - by) + 'px';
+    ul.style.left = (w.left - bx) + 'px';
+    ul.style.width = w.width + 'px';     // 模态内 gradio 量出的宽度同样不可信
   }
   function reflow(e) {
     var t = e && e.target;
@@ -373,6 +392,9 @@ _DROPDOWN_JS = """
   }
   window.addEventListener('scroll', reflow, true);
   window.addEventListener('resize', reflow, true);
+  // 浮层一出现就摆正:模态里的下拉不等滚动,gradio 初始摆放就是错的
+  new MutationObserver(function () { reflow(null); })
+      .observe(document.documentElement, {childList: true, subtree: true});
 
   // ── 点箭头展不开(issue #53,2026-08-19 实机量出来的)────────────────
   // 单选下拉:.icon-wrap 是 pointer-events:none 且**压在 input 上面**
@@ -429,13 +451,18 @@ _QJUMP_JS = """
   document.addEventListener('click', function (e) {
     var t = e.target;
     if (!t || !t.closest) return;
-    var zone = t.closest('#audit-queue, #appeal-queue');
+    var zone = t.closest('#audit-queue, #appeal-queue, #hi-table');
     if (!zone) return;
     var tr = t.closest('tr');
     if (!tr || !tr.cells || !tr.cells.length || tr.querySelector('th')) return;
     if (zone.id === 'audit-queue') {
       var num = (tr.cells[0].innerText || '').trim();
       if (num) relay('qjump-row', 'qjump-go', num);
+    } else if (zone.id === 'hi-table') {
+      // 执行历史(issue #102):行身份 = 末列「编号」(run_id;虚拟滚动下
+      // 行号会漂,单元格文本才稳)
+      var rid = ((tr.cells[tr.cells.length - 1] || {}).innerText || '').trim();
+      if (rid) relay('hijump-row', 'hijump-go', rid);
     } else {
       var eid = ((tr.cells[1] || {}).innerText || '').trim();
       if (eid) relay('apjump-row', 'apjump-go', eid);
@@ -777,6 +804,12 @@ _ARCO_CSS = """
 /* ⚠️ 浮层**不能**用 ::after 挂在问号上:Gradio 的表单块是 overflow:hidden,
    气泡会被齐刷刷裁掉一半(2026-08-13 实测)。所以由 JS 在 body 上另起一个
    position:fixed 的框 —— 定位脱离一切祖先,谁也裁不到。 */
+/* toast 收敛(issue #107,2026-08-29):倒计时进度条整根藏掉——"几秒就没"
+   的焦虑感一半来自它。显式消息已全部迁红字或 duration=None 常驻;这里兜的
+   是没接住的异常那类最后防线 toast,样子收着点,阴影按 Arco 口径。 */
+.toast-wrap .timer, .toast-body .timer { display: none !important; }
+.toast-body { box-shadow: 0 4px 10px rgba(29,33,41,.10) !important; }
+
 .qc-tipbox {
   position: fixed; max-width: 340px; background: #FFFFFF; color: var(--arco-t1);
   border: 1px solid var(--arco-border); font-size: 13px; line-height: 1.7;
@@ -788,17 +821,26 @@ _ARCO_CSS = """
    Gradio 没有原生模态框,但模态不需要它原生支持 —— fixed 居中 + 一层遮罩即可,
    Python 那边只是给 gr.Column 挂个 class,组件树与事件接线一个字不动。
    ⚠️ 遮罩用 box-shadow 大扩散,**不许用 position:fixed 的 `::before`**
-   (2026-08-19 真机打脸):对话框自己带 transform:translate(-50%,-50%),而 CSS
-   规定 fixed 元素一旦有 transform 祖先就改为相对该祖先定位 —— 于是 inset:0 的
-   "全屏遮罩"实际只盖住对话框自己(框内发灰、页面四周纹丝不动)。box-shadow 的
+   (2026-08-19 真机打脸,当时对话框还用 transform 居中):CSS 规定 fixed 元素
+   一旦有 transform 祖先就改为相对该祖先定位 —— 于是 inset:0 的"全屏遮罩"实际
+   只盖住对话框自己(框内发灰、页面四周纹丝不动)。2026-08-29 起居中已改
+   inset+margin:auto、transform 退役(它还劫持模态内下拉的坐标系),但 ::before
+   方案照旧不用:box-shadow 无额外元素、不进裁剪,没理由换。box-shadow 的
    第二段 0 0 0 200vmax 从框边向外铺满整个视口,没有额外元素、不进任何
    overflow:hidden 的裁剪(Gradio 表单块裁兄弟元素那坑也躲开了)。
    代价:box-shadow 不吃点击,页面其余部分仍可点 —— 拿"改写交付"这一下换整屏
    变暗的强提示,可以接受;真正的断路器是「确定」本身(不点绝不发起)。 */
 .gradio-container .modal-dialog {
+  /* 居中不用 transform(2026-08-29):transform 会把 fixed 后代的坐标系整个
+     劫持(CSS 规范),模态内下拉的 ul.options(position:fixed)按视口坐标摆
+     就整块飞掉/塌高(用户实拍+真机复现)。inset:0 + margin:auto +
+     height:fit-content 同样居中,fixed 后代保持视口坐标系,gradio 原生定位
+     直接正确。 */
   position: fixed !important;
-  top: 50% !important; left: 50% !important;
-  transform: translate(-50%, -50%) !important;
+  inset: 0 !important;
+  margin: auto !important;
+  height: fit-content !important;
+  max-height: calc(100vh - 48px) !important;
   z-index: 10000 !important;
   width: min(560px, calc(100vw - 48px)) !important;
   background: #FFFFFF !important;
@@ -1105,7 +1147,7 @@ _AUDIT_CSS = """
 /* 底部翻页的位置提示与顶部同款居中 */
 #mg-pos2 { text-align:center; align-self:center; color:#86909C; }
 /* 点行跳卡的隐藏中转控件(_QJUMP_JS 的落点),永不显示 */
-#qjump-hide, #apjump-hide { display:none !important; }
+#qjump-hide, #apjump-hide, #hijump-hide { display:none !important; }
 /* 表格当前行 = 下方卡片正在显示的那条(_CURROW_JS 上色),Arco 浅蓝 */
 #audit-queue tr.cur-row > td, #appeal-queue tr.cur-row > td {
   background:#E8F3FF !important; }
@@ -1665,7 +1707,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                          _rp_src["region"] or None)
             except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
                 gr.Warning(f"镜像这份交付失败:{type(e).__name__}: "
-                           f"{str(e)[:120]}")
+                           f"{str(e)[:120]}", duration=None)   # 常驻,#107
                 path = ""
         # 镜像交付:打开时顺手探一次源桶可写(2026-08-21)。只读 → 裁决记了也写
         # 不回去,给 m 打上 tos_readonly,人工裁决页按它上锁;看报告不受影响
@@ -2170,13 +2212,29 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             tk_stop = gr.Button("停止", variant="secondary", scale=0,
                                                 size="sm", elem_id="tk-stop",
                                                 interactive=False)
-                    with gr.Tab("历史"):
+                    # 「历史」→「执行历史」(issue #102,2026-08-30 用户定):
+                    # 这页装的是跑批动作的流水账,不是质检结果 —— 一词消歧;
+                    # 结果的历史在「质检报告」页的交付/批次下拉里,各归各位。
+                    with gr.Tab("执行历史"):
                         hi_table = gr.Dataframe(headers=runner.HISTORY_HEADERS,
-                                                interactive=False, wrap=True)
+                                                interactive=False, wrap=True,
+                                                elem_id="hi-table")
                         hi_pick = gr.Markdown()
+                        # 已完成的任务亮它:一键切到「质检报告」并预选那次跑批
+                        # (issue #102 的真实诉求 = 从执行史走到结果,修通这条
+                        # 路,历史不搬家)
+                        hi_report = gr.Button("查看报告", size="sm", scale=0,
+                                              visible=False)
                         hi_log = gr.Textbox(label="这次任务的日志", lines=14,
                                             max_lines=14, interactive=False,
                                             elem_classes=["mono-log"])
+                        # 点行走 _QJUMP 自建通路(非交互表的 select 前端不发,
+                        # gradio 6.9 老坑 —— 原 select 接线在 6.9 上一直是死的,
+                        # 本轮顺手修活);行身份用「编号」列文本,不用行号
+                        with gr.Row(elem_id="hijump-hide"):
+                            hi_jump = gr.Textbox(elem_id="hijump-row")
+                            hi_jump_go = gr.Button("开", elem_id="hijump-go")
+                        hi_sel = gr.State("")
                 # rn_go 挂在末尾(issue #55):每一条会刷新状态条的路(点击/轮询/
                 # 手动刷新/app.load)同时刷新「开始质检」的可点性 —— 单独一条刷新
                 # 链早晚和状态条各说各话。
@@ -2765,6 +2823,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 gr.update(), gr.update(visible=True),
                                 "**还没选数据集**\n\n在「数据集」下拉里选一个,"
                                 "或勾选「跑根目录下的全部数据集」。")
+                    # episode 选择守门(issue #110):手滑类(N=0/负数/巨区间/
+                    # 语法错)与全超界都在点按钮这一刻弹窗;部分超界放行,由
+                    # 管道跑交集+警告(判据同源 episode_select,三层一把尺)
+                    _ep_bad = (runner.episodes_input_error(eps, max_n)
+                               or runner.episodes_range_error(
+                                   eps, _src_root, chosen))
+                    if _ep_bad:
+                        return (*_tk_keep(), args,
+                                gr.update(), gr.update(),
+                                gr.update(), gr.update(), gr.update(),
+                                gr.update(), gr.update(visible=True),
+                                f"**episode 选择不可用**\n\n{_ep_bad}")
                     # 交付名先行校验(2026-08-27 用户实见:名字非法却先弹了
                     # 切片框,答完才报错,人被锁在对话框里)——非法/占用在
                     # 弹切片/型号模态之前拦下。判据与 _run_go 同源:本实例
@@ -2829,11 +2899,20 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         if unk:
                             sug = runner.embodiment_hints(
                                 _src_root, unk[0])["suggest"]
+                            # 建议的型号排最前(2026-08-29 用户实拍:全量字母序
+                            # 让人第一眼看到一堆无关候选)。默认值与选项同一条
+                            # 判据:只预选真在清单里的建议,防静默丢值
+                            _all = runner.embodiment_choices()
+                            _sug = [s["id"] for s in sug
+                                    if s.get("id") in _all]
+                            _emb_choices = _sug + [c for c in _all
+                                                   if c not in _sug]
                             return (*_tk_keep(), args,
                                     gr.update(), gr.update(),
                                     gr.update(visible=True),
                                     runner.embodiment_ask_md("、".join(unk), sug),
-                                    gr.update(value=(sug[0]["id"] if sug
+                                    gr.update(choices=_emb_choices,
+                                              value=(_sug[0] if _sug
                                                      else None)),
                                     _ds_hint(ds, batch), gr.update(),
                                     gr.update())
@@ -2943,20 +3022,54 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 def _hi_rows():
                     return runner.history_rows(runner.list_runs(_runs_root, limit=50))
 
+                def _hi_argv_val(r: dict, flag: str) -> str:
+                    argv = [str(x) for x in (r or {}).get("argv") or []]
+                    try:
+                        return argv[argv.index(flag) + 1]
+                    except (ValueError, IndexError):
+                        return ""
+
+                def _hi_show(r: dict | None):
+                    """一条任务记录 → (标题行, 日志, 选中态, 「查看报告」显隐)。
+                    已完成的质检任务亮按钮:本地/挂载交付要目录真在;直连桶交付
+                    (--output tos://,dataverse 与近期跑批的常态)按 argv 亮,
+                    真伪由跳转时的批次列表核实。找不到落点就不亮 —— 宁可少个
+                    按钮也不指错地方。"""
+                    if r is None:
+                        return ("(这一行对应的任务已不在列表里)", "", "",
+                                gr.update(visible=False))
+                    state = runner.STATE_STYLES.get(r.get("state"), ("",))[0]
+                    _can = runner.run_output_dir(r) is not None
+                    if (not _can and r.get("state") == "done"
+                            and str(r.get("command")) == "run"):
+                        _can = (_hi_argv_val(r, "--output").startswith("tos://")
+                                and bool(_hi_argv_val(r, "--run-name")))
+                    return (f"**{r.get('label') or r.get('command')}** · {state}",
+                            runner.tail_log(_runs_root, r["run_id"]),
+                            str(r.get("run_id") or ""),
+                            gr.update(visible=_can))
+
                 def _hi_open(evt):
                     """点历史某一行 → 回看那次任务的日志(行序与 list_runs 一致)。"""
                     runs = runner.list_runs(_runs_root, limit=50)
                     idx = (evt.index[0] if evt and getattr(evt, "index", None)
                            else 0) or 0
-                    if idx >= len(runs):
-                        return "(这一行对应的任务已不在列表里)", ""
-                    r = runs[idx]
-                    state = runner.STATE_STYLES.get(r.get("state"), ("",))[0]
-                    return (f"**{r.get('label') or r.get('command')}** · {state}",
-                            runner.tail_log(_runs_root, r["run_id"]))
+                    return _hi_show(runs[idx] if idx < len(runs) else None)
 
                 _hi_open.__annotations__ = {"evt": gr.SelectData}
-                hi_table.select(_hi_open, None, [hi_pick, hi_log])
+                _hi_outs = [hi_pick, hi_log, hi_sel, hi_report]
+                hi_table.select(_hi_open, None, _hi_outs)
+
+                def _hi_open_by_id(rid):
+                    """点行的 _QJUMP 通路(gradio 6.9 非交互表 select 前端不发,
+                    上面那条 select 接线在 6.9 上是死的;行身份=「编号」列)。"""
+                    rid = str(rid or "").strip()
+                    runs = runner.list_runs(_runs_root, limit=50)
+                    return _hi_show(next(
+                        (x for x in runs if str(x.get("run_id")) == rid), None))
+
+                hi_jump_go.click(_hi_open_by_id, hi_jump, _hi_outs,
+                                 show_progress="hidden")
 
                 def _tk_stop_click():
                     act = runner.active_run(_runs_root)
@@ -3012,6 +3125,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     qp = getattr(request, "query_params", None) or {}
                     wanted, present = runner.deeplink_values(qp)
                     hold = (gr.update(),) * 6
+                    # 深链的问题句不再走 toast(issue #107:几秒就没,人不在
+                    # 就错过)——攒起来落「数据集」说明位常驻红字,回来还在
+                    probs: list[str] = []
+
+                    def _dl_note(extra: str = "") -> str:
+                        if not probs:
+                            return str(extra or "")
+                        red = ('<span class="note-err">'
+                               + "<br>".join("⚠️ " + _html.escape(p)
+                                             for p in probs) + "</span>")
+                        tail = str(extra or "").strip()
+                        return red + (("<br>" + tail) if tail else "")
+
+                    def _dl_hold():
+                        return (gr.update(), gr.update(), gr.update(),
+                                gr.update(), _dl_note(), gr.update())
                     # ?source=public[&dataset=名字]:公共数据集深链(2026-08-21)。
                     # 裸名字补成镜像桶里的完整地址,之后与 tos:// 深链同一条路
                     _src_q = str((qp.get("source") if hasattr(qp, "get") else "")
@@ -3033,7 +3162,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 旧契约兼容:endpoint/tos_endpoint 消毒后只进提示文案
                     ep_host, ep_present = runner.deeplink_endpoint(qp)
                     if ep_present and not ep_host:
-                        gr.Warning("链接里的端点参数看不懂,已忽略(不影响预选)")
+                        probs.append("链接里的端点参数看不懂,已忽略(不影响预选)")
                     urls = [w for w in wanted if str(w).startswith("tos://")]
                     bare = [w for w in wanted if not str(w).startswith("tos://")]
                     if urls:
@@ -3041,8 +3170,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         try:
                             root, _n0 = runner.split_dataset_url(urls[0])
                         except ValueError as e:
-                            gr.Warning(f"链接里的数据集地址解析不了:{e}")
-                            return hold
+                            probs.append(f"链接里的数据集地址解析不了:{e}")
+                            return _dl_hold()
                         _root_only = (_src_q == "public" and urls[0].rstrip("/")
                                       == public_catalog.root_url())
                         if _root_only:
@@ -3052,18 +3181,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             try:
                                 r2, n2 = runner.split_dataset_url(u)
                             except ValueError:
-                                gr.Warning(f"链接里的地址解析不了,已忽略:{u}")
+                                probs.append(f"链接里的地址解析不了,已忽略:{u}")
                                 continue
                             if r2 == root and n2 and n2 not in names:
                                 names.append(n2)
                             elif r2 != root:
-                                gr.Warning(f"链接带了多个不同前缀,只认第一个"
-                                           f"({root});已忽略 {u}")
+                                probs.append(f"链接带了多个不同前缀,只认第一个"
+                                             f"({root});已忽略 {u}")
                         try:
                             spec = runner.resolve_root_input(root, _buckets)
                         except ValueError as e:
-                            gr.Warning(f"链接里的数据集地址不可用:{e}")
-                            return hold
+                            probs.append(f"链接里的数据集地址不可用:{e}")
+                            return _dl_hold()
                         is_pub = public_catalog.is_public_root(root)
                         if is_pub:
                             # 公共镜像桶:按清单过滤、带全名/版本/集数的显示串
@@ -3087,7 +3216,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 _c = runner._endpoint_conflict_note(
                                     spec["bucket"], ep_host)
                                 if _c:
-                                    gr.Warning(_c)
+                                    probs.append(_c)
                         else:
                             try:
                                 # 深链的陌生桶同样只列真数据集(issue #98)
@@ -3108,26 +3237,23 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         sel = [n for n in names if n in _vals]
                         for n in names:
                             if n not in _vals:
-                                gr.Warning(f"链接指的数据集「{n}」在该前缀下"
-                                           "没找到 —— 前缀或名字可能变了")
-                        if sel:
-                            gr.Info("已按链接预选:" + ", ".join(sel)
-                                    + " —— 点「开始质检」即可")
+                                probs.append(f"链接指的数据集「{n}」在该前缀下"
+                                             "没找到 —— 前缀或名字可能变了")
+                        # 预选成功不再旁白(2026-08-29 用户:字段填上就是最好
+                        # 的证明);问题句并进数据集说明位
                         return (gr.update(value=root, interactive=not is_pub),
                                 gr.update(choices=choices, value=sel),
                                 (gr.update(value=region, interactive=not is_pub)
                                  if region else gr.update(interactive=not is_pub)),
-                                src_note, ds_note,
+                                src_note, _dl_note(ds_note),
                                 gr.update(value=_src_public if is_pub else SRC_PRIVATE))
                     # 旧契约(裸名字):对表预选,行为与 2026-08-17 版一致 ——
                     # **桶不认识绝不回落到默认桶里找同名的**
                     plan = runner.prefill_plan(bare, _buckets,
                                                link_endpoint=ep_host)
-                    for note in plan["notices"]:
-                        gr.Warning(note)
+                    probs.extend(plan["notices"])
                     if not plan["datasets"]:
-                        return hold
-                    gr.Info(plan["info"])
+                        return _dl_hold()
                     _b = next((x for x in _buckets
                                if x["name"] == plan["source"]), None)
                     return ((gr.update(value=runner.bucket_url(_b))
@@ -3136,8 +3262,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                       value=plan["datasets"]),
                             gr.update(),
                             "" if _b else gr.update(),
-                            runner.dataset_root_note(_b["datasets_path"])
-                            if _b else gr.update(),
+                            (_dl_note(runner.dataset_root_note(
+                                _b["datasets_path"]) if _b else "")
+                             if (probs or _b) else gr.update()),
                             gr.update(value=SRC_PRIVATE))
 
                 # gr.Request 靠注解注入;`from __future__ import annotations` 下字符串
@@ -3743,8 +3870,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         rc = runner.tos_run_choices(
                             str(path), _rp_src["region"] or None)
                     except Exception as e:  # noqa: BLE001
+                        # duration=None:常驻到用户手动关(issue #107:几秒
+                        # 就没+倒计时条吓人;进红字位要动 _load 88 槽对齐,不值)
                         gr.Warning(f"列不出该交付下的批次:"
-                                   f"{type(e).__name__}: {str(e)[:120]}")
+                                   f"{type(e).__name__}: {str(e)[:120]}",
+                                   duration=None)
                         rc = []
                     sel = rc[0][1] if rc else ""
                     return (gr.update(choices=rc, value=sel or None),
@@ -3761,6 +3891,58 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # visible 补丁偶尔被冲掉。.input 只认用户动作,单写者,竞态整类消失。
             picker.input(_pick_delivery, picker, [run_pick, *outs])
             run_pick.input(_load, run_pick, outs)
+
+            def _hi_report_jump(rid):
+                """执行历史 →「查看报告」直达(issue #102):切「质检报告」页签
+                并预选那次跑批的交付+批次。两种落点:本地/挂载交付走交付下拉;
+                直连桶交付(--output tos://)把交付根写进 rp_root、批次从桶里
+                现列,与手动打开桶交付同一条路。找不到/对不上号全程空更新 ——
+                按钮只在有落点线索时亮,这里是第二道诚实兜底。"""
+                _hold = (gr.update(),) * (4 + len(outs))
+                runs = runner.list_runs(_runs_root, limit=50)
+                r = next((x for x in runs
+                          if str(x.get("run_id")) == str(rid or "").strip()),
+                         None)
+                if r is None:
+                    return _hold
+                run_dir = runner.run_output_dir(r)
+                if run_dir:
+                    d = delivery_root_of(run_dir)
+                    ch = discover_deliveries(delivery)
+                    if d not in ch:
+                        clear_discover_cache()      # 新交付可能还没进缓存
+                        ch = discover_deliveries(delivery)
+                    # 值必须在选项集里,否则 gradio 静默丢值(老坑):列不进去
+                    # 就不动交付下拉,批次与正文照样按 run_dir 打开
+                    pk = (gr.update(choices=ch, value=d) if d in ch
+                          else gr.update())
+                    return (gr.Tabs(selected="report"), pk, gr.update(),
+                            gr.update(choices=run_choices(d), value=run_dir),
+                            *_load(run_dir))
+                out_url = _hi_argv_val(r, "--output").rstrip("/")
+                run_name = _hi_argv_val(r, "--run-name")
+                if not (out_url.startswith("tos://") and run_name):
+                    return _hold
+                rgn = _hi_argv_val(r, "--output-region").strip()
+                if rgn:
+                    _rp_src["region"] = rgn         # 懒镜像与列表共用的闭包态
+                try:
+                    rc = runner.tos_run_choices(out_url,
+                                                _rp_src["region"] or None)
+                except Exception:  # noqa: BLE001 桶不可达 → 不跳,别弹半张页
+                    return _hold
+                run_url = f"{out_url}/{run_name}"
+                sel = next((v for _l, v in rc if str(v).rstrip("/")
+                            == run_url.rstrip("/")), None)
+                if sel is None:
+                    return _hold                    # 对不上号绝不冒充别的批次
+                return (gr.Tabs(selected="report"), gr.update(),
+                        gr.update(value=out_url),
+                        gr.update(choices=rc, value=sel), *_load(sel))
+
+            hi_report.click(_hi_report_jump, hi_sel,
+                            [topnav, picker, rp_root, run_pick, *outs],
+                            show_progress="hidden")
 
             def _rp_red(why: str) -> str:
                 if not str(why or "").strip():

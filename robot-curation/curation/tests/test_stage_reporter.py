@@ -121,7 +121,10 @@ def test_quiet_period_zero_keeps_old_behavior(capsys):
     k = _progress_init("q2", 5, "抽帧")
     for _ in range(5):
         _progress_tick(k)
-    assert len(capsys.readouterr().out.strip().splitlines()) == 5
+    # 2026-08-30 起开跑先亮 0/N 行(首条完成前进度条也得在)⇒ 5 tick + 1 初始行
+    out = capsys.readouterr().out
+    assert out.startswith("[curation] 抽帧 0/5")
+    assert len(out.strip().splitlines()) == 6
 
 
 def test_quiet_period_still_reports_when_stage_is_slow(capsys):
@@ -285,7 +288,9 @@ def test_eta_suppressed_during_warmup(monkeypatch, capsys):
     for n in range(1, 5):                   # 1..4 < ceil(49/10)=5 → 预热期
         pg._progress_tick(key)
     out = capsys.readouterr().out
-    assert out.count("已用") == 4 and "剩余" not in out and "收尾中" not in out
+    # 4 tick + 开跑的 0/N 初始行(2026-08-30 亮条)= 5 行,预热期仍不报剩余
+    assert out.count("已用") == 5 and "剩余" not in out and "收尾中" not in out
+    assert "0/49" in out
     # 过了预热线(第 5 条起)就该报剩余(速率可算的前提下)
     import time as _time
     st["t0"] = _time.time() - 60            # 制造已用时长,速率>0
@@ -306,3 +311,47 @@ def test_eta_warmup_floor_for_small_totals(capsys):
     pg._progress_tick(key)
     out = capsys.readouterr().out
     assert "剩余 ~" in out or "收尾中" in out   # 第 3 条起恢复报数(近段速率快时说收尾中)
+
+
+# ── 心跳(2026-08-30 用户拍板:静默期看着像卡死)────────────────────────────
+
+def test_progress_bar_appears_at_zero(capsys):
+    """条目式阶段开跑立刻打 0/N 行(首条完成前进度条也得在);
+    设了静默期的快阶段照旧不吭声。"""
+    from curation.pipeline import progress as pg
+    pg._progress_init("hb-t1", 8, "VLM 任务成败判定")
+    out = capsys.readouterr().out
+    assert "VLM 任务成败判定 0/8" in out
+    pg._progress_init("hb-t2", 8, "数值检查", quiet_before_s=3.0)
+    assert "数值检查 0/8" not in capsys.readouterr().out
+    pg._PROGRESS.pop("hb-t1", None)
+    pg._PROGRESS.pop("hb-t2", None)
+
+
+def test_heartbeat_scan_reprints_stalled_bars_and_phases(monkeypatch):
+    """扫描逻辑(线程只是按节奏调它):条目条停 15s+ 重报(0 条=首批在飞);
+    阶段式在一步里停 15s+ 报"仍在这一步";phase_done 收账后闭嘴;完成的条
+    不再吭声。状态字典按用例隔离(pod 实测:别家用例遗留的僵尸条会被扫进
+    来,报「已用 496684.9h」这种鬼数字)。"""
+    import time
+
+    from curation.pipeline import progress as pg
+    monkeypatch.setattr(pg, "_PROGRESS", {})
+    monkeypatch.setattr(pg, "_PHASE", {})
+    now = time.time()
+    pg._PROGRESS["hb-s1"] = {"total": 5, "label": "VLM 任务成败判定", "n": 0,
+                             "t0": now - 30, "last": 0.0, "min_interval_s": 20,
+                             "quiet_before_s": 0.0, "step": 1, "lock": None,
+                             "hist": []}
+    lines = pg._hb_scan(now)
+    assert any("VLM 任务成败判定 0/5" in x and "首批在飞" in x for x in lines)
+    assert pg._hb_scan(now + 1) == []          # 刚报过:间隔内不重复
+    pg._PROGRESS["hb-s1"]["n"] = 5
+    assert pg._hb_scan(now + 100) == []        # 完成:闭嘴(扫描跳过 n>=total)
+    pg._PROGRESS.pop("hb-s1", None)
+    pg.phase_step("技能画像", 2, 5, "归纳技能体系(LLM)…", now - 40)
+    pg._PHASE["技能画像"]["ts"] = now - 20
+    lines = pg._hb_scan(now)
+    assert any("技能画像 2/5" in x and "仍在这一步" in x for x in lines)
+    pg.phase_done("技能画像")
+    assert pg._hb_scan(now + 100) == []

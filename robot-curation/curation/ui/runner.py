@@ -441,6 +441,55 @@ def embodiment_choices() -> list[str]:
                   for p in _glob.glob(os.path.join(_EMB_PROFILE_DIR, "*.yaml")))
 
 
+def episodes_input_error(expr, max_n) -> str:
+    """「只跑前 N 条」「指定 episode」的手滑类校验(开跑闸用,判据与 CLI 同源:
+    episode_select.parse_episodes)。通过→空串;错→字段名开头的一句人话。
+    issue #110 审计第 5/6/8 洞:负数、巨区间、N=0 此前要么静默空跑要么只有
+    任务区小字。"""
+    s = str(max_n or "").strip()
+    if s and (not s.isdigit() or int(s) == 0):
+        return f"「只跑前 N 条」要填正整数,现在是:{s};留空表示全部"
+    try:
+        from ..episode_select import parse_episodes
+        parse_episodes(str(expr or "").strip() or None)
+    except ValueError as e:
+        return f"「指定 episode」解析失败:{e}"
+    return ""
+
+
+def dataset_total_episodes(root: str, name: str) -> int | None:
+    """数据集声明的总条数(meta/info.json 的 total_episodes;读不到→None)。"""
+    from ..ingest import dsfs
+    try:
+        info = dsfs.read_json(
+            dsfs.join(str(root), name, "meta", "info.json")) or {}
+        t = info.get("total_episodes")
+        return int(t) if t is not None else None
+    except Exception:  # noqa: BLE001 读不动按"不知道",让管道层去裁
+        return None
+
+
+def episodes_range_error(expr, root, names) -> str:
+    """全超界提前拦(开跑闸;issue #110 第 1 洞的 UI 前哨)。
+
+    判决与管道同一把尺(编号 0..total-1 与请求集求交);元数据读不到就放行
+    —— 管道内的 reconcile_episodes 才是权威,这里只是把死刑提前到点按钮
+    那一刻。部分超界不在这拦(定案:跑交集+警告,由管道执行)。"""
+    try:
+        from ..episode_select import parse_episodes
+        req = parse_episodes(str(expr or "").strip() or None)
+    except ValueError:
+        return ""            # 手滑类由 episodes_input_error 拦,不重复报
+    if not req:
+        return ""
+    for n in (names or []):
+        total = dataset_total_episodes(root, n)
+        if total and not (req & set(range(total))):
+            return (f"数据集 {n} 共 {total} 条(编号 0-{total - 1}),"
+                    "指定的 episode 一条也不存在")
+    return ""
+
+
 def dataset_robot_type(root: str, name: str) -> str:
     """数据集声明的 robot_type(读 meta,读不到按空)。root 认本地与 tos://。"""
     from ..ingest import dsfs

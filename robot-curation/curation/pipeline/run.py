@@ -131,19 +131,19 @@ def _verify_delivery_visible(items: list, timeout_s: float = 300.0,
     corrupt: list = []
     deferred: list = []          # 挂账放行的记账件名
     last_beat = t0
-    print(f"[curation] 交付落盘回验({total} 项;对象存储可见延迟约 1 分钟,"
-          f"本阶段结束=交付立即可用)", flush=True)
+    print(f"[curation] 交付可用性确认({total} 项逐个回读;写成功≠读得到,"
+          f"读回来才算就绪;对象存储可见延迟约 1 分钟)", flush=True)
     while pending and _time.time() - t0 < timeout_s:
         still = []
         for name, path, kind, tier, republish in pending:
             state = _state(path, kind)
             if state == STATE_OK:
                 done += 1
-                print(f"[curation] 落盘回验 {done}/{total}:{name} ✓"
+                print(f"[curation] 可用性确认 {done}/{total}:{name} ✓"
                       f"({int(_time.time() - t0)}s)", flush=True)
             elif state == STATE_CORRUPT:
                 corrupt.append(name)
-                print(f"[curation] ⚠️ 落盘回验:{name} 读回来是坏的(零填充/解析不了)"
+                print(f"[curation] ⚠️ 可用性确认:{name} 读回来是坏的(零填充/解析不了)"
                       f"—— {path} 不可用,本次交付这一件需要重跑", flush=True)
             else:
                 still.append((name, path, kind, tier, republish))
@@ -161,26 +161,26 @@ def _verify_delivery_visible(items: list, timeout_s: float = 300.0,
                     try:
                         republish()
                     except OSError as e:
-                        print(f"[curation] ⚠️ 落盘回验:{name} 重发布没写成({e})",
+                        print(f"[curation] ⚠️ 可用性确认:{name} 重发布没写成({e})",
                               flush=True)
                 deferred.append(name)
-                print(f"[curation] 落盘回验:{name} 超过 {int(record_grace_s)}s "
+                print(f"[curation] 可用性确认:{name} 超过 {int(record_grace_s)}s "
                       f"未见,已重发布一次并挂账放行 —— 它是记账件,晚到只是界面"
                       f"晚几分钟看到本次运行,不值得等", flush=True)
             pending = keep
         if pending:
             if now - last_beat >= 30:
                 last_beat = now
-                print(f"[curation] 落盘回验:还差 {[p[0] for p in pending]},"
+                print(f"[curation] 可用性确认:还差 {[p[0] for p in pending]},"
                       f"已等 {int(now - t0)}s(上限 {int(timeout_s)}s)——"
                       f"对象存储可见延迟,正常等待", flush=True)
             _time.sleep(5)
     if pending:
-        print(f"[curation] ⚠️ 落盘回验超时({int(timeout_s)}s):"
+        print(f"[curation] ⚠️ 可用性确认超时({int(timeout_s)}s):"
               f"{[p[0] for p in pending]} 仍未读回——产物已写出,稍后自会可见",
               flush=True)
     elif corrupt:
-        print(f"[curation] ⚠️ 落盘回验发现坏文件:{corrupt} —— 其余产物可用",
+        print(f"[curation] ⚠️ 可用性确认发现坏文件:{corrupt} —— 其余产物可用",
               flush=True)
     elif deferred:
         print(f"[curation] 交付就绪(共 {int(_time.time() - t0)}s,数据件全部"
@@ -263,7 +263,7 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
     from .progress import _progress_init, _progress_tick, phase_step
     _sp_t0 = _t.time()
     _G = "技能画像"
-    _pk_cap = _progress_init("caption", len(keep_rows), f"{_G}·逐条 caption",
+    _pk_cap = _progress_init("caption", len(keep_rows), f"{_G} 1/5·逐条 caption",
                              quiet_before_s=3.0)
     phase_step(_G, 1, 5, f"逐条 caption({len(keep_rows)} 条,并发 {_cap_conc})…", _sp_t0)
     caps = caption_episodes(keep_rows, captioner,
@@ -388,6 +388,8 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
               f"耗时 {_t.time() - _rc_t0:.1f}s;"
               f"降级 {len(label_audit.get('low_caption_unstable', []))} 条"
               f"(我方描述不稳)", flush=True)
+    from .progress import phase_done
+    phase_done(_G)          # 画像段收账:心跳不再报"仍在这一步"
     return profile, caption_of, grouping_text_of, grouping_source_of, label_audit
 
 
@@ -528,6 +530,23 @@ def run_pipeline(
     # daft 引擎执行时按 task 流式拉取(ingest/daft_source);caption/报告所需上下文走
     # 轻量元数据(只读 meta 文件,万条秒级)。skip_missing=True:客户数据/下载缺口是
     # 常态,缺文件跳过并在 stderr 汇报(不崩、不静默),而非碰到一个缺失就整批失败。
+    # episode 对账(issue #110):指定的编号先与数据集实有清单求交 —— 全超界
+    # 抛 EpisodesOutOfRange(CLI 按输入错误收场/批量模式跳过该数据集,绝不产
+    # 出标着成功的空交付);部分超界跑交集并把实跑数说清(此前日志印请求数,
+    # 100 条的集上填 90-110 会印"21 条"实跑 10 条)。read_meta 只读 meta,
+    # 万条秒级,只在给了 --episodes 时多扫这一遍。
+    if episode_indices is not None:
+        from ..episode_select import reconcile_episodes
+        _avail = {int(str(r["episode_id"]).lstrip("ep"))
+                  for r in read_meta(input_dir)}
+        episode_indices, _ep_warn = reconcile_episodes(
+            episode_indices, _avail,
+            what=f"数据集 {os.path.basename(str(input_dir).rstrip('/'))} ")
+        if _ep_warn:
+            print(f"[curation] ⚠️ {_ep_warn}", flush=True)
+        print(f"[curation] 只跑指定 episode(实跑 {len(episode_indices)} 条): "
+              f"{sorted(episode_indices)[:10]}"
+              f"{'…' if len(episode_indices) > 10 else ''}", flush=True)
     rows = read_meta(input_dir, max_episodes=max_episodes,
                      episode_indices=episode_indices,
                      embodiment_id=embodiment_id, skip_missing=True)
@@ -1399,7 +1418,7 @@ def run_pipeline(
         _pub = _publish.active()
         _n_up = _pub.uploaded_under(deliver["episodes_parquet"]) if _pub else 0
         if _n_up:
-            print(f"[curation] 落盘回验:episodes_parquet 已随产随传({_n_up} 个文件),跳过本地回验",
+            print(f"[curation] 可用性确认:episodes_parquet 已随产随传({_n_up} 个文件),跳过本地回读",
                   flush=True)
         else:
             _checks_vis.append(("episodes_parquet", deliver["episodes_parquet"], "dir"))
