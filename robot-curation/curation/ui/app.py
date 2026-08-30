@@ -1084,17 +1084,7 @@ _TOPNAV_CSS = """
 """
 
 
-def _config_yaml(m: dict) -> str:
-    if m.get("load_error"):
-        return "(读不到这份交付,见「质检总览」页)"
-    ce = m.get("config_effective")
-    if not ce:
-        return "(此交付无 config_effective 快照——U0 之前的老交付)"
-    try:
-        import yaml
-        return yaml.safe_dump(ce, allow_unicode=True, sort_keys=False)
-    except Exception:  # noqa: BLE001
-        return json.dumps(ce, ensure_ascii=False, indent=1)
+# _config_yaml 已随「本次运行配置」页签一起退役(2026-08-30 用户拍板)
 
 
 def _probe_backends(config_path: str | None, timeout: float) -> list[list]:
@@ -1742,7 +1732,6 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         # 详情面板随交付切换一起刷新:换目录后选中 eid 若恰好同名(ep000000 常见),
         # Dropdown 值不变→change 不触发→详情停留在上一份交付的陈旧渲染(实测踩过)
         return (m, overview_markdown(m), overview_rows(m), ov_note,
-                _config_yaml(m),
                 # 桶随交付切换复位到「全部」:停在「拒绝」而新交付一条都没被拒,
                 # 看到的是空清单 + 一个还亮着的桶,等于骗人
                 gr.update(choices=bucket_choices(m), value=BUCKET_ALL),
@@ -3786,15 +3775,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         tl_note = gr.Markdown()
                         tl_html = gr.HTML()
 
-                    # 从质检总览底部搬过来的(2026-08-13):总览要收敛成一张表,
-                    # 而这份快照是"日后复核这份报告按什么标准出的"的底稿,属于明细。
-                    # 页签名不写文件里的键名 config_effective —— 那是我们的字段名。
-                    with gr.Tab("本次运行配置"):
-                        gr.Markdown(
-                            "这次跑批**实际生效**的全部设置(出厂默认 + 站点配置 + "
-                            "本次界面选项合并之后的结果)。只读,用于日后复核这份"
-                            "报告是按什么标准出的。")
-                        ov_cfg = gr.Code(language="yaml")
+                    # 「本次运行配置」页签 2026-08-30 用户拍板移除:快照 YAML
+                    # 客户读不懂,价值只对内(而对内直接读文件);且历史上整表
+                    # 外泄过站点拓扑(写入端已瘦身,见 _sanitize_config_snapshot)。
+                    # 复核走 passed.json 的 config_effective,不再进界面。
 
             # 性能剖析(2026-08-14 用户点名提回顶层):它回答的是"这批为什么慢、
             # 用的什么服务",是**跑批本身的账**,不是某一维的明细 —— 收进「明细」
@@ -3841,7 +3825,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         mg_fixlab,   # 「标注错了」只在没有①区的卡上亮
                         mg_block, mg_empty]  # 空队列整块收起 + 顶一句说明
 
-            outs = [state, ov_md, ov_table, ov_note, ov_cfg, ep_bucket, *_ep_list_outs,
+            outs = [state, ov_md, ov_table, ov_note, ep_bucket, *_ep_list_outs,
                     sk_html, sk_table, sk_audit_note,
                     mg_filter, mg_hint, qu_table,
                     *_mg_outs,
