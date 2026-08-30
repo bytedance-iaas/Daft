@@ -467,7 +467,10 @@ def test_deeplink_switches_source_dropdown_to_matching_bucket(delivery, tmp_path
     assert tin2.get("value") == "tos://strange/prefix"
     assert str(note2) == ""      # 「TOS 直连:…」整行删(issue #98)
     assert ds2.get("value") == [] and ds2.get("choices") == []
-    assert any("demo_v2" in w for w in warned), "链接指的名字没找到必须点名"
+    # 2026-08-29(issue #107):深链问题句不再走 toast,点名落说明位常驻红字
+    assert warned == [], "深链不许再弹 toast"
+    assert "demo_v2" in str(ds_note2) and "note-err" in str(ds_note2), \
+        "链接指的名字没找到必须在说明位红字点名"
     assert "⚠️" in str(ds_note2), "列不出清单要落到说明行,不许静默"
 
 
@@ -1064,19 +1067,24 @@ def test_info_line_endpoint_always_instance_config_not_link(delivery, tmp_path,
         query_params = {"dataset": "tos://bucketa/prefix/only_b",
                         "endpoint": "tos-ap-southeast-1.volces.com"}
 
-    src_upd, ds_upd, _rg, src_note, _, _src = fns[0].fn(Req())
+    src_upd, ds_upd, _rg, src_note, ds_note, _src = fns[0].fn(Req())
     assert src_upd.get("value") == "tos://bucketa/prefix"
     assert ds_upd.get("value") == ["only_b"]
     # 说明行空着(2026-08-21 起不印端点);链接的端点更不许出现在这儿
     assert src_note == "" and "ap-southeast-1" not in str(src_note)
-    # 矛盾提示照发(两个地域都点名),但只以 Warning 形态出现
-    assert any("cn-beijing" in w and "ap-southeast-1" in w for w in warned)
+    # 矛盾提示照发(两个地域都点名),2026-08-29(issue #107)起以数据集
+    # 说明位常驻红字形态出现,不再弹 toast
+    assert warned == [], "深链不许再弹 toast"
+    assert ("cn-beijing" in str(ds_note) and "ap-southeast-1" in str(ds_note)
+            and "note-err" in str(ds_note))
 
     class Req2:                      # 端点消不干净:说一声"已忽略",不回显原样串
         query_params = {"dataset": "tos://bucketa/prefix/only_b",
                         "endpoint": "<img onerror=alert(1)>"}
 
     warned.clear()
-    fns[0].fn(Req2())
-    assert any("看不懂" in w for w in warned)
-    assert all("<img" not in w for w in warned)
+    *_h, ds_note2, _src2 = fns[0].fn(Req2())
+    assert warned == []
+    assert "看不懂" in str(ds_note2)
+    # 红字是 HTML 片段 ⇒ 原样标签必须被转义,不许把注入串回显进 DOM
+    assert "<img" not in str(ds_note2)

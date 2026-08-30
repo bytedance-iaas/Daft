@@ -932,6 +932,27 @@ def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
     assert labels.count("返回") >= 2, "两个模态都要有返回退路"
 
 
+def test_toasts_are_tamed():
+    """issue #107(用户吐槽:toast 太吓人+倒计时几秒就没):
+    ① gr.Info 全退役(成功不旁白,字段填上就是证明);
+    ② 深链问题句全部迁「数据集」说明位常驻红字(源里不再有深链 gr.Warning);
+    ③ 仅存的 gr.Warning(报告页两处,88 槽对齐动不得)必须 duration=None 常驻;
+    ④ CSS 把倒计时进度条整根藏掉(兜底异常 toast 也不再闪倒计时)。"""
+    import re
+    from pathlib import Path
+
+    pytest.importorskip("gradio")
+    from curation.ui import app as ui_app
+    src = Path(ui_app.__file__).read_text(encoding="utf-8")
+    assert "gr.Info(" not in src, "gr.Info 已整体退役,不许回潮"
+    calls = re.findall(r"gr\.Warning\((?:[^()]|\([^()]*\))*\)", src, re.S)
+    assert len(calls) == 2, f"gr.Warning 只留报告页两处,现有 {len(calls)}"
+    for c in calls:
+        assert "duration=None" in c, f"toast 必须常驻(duration=None):{c[:60]}"
+    css = ui_app.presentation()["css"]
+    assert ".timer { display: none !important; }" in css, "倒计时条要藏掉"
+
+
 def test_preflight_empty_root_and_output_open_gate_dialog(tmp_path,
                                                           monkeypatch):
     """数据集目录/交付目录没填 → 同一扇开跑闸模态(2026-08-29 用户:任务区

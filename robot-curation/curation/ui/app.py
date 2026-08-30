@@ -777,6 +777,12 @@ _ARCO_CSS = """
 /* ⚠️ 浮层**不能**用 ::after 挂在问号上:Gradio 的表单块是 overflow:hidden,
    气泡会被齐刷刷裁掉一半(2026-08-13 实测)。所以由 JS 在 body 上另起一个
    position:fixed 的框 —— 定位脱离一切祖先,谁也裁不到。 */
+/* toast 收敛(issue #107,2026-08-29):倒计时进度条整根藏掉——"几秒就没"
+   的焦虑感一半来自它。显式消息已全部迁红字或 duration=None 常驻;这里兜的
+   是没接住的异常那类最后防线 toast,样子收着点,阴影按 Arco 口径。 */
+.toast-wrap .timer, .toast-body .timer { display: none !important; }
+.toast-body { box-shadow: 0 4px 10px rgba(29,33,41,.10) !important; }
+
 .qc-tipbox {
   position: fixed; max-width: 340px; background: #FFFFFF; color: var(--arco-t1);
   border: 1px solid var(--arco-border); font-size: 13px; line-height: 1.7;
@@ -1665,7 +1671,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                          _rp_src["region"] or None)
             except Exception as e:  # noqa: BLE001 网络/SDK 异常族杂
                 gr.Warning(f"镜像这份交付失败:{type(e).__name__}: "
-                           f"{str(e)[:120]}")
+                           f"{str(e)[:120]}", duration=None)   # 常驻,#107
                 path = ""
         # 镜像交付:打开时顺手探一次源桶可写(2026-08-21)。只读 → 裁决记了也写
         # 不回去,给 m 打上 tos_readonly,人工裁决页按它上锁;看报告不受影响
@@ -3012,6 +3018,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     qp = getattr(request, "query_params", None) or {}
                     wanted, present = runner.deeplink_values(qp)
                     hold = (gr.update(),) * 6
+                    # 深链的问题句不再走 toast(issue #107:几秒就没,人不在
+                    # 就错过)——攒起来落「数据集」说明位常驻红字,回来还在
+                    probs: list[str] = []
+
+                    def _dl_note(extra: str = "") -> str:
+                        if not probs:
+                            return str(extra or "")
+                        red = ('<span class="note-err">'
+                               + "<br>".join("⚠️ " + _html.escape(p)
+                                             for p in probs) + "</span>")
+                        tail = str(extra or "").strip()
+                        return red + (("<br>" + tail) if tail else "")
+
+                    def _dl_hold():
+                        return (gr.update(), gr.update(), gr.update(),
+                                gr.update(), _dl_note(), gr.update())
                     # ?source=public[&dataset=名字]:公共数据集深链(2026-08-21)。
                     # 裸名字补成镜像桶里的完整地址,之后与 tos:// 深链同一条路
                     _src_q = str((qp.get("source") if hasattr(qp, "get") else "")
@@ -3033,7 +3055,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 旧契约兼容:endpoint/tos_endpoint 消毒后只进提示文案
                     ep_host, ep_present = runner.deeplink_endpoint(qp)
                     if ep_present and not ep_host:
-                        gr.Warning("链接里的端点参数看不懂,已忽略(不影响预选)")
+                        probs.append("链接里的端点参数看不懂,已忽略(不影响预选)")
                     urls = [w for w in wanted if str(w).startswith("tos://")]
                     bare = [w for w in wanted if not str(w).startswith("tos://")]
                     if urls:
@@ -3041,8 +3063,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         try:
                             root, _n0 = runner.split_dataset_url(urls[0])
                         except ValueError as e:
-                            gr.Warning(f"链接里的数据集地址解析不了:{e}")
-                            return hold
+                            probs.append(f"链接里的数据集地址解析不了:{e}")
+                            return _dl_hold()
                         _root_only = (_src_q == "public" and urls[0].rstrip("/")
                                       == public_catalog.root_url())
                         if _root_only:
@@ -3052,18 +3074,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             try:
                                 r2, n2 = runner.split_dataset_url(u)
                             except ValueError:
-                                gr.Warning(f"链接里的地址解析不了,已忽略:{u}")
+                                probs.append(f"链接里的地址解析不了,已忽略:{u}")
                                 continue
                             if r2 == root and n2 and n2 not in names:
                                 names.append(n2)
                             elif r2 != root:
-                                gr.Warning(f"链接带了多个不同前缀,只认第一个"
-                                           f"({root});已忽略 {u}")
+                                probs.append(f"链接带了多个不同前缀,只认第一个"
+                                             f"({root});已忽略 {u}")
                         try:
                             spec = runner.resolve_root_input(root, _buckets)
                         except ValueError as e:
-                            gr.Warning(f"链接里的数据集地址不可用:{e}")
-                            return hold
+                            probs.append(f"链接里的数据集地址不可用:{e}")
+                            return _dl_hold()
                         is_pub = public_catalog.is_public_root(root)
                         if is_pub:
                             # 公共镜像桶:按清单过滤、带全名/版本/集数的显示串
@@ -3087,7 +3109,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 _c = runner._endpoint_conflict_note(
                                     spec["bucket"], ep_host)
                                 if _c:
-                                    gr.Warning(_c)
+                                    probs.append(_c)
                         else:
                             try:
                                 # 深链的陌生桶同样只列真数据集(issue #98)
@@ -3108,26 +3130,23 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         sel = [n for n in names if n in _vals]
                         for n in names:
                             if n not in _vals:
-                                gr.Warning(f"链接指的数据集「{n}」在该前缀下"
-                                           "没找到 —— 前缀或名字可能变了")
-                        if sel:
-                            gr.Info("已按链接预选:" + ", ".join(sel)
-                                    + " —— 点「开始质检」即可")
+                                probs.append(f"链接指的数据集「{n}」在该前缀下"
+                                             "没找到 —— 前缀或名字可能变了")
+                        # 预选成功不再旁白(2026-08-29 用户:字段填上就是最好
+                        # 的证明);问题句并进数据集说明位
                         return (gr.update(value=root, interactive=not is_pub),
                                 gr.update(choices=choices, value=sel),
                                 (gr.update(value=region, interactive=not is_pub)
                                  if region else gr.update(interactive=not is_pub)),
-                                src_note, ds_note,
+                                src_note, _dl_note(ds_note),
                                 gr.update(value=_src_public if is_pub else SRC_PRIVATE))
                     # 旧契约(裸名字):对表预选,行为与 2026-08-17 版一致 ——
                     # **桶不认识绝不回落到默认桶里找同名的**
                     plan = runner.prefill_plan(bare, _buckets,
                                                link_endpoint=ep_host)
-                    for note in plan["notices"]:
-                        gr.Warning(note)
+                    probs.extend(plan["notices"])
                     if not plan["datasets"]:
-                        return hold
-                    gr.Info(plan["info"])
+                        return _dl_hold()
                     _b = next((x for x in _buckets
                                if x["name"] == plan["source"]), None)
                     return ((gr.update(value=runner.bucket_url(_b))
@@ -3136,8 +3155,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                       value=plan["datasets"]),
                             gr.update(),
                             "" if _b else gr.update(),
-                            runner.dataset_root_note(_b["datasets_path"])
-                            if _b else gr.update(),
+                            (_dl_note(runner.dataset_root_note(
+                                _b["datasets_path"]) if _b else "")
+                             if (probs or _b) else gr.update()),
                             gr.update(value=SRC_PRIVATE))
 
                 # gr.Request 靠注解注入;`from __future__ import annotations` 下字符串
@@ -3743,8 +3763,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         rc = runner.tos_run_choices(
                             str(path), _rp_src["region"] or None)
                     except Exception as e:  # noqa: BLE001
+                        # duration=None:常驻到用户手动关(issue #107:几秒
+                        # 就没+倒计时条吓人;进红字位要动 _load 88 槽对齐,不值)
                         gr.Warning(f"列不出该交付下的批次:"
-                                   f"{type(e).__name__}: {str(e)[:120]}")
+                                   f"{type(e).__name__}: {str(e)[:120]}",
+                                   duration=None)
                         rc = []
                     sel = rc[0][1] if rc else ""
                     return (gr.update(choices=rc, value=sel or None),
