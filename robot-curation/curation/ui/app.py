@@ -451,13 +451,18 @@ _QJUMP_JS = """
   document.addEventListener('click', function (e) {
     var t = e.target;
     if (!t || !t.closest) return;
-    var zone = t.closest('#audit-queue, #appeal-queue');
+    var zone = t.closest('#audit-queue, #appeal-queue, #hi-table');
     if (!zone) return;
     var tr = t.closest('tr');
     if (!tr || !tr.cells || !tr.cells.length || tr.querySelector('th')) return;
     if (zone.id === 'audit-queue') {
       var num = (tr.cells[0].innerText || '').trim();
       if (num) relay('qjump-row', 'qjump-go', num);
+    } else if (zone.id === 'hi-table') {
+      // 执行历史(issue #102):行身份 = 末列「编号」(run_id;虚拟滚动下
+      // 行号会漂,单元格文本才稳)
+      var rid = ((tr.cells[tr.cells.length - 1] || {}).innerText || '').trim();
+      if (rid) relay('hijump-row', 'hijump-go', rid);
     } else {
       var eid = ((tr.cells[1] || {}).innerText || '').trim();
       if (eid) relay('apjump-row', 'apjump-go', eid);
@@ -1142,7 +1147,7 @@ _AUDIT_CSS = """
 /* 底部翻页的位置提示与顶部同款居中 */
 #mg-pos2 { text-align:center; align-self:center; color:#86909C; }
 /* 点行跳卡的隐藏中转控件(_QJUMP_JS 的落点),永不显示 */
-#qjump-hide, #apjump-hide { display:none !important; }
+#qjump-hide, #apjump-hide, #hijump-hide { display:none !important; }
 /* 表格当前行 = 下方卡片正在显示的那条(_CURROW_JS 上色),Arco 浅蓝 */
 #audit-queue tr.cur-row > td, #appeal-queue tr.cur-row > td {
   background:#E8F3FF !important; }
@@ -2207,13 +2212,29 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             tk_stop = gr.Button("停止", variant="secondary", scale=0,
                                                 size="sm", elem_id="tk-stop",
                                                 interactive=False)
-                    with gr.Tab("历史"):
+                    # 「历史」→「执行历史」(issue #102,2026-08-30 用户定):
+                    # 这页装的是跑批动作的流水账,不是质检结果 —— 一词消歧;
+                    # 结果的历史在「质检报告」页的交付/批次下拉里,各归各位。
+                    with gr.Tab("执行历史"):
                         hi_table = gr.Dataframe(headers=runner.HISTORY_HEADERS,
-                                                interactive=False, wrap=True)
+                                                interactive=False, wrap=True,
+                                                elem_id="hi-table")
                         hi_pick = gr.Markdown()
+                        # 已完成的任务亮它:一键切到「质检报告」并预选那次跑批
+                        # (issue #102 的真实诉求 = 从执行史走到结果,修通这条
+                        # 路,历史不搬家)
+                        hi_report = gr.Button("查看报告", size="sm", scale=0,
+                                              visible=False)
                         hi_log = gr.Textbox(label="这次任务的日志", lines=14,
                                             max_lines=14, interactive=False,
                                             elem_classes=["mono-log"])
+                        # 点行走 _QJUMP 自建通路(非交互表的 select 前端不发,
+                        # gradio 6.9 老坑 —— 原 select 接线在 6.9 上一直是死的,
+                        # 本轮顺手修活);行身份用「编号」列文本,不用行号
+                        with gr.Row(elem_id="hijump-hide"):
+                            hi_jump = gr.Textbox(elem_id="hijump-row")
+                            hi_jump_go = gr.Button("开", elem_id="hijump-go")
+                        hi_sel = gr.State("")
                 # rn_go 挂在末尾(issue #55):每一条会刷新状态条的路(点击/轮询/
                 # 手动刷新/app.load)同时刷新「开始质检」的可点性 —— 单独一条刷新
                 # 链早晚和状态条各说各话。
@@ -3001,20 +3022,54 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 def _hi_rows():
                     return runner.history_rows(runner.list_runs(_runs_root, limit=50))
 
+                def _hi_argv_val(r: dict, flag: str) -> str:
+                    argv = [str(x) for x in (r or {}).get("argv") or []]
+                    try:
+                        return argv[argv.index(flag) + 1]
+                    except (ValueError, IndexError):
+                        return ""
+
+                def _hi_show(r: dict | None):
+                    """一条任务记录 → (标题行, 日志, 选中态, 「查看报告」显隐)。
+                    已完成的质检任务亮按钮:本地/挂载交付要目录真在;直连桶交付
+                    (--output tos://,dataverse 与近期跑批的常态)按 argv 亮,
+                    真伪由跳转时的批次列表核实。找不到落点就不亮 —— 宁可少个
+                    按钮也不指错地方。"""
+                    if r is None:
+                        return ("(这一行对应的任务已不在列表里)", "", "",
+                                gr.update(visible=False))
+                    state = runner.STATE_STYLES.get(r.get("state"), ("",))[0]
+                    _can = runner.run_output_dir(r) is not None
+                    if (not _can and r.get("state") == "done"
+                            and str(r.get("command")) == "run"):
+                        _can = (_hi_argv_val(r, "--output").startswith("tos://")
+                                and bool(_hi_argv_val(r, "--run-name")))
+                    return (f"**{r.get('label') or r.get('command')}** · {state}",
+                            runner.tail_log(_runs_root, r["run_id"]),
+                            str(r.get("run_id") or ""),
+                            gr.update(visible=_can))
+
                 def _hi_open(evt):
                     """点历史某一行 → 回看那次任务的日志(行序与 list_runs 一致)。"""
                     runs = runner.list_runs(_runs_root, limit=50)
                     idx = (evt.index[0] if evt and getattr(evt, "index", None)
                            else 0) or 0
-                    if idx >= len(runs):
-                        return "(这一行对应的任务已不在列表里)", ""
-                    r = runs[idx]
-                    state = runner.STATE_STYLES.get(r.get("state"), ("",))[0]
-                    return (f"**{r.get('label') or r.get('command')}** · {state}",
-                            runner.tail_log(_runs_root, r["run_id"]))
+                    return _hi_show(runs[idx] if idx < len(runs) else None)
 
                 _hi_open.__annotations__ = {"evt": gr.SelectData}
-                hi_table.select(_hi_open, None, [hi_pick, hi_log])
+                _hi_outs = [hi_pick, hi_log, hi_sel, hi_report]
+                hi_table.select(_hi_open, None, _hi_outs)
+
+                def _hi_open_by_id(rid):
+                    """点行的 _QJUMP 通路(gradio 6.9 非交互表 select 前端不发,
+                    上面那条 select 接线在 6.9 上是死的;行身份=「编号」列)。"""
+                    rid = str(rid or "").strip()
+                    runs = runner.list_runs(_runs_root, limit=50)
+                    return _hi_show(next(
+                        (x for x in runs if str(x.get("run_id")) == rid), None))
+
+                hi_jump_go.click(_hi_open_by_id, hi_jump, _hi_outs,
+                                 show_progress="hidden")
 
                 def _tk_stop_click():
                     act = runner.active_run(_runs_root)
@@ -3836,6 +3891,58 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # visible 补丁偶尔被冲掉。.input 只认用户动作,单写者,竞态整类消失。
             picker.input(_pick_delivery, picker, [run_pick, *outs])
             run_pick.input(_load, run_pick, outs)
+
+            def _hi_report_jump(rid):
+                """执行历史 →「查看报告」直达(issue #102):切「质检报告」页签
+                并预选那次跑批的交付+批次。两种落点:本地/挂载交付走交付下拉;
+                直连桶交付(--output tos://)把交付根写进 rp_root、批次从桶里
+                现列,与手动打开桶交付同一条路。找不到/对不上号全程空更新 ——
+                按钮只在有落点线索时亮,这里是第二道诚实兜底。"""
+                _hold = (gr.update(),) * (4 + len(outs))
+                runs = runner.list_runs(_runs_root, limit=50)
+                r = next((x for x in runs
+                          if str(x.get("run_id")) == str(rid or "").strip()),
+                         None)
+                if r is None:
+                    return _hold
+                run_dir = runner.run_output_dir(r)
+                if run_dir:
+                    d = delivery_root_of(run_dir)
+                    ch = discover_deliveries(delivery)
+                    if d not in ch:
+                        clear_discover_cache()      # 新交付可能还没进缓存
+                        ch = discover_deliveries(delivery)
+                    # 值必须在选项集里,否则 gradio 静默丢值(老坑):列不进去
+                    # 就不动交付下拉,批次与正文照样按 run_dir 打开
+                    pk = (gr.update(choices=ch, value=d) if d in ch
+                          else gr.update())
+                    return (gr.Tabs(selected="report"), pk, gr.update(),
+                            gr.update(choices=run_choices(d), value=run_dir),
+                            *_load(run_dir))
+                out_url = _hi_argv_val(r, "--output").rstrip("/")
+                run_name = _hi_argv_val(r, "--run-name")
+                if not (out_url.startswith("tos://") and run_name):
+                    return _hold
+                rgn = _hi_argv_val(r, "--output-region").strip()
+                if rgn:
+                    _rp_src["region"] = rgn         # 懒镜像与列表共用的闭包态
+                try:
+                    rc = runner.tos_run_choices(out_url,
+                                                _rp_src["region"] or None)
+                except Exception:  # noqa: BLE001 桶不可达 → 不跳,别弹半张页
+                    return _hold
+                run_url = f"{out_url}/{run_name}"
+                sel = next((v for _l, v in rc if str(v).rstrip("/")
+                            == run_url.rstrip("/")), None)
+                if sel is None:
+                    return _hold                    # 对不上号绝不冒充别的批次
+                return (gr.Tabs(selected="report"), gr.update(),
+                        gr.update(value=out_url),
+                        gr.update(choices=rc, value=sel), *_load(sel))
+
+            hi_report.click(_hi_report_jump, hi_sel,
+                            [topnav, picker, rp_root, run_pick, *outs],
+                            show_progress="hidden")
 
             def _rp_red(why: str) -> str:
                 if not str(why or "").strip():
