@@ -528,6 +528,23 @@ def run_pipeline(
     # daft 引擎执行时按 task 流式拉取(ingest/daft_source);caption/报告所需上下文走
     # 轻量元数据(只读 meta 文件,万条秒级)。skip_missing=True:客户数据/下载缺口是
     # 常态,缺文件跳过并在 stderr 汇报(不崩、不静默),而非碰到一个缺失就整批失败。
+    # episode 对账(issue #110):指定的编号先与数据集实有清单求交 —— 全超界
+    # 抛 EpisodesOutOfRange(CLI 按输入错误收场/批量模式跳过该数据集,绝不产
+    # 出标着成功的空交付);部分超界跑交集并把实跑数说清(此前日志印请求数,
+    # 100 条的集上填 90-110 会印"21 条"实跑 10 条)。read_meta 只读 meta,
+    # 万条秒级,只在给了 --episodes 时多扫这一遍。
+    if episode_indices is not None:
+        from ..episode_select import reconcile_episodes
+        _avail = {int(str(r["episode_id"]).lstrip("ep"))
+                  for r in read_meta(input_dir)}
+        episode_indices, _ep_warn = reconcile_episodes(
+            episode_indices, _avail,
+            what=f"数据集 {os.path.basename(str(input_dir).rstrip('/'))} ")
+        if _ep_warn:
+            print(f"[curation] ⚠️ {_ep_warn}", flush=True)
+        print(f"[curation] 只跑指定 episode(实跑 {len(episode_indices)} 条): "
+              f"{sorted(episode_indices)[:10]}"
+              f"{'…' if len(episode_indices) > 10 else ''}", flush=True)
     rows = read_meta(input_dir, max_episodes=max_episodes,
                      episode_indices=episode_indices,
                      embodiment_id=embodiment_id, skip_missing=True)

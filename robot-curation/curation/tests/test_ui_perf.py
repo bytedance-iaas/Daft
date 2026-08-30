@@ -984,6 +984,55 @@ def test_emb_ask_puts_suggestion_first(tmp_path, monkeypatch):
     assert set(ch) == set(_runner.embodiment_choices()), "其余候选一个不少"
 
 
+def test_preflight_bad_episode_selection_opens_gate_dialog(tmp_path,
+                                                           monkeypatch):
+    """episode 选择守门走开跑闸模态(issue #110 洞⑧+洞①前哨):N=0、表达式
+    非法、全超界三病例都在点「开始质检」那一刻弹「episode 选择不可用」;
+    判据与 CLI 同源(episode_select),部分超界放行交给管道跑交集。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner as _runner
+    from curation.ui.app import build_app
+
+    deliv = tmp_path / "deliveries"
+    deliv.mkdir()
+    ds = tmp_path / "data" / "d1"
+    (ds / "meta").mkdir(parents=True)
+    # robot_type 故意 unknown:部分超界那一例放行后,流程要安全停在型号追问,
+    # 不能一路冲到 _run_go 真起进程
+    (ds / "meta" / "info.json").write_text(_json.dumps(
+        {"robot_type": "unknown", "total_episodes": 2}), encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+
+    def _boom(*a, **kw):
+        raise AssertionError("弹窗臂碰了任务区重算")
+
+    monkeypatch.setattr(_runner, "active_run", _boom)
+    monkeypatch.setattr(_runner, "list_runs", _boom)
+    fn = _fn_by_name(app, "_run_preflight")
+    import json as _j
+    for max_n, eps, kw in (("0", "", "只跑前 N 条"),
+                           (None, "-5", "解析失败"),
+                           (None, "10-20", "一条也不存在")):
+        out = fn(str(tmp_path / "data"), "", str(deliv), "", ["d1"],
+                 "n1", "", [], "", max_n, eps, None,
+                 "", "", None, None, None, None, "", False, False)
+        flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
+        assert str(out[-1]).startswith("**episode 选择不可用**"), f"病例 {eps or max_n}"
+        assert kw in str(out[-1])
+        assert flat.count("'visible': True") == 1
+        assert "'visible': False" not in flat
+    # 部分超界放行:total=2,要 1-5 → 不弹 episode 那扇窗(交给管道交集+
+    # 警告),流程继续走到下一站 = 型号追问
+    out = fn(str(tmp_path / "data"), "", str(deliv), "", ["d1"],
+             "n1", "", [], "", None, "1-5", None,
+             "", "", None, None, None, None, "", False, False)
+    flat = _j.dumps([str(x) for x in out], ensure_ascii=False)
+    assert not str(out[-1]).startswith("**episode 选择不可用**")
+    assert "没有登记机器人型号" in flat, "部分超界该放行到型号追问这一站"
+
+
 def test_toasts_are_tamed():
     """issue #107(用户吐槽:toast 太吓人+倒计时几秒就没):
     ① gr.Info 全退役(成功不旁白,字段填上就是证明);

@@ -2802,6 +2802,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 gr.update(), gr.update(visible=True),
                                 "**还没选数据集**\n\n在「数据集」下拉里选一个,"
                                 "或勾选「跑根目录下的全部数据集」。")
+                    # episode 选择守门(issue #110):手滑类(N=0/负数/巨区间/
+                    # 语法错)与全超界都在点按钮这一刻弹窗;部分超界放行,由
+                    # 管道跑交集+警告(判据同源 episode_select,三层一把尺)
+                    _ep_bad = (runner.episodes_input_error(eps, max_n)
+                               or runner.episodes_range_error(
+                                   eps, _src_root, chosen))
+                    if _ep_bad:
+                        return (*_tk_keep(), args,
+                                gr.update(), gr.update(),
+                                gr.update(), gr.update(), gr.update(),
+                                gr.update(), gr.update(visible=True),
+                                f"**episode 选择不可用**\n\n{_ep_bad}")
                     # 交付名先行校验(2026-08-27 用户实见:名字非法却先弹了
                     # 切片框,答完才报错,人被锁在对话框里)——非法/占用在
                     # 弹切片/型号模态之前拦下。判据与 _run_go 同源:本实例
