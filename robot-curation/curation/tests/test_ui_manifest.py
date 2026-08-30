@@ -2907,8 +2907,9 @@ def test_detail_subtabs_order_and_the_new_video_page(delivery):
     # (逐相机同步那块),整份配置里 index() 会先命中那边 —— 与 _report_section
     # 当初要限定范围是同一个坑,只是又深了一层。
     det = rep[rep.index("动作打分明细"):]
+    # 「本次运行配置」2026-08-30 用户拍板移除(快照曾外泄站点拓扑,写入端已瘦身)
     order = ["动作打分明细", "视频打分明细", "视频-动作同步",
-             "卡顿动作时间线", "本次运行配置"]
+             "卡顿动作时间线"]
     at = [det.index(t) for t in order]
     assert at == sorted(at), f"明细子页顺序不对:{order} → {at}"
 
@@ -2923,9 +2924,11 @@ def test_perf_tab_is_top_level_right_of_detail(delivery):
     from curation.ui.app import build_app
     rep = _report_section(build_app(delivery))
     assert rep.index("明细") < rep.index("性能剖析")
-    # 不在明细的子页里:子页从「动作打分明细」起,到「本次运行配置」止
-    det = rep[rep.index("动作打分明细"):rep.index("本次运行配置")]
+    # 不在明细的子页里:子页从「动作打分明细」起,到「卡顿动作时间线」止
+    # (「本次运行配置」2026-08-30 移除后,时间线是最后一个子页)
+    det = rep[rep.index("动作打分明细"):rep.index("卡顿动作时间线")]
     assert "性能剖析" not in det
+    assert rep.index("卡顿动作时间线") < rep.index("性能剖析")
 
 
 def test_adjudication_cards_can_play_every_camera_at_once(delivery):
@@ -3140,7 +3143,10 @@ def test_report_page_tab_set_is_frozen(delivery):
         "跑质检", "当前任务", "执行历史",
         "质检报告", "质检总览", "轨迹", "人工裁决", "待你裁决",
         "任务失败复议", "技能分布", "明细", "动作打分明细", "视频打分明细",
-        "视频-动作同步", "卡顿动作时间线", "本次运行配置", "性能剖析"])
+        # 「本次运行配置」2026-08-30 用户拍板移除:快照曾整表外泄站点拓扑
+        # (vlm_backends/tos_buckets/public_datasets)与判据 prompt;写入端
+        # 已瘦身(run.py::_sanitize_config_snapshot),复核直接读 passed.json
+        "视频-动作同步", "卡顿动作时间线", "性能剖析"])
 
 
 def test_dropdown_arrow_click_is_delegated_to_the_input(delivery):
@@ -3565,24 +3571,28 @@ def test_report_overview_tab_is_one_table_without_the_funnel_word(full_delivery)
     assert "质检总览" in cfg
 
 
-def test_effective_config_moved_under_detail_as_the_last_subtab(full_delivery):
-    """「本次运行配置」从质检总览底部搬到「明细」下,是它的最后一个子页。
+def test_effective_config_tab_is_gone(full_delivery):
+    """「本次运行配置」页签已整个移除(2026-08-30 用户拍板)。
 
-    总览要收敛成一张表,而这份快照是"日后复核这份报告按什么标准出的"的底稿。
-    页签名不许写文件里的键名 config_effective —— 那是我们的字段名。
+    快照 YAML 客户读不懂,历史上还整表外泄过站点拓扑(vlm_backends/
+    tos_buckets/public_datasets)与判据 prompt。写入端已瘦身
+    (run.py::_sanitize_config_snapshot),复核走 passed.json 的
+    config_effective,不再进界面 —— 键名同样不许出现。
     """
     pytest.importorskip("gradio")
     from curation.ui.app import build_app
     rep = _report_section(build_app(full_delivery))
-    assert "本次运行配置" in rep
-    det = rep[rep.index("动作打分明细"):]
-    assert det.index("卡顿动作时间线") < det.index("本次运行配置")
+    assert "本次运行配置" not in rep
     assert "config_effective" not in rep          # 键名不进界面
     assert "本次运行生效配置" not in rep          # 旧标题(挂在总览底部那个)已撤
 
 
-def test_load_feeds_the_overview_table_and_the_config_page(full_delivery):
-    """_load 的返回值与 outs 一一对齐,且总览那一格发的是新表、不是老的漏斗表。"""
+def test_load_feeds_the_overview_table(full_delivery):
+    """_load 的返回值与 outs 一一对齐,且总览那一格发的是新表、不是老的漏斗表。
+
+    (原来还钉一格生效配置 YAML;「本次运行配置」页签 2026-08-30 移除后
+    该槽位不复存在,配置 YAML 不再进任何输出。)
+    """
     pytest.importorskip("gradio")
     from curation.ui import app as ui_app
     app = ui_app.build_app(full_delivery)
@@ -3592,7 +3602,6 @@ def test_load_feeds_the_overview_table_and_the_config_page(full_delivery):
     assert len(out) == len(fn.outputs)
     assert out[2] == overview_rows(load_delivery(full_delivery))   # 表
     assert out[3] == ''  # 表下小字只剩沿用一行(本夹具无沿用=空)
-    assert "checks" in out[4] or "(此交付无" in out[4]              # 生效配置 YAML
 
 
 def test_footer_links_are_off(full_delivery, clean_ui_env):

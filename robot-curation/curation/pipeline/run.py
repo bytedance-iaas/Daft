@@ -412,6 +412,34 @@ def _portable_source_path(input_dir: str) -> str:
     return p
 
 
+#: 快照剔除的站点级键(2026-08-30 用户审计:整张后端菜单/桶拓扑曾随交付外泄
+#: ——内部服务地址、部署代号、桶名挂载路径与内网端点)。
+#: 本次**实际生效**的后端仍在 checks.task_success.vlm 里,复核/性能剖析不受影响。
+_SNAPSHOT_SITE_KEYS = ("vlm_backends", "vlm_presets", "tos_buckets",
+                       "public_datasets")
+
+
+def _sanitize_config_snapshot(cfg: dict) -> dict:
+    """交付快照瘦身:记"本次生效",不记站点菜单;方法资产不随单外发。
+
+    ① 站点拓扑表(_SNAPSHOT_SITE_KEYS)整键剔除;
+    ② skill_profile.taxonomy_guideline 全文(数千字判据 prompt)换 sha256
+      指纹 —— 复现性靠指纹对版本,原文留在产品里不进客户交付。
+    深拷贝后操作,绝不改动运行中的 cfg 本体。"""
+    import copy
+    import hashlib
+    ce = copy.deepcopy(cfg)
+    for k in _SNAPSHOT_SITE_KEYS:
+        ce.pop(k, None)
+    sp = ce.get("skill_profile")
+    if isinstance(sp, dict):
+        tg = sp.get("taxonomy_guideline")
+        if isinstance(tg, str) and tg.strip():
+            sp["taxonomy_guideline"] = ("sha256:" + hashlib.sha256(
+                tg.encode("utf-8")).hexdigest()[:12])
+    return ce
+
+
 def run_pipeline(
     config_path: str | None,
     input_dir: str,
@@ -1050,8 +1078,9 @@ def run_pipeline(
     det_dir = os.path.join(output_dir, "details")
     os.makedirs(det_dir, exist_ok=True)
     # 生效配置快照(2026-07-27 U0):UI/复盘要能回答"这次到底用了什么阈值/后端"。
-    # 配置里只有 env 变量名(api_key_env),无密钥,可安心入交付件。
-    report["config_effective"] = cfg
+    # 配置里只有 env 变量名(api_key_env),无密钥;2026-08-30 用户审计后瘦身:
+    # 站点拓扑三张表与判据 prompt 原文不随交付外发(见 _sanitize_config_snapshot)。
+    report["config_effective"] = _sanitize_config_snapshot(cfg)
     # 运行环境+后端信息(2026-07-30 性能剖析页签):config_effective 里有端点/模型/并发,
     # 但没有「跑在什么硬件上、容器有多少配额」——那两样只有运行期知道,补这一块。
     report["runtime"] = collect_runtime(cfg)
