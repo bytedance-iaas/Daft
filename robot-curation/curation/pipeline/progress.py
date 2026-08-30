@@ -19,6 +19,75 @@ from __future__ import annotations
 
 _PROGRESS: dict = {}
 
+#: 阶段式进度的"最近一步"登记(group → 该步信息):心跳线程据此在长 LLM 调用
+#: 期间重报"仍在这一步"。phase_done(group) 收账;不收账就换步也会自动顶掉。
+_PHASE: dict = {}
+
+#: 心跳(issue 讨论 2026-08-30 用户拍板:静默期看着像卡死):条目式阶段在
+#: 首条完成前、阶段式在单次大调用期间,只要超过这个间隔没有新行,就把当前
+#: 行原样重报一遍(带最新"已用")——任何时刻都有一根在呼吸的条。CLI 侧同样
+#: 受益:长静默每 15s 一行,不算刷屏。
+_HB_INTERVAL_S = 15.0
+_HB_TICK_S = 5.0
+_HB_THREAD = {"started": False}
+
+
+def _hb_scan(now: float) -> list[str]:
+    """一次心跳扫描 → 该补打的行(测试直接调它,不用等真线程)。"""
+    out: list[str] = []
+    for st in list(_PROGRESS.values()):
+        total = st.get("total") or 0
+        if not total or st.get("n", 0) >= total:
+            continue                          # 没开张的未知量/已完成:不吭声
+        if now - st.get("t0", now) < st.get("quiet_before_s", 0.0):
+            continue                          # 快阶段的静默期照旧
+        if now - max(st.get("last", 0.0), st.get("t0", 0.0)) < _HB_INTERVAL_S:
+            continue
+        st["last"] = now
+        n = st.get("n", 0)
+        pct = f" ({n / total * 100:.0f}%)"
+        tail = " | 首批在飞…" if n == 0 else " | 仍在跑…"
+        out.append(f"[curation] {st['label']} {n}/{total}{pct}"
+                   f" | 已用 {_fmt_dur(now - st['t0'])}{tail}")
+    for g, ph in list(_PHASE.items()):
+        if now - ph["ts"] < _HB_INTERVAL_S:
+            continue
+        ph["ts"] = now
+        used = f" | 已用 {_fmt_dur(now - ph['t0'])}" if ph.get("t0") else ""
+        out.append(f"[curation] {g} {ph['step']}/{ph['total']} "
+                   f"{ph['what']}{used} | 仍在这一步…")
+    return out
+
+
+def _hb_ensure_thread() -> None:
+    if _HB_THREAD["started"]:
+        return
+    import os
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        # 测试环境不起真线程:模块级 _PROGRESS 会被各用例的假状态污染,常驻
+        # 线程把别家的僵尸条打进无关用例的 capsys(pod 实测:一条 t0 接近
+        # epoch 的遗留项报出「已用 496684.9h」)。心跳逻辑用 _hb_scan 直测。
+        return
+    _HB_THREAD["started"] = True
+    import threading
+    import time
+
+    def _loop():
+        while True:
+            time.sleep(_HB_TICK_S)
+            try:
+                for line in _hb_scan(time.time()):
+                    print(line, flush=True)
+            except Exception:  # noqa: BLE001 心跳绝不弄死跑批
+                pass
+
+    threading.Thread(target=_loop, daemon=True, name="progress-hb").start()
+
+
+def phase_done(group: str) -> None:
+    """阶段式流程收账:这个 group 不再有"仍在这一步"的心跳。"""
+    _PHASE.pop(group, None)
+
 #: 近段速率的窗口(秒)与历史条数上限。
 #: ⚠️ 为什么不用全程平均(2026-08-13 用户实见「已用 41s | 剩余 ~6s」之后又跑了 40 秒):
 #: VLM 段是并发的,开头一批同时冲进去、完成得又快又密,把全程平均速率抬得很高;
@@ -60,6 +129,11 @@ def _progress_init(key: str, total: int, label: str, min_interval_s: float = 20.
                       "quiet_before_s": quiet_before_s,
                       "step": max(1, max(int(total), 0) // 20), "lock": None,
                       "hist": []}
+    # 开跑先亮条(2026-08-30 用户:首条完成前进度条什么都不显示,像卡死):
+    # 0/N 立即可见;快阶段(设了静默期的)照旧不吭声,免得毫秒级阶段刷噪音
+    if total and quiet_before_s <= 0:
+        print(f"[curation] {label} 0/{total} (0%) | 已用 0s", flush=True)
+    _hb_ensure_thread()
     return key
 
 
@@ -137,6 +211,11 @@ def phase_step(group: str, step: int, total: int, what: str,
 
     used = f" | 已用 {_fmt_dur(time.time() - t0)}" if t0 else ""
     print(f"[curation] {group} {step}/{total} {what}{used}", flush=True)
+    # 登记给心跳:这一步(可能是一次几分钟的 LLM 大调用)期间每 15s 重报一次
+    # "仍在这一步";换步自动顶掉,整段结束调 phase_done(group) 收账
+    _PHASE[group] = {"step": step, "total": total, "what": what,
+                     "t0": t0, "ts": time.time()}
+    _hb_ensure_thread()
 
 
 def _fmt_dur(sec: float) -> str:

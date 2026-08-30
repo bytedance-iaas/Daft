@@ -867,7 +867,10 @@ def main(argv: list[str] | None = None) -> int:
         def _tick():
             done[0] += 1
             if done[0] % 10 == 0 or done[0] == len(rows):
-                print(f"[review-page] {done[0]}/{len(rows)}", flush=True)
+                # 中文阶段名(2026-08-30 用户:界面上冒出 "review-page" 没人看
+                # 得懂 —— 子命令名不进用户视野,行话红线的漏网)
+                print(f"[review-page] 切割逐条片段 {done[0]}/{len(rows)}",
+                      flush=True)
 
         if args.into_delivery:
             # 片段进交付批次(2026-08-28 去挂载依赖):落点跟着交付走,桶交付
