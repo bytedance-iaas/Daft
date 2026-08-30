@@ -350,6 +350,18 @@ _TIP_JS = """
 _DROPDOWN_JS = """
 <script>
 (function () {
+  function fixedBase(el) {
+    // fixed 定位的真实包含块:最近的带 transform/perspective/filter 的祖先
+    // (CSS 规范)。模态框 .modal-dialog 用 translate(-50%,-50%) 居中,正好
+    // 命中 —— 浮层坐标必须换算到它的坐标系,否则整块飞到页面左上
+    // (2026-08-29 用户实拍:型号追问框里的下拉脱锚)。
+    for (var p = el.parentElement; p; p = p.parentElement) {
+      var cs = getComputedStyle(p);
+      if (cs.transform !== 'none' || cs.perspective !== 'none'
+          || (cs.filter && cs.filter !== 'none')) return p;
+    }
+    return null;
+  }
   function place(ul) {
     var wrap = ul.closest('.wrap') || ul.parentElement;   // gradio 自己的锚点
     if (!wrap) return;
@@ -361,9 +373,16 @@ _DROPDOWN_JS = """
       if (input) input.blur();           // 锚点已滚出视野:收起,别挂在半空
       return;
     }
+    var bx = 0, by = 0, base = fixedBase(ul);
+    if (base) {
+      var b = base.getBoundingClientRect();
+      bx = b.left; by = b.top;
+    }
     // 开在上方时 ul.top 必然小于 wrap.top;开在下方时 ul.top == wrap.bottom
     var above = u.top < w.top;
-    ul.style.top = (above ? w.top - u.height : w.bottom) + 'px';
+    ul.style.top = ((above ? w.top - u.height : w.bottom) - by) + 'px';
+    ul.style.left = (w.left - bx) + 'px';
+    ul.style.width = w.width + 'px';     // 模态内 gradio 量出的宽度同样不可信
   }
   function reflow(e) {
     var t = e && e.target;
@@ -373,6 +392,9 @@ _DROPDOWN_JS = """
   }
   window.addEventListener('scroll', reflow, true);
   window.addEventListener('resize', reflow, true);
+  // 浮层一出现就摆正:模态里的下拉不等滚动,gradio 初始摆放就是错的
+  new MutationObserver(function () { reflow(null); })
+      .observe(document.documentElement, {childList: true, subtree: true});
 
   // ── 点箭头展不开(issue #53,2026-08-19 实机量出来的)────────────────
   // 单选下拉:.icon-wrap 是 pointer-events:none 且**压在 input 上面**
@@ -794,17 +816,26 @@ _ARCO_CSS = """
    Gradio 没有原生模态框,但模态不需要它原生支持 —— fixed 居中 + 一层遮罩即可,
    Python 那边只是给 gr.Column 挂个 class,组件树与事件接线一个字不动。
    ⚠️ 遮罩用 box-shadow 大扩散,**不许用 position:fixed 的 `::before`**
-   (2026-08-19 真机打脸):对话框自己带 transform:translate(-50%,-50%),而 CSS
-   规定 fixed 元素一旦有 transform 祖先就改为相对该祖先定位 —— 于是 inset:0 的
-   "全屏遮罩"实际只盖住对话框自己(框内发灰、页面四周纹丝不动)。box-shadow 的
+   (2026-08-19 真机打脸,当时对话框还用 transform 居中):CSS 规定 fixed 元素
+   一旦有 transform 祖先就改为相对该祖先定位 —— 于是 inset:0 的"全屏遮罩"实际
+   只盖住对话框自己(框内发灰、页面四周纹丝不动)。2026-08-29 起居中已改
+   inset+margin:auto、transform 退役(它还劫持模态内下拉的坐标系),但 ::before
+   方案照旧不用:box-shadow 无额外元素、不进裁剪,没理由换。box-shadow 的
    第二段 0 0 0 200vmax 从框边向外铺满整个视口,没有额外元素、不进任何
    overflow:hidden 的裁剪(Gradio 表单块裁兄弟元素那坑也躲开了)。
    代价:box-shadow 不吃点击,页面其余部分仍可点 —— 拿"改写交付"这一下换整屏
    变暗的强提示,可以接受;真正的断路器是「确定」本身(不点绝不发起)。 */
 .gradio-container .modal-dialog {
+  /* 居中不用 transform(2026-08-29):transform 会把 fixed 后代的坐标系整个
+     劫持(CSS 规范),模态内下拉的 ul.options(position:fixed)按视口坐标摆
+     就整块飞掉/塌高(用户实拍+真机复现)。inset:0 + margin:auto +
+     height:fit-content 同样居中,fixed 后代保持视口坐标系,gradio 原生定位
+     直接正确。 */
   position: fixed !important;
-  top: 50% !important; left: 50% !important;
-  transform: translate(-50%, -50%) !important;
+  inset: 0 !important;
+  margin: auto !important;
+  height: fit-content !important;
+  max-height: calc(100vh - 48px) !important;
   z-index: 10000 !important;
   width: min(560px, calc(100vw - 48px)) !important;
   background: #FFFFFF !important;
@@ -2835,11 +2866,20 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         if unk:
                             sug = runner.embodiment_hints(
                                 _src_root, unk[0])["suggest"]
+                            # 建议的型号排最前(2026-08-29 用户实拍:全量字母序
+                            # 让人第一眼看到一堆无关候选)。默认值与选项同一条
+                            # 判据:只预选真在清单里的建议,防静默丢值
+                            _all = runner.embodiment_choices()
+                            _sug = [s["id"] for s in sug
+                                    if s.get("id") in _all]
+                            _emb_choices = _sug + [c for c in _all
+                                                   if c not in _sug]
                             return (*_tk_keep(), args,
                                     gr.update(), gr.update(),
                                     gr.update(visible=True),
                                     runner.embodiment_ask_md("、".join(unk), sug),
-                                    gr.update(value=(sug[0]["id"] if sug
+                                    gr.update(choices=_emb_choices,
+                                              value=(_sug[0] if _sug
                                                      else None)),
                                     _ds_hint(ds, batch), gr.update(),
                                     gr.update())

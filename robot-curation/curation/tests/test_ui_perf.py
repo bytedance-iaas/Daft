@@ -932,6 +932,58 @@ def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
     assert labels.count("返回") >= 2, "两个模态都要有返回退路"
 
 
+def test_modal_centers_without_transform_so_dropdowns_anchor():
+    """型号追问框里的下拉浮层飞到页面左上/塌高(2026-08-29 用户实拍+真机
+    复现):ul.options 是 position:fixed,而 .modal-dialog 若用 transform 居中
+    会劫持 fixed 后代的坐标系(CSS 规范)。根治=居中改 inset:0+margin:auto+
+    height:fit-content,transform 从模态规则里退役;JS 端保留 fixedBase 换算
+    作通用保险。"""
+    pytest.importorskip("gradio")
+    from curation.ui.app import _ARCO_CSS, _DROPDOWN_JS
+
+    import re as _re
+    seg = _ARCO_CSS.split(".modal-dialog {")[1].split("}")[0]
+    seg = _re.sub(r"/\*.*?\*/", "", seg, flags=_re.S)   # 注释里提 transform 无罪
+    assert "transform" not in seg, "模态居中不许再用 transform(劫持 fixed 后代)"
+    assert "inset: 0" in seg and "margin: auto" in seg
+    assert "fit-content" in seg
+    assert "fixedBase" in _DROPDOWN_JS and "MutationObserver" in _DROPDOWN_JS
+
+
+def test_emb_ask_puts_suggestion_first(tmp_path, monkeypatch):
+    """型号追问的候选把建议排最前(2026-08-29 用户实拍:全量字母序看着像
+    一堆无关候选);默认值与选项同一条判据——只预选真在清单里的建议。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner as _runner
+    from curation.ui.app import build_app
+
+    deliv = tmp_path / "deliveries"
+    deliv.mkdir()
+    ds = tmp_path / "data" / "mystery"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(_json.dumps(
+        {"robot_type": "unknown", "codebase_version": "v3.0"}),
+        encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    # suggest 的字段契约 = id + reason(embodiment_ask_md 渲染两者都要)
+    monkeypatch.setattr(_runner, "embodiment_hints",
+                        lambda root, name: {"robot_type": "unknown",
+                                            "suggest": [{"id": "ur5",
+                                                         "reason": "测试建议"}]})
+    fn = _fn_by_name(app, "_run_preflight")
+    out = fn(str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
+             "okname", "", [], "", None, "", None,
+             "", "", None, None, None, None, "", False, False)
+    pick = out[-4]
+    assert pick.get("value") == "ur5"
+    ch = [c[1] if isinstance(c, (list, tuple)) else c
+          for c in pick.get("choices") or []]
+    assert ch and ch[0] == "ur5", "建议的型号要排最前"
+    assert set(ch) == set(_runner.embodiment_choices()), "其余候选一个不少"
+
+
 def test_toasts_are_tamed():
     """issue #107(用户吐槽:toast 太吓人+倒计时几秒就没):
     ① gr.Info 全退役(成功不旁白,字段填上就是证明);
