@@ -1708,9 +1708,15 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 origin["delivery_url"] + "/human-decisions",
                 origin.get("region") or None)
             ro_why = "" if ok else why
-        # 先把下拉里的值还原成真正的目录(手输半截字的情形,见 resolve_delivery);
-        # 还原不了的照旧交给 load_delivery,它会挂 load_error 让整页明说读不到
-        m = load_delivery(resolve_delivery(path, discover_deliveries(delivery)))
+        # 先把下拉里的值还原成真正的目录(手输半截字的情形,见 resolve_delivery)。
+        # ⚠️ 直连浏览中(_rp_src["root"] 是 tos://)**跳过**这步回捞:值该是批次
+        # URL(上面已镜像)或缓存路径,短名绝不许从启动参数的默认交付根按名
+        # 认领同名交付 —— 挂载根同名老交付的报告与裁决台账会被端给用户
+        # (2026-08-31 droid-50 跨根串扰事故)。读不到就 load_error 明说。
+        if (_rp_src.get("root") or "").startswith("tos://"):
+            m = load_delivery(path)
+        else:
+            m = load_delivery(resolve_delivery(path, discover_deliveries(delivery)))
         if ro_why and isinstance(m, dict):
             m["tos_readonly"] = ro_why
         eids = bucket_ids(m, BUCKET_ALL)
@@ -3275,7 +3281,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             #    预填本实例交付根的 tos:// 写法 → 默认体验与之前逐字节等价
             #    (挂载直读);改填陌生桶 → 列交付/批次,打开时懒镜像到本地缓存。
             #    ⚠️ 红线自查:报告页那套子页签零改动,这行在页签外的选择区。──
-            _rp_src = {"region": ""}     # 直连地区,懒镜像与列表共用(闭包态)
+            # root 一并记下(2026-08-31 跨根串扰事故):正在浏览哪个交付根,
+            # 决定"短名回捞"允不允许 —— 直连浏览中绝不许从启动参数的默认根
+            # 按名回捞同名交付(默认根下的同名老交付曾把它的裁决台账端给
+            # 正在浏览的直连新交付)。空串 = 启动根语境,行为照旧。
+            _rp_src = {"region": "", "root": ""}   # 直连地区+当前根(闭包态)
             with gr.Row():
                 rp_root = gr.Textbox(label="交付目录", scale=4,
                                      value=_out_default,   # 同跑质检页:没桶留空
@@ -3863,6 +3873,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     sel = rc[0][1] if rc else ""
                     return (gr.update(choices=rc, value=sel or None),
                             *_load(sel))
+                p = str(path or "").strip().rstrip("/")
+                root_now = _rp_src.get("root") or ""
+                if root_now.startswith("tos://") and p:
+                    # 直连浏览中收到非 tos 值(gradio 下拉可把显示短名当值
+                    # 提交):拼回**当前根**重走 tos 分支;列不出会明说。绝不
+                    # 落到下面的启动根按名回捞(2026-08-31 跨根串扰事故)
+                    return _pick_delivery(root_now + "/" + p.rsplit("/", 1)[-1])
                 d = resolve_delivery(path, discover_deliveries(delivery))
                 rc = run_choices(d)
                 sel = resolve_run(d)
@@ -3958,6 +3975,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # (2026-08-20)默认地址是桶里的直连前缀,得真去桶里列
                 if not s or s == str(_deliv_root).rstrip("/") \
                         or (s == home and runner.is_mount_backed(_deliv_root)):
+                    _rp_src["root"] = ""            # 回到启动根语境
                     fresh = discover_deliveries(delivery)
                     ch = delivery_choices(delivery, fresh)
                     return gr.update(choices=ch, value=_keep(ch)), "", ""
@@ -3985,9 +4003,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         why = f"{type(e).__name__}: {str(e)[:120]}"
                     return (gr.update(), "", _rp_red(why))
                 if not names:
+                    _rp_src["root"] = s             # 空前缀也算直连语境
                     return (gr.update(choices=[], value=None),
                             "该前缀下没有列出任何交付(前缀打错?或桶里确实是空的)",
                             "")
+                _rp_src["root"] = s                 # 直连浏览语境,短名回捞下锁
                 ch = [(n, s + "/" + n) for n in names]
                 # 成功不说话(2026-08-28 用户:右侧那句"TOS 直连…"是废话)
                 return gr.update(choices=ch, value=_keep(ch)), "", ""
