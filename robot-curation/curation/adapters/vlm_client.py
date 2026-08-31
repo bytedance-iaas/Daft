@@ -204,6 +204,12 @@ DEFAULT_MAX_CONCURRENCY = 8
 DEFAULT_TIMEOUTS_S = {"probe": 60.0, "endstate": 60.0, "arbitration": 60.0,
                       "caption": 60.0, "llm": 120.0}
 
+#: 首发排队等闸门许可的保险丝(秒)。排队本身**不烧 2T 预算**(方案 A,2026-08-31
+#: 用户拍板):正常拥堵该等就等——队深被上游 episode 信号量天然封顶,等待一定
+#: 有进展。这根丝只防"闸门泄漏"这类真 bug 造成的无声吊死,不参与正常节流;
+#: 按最坏合法队深(episode 并发 × 帧扇出 ÷ 容量 × 单发 2T)再放大数倍取整。
+GATE_WAIT_FUSE_S = 1800.0
+
 
 def timeout_for(kind: str, vlm_cfg: dict | None) -> float:
     """分类型超时:站点配置 checks.task_success.vlm.timeouts_s.<kind> 可覆盖
@@ -269,7 +275,11 @@ def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
       (这不是对冲,是抢救该拿的那票;仍受闸门与 2T 总预算约束);
       4xx 一律不重发(400/401/403/404/429 都是我们自己的问题,429 尤其
       不许重发 —— 服务端明说"你太快了",再发是火上浇油);
-    - 共至多两发;两发都没成 → 原样抛异常/交回错误响应,调用方既有 except
+    - 常规共至多两发;**两发皆因超时死透 → 再给恰好一次串行重发,带全新
+      1×timeout 预算**(2026-08-31 用户拍板;超时路径最坏 = 排队 + 3×timeout。
+      立论与对冲相同:超时是服务端长尾抖动,隔一拍重发大概率落进快的那堆;
+      只有超时触发,4xx/429 与 5xx/连接错的既有规则一个字不变);
+    - 全部没成 → 原样抛异常/交回错误响应,调用方既有 except
       分支照旧走"少一票"(判定逻辑一个字不动:救人一签、杀人双签不变)。
 
     ⚠️ 如实说明:落败那一发**取消不了**(HTTP 没有取消语义,服务端照样在算),
@@ -280,6 +290,9 @@ def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
     gate = SharedGate(语义即共享信号量),**首发和补发都要拿许可**(许可持有 = 该 HTTP
     请求真在飞)。容量由工厂按自身结构并发传入;⚠️ 容量不许低于该类的结构并发,
     否则等于把原本并行的调用串行化 —— 最容易悄悄拖慢整批的坑。
+    **首发许可在调用方线程同步等到手后才起 2T 预算表**(方案 A,2026-08-31):
+    排队不烧预算,拥堵时该等就等(队深被上游并发结构封顶,等待必有进展);
+    只有 GATE_WAIT_FUSE_S 保险丝防闸门泄漏。补发仍只用剩余预算排队。
 
     两发跑在**守护线程**上(2026-08-15 主会话实测教训):此前用 per-call
     ThreadPoolExecutor,其工作线程非守护,CPython 在解释器退出时会把它们全部
@@ -293,16 +306,27 @@ def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
     import requests as _rq
 
     call_id = uuid.uuid4().hex[:12]     # 不用进程内自增:rejudge 增量并档会跨进程撞号
-    deadline = _time.time() + 2.0 * timeout_s
     settled = threading.Event()         # 赢家已定 → 还没发出去的补发不再发(纯浪费)
     results: _queue.Queue = _queue.Queue()   # 每发恰好投一条 (attempt_no, "resp"/"exc", 载荷)
 
-    def _attempt(attempt_no: int):
-        budget = deadline - _time.time()
-        if budget <= 0:
-            raise _rq.exceptions.Timeout(f"{tag}: 2×timeout 总预算已耗尽,不再发起")
-        if gate is not None and not gate.acquire(timeout=budget):
-            raise _rq.exceptions.Timeout(f"{tag}: 等待并发闸门许可超出 2×timeout 总预算")
+    # 方案 A(2026-08-31 用户拍板;修 droid-50 批"排队即弃权"9 条):首发的闸门
+    # 许可在**调用方线程同步等到手**,拿到许可才起 2T 预算表——排队不再烧预算,
+    # docstring 里"从首发发出算起"的不变量从此与实现一致。旧写法在进门就起表,
+    # 拥堵时整段预算耗在队列里,一枪未发即作废,重发机制根本轮不到上场。
+    if gate is not None and not gate.acquire(timeout=GATE_WAIT_FUSE_S):
+        raise _rq.exceptions.Timeout(
+            f"{tag}: 等待并发闸门许可超过保险丝 {GATE_WAIT_FUSE_S:.0f}s(疑似闸门泄漏)")
+    deadline = _time.time() + 2.0 * timeout_s
+
+    def _attempt(attempt_no: int, held: bool = False):
+        # held=True:首发,许可已在调用方线程拿好;补发仍自行排队,且只许用
+        # 剩余预算等——补发是锦上添花,不值得为它等过 2T 死线。
+        if not held:
+            budget = deadline - _time.time()
+            if budget <= 0:
+                raise _rq.exceptions.Timeout(f"{tag}: 2×timeout 总预算已耗尽,不再发起")
+            if gate is not None and not gate.acquire(timeout=budget):
+                raise _rq.exceptions.Timeout(f"{tag}: 等待并发闸门许可超出 2×timeout 总预算")
         try:
             if settled.is_set():
                 return None
@@ -327,17 +351,41 @@ def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
             if gate is not None:
                 gate.release()
 
-    def _spawn(attempt_no: int) -> None:
+    def _timeout_retry(orig_exc):
+        """超时死透后的最后一搏(2026-08-31 用户拍板):读超时多半是服务端长尾
+        抖动,换个时刻再发大概率落进快的那堆(与对冲同一立论)。给**恰好一次**
+        串行重发,带全新 1×timeout 预算 ⇒ 超时路径的最坏时长 = 排队 + 3×timeout。
+        只有超时触发:429/4xx 是"我们的问题"绝不重发,5xx/连接错已有自己的
+        串行重发,都不走这里。排队照方案 A 不烧预算;拿不到许可或重发再败,
+        原样抛回第一具尸体(调用方 except 分支照旧走"少一票")。"""
+        nonlocal deadline
+        if gate is not None and not gate.acquire(timeout=GATE_WAIT_FUSE_S):
+            raise orig_exc
+        deadline = _time.time() + timeout_s
+        try:
+            resp = _attempt(2, held=True)
+            if resp is not None:
+                return resp
+            raise orig_exc
+        except Exception:  # noqa: BLE001  重发的死法不重要,交回原始死因
+            raise orig_exc
+
+    def _spawn(attempt_no: int, held: bool = False) -> None:
         def _run():
             try:
-                results.put((attempt_no, "resp", _attempt(attempt_no)))
+                results.put((attempt_no, "resp", _attempt(attempt_no, held)))
             except Exception as e:  # noqa: BLE001
                 results.put((attempt_no, "exc", e))
-        threading.Thread(target=_run, daemon=True,
-                         name=f"vlm-hedge-{tag}-{attempt_no}").start()
+        try:
+            threading.Thread(target=_run, daemon=True,
+                             name=f"vlm-hedge-{tag}-{attempt_no}").start()
+        except BaseException:
+            if held and gate is not None:   # 线程都没起来,预取的许可要还回去
+                gate.release()
+            raise
 
     try:
-        _spawn(0)
+        _spawn(0, held=True)
         try:
             _no, kind, payload = results.get(timeout=timeout_s)
         except _queue.Empty:
@@ -345,7 +393,9 @@ def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
         else:
             if kind == "exc":
                 if isinstance(payload, _rq.exceptions.Timeout):
-                    raise payload       # 读超时=预算已烧到头,没有重发空间
+                    # 首发早夭于超时:补发已无意义(同一时刻大概率同样命运),
+                    # 直接走"隔一拍再来一发"的超时重发
+                    return _timeout_retry(payload)
                 return _attempt(1)      # 快速网络错(连接拒绝/复位等)→ 立即串行重发
             if payload.ok or payload.status_code < 500:
                 return payload          # 成功,或 4xx(429 在内):原样交回,不重发
@@ -373,8 +423,11 @@ def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
         if best_resp is not None:
             return best_resp            # 两发都是错误响应:交回,调用方 raise_for_status 走原路
         if last_exc is not None:
+            if isinstance(last_exc, _rq.exceptions.Timeout):
+                return _timeout_retry(last_exc)   # 两发皆超时 → 最后一搏
             raise last_exc
-        raise _rq.exceptions.Timeout(f"{tag}: 两发均未在 2×timeout 预算内返回")
+        return _timeout_retry(
+            _rq.exceptions.Timeout(f"{tag}: 两发均未在 2×timeout 预算内返回"))
     finally:
         settled.set()                   # 守护线程自会在 2T 预算线上退出,不 join 不等
 

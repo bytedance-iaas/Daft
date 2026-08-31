@@ -100,7 +100,7 @@ def test_hedge_winner_is_fast_second_attempt():
 
 
 def test_logical_call_hard_capped_at_twice_timeout():
-    """★唯一不变量:从首发算起,整次逻辑调用最多 2×timeout 内返回或作废。
+    """★不变量(2026-08-31 修订):常规路径 2×timeout;超时路径再加一搏,最多 3×timeout。
 
     两发都挂 ⇒ 首发在 2T 被硬杀、补发的死线也钉在同一绝对时刻 2T,调用方在
     ~2T 拿到异常走既有 except 分支(少一票)。旧写法(600s 硬等)在这里会把
@@ -121,15 +121,13 @@ def test_logical_call_hard_capped_at_twice_timeout():
         hedged_request(send, tag="probe", timeout_s=T,
                        gate=threading.Semaphore(4))
     dt = time.time() - t0
-    assert len(calls) == 2, "共两次机会:首发 + 补发,一次不多"
+    assert len(calls) == 3, "首发 + 补发 + 超时最后一搏,一次不多"
     assert abs(calls[0]["hard"] - 2 * T) < 0.05, "首发硬超时应为 2T"
-    for c in calls:                       # 两发各自的死线都不越过绝对 2T
+    for c in calls[:2]:                   # 前两发的死线都不越过绝对 2T
         assert (c["t"] - t0) + c["hard"] <= 2 * T + 0.1
-    assert dt <= 2 * T + 0.5, f"整次逻辑调用耗时 {dt:.2f}s,超出 2T 承诺"
-    assert dt >= 2 * T - 0.1, "两发都挂时不该提前放弃(少等即多冤)"
-    s = latency_summary()["probe"]
-    assert s["unanswered"] == 1 and s["unanswered_timeout"] == 1
-    assert s["hedged"] == 1 and s["attempts"] == 2
+    assert abs(calls[2]["hard"] - T) < 0.1, "最后一搏应带全新 1×timeout 预算"
+    assert dt <= 3 * T + 0.5, f"整次逻辑调用耗时 {dt:.2f}s,超出超时路径 3T 承诺"
+    assert dt >= 3 * T - 0.15, "三发都挂时不该提前放弃(少等即多冤)"
 
 
 def test_hedge_waits_for_concurrency_gate():
@@ -293,18 +291,23 @@ def test_fast_connect_error_gets_one_serial_resend():
     assert s["retried"] == 1 and s["unanswered"] == 0
 
 
-def test_read_timeout_not_resent():
-    """读超时(Timeout 异常)不重发:它意味着 2T 预算已经烧完,再发没有空间。"""
+def test_read_timeout_gets_exactly_one_serial_retry():
+    """读超时 → **恰好一次**串行重发(2026-08-31 用户拍板),再败仍抛原超时。
+
+    旧语义是"读超时不重发"——方案 A 之前 2T 预算确实烧完没有空间;排队不烧
+    预算之后,给最后一搏批一段全新 1×timeout 预算不破坏任何东西。上限仍要
+    钉死:两次都超时就到头,绝不第三次(否则退化成无限重试碰运气)。"""
     calls = []
 
     def send(hard):
-        calls.append(1)
+        calls.append(hard)
         raise requests.exceptions.Timeout("synthetic read timeout")
 
     with pytest.raises(requests.exceptions.Timeout):
         hedged_request(send, tag="llm", timeout_s=0.5,
                        gate=threading.Semaphore(2))
-    assert len(calls) == 1
+    assert len(calls) == 2, "读超时应恰好重发一次:首发 + 最后一搏"
+    assert abs(calls[1] - 0.5) < 0.1, "重发应带全新 1×timeout 预算"
 
 
 def test_both_attempts_dead_walks_existing_except_path(monkeypatch):
@@ -324,13 +327,14 @@ def test_both_attempts_dead_walks_existing_except_path(monkeypatch):
     t0 = time.time()
     with pytest.raises(Exception):
         llm_ask("归纳一下")
-    assert time.time() - t0 <= 0.9      # 2T=0.4 + 松余量,绝不是旧写法的硬等
-    rows = _wait_rows(2)
+    assert time.time() - t0 <= 1.1      # 超时路径 3T=0.6 + 松余量,绝不是旧写法的硬等
+    rows = _wait_rows(3)
     mine = [r for r in rows if r[0] == "llm"]
-    assert {r[5] for r in mine} == {0, 1}, "没有补发 = 调用点绕过了 hedged_request"
+    assert {r[5] for r in mine} == {0, 1, 2}, \
+        "应见 首发+补发+超时最后一搏 三行;缺失 = 调用点绕过了 hedged_request"
     assert all(r[6] == "timeout" and not r[2] for r in mine)
     s = latency_summary()["llm"]
-    assert s["unanswered"] == 1 and s["errors"] == 2
+    assert s["unanswered"] == 1 and s["errors"] == 3
 
 
 def test_default_timeouts_per_kind():
@@ -458,3 +462,124 @@ def test_summary_hedge_stats_from_rows():
     assert s_old["attempts"] == 2 and s_old["unanswered"] == 1
     assert s_old["hedged"] == 0 and s_old["retried"] == 0
     assert s_old["unanswered_timeout"] == 0     # 原因未知,不硬说是超时
+
+
+# ══ 方案 A:排队不烧预算(2026-08-31,修 droid-50 批 9 条"排队即弃权")════════
+
+
+def test_gate_queue_wait_does_not_burn_budget():
+    """★首发排队等闸门的时间不计入 2T 预算:队再长也不弃权,轮到就全额起表。
+
+    布景:闸门容量 1,占用者霸着许可 3T(旧写法下 2T 预算在队列里烧光,直接
+    Timeout 作废——正是 droid-50 批 9 条的死法)。新语义:该等就等,拿到许可
+    后 send 拿到的硬超时仍是**完整 2T**,调用正常成功。
+    """
+    T = 0.2
+    gate = threading.Semaphore(1)
+    assert gate.acquire(timeout=1)          # 占用者:霸住唯一许可
+    released_at: list[float] = []
+
+    def occupant():
+        time.sleep(3 * T)                   # 霸到 3T——旧写法必死,新写法只是等
+        released_at.append(time.time())
+        gate.release()
+
+    threading.Thread(target=occupant, daemon=True).start()
+    calls: list[dict] = []
+
+    def send(hard):
+        calls.append({"hard": hard, "t": time.time()})
+        return _Resp(200, marker="ok")
+
+    t0 = time.time()
+    resp = hedged_request(send, tag="probe", timeout_s=T, gate=gate)
+    assert resp.marker == "ok"
+    assert released_at and calls[0]["t"] >= released_at[0] - 0.05, \
+        "首发在许可释放前就飞了——闸门被绕过"
+    assert abs(calls[0]["hard"] - 2 * T) < 0.05, \
+        f"拿到许可后应享有完整 2T 预算,实得 {calls[0]['hard']:.3f}"
+    assert time.time() - t0 >= 3 * T - 0.05, "没等占用者就返回,布景失效"
+
+
+def test_gate_wait_fuse_only_guards_leaks(monkeypatch):
+    """保险丝只防闸门泄漏:许可永不归还时,在 GATE_WAIT_FUSE_S 处报错说人话。
+
+    真拥堵不该触发它(上一条测试证明);这里把丝调短模拟泄漏,报错必须点名
+    保险丝与泄漏嫌疑,而不是老话术"超出 2×timeout 总预算"(那句已随方案 A
+    从首发路径退役,只留给补发)。
+    """
+    from curation.adapters import vlm_client as vc
+    monkeypatch.setattr(vc, "GATE_WAIT_FUSE_S", 0.3)
+    gate = threading.Semaphore(1)
+    assert gate.acquire(timeout=1)          # 永不释放 = 泄漏
+    t0 = time.time()
+    with pytest.raises(requests.exceptions.Timeout) as ei:
+        hedged_request(lambda hard: _Resp(200), tag="probe",
+                       timeout_s=0.2, gate=gate)
+    dt = time.time() - t0
+    assert "保险丝" in str(ei.value) and "泄漏" in str(ei.value)
+    assert 0.25 <= dt <= 1.0, f"该在丝上断,实际等了 {dt:.2f}s"
+
+
+def test_budget_clock_starts_at_permit_not_entry():
+    """2T 死线从拿到许可起算:排队 1.5T 后首发挂死,补发仍有完整的下半场。
+
+    旧写法里排队会把补发预算吃光(甚至负数);新写法下补发的死线 =
+    许可到手时刻 + 2T,两发合计仍然只等 2T——对外承诺变成
+    "最坏 排队 + 2×timeout 出结果或作废",排队段有上游并发结构封顶。
+    """
+    T = 0.3
+    gate = threading.Semaphore(2)          # 容量 2:补发要能拿到第二张许可
+    assert gate.acquire(timeout=1) and gate.acquire(timeout=1)   # 两张全霸住
+    def _free_both():
+        time.sleep(1.5 * T)
+        gate.release(); gate.release()
+    threading.Thread(target=_free_both, daemon=True).start()
+    calls: list[dict] = []
+    lock = threading.Lock()
+
+    def send(hard):
+        with lock:
+            i = len(calls)
+            calls.append({"hard": hard, "t": time.time()})
+        if i == 0:
+            time.sleep(min(9.9, hard))
+            raise requests.exceptions.Timeout("首发挂死")
+        time.sleep(0.05)
+        return _Resp(200, marker="hedge")
+
+    resp = hedged_request(send, tag="probe", timeout_s=T, gate=gate)
+    assert resp.marker == "hedge"
+    assert len(calls) == 2, "应有补发"
+    permit_at = calls[0]["t"]
+    assert (calls[1]["t"] - permit_at) - T < 0.15, "补发应在许可后 ~T 处起飞"
+    assert (calls[1]["t"] + calls[1]["hard"]) - (permit_at + 2 * T) < 0.15, \
+        "补发死线应钉在 许可时刻+2T,而不是进门时刻+2T"
+
+
+def test_timeout_retry_rescues_the_call():
+    """两发皆超时后的最后一搏拿到 200:调用整体成功,不再弃权。
+
+    这正是 droid-50 批 ep000024 的死法(两发都读超时)——按方舟长尾的统计,
+    隔一拍重发大概率成功;此测试钉死救回路径真的通到 resp 返回。"""
+    T = 0.3
+    calls = []
+    lock = threading.Lock()
+
+    def send(hard):
+        with lock:
+            i = len(calls)
+            calls.append({"hard": hard, "t": time.time()})
+        if i < 2:
+            time.sleep(min(9.9, hard))
+            raise requests.exceptions.Timeout("长尾挂死")
+        return _Resp(200, marker="third")
+
+    t0 = time.time()
+    resp = hedged_request(send, tag="probe", timeout_s=T,
+                          gate=threading.Semaphore(4))
+    dt = time.time() - t0
+    assert resp.marker == "third"
+    assert len(calls) == 3
+    assert calls[2]["t"] - t0 >= 2 * T - 0.1, "最后一搏应在两发死透(2T)后才起飞"
+    assert dt <= 3 * T + 0.5
