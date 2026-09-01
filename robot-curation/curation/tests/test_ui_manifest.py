@@ -2004,6 +2004,13 @@ def test_sync_view_gallery_items_carry_episode_and_badge(delivery):
     assert sync_plot_items(clean, SYNC_FILTER_FLAGGED) == []
     assert "切到「全部」" in sync_view(clean, SYNC_FILTER_FLAGGED, 0)["note"]
     assert sync_view(clean, SYNC_FILTER_ALL, 0)["items"][0][1] == "ep000001 · 同步正常"
+    # aligned 但有弃权路(候选并列/画面不锐利/覆盖不足/信号弱)→ 必须进筛选
+    # (2026-09-01 用户抓出:droid-50 有 6 条只有弃权路标注的 episode 在筛选下隐身)
+    abst = _with_sync(delivery, detail={"verdict": "aligned", "per_camera": {},
+                                        "flagged_cameras": [],
+                                        "abstained_cameras": ["cam_a"]})
+    assert [it["id"] for it in sync_plot_items(abst, SYNC_FILTER_FLAGGED)] == \
+        ["ep000001"]
 
 
 def test_sync_view_pages_and_wraps(delivery):

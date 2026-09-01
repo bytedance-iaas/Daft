@@ -107,6 +107,23 @@ _INFLIGHT: dict = {"n": 0, "max": 0, "t0": 0.0}
 _EPISODE_SEM: dict = {}
 
 
+def sync_plot_worthy(mode: str, det: dict) -> bool:
+    """这条 episode 的同步曲线值不值得留存(flagged 档判据)。
+
+    与 UI 筛选(manifest._sync_flagged)同一把尺子(2026-09-01 用户抓出口径分裂:
+    筛选认弃权路而出图不认,默认档下"值得留意"的条目根本无图可筛):
+    非对齐 / 可信错位·无信号(flagged_cameras) / 弃权路(abstained_cameras,
+    suspect/noisy 是其子集)。all=全存;off=不存。
+    """
+    if mode == "all":
+        return True
+    if mode != "flagged":
+        return False
+    return bool(det.get("verdict") != "aligned"
+                or det.get("flagged_cameras")
+                or det.get("abstained_cameras"))
+
+
 def _episode_gate(limit: int):
     """取当前事件循环上的 episode 并发信号量(懒建,按 loop 缓存)。
 
@@ -339,7 +356,8 @@ def run_funnel(
         do_visual = enabled(cfg, "visual_quality")
         do_sync = enabled(cfg, "video_action_sync")
         # 同步曲线暂存策略(2026-07-15 用户定,证据附件第一块):flagged=只存
-        # 非"过"条目(人工会看的那批,内存有界);all=全存(小数据集/演示);off=不存
+        # 值得留意的条目(非对齐/任一路有标注,人工会看的那批,内存有界);
+        # all=全存(小数据集/演示);off=不存
         sync_plots_mode = str(pcfg.get("sync_plots", "flagged"))
 
         # 标签用**语义化检查名**,不是实现机制(2026-07-22 用户反馈:"抽帧检查(解码+光流)"
@@ -508,10 +526,7 @@ def run_funnel(
                 _sync_res = sync_check_result(sync_cams, len(sync_cams), **pver)
                 out["sync"] = result_to_struct(_sync_res)
                 _det = _sync_res.detail
-                if (sync_plots_mode == "all"
-                        or (sync_plots_mode == "flagged"
-                            and (_det["verdict"] != "aligned"
-                                 or _det["flagged_cameras"]))):
+                if sync_plot_worthy(sync_plots_mode, _det):
                     out["curves"] = json.dumps({
                         "cameras": sync_curves,
                         "verdict": _det["verdict"],

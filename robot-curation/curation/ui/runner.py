@@ -1095,6 +1095,18 @@ def resolve_root_input(value: str, buckets: list) -> dict:
                      "任何拿到界面密码的人")
 
 
+def home_region() -> str:
+    """部署桶自己的地区(TOS_REGION / 端点推导 / 默认)。
+
+    报告页「跟着最新跑批走」跟到挂载根的输出时补区用:挂载跑批的任务记录里
+    没有 --output-region(写本地=写桶,当时不需要),而切成 tos:// 直连形式
+    展示就必须知道桶在哪个区。"""
+    from .. import tos_store as _ts
+    return (os.environ.get("TOS_REGION", "").strip()
+            or _ts.region_from_endpoint(os.environ.get("TOS_ENDPOINT", "").strip())
+            or _ts.DEFAULT_REGION)
+
+
 def home_output_url(deliv_root: str) -> str:
     """交付根的 tos:// 写法(「交付目录」框的默认值)。
 
@@ -2077,6 +2089,27 @@ def latest_run_delivery(runs_root: str) -> dict | None:
 
 def runs_root_of(delivery_root: str) -> str:
     return os.path.join(delivery_root, RUNS_DIRNAME)
+
+
+def last_output_default(runs_root: str) -> tuple[str, str] | None:
+    """跑质检页「交付目录」的记忆默认:最近一次成功跑批写到哪,重开页面就默认哪。
+
+    2026-09-01 用户实报定版:表单每次重开都弹回站点默认桶,在直连桶
+    干活的人一不留神就把 50 条写回家桶的同名交付(200707 误跑实案)。持久化
+    不新增状态文件——任务记录(.runs)本来就是持久的,直接从它读。
+    返回 (tos:// 形式的交付根, 地区);没有可用记录 → None(站点默认兜底)。
+    挂载根输出规范化成 tos:// 身份;纯本地输出没有跨会话意义,不做默认。"""
+    info = latest_run_delivery(runs_root)
+    if not info:
+        return None
+    root = str(info["output"]).rstrip("/").rsplit("/", 1)[0]
+    if root.startswith("tos://"):
+        return root, str(info.get("region") or "")
+    if is_mount_backed(root):
+        url = home_output_url(root)
+        if url.startswith("tos://"):
+            return url, home_region()
+    return None
 
 
 def deliveries_root_of(delivery_arg: str) -> str:

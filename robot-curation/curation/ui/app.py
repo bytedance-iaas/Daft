@@ -60,8 +60,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        OVERVIEW_HEADERS, overview_markdown,
                        overview_rows, perf_backend_md,
                        perf_env_md, readings_text, skill_bar_html, skill_table_html,
-                       sync_camera_html, sync_conclusion_html, sync_health_html,
-                       sync_view, SYNC_HOWTO,
+                       sync_camera_html, sync_view,
                        task_question_md, task_reference_html, task_reference_md,
                        episode_task_text, _adopted_label,
                        timeline_html,
@@ -1684,7 +1683,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         v = sync_view(m or {}, mode or SYNC_FILTER_ALL, page or 0)
         # items = [(路径, 标题)];逐槽位填充,多出来的槽位隐藏(不留空框)
         multi = gr.update(visible=v["pages"] > 1)
-        return v["page"], v["note"], v["pos"], multi, multi, v["cards"]
+        # 顶/尾两套翻页件吃同一份状态(2026-09-01 用户:翻到页尾还得滚回顶部才能点)
+        return (v["page"], v["note"], v["pos"], multi, multi, v["cards"],
+                v["pos"], multi, multi)
 
     def _load(path):
         # 直连批次(2026-08-20 阶段4):值是完整 tos:// URL → 先懒镜像到本地
@@ -1763,7 +1764,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 同步曲线页:筛选与页码一起复位(理由同上)
                 gr.update(value=SYNC_FILTER_ALL),
                 *_sync_view(m, SYNC_FILTER_ALL, 0),
-                sync_conclusion_html(m), sync_health_html(m),
+                # (绿框结论/逐相机概览表 2026-09-01 用户点名撤下,槽位随组件一并删)
                 # 换交付时筛选/排序一起复位(理由同上:停在上一份的筛选上,
                 # 看到的条数和标题对不上)
                 gr.update(value=TL_FILTERS["both"]), gr.update(value=TL_SORTS["episode"]),
@@ -2425,6 +2426,14 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     if not url:
                         return hold
                     if url == _home_out:          # 自己的桶:挂载直写/部署桶,不探
+                        # 记忆默认(2026-09-01 用户定):最近一次跑批写到哪,代填就
+                        # 填哪——站点家桶只在从没跑过时兜底。持久化零新增:任务
+                        # 记录(.runs)本来就在盘上。200707 误跑实案:表单每次重开
+                        # 弹回家桶,在直连桶干活的人一不留神就写回家桶同名交付
+                        mem = runner.last_output_default(_runs_root)
+                        if mem:
+                            return (gr.update(value=mem[0]),
+                                    gr.update(value=mem[1] or None), "", True)
                         return gr.update(value=url), gr.update(), "", True
                     ok, why = runner.writable_verdict(
                         url, str(tin_rg or "").strip() or None,
@@ -3269,7 +3278,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _prefill_evt = app.load(
                     _prefill_from_query, None,
                     [rn_tin, rn_ds, rn_tin_rg, rn_src_note, rn_ds_note, rn_pub])
-                # 深链带来的数据集桶 → 交付目录也借它(没自己桶的实例)
+                # 深链带来的数据集桶 → 交付目录也借它(没自己桶的实例);开门时的
+                # 记忆默认也走这一步的「自己的桶」分支(单写者,见 _borrow_output)
                 _prefill_evt.then(_borrow_output, _bo_in, _bo_out)
             # 报告页装在**可提前收口**的嵌套栈里:它的内容有六百行,不可能塞进
             # 一个 with 缩进;而「终端」要排在它右边,就必须在它收口之后再建。
@@ -3749,15 +3759,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                                 wrap=False, max_height=560)
 
                     with gr.Tab("视频-动作同步"):
-                        # 结论先行(2026-08-07 用户点名:光有图没有提示)——建议原先埋在
-                        # 整页曲线之后,滚不到等于没有。现在顶部先说"这份数据同步得怎么样、
-                        # 该怎么办",曲线退居证据位。
-                        sy_conclusion = gr.HTML()
-                        # 全库逐相机概览紧跟结论(2026-08-07 用户:"建议放到页面开头")——
-                        # 它是结论的量化底稿,原先压在整页曲线之后,谁也滚不到。
-                        sy_health = gr.HTML()
-                        with gr.Accordion("怎么看这些图(展开)", open=False):
-                            gr.Markdown(SYNC_HOWTO)
+                        # 2026-09-01 用户点名三删:结论绿框、全库逐相机概览表(含橙色
+                        # 建议行)、「怎么看这些图」手风琴——页面直接从「筛选」开始。
+                        # 结论与逐路成因仍在:曲线卡标题徽章 + 卡片右侧逐相机诊断;
+                        # 库级 sync_health 照常落交付 JSON 与报告 md,只撤界面渲染。
                         sy_filter = gr.Radio(SYNC_FILTERS, value=SYNC_FILTER_ALL,
                                              label="筛选")
                         with gr.Row():
@@ -3771,6 +3776,12 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                         # 中间两张图周围全是空——2026-08-07 用户实见)。固定槽位 + visible
                         # 开关,数量随分页变化;每张自带全屏/下载按钮,点开即原尺寸。
                         sy_cards = gr.HTML()
+                        with gr.Row():
+                            # 页尾再放一套翻页件(2026-09-01 用户:看完最后一张卡还得
+                            # 滚回顶部才能翻页)。两套吃同一份状态,永远同步显隐。
+                            sy_prev2 = gr.Button("← 上一页", scale=1, visible=False)
+                            sy_pos2 = gr.Markdown("")
+                            sy_next2 = gr.Button("下一页 →", scale=1, visible=False)
                         sy_page = gr.State(0)
 
                     with gr.Tab("卡顿动作时间线"):
@@ -3817,7 +3828,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # 左清单的六个槽(页码 / 选中项 / 单选框 / 页码文字 / 两个翻页键):
             # _ep_list 按这个顺序装配
             _ep_list_outs = [ep_page, ep_sel, ep_pick, ep_pos, ep_prev, ep_next]
-            _sy_outs = [sy_page, sy_note, sy_pos, sy_prev, sy_next, sy_cards]
+            _sy_outs = [sy_page, sy_note, sy_pos, sy_prev, sy_next, sy_cards,
+                        sy_pos2, sy_prev2, sy_next2]
             # 复议卡片的七个槽(_ap_render 按这个顺序装配;两个按钮的顺序 =
             # APPEAL_CHOICES 的顺序)
             _ap_outs = [ap_idx, ap_pos, ap_info, ap_readings, ap_video,
@@ -3841,7 +3853,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     *_mg_outs,
                     ap_block, ap_empty, ap_hint, ap_table, *_ap_outs,
                     *_ep_outs, dt_pick, dt_note, dt_table, vd_note, vd_table,
-                    sy_filter, *_sy_outs, sy_conclusion, sy_health,
+                    sy_filter, *_sy_outs,
                     tl_show, tl_sort, tl_note, tl_html,
                     perf_backend, perf_env, perf_note, perf_table, perf_bar,
                     pending_banner,
@@ -4046,7 +4058,28 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             gr.update(choices=ch, value=val),
                             gr.update(),
                             info["run_id"], True)
-                # 本地/挂载交付:目录不动,只在现有清单里选中它
+                # 挂载根的输出:换成它的 tos:// 身份,与直连输出走同一条
+                # "连根带区一起切"的路(2026-09-01 用户实报:根显示直连桶,
+                # 交付名却被塞成 /mnt/tos/... 的同名交付——老写法目录不动、按启动
+                # 默认根回捞,正是 8/31 跨根禁令的漏网分支;挂载绝对路径也不许进界面)
+                out_root = out.rsplit("/", 1)[0]
+                canon = (runner.home_output_url(out_root)
+                         if runner.is_mount_backed(out_root) else "")
+                if canon.startswith("tos://"):
+                    rgn = info.get("region") or runner.home_region()
+                    pk, _note, _rgu = _rp_root_changed(canon, rgn)
+                    ch = (pk or {}).get("choices") or []
+                    val = next((v for _l, v in ch
+                                if str(v).rstrip("/").endswith("/" + name)),
+                               None)
+                    if val is None:
+                        return hold[:4] + (info["run_id"], False)
+                    return (gr.update(value=canon),
+                            gr.update(value=rgn or None),
+                            gr.update(choices=ch, value=val), gr.update(),
+                            info["run_id"], True)
+                # 真·纯本地根(没有桶身份):清空目录框回到默认根语义,再在默认根
+                # 清单里选中它——目录框与交付名至少不再互相矛盾
                 pk, _note, _rgu = _rp_root_changed("", rg)
                 ch = (pk or {}).get("choices") or []
                 val = next((v for _l, v in ch
@@ -4054,7 +4087,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                            None)
                 if val is None:
                     return hold[:4] + (info["run_id"], False)
-                return (gr.update(), gr.update(),
+                return (gr.update(value=""), gr.update(),
                         gr.update(choices=ch, value=val), gr.update(),
                         info["run_id"], True)
 
@@ -4235,6 +4268,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                           [state, sy_filter, sy_page], _sy_outs)
             sy_next.click(lambda m, mode, p: _sync_view(m, mode, (p or 0) + 1),
                           [state, sy_filter, sy_page], _sy_outs)
+            sy_prev2.click(lambda m, mode, p: _sync_view(m, mode, (p or 0) - 1),
+                           [state, sy_filter, sy_page], _sy_outs)
+            sy_next2.click(lambda m, mode, p: _sync_view(m, mode, (p or 0) + 1),
+                           [state, sy_filter, sy_page], _sy_outs)
 
             def _table_change(m, label):
                 name = {v: k for k, v in DETAIL_LABELS.items()}.get(label)

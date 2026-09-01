@@ -2434,13 +2434,16 @@ def _sync_flagged(ep: dict, detail: dict, state: str) -> bool:
     与 episode 判决(老交付本来也只在非「过」时才画图)。"""
     v = detail.get("verdict")
     if v in SYNC_VERDICT_TEXT:
-        # 判 aligned 但有相机被诊断出毛病的(假峰/疑似错位/无信号),同样要进筛选:
-        # ep4 就是这种——整条结论没问题,可那一路的峰肉眼可见地偏了,用户第一个
-        # 想复查的就是它(2026-08-07)。
+        # 判 aligned 但有相机被诊断出毛病的,同样要进筛选:ep4 就是这种——整条
+        # 结论没问题,可那一路的峰肉眼可见地偏了,用户第一个想复查的就是它
+        # (2026-08-07)。abstained(弃权路:候选并列/画面不锐利/覆盖不足/信号弱)
+        # 2026-09-01 用户抓出漏网:droid-50 里 6 条只有弃权路标注的 episode
+        # 在「只看有标注/异常的」下隐身,而它们正是曲线形状不好看的那批。
         return (v != "aligned"
                 or bool(detail.get("flagged_cameras"))
                 or bool(detail.get("suspect_cameras"))
-                or bool(detail.get("noisy_cameras")))
+                or bool(detail.get("noisy_cameras"))
+                or bool(detail.get("abstained_cameras")))
     if detail.get("flagged_cameras"):
         return True
     if state in ("拒绝", "弃权"):
