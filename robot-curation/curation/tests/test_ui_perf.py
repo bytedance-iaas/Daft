@@ -391,6 +391,112 @@ def test_picker_tick_relists_bucket_in_direct_mode(tmp_path, monkeypatch):
     assert any("welcome" in str(l) for l, _v in upd2["choices"])
 
 
+def test_follow_latest_canonicalizes_mount_output_to_tos(tmp_path, monkeypatch):
+    """跑批落在挂载根 → 报告页跟随时**连根带区**切成它的 tos:// 身份。
+
+    2026-09-01 用户实报(8/31 跨根禁令的漏网分支):目录框显示着直连桶,
+    交付名却被按启动默认根回捞成 /mnt/tos/... 的同名交付——两个框互相矛盾,
+    挂载绝对路径还裸奔进界面。修后:root=tos://桶/前缀、地区=部署区、
+    交付值=tos URL,清单里不许出现本地绝对路径。"""
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    mnt = tmp_path / "mnt"
+    deliv = mnt / "deliveries"
+    _new_delivery(deliv, "droid-x")
+    cache_run = _new_delivery(tmp_path / "cache", "droid-x") + "/20260820-000001"
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(mnt))
+    monkeypatch.setenv("TOS_BUCKET", "homebkt")
+    monkeypatch.setenv("TOS_REGION", "cn-beijing")
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    monkeypatch.delenv("CURATION_UI_USER", raising=False)
+    monkeypatch.delenv("CURATION_UI_PASSWORD", raising=False)
+    monkeypatch.setattr(runner, "latest_run_delivery",
+                        lambda runs_root: {"run_id": "r9",
+                                           "output": str(deliv / "droid-x"),
+                                           "region": ""})
+    monkeypatch.setattr(runner, "tos_list_deliveries",
+                        lambda url, region=None, **k: ["droid-x", "other"])
+    monkeypatch.setattr(runner, "tos_run_choices",
+                        lambda url, region=None, **k: [
+                            ("批次1", str(url).rstrip("/") + "/20260901-1")])
+    monkeypatch.setattr(runner, "mirror_run",
+                        lambda url, region=None, **k: cache_run)
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    fot = next(f.fn for f in app.fns.values()
+               if getattr(f.fn, "__name__", "") == "_follow_or_tick")
+    out = fot("tos://other-bkt/deliveries", "cn-beijing", "", "")
+    rp_root_u, rp_rg_u, picker_u = out[0], out[1], out[2]
+    # 目录框切到本桶的 tos:// 身份(不是挂载路径,也不再留在原直连桶)
+    assert rp_root_u.get("value") == "tos://homebkt/deliveries"
+    assert rp_rg_u.get("value") == "cn-beijing"
+    # 本桶走挂载捷径(设计使然):值=本地绝对路径(手输能力),**显示层**必须是短名
+    val = picker_u.get("value")
+    assert str(val).rstrip("/").endswith("/deliveries/droid-x")
+    label = next(l for l, v in picker_u.get("choices") if v == val)
+    assert label == "droid-x", "下拉显示层不许出现挂载绝对路径"
+
+
+def test_last_output_default_prefers_latest_run(tmp_path, monkeypatch):
+    """跑质检页交付目录的记忆默认(2026-09-01 用户定):最近一次跑批写到哪,
+    重开页面就默认哪;挂载输出规范化 tos://;没跑过 → None(站点默认兜底)。"""
+    from curation.ui import runner
+    monkeypatch.setattr(runner, "latest_run_delivery",
+                        lambda rr: {"run_id": "r",
+                                    "output": "tos://bkt/deliveries/x",
+                                    "region": "cn-shanghai"})
+    assert runner.last_output_default("rr") == ("tos://bkt/deliveries",
+                                                "cn-shanghai")
+    mnt = tmp_path / "mnt"
+    (mnt / "deliveries" / "x").mkdir(parents=True)
+    monkeypatch.setenv("CURATION_TOS_MOUNT", str(mnt))
+    monkeypatch.setenv("TOS_BUCKET", "homebkt")
+    monkeypatch.setenv("TOS_REGION", "cn-beijing")
+    monkeypatch.setattr(runner, "latest_run_delivery",
+                        lambda rr: {"run_id": "r",
+                                    "output": str(mnt / "deliveries" / "x"),
+                                    "region": ""})
+    assert runner.last_output_default("rr") == ("tos://homebkt/deliveries",
+                                                "cn-beijing")
+    monkeypatch.setattr(runner, "latest_run_delivery", lambda rr: None)
+    assert runner.last_output_default("rr") is None
+
+
+def test_run_form_output_defaults_to_last_run(tmp_path, monkeypatch):
+    """交付目录代填的「自己的桶」分支吃记忆默认:最近一次跑批写到哪就填哪,
+    家桶只在没跑过时兜底;用户手改过(auto=False)一律不碰。"""
+    pytest.importorskip("gradio")
+    from curation.ui import runner
+    from curation.ui.app import build_app
+    monkeypatch.delenv("CURATION_CONFIG", raising=False)
+    monkeypatch.delenv("CURATION_UI_USER", raising=False)
+    monkeypatch.delenv("CURATION_UI_PASSWORD", raising=False)
+    # pod 常驻的桶环境会改变 _home_out(没挂载+有桶名 → tos://桶/basename),摘干净
+    monkeypatch.delenv("TOS_BUCKET", raising=False)
+    monkeypatch.delenv("TOS_REGION", raising=False)
+    monkeypatch.delenv("TOS_ENDPOINT", raising=False)
+    root = tmp_path / "deliv"
+    root.mkdir()
+    home = str(root)                      # 无桶环境:home_output_url 退回原样
+    monkeypatch.setattr(runner, "borrowed_output_url", lambda tin, dr: home)
+    monkeypatch.setattr(runner, "last_output_default",
+                        lambda rr: ("tos://other-bkt/deliveries",
+                                    "cn-beijing"))
+    app = build_app(str(root), data_root=str(tmp_path / "data"))
+    fn = next(f.fn for f in app.fns.values()
+              if getattr(f.fn, "__name__", "") == "_borrow_output")
+    u_out, u_rg, note, auto = fn("tos://x/datasets", "", "", True)
+    assert u_out.get("value") == "tos://other-bkt/deliveries"
+    assert u_rg.get("value") == "cn-beijing" and auto is True
+    # 没记忆 → 家桶兜底
+    monkeypatch.setattr(runner, "last_output_default", lambda rr: None)
+    u_out2, _rg2, _n2, _a2 = fn("tos://x/datasets", "", "", True)
+    assert u_out2.get("value") == home
+    # 用户手改过:一律不碰
+    u3 = fn("tos://x/datasets", "", "tos://mine/deliv", False)
+    assert "value" not in (u3[0] or {})
+
+
 def test_tos_list_deliveries_hides_dot_dirs():
     from curation.ui import runner
 

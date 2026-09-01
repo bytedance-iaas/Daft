@@ -224,6 +224,22 @@ def peak_metrics(xc: np.ndarray, lags_s: np.ndarray, k: int, *,
     return round(ratio, 4), round(width, 4)
 
 
+def _peak_issue_clauses(peak_ratio: float, peak_width_s: float,
+                        min_peak_ratio: float, max_peak_width_s: float) -> str:
+    """峰不可信的病因分句——**只写实际失败的那个门**(候选病因有证据才印)。
+
+    2026-09-01 前两处 reason 把 ratio/width 分句无条件一起打印:ratio=99(主峰
+    独一份,清白证明)被印成"另一个候选只差 99.00 倍"当罪状。措辞同步修正:
+    半高全宽的定义就是区间边缘已跌掉一半突出度,"几乎不变"言过其实。"""
+    parts = []
+    if peak_ratio < min_peak_ratio:
+        parts.append(f"另一个候选的相似程度只差 {peak_ratio:.2f} 倍")
+    if peak_width_s > max_peak_width_s:
+        parts.append(f"在 {peak_width_s:.2f} 秒范围内各错开量的相似程度太接近"
+                     f"(上限 {max_peak_width_s}s),定位精度不足")
+    return ";".join(parts) or "证据形态不可信"
+
+
 #: 「覆盖不足 / 入画晚」的判据(2026-08-11 在 droid-200-full 全库空跑校准,阈值不是拍的):
 #: 122 路未可信读数里命中 10 路(8%,刻意保守),470 路可信对齐读数**零触碰**。
 #: 命中的典型:ep000020/exterior_2(开头 2.2s 臂还没进画面,可见段 corr 0.62 @ 0.00s)、
@@ -318,7 +334,10 @@ def global_lag(
     quiet_frac: float = 0.15,
     min_active_samples: int = 16,  # 剔完剩这么少 = 无信号(不硬撑读数)
     min_peak_ratio: float = 1.25,  # 主峰/次高峰:低于此 = 测不准(见 peak_metrics)
-    max_peak_width_s: float = 1.0,  # 峰宽上限:超过此 = 时间分辨率不足,不支撑 lag 断言
+    max_peak_width_s: float = 1.2,  # 峰宽上限(半高全宽):超过此 = 单路定位精度不足。
+                                    # 2026-09-01 全库校准定值:
+                                    # 真错位 w≤0.8,1.0-1.2 贴线带全是被误伤的对齐证据,
+                                    # 1.2 下 13 条测不准救回、判废零新增(1.3+ 无增益)
     peak_sep_s: float = 0.3,
     _probe_visibility: bool = True,  # 递归守卫:可见窗探针内部会再调本函数,那一次必须关
 ) -> CheckResult:
@@ -424,9 +443,11 @@ def global_lag(
     detail["lag_tol_s"] = round(tol_eff, 4)
     # 峰可信度(2026-08-07 新增,两条实测校准):比值不足 = 曲线在掷硬币(so101 ep0
     # 双峰 0.65/0.64,比值 1.02);峰过胖 = 时间分辨率不足(droid ep4 exterior_1 那种
-    # 又矮又平的峰)。默认 1.25 / 1.0s 的依据:①并列双峰的比值必然落在 1.0~1.1,
-    # 留 0.25 的余量才挡得住"略高一点点"的伪冠军;②真错位的峰宽实测在 0.3~0.6s 量级
-    # (峰宽≈运动事件自相关宽度),1.0s 以上意味着半秒内怎么挪都一样高。
+    # 又矮又平的峰)。默认 1.25 / 1.2s 的依据:①并列双峰的比值必然落在 1.0~1.1,
+    # 留 0.25 的余量才挡得住"略高一点点"的伪冠军;②峰宽 2026-09-01 全库校准
+    # 全库校准实测:真错位读数 w 全部 ≤0.8s,1.0-1.2 贴线带
+    # 79% 的峰心落在容差内(纯误伤),1.2 下判废零新增——老值 1.0 只有两条轶事支撑,
+    # 恰好切在全库 w 分布的 p90 上,曾把 ep31 这类三路一致对齐的条目整条判成测不准。
     # 这两个指标只决定 **trusted**(读数可不可信),不改本函数的 passed 语义——
     # 判废是 sync_verdict 的事,单路测量不该越权。
     peak_ok = peak_ratio >= min_peak_ratio and peak_width_s <= max_peak_width_s
@@ -438,8 +459,7 @@ def global_lag(
         detail["trusted"] = peak_ok
         if not peak_ok:
             detail["reason"] = (f"读数落在零点附近({lag_s:.2f}s),但证据不够干净"
-                                f"(另一个候选的相似程度只差 {peak_ratio:.2f} 倍;"
-                                f"相似度在 {peak_width_s:.2f} 秒范围内几乎不变),"
+                                f"({_peak_issue_clauses(peak_ratio, peak_width_s, min_peak_ratio, max_peak_width_s)}),"
                                 f"本路读数不参与判定")
         return CheckResult(name="video_action_sync", passed=True, detail=detail)
     if corr_zero >= corr_peak - prominence:
@@ -456,11 +476,8 @@ def global_lag(
         detail["code"] = detail["peak_issue"]
         detail["reason"] = (
             f"看着像错开 {lag_s:.2f}s,但证据撑不住这个说法"
-            + (f"(另有一个几乎同样像的候选,相似程度只差 {peak_ratio:.2f} 倍)"
-               if peak_ratio < min_peak_ratio
-               else f"(相似度在 {peak_width_s:.2f} 秒范围内几乎不变,"
-                    f"超过 {max_peak_width_s}s,分辨不出这么细的时间差)")
-            + " → 测不准")
+            f"({_peak_issue_clauses(peak_ratio, peak_width_s, min_peak_ratio, max_peak_width_s)})"
+            " → 测不准")
         return CheckResult(name="video_action_sync", passed=None, detail=detail)
     detail["code"] = "lag_exceeds_tol"
     detail["trusted"] = True
@@ -515,7 +532,7 @@ def _is_partial_visibility(vis: dict, lag_tol_s: float) -> bool:
 
 def camera_diagnosis(r: dict, *, lag_tol_s: float = 0.25,
                      min_peak_ratio: float = 1.25,
-                     max_peak_width_s: float = 1.0,
+                     max_peak_width_s: float = 1.2,
                      min_corr: float = 0.3) -> dict:
     """单路读数 → {cause, label, text, advice}:**按病因说话,不含糊其辞**。
 
@@ -616,8 +633,9 @@ def camera_diagnosis(r: dict, *, lag_tol_s: float = 0.25,
                 "advice": advice}
     if width > max_peak_width_s:
         return {"cause": "blurry_motion", "label": "测不准 · 画面不锐利",
-                "text": (f"这一路测不出精确的时间差:在近 {width:.1f} 秒的范围内"
-                         f"怎么错开相似度都差不多,分辨不出 {lag:+.2f}s 与 0 的区别。"),
+                "text": (f"这一路定位时间差的精度不够:相似程度最高的位置在 "
+                         f"{lag:+.2f}s,但附近约 {width:.1f} 秒范围内的相似程度"
+                         f"彼此接近,不足以把误差压进容差内。"),
                 "advice": "多为机位太远/运动缓慢;换更近的机位或选运动更明显的片段才测得准。"}
     if ratio and ratio < min_peak_ratio:
         return {"cause": "rival_lags", "label": "测不准 · 候选并列",

@@ -531,11 +531,81 @@ def test_peak_ratio_catches_tied_double_peak():
 
 
 def test_peak_width_catches_flat_hill():
-    """droid ep4 exterior_1 那种又矮又平的峰:没有第二个候选,但胖到读不出位置。"""
+    """droid ep4 exterior_1 那种又矮又平的峰:没有第二个候选,但胖到读不出位置。
+
+    2026-09-01 全库校准后上限 1.0→1.2:
+    真平峰(本例 w≈1.25)仍被抓;ep31 那类 w≈1.05 的贴线尖峰不再误伤。"""
     lags = np.linspace(-2, 2, 161)
     xc = _gauss(lags, 0.6, 0.8, 0.44)
     ratio, width = peak_metrics(xc, lags, int(np.argmax(xc)))
-    assert width > 1.0 and ratio >= 1.25           # 峰宽判据抓,比值判据不重复定罪
+    assert width > 1.2 and ratio >= 1.25           # 峰宽判据抓,比值判据不重复定罪
+    # ep31 形态(尖峰):半高宽落在 1.0~1.2 贴线带 → 新上限下不误伤
+    xc2 = _gauss(lags, 0.0, 0.5, 0.9)
+    _, width2 = peak_metrics(xc2, lags, int(np.argmax(xc2)))
+    assert 1.0 < width2 <= 1.2, f"贴线带样例应落 1.0~1.2,实测 {width2}"
+
+
+def test_peak_width_cap_is_calibrated_to_1p2():
+    """峰宽上限 = 1.2s(2026-09-01 全库校准定,两处默认必须一致):
+    真错位读数全库 w≤0.8,1.0-1.2 贴线带 79% 峰心在容差内,1.2 下判废零新增。
+    改这个数必须重跑全库校准的采集与模拟再定。"""
+    import inspect
+    from curation.core.checks.video_action_sync import global_lag, camera_diagnosis
+    assert inspect.signature(global_lag).parameters["max_peak_width_s"].default == 1.2
+    assert inspect.signature(camera_diagnosis).parameters["max_peak_width_s"].default == 1.2
+
+
+def test_peak_issue_clauses_only_name_the_failing_gate():
+    """病因分句只写实际失败的门(候选病因有证据才印):ratio=99(主峰独一份)
+    绝不能被印成"另一个候选只差 99.00 倍"的罪状;措辞按半高宽实义,
+    不再写"几乎不变"。"""
+    from curation.core.checks.video_action_sync import _peak_issue_clauses
+    only_w = _peak_issue_clauses(99.0, 1.4, 1.25, 1.2)
+    assert "定位精度" in only_w and "99" not in only_w and "候选" not in only_w
+    only_r = _peak_issue_clauses(1.1, 0.5, 1.25, 1.2)
+    assert "候选" in only_r and "定位精度" not in only_r
+    both = _peak_issue_clauses(1.1, 1.4, 1.25, 1.2)
+    assert "候选" in both and "定位精度" in both
+    assert "几乎不变" not in (only_w + only_r + both)
+
+
+def test_sync_plot_worthy_matches_ui_filter_yardstick():
+    """flagged 档出图判据 = UI 筛选判据,同一把尺子(2026-09-01 用户抓出口径
+    分裂:筛选认弃权路而出图不认,默认档下这批条目根本无图可筛)。"""
+    from curation.pipeline.funnel import sync_plot_worthy
+    clean = {"verdict": "aligned", "flagged_cameras": [], "abstained_cameras": []}
+    abst = {"verdict": "aligned", "flagged_cameras": [],
+            "abstained_cameras": ["cam_a"]}
+    undec = {"verdict": "undecidable", "flagged_cameras": [],
+             "abstained_cameras": ["cam_a"]}
+    flag = {"verdict": "annotated", "flagged_cameras": ["cam_b"],
+            "abstained_cameras": []}
+    assert not sync_plot_worthy("flagged", clean)
+    assert sync_plot_worthy("flagged", abst)        # 弃权路也值得留意(修复点)
+    assert sync_plot_worthy("flagged", undec)
+    assert sync_plot_worthy("flagged", flag)
+    assert all(sync_plot_worthy("all", d) for d in (clean, abst))
+    assert not any(sync_plot_worthy("off", d) for d in (abst, undec, flag))
+    # 与 UI 筛选口径互钉:同一份 detail 两边结论一致(state/ep 参数走新契约路径)
+    from curation.ui.manifest import _sync_flagged
+    for d in (clean, abst, undec, flag):
+        assert sync_plot_worthy("flagged", d) == _sync_flagged({}, d, "通过")
+
+
+def test_blurry_motion_diagnosis_speaks_precision_not_flatness():
+    """逐相机诊断的峰宽措辞:说"定位精度不够/相似程度彼此接近",不说
+    "怎么错开都差不多"(对贴线案言过其实——半高全宽的定义就是区间边缘
+    已跌掉一半突出度);且不出现互相关行话(说人话红线)。
+
+    corr_at_zero 取低值:零滞后处相关与峰值相当时假峰分支(②)会先接走,
+    这里要测的是③峰过胖分支。"""
+    r = {"lag_s": 0.07, "corr_peak": 0.72, "corr_at_zero": 0.30,
+         "peak_ratio": 99.0, "peak_width_s": 1.4, "trusted": False,
+         "code": "flat_peak"}
+    d = camera_diagnosis(r)
+    assert d["cause"] == "blurry_motion"
+    assert "定位" in d["text"] and "都差不多" not in d["text"]
+    assert "峰" not in d["text"] and "corr" not in d["text"]   # 行话不进客户文案
 
 
 def _vis_pair(n=300, head=100, shift=0, seed=5):

@@ -514,7 +514,7 @@ def export_lerobot_v2(dataset_dir: str, keep_episode_indices: list[int], out_dir
     sel = [src_eps[i] for i in keep]
     task_strings, task_index_of = _task_table([_tasks_of(ep) for ep in sel])
 
-    print(f"[curation] v2 导出:{len(sel)} 条 episode × {len(video_keys)} 路相机 "
+    print(f"[curation] 导出交付数据集:{len(sel)} 条 episode × {len(video_keys)} 路相机 "
           f"(每条独立文件 → 视频直接拷贝,无需重编码)", flush=True)
 
     # ---------- 逐条:parquet 改编号另存 + mp4 拷贝 ----------
@@ -566,7 +566,7 @@ def export_lerobot_v2(dataset_dir: str, keep_episode_indices: list[int], out_dir
         # 条数多时逐条打印会淹没日志:每 50 条或每写满一个 chunk 报一次进度
         if (new_idx + 1) % 50 == 0 or (new_idx + 1) % chunks_size == 0 \
                 or new_idx == len(sel) - 1:
-            print(f"[curation] v2 导出 {new_idx + 1}/{len(sel)} 条"
+            print(f"[curation] 导出交付数据集 {new_idx + 1}/{len(sel)} 条"
                   f"(chunk-{out_chunk:03d},累计 {n_frames} 帧 / {n_videos} 个视频)",
                   flush=True)
 
