@@ -124,6 +124,46 @@ def test_assets_get_immutable_cache_header(asgi_client):
     assert r.headers.get("cache-control") == "public, max-age=31536000, immutable"
 
 
+def test_root_path_prefixes_gradio_and_file_urls(tmp_path, monkeypatch):
+    """挂载前缀部署(dataverse /curation,网关不剥前缀;2026-08-31 裁决卡视频 404 案):
+    ① mount_gradio_app 必须 path= 与 root_path= 一起给——SSE 队列回填组件值不在
+       HTTP 请求上下文里,少 root_path 时 gr.Video 的媒体 URL 落在域名根(rerun 的 nginx);
+    ② manifest._file_url 手拼的本地分支同样要吃前缀;
+    ③ 无前缀部署(自家 robot-curator)逐字节回到老写法。
+    """
+    import gradio
+    from curation.ui import manifest as M
+    from curation.ui.app import create_asgi_app
+
+    monkeypatch.delenv("CURATION_UI_USER", raising=False)
+    monkeypatch.delenv("CURATION_UI_PASSWORD", raising=False)
+    monkeypatch.setattr(M, "_URL_ROOT", M._URL_ROOT)   # 退出时恢复全局,别污染邻桌
+
+    seen = {}
+    real = gradio.mount_gradio_app
+
+    def spy(app, blocks, **kw):
+        seen.update(kw)
+        return real(app, blocks, **kw)
+
+    monkeypatch.setattr(gradio, "mount_gradio_app", spy)
+
+    droot = tmp_path / "deliv"
+    droot.mkdir()
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"x")
+
+    create_asgi_app(str(droot), data_root=str(tmp_path / "data"),
+                    root_path="curation/")             # 歪写法也要归一
+    assert seen["path"] == "/curation" and seen["root_path"] == "/curation"
+    assert M._file_url(str(clip)).startswith("/curation/gradio_api/file=")
+
+    seen.clear()
+    create_asgi_app(str(droot), data_root=str(tmp_path / "data"))
+    assert seen["path"] == "/" and seen["root_path"] == ""
+    assert M._file_url(str(clip)).startswith("/gradio_api/file=")
+
+
 def test_sse_stream_is_excluded_from_gzip():
     """事件流绝不能被 gzip 缓冲:压缩缓冲会把 app.load 的结果憋到流结束。
     TestClient 拉无限流会吊死,这里钉中间件配置:starlette 的 GZipMiddleware
