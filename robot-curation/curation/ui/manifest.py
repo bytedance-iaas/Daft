@@ -2739,6 +2739,19 @@ def _md_bold(s: str) -> str:
     return "".join(out)
 
 
+# 挂载前缀(2026-08-31 dataverse 裁决卡视频 404 案):UI 整体住在网关的路径前缀下
+# (--root-path /curation,网关不剥前缀),手拼的 /gradio_api/file= 必须带上同一前缀,
+# 否则打到域名根——那是 rerun viewer 的 nginx,404。由 app.create_asgi_app 启动时注入;
+# 无前缀部署注入 "",行为与老写法逐字节相同。
+_URL_ROOT = ""
+
+
+def set_url_root(root: str) -> None:
+    """由 app 启动时注入挂载前缀(""=无前缀;"/curation" 形式,无尾斜杠)。"""
+    global _URL_ROOT
+    _URL_ROOT = root or ""
+
+
 def _file_url(path: str) -> str:
     """本地文件 → gradio 的静态文件 URL(交付目录已在 allowed_paths 里)。
 
@@ -2760,7 +2773,7 @@ def _file_url(path: str) -> str:
         ver = f"?v={int(os.stat(p).st_mtime)}"
     except OSError:
         ver = ""
-    return "/gradio_api/file=" + quote(p) + ver + frag
+    return _URL_ROOT + "/gradio_api/file=" + quote(p) + ver + frag
 
 # 传输抖动自愈:失败后退避重试,最多 8 次(≈9s)。只改 ?v= 的值,不引入 & 字符
 # ——属性里的 & 会被 HTML 解析器当实体开头,踩过一次不再踩。

@@ -4780,6 +4780,10 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
     from . import auth
 
     root = normalize_root_path(root_path)
+    # 手拼的 /gradio_api/file= URL(manifest._file_url 本地分支)也要吃这个前缀,
+    # 在 build_app 之前注入——构建期渲染的 HTML 同样受益(dataverse 裁决卡视频 404 案)。
+    from . import manifest as _manifest
+    _manifest.set_url_root(root)
     blocks = build_app(delivery, config_path, probe_timeout, terminal=terminal,
                        review_dir=review_dir, data_root=data_root)
     api = FastAPI()
@@ -4837,7 +4841,11 @@ def create_asgi_app(delivery: str, config_path: str | None = None,
     # footer_links=[]:整排页脚(Use via API / Built with Gradio / Settings)去掉。
     # 头一个会把本服务的接口文档摆给任何打开页面的人看,另两个对客户毫无用处。
     # 用 gradio 自己的开关而不是 CSS 藏 —— 藏起来的链接照样可点、照样在 DOM 里。
-    return gr.mount_gradio_app(api, blocks, path=root or "/", allowed_paths=allowed,
+    # root_path= 必须与 path= 一起给:SSE 队列回填组件值(裁决卡 gr.Video 等)不在
+    # HTTP 请求上下文里,gradio 拿不到 mount 前缀,生成的媒体 URL 会落在域名根——
+    # 共享域名按路径分流时那是 rerun viewer 的 nginx(2026-08-31 dataverse 实见 404)。
+    return gr.mount_gradio_app(api, blocks, path=root or "/", root_path=root,
+                               allowed_paths=allowed,
                                footer_links=[], **presentation(terminal, root))
 
 
