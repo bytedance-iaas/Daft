@@ -42,7 +42,7 @@ def test_noisy_episode_appears_with_its_diagnosis():
         "noisy_episodes": [{"episode_id": "ep000004", "verdict": "aligned",
                             "cameras": {"ext": _NOISY_CAM}}],
     })
-    assert "假峰 / 测不准" in md
+    assert "### 假峰(" in md
     assert "ep000004" in md                       # ← 报告里查得到
     assert "测不准 · 画面干扰" in md               # 病因
     assert "固定相机" in md                        # 处方
@@ -61,7 +61,7 @@ def test_suspect_section_is_separate_from_noisy():
                               "cameras": {"ext": cam}}],
     })
     assert "疑似错位,证据不足" in md and "ep000009" in md
-    assert "假峰 / 测不准" not in md               # 没有假峰就不出这一节
+    assert "### 假峰(" not in md                 # 没有假峰就不出这一节
     assert "换更近的机位" in md
 
 
@@ -122,3 +122,25 @@ def test_kill_policy_is_spelled_out():
     assert "判废口径" in md
     assert "所有可信相机一致指向同一个偏移" in md
     assert "不进人工裁决队列" in md and "数据照常交付" in md
+
+
+def test_abstained_episodes_get_their_own_section():
+    """「其余测不准」(弃权路)也要逐条立账(2026-09-01 用户抓出:UI 筛选与曲线
+    亮出它们之后,报告只剩逐相机计数列,读者对着图答不上"这条哪路怎么了")。
+    老交付没有 abstained_episodes 键 → 不出这一节,不崩。"""
+    cam = dict(_NOISY_CAM)
+    cam["diagnosis"] = {"cause": "blurry_motion", "label": "测不准 · 画面不锐利",
+                        "text": "定位精度不够", "advice": "换更近的机位"}
+    md = _report({
+        "per_camera": {}, "advice": "x",
+        "negative_lag_episodes": [], "flagged_episodes": [],
+        "noisy_episodes": [], "suspect_episodes": [],
+        "abstained_episodes": [{"episode_id": "ep000020", "verdict": "aligned",
+                                "cameras": {"ext2": cam}}],
+    })
+    assert "### 测不准(" in md and "ep000020" in md
+    assert "测不准 · 画面不锐利" in md and "结论以其余相机为准" in md
+    # 老交付(无该键):整节静默跳过
+    md_old = _report({"per_camera": {}, "advice": "x",
+                      "negative_lag_episodes": [], "flagged_episodes": []})
+    assert "### 测不准(" not in md_old

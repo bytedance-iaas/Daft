@@ -1509,7 +1509,7 @@ def load_detail_table(m: dict, name: str, cap: int = 2000):
 # ───────── Stuck 时间线(D2,2026-07-28):三态彩条 HTML 渲染 ─────────
 
 TL_COLORS = {"stuck": "#F53F3F", "idle": "#FF7D00", "normal": "#00B42A"}
-TL_LABELS = {"stuck": "stuck(指令在推而不动)", "idle": "idle(无指令静止)",
+TL_LABELS = {"stuck": "卡顿(指令在推而不动)", "idle": "空闲(无指令静止)",
              "normal": "正常(在干活)"}
 
 
@@ -1524,15 +1524,15 @@ def load_timeline(m: dict) -> dict:
 
 #: 时间线的筛选口径 → (界面说法, 判定函数)。默认 both = 有 stuck 或 idle 的都列。
 TL_FILTERS = {
-    "both": "stuck + idle",
-    "stuck": "只看 stuck",
-    "idle": "只看 idle",
-    "all": "全部 episode",
+    "both": "卡顿 + 空闲",
+    "stuck": "只看卡顿",
+    "idle": "只看空闲",
+    "all": "全部条目",
 }
 
 #: 时间线的排序口径 → 界面说法。默认按 episode 序号(录制顺序,便于跟原始数据对照);
 #: 按卡顿时长降序则把最该复查的顶到最前 = 图形化的人工复查队列。
-TL_SORTS = {"episode": "episode 序号", "stuck": "卡顿时长(长的在前)"}
+TL_SORTS = {"episode": "录制顺序", "stuck": "卡顿时长(长的在前)"}
 
 
 def timeline_html(tl: dict, cap: int = 200, show: str = "both",
@@ -1546,7 +1546,7 @@ def timeline_html(tl: dict, cap: int = 200, show: str = "both",
     与原始数据的条目顺序一致;要当复查队列用就切「卡顿时长」)。"""
     eps = tl.get("episodes") or {}
     if not eps:
-        return ("<p>此交付无时间线数据(episodes_timeline.json)——需要跑过"
+        return ("<p>此交付没有卡顿时间线数据——需要跑过"
                 "运动质量检查的新版交付。</p>")
     # 数据集注记(2026-07-29 用户定):看彩条前必须知道的前提(如 bridge 的 state
     # 由 action 累加合成 → 指令-实际无独立信息,stuck 只能弃权,黄条的含义随之变)。
@@ -1564,9 +1564,9 @@ def timeline_html(tl: dict, cap: int = 200, show: str = "both",
             "all": lambda e: True}.get(show, lambda e: True)
     shown_eps = [e for e in eps if keep(e)]
     if not shown_eps:
-        empty = {"stuck": f"全部 {len(eps)} 条 episode 均无 stuck",
-                 "idle": f"全部 {len(eps)} 条 episode 均无 idle"}.get(
-                     show, f"全部 {len(eps)} 条 episode 均无 stuck/idle")
+        empty = {"stuck": f"全部 {len(eps)} 条均无卡顿",
+                 "idle": f"全部 {len(eps)} 条均无空闲"}.get(
+                     show, f"全部 {len(eps)} 条均无卡顿/空闲")
         return note_html + f"<p>{empty}——录制卫生良好 ✅</p>"
     if sort == "stuck":
         order = sorted(shown_eps, key=lambda e: (-_tot(e, "stuck"), -_tot(e, "idle"), e))
@@ -1616,8 +1616,8 @@ def timeline_html(tl: dict, cap: int = 200, show: str = "both",
                       f'font:10px monospace;color:#777">{"".join(marks_above)}</div>'
                       if marks_above else "")
         label = (f'{eid} · {dur:.1f}s'
-                 + (f' · stuck {tot.get("stuck", 0)}s' if tot.get("stuck") else "")
-                 + (f' · idle {tot.get("idle", 0)}s' if tot.get("idle") else ""))
+                 + (f' · 卡顿 {tot.get("stuck", 0)}s' if tot.get("stuck") else "")
+                 + (f' · 空闲 {tot.get("idle", 0)}s' if tot.get("idle") else ""))
         rows.append(
             f'<div style="margin:4px 0 10px 0">'
             f'<div style="font:12px monospace;margin-bottom:2px">{label}</div>'
@@ -2523,36 +2523,6 @@ def sync_plot_items(m: dict, mode: str = SYNC_FILTER_ALL) -> list[dict]:
     return out
 
 
-def sync_plots_mode(m: dict) -> str:
-    """本次质检画曲线的范围:all / flagged / off(读不到 → "")。"""
-    pl = ((m.get("config_effective") or {}).get("pipeline") or {})
-    return str(pl.get("sync_plots") or "")
-
-
-def sync_checked_count(m: dict) -> int:
-    """做过同步检查的 episode 条数(不管有没有画曲线)。"""
-    return sum(1 for ep in (m.get("episodes") or {}).values() if _sync_check_of(ep))
-
-
-def sync_coverage_note(m: dict, n_plots: int) -> str:
-    """「全部」到底是全部什么?—— 覆盖范围说明。
-
-    2026-08-07 用户问:"假如跑质检时没设 all-plots,只有有问题的 episode 有图,
-    我点了「全部」会发生什么?" 答案是只会看到那几张,而页面从前只说"共 N 张曲线",
-    读起来像全库只有 N 条 —— 会让人误以为其余 episode 没被检查。这里说破。
-    """
-    mode = sync_plots_mode(m)
-    n_ck = sync_checked_count(m)
-    if mode == "flagged" or (mode != "all" and n_ck > n_plots > 0):
-        miss = max(0, n_ck - n_plots)
-        return (f"\n\n⚠️ 本次质检**只为需要留意的条目画了曲线**"
-                f"(配置 `pipeline.sync_plots = flagged`):{n_ck} 条 episode 都做了"
-                f"同步检查,但只有 {n_plots} 条有图,其余 {miss} 条同步正常、未出图。"
-                f"这里的「全部」= 全部**已出图**的曲线,不是全部 episode。"
-                f"要逐条都看,请加 `--set pipeline.sync_plots=all` 重跑。")
-    return ""
-
-
 def sync_view(m: dict, mode: str = SYNC_FILTER_ALL, page: int = 0,
               page_size: int = SYNC_PAGE_SIZE) -> dict:
     """同步曲线页的一屏:{page, pages, items, note, pos}。
@@ -2571,11 +2541,9 @@ def sync_view(m: dict, mode: str = SYNC_FILTER_ALL, page: int = 0,
         note = (f"本交付的 {n_all} 张曲线里没有被标注/异常的条目 —— "
                 "切到「全部」可以逐条看。")
     else:
-        note = f"共 **{len(items)}** 张曲线"
-        if mode == SYNC_FILTER_FLAGGED and n_all > len(items):
-            note += f"(另有 {n_all - len(items)} 张同步正常的未列出)"
-        note += ";点任意一张放大,标题里的徽章是该条的同步判定。"
-        note += sync_coverage_note(m, n_all)
+        # 「共 N 张曲线;点任意一张放大…」与 ⚠️ 覆盖范围说明 2026-09-01 用户点名
+        # 删除(说明性文字不上屏);空态与筛选空两句保留——那是状态不是说明
+        note = ""
     pos = f"第 {page + 1} / {pages} 页" if pages > 1 else ""
     return {"page": page, "pages": pages,
             "items": [(it["path"], f'{it["id"]} · {it["badge"]}') for it in shown],

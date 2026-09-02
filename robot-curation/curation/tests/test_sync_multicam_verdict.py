@@ -569,6 +569,25 @@ def test_peak_issue_clauses_only_name_the_failing_gate():
     assert "几乎不变" not in (only_w + only_r + both)
 
 
+def test_sync_health_itemizes_leftover_abstained_cameras():
+    """sync_health 给「其余测不准」(弃权路,剔除已单列的疑似/假峰)逐条立账:
+    报告要能按 episode 说出哪路怎么了,不能只剩计数列(2026-09-01 用户抓出,
+    与 2026-08-07 假峰"查无此人"同族)。"""
+    blurry = _cam(lag=0.0, code="flat_peak", trusted=False,
+                  corr=0.7, zero=0.3, ratio=9.0, width=1.4)
+    det = sync_verdict({"ok": _ali(0.0), "bad": blurry}, 2)
+    noisy_det = sync_verdict(
+        {"ok": _ali(0.0),
+         "np": _cam(lag=0.6, code="ambiguous_peak", trusted=False,
+                    corr=0.44, zero=0.40, ratio=1.7, width=1.1)}, 2)
+    h = sync_health({"ep1": det, "ep2": noisy_det})
+    rest = h["abstained_episodes"]
+    assert [x["episode_id"] for x in rest] == ["ep1"]
+    assert list(rest[0]["cameras"]) == ["bad"]
+    # ep2 的假峰路只进 noisy_episodes,不重复进「其余测不准」
+    assert [x["episode_id"] for x in h["noisy_episodes"]] == ["ep2"]
+
+
 def test_sync_plot_worthy_matches_ui_filter_yardstick():
     """flagged 档出图判据 = UI 筛选判据,同一把尺子(2026-09-01 用户抓出口径
     分裂:筛选认弃权路而出图不认,默认档下这批条目根本无图可筛)。"""

@@ -317,13 +317,24 @@ def _sync_soft_sections(lines: list, sh: dict) -> None:
     noisy = sh.get("noisy_episodes") or []
     if noisy:
         lines.append("")
-        lines.append(f"### 假峰 / 测不准({len(noisy)} 条;**不判废、证据偏向对齐**)")
+        lines.append(f"### 假峰({len(noisy)} 条;**不判废、证据偏向对齐**)")
         lines.append("> 这一路虽然测出了偏移,但把两条曲线错开和**完全不错开**,"
                      "相似程度几乎一样 —— 数据说明不了画面和动作没对上,不是错位。"
                      "成因逐条不同(运动正对镜头、离镜头太近、背景有人走动、相机晃动"
                      "等),**每条只写本条实测到的那一种**,见下方逐相机诊断。"
                      "数据照常交付;想让这些路也可判,按诊断给出的方向改善机位或环境。")
         lines.extend(_sync_camera_lines(noisy, cap=30))
+    rest = sh.get("abstained_episodes") or []
+    if rest:
+        # 其余测不准(2026-09-01 用户抓出:UI 筛选与曲线亮出它们之后,报告只剩
+        # 逐相机计数列,读者对着图问"这条哪路怎么了",报告答不上——与假峰同族洞)
+        lines.append("")
+        lines.append(f"### 测不准({len(rest)} 条;**不判废、结论以其余相机为准**)")
+        lines.append("> 这一路测不出可信的时间差,原因逐条不同(画面不锐利、两个"
+                     "候选并列、覆盖不足、信号弱等),见下方逐相机诊断;它不参与判定,"
+                     "该条的同步结论由其余可信相机给出。不判废、不进人工裁决队列,"
+                     "数据照常交付。")
+        lines.extend(_sync_camera_lines(rest, cap=30))
 
 
 def to_markdown(report: dict) -> str:
