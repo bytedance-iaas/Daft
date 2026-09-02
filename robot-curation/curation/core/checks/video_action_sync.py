@@ -868,6 +868,7 @@ def sync_health(per_episode: dict, *, lag_tol_s: float = 0.25,
     flagged_eps: list = []
     suspect_eps: list = []      # 疑似错位但证据不足:必须能被数出来,不许静默
     noisy_eps: list = []        # 假峰(峰偏离 0 但赢不过 0):同上,不许静默
+    abstained_eps: list = []    # 其余测不准(弃权路,剔除疑似/假峰):同上,不许静默
     for eid in sorted(per_episode):
         det = per_episode[eid] or {}
         if det.get("flagged_cameras"):
@@ -887,6 +888,17 @@ def sync_health(per_episode: dict, *, lag_tol_s: float = 0.25,
                 "episode_id": eid, "verdict": det.get("verdict"),
                 "cameras": {c: (det.get("per_camera") or {}).get(c, {})
                             for c in det["noisy_cameras"]}})
+        # 「其余测不准」(弃权路,剔除已单列的疑似错位/假峰)同样立账(2026-09-01
+        # 用户抓出:UI 筛选与曲线把它们亮出来之后,报告只剩逐相机计数列——
+        # 读者对着图问"这条哪路怎么了",报告答不上。与 2026-08-07 假峰是同族洞。
+        rest = [c for c in (det.get("abstained_cameras") or [])
+                if c not in (det.get("suspect_cameras") or [])
+                and c not in (det.get("noisy_cameras") or [])]
+        if rest:
+            abstained_eps.append({
+                "episode_id": eid, "verdict": det.get("verdict"),
+                "cameras": {c: (det.get("per_camera") or {}).get(c, {})
+                            for c in rest}})
         for cam, r in (det.get("per_camera") or {}).items():
             slot = per_cam.setdefault(cam, {"lags": [], "n_flagged": 0,
                                             "n_suspect": 0, "n_noisy": 0,
@@ -974,6 +986,7 @@ def sync_health(per_episode: dict, *, lag_tol_s: float = 0.25,
     return {"per_camera": out_cams, "advice": advice,
             "suspect_episodes": suspect_eps,
             "noisy_episodes": noisy_eps,
+            "abstained_episodes": abstained_eps,
             "negative_lag_episodes": neg_eps,
             # 契约三键之外的附加项(纯增量,UI 不读也不受影响):逐条被标注的相机
             # 及其读数——报告的「相机流健康度」节要逐条列出来给人看

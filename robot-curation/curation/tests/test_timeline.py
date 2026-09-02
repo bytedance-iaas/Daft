@@ -71,7 +71,7 @@ def test_html_render_and_sort():
     only_stuck = timeline_html(tl, show="stuck")
     assert "ep_a" in only_stuck
     assert "#F53F3F" in html and "#FF7D00" in html and "#00B42A" in html   # Arco 三态色
-    assert 'title="stuck(指令在推而不动) 0.0–2.0s"' in html  # 悬停精确起止
+    assert 'title="卡顿(指令在推而不动) 0.0–2.0s"' in html  # 悬停精确起止
     assert ">2</span>" in html and ">1</span>" in html       # 所有分界都标
     assert ">10s</span>" in html                             # 末端带 s 后缀
     dense = {"episodes": {"ep_d": {"duration_s": 10.0,
@@ -82,8 +82,8 @@ def test_html_render_and_sort():
     dh = timeline_html(dense)
     assert ">0.3</span>" in dh and ">0.6</span>" in dh       # 挤也不丢标
     assert "tl-above" in dh                                  # 挤的标签上移 bar 上方\n    sparse = timeline_html({"episodes": {"ep_s": {"duration_s": 10.0,\n        "totals": {"stuck": 1.0, "idle": 0, "normal": 9.0},\n        "segments": [{"start_s": 0.0, "end_s": 5.0, "state": "normal"},\n                     {"start_s": 5.0, "end_s": 6.0, "state": "stuck"},\n                     {"start_s": 6.0, "end_s": 10.0, "state": "normal"}]}}})\n    assert "tl-above" not in sparse                          # 不挤则全在同一水平线
-    assert "stuck 2.0s" in html                              # 行标签带总量
-    assert "无时间线数据" in timeline_html({"episodes": {}})  # 老交付优雅降级
+    assert "卡顿 2.0s" in html                               # 行标签带总量
+    assert "没有卡顿时间线数据" in timeline_html({"episodes": {}})  # 老交付优雅降级
     only_clean = {"episodes": {"ep_clean": tl["episodes"]["ep_clean"]}}
     assert "录制卫生良好" in timeline_html(only_clean)       # 全干净的友好提示
 

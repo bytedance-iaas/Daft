@@ -1997,7 +1997,7 @@ def test_sync_view_gallery_items_carry_episode_and_badge(delivery):
     assert items[0]["path"].endswith("ep000001_sync.png")
     v = sync_view(m, SYNC_FILTER_ALL, 0)
     assert v["items"] == [(items[0]["path"], "ep000001 · 已标注异常(不判废)")]
-    assert "共 **1** 张曲线" in v["note"] and v["pos"] == ""      # 一页不显示页码
+    assert v["note"] == "" and v["pos"] == ""     # 说明性文字 2026-09-01 用户点名删;一页不显示页码
     # aligned 且无标注相机 → 不算"有标注/异常",筛选后为空并给出指路
     clean = _with_sync(delivery, detail={"verdict": "aligned", "per_camera": {},
                                          "flagged_cameras": []})
@@ -2218,9 +2218,10 @@ def test_sync_filter_catches_diagnosed_but_aligned_episode():
     assert len(sync_plot_items(m, "全部")) == 3
 
 
-def test_sync_coverage_note_explains_partial_plotting():
-    """只给问题条目画图时,「全部」必须说破 = 全部**已出图**,不是全部 episode。"""
-    from curation.ui.manifest import sync_coverage_note, sync_view
+def test_sync_view_note_carries_no_explainer_prose():
+    """曲线页不再打印「共 N 张曲线…」与 ⚠️ 覆盖范围说明(2026-09-01 用户点名删);
+    只留两句**状态**:空态(没有 plots)与筛选空(切到「全部」指路)。"""
+    from curation.ui.manifest import sync_view
 
     def _ep(has_plot):
         e = {"checks": {"视频-动作同步": {"state": "pass",
@@ -2231,15 +2232,9 @@ def test_sync_coverage_note_explains_partial_plotting():
 
     m = {"config_effective": {"pipeline": {"sync_plots": "flagged"}},
          "episodes": {f"ep{i:06d}": _ep(i < 2) for i in range(7)}}
-    note = sync_coverage_note(m, 2)
-    assert "7 条" in note and "2 条有图" in note and "sync_plots=all" in note
-    assert note in sync_view(m, "全部")["note"]
-
-    # 全画了 → 不啰嗦
-    m2 = {"config_effective": {"pipeline": {"sync_plots": "all"}},
-          "episodes": {f"ep{i:06d}": _ep(True) for i in range(3)}}
-    assert sync_coverage_note(m2, 3) == ""
-    assert "只为需要留意的条目" not in sync_view(m2, "全部")["note"]
+    v = sync_view(m, "全部")
+    assert v["note"] == ""
+    assert "只为需要留意的条目" not in v["note"] and "共 " not in v["note"]
 
 
 def test_sync_banner_wording_matches_the_actual_diagnosis():
