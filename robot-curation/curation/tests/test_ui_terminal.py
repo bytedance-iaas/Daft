@@ -24,6 +24,8 @@ def test_rcfile_sets_colored_prompt_and_keeps_user_rc():
     assert body.index("~/.bashrc") < body.index("PS1="), \
         "PS1 必须最后设,否则被用户 rc 盖回素色"
     assert T._rcfile() == path                      # 进程内复用,不攒临时文件
+    assert "当前目录" not in body, \
+        "落脚点说明首行 2026-09-01 用户点名删除,不许回潮"
 
 
 def test_rcfile_survives_deletion():
