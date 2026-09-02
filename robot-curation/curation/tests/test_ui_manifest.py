@@ -242,6 +242,30 @@ def test_detail_tables_discovery_and_load(delivery):
     assert load_detail_table(m, "../passed.json") == ([], [], 0)  # 路径穿越挡住
 
 
+def test_detail_table_blank_cells_show_dash_and_notes_come_from_report(delivery):
+    """(2026-09-02)CSV 空格界面显「—」;运动质量表上方按 passed.json 的
+    motion_subdims 说明哪些子项整列不适用/部分不适用。"""
+    from curation.ui.manifest import detail_table_notes, load_detail_table
+    import json
+    import os
+    det = os.path.join(delivery, "details")
+    with open(os.path.join(det, "motion_details.csv"), "w") as f:
+        f.write("条目,运动总分,尖刺\nep000,0.9,\nep001,0.8,1.0\n")
+    pj = os.path.join(delivery, "passed.json")
+    d = json.load(open(pj, encoding="utf-8"))
+    d.setdefault("dataset", {})["motion_subdims"] = {
+        "不适用": {"执行器饱和": "指令与读数不同空间"},
+        "部分不适用": {"尖刺": "运动占空比<0.15"}}
+    json.dump(d, open(pj, "w", encoding="utf-8"), ensure_ascii=False)
+    m = load_delivery(delivery)
+    headers, rows, total = load_detail_table(m, "motion_details.csv")
+    assert headers == ["条目", "运动总分", "尖刺"] and rows[0][2] == "—" and rows[1][2] == "1.0"
+    note = detail_table_notes(m, "motion_details.csv")
+    assert "执行器饱和:本数据集不适用——指令与读数不同空间" in note
+    assert "尖刺:部分条目不适用,明细表中以「—」标出" in note
+    assert detail_table_notes(m, "visual_details.csv") == ""      # 只对运动质量表
+
+
 # ───────── U3/U4 终端工作区(双层导航 + 内嵌网页终端)─────────
 #
 # U3(2026-07-28)是 ttyd 旁挂进程 + iframe;U4(2026-07-29)换成内嵌式:终端是 UI

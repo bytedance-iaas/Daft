@@ -1048,6 +1048,14 @@ def run_pipeline(
             "worst_episodes": [{"episode": e, "fluency": round(f, 3),
                                 "active_ratio": round(a, 3)}
                                for e, f, a in _by_fl[:10]]}
+    # 速度域标定留痕(2026-09-02):执行器饱和在速度/增量指令数据集上用的增益/延迟/基线
+    try:
+        _vc = json.loads(str(rows[0].get("semantics_extras") or "{}")).get("velocity_calibration") \
+            if rows else None
+    except Exception:  # noqa: BLE001
+        _vc = None
+    if _vc:
+        report["dataset"]["velocity_calibration"] = _vc
     report["dataset"]["stuck"] = {
         "flagged_episodes": len(stuck_eps),
         "note": "一次卡死事件一行(包络重叠的轴合并,如 y+z)。口径:stuck=指令在推而"
@@ -1148,10 +1156,9 @@ def run_pipeline(
     # 教训:曾放在装饰块之前,三者只能靠后面"补写含图版本"的**条件**再保存才进报告,
     # 跳过绘图的运行(--only/--lite)passed.json 就静默缺这些段)。
     jp, mp = save_report(report, output_dir)
-    M_COLS = ["smoothness", "spike", "stuck", "gripper_jitter", "actuator_saturation",
-              "joint_stability", "path_efficiency", "fluency", "active_ratio",
-              "idle_head_s", "idle_tail_s", "idle_mid_count", "idle_mid_total_s",
-              "spike_isolation", "saturation_gap_ratio", "tail_std", "gripper_flips"]
+    from ..export import detail_labels as DL
+    M_COLS = [k for k, _ in DL.MOTION_COLS if k not in ("episode", "score")]
+    m_reasons: dict = {}           # 子项不适用的原因(取第一条留痕),给折叠说明用
     mrows, vrows, srows = [], [], []
     task_rows: list = []           # episode → 成败判定的判定痕迹(只记录,不改判)
     stuck_json: dict = {}          # episode → 事件+timeline(权威完整版,JSON)
@@ -1175,6 +1182,9 @@ def run_pipeline(
             if c == "check_motion_quality":
                 mrows.append({"episode": e, "score": out[c][i].get("score"),
                               **{k: d.get(k) for k in M_COLS}})
+                for k, rk in DL.MOTION_NA_REASON_KEY.items():
+                    if d.get(k) is None and d.get(rk) and k not in m_reasons:
+                        m_reasons[k] = str(d[rk])
                 # 三态时间线(D2,2026-07-28):全员一条 [0,时长] 的 stuck/idle/normal
                 # 分段 → details/episodes_timeline.json,UI 画横向彩条。装配是纯函数
                 # (export/timeline.py);事件段稍后在 stuck 分支里补挂。
@@ -1232,10 +1242,16 @@ def run_pipeline(
                     vrows.append({"episode": e, "camera": cam.split(".")[-1],
                                   "status": "PAD"})
     if mrows:
+        # 中文列名 + 整列不适用的子项折叠成说明(2026-09-02 用户定:droid 的执行器饱和
+        # 整列空白没有信息量,一句"本数据集不适用+原因"就够)
+        m_headers, m_out, m_na, m_partial = DL.collapse_na_columns(
+            mrows, DL.MOTION_COLS, reasons=m_reasons, companions=DL.MOTION_COMPANION)
         with delivery_file(os.path.join(det_dir, "motion_details.csv"), newline="") as f:
-            w = _csv.DictWriter(f, fieldnames=["episode", "score"] + M_COLS)
+            w = _csv.DictWriter(f, fieldnames=m_headers)
             w.writeheader()
-            w.writerows(mrows)
+            w.writerows(m_out)
+        if m_na or m_partial:
+            report["dataset"]["motion_subdims"] = {"不适用": m_na, "部分不适用": m_partial}
     # 判定痕迹落盘:没跑成败判定(--lite / 该检查关闭 / 全员被前置硬门拒掉)就
     # 不产这个文件——空文件会被当成"判定跑了但什么都没测出来"。
     from ..export.task_trace import write_task_details
@@ -1243,13 +1259,12 @@ def run_pipeline(
         print(f"[curation] 判定痕迹:{len(task_rows)} 条 → details/task_details.json",
               flush=True)
     if vrows:
-        vcols = ["episode", "camera", "status", "score", "sharpness", "exposure",
-                 "integrity", "blur_var_median", "clip_frac_median",
-                 "gray_std_median", "frozen_ratio"]
+        v_headers, v_out = DL.translate_rows(vrows, DL.VISUAL_COLS,
+                                             enums={"status": DL.VISUAL_STATUS})
         with delivery_file(os.path.join(det_dir, "visual_details.csv"), newline="") as f:
-            w = _csv.DictWriter(f, fieldnames=vcols, extrasaction="ignore")
+            w = _csv.DictWriter(f, fieldnames=v_headers, extrasaction="ignore")
             w.writeheader()
-            w.writerows(vrows)
+            w.writerows(v_out)
     # 技能归属明细(2026-07-31 用户定):画像只给"每类多少条",答不了"是哪几条"。
     # 一行一条 episode,列 = episode_id/family/subskill/caption,给客户 pandas 直读。
     # 行由画像本身反推(profile.skill_assignment_rows)→ 与 report.json 里的画像同源,
@@ -1280,11 +1295,12 @@ def run_pipeline(
             krows.append({"episode": k["episode_id"], "type": "format_or_other",
                           "joint": "", "frame": "", "value": "",
                           "limit": str(kdet.get("reason"))[:80]})
+    k_headers, k_out = DL.translate_rows(krows, DL.KINEMATIC_COLS,
+                                         enums={"type": DL.KINEMATIC_TYPES})
     with delivery_file(os.path.join(det_dir, "kinematic_details.csv"), newline="") as f:
-        w = _csv.DictWriter(f, fieldnames=["episode", "type", "joint", "frame",
-                                           "value", "limit"], extrasaction="ignore")
+        w = _csv.DictWriter(f, fieldnames=k_headers, extrasaction="ignore")
         w.writeheader()
-        w.writerows(krows)
+        w.writerows(k_out)
     # stuck 明细(二值,不进总分):总是生成——无 stuck 时是"只有表头的空文件",
     # 明确表示"查了、0 条命中"(与 motion/visual details 行为一致,2026-07-10 用户定)
     # 同步曲线证据图(证据附件第一块):漏斗暂存的曲线 → details/plots/*.png
@@ -1308,13 +1324,11 @@ def run_pipeline(
             # save_report(verify=True)自然会带上;同一路径每多写一遍,就多一次
             # 撞上并发写的机会(2026-08-14 全零 passed.json 的事故形状)。
     srows.sort(key=lambda x: -(x["stuck_seconds"] or 0))
-    scols = ["episode", "axes", "stuck_start_sec", "stuck_seconds",
-             "freeze_start_sec", "freeze_total_seconds",
-             "total_frames", "video_file"]
+    s_headers, s_out = DL.translate_rows(srows, DL.STUCK_COLS)
     with delivery_file(os.path.join(det_dir, "stuck_details.csv"), newline="") as f:
-        w = _csv.DictWriter(f, fieldnames=scols, extrasaction="ignore")
+        w = _csv.DictWriter(f, fieldnames=s_headers, extrasaction="ignore")
         w.writeheader()
-        w.writerows(srows)
+        w.writerows(s_out)
     # stuck_details.json(2026-07-15 用户定):嵌套真相的权威版——每 episode 一条,
     # 事件内按时间顺序给 idle/stuck 剧本(秒+帧双标);CSV 是同源的摘要版
     # episodes_timeline.json(D2):全员三态分段,纯函数装配后落盘

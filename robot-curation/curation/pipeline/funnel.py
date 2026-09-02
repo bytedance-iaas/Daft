@@ -280,6 +280,9 @@ def run_funnel(
                 vs = _ex.get("velocity_scale_translation_empirical")
                 if vs:
                     kw.setdefault("velocity_scale", tuple(float(x) for x in vs))
+                vc = _ex.get("velocity_calibration")     # 速度域标定 → 执行器饱和可算
+                if isinstance(vc, dict) and vc.get("gain"):
+                    kw.setdefault("velocity_calib", vc)
             except Exception:  # noqa: BLE001  extras 缺失/损坏 → 走无系数回退
                 pass
             kw.setdefault("same_space",

@@ -1429,6 +1429,7 @@ def delivery_choices(root: str, paths: list | None = None) -> list:
 
 
 # ───────── 明细表(D1,2026-07-28):details/ 下 CSV 的只读渲染 ─────────
+from ..export.detail_labels import NA_CELL, subdim_notes_lines  # noqa: E402
 
 DETAIL_LABELS = {                      # 语义化标签(纪律:界面不出现实现名)
     "motion_details.csv": "运动质量明细(逐子项)",
@@ -1502,8 +1503,20 @@ def load_detail_table(m: dict, name: str, cap: int = 2000):
         for row in reader:
             total += 1
             if total <= cap:
-                rows.append(row)
+                # 空格显示「—」(该条不适用/无读数);CSV 本身留空,pandas 读成 NaN
+                rows.append([c if c != "" else NA_CELL for c in row])
     return headers, rows, total
+
+
+def detail_table_notes(m: dict, name: str) -> str:
+    """明细表上方的适用性说明:运动质量表读 passed.json 里的 motion_subdims
+    (整列不适用的子项已从表里拿掉,这里说为什么;部分不适用的说明「—」的含义)。"""
+    if not m or not m.get("path") or name != "motion_details.csv":
+        return ""
+    d = _load_json(os.path.join(m["path"], "passed.json"))
+    sd = (d.get("dataset") or {}).get("motion_subdims")
+    lines = subdim_notes_lines(sd)
+    return ("\n\n" + "\n".join(f"- {x}" for x in lines)) if lines else ""
 
 
 # ───────── Stuck 时间线(D2,2026-07-28):三态彩条 HTML 渲染 ─────────

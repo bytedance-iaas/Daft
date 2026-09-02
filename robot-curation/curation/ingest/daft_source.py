@@ -80,11 +80,13 @@ class LeRobotDataSource(DataSource):
         self._sem = self._resolve_semantics()
         self._schema = self._build_schema()
 
-    # ---- 语义:profile 命中零数据读;inferred 采样(与急切路同一规则) ----
+    # ---- 语义:profile 命中零数据读;inferred 采样(与急切路同一规则)。
+    #      例外(2026-09-02):末端速度/增量指令数据集要读样本做速度域标定(执行器饱和)----
     def _resolve_semantics(self):
-        from .dataset_semantics import resolve_semantics
+        from .dataset_semantics import needs_velocity_calibration, resolve_semantics
         _name = os.path.basename(str(self._dir).rstrip("/"))
-        if resolve_semantics(self._info, None, _name).source == "profile":
+        _sem0 = resolve_semantics(self._info, None, _name)
+        if _sem0.source == "profile" and not needs_velocity_calibration(_sem0):
             return resolve_dataset_semantics(self._info, [], _name)
         from .lerobot_reader import read_lerobot_rows
         n = (min(SEMANTICS_VOTE_EPISODES, self._max) if self._max
