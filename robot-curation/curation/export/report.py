@@ -547,6 +547,22 @@ def to_markdown(report: dict) -> str:
                 f"{w['episode']}(流畅{w['fluency']*100:.0f}%/有效{w['active_ratio']*100:.0f}%)"
                 for w in worst[:8]))
         lines.append("")
+    vc = d.get("velocity_calibration")
+    if vc:
+        lines.append("## 执行器饱和的速度域标定")
+        lines.append(f"- 本数据集指令为速度/增量型,执行器饱和按速度域换算:逐轴增益 {vc.get('gain')}"
+                     f"(实际速度 ≈ 增益×指令),延迟 {vc.get('lag_frames')} 帧,拟合相关 {vc.get('r')},"
+                     f"样本 {vc.get('n_episodes')} 条")
+        b = vc.get("baseline") or {}
+        lines.append(f"- 欠速比基线(同批中位数 {b.get('median')},MAD {b.get('mad')}):饱和分按"
+                     "超出基线的部分扣,基线附近=满分")
+        lines.append("")
+    sd = d.get("motion_subdims")
+    if sd and (sd.get("不适用") or sd.get("部分不适用")):
+        from .detail_labels import subdim_notes_lines
+        lines.append("## 运动质量子项适用性")
+        lines.extend(f"- {x}" for x in subdim_notes_lines(sd))
+        lines.append("")
     st = d.get("stuck")
     if st:
         lines.append("## 执行器卡死(stuck,单列/不进总分)")

@@ -135,6 +135,31 @@ def resolve_semantics(info: dict, sample_action: np.ndarray | None = None,
     return sem
 
 
+def needs_velocity_calibration(sem: DatasetSemantics) -> bool:
+    """末端速度/增量指令 × 末端位姿读数:执行器饱和要靠速度域标定才算得了。"""
+    return (sem.action_space == "ee" and sem.proprio_space == "ee"
+            and sem.control_mode in ("velocity", "delta"))
+
+
+def attach_velocity_calibration(sem: DatasetSemantics, sample_rows: list[dict]) -> DatasetSemantics:
+    """末端速度/增量指令 × 末端位姿读数的数据集 → 用样本行标定速度域增益/延迟/基线,
+    塞进 extras["velocity_calibration"](随 semantics_extras 列流到运动质量检查;执行器饱和
+    据此在速度域计算,见 core/checks/velocity_calibration.py)。其它数据集原样返回。"""
+    if not needs_velocity_calibration(sem):
+        return sem
+    if not any(r.get("proprio_state") is not None for r in sample_rows):
+        return sem
+    from ..core.checks.velocity_calibration import fit_velocity_gain
+    try:
+        calib = fit_velocity_gain(sample_rows)
+    except Exception:  # noqa: BLE001  标定失败=退回"不适用",不拖垮摄入
+        calib = None
+    if calib:
+        sem.extras = dict(sem.extras or {})
+        sem.extras["velocity_calibration"] = calib
+    return sem
+
+
 def infer_control_mode_majority(rows: list[dict]) -> str:
     """数据集级多数票(控制模式是本体约定,非单条属性;短片单向漂移会骗过单条指纹)。"""
     from collections import Counter

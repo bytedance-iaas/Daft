@@ -333,7 +333,9 @@ def resolve_dataset_semantics(info: dict, sample_rows: list[dict],
     if sem.source == "inferred":
         sem.control_mode = infer_control_mode_majority(
             sample_rows[:SEMANTICS_VOTE_EPISODES])
-    return sem
+    # 速度域标定(2026-09-02):同一批样本行顺手把执行器饱和的增益/延迟/基线标了
+    from .dataset_semantics import attach_velocity_calibration
+    return attach_velocity_calibration(sem, sample_rows[:SEMANTICS_VOTE_EPISODES])
 
 
 def _attach_semantics(rows: list[dict], sem, embodiment_id: str | None = None) -> None:
@@ -451,10 +453,13 @@ def read_lerobot_meta(
     else:
         raise ValueError(f"未知 LeRobot 版本: {version}")
 
-    # 语义解析:profile 命中零数据读;inferred 才读采样 episode 的 action
+    # 语义解析:profile 命中零数据读;inferred 才读采样 episode 的 action。
+    # 例外(2026-09-02):末端速度/增量指令 × 末端读数的数据集(如 droid,恰好都是 profile
+    # 命中的)要用样本行标定速度域增益——不读样本,执行器饱和就永远"不适用"。
     sample: list[dict] = []
-    from .dataset_semantics import resolve_semantics
-    if resolve_semantics(info, None).source != "profile":
+    from .dataset_semantics import needs_velocity_calibration, resolve_semantics
+    _sem0 = resolve_semantics(info, None)
+    if _sem0.source != "profile" or needs_velocity_calibration(_sem0):
         n_sample = (min(SEMANTICS_VOTE_EPISODES, max_episodes)
                     if max_episodes else SEMANTICS_VOTE_EPISODES)
         sample = read_lerobot_rows(dataset_dir, max_episodes=n_sample,

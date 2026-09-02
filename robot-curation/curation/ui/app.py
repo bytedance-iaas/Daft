@@ -54,7 +54,7 @@ from .manifest import (clear_discover_cache,  # noqa: F401
                        discover_deliveries, episode_card_html,
                        episode_list_view, episode_video_html,
                        latency_bar_html, latency_rows,
-                       load_delivery, load_detail_table, load_perf,
+                       load_delivery, load_detail_table, detail_table_notes, load_perf,
                        load_timeline, manual_hint_html, most_recent_delivery,
                        resolve_delivery,
                        OVERVIEW_HEADERS, overview_markdown,
@@ -1503,7 +1503,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         headers, rows, total = load_detail_table(m, name)
         note = f"**{DETAIL_LABELS.get(name, name)}** · 共 {total} 行" + \
                (f"(仅显示前 {len(rows)} 行,完整文件见本次跑批目录下的 details/{name})"
-                if total > len(rows) else "")
+                if total > len(rows) else "") + detail_table_notes(m, name)
         return note, headers or ["(空)"], rows
 
     # ── 裁决卡片的公共装配(三键状态 / 视频槽 / 逐条渲染):两块裁决面板形态

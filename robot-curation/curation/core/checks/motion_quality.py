@@ -31,6 +31,8 @@ def motion_quality(
     stable_window_s: float = 2.0,         # 末态稳定窗口
     stuck_frames: int = 30,               # 冻结帧数上限阈(与 1 秒×fps 取小:5fps 短片也能判)
     saturation_ref: float = 0.15,         # median|cmd-achieved|/关节运动范围 ≥此值算显著饱和
+    saturation_ref_velocity: float = 0.25,  # 速度域口径:高指令最好帧欠速超基线此值 → 半分
+                                          # (droid 基准:干净 p99 0.28,注入削顶 50% 全员≥0.32)
     angle_dims: tuple[int, ...] | None = None,  # 角度维下标(EE 的 rpy / 关节角)
     angle_mode: str | None = None,        # "absolute"=解绕 / "delta"=回卷到±半周期
     angle_period: float = 6.283185307179586,    # 弧度=2π,度=360
@@ -39,6 +41,8 @@ def motion_quality(
     same_space: bool = True,              # action 与 proprio 是否同空间(M1 推断)
     stuck_strategy: str = "auto",         # cmd_delta_vs_pos/increment_vs_pos/
                                           #   velocity_dual_scale/abstain/auto(按control_mode)
+    velocity_calib: dict | None = None,   # 速度域标定(数据集级,语义层算好:gain/lag_frames/
+                                          # axes/baseline;有它才能在速度/增量指令上算饱和)
     velocity_scale: tuple | None = None,  # velocity 控制的经验位移系数(米/单位·帧,
                                           # 数据集 profile extras 提供;有它才能做
                                           # "期望位移 vs 实际位移"的响应效率判据)
@@ -180,13 +184,35 @@ def motion_quality(
         detail["gripper_flip_hz"] = hz_all
     else:
         sub["gripper_jitter"] = None
+        detail["gripper_reason"] = "本数据集没有夹爪列(规格档未配置 gripper_dims)"
 
     # ⑥ actuator_saturation:median|cmd-achieved| / 关节运动范围(持续大偏差;取最差关节)
     # 语义门:值直比要求 cmd/achieved 同空间且 cmd 是绝对目标(增量/速度指令 × 位置读数
     # = 跨语义直比,bridge/droid 实测干净全员 0.0 的教训)
-    if proprio is not None and (not same_space or control_mode != "absolute"):
+    _vc = velocity_calib if isinstance(velocity_calib, dict) and velocity_calib.get("gain") else None
+    if proprio is not None and same_space and control_mode in ("velocity", "delta") and _vc:
+        # 速度域换算(2026-09-02):速度/增量型末端指令 × 末端位姿读数,用数据集级标定的
+        # 增益/延迟把两边放到速度域,欠速比相对同批基线打分(见 velocity_calibration.py)
+        from .velocity_calibration import saturation_ratio
+        _axes = tuple(int(x) for x in _vc.get("axes") or (0, 1, 2))
+        _ratio, _sd = saturation_ratio(action, proprio, fps, gain=_vc["gain"],
+                                       lag=int(_vc.get("lag_frames") or 0), axes=_axes,
+                                       curves=_vc.get("curves"), hi_cmd=_vc.get("hi_cmd"))
+        if _ratio is None:
+            sub["actuator_saturation"] = None
+            detail["saturation_reason"] = f"速度域换算无法计算:{_sd.get('reason', '')}"
+        else:
+            _base = float((_vc.get("baseline") or {}).get("median") or 0.0)
+            _excess = max(0.0, _ratio - _base)
+            sub["actuator_saturation"] = float(np.exp(-np.log(2) * _excess / saturation_ref_velocity))
+            detail["saturation_gap_ratio"] = round(_ratio, 4)
+            detail["saturation_baseline"] = round(_base, 4)
+            detail["saturation_method"] = "velocity_domain"
+            detail["saturation_axes"] = _sd.get("per_axis")
+    elif proprio is not None and (not same_space or control_mode != "absolute"):
         sub["actuator_saturation"] = None
-        detail["saturation_reason"] = "指令与读数不同空间或指令非绝对目标(delta/unknown),值直比无意义"
+        detail["saturation_reason"] = ("指令与读数不同空间,值直比无意义" if not same_space else
+                                       "指令是速度/增量型且缺少速度域标定(样本拟不出可信增益),无法直比")
     elif proprio is not None and np.asarray(proprio).shape[1] > max(arm_cols, default=-1):
         p = np.asarray(proprio, dtype=np.float64)[:, arm_cols]
         gap_med = np.median(np.abs(arm[:-1] - p[1:]), axis=0)      # a_t ≈ s_{t+1}
