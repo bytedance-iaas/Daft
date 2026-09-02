@@ -107,8 +107,9 @@ def task_success(
     passed=None  verdict=uncertain          灰区(证据不足)
                  verdict=gap_violation      契约违约(冲高又崩回,谁也别信)
                  verdict=voc_tripwire       分数高但过程语无伦次(voc<0)
-                 verdict=score_blind        全平低位=打分层完全无信息(≠失败证据!
-                                            cosmos 系在 droid 宽景上 85% 如此)
+    (2026-09-02 起全平低位不再单列 score_blind 弃权:按"全程从未有过进度"落进
+     失败候选,detail 只留 flat_low_scores 标记——droid-200 真值全零×复核 no 9/9
+     真失败零冤杀;当年 cosmos-8b "85% 全瞎"的场景不再兼顾,全力配合豆包)
     """
     if len(frames) < 2:
         return CheckResult(name="task_success", passed=None,
@@ -120,6 +121,17 @@ def task_success(
         return CheckResult(name="task_success", passed=None,
                            detail={"reason": f"VLM 调用/解析失败: {type(e).__name__}: {e}",
                                    "rules": ["vlm_call_failed"]})
+    # 参考帧自检(2026-09-02):probe0 就是参考图,按题面必为 0;模型回非 0 只能是
+    # 联合回答错位/幻觉(ep000014 曾回 100,假峰把灰区判成了契约违约)。强制归 0、
+    # 原值留痕、VOC 按归零后的序列重算。
+    probe0_model = None
+    if len(idx) and int(idx[0]) == 0 and float(preds[0]) != 0.0:
+        from scipy import stats as _st
+        probe0_model = float(preds[0])
+        preds = preds.copy()
+        preds[0] = 0.0
+        voc = (0.0 if float(np.std(preds)) < 1e-9
+               else float(_st.spearmanr(np.arange(len(idx)), preds)[0]))
     final = float(np.median(preds[-2:]))
     peak = float(preds.max())
     gap = peak - final
@@ -134,14 +146,16 @@ def task_success(
     detail["raw"] = {"voc": voc, "completion_final": final, "completion_peak": peak,
                      "completion_gap": gap, "completion_last": last,
                      "completions": [float(p) for p in preds]}
+    if probe0_model is not None:
+        detail["raw"]["probe0_model"] = probe0_model
+        _rule(detail, "probe0_forced_zero")
 
-    # 全平低位 = 打分层对这条完全无信息(每帧都答 0):弃权交复核,绝不是失败证据。
-    # 注意只有**低位**才算瞎——全平在高位(如 ep99 全 1.0)是正常满分,别一刀切。
+    # 全平低位(每帧都答 0)曾单列 score_blind 弃权(cosmos-8b 失明签名,2026-09-02
+    # 撤销):豆包看得见,全零就是没进展,顺着规则落进下面的失败候选(峰值≤fail_max),
+    # 复核 no 才杀、其它进人工,与别的失败候选一视同仁。只留标记便于追溯;
+    # 全平**高位**(ep99 全 1.0)仍是正常满分,别一刀切。
     if float(np.std(preds)) < 1e-9 and float(preds.mean()) <= fail_max:
-        detail["verdict"] = "score_blind"
-        detail["reason"] = "逐帧分数全平于低位:打分层无信息(非失败证据),交复核裁决"
-        _rule(detail, "score_blind_flat_low")
-        return CheckResult(name="task_success", passed=None, detail=detail)
+        _rule(detail, "flat_low_scores")
 
     if final >= success_min:
         if voc < 0.0:
@@ -235,7 +249,6 @@ def endstate_review(
     cam_voter: Callable | None,
     cam_frames: dict,
     endstate_frames: int = 8,
-    blind_rescue_votes: int = 2,
 ) -> CheckResult:
     """二值复核 v7.2:**逐机位独立投票 + 汇票 + 决定表**(105 条人工真值 × 三模型
     小考定稿;取代 v6.5 的多机位混问——好机位的清晰证据曾被烂机位稀释)。
@@ -253,12 +266,10 @@ def endstate_review(
       失败候选      人工(打架)  人工       **杀**(唯一杀格)  人工
       gap契约违约   人工(打架)  人工       人工              人工
       灰区          过(救回)*   人工       人工              人工
-      score_blind   过(救回)**  人工       人工              人工
       其余(绊线等)  过(救回)    人工       人工              人工
       * 灰区×yes 且 final≤fail_max → 人工(末态回原点 vs 复核说完成 = 实质矛盾;
         联合打分曾把 ep143 的 gap 平滑到违约线下,靠这条拦回)
-      ** blind×yes 需 ≥blind_rescue_votes 张实票(打分层零信息时救回也要双签;
-        8b 全瞎+腕部孤票 yes 曾漏 ep143)
+      (score_blind 行 2026-09-02 撤销:全平低位已归失败候选,走上面失败候选那行)
     """
     init = _INIT_ROW.get(res.detail.get("verdict"), res.detail.get("verdict", "other"))
     strong = bool(res.detail.get("strong_score"))
@@ -300,7 +311,6 @@ def endstate_review(
         return res                                    # 无帧可复核,原样返回
 
     review = tally(votes.values())
-    yes_votes = sum(1 for v in votes.values() if v == "yes")
     res.detail["cam_votes"] = dict(votes)
     res.detail["review"] = review
 
@@ -363,7 +373,7 @@ def endstate_review(
             _rule(res.detail, "abstain_kept_review_not_done")
         return res                                    # 其余列维持弃权
 
-    # 灰区 / score_blind / voc_tripwire / 调用失败:复核 yes 才可能救回
+    # 灰区 / voc_tripwire / 调用失败:复核 yes 才可能救回
     if review != "yes":
         _rule(res.detail, "rescue_declined_review_not_done")
     if review == "yes":
@@ -372,15 +382,51 @@ def endstate_review(
             res.detail["reason"] = "打分层末态回到原点 vs 复核判完成:实质矛盾,进人工"
             _rule(res.detail, "gray_final_zero_vs_review_done")
             return res
-        if init == "score_blind" and yes_votes < blind_rescue_votes:
-            res.detail["reason"] = (f"进度打分无信息,复核仅 {yes_votes} 张实票 yes"
-                                    f"(<{blind_rescue_votes}):单一证据不足以放行,转人工")
-            _rule(res.detail, "blind_rescue_needs_two_votes")
-            return res
         res.passed = True
         res.detail["verdict"] = "endstate_success"
         res.detail["reason"] = f"打分层{init};逐机位复核判完成,救回"
         _rule(res.detail, "review_rescue")
+    return res
+
+
+def hold_kill_on_label_conflict(
+    res: CheckResult, *, annotation: str, caption: str,
+    caption_source: str = "自产caption(判废护栏)", same_task: Callable | None,
+) -> CheckResult:
+    """判废前护栏(2026-09-02 ep000029 教训):标注优先策略下,**标注错 = 拿错题问模型**
+    ——打分全零、复核一致 no 都是对"错题"的正确回答,双签杀的是一条好数据。
+
+    只对"已判废(passed is False)且指令来自原始标注"的条目工作:拿自产 caption 与标注
+    做 same_task 比对,**不是同一任务 → 不杀转人工**(原因直说疑似标注错,顺手把
+    打标审计按技能族比对漏掉的标注错暴露出来);同一任务 → 维持判废并留痕。
+    caption 缺失 / 比对器异常 → 维持判废并留痕(不因基础设施缺席把所有判废灌进人工;
+    与仲裁链"比对异常按打架从严"刻意不同——那边是弃权条目,这边是已双签的判废)。
+    """
+    if res.passed is not False:
+        return res
+    ann, cap = str(annotation or "").strip(), str(caption or "").strip()
+    info = {"annotation": ann[:160], "caption": cap[:160], "caption_source": caption_source}
+    res.detail["label_check"] = info
+    if not ann or not cap or same_task is None:
+        info["outcome"] = "unavailable"
+        _rule(res.detail, "label_check_unavailable")
+        return res
+    try:
+        same = bool(same_task(ann, cap))
+    except Exception as e:  # noqa: BLE001
+        info["outcome"] = f"error:{type(e).__name__}"
+        _rule(res.detail, "label_check_error")
+        return res
+    if same:
+        info["outcome"] = "same"
+        _rule(res.detail, "label_agrees_kill_kept")
+        return res
+    info["outcome"] = "different"
+    res.passed = None
+    res.detail["verdict"] = "label_conflict_suspect"
+    res.detail["reason"] = (f"复核判未完成,但标注「{ann[:40]}」与画面描述「{cap[:40]}」"
+                            "不是同一任务:疑似标注错,不判废,转人工核标注")
+    _rule(res.detail, "kill_held_label_conflict")
     return res
 
 

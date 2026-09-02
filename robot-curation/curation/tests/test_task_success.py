@@ -6,7 +6,9 @@
 v6.5 语义要点(2026-08-04,105 条人工真值×三模型消融定稿):
 - VOC 不再是逐条闸门(旧 test_hallucination 那套"VOC 拦幻觉"已废——实测拦下的
   全是撤手型好数据);抗幻觉职责移交复核否决权(见 test_review_veto_*)。
-- 全平低位=打分层无信息=弃权(非失败证据);全平高位=正常满分(ep99 教训)。
+- 全平低位=失败候选(2026-09-02 起,豆包真值全零×复核 no 9/9 真失败;曾按 cosmos-8b
+  失明签名单列 score_blind 弃权,已撤销);全平高位=正常满分(ep99 教训)。
+- 参考帧(probe0)完成度强制归 0,原值留痕(ep000014 假峰教训)。
 - 杀人必须双签:失败候选 + 复核 no;复核缺席/矛盾只能弃权。
 - 复核抽帧 linspace 含端点(ep30 截尾 bug 回归测试)。
 """
@@ -96,12 +98,37 @@ def test_retreat_curve_is_gap_violation():
     assert r.passed is None and r.detail["verdict"] == "gap_violation"
 
 
-def test_flat_low_is_blind_not_failure():
-    """全平低位=打分层无信息 → 弃权(cosmos 系 droid 宽景 85% 如此,当失败证据
-    会造成 36 条冤杀——v6.1 事故回归测试)。"""
+def test_flat_low_is_failure_candidate():
+    """全平低位 → 失败候选(2026-09-02 用户定):豆包看得见,全零就是没进展;
+    droid-200 真值全零×复核 no 9/9 真失败、零冤杀。杀仍需复核双签(见
+    test_endstate_review 失败候选各格),这里只钉打分层不再单列 score_blind 弃权。"""
     frames = [np.zeros((32, 32, 3), dtype=np.uint8)] * 12
     r = task_success(frames, "t", lambda ref, fs, i: [0.0] * len(fs))
-    assert r.passed is None and r.detail["verdict"] == "score_blind"
+    assert r.passed is False and r.detail["verdict"] == "failure"
+    assert "flat_low_scores" in r.detail["rules"]
+    assert "fail_candidate_no_progress" in r.detail["rules"]
+    assert "score_blind" not in r.detail["rules"] and r.detail["verdict"] != "score_blind"
+
+
+def test_probe0_forced_zero_with_trace():
+    """参考帧自检(ep000014 教训):probe0 就是参考图,模型回 100 只能是错位/幻觉。
+    归 0 后 peak 由假的 1.0 变成真实的 0.7,标签从契约违约回到灰区;原值留在 raw。"""
+    seq = [1.0, 0.0, 0.3, 0.3, 0.7, 0.5, 0.3, 0.2]
+
+    def vlm(ref, fs, i):                     # 按打乱后的帧序号回对应分数
+        return [seq[int(round(f.mean()))] for f in fs]
+    frames = [np.full((8, 8, 3), k, dtype=np.uint8) for k in range(8)]
+    r = task_success(frames, "t", vlm)
+    assert r.detail["completions"][0] == 0.0
+    assert r.detail["raw"]["probe0_model"] == 1.0
+    assert "probe0_forced_zero" in r.detail["rules"]
+    assert r.detail["completion_peak"] == 0.7
+    assert r.detail["verdict"] == "uncertain"      # 不再是 gap_violation
+    # 模型本来就答 0 的参考帧:不留痕、不加规则
+    r2 = task_success(frames, "t", lambda ref, fs, i: [0.0 if int(round(f.mean())) == 0
+                                                       else 0.5 for f in fs])
+    assert "probe0_model" not in r2.detail["raw"]
+    assert "probe0_forced_zero" not in r2.detail["rules"]
 
 
 def test_flat_high_is_success_not_blind():

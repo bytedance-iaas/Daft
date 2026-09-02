@@ -10,6 +10,25 @@ import os
 from ..export.safe_write import delivery_file  # 交付件一律"本地临时文件+copyfile"
 
 
+#: 判成败/仲裁用的任务文本策略——**唯一落点**(2026-08-16 标注优先方针,见 CLAUDE.md
+#: 「已纠正的错误判断」第 10 条;技能画像的同名选择在 _skill_profile_stage)。
+JUDGE_TEXT_POLICY = "annotation_first"
+
+
+def judge_text_and_source(instruction, caption) -> tuple[str, str]:
+    """判成败/仲裁用的任务文本与来源:有原始标注用标注,否则用自产 caption。
+
+    🔴 切换成自产标注优先(JUDGE_TEXT_POLICY="caption_first")之前,必须同步两处——
+    test_judge_text_policy_tripwire 钉着本函数,策略一翻它就红,失败信息即 checklist:
+      ① funnel._label_guard 的触发条件从 task_src=="原始标注" 改为"标注与 caption 两段
+         都在且不同"(判废护栏否则静默休眠;错题来源变成 caption 时它得反向守);
+      ② funnel._arbitrate 的 annotation 不再只在原始标注时传入(仲裁双意图链同款盲区)。
+    """
+    ins = (instruction or "").strip()
+    cap = (caption or "").strip()
+    return (ins or cap), ("原始标注" if ins else ("自产caption" if cap else "无"))
+
+
 def check_entry(res: dict) -> dict:
     """检查结果 struct → 报告条目。detail 有就带(2026-07-27 U0 修正:旧逻辑只在
     弃权时保留 detail,被拒条目"为什么杀"的 VLM 证据全被丢弃——reject.json 里
@@ -676,11 +695,10 @@ def run_pipeline(
                     auto_caps[r["episode_id"]] = c
     desc_of, desc_src_of = {}, {}
     for r in rows:
-        ins = (r.get("instruction") or "").strip()
-        cap = auto_caps.get(r["episode_id"], "")
-        r["task_desc"] = desc_of[r["episode_id"]] = ins or cap
-        r["task_desc_source"] = desc_src_of[r["episode_id"]] = (
-            "原始标注" if ins else ("自产caption" if cap else "无"))
+        text, src = judge_text_and_source(r.get("instruction"),
+                                          auto_caps.get(r["episode_id"], ""))
+        r["task_desc"] = desc_of[r["episode_id"]] = text
+        r["task_desc_source"] = desc_src_of[r["episode_id"]] = src
 
     import daft as _daft
 

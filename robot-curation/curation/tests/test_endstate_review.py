@@ -11,7 +11,7 @@ v7.2 判决矩阵(初判 × 汇票 → 终判;救人一签、杀人双签、复�
     失败候选 × split/abstain     → 弃权(缺第二签)
     gap契约违约 × yes            → 人工(打架;联合打分平滑掉violation时靠灰区版拦)
     灰区 × yes 且 final≤0.25     → 人工(末态回原点 vs 复核说完成 = 实质矛盾,ep143)
-    score_blind × yes 孤证(<2票) → 人工(打分层零信息,救回也双签,8b ep143)
+    (score_blind 行 2026-09-02 撤销:全平低位已是失败候选,走失败候选各格)
     其余 × yes                   → 救回;× 其它 → 弃权
     投票器不可用                 → 成功候选过(留痕);失败候选降弃权(废除单方杀)
 """
@@ -149,17 +149,73 @@ def test_gray_mid_final_yes_rescues():
     assert r.passed is True and r.detail["verdict"] == "endstate_success"
 
 
-def test_blind_lone_witness_not_rescued():
-    """8b ep143 钉子:打分层零信息 + 仅 1 张实票 yes → 孤证不救,进人工。"""
-    r = endstate_review(_res(None, "score_blind"), "t",
-                        _voter("yes", "contradictory", "contradictory"), _cams())
+def test_flat_low_failure_candidate_killed_by_unanimous_no():
+    """2026-09-02:全平低位进失败候选后,复核 no 即双签杀(ep000009/23 型:
+    no/no/unclear 与 unclear/no/no 都是 tally=no)。"""
+    r = endstate_review(_res(False, "failure"), "t",
+                        _voter("no", "no", "unclear"), _cams())
+    assert r.passed is False and r.detail["verdict"] == "failure"
+    assert "double_signed_kill" in r.detail["rules"]
+    r = endstate_review(_res(False, "failure"), "t",
+                        _voter("unclear", "no", "no"), _cams())
+    assert r.passed is False
+
+
+def test_flat_low_failure_candidate_abstain_goes_human():
+    """复核全弃权(ep000060 型)→ 缺第二签,人工,不杀。"""
+    r = endstate_review(_res(False, "failure"), "t",
+                        _voter("unclear", "unclear", "contradictory"), _cams())
     assert r.passed is None
 
 
-def test_blind_two_witnesses_rescued():
-    r = endstate_review(_res(None, "score_blind"), "t",
-                        _voter("yes", "yes", "unclear"), _cams())
-    assert r.passed is True and r.detail["verdict"] == "endstate_success"
+# ───────── 判废前护栏(2026-09-02 ep000029) ─────────
+
+def _killed():
+    return CheckResult(name="task_success", passed=False,
+                       detail={"verdict": "failure", "reason": "双签", "rules": ["double_signed_kill"]})
+
+
+def test_label_guard_holds_kill_when_caption_differs():
+    """ep000029 原型:标注「Put the orange thing in the can」错,caption 说的是倒米;
+    比对器判不同 → 不杀转人工,原因点名疑似标注错,留痕两段文本。"""
+    from curation.core.checks.task_success import hold_kill_on_label_conflict
+    r = hold_kill_on_label_conflict(_killed(), annotation="Put the orange thing in the can",
+                                    caption="pour rice into the green bowl",
+                                    same_task=lambda a, b: False)
+    assert r.passed is None and r.detail["verdict"] == "label_conflict_suspect"
+    assert "疑似标注错" in r.detail["reason"]
+    assert r.detail["label_check"]["outcome"] == "different"
+    assert r.detail["label_check"]["annotation"].startswith("Put the orange")
+    assert "kill_held_label_conflict" in r.detail["rules"]
+
+
+def test_label_guard_keeps_kill_when_same_or_unavailable():
+    """同一任务 → 判废不动只留痕;caption 缺/比对器缺/比对器炸 → 判废不动
+    (不因基础设施缺席把判废灌进人工),各留各的痕。"""
+    from curation.core.checks.task_success import hold_kill_on_label_conflict
+    r = hold_kill_on_label_conflict(_killed(), annotation="put x", caption="place x",
+                                    same_task=lambda a, b: True)
+    assert r.passed is False and "label_agrees_kill_kept" in r.detail["rules"]
+    r = hold_kill_on_label_conflict(_killed(), annotation="put x", caption="",
+                                    same_task=lambda a, b: False)
+    assert r.passed is False and r.detail["label_check"]["outcome"] == "unavailable"
+    r = hold_kill_on_label_conflict(_killed(), annotation="put x", caption="y",
+                                    same_task=None)
+    assert r.passed is False and "label_check_unavailable" in r.detail["rules"]
+
+    def boom(a, b):
+        raise RuntimeError("比对器抽风")
+    r = hold_kill_on_label_conflict(_killed(), annotation="put x", caption="y", same_task=boom)
+    assert r.passed is False and "label_check_error" in r.detail["rules"]
+
+
+def test_label_guard_ignores_non_kills():
+    """只管判废:通过/弃权的条目原样返回,连 label_check 都不写。"""
+    from curation.core.checks.task_success import hold_kill_on_label_conflict
+    for p in (True, None):
+        r = hold_kill_on_label_conflict(_res(p, "success"), annotation="a", caption="b",
+                                        same_task=lambda a, b: False)
+        assert r.passed is p and "label_check" not in r.detail
 
 
 def test_no_voter_fail_candidate_downgrades():

@@ -593,6 +593,35 @@ def run_funnel(
             print(f"[curation] ⚠️ 取证仲裁链不可用({type(_e).__name__}:{_e}),"
                   "弃权条目维持进人工", flush=True)
 
+        def _caption_now(cam_frames) -> str:
+            """用已解码的 cam_frames 现打一条自产 caption(不碰视频);unclear/异常 → ""。"""
+            groups = []
+            for name, fr in cam_frames.items():
+                idx = np.unique(np.linspace(0, len(fr) - 1,
+                                            min(arb_deps["caption_n_frames"], len(fr)),
+                                            dtype=int))
+                groups.append((name, [fr[i] for i in idx]))
+            try:
+                cap = str(arb_deps["captioner"](groups)).strip().strip('."')
+                # unclear = captioner 诚实弃权(caption.py 同款归一)
+                if cap and not cap.lower().startswith("unclear"):
+                    return cap
+            except Exception:  # noqa: BLE001
+                pass
+            return ""
+
+        def _label_guard(res, cam_frames, task_desc):
+            """判废前护栏(2026-09-02 ep000029):指令来自原始标注的判废条目,先拿自产
+            caption 与标注比对,不是同一任务就不杀转人工(判定本体在
+            core.hold_kill_on_label_conflict 纯函数)。护栏自身异常只留痕,不拖垮主链。"""
+            from ..core.checks.task_success import hold_kill_on_label_conflict
+            try:
+                hold_kill_on_label_conflict(
+                    res, annotation=str(task_desc), caption=_caption_now(cam_frames),
+                    same_task=arb_deps["same_task"])
+            except Exception as e:  # noqa: BLE001
+                res.detail["label_check"] = {"outcome": f"error:{type(e).__name__}"}
+
         def _arbitrate(res, cam_frames, cam_ts, task_desc, task_src,
                        action, timestamps, embodiment_id):
             """弃权条目 → 取证仲裁链(判定本体在 core.arbitration_review 纯函数)。
@@ -607,22 +636,13 @@ def run_funnel(
                 src = str(task_src)
                 if src == "自产caption":
                     caption, cap_src = str(task_desc), "自产caption(漏斗前)"
+                elif (res.detail.get("label_check") or {}).get("caption"):
+                    # 判废护栏刚打过一条,直接复用,不再烧一次 caption
+                    caption = str(res.detail["label_check"]["caption"])
+                    cap_src = "自产caption(判废护栏)"
                 else:
-                    caption, cap_src = "", "自产caption(仲裁时)"
-                    groups = []
-                    for name, fr in cam_frames.items():
-                        idx = np.unique(np.linspace(0, len(fr) - 1,
-                                                    min(arb_deps["caption_n_frames"],
-                                                        len(fr)), dtype=int))
-                        groups.append((name, [fr[i] for i in idx]))
-                    try:
-                        cap = str(arb_deps["captioner"](groups)).strip().strip('."')
-                        # unclear = captioner 诚实弃权(caption.py 同款归一),留空触发
-                        # arbitration_review 的 no_caption 弃权
-                        if cap and not cap.lower().startswith("unclear"):
-                            caption = cap
-                    except Exception:  # noqa: BLE001
-                        caption = ""
+                    # 留空触发 arbitration_review 的 no_caption 弃权
+                    caption, cap_src = _caption_now(cam_frames), "自产caption(仲裁时)"
                 annotation = str(task_desc) if src == "原始标注" else ""
                 # 夹爪信号:列下标走 registry 的 gripper_dims(不硬编码数据集布局);
                 # 未知 embodiment / 无夹爪列 → None,core 侧自选兜底帧
@@ -685,8 +705,11 @@ def run_funnel(
             # ---- 复核:逐机位独立投票(协议本体在 core.endstate_review 纯函数)----
             res = endstate_review(res, str(task_desc), cam_voter, cam_frames,
                                   endstate_frames=endstate_frames)
-            # ---- 取证仲裁链:**仅当打分+复核后仍弃权**才触发(老判决不许翻案),
-            #      复用本函数已解码的 cam_frames,不再解一遍视频 ----
+            # ---- 判废护栏(2026-09-02):指令来自原始标注的判废,先核标注是不是错题 ----
+            if arb_deps is not None and res.passed is False and str(task_src) == "原始标注":
+                _label_guard(res, cam_frames, task_desc)
+            # ---- 取证仲裁链:**仅当打分+复核后仍弃权**才触发(老判决不许翻案;护栏
+            #      拦下的疑似标注错也走这里的双意图核验),复用已解码的 cam_frames ----
             if arb_deps is not None and res.passed is None:
                 _arbitrate(res, cam_frames, cam_ts, task_desc, task_src,
                            action, timestamps, embodiment_id)

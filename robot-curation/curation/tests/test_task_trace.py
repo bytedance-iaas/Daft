@@ -54,9 +54,9 @@ def test_rules_cover_scoring_arm_branches():
         r = task_success(_frames(prog), "t", _fake_vlm)
         assert rule in r.detail["rules"], (rule, r.detail.get("rules"))
 
-    # 全平低位 = 打分层无信息(不是失败证据)
+    # 全平低位 = 失败候选(2026-09-02 起),标记+候选规则两条都留痕
     r = task_success(_frames([0.0] * 8), "t", _fake_vlm)
-    assert r.detail["rules"] == ["score_blind_flat_low"]
+    assert r.detail["rules"] == ["flat_low_scores", "fail_candidate_no_progress"]
     # 帧数不足 / VLM 抽风:没有读数可留,只留一条"为什么没读数"
     r = task_success(_frames([0.5]), "t", _fake_vlm)
     assert r.detail["rules"] == ["frames_insufficient"] and "scoring" not in r.detail
