@@ -1020,10 +1020,12 @@ body:has(#mg-cur [data-fix="0"]) #tv-fixlab { display: none !important; }
   padding-right: 28px !important; text-overflow: ellipsis !important;
 }
 /* 置灰的输入框(interactive=False → disabled):内容用 Arco 的 text-3 灰,一眼看出
-   "这是给你看的,不是让你填的"(2026-08-21 用户:选了镜像后目录/地区要灰) */
+   "这是给你看的,不是让你填的"(2026-08-21 用户:选了镜像后目录/地区要灰)。
+   光标也要统一变 🚫——地区下拉禁用时浏览器给 not-allowed,目录框却是默认箭头,
+   两个挨着的灰框光标不一致(2026-09-01 用户实见) */
 .gradio-container textarea:disabled, .gradio-container input:disabled {
   color: var(--arco-t3) !important; -webkit-text-fill-color: var(--arco-t3) !important;
-  opacity: 1 !important;
+  opacity: 1 !important; cursor: not-allowed !important;
 }
 
 /* 内层子页签按 Arco 的 line 型(实测自 arco.css):

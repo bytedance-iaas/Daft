@@ -77,22 +77,6 @@ def resolve_shell() -> str:
     return os.environ.get(SHELL_ENV) or shutil.which("bash") or "/bin/sh"
 
 
-def workdir_note() -> str:
-    """落脚目录是哪来的,一句话(终端首行打给用户,免得对着空目录发懵)。"""
-    if os.environ.get(WORKDIR_ENV):
-        return "部署指定的工作目录"
-    mount = (os.environ.get("CURATION_TOS_MOUNT") or "/mnt/tos").rstrip("/")
-    if os.path.isdir(mount):
-        return "TOS 挂载根"
-    try:
-        from ..tos_store import cache_root
-        if os.path.isdir(cache_root()):
-            return "TOS 缓存根:报告与跑批的本地缓存都在这棵树上"
-    except Exception:  # noqa: BLE001
-        pass
-    return "服务进程目录"
-
-
 def _set_winsize(fd: int, rows: int, cols: int) -> None:
     try:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -118,10 +102,7 @@ def _rcfile() -> str:
         with os.fdopen(fd, "w") as f:
             f.write("[ -f /etc/profile ] && . /etc/profile\n"
                     "[ -f ~/.bashrc ] && . ~/.bashrc\n"
-                    f"PS1='{PROMPT_PS1}'\n"
-                    # 首行说清落脚点(直连实例没挂载,落在缓存根;不说的话
-                    # 用户对着一个陌生目录只会觉得"很奇怪")
-                    f"echo '当前目录:{resolve_workdir()}({workdir_note()})'\n")
+                    f"PS1='{PROMPT_PS1}'\n")
         _rcfile_path = path
     return _rcfile_path
 
