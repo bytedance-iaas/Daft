@@ -407,7 +407,8 @@ _pusht_missing = not _os.path.exists(_os.path.join(PUSHT, "meta", "info.json"))
 
 
 class FlatLowVlm:
-    """打分层全平低位(每帧 0)→ score_blind 弃权:制造"老算法弃权"的入口条件。"""
+    """打分层全平低位(每帧 0)→ 失败候选;配合恒 unclear 的复核器 → 缺第二签
+    弃权:制造"老算法弃权"的入口条件(2026-09-02 前是 score_blind 弃权)。"""
 
     def __call__(self, reference, shuffled, instruction):
         return [0.0] * len(shuffled)
@@ -431,6 +432,48 @@ def _patch_vlm_factories(monkeypatch, judge_answer="yes"):
     monkeypatch.setattr(cap, "make_vlm_captioner",
                         lambda *a, **k: (lambda groups:
                                          "push the t-shaped block onto the target"))
+
+
+@pytest.mark.skipif(_pusht_missing, reason="pusht 数据未下载")
+def test_funnel_label_guard_holds_annotation_kill(monkeypatch):
+    """判废护栏端到端(ep000029 原型):全零打分 + 复核三路 no = 双签判废;指令来自原始
+    标注且 caption 被比对器判为另一任务 → 不杀转人工,再进仲裁(双意图链)且 caption
+    复用不重打;比对器判同一任务 → 照杀,留痕 label_agrees_kill_kept。"""
+    import curation.adapters.vlm_client as vc
+    import curation.dataset_level.caption as cap
+    calls = {"caption": 0}
+
+    def _captioner(groups):
+        calls["caption"] += 1
+        return "pour rice into the green bowl"
+    for same in (False, True):
+        calls["caption"] = 0
+        # 判官 unclear:让仲裁弃权,才看得见"护栏拦下→进人工"这一步(判官 yes 时双意图
+        # 两遍都判完成会被仲裁救回,那是正确行为但不是本测试要钉的)
+        _patch_vlm_factories(monkeypatch, judge_answer="unclear")
+        monkeypatch.setattr(vc, "make_endstate_voter",
+                            lambda *a, **k: (lambda s, e, label, d: "no"))
+        monkeypatch.setattr(vc, "make_intent_comparer",
+                            lambda *a, **k: (lambda a_, b_, _s=same: _s))
+        monkeypatch.setattr(cap, "make_vlm_captioner", lambda *a, **k: _captioner)
+        results, _ = _run_task_check(_funnel_cfg(arbitration_enable=True))
+        for e, r in results.items():
+            d = r["detail"]
+            if d.get("task_desc_source") != "原始标注":
+                pytest.skip("pusht 条目非原始标注,护栏不适用")
+            if same:
+                assert r["passed"] is False, e
+                assert "label_agrees_kill_kept" in d["rules"]
+                assert "arbitration" not in d                # 判废不进仲裁
+            else:
+                assert r["passed"] is None, e
+                assert d["verdict"] == "label_conflict_suspect"
+                assert "kill_held_label_conflict" in d["rules"]
+                assert d["label_check"]["outcome"] == "different"
+                assert d["arbitration"]["intent_conflict"] is True   # 双意图链跑了
+                assert d["arbitration"]["final"] == "abstain"
+        # caption 每条只打一次(护栏打的,仲裁复用不重打)
+        assert calls["caption"] == len(results)
 
 
 def _funnel_cfg(arbitration_enable: bool) -> dict:
@@ -460,15 +503,16 @@ def _run_task_check(cfg):
 
 @pytest.mark.skipif(_pusht_missing, reason="pusht 数据未下载")
 def test_funnel_disabled_keeps_todays_behavior(monkeypatch):
-    """enable:false = 完全退回今天的行为:弃权条目维持弃权(score_blind),
+    """enable:false = 完全退回今天的行为:弃权条目维持弃权(失败候选缺第二签),
     detail 里不出现任何 arbitration 痕迹,stats 也没有 arbitration 键——
     仲裁代码一行都没执行(与改动前逐字节等价的可回归锚点)。"""
     _patch_vlm_factories(monkeypatch)
     results, stats = _run_task_check(_funnel_cfg(arbitration_enable=False))
     assert "arbitration" not in stats
     for e, r in results.items():
-        assert r["passed"] is None, e                   # 全平低位=弃权,复核也救不回
-        assert r["detail"].get("verdict") == "score_blind"
+        assert r["passed"] is None, e                   # 失败候选×复核 unclear=缺第二签
+        assert r["detail"].get("verdict") == "failure"
+        assert "kill_missing_second_signature" in r["detail"].get("rules", [])
         assert "arbitration" not in r["detail"]
         assert not any(x.startswith("arbitration") for x in r["detail"].get("rules", []))
 

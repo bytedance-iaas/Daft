@@ -370,5 +370,5 @@ def test_data_items_are_never_deferred_and_wait_prints_heartbeat(
     assert deferred == [], "数据件被挂账了——它是交付本体,只能等或超时警告"
     assert clock["t"] >= 120, "数据件没等到整体上限就放弃了"
     out = capsys.readouterr().out
-    assert "回验超时" in out
+    assert "核验超时" in out
     assert "还差" in out and "正常等待" in out, "等待期间没有心跳"
