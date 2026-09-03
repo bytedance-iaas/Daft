@@ -613,6 +613,20 @@ def run_pipeline(
         _rob_str = f"{_rt}(未注册规格表)"
     print(f"[curation] 数据集: {os.path.basename(input_dir.rstrip('/'))} | "
           f"机器人: {_rob_str} | {len(rows)} 条", flush=True)
+    # 动作语义摘要(2026-09-02 预检):报告里印一行人话——含义是什么、来源是登记/系统判断/
+    # 没把握、要不要人管。数据源就是摄入时挂在行上的语义字段。
+    if rows:
+        try:
+            _ex0 = json.loads(str(rows[0].get("semantics_extras") or "{}"))
+        except Exception:  # noqa: BLE001
+            _ex0 = {}
+        _robot["semantics"] = {
+            "action_space": str(rows[0].get("action_space") or ""),
+            "control_mode": str(rows[0].get("control_mode") or ""),
+            "proprio_space": str(rows[0].get("proprio_space") or ""),
+            "source": str(rows[0].get("semantics_source") or ""),
+            "profile_name": str(_ex0.get("profile_name") or ""),
+            "preflight": _ex0.get("semantics_preflight") or {}}
     if input_format == "rrd" and not embodiment_id and _rt == "unknown":
         # RRD 标准里没有 robot_type 字段,但属性内嵌/溯源回填后 _rt 可能已有值 ——
         # 只有三条路都空才提示。提前一行说清出路,别等漏斗里抛"未知 embodiment_id"。
@@ -978,19 +992,30 @@ def run_pipeline(
         report["dataset"]["skill_profile_note"] = profile_note
     if dedup_note:
         report["dataset"]["dedup_note"] = dedup_note
+    # 任务成败线的判定与 detail(下面两处共用):分歧清单叠成败线、判废护栏条目汇总
+    _task_of, _task_detail = {}, {}
+    for _e, _pe in per_episode.items():
+        _ts = (_pe.get("checks") or {}).get("task_success")
+        if _ts is None:
+            continue
+        try:
+            _d = json.loads(_ts.get("detail") or "{}")
+        except Exception:  # noqa: BLE001
+            _d = {}
+        _task_detail[_e] = _d
+        _task_of[_e] = {"passed": _ts.get("passed"), "verdict": _d.get("verdict", "")}
+    # 判废护栏(复核层/仲裁层)拦下的条目并进分歧清单(2026-09-03 用户定):带护栏当时用的
+    # caption 与结论,顶掉画像段对同一条的重打重判——两个入口一把尺子。纯函数在 audit。
+    from ..dataset_level.audit import guard_hold_entries, merge_guard_holds
+    _holds = guard_hold_entries(_task_detail)
+    if _holds:
+        label_audit = merge_guard_holds(label_audit, _holds)
+        print(f"[curation] 判废护栏拦下 {len(_holds)} 条并入标注-画面分歧清单:"
+              f"{[h['id'] for h in _holds]}", flush=True)
     if label_audit is not None:
         # A∧B 分层:分歧条目带上成败线判定(重点=两线同时不利;参考=成败线放行,
         # 多为难视角 caption 噪声)。纯函数在 audit.attach_task_context,此处只做提取。
         from ..dataset_level.audit import attach_task_context
-        _task_of = {}
-        for _e, _pe in per_episode.items():
-            _ts = (_pe.get("checks") or {}).get("task_success")
-            if _ts is not None:
-                try:
-                    _v = json.loads(_ts.get("detail") or "{}").get("verdict", "")
-                except Exception:  # noqa: BLE001
-                    _v = ""
-                _task_of[_e] = {"passed": _ts.get("passed"), "verdict": _v}
         report["label_audit"] = attach_task_context(label_audit, _task_of)
     # 人工裁决要看的视频片段(2026-08-05 用户定;2026-08-06 扩到弃权条目):
     # ① 标注分歧队列三层全导(裁决面板逐条翻页,每条都可能被看);

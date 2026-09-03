@@ -267,6 +267,67 @@ def retier_by_caption_stability(audit: dict, recaps_by_id: dict[str, list[str]],
     return out
 
 
+def judge_pair(annotation: str, caption: str, llm_ask: LlmAsk) -> tuple[str, str]:
+    """单对判官:→ (verdict, why),verdict ∈ same/different/unsure/garbage。
+    与 audit_labels 同一把尺子(PAIR_JUDGE_PROMPT,droid-200 人工裁决校准),
+    供判废护栏/仲裁按条调用;结构不符即抛,调用方决定从严还是留痕。"""
+    got = _judge_pairs([(0, str(annotation), str(caption))], llm_ask, chunk=1)
+    return got[0]
+
+
+def make_pair_comparer(llm_ask: LlmAsk) -> Callable[[str, str], bool]:
+    """same_task(annotation, caption) -> bool,给判废护栏与仲裁用(2026-09-03 统一尺子:
+    此前仲裁自带一条 SAME/DIFFERENT 短提示比对器,与打标审计各判各的)。
+    映射从严:只有 same 算同一任务;different / unsure / garbage 都算不是。"""
+    def same(annotation: str, caption: str) -> bool:
+        verdict, _why = judge_pair(annotation, caption, llm_ask)
+        return verdict == "same"
+    return same
+
+
+#: 判废护栏拦下的条目在分歧清单里的 reason 前缀(报告/UI 据此识别来源)
+GUARD_REASON_PREFIX = "分歧(判废护栏"
+
+
+def guard_hold_entries(task_of_detail: dict) -> list[dict]:
+    """从任务成败 detail({episode_id: detail dict})提取被判废护栏拦下的条目
+    (verdict == label_conflict_suspect),做成分歧清单条目。纯数据函数。
+
+    caption 取护栏/仲裁当时用的那条(不让画像段再重打重判),层别按 rules 判:
+    仲裁层 = arbitration_kill_held_label_conflict,否则复核层。"""
+    out = []
+    for eid, d in sorted(task_of_detail.items()):
+        if not isinstance(d, dict) or d.get("verdict") != "label_conflict_suspect":
+            continue
+        lc = d.get("label_check") or {}
+        arb = d.get("arbitration") or {}
+        label = lc.get("annotation") or arb.get("intent") or ""
+        caption = lc.get("caption") or arb.get("caption") or ""
+        layer = ("仲裁层" if "arbitration_kill_held_label_conflict" in (d.get("rules") or [])
+                 else "复核层")
+        out.append({"id": eid, "label": label, "caption": caption,
+                    "reason": f"{GUARD_REASON_PREFIX}·{layer}):按标注判未完成,但标注与"
+                              "画面描述不是同一任务——不判废,转人工核标注",
+                    "guard_layer": layer, "caption_stable": False})
+    return out
+
+
+def merge_guard_holds(audit: dict | None, holds: list[dict]) -> dict | None:
+    """把判废护栏条目并进分歧清单:同 id 的画像段条目(各层)先剔除,护栏条目进 high 档
+    并排最前。holds 为空 → 原样返回(含 None)。纯数据函数。"""
+    if not holds:
+        return audit
+    base = {"high": [], "mid_for_review": [], "low_caption_unstable": []}
+    if audit:
+        base.update({k: (list(v) if isinstance(v, list) else v) for k, v in audit.items()})
+    ids = {h["id"] for h in holds}
+    for tier, entries in base.items():
+        if isinstance(entries, list):
+            base[tier] = [e for e in entries if e.get("id") not in ids]
+    base["high"] = list(holds) + base["high"]
+    return base
+
+
 def attach_task_context(audit: dict, task_of: dict) -> dict:
     """A∧B 分层(2026-08-05,纯数据函数):给每条分歧带上任务成败线的判定。
 

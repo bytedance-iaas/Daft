@@ -198,6 +198,12 @@ def run_funnel(
             prof = registry.get(embodiment_id)
             from ..core.contract import CheckResult as _CR
 
+            # B0(2026-09-02 预检):动作含义没把握 → 不硬猜,弃权并说清
+            if str(action_space) == "unknown":
+                return result_to_struct(_CR(
+                    name="kinematic_limits", passed=None,
+                    detail={"reason": "动作数据的含义无法判断(既不像关节角也不像末端指令),"
+                                      "未做极限对照;请提供动作定义或登记数据集格式"}))
             # B2:关节增量指令无绝对角可对照极限 → 诚实弃权(而非静默空转)
             if str(control_mode) == "delta" and str(action_space) != "ee":
                 return result_to_struct(_CR(
@@ -626,12 +632,12 @@ def run_funnel(
                 res.detail["label_check"] = {"outcome": f"error:{type(e).__name__}"}
 
         def _arbitrate(res, cam_frames, cam_ts, task_desc, task_src,
-                       action, timestamps, embodiment_id):
+                       action, timestamps, embodiment_id, cam_hints=None):
             """弃权条目 → 取证仲裁链(判定本体在 core.arbitration_review 纯函数)。
 
-            意图 = 自产 caption:漏斗前为无标注条目补过的直接复用(task_desc 此时
-            本来就是 caption);标注条目在这里现打一条 —— **复用已解码的 cam_frames**,
-            不再碰视频(M7 的 caption 阶段在漏斗之后,此刻还不存在)。
+            意图 = 原始标注(有)否则自产 caption(2026-09-02 与打分/复核对齐)。标注条目
+            仍现打一条 caption —— 只用于"标注与画面描述是否一致"的留痕,**复用已解码的
+            cam_frames**,不再碰视频。
             仲裁链自身的任何异常只写进留痕,绝不拖垮判定主链。
             """
             from ..core.checks.task_success import arbitration_review
@@ -644,7 +650,7 @@ def run_funnel(
                     caption = str(res.detail["label_check"]["caption"])
                     cap_src = "自产caption(判废护栏)"
                 else:
-                    # 留空触发 arbitration_review 的 no_caption 弃权
+                    # caption 只用于标注一致性留痕;意图按标注问(2026-09-02)
                     caption, cap_src = _caption_now(cam_frames), "自产caption(仲裁时)"
                 annotation = str(task_desc) if src == "原始标注" else ""
                 # 夹爪信号:列下标走 registry 的 gripper_dims(不硬编码数据集布局);
@@ -665,13 +671,14 @@ def run_funnel(
                     gripper=gr, gripper_ts=gts,
                     question_writer=arb_deps["question_writer"],
                     grounder=arb_deps["grounder"], judge=arb_deps["judge"],
-                    same_task=arb_deps["same_task"], **arb_deps["params"])
+                    same_task=arb_deps["same_task"], cam_hints=cam_hints,
+                    **arb_deps["params"])
             except Exception as e:  # noqa: BLE001
                 res.detail["arbitration"] = {
                     "applied": False, "error": f"{type(e).__name__}: {e}"}
 
         def _task_check_sync(video, task_desc, task_src, fps,
-                             action, timestamps, embodiment_id):
+                             action, timestamps, embodiment_id, semantics_extras=""):
             from ..adapters.decode import decode_window
             from ..core.contract import CheckResult
 
@@ -700,14 +707,24 @@ def run_funnel(
                 return result_to_struct(res)
             nmin = min(len(f) for f in cam_frames.values())    # 各路对齐到最短(同步误差≤1帧)
             names = list(cam_frames)
-            mv = [[(n, cam_frames[n][i]) for n in names] for i in range(nmin)]
+            # 相机朝向提示(2026-09-02 左右镜像):任务含左右词时按 profile 声明的朝向,把一句
+            # 提示挂在该相机的标签上,打分/复核/仲裁三层同一份(core/checks/camera_view.py)
+            from ..core.checks.camera_view import camera_hints
+            try:
+                _views = (json.loads(str(semantics_extras) or "{}") or {}).get("cameras") or {}
+            except Exception:  # noqa: BLE001
+                _views = {}
+            cam_hints = camera_hints(_views, str(task_desc), names)
+            _lbl = {n: (f"{n}; {cam_hints[n]}" if n in cam_hints else n) for n in names}
+            mv = [[(_lbl[n], cam_frames[n][i]) for n in names] for i in range(nmin)]
             res = task_success(mv, task_desc, vlm_completion, **p_task)
             res.detail["task_desc"] = str(task_desc)[:80]
             res.detail["task_desc_source"] = str(task_src)
             res.detail["cams"] = names
             # ---- 复核:逐机位独立投票(协议本体在 core.endstate_review 纯函数)----
             res = endstate_review(res, str(task_desc), cam_voter, cam_frames,
-                                  endstate_frames=endstate_frames)
+                                  endstate_frames=endstate_frames,
+                                  cam_hints=cam_hints or None)
             # ---- 判废护栏(2026-09-02):指令来自原始标注的判废,先核标注是不是错题 ----
             if arb_deps is not None and res.passed is False and str(task_src) == "原始标注":
                 _label_guard(res, cam_frames, task_desc)
@@ -715,7 +732,7 @@ def run_funnel(
             #      拦下的疑似标注错也走这里的双意图核验),复用已解码的 cam_frames ----
             if arb_deps is not None and res.passed is None:
                 _arbitrate(res, cam_frames, cam_ts, task_desc, task_src,
-                           action, timestamps, embodiment_id)
+                           action, timestamps, embodiment_id, cam_hints or None)
             _progress_tick(_pk_vlm)
             return result_to_struct(res)
 
@@ -734,7 +751,7 @@ def run_funnel(
 
         @daft.func(return_dtype=_result_dtype())
         async def task_check(video, task_desc, task_src, fps,
-                             action, timestamps, embodiment_id):
+                             action, timestamps, embodiment_id, semantics_extras=""):
             import asyncio
             import os
             import sys
@@ -744,7 +761,7 @@ def run_funnel(
                 if not os.environ.get("CURATION_DEBUG_CONCURRENCY"):
                     return await asyncio.to_thread(
                         _task_check_sync, video, task_desc, task_src, fps,
-                        action, timestamps, embodiment_id)
+                        action, timestamps, embodiment_id, semantics_extras)
 
                 from ..adapters.vlm_client import http_stats
 
@@ -754,7 +771,7 @@ def run_funnel(
                 try:
                     return await asyncio.to_thread(
                         _task_check_sync, video, task_desc, task_src, fps,
-                        action, timestamps, embodiment_id)
+                        action, timestamps, embodiment_id, semantics_extras)
                 finally:
                     _INFLIGHT["n"] -= 1
                     n_req, s_req = http_stats()
@@ -771,7 +788,8 @@ def run_funnel(
             col("task_desc") if "task_desc" in df.column_names else col("instruction"),
             col("task_desc_source") if "task_desc_source" in df.column_names
             else lit("原始标注"),
-            col("fps"), col("action"), col("timestamps"), col("embodiment_id")))
+            col("fps"), col("action"), col("timestamps"), col("embodiment_id"),
+            col("semantics_extras") if "semantics_extras" in df.column_names else lit("{}")))
         df = df.collect()                     # ⚡ 物化:task_success(VLM,最贵)只跑一遍
 
         if arb_deps is not None:

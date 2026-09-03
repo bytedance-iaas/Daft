@@ -120,6 +120,50 @@ def _infer_action_space(info: dict) -> str:
     return "ee" if flat & _EE_NAMES else "joint"
 
 
+def _load_tasks_map(dataset_dir: str) -> dict[int, str]:
+    """meta/tasks.parquet → {task_index: 任务文本}。官方 v3 写法:任务文本是索引、
+    task_index 是列;兼容 task/task_index 两列的写法。没有文件 → 空。"""
+    p = dsfs.join(dataset_dir, "meta", "tasks.parquet")
+    if not dsfs.exists(p):
+        return {}
+    t = dsfs.read_parquet(p)
+    if "task_index" not in t.columns:
+        return {}
+    if "task" in t.columns:
+        return {int(i): str(s) for i, s in zip(t["task_index"], t["task"])}
+    return {int(i): str(s) for s, i in zip(t.index, t["task_index"])}
+
+
+def _v3_task_index_of(dataset_dir: str, info: dict, ep_meta: pd.DataFrame) -> dict[int, int]:
+    """episodes 表缺 tasks 列时的回退(2026-09-02 libero 教训:v3 规范里 tasks 列可选,
+    转换器没写它,标注全被读成空 → 系统报"全员缺标注"):按 (chunk,file) 分组只裁两列读
+    data parquet → {episode_index: 该条首帧的 task_index}。"""
+    out: dict[int, int] = {}
+    for (chunk, file), _ in ep_meta.groupby(["data/chunk_index", "data/file_index"]):
+        path = dsfs.join(dataset_dir, info["data_path"].format(
+            chunk_index=int(chunk), file_index=int(file)))
+        try:
+            d = dsfs.read_parquet(path, columns=["episode_index", "task_index"])
+        except Exception:  # noqa: BLE001  该文件没有 task_index 列/读失败 → 这批留空
+            continue
+        first = d.groupby("episode_index")["task_index"].first()
+        out.update({int(k): int(v) for k, v in first.items()})
+    return out
+
+
+def _v3_instruction(ep, tasks_map: dict | None = None, task_index=None) -> str:
+    """标注文本:优先 episodes 表的 tasks 列;没有就 task_index → tasks.parquet。"""
+    tasks = ep.get("tasks") if hasattr(ep, "get") else None
+    if tasks is not None and len(tasks):
+        return str(tasks[0])
+    if tasks_map and task_index is not None:
+        try:
+            return str(tasks_map.get(int(task_index), ""))
+        except (TypeError, ValueError):
+            return ""
+    return ""
+
+
 def _load_episodes_meta(dataset_dir: str) -> pd.DataFrame:
     """meta/episodes/chunk-*/file-*.parquet → 每 episode 一行的边界表。"""
     paths = dsfs.glob(dsfs.join(dataset_dir, "meta", "episodes", "chunk-*", "file-*.parquet"))
@@ -271,6 +315,7 @@ def _rows_v3_group(dataset_dir: str, info: dict, grp: pd.DataFrame) -> list[dict
         dataset_dir, info["data_path"].format(chunk_index=chunk, file_index=file))
     df = dsfs.read_parquet(data_path)
     state_key = "observation.state" if "observation.state" in info["features"] else None
+    tasks_map: dict | None = None          # 只有 episodes 表缺 tasks 时才读 tasks.parquet
 
     rows: list[dict] = []
     for _, ep in grp.iterrows():
@@ -279,8 +324,11 @@ def _rows_v3_group(dataset_dir: str, info: dict, grp: pd.DataFrame) -> list[dict
         assert len(frames) == int(ep["length"]), (
             f"episode {ep['episode_index']} 切片长度 {len(frames)} != meta length {ep['length']}")
 
-        tasks = ep.get("tasks")
-        instruction = str(tasks[0]) if tasks is not None and len(tasks) else ""
+        instruction = _v3_instruction(ep)
+        if not instruction and "task_index" in frames.columns:
+            if tasks_map is None:
+                tasks_map = _load_tasks_map(dataset_dir)
+            instruction = _v3_instruction(ep, tasks_map, frames["task_index"].iloc[0])
 
         rows.append({
             "episode_id": f"ep{int(ep['episode_index']):06d}",
@@ -321,7 +369,7 @@ def _episode_rows_v3(dataset_dir: str, info: dict, max_episodes: int | None = No
 # ---------------------------------------------------------------------------
 
 def resolve_dataset_semantics(info: dict, sample_rows: list[dict],
-                              dataset_name: str = ""):
+                              dataset_name: str = "", embodiment_id: str | None = None):
     """数据集语义:profile 命中→权威声明;否则数值指纹推断+采样多数票。
 
     sample_rows: 用于指纹/多数票的样本行(前 SEMANTICS_VOTE_EPISODES 条足够——
@@ -333,9 +381,67 @@ def resolve_dataset_semantics(info: dict, sample_rows: list[dict],
     if sem.source == "inferred":
         sem.control_mode = infer_control_mode_majority(
             sample_rows[:SEMANTICS_VOTE_EPISODES])
+    # 动作语义预检(2026-09-02):profile 没命中 → 用样本数据验假设,取代"字段名猜";
+    # 命中 → 只做核对留痕。结论与证据放 extras["semantics_preflight"],报告印一行人话。
+    sem = _apply_preflight(sem, info, sample_rows[:SEMANTICS_VOTE_EPISODES], embodiment_id)
     # 速度域标定(2026-09-02):同一批样本行顺手把执行器饱和的增益/延迟/基线标了
     from .dataset_semantics import attach_velocity_calibration
     return attach_velocity_calibration(sem, sample_rows[:SEMANTICS_VOTE_EPISODES])
+
+
+def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: str | None = None):
+    """跑预检:inferred → 有把握就采纳(action/proprio 空间、控制模式、夹爪列),没把握就
+    标 unknown(下游依赖语义的检查弃权而不是硬猜);profile → 只记一致与否。"""
+    if not sample_rows:
+        return sem
+    from .semantics_preflight import agrees_with, preflight
+    limits = dof = None
+    hint: tuple = ()
+    try:
+        from ..registry.registry import EmbodimentRegistry
+        # 用户指定的本体优先(pusht 的 info 里 robot_type=unknown,只能靠 --embodiment-id)
+        prof = EmbodimentRegistry().get(str(embodiment_id or info.get("robot_type") or ""))
+        limits, dof, hint = prof.joint_limits, prof.dof, tuple(prof.gripper_dims or ())
+    except Exception:  # noqa: BLE001  未注册本体:没有极限可验,只靠状态列
+        pass
+    names = _action_names_flat(info)
+    names_hint = "ee" if set(names) & _EE_NAMES else ("joint" if any(
+        n.startswith(("joint", "motor", "j")) for n in names) else None)
+    try:
+        pf = preflight(sample_rows, joint_limits=limits, dof=dof, gripper_hint=hint,
+                       names_hint=names_hint)
+    except Exception as e:  # noqa: BLE001  预检自身异常不拖垮摄入
+        pf = {"status": "error", "error": f"{type(e).__name__}: {e}"}
+    extras = dict(sem.extras or {})
+    if sem.source == "profile":
+        pf["agrees_with_profile"] = agrees_with(pf, sem) if pf.get("status") != "error" else None
+    elif pf.get("status") == "confident":
+        sem.action_space = pf["action_space"]
+        sem.proprio_space = pf["proprio_space"]
+        sem.control_mode = pf["control_mode"]
+        if not sem.gripper_dims and pf.get("gripper_dims"):
+            sem.gripper_dims = tuple(pf["gripper_dims"])
+        if sem.action_space == "ee" and not sem.angle_dims:
+            a0 = np.asarray(sample_rows[0]["action"])
+            if a0.ndim == 2 and a0.shape[1] >= 6:
+                sem.angle_dims, sem.euler_triplet = (3, 4, 5), True
+        sem.source = "preflight"
+    elif pf.get("status") in ("ambiguous", "none"):
+        sem.action_space = sem.proprio_space = sem.control_mode = "unknown"
+        sem.source = "preflight_unknown"
+    pf.pop("gripper_dims", None)
+    extras["semantics_preflight"] = pf
+    if sem.profile_name:
+        extras["profile_name"] = sem.profile_name
+    sem.extras = extras
+    return sem
+
+
+def _action_names_flat(info: dict) -> set:
+    names = info.get("features", {}).get("action", {}).get("names") or []
+    if isinstance(names, dict):
+        names = next(iter(names.values()), [])
+    return {str(n).lower() for n in names}
 
 
 def _attach_semantics(rows: list[dict], sem, embodiment_id: str | None = None) -> None:
@@ -351,7 +457,10 @@ def _attach_semantics(rows: list[dict], sem, embodiment_id: str | None = None) -
         r["stuck_strategy"] = sem.stuck_strategy
         r["unit"] = sem.unit
         r["semantics_source"] = sem.source
-        r["semantics_extras"] = json.dumps(sem.extras or {}, ensure_ascii=False)
+        _ex = dict(sem.extras or {})
+        if getattr(sem, "cameras", None):
+            _ex["cameras"] = dict(sem.cameras)      # 相机朝向随 extras 列流到判定层
+        r["semantics_extras"] = json.dumps(_ex, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +501,7 @@ def read_lerobot_rows(
     # 数据集语义:profile 命中→权威声明;否则数值指纹推断(见 dataset_semantics)。
     # control_mode 是数据集约定(非单条属性),profile 未命中时用采样多数票兜底。
     sem = resolve_dataset_semantics(
-        info, rows, os.path.basename(str(dataset_dir).rstrip("/")))
+        info, rows, os.path.basename(str(dataset_dir).rstrip("/")), embodiment_id)
     _attach_semantics(rows, sem, embodiment_id)
     if validate:
         validate_rows(rows)
@@ -422,13 +531,22 @@ def read_lerobot_meta(
     skipped: list[int] = []
     if version.startswith("v3"):
         ep_meta = _v3_ep_meta(dataset_dir, max_episodes, episode_indices=episode_indices)
+        # episodes 表缺 tasks 列 → 回退到 data.task_index → tasks.parquet(只裁两列读)
+        _tidx: dict[int, int] = {}
+        _tmap: dict[int, str] = {}
+        if any(not _v3_instruction(ep) for _, ep in ep_meta.iterrows()):
+            _tmap = _load_tasks_map(dataset_dir)
+            if _tmap:
+                _tidx = _v3_task_index_of(dataset_dir, info, ep_meta)
+                _n = sum(1 for e in ep_meta["episode_index"] if int(e) in _tidx)
+                print(f"[curation] episodes 表没有任务文本,按 data.task_index → meta/tasks.parquet "
+                      f"回填标注:{_n}/{len(ep_meta)} 条", flush=True)
         for _, ep in ep_meta.iterrows():
-            tasks = ep.get("tasks")
             metas.append({
                 "episode_id": f"ep{int(ep['episode_index']):06d}",
                 "episode_index": int(ep["episode_index"]),
                 "embodiment_id": str(info.get("robot_type") or "unknown"),
-                "instruction": str(tasks[0]) if tasks is not None and len(tasks) else "",
+                "instruction": _v3_instruction(ep, _tmap, _tidx.get(int(ep["episode_index"]))),
                 "video": _v3_video_pointers(dataset_dir, info, ep),
                 "fps": float(info["fps"]),
                 "length": int(ep["length"]),
@@ -456,16 +574,26 @@ def read_lerobot_meta(
     # 语义解析:profile 命中零数据读;inferred 才读采样 episode 的 action。
     # 例外(2026-09-02):末端速度/增量指令 × 末端读数的数据集(如 droid,恰好都是 profile
     # 命中的)要用样本行标定速度域增益——不读样本,执行器饱和就永远"不适用"。
-    sample: list[dict] = []
+    # meta 路(跑批入口)总是读样本:profile 命中也要用数据核对声明(2026-09-02 预检),
+    # 并做速度域标定;只读 parquet 数值列,KB-MB 级。懒读 DataSource 那边保持
+    # "profile 命中零数据读"(其语义只用于检查分派,声明本身就够)。
+    n_sample = (min(SEMANTICS_VOTE_EPISODES, max_episodes)
+                if max_episodes else SEMANTICS_VOTE_EPISODES)
     from .dataset_semantics import needs_velocity_calibration, resolve_semantics
-    _sem0 = resolve_semantics(info, None)
-    if _sem0.source != "profile" or needs_velocity_calibration(_sem0):
-        n_sample = (min(SEMANTICS_VOTE_EPISODES, max_episodes)
-                    if max_episodes else SEMANTICS_VOTE_EPISODES)
+    _sem0 = resolve_semantics(info, None, os.path.basename(str(dataset_dir).rstrip("/")))
+    try:
         sample = read_lerobot_rows(dataset_dir, max_episodes=n_sample,
-                                   validate=False, skip_missing=skip_missing)
+                                   validate=False, skip_missing=skip_missing,
+                                   embodiment_id=embodiment_id)
+    except Exception as e:  # noqa: BLE001
+        # 只有 meta 没有数据文件(如 RRD 溯源回填只借源数据集的标注)时,profile 命中的
+        # 数据集不需要样本(核对/标定缺席即可);没命中的没样本就判不了语义,响亮失败。
+        if _sem0.source == "profile" and not needs_velocity_calibration(_sem0):
+            sample = []
+        else:
+            raise
     sem = resolve_dataset_semantics(
-        info, sample, os.path.basename(str(dataset_dir).rstrip("/")))
+        info, sample, os.path.basename(str(dataset_dir).rstrip("/")), embodiment_id)
     _attach_semantics(metas, sem, embodiment_id)
     return metas
 

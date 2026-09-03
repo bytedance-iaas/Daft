@@ -313,11 +313,12 @@ def read_json(path: str):
         return json.load(f)
 
 
-def read_parquet(path: str):
+def read_parquet(path: str, columns: list[str] | None = None):
+    """columns=只取这几列(parquet 列裁剪;远端仍整对象取回,但解码只解这几列)。"""
     import pandas as pd
     if not is_remote(path):
-        return pd.read_parquet(path)
-    return pd.read_parquet(io.BytesIO(read_bytes(path)))
+        return pd.read_parquet(path, columns=columns)
+    return pd.read_parquet(io.BytesIO(read_bytes(path)), columns=columns)
 
 
 def mtime_key(path: str):

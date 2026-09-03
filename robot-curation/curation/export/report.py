@@ -337,6 +337,38 @@ def _sync_soft_sections(lines: list, sh: dict) -> None:
         lines.extend(_sync_camera_lines(rest, cap=30))
 
 
+_SPACE_CN = {"ee": "末端", "joint": "关节", "unknown": "无法判断"}
+_ACTION_CN = {("ee", "velocity"): "末端速度指令", ("ee", "delta"): "末端位移增量",
+              ("ee", "absolute"): "末端目标位姿", ("joint", "absolute"): "关节角",
+              ("joint", "delta"): "关节增量", ("joint", "velocity"): "关节速度"}
+_STATE_CN = {"ee": "末端位姿", "joint": "关节角"}
+
+
+def semantics_line(sem: dict | None) -> str:
+    """动作含义一行人话(2026-09-02 用户定稿的四版):已登记 / 系统判断 / 无法判断 / 声明与数据打架。"""
+    if not sem:
+        return ""
+    src = str(sem.get("source") or "")
+    pf = sem.get("preflight") or {}
+    act = _ACTION_CN.get((sem.get("action_space"), sem.get("control_mode")),
+                         f"{_SPACE_CN.get(sem.get('action_space'), sem.get('action_space'))}指令")
+    st = _STATE_CN.get(sem.get("proprio_space"), "")
+    st_part = f" / 状态:{st}" if st else ""
+    fit = pf.get("fit")
+    fit_s = f"{float(fit):.2f}" if isinstance(fit, (int, float)) else "?"
+    if src == "profile":
+        prof = (sem.get("profile_name") or "").replace(".yaml", "")
+        if pf.get("agrees_with_profile") is False:
+            return (f"- **动作含义**: 按登记为{act}{st_part},但与数据吻合度仅 {fit_s},"
+                    "请核对数据集版本")
+        return f"- **动作含义**: {act}{st_part}(已登记格式 {prof})"
+    if src == "preflight":
+        return (f"- **动作含义**: {act}{st_part}(系统判断,吻合度 {fit_s};如不符请登记格式)")
+    if src == "preflight_unknown" or sem.get("action_space") == "unknown":
+        return "- **动作含义**: 无法判断——已跳过运动学与相关运动质量项,请提供动作定义"
+    return f"- **动作含义**: {act}{st_part}(按字段名推断)"
+
+
 def to_markdown(report: dict) -> str:
     d = report["dataset"]
     rb = report.get("机器人") or {}
@@ -345,6 +377,9 @@ def to_markdown(report: dict) -> str:
         _rb_line = (f"- **机器人型号**: {rb.get('robot_type')}"
                     f"(规格表: {rb.get('registry_profile')}"
                     f"{',质量 ' + str(rb.get('quality')) if rb.get('quality') else ''})")
+        _sem_line = semantics_line(rb.get("semantics"))
+        if _sem_line:
+            _rb_line += "\n" + _sem_line
     _drop_items, _drop_overlap = drop_breakdown(d)
     _identity = ("输入 = 判废 + 精确去重删除 + 交付" if d.get("dedup_removed")
                  else "输入 = 判废 + 交付")

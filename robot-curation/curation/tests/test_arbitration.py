@@ -183,34 +183,39 @@ def test_line_verdict_plurality():
 
 # ───────── 底线②:意图打架护栏 ─────────
 
-def test_intent_conflict_both_agree_adopts():
-    """标注与 caption 语义不同 → 双意图各跑一遍,两遍结论相同才自动判。
-    (护栏实测价值:去掉它冤杀 17→26。)"""
+def test_annotation_is_the_intent_when_present():
+    """2026-09-02 撤双意图:有原始标注就只按标注问(与打分/复核对齐);caption 与标注不
+    一致只留痕(intent_conflict),不再双跑、不再当门槛。"""
+    calls = []
+
+    def qw(intent):
+        calls.append(intent)
+        return _qw()(intent)
+
     judge = FakeJudge({VAL_A: ["yes"] * 9, VAL_B: ["yes"] * 9, VAL_W: ["yes"] * 9})
-    r = _arb(_res(), judge, annotation="wipe the counter",
+    r = _arb(_res(), judge, qw=qw, annotation="wipe the counter",
              same_task=lambda a, b: False)
     assert r.passed is True
     arb = r.detail["arbitration"]
-    assert arb["intent_conflict"] is True
-    assert arb["annotation_run"]["intent"] == "wipe the counter"
+    assert arb["intent"] == "wipe the counter" and arb["intent_source"] == "原始标注"
+    assert arb["intent_conflict"] is True and "annotation_run" not in arb
+    assert calls == ["wipe the counter"]           # 只按标注跑了一遍
 
 
-def test_intent_conflict_disagree_abstains():
-    """双意图结论不同 → 维持弃权:判官对 caption 问题喊 yes、对标注问题喊 no,
-    说明两种意图下这条数据成败对立,自动判必错一头。judge 靠 verify_question
-    里带的意图原文区分两轮(问题生成器把意图写进问句)。"""
+def test_caption_no_longer_decides_when_annotation_exists():
+    """判官对 caption 问题喊 yes、对标注问题喊 no:以前双意图不一致→弃权;现在只问标注 →
+    按标注的结论走(1 路 no 孤证降级弃权,不会被 caption 那声 yes 救回)。"""
     class SplitJudge:
         def __call__(self, imgs, *, target, question, scene):
             return "yes" if "put the cup in the sink" in question else "no"
 
     r = _arb(_res(), SplitJudge(), annotation="wipe the counter",
              same_task=lambda a, b: False)
-    assert r.passed is None and r.detail["verdict"] == "uncertain"
-    assert r.detail["arbitration"]["applied"] is False
+    assert r.passed is not True
+    assert r.detail["arbitration"]["intent"] == "wipe the counter"
 
 
-def test_intent_same_runs_single_chain():
-    """语义比对判 SAME → 单链(措辞不同不算打架,别为同一个任务烧两倍钱)。"""
+def test_caption_used_only_without_annotation():
     calls = []
 
     def qw(intent):
@@ -218,35 +223,112 @@ def test_intent_same_runs_single_chain():
         return _qw()(intent)
 
     judge = FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["yes"] * 3, VAL_W: ["yes"] * 3})
-    r = _arb(_res(), judge, qw=qw, annotation="place the cup into the sink",
-             same_task=lambda a, b: True)
-    assert r.passed is True
-    assert len(calls) == 1                 # 只按 caption 跑了一遍
+    r = _arb(_res(), judge, qw=qw, annotation="", same_task=lambda a, b: True)
+    assert r.passed is True and calls == ["put the cup in the sink"]
+    assert r.detail["arbitration"]["intent_source"].startswith("自产caption")
     assert r.detail["arbitration"]["intent_conflict"] is False
 
 
-def test_comparer_failure_treated_as_conflict():
-    """语义比对器失败/不可用 → 按打架从严(宁可双跑,不省护栏)。"""
+def test_comparer_failure_only_marks_trace():
+    """语义比对器失败 → 只把 intent_conflict 记为 True 并说明,判定照常单链。"""
     def broken(a, b):
         raise RuntimeError("boom")
 
     judge = FakeJudge({VAL_A: ["yes"] * 9, VAL_B: ["yes"] * 9, VAL_W: ["yes"] * 9})
     r = _arb(_res(), judge, annotation="wipe the counter", same_task=broken)
-    assert r.detail["arbitration"]["intent_conflict"] is True
-    assert "annotation_run" in r.detail["arbitration"]
+    arb = r.detail["arbitration"]
+    assert arb["intent_conflict"] is True and "语义比对失败" in arb["intent_conflict_basis"]
+    assert "annotation_run" not in arb and r.passed is True
+
+
+# ───────── 仲裁出口判废护栏(2026-09-03,droid-50 真值回测 ep17/29/32) ─────────
+
+def _all_no():
+    return FakeJudge({VAL_A: ["no"] * 9, VAL_B: ["no"] * 9, VAL_W: ["no"] * 9})
+
+
+def test_no_with_label_conflict_holds_kill():
+    """ep000029 原型:按标注问三路齐 no,但标注与 caption 不是同一任务 → 不杀转人工,
+    verdict label_conflict_suspect,原因点名疑似标注错,留痕 kill_held。"""
+    r = _arb(_res(), _all_no(), annotation="Put the orange thing in the can",
+             caption="pour rice from the red bowl into the green bowl",
+             same_task=lambda a, b: False)
+    assert r.passed is None and r.detail["verdict"] == "label_conflict_suspect"
+    assert "疑似标注错" in r.detail["reason"]
+    assert "arbitration_kill_held_label_conflict" in r.detail["rules"]
+    assert "arbitration_kill_double_signed" not in r.detail["rules"]
+    arb = r.detail["arbitration"]
+    assert arb["final"] == "no" and arb["kill_held"] is True and arb["intent_conflict"] is True
+
+
+def test_no_with_label_agreement_still_kills():
+    """标注与 caption 同一任务 → 三路齐 no 照杀(护栏不介入)。"""
+    r = _arb(_res(), _all_no(), annotation="put the cup in the sink",
+             caption="place the cup into the sink", same_task=lambda a, b: True)
+    assert r.passed is False and r.detail["verdict"] == "arbitration_failure"
+    assert "arbitration_kill_double_signed" in r.detail["rules"]
+
+
+def test_yes_with_label_conflict_still_rescues():
+    """护栏只挡杀不挡救:标注打架但三路齐 yes → 照常救回。"""
+    judge = FakeJudge({VAL_A: ["yes"] * 9, VAL_B: ["yes"] * 9, VAL_W: ["yes"] * 9})
+    r = _arb(_res(), judge, annotation="wipe the counter", same_task=lambda a, b: False)
+    assert r.passed is True and r.detail["verdict"] == "arbitration_success"
+
+
+def test_no_with_comparer_failure_holds_kill():
+    """比对器炸 → 按打架从严:齐 no 也不杀,转人工。"""
+    def boom(a, b):
+        raise RuntimeError("boom")
+    r = _arb(_res(), _all_no(), annotation="wipe the counter", same_task=boom)
+    assert r.passed is None and "arbitration_kill_held_label_conflict" in r.detail["rules"]
+    assert "语义比对失败" in r.detail["arbitration"]["intent_conflict_basis"]
+
+
+def test_no_without_annotation_kills_regardless():
+    """没有标注就没有"标注对不对"的问题:caption 意图齐 no 照杀。"""
+    r = _arb(_res(), _all_no(), annotation="", same_task=lambda a, b: False)
+    assert r.passed is False and r.detail["verdict"] == "arbitration_failure"
+
+
+def test_reuses_review_guard_comparison():
+    """复核层护栏已用同一条 caption 比过 → 仲裁直接复用结论,不再烧判官;
+    caption 不同则重比。"""
+    calls = []
+
+    def cmp(a, b):
+        calls.append((a, b))
+        return True
+    res = _res()
+    res.detail["label_check"] = {"annotation": "wipe the counter",
+                                 "caption": "pour rice into the green bowl",
+                                 "outcome": "different"}
+    r = _arb(res, _all_no(), annotation="wipe the counter",
+             caption="pour rice into the green bowl", same_task=cmp)
+    assert calls == [] and r.passed is None
+    assert r.detail["arbitration"]["intent_conflict_basis"] == "复用判废护栏比对结论"
+    res = _res()
+    res.detail["label_check"] = {"annotation": "wipe the counter",
+                                 "caption": "another caption", "outcome": "different"}
+    r = _arb(res, _all_no(), annotation="wipe the counter",
+             caption="pour rice into the green bowl", same_task=cmp)
+    assert calls == [("wipe the counter", "pour rice into the green bowl")]
+    assert r.passed is False                      # 重比判同一任务 → 照杀
 
 
 # ───────── 意图缺失 / 依赖缺失:诚实弃权 ─────────
 
-def test_no_caption_skips_chain():
-    """拿不到自产 caption → 不跑仲裁链,维持弃权(拿标注顶会退回"标注优先",
-    违背规格的意图定义);零 VLM 调用。"""
+def test_no_intent_skips_chain():
+    """既无标注也无 caption → 不跑仲裁链,维持弃权;零 VLM 调用。只缺 caption 有标注 → 照跑。"""
     judge = FakeJudge({VAL_A: ["yes"] * 3})
     r = _arb(_res(), judge, caption="")
     assert r.passed is None and not judge.calls
     arb = r.detail["arbitration"]
     assert arb["applied"] is False and arb.get("skipped")
-    assert "arbitration_skipped_no_caption" in r.detail["rules"]
+    assert "arbitration_skipped_no_intent" in r.detail["rules"]
+    judge2 = FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["yes"] * 3, VAL_W: ["yes"] * 3})
+    r2 = _arb(_res(), judge2, caption="", annotation="put the cup in the sink")
+    assert r2.passed is True and r2.detail["arbitration"]["intent_source"] == "原始标注"
 
 
 def test_question_writer_failure_abstains():
@@ -470,7 +552,9 @@ def test_funnel_label_guard_holds_annotation_kill(monkeypatch):
                 assert d["verdict"] == "label_conflict_suspect"
                 assert "kill_held_label_conflict" in d["rules"]
                 assert d["label_check"]["outcome"] == "different"
-                assert d["arbitration"]["intent_conflict"] is True   # 双意图链跑了
+                assert d["arbitration"]["intent_conflict"] is True   # 不一致只留痕
+                assert d["arbitration"]["intent_source"] == "原始标注"  # 仲裁按标注问
+                assert "annotation_run" not in d["arbitration"]
                 assert d["arbitration"]["final"] == "abstain"
         # caption 每条只打一次(护栏打的,仲裁复用不重打)
         assert calls["caption"] == len(results)
@@ -520,7 +604,7 @@ def test_funnel_disabled_keeps_todays_behavior(monkeypatch):
 @pytest.mark.skipif(_pusht_missing, reason="pusht 数据未下载")
 def test_funnel_enabled_arbitrates_abstentions(monkeypatch):
     """enable:true(出厂默认):只有弃权条目走仲裁链,取证一致 yes → 救回;
-    留痕(意图来源=仲裁时自产 caption)与触发计数(stats.arbitration)都要在。
+    留痕(意图来源=原始标注,caption 另记)与触发计数(stats.arbitration)都要在。
     这是"接线通"的进程内证明,真 VLM 的端到端另行在 droid 上验。"""
     _patch_vlm_factories(monkeypatch, judge_answer="yes")
     results, stats = _run_task_check(_funnel_cfg(arbitration_enable=True))
@@ -532,6 +616,7 @@ def test_funnel_enabled_arbitrates_abstentions(monkeypatch):
         assert r["detail"]["verdict"] == "arbitration_success"
         arb = r["detail"]["arbitration"]
         assert arb["applied"] is True
-        assert arb["intent_source"] == "自产caption(仲裁时)"   # pusht 有原始标注
-        assert arb["intent"] == "push the t-shaped block onto the target"
+        assert arb["intent_source"] == "原始标注"              # 2026-09-02:有标注按标注问
+        assert arb["intent"].lower().startswith("push the t-shaped block")
+        assert arb["caption"] == "push the t-shaped block onto the target"   # caption 只留痕
         assert arb["n_effective"] >= 1 and arb["lines"]

@@ -38,6 +38,7 @@ class DatasetSemantics:
                                          #   velocity_dual_scale / abstain / auto
     source: str = "inferred"             # profile / inferred
     profile_name: str = ""
+    cameras: dict = field(default_factory=dict)   # {相机短名: view}(front/rear/wrist/side/unknown)
     extras: dict = field(default_factory=dict)
 
 
@@ -70,8 +71,14 @@ def _action_names(info: dict, key: str = "action") -> list[str]:
     return [str(n).lower() for n in names]
 
 
+#: 测试/回测开关:设为 1 时忽略所有 profile,强制走指纹+预检(拿 profile 声明当标准答案对分)。
+IGNORE_PROFILES_ENV = "CURATION_SEMANTICS_IGNORE_PROFILES"
+
+
 def _match_profile(info: dict, profiles: list[dict],
                    dataset_name: str = "") -> dict | None:
+    if os.environ.get(IGNORE_PROFILES_ENV, "").strip() in ("1", "true", "yes"):
+        return None
     """按 match 段匹配:robot_type / action_names / codebase_version /
     dataset_name 全命中才算。dataset_name(2026-08-27):官方 lerobot/droid_100
     的 robot_type=unknown、names=motor_*,前两把钥匙全废 —— 目录名是这类
@@ -121,6 +128,8 @@ def resolve_semantics(info: dict, sample_action: np.ndarray | None = None,
             euler_triplet=bool(act.get("euler_triplet", False)),
             stuck_strategy=act.get("stuck_strategy", "auto"),
             source="profile", profile_name=prof.get("_file", ""),
+            cameras={str(k): (v.get("view") if isinstance(v, dict) else str(v))
+                     for k, v in (prof.get("cameras") or {}).items()},
             extras=prof.get("extras", {}) or {})
 
     # —— 回退:数值指纹推断(未知数据集也能工作)——
