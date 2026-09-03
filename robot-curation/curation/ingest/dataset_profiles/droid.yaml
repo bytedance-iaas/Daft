@@ -8,6 +8,8 @@ action:
   euler_triplet: true
   stuck_strategy: velocity_dual_scale   # 速度指令×位置读数,各用自身尺度(免物理标定)
 state: {space: ee}
+# 相机朝向:两路外部机位摆在侧前方,左右映射不定(unknown → 含左右词的任务判官拿不准答 UNCLEAR);腕部=机器人坐标
+cameras: {exterior_image_1_left: unknown, exterior_image_2_left: unknown, wrist_image_left: wrist}
 extras:
   note: "action=分位数归一化笛卡尔速度;平移 Δstate≈k·action(k~0.01-0.02,R²~0.6),旋转euler不线性(R²~0)"
   velocity_scale_translation_empirical: [0.010, 0.020, 0.016]   # xyz 经验系数(本地200条拟合)

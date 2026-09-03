@@ -344,9 +344,25 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
 
     task_overrides = task_overrides or {}
 
+    # 源 episodes 表缺 tasks 列(v3 规范里可选;libero 2026-09-02):回退到
+    # data.task_index → 源 meta/tasks.parquet,与读取侧同一套(lerobot_reader)。
+    _src_tasks_missing = "tasks" not in sel.columns or any(
+        not (isinstance(t, (list, tuple, np.ndarray)) and len(t)) for t in sel["tasks"])
+    _tmap: dict = {}
+    _tidx: dict = {}
+    if _src_tasks_missing:
+        from ..ingest.lerobot_reader import _load_tasks_map, _v3_task_index_of
+        _tmap = _load_tasks_map(dataset_dir)
+        _tidx = _v3_task_index_of(dataset_dir, info, sel) if _tmap else {}
+
     def _tasks_of(ep):
         ov = task_overrides.get(int(ep["episode_index"]))
-        return [ov] if ov else (list(ep["tasks"]) or [""])
+        if ov:
+            return [ov]
+        t = ep.get("tasks") if hasattr(ep, "get") else None
+        if isinstance(t, (list, tuple, np.ndarray)) and len(t):
+            return list(t)
+        return [str(_tmap.get(_tidx.get(int(ep["episode_index"])), ""))]
 
     # 新任务表(保序去重;覆写生效后的文本)
     task_strings, task_index_of = _task_table([_tasks_of(ep) for _, ep in sel.iterrows()])
@@ -397,7 +413,8 @@ def export_lerobot_v3(dataset_dir: str, keep_episode_indices: list[int], out_dir
 
     # ---------- meta/episodes:切源行继承 stats,覆写边界/编号/文件位置 ----------
     new_meta = sel.copy()
-    if task_overrides:
+    if task_overrides or _src_tasks_missing:
+        # 源缺 tasks 列时导出的交付补上这一列:下游(含我们自己)再读就不用回退了
         new_meta["tasks"] = [_tasks_of(ep) for _, ep in sel.iterrows()]
     new_meta["episode_index"] = np.arange(len(sel))
     new_meta["data/chunk_index"] = [c for c, _f in data_loc]

@@ -16,6 +16,10 @@ from ..contract import CheckResult
 _MAX_VIOLATIONS_IN_DETAIL = 20
 
 
+#: "起步就越界"守卫看的帧数:连续这么多起始帧都在限位外 → 约定错位嫌疑,不硬判。
+_HEAD_FRAMES = 5
+
+
 def kinematic_limits(
     values: np.ndarray,
     profile,                    # registry.EmbodimentProfile
@@ -59,7 +63,11 @@ def kinematic_limits(
         # 物理硬限不可能被"持续"违反:机械臂无法全程停在限位外还正常作业。
         # 某关节 ≥90% 帧都在限外 = 数据/profile 的角度约定错位(如舵机原始角 vs ±中心角)
         # → 整体弃权待人工核对 profile,绝不误杀(so100 2026-07-07 全灭事故的教训)。
-        if len(bad_frames) >= 0.9 * len(v):
+        # 同理**起始几帧就在限外**:机械臂不可能在限位外开机/起步——那是把别的量(如
+        # libero 的末端增量指令,2026-09-02 全灭)当成了这个关节的角度,同样按错位弃权。
+        head_out = len(v) >= _HEAD_FRAMES and all(
+            f in set(bad_frames.tolist()) for f in range(_HEAD_FRAMES))
+        if len(bad_frames) >= 0.9 * len(v) or head_out:
             sustained.append({"joint": j,
                               "data_range": [round(float(v[:, j].min()), 1),
                                              round(float(v[:, j].max()), 1)],
@@ -83,7 +91,7 @@ def kinematic_limits(
     if sustained:
         return CheckResult(
             name="kinematic_limits", passed=None,
-            detail={"reason": "关节持续限外(≥90%帧)=数据与profile角度约定错位嫌疑,"
+            detail={"reason": "关节持续限外(≥90%帧)或起步即限外=数据与profile角度约定错位嫌疑,"
                               "拒绝硬判,待核对 profile",
                     "sustained_out_of_limit": sustained,
                     "transient_violations": violations[:_MAX_VIOLATIONS_IN_DETAIL]})

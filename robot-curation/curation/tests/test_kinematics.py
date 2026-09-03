@@ -247,3 +247,26 @@ def test_ee_funnel_dispatch_droid():
     for c in out:
         assert c["passed"] is True
         assert json.loads(c["detail"])["mode"] == "ee"
+
+
+def test_head_frames_out_of_limit_abstains_not_kills():
+    """起步就在限位外(2026-09-02 libero 全灭案):机械臂不可能在限位外开机——那是把别的量
+    当成了这个关节的角度,按约定错位弃权;瞬时越界(起步在限内)照常判违规。"""
+    import numpy as np
+    from curation.core.checks.kinematics import kinematic_limits
+    from curation.registry.registry import EmbodimentRegistry
+    prof = EmbodimentRegistry().get("franka")
+    n = 100
+    v = np.zeros((n, 7))
+    for j, (lo, hi) in enumerate(prof.joint_limits):
+        v[:, j] = (lo + hi) / 2
+    bad = v.copy()
+    bad[:, 3] = 0.0                     # joint4 极限 [-3.07,-0.07]:0.0 从第 0 帧起就在限外
+    bad[40:, 3] = -1.5                  # 后面 60% 回到限内 → 不满足 ≥90% 持续,靠起始帧守卫
+    r = kinematic_limits(bad, prof, fps=10.0)
+    assert r.passed is None and "错位嫌疑" in r.detail["reason"]
+    assert r.detail["sustained_out_of_limit"][0]["joint"] == 3
+    good = v.copy()
+    good[50:53, 3] = 0.0                # 中途三帧越界 = 真违规
+    r2 = kinematic_limits(good, prof, fps=10.0)
+    assert r2.passed is False and r2.detail["n_violations"] >= 3

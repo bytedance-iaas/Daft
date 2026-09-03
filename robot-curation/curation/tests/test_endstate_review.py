@@ -190,8 +190,8 @@ def test_label_guard_holds_kill_when_caption_differs():
 
 
 def test_label_guard_keeps_kill_when_same_or_unavailable():
-    """同一任务 → 判废不动只留痕;caption 缺/比对器缺/比对器炸 → 判废不动
-    (不因基础设施缺席把判废灌进人工),各留各的痕。"""
+    """同一任务 → 判废不动只留痕;caption 缺/比对器缺 → 判废不动(没有对照物核不了),
+    各留各的痕。比对器炸 → 从严不杀转人工(2026-09-03 与仲裁护栏同口径)。"""
     from curation.core.checks.task_success import hold_kill_on_label_conflict
     r = hold_kill_on_label_conflict(_killed(), annotation="put x", caption="place x",
                                     same_task=lambda a, b: True)
@@ -206,7 +206,9 @@ def test_label_guard_keeps_kill_when_same_or_unavailable():
     def boom(a, b):
         raise RuntimeError("比对器抽风")
     r = hold_kill_on_label_conflict(_killed(), annotation="put x", caption="y", same_task=boom)
-    assert r.passed is False and "label_check_error" in r.detail["rules"]
+    assert r.passed is None and "label_check_error" in r.detail["rules"]
+    assert r.detail["verdict"] == "label_conflict_suspect" and "核不了" in r.detail["reason"]
+    assert "kill_held_label_conflict" in r.detail["rules"]
 
 
 def test_label_guard_ignores_non_kills():

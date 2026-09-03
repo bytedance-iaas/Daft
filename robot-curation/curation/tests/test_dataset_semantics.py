@@ -91,3 +91,25 @@ def test_stuck_strategy_abstain():
     r = motion_quality(a, p, 15.0, control_mode="unknown", same_space=True,
                        stuck_strategy="abstain")
     assert r.detail["stuck"] is None
+
+
+def test_libero_profile_matches_by_robot_type_and_bare_names():
+    """libero(2026-09-02):names 只有笼统的 actions/state,指纹会把末端增量当关节角
+    → 关节超限全灭。profile 按 robot_type=panda + action_names=[actions] 命中。"""
+    info = {"robot_type": "panda", "codebase_version": "v3.0",
+            "features": {"action": {"names": ["actions"]},
+                         "observation.state": {"names": ["state"]}}}
+    s = resolve_semantics(info, np.zeros((30, 7)), "libero")
+    assert s.source == "profile" and s.profile_name == "libero.yaml"
+    assert s.action_space == "ee" and s.proprio_space == "ee" and s.control_mode == "delta"
+    assert s.gripper_dims == (6,) and s.angle_dims == (3, 4, 5) and not s.euler_triplet
+    # 别的 panda 数据集(names 明确)不被它误吃
+    other = {"robot_type": "panda", "features": {"action": {"names": ["j0", "j1", "j2"]}}}
+    assert resolve_semantics(other, np.zeros((30, 3))).profile_name != "libero.yaml"
+
+
+def test_profile_camera_views_flow_to_semantics():
+    info = {"robot_type": "panda", "codebase_version": "v3.0",
+            "features": {"action": {"names": ["actions"]}, "observation.state": {"names": ["state"]}}}
+    s = resolve_semantics(info, np.zeros((30, 7)), "libero")
+    assert s.cameras == {"image": "front", "image2": "wrist"}

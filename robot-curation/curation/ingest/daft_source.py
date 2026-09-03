@@ -87,13 +87,13 @@ class LeRobotDataSource(DataSource):
         _name = os.path.basename(str(self._dir).rstrip("/"))
         _sem0 = resolve_semantics(self._info, None, _name)
         if _sem0.source == "profile" and not needs_velocity_calibration(_sem0):
-            return resolve_dataset_semantics(self._info, [], _name)
+            return resolve_dataset_semantics(self._info, [], _name, self._embodiment)
         from .lerobot_reader import read_lerobot_rows
         n = (min(SEMANTICS_VOTE_EPISODES, self._max) if self._max
              else SEMANTICS_VOTE_EPISODES)
         sample = read_lerobot_rows(self._dir, max_episodes=n, validate=False,
                                    skip_missing=self._skip_missing)
-        return resolve_dataset_semantics(self._info, sample, _name)
+        return resolve_dataset_semantics(self._info, sample, _name, self._embodiment)
 
     # ---- schema:显式构造(与 rows_to_daft 产物一致,金对齐测试锚定) ----
     def _build_schema(self):

@@ -985,12 +985,6 @@ Judging standards:
   occluded, out of frame), answer UNCLEAR — never guess NO.
 Finish with a single line: VERDICT: YES or VERDICT: NO or VERDICT: UNCLEAR."""
 
-ARB_SAME_INTENT_PROMPT = """Two descriptions of what a robot was asked to do:
-A: "{a}"
-B: "{b}"
-Do they describe the SAME task (same action on the same object, wording
-differences aside)? Answer with exactly one word: SAME or DIFFERENT."""
-
 #: 取证场景 → 判官开场白(core 只传语义化 scene 名,措辞集中在本处)
 _ARB_SCENE_INTRO = {
     "exterior_final": ("Image 1 is the full scene at the FINAL state of the "
@@ -1127,29 +1121,23 @@ def make_evidence_judge(endpoint: str, model: str,
 def make_intent_comparer(endpoint: str, model: str,
                          timeout_s: float = DEFAULT_TIMEOUTS_S["arbitration"],
                          api_key_env: str | None = None, gate=None):
-    """意图语义比对工厂:same(a, b) -> True=同一任务(意图打架护栏用)。
+    """意图语义比对工厂:same(annotation, caption) -> True=同一任务(判废护栏/仲裁用)。
 
-    既非 SAME 也非 DIFFERENT 的回答直接抛 —— 调用方按打架从严处理,
-    比"当作相同"少一道护栏安全。"""
+    2026-09-03 统一尺子:不再自带 SAME/DIFFERENT 短提示,改走打标审计的单对判官
+    (dataset_level.audit.PAIR_JUDGE_PROMPT,droid-200 人工裁决校准过)——同一条
+    episode 在复核护栏、仲裁护栏、分歧清单三处用同一把尺子。回答结构不符直接抛,
+    调用方按打架从严处理。"""
+    from ..dataset_level.audit import make_pair_comparer
 
-    _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=8,
-                           gate=gate)
-
-    def same(a: str, b: str) -> bool:
-        ans = strip_reasoning(_post(ARB_SAME_INTENT_PROMPT.format(a=a, b=b))).upper()
-        if "DIFFERENT" in ans:
-            return False
-        if "SAME" in ans:
-            return True
-        raise ValueError(f"语义比对回答无法解析: {ans[:80]!r}")
-
-    return same
+    llm_ask = make_llm_ask(endpoint, model, timeout_s=timeout_s, max_tokens=1024,
+                           api_key_env=api_key_env, gate=gate)
+    return make_pair_comparer(llm_ask)
 
 
 def make_llm_ask(endpoint: str, model: str,
                  timeout_s: float = DEFAULT_TIMEOUTS_S["llm"],
                  max_tokens: int = 8192, api_key_env: str | None = None,
-                 max_in_flight: int = 2):
+                 max_in_flight: int = 2, gate=None):
     """纯文本 LLM 调用工厂(M7 taxonomy/audit 用;同一端点同一模型,配置一处)。
 
     max_in_flight = 对冲闸门容量,应传调用方的结构并发(下限 2)。默认 2 的来历
@@ -1162,7 +1150,8 @@ def make_llm_ask(endpoint: str, model: str,
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
-    gate = SharedGate(max(2, int(max_in_flight)))
+    # gate 可外传(仲裁链四厂共享一闸,见 _make_arb_post);不传自建
+    gate = gate if gate is not None else SharedGate(max(2, int(max_in_flight)))
 
     def llm_ask(prompt_text: str) -> str:
         payload = {"model": model, "temperature": 0.0, "max_tokens": max_tokens,

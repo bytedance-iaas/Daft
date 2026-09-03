@@ -249,6 +249,7 @@ def endstate_review(
     cam_voter: Callable | None,
     cam_frames: dict,
     endstate_frames: int = 8,
+    cam_hints: dict | None = None,   # {相机名: 朝向提示句}(任务含左右词时才有,见 camera_view)
 ) -> CheckResult:
     """二值复核 v7.2:**逐机位独立投票 + 汇票 + 决定表**(105 条人工真值 × 三模型
     小考定稿;取代 v6.5 的多机位混问——好机位的清晰证据曾被烂机位稀释)。
@@ -298,6 +299,8 @@ def endstate_review(
         pick = [fr[j] for j in _sample_indices(len(fr), endstate_frames)]
         mid = max(1, len(pick) // 2)
         label = f"camera {chr(ord('A') + i)} ({name})"
+        if cam_hints and cam_hints.get(name):
+            label += f"; {cam_hints[name]}"          # 左右镜像提示随机位标签进 prompt
         tasks.append((name, pick[:mid], pick[mid:] or pick[-1:], label))
     votes = {}
     if tasks:
@@ -399,8 +402,9 @@ def hold_kill_on_label_conflict(
     只对"已判废(passed is False)且指令来自原始标注"的条目工作:拿自产 caption 与标注
     做 same_task 比对,**不是同一任务 → 不杀转人工**(原因直说疑似标注错,顺手把
     打标审计按技能族比对漏掉的标注错暴露出来);同一任务 → 维持判废并留痕。
-    caption 缺失 / 比对器异常 → 维持判废并留痕(不因基础设施缺席把所有判废灌进人工;
-    与仲裁链"比对异常按打架从严"刻意不同——那边是弃权条目,这边是已双签的判废)。
+    caption 缺失 / 比对器未装 → 维持判废并留痕(没有对照物,核不了)。
+    比对器调用失败 → 按打架从严,不杀转人工(2026-09-03 用户定:与仲裁护栏同一口径,
+    "拿不准就别杀")。
     """
     if res.passed is not False:
         return res
@@ -416,6 +420,11 @@ def hold_kill_on_label_conflict(
     except Exception as e:  # noqa: BLE001
         info["outcome"] = f"error:{type(e).__name__}"
         _rule(res.detail, "label_check_error")
+        res.passed = None
+        res.detail["verdict"] = "label_conflict_suspect"
+        res.detail["reason"] = (f"复核判未完成,但标注「{ann[:40]}」与画面描述的一致性"
+                                f"核不了({type(e).__name__}):从严不判废,转人工核标注")
+        _rule(res.detail, "kill_held_label_conflict")
         return res
     if same:
         info["outcome"] = "same"
@@ -436,8 +445,9 @@ def hold_kill_on_label_conflict(
 # droid-200 真值实测:人工 50→32(-36%),代价 = 冤杀 1→4(被拒复议轨道兜底)。
 #
 # 三条不许丢的护栏(每条都有实验数字撑着,删一条冤杀就涨):
-#   ① 意图打架:标注与 caption 语义不同 → 双意图各跑一遍,两遍结论相同才自动判
-#     (去掉它冤杀 17→26);
+#   ① (2026-09-02 撤销)意图打架护栏:标注与 caption 语义不同 → 双意图两遍一致才判。
+#     那是 caption 为主意图时代的护栏(去掉它冤杀 17→26,前提是仲裁在问 caption);
+#     现在仲裁与打分/复核一样按原始标注问,不一致只留痕,不再双跑;
 #   ② 判官讲理标准(prompt 在 adapters,三条:达成即YES/看不见答UNCLEAR绝不猜NO/
 #     空间短语按说话人本意)把冤杀 52→17;
 #   ③ 杀需≥2条有效路:实测只有一路的杀 5 条全是冤杀(与 v7.3 杀人双签同源)。
@@ -532,7 +542,8 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
                       gripper, gripper_ts, *,
                       question_writer, grounder, judge,
                       n_votes: int, crop_pad: float, upscale: int,
-                      transient_offset_s: float, max_cams: int) -> dict:
+                      transient_offset_s: float, max_cams: int,
+                      cam_hints: dict | None = None) -> dict:
     """单意图跑完整取证链,返回该 run 的痕迹与共识(不做杀门槛,门槛在上层)。
 
     路的划分:相机名含 wrist(不分大小写)= 腕部线,其余 = 外部取证线(封顶
@@ -555,10 +566,14 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
     question = str(spec.get("verify_question") or "")
     transient = str(spec.get("task_type")) == "transient"
 
-    def _vote(imgs: list, scene: str) -> list:
+    def _vote(imgs: list, scene: str, cam: str = "") -> list:
+        q = question
+        if cam_hints and cam_hints.get(cam):
+            q = f"{question} ({cam_hints[cam]})"        # 该路相机的左右镜像提示
+
         def one(_):
             try:
-                return str(judge(imgs, target=target, question=question, scene=scene))
+                return str(judge(imgs, target=target, question=q, scene=scene))
             except Exception:  # noqa: BLE001  单票失败=少一票,按 error 记不计入多数
                 return "error"
         # 三票互不依赖 → 并发(与 endstate_review 的机位并发同款;判定输入输出不变)
@@ -601,7 +616,7 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
             continue
         tile = _arb_union_crop(pic, boxes, crop_pad, upscale)
         imgs = [pic] + ([tile] if tile is not None else [])
-        votes = _vote(imgs, "exterior_post_grasp" if transient else "exterior_final")
+        votes = _vote(imgs, "exterior_post_grasp" if transient else "exterior_final", cam)
         line["votes"] = votes
         run["lines"][cam] = line
         v = _arb_line_verdict(votes)
@@ -628,7 +643,7 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
                 t0 = float(fts[len(fts) // 2]) if transient else float(fts[-1])
             sel = sorted({int(np.argmin(np.abs(fts - (t0 + o)))) for o in offs})
         imgs = [_arb_upscale(frames[i]) for i in sel]
-        votes = _vote(imgs, scene)
+        votes = _vote(imgs, scene, cam)
         line = {"frames": [int(i) for i in sel], "votes": votes}
         if t0 is not None:
             line["anchor_t"] = round(float(t0), 3)
@@ -680,11 +695,13 @@ def arbitration_review(
     upscale: int = 3,
     transient_offset_s: float = 1.0,
     max_cams: int = 4,
+    cam_hints: dict | None = None,
 ) -> CheckResult:
     """取证仲裁链(与 endstate_review 同风格:注入式依赖,core 内不发 HTTP)。
 
     只在 res.passed is None(打分+复核后仍弃权)时工作;其余条目**原样返回**
-    (逐字段不动)—— 老算法判过的条目不许被翻案。
+    (逐字段不动)—— 老算法判过的条目不许被翻案。意图=原始标注(有)否则自产 caption,
+    与打分/复核两层一致(2026-09-02 撤双意图核验)。
 
     注入接口(全部由 adapters.vlm_client 工厂构造,测试注入假函数):
       question_writer(intent) -> {task_type, target_location, target_visual,
@@ -704,37 +721,50 @@ def arbitration_review(
     arb: dict = {"applied": False}
     res.detail["arbitration"] = arb
     caption = str(caption or "").strip()
-    if not caption:
-        # 主意图=自产 caption;拿不到就不跑(拿标注顶会退回"标注优先",违背规格)
-        arb["skipped"] = "无自产 caption(拿不到独立意图,维持弃权)"
-        _rule(res.detail, "arbitration_skipped_no_caption")
+    annotation = str(annotation or "").strip()
+    # 意图与另外两层对齐(2026-09-02 用户定):**有原始标注就按标注问,没有才用 caption**。
+    # 此前仲裁以 caption 为主意图、标注只做交叉核验(双意图两遍一致才判)——那是 caption
+    # 优先时代的遗留;8/16 打分/复核改标注优先后,三层里只剩仲裁还在问 caption,复合任务
+    # 的 caption 一丢子句仲裁就必弃权(libero ep2/ep4)。caption 与标注不一致现在只留痕
+    # (供打标审计),不再当门槛;判废前的标注核对在 hold_kill_on_label_conflict。
+    if annotation:
+        intent, intent_source = annotation, "原始标注"
+    elif caption:
+        intent, intent_source = caption, caption_source
+    else:
+        arb["skipped"] = "既无原始标注也无自产 caption(拿不到意图,维持弃权)"
+        _rule(res.detail, "arbitration_skipped_no_intent")
         return res
     if question_writer is None or grounder is None or judge is None:
         arb["skipped"] = "仲裁依赖不可用,维持弃权"
         _rule(res.detail, "arbitration_skipped_deps_unavailable")
         return res
 
-    arb.update(intent=caption, intent_source=caption_source, intent_conflict=False)
-    annotation = str(annotation or "").strip()
-    if annotation and annotation.lower() != caption.lower():
-        # 意图打架护栏:语义比对判 DIFFERENT 才算打架(措辞不同不算)。
-        # 比对器不可用/失败 → 按打架从严(宁可多跑一遍,不省这道护栏)。
-        if same_task is None:
+    arb.update(intent=intent, intent_source=intent_source, caption=caption,
+               intent_conflict=False)
+    if annotation and caption and annotation.lower() != caption.lower():
+        # 标注与 caption 是否同一任务:共识 no 要杀时的护栏依据(见下),其余情况只留痕。
+        # 判废护栏(hold_kill_on_label_conflict)若已用同一条 caption 比过,直接复用结论,
+        # 不再烧一次判官;比对器不可用/失败 → 按打架从严记 True 并说明。
+        lc = res.detail.get("label_check") or {}
+        if (lc.get("outcome") in ("same", "different")
+                and str(lc.get("caption", "")).strip() == caption[:160].strip()):
+            arb["intent_conflict"] = lc["outcome"] == "different"
+            arb["intent_conflict_basis"] = "复用判废护栏比对结论"
+        elif same_task is None:
             arb["intent_conflict"] = True
-            arb["intent_conflict_basis"] = "语义比对器不可用,按打架从严处理"
+            arb["intent_conflict_basis"] = "语义比对器不可用"
         else:
             try:
-                arb["intent_conflict"] = not bool(same_task(caption, annotation))
+                arb["intent_conflict"] = not bool(same_task(annotation, caption))
             except Exception as e:  # noqa: BLE001
                 arb["intent_conflict"] = True
-                arb["intent_conflict_basis"] = (
-                    f"语义比对失败({type(e).__name__}),按打架从严处理")
+                arb["intent_conflict_basis"] = f"语义比对失败({type(e).__name__})"
 
     chain_kw = dict(question_writer=question_writer, grounder=grounder, judge=judge,
                     n_votes=n_votes, crop_pad=crop_pad, upscale=upscale,
-                    transient_offset_s=transient_offset_s, max_cams=max_cams)
-    run_a = _arb_single_chain(caption, cam_frames, cam_ts, gripper, gripper_ts,
-                              **chain_kw)
+                    transient_offset_s=transient_offset_s, max_cams=max_cams, cam_hints=cam_hints)
+    run_a = _arb_single_chain(intent, cam_frames, cam_ts, gripper, gripper_ts, **chain_kw)
     arb["spec"] = run_a.get("spec")
     arb["lines"] = run_a["lines"]
     arb["n_effective"] = run_a["n_effective"]
@@ -746,37 +776,33 @@ def arbitration_review(
         arb["kill_downgraded"] = True
         _rule(res.detail, "arbitration_kill_needs_two_lines")
 
-    if arb["intent_conflict"]:
-        # 双意图各跑一遍,两遍结论(各自过完杀门槛)相同才自动判,否则维持弃权
-        run_b = _arb_single_chain(annotation, cam_frames, cam_ts, gripper,
-                                  gripper_ts, **chain_kw)
-        final_b, downgraded_b = _arb_final(run_b, kill_min_lines)
-        arb["annotation_run"] = {
-            "intent": annotation, "spec": run_b.get("spec"),
-            "lines": run_b["lines"], "n_effective": run_b["n_effective"],
-            "consensus": run_b["consensus"], "final": final_b}
-        if downgraded_b:
-            arb["annotation_run"]["kill_downgraded"] = True
-        if final != final_b or final not in ("yes", "no"):
-            if final in ("yes", "no") or final_b in ("yes", "no"):
-                _rule(res.detail, "arbitration_intent_conflict_disagree")
-            final = "abstain"
-
     arb["final"] = final
     n_eff = arb["n_effective"]
     if final == "yes":
         res.passed = True
         res.detail["verdict"] = "arbitration_success"
         res.detail["reason"] = (f"取证仲裁:{n_eff} 条有效取证路一致判完成,救回"
-                                +("(双意图结论一致)" if arb["intent_conflict"] else ""))
+                                )
         _rule(res.detail, "arbitration_success")
         arb["applied"] = True
+    elif final == "no" and annotation and arb["intent_conflict"]:
+        # 仲裁出口判废护栏(2026-09-03 用户定,droid-50 真值回测 ep17/29/32 教训):提问用的是原始
+        # 标注,标注若与画面描述不是同一任务,三路齐 no 只是对错题的正确回答——不杀,
+        # 转人工核标注,并进"标注-画面分歧"清单(run.py 汇总 verdict=label_conflict_suspect)。
+        arb["applied"] = True
+        arb["kill_held"] = True
+        res.passed = None
+        res.detail["verdict"] = "label_conflict_suspect"
+        res.detail["reason"] = (f"取证仲裁按标注判未完成({n_eff} 路),但标注「{annotation[:40]}」"
+                                f"与画面描述「{caption[:40]}」不是同一任务:疑似标注错,"
+                                "不判废,转人工核标注")
+        _rule(res.detail, "arbitration_kill_held_label_conflict")
     elif final == "no":
         res.passed = False
         res.detail["verdict"] = "arbitration_failure"
         res.detail["reason"] = (f"取证仲裁:{n_eff} 条有效取证路一致判未完成"
                                 f"(≥{kill_min_lines} 路相互印证)"
-                                + ("(双意图结论一致)" if arb["intent_conflict"] else ""))
+                                )
         _rule(res.detail, "arbitration_kill_double_signed")
         arb["applied"] = True
     else:

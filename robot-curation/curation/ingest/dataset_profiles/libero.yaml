@@ -1,0 +1,21 @@
+# LIBERO 仿真套件(robosuite Franka Panda)的 LeRobot 转换(HF lerobot/libero,v3.0;2026-09-02
+# 桶上实测):action 7 维 = 末端增量指令 [dx,dy,dz,drx,dry,drz,gripper],OSC 控制器的
+# 归一化输入(平移 ±0.94、旋转 ±0.28、夹爪 ±1);state 8 维 = 末端位姿 [x,y,z(米),旋转向量 3]
+# + 夹爪两指 qpos。info.json 的 names 只写了笼统的 "actions"/"state",指纹推断会把它当成
+# 关节角去对 Franka 关节极限(joint 4 极限 [-3.07,-0.07] vs 增量 ≈0)→ 全员"关节超限"被杀。
+# robot_type=panda 沿用 registry 的 franka 规格(EE 可达/速度检查在 5 条实测上全通过)。
+match: {robot_type: panda, action_names: [actions]}
+action:
+  space: ee
+  control_mode: delta
+  unit: normalized
+  gripper_dims: [6]
+  angle_dims: [3, 4, 5]
+  euler_triplet: false      # 旋转向量增量,不是 rpy;增量模式只做 ±半周期回卷
+  stuck_strategy: auto      # delta → increment_vs_pos(指令增量 vs 位姿读数)
+state: {space: ee}
+# 相机朝向(2026-09-02):image=agentview 正对机器人(画面左右与机器人相反),image2=手腕。
+# 任务文本多含 left/right(机器人视角),判官提示按此挂(core/checks/camera_view.py)。
+cameras: {image: front, image2: wrist}
+extras:
+  note: "仿真数据(LIBERO):动作是归一化的末端增量指令,读数是末端位姿+夹爪开度"
