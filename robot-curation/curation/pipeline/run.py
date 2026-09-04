@@ -158,7 +158,7 @@ def _verify_delivery_visible(items: list, timeout_s: float = 300.0,
             state = _state(path, kind)
             if state == STATE_OK:
                 done += 1
-                print(f"[curation] 核验 {done}/{total}:{name} ✓"
+                print(f"[curation] 核验 {done}/{total} 个文件:{name} ✓"
                       f"({int(_time.time() - t0)}s)", flush=True)
             elif state == STATE_CORRUPT:
                 corrupt.append(name)
@@ -282,7 +282,7 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
     from .progress import _progress_init, _progress_tick, phase_step
     _sp_t0 = _t.time()
     _G = "技能画像"
-    _pk_cap = _progress_init("caption", len(keep_rows), f"{_G} 1/5·逐条 caption",
+    _pk_cap = _progress_init("caption", len(keep_rows), f"{_G} 第 1/5 阶段·逐条 caption",
                              quiet_before_s=3.0)
     phase_step(_G, 1, 5, f"逐条 caption({len(keep_rows)} 条,并发 {_cap_conc})…", _sp_t0)
     caps = caption_episodes(keep_rows, captioner,
@@ -1333,7 +1333,7 @@ def run_pipeline(
         from ..export.sync_plots import render_sync_plots
         _crows = [(e, cj) for e, cj in zip(out["episode_id"], out["_sync_curves"]) if cj]
         # 一条一张图,matplotlib 每张几百毫秒 —— 几百条就是几分钟的静默。可数 → 报进度。
-        _pk_plot = _progress_init("sync_plots", len(_crows), "同步诊断图",
+        _pk_plot = _progress_init("sync_plots", len(_crows), "同步诊断图", unit="张",
                                   quiet_before_s=3.0)
         _pngs = render_sync_plots(_crows, os.path.join(det_dir, "plots"),
                                   on_progress=lambda: _progress_tick(_pk_plot))

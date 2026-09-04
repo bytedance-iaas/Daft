@@ -54,7 +54,7 @@ def _hb_scan(now: float) -> list[str]:
             continue
         ph["ts"] = now
         used = f" | 已用 {_fmt_dur(now - ph['t0'])}" if ph.get("t0") else ""
-        out.append(f"[curation] {g} {ph['step']}/{ph['total']} "
+        out.append(f"[curation] {g} 第 {ph['step']}/{ph['total']} 阶段 "
                    f"{ph['what']}{used} | 仍在这一步…")
     return out
 
@@ -112,7 +112,7 @@ _ETA_FLOOR_S = 5.0
 
 
 def _progress_init(key: str, total: int, label: str, min_interval_s: float = 20.0,
-                   quiet_before_s: float = 0.0) -> str:
+                   quiet_before_s: float = 0.0, unit: str = "条") -> str:
     """登记一个条目式阶段,返回给 UDF 捕获的 key(纯字符串,可序列化)。
 
     节流是两条规则的或:每 total/20 条打一次(**与数据量无关,总共约 20 行**),
@@ -124,7 +124,9 @@ def _progress_init(key: str, total: int, label: str, min_interval_s: float = 20.
     """
     import time
 
-    _PROGRESS[key] = {"total": max(int(total), 0), "label": label, "n": 0,
+    # unit:计数单位,跟在 N/M 后面打进日志、任务卡照抄(2026-09-04 用户定:同一张卡上
+    # "5/5 阶段""39/39 个文件""2/2 条"混在一起,不带单位会被当成条数)。
+    _PROGRESS[key] = {"total": max(int(total), 0), "label": label, "n": 0, "unit": unit,
                       "t0": time.time(), "last": 0.0, "min_interval_s": min_interval_s,
                       "quiet_before_s": quiet_before_s,
                       "step": max(1, max(int(total), 0) // 20), "lock": None,
@@ -132,7 +134,7 @@ def _progress_init(key: str, total: int, label: str, min_interval_s: float = 20.
     # 开跑先亮条(2026-08-30 用户:首条完成前进度条什么都不显示,像卡死):
     # 0/N 立即可见;快阶段(设了静默期的)照旧不吭声,免得毫秒级阶段刷噪音
     if total and quiet_before_s <= 0:
-        print(f"[curation] {label} 0/{total} (0%) | 已用 0s", flush=True)
+        print(f"[curation] {label} 0/{total} {unit} (0%) | 已用 0s", flush=True)
     _hb_ensure_thread()
     return key
 
@@ -194,7 +196,8 @@ def _progress_tick(key: str) -> None:
         elapsed = now - st["t0"]
         eta = _eta_seconds(st, now, n, total)      # 历史也在锁里维护
     pct = f" ({n / total * 100:.0f}%)" if total else ""
-    msg = f"[curation] {st['label']} {n}/{total or '?'}{pct} | 已用 {_fmt_dur(elapsed)}"
+    unit = st.get("unit", "条")
+    msg = f"[curation] {st['label']} {n}/{total or '?'} {unit}{pct} | 已用 {_fmt_dur(elapsed)}"
     if eta is not None:
         msg += (" | 收尾中" if eta < _ETA_FLOOR_S else f" | 剩余 ~{_fmt_dur(eta)}")
     print(msg, flush=True)
@@ -210,7 +213,8 @@ def phase_step(group: str, step: int, total: int, what: str,
     import time
 
     used = f" | 已用 {_fmt_dur(time.time() - t0)}" if t0 else ""
-    print(f"[curation] {group} {step}/{total} {what}{used}", flush=True)
+    # 打"第 N/M 阶段":与条目式的"N/M 条"分得开(2026-09-04 用户定)
+    print(f"[curation] {group} 第 {step}/{total} 阶段 {what}{used}", flush=True)
     # 登记给心跳:这一步(可能是一次几分钟的 LLM 大调用)期间每 15s 重报一次
     # "仍在这一步";换步自动顶掉,整段结束调 phase_done(group) 收账
     _PHASE[group] = {"step": step, "total": total, "what": what,

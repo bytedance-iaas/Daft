@@ -465,7 +465,7 @@ def test_parse_progress_item_style():
 
 def test_parse_progress_phase_style_has_no_percentage():
     """一步 = 一次 LLM 大调用,既没有可数单位也不可预测耗时 —— 不编百分比。"""
-    p = runner.parse_progress("[curation] 技能画像 3/5 归纳技能体系(LLM)… | 已用 1.2min")
+    p = runner.parse_progress("[curation] 技能画像 第 3/5 阶段 归纳技能体系(LLM)… | 已用 1.2min")
     assert p["stage"] == "技能画像" and (p["n"], p["total"]) == (3, 5)
     assert "归纳技能体系" in p["detail"]
 
@@ -1755,3 +1755,33 @@ def test_listing_success_registers_bucket_region(monkeypatch):
     runner.tos_list_datasets("tos://sh-bkt/deliveries", store=_St())
     assert tos_store.bucket_region("sh-bkt") is None
     tos_store.clear_bucket_regions()
+
+
+def test_parse_progress_carries_unit_and_card_renders_it():
+    """N/M 后的单位照抄到任务卡;"第 N/M 阶段"按阶段式渲染(2026-09-04 用户定:
+    "5/5""39/39"不带单位会被当成条数)。老日志没单位也照旧能解析。"""
+    p = runner.parse_progress("[curation] VLM 任务成败判定 2/2 条 (100%) | 已用 40s")
+    assert p["n"] == 2 and p["total"] == 2 and p["unit"] == "条" and p["pct"] == 100
+    assert "2/2 条" in runner._progress_row(dict(p, done=True))
+    p = runner.parse_progress("[tos] 上传交付桶 39/39 个文件")
+    assert p["unit"] == "个文件" and "39/39 个文件" in runner._progress_row(dict(p, done=True))
+    p = runner.parse_progress("[curation] 核验 7/7 个文件:latest ✓(0s)")
+    assert p["unit"] == "个文件" and p["stage"] == "核验"
+    p = runner.parse_progress("[curation] 技能画像 第 5/5 阶段 汇总画像 + 标注-画面分歧检出 | 已用 7.9min")
+    assert p["stage"] == "技能画像" and p["unit"] == "阶段"
+    assert "第 5/5 阶段" in runner._progress_row(dict(p, done=True))
+    p = runner.parse_progress("[curation] 数值检查 10/199 (5%) | 已用 1s")     # 老格式
+    assert p["unit"] == "" and "10/199 ·" in runner._progress_row(p) or "10/199" in runner._progress_row(p)
+    rows = runner.parse_progress_all("[curation] 技能画像 第 1/5 阶段 x\n[curation] 同步诊断图 3/10 张 (30%) | 已用 2s\n")
+    assert [r["unit"] for r in rows] == ["阶段", "张"]
+
+
+def test_parse_progress_ignores_paths_that_look_like_fractions():
+    """rejudge 的两行路径信息(`…/demo-01/20260904-041517`)不是进度,不能解析成
+    903/20260904 挂到任务卡上(2026-09-04 用户实见)。"""
+    assert runner.parse_progress(
+        "[rejudge] 交付在桶里:tos://other-bkt/deliveries/demo-01/20260904-041517 → 按需镜像") is None
+    assert runner.parse_progress(
+        "[rejudge] 已同步回 tos://other-bkt/deliveries/demo-01/20260904-041517:上传 3 个") is None
+    assert runner.parse_progress("[rejudge] 重判 3/12:ep000011 → success | 已用 42s")["n"] == 3
+    assert runner.parse_progress("[curation] 核验 5/5 个文件:episodes_parquet ✓(0s)")["unit"] == "个文件"
