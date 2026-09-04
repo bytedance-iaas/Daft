@@ -1515,7 +1515,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         按钮各有颜色时按下没反馈,分不清成没成功;改为"同色待选、选中变色",
         且翻页/跳行回到已裁决条目时按钮状态跟着该条的落盘裁决走)。
         choices 的顺序 = 界面上三个按钮的排列顺序。"""
-        return [gr.update(variant=("primary" if c == current else "secondary"))
+        return [gr.update(variant=("primary" if c == current else "secondary"),
+                          interactive=True)
                 for c in choices]
 
     #: ① 标注块里**摆出来的**三个键。⚠️ 不能直接用 DECISION_CHOICES:2026-08-19
@@ -3475,9 +3476,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 mg_empty = gr.Markdown("")
                                 with gr.Column(visible=True) as mg_block:
                                     with gr.Row():
-                                        mg_prev = gr.Button("← 上一条", scale=1)
+                                        mg_prev = gr.Button("← 上一条", elem_id="mg-prev", scale=1)
                                         mg_pos = gr.Markdown("", elem_id="mg-pos")
-                                        mg_next = gr.Button("下一条 →", scale=1)
+                                        mg_next = gr.Button("下一条 →", elem_id="mg-next", scale=1)
                                     mg_info = gr.Markdown()
                                     # 「同时播放」按钮**单独占一行**,不进视频那一行:塞进去会把
                                     # 三个播放器挤窄(用户 2026-08-14:"视频 window 大小别变")。
@@ -3514,9 +3515,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                              # 「弃用该条」提出去做卡片级操作(见下面 mg_kill)——
                                              # 用户点破的逻辑错:"这条数据要不要"和"标注 vs caption
                                              # 谁错"是两个正交的维度,弃用根本不是这个问题的第三个答案。
-                                             au_adopt = gr.Button("✅ 采纳改标", variant="secondary")
-                                             au_keep = gr.Button("↩️ 维持原标注", variant="secondary")
-                                             au_hold = gr.Button("🤔 拿不准", variant="secondary")
+                                             au_adopt = gr.Button("✅ 采纳改标", elem_id="au-adopt", variant="secondary")
+                                             au_keep = gr.Button("↩️ 维持原标注", elem_id="au-keep", variant="secondary")
+                                             au_hold = gr.Button("🤔 拿不准", elem_id="au-hold", variant="secondary")
                                          au_status = gr.Markdown()
                                      # ② 成败问题:机器弃权时必答;「采纳改标」后可选(留空=
                                      #    交给机器重判);「弃用该条」时不可用(矛盾拦截)——
@@ -3539,9 +3540,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                          tv_note = gr.Textbox(label="备注(可选;写清依据,复盘时是唯一线索)")
                                          with gr.Row():
                                              # 顺序与 VERDICT_CHOICES 严格对应(按序点亮)
-                                             tv_pass = gr.Button("✅ 判成功", variant="secondary")
-                                             tv_fail = gr.Button("❌ 判失败", variant="secondary")
-                                             tv_hold = gr.Button("🤔 拿不准", variant="secondary")
+                                             tv_pass = gr.Button("✅ 判成功", elem_id="tv-pass", variant="secondary")
+                                             tv_fail = gr.Button("❌ 判失败", elem_id="tv-fail", variant="secondary")
+                                             tv_hold = gr.Button("🤔 拿不准", elem_id="tv-hold", variant="secondary")
                                          tv_status = gr.Markdown()
 
                                     # 卡片级「整条弃用」(2026-08-19 用户拍板):它不隶属于
@@ -3554,7 +3555,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                     # 🔴 语义:点了它,**不管上面两块点了什么,这条都弃用**
                                     # (优先级拦截在 rejudge.run_rejudge,见那处注释)。
                                     with gr.Row(elem_id="adj-kill"):
-                                        mg_kill = gr.Button("其它原因-整条弃用",
+                                        mg_kill = gr.Button("其它原因-整条弃用", elem_id="mg-kill",
                                                             variant="secondary", scale=0)
                                     mg_kill_status = gr.Markdown()
                                     # 底部再放一套翻页(2026-08-25 用户提议):鼠标已经在
@@ -3562,9 +3563,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                     # 套完全同源(同 handler 同 outs),中间的位置提示由
                                     # _mg_render 一起喂
                                     with gr.Row():
-                                        mg_prev2 = gr.Button("← 上一条", scale=1)
+                                        mg_prev2 = gr.Button("← 上一条", elem_id="mg-prev2", scale=1)
                                         mg_pos2 = gr.Markdown("", elem_id="mg-pos2")
-                                        mg_next2 = gr.Button("下一条 →", scale=1)
+                                        mg_next2 = gr.Button("下一条 →", elem_id="mg-next2", scale=1)
                                     # 当前卡 episode 标记(_CURROW_JS 读它给表上色;CSS 藏)
                                     mg_cur = gr.HTML("", elem_id="mg-cur")
                                 # 「标注错了」的对话框:落的是标注线的「采纳建议改标」
@@ -3624,9 +3625,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             with gr.Accordion("复议被拒条目(记草稿,可随时改)", open=True):
                                 ap_idx = gr.State(0)
                                 with gr.Row():
-                                    ap_prev = gr.Button("← 上一条", scale=1)
+                                    ap_prev = gr.Button("← 上一条", elem_id="ap-prev", scale=1)
                                     ap_pos = gr.Markdown("", elem_id="ap-pos")
-                                    ap_next = gr.Button("下一条 →", scale=1)
+                                    ap_next = gr.Button("下一条 →", elem_id="ap-next", scale=1)
                                 ap_info = gr.Markdown()
                                 ap_readings = gr.Markdown()
                                 # 视频走 Episodes 页那条来源链(审片站 → 交付数据集 →
@@ -3636,11 +3637,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                 ap_note = gr.Textbox(label="备注(可选;写清依据,复盘时是唯一线索)")
                                 with gr.Row():
                                     # 顺序与 APPEAL_CHOICES 严格对应(_ap_btns 按序点亮)
-                                    ap_keep = gr.Button("❌ 维持拒绝", variant="secondary")
+                                    ap_keep = gr.Button("❌ 维持拒绝", elem_id="ap-keep", variant="secondary")
                                     # ⚠️ 只改按钮上的字。落进 reject_appeals.csv 的值
                                     # 仍是 "捞回" —— 那是数据契约(老交付的裁决记录、
                                     # rejudge 的匹配、幂等判据都认它),改了会静默失配。
-                                    ap_back = gr.Button("🛟 恢复为可用", variant="secondary")
+                                    ap_back = gr.Button("🛟 恢复为可用", elem_id="ap-back", variant="secondary")
                                 ap_status = gr.Markdown()
 
                 # ── 执行裁决(2026-08-19 定案):执行入口搬到
@@ -4288,14 +4289,43 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # 走 .change 就会被自己的回填再触发一遍渲染,把跳到的卡片冲回第 0 条
             mg_filter.input(lambda m, f: _mg_render(m, f, 0),
                             [state, mg_filter], _mg_outs)
-            mg_prev.click(lambda m, f, i: _mg_render(m, f, (i or 0) - 1),
-                          [state, mg_filter, mg_idx], _mg_outs)
-            mg_next.click(lambda m, f, i: _mg_render(m, f, (i or 0) + 1),
-                          [state, mg_filter, mg_idx], _mg_outs)
-            mg_prev2.click(lambda m, f, i: _mg_render(m, f, (i or 0) - 1),
-                           [state, mg_filter, mg_idx], _mg_outs)
-            mg_next2.click(lambda m, f, i: _mg_render(m, f, (i or 0) + 1),
-                           [state, mg_filter, mg_idx], _mg_outs)
+            # ── 裁决/翻页按钮的守护点击(2026-09-04 立案修复)────────────────
+            # gradio 的 .click 默认 trigger_mode="once":同一按钮上一次事件还没回包
+            # (裁决 0.6~0.9s 含推 TOS,翻页 ~0.5s)时再点,前端**静默丢弃**,界面
+            # 零反馈——8/31 自动化 13 项只落 2 项、9/4 复现 5 点落 1 即此。两层修:
+            # ① trigger_mode="multiple":点击排队按序执行,不丢。落盘是追加式、后写
+            #    覆盖前写,重复点击无害;翻页后紧接的裁决实测落在新卡上(事件按序)。
+            # ② 处理期间把这组按钮置灰、回包再恢复:人看得见"在记",连点也点不到。
+            #    置灰由点击事件的 js 在浏览器里同步做(零往返;此前试过 queue=False 的
+            #    服务端预置灰步,链式事件与翻页交错时会丢主处理,实测 4 点落 1);恢复
+            #    用 .then 而非 .success,主处理抛错也不会把按钮永久卡灰。
+            def _guarded(btn, fn, ins, outs, lock):
+                # 置灰在浏览器里同步完成(js 先于请求跑,零往返):点下去那一刻这组按钮
+                # 就不可点;恢复走 .then 直达步(主处理抛错/拒绝路径也能恢复)。主处理
+                # 本身 trigger_mode="multiple":置灰生效前的那一两次点击排队执行,不丢。
+                ids = [c.elem_id for c in lock]
+                assert all(ids), "守护点击的按钮必须有 elem_id(gradio 6 不再给组件 DOM id)"
+                js = ("(...a) => { for (const i of %s) { const w = document.getElementById(i);"
+                      " const b = w && (w.tagName === 'BUTTON' ? w : w.querySelector('button'));"
+                      " if (b) b.disabled = true; } return a; }" % ids)
+                # 恢复也在浏览器里做:置灰是直接改 DOM 的 disabled,服务端再发
+                # interactive=True 在 gradio 看来"没变",不会重渲染 → 按钮会一直灰着
+                # (实测 25s 后仍灰)。所以恢复同样走 js-only 的 .then 步。
+                js_on = ("() => { for (const i of %s) { const w = document.getElementById(i);"
+                         " const b = w && (w.tagName === 'BUTTON' ? w : w.querySelector('button'));"
+                         " if (b) b.disabled = false; } }" % ids)
+                (btn.click(fn, ins, outs, trigger_mode="multiple", js=js)
+                    .then(None, None, None, js=js_on, trigger_mode="multiple"))
+
+            _nav_lock = [mg_prev, mg_next, mg_prev2, mg_next2]
+            _guarded(mg_prev, lambda m, f, i: _mg_render(m, f, (i or 0) - 1),
+                     [state, mg_filter, mg_idx], _mg_outs, _nav_lock)
+            _guarded(mg_next, lambda m, f, i: _mg_render(m, f, (i or 0) + 1),
+                     [state, mg_filter, mg_idx], _mg_outs, _nav_lock)
+            _guarded(mg_prev2, lambda m, f, i: _mg_render(m, f, (i or 0) - 1),
+                     [state, mg_filter, mg_idx], _mg_outs, _nav_lock)
+            _guarded(mg_next2, lambda m, f, i: _mg_render(m, f, (i or 0) + 1),
+                     [state, mg_filter, mg_idx], _mg_outs, _nav_lock)
 
             def _mg_jump_to(m, filt, eid, status=QUEUE_STATUS_ALL):
                 """卡片跳到指定 episode。当前筛选档看不见它(筛着「只看成败」点了
@@ -4441,20 +4471,21 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                              show_progress="hidden")
 
             _dec_ins = [state, mg_filter, mg_status, mg_idx, au_newlab, au_note]
-            au_adopt.click(lambda m, f, st, i, nl, nt:
-                           _mg_au_decide(m, f, st, i, nl, nt, "采纳建议改标"),
-                           _dec_ins, _dec_outs)
-            au_keep.click(lambda m, f, st, i, nl, nt:
-                          _mg_au_decide(m, f, st, i, nl, nt, "维持原标注"),
-                          _dec_ins, _dec_outs)
-            au_hold.click(lambda m, f, st, i, nl, nt:
-                          _mg_au_decide(m, f, st, i, nl, nt, _HOLD),
-                          _dec_ins, _dec_outs)
+            _au_lock = [au_adopt, au_keep, au_hold, mg_kill]
+            _guarded(au_adopt, lambda m, f, st, i, nl, nt:
+                     _mg_au_decide(m, f, st, i, nl, nt, "采纳建议改标"),
+                     _dec_ins, _dec_outs, _au_lock)
+            _guarded(au_keep, lambda m, f, st, i, nl, nt:
+                     _mg_au_decide(m, f, st, i, nl, nt, "维持原标注"),
+                     _dec_ins, _dec_outs, _au_lock)
+            _guarded(au_hold, lambda m, f, st, i, nl, nt:
+                     _mg_au_decide(m, f, st, i, nl, nt, _HOLD),
+                     _dec_ins, _dec_outs, _au_lock)
             # 卡片级弃用:落的仍是标注线的「弃用该条」(后端语义与溯源一个字没动),
             # 只是入口从标注块里提到了卡片级 —— 见按钮定义处的理由。
-            mg_kill.click(lambda m, f, st, i, nl, nt:
-                          _mg_au_decide(m, f, st, i, nl, nt, "弃用该条"),
-                          _dec_ins, _dec_outs)
+            _guarded(mg_kill, lambda m, f, st, i, nl, nt:
+                     _mg_au_decide(m, f, st, i, nl, nt, "弃用该条"),
+                     _dec_ins, _dec_outs, _au_lock)
 
             def _fixlab_save(m, filt, status, idx, newlab):
                 res = _mg_au_decide(m, filt, status, idx, newlab,
@@ -4494,18 +4525,20 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             tv_pass, tv_fail, tv_hold, mg_hint, pending_banner,
                             mg_filter, mg_status]
             _tv_dec_ins = [state, mg_filter, mg_status, mg_idx, tv_note]
-            tv_pass.click(lambda m, f, st, i, nt: _mg_tv_decide(m, f, st, i, nt, "判成功"),
-                          _tv_dec_ins, _tv_dec_outs)
-            tv_fail.click(lambda m, f, st, i, nt: _mg_tv_decide(m, f, st, i, nt, "判失败"),
-                          _tv_dec_ins, _tv_dec_outs)
-            tv_hold.click(lambda m, f, st, i, nt: _mg_tv_decide(m, f, st, i, nt, _HOLD),
-                          _tv_dec_ins, _tv_dec_outs)
+            _tv_lock = [tv_pass, tv_fail, tv_hold]
+            _guarded(tv_pass, lambda m, f, st, i, nt: _mg_tv_decide(m, f, st, i, nt, "判成功"),
+                     _tv_dec_ins, _tv_dec_outs, _tv_lock)
+            _guarded(tv_fail, lambda m, f, st, i, nt: _mg_tv_decide(m, f, st, i, nt, "判失败"),
+                     _tv_dec_ins, _tv_dec_outs, _tv_lock)
+            _guarded(tv_hold, lambda m, f, st, i, nt: _mg_tv_decide(m, f, st, i, nt, _HOLD),
+                     _tv_dec_ins, _tv_dec_outs, _tv_lock)
 
             # ── ③ 被拒复议:翻页 / 点行跳转 / 两键复议 ──
-            ap_prev.click(lambda m, i: _ap_render(m, (i or 0) - 1),
-                          [state, ap_idx], _ap_outs)
-            ap_next.click(lambda m, i: _ap_render(m, (i or 0) + 1),
-                          [state, ap_idx], _ap_outs)
+            _ap_nav_lock = [ap_prev, ap_next]
+            _guarded(ap_prev, lambda m, i: _ap_render(m, (i or 0) - 1),
+                     [state, ap_idx], _ap_outs, _ap_nav_lock)
+            _guarded(ap_next, lambda m, i: _ap_render(m, (i or 0) + 1),
+                     [state, ap_idx], _ap_outs, _ap_nav_lock)
 
             def _ap_jump(m, idx, evt):
                 # 表尾的捞回台账行没有对应卡片(条目已回交付),点了留在当前卡
@@ -4550,10 +4583,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
 
             _ap_dec_outs = [ap_status, ap_table, ap_info, ap_keep, ap_back,
                             pending_banner]
-            ap_keep.click(lambda m, i, nt: _ap_decide(m, i, nt, "维持拒绝"),
-                          [state, ap_idx, ap_note], _ap_dec_outs)
-            ap_back.click(lambda m, i, nt: _ap_decide(m, i, nt, "捞回"),
-                          [state, ap_idx, ap_note], _ap_dec_outs)
+            _ap_lock = [ap_keep, ap_back]
+            _guarded(ap_keep, lambda m, i, nt: _ap_decide(m, i, nt, "维持拒绝"),
+                     [state, ap_idx, ap_note], _ap_dec_outs, _ap_lock)
+            _guarded(ap_back, lambda m, i, nt: _ap_decide(m, i, nt, "捞回"),
+                     [state, ap_idx, ap_note], _ap_dec_outs, _ap_lock)
 
             # ── 执行裁决(人工裁决页底部,2026-08-19):作用对象 = 当前加载的
             #    那份交付与那一次运行(state 里的 m),不是任何下拉的值 ──

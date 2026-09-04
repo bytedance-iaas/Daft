@@ -152,7 +152,7 @@ def test_phase_step_reports_position_and_action_without_fake_percent(capsys):
 
     phase_step("技能画像", 2, 5, "归纳技能体系(LLM)…")
     out = capsys.readouterr().out
-    assert "技能画像 2/5 归纳技能体系(LLM)…" in out
+    assert "技能画像 第 2/5 阶段 归纳技能体系(LLM)…" in out
     assert "%" not in out
 
 
@@ -352,6 +352,6 @@ def test_heartbeat_scan_reprints_stalled_bars_and_phases(monkeypatch):
     pg.phase_step("技能画像", 2, 5, "归纳技能体系(LLM)…", now - 40)
     pg._PHASE["技能画像"]["ts"] = now - 20
     lines = pg._hb_scan(now)
-    assert any("技能画像 2/5" in x and "仍在这一步" in x for x in lines)
+    assert any("技能画像 第 2/5 阶段" in x and "仍在这一步" in x for x in lines)
     pg.phase_done("技能画像")
     assert pg._hb_scan(now + 100) == []

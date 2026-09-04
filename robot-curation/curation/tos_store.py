@@ -642,7 +642,7 @@ def stage_out(local_root: str, url: str, region: str | None = None, *,
                                 f"{str(e)[:200]};完整性标志尚未上传,远端不会"
                                 "把这份半成品当完整交付列出,重跑即可续传") from e
         if i % 50 == 0 or i == len(plan):
-            print(f"[tos] 上传交付桶 {i}/{len(plan)}", flush=True)
+            print(f"[tos] 上传交付桶 {i}/{len(plan)} 个文件", flush=True)
     return len(plan)
 
 

@@ -4219,3 +4219,34 @@ def test_batch_origin_url_registers_region_for_playback(tmp_path):
     assert url == "tos://sh-deliv-bkt/so101/x/20260828-000000"
     assert tos_store.bucket_region("sh-deliv-bkt") == "cn-shanghai"
     tos_store.clear_bucket_regions()
+
+
+def test_adjudication_buttons_queue_clicks_and_lock_while_pending(full_delivery):
+    """裁决/翻页按钮的守护点击(2026-09-04 立案修复):gradio .click 默认 trigger_mode
+    "once" 会把上一次事件未回包期间的再次点击静默丢掉(复现:连点 5 次只落 1 行)。
+    钉两件事:①这些按钮的主处理事件 trigger_mode="multiple"(排队不丢);
+    ②点击事件带 js 钩子在浏览器里同步把本组按钮 disabled(处理期间有反馈、点不到),
+    并有 js-only 的后继步把它们恢复(服务端发 interactive=True 对 gradio 是"没变",
+    不会重渲染,实测按钮会一直灰着)。"""
+    pytest.importorskip("gradio")
+    from curation.ui import app as ui_app
+    app = ui_app.build_app(full_delivery)
+    labels = {"✅ 判成功", "❌ 判失败", "✅ 采纳改标", "↩️ 维持原标注",
+              "下一条 →", "← 上一条", "❌ 维持拒绝", "其它原因-整条弃用"}
+    btn_ids = {i for i, c in app.blocks.items()
+               if isinstance(getattr(c, "value", None), str) and c.value in labels}
+    assert len(btn_ids) >= 8
+    for bid in btn_ids:
+        deps = [f for f in app.fns.values()
+                if any(t[0] == bid for t in (f.targets or []))]
+        assert deps, bid
+        modes = {getattr(f, "trigger_mode", None) for f in deps}
+        assert "once" not in modes and None not in modes, (bid, modes)
+        eid = app.blocks[bid].elem_id
+        assert eid, bid                                   # 守护点击靠 elem_id 找按钮
+        js_click = " ".join(str(getattr(f, "js", "") or "") for f in deps)
+        assert f"'{eid}'" in js_click and "disabled = true" in js_click, (bid, js_click[:200])
+        # 恢复步是 .then 挂在点击事件之后(targets 不是按钮),在全部事件里找引用该按钮的 js
+        js_any = " ".join(str(getattr(f, "js", "") or "") for f in app.fns.values()
+                          if f"'{eid}'" in str(getattr(f, "js", "") or ""))
+        assert "disabled = false" in js_any, bid

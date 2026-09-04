@@ -99,12 +99,19 @@ def is_task_success_reject(reason) -> bool:
     hit = {k for k in _CHECK_KEYS_EN if k in s}
     return hit == {"task_success"}
 
-# 进程内写缓存 {csv绝对路径: 全量行列表}。FSX 上新写文件有 ~20-45s 可见延迟
-# (读回是空的),而本模块是"读全量+整写"——不兜底的话,延迟窗口内连裁两条,
-# 第二写读到空文件会把第一条冲掉(2026-08-06 实测推演)。取 max(文件, 缓存)
-# 即可自愈:UI 常驻进程连点走缓存;rejudge 是新进程,届时文件早已可见。
+# 进程内写缓存 {csv绝对路径: {"rows": 全量行, "at": 写盘时刻, "digest": 写盘内容摘要,
+# "mtime_ns": 写盘后 stat 到的修改时间}}。FSX 上新写文件有 ~20-45s 可见延迟(读回是空的
+# 或旧的),而本模块是"读全量+整写"——不兜底的话,延迟窗口内连裁两条,第二写读到空文件
+# 会把第一条冲掉(2026-08-06 实测推演)。
+# 判据(2026-09-04 改,此前是"行数多者胜"):读回的内容就是我们写的那份 → 用磁盘;内容不同
+# 且文件比我们写盘**更新** → 有人在界面外改过,磁盘为准、缓存作废;内容不同且文件更旧或
+# 还看不见 → 这才是可见性延迟,用缓存。缓存条目 _WRITE_CACHE_TTL_S 后自动失效。
+# 行数判据的祸害:界面外任何让文件变短的合法改动(删错裁、恢复旧台账、清空)在本进程里
+# 永远不生效,直到 pod 重启(2026-09-04 倒回交付状态时实撞)。
 # 两张表按绝对路径分键,共用一个缓存字典不会串味。
 _WRITE_CACHE: dict = {}
+#: 写缓存存活时间:FSX 可见延迟实测 20~60s,留 3 倍余量;超过它缓存只会盖住别人的改动
+_WRITE_CACHE_TTL_S = 180.0
 
 
 #: 已经就"读到了老位置"提示过的路径(同一进程里只说一次,别刷屏)。
@@ -136,32 +143,74 @@ def _write_path(delivery_path: str, filename: str) -> str:
     return decisions_write_path(delivery_path, filename)
 
 
-def _read_rows(path: str, fields: list) -> list:
-    """读全量行(缺列补空串)。文件读回比本进程写缓存少 = FSX 可见延迟,以缓存为准。"""
+def _csv_text(fields: list, rows: list) -> str:
+    """rows → 整份 CSV 文本(写盘与摘要用同一份字节)。"""
     import csv as _csv
+    import io as _io
+    buf = _io.StringIO()
+    w = _csv.DictWriter(buf, fieldnames=fields)
+    w.writeheader()
+    w.writerows(rows)
+    return buf.getvalue()
+
+
+def _digest(data: bytes) -> str:
+    import hashlib as _h
+    return _h.sha1(data).hexdigest()
+
+
+def _read_rows(path: str, fields: list) -> list:
+    """读全量行(缺列补空串)。与本进程写缓存的取舍见 _WRITE_CACHE 的注释。"""
+    import csv as _csv
+    import time as _time
     rows: list = []
+    raw: bytes | None = None
     if os.path.exists(path):
-        with open(path, newline="", encoding="utf-8") as f:
-            rows = [{k: (r.get(k) or "") for k in fields} for r in _csv.DictReader(f)]
-    cached = _WRITE_CACHE.get(os.path.abspath(path), [])
-    if len(cached) > len(rows):
-        rows = list(cached)
-    return rows
+        with open(path, "rb") as f:
+            raw = f.read()
+        import io as _io
+        rows = [{k: (r.get(k) or "") for k in fields}
+                for r in _csv.DictReader(_io.StringIO(raw.decode("utf-8")))]
+    ent = _WRITE_CACHE.get(os.path.abspath(path))
+    if not ent:
+        return rows
+    if _time.time() - ent["at"] > _WRITE_CACHE_TTL_S:
+        _WRITE_CACHE.pop(os.path.abspath(path), None)          # 过期:磁盘为准
+        return rows
+    if raw is None:
+        return list(ent["rows"])                                 # 还看不见 = 可见性延迟
+    if _digest(raw) == ent["digest"]:
+        return rows                                              # 就是我们写的那份
+    try:
+        mtime_ns = os.stat(path).st_mtime_ns
+    except OSError:
+        return list(ent["rows"])
+    newer = (mtime_ns > ent["mtime_ns"]) if ent.get("mtime_ns") is not None \
+        else (mtime_ns / 1e9 > ent["at"])
+    if newer:
+        _WRITE_CACHE.pop(os.path.abspath(path), None)           # 界面外改过:磁盘为准
+        return rows
+    return list(ent["rows"])                                     # 旧内容 = 延迟,缓存为准
 
 
 def _append_row(path: str, fields: list, row: dict) -> None:
     """追加一行 = 读全量 + 整文件重写(见 record_label_decision 里的 FSX 血泪注释)。"""
-    import csv as _csv
+    import time as _time
 
     from ..export.safe_write import delivery_file
     os.makedirs(os.path.dirname(path), exist_ok=True)
     rows = _read_rows(path, fields)
     rows.append(row)
+    text = _csv_text(fields, rows)
     with delivery_file(path, newline="") as f:
-        w = _csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        w.writerows(rows)
-    _WRITE_CACHE[os.path.abspath(path)] = list(rows)
+        f.write(text)
+    try:
+        mtime_ns = os.stat(path).st_mtime_ns
+    except OSError:                       # FSX 写完可能一时 stat 不到:按写盘时刻兜底
+        mtime_ns = None
+    _WRITE_CACHE[os.path.abspath(path)] = {
+        "rows": list(rows), "at": _time.time(),
+        "digest": _digest(text.encode("utf-8")), "mtime_ns": mtime_ns}
 
 
 def load_label_decisions(delivery_path: str) -> dict:
@@ -481,7 +530,7 @@ def run_decision_records(run_path: str) -> list[dict]:
             return (p, None, None)
 
     sig = (tuple(_sig(p) for p in json_paths + csv_paths)
-           + tuple(len(_WRITE_CACHE.get(os.path.abspath(c), ()))
+           + tuple(len((_WRITE_CACHE.get(os.path.abspath(c)) or {}).get("rows", ()))
                    for c in csv_paths))
     key = os.path.abspath(run_path)
     hit = _RECORDS_CACHE.get(key)

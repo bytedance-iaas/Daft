@@ -107,9 +107,14 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 #: 管道打的进度行。两种格式都要认(见 pipeline/progress.py):
 #:   条目式 `[curation] VLM 任务成败判定 12/199 (6%) | 已用 3.2min | 剩余 ~48min`
 #:   阶段式 `[curation] 技能画像 3/5 归纳技能体系(LLM)… | 已用 1.2min`
+#: N/M 两侧不许贴着字母/数字/斜杠/点/横线:路径里的 `demo-01/20260904-041517` 不是进度
+#: (2026-09-04 用户在 rejudge 卡上实见"交付在桶里 … 903/20260904"两行假进度)。
 #: 另外 review-page 与 rejudge 用自己的前缀且可能没有阶段名,故 stage 允许为空。
+#: N/M 后面的单位(条/个文件/张/组/项/阶段)照抄到任务卡;"第 N/M 阶段"识别为阶段式
+#: (2026-09-04 用户定:不带单位时"5/5"会被读成 5 条)。老日志没单位也照旧能解析。
 _PROGRESS_RE = re.compile(
-    r"^\[(?P<src>[\w-]+)\]\s*(?P<stage>.*?)\s*(?P<n>\d+)\s*/\s*(?P<total>\d+|\?)"
+    r"^\[(?P<src>[\w-]+)\]\s*(?P<stage>.*?)\s*(?P<ordinal>第\s*)?(?<![\w/.-])(?P<n>\d+)\s*/\s*(?P<total>\d+|\?)(?![\w/.-])"
+    r"(?:\s*(?P<unit>阶段|个文件|条|张|组|项))?"
     r"(?:\s*\((?P<pct>\d+)%\))?(?P<rest>.*)$")
 _ELAPSED_RE = re.compile(r"已用\s*(\S+)")
 _ETA_RE = re.compile(r"剩余\s*~?\s*(\S+)")
@@ -2911,9 +2916,15 @@ def _progress_row(p: dict) -> str:
         # 无百分比 = 不装样子(phase_step 那种一步一次 LLM 大调用的阶段)
         width, color, stripe = "100%", _BAR_LIVE, ";opacity:.45"
     name = " · ".join(x for x in (p.get("section"), p.get("stage")) if x)
+    if p.get("unit") == "阶段":
+        count = f"第 {p['n']}/{p['total']} 阶段"
+    elif p.get("total"):
+        count = f"{p['n']}/{p['total']}" + (f" {p['unit']}" if p.get("unit") else "")
+    else:
+        count = None
     detail = " · ".join(x for x in (
         name,
-        f"{p['n']}/{p['total']}" if p.get("total") else None,
+        count,
         (f"用时 {p['elapsed']}" if done else f"已用 {p['elapsed']}")
         if p.get("elapsed") else None,
         (None if done else (f"剩余 ~{p['eta']}" if p.get("eta") else None))) if x)
@@ -3023,7 +3034,7 @@ def parse_progress(log_text: str) -> dict | None:
             pct = str(round(100.0 * n / total_i)) if total_i else None
         el = _ELAPSED_RE.search(rest)
         eta = _ETA_RE.search(rest)
-        best = {"stage": stage, "n": n, "total": total_i,
+        best = {"stage": stage, "n": n, "total": total_i, "unit": m.group("unit") or "",
                 "pct": int(pct) if pct is not None else None,
                 "elapsed": el.group(1) if el else None,
                 "eta": eta.group(1) if eta else None,
@@ -3074,6 +3085,7 @@ def parse_progress_all(log_text: str) -> list[dict]:
         el = _ELAPSED_RE.search(rest)
         eta = _ETA_RE.search(rest)
         reading = {"stage": stage, "section": section, "n": n, "total": total_i,
+                   "unit": m.group("unit") or "",
                    "pct": int(pct) if pct is not None else None,
                    "elapsed": el.group(1) if el else None,
                    "eta": eta.group(1) if eta else None,
