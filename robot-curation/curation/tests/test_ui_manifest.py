@@ -3478,6 +3478,20 @@ def test_overview_rows_are_the_only_place_numbers_appear(full_delivery):
         assert n not in md, n
 
 
+def test_overview_pending_row_counts_the_whole_adjudication_queue(full_delivery):
+    """总览「其中 待人工裁决」= 人工裁决页队列的全部条数(成败弃权 × 标注分歧合并去重),
+    括号里印构成(2026-09-09 用户定:此前只数成败弃权,与裁决页「全部(N)」对不上)。"""
+    from curation.ui.manifest import merged_review_queue
+    m = load_delivery(full_delivery)
+    rows = dict(overview_rows(m))
+    q = merged_review_queue(m)
+    n_task = sum(1 for it in q if it["task"] is not None)
+    n_audit = sum(1 for it in q if it["audit"] is not None)
+    n_both = sum(1 for it in q if it["task"] and it["audit"])
+    assert rows["　其中 待人工裁决"] == f"{len(q)}(成败弃权 {n_task},标注分歧 {n_audit},重叠 {n_both})"
+    assert len(q) == n_task + n_audit - n_both
+
+
 def test_overview_rows_add_up_input_equals_dropped_plus_delivered(full_delivery):
     """口径要能一眼验:输入 = 判废 + 交付,而判废逐项列出来的和 = 判废。
 
@@ -3495,10 +3509,14 @@ def test_overview_rows_add_up_input_equals_dropped_plus_delivered(full_delivery)
 
 def test_overview_rows_mark_the_within_delivery_flags(full_delivery):
     """带「其中」的行是交付内条目上的标记,不参与加减 —— 且**只有**待人工裁决一行。"""
-    rows = dict(overview_rows(load_delivery(full_delivery)))
+    from curation.ui.manifest import merged_review_queue
+    m = load_delivery(full_delivery)
+    rows = dict(overview_rows(m))
     within = {k.replace("　", "").replace("其中 ", ""): v
               for k, v in rows.items() if "其中" in k}
-    assert within == {"待人工裁决": 31}
+    assert set(within) == {"待人工裁决"}
+    # 2026-09-09 起数的是人工裁决页那张队列的全部条数,括号里印构成
+    assert str(within["待人工裁决"]).startswith(f"{len(merged_review_queue(m))}(")
 
 
 def test_overview_never_shows_the_label_rows(full_delivery):
@@ -3508,8 +3526,12 @@ def test_overview_never_shows_the_label_rows(full_delivery):
     有问题"。撤的只是这两行展示,分歧队列本身在「人工裁决」页照旧。
     """
     m = load_delivery(full_delivery)
-    blob = str(overview_rows(m)) + overview_markdown(m)
+    rows = overview_rows(m)
+    blob = str([r[0] for r in rows]) + overview_markdown(m)
     assert AUDIT_TERM not in blob and "标注缺失" not in blob and "分歧" not in blob
+    # 2026-09-09 用户定的唯一例外:「待人工裁决」那一行的括号里印人工队列的构成
+    # (成败弃权 / 标注分歧 / 重叠),因为它就是裁决页队列的条数,不印构成对不上账。
+    assert sum("分歧" in str(r[1]) for r in rows) == 1
     # 功能没被拆掉:队列还在,人工裁决页还照旧靠它
     assert len(m["audit_queue"]) == 32
     assert AUDIT_TERM in audit_note_md(m)

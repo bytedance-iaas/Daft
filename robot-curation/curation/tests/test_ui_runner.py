@@ -598,8 +598,8 @@ def test_vlm_backend_labels_keep_two_machines_of_the_same_model_apart(tmp_path):
 # ── 并发默认值:只为显示,读不到就弃权 ────────────────────────────────────
 
 def test_concurrency_defaults_read_the_shipped_config():
-    """界面上三个并发框的占位符要显示**生效配置里的**默认值(出厂是 32/16/32)。"""
-    assert runner.concurrency_defaults() == {"ep": 32, "fr": 16, "cap": 32}
+    """界面上三个并发框的占位符要显示**生效配置里的**默认值(出厂是 32/64/32,帧级 2026-09-07 起 64)。"""
+    assert runner.concurrency_defaults() == {"ep": 32, "fr": 64, "cap": 32}
 
 
 def test_concurrency_defaults_site_file_overrides_only_what_it_declares(tmp_path):
@@ -607,12 +607,12 @@ def test_concurrency_defaults_site_file_overrides_only_what_it_declares(tmp_path
     界面上就成了"一个有默认值两个没有"。"""
     site = tmp_path / "site.yaml"
     site.write_text("pipeline:\n  vlm_episode_concurrency: 8\n", encoding="utf-8")
-    assert runner.concurrency_defaults(str(site)) == {"ep": 8, "fr": 16, "cap": 32}
+    assert runner.concurrency_defaults(str(site)) == {"ep": 8, "fr": 64, "cap": 32}
 
 
 def test_concurrency_defaults_ignore_a_missing_site_file(tmp_path):
     assert runner.concurrency_defaults(str(tmp_path / "nope.yaml")) \
-        == {"ep": 32, "fr": 16, "cap": 32}
+        == {"ep": 32, "fr": 64, "cap": 32}
 
 
 def test_concurrency_defaults_abstain_when_the_config_says_nothing(monkeypatch):
@@ -1755,6 +1755,75 @@ def test_listing_success_registers_bucket_region(monkeypatch):
     runner.tos_list_datasets("tos://sh-bkt/deliveries", store=_St())
     assert tos_store.bucket_region("sh-bkt") is None
     tos_store.clear_bucket_regions()
+
+
+_PROFILE_LOG = (
+    "[curation] 精确去重·动作指纹 43/43 条 (100%) | 已用 1s\n"
+    "[curation] 技能画像 第 1/5 阶段 逐条 caption(43 条,并发 32)… | 已用 0s\n"
+    "[curation] 技能画像 第 1/5 阶段·逐条 caption 16/43 条 (37%) | 已用 15s | 剩余 ~25s\n"
+    "[curation] 技能画像 第 1/5 阶段·逐条 caption 43/43 条 (100%) | 已用 1.0min\n"
+    "[curation] 技能画像 第 2/5 阶段 归纳技能体系(LLM)… | 已用 1.0min\n"
+    "[curation] 技能画像 第 2/5 阶段 归纳技能体系(LLM)… | 已用 2.8min | 仍在这一步…\n"
+    "[curation] 技能画像 第 3/5 阶段 自查裁判:按判据复核分类(LLM)… | 已用 2.9min\n"
+    "[curation] 技能画像 第 4/5 阶段 补漏:无未归类,跳过 | 已用 3.5min\n"
+    "[curation] 技能画像 第 5/5 阶段 汇总画像 + 标注-画面分歧检出 | 已用 3.5min\n"
+    "[curation] 技能画像 第 5/5 阶段 caption 归族补漏 26 条(LLM)… | 已用 4.4min\n"
+    "[curation] 技能画像 第 5/5 阶段 标注-画面分歧检出 1/27 | 已用 6.0min\n"
+    "[curation] 技能画像 第 5/5 阶段 标注-画面分歧检出 25/27 | 已用 6.6min\n"
+)
+
+
+def test_parse_progress_all_keeps_phase_substeps_as_separate_rows():
+    """阶段式父行只有一条(阶段数只进不退),子步骤各占一行、按出现顺序、不互相覆盖
+    (2026-09-09 用户定:画完一条画下一条);同一子步骤的多次读数更新同一行。"""
+    got = runner.parse_progress_all(_PROFILE_LOG)
+    prof = [p for p in got if p["stage"] == "技能画像"][0]
+    assert prof["unit"] == "阶段" and prof["n"] == 5 and prof["total"] == 5 and prof["done"] is False
+    subs = prof["subs"]
+    assert [(c["step"], c["what"]) for c in subs] == [
+        (1, "逐条 caption"), (2, "归纳技能体系"), (3, "自查裁判:按判据复核分类"),
+        (4, "补漏:无未归类,跳过"), (5, "汇总画像 + 标注-画面分歧检出"),
+        (5, "caption 归族补漏 26 条"), (5, "标注-画面分歧检出")]
+    # 逐条 caption 的两种行(宣告行 + 计数行)归并成一行,计数进 n/total,跑满即完成
+    assert subs[0]["n"] == 43 and subs[0]["total"] == 43 and subs[0]["unit"] == "条" and subs[0]["done"]
+    # 前面的子步骤在后一个出现时标完成;最后一个还在跑,带内嵌计数
+    assert all(c["done"] for c in subs[:-1]) and subs[-1]["done"] is False
+    assert subs[-1]["n"] == 25 and subs[-1]["total"] == 27
+    # 子步骤用时 = 累计已用之差,结束时刻取下一子步骤的开始:归纳体系 1.0min→2.9min
+    assert subs[1]["first_s"] == 60 and subs[1]["last_s"] == 174
+
+
+def test_progress_row_fills_the_phase_bar_stepwise_and_lists_substeps():
+    """父条按 第 N/M 阶段 填到 N/M(2026-09-09 用户定:一次涨一格),子行缩进逐条画,
+    有计数的子行画真进度;整段跑完后子行全部满格且写 用时。"""
+    prof = [p for p in runner.parse_progress_all(_PROFILE_LOG) if p["stage"] == "技能画像"][0]
+    html = runner._progress_row(prof)
+    assert "width:100%" in html.split("</div>")[0]            # 第 5/5 阶段 → 父条 100%
+    assert "第 2/5 阶段 · 归纳技能体系 · 用时 1.9min" in html
+    assert "第 5/5 阶段 · 标注-画面分歧检出 · 25/27" in html and "已用" in html
+    # 父行只有一行阶段小字,不再把最后一条子步骤重复到父行
+    assert html.count("标注-画面分歧检出") == 2   # 汇总画像 + … 那一条 与 25/27 那一条
+    half = [p for p in runner.parse_progress_all(
+        "[curation] 技能画像 第 2/5 阶段 归纳技能体系(LLM)… | 已用 1.0min\n")][0]
+    assert "width:40%" in runner._progress_row(half).split("</div>")[0]
+    # 后面出现新阶段 → 父行与全部子行完成
+    done = runner.parse_progress_all(_PROFILE_LOG + "[curation] 人工裁决视频片段 1/13 条 (8%) | 已用 1s\n")
+    prof = [p for p in done if p["stage"] == "技能画像"][0]
+    assert prof["done"] and all(c["done"] for c in prof["subs"])
+
+
+def test_progress_row_shows_the_substep_while_running():
+    """阶段式行跑着时把子步骤文字带上(2026-09-09 用户实见技能画像第 5/5 阶段五分钟
+    "没动静":日志在报 归族补漏/分歧检出 i/N/分歧复检,卡上只有 已用 在走)。跑完不带。"""
+    p = runner.parse_progress("[curation] 技能画像 第 5/5 阶段 标注-画面分歧检出 25/27 | 已用 6.6min")
+    row = runner._progress_row(p)
+    assert "第 5/5 阶段" in row and "标注-画面分歧检出 25/27" in row and "已用 6.6min" in row
+    p = runner.parse_progress("[curation] 技能画像 第 5/5 阶段 分歧复检:4 条 × 3 轮并发重打标… | 已用 7.5min | 仍在这一步…")
+    assert "分歧复检:4 条 × 3 轮并发重打标" in runner._progress_row(p)
+    # 条目式行的"首批在飞…/收尾中"同样带上;跑完的行只留结果
+    p = runner.parse_progress("[curation] VLM 任务成败判定 0/5 (0%) | 已用 20s | 首批在飞…")
+    assert "首批在飞" in runner._progress_row(p)
+    assert "首批在飞" not in runner._progress_row(dict(p, done=True))
 
 
 def test_parse_progress_carries_unit_and_card_renders_it():
