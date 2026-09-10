@@ -2908,6 +2908,10 @@ _BAR_LIVE, _BAR_DONE = "#2563eb", "#93c5fd"
 def _progress_row(p: dict) -> str:
     """一个阶段一行:条 + 一行小字。宽高全随内容,不写死行数(阶段有几个画几行)。"""
     pct, done = p.get("pct"), bool(p.get("done"))
+    if p.get("unit") == "阶段" and p.get("total") and pct is None:
+        # 阶段式父行按"进入第 N 阶段 = N/M"填色(2026-09-09 用户定:一次涨一格;
+        # 旁边明写 第 N/M 阶段,读者知道那是步数不是时间)
+        pct = int(round(100.0 * int(p.get("n") or 0) / int(p["total"])))
     if done:
         width, color, stripe = "100%", _BAR_DONE, ""
     elif pct is not None:
@@ -2922,17 +2926,56 @@ def _progress_row(p: dict) -> str:
         count = f"{p['n']}/{p['total']}" + (f" {p['unit']}" if p.get("unit") else "")
     else:
         count = None
+    # 跑着的行把日志里"| 已用"前面那截子步骤文字带上(2026-09-09 用户实见:技能画像
+    # 第 5/5 阶段内部有归族补漏、分歧检出 i/N、分歧复检三段共五分钟,日志一直在报,
+    # 卡上却只有"第 5/5 阶段 · 已用 X"一动不动,像卡死)。跑完的行不带:收账只留结果。
+    sub = (p.get("detail") or "").strip(" :·…") if not done else ""
+    if sub and sub == (p.get("stage") or ""):
+        sub = ""
+    if p.get("subs"):
+        sub = ""            # 子步骤各占一行,父行不再重复最后一条
     detail = " · ".join(x for x in (
         name,
         count,
+        sub or None,
         (f"用时 {p['elapsed']}" if done else f"已用 {p['elapsed']}")
         if p.get("elapsed") else None,
         (None if done else (f"剩余 ~{p['eta']}" if p.get("eta") else None))) if x)
-    return (f'<div style="margin-top:8px;height:10px;background:#e2e8f0;'
+    html_ = (f'<div style="margin-top:8px;height:10px;background:#e2e8f0;'
+             f'border-radius:999px;overflow:hidden">'
+             f'<div style="height:100%;width:{width};background:{color}{stripe}"></div>'
+             f'</div><div style="margin-top:4px;color:#475569;font-size:12px">'
+             f'{_esc(detail)}</div>')
+    for c in p.get("subs") or []:
+        html_ += _substep_row(c, p.get("total"))
+    return html_
+
+
+def _substep_row(c: dict, total_steps) -> str:
+    """父行下的子步骤行:缩进、细条;有内嵌计数画真进度,没有的不填色,跑完变满。"""
+    done = bool(c.get("done"))
+    if done:
+        width, color, stripe = "100%", _BAR_DONE, ""
+    elif c.get("pct") is not None:
+        width, color, stripe = f"{max(0, min(100, int(c['pct'])))}%", _BAR_LIVE, ""
+    elif c.get("total"):
+        width, color, stripe = f"{int(round(100.0 * c['n'] / c['total']))}%", _BAR_LIVE, ""
+    else:
+        width, color, stripe = "100%", _BAR_LIVE, ";opacity:.45"
+    count = (f"{c['n']}/{c['total']}" + (f" {c['unit']}" if c.get("unit") else "")
+             if c.get("total") else None)
+    dur = None
+    if c.get("first_s") is not None and c.get("last_s") is not None:
+        dur = _fmt_seconds(c["last_s"] - c["first_s"])
+        dur = f"用时 {dur}" if done else f"已用 {dur}"
+    text = " · ".join(x for x in (
+        f"第 {c['step']}/{total_steps} 阶段" if total_steps else None,
+        c.get("what"), count, dur) if x)
+    return (f'<div style="margin:6px 0 0 18px;height:6px;background:#e2e8f0;'
             f'border-radius:999px;overflow:hidden">'
             f'<div style="height:100%;width:{width};background:{color}{stripe}"></div>'
-            f'</div><div style="margin-top:4px;color:#475569;font-size:12px">'
-            f'{_esc(detail)}</div>')
+            f'</div><div style="margin:3px 0 0 18px;color:#64748b;font-size:11px">'
+            f'{_esc(text)}</div>')
 
 
 def failed_suffix(st: dict) -> str:
@@ -3009,6 +3052,46 @@ def _esc(s) -> str:
     return html.escape(str(s if s is not None else ""))
 
 
+_SUB_COUNT_RE = re.compile(r"(?<![\w/.-])(?P<n>\d+)\s*/\s*(?P<total>\d+)(?![\w/.-])"
+                           r"(?:\s*(?P<unit>个文件|条|张|组|项))?(?:\s*\((?P<pct>\d+)%\))?")
+
+
+def _dur_seconds(text: str | None) -> float | None:
+    """"15s" / "1.6min" / "2.3h" → 秒;认不出返回 None。"""
+    m = re.match(r"^\s*([\d.]+)\s*(s|min|h)\s*$", str(text or ""))
+    if not m:
+        return None
+    v, u = float(m.group(1)), m.group(2)
+    return v * {"s": 1, "min": 60, "h": 3600}[u]
+
+
+def _fmt_seconds(sec: float) -> str:
+    sec = max(float(sec), 0.0)
+    if sec < 60:
+        return f"{sec:.0f}s"
+    if sec < 3600:
+        return f"{sec / 60:.1f}min"
+    return f"{sec / 3600:.1f}h"
+
+
+def _substep_key(detail: str) -> str:
+    """子步骤文字 → 归并键:去掉内嵌计数(16/43 条 (37%))、括号补充与尾部省略号,
+    "逐条 caption(43 条,并发 32)…" 与 "逐条 caption 16/43 条 (37%)" 归为同一子步骤。"""
+    t = _SUB_COUNT_RE.sub("", str(detail or ""))
+    t = t.split("(")[0]
+    return t.strip(" ·:…,;")
+
+
+def _progress_detail(rest: str) -> str:
+    """进度行里"| 已用 / | 剩余"之外的第一截说明文字:阶段式是子步骤(如
+    "标注-画面分歧检出 25/27"),条目式是状态("首批在飞…""收尾中")。没有就空串。"""
+    for seg in str(rest or "").split("|"):
+        seg = seg.strip()
+        if seg and not _ELAPSED_RE.search(seg) and not _ETA_RE.search(seg):
+            return seg
+    return ""
+
+
 def parse_progress(log_text: str) -> dict | None:
     """日志文本 → 最后一条能解析的进度。解析不出返回 None。
 
@@ -3038,7 +3121,7 @@ def parse_progress(log_text: str) -> dict | None:
                 "pct": int(pct) if pct is not None else None,
                 "elapsed": el.group(1) if el else None,
                 "eta": eta.group(1) if eta else None,
-                "detail": rest.split("|")[0].strip()}
+                "detail": _progress_detail(rest)}
     return best
 
 
@@ -3089,17 +3172,63 @@ def parse_progress_all(log_text: str) -> list[dict]:
                    "pct": int(pct) if pct is not None else None,
                    "elapsed": el.group(1) if el else None,
                    "eta": eta.group(1) if eta else None,
-                   "detail": rest.split("|")[0].strip()}
+                   "detail": _progress_detail(rest)}
         hit = index.get(stage)
         if hit is None:
             for e in out:
                 e["done"] = True
+                for c in e.get("subs") or []:
+                    c["done"] = True
             hit = dict(reading, done=False)
             out.append(hit)
             index[stage] = hit
         else:
+            if reading["unit"] == "阶段":
+                # 阶段式父行:阶段数只进不退(子步骤行里的内嵌计数不算阶段数)
+                reading["n"] = max(n, int(hit.get("n") or 0))
             hit.update(reading)
+        if reading["unit"] == "阶段":
+            _register_substep(hit, n, reading["detail"], reading.get("elapsed"))
         # 一旦满格就永远是完成态:后面若还有同名阶段的读数(重试/再跑一遍),
         # 也不该把一个已经跑满的条改回半截
-        hit["done"] = hit["done"] or bool(total_i and n >= total_i)
+        hit["done"] = hit["done"] or bool(total_i and n >= total_i and reading["unit"] != "阶段")
+        if hit["done"]:
+            for c in hit.get("subs") or []:
+                c["done"] = True
     return out
+
+
+def _register_substep(parent: dict, step: int, detail: str, elapsed: str | None) -> None:
+    """阶段式父行下的子步骤(2026-09-09 用户定:子步骤不互相覆盖,画完一条画下一条)。
+
+    键 = (阶段号, 归并后的子步骤文字);同一子步骤的多次读数更新同一行,换了子步骤
+    就追加新行并把前面的行标完成。子行自带的内嵌计数(16/43 条 (37%))进 n/total/pct;
+    用时 = 本子步骤最后一次读数的累计已用 − 第一次读数的累计已用(日志只有累计值)。"""
+    key_text = _substep_key(detail)
+    if not key_text:
+        return
+    subs = parent.setdefault("subs", [])
+    key = (step, key_text)
+    cur = next((c for c in subs if c["key"] == key), None)
+    if cur is None:
+        start = _dur_seconds(elapsed)
+        for c in subs:
+            c["done"] = True
+            # 上一子步骤的结束时刻 = 下一子步骤开始时刻(日志里没有"结束"行,只有累计已用)
+            if c is subs[-1] and start is not None and (c.get("last_s") is None or c["last_s"] < start):
+                c["last_s"] = start
+        cur = {"key": key, "step": step, "what": key_text, "n": None, "total": None,
+               "unit": "", "pct": None, "first_s": _dur_seconds(elapsed),
+               "last_s": _dur_seconds(elapsed), "done": False}
+        subs.append(cur)
+    m = _SUB_COUNT_RE.search(str(detail or ""))
+    if m:
+        cur["n"], cur["total"] = int(m.group("n")), int(m.group("total"))
+        cur["unit"] = m.group("unit") or ""
+        cur["pct"] = int(m.group("pct")) if m.group("pct") else None
+        if cur["n"] >= cur["total"] > 0:
+            cur["done"] = True
+    if _dur_seconds(elapsed) is not None:
+        if cur["first_s"] is None:
+            cur["first_s"] = _dur_seconds(elapsed)
+        cur["last_s"] = _dur_seconds(elapsed)

@@ -353,6 +353,8 @@ _IND = "　"
 #    总览首屏,实际是在展示自家打标不准,还容易被读成"你的标注有 32 条有问题"。
 #    等打标质量改进后再议。**撤的只是总览这两行的展示**:分歧队列在「人工裁决」
 #    页照旧(用户要靠它逐条裁),review.json 的键名与 audit_labels 的产出一律没动。
+#    2026-09-09 用户定的唯一例外:「其中 待人工裁决」那一行数的是裁决页队列的全部
+#    条数,括号里印构成(成败弃权/标注分歧/重叠)—— 分歧数只作为人工队列的构成出现。
 
 
 #: 没有硬门名字的那类判废在表里叫什么。判决层的第二种判废理由是"综合加权分低于
@@ -443,10 +445,17 @@ def overview_rows(m: dict) -> list[list]:
         # "同一件事说两遍"
         rows.append(["交付", f"{delivered}(通过率 {pct}%)"
                      if pct is not None else delivered])
-        n_pending = sum(1 for e in (m.get("episodes") or {}).values()
-                        if e.get("pending"))
-        if n_pending:
-            rows.append([f"{_IND}其中 {PENDING_ROW_LABEL}", n_pending])
+        # 2026-09-09 用户定:这一行数的是「人工裁决」页那张队列的全部条数(成败弃权 ×
+        # 标注分歧 按 episode 合并去重),并把构成印在括号里 —— 此前只数成败弃权
+        # (review.json 的条目),与裁决页的「全部(N)」对不上(droid-50:总览 9 / 队列 13),
+        # 读者会当成 bug。分歧条数在这里只作为人工队列的构成出现,不单列成行(见上 ⚠️)。
+        q = merged_review_queue(m)
+        if q:
+            n_task = sum(1 for it in q if it["task"] is not None)
+            n_audit = sum(1 for it in q if it["audit"] is not None)
+            n_both = sum(1 for it in q if it["task"] is not None and it["audit"] is not None)
+            rows.append([f"{_IND}其中 {PENDING_ROW_LABEL}",
+                         f"{len(q)}(成败弃权 {n_task},标注分歧 {n_audit},重叠 {n_both})"])
     _add("平均质量分", ss.get("avg_soft_score", ""))
     return rows
 
