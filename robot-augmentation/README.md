@@ -55,4 +55,16 @@ augmentation --name gold_silver --edit "本子和桌面保持不变；把红色�
     --seg-len 28 --pick-draws 3 --max-draws 4 --build-dataset
 ```
 
-默认走 VLM 几何层；`--geom <档案目录>` 切到掩码档案模式（后续 PR）；`--chain-only` 为纯链式对照。产物在 `$AUG_WORK/final/<name>/`（生成视频、三格对照、`run.json`）与 `$AUG_OUT/final/<name>/`，`--build-dataset` 另在 `$AUG_OUT/datasets/<name>/` 封一份 LeRobot 数据集。
+默认走 VLM 几何层；`--geom <档案目录>` 切到掩码档案模式；`--chain-only` 为纯链式对照。
+
+## 掩码档案模式（可选，实验）
+
+先建几何档案（VLM 列物体 → GroundingDINO 出框 → VLM 核框 → SAM2 逐帧传播 → Depth‑Anything），再让切段、锚帧、意图门按掩码做；权重放在 `AUG_MODELS`（默认 `augment_work/models`）：
+
+```bash
+pip install -e "robot-augmentation[mask]"
+python3 -m augmentation.geom_archive --video augment_work/src/front.mp4 --out augment_work/geom/front
+augmentation --name gold_silver --edit "..." --seg-len 28 --geom augment_work/geom/front --build-dataset
+```
+
+同题对比下两种模式结果等价，VLM 版更便宜、更快，且不依赖分割质量；掩码版留作精细模式与像素级兜底（合成 `--composite`、碎片门 `--sliver-gate`，都默认关，详见 docs）。产物在 `$AUG_WORK/final/<name>/`（生成视频、三格对照、`run.json`）与 `$AUG_OUT/final/<name>/`，`--build-dataset` 另在 `$AUG_OUT/datasets/<name>/` 封一份 LeRobot 数据集。
