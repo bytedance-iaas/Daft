@@ -36,5 +36,6 @@ pip install -e "robot-augmentation[mask]"    # 可选：掩码档案模式需要
 | `video_ops` | 切段、重采样、带重叠的拼接（色调对齐 + 交叉淡入淡出）、按源规格重编码、并排对比 |
 | `build_dataset` | 把增广后的相机视频封回一份完整的 LeRobot v3 数据集（其它相机、动作、状态原样） |
 | `config` | 环境变量配置 |
+| `collect`、`review_page`、`compare` | 收产物进评审目录、生成本地评审页（原 \| 生成 \| 叠加 三格同步）、并排对比视频 |
 
 流水线（切段、门、择优）在后续 PR 中加入。
