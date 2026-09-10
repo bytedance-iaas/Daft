@@ -17,31 +17,39 @@ from . import config
 from .tos_io import Tos, TosUrl
 
 
-def _get(tos: Tos | None, src: str, dst: str) -> None:
+_TOS: Tos | None = None
+
+
+def _get(src: str, dst: str) -> None:
+    """本地路径直接拷;tos:// 才建 TOS 客户端(本地评审不需要 TOS 凭证)。"""
+    global _TOS
     os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
     if src.startswith("tos://"):
-        tos.download(TosUrl.parse(src), dst)
+        if _TOS is None:
+            _TOS = Tos()
+        _TOS.download(TosUrl.parse(src), dst)
     else:
         shutil.copyfile(src, dst)
 
 
 def collect(run: str, d: str, *, page: bool = True) -> dict:
-    tos = Tos() if run.startswith("tos://") or True else None
     j = lambda *p: run.rstrip("/") + "/" + "/".join(p) if run.startswith("tos://") else os.path.join(run, *p)
     rj = os.path.join(d, "_run.json.tmp")
-    _get(tos, j("run.json"), rj)
+    _get(j("run.json"), rj)
     rec = json.load(open(rj))
     name = rec["name"]
     cam = rec.get("camera", config.camera()).split(".")[-1]
     os.replace(rj, os.path.join(d, f"{name}_run.json"))
-    _get(tos, j(f"{name}_{cam}.mp4"), os.path.join(d, f"{name}.mp4"))
+    _get(j(f"{name}_{cam}.mp4"), os.path.join(d, f"{name}.mp4"))
     try:
-        _get(tos, j(f"{name}_triptych.mp4"), os.path.join(d, f"{name}_triptych.mp4"))
+        _get(j(f"{name}_triptych.mp4"), os.path.join(d, f"{name}_triptych.mp4"))
     except Exception:
         pass
     orig = os.path.join(d, "original.mp4")
     if not os.path.exists(orig) and rec.get("lerobot_src"):
-        _get(tos, TosUrl.parse(rec["lerobot_src"]).join(config.video_rel_path(rec.get("camera", config.camera()))).__str__(), orig)
+        src_root = rec["lerobot_src"]
+        rel = config.video_rel_path(rec.get("camera", config.camera()))
+        _get(str(TosUrl.parse(src_root).join(rel)) if src_root.startswith("tos://") else os.path.join(src_root, rel), orig)
     out = {"name": name, "dir": d}
     if page:
         from .review_page import build
