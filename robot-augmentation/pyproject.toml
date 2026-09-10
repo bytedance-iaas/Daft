@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "augmentation"
+version = "0.1.0"
+description = "机器人演示视频的外观增广（Seedance）：换背景 / 材质 / 被操作物体，动作与相机不动"
+requires-python = ">=3.10"
+dependencies = [
+    "av>=12",
+    "opencv-python-headless>=4.9",
+    "numpy>=1.24",
+    "requests>=2.31",
+    "tos>=2.7",
+]
+
+[project.optional-dependencies]
+mask = ["torch>=2.2", "transformers>=4.40", "ultralytics>=8.3"]
+
+[tool.setuptools.packages.find]
+include = ["augmentation*"]

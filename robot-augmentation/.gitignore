@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+augment_work/
+results/
+*.mp4
