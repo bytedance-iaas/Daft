@@ -37,4 +37,21 @@ pip install -e "robot-augmentation[mask]"    # 可选：掩码档案模式需要
 | `build_dataset` | 把增广后的相机视频封回一份完整的 LeRobot v3 数据集（其它相机、动作、状态原样） |
 | `config` | 环境变量配置 |
 
-流水线（切段、门、择优）在后续 PR 中加入。
+| `vlm` | 方舟 VLM 调用与通用问答（物体清单、编辑目标解析、材质短语） |
+| `maskfree` | 不用掩码的几何层：切点探针、锚帧、意图门、多抽择优、夹缝门（实验） |
+| `vlm_check` | 原帧与生成帧并排问 VLM：多画了什么、少了什么（逐抽门与全片复核） |
+| `pipeline` | 主流程：切段、逐段生成与过门、拼接、复核、封包 |
+| `evaluate`、`geometry` | 运动一致性与几何指标 |
+
+## 跑一条
+
+```bash
+export ARK_API_KEY=... TOS_ACCESS_KEY=... TOS_SECRET_KEY=...
+export AUG_LEROBOT_SRC=tos://<bucket>/<path>/lerobot_curated AUG_OUT=tos://<bucket>/augment/<dataset> AUG_WORK=/tmp/augment_work
+augmentation --name metal_wood --edit "把桌面上那本牛皮纸本子替换成拉丝不锈钢金属板，本子的位置、大小和形态不变；把白色桌面替换成木纹桌面" \
+    --seg-len 17 --build-dataset
+augmentation --name gold_silver --edit "本子和桌面保持不变；把红色方块换成抛光的黄金材质，把蓝色方块换成抛光的白银材质，方块的位置、大小和形状不变" \
+    --seg-len 28 --pick-draws 3 --max-draws 4 --build-dataset
+```
+
+默认走 VLM 几何层；`--geom <档案目录>` 切到掩码档案模式（后续 PR）；`--chain-only` 为纯链式对照。产物在 `$AUG_WORK/final/<name>/`（生成视频、三格对照、`run.json`）与 `$AUG_OUT/final/<name>/`，`--build-dataset` 另在 `$AUG_OUT/datasets/<name>/` 封一份 LeRobot 数据集。
