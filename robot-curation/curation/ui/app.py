@@ -1316,6 +1316,19 @@ def _vlm_involved(mode: str, picks, how: str) -> bool:
     return any(c not in picked for c in VLM_CHECKS)
 
 
+def _kin_will_run(mode: str, picks, how: str) -> bool:
+    """这次跑批会不会跑运动学极限(决定开跑前要不要追问机器人型号)。
+
+    2026-09-16 用户定:勾了运动学极限、数据集又读不到型号才追问;没勾就不问。
+    完整/快速质检都跑它(快速只跳 VLM 的两项);自选模块按「只跑/跳过选中」
+    分别算,一项没勾 = 全跑。
+    """
+    if mode != CUSTOM_SCAN or not picks:
+        return True
+    picked = "kinematic_limits" in set(picks)
+    return picked if how == "只跑选中" else not picked
+
+
 def _sets(plots, c_ep, c_fr, c_cap, manual: str) -> list:
     """界面上的几个旋钮 + 手写的参数覆盖 → `--set 路径=值` 列表。
 
@@ -2897,7 +2910,10 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 机器人型号追问(2026-08-27):在切片追问**之前**——没型号
                     # 连运动学都跑不起来,先解决要不要型号,再谈要不要切片。
                     # 多选时任一数据集没登记就问一次(型号本来就是整跑全局参数)。
-                    if not str(args.get("emb") or "").strip() and not batch:
+                    # 只在这次真跑运动学极限时问(2026-09-16 用户定);登记了但
+                    # 规格库不支持的不问,管道里运动学整项跳过、其余照常。
+                    if (not str(args.get("emb") or "").strip() and not batch
+                            and _kin_will_run(mode, picks, how)):
                         # 走 embodiment_hints 缓存:下拉选中时已预热,点按钮
                         # 不再现场下数据算指纹(2026-08-28 用户实见弹框转 7.5s)
                         unk = [c for c in chosen

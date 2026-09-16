@@ -102,23 +102,24 @@ def test_rrd_flag_vs_file_conflict_is_named():
 
 
 def test_rrd_no_embodiment_says_the_way_out():
-    """没给 --embodiment:状态「缺失」,说明必须给出路(--embodiment / --skip)。"""
+    """没给 --embodiment:状态「缺失」,说清运动学极限整项跳过(2026-09-16 起
+    管道自动跳过,不再失败)并给出路(--embodiment)。"""
     info = {"fps": 5.0, "time_source": "video_timestamps", "has_task_text": True}
     got = _by_item(container_findings("rrd", info, _ROBOT_MISS))
     assert got["机器人型号"]["状态"] == "缺失"
     assert "--embodiment" in got["机器人型号"]["说明"]
-    assert "kinematic_limits" in got["机器人型号"]["说明"]
+    assert "整项跳过" in got["机器人型号"]["说明"]
 
 
 def test_rrd_embodiment_not_in_registry():
-    """给了 --embodiment 但规格库查不到:不冒充"已补",老实说弃权。"""
+    """给了 --embodiment 但规格库查不到:不冒充"已补",老实说整项跳过。"""
     robot = {"robot_type": "myarm", "embodiment_id": "myarm",
              "registry_profile": "(未注册)", "quality": None}
     info = {"fps": 5.0, "time_source": "video_timestamps", "has_task_text": True}
     got = _by_item(container_findings("rrd", info, robot))
     assert got["机器人型号"]["状态"] == "缺失"
     assert "myarm" in got["机器人型号"]["说明"]
-    assert "弃权" in got["机器人型号"]["说明"]
+    assert "整项跳过" in got["机器人型号"]["说明"]
 
 
 def test_rrd_fps_from_properties():
@@ -142,13 +143,35 @@ def test_lerobot_unregistered_robot_degrades():
     got = _by_item(container_findings("lerobot", {"fps": 30}, robot))
     assert got["机器人型号"]["状态"] == "降级"
     assert "ur5e" in got["机器人型号"]["说明"]
-    assert "弃权" in got["机器人型号"]["说明"]
+    assert "整项跳过" in got["机器人型号"]["说明"]
 
 
 def test_lerobot_missing_robot_type():
     got = _by_item(container_findings("lerobot", {"fps": 30}, _ROBOT_MISS))
     assert got["机器人型号"]["状态"] == "缺失"
     assert "--embodiment" in got["机器人型号"]["说明"]
+    assert "整项跳过" in got["机器人型号"]["说明"]
+
+
+def test_lerobot_missing_robot_type_but_embodiment_given():
+    """info.json 没写 robot_type,但追问框/--embodiment 给了已注册型号:照常查,
+    报告说「已补」,不能再说"无规格可查/跳过"。"""
+    robot = {"robot_type": "unknown", "embodiment_id": "so101",
+             "registry_profile": "so101", "quality": "verified"}
+    got = _by_item(container_findings("lerobot", {"fps": 30}, robot))
+    assert got["机器人型号"]["状态"] == "缺失(已补)"
+    assert "so101" in got["机器人型号"]["说明"]
+    assert "跳过" not in got["机器人型号"]["说明"]
+
+
+def test_lerobot_given_embodiment_not_in_registry_names_it():
+    """人工指定的型号不在规格库:说的是指定的那个型号,不是 robot_type。"""
+    robot = {"robot_type": "unknown", "embodiment_id": "koch",
+             "registry_profile": "(未注册)", "quality": None}
+    got = _by_item(container_findings("lerobot", {"fps": 30}, robot))
+    assert got["机器人型号"]["状态"] == "降级"
+    assert "koch" in got["机器人型号"]["说明"]
+    assert "整项跳过" in got["机器人型号"]["说明"]
 
 
 # ───────────────────────── 渲染:报告 + UI ─────────────────────────

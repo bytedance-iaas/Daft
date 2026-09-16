@@ -109,13 +109,13 @@ def container_findings(input_format: str, info: dict, robot: dict,
                                     f"照常执行。{note}"})
         elif emb and emb != "unknown":
             out.append({"项": "机器人型号", "状态": "缺失",
-                        "说明": f"型号 {emb} 不在规格库,运动学极限对照按弃权处理。"})
+                        "说明": f"型号 {emb} 不在规格库,运动学极限整项跳过"
+                                "(其余检查照常)。"})
         else:
             out.append({"项": "机器人型号", "状态": "缺失",
                         "说明": "RRD 文件不带 robot_type 字段,又无溯源信息、未指定 "
-                                "--embodiment,运动学极限检查无规格可查。重跑时加 "
-                                "--embodiment <型号>(如 so101),或 "
-                                "--skip kinematic_limits 明确跳过。"})
+                                "--embodiment,运动学极限无规格可查,本次整项跳过。"
+                                "要检查请重跑时加 --embodiment <型号>(如 so101)。"})
         ts = str(info.get("time_source") or "")
         if ts == "video_timestamps":
             out.append({"项": "帧时间信息", "状态": "正常",
@@ -169,14 +169,21 @@ def container_findings(input_format: str, info: dict, robot: dict,
                                 "此后缺失元数据即可自动回源补全。"})
     else:
         rt = str(robot.get("robot_type") or "unknown")
-        if rt == "unknown":
-            out.append({"项": "机器人型号", "状态": "缺失",
-                        "说明": "info.json 未声明 robot_type,运动学极限检查无规格可查;"
-                                "可用 --embodiment <型号> 指定。"})
-        elif not registry_hit:
+        # 说法与管道实际行为对齐(2026-09-16):查不到规格表 = 运动学极限整项跳过
+        # (run.py),不是逐条弃权;人工指定了型号的按指定的说
+        if registry_hit:
+            if rt == "unknown":
+                out.append({"项": "机器人型号", "状态": "缺失(已补)",
+                            "说明": f"info.json 未声明 robot_type;已按指定型号 {emb} "
+                                    "查规格,运动学极限照常执行。"})
+        elif emb and emb != "unknown":
             out.append({"项": "机器人型号", "状态": "降级",
-                        "说明": f"型号 {rt} 不在规格库,运动学极限对照按弃权处理"
-                                "(不误杀也不放行);需要支持请提供该机器人的关节规格。"})
+                        "说明": f"型号 {emb} 不在规格库,运动学极限整项跳过(其余检查"
+                                "照常);需要支持请提供该机器人的关节规格。"})
+        else:
+            out.append({"项": "机器人型号", "状态": "缺失",
+                        "说明": "info.json 未声明 robot_type,运动学极限无规格可查,"
+                                "本次整项跳过;要检查请用 --embodiment <型号> 指定。"})
     return out
 
 

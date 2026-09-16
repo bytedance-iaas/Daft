@@ -627,12 +627,27 @@ def run_pipeline(
             "source": str(rows[0].get("semantics_source") or ""),
             "profile_name": str(_ex0.get("profile_name") or ""),
             "preflight": _ex0.get("semantics_preflight") or {}}
-    if input_format == "rrd" and not embodiment_id and _rt == "unknown":
-        # RRD 标准里没有 robot_type 字段,但属性内嵌/溯源回填后 _rt 可能已有值 ——
-        # 只有三条路都空才提示。提前一行说清出路,别等漏斗里抛"未知 embodiment_id"。
-        print("[curation] ⚠️ RRD 文件不带机器人型号(也无内嵌/溯源可回填):规格类检查"
-              "需要 --embodiment <型号>(如 so101);不指定就用 "
-              "--skip kinematic_limits 跳过", flush=True)
+    # 运动学极限查不到规格表 → 整项跳过,不许拖垮整批(2026-09-16 用户定)。
+    # 其余模块查不到型号本来就各自降级,只有它非要规格表:漏斗里 registry.get
+    # 一抛,daft 整个任务就失败。两种情况同样处理:
+    #   ① 读到了型号但规格库不支持 → 跳过,其余模块照常;
+    #   ② 读不到型号 → UI/CLI 开跑前会追问;没问到的(跑全部/非交互)也跳过。
+    # RRD 标准里没有 robot_type 字段,但属性内嵌/溯源回填后 _rt 可能已有值 ——
+    # 三条路都空才算读不到。
+    if enabled(cfg, "kinematic_limits") and _robot["registry_profile"] == "(未注册)":
+        cfg["checks"]["kinematic_limits"]["enable"] = False
+        if _emb == "unknown":
+            _why = ("RRD 文件不带机器人型号(也无内嵌/溯源可回填)"
+                    if input_format == "rrd" else "info.json 未声明 robot_type")
+            _why += ",也没指定 --embodiment-id"
+        else:
+            try:
+                _known = "、".join(EmbodimentRegistry().ids())
+            except Exception:  # noqa: BLE001  规格库本身读不动,型号清单就不列了
+                _known = "无"
+            _why = f"机器人型号 {_emb} 不在规格库(已支持:{_known})"
+        print(f"[curation] ⚠️ {_why}:运动学极限整项跳过,其余模块照常",
+              flush=True)
     # 数据包完整性(2026-08-10 用户定):容器缺什么、按什么补的,不能只活在启动
     # 提示里 —— 报错管拦路,报告管留痕。此处只收集,渲染在 report.to_markdown。
     from ..export.report import container_findings

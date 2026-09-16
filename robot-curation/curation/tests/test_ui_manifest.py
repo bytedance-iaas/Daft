@@ -500,6 +500,20 @@ def test_vlm_involved_decides_concurrency_greying():
     assert _vlm_involved(CUSTOM_SCAN, ["task_success"], "跳过选中") is True
 
 
+def test_kin_will_run_decides_embodiment_ask():
+    """型号追问只在这次真跑运动学极限时弹(2026-09-16 用户定):完整/快速都跑;
+    自选模块按只跑/跳过两种语义算,一项没勾 = 全跑。"""
+    from curation.ui.app import CUSTOM_SCAN, FULL_SCAN, QUICK_SCAN, _kin_will_run
+
+    assert _kin_will_run(FULL_SCAN, [], "只跑选中") is True
+    assert _kin_will_run(QUICK_SCAN, [], "只跑选中") is True
+    assert _kin_will_run(CUSTOM_SCAN, [], "只跑选中") is True
+    assert _kin_will_run(CUSTOM_SCAN, ["kinematic_limits"], "只跑选中") is True
+    assert _kin_will_run(CUSTOM_SCAN, ["dedup"], "只跑选中") is False
+    assert _kin_will_run(CUSTOM_SCAN, ["kinematic_limits"], "跳过选中") is False
+    assert _kin_will_run(CUSTOM_SCAN, ["dedup"], "跳过选中") is True
+
+
 # ───────── U4 内嵌终端:ASGI 应用装配 / 鉴权 / PTY 往返 ─────────
 
 def _paths(app) -> set:

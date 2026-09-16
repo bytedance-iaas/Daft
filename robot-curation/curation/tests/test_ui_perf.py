@@ -1013,6 +1013,55 @@ def test_cli_interactive_preflight(tmp_path, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a: next(answers2))
     assert cli._interactive_run_preflight(args2) is None
     assert args2.skip == "kinematic_limits" and args2.embodiment_id is None
+    # TTY + 这次不跑运动学(--only 里没有它):型号一句都不问(2026-09-16 用户定)
+    args3 = types.SimpleNamespace(input=str(ds), output="tos://b/deliveries/x",
+                                  embodiment_id=None, only="dedup", skip=None,
+                                  batch=False)
+    asked = []
+    monkeypatch.setattr("builtins.input",
+                        lambda prompt="": asked.append(prompt) or "n")
+    assert cli._interactive_run_preflight(args3) is None
+    assert not any("型号" in q for q in asked), "没跑运动学还问型号"
+    assert args3.embodiment_id is None and args3.only == "dedup"
+
+
+def test_preflight_asks_embodiment_only_when_kinematics_selected(tmp_path,
+                                                                  monkeypatch):
+    """UI 开跑前的「机器人型号」追问只在勾了运动学极限时弹(2026-09-16 用户定):
+    自选模块没勾它 → 不问直接开跑;勾了 → 数据集读不到型号照旧弹框。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner as _runner
+    from curation.ui.app import CUSTOM_SCAN, build_app
+
+    deliv = tmp_path / "deliveries"
+    deliv.mkdir()
+    ds = tmp_path / "data" / "mystery"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(_json.dumps(
+        {"robot_type": "unknown"}), encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    started = []
+    monkeypatch.setattr(_runner, "start",
+                        lambda runs_root, command, argv, **kw:
+                        started.append(list(argv)))
+    fn = _fn_by_name(app, "_run_preflight")
+
+    def _pre(picks, how, name):
+        out = fn(str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
+                 name, CUSTOM_SCAN, picks, how, None, "", None,
+                 "", "", None, None, None, None, "", False, False)
+        return _json.dumps([str(x) for x in out], ensure_ascii=False)
+
+    assert "没有登记机器人型号" not in _pre(["dedup"], "只跑选中", "k1")
+    assert started and "--only" in started[-1], "没勾运动学:不问,直接开跑"
+    started.clear()
+    assert "没有登记机器人型号" not in _pre(["kinematic_limits"], "跳过选中", "k2")
+    assert started, "跳过运动学:同样不问"
+    started.clear()
+    assert "没有登记机器人型号" in _pre(["kinematic_limits"], "只跑选中", "k3")
+    assert not started, "勾了运动学且读不到型号:先弹追问,不许直接开跑"
 
 
 def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
