@@ -117,7 +117,8 @@ def test_guideline_in_prompt_no_numeric_range():
 
     def spy_llm(prompt):
         seen["prompt"] = prompt
-        return '{"families": []}'
+        return json.dumps({"families": [{"name": "push", "subskills": [
+            {"name": "push", "members": ["push the block"]}]}]})
 
     induce_taxonomy(["push the block"], spy_llm)
     p = seen["prompt"]
