@@ -1114,6 +1114,16 @@ def make_llm_ask(endpoint: str, model: str,
             lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
             tag="llm", timeout_s=timeout_s, gate=gate)
         r.raise_for_status()
-        return strip_reasoning(r.json()["choices"][0]["message"]["content"])
+        choice = r.json()["choices"][0]
+        if choice.get("finish_reason") == "length":
+            raise ValueError(
+                f"LLM 输出被截断 (finish_reason=length, max_tokens={max_tokens}, "
+                f"model={model}); 请提高输出 token 上限或减少归纳输入量。")
+        content = choice["message"].get("content")
+        if not isinstance(content, str) or not strip_reasoning(content).strip():
+            raise ValueError(
+                f"LLM 未返回有效文本 (finish_reason={choice.get('finish_reason')!r}, "
+                f"model={model})")
+        return strip_reasoning(content)
 
     return llm_ask

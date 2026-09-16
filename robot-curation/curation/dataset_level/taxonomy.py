@@ -11,11 +11,23 @@ llm_ask 注入式(纯文本调用;测试注入假函数返回固定 JSON)。
 from __future__ import annotations
 
 import json
+import logging
 import re
-from typing import Callable
+import time
+from collections.abc import Callable
 
 # llm_ask(prompt_text: str) -> str(模型回答原文)
 LlmAsk = Callable[[str], str]
+_LOG = logging.getLogger(__name__)
+_TAXONOMY_MAX_RETRIES = 3
+
+
+class TaxonomyResponseError(ValueError):
+    """Keep the final invalid response available for diagnosis."""
+
+    def __init__(self, message: str, raw_response: str):
+        super().__init__(message)
+        self.raw_response = raw_response
 
 # 默认判据:按操作技能分,物体身份/颜色/位置不是依据。
 # 2026-07-30 粒度改进:**族 = 交互类型(机器人怎么跟物体发生作用),不再是动词**。
@@ -104,7 +116,9 @@ TAXONOMY_PROMPT_TMPL = (
     "criterion = ONE short sentence (max 15 words) describing the shared MOTION; "
     "never mention specific objects, colors, or locations in it.\n"
     "EVERY caption must appear in EXACTLY ONE subskill's members, copied VERBATIM "
-    "(character-for-character) — omitting or altering any caption is an error.\n\n"
+    "(character-for-character after JSON decoding) — omitting or altering any caption "
+    "is an error. Escape quotes, backslashes and newlines inside JSON strings. "
+    "Do not include comments or trailing commas.\n\n"
     "CAPTIONS:\n")
 
 
@@ -113,18 +127,64 @@ def _parse_json(text: str) -> dict:
     return json.loads(t)
 
 
+def _validate_taxonomy(taxonomy: dict) -> None:
+    """Reject invalid structures instead of silently producing an empty profile."""
+    if not isinstance(taxonomy, dict) or not isinstance(taxonomy.get("families"), list):
+        raise ValueError("taxonomy.families must be a list")
+    if not taxonomy["families"]:
+        raise ValueError("taxonomy.families must not be empty for non-empty captions")
+    for fam in taxonomy["families"]:
+        if (not isinstance(fam, dict) or not isinstance(fam.get("name"), str)
+                or not fam["name"].strip() or not isinstance(fam.get("subskills"), list)
+                or not fam["subskills"]):
+            raise ValueError("each family needs a name and a non-empty subskills list")
+        for sub in fam["subskills"]:
+            if (not isinstance(sub, dict) or not isinstance(sub.get("name"), str)
+                    or not sub["name"].strip() or not isinstance(sub.get("members"), list)
+                    or not all(isinstance(m, str) for m in sub["members"])):
+                raise ValueError("each subskill needs a name and a list of string members")
+
+
 def induce_taxonomy(captions: list[str], llm_ask: LlmAsk,
                     guideline: str | None = None) -> dict:
     """去重 caption → LLM(带判据 guideline)→ {"families": [...]}。
 
     guideline 为空时用 DEFAULT_GUIDELINE(按技能动词分,物体/颜色不是依据)。
     返回体系中每个族/子技能带 criterion(LLM 自述的归类理由,进报告可审计)。
+    格式错误带诊断最多重试 3 次,指数退避 1/2/4 秒;网络/截断错误直接传播。
     """
     uniq = sorted(set(c.strip() for c in captions if c.strip()))
     if not uniq:
         return {"families": []}
     prompt = TAXONOMY_PROMPT_TMPL.format(guideline=(guideline or DEFAULT_GUIDELINE).strip())
-    return _parse_json(llm_ask(prompt + "\n".join(f"- {c}" for c in uniq)))
+    prompt += "\n".join(f"- {c}" for c in uniq)
+    request = prompt
+    for attempt in range(_TAXONOMY_MAX_RETRIES + 1):
+        raw = llm_ask(request)
+        try:
+            taxonomy = _parse_json(raw)
+            _validate_taxonomy(taxonomy)
+            return taxonomy
+        except ValueError as exc:
+            pos = exc.pos if isinstance(exc, json.JSONDecodeError) else 0
+            doc = exc.doc if isinstance(exc, json.JSONDecodeError) else raw
+            excerpt = doc[max(0, pos - 100):pos + 100]
+            diagnostic = f"{exc}; response_chars={len(raw)}; near={excerpt!r}"
+            _LOG.debug("Invalid taxonomy response (attempt %d): %s", attempt + 1, raw)
+            if attempt == _TAXONOMY_MAX_RETRIES:
+                raise TaxonomyResponseError(
+                    f"技能体系归纳失败: LLM 连续 {_TAXONOMY_MAX_RETRIES + 1} 次"
+                    f"返回无效 JSON/结构; {diagnostic}",
+                    raw,
+                ) from exc
+            delay_s = 2 ** attempt
+            _LOG.warning("技能体系 JSON/结构无效,%s 秒后纠正重试 (%d/%d): %s",
+                         delay_s, attempt + 1, _TAXONOMY_MAX_RETRIES, diagnostic)
+            request = (prompt + "\n\nYour previous response was invalid:\n" + raw
+                       + "\n\nValidation error: " + diagnostic
+                       + "\nReturn the COMPLETE corrected taxonomy as strict JSON only. "
+                       "Preserve all input captions after JSON decoding.")
+            time.sleep(delay_s)
 
 
 def assign(captions: list[str], taxonomy: dict) -> tuple[list[str], list[str]]:
