@@ -1138,28 +1138,57 @@ def make_llm_ask(endpoint: str, model: str,
                  timeout_s: float = DEFAULT_TIMEOUTS_S["llm"],
                  max_tokens: int = 8192, api_key_env: str | None = None,
                  max_in_flight: int = 2, gate=None):
-    """纯文本 LLM 调用工厂(M7 taxonomy/audit 用;同一端点同一模型,配置一处)。
+    """纯文本 LLM 调用工厂(M7 taxonomy/audit 用)。
 
-    max_in_flight = 对冲闸门容量,应传调用方的结构并发(下限 2)。默认 2 的来历
-    (2026-08-15 用户批准):归纳步是串行大调用,结构并发 = 1,闸门给 1 的话首发攥着
-    唯一许可、补发永远等不到 —— 对冲对最需要它的这一类(llm p99 139.9s)直接失效。
-    ⚠️ 但同一个 llm_ask 还被守规合并(llm_concurrency 16)和标注判官(audit_concurrency)
-    从多线程调用,闸门 2 会把它们悄悄压回 2 路 —— 2026-08-22 判官改单对单并发时发现,
-    run.py 按最大结构并发传。"""
+    HTTP 408/429/5xx、连接错误和超时最多请求 4 次,退避 1/2/4 秒。
+    其他 HTTP 错误和 TLS 错误直接抛出;每次请求独立限时,不叠加对冲。
+    max_in_flight 应与调用方的结构并发匹配,所有请求共用并发闸门。
+    """
+    import logging
     import requests
 
     url = endpoint.rstrip("/") + "/chat/completions"
     headers = auth_headers(api_key_env)
     # gate 可外传(仲裁链四厂共享一闸,见 _make_arb_post);不传自建
     gate = gate if gate is not None else SharedGate(max(2, int(max_in_flight)))
+    logger = logging.getLogger(__name__)
+
+    def retryable(exc) -> bool:
+        if isinstance(exc, requests.exceptions.HTTPError):
+            code = exc.response.status_code
+            return code in (408, 429) or 500 <= code < 600
+        return not isinstance(exc, requests.exceptions.SSLError) and isinstance(
+            exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                  requests.exceptions.ChunkedEncodingError))
 
     def llm_ask(prompt_text: str) -> str:
         payload = {"model": model, "temperature": 0.0, "max_tokens": max_tokens,
                    "messages": [{"role": "user", "content": prompt_text}]}
-        r = hedged_request(
-            lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
-            tag="llm", timeout_s=timeout_s, gate=gate)
-        r.raise_for_status()
+        call_id = uuid.uuid4().hex[:12]
+        for attempt in range(4):
+            if not gate.acquire(timeout=GATE_WAIT_FUSE_S):
+                raise requests.exceptions.Timeout("VLM 等待并发闸门超时")
+            started = _time.time()
+            ok, fail_kind = False, "connect_error"
+            try:
+                r = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
+                fail_kind = "http_error"
+                r.raise_for_status()
+                ok, fail_kind = True, ""
+                break
+            except requests.exceptions.RequestException as exc:
+                if isinstance(exc, requests.exceptions.Timeout):
+                    fail_kind = "timeout"
+                should_retry = retryable(exc) and attempt < 3
+                logger.warning("VLM 请求失败 (%d/4): %s; %s", attempt + 1, exc,
+                               f"{2 ** attempt} 秒后重试" if should_retry else "停止重试")
+                if not should_retry:
+                    raise
+            finally:
+                gate.release()
+                latency_record("llm", _time.time() - started, ok, started_at=started,
+                               call_id=call_id, attempt=attempt, fail_kind=fail_kind)
+            _time.sleep(2 ** attempt)
         choice = r.json()["choices"][0]
         if choice.get("finish_reason") == "length":
             raise ValueError(

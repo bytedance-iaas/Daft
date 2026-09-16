@@ -310,31 +310,23 @@ def test_read_timeout_gets_exactly_one_serial_retry():
     assert abs(calls[1] - 0.5) < 0.1, "重发应带全新 1×timeout 预算"
 
 
-def test_both_attempts_dead_walks_existing_except_path(monkeypatch):
-    """工厂级:两发都超时 ⇒ 工厂抛异常,调用方既有 except 分支(少一票)不变。
-
-    走真实 make_llm_ask(而非直接调 helper):若有人把调用点改回裸
-    requests.post(不过 hedged_request),这里只会记到一行、无 attempt=1,变红。
-    """
+def test_llm_timeout_retries_are_serial_and_bounded(monkeypatch):
+    """文本 LLM 最多请求四次,不叠加对冲,每次都记录耗时。"""
     from curation.adapters.vlm_client import make_llm_ask
-
+    calls, waits = [], []
     def fake_post(url, json=None, headers=None, timeout=None):
-        time.sleep(min(9.9, timeout))
+        calls.append(timeout)
         raise requests.exceptions.Timeout("服务端排队")
-
     monkeypatch.setattr("requests.post", fake_post)
-    llm_ask = make_llm_ask("http://198.51.100.7:8000/v1", "m", timeout_s=0.2)
-    t0 = time.time()
-    with pytest.raises(Exception):
-        llm_ask("归纳一下")
-    assert time.time() - t0 <= 1.1      # 超时路径 3T=0.6 + 松余量,绝不是旧写法的硬等
-    rows = _wait_rows(3)
-    mine = [r for r in rows if r[0] == "llm"]
-    assert {r[5] for r in mine} == {0, 1, 2}, \
-        "应见 首发+补发+超时最后一搏 三行;缺失 = 调用点绕过了 hedged_request"
-    assert all(r[6] == "timeout" and not r[2] for r in mine)
-    s = latency_summary()["llm"]
-    assert s["unanswered"] == 1 and s["errors"] == 3
+    monkeypatch.setattr("curation.adapters.vlm_client._time.sleep", waits.append)
+    with pytest.raises(requests.exceptions.Timeout):
+        make_llm_ask("http://example.test/v1", "m", timeout_s=0.2)("归纳一下")
+    assert calls == [0.2] * 4
+    assert waits == [1, 2, 4]
+    rows = latency_rows()
+    assert len(rows) == 4 and len({r[4] for r in rows}) == 1
+    assert [r[5] for r in rows] == [0, 1, 2, 3]
+    assert all(r[6] == "timeout" and not r[2] for r in rows)
 
 
 def test_default_timeouts_per_kind():
