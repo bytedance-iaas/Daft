@@ -500,6 +500,32 @@ def test_vlm_involved_decides_concurrency_greying():
     assert _vlm_involved(CUSTOM_SCAN, ["task_success"], "跳过选中") is True
 
 
+def test_kin_dropdown_folds_into_picks():
+    """自选模块的运动学极限是型号下拉(2026-09-16):选型号=查且带型号,
+    选「不检查」=skip_kin;不受「只跑/跳过选中」的反向语义影响。"""
+    from curation.ui.app import (CUSTOM_SCAN, FULL_SCAN, KIN_CHECK, KIN_OFF,
+                                 _apply_kin_pick)
+
+    # 非自选模块:下拉不作数,勾选原样
+    assert _apply_kin_pick(FULL_SCAN, [], "只跑选中", "so101") == ([], "", False)
+    # 只跑选中 + 型号:并进勾选;一项没勾 = 只跑运动学
+    assert _apply_kin_pick(CUSTOM_SCAN, ["dedup"], "只跑选中", "so101") == (
+        ["dedup", KIN_CHECK], "so101", False)
+    assert _apply_kin_pick(CUSTOM_SCAN, [], "只跑选中", "franka") == (
+        [KIN_CHECK], "franka", False)
+    # 跳过选中 + 型号:勾选(=要跳过的)里不许出现运动学
+    assert _apply_kin_pick(CUSTOM_SCAN, ["dedup"], "跳过选中", "ur5") == (
+        ["dedup"], "ur5", False)
+    # 不检查(含没值):交给 skip_kin
+    for kin in (KIN_OFF, None, ""):
+        assert _apply_kin_pick(CUSTOM_SCAN, ["dedup"], "跳过选中", kin) == (
+            ["dedup"], "", True)
+    # 调用方的列表不许被改
+    picks = ["dedup"]
+    _apply_kin_pick(CUSTOM_SCAN, picks, "只跑选中", "so101")
+    assert picks == ["dedup"]
+
+
 # ───────── U4 内嵌终端:ASGI 应用装配 / 鉴权 / PTY 往返 ─────────
 
 def _paths(app) -> set:

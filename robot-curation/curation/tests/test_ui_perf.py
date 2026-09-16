@@ -1325,19 +1325,90 @@ def test_module_pick_change_does_not_rerender_itself(tmp_path):
                     data_root=str(tmp_path / "data"))
     picks_fns = [f for f in app.fns.values()
                  if getattr(f.fn, "__name__", "") == "_tk_picks"]
-    assert len(picks_fns) == 2, "勾选与只跑跳过都该走 _tk_picks"
+    assert len(picks_fns) == 3, "勾选、只跑跳过、运动学型号下拉都该走 _tk_picks"
     for f in picks_fns:
         out_labels = [getattr(c, "label", "") for c in f.outputs]
         assert "要跑的模块" not in out_labels, \
             "勾选回调把勾选框列为输出=每勾一下重渲染闪一次"
-        for got in f.fn("自选模块", ["visual_quality"], "只跑选中"):
+        assert "运动学极限" not in out_labels, "型号下拉同理不许回写自己"
+        for got in f.fn("自选模块", ["visual_quality"], "只跑选中", "so101"):
             assert "visible" not in str(got), "勾选变化不许动可见性"
     mode_fns = [f for f in app.fns.values()
                 if getattr(f.fn, "__name__", "") == "_tk_mode"]
     assert mode_fns, "模式单选的回调还在"
-    assert "要跑的模块" in [getattr(c, "label", "")
-                           for c in mode_fns[0].outputs], \
-        "模式切换仍要负责勾选框的显隐"
+    mode_labels = [getattr(c, "label", "") for c in mode_fns[0].outputs]
+    assert "要跑的模块" in mode_labels, "模式切换仍要负责勾选框的显隐"
+    assert "运动学极限" in mode_labels, "模式切换也负责型号下拉的显隐"
+
+
+def test_kinematic_limits_is_last_dropdown_of_registered_embodiments(tmp_path):
+    """自选模块里运动学极限不再是勾选项,而是排在模块区最后的型号下拉
+    (2026-09-16 用户定):选项 = 「不检查」+ 注册表里有规格的全部型号。"""
+    pytest.importorskip("gradio")
+    import gradio as gr
+    from curation.ui import runner as _runner
+    from curation.ui.app import KIN_OFF, build_app
+
+    (tmp_path / "data").mkdir()
+    app = build_app(str(tmp_path / "deliveries"),
+                    data_root=str(tmp_path / "data"))
+    blocks = list(app.blocks.values())
+    pick = next(b for b in blocks if isinstance(b, gr.CheckboxGroup)
+                and b.label == "要跑的模块")
+    assert "kinematic_limits" not in [c[1] for c in pick.choices]
+    kin = next(b for b in blocks if isinstance(b, gr.Dropdown)
+               and b.label == "运动学极限")
+    assert [c[1] for c in kin.choices] == [KIN_OFF] + _runner.embodiment_choices()
+    assert kin.value == KIN_OFF
+    assert set(_runner.embodiment_choices()) >= {
+        "agibot", "aloha", "franka", "google_robot", "pusht", "so100",
+        "so101", "ur5", "widowx"}
+    # 「放到最后」:模块区三件的建树顺序 = 勾选框 → 只跑/跳过 → 型号下拉
+    ids = [b._id for b in blocks]
+    how = next(b for b in blocks if isinstance(b, gr.Radio)
+               and b.label == "选中的这些…")
+    assert ids.index(pick._id) < ids.index(how._id) < ids.index(kin._id)
+
+
+def test_preflight_kin_dropdown_drives_argv_without_embodiment_ask(
+        tmp_path, monkeypatch):
+    """自选模块的型号下拉直接落进命令行:选型号 → --only 带上运动学且
+    --embodiment-id 用它;选「不检查」→ --skip 运动学。两种都已经回答了
+    "型号是什么",数据集 robot_type 未登记也不许再弹型号追问。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner as _runner
+    from curation.ui.app import CUSTOM_SCAN, KIN_OFF, build_app
+
+    deliv = tmp_path / "deliveries"
+    deliv.mkdir()
+    ds = tmp_path / "data" / "mystery"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(_json.dumps(
+        {"robot_type": "unknown"}), encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    started = []
+    monkeypatch.setattr(_runner, "start",
+                        lambda runs_root, command, argv, **kw:
+                        started.append(list(argv)))
+    fn = _fn_by_name(app, "_run_preflight")
+
+    def _go(picks, how, kin, name):
+        out = fn(str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
+                 name, CUSTOM_SCAN, picks, how, None, "", None,
+                 "", "", None, None, None, None, "", False, False, kin)
+        flat = _json.dumps([str(x) for x in out], ensure_ascii=False)
+        assert "没有登记机器人型号" not in flat, f"{kin} 已答型号,不许再追问"
+        argv = started.pop()
+        return dict(zip(argv, argv[1:]))
+
+    got = _go(["dedup"], "只跑选中", "so101", "k1")
+    assert got["--only"] == "dedup,kinematic_limits"
+    assert got["--embodiment-id"] == "so101"
+    got = _go(["dedup"], "跳过选中", KIN_OFF, "k2")
+    assert got["--skip"] == "dedup,kinematic_limits"
+    assert "--embodiment-id" not in got
 
 
 def test_mirror_cache_files_are_servable(tmp_path, monkeypatch):

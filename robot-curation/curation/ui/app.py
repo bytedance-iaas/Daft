@@ -122,6 +122,13 @@ QUICK_SCAN = "快速质检"
 CUSTOM_SCAN = "自选模块"   # 曾叫「自定义模块」——听着像"自己定义模块里查什么"
                           # (那是以后的事),其实是"从现成模块里挑几个跑"
 
+#: 自选模块里「运动学极限」不是勾选框而是型号下拉(2026-09-16 用户定):这项只能
+#: 对着注册表里有规格的型号查,勾上却不给型号就是十条 traceback。下拉排在模块区
+#: 最后;选型号=查且用这个型号,选本项=不查。它不受「只跑/跳过选中」管 —— 选个
+#: 型号却因为「跳过选中」被跳过,是反直觉的双重否定。
+KIN_CHECK = "kinematic_limits"
+KIN_OFF = "不检查"
+
 #: 「交付名」下面那行说明。选一个与选多个,这个名字的含义**不一样**,不说清楚
 #: 客户会以为三个数据集的结果会互相覆盖(2026-08-13 用户提多选时点名要说明白)。
 #: 多选时的落盘形状与 CLI `--batch` 一致(`<交付名>/<数据集名>/`),报告页的递归
@@ -1316,6 +1323,24 @@ def _vlm_involved(mode: str, picks, how: str) -> bool:
     return any(c not in picked for c in VLM_CHECKS)
 
 
+def _apply_kin_pick(mode: str, picks, how: str, kin) -> tuple[list, str, bool]:
+    """自选模块的「运动学极限」型号下拉 → (等效勾选, 型号, 是否跳过运动学)。
+
+    选了型号:「只跑选中」时并进勾选(别的一项没勾 = 只跑运动学,而不是
+    "空选=全跑");「跳过选中」时勾选里本来就没有它,不动。选「不检查」:走与
+    型号追问「跳过运动学检查」同一条 skip_kin 路。非自选模块下拉不作数。
+    """
+    picks = list(picks or [])
+    if mode != CUSTOM_SCAN:
+        return picks, "", False
+    kin = str(kin or "").strip()
+    if not kin or kin == KIN_OFF:
+        return picks, "", True
+    if how == "只跑选中" and KIN_CHECK not in picks:
+        picks.append(KIN_CHECK)
+    return picks, kin, False
+
+
 def _sets(plots, c_ep, c_fr, c_cap, manual: str) -> list:
     """界面上的几个旋钮 + 手写的参数覆盖 → `--set 路径=值` 列表。
 
@@ -2085,10 +2110,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                                    value=FULL_SCAN, label="质检范围",
                                    elem_id="qc-scope")
                 rn_pick = gr.CheckboxGroup(
-                    choices=[(v, k) for k, v in runner.CHECK_LABELS.items()],
+                    choices=[(v, k) for k, v in runner.CHECK_LABELS.items()
+                             if k != KIN_CHECK],
                     label="要跑的模块", visible=False)
                 rn_how = gr.Radio(["只跑选中", "跳过选中"], value="只跑选中",
                                   label="选中的这些…", visible=False)
+                # 运动学极限单独成下拉、排在最后(见 KIN_CHECK 注释):选项就是
+                # 注册表里有规格的型号,与型号追问框同源
+                rn_kin = gr.Dropdown(
+                    choices=[KIN_OFF] + runner.embodiment_choices(),
+                    value=KIN_OFF, label=runner.CHECK_LABELS[KIN_CHECK],
+                    info="只支持以下机器人型号;选型号即检查,不受上面「只跑/跳过」影响",
+                    elem_id="rn-kin", visible=False)
                 with gr.Row():
                     # ⚠️ 不用 gr.Number:服务端 value=None,gradio 6.9 前端却把
                     # None 画成 0 —— 标签写着「留空=全部」框里顶着个 0,自相矛盾
@@ -2241,18 +2274,23 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _tk_outs = [tk_status, tk_log, tk_msg, rn_go, tk_stop]
 
                 # ── 回调(输出只落在任务台自己的组件上)────────────────────
-                def _tk_mode(mode, picks, how):
+                def _tk_mode(mode, picks, how, kin=None):
                     custom = mode == CUSTOM_SCAN
+                    picks = _apply_kin_pick(mode, picks, how, kin)[0]
                     on = _vlm_involved(mode, picks, how)
                     note = "" if on else "*这次不跑用模型的步骤,并发调了也没用。*"
                     return (gr.update(visible=custom), gr.update(visible=custom),
+                            gr.update(visible=custom),
                             gr.update(interactive=on), gr.update(interactive=on),
                             gr.update(interactive=on), note)
 
-                def _tk_picks(mode, picks, how):
-                    """勾选/只跑跳过变化时**只**动并发开关与说明。可见性由模式
+                def _tk_picks(mode, picks, how, kin=None):
+                    """勾选/只跑跳过/型号变化时**只**动并发开关与说明。可见性由模式
                     单选独占:往刚触发事件的 CheckboxGroup 回写 visible= 会让
-                    整个框重渲染,每勾一下闪一下(2026-08-27 用户实见)。"""
+                    整个框重渲染,每勾一下闪一下(2026-08-27 用户实见)。
+                    型号下拉也算一次勾选:只选了型号没勾别的 = 只跑运动学,
+                    不调 VLM,并发该灰。"""
+                    picks = _apply_kin_pick(mode, picks, how, kin)[0]
                     on = _vlm_involved(mode, picks, how)
                     note = "" if on else "*这次不跑用模型的步骤,并发调了也没用。*"
                     return (gr.update(interactive=on), gr.update(interactive=on),
@@ -2575,13 +2613,13 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 # 报告页「执行裁决」的源数据集兜底下拉(ex_src_dd)仍用桶下拉
                 # 那套(_src_datasets),接线在那侧组件建出来之后
 
-                _mode_ins = [rn_mode, rn_pick, rn_how]
-                # 只有模式单选驱动勾选框/只跑跳过的可见性;勾选自身的变化走
-                # _tk_picks(不回写可见性,免得勾一下闪一下)
+                _mode_ins = [rn_mode, rn_pick, rn_how, rn_kin]
+                # 只有模式单选驱动勾选框/只跑跳过/型号下拉的可见性;它们自身的
+                # 变化走 _tk_picks(不回写可见性,免得勾一下闪一下)
                 rn_mode.change(_tk_mode, _mode_ins,
-                               [rn_pick, rn_how, rn_c_ep, rn_c_fr, rn_c_cap,
-                                rn_conc_note])
-                for _c in (rn_pick, rn_how):
+                               [rn_pick, rn_how, rn_kin, rn_c_ep, rn_c_fr,
+                                rn_c_cap, rn_conc_note])
+                for _c in (rn_pick, rn_how, rn_kin):
                     _c.change(_tk_picks, _mode_ins,
                               [rn_c_ep, rn_c_fr, rn_c_cap, rn_conc_note])
 
@@ -2781,7 +2819,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 def _run_preflight(tin, tin_rg, tout, tout_rg, ds, name,
                                    mode, picks, how, max_n, eps, backend, cfg,
                                    emb, plots, c_ep, c_fr, c_cap, sets, batch,
-                                   ro):
+                                   ro, kin=None):
                     """开跑前先看数据格式:v3/rrd 要先切片才有画面可看,问一句再决定。
 
                     只在**真需要**时才问(格式认得出、且本实例配了片段目录),其余一律
@@ -2792,12 +2830,18 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     做法是**问一次、覆盖全部** —— 统计选中项里有几个需要切片,答"一起
                     生成"就给每个需要的都串上,绝不逐个弹窗。
                     """
+                    # 自选模块的型号下拉在这里就折算掉:选的型号覆盖「更多设置」
+                    # 里的型号框(离模块更近、更明确);「不检查」= skip_kin,
+                    # 后面的型号追问也就不必再问
+                    picks, _kin_emb, _kin_off = _apply_kin_pick(mode, picks,
+                                                                how, kin)
                     args = dict(tin=tin, tin_rg=tin_rg, tout=tout,
                                 tout_rg=tout_rg, ds=ds, name=name, mode=mode,
                                 picks=picks, how=how, max_n=max_n, eps=eps,
-                                backend=backend, cfg=cfg, emb=emb, plots=plots,
+                                backend=backend, cfg=cfg,
+                                emb=_kin_emb or emb, plots=plots,
                                 c_ep=c_ep, c_fr=c_fr, c_cap=c_cap, sets=sets,
-                                batch=batch, ro=ro)
+                                batch=batch, ro=ro, skip_kin=_kin_off)
                     try:
                         _spec = runner.resolve_root_input(tin, _buckets)
                     except ValueError as e:
@@ -2897,7 +2941,9 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                     # 机器人型号追问(2026-08-27):在切片追问**之前**——没型号
                     # 连运动学都跑不起来,先解决要不要型号,再谈要不要切片。
                     # 多选时任一数据集没登记就问一次(型号本来就是整跑全局参数)。
-                    if not str(args.get("emb") or "").strip() and not batch:
+                    # 自选模块里已选「不检查」运动学 = 答案已知,不再追问。
+                    if (not str(args.get("emb") or "").strip() and not batch
+                            and not args.get("skip_kin")):
                         # 走 embodiment_hints 缓存:下拉选中时已预热,点按钮
                         # 不再现场下数据算指纹(2026-08-28 用户实见弹框转 7.5s)
                         unk = [c for c in chosen
@@ -2978,7 +3024,8 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             [rn_tin, rn_tin_rg, rn_tout, rn_tout_rg, rn_ds,
                              rn_out, rn_mode, rn_pick, rn_how,
                              rn_max, rn_eps, rn_backend, rn_cfg, rn_emb, rn_plots,
-                             rn_c_ep, rn_c_fr, rn_c_cap, rn_set, rn_batch, rn_ro],
+                             rn_c_ep, rn_c_fr, rn_c_cap, rn_set, rn_batch, rn_ro,
+                             rn_kin],
                             _ask_outs, show_progress="hidden")
                 rn_ask_cancel.click(
                     lambda: (gr.update(visible=False), ""),
