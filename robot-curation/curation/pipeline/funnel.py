@@ -677,6 +677,28 @@ def run_funnel(
                 res.detail["arbitration"] = {
                     "applied": False, "error": f"{type(e).__name__}: {e}"}
 
+        def _internal_error_struct(e: BaseException) -> dict:
+            """单条轨迹判决的兜底:漏网异常一律转成 internal_error 不可判结构。
+
+            纪律:一条轨迹的死活与其余轨迹完全隔离 —— daft UDF 一旦抛错,
+            df.collect() 整批报废,一条轨迹就能拖死全部。这里保证任务一定跑完:
+            passed=None → episode_verdict 记 undecidable(不冤杀也不放行,转人工);
+            detail.rules=["internal_error"] 是离线扫错误码的机器可读标识。
+            """
+            import sys
+            import traceback
+            from ..core.contract import CheckResult
+            print(f"[task_check] internal_error: {type(e).__name__}: {e}\n"
+                  f"{traceback.format_exc()}", file=sys.stderr, flush=True)
+            try:
+                _progress_tick(_pk_vlm)   # 异常路径也如实报进度,别让进度条假死
+            except Exception:  # noqa: BLE001
+                pass
+            return result_to_struct(CheckResult(
+                name="task_success", passed=None,
+                detail={"reason": f"internal_error: {type(e).__name__}: {e}",
+                        "rules": ["internal_error"]}))
+
         def _task_check_sync(video, task_desc, task_src, fps,
                              action, timestamps, embodiment_id, semantics_extras=""):
             from ..adapters.decode import decode_window
@@ -722,9 +744,14 @@ def run_funnel(
             res.detail["task_desc_source"] = str(task_src)
             res.detail["cams"] = names
             # ---- 复核:逐机位独立投票(协议本体在 core.endstate_review 纯函数)----
-            res = endstate_review(res, str(task_desc), cam_voter, cam_frames,
-                                  endstate_frames=endstate_frames,
-                                  cam_hints=cam_hints or None)
+            # 复核层异常只留痕(与判废护栏/仲裁链同款纪律):保留打分层结论,不拖垮主链。
+            try:
+                res = endstate_review(res, str(task_desc), cam_voter, cam_frames,
+                                      endstate_frames=endstate_frames,
+                                      cam_hints=cam_hints or None)
+            except Exception as e:  # noqa: BLE001
+                res.detail["endstate_review"] = {
+                    "applied": False, "error": f"{type(e).__name__}: {e}"}
             # ---- 判废护栏(2026-09-02):指令来自原始标注的判废,先核标注是不是错题 ----
             if arb_deps is not None and res.passed is False and str(task_src) == "原始标注":
                 _label_guard(res, cam_frames, task_desc)
@@ -758,10 +785,14 @@ def run_funnel(
             import time
 
             async with _episode_gate(episode_concurrency):
+                # 兜底纪律:单条轨迹判决的任何异常都不得外泄(见 _internal_error_struct)。
                 if not os.environ.get("CURATION_DEBUG_CONCURRENCY"):
-                    return await asyncio.to_thread(
-                        _task_check_sync, video, task_desc, task_src, fps,
-                        action, timestamps, embodiment_id, semantics_extras)
+                    try:
+                        return await asyncio.to_thread(
+                            _task_check_sync, video, task_desc, task_src, fps,
+                            action, timestamps, embodiment_id, semantics_extras)
+                    except Exception as e:  # noqa: BLE001
+                        return _internal_error_struct(e)
 
                 from ..adapters.vlm_client import http_stats
 
@@ -772,6 +803,8 @@ def run_funnel(
                     return await asyncio.to_thread(
                         _task_check_sync, video, task_desc, task_src, fps,
                         action, timestamps, embodiment_id, semantics_extras)
+                except Exception as e:  # noqa: BLE001
+                    return _internal_error_struct(e)   # finally 照常跑,在飞计数不漏
                 finally:
                     _INFLIGHT["n"] -= 1
                     n_req, s_req = http_stats()
