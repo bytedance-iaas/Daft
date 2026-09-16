@@ -500,36 +500,18 @@ def test_vlm_involved_decides_concurrency_greying():
     assert _vlm_involved(CUSTOM_SCAN, ["task_success"], "跳过选中") is True
 
 
-def test_kin_checkbox_and_dropdown_fold_into_picks():
-    """自选模块的运动学极限 = 勾选 + 型号下拉(2026-09-16):勾上=查(带上下拉
-    选的型号,没选就留空交给兜底),不勾=skip_kin;不受「只跑/跳过选中」的
-    反向语义影响。"""
-    from curation.ui.app import (CUSTOM_SCAN, FULL_SCAN, KIN_CHECK,
-                                 _apply_kin_pick)
+def test_kin_will_run_decides_embodiment_ask():
+    """型号追问只在这次真跑运动学极限时弹(2026-09-16 用户定):完整/快速都跑;
+    自选模块按只跑/跳过两种语义算,一项没勾 = 全跑。"""
+    from curation.ui.app import CUSTOM_SCAN, FULL_SCAN, QUICK_SCAN, _kin_will_run
 
-    # 非自选模块:这一行不作数,勾选原样
-    assert _apply_kin_pick(FULL_SCAN, [], "只跑选中", True, "so101") == (
-        [], "", False)
-    # 只跑选中 + 勾上:并进勾选;别的一项没勾 = 只跑运动学
-    assert _apply_kin_pick(CUSTOM_SCAN, ["dedup"], "只跑选中", True,
-                           "so101") == (["dedup", KIN_CHECK], "so101", False)
-    assert _apply_kin_pick(CUSTOM_SCAN, [], "只跑选中", True, "franka") == (
-        [KIN_CHECK], "franka", False)
-    # 跳过选中 + 勾上:勾选(=要跳过的)里不许出现运动学
-    assert _apply_kin_pick(CUSTOM_SCAN, ["dedup"], "跳过选中", True,
-                           "ur5") == (["dedup"], "ur5", False)
-    # 勾上但没选型号:照查,型号留空交给「更多设置」/数据集声明/型号追问
-    for kin in (None, "", "  "):
-        assert _apply_kin_pick(CUSTOM_SCAN, [], "只跑选中", True, kin) == (
-            [KIN_CHECK], "", False)
-    # 不勾:交给 skip_kin,下拉里残留的型号不作数
-    for kin in ("so101", None):
-        assert _apply_kin_pick(CUSTOM_SCAN, ["dedup"], "跳过选中", False,
-                               kin) == (["dedup"], "", True)
-    # 调用方的列表不许被改
-    picks = ["dedup"]
-    _apply_kin_pick(CUSTOM_SCAN, picks, "只跑选中", True, "so101")
-    assert picks == ["dedup"]
+    assert _kin_will_run(FULL_SCAN, [], "只跑选中") is True
+    assert _kin_will_run(QUICK_SCAN, [], "只跑选中") is True
+    assert _kin_will_run(CUSTOM_SCAN, [], "只跑选中") is True
+    assert _kin_will_run(CUSTOM_SCAN, ["kinematic_limits"], "只跑选中") is True
+    assert _kin_will_run(CUSTOM_SCAN, ["dedup"], "只跑选中") is False
+    assert _kin_will_run(CUSTOM_SCAN, ["kinematic_limits"], "跳过选中") is False
+    assert _kin_will_run(CUSTOM_SCAN, ["dedup"], "跳过选中") is True
 
 
 # ───────── U4 内嵌终端:ASGI 应用装配 / 鉴权 / PTY 往返 ─────────

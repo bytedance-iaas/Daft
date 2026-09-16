@@ -731,7 +731,8 @@ def _interactive_run_preflight(args) -> str | None:
     也能按时间窗播放)。返回切分输出目录(答"切"时),否则 None。
 
     ⚠️ 只在 stdin/stdout 都是 TTY 时提问 —— UI 任务台子进程 / 脚本 / CI 里
-    停下等键盘会把任务吊死;非 TTY 保持原行为(型号缺失照旧响亮报错)。
+    停下等键盘会把任务吊死;非 TTY 不问,型号缺失/不在规格库时管道里运动学
+    极限整项跳过并响亮警告(2026-09-16 起不再整批失败)。
     """
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return None
@@ -745,8 +746,13 @@ def _interactive_run_preflight(args) -> str | None:
         info = {}
     if not info:
         return None
-    # ① 机器人型号
-    if (not args.embodiment_id
+    # ① 机器人型号:只在这次真跑运动学极限时问(2026-09-16 用户定,与 UI 同);
+    # 登记了但规格库不支持的不问,管道里运动学整项跳过、其余照常
+    _only = [x.strip() for x in str(args.only or "").split(",") if x.strip()]
+    _skip = [x.strip() for x in str(args.skip or "").split(",") if x.strip()]
+    kin_runs = ("kinematic_limits" in _only if _only
+                else "kinematic_limits" not in _skip)
+    if (kin_runs and not args.embodiment_id
             and str(info.get("robot_type") or "").strip() in ("", "unknown")):
         from .ui.runner import embodiment_choices, suggest_embodiments
         root = os.path.dirname(inp) or "."

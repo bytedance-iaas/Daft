@@ -1013,6 +1013,55 @@ def test_cli_interactive_preflight(tmp_path, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a: next(answers2))
     assert cli._interactive_run_preflight(args2) is None
     assert args2.skip == "kinematic_limits" and args2.embodiment_id is None
+    # TTY + 这次不跑运动学(--only 里没有它):型号一句都不问(2026-09-16 用户定)
+    args3 = types.SimpleNamespace(input=str(ds), output="tos://b/deliveries/x",
+                                  embodiment_id=None, only="dedup", skip=None,
+                                  batch=False)
+    asked = []
+    monkeypatch.setattr("builtins.input",
+                        lambda prompt="": asked.append(prompt) or "n")
+    assert cli._interactive_run_preflight(args3) is None
+    assert not any("型号" in q for q in asked), "没跑运动学还问型号"
+    assert args3.embodiment_id is None and args3.only == "dedup"
+
+
+def test_preflight_asks_embodiment_only_when_kinematics_selected(tmp_path,
+                                                                  monkeypatch):
+    """UI 开跑前的「机器人型号」追问只在勾了运动学极限时弹(2026-09-16 用户定):
+    自选模块没勾它 → 不问直接开跑;勾了 → 数据集读不到型号照旧弹框。"""
+    import json as _json
+
+    pytest.importorskip("gradio")
+    from curation.ui import runner as _runner
+    from curation.ui.app import CUSTOM_SCAN, build_app
+
+    deliv = tmp_path / "deliveries"
+    deliv.mkdir()
+    ds = tmp_path / "data" / "mystery"
+    (ds / "meta").mkdir(parents=True)
+    (ds / "meta" / "info.json").write_text(_json.dumps(
+        {"robot_type": "unknown"}), encoding="utf-8")
+    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
+    started = []
+    monkeypatch.setattr(_runner, "start",
+                        lambda runs_root, command, argv, **kw:
+                        started.append(list(argv)))
+    fn = _fn_by_name(app, "_run_preflight")
+
+    def _pre(picks, how, name):
+        out = fn(str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
+                 name, CUSTOM_SCAN, picks, how, None, "", None,
+                 "", "", None, None, None, None, "", False, False)
+        return _json.dumps([str(x) for x in out], ensure_ascii=False)
+
+    assert "没有登记机器人型号" not in _pre(["dedup"], "只跑选中", "k1")
+    assert started and "--only" in started[-1], "没勾运动学:不问,直接开跑"
+    started.clear()
+    assert "没有登记机器人型号" not in _pre(["kinematic_limits"], "跳过选中", "k2")
+    assert started, "跳过运动学:同样不问"
+    started.clear()
+    assert "没有登记机器人型号" in _pre(["kinematic_limits"], "只跑选中", "k3")
+    assert not started, "勾了运动学且读不到型号:先弹追问,不许直接开跑"
 
 
 def test_preflight_bad_name_opens_gate_dialog_not_small_text(tmp_path,
@@ -1325,115 +1374,19 @@ def test_module_pick_change_does_not_rerender_itself(tmp_path):
                     data_root=str(tmp_path / "data"))
     picks_fns = [f for f in app.fns.values()
                  if getattr(f.fn, "__name__", "") == "_tk_picks"]
-    assert len(picks_fns) == 3, "勾选、只跑跳过、运动学那个勾都该走 _tk_picks"
+    assert len(picks_fns) == 2, "勾选与只跑跳过都该走 _tk_picks"
     for f in picks_fns:
         out_labels = [getattr(c, "label", "") for c in f.outputs]
-        for lb in ("要跑的模块", "运动学极限", "机器人型号"):
-            assert lb not in out_labels, \
-                f"勾选回调把「{lb}」列为输出=每勾一下重渲染闪一次"
-        for got in f.fn("自选模块", ["visual_quality"], "只跑选中", True):
+        assert "要跑的模块" not in out_labels, \
+            "勾选回调把勾选框列为输出=每勾一下重渲染闪一次"
+        for got in f.fn("自选模块", ["visual_quality"], "只跑选中"):
             assert "visible" not in str(got), "勾选变化不许动可见性"
     mode_fns = [f for f in app.fns.values()
                 if getattr(f.fn, "__name__", "") == "_tk_mode"]
     assert mode_fns, "模式单选的回调还在"
-    mode_labels = [getattr(c, "label", "") for c in mode_fns[0].outputs]
-    for lb in ("要跑的模块", "运动学极限", "机器人型号"):
-        assert lb in mode_labels, f"模式切换负责「{lb}」的显隐"
-    # 运动学的勾只驱动型号下拉亮/灰,不碰别的
-    kin_fns = [f for f in app.fns.values()
-               if getattr(f.fn, "__name__", "") == "_tk_kin_on"]
-    assert len(kin_fns) == 1
-    assert [getattr(c, "label", "") for c in kin_fns[0].outputs] == ["机器人型号"]
-    assert kin_fns[0].fn(True)["interactive"] is True
-    assert kin_fns[0].fn(False)["interactive"] is False
-    assert "visible" not in kin_fns[0].fn(False)
-    # 首次切到自选模块,型号下拉转圈转到下一次任务台轮询(最长 10s)才消
-    # (2026-09-16 用户实测 8s):显隐/置灰切换一律不挂加载态
-    for f in picks_fns + mode_fns + kin_fns:
-        assert f.show_progress == "hidden", f"{f.fn.__name__} 不许挂加载态"
-
-
-def test_kinematic_limits_checkbox_and_dropdown_last_row_of_module_box(tmp_path):
-    """自选模块「要跑的模块」框最后一行 =「□ 运动学极限 [型号下拉]」(2026-09-16
-    用户定):下拉选项 = 注册表里有规格的全部型号,默认不勾、下拉置灰。"""
-    pytest.importorskip("gradio")
-    import gradio as gr
-    from curation.ui import runner as _runner
-    from curation.ui.app import build_app
-
-    (tmp_path / "data").mkdir()
-    app = build_app(str(tmp_path / "deliveries"),
-                    data_root=str(tmp_path / "data"))
-    blocks = list(app.blocks.values())
-    pick = next(b for b in blocks if isinstance(b, gr.CheckboxGroup)
-                and b.label == "要跑的模块")
-    assert "kinematic_limits" not in [c[1] for c in pick.choices]
-    kin_on = next(b for b in blocks if isinstance(b, gr.Checkbox)
-                  and b.label == "运动学极限")
-    assert kin_on.value is False
-    kin = next(b for b in blocks if isinstance(b, gr.Dropdown)
-               and b.label == "机器人型号" and b.elem_id == "rn-kin")
-    assert [c[1] for c in kin.choices] == _runner.embodiment_choices()
-    assert set(_runner.embodiment_choices()) >= {
-        "agibot", "aloha", "franka", "google_robot", "pusht", "so100",
-        "so101", "ur5", "widowx"}
-    assert kin.value is None and kin.interactive is False, "不勾时下拉置灰"
-    # 同框:三件同在 #rn-mods 里(CSS 靠它拼成一个框),运动学那行在最后
-    assert pick.parent is kin_on.parent is kin.parent
-    assert pick.parent.children == [pick, kin_on, kin]
-    box = pick.parent
-    while getattr(box, "elem_id", None) != "rn-mods":
-        box = box.parent
-        assert box is not None, "模块框的组件要装在 #rn-mods 里"
-    how = next(b for b in blocks if isinstance(b, gr.Radio)
-               and b.label == "选中的这些…")
-    ids = [b._id for b in blocks]
-    assert ids.index(kin._id) < ids.index(how._id), "只跑/跳过在模块框之后"
-
-
-def test_preflight_kin_checkbox_drives_argv(tmp_path, monkeypatch):
-    """自选模块运动学那一行直接落进命令行:勾上+选型号 → --only 带上运动学且
-    --embodiment-id 用它,不再弹型号追问;不勾 → --skip 运动学,也不追问
-    (下拉里残留的型号不作数);勾上没选型号 → 数据集没登记型号就照旧追问。"""
-    import json as _json
-
-    pytest.importorskip("gradio")
-    from curation.ui import runner as _runner
-    from curation.ui.app import CUSTOM_SCAN, build_app
-
-    deliv = tmp_path / "deliveries"
-    deliv.mkdir()
-    ds = tmp_path / "data" / "mystery"
-    (ds / "meta").mkdir(parents=True)
-    (ds / "meta" / "info.json").write_text(_json.dumps(
-        {"robot_type": "unknown"}), encoding="utf-8")
-    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
-    started = []
-    monkeypatch.setattr(_runner, "start",
-                        lambda runs_root, command, argv, **kw:
-                        started.append(list(argv)))
-    fn = _fn_by_name(app, "_run_preflight")
-
-    def _pre(picks, how, kin_on, kin, name):
-        out = fn(str(tmp_path / "data"), "", str(deliv), "", ["mystery"],
-                 name, CUSTOM_SCAN, picks, how, None, "", None,
-                 "", "", None, None, None, None, "", False, False, kin_on, kin)
-        return _json.dumps([str(x) for x in out], ensure_ascii=False)
-
-    def _go(*a):
-        assert "没有登记机器人型号" not in _pre(*a), f"{a} 已答型号,不许再追问"
-        argv = started.pop()
-        return dict(zip(argv, argv[1:]))
-
-    got = _go(["dedup"], "只跑选中", True, "so101", "k1")
-    assert got["--only"] == "dedup,kinematic_limits"
-    assert got["--embodiment-id"] == "so101"
-    got = _go(["dedup"], "跳过选中", False, "so101", "k2")
-    assert got["--skip"] == "dedup,kinematic_limits"
-    assert "--embodiment-id" not in got
-    assert "没有登记机器人型号" in _pre([], "只跑选中", True, None, "k3"), \
-        "勾上没选型号、数据集也没登记 → 照旧弹型号追问"
-    assert not started
+    assert "要跑的模块" in [getattr(c, "label", "")
+                           for c in mode_fns[0].outputs], \
+        "模式切换仍要负责勾选框的显隐"
 
 
 def test_mirror_cache_files_are_servable(tmp_path, monkeypatch):
