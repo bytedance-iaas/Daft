@@ -7,6 +7,7 @@ prompt 设计借 OpenGVL:单帧提问完成度(VOC 的打乱在 core 层做,这�
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import queue as _queue
 import re
@@ -264,172 +265,181 @@ class SharedGate:
         self._sem = None
 
 
+_HTTP_MAX_ATTEMPTS = 4  # Includes the initial request and any hedge.
+_HTTP_BACKOFF_S = 1.0
+_HTTP_MAX_RETRY_DELAY_S = 60.0
+_HTTP_RETRY_STATUSES = {408, 429, 500, 502, 503, 504}
+_LOG = logging.getLogger(__name__)
+
+
+def _retry_after_seconds(response) -> float:
+    """Read Retry-After seconds or HTTP-date; invalid values use normal backoff."""
+    import math
+    from email.utils import parsedate_to_datetime
+
+    value = getattr(response, "headers", {}).get("Retry-After", "")
+    try:
+        delay = float(value)
+    except (TypeError, ValueError):
+        try:
+            delay = parsedate_to_datetime(value).timestamp() - _time.time()
+        except (TypeError, ValueError, OverflowError, AttributeError):
+            return 0.0
+    return max(0.0, delay) if math.isfinite(delay) else 0.0
+
+
+def _http_failure(kind: str, payload) -> tuple[bool, str]:
+    """Classify transport failures without retrying configuration/programming errors."""
+    import requests
+
+    if kind == "resp":
+        status = payload.status_code
+        return status in _HTTP_RETRY_STATUSES, f"HTTP {status}"
+    if isinstance(payload, requests.exceptions.SSLError):
+        return False, "SSLError (check TLS certificate/configuration)"
+    retryable = isinstance(payload, (requests.exceptions.Timeout,
+                                     requests.exceptions.ConnectionError,
+                                     requests.exceptions.ChunkedEncodingError))
+    return retryable, type(payload).__name__
+
+
 def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
-    """带对冲补发的一次**逻辑调用**。send(hard_timeout_s) -> requests.Response。
+    """Send with one hedge and bounded, classified transport retries.
 
-    唯一不变量(2026-08-15 用户拍板,好解释也好测):**从首发发出算起,整次
-    逻辑调用最多 2×timeout_s 内返回或作废**。时间线:
-    - 首发硬超时 = 2T;到超时线 T 它还挂着 → 补发一次(硬超时 = 剩余预算 ≤ T),
-      谁先拿到成功响应用谁,不等慢的那个;
-    - 首发在超时线前**快速报错**:5xx / 连接类网络错 → 立即**串行**重发一次
-      (这不是对冲,是抢救该拿的那票;仍受闸门与 2T 总预算约束);
-      4xx 一律不重发(400/401/403/404/429 都是我们自己的问题,429 尤其
-      不许重发 —— 服务端明说"你太快了",再发是火上浇油);
-    - 常规共至多两发;**两发皆因超时死透 → 再给恰好一次串行重发,带全新
-      1×timeout 预算**(2026-08-31 用户拍板;超时路径最坏 = 排队 + 3×timeout。
-      立论与对冲相同:超时是服务端长尾抖动,隔一拍重发大概率落进快的那堆;
-      只有超时触发,4xx/429 与 5xx/连接错的既有规则一个字不变);
-    - 全部没成 → 原样抛异常/交回错误响应,调用方既有 except
-      分支照旧走"少一票"(判定逻辑一个字不动:救人一签、杀人双签不变)。
+    At most four requests, INCLUDING the hedge. The initial request has a 2T
+    deadline; if still pending at T, one hedge shares that deadline. Subsequent
+    retries are serial, with a fresh T deadline after acquiring the gate.
+    Fast failures back off 1/2/4 seconds; a hedge consumes the first retry slot,
+    so retries following it back off 2/4 seconds. Valid Retry-After is a minimum
+    wait. If it exceeds 60 seconds, return the failure instead of retrying early.
 
-    ⚠️ 如实说明:落败那一发**取消不了**(HTTP 没有取消语义,服务端照样在算),
-    本函数只是不再等它;其线程最晚在 2T 预算线上退出,期间继续持有闸门许可
-    ——补发多的那一小段时间里有效并发容量会下降,这是**故意的**(在飞请求
-    总数绝不翻倍),不是 bug。
+    Retry only 408/429/500/502/503/504, connection errors, timeouts and broken
+    response streams. Other HTTP errors, TLS and programming errors fail fast.
+    Final HTTP responses are returned for callers' raise_for_status(); transport
+    exceptions retain their original type. Failed calls always log the reason.
 
-    gate = SharedGate(语义即共享信号量),**首发和补发都要拿许可**(许可持有 = 该 HTTP
-    请求真在飞)。容量由工厂按自身结构并发传入;⚠️ 容量不许低于该类的结构并发,
-    否则等于把原本并行的调用串行化 —— 最容易悄悄拖慢整批的坑。
-    **首发许可在调用方线程同步等到手后才起 2T 预算表**(方案 A,2026-08-31):
-    排队不烧预算,拥堵时该等就等(队深被上游并发结构封顶,等待必有进展);
-    只有 GATE_WAIT_FUSE_S 保险丝防闸门泄漏。补发仍只用剩余预算排队。
-
-    两发跑在**守护线程**上(2026-08-15 主会话实测教训):此前用 per-call
-    ThreadPoolExecutor,其工作线程非守护,CPython 在解释器退出时会把它们全部
-    join —— 跑批全部干完、报告落盘后,进程还要陪落败那发挂最多 2T(120 秒)才
-    退出,任务台只认退出码文件,界面就多显示两分钟「运行中」(正是本项目明令
-    禁止的"静默慢步骤")。守护线程在解释器退出时直接丢弃,对已经放弃的那一发
-    这正是要的语义(结果本来就不要了);顺带省掉每次逻辑调用建一个线程池的
-    开销(4000 次调用 = 4000 个池)。落败发的生命周期从此只由自身硬超时封顶,
-    不再牵连进程生命周期。
+    Backoff holds no gate permit. All actual sends share the gate and call_id.
+    Gate waiting is bounded by GATE_WAIT_FUSE_S; initial queue time does not burn
+    the request budget. Ignoring queue time, total request budget is at most 5T
+    (serial path) or 4T (hedged path), plus bounded backoff. Losing requests keep
+    their original deadline and run on daemon threads, never delaying exit.
     """
     import requests as _rq
 
-    call_id = uuid.uuid4().hex[:12]     # 不用进程内自增:rejudge 增量并档会跨进程撞号
-    settled = threading.Event()         # 赢家已定 → 还没发出去的补发不再发(纯浪费)
-    results: _queue.Queue = _queue.Queue()   # 每发恰好投一条 (attempt_no, "resp"/"exc", 载荷)
+    call_id = uuid.uuid4().hex[:12]
+    settled = threading.Event()
+    results: _queue.Queue = _queue.Queue()
 
-    # 方案 A(2026-08-31 用户拍板;修 droid-50 批"排队即弃权"9 条):首发的闸门
-    # 许可在**调用方线程同步等到手**,拿到许可才起 2T 预算表——排队不再烧预算,
-    # docstring 里"从首发发出算起"的不变量从此与实现一致。旧写法在进门就起表,
-    # 拥堵时整段预算耗在队列里,一枪未发即作废,重发机制根本轮不到上场。
-    if gate is not None and not gate.acquire(timeout=GATE_WAIT_FUSE_S):
-        raise _rq.exceptions.Timeout(
-            f"{tag}: 等待并发闸门许可超过保险丝 {GATE_WAIT_FUSE_S:.0f}s(疑似闸门泄漏)")
-    deadline = _time.time() + 2.0 * timeout_s
-
-    def _attempt(attempt_no: int, held: bool = False):
-        # held=True:首发,许可已在调用方线程拿好;补发仍自行排队,且只许用
-        # 剩余预算等——补发是锦上添花,不值得为它等过 2T 死线。
+    def _attempt(attempt_no: int, deadline: float, held: bool = False):
         if not held:
-            budget = deadline - _time.time()
-            if budget <= 0:
-                raise _rq.exceptions.Timeout(f"{tag}: 2×timeout 总预算已耗尽,不再发起")
-            if gate is not None and not gate.acquire(timeout=budget):
-                raise _rq.exceptions.Timeout(f"{tag}: 等待并发闸门许可超出 2×timeout 总预算")
+            budget = deadline - _time.monotonic()
+            if budget <= 0 or (gate is not None and not gate.acquire(timeout=budget)):
+                raise _rq.exceptions.Timeout(f"{tag}: waiting for hedge permit exceeded deadline")
         try:
             if settled.is_set():
                 return None
-            hard = deadline - _time.time()
+            hard = deadline - _time.monotonic()
             if hard <= 0:
-                raise _rq.exceptions.Timeout(f"{tag}: 2×timeout 总预算已耗尽,不再发起")
+                raise _rq.exceptions.Timeout(f"{tag}: request deadline exhausted")
             t1 = _time.time()
-            ok, kind = False, "connect_error"
+            ok, failure = False, "connect_error"
             try:
                 resp = send(hard)
                 ok = bool(resp.ok)
-                kind = "" if ok else "http_error"
+                failure = "" if ok else "http_error"
                 return resp
-            except Exception as e:
-                if isinstance(e, _rq.exceptions.Timeout):
-                    kind = "timeout"
+            except Exception as exc:
+                if isinstance(exc, _rq.exceptions.Timeout):
+                    failure = "timeout"
                 raise
             finally:
                 latency_record(tag, _time.time() - t1, ok, started_at=t1,
-                               call_id=call_id, attempt=attempt_no, fail_kind=kind)
+                               call_id=call_id, attempt=attempt_no, fail_kind=failure)
         finally:
             if gate is not None:
                 gate.release()
 
-    def _timeout_retry(orig_exc):
-        """超时死透后的最后一搏(2026-08-31 用户拍板):读超时多半是服务端长尾
-        抖动,换个时刻再发大概率落进快的那堆(与对冲同一立论)。给**恰好一次**
-        串行重发,带全新 1×timeout 预算 ⇒ 超时路径的最坏时长 = 排队 + 3×timeout。
-        只有超时触发:429/4xx 是"我们的问题"绝不重发,5xx/连接错已有自己的
-        串行重发,都不走这里。排队照方案 A 不烧预算;拿不到许可或重发再败,
-        原样抛回第一具尸体(调用方 except 分支照旧走"少一票")。"""
-        nonlocal deadline
-        if gate is not None and not gate.acquire(timeout=GATE_WAIT_FUSE_S):
-            raise orig_exc
-        deadline = _time.time() + timeout_s
-        try:
-            resp = _attempt(2, held=True)
-            if resp is not None:
-                return resp
-            raise orig_exc
-        except Exception:  # noqa: BLE001  重发的死法不重要,交回原始死因
-            raise orig_exc
-
-    def _spawn(attempt_no: int, held: bool = False) -> None:
+    def _spawn(attempt_no: int, deadline: float, held: bool = False):
         def _run():
             try:
-                results.put((attempt_no, "resp", _attempt(attempt_no, held)))
-            except Exception as e:  # noqa: BLE001
-                results.put((attempt_no, "exc", e))
+                results.put(("resp", _attempt(attempt_no, deadline, held)))
+            except Exception as exc:
+                results.put(("exc", exc))
         try:
             threading.Thread(target=_run, daemon=True,
                              name=f"vlm-hedge-{tag}-{attempt_no}").start()
         except BaseException:
-            if held and gate is not None:   # 线程都没起来,预取的许可要还回去
+            if held and gate is not None:
                 gate.release()
             raise
 
+    def _acquire():
+        if gate is not None and not gate.acquire(timeout=GATE_WAIT_FUSE_S):
+            _LOG.error("VLM %s call=%s: gate wait exceeded %.0fs; no retry",
+                       tag, call_id, GATE_WAIT_FUSE_S)
+            raise _rq.exceptions.Timeout(
+                f"{tag}: 等待并发闸门许可超过保险丝 {GATE_WAIT_FUSE_S:.0f}s(疑似闸门泄漏)")
+
+    def _finish(kind, payload, reason):
+        _LOG.error("VLM %s call=%s: %s; %s", tag, call_id,
+                   _http_failure(kind, payload)[1], reason)
+        if kind == "exc":
+            raise payload
+        return payload
+
+    _acquire()
+    deadline = _time.monotonic() + 2.0 * timeout_s
     try:
-        _spawn(0, held=True)
+        _spawn(0, deadline, held=True)
+        sent = 1
+        failures = []
         try:
-            _no, kind, payload = results.get(timeout=timeout_s)
+            result = results.get(timeout=timeout_s)
         except _queue.Empty:
-            payload = None              # 超时线上还挂着 → 对冲
-        else:
-            if kind == "exc":
-                if isinstance(payload, _rq.exceptions.Timeout):
-                    # 首发早夭于超时:补发已无意义(同一时刻大概率同样命运),
-                    # 直接走"隔一拍再来一发"的超时重发
-                    return _timeout_retry(payload)
-                return _attempt(1)      # 快速网络错(连接拒绝/复位等)→ 立即串行重发
-            if payload.ok or payload.status_code < 500:
-                return payload          # 成功,或 4xx(429 在内):原样交回,不重发
-            resp0 = payload
-            try:
-                return _attempt(1)      # 5xx → 立即串行重发一次
-            except Exception:  # noqa: BLE001
-                return resp0            # 重发也没成:保留服务端第一句原话给调用方
-        _spawn(1)
-        best_resp, last_exc = None, None
-        for _ in range(2):              # 两发各投恰一条结果
-            try:                        # 双保险超时:两发本就在 deadline 前自我了断
-                _no, kind, payload = results.get(
-                    timeout=max(0.1, deadline - _time.time() + 5.0))
-            except _queue.Empty:
-                break
-            if kind == "exc":
-                last_exc = payload
-                continue
-            if payload is None:         # 补发被跳过(赢家已定)
-                continue
-            if payload.ok:
+            _spawn(1, deadline)
+            sent = 2
+            for _ in range(2):
+                try:
+                    kind, payload = results.get(
+                        timeout=max(0.001, deadline - _time.monotonic() + 0.1))
+                except _queue.Empty:
+                    failures.append(("exc", _rq.exceptions.Timeout(f"{tag}: hedge deadline exhausted")))
+                    break
+                if payload is None:
+                    continue
+                if kind == "resp" and payload.ok:
+                    return payload
+                # Wait for the other in-flight request, which may still succeed.
+                failures.append((kind, payload))
+            if not failures:
+                failures.append(("exc", _rq.exceptions.Timeout(f"{tag}: no response")))
+            # A permanent failure must not be hidden by a transient one.
+            result = next((f for f in failures if not _http_failure(*f)[0]), failures[-1])
+        kind, payload = result
+        while True:
+            if kind == "resp" and payload.ok:
                 return payload
-            best_resp = payload
-        if best_resp is not None:
-            return best_resp            # 两发都是错误响应:交回,调用方 raise_for_status 走原路
-        if last_exc is not None:
-            if isinstance(last_exc, _rq.exceptions.Timeout):
-                return _timeout_retry(last_exc)   # 两发皆超时 → 最后一搏
-            raise last_exc
-        return _timeout_retry(
-            _rq.exceptions.Timeout(f"{tag}: 两发均未在 2×timeout 预算内返回"))
+            retryable, reason = _http_failure(kind, payload)
+            if not retryable or sent >= _HTTP_MAX_ATTEMPTS:
+                return _finish(kind, payload, "non-retryable" if not retryable else "retry limit exhausted")
+            delay = max(_HTTP_BACKOFF_S * 2 ** (sent - 1),
+                        _retry_after_seconds(payload) if kind == "resp" else 0.0,
+                        *[_retry_after_seconds(p) for k, p in failures if k == "resp"])
+            failures = []
+            if delay > _HTTP_MAX_RETRY_DELAY_S:
+                return _finish(kind, payload, "Retry-After exceeds 60s wait limit; not retrying early")
+            _LOG.warning("VLM %s call=%s: %s; retry %d/%d in %.1fs",
+                         tag, call_id, reason, sent, _HTTP_MAX_ATTEMPTS - 1, delay)
+            _time.sleep(delay)
+            _acquire()
+            try:
+                payload = _attempt(sent, _time.monotonic() + timeout_s, held=True)
+                kind = "resp"
+            except Exception as exc:
+                kind, payload = "exc", exc
+            sent += 1
     finally:
-        settled.set()                   # 守护线程自会在 2T 预算线上退出,不 join 不等
+        settled.set()
 
 
 def _map_concurrent(fn, items: list, max_concurrency: int) -> list:

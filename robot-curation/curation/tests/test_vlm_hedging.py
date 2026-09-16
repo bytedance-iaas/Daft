@@ -7,10 +7,9 @@
 
 本文件钉死四件事(改回旧写法必红):
 1. 对冲赢家是快的那发,总耗时 ≈ 补发耗时(不是两发之和、不是等首发死透再重试);
-2. **一次逻辑调用最多 2×timeout**(用户拍板的唯一不变量,界面上要能承诺
-   "最坏 120 秒出结果或作废");
+2. 对冲共享 2T 死线,总请求数不超过四次;后续串行重试每次预算 T;
 3. 补发受同一并发闸门管,闸门满时必须等,在飞请求数绝不翻倍;
-4. 快速报错的分类:5xx/连接错立即串行重发一次,4xx(429 在内)绝不重发。
+4. 瞬态错误退避重试,永久错误直接返回;退避细节见 test_http_retry.py。
 """
 from __future__ import annotations
 
@@ -28,8 +27,9 @@ from curation.adapters.vlm_client import (DEFAULT_TIMEOUTS_S, hedged_request,
 
 
 @pytest.fixture(autouse=True)
-def _clean_latency():
+def _clean_latency(monkeypatch):
     """每条测试前后清延时明细:对冲测试会留下落败发的迟到行,污染别的断言。"""
+    monkeypatch.setattr("curation.adapters.vlm_client._HTTP_BACKOFF_S", 0.0)
     latency_reset()
     yield
     # 落败的僵尸发最晚在 2T(本文件里 ≤1.2s)内退出;等它记完再清,
@@ -99,13 +99,8 @@ def test_hedge_winner_is_fast_second_attempt():
     assert s["attempts"] == 2 and s["hedged"] == 1 and s["unanswered"] == 0
 
 
-def test_logical_call_hard_capped_at_twice_timeout():
-    """★不变量(2026-08-31 修订):常规路径 2×timeout;超时路径再加一搏,最多 3×timeout。
-
-    两发都挂 ⇒ 首发在 2T 被硬杀、补发的死线也钉在同一绝对时刻 2T,调用方在
-    ~2T 拿到异常走既有 except 分支(少一票)。旧写法(600s 硬等)在这里会把
-    测试拖到天荒地老;"补发再给整 T"的写法会把 calls[1] 的死线推过 2T,变红。
-    """
+def test_hedged_call_has_bounded_retry_budget():
+    """对冲两发共用 2T,其后最多两次串行重试各用 T;测试禁用退避等待。"""
     T = 0.3
     calls: list[dict] = []
     lock = threading.Lock()
@@ -121,13 +116,13 @@ def test_logical_call_hard_capped_at_twice_timeout():
         hedged_request(send, tag="probe", timeout_s=T,
                        gate=threading.Semaphore(4))
     dt = time.time() - t0
-    assert len(calls) == 3, "首发 + 补发 + 超时最后一搏,一次不多"
+    assert len(calls) == 4, "首发 + 对冲 + 两次串行重试,共四次"
     assert abs(calls[0]["hard"] - 2 * T) < 0.05, "首发硬超时应为 2T"
     for c in calls[:2]:                   # 前两发的死线都不越过绝对 2T
         assert (c["t"] - t0) + c["hard"] <= 2 * T + 0.1
     assert abs(calls[2]["hard"] - T) < 0.1, "最后一搏应带全新 1×timeout 预算"
-    assert dt <= 3 * T + 0.5, f"整次逻辑调用耗时 {dt:.2f}s,超出超时路径 3T 承诺"
-    assert dt >= 3 * T - 0.15, "三发都挂时不该提前放弃(少等即多冤)"
+    assert dt <= 4 * T + 0.5, f"整次逻辑调用耗时 {dt:.2f}s,超出 4T 请求预算"
+    assert dt >= 4 * T - 0.15, "四发都挂时不该提前放弃"
 
 
 def test_hedge_waits_for_concurrency_gate():
@@ -241,7 +236,7 @@ print("RET", round(time.time() - t0, 2), r.ok)
 
 
 def test_fast_5xx_gets_one_serial_resend():
-    """首发秒回 5xx ⇒ 立即串行重发一次抢救该拿的那票(这不是对冲是重发)。"""
+    """首发 5xx 后重试成功,保持同一逻辑调用的计时记录。"""
     seq = [_Resp(500), _Resp(200, marker="retry")]
     calls = []
 
@@ -258,10 +253,9 @@ def test_fast_5xx_gets_one_serial_resend():
     assert rows[0][6] == "http_error" and rows[0][5] == 0 and rows[1][5] == 1
 
 
-def test_4xx_never_resent_429_included():
-    """4xx 一律不重发:是我们自己的问题(请求/凭证/配额),429 尤其是服务端
-    明说"你太快了",再发就是火上浇油。原响应交回,调用方 raise_for_status 走原路。"""
-    for status in (400, 401, 404, 429):
+def test_permanent_http_errors_never_resent():
+    """永久 HTTP 错误不重试,响应交回调用方 raise_for_status。"""
+    for status in (400, 401, 403, 404, 422, 501, 505):
         latency_reset()
         calls = []
 
@@ -275,7 +269,7 @@ def test_4xx_never_resent_429_included():
 
 
 def test_fast_connect_error_gets_one_serial_resend():
-    """连接类网络错(非读超时)⇒ 立即串行重发一次;重发成功则票没丢。"""
+    """连接错误后重试成功,保持同一逻辑调用的计时记录。"""
     state = {"n": 0}
 
     def send(hard):
@@ -291,12 +285,8 @@ def test_fast_connect_error_gets_one_serial_resend():
     assert s["retried"] == 1 and s["unanswered"] == 0
 
 
-def test_read_timeout_gets_exactly_one_serial_retry():
-    """读超时 → **恰好一次**串行重发(2026-08-31 用户拍板),再败仍抛原超时。
-
-    旧语义是"读超时不重发"——方案 A 之前 2T 预算确实烧完没有空间;排队不烧
-    预算之后,给最后一搏批一段全新 1×timeout 预算不破坏任何东西。上限仍要
-    钉死:两次都超时就到头,绝不第三次(否则退化成无限重试碰运气)。"""
+def test_read_timeout_exhausts_three_serial_retries():
+    """快速超时最多重试三次;每次重试都有独立 T 请求预算。"""
     calls = []
 
     def send(hard):
@@ -306,7 +296,7 @@ def test_read_timeout_gets_exactly_one_serial_retry():
     with pytest.raises(requests.exceptions.Timeout):
         hedged_request(send, tag="llm", timeout_s=0.5,
                        gate=threading.Semaphore(2))
-    assert len(calls) == 2, "读超时应恰好重发一次:首发 + 最后一搏"
+    assert len(calls) == 4, "首发加三次重试"
     assert abs(calls[1] - 0.5) < 0.1, "重发应带全新 1×timeout 预算"
 
 
@@ -327,14 +317,14 @@ def test_both_attempts_dead_walks_existing_except_path(monkeypatch):
     t0 = time.time()
     with pytest.raises(Exception):
         llm_ask("归纳一下")
-    assert time.time() - t0 <= 1.1      # 超时路径 3T=0.6 + 松余量,绝不是旧写法的硬等
-    rows = _wait_rows(3)
+    assert time.time() - t0 <= 1.4      # 对冲路径 4T=0.8 + 松余量(测试禁用退避等待)
+    rows = _wait_rows(4)
     mine = [r for r in rows if r[0] == "llm"]
-    assert {r[5] for r in mine} == {0, 1, 2}, \
-        "应见 首发+补发+超时最后一搏 三行;缺失 = 调用点绕过了 hedged_request"
+    assert {r[5] for r in mine} == {0, 1, 2, 3}, \
+        "应见首发、对冲和两次串行重试"
     assert all(r[6] == "timeout" and not r[2] for r in mine)
     s = latency_summary()["llm"]
-    assert s["unanswered"] == 1 and s["errors"] == 3
+    assert s["unanswered"] == 1 and s["errors"] == 4
 
 
 def test_default_timeouts_per_kind():
