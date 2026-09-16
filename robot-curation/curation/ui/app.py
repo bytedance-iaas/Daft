@@ -784,6 +784,29 @@ _ARCO_CSS = """
   border: none !important; background: transparent !important;
   box-shadow: none !important; padding: 2px 0 !important;
 }
+/* 自选模块:运动学极限的型号下拉接在勾选组框里当最后一行(2026-09-16 用户:
+   与要跑的模块放一起,不单独列)。两个组件拼一个框:勾选组框下沿打开,下拉那块
+   补上左右下三边;标签按选项文字的字号颜色排在下拉左边 */
+#rn-pick { padding-bottom: 0 !important; }
+#rn-pick [data-testid="checkbox-group"] {
+  border-bottom: none !important; border-radius: 4px 4px 0 0 !important;
+  padding-bottom: 2px !important;
+}
+#rn-kin { padding-top: 0 !important; }
+#rn-kin > .container {
+  display: flex !important; align-items: center !important; gap: 12px !important;
+  /* 必须拆成 longhand:`border: … var() …` 简写后再跟 border-top 覆盖,浏览器
+     把另外三条边整个丢掉(实测计算样式 0px) */
+  border-style: solid !important; border-color: var(--arco-border) !important;
+  border-width: 0 1px 1px 1px !important;
+  border-radius: 0 0 4px 4px !important; background: #FFFFFF !important;
+  padding: 2px 12px 8px !important;
+}
+#rn-kin > .container > [data-testid="block-info"] {
+  margin: 0 !important; font-size: 15px !important; color: #27272A !important;
+  flex: 0 0 auto !important;
+}
+#rn-kin > .container > .wrap { width: 240px !important; flex: 0 0 240px !important; }
 /* episode 列表(#ep-list)外面本来就是带标题的框,里面不再套一层组框 */
 #ep-list .wrap:has(> label > input[type="radio"]) {
   border: none !important; padding: 0 !important; background: transparent !important;
@@ -2109,19 +2132,22 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 rn_mode = gr.Radio([FULL_SCAN, QUICK_SCAN, CUSTOM_SCAN],
                                    value=FULL_SCAN, label="质检范围",
                                    elem_id="qc-scope")
-                rn_pick = gr.CheckboxGroup(
-                    choices=[(v, k) for k, v in runner.CHECK_LABELS.items()
-                             if k != KIN_CHECK],
-                    label="要跑的模块", visible=False)
+                # 运动学极限的型号下拉与勾选框同框(2026-09-16 用户:不要单独列
+                # 出来):CSS 把两块拼成「要跑的模块」一个框,下拉是框里最后一项。
+                # 选项就是注册表里有规格的型号,与型号追问框同源。
+                # 显隐仍各自切(不切外层容器:gradio 6.9 给没挂载过的隐藏容器发
+                # visible 更新会卡成隐藏态,见 _run_preflight 注释)
+                with gr.Column(elem_id="rn-mods"):
+                    rn_pick = gr.CheckboxGroup(
+                        choices=[(v, k) for k, v in runner.CHECK_LABELS.items()
+                                 if k != KIN_CHECK],
+                        label="要跑的模块", elem_id="rn-pick", visible=False)
+                    rn_kin = gr.Dropdown(
+                        choices=[KIN_OFF] + runner.embodiment_choices(),
+                        value=KIN_OFF, label=runner.CHECK_LABELS[KIN_CHECK],
+                        elem_id="rn-kin", visible=False)
                 rn_how = gr.Radio(["只跑选中", "跳过选中"], value="只跑选中",
                                   label="选中的这些…", visible=False)
-                # 运动学极限单独成下拉、排在最后(见 KIN_CHECK 注释):选项就是
-                # 注册表里有规格的型号,与型号追问框同源
-                rn_kin = gr.Dropdown(
-                    choices=[KIN_OFF] + runner.embodiment_choices(),
-                    value=KIN_OFF, label=runner.CHECK_LABELS[KIN_CHECK],
-                    info="只支持以下机器人型号;选型号即检查,不受上面「只跑/跳过」影响",
-                    elem_id="rn-kin", visible=False)
                 with gr.Row():
                     # ⚠️ 不用 gr.Number:服务端 value=None,gradio 6.9 前端却把
                     # None 画成 0 —— 标签写着「留空=全部」框里顶着个 0,自相矛盾
@@ -2616,12 +2642,19 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                 _mode_ins = [rn_mode, rn_pick, rn_how, rn_kin]
                 # 只有模式单选驱动勾选框/只跑跳过/型号下拉的可见性;它们自身的
                 # 变化走 _tk_picks(不回写可见性,免得勾一下闪一下)
+                # show_progress="hidden"(2026-09-16 用户实测首次切到自选模块
+                # 型号下拉要转 8 秒):回调服务端 1ms 就回,但下拉是在事件途中
+                # 才挂载的,gradio 6.9 前端收不到"完成"状态,转圈一直挂到同
+                # 会话下一个事件(任务台轮询,空闲 10s 一跳)才消。纯显隐/置灰
+                # 切换本来就不需要加载态。
                 rn_mode.change(_tk_mode, _mode_ins,
                                [rn_pick, rn_how, rn_kin, rn_c_ep, rn_c_fr,
-                                rn_c_cap, rn_conc_note])
+                                rn_c_cap, rn_conc_note],
+                               show_progress="hidden")
                 for _c in (rn_pick, rn_how, rn_kin):
                     _c.change(_tk_picks, _mode_ins,
-                              [rn_c_ep, rn_c_fr, rn_c_cap, rn_conc_note])
+                              [rn_c_ep, rn_c_fr, rn_c_cap, rn_conc_note],
+                              show_progress="hidden")
 
                 def _run_go(tin, tin_rg, tout, tout_rg, ds, name, mode, picks,
                             how, max_n, eps, backend, cfg, emb, plots, c_ep,

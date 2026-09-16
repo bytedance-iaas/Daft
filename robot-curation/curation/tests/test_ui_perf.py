@@ -1339,11 +1339,16 @@ def test_module_pick_change_does_not_rerender_itself(tmp_path):
     mode_labels = [getattr(c, "label", "") for c in mode_fns[0].outputs]
     assert "要跑的模块" in mode_labels, "模式切换仍要负责勾选框的显隐"
     assert "运动学极限" in mode_labels, "模式切换也负责型号下拉的显隐"
+    # 首次切到自选模块,型号下拉转圈转到下一次任务台轮询(最长 10s)才消
+    # (2026-09-16 用户实测 8s):显隐/置灰切换一律不挂加载态
+    for f in picks_fns + mode_fns:
+        assert f.show_progress == "hidden", f"{f.fn.__name__} 不许挂加载态"
 
 
-def test_kinematic_limits_is_last_dropdown_of_registered_embodiments(tmp_path):
-    """自选模块里运动学极限不再是勾选项,而是排在模块区最后的型号下拉
-    (2026-09-16 用户定):选项 = 「不检查」+ 注册表里有规格的全部型号。"""
+def test_kinematic_limits_dropdown_sits_last_in_module_box(tmp_path):
+    """自选模块里运动学极限不再是勾选项,而是型号下拉,与勾选框同框、排在
+    框里最后(2026-09-16 用户定:不单独列出来):选项 = 「不检查」+ 注册表
+    里有规格的全部型号。"""
     pytest.importorskip("gradio")
     import gradio as gr
     from curation.ui import runner as _runner
@@ -1363,11 +1368,17 @@ def test_kinematic_limits_is_last_dropdown_of_registered_embodiments(tmp_path):
     assert set(_runner.embodiment_choices()) >= {
         "agibot", "aloha", "franka", "google_robot", "pusht", "so100",
         "so101", "ur5", "widowx"}
-    # 「放到最后」:模块区三件的建树顺序 = 勾选框 → 只跑/跳过 → 型号下拉
-    ids = [b._id for b in blocks]
+    # 同框:勾选框与型号下拉同在 #rn-mods 里(CSS 靠它拼成一个框),下拉在后
+    assert pick.parent is kin.parent
+    assert pick.parent.children == [pick, kin]
+    box = pick.parent
+    while getattr(box, "elem_id", None) != "rn-mods":
+        box = box.parent
+        assert box is not None, "勾选框与下拉要装在 #rn-mods 里"
     how = next(b for b in blocks if isinstance(b, gr.Radio)
                and b.label == "选中的这些…")
-    assert ids.index(pick._id) < ids.index(how._id) < ids.index(kin._id)
+    ids = [b._id for b in blocks]
+    assert ids.index(kin._id) < ids.index(how._id), "只跑/跳过在模块框之后"
 
 
 def test_preflight_kin_dropdown_drives_argv_without_embodiment_ask(
