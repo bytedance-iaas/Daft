@@ -683,7 +683,9 @@ def run_funnel(
             纪律:一条轨迹的死活与其余轨迹完全隔离 —— daft UDF 一旦抛错,
             df.collect() 整批报废,一条轨迹就能拖死全部。这里保证任务一定跑完:
             passed=None → episode_verdict 记 undecidable(不冤杀也不放行,转人工);
-            detail.rules=["internal_error"] 是离线扫错误码的机器可读标识。
+            detail.rules=["internal_error"] 是离线扫错误码的机器可读标识;
+            detail.internal_error=True 供展示层把「系统内部错误」与「证据不足
+            的诚实弃权」措辞分开(report/manifest 都读它)。
             """
             import sys
             import traceback
@@ -697,7 +699,8 @@ def run_funnel(
             return result_to_struct(CheckResult(
                 name="task_success", passed=None,
                 detail={"reason": f"internal_error: {type(e).__name__}: {e}",
-                        "rules": ["internal_error"]}))
+                        "rules": ["internal_error"],
+                        "internal_error": True}))   # 展示层按它区分「系统坏了」与「证据不足」
 
         def _task_check_sync(video, task_desc, task_src, fps,
                              action, timestamps, embodiment_id, semantics_extras=""):
