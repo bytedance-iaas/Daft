@@ -2981,6 +2981,13 @@ def _first_sentence(text: str) -> str:
     return s.strip()
 
 
+def _check_internal_error(ep: dict, chk: str) -> bool:
+    """某项检查的 detail 是否带 internal_error 标记(funnel._internal_error_struct
+    打的)。有 = 判定阶段系统内部崩了,与「证据不足的诚实弃权」措辞分开。"""
+    d = ((ep.get("checks") or {}).get(chk, {}) or {}).get("detail")
+    return bool(_deep_detail(d or {}).get("internal_error"))
+
+
 def episode_reason_line(m: dict, eid: str) -> str:
     """详情面板第一屏那句人话理由(通过条目没有理由——它没什么可解释的)。
 
@@ -3004,7 +3011,9 @@ def episode_reason_line(m: dict, eid: str) -> str:
             line = f"{line}:{why}" if line else why
         return line
     # 同 episode_list_reason:high-level,不携带读数细节(2026-08-23 用户定)
-    bits = [f"「{chk}」证据不足,系统拿不准——需要人看视频给结论"
+    bits = [(f"「{chk}」系统内部错误(非数据问题),本次未能判定——需人工看视频给结论"
+             if _check_internal_error(ep, chk) else
+             f"「{chk}」证据不足,系统拿不准——需要人看视频给结论")
             for chk in ep.get("pending") or []]
     if eid in audit_queue_ids(m):
         bits.append("原始标注与画面描述不一致,需人工确认")
@@ -3031,7 +3040,10 @@ def episode_list_reason(m: dict, eid: str) -> str:
         return humanize_reason(episode_reason_text(m, eid)) or episode_reason_line(m, eid)
     # 2026-08-23 用户定:待人工的理由在 UI 只说 high-level,"0.15 在灰区(0.25~0.45)"
     # 这类数字细节用户不 care;全文仍在报告与下方「检查明细」里。
-    bits = [f"「{chk}」拿不准" for chk in (ep.get("pending") or [])]
+    # internal_error 条目不说「拿不准」:不是证据问题,是系统侧异常(措辞与横幅同源)
+    bits = [(f"「{chk}」系统内部错误(非数据问题)" if _check_internal_error(ep, chk)
+             else f"「{chk}」拿不准")
+            for chk in (ep.get("pending") or [])]
     if eid in audit_queue_ids(m):
         bits.append("标注与画面不一致")
     bits = [b for b in bits if b]

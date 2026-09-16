@@ -53,6 +53,10 @@ def build_task_trace(episode_id: str, passed, detail: dict, *,
             rec[out] = v
     if detail.get("rules"):
         rec["rules"] = list(detail["rules"])
+    # 内部错误标记(判定阶段漏网异常的兕底,见 funnel._internal_error_struct):
+    # 单独提顶,离线统计不用去 rules 里翻
+    if detail.get("internal_error"):
+        rec["internal_error"] = True
 
     scoring: dict = {}
     for k in _SCORING_KEYS:

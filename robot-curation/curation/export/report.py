@@ -802,10 +802,15 @@ def save_report(report: dict, out_dir: str, verify: bool = False) -> tuple[str, 
         for name in und:
             c = pe.get("checks", {}).get(name, {})
             try:
-                reasons[CHECK_CN.get(name, name)] = json.loads(
-                    c.get("detail") or "{}").get("reason", "未注明")
+                _det = json.loads(c.get("detail") or "{}")
+                _r = _det.get("reason", "未注明")
+                # internal_error 条目跟「证据不足的诚实弃权」不是一回事:明确说
+                # 是系统侧异常,免得人以为这条数据本身有问题
+                if _det.get("internal_error"):
+                    _r = f"系统内部错误(非数据问题):{_r}"
             except Exception:  # noqa: BLE001
-                reasons[CHECK_CN.get(name, name)] = "未注明"
+                _r = "未注明"
+            reasons[CHECK_CN.get(name, name)] = _r
         review_view[e] = {"当前判决": {"keep": "通过", "drop": "拒绝"}[pe["verdict"]],
                           "待裁决项": [CHECK_CN.get(n, n) for n in und],
                           "弃权原因": reasons}
