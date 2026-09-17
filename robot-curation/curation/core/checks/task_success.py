@@ -543,7 +543,9 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
                       question_writer, grounder, judge,
                       n_votes: int, crop_pad: float, upscale: int,
                       transient_offset_s: float, max_cams: int,
-                      cam_hints: dict | None = None) -> dict:
+                      cam_hints: dict | None = None,
+                      peak_frame: int | None = None,
+                      release_offset_s: float = 1.0) -> dict:
     """单意图跑完整取证链,返回该 run 的痕迹与共识(不做杀门槛,门槛在上层)。
 
     路的划分:相机名含 wrist(不分大小写)= 腕部线,其余 = 外部取证线(封顶
@@ -584,42 +586,71 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
     ext_cams = [c for c in names if "wrist" not in c.lower()][:max_cams]
     wrist_cams = [c for c in names if "wrist" in c.lower()]
 
-    t_grasp = None
-    if transient and gripper is not None and gripper_ts is not None:
-        t_grasp = gripper_event_time(gripper, gripper_ts, closing=True)
+    t_grasp = t_release = None
+    if gripper is not None and gripper_ts is not None:
+        if transient:
+            t_grasp = gripper_event_time(gripper, gripper_ts, closing=True)
+        else:
+            t_release = gripper_event_time(gripper, gripper_ts, closing=False)
+
+    def _ext_line(pic: np.ndarray, fi: int, cam: str) -> dict:
+        """一帧上的外部取证:定位 → 裁剪放大 → 判官三票。返回该帧的痕迹
+        (skipped / votes),不改 run。"""
+        line: dict = {"frame": int(fi)}
+        try:
+            boxes = grounder(pic, target, visual, obj)
+        except Exception as e:  # noqa: BLE001  定位失败=该帧无证据
+            line["skipped"] = f"grounding 失败: {type(e).__name__}"
+            return line
+        line["n_boxes"] = len(boxes)
+        if not boxes:
+            line["skipped"] = "target/object 均不可见,无框可裁"
+            return line
+        tile = _arb_union_crop(pic, boxes, crop_pad, upscale)
+        imgs = [pic] + ([tile] if tile is not None else [])
+        line["votes"] = _vote(imgs, "exterior_post_grasp" if transient else "exterior_final", cam)
+        return line
 
     # ── 外部取证线:定位 → 裁剪放大 → 判官三票 ──────────────────────────────
+    # 持久任务的锚点回退(2026-09-17 umi ep0 教训:盒子放进抽屉后抽屉被关上,末帧两路
+    # 六票全 unclear,有效路 0 条弃权):**末帧照旧先看**,末帧定位不到/三票无一 yes-no
+    # 才依次退到「松爪后 release_offset_s 秒」(放好了、还没关上)与「打分层峰值探针帧」
+    # (模型自己认为做成的那一刻);末帧能答的条目行为逐字节不变。每次尝试都留痕。
     for cam in ext_cams:
         frames = list(cam_frames.get(cam) or [])
         fts = np.asarray(cam_ts.get(cam, ()), dtype=np.float64)
         if not frames:
             continue
+        ts_ok = len(fts) == len(frames) and len(fts) > 0
         if transient:
-            if t_grasp is not None and len(fts) == len(frames) and len(fts):
+            if t_grasp is not None and ts_ok:
                 fi = int(np.argmin(np.abs(fts - (t_grasp + transient_offset_s))))
             else:
                 fi = len(frames) // 2     # 无夹爪事件可依:取中段,不猜末帧(松爪≠失败)
+            anchors = [("grasp", fi)]
         else:
-            fi = len(frames) - 1          # 持久任务:验末帧(撤手后仍须成立)
-        pic = np.asarray(frames[fi])
-        line: dict = {"frame": int(fi)}
-        try:
-            boxes = grounder(pic, target, visual, obj)
-        except Exception as e:  # noqa: BLE001  定位失败=该路无证据,跳过不产票
-            line["skipped"] = f"grounding 失败: {type(e).__name__}"
-            run["lines"][cam] = line
-            continue
-        line["n_boxes"] = len(boxes)
-        if not boxes:
-            line["skipped"] = "target/object 均不可见,无框可裁"
-            run["lines"][cam] = line
-            continue
-        tile = _arb_union_crop(pic, boxes, crop_pad, upscale)
-        imgs = [pic] + ([tile] if tile is not None else [])
-        votes = _vote(imgs, "exterior_post_grasp" if transient else "exterior_final", cam)
-        line["votes"] = votes
+            anchors = [("final", len(frames) - 1)]   # 持久任务:验末帧(撤手后仍须成立)
+            if t_release is not None and ts_ok:
+                anchors.append(("release", int(np.argmin(np.abs(fts - (t_release + release_offset_s))))))
+            if peak_frame is not None:
+                anchors.append(("peak", int(min(max(int(peak_frame), 0), len(frames) - 1))))
+        seen: set = set()
+        line: dict = {}
+        failed: list = []                 # 回退前没答出来的那些帧(留痕)
+        for name, fi in anchors:
+            if fi in seen:
+                continue
+            seen.add(fi)
+            line = _ext_line(np.asarray(frames[fi]), fi, cam)
+            line["anchor"] = name
+            if _arb_line_verdict(line.get("votes") or []) in ("yes", "no"):
+                break
+            failed.append(line)
+        fb = [t for t in failed if t is not line]
+        if fb:
+            line["fallbacks"] = fb
         run["lines"][cam] = line
-        v = _arb_line_verdict(votes)
+        v = _arb_line_verdict(line.get("votes") or [])
         if v in ("yes", "no"):
             run["line_verdicts"][cam] = v
 
@@ -761,9 +792,26 @@ def arbitration_review(
                 arb["intent_conflict"] = True
                 arb["intent_conflict_basis"] = f"语义比对失败({type(e).__name__})"
 
+    # 打分层"冲高又崩回"(gap_violation)的峰值探针帧 = 模型自己认为做成的那一刻;
+    # 探针下标与 cam_frames 同一套采样(漏斗多视角按最短路对齐),可直接当帧下标用。
+    # ⚠️ 看规则痕迹不看 verdict:复核层跑完会把 verdict 改写成 review_conflict 等
+    # (2026-09-17 umi 抽屉条目实见:init gap_violation → 复核 yes/yes → review_conflict,
+    # 只认 verdict 就一次也不回退)。gap_violation_monotonicity 是打分层落下的、不会被改写。
+    peak_frame = None
+    rules = res.detail.get("rules") or []
+    if (str(res.detail.get("verdict")) == "gap_violation"
+            or "gap_violation_monotonicity" in rules):
+        try:
+            comps = list(res.detail.get("completions") or [])
+            probes = list(res.detail.get("probe_frames") or [])
+            if comps and len(probes) == len(comps):
+                peak_frame = int(probes[int(np.argmax(np.asarray(comps, dtype=float)))])
+        except Exception:  # noqa: BLE001  痕迹形状不对=没有这个锚点而已
+            peak_frame = None
     chain_kw = dict(question_writer=question_writer, grounder=grounder, judge=judge,
                     n_votes=n_votes, crop_pad=crop_pad, upscale=upscale,
-                    transient_offset_s=transient_offset_s, max_cams=max_cams, cam_hints=cam_hints)
+                    transient_offset_s=transient_offset_s, max_cams=max_cams, cam_hints=cam_hints,
+                    peak_frame=peak_frame)
     run_a = _arb_single_chain(intent, cam_frames, cam_ts, gripper, gripper_ts, **chain_kw)
     arb["spec"] = run_a.get("spec")
     arb["lines"] = run_a["lines"]

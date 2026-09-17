@@ -620,3 +620,110 @@ def test_funnel_enabled_arbitrates_abstentions(monkeypatch):
         assert arb["intent"].lower().startswith("push the t-shaped block")
         assert arb["caption"] == "push the t-shaped block onto the target"   # caption 只留痕
         assert arb["n_effective"] >= 1 and arb["lines"]
+
+
+# ───────── 持久任务的锚点回退(2026-09-17 umi ep0:放进抽屉后关上,末帧看不见) ─────────
+
+def _indexed_cams(n=21):
+    """单路外部相机,帧 i 的填充值 = 100+i,判官/断言能按帧辨认。"""
+    frames = [np.full((16, 16, 3), 100 + i, dtype=np.uint8) for i in range(n)]
+    return {"ext_a": frames}, {"ext_a": np.linspace(0.0, 10.0, n)}
+
+
+def _always_boxes(img, target, visual, obj):
+    return [(2, 2, 10, 10)]
+
+
+def _judge_unclear_at(frames_unclear):
+    """末帧(或指定帧)三票 unclear,其余帧三票 yes。"""
+    calls = []
+
+    def j(imgs, *, target, question, scene):
+        fi = int(np.asarray(imgs[0]).max()) - 100
+        calls.append(fi)
+        return "unclear" if fi in frames_unclear else "yes"
+    j.calls = calls
+    return j
+
+
+def _gap_res():
+    """打分层契约违约:探针 8 帧,第 3 个探针(帧 8)打到峰值 1.0,末态崩回 0。"""
+    return CheckResult(name="task_success", passed=None,
+                       detail={"verdict": "gap_violation", "reason": "orig", "rules": [],
+                               "completions": [0.0, 0.3, 1.0, 0.9, 0.2, 0.0, 0.0, 0.0],
+                               "probe_frames": [0, 3, 8, 11, 14, 17, 19, 20]})
+
+
+def test_persistent_final_unclear_falls_back_to_peak_frame():
+    """末帧六票全 unclear(抽屉关了)→ 退到打分峰值帧(帧 8)→ yes 救回;末帧尝试留痕。"""
+    cams, ts = _indexed_cams()
+    judge = _judge_unclear_at({20})
+    r = _arb(_gap_res(), judge, grounder=_always_boxes, cams=(cams, ts))
+    line = r.detail["arbitration"]["lines"]["ext_a"]
+    assert line["anchor"] == "peak" and line["frame"] == 8
+    assert [f["frame"] for f in line["fallbacks"]] == [20]
+    assert line["fallbacks"][0]["votes"] == ["unclear"] * 3
+    assert r.passed is True and r.detail["verdict"] == "arbitration_success"
+
+
+def test_persistent_release_anchor_tried_before_peak():
+    """有夹爪信号:松爪(1→0 在 t=5.0)后 +1.0s = 帧 12,排在峰值帧之前。"""
+    cams, ts = _indexed_cams()
+    grip = (ts["ext_a"] < 5.0).astype(float)             # droid 约定 1=闭:t=5 张开
+    judge = _judge_unclear_at({20})
+    r = _arb(_gap_res(), judge, grounder=_always_boxes, cams=(cams, ts),
+             gripper=grip, gripper_ts=ts["ext_a"])
+    line = r.detail["arbitration"]["lines"]["ext_a"]
+    assert line["anchor"] == "release" and line["frame"] == 12
+    assert judge.calls[:3] == [20, 20, 20] and 12 in judge.calls and 8 not in judge.calls
+
+
+def test_persistent_final_answered_never_falls_back():
+    """末帧答得出(哪怕是 no)就不回退——老条目行为逐字节不变。"""
+    cams, ts = _indexed_cams()
+
+    def judge(imgs, *, target, question, scene):
+        return "no"
+    r = _arb(_gap_res(), judge, grounder=_always_boxes, cams=(cams, ts))
+    line = r.detail["arbitration"]["lines"]["ext_a"]
+    assert line["anchor"] == "final" and line["frame"] == 20 and "fallbacks" not in line
+
+
+def test_peak_anchor_only_for_gap_violation():
+    """非契约违约(灰区)的弃权不拿峰值帧:末帧 unclear 就到此为止,有效路 0。"""
+    cams, ts = _indexed_cams()
+    res = _gap_res()
+    res.detail["verdict"] = "uncertain"
+    judge = _judge_unclear_at({20})
+    r = _arb(res, judge, grounder=_always_boxes, cams=(cams, ts))
+    arb = r.detail["arbitration"]
+    line = arb["lines"]["ext_a"]
+    assert line["anchor"] == "final" and "fallbacks" not in line
+    assert arb["n_effective"] == 0 and r.passed is None
+
+
+def test_fallback_stops_at_first_answerable_and_skips_duplicate_frames():
+    """末帧与峰值帧重合(峰值就在末帧)时不重复问;松爪帧答出即停。"""
+    cams, ts = _indexed_cams()
+    res = _gap_res()
+    res.detail["probe_frames"][2] = 20                    # 峰值探针 = 末帧
+    grip = (ts["ext_a"] < 5.0).astype(float)
+    judge = _judge_unclear_at({20})
+    r = _arb(res, judge, grounder=_always_boxes, cams=(cams, ts),
+             gripper=grip, gripper_ts=ts["ext_a"])
+    line = r.detail["arbitration"]["lines"]["ext_a"]
+    assert line["anchor"] == "release" and judge.calls.count(20) == 3
+
+
+def test_peak_anchor_survives_review_rewriting_verdict():
+    """真实管线:打分 gap_violation → 复核两路 yes → verdict 被改写成 review_conflict。
+    峰值帧回退要认规则痕迹 gap_violation_monotonicity,不能只认 verdict(umi 抽屉条目实见)。"""
+    cams, ts = _indexed_cams()
+    res = _gap_res()
+    res.detail["verdict"] = "review_conflict"
+    res.detail["rules"] = ["gap_violation_monotonicity", "arms_conflict_gap_vs_done"]
+    judge = _judge_unclear_at({20})
+    r = _arb(res, judge, grounder=_always_boxes, cams=(cams, ts))
+    line = r.detail["arbitration"]["lines"]["ext_a"]
+    assert line["anchor"] == "peak" and line["frame"] == 8
+    assert r.passed is True
