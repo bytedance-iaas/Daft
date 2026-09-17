@@ -88,7 +88,7 @@ def ensure_vlm(endpoint: str, model: str, wait_s: int = 1200,
         return False, f"未找到 vllm({VLLM_BIN})"
     gpu = find_idle_gpu()
     if gpu is None:
-        return False, "无空闲 GPU(有进程的卡按规矩不碰)——自动降级精简版"
+        return False, "无空闲 GPU(有进程的卡按规矩不碰)——自动改跑精简版"
     port = endpoint.rsplit(":", 1)[-1].split("/")[0]
     env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(gpu),
                HF_HOME=os.environ.get("HF_HOME", "/data03/hao/.hf_home"),
@@ -117,4 +117,4 @@ def ensure_vlm(endpoint: str, model: str, wait_s: int = 1200,
                           f"{int(idle_timeout_s / 3600)}h 自动关闭;手动关: pkill -f 'vllm serve'")
         time.sleep(15)
         print(f"[curation]   …等待模型加载({int(time.time() - t0)}s)", flush=True)
-    return False, f"VLM 启动超时({wait_s}s),详见 {VLLM_LOG}——本次降级精简版"
+    return False, f"VLM 启动超时({wait_s}s),详见 {VLLM_LOG}——本次改跑精简版"

@@ -260,7 +260,26 @@ def run_funnel(
             pr = np.asarray(proprio_state) if proprio_state is not None else None
             a = np.asarray(action)
             kw = dict(p_motion)
-            if "angle_dims" not in kw and a.ndim == 2:
+            # 语义层识别出的 EE 布局(2026-09-16,只在无档案的数据集上出现):按块给运动质量,
+            # 不再一律假定"第 3-5 列是 rpy";有档案的数据集走下面的老规则,数值一字不变
+            _layout = None
+            try:
+                _layout = (json.loads(str(semantics_extras) or "{}") or {}).get("layout")
+            except Exception:  # noqa: BLE001
+                _layout = None
+            if "angle_dims" not in kw and a.ndim == 2 and isinstance(_layout, dict) \
+                    and str(action_space) == "ee":
+                cmode = str(control_mode)
+                mode = "delta" if cmode in ("delta", "velocity") else "absolute"
+                kw.update(angle_dims=tuple(int(x) for x in _layout.get("angle_dims") or ()),
+                          angle_mode=mode,
+                          euler_triplet=bool(_layout.get("euler_triplet")),
+                          rotation_blocks=[tuple(b) for b in _layout.get("rotation_blocks") or []],
+                          translation_dims=tuple(int(x) for x in _layout.get("translation_dims") or ()))
+                if _layout.get("gripper_dims"):
+                    kw.setdefault("gripper_dims", tuple(
+                        int(x) for x in _layout["gripper_dims"] if int(x) < a.shape[1]) or None)
+            elif "angle_dims" not in kw and a.ndim == 2:
                 aspace, cmode = str(action_space), str(control_mode)
                 mode = "delta" if cmode in ("delta", "velocity") else "absolute"
                 if aspace == "ee" and a.shape[1] >= 6:

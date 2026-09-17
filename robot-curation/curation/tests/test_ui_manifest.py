@@ -102,7 +102,9 @@ def test_overview_and_check_rows(delivery):
     assert fr["输入 episode"] == 3 and fr["交付"] == "2(通过率 66.7%)"
     cr = check_rows(m, "ep000001")
     ts = [r for r in cr if r[0] == "任务成败判定"][0]
-    assert ts[1] == "拒绝" and "voc=0.87" in ts[3]
+    # 要点不再印打分层的 voc/末态中间量(2026-09-16 用户定):写结论与理由
+    assert ts[1] == "拒绝" and "voc=" not in ts[3] and "渐变问询不可判" in ts[3]
+    assert cr[-1][0] == "打标" and cr[-1][2] == ""            # 末行打标,分数列留空
 
 
 def test_skill_display_prefers_name_zh(tmp_path):
@@ -1198,7 +1200,7 @@ def test_skill_chart_flat_shape_marks_degradation(tmp_path):
     shape, items = skill_chart_items(m)
     assert shape == "flat" and [it["name"] for it in items][0] == "(无指令)"
     html = skill_bar_html(m)
-    assert SKILL_FALLBACK_NOTE in html and "降级" in html and "仅供参考" in html
+    assert SKILL_FALLBACK_NOTE in html and "降级" not in html and "仅供参考" in html
     assert "<details" not in html                     # 无子技能 → 全普通行
     assert _bar_widths(html) == [100.0, 5.36, 1.79]   # 56/3/1,全局尺子
 
@@ -1999,9 +2001,9 @@ def test_check_table_html_highlights_the_rejected_dimension(delivery):
     for h in CHECK_HEADERS:
         assert h in html
     rows = check_rows(m, "ep000001")
-    assert [r[0] for r in rows] == ["任务成败判定"]
-    assert html.count("#FFECE8") == 1                    # 红底只给被拒那一行
-    assert "voc=0.87" in html
+    assert [r[0] for r in rows] == ["任务成败判定", "打标"]
+    assert html.count("#FFECE8") == 1                    # 红底只给被拒那一行(打标行不标)
+    assert "渐变问询不可判" in html
     # 通过条目:一行红都没有
     assert "#FFECE8" not in check_table_html(m, "ep000002")
     assert "没有记录逐维读数" in check_table_html(m, "")   # 空态不崩

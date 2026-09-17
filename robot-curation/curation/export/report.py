@@ -159,7 +159,7 @@ def container_findings(input_format: str, info: dict, robot: dict,
                         "说明": f"属性带原始数据集路径 {prov['source']},可访问 —— "
                                 "缺失元数据可自动回源补全。"})
         elif prov.get("source"):
-            out.append({"项": "溯源信息", "状态": "降级",
+            out.append({"项": "溯源信息", "状态": "部分补全",
                         "说明": f"属性带原始数据集路径 {prov['source']},但当前环境"
                                 "访问不到 —— 无法用于补全,按各项实际缺失处理。"})
         else:
@@ -177,7 +177,7 @@ def container_findings(input_format: str, info: dict, robot: dict,
                             "说明": f"info.json 未声明 robot_type;已按指定型号 {emb} "
                                     "查规格,运动学极限照常执行。"})
         elif emb and emb != "unknown":
-            out.append({"项": "机器人型号", "状态": "降级",
+            out.append({"项": "机器人型号", "状态": "已跳过",
                         "说明": f"型号 {emb} 不在规格库,运动学极限整项跳过(其余检查"
                                 "照常);需要支持请提供该机器人的关节规格。"})
         else:
@@ -242,7 +242,7 @@ def _container_lines(d: dict) -> list:
     _fmt = {"rrd": "RRD(rerun)", "lerobot": "LeRobot"}.get(
         str(cont.get("format")), str(cont.get("format")))
     icon = {"正常": "✅ ", "缺失(已补)": "⚠️ ", "缺失(已溯源补全)": "✅ ",
-            "降级": "⚠️ ", "缺失": "❌ "}
+            "已跳过": "⚠️ ", "部分补全": "⚠️ ", "缺失": "❌ "}
     out = [f"## 数据包完整性({_fmt} 输入)",
            "> 体检的是数据包本身带没带管线需要的元信息,不是数据内容。"
            "缺失但已人工补上的项,请核对补的值是否与实际相符。"]
@@ -651,23 +651,24 @@ def to_markdown(report: dict) -> str:
     _unst = (la or {}).get("low_caption_unstable") or []
     if la and (la["high"] or la["mid_for_review"] or _unst):
         lines.append(f"## 标注-画面分歧(高置信 {len(la['high'])} / 人工复核 "
-                     f"{len(la['mid_for_review'])} / 我方描述不稳 {len(_unst)})")
+                     f"{len(la['mid_for_review'])} / 系统几遍看法不一致 {len(_unst)},不算分歧)")
         lines.append("> 原始标注与自产描述(VLM 生成)归进了不同技能族。**双方都可能错**:"
                      "自产描述既可能看错也不一定可复现,这里只给复核队列,不判谁对。")
         _n_focus = sum(1 for t in ("high", "mid_for_review") for x in la.get(t) or []
                        if x.get("priority") == "重点")
         if _n_focus:
             lines.append(f"> **重点档 {_n_focus} 条**(任务成败线同时不利——两条独立证据线"
-                         "同报警,标注错嫌疑最高,建议优先人工);其余为参考档"
-                         "(成败线已放行,分歧多为自产描述噪声)。")
+                         "同报警,标注错嫌疑最高,建议优先人工);其余为一般档"
+                         "(成败线已放行,分歧多为自产描述噪声)。系统几遍看法不一致的"
+                         "条目不算分歧,只列出来备查。")
         for f in la["high"][:20]:
             _st = "(重打标 N 次同族,我方描述稳定)" if f.get("caption_stable") else ""
-            _pr = f"[{f.get('priority', '参考')}]"
+            _pr = f"[{'一般' if f.get('priority', '参考') == '参考' else f.get('priority')}]"
             _tv = f"(成败线:{f.get('task_verdict')})" if f.get("task_verdict") else ""
             lines.append(f"- [高]{_pr} {f['id']} {f['reason']}: 标注「{f['label'][:40]}」"
                          f" vs 自产描述「{f['caption'][:40]}」{_st}{_tv}")
         for f in _unst[:20]:
-            lines.append(f"- [降级·我方描述不稳] {f['id']}: 标注「{f['label'][:40]}」"
+            lines.append(f"- [不算分歧·系统几遍看法不一致] {f['id']}: 标注「{f['label'][:40]}」"
                          f" vs 重打标「{'」「'.join(c[:40] for c in f.get('recaptions', []))}」")
         lines.append("")
     dropped = report["episodes"]["dropped"]

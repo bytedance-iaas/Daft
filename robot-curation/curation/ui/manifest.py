@@ -472,16 +472,20 @@ CHECK_STATE_TEXT = {"软分": "质量分"}
 
 
 def check_rows(m: dict, eid: str) -> list[list]:
+    """逐维一行:检查 / 结果 / 分数 / 要点。要点(2026-09-16 用户定)不再是"reason 截 120 字":
+    任务成败写一句判定链(打分层 → 复核 → 仲裁 → 结论),运动质量写总分由哪些子项均出、
+    哪些不适用,视觉写最差相机,同步写可信路数与滞后;末尾多一行「打标」(分数列留空)。"""
+    from .episode_detail import check_gist, label_row
     ep = m["episodes"].get(eid) or {}
     rows = []
     for name, c in (ep.get("checks") or {}).items():
         d = c["detail"]
-        gist = d.get("reason") or d.get("verdict") or ""
-        if "voc" in d:
-            gist = f"voc={d['voc']} 末态={d.get('completion_final')} {gist}"
+        gist = check_gist(m, eid, name, d) or d.get("reason") or d.get("verdict") or ""
         state = c["state"]
         rows.append([name, CHECK_STATE_TEXT.get(state, state),
-                     c["score"] if c["score"] is not None else "", str(gist)[:120]])
+                     c["score"] if c["score"] is not None else "", str(gist)])
+    if rows:
+        rows.append(label_row(m, eid))
     return rows
 
 
@@ -593,7 +597,7 @@ SKILL_BAR_COLOR = "#165DFF"
 
 #: 形状 B(VLM 不可用 → 退回按原始标注分组)必须挂的前提说明。不写清楚,客户会
 #: 把一堆原始指令当成系统归纳出的技能体系。形状 A 不显示这句。
-SKILL_FALLBACK_NOTE = ("未经 VLM 审计的原始标注分组(VLM 不可用时的降级路径),仅供参考")
+SKILL_FALLBACK_NOTE = ("未经 VLM 审计的原始标注分组(VLM 不可用时按标注分组),仅供参考")
 
 #: 悬停详情里判据截断长度(判据是 LLM 写的一整句,全塞进 title 会糊一屏)。
 _SKILL_CRIT_CAP = 60
@@ -1297,7 +1301,7 @@ def overview_markdown(m: dict) -> str:
     cf = (d.get("container") or {}).get("findings") or []
     if cf:
         _ic = {"正常": "✅", "缺失(已补)": "⚠️", "缺失(已溯源补全)": "✅",
-               "降级": "⚠️", "缺失": "❌"}
+               "已跳过": "⚠️", "部分补全": "⚠️", "缺失": "❌"}
         lines.append("- 数据包完整性:" + ";".join(
             f"{f.get('项')} {_ic.get(str(f.get('状态')), '')}{f.get('状态')}"
             for f in cf) + "(缺什么、按什么补的,详见质检报告)")

@@ -86,7 +86,7 @@ def test_rrd_provenance_unreachable_degrades():
     info = {"fps": 30.0, "time_source": "config", "has_task_text": False,
             "provenance": {"source": "tos://elsewhere/gone", "reachable": False}}
     got = _by_item(container_findings("rrd", info, _ROBOT_HIT, rrd_fps_arg=30.0))
-    assert got["溯源信息"]["状态"] == "降级"
+    assert got["溯源信息"]["状态"] == "部分补全"
     assert "访问不到" in got["溯源信息"]["说明"]
     assert got["帧时间信息"]["状态"] == "缺失(已补)"      # 溯源没帮上,人工补的
 
@@ -141,7 +141,7 @@ def test_lerobot_unregistered_robot_degrades():
     robot = {"robot_type": "ur5e", "embodiment_id": "ur5e",
              "registry_profile": "(未注册)", "quality": None}
     got = _by_item(container_findings("lerobot", {"fps": 30}, robot))
-    assert got["机器人型号"]["状态"] == "降级"
+    assert got["机器人型号"]["状态"] == "已跳过"
     assert "ur5e" in got["机器人型号"]["说明"]
     assert "整项跳过" in got["机器人型号"]["说明"]
 
@@ -169,7 +169,7 @@ def test_lerobot_given_embodiment_not_in_registry_names_it():
     robot = {"robot_type": "unknown", "embodiment_id": "koch",
              "registry_profile": "(未注册)", "quality": None}
     got = _by_item(container_findings("lerobot", {"fps": 30}, robot))
-    assert got["机器人型号"]["状态"] == "降级"
+    assert got["机器人型号"]["状态"] == "已跳过"
     assert "koch" in got["机器人型号"]["说明"]
     assert "整项跳过" in got["机器人型号"]["说明"]
 
