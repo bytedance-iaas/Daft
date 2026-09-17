@@ -4965,6 +4965,10 @@ def launch(delivery: str, config_path: str | None = None, host: str = "0.0.0.0",
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # 子进程收尸(issue #141):跑批包装 bash 退出后没人 wait,容器里 UI 又是 PID 1,
+    # 每跑一次攒一个 <defunct>。装 SIGCHLD 收尸器,来一个收一个。
+    from .reaper import install_child_reaper
+    install_child_reaper()
     app = create_asgi_app(delivery, config_path, probe_timeout, terminal=terminal,
                           review_dir=review_dir, data_root=data_root,
                           root_path=root_path)

@@ -35,7 +35,7 @@ ARG APT_MIRROR=https://mirrors.volces.com
 RUN sed -i "s|http://deb.debian.org|${APT_MIRROR}|g; s|https://deb.debian.org|${APT_MIRROR}|g" \
         /etc/apt/sources.list.d/debian.sources 2>/dev/null || true \
     && apt-get update -qq \
-    && apt-get install -y -qq --no-install-recommends curl \
+    && apt-get install -y -qq --no-install-recommends curl tini \
     && rm -rf /var/lib/apt/lists/*
 
 # 数据拉取通道(curation fetch,2026-08-18):从火山 extra-tools 源装 onion-ai-data,
@@ -90,7 +90,10 @@ RUN pip install --no-cache-dir --no-deps -e .
 
 # 数据/输出经挂载进出(VKE 挂 TOS/PVC 到这两个路径)
 VOLUME ["/data/input", "/data/output"]
-ENTRYPOINT ["curation"]
+# tini 当 PID 1(issue #141):UI 进程曾直接做 1 号进程,过继来的孤儿无人收尸;
+# tini 负责收尸与转发信号,`curation` 退到子进程。部署侧若用 command: 覆盖入口,
+# 要自己写成 ["tini","--","curation",...],否则这一层不生效。
+ENTRYPOINT ["tini", "--", "curation"]
 CMD ["--help"]
 # 用法: docker run -v 数据集:/data/input -v 结果:/data/output <镜像> \
 #        run --input /data/input --output /data/output --lite --report-only
