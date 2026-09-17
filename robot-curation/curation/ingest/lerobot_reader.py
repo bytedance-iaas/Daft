@@ -422,9 +422,16 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
         if not sem.gripper_dims and pf.get("gripper_dims"):
             sem.gripper_dims = tuple(pf["gripper_dims"])
         if sem.action_space == "ee" and not sem.angle_dims:
+            # 布局按 names 识别(2026-09-16 umi 教训:rot6d 不是 rpy),写进 extras 随行流到漏斗
+            from .dataset_semantics import detect_ee_layout, layout_for_extras
             a0 = np.asarray(sample_rows[0]["action"])
-            if a0.ndim == 2 and a0.shape[1] >= 6:
-                sem.angle_dims, sem.euler_triplet = (3, 4, 5), True
+            if a0.ndim == 2:
+                lay = detect_ee_layout(_action_names_list(info), int(a0.shape[1]))
+                sem.angle_dims = tuple(lay["angle_dims"])
+                sem.euler_triplet = bool(lay["euler_triplet"])
+                if not sem.gripper_dims and lay["gripper_dims"]:
+                    sem.gripper_dims = tuple(lay["gripper_dims"])
+                sem.extras = dict(sem.extras or {}, layout=layout_for_extras(lay))
         sem.source = "preflight"
     elif pf.get("status") in ("ambiguous", "none"):
         sem.action_space = sem.proprio_space = sem.control_mode = "unknown"
@@ -435,6 +442,14 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
         extras["profile_name"] = sem.profile_name
     sem.extras = extras
     return sem
+
+
+def _action_names_list(info: dict) -> list:
+    """action 的 names 按原顺序(小写);布局识别要按列位置对号,集合不够用。"""
+    names = info.get("features", {}).get("action", {}).get("names") or []
+    if isinstance(names, dict):
+        names = next(iter(names.values()), [])
+    return [str(n).lower() for n in names]
 
 
 def _action_names_flat(info: dict) -> set:

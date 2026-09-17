@@ -405,8 +405,8 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
             lambda c: _fam_map.get(str(c).strip().lower(), "未归类"))
         print(f"[curation] 分歧复检:{len(_sub)} 条 × {_rn} 轮 = {_n_calls} 次重打标,"
               f"耗时 {_t.time() - _rc_t0:.1f}s;"
-              f"降级 {len(label_audit.get('low_caption_unstable', []))} 条"
-              f"(我方描述不稳)", flush=True)
+              f"其中 {len(label_audit.get('low_caption_unstable', []))} 条系统自己几遍看法不一致,"
+              f"不算标注问题", flush=True)
     from .progress import phase_done
     phase_done(_G)          # 画像段收账:心跳不再报"仍在这一步"
     return profile, caption_of, grouping_text_of, grouping_source_of, label_audit
@@ -919,7 +919,7 @@ def run_pipeline(
             grouping_text_of[r["episode_id"]] = _t0
             grouping_source_of[r["episode_id"]] = _s0
         if sp_caption_on:
-            profile_note = "技能画像降级:VLM 不可用,按原始标注分组(碎片化、未经审计)"
+            profile_note = "技能画像未经审计:VLM 不可用,按原始标注分组(碎片化)"
             print(f"[curation] ⚠️ {profile_note}", flush=True)
     else:
         profile = skill_profile(keep_rows, ["(未分组)"] * len(keep_rows)) if keep_rows else {

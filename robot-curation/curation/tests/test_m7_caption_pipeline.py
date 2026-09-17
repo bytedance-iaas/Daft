@@ -366,7 +366,7 @@ def test_retier_unstable_demoted_with_all_recaptions():
     d = out["low_caption_unstable"][0]
     assert d["id"] == "epA" and d["caption_stable"] is False
     assert d["recaptions"] == recaps                           # N 次原文供人看
-    assert "我方画面描述不稳定" in d["reason"] and "不足以质疑标注" in d["reason"]
+    assert "系统几遍看法不一致" in d["reason"] and "不算分歧" in d["reason"]
     assert "分歧:原始标注归为 wipe" in d["reason"]             # 原始分歧信息不丢
 
 

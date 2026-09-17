@@ -19,6 +19,41 @@ import numpy as np
 from ..contract import CheckResult
 
 
+def _rotation_sequence(block: np.ndarray, repr_: str):
+    """一段姿态分量序列 → scipy Rotation 序列;表示法认不出/数值退化返回 None。"""
+    from scipy.spatial.transform import Rotation
+    b = np.asarray(block, dtype=np.float64)
+    try:
+        if repr_ == "rpy" and b.shape[1] == 3:
+            return Rotation.from_euler("xyz", b)
+        if repr_ == "quat" and b.shape[1] == 4:
+            n = np.linalg.norm(b, axis=1, keepdims=True)
+            if not np.all(n > 1e-9):
+                return None
+            return Rotation.from_quat(b / n)              # scipy 约定 (x, y, z, w)
+        if repr_ == "rot6d" and b.shape[1] == 6:
+            # 6D 表示 = 旋转矩阵前两列(Zhou et al. 2019),Gram-Schmidt 还原正交基
+            c1 = b[:, :3]
+            c2 = b[:, 3:]
+            n1 = np.linalg.norm(c1, axis=1, keepdims=True)
+            if not np.all(n1 > 1e-9):
+                return None
+            c1 = c1 / n1
+            c2 = c2 - (c1 * c2).sum(axis=1, keepdims=True) * c1
+            n2 = np.linalg.norm(c2, axis=1, keepdims=True)
+            if not np.all(n2 > 1e-9):
+                return None
+            c2 = c2 / n2
+            c3 = np.cross(c1, c2)
+            mats = np.stack([c1, c2, c3], axis=2)         # 列向量拼成矩阵
+            return Rotation.from_matrix(mats)
+        if repr_ == "rotmat" and b.shape[1] == 9:
+            return Rotation.from_matrix(b.reshape(-1, 3, 3))
+    except Exception:  # noqa: BLE001  数值退化(非正交/NaN)→ 不做里程表
+        return None
+    return None
+
+
 def motion_quality(
     action: np.ndarray,
     proprio: np.ndarray | None,
@@ -49,13 +84,46 @@ def motion_quality(
     joint_spans: tuple | None = None,     # 各关节全工作量程(M2 规格表 hi-lo;绝对
                                           # 控制的定罪幅度地板:指令净挪≥2%全量程,
                                           # 死区级微动无资格立案——so101 舵机死区教训)
+    rotation_blocks: list | None = None,  # EE 旋转块 [(起点列, 长度, 表示法)],表示法∈
+                                          #   rpy/quat/rot6d/rotmat/unknown(语义层按 names
+                                          #   识别,2026-09-16 umi 教训);给了就按块做里程表,
+                                          #   不再假定 angle_dims 是 rpy 三元组
+    translation_dims: tuple | None = None,  # 平移列(给了则路径效率只在平移列上算)
 ) -> CheckResult:
     """action: [T,dim] 指令;proprio: [T,dim'] 实际(可空);fps 来自 M1。"""
     a = np.asarray(action, dtype=np.float64)
     T, dim = a.shape
     _rot_seq = None                               # EE 姿态四元数序列(euler_triplet 时填)
+    _transformed: set = set()                     # proprio 里被改写成里程表的列(不能与 action 原值直比)
+    blocks = [tuple(b) for b in (rotation_blocks or []) if len(b) >= 3 and int(b[0]) < dim]
+    if blocks:
+        # 按块处理(2026-09-16):action 只对 rpy 块做回绕防护(四元数/rot6d/矩阵分量本身有界,
+        # 不是角度);proprio 每块换成"姿态里程表"(累计转角进块首列,其余列清零)。
+        for start, length, repr_ in blocks:
+            cols = list(range(int(start), min(dim, int(start) + int(length))))
+            if repr_ == "rpy" and angle_mode in ("absolute", "delta") and len(cols) == 3:
+                if angle_mode == "absolute":
+                    a[:, cols] = np.unwrap(a[:, cols], axis=0, period=angle_period)
+                else:
+                    half = angle_period / 2.0
+                    a[:, cols] = (a[:, cols] + half) % angle_period - half
+        if proprio is not None:
+            p_ = np.asarray(proprio, dtype=np.float64).copy()
+            for start, length, repr_ in blocks:
+                cols = [c for c in range(int(start), int(start) + int(length)) if c < p_.shape[1]]
+                rot = _rotation_sequence(p_[:, cols], str(repr_)) if len(cols) == int(length) else None
+                if rot is None:
+                    continue                      # 认不出的表示法:不做里程表,也不当角度
+                if _rot_seq is None:
+                    _rot_seq = rot                # stuck 健康门用第一块(主手腕)的净旋转
+                steps = (rot[:-1].inv() * rot[1:]).magnitude()
+                p_[:, cols[0]] = np.concatenate([[0.0], np.cumsum(steps)])
+                for c in cols[1:]:
+                    p_[:, c] = 0.0
+                _transformed.update(cols)
+            proprio = p_
     # C1:角度回绕伪影防护——yaw 跨 ±180° 产生 ≈∓2π 假跳变,裸 diff 会误报成物理尖刺
-    if angle_dims and angle_mode in ("absolute", "delta"):
+    elif angle_dims and angle_mode in ("absolute", "delta"):
         ad = [d for d in angle_dims if d < dim]
         if ad:
             if angle_mode == "absolute":
@@ -63,7 +131,7 @@ def motion_quality(
             else:
                 half = angle_period / 2.0
                 a[:, ad] = (a[:, ad] + half) % angle_period - half
-    if angle_dims and proprio is not None:
+    if not blocks and angle_dims and proprio is not None:
         # proprio 是绝对姿态读数,其欧拉三元组的差分有两种表示法陷阱:
         # ①±π回绕(droid roll 悬停边界,假跳变 iso 288-889) ②万向节锁死
         # (droid ep91:pitch→-90°时 roll/yaw 数值等量对冲狂摆而真实转动温和)。
@@ -80,6 +148,7 @@ def motion_quality(
             p_[:, pd[0]] = np.concatenate([[0.0], np.cumsum(steps)])
             p_[:, pd[1]] = 0.0
             p_[:, pd[2]] = 0.0
+            _transformed.update(pd)
         elif pd:                                  # 关节角:解绕足够
             p_[:, pd] = np.unwrap(p_[:, pd], axis=0, period=angle_period)
         proprio = p_
@@ -106,10 +175,14 @@ def motion_quality(
         sub["smoothness"] = None
 
     # ② path_efficiency:直线/路径(关节空间;scorer 同款;软分,来回动作天然低)
-    path = float(np.linalg.norm(np.diff(arm, axis=0), axis=1).sum())
-    straight = float(np.linalg.norm(arm[-1] - arm[0]))
+    _pe_cols = [c for c in (translation_dims or ()) if c < dim]
+    _pe = a[:, _pe_cols] if _pe_cols else arm
+    path = float(np.linalg.norm(np.diff(_pe, axis=0), axis=1).sum())
+    straight = float(np.linalg.norm(_pe[-1] - _pe[0]))
     sub["path_efficiency"] = None if path < 1e-9 else float(np.clip(straight / path, 0, 1))
     detail["path_len"] = round(path, 4)
+    if _pe_cols:
+        detail["path_efficiency_cols"] = "translation"
 
     # ③ spike:加速度离群帧。真数据加速度**重尾**(aloha 实测 MAD-z>15 的帧占 10%+)→
     # MAD/中位数阈值全军覆没;真尖刺的特征是比自身 p99 还高一个量级 → 分位数相对阈值
@@ -190,7 +263,24 @@ def motion_quality(
     # 语义门:值直比要求 cmd/achieved 同空间且 cmd 是绝对目标(增量/速度指令 × 位置读数
     # = 跨语义直比,bridge/droid 实测干净全员 0.0 的教训)
     _vc = velocity_calib if isinstance(velocity_calib, dict) and velocity_calib.get("gain") else None
-    if proprio is not None and same_space and control_mode in ("velocity", "delta") and _vc:
+    # 指令与读数同源守卫(2026-09-16 umi:手持夹爪的"指令"就是下一帧的跟踪位姿,a_t ≡ s_{t+1}):
+    # 逐列 median|a_t − s_{t+1}| 不到量程的万分之一,真实控制器的跟踪误差不可能恰好为零 →
+    # 饱和/卡顿这类"指令 vs 实际"判据判不适用,不硬算。
+    _same_source = False
+    if proprio is not None and same_space and str(control_mode) == "absolute":
+        _p0 = np.asarray(proprio, dtype=np.float64)
+        _cmp = [c for c in arm_cols if c < _p0.shape[1] and c not in _transformed]
+        if _cmp and T >= 3:
+            _rng = a[:, _cmp].max(axis=0) - a[:, _cmp].min(axis=0)
+            _gap = np.median(np.abs(a[:-1, _cmp] - _p0[1:, _cmp]), axis=0)
+            _live = _rng > 1e-9
+            _same_source = bool(_live.any()) and bool(
+                np.all(_gap[_live] <= 1e-4 * _rng[_live]))
+    if _same_source:
+        detail["same_source"] = True
+        sub["actuator_saturation"] = None
+        detail["saturation_reason"] = "指令与读数同源(指令即下一帧读数),无法评估执行响应"
+    elif proprio is not None and same_space and control_mode in ("velocity", "delta") and _vc:
         # 速度域换算(2026-09-02):速度/增量型末端指令 × 末端位姿读数,用数据集级标定的
         # 增益/延迟把两边放到速度域,欠速比相对同批基线打分(见 velocity_calibration.py)
         from .velocity_calibration import saturation_ratio
@@ -214,12 +304,19 @@ def motion_quality(
         detail["saturation_reason"] = ("指令与读数不同空间,值直比无意义" if not same_space else
                                        "指令是速度/增量型且缺少速度域标定(样本拟不出可信增益),无法直比")
     elif proprio is not None and np.asarray(proprio).shape[1] > max(arm_cols, default=-1):
-        p = np.asarray(proprio, dtype=np.float64)[:, arm_cols]
-        gap_med = np.median(np.abs(arm[:-1] - p[1:]), axis=0)      # a_t ≈ s_{t+1}
-        joint_range = arm.max(axis=0) - arm.min(axis=0) + 1e-9
-        ratio = float((gap_med / joint_range).max())
-        sub["actuator_saturation"] = float(np.exp(-np.log(2) * ratio / saturation_ref))
-        detail["saturation_gap_ratio"] = round(ratio, 4)
+        # 被改写成里程表的姿态列与 action 原值不可直比(umi 教训:差值=累计转角),只比其余列
+        _cmp_cols = [c for c in arm_cols if c not in _transformed]
+        if not _cmp_cols:
+            sub["actuator_saturation"] = None
+            detail["saturation_reason"] = "指令列全是姿态分量(已换算里程表),无可直比的列"
+        else:
+            p = np.asarray(proprio, dtype=np.float64)[:, _cmp_cols]
+            arm_c = a[:, _cmp_cols]
+            gap_med = np.median(np.abs(arm_c[:-1] - p[1:]), axis=0)      # a_t ≈ s_{t+1}
+            joint_range = arm_c.max(axis=0) - arm_c.min(axis=0) + 1e-9
+            ratio = float((gap_med / joint_range).max())
+            sub["actuator_saturation"] = float(np.exp(-np.log(2) * ratio / saturation_ref))
+            detail["saturation_gap_ratio"] = round(ratio, 4)
     else:
         sub["actuator_saturation"] = None
 
@@ -233,6 +330,9 @@ def motion_quality(
                  "velocity": "velocity_dual_scale"}.get(str(control_mode), "abstain")
     if proprio is None or np.asarray(proprio).shape[1] <= max(arm_cols, default=-1):
         sub["stuck"] = None                              # 无 achieved,无从判(诚实缺省)
+    elif _same_source:
+        sub["stuck"] = None
+        detail["stuck_reason"] = "指令与读数同源(指令即下一帧读数),无法评估执行响应"
     elif not same_space or strat == "abstain":
         sub["stuck"] = None
         detail["stuck_reason"] = ("action 与 proprio 不同空间" if not same_space
@@ -241,7 +341,9 @@ def motion_quality(
         # EE rpy 三元组已被测地里程表改写(累计转角+两个0),无法与 action 原始 rpy 对照
         # → stuck 只用平移维(物理卡死时平移也冻,平移无回绕/万向节问题,足够可靠)
         stuck_cols = arm_cols
-        if euler_triplet and angle_dims:
+        if _transformed:
+            stuck_cols = [c for c in arm_cols if c not in _transformed] or arm_cols
+        elif euler_triplet and angle_dims:
             adset = set(angle_dims)
             stuck_cols = [c for c in arm_cols if c not in adset] or arm_cols
         arm_s = a[:, stuck_cols]

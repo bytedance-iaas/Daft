@@ -260,9 +260,9 @@ def retier_by_caption_stability(audit: dict, recaps_by_id: dict[str, list[str]],
                 unstable.append({
                     **e, "caption_stable": False, "recaptions": recaps,
                     "recaption_families": fams,
-                    "reason": (f"{e.get('reason', '')};但我方画面描述不稳定"
-                               f"(重打标 {len(recaps)} 次,连同原描述共归入 "
-                               f"{'/'.join(seen)}),不足以质疑标注")})
+                    "reason": (f"{e.get('reason', '')};但系统几遍看法不一致"
+                               f"(重看 {len(recaps)} 次,连同原描述共归入 "
+                               f"{'/'.join(seen)}),不算分歧,不据此质疑标注")})
     out[UNSTABLE_TIER] = unstable
     return out
 
