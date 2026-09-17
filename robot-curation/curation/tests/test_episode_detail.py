@@ -8,7 +8,7 @@ import pytest
 from curation.ui.episode_detail import (LABEL_ROW_NAME, LABEL_STATE_DECIDED,
                                         LABEL_STATE_DISAGREE, LABEL_STATE_NO_LABEL,
                                         episode_timeline_html, kinematics_html, label_row,
-                                        motion_subdims_html, sync_caption_html,
+                                        motion_subdims_html, sync_figure_html,
                                         task_chain_gist, visual_cameras_html)
 from curation.ui.manifest import check_rows, check_table_html, load_delivery
 
@@ -141,7 +141,13 @@ def test_blocks_render_only_what_this_episode_has(delivery):
     assert episode_timeline_html(m, "ep000001") == ""        # 没有时间线的条目不占位
     kin = kinematics_html(m, "ep000002")
     assert "本次未跑运动学极限" in kin and "不在规格库" in kin
-    assert "视频-动作同步曲线" in sync_caption_html()
+    # 曲线块:无图不占位;有图 → 标题 + 页内灯箱(checkbox+label 机关,点图放大),不再依赖
+    # gr.Image(其全屏按钮在 gradio 6.9 只读预览里没接事件,2026-09-16 用户实见)
+    assert sync_figure_html(m, "ep000001") == ""
+    m["episodes"]["ep000002"]["plot"] = __file__            # 任一存在的本地文件即可
+    fig = sync_figure_html(m, "ep000002")
+    assert "视频-动作同步曲线" in fig and 'class="sync-lb-toggle"' in fig
+    assert fig.count("gradio_api/file=") == 2               # 缩略 + 灯箱大图各一
 
 
 def test_gists_tolerate_old_delivery_shapes():

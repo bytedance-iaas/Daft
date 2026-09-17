@@ -1502,20 +1502,16 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
         逐维读数退到默认折叠的明细里。静态证据帧整块撤掉(用户原话:体验太差)。
         """
         if not m or not eid:
-            # 十个槽:判决卡 / 视频 / 指路 / 检查表 / 运动子项 / 视觉逐相机 / 同步读数 /
-            # 曲线 / 时间线 / 运动学 —— 与 _ep_outs 逐项对齐(少一个就是整页接线错位)
-            return (episode_card_html(m or {}, ""), "", "", "", "", "", "",
-                    gr.update(value=None, visible=False), "", "")
+            # 九个槽:判决卡 / 视频 / 指路 / 检查表 / 运动子项 / 视觉逐相机 / 同步读数+曲线 /
+            # 时间线 / 运动学 —— 与 _ep_outs 逐项对齐(少一个就是整页接线错位)
+            return (episode_card_html(m or {}, ""), "", "", "", "", "", "", "", "")
         from .episode_detail import (episode_timeline_html, kinematics_html,
-                                     motion_subdims_html, sync_caption_html,
+                                     motion_subdims_html, sync_figure_html,
                                      visual_cameras_html)
-        plot = (m["episodes"].get(eid) or {}).get("plot")
-        sync_html = sync_camera_html(m, eid) + (sync_caption_html() if plot else "")
         return (episode_card_html(m, eid), episode_video_html(m, eid, review_dir, data_root),
                 manual_hint_html(m, eid), check_table_html(m, eid),
                 motion_subdims_html(m, eid), visual_cameras_html(m, eid),
-                sync_html,
-                gr.update(value=plot, visible=bool(plot)),
+                sync_camera_html(m, eid) + sync_figure_html(m, eid),
                 episode_timeline_html(m, eid), kinematics_html(m, eid))
 
     def _detail_table_md(m, name):
@@ -3420,14 +3416,11 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
                             # 整批的表仍在「明细」页("整批看分布,单条看链条")。
                             ep_motion = gr.HTML()
                             ep_visual = gr.HTML()
+                            # 同步读数 + 曲线图同在这一块 HTML 里:曲线不用 gr.Image
+                            # (它的全屏按钮在 gradio 6.9 只读预览里没接事件、定高容器
+                            # 又把标题和图隔开——2026-09-16 用户实见),自绘 + 页内灯箱,
+                            # 与曲线页同一套 CSS 机关。
                             ep_sync = gr.HTML()
-                            # 同步曲线是超宽长图,给整幅宽度(整页也有专门的曲线页)。
-                            # 不带组件 label:gradio 6 把它浮在图片左上角,正压在图内标题上
-                            # (2026-09-16 用户实见);标题由 ep_sync 末尾那行 HTML 给。
-                            ep_plot = gr.Image(show_label=False, visible=False,
-                                               interactive=False,
-                                               buttons=["fullscreen", "download"],
-                                               height=380)
                             ep_timeline = gr.HTML()
                             ep_kin = gr.HTML()
 
@@ -3862,7 +3855,7 @@ def build_app(delivery: str, config_path: str | None = None, probe_timeout: floa
             # 视觉逐相机 / 逐相机同步 / 同步曲线 / 时间线 / 运动学):_detail 与
             # _ep_bucket_change 都按这个顺序装配。
             _ep_outs = [ep_card, ep_video, ep_hint, ep_checks, ep_motion, ep_visual,
-                        ep_sync, ep_plot, ep_timeline, ep_kin]
+                        ep_sync, ep_timeline, ep_kin]
             # 左清单的六个槽(页码 / 选中项 / 单选框 / 页码文字 / 两个翻页键):
             # _ep_list 按这个顺序装配
             _ep_list_outs = [ep_page, ep_sel, ep_pick, ep_pos, ep_prev, ep_next]

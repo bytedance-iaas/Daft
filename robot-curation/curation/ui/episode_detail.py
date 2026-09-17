@@ -330,7 +330,28 @@ def kinematics_html(m: dict, eid: str) -> str:
                                 f'本次未跑运动学极限{"。" + _m._esc(why) if why else "。"}</p>')
 
 
-def sync_caption_html() -> str:
-    """同步曲线图上方的一行标题(图片组件不再带浮动 label:它压在图内标题上,2026-09-16 用户实见)。"""
+def sync_figure_html(m: dict, eid: str) -> str:
+    """同步曲线:标题 + 图 + 页内灯箱,一块 HTML 自绘(2026-09-16 用户实见两处毛病)。
+
+    不再用 gr.Image:①它的「全屏」按钮在 gradio 6.9 的只读预览里根本没接事件
+    (控制台 `$$props.onclick is not a function`,点了没反应——2026-08-07 曲线页
+    用户实测"不生效"就是同一个坑);②它定高 380 的容器把超宽长图上下留白,标题
+    与图看着隔了一大截。改成与曲线页同款:点图 → 页内灯箱看大图,点任意处关闭,
+    纯 CSS(label+checkbox),gr.HTML 注入也好使;标题与图之间的间距自己说了算。
+    """
+    plot = (m.get("episodes", {}).get(eid) or {}).get("plot")
+    if not plot:
+        return ""
+    url = _m._file_url(plot)
+    lb = "ep-sync-lb"                       # 轨迹页一次只显示一条,id 固定即可
     return ('<div style="font:13px/1.6 system-ui;font-weight:700;color:#4E5969;'
-            'margin:14px 0 2px">视频-动作同步曲线(右上角可全屏放大)</div>')
+            'margin:14px 0 6px">视频-动作同步曲线(点图可放大,再点任意处关闭)</div>'
+            f'<label class="sync-figure" for="{lb}" title="点击放大" '
+            'style="border:1px solid #E5E6EB;border-radius:10px;padding:6px;'
+            'background:#fff;max-width:1240px">'
+            f'<img class="sync-img" src="{url}" alt="{_m._esc(eid)}"{_m._IMG_RETRY}>'
+            '</label>'
+            f'<input type="checkbox" id="{lb}" class="sync-lb-toggle">'
+            f'<label for="{lb}" class="sync-lb" title="点击任意处关闭">'
+            f'<img src="{url}" loading="lazy" alt="{_m._esc(eid)}"{_m._IMG_RETRY}>'
+            '</label>')
