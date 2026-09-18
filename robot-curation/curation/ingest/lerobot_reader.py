@@ -69,11 +69,18 @@ def _load_info(dataset_dir: str) -> dict:
         dsfs.prefetch(dataset_dir)
     info_path = dsfs.join(dataset_dir, "meta", "info.json")
     if not dsfs.exists(info_path):
-        # RRD 开关关着时(2026-08-21 默认):只有 .rrd 的目录给明确的话,不让客户
+        # 可选格式开关关着时(默认):对应格式的目录给明确的话,不让客户
         # 拿着"缺 meta/info.json"去怀疑自己的数据
         from .rrd_reader import RRD_DISABLED_MSG, has_rrd_files, rrd_enabled
         if not rrd_enabled() and has_rrd_files(dataset_dir):
             raise NotADatasetError(RRD_DISABLED_MSG)
+        if not dsfs.is_remote(dataset_dir):
+            from .lance_reader import LANCE_DISABLED_MSG, has_lance_files, lance_enabled
+            if not lance_enabled() and has_lance_files(dataset_dir):
+                raise NotADatasetError(LANCE_DISABLED_MSG)
+            from .mcap_reader import MCAP_DISABLED_MSG, has_mcap_files, mcap_enabled
+            if not mcap_enabled() and has_mcap_files(dataset_dir):
+                raise NotADatasetError(MCAP_DISABLED_MSG)
         # 友好报错:是不是指到了"装多个数据集的父目录"?列出其中的有效数据集
         subs = []
         try:

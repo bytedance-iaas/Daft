@@ -146,6 +146,9 @@ K8s Secret；公网入口经 APIG 网关 + Basic 认证。隔离靠部署——*
 ## 已知限制
 
 - rerun（`.rrd`）格式的质检本版本默认关闭（`ingest.rrd_enabled: false`）
+- lance/lancedb 与 mcap 格式的质检默认关闭（`ingest.lance_enabled` /
+  `ingest.mcap_enabled`）；打开后按原格式交付（`lance_curated/` 过滤+溯源列的新表、
+  `mcap_curated/` 逐字节拷贝+清单），两种格式只支持本地/挂载路径，`tos://` 直读未接
 - 命令行 `--batch` 暂不接受 `tos://` 地址（界面上的「跑全部」支持直连桶）
 
 ## License
