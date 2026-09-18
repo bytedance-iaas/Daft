@@ -13,5 +13,7 @@ action:
   stuck_strategy: abstain         # 同源数据无独立执行器可判;运动质量的同源守卫会再确认一次
 state:
   space: ee
+# 两路相机都装在手持夹爪上(没有外部固定机位):打分/复核题按"腕部机位"口径加提示(camera_view.wrist_only_hints)
+cameras: {robot0_camera0: wrist, robot1_camera0: wrist}
 extras:
   note: "手持夹爪采集:action 即下一帧跟踪位姿,与 state 同源;执行器饱和/卡顿判不适用,平滑度/尖刺/夹爪照常"

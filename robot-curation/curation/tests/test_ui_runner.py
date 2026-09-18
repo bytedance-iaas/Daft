@@ -237,6 +237,7 @@ def test_start_spawns_bash_with_redirect_and_exit_code(tmp_path):
     assert argv[0] == "/bin/bash" and argv[1] == "-c"
     assert "run.log" in argv[2] and "exit_code" in argv[2]
     assert kw["start_new_session"] is True          # 自成进程组 → 停止时能整组 kill
+    assert kw["env"]["PYTHONFAULTHANDLER"] == "1"   # 原生崩溃留栈(2026-09-18 段错误无栈可查)
 
 
 def test_run_id_collision_gets_suffix(tmp_path):

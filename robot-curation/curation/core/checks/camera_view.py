@@ -51,3 +51,36 @@ def camera_hints(views: dict | None, instruction: str, cameras) -> dict[str, str
         if h:
             out[str(cam)] = h
     return out
+
+
+#: 全腕部数据集的提示(2026-09-18 umi 抽屉条目教训):打分/复核题写着"只看物体和场景,
+#: 不看机械臂",这是给外部固定机位定的;相机全装在夹爪上时,东西一到手里镜头就离开原位,
+#: 画面里唯一的"做成"证据就是夹爪里攥着的那个物体——不点明,模型会把它当机械臂动作扔掉。
+#: 只在**每一路**都是 wrist 时才加(有外部机位的数据集一个字不变,droid/libero 零 diff)。
+WRIST_ONLY_HINT = ("this camera is mounted on the gripper; the gripper and whatever it holds are "
+                   "part of the scene, so an object held in the gripper away from where it "
+                   "started counts as task progress")
+
+
+def wrist_only_hints(views: dict | None, cameras) -> dict[str, str]:
+    """{相机短名: 全腕部提示}——仅当 cameras 非空且每一路在 profile 里都声明为 wrist;否则 {}。"""
+    cams = [str(c) for c in cameras]
+    if not cams or not views:
+        return {}
+    for cam in cams:
+        v = views.get(cam)
+        if isinstance(v, dict):
+            v = v.get("view")
+        if str(v or "").lower() != "wrist":
+            return {}
+    return {cam: WRIST_ONLY_HINT for cam in cams}
+
+
+def label_hints(views: dict | None, instruction: str, cameras) -> dict[str, str]:
+    """打分/复核层挂在相机标签上的提示 = 左右镜像提示 + 全腕部提示(用 "; " 连接)。
+    仲裁层**只**用 camera_hints(左右):腕部提示若挂到核验题上会把"物体在夹爪里"暗示成
+    "已在目标位置",那是另一道题。"""
+    out = dict(camera_hints(views, instruction, cameras))
+    for cam, h in wrist_only_hints(views, cameras).items():
+        out[cam] = f"{out[cam]}; {h}" if cam in out else h
+    return out

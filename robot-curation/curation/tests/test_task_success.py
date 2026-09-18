@@ -223,3 +223,66 @@ def test_gap_violation_vs_review_yes_is_conflict():
     frames = [np.full((32, 32, 3), int(p * 255), dtype=np.uint8) for p in prog]
     r = _run(_fake_vlm, "yes", frames)
     assert r.passed is None and r.detail["verdict"] == "review_conflict"
+
+
+# ───────── 瞬时任务(方案 2,2026-09-18):看峰值不看末态 ─────────
+
+def _frames_with_scores(curve):
+    """帧本身编码分数:第 j 帧填充值 = j,假打分器按填充值查表。"""
+    import numpy as np
+    frames = [np.full((4, 4, 3), j, dtype=np.uint8) for j in range(len(curve))]
+
+    def vlm(ref, fs, i, **kw):
+        return [float(curve[int(np.asarray(f).max())]) for f in fs]
+    return frames, vlm
+
+
+def test_transient_peak_success_ignores_final_drop():
+    """拿出类:峰值 1.0 后回落到 0 = 做成了再放下/镜头转开,不是违约。强候选。"""
+    from curation.core.checks.task_success import task_success
+    frames, vlm = _frames_with_scores([0.0, 0.3, 1.0, 0.3, 0.5, 0.5, 0.0, 0.0])
+    r = task_success(frames, "take the box out of the drawer", vlm, n_probe=8, task_type="transient")
+    assert r.passed is True and r.detail["verdict"] == "success"
+    assert r.detail["strong_score"] is False and r.detail["peak_strong"] is True   # 强只留痕,不单凭打分放行
+    assert "transient_peak_success" in r.detail["rules"] and r.detail["task_type"] == "transient"
+    # 同一曲线按持久任务判 = 冲高崩回违约(老口径逐字节不变)
+    r2 = task_success(frames, "take the box out of the drawer", vlm, n_probe=8)
+    assert r2.passed is None and r2.detail["verdict"] == "gap_violation"
+
+
+def test_transient_weak_gray_and_failure():
+    from curation.core.checks.task_success import task_success
+    frames, vlm = _frames_with_scores([0.0, 0.1, 0.5, 0.3, 0.2, 0.0, 0.0, 0.0])
+    r = task_success(frames, "pick up the cup", vlm, n_probe=8, task_type="transient")
+    assert r.passed is True and r.detail["peak_strong"] is False           # 0.5 ≥ success_min,弱候选
+    frames, vlm = _frames_with_scores([0.0, 0.1, 0.3, 0.3, 0.2, 0.0, 0.0, 0.0])
+    r = task_success(frames, "pick up the cup", vlm, n_probe=8, task_type="transient")
+    assert r.passed is None and "transient_gray_peak" in r.detail["rules"]
+    frames, vlm = _frames_with_scores([0.0, 0.1, 0.2, 0.1, 0.2, 0.0, 0.0, 0.0])
+    r = task_success(frames, "pick up the cup", vlm, n_probe=8, task_type="transient")
+    assert r.passed is False and r.detail["verdict"] == "failure"
+
+
+def test_transient_gray_with_review_yes_is_rescued_not_conflict():
+    """瞬时灰区 + 复核两路 yes:末态归零是正常形态,不算"实质矛盾",救回。"""
+    from curation.core.checks.task_success import endstate_review, task_success
+    import numpy as np
+    frames, vlm = _frames_with_scores([0.0, 0.1, 0.3, 0.3, 0.2, 0.0, 0.0, 0.0])
+    r = task_success(frames, "pick up the cup", vlm, n_probe=8, task_type="transient")
+    cams = {"a": frames, "b": frames}
+    r = endstate_review(r, "pick up the cup", lambda s, e, lbl, d: "yes", cams)
+    assert r.passed is True and "review_rescue" in r.detail["rules"]
+    # 同样的曲线按持久任务:末态 0 vs 复核完成 = 矛盾进人工(老口径)
+    r2 = task_success(frames, "put the cup in the sink", vlm, n_probe=8)
+    r2 = endstate_review(r2, "put the cup in the sink", lambda s, e, lbl, d: "yes", cams)
+    assert r2.passed is None and "gray_final_zero_vs_review_done" in r2.detail["rules"]
+
+
+def test_transient_strong_peak_still_needs_corroboration():
+    """瞬时任务峰值 1.0 但复核全体看不清 → 不能单凭打分放行(droid ep131 摘叶子真值失败),转人工。"""
+    from curation.core.checks.task_success import endstate_review, task_success
+    frames, vlm = _frames_with_scores([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0])
+    r = task_success(frames, "pick a leaf from the plant", vlm, n_probe=8, task_type="transient")
+    assert r.passed is True and r.detail["peak_strong"] is True
+    r = endstate_review(r, "pick a leaf from the plant", lambda s, e, lbl, d: "unclear", {"a": frames, "b": frames})
+    assert r.passed is None and "weak_success_uncorroborated" in r.detail["rules"]

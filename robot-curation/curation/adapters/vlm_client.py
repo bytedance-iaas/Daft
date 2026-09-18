@@ -764,6 +764,32 @@ JOINT_SCORE_PROMPT = (
 )
 
 
+# 瞬时任务(拿起/取出/举起)的打分题(2026-09-18 方案 2):目标不是"物体到了某处",而是
+# "物体已被拿起/取出、离开原位、在夹爪里";放下与否、镜头看向哪都不扣分。其余措辞与
+# JOINT_SCORE_PROMPT 逐句相同。
+JOINT_SCORE_PROMPT_TRANSIENT = (
+    "Task: {instruction}\n"
+    "Images 1-{k} show the START of a robot episode, one image per camera, in this "
+    "order: {camlist}. Nothing is accomplished yet at the start.\n"
+    "Images {k1}-{k2} show ONE SAME later moment of the SAME episode, from the same "
+    "cameras in the same order.\n"
+    "Some views may be occluded or unhelpful; rely on the views where the objects "
+    "are clearly visible.\n"
+    "If the task involves a small or thin object (a band, string, straw, paper, "
+    "small part), look for it between the gripper fingers and at the target "
+    "location before scoring - thin objects are easy to mistake for the "
+    "gripper's own rods.\n"
+    "This task only asks to grasp / pick up / lift / take out the object; it does not "
+    "need to be placed anywhere afterwards. Score how far that has physically "
+    "happened at that moment, from 0 to 100, judging by where the object is:\n"
+    "- 0 = the object is still where it started, untouched.\n"
+    "- 100 = the object has been lifted or taken out and is held in the gripper away "
+    "from where it started (or is clearly out of its start location).\n"
+    "A gripper approaching or touching the object without moving it is still 0.\n"
+    "Answer ONLY an integer from 0 to 100."
+)
+
+
 def make_multiview_completion(
     endpoint: str,
     model: str,
@@ -799,13 +825,14 @@ def make_multiview_completion(
     def _img(frame) -> dict:
         return {"type": "image_url", "image_url": {"url": _frame_to_data_uri(frame)}}
 
-    def vlm_joint(reference, shuffled_frames, instruction) -> list[float]:
+    def vlm_joint(reference, shuffled_frames, instruction, task_type: str = "persistent") -> list[float]:
         names = [n for n, _ in reference]
         letters = [chr(ord("A") + i) for i in range(len(names))]
         camlist = ", ".join(f"image {i+1} = camera {letters[i]} ({n})"
                             for i, n in enumerate(names))
         k = len(names)
-        text = JOINT_SCORE_PROMPT.format(
+        prompt = JOINT_SCORE_PROMPT_TRANSIENT if str(task_type) == "transient" else JOINT_SCORE_PROMPT
+        text = prompt.format(
             instruction=instruction or "the robot manipulation task",
             k=k, camlist=camlist, k1=k + 1, k2=2 * k)
         refs = [_img(f) for _, f in reference]        # 参考帧编码一次,各请求复用
@@ -1065,10 +1092,16 @@ def make_question_writer(endpoint: str, model: str,
     _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=400,
                            gate=gate)
 
-    def writer(intent: str) -> dict:
+    def writer(intent: str, task_type: str | None = None) -> dict:
         import json as _json
 
-        ans = strip_reasoning(_post(ARB_QUESTION_PROMPT.format(instruction=intent)))
+        prompt = ARB_QUESTION_PROMPT.format(instruction=intent)
+        if task_type:
+            # 方案 2:类型已在意图确定时判过(规则/出题器),仲裁出题不再自己猜——
+            # 出题器把"take X out of A"判成持久就会去问末态,而末态什么都看不见
+            prompt += (f'\nThe task_type has already been determined as "{task_type}". '
+                       'Output exactly that task_type and write verify_question for it.')
+        ans = strip_reasoning(_post(prompt))
         ans = re.sub(r"^```(json)?|```$", "", ans.strip(), flags=re.M).strip()
         spec = _json.loads(ans)
         for key in ("task_type", "target_location", "verify_question"):

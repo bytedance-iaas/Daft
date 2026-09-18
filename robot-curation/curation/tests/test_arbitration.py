@@ -765,3 +765,107 @@ def test_final_frame_no_still_counts():
     arb = r.detail["arbitration"]
     assert arb["lines"]["ext_a"]["anchor"] == "final"
     assert arb["n_effective"] == 1 and arb["consensus"] == "no"     # 单路 no 计入(孤证仍不杀,那是另一条规则)
+
+
+# ───────── 方案 2(2026-09-18):spec 复用、瞬时锚点=峰值帧、相机角色分线 ─────────
+
+def test_spec_reuse_skips_question_writer():
+    calls = []
+
+    def qw(intent):
+        calls.append(intent)
+        return _qw()(intent)
+    judge = FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["yes"] * 3, VAL_W: ["yes"] * 3})
+    spec = {"task_type": "persistent", "target_location": "sink", "target_visual": "basin",
+            "object": "cup", "verify_question": "Is the cup in the sink?"}
+    r = _arb(_res(), judge, qw=qw, spec=spec)
+    assert calls == [] and r.detail["arbitration"]["spec"]["verify_question"] == "Is the cup in the sink?"
+    assert r.passed is True
+
+
+def test_transient_without_gripper_anchors_on_strong_peak():
+    """瞬时任务、无夹爪信号:取证帧 = 打分峰值帧(≥0.8),不再盲取中段。"""
+    cams, ts = _indexed_cams()
+    res = CheckResult(name="task_success", passed=None,
+                      detail={"verdict": "uncertain", "rules": ["transient_gray_peak"],
+                              "task_type": "transient",
+                              "completions": [0.0, 0.2, 0.3, 0.3, 1.0, 0.2, 0.0, 0.0],
+                              "probe_frames": [0, 3, 6, 9, 12, 15, 18, 20]})
+    judge = _judge_unclear_at(set())
+    r = _arb(res, judge, qw=_qw("transient"), grounder=_always_boxes, cams=(cams, ts))
+    line = r.detail["arbitration"]["lines"]["ext_a"]
+    assert line["anchor"] == "grasp" and line["frame"] == 12
+    # 峰值不够高 → 回到中段(新建 res:上一次已被救回,passed 不再是 None)
+    res2 = CheckResult(name="task_success", passed=None,
+                       detail={"verdict": "uncertain", "rules": ["transient_gray_peak"],
+                               "task_type": "transient",
+                               "completions": [0.0, 0.2, 0.3, 0.3, 0.5, 0.2, 0.0, 0.0],
+                               "probe_frames": [0, 3, 6, 9, 12, 15, 18, 20]})
+    r = _arb(res2, judge, qw=_qw("transient"), grounder=_always_boxes, cams=(cams, ts))
+    assert r.detail["arbitration"]["lines"]["ext_a"]["frame"] == 10
+
+
+def test_camera_roles_from_profile_decide_wrist_line():
+    """profile 声明 wrist 的相机走腕部线,哪怕名字不含 wrist;没声明的按名字。"""
+    judge = FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["yes"] * 3, VAL_W: ["yes"] * 3})
+    r = _arb(_res(), judge, cam_roles={"ext_a": "wrist", "ext_b": {"view": "wrist"}})
+    lines = r.detail["arbitration"]["lines"]
+    assert "frames" in lines["ext_a"] and "frames" in lines["ext_b"]     # 腕部线痕迹形状(多帧)
+    assert "frames" in lines["wrist_image"]                              # 名字含 wrist 但声明缺失 → 仍按名字:腕部线
+    # 反向:声明 front 的相机哪怕名字含 wrist 也走外部线(单帧痕迹)
+    judge2 = FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["yes"] * 3, VAL_W: ["yes"] * 3})
+    r2 = _arb(_res(), judge2, cam_roles={"wrist_image": "front"})
+    assert "frame" in r2.detail["arbitration"]["lines"]["wrist_image"]
+
+
+def test_resolved_transient_type_overrides_question_writer():
+    """意图确定时判为瞬时 → 仲裁按瞬时出题取证,哪怕出题器自己说持久(umi 抽屉条目)。"""
+    cams, ts = _indexed_cams()
+    seen = []
+
+    def qw(intent, task_type=None):
+        seen.append(task_type)
+        return {"task_type": "persistent", "target_location": "drawer", "target_visual": "box",
+                "object": "gray box", "verify_question": "Is the box out of the drawer?"}
+    res = CheckResult(name="task_success", passed=None,
+                      detail={"verdict": "endstate_failure_suspect", "rules": [], "task_type": "transient",
+                              "completions": [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+                              "probe_frames": [0, 3, 6, 9, 12, 15, 18, 20]})
+    judge = _judge_unclear_at({20})
+    r = _arb(res, judge, qw=qw, grounder=_always_boxes, cams=(cams, ts))
+    arb = r.detail["arbitration"]
+    assert seen == ["transient"] and arb["spec"]["task_type"] == "transient"
+    # 两个 1.0 尖峰取**最后一个**(帧 18):早期尖峰是接触前的幻觉
+    assert arb["lines"]["ext_a"]["anchor"] == "grasp" and arb["lines"]["ext_a"]["frame"] == 18
+
+
+def test_transient_wrist_no_is_not_failure_evidence():
+    """双臂:一只夹爪的相机答"在手里",另一只答"不在我这只手里"→ 后者不计,前者救回。"""
+    cams, ts = _cams()
+    judge = FakeJudge({VAL_A: ["no"] * 3, VAL_B: ["yes"] * 3, VAL_W: ["no"] * 3})
+    res = _res()
+    res.detail["task_type"] = "transient"
+    r = _arb(res, judge, qw=_qw("transient"), cam_roles={"ext_a": "wrist", "ext_b": "wrist", "wrist_image": "wrist"})
+    arb = r.detail["arbitration"]
+    assert arb["lines"]["ext_a"].get("no_discarded") and arb["lines"]["wrist_image"].get("no_discarded")
+    assert arb["n_effective"] == 1 and arb["final"] == "yes" and r.passed is True
+    # 持久任务的腕部线"否"照旧计入
+    judge2 = FakeJudge({VAL_A: ["no"] * 3, VAL_B: ["no"] * 3, VAL_W: ["no"] * 3})
+    r2 = _arb(_res(), judge2, cam_roles={"ext_a": "wrist", "ext_b": "wrist", "wrist_image": "wrist"})
+    assert r2.detail["arbitration"]["n_effective"] == 3
+
+
+def test_persistent_wrist_line_without_gripper_falls_back_to_peak_rescue_only():
+    """全腕部数据集(umi)持久任务、无夹爪信号:末段帧看不见 → 腕部线锚在打分峰值帧;那里的 yes 救回,no 不计。"""
+    cams, ts = _indexed_cams()
+    res = _gap_res()                      # 峰值 1.0 在帧 8
+    judge = _judge_unclear_at({20, 19, 18})   # 末段全 unclear,峰值附近 yes
+    r = _arb(res, judge, grounder=_always_boxes, cams=(cams, ts), cam_roles={"ext_a": "wrist"})
+    line = r.detail["arbitration"]["lines"]["ext_a"]
+    assert line.get("anchor") == "peak" and 8 in line["frames"] and r.passed is True
+
+    def judge_no(imgs, *, target, question, scene):
+        return "no"
+    r2 = _arb(_gap_res(), judge_no, grounder=_always_boxes, cams=(cams, ts), cam_roles={"ext_a": "wrist"})
+    line2 = r2.detail["arbitration"]["lines"]["ext_a"]
+    assert line2.get("anchor") == "peak" and line2.get("no_discarded") and r2.passed is None
