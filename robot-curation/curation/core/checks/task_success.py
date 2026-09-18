@@ -454,6 +454,8 @@ def hold_kill_on_label_conflict(
 
 # 腕部线取证帧的时间偏移(秒,相对抓取/投放锚点)。取自 arb_bench_b_v2 实验版:
 # 瞬态任务看抓取前后(松爪≠失败,ep181 教训),持久任务看投放前后与其后的静置。
+_ARB_PEAK_MIN = 0.8            # 打分峰值≥此才能当回退锚点(打分层"末段稳定高位"口径)
+_ARB_RESCUE_ONLY_ANCHORS = ("release", "peak")   # 回退锚点只救不杀:早于末帧的时刻答"否"不是失败证据
 _ARB_WRIST_OFFSETS_TRANSIENT = (-0.5, 0.0, 0.5, 1.5)
 _ARB_WRIST_OFFSETS_PERSISTENT = (-0.5, 0.0, 1.0, 2.5)
 
@@ -651,6 +653,12 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
             line["fallbacks"] = fb
         run["lines"][cam] = line
         v = _arb_line_verdict(line.get("votes") or [])
+        if v == "no" and line.get("anchor") in _ARB_RESCUE_ONLY_ANCHORS:
+            # 回退帧早于末帧,任务可能还没做到:这一帧的"否"是对那一刻的正确回答,
+            # 不是失败证据(2026-09-18 umi 抽屉条目:峰值帧盒子还在抽屉里,一路三票否,
+            # 若另一路也否就双签冤杀)。留痕、不计入有效路。
+            line["no_discarded"] = "回退帧上的否不计入(只救不杀)"
+            continue
         if v in ("yes", "no"):
             run["line_verdicts"][cam] = v
 
@@ -805,7 +813,11 @@ def arbitration_review(
             comps = list(res.detail.get("completions") or [])
             probes = list(res.detail.get("probe_frames") or [])
             if comps and len(probes) == len(comps):
-                peak_frame = int(probes[int(np.argmax(np.asarray(comps, dtype=float)))])
+                arr = np.asarray(comps, dtype=float)
+                # 峰值不够高不当锚点(2026-09-18 umi 抽屉条目:峰值 0.5 出现在夹爪刚伸进
+                # 抽屉的时刻,盒子还没拿出来——那是过程分,不是"做成的时刻")
+                if float(arr.max()) >= _ARB_PEAK_MIN:
+                    peak_frame = int(probes[int(np.argmax(arr))])
         except Exception:  # noqa: BLE001  痕迹形状不对=没有这个锚点而已
             peak_frame = None
     chain_kw = dict(question_writer=question_writer, grounder=grounder, judge=judge,

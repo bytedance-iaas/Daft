@@ -727,3 +727,41 @@ def test_peak_anchor_survives_review_rewriting_verdict():
     line = r.detail["arbitration"]["lines"]["ext_a"]
     assert line["anchor"] == "peak" and line["frame"] == 8
     assert r.passed is True
+
+
+def test_fallback_no_is_rescue_only():
+    """回退帧上的"否"不计入有效路:末帧 unclear → 峰值帧三票 no → 该路无证据,弃权而非判废。"""
+    cams, ts = _indexed_cams()
+
+    def judge(imgs, *, target, question, scene):
+        fi = int(np.asarray(imgs[0]).max()) - 100
+        return "unclear" if fi == 20 else "no"
+    r = _arb(_gap_res(), judge, grounder=_always_boxes, cams=(cams, ts))
+    arb = r.detail["arbitration"]
+    line = arb["lines"]["ext_a"]
+    assert line["anchor"] == "peak" and line["votes"] == ["no"] * 3 and line.get("no_discarded")
+    assert arb["n_effective"] == 0 and arb["final"] == "abstain" and r.passed is None
+
+
+def test_weak_peak_is_not_an_anchor():
+    """峰值 <0.8(过程分)不当锚点:末帧 unclear 后没有回退,维持弃权。"""
+    cams, ts = _indexed_cams()
+    res = _gap_res()
+    res.detail["completions"] = [0.0, 0.3, 0.5, 0.3, 0.5, 0.5, 0.0, 0.0]
+    judge = _judge_unclear_at({20})
+    r = _arb(res, judge, grounder=_always_boxes, cams=(cams, ts))
+    line = r.detail["arbitration"]["lines"]["ext_a"]
+    assert line["anchor"] == "final" and "fallbacks" not in line
+    assert r.passed is None
+
+
+def test_final_frame_no_still_counts():
+    """末帧的"否"照旧是失败证据(只有回退锚点才只救不杀)。"""
+    cams, ts = _indexed_cams()
+
+    def judge(imgs, *, target, question, scene):
+        return "no"
+    r = _arb(_gap_res(), judge, grounder=_always_boxes, cams=(cams, ts))
+    arb = r.detail["arbitration"]
+    assert arb["lines"]["ext_a"]["anchor"] == "final"
+    assert arb["n_effective"] == 1 and arb["consensus"] == "no"     # 单路 no 计入(孤证仍不杀,那是另一条规则)
