@@ -113,3 +113,33 @@ def test_profile_camera_views_flow_to_semantics():
             "features": {"action": {"names": ["actions"]}, "observation.state": {"names": ["state"]}}}
     s = resolve_semantics(info, np.zeros((30, 7)), "libero")
     assert s.cameras == {"image": "front", "image2": "wrist"}
+
+
+def test_profile_gripper_polarity_flows_to_semantics_and_extras():
+    """夹爪极性(2026-09-18 umi ep3):umi 档案是宽度制(gripper_closed: low),语义层与随行
+    extras["gripper"] 都要带上列下标与极性;没声明的档案缺省 high(droid 约定),没声明夹爪列
+    的档案不写 extras["gripper"](老数据集 extras 一字不变)。"""
+    umi_names = [f"robot{r}_{n}" for r in (0, 1)
+                 for n in ("pos_x", "pos_y", "pos_z", "rot6d_0", "rot6d_1", "rot6d_2",
+                           "rot6d_3", "rot6d_4", "rot6d_5", "gripper_width")]
+    info = {"robot_type": "umi_dual_handheld_gripper",
+            "features": {"action": {"names": umi_names}}}
+    s = resolve_semantics(info, np.zeros((30, 20)))
+    assert s.source == "profile" and s.gripper_closed == "low"
+    assert s.extras["gripper"] == {"dims": [9, 19], "closed": "low",
+                                   "by_camera": {"robot0_camera0": 9, "robot1_camera0": 19}}
+    assert s.cameras == {"robot0_camera0": "wrist", "robot1_camera0": "wrist"}   # 字典形式仍给 view
+
+    info = {"robot_type": "franka",
+            "features": {"action": {"names": ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]}}}
+    s = resolve_semantics(info, np.zeros((30, 7)))
+    assert s.source == "profile" and s.gripper_closed == "high"
+    assert s.extras["gripper"] == {"dims": [6], "closed": "high"}
+
+    info = {"robot_type": "unknown", "features": {"action": {"names": ["motor_0", "motor_1"]}}}
+    s = resolve_semantics(info, np.zeros((30, 2)))       # pusht:gripper_dims: []
+    assert s.source == "profile" and "gripper" not in s.extras
+
+    assert DS.gripper_closed_of({"gripper_closed": "LOW"}) == "low"
+    assert DS.gripper_closed_of({"gripper_closed": "width"}) == "high"   # 写错值按缺省,不猜
+    assert DS.gripper_closed_of({}) == "high"

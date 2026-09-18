@@ -90,4 +90,8 @@ def test_umi_profile_declares_wrist_cameras():
     import os
     p = os.path.join(os.path.dirname(_f), "dataset_profiles", "umi.yaml")
     prof = yaml.safe_load(open(p))
-    assert prof["cameras"] == {"robot0_camera0": "wrist", "robot1_camera0": "wrist"}
+    # 2026-09-18 起为字典形式(带 gripper_dim 相机→夹爪列对号);view 仍是 wrist
+    assert {k: v["view"] for k, v in prof["cameras"].items()} == \
+        {"robot0_camera0": "wrist", "robot1_camera0": "wrist"}
+    assert {k: v["gripper_dim"] for k, v in prof["cameras"].items()} == \
+        {"robot0_camera0": 9, "robot1_camera0": 19}

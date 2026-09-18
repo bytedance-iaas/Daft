@@ -32,6 +32,7 @@ class DatasetSemantics:
     control_mode: str = "absolute"       # absolute / delta / velocity / unknown
     unit: str = "unknown"                # rad / deg / normalized / pixel / meter+rad ...
     gripper_dims: tuple = ()             # action 里夹爪列下标
+    gripper_closed: str = "high"         # 夹爪列的极性:high=数值大是闭合(droid 约定)/low=数值大是张开(宽度制,umi)
     angle_dims: tuple = ()               # 姿态角/关节角列下标(供差分解绕/测地)
     euler_triplet: bool = False          # angle_dims 是 EE 的 rpy 三元组(测地里程表)
     stuck_strategy: str = "auto"         # cmd_delta_vs_pos / increment_vs_pos /
@@ -180,11 +181,30 @@ def _match_profile(info: dict, profiles: list[dict],
     return None
 
 
+def gripper_closed_of(act: dict) -> str:
+    """档案 action 段的夹爪极性:`gripper_closed: high|low`,缺省 high(数值大=闭合,droid 约定)。
+    low = 数值大是张开(夹爪宽度制,umi 手持夹爪);写错值按缺省,不猜。"""
+    v = str((act or {}).get("gripper_closed", "high") or "high").strip().lower()
+    return v if v in ("high", "low") else "high"
+
+
 def _profile_extras_with_layout(prof: dict) -> dict:
     """档案 extras;档案若声明了 rotation_blocks(非 rpy 的姿态表示,如 umi 的 rot6d),把布局
     一并写进 extras["layout"] 让漏斗按块处理。没声明的老档案不写 → 漏斗走老规则,数值不变。"""
     act = prof.get("action", {}) or {}
     extras = dict(prof.get("extras", {}) or {})
+    # 夹爪列 + 极性随 extras 列流到判定层(2026-09-18 umi ep3):仲裁取证锚点要靠夹爪闭合
+    # 事件,本体未进规格库时只能从档案拿;没声明夹爪列的档案不写,老数据集 extras 一字不变
+    if act.get("gripper_dims"):
+        extras["gripper"] = {"dims": [int(x) for x in act["gripper_dims"]],
+                             "closed": gripper_closed_of(act)}
+        # 多夹爪(双手)数据集:相机与夹爪列对号(cameras: {名: {view, gripper_dim}}),仲裁的
+        # 腕部线才知道"自己这只手"何时闭合;没声明的相机不入表
+        by_cam = {str(k): int(v["gripper_dim"])
+                  for k, v in (prof.get("cameras") or {}).items()
+                  if isinstance(v, dict) and v.get("gripper_dim") is not None}
+        if by_cam:
+            extras["gripper"]["by_camera"] = by_cam
     blocks = act.get("rotation_blocks")
     if blocks:
         lay = {"angle_dims": tuple(act.get("angle_dims", [])),
@@ -218,6 +238,7 @@ def resolve_semantics(info: dict, sample_action: np.ndarray | None = None,
             control_mode=act.get("control_mode", "unknown"),
             unit=act.get("unit", "unknown"),
             gripper_dims=tuple(act.get("gripper_dims", [])),
+            gripper_closed=gripper_closed_of(act),
             angle_dims=tuple(act.get("angle_dims", [])),
             euler_triplet=bool(act.get("euler_triplet", False)),
             stuck_strategy=act.get("stuck_strategy", "auto"),

@@ -6,6 +6,7 @@ action:
   control_mode: absolute
   unit: meter
   gripper_dims: [9, 19]
+  gripper_closed: low             # 夹爪宽度制:数值大=张开(droid 约定相反);仲裁找闭合事件按它翻转
   angle_dims: [3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 18]
   euler_triplet: false            # 不是 rpy:rot6d = 旋转矩阵前两列(Zhou et al. 2019)
   rotation_blocks: [[3, 6, rot6d], [13, 6, rot6d]]
@@ -14,6 +15,10 @@ action:
 state:
   space: ee
 # 两路相机都装在手持夹爪上(没有外部固定机位):打分/复核题按"腕部机位"口径加提示(camera_view.wrist_only_hints)
-cameras: {robot0_camera0: wrist, robot1_camera0: wrist}
+# gripper_dim = 这路相机所在那只手的夹爪列(仲裁腕部线按自己这只手的闭合事件取证,2026-09-18 ep3:
+# 取"幅度最大的那列"会选中另一只手抓抽屉把手的闭合,锚点落在盒子拿出来之前)
+cameras:
+  robot0_camera0: {view: wrist, gripper_dim: 9}
+  robot1_camera0: {view: wrist, gripper_dim: 19}
 extras:
   note: "手持夹爪采集:action 即下一帧跟踪位姿,与 state 同源;执行器饱和/卡顿判不适用,平滑度/尖刺/夹爪照常"
