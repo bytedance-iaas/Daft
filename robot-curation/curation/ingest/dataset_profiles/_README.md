@@ -13,6 +13,8 @@
 - control_mode: absolute(绝对目标) | delta(增量) | velocity(速度) | unknown
 - unit: rad | deg | deg_normalized | normalized | pixel | meter+rad ...(仅记录/报告)
 - gripper_dims: 夹爪列下标(如 [6];双臂 [6,13])
+- gripper_closed: high(缺省,数值大=闭合,droid 约定)| low(数值大=张开,夹爪**宽度**制,如 umi)。
+    仲裁取证找闭合/松爪事件前按它翻转;本体未进规格库时仲裁的夹爪列也从这里取
 - angle_dims: 姿态/关节角列下标(差分前解绕/测地用)
 - euler_triplet: true=angle_dims 是 EE 的 rpy 三元组(用四元数测地里程表)
 - stuck_strategy:
@@ -24,5 +26,10 @@
 
 ## state 段
 - space: joint | ee
+
+## cameras 段(可选):{相机短名: view} 或 {相机短名: {view, gripper_dim}}
+- view: front | rear | wrist | side | unknown(左右镜像提示、全腕部数据集的打分/复核提示按它给)
+- gripper_dim: 这路相机所在那只手的夹爪列(多夹爪数据集;仲裁腕部线只看自己这只手的闭合事件。
+    没对号的多夹爪数据集:瞬时任务取幅度最大的那列,持久任务不取松爪锚点,退峰值帧只救不杀)
 
 ## extras(可选):数据集特有元数据,如速度反归一化系数等

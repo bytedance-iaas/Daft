@@ -492,7 +492,7 @@ _ARB_WRIST_OFFSETS_PERSISTENT = (-0.5, 0.0, 1.0, 2.5)
 
 
 def gripper_event_time(gripper, ts, *, closing: bool,
-                       min_step: float = 0.15) -> float | None:
+                       min_step: float = 0.15, closed_high: bool = True) -> float | None:
     """夹爪信号里幅度最大的闭爪(closing=True)/开爪时刻(事件后一帧的时间)。
 
     - 夹爪列由调用方按 registry 的 gripper_dims 提供(⚠️ 不硬编码数据集布局);
@@ -500,13 +500,16 @@ def gripper_event_time(gripper, ts, *, closing: bool,
     - 每列先按本条 min-max 归一再差分:0-1 制与 0-100 制同一把尺,min_step 才有
       统一含义。代价是"全程只抖不动"的夹爪可能被放大出假事件——但这只影响选哪
       一帧取证,判官看到的仍是真实画面,不构成误判来源。
-    - 极性沿用 droid 约定(信号增大=闭合);极性反的数据集事件方向会认反,
-      取证帧偏离但同样只是"看错时刻",不是"看假证据"。
+    - 极性缺省沿用 droid 约定(信号增大=闭合);宽度制数据集(umi:增大=张开)由调用方按
+      档案的 gripper_closed 传 closed_high=False,这里把信号翻过来再找事件。极性没声明
+      又反了的数据集事件方向会认反,取证帧偏离但同样只是"看错时刻",不是"看假证据"。
     - 找不到达标事件返回 None(调用方自选兜底帧,这里不猜)。
     """
     g = np.asarray(gripper, dtype=np.float64)
     if g.ndim == 1:
         g = g[:, None]
+    if not closed_high:
+        g = -g
     t = np.asarray(ts, dtype=np.float64)
     n = min(len(g), len(t))
     if n < 2:
@@ -525,6 +528,44 @@ def gripper_event_time(gripper, ts, *, closing: bool,
         if d[k] >= min_step and (best is None or float(d[k]) > best[0]):
             best = (float(d[k]), float(t[k + 1]))
     return None if best is None else best[1]
+
+
+def gripper_event_times(gripper, ts, *, closing: bool, closed_high: bool = True,
+                        min_step: float = 0.15, window_s: float = 0.5,
+                        sep_s: float = 1.0) -> list[float]:
+    """一列夹爪信号里**全部**达标的闭爪/开爪时刻(升序)。gripper_event_time 只给幅度最大的一次,
+    手持夹爪一条里会合好几次(2026-09-18 umi ep3:两手先一起拉抽屉、翻找、最后才抓盒子,
+    幅度都接近满幅),要选"哪一次"得先把每一次都列出来。
+    - 按 window_s 秒的窗口差分(慢合爪单帧差分够不到 min_step),事件时刻=窗口末端;
+    - 相邻 sep_s 秒内只留幅度最大的一次(非极大抑制);
+    - 只看一列(多列调用方先按相机对号挑出自己那列);极性同 gripper_event_time。
+    """
+    x = np.asarray(gripper, dtype=np.float64).reshape(-1)
+    t = np.asarray(ts, dtype=np.float64)
+    n = min(len(x), len(t))
+    if n < 3:
+        return []
+    x, t = x[:n], t[:n]
+    if not closed_high:
+        x = -x
+    lo, hi = float(x.min()), float(x.max())
+    if hi - lo < 1e-9:
+        return []
+    x = (x - lo) / (hi - lo)
+    dt = float(np.median(np.diff(t))) if n > 1 else 0.0
+    w = max(1, int(round(window_s / dt))) if dt > 0 else 1
+    if w >= n:
+        return []
+    d = x[w:] - x[:-w]
+    if not closing:
+        d = -d
+    idx = np.flatnonzero(d >= min_step)
+    kept: list[tuple[float, float]] = []
+    for i in idx[np.argsort(-d[idx], kind="stable")]:
+        tt = float(t[i + w])
+        if all(abs(tt - k[1]) > sep_s for k in kept):
+            kept.append((float(d[i]), tt))
+    return sorted(k[1] for k in kept)
 
 
 def _arb_union_crop(img: np.ndarray, boxes: list, pad: float, upscale: int):
@@ -582,7 +623,9 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
                       spec: dict | None = None,
                       transient_anchor: int | None = None,
                       cam_roles: dict | None = None,
-                      forced_type: str | None = None) -> dict:
+                      forced_type: str | None = None,
+                      gripper_closed_high: bool = True,
+                      gripper_cam_cols: dict | None = None) -> dict:
     """单意图跑完整取证链,返回该 run 的痕迹与共识(不做杀门槛,门槛在上层)。
 
     路的划分:相机名含 wrist(不分大小写)= 腕部线,其余 = 外部取证线(封顶
@@ -647,9 +690,11 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
     t_grasp = t_release = None
     if gripper is not None and gripper_ts is not None:
         if transient:
-            t_grasp = gripper_event_time(gripper, gripper_ts, closing=True)
+            t_grasp = gripper_event_time(gripper, gripper_ts, closing=True,
+                                         closed_high=gripper_closed_high)
         else:
-            t_release = gripper_event_time(gripper, gripper_ts, closing=False)
+            t_release = gripper_event_time(gripper, gripper_ts, closing=False,
+                                           closed_high=gripper_closed_high)
 
     def _ext_line(pic: np.ndarray, fi: int, cam: str) -> dict:
         """一帧上的外部取证:定位 → 裁剪放大 → 判官三票。返回该帧的痕迹
@@ -729,11 +774,42 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
         if not frames:
             continue
         line_anchor = None
+        # 这路相机该看哪列夹爪(2026-09-18 umi ep3):单爪=那一列;多爪且档案对上了号=自己这只手
+        # 的那列;多爪没对号=瞬态沿用"幅度最大的那列"(t_grasp),持久**不取松爪锚点**——
+        # 双手数据集里松爪事件常是另一只手的,锚在那儿的"否"会凑成判废(ep6 复盘实见),
+        # 退到峰值帧回退(只救不杀)
+        own, multi = None, False
+        if gripper is not None and gripper_ts is not None:
+            g_arr = np.asarray(gripper, dtype=np.float64)
+            multi = g_arr.ndim == 2 and g_arr.shape[1] > 1
+            if not multi:
+                own = g_arr
+            elif gripper_cam_cols and cam in gripper_cam_cols:
+                own = g_arr[:, [int(gripper_cam_cols[cam])]]
         if transient:
-            t0, offs, scene = t_grasp, _ARB_WRIST_OFFSETS_TRANSIENT, "wrist_grasp"
+            if own is not None and multi:
+                # 对上号的那只手:一条里会合好几次(拉抽屉/翻找/抓目标),取打分层最后一个强探针
+                # **之前最近的一次**闭合 —— 让任务达成的那次抓取;强探针缺失则取最后一次
+                t_peak = None
+                if transient_anchor is not None and len(fts) == len(frames) and len(fts):
+                    t_peak = float(fts[int(min(max(int(transient_anchor), 0), len(fts) - 1))])
+                evs = gripper_event_times(own, gripper_ts, closing=True,
+                                          closed_high=gripper_closed_high)
+                before = [e for e in evs if t_peak is None or e <= t_peak + 0.5]
+                t0 = before[-1] if before else gripper_event_time(
+                    own, gripper_ts, closing=True, closed_high=gripper_closed_high)
+                if t0 is not None:
+                    line_anchor = "own_grasp"
+            elif own is not None:
+                t0 = gripper_event_time(own, gripper_ts, closing=True,
+                                        closed_high=gripper_closed_high)
+            else:
+                t0 = t_grasp
+            offs, scene = _ARB_WRIST_OFFSETS_TRANSIENT, "wrist_grasp"
         else:
-            t0 = (gripper_event_time(gripper, gripper_ts, closing=False)
-                  if gripper is not None and gripper_ts is not None else None)
+            t0 = (gripper_event_time(own, gripper_ts, closing=False,
+                                     closed_high=gripper_closed_high)
+                  if own is not None and not multi else None)
             offs, scene = _ARB_WRIST_OFFSETS_PERSISTENT, "wrist_release"
         if len(fts) != len(frames) or not len(fts):
             sel = sorted({0, len(frames) // 2, len(frames) - 1})
@@ -817,6 +893,8 @@ def arbitration_review(
     cam_hints: dict | None = None,
     spec: dict | None = None,          # 意图确定时出题器已给的 spec(复用,不重问)
     cam_roles: dict | None = None,     # profile 的 cameras 段({名: view}),腕部线按它分
+    gripper_closed_high: bool = True,  # 夹爪极性:False=宽度制(数值大=张开,umi),找事件前翻转
+    gripper_cam_cols: dict | None = None,  # 多夹爪:{腕部相机: gripper 列下标},腕部线只看自己那只手
 ) -> CheckResult:
     """取证仲裁链(与 endstate_review 同风格:注入式依赖,core 内不发 HTTP)。
 
@@ -917,7 +995,8 @@ def arbitration_review(
                     n_votes=n_votes, crop_pad=crop_pad, upscale=upscale,
                     transient_offset_s=transient_offset_s, max_cams=max_cams, cam_hints=cam_hints,
                     peak_frame=peak_frame, spec=spec, transient_anchor=transient_anchor,
-                    cam_roles=cam_roles, forced_type=forced_type)
+                    cam_roles=cam_roles, forced_type=forced_type,
+                    gripper_closed_high=gripper_closed_high, gripper_cam_cols=gripper_cam_cols)
     run_a = _arb_single_chain(intent, cam_frames, cam_ts, gripper, gripper_ts, **chain_kw)
     arb["spec"] = run_a.get("spec")
     arb["lines"] = run_a["lines"]
