@@ -2455,7 +2455,11 @@ def start(runs_root: str, command: str, argv: list, label: str = "", *,
              f"cp -f {shlex.quote(p['local_rc'])} {shlex.quote(p['rc'])}; }}; "
              f"trap '_fin 143; exit 143' TERM INT; "
              f"{{ {joined}; }} >> {shlex.quote(p['local_log'])} 2>&1; _fin $?")
-    proc = popen(["/bin/bash", "-c", shell], cwd=cwd,
+    # 子进程带上 faulthandler(2026-09-18 dataverse 上一次跑批在视觉阶段 Segmentation fault,
+    # 日志只剩 bash 一行"段错误",无栈可查,且不能稳定复现):有了它,原生崩溃会把各线程
+    # 的 Python 栈打进 run.log,下次再崩就知道是哪个库、哪一步。零开销,不改行为。
+    env = {**os.environ, "PYTHONFAULTHANDLER": "1"}
+    proc = popen(["/bin/bash", "-c", shell], cwd=cwd, env=env,
                  stdin=subprocess.DEVNULL, start_new_session=True)
     # 包装退出后没人 wait 它(死活靠退出码文件与 /proc 判)→ 登记给收尸器,免得攒 <defunct>(issue #141)
     from .reaper import track as _track_child

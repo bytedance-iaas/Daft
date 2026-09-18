@@ -651,7 +651,7 @@ def run_funnel(
                 res.detail["label_check"] = {"outcome": f"error:{type(e).__name__}"}
 
         def _arbitrate(res, cam_frames, cam_ts, task_desc, task_src,
-                       action, timestamps, embodiment_id, cam_hints=None):
+                       action, timestamps, embodiment_id, cam_hints=None, cam_roles=None):
             """弃权条目 → 取证仲裁链(判定本体在 core.arbitration_review 纯函数)。
 
             意图 = 原始标注(有)否则自产 caption(2026-09-02 与打分/复核对齐)。标注条目
@@ -691,6 +691,7 @@ def run_funnel(
                     question_writer=arb_deps["question_writer"],
                     grounder=arb_deps["grounder"], judge=arb_deps["judge"],
                     same_task=arb_deps["same_task"], cam_hints=cam_hints,
+                    spec=res.detail.get("arb_spec") or None, cam_roles=cam_roles,
                     **arb_deps["params"])
             except Exception as e:  # noqa: BLE001
                 res.detail["arbitration"] = {
@@ -753,24 +754,44 @@ def run_funnel(
             names = list(cam_frames)
             # 相机朝向提示(2026-09-02 左右镜像):任务含左右词时按 profile 声明的朝向,把一句
             # 提示挂在该相机的标签上,打分/复核/仲裁三层同一份(core/checks/camera_view.py)
-            from ..core.checks.camera_view import camera_hints
+            from ..core.checks.camera_view import camera_hints, label_hints
             try:
                 _views = (json.loads(str(semantics_extras) or "{}") or {}).get("cameras") or {}
             except Exception:  # noqa: BLE001
                 _views = {}
-            cam_hints = camera_hints(_views, str(task_desc), names)
-            _lbl = {n: (f"{n}; {cam_hints[n]}" if n in cam_hints else n) for n in names}
+            cam_hints = camera_hints(_views, str(task_desc), names)    # 仲裁核验题只挂左右提示
+            # 打分/复核标签:左右提示 + 全腕部提示(2026-09-18 umi:相机全在夹爪上,"物体在
+            # 夹爪里、已离开原位"就是进度证据,题目默认口径会把它当机械臂动作扔掉)
+            lbl_hints = label_hints(_views, str(task_desc), names)
+            _lbl = {n: (f"{n}; {lbl_hints[n]}" if n in lbl_hints else n) for n in names}
             mv = [[(_lbl[n], cam_frames[n][i]) for n in names] for i in range(nmin)]
-            res = task_success(mv, task_desc, vlm_completion, **p_task)
+            # 任务类型(2026-09-18 方案 2):意图确定时判一次,三层共用。规则判不出才问
+            # 出题器,问过的 spec 交给仲裁复用(不再重问)。瞬时任务打分题换成"物体是否
+            # 已被拿起/取出",打分规则看峰值不看末态(core.task_success)。
+            from ..core import task_type as _tt
+            _qw = arb_deps["question_writer"] if arb_deps is not None else None
+            tt, tt_spec, tt_src = _tt.resolve(str(task_desc), _qw)
+            _vlm_ep = vlm_completion
+            if tt == _tt.TRANSIENT:
+                def _vlm_ep(ref, fr, ins, _v=vlm_completion):
+                    try:
+                        return _v(ref, fr, ins, task_type="transient")
+                    except TypeError:          # 注入的假打分器不认 task_type:按老签名调
+                        return _v(ref, fr, ins)
+            res = task_success(mv, task_desc, _vlm_ep, task_type=tt, **p_task)
             res.detail["task_desc"] = str(task_desc)[:80]
             res.detail["task_desc_source"] = str(task_src)
+            res.detail["task_type"] = tt
+            res.detail["task_type_source"] = tt_src
+            if tt_spec:
+                res.detail["arb_spec"] = tt_spec
             res.detail["cams"] = names
             # ---- 复核:逐机位独立投票(协议本体在 core.endstate_review 纯函数)----
             # 复核层异常只留痕(与判废护栏/仲裁链同款纪律):保留打分层结论,不拖垮主链。
             try:
                 res = endstate_review(res, str(task_desc), cam_voter, cam_frames,
                                       endstate_frames=endstate_frames,
-                                      cam_hints=cam_hints or None)
+                                      cam_hints=lbl_hints or None)
             except Exception as e:  # noqa: BLE001
                 res.detail["endstate_review"] = {
                     "applied": False, "error": f"{type(e).__name__}: {e}"}
@@ -781,7 +802,8 @@ def run_funnel(
             #      拦下的疑似标注错也走这里的双意图核验),复用已解码的 cam_frames ----
             if arb_deps is not None and res.passed is None:
                 _arbitrate(res, cam_frames, cam_ts, task_desc, task_src,
-                           action, timestamps, embodiment_id, cam_hints or None)
+                           action, timestamps, embodiment_id, cam_hints or None,
+                           cam_roles=_views or None)
             _progress_tick(_pk_vlm)
             return result_to_struct(res)
 

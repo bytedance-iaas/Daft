@@ -63,3 +63,31 @@ def test_review_label_and_arbitration_question_carry_hint():
                        grounder=lambda img, t, v, o: [(1, 1, 8, 8)], judge=judge, same_task=None,
                        cam_hints={"image": "FRONT-HINT"})
     assert any("FRONT-HINT" in q for q in seen) and any("FRONT-HINT" not in q for q in seen)
+
+
+def test_wrist_only_hint_requires_every_camera_wrist():
+    """全腕部数据集(umi)每路都挂提示;有外部机位(droid)或未声明 → 一字不加(零 diff 由此钉死)。"""
+    from curation.core.checks.camera_view import (WRIST_ONLY_HINT, label_hints,
+                                                  wrist_only_hints)
+    umi = {"robot0_camera0": "wrist", "robot1_camera0": "wrist"}
+    cams = ["robot0_camera0", "robot1_camera0"]
+    assert wrist_only_hints(umi, cams) == {c: WRIST_ONLY_HINT for c in cams}
+    droid = {"exterior_image_1_left": "unknown", "exterior_image_2_left": "unknown",
+             "wrist_image_left": "wrist"}
+    assert wrist_only_hints(droid, list(droid)) == {}
+    assert wrist_only_hints({}, cams) == {} and wrist_only_hints(None, cams) == {}
+    assert wrist_only_hints(umi, ["robot0_camera0", "extra_cam"]) == {}   # 有一路没声明就不算全腕部
+    # 标签提示 = 左右 + 腕部;不含左右词的任务只有腕部提示;droid 任务标签不变
+    assert label_hints(umi, "put the box into the drawer", cams) == {c: WRIST_ONLY_HINT for c in cams}
+    assert label_hints(droid, "put the cup on the left plate", list(droid)) == {}
+    lat = {"cam": {"view": "front"}, "w": "wrist"}
+    assert label_hints(lat, "move the cup to the left", ["cam", "w"]).get("w") is None   # 非全腕部
+
+
+def test_umi_profile_declares_wrist_cameras():
+    import yaml
+    from curation.ingest.dataset_semantics import __file__ as _f
+    import os
+    p = os.path.join(os.path.dirname(_f), "dataset_profiles", "umi.yaml")
+    prof = yaml.safe_load(open(p))
+    assert prof["cameras"] == {"robot0_camera0": "wrist", "robot1_camera0": "wrist"}

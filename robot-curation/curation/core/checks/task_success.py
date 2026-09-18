@@ -99,6 +99,8 @@ def task_success(
                                    # 回落=模型抽风或真回退,都不配硬判)→ 灰区
     recovery_dip: float = 0.25,    # 中途回落幅度超过此且最终成功 = 恢复(仅展示,
                                    # 真值集精确率仅 13%,不作为筛选依据)
+    task_type: str = "persistent", # transient(拿起/取出:做成=物体在手里离开原位,看峰值)
+                                   # / persistent(放进/放到:看撤手后的末态,老规则)
 ) -> CheckResult:
     """打分层初判(v6.5)。终判需经 endstate_review 全员复核合成,本函数产出:
 
@@ -156,6 +158,33 @@ def task_success(
     # 全平**高位**(ep99 全 1.0)仍是正常满分,别一刀切。
     if float(np.std(preds)) < 1e-9 and float(preds.mean()) <= fail_max:
         _rule(detail, "flat_low_scores")
+    # 持久任务的 detail 逐字节不变(test_task_trace 钉死);只有瞬时任务才多这一个键
+    if str(task_type) == "transient":
+        detail["task_type"] = "transient"
+        # 瞬时任务(2026-09-18 方案 2):做成的那一刻是物体在手里、离开原位,之后分数
+        # 回落是正常形态——不看末态、没有"冲高崩回"违约、VOC(单调性)也不作绊线。
+        # 峰值达标 = 成功候选(≥0.8 强);峰值不到失败线 = 失败候选;中间 = 灰区。
+        if peak >= success_min:
+            # 瞬时候选一律按"弱"走复核决定表:峰值只是一个探针上的一次读数,单个尖峰可能是
+            # 幻觉(droid ep131 摘叶子:0,0,0,0,0,1,0,1 真值失败),不配单凭打分层放行——
+            # 必须由复核 yes 或仲裁(峰值帧取证)印证。强弱只留痕。
+            detail["strong_score"] = False
+            detail["peak_strong"] = bool(peak >= 0.8)
+            _rule(detail, "success_candidate_weak")
+            _rule(detail, "transient_peak_success")
+            _rule(detail, "transient_needs_corroboration")
+            detail["verdict"] = "success"
+            return CheckResult(name="task_success", passed=True, detail=detail)
+        if peak <= fail_max:
+            detail["verdict"] = "failure"
+            _rule(detail, "fail_candidate_no_progress")
+            detail["reason"] = f"全程物证进度峰值 {peak:.2f} ≤ {fail_max}:疑似未完成(待逐机位复核确认)"
+            return CheckResult(name="task_success", passed=False, detail=detail)
+        detail["verdict"] = "uncertain"
+        _rule(detail, "transient_gray_peak")
+        detail["reason"] = (f"瞬时任务峰值 {peak:.2f} 在灰区({fail_max}~{success_min}),"
+                            "证据不足以硬判")
+        return CheckResult(name="task_success", passed=None, detail=detail)
 
     if final >= success_min:
         if voc < 0.0:
@@ -380,7 +409,9 @@ def endstate_review(
     if review != "yes":
         _rule(res.detail, "rescue_declined_review_not_done")
     if review == "yes":
-        if init == "gray" and final is not None and final <= 0.25:
+        # 瞬时任务末态归零是正常形态(拿起后放下/镜头转开),不构成矛盾
+        if (init == "gray" and final is not None and final <= 0.25
+                and str(res.detail.get("task_type") or "persistent") != "transient"):
             res.detail["verdict"] = "review_conflict"
             res.detail["reason"] = "打分层末态回到原点 vs 复核判完成:实质矛盾,进人工"
             _rule(res.detail, "gray_final_zero_vs_review_done")
@@ -547,7 +578,11 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
                       transient_offset_s: float, max_cams: int,
                       cam_hints: dict | None = None,
                       peak_frame: int | None = None,
-                      release_offset_s: float = 1.0) -> dict:
+                      release_offset_s: float = 1.0,
+                      spec: dict | None = None,
+                      transient_anchor: int | None = None,
+                      cam_roles: dict | None = None,
+                      forced_type: str | None = None) -> dict:
     """单意图跑完整取证链,返回该 run 的痕迹与共识(不做杀门槛,门槛在上层)。
 
     路的划分:相机名含 wrist(不分大小写)= 腕部线,其余 = 外部取证线(封顶
@@ -558,7 +593,19 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
 
     run: dict = {"intent": intent, "lines": {}, "line_verdicts": {}}
     try:
-        spec = question_writer(intent)
+        # 意图确定时已问过出题器(task_type.resolve)就复用那份 spec,不再烧一次;
+        # 类型已由规则判定的(forced_type),出题时告诉出题器,题要按该类型写
+        if spec:
+            spec = dict(spec)
+        elif forced_type:
+            try:
+                spec = question_writer(intent, task_type=forced_type)
+            except TypeError:                     # 注入的假出题器只认 (intent)
+                spec = question_writer(intent)
+        else:
+            spec = question_writer(intent)
+        if forced_type:
+            spec["task_type"] = forced_type
     except Exception as e:  # noqa: BLE001  问题生成失败=整条链无题可验,如实弃权
         run.update(error=f"问题生成失败: {type(e).__name__}: {e}",
                    consensus="abstain", n_effective=0)
@@ -585,8 +632,17 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
             return list(ex.map(one, range(n_votes)))
 
     names = sorted(cam_frames)
-    ext_cams = [c for c in names if "wrist" not in c.lower()][:max_cams]
-    wrist_cams = [c for c in names if "wrist" in c.lower()]
+    # 腕部线:profile 声明的相机角色优先(2026-09-18:umi 两路都装在夹爪上但名字不含
+    # wrist),没声明的才按名字启发式
+    def _is_wrist(c: str) -> bool:
+        role = (cam_roles or {}).get(c)
+        if isinstance(role, dict):
+            role = role.get("view")
+        if role:
+            return str(role).lower() == "wrist"
+        return "wrist" in c.lower()
+    ext_cams = [c for c in names if not _is_wrist(c)][:max_cams]
+    wrist_cams = [c for c in names if _is_wrist(c)]
 
     t_grasp = t_release = None
     if gripper is not None and gripper_ts is not None:
@@ -627,6 +683,10 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
         if transient:
             if t_grasp is not None and ts_ok:
                 fi = int(np.argmin(np.abs(fts - (t_grasp + transient_offset_s))))
+            elif transient_anchor is not None:
+                # 无夹爪信号(未注册规格库/无夹爪列):打分层认为"做成"的那一帧就是
+                # 物体在手里的时刻(2026-09-18 umi 抽屉条目),比盲取中段准
+                fi = int(min(max(int(transient_anchor), 0), len(frames) - 1))
             else:
                 fi = len(frames) // 2     # 无夹爪事件可依:取中段,不猜末帧(松爪≠失败)
             anchors = [("grasp", fi)]
@@ -668,6 +728,7 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
         fts = np.asarray(cam_ts.get(cam, ()), dtype=np.float64)
         if not frames:
             continue
+        line_anchor = None
         if transient:
             t0, offs, scene = t_grasp, _ARB_WRIST_OFFSETS_TRANSIENT, "wrist_grasp"
         else:
@@ -678,16 +739,35 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
             sel = sorted({0, len(frames) // 2, len(frames) - 1})
             t0 = None
         else:
-            if t0 is None:                 # 无夹爪事件:瞬态取中段,持久取末段
-                t0 = float(fts[len(fts) // 2]) if transient else float(fts[-1])
+            if t0 is None:                 # 无夹爪事件:瞬态取峰值帧(有)否则中段,持久取末段
+                if transient and transient_anchor is not None:
+                    t0 = float(fts[int(min(max(int(transient_anchor), 0), len(fts) - 1))])
+                elif not transient and peak_frame is not None:
+                    # 持久任务、无夹爪信号(未注册规格库):末段帧常常已经关门/撤手看不见,
+                    # 退到打分层峰值帧(与外部线的回退同一口径:只救不杀)
+                    t0 = float(fts[int(min(max(int(peak_frame), 0), len(fts) - 1))])
+                    line_anchor = "peak"
+                else:
+                    t0 = float(fts[len(fts) // 2]) if transient else float(fts[-1])
             sel = sorted({int(np.argmin(np.abs(fts - (t0 + o)))) for o in offs})
         imgs = [_arb_upscale(frames[i]) for i in sel]
         votes = _vote(imgs, scene, cam)
         line = {"frames": [int(i) for i in sel], "votes": votes}
         if t0 is not None:
             line["anchor_t"] = round(float(t0), 3)
+        if line_anchor:
+            line["anchor"] = line_anchor
         run["lines"][cam] = line
         v = _arb_line_verdict(votes)
+        if line_anchor == "peak" and v == "no":
+            # 峰值帧早于末帧,任务可能还没做到:这一帧的"否"不是失败证据(#151 同款,只救不杀)
+            line["no_discarded"] = "回退帧上的否不计入(只救不杀)"
+            continue
+        if transient and v == "no":
+            # 瞬时任务的腕部机位只看得见自己这只夹爪(双臂:umi 两只夹爪各带相机,空着的
+            # 那只如实答"不在我手里");"否"=不在这只手里,不是任务失败的证据。留痕不计。
+            line["no_discarded"] = "腕部线的否=不在这只夹爪里,非失败证据(瞬时任务)"
+            continue
         if v in ("yes", "no"):
             run["line_verdicts"][cam] = v
 
@@ -735,6 +815,8 @@ def arbitration_review(
     transient_offset_s: float = 1.0,
     max_cams: int = 4,
     cam_hints: dict | None = None,
+    spec: dict | None = None,          # 意图确定时出题器已给的 spec(复用,不重问)
+    cam_roles: dict | None = None,     # profile 的 cameras 段({名: view}),腕部线按它分
 ) -> CheckResult:
     """取证仲裁链(与 endstate_review 同风格:注入式依赖,core 内不发 HTTP)。
 
@@ -805,25 +887,37 @@ def arbitration_review(
     # ⚠️ 看规则痕迹不看 verdict:复核层跑完会把 verdict 改写成 review_conflict 等
     # (2026-09-17 umi 抽屉条目实见:init gap_violation → 复核 yes/yes → review_conflict,
     # 只认 verdict 就一次也不回退)。gap_violation_monotonicity 是打分层落下的、不会被改写。
+    # 打分层峰值探针帧(≥_ARB_PEAK_MIN 才算"做成的时刻";探针下标与 cam_frames 同一套采样)
+    strong_peak = None          # 持久任务回退用:第一个峰值探针(#151 口径不变)
+    last_strong = None          # 瞬时任务取证用:最后一个 ≥阈值 的探针——拿到手之后分数
+                                # 应一直高,早期尖峰多是接触前的幻觉(umi 抽屉条目第 16 帧)
+    try:
+        comps = list(res.detail.get("completions") or [])
+        probes = list(res.detail.get("probe_frames") or [])
+        if comps and len(probes) == len(comps):
+            arr = np.asarray(comps, dtype=float)
+            # 峰值不够高不当锚点(2026-09-18 umi 抽屉条目:峰值 0.5 出现在夹爪刚伸进
+            # 抽屉的时刻,盒子还没拿出来——那是过程分,不是"做成的时刻")
+            if float(arr.max()) >= _ARB_PEAK_MIN:
+                strong_peak = int(probes[int(np.argmax(arr))])
+                last_strong = int(probes[int(np.flatnonzero(arr >= _ARB_PEAK_MIN)[-1])])
+    except Exception:  # noqa: BLE001  痕迹形状不对=没有这个锚点而已
+        strong_peak = last_strong = None
+    # 持久任务:峰值帧只做"末帧看不清"后的回退,且只在打分层报过冲高崩回时
     peak_frame = None
     rules = res.detail.get("rules") or []
     if (str(res.detail.get("verdict")) == "gap_violation"
             or "gap_violation_monotonicity" in rules):
-        try:
-            comps = list(res.detail.get("completions") or [])
-            probes = list(res.detail.get("probe_frames") or [])
-            if comps and len(probes) == len(comps):
-                arr = np.asarray(comps, dtype=float)
-                # 峰值不够高不当锚点(2026-09-18 umi 抽屉条目:峰值 0.5 出现在夹爪刚伸进
-                # 抽屉的时刻,盒子还没拿出来——那是过程分,不是"做成的时刻")
-                if float(arr.max()) >= _ARB_PEAK_MIN:
-                    peak_frame = int(probes[int(np.argmax(arr))])
-        except Exception:  # noqa: BLE001  痕迹形状不对=没有这个锚点而已
-            peak_frame = None
+        peak_frame = strong_peak
+    # 瞬时任务:无夹爪信号时的取证锚点就是峰值帧(物体在手里的那一刻);类型由意图确定时
+    # 的判定强制给仲裁(出题器不许再改判)
+    forced_type = "transient" if str(res.detail.get("task_type") or "") == "transient" else None
+    transient_anchor = last_strong if forced_type == "transient" else None
     chain_kw = dict(question_writer=question_writer, grounder=grounder, judge=judge,
                     n_votes=n_votes, crop_pad=crop_pad, upscale=upscale,
                     transient_offset_s=transient_offset_s, max_cams=max_cams, cam_hints=cam_hints,
-                    peak_frame=peak_frame)
+                    peak_frame=peak_frame, spec=spec, transient_anchor=transient_anchor,
+                    cam_roles=cam_roles, forced_type=forced_type)
     run_a = _arb_single_chain(intent, cam_frames, cam_ts, gripper, gripper_ts, **chain_kw)
     arb["spec"] = run_a.get("spec")
     arb["lines"] = run_a["lines"]
