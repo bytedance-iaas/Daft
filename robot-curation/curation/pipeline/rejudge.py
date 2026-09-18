@@ -637,6 +637,10 @@ def run_rejudge(delivery: str, input_dir: str, cfg: dict,
     finally:
         from ..ingest.rrd_reader import cleanup_video_cache
         cleanup_video_cache(input_dir)
+        from ..ingest.lance_reader import cleanup_video_cache as _lance_cleanup
+        _lance_cleanup(input_dir)
+        from ..ingest.mcap_reader import cleanup_video_cache as _mcap_cleanup
+        _mcap_cleanup(input_dir)
 
 
 def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
@@ -979,6 +983,15 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                 src = {r["episode_id"]: r for r in _read_src(
                     input_dir, episode_indices={int(e[2:]) for e in restore},
                     validate=False)}
+                # lance/mcap 的行指针在 /tmp,rejudge 收尾会清 —— 与 run 同一条
+                # 纪律,先持久化进交付(2026-09-21 审查修复;LeRobot 行指向源数据
+                # 集文件,persist 对已存在的非缓存路径原样跳过,零影响)
+                from ..ingest.lance_reader import is_lance_dataset
+                from ..ingest.mcap_reader import is_mcap_dataset
+                if is_lance_dataset(input_dir) or is_mcap_dataset(input_dir):
+                    from ..ingest.lance_reader import persist_videos
+                    persist_videos(list(src.values()),
+                                   os.path.join(delivery, "videos"))
                 for eid in restore:
                     r = src.get(eid)
                     if r is None:
@@ -1102,6 +1115,35 @@ def _run_rejudge(delivery: str, input_dir: str, cfg: dict,
                             "%Y-%m-%d %H:%M:%S"))
                     print(f"[rejudge] rrd_curated 已重导出:{len(keep_eids)} 条,"
                           f"改标 {len(rrd_ov)} 条", flush=True)
+                # mcap 包同步(2026-09-18):交付里有 mcap_curated ⇒ 输入是 mcap
+                # 源;以同步后的 parquet 为唯一事实源整个重建。**先导出进 staging、
+                # 成功后才换位**(2026-09-21 审查实锤:先 rmtree 再导出,导出一失败
+                # 客户的原格式交付就没了 —— 与旁边 parquet 的 staging 同一条纪律)。
+                # (lance V1 无原格式交付,无需同步。)
+                _cur = os.path.join(delivery, "mcap_curated")
+                if os.path.isdir(_cur):
+                    keep_eids = [r["episode_id"] for r in out_rows]
+                    _ov2 = {r["episode_id"]: r["instruction"] for r in out_rows
+                            if r.get("instruction_source") not in (None, "", "原始标注")
+                            and str(r.get("instruction") or "").strip()}
+                    _eps2 = {r["episode_id"]: {
+                        "verdict": "通过",
+                        "instruction": r.get("instruction") or "",
+                        "instruction_source": r.get("instruction_source") or "",
+                    } for r in out_rows}
+                    _gen = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    from ..export.mcap_writer import export_mcap_curated
+                    _staging_name = "mcap_curated.staging"
+                    _sh.rmtree(os.path.join(delivery, _staging_name),
+                               ignore_errors=True)
+                    export_mcap_curated(delivery, input_dir, keep_eids,
+                                        relabels=_ov2, episodes=_eps2,
+                                        generated_at=_gen,
+                                        out_name=_staging_name)
+                    _sh.rmtree(_cur)                       # 新包已就绪,才动旧包
+                    os.rename(os.path.join(delivery, _staging_name), _cur)
+                    print(f"[rejudge] mcap_curated 已重导出:{len(keep_eids)} 条,"
+                          f"改标 {len(_ov2)} 条", flush=True)
         except Exception as e:  # noqa: BLE001  数据集同步失败不吞掉裁决结果
             print(f"[rejudge] ⚠️ 交付数据集同步失败({type(e).__name__}: {e});"
                   f"三件套已更新,episodes_parquet 仍是旧标注", flush=True)
@@ -1358,8 +1400,19 @@ def _episode_row_reader(input_dir: str, cfg: dict) -> Callable:
     RRD 的 fps 走与原 run 同一个配置键 `ingest.rrd_fps`(rejudge 的 --config 应与原
     run 一致);数据里自带时间戳(bridge 那种)时该键留空也读得出来。
     """
+    from ..ingest.lance_reader import is_lance_dataset
+    from ..ingest.mcap_reader import is_mcap_dataset
     from ..ingest.rrd_reader import is_rrd_dataset
 
+    if is_lance_dataset(input_dir):
+        from ..ingest.lance_reader import read_lance_rows
+        return read_lance_rows
+    if is_mcap_dataset(input_dir):
+        from functools import partial
+
+        from ..ingest.mcap_reader import read_mcap_rows
+        return partial(read_mcap_rows,
+                       mapping=(cfg.get("ingest") or {}).get("mcap_mapping"))
     if not is_rrd_dataset(input_dir):
         from ..ingest.lerobot_reader import read_lerobot_rows
         return read_lerobot_rows

@@ -284,6 +284,11 @@ def _scan_dataset_root(data_root: str) -> tuple[str, list[str]]:
         try:
             if _rrd_enabled() and any(f.endswith(".rrd") for f in os.listdir(d)):
                 out.append(name)
+                continue
+            from ..ingest.lance_reader import is_lance_dataset
+            from ..ingest.mcap_reader import is_mcap_dataset
+            if is_lance_dataset(d) or is_mcap_dataset(d):
+                out.append(name)
         except OSError:
             continue
     return ("ok" if out else "empty"), sorted(out)
@@ -379,6 +384,17 @@ def dataset_format(dataset_dir: str) -> dict:
     try:
         if _rrd_enabled() and any(f.endswith(".rrd") for f in dsfs.listdir(dataset_dir)):
             return {"kind": "rrd", "version": "", "needs_clips": True}
+    except Exception:  # noqa: BLE001
+        pass
+    # lance/mcap(2026-09-18):视频同样封在表/容器里,盘上没有逐条 mp4 → 要切片
+    try:
+        if not dsfs.is_remote(dataset_dir):
+            from ..ingest.lance_reader import is_lance_dataset
+            from ..ingest.mcap_reader import is_mcap_dataset
+            if is_lance_dataset(dataset_dir):
+                return {"kind": "lance", "version": "", "needs_clips": True}
+            if is_mcap_dataset(dataset_dir):
+                return {"kind": "mcap", "version": "", "needs_clips": True}
     except Exception:  # noqa: BLE001
         pass
     return {"kind": "unknown", "version": "", "needs_clips": False}

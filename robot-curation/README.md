@@ -146,6 +146,17 @@ K8s Secret；公网入口经 APIG 网关 + Basic 认证。隔离靠部署——*
 ## 已知限制
 
 - rerun（`.rrd`）格式的质检本版本默认关闭（`ingest.rrd_enabled: false`）
+- lance 与 mcap 格式的质检**默认开启**（个别实例要关：`ingest.lance_enabled: false` /
+  `ingest.mcap_enabled: false`，或对应环境变量置 0）；两种格式只支持本地/挂载路径，
+  `tos://` 直读未接
+- lance 只支持官方 `lerobot-lance-convert`（≥0.3.0）的三表布局（frames/videos/meta，
+  info.json 带 `storage_format: "lance"` 标记）；0.3.0 前旧插件的单表布局官方已废弃，
+  不支持。meta/ 就是标准 LeRobot v3 元数据，型号/任务/fps 全自动；lance 的原格式
+  交付本版本未做，交付以 episodes_parquet + 判决清单为准
+- mcap 消息编码认 cdr（ROS2）/ protobuf（foxglove）/ json 三种；action 散在多路
+  topic 时用组合 mapping 指认（`ingest.mcap_mapping`，见 default.yaml），UMI
+  （`/robotN/vio/eef_pose` 形状）零配置自动识别；视频帧只吃 JPEG 与 H.264；
+  交付为 `mcap_curated/` 逐字节拷贝+清单
 - 命令行 `--batch` 暂不接受 `tos://` 地址（界面上的「跑全部」支持直连桶）
 
 ## License
