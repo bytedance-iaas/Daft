@@ -32,27 +32,25 @@ from .verdict import episode_verdict
 
 
 def gripper_signal(action, timestamps, embodiment_id, semantics_extras, registry):
-    """仲裁取证用的夹爪信号 → (夹爪列 [T,G] | None, 时间戳 | None, closed_high, 来源, 相机→列)。
-
-    末项 {相机短名: 夹爪列在返回数组里的下标}:多夹爪数据集由档案的 cameras.*.gripper_dim
-    声明,腕部线据此只看自己这只手的事件;规格库路径与没声明的档案给 {}。
+    """仲裁取证用的夹爪信号 → (夹爪列 [T,G] | None, 时间戳 | None, closed_high, 来源)。
+    多列(双臂/双手)原样全部给出:仲裁按打分层强探针从所有握持段里选,不需要相机↔列对号。
 
     列下标先查本体规格库(registry.gripper_dims);本体未注册(umi 这类客户手持夹爪)再退到
-    数据集档案随行的 semantics_extras["gripper"]({dims, closed})。极性只有档案会声明:
-    closed="low" 是宽度制(数值大=张开),仲裁找闭合事件前要翻转;规格库路径沿用 droid
-    约定(数值大=闭合)。都拿不到 → (None, None, True, "") ,core 侧自选兜底帧。
+    随行的 semantics_extras["gripper"]({dims, closed}:档案声明,或读取器按字段名/
+    数值指纹认出的,见 lerobot_reader._attach_semantics),最后退 extras["layout"]。
+    极性 closed="low" 是宽度制(数值大=张开),仲裁找闭合事件前要翻转;档案没写时按字段名推
+    (width/opening → low),再没有沿用 droid 约定(数值大=闭合)。都拿不到 → (None, None, True, "", {})。
     2026-09-18 umi ep3:夹爪信号明明在档案里,仲裁却按"没有"退到末段峰值帧取证,落在松手
     之后 —— 瞬时任务的"握在手里"在那一刻恒为否。
     """
     try:
         a = np.asarray(action)
         if a.ndim != 2 or not a.shape[0]:
-            return None, None, True, "", {}
+            return None, None, True, ""
     except Exception:  # noqa: BLE001
-        return None, None, True, "", {}
+        return None, None, True, ""
     dims: tuple = ()
     closed_high, src = True, ""
-    cam_cols: dict = {}
     try:
         gd = registry.get(str(embodiment_id)).gripper_dims
         dims = tuple(int(d) for d in (gd or ()) if int(d) < a.shape[1])
@@ -67,13 +65,21 @@ def gripper_signal(action, timestamps, embodiment_id, semantics_extras, registry
             if dims:
                 src = "profile"
                 closed_high = str(g.get("closed", "high")).lower() != "low"
-                cam_cols = {str(c): dims.index(int(d))
-                            for c, d in (g.get("by_camera") or {}).items() if int(d) in dims}
         except Exception:  # noqa: BLE001
-            dims, cam_cols = (), {}
+            dims = ()
     if not dims:
-        return None, None, True, "", {}
-    return a[:, dims], np.asarray(timestamps, dtype=float), closed_high, src, cam_cols
+        # 老缓存/别的读取器只带 layout 没带 gripper 段:退到布局识别出的夹爪列(极性同布局)
+        try:
+            lay = (json.loads(str(semantics_extras) or "{}") or {}).get("layout") or {}
+            dims = tuple(int(d) for d in (lay.get("gripper_dims") or ()) if int(d) < a.shape[1])
+            if dims:
+                src = "layout"
+                closed_high = str(lay.get("gripper_closed", "high")).lower() != "low"
+        except Exception:  # noqa: BLE001
+            dims = ()
+    if not dims:
+        return None, None, True, ""
+    return a[:, dims], np.asarray(timestamps, dtype=float), closed_high, src
 
 
 def _result_dtype():
@@ -721,13 +727,12 @@ def run_funnel(
                 annotation = str(task_desc) if src == "原始标注" else ""
                 # 夹爪信号:列下标先走 registry 的 gripper_dims,本体未注册再退到数据集档案
                 # (semantics_extras.gripper,含极性);都没有 → None,core 侧自选兜底帧
-                gr, gts, closed_high, gsrc, gcols = gripper_signal(
+                gr, gts, closed_high, gsrc = gripper_signal(
                     action, timestamps, embodiment_id, semantics_extras, registry)
                 arbitration_review(
                     res, caption=caption, caption_source=cap_src,
                     annotation=annotation, cam_frames=cam_frames, cam_ts=cam_ts,
                     gripper=gr, gripper_ts=gts, gripper_closed_high=closed_high,
-                    gripper_cam_cols=gcols or None,
                     question_writer=arb_deps["question_writer"],
                     grounder=arb_deps["grounder"], judge=arb_deps["judge"],
                     same_task=arb_deps["same_task"], cam_hints=cam_hints,

@@ -46,3 +46,27 @@ def test_consistent_declaration_not_intercepted(tmp_path):
         read_lerobot_meta(d)          # 空 episodes.jsonl → 读出 0 条,不该抛"标错"
     except NotADatasetError as e:
         assert "标错" not in str(e)
+
+
+def test_attach_semantics_carries_inferred_gripper_columns_and_polarity():
+    """仲裁要拿夹爪列只能走 extras(gripper_dims 是 tuple 列进不了 daft):读取器认出的夹爪列
+    (字段名/数值指纹)随行写成 extras["gripper"];档案已写的(含 by_camera)不覆盖;没夹爪列不写。"""
+    import json
+    from curation.ingest.dataset_semantics import DatasetSemantics
+    from curation.ingest.lerobot_reader import _attach_semantics
+    rows = [{"episode_id": "ep000000"}]
+    sem = DatasetSemantics(action_space="ee", gripper_dims=(9,), gripper_closed="low", source="inferred")
+    _attach_semantics(rows, sem, None)
+    ex = json.loads(rows[0]["semantics_extras"])
+    assert ex["gripper"] == {"dims": [9], "closed": "low", "closed_source": "default", "source": "inferred"}
+
+    rows = [{"episode_id": "ep000000"}]
+    prof = DatasetSemantics(gripper_dims=(9, 19), gripper_closed="low", source="profile",
+                            extras={"gripper": {"dims": [9, 19], "closed": "low",
+                                                "by_camera": {"cam0": 9}}})
+    _attach_semantics(rows, prof, None)
+    assert json.loads(rows[0]["semantics_extras"])["gripper"]["by_camera"] == {"cam0": 9}
+
+    rows = [{"episode_id": "ep000000"}]
+    _attach_semantics(rows, DatasetSemantics(source="inferred"), None)
+    assert "gripper" not in json.loads(rows[0]["semantics_extras"])
