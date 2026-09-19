@@ -551,12 +551,20 @@ def run_pipeline(
 
     # 输入格式嗅探(2026-08-10):meta/info.json → LeRobot;目录里有 *.rrd → rerun 格式。
     # 两条 reader 产出同一份行契约,所以嗅探只换"谁来读",漏斗以下一个字都不用改。
+    from ..ingest.lance_reader import apply_config as _lance_apply_config
+    from ..ingest.lance_reader import is_lance_dataset
+    from ..ingest.mcap_reader import apply_config as _mcap_apply_config
+    from ..ingest.mcap_reader import is_mcap_dataset
     from ..ingest.rrd_reader import apply_config as _rrd_apply_config
     from ..ingest.rrd_reader import is_rrd_dataset
     _rrd_apply_config(cfg)           # ingest.rrd_enabled(默认关)
+    _lance_apply_config(cfg)         # ingest.lance_enabled / lance_table(默认关)
+    _mcap_apply_config(cfg)          # ingest.mcap_enabled(默认关)
     from ..ingest.public_catalog import apply_config as _public_apply_config
     _public_apply_config(cfg)        # public_datasets:公共桶登记成匿名读
-    input_format = "rrd" if is_rrd_dataset(input_dir) else "lerobot"
+    input_format = ("rrd" if is_rrd_dataset(input_dir) else
+                    "lance" if is_lance_dataset(input_dir) else
+                    "mcap" if is_mcap_dataset(input_dir) else "lerobot")
     if input_format == "rrd":
         from functools import partial
 
@@ -568,6 +576,26 @@ def run_pipeline(
         read_lazy = partial(_rrd.read_rrd_lazy, fps=_rrd_fps)
         dataset_info = partial(_rrd.rrd_dataset_info, fps=_rrd_fps,
                                embodiment_id=embodiment_id)
+    elif input_format == "lance":
+        from functools import partial
+
+        from ..ingest import lance_reader as _lance
+        # 表里没有 timestamp 列、metadata 也没 fps 时的兜底帧率 + 库目录多表指名
+        _lkw = dict(fps=(cfg.get("ingest") or {}).get("lance_fps"),
+                    table=(cfg.get("ingest") or {}).get("lance_table"))
+        read_meta = partial(_lance.read_lance_meta, **_lkw)
+        read_rows = partial(_lance.read_lance_rows, **_lkw)
+        read_lazy = partial(_lance.read_lance_lazy, **_lkw)
+        dataset_info = partial(_lance.lance_dataset_info, **_lkw,
+                               embodiment_id=embodiment_id)
+    elif input_format == "mcap":
+        from functools import partial
+
+        from ..ingest import mcap_reader as _mcap
+        read_meta = _mcap.read_mcap_meta
+        read_rows = _mcap.read_mcap_rows
+        read_lazy = _mcap.read_mcap_lazy
+        dataset_info = partial(_mcap.mcap_dataset_info, embodiment_id=embodiment_id)
     else:
         read_meta, read_rows, read_lazy = (read_lerobot_meta, read_lerobot_rows,
                                            read_lerobot_lazy)
@@ -637,8 +665,10 @@ def run_pipeline(
     if enabled(cfg, "kinematic_limits") and _robot["registry_profile"] == "(未注册)":
         cfg["checks"]["kinematic_limits"]["enable"] = False
         if _emb == "unknown":
-            _why = ("RRD 文件不带机器人型号(也无内嵌/溯源可回填)"
-                    if input_format == "rrd" else "info.json 未声明 robot_type")
+            _why = {"rrd": "RRD 文件不带机器人型号(也无内嵌/溯源可回填)",
+                    "lance": "lance 表的 schema metadata 不带 robot_type",
+                    "mcap": "mcap 的 metadata 记录不带 robot_type",
+                    }.get(input_format, "info.json 未声明 robot_type")
             _why += ",也没指定 --embodiment-id"
         else:
             try:
@@ -1458,6 +1488,37 @@ def run_pipeline(
                 generated_at=report.get("生成时间", ""))["out_dir"]
             report["dataset"]["交付数据集"] = (
                 f"rrd_curated/({len(keep_ids)} 个 .rrd,原格式;清单见 index.json)")
+        elif input_format in ("lance", "mcap"):
+            # lance/mcap 交付(2026-09-18):与 RRD 同一条哲学 —— 按原格式交付。
+            # lance:过滤+改标+追加溯源列的新表;mcap:原样字节拷贝+index.json
+            # (改标只落清单不重写文件,理由见 mcap_writer 模块 docstring)。
+            _fmt_eps = {r["episode_id"]: {
+                "verdict": "通过",
+                "instruction": r.get("instruction") or "",
+                "instruction_source": r.get("instruction_source") or "",
+            } for r in keep_full}
+            _fmt_relabels = {e: desc_of[e] for e in keep_ids
+                             if desc_src_of.get(e) == "自产caption"
+                             and desc_of.get(e, "").strip()}
+            if input_format == "lance":
+                from ..export.lance_writer import export_lance_curated
+                deliver["lance_dataset"] = export_lance_curated(
+                    output_dir, input_dir, list(keep_ids),
+                    relabels=_fmt_relabels, episodes=_fmt_eps,
+                    table=(cfg.get("ingest") or {}).get("lance_table"),
+                    generated_at=report.get("生成时间", ""))["out_dir"]
+                report["dataset"]["交付数据集"] = (
+                    f"lance_curated/({len(keep_ids)} 条 episode 的 lance 表,原格式"
+                    "+溯源列;清单见 index.json)")
+            else:
+                from ..export.mcap_writer import export_mcap_curated
+                deliver["mcap_dataset"] = export_mcap_curated(
+                    output_dir, input_dir, list(keep_ids),
+                    relabels=_fmt_relabels, episodes=_fmt_eps,
+                    generated_at=report.get("生成时间", ""))["out_dir"]
+                report["dataset"]["交付数据集"] = (
+                    f"mcap_curated/({len(keep_ids)} 个 .mcap,原格式逐字节;"
+                    "清单见 index.json)")
         else:
             _exporter = (export_lerobot_v3
                          if _load_info(input_dir)["codebase_version"].startswith("v3")
@@ -1531,6 +1592,16 @@ def run_pipeline(
         from ..export.rrd_writer import INDEX_NAME as _RRD_INDEX
         _checks_vis.append(("rrd_curated/index.json",
                             os.path.join(deliver["rrd_dataset"], _RRD_INDEX), "json"))
+    if deliver.get("lance_dataset"):
+        from ..export.lance_writer import INDEX_NAME as _LANCE_INDEX
+        _checks_vis.append(("lance_curated/index.json",
+                            os.path.join(deliver["lance_dataset"], _LANCE_INDEX),
+                            "json"))
+    if deliver.get("mcap_dataset"):
+        from ..export.mcap_writer import INDEX_NAME as _MCAP_INDEX
+        _checks_vis.append(("mcap_curated/index.json",
+                            os.path.join(deliver["mcap_dataset"], _MCAP_INDEX),
+                            "json"))
     _deferred = _verify_delivery_visible(_checks_vis)
     # 回验之后再对一次账:latest 读回来必须就是这次的目录名。回验只保证"读得回来",
     # 内容对不对是另一回事(FSX 直写坏文件那一家子的教训 —— 别信"写成功")。
@@ -1551,6 +1622,10 @@ def run_pipeline(
     # 缓存再无用处。--report-only 同样走到这里,同样要清。幂等,LeRobot 输入时是空操作。
     from ..ingest.rrd_reader import cleanup_video_cache
     cleanup_video_cache(input_dir)
+    from ..ingest.lance_reader import cleanup_video_cache as _lance_cleanup
+    _lance_cleanup(input_dir)
+    from ..ingest.mcap_reader import cleanup_video_cache as _mcap_cleanup
+    _mcap_cleanup(input_dir)
 
     return {"stats": stats, "verdicts": verdicts, "deliverables": deliver,
             "n_delivered": len(keep_rows), "run_dir": output_dir,

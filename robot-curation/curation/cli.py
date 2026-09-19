@@ -567,22 +567,38 @@ def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool,
 def _list_datasets(parent: str) -> list[str]:
     """父目录下所有有效数据集(--batch 的清单)。
 
-    两种格式各有各的"身份证":LeRobot 看 meta/info.json,RRD 看目录里有没有 *.rrd
+    每种格式各有各的"身份证":LeRobot 看 meta/info.json,RRD 看目录里有没有 *.rrd
     (P5,2026-08-10 补齐 —— 漏斗本身早就两种都吃,只有这份清单还只认 LeRobot,
-    于是客户把 rrd 数据集摆进父目录跑 --batch 会得到"没有有效数据集")。
+    于是客户把 rrd 数据集摆进父目录跑 --batch 会得到"没有有效数据集");
+    lance 看表目录/库目录,mcap 看 *.mcap(2026-09-18,同一教训不吃两遍)。
     """
     import os
 
+    from .ingest.lance_reader import is_lance_dataset
+    from .ingest.mcap_reader import is_mcap_dataset
     from .ingest.rrd_reader import is_rrd_dataset
     return sorted(
         name for name in os.listdir(parent)
         if os.path.exists(os.path.join(parent, name, "meta", "info.json"))
-        or is_rrd_dataset(os.path.join(parent, name)))
+        or is_rrd_dataset(os.path.join(parent, name))
+        or is_lance_dataset(os.path.join(parent, name))
+        or is_mcap_dataset(os.path.join(parent, name)))
 
 
 
 from .episode_select import parse_episodes as _parse_episodes  # noqa: E402
 from .episode_select import EpisodesOutOfRange, reconcile_episodes  # noqa: E402
+
+
+def _cleanup_ingest_caches(input_dir: str) -> None:
+    """可选格式(rrd/lance/mcap)reader 落的临时 mp4 一并清掉(LeRobot 输入下全是
+    空操作)。收尾清理绝不能成为新的失败源 —— 三个 cleanup 各自幂等。"""
+    from .ingest.lance_reader import cleanup_video_cache as _lance_cleanup
+    from .ingest.mcap_reader import cleanup_video_cache as _mcap_cleanup
+    from .ingest.rrd_reader import cleanup_video_cache as _rrd_cleanup
+    _rrd_cleanup(input_dir)
+    _lance_cleanup(input_dir)
+    _mcap_cleanup(input_dir)
 
 
 def _bad_max_episodes(n) -> str:
@@ -806,7 +822,7 @@ def main(argv: list[str] | None = None) -> int:
         args = build_parser().parse_args(_argv)
     if args.command == "review-page":
         from .export.review_page import build_delivery_clips, build_review_page
-        from .ingest.rrd_reader import cleanup_video_cache, is_rrd_dataset
+        from .ingest.rrd_reader import is_rrd_dataset
         if str(args.input or "").startswith("tos://"):
             from .ingest import dsfs
             dsfs.configure(args.input_region)
@@ -827,9 +843,31 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             return 2
         # 输入格式嗅探(P5,2026-08-10):与 run 同一套判据。审片站只要
-        # episode_id/标注/视频指针三样,RRD 走**轻量元数据**读法就够——它不做
-        # schema 校验,也就不用逼用户为了看片先报 --embodiment(RRD 无 robot_type)。
-        if is_rrd_dataset(args.input):
+        # episode_id/标注/视频指针三样,可选格式走**轻量元数据**读法就够——它不做
+        # schema 校验,也就不用逼用户为了看片先报 --embodiment(这些格式无 robot_type)。
+        from .ingest.lance_reader import is_lance_dataset as _is_lance
+        from .ingest.mcap_reader import is_mcap_dataset as _is_mcap
+        if _is_lance(args.input) or _is_mcap(args.input):
+            from .ingest.lerobot_reader import NotADatasetError
+            try:
+                if _is_lance(args.input):
+                    from .ingest.lance_reader import read_lance_meta
+                    rows = read_lance_meta(args.input, episode_indices=eps)
+                else:
+                    from .ingest.mcap_reader import read_mcap_meta
+                    rows = read_mcap_meta(args.input, episode_indices=eps)
+            except NotADatasetError as e:
+                print(f"[输入错误] {e}", file=sys.stderr)
+                return 2
+            if eps is not None:
+                if not rows:
+                    print(f"[输入错误] 指定的 episode 在该数据集里一条也不存在:"
+                          f"{sorted(eps)[:8]}…", file=sys.stderr)
+                    return 2
+                if len(rows) < len(eps):
+                    print(f"[review-page] ⚠️ 指定的 {len(eps)} 条里只有 "
+                          f"{len(rows)} 条存在,只做这些")
+        elif is_rrd_dataset(args.input):
             from .ingest.lerobot_reader import NotADatasetError
             from .ingest.rrd_reader import read_rrd_meta
             try:
@@ -888,7 +926,7 @@ def main(argv: list[str] | None = None) -> int:
                                                 region=args.delivery_region,
                                                 on_progress=_tick)
             finally:
-                cleanup_video_cache(args.input)
+                _cleanup_ingest_caches(args.input)
             print(f"[review-page] 完成:新编码 {n} 段 → {where}/review_clips",
                   flush=True)
             return 0
@@ -897,8 +935,8 @@ def main(argv: list[str] | None = None) -> int:
             n = build_review_page(rows, args.output, title=title, on_progress=_tick,
                                   source_dataset=args.input)
         finally:
-            # RRD 解出的临时 mp4 只是切片的原料,站点生成完就该消失(几百条能占几个 GB)
-            cleanup_video_cache(args.input)
+            # 可选格式解出的临时 mp4 只是切片的原料,站点生成完就该消失(几百条能占几个 GB)
+            _cleanup_ingest_caches(args.input)
         print(f"[review-page] 完成:新编码 {n} 段;入口 {args.output}/index.html", flush=True)
         return 0
 
@@ -932,6 +970,10 @@ def main(argv: list[str] | None = None) -> int:
             cfg = apply_vlm_backend(cfg, args.vlm_backend)
         from .ingest.rrd_reader import apply_config as _rrd_apply_config
         _rrd_apply_config(cfg)
+        from .ingest.lance_reader import apply_config as _lance_apply_config
+        _lance_apply_config(cfg)
+        from .ingest.mcap_reader import apply_config as _mcap_apply_config
+        _mcap_apply_config(cfg)
         from .ingest.public_catalog import apply_config as _public_apply_config
         _public_apply_config(cfg)
         _cur_pub = ((f"{_sync[1]}/lerobot_curated", _sync[2]) if _sync else None)
@@ -1144,8 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"[tos] {_pub.summary()}", flush=True)
                     return summary
             finally:
-                from .ingest.rrd_reader import cleanup_video_cache
-                cleanup_video_cache(inp)
+                _cleanup_ingest_caches(inp)
 
         if args.batch:
             datasets = _list_datasets(args.input)

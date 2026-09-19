@@ -34,6 +34,19 @@ ingest:
   # 时间(VideoFrameReference 时间戳/录制属性)时以文件为准,推不出才用这里的值。
   # 留空 = 不替客户猜:推不出时间就报错,让他显式给(--set ingest.rrd_fps=30)。
   rrd_fps: null
+  # lance/lancedb 格式总开关(2026-09-18):与 rrd 同一套纪律,默认关。打开后
+  # --input 指 lance 表目录或 lancedb 库目录即可质检(帧级行,列名约定见
+  # ingest/lance_reader.DEFAULT_MAPPING),交付按原格式落 lance_curated/。
+  lance_enabled: false
+  # lancedb 库目录里有多张表时指定表名(单表自动选,多表不指名会响亮报错列出实有表)。
+  lance_table: null
+  # lance 表没有 timestamp 列、schema metadata 也没有 fps 时的采集帧率。
+  # 留空 = 不替客户猜:推不出时间就报错(与 rrd_fps 同一条纪律)。
+  lance_fps: null
+  # mcap 格式总开关(2026-09-18):默认关。打开后 --input 指一目录 N 个
+  # episode_N.mcap 即可质检(topic 约定见 ingest/mcap_reader.DEFAULT_MAPPING;
+  # 时间轴取 action topic 的 log_time,不需要 fps 配置),交付落 mcap_curated/。
+  mcap_enabled: false
 
 checks:
   # 漏斗顺序按成本:纯数值 → 抽帧 → VLM(垫底只跑幸存者)
