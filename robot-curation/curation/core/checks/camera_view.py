@@ -62,16 +62,25 @@ WRIST_ONLY_HINT = ("this camera is mounted on the gripper; the gripper and whate
                    "started counts as task progress")
 
 
+def camera_view_of(views: dict | None, cam: str) -> str:
+    """一路相机的朝向:profile 声明优先;没声明按相机名(含 wrist → wrist,否则 unknown)。
+    与仲裁分路(task_success._is_wrist)同一条启发式,没档案的数据集也能走。"""
+    v = (views or {}).get(cam)
+    if isinstance(v, dict):
+        v = v.get("view")
+    if v:
+        return str(v).lower()
+    return "wrist" if "wrist" in str(cam).lower() else "unknown"
+
+
 def wrist_only_hints(views: dict | None, cameras) -> dict[str, str]:
-    """{相机短名: 全腕部提示}——仅当 cameras 非空且每一路在 profile 里都声明为 wrist;否则 {}。"""
+    """{相机短名: 全腕部提示}——仅当 cameras 非空且每一路都是 wrist(profile 声明,或没声明时
+    相机名含 wrist);否则 {}。"""
     cams = [str(c) for c in cameras]
-    if not cams or not views:
+    if not cams:
         return {}
     for cam in cams:
-        v = views.get(cam)
-        if isinstance(v, dict):
-            v = v.get("view")
-        if str(v or "").lower() != "wrist":
+        if camera_view_of(views, cam) != "wrist":
             return {}
     return {cam: WRIST_ONLY_HINT for cam in cams}
 

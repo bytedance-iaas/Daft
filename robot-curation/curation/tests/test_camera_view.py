@@ -90,8 +90,15 @@ def test_umi_profile_declares_wrist_cameras():
     import os
     p = os.path.join(os.path.dirname(_f), "dataset_profiles", "umi.yaml")
     prof = yaml.safe_load(open(p))
-    # 2026-09-18 起为字典形式(带 gripper_dim 相机→夹爪列对号);view 仍是 wrist
-    assert {k: v["view"] for k, v in prof["cameras"].items()} == \
-        {"robot0_camera0": "wrist", "robot1_camera0": "wrist"}
-    assert {k: v["gripper_dim"] for k, v in prof["cameras"].items()} == \
-        {"robot0_camera0": 9, "robot1_camera0": 19}
+    assert prof["cameras"] == {"robot0_camera0": "wrist", "robot1_camera0": "wrist"}
+
+
+def test_wrist_only_hint_infers_views_from_camera_names_without_profile():
+    """没档案的全腕部数据集:相机名全含 wrist 也算全腕部;混有外部机位名或名字看不出的 → 不加。"""
+    from curation.core.checks.camera_view import WRIST_ONLY_HINT, camera_view_of, wrist_only_hints
+    assert camera_view_of(None, "left_wrist_cam") == "wrist" and camera_view_of({}, "top") == "unknown"
+    assert camera_view_of({"top": "front"}, "top") == "front"
+    cams = ["wrist_left", "wrist_right"]
+    assert wrist_only_hints(None, cams) == {c: WRIST_ONLY_HINT for c in cams}
+    assert wrist_only_hints({}, ["wrist_left", "top"]) == {}
+    assert wrist_only_hints({"robot0_camera0": "wrist"}, ["robot0_camera0", "robot1_camera0"]) == {}

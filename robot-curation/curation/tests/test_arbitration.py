@@ -20,8 +20,11 @@ import pytest
 from curation.core.checks.task_success import (
     _arb_line_verdict,
     arbitration_review,
+    choose_hold,
     gripper_event_time,
     gripper_event_times,
+    gripper_holds,
+    pick_hold_frames,
 )
 from curation.core.contract import CheckResult
 
@@ -358,14 +361,17 @@ def test_persistent_uses_final_frame():
 
 def test_transient_uses_grasp_moment_plus_offset():
     """瞬态任务(抓/举)不验末帧——"松爪即失败"是被明令纠正过的谬误(ep181/35)。
-    取证时刻=最大闭爪时刻+1.0s:夹爪 0→1 的最大跳变在 t=5.0,锚点 6.0,
-    cam_ts linspace(0,10,21) 上最近帧=下标 12。"""
+    取证在握持段内:夹爪 t=5.0 闭合、片尾未松 → 握持段 [5, 10];掐两端各 0.5s 过渡后 [5.5, 9.5]
+    等分 4 段各取最清楚一帧(合成帧一样清楚→取每段首帧)= 下标 11/13/15/17;外部线先看后段 17。"""
     judge = FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["yes"] * 3, VAL_W: ["yes"] * 3})
     ts = np.linspace(0.0, 10.0, 21)
     grip = (ts >= 5.0).astype(float)                     # t=5.0 闭合(droid 约定 1=闭)
     r = _arb(_res(), judge, qw=_qw("transient"), gripper=grip, gripper_ts=ts)
     arb = r.detail["arbitration"]
-    assert arb["lines"]["ext_a"]["frame"] == 12
+    assert arb["hold"] == {"col": 0, "grasp": 5.0, "release": None, "strong_probes_s": []}
+    assert arb["lines"]["ext_a"]["frame"] == 17 and arb["lines"]["ext_a"]["anchor"] == "hold_late"
+    assert arb["lines"]["wrist_image"]["frames"] == [11, 13, 15, 17]
+    assert arb["lines"]["wrist_image"]["anchor"] == "hold"
     scenes = {s for _, s in judge.calls}
     assert "exterior_post_grasp" in scenes and "wrist_grasp" in scenes
 
@@ -745,10 +751,11 @@ def test_fallback_no_is_rescue_only():
 
 
 def test_weak_peak_is_not_an_anchor():
-    """峰值 <0.8(过程分)不当锚点:末帧 unclear 后没有回退,维持弃权。"""
+    """峰值 <SUCCESS_MIN(过程分)不当锚点:末帧 unclear 后没有回退,维持弃权。(门限 2026-09-18 从 0.8
+    改为引用打分层成功候选口径 0.45:回退帧的"否"早已不计,高门限只剩挡救回的副作用)"""
     cams, ts = _indexed_cams()
     res = _gap_res()
-    res.detail["completions"] = [0.0, 0.3, 0.5, 0.3, 0.5, 0.5, 0.0, 0.0]
+    res.detail["completions"] = [0.0, 0.3, 0.4, 0.3, 0.4, 0.4, 0.0, 0.0]
     judge = _judge_unclear_at({20})
     r = _arb(res, judge, grounder=_always_boxes, cams=(cams, ts))
     line = r.detail["arbitration"]["lines"]["ext_a"]
@@ -785,7 +792,7 @@ def test_spec_reuse_skips_question_writer():
 
 
 def test_transient_without_gripper_anchors_on_strong_peak():
-    """瞬时任务、无夹爪信号:取证帧 = 打分峰值帧(≥0.8),不再盲取中段。"""
+    """瞬时任务、无夹爪信号:取证帧 = 打分峰值帧(≥0.5),不再盲取中段。"""
     cams, ts = _indexed_cams()
     res = CheckResult(name="task_success", passed=None,
                       detail={"verdict": "uncertain", "rules": ["transient_gray_peak"],
@@ -800,7 +807,7 @@ def test_transient_without_gripper_anchors_on_strong_peak():
     res2 = CheckResult(name="task_success", passed=None,
                        detail={"verdict": "uncertain", "rules": ["transient_gray_peak"],
                                "task_type": "transient",
-                               "completions": [0.0, 0.2, 0.3, 0.3, 0.5, 0.2, 0.0, 0.0],
+                               "completions": [0.0, 0.2, 0.3, 0.3, 0.4, 0.2, 0.0, 0.0],
                                "probe_frames": [0, 3, 6, 9, 12, 15, 18, 20]})
     r = _arb(res2, judge, qw=_qw("transient"), grounder=_always_boxes, cams=(cams, ts))
     assert r.detail["arbitration"]["lines"]["ext_a"]["frame"] == 10
@@ -869,7 +876,9 @@ def test_persistent_wrist_line_without_gripper_falls_back_to_peak_rescue_only():
         return "no"
     r2 = _arb(_gap_res(), judge_no, grounder=_always_boxes, cams=(cams, ts), cam_roles={"ext_a": "wrist"})
     line2 = r2.detail["arbitration"]["lines"]["ext_a"]
-    assert line2.get("anchor") == "peak" and line2.get("no_discarded") and r2.passed is None
+    # 峰值帧的否只救不杀 → 继续看末帧;末帧的否计入,但只有一路,判废需两路 → 降级弃权
+    assert [f["anchor"] for f in line2["fallbacks"]] == ["peak"] and line2["anchor"] == "final"
+    assert r2.passed is None and r2.detail["arbitration"].get("kill_downgraded")
 
 
 # ───────── 夹爪极性(2026-09-18 umi ep3):宽度制信号找闭合事件前翻转 ─────────
@@ -887,15 +896,17 @@ def test_gripper_event_time_width_polarity():
 def test_transient_width_gripper_anchors_at_grasp_not_release():
     """umi ep3 复盘:宽度制夹爪 21.5s 合上、24s 松开;不翻极性,"闭合事件"会认成 24s 的松手,
     取证落在松手后(握在手里恒为否)。按档案传 gripper_closed_high=False,外部线取证帧 =
-    真闭合时刻 + 1.0s(cam_ts 0..10 均分 21 帧,闭合 t=5 → 锚点 6.0 → 下标 12)。"""
+    握持段 [5, 8] 内后段帧(掐过渡后 [5.5, 7.5] 四段首帧 11/12/13/14 → 后段 14)。"""
     judge = FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["yes"] * 3, VAL_W: ["yes"] * 3})
     ts = np.linspace(0.0, 10.0, 21)
     width = np.where(ts < 5.0, 0.1, np.where(ts < 8.0, 0.0, 0.1))   # 5s 合上,8s 张开
     r = _arb(_res(), judge, qw=_qw("transient"), gripper=width, gripper_ts=ts,
              gripper_closed_high=False)
-    assert r.detail["arbitration"]["lines"]["ext_a"]["frame"] == 12
+    assert r.detail["arbitration"]["hold"]["grasp"] == 5.0 and r.detail["arbitration"]["hold"]["release"] == 8.0
+    assert r.detail["arbitration"]["lines"]["ext_a"]["frame"] == 14
     r2 = _arb(_res(), judge, qw=_qw("transient"), gripper=width, gripper_ts=ts)
-    assert r2.detail["arbitration"]["lines"]["ext_a"]["frame"] == 18   # 认反:8s+1s → 下标 18
+    assert r2.detail["arbitration"]["hold"]["grasp"] == 8.0            # 认反:8s 的松手当成闭合
+    assert r2.detail["arbitration"]["lines"]["ext_a"]["frame"] >= 17
 
 
 def _two_hand_cams(n=21):
@@ -907,90 +918,115 @@ def _two_hand_cams(n=21):
 _UMI_ROLES = {"robot0_camera0": "wrist", "robot1_camera0": "wrist"}
 
 
-def test_transient_two_hand_wrist_lines_anchor_on_their_own_gripper():
-    """umi ep3 复盘:robot1 先(t=2)合上抓抽屉把手,robot0 后(t=6)合上抓盒子。按"幅度最大的
-    那列"两路都锚在 t=2;按档案的相机→列对号,robot0 线锚 6.0(+偏移 -0.5/0/0.5/1.5 → 帧
-    11/12/13/15),robot1 线锚 2.0(帧 3/4/5/7)。"""
+def test_hold_segmentation_and_selection_by_strong_probes():
+    """握持段 = 每列每次闭合配下一次松爪(开局就握着的从片头算);选段按强探针重叠:瞬时看段内,
+    持久看松爪之后;并列取最晚。"""
+    ts = np.linspace(0.0, 10.0, 21)
+    col0 = np.where((ts >= 2.0) & (ts < 3.5), 0.0, np.where(ts >= 6.0, 0.0, 0.1))   # 2~3.5 与 6~末
+    col1 = np.where(ts < 4.0, 0.0, 0.1)                                              # 开局握着,4.0 松
+    holds = gripper_holds(np.stack([col0, col1], 1), ts, closed_high=False)
+    assert [(h["col"], h["grasp"], h["release"]) for h in holds] == \
+        [(1, 0.0, 4.0), (0, 2.0, 3.5), (0, 6.0, None)]
+    # 瞬时:强探针 t=8 落在 [6, 末] → 选 col0 第二段;强探针 t=3 → 选 col0 第一段;无强探针 → 最晚
+    assert choose_hold(holds, [8.0], transient=True, end_t=10.0)["grasp"] == 6.0
+    assert choose_hold(holds, [3.0], transient=True, end_t=10.0)["grasp"] == 2.0
+    assert choose_hold(holds, [], transient=True, end_t=10.0)["grasp"] == 6.0
+    # 持久:强探针 t=5 在 col1 松爪(4.0)之后、也在 col0 第一段松爪(3.5)之后 → 并列取最晚 grasp(2.0 段)
+    assert choose_hold(holds, [5.0], transient=False, end_t=10.0)["release"] == 3.5
+    assert choose_hold([], [5.0], transient=False) is None
+
+
+def test_pick_hold_frames_prefers_sharp_frames_per_bin():
+    """段内取帧:掐两端过渡,等分 4 段,每段取最清楚的一帧;段太短只取中点。"""
+    ts = np.linspace(0.0, 10.0, 21)
+    frames = list(range(21))
+    sharp = {13: 9.0, 7: 5.0}                              # 帧 13、7 特别清楚
+    sel = pick_hold_frames(frames, ts, {"grasp": 2.0, "release": 8.0},
+                           sharpness=lambda f: sharp.get(f, 1.0))
+    # 掐过渡后 [2.5, 7.5] 四段:[2.5,3.75] 里帧 7 最清楚;[3.75,5] 同样清楚取首帧 8;[5,6.25] 取 10;[6.25,7.5] 里帧 13 最清楚
+    assert sel == [7, 8, 10, 13]
+    assert pick_hold_frames(frames, ts, {"grasp": 2.0, "release": 3.0}) == [5]   # 段短:中点 2.5 → 帧 5
+
+
+def test_two_hand_transient_all_cameras_look_at_the_chosen_hold():
+    """umi ep3 结构化版:robot1 先(t=2)合上抓抽屉把手并一直握着,robot0 后(t=6)合上抓盒子;打分层强
+    探针在帧 16(t=8)。两段都含 t=8,并列取最晚 → robot0 的段 [6, 末];**两路腕部相机都看这一段**
+    (不需要相机↔夹爪列对号),掐过渡后 [6.5, 9.5] 四段首帧 = 13/15/16/18。robot0 线 yes 救回,
+    robot1 线 no 丢弃。"""
     cams, ts = _two_hand_cams()
     t = ts["robot0_camera0"]
     width = np.stack([np.where(t < 6.0, 0.1, 0.0), np.where(t < 2.0, 0.1, 0.0)], 1)
+    res = _res()
+    res.detail["task_type"] = "transient"
+    res.detail["completions"] = [0.0, 0.2, 1.0, 0.0]
+    res.detail["probe_frames"] = [0, 8, 16, 20]
     judge = FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["no"] * 3})
-    r = _arb(_res(), judge, qw=_qw("transient"), cams=(cams, ts), cam_roles=_UMI_ROLES,
-             gripper=width, gripper_ts=t, gripper_closed_high=False,
-             gripper_cam_cols={"robot0_camera0": 0, "robot1_camera0": 1})
-    lines = r.detail["arbitration"]["lines"]
-    assert lines["robot0_camera0"]["frames"] == [11, 12, 13, 15]
-    assert lines["robot1_camera0"]["frames"] == [3, 4, 5, 7]
-    assert lines["robot0_camera0"]["anchor"] == "own_grasp"
+    r = _arb(res, judge, qw=_qw("transient"), cams=(cams, ts), cam_roles=_UMI_ROLES,
+             gripper=width, gripper_ts=t, gripper_closed_high=False)
+    arb = r.detail["arbitration"]
+    assert arb["hold"]["col"] == 0 and arb["hold"]["grasp"] == 6.0 and arb["hold"]["strong_probes_s"] == [8.0]
+    for cam in ("robot0_camera0", "robot1_camera0"):
+        assert arb["lines"][cam]["frames"] == [13, 15, 16, 18] and arb["lines"][cam]["anchor"] == "hold"
+    assert arb["lines"]["robot1_camera0"].get("no_discarded")
     assert r.passed is True and r.detail["verdict"] == "arbitration_success"
-    # 没对号:两路都退到幅度最大的那列(这里两列满幅,取先算到的第 0 列 → 6.0)
-    r2 = _arb(_res(), FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["no"] * 3}), qw=_qw("transient"),
-              cams=(cams, ts), cam_roles=_UMI_ROLES,
-              gripper=width, gripper_ts=t, gripper_closed_high=False)
-    l2 = r2.detail["arbitration"]["lines"]
-    assert l2["robot0_camera0"]["frames"] == l2["robot1_camera0"]["frames"]
 
 
-def test_persistent_two_hand_wrist_lines_skip_release_anchor():
-    """双手数据集的持久任务:松爪事件常是另一只手的,锚在那儿的"否"会凑成两路判废(ep6 复盘
-    实见,那条是当初的误杀)。多爪一律不取松爪锚点,退到峰值帧回退(只救不杀):峰值帧上
-    的"否"只留痕不计,有效路 0 → 弃权进人工。"""
+def test_two_hand_persistent_release_then_peak_rescue_only():
+    """umi ep6 结构化版(倒水):robot1 握罐 t=1~7,robot0 握杯 t=1.5~8;强探针 t=5(倒水中)在两次松爪
+    之前 → 无段得分,并列取最晚 grasp → robot0 段,松爪 8.0。腕部线先看松爪前后(答否)→ 再看峰值帧
+    (t=5)答是 → 救回;峰值/松爪都是回退锚点,"否"只救不杀。全否时有效路 0,弃权而非判废。"""
     cams, ts = _two_hand_cams()
     t = ts["robot0_camera0"]
-    width = np.stack([np.where(t < 6.0, 0.0, 0.1), np.where(t < 2.0, 0.0, 0.1)], 1)   # t=6/2 张开
+    width = np.stack([np.where((t >= 1.5) & (t < 8.0), 0.0, 0.1), np.where((t >= 1.0) & (t < 7.0), 0.0, 0.1)], 1)
     res = _res()
     res.detail["verdict"] = "gap_violation"
     res.detail["completions"] = [0.0, 1.0, 0.0]
-    res.detail["probe_frames"] = [0, 8, 20]
-    judge = FakeJudge({VAL_A: ["no"] * 3, VAL_B: ["no"] * 3})
-    r = _arb(res, judge, cams=(cams, ts), cam_roles=_UMI_ROLES,
-             gripper=width, gripper_ts=t, gripper_closed_high=False,
-             gripper_cam_cols={"robot0_camera0": 0, "robot1_camera0": 1})
+    res.detail["probe_frames"] = [0, 10, 20]
+    # 判官:峰值帧(t=5 前后 → 帧 9~15)答是,松爪帧答否
+    def judge(imgs, *, target, question, scene):
+        key = int(np.asarray(imgs[0]).max())
+        return "yes" if judge.on_peak else "no"
+    judge.on_peak = False
+    calls = []
+    def judge2(imgs, *, target, question, scene):
+        calls.append(len(calls))
+        return "no" if len(calls) <= 3 else "yes"      # 第一轮(松爪)三票否,第二轮(峰值)三票是
+    r = _arb(res, judge2, cams=(cams, ts), cam_roles=_UMI_ROLES,
+             gripper=width, gripper_ts=t, gripper_closed_high=False)
     arb = r.detail["arbitration"]
-    for cam in ("robot0_camera0", "robot1_camera0"):
-        assert arb["lines"][cam]["anchor"] == "peak" and arb["lines"][cam].get("no_discarded")
-    assert arb["n_effective"] == 0 and r.passed is None
-    # 单爪(droid)不受影响:松爪锚点照旧
-    single = np.where(t < 5.0, 1.0, 0.0)
-    cams1, ts1 = _cams()
-    r1 = _arb(res, FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["yes"] * 3, VAL_W: ["yes"] * 3}),
-              cams=(cams1, ts1), gripper=single, gripper_ts=ts1["ext_a"])
-    assert "anchor_t" in r1.detail["arbitration"]["lines"]["wrist_image"]
-    assert r1.detail["arbitration"]["lines"]["wrist_image"].get("anchor") is None
+    assert arb["hold"]["col"] == 0 and arb["hold"]["release"] == 8.0
+    l0 = arb["lines"]["robot0_camera0"]
+    assert l0["anchor"] == "peak" and l0["fallbacks"][0]["anchor"] == "release"
+    assert r.passed is True
+    # 全否:松爪、峰值都否(丢弃)→ 最后看末帧,末帧的否计入(与外部线同口径,末帧是唯一能杀的时刻)
+    r2 = _arb(_res_gap(), FakeJudge({VAL_A: ["no"] * 3, VAL_B: ["no"] * 3}), cams=(cams, ts),
+              cam_roles=_UMI_ROLES, gripper=width, gripper_ts=t, gripper_closed_high=False)
+    l = r2.detail["arbitration"]["lines"]["robot0_camera0"]
+    assert l["anchor"] == "final" and [f["anchor"] for f in l["fallbacks"]] == ["release", "peak"]
+    assert r2.detail["arbitration"]["n_effective"] == 2 and r2.passed is False
+    # 松爪否、峰值否、末帧看不清(unclear):三站都没有"是",末帧 unclear 不计 → 弃权
+    def judge3(imgs, *, target, question, scene):
+        judge3.n += 1
+        return "unclear" if judge3.n > 6 else "no"
+    judge3.n = 0
+    r3 = _arb(_res_gap(), judge3, cams=(cams, ts), cam_roles=_UMI_ROLES,
+              gripper=width, gripper_ts=t, gripper_closed_high=False)
+    assert r3.passed is None
 
 
-def test_gripper_event_times_lists_every_event_with_window_and_suppression():
-    """多事件检测:0.5s 窗口差分抓到慢合爪;1s 内只留最大的一次;开爪反向;宽度制翻极性。"""
-    ts = np.arange(0.0, 10.0, 0.1)
-    width = np.full_like(ts, 0.1)
-    width[(ts >= 2.0) & (ts < 3.0)] = 0.0          # 2.0 合、3.0 开
-    width[(ts >= 6.0) & (ts < 6.4)] = 0.05          # 6.0 半合(幅度 0.5)
-    width[ts >= 6.4] = 0.0                          # 6.4 全合(同一次动作,1s 内只留一次)
-    ev = gripper_event_times(width, ts, closing=True, closed_high=False)
-    assert len(ev) == 2 and abs(ev[0] - 2.0) < 0.31 and abs(ev[1] - 6.4) < 0.51
-    op = gripper_event_times(width, ts, closing=False, closed_high=False)
-    assert len(op) == 1 and abs(op[0] - 3.0) < 0.31
-    assert gripper_event_times(np.ones(50), ts[:50], closing=True) == []
-    assert gripper_event_times(width[:2], ts[:2], closing=True) == []
+def _res_gap():
+    res = _res()
+    res.detail["verdict"] = "gap_violation"
+    res.detail["completions"] = [0.0, 1.0, 0.0]
+    res.detail["probe_frames"] = [0, 10, 20]
+    return res
 
 
-def test_transient_own_hand_takes_last_grasp_before_strong_probe():
-    """umi ep3 复盘:同一只手 t=2 先合(拉抽屉)、t=6 再合(抓盒子),打分层最后一个强探针在
-    帧 16(t=8)。"幅度最大"会选 t=2;规则改为强探针之前最近的一次 → t=6 → 帧 11/12/13/15。
-    强探针在 t=4(帧 8)时选 t=2 → 帧 3/4/5/7。"""
+def test_wrist_final_no_still_counts_without_gripper_events():
+    """没有松爪/峰值可依的持久任务,腕部线直接看末帧,末帧"否"照旧是失败证据(只有回退锚点才只救不杀)。"""
     cams, ts = _two_hand_cams()
-    t = ts["robot0_camera0"]
-    own = np.where((t >= 2.0) & (t < 3.5), 0.0, np.where(t >= 6.0, 0.0, 0.1))   # 两次闭合
-    width = np.stack([own, np.full_like(t, 0.1)], 1)                             # robot1 不动
-    for peak_frame, want in ((16, [11, 12, 13, 15]), (8, [3, 4, 5, 7])):
-        res = _res()
-        res.detail["task_type"] = "transient"
-        res.detail["completions"] = [0.0, 1.0, 1.0, 0.0]
-        res.detail["probe_frames"] = [0, peak_frame // 2, peak_frame, 20]
-        judge = FakeJudge({VAL_A: ["yes"] * 3, VAL_B: ["no"] * 3})
-        r = _arb(res, judge, qw=_qw("transient"), cams=(cams, ts), cam_roles=_UMI_ROLES,
-                 gripper=width, gripper_ts=t, gripper_closed_high=False,
-                 gripper_cam_cols={"robot0_camera0": 0, "robot1_camera0": 1})
-        line = r.detail["arbitration"]["lines"]["robot0_camera0"]
-        assert line["frames"] == want and line["anchor"] == "own_grasp"
-        assert r.passed is True
+    judge = FakeJudge({VAL_A: ["no"] * 3, VAL_B: ["no"] * 3})
+    r = _arb(_res(), judge, cams=(cams, ts), cam_roles=_UMI_ROLES)
+    arb = r.detail["arbitration"]
+    assert all(arb["lines"][c]["anchor"] == "final" for c in arb["lines"])
+    assert arb["n_effective"] == 2 and r.passed is False

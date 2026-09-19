@@ -432,6 +432,15 @@ def _apply_preflight(sem, info: dict, sample_rows: list[dict], embodiment_id: st
                 if not sem.gripper_dims and lay["gripper_dims"]:
                     sem.gripper_dims = tuple(lay["gripper_dims"])
                 sem.extras = dict(sem.extras or {}, layout=layout_for_extras(lay))
+        if sem.gripper_dims:
+            # 极性三层:字段名(width/opening → 宽度制)→ 样本开局状态(多数条目开局张开)→ droid 约定
+            from .dataset_semantics import (gripper_closed_from_samples,
+                                            gripper_polarity_by_names)
+            by_name = gripper_polarity_by_names(_action_names_list(info), sem.gripper_dims)
+            by_start = None if by_name else gripper_closed_from_samples(sample_rows, sem.gripper_dims)
+            sem.gripper_closed = by_name or by_start or "high"
+            extras["gripper_polarity_source"] = ("names" if by_name else
+                                                 "start_state" if by_start else "default")
         sem.source = "preflight"
     elif pf.get("status") in ("ambiguous", "none"):
         sem.action_space = sem.proprio_space = sem.control_mode = "unknown"
@@ -475,6 +484,13 @@ def _attach_semantics(rows: list[dict], sem, embodiment_id: str | None = None) -
         _ex = dict(sem.extras or {})
         if getattr(sem, "cameras", None):
             _ex["cameras"] = dict(sem.cameras)      # 相机朝向随 extras 列流到判定层
+        if sem.gripper_dims and "gripper" not in _ex:
+            # 夹爪列 + 极性随行(2026-09-18):档案没写、但字段名/数值指纹认出了夹爪列的数据集,
+            # 仲裁取证也要拿得到(gripper_dims 是 tuple 列,进不了 daft,只能走 extras)
+            _ex["gripper"] = {"dims": [int(d) for d in sem.gripper_dims],
+                              "closed": str(getattr(sem, "gripper_closed", "high") or "high"),
+                              "closed_source": str(_ex.get("gripper_polarity_source") or "default"),
+                              "source": str(sem.source)}
         r["semantics_extras"] = json.dumps(_ex, ensure_ascii=False)
 
 

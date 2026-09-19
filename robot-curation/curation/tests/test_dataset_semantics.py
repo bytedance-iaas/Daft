@@ -126,15 +126,14 @@ def test_profile_gripper_polarity_flows_to_semantics_and_extras():
             "features": {"action": {"names": umi_names}}}
     s = resolve_semantics(info, np.zeros((30, 20)))
     assert s.source == "profile" and s.gripper_closed == "low"
-    assert s.extras["gripper"] == {"dims": [9, 19], "closed": "low",
-                                   "by_camera": {"robot0_camera0": 9, "robot1_camera0": 19}}
-    assert s.cameras == {"robot0_camera0": "wrist", "robot1_camera0": "wrist"}   # 字典形式仍给 view
+    assert s.extras["gripper"] == {"dims": [9, 19], "closed": "low", "closed_source": "profile"}
+    assert s.cameras == {"robot0_camera0": "wrist", "robot1_camera0": "wrist"}
 
     info = {"robot_type": "franka",
             "features": {"action": {"names": ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]}}}
     s = resolve_semantics(info, np.zeros((30, 7)))
     assert s.source == "profile" and s.gripper_closed == "high"
-    assert s.extras["gripper"] == {"dims": [6], "closed": "high"}
+    assert s.extras["gripper"] == {"dims": [6], "closed": "high", "closed_source": "default"}
 
     info = {"robot_type": "unknown", "features": {"action": {"names": ["motor_0", "motor_1"]}}}
     s = resolve_semantics(info, np.zeros((30, 2)))       # pusht:gripper_dims: []
@@ -143,3 +142,61 @@ def test_profile_gripper_polarity_flows_to_semantics_and_extras():
     assert DS.gripper_closed_of({"gripper_closed": "LOW"}) == "low"
     assert DS.gripper_closed_of({"gripper_closed": "width"}) == "high"   # 写错值按缺省,不猜
     assert DS.gripper_closed_of({}) == "high"
+
+
+def test_gripper_polarity_inferred_from_field_names_without_profile():
+    """没档案的数据集(2026-09-18 用户定"只做便宜的一半"):夹爪列字段名带 width/opening/aperture
+    → 宽度制 low;gripper/finger/position 这类 → 缺省 high;随行 layout 也带上极性。"""
+    assert DS.gripper_closed_from_names(["x", "y", "gripper_width"], (2,)) == "low"
+    assert DS.gripper_closed_from_names(["x", "y", "robot0_opening"], (2,)) == "low"
+    assert DS.gripper_closed_from_names(["x", "y", "gripper"], (2,)) == "high"
+    assert DS.gripper_closed_from_names(["x", "y", "finger_position"], (2,)) == "high"
+    assert DS.gripper_closed_from_names(None, (2,)) == "high"
+    assert DS.gripper_closed_from_names(["gripper_width"], ()) == "high"     # 没夹爪列谈不上极性
+
+    names = [f"arm_{n}" for n in ("pos_x", "pos_y", "pos_z", "rot6d_0", "rot6d_1", "rot6d_2",
+                                  "rot6d_3", "rot6d_4", "rot6d_5", "gripper_width")]
+    info = {"robot_type": "brand_new_handheld", "features": {"action": {"names": names}}}
+    a = np.cumsum(np.random.default_rng(1).normal(size=(40, 10)) * 0.01, axis=0)
+    s = resolve_semantics(info, a, "nope")
+    assert s.source == "inferred" and s.gripper_dims == (9,) and s.gripper_closed == "low"
+    assert s.extras["layout"]["gripper_closed"] == "low" and s.extras["gripper_polarity_source"] == "names"
+
+    info = {"robot_type": "brand_new_arm",
+            "features": {"action": {"names": ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]}}}
+    a = np.cumsum(np.random.default_rng(2).normal(size=(40, 7)) * 0.01, axis=0)
+    a[:, 6] = np.linspace(0.0, 1.0, 40)                 # 名字说不清 → 看开局:0 起步=张开是小值 → high
+    s = resolve_semantics(info, a, "nope")
+    assert s.source == "inferred" and s.gripper_dims == (6,) and s.gripper_closed == "high"
+    assert s.extras["gripper_polarity_source"] == "start_state"
+
+
+def test_gripper_polarity_third_layer_from_start_state():
+    """极性第三层(档案没写、字段名说不清):多数条目开局夹爪张开 → 开局值在量程上半区 = 张开是大值
+    → low;开局在下半区 → high;量程退化/无样本 → None。字段名认得出时不走这层。"""
+    rng = np.random.default_rng(0)
+    def rows(start, end, n=5):
+        out = []
+        for _ in range(n):
+            g = np.linspace(start, end, 100) + rng.normal(0, 0.002, 100)
+            a = np.zeros((100, 7)); a[:, 6] = g
+            out.append({"action": a})
+        return out
+    assert DS.gripper_closed_from_samples(rows(0.10, 0.0), (6,)) == "low"     # 宽度制:开局 0.10 张开
+    assert DS.gripper_closed_from_samples(rows(0.0, 1.0), (6,)) == "high"     # droid 型:开局 0 张开
+    assert DS.gripper_closed_from_samples(rows(0.5, 0.5), (6,)) is None       # 全程不动
+    assert DS.gripper_closed_from_samples([], (6,)) is None
+    assert DS.gripper_polarity_by_names(["x", "gripper"], (1,)) is None
+    assert DS.gripper_polarity_by_names(["x", "gripper_width"], (1,)) == "low"
+
+    # 推断路径(无档案):名字只有 gripper → 走开局状态;来源写进 extras
+    names = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
+    info = {"robot_type": "brand_new_arm", "features": {"action": {"names": names}}}
+    a = np.cumsum(rng.normal(size=(100, 7)) * 0.01, axis=0); a[:, 6] = np.linspace(0.1, 0.0, 100)
+    s = resolve_semantics(info, a, "nope")
+    assert s.source == "inferred" and s.gripper_closed == "low"
+    assert s.extras["gripper_polarity_source"] == "start_state"
+    info2 = {"robot_type": "franka",
+             "features": {"action": {"names": names}}}
+    s2 = resolve_semantics(info2, np.zeros((30, 7)))
+    assert s2.extras["gripper"]["closed_source"] == "default"      # 档案没写极性:缺省,来源留痕

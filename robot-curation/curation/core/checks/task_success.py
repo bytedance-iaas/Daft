@@ -85,6 +85,11 @@ def voc_score(
     return float(rho), preds, idx
 
 
+#: 打分层"成功候选"口径(task_success 的 success_min 缺省):一个探针 ≥ 此值 = 打分层认为那一刻
+#: 任务已达成。仲裁选握持段、选回退锚点都引用同一个数,不另立门限(2026-09-18 用户定)。
+SUCCESS_MIN = 0.45
+
+
 def task_success(
     frames: Sequence[np.ndarray],
     instruction: str,
@@ -92,8 +97,8 @@ def task_success(
     *,
     n_probe: int = 8,
     voc_min: float | None = None,  # v6.5 已废弃(仅兼容旧 YAML,不参与判定)
-    success_min: float = 0.45,     # 末态物证≥此=成功候选(2026-07-08 锚定评测分界;
-                                   # v6.5 真值集复核后维持)
+    success_min: float = SUCCESS_MIN,  # 末态物证≥此=成功候选(2026-07-08 锚定评测分界;
+                                   # v6.5 真值集复核后维持;仲裁同口径)
     fail_max: float = 0.25,        # 末态≤此才可能谈失败(真失败聚集 0.1 附近)
     gap_max: float = 0.5,          # peak-final≥此=单调契约违约(物证打分不该回落:
                                    # 回落=模型抽风或真回退,都不配硬判)→ 灰区
@@ -485,10 +490,16 @@ def hold_kill_on_label_conflict(
 
 # 腕部线取证帧的时间偏移(秒,相对抓取/投放锚点)。取自 arb_bench_b_v2 实验版:
 # 瞬态任务看抓取前后(松爪≠失败,ep181 教训),持久任务看投放前后与其后的静置。
-_ARB_PEAK_MIN = 0.8            # 打分峰值≥此才能当回退锚点(打分层"末段稳定高位"口径)
-_ARB_RESCUE_ONLY_ANCHORS = ("release", "peak")   # 回退锚点只救不杀:早于末帧的时刻答"否"不是失败证据
-_ARB_WRIST_OFFSETS_TRANSIENT = (-0.5, 0.0, 0.5, 1.5)
+_ARB_PEAK_MIN = SUCCESS_MIN    # 回退锚点/握持段选择的探针门限 = 打分层成功候选口径(见文件头 SUCCESS_MIN)
+#: 回退锚点只救不杀:早于末帧/早于握持中段的时刻答"否"不是失败证据
+_ARB_RESCUE_ONLY_ANCHORS = ("release", "peak", "hold_early")
+#: 腕部线持久任务的取证偏移(秒,相对松爪):投放前后与其后的静置(arb_bench_b_v2 实验版)
 _ARB_WRIST_OFFSETS_PERSISTENT = (-0.5, 0.0, 1.0, 2.5)
+#: 瞬时任务每路取证帧数(与持久偏移数一致,判官一次看的帧数不变)
+_ARB_HOLD_BINS = 4
+#: 夹爪事件的窗口差分长度(秒):事件时刻±此长度内是开合过渡,不当取证帧;握持段短于两个
+#: 过渡长度=没有稳定握持,退回单点锚(来源:gripper_event_times 的 window_s)
+_GRIPPER_EVENT_WINDOW_S = 0.5
 
 
 def gripper_event_time(gripper, ts, *, closing: bool,
@@ -531,7 +542,7 @@ def gripper_event_time(gripper, ts, *, closing: bool,
 
 
 def gripper_event_times(gripper, ts, *, closing: bool, closed_high: bool = True,
-                        min_step: float = 0.15, window_s: float = 0.5,
+                        min_step: float = 0.15, window_s: float = _GRIPPER_EVENT_WINDOW_S,
                         sep_s: float = 1.0) -> list[float]:
     """一列夹爪信号里**全部**达标的闭爪/开爪时刻(升序)。gripper_event_time 只给幅度最大的一次,
     手持夹爪一条里会合好几次(2026-09-18 umi ep3:两手先一起拉抽屉、翻找、最后才抓盒子,
@@ -566,6 +577,79 @@ def gripper_event_times(gripper, ts, *, closing: bool, closed_high: bool = True,
         if all(abs(tt - k[1]) > sep_s for k in kept):
             kept.append((float(d[i]), tt))
     return sorted(k[1] for k in kept)
+
+
+def gripper_holds(gripper, ts, *, closed_high: bool = True) -> list[dict]:
+    """全部握持段 [{col, grasp, release}],按 grasp 升序。每列:每次闭合配它之后最近的一次松爪;
+    最后一次闭合若没有松爪 → release=None(握到片尾)。多列(双臂/双手)合在一起,谁的手都行。"""
+    g = np.asarray(gripper, dtype=np.float64)
+    if g.ndim == 1:
+        g = g[:, None]
+    t = np.asarray(ts, dtype=np.float64)
+    holds: list[dict] = []
+    for j in range(g.shape[1]):
+        cl = gripper_event_times(g[:, j], ts, closing=True, closed_high=closed_high)
+        op = gripper_event_times(g[:, j], ts, closing=False, closed_high=closed_high)
+        if op and (not cl or op[0] < cl[0]) and len(t):
+            # 开局就是握着的(第一个事件是松爪):握持段从片头算起
+            holds.append({"col": j, "grasp": float(t[0]), "release": float(op[0])})
+        for c in cl:
+            after = [o for o in op if o > c]
+            holds.append({"col": j, "grasp": float(c),
+                          "release": (float(after[0]) if after else None)})
+    return sorted(holds, key=lambda h: h["grasp"])
+
+
+def choose_hold(holds: list[dict], strong_times, *, transient: bool,
+                end_t: float | None = None) -> dict | None:
+    """选"让任务达成的那段握持":用打分层的强探针时刻(≥SUCCESS_MIN)给每段打分。
+    瞬时:强探针落在 [grasp, release] 内的个数(物体在手里时分数才高);
+    持久:强探针落在 release 之后的个数(放下之后末态才成立)。并列取最晚的一段;
+    没有强探针 → 最晚的一段。没有握持段 → None。"""
+    if not holds:
+        return None
+    st = [float(t) for t in (strong_times or [])]
+    def score(h):
+        r = h["release"] if h["release"] is not None else (end_t if end_t is not None else float("inf"))
+        if transient:
+            return sum(1 for t in st if h["grasp"] <= t <= r)
+        return sum(1 for t in st if t >= r)
+    return max(holds, key=lambda h: (score(h), h["grasp"]))
+
+
+def _frame_sharpness(img) -> float:
+    """拉普拉斯方差(visual_quality 同一口径):越大越清楚。cv2 缺失时全 0(退化为均匀取帧)。"""
+    try:
+        import cv2
+        arr = np.asarray(img)
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY) if arr.ndim == 3 else arr
+        return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def pick_hold_frames(frames, fts, hold: dict, *, n_bins: int = _ARB_HOLD_BINS,
+                     margin_s: float = _GRIPPER_EVENT_WINDOW_S,
+                     sharpness=_frame_sharpness) -> list[int]:
+    """握持段内取证帧:掐掉两端各 margin_s 的开合过渡,剩下的时间等分 n_bins 段,每段取最清楚的
+    一帧(拉普拉斯方差)。段太短(掐完不足一个过渡长度)→ 只取中点一帧。返回升序去重的帧下标。"""
+    fts = np.asarray(fts, dtype=np.float64)
+    if not len(fts) or len(fts) != len(frames):
+        return []
+    t0 = float(hold["grasp"]); t1 = float(hold["release"]) if hold.get("release") is not None else float(fts[-1])
+    lo, hi = t0 + margin_s, t1 - margin_s
+    if hi - lo < margin_s:
+        mid = 0.5 * (t0 + t1)
+        return [int(np.argmin(np.abs(fts - mid)))]
+    edges = np.linspace(lo, hi, n_bins + 1)
+    sel: list[int] = []
+    for a, b in zip(edges[:-1], edges[1:]):
+        idx = [i for i in range(len(fts)) if a <= fts[i] <= b]
+        if not idx:
+            idx = [int(np.argmin(np.abs(fts - 0.5 * (a + b))))]
+        best = max(idx, key=lambda i: sharpness(frames[i]))
+        sel.append(int(best))
+    return sorted(set(sel))
 
 
 def _arb_union_crop(img: np.ndarray, boxes: list, pad: float, upscale: int):
@@ -625,7 +709,7 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
                       cam_roles: dict | None = None,
                       forced_type: str | None = None,
                       gripper_closed_high: bool = True,
-                      gripper_cam_cols: dict | None = None) -> dict:
+                      strong_probe_frames: list | None = None) -> dict:
     """单意图跑完整取证链,返回该 run 的痕迹与共识(不做杀门槛,门槛在上层)。
 
     路的划分:相机名含 wrist(不分大小写)= 腕部线,其余 = 外部取证线(封顶
@@ -687,14 +771,27 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
     ext_cams = [c for c in names if not _is_wrist(c)][:max_cams]
     wrist_cams = [c for c in names if _is_wrist(c)]
 
-    t_grasp = t_release = None
+    # ── 握持段(2026-09-18 结构化):夹爪信号切出全部"闭合→松爪"段,按打分层强探针的重叠选出
+    # "让任务达成的那段";所有相机(腕部/外部、哪只手都一样)都看同一段。瞬时任务的证据在
+    # 段内,持久任务的证据在这一段的松爪之后。没有夹爪信号 → 退到打分层探针帧/中段/末帧。
+    ref_ts = next((np.asarray(cam_ts.get(c, ()), dtype=np.float64) for c in names
+                   if len(cam_ts.get(c, ())) == len(cam_frames.get(c) or [])), np.asarray(()))
+    strong_times = [float(ref_ts[int(i)]) for i in (strong_probe_frames or [])
+                    if 0 <= int(i) < len(ref_ts)]
+    hold = None
     if gripper is not None and gripper_ts is not None:
-        if transient:
-            t_grasp = gripper_event_time(gripper, gripper_ts, closing=True,
-                                         closed_high=gripper_closed_high)
-        else:
-            t_release = gripper_event_time(gripper, gripper_ts, closing=False,
-                                           closed_high=gripper_closed_high)
+        try:
+            hold = choose_hold(gripper_holds(gripper, gripper_ts, closed_high=gripper_closed_high),
+                               strong_times, transient=transient,
+                               end_t=(float(ref_ts[-1]) if len(ref_ts) else None))
+        except Exception:  # noqa: BLE001  信号形状不对=没有握持段而已
+            hold = None
+    t_grasp = hold["grasp"] if hold else None
+    t_release = (hold["release"] if hold and hold.get("release") is not None else None)
+    if hold:
+        run["hold"] = {"col": hold["col"], "grasp": round(hold["grasp"], 3),
+                       "release": (round(hold["release"], 3) if hold.get("release") is not None else None),
+                       "strong_probes_s": [round(t, 2) for t in strong_times]}
 
     def _ext_line(pic: np.ndarray, fi: int, cam: str) -> dict:
         """一帧上的外部取证:定位 → 裁剪放大 → 判官三票。返回该帧的痕迹
@@ -726,15 +823,21 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
             continue
         ts_ok = len(fts) == len(frames) and len(fts) > 0
         if transient:
-            if t_grasp is not None and ts_ok:
-                fi = int(np.argmin(np.abs(fts - (t_grasp + transient_offset_s))))
+            if hold is not None and ts_ok:
+                # 握持段内按清晰度取帧:先看后段(松爪前一刻,物体离原位最远、"拿出来了"最看得清),
+                # 答不出再看中段、前段;前段"否"只是"还没拿出来",只救不杀
+                sel = pick_hold_frames(frames, fts, hold)
+                if len(sel) >= 3:
+                    mid = sel[len(sel) // 2]
+                    anchors = [("hold_late", sel[-1]), ("hold_mid", mid), ("hold_early", sel[0])]
+                else:
+                    anchors = [("hold_late", sel[-1] if sel else len(frames) // 2)]
             elif transient_anchor is not None:
                 # 无夹爪信号(未注册规格库/无夹爪列):打分层认为"做成"的那一帧就是
                 # 物体在手里的时刻(2026-09-18 umi 抽屉条目),比盲取中段准
-                fi = int(min(max(int(transient_anchor), 0), len(frames) - 1))
+                anchors = [("grasp", int(min(max(int(transient_anchor), 0), len(frames) - 1)))]
             else:
-                fi = len(frames) // 2     # 无夹爪事件可依:取中段,不猜末帧(松爪≠失败)
-            anchors = [("grasp", fi)]
+                anchors = [("grasp", len(frames) // 2)]   # 无夹爪事件可依:取中段,不猜末帧(松爪≠失败)
         else:
             anchors = [("final", len(frames) - 1)]   # 持久任务:验末帧(撤手后仍须成立)
             if t_release is not None and ts_ok:
@@ -767,76 +870,75 @@ def _arb_single_chain(intent: str, cam_frames: dict, cam_ts: dict,
         if v in ("yes", "no"):
             run["line_verdicts"][cam] = v
 
-    # ── 腕部线:抓取(瞬态)/投放(持久)前后 4 帧 → 判官三票 ─────────────────
+    # ── 腕部线:瞬时=握持段内按清晰度取帧;持久=选中握持段的松爪前后 4 帧 → 判官三票 ────
+    # 腕部相机不分哪只手:都看同一段握持。握着的那只手是近景,空着的那只/另一只手是旁证;
+    # 瞬时任务腕部"否"只是"不在这只手里",不计(只救不杀)。
     for cam in wrist_cams:
         frames = list(cam_frames.get(cam) or [])
         fts = np.asarray(cam_ts.get(cam, ()), dtype=np.float64)
         if not frames:
             continue
         line_anchor = None
-        # 这路相机该看哪列夹爪(2026-09-18 umi ep3):单爪=那一列;多爪且档案对上了号=自己这只手
-        # 的那列;多爪没对号=瞬态沿用"幅度最大的那列"(t_grasp),持久**不取松爪锚点**——
-        # 双手数据集里松爪事件常是另一只手的,锚在那儿的"否"会凑成判废(ep6 复盘实见),
-        # 退到峰值帧回退(只救不杀)
-        own, multi = None, False
-        if gripper is not None and gripper_ts is not None:
-            g_arr = np.asarray(gripper, dtype=np.float64)
-            multi = g_arr.ndim == 2 and g_arr.shape[1] > 1
-            if not multi:
-                own = g_arr
-            elif gripper_cam_cols and cam in gripper_cam_cols:
-                own = g_arr[:, [int(gripper_cam_cols[cam])]]
+        ts_ok = len(fts) == len(frames) and len(fts) > 0
+        t0 = None
+        sel: list[int] = []
+        votes_done: list = []
+        fallbacks: list = []
         if transient:
-            if own is not None and multi:
-                # 对上号的那只手:一条里会合好几次(拉抽屉/翻找/抓目标),取打分层最后一个强探针
-                # **之前最近的一次**闭合 —— 让任务达成的那次抓取;强探针缺失则取最后一次
-                t_peak = None
-                if transient_anchor is not None and len(fts) == len(frames) and len(fts):
-                    t_peak = float(fts[int(min(max(int(transient_anchor), 0), len(fts) - 1))])
-                evs = gripper_event_times(own, gripper_ts, closing=True,
-                                          closed_high=gripper_closed_high)
-                before = [e for e in evs if t_peak is None or e <= t_peak + 0.5]
-                t0 = before[-1] if before else gripper_event_time(
-                    own, gripper_ts, closing=True, closed_high=gripper_closed_high)
-                if t0 is not None:
-                    line_anchor = "own_grasp"
-            elif own is not None:
-                t0 = gripper_event_time(own, gripper_ts, closing=True,
-                                        closed_high=gripper_closed_high)
-            else:
-                t0 = t_grasp
-            offs, scene = _ARB_WRIST_OFFSETS_TRANSIENT, "wrist_grasp"
-        else:
-            t0 = (gripper_event_time(own, gripper_ts, closing=False,
-                                     closed_high=gripper_closed_high)
-                  if own is not None and not multi else None)
-            offs, scene = _ARB_WRIST_OFFSETS_PERSISTENT, "wrist_release"
-        if len(fts) != len(frames) or not len(fts):
-            sel = sorted({0, len(frames) // 2, len(frames) - 1})
-            t0 = None
-        else:
-            if t0 is None:                 # 无夹爪事件:瞬态取峰值帧(有)否则中段,持久取末段
-                if transient and transient_anchor is not None:
+            scene = "wrist_grasp"
+            if hold is not None and ts_ok:
+                sel = pick_hold_frames(frames, fts, hold)
+                t0 = float(hold["grasp"])
+                line_anchor = "hold"
+            elif ts_ok:
+                if transient_anchor is not None:
                     t0 = float(fts[int(min(max(int(transient_anchor), 0), len(fts) - 1))])
-                elif not transient and peak_frame is not None:
-                    # 持久任务、无夹爪信号(未注册规格库):末段帧常常已经关门/撤手看不见,
-                    # 退到打分层峰值帧(与外部线的回退同一口径:只救不杀)
-                    t0 = float(fts[int(min(max(int(peak_frame), 0), len(fts) - 1))])
-                    line_anchor = "peak"
+                    line_anchor = "grasp"
                 else:
-                    t0 = float(fts[len(fts) // 2]) if transient else float(fts[-1])
-            sel = sorted({int(np.argmin(np.abs(fts - (t0 + o)))) for o in offs})
-        imgs = [_arb_upscale(frames[i]) for i in sel]
-        votes = _vote(imgs, scene, cam)
-        line = {"frames": [int(i) for i in sel], "votes": votes}
+                    t0 = float(fts[len(fts) // 2])
+                # 无握持段:围着锚点取与持久同样多的帧(偏移同 arb_bench_b_v2 实验版)
+                sel = sorted({int(np.argmin(np.abs(fts - (t0 + o)))) for o in (-0.5, 0.0, 0.5, 1.5)})
+        else:
+            # 持久任务:松爪前后 → 打分峰值帧(倒水这类握着做成的任务,证据在峰值帧)→ 末帧。
+            # 前两个是早于末帧的时刻,"否"只救不杀;末帧是最后一站,"否"照旧计入(与外部线同口径)。
+            # 末帧放最后而不是最前:腕部镜头松爪后就移开了,末帧多半看不见目标,先看有证据的时刻
+            scene = "wrist_release"
+            offs = _ARB_WRIST_OFFSETS_PERSISTENT
+            chain: list = []
+            if ts_ok:
+                if t_release is not None:
+                    chain.append(("release", float(t_release)))
+                if peak_frame is not None:
+                    chain.append(("peak", float(fts[int(min(max(int(peak_frame), 0), len(fts) - 1))])))
+                chain.append(("final", float(fts[-1])))
+            tried: list = []
+            for name, tt in chain:
+                sel_i = sorted({int(np.argmin(np.abs(fts - (tt + o)))) for o in offs})
+                votes_i = _vote([_arb_upscale(frames[i]) for i in sel_i], scene, cam)
+                tried.append({"anchor": name, "anchor_t": round(tt, 3),
+                              "frames": [int(i) for i in sel_i], "votes": votes_i})
+                if _arb_line_verdict(votes_i) == "yes":
+                    break
+            if tried:
+                last = tried[-1]
+                sel, t0, line_anchor = list(last["frames"]), last["anchor_t"], last["anchor"]
+                votes_done = last["votes"]
+                fallbacks = tried[:-1]
+        if not sel:
+            sel = sorted({0, len(frames) // 2, len(frames) - 1})
+        if transient or not ts_ok:
+            votes_done = _vote([_arb_upscale(frames[i]) for i in sel], scene, cam)
+            fallbacks = []
+        line = {"frames": [int(i) for i in sel], "votes": votes_done}
         if t0 is not None:
             line["anchor_t"] = round(float(t0), 3)
         if line_anchor:
             line["anchor"] = line_anchor
+        if fallbacks:
+            line["fallbacks"] = fallbacks
         run["lines"][cam] = line
-        v = _arb_line_verdict(votes)
-        if line_anchor == "peak" and v == "no":
-            # 峰值帧早于末帧,任务可能还没做到:这一帧的"否"不是失败证据(#151 同款,只救不杀)
+        v = _arb_line_verdict(votes_done)
+        if line_anchor in _ARB_RESCUE_ONLY_ANCHORS and v == "no":
             line["no_discarded"] = "回退帧上的否不计入(只救不杀)"
             continue
         if transient and v == "no":
@@ -894,7 +996,6 @@ def arbitration_review(
     spec: dict | None = None,          # 意图确定时出题器已给的 spec(复用,不重问)
     cam_roles: dict | None = None,     # profile 的 cameras 段({名: view}),腕部线按它分
     gripper_closed_high: bool = True,  # 夹爪极性:False=宽度制(数值大=张开,umi),找事件前翻转
-    gripper_cam_cols: dict | None = None,  # 多夹爪:{腕部相机: gripper 列下标},腕部线只看自己那只手
 ) -> CheckResult:
     """取证仲裁链(与 endstate_review 同风格:注入式依赖,core 内不发 HTTP)。
 
@@ -967,20 +1068,21 @@ def arbitration_review(
     # 只认 verdict 就一次也不回退)。gap_violation_monotonicity 是打分层落下的、不会被改写。
     # 打分层峰值探针帧(≥_ARB_PEAK_MIN 才算"做成的时刻";探针下标与 cam_frames 同一套采样)
     strong_peak = None          # 持久任务回退用:第一个峰值探针(#151 口径不变)
-    last_strong = None          # 瞬时任务取证用:最后一个 ≥阈值 的探针——拿到手之后分数
-                                # 应一直高,早期尖峰多是接触前的幻觉(umi 抽屉条目第 16 帧)
+    last_strong = None          # 瞬时任务无夹爪信号时的取证帧:最后一个 ≥阈值 的探针
+    strong_probes: list = []    # 全部 ≥阈值 的探针帧:选握持段用(哪段握持里分数高)
     try:
         comps = list(res.detail.get("completions") or [])
         probes = list(res.detail.get("probe_frames") or [])
         if comps and len(probes) == len(comps):
             arr = np.asarray(comps, dtype=float)
-            # 峰值不够高不当锚点(2026-09-18 umi 抽屉条目:峰值 0.5 出现在夹爪刚伸进
-            # 抽屉的时刻,盒子还没拿出来——那是过程分,不是"做成的时刻")
             if float(arr.max()) >= _ARB_PEAK_MIN:
                 strong_peak = int(probes[int(np.argmax(arr))])
-                last_strong = int(probes[int(np.flatnonzero(arr >= _ARB_PEAK_MIN)[-1])])
+                idx = np.flatnonzero(arr >= _ARB_PEAK_MIN)
+                last_strong = int(probes[int(idx[-1])])
+                strong_probes = [int(probes[int(i)]) for i in idx]
     except Exception:  # noqa: BLE001  痕迹形状不对=没有这个锚点而已
         strong_peak = last_strong = None
+        strong_probes = []
     # 持久任务:峰值帧只做"末帧看不清"后的回退,且只在打分层报过冲高崩回时
     peak_frame = None
     rules = res.detail.get("rules") or []
@@ -996,9 +1098,11 @@ def arbitration_review(
                     transient_offset_s=transient_offset_s, max_cams=max_cams, cam_hints=cam_hints,
                     peak_frame=peak_frame, spec=spec, transient_anchor=transient_anchor,
                     cam_roles=cam_roles, forced_type=forced_type,
-                    gripper_closed_high=gripper_closed_high, gripper_cam_cols=gripper_cam_cols)
+                    gripper_closed_high=gripper_closed_high, strong_probe_frames=strong_probes)
     run_a = _arb_single_chain(intent, cam_frames, cam_ts, gripper, gripper_ts, **chain_kw)
     arb["spec"] = run_a.get("spec")
+    if run_a.get("hold"):
+        arb["hold"] = run_a["hold"]
     arb["lines"] = run_a["lines"]
     arb["n_effective"] = run_a["n_effective"]
     arb["consensus"] = run_a["consensus"]
@@ -1008,6 +1112,16 @@ def arbitration_review(
     if downgraded:
         arb["kill_downgraded"] = True
         _rule(res.detail, "arbitration_kill_needs_two_lines")
+    if final == "no" and str(res.detail.get("review") or "") == "yes":
+        # 复核冲突护栏(2026-09-18 umi ep6 第二批):末态复核两路一致判完成,仲裁在同一批末帧上
+        # 判未完成 —— 两次核验对同一画面打架,是模型抖动不是证据;不杀,转人工。
+        # 库里既有 44 条仲裁判废没有一条复核是"完成",此门对旧结果零影响。
+        arb["kill_held"] = True
+        arb["kill_held_reason"] = "末态复核一致判完成,与仲裁结论打架"
+        final = "abstain"
+        res.detail["reason"] = (f"取证仲裁 {arb['n_effective']} 路判未完成,但末态复核各机位一致判完成:"
+                                "两次核验打架,不判废,转人工")
+        _rule(res.detail, "arbitration_kill_vs_review_done")
 
     arb["final"] = final
     n_eff = arb["n_effective"]

@@ -70,6 +70,62 @@ def _name_kind(name: str) -> str:
     return "other"
 
 
+#: 字段名里带这些词元 = 夹爪**宽度/开度**制(数值大是张开),极性与 droid 约定相反
+_WIDTH_TOKENS = ("width", "opening", "aperture", "open")
+
+
+def gripper_polarity_by_names(names: list | None, dims) -> str | None:
+    """按夹爪列的字段名推极性:名字带 width/opening/aperture/open → "low"(数值大=张开);
+    认不出 → None(名字里只有 gripper/grip/finger/position 这类词说明不了方向)。"""
+    names = [str(n) for n in (names or [])]
+    for d in (dims or ()):
+        if 0 <= int(d) < len(names):
+            toks = names[int(d)].lower().replace(".", "_").replace(" ", "_").split("_")
+            if any(t in _WIDTH_TOKENS for t in toks):
+                return "low"
+    return None
+
+
+def gripper_closed_from_names(names: list | None, dims) -> str:
+    """gripper_polarity_by_names 的缺省版:认不出按 droid 约定 "high"(数值大=闭合)。"""
+    return gripper_polarity_by_names(names, dims) or "high"
+
+
+def gripper_closed_from_samples(sample_rows, dims, *, head_frac: float = 0.05,
+                                min_head: int = 3) -> str | None:
+    """按样本条目的开局状态推极性(第三层,档案与字段名都说不清时):示教数据绝大多数开局
+    夹爪是**张开**的——每条取开头 head_frac(至少 min_head 帧)的中位数,在该列全样本量程里
+    归一化,多数条目开局落在外四分之一:上区 → 张开=数值大 → "low";下区 → "high"。开局在中段
+    (只抖不动/半开)、量程退化、没样本 → None,不猜。
+    这是启发式:开局就握着东西的数据集会认反,痕迹里记来源 start_state,人能看出来是猜的。"""
+    dims = tuple(int(d) for d in (dims or ()))
+    if not dims or not sample_rows:
+        return None
+    votes = []
+    for d in dims:
+        cols = []
+        for r in sample_rows:
+            a = np.asarray(r.get("action"), dtype=np.float64)
+            if a.ndim == 2 and d < a.shape[1] and a.shape[0] >= min_head:
+                cols.append(a[:, d])
+        if not cols:
+            continue
+        lo = min(float(c.min()) for c in cols); hi = max(float(c.max()) for c in cols)
+        if hi - lo < 1e-9:
+            continue
+        starts = []
+        for c in cols:
+            n = max(min_head, int(round(len(c) * head_frac)))
+            starts.append((float(np.median(c[:n])) - lo) / (hi - lo))
+        votes.append(float(np.median(starts)))
+    if not votes:
+        return None
+    v = float(np.median(votes))
+    if abs(v - 0.5) < 0.25:
+        return None          # 开局落在量程中段(只抖不动/半开):说明不了方向,不猜
+    return "low" if v >= 0.5 else "high"
+
+
 def detect_ee_layout(names: list | None, dim: int) -> dict:
     """EE 布局:{angle_dims, rotation_blocks:[(起点,长度,表示法)], euler_triplet, gripper_dims,
     translation_dims, source}。names 缺失/对不上维数 → 只对 6/7 维保留 xyz+rpy 老规则。"""
@@ -90,13 +146,15 @@ def detect_ee_layout(names: list | None, dim: int) -> dict:
         trans = tuple(i for i, k in enumerate(kinds) if k == "pos")
         return {"angle_dims": tuple(rot_idx), "rotation_blocks": blocks,
                 "euler_triplet": bool(blocks) and all(b[2] == "rpy" for b in blocks),
-                "gripper_dims": grip, "translation_dims": trans, "source": "names"}
+                "gripper_dims": grip, "translation_dims": trans, "source": "names",
+                "gripper_closed": gripper_closed_from_names(names, grip)}
     if dim in (6, 7):                                   # 经典 xyz+rpy(+夹爪):老规则原样
         return {"angle_dims": (3, 4, 5), "rotation_blocks": [(3, 3, "rpy")],
                 "euler_triplet": True, "gripper_dims": (6,) if dim == 7 else (),
-                "translation_dims": (0, 1, 2), "source": "dim_rule"}
+                "translation_dims": (0, 1, 2), "source": "dim_rule", "gripper_closed": "high"}
     return {"angle_dims": (), "rotation_blocks": [], "euler_triplet": False,
-            "gripper_dims": (), "translation_dims": (), "source": "unknown"}
+            "gripper_dims": (), "translation_dims": (), "source": "unknown",
+            "gripper_closed": "high"}
 
 
 def layout_for_extras(layout: dict) -> dict:
@@ -106,7 +164,8 @@ def layout_for_extras(layout: dict) -> dict:
             "euler_triplet": bool(layout.get("euler_triplet")),
             "gripper_dims": list(layout.get("gripper_dims") or ()),
             "translation_dims": list(layout.get("translation_dims") or ()),
-            "source": str(layout.get("source") or "")}
+            "source": str(layout.get("source") or ""),
+            "gripper_closed": str(layout.get("gripper_closed") or "high")}
 
 
 def _infer_control_mode(action: np.ndarray) -> str:
@@ -197,14 +256,8 @@ def _profile_extras_with_layout(prof: dict) -> dict:
     # 事件,本体未进规格库时只能从档案拿;没声明夹爪列的档案不写,老数据集 extras 一字不变
     if act.get("gripper_dims"):
         extras["gripper"] = {"dims": [int(x) for x in act["gripper_dims"]],
-                             "closed": gripper_closed_of(act)}
-        # 多夹爪(双手)数据集:相机与夹爪列对号(cameras: {名: {view, gripper_dim}}),仲裁的
-        # 腕部线才知道"自己这只手"何时闭合;没声明的相机不入表
-        by_cam = {str(k): int(v["gripper_dim"])
-                  for k, v in (prof.get("cameras") or {}).items()
-                  if isinstance(v, dict) and v.get("gripper_dim") is not None}
-        if by_cam:
-            extras["gripper"]["by_camera"] = by_cam
+                             "closed": gripper_closed_of(act),
+                             "closed_source": ("profile" if act.get("gripper_closed") else "default")}
     blocks = act.get("rotation_blocks")
     if blocks:
         lay = {"angle_dims": tuple(act.get("angle_dims", [])),
@@ -259,7 +312,13 @@ def resolve_semantics(info: dict, sample_action: np.ndarray | None = None,
         sem.euler_triplet = bool(lay["euler_triplet"])
         if not sem.gripper_dims and lay["gripper_dims"]:
             sem.gripper_dims = tuple(lay["gripper_dims"])
-        sem.extras = dict(sem.extras or {}, layout=layout_for_extras(lay))
+        by_name = gripper_polarity_by_names(list(anames), sem.gripper_dims)
+        by_start = None if by_name else gripper_closed_from_samples(
+            [{"action": sample_action}], sem.gripper_dims)
+        sem.gripper_closed = by_name or by_start or "high"
+        sem.extras = dict(sem.extras or {}, layout=layout_for_extras(lay),
+                          gripper_polarity_source=("names" if by_name else
+                                                   "start_state" if by_start else "default"))
     return sem
 
 

@@ -15,10 +15,6 @@ action:
 state:
   space: ee
 # 两路相机都装在手持夹爪上(没有外部固定机位):打分/复核题按"腕部机位"口径加提示(camera_view.wrist_only_hints)
-# gripper_dim = 这路相机所在那只手的夹爪列(仲裁腕部线按自己这只手的闭合事件取证,2026-09-18 ep3:
-# 取"幅度最大的那列"会选中另一只手抓抽屉把手的闭合,锚点落在盒子拿出来之前)
-cameras:
-  robot0_camera0: {view: wrist, gripper_dim: 9}
-  robot1_camera0: {view: wrist, gripper_dim: 19}
+cameras: {robot0_camera0: wrist, robot1_camera0: wrist}
 extras:
   note: "手持夹爪采集:action 即下一帧跟踪位姿,与 state 同源;执行器饱和/卡顿判不适用,平滑度/尖刺/夹爪照常"
