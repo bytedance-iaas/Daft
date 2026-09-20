@@ -11,6 +11,9 @@ Current summary:
   - 已盘点 release_v1 现状:8 个质检模块、Gradio 单体 UI、CLI、约 6.5 万行
   - 已输出 12 篇设计文档到 robot-curation/docs/design/
   - 已建立需求账本 feature_list.md(19 个 feature,阶段 0 两项 completed)
+  - 已导出团队评审副本到飞书文档(汇总 12 篇):
+    https://bytedance.us.larkoffice.com/docx/A4mndB5oBo8IGAxNuUlumWPBsod
+    以仓库内 Markdown 为准,飞书文档是副本;评审意见在飞书划词评论
   - 工作分支 feat/curator-v2 已创建,尚未做任何删除或重构
 
 Key findings (影响设计的现状事实):
