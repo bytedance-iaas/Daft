@@ -390,7 +390,11 @@ def global_lag(
     zs = (s_on_f - s_on_f.mean()) / s_on_f.std()
 
     dt = float(np.median(np.diff(ft)))
-    xc = signal.correlate(zf, zs, mode="full") / len(zf)
+    # method="direct"(2026-09-19):自动选法在这个长度上会走 FFT,scipy 自带的 C++ pocketfft 在
+    # dataverse 的 VCI/AMD EPYC 节点上间歇性段错误(退出码 139,faulthandler 栈落在 r2cn),
+    # 同镜像在 Intel 节点从未崩过。曲线按抽帧间隔采样只有几十到一两百个点,直接法的代价
+    # 可忽略,数值与 FFT 法只差浮点舍入(lite 回归六数据集零 diff)。
+    xc = signal.correlate(zf, zs, mode="full", method="direct") / len(zf)
     lags = signal.correlation_lags(len(zf), len(zs), mode="full")
     win = np.abs(lags * dt) <= max_lag_s
     xc_win, lags_win = xc[win], lags[win] * dt
