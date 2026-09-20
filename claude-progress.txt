@@ -1,0 +1,32 @@
+Date: 2026-09-20
+TaskStatus: completed
+
+Task scope:
+  读取需求文档《Physical AI Kit - Curator 设计文档Prompt》,完成需求澄清,
+  输出可开工的详细工程设计文档。本轮不写产品代码。
+
+Current summary:
+  - 已读需求文档(飞书 wiki GzHSwyALai8fRzkb5tTcXXYInRI)
+  - 已完成两轮需求澄清,15 条决策冻结(见 docs/design/00-overview.md §7)
+  - 已盘点 release_v1 现状:8 个质检模块、Gradio 单体 UI、CLI、约 6.5 万行
+  - 已输出 12 篇设计文档到 robot-curation/docs/design/
+  - 已建立需求账本 feature_list.md(19 个 feature,阶段 0 两项 completed)
+  - 工作分支 feat/curator-v2 已创建,尚未做任何删除或重构
+
+Key findings (影响设计的现状事实):
+  - 现有 vlm_client.py 只统计延迟,无 token usage 采集 → Token 消耗是全新能力
+  - 交付导出 v2 天然增量友好(文件级复用),v3 需按 chunk 粒度重编码
+  - 标注审计不是独立模块,是技能画像(M7)的第三步
+  - 并发闸门必须用自建信号量,daft 的 max_concurrency 对 async 行级 UDF 静默失效
+  - TOS FSX 挂载拒绝随机写,视频必须先写本地临时文件再整文件拷贝
+
+Main gaps:
+  - 设计文档尚未经需求方评审
+  - baseline 清理(删除上游 daft 源码)是破坏性操作,等需求方点头后才能执行
+  - 黄金基线产物尚未生成(必须用 v1 代码跑,且先于任何重构)
+
+Next steps:
+  1. 需求方评审 12 篇设计文档,确认架构与契约
+  2. 确认后执行 F1.1(对账工具 + 黄金基线)和 F1.2(baseline 清理)
+  3. F3.1 静态 HTML 两页可与上述并行启动
+  4. F1.3 契约冻结完成后,按 11-workstreams.md 的批次 1 开多 agent 并行
