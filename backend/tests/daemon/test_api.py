@@ -636,6 +636,41 @@ def test_timeline_from_events_and_subtasks(client_for, clock):
     assert body["items"][-1]["revision"] == 2 and body["items"][-2]["subtask_id"] == sub.id
 
 
+def test_timeline_of_a_resumed_task(client_for, clock):
+    """C5 1.2: a resume subtask that finishes ends the main run - the timeline says so."""
+    from daemon.transitions import change_subtask_state, record_revision
+
+    c = client_for()
+    rt = _rt(c)
+    t = seed_task(rt.repo)
+    for frm, to, kw in (("queued", "running", {}), ("running", "stopping", {}),
+                        ("stopping", "stopped", {"reason": "用户停止"})):
+        clock.advance(1000)
+        assert change_task_state(rt.repo, rt.hub, t.id, {frm}, to, at=clock(), **kw)
+    sub = rt.repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="resume", scope={},
+                                           state="queued"))
+    assert change_subtask_state(rt.repo, rt.hub, sub.id, {"queued"}, "running",
+                                at=clock.advance(1000))
+    rt.repo.switch_result_rev(t.id, 0, 1)
+    rt.repo.set_subtask_result_rev(sub.id, 1)
+    record_revision(rt.repo, t.id, 1, at=clock.advance(1000), subtask_id=sub.id)
+    assert change_task_state(rt.repo, rt.hub, t.id, {"stopped"}, "succeeded",
+                             at=clock.advance(1000))       # the parent first, then the subtask
+    assert change_subtask_state(rt.repo, rt.hub, sub.id, {"running"}, "succeeded",
+                                at=clock.advance(1000))
+    body = c.get(f"/api/v1/tasks/{t.id}/timeline").json()
+    assert_schema("openapi.yaml#/paths/~1tasks~1{id}~1timeline/get/responses/200/content/"
+                  "application~1json/schema", body)
+    assert [(e["kind"], e["state"]) for e in body["items"]] == [
+        ("created", None), ("started", "running"), ("stopped", "stopped"),
+        ("subtask_started", "running"), ("revision", None), ("finished", "succeeded"),
+        ("subtask_finished", "succeeded")]
+    assert body["items"][5]["text"] == "继续运行后主流程结束：已完成"
+    assert body["items"][6]["revision"] == 1 and body["items"][6]["subtask_id"] == sub.id
+    task = rt.repo.get_task(t.id)
+    assert task.finished_at == body["items"][5]["at"]              # the resume's end
+
+
 def test_timeline_mixes_row_and_events(client_for, clock):
     """Started without an event (e.g. purged), then paused by the startup reconciliation."""
     from daemon.reconcile import reconcile

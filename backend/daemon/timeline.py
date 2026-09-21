@@ -57,6 +57,9 @@ def _state_event(ev: P.Event, started: list[bool]) -> dict | None:
         return _entry(ev.at, "failed", _with_reason("任务失败", reason), state=to)
     if to in ("succeeded", "completed_with_errors") and frm == "running":
         return _entry(ev.at, "finished", f"主流程结束：{STATE_ZH[to]}", state=to)
+    if to in ("succeeded", "completed_with_errors") and frm in ("stopped", "failed"):
+        # a resume subtask finished the main run (C5 1.2 edges, 01 §3.1)
+        return _entry(ev.at, "finished", f"继续运行后主流程结束：{STATE_ZH[to]}", state=to)
     return None
 
 
