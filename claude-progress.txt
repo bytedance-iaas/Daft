@@ -2,32 +2,36 @@ Date: 2026-09-20
 TaskStatus: not_completed
 
 Task scope:
-  开工：开工前核对设计 → F1.1（W0 对账工具与黄金基线）→ F3.1 第二批静态稿（并行）→ 之后 F1.2 / F1.3。
+  开工：开工前核对设计 → F1.1（W0 对账工具与黄金基线）→ F1.2（W1 清理与重组）→ F3.1 第二批静态稿（并行）→ F1.3（W2 契约冻结）。
 
 Current summary:
-  - 开工前核对完成（评审记录 §9）：D33 执行出错取宽口径；D34 冻结点 release_v1@45bdf9292；
-    基线在现网 v1 Pod 里生成；需求方已同意删除上游 daft 源码；第一批静态稿风格已确认。飞书副本已同步（rev 65）。
-  - W0 工具完成（robot-curation/tools/parity/，用法见同目录 README.md）：
-      dump-v1   在同一进程跑 v1 原版 `curation run`，挂钩取数（过滤前的逐条结果、判决、去重、画像、补打描述、解码失败），
-                录制 / 回放 / 回放+补录全部模型调用；启动时按 v1_manifest.json 逐文件核对冻结点源码
-      compare   确定性六项逐位比、VLM 三项判决级比（噪声底）、终判清单（排除任一侧 error）、回放命中；--all-strict 用于回放对账
-      make-fixture / tape-summary / pack / archive / fetch / v1-manifest
-    契约：docs/contracts/cli/result-record.schema.json（C2 的逐条结果行，W0 先行定稿，verdict 增加 scored）、
-          docs/contracts/parity/vlm-tape-entry.schema.json
-  - 验证：tools/parity/tests 54 个测试全过（含 8 条合成数据上的真跑：录制→回放 --all-strict 全 PASS、123 次请求 100% 命中；
-    v1 跑两遍一致；改一个答案能被抓到；删一条录制算未命中；回放+补录能修复失败的调用；源码漂移拒跑）
+  - 开工前核对完成（评审记录 §9）：D33 执行出错取宽口径；D34 冻结点 release_v1@45bdf9292；基线在现网 Pod 里生成；
+    需求方同意删除上游 daft；第一批静态稿风格已确认。飞书副本已同步（rev 65）。
+  - F1.1 / W0 工具完成（tools/parity/，用法见同目录 README.md）：dump-v1（挂钩导出 v1 结果，录制/回放/补录模型调用）、
+    compare（六项逐位、三项判决级+噪声底、终判清单、回放命中；--all-strict）、make-fixture、tape-summary、pack、
+    archive/fetch、v1-manifest、v1-src、a-class-check。契约：docs/contracts/cli/result-record.schema.json（verdict 增加 scored）、
+    docs/contracts/parity/vlm-tape-entry.schema.json。58 个测试全过（含合成数据上的真跑：录制→回放逐位一致、123 次请求全部命中）。
+  - F1.2 / W1 五步完成，各自独立 commit：
+      ① 删除上游 daft（2636 个文件）；CLAUDE.md（原为指向 daft AGENTS.md 的符号链接）换成 Curator 说明
+      ② 目录重组：backend/curation（测试留在包内）、deploy/Dockerfile（构建上下文改为仓库根）、docs/design、docs/contracts、
+         frontend/、tools/parity；v1 使用文档归档 docs/v1/；本地 venv 挪到仓库根 .venv
+      ③ 下线 Gradio 界面与内嵌终端；ui/ 里不依赖 Gradio 的 auth/runner/manifest/episode_detail/reaper 暂留作移植参考；
+         134 条依赖界面的测试下线，逐条去向见 docs/v1/retired-ui-tests.md
+      ④ 依赖去掉 gradio、websockets；Dockerfile 去掉字体补丁层
+      ⑤ 新 CI（.github/workflows/ci.yml）：v1 单测、对账工具、A 类保护检查、镜像构建
+    验证：v1 单测 1408 过（5 条是本机无 GPU / macOS 的已知失败）；CLI 正常；
+          工作区 v1 回放冻结点录制带，九项逐位一致（重构未改变任何质检结果）；A 类 57 个文件与冻结点一致
   - 实测确认 v1 小问题：被去重剔除的条目仍在 passed.json 里（交付数据集正确），终判对账按交付口径比
-  - 本地环境：robot-curation/.venv（py3.12）；macOS 27 上 scipy 1.15.3 加载失败，本地用 1.16.3；v1 非 UI 单测 1058 过，
-    3 条挂在本机无 GPU/torch
-  - 进行中：F3.1 第二批静态稿（后台 agent 在独立 worktree 里做）
+  - 进行中：F3.1 第二批静态稿（后台 agent 在独立 worktree 里做，基于重组前的路径，合入时挪到 frontend/mockups/）
 
 Main gaps:
-  - F1.1 基线未生成：需在现网 Pod 里按 tools/parity/README.md「在现网 Pod 里生成黄金基线」执行；
-    需要两个数据集的 tos:// 地址和地域、存档目录（站点配置会自动记进 dump.json，不必另给）
+  - F1.1 基线未生成：需在现网 Pod 里按 tools/parity/README.md「在现网 Pod 里生成黄金基线」执行
+  - F1.2 验收③「镜像可构建」本机无 Docker，靠 CI 的 image 任务验证；分支 feat/curator-v2 尚未推送到 origin（需用户确认）
   - compare 目前只读导出目录，v2 运行目录的读取在 W2 冻结目录格式后补
   - 02 §3.6/§3.8 的 --revision 参数留给 W2 冻结 C2 时补
 
 Next steps:
-  1. 用户在 Pod 里跑基线（droid50 两遍、umi640 一遍、umi64 两遍、各自回放自检），存档并把 manifest 放进 robot-curation/golden/manifests/
-  2. 合入 F3.1 第二批静态稿并验证
-  3. 基线生成期间推进 F1.2（W1 目录重组，删除上游 daft）与 F1.3（W2 契约冻结）
+  1. 合入 F3.1 第二批静态稿并验证
+  2. 用户确认后推送分支，看 CI（尤其镜像构建）结果；通过则 F1.2 置 completed
+  3. 用户在 Pod 里跑基线（droid50 两遍、umi640 一遍、umi64 两遍、各自回放自检），存档 manifest 放进 tools/parity/golden/
+  4. F1.3 / W2 契约冻结：C1 模块注册表、C2 其余 CLI schema、C3 进度协议、C4 OpenAPI、C5 Repository 接口 + 契约测试
