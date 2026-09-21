@@ -1225,36 +1225,6 @@ def test_multi_select_also_blocks_when_the_parent_itself_is_a_legacy_delivery(tm
     assert runner.delivery_name_error(str(root), "old-batch", ["so101"])
 
 
-def test_app_blocks_legacy_delivery_name_before_starting_a_task(tmp_path):
-    """app 层:用老布局交付名点「开始质检」,任务根本不该被起起来 —— 任务目录
-    零新增,界面直接回「交付名…」那句话,而不是让用户等退出码 3 再翻日志。
-    (2026-08-14 用户实见的完整链路,这条钉住"拦在点按钮之前"。)
-    """
-    pytest.importorskip("gradio")
-    from curation.ui.app import build_app
-
-    deliv = tmp_path / "deliveries"
-    _legacy_delivery(deliv, "droid-200-full")
-    (tmp_path / "data" / "so101" / "meta").mkdir(parents=True)
-    # robot_type 写上:不写会先触发 2026-08-27 的「机器人型号」追问,
-    # 把本测试要钉的交付名校验挡在后面(那是另一条链路,另有测试)
-    (tmp_path / "data" / "so101" / "meta" / "info.json").write_text(
-        json.dumps({"robot_type": "so101"}), encoding="utf-8")
-    app = build_app(str(deliv), data_root=str(tmp_path / "data"))
-    fns = [f.fn for f in app.fns.values()
-           if getattr(f.fn, "__name__", "") == "_run_preflight"]
-    assert fns, "任务台的开跑回调没找到"
-    # 前四参 = 数据集路径/地区、输出路径/地区(2026-08-20 融合改版;单桶合成
-    # 部署时路径框的值就是 data_root/交付根本身,白名单精确匹配放行)
-    out = fns[0](str(tmp_path / "data"), "", str(deliv), "", ["so101"],
-                 "droid-200-full", "", [], "", None, "", None,
-                 "", "", None, None, None, None, "", False, False)
-    flat = json.dumps([str(x) for x in out], ensure_ascii=False)
-    assert "交付名" in flat and "output" not in flat
-    runs = runner.runs_root_of(str(deliv))
-    assert not os.path.isdir(runs) or not os.listdir(runs)
-
-
 # ── 「停止」按下去永远卡在「正在停止」(2026-08-14 用户实见)───────────────
 #
 # 现场(.runs/20260814-043019-run):用户点了停止 → 状态 stopping,**七分钟后仍是

@@ -117,36 +117,6 @@ def test_borrowed_output_url(tmp_path, monkeypatch):
         == "tos://herbucket/deliveries"
 
 
-def test_readonly_lock_messages():
-    from curation.ui import app as ui_app
-    assert ui_app.readonly_block_msg({}) == ""
-    assert ui_app.readonly_block_msg(None) == ""
-    assert ui_app.readonly_banner_md({"path": "x"}) == ""
-    m = {"tos_readonly": "桶 ai-infra 对本实例只读"}
-    assert "未记录" in ui_app.readonly_block_msg(m) and "ai-infra" in ui_app.readonly_block_msg(m)
-    assert ui_app.readonly_banner_md(m).startswith("🔒")
-
-
-def test_no_bucket_instance_leaves_output_boxes_empty_and_has_modal(tmp_path, monkeypatch):
-    """同事的纯直连部署(没挂载、没 TOS_BUCKET):两页的「交付目录」默认留空等借桶,
-    绝不显示 /data/deliveries;写不进去的对话框与按钮居中样式都在。"""
-    pytest.importorskip("gradio")
-    from curation.ui import app as ui_app
-    monkeypatch.setenv("CURATION_TOS_MOUNT", str(tmp_path / "mnt"))
-    monkeypatch.delenv("TOS_BUCKET", raising=False)
-    monkeypatch.delenv("CURATION_CONFIG", raising=False)
-    root = tmp_path / "data" / "deliveries"
-    root.mkdir(parents=True)
-    app = ui_app.build_app(str(root), data_root=str(tmp_path / "data" / "datasets"))
-    cfg = json.loads(json.dumps(app.get_config_file(), default=str))
-    outs = [c["props"].get("value") for c in cfg["components"]
-            if c["props"].get("label") == "交付目录"]
-    assert len(outs) == 2 and all(v in ("", None) for v in outs), outs
-    ids = {c["props"].get("elem_id") for c in cfg["components"]}
-    assert {"out-ask", "out-ask-btns", "rn-tout-note"} <= ids
-    assert "#out-ask-btns" in ui_app._ARCO_CSS
-
-
 # ── 读侧探针 + 地区找桶(2026-08-21 用户问"桶地址和地区对不上会不会跳出来提示")────────
 
 @pytest.mark.parametrize("kw, kind", [
@@ -202,25 +172,6 @@ def test_readable_and_writable_verdicts_share_region_hint():
     assert ok is False and "读权限" in why
     assert runner.readable_verdict("tos://bkt/ds", probe=lambda u, r: {"kind": "ok", "detail": ""}) == (True, "")
     assert runner.readable_verdict("not-a-url")[0] is False
-
-
-def test_run_page_region_red_notes_replace_fill_time_dialogs(tmp_path, monkeypatch):
-    """2026-08-28 用户定版:填表阶段桶/地区问题一律红字贴在地区下拉正下方,
-    读侧对话框(in-ask)退役;交付目录对话框(out-ask)保留但只在点「开始
-    质检」时出场。三个红字位都在。"""
-    pytest.importorskip("gradio")
-    from curation.ui import app as ui_app
-    monkeypatch.delenv("CURATION_CONFIG", raising=False)
-    root = tmp_path / "data" / "deliveries"
-    root.mkdir(parents=True)
-    app = ui_app.build_app(str(root), data_root=str(tmp_path / "data" / "datasets"))
-    cfg = json.loads(json.dumps(app.get_config_file(), default=str))
-    ids = {c["props"].get("elem_id") for c in cfg["components"]}
-    assert "in-ask" not in ids, "读侧填表对话框已退役"
-    assert {"out-ask", "out-ask-ok"} <= ids, "开跑闸的对话框还在"
-    assert {"rn-tin-rg-err", "rn-tout-rg-err", "rp-rg-err"} <= ids
-    assert any(c["props"].get("label") == "交付名" and c["type"] == "dropdown"
-               for c in cfg["components"]), "报告页的交付下拉叫「交付名」(与跑质检页同名)"
 
 
 def test_mounted_bucket_region_and_mismatch_text(monkeypatch):

@@ -60,7 +60,7 @@ def verify_v1_source(v1_src: str, manifest_path: str) -> dict:
     """Compare ``<v1_src>/curation`` with the manifest; report every mismatch."""
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
-    root = os.path.join(v1_src, "curation")
+    root = os.path.join(os.path.abspath(v1_src), "curation")
     expected = manifest["files"]
     seen, modified, missing = set(), [], []
     for rel, sha in sorted(expected.items()):

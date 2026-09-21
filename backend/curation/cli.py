@@ -20,14 +20,6 @@ os.environ.setdefault("DAFT_PROGRESS_BAR", "0")
 os.environ.setdefault("DAFT_SHOW_QUERY_ID", "0")
 
 
-def _env_flag(name: str) -> bool:
-    """布尔开关的环境变量缺省值:`CURATION_TERMINAL=1` 与命令行 `--terminal` 等价。
-
-    "假"的写法容忍 0/false/no/off/空(YAML 里手滑写成 "false" 是最常见的一脚)。
-    """
-    return os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no", "off")
-
-
 def _disp_w(s: str) -> int:
     """终端显示宽度:东亚宽字符(中文/全角)按 2 列算。argparse 按字符数折行,
     中文文案会被它低估一半宽度,窄终端下溢出硬折 —— 折行必须按这个宽度来。"""
@@ -377,36 +369,6 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--json", action="store_true", help="按 JSON 输出(给脚本用)")
     # 零测试零真机使用记录 → 藏(同上纪律);原说明:忽略缓存,重读清单。
     pb.add_argument("--refresh", action="store_true", help=argparse.SUPPRESS)
-
-    ui = _cmd("ui", "启动质检平台 Web 界面",
-              "启动质检平台 Web 界面:跑质检、看质检报告、人工裁决、执行裁决都在这里。")
-    ui.add_argument("--delivery", required=True,
-                    help="交付目录(或含多份交付的父目录,如 /mnt/tos/deliveries)")
-    ui.add_argument("--config", default=None,
-                    help="站点配置(仅供「后端状态」tab 探活;缺省读 CURATION_CONFIG)")
-    ui.add_argument("--host", default="0.0.0.0", help="监听地址(默认 0.0.0.0,便于 port-forward)")
-    ui.add_argument("--port", type=int, default=7860, help="监听端口(默认 7860)")
-    ui.add_argument("--timeout", type=float, default=5.0, help="后端探活超时秒数")
-    ui.add_argument("--review-dir", default=os.environ.get("CURATION_REVIEW_DIR"),
-                    help="静态审片站根目录(curation review-page 的产出);给出后挂 /review "
-                         "路由(同端口、Basic 锁覆盖)。也可用环境变量 CURATION_REVIEW_DIR")
-    ui.add_argument("--data-root", default=os.environ.get("CURATION_DATA_ROOT"),
-                    help="数据集根目录(「跑质检」页只列这个根下的数据集,"
-                         "缺省 /mnt/tos/datasets)。面板只在这个根下选数据集,"
-                         "不接受任意路径输入(安全边界)。"
-                         "也可用环境变量 CURATION_DATA_ROOT")
-    ui.add_argument("--terminal", action="store_true", default=_env_flag("CURATION_TERMINAL"),
-                    help="打开顶层「终端」页签(内嵌网页终端:xterm.js + 本服务的 "
-                         "/ws/term,与 UI 同端口同鉴权)。不传(或 CURATION_TERMINAL 未设)"
-                         "则页签不渲染、/ws/term 路由不注册。"
-                         "⚠️ 这是一个真 shell,公网暴露前必须配鉴权:"
-                         "CURATION_UI_HTPASSWD_FILE(htpasswd 多用户,推荐)或 "
-                         "CURATION_UI_USER/CURATION_UI_PASSWORD(单用户),"
-                         "并在网关上再加一层")
-    ui.add_argument("--root-path", default=os.environ.get("CURATION_UI_ROOT_PATH", ""),
-                    help="UI 挂载前缀(如 /curation):与别的服务共用一个网关域名、"
-                         "按路径分流时用;网关不剥前缀,全部路由都注册在前缀下。"
-                         "缺省挂根路径。也可用环境变量 CURATION_UI_ROOT_PATH")
 
     return p
 
@@ -997,18 +959,6 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_backends(args.config, args.timeout)
     if args.command == "public":
         return _cmd_public(args.config, as_json=args.json, refresh=args.refresh)
-    if args.command == "ui":
-        try:
-            import gradio  # noqa: F401
-        except ImportError:
-            print("[curation] ui 需要 gradio:pip install gradio", file=sys.stderr)
-            return 2
-        from .ui.app import launch
-        launch(args.delivery, config_path=args.config, host=args.host,
-               port=args.port, probe_timeout=args.timeout,
-               terminal=args.terminal, review_dir=args.review_dir,
-               data_root=args.data_root, root_path=args.root_path)
-        return 0
     if args.command == "run":
         from .ingest.lerobot_reader import NotADatasetError, OutputExistsError
         from .pipeline.run import run_pipeline

@@ -70,51 +70,6 @@ def test_rerun_is_idempotent_on_clips(tmp_path, monkeypatch):
     assert (tmp_path / "index.html").exists()
 
 
-def test_review_route_serves_and_auth_covers(tmp_path, monkeypatch):
-    """/review 挂上就能出 index.html;配 Basic 后同样 401→200。"""
-    pytest.importorskip("gradio")
-    from starlette.testclient import TestClient
-
-    from curation.ui.app import create_asgi_app
-    for k in ("CURATION_TERMINAL", "CURATION_UI_USER", "CURATION_UI_PASSWORD"):
-        monkeypatch.delenv(k, raising=False)
-    delivery = tmp_path / "dlv"
-    delivery.mkdir()
-    (delivery / "passed.json").write_text('{"episodes": {}}', encoding="utf-8")
-    site = tmp_path / "site"
-    site.mkdir()
-    (site / "index.html").write_text("<h1>review-site</h1>", encoding="utf-8")
-
-    app = create_asgi_app(str(delivery), terminal=False, review_dir=str(site))
-    with TestClient(app) as c:
-        r = c.get("/review/")
-        assert r.status_code == 200 and "review-site" in r.text
-        assert c.get("/review/nope.html").status_code == 404
-
-    monkeypatch.setenv("CURATION_UI_USER", "demo")
-    monkeypatch.setenv("CURATION_UI_PASSWORD", "s3cret")
-    app = create_asgi_app(str(delivery), terminal=False, review_dir=str(site))
-    with TestClient(app) as c:
-        assert c.get("/review/").status_code == 401
-        assert c.get("/review/", auth=("demo", "s3cret")).status_code == 200
-
-
-def test_no_review_dir_no_route(tmp_path, monkeypatch):
-    """不传 review_dir:/review 不存在(与终端「不传就没有」同一约定)。"""
-    pytest.importorskip("gradio")
-    from starlette.testclient import TestClient
-
-    from curation.ui.app import create_asgi_app
-    for k in ("CURATION_TERMINAL", "CURATION_UI_USER", "CURATION_UI_PASSWORD"):
-        monkeypatch.delenv(k, raising=False)
-    delivery = tmp_path / "dlv"
-    delivery.mkdir()
-    (delivery / "passed.json").write_text('{"episodes": {}}', encoding="utf-8")
-    app = create_asgi_app(str(delivery), terminal=False)
-    with TestClient(app) as c:
-        assert c.get("/review/").status_code == 404
-
-
 def test_site_json_records_source_dataset(tmp_path, monkeypatch):
     """站点身份文件(2026-08-11):UI 靠它把交付对上审片站,内容必须是**源数据集**。
 

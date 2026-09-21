@@ -27,6 +27,7 @@ B 类文件按意图移植到对应的 stage。新的输入格式（如开发中
 ```
 
 执行情况（2026-09-20）：①② 已完成，实际落点：`backend/curation`（v1 的测试仍在包内 `backend/curation/tests`，免得改几百处 import）、`backend/pyproject.toml`、`backend/requirements.txt`、`backend/scripts`、`deploy/Dockerfile`（构建上下文改为仓库根）、`docs/design`、`docs/contracts`、`frontend/`、`tools/parity`；v1 的使用文档与发布说明归档到 `docs/v1/`。
+③ 与原计划有一处出入：删掉的是 Gradio 界面（`ui/app.py`）、内嵌终端（`ui/terminal.py` 与 xterm 资产）和 `curation ui` 入口；`ui/` 里不依赖 Gradio 的 `auth` / `runner` / `manifest` / `episode_detail` / `reaper` 暂留，作为 W4、W10 的移植参考，连同它们的逻辑测试一起保留，移植完再整包删除。依赖界面的 134 条测试随之下线，逐条去向见 `docs/v1/retired-ui-tests.md`。改完用对账工具验证：工作区的 v1 回放冻结点的录制带，九项逐位一致。
 
 **为什么从 `release_v1` 派生而不是空分支**：保留 git blame。搬运算法时，
 每个阈值都能追回它是哪次实测定的（代码注释里全是这类依据）。真出了对账不一致，
