@@ -128,7 +128,8 @@ class Chain:
         return ["--input", self.ds, "--run-dir", self.rd,
                 "--source-manifest", self.path("source_manifest.json")]
 
-    def funnel(self, episodes: str = "0-7") -> None:
+    def before_vlm(self, episodes: str = "0-7") -> None:
+        """autolabel, check numeric, check frame: everything the VLM stage reads."""
         os.makedirs(self.path("stages"), exist_ok=True)
         self.step("autolabel", "autolabel", *self.common(), "--episodes", episodes, *self.vlm)
         self.step("numeric", "check", "--modules", self.NUMERIC, *self.common(),
@@ -136,6 +137,9 @@ class Chain:
         self.step("frame", "check", "--modules", self.FRAME, *self.common(),
                   "--episodes", "@" + self.path("stages", "numeric.txt"),
                   "--survivors-out", self.path("stages", "frame.txt"))
+
+    def funnel(self, episodes: str = "0-7") -> None:
+        self.before_vlm(episodes)
         self.step("vlm", "check", "--modules", "task_success", *self.common(),
                   "--episodes", "@" + self.path("stages", "frame.txt"), *self.vlm)
 

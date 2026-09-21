@@ -164,19 +164,24 @@ def apply_vlm_args(cfg: dict, args) -> None:
 
 
 def vlm_gates(args, plan_stage: dict | None) -> dict:
-    """The VLM gates of this call: the plan stage's, else derived from ``--concurrency``
-    (N = 1 when not given: one request at a time, doc 02 §1)."""
+    """The VLM gates of this call: the plan stage's, else derived from ``--concurrency``.
+
+    With neither, every gate is 1: one model request in flight at a time (doc 02
+    §1: no concurrency unless asked for). ``derive_gates(1)`` would still allow two
+    review votes at once (the endstate gate never drops below 2 there).
+    """
     from ..planner.gates import derive_gates
 
+    if args.concurrency is not None and int(args.concurrency) < 1:
+        raise UsageError("--concurrency must be at least 1")
     if plan_stage and plan_stage.get("gates"):
         n = int(args.concurrency) if args.concurrency else None
-        gates = derive_gates(n) if n else {}
+        gates = derive_gates(n) if n else {k: 1 for k in derive_gates(1)}
         gates.update({k: int(v) for k, v in plan_stage["gates"].items()})
         return gates
-    n = int(args.concurrency or 1)
-    if n < 1:
-        raise UsageError("--concurrency must be at least 1")
-    return derive_gates(n)
+    if args.concurrency is None:
+        return {k: 1 for k in derive_gates(1)}
+    return derive_gates(int(args.concurrency))
 
 
 def cpu_workers(args, plan_stage: dict | None) -> int:
@@ -247,33 +252,70 @@ def open_input(ctx: Context, args):
 
 def source_guard(ctx: Context, args, storage):
     """A callable(episodes) that checks the source objects of those episodes against
-    ``--source-manifest`` (meta files included); a no-op without one."""
+    ``--source-manifest`` (meta files included); a no-op without one.
+
+    v1's readers (``read_lerobot_meta``, ``LeRobotDataSource``) resolve the dataset's
+    semantics from the data files of its first ``min(100, --max-episodes)`` episodes
+    whatever the selection; those files are checked too, since they shape every
+    selected episode's judgement.
+    """
     from . import lerobot_meta, source_manifest
 
     manifest = source_manifest.guard(getattr(args, "source_manifest", None), storage.uri)
     if manifest is None:
         return None
+    state: dict = {}
 
     def check(episodes) -> None:
-        listing = storage.list()
-        info = lerobot_meta.load_info(storage)
-        fmt = lerobot_meta.detect_format(listing)
-        fmt.codebase_version = str(info.get("codebase_version") or "")
-        fmt.version = lerobot_meta.version_of(fmt.codebase_version)
-        keys = set(lerobot_meta.meta_keys(listing)) & set(manifest.objects)
-        wanted = {int(e) for e in episodes}
-        try:
-            meta = lerobot_meta.read_dataset(storage, listing, info, fmt)
-        except lerobot_meta.MetaError as e:
-            raise InputUnreachable(f"{storage.uri}: {e}") from None
-        for ep in meta.episodes:
-            if ep.index in wanted:
+        if not state:                    # one listing per command: it is what the call reads
+            listing = storage.list()
+            info = lerobot_meta.load_info(storage)
+            fmt = lerobot_meta.detect_format(listing)
+            fmt.codebase_version = str(info.get("codebase_version") or "")
+            fmt.version = lerobot_meta.version_of(fmt.codebase_version)
+            keys = set(lerobot_meta.meta_keys(listing)) & set(manifest.objects)
+            try:
+                meta = lerobot_meta.read_dataset(storage, listing, info, fmt)
+            except lerobot_meta.MetaError as e:
+                raise InputUnreachable(f"{storage.uri}: {e}") from None
+            for ep in lerobot_meta.semantics_sample(meta, getattr(args, "max_episodes", None)):
+                keys.update(ep.data_keys)
+            state.update(listing=listing, verified=set(),
+                         episodes={ep.index: ep for ep in meta.episodes}, first=keys)
+        keys = set(state.pop("first", ()))
+        for e in episodes:
+            ep = state["episodes"].get(int(e))
+            if ep is not None:
                 keys.update(ep.data_keys)
                 keys.update(ep.video_keys.values())
-        manifest.verify(listing, keys=sorted(keys))
-        ctx.log("info", f"source manifest: {len(keys)} objects unchanged")
+        # a file missing at snapshot time and still missing is unchanged (that episode is
+        # an error at run time); one that appeared since is a change
+        keys = {k for k in keys - state["verified"]
+                if k in manifest.objects or k in state["listing"]}
+        if keys:
+            manifest.verify(state["listing"], keys=sorted(keys))
+            state["verified"] |= keys
+        ctx.log("info", f"source manifest: {len(state['verified'])} objects unchanged")
 
     return check
+
+
+def meta_rows(input_dir: str, episodes, args, *, what: str) -> list[dict]:
+    """v1's metadata rows of ``episodes`` in index order (``pipeline.rows.meta_rows``).
+
+    v1 reads the semantics sample here as well; when that fails nothing can be
+    judged: exit 4 with the reader's reason instead of an internal error.
+    """
+    from ..pipeline.rows import index_of
+    from ..pipeline.rows import meta_rows as read
+
+    try:
+        rows = read(input_dir, episodes, embodiment_id=getattr(args, "embodiment_id", None),
+                    max_episodes=getattr(args, "max_episodes", None))
+    except Exception as e:  # noqa: BLE001 - reader errors are many
+        raise ModuleFailed(f"{what}: the dataset cannot be read: {type(e).__name__}: {e}"[:600],
+                           {"exception": type(e).__name__}) from None
+    return sorted(rows, key=lambda r: index_of(r["episode_id"]))
 
 
 def resolve_episodes(args, available, *, what: str = "the dataset") -> tuple[list[int], str]:

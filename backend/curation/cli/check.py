@@ -143,15 +143,17 @@ def _funnel_cpu(ctx, args, modules, run_dir, input_dir, episodes, part, plan_sta
 def _funnel_vlm(ctx, args, modules, run_dir, input_dir, episodes, part, plan_stage, guard):
     from ..pipeline import funnel
     from ..pipeline.check_stage import StageOptions, StageRun, TaskClients
-    from ..pipeline.rows import index_of, meta_rows
+    from ..pipeline.rows import index_of
     from ..pipeline.tasktext import TaskText
     from ..registry.registry import EmbodimentRegistry
 
     gates = runctx.vlm_gates(args, plan_stage)
     cfg = runctx.stage_config(ctx, modules, gates=gates, args=args)
+    if guard is not None:
+        guard([])                        # metadata and the semantics sample, read next
     instructions = {index_of(r["episode_id"]): str(r.get("instruction") or "")
-                    for r in meta_rows(input_dir, episodes, embodiment_id=args.embodiment_id,
-                                       max_episodes=args.max_episodes)}
+                    for r in runctx.meta_rows(input_dir, episodes, args,
+                                              what="check:task_success")}
     task_text = TaskText(run_dir, instructions)
     with runctx.VlmSession(ctx, args, cfg, "task_success", run_dir):
         from ..adapters.vlm_client import vlm_completion_from_config
@@ -206,16 +208,13 @@ def _profile(ctx, args, run_dir, input_dir, episodes, part, plan_stage, guard):
     from ..adapters import vlm_client
     from ..dataset_level.caption import make_vlm_captioner
     from ..pipeline.dataset_stages import run_skill_profile
-    from ..pipeline.rows import index_of, meta_rows
     from ..pipeline.tasktext import load_autolabel, load_relabels, precomputed_captions
 
     gates = runctx.vlm_gates(args, plan_stage)
     cfg = runctx.stage_config(ctx, ["skill_profile"], gates=gates, args=args)
     if guard is not None:
         guard(episodes)
-    rows = sorted(meta_rows(input_dir, episodes, embodiment_id=args.embodiment_id,
-                            max_episodes=args.max_episodes),
-                  key=lambda r: index_of(r["episode_id"]))
+    rows = runctx.meta_rows(input_dir, episodes, args, what="check:skill_profile")
     auto_caps = {f"ep{i:06d}": c
                  for i, c in precomputed_captions(load_autolabel(run_dir)).items()}
     sp = cfg.get("skill_profile") or {}

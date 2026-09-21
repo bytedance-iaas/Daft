@@ -173,6 +173,21 @@ class StageRun:
         return [e for e in eps if e not in done and e not in crashed], len(done), crashed
 
     # ------------------------------------------------------------ per episode
+    def _source(self, todo: list[int]) -> RowSource:
+        """v1's data source for these episodes. It reads the dataset's first episodes to
+        resolve its semantics; when that fails no episode can be judged (exit 4)."""
+        from ..cli.errors import ModuleFailed
+
+        o = self.o
+        try:
+            return RowSource(o.input_dir, todo, embodiment_id=o.embodiment_id,
+                             max_episodes=o.max_episodes)
+        except Exception as e:  # noqa: BLE001 - reader errors are many
+            raise ModuleFailed(f"{self.label}: the dataset cannot be read: "
+                               f"{type(e).__name__}: {e}"[:600],
+                               {"modules": list(o.modules),
+                                "exception": type(e).__name__}) from None
+
     def _records(self, ep: int, structs: dict[str, dict | None], logs: dict[str, IncidentLog],
                  elapsed: float, evidence: dict[str, list] | None = None) -> dict[str, dict]:
         return {m: record_from_struct(m, ep, structs.get(m), incidents=logs[m].items(),
@@ -322,8 +337,7 @@ class StageRun:
             if todo:
                 if o.verify_source is not None:
                     o.verify_source(todo)
-                source = RowSource(o.input_dir, todo, embodiment_id=o.embodiment_id,
-                                   max_episodes=o.max_episodes)
+                source = self._source(todo)
                 self._drive(source, todo, writer, inflight, breaker, total)
             drained = True
         finally:

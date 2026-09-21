@@ -169,7 +169,8 @@ def test_no_option_takes_a_credential():
     assert "--json" in opts and "--input" in opts                  # the walk works
     secretish = {o for o in opts
                  if any(w in o for w in ("key", "secret", "password", "token", "credential"))}
-    assert secretish == {"--idempotency-key"}                      # a request id, not a secret
+    # a request id, and the NAME of the variable that holds the model's API key
+    assert secretish == {"--idempotency-key", "--vlm-api-key-env"}
 
 
 # ---------------------------------------------------------------- credentials

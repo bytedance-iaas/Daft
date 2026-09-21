@@ -41,7 +41,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     from ..adapters import vlm_client
     from ..dataset_level.caption import make_vlm_captioner
     from ..pipeline.dataset_stages import run_autolabel
-    from ..pipeline.rows import index_of, meta_rows
+    from ..pipeline.rows import index_of
 
     run_dir = runctx.run_dir_of(args, create=True)
     plan_stage = runctx.load_plan_stage(args.plan_stage, [], stage_id="autolabel")
@@ -51,12 +51,12 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if warning:
         ctx.log("warn", warning)
     input_dir = storage.root if not storage.remote else storage.uri
-    rows = sorted(meta_rows(input_dir, episodes, embodiment_id=args.embodiment_id,
-                            max_episodes=args.max_episodes),
-                  key=lambda r: index_of(r["episode_id"]))
+    guard = runctx.source_guard(ctx, args, storage)
+    if guard is not None:
+        guard([])                        # metadata and the semantics sample, read next
+    rows = runctx.meta_rows(input_dir, episodes, args, what="autolabel")
     unlabeled = [index_of(r["episode_id"]) for r in rows
                  if not (r.get("instruction") or "").strip()]
-    guard = runctx.source_guard(ctx, args, storage)
     if guard is not None and unlabeled:
         guard(unlabeled)
     ctx.log("info", f"autolabel: {len(unlabeled)} of {len(rows)} episode(s) have no task text")

@@ -14,12 +14,19 @@ factories look up at call time, and restores them afterwards:
   the same latency row. Either way the outer retry (``--retry N``, 1 s / 2 s /
   4 s, at least ``Retry-After`` on 429) wraps it: timeouts, connection errors,
   5xx and 429 are tried again, anything else is not.
-* ``make_llm_ask`` - text calls keep v1's own four tries (1/2/4 s); the outer
-  retry wraps the whole call.
+* ``make_llm_ask`` - v1's text client tries four times (1/2/4 s) and never
+  lets its gate below 2. Here a text call is one HTTP request under a gate of
+  exactly ``max_in_flight``, with v1's request body, latency row and answer
+  checks; the outer retry stands in for the built-in tries, so ``--retry 3``
+  is v1's behaviour.
 
 When a call finally fails, the exception (or the error response the factory
 will raise on) carries ``curation_failure = {"cause", "attempts"}``, which the
 per-episode incident wrappers (:mod:`.incidents`) put into the record (D33).
+A client that swallows the failure (the review voter answers ``unavail``) is
+covered by :class:`failures`: the failures of the calls made from the current
+thread, and from the pool v1's clients fan out to (``_map_concurrent``, carried
+over while a policy is installed).
 
 Token usage: ``vlm_client`` hands every HTTP request it sends to a sink
 (:func:`vlm_client.set_usage_sink`); here it is booked on W6's two ledgers
@@ -60,12 +67,53 @@ def active() -> TransportPolicy | None:
     return _ACTIVE["policy"]
 
 
+_TL = threading.local()
+
+
+class failures:
+    """``with failures() as seen:`` - the model calls that finally failed while the
+    block ran, made from this thread or from v1's fan-out pool it started."""
+
+    def __enter__(self) -> list[dict]:
+        self._prev = getattr(_TL, "sink", None)
+        self.seen: list[dict] = []
+        _TL.sink = self.seen
+        return self.seen
+
+    def __exit__(self, *exc):
+        _TL.sink = self._prev
+        return False
+
+
 def _mark(obj, failure: Failure, attempts: int, tag: str) -> None:
+    info = {"cause": failure.cause, "attempts": attempts, "call_kind": tag,
+            "status": failure.status}
+    sink = getattr(_TL, "sink", None)
+    if sink is not None:
+        sink.append(dict(info))
     try:
-        obj.curation_failure = {"cause": failure.cause, "attempts": attempts,
-                                "call_kind": tag, "status": failure.status}
+        obj.curation_failure = info
     except Exception:  # noqa: BLE001 - some exception types refuse attributes
         pass
+
+
+def policy_map_concurrent(fn, items, max_concurrency):
+    """``vlm_client._map_concurrent`` with the caller's :class:`failures` sink carried
+    into the worker threads (same pool size, same order)."""
+    orig = _ACTIVE["orig"]["_map_concurrent"]
+    sink = getattr(_TL, "sink", None)
+    if sink is None:
+        return orig(fn, items, max_concurrency)
+
+    def carried(item):
+        prev = getattr(_TL, "sink", None)
+        _TL.sink = sink
+        try:
+            return fn(item)
+        finally:
+            _TL.sink = prev
+
+    return orig(carried, items, max_concurrency)
 
 
 def _single_request(send, *, tag: str, timeout_s: float, gate=None):
@@ -150,8 +198,68 @@ def _outcome(policy: TransportPolicy, tag: str, outcome: str) -> None:
             pass
 
 
+class SingleLlmAsk:
+    """One attempt of v1's ``make_llm_ask`` client (``adapters/vlm_client.py``).
+
+    Same URL, headers (resolved when the client is built), request body, gate
+    discipline, latency row and answer checks; one request per call. Holds only
+    picklable state, like v1's clients.
+    """
+
+    def __init__(self, endpoint: str, model: str, timeout_s: float | None = None,
+                 max_tokens: int = 8192, api_key_env: str | None = None,
+                 max_in_flight: int = 2, gate=None):
+        from ..adapters import vlm_client
+
+        self.url = endpoint.rstrip("/") + "/chat/completions"
+        self.model, self.max_tokens = model, max_tokens
+        self.timeout_s = (vlm_client.DEFAULT_TIMEOUTS_S["llm"] if timeout_s is None
+                          else timeout_s)
+        self.headers = vlm_client.auth_headers(api_key_env)
+        self.gate = gate if gate is not None else vlm_client.SharedGate(
+            max(1, int(max_in_flight)))
+
+    def __call__(self, prompt_text: str) -> str:
+        import requests
+
+        from ..adapters import vlm_client
+
+        payload = {"model": self.model, "temperature": 0.0, "max_tokens": self.max_tokens,
+                   "messages": [{"role": "user", "content": prompt_text}]}
+        if not self.gate.acquire(timeout=vlm_client.GATE_WAIT_FUSE_S):
+            raise requests.exceptions.Timeout("VLM 等待并发闸门超时")
+        started = time.time()
+        ok, fail_kind, sent = False, "connect_error", None
+        try:
+            r = sent = requests.post(self.url, json=payload, headers=self.headers,
+                                     timeout=self.timeout_s)
+            fail_kind = "http_error"
+            r.raise_for_status()
+            ok, fail_kind = True, ""
+        except requests.exceptions.Timeout:
+            fail_kind = "timeout"
+            raise
+        finally:
+            self.gate.release()
+            vlm_client.latency_record("llm", time.time() - started, ok, started_at=started,
+                                      call_id=uuid.uuid4().hex[:12], attempt=0,
+                                      fail_kind=fail_kind)
+            vlm_client.usage_note("llm", sent)
+        choice = r.json()["choices"][0]
+        if choice.get("finish_reason") == "length":
+            raise ValueError(
+                f"LLM 输出被截断 (finish_reason=length, max_tokens={self.max_tokens}, "
+                f"model={self.model}); 请提高输出 token 上限或减少归纳输入量。")
+        content = choice["message"].get("content")
+        if not isinstance(content, str) or not vlm_client.strip_reasoning(content).strip():
+            raise ValueError(
+                f"LLM 未返回有效文本 (finish_reason={choice.get('finish_reason')!r}, "
+                f"model={self.model})")
+        return vlm_client.strip_reasoning(content)
+
+
 class RetryingLlmAsk:
-    """A text client (``make_llm_ask``) with the outer retry around v1's own four tries."""
+    """A text client with the outer retry (``--retry N``, 1/2/4 s) around it."""
 
     def __init__(self, inner: Callable[[str], str]):
         self.inner = inner
@@ -182,8 +290,8 @@ class RetryingLlmAsk:
 
 
 def policy_make_llm_ask(*args, **kwargs):
-    orig = _ACTIVE["orig"]["make_llm_ask"]
-    return RetryingLlmAsk(orig(*args, **kwargs))
+    """``vlm_client.make_llm_ask`` while a policy is installed: one request per try."""
+    return RetryingLlmAsk(SingleLlmAsk(*args, **kwargs))
 
 
 class installed:
@@ -199,10 +307,12 @@ class installed:
             if _ACTIVE["policy"] is not None:
                 raise RuntimeError("a transport policy is already installed")
             _ACTIVE["orig"] = {"hedged_request": vlm_client.hedged_request,
-                               "make_llm_ask": vlm_client.make_llm_ask}
+                               "make_llm_ask": vlm_client.make_llm_ask,
+                               "_map_concurrent": vlm_client._map_concurrent}
             _ACTIVE["policy"] = self.policy
             vlm_client.hedged_request = policy_hedged_request
             vlm_client.make_llm_ask = policy_make_llm_ask
+            vlm_client._map_concurrent = policy_map_concurrent
             if self.usage is not None:
                 vlm_client.set_usage_sink(self.usage.note)
         return self
@@ -215,6 +325,7 @@ class installed:
             if orig:
                 vlm_client.hedged_request = orig["hedged_request"]
                 vlm_client.make_llm_ask = orig["make_llm_ask"]
+                vlm_client._map_concurrent = orig["_map_concurrent"]
             vlm_client.set_usage_sink(None)
             _ACTIVE["policy"] = None
             _ACTIVE["orig"] = None

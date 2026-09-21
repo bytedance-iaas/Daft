@@ -4,7 +4,8 @@ Real HTTP on 127.0.0.1, so the CLI runs unchanged (in process or as a subprocess
 that gets signals). Answers depend only on the request body (the parity fake's
 rule), so a run is reproducible; ``delay_s`` slows every answer down (to stop a
 run half way) and ``fail(prompt_text, payload) -> status | None`` makes chosen
-requests fail with an HTTP status.
+requests fail with an HTTP status. ``max_in_flight`` is the most requests it
+was ever answering at once.
 """
 from __future__ import annotations
 
@@ -21,6 +22,8 @@ class FakeVlmServer:
         self.delay_s, self.fail, self.model = delay_s, fail, model
         self.fake = FakeVlm(model)
         self.calls: list[dict] = []
+        #: requests being answered right now, and the most there ever were at once
+        self.in_flight = self.max_in_flight = 0
         self._lock = threading.Lock()
         self._server = None
 
@@ -48,11 +51,22 @@ class FakeVlmServer:
                 self._send(404, {"error": "not found"})
 
             def do_POST(self):
+                with srv._lock:
+                    srv.in_flight += 1
+                    srv.max_in_flight = max(srv.max_in_flight, srv.in_flight)
+                try:
+                    self._post()
+                finally:
+                    with srv._lock:
+                        srv.in_flight -= 1
+
+            def _post(self):
                 n = int(self.headers.get("Content-Length") or 0)
                 payload = json.loads(self.rfile.read(n) or b"{}")
                 text = _texts(payload)
                 with srv._lock:
-                    srv.calls.append({"path": self.path, "text": text})
+                    srv.calls.append({"path": self.path, "text": text, "payload": payload,
+                                      "headers": dict(self.headers)})
                 if srv.delay_s:
                     time.sleep(srv.delay_s)
                 status = srv.fail(text, payload) if srv.fail else None
@@ -67,7 +81,10 @@ class FakeVlmServer:
                               "completion_tokens_details": {"reasoning_tokens": 0},
                               "prompt_tokens_details": {"cached_tokens": 0}}})
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class Server(ThreadingHTTPServer):
+            request_queue_size = 256            # every call opens a connection (v1's clients)
+
+        self._server = Server(("127.0.0.1", 0), Handler)
         self._server.daemon_threads = True
         threading.Thread(target=self._server.serve_forever, kwargs={"poll_interval": 0.02},
                          daemon=True).start()

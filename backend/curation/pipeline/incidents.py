@@ -15,6 +15,7 @@ votes and arbitration votes on its own thread pools).
 """
 from __future__ import annotations
 
+import re
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -91,17 +92,29 @@ def wrap_call(fn: Callable | None, log: IncidentLog, *, step: str,
     return wrapped
 
 
+def label_camera(cam_label: str) -> str:
+    """``camera A (wrist); hint`` (core's review label) -> ``wrist``."""
+    head = str(cam_label).split(";")[0].strip()
+    m = re.search(r"\(([^()]*)\)$", head)
+    return m.group(1) if m else head
+
+
 def wrap_voter(voter: Callable | None, log: IncidentLog) -> Callable | None:
     """The per-camera review voter answers ``unavail`` exactly when one of its two
-    questions failed (``vlm_client.make_endstate_voter``); note that as an incident."""
+    questions failed (``vlm_client.make_endstate_voter``); note that as an incident,
+    with the cause the transport recorded for the failed question."""
     if voter is None:
         return None
 
     def wrapped(start_frames, end_frames, cam_label, instruction):
-        vote = voter(start_frames, end_frames, cam_label, instruction)
+        from .vlm_policy import failures
+
+        with failures() as seen:
+            vote = voter(start_frames, end_frames, cam_label, instruction)
         if vote == "unavail":
-            log.add("endstate", call_kind="endstate", camera=str(cam_label).split(";")[0],
-                    cause="call_failed")
+            info = seen[-1] if seen else {}
+            log.add("endstate", call_kind="endstate", camera=label_camera(cam_label),
+                    cause=info.get("cause") or "call_failed", attempts=info.get("attempts"))
         return vote
 
     return wrapped

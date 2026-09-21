@@ -113,7 +113,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
 
 
 def _task_text(ctx, args, run_dir: str, episodes: list[int]):
-    from ..pipeline.rows import index_of, meta_rows
+    from ..pipeline.rows import index_of
     from ..pipeline.tasktext import TaskText
 
     instructions: dict[int, str] = {}
@@ -121,9 +121,8 @@ def _task_text(ctx, args, run_dir: str, episodes: list[int]):
         storage = runctx.open_input(ctx, args)
         input_dir = storage.root if not storage.remote else storage.uri
         instructions = {index_of(r["episode_id"]): str(r.get("instruction") or "")
-                        for r in meta_rows(input_dir, episodes,
-                                           embodiment_id=args.embodiment_id,
-                                           max_episodes=args.max_episodes)}
+                        for r in runctx.meta_rows(input_dir, episodes, args,
+                                                  what="aggregate")}
     return TaskText(run_dir, instructions)
 
 

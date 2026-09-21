@@ -28,13 +28,14 @@ def chain(tmp_path_factory, mini_dataset):
     with pytest.MonkeyPatch.context() as mp:
         for name in ENV_VARS:
             mp.delenv(name, raising=False)
-        with FakeVlmServer() as vlm:
+        with FakeVlmServer(delay_s=0.003) as vlm:
             c = Chain(mini_dataset, str(tmp / "run"), vlm.url)
             c.front()
             c.funnel()
             c.post()
             c.deliver(str(tmp / "delivery"))
             c.vlm_calls = list(vlm.calls)
+            c.max_in_flight = vlm.max_in_flight
             c.delivery = str(tmp / "delivery")
             yield c
 
@@ -44,6 +45,11 @@ def test_every_step_ran_and_fits_its_contract(chain):
                                  "frame", "vlm", "funnel", "dedup", "profile", "final",
                                  "report", "export", "verify"]
     assert all(s.rc == 0 for s in chain.steps.values())
+
+
+def test_by_default_one_model_request_at_a_time(chain):
+    """No --concurrency anywhere in the chain: never two model requests in flight."""
+    assert len(chain.vlm_calls) > 100 and chain.max_in_flight == 1
 
 
 def test_the_funnel_takes_the_survivors_of_each_stage(chain):
