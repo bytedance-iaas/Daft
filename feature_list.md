@@ -38,7 +38,7 @@
 - 描述：删除上游 daft 源码，按设计文档 §6 重组目录，删除 Gradio UI 与内嵌终端，清理依赖
 - 验收：①CLI 可运行；②搬运的单元测试全绿；③镜像可构建；④每步独立 commit 可回滚
 - 前置：需求方确认删除上游代码
-- status: not_completed
+- status: **completed**
 
 ### F1.3 契约冻结
 - 描述：定稿 C1 模块注册表、C2 CLI JSON schema、C3 进度协议、C4 REST OpenAPI、C5 Repository 接口
