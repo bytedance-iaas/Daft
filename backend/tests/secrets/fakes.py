@@ -82,6 +82,7 @@ class FakeTos:
         self.calls: list[dict] = []
         self.fail_delete = False
         self.down = False
+        self.list_error: Exception | None = None     # raised by list_buckets when set
         self._lock = threading.Lock()
 
     # -- setup -------------------------------------------------------------------
@@ -138,6 +139,8 @@ class FakeTosClient:
 
     def list_buckets(self):
         ak = self._call("list_buckets")
+        if self.tos.list_error is not None:
+            raise self.tos.list_error
         if ak is None or not self.tos.grants[ak].list_buckets:
             raise FakeTosError(403, "AccessDenied", "Access Denied")
         return sorted(self.tos.buckets)
