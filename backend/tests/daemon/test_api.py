@@ -44,6 +44,8 @@ def test_probes_at_root_and_under_the_prefix(client_for, base):
         assert r.json() == {"status": "ok", "checks": {
             "db_writable": True, "master_key": True, "workdir_writable": True,
             "scratch_writable": True, "reconciled": True}}
+        assert c.head(f"{prefix}/healthz").status_code == 200
+        assert c.head(f"{prefix}/readyz").status_code == 200
 
 
 def test_readyz_turns_503_when_a_check_fails(client_for, tmp_path):

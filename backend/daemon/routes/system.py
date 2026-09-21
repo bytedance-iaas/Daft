@@ -35,5 +35,8 @@ def probe_paths(base_path: str) -> frozenset[str]:
 
 def install(app: FastAPI, base_path: str) -> None:
     for prefix in dict.fromkeys(("", base_path)):
-        app.add_api_route(prefix + "/healthz", healthz, methods=["GET"], include_in_schema=False)
-        app.add_api_route(prefix + "/readyz", readyz, methods=["GET"], include_in_schema=False)
+        # HEAD too: gateway-side health checks are not always GET
+        app.add_api_route(prefix + "/healthz", healthz, methods=["GET", "HEAD"],
+                          include_in_schema=False)
+        app.add_api_route(prefix + "/readyz", readyz, methods=["GET", "HEAD"],
+                          include_in_schema=False)
