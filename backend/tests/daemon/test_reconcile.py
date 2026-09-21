@@ -9,11 +9,11 @@ from daemon.transitions import change_subtask_state, change_task_state
 from .conftest import T0, seed_task
 
 
-def _to(repo, task_id, *steps):
+def _to(repo, task_id, *steps, owner="default"):
     """Drive a task with raw CAS steps, e.g. ("running",), ("pausing", "user")."""
     for step in steps:
         to, pause = (step if isinstance(step, tuple) else (step, None))
-        cur = repo.get_task(task_id).state
+        cur = repo.get_task(task_id, owner=owner).state
         assert repo.update_task_state(task_id, {cur}, to, pause_reason=pause, at=T0), (cur, to)
 
 
@@ -124,12 +124,26 @@ def test_subtasks_follow_the_same_table(repo, clock):
     got = {name: repo.get_subtask(s.id).state for name, s in subs.items()}
     assert got == {"running": "queued", "pausing-system": "queued", "pausing-user": "paused",
                    "paused-user": "paused", "stopping": "stopped", "queued": "queued",
-                   "paused-unknown": "queued"}
-    assert counts["subtask:paused->queued"] == 3
+                   "paused-unknown": "paused"}                  # no recorded reason: stay paused
+    assert counts["subtask:paused->queued"] == 2
     for t in parents:
         assert repo.get_task(t.id).state == "completed_with_errors"        # parents never move
     user_paused = [e for e in hub.buffered(parents[3].id) if e.data.get("subtask_id")]
     assert user_paused[-1].data["pause_reason"] == "user"
+
+
+def test_tasks_of_other_owners_are_reconciled_too(repo, clock):
+    """IAM later: owners other than default must not make the start-up loop fail forever."""
+    t = seed_task(repo, owner="alice")
+    _to(repo, t.id, "running", owner="alice")
+    parent = seed_task(repo, "alice's finished", owner="alice")
+    _to(repo, parent.id, "running", "completed_with_errors", owner="alice")
+    sub = _sub(repo, parent.id, "running")
+    counts = reconcile(repo, EventHub(1), clock)
+    assert repo.get_task(t.id, owner="alice").state == "queued"
+    assert repo.get_subtask(sub.id).state == "queued"
+    assert counts["task:paused->queued"] == 1 and counts["subtask:paused->queued"] == 1
+    assert repo.list_events(resource=t.id, owner="alice").items            # audit under alice
 
 
 def test_reconciliation_leaves_system_log_lines(repo, clock, tmp_path):

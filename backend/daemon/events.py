@@ -17,7 +17,14 @@ stderr can call them directly.
   interval is over, a stage's final progress goes out at once; ``log`` at most 20
   per second per task, the rest is dropped (the full log is in ``/logs``) and the
   next delivered line carries ``dropped: N``. ``state``, ``done`` and ``reset``
-  are never throttled.
+  are never throttled, and before a ``state`` or ``done`` goes out the task's
+  pending progress and usage are sent, so the final totals precede the end.
+* ``state`` / ``done`` may carry a version (:mod:`daemon.transitions` passes the
+  id of the audit event written with the change, which grows in commit order):
+  one older than what was already published for that task (or subtask) is
+  dropped, so two threads racing never leave the stream on a stale state.
+* A subscriber that falls ``max_queue`` events behind gets nothing more after the
+  gap; its stream sends ``reset`` and ends.
 * ``progress`` and ``usage`` carry cumulative values, so a replayed or repeated
   event never double counts; the database stays the source of truth.
 """
@@ -88,6 +95,8 @@ class Subscription:
     def _deliver(self, ev: SseEvent) -> bool:
         if self.closed:
             return False
+        if self.overflowed:
+            return True                  # past a gap nothing more is queued; the stream resets
         if len(self._items) >= self._max_queue:
             self.overflowed = True
         else:
@@ -139,6 +148,8 @@ class _TaskBuffer:
 
 @dataclass
 class _Throttle:
+    """Per-task publishing state: throttles and the newest state version seen."""
+
     last_progress: float = float("-inf")
     last_usage: float = float("-inf")
     pending_progress: dict = field(default_factory=dict)     # stage id -> data
@@ -146,6 +157,7 @@ class _Throttle:
     log_tokens: float = 0.0
     log_refilled: float = float("-inf")
     log_dropped: int = 0
+    versions: dict = field(default_factory=dict)             # (event, subtask id) -> version
 
 
 class EventHub:
@@ -206,21 +218,26 @@ class EventHub:
     # -- publishing (any thread) ------------------------------------------------
     def publish_state(self, task_id: str, state: str, *, pause_reason: str | None = None,
                       at: int | None = None, subtask_id: str | None = None,
-                      reason: str | None = None) -> str:
+                      reason: str | None = None, version: int | None = None) -> str | None:
+        """``version`` orders concurrent publishers: an older one than already sent is dropped.
+
+        :mod:`daemon.transitions` passes the id of the audit event written with the
+        state change, which grows in commit order. Returns None when dropped.
+        """
         data: dict[str, Any] = {"state": state, "pause_reason": pause_reason,
                                 "at": int(at if at is not None else self._wall())}
         if subtask_id:
             data["subtask_id"] = subtask_id
         if reason:
             data["reason"] = reason
-        return self._publish_now(task_id, "state", data)
+        return self._publish_now(task_id, "state", data, version=version, subtask_id=subtask_id)
 
     def publish_done(self, task_id: str, state: str, *, failed_modules: Iterable[str] = (),
-                     subtask_id: str | None = None) -> str:
+                     subtask_id: str | None = None, version: int | None = None) -> str | None:
         data: dict[str, Any] = {"state": state, "failed_modules": sorted(set(failed_modules))}
         if subtask_id:
             data["subtask_id"] = subtask_id
-        return self._publish_now(task_id, "done", data)
+        return self._publish_now(task_id, "done", data, version=version, subtask_id=subtask_id)
 
     def publish_progress(self, task_id: str, stage: dict) -> str | None:
         """``stage`` is a C4 ``StageProgress`` (cumulative ``done`` / ``total``); other keys are dropped."""
@@ -292,9 +309,34 @@ class EventHub:
             raise ValueError(f"unknown SSE event {event!r}")
         return self._publish_now(task_id, event, dict(data))
 
-    def _publish_now(self, task_id: str, event: str, data: dict) -> str:
+    def _publish_now(self, task_id: str, event: str, data: dict, *, version: int | None = None,
+                     subtask_id: str | None = None) -> str | None:
         with self._lock:
+            if version is not None:
+                versions = self._throttle(task_id).versions
+                key = (event, subtask_id or "")
+                if key in versions and version <= versions[key]:
+                    return None                  # a newer state already went out
+                versions[key] = version
+            if event in ("state", "done"):
+                self._flush_task(task_id)        # throttled progress / usage first, in order
             return self._emit(task_id, event, data)
+
+    def _flush_task(self, task_id: str) -> None:
+        """Emit this task's pending progress and usage now, whatever the interval says."""
+        th = self._throttles.get(task_id)
+        if th is None:
+            return
+        now = self._clock()
+        if th.pending_progress:
+            pending, th.pending_progress = th.pending_progress, {}
+            th.last_progress = now
+            for data in pending.values():
+                self._emit(task_id, "progress", data)
+        if th.pending_usage is not None:
+            data, th.pending_usage = th.pending_usage, None
+            th.last_usage = now
+            self._emit(task_id, "usage", data)
 
     # -- internals (hold the lock) ----------------------------------------------
     def _throttle(self, task_id: str) -> _Throttle:

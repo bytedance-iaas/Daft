@@ -15,8 +15,9 @@ import sys
 import time
 
 _SECRET_NAMES = (r"tos_secret_key|tos_access_key|tos_session_token|ark_api_key|api_key|apikey|"
-                 r"secret_access_key|access_key_id|password|passwd|master_key|curator_master_key\w*|"
-                 r"curation_ui_password|curator_auth_password|token")
+                 r"secret_access_key|access_key_id|secret_key|access_key|secret|password|passwd|"
+                 r"master_key|curator_master_key\w*|curation_ui_password|curator_auth_password|"
+                 r"token|ak|sk")
 _PATTERNS = (
     re.compile(r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?(?:basic|bearer)\s+)[A-Za-z0-9+/=._~-]+"),
     re.compile(rf"(?i)(\b(?:{_SECRET_NAMES})[\"']?\s*[:=]\s*[\"']?)([^\"'\s,;}}&]+)"),

@@ -78,10 +78,10 @@ class Frontend:
         rel = rel.lstrip("/")
         if rel in ("", "index.html"):
             return self.index_response()
-        candidate = (self.dir / rel).resolve()
         try:
+            candidate = (self.dir / rel).resolve()
             candidate.relative_to(self.dir)
-        except ValueError:
+        except (ValueError, OSError):          # outside dist, or not a usable path (NUL byte)
             raise ApiError("not_found", "这个地址不存在") from None
         if candidate.is_file():
             cache = IMMUTABLE if rel.startswith("assets/") else "no-cache"

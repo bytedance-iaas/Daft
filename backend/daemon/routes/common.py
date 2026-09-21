@@ -2,9 +2,13 @@
 
 Write endpoints accept only ``application/json`` and there is no CORS (design doc
 03, section 1): with Basic auth the browser sends credentials by itself, so these
-two rules are what keeps other sites from issuing writes. Browsers also label
-cross-site requests with ``Sec-Fetch-Site: cross-site``; those writes are refused
-outright (agents and the CLI send no such header).
+two rules are what keeps other sites from issuing writes. Concretely:
+
+* every write (POST / PUT / PATCH / DELETE) must say ``Content-Type:
+  application/json``, even without a body - a cross-origin page cannot send that
+  header without a CORS preflight, which this server never answers;
+* a browser's ``Sec-Fetch-Site`` other than ``same-origin`` (or ``none``) is
+  refused - sibling subdomains included. Agents and the CLI send no such header.
 """
 from __future__ import annotations
 
@@ -40,13 +44,17 @@ def _is_json(content_type: str) -> bool:
 
 
 def check_write_origin(request: Request) -> None:
-    if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+    site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if site and site not in ("same-origin", "none"):
         raise ApiError("validation_failed", "不接受来自其它站点的写请求")
 
 
 async def read_json_body(request: Request, *, required: bool) -> Any:
     """The parsed JSON body of a write request (``None`` when optional and empty)."""
     check_write_origin(request)
+    if not _is_json(request.headers.get("content-type", "")):
+        raise ApiError("validation_failed",
+                       "写接口只接受 JSON：请带上 Content-Type: application/json（没有请求体也要带）")
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
         raise ApiError("validation_failed", f"请求体太大（上限 {MAX_BODY_BYTES // 1024} KiB）")
@@ -56,15 +64,10 @@ async def read_json_body(request: Request, *, required: bool) -> Any:
         if len(buf) > MAX_BODY_BYTES:
             raise ApiError("validation_failed", f"请求体太大（上限 {MAX_BODY_BYTES // 1024} KiB）")
     raw = bytes(buf)
-    content_type = request.headers.get("content-type", "")
     if not raw.strip():
         if required:
             raise ApiError("validation_failed", "请求体不能为空，请提交 JSON")
-        if content_type and not _is_json(content_type):
-            raise ApiError("validation_failed", "写接口只接受 JSON（Content-Type: application/json）")
         return None
-    if not _is_json(content_type):
-        raise ApiError("validation_failed", "写接口只接受 JSON（Content-Type: application/json）")
     try:
         return json.loads(raw)
     except ValueError:

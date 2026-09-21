@@ -103,11 +103,18 @@ def test_half_written_and_broken_lines_are_skipped(tmp_path):
 
 
 def test_cursor_is_bound_to_its_filters(store):
+    from daemon.pagination import encode_cursor
+
     page = store.page(TASK, limit=1)
     with pytest.raises(CursorError):
         store.page(TASK, limit=1, cursor=page.next_cursor, min_level="warn")
     with pytest.raises(CursorError):
         store.page(TASK, limit=1, cursor="garbage")
+    scope = {"task": TASK, "stage": None, "subtask": "*", "level": None}
+    for payload in (["not", "offsets"], {"/numeric": "12"}, {"/numeric": -1}, {"/numeric": True}):
+        forged = encode_cursor("logs", payload, scope=scope)        # right listing, wrong shape
+        with pytest.raises(CursorError):
+            store.page(TASK, cursor=forged)
 
 
 def test_scan_budget_still_makes_progress(tmp_path, monkeypatch):
@@ -154,6 +161,11 @@ def test_logs_endpoint(client_for):
                  "validation_failed")
     assert_error(c.get(f"/curation/api/v1/tasks/{t.id}/logs", params={"cursor": "zzz"}),
                  "validation_failed")
+    from daemon.pagination import encode_cursor
+    forged = encode_cursor("logs", [1, 2], scope={"task": t.id, "stage": None, "subtask": "*",
+                                                  "level": None})
+    assert_error(c.get(f"/curation/api/v1/tasks/{t.id}/logs", params={"cursor": forged}),
+                 "validation_failed")                              # not a 500
     assert_error(c.get(f"/curation/api/v1/tasks/{t.id}/logs", params={"subtask": "sub_nope"}),
                  "not_found")
     assert ALL_RUNS is logs_mod.ALL_RUNS

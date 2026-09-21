@@ -103,6 +103,53 @@ def test_read_connections_are_read_only(tmp_path):
         repo.close()
 
 
+def _commit_fails(c):
+    """A write whose COMMIT fails - a deferred foreign key stands in for a full disk."""
+    c.execute("PRAGMA defer_foreign_keys = ON")
+    c.execute("INSERT INTO task_module (task_id, module_id, selected, availability, state)"
+              " VALUES ('task_missing', 'x', 1, 'available', 'pending')")
+
+
+def test_a_failed_commit_leaves_the_writer_usable(tmp_path):
+    repo = _open(tmp_path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            repo._write(_commit_fails)
+        repo.append_event(actor="a", action="after", resource="r", at=T0)
+        with pytest.raises(sqlite3.IntegrityError):
+            with repo.transaction():
+                repo._write(_commit_fails)
+        with repo.transaction():
+            repo.append_event(actor="a", action="in a block", resource="r", at=T0)
+        assert [e.action for e in repo.list_events().items] == ["in a block", "after"]
+        assert repo._read(lambda c: c.execute("SELECT COUNT(*) FROM task_module").fetchone()[0]) == 0
+    finally:
+        repo.close()
+
+
+def test_an_aborted_transaction_refuses_further_calls(tmp_path):
+    """If SQLite drops the whole transaction (SQLITE_FULL does), later calls must not autocommit."""
+    from daemon.repo.sqlite import TransactionAborted
+
+    def dropped_then_failed(c):
+        c.execute("ROLLBACK")
+        raise sqlite3.OperationalError("database or disk is full")
+
+    repo = _open(tmp_path)
+    try:
+        with pytest.raises(TransactionAborted):
+            with repo.transaction():
+                repo.append_event(actor="a", action="before", resource="r", at=T0)
+                with pytest.raises(sqlite3.OperationalError, match="disk is full"):
+                    repo._write(dropped_then_failed)             # the caller carries on...
+                repo.append_event(actor="a", action="must not land", resource="r", at=T0)
+        assert repo.list_events().items == []                    # ...but nothing autocommits
+        repo.append_event(actor="a", action="fine again", resource="r", at=T0)
+        assert [e.action for e in repo.list_events().items] == ["fine again"]
+    finally:
+        repo.close()
+
+
 def test_closed_repository_refuses_writes(tmp_path):
     repo = _open(tmp_path)
     repo.close()

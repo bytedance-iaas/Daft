@@ -89,6 +89,8 @@ def test_secrets_are_masked_in_logs():
     assert redact("ARK_API_KEY=abc123 TOS_SECRET_KEY=def password=hunter2") == \
         "ARK_API_KEY=*** TOS_SECRET_KEY=*** password=***"
     assert redact("nothing to hide here") == "nothing to hide here"
+    assert redact("secret_key=abc access_key: def ak=g1 sk=h2") == \
+        "secret_key=*** access_key: *** ak=*** sk=***"
     import logging
     try:
         raise RuntimeError("api_key=leak")

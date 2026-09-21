@@ -55,6 +55,8 @@ def test_no_escape_from_the_dist_directory(client_for, dist):
     for path in ("/../secret.txt", "/assets/../../secret.txt", "/%2e%2e/secret.txt"):
         r = c.get(path)
         assert "outside dist" not in r.text, path
+    assert_error(c.get("/foo%00bar.js"), "not_found")                  # a NUL byte is a 404, not 500
+    assert c.get("/tasks%00x").status_code in (200, 404)
 
 
 def test_index_already_carrying_a_base_tag_is_left_alone(client_for, tmp_path):

@@ -30,7 +30,7 @@ import sqlite3
 import threading
 from typing import Any, Callable, Iterable, Iterator
 
-from ..pagination import decode_cursor, encode_cursor
+from ..pagination import CursorError, decode_cursor, encode_cursor
 from ..util import new_id, now_ms
 from . import migrations
 from .protocol import (
@@ -117,8 +117,34 @@ class _Job:
         return self._result
 
 
+def _begin(conn: sqlite3.Connection) -> None:
+    """``BEGIN IMMEDIATE``, first clearing a transaction an earlier failure may have left open."""
+    if conn.in_transaction:
+        conn.execute("ROLLBACK")
+    conn.execute("BEGIN IMMEDIATE")
+
+
+def _commit(conn: sqlite3.Connection) -> None:
+    """``COMMIT``; if it fails (disk full, I/O error) roll back so the writer stays usable."""
+    try:
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            with contextlib.suppress(sqlite3.Error):
+                conn.execute("ROLLBACK")
+        raise
+
+
+class TransactionAborted(sqlite3.OperationalError):
+    """SQLite rolled the whole transaction back after an error; the block has to be redone."""
+
+
 class _Session:
-    """Holds the writer for one explicit transaction; the caller feeds it jobs."""
+    """Holds the writer for one explicit transaction; the caller feeds it jobs.
+
+    Every call runs inside a savepoint, so a repository method that fails halfway
+    leaves nothing behind even when the caller catches the error and carries on.
+    """
 
     _COMMIT = object()
     _ROLLBACK = object()
@@ -128,11 +154,12 @@ class _Session:
         self._started = threading.Event()
         self._start_error: BaseException | None = None
         self._finished = _Job(lambda conn: None)
+        self._aborted = False
 
     # -- writer side --------------------------------------------------------
     def run(self, conn: sqlite3.Connection) -> None:
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            _begin(conn)
         except BaseException as err:
             self._start_error = err
             self._started.set()
@@ -142,12 +169,10 @@ class _Session:
             item = self._calls.get()
             if item is self._COMMIT:
                 def commit(c):
-                    try:
-                        c.execute("COMMIT")
-                    except BaseException:
-                        if c.in_transaction:
-                            c.execute("ROLLBACK")
-                        raise
+                    if self._aborted or not c.in_transaction:
+                        raise TransactionAborted("the transaction was rolled back after an "
+                                                 "earlier error; nothing was committed")
+                    _commit(c)
                 self._finished.fn = commit
                 self._finished.run(conn)
                 return
@@ -160,6 +185,27 @@ class _Session:
                 return
             item.run(conn)
 
+    def _guarded(self, fn: Callable[[sqlite3.Connection], Any]) -> Callable:
+        def run(conn: sqlite3.Connection) -> Any:
+            if self._aborted or not conn.in_transaction:
+                self._aborted = True
+                raise TransactionAborted("the transaction was rolled back after an earlier "
+                                         "error; leave the block and try again")
+            conn.execute("SAVEPOINT repo_call")
+            try:
+                result = fn(conn)
+            except BaseException:
+                if conn.in_transaction:
+                    with contextlib.suppress(sqlite3.Error):
+                        conn.execute("ROLLBACK TO repo_call")
+                        conn.execute("RELEASE repo_call")
+                else:
+                    self._aborted = True      # e.g. SQLITE_FULL: SQLite dropped everything
+                raise
+            conn.execute("RELEASE repo_call")
+            return result
+        return run
+
     # -- caller side --------------------------------------------------------
     def wait_started(self) -> None:
         self._started.wait()
@@ -167,7 +213,7 @@ class _Session:
             raise self._start_error
 
     def call(self, fn: Callable[[sqlite3.Connection], Any]) -> Any:
-        job = _Job(fn)
+        job = _Job(self._guarded(fn))
         self._calls.put(job)
         return job.outcome()
 
@@ -395,14 +441,14 @@ class SqliteRepository:
             return session.call(fn)
 
         def atomic(conn: sqlite3.Connection) -> Any:
-            conn.execute("BEGIN IMMEDIATE")
+            _begin(conn)
             try:
                 result = fn(conn)
             except BaseException:
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
                 raise
-            conn.execute("COMMIT")
+            _commit(conn)
             return result
 
         return self._writer.call(atomic)
@@ -1191,7 +1237,7 @@ class SqliteRepository:
         if cursor:
             last_id = decode_cursor(cursor, "events", scope=scope)
             if not isinstance(last_id, int):
-                raise ValueError("events cursor must hold an id")
+                raise CursorError("events cursor must hold an id")
             where.append("id < ?")
             args.append(last_id)
 

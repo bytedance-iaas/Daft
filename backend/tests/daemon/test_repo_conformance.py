@@ -111,6 +111,21 @@ def test_uncommitted_writes_are_invisible_to_other_threads(repo):
     assert repo.get_task(seen["id"]).id == seen["id"]
 
 
+def test_a_method_failing_halfway_inside_a_transaction_leaves_nothing(repo):
+    """Each method stays atomic in a caller's block, even when the caller catches its error."""
+    repo.create_vlm_backend(_backend("taken"), None)
+    t = repo.create_task(_spec())
+    with repo.transaction():
+        with pytest.raises(P.Conflict):
+            repo.create_vlm_backend(_backend("taken"), _cred("new-key", kind="ark"))
+        with pytest.raises(P.NotFound):
+            repo.upsert_task_modules("task_missing", _module_rows())
+        repo.update_task_fields(t.id, if_updated_at=None, note="kept")
+    with pytest.raises(P.NotFound):
+        repo.get_credential_by_name("new-key")                  # the key did not slip through
+    assert repo.get_task(t.id).note == "kept"
+
+
 def test_errors_inside_a_transaction_leave_it_usable(repo):
     t = repo.create_task(_spec())
     with repo.transaction():
@@ -688,6 +703,10 @@ def test_events_newest_first_with_cursor(repo):
         repo.list_events(resource="task_1", cursor=page.next_cursor)
     with pytest.raises(CursorError):
         repo.list_events(cursor="not-a-cursor")
+    from daemon.pagination import encode_cursor
+    with pytest.raises(CursorError):                                   # right listing, wrong shape
+        repo.list_events(cursor=encode_cursor("events", "7", scope={"owner": P.DEFAULT_OWNER,
+                                                                     "resource": None}))
     with pytest.raises(ValueError):
         repo.list_events(limit=0)
     assert repo.list_events(owner=OTHER).items[0].actor == "bob"

@@ -10,6 +10,8 @@ from daemon.transitions import change_task_state
 from .conftest import T0, assert_error, assert_schema, seed_task
 
 BASES = ("", "/curation")
+#: Every write says it is JSON, even without a body (routes/common.py).
+JSON = {"Content-Type": "application/json"}
 
 
 def _rt(client):
@@ -182,7 +184,7 @@ def test_deleted_filter_lists_soft_deleted_tasks(client_for):
     c = client_for()
     rt = _rt(c)
     t = seed_task(rt.repo, state="created")
-    assert c.delete(f"/api/v1/tasks/{t.id}").status_code == 204
+    assert c.delete(f"/api/v1/tasks/{t.id}", headers=JSON).status_code == 204
     assert c.get("/api/v1/tasks").json()["total"] == 0
     body = c.get("/api/v1/tasks", params={"state": "deleted"}).json()
     assert [x["id"] for x in body["items"]] == [t.id] and body["items"][0]["deleted_at"] is not None
@@ -445,25 +447,25 @@ def test_delete_and_restore(client_for, clock):
     rt = _rt(c)
     running = seed_task(rt.repo, "running")
     change_task_state(rt.repo, None, running.id, {"queued"}, "running", at=T0)
-    body = assert_error(c.delete(f"/curation/api/v1/tasks/{running.id}"), "task_state_conflict")
+    body = assert_error(c.delete(f"/curation/api/v1/tasks/{running.id}", headers=JSON), "task_state_conflict")
     assert "先停止" in body["error"]["message"] and body["error"]["details"]["state"] == "running"
 
     done = seed_task(rt.repo, "done")
     _finish(rt, done.id)
-    r = c.delete(f"/curation/api/v1/tasks/{done.id}")
+    r = c.delete(f"/curation/api/v1/tasks/{done.id}", headers=JSON)
     assert r.status_code == 204 and r.content == b""
     assert_error(c.get(f"/curation/api/v1/tasks/{done.id}"), "not_found")
-    assert_error(c.delete(f"/curation/api/v1/tasks/{done.id}"), "not_found")
-    r = c.post(f"/curation/api/v1/tasks/{done.id}/restore")
+    assert_error(c.delete(f"/curation/api/v1/tasks/{done.id}", headers=JSON), "not_found")
+    r = c.post(f"/curation/api/v1/tasks/{done.id}/restore", headers=JSON)
     assert r.status_code == 200
     assert_schema("Task", r.json())
     assert r.json()["deleted_at"] is None
     actions = [e.action for e in rt.repo.list_events(resource=done.id).items]
     assert actions[:2] == ["task.restore", "task.delete"]
 
-    c.delete(f"/curation/api/v1/tasks/{done.id}")
+    c.delete(f"/curation/api/v1/tasks/{done.id}", headers=JSON)
     clock.advance(31 * 24 * 3600 * 1000)
-    body = assert_error(c.post(f"/curation/api/v1/tasks/{done.id}/restore"), "not_found")
+    body = assert_error(c.post(f"/curation/api/v1/tasks/{done.id}/restore", headers=JSON), "not_found")
     assert "30 天" in body["error"]["message"]
 
 
@@ -473,7 +475,7 @@ def test_delete_waits_for_an_active_subtask(client_for):
     t = seed_task(rt.repo)
     _finish(rt, t.id)
     rt.repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="reexport", scope={}, state="queued"))
-    body = assert_error(c.delete(f"/api/v1/tasks/{t.id}"), "task_state_conflict")
+    body = assert_error(c.delete(f"/api/v1/tasks/{t.id}", headers=JSON), "task_state_conflict")
     assert "子任务" in body["error"]["message"] and body["error"]["details"]["active_subtask"]
 
 
@@ -615,12 +617,17 @@ def test_unknown_routes_and_methods_answer_with_the_error_body(client_for):
 def test_cross_site_writes_are_refused(client_for):
     c = client_for()
     t = seed_task(_rt(c).repo, state="created")
-    r = c.delete(f"/api/v1/tasks/{t.id}", headers={"Sec-Fetch-Site": "cross-site"})
-    assert "其它站点" in assert_error(r, "validation_failed")["error"]["message"]
+    for site in ("cross-site", "same-site"):                         # sibling subdomains too
+        r = c.delete(f"/api/v1/tasks/{t.id}", headers={**JSON, "Sec-Fetch-Site": site})
+        assert "其它站点" in assert_error(r, "validation_failed")["error"]["message"]
     r = c.post(f"/api/v1/tasks/{t.id}/restore", content=b"a=b",
                headers={"Content-Type": "application/x-www-form-urlencoded"})
     assert_error(r, "validation_failed")
-    assert c.delete(f"/api/v1/tasks/{t.id}", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 204
+    for bodyless in (c.delete(f"/api/v1/tasks/{t.id}"),              # no Content-Type at all:
+                     c.post(f"/api/v1/tasks/{t.id}/restore")):        # a CORS "simple request"
+        assert "Content-Type" in assert_error(bodyless, "validation_failed")["error"]["message"]
+    assert c.delete(f"/api/v1/tasks/{t.id}",
+                    headers={**JSON, "Sec-Fetch-Site": "same-origin"}).status_code == 204
 
 
 def test_oversized_bodies_are_refused(client_for):
@@ -654,17 +661,17 @@ def test_idempotent_writes_replay_the_first_response(client_for):
     t = seed_task(rt.repo)
     _finish(rt, t.id)
     key = {"Idempotency-Key": "agent-retry-0001"}
-    first = c.delete(f"/api/v1/tasks/{t.id}", headers=key)
-    again = c.delete(f"/api/v1/tasks/{t.id}", headers=key)
+    first = c.delete(f"/api/v1/tasks/{t.id}", headers={**JSON, **key})
+    again = c.delete(f"/api/v1/tasks/{t.id}", headers={**JSON, **key})
     assert first.status_code == again.status_code == 204
     assert again.headers.get("idempotent-replayed") == "true"
-    assert_error(c.delete(f"/api/v1/tasks/{t.id}"), "not_found")           # without the key
+    assert_error(c.delete(f"/api/v1/tasks/{t.id}", headers=JSON), "not_found")           # without the key
 
     other = seed_task(rt.repo)
     _finish(rt, other.id)
-    body = assert_error(c.delete(f"/api/v1/tasks/{other.id}", headers=key), "idempotency_conflict")
+    body = assert_error(c.delete(f"/api/v1/tasks/{other.id}", headers={**JSON, **key}), "idempotency_conflict")
     assert body["error"]["details"] == {"operation": "deleteTask"}
-    assert_error(c.delete(f"/api/v1/tasks/{other.id}", headers={"Idempotency-Key": "short"}),
+    assert_error(c.delete(f"/api/v1/tasks/{other.id}", headers={**JSON, "Idempotency-Key": "short"}),
                  "validation_failed")
 
 
@@ -674,9 +681,9 @@ def test_idempotency_does_not_record_failures(client_for):
     t = seed_task(rt.repo)
     change_task_state(rt.repo, None, t.id, {"queued"}, "running", at=T0)
     key = {"Idempotency-Key": "retry-after-fix"}
-    assert_error(c.delete(f"/api/v1/tasks/{t.id}", headers=key), "task_state_conflict")
+    assert_error(c.delete(f"/api/v1/tasks/{t.id}", headers={**JSON, **key}), "task_state_conflict")
     change_task_state(rt.repo, None, t.id, {"running"}, "failed", at=T0)
-    assert c.delete(f"/api/v1/tasks/{t.id}", headers=key).status_code == 204
+    assert c.delete(f"/api/v1/tasks/{t.id}", headers={**JSON, **key}).status_code == 204
 
 
 def test_idempotent_patch_replays_even_after_the_task_moved_on(client_for):

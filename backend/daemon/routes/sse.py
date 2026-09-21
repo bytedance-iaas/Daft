@@ -13,8 +13,9 @@ Stream shape:
 
 After a ``done`` event, the stream ends when the task is terminal and no
 subtask is running (clients close their ``EventSource`` on ``done``; if they
-reconnect they get the snapshot and ``done`` again). A client that falls too
-far behind is sent ``reset`` and disconnected.
+reconnect - with or without ``Last-Event-ID`` - they get what they missed, the
+snapshot and ``done`` again, and the stream ends). A client that falls too far
+behind gets the events up to the gap, then ``reset``, and is disconnected.
 """
 from __future__ import annotations
 
@@ -37,11 +38,26 @@ RETRY_MS = 3000
 PING = b": ping\n\n"
 
 
-def _snapshot(repo: P.Repository, task_id: str, owner: str):
-    task = repo.get_task(task_id, owner=owner)
+def _snapshot(repo: P.Repository, task_id: str, owner: str, event_id: str) -> tuple[list[bytes], bool]:
+    """Frames that say where the task stands now, and whether nothing more will come."""
+    try:
+        task = repo.get_task(task_id, owner=owner)
+    except P.NotFound:
+        return [], True                               # deleted meanwhile: just end the stream
+    frames = [format_event("state", {"state": task.state, "pause_reason": task.pause_reason,
+                                     "at": task.updated_at}, event_id)]
     active = repo.active_subtask(task_id)
-    failed = failed_modules(repo, task_id) if task.state in P.TERMINAL_STATES else []
-    return task, active, failed
+    if active is not None:
+        frames.append(format_event("state", {"state": active.state, "pause_reason": None,
+                                             "at": active.started_at or active.created_at,
+                                             "subtask_id": active.id}, event_id))
+        return frames, False
+    if task.state in P.TERMINAL_STATES:
+        frames.append(format_event("done", {"state": task.state,
+                                            "failed_modules": failed_modules(repo, task_id)},
+                                   event_id))
+        return frames, True
+    return frames, False
 
 
 def _finished(repo: P.Repository, task_id: str, owner: str) -> bool:
@@ -66,19 +82,24 @@ async def task_events(request: Request, task_id: str):
             head_id = hub.event_id(sub.head)
             if sub.reset:
                 yield format_event("reset", {"reason": "replay_unavailable"}, head_id)
+            pending: collections.deque = collections.deque()
             if sub.fresh or sub.reset:
-                task, active, failed = await in_thread(_snapshot, rt.repo, task_id, owner)
-                yield format_event("state", {"state": task.state, "pause_reason": task.pause_reason,
-                                             "at": task.updated_at}, head_id)
-                if active is not None:
-                    yield format_event("state", {"state": active.state, "pause_reason": None,
-                                                 "at": active.started_at or active.created_at,
-                                                 "subtask_id": active.id}, head_id)
-                elif task.state in P.TERMINAL_STATES:
-                    yield format_event("done", {"state": task.state, "failed_modules": failed},
-                                       head_id)
+                frames, over = await in_thread(_snapshot, rt.repo, task_id, owner, head_id)
+                for frame in frames:
+                    yield frame
+                if over:
                     return
-            pending = collections.deque(sub.replay)
+            else:
+                pending.extend(sub.replay)
+                if (not pending or pending[-1].event != "done") \
+                        and await in_thread(_finished, rt.repo, task_id, owner):
+                    # a reconnect after the end: replay what was missed, then where things stand
+                    for ev in pending:
+                        yield format_event(ev.event, ev.data, hub.event_id(ev.seq))
+                    frames, _ = await in_thread(_snapshot, rt.repo, task_id, owner, head_id)
+                    for frame in frames:
+                        yield frame
+                    return
             while True:
                 if not pending:
                     pending.extend(sub.drain())

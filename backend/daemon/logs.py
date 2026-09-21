@@ -27,7 +27,7 @@ import re
 import threading
 from typing import Any, Iterator
 
-from .pagination import decode_cursor, encode_cursor
+from .pagination import CursorError, decode_cursor, encode_cursor
 from .repo.protocol import CursorPage
 
 LEVEL_RANK = {"debug": 0, "info": 1, "warn": 2, "error": 3}
@@ -107,8 +107,10 @@ class TaskLogs:
         files = self._files(task_id, stage, subtask)
         if cursor:
             ends = decode_cursor(cursor, "logs", scope=scope)
-            if not isinstance(ends, dict):
-                raise ValueError("logs cursor must hold file offsets")
+            if not isinstance(ends, dict) or not all(
+                    isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) and v >= 0
+                    for k, v in ends.items()):
+                raise CursorError("logs cursor must hold file offsets")
         else:
             ends = {key: _complete_size(path) for key, _, path in files}
         budget = [_SCAN_BUDGET]

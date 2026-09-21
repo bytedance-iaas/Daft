@@ -168,7 +168,8 @@ def test_audit_events_name_the_account(client_for, tmp_path):
     c = client_for(auth=AuthConfig(htpasswd_file=_htpasswd(tmp_path, BOB)))
     rt = c.app.state.runtime
     t = seed_task(rt.repo, state="created")
-    assert c.delete(f"/api/v1/tasks/{t.id}", auth=("bob", "pwd456")).status_code == 204
+    assert c.delete(f"/api/v1/tasks/{t.id}", auth=("bob", "pwd456"),
+                    headers={"Content-Type": "application/json"}).status_code == 204
     event = rt.repo.list_events(resource=t.id).items[0]
     assert (event.action, event.actor) == ("task.delete", "bob")
 

@@ -30,6 +30,17 @@ from .masterkey import load as load_master_key
 
 BASE_PATH_ENVS = ("CURATOR_BASE_PATH", "CURATION_UI_ROOT_PATH")
 
+#: Variables that carry secrets. Once read they leave ``os.environ``, so CLI subprocesses
+#: started by the Daemon never inherit them (design doc 08, section 3).
+SECRET_ENVS = ("CURATOR_MASTER_KEY", "CURATOR_MASTER_KEY_NEXT", "CURATOR_AUTH_PASSWORD",
+               "CURATION_UI_PASSWORD")
+
+
+def scrub_secrets(environ: dict | None = None) -> None:
+    env = os.environ if environ is None else environ
+    for name in SECRET_ENVS:
+        env.pop(name, None)
+
 
 class ConfigError(RuntimeError):
     """The environment does not describe a runnable Daemon (message is for operators)."""

@@ -11,8 +11,8 @@ import sys
 
 from . import logconfig
 from .instance import AlreadyRunning
-from .masterkey import MasterKeyError, scrub_environment
-from .settings import ConfigError, Settings
+from .masterkey import MasterKeyError
+from .settings import ConfigError, Settings, scrub_secrets
 
 EXIT_CONFIG = 2
 
@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError, MasterKeyError) as err:
         print(f"curator-daemon: 启动失败：{err}", file=sys.stderr)
         return EXIT_CONFIG
-    scrub_environment()                    # CLI children must never inherit key material
+    scrub_secrets()                        # CLI children must never inherit key material
     logconfig.configure(settings.log_level, settings.log_format)
     log = logging.getLogger("daemon")
     if args.check_config:

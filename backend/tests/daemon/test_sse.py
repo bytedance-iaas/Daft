@@ -181,7 +181,7 @@ def test_publish_from_a_worker_thread_wakes_the_stream():
     assert [e.data["state"] for e in got] == ["running"]
 
 
-def test_a_slow_client_is_marked_overflowed():
+def test_a_slow_client_gets_nothing_after_the_gap():
     hub = EventHub(1, max_queue=3)
 
     async def go():
@@ -189,10 +189,41 @@ def test_a_slow_client_is_marked_overflowed():
         for i in range(5):
             hub.publish_state("t", "running", at=i)
         await asyncio.sleep(0)
-        return sub
+        first = sub.drain()
+        for i in range(5, 8):                                  # the reader caught up a bit...
+            hub.publish_state("t", "running", at=i)
+        await asyncio.sleep(0)
+        return sub, first
 
-    sub = asyncio.run(go())
-    assert sub.overflowed and len(sub.drain()) == 3
+    sub, first = asyncio.run(go())
+    assert sub.overflowed and [e.seq for e in first] == [1, 2, 3]   # contiguous up to the gap
+    assert not sub.has_items()                                  # ...but nothing after the gap
+
+
+def test_pending_totals_go_out_before_state_and_done():
+    tick = Tick()
+    hub = EventHub(1, clock=tick)
+    hub.publish_usage("t", {"requests": 10})
+    assert hub.publish_usage("t", {"requests": 12}) is None     # throttled, pending
+    hub.publish_progress("t", {"id": "vlm", "state": "running", "done": 1, "total": 9})
+    assert hub.publish_progress("t", {"id": "vlm", "state": "running", "done": 8, "total": 9}) is None
+    hub.publish_state("t", "succeeded", at=1)
+    hub.publish_done("t", "succeeded")
+    got = [(e.event, e.data.get("requests", e.data.get("done", e.data.get("state"))))
+           for e in hub.buffered("t")]
+    assert got == [("usage", 10), ("progress", 1), ("progress", 8), ("usage", 12),
+                   ("state", "succeeded"), ("done", "succeeded")]
+
+
+def test_stale_state_versions_are_dropped():
+    hub = EventHub(1)
+    assert hub.publish_state("t", "paused", version=7)
+    assert hub.publish_state("t", "pausing", version=6) is None         # lost the race: dropped
+    assert hub.publish_done("t", "stopped", version=7)                  # done tracks separately
+    assert hub.publish_state("t", "running", subtask_id="sub_1", version=3)   # per subtask
+    assert hub.publish_state("t", "queued") is not None                 # unversioned: always
+    assert [e.data["state"] for e in hub.buffered("t")] == ["paused", "stopped", "running",
+                                                            "queued"]
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +280,22 @@ def test_unusable_last_event_id_gets_reset_then_a_snapshot(client_for):
     events = parse_stream(r.text)[1:]
     assert [e["event"] for e in events] == ["reset", "state", "done"]
     assert events[1]["data"]["state"] == "stopped"
+
+
+def test_reconnecting_after_done_gets_done_again_and_ends(client_for):
+    c = client_for()
+    rt = c.app.state.runtime
+    t = seed_task(rt.repo)
+    change_task_state(rt.repo, rt.hub, t.id, {"queued"}, "running", at=T0)
+    change_task_state(rt.repo, rt.hub, t.id, {"running"}, "succeeded", at=T0)
+    done_id = hub_id = rt.hub.event_id(rt.hub.head)
+    r = c.get(f"/events/tasks/{t.id}", headers={"Last-Event-ID": done_id})   # EventSource retry
+    events = parse_stream(r.text)[1:]
+    assert [e["event"] for e in events] == ["state", "done"]           # and the stream ended
+    assert events[1]["id"] == hub_id
+    first = rt.hub.buffered(t.id)[0]
+    r = c.get(f"/events/tasks/{t.id}", headers={"Last-Event-ID": rt.hub.event_id(first.seq)})
+    assert [e["event"] for e in parse_stream(r.text)[1:]] == ["state", "done"]   # replay ends it
 
 
 def test_unknown_task_is_a_404_before_streaming(client_for):
