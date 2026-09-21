@@ -355,6 +355,22 @@ def test_live_events_heartbeats_and_resume(live):
     s2.close()
 
 
+def test_disconnected_clients_are_unsubscribed(live):
+    app, port = live
+    rt = app.state.runtime
+    t = seed_task(rt.repo)
+    streams = [Stream(port, f"/curation/events/tasks/{t.id}") for _ in range(3)]
+    for s in streams:
+        assert s.next() == {"retry": "3000"} and s.next()["event"] == "state"
+    assert rt.hub.subscriber_count(t.id) == 3
+    for s in streams:
+        s.close()
+    deadline = time.monotonic() + 5
+    while rt.hub.subscriber_count(t.id) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert rt.hub.subscriber_count(t.id) == 0
+
+
 def test_live_stream_ends_on_graceful_shutdown(live):
     app, port = live
     rt = app.state.runtime
