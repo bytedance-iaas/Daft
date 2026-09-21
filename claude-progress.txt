@@ -2,7 +2,8 @@ Date: 2026-09-21
 TaskStatus: not_completed
 
 Task scope:
-  开工：开工前核对设计 → F1.1（W0 对账工具与黄金基线）→ F1.2（W1 清理与重组）→ F3.1 第二批静态稿（并行）→ F1.3（W2 契约冻结）。
+  开工：开工前核对设计 → F1.1（W0 对账工具与黄金基线）→ F1.2（W1 清理与重组）→ F3.1 第二批静态稿（并行）→ F1.3（W2 契约冻结）
+  → 契约核对（D35）→ 批次 1：W3 前半（F2.1 骨架、F2.7）、W4（F2.2）、W6（F2.4 不碰 B 类的部分）、W7（F2.5）。
 
 Current summary:
   - 开工前核对完成（评审记录 §9）：D33 执行出错取宽口径；D34 冻结点 release_v1@45bdf9292；基线在现网 Pod 里生成；
@@ -36,23 +37,27 @@ Current summary:
       更正：「硬门确定失败压过执行出错（drop 优先于 held）」只写进了 verdict-line 契约的说明，设计原文 02 §3.6、06 §3
       仍是「任一模块出错即进 held」，两处不一致，已列为待拍板（见下）
   - 2026-09-21 续：
-      · 契约一页摘要 docs/contracts/SUMMARY.md（要点、冻结时定下的 7 处细节、1 处待拍板），等用户评审后再开批次 1
+      · 契约一页摘要 docs/contracts/SUMMARY.md（要点、冻结时定下的 7 处细节、1 处待拍板），用户已评审：7 处全部接受，那 1 处定为 D35
       · 修 openapi.yaml 错误体 message 描述的 YAML 解析事故（逗号未加引号多出一个字段），加回归测试，锁已刷新；
         契约测试 71 条全过（51e048568）
-      · 推送被权限拦下：origin = github.com/bytedance-iaas/daft 是公开仓库。release_v1 上的 v1 代码本来就公开，
-        但本分支的设计文档、评审记录、静态稿、feature_list/progress 等过程文件是首次公开，需用户决定推到哪里
+      · 推送：origin = github.com/bytedance-iaas/daft 是公开仓库，用户确认可以直接推；已推 feat/curator-v2（2026-09-21）
+      · D35 已拍板并落地（77741a56f）：已被正常判完的模块确定拒绝的条目不进 held；决策表、00–04/06/11 篇、判决行契约、
+        评审记录 §10、账本修订记录；飞书副本已同步（revision 130，头部改为 docs/design/ 与 D1–D35）
+      · 11 §6：planner 库与合并框架放 backend/curation/planner/（CLI 的 plan 与 Daemon 共用）；并行 agent 不改公共文件
+      · CI：run #1 镜像构建与 A 类保护通过，tests 在 v1 单测一步失败（日志要登录 GitHub 才能看，gh 查询被权限拦下）；
+        加了 pytest-github-actions-annotate-failures，失败用例以注解形式显示在公开的运行页上（ba9fc7307），run #2 进行中
+      · 批次 1 已派出 4 个后台 agent（各自 worktree）：W4 Daemon 骨架、W6 planner 与合并框架、W7 增量导出、W3 CLI 非 B 类部分
 
 Main gaps:
   - F1.1 基线未生成：需在现网 Pod 里按 tools/parity/README.md「在现网 Pod 里生成黄金基线」执行
-  - F1.2 验收③「镜像可构建」本机无 Docker，靠 CI 的 image 任务验证；分支尚未推送（目标仓库待用户定：公开 fork / 私有仓库）
-  - 待拍板：已被确定拒绝的条目又有模块出错，直接拒绝（推荐，契约现状）还是进 held（设计原文）；定后改 01/02/06 并写成 schema 约束
+  - F1.2 验收②：CI 里 v1 单测未全绿（本机 5 条已知失败；CI 的失败用例待 run #2 的注解确认）；验收③镜像构建已在 CI 通过
+  - 批次 1 进行中，未合并
   - compare 目前只读导出目录；v2 运行目录的读取随 W3 补（行格式已由 C2 冻结）
 
 Next steps:
-  1. 用户评审 SUMMARY.md、拍板上面那一处；点头后开批次 1，四个后台 agent 各占一个 worktree：
-     W4 Daemon 骨架（backend/daemon/ 除 planner/）、W6 planner 与合并框架（backend/daemon/planner/，先不接 v1 的 vlm_client）、
-     W7 增量导出（backend/curation/export/ 下新增文件，不改 A 类的 lerobot_writer.py、safe_write.py）、
-     W3 CLI 的非 B 类部分（骨架、preflight、snapshot、verify、curation task … 客户端）；拆 v1 编排等基线存档后再做
-  2. 用户定推送目标后推分支，看 CI（尤其镜像构建）结果；通过则 F1.2 置 completed
-  3. 用户在 Pod 里跑基线（droid50 两遍、umi640 一遍、umi64 两遍、各自回放自检），存档 manifest 放进 tools/parity/golden/
+  1. 看 CI run #2 的失败注解，修到 v1 单测全绿后 F1.2 置 completed
+  2. 批次 1 各 agent 交付后逐个合并：核对目录边界与 A/B 类纪律，跑契约与各包测试，落地它们报告里的公共文件改动
+     （依赖、CI 步骤、README 手动验证步骤），更新 feature_list 状态
+  3. 用户在 Pod 里跑基线（droid50 两遍、umi640 一遍、umi64 两遍、各自回放自检），存档 manifest 放进 tools/parity/golden/；
+     存档后开 W3 后半（拆 v1 编排：autolabel / check / aggregate / export / report / adjudicate-apply）
   4. 需求方评审六页静态稿（README 待确认 1–10），通过后才开 F3.2

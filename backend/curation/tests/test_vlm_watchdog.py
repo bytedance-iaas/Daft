@@ -109,8 +109,10 @@ def test_watchdog_real_process_integration(tmp_path):
 
     dummy = subprocess.Popen(["sleep", "600"], start_new_session=True)
     log = tmp_path / "wd.log"
-    repo = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__import__("curation").__file__)))) or "."
+    # 子进程要能 import curation:PYTHONPATH 放 curation 包所在的目录。原先多退了一级,
+    # 只在 curation 被 pip 装进环境时才过(子进程 import 失败,看门狗根本没起来)
+    repo = os.path.dirname(os.path.dirname(
+        os.path.abspath(__import__("curation").__file__))) or "."
     with open(log, "w") as lf:
         wd = subprocess.Popen(
             [sys.executable, "-m", "curation.adapters.vlm_watchdog",

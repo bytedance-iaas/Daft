@@ -33,6 +33,6 @@
 依赖装在仓库根目录的 `.venv`（配方见对账工具 README 的「本地环境」一节；macOS 27 上 scipy 用 1.16.3）：
 
 ```bash
-.venv/bin/python -m pytest -q backend/curation/tests       # v1 单测（本机无 GPU 的几条会失败）
+.venv/bin/python -m pytest -q backend/curation/tests --ignore=backend/curation/tests/test_environment.py   # v1 单测（test_environment 要 GPU）
 PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests   # 对账工具，约 40 秒
 ```

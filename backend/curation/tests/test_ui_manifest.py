@@ -918,7 +918,12 @@ def test_task_verdict_survives_fsx_visibility_gap(tmp_path):
     d = str(tmp_path)
     record_task_verdict(d, "ep000001", "判成功", note="第一条")
     # 裁决 CSV 2026-08-14 起住在交付根的 human-decisions/(不再混在 details/ 里)
-    (tmp_path / "human-decisions" / "task_verdicts.csv").write_text("")  # 装作还看不见
+    csv_path = tmp_path / "human-decisions" / "task_verdicts.csv"
+    written = csv_path.stat().st_mtime_ns
+    csv_path.write_text("")  # 装作还看不见
+    # 延迟窗口里读到的是旧版本,mtime 不比我们写盘时新。2026-09-04 起的判据里"文件更新"
+    # 表示界面外改过、磁盘为准,不回填 mtime 的话测的就成了那条分支(且随时间戳粒度时过时不过)
+    os.utime(csv_path, ns=(written, written))
     record_task_verdict(d, "ep000002", "判失败", note="第二条")
     got = load_task_verdicts(d)
     assert set(got) == {"ep000001", "ep000002"}, "延迟窗口内第一条裁决被冲掉"
@@ -1227,7 +1232,9 @@ def test_decision_survives_fsx_visibility_gap(tmp_path):
     d = str(tmp_path)
     record_label_decision(d, "ep000001", "维持原标注", note="第一条")
     csv_path = tmp_path / "human-decisions" / "label_decisions.csv"
+    written = csv_path.stat().st_mtime_ns
     csv_path.write_text("")                      # 模拟 FSX 可见延迟:读回是空的
+    os.utime(csv_path, ns=(written, written))    # 且 mtime 还是旧的(理由见上面裁决版的同款测试)
     record_label_decision(d, "ep000002", "弃用该条", note="第二条")
     got = load_label_decisions(d)
     assert set(got) == {"ep000001", "ep000002"}, "延迟窗口内第一条裁决被冲掉"

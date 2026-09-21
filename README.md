@@ -32,11 +32,11 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 
 1. **对账工具离线自检**（约 1 分钟，不需要任何密钥）：按 [tools/parity/README.md](tools/parity/README.md) 的「手动验证步骤」执行，
    最后一行应为 `conclusion: PASS`。
-2. **v1 单测**：`cd backend && ../.venv/bin/python -m pytest -q curation/tests`。
-   在 macOS 上有几条已知失败：本机没有 GPU / torch 的环境检查、Linux 专属的进程测试、
-   两条 `*_survives_fsx_visibility_gap`。
+2. **v1 单测**：`cd backend && ../.venv/bin/python -m pytest -q curation/tests --ignore=curation/tests/test_environment.py`，
+   应全部通过（`test_environment` 检查的是 GPU 主机，本机和 CI 都跳过）。冻结点上就不过的三条测试已修正，
+   原因见 [docs/v1/test-fixes.md](docs/v1/test-fixes.md)。
 3. **对账工具测试**：`PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests`（约 40 秒）。
-4. **契约**：`cd backend && ../.venv/bin/python -m pytest -q tests && ../.venv/bin/python -m curation.contracts check`，70 条测试通过、`check` 无输出；故意改一处契约再跑 `check` 会报出是哪个文件变了（步骤见 [docs/contracts/README.md](docs/contracts/README.md)）。
+4. **契约**：`cd backend && ../.venv/bin/python -m pytest -q tests && ../.venv/bin/python -m curation.contracts check`，测试全部通过、`check` 无输出；故意改一处契约再跑 `check` 会报出是哪个文件变了（步骤见 [docs/contracts/README.md](docs/contracts/README.md)）。
 5. **静态预览稿**：`python3 -m http.server 4173 --directory frontend/mockups`，
    浏览器打开 <http://localhost:4173/tasks.html>，逐页核对项见 [frontend/mockups/README.md](frontend/mockups/README.md)。
 
