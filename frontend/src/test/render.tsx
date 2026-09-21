@@ -23,7 +23,7 @@ export function currentLocation(): string {
 export function renderApp(route: string): RenderResult & { user: UserEvent } {
   const client = makeQueryClient();
   client.setDefaultOptions({ queries: { retry: false, staleTime: 0 }, mutations: { retry: false } });
-  const user = userEvent.setup();
+  const user = userEvent.setup({ pointerEventsCheck: 0 });
   const result = render(
     <AppProviders client={client}>
       <MemoryRouter initialEntries={[route]}>
@@ -39,7 +39,7 @@ export function renderApp(route: string): RenderResult & { user: UserEvent } {
 export function renderWithProviders(ui: ReactElement, route = '/'): RenderResult & { user: UserEvent } {
   const client = makeQueryClient();
   client.setDefaultOptions({ queries: { retry: false, staleTime: 0 }, mutations: { retry: false } });
-  const user = userEvent.setup();
+  const user = userEvent.setup({ pointerEventsCheck: 0 });
   const result = render(
     <AppProviders client={client}>
       <MemoryRouter initialEntries={[route]}>

@@ -4,10 +4,10 @@
     <meta charset="UTF-8" />
     <!-- curator:base -->
     <script>
-      // Mount prefix bootstrap (doc 07 §2.3). The Daemon replaces the marker above with
-      // <script>window.__CURATOR_BASE__ = "/curation";</script>. Assets are relative, so a
-      // <base> element pointing at the prefix keeps deep links (e.g. /curation/tasks/1/report)
-      // loading ./assets/* from the prefix instead of from the current path.
+      // Mount prefix bootstrap (doc 07 §2.3). The Daemon replaces the marker above with a script
+      // element that sets window.__CURATOR_BASE__ = "/curation" (see frontend/README.md). Assets
+      // are relative, so a base element pointing at the prefix keeps deep links (for example
+      // /curation/tasks/1/report) loading ./assets/* from the prefix, not from the current path.
       (function () {
         var known = ['overview', 'datasets', 'tasks', 'credentials'];
         var base = window.__CURATOR_BASE__;
