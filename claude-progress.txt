@@ -22,7 +22,8 @@ Current summary:
     验证：v1 单测 1408 过（5 条是本机无 GPU / macOS 的已知失败）；CLI 正常；
           工作区 v1 回放冻结点录制带，九项逐位一致（重构未改变任何质检结果）；A 类 57 个文件与冻结点一致
   - 实测确认 v1 小问题：被去重剔除的条目仍在 passed.json 里（交付数据集正确），终判对账按交付口径比
-  - 进行中：F3.1 第二批静态稿（后台 agent 在独立 worktree 里做，基于重组前的路径，合入时挪到 frontend/mockups/）
+  - F3.1 完成：第二批四页（任务详情、质检报告、人工裁决、密钥与资源管理）加前两页的评审修改，已合入 frontend/mockups/；
+    六页无外部资源、无控制台报错、页面间链接齐全；README 列了手动核对步骤与待确认问题 1–10（进 F3.2 前需求方评审）
 
 Main gaps:
   - F1.1 基线未生成：需在现网 Pod 里按 tools/parity/README.md「在现网 Pod 里生成黄金基线」执行
@@ -31,7 +32,7 @@ Main gaps:
   - 02 §3.6/§3.8 的 --revision 参数留给 W2 冻结 C2 时补
 
 Next steps:
-  1. 合入 F3.1 第二批静态稿并验证
+  1. F1.3 / W2 契约冻结（进行中）
   2. 用户确认后推送分支，看 CI（尤其镜像构建）结果；通过则 F1.2 置 completed
   3. 用户在 Pod 里跑基线（droid50 两遍、umi640 一遍、umi64 两遍、各自回放自检），存档 manifest 放进 tools/parity/golden/
-  4. F1.3 / W2 契约冻结：C1 模块注册表、C2 其余 CLI schema、C3 进度协议、C4 OpenAPI、C5 Repository 接口 + 契约测试
+  4. 需求方评审六页静态稿（README 待确认 1–10），通过后才开 F3.2
