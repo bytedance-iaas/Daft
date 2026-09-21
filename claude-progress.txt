@@ -68,7 +68,10 @@ Current summary:
         导出清单可选 task/files、videos_renamed/full_reason）；设计 01–06、09 跟进；预检 reason_code 已补进 CLI
       · 合并 W7（f8c9a2eaa）：backend/curation/export/ 增量重导出库（全量与 v1 逐字节一致，v2 改号视频只改名，
         v3 只重编码受影响文件，只改文本不碰视频，中断后自动退回全量）；官方 loader 在两个独立 venv 实跑通过
-        （0.3.3 读 v2.1、0.6.1 读 v3.0，零警告）；CI 加 tests/export 步骤与 lerobot-loader job；F2.5 待 CI 的 loader job 绿后置 completed
+        （0.3.3 读 v2.1、0.6.1 读 v3.0，零警告）；CI 加 tests/export 步骤与 lerobot-loader job（带护栏：该格式的用例全跳过则失败）；
+        CI run 9 全绿 → F2.5 置 completed
+      · 修掉一条时过时不过的对账工具测试（改录制带里「第一条」打分答案，顺序受线程调度影响；3ee3b6b17）
+      · 批次 2 已派出 W10 前端、W3 后半两个后台 agent（worktree 均从 0f8f8c4d0 起）；W4 仍在进行
       · 合并后 v2 测试 684 过、3 跳过（loader 用例在共享 venv 里跳过）
 
 Main gaps:
@@ -77,9 +80,8 @@ Main gaps:
   - compare 目前只读导出目录；v2 运行目录的读取随 W3 补（行格式已由 C2 冻结）
 
 Next steps:
-  1. 看 CI（含新的 lerobot-loader job），绿了把 F2.5 置 completed
-  2. 批次 2 先开不依赖 W4 的两包：W10 前端（React + Arco，按 C4 1.1 与 mock 开发，含概览、数据集、新建两屏）、
+  1. 批次 2 已开不依赖 W4 的两包：W10 前端（React + Arco，按 C4 1.1 与 mock 开发，含概览、数据集、新建两屏）、
      W3 后半（拆 v1 编排为 autolabel / check / aggregate / export / report / adjudicate-apply，接 W6 合并执行器与 usage、
      W7 导出库，合成数据集 v1 对 v2 逐位对账进 CI，契约 1.1 带出的 CLI 改动）
-  3. W4 交付后合并，补它报告的契约缺口；再开 W4 续作（数据集登记、概览、指纹核对与 repreflight）、W5 任务编排、W8 密钥管理
-  4. 真实数据的两个基线在 F4.2 黄金对账之前补
+  2. W4 交付后合并，补它报告的契约缺口；再开 W4 续作（数据集登记、概览、指纹核对与 repreflight）、W5 任务编排、W8 密钥管理
+  3. 真实数据的两个基线在 F4.2 黄金对账之前补
