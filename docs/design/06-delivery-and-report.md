@@ -186,6 +186,23 @@ review 与它们正交：多数条目在 passed 里（成败弃权、标注分�
 - v3：编号列同样廉价，但视频在合并 mp4 里，**只重编码 drop/add 命中的 chunk**，
   未受影响的 chunk 原样保留。
 
+W7 实现时定下的几条（2026-09-21）：
+
+- 全量导出与 v1 的 `export_lerobot_v2` / `export_lerobot_v3` 逐字节一致，写字节的地方都原样调用 v1 的 A 类代码。
+  多出的只有一个旁挂文件 `meta/curation_episodes.jsonl`（新编号、源编号、任务文本、`instruction_source`），
+  不往 LeRobot 的标准文件里加字段。
+- 增量需要的更多细节（每个文件的大小与 sha256、帧布局、导出参数）写在 `export/manifest.detail.json`，
+  与 `manifest.json` 共用同一个指纹；它是导出器自己的文件，不是契约。契约 1.1 给 `manifest.json` 加了可选的
+  `files`（大小与 sha256，`verify` 用）和每条的 `task`。
+- 任务表在增量导出时保留上一版的编号，否则改一条标注就会让后面所有帧表跟着重写（DROID 规模下是几万个文件）；
+  所以「任务编号变了」极少发生，发生时也按 relabel 处理。
+- v2 里只改了编号的视频直接改名，不拷字节（结果里记为 `videos_renamed`）；v3 只重编码被剔除条目所在的视频文件，
+  新增的条目编进新文件，帧表文件保持原来的归属。
+- 上次导出中断（留着 `_EXPORTING`）、产物缺失或大小变了、格式或参数变了，`--incremental` 自动退回全量，
+  原因写进结果的 `full_reason`。
+- 和 v1 的两处有意差异：v2.1 的源没有 `episodes_stats.jsonl` 时由导出器补算（官方 v2.1 loader 必须读它，
+  v1 这种情况下导出的数据集打不开）；交付文件的权限跟随所在目录（v1 的写法会留下 0600）。
+
 ### 4.4 原子性
 
 - 所有写入先写临时前缀，完成后再发布（搬 v1 `export/publish.py` + `safe_write.py`）。

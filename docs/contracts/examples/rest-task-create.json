@@ -70,6 +70,55 @@
    "modules": [
     "timestamp_check"
    ]
+  },
+  {
+   "name": "droid 前 50 条质检",
+   "note": "第一轮抽检",
+   "input": {
+    "dataset_id": "ds_01HX"
+   },
+   "output": {
+    "uri": "tos://bucket/deliveries/droid-50",
+    "region": "cn-beijing",
+    "credential": "prod-tos"
+   },
+   "preflight_id": "pf_01HX",
+   "episodes": {
+    "mode": "head",
+    "n": 50
+   },
+   "modules": [
+    "timestamp_check",
+    "motion_quality",
+    {
+     "id": "kinematic_limits"
+    },
+    {
+     "id": "video_action_sync",
+     "params": {
+      "sync_plots": "all"
+     }
+    },
+    "visual_quality",
+    "task_success",
+    "dedup",
+    "skill_profile"
+   ],
+   "embodiment_id": "franka",
+   "vlm": {
+    "backend": "ark-prod",
+    "model": "doubao-seed-2-0-pro-260215",
+    "reasoning_effort": null
+   },
+   "params": {
+    "vlm_retry": 3,
+    "export": true,
+    "start_now": true,
+    "limits": {
+     "cpu_concurrency": 4,
+     "vlm_parallelism": 32
+    }
+   }
   }
  ],
  "invalid": [
@@ -220,6 +269,56 @@
     "backend": "ark-prod",
     "model": "doubao-seed-2-0-pro-260215",
     "reasoning_effort": "ultra"
+   },
+   "params": {
+    "vlm_retry": 3,
+    "export": true,
+    "start_now": true,
+    "limits": {
+     "cpu_concurrency": 4,
+     "vlm_parallelism": 32
+    }
+   }
+  },
+  {
+   "name": "droid 前 50 条质检",
+   "note": "第一轮抽检",
+   "input": {
+    "dataset_id": "ds_01HX",
+    "uri": "tos://bkt/x"
+   },
+   "output": {
+    "uri": "tos://bucket/deliveries/droid-50",
+    "region": "cn-beijing",
+    "credential": "prod-tos"
+   },
+   "preflight_id": "pf_01HX",
+   "episodes": {
+    "mode": "head",
+    "n": 50
+   },
+   "modules": [
+    "timestamp_check",
+    "motion_quality",
+    {
+     "id": "kinematic_limits"
+    },
+    {
+     "id": "video_action_sync",
+     "params": {
+      "sync_plots": "all"
+     }
+    },
+    "visual_quality",
+    "task_success",
+    "dedup",
+    "skill_profile"
+   ],
+   "embodiment_id": "franka",
+   "vlm": {
+    "backend": "ark-prod",
+    "model": "doubao-seed-2-0-pro-260215",
+    "reasoning_effort": null
    },
    "params": {
     "vlm_retry": 3,

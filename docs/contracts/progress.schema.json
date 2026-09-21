@@ -104,25 +104,22 @@
         },
         "module": {
           "type": "string",
-          "description": "a module id, or autolabel"
+          "description": "a module id, or autolabel. On the actual ledger a merged request is booked under the module ids it carried, sorted and joined with +, e.g. example_grasp+example_table; the attributed ledger splits it back to single modules."
         },
         "call_kind": {
-          "enum": [
-            "probe",
-            "endstate",
-            "arbitration",
-            "caption",
-            "llm",
-            "merged"
-          ]
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "v1's kinds are probe, endstate, arbitration, caption and llm; merged marks a request that carried several modules (actual ledger only). A new module sends under its own kind, named like a module id."
         },
         "requests": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "requests that returned a usage block; requests + requests_unknown_usage is every request sent"
         },
         "requests_unknown_usage": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "requests sent whose usage is unknown (timed out, lost the hedge race, in flight at an interruption); never estimated"
         },
         "prompt_tokens": {
           "type": "integer",

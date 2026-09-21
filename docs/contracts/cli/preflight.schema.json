@@ -28,7 +28,7 @@
           "required": ["episode_count", "cameras", "fps", "robot_type", "total_frames", "labels", "profile"],
           "properties": {
             "episode_count": {"type": "integer", "minimum": 0, "description": "episodes are 0 .. count-1"},
-            "cameras": {"type": "array", "items": {"type": "string"}},
+            "cameras": {"type": "array", "items": {"type": "string"}, "description": "short camera names: the video feature key without the observation.images. prefix"},
             "fps": {"type": ["number", "null"]},
             "robot_type": {"type": ["string", "null"]},
             "total_frames": {"type": ["integer", "null"]},
@@ -57,7 +57,7 @@
       ]
     },
     "modules": {"type": "array", "items": {"$ref": "#/$defs/module_availability"}},
-    "meta_fingerprint": {"$ref": "common.schema.json#/$defs/digest"},
+    "meta_fingerprint": {"$ref": "common.schema.json#/$defs/digest", "description": "the listing fingerprint (source-manifest summary.digest) computed over the metadata objects only"},
     "warnings": {"type": "array", "items": {"type": "string"}}
   },
   "$defs": {
@@ -68,7 +68,13 @@
       "properties": {
         "id": {"$ref": "common.schema.json#/$defs/module_id"},
         "availability": {"enum": ["available", "needs_input", "unsupported"]},
-        "reason": {"type": "string"},
+        "reason": {"type": "string", "description": "English, for the terminal and logs; UIs render reason_code instead"},
+        "reason_code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Stable reason for UIs to translate. Known codes: format_unsupported {detected}, metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing. New modules may add codes; a UI that does not know one shows reason."
+        },
+        "reason_args": {"type": "object", "description": "parameters of reason_code, listed with each code"},
         "input_hint": {
           "type": "object",
           "additionalProperties": false,
@@ -81,8 +87,8 @@
         "notes": {"type": "array", "items": {"type": "string"}}
       },
       "allOf": [
-        {"if": {"properties": {"availability": {"const": "unsupported"}}}, "then": {"required": ["reason"]}},
-        {"if": {"properties": {"availability": {"const": "needs_input"}}}, "then": {"required": ["reason", "input_hint"]}}
+        {"if": {"properties": {"availability": {"const": "unsupported"}}}, "then": {"required": ["reason", "reason_code"]}},
+        {"if": {"properties": {"availability": {"const": "needs_input"}}}, "then": {"required": ["reason", "reason_code", "input_hint"]}}
       ]
     }
   }

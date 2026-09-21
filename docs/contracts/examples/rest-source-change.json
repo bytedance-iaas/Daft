@@ -1,0 +1,41 @@
+{
+ "schema": "openapi.yaml#/components/schemas/SourceChange",
+ "valid": [
+  {
+   "meta_changed": true,
+   "added": 12,
+   "removed": 0,
+   "modified": 1,
+   "sample_keys": [
+    "data/chunk-000/episode_000200.parquet",
+    "meta/info.json"
+   ],
+   "preflighted_at": 1758300000000
+  },
+  {
+   "meta_changed": false,
+   "added": 0,
+   "removed": 3,
+   "modified": 0,
+   "sample_keys": [],
+   "preflighted_at": 1758300000000
+  }
+ ],
+ "invalid": [
+  {
+   "meta_changed": false,
+   "added": -1,
+   "removed": 0,
+   "modified": 0,
+   "sample_keys": [],
+   "preflighted_at": 1
+  },
+  {
+   "added": 1,
+   "removed": 0,
+   "modified": 0,
+   "sample_keys": [],
+   "preflighted_at": 1
+  }
+ ]
+}

@@ -30,6 +30,7 @@
 | 读输入数据集 | `CURATION_INPUT_TOS_ACCESS_KEY` / `CURATION_INPUT_TOS_SECRET_KEY` |
 | 写交付目录 | `CURATION_OUTPUT_TOS_ACCESS_KEY` / `CURATION_OUTPUT_TOS_SECRET_KEY` |
 | 两者相同时的简写 | `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`（v1 既有；上面两组没设时回落到它） |
+| 临时凭证的会话令牌（可选） | `CURATION_INPUT_TOS_SESSION_TOKEN` / `CURATION_OUTPUT_TOS_SESSION_TOKEN` |
 | VLM | `--vlm-api-key-env <变量名>` 指定从哪个变量读（v1 既有设计），默认 `ARK_API_KEY` |
 
 输入和输出必须能用**两套不同的访问密钥**：源数据常常是别人账号下的只读桶，交付写进自己的桶。
@@ -47,7 +48,8 @@ episode 一律用**整数下标**表达，语法沿用 v1：`34`、`10-20`、`3,
 
 ```bash
 curation preflight --input tos://bucket/datasets/my_dataset --input-region cn-beijing \
-                   [--source tos|public|local] [--vlm-backend <name>] --json
+                   [--source tos|public|local] [--vlm-backend <name>] \
+                   [--embodiment-id <型号>] [--modules a,b,...] --json
 ```
 
 只读 metadata（`meta/info.json`、任务表、文件清单），**不读样本数据**，秒级返回。输出：
@@ -75,13 +77,14 @@ curation preflight --input tos://bucket/datasets/my_dataset --input-region cn-be
     {"id": "timestamp_check", "availability": "available"},
     {"id": "kinematic_limits", "availability": "needs_input",
      "reason": "robot_type not found in info.json; pick a model or skip this module",
+     "reason_code": "robot_type_unknown", "reason_args": {"robot_type": null},
      "input_hint": {"field": "embodiment_id",
                     "options": ["agibot", "aloha", "franka", "google_robot", "pusht",
                                 "so100", "so101", "ur5", "widowx"]}},
     {"id": "task_success", "availability": "available",
      "notes": ["88 episodes have no task text; the model will caption them first"]}
   ],
-  "meta_fingerprint": "sha256:…",   // meta 文件的指纹；任务启动时再比一次，变了就要求重新预检
+  "meta_fingerprint": "sha256:…",   // meta 文件的指纹，和全量文件清单的指纹一起记在数据集登记上；开始任务时再比（D37）
   "warnings": ["episodes_stats.json missing; per-episode stats will be recomputed"]
 }
 ```
@@ -90,8 +93,13 @@ curation preflight --input tos://bucket/datasets/my_dataset --input-region cn-be
 
 ```jsonc
 {"id": "kinematic_limits", "availability": "unsupported",
- "reason": "robot_type 'umi_dual_handheld_gripper' is not in the embodiment registry"}
+ "reason": "robot_type 'umi_dual_handheld_gripper' is not in the embodiment registry (supported: agibot, …)",
+ "reason_code": "embodiment_unsupported",
+ "reason_args": {"subject": "umi_dual_handheld_gripper", "given_by": "robot_type", "supported": ["agibot", "…"]}}
 ```
+
+`reason` 是英文，给终端和日志看；界面按 `reason_code` 和 `reason_args` 渲染中文，已知的原因码列在
+`cli/preflight.schema.json` 里，遇到不认识的就显示 `reason`（契约 1.1）。
 
 三态 `availability` 的判定规则见 `05-modules-and-preflight.md` §4。
 没传 `--vlm-backend` 时，VLM 模块是 `needs_input`（`input_hint.field = "vlm"`），不是 `unsupported`。
@@ -242,12 +250,14 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 
 ```bash
 curation export --run-dir <dir> --input tos://... --output tos://... \
-                [--incremental] [--concurrency N] --json
+                [--revision N] [--incremental] [--concurrency N] --json
 ```
 
 按 `passed.json` 导出 `lerobot_curated/`，**含待裁决条目**（v1 的保守放行），不含 `held` 里待补跑的条目。
 任务文本按来源写入：原始标注、自产 caption、人工改标，各带 `instruction_source`。
 `--incremental` 时对比上一次的产物清单，只处理变动部分，详见 `06-delivery-and-report.md` §4。
+`--revision` 省略时取编号最大、带 `commit.json` 的结果版本。上次导出中断、产物缺失或格式参数变了，
+`--incremental` 会自动退回全量导出，原因写在输出的 `full_reason` 里。
 
 ### 3.8 `curation report` — 生成报告
 
@@ -330,11 +340,14 @@ v1 的 `run` / `rejudge` 这两个「一口气跑完」的命令不再保留，�
 | 码 | 含义 | Daemon 的处理 |
 |---|---|---|
 | 0 | 成功（含部分 episode 出错） | 正常 |
+| 1 | 命令自身的意外错误（`internal`，调用栈在 stderr） | 任务 `failed`，属于 bug，告警 |
 | 2 | 参数错误 | 任务 `failed`，属于 bug，告警 |
-| 3 | 输入不可达（数据集读不了、凭证失效） | 任务 `failed`，原因回显给用户 |
+| 3 | 读不到：输入数据集（`input_unreachable`）、交付目录（`output_unreachable`）、Daemon（`daemon_unreachable`，只有 `curation task …`） | 任务 `failed`，原因回显给用户 |
 | 4 | 模块整体失败（VLM 端点不可达等） | 该模块 `failed`，其余模块继续 |
 | 5 | 收到 SIGTERM，已收尾退出 | 按 Daemon 自己的意图置 `paused` / `stopped` |
 | 6 | 源数据与 `--source-manifest` 对不上 | 任务（或子任务）`failed`，原因 `source_changed`，提示重新预检后另建任务 |
+| 7 | `curation task …`：Daemon 回了错误（`rejected`），它的错误体原样放在 `details.rest_error` | 不涉及（给 Agent 和脚本看） |
+| 8 | `curation task wait` 等到超时任务仍未结束（`wait_timeout`），最后一次的状态在 `details.task` | 不涉及 |
 | 130 | 收到 SIGINT，已中止 | 同上 |
 
 信号协议：

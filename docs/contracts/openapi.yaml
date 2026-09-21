@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -11,6 +11,13 @@ info:
     Responses that point people at a page carry `links` (D22): absolute URLs when
     `server.publicBaseUrl` is configured, otherwise relative paths with `absolute: false`.
     Write endpoints accept only `application/json`; there is no CORS.
+
+    1.1.0 (2026-09-21): dataset registry (D36): `/datasets` now lists registered datasets and the
+    TOS / cache-bucket listing moved to `/datasets/browse`; `/overview`; starting a task re-checks
+    the dataset fingerprints and answers 409 `source_changed` with a `SourceChange`, after which
+    `/tasks/{id}/repreflight` re-runs preflight (D37); the task list filters by `module` and
+    `dataset_id` and lists the selected modules; request inputs may name a `dataset_id`;
+    `dataset_in_use`. No client consumed 1.0.0.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -25,7 +32,9 @@ tags:
   - name: vlm
     description: VLM backends and models
   - name: datasets
-    description: modules, datasets, episodes, preflight, delivery probe
+    description: modules, dataset registry and browsing, episodes, preflight, delivery probe
+  - name: overview
+    description: the overview page
   - name: tasks
     description: tasks and subtasks
   - name: report
@@ -280,11 +289,85 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/ModuleRegistry"}
         default: {$ref: "#/components/responses/Error"}
+  /overview:
+    get:
+      tags: [overview]
+      operationId: getOverview
+      summary: The overview page in one call - what needs attention, what runs, the last 7 days (D36)
+      responses:
+        "200":
+          description: overview
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Overview"}
+        default: {$ref: "#/components/responses/Error"}
   /datasets:
     get:
       tags: [datasets]
       operationId: listDatasets
-      summary: List datasets under a private TOS prefix or in the HuggingFace cache bucket
+      summary: Registered datasets, page-number pagination, newest first (D36)
+      parameters:
+        - name: page
+          in: query
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          schema: {enum: [10, 20, 50, 100], default: 20}
+        - name: q
+          in: query
+          description: search by name or address
+          schema: {type: string}
+        - name: format
+          in: query
+          schema: {$ref: "#/components/schemas/DatasetFormat"}
+        - name: check_state
+          in: query
+          schema: {enum: [ok, changed]}
+      responses:
+        "200":
+          description: one page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page, page_size, total]
+                properties:
+                  items: {type: array, items: {$ref: "#/components/schemas/DatasetItem"}}
+                  page: {type: integer, minimum: 1}
+                  page_size: {type: integer}
+                  total: {type: integer, minimum: 0}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [datasets]
+      operationId: createDataset
+      summary: Register a dataset - preflight plus the full file listing, both fingerprints kept (D36)
+      description: |
+        Registering the same source + address + region again returns the existing registration
+        with 200 instead of creating a second one.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DatasetCreate"}
+      responses:
+        "201":
+          description: registered
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetDetail"}
+        "200":
+          description: already registered
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetDetail"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/browse:
+    get:
+      tags: [datasets]
+      operationId: browseDatasets
+      summary: List datasets under a private TOS prefix or in the HuggingFace cache bucket, to pick one to register
       parameters:
         - $ref: "#/components/parameters/Source"
         - name: uri
@@ -305,18 +388,23 @@ paths:
                   - $ref: "#/components/schemas/CursorPage"
                   - type: object
                     properties:
-                      items: {type: array, items: {$ref: "#/components/schemas/Dataset"}}
+                      items: {type: array, items: {$ref: "#/components/schemas/BrowsedDataset"}}
         default: {$ref: "#/components/responses/Error"}
   /datasets/episodes:
     get:
       tags: [datasets]
       operationId: listDatasetEpisodes
       summary: Episodes for the preview grid; metadata only, no decoding on the server (doc 03 §10)
+      description: Give `dataset_id`, or `source` + `uri` (+ `region`, `credential`).
       parameters:
-        - $ref: "#/components/parameters/Source"
+        - name: dataset_id
+          in: query
+          schema: {type: string}
+        - name: source
+          in: query
+          schema: {enum: [tos, public, local]}
         - name: uri
           in: query
-          required: true
           schema: {type: string}
         - $ref: "#/components/parameters/Region"
         - $ref: "#/components/parameters/CredentialName"
@@ -333,6 +421,73 @@ paths:
                   - type: object
                     properties:
                       items: {type: array, items: {$ref: "#/components/schemas/EpisodePreview"}}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [datasets]
+      operationId: getDataset
+      summary: One registration with its preflight result, recent fingerprint checks and tasks
+      responses:
+        "200":
+          description: dataset
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetDetail"}
+        default: {$ref: "#/components/responses/Error"}
+    patch:
+      tags: [datasets]
+      operationId: updateDataset
+      summary: Rename, or change the note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DatasetPatch"}
+      responses:
+        "200":
+          description: updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetDetail"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [datasets]
+      operationId: deleteDataset
+      summary: Remove the registration; the data on TOS is untouched. In use by an unfinished task -> 409 dataset_in_use
+      responses:
+        "204": {description: removed}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/recheck:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [datasets]
+      operationId: recheckDataset
+      summary: Recompute both fingerprints and compare, nothing else changes; a difference sets check_state=changed
+      responses:
+        "200":
+          description: the check
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetCheck"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/repreflight:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [datasets]
+      operationId: repreflightDataset
+      summary: Run preflight again and keep the new result and fingerprints; check_state returns to ok
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: refreshed
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetDetail"}
         default: {$ref: "#/components/responses/Error"}
   /preflight:
     post:
@@ -396,6 +551,14 @@ paths:
         - name: delivery
           in: query
           description: tasks writing to this delivery directory
+          schema: {type: string}
+        - name: module
+          in: query
+          description: comma-separated module ids; only tasks that selected every one of them
+          schema: {type: string}
+        - name: dataset_id
+          in: query
+          description: tasks on this registered dataset
           schema: {type: string}
       responses:
         "200":
@@ -579,6 +742,10 @@ paths:
       tags: [tasks]
       operationId: taskAction
       summary: start / pause / resume / stop; illegal transitions return 409 task_state_conflict
+      description: |
+        `start` first re-checks the dataset fingerprints against its registration (D37). On a
+        mismatch nothing starts: 409 `source_changed` whose `error.details` is a `SourceChange`;
+        after the user confirms, call `POST /tasks/{id}/repreflight`.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       responses:
@@ -587,6 +754,26 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Task"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/repreflight:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [tasks]
+      operationId: repreflightTask
+      summary: After a source_changed at start, run preflight again and start if the task still fits (D37)
+      description: |
+        Refreshes the dataset registration. Compatible (selected modules still available, explicit
+        episodes still in range, needed inputs present) -> the task starts as with `start`; otherwise
+        it stays `created` and `incompatibilities` says what to change in the form.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: result
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RepreflightResult"}
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/retry:
     parameters:
@@ -1101,7 +1288,7 @@ components:
           properties:
             code:
               enum: [validation_failed, unauthorized, not_found, task_state_conflict, subtask_active,
-                     credential_in_use, backend_in_use, name_taken, preflight_expired, precheck_failed,
+                     credential_in_use, backend_in_use, dataset_in_use, name_taken, preflight_expired, precheck_failed,
                      source_changed, result_changed, confirm_path_mismatch, model_check_failed,
                      idempotency_conflict, precondition_failed, internal]
             message: {type: string, description: "Chinese, shown to people as is"}
@@ -1321,7 +1508,7 @@ components:
                     sortable: {type: array, items: {type: string}}
                     default_sort: {type: string}
               mergeable: {type: boolean}
-    Dataset:
+    BrowsedDataset:
       type: object
       additionalProperties: false
       required: [name, uri]
@@ -1330,6 +1517,184 @@ components:
         uri: {type: string}
         format_hint: {enum: [lerobot_v2, lerobot_v3, rrd, unknown]}
         episodes: {type: [integer, "null"]}
+    DatasetFormat: {enum: [lerobot_v2, lerobot_v3, unsupported]}
+    DatasetItem:
+      type: object
+      additionalProperties: false
+      required: [id, name, source, uri, region, format, episode_count, robot_type, check_state, checked_at,
+                 preflighted_at, created_at, last_task]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        source: {enum: [tos, public, local]}
+        uri: {type: string}
+        region: {type: [string, "null"]}
+        format: {$ref: "#/components/schemas/DatasetFormat"}
+        episode_count: {type: [integer, "null"], minimum: 0}
+        robot_type: {type: [string, "null"]}
+        check_state: {enum: [ok, changed], description: "changed: the fingerprints differ from the kept ones; preflight again"}
+        checked_at: {type: [integer, "null"]}
+        preflighted_at: {type: integer}
+        created_at: {type: integer}
+        last_task:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/TaskRef"
+    DatasetDetail:
+      allOf:
+        - $ref: "#/components/schemas/DatasetItem"
+        - type: object
+          required: [note, credential, preflight, meta_fingerprint, listing, checks, tasks, links]
+          properties:
+            note: {type: [string, "null"]}
+            credential: {type: [string, "null"], description: "access key name; null for the public bucket, or once the key is deleted"}
+            preflight: {$ref: "./cli/preflight.schema.json"}
+            meta_fingerprint: {type: string}
+            listing:
+              type: object
+              description: summary of the file listing kept at the last preflight (source-manifest summary)
+              required: [objects, bytes, digest]
+              properties:
+                objects: {type: integer, minimum: 0}
+                bytes: {type: integer, minimum: 0}
+                digest: {type: string}
+            checks: {type: array, maxItems: 20, items: {$ref: "#/components/schemas/DatasetCheck"}, description: "newest first"}
+            tasks: {type: array, maxItems: 20, items: {$ref: "#/components/schemas/TaskRef"}, description: "newest first"}
+            links: {$ref: "#/components/schemas/Links"}
+    DatasetCreate:
+      type: object
+      additionalProperties: false
+      required: [input]
+      properties:
+        input: {$ref: "#/components/schemas/InputRef"}
+        name: {type: string, minLength: 1, maxLength: 128, description: "defaults to the last path segment"}
+        note: {type: string, maxLength: 2000}
+    DatasetPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        note: {type: [string, "null"], maxLength: 2000}
+    DatasetCheck:
+      type: object
+      additionalProperties: false
+      required: [at, trigger, result, change]
+      properties:
+        at: {type: integer}
+        trigger: {enum: [add, recheck, task_start, repreflight]}
+        result: {enum: [same, changed]}
+        change:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/SourceChange"
+    SourceChange:
+      type: object
+      additionalProperties: false
+      description: what differs from the fingerprints kept at registration or at the last preflight (D37)
+      required: [meta_changed, added, removed, modified, sample_keys, preflighted_at]
+      properties:
+        meta_changed: {type: boolean}
+        added: {type: integer, minimum: 0}
+        removed: {type: integer, minimum: 0}
+        modified: {type: integer, minimum: 0}
+        sample_keys: {type: array, maxItems: 20, items: {type: string}, description: "a few affected keys, added ones first"}
+        preflighted_at: {type: integer}
+    TaskRef:
+      type: object
+      additionalProperties: false
+      required: [id, name, state, created_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        state: {$ref: "#/components/schemas/TaskState"}
+        created_at: {type: integer}
+    RepreflightResult:
+      type: object
+      additionalProperties: false
+      required: [compatible, incompatibilities, task]
+      properties:
+        compatible: {type: boolean}
+        incompatibilities:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, reason_code, reason]
+            properties:
+              field: {type: string, description: "form field to fix, e.g. modules, episodes, embodiment_id"}
+              module: {$ref: "#/components/schemas/ModuleId"}
+              reason_code: {type: string}
+              reason: {type: string, description: "Chinese, shown as is"}
+        task: {$ref: "#/components/schemas/Task"}
+    Overview:
+      type: object
+      additionalProperties: false
+      required: [todo, running, recent, datasets, generated_at]
+      properties:
+        todo:
+          type: object
+          additionalProperties: false
+          required: [error_tasks, adjudication, delivery_pending, datasets_changed, credentials_failed, backends_failed]
+          properties:
+            error_tasks: {type: integer, minimum: 0, description: "completed_with_errors, can be retried"}
+            adjudication:
+              type: object
+              additionalProperties: false
+              required: [tasks, episodes]
+              properties:
+                tasks: {type: integer, minimum: 0}
+                episodes: {type: integer, minimum: 0}
+            delivery_pending: {type: integer, minimum: 0, description: "tasks whose delivered dataset is stale or was never exported"}
+            datasets_changed: {type: integer, minimum: 0}
+            credentials_failed: {type: integer, minimum: 0}
+            backends_failed: {type: integer, minimum: 0}
+        running:
+          type: object
+          additionalProperties: false
+          required: [running, queued, paused, active]
+          properties:
+            running: {type: integer, minimum: 0}
+            queued: {type: integer, minimum: 0}
+            paused: {type: integer, minimum: 0}
+            active:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [task, stage, done, total]
+                properties:
+                  task: {$ref: "#/components/schemas/TaskRef"}
+                  stage: {type: [string, "null"]}
+                  done: {type: integer, minimum: 0}
+                  total: {type: integer, minimum: 0}
+        recent:
+          type: object
+          additionalProperties: false
+          required: [days, tasks_finished, episodes_checked, pass_rate, tokens_per_day]
+          properties:
+            days: {const: 7}
+            tasks_finished: {type: integer, minimum: 0}
+            episodes_checked: {type: integer, minimum: 0}
+            pass_rate: {type: [number, "null"], minimum: 0, maximum: 1}
+            tokens_per_day:
+              type: array
+              description: actual-ledger totals only, oldest day first
+              items:
+                type: object
+                additionalProperties: false
+                required: [date, tokens]
+                properties:
+                  date: {type: string, pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+                  tokens: {type: integer, minimum: 0}
+        datasets:
+          type: object
+          additionalProperties: false
+          required: [total, changed]
+          properties:
+            total: {type: integer, minimum: 0}
+            changed: {type: integer, minimum: 0}
+        generated_at: {type: integer}
     EpisodePreview:
       type: object
       additionalProperties: false
@@ -1363,6 +1728,15 @@ components:
         properties: {source: {const: tos}}
       then:
         required: [credential]
+    InputSpec:
+      description: a registered dataset (D36), or an input given in full
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [dataset_id]
+          properties:
+            dataset_id: {type: string}
+        - $ref: "#/components/schemas/InputRef"
     OutputRef:
       type: object
       additionalProperties: false
@@ -1376,7 +1750,7 @@ components:
       additionalProperties: false
       required: [input]
       properties:
-        input: {$ref: "#/components/schemas/InputRef"}
+        input: {$ref: "#/components/schemas/InputSpec"}
         vlm_backend: {type: string}
         embodiment_id: {type: string}
     PreflightResponse:
@@ -1468,7 +1842,7 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
         note: {type: string, maxLength: 2000}
-        input: {$ref: "#/components/schemas/InputRef"}
+        input: {$ref: "#/components/schemas/InputSpec"}
         output: {$ref: "#/components/schemas/OutputRef"}
         preflight_id: {type: string}
         episodes: {$ref: "#/components/schemas/EpisodeSelector"}
@@ -1490,7 +1864,7 @@ components:
             required: [name, input, output, preflight_id]
             properties:
               name: {type: string, minLength: 1, maxLength: 128}
-              input: {$ref: "#/components/schemas/InputRef"}
+              input: {$ref: "#/components/schemas/InputSpec"}
               output: {$ref: "#/components/schemas/OutputRef"}
               preflight_id: {type: string}
         shared:
@@ -1522,7 +1896,7 @@ components:
       properties:
         name: {type: string, minLength: 1, maxLength: 128}
         note: {type: string, maxLength: 2000}
-        input: {$ref: "#/components/schemas/InputRef"}
+        input: {$ref: "#/components/schemas/InputSpec"}
         output: {$ref: "#/components/schemas/OutputRef"}
         preflight_id: {type: string}
         episodes: {$ref: "#/components/schemas/EpisodeSelector"}
@@ -1582,13 +1956,15 @@ components:
     TaskListItem:
       type: object
       additionalProperties: false
-      required: [id, name, state, dataset, created_at, progress, summary, pending_adjudication, delivery_stale, module_counts, usage]
+      required: [id, name, state, dataset, created_at, progress, summary, pending_adjudication, delivery_stale, modules,
+                 module_counts, usage]
       properties:
         id: {type: string}
         name: {type: string}
         state: {$ref: "#/components/schemas/TaskState"}
         pause_reason: {enum: [user, system, null]}
         dataset: {type: string}
+        dataset_id: {type: [string, "null"]}
         created_at: {type: integer}
         progress:
           type: object
@@ -1599,7 +1975,8 @@ components:
         pending_adjudication: {type: integer, minimum: 0}
         delivery_stale: {type: boolean}
         active_subtask: {type: [string, "null"]}
-        module_counts: {type: object, additionalProperties: {type: integer, minimum: 0}}
+        modules: {type: array, items: {$ref: "#/components/schemas/ModuleId"}, description: "selected modules, registry order"}
+        module_counts: {type: object, additionalProperties: {type: integer, minimum: 0}, description: "selected modules per ModuleState state"}
         usage: {$ref: "#/components/schemas/UsageTotals"}
         deleted_at: {type: [integer, "null"]}
     Task:
@@ -1615,6 +1992,7 @@ components:
         state_reason: {type: [string, "null"]}
         pause_reason: {enum: [user, system, null]}
         input: {$ref: "#/components/schemas/InputRef"}
+        dataset_id: {type: [string, "null"], description: "the registered dataset (D36)"}
         output: {$ref: "#/components/schemas/OutputRef"}
         run_id: {type: [string, "null"]}
         episodes: {$ref: "#/components/schemas/EpisodeSelector"}

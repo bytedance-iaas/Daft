@@ -24,7 +24,7 @@
           "merge": {
             "type": "object",
             "additionalProperties": false,
-            "description": "receipts of the VLM request merge framework (design doc 04, section 4.2)",
+            "description": "receipts of the VLM request merge framework (design doc 04, section 4.2). A request that carries units of several modules counts once in each of them; task totals come from the actual usage ledger, not from summing these.",
             "required": ["requests", "merged_units", "split_units", "fallback_units"],
             "properties": {
               "requests": {"type": "integer", "minimum": 0},

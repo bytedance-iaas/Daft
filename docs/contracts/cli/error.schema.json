@@ -7,15 +7,15 @@
   "required": ["schema_version", "exit_code", "error"],
   "properties": {
     "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
-    "exit_code": {"enum": [2, 3, 4, 5, 6, 130]},
+    "exit_code": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 130]},
     "error": {
       "type": "object",
       "additionalProperties": false,
       "required": ["code", "message"],
       "properties": {
         "code": {
-          "enum": ["usage", "input_unreachable", "module_failed", "terminated", "source_changed", "interrupted"],
-          "description": "usage=2, input_unreachable=3, module_failed=4, terminated (SIGTERM, finished the episodes in flight)=5, source_changed=6, interrupted (SIGINT)=130"
+          "enum": ["internal", "usage", "input_unreachable", "output_unreachable", "daemon_unreachable", "module_failed", "terminated", "source_changed", "rejected", "wait_timeout", "interrupted"],
+          "description": "internal (a bug; traceback on stderr)=1, usage=2, input_unreachable / output_unreachable (the delivery location) / daemon_unreachable (curation task, no HTTP response)=3, module_failed=4, terminated (SIGTERM, finished the episodes in flight)=5, source_changed=6, rejected (curation task: the Daemon answered with an error; details.rest_error holds status and its Error body)=7, wait_timeout (curation task wait; details.task holds the last state)=8, interrupted (SIGINT)=130"
         },
         "message": {"type": "string"},
         "details": {"type": "object"}
@@ -23,11 +23,14 @@
     }
   },
   "allOf": [
+    {"if": {"properties": {"error": {"properties": {"code": {"const": "internal"}}}}}, "then": {"properties": {"exit_code": {"const": 1}}}},
     {"if": {"properties": {"error": {"properties": {"code": {"const": "usage"}}}}}, "then": {"properties": {"exit_code": {"const": 2}}}},
-    {"if": {"properties": {"error": {"properties": {"code": {"const": "input_unreachable"}}}}}, "then": {"properties": {"exit_code": {"const": 3}}}},
+    {"if": {"properties": {"error": {"properties": {"code": {"enum": ["input_unreachable", "output_unreachable", "daemon_unreachable"]}}}}}, "then": {"properties": {"exit_code": {"const": 3}}}},
     {"if": {"properties": {"error": {"properties": {"code": {"const": "module_failed"}}}}}, "then": {"properties": {"exit_code": {"const": 4}}}},
     {"if": {"properties": {"error": {"properties": {"code": {"const": "terminated"}}}}}, "then": {"properties": {"exit_code": {"const": 5}}}},
     {"if": {"properties": {"error": {"properties": {"code": {"const": "source_changed"}}}}}, "then": {"properties": {"exit_code": {"const": 6}}}},
+    {"if": {"properties": {"error": {"properties": {"code": {"const": "rejected"}}}}}, "then": {"properties": {"exit_code": {"const": 7}}}},
+    {"if": {"properties": {"error": {"properties": {"code": {"const": "wait_timeout"}}}}}, "then": {"properties": {"exit_code": {"const": 8}}}},
     {"if": {"properties": {"error": {"properties": {"code": {"const": "interrupted"}}}}}, "then": {"properties": {"exit_code": {"const": 130}}}}
   ]
 }

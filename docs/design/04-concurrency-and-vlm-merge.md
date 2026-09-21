@@ -97,6 +97,8 @@ N = min( 任务上限 params.limits.vlm_parallelism,   ← 用户在 API / CLI /
 - ⚠️ 闸门必须是**自建信号量**，不能用 daft 的 `max_concurrency` —— 后者对 async 行级 UDF
   静默失效（v1 `funnel.py` 里踩过，注释有记录）。搬运时这条纪律不得丢。
   `funnel.py:867` 那句「总并发 = 两层相乘」的注释已经过时，搬运时一并改掉。
+- **有三把闸门跟着 episode 闸门走**（W6 按 v1 `funnel.py` 核实）：endstate = 2 × episode，arbitration、guard_caption
+  = episode。N 为偶数时它们就是上表的 N、N/2、N/2；N 为奇数时 endstate 比表里少 1。
 
 ### 2.3 多个任务同时跑
 
@@ -118,24 +120,26 @@ planner 的输出，也是 `curation plan --json` 的 schema：
 {
   "schema_version": "1.0",
   "vlm_parallelism": 64,
+  "limits": {"cpu_concurrency": {"value": 8, "bound_by": "planner"},     // 取了哪个上限、卡在哪一层（D31）
+             "vlm_parallelism": {"value": 64, "bound_by": "model"}},
   "stages": [
     {"id": "autolabel", "kind": "vlm", "command": "autolabel",
      "episodes": "unlabeled", "gates": {"caption": 32}},
-    {"id": "numeric", "kind": "cpu", "concurrency": 8,
+    {"id": "numeric", "kind": "cpu", "command": "check", "concurrency": 8,
      "modules": ["timestamp_check", "kinematic_limits", "motion_quality"],
      "episodes": "selected", "hard_gates": ["timestamp_check", "kinematic_limits"]},
-    {"id": "frame", "kind": "cpu", "concurrency": 8,
+    {"id": "frame", "kind": "cpu", "command": "check", "concurrency": 8,
      "modules": ["visual_quality", "video_action_sync"],
      "episodes": "survivors:numeric", "hard_gates": ["video_action_sync"]},
-    {"id": "vlm", "kind": "vlm",
+    {"id": "vlm", "kind": "vlm", "command": "check",
      "modules": ["task_success"], "episodes": "survivors:frame",
-     "gates": {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32},
+     "gates": {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32, "guard_caption": 32},
      "merge": {"strategy": "none", "groups": []}},
-    {"id": "verdict", "kind": "aggregate", "phase": "funnel"},
-    {"id": "dedup", "kind": "cpu", "modules": ["dedup"], "episodes": "keep"},
-    {"id": "profile", "kind": "vlm", "modules": ["skill_profile"], "episodes": "keep-minus-duplicates",
-     "gates": {"caption": 32, "llm": 16, "audit": 16}},
-    {"id": "final", "kind": "aggregate", "phase": "final"}
+    {"id": "verdict", "kind": "aggregate", "command": "aggregate", "phase": "funnel"},
+    {"id": "dedup", "kind": "cpu", "command": "check", "concurrency": 1, "modules": ["dedup"], "episodes": "keep"},
+    {"id": "profile", "kind": "vlm", "command": "check", "modules": ["skill_profile"],
+     "episodes": "keep-minus-duplicates", "gates": {"caption": 32, "llm": 16, "audit": 16}},
+    {"id": "final", "kind": "aggregate", "command": "aggregate", "phase": "final"}
   ],
   "estimates": {"vlm_requests": 735, "wall_clock_s": 1100, "notes": ["..."]}
 }

@@ -14,7 +14,7 @@ Rules every implementation keeps:
 * **Every query is scoped by owner.** The owner is ``"default"`` in this release
   (single tenant, D3) but the code path is real, so IAM can be added without
   touching the callers.
-* **Two paginations.** The task list uses page numbers with a ``total`` (D21);
+* **Two paginations.** The task and dataset lists use page numbers with a ``total`` (D21);
   "scroll down" content (logs, adjudication queue, episode lists) uses opaque
   cursors built from the last row's sort key.
 * Times are integer epoch milliseconds. Secrets are stored encrypted by the
@@ -47,7 +47,11 @@ VerifyState = Literal["unverified", "ok", "failed"]
 BackendKind = Literal["ark", "custom"]
 ModelSource = Literal["listed", "manual"]
 Ledger = Literal["actual", "attributed"]
-CallKind = Literal["probe", "endstate", "arbitration", "caption", "llm", "merged"]
+#: v1's call kinds are probe, endstate, arbitration, caption and llm; ``merged`` marks a request that
+#: carried several modules. New modules send under kinds of their own (C3 1.1), so this is open.
+CallKind = str
+DatasetCheckState = Literal["ok", "changed"]
+DatasetCheckTrigger = Literal["add", "recheck", "task_start", "repreflight"]
 AdjudicationLine = Literal["label", "task_verdict", "reject_appeal"]
 InputSource = Literal["tos", "public", "local"]
 
@@ -182,6 +186,43 @@ class VlmBackend:
     updated_at: int = 0
 
 
+
+@dataclass
+class Dataset:
+    """A registered dataset (D36): where it lives, its last preflight and both fingerprints.
+    Registration is a record, not a copy; the data stays on TOS."""
+
+    id: str
+    name: str
+    source: InputSource
+    uri: str
+    preflight: dict                          # the last preflight result (C2 preflight.schema.json)
+    meta_fingerprint: str
+    source_fingerprint: dict                 # listing summary: objects, bytes, digest
+    preflighted_at: int
+    note: str | None = None
+    region: str | None = None
+    credential_id: str | None = None
+    manifest_path: str | None = None         # the kept file listing, to tell which files changed
+    check_state: DatasetCheckState = "ok"
+    checked_at: int | None = None
+    owner_id: str = DEFAULT_OWNER
+    created_at: int = 0
+    updated_at: int = 0
+
+
+@dataclass
+class DatasetCheck:
+    """One fingerprint comparison (D37); the dataset page shows them as its change history."""
+
+    dataset_id: str
+    at: int
+    trigger: DatasetCheckTrigger
+    result: Literal["same", "changed"]
+    change: dict | None = None               # C4 SourceChange when result == "changed"
+    id: int | None = None
+
+
 @dataclass
 class Task:
     id: str
@@ -198,6 +239,7 @@ class Task:
     pause_reason: PauseReason | None = None
     input_region: str | None = None
     input_cred_id: str | None = None
+    dataset_id: str | None = None            # the registered dataset (D36)
     output_region: str | None = None
     output_cred_id: str | None = None
     embodiment_id: str | None = None
@@ -234,6 +276,7 @@ class TaskCreate:
     note: str | None = None
     input_region: str | None = None
     input_cred_id: str | None = None
+    dataset_id: str | None = None
     output_region: str | None = None
     output_cred_id: str | None = None
     embodiment_id: str | None = None
@@ -413,6 +456,31 @@ class Repository(Protocol):
 
     def delete_vlm_model(self, model_id: str) -> None: ...
 
+    # -- datasets (D36, D37) ----------------------------------------------------------
+    def register_dataset(self, dataset: Dataset) -> tuple[Dataset, bool]:
+        """Get-or-create by (owner, source, uri, region); returns (dataset, created)."""
+
+    def get_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER) -> Dataset:
+        """Raises NotFound."""
+
+    def list_datasets(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
+                      q: str | None = None, fmt: str | None = None,
+                      check_state: DatasetCheckState | None = None) -> PagedResult[Dataset]:
+        """Newest first; ``fmt`` is lerobot_v2 | lerobot_v3 | unsupported, read from the preflight."""
+
+    def update_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER, **fields) -> Dataset:
+        """Name and note (PATCH), or a refreshed preflight with both fingerprints (repreflight)."""
+
+    def record_dataset_check(self, check: DatasetCheck) -> DatasetCheck:
+        """Appends the check and sets the dataset's check_state and checked_at in one step."""
+
+    def list_dataset_checks(self, dataset_id: str, *, limit: int = 20) -> list[DatasetCheck]:
+        """Newest first."""
+
+    def delete_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER) -> None:
+        """Raises Conflict('dataset_in_use') while an unfinished task uses it; tasks keep their
+        own copy of the input, so finished ones only lose the link (dataset_id set to NULL)."""
+
     # -- tasks --------------------------------------------------------------------
     def create_task(self, spec: TaskCreate) -> Task:
         """Creates the task and its task_module rows in one transaction."""
@@ -423,8 +491,10 @@ class Repository(Protocol):
 
     def list_tasks(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
                    state: str | None = None, q: str | None = None,
-                   delivery_key: str | None = None) -> PagedResult[Task]:
-        """Newest first. ``state='deleted'`` lists soft-deleted tasks."""
+                   delivery_key: str | None = None, dataset_id: str | None = None,
+                   modules: list[str] | None = None) -> PagedResult[Task]:
+        """Newest first. ``state='deleted'`` lists soft-deleted tasks; ``modules`` keeps tasks that
+        selected every one of them."""
 
     def update_task_fields(self, task_id: str, *, if_updated_at: int | None,
                            owner: str = DEFAULT_OWNER, **fields) -> Task:

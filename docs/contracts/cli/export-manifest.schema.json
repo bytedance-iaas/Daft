@@ -20,6 +20,13 @@
           "new_index": {"$ref": "common.schema.json#/$defs/episode_index"},
           "content_key": {"$ref": "common.schema.json#/$defs/digest"},
           "task_key": {"$ref": "common.schema.json#/$defs/digest"},
+          "task": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "the task text written for the episode and where it came from; also in meta/curation_episodes.jsonl of the delivered dataset",
+            "required": ["text", "source"],
+            "properties": {"text": {"type": "string"}, "source": {"$ref": "common.schema.json#/$defs/task_text_source"}}
+          },
           "artifacts": {
             "type": "object",
             "additionalProperties": false,
@@ -27,12 +34,22 @@
             "properties": {
               "parquet": {"type": "string"},
               "videos": {"type": "object", "additionalProperties": {"type": "string"}},
-              "chunk": {"type": "integer", "minimum": 0, "description": "v3: the chunk the episode lives in"}
+              "chunk": {"type": "integer", "minimum": 0, "description": "v3: linear index of the data file the episode lives in, chunk_index * chunks_size + file_index"}
             }
           }
         }
       }
     },
-    "meta_files": {"type": "array", "items": {"type": "string"}}
+    "meta_files": {"type": "array", "items": {"type": "string"}},
+    "files": {
+      "type": "object",
+      "description": "every file of the delivered dataset, relative to export/lerobot_curated/, with size and sha256; verify reads it back against these",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["size", "sha256"],
+        "properties": {"size": {"type": "integer", "minimum": 0}, "sha256": {"$ref": "common.schema.json#/$defs/digest"}}
+      }
+    }
   }
 }

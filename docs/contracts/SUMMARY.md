@@ -1,4 +1,4 @@
-# 契约要点与冻结时的取舍（2026-09-21）
+# 契约要点与冻结时的取舍（2026-09-21，1.1 修订后）
 
 一页读懂 C1–C5：每份管什么、冻结时定下了哪些原文没写死的细节，以及需求方拍板的那一处（D35）。
 文件索引和改契约的流程见同目录 `README.md`；以契约文件本身为准，本页是导读。
@@ -7,14 +7,14 @@
 
 | # | 管什么 | 要点 |
 |---|---|---|
-| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 8 个模块 = 6 项漏斗检查 + 去重、技能画像两项数据集级模块；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off` |
+| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 8 个模块 = 6 项漏斗检查 + 去重、技能画像两项数据集级模块；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（20 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥且完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
-| C4 REST API `openapi.yaml`（OpenAPI 3.1） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 39 个路径、48 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 17 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
+| C4 REST API `openapi.yaml`（OpenAPI 3.1，1.1.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 18 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
 | C5 Repository 与状态机 `backend/daemon/repo/protocol.py` | Daemon 内部读写状态的唯一入口 | 10 个任务状态，允许的迁移逐条列出（契约测试逐条对照 01 篇 §3.1）；状态变更一律比较后交换（CAS），不许先读后写；事务由调用方显式开启；每个查询都带 owner（本期固定为 `default`，为以后接 IAM 留路）；结果版本切换也是 CAS |
 
 防漂移：26 份契约文件的 sha256 记在 `CONTRACTS.lock`，改了契约而没刷新锁，CI 变红；
-`examples/` 里 22 组从设计文档抄来的合法与不合法样例，契约测试双向校验。
+`examples/` 里 25 组合法与不合法样例，契约测试双向校验。
 
 ## 二、冻结时定下的细节（已按此落地，可否决）
 
@@ -50,10 +50,11 @@
 - `openapi.yaml` 错误体 `message` 的描述里有个逗号没加引号，被 YAML 解析成了一个多余字段。
   它不影响校验，但契约不干净。已修，另加了一条测试专抓这类解析事故，锁已刷新（`51e048568`）。
 
-## 五、下一版（1.1）要改的
+## 五、1.1 修订（2026-09-21，已完成）
 
-批次 1 各包实现时发现的缺口，和静态稿评审新增的接口，攒在这里；W4、W7 合并后一次修订，统一升版本、刷新锁。
-在那之前各包按括号里的临时做法实现。
+批次 1 各包报告的缺口，和静态稿评审新增的接口，一次修订完。C4 升到 1.1.0，C1 注册表升到 1.1；
+C2、C3 只做了向后兼容的扩充（新增可选字段、放宽枚举），`schema_version` 仍是 1.0。下表每一项都已落地，
+括号里是原来的临时做法。W4 的报告到了再补一轮。
 
 | # | 契约 | 要改什么 | 来源 |
 |---|---|---|---|
@@ -74,3 +75,19 @@
 W6 另建议补进设计文档的：09 §2.1 的 values.yaml 加 `vlm.merge`；04 §3 的示例计划补 `limits`、`command`、`guard_caption`；
 04 §2.2 注明 endstate、arbitration、guard_caption 三把闸门跟着 episode 闸门走；01 §2.6 写明第 10 条的约定；
 05 §7 写明 `merge_units` 的约定（`DeclaredMergeUnits`）。
+
+W7 报告的缺口同样在这一轮落地：`export-manifest` 加可选的每条 `task` 和顶层 `files`（大小与 sha256），
+`export` 结果加 `videos_renamed`、`full_reason`，并写明 `videos_copied`、`videos_reencoded` 的口径和 v3 `chunk` 的含义；
+设计 02 §3.7 补 `--revision`，06 §4.3 写明旁挂文件、任务表编号与退回全量的条件。
+
+修订带出来的代码改动（交给批次 2）：
+
+| 谁 | 改什么 |
+|---|---|
+| W3 后半 | `curation task …` 改用新错误码：Daemon 回错误 → `rejected`（7），连不上 → `daemon_unreachable`（3），`wait` 超时 → `wait_timeout`（8）；`verify` 读不到交付目录用 `output_unreachable`；`export` 命令补 `--revision` |
+| W3 后半（接线 W6） | planner 里 `DeclaredMergeUnits` 只认 v1 五种调用种类的限制放开（C3 1.1 允许模块自己的种类） |
+| W7 续 | 导出时把每条的 `task` 和顶层 `files` 写进 `manifest.json`，`verify` 就能按它逐文件比大小和 sha256 |
+| W4 续 | 数据集登记、概览、开始时的指纹核对与 `repreflight`；任务列表的 `module` / `dataset_id` 筛选与 `modules` 字段 |
+
+预检的 `reason_code` 已由我直接补进 W3 的 `preflight`（七种原因码都有测试）。
+

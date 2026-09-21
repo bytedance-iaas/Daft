@@ -51,6 +51,10 @@
        "ur5",
        "widowx"
       ]
+     },
+     "reason_code": "robot_type_unknown",
+     "reason_args": {
+      "robot_type": null
      }
     },
     {
@@ -98,7 +102,23 @@
     {
      "id": "kinematic_limits",
      "availability": "unsupported",
-     "reason": "robot_type 'umi_dual_handheld_gripper' is not in the embodiment registry"
+     "reason": "robot_type 'umi_dual_handheld_gripper' is not in the embodiment registry",
+     "reason_code": "embodiment_unsupported",
+     "reason_args": {
+      "subject": "umi_dual_handheld_gripper",
+      "given_by": "robot_type",
+      "supported": [
+       "agibot",
+       "aloha",
+       "franka",
+       "google_robot",
+       "pusht",
+       "so100",
+       "so101",
+       "ur5",
+       "widowx"
+      ]
+     }
     }
    ],
    "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
@@ -120,12 +140,20 @@
     {
      "id": "timestamp_check",
      "availability": "unsupported",
-     "reason": "当前版本仅支持 LeRobot v2/v3，检测到 mcap"
+     "reason": "only LeRobot v2/v3 is supported in this version; detected mcap files",
+     "reason_code": "format_unsupported",
+     "reason_args": {
+      "detected": "mcap"
+     }
     },
     {
      "id": "task_success",
      "availability": "unsupported",
-     "reason": "当前版本仅支持 LeRobot v2/v3，检测到 mcap"
+     "reason": "only LeRobot v2/v3 is supported in this version; detected mcap files",
+     "reason_code": "format_unsupported",
+     "reason_args": {
+      "detected": "mcap"
+     }
     }
    ],
    "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
@@ -253,6 +281,71 @@
    "schema_version": "1.0",
    "format": {
     "kind": "hdf5",
+    "version": "v2",
+    "supported": true,
+    "detail": "LeRobot v2, 200 episodes, 3 cameras"
+   },
+   "validation": [],
+   "dataset": {
+    "episode_count": 200,
+    "cameras": [
+     "exterior_1",
+     "exterior_2",
+     "wrist"
+    ],
+    "fps": 15.0,
+    "robot_type": null,
+    "total_frames": 51200,
+    "labels": {
+     "with_task": 112,
+     "without_task": 88
+    },
+    "profile": {
+     "matched": "droid",
+     "by": "robot_type"
+    }
+   },
+   "modules": [
+    {
+     "id": "timestamp_check",
+     "availability": "available"
+    },
+    {
+     "id": "kinematic_limits",
+     "availability": "needs_input",
+     "reason": "robot_type not found in info.json; pick a model or skip this module",
+     "input_hint": {
+      "field": "embodiment_id",
+      "options": [
+       "agibot",
+       "aloha",
+       "franka",
+       "google_robot",
+       "pusht",
+       "so100",
+       "so101",
+       "ur5",
+       "widowx"
+      ]
+     }
+    },
+    {
+     "id": "task_success",
+     "availability": "available",
+     "notes": [
+      "88 episodes have no task text; the model will caption them first"
+     ]
+    }
+   ],
+   "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "warnings": [
+    "episodes_stats.json missing; per-episode stats will be recomputed"
+   ]
+  },
+  {
+   "schema_version": "1.0",
+   "format": {
+    "kind": "lerobot",
     "version": "v2",
     "supported": true,
     "detail": "LeRobot v2, 200 episodes, 3 cameras"

@@ -34,6 +34,20 @@
    "backend": "ark-prod",
    "limit": 32,
    "reason": "429 rate 12% in last 30s"
+  },
+  {
+   "ts": 1758300000000,
+   "kind": "usage",
+   "ledger": "actual",
+   "model": "doubao-seed-2-0-pro-260215",
+   "module": "example_grasp+example_table",
+   "call_kind": "merged",
+   "requests": 3,
+   "requests_unknown_usage": 1,
+   "prompt_tokens": 9000,
+   "completion_tokens": 420,
+   "reasoning_tokens": 0,
+   "cached_tokens": 1200
   }
  ],
  "invalid": [
@@ -48,7 +62,7 @@
    "kind": "usage",
    "model": "m",
    "module": "x",
-   "call_kind": "vision",
+   "call_kind": "Vision Call",
    "requests": 1,
    "prompt_tokens": 1,
    "completion_tokens": 1,

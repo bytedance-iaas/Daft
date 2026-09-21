@@ -78,8 +78,15 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
-def _unsupported(specs, reason: str) -> list[dict]:
-    return [{"id": m.id, "availability": "unsupported", "reason": reason} for m in specs]
+def _unsupported(specs, reason: str, code: str, args: dict | None = None) -> list[dict]:
+    """Every module greyed out for the same reason; ``code`` and ``args`` are for UIs (C2 1.1)."""
+    out = []
+    for m in specs:
+        entry = {"id": m.id, "availability": "unsupported", "reason": reason, "reason_code": code}
+        if args:
+            entry["reason_args"] = dict(args)
+        out.append(entry)
+    return out
 
 
 def _describe_kind(fmt: Format) -> str:
@@ -115,7 +122,10 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
                       f"recognised dataset ({fmt.note})")
         doc["format"] = {"kind": fmt.kind, "version": None, "supported": False,
                          "detail": reason}
-        doc["modules"] = _unsupported(specs, reason)
+        detected = {"detected": fmt.kind}
+        if fmt.kind == "unknown" and fmt.note:
+            detected["note"] = fmt.note
+        doc["modules"] = _unsupported(specs, reason, "format_unsupported", detected)
         return _done(ctx, doc)
 
     try:
@@ -129,7 +139,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
                   f"{fmt.codebase_version}")
         doc["format"] = {"kind": "lerobot", "version": None, "supported": False,
                          "detail": reason}
-        doc["modules"] = _unsupported(specs, reason)
+        doc["modules"] = _unsupported(specs, reason, "format_unsupported",
+                                      {"detected": f"lerobot {fmt.codebase_version}"})
         return _done(ctx, doc)
 
     problems = _validate(info, storage.uri, listing, fmt)
@@ -168,7 +179,7 @@ def _invalid(ctx: Context, doc: dict, specs, fmt: Format, problems: list[str]) -
                      "detail": "LeRobot dataset with invalid metadata: " + problems[0]}
     doc["validation"] = problems
     doc["modules"] = _unsupported(specs, "the dataset metadata is invalid (see validation): "
-                                         + problems[0])
+                                  + problems[0], "metadata_invalid", {"problem": problems[0]})
     return _done(ctx, doc)
 
 
@@ -264,8 +275,10 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
             "raw_bytes": True}
     if not meta.cameras:
         video_reason = "the dataset declares no video camera"
+        video_cause = "none_declared"
     else:
         video_reason = "no video files were found for the declared cameras"
+        video_cause = "files_missing"
     emb_state, emb_subject, emb_value = _embodiment(info, args.embodiment_id)
     override = (args.embodiment_id or "").strip()
     vlm_backend = (args.vlm_backend or "").strip()
@@ -280,19 +293,29 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
                    if c in spec.needs and not caps[c]]
         notes: list[str] = []
         if lacking:
+            args: dict = {"missing": lacking}
+            if "video" in lacking:
+                args["video_cause"] = video_cause
             entry.update(availability="unsupported", reason="; ".join(
-                video_reason if c == "video" else _CAP_REASON[c] for c in lacking))
+                video_reason if c == "video" else _CAP_REASON[c] for c in lacking),
+                reason_code="missing_input", reason_args=args)
         elif "embodiment_profile" in spec.needs and emb_state != "ok":
             if emb_state == "unsupported":
                 who = "embodiment" if override else "robot_type"
                 entry.update(availability="unsupported",
                              reason=f"{who} '{emb_subject}' is not in the embodiment registry "
-                                    f"(supported: {', '.join(emb_value)})")
+                                    f"(supported: {', '.join(emb_value)})",
+                             reason_code="embodiment_unsupported",
+                             reason_args={"subject": emb_subject,
+                                          "given_by": "embodiment_id" if override else "robot_type",
+                                          "supported": list(emb_value)})
             else:
                 said = (f"robot_type is '{emb_subject}' in info.json" if emb_subject
                         else "robot_type not found in info.json")
                 entry.update(availability="needs_input",
                              reason=f"{said}; pick a model or skip this module",
+                             reason_code="robot_type_unknown",
+                             reason_args={"robot_type": emb_subject or None},
                              input_hint={"field": "embodiment_id", "options": list(emb_value)})
                 if suggested:
                     notes.append(f"the dataset profile {profile['matched']} suggests "
@@ -301,6 +324,7 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
             entry.update(availability="needs_input",
                          reason="no VLM backend chosen; pick one (add one first if there is "
                                 "none)",
+                         reason_code="vlm_backend_missing",
                          input_hint={"field": "vlm"})
         else:
             entry["availability"] = "available"

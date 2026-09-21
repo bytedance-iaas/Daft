@@ -1,0 +1,37 @@
+{
+ "schema": "openapi.yaml#/components/schemas/DatasetCreate",
+ "valid": [
+  {
+   "input": {
+    "source": "tos",
+    "uri": "tos://bkt/datasets/droid_lerobot",
+    "region": "cn-beijing",
+    "credential": "readonly-tos"
+   },
+   "name": "droid_lerobot",
+   "note": "DROID 抽检用"
+  },
+  {
+   "input": {
+    "source": "public",
+    "uri": "tos://hf-cache/lerobot/aloha_sim"
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "input": {
+    "source": "tos",
+    "uri": "tos://bkt/datasets/droid_lerobot"
+   }
+  },
+  {
+   "input": {
+    "dataset_id": "ds_01HX"
+   }
+  },
+  {
+   "name": "no input"
+  }
+ ]
+}

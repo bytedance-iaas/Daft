@@ -66,6 +66,7 @@ def test_no_vlm_backend_means_needs_input(cli, dataset):
         assert m["availability"] == "needs_input"
         assert m["input_hint"] == {"field": "vlm"}
         assert "VLM backend" in m["reason"]
+        assert m["reason_code"] == "vlm_backend_missing"
 
 
 def test_missing_task_text_does_not_grey_out_vlm_modules(cli, dataset):
@@ -102,6 +103,8 @@ def test_robot_type_outside_the_registry_skips_only_kinematics(cli, dataset):
     assert kin["availability"] == "unsupported"
     assert kin["reason"].startswith("robot_type 'umi_dual_handheld_gripper' is not in the "
                                     "embodiment registry")
+    assert kin["reason_code"] == "embodiment_unsupported"
+    assert kin["reason_args"]["given_by"] == "robot_type"
     assert "franka" in kin["reason"]                    # names what is supported
     others = [m for m in doc["modules"] if m["id"] != "kinematic_limits"]
     assert all(m["availability"] == "available" for m in others)
@@ -115,6 +118,7 @@ def test_unreadable_robot_type_needs_input(cli, dataset, robot_type):
     assert kin["availability"] == "needs_input"
     assert kin["input_hint"] == {"field": "embodiment_id", "options": REGISTRY}
     assert kin["reason"].endswith("pick a model or skip this module")
+    assert kin["reason_code"] == "robot_type_unknown"
     if robot_type == "unknown":
         assert doc["dataset"]["robot_type"] == "unknown"
     else:
@@ -144,6 +148,8 @@ def test_embodiment_id_overrides_robot_type(cli, dataset):
     kin = _mod(doc, "kinematic_limits")
     assert kin["availability"] == "unsupported"
     assert kin["reason"].startswith("embodiment 'koch' is not in the embodiment registry")
+    assert kin["reason_args"]["subject"] == "koch"
+    assert kin["reason_args"]["given_by"] == "embodiment_id"
 
 
 def test_dataset_profile_is_reported_and_suggests_an_embodiment(cli, mini_dataset, tmp_path):
@@ -169,7 +175,8 @@ def test_missing_state_greys_out_motion_quality(cli, dataset):
     doc = _valid(cli("preflight", "--input", dataset, "--vlm-backend", "ark").doc)
     mq = _mod(doc, "motion_quality")
     assert mq == {"id": "motion_quality", "availability": "unsupported",
-                  "reason": "the dataset has no observation.state feature"}
+                  "reason": "the dataset has no observation.state feature",
+                  "reason_code": "missing_input", "reason_args": {"missing": ["state"]}}
     assert _mod(doc, "kinematic_limits")["availability"] == "available"
 
 
@@ -186,6 +193,7 @@ def test_missing_videos(cli, dataset):
         m = _mod(doc, mid)
         assert m["availability"] == "unsupported"
         assert m["reason"] == "no video files were found for the declared cameras"
+        assert m["reason_code"] == "missing_input" and m["reason_args"]["video_cause"] == "files_missing"
     assert _mod(doc, "timestamp_check")["availability"] == "available"
 
 
@@ -219,6 +227,7 @@ def test_other_formats_grey_out_every_module(cli, tmp_path, kind, files, words):
     for m in doc["modules"]:
         assert m["availability"] == "unsupported"
         assert m["reason"].startswith("only LeRobot v2/v3 is supported in this version")
+        assert m["reason_code"] == "format_unsupported"
 
 
 def test_other_lerobot_versions_are_unsupported(cli, dataset):
@@ -238,6 +247,7 @@ def test_invalid_info_is_reported_verbatim(cli, dataset):
     assert len(doc["validation"]) == 1 and "fps" in doc["validation"][0]
     assert "缺少必需字段" in doc["validation"][0]           # v1's validate_info, untouched
     assert all(m["availability"] == "unsupported" for m in doc["modules"])
+    assert {m["reason_code"] for m in doc["modules"]} == {"metadata_invalid"}
 
 
 def test_declared_version_contradicting_the_layout(cli, dataset):

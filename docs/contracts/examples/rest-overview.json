@@ -1,0 +1,97 @@
+{
+ "schema": "openapi.yaml#/components/schemas/Overview",
+ "valid": [
+  {
+   "todo": {
+    "error_tasks": 1,
+    "adjudication": {
+     "tasks": 2,
+     "episodes": 15
+    },
+    "delivery_pending": 1,
+    "datasets_changed": 1,
+    "credentials_failed": 0,
+    "backends_failed": 0
+   },
+   "running": {
+    "running": 1,
+    "queued": 2,
+    "paused": 0,
+    "active": [
+     {
+      "task": {
+       "id": "task_01HX",
+       "name": "droid 前 50 条质检",
+       "state": "running",
+       "created_at": 1758300000000
+      },
+      "stage": "vlm",
+      "done": 31,
+      "total": 49
+     }
+    ]
+   },
+   "recent": {
+    "days": 7,
+    "tasks_finished": 9,
+    "episodes_checked": 1480,
+    "pass_rate": 0.81,
+    "tokens_per_day": [
+     {
+      "date": "2026-09-15",
+      "tokens": 1200000
+     },
+     {
+      "date": "2026-09-21",
+      "tokens": 2077500
+     }
+    ]
+   },
+   "datasets": {
+    "total": 12,
+    "changed": 1
+   },
+   "generated_at": 1758400000000
+  }
+ ],
+ "invalid": [
+  {
+   "todo": {},
+   "running": {},
+   "recent": {},
+   "datasets": {},
+   "generated_at": 1
+  },
+  {
+   "todo": {
+    "error_tasks": 0,
+    "adjudication": {
+     "tasks": 0,
+     "episodes": 0
+    },
+    "delivery_pending": 0,
+    "datasets_changed": 0,
+    "credentials_failed": 0,
+    "backends_failed": 0
+   },
+   "running": {
+    "running": 0,
+    "queued": 0,
+    "paused": 0,
+    "active": []
+   },
+   "recent": {
+    "days": 30,
+    "tasks_finished": 0,
+    "episodes_checked": 0,
+    "pass_rate": null,
+    "tokens_per_day": []
+   },
+   "datasets": {
+    "total": 0,
+    "changed": 0
+   },
+   "generated_at": 1
+  }
+ ]
+}

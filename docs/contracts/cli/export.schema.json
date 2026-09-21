@@ -23,8 +23,10 @@
       }
     },
     "fingerprint": {"$ref": "common.schema.json#/$defs/digest"},
-    "manifest": {"type": "string"},
-    "videos_copied": {"type": "integer", "minimum": 0},
-    "videos_reencoded": {"type": "integer", "minimum": 0}
+    "manifest": {"type": "string", "description": "path of export/manifest.json, relative to the run directory"},
+    "videos_copied": {"type": "integer", "minimum": 0, "description": "video files whose bytes were copied from the source"},
+    "videos_reencoded": {"type": "integer", "minimum": 0, "description": "video files produced by encoding (v3 files that lost or gained an episode)"},
+    "videos_renamed": {"type": "integer", "minimum": 0, "description": "v2 videos only renumbered: renamed in place, no bytes copied"},
+    "full_reason": {"type": ["string", "null"], "description": "why an --incremental run fell back to a full export (interrupted last export, missing or changed files, other format or parameters); null otherwise"}
   }
 }

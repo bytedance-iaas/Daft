@@ -42,7 +42,9 @@
     },
     "gates": {
       "type": "object",
-      "additionalProperties": false,
+      "description": "Concurrency gates of a stage. The eight named ones are v1's; a new module may declare its own, named like a module id.",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+      "additionalProperties": {"type": "integer", "minimum": 1},
       "properties": {
         "episode": {"type": "integer", "minimum": 1},
         "probe": {"type": "integer", "minimum": 1},
@@ -84,7 +86,7 @@
       "additionalProperties": false,
       "required": ["id", "kind"],
       "properties": {
-        "id": {"enum": ["autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile", "final"]},
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "v1's stages are autolabel, numeric, frame, vlm, verdict, dedup, profile, final; stages of new modules follow the same pattern"},
         "kind": {"enum": ["cpu", "vlm", "aggregate"]},
         "command": {"enum": ["autolabel", "check", "aggregate"]},
         "modules": {"$ref": "common.schema.json#/$defs/module_list"},

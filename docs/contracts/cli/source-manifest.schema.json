@@ -30,7 +30,7 @@
       "properties": {
         "count": {"type": "integer", "minimum": 0},
         "bytes": {"type": "integer", "minimum": 0},
-        "digest": {"$ref": "common.schema.json#/$defs/digest"}
+        "digest": {"$ref": "common.schema.json#/$defs/digest", "description": "listing fingerprint: sha256 over one line per object, key TAB size TAB identity NEWLINE, lines sorted by key; identity is the ETag without quotes (TOS) or mtime_ns (local files). A dataset registration keeps it and task start compares against it (D36, D37)"}
       }
     }
   }

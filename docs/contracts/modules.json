@@ -1,5 +1,5 @@
 {
- "registry_version": "1.0",
+ "registry_version": "1.1",
  "stages": [
   "numeric",
   "frame",
@@ -154,13 +154,23 @@
     "additionalProperties": false,
     "properties": {
      "sync_plots": {
-      "enum": [
-       "flagged",
-       "all",
-       "off"
-      ],
+      "title": "同步曲线证据图",
+      "description": "为哪些条目画画面运动与关节速度的对照曲线",
       "default": "flagged",
-      "description": "同步曲线证据图：flagged 只画有标注或未对齐的条目，all 全画，off 不画"
+      "oneOf": [
+       {
+        "const": "flagged",
+        "title": "有标注或未对齐的"
+       },
+       {
+        "const": "all",
+        "title": "全部"
+       },
+       {
+        "const": "off",
+        "title": "不画"
+       }
+      ]
      }
     }
    },
@@ -199,13 +209,23 @@
     "additionalProperties": false,
     "properties": {
      "evidence_frames": {
-      "enum": [
-       "flagged",
-       "all",
-       "off"
-      ],
+      "title": "证据帧",
+      "description": "为哪些条目保存判定时看过的画面",
       "default": "flagged",
-      "description": "证据帧：flagged 只存拒绝与待裁决条目，all 全存，off 不存"
+      "oneOf": [
+       {
+        "const": "flagged",
+        "title": "拒绝与待裁决的"
+       },
+       {
+        "const": "all",
+        "title": "全部"
+       },
+       {
+        "const": "off",
+        "title": "不存"
+       }
+      ]
      }
     }
    },

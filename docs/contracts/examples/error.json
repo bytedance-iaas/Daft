@@ -19,6 +19,53 @@
     "code": "usage",
     "message": "--modules mixes stages: numeric and frame"
    }
+  },
+  {
+   "schema_version": "1.0",
+   "exit_code": 7,
+   "error": {
+    "code": "rejected",
+    "message": "the daemon refused: the task is running",
+    "details": {
+     "rest_error": {
+      "status": 409,
+      "error": {
+       "code": "task_state_conflict",
+       "message": "任务正在运行，请先停止再删除"
+      }
+     }
+    }
+   }
+  },
+  {
+   "schema_version": "1.0",
+   "exit_code": 8,
+   "error": {
+    "code": "wait_timeout",
+    "message": "task still running after 600 s",
+    "details": {
+     "task": {
+      "id": "task_01HX",
+      "state": "running"
+     }
+    }
+   }
+  },
+  {
+   "schema_version": "1.0",
+   "exit_code": 3,
+   "error": {
+    "code": "output_unreachable",
+    "message": "cannot read tos://bkt/deliveries/droid-50"
+   }
+  },
+  {
+   "schema_version": "1.0",
+   "exit_code": 1,
+   "error": {
+    "code": "internal",
+    "message": "unexpected KeyError; traceback on stderr"
+   }
   }
  ],
  "invalid": [
@@ -28,6 +75,22 @@
    "error": {
     "code": "source_changed",
     "message": "x"
+   }
+  },
+  {
+   "schema_version": "1.0",
+   "exit_code": 3,
+   "error": {
+    "code": "rejected",
+    "message": "wrong exit code for rejected"
+   }
+  },
+  {
+   "schema_version": "1.0",
+   "exit_code": 9,
+   "error": {
+    "code": "usage",
+    "message": "no such exit code"
    }
   }
  ]

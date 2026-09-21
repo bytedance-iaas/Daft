@@ -112,6 +112,11 @@ concurrency:                    # 站点级默认与上限，见 04 篇 §2；�
   vlmParallelism: 64
   vlmParallelismMax: 128
 
+vlm:                            # 04 篇 §2.2、§4.2
+  merge:
+    enabled: true               # 请求合并的一键开关；关了之后 planner 一律出 strategy=none
+  gates: {}                     # 逐把覆盖由 N 推导出的闸门，例如 {probe: 48}；只在调优时用
+
 backup:
   enabled: false
   schedule: "0 3 * * *"

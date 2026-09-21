@@ -178,10 +178,14 @@ v1 还有一个名字相近的东西：`ingest/semantics_preflight.py`。数据�
 本期不实现新模块，但框架要让「加一个模块」是件小事。清单：
 
 1. 在 `core/checks/` 加纯函数实现（不 import daft、不碰 I/O）。
-2. 在注册表加一行 `ModuleSpec`。
+2. 在注册表加一行 `ModuleSpec`。有参数的，`param_schema` 里每个参数带 `title`（表单上的字段名）、`description`、
+   `default`，可选值写成 `oneOf` 的 `{const, title}`，必填的列进 `required` —— 新建任务的第二屏按它生成表单（D38）。
 3. 在 `pipeline/verdict.py` 声明它如何参与判决（hard/soft/none + 权重）。
-4. 如果是 VLM 模块，且形态是「抽 N 帧、问一次」：实现 `merge_units`，声明帧策略、`prompt_part` 和 `parser`，
+4. 如果是 VLM 模块，且形态是「抽 N 帧、问一次」：`merge_units` 放一个 `DeclaredMergeUnits`（`backend/curation/planner/merge.py`）——
+   声明 `frame_policy`、`call_kind`、`units_per_episode`，并按 `(episode_index, context)` 给出这一条的提问单元
+   （每个单元带 `prompt_part` 和 `parser`）。planner 读帧策略提出分组，`check` 进程逐条调用它拿单元，
    帧策略相同的模块会被自动合进同一个请求（见 04 篇 §4.2）。多步证据链式的模块不用声明，按自己的方式调用。
+   新模块的调用种类用自己的名字（形如模块 id，C3 1.1），不必借 v1 的五种。
 5. 报告小节渲染器：给一个默认表格渲染器兜底，需要定制才写。
 6. 前端：零改动 —— 模块清单、中文名、标灰原因全部来自 API。
 

@@ -48,8 +48,13 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/v1/modules` | 模块注册表：id、中文名、所属档、参数 schema。前端的模块清单只从这里来 |
-| GET | `/api/v1/datasets` | 列数据集。`source=tos`（需 uri + 访问密钥）或 `source=public`（HuggingFace 缓存桶，匿名） |
-| GET | `/api/v1/datasets/episodes` | 分页列 episode，供新建页预览勾选，见 §10 |
+| GET | `/api/v1/overview` | 概览页一次取回：待处理事项、运行情况、近 7 天统计（D36，§12） |
+| GET / POST | `/api/v1/datasets` | 已登记的数据集（页码分页，按名称搜索，按格式、指纹状态筛选）/ 登记：预检 + 取文件清单，记下两个指纹（D36，§12） |
+| GET / PATCH / DELETE | `/api/v1/datasets/{id}` | 登记详情 / 改名称和备注 / 删除登记（不动 TOS；有非终态任务在用 → 409 `dataset_in_use`） |
+| POST | `/api/v1/datasets/{id}/recheck` | 重新核对指纹，只比较、不改任何任务 |
+| POST | `/api/v1/datasets/{id}/repreflight` | 重新预检，刷新预检结果和两个指纹 |
+| GET | `/api/v1/datasets/browse` | 列私有 TOS 前缀下或 HuggingFace 缓存桶里的数据集，供登记时挑选。`source=tos`（需 uri + 访问密钥）或 `source=public`（匿名） |
+| GET | `/api/v1/datasets/episodes` | 分页列 episode，供新建页预览勾选；给 `dataset_id`，或来源 + 地址，见 §10 |
 | POST | `/api/v1/preflight` | 预检，同步返回，结果带 `preflight_id` |
 | POST | `/api/v1/deliveries/probe` | 交付目录写探针：用指定的访问密钥真实写一个对象再删掉。新建页交付目录失焦时调 |
 
@@ -59,7 +64,7 @@
 |---|---|---|
 | POST | `/api/v1/tasks` | 新建任务（= 需求里的 `run_modules()`） |
 | POST | `/api/v1/tasks/batch` | 同一套配置、多个数据集，一次建 N 个任务（深链带多个数据集时用） |
-| GET | `/api/v1/tasks` | 任务列表，页码分页 |
+| GET | `/api/v1/tasks` | 任务列表，页码分页；可按状态、名称、交付目录、数据集、所含模块筛选 |
 | GET | `/api/v1/tasks/{id}` | 任务详情，见 §3.3 |
 | PATCH | `/api/v1/tasks/{id}` | `created`（待启动）可改全部配置；启动之后只能改 `name` 和 `note`（D20）。带 `If-Match: <updated_at>`，两个窗口同时改时后到的返回 412 |
 | DELETE | `/api/v1/tasks/{id}` | 删除平台里的任务记录，不动 TOS（`created` 或终态才允许），见 §8 |
@@ -67,6 +72,7 @@
 | POST | `/api/v1/tasks/{id}/purge-artifacts` | 清理该任务在 TOS 上的交付产物，见 §8 |
 | POST | `/api/v1/tasks/{id}/rebind-credentials` | 原访问密钥被删后，给历史任务重新指定一个，只影响报告读取与媒体签名 |
 | POST | `/api/v1/tasks/{id}/actions/{action}` | `start` / `pause` / `resume` / `stop` |
+| POST | `/api/v1/tasks/{id}/repreflight` | 开始时指纹对不上、用户确认之后调：重新预检，相容就直接开始（D37，§12） |
 | POST | `/api/v1/tasks/{id}/retry` | 重试 → 建子任务，见 §3.2 |
 | POST | `/api/v1/tasks/{id}/continue` | stopped / failed 的任务继续运行 → 建子任务 |
 | POST | `/api/v1/tasks/{id}/reexport` | 重新导出交付数据集 → 建子任务 |
@@ -362,19 +368,19 @@ GET /api/v1/tasks/{id}/logs?stage=vlm&subtask=&level=warn&cursor=…&limit=200
 
 ## 12. 数据集登记、概览与开始前的指纹核对（D36、D37）
 
-2026-09-21 静态稿评审新增。**这一节的端点还没写进 C4**：批次 1 合并后连同各包报告的契约缺口一起修订
-`openapi.yaml`（`info.version` 升到 1.1.0），届时并入 §2 总表。
+2026-09-21 静态稿评审新增，已写进 C4 1.1.0（端点见 §2 总表，结构以 `openapi.yaml` 为准）。
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/v1/datasets` | 已登记的数据集，页码分页；按名称搜索，按格式、指纹状态（`check_state`）筛选 |
-| POST | `/api/v1/datasets` | 登记：来源 + 地址 + 地域 + 访问密钥 → 预检 + 取文件清单，记下两个指纹。同一 `(来源, 地址, 地域)` 已登记则返回已有的那条 |
-| GET / PATCH / DELETE | `/api/v1/datasets/{id}` | 详情（含预检结果、最近的核对记录）/ 改名称和备注 / 删除登记（不动 TOS；有非终态任务在用 → 409） |
-| POST | `/api/v1/datasets/{id}/recheck` | 重新核对指纹，只比较、不改任何任务；有变化时 `check_state=changed` 并返回变化 |
-| POST | `/api/v1/datasets/{id}/repreflight` | 重新预检，刷新预检结果和两个指纹 |
-| GET | `/api/v1/datasets/browse` | 原来的「列数据集」：列私有 TOS 前缀下或 HuggingFace 缓存桶里的数据集，供登记时挑选 |
-| POST | `/api/v1/tasks/{id}/repreflight` | 开始时指纹对不上、用户确认之后调：重新预检，判断与任务配置是否相容。相容 → 直接开始（等同再调一次 `start`）；不相容 → 任务留在待启动，返回不相容的项（例如所选模块变成不支持、自选的 episode 超出范围），前端带用户回编辑页 |
-| GET | `/api/v1/overview` | 概览页一次取回：待处理事项（错误的任务、待裁决、交付待导出、有变化的数据集、验证失败的密钥与后端）、运行情况、近 7 天统计（Token 只算实际调用账）|
-
-另外两处小改：`GET /tasks` 增加 `module` 参数（逗号分隔，只看包含这些模块的任务），列表条目增加所选模块的 id
-（质检模块列要显示预设名，07 篇 §4.1）；`POST /tasks` 的 `input` 可以直接给 `dataset_id`，与给来源和地址等价。
+- **登记**（`POST /datasets`）：Daemon 调 `curation preflight` 和 `curation snapshot`，存下预检结果、meta 指纹、
+  全量文件清单及其指纹（01 篇 §2.8）。同一个来源 + 地址 + 地域再登记一次，返回已有的那条（200），不重复建。
+  新建任务时直接填地址的，预检通过后同样走这一步，任务上记 `dataset_id`。
+- **重新核对**（`/recheck`）只比较、不改任何任务：有变化时 `check_state` 置为 `changed`，
+  返回 `SourceChange`（meta 有没有变、新增 / 删除 / 改动的文件数、前若干个键）。**重新预检**（`/repreflight`）
+  刷新预检结果和两个指纹，`check_state` 回到 `ok`。
+- **开始任务**（`actions/start`，或 `POST /tasks` 带 `start_now`）先核对，见 §3 第 5 步。对不上返回 409
+  `source_changed`，`error.details` 是一个 `SourceChange`；前端弹框请用户确认后调 `POST /tasks/{id}/repreflight`：
+  重新预检并判断与任务配置是否相容（所选模块仍可用、自选的 episode 仍在范围内、需要补充的输入都有）。
+  相容就直接开始，不用再点一次；不相容则任务留在待启动，`incompatibilities` 逐项说明，前端带用户回编辑页。
+- **概览**（`GET /overview`）一次返回：待处理事项（错误的任务、待裁决、交付待导出、有变化的数据集、
+  验证失败的密钥与后端）、运行情况、近 7 天统计（Token 只算实际调用账）。
+- 任务列表的 `module` 参数是逗号分隔的模块 id，只看**勾选了其中每一个**的任务；列表条目带所选模块的 id
+  （质检模块列显示预设名要用，07 篇 §4.1）。请求里的 `input` 可以只给 `dataset_id`，与给全来源和地址等价。

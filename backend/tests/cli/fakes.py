@@ -363,4 +363,5 @@ def _list_item(task: dict) -> dict:
             "created_at": task["created_at"], "progress": task["progress"],
             "summary": task["summary"], "pending_adjudication": task["pending_adjudication"],
             "delivery_stale": task["delivery_stale"], "active_subtask": None,
+            "modules": [m["id"] for m in task["modules"]], "dataset_id": task.get("dataset_id"),
             "module_counts": {"succeeded": 1}, "usage": task["usage"]}

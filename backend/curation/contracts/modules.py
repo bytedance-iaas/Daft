@@ -12,13 +12,19 @@ Two facts from v1 shape it (design doc 05, section 1):
   and knows which results go stale when an upstream verdict changes.
 * ``autolabel`` (captioning episodes without a task text) is not a module; it
   is a shared prerequisite of ``task_success`` and ``skill_profile``.
+
+``param_schema`` drives the second screen of the new-task form (D38), so every
+parameter carries ``title`` (the field label), ``description`` (help text) and
+``default``; a choice lists its options as ``oneOf`` of ``{const, title}``, and
+required parameters go into the object's ``required``. Adding a module with
+parameters needs no frontend change.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.0"
+REGISTRY_VERSION = "1.1"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
@@ -84,10 +90,11 @@ def _no_params() -> dict:
     return {"type": "object", "properties": {}, "additionalProperties": False}
 
 
-def _evidence_param(name: str, description: str) -> dict:
+def _evidence_param(name: str, title: str, labels: dict[str, str], description: str) -> dict:
+    options = [{"const": mode, "title": labels[mode]} for mode in EVIDENCE_MODES]
     return {"type": "object", "additionalProperties": False,
-            "properties": {name: {"enum": list(EVIDENCE_MODES), "default": "flagged",
-                                  "description": description}}}
+            "properties": {name: {"title": title, "description": description,
+                                  "default": "flagged", "oneOf": options}}}
 
 
 MODULES: tuple[ModuleSpec, ...] = (
@@ -125,7 +132,9 @@ MODULES: tuple[ModuleSpec, ...] = (
         level="episode", gate="hard", needs=frozenset({"video", "action"}), stage="frame",
         depends_on=("numeric_gates",), produces_adjudication=False,
         param_schema=_evidence_param(
-            "sync_plots", "同步曲线证据图：flagged 只画有标注或未对齐的条目，all 全画，off 不画"),
+            "sync_plots", "同步曲线证据图",
+            {"flagged": "有标注或未对齐的", "all": "全部", "off": "不画"},
+            "为哪些条目画画面运动与关节速度的对照曲线"),
         tables=(TableSpec("video_action_sync", "逐机位同步读数",
                           ("episode_index", "lag_s", "corr_peak")),)),
     ModuleSpec(
@@ -134,7 +143,9 @@ MODULES: tuple[ModuleSpec, ...] = (
         level="episode", gate="hard", needs=frozenset({"video", "vlm"}), stage="vlm",
         depends_on=("frame_gates", "autolabel"), produces_adjudication=True,
         param_schema=_evidence_param(
-            "evidence_frames", "证据帧：flagged 只存拒绝与待裁决条目，all 全存，off 不存"),
+            "evidence_frames", "证据帧",
+            {"flagged": "拒绝与待裁决的", "all": "全部", "off": "不存"},
+            "为哪些条目保存判定时看过的画面"),
         tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),)),
     ModuleSpec(
         id="dedup", name_zh="精确去重",
