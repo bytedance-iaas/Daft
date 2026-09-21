@@ -51,6 +51,7 @@ class Chain:
         self.run_dir, self.dataset, self.delivery = run_dir, dataset, delivery
         self.vlm = ["--vlm-endpoint", vlm_endpoint, "--vlm-model", vlm_model, "--hedge",
                     "--concurrency", "64"]
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
         self.log = open(log_path, "a", encoding="utf-8")
         self.steps: list[dict] = []
 
@@ -110,22 +111,28 @@ class Chain:
                  "--episodes", f"@{dedup}", *self.vlm)
         self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
                  "--revision", "1", "--episodes", episodes, "--input", ds)
-        if _has_command("report"):
-            self.run("report", "report", "--run-dir", rd, "--revision", "1")
-            if _has_command("export"):
-                out = ["--output", self.delivery] if self.delivery else []
-                self.run("export", "export", "--run-dir", rd, "--input", ds, "--source-manifest",
-                         sm, *out)
-            if self.delivery:
-                self.run("verify", "verify", "--run-dir", rd, "--output", self.delivery,
-                         "--visibility-timeout", "0")
+        self.run("report", "report", "--run-dir", rd, "--revision", "1")
+        out = ["--output", self.delivery] if self.delivery else []
+        self.run("export", "export", "--run-dir", rd, "--input", ds, "--source-manifest", sm,
+                 *out)
+        if self.delivery:
+            _mirror(rd, self.delivery)            # what the Daemon uploads as it goes
+            self.run("verify", "verify", "--run-dir", rd, "--output", self.delivery,
+                     "--visibility-timeout", "0")
 
 
-def _has_command(name: str) -> bool:
-    from curation.cli.app import build_parser
+def _mirror(run_dir: str, delivery: str) -> None:
+    """Copy the run directory into the delivery, as the Daemon's sync does (the dataset
+    itself went there through ``export --output``)."""
+    import shutil
 
-    sub = [a for a in build_parser()._actions if a.dest == "command"][0]
-    return name in sub.choices
+    skip = {os.path.join(run_dir, "export", "lerobot_curated")}
+
+    def ignore(d, names):
+        return [n for n in names if os.path.join(d, n) in skip or n == "inflight.json"
+                or n.startswith(".")]
+
+    shutil.copytree(run_dir, delivery, ignore=ignore, dirs_exist_ok=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -177,7 +184,8 @@ def main(argv: list[str]) -> int:
                             tape_meta={"label": "v2 chain"})
         mode = "record"
     chain = Chain(args.out, args.input, delivery=args.delivery, vlm_endpoint=args.vlm_endpoint,
-                  vlm_model=args.vlm_model, log_path=os.path.join(args.out, "parity.log"))
+                  vlm_model=args.vlm_model,
+                  log_path=os.path.join(args.out, "logs", "parity-run.log"))
     failure = None
     hooks.install(vlm_client)
     try:

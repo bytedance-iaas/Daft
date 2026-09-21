@@ -90,10 +90,22 @@ def collect_expected(run_dir: str, output: Storage) -> dict[str, Expected]:
     if not out:                      # no reference at all: nothing may be declared complete
         raise UsageError(f"--run-dir {run_dir} holds no delivered file to verify")
     manifest = _export_manifest(run_dir, output)
-    for rel in _manifest_artifacts(manifest):
+    sizes = _manifest_sizes(manifest)
+    for rel in _manifest_artifacts(manifest) + sorted(sizes):
         key = f"{EXPORT_ROOT}/{rel}"
-        out.setdefault(key, Expected(key, None))
+        if key in out and out[key].size is not None:
+            continue                      # a local copy: its size is the reference
+        out[key] = Expected(key, sizes.get(rel))
     return out
+
+
+def _manifest_sizes(manifest) -> dict[str, int]:
+    """``files`` of export/manifest.json (C2 1.1): every delivered file with its size."""
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(files, dict):
+        return {}
+    return {str(rel).strip("/"): int(rec["size"]) for rel, rec in files.items()
+            if isinstance(rec, dict) and isinstance(rec.get("size"), int)}
 
 
 def _export_manifest(run_dir: str, output: Storage) -> dict | None:
