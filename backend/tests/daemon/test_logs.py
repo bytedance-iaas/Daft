@@ -169,3 +169,34 @@ def test_logs_endpoint(client_for):
     assert_error(c.get(f"/curation/api/v1/tasks/{t.id}/logs", params={"subtask": "sub_nope"}),
                  "not_found")
     assert ALL_RUNS is logs_mod.ALL_RUNS
+
+
+def test_logs_endpoint_subtask_filter(client_for):
+    """C4 1.2: no ``subtask`` = everything, ``subtask=`` = the main run, an id = that subtask."""
+    from daemon.repo import protocol as P
+    from daemon.transitions import change_task_state
+
+    c = client_for()
+    rt = c.app.state.runtime
+    t = seed_task(rt.repo)
+    for frm, to in (("queued", "running"), ("running", "completed_with_errors")):
+        change_task_state(rt.repo, None, t.id, {frm}, to, at=T0)
+    sub = rt.repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="retry", scope={},
+                                           state="queued"))
+    other = seed_task(rt.repo, "other")
+    rt.logs.append(t.id, "vlm", _line(T0 + 1, "main vlm"))
+    rt.logs.append(t.id, "vlm", _line(T0 + 2, "retry vlm", "warn"), subtask_id=sub.id)
+    rt.logs.append(t.id, "system", _line(T0 + 3, "main system"))
+    schema = "openapi.yaml#/paths/~1tasks~1{id}~1logs/get/responses/200/content/application~1json/schema"
+
+    def get(**params):
+        body = c.get(f"/api/v1/tasks/{t.id}/logs", params=params).json()
+        assert_schema(schema, body)
+        return [(i["msg"], i["subtask_id"]) for i in body["items"]]
+
+    assert get() == [("main system", None), ("retry vlm", sub.id), ("main vlm", None)]
+    assert get(subtask="") == [("main system", None), ("main vlm", None)]
+    assert get(subtask=sub.id) == [("retry vlm", sub.id)]
+    assert get(subtask=sub.id, stage="system") == []
+    assert get(stage="vlm") == [("retry vlm", sub.id), ("main vlm", None)]
+    assert_error(c.get(f"/api/v1/tasks/{other.id}/logs", params={"subtask": sub.id}), "not_found")

@@ -2,9 +2,11 @@
 
 FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权、SSE、探针、静态资源与挂载前缀、启动对账，
 以及只靠数据库和工作目录就能做完的接口。建任务、跑任务（W5）和密钥管理（W8）会接在这副骨架上。
+续作把 Daemon 对齐到契约 1.1 / 1.2：数据集登记（D36、D37）的仓储与只读接口、概览、任务列表的模块与数据集筛选，
+以及 C4 1.2 的响应格式。
 
-设计依据：`docs/design/01`（数据模型与对账）、`03`（REST）、`08`（鉴权与主密钥）、`09`（部署与探针），
-契约 C4 `docs/contracts/openapi.yaml`、C5 `daemon/repo/protocol.py`。
+设计依据：`docs/design/01`（数据模型与对账）、`03`（REST）、`07` §4.3（概览）、`08`（鉴权与主密钥）、`09`（部署与探针），
+契约 C4 `docs/contracts/openapi.yaml`（1.2.0）、C5 `daemon/repo/protocol.py`（1.2）。
 
 ## 文件
 
@@ -14,11 +16,13 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `app.py` | `create_app(settings)`、`Runtime`（仓储、事件中心、鉴权、钩子）、就绪检查、维护线程 |
 | `settings.py` / `masterkey.py` | 环境变量配置；主密钥缺失或格式不对就拒绝启动 |
 | `instance.py` | 一个数据卷只跑一个 Daemon：启动时对 `curator.db.lock` 加排它锁，第二个进程等 10 秒拿不到锁就退出（退出码 2） |
-| `repo/sqlite.py`、`repo/migrations.py` | C5 的 SQLite 实现：WAL、单写线程、显式事务、CAS、迁移（`PRAGMA user_version`） |
+| `repo/sqlite.py`、`repo/migrations.py` | C5 的 SQLite 实现：WAL、单写线程、显式事务、CAS、迁移（`PRAGMA user_version`，现为第 2 步） |
+| `repo/extras.py` | C5 之外的几条只读查询（按地址找登记、概览的统计口径），拟并入 C5 1.3 |
 | `auth.py` | Basic 鉴权（搬自 v1 `ui/auth.py`）：htpasswd（bcrypt / apr1）优先，单用户环境变量兼容 |
 | `events.py`、`routes/sse.py` | SSE 事件中心与 `GET {base}/events/tasks/{id}` |
 | `transitions.py`、`timeline.py`、`reconcile.py` | 状态迁移（CAS + 审计事件 + SSE 一处做完）、执行时间线、启动对账 |
-| `routes/api.py` | 已实现的 `{base}/api/v1` 接口 |
+| `routes/api.py`、`routes/datasets.py`、`routes/overview.py` | 已实现的 `{base}/api/v1` 接口：任务、数据集登记、概览；未知路径统一由 `api.fallback` 兜底 |
+| `overview.py` | 概览的各项数字怎么算（口径写在模块说明里） |
 | `routes/static.py`、`deeplink.py` | 前端静态资源、SPA 回退、v1 旧深链 302（解析规则搬自 v1 `ui/runner.py`） |
 | `errors.py`、`idempotency.py`、`pagination.py`、`logs.py`、`views.py`、`taskspec.py` | 统一错误体、幂等键、游标、任务日志、响应组装、任务配置校验 |
 | `operations.py` | C4 全部 48 个操作的去向：已实现的，和留给 W3/W5/W8 的 |
@@ -26,8 +30,11 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 ## 已实现的接口
 
 `/healthz`、`/readyz`（根路径和 `{base}` 下各一份，免鉴权）；`{base}/api/v1` 下：`GET /modules`、
-`GET /tasks`（页码分页，带 `total`）、`GET/PATCH/DELETE /tasks/{id}`、`POST /tasks/{id}/restore`、
-`POST /tasks/{id}/rebind-credentials`、`GET /tasks/{id}/subtasks|timeline|logs|usage`；`GET {base}/events/tasks/{id}`。
+`GET /tasks`（页码分页，带 `total`；可按 `state`、`q`、`delivery`、`module`、`dataset_id` 筛选）、`GET/PATCH/DELETE /tasks/{id}`、
+`POST /tasks/{id}/restore`、`POST /tasks/{id}/rebind-credentials`、`GET /tasks/{id}/subtasks|timeline|logs|usage`、
+`GET /datasets`、`GET/PATCH/DELETE /datasets/{id}`、`GET /overview`；`GET {base}/events/tasks/{id}`。
+
+登记数据集（`POST /datasets`）、重新核对、重新预检都要跑 CLI，归 W5；这里只有读、改名改备注和删除登记。
 
 其余操作一个都没注册（访问返回 404 `not_found`），去向写在 `operations.py`，测试保证两张表合起来正好是 `openapi.yaml` 的全部操作。
 
@@ -50,6 +57,7 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `CURATOR_SSE_HEARTBEAT_S` | 15 | SSE 空闲时每隔多久发一行 `: ping` |
 | `CURATOR_HOST` / `CURATOR_PORT` | `0.0.0.0` / 8080 | 监听地址 |
 | `CURATOR_LOG_LEVEL` / `CURATOR_LOG_FORMAT` | `INFO` / `json` | 日志写到 stdout，密钥类字段一律打成 `***` |
+| `CURATOR_TZ_OFFSET` | `+08:00` | 站点所在时区的 UTC 偏移（形如 `+08:00`、`-05:30`、`Z`），决定概览「近 7 天」每天从几点算起 |
 
 htpasswd 和单用户都没配、也没指定 `CURATOR_AUTH_MODE` 时不做鉴权，日志里会有一条警告，只适合本机调试。
 
@@ -58,8 +66,9 @@ htpasswd 和单用户都没配、也没指定 `CURATOR_AUTH_MODE` 时不做鉴�
 以下命令在 `backend/` 下执行。依赖装在仓库根的 `.venv`：Daemon 需要 `fastapi`、`uvicorn`，测试另需 `httpx2`
 （版本见 `backend/requirements.txt`、`requirements-dev.txt`）。
 
-**准备**：选一个空目录当数据卷，造 23 条任务，其中 1 条停在「运行中」，模拟 Daemon 被杀掉时的样子。
-W5 之前还没有建任务的接口，所以直接写仓储：
+**准备**：选一个空目录当数据卷，登记两个数据集（其中 `umi_640` 的指纹有变化），在 `droid_100` 上造 23 条任务：
+单号的只勾时间戳检查，第 0 条已经跑完（有错误、有 4 条待裁决、用了一些 Token），最后 1 条停在「运行中」，
+模拟 Daemon 被杀掉时的样子。W5 之前还没有登记数据集和建任务的接口，所以直接写仓储：
 
 ```bash
 export CURATOR_DATA_DIR=$(mktemp -d)/data
@@ -67,24 +76,57 @@ PYTHONPATH=. ../.venv/bin/python - <<'EOF'
 import os
 from daemon.repo import protocol as P
 from daemon.repo.sqlite import SqliteRepository
+from daemon.util import now_ms
 from curation.contracts import modules as registry
 
 repo = SqliteRepository(os.path.join(os.environ["CURATOR_DATA_DIR"], "curator.db"))
-rows = [P.TaskModule(task_id="", module_id=m, selected=True, availability="available")
-        for m in registry.ids()]
+now = now_ms()
+
+def preflight(version, episodes):
+    return {"schema_version": "1.0", "validation": [], "modules": [], "warnings": [],
+            "format": {"kind": "lerobot", "version": version, "supported": True, "detail": version},
+            "dataset": {"episode_count": episodes, "cameras": ["wrist"], "fps": 15.0,
+                        "robot_type": "franka", "total_frames": episodes * 250,
+                        "labels": {"with_task": episodes, "without_task": 0}, "profile": None},
+            "meta_fingerprint": "sha256:" + "a" * 64}
+
+def register(name, version, episodes):
+    ds, _ = repo.register_dataset(P.Dataset(
+        id="", name=name, source="tos", uri=f"tos://bucket/datasets/{name}", region="cn-beijing",
+        preflight=preflight(version, episodes), meta_fingerprint="sha256:" + "a" * 64,
+        source_fingerprint={"objects": 204, "bytes": 1520331122, "digest": "sha256:" + "b" * 64},
+        preflighted_at=now))
+    return ds
+
+ds, umi = register("droid_100", "v2", 100), register("umi_640", "v3", 640)
+repo.record_dataset_check(P.DatasetCheck(
+    dataset_id=umi.id, at=now, trigger="recheck", result="changed",
+    change={"meta_changed": False, "added": 12, "removed": 0, "modified": 1, "preflighted_at": now,
+            "sample_keys": ["data/chunk-000/episode_000640.parquet"]}))
 for i in range(23):
+    rows = [P.TaskModule(task_id="", module_id=m, availability="available",
+                         selected=i % 2 == 0 or m == "timestamp_check") for m in registry.ids()]
     t = repo.create_task(P.TaskCreate(
-        name=f"droid 抽检 {i:02d}", input_source="tos",
+        name=f"droid 抽检 {i:02d}", input_source="tos", input_region="cn-beijing",
         input_uri="tos://bucket/datasets/droid_100", output_uri="tos://bucket/deliveries/droid",
         delivery_key="tos://bucket/deliveries/droid", episode_selector={"mode": "head", "n": 50},
-        params={"export": True}, modules=rows))
+        params={"export": True}, modules=rows, dataset_id=ds.id))
+    if i == 0:
+        repo.update_task_state(t.id, {"queued"}, "running", at=now)
+        repo.update_task_state(t.id, {"running"}, "completed_with_errors", at=now)
+        repo.set_task_summary(t.id, {"total": 50, "passed": 41, "rejected": 7, "held": 2,
+                                     "review": 10, "pass_rate": 0.82, "pending_adjudication": 4})
+        repo.switch_result_rev(t.id, 0, 1)
+        repo.add_usage([P.UsageDelta(task_id=t.id, ledger="actual", module_id="task_success",
+                                     call_kind="probe", model_name="doubao", prompt_tokens=182000,
+                                     completion_tokens=6400, requests=124)], at=now)
 repo.update_task_state(t.id, {"queued"}, "running", at=t.created_at)
 repo.close()
-print(t.id)
+print(f"export T={t.id} D={ds.id} U={umi.id}")
 EOF
 ```
 
-记下最后打印的任务 id，下文写作 `$T`（`export T=task_...`）。
+把最后打印的那行复制下来执行一遍，下文用 `$T`（停在运行中的任务）、`$D`（`droid_100`）、`$U`（`umi_640`）。
 
 1. **没有主密钥就拒绝启动**
 
@@ -112,6 +154,8 @@ EOF
    ```
 
    预期：`{"status":"ok"}`；`readyz` 的 `checks` 五项全是 `true`（其中 `reconciled` 表示启动对账已完成）。
+
+   下文的 `curl` 都要带账号，先定义一个简写：`c() { curl -s -u demo:demo-pass "$@"; }`。
 
 4. **鉴权**
 
@@ -193,27 +237,81 @@ EOF
     预期：任意前端路由都返回 `index.html`，`<head>` 后面注入了 `<base href="/curation/">` 和 `window.__CURATOR_BASE__="/curation"`；
     `/curation/assets/不存在.js` 返回 404 错误体，不会返回 `index.html`。
 
-11. **优雅停机**：`kill %1`（SIGTERM），Daemon 日志最后是 `Application shutdown complete.`；打开着的 SSE 连接会被主动结束，
+11. **数据集列表与详情**
+
+    ```bash
+    c 'localhost:18080/curation/api/v1/datasets?page_size=10' | python3 -m json.tool | head -40
+    c 'localhost:18080/curation/api/v1/datasets?check_state=changed&format=lerobot_v3' \
+      | python3 -c 'import json,sys; b=json.load(sys.stdin); print(b["total"], [x["name"] for x in b["items"]])'
+    c localhost:18080/curation/api/v1/datasets/$D | python3 -m json.tool | head -30
+    c localhost:18080/curation/api/v1/datasets/browse
+    ```
+
+    预期：列表 `total` 是 2，新登记的在前；`droid_100` 的 `format` 是 `lerobot_v2`、`episode_count` 100，`last_task` 是最新建的那条任务。
+    第二条输出 `1 ['umi_640']`。详情里有 `preflight`、`listing`（`objects` 204）、`checks`（最新的在前）、`tasks`（最多 20 条，最新的在前），
+    `links` 暂时是空数组（契约的 `Link.rel` 还没有数据集这一种）。最后一条是 404，`message` 是「这个接口不存在（或还没有实现）」：
+    `browse` 归 W3，不会被当成数据集 id。
+
+12. **任务列表按模块、数据集筛选**
+
+    ```bash
+    for q in 'module=task_success' 'module=timestamp_check,task_success' "dataset_id=$D" 'module=nope'; do
+      c "localhost:18080/curation/api/v1/tasks?$q" | python3 -c 'import json,sys; b=json.load(sys.stdin); print(b.get("total", b))'
+    done
+    ```
+
+    预期：`12`、`12`（要求每一个都勾了）、`23`，最后一条是 400 `validation_failed`，列出可选的模块。列表条目带 `modules`（所选模块，按注册表顺序）和 `dataset_id`。
+
+13. **概览**
+
+    ```bash
+    c localhost:18080/curation/api/v1/overview | python3 -m json.tool
+    ```
+
+    预期：`todo` 里 `error_tasks` 1、`adjudication` 为 `{"tasks": 1, "episodes": 4}`、`delivery_pending` 1（有结果但从没导出过）、
+    `datasets_changed` 1；`running` 里 `queued` 22（对账后运行中的那条也回到了排队）；
+    `recent` 的 `tasks_finished` 1、`episodes_checked` 50、`pass_rate` 0.82，`tokens_per_day` 列出 7 天、最早的在前，
+    今天是 188400（只算实际调用账的 `prompt + completion`）；`datasets` 为 `{"total": 2, "changed": 1}`。
+    日期按 `CURATOR_TZ_OFFSET`（默认北京时间）切分。
+
+14. **改名、备注与删除登记**
+
+    ```bash
+    c -X PATCH -H 'Content-Type: application/json' -d '{"name":"DROID 抽检集","note":"第二批"}' \
+      localhost:18080/curation/api/v1/datasets/$D | head -c 160; echo
+    c -X DELETE -H 'Content-Type: application/json' localhost:18080/curation/api/v1/datasets/$D; echo
+    c -o /dev/null -w '%{http_code}\n' -X DELETE -H 'Content-Type: application/json' localhost:18080/curation/api/v1/datasets/$U
+    ```
+
+    预期：改名成功，返回整条详情；删 `droid_100` 返回 409 `dataset_in_use`，「还有 22 个未结束的任务在用这个数据集……」，
+    `details.tasks` 列出其中最新的 20 条；`umi_640` 没有任务在用，删除返回 `204`，TOS 上的数据不受影响。
+    不带 `Content-Type: application/json` 的写请求一律 400。
+
+15. **优雅停机**：`kill %1`（SIGTERM），Daemon 日志最后是 `Application shutdown complete.`；打开着的 SSE 连接会被主动结束，
     不会拖住停机。重启之后 SSE 的 epoch 加 1，旧的 `Last-Event-ID` 会收到 `reset`。
 
 ## 自动化测试
 
 ```bash
-../.venv/bin/python -m pytest -q tests/daemon tests/contracts   # 约 40 秒
+../.venv/bin/python -m pytest -q tests/daemon tests/contracts   # 约 1 分钟
 ../.venv/bin/python -m curation.contracts check                 # 无输出、退出码 0
 ```
 
 `tests/daemon/test_repo_conformance.py` 是仓储的一致性测试套件，只用 C5 协议，
-按 `tests/daemon/repo_impls.py` 列出的实现逐个跑。将来接火山 RDS，把新实现加进去（或设环境变量
-`CURATOR_EXTRA_REPO_FACTORIES=包.模块:工厂函数`），原样跑过这套测试即可。
+按 `tests/daemon/repo_impls.py` 列出的实现逐个跑；`test_repo_extras.py` 同样地测 `repo/extras.py` 里的查询。
+将来接火山 RDS，把新实现加进去（或设环境变量 `CURATOR_EXTRA_REPO_FACTORIES=包.模块:工厂函数`），原样跑过这两套测试即可。
+`test_repo_sqlite.py` 里有从第 1 步迁移上来的测试。
 
 ## 给后续工作包
 
 - **W5（编排）**：
   - 状态变更一律走 `transitions.change_task_state` / `change_subtask_state`（带上任务的 `owner`）：CAS、审计事件、SSE 一次做完，
     时间线也从这些事件来；SSE 事件以审计事件的 id 作版本，多个线程同时改同一个任务也不会把旧状态发在新状态后面。
-    结果版本切换成功后调 `transitions.record_revision`。子任务结束、父任务终态重算后，发一条 `hub.publish_done`（或让 `change_task_state` 发）。
-    子任务的暂停原因记在审计事件里（C5 没有这一列），找不到原因的子任务启动对账时保持暂停。
+    结果版本切换成功后调 `transitions.record_revision`，子任务产出的版本再用 `repo.set_subtask_result_rev` 记到子任务上。
+    子任务的终态那一步默认会发带 `subtask_id` 的 `done`，之后已结束任务的 SSE 流就会收尾：所以子任务结束时，
+    先按当前结果重算父任务终态（D25，含 C5 1.2 新增的 `stopped / failed → succeeded / completed_with_errors`，只对任务），再结束子任务。
+    任务从 `stopped` / `failed` 因 resume 结束时 `finished_at` 取新的结束时间，`succeeded` 与 `completed_with_errors` 之间重算时保留原值。
+    子任务的暂停原因现在是子任务上的一列（C5 1.2），`change_subtask_state(pause_reason=...)` 会写进去；启动对账对子任务和任务用同一张表。
   - 进度、日志、用量推给 `runtime.hub.publish_progress / publish_log / publish_usage`（线程安全、不阻塞；进度和用量发累计值，
     发 `state` / `done` 之前会先把积压的进度和用量发出去）。
   - 日志文件按 `logs.TaskLogs` 的布局写：主流程 `runs/<task_id>/logs/<stage>.jsonl`，子任务 `runs/<task_id>/logs/<subtask_id>/<stage>.jsonl`，
@@ -223,13 +321,26 @@ EOF
   - 写接口用 `routes.common.read_json_body`（只收 JSON、拒绝跨站写）和 `runtime.idempotency.run`（`Idempotency-Key`）。
     事务里每次仓储调用都有保存点，方法中途失败不留半截数据；磁盘写满这类让 SQLite 整体回滚的错误，块内后续调用会直接报错。
   - `POST /tasks` 复用 `taskspec.resolve_config`，和 PATCH 的校验保持一致；`created` 任务把预检结果存在 `task.preflight`。
+    `input` 给 `{dataset_id}` 时由 `taskspec.resolve_input` 换成登记的来源、地址、地域和访问密钥，并记下 `dataset_id`；
+    给完整地址时按地址找已有登记（`repo.find_dataset`），找不到就是 `None`，登记新地址（预检加 `curation snapshot`）是 W5 的事。
+  - 数据集登记：`repo.register_dataset` 按（来源、地址、地域）取或建，地址先用 `taskspec.normalize_tos_uri` 归一，空地域等同于没有；
+    `source_fingerprint` 存 `{objects, bytes, digest}`（`listing` 也认 C2 `source-manifest` 的 `count`）。每次核对都 `record_dataset_check`
+    （`add` / `recheck` / `task_start` / `repreflight`），它会同时更新 `check_state` 和 `checked_at`；重新预检用
+    `update_dataset(preflight=, meta_fingerprint=, source_fingerprint=, preflighted_at=, manifest_path=)` 一次换掉基线，`check_state` 回到 `ok`，
+    `repreflight` 那条核对记录不会再把它改回 `changed`。已登记的地址再登记一次时，若原来的访问密钥已被删除，请用 `update_dataset(credential_id=...)` 换上新的。
+  - 概览读 `summary` 里的 `total`、`passed`、`pending_adjudication`，Token 按 `add_usage` 被调用的时刻计入某一天：用量请照常每 5 秒汇总一次。
   - 任务列表的「待裁决」徽标读 `summary.pending_adjudication`：提交裁决后请更新这个数。
   - 裁决队列等内存里排好序的列表，可以用 `pagination.keyset_page` 做游标分页，`scope` 里带上结果版本。
   - 接上一个接口，就把它从 `operations.PENDING` 挪到 `IMPLEMENTED`，测试会检查路由和表是否一致。
+    新路由加在 `app.py` 那组 `include_router` 里、`api.fallback` 之前；`/datasets/{id}` 只匹配 `ds_` 开头的 id，
+    W3 的 `/datasets/browse`、`/datasets/episodes` 放在哪个路由表里都不会被它挡住。
 - **W8（密钥）**：主密钥在 `runtime.master_key`（`key`、`version`、`next_key`）；进程启动后已从 `os.environ` 删掉，CLI 子进程不会继承。
-  仓储里凭证与模型服务的方法都已实现并有一致性测试。
+  仓储里凭证与模型服务的方法都已实现并有一致性测试。访问密钥删掉后，任务和数据集的响应里 `credential` 为 `null`（C4 1.2），
+  数据集上的引用会被置空；概览的「验证失败」只数 TOS 访问密钥和 VLM 后端，VLM 的 API Key 跟着后端算。
 - **W10（前端）与 W3（`curation task …` 客户端）**：写请求（POST / PUT / PATCH / DELETE）一律带
   `Content-Type: application/json`，没有请求体也要带，否则 400；浏览器的跨站写请求（`Sec-Fetch-Site` 不是 `same-origin`）会被拒。
   路由基址取 `window.__CURATOR_BASE__`；`index.html` 里已注入 `<base href="{base}/">`，Vite 用 `base: './'` 即可。
   SSE 收到 `done` 后请关闭 `EventSource`（断线重连也只会再收到一次快照和 `done`）；收到 `reset` 就丢掉本地增量状态，重新拉一次任务详情。
-  日志接口按时间倒序分页：第一页是最新的，`next_cursor` 往更早翻。
+  `state`、`done` 总带 `subtask_id`（任务本身为 `null`）和 `reason`（状态原因，可为 `null`）。
+  日志接口按时间倒序分页：第一页是最新的，`next_cursor` 往更早翻；`subtask` 不传是全部，传空串只看主流程，传 id 只看那个子任务。
+  `Task.vlm` 现在带 `snapshot`（启动时固化的有效配置，未启动时为 `null`）。
