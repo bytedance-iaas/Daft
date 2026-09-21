@@ -161,11 +161,13 @@ EOF
      '{"ts":2,"kind":"progress","stage":"check:x","done":1,"total":50}' \
      '{"ts":3,"kind":"log","level":"warn","msg":"episode 18 too short","episode_index":18}' \
      '{"ts":4,"kind":"log","level":"info","msg":"done"}' >> $D/numeric.jsonl
-   curl -s -u demo:demo-pass "localhost:18080/curation/api/v1/tasks/$T/logs?limit=2"
+   curl -s -u demo:demo-pass "localhost:18080/curation/api/v1/tasks/$T/logs?stage=numeric&limit=2"
+   curl -s -u demo:demo-pass "localhost:18080/curation/api/v1/tasks/$T/logs?stage=system"
    ```
 
-   预期：返回 `done`、`episode 18 too short` 两行，`has_more: true`；带上返回的 `next_cursor` 再请求一次，得到 `start`，`has_more: false`。
-   `progress` 行不算日志；加 `&level=warn` 只剩警告及以上。
+   预期：第一条返回 `done`、`episode 18 too short` 两行，`has_more: true`；带上返回的 `next_cursor`（`&cursor=...`）再请求一次，
+   得到 `start`，`has_more: false`。`progress` 行不算日志；加 `&level=warn` 只剩警告及以上。
+   第二条是启动对账写下的两行系统日志（系统暂停、自动恢复）。不带 `stage` 时两个文件按时间合在一起，最新的在前。
 
 9. **改名与 If-Match**
 
