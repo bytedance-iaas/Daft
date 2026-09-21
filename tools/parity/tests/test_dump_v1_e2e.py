@@ -119,18 +119,21 @@ def test_a_changed_model_answer_is_caught(recorded, mini_dataset, tmp_path):
     _, out = recorded
 
     def edit(entries):
-        for e in entries:
-            if e.get("tag") == "probe":
-                body = json.loads(e["body"])
-                old = body["choices"][0]["message"]["content"]
-                body["choices"][0]["message"]["content"] = "0" if old != "0" else "100"
-                e["body"] = json.dumps(body)
-                break
+        # Tape order follows thread scheduling during the recording, so pick the answer by
+        # request hash: the same probe is edited on every run.
+        e = min((e for e in entries if e.get("tag") == "probe"), key=lambda e: e["hash"])
+        body = json.loads(e["body"])
+        old = body["choices"][0]["message"]["content"]
+        body["choices"][0]["message"]["content"] = "0" if old != "0" else "100"
+        e["body"] = json.dumps(body)
         return entries
 
     tape = rewrite_tape(os.path.join(out, "vlm_tape.jsonl.gz"),
                         str(tmp_path / "edited.jsonl.gz"), edit)
-    rep, proc = dump(tmp_path, "replay-edited", mini_dataset, "--replay", tape)
+    # The changed answer may send task_success down a path whose requests were never
+    # recorded (arbitration, the reject guard); those replay misses are expected here.
+    rep, proc = dump(tmp_path, "replay-edited", mini_dataset, "--replay", tape,
+                     "--allow-failures")
     assert proc.returncode == 0, proc.stderr[-4000:]
     res = compare(out, rep, "--all-strict", "--json")
     assert res.returncode == 1
