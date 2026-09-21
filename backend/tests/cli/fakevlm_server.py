@@ -5,7 +5,8 @@ that gets signals). Answers depend only on the request body (the parity fake's
 rule), so a run is reproducible; ``delay_s`` slows every answer down (to stop a
 run half way) and ``fail(prompt_text, payload) -> status | None`` makes chosen
 requests fail with an HTTP status. ``max_in_flight`` is the most requests it
-was ever answering at once.
+was ever answering at once. ``port`` (default: any free one) is for running it
+by hand (``backend/curation/cli/README.md``, manual steps).
 """
 from __future__ import annotations
 
@@ -18,8 +19,9 @@ from parity.fakevlm import FakeVlm, _texts
 
 
 class FakeVlmServer:
-    def __init__(self, *, delay_s: float = 0.0, fail=None, model: str = "fake-vlm"):
-        self.delay_s, self.fail, self.model = delay_s, fail, model
+    def __init__(self, *, delay_s: float = 0.0, fail=None, model: str = "fake-vlm",
+                 port: int = 0):
+        self.delay_s, self.fail, self.model, self.port = delay_s, fail, model, port
         self.fake = FakeVlm(model)
         self.calls: list[dict] = []
         #: requests being answered right now, and the most there ever were at once
@@ -84,7 +86,7 @@ class FakeVlmServer:
         class Server(ThreadingHTTPServer):
             request_queue_size = 256            # every call opens a connection (v1's clients)
 
-        self._server = Server(("127.0.0.1", 0), Handler)
+        self._server = Server(("127.0.0.1", self.port), Handler)
         self._server.daemon_threads = True
         threading.Thread(target=self._server.serve_forever, kwargs={"poll_interval": 0.02},
                          daemon=True).start()

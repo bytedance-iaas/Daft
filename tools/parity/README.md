@@ -7,7 +7,8 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
 | 命令（`python -m parity …`） | 作用 |
 |---|---|
 | `dump-v1` | 在同一进程里跑一遍 v1 原版 `curation run`，挂钩取数，导出规范化结果；同时录制或回放全部模型调用 |
-| `compare` | 比较两份导出：确定性六项逐位比，VLM 三项按判决比（可带噪声底），终判清单比，回放命中率 |
+| `run-v2` | 按 Daemon 的顺序跑一遍 v2 的原子命令（preflight → … → verify），模型调用走同一套录制带挂钩（W3） |
+| `compare` | 比较两份导出（或 v2 运行目录）：确定性六项逐位比，VLM 三项按判决比（可带噪声底），终判清单比，回放命中率与调用图 |
 | `make-fixture` | 生成 8 条 episode 的合成 LeRobot v2 数据集（真视频），离线测试用 |
 | `tape-summary` | 看一盘录制带：各类调用多少次、有没有失败 |
 | `pack` | 打一个带进 Pod 的包：冻结点的 v1 源码 + 当前的对账工具 |
@@ -32,6 +33,14 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
 - **规范化记录**：每个模块每条 episode 一行，格式与 v2 的 `checks/<module>/results.jsonl` 相同，
   见 [`docs/contracts/cli/result-record.schema.json`](../../docs/contracts/cli/result-record.schema.json)。
   `verdict` 取 `pass` / `fail` / `abstain` / `scored`（打分项，不投票）/ `error`（D33：降级得来的结论也算出错）。
+- **v2 一侧**（`run-v2`，设计 11 篇 §3）：在同一进程里按 Daemon 的顺序依次调 v2 的原子命令，
+  每档读上一档的幸存者（`--survivors-out`），写出一个普通的 v2 运行目录，`compare` 直接读它（`checks/*/results.jsonl`、
+  `revisions/r0001/` 的清单、`autolabel/`、`checks/dedup/groups.json`、`checks/skill_profile/`）。
+  `--replay` 用 v1 的录制带回答；`--fake-vlm` 用内置假模型现答并录一盘新带。调模型的命令都带 `--hedge`
+  （v1 总是对冲，挂钩替换的正是对冲函数）和 `--concurrency 64`（N=64 时八把闸门与 v1 出厂值逐项相等）。
+  `/models` 探活不算模型调用：v2 每条命令探一次、v1 一次运行探两次，回放时这类请求可重复取用，不计入命中和剩余。
+- **调用图一致**：`compare --all-strict` 的回放一项要求 misses 为 0（v2 的每个请求都在 v1 的带子上）且
+  没有剩余（带子上的每个请求 v2 都发了）。多一个、少一个、提示词差一个字，都会失败。
 - **干净的基线**：导出结束时汇总所有「执行出错」的迹象，包括录制带里失败的调用、打分回答解析不了、v1 降级留下的痕迹和解码失败。
   有任何一项，`dump.json` 的 `status` 就是 `dirty`，退出码为 3。这样的基线不收，用「回放 + 补录」再跑一遍，
   直到状态变为 `clean`（见下文第 5 步）。
@@ -81,12 +90,26 @@ $python -m parity dump-v1 --out $W/rep --v1-src $V1 --replay $W/rec/vlm_tape.jso
 $python -m parity compare --golden $W/rec --candidate $W/rep --all-strict
 ```
 
+再用同一盘带子跑 v2 的命令链，和 v1 逐位对账（约半分钟）：
+
+```bash
+# 5. v2 的原子命令，按 Daemon 的顺序，回放 v1 的录制带 → [run-v2] done; tape replay: hits=121 misses=0 unused=0
+$python -m parity run-v2 --out $W/v2 --input $W/mini --delivery $W/v2-delivery --replay $W/rec/vlm_tape.jsonl.gz
+
+# 6. v1 对 v2：九项逐位一致、终判清单一致、回放无缺无余 → conclusion: PASS
+$python -m parity compare --golden $W/rec --candidate $W/v2 --all-strict
+```
+
+`$W/v2/parity.json` 记着每一步的命令行、退出码、`--json` 输出和录制带统计；各命令的 stderr 在 `$W/v2/logs/parity-run.log`。
+`--fake-vlm` 代替 `--replay …` 时不看带子，由假模型现答，结论应同样是 PASS。
+
 逐项核对：
 - 第 2 步的 `$W/rec/final.json` 里，`passed` 是 `[0, 1, 3, 4, 6]`，`reject` 是 `[2, 5, 7]`
   （2 是时间戳跳变，5 是残段，7 与 3 字节级重复）；`v1_views.passed_json` 里却有 7：
   这是 v1 的一个小问题，`passed.json` 没扣掉被去重剔除的条目（交付数据集里是扣掉了的）。
 - `$python -m parity tape-summary $W/rec/vlm_tape.jsonl.gz` 应列出 probe / endstate / arbitration / caption 各类调用，`0 failed calls`。
-- 单元测试与端到端测试：`$python -m pytest -q tools/parity/tests`（约 40 秒）。
+- 单元测试与端到端测试：`$python -m pytest -q tools/parity/tests`（约 1 分钟；`test_v2_parity.py` 就是第 5、6 步，
+  外加「带子上少一个请求时对账必须失败」的反例，CI 的对账工具一步里一起跑）。
 
 ## 在现网 Pod 里生成黄金基线
 
@@ -179,4 +202,4 @@ $python -m parity compare --golden $W/rec --candidate $W/rep --all-strict
 - **字节级重复的两条 episode** 发出的请求完全相同，回放时它们的响应可能对调。真模型对这两条给了不同回答时，
   会表现为两条互换的差异，对账时对照 `dedup.json` 人工确认。
 - 除打分外，其它回答解析不了（比如仲裁返回的 JSON 坏了）时，导出只能认出「这条降级了」，定位不到是哪次请求，只能整份重跑。
-- `compare` 目前只认导出目录；v2 运行目录的读取在 W2 冻结目录格式后补。
+- `compare` 读 v2 运行目录时，取 `revisions/` 下最新的已提交版本（有 `commit.json` 的），没有就取编号最大的；`run-v2` 只产生 r0001。
