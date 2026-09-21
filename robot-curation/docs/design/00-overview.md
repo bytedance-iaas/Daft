@@ -1,7 +1,9 @@
 # 00 总体架构
 
 > Curator v2 工程设计文档。本册共 12 篇，本篇是入口：讲清楚分层、边界、数据流和本期范围。
-> 需求来源：《Physical AI Kit - Curator 设计文档Prompt》+ 两轮澄清（结论见 §7）。
+> 需求来源：《Physical AI Kit - Curator 设计文档Prompt》+ 两轮澄清 + 2026-09-20 设计评审（结论见 §7，
+> 评审记录见 `review-2026-09-20.md`）。
+> 本册以仓库内的 Markdown 为源，飞书评审副本由它同步生成。
 
 ## 1. 一句话
 
@@ -65,24 +67,29 @@
                      ┌──────────────── VKE Pod ────────────────┐
   浏览器 ──HTTPS──▶  │  nginx? 不需要。Daemon 自己 serve 静态资源  │
                      │                                          │
-                     │   uvicorn  ┌─ /api/**     REST           │
-                     │            ├─ /events/**  SSE            │
-                     │            ├─ /healthz    探针            │
-                     │            └─ /*          前端静态资源      │
+                     │   uvicorn  ┌─ {base}/api/**     REST     │
+                     │            ├─ {base}/events/**  SSE      │
+                     │            ├─ /healthz /readyz  探针      │
+                     │            └─ {base}/*          前端静态资源│
                      │                │                         │
                      │                ├─ worker 池 → subprocess  │
                      │                │      curation check ...  │
-                     │                └─ SQLite @ PVC            │
+                     │                ├─ SQLite @ 数据卷         │
+                     │                └─ 任务工作目录 @ 数据卷     │
                      └──────────────────┬───────────────────────┘
                                         │
                     ┌───────────────────┼────────────────────┐
                     ▼                   ▼                    ▼
-              火山 TOS            方舟 MaaS / 自托管 vLLM   HF 镜像桶
-           （数据集 + 交付）          （VLM 推理）          （公共数据集）
+              火山 TOS            方舟 MaaS / 自托管 vLLM   HuggingFace 缓存桶
+           （数据集 + 交付）          （VLM 推理）        （公共数据集，匿名只读）
 ```
 
 - **单副本**。任务在 Daemon 进程内的 worker 池里排队执行，1000 条还是 10000 条 episode
-  都打到同一个节点上排队。
+  都打到同一个节点上排队。**同一时间默认只跑 1 个任务**，其余排队（v1 也是如此），
+  `maxRunningTasks` 可调，见 `04-concurrency-and-vlm-merge.md` §2.3。
+- **挂载前缀 `{base}`**：现网的 APIG 分流**不剥前缀**，请求原样带着 `/curation/...` 打过来。
+  所以全部路由、静态资源、SSE 都注册在可配置的前缀之下（默认空，现网为 `/curation`），
+  探针同时在根路径和前缀下可达。详见 `09-deployment.md` §2.4。
 - **扩展路径**（本期不做，只留接口）：请求层加 LB + 多 StatefulSet 实例分流；
   存储从 SQLite 换火山 RDS。全部收在 Repository 接口后面，业务代码不感知。
 - **目标节点规格**：32 核 128G。并发默认值按此标定，见 `04-concurrency-and-vlm-merge.md`。
@@ -96,48 +103,82 @@
 ```
 用户新建任务
     │
-    ├─▶ ① preflight        curation preflight --input tos://...
-    │     读 metadata，出：数据格式、episode 清单、robot_type、模块可用性矩阵
-    │     ↓ 前端据此渲染「可跑/标灰/需补充」三态
+    ├─▶ ① preflight     curation preflight --input tos://...
+    │     只读 metadata：数据格式、episode 清单、robot_type、命中的数据集语义 profile、模块可用性矩阵
+    │     ↓ 前端据此渲染「可跑 / 需补充 / 不支持」三态
     │
-    ├─▶ ② plan             Daemon 内部 planner（也有 CLI 形态便于调试）
-    │     出：CPU 段并发度、VLM 段并发度、请求合并分组
+    ├─▶ ② plan          Daemon 内部 planner，必经（也有 CLI 形态便于调试）
+    │     出：分档、每档并发度与各闸门、VLM 请求合并分组
     │
-    ├─▶ ③ decode           curation decode --episodes ...
-    │     抽帧落本地缓存，供视觉质量/同步/VLM 三方复用（解码是最贵的一步，只做一次）
+    ├─▶ ③ autolabel     curation autolabel --episodes <没有任务标注的条目>
+    │     由 VLM 补一句任务描述，作为任务成败判定的任务文本，技能画像直接复用
+    │     （v1 行为：漏斗之前、对无标注条目全量跑；没勾 VLM 模块就不跑）
     │
-    ├─▶ ④ check × N        curation check --module <id> --episodes ...
-    │     每个模块独立跑、独立落盘：runs/<run_id>/checks/<module>/results.jsonl
-    │     ★ 这一步的产物是「模块级、episode 级」的，所以单个模块可以被单独重跑覆盖
+    ├─▶ ④ check · 漏斗   档的划分与顺序照搬 v1；一档一个进程，前一档的幸存者是后一档的 --episodes
+    │     数值档  check --modules timestamp_check,kinematic_limits,motion_quality
+    │        └ 硬门①（时间戳、运动学）
+    │     帧档    check --modules visual_quality,video_action_sync   ← 同进程共享一次全帧率解码
+    │        └ 硬门②（视频-动作同步）
+    │     VLM 档  check --modules task_success                        ← 只跑幸存者
+    │     ★ 结果按模块分目录落盘：checks/<module>/…，所以单个模块可以被单独重跑覆盖
     │
-    ├─▶ ⑤ aggregate        curation aggregate --run <run_id>
-    │     把 N 个模块的结果合成判决：passed / reject / review（待裁决）
+    ├─▶ ⑤ aggregate --phase funnel
+    │     六项检查合成判决 keep / drop；弃权条目仍是 keep，带「待裁决」标记
     │
-    ├─▶ ⑥ export           curation export --run <run_id> [--incremental]
-    │     按 passed 清单导出 lerobot_curated
+    ├─▶ ⑥ check · 判决之后（只对 keep 集合）
+    │     check --modules dedup           重复项改判拒绝
+    │     check --modules skill_profile   caption（补过的复用）→ 归纳两级体系 → 标注分歧检出
     │
-    └─▶ ⑦ report           curation report --run <run_id>
-          报告 + 性能剖析
+    ├─▶ ⑦ aggregate --phase final     出 passed / reject / review 三份清单
+    ├─▶ ⑧ export        按 passed（含待裁决条目）导出 lerobot_curated；任务参数可关
+    ├─▶ ⑨ report        报告 + 性能剖析
+    └─▶ ⑩ verify        交付核验：逐文件回读，写成功不等于读得到
 ```
 
 漏斗优化（硬门先跑、VLM 垫底只跑幸存者）在 v1 里是 DataFrame 链的隐式行为，
-v2 里变成 **planner 的显式决策**：planner 按成本排序模块，前一档的 reject 名单
-作为后一档的 `--episodes` 输入。省下来的 VLM 调用一分不少，但现在是可观测、可干预的。
+v2 里变成 **planner 的显式决策**：计划里写明每一档跑哪些模块、吃哪份幸存者名单。
+省下来的 VLM 调用一分不少，但现在是可观测的 —— 生成的计划随任务存档，可经 API 只读查看。
+
+两点和直觉不同，都是 v1 的既有行为，搬运时不能改：
+
+- **没有独立的解码 stage，也没有帧缓存**（D18）。视频-动作同步必须全帧率解码，视觉质量从同一批帧里抽稀，
+  两者在同一进程里共享一次解码、逐机位串行、用完即释放；task_success、caption、证据帧各自按自己的
+  策略再解码。把帧落盘复用，体积是单条 GB 级，用有损格式又会破坏对账的逐位一致。
+  所以 `check` 允许一次传同一档内的多个模块；单独重试其中一个时接受重复解码。
+- **去重和技能画像在判决之后**，只对 keep 集合跑；去重会把重复项改判为拒绝。
+  它们的输入依赖上游判决，所以上游结果一变（重试、裁决），它们要跟着同步，见 §4.1。
 
 ### 4.1 子任务
 
-任务跑完，某个模块失败 → 用户点「重试」→ 建一个**子任务**，只重跑 ④ 里那一个模块：
+「在已有任务上再做一件事」统一建模为子任务，共四种：
 
 ```
-子任务 = check(失败模块) → aggregate(整 run 重算) → report(重生成)
-                                                  └─▶ 提示「交付数据集已过期，需重新导出」
+重试        check（所选模块里出错的 episode；模块整体失败才全量）
+            → aggregate(funnel) → keep 集合变了则 dedup / skill_profile 增量同步
+            → aggregate(final) → report
+继续运行    stopped / failed 的任务从断点接着跑主流程里没完成的部分
+执行裁决    adjudicate-apply → 改了标且没有人工成败结论的条目重跑 task_success
+            → aggregate → 技能画像同步 → report
+重新导出    export --incremental → verify
 ```
 
-模块结果是按 `<run_id>/checks/<module>/` 分文件存的，所以覆盖是文件级替换，
-不影响其他模块的产物。aggregate 是纯计算、秒级，每次重算全量即可。
+模块结果按 `checks/<module>/` 分目录存放，子任务的产物先写临时目录、成功后才替换，
+失败不会破坏旧结果。aggregate 是纯计算、秒级，每次全量重算。
+增量同步沿用 v1 的 `reassign` / `reprofile`：已有 caption 直接复用，只给新进入 keep 集合的条目补打，
+不重新归纳技能体系。
 
-**交付数据集不自动重建**（用户明确要求）：页面显式提示，由用户点「重新导出」，
+**交付数据集不自动重建**（D9）：判决变了，页面显式提示，由用户点「重新导出」，
 且导出走增量路径，只处理变动的 episode。详见 `06-delivery-and-report.md` §4。
+
+### 4.2 工作目录与交付目录
+
+CLI 在本地工作目录上干活，产物随产随传到 TOS 上的交付目录：
+
+- 工作目录在数据卷上：`<data>/runs/<task_id>/`。Pod 重启后任务从这里恢复。
+- 每个模块完成就上传它的产物；任务结束前做一次交付核验（⑩）。
+- 几天后再来的子任务先看本地，本地已清理就从交付目录回灌所需文件
+  （搬 v1 的 `mirror_run` / `sync_back` 及其跳过表，大文件不回灌）。
+- 任务到达终态 7 天后清理本地工作目录，交付目录不动。
 
 ## 5. 本期范围
 
@@ -147,14 +188,23 @@ v2 里变成 **planner 的显式决策**：planner 按成本排序模块，前�
 | 8 个模块原样搬运 + 黄金对账 | 算法调优、阈值调整 |
 | 预检（只识别格式，非 LeRobot v2/v3 全标灰） | mcap / LanceDB 的 reader |
 | 密钥管理、任务状态机、子任务、分页、Token 计量 | 火山 IAM 对接（只留抽象） |
-| VLM 请求合并框架 + 同 episode 多模块合并 | 跨 episode 帧合并（留扩展点）、并发参数调优 |
+| VLM 请求合并框架（现有两个 VLM 模块按 v1 调用图原样跑） | 现有模块之间的请求合并、跨 episode 帧合并（留扩展点）、并发参数调优 |
+| 挂载前缀、页码分页、任务日志、交付核验 | 静态审片站（`review-page`，只保留片段生成） |
 | Helm Chart、单副本部署 | 多副本、RDS、LB |
 | 前端六页 | 样式与火山控制台的像素级对齐（后期整合时做） |
 
 明确**删除**：内嵌终端（`curation/ui/terminal.py` 及 `/ws/term` 路由、xterm 前端资产）。
 
-明确**保留**：HF 镜像缓存桶、深链 GET 参数契约（`?dataset=` / `?url=` / `?region=` / endpoint 键，
-逻辑一字不改）、本地挂载路径输入（降级为调试功能，UI 上标注 experimental）。
+明确**保留**：
+
+- HuggingFace 缓存桶：匿名直读公共桶（新建任务页的数据来源之一，无需凭证，只读）；
+  另有 `curation fetch` 把公开数据集拉到自己的桶，保持 CLI-only。
+- 深链 GET 参数契约：`dataset` / `dataset_url` / `url`、`region`、`endpoint` / `tos_endpoint`、`source=public`，
+  解析规则逐条照搬，见 `07-frontend.md` §2.1。
+- 本地挂载路径输入：降级为调试功能，默认关闭，只允许白名单根目录之下，UI 上标注 experimental。
+
+v1 其余能力（`--lite`、`--report-only`、`--max-episodes`、`reprofile`、`ls` 等）的去向，
+见 `10-parity-and-migration.md` §2.3。
 
 ## 6. 目标仓库布局
 
@@ -181,7 +231,7 @@ curator/
 
 ## 7. 已冻结的决策
 
-来自两轮需求澄清，后续设计一律以此为准：
+D1–D15 来自两轮需求澄清，D16 起来自 2026-09-20 的设计评审。后续设计一律以此为准：
 
 | # | 决策 |
 |---|---|
@@ -189,17 +239,43 @@ curator/
 | D2 | Daemon 单副本 + 进程内 worker 池；扩展靠请求层 LB + 多实例分流 |
 | D3 | 单实例单租户；数据模型带 owner 字段，鉴权抽象成 Provider，预留火山 IAM |
 | D4 | 密钥、任务、子任务、报告索引全部持久化 |
-| D5 | 提交接口只有标准模式 `run_modules()`；helper 优化在 Daemon 内部必经，对调用方不可见 |
+| D5 | 提交接口只有标准模式 `run_modules()`；helper 优化在 Daemon 内部必经，对调用方不可见。评审时重申：不提供自定义计划入口，生成的计划只读可查，调优经站点配置 |
 | D6 | 预检只识别格式；非 LeRobot v2/v3 全模块标灰 |
 | D7 | 不做历史兼容，交付目录结构可重新设计 |
-| D8 | VLM 后端两类：方舟（拉模型列表）+ 自定义 endpoint（手填模型），都带 thinkingEffort |
+| D8 | VLM 后端两类：方舟 + 自定义 endpoint，都带思考强度（方舟的 `reasoning_effort`，取值与映射见 08 篇 §4.1）。方舟模型列表先试 `GET {endpoint}/models`，不通则用内置清单 + 手填 —— 官方的模型列表接口只支持 AK/SK 鉴权 |
 | D9 | 子任务改判后不自动重导出，显式提示 + 用户点击，导出走增量 |
 | D10 | 人工裁决 = 任务停在「已完成（待裁决 N 条）」，裁决执行是一种子任务 |
-| D11 | 数据来源：私有 TOS + HF 镜像；本地挂载保留为 experimental 调试入口 |
+| D11 | 数据来源：私有 TOS + HuggingFace 缓存桶（匿名只读）；本地挂载保留为 experimental 调试入口 |
 | D12 | Token 只显示消耗量，不换算金额（用户有套餐） |
 | D13 | 暂停 = episode 级断点，不做帧级中断续传 |
 | D14 | 框架代码英文注释；搬运的算法模块连中文注释原样保留 |
-| D15 | 对账基线数据集 `umi_640_notask`；CPU 五项逐位一致，VLM 三项比对判决 |
+| D15 | 对账口径：确定性六项（时间戳 / 运动学 / 运动质量 / 视觉质量 / 视频-动作同步 / 去重）逐位一致；VLM 三项（无标注补 caption / 任务成败 / 技能画像）判决级比对。基线数据集 `umi_640_notask`，另见 D19 |
+| D16 | 视频与证据帧由浏览器经预签名 URL 直连 TOS，Daemon 不中转流量（用户本来就有该桶的访问权限） |
+| D17 | 前端零业务状态：状态全部保存在后端，前端本地只存 UI 偏好 |
+| D18 | 不设独立的解码 stage 和帧缓存；分档与顺序照搬 v1 漏斗；`check` 可一次接受同一档内的多个模块，同进程共享一次解码 |
+| D19 | 黄金对账双基线：`umi_640_notask` + `droid_lerobot` 前 50 条，两个都要过 |
+| D20 | 任务增加「待启动」状态（可改全部配置，启动后锁定）；`stopped` / `failed` 可「继续运行」；支持「复制为新任务」 |
+| D21 | 任务列表用页码分页（page / page_size / total）；Lazy Loading 用在预览图、明细表、视频、日志上；裁决队列与日志用游标 |
+| D22 | Agent 主入口是 REST API；CLI 增加薄客户端命令 `curation task …`，返回带 `links` 的 JSON；原子命令不产出 `links` |
+| D23 | VLM 请求合并：一期交付合并框架，现有两个 VLM 模块不参与合并、按 v1 调用图原样跑；框架用契约测试加示例模块验证，新 VLM 模块接入时自动生效 |
+
+### 7.1 评审中给出的默认取值
+
+下面几项不是需求方的决定，是评审时给的默认处理，需求方可以否掉：
+
+| # | 事项 | 默认 | 落在哪 |
+|---|---|---|---|
+| P1 | 同时运行的任务数 | 1，其余排队；`maxRunningTasks` 可调，大于 1 时 Daemon 按任务数均分 VLM 并发预算 | 04 §2.3 |
+| P2 | 429 / 5xx 自适应降并发放在哪层 | CLI 进程内的 VLM 客户端；Daemon 只给初值、收事件 | 04 §7 |
+| P3 | 深链带多个数据集 | 新建页进入批量模式，共用一套配置，一次建 N 个任务 | 07 §2.1 |
+| P4 | CPU 档并发 | CLI 默认 1（需求原话）；Daemon 的 planner 默认 `min(8, 核数/4)` | 04 §2.1 |
+| P5 | 进度模型 | 分档数组，每档独立的进度、耗时、预计剩余 | 01 §2.3 |
+| P6 | 创建任务的幂等 | `POST /tasks` 支持 `Idempotency-Key` | 03 §8 |
+| P7 | `/metrics` | 免鉴权，但只在集群内端口监听 | 09 §4 |
+| P8 | 任务列表的实时性 | 有非终态任务时 5s 轮询，不做全局 SSE | 07 §4 |
+| P9 | 信号协议 | SIGTERM 收尾当前 episode 后退出；SIGINT 取消在飞请求立即退出；超时 SIGKILL | 02 §4 |
+| P10 | 重试粒度 | 默认只重跑所选模块里出错的 episode；模块整体失败才全量 | 03 §3.2 |
+| P11 | 删除任务 | 只删平台记录，TOS 产物保留；清产物需显式参数和二次确认 | 03 §8 |
 
 ## 8. 本册索引
 
@@ -217,3 +293,4 @@ curator/
 | 09 | 镜像与 Helm Chart | 后端、运维 |
 | 10 | 搬运计划与黄金对账 | 全员 |
 | 11 | 并行工作包与接口冻结顺序 | 全员先读 |
+| — | `review-2026-09-20.md` 设计评审记录（问题清单与结论） | 想知道「为什么改」时读 |

@@ -13,15 +13,15 @@
 
 | 包 | 名称 | 产出 | 依赖 | 可并行 |
 |---|---|---|---|---|
-| **W0** | 对账工具与黄金基线 | `curation-parity` 工具 + `golden/v1/` 存档 | 无 | — |
-| **W1** | Baseline 清理与重组 | 新目录结构、依赖清理、测试挑拣 | 需你点头删上游 | — |
+| **W0** | 对账工具与黄金基线 | `curation-parity` 工具 + v1 侧导出脚本 `dump_v1.py` + 两个基线的 `golden/v1/` 存档（含 v1 自身的噪声底） | 无 | — |
+| **W1** | Baseline 清理与重组 | 新目录结构、依赖清理、测试挑拣 | 需需求方点头删上游 | — |
 | **W2** | 契约冻结 | CLI JSON schema、REST OpenAPI、Repository 接口、模块注册表、进度协议 | W1 | — |
-| **W3** | CLI 层 | 8 条原子命令 | W2 | ✅ |
-| **W4** | Daemon 骨架 | FastAPI、SQLite Repository、鉴权、SSE、静态资源 | W2 | ✅ |
-| **W5** | 任务编排 | 状态机、worker 池、子任务、暂停恢复 | W4 | ✅ |
-| **W6** | planner 与 VLM 合并 | 执行计划、MergeStrategy、usage 采集 | W2 | ✅ |
+| **W3** | CLI 层 | 9 条原子命令（preflight / plan / autolabel / check / aggregate / export / report / adjudicate-apply / verify）+ 客户端命令 `curation task …` + 辅助命令 | W2（客户端命令另依赖 W4 的 OpenAPI） | ✅ |
+| **W4** | Daemon 骨架 | FastAPI、SQLite Repository、鉴权、SSE、静态资源、挂载前缀、启动对账 | W2 | ✅ |
+| **W5** | 任务编排 | 状态机（含待启动、系统暂停）、worker 池、四种子任务、暂停恢复、工作目录与回灌、日志 | W4 | ✅ |
+| **W6** | planner 与 VLM 合并 | 执行计划、闸门推导、合并框架（现有模块不参与，示例模块验证）、usage 采集、外层重试、自适应降并发 | W2 | ✅ |
 | **W7** | 增量导出 | manifest、diff 算法、v2/v3 两条路径 | W2 | ✅ |
-| **W8** | 密钥与资源管理 | 加密存储、连通性校验、方舟拉模型 | W4 | ✅ |
+| **W8** | 密钥与资源管理 | 加密存储、连通性校验、模型列表（`/models` → 内置清单 → 手填）、思考强度能力表 | W4 | ✅ |
 | **W9** | 前端静态稿 | 6 页 HTML mockup（先 2 页定风格） | 无（可最先开） | ✅ |
 | **W10** | 前端实现 | React 工程、6 个页面 | W2 + W9 定稿 | ✅ |
 | **W11** | 镜像与 Chart | Dockerfile、Helm Chart | W3 + W4 | ✅ |
@@ -52,7 +52,7 @@
    └── W12 黄金对账 + 合并对账
 ```
 
-**W9 建议和批次 0 同时启动**：静态稿不依赖任何后端代码，而它的评审需要你的时间，
+**W9 建议和批次 0 同时启动**：静态稿不依赖任何后端代码，而它的评审需要需求方的时间，
 早开早定，避免后面卡在等风格确认。
 
 ## 4. W2 要冻结的五份契约
@@ -62,7 +62,7 @@
 | # | 契约 | 文件 | 消费方 |
 |---|---|---|---|
 | C1 | 模块注册表 | `backend/curation/registry/modules.py` | CLI、Daemon、前端 |
-| C2 | CLI `--json` schema | `docs/contracts/cli/*.schema.json` | Daemon |
+| C2 | CLI `--json` schema（含规范化的 `results.jsonl` 行，对账工具也消费它） | `docs/contracts/cli/*.schema.json` | Daemon、对账工具 |
 | C3 | 进度协议（stderr JSON Lines） | `docs/contracts/progress.schema.json` | Daemon → SSE |
 | C4 | REST OpenAPI | `docs/contracts/openapi.yaml` | 前端 |
 | C5 | Repository 接口 | `backend/daemon/repo/protocol.py` | Daemon 内部 |
@@ -83,14 +83,17 @@
 
 | 包 | 验收 |
 |---|---|
-| W0 | 对 v1 自己的两次跑批做对账，结果必须是「完全一致」（工具自身的正确性验证） |
+| W0 | 对 v1 自己的两次跑批做对账：确定性六项必须「完全一致」（工具自身的正确性验证）；VLM 三项给出 v1 自身的波动基线。两个基线数据集都要有存档 |
 | W1 | 清理后 CLI 能跑、搬运的测试全绿、镜像能构建 |
-| W3 | 每条命令 `--json` 输出通过 schema 校验；`preflight`→`report` 全链路跑通 8 条 episode |
-| W5 | 暂停/恢复后结果与不暂停一致；停止后无孤儿子进程；崩溃重启后任务状态可恢复 |
-| W6 | 合并模式与单发模式判决一致率 ≥98%（见 10 篇 §3.4）；token 摊派总和等于实际用量 |
-| W7 | 剔除中间一条 episode 后重新导出：产物可被官方 lerobot loader 无警告加载；未受影响的视频文件字节不变 |
-| W10 | 深链参数行为与 v1 逐项一致；SSE 断线自动降级轮询；表单必填校验全覆盖 |
-| W12 | CPU 五项逐位一致；VLM 两项判决差异 <2% 且逐条人工确认 |
+| W3 | 每条命令 `--json` 输出通过 schema 校验；`preflight`→`verify` 全链路跑通 8 条 episode；`check --resume` 在中途被 SIGTERM / SIGKILL 后续跑，结果与一次跑完一致 |
+| W5 | 暂停/恢复后结果与不暂停一致；停止后无孤儿子进程；崩溃重启后任务状态可恢复且系统暂停的任务自动续跑；优雅停机超时不把任务置为失败；`stopped` / `failed` 的任务「继续运行」后不重复已完成的工作 |
+| W6 | 示例模块上：合并模式与单发模式判决一致率 ≥98%（见 10 篇 §3.4）、token 摊派总和等于实际用量、单项解析失败只降级那一项；N=64 时推导出的八把闸门与 v1 出厂默认逐项相等；现有两个 VLM 模块的计划里 `merge.strategy` 恒为 `none` |
+| W7 | 剔除中间一条 episode 后重新导出：产物可被官方 lerobot loader 无警告加载；未受影响的视频文件字节不变；只改了任务文本的条目（人工改标）不触发视频拷贝或重编码；待裁决条目在导出结果里 |
+| W4 | 探针免鉴权且在根路径与前缀下都可达；`/curation` 前缀下全部路由可用、旧深链入口 302 正确；SSE 支持 `Last-Event-ID` 重放；主密钥缺失拒绝启动；任务列表页码分页的 `total` 正确 |
+| W8 | 任何 API 响应与日志都不含密钥本体；TOS 校验含写探针；`/models` 不通时回落到内置清单；思考强度为空时请求体里没有 `reasoning_effort` 字段 |
+| W11 | VKE 上 helm install 一次成功（StatefulSet + EBS 数据卷）；升级时运行中任务被系统暂停、新 Pod 起来后自动续跑；`basePath=/curation` 下经 APIG 可用 |
+| W10 | 深链参数行为与 v1 逐项一致（v1 的深链测试用例全部搬过来并通过）；在 `/curation` 前缀下刷新任意页面不 404；SSE 断线自动降级轮询；表单必填校验全覆盖 |
+| W12 | 两个基线上：确定性六项逐位一致；VLM 三项判决差异 <2% 且不超过 v1 噪声底的 1.5 倍，逐条人工确认；droid 基线上同一组裁决输入的执行结果逐位一致 |
 
 ## 6. 给并行 agent 的分工提示
 

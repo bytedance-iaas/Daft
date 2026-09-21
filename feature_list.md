@@ -111,6 +111,25 @@
 - 验收：按 README 步骤可完成一次完整质检并看到报告
 - status: not_completed
 
+## 修订记录（2026-09-20 设计评审）
+
+> 原有条款一字未改。下面是需求方在评审中拍板的决策对各 feature 的追加与替换说明，
+> 与原文冲突处以本节为准。决策编号见 `robot-curation/docs/design/00-overview.md` §7。
+
+- **F1.1 / F4.2（D19）追加**：黄金基线为两个数据集 —— `umi_640_notask` 与 `droid_lerobot` 前 50 条，两个都要过。
+  对账比较的是规范化记录，v1 一侧由 `tools/parity/dump_v1.py` 导出；F1.1 验收①的「完全一致」指确定性六项，
+  VLM 三项给出 v1 自身的波动基线。
+- **F2.1（D18 / D22）替换**：原子命令为 preflight / plan / autolabel / check / aggregate / export / report /
+  adjudicate-apply / verify 九条（`decode` 取消，新增 `autolabel` 与 `verify`），另加客户端命令 `curation task …`。
+  `check` 可一次接受同一档内的多个模块。
+- **F2.2（D21）替换**：验收④的「游标分页」改为：任务列表页码分页且 `total` 正确；裁决队列、日志、episode 列表用游标。
+- **F2.3（D20）追加**：状态机含「待启动」与系统暂停；`stopped` / `failed` 可继续运行；优雅停机超时不把任务置为失败。
+- **F2.4（D23）替换**：现有两个 VLM 模块不参与合并、按 v1 调用图原样跑；验收①②由示例模块承担，
+  另加「N=64 时推导出的闸门与 v1 出厂默认逐项相等」。
+- **F2.7 追加**：没有任务标注不导致 VLM 模块标灰（由 autolabel 补）；未选 VLM 后端 → needs_input。
+- **F3.2 追加**：在 `/curation` 挂载前缀下可用；任务列表页码分页。
+- **F4.1 追加**：StatefulSet + 块存储数据卷；不再有帧缓存卷；升级后系统暂停的任务自动续跑。
+
 ## 范围外（本期明确不做）
 
 - 新质检模块的算法实现；算法调优、阈值调整
