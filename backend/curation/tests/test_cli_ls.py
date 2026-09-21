@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from curation import cli
+from curation.cli import legacy as cli
 
 
 def _run(capsys, argv):

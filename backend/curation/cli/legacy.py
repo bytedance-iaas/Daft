@@ -122,7 +122,7 @@ def _tos_err_line(e: Exception) -> str:
 def _cmd_ls(path: str, region: str | None) -> int:
     """列一层内容:tos:// 走直连 delimiter 列举,本地走 scandir。输出先目录后文件。"""
     if str(path).startswith("tos://"):
-        from . import tos_store
+        from .. import tos_store
         try:
             bucket, prefix = tos_store.parse_tos_url(path)
         except Exception as e:  # noqa: BLE001 — URL 写法错要按输入错误报
@@ -379,8 +379,8 @@ def _cmd_backends(config_path: str | None, timeout: float) -> int:
     信息型命令,恒返回 0(出厂自带的 self-hosted-example 占位预设注定不可达,
     以退出码报警会让健康的部署天天假红)。要脚本化判活,grep DOWN 即可。
     """
-    from .adapters.vlm_client import list_models
-    from .pipeline.config import load_config
+    from ..adapters.vlm_client import list_models
+    from ..pipeline.config import load_config
 
     cfg = load_config(config_path)
     presets = cfg.get("vlm_backends") or {}
@@ -396,7 +396,7 @@ def _cmd_backends(config_path: str | None, timeout: float) -> int:
             extra = f" …(共{len(ids)}个)" if len(ids) > 3 else ""
             print(f"{name:<24}{'✅在线':<10}{', '.join(ids[:3])}{extra}")
         except Exception as e:  # noqa: BLE001  单预设失败照常列完其余
-            from .adapters.vlm_client import probe_failure_reason
+            from ..adapters.vlm_client import probe_failure_reason
             reason = probe_failure_reason(e, p_.get("api_key_env"))
             state = "❌密钥问题" if ("密钥" in reason or "鉴权" in reason) else "❌不可达"
             print(f"{name:<24}{state:<10}{reason}")
@@ -407,8 +407,8 @@ def _cmd_public(config_path: str | None, *, as_json: bool = False,
                 refresh: bool = False) -> int:
     """`curation public`:公共数据集清单。每行一个数据集:名字、全名、版本、集数、
     直接能喂给 `run --input` 的 tos:// 地址与地区。"""
-    from .ingest import public_catalog
-    from .pipeline.config import load_config
+    from ..ingest import public_catalog
+    from ..pipeline.config import load_config
     public_catalog.apply_config(load_config(config_path))
     if not public_catalog.configured():
         print("本实例没有配置公共数据集(站点配置 public_datasets.bucket 为空)",
@@ -454,7 +454,7 @@ def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool,
     """
     import shutil
 
-    from .delivery import is_delivery, prune_plan, size_text
+    from ..delivery import is_delivery, prune_plan, size_text
 
     remote = str(delivery).startswith("tos://")
     if yes and keep_latest is None:
@@ -463,7 +463,7 @@ def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool,
               file=sys.stderr)
         return 2
     if remote:
-        from . import tos_store
+        from .. import tos_store
         try:
             plan = tos_store.prune_plan_url(delivery, region, keep_latest)
         except (tos_store.TosUrlError, tos_store.TosConfigError) as e:
@@ -515,7 +515,7 @@ def _cmd_prune(delivery: str, keep_latest: int | None, yes: bool,
         return 0
     for f in plan["delete"]:
         if remote:
-            from . import tos_store
+            from .. import tos_store
             n_del = tos_store.delete_run_url(delivery, f["name"], region)
             print(f"  已删 {f['name']}({n_del} 个对象)")
         else:
@@ -535,7 +535,7 @@ def _list_datasets(parent: str) -> list[str]:
     """
     import os
 
-    from .ingest.rrd_reader import is_rrd_dataset
+    from ..ingest.rrd_reader import is_rrd_dataset
     return sorted(
         name for name in os.listdir(parent)
         if os.path.exists(os.path.join(parent, name, "meta", "info.json"))
@@ -543,8 +543,8 @@ def _list_datasets(parent: str) -> list[str]:
 
 
 
-from .episode_select import parse_episodes as _parse_episodes  # noqa: E402
-from .episode_select import EpisodesOutOfRange, reconcile_episodes  # noqa: E402
+from ..episode_select import parse_episodes as _parse_episodes  # noqa: E402
+from ..episode_select import EpisodesOutOfRange, reconcile_episodes  # noqa: E402
 
 
 def _bad_max_episodes(n) -> str:
@@ -618,7 +618,7 @@ def _stage_tos_delivery(args, tag: str, skip_dirs: tuple = ()):
     d = str(getattr(args, "delivery", "") or "")
     if not d.startswith("tos://"):
         return ()
-    from . import tos_store
+    from .. import tos_store
     region = getattr(args, "delivery_region", None)
     how = "按需镜像(跳过视频等大文件)" if skip_dirs else "先全量镜像"
     try:
@@ -641,7 +641,7 @@ def _sync_tos_delivery(sync, tag: str) -> int:
     if not sync:
         return 0
     local, url, region, skip_dirs = sync
-    from . import tos_store
+    from .. import tos_store
     try:
         r = tos_store.sync_back(local, url, region, skip_dirs=skip_dirs)
     except Exception as e:  # noqa: BLE001
@@ -701,7 +701,7 @@ def _interactive_run_preflight(args) -> str | None:
     if getattr(args, "batch", False):
         return None
     inp = str(args.input or "").rstrip("/")
-    from .ingest import dsfs
+    from ..ingest import dsfs
     try:
         info = dsfs.read_json(dsfs.join(inp, "meta", "info.json")) or {}
     except Exception:  # noqa: BLE001 读不动交给管道自己报,这里不拦
@@ -716,7 +716,7 @@ def _interactive_run_preflight(args) -> str | None:
                 else "kinematic_limits" not in _skip)
     if (kin_runs and not args.embodiment_id
             and str(info.get("robot_type") or "").strip() in ("", "unknown")):
-        from .ui.runner import embodiment_choices, suggest_embodiments
+        from ..ui.runner import embodiment_choices, suggest_embodiments
         root = os.path.dirname(inp) or "."
         name = os.path.basename(inp)
         sug = suggest_embodiments(root, name)
@@ -767,10 +767,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         args = build_parser().parse_args(_argv)
     if args.command == "review-page":
-        from .export.review_page import build_delivery_clips, build_review_page
-        from .ingest.rrd_reader import cleanup_video_cache, is_rrd_dataset
+        from ..export.review_page import build_delivery_clips, build_review_page
+        from ..ingest.rrd_reader import cleanup_video_cache, is_rrd_dataset
         if str(args.input or "").startswith("tos://"):
-            from .ingest import dsfs
+            from ..ingest import dsfs
             dsfs.configure(args.input_region)
         if bool(args.output) == bool(args.into_delivery):
             print("[输入错误] --output(静态审片站)与 --into-delivery(片段进交付)"
@@ -792,8 +792,8 @@ def main(argv: list[str] | None = None) -> int:
         # episode_id/标注/视频指针三样,RRD 走**轻量元数据**读法就够——它不做
         # schema 校验,也就不用逼用户为了看片先报 --embodiment(RRD 无 robot_type)。
         if is_rrd_dataset(args.input):
-            from .ingest.lerobot_reader import NotADatasetError
-            from .ingest.rrd_reader import read_rrd_meta
+            from ..ingest.lerobot_reader import NotADatasetError
+            from ..ingest.rrd_reader import read_rrd_meta
             try:
                 rows = read_rrd_meta(args.input, episode_indices=eps, fps=args.rrd_fps)
             except NotADatasetError as e:
@@ -813,10 +813,10 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"[review-page] ⚠️ 指定的 {len(eps)} 条里只有 "
                           f"{len(rows)} 条存在,只做这些")
         else:
-            from .ingest.lerobot_reader import read_lerobot_rows
+            from ..ingest.lerobot_reader import read_lerobot_rows
             if eps is not None:
                 # 先对账再读(与 run 同一个纯函数;元数据轻扫,万条秒级)
-                from .ingest.lerobot_reader import read_lerobot_meta
+                from ..ingest.lerobot_reader import read_lerobot_meta
                 _avail = {int(str(r["episode_id"])[2:])
                           for r in read_lerobot_meta(args.input)}
                 try:
@@ -869,16 +869,16 @@ def main(argv: list[str] | None = None) -> int:
                           region=args.region)
 
     if args.command == "rejudge":
-        from .delivery import is_legacy_delivery, resolve_run
-        from .pipeline.config import load_config
-        from .pipeline.rejudge import run_rejudge
+        from ..delivery import is_legacy_delivery, resolve_run
+        from ..pipeline.config import load_config
+        from ..pipeline.rejudge import run_rejudge
         # 交付在桶里(2026-08-21;2026-08-28 起按需镜像):小文件镜像到本地
         # 执行,视频零下载;改动写回桶,重导出的成品包随导随传
         _sync = _stage_tos_delivery(args, "rejudge", skip_dirs=REJUDGE_SKIP_DIRS)
         if _sync is None and str(args.delivery).startswith("tos://"):
             return 1
         if str(args.input or "").startswith("tos://"):
-            from .ingest import dsfs
+            from ..ingest import dsfs
             dsfs.configure(args.input_region)
         # --delivery 指的是**某一次跑批**;只给了交付目录时按 latest 记的那次执行
         # 并把选中的那次明说出来(裁决是写数据的命令,不许让人猜动了哪一份)。
@@ -890,11 +890,11 @@ def main(argv: list[str] | None = None) -> int:
             args.delivery = _run
         cfg = load_config(args.config)
         if args.vlm_backend:
-            from .pipeline.config import apply_vlm_backend
+            from ..pipeline.config import apply_vlm_backend
             cfg = apply_vlm_backend(cfg, args.vlm_backend)
-        from .ingest.rrd_reader import apply_config as _rrd_apply_config
+        from ..ingest.rrd_reader import apply_config as _rrd_apply_config
         _rrd_apply_config(cfg)
-        from .ingest.public_catalog import apply_config as _public_apply_config
+        from ..ingest.public_catalog import apply_config as _public_apply_config
         _public_apply_config(cfg)
         _cur_pub = ((f"{_sync[1]}/lerobot_curated", _sync[2]) if _sync else None)
         summary = run_rejudge(args.delivery, args.input, cfg,
@@ -902,7 +902,7 @@ def main(argv: list[str] | None = None) -> int:
                               curated_publish=_cur_pub)
         # 剔除条目的逐条片段清理:索引改本地(随 sync_back 回桶),片段本体
         # 点名删(它被镜像/写回双向跳过)。放在 sync_back 之前,索引才搭得上车
-        from .export.review_page import prune_delivery_clips
+        from ..export.review_page import prune_delivery_clips
         try:
             with open(os.path.join(args.delivery, "passed.json"),
                       encoding="utf-8") as _f:
@@ -921,9 +921,9 @@ def main(argv: list[str] | None = None) -> int:
         return _sync_tos_delivery(_sync, "rejudge")
 
     if args.command == "reprofile":
-        from .delivery import is_legacy_delivery, resolve_run
-        from .pipeline.config import load_config
-        from .pipeline.reprofile import run_reprofile
+        from ..delivery import is_legacy_delivery, resolve_run
+        from ..pipeline.config import load_config
+        from ..pipeline.reprofile import run_reprofile
         _sync = _stage_tos_delivery(args, "reprofile", skip_dirs=REPROFILE_SKIP_DIRS)
         if _sync is None and str(args.delivery).startswith("tos://"):
             return 1
@@ -936,9 +936,9 @@ def main(argv: list[str] | None = None) -> int:
             args.delivery = _run
         cfg = load_config(args.config)
         if args.vlm_backend:
-            from .pipeline.config import apply_vlm_backend
+            from ..pipeline.config import apply_vlm_backend
             cfg = apply_vlm_backend(cfg, args.vlm_backend)
-        from .ingest.public_catalog import apply_config as _public_apply_config
+        from ..ingest.public_catalog import apply_config as _public_apply_config
         _public_apply_config(cfg)
         summary = run_reprofile(args.delivery, cfg=cfg)
         if summary.get("note"):
@@ -949,8 +949,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_ls(args.path, args.region)
 
     if args.command == "fetch":
-        from .fetch import run_fetch
-        from .pipeline.config import load_config
+        from ..fetch import run_fetch
+        from ..pipeline.config import load_config
         return run_fetch(load_config(args.config), args.source, args.ref,
                          into=args.into, name=args.name, includes=args.include,
                          overwrite=args.overwrite)
@@ -960,8 +960,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "public":
         return _cmd_public(args.config, as_json=args.json, refresh=args.refresh)
     if args.command == "run":
-        from .ingest.lerobot_reader import NotADatasetError, OutputExistsError
-        from .pipeline.run import run_pipeline
+        from ..ingest.lerobot_reader import NotADatasetError, OutputExistsError
+        from ..pipeline.run import run_pipeline
 
         _bad_n = _bad_max_episodes(args.max_episodes)
         if _bad_n:
@@ -984,7 +984,7 @@ def main(argv: list[str] | None = None) -> int:
         # 跑批子目录名只算一次:--batch 下几个数据集共用同一个名字,一次点击的
         # 产物在各自交付里对得上号(`<交付>/<数据集>/20260814-074045/`)。
         _then_clips = _interactive_run_preflight(args)
-        from .delivery import is_run_name, new_run_name
+        from ..delivery import is_run_name, new_run_name
         if args.run_name and not is_run_name(args.run_name):
             print(f"[输入错误] --run-name {args.run_name!r} 不是合法批次名:必须以"
                   "时间戳打头(YYYYMMDD-HHMMSS,可带 -后缀),否则清理/最新批次"
@@ -1001,11 +1001,11 @@ def main(argv: list[str] | None = None) -> int:
         tos_in = str(args.input or "").startswith("tos://")
         tos_out = str(args.output or "").startswith("tos://")
         if tos_in or tos_out:
-            from . import tos_store
+            from .. import tos_store
             # 公共(匿名读)桶要在第一次碰桶之前登记好,否则签名请求被拒还长得像
             # "密钥没权限"(2026-08-21);只读配置里这一段,不动别的
-            from .ingest.public_catalog import apply_config as _public_apply_config
-            from .pipeline.config import load_config as _load_config
+            from ..ingest.public_catalog import apply_config as _public_apply_config
+            from ..pipeline.config import load_config as _load_config
             _public_apply_config(_load_config(args.config))
             if args.batch:
                 # MVP 限制(比 PR#65 收得更紧:输入或输出任一 tos:// 都拒):
@@ -1026,7 +1026,7 @@ def main(argv: list[str] | None = None) -> int:
                     # 2026-08-21 起 LeRobot 桶**直读**(读端会说 tos://):meta/parquet
                     # 按需取回内存,视频走预签名 URL 顺序读,pod 不落一个字节,数据集
                     # 多大都不受容器盘限制。RRD 仍整包暂存(rerun SDK 只吃本地文件)。
-                    from .ingest import dsfs
+                    from ..ingest import dsfs
                     dsfs.configure(args.input_region)
                     if dsfs.exists(dsfs.join(args.input, "meta", "info.json")):
                         inp_root = args.input
@@ -1046,7 +1046,7 @@ def main(argv: list[str] | None = None) -> int:
             失败保留本地产出并明说怎么续传。返回退出码(0 = 无事/成功)。"""
             if not tos_out:
                 return 0
-            from . import tos_store
+            from .. import tos_store
             try:
                 n = tos_store.stage_out(out_root, args.output, args.output_region)
             except (tos_store.TosUrlError, tos_store.TosConfigError) as e:
@@ -1072,7 +1072,7 @@ def main(argv: list[str] | None = None) -> int:
             # 就能把 /tmp 撑满。幂等,清两次不出错。
             # 直连输出(2026-08-21 方案 1):激活发布器,导出的文件封口即传、传完即删;
             # 收尾 finish() 等传完,失败在这儿就炸(远端还没有任何完整性标志)。
-            from .export import publish as _publish
+            from ..export import publish as _publish
             _pub = (_publish.Publisher(outp, args.output, args.output_region)
                     if tos_out else None)
             try:
@@ -1094,7 +1094,7 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"[tos] {_pub.summary()}", flush=True)
                     return summary
             finally:
-                from .ingest.rrd_reader import cleanup_video_cache
+                from ..ingest.rrd_reader import cleanup_video_cache
                 cleanup_video_cache(inp)
 
         if args.batch:
@@ -1130,8 +1130,8 @@ def main(argv: list[str] | None = None) -> int:
                                      "机器人": rb.get("robot_type", "(失败/未知)"),
                                      "规格表": rb.get("registry_profile", "-"),
                                      "输入": ni, "交付": nd})
-            from .export.safe_write import write_json as _write_json
-            from .export.safe_write import write_text as _write_text
+            from ..export.safe_write import write_json as _write_json
+            from ..export.safe_write import write_text as _write_text
             _write_json(os.path.join(args.output, "batch_summary.json"),
                         {"数据集数": len(agg), "datasets": summary_rows})
             md = ["# 批处理汇总", "",
@@ -1159,11 +1159,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[输出目录冲突] {e}", file=sys.stderr)
             return 3
         except Exception as e:
-            from .pipeline.config import ConfigError
+            from ..pipeline.config import ConfigError
             if isinstance(e, ConfigError):
                 print(f"[配置错误] {e}", file=sys.stderr)
                 return 2
-            from . import tos_store as _ts
+            from .. import tos_store as _ts
             if isinstance(e, _ts.TosStageError):
                 print(f"[tos 失败] {e}", file=sys.stderr)
                 return 1

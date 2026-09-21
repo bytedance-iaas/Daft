@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 from curation.adapters.vlm_client import list_models
-from curation.cli import _cmd_backends, build_parser
+from curation.cli.legacy import _cmd_backends, build_parser
 
 
 @pytest.fixture

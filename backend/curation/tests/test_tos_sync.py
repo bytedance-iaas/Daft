@@ -238,7 +238,7 @@ def test_cli_rejudge_tos_uses_lazy_mirror_and_curated_publish(tmp_path, monkeypa
     重导出直传地址(<批次>/lerobot_curated)与地区一起进 run_rejudge。"""
     import json as _j
 
-    from curation import cli
+    from curation.cli import legacy as cli
     calls = {}
     monkeypatch.setattr(tos_store, "resolve_run_url",
                         lambda url, region=None, **kw: f"tos://bkt/{RUN}")

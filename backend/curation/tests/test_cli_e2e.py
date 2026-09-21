@@ -93,7 +93,7 @@ def test_skill_profile_present(cli_output):
 # ---------- --episodes(只跑指定 episode;2026-07-21) ----------
 def test_parse_episodes_forms():
     """单条/多条/区间/混用 四种写法。"""
-    from curation.cli import _parse_episodes
+    from curation.cli.legacy import _parse_episodes
 
     assert _parse_episodes(None) is None
     assert _parse_episodes("") is None
@@ -105,7 +105,7 @@ def test_parse_episodes_forms():
 
 
 def test_parse_episodes_rejects_bad_input():
-    from curation.cli import _parse_episodes
+    from curation.cli.legacy import _parse_episodes
 
     for bad in ("abc", "1-", "-", "5-3"):                # 非数字/残缺/起止颠倒
         with pytest.raises(ValueError):
@@ -119,7 +119,7 @@ def test_broken_log_stream_never_kills_a_run():
     print 抛 OSError 把整批 200 条带走,而 traceback 又写不进同一个坏文件,现场
     什么都没留下。日志已改为先写本地盘,这层是第二道保险。
     """
-    from curation.cli import _TolerantStream
+    from curation.cli.legacy import _TolerantStream
 
     class _Broken:
         encoding = "utf-8"
