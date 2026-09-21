@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import bisect
 import json
-from typing import Any
+from typing import Any, Callable, Sequence, TypeVar
 
 from .util import canonical_json, sha256_hex
+
+T = TypeVar("T")
 
 CURSOR_VERSION = 1
 
@@ -54,3 +57,33 @@ def decode_cursor(cursor: str, kind: str, *, scope: Any = None) -> Any:
     if "p" not in payload:
         raise CursorError("cursor has no position")
     return payload["p"]
+
+
+def keyset_page(items: Sequence[T], key: Callable[[T], Any], *, kind: str, scope: Any = None,
+                cursor: str | None = None, limit: int = 50):
+    """One page of an in-memory listing, e.g. the adjudication queue or a dataset's episodes.
+
+    ``items`` must be sorted by ``key`` with unique keys (an episode index, or a
+    tuple). The cursor holds the last key returned, so rows inserted or removed
+    between two requests never make a page repeat or skip an existing row.
+    Put whatever the listing depends on into ``scope`` - e.g. the result revision
+    (``{"task": id, "rev": 3, "source": ...}``) - so a cursor from an older
+    revision is refused (-> ``validation_failed``, or ``result_changed`` if the
+    caller checks the revision first) instead of mixing two versions.
+    """
+    from .repo.protocol import CursorPage
+
+    if limit < 1:
+        raise ValueError("limit starts at 1")
+    keys = [key(it) for it in items]
+    start = 0
+    if cursor:
+        last = decode_cursor(cursor, kind, scope=scope)
+        last = tuple(last) if isinstance(last, list) else last
+        start = bisect.bisect_right(keys, last)
+    page = list(items[start:start + limit])
+    more = start + limit < len(items)
+    last_key = key(page[-1]) if page else None
+    next_cursor = encode_cursor(kind, list(last_key) if isinstance(last_key, tuple) else last_key,
+                                scope=scope) if more else None
+    return CursorPage(items=page, next_cursor=next_cursor, has_more=more)

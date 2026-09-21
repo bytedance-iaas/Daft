@@ -36,6 +36,8 @@ def test_probes_at_root_and_under_the_prefix(client_for, base):
     for prefix in {"", base}:
         r = c.get(f"{prefix}/healthz")
         assert r.status_code == 200 and r.json() == {"status": "ok"}
+        assert_schema("openapi.yaml#/paths/~1healthz/get/responses/200/content/application~1json/"
+                      "schema", r.json())
         r = c.get(f"{prefix}/readyz")
         assert r.status_code == 200
         assert_schema("Readiness", r.json())
@@ -530,6 +532,21 @@ def test_timeline_from_events_and_subtasks(client_for, clock):
                      "user_resume", "finished", "subtask_started", "subtask_finished", "revision"]
     assert [e["at"] for e in body["items"]] == sorted(e["at"] for e in body["items"])
     assert body["items"][-1]["revision"] == 2 and body["items"][-2]["subtask_id"] == sub.id
+
+
+def test_timeline_mixes_row_and_events(client_for, clock):
+    """Started without an event (e.g. purged), then paused by the startup reconciliation."""
+    from daemon.reconcile import reconcile
+
+    c = client_for()
+    rt = _rt(c)
+    t = seed_task(rt.repo)
+    rt.repo.update_task_state(t.id, {"queued"}, "running", at=T0 + 10)
+    clock.advance(60_000)
+    reconcile(rt.repo, rt.hub, rt.clock)
+    items = c.get(f"/api/v1/tasks/{t.id}/timeline").json()["items"]
+    assert [e["kind"] for e in items] == ["created", "started", "system_pause", "system_resume"]
+    assert items[2]["text"] == "任务被系统暂停：Daemon 重启时任务还在运行，将自动恢复"
 
 
 def test_timeline_falls_back_to_the_row_without_events(client_for):

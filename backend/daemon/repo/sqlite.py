@@ -22,6 +22,7 @@ another thread that uses the repository - it would queue behind you.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import os
 import queue
@@ -628,8 +629,7 @@ class SqliteRepository:
                     raise Conflict("name_taken", f"backend name {backend.name!r} exists") from None
                 raise
             for model in backend.models:
-                model.backend_id = backend_id
-                self._insert_model(c, model, now)
+                self._insert_model(c, dataclasses.replace(model, backend_id=backend_id), now)
             return self._get_backend(c, "id=?", (backend_id,), f"backend {backend_id}")
 
         return self._write(op)

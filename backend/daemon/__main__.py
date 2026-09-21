@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = Settings.from_env()
     except (ConfigError, MasterKeyError) as err:
-        print(f"curator-daemon: 配置有误，拒绝启动：{err}", file=sys.stderr)
+        print(f"curator-daemon: 启动失败：{err}", file=sys.stderr)
         return EXIT_CONFIG
     scrub_environment()                    # CLI children must never inherit key material
     logconfig.configure(settings.log_level, settings.log_format)
@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         app = create_app(settings)
     except (ConfigError, MasterKeyError) as err:
-        print(f"curator-daemon: 配置有误，拒绝启动：{err}", file=sys.stderr)
+        print(f"curator-daemon: 启动失败：{err}", file=sys.stderr)
         return EXIT_CONFIG
     runtime = app.state.runtime
 

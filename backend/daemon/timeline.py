@@ -39,8 +39,8 @@ def _state_event(ev: P.Event, started: list[bool]) -> dict | None:
     if to == "paused":
         if d.get("pause_reason") == "user":
             return _entry(ev.at, "user_pause", f"{who}被用户暂停", state=to, subtask_id=sub)
-        return _entry(ev.at, "system_pause",
-                      _with_reason(f"{who}被系统暂停，稍后自动恢复", reason), state=to, subtask_id=sub)
+        text = f"{who}被系统暂停：{reason}，将自动恢复" if reason else f"{who}被系统暂停，将自动恢复"
+        return _entry(ev.at, "system_pause", text, state=to, subtask_id=sub)
     if frm == "paused" and to == "queued":
         if d.get("prev_pause_reason") == "user":
             return _entry(ev.at, "user_resume", f"用户恢复{who}，重新排队", state=to, subtask_id=sub)
@@ -71,18 +71,19 @@ def build(task: P.Task, subtasks: list[P.Subtask], events: list[P.Event]) -> lis
 
     add(_entry(task.created_at, "created", "任务创建"))
     started = [False]
-    state_events = [e for e in events if e.action in ("task.state", "subtask.state")]
-    for ev in state_events:
-        add(_state_event(ev, started))
-    if not any(e.action == "task.state" for e in state_events):
-        if task.started_at is not None:
-            add(_entry(task.started_at, "started", "开始运行", state="running"))
-        if task.finished_at is not None and task.state in P.TERMINAL_STATES:
-            kind = {"stopped": "stopped", "failed": "failed"}.get(task.state, "finished")
-            text = {"stopped": _with_reason("任务已停止", task.state_reason),
-                    "failed": _with_reason("任务失败", task.state_reason)}.get(
-                kind, f"主流程结束：{STATE_ZH[task.state]}")
-            add(_entry(task.finished_at, kind, text, state=task.state))
+    for ev in events:
+        if ev.action in ("task.state", "subtask.state"):
+            add(_state_event(ev, started))
+    # the row fills what the events do not say (purged after 90 days, or never written)
+    if not started[0] and task.started_at is not None:
+        add(_entry(task.started_at, "started", "开始运行", state="running"))
+    ended = any(e["kind"] in ("finished", "stopped", "failed") for _, _, e in out)
+    if not ended and task.finished_at is not None and task.state in P.TERMINAL_STATES:
+        kind = {"stopped": "stopped", "failed": "failed"}.get(task.state, "finished")
+        text = {"stopped": _with_reason("任务已停止", task.state_reason),
+                "failed": _with_reason("任务失败", task.state_reason)}.get(
+            kind, f"主流程结束：{STATE_ZH[task.state]}")
+        add(_entry(task.finished_at, kind, text, state=task.state))
     for ev in events:
         if ev.action == "task.revision":
             rev = (ev.detail or {}).get("revision")

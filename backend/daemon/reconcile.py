@@ -31,7 +31,7 @@ from .transitions import change_subtask_state, change_task_state, subtask_pause_
 
 log = logging.getLogger("daemon.reconcile")
 
-SYSTEM_PAUSE_REASON = "Daemon 重启，进行中的任务已被系统暂停，将自动恢复"
+SYSTEM_PAUSE_REASON = "Daemon 重启时任务还在运行"
 BY = "reconcile"
 
 
