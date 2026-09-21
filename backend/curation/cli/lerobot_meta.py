@@ -24,6 +24,16 @@ from .storage import ObjectInfo, ObjectMissing, Storage
 INFO_KEY = "meta/info.json"
 V2_EPISODES_KEY = "meta/episodes.jsonl"
 V3_EPISODES_GLOB = "meta/episodes/chunk-*/file-*.parquet"
+#: v1 resolves a dataset's semantics from the data of its first this-many episodes,
+#: whatever the selection (``ingest.lerobot_reader.SEMANTICS_VOTE_EPISODES``; a test
+#: keeps the two equal, this module must not import the numeric reader)
+SEMANTICS_SAMPLE = 100
+
+
+def semantics_sample(meta: "DatasetMeta", max_episodes: int | None = None) -> list["Episode"]:
+    """The episodes whose data v1 reads to resolve the dataset's semantics."""
+    n = SEMANTICS_SAMPLE if not max_episodes else min(SEMANTICS_SAMPLE, int(max_episodes))
+    return list(meta.episodes[:n])
 
 
 class MetaError(Exception):

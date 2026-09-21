@@ -30,6 +30,14 @@ def _episode_keys(ep: int) -> list[str]:
             f"videos/chunk-000/observation.images.wrist/episode_{ep:06d}.mp4"]
 
 
+#: the data files v1 reads to resolve the dataset semantics (its first 100 episodes)
+SAMPLE = [f"data/chunk-000/episode_{ep:06d}.parquet" for ep in range(8)]
+
+
+def _selected(*eps: int) -> list[str]:
+    return sorted(set(META + SAMPLE + [k for ep in eps for k in _episode_keys(ep)]))
+
+
 def test_snapshot_lists_meta_and_every_episode(cli, dataset, tmp_path):
     out = tmp_path / "run" / "source_manifest.json"
     res = cli("snapshot", "--input", dataset, "--out", str(out))
@@ -50,14 +58,21 @@ def test_snapshot_lists_meta_and_every_episode(cli, dataset, tmp_path):
 def test_snapshot_of_selected_episodes(cli, dataset, tmp_path):
     doc = _valid(cli("snapshot", "--input", dataset, "--episodes", "0-2,7",
                      "--out", str(tmp_path / "m.json")).doc)
-    assert sorted(_keys(doc)) == sorted(META + [k for ep in (0, 1, 2, 7)
-                                                for k in _episode_keys(ep)])
+    assert sorted(_keys(doc)) == _selected(0, 1, 2, 7)
     listfile = tmp_path / "eps.txt"
     listfile.write_text("# survivors\n3\n\n5-6\n")
     doc = _valid(cli("snapshot", "--input", dataset, "--episodes", f"@{listfile}",
                      "--out", str(tmp_path / "m2.json")).doc)
-    assert sorted(_keys(doc)) == sorted(META + [k for ep in (3, 5, 6)
-                                                for k in _episode_keys(ep)])
+    assert sorted(_keys(doc)) == _selected(3, 5, 6)
+
+
+def test_the_semantics_sample_is_v1s():
+    """snapshot records the data v1 resolves the semantics from; the CLI keeps its own
+    copy of the sample size so it never imports the numeric reader."""
+    from curation.cli import lerobot_meta
+    from curation.ingest import lerobot_reader
+
+    assert lerobot_meta.SEMANTICS_SAMPLE == lerobot_reader.SEMANTICS_VOTE_EPISODES
 
 
 def test_episode_selection_errors(cli, dataset, tmp_path):
@@ -100,7 +115,7 @@ def test_snapshot_on_tos_records_etags(cli, cloud, mini_dataset, tmp_path, monke
     doc = _valid(cli("snapshot", "--input", "tos://src-bucket/datasets/mini/", "--episodes",
                      "1", "--out", str(tmp_path / "m.json")).doc)
     assert doc["input"] == "tos://src-bucket/datasets/mini"
-    assert sorted(_keys(doc)) == sorted(META + _episode_keys(1))
+    assert sorted(_keys(doc)) == _selected(1)
     info = next(o for o in doc["objects"] if o["key"] == "meta/info.json")
     data = cloud.buckets["src-bucket"]["datasets/mini/meta/info.json"]
     assert info == {"key": "meta/info.json", "size": len(data), "etag": cloud.etag(data)}
