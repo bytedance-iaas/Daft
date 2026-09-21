@@ -73,15 +73,24 @@ Current summary:
       · 修掉一条时过时不过的对账工具测试（改录制带里「第一条」打分答案，顺序受线程调度影响；3ee3b6b17）
       · 批次 2 已派出 W10 前端、W3 后半两个后台 agent（worktree 均从 0f8f8c4d0 起）；W4 仍在进行
       · 合并后 v2 测试 684 过、3 跳过（loader 用例在共享 venv 里跳过）
+      · 13:40 PDT 前三个 agent 因会话额度（HTTP 429）中断；额度重置后用原上下文恢复，改为每一步都提交
+      · 合并 W4（ac45eaac1）：Daemon 骨架（FastAPI、SQLite 仓储实现 C5、Basic 鉴权、SSE 重放、探针、SPA 回退、
+        v1 深链 302、启动对账、同一数据卷单实例锁），独立评审 10 个问题已修；随后对齐契约 1.1（0a6064b25）、
+        接入 CI 与打包（fastapi / uvicorn / jsonschema / httpx2）；CI run 11 全绿（含 Python 3.10）。
+        F2.2 除裁决队列、episode 列表两个游标接口（归 W5）外验收全部满足，暂保持 not_completed
+      · 契约 1.2（bc6b2e644）：C5 补 stopped/failed → succeeded/completed_with_errors（只对任务，resume 子任务结束后重算终态）、
+        Subtask.pause_reason、set_subtask_result_rev、subtasks_in_states；C4 1.2.0：写请求一律带 JSON Content-Type、
+        所有写接口接受 Idempotency-Key、method_not_allowed、TaskVlm、密钥删除后名称为 null、SSE 带 subtask_id/reason、
+        日志顺序与 subtask 筛选、call_kind 与 stage id 放开
+      · 在跑：W3 后半、W10 前端、W4 续作（仓储与只读接口跟上 1.1/1.2）、W8 密钥与资源管理（新派，从 bc6b2e644 起）
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
-  - 批次 1：W6、W3 前半、W7 已合并；W4 仍在进行
+  - 批次 1 全部合并；批次 2 进行中（W3 后半、W10、W4 续作、W8），W5 待 W4 续作合并后开
   - compare 目前只读导出目录；v2 运行目录的读取随 W3 补（行格式已由 C2 冻结）
 
 Next steps:
-  1. 批次 2 已开不依赖 W4 的两包：W10 前端（React + Arco，按 C4 1.1 与 mock 开发，含概览、数据集、新建两屏）、
-     W3 后半（拆 v1 编排为 autolabel / check / aggregate / export / report / adjudicate-apply，接 W6 合并执行器与 usage、
-     W7 导出库，合成数据集 v1 对 v2 逐位对账进 CI，契约 1.1 带出的 CLI 改动）
-  2. W4 交付后合并，补它报告的契约缺口；再开 W4 续作（数据集登记、概览、指纹核对与 repreflight）、W5 任务编排、W8 密钥管理
+  1. 各 agent 交付后逐个合并验证：W4 续作 → 开 W5（执行器、编排、CLI 驱动的接口、读报告的接口、D37 开始前核对）；
+     W8、W3 后半、W10 合并时按各自报告落地公共文件改动
+  2. W5 做完裁决队列与 episode 列表的游标接口后，F2.2 置 completed
   3. 真实数据的两个基线在 F4.2 黄金对账之前补
