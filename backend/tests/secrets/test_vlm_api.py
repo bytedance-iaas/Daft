@@ -124,6 +124,24 @@ def test_reasoning_effort_is_limited_to_the_models_levels(secret_client, vlm_stu
     assert other.json()["capabilities"]["reasoning_effort_levels"] == ALL
 
 
+def test_a_task_level_override_is_checked_against_the_model(secret_client, vlm_stub):
+    import pytest
+
+    from daemon.secrets.effort import EffortNotAllowed
+
+    c = secret_client()
+    backend = add_backend(c, vlm_stub, kind="custom")
+    model = c.post(f"{API}/vlm-backends/{backend['id']}/models",
+                   json={"model_name": "doubao-seed-2-0-pro-260215"}, headers=JSON).json()
+    svc = service(c)
+    for effort in (None, "minimal", "high"):
+        svc.check_task_effort(model["id"], effort)
+    svc.check_task_effort(None, "max")                      # no model: nothing to check against
+    with pytest.raises(EffortNotAllowed) as err:
+        svc.check_task_effort(model["id"], "max")
+    assert "等同于 high" in err.value.message_zh
+
+
 def test_refresh_adds_listed_models_and_keeps_their_settings(secret_client, vlm_stub):
     c = secret_client()
     backend = add_backend(c, vlm_stub, kind="custom")
@@ -166,6 +184,10 @@ def test_verify_tries_models_then_a_minimal_call(secret_client, vlm_stub):
     r = c.post(url, headers=JSON)
     assert r.json()["verify_state"] == "failed" and "HTTP 401" in r.json()["error"]
     assert API_KEY not in r.text                           # the stub echoed it; we did not
+    assert c.get(f"{API}/vlm-backends").json()["items"][0]["models_listed"] is False
+    vlm_stub.keys, vlm_stub.models = {API_KEY}, ["m1"]     # the server learned /models
+    assert c.post(url, headers=JSON).json()["verify_state"] == "ok"
+    assert c.get(f"{API}/vlm-backends").json()["items"][0]["models_listed"] is True
 
 
 def test_update_keeps_an_empty_key_and_reverifies_a_new_one(secret_client, vlm_stub):

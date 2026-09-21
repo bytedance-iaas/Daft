@@ -279,9 +279,9 @@ def _handler(stub: VlmStub):
 
 
 class StubServer:
-    def __init__(self, stub: VlmStub):
+    def __init__(self, stub: VlmStub, port: int = 0):
         self.stub = stub
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), _handler(stub))
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", port), _handler(stub))
         self.httpd.daemon_threads = True
         stub.url = f"http://127.0.0.1:{self.httpd.server_address[1]}/v1"
         self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05},
@@ -294,3 +294,31 @@ class StubServer:
     def __exit__(self, *exc) -> None:
         self.httpd.shutdown()
         self.httpd.server_close()
+
+
+def main(argv=None) -> int:
+    """``python -m tests.secrets.fakes --port 18181 --key demo-key`` - the stub for the manual
+    checks in ``daemon/secrets/README.md``; prints every request body it receives."""
+    import argparse
+    import time
+
+    parser = argparse.ArgumentParser(prog="python -m tests.secrets.fakes")
+    parser.add_argument("--port", type=int, default=18181)
+    parser.add_argument("--key", action="append", help="accepted API key (repeatable)")
+    parser.add_argument("--models", help="comma-separated GET /models answer (default: 404)")
+    args = parser.parse_args(argv)
+    stub = VlmStub(keys=set(args.key) if args.key else None,
+                   models=args.models.split(",") if args.models else None)
+    with StubServer(stub, port=args.port):
+        print(f"OpenAI-compatible stub on {stub.url}", flush=True)
+        seen = 0
+        while True:
+            time.sleep(0.2)
+            for req in stub.requests[seen:]:
+                print(json.dumps({"method": req["method"], "path": req["path"],
+                                  "body": req["body"]}, ensure_ascii=False), flush=True)
+            seen = len(stub.requests)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

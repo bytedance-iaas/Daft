@@ -183,6 +183,25 @@ def test_delete_is_refused_while_an_unfinished_task_uses_the_key(secret_client):
     assert actions == ["credential.delete", "credential.create"]
 
 
+def test_a_secret_sealed_with_another_master_key_is_reported_not_crashed(secret_client, caplog):
+    from daemon.masterkey import MasterKey
+    from daemon.secrets.sealing import Sealer
+
+    c = secret_client()
+    blob, _ = Sealer(MasterKey(bytes(range(5, 37)))).seal(
+        "cred_foreign", {"access_key_id": AK, "secret_access_key": SK})
+    runtime(c).repo.create_credential(P.Credential(
+        id="cred_foreign", name="foreign", kind="tos", payload_enc=blob, key_version=1,
+        payload_meta={"region": "cn-beijing"}))
+    assert c.get(f"{API}/credentials").status_code == 200        # listing never decrypts
+    body = assert_error(c.post(f"{API}/credentials/cred_foreign/verify", headers=JSON),
+                        "internal")
+    assert "主密钥" in body["error"]["message"]
+    assert_error(c.put(f"{API}/credentials/cred_foreign", json={"name": "f2"}, headers=JSON),
+                 "internal")
+    assert "cred_foreign" in caplog.text and SK not in caplog.text
+
+
 def test_writes_accept_an_idempotency_key(secret_client, fake_tos):
     c = secret_client()
     body = {"name": "k", "access_key_id": AK, "secret_access_key": SK, "region": "cn-beijing"}

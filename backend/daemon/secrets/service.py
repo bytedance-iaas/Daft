@@ -278,6 +278,19 @@ class SecretsService:
         caps = model.capabilities or {}
         return self.effort.levels_for(caps.get("served_model") or model.model_name)
 
+    def check_task_effort(self, model_id: str | None, effort: str | None, *,
+                          owner: str = P.DEFAULT_OWNER) -> None:
+        """A task-level ``reasoning_effort`` override must be one of the model's levels too;
+        raises :class:`~.effort.EffortNotAllowed` (``message_zh``) - for W5's create/PATCH."""
+        if effort is None or not model_id:
+            return
+        for backend in self.repo.list_vlm_backends(owner=owner):
+            for model in backend.models:
+                if model.id == model_id:
+                    caps = model.capabilities or {}
+                    self.effort.check(caps.get("served_model") or model.model_name, effort)
+                    return
+
 
 _CREATE_LOCK = threading.Lock()
 

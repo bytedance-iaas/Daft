@@ -229,7 +229,8 @@ async def update_backend(request: Request, backend_id: str):
         with rt.repo.transaction():
             key_id = cred.id if cred is not None else None
             meta = dict(cred.payload_meta or {}) if cred is not None else {}
-            meta.update(_key_meta(endpoint, bool(api_key), meta.get("models_listed"), backend.id))
+            listed = verification.listed if verification is not None else meta.get("models_listed")
+            meta.update(_key_meta(endpoint, bool(api_key), listed, backend.id))
             if cred is None and api_key:
                 key_id = new_id("cred")
                 blob, version = svc.sealer.seal(key_id, {"api_key": api_key})
@@ -249,7 +250,8 @@ async def update_backend(request: Request, backend_id: str):
                     rt.repo.update_credential(cred.id, owner=cred.owner_id, **sealed)
             updated = rt.repo.update_vlm_backend(backend.id, owner=owner, **fields)
             if verification is not None:
-                rt.repo.set_vlm_backend_verification(backend.id, *verification)
+                rt.repo.set_vlm_backend_verification(backend.id, verification.state,
+                                                     verification.at, verification.error)
                 updated = rt.repo.get_vlm_backend(backend.id, owner=owner)
             audit(request, "vlm_backend.update", backend.id,
                   {"name": updated.name, "fields": sorted(body)})
@@ -287,23 +289,31 @@ async def delete_backend(request: Request, backend_id: str, confirm: bool = Quer
     return await write(request, "deleteVlmBackend", handler)
 
 
-def _verify(svc: SecretsService, backend: P.VlmBackend,
-            api_key: str | None) -> tuple[str, int, str | None]:
+@dataclasses.dataclass(frozen=True)
+class _Check:
+    state: str
+    at: int
+    error: str | None
+    listed: bool                     # whether GET /models worked (kept as models_listed)
+
+
+def _verify(svc: SecretsService, backend: P.VlmBackend, api_key: str | None) -> _Check:
     """GET /models; when that does not work, one minimal call with the first model."""
     listing = svc.vlm.list_models(backend.endpoint, api_key)
     now = svc.clock()
     if listing.ok:
-        return "ok", now, None
+        return _Check("ok", now, None, True)
     if backend.models:
         model = backend.models[0]
         call = svc.vlm.minimal_call(backend.endpoint, api_key, model.model_name)
         if call.ok:
-            return "ok", now, None
-        return "failed", now, f"模型 {model.model_name} 调用失败：{call.failure.reason}"
+            return _Check("ok", now, None, False)
+        return _Check("failed", now, f"模型 {model.model_name} 调用失败：{call.failure.reason}",
+                      False)
     verdict = _listing_verification(listing)
     if verdict is not None:
-        return verdict[0], now, verdict[1]
-    return "unverified", now, f"{listing.failure.reason}；添加一个模型之后可以再验证"
+        return _Check(verdict[0], now, verdict[1], False)
+    return _Check("unverified", now, f"{listing.failure.reason}；添加一个模型之后可以再验证", False)
 
 
 @router.post("/vlm-backends/{backend_id}/verify")
@@ -314,9 +324,11 @@ async def verify_backend(request: Request, backend_id: str):
 
     def handler() -> Response:
         backend = _backend(rt.repo, backend_id, owner)
-        state, at, error = _verify(svc, backend, svc.backend_api_key(backend))
-        rt.repo.set_vlm_backend_verification(backend.id, state, at, error)
-        return JSONResponse(views.verify_result(state, at, error))
+        check = _verify(svc, backend, svc.backend_api_key(backend))
+        with rt.repo.transaction():
+            rt.repo.set_vlm_backend_verification(backend.id, check.state, check.at, check.error)
+            _update_key_meta(svc, backend, models_listed=check.listed)
+        return JSONResponse(views.verify_result(check.state, check.at, check.error))
 
     return await write(request, "verifyVlmBackend", handler)
 
