@@ -116,7 +116,8 @@ subprocess.Popen(argv + ["--input-region", cli.input_region, "--output-region", 
      -d '{"name":"demo-tos","access_key_id":"AKLTmanualDemoKeyId0000","secret_access_key":"manual-demo-secret-0000","region":"cn-beijing"}'
    ```
 
-   预期：201，`verify_state` 为 `failed`，`last_verify_error` 是「访问密钥「demo-tos」的 AK/SK 不对，或者已经失效（InvalidAccessKeyId）」，
+   预期：201，`verify_state` 为 `failed`，`last_verify_error` 是「访问密钥「demo-tos」的 AK/SK 不对，或者已经失效（InvalidAccessKeyId）」
+   （连不上公网时是「连不上 TOS（…）：检查地域、endpoint 和网络」，同样保存、同样标记失败），
    `meta` 里只有地域和 `access_key_id_hint: "0000"`。
 
 4. **密钥不在任何响应、日志和库文件里**
