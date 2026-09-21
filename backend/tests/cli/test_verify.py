@@ -246,7 +246,7 @@ def test_files_that_become_readable_within_the_window(cli, cloud, tos_delivery, 
 def test_tos_delivery_errors(cli, cloud, tos_delivery, monkeypatch):
     run, url = tos_delivery
     res = _verify(cli, run, "tos://no-such-bucket/deliveries/x")
-    assert res.rc == 3 and res.doc["error"]["code"] == "input_unreachable"
+    assert res.rc == 3 and res.doc["error"]["code"] == "output_unreachable"
     monkeypatch.delenv("CURATION_OUTPUT_TOS_ACCESS_KEY")
     monkeypatch.delenv("CURATION_OUTPUT_TOS_SECRET_KEY")
     res = _verify(cli, run, url)                         # the input keys are not borrowed

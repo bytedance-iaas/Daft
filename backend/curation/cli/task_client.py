@@ -10,12 +10,19 @@ mount prefix, e.g. ``https://host/curation``; ``/api/v1`` is appended), and
 ``$CURATOR_USER`` / ``$CURATOR_PASSWORD`` for HTTP Basic. The password is read
 from the environment only. Nothing is retried.
 
-Errors keep the CLI's exit codes; the REST error body travels in
-``error.details.rest_error``:
+Errors (C2 1.1, C4 1.2):
 
-* cannot connect, 401/403, 5xx, ``precheck_failed`` -> 3 (``input_unreachable``)
-* ``source_changed`` -> 6
-* any other 4xx (``not_found``, ``task_state_conflict``, ``validation_failed``, ...) -> 2
+* no HTTP answer (connection refused, TLS, a body that is not JSON) -> 3,
+  ``daemon_unreachable``;
+* the Daemon answered with an error (any 4xx / 5xx, ``method_not_allowed``
+  included) -> 7, ``rejected``; its status and REST error body travel in
+  ``error.details.http_status`` / ``error.details.rest_error``, so a caller
+  tells ``task_state_conflict`` from ``source_changed`` or ``unauthorized``;
+* ``wait`` gave up before the task ended -> 8, ``wait_timeout``; the last task
+  document is in ``error.details.task``.
+
+Every write request carries ``Content-Type: application/json``, with or
+without a body (C4 1.2).
 """
 from __future__ import annotations
 
@@ -25,7 +32,7 @@ import os
 import time
 from typing import Any
 
-from .errors import CliError, InputUnreachable, SourceChanged, UsageError
+from .errors import CliError, DaemonUnreachable, Rejected, UsageError, WaitTimeout
 from .framework import Context, Result
 
 TERMINAL_STATES = frozenset({"succeeded", "completed_with_errors", "failed", "stopped"})
@@ -67,8 +74,9 @@ class DaemonClient:
         url = f"{self.base}/api/v1{path}"
         headers = {"Accept": "application/json"}
         data = None
+        if method.upper() != "GET":
+            headers["Content-Type"] = "application/json"      # C4 1.2: every write
         if body is not None:
-            headers["Content-Type"] = "application/json"
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
@@ -76,8 +84,8 @@ class DaemonClient:
             resp = requests.request(method, url, params=_clean(params), data=data,
                                     headers=headers, auth=self._auth, timeout=self.timeout)
         except requests.RequestException as e:
-            raise InputUnreachable(f"cannot reach the Curator daemon at {self.base}: "
-                                   f"{type(e).__name__}", {"url": self.base}) from None
+            raise DaemonUnreachable(f"cannot reach the Curator daemon at {self.base}: "
+                                    f"{type(e).__name__}", {"url": self.base}) from None
         try:
             payload = resp.json() if resp.content else None
         except ValueError:
@@ -85,9 +93,9 @@ class DaemonClient:
         if resp.status_code >= 400:
             raise _http_error(method, path, resp.status_code, payload, resp.text)
         if resp.content and payload is None:
-            raise InputUnreachable(f"the Daemon at {self.base} did not answer JSON "
-                                   f"({method} {path}, HTTP {resp.status_code})",
-                                   {"url": self.base, "http_status": resp.status_code})
+            raise DaemonUnreachable(f"the Daemon at {self.base} did not answer JSON "
+                                    f"({method} {path}, HTTP {resp.status_code})",
+                                    {"url": self.base, "http_status": resp.status_code})
         return payload
 
 
@@ -108,11 +116,7 @@ def _http_error(method: str, path: str, status: int, payload: Any, text: str) ->
         summary += f" {code}"
     if message:
         summary += f" - {message}"
-    if code == "source_changed":
-        return SourceChanged(summary, details)
-    if status in (401, 403) or status >= 500 or code == "precheck_failed":
-        return InputUnreachable(summary, details)
-    return UsageError(summary, details)
+    return Rejected(summary, details)
 
 
 # ---------------------------------------------------------------- parser
@@ -282,9 +286,8 @@ def _wait(ctx: Context, client: DaemonClient, task_id: str, args) -> Result:
                             f"curation task start {task_id}")
             told_created = True
         if args.timeout is not None and time.monotonic() - started >= args.timeout:
-            ctx.log("warn", f"stopped waiting after {args.timeout:g}s; task {task_id} is "
-                            f"still {state}")
-            return Result(task, human=_render_task(task))
+            raise WaitTimeout(f"stopped waiting after {args.timeout:g}s; task {task_id} is "
+                              f"still {state}", {"task": task})
         pause = args.poll_interval
         if args.timeout is not None:
             pause = min(pause, max(0.0, args.timeout - (time.monotonic() - started)))

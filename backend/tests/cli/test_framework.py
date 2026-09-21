@@ -14,6 +14,7 @@ import pytest
 from curation.cli import app, creds, framework
 from curation.cli.errors import (
     InputUnreachable,
+    ModuleFailed,
     SourceChanged,
     Terminated,
     UsageError,
@@ -78,7 +79,8 @@ def test_human_mode_keeps_library_prints_off_stdout(capsys):
     (SourceChanged("moved", {"key": "meta/info.json"}), 6, "source_changed"),
     (Terminated("stop"), 5, "terminated"),
     (KeyboardInterrupt(), 130, "interrupted"),
-    (RuntimeError("boom"), 4, "module_failed"),
+    (ModuleFailed("endpoint down"), 4, "module_failed"),
+    (RuntimeError("boom"), 1, "internal"),
 ])
 def test_every_failure_ends_in_the_envelope(capsys, exc, rc, code):
     def fails(ctx, args):
@@ -90,7 +92,7 @@ def test_every_failure_ends_in_the_envelope(capsys, exc, rc, code):
     assert schemas.errors("cli/error.schema.json", doc) == []
     assert doc["exit_code"] == rc and doc["error"]["code"] == code
     events = _events(err)
-    if code == "module_failed":                      # a bug: the traceback is logged
+    if code == "internal":                           # a bug: the traceback is logged
         assert any(e["level"] == "error" and "RuntimeError: boom" in e["msg"] for e in events)
 
 

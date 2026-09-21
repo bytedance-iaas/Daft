@@ -291,8 +291,17 @@ class StubDaemon:
         path = parsed.path
         if not path.startswith("/curation" + API):
             return self._error(h, 404, "not_found", "没有这个接口")
+        if method != "GET":
+            # C4 1.2 (as the Daemon does it): a write carries JSON, body or not
+            ctype = (h.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if ctype != "application/json":
+                return self._error(h, 400, "validation_failed",
+                                   "写接口只接受 JSON：请带上 Content-Type: application/json"
+                                   "（没有请求体也要带）")
         path = path[len("/curation" + API):]
         q = parse_qs(parsed.query)
+        if method == "POST" and re.fullmatch(r"/tasks/[^/]+", path):
+            return self._error(h, 405, "method_not_allowed", "这个地址不支持该请求方法")
 
         if method == "POST" and path == "/tasks":
             self.check(REF_TASK_CREATE, body, "request POST /tasks")
