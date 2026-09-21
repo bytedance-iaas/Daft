@@ -586,6 +586,15 @@ def test_cross_site_writes_are_refused(client_for):
     assert c.delete(f"/api/v1/tasks/{t.id}", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 204
 
 
+def test_oversized_bodies_are_refused(client_for):
+    c = client_for()
+    t = seed_task(_rt(c).repo)
+    big = b'{"name": "' + b"x" * (1024 * 1024) + b'"}'
+    r = c.patch(f"/api/v1/tasks/{t.id}", content=big,
+                headers={"Content-Type": "application/json", "If-Match": '"1"'})
+    assert "太大" in assert_error(r, "validation_failed")["error"]["message"]
+
+
 def test_unexpected_errors_become_internal(client_for, monkeypatch):
     c = client_for()
     rt = _rt(c)

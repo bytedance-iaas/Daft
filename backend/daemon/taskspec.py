@@ -275,7 +275,9 @@ def resolve_config(repo: P.Repository, settings: Settings, task: P.Task, body: d
             choices = module_choices(body["modules"])
         else:
             current = repo.get_task_modules(task.id)
-            choices = [(m.module_id, m.params) for m in current if m.selected]
+            known = set(registry.ids())
+            choices = [(m.module_id, m.params) for m in current
+                       if m.selected and m.module_id in known]
         embodiment = out.fields.get("embodiment_id", task.embodiment_id)
         has_vlm = bool(out.fields.get("vlm_model_id", task.vlm_model_id))
         check_modules([mid for mid, _ in choices], availability, embodiment_id=embodiment,

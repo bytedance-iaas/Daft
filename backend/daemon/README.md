@@ -93,13 +93,15 @@ EOF
 
    预期：`curator-daemon: 启动失败：没有配置 CURATOR_MASTER_KEY……`，`exit=2`。把 `CURATOR_MASTER_KEY` 设成 `dG9vIHNob3J0`（只有 9 字节）再试，同样退出码 2，报错里不回显这个值。
 
-2. **启动**（另开一个终端，数据卷与上面相同）
+2. **启动**（同一个终端，放到后台；它的日志会和下面命令的输出混在一起）
 
    ```bash
    export CURATOR_MASTER_KEY=$(openssl rand -base64 32) CURATOR_BASE_PATH=/curation \
           CURATOR_AUTH_USER=demo CURATOR_AUTH_PASSWORD=demo-pass CURATOR_LOG_FORMAT=text
-   ../.venv/bin/python -m daemon --host 127.0.0.1 --port 18080
+   ../.venv/bin/python -m daemon --host 127.0.0.1 --port 18080 &
    ```
+
+   在另一个终端起第二个 Daemon（同样的 `CURATOR_DATA_DIR`）会等 10 秒后以退出码 2 结束：一个数据卷只允许一个 Daemon。
 
 3. **探针免鉴权，根路径和前缀下都在**
 
@@ -181,14 +183,15 @@ EOF
     ```bash
     export CURATOR_STATIC_DIR=$(mktemp -d); mkdir -p $CURATOR_STATIC_DIR/assets
     echo '<html><head></head><body>curator</body></html>' > $CURATOR_STATIC_DIR/index.html
-    # 带上 CURATOR_STATIC_DIR 重启第 2 步的 Daemon，然后：
-    curl -s -u demo:demo-pass localhost:18080/curation/tasks/$T/report
+    kill %1; wait; ../.venv/bin/python -m daemon --host 127.0.0.1 --port 18080 &   # 带着新变量重启
+    sleep 2; curl -s -u demo:demo-pass localhost:18080/curation/tasks/$T/report
     ```
 
     预期：任意前端路由都返回 `index.html`，`<head>` 后面注入了 `<base href="/curation/">` 和 `window.__CURATOR_BASE__="/curation"`；
     `/curation/assets/不存在.js` 返回 404 错误体，不会返回 `index.html`。
 
-11. **优雅停机**：在 Daemon 的终端按 Ctrl+C（或 `kill -TERM`），日志最后是 `Application shutdown complete.`；打开着的 SSE 连接会被主动结束。
+11. **优雅停机**：`kill %1`（SIGTERM），Daemon 日志最后是 `Application shutdown complete.`；打开着的 SSE 连接会被主动结束，
+    不会拖住停机。重启之后 SSE 的 epoch 加 1，旧的 `Last-Event-ID` 会收到 `reset`。
 
 ## 自动化测试
 

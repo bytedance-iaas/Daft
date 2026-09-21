@@ -103,7 +103,10 @@ def usage_report(actual: list[P.UsageBucket], attributed: list[P.UsageBucket]) -
 
 
 def module_state(m: P.TaskModule, now: int) -> dict:
-    spec = registry._BY_ID.get(m.module_id)
+    try:
+        spec = registry.get(m.module_id)
+    except KeyError:                     # a module retired from the registry after the task ran
+        spec = None
     elapsed = None
     if m.started_at is not None:
         elapsed = round(((m.finished_at or now) - m.started_at) / 1000.0, 3)

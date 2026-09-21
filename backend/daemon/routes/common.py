@@ -22,6 +22,9 @@ from ..errors import ApiError, validation_error
 
 OPENAPI = "openapi.yaml#/components/schemas/"
 
+#: Write bodies are small JSON documents; anything bigger is refused before parsing.
+MAX_BODY_BYTES = 1024 * 1024
+
 
 def runtime(request: Request):
     return request.app.state.runtime
@@ -44,7 +47,15 @@ def check_write_origin(request: Request) -> None:
 async def read_json_body(request: Request, *, required: bool) -> Any:
     """The parsed JSON body of a write request (``None`` when optional and empty)."""
     check_write_origin(request)
-    raw = await request.body()
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        raise ApiError("validation_failed", f"请求体太大（上限 {MAX_BODY_BYTES // 1024} KiB）")
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf += chunk
+        if len(buf) > MAX_BODY_BYTES:
+            raise ApiError("validation_failed", f"请求体太大（上限 {MAX_BODY_BYTES // 1024} KiB）")
+    raw = bytes(buf)
     content_type = request.headers.get("content-type", "")
     if not raw.strip():
         if required:
