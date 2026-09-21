@@ -131,6 +131,46 @@ def test_the_second_export_is_incremental(flow):
     assert _json(flow.delivery, "export", "manifest.json")["fingerprint"] == man["fingerprint"]
 
 
+def test_export_syncs_to_tos_and_verify_completes_it(flow, tmp_path, cloud, monkeypatch):
+    """--output tos://: _COMPLETE goes first, stale files go, the two manifests come last,
+    and only the output key set is used; verify then reads it back and completes it."""
+    rd = str(tmp_path / "run")
+    shutil.copytree(flow.rd, rd)
+    prefix = "deliveries/droid-50/run1"
+    bucket = cloud.bucket("dst-bucket", readers={"out-ak"})
+    bucket[f"{prefix}/_COMPLETE"] = b""                                  # a verified old state
+    stale = f"{prefix}/export/lerobot_curated/data/chunk-000/episode_000009.parquet"
+    bucket[stale] = b"old"
+    monkeypatch.setenv("CURATION_OUTPUT_TOS_ACCESS_KEY", "out-ak")
+    monkeypatch.setenv("CURATION_OUTPUT_TOS_SECRET_KEY", "out-sk")
+    url = f"tos://dst-bucket/{prefix}"
+    res = run("export", "--run-dir", rd, "--input", flow.ds, "--revision", "2", "--output", url)
+    assert res.rc == 0, res.doc
+    assert f"{prefix}/_COMPLETE" not in bucket and stale not in bucket
+    man = _json(rd, "export", "manifest.json")
+    for rel, info in man["files"].items():
+        assert len(bucket[f"{prefix}/export/lerobot_curated/{rel}"]) == info["size"], rel
+    puts = [c[2] for c in cloud.calls if c[0] == "put"]
+    assert puts[-2:] == [f"{prefix}/export/manifest.detail.json",
+                         f"{prefix}/export/manifest.json"]
+    assert {c["access_key"] for c in cloud.clients} == {"out-ak"}
+
+    # what the Daemon uploads as the run goes, then the read-back
+    for dirpath, dirs, files in os.walk(rd):
+        rel_dir = os.path.relpath(dirpath, rd).replace(os.sep, "/")
+        if rel_dir == "export/lerobot_curated" or rel_dir.startswith("export/lerobot_curated/"):
+            continue
+        for name in files:
+            if name == "inflight.json":
+                continue
+            rel = name if rel_dir == "." else f"{rel_dir}/{name}"
+            with open(os.path.join(dirpath, name), "rb") as fh:
+                bucket[f"{prefix}/{rel}"] = fh.read()
+    res = run("verify", "--run-dir", rd, "--output", url, "--visibility-timeout", "0")
+    assert res.rc == 0 and res.doc["failed"] == [] and res.doc["complete_marker"] is True
+    assert f"{prefix}/_COMPLETE" in bucket
+
+
 def test_export_stops_when_the_source_changed(flow, tmp_path):
     rd = str(tmp_path / "run")
     shutil.copytree(flow.rd, rd)
