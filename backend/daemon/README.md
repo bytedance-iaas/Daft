@@ -51,11 +51,12 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `CURATOR_HOST` / `CURATOR_PORT` | `0.0.0.0` / 8080 | 监听地址 |
 | `CURATOR_LOG_LEVEL` / `CURATOR_LOG_FORMAT` | `INFO` / `json` | 日志写到 stdout，密钥类字段一律打成 `***` |
 
-三种鉴权都没配时不做鉴权，日志里会有一条警告，只适合本机调试。
+htpasswd 和单用户都没配、也没指定 `CURATOR_AUTH_MODE` 时不做鉴权，日志里会有一条警告，只适合本机调试。
 
 ## 手动验证步骤
 
-以下命令在 `backend/` 下执行（依赖装在仓库根的 `.venv`，另需 `fastapi`、`uvicorn`，见交付报告的依赖清单）。
+以下命令在 `backend/` 下执行。依赖装在仓库根的 `.venv`：Daemon 需要 `fastapi`、`uvicorn`，测试另需 `httpx2`
+（版本见 `backend/requirements.txt`、`requirements-dev.txt`）。
 
 **准备**：选一个空目录当数据卷，造 23 条任务，其中 1 条停在「运行中」，模拟 Daemon 被杀掉时的样子。
 W5 之前还没有建任务的接口，所以直接写仓储：
