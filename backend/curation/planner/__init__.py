@@ -18,7 +18,7 @@ baselines are archived (see README.md in this package).
 from .consistency import (MERGE_AGREEMENT_BAR, AgreementReport, default_verdict,
                           run_merge_consistency, verdict_agreement)
 from .executor import (MergeExecutor, MergeReceipts, MergeRun, UnitOutcome, VlmRequest,
-                       VlmResponse, merge_units_for)
+                       VlmResponse, chat_payload, merge_units_for)
 from .gates import GATE_NAMES, V1_CONFIG_KEYS, derive_gates, v1_set_overrides
 from .limits import (Limit, PlanLimits, SiteConfig, effective_cpu_concurrency,
                      effective_vlm_parallelism)
@@ -39,7 +39,7 @@ __all__ = [
     "PerEpisodeMultiModule", "PlanError", "PlanLimits", "ResizableGate", "RetryPolicy",
     "RetryStats", "SiteConfig", "UnitOutcome", "Usage", "UsageAccumulator", "UsageLedger",
     "V1_CONFIG_KEYS", "VlmRequest", "VlmResponse", "VlmTransportError", "apportion",
-    "build_plan", "call_with_retry", "classify_failure", "compose_merged_prompt",
+    "build_plan", "call_with_retry", "chat_payload", "classify_failure", "compose_merged_prompt",
     "default_verdict", "derive_gates", "effective_cpu_concurrency", "effective_vlm_parallelism",
     "merge_enabled", "merge_units_for", "parse_usage", "run_merge_consistency", "split_answer",
     "strategy_for_stage", "strategy_named", "usage_from_response", "v1_set_overrides",

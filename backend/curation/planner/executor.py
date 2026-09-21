@@ -75,6 +75,27 @@ class VlmResponse:
         return cls("" if content is None else str(content), body.get("usage"))
 
 
+def chat_payload(request: VlmRequest, *, model: str,
+                 image_url: Callable[[Any], str] | None = None,
+                 temperature: float = 0.0) -> dict[str, Any]:
+    """The chat-completions body for ``request``, in v1's shape (04 §4.1).
+
+    Only model / temperature / max_tokens / messages, in that order; one user
+    message whose content is the text followed by the images. ``image_url`` turns
+    a frame into a URL (v1's ``_frame_to_data_uri``: JPEG quality 85, base64);
+    ``max_tokens`` is left out when the request has none (the server's default).
+    """
+    content: list[dict[str, Any]] = [{"type": "text", "text": request.text}]
+    for image in request.images:
+        url = image_url(image) if image_url is not None else str(image)
+        content.append({"type": "image_url", "image_url": {"url": url}})
+    body: dict[str, Any] = {"model": model, "temperature": temperature}
+    if request.max_tokens is not None:
+        body["max_tokens"] = request.max_tokens
+    body["messages"] = [{"role": "user", "content": content}]
+    return body
+
+
 def as_response(value: Any) -> VlmResponse:
     if isinstance(value, VlmResponse):
         return value

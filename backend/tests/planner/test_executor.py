@@ -306,6 +306,23 @@ def test_a_new_strategy_needs_no_executor_change():
     assert all(o.ok and o.receipt == "merged" and o.result.passed for o in run.outcomes)
 
 
+def test_chat_payload_has_v1_request_shape():
+    from curation.planner import chat_payload
+
+    fake = X.FakeVlm()
+    executor(fake).run(X.units_for([0]))
+    merged = fake.requests[0]
+    body = chat_payload(merged, model="doubao", image_url=lambda img: f"data:image/jpeg;base64,{img}")
+    assert list(body) == ["model", "temperature", "max_tokens", "messages"]   # v1's keys, v1's order
+    assert (body["model"], body["temperature"], body["max_tokens"]) == ("doubao", 0.0, 32)
+    [message] = body["messages"]
+    assert message["role"] == "user" and message["content"][0] == {"type": "text", "text": merged.text}
+    assert [c["image_url"]["url"] for c in message["content"][1:]] == \
+        [f"data:image/jpeg;base64,{img}" for img in merged.images]
+    single = VlmRequest(0, "caption", ("example_grasp",), X.GRASP_PROMPT)
+    assert list(chat_payload(single, model="m")) == ["model", "temperature", "messages"]
+
+
 def test_merged_request_carries_nothing_but_verbatim_prompts():
     fake = X.FakeVlm()
     executor(fake).run(X.units_for([0]))

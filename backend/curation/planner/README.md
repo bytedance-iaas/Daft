@@ -16,7 +16,7 @@ Daemon 与 `curation plan` 共用的纯计算库（设计 02 §3.2）：不联�
 | `plan.py` | `build_plan()`：分档、幸存者链、硬门、autolabel 条件、两个聚合档、dedup（并发恒为 1）与技能画像、合并提案、估算；输出符合 `docs/contracts/cli/plan.schema.json` |
 | `estimates.py` | 估算用的常数全部来自 v1 的实测与出厂配置，逐条注明出处 |
 | `merge.py` | `FramePolicy`、`MergeUnit`、`MergeGroup`、`MergeLimits`、`none` 与 `per_episode_multi_module` 两个策略、合并请求的拼装与按 key 拆回、`vlm.merge.enabled` 开关 |
-| `executor.py` | `MergeExecutor`：注入 `send(request)`，按组发送、拆回交给各模块自己的解析函数、单项解析失败只降级那一项、超限拆包、回执（`check --json` 的 `merge` 块） |
+| `executor.py` | `MergeExecutor`：注入 `send(request)`，按组发送、拆回交给各模块自己的解析函数、单项解析失败只降级那一项、超限拆包、回执（`check --json` 的 `merge` 块）；`chat_payload()` 把请求拼成 v1 形态的请求体 |
 | `usage.py` | 解析 OpenAI 兼容的 `usage`；实际调用账与分摊账两本账，分摊账逐项等于实际账（最大余数法，整数精确）；拿不到 usage 的只计数不估算；产出 C3 的 `usage` 行（增量） |
 | `retry.py` | 外层 `vlm_retry`（04 §6）：只重试超时、连接错、5xx、429，间隔 1/2/4 秒，429 至少等 `Retry-After` |
 | `throttle.py` | 自适应降并发（04 §7）：30 秒窗口内 429/5xx 占比超过阈值，八把闸门一起减半，干净的窗口逐步加回；每次调整产出 C3 的 `throttle` 行；`ResizableGate` 是可在运行中改容量的信号量 |
@@ -202,7 +202,7 @@ EOF
 | 外层重试 | 各工厂里 `hedged_request(...)` 加 `raise_for_status()` 这一段；`llm_ask` 包在 4 次循环（1201–1224）外面 | `call_with_retry(..., RetryPolicy(max_retries=--retry))`；次数与挽回数 `RetryStats.to_json()` 进性能剖析 |
 | 自适应降并发 | 闸门在各工厂内部新建（`vlm_client.py` 675、814、913、1069、1186 行，`caption.py` 148 行，`funnel.py` 121 行）；每一发的结局在 `_attempt` 里 | 工厂改为接受注入的闸门，换成 `ResizableGate` 并 `AdaptiveThrottle.bind()`；`_attempt` 按状态码把 `ok / rate_limited / server_error / timeout / connect_error` 交给 `throttle.record()`；事件写 stderr |
 | 闸门 | `check --concurrency N` | 拆 `funnel.py` 之前：`v1_set_overrides(derive_gates(N))` 经 `config.apply_overrides` 生效（endstate、arbitration、guard_caption 由 v1 从 episode 闸门推出，单独覆盖要等拆分） |
-| 合并执行 | `check` 拆出来的 VLM 档，episode 闸门之内 | 每条 episode：`executor.run(merge_units_for(本档模块, ep, ctx))`；`send` 适配 `hedged_request`，请求体只有 model / temperature / max_tokens / messages（v1 形态）；`frames` 按 `FramePolicy` 解码一次 |
+| 合并执行 | `check` 拆出来的 VLM 档，episode 闸门之内 | 每条 episode：`executor.run(merge_units_for(本档模块, ep, ctx))`；`send` 用 `chat_payload(request, model=..., image_url=vlm_client._frame_to_data_uri)` 拼出 v1 形态的请求体（只有 model / temperature / max_tokens / messages），经 `hedged_request` 发出，`raise_for_status()` 后返回 `r.json()`；`frames` 按 `FramePolicy` 解码一次 |
 
 ## 已知限制
 
@@ -214,3 +214,5 @@ EOF
 - 合并请求的延迟行还没有标签：`vlm_latency.csv` 的五个标签是数据契约，加 `merged` 要单独定。
 - 计划里的八把闸门是 v1 的调用点；新模块的请求暂按 `probe` 估算，真正接入时要定它归哪把闸门。
 - 估算是建议值：假定所选条目全部过硬门；仲裁、判废护栏与画像的纯文本调用随数据变化，不计入。
+- 10 篇 §3.4 要求示例模块走真实的方舟端点再跑一遍对账：`run_merge_consistency` 可以直接用，
+  缺的是真实的 `send`（上表「合并执行」一行）和按 `FramePolicy` 解码的 `frames`，都属于接入步骤。
