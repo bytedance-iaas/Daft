@@ -46,7 +46,7 @@ deploy/charts/curator/
 │   ├── service.yaml
 │   ├── ingress.yaml           # 可选
 │   ├── secret.yaml            # 主密钥（可由外部 Secret 接管）
-│   ├── configmap.yaml         # 站点配置：流水线 YAML 覆盖、公共数据集、模型能力表
+│   ├── configmap.yaml         # 站点配置：流水线 YAML 覆盖、公共数据集、思考强度映射表
 │   ├── cronjob-backup.yaml    # 可选：触发库备份，见 §6
 │   └── NOTES.txt
 └── README.md
@@ -106,9 +106,11 @@ publicDatasets:                 # HuggingFace 缓存桶；不配则新建页不�
 
 localDataRoot: ""               # 留空 = 关闭「本地挂载路径」来源；配了则只允许这个根目录之下
 
-concurrency:                    # 站点级默认，见 04 篇 §2
+concurrency:                    # 站点级默认与上限，见 04 篇 §2；任务只能在上限之内再往下压
   cpu: 8
+  cpuMax: 16
   vlmParallelism: 64
+  vlmParallelismMax: 128
 
 backup:
   enabled: false
@@ -123,6 +125,11 @@ ingress:
   className: ""
   hosts: []
 ```
+
+**内存上不要指望子进程隔离**。CLI 子进程和 Daemon 在同一个容器、同一个 cgroup 里，容器内存触顶时
+内核挑谁杀不由我们定。Chart 做三件事降低 Daemon 被误杀的概率：启动子进程时把它的 `oom_score_adj` 调到 +500、
+Daemon 自己 −500；帧档按 RSS 准入（04 篇 §7）；`limits.memory` 给足。真被整个带走了，StatefulSet 把 Pod 拉起来，
+任务从检查点自动续跑。
 
 数据卷从 20Gi 调到 100Gi，是因为任务工作目录也放在这里（00 篇 §4.2）：每个任务的结果、证据帧、日志，
 MB 到 GB 级，终态 7 天后清理。原设计里的 200Gi 帧缓存卷已经取消（D18，不再有帧缓存），
@@ -198,7 +205,7 @@ SIGTERM 后 Daemon：停止接新任务 → 给运行中的 CLI 子进程发 SIG
 ## 5. 部署前检查清单
 
 1. TOS 存储桶存在、地域正确、访问密钥有读写权限（密钥管理页会校验）。
-2. 方舟 API Key 有效、目标模型已开通（添加模型时会用一次最小请求确认）。
+2. 方舟 API Key 有效、目标模型已开通（添加模型时会用一次最小请求确认；任务开始前还会再查一次）。
 3. **数据卷必须是块存储（EBS）**。SQLite 的 WAL 依赖共享内存和可靠的文件锁，放在 NAS 或 TOS-FSX
    这类网络文件系统上会损坏。临时卷同样不能是 FSX 挂载：TOS FSX 拒绝随机写，PyAV 收尾时要 seek 回文件头，
    会 EINVAL（v1 实锤）。

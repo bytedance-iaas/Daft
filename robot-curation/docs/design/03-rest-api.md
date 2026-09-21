@@ -36,10 +36,10 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/v1/vlm-backends` | 列后端及其模型 |
-| POST | `/api/v1/vlm-backends` | 新建：名称 + 类型 + endpoint + API Key；保存后自动列一次模型 |
+| POST | `/api/v1/vlm-backends` | 新建：名称 + 类型 + endpoint + API Key；保存后试着列一次模型，列不出来不算失败 |
 | PUT / DELETE | `/api/v1/vlm-backends/{id}` | 更新（API Key 留空 = 不改）/ 删除（被非终态任务引用 → 409） |
 | POST | `/api/v1/vlm-backends/{id}/verify` | 探活 |
-| POST | `/api/v1/vlm-backends/{id}/refresh-models` | 重新列模型（先 `/models`，不通则内置清单） |
+| POST | `/api/v1/vlm-backends/{id}/refresh-models` | 重新列模型（`GET {endpoint}/models`；拉不出来就返回空，由用户手填） |
 | POST | `/api/v1/vlm-backends/{id}/models` | 手动添加一个模型（Model ID 或推理接入点 ID），保存前用一次最小请求校验 |
 | PATCH / DELETE | `/api/v1/vlm-backends/{id}/models/{model_id}` | 配置思考强度、并行度 / 移除 |
 
@@ -51,6 +51,7 @@
 | GET | `/api/v1/datasets` | 列数据集。`source=tos`（需 uri + 访问密钥）或 `source=public`（HuggingFace 缓存桶，匿名） |
 | GET | `/api/v1/datasets/episodes` | 分页列 episode，供新建页预览勾选，见 §10 |
 | POST | `/api/v1/preflight` | 预检，同步返回，结果带 `preflight_id` |
+| POST | `/api/v1/deliveries/probe` | 交付目录写探针：用指定的访问密钥真实写一个对象再删掉。新建页交付目录失焦时调 |
 
 **任务**
 
@@ -60,8 +61,11 @@
 | POST | `/api/v1/tasks/batch` | 同一套配置、多个数据集，一次建 N 个任务（深链带多个数据集时用） |
 | GET | `/api/v1/tasks` | 任务列表，页码分页 |
 | GET | `/api/v1/tasks/{id}` | 任务详情，见 §3.3 |
-| PATCH | `/api/v1/tasks/{id}` | `created` 状态可改全部配置；其余状态只能改名和重新绑定访问密钥 |
-| DELETE | `/api/v1/tasks/{id}` | 删除（`created` 或终态才允许），见 §8 |
+| PATCH | `/api/v1/tasks/{id}` | `created`（待启动）可改全部配置；启动之后只能改 `name` 和 `note`（D20）。带 `If-Match: <updated_at>`，两个窗口同时改时后到的返回 412 |
+| DELETE | `/api/v1/tasks/{id}` | 删除平台里的任务记录，不动 TOS（`created` 或终态才允许），见 §8 |
+| POST | `/api/v1/tasks/{id}/restore` | 恢复 30 天内删除的任务记录 |
+| POST | `/api/v1/tasks/{id}/purge-artifacts` | 清理该任务在 TOS 上的交付产物，见 §8 |
+| POST | `/api/v1/tasks/{id}/rebind-credentials` | 原访问密钥被删后，给历史任务重新指定一个，只影响报告读取与媒体签名 |
 | POST | `/api/v1/tasks/{id}/actions/{action}` | `start` / `pause` / `resume` / `stop` |
 | POST | `/api/v1/tasks/{id}/retry` | 重试 → 建子任务，见 §3.2 |
 | POST | `/api/v1/tasks/{id}/continue` | stopped / failed 的任务继续运行 → 建子任务 |
@@ -100,6 +104,7 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
 // 请求
 {
   "name": "droid 前 50 条质检",
+  "note": "第一轮抽检",
   "input":  {"source": "tos", "uri": "tos://bucket/datasets/droid_lerobot",
              "region": "cn-beijing", "credential": "prod-tos"},   // source=public 时不需要 credential
   "output": {"uri": "tos://bucket/deliveries/droid-50", "region": "cn-beijing",
@@ -113,11 +118,13 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
   "embodiment_id": "franka",
   "vlm": {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
           "reasoning_effort": null},              // null = 用模型上的配置；都为空则请求里不带该字段
-  "params": {"vlm_retry": 3, "export": true, "start_now": true}
+  "params": {"vlm_retry": 3, "export": true, "start_now": true,
+             "limits": {"cpu_concurrency": 4, "vlm_parallelism": 32}}   // 上限，可省略
 }
 
 // 响应 201
 {"id": "task_01HX...", "state": "queued", "created_at": 1758300000000,
+ "warnings": [],
  "links": [{"rel": "task", "title": "Open task",
             "url": "https://<host>/curation/tasks/task_01HX..."}]}
 ```
@@ -125,10 +132,18 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
 服务端行为：
 1. 用 `preflight_id` 取回预检快照，校验所选模块的可用性与它一致；快照过期（30 分钟）或不存在
    → `preflight_expired`，要求重检。
-2. 校验访问密钥可用、交付目录可写；校验交付目录绑定的输入数据集与本次一致（01 篇 §2.7）。
-3. `modules` 的每一项可以是 id 字符串，也可以是 `{id, params}`；`params` 按注册表里该模块的参数 schema 校验。
-4. 写 DB。`start_now=true` → `queued`；`start_now=false` → `created`（待启动），等 `actions/start`。
-5. 启动那一刻固化 `preflight` 快照、生成 `run_id`（时间戳）。
+2. `modules` 的每一项可以是 id 字符串，也可以是 `{id, params}`；`params` 按注册表里该模块的参数 schema 校验。
+3. 写 DB。`start_now=true` → 走第 4 步；`start_now=false` → `created`（待启动），等 `actions/start` 时再走第 4 步。
+4. **开始前的三项硬检查**（D30），任何一项不过都不允许开始，返回 `precheck_failed` 并逐项说明：
+   - 输入：用输入密钥真实读一次（`meta/info.json`）；HuggingFace 缓存桶匿名读；
+   - 输出：用输出密钥在交付目录下真实写一个探针对象，写完即删；
+   - VLM（勾了 VLM 模块才查）：用所选后端和模型发一次最小请求。
+   密钥在管理页上标着「未验证」或「验证失败」不妨碍保存和选用，但过不了这一步就跑不起来。
+5. 固化：`preflight` 快照、`run_id`（时间戳，对应的目录已存在则换一个，绝不覆盖别人的批次）、
+   源文件清单（`curation snapshot`）。meta 指纹和预检时对不上 → `preflight_expired`。
+6. 入队。交付目录下已经有别的输入数据集跑出来的批次时，不拦，只在 `warnings` 里提醒一句。
+
+`retry` / `continue` / `reexport` / 执行裁决 在建子任务之前同样走第 4 步里与它相关的检查。
 
 ### 3.1 `params` 全表
 
@@ -136,26 +151,35 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
 |---|---|---|---|---|
 | `start_now` | bool | true | false 则停在「待启动」 | — |
 | `export` | bool | true | 是否导出交付数据集；false 时之后可用「导出」补做 | `--report-only` 取反 |
-| `vlm_retry` | int 0–5 | 3 | VLM 调用的外层重试次数，间隔 1s / 2s / 4s | 新增 |
+| `vlm_retry` | int 0–5 | 3 | VLM 调用的外层重试次数上限，间隔 1s / 2s / 4s | 新增 |
+| `limits.cpu_concurrency` | int ≥1 | 不设 | CPU 档并发的上限 | 新增 |
+| `limits.vlm_parallelism` | int ≥1 | 不设 | VLM 并行度 N 的上限 | v1 界面上的三个并发输入框 |
 | `vlm_hedge` | bool | true | 超时对冲补发 | v1 默认开 |
 | `vlm_timeouts_s` | object | probe/endstate/arbitration/caption 60，llm 120 | 各类调用的单次超时 | `vlm.timeouts_s` |
 | `clips` | bool | false | 为裁决页预生成视频片段 | v1「一起生成」 |
 
-没有任何并发类的键。模块自己的参数走 `modules[].params`，可用的键由 `GET /modules` 给出
+**并发只能给上限，不能给计划**（D31）。实际取值 = min(用户给的上限, 模型 / 后端上配的并行度, 站点上限, planner 算出来的值)；
+八把闸门怎么从 N 推出来、各档怎么排，仍然是 planner 的事（04 篇 §2）。超时和重试次数同理，是「最多这么多」。
+CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」提交的是同一组键。
+模块自己的参数走 `modules[].params`，可用的键由 `GET /modules` 给出
 （例：`video_action_sync.sync_plots = flagged | all | none`）。
 
 ### 3.2 重试、继续运行、重新导出
 
 ```jsonc
 // POST /api/v1/tasks/{id}/retry
-{"modules": ["task_success"],      // 省略 = 所有出过错的模块
- "episodes": "errors"}             // errors（默认）| all
+{"modules": ["task_success"]}      // 省略 = 所有有出错条目或整体失败的模块
 ```
 
-- `errors`：只重跑这些模块里 `verdict=error`、或因调用失败而弃权的 episode。
-  640 条里 5 条超时，就只跑那 5 条。模块整体失败（从未产出结果）时自动按 `all` 处理。
-- 重试完成后，下游的去重和技能画像如果输入变了，会在同一个子任务里增量同步，不用再点一次。
-- `continue` 没有请求体：从断点接着跑主流程里没完成的部分。
+- **只补跑出错的 episode，成功的结果一律保留**（D25）。640 条里 5 条超时，就只跑那 5 条。
+  出错的条目当初没有进后面的档，所以补跑是从它出错的那一档接着往后跑，把该跑的都跑完。
+  模块整体失败（从未产出结果）时，该模块全量跑。
+- 补跑完成后，下游的去重和技能画像如果输入变了，会在同一个子任务里增量同步，不用再点一次。
+- **新结果完整生成、上传并核验之后才替换旧的**：判决清单和报告作为一个结果版本整体存放，
+  切换的只是库里的 `result_rev`（CAS）。补跑失败或被停止，用户看到的仍是上一版，不会出现清单是新的、报告是旧的。
+- **补跑后任务的终态按当前结果重算**：出错的条目都救回来了，列表和报告上就从「部分错误」变为「已完成」；
+  原先的失败和这次补跑留在任务详情的执行时间线里。
+- `continue` 没有请求体：从断点接着跑主流程里没完成的部分。因 `source_changed` 失败的任务不能继续，只能复制为新任务。
 - `reexport` 没有请求体：走增量导出；创建时 `export=false` 的任务也用它补做首次导出。
 - 三者都建子任务。同一任务已有未结束的子任务时返回 409。
 
@@ -163,8 +187,9 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
 
 ```jsonc
 {
-  "id": "task_01HX...", "name": "droid 前 50 条质检",
+  "id": "task_01HX...", "name": "droid 前 50 条质检", "note": "第一轮抽检",
   "state": "completed_with_errors", "state_reason": null, "pause_reason": null,
+  "result_rev": 1, "source": {"objects": 204, "bytes": 1520331122, "digest": "sha256:…"},
   "input": {...}, "output": {...}, "episodes": {...}, "vlm": {...}, "params": {...},
   "progress": {"stages": [
     {"id": "autolabel", "state": "succeeded", "done": 22, "total": 22, "elapsed_s": 46},
@@ -176,7 +201,7 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
     {"id": "task_success", "name": "任务成败判定", "state": "succeeded",
      "episodes_total": 49, "episodes_error": 2, "elapsed_s": 408}
   ],
-  "summary": {"total": 50, "passed": 43, "rejected": 7, "review": 10, "pass_rate": 0.86},
+  "summary": {"total": 50, "passed": 41, "rejected": 7, "held": 2, "review": 10, "pass_rate": 0.82},
   "usage": {"prompt_tokens": 1820000, "completion_tokens": 64000,
             "reasoning_tokens": 41000, "cached_tokens": 903000, "requests": 742},
   "pending_adjudication": 10, "delivery_stale": false,
@@ -226,21 +251,29 @@ data: {"state":"completed_with_errors","failed_modules":["task_success"]}
 
 - 事件源是 CLI 子进程 stderr 的 JSON Lines（见 `02-cli-contract.md` §5），
   Daemon 做聚合与限流（progress 最多 2 条/秒，log 最多 20 条/秒，超出丢弃中间态）。
-- **断线重连**：客户端带 `Last-Event-ID`，Daemon 重放最近 200 条。再早的从
-  `GET /api/v1/tasks/{id}` 的快照恢复 —— SSE 是加速通道，不是唯一真相源。
+- **每条事件都带 `id: <epoch>-<seq>`**（上面的示例省略了）。`epoch` 是 Daemon 的启动序号，`seq` 在一次启动内单调递增。
+- **断线重连**：客户端带 `Last-Event-ID`。`epoch` 相同且 `seq` 还在缓冲区（最近 200 条）里 → 从下一条接着发；
+  `epoch` 变了（Daemon 重启过）或 `seq` 已被挤出缓冲区 → 先发一条 `event: reset`，
+  客户端丢掉本地的增量状态，从 `GET /api/v1/tasks/{id}` 拉一次快照再继续听。
+- **事件不是账本**。`usage` 和 `progress` 发的都是**累计值**，不是增量，重放或重复收到都不会多记；
+  真正的数在库里，SSE 只是让界面动得快一点。
 - 被限流丢掉的日志不会真的丢：完整日志在 `/logs`（§11）。
 - 前端必须能在 SSE 完全不可用时靠轮询工作（每 5s 拉一次详情），这是容错底线。
 
 ## 6. 报告与大表分页
 
-报告概览一次返回（KB 级）。明细表可能是几十万行的 CSV，走切片接口：
+报告概览一次返回（KB 级）。明细表可能有几十万行，走切片接口：
 
 ```
 GET /api/v1/tasks/{id}/report/tables/visual_quality?cursor=...&limit=100&sort=score&order=asc
 ```
 
-Daemon 不把 CSV 读进内存，转调 `curation table slice`，由 CLI 用 pyarrow 做投影+切片。
-排序字段限白名单，避免对大文件做任意排序。
+- 明细表在生成报告时就写成 **Parquet**（按 episode 下标排序，带行组统计），放在结果版本目录里。
+  Daemon 直接用 pyarrow 读需要的行组和列，不为翻一页去拉起一个 CLI 进程，也不把整张表读进内存。
+- 排序字段限白名单（注册表里逐表声明）；非默认排序在 Daemon 内对单列做一次排序并缓存该版本的行序，
+  几十万行是亚秒级。
+- 游标里带着 `result_rev`。翻页翻到一半结果版本换了（补跑、裁决之后），返回 `result_changed`，
+  前端回到第一页，不会把两个版本的行拼在一起。
 
 报告按模块组织，但看一条具体的 episode 时需要横着看所有模块：
 `GET /tasks/{id}/episodes/{index}` 返回这一条的判决卡、各模块读数、证据帧和各机位视频位置，
@@ -268,9 +301,13 @@ GET /api/v1/media/sign?task=task_01HX...&scope=delivery&path=details/clips/ep000
 - `POST /tasks`、`/tasks/batch`、所有 `actions/*` 与建子任务的接口都支持 `Idempotency-Key` 头；
   相同 key 24 小时内返回首次结果。Agent 超时重试时最容易重复建任务，所以创建接口必须支持。
 - 状态相关的写操作走 Repository 的 CAS，冲突返回 409 + 当前状态，前端刷新即可。
-- 删除任务只允许 `created` 或终态；运行中删除返回 409 并提示先停止。
-- **删除只删平台里的记录，TOS 上的产物保留**。要连产物一起清，显式带 `?purge_artifacts=true`，
-  界面上二次确认；即便如此也不动交付目录根上的 `human-decisions/`（它属于交付目录，不属于某个任务）。
+- **删除和清理是两个动作**（D28）：
+  - `DELETE /tasks/{id}` 只处理平台里的记录，**不碰 TOS**。只允许 `created` 或终态；运行中返回 409 并提示先停止。
+    实现为软删除：从列表里消失，30 天内可 `restore`，之后连同库里的裁决、Token 记录一起清除。
+    留这个窗口是因为产物虽然还在 TOS，但平台没有「把已有目录导入为任务」的入口，记录一删，报告就再也打不开了。
+  - `POST /tasks/{id}/purge-artifacts` 清理该任务的批次目录 `<交付目录>/<run_id>/`。请求体必须回传完整路径
+    （`{"confirm_path": "tos://…/<run_id>/"}`），与服务端算出来的一致才执行；界面上先展示路径和体积，再二次确认。
+    只清这一个批次目录：同一交付目录下别的任务的批次不动；`latest` 若正指向它则一并移除。
 
 ## 9. 鉴权
 

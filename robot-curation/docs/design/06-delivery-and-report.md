@@ -6,12 +6,9 @@
 
 ```
 deliveries/<delivery-name>/
-├── human-decisions/               人工裁决 CSV 副本（DB 是权威，这里是自包含副本），跨批次累积
-│   ├── label_decisions.csv
-│   ├── task_verdicts.csv
-│   └── reject_appeals.csv
-├── <run_id>/                      一次跑批 = 一个任务（run_id 是启动时刻的时间戳）
+├── <run_id>/                      一次跑批 = 一个任务（run_id 是启动时刻的时间戳），独立且不可被别的任务覆盖
 │   ├── run.json                   任务快照：输入/模块/参数/预检/版本指纹
+│   ├── source_manifest.json       ★ 源文件清单与版本指纹（D27）
 │   ├── plan.json                  执行计划（04 篇），存档便于复现与调优
 │   ├── autolabel/captions.jsonl   无标注条目的补充描述
 │   ├── checks/                    ★ 模块级结果，子任务按模块覆盖
@@ -19,22 +16,39 @@ deliveries/<delivery-name>/
 │   │   ├── task_success/{parts/*.jsonl, results.jsonl}
 │   │   ├── skill_profile/{captions.jsonl, taxonomy.json, assignments.jsonl, label_audit.json}
 │   │   └── ...
-│   ├── verdicts.jsonl  keep.txt                  漏斗判决（aggregate --phase funnel）
-│   ├── passed.json  reject.json  review.json     终判（aggregate --phase final）
-│   ├── report.md  report.json  perf.json
+│   ├── revisions/r0001/           ★ 一个结果版本 = 一套判决清单 + 一份报告，不可变，旧版本保留
+│   │   ├── verdicts.jsonl  keep.txt                           漏斗判决（aggregate --phase funnel）
+│   │   ├── passed.json  reject.json  held.json  review.json   终判（aggregate --phase final）
+│   │   ├── report.md  report.json  perf.json  tables/*.parquet
+│   │   └── commit.json            最后写：这一版用了每个模块的哪些 part、应用了哪些裁决、源数据指纹
+│   ├── passed.json  reject.json  report.md   当前版本的副本，方便离线翻看；切换版本后才覆盖
+│   ├── human-decisions/           本任务的人工裁决 CSV 副本（DB 是权威，这里是自包含副本）
+│   │   ├── label_decisions.csv
+│   │   ├── task_verdicts.csv
+│   │   └── reject_appeals.csv
 │   ├── details/                   明细 CSV、证据帧、同步曲线、裁决视频片段、vlm_latency.csv
 │   ├── logs/<stage>.jsonl         各 stage 的完整日志
 │   ├── export/
 │   │   ├── manifest.json          ★ 产物清单，增量导出的依据
 │   │   └── lerobot_curated/       交付数据集
 │   └── _COMPLETE                  完整性标志，交付核验通过后最后写
-└── latest                         指向最近一次 run_id
+└── latest                         指向最近一次发布成功的完整版本
 ```
 
-两个 ★ 是本期的关键新增：`checks/` 让模块结果可独立覆盖，`export/manifest.json` 让导出可增量。
+★ 是本期的关键新增：`checks/` 让模块结果可独立覆盖，`export/manifest.json` 让导出可增量，
+`source_manifest.json` 钉住源数据版本，`revisions/` 让结果的替换是原子的 ——
+对象存储没有跨文件事务，所以不去改已有的文件，而是写一个新版本目录、最后落 `commit.json`，
+再由 Daemon 用 CAS 把库里的 `result_rev` 指过去。读方只认有 `commit.json` 的版本。
 
-和 v1 一样，**同一个交付目录可以跑多次**：每次一个 `<run_id>/`，互不覆盖，`human-decisions/` 在它们之上共用。
-产品上「一个任务 = 一个批次 = 一份报告」。约束只有一条：一个交付目录只绑定一个输入数据集（01 篇 §2.7）。
+**同一个交付目录可以跑多次**（D29）：每个任务一个 `<run_id>/`，互不覆盖，构成这个交付目录的历史版本。
+目录名撞了就换一个，绝不写进别人的批次目录。
+
+**`latest` 只指向完整成功的版本**。一个批次要同时满足：任务状态是已完成（没有失败的模块、没有待补跑的条目）、
+交付数据集已导出且不是过期状态、交付核验通过（`_COMPLETE` 在）。满足时才把 `latest` 原子地改过去；
+补跑、裁决之后要重新导出并核验通过，才会再动它。它指向的是**最近一次发布成功**的版本，不是最近一次启动的任务。
+这和 v1 不同：v1 的 `latest` 只表示「最近跑的是哪一次」。
+
+**同一交付目录的发布串行**：导出、核验、写 `_COMPLETE`、改 `latest` 这一段，Daemon 按交付目录加锁，一次只让一个任务做。
 
 v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/info.json` → `passed.json` → `latest`」的
 上传顺序来保证读方看不到半成品。v2 改用显式的 `_COMPLETE`，但**上传顺序的纪律保留**：
@@ -74,14 +88,31 @@ v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/inf
 - `dedup` 找出的重复项改判拒绝，理由「与 X 字节级完全重复」。
 - 已执行的人工裁决落到对应条目上（判失败、整条弃用 → 拒绝；捞回 → 通过）。
 
-产出三份清单，关系是这样的：
+三个维度分开表达，互不替代：
+
+| 维度 | 取值 | 落在哪 |
+|---|---|---|
+| 质量判决 | 通过 / 拒绝 | `passed.json` / `reject.json` |
+| 执行完整性 | 完整 / 待补跑 | `held.json`：执行出错、还没有完整结论的条目，既不算通过也不算拒绝，暂不交付 |
+| 人工复核 | 要不要人看、看什么 | `review.json`：一个**视图**，不是第三个桶 |
 
 ```
-全部参与质检的 episode = passed ∪ reject，两者互斥
-review ⊂ passed        带未决问题、等人工确认的那部分（成败弃权、标注分歧）
+全部参与质检的 episode = passed ∪ reject ∪ held，三者互斥且完备
+review 与它们正交：多数条目在 passed 里（成败弃权、标注分歧，保守放行后等人确认），
+                  也可以在 reject 里（归因于任务成败判定的拒绝，可复议）
 ```
 
-`review` 不是第三个互斥的桶。使用文档里那次实跑：输入 50 = 判废 7 + 交付 43，交付的 43 条里有 10 条待人工确认。
+**正常弃权和执行出错，处理方式不同**（D24）：
+
+- 模型或算法正常给出的「判不了」，以及标注分歧：维持 v1，**先交付，同时进人工复核**。
+- 执行层面的失败（解码失败、模型调用重试用尽、进程崩溃）：**暂不交付**，进 `held`，等「重试」补跑；
+  补跑成功后它回到正常的判决流程，该通过通过、该拒绝拒绝。
+  规则对所有已勾选的模块一视同仁：哪怕只是技能画像给它打标失败了，这一条也先不交付 ——
+  交付出去的每一条，报告里每个模块对它都有结论。
+
+这是和 v1 的一处有意差异：v1 把调用失败也记成弃权、照常交付。
+
+使用文档里那次实跑：输入 50 = 判废 7 + 交付 43，交付的 43 条里有 10 条待人工确认。
 **待裁决的条目计入交付、会被导出**，人工判失败或弃用之后，再经一次重新导出剔除。
 `aggregate` 每次全量重算，天然保证这些关系。
 
@@ -120,7 +151,7 @@ review ⊂ passed        带未决问题、等人工确认的那部分（成败�
 重新导出时：
 
 ```
-① 算新的 passed 名单 → 新 episode 序列
+① 算新的 passed 名单（不含 held）→ 新 episode 序列
 ② 与 manifest.episodes 做 diff：
      keep     内容相同且编号不变  → 一个字节都不动
      relabel  只有任务文本变了    → 只改 parquet 的 task_index 列与 meta/tasks，视频不动
@@ -135,6 +166,10 @@ review ⊂ passed        带未决问题、等人工确认的那部分（成败�
 
 任务文本按来源写入交付数据集，并带 `instruction_source`：原始标注 / 自产 caption（autolabel 补的）/ 人工改标。
 这是 v1 的既有行为 —— 客户拿到的成品包里，无标注的条目有了描述，被人工纠正的标注是纠正后的。
+
+**交付是否过期，按指纹算，不按「名单变没变」算。** 指纹 = 通过名单及其顺序 + 每条的任务文本与来源 +
+源数据指纹 + 导出格式与参数。它和上次成功导出时记下的 `export_fingerprint` 不一样，`delivery_stale` 就是 1。
+只改了标、名单一条没动，同样是过期 —— 成品包里的任务文本还是旧的。
 
 **关键约束：LeRobot 要求 `episode_index` 和全局 `index` 连续。**
 所以「剔除中间一条」必然引发后续所有 episode 的重新编号。
@@ -151,6 +186,9 @@ review ⊂ passed        带未决问题、等人工确认的那部分（成败�
   文件头改写 moov → EINVAL。所以视频必须**先写本地临时文件，再整文件拷贝到交付目录**。
   增量导出同样受此约束，不得图省事直接往远端写。
 - `_COMPLETE` 最后写。读方（报告页、下游训练）只认带 `_COMPLETE` 的批次。
+- 增量重新导出是**就地**改这个批次的 `export/`（对象存储没有原子的目录切换，整份另存一遍又要翻倍占空间）。
+  所以顺序是：先删 `_COMPLETE` → 改 → 核验 → 再写 `_COMPLETE`。这段时间里顺着 `latest` 找过来的读方会看到
+  「没有 `_COMPLETE`」，应当稍后再来，而不是读一个改到一半的数据集。读方的正确姿势写进交付目录的 README。
 
 ## 5. 人工裁决
 
@@ -187,7 +225,7 @@ review ⊂ passed        带未决问题、等人工确认的那部分（成败�
          ├─ aggregate                           重算三份清单
          ├─ check --modules skill_profile --incremental
          │                                      被裁决的条目按新标注重新归位，被剔除的从画像里移除
-         ├─ report                              报告追加「人工裁决」小节，区分本次新裁与沿用的
+         ├─ report                              生成新版本报告，追加「人工裁决」小节
          └─ 判决或任务文本变了 → 置 delivery_stale=1
                └─ UI 提示「判决已更新，交付数据集待重新导出」+「重新导出」按钮
 ```
@@ -196,22 +234,20 @@ review ⊂ passed        带未决问题、等人工确认的那部分（成败�
 这样「我点一下裁决」和「几百 GB 的数据集被重写」之间隔着一道明确的确认。
 这是和 v1 的一处有意差异：v1 的 `rejudge` 执行完会顺手重新导出。
 
-### 5.3 裁决跟着交付目录走
+### 5.3 裁决只属于本任务
 
-v1 的裁决记录放在交付目录根上（`human-decisions/`），同一个交付目录再跑一次，之前的裁决还在。
-这个语义保留，但要说清楚它**不是自动生效**：
+**人工裁决不跨任务**（D32）。一个任务的裁决只对这个任务的判决、报告和交付数据集生效；
+同一个数据集再建一个任务，或者往同一个交付目录再跑一次，都是从零开始，不会带上之前的裁决。
+CSV 副本也因此放在批次目录里（`<run_id>/human-decisions/`），不放在交付目录根上。
 
-- 新任务跑主流程时**不读**任何历史裁决（v1 的 `run` 也不读），判决只反映机器的结论。
-- 新任务的裁决页上，历史裁决显示为「沿用自此前的人工裁决 · 待应用」，和本次新裁的分开计数；
-  点「执行裁决」时一并落实。报告里单列一节说明哪些结论是沿用来的。
-- 「是否已应用」按任务记录（01 篇 §2.7 的 `adjudication_applied`），所以重复点执行是安全的。
-
-想从零开始、不沿用历史裁决，就换一个交付目录。
+这是和 v1 的一处有意差异。v1 把裁决放在交付目录根上、跨批次沿用（同名交付再跑，旧裁决还在，
+但要再执行一次才生效）。拿掉它的理由很直接：只靠交付目录和 episode 下标去认旧裁决，
+数据一旦变过（重新采集、重新编号、改过标注），旧裁决就会套到不相干的条目上。
 
 ### 5.4 补判调用失败的弃权条目
 
 v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」而弃权的条目，模型真说「看不出来」的不重判
-（那种重判一百次也一样）。v2 把它并入「重试」：`retry` 默认的 `episodes=errors` 就是这个范围（03 篇 §3.2）。
+（那种重判一百次也一样）。v2 里这类条目不再算弃权，而是 `error`、待补跑（§3），「重试」补跑的正是它们（03 篇 §3.2）。
 
 ## 6. 报告结构
 
@@ -220,8 +256,8 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
 {
   "overview": {
     "dataset": {...}, "run": {...},
-    "counts": {"total": 640, "passed": 512, "rejected": 96, "review": 32},
-    "pass_rate": 0.8,
+    "counts": {"total": 640, "passed": 508, "rejected": 96, "held": 36, "review": 32},
+    "pass_rate": 0.79,               // 通过 / 全部；held 既不算通过也不算拒绝
     "reject_reasons": [{"module": "task_success", "count": 61}, ...],
     "token_usage": {"prompt": 1820000, "completion": 64000, "reasoning": 41000,
                     "cached": 903000, "requests": 10240},
@@ -260,6 +296,11 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
   合并请求的节省量（合并后请求数 vs 未合并估算）。
 - **子任务之后同步更新**（需求硬要求）：延迟明细是追加式的，每行带 `subtask_id`；
   性能剖析默认展示全部调用的合计，可切到「仅主流程」或某一次子任务。Token 同理，合计里包含重试花掉的。
+- **因中断而重做的 episode 数**：Pod 重启或崩溃时在飞的请求结果丢了，那几条恢复后会重新调用一次。
+  服务端可能已为丢掉的那次计费，而它的 `usage` 我们收不到，Token 统计里没有，这里如实列出条数（D26）。
+
+报告和判决清单同属一个结果版本：每次生成写进新的 `revisions/r<NNNN>/`，完整上传并核验之后才切换生效版本（D25）。
+补跑前后的版本都留着，任务详情的执行时间线上可以逐个打开。
 
 ### 6.2 报告页与模块的对应
 

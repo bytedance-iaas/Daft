@@ -10,8 +10,8 @@
 4. **不重试、不并发**，除非显式要求。默认参数下就是一次直来直去的执行；
    `--concurrency` / `--retry` / `--hedge` 是可选行为开关。这条是需求的硬要求。
 5. **两类命令，界线分明**（D22）：
-   - **原子命令**（§3.1–3.9）在本地干活，不知道 Daemon 的存在，也没有「任务」这个概念；
-   - **客户端命令**（§3.10，`curation task …`）只调 Daemon 的 REST API，给 Agent 和脚本用。
+   - **原子命令**（§3.1–3.10）在本地干活，不知道 Daemon 的存在，也没有「任务」这个概念；
+   - **客户端命令**（§3.11，`curation task …`）只调 Daemon 的 REST API，给 Agent 和脚本用。
 
 ## 2. 全局参数
 
@@ -23,9 +23,20 @@
 | `--log-level` | `error`/`warn`/`info`/`debug`，默认 `info` |
 | `--region` / `--input-region` / `--output-region` | TOS 地域 |
 
-**凭证只走环境变量**，不进 argv：`TOS_ACCESS_KEY` / `TOS_SECRET_KEY` / `ARK_API_KEY`；
-VLM 的 key 通过 `--vlm-api-key-env <变量名>` 指定从哪个变量读（v1 既有设计）。
-理由：argv 在 `ps` 里全局可见，容器里同样。
+**凭证只走环境变量**，不进 argv。理由：argv 在 `ps` 里全局可见，容器里同样。
+
+| 用途 | 环境变量 |
+|---|---|
+| 读输入数据集 | `CURATION_INPUT_TOS_ACCESS_KEY` / `CURATION_INPUT_TOS_SECRET_KEY` |
+| 写交付目录 | `CURATION_OUTPUT_TOS_ACCESS_KEY` / `CURATION_OUTPUT_TOS_SECRET_KEY` |
+| 两者相同时的简写 | `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`（v1 既有；上面两组没设时回落到它） |
+| VLM | `--vlm-api-key-env <变量名>` 指定从哪个变量读（v1 既有设计），默认 `ARK_API_KEY` |
+
+输入和输出必须能用**两套不同的访问密钥**：源数据常常是别人账号下的只读桶，交付写进自己的桶。
+HuggingFace 缓存桶匿名读，不需要输入密钥。
+
+凡是读源数据的命令都接受 `--source-manifest <file>`（§3.3）：传了就逐个对象校验大小与 ETag，
+对不上立即以退出码 6 结束。不传则不校验 —— 直接用 CLI 的人自己负责数据不变。
 
 episode 一律用**整数下标**表达，语法沿用 v1：`34`、`10-20`、`3,10-12`，或 `@file`（每行一个下标）。
 负数、倒序区间、跨度超过 100 万的区间直接拒绝。
@@ -70,6 +81,7 @@ curation preflight --input tos://bucket/datasets/my_dataset --input-region cn-be
     {"id": "task_success", "availability": "available",
      "notes": ["88 episodes have no task text; the model will caption them first"]}
   ],
+  "meta_fingerprint": "sha256:…",   // meta 文件的指纹；任务启动时再比一次，变了就要求重新预检
   "warnings": ["episodes_stats.json missing; per-episode stats will be recomputed"]
 }
 ```
@@ -95,7 +107,25 @@ curation plan --preflight preflight.json --modules timestamp_check,visual_qualit
 Daemon 内部直接调用同一个 planner 库函数；CLI 形态是为了可调试、可复现。
 计划 schema 见 `04-concurrency-and-vlm-merge.md` §3。
 
-### 3.3 `curation autolabel` — 给没有任务标注的条目补描述
+### 3.3 `curation snapshot` — 固化源文件清单
+
+```bash
+curation snapshot --input tos://... --episodes 0-199 --out <run-dir>/source_manifest.json --json
+```
+
+列出本次任务要读的全部源对象（meta 文件 + 所选 episode 的 parquet 与视频），记下键、大小、ETag：
+
+```jsonc
+{"schema_version": "1.0", "input": "tos://bucket/datasets/droid_lerobot",
+ "objects": [{"key": "meta/info.json", "size": 4211, "etag": "\"9b2c…\""},
+             {"key": "videos/chunk-000/wrist/episode_000034.mp4", "size": 1839201, "etag": "\"77aa…\""}],
+ "summary": {"count": 804, "bytes": 1520331122, "digest": "sha256:…"}}
+```
+
+只列目录，不读内容：一万条 episode 也就几十次 LIST 请求。本地路径用大小 + 修改时间代替 ETag。
+之后的每条命令带上 `--source-manifest` 去读，就保证了一个任务从头到尾只认这一个版本的源数据（D27）。
+
+### 3.4 `curation autolabel` — 给没有任务标注的条目补描述
 
 ```bash
 curation autolabel --input tos://... --run-dir <dir> --episodes @unlabeled.txt \
@@ -113,7 +143,7 @@ v1 的既有行为（`pipeline/run.py` 漏斗前的 caption 兜底）：没有�
 `skill_profile` 直接复用，不再重打；`export` 把它写进交付数据集的任务文本，并标明来源。
 抽帧与提示词原样搬运 `dataset_level/caption.py`。
 
-### 3.4 `curation check` — 跑检查
+### 3.5 `curation check` — 跑检查
 
 ```bash
 curation check --modules visual_quality,video_action_sync --input tos://... --run-dir <dir> \
@@ -131,7 +161,9 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
   一次调用写一个 part（主流程一档只调一次，所以通常只有一个；续跑和重试各自再追加一个）。
   同一条 episode 在多个 part 里出现时，**编号大的 part 为准** —— 重试就是追加一个编号更大的 part，
   不改旧文件。`aggregate` 读之前先把 parts 压实成 `results.jsonl`。
-- `--resume`：跳过已经有非 `error` 结果的 episode。暂停后恢复、崩溃后续跑都靠它。
+- `--resume`：跳过已经有非 `error` 结果的 episode。暂停后恢复、崩溃后续跑、重试补跑都靠它。
+- 进程每开始处理一条 episode，就把它记进 `<run-dir>/checks/<module>/inflight.json`，处理完抹掉。
+  进程被杀或自己崩了，Daemon 从这个文件知道「出事时手上是哪几条」（04 篇 §7）。
 - 数据集级模块（`dedup`、`skill_profile`）不分批，一次调用吃整个 keep 集合；
   `skill_profile --incremental` 在已有技能体系上只处理变动的条目（搬 v1 的 `reassign` / `reprofile`）。
 
@@ -146,8 +178,20 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 
 - `abstain`（弃权）是一等公民：证据不足不判废，进人工裁决队列 —— 这是 v1 的核心纪律，
   搬运时不得简化成二值。
+- **`error` 和 `abstain` 严格区分**（D24）。`abstain` 是模型或算法正常给出的「判不了」（证据灰区、两问矛盾），
+  维持 v1：照样交付，同时进人工复核。`error` 是执行层面的失败：解码失败、模型调用重试用尽、解析不了返回、内部异常。
+  v1 把后者也记成弃权（理由以「VLM 调用/解析失败」开头）；v2 把它单列出来，因为处理方式不同：
+  出错的这条**不再进入后面的档、暂不交付**，等「重试」补跑。
 - 单条 episode 出错不影响其他条：该行 `verdict=error`，命令整体仍返回 0；
   只有「整个模块无法执行」（如 VLM 端点完全不可达）才非零退出。
+- **退出码 0 不等于「全部成功」**。`--json` 的最终输出必须带逐状态计数和输入集合的指纹，Daemon 据此给模块定
+  `succeeded` 还是 `completed_with_errors`，不靠退出码猜：
+
+```jsonc
+{"modules": {"task_success": {"part": "0001", "input_digest": "sha256:…",
+   "episodes": {"total": 49, "pass": 38, "fail": 6, "abstain": 3, "error": 2},
+   "error_episodes": [14, 31]}}}
+```
 
 三个行为开关，默认全关：
 
@@ -159,7 +203,7 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 
 `--plan-stage <file>` 传入 planner 为这一档生成的 VLM 请求合并分组；不传就逐模块单发。
 
-### 3.5 `curation aggregate` — 聚合判决
+### 3.6 `curation aggregate` — 聚合判决
 
 ```bash
 curation aggregate --run-dir <dir> --phase funnel|final --json
@@ -170,40 +214,46 @@ curation aggregate --run-dir <dir> --phase funnel|final --json
 | 阶段 | 读 | 写 |
 |---|---|---|
 | `funnel` | 六项漏斗检查的结果 | `verdicts.jsonl`（每条 keep / drop、硬门失败项、软分、弃权项）和 `keep.txt` |
-| `final` | 上一步 + `dedup`、`skill_profile` 的结果 + 已应用的人工裁决 | `passed.json` / `reject.json` / `review.json` |
+| `final` | 上一步 + `dedup`、`skill_profile` 的结果 + 已应用的人工裁决 | `passed.json` / `reject.json` / `review.json` / `held.json` |
 
 判决规则原样搬运 v1 `pipeline/verdict.py`，不得重写：硬门 `passed=False` 才 drop；
 硬门弃权（`passed=None`）只记入未决项，**不 drop**；软分加权均值低于阈值 drop。
-所以 `review` 是 `passed` 的子集，不是第三个互斥的桶，见 06 篇 §3。
+`passed` / `reject` / `held` 三份互斥且完备；`review` 是独立的复核视图，不和它们并列 ——
+里面的条目多数在 `passed` 里（保守放行、等人确认），也可以在 `reject` 里（被拒复议的候选）。
+任何一个已勾选的模块对某条 episode 是 `error`，这一条进 `held`（待补跑），既不算通过也不算拒绝，见 06 篇 §3。
 
-### 3.6 `curation export` — 导出交付数据集
+### 3.7 `curation export` — 导出交付数据集
 
 ```bash
 curation export --run-dir <dir> --input tos://... --output tos://... \
                 [--incremental] [--concurrency N] --json
 ```
 
-按 `passed.json` 导出 `lerobot_curated/`，**含待裁决条目**（v1 的保守放行）。
+按 `passed.json` 导出 `lerobot_curated/`，**含待裁决条目**（v1 的保守放行），不含 `held` 里待补跑的条目。
 任务文本按来源写入：原始标注、自产 caption、人工改标，各带 `instruction_source`。
 `--incremental` 时对比上一次的产物清单，只处理变动部分，详见 `06-delivery-and-report.md` §4。
 
-### 3.7 `curation report` — 生成报告
+### 3.8 `curation report` — 生成报告
 
 ```bash
 curation report --run-dir <dir> [--format md,json] --json
 ```
 
-产出 `report.md` + `report.json` + 性能剖析。报告结构见 06 篇。
+产出 `report.md` + `report.json` + 性能剖析，写进 `--revision` 指定的结果版本目录
+`<run-dir>/revisions/r<NNNN>/`（`aggregate --phase final` 的清单也写在这里），不覆盖旧版本。
+目录里最后写 `commit.json`，列明这一版用了每个模块的哪些 part、应用了哪些裁决。
+哪个版本生效由 Daemon 在它完整上传并核验之后切换（D25）。报告结构见 06 篇。
+明细表一律写成 Parquet（按 episode 下标排序），供报告页分页读取，见 03 篇 §6。
 延迟明细是追加式的（v1 的 rejudge 已如此），子任务跑过之后重新生成，性能剖析自然包含历次调用。
 
-### 3.8 `curation adjudicate-apply` — 执行人工裁决
+### 3.9 `curation adjudicate-apply` — 执行人工裁决
 
 ```bash
 curation adjudicate-apply --run-dir <dir> --decisions decisions.json --json
 ```
 
 v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型、不导出数据集**。
-`decisions.json` 由 Daemon 从库里导出（只含对本任务尚未应用的裁决）。三条裁决线的优先级规则原样保留
+`decisions.json` 由 Daemon 从库里导出，只含**本任务**尚未执行的裁决；裁决不跨任务（D32）。三条裁决线的优先级规则原样保留
 （「整条弃用」压过成败裁决等，见 06 篇 §5）。输出里带两份名单，交给后续步骤：
 
 ```jsonc
@@ -215,7 +265,7 @@ v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型�
 Daemon 据此接着调 `check --modules task_success --episodes 17,29` →
 `aggregate` → `check --modules skill_profile --incremental` → `report`。
 
-### 3.9 `curation verify` — 交付核验
+### 3.10 `curation verify` — 交付核验
 
 ```bash
 curation verify --run-dir <dir> --output tos://... --json
@@ -225,7 +275,7 @@ curation verify --run-dir <dir> --output tos://... --json
 搬 v1 的 `_verify_delivery_visible`：写成功不等于读得到，读回来全零的文件 v1 见过六次。
 核验通过才写 `_COMPLETE`。
 
-### 3.10 客户端命令：`curation task …`
+### 3.11 客户端命令：`curation task …`
 
 给 Agent 和脚本用。只做一件事：调 Daemon 的 REST API，把响应原样（`--json`）或渲染后打出来。
 响应里带 `links`，见 §6。连接信息只从参数或环境变量来：`CURATOR_URL`、`CURATOR_USER`、`CURATOR_PASSWORD`。
@@ -237,22 +287,21 @@ curation verify --run-dir <dir> --output tos://... --json
 | `curation task get <id>` | `GET /api/v1/tasks/{id}` |
 | `curation task wait <id> [--timeout S]` | 轮询到终态，输出最终的任务 JSON |
 | `curation task start\|pause\|resume\|stop <id>` | `POST /api/v1/tasks/{id}/actions/{action}` |
-| `curation task retry <id> [--modules a,b] [--all-episodes]` | `POST /api/v1/tasks/{id}/retry` |
+| `curation task retry <id> [--modules a,b]` | `POST /api/v1/tasks/{id}/retry`（只补跑出错的 episode） |
 | `curation task continue <id>` | `POST /api/v1/tasks/{id}/continue`（stopped / failed 续跑） |
 | `curation task report <id>` | `GET /api/v1/tasks/{id}/report` |
 | `curation task adjudication <id>` | 待裁决条数 + 裁决页链接；裁决本身要人看视频，只能在网页上做 |
 
-### 3.11 辅助命令
+### 3.12 辅助命令
 
 | 命令 | 作用 | 来源 |
 |---|---|---|
 | `curation datasets list [--source public]` | 列数据集（私有 TOS 前缀 / HuggingFace 缓存桶） | 搬 v1 的 `public` + 目录扫描 |
 | `curation datasets episodes` | 分页列 episode：下标、时长、任务文本、各机位视频位置 | 新增，供新建页的预览 |
 | `curation fetch` | 从数据来源站把公开数据集拉到自己的桶（调外部 `oniond`，长任务） | 原样搬运，CLI-only |
-| `curation backends probe` | VLM 端点探活 + 列模型（先 `GET /models`，不通则最小 chat 探活） | 搬 v1 的 `backends` |
+| `curation backends probe` | VLM 端点探活 + 列模型（`GET /models` 能拉就拉；拉不出不算错，退回一次最小 chat 探活） | 搬 v1 的 `backends` |
 | `curation creds verify` | 校验 TOS 访问密钥 / VLM API Key | 新增 |
 | `curation clips` | 为裁决页生成视频片段（v3 源数据是多条拼接的 mp4 时需要） | 从 v1 `review-page` 拆出 |
-| `curation table slice` | 对大明细 CSV 做服务端切片分页 | 新增，供报告页 |
 | `curation ls` | 列一层目录或 `tos://` 前缀 | 原样搬运 |
 | `curation prune` | 清理旧批次（默认只列不删，不碰裁决记录） | 原样搬运 |
 
@@ -269,6 +318,7 @@ v1 的 `run` / `rejudge` 这两个「一口气跑完」的命令不再保留，�
 | 3 | 输入不可达（数据集读不了、凭证失效） | 任务 `failed`，原因回显给用户 |
 | 4 | 模块整体失败（VLM 端点不可达等） | 该模块 `failed`，其余模块继续 |
 | 5 | 收到 SIGTERM，已收尾退出 | 按 Daemon 自己的意图置 `paused` / `stopped` |
+| 6 | 源数据与 `--source-manifest` 对不上 | 任务（或子任务）`failed`，原因 `source_changed`，提示重新预检后另建任务 |
 | 130 | 收到 SIGINT，已中止 | 同上 |
 
 信号协议：
