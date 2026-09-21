@@ -156,7 +156,7 @@ class Runtime:
 
     def _reconcile_once(self) -> bool:
         try:
-            self.reconcile_counts = reconcile(self.repo, self.hub, self.clock)
+            self.reconcile_counts = reconcile(self.repo, self.hub, self.clock, logs=self.logs)
         except Exception:
             log.exception("startup reconciliation failed; retrying in %ss", RECONCILE_RETRY_S)
             return False

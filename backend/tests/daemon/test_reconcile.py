@@ -132,6 +132,24 @@ def test_subtasks_follow_the_same_table(repo, clock):
     assert user_paused[-1].data["pause_reason"] == "user"
 
 
+def test_reconciliation_leaves_system_log_lines(repo, clock, tmp_path):
+    from daemon.logs import TaskLogs
+
+    logs = TaskLogs(tmp_path / "runs")
+    t = seed_task(repo)
+    _to(repo, t.id, "running")
+    done = seed_task(repo, "with a subtask")
+    _to(repo, done.id, "running", "completed_with_errors")
+    sub = _sub(repo, done.id, "running")
+    reconcile(repo, EventHub(1), clock, logs=logs)
+    lines = [(i["stage"], i["level"], i["msg"]) for i in reversed(logs.page(t.id).items)]
+    assert [(s, lvl) for s, lvl, _ in lines] == [("system", "warn"), ("system", "info")]
+    assert "paused by the system" in lines[0][2] and "queued again" in lines[1][2]
+    sub_lines = logs.page(done.id, subtask=sub.id).items
+    assert len(sub_lines) == 2 and all(i["subtask_id"] == sub.id for i in sub_lines)
+    assert logs.page(done.id, subtask="").items == []                   # the main run is untouched
+
+
 def test_app_start_reconciles_before_serving(make_app):
     from fastapi.testclient import TestClient
 
@@ -155,7 +173,7 @@ def test_a_failed_reconciliation_keeps_the_pod_unready(make_app, monkeypatch):
 
     calls = []
 
-    def flaky(repo, hub, clock):
+    def flaky(repo, hub, clock, **kw):
         calls.append(1)
         raise RuntimeError("database is locked")
 
@@ -166,7 +184,7 @@ def test_a_failed_reconciliation_keeps_the_pod_unready(make_app, monkeypatch):
         r = c.get("/readyz")
         assert r.status_code == 503 and r.json()["checks"]["reconciled"] is False
         assert c.get("/healthz").status_code == 200
-        monkeypatch.setattr(app_mod, "reconcile", lambda *a: {})
+        monkeypatch.setattr(app_mod, "reconcile", lambda *a, **kw: {})
         rt = app.state.runtime
         assert rt.reconciled.wait(5)
         assert c.get("/readyz").status_code == 200
