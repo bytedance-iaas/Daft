@@ -417,7 +417,7 @@ def test_task_state_cas(repo):
 def test_illegal_transitions_are_programming_errors(repo):
     t = repo.create_task(_spec())
     for frm, to in (({"running"}, "queued"), ({"failed"}, "queued"), ({"queued", "running"}, "paused"),
-                    ({"stopped"}, "succeeded")):
+                    ({"stopped"}, "queued")):
         with pytest.raises(ValueError):
             repo.update_task_state(t.id, frm, to, at=T0)
 

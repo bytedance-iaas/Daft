@@ -611,7 +611,7 @@ def test_unknown_routes_and_methods_answer_with_the_error_body(client_for):
     assert_error(c.get("/curation/api/v1/credentials"), "not_found")                # W8, pending
     assert_error(c.put("/curation/api/v1/tasks/x", json={}), "not_found")
     r = c.post("/curation/healthz")
-    assert_error(r, "not_found", status=405)
+    assert_error(r, "method_not_allowed", status=405)
 
 
 def test_cross_site_writes_are_refused(client_for):

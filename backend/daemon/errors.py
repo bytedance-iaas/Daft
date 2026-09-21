@@ -36,6 +36,7 @@ STATUS: dict[str, int] = {
     "result_changed": 409,
     "idempotency_conflict": 409,
     "precondition_failed": 412,
+    "method_not_allowed": 405,
     "precheck_failed": 422,
     "confirm_path_mismatch": 422,
     "model_check_failed": 422,
@@ -58,6 +59,7 @@ DEFAULT_MESSAGE: dict[str, str] = {
     "result_changed": "结果版本已更新，请从第一页重新加载",
     "idempotency_conflict": "同一个 Idempotency-Key 已用于内容不同的请求",
     "precondition_failed": "任务已被别人修改，请刷新后再改",
+    "method_not_allowed": "这个地址不支持该请求方法",
     "precheck_failed": "开始前的检查没有通过",
     "confirm_path_mismatch": "确认的路径与服务端计算的不一致",
     "model_check_failed": "模型调用检查没有通过",
@@ -201,8 +203,7 @@ def install(app: FastAPI) -> None:
         if exc.status_code == 404:
             return error_response("not_found", "这个地址不存在")
         if exc.status_code == 405:
-            # the Error enum has no method_not_allowed: keep the HTTP status, say not_found
-            return error_response("not_found", "这个地址不支持该请求方法", status=405,
+            return error_response("method_not_allowed", "这个地址不支持该请求方法", status=405,
                                   headers=dict(exc.headers or {}))
         if exc.status_code == 401:
             return error_response("unauthorized")

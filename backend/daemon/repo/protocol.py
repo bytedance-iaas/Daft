@@ -65,15 +65,19 @@ TASK_TRANSITIONS: dict[str, frozenset[str]] = {
     "pausing": frozenset({"paused", "stopping"}),
     "paused": frozenset({"queued", "stopping"}),
     "stopping": frozenset({"stopped"}),
-    "stopped": frozenset(),
+    # a resume subtask that finishes re-derives the task's terminal state (01 §2.5); if it
+    # fails or is stopped the task keeps its state
+    "stopped": frozenset({"succeeded", "completed_with_errors"}),
     "succeeded": frozenset({"completed_with_errors"}),
     "completed_with_errors": frozenset({"succeeded"}),
-    "failed": frozenset(),
+    "failed": frozenset({"succeeded", "completed_with_errors"}),
 }
 
-#: Subtasks share the machine but never have ``created`` (design doc 01, section 3).
+#: Subtasks share the machine but never have ``created`` and are never resumed themselves,
+#: so ``stopped`` and ``failed`` are final for them (design doc 01, section 3).
 SUBTASK_TRANSITIONS: dict[str, frozenset[str]] = {
-    k: v for k, v in TASK_TRANSITIONS.items() if k != "created"}
+    k: (frozenset() if k in ("stopped", "failed") else v)
+    for k, v in TASK_TRANSITIONS.items() if k != "created"}
 
 #: Parent states a subtask kind may start from (design doc 01, section 2.5).
 SUBTASK_PARENT_STATES: dict[str, frozenset[str]] = {
@@ -310,8 +314,9 @@ class Subtask:
     scope: dict
     state: TaskState
     state_reason: str | None = None
+    pause_reason: PauseReason | None = None  # only while pausing/paused, like the task's
     progress: dict | None = None
-    result_rev: int | None = None
+    result_rev: int | None = None            # the result revision this subtask committed, if any
     created_at: int = 0
     started_at: int | None = None
     finished_at: int | None = None
@@ -521,10 +526,12 @@ class Repository(Protocol):
         """What start fixes for the task's lifetime (D27, P17)."""
 
     def rebind_task_credentials(self, task_id: str, *, input_cred_id: str | None,
-                                output_cred_id: str | None) -> Task: ...
+                                output_cred_id: str | None) -> Task:
+        """``None`` leaves that side unchanged."""
 
     def soft_delete_task(self, task_id: str, *, at: int) -> None:
-        """Raises StateConflict unless created or terminal (D28)."""
+        """Raises StateConflict unless created or terminal (D28), Conflict('subtask_active')
+        while a subtask is not terminal."""
 
     def restore_task(self, task_id: str) -> Task: ...
 
@@ -533,6 +540,9 @@ class Repository(Protocol):
 
     def tasks_in_states(self, states: Iterable[str]) -> list[Task]:
         """Startup reconciliation (design doc 01, section 3.2)."""
+
+    def subtasks_in_states(self, states: Iterable[str]) -> list[Subtask]:
+        """Startup reconciliation of subtasks, across all tasks."""
 
     # -- task modules -----------------------------------------------------------
     def get_task_modules(self, task_id: str) -> list[TaskModule]: ...
@@ -547,7 +557,8 @@ class Repository(Protocol):
 
     # -- subtasks -----------------------------------------------------------------
     def create_subtask(self, subtask: Subtask) -> Subtask:
-        """Raises Conflict('subtask_active') while another subtask of the task is not terminal."""
+        """Raises Conflict('subtask_active') while another subtask of the task is not terminal,
+        StateConflict when the task's state does not allow this kind (SUBTASK_PARENT_STATES)."""
 
     def get_subtask(self, subtask_id: str) -> Subtask: ...
 
@@ -557,8 +568,12 @@ class Repository(Protocol):
     def active_subtask(self, task_id: str) -> Subtask | None: ...
 
     def update_subtask_state(self, subtask_id: str, frm: set[str] | frozenset[str], to: TaskState,
-                             *, reason: str | None = None, at: int) -> bool:
-        """CAS."""
+                             *, reason: str | None = None, pause_reason: PauseReason | None = None,
+                             at: int) -> bool:
+        """CAS, like update_task_state; ``pause_reason`` is kept only while pausing/paused."""
+
+    def set_subtask_result_rev(self, subtask_id: str, result_rev: int) -> None:
+        """The revision the subtask committed; the timeline links to its report."""
 
     def set_subtask_progress(self, subtask_id: str, progress: dict) -> None: ...
 
@@ -581,7 +596,8 @@ class Repository(Protocol):
                      detail: dict | None = None, owner: str = DEFAULT_OWNER) -> Event: ...
 
     def list_events(self, *, resource: str | None = None, cursor: str | None = None,
-                    limit: int = 50, owner: str = DEFAULT_OWNER) -> CursorPage[Event]: ...
+                    limit: int = 50, owner: str = DEFAULT_OWNER) -> CursorPage[Event]:
+        """Newest first."""
 
     def purge_events(self, *, before: int) -> int: ...
 

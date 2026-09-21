@@ -139,7 +139,8 @@ CREATE INDEX idx_task_list ON task(owner_id, created_at DESC);
 - episode 以**整数下标**为准（与 v1 的 `3,10-12` 表达式一致）；`ep000034` 这种写法只是展示形式。
   表达式由后端解析和校验（负数、倒序区间、跨度超过 100 万都拒绝），前端不自己解析。
 - `progress` 按档记录，对应 v1 任务卡上每个阶段各自的进度条、耗时和预计剩余。
-- `summary` 让列表页和「已完成任务的报告概览」不必每次去 TOS 读报告。
+- `summary` 让列表页和「已完成任务的报告概览」不必每次去 TOS 读报告。其中的待裁决条数（`pending_adjudication`）
+  由编排层维护：每次聚合出新的结果版本、每次提交或执行裁决之后重算，列表和详情页都读它。
 - `source_fingerprint` 对应交付目录里的 `source_manifest.json`（逐个对象的键、大小、ETag）。
   任务的每一步读源数据都按它校验，几天后的重试和重新导出也一样；对不上就是源数据被改过了，
   任务（或子任务）以 `source_changed` 失败，提示重新预检后另建任务。一个任务不混用两个版本的数据（D27）。
@@ -318,10 +319,11 @@ CREATE TABLE dataset_check (              -- 指纹核对记录：数据集详�
   id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id TEXT NOT NULL REFERENCES dataset(id) ON DELETE CASCADE,
   at INTEGER NOT NULL, trigger TEXT NOT NULL,   -- 'add' | 'recheck' | 'task_start' | 'repreflight'
   result TEXT NOT NULL,                     -- 'same' | 'changed'
-  diff TEXT                                 -- JSON：meta 是否变了，新增 / 删除 / 改动的文件数与前若干个键
+  change TEXT                               -- JSON（C4 SourceChange）：meta 是否变了，新增 / 删除 / 改动的文件数与前若干个键
 );
 ```
 
+- `UNIQUE(owner_id, source, uri, region)` 里 `region` 可以为空，SQLite 不把两个 NULL 当作重复，实现时用表达式唯一索引（`COALESCE(region, '')`）。
 - 数据集是**登记**，不是拷贝：平台只记来源、地址和指纹，数据仍在 TOS 上。删除登记不动数据；有非终态任务在用时不能删。
 - 新建任务时直接填地址的，预检通过后按 `(来源, 地址, 地域)` 找到已有的登记或新建一条；任务上记 `dataset_id`。
 - **开始任务时的核对**（D37）：重新取 meta 指纹，并用 `curation snapshot` 取全量文件清单，与 `dataset` 上记下的比。
@@ -399,8 +401,11 @@ CREATE TABLE idempotency_key (            -- 24 小时过期，见 03 篇 §8
 | running / pausing / paused | stopping → stopped | 用户停止 |
 | running | succeeded / completed_with_errors / failed | 自然结束 |
 | completed_with_errors ⇄ succeeded | — | 子任务结束后按当前结果重算（D25） |
+| stopped / failed | succeeded / completed_with_errors | 「继续运行」的 resume 子任务成功结束后，按当前结果重算终态（§2.5） |
 
 非法迁移一律拒绝并返回 409，不做「尽力而为」的猜测。
+
+「继续运行」期间父任务保持 stopped / failed，由 resume 子任务在跑（详情页显示「有子任务运行中」）；子任务成功结束，父任务按 §2.5 的规则进 succeeded 或 completed_with_errors；子任务失败或被停止，父任务保持原状。子任务自己的 stopped / failed 是终局，不会再被继续。
 
 ### 3.2 Daemon 启动时的状态对账
 
