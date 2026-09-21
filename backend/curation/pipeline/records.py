@@ -207,7 +207,7 @@ def parts_used(run_dir: str, module: str) -> list[str]:
 
 def compact(run_dir: str, module: str) -> str:
     """Write ``results.jsonl``: one current record per episode, sorted by index."""
-    rows = [rec for _, rec in sorted(load_parts(run_dir, module).items())]
+    rows = [rec for _, (_, rec) in sorted(load_parts(run_dir, module).items())]
     path = os.path.join(module_dir(run_dir, module), RESULTS_NAME)
     write_text_atomic(path, "".join(dumps_line(r) for r in rows))
     return path

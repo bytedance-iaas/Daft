@@ -247,8 +247,12 @@ def collect_runtime(cfg: dict) -> dict:
 
 
 def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
-                         auto_caps: dict) -> tuple:
+                         auto_caps: dict, *, caption_fn=None) -> tuple:
     """技能画像段(caption→LLM 归纳两级体系→分配→画像→分歧检出→复检,8 次迭代定稿)。
+
+    ``caption_fn`` (v2): a drop-in for ``caption_episodes`` with the same signature and
+    order guarantee; ``curation check`` passes one that captions episode by episode so
+    a failed call is charged to its episode (D33). None = ``caption_episodes`` itself.
 
     2026-08-16 从 run_pipeline 抽出:归类输入从"全员 caption"改成**标注优先**,
     这个输入选择必须能被单测钉死(埋在千行函数里只能靠 e2e 撞运气)。
@@ -266,6 +270,8 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
     from ..dataset_level.audit import audit_labels
     from ..dataset_level.caption import caption_episodes
     from ..dataset_level.profile import skill_profile_two_level
+    if caption_fn is not None:
+        caption_episodes = caption_fn  # noqa: F811 - same contract, per-episode incidents
     from ..dataset_level.reassign import grouping_text_and_source
     from ..dataset_level.taxonomy import (assign, induce_taxonomy,
                                           refine_taxonomy, repair_unassigned)

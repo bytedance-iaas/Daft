@@ -208,12 +208,20 @@ class ReplayMiss(Exception):
 
 
 class ReplayStore:
-    """FIFO queues of recorded outcomes, keyed by (kind, hash)."""
+    """FIFO queues of recorded outcomes, keyed by (kind, hash).
+
+    ``sticky_tags``: entries with these tags are not consumed and not counted -
+    every request with their hash gets the last recorded outcome. The v2 replay uses
+    it for ``/models`` endpoint probes: each v2 command probes once, v1 probed twice
+    per run, and a probe is not part of the VLM call graph (design doc 04 §4.1).
+    """
 
     def __init__(self, entries: Iterable[dict], *, skip_failures: bool = False,
-                 drop_hashes: Iterable[str] = ()):
+                 drop_hashes: Iterable[str] = (), sticky_tags: Iterable[str] = ()):
         self._queues: dict[tuple[str, str], collections.deque] = collections.defaultdict(
             collections.deque)
+        self._sticky: dict[tuple[str, str], dict] = {}
+        sticky = set(sticky_tags)
         drop = set(drop_hashes)
         for e in entries:
             if e.get("kind") not in ("logical", "direct"):
@@ -221,6 +229,9 @@ class ReplayStore:
             if skip_failures and not _entry_ok(e):
                 continue
             if e.get("hash") in drop:
+                continue
+            if e.get("tag") in sticky:
+                self._sticky[(e["kind"], e["hash"])] = e
                 continue
             self._queues[(e["kind"], e["hash"])].append(e)
         self._lock = threading.Lock()
@@ -233,7 +244,7 @@ class ReplayStore:
             if q:
                 self.hits[kind] += 1
                 return q.popleft()
-            return None
+            return self._sticky.get((kind, digest))
 
     def note_miss(self, kind: str, digest: str, canonical: dict, tag: str | None) -> None:
         with self._lock:
@@ -363,7 +374,8 @@ class TapeHooks:
                  replay_entries: list[dict] | None = None,
                  transport: dict[str, Callable] | None = None,
                  tape_meta: dict | None = None,
-                 drop_hashes: Iterable[str] = ()):
+                 drop_hashes: Iterable[str] = (),
+                 sticky_tags: Iterable[str] = ()):
         if mode not in ("record", "replay", "replay-record"):
             raise ValueError(f"unknown tape mode {mode!r}")
         if mode != "replay" and not tape_out:
@@ -372,7 +384,8 @@ class TapeHooks:
         self.writer = TapeWriter(tape_out, tape_meta) if tape_out else None
         self.store = (ReplayStore(replay_entries or [],
                                   skip_failures=(mode == "replay-record"),
-                                  drop_hashes=drop_hashes if mode == "replay-record" else ())
+                                  drop_hashes=drop_hashes if mode == "replay-record" else (),
+                                  sticky_tags=sticky_tags)
                       if mode != "record" else None)
         self._transport = transport or {}
         self._orig: dict = {}

@@ -37,6 +37,17 @@ VERDICT_DEFAULT = ("autolabel", "task_success", "skill_profile")
 # Loading
 # ---------------------------------------------------------------------------
 
+def load_side(path: str):
+    """A parity dump (``dump.json``) or a v2 run directory (``checks/``, ``revisions/``)."""
+    if os.path.isfile(os.path.join(path, "dump.json")):
+        return Side(path)
+    if os.path.isdir(os.path.join(path, "checks")) or os.path.isdir(os.path.join(path,
+                                                                                 "revisions")):
+        return V2Side(path)
+    raise ValueError(f"{path}: neither a parity dump (dump.json) nor a v2 run directory "
+                     "(checks/, revisions/)")
+
+
 class Side:
     """One dump directory, loaded lazily."""
 
@@ -44,8 +55,7 @@ class Side:
         self.path = path
         meta_path = os.path.join(path, "dump.json")
         if not os.path.isfile(meta_path):
-            raise ValueError(f"{path}: no dump.json (not a parity dump; v2 run directories "
-                             "get their own loader once the layout is frozen in W2)")
+            raise ValueError(f"{path}: no dump.json (not a parity dump)")
         with open(meta_path, encoding="utf-8") as fh:
             self.meta = json.load(fh)
         self._cache: dict = {}
@@ -91,6 +101,110 @@ class Side:
                     if rec.get("verdict") == "error":
                         out.add(idx)
         out |= set(self.final().get("held") or [])
+        return out
+
+
+class V2Side(Side):
+    """A v2 run directory (design doc 06 §1), read into the shape of a parity dump.
+
+    * ``records/<m>.jsonl``   <- ``checks/<m>/results.jsonl`` (same C2 record);
+    * ``autolabel.jsonl``     <- ``autolabel/captions.jsonl`` (an ``unclear`` or failed
+      caption is v1's empty caption);
+    * ``dedup.json``          <- ``checks/dedup/groups.json``;
+    * ``skill_profile.json``  <- ``checks/skill_profile/assignments.jsonl`` and the result
+      revision's ``label_audit.json`` (skill_profile's audit with the kill guard's holds
+      and the task line merged in, as v1's report has it);
+    * ``final.json``          <- the revision's ``passed`` / ``reject`` / ``held`` and the
+      ``review`` view without pure appeal entries (v1 has no appeal queue in review.json);
+    * ``dump.json`` ``tape``  <- ``parity.json`` written by ``python -m parity run-v2``.
+
+    The revision is the newest committed one, else the newest one.
+    """
+
+    def __init__(self, path: str):
+        self.path = path
+        self._cache = {}
+        meta_path = os.path.join(path, "parity.json")
+        self.meta = {}
+        if os.path.isfile(meta_path):
+            with open(meta_path, encoding="utf-8") as fh:
+                self.meta = json.load(fh)
+        self.revision_dir = self._revision()
+
+    def _revision(self) -> str | None:
+        base = os.path.join(self.path, "revisions")
+        names = sorted(n for n in (os.listdir(base) if os.path.isdir(base) else [])
+                       if len(n) == 5 and n[0] == "r" and n[1:].isdigit())
+        committed = [n for n in names if os.path.isfile(os.path.join(base, n, "commit.json"))]
+        pick = (committed or names or [None])[-1]
+        return os.path.join(base, pick) if pick else None
+
+    def records(self, module: str) -> dict[int, dict]:
+        key = ("records", module)
+        if key not in self._cache:
+            p = os.path.join(self.path, "checks", module, "results.jsonl")
+            rows = R.read_jsonl(p) if os.path.isfile(p) else []
+            self._cache[key] = {r["episode_index"]: r for r in rows}
+        return self._cache[key]
+
+    def has_records(self, module: str) -> bool:
+        return os.path.isfile(os.path.join(self.path, "checks", module, "results.jsonl"))
+
+    def autolabel(self) -> dict[int, dict]:
+        p = os.path.join(self.path, "autolabel", "captions.jsonl")
+        out = {}
+        for line in R.read_jsonl(p) if os.path.isfile(p) else []:
+            cap = str(line.get("caption") or "") if line.get("status") == "ok" else ""
+            out[line["episode_index"]] = {"episode_index": line["episode_index"],
+                                          "caption": cap, "has_caption": bool(cap)}
+        return out
+
+    def dedup(self) -> dict:
+        return self._json(os.path.join("checks", "dedup", "groups.json"), {})
+
+    def skill_profile(self) -> dict:
+        from .dump_v1 import _normalize_audit
+
+        p = os.path.join(self.path, "checks", "skill_profile", "assignments.jsonl")
+        if not os.path.isfile(p):
+            return {"ran": False, "assignments": [], "label_audit_queue": []}
+        keys = ("family", "subskill", "caption", "grouping_text", "grouping_text_source")
+        rows = [{"episode_index": int(r["episode_index"]), **{k: r.get(k, "") for k in keys}}
+                for r in R.read_jsonl(p)]
+        audit = {}
+        if self.revision_dir:
+            audit = self._json(os.path.relpath(os.path.join(self.revision_dir,
+                                                            "label_audit.json"), self.path), {})
+        return {"ran": True, "assignments": sorted(rows, key=lambda r: r["episode_index"]),
+                "label_audit_queue": _normalize_audit(audit)}
+
+    def final(self) -> dict:
+        if not self.revision_dir:
+            return {}
+        out: dict = {}
+        for name in ("passed", "reject", "held", "review"):
+            doc = self._json(os.path.relpath(os.path.join(self.revision_dir, f"{name}.json"),
+                                             self.path), None)
+            if doc is None:
+                return {}
+            eps = doc.get("episodes") or []
+            if name == "review":
+                eps = [e for e in eps if any(i.get("kind") != "reject_appeal"
+                                             for i in e.get("review") or [])]
+            out[name] = sorted(int(e["episode_index"]) for e in eps)
+        return out
+
+    def error_episodes(self) -> set[int]:
+        out = set()
+        base = os.path.join(self.path, "checks")
+        for name in os.listdir(base) if os.path.isdir(base) else []:
+            for idx, rec in self.records(name).items():
+                if rec.get("verdict") == "error":
+                    out.add(idx)
+        out |= set(self.final().get("held") or [])
+        p = os.path.join(self.path, "autolabel", "captions.jsonl")
+        out |= {int(line["episode_index"]) for line in (R.read_jsonl(p) if os.path.isfile(p)
+                                                         else []) if line.get("status") == "error"}
         return out
 
 
@@ -249,8 +363,12 @@ def check_replay(c: Side) -> dict:
         # not a replay-parity run: whatever missed was asked live and recorded
         return {"status": "skipped", "hits": hits, "misses": misses,
                 "note": f"replay-record run, {misses} calls recorded live"}
-    return {"status": "pass" if misses == 0 else "fail", "hits": hits, "misses": misses,
-            "unused_on_tape": hooks.get("unused")}
+    unused = hooks.get("unused")
+    # the call graph must be the same both ways: nothing asked that v1 did not ask
+    # (misses), nothing v1 asked left unasked (unused)
+    ok = misses == 0 and not unused
+    return {"status": "pass" if ok else "fail", "hits": hits, "misses": misses,
+            "unused_on_tape": unused}
 
 
 # ---------------------------------------------------------------------------
@@ -284,8 +402,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_compare(args) -> dict:
-    g, c = Side(args.golden), Side(args.candidate)
-    noise = Side(args.noise_floor) if args.noise_floor else None
+    g, c = load_side(args.golden), load_side(args.candidate)
+    noise = load_side(args.noise_floor) if args.noise_floor else None
     exclude = g.error_episodes() | c.error_episodes()
     strict, verdict_only = _csv(args.strict), _csv(args.verdict_only)
     if args.all_strict:

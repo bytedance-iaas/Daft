@@ -12,7 +12,8 @@ import os
 import re
 import sys
 
-from . import preflight, snapshot, task_client, verify
+from . import (adjudicate, aggregate, autolabel, check, plan, preflight, snapshot,
+               task_client, verify)
 from .errors import EXIT_INTERRUPTED, UsageError
 from .framework import LEVELS, emit_usage_error, run_command
 
@@ -74,7 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.required = True
     atomic = [_global_options(atomic=True)]
     preflight.add_parser(sub, atomic)
+    plan.add_parser(sub, atomic)
     snapshot.add_parser(sub, atomic)
+    autolabel.add_parser(sub, atomic)
+    check.add_parser(sub, atomic)
+    aggregate.add_parser(sub, atomic)
+    adjudicate.add_parser(sub, atomic)
     verify.add_parser(sub, atomic)
     task_client.add_parser(sub, _global_options(atomic=False))
     return parser
