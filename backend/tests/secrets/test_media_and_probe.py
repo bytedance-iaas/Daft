@@ -5,7 +5,17 @@ import pytest
 
 from daemon.repo import protocol as P
 
-from .conftest import API, JSON, T0, add_access_key, assert_error, assert_schema, runtime, seed_task
+from .conftest import (
+    API,
+    JSON,
+    T0,
+    add_access_key,
+    assert_error,
+    assert_schema,
+    runtime,
+    seed_task,
+    service,
+)
 from .fakes import AK, AK2, SK, SK2
 
 PROBE_RESULT = "ProbeResult"
@@ -155,6 +165,27 @@ def test_redundant_slashes_and_dots_are_normalized(secret_client, fake_tos):
     assert fake_tos.ops("presign")[-1]["key"] == "droid-50/20260921-1200/details/clips/ep1.mp4"
 
 
+def test_browser_urls_under_a_prefix_without_a_task(secret_client, fake_tos):
+    """The helper the new-task page's episode preview and the report pages reuse."""
+    from daemon.secrets import BadPath, browser_url
+
+    c = secret_client()
+    svc = service(c)
+    key = svc.tos_key(add_access_key(c, name="in")["id"])
+    url = browser_url(svc, "tos://datasets/droid_100", "videos/a.mp4", ttl_s=900, key=key)
+    op = fake_tos.ops("presign")[-1]
+    assert (op["bucket"], op["key"], op["expires"], op["endpoint"]) == (
+        "datasets", "droid_100/videos/a.mp4", 900, "https://tos-cn-beijing.volces.com")
+    assert url.startswith("https://datasets.tos-cn-beijing.volces.com/droid_100/videos/a.mp4?")
+    assert browser_url(svc, "tos://public-mirror/lerobot/pusht", "videos/a.mp4", ttl_s=900,
+                       key=None, region="cn-shanghai") == \
+        "https://public-mirror.tos-cn-shanghai.volces.com/lerobot/pusht/videos/a.mp4"
+    for bad_path in ("../x.mp4", "", "a/%2e%2e/b"):
+        with pytest.raises(BadPath):
+            browser_url(svc, "tos://datasets/droid_100", bad_path, ttl_s=900, key=key)
+    assert fake_tos.opened == fake_tos.closed
+
+
 def test_sign_errors(secret_client):
     c = secret_client()
     out = add_access_key(c, name="out", ak=AK2, sk=SK2)
@@ -162,7 +193,7 @@ def test_sign_errors(secret_client):
     assert_error(_sign(c, not_started.id, "delivery", "x.mp4"), "not_found")
     task = _started_task(c, out_cred=None)                     # the key was deleted
     body = assert_error(_sign(c, task.id, "delivery", "x.mp4"), "not_found")
-    assert "重新绑定" in body["error"]["message"]
+    assert "重新指定" in body["error"]["message"]
     assert_error(_sign(c, "task_nope", "delivery", "x.mp4"), "not_found")
     ok = _started_task(c, out_cred=out["id"])
     for ttl in (30, 7200):

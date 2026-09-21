@@ -19,6 +19,7 @@ TOS 访问密钥、VLM 后端与模型、交付目录写探针、媒体预签名
 | `service.py` | `SecretsService`（每个 Daemon 一个，`service_of(runtime)`）：解密、查找、给 W5 的 `VlmTarget` |
 | `prechecks.py` | 开始前的三项检查（D30） |
 | `cli_env.py` | CLI 子进程的环境变量 |
+| `presign.py` | 给浏览器的对象地址：前缀校验、公网端点签名、公共桶直给地址（`/media/sign` 与 episode 预览共用） |
 | `views.py`、`http.py` | 响应组装；路由共用的校验（不回显密钥）、幂等、审计 |
 | `../routes/access_keys.py`、`vlm.py`、`media.py` | `/credentials`、`/vlm-backends`、`/deliveries/probe`、`/media/sign` |
 
@@ -68,6 +69,8 @@ subprocess.Popen(argv + ["--input-region", cli.input_region, "--output-region", 
 - `need_vlm=None` 表示按任务勾选的模块推断（C1 注册表里 `needs` 含 `vlm` 的模块）。
 - 密钥或后端被删、密钥解不开时，`cli_environment` 与 `svc.tos_key(...)` 抛 `Unavailable`（`code`、`message_zh`）。
 - 任务级思考强度覆盖在建任务 / PATCH 时用 `svc.check_task_effort(model_id, effort)` 校验。
+- 给浏览器的视频 / 证据帧地址（报告页、新建任务页的 episode 预览）：
+  `browser_url(svc, "tos://桶/前缀", 相对路径, ttl_s=1800, key=key 或 None, region=...)`，路径越界抛 `BadPath`。
 - 其它 TOS 操作（清理交付产物、读报告）：`key = svc.tos_key(cred_id, role="output")`，
   `with svc.tos(key, region) as (client, ends): ...`（TOS SDK 客户端，用完关闭；Daemon 建的客户端关掉了 SDK 的 DNS 缓存，
   否则它会替换整个进程的 urllib3 建连函数）。

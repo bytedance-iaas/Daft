@@ -6,7 +6,8 @@ factory) and ``vlm`` (the OpenAI-compatible HTTP connector).
 
 What W5 calls (also through :mod:`.prechecks` and :mod:`.cli_env`):
 
-* ``tos_key(cred_id)`` -> :class:`~.tos.TosKey` (decrypted), ``tos_client(key, region)``;
+* ``tos_key(cred_id)`` -> :class:`~.tos.TosKey` (decrypted); ``with tos(key, region) as
+  (client, endpoints)`` for a TOS SDK client that is closed afterwards;
 * ``vlm_target_for_task(task)`` -> :class:`VlmTarget` (endpoint, model, effective reasoning
   effort, parallelism and the live API key); ``VlmTarget.snapshot()`` is what start freezes
   into ``task.vlm_snapshot`` (P17) - everything but the key.
@@ -163,14 +164,13 @@ class SecretsService:
                 role: str = "") -> T.TosKey:
         """The decrypted key; :class:`Unavailable` when it was deleted (``cred_id`` None)."""
         what = {"input": "输入数据集的", "output": "交付目录的"}.get(role, "")
+        gone = f"{what}访问密钥已被删除，请给任务重新指定一个访问密钥"
         if not cred_id:
-            raise Unavailable("credential_missing",
-                              f"{what}访问密钥已被删除：请重新绑定一个访问密钥")
+            raise Unavailable("credential_missing", gone)
         try:
             cred = self.repo.get_credential(cred_id, owner=owner)
         except P.NotFound:
-            raise Unavailable("credential_missing",
-                              f"{what}访问密钥已被删除：请重新绑定一个访问密钥") from None
+            raise Unavailable("credential_missing", gone) from None
         return self.tos_key_from(cred)
 
     def tos_endpoints(self, key: T.TosKey | None, region: str | None = None) -> T.Endpoints:
