@@ -53,12 +53,18 @@ def test_frame_policy_rejects_nonsense(args):
 
 def test_unit_validation():
     assert unit().key == (0, "example_grasp", "")
-    for bad in (dict(ep=-1), dict(module="Bad-Id"), dict(prompt="  "), dict(call_kind="vision"),
-                dict(call_kind="merged"), dict(max_tokens=0)):
+    for bad in (dict(ep=-1), dict(module="Bad-Id"), dict(prompt="  "), dict(call_kind="Vision"),
+                dict(call_kind="merged"), dict(call_kind=""), dict(max_tokens=0)):
         with pytest.raises(ValueError):
             unit(**bad)
     with pytest.raises(ValueError):
         MergeUnit(0, "m", X.FRAME_POLICY, "p", parser=None, call_kind="caption")
+
+
+def test_a_new_module_may_use_its_own_call_kind():
+    """C3 1.1: v1's five tags stay valid, and a new module sends under its own kind."""
+    assert unit(call_kind="example_grasp").call_kind == "example_grasp"
+    assert unit(call_kind="caption").call_kind == "caption"
 
 
 def test_declared_units_check_what_modules_return():

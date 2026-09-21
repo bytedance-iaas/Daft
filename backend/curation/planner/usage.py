@@ -29,9 +29,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
-from .merge import MERGED_CALL_KIND, SINGLE_CALL_KINDS
+from .merge import MERGED_CALL_KIND, SINGLE_CALL_KINDS, check_single_call_kind
 
 LEDGERS = ("actual", "attributed")
+#: The kinds v1 knows plus ``merged``; a new module may book under its own kind (C3 1.1).
 USAGE_CALL_KINDS = SINGLE_CALL_KINDS + (MERGED_CALL_KIND,)
 TOKEN_FIELDS = ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens")
 COUNT_FIELDS = ("requests", "requests_unknown_usage")
@@ -208,8 +209,8 @@ class UsageLedger:
         """
         if not isinstance(model, str):
             raise ValueError("model must be a string")
-        if call_kind not in USAGE_CALL_KINDS:
-            raise ValueError(f"call_kind must be one of {USAGE_CALL_KINDS}, got {call_kind!r}")
+        if call_kind != MERGED_CALL_KIND:
+            check_single_call_kind(call_kind)
         modules = sorted(shares)
         if not modules or any(not isinstance(m, str) or not m for m in modules):
             raise ValueError("a request carries at least one named module")

@@ -28,12 +28,22 @@ from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 from ..vlm_call_kinds import CALL_KIND_ORDER
 
-#: Call kinds a single request can carry: v1's five latency tags, a data contract
-#: (``vlm_call_kinds.py``); C3 adds only ``merged`` for merged requests.
+#: v1's five latency tags (``vlm_call_kinds.py``, a data contract). C3 1.1 lets a new
+#: module send under its own kind, named like a module id; ``merged`` is reserved for
+#: requests that carry several modules.
 SINGLE_CALL_KINDS: tuple[str, ...] = tuple(CALL_KIND_ORDER)
 MERGED_CALL_KIND = "merged"
 
 _MODULE_ID = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def check_single_call_kind(call_kind: str) -> None:
+    """A single request's kind: a v1 tag or a module's own kind, never ``merged``."""
+    if not isinstance(call_kind, str) or not _MODULE_ID.match(call_kind):
+        raise ValueError(f"call_kind must be named like a module id (v1's kinds: "
+                         f"{', '.join(SINGLE_CALL_KINDS)}), got {call_kind!r}")
+    if call_kind == MERGED_CALL_KIND:
+        raise ValueError(f"call_kind {MERGED_CALL_KIND!r} is reserved for merged requests")
 _PICK = re.compile(r"^linspace:([1-9][0-9]*)$")
 
 
@@ -109,9 +119,10 @@ class MergeUnit:
             raise ValueError(f"{self.module_id}: prompt_part must be non-empty text")
         if not callable(self.parser):
             raise ValueError(f"{self.module_id}: parser must be callable")
-        if self.call_kind not in SINGLE_CALL_KINDS:
-            raise ValueError(f"{self.module_id}: call_kind must be one of {SINGLE_CALL_KINDS} "
-                             f"(the latency tags are a data contract), got {self.call_kind!r}")
+        try:
+            check_single_call_kind(self.call_kind)
+        except ValueError as e:
+            raise ValueError(f"{self.module_id}: {e}") from None
         if self.max_tokens is not None and (isinstance(self.max_tokens, bool)
                                             or not isinstance(self.max_tokens, int)
                                             or self.max_tokens < 1):
@@ -404,8 +415,7 @@ class DeclaredMergeUnits:
     units_per_episode: int = 1
 
     def __post_init__(self) -> None:
-        if self.call_kind not in SINGLE_CALL_KINDS:
-            raise ValueError(f"call_kind must be one of {SINGLE_CALL_KINDS}, got {self.call_kind!r}")
+        check_single_call_kind(self.call_kind)
         if isinstance(self.units_per_episode, bool) or not isinstance(self.units_per_episode, int) \
                 or self.units_per_episode < 1:
             raise ValueError("units_per_episode must be a positive integer")
