@@ -49,3 +49,28 @@
 
 - `openapi.yaml` 错误体 `message` 的描述里有个逗号没加引号，被 YAML 解析成了一个多余字段。
   它不影响校验，但契约不干净。已修，另加了一条测试专抓这类解析事故，锁已刷新（`51e048568`）。
+
+## 五、下一版（1.1）要改的
+
+批次 1 各包实现时发现的缺口，和静态稿评审新增的接口，攒在这里；W4、W7 合并后一次修订，统一升版本、刷新锁。
+在那之前各包按括号里的临时做法实现。
+
+| # | 契约 | 要改什么 | 来源 |
+|---|---|---|---|
+| 1 | C4 | 数据集登记：`GET/POST /datasets`、`GET/PATCH/DELETE /datasets/{id}`、`/recheck`、`/repreflight`；原来的「列数据集」挪到 `GET /datasets/browse`；`POST /tasks/{id}/repreflight`；`GET /overview`；`GET /tasks` 加 `module` 筛选，列表条目加所选模块 id；`POST /tasks` 的 `input` 可给 `dataset_id`；`start` 指纹对不上返回 409 `source_changed`，`details` 带变化 | D36、D37；设计 03 §12 |
+| 2 | C5 | `Dataset`、`DatasetCheck` 实体与仓储方法；任务加 `dataset_id` | D36；设计 01 §2.8 |
+| 3 | C2 `error` | 命令行客户端被 Daemon 拒绝、未预期的异常、交付目录读不到，现在分别借用 2/3/6、4、3（`input_unreachable`）；考虑补专门的 code | W3 |
+| 4 | C2 | `task wait --timeout` 到时没有退出码（现为 0 + 警告，调用方看 `state`） | W3 |
+| 5 | C2 `export-manifest` | 产物条目没有 `size`，只在远端的文件没法比大小；`verify` 核验哪些「关键文件」没写进契约 | W3，待 W7 确认 |
+| 6 | C2 `preflight` / 设计 02 §3.1 | 补 `--embodiment-id`、`--modules` 两个参数；`cameras` 用去掉 `observation.images.` 前缀的短名；原因文案用英文还是中文 | W3 |
+| 7 | C2 `source-manifest` | 写明 digest 算法：每个对象「键、大小、ETag 或修改时间」一行，排序后取 sha256 | W3 |
+| 8 | 设计 02 §2 | 可选的会话令牌变量 `CURATION_INPUT_TOS_SESSION_TOKEN` / `CURATION_OUTPUT_TOS_SESSION_TOKEN` | W3 |
+| 9 | C3 `usage` | `call_kind` 只有 v1 的五种加 `merged`，新模块单发时没有自己的标签（暂借五种之一） | W6 |
+| 10 | C3 `usage` | 实际账里合并请求记在哪个 `module` 下没定义（暂用参与模块排序后以 `+` 连接）；`requests` 与 `requests_unknown_usage` 互斥、两者之和才是发出的总数，要写明 | W6 |
+| 11 | C2 `check` | `merge.requests` 遇到跨模块请求怎么计没定义（暂在每个参与模块里各记一次，任务总数以实际账为准） | W6 |
+| 12 | C2 `plan` | 闸门只有 v1 那八把、档位 id 是固定枚举，新模块接入时要能扩展 | W6 |
+| 13 | 数据契约 | `vlm_latency.csv` 的五个标签没有 `merged`，接线时定合并请求的延迟行用什么标签 | W6 |
+
+W6 另建议补进设计文档的：09 §2.1 的 values.yaml 加 `vlm.merge`；04 §3 的示例计划补 `limits`、`command`、`guard_caption`；
+04 §2.2 注明 endstate、arbitration、guard_caption 三把闸门跟着 episode 闸门走；01 §2.6 写明第 10 条的约定；
+05 §7 写明 `merge_units` 的约定（`DeclaredMergeUnits`）。

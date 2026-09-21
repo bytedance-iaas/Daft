@@ -52,17 +52,26 @@ Current summary:
       · 批次 1 已派出 4 个后台 agent（各自 worktree）：W4 Daemon 骨架、W6 planner 与合并框架、W7 增量导出、W3 CLI 非 B 类部分
       · 需求方：黄金基线暂缓（v1 在 Pod 上跑过、结果正常，旧系统有备份）；W3 拆编排的卡点放宽，改由合成数据集上
         冻结点 v1 与 v2 的逐位对账守住（进 CI），真实数据基线在 F4.2 前补（11 §3、评审记录 §10、账本修订记录）
+      · 静态稿评审（2026-09-21）：六页通过，文案等页面全部实现后一次性改；D36 概览、数据集两页（数据集登记并记指纹）、
+        D37 开始时核对指纹（不一致弹框确认后重新预检）、D38 新建任务两屏；其余答复落在 07 篇与静态稿 README 的「评审结论」；
+        新接口写在 03 §12，契约随 1.1 修订补（a6cf86354）
+      · 合并 W6（b016603a3）：backend/curation/planner/ 独立库（计划、N→八把闸门与 v1 出厂默认逐项相等、合并框架、
+        Token 两本账、外层重试、自适应降并发），433 条测试；未接入 check / vlm_client（随 W3 后半）；F2.4 保持 not_completed
+      · 合并 W3 前半（0ea167f60）：backend/curation/cli/（v1 命令行挪成 legacy.py，只改 import）、preflight、snapshot、
+        verify、curation task 客户端，106 条测试；F2.1、F2.7 保持 not_completed（后半与 D37 未做）
+      · 合并后：v2 测试 610 过（契约 71、CLI 106、planner 433），v1 单测 1407 过 0 失败，契约锁一致，A 类 57 个文件未动；
+        CI 拆出 CLI 与 planner 两步；README 加两个包的目录与手动验证步骤
+      · 契约 1.1 修订清单（D36/D37 的新接口 + W3、W6 报告的 13 处缺口）记在 docs/contracts/SUMMARY.md §五，等 W4、W7 合并后一次改
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
-  - 批次 1 进行中，未合并
+  - 批次 1：W6、W3 前半已合并；W4、W7 仍在进行
   - compare 目前只读导出目录；v2 运行目录的读取随 W3 补（行格式已由 C2 冻结）
 
 Next steps:
-  1. 批次 1 各 agent 交付后逐个合并：核对目录边界与 A/B 类纪律，跑契约与各包测试，落地它们报告里的公共文件改动
-     （依赖、CI 步骤、README 手动验证步骤），更新 feature_list 状态
-  2. W3 后半（卡点已放宽）：拆 v1 编排为 autolabel / check / aggregate / export / report / adjudicate-apply；
-     compare 补 v2 运行目录的读取；合成数据集上冻结点 v1 对 v2 的 compare --all-strict 进 CI
-  3. 批次 2：W5 任务编排、W8 密钥管理（都依赖 W4）
-  4. 需求方评审六页静态稿（frontend/mockups/，README 待确认 1–10），通过后开 F3.2
-  5. 真实数据的两个基线在 F4.2 黄金对账之前补
+  1. W4、W7 交付后合并（边界检查、测试、公共文件改动），然后做契约 1.1 修订（SUMMARY §五 + W4、W7 的缺口），升版本、刷新锁
+  2. 批次 2：W5 任务编排、W8 密钥管理、W10 前端（含概览、数据集两页与新建任务两屏，D36–D38），
+     外加 W4 续作：数据集登记、概览、开始时的指纹核对与重新预检（D36、D37）
+  3. W3 后半（卡点已放宽）：拆 v1 编排为 autolabel / check / aggregate / export / report / adjudicate-apply；
+     接入 W6 的合并执行器与 usage 采集；compare 补 v2 运行目录的读取；合成数据集上冻结点 v1 对 v2 的 compare --all-strict 进 CI
+  4. 真实数据的两个基线在 F4.2 黄金对账之前补

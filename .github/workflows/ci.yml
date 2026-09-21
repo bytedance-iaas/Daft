@@ -30,8 +30,14 @@ jobs:
       - name: Contracts (C1-C5 tests and the drift lock)
         working-directory: backend
         run: |
-          python -m pytest -q -rfE tests
+          python -m pytest -q -rfE tests/contracts
           python -m curation.contracts check
+      - name: v2 command line (W3)
+        working-directory: backend
+        run: python -m pytest -q -rfE tests/cli
+      - name: Planner and VLM request merge framework (W6)
+        working-directory: backend
+        run: python -m pytest -q -rfE tests/planner
       - name: Parity tools (unit + end-to-end on the synthetic dataset)
         env:
           PYTHONPATH: tools
