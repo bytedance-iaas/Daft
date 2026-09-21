@@ -55,6 +55,41 @@ def test_readyz_turns_503_when_a_check_fails(client_for, tmp_path):
     assert r.json()["status"] == "not_ready" and r.json()["checks"]["scratch_writable"] is False
 
 
+def test_readyz_reports_a_stuck_or_read_only_database(client_for, monkeypatch):
+    import threading
+    import time
+
+    import daemon.app as app_mod
+
+    c = client_for()
+    rt = _rt(c)
+    monkeypatch.setattr(app_mod, "PROBE_TIMEOUT_S", 0.2)
+    release = threading.Event()
+    real = rt.repo.purge_expired
+
+    def stuck(*, now):
+        release.wait(5)
+        return real(now=now)
+
+    monkeypatch.setattr(rt.repo, "purge_expired", stuck)
+    started = time.monotonic()
+    r = c.get("/readyz")
+    assert r.status_code == 503 and r.json()["checks"]["db_writable"] is False
+    assert time.monotonic() - started < 2                         # bounded, never hangs the probe
+    assert c.get("/readyz").json()["checks"]["db_writable"] is False   # still stuck: no pile-up
+    release.set()
+
+    def read_only(*, now):
+        import sqlite3
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    monkeypatch.setattr(rt.repo, "purge_expired", read_only)
+    time.sleep(0.1)
+    assert c.get("/readyz").json()["checks"]["db_writable"] is False
+    monkeypatch.setattr(rt.repo, "purge_expired", real)
+    assert c.get("/readyz").status_code == 200
+
+
 def test_everything_lives_under_the_prefix(client_for):
     c = client_for(base_path="/curation")
     assert c.get("/curation/api/v1/modules").status_code == 200
