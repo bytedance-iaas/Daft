@@ -145,6 +145,31 @@ def test_write_probe_failures(fake_tos):
     assert out.ok and out.kind == "leftover" and T.PROBE_OBJECT in out.reason
 
 
+def test_the_real_sdk_client_signs_locally_and_keeps_its_logger_quiet():
+    import logging
+
+    from urllib3.util import connection
+
+    sdk_log = logging.getLogger("tos")
+    before = sdk_log.level
+    original = connection.create_connection
+    try:
+        sdk_log.setLevel(logging.NOTSET)
+        client = T.sdk_client("https://tos-cn-beijing.volces.com", "cn-beijing", _key())
+        assert sdk_log.level == logging.WARNING
+        # no DNS cache: the SDK leaves urllib3 (and so every other HTTP call) alone
+        assert connection.create_connection is original
+        url = T.presign_get(client, "deliveries", "droid-50/r1/a b.mp4", 600)   # no network
+        assert url.startswith("https://deliveries.tos-cn-beijing.volces.com/droid-50/r1/a%20b.mp4?")
+        assert "X-Tos-Signature=" in url and SK not in url
+        sdk_log.setLevel(logging.DEBUG)                  # an operator's choice is kept
+        T.sdk_client("https://tos-cn-beijing.volces.com", "cn-beijing", None).close()
+        assert sdk_log.level == logging.DEBUG
+        client.close()
+    finally:
+        sdk_log.setLevel(before)
+
+
 def test_anonymous_urls_are_public_and_quoted():
     assert T.anonymous_url("public-mirror", "a b/c.mp4", "cn-beijing") == \
         "https://public-mirror.tos-cn-beijing.volces.com/a%20b/c.mp4"

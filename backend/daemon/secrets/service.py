@@ -16,11 +16,12 @@ deleted, the backend is gone, the stored secret does not open).
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 from ..masterkey import MasterKey
 from ..repo import protocol as P
@@ -178,19 +179,32 @@ class SecretsService:
         return T.endpoints(want, custom, self.deployment_endpoint)
 
     def tos_client(self, key: T.TosKey | None, region: str | None = None):
-        """(SDK client for the Daemon's own calls, endpoints); ``key=None`` = anonymous."""
+        """(SDK client for the Daemon's own calls, endpoints); ``key=None`` = anonymous.
+        The caller closes the client; :meth:`tos` does that for a ``with`` block."""
         ends = self.tos_endpoints(key, region)
         return self.tos_factory(ends.server, ends.region, key), ends
 
-    def signing_client(self, key: T.TosKey, region: str | None = None):
-        """A client on the public endpoint: presigned URLs are for browsers (08 §6.3)."""
+    @contextlib.contextmanager
+    def tos(self, key: T.TosKey | None, region: str | None = None, *,
+            browser: bool = False) -> Iterator[tuple[Any, T.Endpoints]]:
+        """``with svc.tos(key, region) as (client, ends):`` - closed afterwards. ``browser``:
+        a client on the public endpoint, for presigned URLs (08 §6.3)."""
         ends = self.tos_endpoints(key, region)
-        return self.tos_factory(ends.browser, ends.region, key), ends
+        client = self.tos_factory(ends.browser if browser else ends.server, ends.region, key)
+        try:
+            yield client, ends
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001 - closing an idle session must not mask a result
+                    log.debug("closing a TOS client failed", exc_info=False)
 
     def verify_tos(self, key: T.TosKey) -> T.Verification:
-        client, ends = self.tos_client(key)
-        result = T.verify_identity(client, key, region=ends.region, endpoint=ends.server,
-                                   now=self.clock())
+        with self.tos(key) as (client, ends):
+            result = T.verify_identity(client, key, region=ends.region, endpoint=ends.server,
+                                       now=self.clock())
         if result.state != "ok":
             log.info("access key %s: identity check %s: %s", key.name, result.state, result.error)
         return result
@@ -255,14 +269,17 @@ class SecretsService:
         return self.vlm_target(task.vlm_model_id, reasoning_effort=task.vlm_reasoning_effort,
                                owner=task.owner_id)
 
-    def backend_references(self, backend: P.VlmBackend, *,
-                           owner: str = P.DEFAULT_OWNER) -> tuple[int, int]:
+    def backend_references(self, backend: P.VlmBackend, *, owner: str = P.DEFAULT_OWNER,
+                           count_finished: bool = True) -> tuple[int, int]:
         """(unfinished, finished or deleted) tasks that use one of the backend's models or were
         started on it (their snapshot names it). C5 has no count query for this, so it scans
-        the tasks; deleting a backend is rare."""
+        the tasks; ``count_finished=False`` skips the (large) set of finished ones."""
         model_ids = {m.id for m in backend.models}
+        states = set(P.TASK_TRANSITIONS)
+        if not count_finished:
+            states -= P.TERMINAL_STATES
         active = historical = 0
-        for task in self.repo.tasks_in_states(P.TASK_TRANSITIONS):
+        for task in self.repo.tasks_in_states(states):
             if task.owner_id != owner:
                 continue
             snap = task.vlm_snapshot if isinstance(task.vlm_snapshot, dict) else {}

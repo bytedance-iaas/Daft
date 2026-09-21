@@ -269,7 +269,7 @@ async def delete_backend(request: Request, backend_id: str, confirm: bool = Quer
 
     def handler() -> Response:
         backend = _backend(rt.repo, backend_id, owner)
-        active, historical = svc.backend_references(backend, owner=owner)
+        active, historical = svc.backend_references(backend, owner=owner, count_finished=not confirm)
         refs = {"active_tasks": active, "historical_tasks": historical}
         if active:
             raise ApiError("backend_in_use",
@@ -283,7 +283,7 @@ async def delete_backend(request: Request, backend_id: str, confirm: bool = Quer
         with rt.repo.transaction():
             rt.repo.delete_vlm_backend(backend.id, owner=owner)
             audit(request, "vlm_backend.delete", backend.id,
-                  {"name": backend.name, "historical_tasks": historical})
+                  {"name": backend.name, "confirmed": bool(confirm)})
         return Response(status_code=204)
 
     return await write(request, "deleteVlmBackend", handler)

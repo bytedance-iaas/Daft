@@ -144,8 +144,8 @@ def check_input(svc: SecretsService, target: InputTarget, *,
     except ValueError as err:
         return CheckResult("input", False, "failed", f"输入地址的写法不对：{err}", target.uri)
     try:
-        client, ends = svc.tos_client(key, target.region)
-        T.read_object(client, bucket, T.join_key(prefix, META_INFO))
+        with svc.tos(key, target.region) as (client, _):
+            T.read_object(client, bucket, T.join_key(prefix, META_INFO))
     except Exception as exc:  # noqa: BLE001 - classified below, never re-raised
         ends = svc.tos_endpoints(key, target.region)
         failure = T.classify(exc, scrub)
@@ -193,9 +193,9 @@ def check_output(svc: SecretsService, target: OutputTarget, *,
     except ValueError as err:
         return CheckResult("output", False, "failed", f"交付目录的写法不对：{err}", target.uri)
     try:
-        client, ends = svc.tos_client(key, target.region)
-        outcome = T.write_probe(client, target.uri, key=key, region=ends.region,
-                                endpoint=ends.server)
+        with svc.tos(key, target.region) as (client, ends):
+            outcome = T.write_probe(client, target.uri, key=key, region=ends.region,
+                                    endpoint=ends.server)
     except Exception as exc:  # noqa: BLE001
         ends = svc.tos_endpoints(key, target.region)
         failure = T.classify(exc, key.scrubber())

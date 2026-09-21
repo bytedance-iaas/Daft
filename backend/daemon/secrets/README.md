@@ -68,7 +68,9 @@ subprocess.Popen(argv + ["--input-region", cli.input_region, "--output-region", 
 - `need_vlm=None` 表示按任务勾选的模块推断（C1 注册表里 `needs` 含 `vlm` 的模块）。
 - 密钥或后端被删、密钥解不开时，`cli_environment` 与 `svc.tos_key(...)` 抛 `Unavailable`（`code`、`message_zh`）。
 - 任务级思考强度覆盖在建任务 / PATCH 时用 `svc.check_task_effort(model_id, effort)` 校验。
-- 其它 TOS 操作（清理交付产物、读报告）：`key = svc.tos_key(cred_id, role="output")`，`client, ends = svc.tos_client(key, region)`。
+- 其它 TOS 操作（清理交付产物、读报告）：`key = svc.tos_key(cred_id, role="output")`，
+  `with svc.tos(key, region) as (client, ends): ...`（TOS SDK 客户端，用完关闭；Daemon 建的客户端关掉了 SDK 的 DNS 缓存，
+  否则它会替换整个进程的 urllib3 建连函数）。
 
 ## 配置
 

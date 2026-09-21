@@ -91,8 +91,8 @@ def sign_media(request: Request, task: str = Query(...),
     if not _inside(base, object_key):
         raise bad("path 只能指向这个任务目录之内的文件", "path")
     try:
-        client, _ = svc.signing_client(key, region)
-        url = T.presign_get(client, bucket, object_key, ttl)
+        with svc.tos(key, region, browser=True) as (client, _):
+            url = T.presign_get(client, bucket, object_key, ttl)
     except Exception as exc:  # noqa: BLE001 - signing is local; whatever failed, say it cleanly
         failure = T.classify(exc, key.scrubber())
         raise ApiError("internal", f"签名失败：{failure.detail}") from None
@@ -112,9 +112,9 @@ async def probe_delivery(request: Request):
         key = svc.tos_key(cred_id, owner=owner, role="output")
         region = body.get("region") or key.region
         try:
-            client, ends = svc.tos_client(key, region)
-            outcome = T.write_probe(client, uri, key=key, region=ends.region,
-                                    endpoint=ends.server)
+            with svc.tos(key, region) as (client, ends):
+                outcome = T.write_probe(client, uri, key=key, region=ends.region,
+                                        endpoint=ends.server)
         except Exception as exc:  # noqa: BLE001 - e.g. the client could not be built
             ends = svc.tos_endpoints(key, region)
             failure = T.classify(exc, key.scrubber())

@@ -17,6 +17,7 @@ offline with a fake; the real one is :func:`sdk_client` (``tos`` is imported laz
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -119,12 +120,28 @@ def endpoints(region: str | None, custom: str | None, deployment: str | None) ->
     return Endpoints(region=want, server=server, browser=browser)
 
 
+def _quiet_sdk_logger() -> None:
+    """The SDK logs every failed attempt at INFO with the raw exception (response headers,
+    request URL, retry bodies). The Daemon reports failures itself, scrubbed, so the SDK's
+    logger is raised to WARNING - unless an operator configured it on purpose."""
+    sdk = logging.getLogger("tos")
+    if sdk.level == logging.NOTSET:
+        sdk.setLevel(logging.WARNING)
+
+
 def sdk_client(endpoint: str, region: str, key: TosKey | None):
-    """The real TOS SDK client; ``key=None`` is an anonymous (unsigned) client."""
+    """The real TOS SDK client; ``key=None`` is an anonymous (unsigned) client.
+
+    ``dns_cache_time=0``: with its DNS cache on, the SDK patches urllib3's
+    ``create_connection`` for the whole process (every ``requests`` call, the VLM calls
+    included) and starts a global refresh thread that ``close()`` shuts down for everyone.
+    The Daemon makes a handful of short calls; it does not need that.
+    """
     import tos  # lazy: tests inject a fake factory and never import the SDK
 
+    _quiet_sdk_logger()
     kwargs: dict[str, Any] = dict(max_retry_count=1, connection_time=CONNECT_TIMEOUT_S,
-                                  socket_timeout=SOCKET_TIMEOUT_S)
+                                  socket_timeout=SOCKET_TIMEOUT_S, dns_cache_time=0)
     if key is None:
         return tos.TosClientV2("", "", endpoint, region, **kwargs)
     return tos.TosClientV2(key.access_key_id, key.secret_access_key, endpoint, region,

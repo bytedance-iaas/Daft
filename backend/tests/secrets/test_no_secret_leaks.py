@@ -177,3 +177,4 @@ def test_no_secret_reaches_a_response_a_log_line_or_the_database(secret_client, 
     assert any(AK2 in r.text for r in media[:1])                   # a presigned URL has to
     assert len(call.seen) > 35 and "SignatureDoesNotMatch" in places["events"] + logs + \
         "".join(text for _, text in call.seen)
+    assert fake_tos.opened == fake_tos.closed > 10          # every TOS client was closed again

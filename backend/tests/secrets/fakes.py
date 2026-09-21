@@ -83,6 +83,7 @@ class FakeTos:
         self.fail_delete = False
         self.down = False
         self.list_error: Exception | None = None     # raised by list_buckets when set
+        self.opened = self.closed = 0                # clients built / closed again
         self._lock = threading.Lock()
 
     # -- setup -------------------------------------------------------------------
@@ -96,6 +97,8 @@ class FakeTos:
         self.objects[(bucket, key)] = data
 
     def factory(self, endpoint: str, region: str, key):
+        with self._lock:
+            self.opened += 1
         return FakeTosClient(self, endpoint, region, key)
 
     def ops(self, op: str | None = None) -> list[dict]:
@@ -105,6 +108,10 @@ class FakeTos:
 class FakeTosClient:
     def __init__(self, tos: FakeTos, endpoint: str, region: str, key):
         self.tos, self.endpoint, self.region, self.key = tos, endpoint, region, key
+
+    def close(self) -> None:
+        with self.tos._lock:
+            self.tos.closed += 1
 
     def _call(self, op: str, bucket: str | None = None, key: str | None = None) -> str | None:
         ak = self.key.access_key_id if self.key is not None else None

@@ -200,7 +200,7 @@ def test_unreachable_tos_and_crashing_checks(secret_client, fake_tos, monkeypatc
     def boom(*a, **k):
         raise RuntimeError(f"surprise with {SK}")
 
-    monkeypatch.setattr(svc, "tos_client", boom)
+    monkeypatch.setattr(svc, "tos_factory", boom)
     report = run_prechecks(svc, input=InputTarget("tos", INPUT, credential_id=inp["id"]),
                            output=OutputTarget(OUTPUT, credential_id=out["id"]))
     assert not report.ok and SK not in report.message() and SK not in str(report.details())
