@@ -32,16 +32,27 @@ Current summary:
       C5 backend/daemon/repo/protocol.py（实体、状态机迁移表、CAS、两种分页、错误类型）
       契约测试 backend/tests/contracts 70 条：Schema 合法、22 组示例（合法/不合法）、注册表一致性、OpenAPI 有效且覆盖 03 篇接口表、
       状态机与 01 篇迁移表逐边一致、CONTRACTS.lock 漂移检测（手动改契约验证过：报出文件、退出码 1）
-      与设计的出入已回写文档：新增 GET /tasks/{id}/timeline；证据模式取值用 v1 的 off；aggregate/report 补 --revision；
-      同档里硬门失败压过执行出错（drop 优先于 held）
+      与设计的出入已回写文档：新增 GET /tasks/{id}/timeline；证据模式取值用 v1 的 off；aggregate/report 补 --revision。
+      更正：「硬门确定失败压过执行出错（drop 优先于 held）」只写进了 verdict-line 契约的说明，设计原文 02 §3.6、06 §3
+      仍是「任一模块出错即进 held」，两处不一致，已列为待拍板（见下）
+  - 2026-09-21 续：
+      · 契约一页摘要 docs/contracts/SUMMARY.md（要点、冻结时定下的 7 处细节、1 处待拍板），等用户评审后再开批次 1
+      · 修 openapi.yaml 错误体 message 描述的 YAML 解析事故（逗号未加引号多出一个字段），加回归测试，锁已刷新；
+        契约测试 71 条全过（51e048568）
+      · 推送被权限拦下：origin = github.com/bytedance-iaas/daft 是公开仓库。release_v1 上的 v1 代码本来就公开，
+        但本分支的设计文档、评审记录、静态稿、feature_list/progress 等过程文件是首次公开，需用户决定推到哪里
 
 Main gaps:
   - F1.1 基线未生成：需在现网 Pod 里按 tools/parity/README.md「在现网 Pod 里生成黄金基线」执行
-  - F1.2 验收③「镜像可构建」本机无 Docker，靠 CI 的 image 任务验证；分支 feat/curator-v2 尚未推送到 origin（需用户确认）
+  - F1.2 验收③「镜像可构建」本机无 Docker，靠 CI 的 image 任务验证；分支尚未推送（目标仓库待用户定：公开 fork / 私有仓库）
+  - 待拍板：已被确定拒绝的条目又有模块出错，直接拒绝（推荐，契约现状）还是进 held（设计原文）；定后改 01/02/06 并写成 schema 约束
   - compare 目前只读导出目录；v2 运行目录的读取随 W3 补（行格式已由 C2 冻结）
 
 Next steps:
-  1. 批次 1 可以开工：W3 CLI 层、W4 Daemon 骨架、W6 planner/合并、W7 增量导出（W3 改 B 类代码前两个基线须存档）
-  2. 用户确认后推送分支，看 CI（尤其镜像构建）结果；通过则 F1.2 置 completed
+  1. 用户评审 SUMMARY.md、拍板上面那一处；点头后开批次 1，四个后台 agent 各占一个 worktree：
+     W4 Daemon 骨架（backend/daemon/ 除 planner/）、W6 planner 与合并框架（backend/daemon/planner/，先不接 v1 的 vlm_client）、
+     W7 增量导出（backend/curation/export/ 下新增文件，不改 A 类的 lerobot_writer.py、safe_write.py）、
+     W3 CLI 的非 B 类部分（骨架、preflight、snapshot、verify、curation task … 客户端）；拆 v1 编排等基线存档后再做
+  2. 用户定推送目标后推分支，看 CI（尤其镜像构建）结果；通过则 F1.2 置 completed
   3. 用户在 Pod 里跑基线（droid50 两遍、umi640 一遍、umi64 两遍、各自回放自检），存档 manifest 放进 tools/parity/golden/
   4. 需求方评审六页静态稿（README 待确认 1–10），通过后才开 F3.2

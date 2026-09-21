@@ -2,6 +2,8 @@
 
 并行开发的地基：CLI、Daemon、前端之间只通过这里的文件对话，谁都不直接 import 对方的内部模块（设计 11 篇 §1）。
 
+先读 [`SUMMARY.md`](SUMMARY.md)：一页讲清五份契约的要点、冻结时定下的细节和待拍板的事项。
+
 | # | 契约 | 文件 | 谁读 |
 |---|---|---|---|
 | C1 | 模块注册表 | `backend/curation/contracts/modules.py`，导出为 `modules.json` | CLI、Daemon、前端（`GET /api/v1/modules`） |
