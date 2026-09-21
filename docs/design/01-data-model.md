@@ -5,6 +5,7 @@
 ```
 Owner(预留) ──┬── Credential (TOS 访问密钥；VLM 后端的 API Key 也存这里，但由后端接口代管)
               ├── VlmBackend(方舟/自定义) ── VlmModel
+              ├── Dataset (登记的数据集：来源、地址、预检结果、指纹及其变化记录，D36)
               │
               ├── Task ──┬── TaskModule (任务 × 模块，本期 8 行/任务)
               │          ├── Subtask (重试 / 继续运行 / 执行裁决 / 重新导出)
@@ -103,6 +104,7 @@ CREATE TABLE task (
   input_uri      TEXT NOT NULL,           -- tos://bucket/prefix | 白名单根目录下的本地路径
   input_region   TEXT,
   input_cred_id  TEXT REFERENCES credential(id) ON DELETE SET NULL,  -- public 来源为空（匿名直读）
+  dataset_id     TEXT REFERENCES dataset(id) ON DELETE SET NULL,     -- 登记的数据集（D36），见 §2.8
   output_uri     TEXT NOT NULL,
   output_region  TEXT,
   output_cred_id TEXT REFERENCES credential(id) ON DELETE SET NULL,
@@ -133,6 +135,7 @@ CREATE INDEX idx_task_list ON task(owner_id, created_at DESC);
 
 - `preflight` 在**任务启动时固化**：数据集后来变了，任务的语义也不能变。
   「待启动」的任务还能改配置，所以固化发生在启动那一刻，不是创建那一刻。
+  启动前先核对数据集指纹，和登记时（或最近一次预检时）不一致就要用户确认、重新预检（D37，见 §2.8）。
 - episode 以**整数下标**为准（与 v1 的 `3,10-12` 表达式一致）；`ep000034` 这种写法只是展示形式。
   表达式由后端解析和校验（负数、倒序区间、跨度超过 100 万都拒绝），前端不自己解析。
 - `progress` 按档记录，对应 v1 任务卡上每个阶段各自的进度条、耗时和预计剩余。
@@ -214,7 +217,7 @@ CREATE TABLE subtask (
 2. **产物先写临时目录，成功才替换**：子任务失败或被停止，父任务原有的结果原样保留。
 3. **子任务结束后，父任务的终态按当前结果重算**（D25）：没有整体失败（`failed`）的模块、也没有待补跑的 episode
    （`held` 为空）→ `succeeded`；否则 `completed_with_errors`。某个模块判出错、但已被别的模块确定拒绝的条目
-   不算待补跑（D35）。所以补跑成功会让「部分错误」变成「已完成」，
+   不算待补跑（D35）。所以补跑成功会让「错误」变成「已完成」，
    执行裁决时重跑模型又出了错则反过来。原先的失败不会被抹掉：子任务本身、它的起止时间和结果都留在时间线里。
    `resume` 是主流程的续篇，它结束时同样按这条规则定终态。
 
@@ -288,7 +291,43 @@ CREATE INDEX idx_adj_lookup ON adjudication(task_id, line, episode_index, id);
 **双写纪律**：DB 是权威副本，同时导出一份 CSV 到该任务的批次目录 `<run_id>/human-decisions/`，
 保证交付目录自包含、离开平台也能读懂。写 DB 成功即算成功，CSV 导出失败只告警。
 
-### 2.8 其余小表
+### 2.8 dataset — 数据集（D36）
+
+```sql
+CREATE TABLE dataset (
+  id              TEXT PRIMARY KEY,         -- ds_<uuid7>
+  owner_id        TEXT NOT NULL DEFAULT 'default',
+  name            TEXT NOT NULL,            -- 默认取地址的最后一段，可改
+  note            TEXT,
+  source          TEXT NOT NULL,            -- 'tos' | 'public' | 'local'(experimental)
+  uri             TEXT NOT NULL,
+  region          TEXT,
+  credential_id   TEXT REFERENCES credential(id) ON DELETE SET NULL,
+  preflight       TEXT NOT NULL,            -- JSON：最近一次预检的结果（格式、条数、相机、机器人型号、模块可用性）
+  meta_fingerprint   TEXT NOT NULL,         -- 最近一次预检时 meta 文件的指纹
+  source_fingerprint TEXT NOT NULL,         -- 最近一次预检时全量文件清单的摘要（对象数、总字节、清单哈希）
+  manifest_path   TEXT,                     -- 那份文件清单存在数据卷上的位置，比对「变了哪些文件」时用
+  check_state     TEXT NOT NULL DEFAULT 'ok',  -- 'ok' 一致 | 'changed' 有变化待重新预检
+  checked_at      INTEGER,                  -- 最近一次核对指纹的时间
+  preflighted_at  INTEGER NOT NULL,
+  UNIQUE(owner_id, source, uri, region)
+);
+CREATE TABLE dataset_check (              -- 指纹核对记录：数据集详情页的「变化记录」
+  id INTEGER PRIMARY KEY AUTOINCREMENT, dataset_id TEXT NOT NULL REFERENCES dataset(id) ON DELETE CASCADE,
+  at INTEGER NOT NULL, trigger TEXT NOT NULL,   -- 'add' | 'recheck' | 'task_start' | 'repreflight'
+  result TEXT NOT NULL,                     -- 'same' | 'changed'
+  diff TEXT                                 -- JSON：meta 是否变了，新增 / 删除 / 改动的文件数与前若干个键
+);
+```
+
+- 数据集是**登记**，不是拷贝：平台只记来源、地址和指纹，数据仍在 TOS 上。删除登记不动数据；有非终态任务在用时不能删。
+- 新建任务时直接填地址的，预检通过后按 `(来源, 地址, 地域)` 找到已有的登记或新建一条；任务上记 `dataset_id`。
+- **开始任务时的核对**（D37）：重新取 meta 指纹，并用 `curation snapshot` 取全量文件清单，与 `dataset` 上记下的比。
+  一致就沿用已有的预检结果，同一份清单固化为任务的 `source_fingerprint`；不一致就不开始，把变化写进 `dataset_check`，
+  `check_state` 置为 `changed`，等用户确认后重新预检。重新预检会刷新 `preflight` 和两个指纹，`check_state` 回到 `ok`。
+- 运行中的核对不变：任务的每一步读源数据都按它自己固化的 `source_manifest.json` 校验（D27）。
+
+### 2.9 其余小表
 
 ```sql
 CREATE TABLE event (                      -- 审计，保留 90 天，见 08 篇 §7
