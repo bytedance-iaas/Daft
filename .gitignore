@@ -1,76 +1,28 @@
-# Added by jetbrains IDE
-.idea/
-
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
+dist/
+build/
+
+# Local secrets and data
 .env
-venv
-.venv
-dist
-**/__pycache__/
-requirements.txt
-build
-.cython_build
-.hypothesis
+.env.*
+data/
 
-**/.ipynb_checkpoints/
+# Node
+**/node_modules/
 
-**/node_modules/**
-data/**
-benchmarking/tpcds/data
-*.so
-*.dylib
-*.whl
-log/
-*.egg-info
-
-# Added by MacOS
+# Editors / OS
+.idea/
+.vscode/
 **.DS_Store
 
-# Added by cargo
-/target
-**/target/
-# pytest benchmarks
-.benchmarks
-
-# Added by pyenv
-.python-version
-
-# Added by mypy
-.mypy_cache
-
-# Zed editor
-.zed/
-
-# helix editor
-.helix
-
-# dependencies
-node_modules
-
-# next.js
-.next
-
-out/**
-!out/
-!out/.gitkeep
-
-# production
-/build
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-
-# docs build
-site
-
-# added by vim
-*.swp
-*.swo
-
-# AGENT Prompting Templates
-AGENTS.md
-CLAUDE.local.md
-.claude/**/*.md
+# Claude Code local state (worktrees of background agents)
 .claude/worktrees/
-.beads
