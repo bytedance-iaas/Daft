@@ -26,6 +26,25 @@ def _operations():
             for m, op in item.items() if m in METHODS]
 
 
+def test_no_yaml_flow_mapping_accidents():
+    """An unquoted comma in ``{description: a, b}`` silently adds a key ``b``."""
+    spec, _ = _spec()
+    bad = []
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if not isinstance(key, str) or " " in key:
+                    bad.append("/".join(path + [str(key)]))
+                walk(value, path + [str(key)])
+        elif isinstance(node, list):
+            for i, value in enumerate(node):
+                walk(value, path + [str(i)])
+
+    walk(spec, [])
+    assert not bad, f"keys that look like parse accidents: {bad}"
+
+
 def test_operation_ids_are_unique_and_errors_declared():
     ops = _operations()
     ids = [op["operationId"] for _, _, op in ops]

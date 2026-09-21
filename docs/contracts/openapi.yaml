@@ -1104,7 +1104,7 @@ components:
                      credential_in_use, backend_in_use, name_taken, preflight_expired, precheck_failed,
                      source_changed, result_changed, confirm_path_mismatch, model_check_failed,
                      idempotency_conflict, precondition_failed, internal]
-            message: {type: string, description: Chinese, shown to people as is}
+            message: {type: string, description: "Chinese, shown to people as is"}
             details: {type: object}
     Link:
       type: object
