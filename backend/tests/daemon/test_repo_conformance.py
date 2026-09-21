@@ -245,6 +245,21 @@ def test_backend_updates_and_verification(repo):
     assert repo.get_vlm_backend(b.id).verify_state == "ok"
 
 
+def test_backend_and_model_edits_are_whitelisted(repo):
+    b = repo.create_vlm_backend(_backend(models=("a", "b")), None)
+    with pytest.raises(ValueError):
+        repo.update_vlm_backend(b.id, owner_id="someone-else")
+    with pytest.raises(ValueError):
+        repo.update_vlm_model(b.models[0].id, backend_id="vb_other")
+    with pytest.raises(P.Conflict) as err:
+        repo.update_vlm_model(b.models[0].id, model_name="b")     # unique per backend
+    assert err.value.code == "name_taken"
+    with pytest.raises(P.NotFound):
+        repo.update_vlm_backend("vb_missing", endpoint="x")
+    with pytest.raises(P.NotFound):
+        repo.update_vlm_backend(b.id, owner=OTHER, endpoint="x")
+
+
 def test_model_upsert_update_delete(repo):
     b = repo.create_vlm_backend(_backend(models=()), None)
     m = repo.upsert_vlm_model(P.VlmModel(id="", backend_id=b.id, model_name="ep-2026", source="manual"))
