@@ -19,3 +19,6 @@ rerun-sdk==0.35.0       # RRD 输入格式的读/写(ingest/rrd_reader + export/
                         # test_rrd_reader.py + test_rrd_writer.py 全绿。
 bcrypt==4.3.0           # UI 鉴权的 htpasswd 多用户模式:核验 bcrypt 哈希($2y$,
                         # htpasswd -B 的缺省输出)。apr1 是纯标准库实现,不需要它。
+fastapi==0.141.1        # API Daemon (W4); brings starlette 1.6.0, pydantic 2, anyio
+uvicorn==0.53.0         # python -m daemon / curator-daemon
+jsonschema==4.26.0      # the Daemon validates request bodies against docs/contracts at runtime

@@ -39,6 +39,9 @@ def test_state_machine_invariants():
     assert P.can_transition("created", "queued")
     assert not P.can_transition("failed", "queued")             # continue = a resume subtask
     assert P.can_transition("completed_with_errors", "succeeded")  # D25 recompute
+    assert P.can_transition("stopped", "succeeded")               # a resume subtask finished
+    assert not P.can_transition("stopped", "succeeded", subtask=True)  # subtasks are never resumed
+    assert not P.can_transition("failed", "completed_with_errors", subtask=True)
     assert set(P.SUBTASK_PARENT_STATES) == {"retry", "resume", "apply_adjudication", "reexport"}
     for kind, parents in P.SUBTASK_PARENT_STATES.items():
         assert parents <= P.TERMINAL_STATES, kind

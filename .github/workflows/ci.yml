@@ -38,6 +38,9 @@ jobs:
       - name: Planner and VLM request merge framework (W6)
         working-directory: backend
         run: python -m pytest -q -rfE tests/planner
+      - name: Daemon skeleton (W4)
+        working-directory: backend
+        run: python -m pytest -q -rfE tests/daemon
       - name: Incremental re-export (W7)
         working-directory: backend
         # the official lerobot loader cases skip here; the lerobot-loader job runs them

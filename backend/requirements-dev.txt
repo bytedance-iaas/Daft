@@ -3,3 +3,4 @@ pytest
 jsonschema
 openapi-spec-validator
 pytest-github-actions-annotate-failures   # failed tests show up as run annotations, readable without log access
+httpx2==2.13.0          # Starlette 1.x TestClient (Daemon tests)

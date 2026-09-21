@@ -8,6 +8,7 @@
   前端不负责编排，不存在「前端连续调三个接口才完成一件事」的设计。
 - 写操作全部**异步**：立即返回资源和 `state`，进度靠 SSE 或轮询。
 - 写接口只收 `application/json`，不开 CORS —— Basic 鉴权下浏览器会自动带凭证，这两条是防跨站请求的底线。
+  没有请求体的写请求（`actions/*`、`continue` 等）也要带 `Content-Type: application/json`；跨站的写请求一律拒绝（C4 1.2）。
 - 错误体统一：
 
 ```jsonc
@@ -314,7 +315,7 @@ GET /api/v1/media/sign?task=task_01HX...&scope=delivery&path=details/clips/ep000
 
 ## 8. 幂等、并发与删除
 
-- `POST /tasks`、`/tasks/batch`、所有 `actions/*` 与建子任务的接口都支持 `Idempotency-Key` 头；
+- 所有写接口都支持 `Idempotency-Key` 头（C4 1.2 起，改名、删除、恢复、重新绑定密钥也在内）；
   相同 key 24 小时内返回首次结果。Agent 超时重试时最容易重复建任务，所以创建接口必须支持。
 - 状态相关的写操作走 Repository 的 CAS，冲突返回 409 + 当前状态，前端刷新即可。
 - **删除和清理是两个动作**（D28）：
