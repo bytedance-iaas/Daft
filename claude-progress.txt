@@ -1,30 +1,38 @@
 Date: 2026-09-20
-TaskStatus: not_completed
+TaskStatus: completed
 
 Task scope:
   F0.3 设计文档评审与完善:对照需求文档 / v1 代码 / v1 使用文档 / 方舟 API 文档,
   评审 12 篇设计文档,澄清后逐项修订并同步飞书副本。
-  (F3.1 静态稿第一批两页已交付,仍等需求方确认风格,状态不变)
 
 Current summary:
-  - 评审已完成,记录在 robot-curation/docs/design/review-2026-09-20.md:
-      Q1-Q8   需要需求方拍板的 8 个问题(含选项与推荐)
-      A1-A19  与 v1 代码事实不符(VLM 调用图、解码方式、dedup/skill_profile 执行位置、
-              无标注补 caption、三份清单关系、对账工具前提、深链与挂载前缀等)
-      B1-B21  文档内部不自洽 / 契约不可编码
-      C1-C12  需求覆盖缺口(方舟 reasoning_effort 7 档与模型映射、模型列表接口仅支持 AK/SK、
-              火山术语、重试粒度、日志、备份等)
-      D-1~9   默认处理的产品细节
-  - 方舟文档查证结论已写入 C1(来源:docs.volcengine.com 对话 API / 深度思考 / 获取基础模型列表)
-  - 12 篇设计文档本身尚未改动;飞书副本尚未改动
-  - 飞书评审副本:https://bytedance.us.larkoffice.com/docx/A4mndB5oBo8IGAxNuUlumWPBsod
+  - 评审记录:robot-curation/docs/design/review-2026-09-20.md
+      Q1-Q8 全部有结论,A1-A19 / B1-B21 / C1-C12 全部已修订,默认处理项汇总在 00 篇 §7.1(P1-P11)
+  - 需求方拍板的决策已记入 00-overview.md §7:
+      D16 预签名直连 TOS(补登记)   D17 前端零业务状态(补登记)
+      D18 取消 decode stage 与帧缓存,check 支持同档多模块,分档照搬 v1 漏斗
+      D19 黄金对账双基线:umi_640_notask + droid_lerobot 前 50 条
+      D20 任务「待启动」状态 + stopped/failed 继续运行 + 复制为新任务
+      D21 任务列表页码分页;重内容 Lazy Loading;裁决队列/日志用游标
+      D22 Agent 主入口 REST;CLI 薄客户端 curation task …;原子命令不产出 links
+      D23 VLM 合并:一期只交付框架,现有两个 VLM 模块按 v1 调用图原样跑
+      D5 重申:所有提交只走标准 run_modules(),不留自定义计划入口
+  - 12 篇 Markdown 已全部修订并 commit;feature_list.md 末尾追加了「修订记录」(原条款未改)
+  - 飞书副本已同步(整篇重写,链接不变,rev 28;文末附评审记录):
+      https://bytedance.us.larkoffice.com/docx/A4mndB5oBo8IGAxNuUlumWPBsod
+    同步方法:scratchpad 里按章节转义(< 和 ~)后拼成一份 markdown,docs +update --command overwrite。
+    注意:飞书会把只隔一个空格的相邻行内代码并成一个;章节区间替换因列表块无 block ID 而不可用。
+  - 静态稿 README 已追加「设计评审后待改」三条
 
 Main gaps:
-  - Q1-Q8 等需求方答复;答复前不动设计文档正文
+  - P1-P11 是评审时给的默认值,需求方尚未逐条确认(可否决)
+  - 10 篇 §1 记了一处与需求原文的出入:分支从 release_v1 派生而非 main(v1 代码只在 release_v1)
+  - 方舟 GET {endpoint}/models 用 API Key 是否可用未实测(官方文档只有 AK/SK 鉴权的列表接口);
+    设计已按「先试 /models,不通则内置清单 + 手填」兜底
   - F3.1 风格确认、baseline 清理点头、黄金基线生成 —— 均未变化
 
 Next steps:
-  1. 拿到 Q1-Q8 的答复,记入 00-overview.md §7 决策表(D16 起)
-  2. 按 review 文件编号逐项修订 12 篇 Markdown,每项把「状态」改为 已修订 / 不改
-  3. 把修订同步到飞书副本对应章节(顺带修 /healthz /readyz 粘连)
-  4. F0.3 置 completed;之后回到 F3.1 / F1.1
+  1. 需求方过一遍 00 篇 §7 / §7.1 与飞书副本,否决或确认默认项
+  2. F3.1:风格确认后补第二批静态稿,并按 mockups/README.md「设计评审后待改」修正前两页
+  3. F1.1:dump_v1.py + curation-parity;用 release_v1 生成两个基线及 v1 自身噪声底(先于任何重构)
+  4. F1.2(待点头)→ F1.3 契约冻结 → 按 11 篇批次 1 开并行

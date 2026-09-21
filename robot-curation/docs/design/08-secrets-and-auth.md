@@ -110,7 +110,7 @@ v2 沿用并补上兜底，按顺序：
 
 1. **裸 ASGI 中间件，覆盖全部路由**，不用 `BaseHTTPMiddleware`
    （后者只经手 `scope["type"] == "http"`，SSE 走的是 http 没问题，但将来加 WS 会漏）。
-2. **`/healthz` `/readyz` 豁免**：探针被 401 会让 pod 直接下线。根路径和挂载前缀下的两份都豁免。
+2. **`/healthz`、`/readyz` 豁免**：探针被 401 会让 pod 直接下线。根路径和挂载前缀下的两份都豁免。
 3. **常数时间比较**（`hmac.compare_digest` / bcrypt）：短路比较会泄漏密码前缀；
    账号不存在时也照样算一轮哈希，把耗时抹平。
 

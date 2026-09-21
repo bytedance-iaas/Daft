@@ -89,7 +89,7 @@
 |---|---|---|
 | GET | `/api/v1/media/sign` | 换一个 TOS 预签名 URL（视频、证据帧） |
 | GET | `/events/tasks/{id}` | SSE：进度、日志、状态变更 |
-| GET | `/healthz` `/readyz` | 探针，免鉴权，根路径与 `{base}` 下都可达 |
+| GET | `/healthz`、`/readyz` | 探针，免鉴权，根路径与 `{base}` 下都可达 |
 
 ## 3. 新建任务：`POST /api/v1/tasks`
 

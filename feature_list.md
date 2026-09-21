@@ -20,7 +20,7 @@
 ### F0.3 设计文档评审与完善
 - 描述：对照需求文档、v1 代码、v1 使用文档与方舟 API 文档评审 12 篇设计文档；澄清遗留问题；逐项修订并同步飞书评审副本
 - 验收：①`robot-curation/docs/design/review-2026-09-20.md` 中每一项都有结论（已修订 / 不改及理由）；②需求方拍板的问题记入 `00-overview.md` §7 决策表；③仓库 Markdown 与飞书副本内容一致
-- status: not_completed
+- status: **completed**
 
 ## 阶段 1：地基（串行，不可跳过）
 
