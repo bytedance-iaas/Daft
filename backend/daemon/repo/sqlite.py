@@ -11,8 +11,13 @@ Concurrency discipline (design doc 01, section 4.1):
 * ``transaction()`` pins the writer thread for the caller's block: every
   repository call the caller makes inside the block - reads included - runs on
   the writer connection inside one ``BEGIN IMMEDIATE`` ... ``COMMIT``. Nested
-  use joins the outer block. An exception rolls the whole block back.
+  use joins the outer block. An exception rolls the whole block back. Each call
+  inside the block runs in a savepoint, so a method that fails halfway leaves
+  nothing behind even if the caller catches the error and goes on.
   Outside a block each method is atomic on its own.
+* A failed ``COMMIT`` (disk full, I/O error) is rolled back so the writer stays
+  usable; if SQLite abandons a caller's transaction on its own, the rest of that
+  block raises :class:`TransactionAborted` instead of autocommitting.
 
 Methods are blocking. Call them from worker threads (FastAPI runs sync handlers
 in its thread pool; async code uses ``anyio.to_thread``). Never hold a

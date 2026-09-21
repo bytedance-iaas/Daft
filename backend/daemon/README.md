@@ -208,19 +208,26 @@ EOF
 ## 给后续工作包
 
 - **W5（编排）**：
-  - 状态变更一律走 `transitions.change_task_state` / `change_subtask_state`：CAS、审计事件、SSE 一次做完，时间线也从这些事件来。
+  - 状态变更一律走 `transitions.change_task_state` / `change_subtask_state`（带上任务的 `owner`）：CAS、审计事件、SSE 一次做完，
+    时间线也从这些事件来；SSE 事件以审计事件的 id 作版本，多个线程同时改同一个任务也不会把旧状态发在新状态后面。
     结果版本切换成功后调 `transitions.record_revision`。子任务结束、父任务终态重算后，发一条 `hub.publish_done`（或让 `change_task_state` 发）。
-  - 进度、日志、用量推给 `runtime.hub.publish_progress / publish_log / publish_usage`（线程安全、不阻塞；进度和用量发累计值）。
+    子任务的暂停原因记在审计事件里（C5 没有这一列），找不到原因的子任务启动对账时保持暂停。
+  - 进度、日志、用量推给 `runtime.hub.publish_progress / publish_log / publish_usage`（线程安全、不阻塞；进度和用量发累计值，
+    发 `state` / `done` 之前会先把积压的进度和用量发出去）。
   - 日志文件按 `logs.TaskLogs` 的布局写：主流程 `runs/<task_id>/logs/<stage>.jsonl`，子任务 `runs/<task_id>/logs/<subtask_id>/<stage>.jsonl`，
     每行一个 C3 对象；Daemon 自己的系统日志用 stage `system`。
   - 生命周期钩子：`runtime.on_ready`（启动对账之后，启动 worker 池）、`on_stopping`（收到 SIGTERM 立即调用，开始把任务置为系统暂停）、
     `on_shutdown`（lifespan 结束时，等暂停收尾）。
   - 写接口用 `routes.common.read_json_body`（只收 JSON、拒绝跨站写）和 `runtime.idempotency.run`（`Idempotency-Key`）。
+    事务里每次仓储调用都有保存点，方法中途失败不留半截数据；磁盘写满这类让 SQLite 整体回滚的错误，块内后续调用会直接报错。
   - `POST /tasks` 复用 `taskspec.resolve_config`，和 PATCH 的校验保持一致；`created` 任务把预检结果存在 `task.preflight`。
   - 任务列表的「待裁决」徽标读 `summary.pending_adjudication`：提交裁决后请更新这个数。
   - 裁决队列等内存里排好序的列表，可以用 `pagination.keyset_page` 做游标分页，`scope` 里带上结果版本。
   - 接上一个接口，就把它从 `operations.PENDING` 挪到 `IMPLEMENTED`，测试会检查路由和表是否一致。
 - **W8（密钥）**：主密钥在 `runtime.master_key`（`key`、`version`、`next_key`）；进程启动后已从 `os.environ` 删掉，CLI 子进程不会继承。
   仓储里凭证与模型服务的方法都已实现并有一致性测试。
-- **W10（前端）**：路由基址取 `window.__CURATOR_BASE__`；`index.html` 里已注入 `<base href="{base}/">`，Vite 用 `base: './'` 即可。
-  SSE 收到 `done` 后请关闭 `EventSource`；收到 `reset` 就丢掉本地增量状态，重新拉一次任务详情。
+- **W10（前端）与 W3（`curation task …` 客户端）**：写请求（POST / PUT / PATCH / DELETE）一律带
+  `Content-Type: application/json`，没有请求体也要带，否则 400；浏览器的跨站写请求（`Sec-Fetch-Site` 不是 `same-origin`）会被拒。
+  路由基址取 `window.__CURATOR_BASE__`；`index.html` 里已注入 `<base href="{base}/">`，Vite 用 `base: './'` 即可。
+  SSE 收到 `done` 后请关闭 `EventSource`（断线重连也只会再收到一次快照和 `done`）；收到 `reset` 就丢掉本地增量状态，重新拉一次任务详情。
+  日志接口按时间倒序分页：第一页是最新的，`next_cursor` 往更早翻。
