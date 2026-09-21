@@ -140,6 +140,25 @@ def _funnel_cpu(ctx, args, modules, run_dir, input_dir, episodes, part, plan_sta
     return stage.run(), stage.survivors()
 
 
+def _merge_strategy(ctx, plan_stage, cfg, modules):
+    """The VLM request merge strategy of this call (W6, doc 04 §4.2): the plan stage's
+    proposal unless ``vlm.merge.enabled`` is off. Only modules that declare merge units
+    take part; task_success is an evidence chain and never does (D23), so its requests
+    always go out one by one, which is strategy ``none``."""
+    from ..contracts import modules as registry
+    from ..planner.merge import NoMerge, merge_enabled, strategy_for_stage
+
+    try:
+        strategy = strategy_for_stage(plan_stage, enabled=merge_enabled(cfg))
+    except ValueError as e:
+        raise UsageError(f"--plan-stage: {e}") from None
+    mergeable = [m for m in modules if getattr(registry.get(m), "merge_units", None)]
+    if not isinstance(strategy, NoMerge) and not mergeable:
+        ctx.log("warn", f"the plan proposes merging requests, but none of {', '.join(modules)} "
+                        f"declares merge units: every request goes out on its own")
+    return strategy
+
+
 def _funnel_vlm(ctx, args, modules, run_dir, input_dir, episodes, part, plan_stage, guard):
     from ..pipeline import funnel
     from ..pipeline.check_stage import StageOptions, StageRun, TaskClients
@@ -149,6 +168,7 @@ def _funnel_vlm(ctx, args, modules, run_dir, input_dir, episodes, part, plan_sta
 
     gates = runctx.vlm_gates(args, plan_stage)
     cfg = runctx.stage_config(ctx, modules, gates=gates, args=args)
+    _merge_strategy(ctx, plan_stage, cfg, modules)
     if guard is not None:
         guard([])                        # metadata and the semantics sample, read next
     instructions = {index_of(r["episode_id"]): str(r.get("instruction") or "")

@@ -89,3 +89,32 @@ def test_check_runs_with_its_plan_stage_gates(vlm_stage, tmp_path):
     res = run("check", "--modules", "visual_quality,video_action_sync", "--input",
               vlm_stage["dataset"], "--run-dir", rd, "--episodes", "0", "--plan-stage", stage)
     assert res.rc == 2 and "not for" in res.doc["error"]["message"]
+
+
+def test_the_merge_proposal_of_the_vlm_stage(vlm_stage, tmp_path):
+    """task_success declares no merge units (an evidence chain, D23): whatever the plan
+    proposes, its requests go out one by one; a strategy nobody knows is refused."""
+    res, plan = _plan(vlm_stage, tmp_path)
+    with open(plan, encoding="utf-8") as fh:
+        stage = _stage(json.load(fh), "vlm")
+    rd = str(tmp_path / "run")
+    shutil.copytree(vlm_stage["base"], rd)
+    args = ["check", "--modules", "task_success", "--input", vlm_stage["dataset"],
+            "--run-dir", rd, "--episodes", "3", "--vlm-model", "fake-vlm"]
+
+    def with_merge(merge: dict) -> str:
+        path = str(tmp_path / f"stage-{merge['strategy']}.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({**stage, "merge": merge}, fh)
+        return path
+
+    with FakeVlmServer() as vlm:
+        res = run(*args, "--vlm-endpoint", vlm.url,
+                  "--plan-stage", with_merge({"strategy": "per_episode_multi_module",
+                                              "groups": []}))
+        assert res.rc == 0, res.doc
+        assert any(e["kind"] == "log" and "declares merge units" in e["msg"]
+                   for e in res.events)
+        res = run(*args, "--vlm-endpoint", vlm.url,
+                  "--plan-stage", with_merge({"strategy": "bogus", "groups": []}))
+        assert res.rc == 2 and "unknown merge strategy" in res.doc["error"]["message"]
