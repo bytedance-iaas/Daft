@@ -1,0 +1,372 @@
+/* Layout and a few helpers. Colours and sizes follow the Arco tokens listed in
+   frontend/mockups/README.md (设计口径); components come from Arco, not from the mockups' CSS. */
+:root {
+  --c-primary: #165dff;
+  --c-success: #00b42a;
+  --c-warning: #ff7d00;
+  --c-danger: #f53f3f;
+  --c-text-1: #1d2129;
+  --c-text-2: #4e5969;
+  --c-text-3: #86909c;
+  --c-text-4: #c9cdd4;
+  --c-border: #e5e6eb;
+  --c-bg: #f7f8fa;
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--c-bg);
+  color: var(--c-text-1);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+}
+
+.app-header {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  background: #fff;
+  border-bottom: 1px solid var(--c-border);
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.app-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--c-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex: none;
+}
+
+.app-vendor {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.app-product {
+  color: var(--c-text-2);
+  border-left: 1px solid var(--c-border);
+  padding-left: 12px;
+}
+
+.app-body {
+  display: flex;
+  min-height: calc(100% - 61px);
+}
+
+.app-sider {
+  width: 208px;
+  flex: none;
+  background: #fff;
+  border-right: 1px solid var(--c-border);
+}
+
+.app-sider .arco-menu {
+  width: 208px;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  padding: 16px 20px 80px;
+}
+
+.page-header {
+  margin-bottom: 16px;
+}
+
+.page-header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 8px 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.page-header .page-desc {
+  color: var(--c-text-3);
+  margin: 0;
+}
+
+.page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.card-gap > * + * {
+  margin-top: 16px;
+}
+
+.muted {
+  color: var(--c-text-3);
+}
+
+.mono {
+  font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 12.5px;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.field-note-error {
+  color: var(--c-danger);
+  font-size: 12px;
+  line-height: 20px;
+  margin-top: 4px;
+}
+
+.field-note-ok {
+  color: var(--c-success);
+  font-size: 12px;
+  line-height: 20px;
+  margin-top: 4px;
+}
+
+.field-note {
+  color: var(--c-text-3);
+  font-size: 12px;
+  line-height: 20px;
+  margin-top: 4px;
+}
+
+.sticky-footer {
+  position: fixed;
+  left: 208px;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-top: 1px solid var(--c-border);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  z-index: 50;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.stat-cell {
+  background: #fff;
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 12px 16px;
+}
+
+.stat-cell .stat-label {
+  color: var(--c-text-3);
+  font-size: 13px;
+}
+
+.stat-cell .stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.stat-cell .stat-foot {
+  color: var(--c-text-3);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.module-card {
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 12px;
+  background: #fff;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.module-card.selected {
+  border-color: var(--c-primary);
+}
+
+.module-card.warn {
+  border-color: var(--c-warning);
+  background: #fff7e8;
+}
+
+.module-card.disabled {
+  background: var(--c-bg);
+  color: var(--c-text-3);
+}
+
+.module-card.marked {
+  box-shadow: 0 0 0 2px var(--c-danger);
+}
+
+.episode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.episode-cell {
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #fff;
+  font-size: 12px;
+}
+
+.episode-cell.picked {
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 1px var(--c-primary);
+}
+
+.episode-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #e8f3ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-text-3);
+  overflow: hidden;
+}
+
+.episode-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.video-box {
+  background: #1d2129;
+  border-radius: 4px;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #c9cdd4;
+  font-size: 12px;
+}
+
+.video-box video,
+.video-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.video-caption {
+  font-size: 12px;
+  color: var(--c-text-3);
+  margin-top: 4px;
+}
+
+.log-view {
+  background: #1d2129;
+  color: #e5e6eb;
+  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 20px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  height: 480px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-line.error {
+  color: #f76965;
+}
+
+.log-line.warn {
+  color: #ff9a2e;
+}
+
+.log-line.debug {
+  color: #86909c;
+}
+
+.chart-box {
+  width: 100%;
+  height: 220px;
+}
+
+.section-anchor {
+  scroll-margin-top: 72px;
+}
+
+.adj-card .arco-card-header {
+  height: auto;
+  min-height: 46px;
+}
+
+.question {
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 12px;
+  margin-top: 12px;
+}
+
+.question.overridden {
+  opacity: 0.6;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+}
+
+.kv dt {
+  color: var(--c-text-3);
+}
+
+.kv dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-all;
+}
