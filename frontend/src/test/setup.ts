@@ -36,6 +36,7 @@ afterEach(() => {
   Modal.destroyAll();
   Message.clear();
   server.resetHandlers();
+  server.events.removeAllListeners();
   window.localStorage.clear();
   expect(violations, violations.join('\n\n')).toEqual([]);
 });
@@ -81,6 +82,11 @@ class ImmediateIntersectionObserver {
   }
 }
 (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = ImmediateIntersectionObserver;
+
+// ECharts' SVG renderer still measures text on a 2D canvas, which jsdom does not implement.
+HTMLCanvasElement.prototype.getContext = function getContext() {
+  return { font: '', measureText: (text: string) => ({ width: text.length * 7 }) };
+} as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
 window.scrollTo = () => undefined;
 Element.prototype.scrollIntoView = function scrollIntoView() {};

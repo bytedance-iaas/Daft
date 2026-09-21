@@ -1,17 +1,18 @@
-import { Button, Card, Collapse, Descriptions, Empty, Message, Modal, Progress, Space, Spin, Table, Tabs, Tag, Timeline, Typography } from '@arco-design/web-react';
+import { Button, Card, Collapse, Descriptions, Empty, Progress, Space, Spin, Table, Tabs, Tag, Timeline, Typography } from '@arco-design/web-react';
 import type { ColumnProps } from '@arco-design/web-react/es/Table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, idempotencyKey, unwrap } from '../../api/client';
+import { api, unwrap } from '../../api/client';
 import { errorMessage, isApiError } from '../../api/errors';
 import { moduleName, qk, useModules } from '../../api/queries';
 import type { ModuleState, Plan, Subtask, Task, TimelineEntry, UsageRow } from '../../api/types';
 import { RelTime } from '../../components/RelTime';
 import { regionLabel } from '../../components/RegionSelect';
 import { MODULE_STATE_COLOR } from '../../features/tasks/ModuleSummary';
-import { showPrecheckFailure } from '../../features/tasks/useTaskActions';
+import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { absoluteTime, bytes, compactNumber, percent } from '../../lib/format';
+import { subtaskName } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
 import { isTerminalState, stageLabel, stagePercent } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
@@ -131,12 +132,7 @@ function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
   const reg = useModules();
   const usage = useQuery({ queryKey: qk.usage(task.id), queryFn: () => unwrap(api().GET('/tasks/{id}/usage', { params: { path: { id: task.id } } })) });
   const u = task.usage;
-  const subtaskLabel = (id: string) => {
-    if (!id) return zh.taskDetail.mainRun;
-    const i = subtasks.findIndex((s) => s.id === id);
-    const s = subtasks[i];
-    return s ? `${zh.taskDetail.subtaskKind[s.kind] ?? s.kind} #${subtasks.filter((x, j) => x.kind === s.kind && j <= i).length}` : id;
-  };
+  const subtaskLabel = (id: string) => subtaskName(subtasks, id);
   const moduleLabel = (id: string) => (id.includes('+') ? `合并请求（${id.split('+').map((m) => moduleName(reg.data, m)).join('、')}）` : moduleName(reg.data, id));
   const cols = (label: string) => [
     { title: label, dataIndex: 'key' },
@@ -208,22 +204,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
   const skipped = task.modules.filter((m) => !m.selected && m.availability !== 'available');
   const terminal = isTerminalState(task.state);
   const retry = (m: ModuleState) =>
-    Modal.confirm({
-      title: zh.taskDetail.retryModuleTitle(m.name),
-      content: zh.actions.confirmRetry.contentModules(m.name),
-      okText: zh.actions.confirmRetry.ok,
-      cancelText: zh.common.cancel,
-      onOk: async () => {
-        try {
-          await unwrap(api().POST('/tasks/{id}/retry', { params: { path: { id: task.id }, header: { 'Idempotency-Key': idempotencyKey() } }, body: { modules: [m.id] } }));
-          Message.success(zh.actions.done.retry);
-          void qc.invalidateQueries({ queryKey: ['task', task.id] });
-        } catch (e) {
-          if (isApiError(e, 'precheck_failed')) showPrecheckFailure(e);
-          else Message.error(errorMessage(e));
-        }
-      },
-    });
+    confirmModuleRetry({ taskId: task.id, moduleId: m.id, name: moduleName(reg.data, m.id) || m.name, onDone: () => void qc.invalidateQueries({ queryKey: ['task', task.id] }) });
   const columns: ColumnProps<ModuleState>[] = [
     { title: zh.taskDetail.colModule, dataIndex: 'name', render: (_: unknown, m) => <b>{moduleName(reg.data, m.id) || m.name}</b> },
     { title: zh.taskDetail.colStage, dataIndex: 'id', render: (_: unknown, m) => stageLabel(reg.data?.modules.find((x) => x.id === m.id)?.stage ?? '') },

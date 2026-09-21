@@ -1,8 +1,8 @@
 // Query keys and the small read hooks shared by several pages. Everything is fetched from the
 // Daemon (D17); nothing here is kept beyond the query cache.
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type Query } from '@tanstack/react-query';
 import { api, unwrap } from './client';
-import type { ModuleRegistry, ModuleSpec } from './types';
+import type { ModuleRegistry, ModuleSpec, Task } from './types';
 
 export const qk = {
   modules: ['modules'] as const,
@@ -55,7 +55,7 @@ export function useBackends() {
   return useQuery({ queryKey: qk.backends, queryFn: () => unwrap(api().GET('/vlm-backends')) });
 }
 
-export function useTask(id: string | undefined, refetchInterval?: number | false) {
+export function useTask(id: string | undefined, refetchInterval?: number | false | ((q: Query<Task>) => number | false)) {
   return useQuery({
     queryKey: qk.task(id ?? ''),
     queryFn: () => unwrap(api().GET('/tasks/{id}', { params: { path: { id: id! } } })),
