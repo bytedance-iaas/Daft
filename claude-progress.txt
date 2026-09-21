@@ -1,46 +1,24 @@
 Date: 2026-09-20
-TaskStatus: completed
+TaskStatus: not_completed
 
 Task scope:
-  F0.3 设计文档评审与完善 + F0.4 第二、三轮评审意见整合。
-  对照需求文档 / v1 代码 / v1 使用文档 / 方舟 API 文档评审 12 篇设计文档,
-  整合需求方带来的另外两份评审意见,逐项修订并同步飞书副本。
+  开工：开工前核对设计 → F1.1（W0 对账工具与黄金基线）→ F3.1 第二批静态稿（并行）→ 之后 F1.2 / F1.3。
 
 Current summary:
-  - 评审记录:robot-curation/docs/design/review-2026-09-20.md
-      §1-5 第一轮(Q1-Q8、A1-A19、B1-B21、C1-C12)
-      §6   第二轮:另一位评审者的 14 条问答 → D24-D32
-      §7   第三轮:review-catalog.md 的 F01-F28(15 条已覆盖,13 条本轮补)
-      §8   追问的 4 个问题及答复
-  - 决策表 00-overview.md §7:D1-D32 全部有结论;§7.1 的 P1-P17 需求方已全部确认;
-    §9 新增需求覆盖表(与需求原文有出入的三处标 ⚠)
-  - 本轮的关键结论:
-      D24 执行出错的 episode 暂不交付(held),停在出错那一档;正常弃权与标注分歧维持 v1
-      D25 重试只补跑出错条目;判决清单+报告合成不可变的结果版本(revisions/rNNNN + commit.json),
-          result_rev 用 CAS 切换;补跑后任务终态按当前结果重算
-      D27 任务启动时固化源文件清单(curation snapshot,退出码 6 = 源数据变了)
-      D28 删除(软删除 30 天)与「清理交付产物」分开
-      D29 latest 只指向最近一次发布成功的完整版本;同一交付目录发布串行
-      D30 未验证的密钥可保存;任务开始前 输入读 / 输出写 / VLM 最小调用 三项硬检查
-      D31 调用方只能设并发、超时、重试的上限,计划仍由 planner 定
-      D32 人工裁决不跨任务(拿掉了 delivery 绑定表与 adjudication_applied)
-      D8  模型列表能拉就拉、拉不出手填;不引入管理 AK/SK,不维护内置清单
-      其它:review 是独立维度(不是 passed 的子集);模块状态 completed_with_errors;
-           Token 两本账;导出指纹决定 delivery_stale;输入/输出两组凭证环境变量;
-           保存密钥只验身份;vlm_snapshot;SSE 事件序号与 reset;明细表 Parquet;
-           VLM 三项首选回放对账;v3 格式本期不做对账(已确认的缺口)
-  - 12 篇 Markdown 全部修订并 commit;feature_list.md 末尾两段「修订记录」(原条款未改)
-  - 飞书副本已同步(整篇重写,链接不变,rev 46,覆盖前确认 0 条评论):
-      https://bytedance.us.larkoffice.com/docx/A4mndB5oBo8IGAxNuUlumWPBsod
-    同步方法见 memory: curator-v2-design-docs
+  - 开工前核对完成，4 个问题已答复（评审记录 §9）：
+      D33 「执行出错」取宽口径：任何一次调用重试用尽或一路解码失败 → 整条 error、待补跑
+      D34 冻结点 release_v1@45bdf9292；之后分批同步，新格式（#155 mcap/lance）按 .rrd 办法处理
+      基线在现网 v1 的 Pod 里生成（导出脚本自带冻结点的 v1 源码）
+      需求方已同意删除上游 daft 源码；第一批静态稿风格已确认
+  - 文档已按上述决策修订，并修掉三处「保存密钥时做写探针」的过时说法与 00 §7 表格断行
+  - 进行中：F1.1 W0 工具（离线部分）、F3.1 第二批静态稿
 
 Main gaps:
-  - 方舟 GET {endpoint}/models 用 API Key 是否可用仍未实测;设计已按「能拉就拉,拉不出手填」处理,不阻塞
-  - 10 篇 §1 记了一处与需求原文的出入:分支从 release_v1 派生而非 main
-  - F3.1 风格确认、baseline 清理点头、黄金基线生成 —— 均未变化
-  - 静态稿前两页与现设计有出入,清单在 frontend/mockups/README.md「设计评审后待改」
+  - 生成基线需要：两个数据集的 tos:// 地址和地域、存档放哪个 TOS 目录、现网站点配置（CURATION_CONFIG 非密钥部分）
+  - 方舟 GET {endpoint}/models 用 API Key 是否可用仍未实测（不阻塞）
+  - 02 §3.6/§3.8 的 --revision 参数留给 W2 冻结 C2 时补
 
 Next steps:
-  1. F3.1:需求方确认风格后补第二批静态稿,并按 README 的待改清单修正前两页
-  2. F1.1:dump_v1.py(含 VLM 请求/响应录制)+ curation-parity;用 release_v1 生成两个基线与噪声底(先于任何重构)
-  3. F1.2(待点头)→ F1.3 契约冻结 → 按 11 篇批次 1 开并行
+  1. W0：规范化记录 schema + 请求哈希 + 录制/回放 + dump_v1 + curation-parity compare + 迷你数据集夹具与测试
+  2. 把 W0 的 Pod 内执行步骤写进 README，交给用户在现网 Pod 生成两个基线
+  3. 基线生成期间推进 F1.2（W1 目录重组）与 F1.3（W2 契约冻结）

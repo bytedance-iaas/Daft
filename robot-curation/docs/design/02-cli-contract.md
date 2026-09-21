@@ -182,6 +182,18 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
   维持 v1：照样交付，同时进人工复核。`error` 是执行层面的失败：解码失败、模型调用重试用尽、解析不了返回、内部异常。
   v1 把后者也记成弃权（理由以「VLM 调用/解析失败」开头）；v2 把它单列出来，因为处理方式不同：
   出错的这条**不再进入后面的档、暂不交付**，等「重试」补跑。
+- **口径取宽**（D33）：判这一条的过程中，任何一次模型调用在全部重试之后仍失败、或任一机位解码失败，
+  这一行就记 `error` —— 即使 v1 的降级逻辑还能给出结论（打分失败后复核救回、仲裁失败维持弃权、少一路机位照判）。
+  `details` 照常保留算法给出的留痕，`error` 字段列出失败的调用与机位：
+
+```jsonc
+"error": {"kind": "execution",
+          "incidents": [{"step": "probe", "call_kind": "probe", "cause": "timeout", "attempts": 4},
+                        {"step": "decode", "camera": "wrist", "cause": "InvalidDataError"}]}
+```
+
+  这份清单由编排壳记录：每条 episode 单独包一层模型调用与解码的封装，失败时记一笔再原样抛出，
+  A 类算法代码一行不动。模型正常给出的看不清、拿不准（如 caption 回 `unclear`）不是出错。
 - 单条 episode 出错不影响其他条：该行 `verdict=error`，命令整体仍返回 0；
   只有「整个模块无法执行」（如 VLM 端点完全不可达）才非零退出。
 - **退出码 0 不等于「全部成功」**。`--json` 的最终输出必须带逐状态计数和输入集合的指纹，Daemon 据此给模块定

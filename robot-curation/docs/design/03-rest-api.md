@@ -27,7 +27,7 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/v1/credentials` | 列访问密钥（永不返回密钥本体） |
-| POST | `/api/v1/credentials` | 新建，保存时做一次连通性校验（含写探针） |
+| POST | `/api/v1/credentials` | 新建，保存时只验身份（一次签名请求）；对具体存储桶的读写权限在任务开始前验（08 篇 §4） |
 | PUT / DELETE | `/api/v1/credentials/{id}` | 更新（密钥字段留空 = 不改）/ 删除（规则见 01 篇 §2.1） |
 | POST | `/api/v1/credentials/{id}/verify` | 重新校验 |
 
