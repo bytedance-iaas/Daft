@@ -139,7 +139,8 @@ def client_for(make_app):
 
 def seed_task(repo, name="droid 前 50 条质检", *, state="queued", selected=("timestamp_check",),
               owner="default", input_cred_id=None, output_cred_id=None, vlm_model_id=None,
-              delivery="tos://deliveries/droid-50", input_uri="tos://bucket/datasets/droid_100"):
+              delivery="tos://deliveries/droid-50", input_uri="tos://bucket/datasets/droid_100",
+              dataset_id=None):
     """A task through the repository only (what W5's create path will do)."""
     from curation.contracts import modules as registry
     from daemon.repo import protocol as P
@@ -151,4 +152,41 @@ def seed_task(repo, name="droid 前 50 条质检", *, state="queued", selected=(
         delivery_key=delivery, episode_selector={"mode": "head", "n": 50},
         params={"export": True, "vlm_retry": 3}, modules=rows, state=state, owner_id=owner,
         input_cred_id=input_cred_id, output_cred_id=output_cred_id, vlm_model_id=vlm_model_id,
-        input_region="cn-beijing", output_region="cn-beijing"))
+        input_region="cn-beijing", output_region="cn-beijing", dataset_id=dataset_id))
+
+
+META_DIGEST = "sha256:" + "a" * 64
+LISTING_DIGEST = "sha256:" + "b" * 64
+
+
+def sample_preflight(*, version="v2", supported=True, episodes=200, robot_type="franka",
+                     modules=None) -> dict:
+    """A C2 ``preflight`` result (valid against ``cli/preflight.schema.json``)."""
+    return {
+        "schema_version": "1.0",
+        "format": {"kind": "lerobot", "version": version, "supported": supported,
+                   "detail": f"LeRobot {version}, {episodes} episodes"},
+        "validation": [] if supported else ["meta/info.json: codebase_version missing"],
+        "dataset": {"episode_count": episodes, "cameras": ["wrist", "exterior_1"], "fps": 15.0,
+                    "robot_type": robot_type, "total_frames": episodes * 250,
+                    "labels": {"with_task": episodes, "without_task": 0}, "profile": None},
+        "modules": modules if modules is not None else [
+            {"id": "timestamp_check", "availability": "available"}],
+        "meta_fingerprint": META_DIGEST,
+        "warnings": [],
+    }
+
+
+def seed_dataset(repo, uri="tos://bucket/datasets/droid_100", *, name=None, source="tos",
+                 region="cn-beijing", credential_id=None, owner="default", preflighted_at=T0,
+                 **preflight):
+    """A registration through the repository only (what W5's POST /datasets will do)."""
+    from daemon.repo import protocol as P
+
+    ds, _ = repo.register_dataset(P.Dataset(
+        id="", name=name or uri.rstrip("/").rsplit("/", 1)[-1], source=source, uri=uri,
+        region=region, credential_id=credential_id, owner_id=owner,
+        preflight=sample_preflight(**preflight), meta_fingerprint=META_DIGEST,
+        source_fingerprint={"objects": 204, "bytes": 1_234_567, "digest": LISTING_DIGEST},
+        preflighted_at=preflighted_at))
+    return ds

@@ -135,10 +135,14 @@ async def delete_task(request: Request, task_id: str):
             try:
                 rt.repo.soft_delete_task(task_id, at=rt.clock())
             except P.StateConflict:
+                raise ApiError("task_state_conflict",
+                               "只有待启动或已结束的任务可以删除；运行中的任务请先停止",
+                               details={"state": task.state}) from None
+            except P.Conflict as err:
+                if err.code != "subtask_active":
+                    raise
                 active = rt.repo.active_subtask(task_id)
-                message = ("任务还有子任务在运行，等它结束后再删除" if active is not None else
-                           "只有待启动或已结束的任务可以删除；运行中的任务请先停止")
-                raise ApiError("task_state_conflict", message,
+                raise ApiError("subtask_active", "任务还有子任务没结束，等它结束后再删除",
                                details={"state": task.state,
                                         "active_subtask": active.id if active else None}) from None
             record(rt.repo, action="task.delete", task_id=task_id, actor=who.display_name,

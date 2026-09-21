@@ -1,6 +1,7 @@
 """SQLite specifics behind the C5 protocol (design doc 01, section 4.1)."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 
@@ -26,7 +27,7 @@ def test_wal_foreign_keys_and_schema_version(tmp_path):
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"credential", "vlm_backend", "vlm_model", "task", "task_module", "subtask",
                 "token_usage", "adjudication", "event", "preflight_cache",
-                "idempotency_key"} <= tables
+                "idempotency_key", "dataset", "dataset_check", "token_timeline"} <= tables
         conn.close()
         assert repo.schema_version() == migrations.LATEST_VERSION
     finally:
@@ -44,6 +45,62 @@ def test_reopening_does_not_migrate_again(tmp_path):
         assert again.get_task(t.id).name == "keep"
     finally:
         again.close()
+
+
+def _v1_database(path) -> None:
+    """A database at step 1, whose subtasks kept their pause reason in audit events only."""
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.executescript(f"BEGIN;\n{migrations.MIGRATIONS[0][1]}\nPRAGMA user_version = 1;\nCOMMIT;")
+    conn.execute("INSERT INTO task (id, name, state, input_source, input_uri, output_uri,"
+                 " delivery_key, episode_selector, params, created_at, updated_at) VALUES"
+                 " ('task_1', 't', 'completed_with_errors', 'tos', 'tos://b/x', 'tos://b/o',"
+                 " 'tos://b/o', '{\"mode\":\"all\"}', '{}', 1, 1)")
+    for sub, state in (("sub_user", "paused"), ("sub_system", "pausing"), ("sub_unknown", "paused"),
+                       ("sub_done", "succeeded")):
+        conn.execute("INSERT INTO subtask (id, task_id, kind, scope, state, created_at)"
+                     " VALUES (?, 'task_1', 'retry', '{}', ?, 1)", (sub, state))
+    for sub, to, reason in (("sub_user", "pausing", "user"), ("sub_user", "paused", "user"),
+                            ("sub_system", "pausing", "system"), ("sub_done", "pausing", "user")):
+        conn.execute("INSERT INTO event (owner_id, actor, action, resource, detail, at)"
+                     " VALUES ('default', 'system', 'subtask.state', 'task_1', ?, 1)",
+                     (json.dumps({"subtask_id": sub, "to": to, "pause_reason": reason}),))
+    conn.close()
+
+
+def test_upgrading_a_first_release_database(tmp_path):
+    _v1_database(tmp_path / "curator.db")
+    repo = _open(tmp_path)
+    try:
+        assert repo.schema_version() == migrations.LATEST_VERSION
+        reasons = {s.id: s.pause_reason for s in repo.list_subtasks("task_1")}
+        assert reasons == {"sub_user": "user", "sub_system": "system", "sub_unknown": None,
+                           "sub_done": None}
+        task = repo.get_task("task_1")
+        assert task.dataset_id is None and task.state == "completed_with_errors"
+        ds, created = repo.register_dataset(P.Dataset(
+            id="", name="x", source="tos", uri="tos://b/x", preflight={}, meta_fingerprint="m",
+            source_fingerprint={}, preflighted_at=T0))
+        assert created and repo.list_datasets(page=1, page_size=5, fmt="unsupported").total == 1
+        repo.update_task_fields("task_1", if_updated_at=None, dataset_id=ds.id)
+        assert repo.list_tasks(page=1, page_size=5, dataset_id=ds.id).total == 1
+    finally:
+        repo.close()
+
+
+def test_dataset_address_is_unique_even_without_a_region(tmp_path):
+    """SQLite never treats two NULLs as equal; the expression index does."""
+    repo = _open(tmp_path)
+    try:
+        def insert(c):
+            for _ in range(2):
+                c.execute("INSERT INTO dataset (id, name, source, uri, region, preflight, format,"
+                          " meta_fingerprint, source_fingerprint, preflighted_at, created_at,"
+                          " updated_at) VALUES (lower(hex(randomblob(8))), 'n', 'public',"
+                          " 'tos://hf/x', NULL, '{}', 'unsupported', 'm', '{}', 1, 1, 1)")
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+            repo._write(insert)
+    finally:
+        repo.close()
 
 
 def test_refuses_a_database_from_a_newer_build(tmp_path):

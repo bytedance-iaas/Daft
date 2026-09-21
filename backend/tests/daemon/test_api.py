@@ -475,7 +475,7 @@ def test_delete_waits_for_an_active_subtask(client_for):
     t = seed_task(rt.repo)
     _finish(rt, t.id)
     rt.repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="reexport", scope={}, state="queued"))
-    body = assert_error(c.delete(f"/api/v1/tasks/{t.id}", headers=JSON), "task_state_conflict")
+    body = assert_error(c.delete(f"/api/v1/tasks/{t.id}", headers=JSON), "subtask_active")
     assert "子任务" in body["error"]["message"] and body["error"]["details"]["active_subtask"]
 
 

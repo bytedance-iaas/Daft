@@ -14,6 +14,19 @@ Deviations from the sketch in design doc 01, all additive:
   finished tasks that used it, which then get rebound like a deleted access key.
 * ``event.id`` is ``AUTOINCREMENT`` so ids are never reused after the 90-day
   purge; the SSE epoch is the id of the ``daemon.start`` event.
+
+Step 2 (C5 1.1 / 1.2) adds the dataset registry of design doc 01, section 2.8,
+``task.dataset_id``, ``subtask.pause_reason`` and one table of our own:
+
+* ``dataset.format`` is derived from the stored preflight on every write (the
+  ``fmt`` filter of ``list_datasets``); ``created_at`` / ``updated_at`` as everywhere.
+* The address is unique through an expression index over ``COALESCE(region, '')``:
+  SQLite never treats two NULL regions as equal, so a plain ``UNIQUE`` would not do.
+* ``subtask.pause_reason`` is filled from the audit events for subtasks that were
+  pausing or paused when the step ran (step 1 kept the reason only there).
+* ``token_timeline`` sums actual-ledger tokens per owner and 15-minute UTC slot;
+  ``token_usage`` has no time axis, and the overview charts tokens per day
+  (see ``daemon.repo.extras``).
 """
 from __future__ import annotations
 
@@ -214,9 +227,69 @@ CREATE TABLE idempotency_key (
 CREATE INDEX idx_idempotency_created ON idempotency_key(created_at);
 """
 
+_V2 = """
+CREATE TABLE dataset (
+  id                 TEXT PRIMARY KEY,
+  owner_id           TEXT NOT NULL DEFAULT 'default',
+  name               TEXT NOT NULL,
+  note               TEXT,
+  source             TEXT NOT NULL CHECK (source IN ('tos','public','local')),
+  uri                TEXT NOT NULL,
+  region             TEXT,
+  credential_id      TEXT REFERENCES credential(id) ON DELETE SET NULL,
+  preflight          TEXT NOT NULL,
+  format             TEXT NOT NULL CHECK (format IN ('lerobot_v2','lerobot_v3','unsupported')),
+  meta_fingerprint   TEXT NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  manifest_path      TEXT,
+  check_state        TEXT NOT NULL DEFAULT 'ok' CHECK (check_state IN ('ok','changed')),
+  checked_at         INTEGER,
+  preflighted_at     INTEGER NOT NULL,
+  created_at         INTEGER NOT NULL,
+  updated_at         INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX idx_dataset_address ON dataset(owner_id, source, uri, COALESCE(region, ''));
+CREATE INDEX idx_dataset_list ON dataset(owner_id, created_at DESC, id DESC);
+CREATE INDEX idx_dataset_credential ON dataset(credential_id);
+
+CREATE TABLE dataset_check (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  dataset_id TEXT NOT NULL REFERENCES dataset(id) ON DELETE CASCADE,
+  at         INTEGER NOT NULL,
+  "trigger"  TEXT NOT NULL CHECK ("trigger" IN ('add','recheck','task_start','repreflight')),
+  result     TEXT NOT NULL CHECK (result IN ('same','changed')),
+  change     TEXT
+);
+CREATE INDEX idx_dataset_check ON dataset_check(dataset_id, at, id);
+
+ALTER TABLE task ADD COLUMN dataset_id TEXT REFERENCES dataset(id) ON DELETE SET NULL;
+CREATE INDEX idx_task_dataset ON task(dataset_id);
+CREATE INDEX idx_task_finished ON task(owner_id, finished_at);
+
+ALTER TABLE subtask ADD COLUMN pause_reason TEXT CHECK (pause_reason IN ('user','system'));
+CREATE INDEX idx_subtask_state ON subtask(state);
+UPDATE subtask SET pause_reason = (
+  SELECT json_extract(e.detail, '$.pause_reason') FROM event e
+  WHERE e.resource = subtask.task_id AND e.action = 'subtask.state'
+    AND json_extract(e.detail, '$.subtask_id') = subtask.id
+    AND json_extract(e.detail, '$.to') IN ('pausing','paused')
+    AND json_extract(e.detail, '$.pause_reason') IN ('user','system')
+  ORDER BY e.id DESC LIMIT 1)
+WHERE state IN ('pausing','paused');
+
+CREATE TABLE token_timeline (
+  owner_id TEXT NOT NULL,
+  slot     INTEGER NOT NULL,
+  tokens   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (owner_id, slot)
+);
+CREATE INDEX idx_token_timeline_slot ON token_timeline(slot);
+"""
+
 #: (version, script). Append only.
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _V1),
+    (2, _V2),
 )
 
 LATEST_VERSION = MIGRATIONS[-1][0]
