@@ -22,8 +22,12 @@ export function LazyVisible({ children, placeholder, rootMargin = '200px' }: { c
   return <div ref={ref}>{visible ? children : placeholder ?? null}</div>;
 }
 
-/** Calls onVisible whenever the sentinel becomes visible (infinite scrolling). */
-export function Sentinel({ onVisible, disabled }: { onVisible: () => void; disabled?: boolean }) {
+/**
+ * Calls onVisible whenever the sentinel becomes visible (infinite scrolling). Pass the number of
+ * loaded pages as `version`: the observer is set up again after each page, so a sentinel that is
+ * still on screen asks for the next page instead of waiting for a scroll that never comes.
+ */
+export function Sentinel({ onVisible, disabled, version = 0 }: { onVisible: () => void; disabled?: boolean; version?: number }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const cb = useRef(onVisible);
   cb.current = onVisible;
@@ -35,6 +39,6 @@ export function Sentinel({ onVisible, disabled }: { onVisible: () => void; disab
     });
     io.observe(el);
     return () => io.disconnect();
-  }, [disabled]);
+  }, [disabled, version]);
   return <div ref={ref} style={{ height: 1 }} />;
 }

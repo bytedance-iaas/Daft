@@ -409,6 +409,21 @@ button.video-placeholder {
   min-height: 46px;
 }
 
+.adj-card.unsure {
+  border-color: var(--c-warning);
+}
+
+.adj-bar {
+  position: sticky;
+  top: 60px;
+  z-index: 20;
+  background: #fff;
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+}
+
 .question {
   border: 1px solid var(--c-border);
   border-radius: 4px;

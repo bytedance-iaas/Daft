@@ -11,7 +11,8 @@ export async function pick(user: UserEvent, label: string | RegExp, option: stri
     if (!opts.length) throw new Error(`no option ${String(option)}`);
     return opts[opts.length - 1];
   });
-  await user.click(popup);
+  // Multiple-mode selects wrap each option; the click handler sits on the inner element.
+  await user.click(popup.querySelector<HTMLElement>('.arco-select-option') ?? popup);
 }
 
 /** The open Arco Drawer titled `title` (Arco drawers carry no dialog role). */

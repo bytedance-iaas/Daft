@@ -72,7 +72,7 @@ function PreviewGrid({ source, expr, onToggle, disabled }: { source: PreviewSour
             </div>
           </div>
         ))}
-        <Sentinel onVisible={() => q.hasNextPage && !q.isFetchingNextPage && void q.fetchNextPage()} disabled={!q.hasNextPage} />
+        <Sentinel onVisible={() => q.hasNextPage && !q.isFetchingNextPage && void q.fetchNextPage()} disabled={!q.hasNextPage} version={q.data?.pages.length ?? 0} />
       </div>
       {q.hasNextPage ? (
         <Button size="small" type="text" loading={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
