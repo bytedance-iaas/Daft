@@ -26,16 +26,16 @@ jobs:
       - name: v1 unit tests
         working-directory: backend
         # test_environment checks a GPU host (torch, nvidia-smi); not available here
-        run: python -m pytest -q curation/tests --ignore=curation/tests/test_environment.py
+        run: python -m pytest -q -rfE curation/tests --ignore=curation/tests/test_environment.py
       - name: Contracts (C1-C5 tests and the drift lock)
         working-directory: backend
         run: |
-          python -m pytest -q tests
+          python -m pytest -q -rfE tests
           python -m curation.contracts check
       - name: Parity tools (unit + end-to-end on the synthetic dataset)
         env:
           PYTHONPATH: tools
-        run: python -m pytest -q tools/parity/tests
+        run: python -m pytest -q -rfE tools/parity/tests
 
   a-class-guard:
     runs-on: ubuntu-latest
