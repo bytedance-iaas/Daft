@@ -1252,7 +1252,8 @@ export function mainLogs(now: number): LogLine[] {
   push(204_000, 'frame', 'info', 'frame stage done: 49 survivors');
   for (let i = 0; i < 49; i += 1) {
     const ep = i < 18 ? i : i + 1;
-    push(206_000 + i * 11_000, 'vlm', ep === 7 || ep === 31 ? 'error' : 'info', ep === 7 || ep === 31 ? `episode ${ep}: arbitration request timed out after 60s (attempt 3/3); marked as error` : `task_success episode ${ep}: done`, ep);
+    for (const [k, kind] of ['probe', 'endstate', 'arbitration'].entries()) push(206_000 + i * 11_000 + k * 3000, 'vlm', 'debug', `episode ${ep}: ${kind} request sent`, ep);
+    push(206_000 + i * 11_000 + 9000, 'vlm', ep === 7 || ep === 31 ? 'error' : 'info', ep === 7 || ep === 31 ? `episode ${ep}: arbitration request timed out after 60s (attempt 3/3); marked as error` : `task_success episode ${ep}: done`, ep);
   }
   push(6 * MIN, 'system', 'warn', 'system pause: daemon upgrade v2.0.3 -> v2.0.4; stopping after in-flight episodes');
   push(8 * MIN, 'system', 'info', 'system resume: continuing from checkpoint (3 in-flight episodes will be re-requested)');

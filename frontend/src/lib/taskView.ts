@@ -100,7 +100,17 @@ export interface ActionPlan {
 }
 
 /** Row and header actions by state (07 §4.1, §4.2); the server still validates every call. */
-export function actionsFor(t: Pick<TaskListItem, 'state' | 'pause_reason' | 'pending_adjudication' | 'delivery_stale' | 'summary' | 'deleted_at' | 'active_subtask'>): ActionPlan {
+export interface ActionSubject {
+  state: TaskState;
+  pause_reason?: TaskListItem['pause_reason'];
+  pending_adjudication: number;
+  delivery_stale: boolean;
+  summary?: TaskListItem['summary'];
+  deleted_at?: number | null;
+  active_subtask?: unknown;
+}
+
+export function actionsFor(t: ActionSubject): ActionPlan {
   if (t.deleted_at) return { primary: 'restore', more: [], disabled: {} };
   const disabled: ActionPlan['disabled'] = {};
   const terminal = isTerminalState(t.state);
