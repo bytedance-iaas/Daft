@@ -57,33 +57,11 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
       && rm -rf /var/lib/apt/lists/*; \
     fi
 
-# (2026-07-29 U4)这里原本有一层"下载 ttyd 静态二进制"——**已整层删除**。
-# 网页终端改成**内嵌式**:终端是质检台 UI 自己的一条 WebSocket 路由(/ws/term,
-# forkpty 起 bash),前端 xterm.js 已 vendored 进 curation/ui/static/。换掉 ttyd 的
-# 三条理由:
-#   ① **单端口** —— 终端与 UI 同一个 7860,不再需要第二个 containerPort/port-forward;
-#   ② **无外部二进制** —— 构建不再依赖 GitHub releases(那一层实测极不稳:SSL 秒断/
-#      连上不吐字节/106s 才下完,靠 --max-time 兜着才没吊死构建),镜像也少一个供应链面;
-#   ③ **鉴权同一套** —— ttyd 是独立进程、独立(无)鉴权;内嵌之后 Basic 中间件与
-#      未来的 APIG 网关一次就把 UI 和终端一起护住(见 curation/ui/auth.py)。
-# 开关:`curation ui --terminal`(或 CURATION_TERMINAL=1);不开则页签不渲染、
-# /ws/term 路由根本不注册。
-
 # 构建上下文=仓库根目录(F1.2 起):docker build -f deploy/Dockerfile .
 # (火山 CI 的 ContextPath 从 robot-curation 改为仓库根,Dockerfile 路径填 deploy/Dockerfile)
 WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# 质检台 UI 字体离线补丁(2026-07-27):gradio 前端在 index.html(preconnect)与
-# Index-*.js(inject_fonts 硬编码)里请求 fonts.googleapis.com——与主题配置无关,
-# 国内网络会把首屏挂起 15s+(实测)。把域名改写为相对路径 → 浏览器打回本服务,
-# 毫秒级 404 完事,页面用系统字体(theme 已设),外观无损。金丝雀测试:
-# tests/test_gradio_offline_fonts.py(装了 gradio 的环境里扫模板目录,残留即红)。
-RUN T=$(python -c "import gradio,os;print(os.path.dirname(gradio.__file__))")/templates \
-    && grep -rl 'fonts\.googleapis\.com\|fonts\.gstatic\.com' $T \
-       | xargs -r sed -i 's|https://fonts.googleapis.com|/offline-fonts|g; s|https://fonts.gstatic.com|/offline-fonts|g' \
-    && [ $(grep -rl 'fonts\.googleapis\.com' $T | wc -l) -eq 0 ]
 
 COPY backend/curation/ ./curation/
 COPY backend/pyproject.toml ./
