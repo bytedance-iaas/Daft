@@ -497,6 +497,9 @@ def test_a_deleted_access_key_leaves_the_dataset_without_one(repo):
     assert repo.get_dataset(ds.id).credential_id is None
     other = repo.create_credential(_cred("new-key"))
     assert repo.update_dataset(ds.id, credential_id=other.id).credential_id == other.id
+    with pytest.raises(P.NotFound):
+        repo.update_dataset(ds.id, credential_id="cred_missing")
+    assert repo.get_dataset(ds.id).credential_id == other.id
 
 
 # ---------------------------------------------------------------------------

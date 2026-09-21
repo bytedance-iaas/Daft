@@ -933,8 +933,11 @@ class SqliteRepository:
             if not values:
                 return current
             cols = ", ".join(f"{k}=?" for k in values)
-            c.execute(f"UPDATE dataset SET {cols}, updated_at=MAX(?, updated_at + 1) WHERE id=?",
-                      (*values.values(), now, dataset_id))
+            try:
+                c.execute(f"UPDATE dataset SET {cols}, updated_at=MAX(?, updated_at + 1) WHERE id=?",
+                          (*values.values(), now, dataset_id))
+            except sqlite3.IntegrityError:
+                raise NotFound("credential to bind does not exist") from None
             return self._get_dataset(c, dataset_id, owner)
 
         return self._write(op)

@@ -13,7 +13,7 @@ Start-up order (``create_app`` then the lifespan):
    in the background when it fails; ``/readyz`` says ``reconciled: false`` until it
    succeeds), then the ``on_ready`` hooks (W5 starts its worker pool there), then
    a maintenance thread (expired preflight / idempotency rows, deleted tasks after
-   30 days, audit events after 90 days).
+   30 days, audit events and the token timeline after 90 days).
 
 Lifespan end runs the ``on_shutdown`` hooks (W5 pauses running tasks there,
 design doc 09 §2.3), stops the threads and closes the database.

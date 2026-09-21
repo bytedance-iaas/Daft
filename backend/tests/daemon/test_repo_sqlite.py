@@ -83,6 +83,8 @@ def test_upgrading_a_first_release_database(tmp_path):
         assert created and repo.list_datasets(page=1, page_size=5, fmt="unsupported").total == 1
         repo.update_task_fields("task_1", if_updated_at=None, dataset_id=ds.id)
         assert repo.list_tasks(page=1, page_size=5, dataset_id=ds.id).total == 1
+        repo.delete_dataset(ds.id)                    # the added column keeps ON DELETE SET NULL
+        assert repo.get_task("task_1").dataset_id is None
     finally:
         repo.close()
 
