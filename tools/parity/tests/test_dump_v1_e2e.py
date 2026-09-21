@@ -17,11 +17,9 @@ import pytest
 
 from parity import vlm_tape as T
 
-from .conftest import load_schema, run_parity
+from .conftest import V1_RUN, load_schema, run_parity
 
 pytestmark = pytest.mark.e2e
-
-V1_RUN = ["run", "--vlm-endpoint", "http://fake-vlm.local/v1", "--vlm-model", "fake-vlm"]
 
 
 V1_SRC: list[str] = []          # set once by the autouse fixture below
@@ -60,11 +58,9 @@ def rewrite_tape(src, dst, edit):
 
 
 @pytest.fixture(scope="module")
-def recorded(tmp_path_factory, mini_dataset):
-    tmp = tmp_path_factory.mktemp("e2e")
-    out, proc = dump(tmp, "rec1", mini_dataset, "--fake-vlm")
-    assert proc.returncode == 0, proc.stderr[-4000:]
-    return tmp, out
+def recorded(tmp_path_factory, v1_golden):
+    """(a scratch directory, the session's recorded v1 run)."""
+    return tmp_path_factory.mktemp("e2e"), v1_golden
 
 
 def test_record_run_is_clean_and_walks_the_whole_funnel(recorded):

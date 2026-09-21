@@ -368,15 +368,26 @@ def run_skill_profile(ctx, run_dir: str, rows: list[dict], cfg: dict, captioner:
     previous = load_profile(run_dir) if incremental else None
     if incremental and previous is None:
         ctx.log("info", "--incremental: no previous skill profile; profiling in full")
-    with installed_decode_watch():
-        if previous is None:
-            caption_fn = _PerEpisodeCaptions(logs, lock)
-            profile, caption_of, gtext_of, gsrc_of, label_audit = _skill_profile_stage(
-                rows, cfg, captioner, ask, auto_caps, caption_fn=caption_fn)
-        else:
-            profile, caption_of, gtext_of, gsrc_of, label_audit = _incremental_profile(
-                ctx, rows, cfg, captioner, ask, auto_caps, previous, logs, lock,
-                relabels or {})
+    try:
+        with installed_decode_watch():
+            if previous is None:
+                caption_fn = _PerEpisodeCaptions(logs, lock)
+                profile, caption_of, gtext_of, gsrc_of, label_audit = _skill_profile_stage(
+                    rows, cfg, captioner, ask, auto_caps, caption_fn=caption_fn)
+            else:
+                profile, caption_of, gtext_of, gsrc_of, label_audit = _incremental_profile(
+                    ctx, rows, cfg, captioner, ask, auto_caps, previous, logs, lock,
+                    relabels or {})
+    except Exception as e:
+        # a text call the taxonomy needs failed for good: no episode can be filed, the
+        # module as a whole failed (exit 4); anything else is a bug and stays one
+        if not llm_log:
+            raise
+        from ..cli.errors import ModuleFailed
+
+        raise ModuleFailed(f"skill_profile: a model call the taxonomy needs failed: "
+                           f"{type(e).__name__}: {e}"[:600],
+                           {"incidents": llm_log.items()[:5]}) from None
     from ..dataset_level.profile import skill_assignment_rows
 
     _write_profile_outputs(run_dir, profile, caption_of, gtext_of, gsrc_of, label_audit)

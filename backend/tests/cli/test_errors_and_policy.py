@@ -231,6 +231,27 @@ def test_a_failed_caption_is_an_error_down_to_the_verdict(vlm_stage, tmp_path):
         assert verdicts[e]["error_modules"] == ["autolabel"]
 
 
+def test_a_failed_taxonomy_call_fails_the_skill_profile_module(vlm_stage, tmp_path):
+    """The taxonomy is one dataset-level result: when a text call it needs fails for
+    good no episode can be filed, and the module fails as a whole (exit 4)."""
+    rd = str(tmp_path / "run")
+    shutil.copytree(vlm_stage["reference_dir"], rd)
+    _funnel(rd)
+    keep = os.path.join(rd, "revisions", "r0001", "keep.txt")
+    res = run("check", "--modules", "dedup", "--input", vlm_stage["dataset"], "--run-dir", rd,
+              "--episodes", "@" + keep, "--survivors-out", str(tmp_path / "dedup.txt"))
+    assert res.rc == 0, res.doc
+    taxonomy = "Build a TWO-LEVEL skill taxonomy"
+    with FakeVlmServer(fail=lambda text, payload: 503 if taxonomy in text else None) as vlm:
+        res = run("check", "--modules", "skill_profile", "--input", vlm_stage["dataset"],
+                  "--run-dir", rd, "--episodes", "@" + str(tmp_path / "dedup.txt"),
+                  "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
+    assert res.rc == 4 and res.doc["error"]["code"] == "module_failed", res.doc
+    assert res.doc["error"]["details"]["incidents"][0] == {
+        "step": "llm", "call_kind": "llm", "cause": "server_error", "attempts": 1}
+    assert vlm.count(taxonomy) == 1                     # one request: no retry by default
+
+
 # ---------------------------------------------------------------- source guard
 
 def test_a_changed_source_stops_the_commands(dataset, tmp_path):
