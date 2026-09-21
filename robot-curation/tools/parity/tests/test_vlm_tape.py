@@ -225,3 +225,23 @@ def test_hooked_functions_pickle_by_reference():
         assert isinstance(wrapped, T.LlmAskWrapper)
     finally:
         hooks.uninstall()
+
+
+def test_a_truncated_tape_is_still_readable(tmp_path):
+    mod = _fake_client()
+    tape = str(tmp_path / "t.jsonl.gz")
+    hooks = T.TapeHooks("record", tape_out=tape, transport=_transport({}))
+    hooks.install(mod)
+    try:
+        _vision_call(mod, URL)
+        _vision_call(mod, URL, img=PNG_B)
+    finally:
+        hooks.uninstall()
+    with open(tape, "rb") as fh:
+        data = fh.read()
+    cut = str(tmp_path / "cut.jsonl.gz")
+    with open(cut, "wb") as fh:
+        fh.write(data[:-12])                       # drop the gzip trailer
+    header, entries = T.read_tape(cut)
+    assert header.get("truncated") is True
+    assert len(entries) <= 2

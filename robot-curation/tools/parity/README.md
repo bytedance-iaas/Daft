@@ -86,6 +86,9 @@ $python -m parity compare --golden $W/rec --candidate $W/rep --all-strict
 
 ## 在现网 Pod 里生成黄金基线
 
+> ⚠️ 现网 Pod 同时在给用户提供服务。基线跑批会和用户任务抢 CPU、内存和方舟配额（v1 的界面本来一次只跑一个任务），
+> umi 全量一遍大约要一两个小时。建议挑没人用的时段跑，或者用同一个镜像、同样的环境变量和配置另起一个一次性 Pod 来跑。
+
 基线要两份（D19）：`droid_lerobot` 前 50 条、`umi_640_notask` 全量；
 另外跑几遍 v1，量出模型输出的自然波动，作为噪声底。具体为 droid 50 条跑两遍，umi 前 64 条另跑两遍。
 下面的 `<…>` 换成实际值。
@@ -116,13 +119,14 @@ $python -m parity compare --golden $W/rec --candidate $W/rep --all-strict
 
    ```bash
    kubectl exec -n <ns> <pod> -- bash -lc 'cd /tmp/parity/robot-curation && export PYTHONPATH=tools &&
-     mkdir -p /tmp/golden && nohup python -m parity dump-v1 --out /tmp/golden/droid50-a --label droid50-a -- \
+     mkdir -p /tmp/golden && setsid nohup python -m parity dump-v1 --out /tmp/golden/droid50-a --label droid50-a -- \
        run --input tos://<桶>/<前缀>/droid_lerobot --input-region <地域> \
            --output tos://<交付桶>/<前缀>/golden/v1/droid50-a --output-region <地域> \
            --max-episodes 50 --vlm-model doubao-seed-2-0-pro-260215 \
        > /tmp/golden/droid50-a.log 2>&1 < /dev/null &'
    ```
 
+   现网配置里的模型如果已经是 `doubao-seed-2-0-pro-260215`，`--vlm-model` 可以省掉；它和对账口径里的固定模型必须一致。
    Pod 里的 `CURATION_CONFIG` 会让 v1 自动用现网的站点配置；实际生效的配置（v1 自己脱敏过的）和它的哈希记在 `dump.json`。
    umi 同样的命令，去掉 `--max-episodes`；umi 不在运动学规格库里，这一项会整项跳过，属正常。
 

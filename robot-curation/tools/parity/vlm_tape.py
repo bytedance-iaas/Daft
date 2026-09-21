@@ -126,18 +126,34 @@ class TapeWriter:
 
 
 def read_tape(path: str) -> tuple[dict, list[dict]]:
-    """Return ``(header, entries)``; entries keep file order."""
+    """Return ``(header, entries)``; entries keep file order.
+
+    A run that was killed leaves a gzip stream without its trailer and maybe a
+    half-written last line; everything before that is still usable (e.g. for a
+    replay-record rerun), so reading stops there and ``header["truncated"]``
+    is set.
+    """
     header: dict = {}
     entries: list[dict] = []
+    truncated = False
     with gzip.open(path, "rt", encoding="utf-8") as fh:
-        for line in fh:
-            if not line.strip():
-                continue
-            obj = json.loads(line)
-            if obj.get("kind") == "header":
-                header = obj
-            else:
-                entries.append(obj)
+        try:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    truncated = True
+                    break
+                if obj.get("kind") == "header":
+                    header = obj
+                else:
+                    entries.append(obj)
+        except (EOFError, gzip.BadGzipFile, OSError):
+            truncated = True
+    if truncated:
+        header = {**header, "truncated": True}
     return header, entries
 
 
