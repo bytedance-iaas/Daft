@@ -9,7 +9,7 @@ from curation.contracts import schemas
 from daemon.operations import IMPLEMENTED, PENDING
 
 METHODS = ("get", "post", "put", "patch", "delete")
-OWNERS = {"W3", "W5", "W6", "W7", "W8", "W10"}
+OWNERS = {"W3", "W4", "W5", "W6", "W7", "W8", "W10"}   # W4: its follow-up (C5 1.1 datasets)
 UNKNOWN = "这个接口不存在（或还没有实现）"      # the catch-all's words: no handler matched
 
 

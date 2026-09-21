@@ -48,7 +48,7 @@ PENDING: dict[str, tuple[str, str]] = {
     "signMedia": ("W8", "presigned TOS URLs on the public endpoint, prefix checks (08 §6)"),
     # W3 CLI-backed (run through W5's executor)
     "preflight": ("W3", "curation preflight --json; cache with repo.put_preflight"),
-    "listDatasets": ("W3", "curation datasets list (TOS listing / public catalog), needs W8 keys"),
+    "browseDatasets": ("W3", "curation datasets list (TOS listing / public catalog), needs W8 keys"),
     "listDatasetEpisodes": ("W3", "episodes.jsonl metadata + W8 presigned camera URLs"),
     # W5 orchestration: queue, subprocesses, prechecks, work directory and result revisions
     "createTask": ("W5", "prechecks (D30), start, planner (W6); reuse daemon.taskspec.resolve_config"),
@@ -66,4 +66,14 @@ PENDING: dict[str, tuple[str, str]] = {
     "listAdjudication": ("W5", "review.json of the revision + repo.latest_adjudications"),
     "submitAdjudication": ("W5", "append + CSV copy in the run directory (double write)"),
     "applyAdjudication": ("W5", "apply_adjudication subtask"),
+    # contract 1.1 (D36, D37): registered datasets and the overview
+    "listDatasets": ("W4", "registered datasets from the repository (C5 1.1)"),
+    "getDataset": ("W4", "registration, recent checks and tasks from the repository"),
+    "updateDataset": ("W4", "name and note"),
+    "deleteDataset": ("W4", "dataset_in_use while an unfinished task uses it"),
+    "getOverview": ("W4", "aggregates over tasks, datasets, credentials and backends"),
+    "createDataset": ("W5", "curation preflight + snapshot through the executor"),
+    "recheckDataset": ("W5", "curation snapshot, compare with the kept listing"),
+    "repreflightDataset": ("W5", "curation preflight + snapshot, refresh the registration"),
+    "repreflightTask": ("W5", "D37: re-preflight, compatibility check, then start"),
 }

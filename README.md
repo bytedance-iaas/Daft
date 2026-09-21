@@ -18,8 +18,8 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 | `backend/curation/planner/` | 执行计划与 VLM 请求合并框架（W6）：闸门推导、合并执行器、Token 两本账、外层重试与自适应降并发。说明与手动验证见 [其 README](backend/curation/planner/README.md) |
 | `backend/curation/ui/` | 已下线的 v1 界面里待移植的逻辑（鉴权、深链解析、报告数据整形），移植完成后整包删除 |
 | `backend/curation/contracts/` | C1 模块注册表与契约校验工具 |
-| `backend/daemon/` | API Daemon；目前只有 C5 Repository 接口 |
-| `backend/tests/` | v2 的测试：`contracts/`、`cli/`、`planner/`、`export/` |
+| `backend/daemon/` | API Daemon（W4 骨架：FastAPI、SQLite 仓储、鉴权、SSE、探针、静态资源与挂载前缀、启动对账）；用法与手动验证见 [其 README](backend/daemon/README.md) |
+| `backend/tests/` | v2 的测试：`contracts/`、`daemon/`、`cli/`、`planner/`、`export/` |
 | `frontend/mockups/` | 静态 HTML 预览稿（F3.1） |
 | `tools/parity/` | 对账工具与黄金基线流程（W0） |
 | `deploy/Dockerfile` | 镜像，构建上下文是仓库根：`docker build -f deploy/Dockerfile .` |
@@ -45,10 +45,11 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 6. **v2 命令行（W3）**：`cd backend && ../.venv/bin/python -m pytest -q tests/cli`（约 10 秒），应全部通过；逐条手动核对见 [backend/curation/cli/README.md](backend/curation/cli/README.md) 的「手动验证步骤」。
 7. **planner 与 VLM 请求合并（W6）**：`cd backend && ../.venv/bin/python -m pytest -q tests/planner`（约 3 秒），应全部通过；逐项核对见 [backend/curation/planner/README.md](backend/curation/planner/README.md) 的「手动验证步骤」。
 8. **增量重新导出（W7）**：`cd backend && ../.venv/bin/python -m pytest -q tests/export`（约 30 秒；官方 loader 的 3 条用例在共享 venv 里跳过），再按 [INCREMENTAL.md](backend/curation/export/INCREMENTAL.md) 的手动验证步骤跑一遍 v2、v3 的演示，并在两个独立 venv 里跑官方 loader，输出应为 `ok: true`、`warnings: []`。
+9. **Daemon 骨架（W4）**：`cd backend && ../.venv/bin/python -m pytest -q tests/daemon`（约 40 秒），应全部通过；真起进程的 11 步手动验证见 [backend/daemon/README.md](backend/daemon/README.md)。
 
 ## CI
 
-`.github/workflows/ci.yml`：v1 单测、契约测试与漂移锁、v2 命令行测试、planner 测试、对账工具测试（含合成数据上的端到端回放对账）、A 类算法文件保护检查、镜像构建；另有一个独立 job 用官方 LeRobot loader 检查增量重导出的产物（lerobot 0.3.3 读 v2.1，0.6.1 读 v3.0）。
+`.github/workflows/ci.yml`：v1 单测、契约测试与漂移锁、Daemon 测试、v2 命令行测试、planner 测试、对账工具测试（含合成数据上的端到端回放对账）、A 类算法文件保护检查、镜像构建；另有一个独立 job 用官方 LeRobot loader 检查增量重导出的产物（lerobot 0.3.3 读 v2.1，0.6.1 读 v3.0）。
 
 ## License
 
