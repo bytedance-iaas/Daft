@@ -1,0 +1,29 @@
+{
+ "schema": "cli/autolabel.schema.json",
+ "valid": [
+  {
+   "schema_version": "1.0",
+   "counts": {
+    "total": 22,
+    "ok": 20,
+    "unclear": 1,
+    "error": 1
+   },
+   "error_episodes": [
+    19
+   ],
+   "captions_file": "autolabel/captions.jsonl"
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "counts": {
+    "total": 22,
+    "ok": 20
+   },
+   "error_episodes": [],
+   "captions_file": "x"
+  }
+ ]
+}

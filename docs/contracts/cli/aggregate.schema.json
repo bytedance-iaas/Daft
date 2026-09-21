@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "curation aggregate --json (schema 1.0)",
+  "description": "Pure computation, recomputed in full every time (design doc 02, section 3.6). --phase funnel writes verdicts.jsonl and keep.txt; --phase final writes the four lists into the revision given by --revision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "phase", "revision", "counts", "files"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "phase": {"enum": ["funnel", "final"]},
+    "revision": {"oneOf": [{"type": "null"}, {"$ref": "common.schema.json#/$defs/revision"}]},
+    "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "files": {"type": "object", "additionalProperties": {"type": "string"}}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"phase": {"const": "funnel"}}},
+      "then": {"properties": {"counts": {"required": ["total", "keep", "drop", "held"]}, "files": {"required": ["verdicts", "keep"]}}}
+    },
+    {
+      "if": {"properties": {"phase": {"const": "final"}}},
+      "then": {"properties": {"revision": {"type": "integer"}, "counts": {"required": ["total", "passed", "reject", "held", "review"]}, "files": {"required": ["passed", "reject", "held", "review"]}}}
+    }
+  ]
+}

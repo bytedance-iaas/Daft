@@ -1,0 +1,294 @@
+{
+ "registry_version": "1.0",
+ "stages": [
+  "numeric",
+  "frame",
+  "vlm",
+  "post_verdict"
+ ],
+ "modules": [
+  {
+   "id": "timestamp_check",
+   "name_zh": "时间戳检查",
+   "summary_zh": "时间戳是否单调、有没有丢帧跳变、是不是短于残段阈值的碎片",
+   "level": "episode",
+   "gate": "hard",
+   "needs": [
+    "timestamps"
+   ],
+   "stage": "numeric",
+   "depends_on": [],
+   "produces_adjudication": false,
+   "param_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+   },
+   "tables": [
+    {
+     "id": "timestamp_check",
+     "title_zh": "时间戳异常",
+     "sortable": [
+      "episode_index",
+      "duration_s",
+      "max_dt"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
+   "mergeable": false
+  },
+  {
+   "id": "kinematic_limits",
+   "name_zh": "运动学极限",
+   "summary_zh": "对照机器人规格库检查关节位置与速度是否越限",
+   "level": "episode",
+   "gate": "hard",
+   "needs": [
+    "action",
+    "embodiment_profile"
+   ],
+   "stage": "numeric",
+   "depends_on": [],
+   "produces_adjudication": false,
+   "param_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+   },
+   "tables": [
+    {
+     "id": "kinematic_violations",
+     "title_zh": "越限明细",
+     "sortable": [
+      "episode_index",
+      "joint",
+      "value"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
+   "mergeable": false
+  },
+  {
+   "id": "motion_quality",
+   "name_zh": "运动质量",
+   "summary_zh": "动作是否平滑、有无尖刺与执行器卡死、操作是否流畅（打分项）",
+   "level": "episode",
+   "gate": "soft",
+   "needs": [
+    "action",
+    "state"
+   ],
+   "stage": "numeric",
+   "depends_on": [],
+   "produces_adjudication": false,
+   "param_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+   },
+   "tables": [
+    {
+     "id": "motion_quality",
+     "title_zh": "运动质量明细",
+     "sortable": [
+      "episode_index",
+      "score"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
+   "mergeable": false
+  },
+  {
+   "id": "visual_quality",
+   "name_zh": "视觉质量",
+   "summary_zh": "逐机位检查清晰度、曝光与画面冻结（打分项）",
+   "level": "episode",
+   "gate": "soft",
+   "needs": [
+    "video"
+   ],
+   "stage": "frame",
+   "depends_on": [
+    "numeric_gates"
+   ],
+   "produces_adjudication": false,
+   "param_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+   },
+   "tables": [
+    {
+     "id": "visual_quality",
+     "title_zh": "逐机位打分",
+     "sortable": [
+      "episode_index",
+      "score",
+      "camera"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
+   "mergeable": false
+  },
+  {
+   "id": "video_action_sync",
+   "name_zh": "视频-动作同步",
+   "summary_zh": "逐机位比对画面运动与关节速度，找出画面与动作的时间错位",
+   "level": "episode",
+   "gate": "hard",
+   "needs": [
+    "action",
+    "video"
+   ],
+   "stage": "frame",
+   "depends_on": [
+    "numeric_gates"
+   ],
+   "produces_adjudication": false,
+   "param_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "sync_plots": {
+      "enum": [
+       "flagged",
+       "all",
+       "off"
+      ],
+      "default": "flagged",
+      "description": "同步曲线证据图：flagged 只画有标注或未对齐的条目，all 全画，off 不画"
+     }
+    }
+   },
+   "tables": [
+    {
+     "id": "video_action_sync",
+     "title_zh": "逐机位同步读数",
+     "sortable": [
+      "episode_index",
+      "lag_s",
+      "corr_peak"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
+   "mergeable": false
+  },
+  {
+   "id": "task_success",
+   "name_zh": "任务成败判定",
+   "summary_zh": "由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
+   "level": "episode",
+   "gate": "hard",
+   "needs": [
+    "video",
+    "vlm"
+   ],
+   "stage": "vlm",
+   "depends_on": [
+    "frame_gates",
+    "autolabel"
+   ],
+   "produces_adjudication": true,
+   "param_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "evidence_frames": {
+      "enum": [
+       "flagged",
+       "all",
+       "off"
+      ],
+      "default": "flagged",
+      "description": "证据帧：flagged 只存拒绝与待裁决条目，all 全存，off 不存"
+     }
+    }
+   },
+   "tables": [
+    {
+     "id": "task_success",
+     "title_zh": "判定明细",
+     "sortable": [
+      "episode_index",
+      "verdict"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
+   "mergeable": false
+  },
+  {
+   "id": "dedup",
+   "name_zh": "精确去重",
+   "summary_zh": "找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",
+   "level": "dataset",
+   "gate": "dedup",
+   "needs": [
+    "raw_bytes"
+   ],
+   "stage": "post_verdict",
+   "depends_on": [
+    "funnel_verdict"
+   ],
+   "produces_adjudication": false,
+   "param_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+   },
+   "tables": [
+    {
+     "id": "dedup_groups",
+     "title_zh": "重复组",
+     "sortable": [
+      "episode_index",
+      "duplicate_of"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
+   "mergeable": false
+  },
+  {
+   "id": "skill_profile",
+   "name_zh": "技能画像",
+   "summary_zh": "归纳两级技能体系并统计分布，检出标注与画面不一致的条目",
+   "level": "dataset",
+   "gate": "none",
+   "needs": [
+    "video",
+    "vlm"
+   ],
+   "stage": "post_verdict",
+   "depends_on": [
+    "funnel_verdict",
+    "dedup",
+    "autolabel"
+   ],
+   "produces_adjudication": true,
+   "param_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+   },
+   "tables": [
+    {
+     "id": "skill_assignment",
+     "title_zh": "技能归属",
+     "sortable": [
+      "episode_index",
+      "family",
+      "subskill"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
+   "mergeable": false
+  }
+ ]
+}

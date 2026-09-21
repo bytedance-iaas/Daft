@@ -1,0 +1,82 @@
+{
+ "schema": "cli/check.schema.json",
+ "valid": [
+  {
+   "schema_version": "1.0",
+   "modules": {
+    "task_success": {
+     "part": "0001",
+     "input_digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+     "episodes": {
+      "total": 49,
+      "pass": 38,
+      "fail": 6,
+      "abstain": 3,
+      "scored": 0,
+      "error": 2
+     },
+     "error_episodes": [
+      14,
+      31
+     ]
+    }
+   }
+  },
+  {
+   "schema_version": "1.0",
+   "modules": {
+    "visual_quality": {
+     "part": "0001",
+     "input_digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+     "episodes": {
+      "total": 50,
+      "pass": 0,
+      "fail": 0,
+      "abstain": 0,
+      "scored": 50,
+      "error": 0
+     },
+     "error_episodes": []
+    },
+    "video_action_sync": {
+     "part": "0001",
+     "input_digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+     "episodes": {
+      "total": 50,
+      "pass": 49,
+      "fail": 1,
+      "abstain": 0,
+      "scored": 0,
+      "error": 0
+     },
+     "error_episodes": [],
+     "skipped_existing": 12
+    }
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "modules": {}
+  },
+  {
+   "schema_version": "1.0",
+   "modules": {
+    "task_success": {
+     "part": "1",
+     "input_digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+     "episodes": {
+      "total": 1,
+      "pass": 1,
+      "fail": 0,
+      "abstain": 0,
+      "scored": 0,
+      "error": 0
+     },
+     "error_episodes": []
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,38 @@
+{
+ "schema": "cli/verify.schema.json",
+ "valid": [
+  {
+   "schema_version": "1.0",
+   "output": "tos://bucket/deliveries/droid-50/20260920-101500",
+   "checked": 212,
+   "failed": [],
+   "complete_marker": true
+  },
+  {
+   "schema_version": "1.0",
+   "output": "tos://b/x",
+   "checked": 212,
+   "failed": [
+    {
+     "path": "passed.json",
+     "reason": "zero_filled"
+    }
+   ],
+   "complete_marker": false
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "output": "tos://b/x",
+   "checked": 1,
+   "failed": [
+    {
+     "path": "a",
+     "reason": "zero_filled"
+    }
+   ],
+   "complete_marker": true
+  }
+ ]
+}

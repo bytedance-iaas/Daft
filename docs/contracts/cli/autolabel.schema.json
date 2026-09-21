@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "curation autolabel --json (schema 1.0)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "counts", "error_episodes", "captions_file"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "ok", "unclear", "error"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "ok": {"type": "integer", "minimum": 0},
+        "unclear": {"type": "integer", "minimum": 0},
+        "error": {"type": "integer", "minimum": 0}
+      }
+    },
+    "error_episodes": {"$ref": "common.schema.json#/$defs/episode_list"},
+    "captions_file": {"type": "string"}
+  }
+}

@@ -1,0 +1,39 @@
+{
+ "schema": "cli/export-manifest.schema.json",
+ "valid": [
+  {
+   "schema_version": "1.0",
+   "source_format": "lerobot_v2",
+   "fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "episodes": [
+    {
+     "episode_index": 34,
+     "new_index": 0,
+     "content_key": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+     "task_key": "sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752",
+     "artifacts": {
+      "parquet": "data/chunk-000/episode_000000.parquet",
+      "videos": {
+       "wrist": "videos/chunk-000/wrist/episode_000000.mp4"
+      }
+     }
+    }
+   ],
+   "meta_files": [
+    "meta/info.json",
+    "meta/episodes.jsonl",
+    "meta/tasks.jsonl",
+    "meta/stats.json"
+   ]
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "source_format": "lerobot_v4",
+   "fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "episodes": [],
+   "meta_files": []
+  }
+ ]
+}

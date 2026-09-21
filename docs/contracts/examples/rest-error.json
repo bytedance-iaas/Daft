@@ -1,0 +1,22 @@
+{
+ "schema": "openapi.yaml#/components/schemas/Error",
+ "valid": [
+  {
+   "error": {
+    "code": "task_state_conflict",
+    "message": "任务正在运行，请先停止再删除",
+    "details": {
+     "state": "running"
+    }
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "error": {
+    "code": "oops",
+    "message": "x"
+   }
+  }
+ ]
+}

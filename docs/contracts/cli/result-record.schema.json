@@ -1,46 +1,118 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "curator/contracts/cli/result-record.schema.json",
   "title": "Per-episode check result record (schema 1.0)",
   "description": "One line of checks/<module>/results.jsonl (v2) and of records/<module>.jsonl in a parity dump of v1. Frozen early by W0 because the parity tool consumes it; W2 adopts it as part of C2.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["episode_index", "module", "verdict", "passed", "score", "gate",
-               "details", "evidence", "elapsed_s", "error"],
+  "required": [
+    "episode_index",
+    "module",
+    "verdict",
+    "passed",
+    "score",
+    "gate",
+    "details",
+    "evidence",
+    "elapsed_s",
+    "error"
+  ],
   "properties": {
-    "episode_index": {"type": "integer", "minimum": 0},
-    "module": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "episode_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "module": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
     "verdict": {
       "description": "pass/fail: hard gate passed=True/False; abstain: passed=null and no score; scored: soft module with a score (never votes); error: the module could not judge this episode properly (D33).",
-      "enum": ["pass", "fail", "abstain", "scored", "error"]
+      "enum": [
+        "pass",
+        "fail",
+        "abstain",
+        "scored",
+        "error"
+      ]
     },
-    "passed": {"type": ["boolean", "null"]},
-    "score": {"type": ["number", "null"]},
-    "gate": {"enum": ["hard", "soft", "dedup", "none"]},
-    "details": {"type": "object", "description": "Module-specific, field names kept from v1."},
-    "evidence": {"type": "array", "items": {"type": "string"}},
-    "elapsed_s": {"type": ["number", "null"], "minimum": 0},
+    "passed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "gate": {
+      "enum": [
+        "hard",
+        "soft",
+        "dedup",
+        "none"
+      ]
+    },
+    "details": {
+      "type": "object",
+      "description": "Module-specific, field names kept from v1."
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "elapsed_s": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
     "error": {
       "oneOf": [
-        {"type": "null"},
+        {
+          "type": "null"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "incidents"],
+          "required": [
+            "kind",
+            "incidents"
+          ],
           "properties": {
-            "kind": {"const": "execution"},
+            "kind": {
+              "const": "execution"
+            },
             "incidents": {
               "type": "array",
               "minItems": 1,
               "items": {
                 "type": "object",
-                "required": ["step"],
+                "required": [
+                  "step"
+                ],
                 "properties": {
-                  "step": {"type": "string"},
-                  "cause": {"type": "string"},
-                  "camera": {"type": "string"},
-                  "call_kind": {"type": "string"},
-                  "attempts": {"type": "integer", "minimum": 0}
+                  "step": {
+                    "type": "string"
+                  },
+                  "cause": {
+                    "type": "string"
+                  },
+                  "camera": {
+                    "type": "string"
+                  },
+                  "call_kind": {
+                    "type": "string"
+                  },
+                  "attempts": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
                 }
               }
             }
@@ -51,9 +123,27 @@
   },
   "allOf": [
     {
-      "if": {"properties": {"verdict": {"const": "error"}}},
-      "then": {"properties": {"error": {"type": "object"}}},
-      "else": {"properties": {"error": {"type": "null"}}}
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "object"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      }
     }
   ]
 }

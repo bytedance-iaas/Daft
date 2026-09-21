@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "autolabel/captions.jsonl line (schema 1.0)",
+  "description": "One line per episode without a task text (design doc 02, section 3.4). status=unclear is the model's honest 'cannot tell'; status=error means the call failed after retries (D33) and the episode is held.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["episode_index", "status", "caption", "source", "error"],
+  "properties": {
+    "episode_index": {"$ref": "common.schema.json#/$defs/episode_index"},
+    "status": {"enum": ["ok", "unclear", "error"]},
+    "caption": {"type": ["string", "null"]},
+    "source": {"const": "自产caption"},
+    "error": {"oneOf": [{"type": "null"}, {"$ref": "common.schema.json#/$defs/execution_error"}]}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "ok"}}}, "then": {"properties": {"caption": {"type": "string", "minLength": 1}, "error": {"type": "null"}}}},
+    {"if": {"properties": {"status": {"const": "error"}}}, "then": {"properties": {"caption": {"type": "null"}, "error": {"type": "object"}}}}
+  ]
+}

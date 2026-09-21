@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "passed.json / reject.json / held.json / review.json (schema 1.0)",
+  "description": "aggregate --phase final writes the four lists into revisions/r<NNNN>/ (design doc 06, sections 1 and 3). passed, reject and held are disjoint and together cover every episode of the task; review is an orthogonal view: mostly passed episodes waiting for a human, plus rejects attributed to task_success that may be appealed. Dedup-removed episodes are only in reject (v1's passed.json also listed them; see design doc 10, section 3.0).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "list",
+    "revision",
+    "count",
+    "episodes"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version"
+    },
+    "list": {
+      "enum": [
+        "passed",
+        "reject",
+        "held",
+        "review"
+      ]
+    },
+    "revision": {
+      "$ref": "common.schema.json#/$defs/revision"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "episodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "episode_index"
+      ],
+      "properties": {
+        "episode_index": {
+          "$ref": "common.schema.json#/$defs/episode_index"
+        },
+        "soft_score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "description": "reject: why; held: which module could not judge it",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "module",
+              "text"
+            ],
+            "properties": {
+              "module": {
+                "$ref": "common.schema.json#/$defs/module_id"
+              },
+              "text": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "hard_gate",
+                  "soft_score",
+                  "duplicate",
+                  "human",
+                  "execution_error"
+                ]
+              },
+              "duplicate_of": {
+                "$ref": "common.schema.json#/$defs/episode_index"
+              }
+            }
+          }
+        },
+        "task_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "text",
+            "source"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "source": {
+              "$ref": "common.schema.json#/$defs/task_text_source"
+            }
+          }
+        },
+        "review": {
+          "type": "array",
+          "description": "review.json only: what a human is asked to decide, per source module",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_module",
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "source_module": {
+                "$ref": "common.schema.json#/$defs/module_id"
+              },
+              "kind": {
+                "enum": [
+                  "task_verdict",
+                  "label_conflict",
+                  "reject_appeal"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "current_list": {
+          "enum": [
+            "passed",
+            "reject"
+          ],
+          "description": "review.json only"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "list": {
+            "const": "review"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "episodes": {
+            "items": {
+              "required": [
+                "episode_index",
+                "review",
+                "current_list"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

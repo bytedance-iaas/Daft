@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Progress protocol - one stderr line under --json (schema 1.0)",
+  "description": "C3, the only runtime coupling between the CLI and the Daemon (design doc 02, section 5). With --json, stdout carries only the final result and stderr carries one JSON object per line. progress lines are cumulative (done/total so far); usage lines are increments for the requests they cover, and the Daemon adds them up per (subtask, module, call_kind, model, ledger) before writing the token_usage table (design doc 01, section 2.6). The SSE stream the Daemon sends to browsers carries cumulative totals instead.",
+  "type": "object",
+  "required": [
+    "ts",
+    "kind"
+  ],
+  "properties": {
+    "ts": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "epoch milliseconds"
+    },
+    "kind": {
+      "enum": [
+        "progress",
+        "log",
+        "usage",
+        "throttle"
+      ]
+    },
+    "level": {
+      "enum": [
+        "error",
+        "warn",
+        "info",
+        "debug"
+      ]
+    },
+    "stage": {
+      "type": "string",
+      "description": "e.g. autolabel, check:visual_quality, aggregate:funnel"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {
+          "const": "progress"
+        },
+        "done": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eta_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "episode_index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "stage",
+        "done",
+        "total"
+      ]
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "log"
+        },
+        "msg": {
+          "type": "string"
+        },
+        "episode_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "module": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "level",
+        "msg"
+      ]
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "usage"
+        },
+        "ledger": {
+          "enum": [
+            "actual",
+            "attributed"
+          ],
+          "default": "actual"
+        },
+        "model": {
+          "type": "string"
+        },
+        "module": {
+          "type": "string",
+          "description": "a module id, or autolabel"
+        },
+        "call_kind": {
+          "enum": [
+            "probe",
+            "endstate",
+            "arbitration",
+            "caption",
+            "llm",
+            "merged"
+          ]
+        },
+        "requests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requests_unknown_usage": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prompt_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completion_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cached_tokens": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "model",
+        "module",
+        "call_kind",
+        "requests",
+        "prompt_tokens",
+        "completion_tokens",
+        "reasoning_tokens",
+        "cached_tokens"
+      ]
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "throttle"
+        },
+        "backend": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason": {
+          "type": "string"
+        },
+        "gates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "required": [
+        "backend",
+        "limit",
+        "reason"
+      ]
+    }
+  ]
+}

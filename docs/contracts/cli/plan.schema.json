@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "curation plan --json / plan.json (schema 1.0)",
+  "description": "The execution plan the planner derives (design doc 04, section 3). It is data: the Daemon stores it with the task, schedules by it and serves it read-only. Callers can only lower the limits it is derived from (D31).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "vlm_parallelism", "limits", "stages", "estimates"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "vlm_parallelism": {"type": "integer", "minimum": 1, "description": "the effective N the VLM gates are derived from"},
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The upper bounds the plan honoured, and where each came from.",
+      "required": ["cpu_concurrency", "vlm_parallelism"],
+      "properties": {
+        "cpu_concurrency": {"$ref": "#/$defs/limit"},
+        "vlm_parallelism": {"$ref": "#/$defs/limit"}
+      }
+    },
+    "stages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/stage"}},
+    "estimates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vlm_requests", "wall_clock_s", "notes"],
+      "properties": {
+        "vlm_requests": {"type": "integer", "minimum": 0},
+        "wall_clock_s": {"type": "number", "minimum": 0},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  },
+  "$defs": {
+    "limit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "bound_by"],
+      "properties": {
+        "value": {"type": "integer", "minimum": 1},
+        "bound_by": {"enum": ["task", "model", "backend", "site", "planner", "running_tasks"]}
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "episode": {"type": "integer", "minimum": 1},
+        "probe": {"type": "integer", "minimum": 1},
+        "endstate": {"type": "integer", "minimum": 1},
+        "arbitration": {"type": "integer", "minimum": 1},
+        "guard_caption": {"type": "integer", "minimum": 1},
+        "caption": {"type": "integer", "minimum": 1},
+        "llm": {"type": "integer", "minimum": 1},
+        "audit": {"type": "integer", "minimum": 1}
+      }
+    },
+    "merge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "groups"],
+      "properties": {
+        "strategy": {"enum": ["none", "per_episode_multi_module"]},
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["modules", "frame_policy"],
+            "properties": {
+              "modules": {"$ref": "common.schema.json#/$defs/module_list"},
+              "frame_policy": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "episodes_ref": {
+      "type": "string",
+      "pattern": "^(selected|unlabeled|keep|keep-minus-duplicates|survivors:[a-z_]+)$",
+      "description": "which episode set a stage consumes"
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": {"enum": ["autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile", "final"]},
+        "kind": {"enum": ["cpu", "vlm", "aggregate"]},
+        "command": {"enum": ["autolabel", "check", "aggregate"]},
+        "modules": {"$ref": "common.schema.json#/$defs/module_list"},
+        "episodes": {"$ref": "#/$defs/episodes_ref"},
+        "concurrency": {"type": "integer", "minimum": 1},
+        "hard_gates": {"$ref": "common.schema.json#/$defs/module_list"},
+        "gates": {"$ref": "#/$defs/gates"},
+        "merge": {"$ref": "#/$defs/merge"},
+        "phase": {"enum": ["funnel", "final"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "aggregate"}}}, "then": {"required": ["phase"]}},
+        {"if": {"properties": {"kind": {"enum": ["cpu", "vlm"]}}, "required": ["kind"]}, "then": {"required": ["episodes"]}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+ "schema": "cli/commit.schema.json",
+ "valid": [
+  {
+   "schema_version": "1.0",
+   "revision": 2,
+   "created_at": 1758300000000,
+   "source_digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "parts": {
+    "task_success": [
+     "0001",
+     "0002"
+    ],
+    "skill_profile": [
+     "0001",
+     "0002"
+    ]
+   },
+   "adjudications_applied": [],
+   "subtask_id": "sub_01HX",
+   "files": {
+    "passed.json": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "report.json": "sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752"
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "revision": 0,
+   "created_at": 1,
+   "source_digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "parts": {},
+   "adjudications_applied": [],
+   "subtask_id": null,
+   "files": {}
+  }
+ ]
+}

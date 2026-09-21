@@ -71,6 +71,7 @@
 | POST | `/api/v1/tasks/{id}/continue` | stopped / failed 的任务继续运行 → 建子任务 |
 | POST | `/api/v1/tasks/{id}/reexport` | 重新导出交付数据集 → 建子任务 |
 | GET | `/api/v1/tasks/{id}/subtasks` | 子任务列表 |
+| GET | `/api/v1/tasks/{id}/timeline` | 执行时间线：主流程、子任务、暂停与恢复、结果版本（任务详情页用，W2 补） |
 | GET | `/api/v1/tasks/{id}/plan` | planner 生成的执行计划，**只读** |
 | GET | `/api/v1/tasks/{id}/logs` | 完整日志，按 stage 过滤，游标分页，见 §11 |
 | GET | `/api/v1/tasks/{id}/usage` | Token 消耗（按模块 / 调用种类 / 模型 / 子任务聚合） |
@@ -94,6 +95,9 @@
 | GET | `/api/v1/media/sign` | 换一个 TOS 预签名 URL（视频、证据帧） |
 | GET | `/events/tasks/{id}` | SSE：进度、日志、状态变更 |
 | GET | `/healthz`、`/readyz` | 探针，免鉴权，根路径与 `{base}` 下都可达 |
+
+报告、明细表、单条 episode、性能剖析四个接口都接受 `?rev=N` 查看历史结果版本，缺省是当前版本。
+全部接口的请求与响应结构以 `docs/contracts/openapi.yaml`（C4）为准，本篇是它的说明。
 
 ## 3. 新建任务：`POST /api/v1/tasks`
 
@@ -162,7 +166,7 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
 八把闸门怎么从 N 推出来、各档怎么排，仍然是 planner 的事（04 篇 §2）。超时和重试次数同理，是「最多这么多」。
 CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」提交的是同一组键。
 模块自己的参数走 `modules[].params`，可用的键由 `GET /modules` 给出
-（例：`video_action_sync.sync_plots = flagged | all | none`）。
+（例：`video_action_sync.sync_plots = flagged | all | off`，取值沿用 v1 的 `pipeline.sync_plots`）。
 
 ### 3.2 重试、继续运行、重新导出
 

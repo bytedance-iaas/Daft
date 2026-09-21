@@ -1,0 +1,60 @@
+{
+ "schema": "cli/verdict-line.schema.json",
+ "valid": [
+  {
+   "episode_index": 0,
+   "verdict": "keep",
+   "hard_fails": [],
+   "soft_score": 0.99,
+   "undecidable": [
+    "task_success"
+   ],
+   "error_modules": [],
+   "reason": ""
+  },
+  {
+   "episode_index": 2,
+   "verdict": "drop",
+   "hard_fails": [
+    "timestamp_check"
+   ],
+   "soft_score": null,
+   "undecidable": [],
+   "error_modules": [],
+   "reason": "未通过「时间戳检查」：第 37 帧后间隔突增至 0.67 秒"
+  },
+  {
+   "episode_index": 31,
+   "verdict": "held",
+   "hard_fails": [],
+   "soft_score": 0.9,
+   "undecidable": [],
+   "error_modules": [
+    "task_success"
+   ],
+   "reason": "任务成败判定执行出错，待补跑"
+  }
+ ],
+ "invalid": [
+  {
+   "episode_index": 31,
+   "verdict": "held",
+   "hard_fails": [],
+   "soft_score": null,
+   "undecidable": [],
+   "error_modules": [],
+   "reason": ""
+  },
+  {
+   "episode_index": 1,
+   "verdict": "keep",
+   "hard_fails": [
+    "kinematic_limits"
+   ],
+   "soft_score": null,
+   "undecidable": [],
+   "error_modules": [],
+   "reason": ""
+  }
+ ]
+}

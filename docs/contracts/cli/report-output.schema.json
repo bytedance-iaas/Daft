@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "curation report --json (schema 1.0)",
+  "description": "report writes report.md, report.json, perf.json and tables/*.parquet into the revision given by --revision, then commit.json last (design doc 02, section 3.8).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "revision", "files"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "revision": {"$ref": "common.schema.json#/$defs/revision"},
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["report_md", "report_json", "perf_json", "tables", "commit"],
+      "properties": {
+        "report_md": {"type": "string"},
+        "report_json": {"type": "string"},
+        "perf_json": {"type": "string"},
+        "tables": {"type": "array", "items": {"type": "string"}},
+        "commit": {"type": "string"}
+      }
+    }
+  }
+}

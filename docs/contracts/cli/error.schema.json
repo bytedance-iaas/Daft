@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CLI --json error envelope (schema 1.0)",
+  "description": "What a command prints on stdout with --json when it exits non-zero (design doc 02, section 4). Exit 0 always prints the command's own result, even when some episodes are errors.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "exit_code", "error"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "exit_code": {"enum": [2, 3, 4, 5, 6, 130]},
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": ["usage", "input_unreachable", "module_failed", "terminated", "source_changed", "interrupted"],
+          "description": "usage=2, input_unreachable=3, module_failed=4, terminated (SIGTERM, finished the episodes in flight)=5, source_changed=6, interrupted (SIGINT)=130"
+        },
+        "message": {"type": "string"},
+        "details": {"type": "object"}
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"error": {"properties": {"code": {"const": "usage"}}}}}, "then": {"properties": {"exit_code": {"const": 2}}}},
+    {"if": {"properties": {"error": {"properties": {"code": {"const": "input_unreachable"}}}}}, "then": {"properties": {"exit_code": {"const": 3}}}},
+    {"if": {"properties": {"error": {"properties": {"code": {"const": "module_failed"}}}}}, "then": {"properties": {"exit_code": {"const": 4}}}},
+    {"if": {"properties": {"error": {"properties": {"code": {"const": "terminated"}}}}}, "then": {"properties": {"exit_code": {"const": 5}}}},
+    {"if": {"properties": {"error": {"properties": {"code": {"const": "source_changed"}}}}}, "then": {"properties": {"exit_code": {"const": 6}}}},
+    {"if": {"properties": {"error": {"properties": {"code": {"const": "interrupted"}}}}}, "then": {"properties": {"exit_code": {"const": 130}}}}
+  ]
+}

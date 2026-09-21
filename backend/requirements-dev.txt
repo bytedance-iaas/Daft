@@ -1,0 +1,4 @@
+# Test-only dependencies (CI and local); runtime deps are in requirements.txt
+pytest
+jsonschema
+openapi-spec-validator

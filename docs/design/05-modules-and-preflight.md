@@ -20,6 +20,8 @@ class ModuleSpec:
     merge_units: Callable | None                    # VLM 模块可选：声明可合并的提问，见 04 篇 §4.2
 ```
 
+定稿（W2）：代码在 `backend/curation/contracts/modules.py`，另加两个字段 —— `summary_zh`（界面上的一句话说明）和 `tables`（报告明细表的 id 与可排序字段白名单，03 篇 §6）；导出为 `docs/contracts/modules.json`，`GET /api/v1/modules` 原样返回。模块参数的取值沿用 v1：`sync_plots`、`evidence_frames` 都是 `flagged | all | off`。
+
 | id | 中文名 | 级别 | 门 | 需要 | 档 | 依赖 | 产生裁决 |
 |---|---|---|---|---|---|---|---|
 | `timestamp_check` | 时间戳检查 | episode | hard | `timestamps` | numeric | — | 否 |

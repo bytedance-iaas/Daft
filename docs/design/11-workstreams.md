@@ -65,7 +65,7 @@
 
 | # | 契约 | 文件 | 消费方 |
 |---|---|---|---|
-| C1 | 模块注册表 | `backend/curation/registry/modules.py` | CLI、Daemon、前端 |
+| C1 | 模块注册表 | `backend/curation/contracts/modules.py`（导出为 `docs/contracts/modules.json`；不放在 A 类的 `registry/` 目录里） | CLI、Daemon、前端 |
 | C2 | CLI `--json` schema（含规范化的 `results.jsonl` 行，对账工具也消费它；这一行的格式已由 W0 先行定稿为 `result-record.schema.json`） | `docs/contracts/cli/*.schema.json` | Daemon、对账工具 |
 | C3 | 进度协议（stderr JSON Lines） | `docs/contracts/progress.schema.json` | Daemon → SSE |
 | C4 | REST OpenAPI | `docs/contracts/openapi.yaml` | 前端 |
@@ -73,6 +73,8 @@
 
 **三份 schema 文件是真的文件，不是文档里的示意**：CI 用它们做契约测试，
 任何一方改了 schema 而没同步改测试，CI 就红。
+
+落地（2026-09-21）：契约与说明都在 `docs/contracts/`（见其 README）；`docs/contracts/examples/` 里是从设计文档抄来的合法与不合法示例，契约测试逐条校验；`CONTRACTS.lock` 记着每份契约的 sha256，改了契约而没刷新锁，CI 就红。
 
 ## 5. 每个包的验收标准
 

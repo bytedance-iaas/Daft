@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "curation export --json (schema 1.0)",
+  "description": "Exports passed (review episodes included, held excluded) into export/lerobot_curated/ (design doc 02, section 3.7; doc 06, section 4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "format", "incremental", "episodes", "diff", "fingerprint", "manifest", "videos_copied", "videos_reencoded"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "format": {"enum": ["lerobot_v2", "lerobot_v3"]},
+    "incremental": {"type": "boolean"},
+    "episodes": {"type": "integer", "minimum": 0},
+    "diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keep", "relabel", "renumber", "add", "drop"],
+      "properties": {
+        "keep": {"type": "integer", "minimum": 0},
+        "relabel": {"type": "integer", "minimum": 0},
+        "renumber": {"type": "integer", "minimum": 0},
+        "add": {"type": "integer", "minimum": 0},
+        "drop": {"type": "integer", "minimum": 0}
+      }
+    },
+    "fingerprint": {"$ref": "common.schema.json#/$defs/digest"},
+    "manifest": {"type": "string"},
+    "videos_copied": {"type": "integer", "minimum": 0},
+    "videos_reencoded": {"type": "integer", "minimum": 0}
+  }
+}

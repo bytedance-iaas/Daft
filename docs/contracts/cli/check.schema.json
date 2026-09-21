@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "curation check --json (schema 1.0)",
+  "description": "Design doc 02, section 3.5. Exit 0 does not mean every episode succeeded: the Daemon sets the module state from these counts (succeeded / completed_with_errors), never from the exit code alone.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "modules"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "modules": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "common.schema.json#/$defs/module_id"},
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["part", "input_digest", "episodes", "error_episodes"],
+        "properties": {
+          "part": {"$ref": "common.schema.json#/$defs/part_id"},
+          "input_digest": {"$ref": "common.schema.json#/$defs/digest"},
+          "episodes": {"$ref": "common.schema.json#/$defs/verdict_counts"},
+          "error_episodes": {"$ref": "common.schema.json#/$defs/episode_list"},
+          "skipped_existing": {"type": "integer", "minimum": 0, "description": "--resume: episodes that already had a non-error result"},
+          "merge": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "receipts of the VLM request merge framework (design doc 04, section 4.2)",
+            "required": ["requests", "merged_units", "split_units", "fallback_units"],
+            "properties": {
+              "requests": {"type": "integer", "minimum": 0},
+              "merged_units": {"type": "integer", "minimum": 0},
+              "split_units": {"type": "integer", "minimum": 0},
+              "fallback_units": {"type": "integer", "minimum": 0}
+            }
+          }
+        }
+      }
+    }
+  }
+}

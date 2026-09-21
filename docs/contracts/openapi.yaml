@@ -1,0 +1,1918 @@
+openapi: 3.1.0
+info:
+  title: Curator v2 API
+  version: 1.0.0
+  description: |
+    C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
+    Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
+    production; the gateway does not strip it). Write operations are asynchronous: they
+    return the resource and its state, progress arrives over SSE or polling.
+    Errors use one body, `Error`; `code` is stable for machines, `message` is Chinese for people.
+    Responses that point people at a page carry `links` (D22): absolute URLs when
+    `server.publicBaseUrl` is configured, otherwise relative paths with `absolute: false`.
+    Write endpoints accept only `application/json`; there is no CORS.
+servers:
+  - url: "{base}/api/v1"
+    variables:
+      base:
+        default: ""
+        description: mount prefix, e.g. /curation
+security:
+  - basicAuth: []
+tags:
+  - name: credentials
+    description: TOS access keys (VLM API keys are stored with their backend)
+  - name: vlm
+    description: VLM backends and models
+  - name: datasets
+    description: modules, datasets, episodes, preflight, delivery probe
+  - name: tasks
+    description: tasks and subtasks
+  - name: report
+    description: report, detail tables, episodes, performance, adjudication
+  - name: system
+    description: media signing, events, probes
+
+paths:
+  # ---------------------------------------------------------------- credentials
+  /credentials:
+    get:
+      tags: [credentials]
+      operationId: listCredentials
+      summary: List TOS access keys (never returns secrets)
+      responses:
+        "200":
+          description: all access keys of the owner
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: "#/components/schemas/Credential"}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [credentials]
+      operationId: createCredential
+      summary: Save an access key; verifies identity only (D30, doc 08 §4)
+      description: |
+        Saving never fails because verification failed: the key is stored and marked
+        `failed` or `unverified`. Read and write permissions are checked against concrete
+        buckets when a task starts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CredentialCreate"}
+      responses:
+        "201":
+          description: saved
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Credential"}
+        default: {$ref: "#/components/responses/Error"}
+  /credentials/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    put:
+      tags: [credentials]
+      operationId: updateCredential
+      summary: Update; a secret left empty stays unchanged
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CredentialUpdate"}
+      responses:
+        "200":
+          description: updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Credential"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [credentials]
+      operationId: deleteCredential
+      summary: Delete (409 credential_in_use while a non-terminal task uses it)
+      description: |
+        Referenced only by finished tasks: requires `confirm=true`. Those tasks keep their
+        reports, which then say the key is gone; rebind-credentials gives them another one.
+      parameters:
+        - name: confirm
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "204": {description: deleted}
+        default: {$ref: "#/components/responses/Error"}
+  /credentials/{id}/verify:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [credentials]
+      operationId: verifyCredential
+      summary: Verify identity again
+      responses:
+        "200":
+          description: verification result (also stored on the key)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VerifyResult"}
+        default: {$ref: "#/components/responses/Error"}
+
+  # ---------------------------------------------------------------- vlm backends
+  /vlm-backends:
+    get:
+      tags: [vlm]
+      operationId: listVlmBackends
+      summary: List backends with their models
+      responses:
+        "200":
+          description: backends
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: "#/components/schemas/VlmBackend"}}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [vlm]
+      operationId: createVlmBackend
+      summary: Add a backend with its API key; then try GET {endpoint}/models once (D8)
+      description: Not listing any models is not an error; the user adds model IDs by hand.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/VlmBackendCreate"}
+      responses:
+        "201":
+          description: saved
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VlmBackend"}
+        default: {$ref: "#/components/responses/Error"}
+  /vlm-backends/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    put:
+      tags: [vlm]
+      operationId: updateVlmBackend
+      summary: Update; an API key left empty stays unchanged
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/VlmBackendUpdate"}
+      responses:
+        "200":
+          description: updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VlmBackend"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [vlm]
+      operationId: deleteVlmBackend
+      summary: Delete with its models and key (409 backend_in_use while a non-terminal task uses it)
+      parameters:
+        - name: confirm
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        "204": {description: deleted}
+        default: {$ref: "#/components/responses/Error"}
+  /vlm-backends/{id}/verify:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [vlm]
+      operationId: verifyVlmBackend
+      summary: Probe the endpoint (GET /models, else a minimal chat call)
+      responses:
+        "200":
+          description: result
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VerifyResult"}
+        default: {$ref: "#/components/responses/Error"}
+  /vlm-backends/{id}/refresh-models:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [vlm]
+      operationId: refreshVlmModels
+      summary: List models again; an empty result means "enter them by hand"
+      responses:
+        "200":
+          description: listing result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [listed, models]
+                properties:
+                  listed: {type: boolean, description: "false when GET /models is not available"}
+                  models: {type: array, items: {$ref: "#/components/schemas/VlmModel"}}
+                  note: {type: string}
+        default: {$ref: "#/components/responses/Error"}
+  /vlm-backends/{id}/models:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [vlm]
+      operationId: addVlmModel
+      summary: Add a model ID or inference endpoint ID (ep-...), checked with one minimal call
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/VlmModelCreate"}
+      responses:
+        "201":
+          description: added
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VlmModel"}
+        default: {$ref: "#/components/responses/Error"}
+  /vlm-backends/{id}/models/{model_id}:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - name: model_id
+        in: path
+        required: true
+        schema: {type: string}
+    patch:
+      tags: [vlm]
+      operationId: updateVlmModel
+      summary: Set reasoning effort and parallelism
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/VlmModelPatch"}
+      responses:
+        "200":
+          description: updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VlmModel"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [vlm]
+      operationId: deleteVlmModel
+      summary: Remove a model (409 backend_in_use while a non-terminal task uses it)
+      responses:
+        "204": {description: removed}
+        default: {$ref: "#/components/responses/Error"}
+
+  # ---------------------------------------------------------------- datasets
+  /modules:
+    get:
+      tags: [datasets]
+      operationId: getModules
+      summary: The module registry (C1); the frontend's module list comes only from here
+      responses:
+        "200":
+          description: registry
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ModuleRegistry"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets:
+    get:
+      tags: [datasets]
+      operationId: listDatasets
+      summary: List datasets under a private TOS prefix or in the HuggingFace cache bucket
+      parameters:
+        - $ref: "#/components/parameters/Source"
+        - name: uri
+          in: query
+          description: tos:// prefix to list (source=tos)
+          schema: {type: string}
+        - $ref: "#/components/parameters/Region"
+        - $ref: "#/components/parameters/CredentialName"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: datasets
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/CursorPage"
+                  - type: object
+                    properties:
+                      items: {type: array, items: {$ref: "#/components/schemas/Dataset"}}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/episodes:
+    get:
+      tags: [datasets]
+      operationId: listDatasetEpisodes
+      summary: Episodes for the preview grid; metadata only, no decoding on the server (doc 03 §10)
+      parameters:
+        - $ref: "#/components/parameters/Source"
+        - name: uri
+          in: query
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/Region"
+        - $ref: "#/components/parameters/CredentialName"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: episodes
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/CursorPage"
+                  - type: object
+                    properties:
+                      items: {type: array, items: {$ref: "#/components/schemas/EpisodePreview"}}
+        default: {$ref: "#/components/responses/Error"}
+  /preflight:
+    post:
+      tags: [datasets]
+      operationId: preflight
+      summary: Preflight a dataset (metadata only, seconds); the result is kept 30 minutes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PreflightRequest"}
+      responses:
+        "200":
+          description: preflight result
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PreflightResponse"}
+        default: {$ref: "#/components/responses/Error"}
+  /deliveries/probe:
+    post:
+      tags: [datasets]
+      operationId: probeDelivery
+      summary: Write and delete one object under the delivery directory with the given key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DeliveryProbeRequest"}
+      responses:
+        "200":
+          description: probe result
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProbeResult"}
+        default: {$ref: "#/components/responses/Error"}
+
+  # ---------------------------------------------------------------- tasks
+  /tasks:
+    get:
+      tags: [tasks]
+      operationId: listTasks
+      summary: Task list, page-number pagination (D21), newest first
+      parameters:
+        - name: page
+          in: query
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          schema: {enum: [10, 20, 50, 100], default: 20}
+        - name: state
+          in: query
+          description: a task state, or `deleted` for soft-deleted tasks (restorable for 30 days)
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/TaskState"
+              - const: deleted
+        - name: q
+          in: query
+          description: search by name or id
+          schema: {type: string}
+        - name: delivery
+          in: query
+          description: tasks writing to this delivery directory
+          schema: {type: string}
+      responses:
+        "200":
+          description: one page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page, page_size, total]
+                properties:
+                  items: {type: array, items: {$ref: "#/components/schemas/TaskListItem"}}
+                  page: {type: integer, minimum: 1}
+                  page_size: {type: integer}
+                  total: {type: integer, minimum: 0}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [tasks]
+      operationId: createTask
+      summary: Create a task - the requirement's run_modules() (D5)
+      description: |
+        The only way to submit work. The Daemon always plans internally; callers may only give
+        upper bounds (D31). With `start_now` the three pre-start checks run first (D30): input
+        readable, delivery writable, VLM callable; any failure returns `precheck_failed` with
+        a per-check reason and nothing starts.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TaskCreate"}
+      responses:
+        "201":
+          description: created (state queued, or created when start_now=false)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TaskCreated"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/batch:
+    post:
+      tags: [tasks]
+      operationId: createTasksBatch
+      summary: One configuration, several datasets, one task each (deep link with many datasets)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TaskBatchCreate"}
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks]
+                properties:
+                  tasks: {type: array, items: {$ref: "#/components/schemas/TaskCreated"}}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [tasks]
+      operationId: getTask
+      responses:
+        "200":
+          description: task detail (doc 03 §3.3)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Task"}
+        default: {$ref: "#/components/responses/Error"}
+    patch:
+      tags: [tasks]
+      operationId: updateTask
+      summary: created - any field; after start - only name and note (D20)
+      description: Other fields after start return task_state_conflict. Concurrent edits are guarded by If-Match.
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          description: the task's updated_at as returned by GET; a stale value returns 412
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TaskPatch"}
+      responses:
+        "200":
+          description: updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Task"}
+        default: {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [tasks]
+      operationId: deleteTask
+      summary: Soft-delete the platform record; TOS is untouched (D28); created or terminal only
+      responses:
+        "204": {description: "deleted; restorable for 30 days"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/restore:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [tasks]
+      operationId: restoreTask
+      responses:
+        "200":
+          description: restored
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Task"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/purge-artifacts:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [tasks]
+      operationId: purgeTaskArtifacts
+      summary: Delete this task's run directory on TOS; the exact path must be echoed back (D28)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirm_path]
+              properties:
+                confirm_path: {type: string, description: "tos://.../<run_id>/ exactly as the server computes it"}
+      responses:
+        "202":
+          description: purge started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [path, bytes]
+                properties:
+                  path: {type: string}
+                  bytes: {type: integer, minimum: 0}
+                  latest_removed: {type: boolean}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/rebind-credentials:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [tasks]
+      operationId: rebindTaskCredentials
+      summary: Give a finished task a new access key after the old one was deleted
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                input_credential: {type: string}
+                output_credential: {type: string}
+      responses:
+        "200":
+          description: rebound
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Task"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/actions/{action}:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - name: action
+        in: path
+        required: true
+        schema: {enum: [start, pause, resume, stop]}
+    post:
+      tags: [tasks]
+      operationId: taskAction
+      summary: start / pause / resume / stop; illegal transitions return 409 task_state_conflict
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: new state
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Task"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/retry:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [tasks]
+      operationId: retryTask
+      summary: Re-run only the error episodes, from the stage they failed in (D25, D33)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                modules:
+                  type: array
+                  items: {$ref: "#/components/schemas/ModuleId"}
+                  description: omitted = every module with error episodes or a whole-module failure
+      responses:
+        "202":
+          description: subtask created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SubtaskCreated"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/continue:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [tasks]
+      operationId: continueTask
+      summary: Resume a stopped or failed task from its checkpoints (not after source_changed)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: subtask created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SubtaskCreated"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/reexport:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [tasks]
+      operationId: reexportTask
+      summary: Incremental re-export of the delivered dataset (also the first export when export=false)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: subtask created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SubtaskCreated"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/subtasks:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [tasks]
+      operationId: listSubtasks
+      responses:
+        "200":
+          description: subtasks, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: "#/components/schemas/Subtask"}}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/timeline:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [tasks]
+      operationId: getTaskTimeline
+      summary: Execution timeline - main run, subtasks, pauses and resumes, result revisions
+      responses:
+        "200":
+          description: timeline, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: "#/components/schemas/TimelineEntry"}}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/plan:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [tasks]
+      operationId: getTaskPlan
+      summary: The execution plan, read only (404 before the task starts)
+      responses:
+        "200":
+          description: plan
+          content:
+            application/json:
+              schema: {$ref: "./cli/plan.schema.json"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/logs:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [tasks]
+      operationId: getTaskLogs
+      summary: Full logs, cursor paginated; SSE only carries what is happening now
+      parameters:
+        - name: stage
+          in: query
+          schema: {type: string}
+        - name: subtask
+          in: query
+          description: empty = main run
+          schema: {type: string}
+        - name: level
+          in: query
+          schema: {enum: [error, warn, info, debug]}
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: log lines
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/CursorPage"
+                  - type: object
+                    properties:
+                      items: {type: array, items: {$ref: "#/components/schemas/LogLine"}}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/usage:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [tasks]
+      operationId: getTaskUsage
+      summary: Token usage by module, call kind, model and subtask; totals use the actual ledger only
+      responses:
+        "200":
+          description: usage
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UsageReport"}
+        default: {$ref: "#/components/responses/Error"}
+
+  # ---------------------------------------------------------------- report
+  /tasks/{id}/report:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/Rev"
+    get:
+      tags: [report]
+      operationId: getReport
+      summary: Report of the current (or given) result revision
+      responses:
+        "200":
+          description: report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, report, links]
+                properties:
+                  revision: {type: integer, minimum: 1}
+                  report: {$ref: "./cli/report.schema.json"}
+                  links: {$ref: "#/components/schemas/Links"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/report/tables/{table}:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - name: table
+        in: path
+        required: true
+        description: a table id declared in the module registry
+        schema: {type: string}
+      - $ref: "#/components/parameters/Rev"
+    get:
+      tags: [report]
+      operationId: getReportTable
+      summary: One slice of a detail table, read from Parquet by the Daemon (doc 03 §6)
+      description: |
+        The cursor carries the revision; if the revision changed since the cursor was issued the
+        server returns result_changed and the client starts again from the first page.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500, default: 100}
+        - name: sort
+          in: query
+          description: a column from the table's sortable whitelist
+          schema: {type: string}
+        - name: order
+          in: query
+          schema: {enum: [asc, desc], default: asc}
+      responses:
+        "200":
+          description: rows
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/CursorPage"
+                  - type: object
+                    required: [columns, revision]
+                    properties:
+                      columns: {type: array, items: {type: string}}
+                      revision: {type: integer, minimum: 1}
+                      items: {type: array, items: {type: object}}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - name: index
+        in: path
+        required: true
+        schema: {type: integer, minimum: 0}
+      - $ref: "#/components/parameters/Rev"
+    get:
+      tags: [report]
+      operationId: getEpisode
+      summary: One episode across all modules (the v1 trajectory page)
+      responses:
+        "200":
+          description: episode view
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EpisodeView"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/perf:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/Rev"
+    get:
+      tags: [report]
+      operationId: getPerf
+      summary: Performance profile - all calls, main run only, or one subtask
+      parameters:
+        - name: scope
+          in: query
+          schema: {enum: [all, main, subtask], default: all}
+        - name: subtask
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: profile
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Perf"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/adjudication:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [report]
+      operationId: listAdjudication
+      summary: The adjudication queue, one card per episode, grouped by source module
+      parameters:
+        - name: source
+          in: query
+          schema: {$ref: "#/components/schemas/ModuleId"}
+        - name: status
+          in: query
+          schema: {enum: [pending, decided, unapplied, all], default: pending}
+        - name: tab
+          in: query
+          description: appeals lists only rejects attributed to task_success
+          schema: {enum: [review, appeals], default: review}
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: cards
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/CursorPage"
+                  - type: object
+                    required: [counts]
+                    properties:
+                      items: {type: array, items: {$ref: "#/components/schemas/AdjudicationCard"}}
+                      counts: {$ref: "#/components/schemas/AdjudicationCounts"}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [report]
+      operationId: submitAdjudication
+      summary: Record decisions (append only, last one wins, nothing is executed)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decisions]
+              properties:
+                decisions:
+                  type: array
+                  minItems: 1
+                  items: {$ref: "#/components/schemas/DecisionInput"}
+      responses:
+        "200":
+          description: recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AdjudicationCounts"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/adjudication/apply:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [report]
+      operationId: applyAdjudication
+      summary: Execute the recorded decisions as a subtask (D10); never exports (D9)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: subtask created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SubtaskCreated"}
+        default: {$ref: "#/components/responses/Error"}
+
+  # ---------------------------------------------------------------- system
+  /media/sign:
+    get:
+      tags: [system]
+      operationId: signMedia
+      summary: A presigned TOS URL for a video or evidence frame (D16); browsers fetch it directly
+      parameters:
+        - name: task
+          in: query
+          required: true
+          schema: {type: string}
+        - name: scope
+          in: query
+          required: true
+          description: delivery (output key) or input (input key; the public cache bucket is not signed)
+          schema: {enum: [delivery, input]}
+        - name: path
+          in: query
+          required: true
+          description: relative to the scope's prefix; normalized and checked against it
+          schema: {type: string}
+        - name: ttl
+          in: query
+          schema: {type: integer, minimum: 60, maximum: 3600, default: 1800}
+      responses:
+        "200":
+          description: signed URL (public endpoint)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SignedUrl"}
+        default: {$ref: "#/components/responses/Error"}
+  /events/tasks/{id}:
+    servers:
+      - url: "{base}"
+        variables:
+          base: {default: ""}
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [system]
+      operationId: taskEvents
+      summary: Server-sent events for one task (doc 03 §5)
+      description: |
+        Events: `state`, `progress`, `log`, `usage`, `done`, `reset`; data payloads are the
+        Sse* schemas. Every event has `id: <epoch>-<seq>`. Reconnect with `Last-Event-ID`: same
+        epoch and seq still buffered (last 200) resumes; otherwise the server sends `reset`
+        and the client reloads GET /api/v1/tasks/{id}. usage and progress carry cumulative
+        values. Progress is throttled to 2/s and logs to 20/s; the full log is in /logs.
+        Clients must keep working without SSE by polling every 5 s.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          schema: {type: string, pattern: "^[0-9]+-[0-9]+$"}
+      responses:
+        "200":
+          description: event stream
+          content:
+            text/event-stream:
+              schema: {type: string}
+        default: {$ref: "#/components/responses/Error"}
+  /healthz:
+    servers:
+      - url: "/"
+      - url: "{base}"
+        variables:
+          base: {default: ""}
+    get:
+      tags: [system]
+      operationId: healthz
+      summary: Liveness; no authentication, no dependency checks
+      security: []
+      responses:
+        "200":
+          description: alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {const: ok}
+  /readyz:
+    servers:
+      - url: "/"
+      - url: "{base}"
+        variables:
+          base: {default: ""}
+    get:
+      tags: [system]
+      operationId: readyz
+      summary: Readiness; no authentication (doc 09 §2.2)
+      security: []
+      responses:
+        "200":
+          description: ready
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Readiness"}
+        "503":
+          description: not ready
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Readiness"}
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: HTTP Basic against htpasswd (bcrypt / apr1), realm "Robot Data Curation" (doc 08 §5)
+
+  parameters:
+    PathId:
+      name: id
+      in: path
+      required: true
+      schema: {type: string}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: the same key within 24 hours returns the first response (doc 03 §8)
+      schema: {type: string, minLength: 8, maxLength: 128}
+    Cursor:
+      name: cursor
+      in: query
+      description: opaque, from next_cursor
+      schema: {type: string}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+    Rev:
+      name: rev
+      in: query
+      description: result revision; omitted = the current one (task.result_rev)
+      schema: {type: integer, minimum: 1}
+    Source:
+      name: source
+      in: query
+      required: true
+      schema: {enum: [tos, public, local]}
+    Region:
+      name: region
+      in: query
+      schema: {$ref: "#/components/schemas/Region"}
+    CredentialName:
+      name: credential
+      in: query
+      description: access key name (not needed for source=public)
+      schema: {type: string}
+
+  responses:
+    Error:
+      description: |
+        400 validation_failed, 401 unauthorized, 404 not_found, 409 task_state_conflict /
+        subtask_active / credential_in_use / backend_in_use / name_taken / preflight_expired /
+        source_changed / result_changed / idempotency_conflict, 412 precondition_failed,
+        422 precheck_failed / confirm_path_mismatch / model_check_failed, 500 internal
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+
+  schemas:
+    # ---------- common
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              enum: [validation_failed, unauthorized, not_found, task_state_conflict, subtask_active,
+                     credential_in_use, backend_in_use, name_taken, preflight_expired, precheck_failed,
+                     source_changed, result_changed, confirm_path_mismatch, model_check_failed,
+                     idempotency_conflict, precondition_failed, internal]
+            message: {type: string, description: Chinese, shown to people as is}
+            details: {type: object}
+    Link:
+      type: object
+      additionalProperties: false
+      required: [rel, title, url]
+      properties:
+        rel: {enum: [task, report, adjudication, plan, logs, credentials]}
+        title: {type: string}
+        url: {type: string}
+        absolute: {type: boolean, default: true, description: "false when publicBaseUrl is not configured"}
+    Links:
+      type: array
+      items: {$ref: "#/components/schemas/Link"}
+    CursorPage:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items: {type: array}
+        next_cursor: {type: [string, "null"]}
+        has_more: {type: boolean}
+    Region:
+      type: string
+      pattern: "^[a-z0-9][a-z0-9-]{1,31}$"
+    ModuleId:
+      type: string
+      pattern: "^[a-z][a-z0-9_]*$"
+    ReasoningEffort:
+      description: Ark's native values; null = the field is not sent (the model's default, and the parity setting)
+      enum: [none, minimal, low, medium, high, xhigh, max, null]
+    VerifyState:
+      enum: [unverified, ok, failed]
+    VerifyResult:
+      type: object
+      additionalProperties: false
+      required: [verify_state, last_verified_at]
+      properties:
+        verify_state: {$ref: "#/components/schemas/VerifyState"}
+        last_verified_at: {type: integer}
+        error: {type: [string, "null"]}
+    ProbeResult:
+      type: object
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok: {type: boolean}
+        error:
+          type: object
+          properties:
+            code: {type: string}
+            message: {type: string}
+
+    # ---------- credentials
+    Credential:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, meta, verify_state, created_at, updated_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        kind: {const: tos}
+        meta:
+          type: object
+          additionalProperties: false
+          required: [region]
+          properties:
+            region: {$ref: "#/components/schemas/Region"}
+            endpoint: {type: string}
+            test_bucket: {type: string, description: "HeadBucket target when the key cannot ListBuckets"}
+            access_key_id_hint: {type: string, description: "last 4 characters only"}
+        verify_state: {$ref: "#/components/schemas/VerifyState"}
+        last_verified_at: {type: [integer, "null"]}
+        last_verify_error: {type: [string, "null"]}
+        references:
+          type: object
+          properties:
+            active_tasks: {type: integer, minimum: 0}
+            historical_tasks: {type: integer, minimum: 0}
+        created_at: {type: integer}
+        updated_at: {type: integer}
+    CredentialCreate:
+      type: object
+      additionalProperties: false
+      required: [name, access_key_id, secret_access_key, region]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 64}
+        access_key_id: {type: string, minLength: 1}
+        secret_access_key: {type: string, minLength: 1, writeOnly: true}
+        region: {$ref: "#/components/schemas/Region"}
+        endpoint: {type: string}
+        test_bucket: {type: string}
+    CredentialUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: {type: string, minLength: 1, maxLength: 64}
+        access_key_id: {type: string}
+        secret_access_key: {type: string, writeOnly: true, description: "empty = unchanged"}
+        region: {$ref: "#/components/schemas/Region"}
+        endpoint: {type: string}
+        test_bucket: {type: string}
+
+    # ---------- vlm
+    VlmModel:
+      type: object
+      additionalProperties: false
+      required: [id, model_name, reasoning_effort, max_concurrency, capabilities, source]
+      properties:
+        id: {type: string}
+        model_name: {type: string, description: "Model ID or inference endpoint ID (ep-...)"}
+        reasoning_effort: {$ref: "#/components/schemas/ReasoningEffort"}
+        max_concurrency: {type: [integer, "null"], minimum: 1, description: "null = the backend's"}
+        capabilities:
+          type: object
+          additionalProperties: false
+          properties:
+            vision: {type: [boolean, "null"]}
+            reasoning_effort_levels:
+              type: array
+              description: effective levels to offer (from the site's mapping table; all 7 when unknown)
+              items: {enum: [none, minimal, low, medium, high, xhigh, max]}
+        source: {enum: [listed, manual]}
+    VlmModelCreate:
+      type: object
+      additionalProperties: false
+      required: [model_name]
+      properties:
+        model_name: {type: string, minLength: 1}
+        reasoning_effort: {$ref: "#/components/schemas/ReasoningEffort"}
+        max_concurrency: {type: [integer, "null"], minimum: 1}
+    VlmModelPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        reasoning_effort: {$ref: "#/components/schemas/ReasoningEffort"}
+        max_concurrency: {type: [integer, "null"], minimum: 1}
+    VlmBackend:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, endpoint, max_concurrency, has_api_key, verify_state, models, created_at, updated_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        kind: {enum: [ark, custom]}
+        endpoint: {type: string}
+        max_concurrency: {type: integer, minimum: 1, default: 64}
+        has_api_key: {type: boolean}
+        verify_state: {$ref: "#/components/schemas/VerifyState"}
+        last_verified_at: {type: [integer, "null"]}
+        last_verify_error: {type: [string, "null"]}
+        models: {type: array, items: {$ref: "#/components/schemas/VlmModel"}}
+        models_listed: {type: boolean, description: "whether GET /models worked last time"}
+        created_at: {type: integer}
+        updated_at: {type: integer}
+    VlmBackendCreate:
+      type: object
+      additionalProperties: false
+      required: [name, kind, endpoint]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 64}
+        kind: {enum: [ark, custom]}
+        endpoint: {type: string, minLength: 1}
+        api_key: {type: string, writeOnly: true, description: "required for ark"}
+        max_concurrency: {type: integer, minimum: 1}
+      if:
+        properties: {kind: {const: ark}}
+      then:
+        required: [api_key]
+    VlmBackendUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: {type: string, minLength: 1, maxLength: 64}
+        endpoint: {type: string}
+        api_key: {type: string, writeOnly: true, description: "empty = unchanged"}
+        max_concurrency: {type: integer, minimum: 1}
+
+    # ---------- datasets
+    ModuleRegistry:
+      type: object
+      additionalProperties: false
+      required: [registry_version, stages, modules]
+      properties:
+        registry_version: {type: string}
+        stages: {type: array, items: {enum: [numeric, frame, vlm, post_verdict]}}
+        modules:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name_zh, summary_zh, level, gate, needs, stage, depends_on, produces_adjudication, param_schema, tables, mergeable]
+            properties:
+              id: {$ref: "#/components/schemas/ModuleId"}
+              name_zh: {type: string}
+              summary_zh: {type: string}
+              level: {enum: [episode, dataset]}
+              gate: {enum: [hard, soft, dedup, none]}
+              needs: {type: array, items: {enum: [timestamps, action, state, video, embodiment_profile, vlm, raw_bytes]}}
+              stage: {enum: [numeric, frame, vlm, post_verdict]}
+              depends_on: {type: array, items: {enum: [numeric_gates, frame_gates, autolabel, funnel_verdict, dedup]}}
+              produces_adjudication: {type: boolean}
+              param_schema: {type: object}
+              tables:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [id, title_zh, sortable, default_sort]
+                  properties:
+                    id: {type: string}
+                    title_zh: {type: string}
+                    sortable: {type: array, items: {type: string}}
+                    default_sort: {type: string}
+              mergeable: {type: boolean}
+    Dataset:
+      type: object
+      additionalProperties: false
+      required: [name, uri]
+      properties:
+        name: {type: string}
+        uri: {type: string}
+        format_hint: {enum: [lerobot_v2, lerobot_v3, rrd, unknown]}
+        episodes: {type: [integer, "null"]}
+    EpisodePreview:
+      type: object
+      additionalProperties: false
+      required: [index, length_s, task, task_source, cameras]
+      properties:
+        index: {type: integer, minimum: 0}
+        length_s: {type: [number, "null"]}
+        task: {type: string}
+        task_source: {enum: [原始标注, 无]}
+        cameras:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, url]
+            properties:
+              name: {type: string}
+              url: {type: string, description: "presigned, or anonymous for the public bucket"}
+              from_ts: {type: number}
+              to_ts: {type: number}
+    InputRef:
+      type: object
+      additionalProperties: false
+      required: [source, uri]
+      properties:
+        source: {enum: [tos, public, local]}
+        uri: {type: string, minLength: 1}
+        region: {$ref: "#/components/schemas/Region"}
+        credential: {type: string, description: "access key name; not for source=public"}
+      if:
+        properties: {source: {const: tos}}
+      then:
+        required: [credential]
+    OutputRef:
+      type: object
+      additionalProperties: false
+      required: [uri, credential]
+      properties:
+        uri: {type: string, pattern: "^tos://"}
+        region: {$ref: "#/components/schemas/Region"}
+        credential: {type: string}
+    PreflightRequest:
+      type: object
+      additionalProperties: false
+      required: [input]
+      properties:
+        input: {$ref: "#/components/schemas/InputRef"}
+        vlm_backend: {type: string}
+        embodiment_id: {type: string}
+    PreflightResponse:
+      type: object
+      additionalProperties: false
+      required: [preflight_id, expires_at, result]
+      properties:
+        preflight_id: {type: string}
+        expires_at: {type: integer}
+        result: {$ref: "./cli/preflight.schema.json"}
+    DeliveryProbeRequest:
+      type: object
+      additionalProperties: false
+      required: [uri, credential]
+      properties:
+        uri: {type: string, pattern: "^tos://"}
+        region: {$ref: "#/components/schemas/Region"}
+        credential: {type: string}
+
+    # ---------- tasks
+    TaskState:
+      enum: [created, queued, running, pausing, paused, stopping, stopped, succeeded, completed_with_errors, failed]
+    EpisodeSelector:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [mode]
+          properties:
+            mode: {const: all}
+        - type: object
+          additionalProperties: false
+          required: [mode, n]
+          properties:
+            mode: {const: head}
+            n: {type: integer, minimum: 1}
+        - type: object
+          additionalProperties: false
+          required: [mode, expr]
+          properties:
+            mode: {const: explicit}
+            expr: {type: string, description: "3,10-12 / @file is CLI only; validated and expanded on the server"}
+            indices: {type: array, items: {type: integer, minimum: 0}, readOnly: true}
+    ModuleChoice:
+      oneOf:
+        - $ref: "#/components/schemas/ModuleId"
+        - type: object
+          additionalProperties: false
+          required: [id]
+          properties:
+            id: {$ref: "#/components/schemas/ModuleId"}
+            params: {type: object, description: "validated against the module's param_schema"}
+    VlmChoice:
+      type: object
+      additionalProperties: false
+      required: [backend, model]
+      properties:
+        backend: {type: string}
+        model: {type: string}
+        reasoning_effort: {$ref: "#/components/schemas/ReasoningEffort"}
+    TaskParams:
+      type: object
+      additionalProperties: false
+      description: task-level parameters (doc 03 §3.1); concurrency values are upper bounds only (D31)
+      properties:
+        start_now: {type: boolean, default: true}
+        export: {type: boolean, default: true}
+        vlm_retry: {type: integer, minimum: 0, maximum: 5, default: 3}
+        vlm_hedge: {type: boolean, default: true}
+        vlm_timeouts_s:
+          type: object
+          additionalProperties: false
+          properties:
+            probe: {type: number, exclusiveMinimum: 0, default: 60}
+            endstate: {type: number, exclusiveMinimum: 0, default: 60}
+            arbitration: {type: number, exclusiveMinimum: 0, default: 60}
+            caption: {type: number, exclusiveMinimum: 0, default: 60}
+            llm: {type: number, exclusiveMinimum: 0, default: 120}
+        clips: {type: boolean, default: false}
+        limits:
+          type: object
+          additionalProperties: false
+          properties:
+            cpu_concurrency: {type: integer, minimum: 1}
+            vlm_parallelism: {type: integer, minimum: 1}
+    TaskCreate:
+      type: object
+      additionalProperties: false
+      required: [name, input, output, preflight_id, episodes, modules]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        note: {type: string, maxLength: 2000}
+        input: {$ref: "#/components/schemas/InputRef"}
+        output: {$ref: "#/components/schemas/OutputRef"}
+        preflight_id: {type: string}
+        episodes: {$ref: "#/components/schemas/EpisodeSelector"}
+        modules: {type: array, minItems: 1, items: {$ref: "#/components/schemas/ModuleChoice"}}
+        embodiment_id: {type: string}
+        vlm: {$ref: "#/components/schemas/VlmChoice"}
+        params: {$ref: "#/components/schemas/TaskParams"}
+    TaskBatchCreate:
+      type: object
+      additionalProperties: false
+      required: [items, shared]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, input, output, preflight_id]
+            properties:
+              name: {type: string, minLength: 1, maxLength: 128}
+              input: {$ref: "#/components/schemas/InputRef"}
+              output: {$ref: "#/components/schemas/OutputRef"}
+              preflight_id: {type: string}
+        shared:
+          type: object
+          additionalProperties: false
+          required: [episodes, modules]
+          properties:
+            note: {type: string, maxLength: 2000}
+            episodes: {$ref: "#/components/schemas/EpisodeSelector"}
+            modules: {type: array, minItems: 1, items: {$ref: "#/components/schemas/ModuleChoice"}}
+            embodiment_id: {type: string}
+            vlm: {$ref: "#/components/schemas/VlmChoice"}
+            params: {$ref: "#/components/schemas/TaskParams"}
+    TaskCreated:
+      type: object
+      additionalProperties: false
+      required: [id, state, created_at, warnings, links]
+      properties:
+        id: {type: string}
+        state: {$ref: "#/components/schemas/TaskState"}
+        created_at: {type: integer}
+        warnings: {type: array, items: {type: string}}
+        links: {$ref: "#/components/schemas/Links"}
+    TaskPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: after start only name and note are accepted
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        note: {type: string, maxLength: 2000}
+        input: {$ref: "#/components/schemas/InputRef"}
+        output: {$ref: "#/components/schemas/OutputRef"}
+        preflight_id: {type: string}
+        episodes: {$ref: "#/components/schemas/EpisodeSelector"}
+        modules: {type: array, minItems: 1, items: {$ref: "#/components/schemas/ModuleChoice"}}
+        embodiment_id: {type: [string, "null"]}
+        vlm: {$ref: "#/components/schemas/VlmChoice"}
+        params: {$ref: "#/components/schemas/TaskParams"}
+    StageProgress:
+      type: object
+      additionalProperties: false
+      required: [id, state, done, total]
+      properties:
+        id: {enum: [autolabel, numeric, frame, vlm, verdict, dedup, profile, final, export, report, verify]}
+        state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped]}
+        done: {type: integer, minimum: 0}
+        total: {type: integer, minimum: 0}
+        elapsed_s: {type: [number, "null"]}
+        eta_s: {type: [number, "null"]}
+        note: {type: string, description: "e.g. why total dropped from 50 to 49"}
+    ModuleState:
+      type: object
+      additionalProperties: false
+      required: [id, name, selected, availability, state, episodes_total, episodes_error]
+      properties:
+        id: {$ref: "#/components/schemas/ModuleId"}
+        name: {type: string}
+        selected: {type: boolean}
+        availability: {enum: [available, needs_input, unsupported]}
+        unavailable_reason: {type: [string, "null"]}
+        state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped, stale]}
+        episodes_total: {type: integer, minimum: 0}
+        episodes_error: {type: integer, minimum: 0}
+        elapsed_s: {type: [number, "null"]}
+        error: {type: [string, "null"]}
+    Summary:
+      type: object
+      additionalProperties: false
+      required: [total, passed, rejected, held, review, pass_rate]
+      properties:
+        total: {type: integer, minimum: 0}
+        passed: {type: integer, minimum: 0}
+        rejected: {type: integer, minimum: 0}
+        held: {type: integer, minimum: 0}
+        review: {type: integer, minimum: 0}
+        pass_rate: {type: [number, "null"]}
+    UsageTotals:
+      type: object
+      additionalProperties: false
+      required: [prompt_tokens, completion_tokens, reasoning_tokens, cached_tokens, requests, requests_unknown_usage]
+      properties:
+        prompt_tokens: {type: integer, minimum: 0}
+        completion_tokens: {type: integer, minimum: 0}
+        reasoning_tokens: {type: integer, minimum: 0}
+        cached_tokens: {type: integer, minimum: 0}
+        requests: {type: integer, minimum: 0}
+        requests_unknown_usage: {type: integer, minimum: 0}
+    TaskListItem:
+      type: object
+      additionalProperties: false
+      required: [id, name, state, dataset, created_at, progress, summary, pending_adjudication, delivery_stale, module_counts, usage]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        state: {$ref: "#/components/schemas/TaskState"}
+        pause_reason: {enum: [user, system, null]}
+        dataset: {type: string}
+        created_at: {type: integer}
+        progress:
+          type: object
+          required: [stages]
+          properties:
+            stages: {type: array, items: {$ref: "#/components/schemas/StageProgress"}}
+        summary: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Summary"}]}
+        pending_adjudication: {type: integer, minimum: 0}
+        delivery_stale: {type: boolean}
+        active_subtask: {type: [string, "null"]}
+        module_counts: {type: object, additionalProperties: {type: integer, minimum: 0}}
+        usage: {$ref: "#/components/schemas/UsageTotals"}
+        deleted_at: {type: [integer, "null"]}
+    Task:
+      type: object
+      additionalProperties: false
+      required: [id, name, state, input, output, episodes, modules, params, progress, result_rev,
+                 pending_adjudication, delivery_stale, usage, created_at, updated_at, links]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        note: {type: [string, "null"]}
+        state: {$ref: "#/components/schemas/TaskState"}
+        state_reason: {type: [string, "null"]}
+        pause_reason: {enum: [user, system, null]}
+        input: {$ref: "#/components/schemas/InputRef"}
+        output: {$ref: "#/components/schemas/OutputRef"}
+        run_id: {type: [string, "null"]}
+        episodes: {$ref: "#/components/schemas/EpisodeSelector"}
+        embodiment_id: {type: [string, "null"]}
+        vlm:
+          oneOf:
+            - type: "null"
+            - allOf:
+                - $ref: "#/components/schemas/VlmChoice"
+                - type: object
+                  properties:
+                    snapshot: {type: [object, "null"], description: "effective settings frozen at start (P17)"}
+        params: {$ref: "#/components/schemas/TaskParams"}
+        source:
+          type: [object, "null"]
+          description: source manifest summary frozen at start (D27)
+          properties:
+            objects: {type: integer}
+            bytes: {type: integer}
+            digest: {type: string}
+        progress:
+          type: object
+          required: [stages]
+          properties:
+            stages: {type: array, items: {$ref: "#/components/schemas/StageProgress"}}
+        modules: {type: array, items: {$ref: "#/components/schemas/ModuleState"}}
+        summary: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Summary"}]}
+        result_rev: {type: integer, minimum: 0}
+        usage: {$ref: "#/components/schemas/UsageTotals"}
+        pending_adjudication: {type: integer, minimum: 0}
+        delivery_stale: {type: boolean}
+        active_subtask: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Subtask"}]}
+        created_at: {type: integer}
+        updated_at: {type: integer}
+        started_at: {type: [integer, "null"]}
+        finished_at: {type: [integer, "null"]}
+        deleted_at: {type: [integer, "null"]}
+        links: {$ref: "#/components/schemas/Links"}
+    Subtask:
+      type: object
+      additionalProperties: false
+      required: [id, task_id, kind, scope, state, created_at]
+      properties:
+        id: {type: string}
+        task_id: {type: string}
+        kind: {enum: [retry, resume, apply_adjudication, reexport]}
+        scope:
+          type: object
+          properties:
+            modules: {type: array, items: {$ref: "#/components/schemas/ModuleId"}}
+            episodes: {enum: [errors, all]}
+        state: {$ref: "#/components/schemas/TaskState"}
+        state_reason: {type: [string, "null"]}
+        progress: {type: [object, "null"]}
+        created_at: {type: integer}
+        started_at: {type: [integer, "null"]}
+        finished_at: {type: [integer, "null"]}
+        result_rev: {type: [integer, "null"], description: "the revision this subtask produced"}
+    SubtaskCreated:
+      type: object
+      additionalProperties: false
+      required: [subtask, links]
+      properties:
+        subtask: {$ref: "#/components/schemas/Subtask"}
+        links: {$ref: "#/components/schemas/Links"}
+    TimelineEntry:
+      type: object
+      additionalProperties: false
+      required: [at, kind, text]
+      properties:
+        at: {type: integer}
+        kind: {enum: [created, started, system_pause, system_resume, user_pause, user_resume, stopped, failed,
+                      finished, subtask_started, subtask_finished, revision]}
+        subtask_id: {type: [string, "null"]}
+        revision: {type: [integer, "null"]}
+        state: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/TaskState"}]}
+        text: {type: string}
+    LogLine:
+      type: object
+      additionalProperties: false
+      required: [ts, stage, level, msg]
+      properties:
+        ts: {type: integer}
+        stage: {type: string}
+        subtask_id: {type: [string, "null"]}
+        level: {enum: [error, warn, info, debug]}
+        msg: {type: string}
+        episode_index: {type: [integer, "null"]}
+    UsageRow:
+      type: object
+      additionalProperties: false
+      required: [subtask_id, module_id, call_kind, model_name, prompt_tokens, completion_tokens, reasoning_tokens, cached_tokens, requests, requests_unknown_usage]
+      properties:
+        subtask_id: {type: string, description: "empty = main run"}
+        module_id: {type: string}
+        call_kind: {enum: [probe, endstate, arbitration, caption, llm, merged]}
+        model_name: {type: string}
+        prompt_tokens: {type: integer, minimum: 0}
+        completion_tokens: {type: integer, minimum: 0}
+        reasoning_tokens: {type: integer, minimum: 0}
+        cached_tokens: {type: integer, minimum: 0}
+        requests: {type: integer, minimum: 0}
+        requests_unknown_usage: {type: integer, minimum: 0}
+    UsageReport:
+      type: object
+      additionalProperties: false
+      required: [totals, actual, attributed]
+      description: totals sum the actual ledger only; attributed splits merged requests across modules and must never be added to it
+      properties:
+        totals: {$ref: "#/components/schemas/UsageTotals"}
+        actual: {type: array, items: {$ref: "#/components/schemas/UsageRow"}}
+        attributed: {type: array, items: {$ref: "#/components/schemas/UsageRow"}}
+
+    # ---------- report
+    EpisodeView:
+      type: object
+      additionalProperties: false
+      required: [episode_index, revision, list, modules, videos]
+      properties:
+        episode_index: {type: integer, minimum: 0}
+        revision: {type: integer, minimum: 1}
+        list: {enum: [passed, reject, held]}
+        reasons: {type: array, items: {type: object}}
+        review: {type: array, items: {type: object}}
+        task_text:
+          type: object
+          properties:
+            text: {type: string}
+            source: {type: string}
+        modules:
+          type: object
+          description: module id -> result record (cli/result-record.schema.json)
+          additionalProperties: {$ref: "./cli/result-record.schema.json"}
+        evidence:
+          type: array
+          items:
+            type: object
+            required: [module, path]
+            properties:
+              module: {type: string}
+              path: {type: string, description: "sign with scope=delivery"}
+              kind: {type: string}
+        videos:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [camera, scope, path]
+            properties:
+              camera: {type: string}
+              scope: {enum: [delivery, input]}
+              origin: {enum: [clip, delivery_dataset, source_dataset]}
+              path: {type: string}
+              from_ts: {type: number}
+              to_ts: {type: number}
+    Perf:
+      type: object
+      additionalProperties: false
+      required: [revision, scope, latency, stages]
+      properties:
+        revision: {type: integer, minimum: 1}
+        scope: {enum: [all, main, subtask]}
+        subtask_id: {type: [string, "null"]}
+        backend: {type: object, description: "model service used (v1 perf_backend)"}
+        container: {type: object, description: "CPU / memory quota (v1 perf_env)"}
+        latency:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [call_kind, count, p50_s, p90_s, p99_s, wall_s]
+            properties:
+              call_kind: {enum: [probe, endstate, arbitration, caption, llm, merged]}
+              count: {type: integer, minimum: 0}
+              failed: {type: integer, minimum: 0}
+              hedged: {type: integer, minimum: 0}
+              p50_s: {type: number}
+              p90_s: {type: number}
+              p99_s: {type: number}
+              wall_s: {type: number, description: "first sent to last returned - never count x mean"}
+        effective_concurrency: {type: [number, "null"]}
+        stages:
+          type: array
+          items:
+            type: object
+            required: [id, wall_s]
+            properties:
+              id: {type: string}
+              wall_s: {type: number}
+              share: {type: number}
+        retries:
+          type: object
+          properties:
+            outer_attempts: {type: integer, minimum: 0}
+            rescued: {type: integer, minimum: 0}
+        merge:
+          type: object
+          properties:
+            requests: {type: integer, minimum: 0}
+            estimated_unmerged: {type: integer, minimum: 0}
+        redone_after_interruption: {type: integer, minimum: 0, description: "D26"}
+    AdjudicationQuestion:
+      type: object
+      additionalProperties: false
+      required: [line, source_module, reason]
+      properties:
+        line: {enum: [label, task_verdict, reject_appeal]}
+        source_module: {$ref: "#/components/schemas/ModuleId"}
+        reason: {type: string}
+        annotation: {type: [string, "null"]}
+        caption: {type: [string, "null"]}
+        suggestion: {type: [string, "null"], description: "suggested new label"}
+        priority: {type: [string, "null"]}
+        latest_decision: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Decision"}]}
+    AdjudicationCard:
+      type: object
+      additionalProperties: false
+      required: [episode_index, status, questions]
+      properties:
+        episode_index: {type: integer, minimum: 0}
+        status: {enum: [pending, decided, unsure, applied]}
+        questions: {type: array, minItems: 1, items: {$ref: "#/components/schemas/AdjudicationQuestion"}}
+    AdjudicationCounts:
+      type: object
+      additionalProperties: false
+      required: [decided, pending, unapplied]
+      properties:
+        decided: {type: integer, minimum: 0}
+        pending: {type: integer, minimum: 0}
+        unapplied: {type: integer, minimum: 0}
+    DecisionInput:
+      type: object
+      additionalProperties: false
+      required: [episode_index, line, decision]
+      properties:
+        episode_index: {type: integer, minimum: 0}
+        line: {enum: [label, task_verdict, reject_appeal]}
+        decision: {enum: [adopt_suggestion, custom_label, keep_label, success, failure, restore, keep_rejected, unsure, discard]}
+        new_label: {type: [string, "null"]}
+        note: {type: [string, "null"]}
+    Decision:
+      allOf:
+        - $ref: "#/components/schemas/DecisionInput"
+        - type: object
+          required: [id, decided_by, decided_at, applied]
+          properties:
+            id: {type: integer}
+            decided_by: {type: string}
+            decided_at: {type: integer}
+            applied: {type: boolean}
+
+    # ---------- system
+    SignedUrl:
+      type: object
+      additionalProperties: false
+      required: [url, expires_at]
+      properties:
+        url: {type: string}
+        expires_at: {type: integer}
+        from_ts: {type: number, description: "v3 sources: play url#t=from,to"}
+        to_ts: {type: number}
+    Readiness:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status: {enum: [ok, not_ready]}
+        checks:
+          type: object
+          additionalProperties: false
+          required: [db_writable, master_key, workdir_writable, scratch_writable, reconciled]
+          properties:
+            db_writable: {type: boolean}
+            master_key: {type: boolean}
+            workdir_writable: {type: boolean}
+            scratch_writable: {type: boolean}
+            reconciled: {type: boolean}
+    SseState:
+      type: object
+      required: [state, at]
+      properties:
+        state: {$ref: "#/components/schemas/TaskState"}
+        pause_reason: {enum: [user, system, null]}
+        at: {type: integer}
+    SseProgress:
+      $ref: "#/components/schemas/StageProgress"
+    SseLog:
+      type: object
+      required: [stage, level, msg]
+      properties:
+        stage: {type: string}
+        level: {enum: [error, warn, info, debug]}
+        msg: {type: string}
+    SseUsage:
+      $ref: "#/components/schemas/UsageTotals"
+    SseDone:
+      type: object
+      required: [state]
+      properties:
+        state: {$ref: "#/components/schemas/TaskState"}
+        failed_modules: {type: array, items: {$ref: "#/components/schemas/ModuleId"}}

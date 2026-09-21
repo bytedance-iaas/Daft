@@ -1,0 +1,96 @@
+{
+ "schema": "cli/result-record.schema.json",
+ "valid": [
+  {
+   "episode_index": 34,
+   "module": "motion_quality",
+   "verdict": "scored",
+   "passed": null,
+   "score": 0.82,
+   "gate": "soft",
+   "details": {
+    "jerk": 0.1
+   },
+   "evidence": [],
+   "elapsed_s": 3.4,
+   "error": null
+  },
+  {
+   "episode_index": 31,
+   "module": "task_success",
+   "verdict": "error",
+   "passed": true,
+   "score": null,
+   "gate": "hard",
+   "details": {
+    "rules": [
+     "vlm_call_failed",
+     "review_rescue"
+    ]
+   },
+   "evidence": [
+    "details/evidence/ep000031/probe3_f0120.jpg"
+   ],
+   "elapsed_s": 40.1,
+   "error": {
+    "kind": "execution",
+    "incidents": [
+     {
+      "step": "probe",
+      "call_kind": "probe",
+      "cause": "timeout",
+      "attempts": 4
+     }
+    ]
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "episode_index": 31,
+   "module": "task_success",
+   "verdict": "error",
+   "passed": true,
+   "score": null,
+   "gate": "hard",
+   "details": {
+    "rules": [
+     "vlm_call_failed",
+     "review_rescue"
+    ]
+   },
+   "evidence": [
+    "details/evidence/ep000031/probe3_f0120.jpg"
+   ],
+   "elapsed_s": 40.1,
+   "error": null
+  },
+  {
+   "episode_index": 34,
+   "module": "motion_quality",
+   "verdict": "maybe",
+   "passed": null,
+   "score": 0.82,
+   "gate": "soft",
+   "details": {
+    "jerk": 0.1
+   },
+   "evidence": [],
+   "elapsed_s": 3.4,
+   "error": null
+  },
+  {
+   "episode_index": 34,
+   "module": "motion_quality",
+   "verdict": "scored",
+   "passed": null,
+   "score": 0.82,
+   "details": {
+    "jerk": 0.1
+   },
+   "evidence": [],
+   "elapsed_s": 3.4,
+   "error": null
+  }
+ ]
+}

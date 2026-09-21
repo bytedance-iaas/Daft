@@ -43,7 +43,7 @@
 ### F1.3 契约冻结
 - 描述：定稿 C1 模块注册表、C2 CLI JSON schema、C3 进度协议、C4 REST OpenAPI、C5 Repository 接口
 - 验收：三份 schema 为真实文件且被契约测试消费；CI 在契约漂移时变红
-- status: not_completed
+- status: **completed**
 
 ## 阶段 2：后端
 

@@ -1,0 +1,39 @@
+{
+ "schema": "cli/adjudicate-apply.schema.json",
+ "valid": [
+  {
+   "schema_version": "1.0",
+   "applied": 14,
+   "skipped_already_applied": 0,
+   "rerun_task_success": [
+    17,
+    29
+   ],
+   "profile_resync": [
+    14,
+    17,
+    29,
+    31
+   ],
+   "label_changes": [
+    {
+     "episode_index": 29,
+     "new_label": "pour rice into the green bowl"
+    }
+   ]
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "applied": 14,
+   "rerun_task_success": [
+    17,
+    17
+   ],
+   "profile_resync": [],
+   "label_changes": [],
+   "skipped_already_applied": 0
+  }
+ ]
+}

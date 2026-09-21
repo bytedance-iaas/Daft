@@ -220,7 +220,7 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 ### 3.6 `curation aggregate` — 聚合判决
 
 ```bash
-curation aggregate --run-dir <dir> --phase funnel|final --json
+curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 ```
 
 纯计算，秒级，**每次全量重算**。分两个阶段，对应 v1 `run.py` 里的两段：
@@ -250,7 +250,7 @@ curation export --run-dir <dir> --input tos://... --output tos://... \
 ### 3.8 `curation report` — 生成报告
 
 ```bash
-curation report --run-dir <dir> [--format md,json] --json
+curation report --run-dir <dir> --revision N [--format md,json] --json
 ```
 
 产出 `report.md` + `report.json` + 性能剖析，写进 `--revision` 指定的结果版本目录

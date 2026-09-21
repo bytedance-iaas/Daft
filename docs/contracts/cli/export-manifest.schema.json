@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "export/manifest.json (schema 1.0)",
+  "description": "What the delivered dataset holds, the basis of incremental re-export (design doc 06, section 4.3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source_format", "fingerprint", "episodes", "meta_files"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "source_format": {"enum": ["lerobot_v2", "lerobot_v3"]},
+    "fingerprint": {"$ref": "common.schema.json#/$defs/digest", "description": "export fingerprint: passed list and order, task texts and sources, source digest, format and parameters"},
+    "episodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["episode_index", "new_index", "content_key", "task_key", "artifacts"],
+        "properties": {
+          "episode_index": {"$ref": "common.schema.json#/$defs/episode_index"},
+          "new_index": {"$ref": "common.schema.json#/$defs/episode_index"},
+          "content_key": {"$ref": "common.schema.json#/$defs/digest"},
+          "task_key": {"$ref": "common.schema.json#/$defs/digest"},
+          "artifacts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["parquet", "videos"],
+            "properties": {
+              "parquet": {"type": "string"},
+              "videos": {"type": "object", "additionalProperties": {"type": "string"}},
+              "chunk": {"type": "integer", "minimum": 0, "description": "v3: the chunk the episode lives in"}
+            }
+          }
+        }
+      }
+    },
+    "meta_files": {"type": "array", "items": {"type": "string"}}
+  }
+}

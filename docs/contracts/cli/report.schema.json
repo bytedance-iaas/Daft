@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "revisions/r<NNNN>/report.json (schema 1.0)",
+  "description": "Report structure (design doc 06, section 6). modules[] follows the selected modules one to one, in registry order; a module that failed keeps its section with the error. URLs are not part of the file: the REST layer adds links.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "revision", "overview", "modules", "skipped_modules", "integrity", "perf"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "revision": {"$ref": "common.schema.json#/$defs/revision"},
+    "overview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset", "run", "counts", "pass_rate", "reject_reasons", "token_usage", "duration_s"],
+      "properties": {
+        "dataset": {"type": "object"},
+        "run": {"type": "object"},
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["total", "passed", "rejected", "held", "review"],
+          "properties": {
+            "total": {"type": "integer", "minimum": 0},
+            "passed": {"type": "integer", "minimum": 0},
+            "rejected": {"type": "integer", "minimum": 0},
+            "held": {"type": "integer", "minimum": 0},
+            "review": {"type": "integer", "minimum": 0}
+          }
+        },
+        "pass_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "passed / total; held is neither"},
+        "reject_reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["module", "count"],
+            "properties": {
+              "module": {"$ref": "common.schema.json#/$defs/module_id"},
+              "count": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "token_usage": {"$ref": "#/$defs/token_usage"},
+        "duration_s": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "modules": {"type": "array", "items": {"$ref": "#/$defs/module_section"}},
+    "skipped_modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "reason"],
+        "properties": {"id": {"$ref": "common.schema.json#/$defs/module_id"}, "reason": {"type": "string"}}
+      }
+    },
+    "integrity": {"type": "object", "description": "data package integrity: format, missing fields, unlabeled count, semantics profile / action semantics preflight"},
+    "perf": {"type": "object", "description": "summary; the full profile is perf.json in the same revision"}
+  },
+  "$defs": {
+    "token_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt", "completion", "reasoning", "cached", "requests", "requests_unknown_usage"],
+      "properties": {
+        "prompt": {"type": "integer", "minimum": 0},
+        "completion": {"type": "integer", "minimum": 0},
+        "reasoning": {"type": "integer", "minimum": 0},
+        "cached": {"type": "integer", "minimum": 0},
+        "requests": {"type": "integer", "minimum": 0},
+        "requests_unknown_usage": {"type": "integer", "minimum": 0}
+      }
+    },
+    "module_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "state", "gate", "summary", "tables", "adjudication"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/module_id"},
+        "state": {"enum": ["succeeded", "completed_with_errors", "failed"]},
+        "gate": {"enum": ["hard", "soft", "dedup", "none"]},
+        "summary": {"type": "object"},
+        "tables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "rows", "file"],
+            "properties": {
+              "id": {"type": "string"},
+              "rows": {"type": "integer", "minimum": 0},
+              "file": {"type": "string", "description": "tables/<id>.parquet, sorted by episode_index"}
+            }
+          }
+        },
+        "adjudication": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pending"],
+              "properties": {"pending": {"type": "integer", "minimum": 0}}
+            }
+          ]
+        },
+        "episodes_error": {"type": "integer", "minimum": 0},
+        "error": {"type": "string"},
+        "fingerprints": {"type": "object", "description": "code / prompt hashes when the result came from a subtask (design doc 06, section 2)"}
+      },
+      "allOf": [
+        {"if": {"properties": {"state": {"const": "failed"}}}, "then": {"required": ["error"]}}
+      ]
+    }
+  }
+}

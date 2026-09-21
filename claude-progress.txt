@@ -1,4 +1,4 @@
-Date: 2026-09-20
+Date: 2026-09-21
 TaskStatus: not_completed
 
 Task scope:
@@ -24,15 +24,24 @@ Current summary:
   - 实测确认 v1 小问题：被去重剔除的条目仍在 passed.json 里（交付数据集正确），终判对账按交付口径比
   - F3.1 完成：第二批四页（任务详情、质检报告、人工裁决、密钥与资源管理）加前两页的评审修改，已合入 frontend/mockups/；
     六页无外部资源、无控制台报错、页面间链接齐全；README 列了手动核对步骤与待确认问题 1–10（进 F3.2 前需求方评审）
+  - F1.3 / W2 契约冻结完成（docs/contracts/，说明见其 README）：
+      C1 backend/curation/contracts/modules.py → modules.json（八模块、档、依赖、参数 schema、报告明细表与排序白名单；
+         不放在 A 类 registry/ 目录）
+      C2 docs/contracts/cli/ 20 份 schema（十条命令的 --json、parts/results 行、判决行、四份清单、commit.json、导出清单、
+         report.json、裁决输入、错误信封）；C3 progress.schema.json；C4 openapi.yaml（39 路径 48 操作，报告/计划/预检引用 C2）；
+      C5 backend/daemon/repo/protocol.py（实体、状态机迁移表、CAS、两种分页、错误类型）
+      契约测试 backend/tests/contracts 70 条：Schema 合法、22 组示例（合法/不合法）、注册表一致性、OpenAPI 有效且覆盖 03 篇接口表、
+      状态机与 01 篇迁移表逐边一致、CONTRACTS.lock 漂移检测（手动改契约验证过：报出文件、退出码 1）
+      与设计的出入已回写文档：新增 GET /tasks/{id}/timeline；证据模式取值用 v1 的 off；aggregate/report 补 --revision；
+      同档里硬门失败压过执行出错（drop 优先于 held）
 
 Main gaps:
   - F1.1 基线未生成：需在现网 Pod 里按 tools/parity/README.md「在现网 Pod 里生成黄金基线」执行
   - F1.2 验收③「镜像可构建」本机无 Docker，靠 CI 的 image 任务验证；分支 feat/curator-v2 尚未推送到 origin（需用户确认）
-  - compare 目前只读导出目录，v2 运行目录的读取在 W2 冻结目录格式后补
-  - 02 §3.6/§3.8 的 --revision 参数留给 W2 冻结 C2 时补
+  - compare 目前只读导出目录；v2 运行目录的读取随 W3 补（行格式已由 C2 冻结）
 
 Next steps:
-  1. F1.3 / W2 契约冻结（进行中）
+  1. 批次 1 可以开工：W3 CLI 层、W4 Daemon 骨架、W6 planner/合并、W7 增量导出（W3 改 B 类代码前两个基线须存档）
   2. 用户确认后推送分支，看 CI（尤其镜像构建）结果；通过则 F1.2 置 completed
   3. 用户在 Pod 里跑基线（droid50 两遍、umi640 一遍、umi64 两遍、各自回放自检），存档 manifest 放进 tools/parity/golden/
   4. 需求方评审六页静态稿（README 待确认 1–10），通过后才开 F3.2

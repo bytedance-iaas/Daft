@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "decisions.json - input of curation adjudicate-apply (schema 1.0)",
+  "description": "The Daemon exports this task's decisions that are not applied yet (D32: decisions never cross tasks). Lines and decisions follow v1 (design doc 06, section 5.1): label = annotation conflict from skill_profile, task_verdict = task_success abstention, reject_appeal = appeal of a reject attributed to task_success. 'discard' (drop the whole episode) wins over any task verdict; 'unsure' is recorded and changes nothing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "decisions"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}}
+  },
+  "$defs": {
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "episode_index", "line", "decision", "new_label", "note", "decided_by", "decided_at"],
+      "properties": {
+        "id": {"type": "integer", "minimum": 1},
+        "episode_index": {"$ref": "common.schema.json#/$defs/episode_index"},
+        "line": {"enum": ["label", "task_verdict", "reject_appeal"]},
+        "decision": {"enum": ["adopt_suggestion", "custom_label", "keep_label", "success", "failure", "restore", "keep_rejected", "unsure", "discard"]},
+        "new_label": {"type": ["string", "null"]},
+        "note": {"type": ["string", "null"]},
+        "decided_by": {"type": "string", "minLength": 1},
+        "decided_at": {"$ref": "common.schema.json#/$defs/epoch_ms"}
+      },
+      "allOf": [
+        {"if": {"properties": {"line": {"const": "label"}}}, "then": {"properties": {"decision": {"enum": ["adopt_suggestion", "custom_label", "keep_label", "unsure", "discard"]}}}},
+        {"if": {"properties": {"line": {"const": "task_verdict"}}}, "then": {"properties": {"decision": {"enum": ["success", "failure", "unsure", "discard"]}}}},
+        {"if": {"properties": {"line": {"const": "reject_appeal"}}}, "then": {"properties": {"decision": {"enum": ["restore", "keep_rejected", "unsure"]}}}},
+        {"if": {"properties": {"decision": {"enum": ["adopt_suggestion", "custom_label"]}}}, "then": {"properties": {"new_label": {"type": "string", "minLength": 1}}}}
+      ]
+    }
+  }
+}

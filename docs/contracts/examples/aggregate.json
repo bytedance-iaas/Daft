@@ -1,0 +1,58 @@
+{
+ "schema": "cli/aggregate.schema.json",
+ "valid": [
+  {
+   "schema_version": "1.0",
+   "phase": "funnel",
+   "revision": null,
+   "counts": {
+    "total": 50,
+    "keep": 42,
+    "drop": 6,
+    "held": 2
+   },
+   "files": {
+    "verdicts": "verdicts.jsonl",
+    "keep": "keep.txt"
+   }
+  },
+  {
+   "schema_version": "1.0",
+   "phase": "final",
+   "revision": 2,
+   "counts": {
+    "total": 50,
+    "passed": 41,
+    "reject": 7,
+    "held": 2,
+    "review": 10
+   },
+   "files": {
+    "passed": "revisions/r0002/passed.json",
+    "reject": "revisions/r0002/reject.json",
+    "held": "revisions/r0002/held.json",
+    "review": "revisions/r0002/review.json"
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "phase": "final",
+   "revision": null,
+   "counts": {
+    "total": 1,
+    "passed": 1,
+    "reject": 0,
+    "held": 0,
+    "review": 0
+   },
+   "files": {
+    "passed": "a",
+    "reject": "b",
+    "held": "c",
+    "review": "d"
+   }
+  }
+ ]
+}

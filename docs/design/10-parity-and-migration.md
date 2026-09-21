@@ -91,7 +91,7 @@ v1 的 CLI 和界面上的每一项能力，在 v2 里去哪了。原则：需�
 | `curation review-page`（静态审片站）、`/review` 挂载 | 静态站下线，裁决与逐条查看都在新前端里；片段生成拆成 `curation clips` |
 | `curation ui`、内嵌终端 | 删除 |
 | 界面并发三个输入框 | 改为高级设置里的两个**上限**（CPU 并发、VLM 并行度，D31）；实际取值和执行计划仍由 planner 决定，模型并行度在密钥管理里配 |
-| 同步证据图模式（flagged / all / none）、证据帧模式 | 模块参数 `sync_plots` / `evidence_frames` |
+| 同步证据图模式（flagged / all / off）、证据帧模式 | 模块参数 `video_action_sync.sync_plots` / `task_success.evidence_frames`，取值同 v1 |
 | 报告页「质检批次」下拉 | 不需要：一个任务就是一个批次；同一交付目录下的其它任务在任务列表里按交付目录筛选 |
 | 人工裁决随交付目录跨批次沿用 | **不保留**（D32）。裁决只属于产生它的任务 |
 | `latest` =「最近跑的是哪一次」 | 改为「最近一次发布成功的完整版本」（D29） |

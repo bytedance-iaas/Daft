@@ -1,0 +1,64 @@
+{
+ "schema": "progress.schema.json",
+ "valid": [
+  {
+   "ts": 1758300000123,
+   "level": "info",
+   "kind": "progress",
+   "stage": "check:visual_quality",
+   "done": 12,
+   "total": 640,
+   "eta_s": 480
+  },
+  {
+   "ts": 1758300000456,
+   "level": "warn",
+   "kind": "log",
+   "msg": "episode 18 too short (0.5s); marked as fragment"
+  },
+  {
+   "ts": 1758300001000,
+   "kind": "usage",
+   "model": "doubao-seed-2-0-pro-260215",
+   "module": "task_success",
+   "call_kind": "endstate",
+   "requests": 1,
+   "prompt_tokens": 1820,
+   "completion_tokens": 64,
+   "reasoning_tokens": 40,
+   "cached_tokens": 1536
+  },
+  {
+   "ts": 1758300002000,
+   "kind": "throttle",
+   "backend": "ark-prod",
+   "limit": 32,
+   "reason": "429 rate 12% in last 30s"
+  }
+ ],
+ "invalid": [
+  {
+   "ts": 1,
+   "kind": "progress",
+   "stage": "x",
+   "done": 1
+  },
+  {
+   "ts": 1,
+   "kind": "usage",
+   "model": "m",
+   "module": "x",
+   "call_kind": "vision",
+   "requests": 1,
+   "prompt_tokens": 1,
+   "completion_tokens": 1,
+   "reasoning_tokens": 0,
+   "cached_tokens": 0
+  },
+  {
+   "ts": 1,
+   "kind": "log",
+   "msg": "no level"
+  }
+ ]
+}

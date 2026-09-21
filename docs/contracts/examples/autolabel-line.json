@@ -1,0 +1,52 @@
+{
+ "schema": "cli/autolabel-line.schema.json",
+ "valid": [
+  {
+   "episode_index": 17,
+   "status": "ok",
+   "caption": "put the orange box into the bin",
+   "source": "自产caption",
+   "error": null
+  },
+  {
+   "episode_index": 18,
+   "status": "unclear",
+   "caption": "",
+   "source": "自产caption",
+   "error": null
+  },
+  {
+   "episode_index": 19,
+   "status": "error",
+   "caption": null,
+   "source": "自产caption",
+   "error": {
+    "kind": "execution",
+    "incidents": [
+     {
+      "step": "caption",
+      "call_kind": "caption",
+      "cause": "timeout",
+      "attempts": 4
+     }
+    ]
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "episode_index": 19,
+   "status": "error",
+   "caption": "x",
+   "source": "自产caption",
+   "error": null
+  },
+  {
+   "episode_index": 17,
+   "status": "ok",
+   "caption": "",
+   "source": "自产caption",
+   "error": null
+  }
+ ]
+}

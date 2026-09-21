@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "curation verify --json (schema 1.0)",
+  "description": "Reads back every key file of the delivery: exists, right size, parses (JSON / parquet header / mp4 moov / JPEG magic). _COMPLETE is written only when all pass (design doc 02, section 3.10).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "output", "checked", "failed", "complete_marker"],
+  "properties": {
+    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
+    "output": {"$ref": "common.schema.json#/$defs/uri"},
+    "checked": {"type": "integer", "minimum": 0},
+    "failed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "reason"],
+        "properties": {
+          "path": {"type": "string"},
+          "reason": {"enum": ["missing", "size_mismatch", "unparseable", "zero_filled", "not_visible_in_time"]}
+        }
+      }
+    },
+    "complete_marker": {"type": "boolean"}
+  },
+  "if": {"properties": {"failed": {"minItems": 1}}},
+  "then": {"properties": {"complete_marker": {"const": false}}}
+}

@@ -1,0 +1,25 @@
+{
+ "schema": "cli/report-output.schema.json",
+ "valid": [
+  {
+   "schema_version": "1.0",
+   "revision": 2,
+   "files": {
+    "report_md": "revisions/r0002/report.md",
+    "report_json": "revisions/r0002/report.json",
+    "perf_json": "revisions/r0002/perf.json",
+    "tables": [
+     "revisions/r0002/tables/visual_quality.parquet"
+    ],
+    "commit": "revisions/r0002/commit.json"
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "revision": 2,
+   "files": {}
+  }
+ ]
+}

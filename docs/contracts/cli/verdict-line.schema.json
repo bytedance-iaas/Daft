@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "verdicts.jsonl line - funnel verdict (schema 1.0)",
+  "description": "aggregate --phase funnel, one line per selected episode. Rules are v1's pipeline/verdict.py: a hard gate with passed=false drops; passed=null is only recorded as undecidable; a weighted soft score under the threshold drops. An episode that a selected module failed to judge (D24, D33) is held - unless a hard gate already rejected it: a definite hard-gate failure is not a degraded conclusion, so drop wins over held (as in v1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "episode_index",
+    "verdict",
+    "hard_fails",
+    "soft_score",
+    "undecidable",
+    "error_modules",
+    "reason"
+  ],
+  "properties": {
+    "episode_index": {
+      "$ref": "common.schema.json#/$defs/episode_index"
+    },
+    "verdict": {
+      "enum": [
+        "keep",
+        "drop",
+        "held"
+      ]
+    },
+    "hard_fails": {
+      "$ref": "common.schema.json#/$defs/module_list"
+    },
+    "soft_score": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "undecidable": {
+      "$ref": "common.schema.json#/$defs/module_list"
+    },
+    "error_modules": {
+      "$ref": "common.schema.json#/$defs/module_list"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "held"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error_modules": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "keep"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "hard_fails": {
+            "maxItems": 0
+          },
+          "error_modules": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ]
+}

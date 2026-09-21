@@ -1,0 +1,64 @@
+{
+ "schema": "cli/source-manifest.schema.json",
+ "valid": [
+  {
+   "schema_version": "1.0",
+   "input": "tos://bucket/datasets/droid_lerobot",
+   "objects": [
+    {
+     "key": "meta/info.json",
+     "size": 4211,
+     "etag": "\"9b2c\""
+    },
+    {
+     "key": "videos/chunk-000/wrist/episode_000034.mp4",
+     "size": 1839201,
+     "etag": "\"77aa\""
+    }
+   ],
+   "summary": {
+    "count": 804,
+    "bytes": 1520331122,
+    "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+   }
+  },
+  {
+   "schema_version": "1.0",
+   "input": "/mnt/data/droid",
+   "objects": [
+    {
+     "key": "meta/info.json",
+     "size": 10,
+     "mtime_ns": 1758300000000000000
+    }
+   ],
+   "summary": {
+    "count": 1,
+    "bytes": 10,
+    "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "1.0",
+   "input": "tos://bucket/datasets/droid_lerobot",
+   "objects": [
+    {
+     "key": "meta/info.json",
+     "size": 4211
+    },
+    {
+     "key": "videos/chunk-000/wrist/episode_000034.mp4",
+     "size": 1839201,
+     "etag": "\"77aa\""
+    }
+   ],
+   "summary": {
+    "count": 804,
+    "bytes": 1520331122,
+    "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+   }
+  }
+ ]
+}
