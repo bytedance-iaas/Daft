@@ -86,13 +86,18 @@ class Idempotency:
                     return _replay(stored)
                 response = handler()
                 if 200 <= response.status_code < 300:
+                    kept = {k: response.headers[k] for k in _REPLAYED_HEADERS if k in response.headers}
                     self._repo.put_idempotent(P.IdempotencyRecord(
                         key=key, route=operation, owner_id=owner, created_at=self._clock(),
                         response={"fingerprint": fp, "status": response.status_code,
-                                  "body": _json_body(response)}))
+                                  "body": _json_body(response), "headers": kept}))
                 return response
         finally:
             self._release(ident)
+
+
+#: Response headers a replay repeats (the ETag of the task written, a created resource's URL).
+_REPLAYED_HEADERS = ("etag", "location")
 
 
 def _json_body(response: Response) -> Any:
@@ -108,7 +113,7 @@ def _json_body(response: Response) -> Any:
 
 
 def _replay(stored: dict) -> Response:
-    headers = {"Idempotent-Replayed": "true"}
+    headers = {**(stored.get("headers") or {}), "Idempotent-Replayed": "true"}
     status = int(stored.get("status", 200))
     body = stored.get("body")
     if body is None:

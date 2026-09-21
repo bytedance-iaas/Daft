@@ -688,5 +688,6 @@ def test_idempotent_patch_replays_even_after_the_task_moved_on(client_for):
     again = c.patch(f"/api/v1/tasks/{t.id}", json={"name": "x"}, headers=headers)
     assert first.status_code == again.status_code == 200
     assert again.json() == first.json() and again.headers["idempotent-replayed"] == "true"
+    assert again.headers["etag"] == first.headers["etag"]
     assert_error(c.patch(f"/api/v1/tasks/{t.id}", json={"name": "y"}, headers=headers),
                  "idempotency_conflict")
