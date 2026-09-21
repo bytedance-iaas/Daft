@@ -106,6 +106,7 @@ v1 的 CLI 和界面上的每一项能力，在 v2 里去哪了。原则：需�
 | 调用失败的条目（D24） | 记成弃权，照常交付并进复核 | 记为执行出错，暂不交付，等补跑 | 逐模块的规范化记录照比；终判清单的比对**排除**两边任何一侧出过错的条目，并单独列出 |
 | 降级得出的结论（D33） | 打分失败后复核救回、仲裁失败维持弃权、少一路机位照判，结论照常生效 | 同样算执行出错，整条待补跑 | 同上；黄金基线要求零失败，所以基线里不会有这类条目 |
 | 无标注补 caption 失败（D33） | 给空串，成败判定拿空任务文本照跑 | 执行出错，不进后面的档 | 同上 |
+| 被去重剔除的条目 | `passed.json` 按漏斗判决生成，没扣掉它（同时也在 `reject.json` 里）；交付数据集里是扣掉的 | 只在 `reject` 里 | 终判清单按交付口径比：passed = 漏斗 keep − 重复项（W0 实测确认） |
 | 执行裁决之后（D9） | 顺手重新导出 | 只改判决与报告，导出由用户显式触发 | 裁决对账比的是三份清单与改标结果，不比导出时机 |
 | 人工裁决的归属（D32） | 随交付目录跨批次沿用 | 只属于本任务 | 不对账；v1 的沿用逻辑不搬 |
 | 完整性标志与 `latest`（D7、D29） | `passed.json` 兼作标志；`latest` = 最近一次跑批 | `_COMPLETE`；`latest` = 最近一次发布成功的完整版本 | 不对账 |
@@ -195,14 +196,20 @@ VLM 三项有随机性（实测：方舟 temperature=0 同一条打 5 次可得 
 ### 3.3 对账工具
 
 ```bash
-python tools/parity/dump_v1.py --input tos://… --out golden/v1/droid50/     # 在现网 v1 Pod 里跑，见 §3.1
+# 在现网 v1 Pod 里跑（步骤见 tools/parity/README.md）；`--` 之后就是 v1 的 `curation run` 参数
+python -m parity dump-v1 --out golden/v1/droid50-a -- run --input tos://… --output tos://… --max-episodes 50
 
-curation-parity compare --golden golden/v1/droid50 --candidate <run_dir> \
-                        --strict timestamp_check,kinematic_limits,motion_quality,\
-visual_quality,video_action_sync,dedup \
-                        --verdict-only autolabel,task_success,skill_profile \
-                        --noise-floor golden/v1/droid50-rerun --json
+# 回放对账：九项全部逐位一致、请求 100% 命中
+python -m parity compare --golden golden/v1/droid50-a --candidate <回放导出> --all-strict
+
+# 真模型对账：确定性六项逐位，VLM 三项判决级，带 v1 自身的噪声底
+python -m parity compare --golden golden/v1/droid50-a --candidate <导出> \
+                         --noise-floor golden/v1/droid50-b --json
 ```
+
+默认 `--strict` 为确定性六项、`--verdict-only` 为 VLM 三项；终判清单比对时，两边任一侧 `error` 的条目排除并单列。
+工具与录制带格式在 `robot-curation/tools/parity/`（W1 后挪到根下 `tools/parity/`），
+录制带的格式见 `docs/contracts/parity/vlm-tape-entry.schema.json`，v2 的回放后端读同一种格式、用同一个请求哈希函数。
 
 输出：逐模块一致/不一致计数、差异条目明细、结论。**这个工具是工作包 W0 的一部分，
 必须先于重构存在** —— 没有对账工具的重构是在裸奔。

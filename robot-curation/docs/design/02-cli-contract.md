@@ -169,13 +169,15 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 
 ```jsonc
 // parts/*.jsonl 每行
-{"episode_index": 34, "verdict": "pass",          // pass | fail | abstain | error
+{"episode_index": 34, "verdict": "scored",        // pass | fail | abstain | scored | error
  "score": 0.82, "gate": "soft",
  "details": { /* 模块自定义，原样保留 v1 的字段名 */ },
  "evidence": ["details/evidence/ep000034/probe3_f0120.jpg"],
  "elapsed_s": 3.4, "error": null}
 ```
 
+- 行格式由 W0 先行定稿：`docs/contracts/cli/result-record.schema.json`（对账工具导出 v1 结果用的是同一份）。
+  `passed` / `score` 原样保留 v1 的三态与分数，`verdict` 由它们推出：硬门 `pass` / `fail`，无判无分为 `abstain`，打分项（视觉质量、运动质量这类不投票的）为 `scored`，执行出错为 `error`。
 - `abstain`（弃权）是一等公民：证据不足不判废，进人工裁决队列 —— 这是 v1 的核心纪律，
   搬运时不得简化成二值。
 - **`error` 和 `abstain` 严格区分**（D24）。`abstain` 是模型或算法正常给出的「判不了」（证据灰区、两问矛盾），

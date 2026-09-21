@@ -66,7 +66,7 @@
 | # | 契约 | 文件 | 消费方 |
 |---|---|---|---|
 | C1 | 模块注册表 | `backend/curation/registry/modules.py` | CLI、Daemon、前端 |
-| C2 | CLI `--json` schema（含规范化的 `results.jsonl` 行，对账工具也消费它） | `docs/contracts/cli/*.schema.json` | Daemon、对账工具 |
+| C2 | CLI `--json` schema（含规范化的 `results.jsonl` 行，对账工具也消费它；这一行的格式已由 W0 先行定稿为 `result-record.schema.json`） | `docs/contracts/cli/*.schema.json` | Daemon、对账工具 |
 | C3 | 进度协议（stderr JSON Lines） | `docs/contracts/progress.schema.json` | Daemon → SSE |
 | C4 | REST OpenAPI | `docs/contracts/openapi.yaml` | 前端 |
 | C5 | Repository 接口 | `backend/daemon/repo/protocol.py` | Daemon 内部 |

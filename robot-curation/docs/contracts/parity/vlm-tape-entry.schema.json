@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "curator/contracts/parity/vlm-tape-entry.schema.json",
+  "title": "VLM tape line (schema 1.0)",
+  "description": "One line of a gzip JSON-Lines tape written by the parity hooks. The first line is the header; every other line is a recorded call or a failure marker. v2's replay backend reads the same format and must hash requests with parity.vlm_tape.canonical_request.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["kind", "tape_schema_version", "created_at"],
+      "properties": {
+        "kind": {"const": "header"},
+        "tape_schema_version": {"const": "1.0"},
+        "created_at": {"type": "number"}
+      }
+    },
+    {
+      "type": "object",
+      "required": ["seq", "kind", "hash", "tag", "request", "outcome"],
+      "properties": {
+        "seq": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["logical", "direct"]},
+        "hash": {"type": "string", "pattern": "^(sha256:[0-9a-f]{64})?$"},
+        "tag": {"type": ["string", "null"]},
+        "request": {
+          "type": "object",
+          "properties": {
+            "method": {"enum": ["GET", "POST"]},
+            "path": {"type": "string"},
+            "body": {"type": ["object", "null"]}
+          }
+        },
+        "outcome": {"enum": ["response", "exception"]},
+        "status": {"type": "integer"},
+        "reason": {"type": "string"},
+        "body": {"type": "string"},
+        "exc_type": {"type": "string"},
+        "exc_message": {"type": "string"},
+        "t_start": {"type": ["number", "null"]},
+        "t_end": {"type": ["number", "null"]},
+        "replayed_from": {"type": ["integer", "null"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"outcome": {"const": "response"}}},
+          "then": {"required": ["status", "body"]},
+          "else": {"required": ["exc_type", "exc_message"]}
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "required": ["seq", "kind", "exc_type"],
+      "properties": {
+        "seq": {"type": "integer", "minimum": 1},
+        "kind": {"const": "llm_failure"},
+        "exc_type": {"type": "string"},
+        "exc_message": {"type": "string"},
+        "prompt_head": {"type": "string"}
+      }
+    }
+  ]
+}

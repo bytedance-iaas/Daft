@@ -1,7 +1,8 @@
 # robot-curation
 
 > **v2 重构进行中**：工程设计文档在 [docs/design/](docs/design/)（12 篇，入口是 `00-overview.md`），
-> UI 静态预览稿在 [frontend/mockups/](frontend/mockups/)。
+> UI 静态预览稿在 [frontend/mockups/](frontend/mockups/)；重构前的对账工具与黄金基线步骤在
+> [tools/parity/README.md](tools/parity/README.md)（含离线手动验证步骤）。
 > 本文档描述的是当前在运的 v1（`release_v1`），两者并行期间以本文为准。
 
 机器人演示数据集的质检与清洗服务：接收 LeRobot v2 / v3 格式的数据集，跑八项自动质检，
