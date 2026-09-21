@@ -20,6 +20,7 @@ configuration that is not stored yet.
 from __future__ import annotations
 
 import concurrent.futures
+import dataclasses
 import logging
 import os
 import pathlib
@@ -231,6 +232,27 @@ def check_vlm(svc: SecretsService, selection: VlmSelection, *,
     return CheckResult("vlm", True, "ok", f"{target.label}完成了一次最小调用{effort}", where)
 
 
+def _run_scrubber(svc: SecretsService, input: InputTarget | None, output: OutputTarget | None,
+                  vlm: VlmSelection | None, owner: str) -> Scrubber:
+    """A scrubber that knows every secret the run used (best effort: gone keys are skipped)."""
+    values: list[str | None] = []
+    for target in (input, output):
+        if target is not None and getattr(target, "credential_id", None):
+            try:
+                values += svc.tos_key(target.credential_id, owner=owner).secrets()
+            except Unavailable:
+                pass
+    if vlm is not None:
+        try:
+            if isinstance(vlm.snapshot, dict) and vlm.snapshot.get("backend_id"):
+                values.append(svc.vlm_target_from_snapshot(vlm.snapshot, owner=owner).api_key)
+            else:
+                values.append(svc.vlm_target(vlm.model_id, owner=owner).api_key)
+        except Unavailable:
+            pass
+    return Scrubber(values)
+
+
 def _timed(fn, *args, **kwargs) -> CheckResult:
     started = time.monotonic()
     result = fn(*args, **kwargs)
@@ -265,7 +287,11 @@ def run_prechecks(svc: SecretsService, *, input: InputTarget | None = None,
             results = list(ex.map(run, jobs))
     else:
         results = [run(job) for job in jobs]
-    report = PrecheckReport(tuple(results))
+    # each check scrubbed its own key out of its text; scrub every key of the run out of all of
+    # them, so nothing one check saw can surface in another's reason
+    scrub = _run_scrubber(svc, input, output, vlm, owner)
+    report = PrecheckReport(tuple(dataclasses.replace(r, reason=scrub(r.reason),
+                                                      target=scrub(r.target)) for r in results))
     if not report.ok:
         log.info("prechecks failed: %s", report.message())
     return report

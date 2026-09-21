@@ -70,7 +70,10 @@ def test_classify_splits_identity_permission_location_and_network():
     assert T.classify(FakeTosError(404, "NoSuchKey"), s).kind == "no_object"
     assert T.classify(FakeTosError(503, "ServiceUnavailable"), s).kind == "server"
     assert T.classify(FakeNetworkError("dns"), s).kind == "unreachable"
+    assert T.classify(ConnectionResetError("reset"), s).kind == "unreachable"
     assert T.classify(FakeTosError(400, "InvalidArgument", "bad"), s).kind == "other"
+    bug = T.classify(RuntimeError(f"not a network problem {SK}"), s)   # no status, no cause
+    assert bug.kind == "other" and SK not in bug.detail
 
 
 def test_identity_check_lists_buckets_and_touches_no_object(fake_tos):

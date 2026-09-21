@@ -162,6 +162,12 @@ def _status(exc: BaseException) -> int | None:
     return None
 
 
+def _is_transport_error(exc: BaseException) -> bool:
+    if getattr(exc, "cause", None) is not None or isinstance(exc, (OSError, TimeoutError)):
+        return True
+    return type(exc).__module__.split(".", 1)[0] in ("requests", "urllib3")
+
+
 def classify(exc: BaseException, scrub: Scrubber, *, bucket_op: bool = False) -> TosFailure:
     """An SDK exception -> :class:`TosFailure`. ``bucket_op``: a 404 means the bucket."""
     status = _status(exc)
@@ -173,7 +179,9 @@ def classify(exc: BaseException, scrub: Scrubber, *, bucket_op: bool = False) ->
     code = clip(scrub(code), 64)
     if status is None:
         # client side: DNS, connect, TLS, timeout (TosClientError carries the cause)
-        return TosFailure("unreachable", None, code, detail)
+        if _is_transport_error(exc):
+            return TosFailure("unreachable", None, code, detail)
+        return TosFailure("other", None, code, detail)
     if code in AUTH_CODES or status == 401:
         return TosFailure("auth", status, code, detail)
     if status == 403:
