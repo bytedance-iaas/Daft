@@ -1,5 +1,9 @@
 # robot-curation
 
+> **v2 重构进行中**：工程设计文档在 [docs/design/](docs/design/)（12 篇，入口是 `00-overview.md`），
+> UI 静态预览稿在 [frontend/mockups/](frontend/mockups/)。
+> 本文档描述的是当前在运的 v1（`release_v1`），两者并行期间以本文为准。
+
 机器人演示数据集的质检与清洗服务：接收 LeRobot v2 / v3 格式的数据集，跑八项自动质检，
 把拿不准的轨迹交给人裁决，最后产出一份可直接用于训练的交付数据集和一份可追溯的质检报告。
 数据放在火山 TOS 对象存储里，质检时不用先把数据集整个拷到服务器上。底座是 Daft 数据引擎。

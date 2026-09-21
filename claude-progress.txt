@@ -1,35 +1,30 @@
 Date: 2026-09-20
-TaskStatus: completed
+TaskStatus: not_completed
 
 Task scope:
-  读取需求文档《Physical AI Kit - Curator 设计文档Prompt》,完成需求澄清,
-  输出可开工的详细工程设计文档。本轮不写产品代码。
+  F3.1 UI 静态预览稿第一批:任务列表 + 新建任务两页,用于确定视觉风格。
+  (F0.1 需求澄清、F0.2 工程设计文档已 completed,见 feature_list.md)
 
 Current summary:
-  - 已读需求文档(飞书 wiki GzHSwyALai8fRzkb5tTcXXYInRI)
-  - 已完成两轮需求澄清,15 条决策冻结(见 docs/design/00-overview.md §7)
-  - 已盘点 release_v1 现状:8 个质检模块、Gradio 单体 UI、CLI、约 6.5 万行
-  - 已输出 12 篇设计文档到 robot-curation/docs/design/
-  - 已建立需求账本 feature_list.md(19 个 feature,阶段 0 两项 completed)
-  - 已导出团队评审副本到飞书文档(汇总 12 篇):
+  - 设计文档 12 篇已产出,飞书评审副本已导出:
     https://bytedance.us.larkoffice.com/docx/A4mndB5oBo8IGAxNuUlumWPBsod
-    以仓库内 Markdown 为准,飞书文档是副本;评审意见在飞书划词评论
-  - 工作分支 feat/curator-v2 已创建,尚未做任何删除或重构
-
-Key findings (影响设计的现状事实):
-  - 现有 vlm_client.py 只统计延迟,无 token usage 采集 → Token 消耗是全新能力
-  - 交付导出 v2 天然增量友好(文件级复用),v3 需按 chunk 粒度重编码
-  - 标注审计不是独立模块,是技能画像(M7)的第三步
-  - 并发闸门必须用自建信号量,daft 的 max_concurrency 对 async 行级 UDF 静默失效
-  - TOS FSX 挂载拒绝随机写,视频必须先写本地临时文件再整文件拷贝
+  - F3.1 第一批两页已交付:robot-curation/frontend/mockups/
+      tasks.html      质检任务列表(七种状态、待裁决徽标、游标分页 Lazy Loading)
+      task-new.html   新建任务(预检结果、Episode 自选、模块三态、必填校验、吸底操作条)
+      README.md       手动验证步骤 + 设计 token 口径 + 4 个待确认项
+  - 自验证已通过:自选展开、预览图勾选计数、高级折叠、必填校验标红,均正常
+  - 预览方式:python3 -m http.server 4173 --directory robot-curation/frontend/mockups
+    (已加 .claude/launch.json 配置,名为 curator-mockups)
+  - 工作分支 feat/curator-v2,仍未做任何删除或重构
 
 Main gaps:
-  - 设计文档尚未经需求方评审
-  - baseline 清理(删除上游 daft 源码)是破坏性操作,等需求方点头后才能执行
+  - F3.1 验收标准是"需求方确认风格",尚未确认 → 状态保持 not_completed
+  - 另四页(任务详情、质检报告、人工裁决、密钥管理)等风格确认后再补
+  - baseline 清理(删除上游 daft 源码)仍等需求方点头
   - 黄金基线产物尚未生成(必须用 v1 代码跑,且先于任何重构)
 
 Next steps:
-  1. 需求方评审 12 篇设计文档,确认架构与契约
-  2. 确认后执行 F1.1(对账工具 + 黄金基线)和 F1.2(baseline 清理)
-  3. F3.1 静态 HTML 两页可与上述并行启动
-  4. F1.3 契约冻结完成后,按 11-workstreams.md 的批次 1 开多 agent 并行
+  1. 需求方评审两页静态稿,重点看 README 末尾的 4 个待确认项
+  2. 风格确认后补齐剩余四页,F3.1 置 completed
+  3. 并行推进 F1.1(对账工具 + 黄金基线)与 F1.2(baseline 清理,待点头)
+  4. F1.3 契约冻结后,按 docs/design/11-workstreams.md 批次 1 开多 agent 并行

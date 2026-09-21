@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新建质检任务 · Physical AI Kit 数据质检平台</title>
+<style>
+/* ===== shared tokens (inlined so each page is self-contained) ===== */
+/* Curator v2 mockup — Arco Design tokens, aligned with Volcengine console.
+   Mockup only: hand-written CSS standing in for @arco-design/web-react.
+   The React build will use the real component library; keep tokens in sync. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+
+:root {
+  /* Arco primary */
+  --primary-6: #165DFF; --primary-5: #4080FF; --primary-7: #0E42D2; --primary-1: #E8F3FF;
+  /* status */
+  --success-6: #00B42A; --success-1: #E8FFEA;
+  --warning-6: #FF7D00; --warning-1: #FFF7E8;
+  --danger-6:  #F53F3F; --danger-1:  #FFECE8;
+  /* neutrals */
+  --text-1: #1D2129; --text-2: #4E5969; --text-3: #86909C; --text-4: #C9CDD4;
+  --border:  #E5E6EB; --fill-2: #F2F3F5; --fill-1: #F7F8FA; --white: #FFFFFF;
+  /* metrics */
+  --topbar-h: 60px; --sider-w: 208px; --radius: 4px; --radius-sm: 2px;
+  --shadow-card: 0 1px 3px rgba(0,0,0,.04);
+  --shadow-pop: 0 4px 10px rgba(0,0,0,.10);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+               "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px; line-height: 1.5715; color: var(--text-1);
+  background: var(--fill-1); -webkit-font-smoothing: antialiased;
+}
+a { color: var(--primary-6); text-decoration: none; }
+a:hover { color: var(--primary-5); }
+
+/* ── layout ───────────────────────────────────────────── */
+.topbar {
+  position: fixed; inset: 0 0 auto 0; height: var(--topbar-h); z-index: 100;
+  display: flex; align-items: center; gap: 16px; padding: 0 20px;
+  background: var(--white); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; }
+.brand .logo {
+  width: 26px; height: 26px; border-radius: 6px; flex: none;
+  background: linear-gradient(135deg, var(--primary-6), #7B4DFF);
+}
+.brand .divider { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
+.brand .product { font-weight: 500; color: var(--text-2); }
+.topbar .spacer { flex: 1; }
+.topbar .region, .topbar .user {
+  display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
+  border-radius: var(--radius-sm); color: var(--text-2); cursor: pointer; font-size: 13px;
+}
+.topbar .region:hover, .topbar .user:hover { background: var(--fill-2); }
+.avatar {
+  width: 24px; height: 24px; border-radius: 50%; background: var(--primary-1);
+  color: var(--primary-6); display: grid; place-items: center; font-size: 12px; font-weight: 600;
+}
+
+.sider {
+  position: fixed; top: var(--topbar-h); bottom: 0; left: 0; width: var(--sider-w);
+  background: var(--white); border-right: 1px solid var(--border); padding: 8px 8px 0;
+  overflow-y: auto;
+}
+.menu-group { padding: 12px 12px 6px; font-size: 12px; color: var(--text-3); }
+.menu-item {
+  display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px;
+  border-radius: var(--radius); color: var(--text-1); cursor: pointer; margin-bottom: 2px;
+}
+.menu-item:hover { background: var(--fill-2); }
+.menu-item.active { background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.menu-item svg { flex: none; }
+
+.main { margin: var(--topbar-h) 0 0 var(--sider-w); padding: 16px 20px 48px; }
+.crumb { font-size: 13px; color: var(--text-3); margin-bottom: 12px; }
+.crumb b { color: var(--text-1); font-weight: 400; }
+.page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+.page-title { font-size: 20px; font-weight: 600; margin: 0; }
+.page-desc { font-size: 13px; color: var(--text-3); margin: 4px 0 0; }
+.page-head .spacer { flex: 1; }
+
+.card {
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-card); margin-bottom: 16px;
+}
+.card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 20px; border-bottom: 1px solid var(--border);
+}
+.card-title { font-size: 15px; font-weight: 600; }
+.card-head .spacer { flex: 1; }
+.card-body { padding: 20px; }
+
+/* ── buttons ──────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 15px; border-radius: var(--radius-sm); font-size: 14px;
+  border: 1px solid transparent; background: var(--fill-2); color: var(--text-1);
+  cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s;
+}
+.btn:hover { background: #E5E6EB; }
+.btn-primary { background: var(--primary-6); color: #fff; }
+.btn-primary:hover { background: var(--primary-5); }
+.btn-outline { background: var(--white); border-color: var(--border); }
+.btn-outline:hover { background: var(--white); border-color: var(--primary-6); color: var(--primary-6); }
+.btn-text { background: transparent; padding: 0 8px; color: var(--primary-6); }
+.btn-text:hover { background: var(--primary-1); }
+.btn-lg { height: 36px; padding: 0 20px; }
+.btn[disabled] { background: var(--fill-2); color: var(--text-4); cursor: not-allowed; }
+.btn-icon { width: 32px; padding: 0; }
+
+/* ── form ─────────────────────────────────────────────── */
+.form-row { display: flex; gap: 16px; margin-bottom: 18px; }
+.field { flex: 1; min-width: 0; }
+.label { display: block; font-size: 14px; color: var(--text-1); margin-bottom: 8px; }
+.label .req { color: var(--danger-6); margin-right: 4px; }
+.label .hint { color: var(--text-3); font-size: 12px; margin-left: 6px; }
+.input, .select {
+  width: 100%; height: 32px; padding: 0 11px; font-size: 14px; color: var(--text-1);
+  background: var(--fill-1); border: 1px solid transparent; border-radius: var(--radius-sm);
+  outline: none; font-family: inherit;
+}
+.input::placeholder { color: var(--text-4); }
+.input:hover, .select:hover { background: var(--fill-2); }
+.input:focus, .select:focus { background: var(--white); border-color: var(--primary-6); }
+.input.is-error { background: var(--danger-1); border-color: var(--danger-6); }
+.err-text { color: var(--danger-6); font-size: 12px; margin-top: 4px; }
+.help-text { color: var(--text-3); font-size: 12px; margin-top: 6px; }
+textarea.input { height: auto; padding: 8px 11px; resize: vertical; line-height: 1.6; }
+select.select { appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%2386909C' stroke-width='1.2'/></svg>");
+  background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+
+.check, .radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.check input, .radio input { accent-color: var(--primary-6); width: 14px; height: 14px; margin: 0; }
+.check.is-disabled { color: var(--text-4); cursor: not-allowed; }
+
+/* ── tags & status ────────────────────────────────────── */
+.tag {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px;
+  border-radius: var(--radius-sm); font-size: 12px; background: var(--fill-2); color: var(--text-2);
+  white-space: nowrap;
+}
+.tag .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.tag-blue   { background: var(--primary-1); color: var(--primary-6); }
+.tag-green  { background: var(--success-1); color: var(--success-6); }
+.tag-orange { background: var(--warning-1); color: var(--warning-6); }
+.tag-red    { background: var(--danger-1);  color: var(--danger-6); }
+.tag-gray   { background: var(--fill-2);    color: var(--text-3); }
+.tag-outline-blue { background: var(--white); color: var(--primary-6); border: 1px solid var(--primary-6); }
+.tag-running .dot { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* ── table ────────────────────────────────────────────── */
+.table { width: 100%; border-collapse: collapse; }
+.table th {
+  text-align: left; font-weight: 500; font-size: 13px; color: var(--text-2);
+  background: var(--fill-1); padding: 11px 16px; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.table td { padding: 13px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tbody tr:hover td { background: var(--fill-1); }
+.table .col-name { font-weight: 500; }
+.table .sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.mono { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+
+.progress { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.progress .bar { flex: 1; height: 4px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+.progress .bar i { display: block; height: 100%; background: var(--primary-6); border-radius: 2px; }
+.progress .bar.is-done i { background: var(--success-6); }
+.progress .bar.is-err  i { background: var(--warning-6); }
+.progress .pct { font-size: 12px; color: var(--text-3); width: 34px; text-align: right; }
+
+.list-foot {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 16px; color: var(--text-3); font-size: 13px;
+}
+
+/* ── misc ─────────────────────────────────────────────── */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px; }
+.stat { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 16px 20px; box-shadow: var(--shadow-card); }
+.stat .k { font-size: 13px; color: var(--text-3); }
+.stat .v { font-size: 24px; font-weight: 600; margin-top: 6px; letter-spacing: .5px; }
+.stat .v small { font-size: 13px; font-weight: 400; color: var(--text-3); margin-left: 4px; }
+
+.toolbar { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.toolbar .spacer { flex: 1; }
+.search { position: relative; }
+.search .input { width: 240px; padding-left: 32px; }
+.search svg { position: absolute; left: 10px; top: 9px; }
+
+.alert {
+  display: flex; gap: 10px; padding: 12px 16px; border-radius: var(--radius); font-size: 13px;
+  background: var(--warning-1); color: #7A4100; border: 1px solid #FFCF8B;
+}
+.alert-blue { background: var(--primary-1); color: #0A2A8C; border-color: #94BFFF; }
+.alert-green { background: var(--success-1); color: #0A6B1C; border-color: #AFF0B5; }
+.alert svg { flex: none; margin-top: 2px; }
+.alert .spacer { flex: 1; }
+
+.divider-h { height: 1px; background: var(--border); margin: 20px 0; }
+.muted { color: var(--text-3); }
+.nowrap { white-space: nowrap; }
+.mockup-note {
+  position: fixed; right: 16px; bottom: 76px; z-index: 200; cursor: pointer;
+  background: rgba(29,33,41,.88); color: #fff; font-size: 12px; line-height: 1.6;
+  padding: 8px 12px; border-radius: var(--radius); max-width: 280px;
+}
+.mockup-note b { color: #FFD666; }
+</style>
+<style>
+  .form-wrap { max-width: 1080px; }
+  .seg { display: inline-flex; background: var(--fill-1); border-radius: var(--radius-sm); padding: 2px; }
+  .seg label {
+    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px;
+    border-radius: var(--radius-sm); font-size: 13px; color: var(--text-2); cursor: pointer; }
+  .seg input { display: none; }
+  .seg input:checked + span { color: var(--primary-6); }
+  .seg label:has(input:checked) { background: var(--white); box-shadow: var(--shadow-card); color: var(--primary-6); }
+  .exp-tag { font-size: 11px; color: var(--warning-6); background: var(--warning-1);
+             border-radius: 2px; padding: 0 5px; line-height: 16px; }
+
+  .modules { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px 20px; }
+  .mod {
+    display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius); background: var(--white); }
+  .mod.checked { border-color: var(--primary-6); background: #FBFDFF; }
+  .mod.warn { border-color: #FFCF8B; background: var(--warning-1); }
+  .mod.off { background: var(--fill-1); border-style: dashed; color: var(--text-3); }
+  .mod .body { flex: 1; min-width: 0; }
+  .mod .name { font-size: 14px; display: flex; align-items: center; gap: 6px; }
+  .mod .meta { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+  .mod.off .name { color: var(--text-3); }
+  .gate { font-size: 11px; border-radius: 2px; padding: 0 5px; line-height: 16px;
+          background: var(--fill-2); color: var(--text-3); }
+  .gate.hard { background: #FFECE8; color: #CB2634; }
+  .gate.soft { background: #E8F3FF; color: var(--primary-6); }
+
+  .eps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+  .ep { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; cursor: pointer; background: #fff; }
+  .ep.on { border-color: var(--primary-6); box-shadow: 0 0 0 2px rgba(22,93,255,.12); }
+  .ep .thumb { height: 66px; background: linear-gradient(135deg,#C9CDD4,#86909C); position: relative; }
+  .ep:nth-child(3n) .thumb { background: linear-gradient(135deg,#A8C6FF,#5B88E0); }
+  .ep:nth-child(3n+1) .thumb { background: linear-gradient(135deg,#D4C7B0,#9E8A6B); }
+  .ep .thumb::after { content: '▶'; position: absolute; inset: 0; display: grid; place-items: center;
+                      color: rgba(255,255,255,.75); font-size: 13px; }
+  .ep .cap { display: flex; align-items: center; justify-content: space-between;
+             padding: 6px 8px; font-size: 12px; }
+  .ep .cap .mono { color: var(--text-2); }
+  .ep .tick { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--text-4); }
+  .ep.on .tick { background: var(--primary-6); border-color: var(--primary-6); }
+  .ep.on .tick::after { content: '✓'; color: #fff; font-size: 10px; display: block; line-height: 12px; text-align: center; }
+
+  .adv-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .adv-head .arr { transition: transform .15s; }
+  .adv.open .arr { transform: rotate(90deg); }
+  .adv-body { display: none; padding-top: 18px; }
+  .adv.open .adv-body { display: block; }
+
+  .footbar {
+    position: sticky; bottom: 0; margin: 0 -20px -48px; padding: 14px 20px;
+    background: rgba(255,255,255,.94); backdrop-filter: blur(6px);
+    border-top: 1px solid var(--border); display: flex; gap: 12px; align-items: center; }
+  .footbar .spacer { flex: 1; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo"></span><span>火山引擎</span><span class="divider"></span>
+    <span class="product">Physical AI Kit · 数据质检平台</span>
+  </div>
+  <div class="spacer"></div>
+  <div class="region">华北 2（北京）
+    <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="#86909C" stroke-width="1.2"/></svg>
+  </div>
+  <div class="user"><span class="avatar">GB</span> galbot</div>
+</header>
+
+<nav class="sider">
+  <div class="menu-group">数据质检</div>
+  <div class="menu-item active">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2.5" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M5 6.5h6M5 9.5h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+    质检任务
+  </div>
+  <div class="menu-item">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10.5 2.5a3.5 3.5 0 00-3.2 4.9L2.5 12.2v1.3h1.3l4.8-4.8a3.5 3.5 0 102-6.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    密钥与资源
+  </div>
+</nav>
+
+<main class="main">
+  <div class="crumb">数据质检平台 / <a href="tasks.html">质检任务</a> / <b>新建任务</b></div>
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">新建质检任务</h1>
+      <p class="page-desc">填好数据集与交付目录后会自动预检，按预检结果决定可以开启哪些质检模块。</p>
+    </div>
+  </div>
+
+  <div class="form-wrap">
+
+    <!-- 基本信息 -->
+    <div class="card">
+      <div class="card-head"><span class="card-title">基本信息</span></div>
+      <div class="card-body">
+        <div class="form-row">
+          <div class="field" style="max-width:420px">
+            <label class="label"><span class="req">*</span>任务名称</label>
+            <input class="input" id="taskName" value="droid-200 全量质检">
+            <div class="err-text" id="nameErr" style="display:none">请输入任务名称</div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field">
+            <label class="label"><span class="req">*</span>数据集来源</label>
+            <div class="seg">
+              <label><input type="radio" name="src" checked><span>私有 TOS</span></label>
+              <label><input type="radio" name="src"><span>HuggingFace 镜像</span></label>
+              <label><input type="radio" name="src"><span>本地挂载路径 <i class="exp-tag">experimental</i></span></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field" style="flex:2">
+            <label class="label"><span class="req">*</span>数据集地址</label>
+            <input class="input mono" value="tos://pai-kit-datasets/lerobot/droid-200">
+          </div>
+          <div class="field" style="max-width:200px">
+            <label class="label"><span class="req">*</span>地区</label>
+            <select class="select"><option>华北 2（北京）cn-beijing</option><option>亚太（新加坡）ap-southeast-1</option></select>
+          </div>
+          <div class="field" style="max-width:220px">
+            <label class="label"><span class="req">*</span>访问凭证</label>
+            <select class="select"><option>prod-tos</option><option>readonly-tos</option><option>+ 新建凭证</option></select>
+          </div>
+        </div>
+
+        <div class="form-row" style="margin-bottom:0">
+          <div class="field" style="flex:2">
+            <label class="label"><span class="req">*</span>交付目录<span class="hint">质检报告与交付数据集的写入位置</span></label>
+            <input class="input mono" value="tos://pai-kit-deliveries/droid-200">
+            <div class="help-text" style="color:var(--success-6)">✓ 写入探针通过（09-20 15:41）</div>
+          </div>
+          <div class="field" style="max-width:200px">
+            <label class="label">地区</label>
+            <select class="select"><option>同数据集地区</option><option>华北 2（北京）</option></select>
+          </div>
+          <div class="field" style="max-width:220px">
+            <label class="label">访问凭证</label>
+            <select class="select"><option>同数据集凭证</option><option>prod-tos</option></select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 预检结果 -->
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">预检结果</span>
+        <span class="tag tag-green" style="margin-left:4px"><i class="dot"></i>已识别</span>
+        <div class="spacer"></div>
+        <button class="btn btn-outline">重新预检</button>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-green" style="margin-bottom:12px">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="#00B42A" stroke-width="1.3"/><path d="M5.2 8.2l2 2 3.6-4" stroke="#00B42A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div>
+            <b>LeRobot v2</b> · 200 条 episode · 3 路相机（exterior_1 / exterior_2 / wrist）· 15 fps · 共 182,400 帧
+            <div class="muted" style="margin-top:2px">读取 info.json、episodes.jsonl 与 tasks.jsonl，未读取样本数据</div>
+          </div>
+        </div>
+        <div class="alert">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2.4l5.8 10.2H2.2L8 2.4z" stroke="#FF7D00" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.6v2.8" stroke="#FF7D00" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.2" r=".8" fill="#FF7D00"/></svg>
+          <div>
+            <b>未读到机器人型号</b>（info.json 里没有 robot_type）：运动学极限需要按型号查规格表，请在下方补充型号或跳过该模块。
+          </div>
+        </div>
+        <div class="help-text" style="margin-top:10px">
+          未通过预检的模块会在「质检模块」里置灰，鼠标移上去或点「详细信息」可以看到具体原因。
+        </div>
+      </div>
+    </div>
+
+    <!-- Episode 选择 -->
+    <div class="card">
+      <div class="card-head"><span class="card-title">Episode 选择</span>
+        <div class="spacer"></div>
+        <span class="muted" style="font-size:13px">已选 <b id="epCount">200</b> / 200 条</span>
+      </div>
+      <div class="card-body">
+        <div class="form-row">
+          <div class="field">
+            <div class="seg" id="epMode">
+              <label><input type="radio" name="ep" checked><span>全部 200 条</span></label>
+              <label><input type="radio" name="ep"><span>自选</span></label>
+            </div>
+          </div>
+        </div>
+
+        <div id="epPicker" style="display:none">
+          <div class="form-row">
+            <div class="field" style="max-width:520px">
+              <label class="label">按编号输入<span class="hint">支持单条、区间与混写，如 3,10-12,34</span></label>
+              <input class="input mono" placeholder="3,10-12,34">
+            </div>
+          </div>
+          <div class="eps" id="epGrid"></div>
+          <div class="help-text">预览图取每条 episode 的首帧；勾选与上方输入框双向同步。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 质检模块 -->
+    <div class="card">
+      <div class="card-head"><span class="card-title">质检模块</span>
+        <div class="spacer"></div>
+        <button class="btn btn-text" id="selAll">全选可用</button>
+        <button class="btn btn-text" id="selNone">清空</button>
+      </div>
+      <div class="card-body">
+        <div class="modules" id="mods">
+          <label class="mod checked"><input type="checkbox" checked>
+            <div class="body"><div class="name">时间戳检查 <i class="gate hard">一票否决</i></div>
+              <div class="meta">时间轴单调、无重复、帧率合理</div></div></label>
+
+          <label class="mod warn"><input type="checkbox">
+            <div class="body">
+              <div class="name">运动学极限 <i class="gate hard">一票否决</i>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2.4l5.8 10.2H2.2L8 2.4z" stroke="#FF7D00" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.6v2.8" stroke="#FF7D00" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.2" r=".7" fill="#FF7D00"/></svg>
+              </div>
+              <div class="meta">关节位置 / 速度是否越过该型号的物理极限</div>
+              <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
+                <select class="select" style="width:190px">
+                  <option>请选择机器人型号</option><option>agibot</option><option>aloha</option>
+                  <option>franka</option><option>google_robot</option><option>so100</option>
+                  <option>so101</option><option>ur5</option><option>widowx</option>
+                </select>
+                <button class="btn btn-text">跳过该模块</button>
+              </div>
+            </div></label>
+
+          <label class="mod checked"><input type="checkbox" checked>
+            <div class="body"><div class="name">视觉质量 <i class="gate soft">打分项</i></div>
+              <div class="meta">逐相机检查模糊、曝光与坏帧</div></div></label>
+
+          <label class="mod checked"><input type="checkbox" checked>
+            <div class="body"><div class="name">视频-动作同步 <i class="gate hard">一票否决</i></div>
+              <div class="meta">画面与动作时间轴是否对齐，逐相机取证</div></div></label>
+
+          <label class="mod checked"><input type="checkbox" checked>
+            <div class="body"><div class="name">任务成败判定 <i class="gate hard">一票否决</i></div>
+              <div class="meta">模型判这条演示到底成没成，证据不足会转人工裁决</div></div></label>
+
+          <label class="mod checked"><input type="checkbox" checked>
+            <div class="body"><div class="name">精确去重</div>
+              <div class="meta">字节级完全重复的轨迹归组</div></div></label>
+
+          <label class="mod checked"><input type="checkbox" checked>
+            <div class="body"><div class="name">技能画像</div>
+              <div class="meta">两级技能体系归纳；标注与画面不符的轨迹转人工裁决</div></div></label>
+        </div>
+
+        <div class="divider-h"></div>
+        <div style="font-size:13px; color:var(--text-2); margin-bottom:10px">
+          不支持的模块（1）<span class="muted" style="margin-left:6px">当前数据集不具备所需数据，无法开启</span>
+        </div>
+        <div class="modules">
+          <label class="mod off"><input type="checkbox" disabled>
+            <div class="body">
+              <div class="name">运动质量 <i class="gate">打分项</i></div>
+              <div class="meta">数据集缺少 observation.state 列
+                <a href="#" style="margin-left:6px">详细信息</a></div>
+            </div></label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模型配置 -->
+    <div class="card">
+      <div class="card-head"><span class="card-title">模型配置</span>
+        <span class="muted" style="font-size:12px">任务成败判定与技能画像会调用视觉语言模型</span></div>
+      <div class="card-body">
+        <div class="form-row" style="margin-bottom:0">
+          <div class="field" style="max-width:260px">
+            <label class="label"><span class="req">*</span>模型服务</label>
+            <select class="select"><option>ark-prod（火山方舟）</option><option>vllm-a100（自定义端点）</option></select>
+          </div>
+          <div class="field" style="max-width:300px">
+            <label class="label"><span class="req">*</span>模型</label>
+            <select class="select"><option>doubao-seed-2-0-pro-260215</option><option>doubao-seed-1-6-vision</option></select>
+          </div>
+          <div class="field" style="max-width:200px">
+            <label class="label">思考强度</label>
+            <select class="select"><option>medium</option><option>minimal</option><option>low</option><option>high</option></select>
+          </div>
+          <div class="field"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 高级 -->
+    <div class="card adv" id="adv">
+      <div class="card-head adv-head" id="advHead">
+        <svg class="arr" width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 2.5L8 6l-3.5 3.5" fill="none" stroke="#4E5969" stroke-width="1.3"/></svg>
+        <span class="card-title">高级设置</span>
+        <span class="muted" style="font-size:12px">不改也能跑，默认值已按节点规格标定</span>
+      </div>
+      <div class="card-body adv-body">
+        <div class="alert alert-blue" style="margin-bottom:18px">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="#165DFF" stroke-width="1.3"/><path d="M8 7.2v4" stroke="#165DFF" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".8" fill="#165DFF"/></svg>
+          <div>并发度与模型请求的合并方式由后端自动优化，这里只需要设置任务级的容错参数。</div>
+        </div>
+        <div class="form-row" style="margin-bottom:0">
+          <div class="field" style="max-width:200px">
+            <label class="label">模型调用重试次数</label>
+            <select class="select"><option>3 次（1s / 2s / 4s）</option><option>1 次</option><option>不重试</option></select>
+          </div>
+          <div class="field" style="max-width:200px">
+            <label class="label">单次请求超时</label>
+            <input class="input" value="120 秒">
+          </div>
+          <div class="field" style="max-width:240px">
+            <label class="label">模型并发上限<span class="hint">留空为自动</span></label>
+            <input class="input" placeholder="自动（32）">
+          </div>
+          <div class="field"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footbar">
+      <span class="muted" style="font-size:13px">将质检 <b>200</b> 条 episode，开启 <b id="modCount">6</b> 个模块</span>
+      <div class="spacer"></div>
+      <a class="btn btn-outline btn-lg" href="tasks.html">取消</a>
+      <button class="btn btn-outline btn-lg">仅创建，不开始</button>
+      <button class="btn btn-primary btn-lg" id="submit">创建并开始</button>
+    </div>
+  </div>
+</main>
+
+<div class="mockup-note"><b>静态预览稿</b> · 仅用于确定视觉风格<br>数据为假数据，交互不接后端<br><span style="opacity:.6">点此关闭</span></div>
+
+<script>
+  // Episode 模式切换 + 预览网格
+  var grid = document.getElementById('epGrid');
+  for (var i = 0; i < 12; i++) {
+    var d = document.createElement('div');
+    d.className = 'ep';
+    d.innerHTML = '<div class="thumb"></div><div class="cap"><span class="mono">' +
+      String(i).padStart(6, '0') + '</span><span class="tick"></span></div>';
+    d.addEventListener('click', function () { this.classList.toggle('on'); sync(); });
+    grid.appendChild(d);
+  }
+  document.querySelectorAll('#epMode input').forEach(function (r, idx) {
+    r.addEventListener('change', function () {
+      document.getElementById('epPicker').style.display = idx === 1 ? 'block' : 'none';
+      sync();
+    });
+  });
+  function sync() {
+    var custom = document.querySelectorAll('#epMode input')[1].checked;
+    document.getElementById('epCount').textContent =
+      custom ? document.querySelectorAll('.ep.on').length : 200;
+  }
+
+  // 模块勾选
+  function bindMods() {
+    document.querySelectorAll('#mods .mod input').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var box = cb.closest('.mod');
+        if (!box.classList.contains('warn')) box.classList.toggle('checked', cb.checked);
+        count();
+      });
+    });
+  }
+  function count() {
+    document.getElementById('modCount').textContent =
+      document.querySelectorAll('#mods .mod input:checked').length;
+  }
+  bindMods();
+  document.getElementById('selAll').addEventListener('click', function () {
+    document.querySelectorAll('#mods .mod input').forEach(function (cb) {
+      cb.checked = true; cb.dispatchEvent(new Event('change'));
+    });
+  });
+  document.getElementById('selNone').addEventListener('click', function () {
+    document.querySelectorAll('#mods .mod input').forEach(function (cb) {
+      cb.checked = false; cb.dispatchEvent(new Event('change'));
+    });
+  });
+
+  // 高级折叠
+  document.getElementById('advHead').addEventListener('click', function () {
+    document.getElementById('adv').classList.toggle('open');
+  });
+
+  // 必填校验演示
+  document.getElementById('submit').addEventListener('click', function () {
+    var n = document.getElementById('taskName');
+    var bad = !n.value.trim();
+    n.classList.toggle('is-error', bad);
+    document.getElementById('nameErr').style.display = bad ? 'block' : 'none';
+    if (bad) { n.focus(); return; }
+    alert('静态预览稿：这里会调用 POST /api/v1/tasks 创建任务');
+  });
+</script>
+<script>document.querySelector('.mockup-note').addEventListener('click', function(){ this.style.display='none'; });</script>
+</body>
+</html>
