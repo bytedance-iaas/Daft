@@ -251,6 +251,9 @@ def create_app(settings: Settings, *, repo: P.Repository | None = None,
     errors.install(app)
     base = settings.base_path
     system.install(app, base)
+    from .routes import access_keys, media, vlm       # W8; before api.router and its catch-all 404
+    for w8 in (access_keys, vlm, media):
+        app.include_router(w8.router, prefix=f"{base}/api/v1")
     app.include_router(api.router, prefix=f"{base}/api/v1")
     app.include_router(sse.router, prefix=f"{base}/events")
     rt.frontend = static.install(app, settings.static_dir, base)
