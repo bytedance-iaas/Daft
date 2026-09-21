@@ -87,7 +87,7 @@
 ### F3.1 静态 HTML 预览
 - 描述：先出任务列表 + 新建任务两页定风格，确认后补齐详情/报告/裁决/密钥四页
 - 验收：需求方确认风格
-- status: not_completed
+- status: **completed**
 
 ### F3.2 前端实现
 - 描述：React + Arco Design 六个页面

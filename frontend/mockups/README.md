@@ -18,7 +18,7 @@
 
 ```bash
 # 在仓库根目录起一个静态服务（页面之间有跳转，用 http 打开体验完整）
-python3 -m http.server 4173 --directory robot-curation/frontend/mockups
+python3 -m http.server 4173 --directory frontend/mockups
 ```
 
 浏览器打开 <http://localhost:4173/tasks.html>，按下面逐页对照。按钮不接后端，点了之后顶部会出一条小提示，说明真实页面会做什么。
