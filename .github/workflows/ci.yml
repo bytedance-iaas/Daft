@@ -1,0 +1,59 @@
+# Curator v2 CI: v1 unit tests, parity tools, the A-class guard and the image.
+name: curator-ci
+
+on:
+  push:
+    branches: [feat/curator-v2]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # parity tests extract v1 at the freeze commit
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"    # same as the image
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install
+        run: pip install -r backend/requirements.txt pytest jsonschema
+      - name: v1 unit tests
+        working-directory: backend
+        # test_environment checks a GPU host (torch, nvidia-smi); not available here
+        run: python -m pytest -q curation/tests --ignore=curation/tests/test_environment.py
+      - name: Parity tools (unit + end-to-end on the synthetic dataset)
+        env:
+          PYTHONPATH: tools
+        run: python -m pytest -q tools/parity/tests
+
+  a-class-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Algorithm files unchanged unless declared with parity-change
+        env:
+          PYTHONPATH: tools
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python -m parity a-class-check --pr-body-env PR_BODY
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (public mirrors; the Volcano-internal ones are not reachable here)
+        run: >
+          docker build -f deploy/Dockerfile -t curator:ci
+          --build-arg NO_MIRROR=1
+          --build-arg PIP_INDEX_URL=https://pypi.org/simple
+          --build-arg APT_MIRROR=http://deb.debian.org .
+      - name: CLI runs in the image
+        run: docker run --rm curator:ci --help

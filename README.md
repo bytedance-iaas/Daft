@@ -36,6 +36,10 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 4. **静态预览稿**：`python3 -m http.server 4173 --directory frontend/mockups`，
    浏览器打开 <http://localhost:4173/tasks.html>，逐页核对项见 [frontend/mockups/README.md](frontend/mockups/README.md)。
 
+## CI
+
+`.github/workflows/ci.yml`：v1 单测、对账工具测试（含合成数据上的端到端回放对账）、A 类算法文件保护检查、镜像构建。
+
 ## License
 
 Apache 2.0（见 [LICENSE](LICENSE)）。

@@ -13,6 +13,8 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
 | `pack` | 打一个带进 Pod 的包：冻结点的 v1 源码 + 当前的对账工具 |
 | `archive` / `fetch` | 导出结果连同 `MANIFEST.json`（逐文件 sha256）上传到 TOS / 取回并校验 |
 | `v1-manifest` | 从 git 重新生成 `v1_manifest.json`（冻结点逐文件的 blob 哈希） |
+| `v1-src` | 从 git 取出冻结点的 v1 源码树，作为本地运行 `dump-v1` 的 `--v1-src` |
+| `a-class-check` | A 类算法文件与冻结点逐个比对；有差异且 PR 描述里没有 `parity-change:` 说明就失败（CI 里跑） |
 
 所有命令都在仓库根目录、以 `PYTHONPATH=tools` 运行。
 

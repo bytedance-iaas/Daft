@@ -11,6 +11,7 @@ commands:
   make-fixture  write the synthetic 8-episode LeRobot v2 dataset
   v1-manifest   regenerate v1_manifest.json from git (freeze commit)
   v1-src        extract v1 at the freeze commit (the --v1-src for local runs)
+  a-class-check fail when algorithm (A-class) files differ from the freeze commit
   tape-summary  counts and failures of a VLM tape
   pack          tarball for the pod: v1 at the freeze commit + these tools
   archive       write MANIFEST.json into a dump and upload it (tos:// or a directory)
@@ -33,6 +34,8 @@ def main(argv: list[str]) -> int:
         from .manifest import main as run
     elif cmd == "v1-src":
         from .manifest import v1_src_main as run
+    elif cmd == "a-class-check":
+        from .aclass import main as run
     elif cmd == "tape-summary":
         from .vlm_tape import main as run
     elif cmd == "pack":
