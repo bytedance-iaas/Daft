@@ -76,9 +76,10 @@ jobs:
         working-directory: backend
         env:
           HF_HUB_OFFLINE: "1"
+          CURATOR_EXPECT_LOADER_READS: ${{ matrix.reads }}
         run: |
           python -c "import lerobot"
-          python -m pytest -q -rfE -rs tests/export/test_lerobot_loader.py
+          python -m pytest -q -rfE -rs tests/export/test_lerobot_loader.py tests/export/test_lerobot_loader_expected.py
 
   a-class-guard:
     runs-on: ubuntu-latest

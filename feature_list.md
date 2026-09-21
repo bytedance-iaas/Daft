@@ -70,7 +70,7 @@
 ### F2.5 增量重新导出
 - 描述：export manifest、diff 算法、LeRobot v2/v3 两条增量路径
 - 验收：①剔除中间一条 episode 后重新导出，产物可被官方 lerobot loader 无警告加载；②未受影响的视频文件字节不变；③视频先写本地临时文件再整文件拷贝（FSX 随机写限制）
-- status: not_completed
+- status: **completed**
 
 ### F2.6 密钥与资源管理
 - 描述：AES-GCM 加密存储、连通性校验、方舟拉模型列表、自定义端点
