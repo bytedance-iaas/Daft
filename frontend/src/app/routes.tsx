@@ -14,7 +14,7 @@ const TaskFormPage = named(() => import('../pages/task-form/TaskFormPage'), 'Tas
 const TaskDetailPage = named(() => import('../pages/task-detail/TaskDetailPage'), 'TaskDetailPage');
 const ReportPage = named(() => import('../pages/report/ReportPage'), 'ReportPage');
 const AdjudicationPage = named(() => import('../pages/adjudication/AdjudicationPage'), 'AdjudicationPage');
-const CredentialsPage = named(() => import('../pages/credentials/CredentialsPage'), 'CredentialsPage');
+const KeysPage = named(() => import('../pages/keys/KeysPage'), 'KeysPage');
 const NotFoundPage = named(() => import('../pages/NotFoundPage'), 'NotFoundPage');
 
 /** Every query key v1's deep links may carry (doc 07 §2.1). */
@@ -41,7 +41,7 @@ export function AppRoutes() {
         <Route path="tasks/:id" element={<TaskDetailPage />} />
         <Route path="tasks/:id/report" element={<ReportPage />} />
         <Route path="tasks/:id/adjudication" element={<AdjudicationPage />} />
-        <Route path="credentials" element={<CredentialsPage />} />
+        <Route path="credentials" element={<KeysPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

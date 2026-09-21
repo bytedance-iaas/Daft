@@ -929,7 +929,7 @@ export interface components {
              * @description false when publicBaseUrl is not configured
              * @default true
              */
-            absolute: boolean;
+            absolute?: boolean;
         };
         Links: components["schemas"]["Link"][];
         CursorPage: {
@@ -1293,27 +1293,27 @@ export interface components {
         /** @description task-level parameters (doc 03 §3.1); concurrency values are upper bounds only (D31) */
         TaskParams: {
             /** @default true */
-            start_now: boolean;
+            start_now?: boolean;
             /** @default true */
-            export: boolean;
+            export?: boolean;
             /** @default 3 */
-            vlm_retry: number;
+            vlm_retry?: number;
             /** @default true */
-            vlm_hedge: boolean;
+            vlm_hedge?: boolean;
             vlm_timeouts_s?: {
                 /** @default 60 */
-                probe: number;
+                probe?: number;
                 /** @default 60 */
-                endstate: number;
+                endstate?: number;
                 /** @default 60 */
-                arbitration: number;
+                arbitration?: number;
                 /** @default 60 */
-                caption: number;
+                caption?: number;
                 /** @default 120 */
-                llm: number;
+                llm?: number;
             };
             /** @default false */
-            clips: boolean;
+            clips?: boolean;
             limits?: {
                 cpu_concurrency?: number;
                 vlm_parallelism?: number;

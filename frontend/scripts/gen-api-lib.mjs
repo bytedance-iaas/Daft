@@ -40,7 +40,8 @@ export function stripDefs(source) {
 }
 
 export async function generate() {
-  const ast = await openapiTS(new URL(`file://${CONTRACT}`), { emptyObjectsUnknown: true });
+  // defaultNonNullable: false — a default is applied by the server, it does not make a request field required.
+  const ast = await openapiTS(new URL(`file://${CONTRACT}`), { emptyObjectsUnknown: true, defaultNonNullable: false });
   return HEADER + stripDefs(astToString(ast));
 }
 
