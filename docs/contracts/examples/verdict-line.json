@@ -33,6 +33,30 @@
     "task_success"
    ],
    "reason": "任务成败判定执行出错，待补跑"
+  },
+  {
+   "episode_index": 5,
+   "verdict": "drop",
+   "hard_fails": [
+    "kinematic_limits"
+   ],
+   "soft_score": null,
+   "undecidable": [],
+   "error_modules": [
+    "motion_quality"
+   ],
+   "reason": "未通过「运动学极限」：关节 3 速度越限；运动质量执行出错，不影响结论"
+  },
+  {
+   "episode_index": 12,
+   "verdict": "drop",
+   "hard_fails": [],
+   "soft_score": 0.41,
+   "undecidable": [],
+   "error_modules": [
+    "task_success"
+   ],
+   "reason": "综合质量分 0.410 低于阈值 0.5；任务成败判定执行出错，不影响结论"
   }
  ],
  "invalid": [
@@ -54,6 +78,30 @@
    "soft_score": null,
    "undecidable": [],
    "error_modules": [],
+   "reason": ""
+  },
+  {
+   "episode_index": 7,
+   "verdict": "held",
+   "hard_fails": [
+    "video_action_sync"
+   ],
+   "soft_score": null,
+   "undecidable": [],
+   "error_modules": [
+    "visual_quality"
+   ],
+   "reason": ""
+  },
+  {
+   "episode_index": 8,
+   "verdict": "drop",
+   "hard_fails": [],
+   "soft_score": null,
+   "undecidable": [],
+   "error_modules": [
+    "task_success"
+   ],
    "reason": ""
   }
  ]

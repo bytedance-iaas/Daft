@@ -116,17 +116,21 @@
 ```
 backend/curation/core/        ← 冻结，谁也不改（W1 只搬位置）
 backend/curation/cli/         ← W3
-backend/curation/pipeline/    ← W3（stage 拆分）+ W6（planner）需协调，建议同一 agent
+backend/curation/pipeline/    ← W3（stage 拆分；把合并执行器接进 check 时与 W6 协调）
+backend/curation/planner/     ← W6（planner 库与 VLM 合并框架，纯计算；CLI 的 plan 命令和 Daemon 调同一个库，02 §3.2）
 backend/curation/export/      ← W7
 backend/daemon/repo/          ← W4
 backend/daemon/routes/        ← W4（骨架）+ W8（密钥路由）
 backend/daemon/orchestr/      ← W5
-backend/daemon/planner/       ← W6
 frontend/mockups/             ← W9
 frontend/src/                 ← W10
 deploy/                       ← W11
 tools/parity/                 ← W0
 ```
+
+v2 的测试按包放在 `backend/tests/` 下（`contracts/`、`daemon/`、`cli/`、`planner/`、`export/`），
+v1 的测试留在包内的 `backend/curation/tests/`。并行 agent 不改公共文件（根目录 `README.md`、
+`feature_list.md`、`claude-progress.txt`、CI 配置、依赖清单、设计与契约文档），需要改的写进交付报告，合并时统一落地。
 
 ## 7. 外置记忆三件套
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "verdicts.jsonl line - funnel verdict (schema 1.0)",
-  "description": "aggregate --phase funnel, one line per selected episode. Rules are v1's pipeline/verdict.py: a hard gate with passed=false drops; passed=null is only recorded as undecidable; a weighted soft score under the threshold drops. An episode that a selected module failed to judge (D24, D33) is held - unless a hard gate already rejected it: a definite hard-gate failure is not a degraded conclusion, so drop wins over held (as in v1).",
+  "description": "aggregate --phase funnel, one line per selected episode. Rules are v1's pipeline/verdict.py: a hard gate with passed=false drops; passed=null is only recorded as undecidable; a weighted soft score under the threshold drops. An episode that a selected module failed to judge (D24, D33) is held, unless modules that judged it normally already reject it (D35): a hard gate failed, or the soft score is under the threshold while every selected soft module scored it. Re-running the errored module cannot change such a drop, so the episode is dropped and error_modules still names the modules that failed; retries only re-run held episodes.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -56,6 +56,9 @@
         "properties": {
           "error_modules": {
             "minItems": 1
+          },
+          "hard_fails": {
+            "maxItems": 0
           }
         }
       }
@@ -77,6 +80,33 @@
             "maxItems": 0
           }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "drop"
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "hard_fails": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "soft_score": {
+                "type": "number"
+              }
+            }
+          }
+        ]
       }
     }
   ]

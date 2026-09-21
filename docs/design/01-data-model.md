@@ -176,6 +176,7 @@ CREATE TABLE task_module (
   （条数在 `episodes_error`）；`failed` = 整个模块跑不起来（VLM 端点完全不可达之类）。
   CLI 的退出码 0 不等于 `succeeded`，Daemon 看的是命令输出里的逐状态计数（02 篇 §3.5）。
   出错的 episode 不进后面的档、暂不交付，等「重试」补跑（D24）。
+  例外是已被正常判完的模块确定拒绝的条目：直接拒绝，不用补跑，但仍计入出错那个模块的 `episodes_error`（D35）。
 - `input_digest` 记下这份结果对应的输入集合。数据集级模块靠它判断自己是否过期：
   当前 keep 集合的哈希和它对不上，就是 `stale`。
 - **`stale`** 只表示一件事：**这个模块的输入集合变了，结果待同步**。去重和技能画像吃的是判决后的
@@ -211,8 +212,9 @@ CREATE TABLE subtask (
 
 1. **同一任务的子任务串行**：它们写同一个工作目录。已有子任务未到终态时再建，返回 409。
 2. **产物先写临时目录，成功才替换**：子任务失败或被停止，父任务原有的结果原样保留。
-3. **子任务结束后，父任务的终态按当前结果重算**（D25）：所有勾选的模块都成功、没有待补跑的 episode →
-   `succeeded`；否则 `completed_with_errors`。所以补跑成功会让「部分错误」变成「已完成」，
+3. **子任务结束后，父任务的终态按当前结果重算**（D25）：没有整体失败（`failed`）的模块、也没有待补跑的 episode
+   （`held` 为空）→ `succeeded`；否则 `completed_with_errors`。某个模块判出错、但已被别的模块确定拒绝的条目
+   不算待补跑（D35）。所以补跑成功会让「部分错误」变成「已完成」，
    执行裁决时重跑模型又出了错则反过来。原先的失败不会被抹掉：子任务本身、它的起止时间和结果都留在时间线里。
    `resume` 是主流程的续篇，它结束时同样按这条规则定终态。
 
@@ -316,8 +318,8 @@ CREATE TABLE idempotency_key (            -- 24 小时过期，见 03 篇 §8
      │                   │           │           │
      │                   │           └───────────┴──▶ stopping ──▶ stopped   (终态)
      │                   ├──▶ stopping ──▶ stopped                           (终态)
-     │                   ├──▶ succeeded                 (终态，全部模块成功且没有待补跑的 episode)
-     │                   ├──▶ completed_with_errors     (终态，有模块 failed 或 completed_with_errors)
+     │                   ├──▶ succeeded                 (终态，没有整体失败的模块，也没有待补跑的 episode)
+     │                   ├──▶ completed_with_errors     (终态，有模块 failed，或有待补跑的 episode)
      │                   │        ▲ │ 子任务结束后按当前结果重算，两者可互相转换
      │                   │        │ ▼
      │                   │    succeeded

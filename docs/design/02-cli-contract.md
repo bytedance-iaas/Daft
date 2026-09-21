@@ -235,6 +235,8 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 `passed` / `reject` / `held` 三份互斥且完备；`review` 是独立的复核视图，不和它们并列 ——
 里面的条目多数在 `passed` 里（保守放行、等人确认），也可以在 `reject` 里（被拒复议的候选）。
 任何一个已勾选的模块对某条 episode 是 `error`，这一条进 `held`（待补跑），既不算通过也不算拒绝，见 06 篇 §3。
+例外（D35）：正常判完的模块已经足以拒绝它 —— 某个硬门确定失败，或者所有已勾选的软分模块都给了分、加权分低于阈值 ——
+就直接 `drop`，出错的模块照样记在判决行的 `error_modules` 里。出错模块重跑出什么结果，都改变不了这个拒绝。
 
 ### 3.7 `curation export` — 导出交付数据集
 

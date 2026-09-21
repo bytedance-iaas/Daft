@@ -20,7 +20,7 @@
   "docs/contracts/cli/report.schema.json": "sha256:1fe026f5992f82f5a2861e0d71b6a661398d716169fde9cc31fbd712cf829940",
   "docs/contracts/cli/result-record.schema.json": "sha256:5e49c58ee793f5943f53e0418c1982ee53c9a51c3e4a8606448c176575ac4dac",
   "docs/contracts/cli/source-manifest.schema.json": "sha256:37d346aa3b2a25b0747a7117c47769a3fe3a978324b159a1609f5a7ada6acba7",
-  "docs/contracts/cli/verdict-line.schema.json": "sha256:7fcbb5f5fe5cc17bb80432bec070fe939f5ed556ff833fe16522619955439ff0",
+  "docs/contracts/cli/verdict-line.schema.json": "sha256:71fc35e2c3bd3dd93a0ef9011acb6dda0e0cd3bb6fff7abcbd3a71e673ce155a",
   "docs/contracts/cli/verify.schema.json": "sha256:bdface3671e9400ae9f1a40d9fbf54986701b1db0c578c99976e69701ddb00dc",
   "docs/contracts/modules.json": "sha256:3a2133acacc1bbe4c8a7583e6c4dac56e0796657ff5be280f048548cc3e73d12",
   "docs/contracts/openapi.yaml": "sha256:ad036b5263d1823374789b387028b6fbfe9b3ab2eb27624da87a5844b918a094",
