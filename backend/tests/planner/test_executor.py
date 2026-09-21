@@ -55,6 +55,25 @@ def test_single_mode_sends_each_module_its_own_prompt():
     assert answers(run) == truths(range(3))
 
 
+def test_nearly_equal_policies_are_decoded_and_sent_apart():
+    from curation.planner import FramePolicy, MergeUnit
+
+    near = FramePolicy("interval", 0.5000001, 448, 4, "linspace:8")
+    grasp = X.EXAMPLE_GRASP.merge_units(0)[0]
+    table = MergeUnit(0, "example_table", near, X.TABLE_PROMPT, parser=grasp.parser,
+                      call_kind="caption")
+    calls = []
+
+    def frames(ep, policy):
+        calls.append(policy)
+        return X.frames(ep, policy)
+
+    fake = X.FakeVlm()
+    run = executor(fake, frames=frames).run([grasp, table])
+    assert calls == [X.FRAME_POLICY, near] and len(fake.requests) == 2
+    assert {o.receipt for o in run.outcomes} == {"single"}
+
+
 def test_frames_are_decoded_once_per_episode_and_policy():
     calls = []
 

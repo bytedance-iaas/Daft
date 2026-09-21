@@ -23,6 +23,11 @@ MAX_ENDSTATE_CAMS = 4         # pipeline.max_endstate_cams
 CAPTIONS_PER_EPISODE = 1
 
 
+def _units_per_episode(spec: Any) -> int:
+    """Questions a mergeable module asks per episode (1 unless it declares otherwise)."""
+    return int(getattr(spec.merge_units, "units_per_episode", 1) or 1)
+
+
 def _vlm_seconds(requests: int, gate: int) -> float:
     return requests * VLM_LATENCY_S / (max(1, gate) * GATE_UTILISATION) if requests else 0.0
 
@@ -48,7 +53,7 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
         elif sid == "vlm":
             grouped: set[str] = set()
             for group in stage.get("merge", {}).get("groups", []):
-                units = sum(specs[m].merge_units.units_per_episode for m in group["modules"])
+                units = sum(_units_per_episode(specs[m]) for m in group["modules"])
                 grouped.update(group["modules"])
                 n = selected * math.ceil(units / max_units)
                 requests += n
@@ -56,9 +61,8 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
             for module in stage["modules"]:
                 if module in grouped:
                     continue
-                provider = specs[module].merge_units
-                if provider is not None:
-                    n = selected * provider.units_per_episode
+                if specs[module].merge_units is not None:
+                    n = selected * _units_per_episode(specs[module])
                     requests += n
                     seconds += _vlm_seconds(n, gates["probe"])
                 elif module == "task_success":

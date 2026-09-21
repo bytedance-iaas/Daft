@@ -30,6 +30,19 @@ def test_frame_policy_key_and_images():
     assert p == FramePolicy("interval", 0.5, 448, 4, "linspace:8") and p != full
 
 
+def test_policy_keys_are_exact():
+    a = FramePolicy("interval", 0.5, 448, 4, "linspace:8")
+    b = FramePolicy("interval", 0.5000001, 448, 4, "linspace:8")
+    assert a != b and a.key != b.key
+    one, one_f = (FramePolicy("interval", v, 448, 4, "linspace:8") for v in (1, 1.0))
+    assert one == one_f and one.key == one_f.key == "interval:1.0/max_side:448/max_cams:4/linspace:8"
+    with pytest.raises(ValueError):
+        FramePolicy("interval", 0.5, 448, 4, "linspace:8/max_cams:1")
+    groups = PerEpisodeMultiModule().group([unit(module="a1", policy=a), unit(module="a2", policy=b)],
+                                           MergeLimits())
+    assert [g.modules for g in groups] == [("a1",), ("a2",)]
+
+
 @pytest.mark.parametrize("args", [("sparse", 0.5, 448, 4, "linspace:8"), ("interval", None, 448, 4, "x"),
                                   ("interval", 0, 448, 4, "x"), ("full_rate", 0.5, 448, 4, "x"),
                                   ("interval", 0.5, 0, 4, "x"), ("interval", 0.5, 448, 4, "")])

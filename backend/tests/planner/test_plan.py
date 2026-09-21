@@ -193,6 +193,17 @@ def test_merge_can_be_switched_off_in_the_plan():
     assert any("switched off" in n for n in p["estimates"]["notes"])
 
 
+def test_a_plain_callable_merge_units_is_planned_without_merging():
+    import dataclasses
+
+    plain = dataclasses.replace(X.EXAMPLE_GRASP, id="example_plain",
+                                merge_units=lambda ep, ctx=None: [])
+    p = plan(["example_plain", "example_table"], registry=X.REGISTRY + (plain,),
+             preflight=X.preflight(10))
+    assert stage(p, "vlm")["merge"] == {"strategy": "none", "groups": []}
+    assert p["estimates"]["vlm_requests"] == 20                     # one question each, not merged
+
+
 def test_one_mergeable_module_has_nothing_to_merge_with():
     p = plan(["example_grasp"], registry=X.REGISTRY)
     assert stage(p, "vlm")["merge"] == {"strategy": "none", "groups": []}

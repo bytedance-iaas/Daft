@@ -225,7 +225,7 @@ class MergeExecutor:
             return ()
         out: list[Any] = []
         for episode in episodes:
-            key = (episode, policy.key)
+            key = (episode, policy)
             if key not in state.frames:
                 state.frames[key] = tuple(self._frames(episode, policy))
             out.extend(state.frames[key])
@@ -352,7 +352,7 @@ def _identity(request: VlmRequest) -> str:
 
 class _RunState:
     def __init__(self) -> None:
-        self.frames: dict[tuple[int, str], tuple[Any, ...]] = {}
+        self.frames: dict[tuple[int, FramePolicy], tuple[Any, ...]] = {}
         self.outcomes: dict[tuple[int, str, str], UnitOutcome] = {}
         self.sent: list[SentRequest] = []
 

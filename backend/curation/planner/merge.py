@@ -54,19 +54,24 @@ class FramePolicy:
             if isinstance(self.interval_s, bool) or not isinstance(self.interval_s, (int, float)) \
                     or self.interval_s <= 0:
                 raise ValueError(f"interval decoding needs interval_s > 0, got {self.interval_s!r}")
+            object.__setattr__(self, "interval_s", float(self.interval_s))   # 1 and 1.0 are one policy
         elif self.interval_s is not None:
             raise ValueError("full_rate decoding takes no interval_s")
         for name in ("max_side", "max_cams"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer, got {value!r}")
-        if not isinstance(self.pick, str) or not self.pick.strip():
-            raise ValueError("pick must be a non-empty string such as 'linspace:8'")
+        if not isinstance(self.pick, str) or not self.pick.strip() or "/" in self.pick:
+            raise ValueError("pick must be a non-empty string without '/', such as 'linspace:8'")
 
     @property
     def key(self) -> str:
-        """Canonical text form; ``plan.json`` ``merge.groups[].frame_policy`` carries it."""
-        decode = "full_rate" if self.decode == "full_rate" else f"interval:{self.interval_s:g}"
+        """Canonical text form; ``plan.json`` ``merge.groups[].frame_policy`` carries it.
+
+        Exact: two policies have the same key only if they are equal (the interval is
+        written with ``repr``, which round-trips, and ``pick`` cannot contain ``/``).
+        """
+        decode = "full_rate" if self.decode == "full_rate" else f"interval:{self.interval_s!r}"
         return f"{decode}/max_side:{self.max_side}/max_cams:{self.max_cams}/{self.pick}"
 
     def frames_per_camera(self) -> int | None:
@@ -336,7 +341,7 @@ class PerEpisodeMultiModule:
             if slot is None:
                 order.append(("alone", unit))
                 continue
-            key = (unit.episode_index, unit.frame_policy.key, slot)
+            key = (unit.episode_index, unit.frame_policy, slot)
             if key not in buckets:
                 buckets[key] = []
                 order.append(("bucket", key))
