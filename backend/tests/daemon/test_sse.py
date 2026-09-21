@@ -123,6 +123,20 @@ def test_progress_and_usage_throttle_keep_the_newest():
     assert hub.publish_progress("t", {"id": "frame", "state": "failed", "done": 3, "total": 9})
 
 
+def test_payloads_always_fit_the_contract():
+    hub = EventHub(1)
+    hub.publish_progress("t", {"id": "vlm", "state": "running", "done": 1, "total": 2,
+                               "stage": "check:task_success", "episode_index": 7})
+    hub.publish_usage("t", {"prompt_tokens": 5, "model": "doubao"})
+    hub.publish_log("t", "vlm", "info", "x", episode_index=3, module="task_success")
+    check_payloads([{"event": e.event, "data": e.data} for e in hub.buffered("t")])
+    assert hub.buffered("t")[1].data == {"prompt_tokens": 5, "completion_tokens": 0,
+                                         "reasoning_tokens": 0, "cached_tokens": 0,
+                                         "requests": 0, "requests_unknown_usage": 0}
+    with pytest.raises(ValueError):
+        hub.publish_progress("t", {"id": "vlm", "done": 1})
+
+
 def test_log_rate_limit_counts_what_it_dropped():
     tick = Tick()
     hub = EventHub(1, clock=tick)

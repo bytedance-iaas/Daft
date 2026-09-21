@@ -37,6 +37,10 @@ log = logging.getLogger("daemon.events")
 
 EVENT_KINDS = ("state", "progress", "log", "usage", "done", "reset")
 LOG_LEVELS = ("error", "warn", "info", "debug")
+#: C4 ``StageProgress`` and ``UsageTotals`` allow no other keys.
+_STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note")
+_USAGE_KEYS = ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens",
+               "requests", "requests_unknown_usage")
 _FINAL_STAGE_STATES = frozenset({"succeeded", "completed_with_errors", "failed", "skipped"})
 _EVENT_ID_RE = re.compile(r"^([0-9]+)-([0-9]+)$")
 
@@ -219,9 +223,12 @@ class EventHub:
         return self._publish_now(task_id, "done", data)
 
     def publish_progress(self, task_id: str, stage: dict) -> str | None:
-        """``stage`` is a C4 ``StageProgress`` (cumulative ``done`` / ``total``)."""
-        data = dict(stage)
-        stage_id = str(data.get("id", ""))
+        """``stage`` is a C4 ``StageProgress`` (cumulative ``done`` / ``total``); other keys are dropped."""
+        missing = [k for k in ("id", "state", "done", "total") if k not in stage]
+        if missing:
+            raise ValueError(f"progress needs {missing} (C4 StageProgress)")
+        data = {k: stage[k] for k in _STAGE_KEYS if k in stage}
+        stage_id = str(data["id"])
         final = data.get("state") in _FINAL_STAGE_STATES or (
             data.get("total") is not None and data.get("done") == data.get("total"))
         with self._lock:
@@ -236,8 +243,8 @@ class EventHub:
             return None
 
     def publish_usage(self, task_id: str, totals: dict) -> str | None:
-        """``totals`` is a C4 ``UsageTotals`` for the whole task (actual ledger)."""
-        data = dict(totals)
+        """``totals`` is a C4 ``UsageTotals`` for the whole task (actual ledger, cumulative)."""
+        data = {k: int(totals.get(k) or 0) for k in _USAGE_KEYS}
         with self._lock:
             th = self._throttle(task_id)
             now = self._clock()
