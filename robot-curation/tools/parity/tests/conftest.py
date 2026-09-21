@@ -33,6 +33,17 @@ def load_schema(*parts: str) -> dict:
 
 
 @pytest.fixture(scope="session")
+def v1_src(tmp_path_factory) -> str:
+    """v1 exactly as at the freeze commit, taken from git (the working tree moved on)."""
+    from parity.manifest import extract_v1
+
+    repo = subprocess.run(["git", "-C", TOOLS, "rev-parse", "--show-toplevel"], check=True,
+                          capture_output=True, text=True).stdout.strip()
+    return extract_v1(repo, "45bdf929222e7aa08b6ec1827876af3571515202",
+                      str(tmp_path_factory.mktemp("v1src")))
+
+
+@pytest.fixture(scope="session")
 def mini_dataset(tmp_path_factory) -> str:
     from parity.fixtures import make_mini_lerobot
 

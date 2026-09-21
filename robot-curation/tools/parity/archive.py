@@ -61,31 +61,32 @@ def verify(dump_dir: str) -> list[str]:
     return bad
 
 
-def _tos_store():
+def _tos_store(v1_src: str | None = None):
     from .dump_v1 import DEFAULT_V1_SRC
 
-    if DEFAULT_V1_SRC not in sys.path:
-        sys.path.insert(0, DEFAULT_V1_SRC)
+    src = os.path.abspath(v1_src or DEFAULT_V1_SRC)
+    if src not in sys.path:
+        sys.path.insert(0, src)
     from curation import tos_store  # noqa: E402 - v1's TOS helper, same credentials as a run
 
     return tos_store
 
 
-def archive(dump_dir: str, dest: str, region: str | None) -> dict:
+def archive(dump_dir: str, dest: str, region: str | None, v1_src: str | None = None) -> dict:
     manifest = build_manifest(dump_dir)
     with open(os.path.join(dump_dir, MANIFEST), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=1, sort_keys=True)
     if dest.startswith("tos://"):
-        n = _tos_store().stage_out(dump_dir, dest, region)
+        n = _tos_store(v1_src).stage_out(dump_dir, dest, region)
     else:
         shutil.copytree(dump_dir, dest, dirs_exist_ok=False)
         n = len(manifest["files"]) + 1
     return {"dest": dest, "uploaded": n, "manifest": manifest}
 
 
-def fetch(src: str, dest: str, region: str | None) -> list[str]:
+def fetch(src: str, dest: str, region: str | None, v1_src: str | None = None) -> list[str]:
     if src.startswith("tos://"):
-        local = _tos_store().stage_in(src, region)
+        local = _tos_store(v1_src).stage_in(src, region)
         shutil.copytree(local, dest, dirs_exist_ok=False)
     else:
         shutil.copytree(src, dest, dirs_exist_ok=False)
@@ -98,8 +99,9 @@ def main(argv: list[str]) -> int:
     p.add_argument("--to", required=True, help="tos://bucket/prefix or a local directory")
     p.add_argument("--region")
     p.add_argument("--manifest-out", help="also write the manifest here (to commit it)")
+    p.add_argument("--v1-src", help="v1 tree whose tos_store to use (default: next to the tools)")
     args = p.parse_args(argv)
-    info = archive(args.dump, args.to, args.region)
+    info = archive(args.dump, args.to, args.region, args.v1_src)
     if args.manifest_out:
         with open(args.manifest_out, "w", encoding="utf-8") as fh:
             json.dump(info["manifest"], fh, indent=1, sort_keys=True)
@@ -114,8 +116,9 @@ def fetch_main(argv: list[str]) -> int:
     p.add_argument("--from", dest="src", required=True)
     p.add_argument("--to", required=True)
     p.add_argument("--region")
+    p.add_argument("--v1-src", help="v1 tree whose tos_store to use (default: next to the tools)")
     args = p.parse_args(argv)
-    bad = fetch(args.src, args.to, args.region)
+    bad = fetch(args.src, args.to, args.region, args.v1_src)
     if bad:
         print(f"fetch: {len(bad)} files do not match MANIFEST.json: {bad[:10]}", file=sys.stderr)
         return 1

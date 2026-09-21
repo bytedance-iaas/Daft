@@ -17,16 +17,25 @@ import pytest
 
 from parity import vlm_tape as T
 
-from .conftest import ROBOT_CURATION, load_schema, run_parity
+from .conftest import load_schema, run_parity
 
 pytestmark = pytest.mark.e2e
 
 V1_RUN = ["run", "--vlm-endpoint", "http://fake-vlm.local/v1", "--vlm-model", "fake-vlm"]
 
 
+V1_SRC: list[str] = []          # set once by the autouse fixture below
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _v1_source(v1_src):
+    V1_SRC[:] = [v1_src]
+
+
 def dump(tmp, name, dataset, *extra):
     out = str(tmp / name)
-    proc = run_parity("dump-v1", "--out", out, *extra, "--", *V1_RUN,
+    src = [] if "--v1-src" in extra else ["--v1-src", V1_SRC[0]]
+    proc = run_parity("dump-v1", "--out", out, *src, *extra, "--", *V1_RUN,
                       "--input", dataset, "--output", str(tmp / f"{name}-delivery"))
     return out, proc
 
@@ -171,9 +180,9 @@ def test_replay_record_repairs_a_failed_call(recorded, mini_dataset, tmp_path):
     assert compare(out, fixed, "--all-strict").returncode == 0
 
 
-def test_v1_source_drift_is_refused(tmp_path, mini_dataset):
+def test_v1_source_drift_is_refused(tmp_path, mini_dataset, v1_src):
     src = tmp_path / "v1"
-    shutil.copytree(os.path.join(ROBOT_CURATION, "curation"), src / "curation",
+    shutil.copytree(os.path.join(v1_src, "curation"), src / "curation",
                     ignore=shutil.ignore_patterns("__pycache__"))
     with open(src / "curation" / "pipeline" / "verdict.py", "a") as fh:
         fh.write("\n# drift\n")
