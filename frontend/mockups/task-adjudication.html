@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人工裁决 · Physical AI Kit 数据质检平台</title>
+<style>
+/* ===== shared tokens (inlined so each page is self-contained) ===== */
+/* Curator v2 mockup — Arco Design tokens, aligned with Volcengine console.
+   Mockup only: hand-written CSS standing in for @arco-design/web-react.
+   The React build will use the real component library; keep tokens in sync. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+
+:root {
+  /* Arco primary */
+  --primary-6: #165DFF; --primary-5: #4080FF; --primary-7: #0E42D2; --primary-1: #E8F3FF;
+  /* status */
+  --success-6: #00B42A; --success-1: #E8FFEA;
+  --warning-6: #FF7D00; --warning-1: #FFF7E8;
+  --danger-6:  #F53F3F; --danger-1:  #FFECE8;
+  /* neutrals */
+  --text-1: #1D2129; --text-2: #4E5969; --text-3: #86909C; --text-4: #C9CDD4;
+  --border:  #E5E6EB; --fill-2: #F2F3F5; --fill-1: #F7F8FA; --white: #FFFFFF;
+  /* metrics */
+  --topbar-h: 60px; --sider-w: 208px; --radius: 4px; --radius-sm: 2px;
+  --shadow-card: 0 1px 3px rgba(0,0,0,.04);
+  --shadow-pop: 0 4px 10px rgba(0,0,0,.10);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+               "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px; line-height: 1.5715; color: var(--text-1);
+  background: var(--fill-1); -webkit-font-smoothing: antialiased;
+}
+a { color: var(--primary-6); text-decoration: none; }
+a:hover { color: var(--primary-5); }
+
+/* ── layout ───────────────────────────────────────────── */
+.topbar {
+  position: fixed; inset: 0 0 auto 0; height: var(--topbar-h); z-index: 100;
+  display: flex; align-items: center; gap: 16px; padding: 0 20px;
+  background: var(--white); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; }
+.brand .logo {
+  width: 26px; height: 26px; border-radius: 6px; flex: none;
+  background: linear-gradient(135deg, var(--primary-6), #7B4DFF);
+}
+.brand .divider { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
+.brand .product { font-weight: 500; color: var(--text-2); }
+.topbar .spacer { flex: 1; }
+.topbar .region, .topbar .user {
+  display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
+  border-radius: var(--radius-sm); color: var(--text-2); cursor: pointer; font-size: 13px;
+}
+.topbar .region:hover, .topbar .user:hover { background: var(--fill-2); }
+.avatar {
+  width: 24px; height: 24px; border-radius: 50%; background: var(--primary-1);
+  color: var(--primary-6); display: grid; place-items: center; font-size: 12px; font-weight: 600;
+}
+
+.sider {
+  position: fixed; top: var(--topbar-h); bottom: 0; left: 0; width: var(--sider-w);
+  background: var(--white); border-right: 1px solid var(--border); padding: 8px 8px 0;
+  overflow-y: auto;
+}
+.menu-group { padding: 12px 12px 6px; font-size: 12px; color: var(--text-3); }
+.menu-item {
+  display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px;
+  border-radius: var(--radius); color: var(--text-1); cursor: pointer; margin-bottom: 2px;
+}
+.menu-item:hover { background: var(--fill-2); }
+.menu-item.active { background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.menu-item svg { flex: none; }
+
+.main { margin: var(--topbar-h) 0 0 var(--sider-w); padding: 16px 20px 48px; }
+.crumb { font-size: 13px; color: var(--text-3); margin-bottom: 12px; }
+.crumb b { color: var(--text-1); font-weight: 400; }
+.page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+.page-title { font-size: 20px; font-weight: 600; margin: 0; }
+.page-desc { font-size: 13px; color: var(--text-3); margin: 4px 0 0; }
+.page-head .spacer { flex: 1; }
+
+.card {
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-card); margin-bottom: 16px;
+}
+.card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 20px; border-bottom: 1px solid var(--border);
+}
+.card-title { font-size: 15px; font-weight: 600; }
+.card-head .spacer { flex: 1; }
+.card-body { padding: 20px; }
+
+/* ── buttons ──────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 15px; border-radius: var(--radius-sm); font-size: 14px;
+  border: 1px solid transparent; background: var(--fill-2); color: var(--text-1);
+  cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s;
+}
+.btn:hover { background: #E5E6EB; }
+.btn-primary { background: var(--primary-6); color: #fff; }
+.btn-primary:hover { background: var(--primary-5); }
+.btn-outline { background: var(--white); border-color: var(--border); }
+.btn-outline:hover { background: var(--white); border-color: var(--primary-6); color: var(--primary-6); }
+.btn-text { background: transparent; padding: 0 8px; color: var(--primary-6); }
+.btn-text:hover { background: var(--primary-1); }
+.btn-lg { height: 36px; padding: 0 20px; }
+.btn[disabled] { background: var(--fill-2); color: var(--text-4); cursor: not-allowed; }
+.btn-icon { width: 32px; padding: 0; }
+
+/* ── form ─────────────────────────────────────────────── */
+.form-row { display: flex; gap: 16px; margin-bottom: 18px; }
+.field { flex: 1; min-width: 0; }
+.label { display: block; font-size: 14px; color: var(--text-1); margin-bottom: 8px; }
+.label .req { color: var(--danger-6); margin-right: 4px; }
+.label .hint { color: var(--text-3); font-size: 12px; margin-left: 6px; }
+.input, .select {
+  width: 100%; height: 32px; padding: 0 11px; font-size: 14px; color: var(--text-1);
+  background: var(--fill-1); border: 1px solid transparent; border-radius: var(--radius-sm);
+  outline: none; font-family: inherit;
+}
+.input::placeholder { color: var(--text-4); }
+.input:hover, .select:hover { background: var(--fill-2); }
+.input:focus, .select:focus { background: var(--white); border-color: var(--primary-6); }
+.input.is-error { background: var(--danger-1); border-color: var(--danger-6); }
+.err-text { color: var(--danger-6); font-size: 12px; margin-top: 4px; }
+.help-text { color: var(--text-3); font-size: 12px; margin-top: 6px; }
+textarea.input { height: auto; padding: 8px 11px; resize: vertical; line-height: 1.6; }
+select.select { appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%2386909C' stroke-width='1.2'/></svg>");
+  background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+
+.check, .radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.check input, .radio input { accent-color: var(--primary-6); width: 14px; height: 14px; margin: 0; }
+.check.is-disabled { color: var(--text-4); cursor: not-allowed; }
+
+/* ── tags & status ────────────────────────────────────── */
+.tag {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px;
+  border-radius: var(--radius-sm); font-size: 12px; background: var(--fill-2); color: var(--text-2);
+  white-space: nowrap;
+}
+.tag .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.tag-blue   { background: var(--primary-1); color: var(--primary-6); }
+.tag-green  { background: var(--success-1); color: var(--success-6); }
+.tag-orange { background: var(--warning-1); color: var(--warning-6); }
+.tag-red    { background: var(--danger-1);  color: var(--danger-6); }
+.tag-gray   { background: var(--fill-2);    color: var(--text-3); }
+.tag-outline-blue { background: var(--white); color: var(--primary-6); border: 1px solid var(--primary-6); }
+.tag-running .dot { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* ── table ────────────────────────────────────────────── */
+.table { width: 100%; border-collapse: collapse; }
+.table th {
+  text-align: left; font-weight: 500; font-size: 13px; color: var(--text-2);
+  background: var(--fill-1); padding: 11px 16px; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.table td { padding: 13px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tbody tr:hover td { background: var(--fill-1); }
+.table .col-name { font-weight: 500; }
+.table .sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.mono { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+
+.progress { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.progress .bar { flex: 1; height: 4px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+.progress .bar i { display: block; height: 100%; background: var(--primary-6); border-radius: 2px; }
+.progress .bar.is-done i { background: var(--success-6); }
+.progress .bar.is-err  i { background: var(--warning-6); }
+.progress .pct { font-size: 12px; color: var(--text-3); width: 34px; text-align: right; }
+
+.list-foot {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 16px; color: var(--text-3); font-size: 13px;
+}
+
+/* ── misc ─────────────────────────────────────────────── */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px; }
+.stat { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 16px 20px; box-shadow: var(--shadow-card); }
+.stat .k { font-size: 13px; color: var(--text-3); }
+.stat .v { font-size: 24px; font-weight: 600; margin-top: 6px; letter-spacing: .5px; }
+.stat .v small { font-size: 13px; font-weight: 400; color: var(--text-3); margin-left: 4px; }
+
+.toolbar { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.toolbar .spacer { flex: 1; }
+.search { position: relative; }
+.search .input { width: 240px; padding-left: 32px; }
+.search svg { position: absolute; left: 10px; top: 9px; }
+
+.alert {
+  display: flex; gap: 10px; padding: 12px 16px; border-radius: var(--radius); font-size: 13px;
+  background: var(--warning-1); color: #7A4100; border: 1px solid #FFCF8B;
+}
+.alert-blue { background: var(--primary-1); color: #0A2A8C; border-color: #94BFFF; }
+.alert-green { background: var(--success-1); color: #0A6B1C; border-color: #AFF0B5; }
+.alert svg { flex: none; margin-top: 2px; }
+.alert .spacer { flex: 1; }
+
+.divider-h { height: 1px; background: var(--border); margin: 20px 0; }
+.muted { color: var(--text-3); }
+.nowrap { white-space: nowrap; }
+.mockup-note {
+  position: fixed; right: 16px; bottom: 76px; z-index: 200; cursor: pointer;
+  background: rgba(29,33,41,.88); color: #fff; font-size: 12px; line-height: 1.6;
+  padding: 8px 12px; border-radius: var(--radius); max-width: 280px;
+}
+.mockup-note b { color: #FFD666; }
+</style>
+
+<style>
+/* ===== shared components, batch 2 (same block in all six pages) ===== */
+/* Added with the second batch. Keep this block identical across pages. */
+a.menu-item, a.menu-item:hover { color: var(--text-1); }
+a.menu-item.active, a.menu-item.active:hover { color: var(--primary-6); }
+.crumb a { color: var(--text-3); }
+.crumb a:hover { color: var(--primary-6); }
+.hidden { display: none !important; }
+.btn-sm { height: 24px; padding: 0 8px; font-size: 12px; }
+.btn-danger { background: var(--danger-6); color: #fff; }
+.btn-danger:hover { background: #F76560; }
+.btn-danger[disabled] { background: var(--fill-2); color: var(--text-4); }
+.btn-text-danger { background: transparent; padding: 0 8px; color: var(--danger-6); }
+.btn-text-danger:hover { background: var(--danger-1); }
+.btn-text[disabled], .btn-text-danger[disabled] { background: transparent; color: var(--text-4); }
+.tag-outline { background: var(--white); color: var(--text-2); border: 1px solid var(--border); }
+.num { font-variant-numeric: tabular-nums; }
+.req { color: var(--danger-6); margin-right: 4px; }
+
+/* segmented control */
+.seg { display: inline-flex; background: var(--fill-1); border-radius: var(--radius-sm); padding: 2px; }
+.seg label, .seg button {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0;
+  border-radius: var(--radius-sm); font: inherit; font-size: 13px; color: var(--text-2);
+  background: transparent; cursor: pointer; white-space: nowrap; }
+.seg input { display: none; }
+.seg input:checked + span { color: var(--primary-6); }
+.seg label:has(input:checked), .seg button.on {
+  background: var(--white); box-shadow: var(--shadow-card); color: var(--primary-6); }
+.seg label.is-disabled { color: var(--text-4); cursor: not-allowed; }
+
+/* radio-button group (one answer per question) */
+.rbtn { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.rbtn button {
+  height: 28px; padding: 0 12px; font: inherit; font-size: 13px; color: var(--text-2);
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.rbtn button:hover { border-color: var(--primary-6); color: var(--primary-6); }
+.rbtn button.on { border-color: var(--primary-6); background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.rbtn button.on.is-bad { border-color: var(--danger-6); background: var(--danger-1); color: var(--danger-6); }
+.rbtn button.on.is-hold { border-color: var(--warning-6); background: var(--warning-1); color: var(--warning-6); }
+.rbtn button[disabled] { color: var(--text-4); border-color: var(--border); background: var(--fill-1); cursor: not-allowed; }
+
+/* tabs */
+.tabs { display: flex; gap: 28px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+.tab {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; height: 46px; padding: 0;
+  border: 0; background: none; font: inherit; font-size: 14px; color: var(--text-2); cursor: pointer; }
+.tab:hover { color: var(--text-1); }
+.tab.active { color: var(--primary-6); font-weight: 500; }
+.tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--primary-6); }
+.tab .cnt { font-size: 12px; line-height: 18px; padding: 0 6px; border-radius: 9px; background: var(--fill-2); color: var(--text-3); font-weight: 400; }
+.tab.active .cnt { background: var(--primary-1); color: var(--primary-6); }
+.pane { display: none; }
+.pane.active { display: block; }
+
+/* descriptions (label / value grid) */
+.desc { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 32px; }
+.desc.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.desc .it { display: flex; gap: 12px; font-size: 13px; line-height: 1.6; min-width: 0; }
+.desc .it.full { grid-column: 1 / -1; }
+.desc .k { flex: none; width: 104px; color: var(--text-3); }
+.desc .v { min-width: 0; color: var(--text-1); overflow-wrap: anywhere; }
+
+/* switch */
+.switch {
+  position: relative; display: inline-block; flex: none; width: 28px; height: 16px; padding: 0; border: 0;
+  border-radius: 8px; background: var(--text-4); cursor: pointer; vertical-align: middle; transition: background .15s; }
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; transition: left .15s; }
+.switch.on { background: var(--primary-6); }
+.switch.on::after { left: 14px; }
+
+/* pagination: total on the left, pages / size / jump on the right */
+.pager { display: flex; align-items: center; gap: 8px; padding: 14px 20px; font-size: 13px; color: var(--text-2); }
+.pager .total { margin-right: auto; color: var(--text-3); }
+.pager .pg {
+  min-width: 32px; height: 32px; padding: 0 6px; border: 0; border-radius: var(--radius-sm);
+  background: transparent; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.pager .pg:hover { background: var(--fill-2); }
+.pager .pg.active { background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.pager .pg[disabled] { color: var(--text-4); background: transparent; cursor: not-allowed; }
+.pager .gap { color: var(--text-3); padding: 0 2px; }
+.pager .select { width: 104px; }
+.pager .jump { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); }
+.pager .jump .input { width: 52px; text-align: center; }
+
+/* overlays: mask, right drawer, modal */
+.mask { position: fixed; inset: 0; z-index: 300; background: rgba(29,33,41,.45); display: none; }
+.mask.open { display: block; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 310; width: 640px; max-width: 92vw;
+  display: flex; flex-direction: column; background: var(--white); box-shadow: -6px 0 16px rgba(0,0,0,.08);
+  transform: translateX(105%); transition: transform .2s ease; }
+.drawer.open { transform: none; }
+.drawer.wide { width: 800px; }
+.drawer-head { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+.drawer-title { font-size: 16px; font-weight: 600; }
+.drawer-head .spacer { flex: 1; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 20px; }
+.drawer-foot { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); }
+.drawer-foot .spacer { flex: 1; }
+.modal {
+  position: fixed; top: 14vh; left: 50%; z-index: 320; width: 520px; transform: translateX(-50%);
+  background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow-pop); display: none; }
+.modal.open { display: block; }
+.modal-head { display: flex; align-items: center; gap: 8px; padding: 18px 20px 0; font-size: 16px; font-weight: 600; }
+.modal-head .spacer { flex: 1; }
+.modal-body { padding: 14px 20px 4px; font-size: 14px; color: var(--text-2); }
+.modal-foot { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 20px 18px; }
+.x-close {
+  width: 28px; height: 28px; border: 0; background: none; border-radius: var(--radius-sm); cursor: pointer;
+  display: grid; place-items: center; color: var(--text-3); }
+.x-close:hover { background: var(--fill-2); color: var(--text-1); }
+
+/* toast (operation-level message) */
+.toast {
+  position: fixed; top: 72px; left: 50%; z-index: 400; transform: translateX(-50%); display: none;
+  align-items: center; gap: 8px; max-width: 640px; padding: 9px 16px; font-size: 13px; color: var(--text-1);
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.toast.show { display: flex; }
+
+/* fold (collapse) */
+.fold-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.fold-head .arr { flex: none; transition: transform .15s; }
+.fold.open > .fold-head .arr { transform: rotate(90deg); }
+.fold > .fold-body { display: none; }
+.fold.open > .fold-body { display: block; }
+
+/* timeline */
+.tl { list-style: none; margin: 0; padding: 0; }
+.tl > li { position: relative; padding: 0 0 20px 28px; }
+.tl > li::before { content: ''; position: absolute; left: 5px; top: 17px; bottom: 0; width: 1px; background: var(--border); }
+.tl > li:last-child { padding-bottom: 0; }
+.tl > li:last-child::before { display: none; }
+.tl .dot { position: absolute; left: 0; top: 5px; width: 11px; height: 11px; border-radius: 50%; background: var(--white); border: 2px solid var(--primary-6); }
+.tl .dot.green { border-color: var(--success-6); }
+.tl .dot.orange { border-color: var(--warning-6); }
+.tl .dot.red { border-color: var(--danger-6); }
+.tl .dot.gray { border-color: var(--text-4); }
+.tl .t-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tl .t-time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tl .t-title { font-weight: 500; }
+.tl .t-body { font-size: 13px; color: var(--text-2); margin-top: 3px; }
+
+/* video placeholder (real page: <video> with a presigned TOS URL) */
+.video { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius); overflow: hidden; background: linear-gradient(160deg, #3A4150, #1D2129); color: #fff; }
+.video .cam { position: absolute; left: 8px; top: 6px; font-size: 12px; opacity: .9; }
+.video .play { position: absolute; left: 50%; top: 50%; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; background: rgba(255,255,255,.18); display: grid; place-items: center; }
+.video .time { position: absolute; right: 8px; bottom: 8px; font: 11px "SF Mono", ui-monospace, Menlo, monospace; opacity: .9; }
+.video .scrub { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.2); }
+.video .scrub i { display: block; height: 100%; width: 0; background: var(--primary-5); }
+.frame { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); overflow: hidden; background: linear-gradient(135deg, #C9CDD4, #86909C); }
+.frame span { position: absolute; left: 4px; bottom: 3px; font: 11px "SF Mono", ui-monospace, Menlo, monospace; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
+
+/* charts: thin marks, hairline grid, text in text tokens */
+.chart { display: block; overflow: visible; }
+.chart text { font-family: inherit; font-size: 11px; fill: var(--text-3); }
+.chart .ax { stroke: var(--border); stroke-width: 1; }
+.chart .grid { stroke: var(--fill-2); stroke-width: 1; }
+.chart .lbl { fill: var(--text-2); font-size: 12px; }
+.chart .val { fill: var(--text-1); font-size: 12px; }
+.chart [data-tip]:hover, .chart [data-tip]:focus { opacity: .8; outline: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-2); }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.legend .ln { width: 14px; height: 2px; border-radius: 1px; flex: none; }
+.tip {
+  position: fixed; z-index: 500; pointer-events: none; display: none; max-width: 300px; padding: 7px 10px;
+  font-size: 12px; line-height: 1.6; color: var(--text-2); background: var(--white);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.tip b { display: block; color: var(--text-1); font-size: 13px; }
+
+/* key figures inside a card */
+.kv-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.kv { padding: 2px 20px; border-left: 1px solid var(--border); min-width: 0; }
+.kv:first-child { border-left: 0; padding-left: 0; }
+.kv .k { font-size: 12px; color: var(--text-3); }
+.kv .v { font-size: 20px; font-weight: 600; margin-top: 2px; }
+.kv .v small { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 3px; }
+.kv .s { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+</style>
+<style>
+  .actions { display: flex; gap: 8px; }
+  .adj-bar {
+    position: sticky; top: var(--topbar-h); z-index: 30; display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px; margin: 0 0 12px; background: var(--white); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: 0 2px 6px rgba(0,0,0,.04); }
+  .adj-bar .spacer { flex: 1; }
+  .adj-bar .lbl { font-size: 13px; color: var(--text-3); }
+  .counter { font-size: 13px; color: var(--text-2); }
+  .counter b { color: var(--text-1); font-variant-numeric: tabular-nums; }
+  .counter .unapplied { color: var(--warning-6); }
+  .counter .unapplied b { color: var(--warning-6); }
+  .hint { font-size: 12px; color: var(--text-3); margin: -4px 0 14px; }
+
+  .group-head { display: flex; align-items: baseline; gap: 10px; margin: 20px 0 10px; }
+  .group-head h2 { font-size: 16px; font-weight: 600; margin: 0; }
+  .group-desc { font-size: 13px; color: var(--text-3); margin: -4px 0 12px; }
+  .merged-note { font-size: 13px; color: var(--text-2); background: var(--fill-2); border-radius: var(--radius-sm); padding: 8px 12px; margin-bottom: 12px; }
+
+  .acard { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 12px; box-shadow: var(--shadow-card); }
+  .acard.is-decided { border-color: #94BFFF; }
+  .acard.is-discarded { border-color: #FDCDC5; }
+  .acard-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .acard-head .ep-no { font: 600 14px "SF Mono", ui-monospace, Menlo, monospace; }
+  .acard-head .task-text { color: var(--text-1); }
+  .acard-head .spacer { flex: 1; }
+  .prio { font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 2px; background: var(--danger-1); color: #CB2634; }
+  .prio.normal { background: var(--fill-2); color: var(--text-3); }
+  .acard-body { display: grid; grid-template-columns: 500px minmax(0, 1fr); gap: 20px; padding: 14px 16px; }
+  .vids3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .media-tools { display: flex; align-items: center; gap: 10px; margin: 8px 0 10px; font-size: 12px; color: var(--text-3); }
+  .frames4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .frames4 .cap { font-size: 11px; color: var(--text-3); margin-top: 3px; }
+  .q { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 10px; }
+  .q:last-child { margin-bottom: 0; }
+  .q-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; margin-bottom: 8px; }
+  .q-head .src { font-weight: 600; color: var(--text-1); }
+  .q-head .ask { color: var(--text-3); }
+  .kvline { display: flex; gap: 10px; font-size: 13px; padding: 2px 0; }
+  .kvline .k { width: 64px; flex: none; color: var(--text-3); }
+  .chain { font-size: 12px; color: var(--text-2); background: var(--fill-1); border-radius: var(--radius-sm); padding: 6px 8px; margin-bottom: 8px; }
+  .q-ask { font-size: 13px; margin-bottom: 8px; }
+  .q .rbtn { margin-top: 8px; }
+  .q.is-optional { border-style: dashed; }
+  .q .blocked { font-size: 12px; color: var(--danger-6); margin-top: 6px; }
+  .rewrite { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
+  .rewrite .field { flex: 1; }
+  .rewrite .label { font-size: 12px; margin-bottom: 4px; }
+  .acard-foot { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-top: 1px solid var(--border); background: var(--fill-1); font-size: 12px; }
+  .acard-foot .trace { color: var(--text-3); }
+  .acard-foot .spacer { flex: 1; }
+  .empty { text-align: center; color: var(--text-3); font-size: 13px; padding: 30px 0; }
+  .list-end { text-align: center; color: var(--text-3); font-size: 12px; padding: 8px 0 4px; }
+
+  .appeal-intro { font-size: 13px; color: var(--text-2); }
+  .appeal-table td { vertical-align: top; font-size: 13px; }
+  .appeal-table .chain { margin: 0; }
+  .ep-link { color: var(--primary-6); cursor: pointer; background: none; border: 0; padding: 0; font: 12px "SF Mono", ui-monospace, Menlo, monospace; }
+  .vid-drawer .vids3 { margin-bottom: 10px; }
+  .modal-body p { margin: 0 0 8px; }
+  .apply-list { margin: 6px 0 10px; padding: 8px 12px; background: var(--fill-1); border-radius: var(--radius-sm); font-size: 13px; }
+  .apply-list div { padding: 2px 0; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo"></span>
+    <span>火山引擎</span>
+    <span class="divider"></span>
+    <span class="product">Physical AI Kit · 数据质检平台</span>
+  </div>
+  <div class="spacer"></div>
+  <div class="region">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="#86909C" stroke-width="1.2"/><path d="M8 1.8c1.8 1.7 2.7 3.8 2.7 6.2S9.8 12.5 8 14.2C6.2 12.5 5.3 10.4 5.3 8S6.2 3.5 8 1.8z" stroke="#86909C" stroke-width="1.2"/><path d="M2 8h12" stroke="#86909C" stroke-width="1.2"/></svg>
+    华北 2（北京）
+    <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="#86909C" stroke-width="1.2"/></svg>
+  </div>
+  <div class="user">
+    <span class="avatar">GB</span> galbot
+    <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="#86909C" stroke-width="1.2"/></svg>
+  </div>
+</header>
+
+<nav class="sider">
+  <div class="menu-group">数据质检</div>
+  <a class="menu-item active" href="tasks.html">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2.5" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M5 6.5h6M5 9.5h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+    质检任务
+  </a>
+  <a class="menu-item" href="credentials.html">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10.5 2.5a3.5 3.5 0 00-3.2 4.9L2.5 12.2v1.3h1.3l4.8-4.8a3.5 3.5 0 102-6.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    密钥与资源
+  </a>
+  <div class="menu-group">帮助</div>
+  <div class="menu-item" data-toast="静态预览稿不含使用文档">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3"/><path d="M6.4 6.2a1.7 1.7 0 113.2.8c-.4.6-1.6.8-1.6 1.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>
+    使用文档
+  </div>
+</nav>
+
+<main class="main">
+  <div class="crumb">数据质检平台 / <a href="tasks.html">质检任务</a> / <a href="task-detail.html">droid 前 50 条质检</a> / <b>人工裁决</b></div>
+
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">人工裁决</h1>
+      <p class="page-desc">droid 前 50 条质检 · 结果版本 r0002 · 10 条等人确认（已先交付），另有 5 条被拒的可以复议</p>
+    </div>
+    <div class="spacer"></div>
+    <div class="actions">
+      <a class="btn btn-outline" href="task-report.html">查看质检报告</a>
+      <a class="btn btn-outline" href="task-detail.html">返回任务详情</a>
+    </div>
+  </div>
+
+  <div class="alert alert-blue" style="margin-bottom:16px">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="#165DFF" stroke-width="1.3"/><path d="M8 7.2v4" stroke="#165DFF" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".8" fill="#165DFF"/></svg>
+    <div>裁决只属于这个任务：不会带到别的任务，也不会从别的任务带过来。同一个数据集再建任务，要重新裁。</div>
+  </div>
+
+  <div class="card" style="margin-bottom:12px">
+    <div class="tabs" data-tabs="adj" style="border-bottom:0">
+      <button class="tab active" data-pane="paneQueue">待裁决<span class="cnt">10</span></button>
+      <button class="tab" data-pane="paneAppeal">任务失败复议<span class="cnt">5</span></button>
+    </div>
+  </div>
+
+  <div class="adj-bar">
+    <span class="lbl q-filter">问题类型</span>
+    <select class="select q-filter" id="fType" style="width:210px">
+      <option value="">全部</option>
+      <option value="label">标注分歧（技能画像）</option>
+      <option value="task">任务成败弃权（任务成败判定）</option>
+    </select>
+    <span class="lbl q-filter">状态</span>
+    <select class="select q-filter" id="fStatus" style="width:150px">
+      <option value="">全部</option>
+      <option value="todo">待裁（含拿不准）</option>
+      <option value="hold">拿不准</option>
+      <option value="decided">已裁、未执行</option>
+    </select>
+    <div class="spacer"></div>
+    <span class="counter" id="counter"></span>
+    <button class="btn btn-primary" id="applyBtn">执行裁决</button>
+  </div>
+  <div class="hint">每点一下就保存，可以反复改。点「执行裁决」才会建子任务、真正改判决；交付数据集不会跟着自动更新。</div>
+
+  <!-- ================= 待裁决 ================= -->
+  <div class="pane active" data-group="adj" id="paneQueue">
+
+    <section class="group" data-group-type="label">
+      <div class="group-head"><h2>来源：技能画像 · 标注分歧</h2><span class="muted">5 条</span></div>
+      <p class="group-desc">原始标注和模型看到的画面，归进了不同的技能族。双方都可能错，这里只列分歧、不判谁对。改了标注又没给成败结论的，执行时按新标注重跑任务成败判定。</p>
+
+      <!-- ep 29: two questions on one card -->
+      <div class="acard" data-ep="29" data-types="label task" data-dl="" data-dt="">
+        <div class="acard-head">
+          <span class="ep-no">ep 29</span>
+          <span class="task-text">Put the orange thing in the can</span><span class="muted">原始标注</span>
+          <span class="prio" title="两条独立的证据线同时报警：标注分歧 + 任务成败判定被护栏拦下">重点</span>
+          <div class="spacer"></div><span class="st"></span>
+        </div>
+        <div class="acard-body">
+          <div>
+            <div class="vids3">
+              <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:14</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:14</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:14</span><span class="scrub"><i></i></span></div>
+            </div>
+            <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>视频来自源数据集，经预签名地址直连 TOS</span></div>
+            <div class="frames4">
+              <div><div class="frame"><span>1</span></div><div class="cap">ext_1 · 夹爪闭合 11.4 秒</div></div>
+              <div><div class="frame" style="filter:hue-rotate(25deg)"><span>2</span></div><div class="cap">ext_1 · 放大取证</div></div>
+              <div><div class="frame" style="filter:hue-rotate(50deg)"><span>3</span></div><div class="cap">wrist · +1.0 秒</div></div>
+              <div><div class="frame" style="filter:hue-rotate(75deg)"><span>4</span></div><div class="cap">wrist · +2.5 秒</div></div>
+            </div>
+          </div>
+          <div class="qs">
+            <div class="q" data-q="label">
+              <div class="q-head"><span class="src">① 技能画像 · 标注分歧</span><span class="ask">这条标注和画面对不上</span></div>
+              <div class="kvline"><span class="k">原始标注</span><span>Put the orange thing in the can <span class="muted">→ 放置</span></span></div>
+              <div class="kvline"><span class="k">画面描述</span><span>pour rice into the green bowl <span class="muted">→ 倾倒（模型生成，重打标 3 次都归入倾倒）</span></span></div>
+              <div class="rbtn"><button data-v="adopt">采纳新标注</button><button data-v="keep">维持原标注</button><button data-v="hold">拿不准</button><button data-v="rewrite">自行改写标注</button></div>
+              <div class="rewrite hidden">
+                <div class="field"><label class="label"><span class="req">*</span>改写后的标注</label><input class="input" value="pour rice into the green bowl"></div>
+                <button class="btn btn-primary btn-sm js-save-rewrite">保存</button>
+              </div>
+            </div>
+            <div class="q" data-q="task">
+              <div class="q-head"><span class="src">② 任务成败判定 · 证据不足，弃权</span><span class="ask">这条成败判不了</span></div>
+              <div class="chain">打分层失败候选 → 3 路复核一致判未完成 → 标注与自产描述不是同一任务，护栏拦下 → 转人工</div>
+              <div class="q-ask" data-orig="按原始标注「Put the orange thing in the can」，这条做成了吗？" data-new="按新标注「pour rice into the green bowl」，这条做成了吗？">按原始标注「Put the orange thing in the can」，这条做成了吗？</div>
+              <div class="rbtn"><button data-v="success">判成功</button><button data-v="fail">判失败</button><button data-v="hold">拿不准</button></div>
+              <div class="blocked hidden">这一条已整条弃用，不再判成败（「这条不要了」和「判它成功」互相矛盾）。</div>
+            </div>
+          </div>
+        </div>
+        <div class="acard-foot">
+          <button class="btn btn-text-danger btn-sm js-discard">其它原因，整条弃用</button>
+          <span class="spacer"></span><span class="trace"></span>
+        </div>
+      </div>
+
+      <!-- ep 4: decided, adopt new label; optional verdict left blank -->
+      <div class="acard" data-ep="4" data-types="label" data-dl="adopt" data-dt="" data-time="14:21">
+        <div class="acard-head">
+          <span class="ep-no">ep 4</span>
+          <span class="task-text">Wipe the table with the cloth</span><span class="muted">原始标注</span>
+          <span class="prio normal">高置信</span>
+          <div class="spacer"></div><span class="st"></span>
+        </div>
+        <div class="acard-body">
+          <div>
+            <div class="vids3">
+              <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:17</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:17</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:17</span><span class="scrub"><i></i></span></div>
+            </div>
+            <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>视频来自源数据集，经预签名地址直连 TOS</span></div>
+          </div>
+          <div class="qs">
+            <div class="q" data-q="label">
+              <div class="q-head"><span class="src">① 技能画像 · 标注分歧</span><span class="ask">这条标注和画面对不上</span></div>
+              <div class="kvline"><span class="k">原始标注</span><span>Wipe the table with the cloth <span class="muted">→ 擦拭</span></span></div>
+              <div class="kvline"><span class="k">画面描述</span><span>fold the cloth and put it on the table <span class="muted">→ 放置（模型生成，重打标 3 次都归入放置）</span></span></div>
+              <div class="rbtn"><button data-v="adopt">采纳新标注</button><button data-v="keep">维持原标注</button><button data-v="hold">拿不准</button><button data-v="rewrite">自行改写标注</button></div>
+              <div class="rewrite hidden">
+                <div class="field"><label class="label"><span class="req">*</span>改写后的标注</label><input class="input" value="fold the cloth and put it on the table"></div>
+                <button class="btn btn-primary btn-sm js-save-rewrite">保存</button>
+              </div>
+            </div>
+            <div class="q is-optional hidden" data-q="task-opt">
+              <div class="q-head"><span class="src">② 顺手给成败结论（选填）</span></div>
+              <div class="q-ask">你改了标注。给了成败结论就直接采用、不再重判；留空则按新标注重跑任务成败判定。</div>
+              <div class="rbtn"><button data-v="success">判成功</button><button data-v="fail">判失败</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="acard-foot">
+          <button class="btn btn-text-danger btn-sm js-discard">其它原因，整条弃用</button>
+          <span class="spacer"></span><span class="trace"></span>
+        </div>
+      </div>
+
+      <!-- ep 36 -->
+      <div class="acard" data-ep="36" data-types="label" data-dl="" data-dt="">
+        <div class="acard-head">
+          <span class="ep-no">ep 36</span>
+          <span class="task-text">Close the microwave door</span><span class="muted">原始标注</span>
+          <span class="prio normal">高置信</span>
+          <div class="spacer"></div><span class="st"></span>
+        </div>
+        <div class="acard-body">
+          <div>
+            <div class="vids3">
+              <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:22</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:22</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:22</span><span class="scrub"><i></i></span></div>
+            </div>
+            <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>视频来自源数据集，经预签名地址直连 TOS</span></div>
+          </div>
+          <div class="qs">
+            <div class="q" data-q="label">
+              <div class="q-head"><span class="src">① 技能画像 · 标注分歧</span><span class="ask">这条标注和画面对不上</span></div>
+              <div class="kvline"><span class="k">原始标注</span><span>Close the microwave door <span class="muted">→ 开合</span></span></div>
+              <div class="kvline"><span class="k">画面描述</span><span>push the plate to the back of the table <span class="muted">→ 推拉（模型生成）</span></span></div>
+              <div class="rbtn"><button data-v="adopt">采纳新标注</button><button data-v="keep">维持原标注</button><button data-v="hold">拿不准</button><button data-v="rewrite">自行改写标注</button></div>
+              <div class="rewrite hidden">
+                <div class="field"><label class="label"><span class="req">*</span>改写后的标注</label><input class="input" value="push the plate to the back of the table"></div>
+                <button class="btn btn-primary btn-sm js-save-rewrite">保存</button>
+              </div>
+            </div>
+            <div class="q is-optional hidden" data-q="task-opt">
+              <div class="q-head"><span class="src">② 顺手给成败结论（选填）</span></div>
+              <div class="q-ask">你改了标注。给了成败结论就直接采用、不再重判；留空则按新标注重跑任务成败判定。</div>
+              <div class="rbtn"><button data-v="success">判成功</button><button data-v="fail">判失败</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="acard-foot">
+          <button class="btn btn-text-danger btn-sm js-discard">其它原因，整条弃用</button>
+          <span class="spacer"></span><span class="trace"></span>
+        </div>
+      </div>
+
+      <!-- ep 13: decided, keep label -->
+      <div class="acard" data-ep="13" data-types="label" data-dl="keep" data-dt="" data-time="14:23">
+        <div class="acard-head">
+          <span class="ep-no">ep 13</span>
+          <span class="task-text">Put the lid on the pot</span><span class="muted">原始标注</span>
+          <span class="prio normal">人工复核档</span>
+          <div class="spacer"></div><span class="st"></span>
+        </div>
+        <div class="acard-body">
+          <div>
+            <div class="vids3">
+              <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:19</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:19</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:19</span><span class="scrub"><i></i></span></div>
+            </div>
+            <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>视频来自源数据集，经预签名地址直连 TOS</span></div>
+          </div>
+          <div class="qs">
+            <div class="q" data-q="label">
+              <div class="q-head"><span class="src">① 技能画像 · 标注分歧</span><span class="ask">这条标注和画面对不上</span></div>
+              <div class="kvline"><span class="k">原始标注</span><span>Put the lid on the pot <span class="muted">→ 放置</span></span></div>
+              <div class="kvline"><span class="k">画面描述</span><span>open the pot and take the lid off <span class="muted">→ 开合（模型生成，重打标 3 次有 2 次归入开合）</span></span></div>
+              <div class="rbtn"><button data-v="adopt">采纳新标注</button><button data-v="keep">维持原标注</button><button data-v="hold">拿不准</button><button data-v="rewrite">自行改写标注</button></div>
+              <div class="rewrite hidden">
+                <div class="field"><label class="label"><span class="req">*</span>改写后的标注</label><input class="input" value="open the pot and take the lid off"></div>
+                <button class="btn btn-primary btn-sm js-save-rewrite">保存</button>
+              </div>
+            </div>
+            <div class="q is-optional hidden" data-q="task-opt">
+              <div class="q-head"><span class="src">② 顺手给成败结论（选填）</span></div>
+              <div class="q-ask">你改了标注。给了成败结论就直接采用、不再重判；留空则按新标注重跑任务成败判定。</div>
+              <div class="rbtn"><button data-v="success">判成功</button><button data-v="fail">判失败</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="acard-foot">
+          <button class="btn btn-text-danger btn-sm js-discard">其它原因，整条弃用</button>
+          <span class="spacer"></span><span class="trace"></span>
+        </div>
+      </div>
+
+      <!-- ep 22 -->
+      <div class="acard" data-ep="22" data-types="label" data-dl="" data-dt="">
+        <div class="acard-head">
+          <span class="ep-no">ep 22</span>
+          <span class="task-text">Turn on the faucet</span><span class="muted">原始标注</span>
+          <span class="prio normal">人工复核档</span>
+          <div class="spacer"></div><span class="st"></span>
+        </div>
+        <div class="acard-body">
+          <div>
+            <div class="vids3">
+              <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:12</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:12</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:12</span><span class="scrub"><i></i></span></div>
+            </div>
+            <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>视频来自源数据集，经预签名地址直连 TOS</span></div>
+          </div>
+          <div class="qs">
+            <div class="q" data-q="label">
+              <div class="q-head"><span class="src">① 技能画像 · 标注分歧</span><span class="ask">这条标注和画面对不上</span></div>
+              <div class="kvline"><span class="k">原始标注</span><span>Turn on the faucet <span class="muted">→ 旋转开关</span></span></div>
+              <div class="kvline"><span class="k">画面描述</span><span>pick up the sponge and put it in the sink <span class="muted">→ 放置（模型生成，重打标 3 次有 2 次归入放置）</span></span></div>
+              <div class="rbtn"><button data-v="adopt">采纳新标注</button><button data-v="keep">维持原标注</button><button data-v="hold">拿不准</button><button data-v="rewrite">自行改写标注</button></div>
+              <div class="rewrite hidden">
+                <div class="field"><label class="label"><span class="req">*</span>改写后的标注</label><input class="input" value="pick up the sponge and put it in the sink"></div>
+                <button class="btn btn-primary btn-sm js-save-rewrite">保存</button>
+              </div>
+            </div>
+            <div class="q is-optional hidden" data-q="task-opt">
+              <div class="q-head"><span class="src">② 顺手给成败结论（选填）</span></div>
+              <div class="q-ask">你改了标注。给了成败结论就直接采用、不再重判；留空则按新标注重跑任务成败判定。</div>
+              <div class="rbtn"><button data-v="success">判成功</button><button data-v="fail">判失败</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="acard-foot">
+          <button class="btn btn-text-danger btn-sm js-discard">其它原因，整条弃用</button>
+          <span class="spacer"></span><span class="trace"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="group" data-group-type="task">
+      <div class="group-head"><h2>来源：任务成败判定 · 证据不足，弃权</h2><span class="muted">6 条</span></div>
+      <p class="group-desc">模型正常给出了「拿不准」，这不是出错：这些条目已先交付，等人给结论。人给的结论直接采用，不再跑模型。</p>
+      <div class="merged-note" id="mergedNote">ep 29 同时有标注分歧，它的成败问题已经放在上面「技能画像」组的卡片里，这里不再重复。</div>
+
+      <!-- ep 9: decided success -->
+      <div class="acard" data-ep="9" data-types="task" data-dl="" data-dt="success" data-time="14:22">
+        <div class="acard-head">
+          <span class="ep-no">ep 9</span>
+          <span class="task-text">Pull the chair toward the table</span><span class="muted">原始标注</span>
+          <div class="spacer"></div><span class="st"></span>
+        </div>
+        <div class="acard-body">
+          <div>
+            <div class="vids3">
+              <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:16</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:16</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:16</span><span class="scrub"><i></i></span></div>
+            </div>
+            <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>视频来自源数据集，经预签名地址直连 TOS</span></div>
+          </div>
+          <div class="qs">
+            <div class="q" data-q="task">
+              <div class="q-head"><span class="src">① 任务成败判定 · 证据不足，弃权</span><span class="ask">这条成败判不了</span></div>
+              <div class="chain">打分层拿不准 → 复核分歧 → 仲裁 2 路拿不准 → 转人工</div>
+              <div class="q-ask">按任务文本「Pull the chair toward the table」，这条做成了吗？</div>
+              <div class="rbtn"><button data-v="success">判成功</button><button data-v="fail">判失败</button><button data-v="hold">拿不准</button></div>
+              <div class="blocked hidden">这一条已整条弃用，不再判成败。</div>
+            </div>
+          </div>
+        </div>
+        <div class="acard-foot">
+          <button class="btn btn-text-danger btn-sm js-discard">其它原因，整条弃用</button>
+          <span class="spacer"></span><span class="trace"></span>
+        </div>
+      </div>
+
+      <!-- ep 16: marked "not sure" -->
+      <div class="acard" data-ep="16" data-types="task" data-dl="" data-dt="hold" data-time="14:25">
+        <div class="acard-head">
+          <span class="ep-no">ep 16</span>
+          <span class="task-text">pour water from the cup into the sink</span><span class="muted">自产描述（原数据没有标注）</span>
+          <div class="spacer"></div><span class="st"></span>
+        </div>
+        <div class="acard-body">
+          <div>
+            <div class="vids3">
+              <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:21</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:21</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:21</span><span class="scrub"><i></i></span></div>
+            </div>
+            <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>视频来自源数据集，经预签名地址直连 TOS</span></div>
+          </div>
+          <div class="qs">
+            <div class="q" data-q="task">
+              <div class="q-head"><span class="src">① 任务成败判定 · 证据不足，弃权</span><span class="ask">这条成败判不了</span></div>
+              <div class="chain">打分层拿不准 → 复核全体弃权 → 转人工</div>
+              <div class="q-ask">按任务文本「pour water from the cup into the sink」，这条做成了吗？</div>
+              <div class="rbtn"><button data-v="success">判成功</button><button data-v="fail">判失败</button><button data-v="hold">拿不准</button></div>
+              <div class="blocked hidden">这一条已整条弃用，不再判成败。</div>
+            </div>
+          </div>
+        </div>
+        <div class="acard-foot">
+          <button class="btn btn-text-danger btn-sm js-discard">其它原因，整条弃用</button>
+          <span class="spacer"></span><span class="trace"></span>
+        </div>
+      </div>
+
+      <!-- ep 33 -->
+      <div class="acard" data-ep="33" data-types="task" data-dl="" data-dt="">
+        <div class="acard-head">
+          <span class="ep-no">ep 33</span>
+          <span class="task-text">Turn the knob of the stove</span><span class="muted">原始标注</span>
+          <div class="spacer"></div><span class="st"></span>
+        </div>
+        <div class="acard-body">
+          <div>
+            <div class="vids3">
+              <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:15</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:15</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:15</span><span class="scrub"><i></i></span></div>
+            </div>
+            <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>视频来自源数据集，经预签名地址直连 TOS</span></div>
+          </div>
+          <div class="qs">
+            <div class="q" data-q="task">
+              <div class="q-head"><span class="src">① 任务成败判定 · 证据不足，弃权</span><span class="ask">这条成败判不了</span></div>
+              <div class="chain">打分层成功候选（弱）→ 复核分歧 → 仲裁只有 1 路说未完成（判废要 2 路）→ 转人工</div>
+              <div class="q-ask">按任务文本「Turn the knob of the stove」，这条做成了吗？</div>
+              <div class="rbtn"><button data-v="success">判成功</button><button data-v="fail">判失败</button><button data-v="hold">拿不准</button></div>
+              <div class="blocked hidden">这一条已整条弃用，不再判成败。</div>
+            </div>
+          </div>
+        </div>
+        <div class="acard-foot">
+          <button class="btn btn-text-danger btn-sm js-discard">其它原因，整条弃用</button>
+          <span class="spacer"></span><span class="trace"></span>
+        </div>
+      </div>
+
+      <!-- ep 40 -->
+      <div class="acard" data-ep="40" data-types="task" data-dl="" data-dt="">
+        <div class="acard-head">
+          <span class="ep-no">ep 40</span>
+          <span class="task-text">Drag the box to the edge of the table</span><span class="muted">原始标注</span>
+          <div class="spacer"></div><span class="st"></span>
+        </div>
+        <div class="acard-body">
+          <div>
+            <div class="vids3">
+              <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:24</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:24</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:24</span><span class="scrub"><i></i></span></div>
+            </div>
+            <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>视频来自源数据集，经预签名地址直连 TOS</span></div>
+          </div>
+          <div class="qs">
+            <div class="q" data-q="task">
+              <div class="q-head"><span class="src">① 任务成败判定 · 证据不足，弃权</span><span class="ask">这条成败判不了</span></div>
+              <div class="chain">打分层峰值后回落 → 复核分歧 → 仲裁拿不准 → 转人工</div>
+              <div class="q-ask">按任务文本「Drag the box to the edge of the table」，这条做成了吗？</div>
+              <div class="rbtn"><button data-v="success">判成功</button><button data-v="fail">判失败</button><button data-v="hold">拿不准</button></div>
+              <div class="blocked hidden">这一条已整条弃用，不再判成败。</div>
+            </div>
+          </div>
+        </div>
+        <div class="acard-foot">
+          <button class="btn btn-text-danger btn-sm js-discard">其它原因，整条弃用</button>
+          <span class="spacer"></span><span class="trace"></span>
+        </div>
+      </div>
+
+      <!-- ep 47 -->
+      <div class="acard" data-ep="47" data-types="task" data-dl="" data-dt="">
+        <div class="acard-head">
+          <span class="ep-no">ep 47</span>
+          <span class="task-text">pour the cereal into the bowl</span><span class="muted">自产描述（原数据没有标注）</span>
+          <div class="spacer"></div><span class="st"></span>
+        </div>
+        <div class="acard-body">
+          <div>
+            <div class="vids3">
+              <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:18</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:18</span><span class="scrub"><i></i></span></div>
+              <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:18</span><span class="scrub"><i></i></span></div>
+            </div>
+            <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>视频来自源数据集，经预签名地址直连 TOS</span></div>
+          </div>
+          <div class="qs">
+            <div class="q" data-q="task">
+              <div class="q-head"><span class="src">① 任务成败判定 · 证据不足，弃权</span><span class="ask">这条成败判不了</span></div>
+              <div class="chain">打分层无信息 → 复核全体弃权 → 转人工</div>
+              <div class="q-ask">按任务文本「pour the cereal into the bowl」，这条做成了吗？</div>
+              <div class="rbtn"><button data-v="success">判成功</button><button data-v="fail">判失败</button><button data-v="hold">拿不准</button></div>
+              <div class="blocked hidden">这一条已整条弃用，不再判成败。</div>
+            </div>
+          </div>
+        </div>
+        <div class="acard-foot">
+          <button class="btn btn-text-danger btn-sm js-discard">其它原因，整条弃用</button>
+          <span class="spacer"></span><span class="trace"></span>
+        </div>
+      </div>
+    </section>
+
+    <div class="empty hidden" id="emptyNote">没有符合筛选条件的条目</div>
+    <div class="list-end">已加载全部 10 条 · 队列按游标分页，条目多时往下翻自动加载</div>
+  </div>
+
+  <!-- ================= 任务失败复议 ================= -->
+  <div class="pane" data-group="adj" id="paneAppeal">
+    <div class="card">
+      <div class="card-body">
+        <p class="appeal-intro" style="margin:0 0 12px">系统按「任务成败判定」拒掉了 5 条，都还没人复核。看完视频，如果认为判定有误，可以把它恢复为可用。复议结论同样要点「执行裁决」才生效；它不计入上面的「待裁」条数。</p>
+        <div class="fold open" style="border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px">
+          <div class="fold-head" style="font-size:13px; font-weight:500">
+            <svg class="arr" width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 2.5L8 6l-3.5 3.5" fill="none" stroke="#4E5969" stroke-width="1.3"/></svg>
+            为什么有的被拒条目不在这里
+          </div>
+          <div class="fold-body" style="font-size:13px; color:var(--text-2); margin-top:8px; line-height:1.8">
+            本次一共拒绝 7 条，另外 2 条的结论不接受复议：<br>
+            <span class="mono">ep 18</span> 时间戳检查：残段，全程 0.5 秒；<span class="mono">ep 44</span> 精确去重：与 ep 43 字节级完全重复。<br>
+            时间戳、运动学、视频-动作同步量的是数据本身，去重比的是文件字节，复议也改变不了结论。只有任务成败判定是模型判的，才开放复议；后端同样会拒绝别的复议。
+          </div>
+        </div>
+      </div>
+      <table class="table appeal-table">
+        <thead><tr><th>episode</th><th style="min-width:200px">任务文本</th><th style="min-width:300px">拒绝原因（判定链）</th><th>关键读数</th><th>视频</th><th style="min-width:210px">复议结论</th></tr></thead>
+        <tbody>
+          <tr data-ep="6">
+            <td class="mono">ep 6</td><td>Put the marker in the cup<div class="sub">原始标注</div></td>
+            <td><div class="chain">打分层失败候选 → 3 路复核一致判未完成 → 判废</div></td>
+            <td class="nowrap">完成度末值 0.12<div class="sub">峰值 0.31</div></td>
+            <td><button class="btn btn-text btn-sm" data-vid="6">看视频</button></td>
+            <td><div class="rbtn"><button data-v="restore">恢复为可用</button><button data-v="keep">维持拒绝</button></div></td>
+          </tr>
+          <tr data-ep="11">
+            <td class="mono">ep 11</td><td>push the blue block to the left<div class="sub">自产描述</div></td>
+            <td><div class="chain">打分层全程无进展 → 3 路复核一致判未完成 → 判废</div></td>
+            <td class="nowrap">完成度全程 ≤ 0.08</td>
+            <td><button class="btn btn-text btn-sm" data-vid="11">看视频</button></td>
+            <td><div class="rbtn"><button data-v="restore">恢复为可用</button><button data-v="keep">维持拒绝</button></div></td>
+          </tr>
+          <tr data-ep="23">
+            <td class="mono">ep 23</td><td>Close the top drawer<div class="sub">原始标注</div></td>
+            <td><div class="chain">打分层成功候选（弱）→ 2 路复核判未完成 → 仲裁 2 路一致未完成 → 判废</div></td>
+            <td class="nowrap">完成度末值 0.52<div class="sub">复核 2 / 3 判未完成</div></td>
+            <td><button class="btn btn-text btn-sm" data-vid="23">看视频</button></td>
+            <td><div class="rbtn"><button data-v="restore">恢复为可用</button><button data-v="keep">维持拒绝</button></div></td>
+          </tr>
+          <tr data-ep="38">
+            <td class="mono">ep 38</td><td>Pour the beans into the pot<div class="sub">原始标注</div></td>
+            <td><div class="chain">打分层峰值后回落 → 2 路复核判未完成 → 仲裁 3 路一致未完成 → 判废</div></td>
+            <td class="nowrap">峰值 0.81 → 末值 0.22</td>
+            <td><button class="btn btn-text btn-sm" data-vid="38">看视频</button></td>
+            <td><div class="rbtn"><button data-v="restore">恢复为可用</button><button data-v="keep">维持拒绝</button></div></td>
+          </tr>
+          <tr data-ep="45">
+            <td class="mono">ep 45</td><td>open the cabinet door<div class="sub">自产描述</div></td>
+            <td><div class="chain">打分层失败候选 → 3 路复核一致判未完成 → 判废</div></td>
+            <td class="nowrap">完成度末值 0.09</td>
+            <td><button class="btn btn-text btn-sm" data-vid="45">看视频</button></td>
+            <td><div class="rbtn"><button data-v="restore">恢复为可用</button><button data-v="keep">维持拒绝</button></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<div class="mask" id="mask"></div>
+
+<div class="drawer vid-drawer" id="vidDrawer" role="dialog" aria-labelledby="vidTitle">
+  <div class="drawer-head"><span class="drawer-title" id="vidTitle">ep 6</span><span class="tag tag-red">拒绝 · 任务成败判定</span><div class="spacer"></div>
+    <button class="x-close" data-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="drawer-body">
+    <div class="vids3">
+      <div class="video"><span class="cam">exterior_image_1_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:18</span><span class="scrub"><i></i></span></div>
+      <div class="video"><span class="cam">exterior_image_2_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:18</span><span class="scrub"><i></i></span></div>
+      <div class="video"><span class="cam">wrist_image_left</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span><span class="time">0:00 / 0:18</span><span class="scrub"><i></i></span></div>
+    </div>
+    <div class="media-tools"><button class="btn btn-outline btn-sm js-play">同时播放</button><span>被拒的条目只在源数据集里有画面，用输入访问密钥签名</span></div>
+    <div class="chain" id="vidChain"></div>
+  </div>
+</div>
+
+<div class="modal" id="applyModal" role="dialog" aria-labelledby="applyTitle">
+  <div class="modal-head" id="applyTitle">执行裁决<div class="spacer"></div>
+    <button class="x-close" data-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="modal-body">
+    <p>将执行下面这些还没应用的裁决：</p>
+    <div class="apply-list" id="applyList"></div>
+    <p>执行会建一个子任务，完成后生成新的结果版本（r0003）。判决或任务文本变了，交付数据集要再导出一次，平台不会自动重建。</p>
+    <p class="muted" id="applyCheck">开始前会检查：数据集能读、交付目录能写、模型能调通。</p>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" data-close>取消</button>
+    <button class="btn btn-primary" id="applyGo">执行</button>
+  </div>
+</div>
+
+<div class="mockup-note">
+  <b>静态预览稿</b> · 第二批<br>
+  数据为假数据，交互不接后端<br><span style="opacity:.6">点此关闭</span>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// Shared mockup helpers (same block in all six pages): menus, tabs, folds,
+// drawers / modals, toast and chart tooltips. No network, no storage.
+(function () {
+  var note = document.querySelector('.mockup-note');
+  if (note) note.addEventListener('click', function () { note.style.display = 'none'; });
+
+  var toastEl = document.getElementById('toast'), toastTimer;
+  window.toast = function (msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 2600);
+  };
+
+  window.openLayer = function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var mask = document.getElementById('mask');
+    if (mask) mask.classList.add('open');
+    el.classList.add('open');
+  };
+  window.closeLayers = function () {
+    document.querySelectorAll('.drawer.open, .modal.open, .mask.open').forEach(function (n) {
+      n.classList.remove('open');
+    });
+  };
+
+  document.addEventListener('click', function (e) {
+    // dropdown menus
+    var more = e.target.closest('.js-more');
+    document.querySelectorAll('.menu-pop.open').forEach(function (n) {
+      if (!more || n !== more.parentElement) n.classList.remove('open');
+    });
+    if (more) { more.parentElement.classList.toggle('open'); return; }
+
+    // tabs: .tabs[data-tabs=g] > .tab[data-pane=id]; panes: .pane[data-group=g]
+    var tab = e.target.closest('.tab[data-pane]');
+    if (tab) {
+      var bar = tab.closest('.tabs');
+      bar.querySelectorAll('.tab').forEach(function (b) { b.classList.toggle('active', b === tab); });
+      document.querySelectorAll('.pane[data-group="' + bar.dataset.tabs + '"]').forEach(function (p) {
+        p.classList.toggle('active', p.id === tab.dataset.pane);
+      });
+      return;
+    }
+
+    // folds
+    var head = e.target.closest('.fold-head');
+    if (head && !e.target.closest('.fold-head a, .fold-head button, .fold-head select, .fold-head input')) {
+      head.parentElement.classList.toggle('open');
+    }
+
+    // layers
+    var opener = e.target.closest('[data-open]');
+    if (opener) { e.preventDefault(); openLayer(opener.dataset.open); return; }
+    if (e.target.closest('[data-close]') || e.target.id === 'mask') { closeLayers(); return; }
+
+    // mockup-only actions
+    var t = e.target.closest('[data-toast]');
+    if (t && !t.disabled) toast(t.dataset.toast);
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeLayers(); });
+
+  // chart tooltips: data-tip="value|label|more…"; values lead, labels follow
+  var tip = document.createElement('div');
+  tip.className = 'tip';
+  document.body.appendChild(tip);
+  function show(el, x, y) {
+    var parts = el.getAttribute('data-tip').split('|');
+    tip.textContent = '';
+    parts.forEach(function (p, i) {
+      var n = document.createElement(i === 0 ? 'b' : 'div');
+      n.textContent = p;
+      tip.appendChild(n);
+    });
+    tip.style.display = 'block';
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(x + 14, window.innerWidth - w - 8) + 'px';
+    tip.style.top = Math.max(8, y - h - 10) + 'px';
+  }
+  document.addEventListener('mousemove', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (el) show(el, e.clientX, e.clientY); else tip.style.display = 'none';
+  });
+  document.addEventListener('focusin', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) return;
+    var r = el.getBoundingClientRect();
+    show(el, r.left + r.width / 2, r.top);
+  });
+  document.addEventListener('focusout', function () { tip.style.display = 'none'; });
+})();
+</script>
+<script>
+  function $(id) { return document.getElementById(id); }
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.acard'));
+  var LABEL_TXT = { adopt: '采纳新标注', keep: '维持原标注', hold: '拿不准', rewrite: '自行改写标注' };
+  var TASK_TXT = { success: '判成功', fail: '判失败', hold: '拿不准' };
+  var appeals = {};        // ep -> 'restore' | 'keep'
+  var appealDirty = {};
+
+  // Card status: discarded / decided / hold / todo. "拿不准" is a legal answer but still counts as pending.
+  function status(c) {
+    if (c.dataset.discard === '1') return 'decided';
+    var types = c.dataset.types.split(' '), dl = c.dataset.dl, dt = c.dataset.dt, hold = false, todo = false;
+    if (types.indexOf('label') >= 0) {
+      if (!dl) todo = true; else if (dl === 'hold') hold = true;
+    }
+    if (types.indexOf('task') >= 0) {
+      if (!dt) todo = true; else if (dt === 'hold') hold = true;
+    }
+    return todo ? 'todo' : hold ? 'hold' : 'decided';
+  }
+  function describe(c) {
+    if (c.dataset.discard === '1') return '其它原因，整条弃用';
+    var parts = [];
+    if (c.dataset.dl) parts.push(LABEL_TXT[c.dataset.dl]);
+    if (c.dataset.dt) parts.push(TASK_TXT[c.dataset.dt]);
+    return parts.join('；');
+  }
+  function paint(c) {
+    var st = status(c), applied = c.dataset.applied === '1';
+    var tag = applied ? '<span class="tag tag-green"><i class="dot"></i>已提交执行</span>'
+      : st === 'decided' ? '<span class="tag tag-blue"><i class="dot"></i>已裁 · 未执行</span>'
+      : st === 'hold' ? '<span class="tag tag-orange"><i class="dot"></i>拿不准</span>'
+      : '<span class="tag tag-gray"><i class="dot"></i>待裁</span>';
+    c.querySelector('.st').innerHTML = tag;
+    c.classList.toggle('is-decided', st === 'decided' && c.dataset.discard !== '1');
+    c.classList.toggle('is-discarded', c.dataset.discard === '1');
+    // button states
+    var lq = c.querySelector('.q[data-q=label]');
+    if (lq) lq.querySelectorAll('.rbtn button').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.v === c.dataset.dl);
+      b.classList.toggle('is-hold', b.dataset.v === 'hold');
+      b.disabled = c.dataset.discard === '1';
+    });
+    var tq = c.querySelector('.q[data-q=task]');
+    if (tq) {
+      tq.querySelectorAll('.rbtn button').forEach(function (b) {
+        b.classList.toggle('on', b.dataset.v === c.dataset.dt);
+        b.classList.toggle('is-bad', b.dataset.v === 'fail');
+        b.classList.toggle('is-hold', b.dataset.v === 'hold');
+        b.disabled = c.dataset.discard === '1';
+      });
+      tq.querySelector('.blocked').classList.toggle('hidden', c.dataset.discard !== '1');
+      var ask = tq.querySelector('.q-ask[data-new]');
+      if (ask) ask.textContent = (c.dataset.dl === 'adopt' || c.dataset.dl === 'rewrite') ? ask.dataset.new : ask.dataset.orig;
+    }
+    var oq = c.querySelector('.q[data-q=task-opt]');
+    if (oq) {
+      var show = (c.dataset.dl === 'adopt' || c.dataset.dl === 'rewrite') && c.dataset.discard !== '1';
+      oq.classList.toggle('hidden', !show);
+      oq.querySelectorAll('.rbtn button').forEach(function (b) {
+        b.classList.toggle('on', b.dataset.v === c.dataset.dopt);
+        b.classList.toggle('is-bad', b.dataset.v === 'fail');
+      });
+    }
+    var rw = c.querySelector('.rewrite');
+    if (rw) rw.classList.toggle('hidden', c.dataset.dl !== 'rewrite' || c.dataset.discard === '1');
+    var disc = c.querySelector('.js-discard');
+    disc.textContent = c.dataset.discard === '1' ? '撤销整条弃用' : '其它原因，整条弃用';
+    var tr = c.querySelector('.trace');
+    if (!c.dataset.time && !c.dataset.touched) tr.textContent = '还没人裁过';
+    else if (st === 'hold') tr.textContent = who(c) + '选了拿不准：留在队列里，仍算待裁，执行时不动它';
+    else if (st === 'decided') tr.textContent = who(c) + '裁过：' + describe(c) + (applied ? '（已提交执行）' : '（尚未执行）');
+    else tr.textContent = '已记录部分答案，还有问题没答完';
+  }
+  function who(c) { return c.dataset.time && c.dataset.time !== '刚刚' ? 'galbot 在 ' + c.dataset.time + ' ' : 'galbot 刚刚'; }
+  function dirtyCount() {
+    var n = cards.filter(function (c) { return status(c) === 'decided' && c.dataset.applied !== '1'; }).length;
+    Object.keys(appealDirty).forEach(function (k) { if (appealDirty[k]) n++; });
+    return n;
+  }
+  function refresh() {
+    cards.forEach(paint);
+    var decided = cards.filter(function (c) { return status(c) === 'decided'; }).length;
+    var un = dirtyCount();
+    $('counter').innerHTML = '已裁 <b>' + decided + '</b> 条 · 待裁 <b>' + (cards.length - decided) + '</b> 条 · ' +
+      '<span class="' + (un ? 'unapplied' : '') + '"><b>' + un + '</b> 条尚未应用</span>';
+    $('applyBtn').disabled = un === 0;
+    filter();
+  }
+  function touch(c) { c.dataset.applied = ''; c.dataset.touched = '1'; c.dataset.time = ''; }
+
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('.acard .rbtn button');
+    if (b && !b.disabled) {
+      var c = b.closest('.acard'), q = b.closest('.q').dataset.q;
+      if (q === 'label') { c.dataset.dl = c.dataset.dl === b.dataset.v ? '' : b.dataset.v; if (c.dataset.dl !== 'adopt' && c.dataset.dl !== 'rewrite') c.dataset.dopt = ''; }
+      else if (q === 'task') c.dataset.dt = c.dataset.dt === b.dataset.v ? '' : b.dataset.v;
+      else if (q === 'task-opt') c.dataset.dopt = c.dataset.dopt === b.dataset.v ? '' : b.dataset.v;
+      touch(c); refresh();
+      toast('已保存（只记录，还没执行）');
+      return;
+    }
+    var d = e.target.closest('.js-discard');
+    if (d) { var cc = d.closest('.acard'); cc.dataset.discard = cc.dataset.discard === '1' ? '' : '1'; touch(cc); refresh(); toast(cc.dataset.discard ? '已记录：整条弃用，执行后进拒绝' : '已撤销弃用'); return; }
+    var sr = e.target.closest('.js-save-rewrite');
+    if (sr) {
+      var inp = sr.closest('.rewrite').querySelector('input');
+      var bad = !inp.value.trim();
+      inp.classList.toggle('is-error', bad);
+      toast(bad ? '改写后的标注不能为空' : '已保存改写（只记录，还没执行）');
+      return;
+    }
+    var pb = e.target.closest('.js-play');
+    if (pb) { play(pb); return; }
+    var ab = e.target.closest('.appeal-table .rbtn button');
+    if (ab) {
+      var ep = ab.closest('tr').dataset.ep;
+      appeals[ep] = appeals[ep] === ab.dataset.v ? '' : ab.dataset.v;
+      appealDirty[ep] = !!appeals[ep];
+      ab.closest('.rbtn').querySelectorAll('button').forEach(function (x) {
+        x.classList.toggle('on', x.dataset.v === appeals[ep]);
+        x.classList.toggle('is-bad', x.dataset.v === 'keep');
+      });
+      refresh();
+      toast('已保存（只记录，还没执行）');
+      return;
+    }
+    var vb = e.target.closest('[data-vid]');
+    if (vb) {
+      var tr = vb.closest('tr');
+      $('vidTitle').textContent = 'ep ' + tr.dataset.ep;
+      $('vidChain').textContent = tr.querySelector('.chain').textContent;
+      openLayer('vidDrawer');
+    }
+  });
+
+  // 同时播放：三路一起走、一起停（占位演示）
+  var timers = new Map();
+  function play(btn) {
+    var box = btn.closest('.acard, .drawer-body');
+    if (timers.has(box)) { clearInterval(timers.get(box)); timers.delete(box); btn.textContent = '同时播放'; return; }
+    btn.textContent = '全部暂停';
+    var p = 0;
+    timers.set(box, setInterval(function () {
+      p = Math.min(100, p + 1.2);
+      box.querySelectorAll('.scrub i').forEach(function (n) { n.style.width = p + '%'; });
+      if (p >= 100) { clearInterval(timers.get(box)); timers.delete(box); btn.textContent = '同时播放'; }
+    }, 120));
+  }
+
+  // 筛选：问题类型 / 状态
+  function filter() {
+    var ty = $('fType').value, st = $('fStatus').value, shown = 0;
+    cards.forEach(function (c) {
+      var s = status(c), ok = true;
+      if (ty && c.dataset.types.split(' ').indexOf(ty) < 0) ok = false;
+      if (st === 'todo' && s === 'decided') ok = false;
+      if (st === 'hold' && s !== 'hold') ok = false;
+      if (st === 'decided' && !(s === 'decided' && c.dataset.applied !== '1')) ok = false;
+      c.classList.toggle('hidden', !ok);
+      if (ok) shown++;
+    });
+    document.querySelectorAll('.group').forEach(function (g) {
+      g.classList.toggle('hidden', !g.querySelector('.acard:not(.hidden)'));
+    });
+    $('mergedNote').classList.toggle('hidden', ty === 'task' || !!st);
+    $('emptyNote').classList.toggle('hidden', shown > 0);
+  }
+  $('fType').addEventListener('change', filter);
+  $('fStatus').addEventListener('change', filter);
+
+  // tabs: filters only apply to the queue
+  document.querySelector('.tabs[data-tabs=adj]').addEventListener('click', function (e) {
+    var t = e.target.closest('.tab');
+    if (!t) return;
+    var appeal = t.dataset.pane === 'paneAppeal';
+    document.querySelectorAll('.q-filter').forEach(function (n) { n.classList.toggle('hidden', appeal); });
+  });
+
+  // 执行裁决
+  $('applyBtn').addEventListener('click', function () {
+    var rows = [], rerun = false;
+    cards.forEach(function (c) {
+      if (status(c) !== 'decided' || c.dataset.applied === '1') return;
+      var ep = 'ep ' + c.dataset.ep, what;
+      if (c.dataset.discard === '1') what = '整条弃用 → 进拒绝';
+      else if (c.dataset.dl === 'adopt' || c.dataset.dl === 'rewrite') {
+        var human = c.dataset.dopt || c.dataset.dt;
+        what = LABEL_TXT[c.dataset.dl] + (human ? '；' + TASK_TXT[human] + ' → 采用人的结论，不重跑模型' : ' → 按新标注重跑任务成败判定');
+        if (!human) rerun = true;
+      } else if (c.dataset.dl === 'keep') what = '维持原标注' + (c.dataset.dt ? '；' + TASK_TXT[c.dataset.dt] : '') + ' → 标注不改';
+      else what = TASK_TXT[c.dataset.dt] + ' → 直接采用，不跑模型';
+      rows.push('<div><span class="mono">' + ep + '</span> · ' + what + '</div>');
+    });
+    Object.keys(appealDirty).forEach(function (k) {
+      if (appealDirty[k]) rows.push('<div><span class="mono">ep ' + k + '</span> · 复议：' + (appeals[k] === 'restore' ? '恢复为可用 → 回到通过' : '维持拒绝') + '</div>');
+    });
+    $('applyList').innerHTML = rows.join('');
+    $('applyCheck').textContent = '开始前会检查：数据集能读、交付目录能写' + (rerun ? '、模型能调通（有条目要按新标注重跑任务成败判定）' : '') + '。';
+    openLayer('applyModal');
+  });
+  $('applyGo').addEventListener('click', function () {
+    cards.forEach(function (c) { if (status(c) === 'decided') { c.dataset.applied = '1'; if (!c.dataset.time) c.dataset.time = '刚刚'; } });
+    appealDirty = {};
+    closeLayers();
+    refresh();
+    toast('静态预览稿：已创建子任务「执行裁决」，完成后任务详情的时间线上会多一个节点');
+  });
+
+  // deep links from the report: ?source=task_success | skill_profile, ?status=pending
+  var src = /[?&]source=(\w+)/.exec(location.search), sta = /[?&]status=(\w+)/.exec(location.search);
+  if (src) $('fType').value = src[1] === 'skill_profile' ? 'label' : src[1] === 'task_success' ? 'task' : '';
+  if (sta && sta[1] === 'pending') $('fStatus').value = 'todo';
+  refresh();
+</script>
+</body>
+</html>

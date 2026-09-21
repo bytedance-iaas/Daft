@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任务详情 · Physical AI Kit 数据质检平台</title>
+<style>
+/* ===== shared tokens (inlined so each page is self-contained) ===== */
+/* Curator v2 mockup — Arco Design tokens, aligned with Volcengine console.
+   Mockup only: hand-written CSS standing in for @arco-design/web-react.
+   The React build will use the real component library; keep tokens in sync. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+
+:root {
+  /* Arco primary */
+  --primary-6: #165DFF; --primary-5: #4080FF; --primary-7: #0E42D2; --primary-1: #E8F3FF;
+  /* status */
+  --success-6: #00B42A; --success-1: #E8FFEA;
+  --warning-6: #FF7D00; --warning-1: #FFF7E8;
+  --danger-6:  #F53F3F; --danger-1:  #FFECE8;
+  /* neutrals */
+  --text-1: #1D2129; --text-2: #4E5969; --text-3: #86909C; --text-4: #C9CDD4;
+  --border:  #E5E6EB; --fill-2: #F2F3F5; --fill-1: #F7F8FA; --white: #FFFFFF;
+  /* metrics */
+  --topbar-h: 60px; --sider-w: 208px; --radius: 4px; --radius-sm: 2px;
+  --shadow-card: 0 1px 3px rgba(0,0,0,.04);
+  --shadow-pop: 0 4px 10px rgba(0,0,0,.10);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+               "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px; line-height: 1.5715; color: var(--text-1);
+  background: var(--fill-1); -webkit-font-smoothing: antialiased;
+}
+a { color: var(--primary-6); text-decoration: none; }
+a:hover { color: var(--primary-5); }
+
+/* ── layout ───────────────────────────────────────────── */
+.topbar {
+  position: fixed; inset: 0 0 auto 0; height: var(--topbar-h); z-index: 100;
+  display: flex; align-items: center; gap: 16px; padding: 0 20px;
+  background: var(--white); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; }
+.brand .logo {
+  width: 26px; height: 26px; border-radius: 6px; flex: none;
+  background: linear-gradient(135deg, var(--primary-6), #7B4DFF);
+}
+.brand .divider { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
+.brand .product { font-weight: 500; color: var(--text-2); }
+.topbar .spacer { flex: 1; }
+.topbar .region, .topbar .user {
+  display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
+  border-radius: var(--radius-sm); color: var(--text-2); cursor: pointer; font-size: 13px;
+}
+.topbar .region:hover, .topbar .user:hover { background: var(--fill-2); }
+.avatar {
+  width: 24px; height: 24px; border-radius: 50%; background: var(--primary-1);
+  color: var(--primary-6); display: grid; place-items: center; font-size: 12px; font-weight: 600;
+}
+
+.sider {
+  position: fixed; top: var(--topbar-h); bottom: 0; left: 0; width: var(--sider-w);
+  background: var(--white); border-right: 1px solid var(--border); padding: 8px 8px 0;
+  overflow-y: auto;
+}
+.menu-group { padding: 12px 12px 6px; font-size: 12px; color: var(--text-3); }
+.menu-item {
+  display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px;
+  border-radius: var(--radius); color: var(--text-1); cursor: pointer; margin-bottom: 2px;
+}
+.menu-item:hover { background: var(--fill-2); }
+.menu-item.active { background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.menu-item svg { flex: none; }
+
+.main { margin: var(--topbar-h) 0 0 var(--sider-w); padding: 16px 20px 48px; }
+.crumb { font-size: 13px; color: var(--text-3); margin-bottom: 12px; }
+.crumb b { color: var(--text-1); font-weight: 400; }
+.page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+.page-title { font-size: 20px; font-weight: 600; margin: 0; }
+.page-desc { font-size: 13px; color: var(--text-3); margin: 4px 0 0; }
+.page-head .spacer { flex: 1; }
+
+.card {
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-card); margin-bottom: 16px;
+}
+.card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 20px; border-bottom: 1px solid var(--border);
+}
+.card-title { font-size: 15px; font-weight: 600; }
+.card-head .spacer { flex: 1; }
+.card-body { padding: 20px; }
+
+/* ── buttons ──────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 15px; border-radius: var(--radius-sm); font-size: 14px;
+  border: 1px solid transparent; background: var(--fill-2); color: var(--text-1);
+  cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s;
+}
+.btn:hover { background: #E5E6EB; }
+.btn-primary { background: var(--primary-6); color: #fff; }
+.btn-primary:hover { background: var(--primary-5); }
+.btn-outline { background: var(--white); border-color: var(--border); }
+.btn-outline:hover { background: var(--white); border-color: var(--primary-6); color: var(--primary-6); }
+.btn-text { background: transparent; padding: 0 8px; color: var(--primary-6); }
+.btn-text:hover { background: var(--primary-1); }
+.btn-lg { height: 36px; padding: 0 20px; }
+.btn[disabled] { background: var(--fill-2); color: var(--text-4); cursor: not-allowed; }
+.btn-icon { width: 32px; padding: 0; }
+
+/* ── form ─────────────────────────────────────────────── */
+.form-row { display: flex; gap: 16px; margin-bottom: 18px; }
+.field { flex: 1; min-width: 0; }
+.label { display: block; font-size: 14px; color: var(--text-1); margin-bottom: 8px; }
+.label .req { color: var(--danger-6); margin-right: 4px; }
+.label .hint { color: var(--text-3); font-size: 12px; margin-left: 6px; }
+.input, .select {
+  width: 100%; height: 32px; padding: 0 11px; font-size: 14px; color: var(--text-1);
+  background: var(--fill-1); border: 1px solid transparent; border-radius: var(--radius-sm);
+  outline: none; font-family: inherit;
+}
+.input::placeholder { color: var(--text-4); }
+.input:hover, .select:hover { background: var(--fill-2); }
+.input:focus, .select:focus { background: var(--white); border-color: var(--primary-6); }
+.input.is-error { background: var(--danger-1); border-color: var(--danger-6); }
+.err-text { color: var(--danger-6); font-size: 12px; margin-top: 4px; }
+.help-text { color: var(--text-3); font-size: 12px; margin-top: 6px; }
+textarea.input { height: auto; padding: 8px 11px; resize: vertical; line-height: 1.6; }
+select.select { appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%2386909C' stroke-width='1.2'/></svg>");
+  background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+
+.check, .radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.check input, .radio input { accent-color: var(--primary-6); width: 14px; height: 14px; margin: 0; }
+.check.is-disabled { color: var(--text-4); cursor: not-allowed; }
+
+/* ── tags & status ────────────────────────────────────── */
+.tag {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px;
+  border-radius: var(--radius-sm); font-size: 12px; background: var(--fill-2); color: var(--text-2);
+  white-space: nowrap;
+}
+.tag .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.tag-blue   { background: var(--primary-1); color: var(--primary-6); }
+.tag-green  { background: var(--success-1); color: var(--success-6); }
+.tag-orange { background: var(--warning-1); color: var(--warning-6); }
+.tag-red    { background: var(--danger-1);  color: var(--danger-6); }
+.tag-gray   { background: var(--fill-2);    color: var(--text-3); }
+.tag-outline-blue { background: var(--white); color: var(--primary-6); border: 1px solid var(--primary-6); }
+.tag-running .dot { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* ── table ────────────────────────────────────────────── */
+.table { width: 100%; border-collapse: collapse; }
+.table th {
+  text-align: left; font-weight: 500; font-size: 13px; color: var(--text-2);
+  background: var(--fill-1); padding: 11px 16px; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.table td { padding: 13px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tbody tr:hover td { background: var(--fill-1); }
+.table .col-name { font-weight: 500; }
+.table .sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.mono { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+
+.progress { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.progress .bar { flex: 1; height: 4px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+.progress .bar i { display: block; height: 100%; background: var(--primary-6); border-radius: 2px; }
+.progress .bar.is-done i { background: var(--success-6); }
+.progress .bar.is-err  i { background: var(--warning-6); }
+.progress .pct { font-size: 12px; color: var(--text-3); width: 34px; text-align: right; }
+
+.list-foot {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 16px; color: var(--text-3); font-size: 13px;
+}
+
+/* ── misc ─────────────────────────────────────────────── */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px; }
+.stat { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 16px 20px; box-shadow: var(--shadow-card); }
+.stat .k { font-size: 13px; color: var(--text-3); }
+.stat .v { font-size: 24px; font-weight: 600; margin-top: 6px; letter-spacing: .5px; }
+.stat .v small { font-size: 13px; font-weight: 400; color: var(--text-3); margin-left: 4px; }
+
+.toolbar { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.toolbar .spacer { flex: 1; }
+.search { position: relative; }
+.search .input { width: 240px; padding-left: 32px; }
+.search svg { position: absolute; left: 10px; top: 9px; }
+
+.alert {
+  display: flex; gap: 10px; padding: 12px 16px; border-radius: var(--radius); font-size: 13px;
+  background: var(--warning-1); color: #7A4100; border: 1px solid #FFCF8B;
+}
+.alert-blue { background: var(--primary-1); color: #0A2A8C; border-color: #94BFFF; }
+.alert-green { background: var(--success-1); color: #0A6B1C; border-color: #AFF0B5; }
+.alert svg { flex: none; margin-top: 2px; }
+.alert .spacer { flex: 1; }
+
+.divider-h { height: 1px; background: var(--border); margin: 20px 0; }
+.muted { color: var(--text-3); }
+.nowrap { white-space: nowrap; }
+.mockup-note {
+  position: fixed; right: 16px; bottom: 76px; z-index: 200; cursor: pointer;
+  background: rgba(29,33,41,.88); color: #fff; font-size: 12px; line-height: 1.6;
+  padding: 8px 12px; border-radius: var(--radius); max-width: 280px;
+}
+.mockup-note b { color: #FFD666; }
+</style>
+
+<style>
+/* ===== shared components, batch 2 (same block in all six pages) ===== */
+/* Added with the second batch. Keep this block identical across pages. */
+a.menu-item, a.menu-item:hover { color: var(--text-1); }
+a.menu-item.active, a.menu-item.active:hover { color: var(--primary-6); }
+.crumb a { color: var(--text-3); }
+.crumb a:hover { color: var(--primary-6); }
+.hidden { display: none !important; }
+.btn-sm { height: 24px; padding: 0 8px; font-size: 12px; }
+.btn-danger { background: var(--danger-6); color: #fff; }
+.btn-danger:hover { background: #F76560; }
+.btn-danger[disabled] { background: var(--fill-2); color: var(--text-4); }
+.btn-text-danger { background: transparent; padding: 0 8px; color: var(--danger-6); }
+.btn-text-danger:hover { background: var(--danger-1); }
+.btn-text[disabled], .btn-text-danger[disabled] { background: transparent; color: var(--text-4); }
+.tag-outline { background: var(--white); color: var(--text-2); border: 1px solid var(--border); }
+.num { font-variant-numeric: tabular-nums; }
+.req { color: var(--danger-6); margin-right: 4px; }
+
+/* segmented control */
+.seg { display: inline-flex; background: var(--fill-1); border-radius: var(--radius-sm); padding: 2px; }
+.seg label, .seg button {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0;
+  border-radius: var(--radius-sm); font: inherit; font-size: 13px; color: var(--text-2);
+  background: transparent; cursor: pointer; white-space: nowrap; }
+.seg input { display: none; }
+.seg input:checked + span { color: var(--primary-6); }
+.seg label:has(input:checked), .seg button.on {
+  background: var(--white); box-shadow: var(--shadow-card); color: var(--primary-6); }
+.seg label.is-disabled { color: var(--text-4); cursor: not-allowed; }
+
+/* radio-button group (one answer per question) */
+.rbtn { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.rbtn button {
+  height: 28px; padding: 0 12px; font: inherit; font-size: 13px; color: var(--text-2);
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.rbtn button:hover { border-color: var(--primary-6); color: var(--primary-6); }
+.rbtn button.on { border-color: var(--primary-6); background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.rbtn button.on.is-bad { border-color: var(--danger-6); background: var(--danger-1); color: var(--danger-6); }
+.rbtn button.on.is-hold { border-color: var(--warning-6); background: var(--warning-1); color: var(--warning-6); }
+.rbtn button[disabled] { color: var(--text-4); border-color: var(--border); background: var(--fill-1); cursor: not-allowed; }
+
+/* tabs */
+.tabs { display: flex; gap: 28px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+.tab {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; height: 46px; padding: 0;
+  border: 0; background: none; font: inherit; font-size: 14px; color: var(--text-2); cursor: pointer; }
+.tab:hover { color: var(--text-1); }
+.tab.active { color: var(--primary-6); font-weight: 500; }
+.tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--primary-6); }
+.tab .cnt { font-size: 12px; line-height: 18px; padding: 0 6px; border-radius: 9px; background: var(--fill-2); color: var(--text-3); font-weight: 400; }
+.tab.active .cnt { background: var(--primary-1); color: var(--primary-6); }
+.pane { display: none; }
+.pane.active { display: block; }
+
+/* descriptions (label / value grid) */
+.desc { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 32px; }
+.desc.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.desc .it { display: flex; gap: 12px; font-size: 13px; line-height: 1.6; min-width: 0; }
+.desc .it.full { grid-column: 1 / -1; }
+.desc .k { flex: none; width: 104px; color: var(--text-3); }
+.desc .v { min-width: 0; color: var(--text-1); overflow-wrap: anywhere; }
+
+/* switch */
+.switch {
+  position: relative; display: inline-block; flex: none; width: 28px; height: 16px; padding: 0; border: 0;
+  border-radius: 8px; background: var(--text-4); cursor: pointer; vertical-align: middle; transition: background .15s; }
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; transition: left .15s; }
+.switch.on { background: var(--primary-6); }
+.switch.on::after { left: 14px; }
+
+/* pagination: total on the left, pages / size / jump on the right */
+.pager { display: flex; align-items: center; gap: 8px; padding: 14px 20px; font-size: 13px; color: var(--text-2); }
+.pager .total { margin-right: auto; color: var(--text-3); }
+.pager .pg {
+  min-width: 32px; height: 32px; padding: 0 6px; border: 0; border-radius: var(--radius-sm);
+  background: transparent; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.pager .pg:hover { background: var(--fill-2); }
+.pager .pg.active { background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.pager .pg[disabled] { color: var(--text-4); background: transparent; cursor: not-allowed; }
+.pager .gap { color: var(--text-3); padding: 0 2px; }
+.pager .select { width: 104px; }
+.pager .jump { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); }
+.pager .jump .input { width: 52px; text-align: center; }
+
+/* overlays: mask, right drawer, modal */
+.mask { position: fixed; inset: 0; z-index: 300; background: rgba(29,33,41,.45); display: none; }
+.mask.open { display: block; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 310; width: 640px; max-width: 92vw;
+  display: flex; flex-direction: column; background: var(--white); box-shadow: -6px 0 16px rgba(0,0,0,.08);
+  transform: translateX(105%); transition: transform .2s ease; }
+.drawer.open { transform: none; }
+.drawer.wide { width: 800px; }
+.drawer-head { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+.drawer-title { font-size: 16px; font-weight: 600; }
+.drawer-head .spacer { flex: 1; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 20px; }
+.drawer-foot { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); }
+.drawer-foot .spacer { flex: 1; }
+.modal {
+  position: fixed; top: 14vh; left: 50%; z-index: 320; width: 520px; transform: translateX(-50%);
+  background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow-pop); display: none; }
+.modal.open { display: block; }
+.modal-head { display: flex; align-items: center; gap: 8px; padding: 18px 20px 0; font-size: 16px; font-weight: 600; }
+.modal-head .spacer { flex: 1; }
+.modal-body { padding: 14px 20px 4px; font-size: 14px; color: var(--text-2); }
+.modal-foot { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 20px 18px; }
+.x-close {
+  width: 28px; height: 28px; border: 0; background: none; border-radius: var(--radius-sm); cursor: pointer;
+  display: grid; place-items: center; color: var(--text-3); }
+.x-close:hover { background: var(--fill-2); color: var(--text-1); }
+
+/* toast (operation-level message) */
+.toast {
+  position: fixed; top: 72px; left: 50%; z-index: 400; transform: translateX(-50%); display: none;
+  align-items: center; gap: 8px; max-width: 640px; padding: 9px 16px; font-size: 13px; color: var(--text-1);
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.toast.show { display: flex; }
+
+/* fold (collapse) */
+.fold-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.fold-head .arr { flex: none; transition: transform .15s; }
+.fold.open > .fold-head .arr { transform: rotate(90deg); }
+.fold > .fold-body { display: none; }
+.fold.open > .fold-body { display: block; }
+
+/* timeline */
+.tl { list-style: none; margin: 0; padding: 0; }
+.tl > li { position: relative; padding: 0 0 20px 28px; }
+.tl > li::before { content: ''; position: absolute; left: 5px; top: 17px; bottom: 0; width: 1px; background: var(--border); }
+.tl > li:last-child { padding-bottom: 0; }
+.tl > li:last-child::before { display: none; }
+.tl .dot { position: absolute; left: 0; top: 5px; width: 11px; height: 11px; border-radius: 50%; background: var(--white); border: 2px solid var(--primary-6); }
+.tl .dot.green { border-color: var(--success-6); }
+.tl .dot.orange { border-color: var(--warning-6); }
+.tl .dot.red { border-color: var(--danger-6); }
+.tl .dot.gray { border-color: var(--text-4); }
+.tl .t-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tl .t-time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tl .t-title { font-weight: 500; }
+.tl .t-body { font-size: 13px; color: var(--text-2); margin-top: 3px; }
+
+/* video placeholder (real page: <video> with a presigned TOS URL) */
+.video { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius); overflow: hidden; background: linear-gradient(160deg, #3A4150, #1D2129); color: #fff; }
+.video .cam { position: absolute; left: 8px; top: 6px; font-size: 12px; opacity: .9; }
+.video .play { position: absolute; left: 50%; top: 50%; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; background: rgba(255,255,255,.18); display: grid; place-items: center; }
+.video .time { position: absolute; right: 8px; bottom: 8px; font: 11px "SF Mono", ui-monospace, Menlo, monospace; opacity: .9; }
+.video .scrub { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.2); }
+.video .scrub i { display: block; height: 100%; width: 0; background: var(--primary-5); }
+.frame { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); overflow: hidden; background: linear-gradient(135deg, #C9CDD4, #86909C); }
+.frame span { position: absolute; left: 4px; bottom: 3px; font: 11px "SF Mono", ui-monospace, Menlo, monospace; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
+
+/* charts: thin marks, hairline grid, text in text tokens */
+.chart { display: block; overflow: visible; }
+.chart text { font-family: inherit; font-size: 11px; fill: var(--text-3); }
+.chart .ax { stroke: var(--border); stroke-width: 1; }
+.chart .grid { stroke: var(--fill-2); stroke-width: 1; }
+.chart .lbl { fill: var(--text-2); font-size: 12px; }
+.chart .val { fill: var(--text-1); font-size: 12px; }
+.chart [data-tip]:hover, .chart [data-tip]:focus { opacity: .8; outline: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-2); }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.legend .ln { width: 14px; height: 2px; border-radius: 1px; flex: none; }
+.tip {
+  position: fixed; z-index: 500; pointer-events: none; display: none; max-width: 300px; padding: 7px 10px;
+  font-size: 12px; line-height: 1.6; color: var(--text-2); background: var(--white);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.tip b { display: block; color: var(--text-1); font-size: 13px; }
+
+/* key figures inside a card */
+.kv-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.kv { padding: 2px 20px; border-left: 1px solid var(--border); min-width: 0; }
+.kv:first-child { border-left: 0; padding-left: 0; }
+.kv .k { font-size: 12px; color: var(--text-3); }
+.kv .v { font-size: 20px; font-weight: 600; margin-top: 2px; }
+.kv .v small { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 3px; }
+.kv .s { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+</style>
+<style>
+  .title-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .badge-sub { font-size: 11px; color: var(--primary-6); background: var(--primary-1); border-radius: 10px; padding: 1px 7px; }
+  .badge-warn { font-size: 11px; color: var(--warning-6); background: var(--warning-1); border-radius: 10px; padding: 1px 7px; }
+  .meta-line { font-size: 13px; color: var(--text-3); margin: 6px 0 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .meta-line .note-text { color: var(--text-2); }
+  .state-note { font-size: 13px; color: var(--text-2); margin-top: 8px; }
+  .actions { display: flex; align-items: center; gap: 8px; }
+  .menu-pop { position: relative; }
+  .menu-pop .pop {
+    display: none; position: absolute; right: 0; top: 38px; z-index: 50; min-width: 150px;
+    background: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow-pop); padding: 4px; }
+  .menu-pop.open .pop { display: block; }
+  .pop button, .pop a {
+    display: block; width: 100%; text-align: left; border: 0; background: none; cursor: pointer;
+    font: inherit; font-size: 13px; color: var(--text-1); padding: 7px 10px; border-radius: var(--radius-sm); }
+  .pop button:hover, .pop a:hover { background: var(--fill-1); color: var(--text-1); }
+  .pop .danger { color: var(--danger-6); }
+  .pop .sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+  .preview-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 16px; padding: 8px 12px;
+    border: 1px dashed #C9CDD4; border-radius: var(--radius); font-size: 12px; color: var(--text-3); background: #FCFCFD; }
+  .preview-bar b { color: #1D2129; background: #FFD666; padding: 0 6px; border-radius: 2px; font-weight: 500; }
+  .alert .btn { align-self: center; }
+
+  .grid-2 { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .card-head .muted { font-size: 12px; }
+
+  .stage { padding: 10px 0 12px; border-bottom: 1px solid var(--fill-2); }
+  .stage:first-child { padding-top: 0; }
+  .stage-top { display: flex; align-items: baseline; gap: 8px; }
+  .stage-name { font-weight: 500; }
+  .stage-mods { font-size: 12px; color: var(--text-3); }
+  .stage-top .spacer { flex: 1; }
+  .stage-count { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .stage-bar { display: flex; gap: 2px; height: 6px; margin-top: 7px; border-radius: 3px; background: var(--fill-2); overflow: hidden; }
+  .stage-bar i { display: block; height: 100%; }
+  .stage-bar i.ok { background: var(--success-6); }
+  .stage-bar i.err { background: var(--warning-6); }
+  .stage-bar i.run { background: var(--primary-6); }
+  .stage-bar i.hold { background: var(--text-4); }
+  .stage-meta { display: flex; gap: 14px; margin-top: 5px; font-size: 12px; color: var(--text-3); flex-wrap: wrap; }
+  .stage-meta .warn { color: var(--warning-6); }
+  .stage-explain { margin-top: 12px; padding: 8px 10px; font-size: 12px; color: var(--text-2); background: var(--fill-1); border-radius: var(--radius-sm); }
+
+  .tok { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .tok .kv { padding: 2px 14px; }
+  .tok .kv:first-child { padding-left: 0; }
+  .tok .kv .v { font-size: 18px; }
+  .mini-table th, .mini-table td { padding: 8px 12px; font-size: 13px; }
+  .mini-table td.r, .mini-table th.r { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .mod-table td { vertical-align: top; }
+  .err-link { color: var(--warning-6); cursor: pointer; background: none; border: 0; padding: 0; font: inherit; font-size: 13px; }
+  .err-link:hover { text-decoration: underline; }
+  .err-box { background: var(--warning-1); border: 1px solid #FFCF8B; border-radius: var(--radius); padding: 10px 14px; font-size: 13px; }
+  .err-box .it { display: flex; gap: 10px; padding: 3px 0; }
+  .err-box .it .mono { color: var(--text-1); font-size: 12px; padding-top: 1px; min-width: 42px; }
+  .row-muted td { color: var(--text-3); }
+
+  .tl .t-body .btn-text { height: 22px; padding: 0 6px; font-size: 12px; }
+  .cur-tag { font-size: 11px; color: var(--success-6); background: var(--success-1); border-radius: 10px; padding: 0 7px; }
+
+  .sub-title { font-size: 14px; font-weight: 600; margin: 4px 0 12px; }
+  .sub-title .muted { font-size: 12px; font-weight: 400; margin-left: 6px; }
+  .plan-note { font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
+
+  .log-tools { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+  .log-tools .spacer { flex: 1; }
+  .follow { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
+  .log { height: 520px; overflow-y: auto; padding: 6px 20px 14px; background: #FBFBFC;
+         font: 12px/1.9 "SF Mono", ui-monospace, Menlo, Consolas, monospace; color: var(--text-2); }
+  .log .ln { display: grid; grid-template-columns: 64px 84px 50px minmax(0, 1fr); gap: 10px; }
+  .log .ln .st { color: var(--text-3); }
+  .log .lv-info { color: var(--text-3); }
+  .log .lv-warn { color: var(--warning-6); }
+  .log .lv-error { color: var(--danger-6); }
+  .log .ln.lv-error-row .msg { color: var(--danger-6); }
+  .log-more { text-align: center; padding: 6px 0 8px; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+  .log-foot { padding: 10px 20px; font-size: 12px; color: var(--text-3); border-top: 1px solid var(--border); }
+  .modal-body p { margin: 0 0 8px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo"></span>
+    <span>火山引擎</span>
+    <span class="divider"></span>
+    <span class="product">Physical AI Kit · 数据质检平台</span>
+  </div>
+  <div class="spacer"></div>
+  <div class="region">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="#86909C" stroke-width="1.2"/><path d="M8 1.8c1.8 1.7 2.7 3.8 2.7 6.2S9.8 12.5 8 14.2C6.2 12.5 5.3 10.4 5.3 8S6.2 3.5 8 1.8z" stroke="#86909C" stroke-width="1.2"/><path d="M2 8h12" stroke="#86909C" stroke-width="1.2"/></svg>
+    华北 2（北京）
+    <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="#86909C" stroke-width="1.2"/></svg>
+  </div>
+  <div class="user">
+    <span class="avatar">GB</span> galbot
+    <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="#86909C" stroke-width="1.2"/></svg>
+  </div>
+</header>
+
+<nav class="sider">
+  <div class="menu-group">数据质检</div>
+  <a class="menu-item active" href="tasks.html">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2.5" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M5 6.5h6M5 9.5h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+    质检任务
+  </a>
+  <a class="menu-item" href="credentials.html">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10.5 2.5a3.5 3.5 0 00-3.2 4.9L2.5 12.2v1.3h1.3l4.8-4.8a3.5 3.5 0 102-6.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    密钥与资源
+  </a>
+  <div class="menu-group">帮助</div>
+  <div class="menu-item" data-toast="静态预览稿不含使用文档">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3"/><path d="M6.4 6.2a1.7 1.7 0 113.2.8c-.4.6-1.6.8-1.6 1.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>
+    使用文档
+  </div>
+</nav>
+
+<main class="main">
+  <div class="crumb">数据质检平台 / <a href="tasks.html">质检任务</a> / <b>droid 前 50 条质检</b></div>
+
+  <div class="page-head">
+    <div>
+      <div class="title-line">
+        <h1 class="page-title" id="taskTitle">droid 前 50 条质检</h1>
+        <span id="stateTag"><span class="tag tag-orange"><i class="dot"></i>部分错误</span></span>
+        <a class="badge-sub" href="task-adjudication.html">待裁决 10</a>
+        <span class="badge-warn">交付待导出</span>
+      </div>
+      <div class="meta-line">
+        <span class="mono">task_01HXR2D8</span><span>·</span><span>galbot 创建于 09-20 13:05</span><span>·</span>
+        <span>备注：<span class="note-text" id="noteText">第一轮抽检，看标注质量</span></span>
+        <button class="btn btn-text btn-sm" data-open="editModal">改名称和备注</button>
+      </div>
+      <div class="state-note" id="stateNote"></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="actions" id="actions"></div>
+  </div>
+
+  <div class="preview-bar">
+    <b>预览稿</b>切换状态看页头按钮和进度怎么变：
+    <div class="seg" id="statePreview">
+      <button class="on" data-s="cwe">部分错误（当前）</button>
+      <button data-s="running">运行中</button>
+      <button data-s="sysPaused">已暂停 · 系统将自动恢复</button>
+      <button data-s="paused">已暂停</button>
+      <button data-s="created">待启动</button>
+      <button data-s="succeeded">已完成</button>
+      <button data-s="stopped">已停止</button>
+    </div>
+    <span>其余卡片保持「部分错误」时的内容</span>
+  </div>
+
+  <div class="alert" id="staleBanner" style="margin-bottom:16px; align-items:center">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2.4l5.8 10.2H2.2L8 2.4z" stroke="#FF7D00" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.6v2.8" stroke="#FF7D00" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.2" r=".8" fill="#FF7D00"/></svg>
+    <div><b>判决已更新，交付数据集待重新导出。</b>重试 #1 之后通过名单从 0 条变成 41 条，交付目录里还没有对应的数据集。导出走增量，只处理变动的 episode。</div>
+    <div class="spacer"></div>
+    <button class="btn btn-primary" data-open="exportModal">重新导出</button>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="tabs" data-tabs="detail" style="border-bottom:0">
+      <button class="tab active" data-pane="paneOverview">概览</button>
+      <button class="tab" data-pane="paneLogs">日志</button>
+    </div>
+  </div>
+
+  <!-- ===== 概览 ===== -->
+  <div class="pane active" data-group="detail" id="paneOverview">
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">报告概览</span>
+        <span class="muted">结果版本 r0002 · 09-20 14:09 生成</span>
+        <div class="spacer"></div>
+        <a class="btn btn-outline" href="task-adjudication.html">去裁决（10）</a>
+        <a class="btn btn-primary" href="task-report.html">查看详细报告</a>
+      </div>
+      <div class="card-body">
+        <div class="kv-row">
+          <div class="kv"><div class="k">总数</div><div class="v">50<small>条</small></div><div class="s">前 50 条（ep 0–49）</div></div>
+          <div class="kv"><div class="k">通过</div><div class="v" style="color:var(--success-6)">41</div><div class="s">含待裁决 10 条</div></div>
+          <div class="kv"><div class="k">拒绝</div><div class="v">7</div><div class="s">成败 5 · 时间戳 1 · 去重 1</div></div>
+          <div class="kv"><div class="k">待补跑</div><div class="v" style="color:var(--warning-6)">2</div><div class="s">暂不交付</div></div>
+          <div class="kv"><div class="k">待裁决</div><div class="v">10</div><div class="s">其中 3 条已裁未执行</div></div>
+          <div class="kv"><div class="k">通过率</div><div class="v">82%</div><div class="s">通过 / 总数</div></div>
+        </div>
+        <div class="help-text" style="margin-top:14px">待裁决的 10 条算在通过里：先交付，同时等人确认。待补跑的 2 条既不算通过也不算拒绝，补跑成功前不交付。</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">分档进度</span>
+          <span class="muted" id="stageSummary">主流程 13:05:14 开始，用时 16 分 56 秒（含系统暂停 2 分 11 秒）</span>
+        </div>
+        <div class="card-body" id="stages"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">Token 消耗</span>
+          <span class="muted">只统计用量，不换算金额</span>
+        </div>
+        <div class="card-body">
+          <div class="tok">
+            <div class="kv"><div class="k">输入</div><div class="v">2.01M</div><div class="s">含缓存命中</div></div>
+            <div class="kv"><div class="k">输出</div><div class="v">67.5K</div><div class="s">含思维链</div></div>
+            <div class="kv"><div class="k">思维链</div><div class="v">42.9K</div><div class="s">占输出 64%</div></div>
+            <div class="kv"><div class="k">缓存命中</div><div class="v">931.8K</div><div class="s">占输入 46%</div></div>
+            <div class="kv"><div class="k">请求数</div><div class="v">886</div><div class="s">41 次没拿到用量</div></div>
+          </div>
+          <div class="fold open" style="margin-top:16px">
+            <div class="fold-head" style="font-size:13px; color:var(--text-2)">
+              <svg class="arr" width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 2.5L8 6l-3.5 3.5" fill="none" stroke="#4E5969" stroke-width="1.3"/></svg>
+              明细
+              <div class="spacer" style="flex:1"></div>
+              <div class="seg" id="tokSeg"><button class="on" data-v="mod">按模块</button><button data-v="sub">按子任务</button></div>
+            </div>
+            <div class="fold-body" style="margin-top:10px">
+              <table class="table mini-table" id="tokTable"></table>
+              <div class="help-text">重试花掉的也算在合计里。没拿到用量的请求（429、超时、对冲里输掉的那一发）不估算，只计次数。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">模块</span>
+        <span class="muted">7 个模块参与本次质检；运动学极限未运行</span>
+      </div>
+      <table class="table mod-table">
+        <thead>
+          <tr><th>模块</th><th>所属档</th><th>状态</th><th>处理条数</th><th>耗时</th><th style="min-width:230px">判决摘要</th><th>出错</th><th style="width:90px">操作</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="col-name">时间戳检查</td><td>数值档</td>
+            <td><span class="tag tag-green"><i class="dot"></i>已完成</span></td>
+            <td class="num">50</td><td>2 秒</td><td>拒绝 1（残段）</td><td class="muted">—</td><td></td>
+          </tr>
+          <tr>
+            <td class="col-name">运动质量</td><td>数值档</td>
+            <td><span class="tag tag-green"><i class="dot"></i>已完成</span></td>
+            <td class="num">50</td><td>7 秒</td><td>平均分 0.84 · 执行器卡死 4 条（单列，不进总分）</td><td class="muted">—</td><td></td>
+          </tr>
+          <tr>
+            <td class="col-name">视觉质量</td><td>帧档</td>
+            <td><span class="tag tag-green"><i class="dot"></i>已完成</span></td>
+            <td class="num">49</td><td>2 分 24 秒<div class="sub">与同步共享一次解码</div></td><td>平均分 0.87</td><td class="muted">—</td><td></td>
+          </tr>
+          <tr>
+            <td class="col-name">视频-动作同步</td><td>帧档</td>
+            <td><span class="tag tag-green"><i class="dot"></i>已完成</span></td>
+            <td class="num">49</td><td>同上</td><td>错位判废 0 · 已标注 2 · 疑似错位 1 · 测不准 3</td><td class="muted">—</td><td></td>
+          </tr>
+          <tr>
+            <td class="col-name">任务成败判定</td><td>VLM 档</td>
+            <td><span class="tag tag-orange"><i class="dot"></i>部分错误</span></td>
+            <td class="num">49</td><td>9 分 02 秒<div class="sub">重试 #1 另用 4 分 16 秒</div></td>
+            <td>通过 36 · 判废 5 · 弃权 6（转人工）</td>
+            <td><button class="err-link" id="errToggle" aria-expanded="false">2 条待补跑 ▾</button></td>
+            <td><button class="btn btn-outline btn-sm" data-open="retryModal">重试</button></td>
+          </tr>
+          <tr class="hidden" id="errRow">
+            <td colspan="8">
+              <div class="err-box">
+                <div class="it"><span class="mono">ep 7</span><span>VLM 档 · 取证仲裁请求超时（60 秒），外层重试 3 次后仍失败。主流程和重试 #1 都停在这一步。</span></div>
+                <div class="it"><span class="mono">ep 31</span><span>VLM 档 · 取证仲裁请求超时（60 秒），外层重试 3 次后仍失败。主流程和重试 #1 都停在这一步。</span></div>
+                <div class="muted" style="margin-top:4px">两条都卡在同一步。可以再重试一次；还超时的话，复制为新任务并放宽「取证仲裁」的超时。</div>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td class="col-name">精确去重</td><td>判决之后</td>
+            <td><span class="tag tag-green"><i class="dot"></i>已完成</span></td>
+            <td class="num">42</td><td>11 秒</td><td>重复 1 组，剔除 1 条（ep 44）</td><td class="muted">—</td><td></td>
+          </tr>
+          <tr>
+            <td class="col-name">技能画像</td><td>判决之后</td>
+            <td><span class="tag tag-green"><i class="dot"></i>已完成</span></td>
+            <td class="num">41</td><td>2 分 11 秒<div class="sub">重试 #1；主流程中失败</div></td>
+            <td>6 个技能族 · 标注分歧 5 条（转人工）</td><td class="muted">—</td><td></td>
+          </tr>
+          <tr class="row-muted">
+            <td class="col-name">运动学极限</td><td>—</td>
+            <td><span class="tag tag-gray"><i class="dot"></i>未运行</span></td>
+            <td>—</td><td>—</td><td>预检未读到机器人型号，创建时选择跳过</td><td>—</td><td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">执行时间线</span>
+        <span class="muted">主流程、子任务、系统暂停都记在这里；每个结果版本都能打开当时的报告</span>
+      </div>
+      <div class="card-body">
+        <ul class="tl">
+          <li>
+            <span class="dot green"></span>
+            <div class="t-line"><span class="t-title">创建并开始</span><span class="t-time">09-20 13:05:12</span><span class="muted" style="font-size:12px">galbot</span></div>
+            <div class="t-body">开始前检查通过：数据集能读（readonly-tos）、交付目录能写（prod-tos）、模型能调通（ark-prod）。结果目录 20260920-130514，源文件清单 204 个对象已固化。</div>
+          </li>
+          <li>
+            <span class="dot gray"></span>
+            <div class="t-line"><span class="t-title">系统暂停</span><span class="t-time">13:11:41</span></div>
+            <div class="t-body">Daemon 升级（v2.0.3 → v2.0.4），VLM 档停在 21 / 49 条。不是用户操作，不需要处理。</div>
+          </li>
+          <li>
+            <span class="dot"></span>
+            <div class="t-line"><span class="t-title">自动恢复</span><span class="t-time">13:13:52</span></div>
+            <div class="t-body">新版本起来后自动续跑。中断时在飞的 3 条（ep 26、27、30）重新调用了一次，服务端可能已为丢掉的那次计费，这部分 Token 统计不到。</div>
+          </li>
+          <li>
+            <span class="dot orange"></span>
+            <div class="t-line"><span class="t-title">主流程结束 · 部分错误</span><span class="t-time">13:22:10</span></div>
+            <div class="t-body">
+              结果版本 r0001：通过 0 · 拒绝 7 · 待补跑 43。技能画像整体失败（方舟返回 429 QuotaExceeded，套餐额度用尽；开头 20 条同类失败后熔断），41 条缺这一项结论，暂不交付；任务成败判定另有 2 条出错。没有可交付的条目，这次没有导出。
+              <a class="btn btn-text" href="task-report.html?rev=1">查看 r0001 报告</a>
+            </div>
+          </li>
+          <li>
+            <span class="dot"></span>
+            <div class="t-line"><span class="t-title">子任务 · 重试 #1</span><span class="t-time">14:02:10</span><span class="muted" style="font-size:12px">galbot</span></div>
+            <div class="t-body">范围：技能画像（整体重跑 41 条）+ 任务成败判定（出错的 2 条）。开始前检查通过，额度已恢复。</div>
+          </li>
+          <li>
+            <span class="dot orange"></span>
+            <div class="t-line"><span class="t-title">重试 #1 结束</span><span class="t-time">14:09:02</span><span class="cur-tag">当前版本</span></div>
+            <div class="t-body">
+              技能画像补齐 41 条；任务成败判定的 2 条仍在取证仲裁这一步超时。结果版本 r0002：通过 41 · 拒绝 7 · 待补跑 2。通过名单变了，交付数据集待重新导出。
+              <a class="btn btn-text" href="task-report.html">查看 r0002 报告</a>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card fold" id="moreInfo">
+      <div class="card-head fold-head">
+        <svg class="arr" width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 2.5L8 6l-3.5 3.5" fill="none" stroke="#4E5969" stroke-width="1.3"/></svg>
+        <span class="card-title">更多信息</span>
+        <span class="muted">任务配置与执行计划，只读</span>
+      </div>
+      <div class="fold-body card-body">
+        <div class="sub-title">任务配置<span class="muted">启动后只能改名称和备注；要换数据、模块、模型或参数，复制为新任务</span></div>
+        <div class="desc">
+          <div class="it"><span class="k">数据集</span><span class="v mono">tos://pai-kit-datasets/lerobot/droid_100</span></div>
+          <div class="it"><span class="k">地域</span><span class="v">华北 2（北京）cn-beijing</span></div>
+          <div class="it"><span class="k">访问密钥</span><span class="v">readonly-tos</span></div>
+          <div class="it"><span class="k">交付目录</span><span class="v mono">tos://pai-kit-deliveries/droid-50</span></div>
+          <div class="it"><span class="k">结果目录</span><span class="v mono">20260920-130514/</span></div>
+          <div class="it"><span class="k">交付访问密钥</span><span class="v">prod-tos</span></div>
+          <div class="it"><span class="k">数据格式</span><span class="v">LeRobot v3 · 100 条 · 3 路相机 · 15 fps</span></div>
+          <div class="it"><span class="k">Episode</span><span class="v">前 50 条（ep 0–49）</span></div>
+          <div class="it"><span class="k">源文件清单</span><span class="v">204 个对象 · 1.42 GiB · 启动时固化</span></div>
+          <div class="it"><span class="k">质检模块</span><span class="v">7 个；运动学极限未运行</span></div>
+          <div class="it"><span class="k">VLM</span><span class="v">ark-prod · doubao-seed-2-0-pro-260215</span></div>
+          <div class="it"><span class="k">思考强度</span><span class="v">模型默认（请求不带该字段）</span></div>
+          <div class="it"><span class="k">重试次数上限</span><span class="v">3 次 · 超时对冲开</span></div>
+          <div class="it"><span class="k">各类调用超时</span><span class="v">打分、复核、仲裁、打标 60 秒；归纳 120 秒</span></div>
+          <div class="it"><span class="k">并发上限</span><span class="v">CPU 不限 · VLM 不限</span></div>
+          <div class="it"><span class="k">导出</span><span class="v">导出交付数据集 · 不预生成裁决片段</span></div>
+        </div>
+
+        <div class="divider-h"></div>
+        <div class="sub-title">执行计划<span class="muted">planner 生成，只读；调优改站点配置</span></div>
+        <div class="plan-note">VLM 并行度 N = 64：取任务上限（不限）、模型（64）、后端（64）、站点（128）里最小的；各闸门由 N 推出。现有两个 VLM 模块不参与请求合并（merge = none）。</div>
+        <table class="table mini-table">
+          <thead><tr><th>档</th><th>模块</th><th>处理哪些条目</th><th>并发 / 闸门</th></tr></thead>
+          <tbody>
+            <tr><td>补任务描述</td><td>autolabel</td><td>没有任务标注的 22 条</td><td>技能打标 32</td></tr>
+            <tr><td>数值档</td><td>时间戳检查、运动质量</td><td>选中的 50 条</td><td>CPU 8 · 硬门：时间戳检查</td></tr>
+            <tr><td>帧档</td><td>视觉质量、视频-动作同步</td><td>数值档放行的条目</td><td>CPU 8 · 硬门：视频-动作同步 · 同进程共享一次解码</td></tr>
+            <tr><td>VLM 档</td><td>任务成败判定</td><td>帧档放行的条目</td><td>episode 32 · 打分 64 · 复核 64 · 仲裁 32 · 护栏打标 32</td></tr>
+            <tr><td>判决</td><td>—</td><td>六项检查合成通过 / 拒绝</td><td>—</td></tr>
+            <tr><td>判决之后</td><td>精确去重</td><td>判决放行的条目</td><td>CPU 1（固定，保证结果可复现）</td></tr>
+            <tr><td>判决之后</td><td>技能画像</td><td>去重后的条目</td><td>打标 32 · 归纳 16 · 分歧判断 16</td></tr>
+            <tr><td>终判</td><td>—</td><td>出通过 / 拒绝 / 待补跑三份清单</td><td>—</td></tr>
+          </tbody>
+        </table>
+        <div class="help-text">计划估算：VLM 请求约 780 次，墙钟约 15 分钟。实际主流程 794 次、16 分 56 秒（含系统暂停）。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 日志 ===== -->
+  <div class="pane" data-group="detail" id="paneLogs">
+    <div class="card">
+      <div class="log-tools">
+        <select class="select" id="logStage" style="width:150px">
+          <option value="">全部档</option><option value="autolabel">补任务描述</option><option value="numeric">数值档</option>
+          <option value="frame">帧档</option><option value="vlm">VLM 档</option><option value="post">判决之后</option>
+          <option value="final">收尾</option><option value="system">系统</option>
+        </select>
+        <select class="select" id="logRun" style="width:170px">
+          <option value="">主流程 + 子任务</option><option value="main">主流程</option><option value="retry">重试 #1</option>
+        </select>
+        <select class="select" id="logLevel" style="width:130px">
+          <option value="">全部级别</option><option value="warn">警告及以上</option><option value="error">只看错误</option>
+        </select>
+        <div class="spacer"></div>
+        <span class="follow">跟随最新 <button class="switch on" id="follow" aria-pressed="true" aria-label="跟随最新"></button></span>
+        <button class="btn btn-outline" data-toast="静态预览稿：下载 logs/*.jsonl 的打包文件">下载完整日志</button>
+      </div>
+      <div class="log" id="logBox"></div>
+      <div class="log-foot">日志原文来自命令行，保持英文。运行中的任务会实时追加；往上翻加载更早的日志。</div>
+    </div>
+  </div>
+</main>
+
+<div class="mask" id="mask"></div>
+
+<div class="modal" id="editModal" role="dialog" aria-labelledby="editTitle">
+  <div class="modal-head" id="editTitle">改名称和备注<div class="spacer"></div>
+    <button class="x-close" data-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="modal-body">
+    <div class="field" style="margin-bottom:14px">
+      <label class="label" for="nameInput"><span class="req">*</span>任务名称</label>
+      <input class="input" id="nameInput" value="droid 前 50 条质检" maxlength="64">
+      <div class="err-text hidden" id="nameErr">请输入任务名称</div>
+    </div>
+    <div class="field">
+      <label class="label" for="noteInput">备注</label>
+      <textarea class="input" id="noteInput" rows="3" maxlength="200">第一轮抽检，看标注质量</textarea>
+    </div>
+    <div class="help-text">任务已经启动，只能改这两项。</div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" data-close>取消</button>
+    <button class="btn btn-primary" id="saveMeta">保存</button>
+  </div>
+</div>
+
+<div class="modal" id="retryModal" role="dialog" aria-labelledby="retryTitle">
+  <div class="modal-head" id="retryTitle">重试出错的条目<div class="spacer"></div>
+    <button class="x-close" data-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="modal-body">
+    <p>建一个重试子任务，只补跑出错的 2 条：ep 7、ep 31（任务成败判定，从 VLM 档接着往后跑）。已经成功的结果原样保留。</p>
+    <p>新结果完整生成后才替换当前版本；重试失败或被停止，页面上仍是 r0002。</p>
+    <p class="muted">开始前会检查：数据集能读、交付目录能写、模型能调通。</p>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" data-close>取消</button>
+    <button class="btn btn-primary" data-close data-toast="静态预览稿：已创建子任务「重试 #2」，完成后时间线上会多一个节点">开始重试</button>
+  </div>
+</div>
+
+<div class="modal" id="exportModal" role="dialog" aria-labelledby="exportTitle">
+  <div class="modal-head" id="exportTitle">重新导出交付数据集<div class="spacer"></div>
+    <button class="x-close" data-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="modal-body">
+    <p>按当前通过名单导出 41 条（含待裁决的 10 条，不含待补跑的 2 条），写到：</p>
+    <p class="mono" style="color:var(--text-1)">tos://pai-kit-deliveries/droid-50/20260920-130514/export/lerobot_curated/</p>
+    <p>源数据是 LeRobot v3，多条 episode 合在同一个视频文件里，受影响的分块要重新编码。导出后逐文件回读核验，通过才标记完成。</p>
+    <p class="muted">以后人工裁决改了判决，还要再导出一次；平台不会自动重建数据集。</p>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" data-close>取消</button>
+    <button class="btn btn-primary" data-close data-toast="静态预览稿：已创建子任务「重新导出」">开始导出</button>
+  </div>
+</div>
+
+<div class="modal" id="purgeModal" role="dialog" aria-labelledby="purgeTitle">
+  <div class="modal-head" id="purgeTitle">清理交付产物<div class="spacer"></div>
+    <button class="x-close" data-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="modal-body">
+    <p>会删掉这个任务在 TOS 上的批次目录，删了不能恢复：</p>
+    <p class="mono" style="color:var(--text-1)">tos://pai-kit-deliveries/droid-50/20260920-130514/</p>
+    <p class="muted">共 212 MB，1,318 个对象。同一交付目录下别的任务的批次不动；平台里的任务记录保留。</p>
+    <label class="label" for="purgeInput"><span class="req">*</span>输入任务名称「droid 前 50 条质检」确认</label>
+    <input class="input" id="purgeInput" autocomplete="off">
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" data-close>取消</button>
+    <button class="btn btn-danger" id="purgeGo" disabled data-close data-toast="静态预览稿：已提交清理">清理</button>
+  </div>
+</div>
+
+<div class="mockup-note">
+  <b>静态预览稿</b> · 第二批<br>
+  数据为假数据，交互不接后端<br><span style="opacity:.6">点此关闭</span>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// Shared mockup helpers (same block in all six pages): menus, tabs, folds,
+// drawers / modals, toast and chart tooltips. No network, no storage.
+(function () {
+  var note = document.querySelector('.mockup-note');
+  if (note) note.addEventListener('click', function () { note.style.display = 'none'; });
+
+  var toastEl = document.getElementById('toast'), toastTimer;
+  window.toast = function (msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 2600);
+  };
+
+  window.openLayer = function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var mask = document.getElementById('mask');
+    if (mask) mask.classList.add('open');
+    el.classList.add('open');
+  };
+  window.closeLayers = function () {
+    document.querySelectorAll('.drawer.open, .modal.open, .mask.open').forEach(function (n) {
+      n.classList.remove('open');
+    });
+  };
+
+  document.addEventListener('click', function (e) {
+    // dropdown menus
+    var more = e.target.closest('.js-more');
+    document.querySelectorAll('.menu-pop.open').forEach(function (n) {
+      if (!more || n !== more.parentElement) n.classList.remove('open');
+    });
+    if (more) { more.parentElement.classList.toggle('open'); return; }
+
+    // tabs: .tabs[data-tabs=g] > .tab[data-pane=id]; panes: .pane[data-group=g]
+    var tab = e.target.closest('.tab[data-pane]');
+    if (tab) {
+      var bar = tab.closest('.tabs');
+      bar.querySelectorAll('.tab').forEach(function (b) { b.classList.toggle('active', b === tab); });
+      document.querySelectorAll('.pane[data-group="' + bar.dataset.tabs + '"]').forEach(function (p) {
+        p.classList.toggle('active', p.id === tab.dataset.pane);
+      });
+      return;
+    }
+
+    // folds
+    var head = e.target.closest('.fold-head');
+    if (head && !e.target.closest('.fold-head a, .fold-head button, .fold-head select, .fold-head input')) {
+      head.parentElement.classList.toggle('open');
+    }
+
+    // layers
+    var opener = e.target.closest('[data-open]');
+    if (opener) { e.preventDefault(); openLayer(opener.dataset.open); return; }
+    if (e.target.closest('[data-close]') || e.target.id === 'mask') { closeLayers(); return; }
+
+    // mockup-only actions
+    var t = e.target.closest('[data-toast]');
+    if (t && !t.disabled) toast(t.dataset.toast);
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeLayers(); });
+
+  // chart tooltips: data-tip="value|label|more…"; values lead, labels follow
+  var tip = document.createElement('div');
+  tip.className = 'tip';
+  document.body.appendChild(tip);
+  function show(el, x, y) {
+    var parts = el.getAttribute('data-tip').split('|');
+    tip.textContent = '';
+    parts.forEach(function (p, i) {
+      var n = document.createElement(i === 0 ? 'b' : 'div');
+      n.textContent = p;
+      tip.appendChild(n);
+    });
+    tip.style.display = 'block';
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(x + 14, window.innerWidth - w - 8) + 'px';
+    tip.style.top = Math.max(8, y - h - 10) + 'px';
+  }
+  document.addEventListener('mousemove', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (el) show(el, e.clientX, e.clientY); else tip.style.display = 'none';
+  });
+  document.addEventListener('focusin', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) return;
+    var r = el.getBoundingClientRect();
+    show(el, r.left + r.width / 2, r.top);
+  });
+  document.addEventListener('focusout', function () { tip.style.display = 'none'; });
+})();
+</script>
+<script>
+  function $(id) { return document.getElementById(id); }
+
+  // ---- state-dependent header (mockup preview switch) ----
+  var MORE_TERMINAL = '<div class="menu-pop"><button class="btn btn-outline js-more">更多 ▾</button><div class="pop">' +
+    '<button data-open="exportModal">重新导出</button><a href="task-new.html">复制为新任务</a><div class="sep"></div>' +
+    '<button class="danger" data-open="purgeModal">清理交付产物</button>' +
+    '<button class="danger" data-toast="静态预览稿：只删平台里的任务记录，30 天内可恢复">删除</button></div></div>';
+  var STATES = {
+    cwe: {
+      tag: '<span class="tag tag-orange"><i class="dot"></i>部分错误</span>',
+      note: '主流程和重试 #1 都已结束。2 条出错待补跑，其余结果已生效（结果版本 r0002）。',
+      actions: '<button class="btn btn-outline" data-open="retryModal">重试（2 条）</button>' +
+        '<a class="btn btn-outline" href="task-adjudication.html">人工裁决（10）</a>' +
+        '<a class="btn btn-primary" href="task-report.html">查看详细报告</a>' + MORE_TERMINAL,
+      stages: 'final'
+    },
+    running: {
+      tag: '<span class="tag tag-blue tag-running"><i class="dot"></i>运行中</span>',
+      note: '正在跑 VLM 档（任务成败判定）21 / 49，预计还要 5 分钟。',
+      actions: '<button class="btn btn-outline" data-toast="静态预览稿：在飞的 episode 跑完后暂停">暂停</button>' +
+        '<button class="btn btn-outline" data-toast="静态预览稿：停止后可以继续运行">停止</button>' +
+        '<button class="btn btn-primary" disabled title="跑完才有报告">查看详细报告</button>',
+      stages: 'running'
+    },
+    sysPaused: {
+      tag: '<span class="tag tag-gray">已暂停 · 系统将自动恢复</span>',
+      note: 'Daemon 升级时由系统暂停。新版本起来后自动续跑，不需要手动恢复。',
+      actions: '<button class="btn btn-outline" disabled title="系统会自动恢复">恢复</button>' +
+        '<button class="btn btn-outline" data-toast="静态预览稿：停止后不再自动恢复">停止</button>',
+      stages: 'paused'
+    },
+    paused: {
+      tag: '<span class="tag"><i class="dot"></i>已暂停</span>',
+      note: 'galbot 在 13:11 暂停。在飞的 episode 已经跑完落盘，恢复后从没处理的条目继续。',
+      actions: '<button class="btn btn-primary" data-toast="静态预览稿：重新排队，从断点继续">恢复</button>' +
+        '<button class="btn btn-outline" data-toast="静态预览稿：停止后可以继续运行">停止</button>',
+      stages: 'paused'
+    },
+    created: {
+      tag: '<span class="tag tag-outline-blue"><i class="dot"></i>待启动</span>',
+      note: '还没启动，所有配置都能改。启动时会检查数据集能读、交付目录能写、模型能调通。',
+      actions: '<a class="btn btn-outline" href="task-new.html">编辑</a>' +
+        '<button class="btn btn-outline" data-toast="静态预览稿：只删平台里的任务记录">删除</button>' +
+        '<button class="btn btn-primary" data-toast="静态预览稿：开始前检查通过后排队">启动</button>',
+      stages: 'created'
+    },
+    succeeded: {
+      tag: '<span class="tag tag-green"><i class="dot"></i>已完成</span>',
+      note: '所有模块都成功，没有待补跑的条目。',
+      actions: '<a class="btn btn-outline" href="task-adjudication.html">人工裁决（10）</a>' +
+        '<a class="btn btn-primary" href="task-report.html">查看详细报告</a>' + MORE_TERMINAL,
+      stages: 'final'
+    },
+    stopped: {
+      tag: '<span class="tag tag-gray"><i class="dot"></i>已停止</span>',
+      note: 'galbot 在 13:15 停止。已完成的部分保留，可以从断点继续运行。',
+      actions: '<button class="btn btn-primary" data-toast="静态预览稿：从断点接着跑没完成的部分">继续运行</button>' +
+        '<a class="btn btn-outline" href="task-report.html">查看报告</a>' + MORE_TERMINAL,
+      stages: 'paused'
+    }
+  };
+
+  var STAGES = [
+    { name: '补任务描述', mods: 'autolabel · 没有任务标注的 22 条', total: 22 },
+    { name: '数值档', mods: '时间戳检查 · 运动质量', total: 50 },
+    { name: '帧档', mods: '视觉质量 · 视频-动作同步', total: 49 },
+    { name: 'VLM 档', mods: '任务成败判定', total: 49 },
+    { name: '判决之后', mods: '精确去重 · 技能画像', total: 42 }
+  ];
+  var FINAL = [
+    { done: 22, err: 0, meta: ['耗时 46 秒', '已完成'] },
+    { done: 50, err: 0, meta: ['耗时 9 秒', '已完成', '硬门拦下 1 条（ep 18 残段）'] },
+    { done: 49, err: 0, meta: ['耗时 2 分 24 秒', '已完成', '硬门拦下 0 条'] },
+    { done: 49, err: 2, meta: ['耗时 9 分 02 秒（另有系统暂停 2 分 11 秒）', '已完成'], warn: '2 条出错待补跑（ep 7、ep 31）' },
+    { done: 42, err: 0, meta: ['主流程 47 秒 + 重试 #1 2 分 11 秒', '已完成'], warn: '技能画像在主流程中失败，重试 #1 已补齐' }
+  ];
+  function running(paused) {
+    var eta = paused ? '已暂停' : '预计还要 5 分钟';
+    return [
+      { done: 22, err: 0, meta: ['耗时 46 秒', '已完成'] },
+      { done: 50, err: 0, meta: ['耗时 9 秒', '已完成', '硬门拦下 1 条（ep 18 残段）'] },
+      { done: 49, err: 0, meta: ['耗时 2 分 24 秒', '已完成', '硬门拦下 0 条'] },
+      { done: 21, err: 0, run: true, meta: ['已用 3 分 07 秒', eta] },
+      { done: 0, err: 0, total: '—', meta: ['等上一档跑完'] }
+    ];
+  }
+  function renderStages(kind) {
+    var data = kind === 'final' ? FINAL : kind === 'created'
+      ? STAGES.map(function () { return { done: 0, err: 0, total: '—', meta: ['未开始'] }; })
+      : running(kind === 'paused');
+    var html = '';
+    STAGES.forEach(function (s, i) {
+      var d = data[i], total = d.total === undefined ? s.total : d.total;
+      var okPct = typeof total === 'number' ? ((d.done - d.err) / total * 100) : 0;
+      var errPct = typeof total === 'number' ? (d.err / total * 100) : 0;
+      var cls = d.run ? (kind === 'paused' ? 'hold' : 'run') : 'ok';
+      html += '<div class="stage"><div class="stage-top"><span class="stage-name">' + s.name + '</span>' +
+        '<span class="stage-mods">' + s.mods + '</span><span class="spacer"></span>' +
+        '<span class="stage-count">' + d.done + ' / ' + total + '</span></div>' +
+        '<div class="stage-bar">' + (okPct ? '<i class="' + cls + '" style="width:' + okPct + '%"></i>' : '') +
+        (errPct ? '<i class="err" style="width:' + errPct + '%" data-tip="' + d.err + ' 条|出错待补跑"></i>' : '') + '</div>' +
+        '<div class="stage-meta">' + d.meta.map(function (m) { return '<span>' + m + '</span>'; }).join('') +
+        (d.warn ? '<span class="warn">' + d.warn + '</span>' : '') + '</div></div>';
+    });
+    html += '<div class="stage-explain">每一档只接着处理上一档放行的条目。数值档按残段拦下了 ep 18，所以帧档是 49 / 49，不是 50 / 50；这是正常的。' +
+      '判决之后只处理判决放行的 42 条。</div>';
+    $('stages').innerHTML = html;
+    $('stageSummary').textContent = kind === 'final'
+      ? '主流程 13:05:14 开始，用时 16 分 56 秒（含系统暂停 2 分 11 秒）'
+      : kind === 'created' ? '还没开始' : '13:05:14 开始，已用 6 分 26 秒';
+  }
+  function setState(key) {
+    var s = STATES[key];
+    $('stateTag').innerHTML = s.tag;
+    $('stateNote').textContent = s.note;
+    $('actions').innerHTML = s.actions;
+    renderStages(s.stages);
+    document.querySelectorAll('#statePreview button').forEach(function (b) { b.classList.toggle('on', b.dataset.s === key); });
+  }
+  $('statePreview').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-s]');
+    if (b) setState(b.dataset.s);
+  });
+  setState('cwe');
+
+  // ---- 出错条目展开 ----
+  $('errToggle').addEventListener('click', function () {
+    var row = $('errRow'), open = row.classList.toggle('hidden') === false;
+    this.textContent = '2 条待补跑 ' + (open ? '▴' : '▾');
+    this.setAttribute('aria-expanded', open);
+  });
+
+  // ---- Token 明细 ----
+  var TOK = {
+    mod: [['补任务描述（autolabel）', 22, '138.6K', '4.0K', '2.4K', '7.0K'],
+          ['任务成败判定', 789, '1.59M', '52.5K', '36.1K', '902.9K'],
+          ['技能画像', 75, '281.9K', '11.0K', '4.4K', '21.9K']],
+    sub: [['主流程', 794, '1.67M', '54.7K', '37.3K', '874.4K'],
+          ['子任务 · 重试 #1', 92, '344.2K', '12.8K', '5.6K', '57.4K']]
+  };
+  function renderTok(k) {
+    var head = '<thead><tr><th>' + (k === 'mod' ? '模块' : '主流程 / 子任务') + '</th><th class="r">请求</th><th class="r">输入</th><th class="r">输出</th><th class="r">思维链</th><th class="r">缓存命中</th></tr></thead>';
+    var body = TOK[k].map(function (r) {
+      return '<tr><td>' + r[0] + '</td>' + r.slice(1).map(function (c) { return '<td class="r">' + c + '</td>'; }).join('') + '</tr>';
+    }).join('');
+    body += '<tr><td><b>合计</b></td><td class="r"><b>886</b></td><td class="r"><b>2.01M</b></td><td class="r"><b>67.5K</b></td><td class="r"><b>42.9K</b></td><td class="r"><b>931.8K</b></td></tr>';
+    $('tokTable').innerHTML = head + '<tbody>' + body + '</tbody>';
+    document.querySelectorAll('#tokSeg button').forEach(function (b) { b.classList.toggle('on', b.dataset.v === k); });
+  }
+  $('tokSeg').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-v]');
+    if (b) { e.stopPropagation(); renderTok(b.dataset.v); }
+  });
+  renderTok('mod');
+
+  // ---- 改名称和备注 ----
+  $('saveMeta').addEventListener('click', function () {
+    var n = $('nameInput'), bad = !n.value.trim();
+    n.classList.toggle('is-error', bad);
+    $('nameErr').classList.toggle('hidden', !bad);
+    if (bad) return;
+    $('taskTitle').textContent = n.value.trim();
+    $('noteText').textContent = $('noteInput').value.trim() || '（无）';
+    closeLayers();
+    toast('已保存');
+  });
+  $('purgeInput').addEventListener('input', function () {
+    $('purgeGo').disabled = this.value.trim() !== 'droid 前 50 条质检';
+  });
+
+  // ---- 日志：按档 / 运行 / 级别筛选，跟随最新，往上翻懒加载 ----
+  var LOGS = [
+    ['13:05:12', 'system', 'main', 'info', 'task created by galbot; prechecks passed (input read, output write, vlm call)'],
+    ['13:05:14', 'system', 'main', 'info', 'run_id 20260920-130514; source snapshot 204 objects, 1.42 GiB'],
+    ['13:05:15', 'autolabel', 'main', 'info', 'start: 22 episodes without task annotation, gate caption=32'],
+    ['13:06:01', 'autolabel', 'main', 'info', 'done: 22/22 captions in 46s'],
+    ['13:06:01', 'numeric', 'main', 'info', 'start: 50 episodes, modules timestamp_check,motion_quality, concurrency 8'],
+    ['13:06:04', 'numeric', 'main', 'warn', 'episode 18 too short (0.5s, 8 frames) < min_duration_s 1.0 -> reject'],
+    ['13:06:10', 'numeric', 'main', 'info', 'done: 50/50 in 9s, hard gate dropped 1'],
+    ['13:06:10', 'frame', 'main', 'info', 'start: 49 episodes, modules visual_quality,video_action_sync, concurrency 8'],
+    ['13:07:32', 'frame', 'main', 'warn', 'episode 12 camera exterior_image_2_left: false peak, lag +0.62s not trusted'],
+    ['13:08:34', 'frame', 'main', 'info', 'done: 49/49 in 144s, hard gate dropped 0'],
+    ['13:08:34', 'vlm', 'main', 'info', 'start: 49 episodes, gates episode=32 probe=64 endstate=64 arbitration=32'],
+    ['13:11:41', 'system', 'main', 'warn', 'SIGTERM (upgrade v2.0.3 -> v2.0.4): pausing, 3 episodes in flight'],
+    ['13:11:53', 'system', 'main', 'info', 'task paused (reason=system) at vlm 21/49'],
+    ['13:13:52', 'system', 'main', 'info', 'daemon v2.0.4 up; auto-resuming system-paused task'],
+    ['13:13:53', 'vlm', 'main', 'warn', 'episodes 26,27,30 were in flight at interruption; re-running'],
+    ['13:16:20', 'vlm', 'main', 'warn', 'episode 7 arbitration timeout (60s); outer retry 1/3 in 1s'],
+    ['13:18:41', 'vlm', 'main', 'error', 'episode 7 arbitration failed after 3 outer retries (timeout) -> error, held'],
+    ['13:19:05', 'vlm', 'main', 'error', 'episode 31 arbitration failed after 3 outer retries (timeout) -> error, held'],
+    ['13:19:47', 'vlm', 'main', 'info', 'done: 49/49 in 542s (errors 2)'],
+    ['13:19:48', 'post', 'main', 'info', 'funnel verdict: keep 42, drop 6, held 2'],
+    ['13:19:59', 'post', 'main', 'info', 'dedup: episode 44 byte-identical to 43 -> reject 44'],
+    ['13:20:07', 'post', 'main', 'warn', 'skill_profile: 429 QuotaExceeded x12 in 30s window; halving gates'],
+    ['13:20:35', 'post', 'main', 'error', 'skill_profile: first 20 requests failed with the same infra error (429 QuotaExceeded); circuit open, module failed'],
+    ['13:20:36', 'final', 'main', 'info', 'aggregate: passed 0, rejected 7, held 43 (skill_profile failed: 41, task_success errors: 2)'],
+    ['13:21:58', 'final', 'main', 'info', 'report r0001 written; export skipped: no passed episodes'],
+    ['13:22:10', 'final', 'main', 'info', 'verify ok; task state completed_with_errors'],
+    ['14:02:10', 'system', 'retry', 'info', 'subtask retry#1 by galbot: skill_profile (all), task_success (2 errors); prechecks passed'],
+    ['14:02:11', 'vlm', 'retry', 'info', 'start: episodes 7,31 (task_success from scratch)'],
+    ['14:06:21', 'vlm', 'retry', 'error', 'episode 7 arbitration failed after 3 outer retries (timeout) -> error, held'],
+    ['14:06:27', 'vlm', 'retry', 'error', 'episode 31 arbitration failed after 3 outer retries (timeout) -> error, held'],
+    ['14:06:29', 'post', 'retry', 'info', 'skill_profile: start 41 episodes (module failed before, full run)'],
+    ['14:08:40', 'post', 'retry', 'info', 'taxonomy: 6 families, 10 subskills; label audit: 5 disagreements, 2 unstable captions'],
+    ['14:09:00', 'final', 'retry', 'info', 'aggregate: passed 41, rejected 7, held 2, review 10'],
+    ['14:09:02', 'final', 'retry', 'info', 'revision r0002 committed; delivery stale (export fingerprint changed)']
+  ];
+  var STAGE_ZH = { system: '系统', autolabel: '补描述', numeric: '数值档', frame: '帧档', vlm: 'VLM 档', post: '判决之后', final: '收尾' };
+  var shownFrom = LOGS.length - 18;   // first screen: latest lines only
+  function renderLogs() {
+    var st = $('logStage').value, run = $('logRun').value, lv = $('logLevel').value;
+    var box = $('logBox');
+    box.textContent = '';
+    if (shownFrom > 0) {
+      var more = document.createElement('div');
+      more.className = 'log-more';
+      more.innerHTML = '<button class="btn btn-text btn-sm" id="logMore">加载更早的 ' + shownFrom + ' 行</button>';
+      box.appendChild(more);
+    }
+    LOGS.slice(shownFrom).forEach(function (l) {
+      if (st && l[1] !== st) return;
+      if (run && l[2] !== run) return;
+      if (lv === 'warn' && l[3] === 'info') return;
+      if (lv === 'error' && l[3] !== 'error') return;
+      var d = document.createElement('div');
+      d.className = 'ln' + (l[3] === 'error' ? ' lv-error-row' : '');
+      [l[0], STAGE_ZH[l[1]] + (l[2] === 'retry' ? ' #1' : ''), l[3].toUpperCase(), l[4]].forEach(function (t, i) {
+        var s = document.createElement('span');
+        s.className = ['', 'st', 'lv-' + l[3], 'msg'][i];
+        s.textContent = t;
+        d.appendChild(s);
+      });
+      box.appendChild(d);
+    });
+    if ($('follow').classList.contains('on')) box.scrollTop = box.scrollHeight;
+  }
+  $('logBox').addEventListener('click', function (e) {
+    if (e.target.id === 'logMore') { shownFrom = 0; $('follow').classList.remove('on'); renderLogs(); $('logBox').scrollTop = 0; }
+  });
+  ['logStage', 'logRun', 'logLevel'].forEach(function (id) { $(id).addEventListener('change', renderLogs); });
+  $('follow').addEventListener('click', function () {
+    this.classList.toggle('on');
+    this.setAttribute('aria-pressed', this.classList.contains('on'));
+    renderLogs();
+  });
+  document.querySelector('.tab[data-pane=paneLogs]').addEventListener('click', function () { setTimeout(renderLogs, 0); });
+  renderLogs();
+</script>
+</body>
+</html>

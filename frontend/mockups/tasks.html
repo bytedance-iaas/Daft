@@ -213,23 +213,217 @@ select.select { appearance: none;
 }
 .mockup-note b { color: #FFD666; }
 </style>
+
 <style>
-  .task-name { display: flex; align-items: center; gap: 8px; }
+/* ===== shared components, batch 2 (same block in all six pages) ===== */
+/* Added with the second batch. Keep this block identical across pages. */
+a.menu-item, a.menu-item:hover { color: var(--text-1); }
+a.menu-item.active, a.menu-item.active:hover { color: var(--primary-6); }
+.crumb a { color: var(--text-3); }
+.crumb a:hover { color: var(--primary-6); }
+.hidden { display: none !important; }
+.btn-sm { height: 24px; padding: 0 8px; font-size: 12px; }
+.btn-danger { background: var(--danger-6); color: #fff; }
+.btn-danger:hover { background: #F76560; }
+.btn-danger[disabled] { background: var(--fill-2); color: var(--text-4); }
+.btn-text-danger { background: transparent; padding: 0 8px; color: var(--danger-6); }
+.btn-text-danger:hover { background: var(--danger-1); }
+.btn-text[disabled], .btn-text-danger[disabled] { background: transparent; color: var(--text-4); }
+.tag-outline { background: var(--white); color: var(--text-2); border: 1px solid var(--border); }
+.num { font-variant-numeric: tabular-nums; }
+.req { color: var(--danger-6); margin-right: 4px; }
+
+/* segmented control */
+.seg { display: inline-flex; background: var(--fill-1); border-radius: var(--radius-sm); padding: 2px; }
+.seg label, .seg button {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0;
+  border-radius: var(--radius-sm); font: inherit; font-size: 13px; color: var(--text-2);
+  background: transparent; cursor: pointer; white-space: nowrap; }
+.seg input { display: none; }
+.seg input:checked + span { color: var(--primary-6); }
+.seg label:has(input:checked), .seg button.on {
+  background: var(--white); box-shadow: var(--shadow-card); color: var(--primary-6); }
+.seg label.is-disabled { color: var(--text-4); cursor: not-allowed; }
+
+/* radio-button group (one answer per question) */
+.rbtn { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.rbtn button {
+  height: 28px; padding: 0 12px; font: inherit; font-size: 13px; color: var(--text-2);
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.rbtn button:hover { border-color: var(--primary-6); color: var(--primary-6); }
+.rbtn button.on { border-color: var(--primary-6); background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.rbtn button.on.is-bad { border-color: var(--danger-6); background: var(--danger-1); color: var(--danger-6); }
+.rbtn button.on.is-hold { border-color: var(--warning-6); background: var(--warning-1); color: var(--warning-6); }
+.rbtn button[disabled] { color: var(--text-4); border-color: var(--border); background: var(--fill-1); cursor: not-allowed; }
+
+/* tabs */
+.tabs { display: flex; gap: 28px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+.tab {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; height: 46px; padding: 0;
+  border: 0; background: none; font: inherit; font-size: 14px; color: var(--text-2); cursor: pointer; }
+.tab:hover { color: var(--text-1); }
+.tab.active { color: var(--primary-6); font-weight: 500; }
+.tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--primary-6); }
+.tab .cnt { font-size: 12px; line-height: 18px; padding: 0 6px; border-radius: 9px; background: var(--fill-2); color: var(--text-3); font-weight: 400; }
+.tab.active .cnt { background: var(--primary-1); color: var(--primary-6); }
+.pane { display: none; }
+.pane.active { display: block; }
+
+/* descriptions (label / value grid) */
+.desc { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 32px; }
+.desc.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.desc .it { display: flex; gap: 12px; font-size: 13px; line-height: 1.6; min-width: 0; }
+.desc .it.full { grid-column: 1 / -1; }
+.desc .k { flex: none; width: 104px; color: var(--text-3); }
+.desc .v { min-width: 0; color: var(--text-1); overflow-wrap: anywhere; }
+
+/* switch */
+.switch {
+  position: relative; display: inline-block; flex: none; width: 28px; height: 16px; padding: 0; border: 0;
+  border-radius: 8px; background: var(--text-4); cursor: pointer; vertical-align: middle; transition: background .15s; }
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; transition: left .15s; }
+.switch.on { background: var(--primary-6); }
+.switch.on::after { left: 14px; }
+
+/* pagination: total on the left, pages / size / jump on the right */
+.pager { display: flex; align-items: center; gap: 8px; padding: 14px 20px; font-size: 13px; color: var(--text-2); }
+.pager .total { margin-right: auto; color: var(--text-3); }
+.pager .pg {
+  min-width: 32px; height: 32px; padding: 0 6px; border: 0; border-radius: var(--radius-sm);
+  background: transparent; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.pager .pg:hover { background: var(--fill-2); }
+.pager .pg.active { background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.pager .pg[disabled] { color: var(--text-4); background: transparent; cursor: not-allowed; }
+.pager .gap { color: var(--text-3); padding: 0 2px; }
+.pager .select { width: 104px; }
+.pager .jump { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); }
+.pager .jump .input { width: 52px; text-align: center; }
+
+/* overlays: mask, right drawer, modal */
+.mask { position: fixed; inset: 0; z-index: 300; background: rgba(29,33,41,.45); display: none; }
+.mask.open { display: block; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 310; width: 640px; max-width: 92vw;
+  display: flex; flex-direction: column; background: var(--white); box-shadow: -6px 0 16px rgba(0,0,0,.08);
+  transform: translateX(105%); transition: transform .2s ease; }
+.drawer.open { transform: none; }
+.drawer.wide { width: 800px; }
+.drawer-head { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+.drawer-title { font-size: 16px; font-weight: 600; }
+.drawer-head .spacer { flex: 1; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 20px; }
+.drawer-foot { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); }
+.drawer-foot .spacer { flex: 1; }
+.modal {
+  position: fixed; top: 14vh; left: 50%; z-index: 320; width: 520px; transform: translateX(-50%);
+  background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow-pop); display: none; }
+.modal.open { display: block; }
+.modal-head { display: flex; align-items: center; gap: 8px; padding: 18px 20px 0; font-size: 16px; font-weight: 600; }
+.modal-head .spacer { flex: 1; }
+.modal-body { padding: 14px 20px 4px; font-size: 14px; color: var(--text-2); }
+.modal-foot { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 20px 18px; }
+.x-close {
+  width: 28px; height: 28px; border: 0; background: none; border-radius: var(--radius-sm); cursor: pointer;
+  display: grid; place-items: center; color: var(--text-3); }
+.x-close:hover { background: var(--fill-2); color: var(--text-1); }
+
+/* toast (operation-level message) */
+.toast {
+  position: fixed; top: 72px; left: 50%; z-index: 400; transform: translateX(-50%); display: none;
+  align-items: center; gap: 8px; max-width: 640px; padding: 9px 16px; font-size: 13px; color: var(--text-1);
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.toast.show { display: flex; }
+
+/* fold (collapse) */
+.fold-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.fold-head .arr { flex: none; transition: transform .15s; }
+.fold.open > .fold-head .arr { transform: rotate(90deg); }
+.fold > .fold-body { display: none; }
+.fold.open > .fold-body { display: block; }
+
+/* timeline */
+.tl { list-style: none; margin: 0; padding: 0; }
+.tl > li { position: relative; padding: 0 0 20px 28px; }
+.tl > li::before { content: ''; position: absolute; left: 5px; top: 17px; bottom: 0; width: 1px; background: var(--border); }
+.tl > li:last-child { padding-bottom: 0; }
+.tl > li:last-child::before { display: none; }
+.tl .dot { position: absolute; left: 0; top: 5px; width: 11px; height: 11px; border-radius: 50%; background: var(--white); border: 2px solid var(--primary-6); }
+.tl .dot.green { border-color: var(--success-6); }
+.tl .dot.orange { border-color: var(--warning-6); }
+.tl .dot.red { border-color: var(--danger-6); }
+.tl .dot.gray { border-color: var(--text-4); }
+.tl .t-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tl .t-time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tl .t-title { font-weight: 500; }
+.tl .t-body { font-size: 13px; color: var(--text-2); margin-top: 3px; }
+
+/* video placeholder (real page: <video> with a presigned TOS URL) */
+.video { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius); overflow: hidden; background: linear-gradient(160deg, #3A4150, #1D2129); color: #fff; }
+.video .cam { position: absolute; left: 8px; top: 6px; font-size: 12px; opacity: .9; }
+.video .play { position: absolute; left: 50%; top: 50%; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; background: rgba(255,255,255,.18); display: grid; place-items: center; }
+.video .time { position: absolute; right: 8px; bottom: 8px; font: 11px "SF Mono", ui-monospace, Menlo, monospace; opacity: .9; }
+.video .scrub { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.2); }
+.video .scrub i { display: block; height: 100%; width: 0; background: var(--primary-5); }
+.frame { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); overflow: hidden; background: linear-gradient(135deg, #C9CDD4, #86909C); }
+.frame span { position: absolute; left: 4px; bottom: 3px; font: 11px "SF Mono", ui-monospace, Menlo, monospace; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
+
+/* charts: thin marks, hairline grid, text in text tokens */
+.chart { display: block; overflow: visible; }
+.chart text { font-family: inherit; font-size: 11px; fill: var(--text-3); }
+.chart .ax { stroke: var(--border); stroke-width: 1; }
+.chart .grid { stroke: var(--fill-2); stroke-width: 1; }
+.chart .lbl { fill: var(--text-2); font-size: 12px; }
+.chart .val { fill: var(--text-1); font-size: 12px; }
+.chart [data-tip]:hover, .chart [data-tip]:focus { opacity: .8; outline: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-2); }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.legend .ln { width: 14px; height: 2px; border-radius: 1px; flex: none; }
+.tip {
+  position: fixed; z-index: 500; pointer-events: none; display: none; max-width: 300px; padding: 7px 10px;
+  font-size: 12px; line-height: 1.6; color: var(--text-2); background: var(--white);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.tip b { display: block; color: var(--text-1); font-size: 13px; }
+
+/* key figures inside a card */
+.kv-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.kv { padding: 2px 20px; border-left: 1px solid var(--border); min-width: 0; }
+.kv:first-child { border-left: 0; padding-left: 0; }
+.kv .k { font-size: 12px; color: var(--text-3); }
+.kv .v { font-size: 20px; font-weight: 600; margin-top: 2px; }
+.kv .v small { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 3px; }
+.kv .s { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+</style>
+<style>
+  .task-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .badge-sub { font-size: 11px; color: var(--primary-6); background: var(--primary-1);
                border-radius: 10px; padding: 1px 7px; }
+  .badge-warn { font-size: 11px; color: var(--warning-6); background: var(--warning-1);
+                border-radius: 10px; padding: 1px 7px; }
+  .badge-gray { font-size: 11px; color: var(--text-3); background: var(--fill-2);
+                border-radius: 10px; padding: 1px 7px; cursor: help; }
   .ops { display: flex; align-items: center; gap: 2px; }
   .menu-pop { position: relative; }
   .menu-pop .pop {
-    display: none; position: absolute; right: 0; top: 30px; z-index: 50; min-width: 140px;
+    display: none; position: absolute; right: 0; top: 30px; z-index: 50; min-width: 150px;
     background: #fff; border: 1px solid var(--border); border-radius: var(--radius);
     box-shadow: var(--shadow-pop); padding: 4px; }
   .menu-pop.open .pop { display: block; }
-  .pop button {
+  .pop button, .pop a {
     display: block; width: 100%; text-align: left; border: 0; background: none; cursor: pointer;
     font: inherit; font-size: 13px; color: var(--text-1); padding: 7px 10px; border-radius: var(--radius-sm); }
-  .pop button:hover { background: var(--fill-1); }
+  .pop button:hover, .pop a:hover { background: var(--fill-1); color: var(--text-1); }
   .pop button.danger { color: var(--danger-6); }
+  .pop button[disabled] { color: var(--text-4); cursor: not-allowed; background: none; }
   .pop .sep { height: 1px; background: var(--border); margin: 4px 0; }
+  .progress .bar.is-stop i { background: var(--text-4); }
+  .progress .bar.is-fail i { background: var(--danger-6); }
+  .tag .ico { flex: none; }
+  .path-box { margin: 8px 0 10px; padding: 8px 10px; background: var(--fill-1); border-radius: var(--radius-sm);
+              color: var(--text-1); overflow-wrap: anywhere; }
+  .modal-body p { margin: 0 0 8px; }
 </style>
 </head>
 <body>
@@ -255,16 +449,16 @@ select.select { appearance: none;
 
 <nav class="sider">
   <div class="menu-group">数据质检</div>
-  <div class="menu-item active">
+  <a class="menu-item active" href="tasks.html">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2.5" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M5 6.5h6M5 9.5h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
     质检任务
-  </div>
-  <div class="menu-item">
+  </a>
+  <a class="menu-item" href="credentials.html">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10.5 2.5a3.5 3.5 0 00-3.2 4.9L2.5 12.2v1.3h1.3l4.8-4.8a3.5 3.5 0 102-6.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
     密钥与资源
-  </div>
+  </a>
   <div class="menu-group">帮助</div>
-  <div class="menu-item">
+  <div class="menu-item" data-toast="静态预览稿不含使用文档">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3"/><path d="M6.4 6.2a1.7 1.7 0 113.2.8c-.4.6-1.6.8-1.6 1.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>
     使用文档
   </div>
@@ -286,8 +480,8 @@ select.select { appearance: none;
   </div>
 
   <div class="stats">
-    <div class="stat"><div class="k">运行中</div><div class="v">2</div></div>
-    <div class="stat"><div class="k">待人工裁决</div><div class="v">44 <small>条轨迹</small></div></div>
+    <div class="stat"><div class="k">运行中</div><div class="v">1 <small>另有 1 个排队</small></div></div>
+    <div class="stat"><div class="k">待人工裁决</div><div class="v">42 <small>条轨迹</small></div></div>
     <div class="stat"><div class="k">近 7 天完成</div><div class="v">18 <small>个任务</small></div></div>
     <div class="stat"><div class="k">本月 Token 消耗</div><div class="v">42.6M</div></div>
   </div>
@@ -298,15 +492,17 @@ select.select { appearance: none;
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.6" stroke="#86909C" stroke-width="1.3"/><path d="M10.6 10.6L14 14" stroke="#86909C" stroke-width="1.3" stroke-linecap="round"/></svg>
         <input class="input" placeholder="搜索任务名称或 ID">
       </div>
-      <select class="select" style="width:140px">
-        <option>全部状态</option><option>运行中</option><option>排队中</option>
-        <option>已暂停</option><option>已完成</option><option>部分错误</option><option>失败</option>
+      <select class="select" style="width:190px" id="stateFilter">
+        <option>全部状态</option><option>待启动</option><option>排队中</option><option>运行中</option>
+        <option>已暂停</option><option>已停止</option><option>已完成</option><option>部分错误</option>
+        <option>失败</option><option>已删除（30 天内可恢复）</option>
       </select>
       <select class="select" style="width:160px">
-        <option>全部数据集</option><option>umi_640_notask</option><option>droid-200</option>
+        <option>全部数据集</option><option>droid_100</option><option>umi_640_notask</option><option>droid-200</option>
       </select>
       <div class="spacer"></div>
-      <button class="btn btn-outline btn-icon" title="刷新">
+      <span class="muted" style="font-size:12px">有未结束的任务，每 5 秒自动刷新</span>
+      <button class="btn btn-outline btn-icon" title="刷新" data-toast="已刷新">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.2 8a5.2 5.2 0 11-1.6-3.7" stroke="#4E5969" stroke-width="1.3" stroke-linecap="round"/><path d="M13.4 2.2v3.2h-3.2" stroke="#4E5969" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </div>
@@ -314,172 +510,326 @@ select.select { appearance: none;
     <table class="table">
       <thead>
         <tr>
-          <th style="min-width:230px">任务名称</th>
+          <th style="min-width:200px">任务名称</th>
           <th>状态</th>
           <th>数据集</th>
-          <th class="nowrap">质检模块</th>
-          <th style="min-width:150px">进度</th>
+          <th class="nowrap" style="min-width:96px">质检模块</th>
+          <th style="min-width:180px">进度 / 结果</th>
           <th class="nowrap">Token 消耗</th>
           <th class="nowrap">创建时间</th>
-          <th style="width:150px">操作</th>
+          <th style="width:170px">操作</th>
         </tr>
       </thead>
       <tbody id="rows">
-        <tr>
+        <tr data-name="libero-10 抽检" data-path="" data-size="">
           <td>
-            <div class="task-name"><a href="#">umi_640 全量质检</a></div>
-            <div class="sub mono">task_01HXQ7M4</div>
+            <div class="task-name"><a href="task-detail.html">libero-10 抽检</a></div>
+            <div class="sub mono">task_01HXR6T3</div>
           </td>
-          <td><span class="tag tag-blue tag-running"><i class="dot"></i>运行中</span></td>
-          <td>umi_640_notask<div class="sub">640 条</div></td>
-          <td>8 / 8</td>
+          <td><span class="tag tag-outline-blue"><i class="dot"></i>待启动</span></td>
+          <td>libero_10<div class="sub">前 200 条</div></td>
+          <td>6 个<div class="sub">快速质检</div></td>
           <td>
-            <div class="progress"><div class="bar"><i style="width:65%"></i></div><span class="pct">65%</span></div>
-            <div class="sub">任务成败判定 · 剩余约 24 分钟</div>
+            <div class="progress"><div class="bar"><i style="width:0"></i></div><span class="pct">—</span></div>
+            <div class="sub">还没启动，配置都能改</div>
           </td>
-          <td class="mono" title="prompt 1.74M · completion 82K">1.82M</td>
-          <td class="nowrap">09-20 14:02</td>
+          <td class="mono muted">—</td>
+          <td class="nowrap">09-20 14:52</td>
           <td>
             <div class="ops">
-              <button class="btn btn-text">查看</button>
+              <button class="btn btn-text" data-toast="静态预览稿：启动前会检查数据集能读、交付目录能写">启动</button>
               <div class="menu-pop">
                 <button class="btn btn-text js-more">更多 ▾</button>
                 <div class="pop">
-                  <button>暂停</button><button>停止</button>
-                  <div class="sep"></div><button class="danger" disabled>删除</button>
+                  <a href="task-new.html">编辑</a><a href="task-new.html">复制为新任务</a>
+                  <div class="sep"></div><button class="danger" data-act="delete">删除</button>
                 </div>
               </div>
             </div>
           </td>
         </tr>
 
-        <tr>
+        <tr data-name="bridge-v2 全量" data-path="" data-size="">
           <td>
-            <div class="task-name"><a href="#">droid-200 抽检</a><span class="badge-sub">待裁决 32</span></div>
+            <div class="task-name"><a href="task-detail.html">bridge-v2 全量</a></div>
+            <div class="sub mono">task_01HXR5Q2</div>
+          </td>
+          <td><span class="tag tag-gray"><i class="dot"></i>排队中</span></td>
+          <td>bridge_v2<div class="sub">2,048 条</div></td>
+          <td>8 个</td>
+          <td>
+            <div class="progress"><div class="bar"><i style="width:0"></i></div><span class="pct">—</span></div>
+            <div class="sub">排第 1 位，等当前任务结束</div>
+          </td>
+          <td class="mono muted">—</td>
+          <td class="nowrap">09-20 14:31</td>
+          <td>
+            <div class="ops">
+              <a class="btn btn-text" href="task-detail.html">查看</a>
+              <div class="menu-pop">
+                <button class="btn btn-text js-more">更多 ▾</button>
+                <div class="pop">
+                  <button data-toast="静态预览稿：取消后任务变为已停止">取消排队</button>
+                  <div class="sep"></div><button class="danger" disabled title="排队中的任务不能删除，先取消排队">删除</button>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+
+        <tr data-name="umi_640 全量质检" data-path="" data-size="">
+          <td>
+            <div class="task-name"><a href="task-detail.html">umi_640 全量质检</a></div>
+            <div class="sub mono">task_01HXR4M7</div>
+          </td>
+          <td><span class="tag tag-blue tag-running"><i class="dot"></i>运行中</span></td>
+          <td>umi_640_notask<div class="sub">640 条</div></td>
+          <td>3 / 7</td>
+          <td>
+            <div class="progress"><div class="bar"><i style="width:65%"></i></div><span class="pct">65%</span></div>
+            <div class="sub">VLM 档 · 剩余约 24 分钟</div>
+          </td>
+          <td class="mono" title="输入 1.74M · 输出 82K">1.82M</td>
+          <td class="nowrap">09-20 14:10</td>
+          <td>
+            <div class="ops">
+              <a class="btn btn-text" href="task-detail.html">查看</a>
+              <div class="menu-pop">
+                <button class="btn btn-text js-more">更多 ▾</button>
+                <div class="pop">
+                  <button data-toast="静态预览稿：在飞的 episode 跑完后暂停">暂停</button>
+                  <button data-toast="静态预览稿：停止后可以继续运行">停止</button>
+                  <div class="sep"></div><button class="danger" disabled title="运行中的任务不能删除，先停止">删除</button>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+
+        <tr data-name="droid 前 50 条质检" data-path="tos://pai-kit-deliveries/droid-50/20260920-130514/" data-size="212 MB，1,318 个对象">
+          <td>
+            <div class="task-name">
+              <a href="task-detail.html">droid 前 50 条质检</a>
+              <a class="badge-sub" href="task-adjudication.html">待裁决 10</a>
+              <span class="badge-warn" title="判决已更新，交付数据集待重新导出">交付待导出</span>
+            </div>
+            <div class="sub mono">task_01HXR2D8</div>
+          </td>
+          <td><span class="tag tag-orange"><i class="dot"></i>部分错误</span></td>
+          <td>droid_100<div class="sub">前 50 条</div></td>
+          <td>6 / 7<div class="sub nowrap">1 个部分错误</div></td>
+          <td>
+            <div class="progress"><div class="bar is-err"><i style="width:100%"></i></div><span class="pct">100%</span></div>
+            <div class="sub">通过 41 · 拒绝 7 · 待补跑 2</div><div class="sub">通过率 82%</div>
+          </td>
+          <td class="mono" title="输入 2.01M · 输出 67.5K">2.08M</td>
+          <td class="nowrap">09-20 13:05</td>
+          <td>
+            <div class="ops">
+              <a class="btn btn-text" href="task-report.html">查看报告</a>
+              <div class="menu-pop">
+                <button class="btn btn-text js-more">更多 ▾</button>
+                <div class="pop">
+                  <button data-toast="静态预览稿：只补跑出错的 2 条，建一个重试子任务">重试（2 条）</button>
+                  <a href="task-adjudication.html">人工裁决</a>
+                  <button data-toast="静态预览稿：增量导出，只处理变动的 episode">重新导出</button>
+                  <a href="task-new.html">复制为新任务</a>
+                  <div class="sep"></div>
+                  <button class="danger" data-act="purge">清理交付产物</button>
+                  <button class="danger" data-act="delete">删除</button>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+
+        <tr data-name="droid-200 抽检" data-path="tos://pai-kit-deliveries/droid-200/20260920-093106/" data-size="38.4 GB，2,947 个对象">
+          <td>
+            <div class="task-name"><a href="task-detail.html">droid-200 抽检</a><a class="badge-sub" href="task-adjudication.html">待裁决 32</a></div>
             <div class="sub mono">task_01HXQ5R9</div>
           </td>
           <td><span class="tag tag-green"><i class="dot"></i>已完成</span></td>
           <td>droid-200<div class="sub">200 条</div></td>
-          <td>8 / 8</td>
+          <td>7 / 7</td>
           <td>
             <div class="progress"><div class="bar is-done"><i style="width:100%"></i></div><span class="pct">100%</span></div>
-            <div class="sub">通过 156 · 拒绝 12 · 待裁决 32</div>
+            <div class="sub">通过 188 · 拒绝 12</div><div class="sub">通过率 94%</div>
           </td>
           <td class="mono">3.41M</td>
           <td class="nowrap">09-20 09:31</td>
           <td>
             <div class="ops">
-              <button class="btn btn-text">查看报告</button>
+              <a class="btn btn-text" href="task-report.html">查看报告</a>
               <div class="menu-pop">
                 <button class="btn btn-text js-more">更多 ▾</button>
                 <div class="pop">
-                  <button>人工裁决</button><button>重新导出</button>
-                  <div class="sep"></div><button class="danger">删除</button>
+                  <a href="task-adjudication.html">人工裁决</a>
+                  <button data-toast="静态预览稿：增量导出，只处理变动的 episode">重新导出</button>
+                  <a href="task-new.html">复制为新任务</a>
+                  <div class="sep"></div>
+                  <button class="danger" data-act="purge">清理交付产物</button>
+                  <button class="danger" data-act="delete">删除</button>
                 </div>
               </div>
             </div>
           </td>
         </tr>
 
-        <tr>
+        <tr data-name="so101 夜间批次" data-path="tos://pai-kit-deliveries/so101-nightly/20260920-020003/" data-size="96.7 GB，6,215 个对象">
           <td>
-            <div class="task-name"><a href="#">so101 夜间批次</a></div>
+            <div class="task-name">
+              <a href="task-detail.html">so101 夜间批次</a>
+              <span class="badge-gray" title="主流程结束时 6 条出错（部分错误）；重试把 6 条都补回来之后变为已完成。经过记在任务详情的时间线里。">补跑过 1 次</span>
+            </div>
             <div class="sub mono">task_01HXPZ2K</div>
           </td>
-          <td><span class="tag tag-orange"><i class="dot"></i>部分错误</span></td>
+          <td><span class="tag tag-green"><i class="dot"></i>已完成</span></td>
           <td>so101-nightly<div class="sub">1,024 条</div></td>
-          <td>7 / 8 <span class="muted">（1 失败）</span></td>
+          <td>8 / 8</td>
           <td>
-            <div class="progress"><div class="bar is-err"><i style="width:100%"></i></div><span class="pct">100%</span></div>
-            <div class="sub">视频-动作同步：模型端点不可达</div>
+            <div class="progress"><div class="bar is-done"><i style="width:100%"></i></div><span class="pct">100%</span></div>
+            <div class="sub">通过 968 · 拒绝 56</div><div class="sub">通过率 94.5%</div>
           </td>
           <td class="mono">5.07M</td>
           <td class="nowrap">09-20 02:00</td>
           <td>
             <div class="ops">
-              <button class="btn btn-text">查看报告</button>
+              <a class="btn btn-text" href="task-report.html">查看报告</a>
               <div class="menu-pop">
                 <button class="btn btn-text js-more">更多 ▾</button>
                 <div class="pop">
-                  <button>重试失败模块</button><button>重新导出</button>
-                  <div class="sep"></div><button class="danger">删除</button>
+                  <button data-toast="静态预览稿：增量导出，只处理变动的 episode">重新导出</button>
+                  <a href="task-new.html">复制为新任务</a>
+                  <div class="sep"></div>
+                  <button class="danger" data-act="purge">清理交付产物</button>
+                  <button class="danger" data-act="delete">删除</button>
                 </div>
               </div>
             </div>
           </td>
         </tr>
 
-        <tr>
+        <tr data-name="widowx 回归" data-path="" data-size="">
           <td>
-            <div class="task-name"><a href="#">agibot 预检回归</a></div>
+            <div class="task-name"><a href="task-detail.html">widowx 回归</a></div>
+            <div class="sub mono">task_01HXPX4W</div>
+          </td>
+          <td>
+            <span class="tag tag-gray" title="Daemon 升级或重启时由系统暂停，新版本起来后自动续跑">
+              <svg class="ico" width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M9.8 6A3.8 3.8 0 112.9 3.8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M10 1.8v2.4H7.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              已暂停 · 系统将自动恢复
+            </span>
+          </td>
+          <td>widowx-recheck<div class="sub">430 条</div></td>
+          <td>5 / 8</td>
+          <td>
+            <div class="progress"><div class="bar is-stop"><i style="width:42%"></i></div><span class="pct">42%</span></div>
+            <div class="sub">停在 VLM 档 180 / 430</div><div class="sub">Daemon 重启后自动续跑</div>
+          </td>
+          <td class="mono">0.66M</td>
+          <td class="nowrap">09-19 23:40</td>
+          <td>
+            <div class="ops">
+              <a class="btn btn-text" href="task-detail.html">查看</a>
+              <div class="menu-pop">
+                <button class="btn btn-text js-more">更多 ▾</button>
+                <div class="pop">
+                  <button disabled title="系统会自动恢复，不需要手动操作">恢复</button>
+                  <button data-toast="静态预览稿：停止后不再自动恢复">停止</button>
+                  <div class="sep"></div><button class="danger" disabled title="未结束的任务不能删除，先停止">删除</button>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+
+        <tr data-name="agibot 预检回归" data-path="" data-size="">
+          <td>
+            <div class="task-name"><a href="task-detail.html">agibot 预检回归</a></div>
             <div class="sub mono">task_01HXPW8D</div>
           </td>
           <td><span class="tag"><i class="dot"></i>已暂停</span></td>
           <td>agibot-world<div class="sub">3,200 条</div></td>
           <td>6 / 8</td>
           <td>
-            <div class="progress"><div class="bar"><i style="width:38%"></i></div><span class="pct">38%</span></div>
-            <div class="sub">已完成 1,216 条，可从断点继续</div>
+            <div class="progress"><div class="bar is-stop"><i style="width:38%"></i></div><span class="pct">38%</span></div>
+            <div class="sub">已完成 1,216 / 3,200 条</div><div class="sub">恢复后从断点继续</div>
           </td>
           <td class="mono">0.94M</td>
           <td class="nowrap">09-19 21:44</td>
           <td>
             <div class="ops">
-              <button class="btn btn-text">恢复</button>
+              <button class="btn btn-text" data-toast="静态预览稿：重新排队，从断点继续">恢复</button>
               <div class="menu-pop">
                 <button class="btn btn-text js-more">更多 ▾</button>
                 <div class="pop">
-                  <button>查看</button><button>停止</button>
-                  <div class="sep"></div><button class="danger">删除</button>
+                  <a href="task-detail.html">查看</a>
+                  <button data-toast="静态预览稿：停止后可以继续运行">停止</button>
+                  <div class="sep"></div><button class="danger" disabled title="未结束的任务不能删除，先停止">删除</button>
                 </div>
               </div>
             </div>
           </td>
         </tr>
 
-        <tr>
+        <tr data-name="franka 20 条冒烟" data-path="tos://pai-kit-deliveries/franka-smoke/20260919-182533/" data-size="3.1 MB，41 个对象">
           <td>
-            <div class="task-name"><a href="#">bridge-v2 全量</a></div>
-            <div class="sub mono">task_01HXPT1A</div>
+            <div class="task-name"><a href="task-detail.html">franka 20 条冒烟</a></div>
+            <div class="sub mono">task_01HXPN6F</div>
           </td>
-          <td><span class="tag tag-gray"><i class="dot"></i>排队中</span></td>
-          <td>bridge_v2<div class="sub">2,048 条</div></td>
-          <td>8 / 8</td>
-          <td><div class="progress"><div class="bar"><i style="width:0"></i></div><span class="pct">—</span></div>
-            <div class="sub">前面还有 1 个任务</div></td>
-          <td class="mono muted">—</td>
-          <td class="nowrap">09-19 20:10</td>
+          <td><span class="tag tag-red"><i class="dot"></i>失败</span></td>
+          <td>franka-smoke<div class="sub">20 条</div></td>
+          <td>2 / 8</td>
+          <td>
+            <div class="progress"><div class="bar is-fail"><i style="width:25%"></i></div><span class="pct">25%</span></div>
+            <div class="sub">数值档之后访问密钥失效</div><div class="sub mono">InvalidAccessKeyId</div>
+          </td>
+          <td class="mono">0.03M</td>
+          <td class="nowrap">09-19 18:25</td>
           <td>
             <div class="ops">
-              <button class="btn btn-text">查看</button>
+              <button class="btn btn-text" data-toast="静态预览稿：继续运行前会重新检查访问密钥">继续运行</button>
               <div class="menu-pop">
                 <button class="btn btn-text js-more">更多 ▾</button>
-                <div class="pop"><button>取消排队</button><div class="sep"></div><button class="danger">删除</button></div>
+                <div class="pop">
+                  <a href="task-detail.html">查看原因</a>
+                  <a href="task-report.html">查看报告</a>
+                  <a href="task-new.html">复制为新任务</a>
+                  <div class="sep"></div>
+                  <button class="danger" data-act="purge">清理交付产物</button>
+                  <button class="danger" data-act="delete">删除</button>
+                </div>
               </div>
             </div>
           </td>
         </tr>
 
-        <tr>
+        <tr data-name="aloha 手眼标定" data-path="tos://pai-kit-deliveries/aloha-calib/20260919-160211/" data-size="7.9 GB，903 个对象">
           <td>
-            <div class="task-name"><a href="#">franka 20 条冒烟</a></div>
-            <div class="sub mono">task_01HXPN6F</div>
+            <div class="task-name"><a href="task-detail.html">aloha 手眼标定</a></div>
+            <div class="sub mono">task_01HXPJ3C</div>
           </td>
-          <td><span class="tag tag-red"><i class="dot"></i>失败</span></td>
-          <td>franka-smoke<div class="sub">20 条</div></td>
-          <td>0 / 8</td>
+          <td><span class="tag tag-gray"><i class="dot"></i>已停止</span></td>
+          <td>aloha-calib<div class="sub">480 条</div></td>
+          <td>4 / 8</td>
           <td>
-            <div class="progress"><div class="bar"><i style="width:0"></i></div><span class="pct">—</span></div>
-            <div class="sub">TOS 凭证校验失败：AccessDenied</div>
+            <div class="progress"><div class="bar is-stop"><i style="width:40%"></i></div><span class="pct">40%</span></div>
+            <div class="sub">已完成 4 个模块</div><div class="sub">可以继续运行</div>
           </td>
-          <td class="mono muted">—</td>
-          <td class="nowrap">09-19 18:25</td>
+          <td class="mono">0.31M</td>
+          <td class="nowrap">09-19 16:02</td>
           <td>
             <div class="ops">
-              <button class="btn btn-text">查看原因</button>
+              <button class="btn btn-text" data-toast="静态预览稿：从断点接着跑没完成的部分">继续运行</button>
               <div class="menu-pop">
                 <button class="btn btn-text js-more">更多 ▾</button>
-                <div class="pop"><button>重新创建</button><div class="sep"></div><button class="danger">删除</button></div>
+                <div class="pop">
+                  <a href="task-report.html">查看报告</a>
+                  <a href="task-new.html">复制为新任务</a>
+                  <div class="sep"></div>
+                  <button class="danger" data-act="purge">清理交付产物</button>
+                  <button class="danger" data-act="delete">删除</button>
+                </div>
               </div>
             </div>
           </td>
@@ -487,52 +837,258 @@ select.select { appearance: none;
       </tbody>
     </table>
 
-    <div class="list-foot">
-      <span>已加载 <b id="loaded">6</b> / 共 128 条</span>
-      <button class="btn btn-outline" id="more">加载更多</button>
-      <span class="muted">滚动到底部自动加载</span>
-    </div>
+    <div class="pager" id="pager"></div>
   </div>
 </main>
 
-<div class="mockup-note">
-  <b>静态预览稿</b> · 仅用于确定视觉风格<br>
-  数据为假数据，交互不接后端<br><span style="opacity:.6">点此关闭</span>
+<div class="mask" id="mask"></div>
+
+<div class="modal" id="delModal" role="dialog" aria-labelledby="delTitle">
+  <div class="modal-head" id="delTitle">删除任务<div class="spacer"></div>
+    <button class="x-close" data-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="modal-body">
+    <p>删除「<b id="delName"></b>」？</p>
+    <p>只删平台里的任务记录，TOS 上的交付产物不动。30 天内可以在「已删除」筛选里恢复，之后连同裁决记录、Token 统计一起清除。</p>
+    <p class="muted">要删 TOS 上的产物，用「清理交付产物」。</p>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" data-close>取消</button>
+    <button class="btn btn-danger" data-close data-toast="静态预览稿：任务记录已移到「已删除」">删除</button>
+  </div>
 </div>
 
+<div class="modal" id="purgeModal" role="dialog" aria-labelledby="purgeTitle">
+  <div class="modal-head" id="purgeTitle">清理交付产物<div class="spacer"></div>
+    <button class="x-close" data-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="modal-body">
+    <p>会删掉这个任务在 TOS 上的批次目录，删了不能恢复：</p>
+    <div class="path-box mono" id="purgePath"></div>
+    <p class="muted">共 <span id="purgeSize"></span>。同一交付目录下别的任务的批次不动；latest 如果指向这个批次，会一并移除。平台里的任务记录保留。</p>
+    <label class="label" for="purgeInput"><span class="req">*</span>输入任务名称「<b id="purgeName"></b>」确认</label>
+    <input class="input" id="purgeInput" autocomplete="off">
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" data-close>取消</button>
+    <button class="btn btn-danger" id="purgeGo" disabled data-close data-toast="静态预览稿：已提交清理，完成后列表里会标出">清理</button>
+  </div>
+</div>
+
+<div class="mockup-note">
+  <b>静态预览稿</b> · 第二批<br>
+  数据为假数据，交互不接后端<br><span style="opacity:.6">点此关闭</span>
+</div>
+<div class="toast" id="toast"></div>
+
 <script>
-  // 下拉菜单
-  document.addEventListener('click', function (e) {
-    var hit = e.target.closest('.js-more');
-    document.querySelectorAll('.menu-pop.open').forEach(function (n) {
-      if (!hit || n !== hit.parentElement) n.classList.remove('open');
+// Shared mockup helpers (same block in all six pages): menus, tabs, folds,
+// drawers / modals, toast and chart tooltips. No network, no storage.
+(function () {
+  var note = document.querySelector('.mockup-note');
+  if (note) note.addEventListener('click', function () { note.style.display = 'none'; });
+
+  var toastEl = document.getElementById('toast'), toastTimer;
+  window.toast = function (msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 2600);
+  };
+
+  window.openLayer = function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var mask = document.getElementById('mask');
+    if (mask) mask.classList.add('open');
+    el.classList.add('open');
+  };
+  window.closeLayers = function () {
+    document.querySelectorAll('.drawer.open, .modal.open, .mask.open').forEach(function (n) {
+      n.classList.remove('open');
     });
-    if (hit) hit.parentElement.classList.toggle('open');
+  };
+
+  document.addEventListener('click', function (e) {
+    // dropdown menus
+    var more = e.target.closest('.js-more');
+    document.querySelectorAll('.menu-pop.open').forEach(function (n) {
+      if (!more || n !== more.parentElement) n.classList.remove('open');
+    });
+    if (more) { more.parentElement.classList.toggle('open'); return; }
+
+    // tabs: .tabs[data-tabs=g] > .tab[data-pane=id]; panes: .pane[data-group=g]
+    var tab = e.target.closest('.tab[data-pane]');
+    if (tab) {
+      var bar = tab.closest('.tabs');
+      bar.querySelectorAll('.tab').forEach(function (b) { b.classList.toggle('active', b === tab); });
+      document.querySelectorAll('.pane[data-group="' + bar.dataset.tabs + '"]').forEach(function (p) {
+        p.classList.toggle('active', p.id === tab.dataset.pane);
+      });
+      return;
+    }
+
+    // folds
+    var head = e.target.closest('.fold-head');
+    if (head && !e.target.closest('.fold-head a, .fold-head button, .fold-head select, .fold-head input')) {
+      head.parentElement.classList.toggle('open');
+    }
+
+    // layers
+    var opener = e.target.closest('[data-open]');
+    if (opener) { e.preventDefault(); openLayer(opener.dataset.open); return; }
+    if (e.target.closest('[data-close]') || e.target.id === 'mask') { closeLayers(); return; }
+
+    // mockup-only actions
+    var t = e.target.closest('[data-toast]');
+    if (t && !t.disabled) toast(t.dataset.toast);
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeLayers(); });
+
+  // chart tooltips: data-tip="value|label|more…"; values lead, labels follow
+  var tip = document.createElement('div');
+  tip.className = 'tip';
+  document.body.appendChild(tip);
+  function show(el, x, y) {
+    var parts = el.getAttribute('data-tip').split('|');
+    tip.textContent = '';
+    parts.forEach(function (p, i) {
+      var n = document.createElement(i === 0 ? 'b' : 'div');
+      n.textContent = p;
+      tip.appendChild(n);
+    });
+    tip.style.display = 'block';
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(x + 14, window.innerWidth - w - 8) + 'px';
+    tip.style.top = Math.max(8, y - h - 10) + 'px';
+  }
+  document.addEventListener('mousemove', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (el) show(el, e.clientX, e.clientY); else tip.style.display = 'none';
+  });
+  document.addEventListener('focusin', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) return;
+    var r = el.getBoundingClientRect();
+    show(el, r.left + r.width / 2, r.top);
+  });
+  document.addEventListener('focusout', function () { tip.style.display = 'none'; });
+})();
+</script>
+<script>
+  // Row actions that need the row's own data (delete / purge confirmations).
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('.pop [data-act]');
+    if (!b || b.disabled) return;
+    var tr = b.closest('tr');
+    document.querySelectorAll('.menu-pop.open').forEach(function (n) { n.classList.remove('open'); });
+    if (b.dataset.act === 'delete') {
+      document.getElementById('delName').textContent = tr.dataset.name;
+      openLayer('delModal');
+    } else {
+      document.getElementById('purgeName').textContent = tr.dataset.name;
+      document.getElementById('purgePath').textContent = tr.dataset.path;
+      document.getElementById('purgeSize').textContent = tr.dataset.size;
+      var inp = document.getElementById('purgeInput');
+      inp.value = '';
+      inp.dataset.expect = tr.dataset.name;
+      document.getElementById('purgeGo').disabled = true;
+      openLayer('purgeModal');
+      inp.focus();
+    }
+  });
+  document.getElementById('purgeInput').addEventListener('input', function () {
+    document.getElementById('purgeGo').disabled = this.value.trim() !== this.dataset.expect;
+  });
+  document.getElementById('stateFilter').addEventListener('change', function () {
+    toast('静态预览稿：按「' + this.value + '」筛选，回到第 1 页');
   });
 
-  // 加载更多：演示游标分页 + Lazy Loading 的手感
-  var extra = [
-    ['aloha 手眼标定', 'task_01HXPJ3C', 'tag-gray', '已停止', 'aloha-calib', '480 条', '4 / 8', 40, '用户手动停止', '0.31M', '09-19 16:02'],
-    ['widowx 复检', 'task_01HXPE9B', 'tag-green', '已完成', 'widowx-recheck', '96 条', '8 / 8', 100, '通过 88 · 拒绝 8', '0.77M', '09-19 11:20']
-  ];
-  var i = 0;
-  document.getElementById('more').addEventListener('click', function () {
-    if (i >= extra.length) { this.disabled = true; this.textContent = '没有更多了'; return; }
-    var d = extra[i++];
+  // Page-number pagination demo: page 1 rows are hand-written above; the rest are generated.
+  var TOTAL = 128, page = 1, size = 10;
+  var tbody = document.getElementById('rows');
+  var fixedRows = Array.prototype.slice.call(tbody.children);
+  var DS = [['bridge_v2', '2,048 条'], ['droid-200', '200 条'], ['so101-nightly', '1,024 条'], ['umi_640_notask', '640 条'],
+            ['agibot-world', '3,200 条'], ['widowx-recheck', '430 条'], ['pusht', '206 条'], ['libero_10', '379 条']];
+  var KIND = ['日常回归', '夜间批次', '抽检', '全量质检', '复检'];
+  var STATES = ['done', 'done', 'done', 'err', 'done', 'stop', 'done', 'fail'];
+
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function when(i) {
+    var d = new Date(2026, 8, 19, 12, 0);
+    d.setMinutes(d.getMinutes() - (i - 11) * 223);
+    return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function genRow(i) {
+    var ds = DS[i % DS.length], st = STATES[i % STATES.length];
+    var name = ds[0].replace(/_/g, '-') + ' ' + KIND[i % KIND.length] + ' #' + (140 - i);
+    var tag = { done: ['tag-green', '已完成'], err: ['tag-orange', '部分错误'], stop: ['tag-gray', '已停止'], fail: ['tag-red', '失败'] }[st];
+    var pass = 80 + (i * 7) % 18;
+    var sub = { done: '通过率 ' + pass + '%', err: '通过率 ' + pass + '% · 待补跑 ' + (1 + i % 4),
+                stop: 'galbot 停止，可以继续运行', fail: '源数据中途被改动，不能继续' }[st];
+    var bar = { done: 'is-done', err: 'is-err', stop: 'is-stop', fail: 'is-fail' }[st];
+    var w = st === 'stop' ? 55 : st === 'fail' ? 30 : 100;
+    var primary = (st === 'done' || st === 'err') ? '<a class="btn btn-text" href="task-report.html">查看报告</a>'
+      : st === 'stop' ? '<button class="btn btn-text" data-toast="静态预览稿：从断点接着跑没完成的部分">继续运行</button>'
+      : '<a class="btn btn-text" href="task-new.html" title="源数据变了，不能继续运行">复制为新任务</a>';
     var tr = document.createElement('tr');
+    tr.dataset.name = name;
+    tr.dataset.path = 'tos://pai-kit-deliveries/' + ds[0].replace(/_/g, '-') + '/2026' + when(i).replace(/[- :]/g, '').slice(0, 4) + '-' + when(i).slice(6).replace(':', '') + '00/';
+    tr.dataset.size = (1 + i % 9) + '.' + (i % 10) + ' GB，' + (300 + i * 17) + ' 个对象';
     tr.innerHTML =
-      '<td><div class="task-name"><a href="#">' + d[0] + '</a></div><div class="sub mono">' + d[1] + '</div></td>' +
-      '<td><span class="tag ' + d[2] + '"><i class="dot"></i>' + d[3] + '</span></td>' +
-      '<td>' + d[4] + '<div class="sub">' + d[5] + '</div></td>' +
-      '<td>' + d[6] + '</td>' +
-      '<td><div class="progress"><div class="bar' + (d[7] === 100 ? ' is-done' : '') + '"><i style="width:' + d[7] + '%"></i></div>' +
-      '<span class="pct">' + d[7] + '%</span></div><div class="sub">' + d[8] + '</div></td>' +
-      '<td class="mono">' + d[9] + '</td><td class="nowrap">' + d[10] + '</td>' +
-      '<td><div class="ops"><button class="btn btn-text">查看</button></div></td>';
-    document.getElementById('rows').appendChild(tr);
-    document.getElementById('loaded').textContent = document.querySelectorAll('#rows tr').length;
+      '<td><div class="task-name"><a href="task-detail.html"></a></div><div class="sub mono">task_01HX' + (50000 + i * 997).toString(36).toUpperCase() + '</div></td>' +
+      '<td><span class="tag ' + tag[0] + '"><i class="dot"></i>' + tag[1] + '</span></td>' +
+      '<td>' + ds[0] + '<div class="sub">' + ds[1] + '</div></td>' +
+      '<td>' + (st === 'stop' || st === 'fail' ? (2 + i % 4) + ' / 8' : '8 / 8') + '</td>' +
+      '<td><div class="progress"><div class="bar ' + bar + '"><i style="width:' + w + '%"></i></div><span class="pct">' + w + '%</span></div><div class="sub">' + sub + '</div></td>' +
+      '<td class="mono">' + (0.2 + (i % 13) * 0.37).toFixed(2) + 'M</td>' +
+      '<td class="nowrap">' + when(i) + '</td>' +
+      '<td><div class="ops">' + primary + '<div class="menu-pop"><button class="btn btn-text js-more">更多 ▾</button><div class="pop">' +
+        '<a href="task-report.html">查看报告</a><a href="task-new.html">复制为新任务</a><div class="sep"></div>' +
+        '<button class="danger" data-act="purge">清理交付产物</button><button class="danger" data-act="delete">删除</button></div></div></div></td>';
+    tr.querySelector('.task-name a').textContent = name;
+    return tr;
+  }
+  function render() {
+    tbody.textContent = '';
+    var from = (page - 1) * size + 1, to = Math.min(TOTAL, page * size);
+    for (var i = from; i <= to; i++) tbody.appendChild(i <= fixedRows.length ? fixedRows[i - 1] : genRow(i));
+    renderPager();
+  }
+  function renderPager() {
+    var pages = Math.ceil(TOTAL / size), el = document.getElementById('pager');
+    var list = [];
+    if (pages <= 7) { for (var p = 1; p <= pages; p++) list.push(p); }
+    else if (page <= 4) list = [1, 2, 3, 4, 5, 0, pages];
+    else if (page >= pages - 3) list = [1, 0, pages - 4, pages - 3, pages - 2, pages - 1, pages];
+    else list = [1, 0, page - 1, page, page + 1, 0, pages];
+    var html = '<span class="total">共 ' + TOTAL + ' 条</span>' +
+      '<button class="pg" data-go="' + (page - 1) + '"' + (page === 1 ? ' disabled' : '') + ' aria-label="上一页">‹</button>';
+    list.forEach(function (p) {
+      html += p === 0 ? '<span class="gap">…</span>'
+        : '<button class="pg' + (p === page ? ' active' : '') + '" data-go="' + p + '">' + p + '</button>';
+    });
+    html += '<button class="pg" data-go="' + (page + 1) + '"' + (page === pages ? ' disabled' : '') + ' aria-label="下一页">›</button>' +
+      '<select class="select" id="pageSize">' + [10, 20, 50, 100].map(function (n) {
+        return '<option value="' + n + '"' + (n === size ? ' selected' : '') + '>' + n + ' 条/页</option>';
+      }).join('') + '</select>' +
+      '<span class="jump">前往<input class="input" id="jump" inputmode="numeric">页</span>';
+    el.innerHTML = html;
+    document.getElementById('pageSize').addEventListener('change', function () {
+      size = +this.value; page = 1; render();
+    });
+    document.getElementById('jump').addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      var n = parseInt(this.value, 10);
+      if (n >= 1 && n <= pages) { page = n; render(); }
+    });
+  }
+  document.getElementById('pager').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-go]');
+    if (!b || b.disabled) return;
+    page = +b.dataset.go; render();
   });
+  render();
 </script>
-<script>document.querySelector('.mockup-note').addEventListener('click', function(){ this.style.display='none'; });</script>
 </body>
 </html>

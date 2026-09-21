@@ -213,17 +213,195 @@ select.select { appearance: none;
 }
 .mockup-note b { color: #FFD666; }
 </style>
+
+<style>
+/* ===== shared components, batch 2 (same block in all six pages) ===== */
+/* Added with the second batch. Keep this block identical across pages. */
+a.menu-item, a.menu-item:hover { color: var(--text-1); }
+a.menu-item.active, a.menu-item.active:hover { color: var(--primary-6); }
+.crumb a { color: var(--text-3); }
+.crumb a:hover { color: var(--primary-6); }
+.hidden { display: none !important; }
+.btn-sm { height: 24px; padding: 0 8px; font-size: 12px; }
+.btn-danger { background: var(--danger-6); color: #fff; }
+.btn-danger:hover { background: #F76560; }
+.btn-danger[disabled] { background: var(--fill-2); color: var(--text-4); }
+.btn-text-danger { background: transparent; padding: 0 8px; color: var(--danger-6); }
+.btn-text-danger:hover { background: var(--danger-1); }
+.btn-text[disabled], .btn-text-danger[disabled] { background: transparent; color: var(--text-4); }
+.tag-outline { background: var(--white); color: var(--text-2); border: 1px solid var(--border); }
+.num { font-variant-numeric: tabular-nums; }
+.req { color: var(--danger-6); margin-right: 4px; }
+
+/* segmented control */
+.seg { display: inline-flex; background: var(--fill-1); border-radius: var(--radius-sm); padding: 2px; }
+.seg label, .seg button {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0;
+  border-radius: var(--radius-sm); font: inherit; font-size: 13px; color: var(--text-2);
+  background: transparent; cursor: pointer; white-space: nowrap; }
+.seg input { display: none; }
+.seg input:checked + span { color: var(--primary-6); }
+.seg label:has(input:checked), .seg button.on {
+  background: var(--white); box-shadow: var(--shadow-card); color: var(--primary-6); }
+.seg label.is-disabled { color: var(--text-4); cursor: not-allowed; }
+
+/* radio-button group (one answer per question) */
+.rbtn { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.rbtn button {
+  height: 28px; padding: 0 12px; font: inherit; font-size: 13px; color: var(--text-2);
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.rbtn button:hover { border-color: var(--primary-6); color: var(--primary-6); }
+.rbtn button.on { border-color: var(--primary-6); background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.rbtn button.on.is-bad { border-color: var(--danger-6); background: var(--danger-1); color: var(--danger-6); }
+.rbtn button.on.is-hold { border-color: var(--warning-6); background: var(--warning-1); color: var(--warning-6); }
+.rbtn button[disabled] { color: var(--text-4); border-color: var(--border); background: var(--fill-1); cursor: not-allowed; }
+
+/* tabs */
+.tabs { display: flex; gap: 28px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+.tab {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; height: 46px; padding: 0;
+  border: 0; background: none; font: inherit; font-size: 14px; color: var(--text-2); cursor: pointer; }
+.tab:hover { color: var(--text-1); }
+.tab.active { color: var(--primary-6); font-weight: 500; }
+.tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--primary-6); }
+.tab .cnt { font-size: 12px; line-height: 18px; padding: 0 6px; border-radius: 9px; background: var(--fill-2); color: var(--text-3); font-weight: 400; }
+.tab.active .cnt { background: var(--primary-1); color: var(--primary-6); }
+.pane { display: none; }
+.pane.active { display: block; }
+
+/* descriptions (label / value grid) */
+.desc { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 32px; }
+.desc.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.desc .it { display: flex; gap: 12px; font-size: 13px; line-height: 1.6; min-width: 0; }
+.desc .it.full { grid-column: 1 / -1; }
+.desc .k { flex: none; width: 104px; color: var(--text-3); }
+.desc .v { min-width: 0; color: var(--text-1); overflow-wrap: anywhere; }
+
+/* switch */
+.switch {
+  position: relative; display: inline-block; flex: none; width: 28px; height: 16px; padding: 0; border: 0;
+  border-radius: 8px; background: var(--text-4); cursor: pointer; vertical-align: middle; transition: background .15s; }
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; transition: left .15s; }
+.switch.on { background: var(--primary-6); }
+.switch.on::after { left: 14px; }
+
+/* pagination: total on the left, pages / size / jump on the right */
+.pager { display: flex; align-items: center; gap: 8px; padding: 14px 20px; font-size: 13px; color: var(--text-2); }
+.pager .total { margin-right: auto; color: var(--text-3); }
+.pager .pg {
+  min-width: 32px; height: 32px; padding: 0 6px; border: 0; border-radius: var(--radius-sm);
+  background: transparent; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.pager .pg:hover { background: var(--fill-2); }
+.pager .pg.active { background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.pager .pg[disabled] { color: var(--text-4); background: transparent; cursor: not-allowed; }
+.pager .gap { color: var(--text-3); padding: 0 2px; }
+.pager .select { width: 104px; }
+.pager .jump { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); }
+.pager .jump .input { width: 52px; text-align: center; }
+
+/* overlays: mask, right drawer, modal */
+.mask { position: fixed; inset: 0; z-index: 300; background: rgba(29,33,41,.45); display: none; }
+.mask.open { display: block; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 310; width: 640px; max-width: 92vw;
+  display: flex; flex-direction: column; background: var(--white); box-shadow: -6px 0 16px rgba(0,0,0,.08);
+  transform: translateX(105%); transition: transform .2s ease; }
+.drawer.open { transform: none; }
+.drawer.wide { width: 800px; }
+.drawer-head { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+.drawer-title { font-size: 16px; font-weight: 600; }
+.drawer-head .spacer { flex: 1; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 20px; }
+.drawer-foot { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); }
+.drawer-foot .spacer { flex: 1; }
+.modal {
+  position: fixed; top: 14vh; left: 50%; z-index: 320; width: 520px; transform: translateX(-50%);
+  background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow-pop); display: none; }
+.modal.open { display: block; }
+.modal-head { display: flex; align-items: center; gap: 8px; padding: 18px 20px 0; font-size: 16px; font-weight: 600; }
+.modal-head .spacer { flex: 1; }
+.modal-body { padding: 14px 20px 4px; font-size: 14px; color: var(--text-2); }
+.modal-foot { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 20px 18px; }
+.x-close {
+  width: 28px; height: 28px; border: 0; background: none; border-radius: var(--radius-sm); cursor: pointer;
+  display: grid; place-items: center; color: var(--text-3); }
+.x-close:hover { background: var(--fill-2); color: var(--text-1); }
+
+/* toast (operation-level message) */
+.toast {
+  position: fixed; top: 72px; left: 50%; z-index: 400; transform: translateX(-50%); display: none;
+  align-items: center; gap: 8px; max-width: 640px; padding: 9px 16px; font-size: 13px; color: var(--text-1);
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.toast.show { display: flex; }
+
+/* fold (collapse) */
+.fold-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.fold-head .arr { flex: none; transition: transform .15s; }
+.fold.open > .fold-head .arr { transform: rotate(90deg); }
+.fold > .fold-body { display: none; }
+.fold.open > .fold-body { display: block; }
+
+/* timeline */
+.tl { list-style: none; margin: 0; padding: 0; }
+.tl > li { position: relative; padding: 0 0 20px 28px; }
+.tl > li::before { content: ''; position: absolute; left: 5px; top: 17px; bottom: 0; width: 1px; background: var(--border); }
+.tl > li:last-child { padding-bottom: 0; }
+.tl > li:last-child::before { display: none; }
+.tl .dot { position: absolute; left: 0; top: 5px; width: 11px; height: 11px; border-radius: 50%; background: var(--white); border: 2px solid var(--primary-6); }
+.tl .dot.green { border-color: var(--success-6); }
+.tl .dot.orange { border-color: var(--warning-6); }
+.tl .dot.red { border-color: var(--danger-6); }
+.tl .dot.gray { border-color: var(--text-4); }
+.tl .t-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tl .t-time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tl .t-title { font-weight: 500; }
+.tl .t-body { font-size: 13px; color: var(--text-2); margin-top: 3px; }
+
+/* video placeholder (real page: <video> with a presigned TOS URL) */
+.video { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius); overflow: hidden; background: linear-gradient(160deg, #3A4150, #1D2129); color: #fff; }
+.video .cam { position: absolute; left: 8px; top: 6px; font-size: 12px; opacity: .9; }
+.video .play { position: absolute; left: 50%; top: 50%; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; background: rgba(255,255,255,.18); display: grid; place-items: center; }
+.video .time { position: absolute; right: 8px; bottom: 8px; font: 11px "SF Mono", ui-monospace, Menlo, monospace; opacity: .9; }
+.video .scrub { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.2); }
+.video .scrub i { display: block; height: 100%; width: 0; background: var(--primary-5); }
+.frame { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); overflow: hidden; background: linear-gradient(135deg, #C9CDD4, #86909C); }
+.frame span { position: absolute; left: 4px; bottom: 3px; font: 11px "SF Mono", ui-monospace, Menlo, monospace; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
+
+/* charts: thin marks, hairline grid, text in text tokens */
+.chart { display: block; overflow: visible; }
+.chart text { font-family: inherit; font-size: 11px; fill: var(--text-3); }
+.chart .ax { stroke: var(--border); stroke-width: 1; }
+.chart .grid { stroke: var(--fill-2); stroke-width: 1; }
+.chart .lbl { fill: var(--text-2); font-size: 12px; }
+.chart .val { fill: var(--text-1); font-size: 12px; }
+.chart [data-tip]:hover, .chart [data-tip]:focus { opacity: .8; outline: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-2); }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.legend .ln { width: 14px; height: 2px; border-radius: 1px; flex: none; }
+.tip {
+  position: fixed; z-index: 500; pointer-events: none; display: none; max-width: 300px; padding: 7px 10px;
+  font-size: 12px; line-height: 1.6; color: var(--text-2); background: var(--white);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.tip b { display: block; color: var(--text-1); font-size: 13px; }
+
+/* key figures inside a card */
+.kv-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.kv { padding: 2px 20px; border-left: 1px solid var(--border); min-width: 0; }
+.kv:first-child { border-left: 0; padding-left: 0; }
+.kv .k { font-size: 12px; color: var(--text-3); }
+.kv .v { font-size: 20px; font-weight: 600; margin-top: 2px; }
+.kv .v small { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 3px; }
+.kv .s { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+</style>
 <style>
   .form-wrap { max-width: 1080px; }
-  .seg { display: inline-flex; background: var(--fill-1); border-radius: var(--radius-sm); padding: 2px; }
-  .seg label {
-    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px;
-    border-radius: var(--radius-sm); font-size: 13px; color: var(--text-2); cursor: pointer; }
-  .seg input { display: none; }
-  .seg input:checked + span { color: var(--primary-6); }
-  .seg label:has(input:checked) { background: var(--white); box-shadow: var(--shadow-card); color: var(--primary-6); }
   .exp-tag { font-size: 11px; color: var(--warning-6); background: var(--warning-1);
              border-radius: 2px; padding: 0 5px; line-height: 16px; }
+  .label a.hint { color: var(--primary-6); margin-left: 8px; }
+  .label a.hint:hover { color: var(--primary-5); }
 
   .modules { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px 20px; }
   .mod {
@@ -240,6 +418,7 @@ select.select { appearance: none;
           background: var(--fill-2); color: var(--text-3); }
   .gate.hard { background: #FFECE8; color: #CB2634; }
   .gate.soft { background: #E8F3FF; color: var(--primary-6); }
+  .gate.vlm { background: #F5E8FF; color: #722ED1; }
 
   .eps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
   .ep { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; cursor: pointer; background: #fff; }
@@ -261,6 +440,9 @@ select.select { appearance: none;
   .adv.open .arr { transform: rotate(90deg); }
   .adv-body { display: none; padding-top: 18px; }
   .adv.open .adv-body { display: block; }
+  .timeouts { display: flex; flex-wrap: wrap; gap: 10px 20px; }
+  .timeouts label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
+  .timeouts .input { width: 72px; }
 
   .footbar {
     position: sticky; bottom: 0; margin: 0 -20px -48px; padding: 14px 20px;
@@ -273,25 +455,37 @@ select.select { appearance: none;
 
 <header class="topbar">
   <div class="brand">
-    <span class="logo"></span><span>火山引擎</span><span class="divider"></span>
+    <span class="logo"></span>
+    <span>火山引擎</span>
+    <span class="divider"></span>
     <span class="product">Physical AI Kit · 数据质检平台</span>
   </div>
   <div class="spacer"></div>
-  <div class="region">华北 2（北京）
+  <div class="region">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="#86909C" stroke-width="1.2"/><path d="M8 1.8c1.8 1.7 2.7 3.8 2.7 6.2S9.8 12.5 8 14.2C6.2 12.5 5.3 10.4 5.3 8S6.2 3.5 8 1.8z" stroke="#86909C" stroke-width="1.2"/><path d="M2 8h12" stroke="#86909C" stroke-width="1.2"/></svg>
+    华北 2（北京）
     <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="#86909C" stroke-width="1.2"/></svg>
   </div>
-  <div class="user"><span class="avatar">GB</span> galbot</div>
+  <div class="user">
+    <span class="avatar">GB</span> galbot
+    <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="#86909C" stroke-width="1.2"/></svg>
+  </div>
 </header>
 
 <nav class="sider">
   <div class="menu-group">数据质检</div>
-  <div class="menu-item active">
+  <a class="menu-item active" href="tasks.html">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2.5" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M5 6.5h6M5 9.5h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
     质检任务
-  </div>
-  <div class="menu-item">
+  </a>
+  <a class="menu-item" href="credentials.html">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10.5 2.5a3.5 3.5 0 00-3.2 4.9L2.5 12.2v1.3h1.3l4.8-4.8a3.5 3.5 0 102-6.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
     密钥与资源
+  </a>
+  <div class="menu-group">帮助</div>
+  <div class="menu-item" data-toast="静态预览稿不含使用文档">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3"/><path d="M6.4 6.2a1.7 1.7 0 113.2.8c-.4.6-1.6.8-1.6 1.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>
+    使用文档
   </div>
 </nav>
 
@@ -312,51 +506,80 @@ select.select { appearance: none;
       <div class="card-body">
         <div class="form-row">
           <div class="field" style="max-width:420px">
-            <label class="label"><span class="req">*</span>任务名称</label>
-            <input class="input" id="taskName" value="droid-200 全量质检">
+            <label class="label" for="taskName"><span class="req">*</span>任务名称</label>
+            <input class="input" id="taskName" value="droid-200 全量质检" maxlength="64">
             <div class="err-text" id="nameErr" style="display:none">请输入任务名称</div>
+          </div>
+          <div class="field" style="max-width:560px">
+            <label class="label" for="taskNote">备注<span class="hint">选填；任务开始后仍可修改</span></label>
+            <input class="input" id="taskNote" placeholder="例如：第一轮抽检，看标注质量" maxlength="200">
           </div>
         </div>
 
         <div class="form-row">
           <div class="field">
-            <label class="label"><span class="req">*</span>数据集来源</label>
-            <div class="seg">
-              <label><input type="radio" name="src" checked><span>私有 TOS</span></label>
-              <label><input type="radio" name="src"><span>HuggingFace 镜像</span></label>
-              <label><input type="radio" name="src"><span>本地挂载路径 <i class="exp-tag">experimental</i></span></label>
+            <label class="label"><span class="req">*</span>数据来源</label>
+            <div class="seg" id="srcSeg">
+              <label><input type="radio" name="src" value="tos" checked><span>私有 TOS</span></label>
+              <label><input type="radio" name="src" value="public"><span>HuggingFace 缓存桶</span></label>
+              <label><input type="radio" name="src" value="local"><span>本地挂载路径 <i class="exp-tag">experimental</i></span></label>
             </div>
           </div>
         </div>
 
-        <div class="form-row">
+        <div class="form-row" id="srcTos">
           <div class="field" style="flex:2">
             <label class="label"><span class="req">*</span>数据集地址</label>
             <input class="input mono" value="tos://pai-kit-datasets/lerobot/droid-200">
           </div>
-          <div class="field" style="max-width:200px">
-            <label class="label"><span class="req">*</span>地区</label>
-            <select class="select"><option>华北 2（北京）cn-beijing</option><option>亚太（新加坡）ap-southeast-1</option></select>
+          <div class="field" style="max-width:220px">
+            <label class="label"><span class="req">*</span>地域</label>
+            <select class="select"><option>华北 2（北京）cn-beijing</option><option>华东 2（上海）cn-shanghai</option><option>华南 1（广州）cn-guangzhou</option></select>
+          </div>
+          <div class="field" style="max-width:240px">
+            <label class="label"><span class="req">*</span>访问密钥<a class="hint" href="credentials.html">管理</a></label>
+            <select class="select"><option>readonly-tos</option><option>prod-tos</option><option>partner-upload（未验证）</option></select>
+          </div>
+        </div>
+
+        <div class="form-row hidden" id="srcPublic">
+          <div class="field" style="flex:2">
+            <label class="label"><span class="req">*</span>数据集</label>
+            <select class="select"><option>droid_100</option><option>aloha_sim_insertion_human</option><option>pusht</option><option>libero_10</option></select>
+            <div class="help-text">缓存桶由站点配置好，地址和地域不用填。它是只读的，不能当交付目录。</div>
           </div>
           <div class="field" style="max-width:220px">
-            <label class="label"><span class="req">*</span>访问凭证</label>
-            <select class="select"><option>prod-tos</option><option>readonly-tos</option><option>+ 新建凭证</option></select>
+            <label class="label">地域</label>
+            <select class="select" disabled><option>华北 2（北京）cn-beijing</option></select>
           </div>
+          <div class="field" style="max-width:240px">
+            <label class="label">访问密钥</label>
+            <select class="select" disabled><option>不需要（匿名只读）</option></select>
+          </div>
+        </div>
+
+        <div class="form-row hidden" id="srcLocal">
+          <div class="field" style="flex:2">
+            <label class="label"><span class="req">*</span>本地路径<span class="hint">调试用，只允许站点配置的根目录之下</span></label>
+            <input class="input mono" placeholder="/data/local/datasets/…">
+          </div>
+          <div class="field" style="max-width:220px"></div>
+          <div class="field" style="max-width:240px"></div>
         </div>
 
         <div class="form-row" style="margin-bottom:0">
           <div class="field" style="flex:2">
             <label class="label"><span class="req">*</span>交付目录<span class="hint">质检报告与交付数据集的写入位置</span></label>
             <input class="input mono" value="tos://pai-kit-deliveries/droid-200">
-            <div class="help-text" style="color:var(--success-6)">✓ 写入探针通过（09-20 15:41）</div>
-          </div>
-          <div class="field" style="max-width:200px">
-            <label class="label">地区</label>
-            <select class="select"><option>同数据集地区</option><option>华北 2（北京）</option></select>
+            <div class="help-text" style="color:var(--success-6)">✓ 写探针通过（09-20 15:41，用 prod-tos 写入一个探针对象后删除）</div>
           </div>
           <div class="field" style="max-width:220px">
-            <label class="label">访问凭证</label>
-            <select class="select"><option>同数据集凭证</option><option>prod-tos</option></select>
+            <label class="label"><span class="req">*</span>地域</label>
+            <select class="select"><option>同数据集（华北 2）</option><option>华东 2（上海）cn-shanghai</option><option>华南 1（广州）cn-guangzhou</option></select>
+          </div>
+          <div class="field" style="max-width:240px">
+            <label class="label"><span class="req">*</span>访问密钥</label>
+            <select class="select"><option>prod-tos</option><option>同数据集（readonly-tos）</option></select>
           </div>
         </div>
       </div>
@@ -368,7 +591,7 @@ select.select { appearance: none;
         <span class="card-title">预检结果</span>
         <span class="tag tag-green" style="margin-left:4px"><i class="dot"></i>已识别</span>
         <div class="spacer"></div>
-        <button class="btn btn-outline">重新预检</button>
+        <button class="btn btn-outline" data-toast="静态预览稿：地址改动后会自动重新预检，这里手动再跑一次">重新预检</button>
       </div>
       <div class="card-body">
         <div class="alert alert-green" style="margin-bottom:12px">
@@ -378,6 +601,12 @@ select.select { appearance: none;
             <div class="muted" style="margin-top:2px">读取 info.json、episodes.jsonl 与 tasks.jsonl，未读取样本数据</div>
           </div>
         </div>
+        <div class="alert alert-blue" style="margin-bottom:12px">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="#165DFF" stroke-width="1.3"/><path d="M8 7.2v4" stroke="#165DFF" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".8" fill="#165DFF"/></svg>
+          <div>
+            <b>88 条没有任务标注</b>：开跑时先由模型给它们补一句任务描述（来源记为「自产描述」），任务成败判定和技能画像都用它。
+          </div>
+        </div>
         <div class="alert">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2.4l5.8 10.2H2.2L8 2.4z" stroke="#FF7D00" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.6v2.8" stroke="#FF7D00" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.2" r=".8" fill="#FF7D00"/></svg>
           <div>
@@ -385,7 +614,7 @@ select.select { appearance: none;
           </div>
         </div>
         <div class="help-text" style="margin-top:10px">
-          未通过预检的模块会在「质检模块」里置灰，鼠标移上去或点「详细信息」可以看到具体原因。
+          未通过预检的模块会在「质检范围」里置灰，鼠标移上去或点「详细信息」可以看到具体原因。
         </div>
       </div>
     </div>
@@ -397,55 +626,68 @@ select.select { appearance: none;
         <span class="muted" style="font-size:13px">已选 <b id="epCount">200</b> / 200 条</span>
       </div>
       <div class="card-body">
-        <div class="form-row">
-          <div class="field">
-            <div class="seg" id="epMode">
-              <label><input type="radio" name="ep" checked><span>全部 200 条</span></label>
-              <label><input type="radio" name="ep"><span>自选</span></label>
-            </div>
+        <div class="seg" id="epMode">
+          <label><input type="radio" name="ep" value="all" checked><span>全部 200 条</span></label>
+          <label><input type="radio" name="ep" value="head"><span>前 N 条</span></label>
+          <label><input type="radio" name="ep" value="pick"><span>自选</span></label>
+        </div>
+
+        <div id="epHead" class="hidden" style="margin-top:18px">
+          <div class="field" style="max-width:360px">
+            <label class="label" for="headN"><span class="req">*</span>条数<span class="hint">从 ep 0 开始按顺序取，抽检常用</span></label>
+            <input class="input" id="headN" type="number" min="1" max="200" value="50">
+            <div class="err-text hidden" id="headErr">请输入 1 到 200 之间的整数</div>
           </div>
         </div>
 
-        <div id="epPicker" style="display:none">
+        <div id="epPicker" class="hidden" style="margin-top:18px">
           <div class="form-row">
             <div class="field" style="max-width:520px">
-              <label class="label">按编号输入<span class="hint">支持单条、区间与混写，如 3,10-12,34</span></label>
-              <input class="input mono" placeholder="3,10-12,34">
+              <label class="label"><span class="req">*</span>按编号输入<span class="hint">支持单条、区间与混写，如 3,10-12,34；由后端校验</span></label>
+              <input class="input mono" id="epExpr" placeholder="3,10-12,34">
             </div>
           </div>
           <div class="eps" id="epGrid"></div>
-          <div class="help-text">预览图取每条 episode 的首帧；勾选与上方输入框双向同步。</div>
+          <div class="help-text">预览图取每条 episode 的首帧，滚动到哪加载到哪；勾选与上方输入框双向同步。数据集很大时以输入框为主。</div>
         </div>
       </div>
     </div>
 
-    <!-- 质检模块 -->
+    <!-- 质检范围 -->
     <div class="card">
-      <div class="card-head"><span class="card-title">质检模块</span>
+      <div class="card-head"><span class="card-title">质检范围</span>
         <div class="spacer"></div>
         <button class="btn btn-text" id="selAll">全选可用</button>
         <button class="btn btn-text" id="selNone">清空</button>
       </div>
       <div class="card-body">
+        <div class="seg" id="scopeSeg">
+          <label><input type="radio" name="scope" value="full" checked><span>完整质检</span></label>
+          <label><input type="radio" name="scope" value="quick"><span>快速质检（不调用模型的六项）</span></label>
+          <label><input type="radio" name="scope" value="custom"><span>自选</span></label>
+        </div>
+        <div class="help-text" id="scopeHint" style="margin:8px 0 16px">可用的模块全部开启，包括两个调用视觉语言模型的模块。</div>
+
         <div class="modules" id="mods">
           <label class="mod checked"><input type="checkbox" checked>
             <div class="body"><div class="name">时间戳检查 <i class="gate hard">一票否决</i></div>
               <div class="meta">时间轴单调、无重复、帧率合理</div></div></label>
 
-          <label class="mod warn"><input type="checkbox">
+          <label class="mod warn" id="kinMod"><input type="checkbox">
             <div class="body">
               <div class="name">运动学极限 <i class="gate hard">一票否决</i>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2.4l5.8 10.2H2.2L8 2.4z" stroke="#FF7D00" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.6v2.8" stroke="#FF7D00" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.2" r=".7" fill="#FF7D00"/></svg>
               </div>
               <div class="meta">关节位置 / 速度是否越过该型号的物理极限</div>
               <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
-                <select class="select" style="width:190px">
-                  <option>请选择机器人型号</option><option>agibot</option><option>aloha</option>
-                  <option>franka</option><option>google_robot</option><option>so100</option>
+                <select class="select" style="width:190px" id="robotSel">
+                  <option value="">请选择机器人型号</option><option>agibot</option><option>aloha</option>
+                  <option>franka</option><option>google_robot</option><option>pusht</option><option>so100</option>
                   <option>so101</option><option>ur5</option><option>widowx</option>
                 </select>
-                <button class="btn btn-text">跳过该模块</button>
+                <button class="btn btn-text" type="button" id="skipKin">跳过该模块</button>
               </div>
+              <div class="meta" id="kinNote"></div>
             </div></label>
 
           <label class="mod checked"><input type="checkbox" checked>
@@ -456,16 +698,16 @@ select.select { appearance: none;
             <div class="body"><div class="name">视频-动作同步 <i class="gate hard">一票否决</i></div>
               <div class="meta">画面与动作时间轴是否对齐，逐相机取证</div></div></label>
 
-          <label class="mod checked"><input type="checkbox" checked>
-            <div class="body"><div class="name">任务成败判定 <i class="gate hard">一票否决</i></div>
+          <label class="mod checked" data-vlm="1"><input type="checkbox" checked>
+            <div class="body"><div class="name">任务成败判定 <i class="gate hard">一票否决</i><i class="gate vlm">调用模型</i></div>
               <div class="meta">模型判这条演示到底成没成，证据不足会转人工裁决</div></div></label>
 
           <label class="mod checked"><input type="checkbox" checked>
             <div class="body"><div class="name">精确去重</div>
-              <div class="meta">字节级完全重复的轨迹归组</div></div></label>
+              <div class="meta">字节级完全重复的轨迹归组，每组只留一条</div></div></label>
 
-          <label class="mod checked"><input type="checkbox" checked>
-            <div class="body"><div class="name">技能画像</div>
+          <label class="mod checked" data-vlm="1"><input type="checkbox" checked>
+            <div class="body"><div class="name">技能画像 <i class="gate vlm">调用模型</i></div>
               <div class="meta">两级技能体系归纳；标注与画面不符的轨迹转人工裁决</div></div></label>
         </div>
 
@@ -478,32 +720,36 @@ select.select { appearance: none;
             <div class="body">
               <div class="name">运动质量 <i class="gate">打分项</i></div>
               <div class="meta">数据集缺少 observation.state 列
-                <a href="#" style="margin-left:6px">详细信息</a></div>
+                <a href="#" data-toast="详细信息弹窗：运动质量要同时读动作指令和关节读数（observation.state），info.json 的 features 里没有后者" style="margin-left:6px">详细信息</a></div>
             </div></label>
         </div>
       </div>
     </div>
 
     <!-- 模型配置 -->
-    <div class="card">
+    <div class="card" id="vlmCard">
       <div class="card-head"><span class="card-title">模型配置</span>
         <span class="muted" style="font-size:12px">任务成败判定与技能画像会调用视觉语言模型</span></div>
       <div class="card-body">
         <div class="form-row" style="margin-bottom:0">
           <div class="field" style="max-width:260px">
-            <label class="label"><span class="req">*</span>模型服务</label>
-            <select class="select"><option>ark-prod（火山方舟）</option><option>vllm-a100（自定义端点）</option></select>
+            <label class="label"><span class="req">*</span>VLM 后端<a class="hint" href="credentials.html#vlm">管理</a></label>
+            <select class="select"><option>ark-prod（方舟）</option><option>ark-ep（方舟）</option><option>vllm-a100（自定义）</option></select>
           </div>
           <div class="field" style="max-width:300px">
             <label class="label"><span class="req">*</span>模型</label>
-            <select class="select"><option>doubao-seed-2-0-pro-260215</option><option>doubao-seed-1-6-vision</option></select>
+            <select class="select"><option>doubao-seed-2-0-pro-260215</option><option>doubao-seed-2-0-lite-260215</option><option>doubao-seed-1-6-251015</option></select>
           </div>
-          <div class="field" style="max-width:200px">
-            <label class="label">思考强度</label>
-            <select class="select"><option>medium</option><option>minimal</option><option>low</option><option>high</option></select>
+          <div class="field" style="max-width:220px">
+            <label class="label" for="effort">思考强度</label>
+            <select class="select" id="effort">
+              <option value="">模型默认</option><option value="minimal">minimal（关闭思考）</option>
+              <option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
+            </select>
           </div>
           <div class="field"></div>
         </div>
+        <div class="help-text" id="effortHint">「模型默认」表示请求里不带这个字段，按模型自己的默认档走（这个模型是 medium）。</div>
       </div>
     </div>
 
@@ -512,107 +758,309 @@ select.select { appearance: none;
       <div class="card-head adv-head" id="advHead">
         <svg class="arr" width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 2.5L8 6l-3.5 3.5" fill="none" stroke="#4E5969" stroke-width="1.3"/></svg>
         <span class="card-title">高级设置</span>
-        <span class="muted" style="font-size:12px">不改也能跑，默认值已按节点规格标定</span>
+        <span class="muted" style="font-size:12px">不改也能跑；这里的数值都是上限</span>
       </div>
       <div class="card-body adv-body">
         <div class="alert alert-blue" style="margin-bottom:18px">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="#165DFF" stroke-width="1.3"/><path d="M8 7.2v4" stroke="#165DFF" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".8" fill="#165DFF"/></svg>
-          <div>并发度与模型请求的合并方式由后端自动优化，这里只需要设置任务级的容错参数。</div>
+          <div>执行计划和请求合并由后端决定。这里只能设上限：留空表示不限，填了后端就不会超过它。</div>
         </div>
-        <div class="form-row" style="margin-bottom:0">
-          <div class="field" style="max-width:200px">
-            <label class="label">模型调用重试次数</label>
-            <select class="select"><option>3 次（1s / 2s / 4s）</option><option>1 次</option><option>不重试</option></select>
+        <div class="form-row">
+          <div class="field" style="max-width:220px">
+            <label class="label">模型调用重试次数上限</label>
+            <select class="select"><option>3 次（间隔 1s / 2s / 4s）</option><option>2 次</option><option>1 次</option><option>不重试</option></select>
+          </div>
+          <div class="field" style="max-width:230px">
+            <label class="label">超时对冲</label>
+            <div style="height:32px; display:flex; align-items:center; gap:8px">
+              <button class="switch on" type="button" id="hedge" aria-pressed="true" aria-label="超时对冲"></button>
+              <span class="muted" style="font-size:13px">到时没返回就补发一次</span>
+            </div>
           </div>
           <div class="field" style="max-width:200px">
-            <label class="label">单次请求超时</label>
-            <input class="input" value="120 秒">
+            <label class="label">CPU 并发上限</label>
+            <input class="input" placeholder="不限" inputmode="numeric">
           </div>
-          <div class="field" style="max-width:240px">
-            <label class="label">模型并发上限<span class="hint">留空为自动</span></label>
-            <input class="input" placeholder="自动（32）">
+          <div class="field" style="max-width:250px">
+            <label class="label">VLM 并行度上限</label>
+            <input class="input" placeholder="不限（模型上配的是 64）" inputmode="numeric">
           </div>
-          <div class="field"></div>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label class="label">各类调用超时（秒）<span class="hint">单次请求最多等多久</span></label>
+            <div class="timeouts">
+              <label>任务完成度打分 <input class="input" value="60"></label>
+              <label>逐机位复核 <input class="input" value="60"></label>
+              <label>取证仲裁 <input class="input" value="60"></label>
+              <label>技能打标 <input class="input" value="60"></label>
+              <label>技能归纳 <input class="input" value="120"></label>
+            </div>
+          </div>
+        </div>
+        <div class="form-row" style="margin-bottom:0; gap:32px">
+          <label class="check"><input type="checkbox" checked> 导出交付数据集</label>
+          <label class="check"><input type="checkbox"> 为人工裁决预生成视频片段</label>
         </div>
       </div>
     </div>
 
     <div class="footbar">
-      <span class="muted" style="font-size:13px">将质检 <b>200</b> 条 episode，开启 <b id="modCount">6</b> 个模块</span>
+      <span class="muted" style="font-size:13px">将质检 <b id="epTotal">200</b> 条 episode，开启 <b id="modCount">6</b> 个模块</span>
+      <span class="muted" style="font-size:12px" id="precheckHint">开始前会检查：数据集能读、交付目录能写、模型能调通</span>
       <div class="spacer"></div>
       <a class="btn btn-outline btn-lg" href="tasks.html">取消</a>
-      <button class="btn btn-outline btn-lg">仅创建，不开始</button>
+      <button class="btn btn-outline btn-lg" id="saveDraft">保存为待启动</button>
       <button class="btn btn-primary btn-lg" id="submit">创建并开始</button>
     </div>
   </div>
 </main>
 
-<div class="mockup-note"><b>静态预览稿</b> · 仅用于确定视觉风格<br>数据为假数据，交互不接后端<br><span style="opacity:.6">点此关闭</span></div>
+<div class="mockup-note">
+  <b>静态预览稿</b> · 第二批<br>
+  数据为假数据，交互不接后端<br><span style="opacity:.6">点此关闭</span>
+</div>
+<div class="toast" id="toast"></div>
 
 <script>
-  // Episode 模式切换 + 预览网格
-  var grid = document.getElementById('epGrid');
+// Shared mockup helpers (same block in all six pages): menus, tabs, folds,
+// drawers / modals, toast and chart tooltips. No network, no storage.
+(function () {
+  var note = document.querySelector('.mockup-note');
+  if (note) note.addEventListener('click', function () { note.style.display = 'none'; });
+
+  var toastEl = document.getElementById('toast'), toastTimer;
+  window.toast = function (msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 2600);
+  };
+
+  window.openLayer = function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var mask = document.getElementById('mask');
+    if (mask) mask.classList.add('open');
+    el.classList.add('open');
+  };
+  window.closeLayers = function () {
+    document.querySelectorAll('.drawer.open, .modal.open, .mask.open').forEach(function (n) {
+      n.classList.remove('open');
+    });
+  };
+
+  document.addEventListener('click', function (e) {
+    // dropdown menus
+    var more = e.target.closest('.js-more');
+    document.querySelectorAll('.menu-pop.open').forEach(function (n) {
+      if (!more || n !== more.parentElement) n.classList.remove('open');
+    });
+    if (more) { more.parentElement.classList.toggle('open'); return; }
+
+    // tabs: .tabs[data-tabs=g] > .tab[data-pane=id]; panes: .pane[data-group=g]
+    var tab = e.target.closest('.tab[data-pane]');
+    if (tab) {
+      var bar = tab.closest('.tabs');
+      bar.querySelectorAll('.tab').forEach(function (b) { b.classList.toggle('active', b === tab); });
+      document.querySelectorAll('.pane[data-group="' + bar.dataset.tabs + '"]').forEach(function (p) {
+        p.classList.toggle('active', p.id === tab.dataset.pane);
+      });
+      return;
+    }
+
+    // folds
+    var head = e.target.closest('.fold-head');
+    if (head && !e.target.closest('.fold-head a, .fold-head button, .fold-head select, .fold-head input')) {
+      head.parentElement.classList.toggle('open');
+    }
+
+    // layers
+    var opener = e.target.closest('[data-open]');
+    if (opener) { e.preventDefault(); openLayer(opener.dataset.open); return; }
+    if (e.target.closest('[data-close]') || e.target.id === 'mask') { closeLayers(); return; }
+
+    // mockup-only actions
+    var t = e.target.closest('[data-toast]');
+    if (t && !t.disabled) toast(t.dataset.toast);
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeLayers(); });
+
+  // chart tooltips: data-tip="value|label|more…"; values lead, labels follow
+  var tip = document.createElement('div');
+  tip.className = 'tip';
+  document.body.appendChild(tip);
+  function show(el, x, y) {
+    var parts = el.getAttribute('data-tip').split('|');
+    tip.textContent = '';
+    parts.forEach(function (p, i) {
+      var n = document.createElement(i === 0 ? 'b' : 'div');
+      n.textContent = p;
+      tip.appendChild(n);
+    });
+    tip.style.display = 'block';
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(x + 14, window.innerWidth - w - 8) + 'px';
+    tip.style.top = Math.max(8, y - h - 10) + 'px';
+  }
+  document.addEventListener('mousemove', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (el) show(el, e.clientX, e.clientY); else tip.style.display = 'none';
+  });
+  document.addEventListener('focusin', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) return;
+    var r = el.getBoundingClientRect();
+    show(el, r.left + r.width / 2, r.top);
+  });
+  document.addEventListener('focusout', function () { tip.style.display = 'none'; });
+})();
+</script>
+<script>
+  function $(id) { return document.getElementById(id); }
+
+  // 数据来源
+  document.querySelectorAll('#srcSeg input').forEach(function (r) {
+    r.addEventListener('change', function () {
+      $('srcTos').classList.toggle('hidden', r.value !== 'tos');
+      $('srcPublic').classList.toggle('hidden', r.value !== 'public');
+      $('srcLocal').classList.toggle('hidden', r.value !== 'local');
+    });
+  });
+
+  // Episode 选择：全部 / 前 N 条 / 自选
+  var grid = $('epGrid');
   for (var i = 0; i < 12; i++) {
     var d = document.createElement('div');
     d.className = 'ep';
-    d.innerHTML = '<div class="thumb"></div><div class="cap"><span class="mono">' +
-      String(i).padStart(6, '0') + '</span><span class="tick"></span></div>';
-    d.addEventListener('click', function () { this.classList.toggle('on'); sync(); });
+    d.innerHTML = '<div class="thumb"></div><div class="cap"><span class="mono">ep ' + i + '</span><span class="tick"></span></div>';
+    d.addEventListener('click', function () { this.classList.toggle('on'); syncEp(); });
     grid.appendChild(d);
   }
-  document.querySelectorAll('#epMode input').forEach(function (r, idx) {
-    r.addEventListener('change', function () {
-      document.getElementById('epPicker').style.display = idx === 1 ? 'block' : 'none';
-      sync();
-    });
-  });
-  function sync() {
-    var custom = document.querySelectorAll('#epMode input')[1].checked;
-    document.getElementById('epCount').textContent =
-      custom ? document.querySelectorAll('.ep.on').length : 200;
+  function epMode() { return document.querySelector('#epMode input:checked').value; }
+  function syncEp() {
+    var m = epMode(), n = 200;
+    $('epHead').classList.toggle('hidden', m !== 'head');
+    $('epPicker').classList.toggle('hidden', m !== 'pick');
+    if (m === 'head') {
+      var v = parseInt($('headN').value, 10), ok = v >= 1 && v <= 200;
+      $('headN').classList.toggle('is-error', !ok);
+      $('headErr').classList.toggle('hidden', ok);
+      n = ok ? v : 0;
+    } else if (m === 'pick') {
+      var on = [];
+      document.querySelectorAll('.ep').forEach(function (e, k) { if (e.classList.contains('on')) on.push(k); });
+      $('epExpr').value = on.join(',');
+      n = on.length;
+    }
+    $('epCount').textContent = n;
+    $('epTotal').textContent = n;
   }
+  document.querySelectorAll('#epMode input').forEach(function (r) { r.addEventListener('change', syncEp); });
+  $('headN').addEventListener('input', syncEp);
 
-  // 模块勾选
-  function bindMods() {
-    document.querySelectorAll('#mods .mod input').forEach(function (cb) {
-      cb.addEventListener('change', function () {
-        var box = cb.closest('.mod');
-        if (!box.classList.contains('warn')) box.classList.toggle('checked', cb.checked);
-        count();
-      });
+  // 质检范围：完整 / 快速 / 自选
+  var hints = {
+    full: '可用的模块全部开启，包括两个调用视觉语言模型的模块。',
+    quick: '只开不调用模型的模块，秒级出报告；模型配置不用填。',
+    custom: '按需勾选。改了勾选会自动切到「自选」。'
+  };
+  function scope() { return document.querySelector('#scopeSeg input:checked').value; }
+  function paint(m) {
+    var cb = m.querySelector('input[type=checkbox]');
+    if (!m.classList.contains('warn')) m.classList.toggle('checked', cb.checked);
+  }
+  function kinReady() { return !!$('robotSel').value; }
+  function applyScope() {
+    var s = scope();
+    $('scopeHint').textContent = hints[s];
+    if (s === 'custom') { refresh(); return; }
+    document.querySelectorAll('#mods .mod').forEach(function (m) {
+      var cb = m.querySelector('input[type=checkbox]');
+      if (m.id === 'kinMod' && !kinReady()) cb.checked = false;
+      else cb.checked = s === 'full' || !m.dataset.vlm;
+      paint(m);
     });
+    refresh();
   }
-  function count() {
-    document.getElementById('modCount').textContent =
-      document.querySelectorAll('#mods .mod input:checked').length;
+  function refresh() {
+    var checked = document.querySelectorAll('#mods .mod input:checked');
+    var vlm = document.querySelectorAll('#mods .mod[data-vlm] input:checked').length > 0;
+    $('modCount').textContent = checked.length;
+    $('vlmCard').classList.toggle('hidden', !vlm);
+    $('precheckHint').textContent = '开始前会检查：数据集能读、交付目录能写' + (vlm ? '、模型能调通' : '');
   }
-  bindMods();
-  document.getElementById('selAll').addEventListener('click', function () {
-    document.querySelectorAll('#mods .mod input').forEach(function (cb) {
-      cb.checked = true; cb.dispatchEvent(new Event('change'));
+  function setScope(v) { document.querySelector('#scopeSeg input[value=' + v + ']').checked = true; }
+  document.querySelectorAll('#scopeSeg input').forEach(function (r) { r.addEventListener('change', applyScope); });
+  document.querySelectorAll('#mods .mod input[type=checkbox]').forEach(function (cb) {
+    cb.addEventListener('change', function (e) {
+      var m = cb.closest('.mod');
+      if (m.id === 'kinMod' && cb.checked && !kinReady()) {
+        cb.checked = false;
+        toast('先选机器人型号，或者跳过这个模块');
+      }
+      paint(m);
+      if (e.isTrusted) { setScope('custom'); $('scopeHint').textContent = hints.custom; }
+      refresh();
     });
   });
-  document.getElementById('selNone').addEventListener('click', function () {
-    document.querySelectorAll('#mods .mod input').forEach(function (cb) {
-      cb.checked = false; cb.dispatchEvent(new Event('change'));
-    });
+  $('robotSel').addEventListener('change', function () {
+    var m = $('kinMod'), cb = m.querySelector('input');
+    cb.checked = kinReady() && (scope() !== 'custom' || cb.checked);
+    m.classList.toggle('warn', !kinReady());
+    paint(m);
+    $('kinNote').textContent = kinReady() ? '将按 ' + this.value + ' 的规格表检查' : '';
+    refresh();
+  });
+  $('skipKin').addEventListener('click', function (e) {
+    e.preventDefault();
+    var m = $('kinMod');
+    $('robotSel').value = '';
+    m.querySelector('input').checked = false;
+    m.classList.remove('checked');
+    m.classList.add('warn');
+    $('kinNote').textContent = '已跳过：这个任务不跑运动学极限，报告里会注明原因';
+    refresh();
+  });
+  $('selAll').addEventListener('click', function () { setScope('full'); applyScope(); });
+  $('selNone').addEventListener('click', function () {
+    setScope('custom');
+    document.querySelectorAll('#mods .mod input').forEach(function (cb) { cb.checked = false; paint(cb.closest('.mod')); });
+    $('scopeHint').textContent = hints.custom;
+    refresh();
   });
 
-  // 高级折叠
-  document.getElementById('advHead').addEventListener('click', function () {
-    document.getElementById('adv').classList.toggle('open');
+  // 思考强度提示
+  $('effort').addEventListener('change', function () {
+    $('effortHint').textContent = this.value === 'high'
+      ? '思考强度调高后单次调用会明显变慢，建议在「高级设置」里同步放宽各类调用超时。'
+      : this.value === ''
+        ? '「模型默认」表示请求里不带这个字段，按模型自己的默认档走（这个模型是 medium）。'
+        : '请求里会带 reasoning_effort = ' + this.value + '。';
+  });
+
+  // 高级折叠、开关
+  $('advHead').addEventListener('click', function () { $('adv').classList.toggle('open'); });
+  $('hedge').addEventListener('click', function () {
+    this.classList.toggle('on');
+    this.setAttribute('aria-pressed', this.classList.contains('on'));
   });
 
   // 必填校验演示
-  document.getElementById('submit').addEventListener('click', function () {
-    var n = document.getElementById('taskName');
-    var bad = !n.value.trim();
+  function validName() {
+    var n = $('taskName'), bad = !n.value.trim();
     n.classList.toggle('is-error', bad);
-    document.getElementById('nameErr').style.display = bad ? 'block' : 'none';
-    if (bad) { n.focus(); return; }
-    alert('静态预览稿：这里会调用 POST /api/v1/tasks 创建任务');
+    $('nameErr').style.display = bad ? 'block' : 'none';
+    if (bad) n.focus();
+    return !bad;
+  }
+  $('saveDraft').addEventListener('click', function () {
+    if (validName()) toast('静态预览稿：已保存为待启动，之后还能回来改任何配置');
   });
+  $('submit').addEventListener('click', function () {
+    if (validName()) toast('静态预览稿：这里会调用 POST /api/v1/tasks，通过开始前检查后排队');
+  });
+  refresh();
 </script>
-<script>document.querySelector('.mockup-note').addEventListener('click', function(){ this.style.display='none'; });</script>
 </body>
 </html>

@@ -1,0 +1,1659 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>质检报告 · Physical AI Kit 数据质检平台</title>
+<style>
+/* ===== shared tokens (inlined so each page is self-contained) ===== */
+/* Curator v2 mockup — Arco Design tokens, aligned with Volcengine console.
+   Mockup only: hand-written CSS standing in for @arco-design/web-react.
+   The React build will use the real component library; keep tokens in sync. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+
+:root {
+  /* Arco primary */
+  --primary-6: #165DFF; --primary-5: #4080FF; --primary-7: #0E42D2; --primary-1: #E8F3FF;
+  /* status */
+  --success-6: #00B42A; --success-1: #E8FFEA;
+  --warning-6: #FF7D00; --warning-1: #FFF7E8;
+  --danger-6:  #F53F3F; --danger-1:  #FFECE8;
+  /* neutrals */
+  --text-1: #1D2129; --text-2: #4E5969; --text-3: #86909C; --text-4: #C9CDD4;
+  --border:  #E5E6EB; --fill-2: #F2F3F5; --fill-1: #F7F8FA; --white: #FFFFFF;
+  /* metrics */
+  --topbar-h: 60px; --sider-w: 208px; --radius: 4px; --radius-sm: 2px;
+  --shadow-card: 0 1px 3px rgba(0,0,0,.04);
+  --shadow-pop: 0 4px 10px rgba(0,0,0,.10);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+               "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px; line-height: 1.5715; color: var(--text-1);
+  background: var(--fill-1); -webkit-font-smoothing: antialiased;
+}
+a { color: var(--primary-6); text-decoration: none; }
+a:hover { color: var(--primary-5); }
+
+/* ── layout ───────────────────────────────────────────── */
+.topbar {
+  position: fixed; inset: 0 0 auto 0; height: var(--topbar-h); z-index: 100;
+  display: flex; align-items: center; gap: 16px; padding: 0 20px;
+  background: var(--white); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; }
+.brand .logo {
+  width: 26px; height: 26px; border-radius: 6px; flex: none;
+  background: linear-gradient(135deg, var(--primary-6), #7B4DFF);
+}
+.brand .divider { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
+.brand .product { font-weight: 500; color: var(--text-2); }
+.topbar .spacer { flex: 1; }
+.topbar .region, .topbar .user {
+  display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
+  border-radius: var(--radius-sm); color: var(--text-2); cursor: pointer; font-size: 13px;
+}
+.topbar .region:hover, .topbar .user:hover { background: var(--fill-2); }
+.avatar {
+  width: 24px; height: 24px; border-radius: 50%; background: var(--primary-1);
+  color: var(--primary-6); display: grid; place-items: center; font-size: 12px; font-weight: 600;
+}
+
+.sider {
+  position: fixed; top: var(--topbar-h); bottom: 0; left: 0; width: var(--sider-w);
+  background: var(--white); border-right: 1px solid var(--border); padding: 8px 8px 0;
+  overflow-y: auto;
+}
+.menu-group { padding: 12px 12px 6px; font-size: 12px; color: var(--text-3); }
+.menu-item {
+  display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px;
+  border-radius: var(--radius); color: var(--text-1); cursor: pointer; margin-bottom: 2px;
+}
+.menu-item:hover { background: var(--fill-2); }
+.menu-item.active { background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.menu-item svg { flex: none; }
+
+.main { margin: var(--topbar-h) 0 0 var(--sider-w); padding: 16px 20px 48px; }
+.crumb { font-size: 13px; color: var(--text-3); margin-bottom: 12px; }
+.crumb b { color: var(--text-1); font-weight: 400; }
+.page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+.page-title { font-size: 20px; font-weight: 600; margin: 0; }
+.page-desc { font-size: 13px; color: var(--text-3); margin: 4px 0 0; }
+.page-head .spacer { flex: 1; }
+
+.card {
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-card); margin-bottom: 16px;
+}
+.card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 20px; border-bottom: 1px solid var(--border);
+}
+.card-title { font-size: 15px; font-weight: 600; }
+.card-head .spacer { flex: 1; }
+.card-body { padding: 20px; }
+
+/* ── buttons ──────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 15px; border-radius: var(--radius-sm); font-size: 14px;
+  border: 1px solid transparent; background: var(--fill-2); color: var(--text-1);
+  cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s;
+}
+.btn:hover { background: #E5E6EB; }
+.btn-primary { background: var(--primary-6); color: #fff; }
+.btn-primary:hover { background: var(--primary-5); }
+.btn-outline { background: var(--white); border-color: var(--border); }
+.btn-outline:hover { background: var(--white); border-color: var(--primary-6); color: var(--primary-6); }
+.btn-text { background: transparent; padding: 0 8px; color: var(--primary-6); }
+.btn-text:hover { background: var(--primary-1); }
+.btn-lg { height: 36px; padding: 0 20px; }
+.btn[disabled] { background: var(--fill-2); color: var(--text-4); cursor: not-allowed; }
+.btn-icon { width: 32px; padding: 0; }
+
+/* ── form ─────────────────────────────────────────────── */
+.form-row { display: flex; gap: 16px; margin-bottom: 18px; }
+.field { flex: 1; min-width: 0; }
+.label { display: block; font-size: 14px; color: var(--text-1); margin-bottom: 8px; }
+.label .req { color: var(--danger-6); margin-right: 4px; }
+.label .hint { color: var(--text-3); font-size: 12px; margin-left: 6px; }
+.input, .select {
+  width: 100%; height: 32px; padding: 0 11px; font-size: 14px; color: var(--text-1);
+  background: var(--fill-1); border: 1px solid transparent; border-radius: var(--radius-sm);
+  outline: none; font-family: inherit;
+}
+.input::placeholder { color: var(--text-4); }
+.input:hover, .select:hover { background: var(--fill-2); }
+.input:focus, .select:focus { background: var(--white); border-color: var(--primary-6); }
+.input.is-error { background: var(--danger-1); border-color: var(--danger-6); }
+.err-text { color: var(--danger-6); font-size: 12px; margin-top: 4px; }
+.help-text { color: var(--text-3); font-size: 12px; margin-top: 6px; }
+textarea.input { height: auto; padding: 8px 11px; resize: vertical; line-height: 1.6; }
+select.select { appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%2386909C' stroke-width='1.2'/></svg>");
+  background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+
+.check, .radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.check input, .radio input { accent-color: var(--primary-6); width: 14px; height: 14px; margin: 0; }
+.check.is-disabled { color: var(--text-4); cursor: not-allowed; }
+
+/* ── tags & status ────────────────────────────────────── */
+.tag {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px;
+  border-radius: var(--radius-sm); font-size: 12px; background: var(--fill-2); color: var(--text-2);
+  white-space: nowrap;
+}
+.tag .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.tag-blue   { background: var(--primary-1); color: var(--primary-6); }
+.tag-green  { background: var(--success-1); color: var(--success-6); }
+.tag-orange { background: var(--warning-1); color: var(--warning-6); }
+.tag-red    { background: var(--danger-1);  color: var(--danger-6); }
+.tag-gray   { background: var(--fill-2);    color: var(--text-3); }
+.tag-outline-blue { background: var(--white); color: var(--primary-6); border: 1px solid var(--primary-6); }
+.tag-running .dot { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* ── table ────────────────────────────────────────────── */
+.table { width: 100%; border-collapse: collapse; }
+.table th {
+  text-align: left; font-weight: 500; font-size: 13px; color: var(--text-2);
+  background: var(--fill-1); padding: 11px 16px; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.table td { padding: 13px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tbody tr:hover td { background: var(--fill-1); }
+.table .col-name { font-weight: 500; }
+.table .sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.mono { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+
+.progress { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.progress .bar { flex: 1; height: 4px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+.progress .bar i { display: block; height: 100%; background: var(--primary-6); border-radius: 2px; }
+.progress .bar.is-done i { background: var(--success-6); }
+.progress .bar.is-err  i { background: var(--warning-6); }
+.progress .pct { font-size: 12px; color: var(--text-3); width: 34px; text-align: right; }
+
+.list-foot {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 16px; color: var(--text-3); font-size: 13px;
+}
+
+/* ── misc ─────────────────────────────────────────────── */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px; }
+.stat { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 16px 20px; box-shadow: var(--shadow-card); }
+.stat .k { font-size: 13px; color: var(--text-3); }
+.stat .v { font-size: 24px; font-weight: 600; margin-top: 6px; letter-spacing: .5px; }
+.stat .v small { font-size: 13px; font-weight: 400; color: var(--text-3); margin-left: 4px; }
+
+.toolbar { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.toolbar .spacer { flex: 1; }
+.search { position: relative; }
+.search .input { width: 240px; padding-left: 32px; }
+.search svg { position: absolute; left: 10px; top: 9px; }
+
+.alert {
+  display: flex; gap: 10px; padding: 12px 16px; border-radius: var(--radius); font-size: 13px;
+  background: var(--warning-1); color: #7A4100; border: 1px solid #FFCF8B;
+}
+.alert-blue { background: var(--primary-1); color: #0A2A8C; border-color: #94BFFF; }
+.alert-green { background: var(--success-1); color: #0A6B1C; border-color: #AFF0B5; }
+.alert svg { flex: none; margin-top: 2px; }
+.alert .spacer { flex: 1; }
+
+.divider-h { height: 1px; background: var(--border); margin: 20px 0; }
+.muted { color: var(--text-3); }
+.nowrap { white-space: nowrap; }
+.mockup-note {
+  position: fixed; right: 16px; bottom: 76px; z-index: 200; cursor: pointer;
+  background: rgba(29,33,41,.88); color: #fff; font-size: 12px; line-height: 1.6;
+  padding: 8px 12px; border-radius: var(--radius); max-width: 280px;
+}
+.mockup-note b { color: #FFD666; }
+</style>
+
+<style>
+/* ===== shared components, batch 2 (same block in all six pages) ===== */
+/* Added with the second batch. Keep this block identical across pages. */
+a.menu-item, a.menu-item:hover { color: var(--text-1); }
+a.menu-item.active, a.menu-item.active:hover { color: var(--primary-6); }
+.crumb a { color: var(--text-3); }
+.crumb a:hover { color: var(--primary-6); }
+.hidden { display: none !important; }
+.btn-sm { height: 24px; padding: 0 8px; font-size: 12px; }
+.btn-danger { background: var(--danger-6); color: #fff; }
+.btn-danger:hover { background: #F76560; }
+.btn-danger[disabled] { background: var(--fill-2); color: var(--text-4); }
+.btn-text-danger { background: transparent; padding: 0 8px; color: var(--danger-6); }
+.btn-text-danger:hover { background: var(--danger-1); }
+.btn-text[disabled], .btn-text-danger[disabled] { background: transparent; color: var(--text-4); }
+.tag-outline { background: var(--white); color: var(--text-2); border: 1px solid var(--border); }
+.num { font-variant-numeric: tabular-nums; }
+.req { color: var(--danger-6); margin-right: 4px; }
+
+/* segmented control */
+.seg { display: inline-flex; background: var(--fill-1); border-radius: var(--radius-sm); padding: 2px; }
+.seg label, .seg button {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0;
+  border-radius: var(--radius-sm); font: inherit; font-size: 13px; color: var(--text-2);
+  background: transparent; cursor: pointer; white-space: nowrap; }
+.seg input { display: none; }
+.seg input:checked + span { color: var(--primary-6); }
+.seg label:has(input:checked), .seg button.on {
+  background: var(--white); box-shadow: var(--shadow-card); color: var(--primary-6); }
+.seg label.is-disabled { color: var(--text-4); cursor: not-allowed; }
+
+/* radio-button group (one answer per question) */
+.rbtn { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.rbtn button {
+  height: 28px; padding: 0 12px; font: inherit; font-size: 13px; color: var(--text-2);
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.rbtn button:hover { border-color: var(--primary-6); color: var(--primary-6); }
+.rbtn button.on { border-color: var(--primary-6); background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.rbtn button.on.is-bad { border-color: var(--danger-6); background: var(--danger-1); color: var(--danger-6); }
+.rbtn button.on.is-hold { border-color: var(--warning-6); background: var(--warning-1); color: var(--warning-6); }
+.rbtn button[disabled] { color: var(--text-4); border-color: var(--border); background: var(--fill-1); cursor: not-allowed; }
+
+/* tabs */
+.tabs { display: flex; gap: 28px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+.tab {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; height: 46px; padding: 0;
+  border: 0; background: none; font: inherit; font-size: 14px; color: var(--text-2); cursor: pointer; }
+.tab:hover { color: var(--text-1); }
+.tab.active { color: var(--primary-6); font-weight: 500; }
+.tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--primary-6); }
+.tab .cnt { font-size: 12px; line-height: 18px; padding: 0 6px; border-radius: 9px; background: var(--fill-2); color: var(--text-3); font-weight: 400; }
+.tab.active .cnt { background: var(--primary-1); color: var(--primary-6); }
+.pane { display: none; }
+.pane.active { display: block; }
+
+/* descriptions (label / value grid) */
+.desc { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 32px; }
+.desc.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.desc .it { display: flex; gap: 12px; font-size: 13px; line-height: 1.6; min-width: 0; }
+.desc .it.full { grid-column: 1 / -1; }
+.desc .k { flex: none; width: 104px; color: var(--text-3); }
+.desc .v { min-width: 0; color: var(--text-1); overflow-wrap: anywhere; }
+
+/* switch */
+.switch {
+  position: relative; display: inline-block; flex: none; width: 28px; height: 16px; padding: 0; border: 0;
+  border-radius: 8px; background: var(--text-4); cursor: pointer; vertical-align: middle; transition: background .15s; }
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; transition: left .15s; }
+.switch.on { background: var(--primary-6); }
+.switch.on::after { left: 14px; }
+
+/* pagination: total on the left, pages / size / jump on the right */
+.pager { display: flex; align-items: center; gap: 8px; padding: 14px 20px; font-size: 13px; color: var(--text-2); }
+.pager .total { margin-right: auto; color: var(--text-3); }
+.pager .pg {
+  min-width: 32px; height: 32px; padding: 0 6px; border: 0; border-radius: var(--radius-sm);
+  background: transparent; font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.pager .pg:hover { background: var(--fill-2); }
+.pager .pg.active { background: var(--primary-1); color: var(--primary-6); font-weight: 500; }
+.pager .pg[disabled] { color: var(--text-4); background: transparent; cursor: not-allowed; }
+.pager .gap { color: var(--text-3); padding: 0 2px; }
+.pager .select { width: 104px; }
+.pager .jump { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); }
+.pager .jump .input { width: 52px; text-align: center; }
+
+/* overlays: mask, right drawer, modal */
+.mask { position: fixed; inset: 0; z-index: 300; background: rgba(29,33,41,.45); display: none; }
+.mask.open { display: block; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 310; width: 640px; max-width: 92vw;
+  display: flex; flex-direction: column; background: var(--white); box-shadow: -6px 0 16px rgba(0,0,0,.08);
+  transform: translateX(105%); transition: transform .2s ease; }
+.drawer.open { transform: none; }
+.drawer.wide { width: 800px; }
+.drawer-head { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 20px; border-bottom: 1px solid var(--border); }
+.drawer-title { font-size: 16px; font-weight: 600; }
+.drawer-head .spacer { flex: 1; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 20px; }
+.drawer-foot { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); }
+.drawer-foot .spacer { flex: 1; }
+.modal {
+  position: fixed; top: 14vh; left: 50%; z-index: 320; width: 520px; transform: translateX(-50%);
+  background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow-pop); display: none; }
+.modal.open { display: block; }
+.modal-head { display: flex; align-items: center; gap: 8px; padding: 18px 20px 0; font-size: 16px; font-weight: 600; }
+.modal-head .spacer { flex: 1; }
+.modal-body { padding: 14px 20px 4px; font-size: 14px; color: var(--text-2); }
+.modal-foot { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 20px 18px; }
+.x-close {
+  width: 28px; height: 28px; border: 0; background: none; border-radius: var(--radius-sm); cursor: pointer;
+  display: grid; place-items: center; color: var(--text-3); }
+.x-close:hover { background: var(--fill-2); color: var(--text-1); }
+
+/* toast (operation-level message) */
+.toast {
+  position: fixed; top: 72px; left: 50%; z-index: 400; transform: translateX(-50%); display: none;
+  align-items: center; gap: 8px; max-width: 640px; padding: 9px 16px; font-size: 13px; color: var(--text-1);
+  background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.toast.show { display: flex; }
+
+/* fold (collapse) */
+.fold-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.fold-head .arr { flex: none; transition: transform .15s; }
+.fold.open > .fold-head .arr { transform: rotate(90deg); }
+.fold > .fold-body { display: none; }
+.fold.open > .fold-body { display: block; }
+
+/* timeline */
+.tl { list-style: none; margin: 0; padding: 0; }
+.tl > li { position: relative; padding: 0 0 20px 28px; }
+.tl > li::before { content: ''; position: absolute; left: 5px; top: 17px; bottom: 0; width: 1px; background: var(--border); }
+.tl > li:last-child { padding-bottom: 0; }
+.tl > li:last-child::before { display: none; }
+.tl .dot { position: absolute; left: 0; top: 5px; width: 11px; height: 11px; border-radius: 50%; background: var(--white); border: 2px solid var(--primary-6); }
+.tl .dot.green { border-color: var(--success-6); }
+.tl .dot.orange { border-color: var(--warning-6); }
+.tl .dot.red { border-color: var(--danger-6); }
+.tl .dot.gray { border-color: var(--text-4); }
+.tl .t-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tl .t-time { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tl .t-title { font-weight: 500; }
+.tl .t-body { font-size: 13px; color: var(--text-2); margin-top: 3px; }
+
+/* video placeholder (real page: <video> with a presigned TOS URL) */
+.video { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius); overflow: hidden; background: linear-gradient(160deg, #3A4150, #1D2129); color: #fff; }
+.video .cam { position: absolute; left: 8px; top: 6px; font-size: 12px; opacity: .9; }
+.video .play { position: absolute; left: 50%; top: 50%; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; background: rgba(255,255,255,.18); display: grid; place-items: center; }
+.video .time { position: absolute; right: 8px; bottom: 8px; font: 11px "SF Mono", ui-monospace, Menlo, monospace; opacity: .9; }
+.video .scrub { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.2); }
+.video .scrub i { display: block; height: 100%; width: 0; background: var(--primary-5); }
+.frame { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); overflow: hidden; background: linear-gradient(135deg, #C9CDD4, #86909C); }
+.frame span { position: absolute; left: 4px; bottom: 3px; font: 11px "SF Mono", ui-monospace, Menlo, monospace; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
+
+/* charts: thin marks, hairline grid, text in text tokens */
+.chart { display: block; overflow: visible; }
+.chart text { font-family: inherit; font-size: 11px; fill: var(--text-3); }
+.chart .ax { stroke: var(--border); stroke-width: 1; }
+.chart .grid { stroke: var(--fill-2); stroke-width: 1; }
+.chart .lbl { fill: var(--text-2); font-size: 12px; }
+.chart .val { fill: var(--text-1); font-size: 12px; }
+.chart [data-tip]:hover, .chart [data-tip]:focus { opacity: .8; outline: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-2); }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.legend .ln { width: 14px; height: 2px; border-radius: 1px; flex: none; }
+.tip {
+  position: fixed; z-index: 500; pointer-events: none; display: none; max-width: 300px; padding: 7px 10px;
+  font-size: 12px; line-height: 1.6; color: var(--text-2); background: var(--white);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); }
+.tip b { display: block; color: var(--text-1); font-size: 13px; }
+
+/* key figures inside a card */
+.kv-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.kv { padding: 2px 20px; border-left: 1px solid var(--border); min-width: 0; }
+.kv:first-child { border-left: 0; padding-left: 0; }
+.kv .k { font-size: 12px; color: var(--text-3); }
+.kv .v { font-size: 20px; font-weight: 600; margin-top: 2px; }
+.kv .v small { font-size: 12px; font-weight: 400; color: var(--text-3); margin-left: 3px; }
+.kv .s { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+</style>
+<style>
+  .card-head .muted { font-size: 12px; }
+  .head-desc { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-3); margin-top: 6px; }
+  .head-desc .select { width: 250px; height: 28px; font-size: 13px; }
+  .actions { display: flex; gap: 8px; align-items: center; }
+  .sub-title { font-size: 14px; font-weight: 600; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .sub-title .muted { font-size: 12px; font-weight: 400; }
+  .sub-title .spacer { flex: 1; }
+  .gate { font-size: 11px; font-style: normal; border-radius: 2px; padding: 0 5px; line-height: 16px; background: var(--fill-2); color: var(--text-3); }
+  .gate.hard { background: #FFECE8; color: #CB2634; }
+  .gate.soft { background: #E8F3FF; color: var(--primary-6); }
+  .gate.vlm { background: #F5E8FF; color: #722ED1; }
+  .note-line { font-size: 12px; color: var(--text-3); margin-top: 10px; }
+  .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+  .grid-2c { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .mini-table th, .mini-table td { padding: 8px 12px; font-size: 13px; }
+  .mini-table .r { text-align: right; font-variant-numeric: tabular-nums; }
+  .ep-link { color: var(--primary-6); cursor: pointer; background: none; border: 0; padding: 0; font: 12px "SF Mono", ui-monospace, Menlo, monospace; }
+  .ep-link:hover { text-decoration: underline; }
+
+  /* overview */
+  .formula { display: flex; align-items: flex-end; gap: 18px; }
+  .formula .f .k { font-size: 12px; color: var(--text-3); }
+  .formula .f .v { font-size: 30px; font-weight: 600; line-height: 1.2; }
+  .formula .f .s { font-size: 12px; color: var(--text-3); height: 18px; }
+  .formula .op { font-size: 22px; color: var(--text-4); padding-bottom: 22px; }
+  .formula .ok { color: var(--success-6); } .formula .bad { color: var(--danger-6); } .formula .held { color: var(--warning-6); }
+  .ov-kv { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .held-box { background: var(--warning-1); border: 1px solid #FFCF8B; border-radius: var(--radius); padding: 10px 14px; font-size: 13px; }
+  .held-box .it { display: flex; gap: 10px; padding: 3px 0; color: var(--text-2); }
+  .held-box .it .ep-link { min-width: 40px; text-align: left; }
+
+  /* horizontal bars: one series, one color */
+  .hb { display: grid; grid-template-columns: 150px minmax(0, 1fr) 40px; align-items: center; gap: 10px; height: 26px; font-size: 13px; color: var(--text-2); }
+  .hb .track { height: 12px; }
+  .hb .fill { height: 12px; background: var(--primary-6); border-radius: 0 4px 4px 0; min-width: 2px; }
+  .hb .val { color: var(--text-1); font-variant-numeric: tabular-nums; }
+  .hb.sub { font-size: 12px; height: 22px; }
+  .hb.sub .name { padding-left: 16px; color: var(--text-3); }
+  .hb.sub .fill { height: 8px; }
+
+  /* scope */
+  .scope-table td:first-child { width: 54px; color: var(--text-3); }
+  .row-muted td { color: var(--text-3); }
+
+  /* module sections */
+  .msec .card-head { gap: 8px; }
+  .sec-no { width: 22px; height: 22px; border-radius: 50%; background: var(--fill-2); color: var(--text-2); font-size: 12px; display: grid; place-items: center; flex: none; }
+  .msec .kv-row { margin-bottom: 16px; }
+  .src-note { font-size: 12px; color: var(--text-2); background: var(--fill-1); border-radius: var(--radius-sm); padding: 6px 10px; margin-bottom: 14px; }
+
+  /* stuck timeline */
+  .tl-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tl-tools .spacer { flex: 1; }
+  .tl-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) 160px; gap: 12px; padding: 5px 0; }
+  .tl-row .tot { font-size: 12px; color: var(--text-3); padding-top: 1px; }
+  .tl-bar { display: flex; gap: 2px; height: 14px; }
+  .tl-bar i { display: block; height: 100%; }
+  .tl-bar i:first-child { border-radius: 3px 0 0 3px; }
+  .tl-bar i:last-child { border-radius: 0 3px 3px 0; }
+  .tl-bar .s-stuck { background: #F53F3F; } .tl-bar .s-idle { background: #FF7D00; } .tl-bar .s-normal { background: #00B42A; }
+  .tl-ticks { position: relative; height: 16px; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .tl-ticks span { position: absolute; top: 1px; transform: translateX(-50%); white-space: nowrap; }
+  .tl-ticks span.end { transform: translateX(-100%); }
+
+  /* sync cards */
+  .sync-card { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 12px; overflow: hidden; }
+  .sync-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-left: 4px solid var(--border); background: var(--fill-1); }
+  .sync-head.flag { border-left-color: var(--warning-6); }
+  .sync-head .spacer { flex: 1; }
+  .sync-body { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 18px; padding: 12px 14px; }
+  .cam-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .cam-charts .cn { font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+  .diag { margin-top: 10px; font-size: 12px; }
+  .diag .d { display: grid; grid-template-columns: 10px 170px 150px minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 3px 0; color: var(--text-2); }
+  .diag .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .diag .lbl { color: var(--text-1); }
+
+  /* task_success trail */
+  .trail-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 10px; }
+  .trail-head { display: flex; align-items: center; gap: 10px; font-size: 13px; margin-bottom: 8px; }
+  .trail-head .task { color: var(--text-3); }
+  .trail { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+  .step { position: relative; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 8px; font-size: 12px; color: var(--text-2); background: #fff; }
+  .step .sn { font-size: 11px; color: var(--text-3); }
+  .step .sv { color: var(--text-1); margin-top: 1px; }
+  .step.off { background: var(--fill-1); color: var(--text-4); border-style: dashed; }
+  .step.off .sv, .step.off .sn { color: var(--text-4); }
+  .step:not(:last-child)::after { content: '›'; position: absolute; right: -8px; top: 50%; transform: translateY(-50%); color: var(--text-4); font-size: 14px; }
+  .step.res-pass { border-color: #AFF0B5; background: var(--success-1); }
+  .step.res-fail { border-color: #FDCDC5; background: var(--danger-1); }
+  .step.res-hold { border-color: #FFCF8B; background: var(--warning-1); }
+  .step.res-err { border-color: #FFCF8B; background: var(--warning-1); }
+
+  /* skills */
+  details.fam > summary { list-style: none; cursor: pointer; }
+  details.fam > summary::-webkit-details-marker { display: none; }
+  details.fam > summary .name::before {
+    content: ''; display: inline-block; width: 0; height: 0; margin: 0 7px 1px 1px; vertical-align: middle;
+    border-style: solid; border-width: 4px 0 4px 6px; border-color: transparent transparent transparent var(--text-3);
+    transition: transform .15s; }
+  details.fam[open] > summary .name::before { transform: rotate(90deg); }
+  details.fam.single > summary .name::before { border-color: transparent; }
+  .chip { display: inline-block; font-size: 11px; padding: 0 6px; line-height: 18px; border-radius: 2px; background: var(--warning-1); color: #D25F00; margin-left: 6px; }
+  .tax td { vertical-align: top; }
+  .tax .eps { font: 12px/1.6 "SF Mono", ui-monospace, Menlo, monospace; color: var(--text-2); }
+  .audit-row { display: grid; grid-template-columns: 52px 64px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--fill-2); font-size: 13px; align-items: baseline; }
+
+  .fail-box { background: var(--danger-1); border: 1px solid #FDCDC5; border-radius: var(--radius); padding: 12px 14px; font-size: 13px; color: #7D1B1B; }
+  .fail-box .code { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: #A1151E; margin-top: 6px; }
+
+  /* detail table */
+  .dt-tools { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+  .dt-tools .spacer { flex: 1; }
+  .dt th, .dt td { padding: 9px 12px; font-size: 13px; white-space: nowrap; }
+  .dt td.r, .dt th.r { text-align: right; font-variant-numeric: tabular-nums; }
+  .dt-wrap { max-height: 640px; overflow: auto; }
+
+  /* drawer */
+  .dw-sec { margin-bottom: 22px; }
+  .vcard { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; font-size: 13px; }
+  .vcard .row { display: flex; gap: 12px; padding: 3px 0; }
+  .vcard .k { width: 76px; flex: none; color: var(--text-3); }
+  .vids { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .frames { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .frames .cap { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+  .read-table td { font-size: 13px; padding: 9px 12px; vertical-align: top; }
+  .read-table td:first-child { white-space: nowrap; color: var(--text-2); width: 110px; }
+
+  /* perf */
+  .perf-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .perf-tools .muted { font-size: 12px; }
+  .lat td { vertical-align: middle; }
+  .kind-name { white-space: nowrap; }
+  .kind-name .tagk { font: 11px "SF Mono", ui-monospace, Menlo, monospace; color: var(--text-3); margin-left: 6px; }
+  .share .hb { grid-template-columns: 110px minmax(0, 1fr) 90px; }
+  .fact { font-size: 13px; color: var(--text-2); padding: 6px 0; border-bottom: 1px solid var(--fill-2); display: flex; gap: 12px; }
+  .fact .k { width: 150px; color: var(--text-3); flex: none; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo"></span>
+    <span>火山引擎</span>
+    <span class="divider"></span>
+    <span class="product">Physical AI Kit · 数据质检平台</span>
+  </div>
+  <div class="spacer"></div>
+  <div class="region">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="#86909C" stroke-width="1.2"/><path d="M8 1.8c1.8 1.7 2.7 3.8 2.7 6.2S9.8 12.5 8 14.2C6.2 12.5 5.3 10.4 5.3 8S6.2 3.5 8 1.8z" stroke="#86909C" stroke-width="1.2"/><path d="M2 8h12" stroke="#86909C" stroke-width="1.2"/></svg>
+    华北 2（北京）
+    <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="#86909C" stroke-width="1.2"/></svg>
+  </div>
+  <div class="user">
+    <span class="avatar">GB</span> galbot
+    <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="#86909C" stroke-width="1.2"/></svg>
+  </div>
+</header>
+
+<nav class="sider">
+  <div class="menu-group">数据质检</div>
+  <a class="menu-item active" href="tasks.html">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2.5" width="12" height="11" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M5 6.5h6M5 9.5h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+    质检任务
+  </a>
+  <a class="menu-item" href="credentials.html">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10.5 2.5a3.5 3.5 0 00-3.2 4.9L2.5 12.2v1.3h1.3l4.8-4.8a3.5 3.5 0 102-6.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    密钥与资源
+  </a>
+  <div class="menu-group">帮助</div>
+  <div class="menu-item" data-toast="静态预览稿不含使用文档">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3"/><path d="M6.4 6.2a1.7 1.7 0 113.2.8c-.4.6-1.6.8-1.6 1.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>
+    使用文档
+  </div>
+</nav>
+
+<main class="main">
+  <div class="crumb">数据质检平台 / <a href="tasks.html">质检任务</a> / <a href="task-detail.html">droid 前 50 条质检</a> / <b>质检报告</b></div>
+
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">质检报告</h1>
+      <div class="head-desc">
+        <span>droid 前 50 条质检 · 结果版本</span>
+        <select class="select" id="revSel" aria-label="结果版本">
+          <option value="2">r0002 · 当前 · 09-20 14:09</option>
+          <option value="1">r0001 · 主流程结束 · 09-20 13:22</option>
+        </select>
+        <span>· 小节和本次开启的 7 个模块一一对应</span>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <div class="actions">
+      <a class="btn btn-outline" href="task-detail.html">返回任务详情</a>
+      <button class="btn btn-outline" data-toast="静态预览稿：下载 revisions/r0002/report.md">下载报告</button>
+      <a class="btn btn-primary rev2-only" href="task-adjudication.html">去裁决（10）</a>
+    </div>
+  </div>
+
+  <div class="alert rev1-only hidden" style="margin-bottom:16px; align-items:center">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2.4l5.8 10.2H2.2L8 2.4z" stroke="#FF7D00" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.6v2.8" stroke="#FF7D00" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.2" r=".8" fill="#FF7D00"/></svg>
+    <div><b>你在看历史版本 r0001</b>（主流程结束时生成）。当前生效的是 r0002。历史版本只读，按钮不可用。预览稿里只替换了总览、本次质检范围和技能画像小节。</div>
+    <div class="spacer"></div>
+    <button class="btn btn-outline" id="backCur">回到当前版本</button>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="tabs" data-tabs="report" style="border-bottom:0">
+      <button class="tab active" data-pane="paneReport">报告</button>
+      <button class="tab" data-pane="panePerf">性能剖析</button>
+    </div>
+  </div>
+
+  <!-- ================= 报告 ================= -->
+  <div class="pane active" data-group="report" id="paneReport">
+
+    <div class="card">
+      <div class="card-head"><span class="card-title">质检总览</span><span class="muted">输入 = 判废 + 交付 + 待补跑，三者不重不漏</span></div>
+      <div class="card-body">
+        <div class="grid-2">
+          <div>
+            <div class="formula">
+              <div class="f"><div class="k">输入</div><div class="v">50</div><div class="s">前 50 条</div></div>
+              <div class="op">=</div>
+              <div class="f"><div class="k">判废</div><div class="v bad">7</div><div class="s">&nbsp;</div></div>
+              <div class="op">+</div>
+              <div class="f"><div class="k">交付</div><div class="v ok" id="ovPass">41</div><div class="s" id="ovPassSub">其中 10 条待人工确认</div></div>
+              <div class="op">+</div>
+              <div class="f"><div class="k">待补跑</div><div class="v held" id="ovHeld">2</div><div class="s">暂不交付</div></div>
+            </div>
+            <div class="ov-kv">
+              <div class="kv"><div class="k">通过率</div><div class="v" id="ovRate">82%</div></div>
+              <div class="kv"><div class="k">平均质量分</div><div class="v" id="ovScore">0.86</div></div>
+              <div class="kv"><div class="k">耗时</div><div class="v" style="font-size:15px; margin-top:6px" id="ovTime">16 分 56 秒 + 6 分 52 秒</div><div class="s" id="ovTimeSub">主流程 + 重试 #1</div></div>
+              <div class="kv"><div class="k">Token</div><div class="v" style="font-size:15px; margin-top:6px" id="ovTok">2.08M</div><div class="s" id="ovTokSub">输入 2.01M · 输出 67.5K</div></div>
+            </div>
+          </div>
+          <div>
+            <div class="sub-title">判废原因分布<span class="muted">按归因模块，共 7 条</span></div>
+            <div id="rejectBars"></div>
+            <div class="sub-title" style="margin-top:18px">待补跑<span class="muted">执行出错，既不算通过也不算拒绝</span></div>
+            <div class="held-box rev2-only">
+              <div class="it"><button class="ep-link" data-ep="7">ep 7</button><span>任务成败判定 · 取证仲裁请求超时（60 秒），外层重试 3 次后仍失败</span></div>
+              <div class="it"><button class="ep-link" data-ep="31">ep 31</button><span>任务成败判定 · 同上，主流程和重试 #1 都停在这一步</span></div>
+              <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
+                <button class="btn btn-outline btn-sm" data-open="retryModal">重试这 2 条</button>
+                <span class="muted" style="font-size:12px">补跑成功后按新结果进通过或拒绝，再重新导出</span>
+              </div>
+            </div>
+            <div class="held-box rev1-only hidden">
+              <div class="it"><span style="min-width:40px">41 条</span><span>技能画像整体失败，所有进入判决之后的条目都缺这一项结论</span></div>
+              <div class="it"><span style="min-width:40px">2 条</span><span>任务成败判定出错：ep 7、ep 31（取证仲裁请求超时）</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-title">数据包完整性</span><span class="muted">读任何数字之前先看数据本身</span></div>
+      <div class="card-body">
+        <div class="desc">
+          <div class="it"><span class="k">格式</span><span class="v">LeRobot v3（结构校验通过）</span></div>
+          <div class="it"><span class="k">Episode</span><span class="v">数据集 100 条，本次前 50 条（ep 0–49）</span></div>
+          <div class="it"><span class="k">相机</span><span class="v">3 路：exterior_image_1_left、exterior_image_2_left、wrist_image_left</span></div>
+          <div class="it"><span class="k">帧率</span><span class="v">15 fps</span></div>
+          <div class="it"><span class="k">机器人型号</span><span class="v">未读到（robot_type 为 unknown），运动学极限未运行</span></div>
+          <div class="it"><span class="k">语义档案</span><span class="v">命中 droid_100：动作是归一化的末端速度 + 夹爪，状态是末端绝对位姿</span></div>
+          <div class="it"><span class="k">任务标注</span><span class="v">28 条有；22 条没有，已由模型补描述（来源记为「自产描述」）</span></div>
+          <div class="it"><span class="k">缺失字段</span><span class="v">无</span></div>
+          <div class="it"><span class="k">源文件清单</span><span class="v">204 个对象 · 1.42 GiB · sha256:9f3c…e21a（启动时固化）</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-title">本次质检范围</span><span class="muted">报告小节按下面的顺序排列，点名称跳到对应小节</span></div>
+      <table class="table mini-table scope-table">
+        <thead><tr><th>顺序</th><th>模块</th><th>判决方式</th><th>状态</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><a href="#sec-ts">时间戳检查</a></td><td><i class="gate hard">一票否决</i></td><td><span class="tag tag-green"><i class="dot"></i>已完成</span></td><td>拒绝 1 条</td></tr>
+          <tr><td>2</td><td><a href="#sec-motion">运动质量</a></td><td><i class="gate soft">打分项</i></td><td><span class="tag tag-green"><i class="dot"></i>已完成</span></td><td>平均分 0.84</td></tr>
+          <tr><td>3</td><td><a href="#sec-visual">视觉质量</a></td><td><i class="gate soft">打分项</i></td><td><span class="tag tag-green"><i class="dot"></i>已完成</span></td><td>平均分 0.87</td></tr>
+          <tr><td>4</td><td><a href="#sec-sync">视频-动作同步</a></td><td><i class="gate hard">一票否决</i></td><td><span class="tag tag-green"><i class="dot"></i>已完成</span></td><td>错位判废 0 条，已标注 2 条</td></tr>
+          <tr><td>5</td><td><a href="#sec-task">任务成败判定</a></td><td><i class="gate hard">一票否决</i></td><td><span class="tag tag-orange"><i class="dot"></i>部分错误</span></td><td>判废 5 条，转人工 6 条，出错 2 条</td></tr>
+          <tr><td>6</td><td><a href="#sec-dedup">精确去重</a></td><td><i class="gate">剔除重复</i></td><td><span class="tag tag-green"><i class="dot"></i>已完成</span></td><td>剔除 1 条</td></tr>
+          <tr><td>7</td><td><a href="#sec-skill">技能画像</a></td><td><i class="gate">只出画像</i></td>
+            <td><span class="rev2-only tag tag-green"><i class="dot"></i>已完成</span><span class="rev1-only hidden tag tag-red"><i class="dot"></i>失败</span></td>
+            <td><span class="rev2-only">6 个技能族，标注分歧 5 条</span><span class="rev1-only hidden">方舟返回 429，模块熔断</span></td></tr>
+          <tr class="row-muted"><td>—</td><td>运动学极限</td><td><i class="gate">一票否决</i></td><td><span class="tag tag-gray"><i class="dot"></i>未运行</span></td><td>预检没读到机器人型号（robot_type 为 unknown），创建任务时选择跳过；其余模块照常</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 1 时间戳检查 -->
+    <section class="card msec" id="sec-ts">
+      <div class="card-head"><span class="sec-no">1</span><span class="card-title">时间戳检查</span><i class="gate hard">一票否决</i><span class="tag tag-green"><i class="dot"></i>已完成</span></div>
+      <div class="card-body">
+        <div class="kv-row">
+          <div class="kv"><div class="k">不合格</div><div class="v">1<small>条</small></div></div>
+          <div class="kv"><div class="k">乱序</div><div class="v">0</div></div>
+          <div class="kv"><div class="k">跳变</div><div class="v">0</div></div>
+          <div class="kv"><div class="k">残段</div><div class="v">1</div></div>
+          <div class="kv"><div class="k">检查条数</div><div class="v">50</div></div>
+          <div class="kv"><div class="k">残段下限</div><div class="v">1.0<small>秒</small></div></div>
+        </div>
+        <table class="table mini-table">
+          <thead><tr><th>episode</th><th>原因</th><th>异常位置</th><th>说明</th></tr></thead>
+          <tbody><tr><td><button class="ep-link" data-ep="18">ep 18</button></td><td>残段</td><td>全程 0.5 秒（8 帧）</td><td>短于 1.0 秒，按采集中断的碎片处理，判废</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 2 运动质量 -->
+    <section class="card msec" id="sec-motion">
+      <div class="card-head"><span class="sec-no">2</span><span class="card-title">运动质量</span><i class="gate soft">打分项</i><span class="tag tag-green"><i class="dot"></i>已完成</span></div>
+      <div class="card-body">
+        <div class="kv-row">
+          <div class="kv"><div class="k">平均分</div><div class="v">0.84</div></div>
+          <div class="kv"><div class="k">平滑度</div><div class="v">0.86</div><div class="s">计入总分</div></div>
+          <div class="kv"><div class="k">尖刺</div><div class="v">0.90</div><div class="s">计入总分</div></div>
+          <div class="kv"><div class="k">夹爪抖动</div><div class="v">0.77</div><div class="s">计入总分</div></div>
+          <div class="kv"><div class="k">路径效率</div><div class="v">0.71</div><div class="s">只报不罚</div></div>
+          <div class="kv"><div class="k">执行器卡死</div><div class="v">4<small>条</small></div><div class="s">单列，不进总分</div></div>
+        </div>
+        <div class="src-note">子项适用性：执行器饱和对本数据集不适用 —— 速度型指令和位置读数含义不同，没法直接比，明细表不列这一列。</div>
+
+        <div class="sub-title">卡顿动作时间线<span class="muted">每条一根三色条；只画有卡顿或空闲的条目</span></div>
+        <div class="tl-tools">
+          <div class="seg" id="tlShow">
+            <button class="on" data-v="both">卡顿 + 空闲</button><button data-v="stuck">只看卡顿</button>
+            <button data-v="idle">只看空闲</button><button data-v="all">全部条目</button>
+          </div>
+          <div class="seg" id="tlSort"><button class="on" data-v="ep">录制顺序</button><button data-v="stuck">卡顿时长（长的在前）</button></div>
+          <div class="spacer"></div>
+          <div class="legend">
+            <span class="key"><i class="sw" style="background:#F53F3F"></i>卡顿（指令在推而不动）</span>
+            <span class="key"><i class="sw" style="background:#FF7D00"></i>空闲（无指令静止）</span>
+            <span class="key"><i class="sw" style="background:#00B42A"></i>正常（在干活）</span>
+          </div>
+        </div>
+        <div id="stuckRows"></div>
+        <div class="note-line">明细：运动质量逐条读数（50 行），在页面底部「明细表」里选「运动质量」。</div>
+      </div>
+    </section>
+
+    <!-- 3 视觉质量 -->
+    <section class="card msec" id="sec-visual">
+      <div class="card-head"><span class="sec-no">3</span><span class="card-title">视觉质量</span><i class="gate soft">打分项</i><span class="tag tag-green"><i class="dot"></i>已完成</span></div>
+      <div class="card-body">
+        <div class="kv-row">
+          <div class="kv"><div class="k">平均分</div><div class="v">0.87</div></div>
+          <div class="kv"><div class="k">检查条数</div><div class="v">49</div><div class="s">每条 3 路相机</div></div>
+          <div class="kv"><div class="k">低于 0.6 的相机读数</div><div class="v">3</div></div>
+          <div class="kv"><div class="k">占位（无画面）</div><div class="v">0</div></div>
+          <div class="kv"><div class="k">清晰度参考线</div><div class="v">100</div><div class="s">画面最长边 448 像素</div></div>
+          <div class="kv"><div class="k">相机权重</div><div class="v" style="font-size:15px; margin-top:6px">各路 1.0</div></div>
+        </div>
+        <div class="sub-title">逐相机分布<span class="muted">横轴是视觉总分，纵轴是条数</span></div>
+        <div class="cam-charts" id="visHist"></div>
+      </div>
+    </section>
+
+    <!-- 4 视频-动作同步 -->
+    <section class="card msec" id="sec-sync">
+      <div class="card-head"><span class="sec-no">4</span><span class="card-title">视频-动作同步</span><i class="gate hard">一票否决</i><span class="tag tag-green"><i class="dot"></i>已完成</span></div>
+      <div class="card-body">
+        <div class="kv-row">
+          <div class="kv"><div class="k">整体错位（判废）</div><div class="v">0</div></div>
+          <div class="kv"><div class="k">已标注异常</div><div class="v">2</div><div class="s">不判废</div></div>
+          <div class="kv"><div class="k">疑似错位</div><div class="v">1</div><div class="s">证据不足，只提醒</div></div>
+          <div class="kv"><div class="k">测不准</div><div class="v">3</div><div class="s">弃权，不进裁决</div></div>
+          <div class="kv"><div class="k">同步正常</div><div class="v">43</div></div>
+          <div class="kv"><div class="k">被标注的相机</div><div class="v">2<small>路次</small></div></div>
+        </div>
+        <div class="sub-title">全库逐相机同步概览</div>
+        <table class="table mini-table">
+          <thead><tr><th>相机</th><th class="r">有效读数</th><th class="r">典型滞后（秒）</th><th class="r">逐条波动（秒）</th><th class="r">疑似错位</th><th class="r">测不准</th><th class="r">已标注</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">exterior_image_1_left</td><td class="r">46</td><td class="r">+0.03</td><td class="r">0.05</td><td class="r">1</td><td class="r">2</td><td class="r">0</td></tr>
+            <tr><td class="mono">exterior_image_2_left</td><td class="r">46</td><td class="r">+0.07</td><td class="r">0.09</td><td class="r">0</td><td class="r">2</td><td class="r">2</td></tr>
+            <tr><td class="mono">wrist_image_left</td><td class="r">48</td><td class="r">−0.01</td><td class="r">0.04</td><td class="r">0</td><td class="r">1</td><td class="r">0</td></tr>
+          </tbody>
+        </table>
+        <div class="note-line">典型滞后：这一路画面比动作晚多少（正 = 画面晚），越接近 0 越好。逐条波动：各条之间这个数跳得厉不厉害。判废只发生在「所有可信相机一致指向同一个偏移」这一种情况，本次没有。</div>
+
+        <div class="sub-title" style="margin-top:20px">同步曲线<span class="muted">蓝线 = 画面在动的程度，青线 = 机械臂在动的程度，两条同步起伏才对；右边是各相机的互相关曲线，峰落在绿带（0 ± 0.25 秒）内就是对齐</span></div>
+        <div class="tl-tools">
+          <div class="seg" id="syncFilter"><button class="on" data-v="all">全部（49）</button><button data-v="flag">只看有标注或异常的（6）</button></div>
+          <div class="spacer"></div>
+          <span class="muted" style="font-size:12px">每页 20 张，往下翻懒加载；稿子里只画了 4 张</span>
+        </div>
+        <div id="syncCards"></div>
+      </div>
+    </section>
+
+    <!-- 5 任务成败判定 -->
+    <section class="card msec" id="sec-task">
+      <div class="card-head"><span class="sec-no">5</span><span class="card-title">任务成败判定</span><i class="gate hard">一票否决</i><i class="gate vlm">调用模型</i><span class="tag tag-orange"><i class="dot"></i>部分错误</span>
+        <div class="spacer"></div>
+        <a class="btn btn-outline btn-sm rev2-only" href="task-adjudication.html?source=task_success">去裁决（6）</a>
+      </div>
+      <div class="card-body">
+        <div class="kv-row">
+          <div class="kv"><div class="k">判定条数</div><div class="v">49</div><div class="s">过了两道硬门的条目</div></div>
+          <div class="kv"><div class="k">通过</div><div class="v">36</div></div>
+          <div class="kv"><div class="k">判废</div><div class="v">5</div><div class="s">可在「任务失败复议」里复议</div></div>
+          <div class="kv"><div class="k">弃权（转人工）</div><div class="v">6</div><div class="s">先交付，同时等人确认</div></div>
+          <div class="kv"><div class="k">出错（待补跑）</div><div class="v" style="color:var(--warning-6)">2</div><div class="s">ep 7、ep 31</div></div>
+          <div class="kv"><div class="k">任务文本来源</div><div class="v" style="font-size:15px; margin-top:6px">标注 27 · 自产 22</div></div>
+        </div>
+        <div class="grid-2">
+          <div>
+            <div class="sub-title">弃权原因分布</div>
+            <div id="abstainBars"></div>
+          </div>
+          <div>
+            <div class="sub-title">判定口径</div>
+            <div class="note-line" style="margin-top:0; line-height:1.8">
+              打分层：8 个时刻、各机位联合打完成度（0–100）。<br>
+              复核：每个机位分开问「做成了吗」「失败了吗」，一个机位一票。<br>
+              护栏：判废且任务文本来自原始标注时，比对标注和画面是不是同一件事。<br>
+              仲裁：打分和复核之后仍拿不准才跑；至少 2 路取证都说失败才判废。
+            </div>
+          </div>
+        </div>
+        <div class="sub-title" style="margin-top:20px">判决卡<span class="muted">每条走过哪几层、在哪一层定的结论；没走到的层显示为虚线</span></div>
+        <div id="trails"></div>
+        <div class="note-line">逐条判定痕迹在 details/task_details.json（49 条），只含真正跑过成败判定的条目。</div>
+      </div>
+    </section>
+
+    <!-- 6 精确去重 -->
+    <section class="card msec" id="sec-dedup">
+      <div class="card-head"><span class="sec-no">6</span><span class="card-title">精确去重</span><i class="gate">剔除重复</i><span class="tag tag-green"><i class="dot"></i>已完成</span></div>
+      <div class="card-body">
+        <div class="kv-row">
+          <div class="kv"><div class="k">检查条数</div><div class="v">42</div><div class="s">判决放行的条目</div></div>
+          <div class="kv"><div class="k">重复组</div><div class="v">1</div></div>
+          <div class="kv"><div class="k">剔除</div><div class="v">1<small>条</small></div></div>
+        </div>
+        <table class="table mini-table">
+          <thead><tr><th>组</th><th>保留</th><th>剔除</th><th>依据</th></tr></thead>
+          <tbody><tr><td>1</td><td><button class="ep-link" data-ep="43">ep 43</button></td><td><button class="ep-link" data-ep="44">ep 44</button></td><td>动作数据与视频字节级完全一致；保留遍历顺序里最先出现的那一条</td></tr></tbody>
+        </table>
+        <div class="note-line">去重固定单线程：并发会让同一份数据两次跑出不同的保留对象。</div>
+      </div>
+    </section>
+
+    <!-- 7 技能画像（当前版本） -->
+    <section class="card msec rev2-only" id="sec-skill">
+      <div class="card-head"><span class="sec-no">7</span><span class="card-title">技能画像</span><i class="gate">只出画像</i><i class="gate vlm">调用模型</i><span class="tag tag-green"><i class="dot"></i>已完成</span>
+        <div class="spacer"></div>
+        <a class="btn btn-outline btn-sm" href="task-adjudication.html?source=skill_profile">去裁决（5）</a>
+      </div>
+      <div class="card-body">
+        <div class="src-note">这一节的结果来自子任务「重试 #1」（09-20 14:09）。提示词版本 sha256:4be1…c02d，和主流程相同。</div>
+        <div class="kv-row">
+          <div class="kv"><div class="k">覆盖条数</div><div class="v">41</div><div class="s">去重后的交付条目</div></div>
+          <div class="kv"><div class="k">技能族</div><div class="v">6</div></div>
+          <div class="kv"><div class="k">子技能</div><div class="v">10</div></div>
+          <div class="kv"><div class="k">样本偏少的族</div><div class="v">2</div><div class="s">擦拭、旋转开关</div></div>
+          <div class="kv"><div class="k">标注分歧</div><div class="v">5</div><div class="s">高置信 3 · 人工复核 2</div></div>
+          <div class="kv"><div class="k">看法不稳</div><div class="v">2</div><div class="s">不算分歧，只列出来</div></div>
+        </div>
+        <div class="grid-2">
+          <div>
+            <div class="sub-title">技能分布<span class="muted">点族名展开子技能；族和子技能用同一把尺子</span></div>
+            <div id="skillBars"></div>
+          </div>
+          <div>
+            <div class="sub-title">标注分歧<span class="muted">原始标注和模型看到的画面归进了不同的技能族</span></div>
+            <div id="auditRows"></div>
+            <div class="note-line">双方都可能错：模型的描述也会看错，而且同一条打几次说法不一样。这里只列分歧，不判谁对，交给人看。</div>
+          </div>
+        </div>
+        <div class="sub-title" style="margin-top:20px">两级技能体系</div>
+        <table class="table mini-table tax" id="taxTable"></table>
+      </div>
+    </section>
+
+    <!-- 7 技能画像（历史版本 r0001：模块失败） -->
+    <section class="card msec rev1-only hidden" id="sec-skill-failed">
+      <div class="card-head"><span class="sec-no">7</span><span class="card-title">技能画像</span><i class="gate">只出画像</i><i class="gate vlm">调用模型</i><span class="tag tag-red"><i class="dot"></i>失败</span></div>
+      <div class="card-body">
+        <div class="fail-box">
+          <b>这个模块没有跑完。</b>方舟返回 429（套餐额度用尽），开头 20 条打标请求都是同一类错误，模块已熔断，没有产出技能分布和标注分歧。
+          因为缺这一项结论，进入判决之后的 41 条全部待补跑、暂不交付。
+          <div class="code">skill_profile: 429 QuotaExceeded x20, circuit open, exit 4 · 13:20:35</div>
+        </div>
+        <div style="margin-top:12px; display:flex; align-items:center; gap:10px">
+          <button class="btn btn-primary" disabled title="历史版本只读">重试此模块</button>
+          <span class="muted" style="font-size:12px">历史版本只读。这个模块已在子任务「重试 #1」中恢复，当前版本是 r0002。</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 明细表 -->
+    <div class="card" id="detailCard">
+      <div class="card-head"><span class="card-title">明细表</span><span class="muted">服务端按页切片，每页 100 行；排序字段只能选下拉里的这几个；点 episode 看它在所有模块下的读数</span></div>
+      <div class="dt-tools">
+        <select class="select" id="dtSel" style="width:220px">
+          <option value="verdict">判决总表（50 行）</option>
+          <option value="visual">视觉质量 · 逐相机（147 行）</option>
+          <option value="sync">视频-动作同步 · 逐相机（147 行）</option>
+          <option value="motion">运动质量（50 行）</option>
+        </select>
+        <select class="select" id="dtSort" style="width:170px"></select>
+        <div class="seg" id="dtOrder"><button class="on" data-v="asc">升序</button><button data-v="desc">降序</button></div>
+        <div class="spacer"></div>
+        <button class="btn btn-outline" data-toast="静态预览稿：下载这张表的 CSV">下载 CSV</button>
+      </div>
+      <div class="dt-wrap"><table class="table dt" id="dtTable"></table></div>
+      <div class="pager" id="dtPager"></div>
+    </div>
+  </div>
+
+  <!-- ================= 性能剖析 ================= -->
+  <div class="pane" data-group="report" id="panePerf">
+    <div class="perf-tools">
+      <div class="seg" id="perfScope">
+        <button class="on" data-v="all">全部</button><button data-v="main">仅主流程</button><button data-v="retry">子任务 · 重试 #1</button>
+      </div>
+      <span class="muted">延迟明细是追加式的，每行带子任务编号；默认看全部调用的合计，含重试花掉的</span>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-title">模型服务与容器配额</span></div>
+      <div class="card-body">
+        <div class="desc">
+          <div class="it"><span class="k">模型服务</span><span class="v">ark-prod（方舟）· https://ark.cn-beijing.volces.com/api/v3</span></div>
+          <div class="it"><span class="k">模型</span><span class="v">doubao-seed-2-0-pro-260215</span></div>
+          <div class="it"><span class="k">思考强度</span><span class="v">模型默认（请求不带该字段）</span></div>
+          <div class="it"><span class="k">VLM 并行度 N</span><span class="v">64（任务不限 · 模型 64 · 后端 64 · 站点 128，取最小）</span></div>
+          <div class="it full"><span class="k">闸门</span><span class="v">episode 32 · 打分 64 · 复核 64 · 仲裁 32 · 护栏打标 32 · 打标 32 · 归纳 16 · 分歧判断 16</span></div>
+          <div class="it"><span class="k">流水线容器</span><span class="v">CPU 配额 30 核 · 内存配额 112 GiB（节点 32 核 128G）</span></div>
+          <div class="it"><span class="k">CPU 档并发</span><span class="v">数值档 8 · 帧档 8 · 去重 1</span></div>
+          <div class="it"><span class="k">代码版本</span><span class="v">v2.0.4（主流程 13:11 由 v2.0.3 升级后续跑，两版模块实现指纹一致）</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <div class="kv-row" id="perfKpi"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-title">五类调用的延迟</span><span class="muted">客户端视角：网络 + 服务端排队 + 推理；墙钟口径，不用「次数 × 均值」</span></div>
+      <table class="table mini-table lat" id="latTable"></table>
+      <div class="card-body" style="padding-top:10px">
+        <div class="legend">
+          <span class="key"><i class="sw" style="background:#165DFF"></i>条数分布（每格 5 秒）</span>
+          <span class="key"><i class="ln" style="background:#1D2129"></i>P50 / P90 / P99</span>
+        </div>
+        <div class="note-line">失败：补发、重试之后仍没拿到结果的调用。取证仲裁只对打分和复核之后仍拿不准的条目跑，所以次数少、耗时长。</div>
+      </div>
+    </div>
+
+    <div class="grid-2c">
+      <div class="card">
+        <div class="card-head"><span class="card-title">各阶段墙钟占比</span><span class="muted" id="shareTotal"></span></div>
+        <div class="card-body share" id="shareBars"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-title">重试与合并</span></div>
+        <div class="card-body" id="retryFacts"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-title">Token（按调用种类）</span><span class="muted">实际调用账；合并请求会单列一行，本次没有</span></div>
+      <table class="table mini-table" id="tokKind"></table>
+    </div>
+  </div>
+</main>
+
+<div class="mask" id="mask"></div>
+
+<div class="drawer wide" id="epDrawer" role="dialog" aria-labelledby="dwTitle">
+  <div class="drawer-head">
+    <span class="drawer-title" id="dwTitle">ep 29</span>
+    <span id="dwTag"></span>
+    <div class="spacer"></div>
+    <a class="btn btn-outline btn-sm" id="dwAdj" href="task-adjudication.html">去裁决</a>
+    <button class="x-close" data-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="drawer-body">
+    <div class="dw-sec">
+      <div class="sub-title">判决卡</div>
+      <div class="vcard" id="dwCard"></div>
+    </div>
+    <div class="dw-sec">
+      <div class="sub-title">各机位视频<span class="muted" id="dwVidSrc"></span><span class="spacer"></span><button class="btn btn-outline btn-sm" id="playAll">同时播放</button></div>
+      <div class="vids" id="dwVids"></div>
+    </div>
+    <div class="dw-sec">
+      <div class="sub-title">证据帧</div>
+      <div class="frames" id="dwFrames"></div>
+    </div>
+    <div class="dw-sec">
+      <div class="sub-title">各模块读数</div>
+      <table class="table read-table" id="dwReads"></table>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="retryModal" role="dialog" aria-labelledby="retryTitle">
+  <div class="modal-head" id="retryTitle">重试出错的条目<div class="spacer"></div>
+    <button class="x-close" data-close aria-label="关闭"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="modal-body">
+    <p style="margin:0 0 8px">建一个重试子任务，只补跑 ep 7、ep 31（任务成败判定，从 VLM 档接着往后跑）。已经成功的结果原样保留，新结果完整生成后才替换当前版本。</p>
+    <p class="muted" style="margin:0">开始前会检查：数据集能读、交付目录能写、模型能调通。</p>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" data-close>取消</button>
+    <button class="btn btn-primary" data-close data-toast="静态预览稿：已创建子任务「重试 #2」">开始重试</button>
+  </div>
+</div>
+
+<div class="mockup-note">
+  <b>静态预览稿</b> · 第二批<br>
+  数据为假数据，交互不接后端<br><span style="opacity:.6">点此关闭</span>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// Shared mockup helpers (same block in all six pages): menus, tabs, folds,
+// drawers / modals, toast and chart tooltips. No network, no storage.
+(function () {
+  var note = document.querySelector('.mockup-note');
+  if (note) note.addEventListener('click', function () { note.style.display = 'none'; });
+
+  var toastEl = document.getElementById('toast'), toastTimer;
+  window.toast = function (msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 2600);
+  };
+
+  window.openLayer = function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var mask = document.getElementById('mask');
+    if (mask) mask.classList.add('open');
+    el.classList.add('open');
+  };
+  window.closeLayers = function () {
+    document.querySelectorAll('.drawer.open, .modal.open, .mask.open').forEach(function (n) {
+      n.classList.remove('open');
+    });
+  };
+
+  document.addEventListener('click', function (e) {
+    // dropdown menus
+    var more = e.target.closest('.js-more');
+    document.querySelectorAll('.menu-pop.open').forEach(function (n) {
+      if (!more || n !== more.parentElement) n.classList.remove('open');
+    });
+    if (more) { more.parentElement.classList.toggle('open'); return; }
+
+    // tabs: .tabs[data-tabs=g] > .tab[data-pane=id]; panes: .pane[data-group=g]
+    var tab = e.target.closest('.tab[data-pane]');
+    if (tab) {
+      var bar = tab.closest('.tabs');
+      bar.querySelectorAll('.tab').forEach(function (b) { b.classList.toggle('active', b === tab); });
+      document.querySelectorAll('.pane[data-group="' + bar.dataset.tabs + '"]').forEach(function (p) {
+        p.classList.toggle('active', p.id === tab.dataset.pane);
+      });
+      return;
+    }
+
+    // folds
+    var head = e.target.closest('.fold-head');
+    if (head && !e.target.closest('.fold-head a, .fold-head button, .fold-head select, .fold-head input')) {
+      head.parentElement.classList.toggle('open');
+    }
+
+    // layers
+    var opener = e.target.closest('[data-open]');
+    if (opener) { e.preventDefault(); openLayer(opener.dataset.open); return; }
+    if (e.target.closest('[data-close]') || e.target.id === 'mask') { closeLayers(); return; }
+
+    // mockup-only actions
+    var t = e.target.closest('[data-toast]');
+    if (t && !t.disabled) toast(t.dataset.toast);
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeLayers(); });
+
+  // chart tooltips: data-tip="value|label|more…"; values lead, labels follow
+  var tip = document.createElement('div');
+  tip.className = 'tip';
+  document.body.appendChild(tip);
+  function show(el, x, y) {
+    var parts = el.getAttribute('data-tip').split('|');
+    tip.textContent = '';
+    parts.forEach(function (p, i) {
+      var n = document.createElement(i === 0 ? 'b' : 'div');
+      n.textContent = p;
+      tip.appendChild(n);
+    });
+    tip.style.display = 'block';
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(x + 14, window.innerWidth - w - 8) + 'px';
+    tip.style.top = Math.max(8, y - h - 10) + 'px';
+  }
+  document.addEventListener('mousemove', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (el) show(el, e.clientX, e.clientY); else tip.style.display = 'none';
+  });
+  document.addEventListener('focusin', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) return;
+    var r = el.getBoundingClientRect();
+    show(el, r.left + r.width / 2, r.top);
+  });
+  document.addEventListener('focusout', function () { tip.style.display = 'none'; });
+})();
+</script>
+<script>
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+  function rng(seed) { var x = seed * 9301 + 49297; return function () { x = (x * 9301 + 49297) % 233280; return x / 233280; }; }
+  var C1 = '#165DFF', C2 = '#0DA5AA', C3 = '#E8590C';   // categorical slots, validated for CVD
+  var CAMS = ['exterior_image_1_left', 'exterior_image_2_left', 'wrist_image_left'];
+
+  // ---------- episode facts (one source for tables and the drawer) ----------
+  var LABEL = {
+    0: 'Push the red block to the right', 3: 'Pour the water into the sink', 4: 'Wipe the table with the cloth',
+    6: 'Put the marker in the cup', 7: 'Put the spoon in the bowl', 9: 'Pull the chair toward the table',
+    10: 'Put the apple in the basket', 12: 'Push the cup to the back of the table', 13: 'Put the lid on the pot',
+    15: 'Open the middle drawer', 17: 'Wipe the counter with the sponge', 18: 'Pick up the pen',
+    20: 'Close the cabinet door', 22: 'Turn on the faucet', 23: 'Close the top drawer', 25: 'Put the carrot in the pot',
+    27: 'Place the cup on the plate', 29: 'Put the orange thing in the can', 30: 'Open the top drawer',
+    32: 'Push the box against the wall', 33: 'Turn the knob of the stove', 35: 'Put the bread in the toaster',
+    36: 'Close the microwave door', 38: 'Pour the beans into the pot', 40: 'Drag the box to the edge of the table',
+    41: 'Close the fridge door', 46: 'Close the laptop', 48: 'Put the toy in the box'
+  };
+  var CAPTION = {
+    1: 'put the green block into the bowl', 2: 'place the mug on the tray', 5: 'open the lower drawer',
+    8: 'close the oven door', 11: 'push the blue block to the left', 14: 'put the fork into the cup',
+    16: 'pour water from the cup into the sink', 19: 'place the bottle on the shelf',
+    21: 'press the button on the coffee machine', 24: 'push the chair under the table', 26: 'pull the towel off the rack',
+    28: 'pour the pasta into the pot', 31: 'move the towel next to the sink', 34: 'wipe the whiteboard with the eraser',
+    37: 'place the book on the desk', 39: 'open the drawer of the nightstand', 42: 'put the socks in the laundry basket',
+    43: 'place the plate on the rack', 44: 'place the plate on the rack', 45: 'open the cabinet door',
+    47: 'pour the cereal into the bowl', 49: 'push the stool to the corner'
+  };
+  var SKILL = {};
+  [['放置', '放入容器', [1, 10, 14, 25, 29, 35, 42, 48]], ['放置', '放到台面', [2, 13, 19, 27, 37, 43]],
+   ['开合', '开抽屉', [5, 15, 30, 39]], ['开合', '关门', [8, 20, 36, 41, 46]],
+   ['推拉', '推移', [0, 12, 24, 32, 49]], ['推拉', '拖拽', [9, 26, 40]], ['倾倒', '倾倒', [3, 16, 28, 47]],
+   ['擦拭', '擦拭', [4, 17, 34]], ['旋转开关', '拧转', [22, 33]], ['旋转开关', '按压', [21]]
+  ].forEach(function (r) { r[2].forEach(function (e) { SKILL[e] = r[0] + ' › ' + r[1]; }); });
+  var REJECT = { 18: '时间戳检查', 6: '任务成败判定', 11: '任务成败判定', 23: '任务成败判定', 38: '任务成败判定', 45: '任务成败判定', 44: '精确去重' };
+  var HELD = { 7: 1, 31: 1 };
+  var ABSTAIN = { 9: '打分层拿不准 → 复核分歧 → 仲裁 2 路拿不准 → 转人工；意图取原始标注',
+                  16: '打分层拿不准 → 复核全体弃权 → 转人工；意图取自产描述',
+                  29: '打分层失败候选 → 3 路复核一致判未完成 → 标注与自产描述不是同一任务，护栏拦下 → 转人工；意图取原始标注',
+                  33: '打分层成功候选（弱）→ 复核分歧 → 仲裁 1 路一致未完成 → 转人工；意图取原始标注',
+                  40: '打分层峰值后回落 → 复核分歧 → 仲裁拿不准 → 转人工；意图取原始标注',
+                  47: '打分层无信息 → 复核全体弃权 → 转人工；意图取自产描述' };
+  var FAILCHAIN = { 6: '打分层失败候选 → 3 路复核一致判未完成 → 判废；意图取原始标注',
+                    11: '打分层全程无进展 → 3 路复核一致判未完成 → 判废；意图取自产描述',
+                    23: '打分层成功候选（弱）→ 2 路复核判未完成 → 仲裁 2 路一致未完成 → 判废；意图取原始标注',
+                    38: '打分层峰值后回落 → 2 路复核判未完成 → 仲裁 3 路一致未完成 → 判废；意图取原始标注',
+                    45: '打分层失败候选 → 3 路复核一致判未完成 → 判废；意图取自产描述' };
+  var DISAGREE = { 4: 1, 13: 1, 22: 1, 29: 1, 36: 1 };
+  var SYNCV = { 12: '已标注异常', 20: '已标注异常', 26: '疑似错位', 35: '测不准', 5: '测不准', 41: '测不准' };
+  var STUCK = { 8: 1, 21: 1, 34: 1, 46: 1 };
+
+  function ep(i) {
+    var r = rng(i + 11);
+    var dur = i === 18 ? 0.5 : +(11 + r() * 21).toFixed(1);
+    var o = {
+      i: i, dur: dur, frames: Math.round(dur * 15),
+      text: LABEL[i] || CAPTION[i], src: LABEL[i] ? '原始标注' : '自产描述',
+      motion: +(0.72 + r() * 0.22).toFixed(2), visual: +(0.78 + r() * 0.19).toFixed(2),
+      verdict: REJECT[i] ? '拒绝' : HELD[i] ? '待补跑' : '通过',
+      review: !!(ABSTAIN[i] || DISAGREE[i])
+    };
+    if (STUCK[i]) o.motion = +(o.motion - 0.08).toFixed(2);
+    o.q = +((o.motion + o.visual) / 2).toFixed(2);
+    o.sync = i === 18 ? '—' : SYNCV[i] || '同步正常';
+    o.task = i === 18 ? '—' : HELD[i] ? '出错' : FAILCHAIN[i] ? '判废' : ABSTAIN[i] ? '弃权' : '通过';
+    o.dedup = (i === 18 || FAILCHAIN[i] || HELD[i]) ? '—' : i === 44 ? '与 ep 43 重复' : '无重复';
+    o.label = (REJECT[i] || HELD[i]) ? '—' : DISAGREE[i] ? '分歧（待人工）' : LABEL[i] ? '一致' : '无标注（用自产描述）';
+    return o;
+  }
+  var EPS = []; for (var k = 0; k < 50; k++) EPS.push(ep(k));
+
+  // ---------- small chart helpers ----------
+  function hbars(el, rows, max, unit) {
+    el.innerHTML = rows.map(function (r) {
+      var w = Math.max(1, r[1] / max * 100);
+      return '<div class="hb' + (r[2] ? ' sub' : '') + '"><span class="name">' + esc(r[0]) + '</span>' +
+        '<div class="track"><div class="fill" style="width:' + w + '%" tabindex="0" data-tip="' + r[1] + ' ' + unit + '|' + esc(r[0]) + '"></div></div>' +
+        '<span class="val">' + r[1] + '</span></div>';
+    }).join('');
+  }
+  hbars($('rejectBars'), [['任务成败判定', 5], ['时间戳检查', 1], ['精确去重', 1]], 5, '条');
+  hbars($('abstainBars'), [['仲裁后仍拿不准', 3], ['复核全体弃权', 2], ['护栏拦下（疑似标注错）', 1]], 3, '条');
+
+  // ---------- 卡顿时间线 ----------
+  var TL = {
+    3: [16.2, [['idle', 0, 1.4], ['normal', 1.4, 14.9], ['idle', 14.9, 16.2]]],
+    8: [22.7, [['idle', 0, 0.8], ['normal', 0.8, 9.6], ['stuck', 9.6, 11.3], ['normal', 11.3, 21.5], ['idle', 21.5, 22.7]]],
+    12: [12.9, [['normal', 0, 12.1], ['idle', 12.1, 12.9]]],
+    21: [31.4, [['idle', 0, 2.2], ['normal', 2.2, 13.0], ['stuck', 13.0, 17.8], ['normal', 17.8, 29.6], ['idle', 29.6, 31.4]]],
+    26: [18.5, [['idle', 0, 3.9], ['normal', 3.9, 18.5]]],
+    34: [27.0, [['normal', 0, 6.1], ['stuck', 6.1, 8.9], ['idle', 8.9, 10.2], ['normal', 10.2, 24.8], ['stuck', 24.8, 26.1], ['normal', 26.1, 27.0]]],
+    41: [14.6, [['idle', 0, 1.0], ['normal', 1.0, 13.2], ['idle', 13.2, 14.6]]],
+    46: [24.1, [['normal', 0, 15.3], ['stuck', 15.3, 18.0], ['normal', 18.0, 22.4], ['idle', 22.4, 24.1]]],
+    0: [19.8, [['normal', 0, 19.8]]], 1: [15.1, [['normal', 0, 15.1]]], 2: [21.6, [['normal', 0, 21.6]]]
+  };
+  var ZH = { stuck: '卡顿', idle: '空闲', normal: '正常' };
+  function tot(segs, s) { return segs.reduce(function (a, g) { return a + (g[0] === s ? g[2] - g[1] : 0); }, 0); }
+  function renderStuck() {
+    var show = document.querySelector('#tlShow .on').dataset.v, sort = document.querySelector('#tlSort .on').dataset.v;
+    var ids = Object.keys(TL).map(Number).filter(function (e) {
+      var s = tot(TL[e][1], 'stuck'), d = tot(TL[e][1], 'idle');
+      return show === 'all' || (show === 'both' && (s || d)) || (show === 'stuck' && s) || (show === 'idle' && d);
+    });
+    ids.sort(function (a, b) {
+      return sort === 'stuck' ? (tot(TL[b][1], 'stuck') - tot(TL[a][1], 'stuck')) || (tot(TL[b][1], 'idle') - tot(TL[a][1], 'idle')) : a - b;
+    });
+    $('stuckRows').innerHTML = ids.map(function (e) {
+      var dur = TL[e][0], segs = TL[e][1];
+      var bar = segs.map(function (g) {
+        return '<i class="s-' + g[0] + '" style="flex:' + (g[2] - g[1]).toFixed(2) + '" tabindex="0" data-tip="' +
+          ZH[g[0]] + ' ' + g[1].toFixed(1) + '–' + g[2].toFixed(1) + ' 秒|ep ' + e + '"></i>';
+      }).join('');
+      var last = -1, ticks = '';
+      segs.slice(1).forEach(function (g) {
+        var p = g[1] / dur * 100;
+        if (p - last > 5 && 100 - p > 6) { ticks += '<span style="left:' + p + '%">' + g[1].toFixed(1) + '</span>'; last = p; }
+      });
+      ticks += '<span class="end" style="left:100%">' + dur.toFixed(1) + ' 秒</span>';
+      var s = tot(segs, 'stuck'), d = tot(segs, 'idle');
+      return '<div class="tl-row"><button class="ep-link" data-ep="' + e + '">ep ' + e + '</button>' +
+        '<div><div class="tl-bar">' + bar + '</div><div class="tl-ticks">' + ticks + '</div></div>' +
+        '<div class="tot">卡顿 ' + s.toFixed(1) + ' 秒 · 空闲 ' + d.toFixed(1) + ' 秒</div></div>';
+    }).join('') || '<div class="muted" style="font-size:13px">没有符合条件的条目</div>';
+  }
+  function segBind(id, fn) {
+    $(id).addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-v]');
+      if (!b) return;
+      this.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      fn(b.dataset.v);
+    });
+  }
+  segBind('tlShow', renderStuck); segBind('tlSort', renderStuck); renderStuck();
+
+  // ---------- 视觉质量逐相机分布（小多图） ----------
+  var HIST = { exterior_image_1_left: [0, 0, 0, 0, 1, 3, 6, 11, 16, 12], exterior_image_2_left: [0, 1, 0, 1, 2, 4, 9, 13, 12, 7],
+               wrist_image_left: [0, 2, 1, 1, 3, 5, 8, 12, 11, 6] };
+  var MEAN = { exterior_image_1_left: 0.89, exterior_image_2_left: 0.86, wrist_image_left: 0.85 };
+  $('visHist').innerHTML = CAMS.map(function (cam) {
+    var h = HIST[cam], W = 300, H = 110, pl = 26, pb = 18, bw = (W - pl) / 10, max = 16;
+    var bars = h.map(function (n, j) {
+      var bh = n / max * (H - pb - 8), x = pl + j * bw + 2, y = H - pb - bh;
+      var lo = (0.5 + j * 0.05).toFixed(2), hi = (0.55 + j * 0.05).toFixed(2);
+      return n ? '<path d="M' + x + ' ' + (H - pb) + 'V' + (y + 3) + 'Q' + x + ' ' + y + ' ' + (x + 3) + ' ' + y + 'H' + (x + bw - 7) + 'Q' + (x + bw - 4) + ' ' + y + ' ' + (x + bw - 4) + ' ' + (y + 3) + 'V' + (H - pb) + 'Z" fill="' + C1 + '" tabindex="0" data-tip="' + n + ' 条|总分 ' + lo + '–' + hi + '"/>' : '';
+    }).join('');
+    var grid = [0, 8, 16].map(function (v) { var y = H - pb - v / max * (H - pb - 8); return '<line class="grid" x1="' + pl + '" x2="' + W + '" y1="' + y + '" y2="' + y + '"/><text x="' + (pl - 6) + '" y="' + (y + 4) + '" text-anchor="end">' + v + '</text>'; }).join('');
+    var xl = ['0.5', '0.75', '1.0'].map(function (t, j) { return '<text x="' + (pl + j * (W - pl) / 2) + '" y="' + (H - 4) + '" text-anchor="' + (j === 0 ? 'start' : j === 2 ? 'end' : 'middle') + '">' + t + '</text>'; }).join('');
+    return '<div><div class="cn"><span class="mono">' + cam + '</span> · 均分 ' + MEAN[cam] + '</div><svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="' + cam + ' 视觉总分分布">' + grid + bars + xl + '</svg></div>';
+  }).join('');
+
+  // ---------- 同步曲线卡片 ----------
+  var DIAG = {
+    aligned: ['#00B42A', '对齐'], misaligned: ['#F53F3F', '错位'], weak: ['#FF7D00', '测不准 · 信号弱'],
+    partial: ['#FF7D00', '测不准 · 覆盖不足'], falsepk: ['#FF7D00', '测不准 · 画面干扰'], blurry: ['#FF7D00', '测不准 · 画面不锐利'],
+    suspect: ['#FF7D00', '疑似错位（证据不足）'], nomotion: ['#86909C', '无信号']
+  };
+  var SYNC_CARDS = [
+    { e: 3, badge: ['同步正常', 'tag-green'], flag: false, cams: [
+      ['aligned', 0.02, 0.86, '可信，滞后 +0.02 秒'], ['aligned', 0.07, 0.79, '可信，滞后 +0.07 秒'], ['aligned', -0.01, 0.91, '可信，滞后 −0.01 秒']] },
+    { e: 12, badge: ['已标注异常（不判废）', 'tag-orange'], flag: true, cams: [
+      ['aligned', 0.02, 0.84, '可信，滞后 +0.02 秒'],
+      ['misaligned', 0.38, 0.72, '这一路画面比动作晚 0.38 秒，另外两路是对齐的；只标注这一路，不判废'],
+      ['aligned', -0.01, 0.88, '可信，滞后 −0.01 秒']] },
+    { e: 26, badge: ['疑似错位（证据不足）', 'tag-orange'], flag: true, cams: [
+      ['suspect', 0.41, 0.46, '峰偏离 0 明显，但峰又矮又宽，不够可信：只提醒，不判废、不进裁决'],
+      ['aligned', 0.05, 0.77, '可信，滞后 +0.05 秒'], ['aligned', 0.00, 0.83, '可信，滞后 0.00 秒']] },
+    { e: 35, badge: ['测不准（弃权）', 'tag-blue'], flag: true, cams: [
+      ['partial', 0.10, 0.52, '开头 2.1 秒机械臂还没进画面；拍到的部分和动作对齐，是机位覆盖问题，不是错位'],
+      ['weak', 0.00, 0.21, '画面运动和机械臂动作对不上号（整体相似度 0.21），给不出可靠读数'],
+      ['blurry', 0.06, 0.58, '相似度最高处附近 0.9 秒范围都差不多，精度不够']] }
+  ];
+  function lines(e, cam, lag, pk) {
+    var r = rng(e * 7 + cam.length), W = 300, H = 70, n = 60, T = 20, v = [], m = [];
+    var bumps = [[3 + r() * 3, 1.2], [9 + r() * 3, 1.6], [15 + r() * 2, 1.0]];
+    for (var j = 0; j < n; j++) {
+      var t = j / (n - 1) * T, a = 0, b = 0;
+      bumps.forEach(function (bp) { a += Math.exp(-Math.pow(t - bp[0], 2) / bp[1]); b += Math.exp(-Math.pow(t - lag - bp[0], 2) / bp[1]); });
+      v.push(a); m.push(b * pk + (1 - pk) * r() * 0.8 + 0.05 * r());
+    }
+    function path(arr) { return arr.map(function (y, j) { return (j ? 'L' : 'M') + (j / (n - 1) * W).toFixed(1) + ' ' + (H - 6 - y / 1.25 * (H - 14)).toFixed(1); }).join(''); }
+    return '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="' + cam + ' 画面动量与关节速度">' +
+      '<line class="ax" x1="0" x2="' + W + '" y1="' + (H - 6) + '" y2="' + (H - 6) + '"/>' +
+      '<path d="' + path(v) + '" fill="none" stroke="' + C2 + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+      '<path d="' + path(m) + '" fill="none" stroke="' + C1 + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+  }
+  function xcorr(c) {
+    var W = 330, H = 150, pl = 28, pb = 20, x0 = pl, x1 = W - 6;
+    function X(s) { return x0 + (s + 1.5) / 3 * (x1 - x0); }
+    function Y(v) { return H - pb - v * (H - pb - 10); }
+    var band = '<rect x="' + X(-0.25) + '" y="10" width="' + (X(0.25) - X(-0.25)) + '" height="' + (H - pb - 10) + '" fill="#E8FFEA"/>';
+    var axes = [0, 0.5, 1].map(function (v) { return '<line class="grid" x1="' + x0 + '" x2="' + x1 + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/><text x="' + (x0 - 5) + '" y="' + (Y(v) + 4) + '" text-anchor="end">' + v + '</text>'; }).join('') +
+      ['-1.5', '0', '+1.5'].map(function (t, j) { return '<text x="' + X(-1.5 + j * 1.5) + '" y="' + (H - 5) + '" text-anchor="' + (j === 0 ? 'start' : j === 2 ? 'end' : 'middle') + '">' + t + ' 秒</text>'; }).join('');
+    var cols = [C1, C2, C3];
+    var ls = c.cams.map(function (cm, ci) {
+      var pts = [], lag = cm[1], pk = cm[2], wide = cm[0] === 'blurry' || cm[0] === 'suspect' ? 0.5 : 0.18;
+      for (var j = 0; j <= 60; j++) {
+        var s = -1.5 + j / 60 * 3, v = pk * Math.exp(-Math.pow(s - lag, 2) / wide) + 0.12 * Math.cos(s * 3 + ci);
+        pts.push((j ? 'L' : 'M') + X(s).toFixed(1) + ' ' + Y(Math.max(0, Math.min(1, v))).toFixed(1));
+      }
+      return '<path d="' + pts.join('') + '" fill="none" stroke="' + cols[ci] + '" stroke-width="2" stroke-linejoin="round"/>' +
+        '<circle cx="' + X(lag) + '" cy="' + Y(pk) + '" r="4" fill="' + cols[ci] + '" stroke="#fff" stroke-width="2" tabindex="0" data-tip="峰 ' + pk.toFixed(2) + ' @ ' + (lag >= 0 ? '+' : '') + lag.toFixed(2) + ' 秒|' + CAMS[ci] + '"/>';
+    }).join('');
+    return '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="各相机互相关曲线">' + band + axes + ls + '</svg>' +
+      '<div class="legend" style="margin-top:4px">' + CAMS.map(function (n, ci) { return '<span class="key"><i class="ln" style="background:' + cols[ci] + '"></i><span class="mono">' + n.replace('_image', '').replace('_left', '') + '</span></span>'; }).join('') + '</div>';
+  }
+  function renderSync(v) {
+    $('syncCards').innerHTML = SYNC_CARDS.filter(function (c) { return v !== 'flag' || c.flag; }).map(function (c) {
+      var charts = c.cams.map(function (cm, ci) { return '<div><div class="cn mono">' + CAMS[ci] + '</div>' + lines(c.e, CAMS[ci], cm[1], cm[2]) + '</div>'; }).join('');
+      var diag = c.cams.map(function (cm, ci) {
+        var d = DIAG[cm[0]];
+        return '<div class="d"><span class="dot" style="background:' + d[0] + '"></span><span class="mono">' + CAMS[ci] + '</span><span class="lbl">' + d[1] + '</span><span>' + cm[3] + '</span></div>';
+      }).join('');
+      return '<div class="sync-card"><div class="sync-head' + (c.flag ? ' flag' : '') + '"><button class="ep-link" data-ep="' + c.e + '">ep ' + c.e + '</button>' +
+        '<span class="tag ' + c.badge[1] + '">' + c.badge[0] + '</span><span class="spacer"></span>' +
+        '<button class="btn btn-text btn-sm" data-toast="静态预览稿：打开 details/ 下的同步曲线原图">原图 ↗</button></div>' +
+        '<div class="sync-body"><div><div class="cam-charts">' + charts + '</div>' +
+        '<div class="legend" style="margin-top:6px"><span class="key"><i class="ln" style="background:' + C1 + '"></i>画面动量</span><span class="key"><i class="ln" style="background:' + C2 + '"></i>关节速度</span></div>' +
+        '<div class="diag">' + diag + '</div></div><div>' + xcorr(c) + '</div></div></div>';
+    }).join('');
+  }
+  segBind('syncFilter', renderSync); renderSync('all');
+
+  // ---------- 判决卡留痕 ----------
+  var TRAILS = [
+    { e: 23, res: ['判废', 'res-fail'], task: 'Close the top drawer · 原始标注', steps: [['打分层', '成功候选（弱）'], ['复核汇票', '2 路判未完成'], ['护栏', '标注与画面一致，维持'], ['仲裁', '2 路一致未完成']] },
+    { e: 29, res: ['转人工', 'res-hold'], task: 'Put the orange thing in the can · 原始标注', steps: [['打分层', '失败候选'], ['复核汇票', '3 路一致判未完成'], ['护栏', '标注与画面不是同一件事，拦下'], null] },
+    { e: 9, res: ['转人工', 'res-hold'], task: 'Pull the chair toward the table · 原始标注', steps: [['打分层', '拿不准'], ['复核汇票', '复核分歧'], null, ['仲裁', '2 路拿不准']] },
+    { e: 12, res: ['通过', 'res-pass'], task: 'Push the cup to the back of the table · 原始标注', steps: [['打分层', '成功候选（强）'], ['复核汇票', '3 路一致判完成'], null, null] },
+    { e: 7, res: ['出错，待补跑', 'res-err'], task: 'Put the spoon in the bowl · 原始标注', steps: [['打分层', '成功候选（弱）'], ['复核汇票', '复核分歧'], null, ['仲裁', '请求超时，重试 3 次仍失败']] }
+  ];
+  var STEP_NAMES = ['打分层', '复核汇票', '护栏', '仲裁'];
+  $('trails').innerHTML = TRAILS.map(function (t) {
+    var steps = t.steps.map(function (s, j) {
+      return s ? '<div class="step"><div class="sn">' + s[0] + '</div><div class="sv">' + s[1] + '</div></div>'
+               : '<div class="step off"><div class="sn">' + STEP_NAMES[j] + '</div><div class="sv">未触发</div></div>';
+    }).join('');
+    return '<div class="trail-card"><div class="trail-head"><button class="ep-link" data-ep="' + t.e + '">ep ' + t.e + '</button>' +
+      '<span class="task">' + esc(t.task) + '</span></div><div class="trail">' + steps +
+      '<div class="step ' + t.res[1] + '"><div class="sn">结论</div><div class="sv">' + t.res[0] + '</div></div></div></div>';
+  }).join('');
+
+  // ---------- 技能画像 ----------
+  var FAM = [['放置', 14, [['放入容器', 8], ['放到台面', 6]]], ['开合', 9, [['关门', 5], ['开抽屉', 4]]],
+             ['推拉', 8, [['推移', 5], ['拖拽', 3]]], ['倾倒', 4, [['倾倒', 4]]], ['擦拭', 3, [['擦拭', 3]], 1], ['旋转开关', 3, [['拧转', 2], ['按压', 1]], 1]];
+  $('skillBars').innerHTML = FAM.map(function (f, fi) {
+    var chip = f[3] ? '<span class="chip">样本偏少</span>' : '';
+    var head = '<div class="hb"><span class="name">' + f[0] + chip + '</span><div class="track"><div class="fill" style="width:' + (f[1] / 14 * 100) + '%" tabindex="0" data-tip="' + f[1] + ' 条 · ' + (f[1] / 41 * 100).toFixed(1) + '%|' + f[0] + '"></div></div><span class="val">' + f[1] + '</span></div>';
+    if (f[2].length < 2) return '<details class="fam single"><summary>' + head + '</summary></details>';
+    var subs = f[2].map(function (s) { return '<div class="hb sub"><span class="name">' + s[0] + '</span><div class="track"><div class="fill" style="width:' + (s[1] / 14 * 100) + '%" tabindex="0" data-tip="' + s[1] + ' 条|' + f[0] + ' › ' + s[0] + '"></div></div><span class="val">' + s[1] + '</span></div>'; }).join('');
+    return '<details class="fam"' + (fi === 0 ? ' open' : '') + '><summary>' + head + '</summary>' + subs + '</details>';
+  }).join('');
+  var AUD = [[29, '高 · 重点', 'Put the orange thing in the can', '放置', 'pour rice into the green bowl', '倾倒'],
+             [4, '高', 'Wipe the table with the cloth', '擦拭', 'fold the cloth and put it on the table', '放置'],
+             [36, '高', 'Close the microwave door', '开合', 'push the plate to the back of the table', '推拉'],
+             [13, '复核', 'Put the lid on the pot', '放置', 'open the pot and take the lid off', '开合'],
+             [22, '复核', 'Turn on the faucet', '旋转开关', 'pick up the sponge and put it in the sink', '放置']];
+  $('auditRows').innerHTML = '<div class="audit-row" style="color:var(--text-3); font-size:12px"><span>条目</span><span>档位</span><span>原始标注 → 族</span><span>模型描述 → 族</span></div>' +
+    AUD.map(function (a) {
+      return '<div class="audit-row"><button class="ep-link" data-ep="' + a[0] + '">ep ' + a[0] + '</button><span>' + a[1] + '</span>' +
+        '<span>' + esc(a[2]) + ' <span class="muted">→ ' + a[3] + '</span></span><span>' + esc(a[4]) + ' <span class="muted">→ ' + a[5] + '</span></span></div>';
+    }).join('');
+  var TINT = ['#F2F7FF', '#F1FAF3', '#FFF9EE', '#F7F4FF', '#EFFAF9', '#FDF3F7'];
+  var TAXROWS = [['放置', '放入容器', 8, [1, 10, 14, 25, 29, 35, 42, 48]], ['放置', '放到台面', 6, [2, 13, 19, 27, 37, 43]],
+                 ['开合', '关门', 5, [8, 20, 36, 41, 46]], ['开合', '开抽屉', 4, [5, 15, 30, 39]],
+                 ['推拉', '推移', 5, [0, 12, 24, 32, 49]], ['推拉', '拖拽', 3, [9, 26, 40]], ['倾倒', '倾倒', 4, [3, 16, 28, 47]],
+                 ['擦拭', '擦拭', 3, [4, 17, 34]], ['旋转开关', '拧转', 2, [22, 33]], ['旋转开关', '按压', 1, [21]]];
+  var famIdx = {}; FAM.forEach(function (f, j) { famIdx[f[0]] = j; });
+  $('taxTable').innerHTML = '<thead><tr><th>技能族</th><th>子技能</th><th class="r">条数</th><th class="r">占比</th><th>episodes</th></tr></thead><tbody>' +
+    TAXROWS.map(function (r) {
+      return '<tr style="background:' + TINT[famIdx[r[0]]] + '"><td>' + r[0] + '</td><td>' + r[1] + '</td><td class="r">' + r[2] + '</td><td class="r">' + (r[2] / 41 * 100).toFixed(1) + '%</td><td class="eps">' + r[3].join(', ') + '</td></tr>';
+    }).join('') + '</tbody>';
+
+  // ---------- 明细表（服务端切片，每页 100 行） ----------
+  var TABLES = {
+    verdict: { sorts: [['episode', 'episode'], ['q', '质量分'], ['motion', '运动质量'], ['visual', '视觉质量']],
+      head: ['episode', '判决', '质量分', '时间戳', '运动质量', '视觉质量', '同步', '任务成败', '去重', '标注', '待裁决'],
+      rows: function () { return EPS.map(function (o) { return o; }); },
+      cell: function (o) {
+        var vt = { '通过': 'tag-green', '拒绝': 'tag-red', '待补跑': 'tag-orange' }[o.verdict];
+        return [epBtn(o.i), '<span class="tag ' + vt + '">' + o.verdict + '</span>', o.q.toFixed(2), o.i === 18 ? '残段' : '通过', o.motion.toFixed(2),
+                o.i === 18 ? '—' : o.visual.toFixed(2), o.sync, o.task, o.dedup, o.label, o.review ? '是' : ''];
+      } },
+    visual: { sorts: [['episode', 'episode'], ['score', '视觉总分'], ['sharp', '清晰度']],
+      head: ['episode', '相机', '状态', '视觉总分', '清晰度', '曝光', '完整性', '冻结帧占比'],
+      rows: function () {
+        var out = [];
+        EPS.forEach(function (o) {
+          if (o.i === 18) return;
+          CAMS.forEach(function (c, ci) {
+            var r = rng(o.i * 3 + ci + 5), s = +Math.min(0.99, o.visual + (r() - 0.5) * 0.12).toFixed(2);
+            if (o.i === 20 && ci === 1) s = 0.55; if (o.i === 35 && ci === 2) s = 0.57; if (o.i === 47 && ci === 2) s = 0.58;
+            out.push({ i: o.i, cam: c, score: s, sharp: +(s - 0.04 + r() * 0.08).toFixed(2), exp: +(0.85 + r() * 0.14).toFixed(2), frozen: (r() * 0.02).toFixed(3) });
+          });
+        });
+        return out;
+      },
+      cell: function (x) { return [epBtn(x.i), '<span class="mono">' + x.cam + '</span>', '正常', x.score.toFixed(2), x.sharp.toFixed(2), x.exp.toFixed(2), '1.00', x.frozen]; } },
+    sync: { sorts: [['episode', 'episode'], ['lag', '滞后（秒）'], ['peak', '相关峰值']],
+      head: ['episode', '相机', '标注', '滞后（秒）', '相关峰值', '零偏相关', '可信', '说明'],
+      rows: function () {
+        var out = [];
+        EPS.forEach(function (o) {
+          if (o.i === 18) return;
+          CAMS.forEach(function (c, ci) {
+            var r = rng(o.i * 5 + ci + 1), lag = +((r() - 0.45) * 0.14 + [0.03, 0.07, -0.01][ci]).toFixed(2), pk = +(0.7 + r() * 0.25).toFixed(2), note = '', flag = '', trusted = '可信';
+            if (o.i === 12 && ci === 1) { lag = 0.38; pk = 0.72; flag = '⚠ 已标注'; note = '错位，另两路对齐'; }
+            if (o.i === 20 && ci === 1) { lag = null; pk = 0.08; flag = '⚠ 已标注'; trusted = '不可信'; note = '无信号'; }
+            if (o.i === 26 && ci === 0) { lag = 0.41; pk = 0.46; trusted = '不可信'; note = '疑似错位'; }
+            if ((o.i === 35 || o.i === 5) && ci === 0) { trusted = '不可信'; note = '覆盖不足'; }
+            if ((o.i === 35 || o.i === 41) && ci === 1) { trusted = '不可信'; note = o.i === 35 ? '信号弱' : '画面干扰'; }
+            if (o.i === 35 && ci === 2) { trusted = '不可信'; note = '画面不锐利'; }
+            out.push({ i: o.i, cam: c, lag: lag, peak: pk, zero: +(pk - Math.abs(lag || 0) * 0.6).toFixed(2), flag: flag, trusted: trusted, note: note });
+          });
+        });
+        return out;
+      },
+      cell: function (x) { return [epBtn(x.i), '<span class="mono">' + x.cam + '</span>', x.flag, x.lag === null ? '—' : (x.lag >= 0 ? '+' : '') + x.lag.toFixed(2), x.peak.toFixed(2), x.zero.toFixed(2), x.trusted, x.note]; } },
+    motion: { sorts: [['episode', 'episode'], ['motion', '运动总分']],
+      head: ['episode', '运动总分', '平滑度', '尖刺', '夹爪抖动', '末态稳定', '路径效率', '开头空闲（秒）', '结尾空闲（秒）', '执行器卡死'],
+      rows: function () { return EPS.map(function (o) { return o; }); },
+      cell: function (o) {
+        var r = rng(o.i + 3);
+        return [epBtn(o.i), o.motion.toFixed(2), (o.motion + 0.02).toFixed(2), Math.min(0.99, o.motion + 0.06).toFixed(2), (o.motion - 0.07).toFixed(2),
+                (0.7 + r() * 0.25).toFixed(2), (0.6 + r() * 0.25).toFixed(2), (TL[o.i] && TL[o.i][1][0][0] === 'idle' ? TL[o.i][1][0][2] : 0).toFixed(1),
+                (TL[o.i] && TL[o.i][1][TL[o.i][1].length - 1][0] === 'idle' ? (TL[o.i][0] - TL[o.i][1][TL[o.i][1].length - 1][1]) : 0).toFixed(1), STUCK[o.i] ? '是' : ''];
+      } }
+  };
+  function epBtn(i) { return '<button class="ep-link" data-ep="' + i + '">ep ' + i + '</button>'; }
+  var dtPage = 1;
+  function renderDT() {
+    var t = TABLES[$('dtSel').value], key = $('dtSort').value || 'episode', desc = document.querySelector('#dtOrder .on').dataset.v === 'desc';
+    var rows = t.rows().slice();
+    rows.sort(function (a, b) {
+      var x = key === 'episode' ? a.i : a[key], y = key === 'episode' ? b.i : b[key];
+      x = x === null ? -1 : x; y = y === null ? -1 : y;
+      return (x - y) * (desc ? -1 : 1) || (a.i - b.i);
+    });
+    var total = rows.length, pages = Math.ceil(total / 100);
+    dtPage = Math.min(dtPage, pages);
+    var from = (dtPage - 1) * 100, slice = rows.slice(from, from + 100);
+    $('dtTable').innerHTML = '<thead><tr>' + t.head.map(function (h) { return '<th>' + h + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      slice.map(function (x) { return '<tr>' + t.cell(x).map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody>';
+    $('dtPager').innerHTML = '<span class="total">第 ' + (from + 1) + '–' + (from + slice.length) + ' 行，共 ' + total + ' 行 · 每页 100 行</span>' +
+      '<button class="pg" data-dt="-1"' + (dtPage === 1 ? ' disabled' : '') + '>‹ 上一页</button>' +
+      '<button class="pg" data-dt="1"' + (dtPage === pages ? ' disabled' : '') + '>下一页 ›</button>';
+  }
+  function resetSort() {
+    $('dtSort').innerHTML = TABLES[$('dtSel').value].sorts.map(function (s) { return '<option value="' + s[0] + '">按 ' + s[1] + ' 排序</option>'; }).join('');
+  }
+  $('dtSel').addEventListener('change', function () { dtPage = 1; resetSort(); renderDT(); });
+  $('dtSort').addEventListener('change', function () { dtPage = 1; renderDT(); });
+  segBind('dtOrder', function () { dtPage = 1; renderDT(); });
+  $('dtPager').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-dt]');
+    if (b && !b.disabled) { dtPage += +b.dataset.dt; renderDT(); }
+  });
+  resetSort(); renderDT();
+
+  // ---------- 逐条下钻抽屉 ----------
+  var CARD_EXTRA = {
+    29: ['通过 · 待裁决', 'tag-green', '先交付，同时等人确认：技能画像报了标注分歧，任务成败判定被护栏拦下转人工', ['task_success', 'skill_profile']],
+    18: ['拒绝', 'tag-red', '时间戳检查：残段，全程 0.5 秒（8 帧），短于 1.0 秒', []],
+    44: ['拒绝', 'tag-red', '精确去重：与 ep 43 字节级完全重复', []],
+    7: ['待补跑', 'tag-orange', '任务成败判定出错：取证仲裁请求超时（60 秒），外层重试 3 次后仍失败；补跑前不交付', []],
+    31: ['待补跑', 'tag-orange', '任务成败判定出错：取证仲裁请求超时（60 秒），外层重试 3 次后仍失败；补跑前不交付', []]
+  };
+  function openEp(i) {
+    var o = EPS[i], x = CARD_EXTRA[i];
+    var tag, reason;
+    if (x) { tag = [x[0], x[1]]; reason = x[2]; }
+    else if (FAILCHAIN[i]) { tag = ['拒绝', 'tag-red']; reason = '任务成败判定判废：' + FAILCHAIN[i]; }
+    else if (o.review) { tag = ['通过 · 待裁决', 'tag-green']; reason = ABSTAIN[i] ? '任务成败判定弃权，转人工' : '技能画像：原始标注和画面归进了不同的技能族，转人工'; }
+    else { tag = ['通过', 'tag-green']; reason = '六项检查都通过，已交付'; }
+    $('dwTitle').textContent = 'ep ' + i;
+    $('dwTag').innerHTML = '<span class="tag ' + tag[1] + '">' + tag[0] + '</span>';
+    $('dwAdj').classList.toggle('hidden', !o.review);
+    $('dwCard').innerHTML =
+      '<div class="row"><span class="k">结论</span><span>' + tag[0] + '</span></div>' +
+      '<div class="row"><span class="k">理由</span><span>' + esc(reason) + '</span></div>' +
+      '<div class="row"><span class="k">任务文本</span><span>' + esc(o.text) + ' <span class="muted">（' + o.src + '）</span></span></div>' +
+      '<div class="row"><span class="k">时长</span><span>' + o.dur + ' 秒 · ' + o.frames + ' 帧</span></div>';
+    $('dwVidSrc').textContent = '来自源数据集（交付数据集还没导出），经预签名地址直连 TOS，过期自动重签';
+    $('dwVids').innerHTML = CAMS.map(function (c) {
+      return '<div class="video"><span class="cam">' + c + '</span><span class="play"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.8v8.4L10 6z" fill="#fff"/></svg></span>' +
+        '<span class="time">0:00 / 0:' + (o.dur < 10 ? '0' : '') + Math.round(o.dur) + '</span><span class="scrub"><i></i></span></div>';
+    }).join('');
+    var fr = i === 29 ? ['exterior_1 · 夹爪闭合 11.4 秒', 'exterior_1 · 放大取证', 'wrist · +1.0 秒', 'wrist · +2.5 秒']
+      : i === 18 ? ['exterior_1 · 0.0 秒', 'exterior_1 · 0.5 秒', 'wrist · 0.0 秒', 'wrist · 0.5 秒']
+      : ['exterior_1 · 开头', 'exterior_1 · 结尾', 'wrist · 开头', 'wrist · 结尾'];
+    $('dwFrames').innerHTML = fr.map(function (f, j) { return '<div><div class="frame" style="filter:hue-rotate(' + (j * 25) + 'deg)"><span>' + (j + 1) + '</span></div><div class="cap">' + f + '</div></div>'; }).join('');
+    var r = rng(i + 3), rows = [];
+    rows.push(['时间戳检查', i === 18 ? '<span class="tag tag-red">判废</span>' : '通过', i === 18 ? '残段：0.5 秒（8 帧）短于 1.0 秒' : o.frames + ' 帧 ' + o.dur + ' 秒，帧间隔稳定']);
+    rows.push(['运动质量', o.motion.toFixed(2), '总分 = 平滑度 ' + (o.motion + 0.02).toFixed(2) + '、尖刺 ' + Math.min(0.99, o.motion + 0.06).toFixed(2) + '、夹爪抖动 ' + (o.motion - 0.07).toFixed(2) + ' 的均值；不适用：执行器饱和' + (STUCK[i] ? '；执行器卡死（单列）' : '')]);
+    if (i === 18) {
+      rows.push(['其余模块', '—', '被时间戳检查拦下，没有进入后面的档']);
+    } else {
+      rows.push(['视觉质量', o.visual.toFixed(2), '3 路相机；最低 ' + (o.visual - 0.04).toFixed(2) + '（wrist_image_left）']);
+      rows.push(['视频-动作同步', o.sync, o.sync === '同步正常' ? '3 / 3 路可信 · 滞后 +0.03 / +0.07 / −0.01 秒' : '见「视频-动作同步」小节的曲线卡片']);
+      rows.push(['任务成败判定', o.task, HELD[i] ? '打分层成功候选（弱）→ 复核分歧 → 仲裁请求超时，重试 3 次仍失败 → 出错'
+        : FAILCHAIN[i] || ABSTAIN[i] || ('打分层成功候选（强）→ 3 路复核一致判完成 → 通过；意图取' + o.src)]);
+      rows.push(['精确去重', o.dedup, i === 44 ? '动作与视频字节级完全一致，保留 ep 43' : (o.dedup === '—' ? '没有进入判决之后' : '无重复')]);
+      rows.push(['技能画像', SKILL[i] || '—', SKILL[i] ? (DISAGREE[i] ? '标注分歧（待人工）；模型描述：' + esc(CAPTION[i] || AUDDESC(i)) : '标注' + (LABEL[i] ? '一致' : '缺失，用自产描述')) : '没有进入画像']);
+    }
+    $('dwReads').innerHTML = '<tbody>' + rows.map(function (r) { return '<tr><td>' + r[0] + '</td><td style="white-space:nowrap">' + r[1] + '</td><td>' + r[2] + '</td></tr>'; }).join('') + '</tbody>';
+    stopPlay();
+    openLayer('epDrawer');
+  }
+  function AUDDESC(i) { var a = AUD.filter(function (x) { return x[0] === i; })[0]; return a ? a[4] : ''; }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('.ep-link[data-ep]');
+    if (b) openEp(+b.dataset.ep);
+  });
+
+  // 同时播放：三路进度条一起走（占位演示）
+  var timer = null, t0 = 0;
+  function stopPlay() { clearInterval(timer); timer = null; $('playAll').textContent = '同时播放'; }
+  $('playAll').addEventListener('click', function () {
+    if (timer) { stopPlay(); return; }
+    this.textContent = '全部暂停';
+    t0 = 0;
+    timer = setInterval(function () {
+      t0 = Math.min(100, t0 + 1.5);
+      document.querySelectorAll('#dwVids .scrub i').forEach(function (n) { n.style.width = t0 + '%'; });
+      if (t0 >= 100) stopPlay();
+    }, 120);
+  });
+
+  // ---------- 结果版本：r0002（当前）/ r0001（历史） ----------
+  function setRev(v) {
+    var old = v === '1';
+    $('revSel').value = v;
+    document.querySelectorAll('.rev1-only').forEach(function (n) { n.classList.toggle('hidden', !old); });
+    document.querySelectorAll('.rev2-only').forEach(function (n) { n.classList.toggle('hidden', old); });
+    $('ovPass').textContent = old ? '0' : '41';
+    $('ovPassSub').textContent = old ? '没有可交付的条目' : '其中 10 条待人工确认';
+    $('ovHeld').textContent = old ? '43' : '2';
+    $('ovRate').textContent = old ? '0%' : '82%';
+    $('ovTime').textContent = old ? '16 分 56 秒' : '16 分 56 秒 + 6 分 52 秒';
+    $('ovTimeSub').textContent = old ? '主流程（含系统暂停 2 分 11 秒）' : '主流程 + 重试 #1';
+    $('ovTok').textContent = old ? '1.72M' : '2.08M';
+    $('ovTokSub').textContent = old ? '输入 1.67M · 输出 54.7K' : '输入 2.01M · 输出 67.5K';
+  }
+  $('revSel').addEventListener('change', function () { setRev(this.value); });
+  $('backCur').addEventListener('click', function () { setRev('2'); });
+  if (/[?&]rev=1\b/.test(location.search)) setRev('1');
+
+  // ---------- 性能剖析 ----------
+  var PERF = {
+    all: { kpi: [['请求数', '886', '41 次没拿到用量'], ['VLM 档墙钟', '13 分 18 秒', '主流程 + 重试 #1'], ['有效并发度', '19.2', 'Σ请求耗时 ÷ VLM 档墙钟'],
+                 ['外层重试', '46 次', '挽回 34 次'], ['对冲补发', '31 次', '先到先用'], ['因中断重做', '3 条', '在飞请求的结果丢了']],
+           lat: [['probe', '任务完成度打分', 408, 14, 0, 19.6, 17.6, 28.9, 46.2, 58.3], ['endstate', '逐机位复核', 306, 9, 0, 16.4, 15.1, 24.7, 40.8, 57.9],
+                 ['arbitration', '取证仲裁', 67, 6, 4, 31.8, 22.4, 60.0, 60.0, 60.0], ['caption', '技能打标', 85, 2, 20, 25.2, 25.8, 38.1, 54.9, 59.1],
+                 ['llm', '技能归纳', 20, 0, 0, 11.1, 9.3, 17.6, 30.2, 31.0]],
+           share: [['补任务描述', 46], ['数值档', 9], ['帧档', 144], ['VLM 档', 798], ['判决之后', 178], ['收尾', 120]],
+           fails: '超时 31 · HTTP 错误 26（其中 429 20 次）· 连接错误 2', retry: '46 次，挽回 34 次', unknown: 41, redo: 3, throttle: 1,
+           tok: [['probe', '任务完成度打分', 408, '735.4K', '12.2K', '7.9K', '598.1K'], ['endstate', '逐机位复核', 306, '689.1K', '21.4K', '14.9K', '281.6K'],
+                 ['arbitration', '取证仲裁', 67, '136.1K', '17.3K', '12.4K', '20.1K'], ['caption', '技能打标', 85, '409.5K', '13.3K', '6.3K', '28.2K'],
+                 ['llm', '技能归纳', 20, '42.2K', '3.3K', '1.4K', '3.8K']], tokSum: [886, '2.01M', '67.5K', '42.9K', '931.8K'] },
+    main: { kpi: [['请求数', '794', '32 次没拿到用量'], ['VLM 档墙钟', '9 分 02 秒', '不含系统暂停 2 分 11 秒'], ['有效并发度', '26.4', 'Σ请求耗时 ÷ VLM 档墙钟'],
+                  ['外层重试', '35 次', '挽回 29 次'], ['对冲补发', '26 次', '先到先用'], ['因中断重做', '3 条', '在飞请求的结果丢了']],
+            lat: [['probe', '任务完成度打分', 392, 13, 0, 19.7, 17.8, 29.1, 46.5, 58.3], ['endstate', '逐机位复核', 294, 8, 0, 16.4, 15.1, 24.6, 40.9, 57.9],
+                  ['arbitration', '取证仲裁', 58, 4, 2, 29.1, 21.7, 57.3, 60.0, 60.0], ['caption', '技能打标', 46, 1, 20, 24.1, 25.2, 37.4, 52.8, 55.0],
+                  ['llm', '技能归纳', 4, 0, 0, 7.9, 7.4, 12.6, 14.1, 14.1]],
+            share: [['补任务描述', 46], ['数值档', 9], ['帧档', 144], ['VLM 档', 542], ['判决之后', 47], ['收尾', 95]],
+            fails: '超时 21 · HTTP 错误 24（其中 429 20 次）· 连接错误 2', retry: '35 次，挽回 29 次', unknown: 32, redo: 3, throttle: 1,
+            tok: [['probe', '任务完成度打分', 392, '705.6K', '11.7K', '7.6K', '574.3K'], ['endstate', '逐机位复核', 294, '661.5K', '20.5K', '14.3K', '270.4K'],
+                  ['arbitration', '取证仲裁', 58, '131.2K', '16.9K', '12.1K', '19.6K'], ['caption', '技能打标', 46, '163.8K', '4.7K', '2.8K', '8.3K'],
+                  ['llm', '技能归纳', 4, '6.0K', '0.9K', '0.5K', '1.8K']], tokSum: [794, '1.67M', '54.7K', '37.3K', '874.4K'] },
+    retry: { kpi: [['请求数', '92', '9 次没拿到用量'], ['VLM 档墙钟', '4 分 16 秒', '只有 2 条，都卡在仲裁'], ['有效并发度', '4.1', 'Σ请求耗时 ÷ VLM 档墙钟'],
+                   ['外层重试', '11 次', '挽回 5 次'], ['对冲补发', '5 次', '先到先用'], ['因中断重做', '0 条', '']],
+             lat: [['probe', '任务完成度打分', 16, 1, 0, 18.2, 16.9, 25.3, 27.7, 27.7], ['endstate', '逐机位复核', 12, 1, 0, 16.0, 15.4, 22.1, 23.0, 23.0],
+                   ['arbitration', '取证仲裁', 9, 2, 2, 51.6, 60.0, 60.0, 60.0, 60.0], ['caption', '技能打标', 39, 1, 0, 25.9, 26.3, 38.6, 55.6, 59.1],
+                   ['llm', '技能归纳', 16, 0, 0, 11.9, 9.8, 18.0, 31.0, 31.0]],
+             share: [['补任务描述', 0], ['数值档', 0], ['帧档', 0], ['VLM 档', 256], ['判决之后', 131], ['收尾', 25]],
+             fails: '超时 10 · HTTP 错误 2 · 连接错误 0', retry: '11 次，挽回 5 次', unknown: 9, redo: 0, throttle: 0,
+             tok: [['probe', '任务完成度打分', 16, '29.8K', '0.5K', '0.3K', '23.8K'], ['endstate', '逐机位复核', 12, '27.6K', '0.9K', '0.6K', '11.2K'],
+                   ['arbitration', '取证仲裁', 9, '4.9K', '0.4K', '0.3K', '0.5K'], ['caption', '技能打标', 39, '245.7K', '8.6K', '3.5K', '19.9K'],
+                   ['llm', '技能归纳', 16, '36.2K', '2.4K', '0.9K', '2.0K']], tokSum: [92, '344.2K', '12.8K', '5.6K', '57.4K'] }
+  };
+  function hist(n, p50, p90, p99, mx, seed) {
+    // latency histogram, 12 bins of 5 s; shape derived from the percentiles
+    var r = rng(seed), bins = [], W = 240, H = 40, bw = W / 12;
+    for (var j = 0; j < 12; j++) {
+      var mid = j * 5 + 2.5, d = Math.exp(-Math.pow((mid - p50) / (Math.max(4, (p90 - p50)) * 1.1), 2));
+      if (mid > p90) d *= 0.35; if (mid > mx) d = 0; if (mid > p99 && mid <= mx) d = Math.max(d, 0.06);
+      bins.push(d * (0.85 + r() * 0.3));
+    }
+    var sum = bins.reduce(function (a, b) { return a + b; }, 0) || 1;
+    var cnt = bins.map(function (b) { return Math.round(b / sum * n); }), max = Math.max.apply(null, cnt) || 1;
+    var rects = cnt.map(function (c, j) {
+      var h = c / max * (H - 8), x = j * bw + 1, y = H - h;
+      return c ? '<rect x="' + x + '" y="' + y + '" width="' + (bw - 2) + '" height="' + h + '" rx="1.5" fill="#165DFF" tabindex="0" data-tip="' + c + ' 次|' + (j * 5) + '–' + (j * 5 + 5) + ' 秒"/>' : '';
+    }).join('');
+    var ticks = [[p50, 'P50'], [p90, 'P90'], [p99, 'P99']].map(function (p) {
+      var x = Math.min(W - 1, p[0] / 60 * W);
+      return '<line x1="' + x + '" x2="' + x + '" y1="0" y2="' + H + '" stroke="#1D2129" stroke-width="1" data-tip="' + p[0] + ' 秒|' + p[1] + '"/>';
+    }).join('');
+    return '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" width="240" height="40" role="img" aria-label="延迟分布">' +
+      '<line class="ax" x1="0" x2="' + W + '" y1="' + H + '" y2="' + H + '"/>' + rects + ticks + '</svg>';
+  }
+  function renderPerf(k) {
+    var p = PERF[k];
+    $('perfKpi').innerHTML = p.kpi.map(function (x) { return '<div class="kv"><div class="k">' + x[0] + '</div><div class="v">' + x[1] + '</div><div class="s">' + x[2] + '</div></div>'; }).join('');
+    $('latTable').innerHTML = '<thead><tr><th>调用类型</th><th class="r">发起次数</th><th class="r">补发</th><th class="r">失败</th><th class="r">均值</th><th class="r">P50</th><th class="r">P90</th><th class="r">P99</th><th class="r">最大</th><th>分布（0–60 秒）</th></tr></thead><tbody>' +
+      p.lat.map(function (l, j) {
+        return '<tr><td class="kind-name">' + l[1] + '<span class="tagk">' + l[0] + '</span></td><td class="r">' + l[2] + '</td><td class="r">' + l[3] + '</td><td class="r">' + (l[4] ? '<span style="color:var(--warning-6)">' + l[4] + '</span>' : 0) + '</td>' +
+          l.slice(5).map(function (v) { return '<td class="r">' + v.toFixed(1) + '</td>'; }).join('') + '<td>' + hist(l[2] - l[4], l[6], l[7], l[8], l[9], j + k.length) + '</td></tr>';
+      }).join('') + '</tbody>';
+    var total = p.share.reduce(function (a, s) { return a + s[1]; }, 0);
+    $('shareTotal').textContent = '合计 ' + Math.floor(total / 60) + ' 分 ' + (total % 60) + ' 秒（不含系统暂停）';
+    $('shareBars').innerHTML = p.share.map(function (s) {
+      var pct = s[1] / total * 100;
+      return '<div class="hb"><span class="name">' + s[0] + '</span><div class="track"><div class="fill" style="width:' + Math.max(pct, s[1] ? 0.6 : 0) + '%" tabindex="0" data-tip="' + s[1] + ' 秒 · ' + pct.toFixed(1) + '%|' + s[0] + '"></div></div><span class="val">' + pct.toFixed(1) + '%</span></div>';
+    }).join('');
+    $('retryFacts').innerHTML = [
+      ['外层重试', p.retry + '（内层对冲放弃之后才触发，间隔 1s / 2s / 4s）'],
+      ['失败原因', p.fails],
+      ['没拿到用量的请求', p.unknown + ' 次，不估算 Token'],
+      ['因中断而重做的条目', p.redo ? p.redo + ' 条（ep 26、27、30）：服务端可能已为丢掉的那次计费，统计里没有' : '0 条'],
+      ['自适应降并发', p.throttle ? '1 次：技能画像遇到连续 429，闸门减半' : '没有触发'],
+      ['请求合并', '合并请求 0 次，节省 0 次。现有两个 VLM 模块按 v1 的调用方式原样跑（merge = none）']
+    ].map(function (f) { return '<div class="fact"><span class="k">' + f[0] + '</span><span>' + f[1] + '</span></div>'; }).join('');
+    $('tokKind').innerHTML = '<thead><tr><th>调用类型</th><th class="r">请求</th><th class="r">输入</th><th class="r">输出</th><th class="r">思维链</th><th class="r">缓存命中</th></tr></thead><tbody>' +
+      p.tok.map(function (t) { return '<tr><td class="kind-name">' + t[1] + '<span class="tagk">' + t[0] + '</span></td>' + t.slice(2).map(function (c) { return '<td class="r">' + c + '</td>'; }).join('') + '</tr>'; }).join('') +
+      '<tr><td><b>合计</b></td>' + p.tokSum.map(function (c) { return '<td class="r"><b>' + c + '</b></td>'; }).join('') + '</tr></tbody>';
+  }
+  segBind('perfScope', renderPerf);
+  renderPerf('all');
+
+  // deep links: #perf opens the performance tab, ?ep=N opens that episode's drawer
+  if (location.hash === '#perf') document.querySelector('.tab[data-pane=panePerf]').click();
+  var epm = /[?&]ep=(\d+)/.exec(location.search);
+  if (epm && +epm[1] < 50) openEp(+epm[1]);
+</script>
+</body>
+</html>
