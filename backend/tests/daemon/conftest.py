@@ -67,3 +67,81 @@ def clean_env(monkeypatch):
     for key in _CLEAN_ENV:
         monkeypatch.delenv(key, raising=False)
     return monkeypatch
+
+
+def assert_schema(ref: str, instance) -> None:
+    """Validate against C4 (a bare name means ``openapi.yaml#/components/schemas/<name>``)."""
+    from curation.contracts import schemas
+
+    if "#" not in ref and "/" not in ref:
+        ref = f"openapi.yaml#/components/schemas/{ref}"
+    problems = schemas.errors(ref, instance)
+    assert not problems, f"{ref}: {problems}"
+
+
+def assert_error(response, code: str, status: int | None = None) -> dict:
+    from daemon.errors import STATUS
+
+    assert response.status_code == (status or STATUS[code]), response.text
+    body = response.json()
+    assert_schema("Error", body)
+    assert body["error"]["code"] == code, body
+    return body
+
+
+def make_settings(tmp_path, *, base_path="", **overrides):
+    from daemon.masterkey import MasterKey
+    from daemon.settings import Settings
+
+    values = dict(master_key=MasterKey(bytes(range(32))), base_path=base_path,
+                  data_dir=tmp_path / "data", scratch_dir=tmp_path / "scratch",
+                  static_dir=None, sse_heartbeat_s=0.2)
+    values.update(overrides)
+    return Settings(**values)
+
+
+@pytest.fixture
+def make_app(tmp_path, clean_env, clock):
+    """``make_app(base_path=..., **settings)`` -> a FastAPI app on a fresh database."""
+    from daemon.app import create_app
+
+    def build(*, clock_fn=None, **kw):
+        return create_app(make_settings(tmp_path, **kw), clock=clock_fn or clock)
+
+    return build
+
+
+@pytest.fixture
+def client_for(make_app):
+    """``client_for(**settings)`` -> a started TestClient (lifespan runs); closed after the test."""
+    from fastapi.testclient import TestClient
+
+    opened = []
+
+    def build(**kw):
+        app = make_app(**kw)
+        c = TestClient(app, raise_server_exceptions=False)
+        c.__enter__()
+        opened.append(c)
+        return c
+
+    yield build
+    for c in opened:
+        c.__exit__(None, None, None)
+
+
+def seed_task(repo, name="droid 前 50 条质检", *, state="queued", selected=("timestamp_check",),
+              owner="default", input_cred_id=None, output_cred_id=None, vlm_model_id=None,
+              delivery="tos://deliveries/droid-50", input_uri="tos://bucket/datasets/droid_100"):
+    """A task through the repository only (what W5's create path will do)."""
+    from curation.contracts import modules as registry
+    from daemon.repo import protocol as P
+
+    rows = [P.TaskModule(task_id="", module_id=m, selected=m in selected, availability="available")
+            for m in registry.ids()]
+    return repo.create_task(P.TaskCreate(
+        name=name, input_source="tos", input_uri=input_uri, output_uri=delivery,
+        delivery_key=delivery, episode_selector={"mode": "head", "n": 50},
+        params={"export": True, "vlm_retry": 3}, modules=rows, state=state, owner_id=owner,
+        input_cred_id=input_cred_id, output_cred_id=output_cred_id, vlm_model_id=vlm_model_id,
+        input_region="cn-beijing", output_region="cn-beijing"))
