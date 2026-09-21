@@ -2,37 +2,45 @@ Date: 2026-09-20
 TaskStatus: completed
 
 Task scope:
-  F0.3 设计文档评审与完善:对照需求文档 / v1 代码 / v1 使用文档 / 方舟 API 文档,
-  评审 12 篇设计文档,澄清后逐项修订并同步飞书副本。
+  F0.3 设计文档评审与完善 + F0.4 第二、三轮评审意见整合。
+  对照需求文档 / v1 代码 / v1 使用文档 / 方舟 API 文档评审 12 篇设计文档,
+  整合需求方带来的另外两份评审意见,逐项修订并同步飞书副本。
 
 Current summary:
   - 评审记录:robot-curation/docs/design/review-2026-09-20.md
-      Q1-Q8 全部有结论,A1-A19 / B1-B21 / C1-C12 全部已修订,默认处理项汇总在 00 篇 §7.1(P1-P11)
-  - 需求方拍板的决策已记入 00-overview.md §7:
-      D16 预签名直连 TOS(补登记)   D17 前端零业务状态(补登记)
-      D18 取消 decode stage 与帧缓存,check 支持同档多模块,分档照搬 v1 漏斗
-      D19 黄金对账双基线:umi_640_notask + droid_lerobot 前 50 条
-      D20 任务「待启动」状态 + stopped/failed 继续运行 + 复制为新任务
-      D21 任务列表页码分页;重内容 Lazy Loading;裁决队列/日志用游标
-      D22 Agent 主入口 REST;CLI 薄客户端 curation task …;原子命令不产出 links
-      D23 VLM 合并:一期只交付框架,现有两个 VLM 模块按 v1 调用图原样跑
-      D5 重申:所有提交只走标准 run_modules(),不留自定义计划入口
-  - 12 篇 Markdown 已全部修订并 commit;feature_list.md 末尾追加了「修订记录」(原条款未改)
-  - 飞书副本已同步(整篇重写,链接不变,rev 28;文末附评审记录):
+      §1-5 第一轮(Q1-Q8、A1-A19、B1-B21、C1-C12)
+      §6   第二轮:另一位评审者的 14 条问答 → D24-D32
+      §7   第三轮:review-catalog.md 的 F01-F28(15 条已覆盖,13 条本轮补)
+      §8   追问的 4 个问题及答复
+  - 决策表 00-overview.md §7:D1-D32 全部有结论;§7.1 的 P1-P17 需求方已全部确认;
+    §9 新增需求覆盖表(与需求原文有出入的三处标 ⚠)
+  - 本轮的关键结论:
+      D24 执行出错的 episode 暂不交付(held),停在出错那一档;正常弃权与标注分歧维持 v1
+      D25 重试只补跑出错条目;判决清单+报告合成不可变的结果版本(revisions/rNNNN + commit.json),
+          result_rev 用 CAS 切换;补跑后任务终态按当前结果重算
+      D27 任务启动时固化源文件清单(curation snapshot,退出码 6 = 源数据变了)
+      D28 删除(软删除 30 天)与「清理交付产物」分开
+      D29 latest 只指向最近一次发布成功的完整版本;同一交付目录发布串行
+      D30 未验证的密钥可保存;任务开始前 输入读 / 输出写 / VLM 最小调用 三项硬检查
+      D31 调用方只能设并发、超时、重试的上限,计划仍由 planner 定
+      D32 人工裁决不跨任务(拿掉了 delivery 绑定表与 adjudication_applied)
+      D8  模型列表能拉就拉、拉不出手填;不引入管理 AK/SK,不维护内置清单
+      其它:review 是独立维度(不是 passed 的子集);模块状态 completed_with_errors;
+           Token 两本账;导出指纹决定 delivery_stale;输入/输出两组凭证环境变量;
+           保存密钥只验身份;vlm_snapshot;SSE 事件序号与 reset;明细表 Parquet;
+           VLM 三项首选回放对账;v3 格式本期不做对账(已确认的缺口)
+  - 12 篇 Markdown 全部修订并 commit;feature_list.md 末尾两段「修订记录」(原条款未改)
+  - 飞书副本已同步(整篇重写,链接不变,rev 46,覆盖前确认 0 条评论):
       https://bytedance.us.larkoffice.com/docx/A4mndB5oBo8IGAxNuUlumWPBsod
-    同步方法:scratchpad 里按章节转义(< 和 ~)后拼成一份 markdown,docs +update --command overwrite。
-    注意:飞书会把只隔一个空格的相邻行内代码并成一个;章节区间替换因列表块无 block ID 而不可用。
-  - 静态稿 README 已追加「设计评审后待改」三条
+    同步方法见 memory: curator-v2-design-docs
 
 Main gaps:
-  - P1-P11 是评审时给的默认值,需求方尚未逐条确认(可否决)
-  - 10 篇 §1 记了一处与需求原文的出入:分支从 release_v1 派生而非 main(v1 代码只在 release_v1)
-  - 方舟 GET {endpoint}/models 用 API Key 是否可用未实测(官方文档只有 AK/SK 鉴权的列表接口);
-    设计已按「先试 /models,不通则内置清单 + 手填」兜底
+  - 方舟 GET {endpoint}/models 用 API Key 是否可用仍未实测;设计已按「能拉就拉,拉不出手填」处理,不阻塞
+  - 10 篇 §1 记了一处与需求原文的出入:分支从 release_v1 派生而非 main
   - F3.1 风格确认、baseline 清理点头、黄金基线生成 —— 均未变化
+  - 静态稿前两页与现设计有出入,清单在 frontend/mockups/README.md「设计评审后待改」
 
 Next steps:
-  1. 需求方过一遍 00 篇 §7 / §7.1 与飞书副本,否决或确认默认项
-  2. F3.1:风格确认后补第二批静态稿,并按 mockups/README.md「设计评审后待改」修正前两页
-  3. F1.1:dump_v1.py + curation-parity;用 release_v1 生成两个基线及 v1 自身噪声底(先于任何重构)
-  4. F1.2(待点头)→ F1.3 契约冻结 → 按 11 篇批次 1 开并行
+  1. F3.1:需求方确认风格后补第二批静态稿,并按 README 的待改清单修正前两页
+  2. F1.1:dump_v1.py(含 VLM 请求/响应录制)+ curation-parity;用 release_v1 生成两个基线与噪声底(先于任何重构)
+  3. F1.2(待点头)→ F1.3 契约冻结 → 按 11 篇批次 1 开并行
