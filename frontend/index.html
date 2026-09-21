@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- curator:base -->
+    <script>
+      // Mount prefix bootstrap (doc 07 §2.3). The Daemon replaces the marker above with
+      // <script>window.__CURATOR_BASE__ = "/curation";</script>. Assets are relative, so a
+      // <base> element pointing at the prefix keeps deep links (e.g. /curation/tasks/1/report)
+      // loading ./assets/* from the prefix instead of from the current path.
+      (function () {
+        var known = ['overview', 'datasets', 'tasks', 'credentials'];
+        var base = window.__CURATOR_BASE__;
+        if (typeof base !== 'string') {
+          // Not injected (e.g. a plain static server): infer from the path, never assume the root.
+          var parts = window.location.pathname.split('/');
+          var cut = parts.length;
+          for (var i = 1; i < parts.length; i++) {
+            if (known.indexOf(parts[i]) >= 0) { cut = i; break; }
+          }
+          base = parts.slice(0, cut).join('/');
+          if (/\.html?$/.test(base)) base = base.replace(/\/[^/]*$/, '');
+        }
+        base = String(base).replace(/\/+$/, '');
+        window.__CURATOR_BASE__ = base;
+        var el = document.createElement('base');
+        el.href = base + '/';
+        document.head.appendChild(el);
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <title>数据质检平台 · Physical AI Kit</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>
