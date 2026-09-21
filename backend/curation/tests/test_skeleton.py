@@ -72,7 +72,7 @@ def test_cli_top_help_is_a_directory_not_a_manual():
     自己的 --help(description)里,没丢只是搬家(2026-08-26 用户审阅定)。"""
     import argparse
 
-    from curation.cli import build_parser
+    from curation.cli.legacy import build_parser
     p = build_parser()
     sub = next(a for a in p._actions if isinstance(a, argparse._SubParsersAction))
     for ca in sub._choices_actions:
@@ -106,7 +106,7 @@ def test_cli_top_help_is_a_directory_not_a_manual():
     # reprofile 整命令对客户隐藏(2026-08-27 用户定):顶层目录 / usage /
     # 错误提示的候选列表都不出现;功能与自身 --help 原样保留(运维工具)
     assert "reprofile" not in sub.choices and "reprofile" not in top
-    from curation.cli import _reprofile_parser
+    from curation.cli.legacy import _reprofile_parser
     _flat = _reprofile_parser().format_help().replace("\n", "").replace(" ", "")
     assert "第二次报0条变化" in _flat and "与rejudge的区别" in _flat
     from curation.cli import main as _main

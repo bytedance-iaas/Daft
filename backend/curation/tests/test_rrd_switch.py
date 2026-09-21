@@ -65,7 +65,7 @@ def test_off_hides_rrd_from_ui_lists_and_format(rrd_dir, tmp_path):
 
 
 def test_off_batch_listing_and_run_dispatch(rrd_dir, tmp_path):
-    from curation import cli
+    from curation.cli import legacy as cli
     rrd_reader.set_enabled(False)
     assert cli._list_datasets(str(tmp_path / "datasets")) == []
     rrd_reader.set_enabled(True)

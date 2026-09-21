@@ -537,7 +537,7 @@ def test_cli_wiring_passes_all_flags(monkeypatch, tmp_path):
 
 
 def _fetch_help() -> str:
-    from curation.cli import build_parser
+    from curation.cli.legacy import build_parser
     # argparse 子命令的 help 要从 subparser 上拿;从 _subparsers action 里翻出来
     p = build_parser()
     for action in p._actions:

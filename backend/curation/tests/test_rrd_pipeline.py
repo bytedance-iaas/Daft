@@ -192,7 +192,7 @@ def test_lerobot_input_still_uses_lerobot_reader(tmp_path):
 
 def test_list_datasets_counts_rrd_dirs(tmp_path):
     """父目录下 LeRobot 集与 RRD 集都要被 --batch 认出来(非数据集目录不许混进来)。"""
-    from curation.cli import _list_datasets
+    from curation.cli.legacy import _list_datasets
 
     (tmp_path / "lerobot_ds" / "meta").mkdir(parents=True)
     (tmp_path / "lerobot_ds" / "meta" / "info.json").write_text("{}", encoding="utf-8")

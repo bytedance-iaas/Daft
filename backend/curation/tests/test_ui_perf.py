@@ -443,7 +443,7 @@ def test_cli_interactive_preflight(tmp_path, monkeypatch):
     import sys as _sys
     import types
 
-    from curation import cli
+    from curation.cli import legacy as cli
 
     ds = tmp_path / "mystery"
     (ds / "meta").mkdir(parents=True)
