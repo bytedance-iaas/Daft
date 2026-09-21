@@ -40,7 +40,7 @@ from .logs import TaskLogs
 from .masterkey import MasterKey, MasterKeyError
 from .reconcile import reconcile
 from .repo import protocol as P
-from .routes import api, sse, static, system
+from .routes import api, datasets, overview, sse, static, system
 from .settings import Settings
 from .util import now_ms
 from .views import Links
@@ -251,7 +251,9 @@ def create_app(settings: Settings, *, repo: P.Repository | None = None,
     errors.install(app)
     base = settings.base_path
     system.install(app, base)
-    app.include_router(api.router, prefix=f"{base}/api/v1")
+    for router in (api.router, datasets.router, overview.router):     # new routers go here,
+        app.include_router(router, prefix=f"{base}/api/v1")              # before the fallback
+    app.include_router(api.fallback, prefix=f"{base}/api/v1")
     app.include_router(sse.router, prefix=f"{base}/events")
     rt.frontend = static.install(app, settings.static_dir, base)
     app.add_middleware(GZipMiddleware, minimum_size=1024)

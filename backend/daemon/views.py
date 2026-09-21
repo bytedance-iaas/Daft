@@ -13,6 +13,7 @@ from urllib.parse import quote
 from curation.contracts import modules as registry
 
 from .repo import protocol as P
+from .repo.extras import dataset_format
 
 _STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note")
 _SUMMARY_KEYS = ("total", "passed", "rejected", "held", "review", "pass_rate")
@@ -250,6 +251,55 @@ def task_list_item(task: P.Task, *, repo: P.Repository) -> dict:
 
 def etag(task: P.Task) -> str:
     return f'"{task.updated_at}"'
+
+
+# ---------------------------------------------------------------------------
+# datasets (D36, D37)
+# ---------------------------------------------------------------------------
+
+def task_ref(task: P.Task) -> dict:
+    return {"id": task.id, "name": task.name, "state": task.state, "created_at": task.created_at}
+
+
+def dataset_item(ds: P.Dataset, last_task: P.Task | None) -> dict:
+    """C4 ``DatasetItem``; format, episode count and robot type come from the kept preflight."""
+    pf = ds.preflight if isinstance(ds.preflight, dict) else {}
+    info = pf.get("dataset") if isinstance(pf.get("dataset"), dict) else {}
+    robot = info.get("robot_type")
+    return {"id": ds.id, "name": ds.name, "source": ds.source, "uri": ds.uri, "region": ds.region,
+            "format": dataset_format(pf), "episode_count": _count(info.get("episode_count")),
+            "robot_type": robot if isinstance(robot, str) else None,
+            "check_state": ds.check_state, "checked_at": ds.checked_at,
+            "preflighted_at": ds.preflighted_at, "created_at": ds.created_at,
+            "last_task": task_ref(last_task) if last_task is not None else None}
+
+
+def dataset_check(check: P.DatasetCheck) -> dict:
+    change = check.change if isinstance(check.change, dict) else None
+    return {"at": check.at, "trigger": check.trigger, "result": check.result, "change": change}
+
+
+def listing(fp: dict | None) -> dict:
+    """The kept file listing's summary; C2 ``source-manifest`` calls the object count ``count``."""
+    fp = fp if isinstance(fp, dict) else {}
+    objects = fp.get("objects", fp.get("count"))
+    digest = fp.get("digest")
+    return {"objects": _count(objects) or 0, "bytes": _count(fp.get("bytes")) or 0,
+            "digest": digest if isinstance(digest, str) else ""}
+
+
+def dataset_detail(ds: P.Dataset, *, tasks: list[P.Task], checks: list[P.DatasetCheck],
+                   names: Names) -> dict:
+    """C4 ``DatasetDetail``: ``tasks`` newest first (the first is ``last_task``).
+
+    ``links`` stays empty: C4 ``Link.rel`` has no value for a dataset page yet.
+    """
+    return {**dataset_item(ds, tasks[0] if tasks else None),
+            "note": ds.note, "credential": names.credential(ds.credential_id),
+            "preflight": ds.preflight, "meta_fingerprint": ds.meta_fingerprint,
+            "listing": listing(ds.source_fingerprint),
+            "checks": [dataset_check(c) for c in checks],
+            "tasks": [task_ref(t) for t in tasks], "links": []}
 
 
 def is_under(path: pathlib.Path, root: pathlib.Path) -> bool:

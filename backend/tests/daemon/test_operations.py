@@ -40,7 +40,8 @@ def test_implemented_and_pending_cover_the_contract_exactly():
 
 def _call(client, op, base="/curation"):
     method, path = _contract_ops()[op]
-    url = base + path.replace("{id}", "task_x").replace("{model_id}", "vm_x") \
+    some_id = "ds_x" if path.startswith("/api/v1/datasets/") else "task_x"
+    url = base + path.replace("{id}", some_id).replace("{model_id}", "vm_x") \
         .replace("{action}", "start").replace("{index}", "3").replace("{table}", "t")
     return client.request(method, url, json={} if method in ("POST", "PUT", "PATCH") else None)
 

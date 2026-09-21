@@ -7,7 +7,7 @@ from curation.contracts import modules as registry
 from daemon.repo import protocol as P
 from daemon.transitions import change_task_state
 
-from .conftest import T0, assert_error, assert_schema, seed_task
+from .conftest import T0, assert_error, assert_schema, seed_dataset, seed_task
 
 BASES = ("", "/curation")
 #: Every write says it is JSON, even without a body (routes/common.py).
@@ -173,6 +173,18 @@ def test_task_list_filters_and_item_fields(client_for, clock):
     assert item["module_counts"] == {"selected": 2, "pending": 1, "failed": 1}
     assert item["usage"]["prompt_tokens"] == 100 and item["usage"]["requests"] == 2
     assert item["active_subtask"] is None and item["deleted_at"] is None
+    assert item["modules"] == [m for m in registry.ids() if m in ("timestamp_check", "dedup")]
+    assert item["dataset_id"] is None
+
+    assert ids(module="dedup")[0] == [b.id]                          # C4 1.1: every listed module
+    assert ids(module="timestamp_check,dedup")[0] == [b.id]
+    assert ids(module=" timestamp_check ,")[0] == [b.id, a.id]
+    assert ids(module="")[0] == [b.id, a.id]
+    assert ids(module="dedup", q="droid")[0] == []
+    assert ids(dataset_id="ds_unknown")[0] == []
+    body = assert_error(c.get("/curation/api/v1/tasks", params={"module": "dedup,nope"}),
+                        "validation_failed")
+    assert "nope" in body["error"]["message"]
 
     assert_error(c.get("/curation/api/v1/tasks", params={"page_size": 7}), "validation_failed")
     assert_error(c.get("/curation/api/v1/tasks", params={"page": 0}), "validation_failed")
@@ -443,6 +455,50 @@ def test_local_input_stays_under_its_root(client_for, tmp_path):
     err = assert_error(_patch(c, t.id, {"input": {"source": "local", "uri": str(root / "../..")},
                                         "preflight_id": pf}), "validation_failed")
     assert "之下" in err["error"]["message"]
+
+
+def test_patch_input_may_name_a_registered_dataset(client_for):
+    """C4 1.1: ``input: {dataset_id}`` is the same as giving that dataset's address in full."""
+    c = client_for()
+    rt = _rt(c)
+    key = _cred(rt.repo, "ds-key")
+    _cred(rt.repo, "src")
+    ds = seed_dataset(rt.repo, "tos://bucket/datasets/umi_640", region="cn-shanghai",
+                      credential_id=key.id)
+    t = seed_task(rt.repo, state="created")
+    assert rt.repo.get_task(t.id).dataset_id is None
+
+    err = assert_error(_patch(c, t.id, {"input": {"dataset_id": ds.id}}), "validation_failed")
+    assert "重新预检" in err["error"]["message"]                     # a new input, a new preflight
+    r = _patch(c, t.id, {"input": {"dataset_id": ds.id}, "preflight_id": _preflight(rt)})
+    assert r.status_code == 200, r.text
+    assert_schema("Task", r.json())
+    assert r.json()["dataset_id"] == ds.id
+    assert r.json()["input"] == {"source": "tos", "uri": "tos://bucket/datasets/umi_640",
+                                 "region": "cn-shanghai", "credential": "ds-key"}
+    listed = c.get("/api/v1/tasks", params={"dataset_id": ds.id}).json()
+    assert [x["id"] for x in listed["items"]] == [t.id] and listed["items"][0]["dataset_id"] == ds.id
+
+    # the same address in full links the registration; another address drops the link
+    r = _patch(c, t.id, {"input": {"source": "tos", "uri": "tos://bucket/datasets/umi_640/",
+                                   "region": "cn-shanghai", "credential": "src"}})
+    assert r.status_code == 200 and r.json()["dataset_id"] == ds.id
+    r = _patch(c, t.id, {"input": {"source": "tos", "uri": "tos://bucket/datasets/other",
+                                   "credential": "src"}, "preflight_id": _preflight(rt)})
+    assert r.status_code == 200 and r.json()["dataset_id"] is None
+
+    err = assert_error(_patch(c, t.id, {"input": {"dataset_id": "ds_missing"}}),
+                       "validation_failed")["error"]
+    assert "不存在" in err["message"] and err["details"]["errors"][0]["field"] == "input.dataset_id"
+    rt.repo.delete_credential(key.id)                         # the registration loses its key
+    assert rt.repo.get_dataset(ds.id).credential_id is None
+    err = assert_error(_patch(c, t.id, {"input": {"dataset_id": ds.id},
+                                        "preflight_id": _preflight(rt)}), "validation_failed")
+    assert "访问密钥已被删除" in err["error"]["message"]
+    public = seed_dataset(rt.repo, "tos://hf-cache/lerobot/aloha_sim", source="public", region=None)
+    r = _patch(c, t.id, {"input": {"dataset_id": public.id}, "preflight_id": _preflight(rt)})
+    assert r.status_code == 200, r.text
+    assert r.json()["input"] == {"source": "public", "uri": "tos://hf-cache/lerobot/aloha_sim"}
 
 
 # ---------------------------------------------------------------------------
