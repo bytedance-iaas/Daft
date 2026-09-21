@@ -54,8 +54,8 @@ import {
 import { AdvancedSection, ModelSection } from './ModelSection';
 import { ModuleSection, type AvailabilityMap } from './ModuleSection';
 import { ModuleSettings } from './ModuleSettings';
-import { PreflightCard } from './PreflightCard';
-import { runPreflight, useDeliveryProbe, usePreflight, type PreflightState } from './usePreflight';
+import { PreflightCard } from '../../features/preflight/PreflightCard';
+import { runPreflight, useDeliveryProbe, usePreflight, type PreflightState } from '../../features/preflight/usePreflight';
 
 export type FormMode = 'new' | 'edit' | 'copy';
 

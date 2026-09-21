@@ -2,6 +2,7 @@
 // on them), the MSW server with the mock world, and contract validation of every request body
 // the UI sends (a violation fails the test that caused it).
 import '@testing-library/jest-dom/vitest';
+import { Message, Modal } from '@arco-design/web-react';
 import { cleanup } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
 import { resetDb } from '../mocks/db';
@@ -31,6 +32,9 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  // Modal.confirm and Message render into their own roots, outside RTL's containers.
+  Modal.destroyAll();
+  Message.clear();
   server.resetHandlers();
   window.localStorage.clear();
   expect(violations, violations.join('\n\n')).toEqual([]);

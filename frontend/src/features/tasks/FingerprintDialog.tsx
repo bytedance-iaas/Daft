@@ -27,7 +27,9 @@ export function FingerprintDialog({
   loading,
   onCancel,
   onConfirm,
+  context = 'task',
 }: {
+  context?: 'task' | 'dataset';
   change: SourceChange | null;
   visible: boolean;
   loading?: boolean;
@@ -46,7 +48,7 @@ export function FingerprintDialog({
       unmountOnExit
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        <Typography.Text>{zh.fingerprint.intro}</Typography.Text>
+        <Typography.Text>{context === 'dataset' ? zh.fingerprint.introDataset : zh.fingerprint.intro}</Typography.Text>
         {change ? (
           <Alert
             type="warning"

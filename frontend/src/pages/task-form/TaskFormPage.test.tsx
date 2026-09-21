@@ -5,7 +5,7 @@ import { server } from '../../mocks/server';
 import { fill, pick } from '../../test/arco';
 import { fieldErrors, requiredFieldLabels } from '../../test/forms';
 import { currentLocation, renderApp } from '../../test/render';
-import { PREFLIGHT_DEBOUNCE } from './usePreflight';
+import { PREFLIGHT_DEBOUNCE } from '../../features/preflight/usePreflight';
 
 beforeAll(() => {
   PREFLIGHT_DEBOUNCE.ms = 0;

@@ -6,7 +6,7 @@ import { shortTime } from '../../lib/format';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
 import type { Errors, FormValues } from './formModel';
-import type { ProbeState } from './usePreflight';
+import type { ProbeState } from '../../features/preflight/usePreflight';
 
 const { Row, Col } = Grid;
 

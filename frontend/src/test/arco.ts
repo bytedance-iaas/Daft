@@ -14,6 +14,16 @@ export async function pick(user: UserEvent, label: string | RegExp, option: stri
   await user.click(popup);
 }
 
+/** The open Arco Drawer titled `title` (Arco drawers carry no dialog role). */
+export async function findDrawer(title: string): Promise<HTMLElement> {
+  return waitFor(() => {
+    const t = [...document.querySelectorAll('.arco-drawer-header-title')].find((e) => e.textContent?.trim() === title);
+    const d = t?.closest('.arco-drawer');
+    if (!(d instanceof HTMLElement)) throw new Error(`no drawer ${title}`);
+    return d;
+  });
+}
+
 /** Types into the input labelled `label`, replacing what was there. */
 export async function fill(user: UserEvent, label: string | RegExp, text: string, root: HTMLElement = document.body): Promise<void> {
   const el = within(root).getAllByLabelText(label).find((x) => x.tagName === 'INPUT' || x.tagName === 'TEXTAREA') as HTMLInputElement | undefined;
