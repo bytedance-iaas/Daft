@@ -38,7 +38,8 @@ def test_terminal_state_publishes_done_with_failed_modules(repo):
     change_task_state(repo, hub, t.id, {"running"}, "completed_with_errors", at=T0)
     last = hub.buffered(t.id)[-1]
     assert (last.event, last.data) == ("done", {"state": "completed_with_errors",
-                                                "failed_modules": ["dedup"]})
+                                                "failed_modules": ["dedup"], "subtask_id": None,
+                                                "reason": None})
     change_task_state(repo, None, t.id, {"completed_with_errors"}, "succeeded", at=T0)   # no hub
 
 

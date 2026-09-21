@@ -212,10 +212,13 @@ def test_task_detail_fits_the_contract(client_for):
     rt.repo.set_task_summary(t.id, {"total": 50, "passed": 41, "rejected": 7, "held": 2,
                                     "review": 10, "pass_rate": 0.82, "pending_adjudication": 4})
     rt.repo.switch_result_rev(t.id, 0, 1)
+    snapshot = {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
+                "endpoint": "https://ark.example/api/v3", "reasoning_effort": None,
+                "timeouts_s": {"probe": 60}, "parallelism": 64}
     rt.repo.freeze_task_inputs(t.id, run_id="20260920-130514", preflight={},
                                source_fingerprint={"objects": 204, "bytes": 1520331122,
                                                    "digest": "sha256:abc"},
-                               vlm_snapshot={"backend": "ark-prod", "model": "doubao"})
+                               vlm_snapshot=snapshot)
     r = c.get(f"/curation/api/v1/tasks/{t.id}")
     assert r.status_code == 200
     body = r.json()
@@ -224,7 +227,7 @@ def test_task_detail_fits_the_contract(client_for):
     assert body["input"] == {"source": "tos", "uri": "tos://bucket/datasets/droid_100",
                              "region": "cn-beijing", "credential": "prod-tos"}
     assert body["vlm"] == {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
-                           "reasoning_effort": None}
+                           "reasoning_effort": None, "snapshot": snapshot}
     assert body["source"] == {"objects": 204, "bytes": 1520331122, "digest": "sha256:abc"}
     assert [m["id"] for m in body["modules"]] == list(registry.ids())
     assert body["modules"][0]["name"] == "时间戳检查"
@@ -235,9 +238,12 @@ def test_task_detail_fits_the_contract(client_for):
         "adjudication": f"https://kit.example.com/curation/tasks/{t.id}/adjudication?status=pending"}
 
     rt.repo.delete_credential(cred.id)                       # finished task keeps its report
+    rt.repo.delete_vlm_backend(backend.id)
     body = c.get(f"/curation/api/v1/tasks/{t.id}").json()
     assert_schema("Task", body)
-    assert body["input"]["credential"] == "" and body["output"]["credential"] == ""
+    assert body["input"]["credential"] is None and body["output"]["credential"] is None
+    assert body["vlm"] == {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
+                           "reasoning_effort": None, "snapshot": snapshot}   # names from start
 
 
 def test_links_are_relative_without_public_base_url(client_for):
@@ -360,7 +366,8 @@ def test_patch_a_created_task_resolves_every_field(client_for, tmp_path):
                             "region": "cn-shanghai", "credential": "src"}
     assert got["output"] == {"uri": "tos://out/deliveries/x", "credential": "dst"}
     assert got["episodes"] == {"mode": "explicit", "expr": "3,10-12", "indices": [3, 10, 11, 12]}
-    assert got["vlm"] == {"backend": "ark-prod", "model": "doubao", "reasoning_effort": "low"}
+    assert got["vlm"] == {"backend": "ark-prod", "model": "doubao", "reasoning_effort": "low",
+                          "snapshot": None}                     # frozen only at start
     assert got["params"] == {"export": False, "limits": {"cpu_concurrency": 4}}
     mods = {m["id"]: m for m in got["modules"]}
     assert [m for m in mods if mods[m]["selected"]] == ["timestamp_check", "kinematic_limits",
@@ -493,7 +500,7 @@ def test_rebind_credentials(client_for):
     r = c.post(f"/api/v1/tasks/{t.id}/rebind-credentials", json={"output_credential": "new"})
     assert r.status_code == 200, r.text
     assert_schema("Task", r.json())
-    assert r.json()["output"]["credential"] == "new" and r.json()["input"]["credential"] == ""
+    assert r.json()["output"]["credential"] == "new" and r.json()["input"]["credential"] is None
     assert_error(c.post(f"/api/v1/tasks/{t.id}/rebind-credentials", json={}), "validation_failed")
     assert_error(c.post(f"/api/v1/tasks/{t.id}/rebind-credentials",
                         json={"input_credential": "missing"}), "validation_failed")

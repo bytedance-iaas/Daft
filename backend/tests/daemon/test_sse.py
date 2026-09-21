@@ -64,7 +64,10 @@ def test_ids_are_epoch_and_a_growing_sequence():
     c = hub.publish_done("task_a", "succeeded", failed_modules=["dedup", "dedup"])
     assert [parse_event_id(x) for x in (a, b, c)] == [(7, 1), (7, 2), (7, 3)]
     assert [e.event for e in hub.buffered("task_a")] == ["state", "done"]
-    assert hub.buffered("task_a")[1].data == {"state": "succeeded", "failed_modules": ["dedup"]}
+    assert hub.buffered("task_a")[1].data == {"state": "succeeded", "failed_modules": ["dedup"],
+                                              "subtask_id": None, "reason": None}
+    assert hub.buffered("task_a")[0].data == {"state": "running", "pause_reason": None,
+                                              "subtask_id": None, "reason": None, "at": T0}
     assert parse_event_id("1-x") is None and parse_event_id(None) is None
 
 
@@ -244,8 +247,50 @@ def test_terminal_task_gets_state_and_done_then_the_stream_ends(client_for):
     assert events[0] == {"retry": "3000"}
     assert [e["event"] for e in events[1:]] == ["state", "done"]
     assert events[2]["data"] == {"state": "completed_with_errors",
-                                 "failed_modules": ["timestamp_check"]}
+                                 "failed_modules": ["timestamp_check"], "subtask_id": None,
+                                 "reason": None}
     assert events[1]["id"] == events[2]["id"] == rt.hub.event_id(rt.hub.head)
+    check_payloads(events)
+
+
+def test_snapshot_carries_the_subtask_and_the_reasons(client_for):
+    """C4 1.2: state / done always say which subtask (or none) and why."""
+    from daemon.repo import protocol as P
+    from daemon.transitions import change_subtask_state
+
+    c = client_for()
+    rt = c.app.state.runtime
+    t = seed_task(rt.repo)
+    change_task_state(rt.repo, rt.hub, t.id, {"queued"}, "running", at=T0)
+    change_task_state(rt.repo, rt.hub, t.id, {"running"}, "failed", at=T0 + 1,
+                      reason="访问密钥失效")
+    sub = rt.repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="resume", scope={},
+                                           state="queued"))
+    for frm, to, kw in (("queued", "running", {}), ("running", "pausing", {"pause_reason": "user"}),
+                        ("pausing", "paused", {"reason": "用户暂停"})):
+        change_subtask_state(rt.repo, rt.hub, sub.id, {frm}, to, at=T0 + 2, **kw)
+    from daemon.routes.sse import _snapshot
+
+    frames, over = _snapshot(rt.repo, t.id, "default", "1-1")      # the stream stays open
+    assert not over
+    snapshot = parse_stream(b"".join(frames).decode())
+    states = [e["data"] for e in snapshot if e.get("event") == "state"]
+    assert states[0] == {"state": "failed", "pause_reason": None, "subtask_id": None,
+                         "reason": "访问密钥失效", "at": states[0]["at"]}
+    assert states[1] == {"state": "paused", "pause_reason": "user", "subtask_id": sub.id,
+                         "reason": "用户暂停", "at": states[1]["at"]}
+    check_payloads(snapshot)
+
+    change_subtask_state(rt.repo, rt.hub, sub.id, {"paused"}, "stopping", at=T0 + 3)
+    change_subtask_state(rt.repo, rt.hub, sub.id, {"stopping"}, "stopped", at=T0 + 4,
+                         reason="用户停止")
+    done = [e for e in rt.hub.buffered(t.id) if e.event == "done"][-1]
+    assert done.data == {"state": "stopped", "failed_modules": [], "subtask_id": sub.id,
+                         "reason": "用户停止"}
+    events = parse_stream(c.get(f"/events/tasks/{t.id}").text)       # finished: ends by itself
+    assert [e.get("event") for e in events[1:]] == ["state", "done"]
+    assert events[2]["data"] == {"state": "failed", "failed_modules": [], "subtask_id": None,
+                                 "reason": "访问密钥失效"}
     check_payloads(events)
 
 

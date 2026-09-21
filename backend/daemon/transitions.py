@@ -61,19 +61,20 @@ def change_task_state(repo: P.Repository, hub: EventHub | None, task_id: str, fr
                           version=version)
         if publish_done and to in P.TERMINAL_STATES:
             hub.publish_done(task_id, to, failed_modules=failed_modules(repo, task_id),
-                             version=version)
+                             reason=reason, version=version)
     return True
 
 
 def change_subtask_state(repo: P.Repository, hub: EventHub | None, subtask_id: str,
                          frm: Iterable[str], to: str, *, at: int, actor: str = "system",
                          reason: str | None = None, pause_reason: str | None = None,
-                         by: str = "", publish_done: bool = False,
+                         by: str = "", publish_done: bool = True,
                          owner: str = P.DEFAULT_OWNER) -> bool:
     """CAS on a subtask, like :func:`change_task_state`; ``owner`` is the parent task's.
 
-    ``done`` is off by default: the parent's terminal state is recomputed after a
-    subtask ends (D25), and that change publishes the task's own ``done``.
+    A terminal step publishes ``done`` with the subtask's id, after which a stream on
+    a finished task ends. So when a subtask ends, recompute the parent's terminal
+    state (D25) first and end the subtask last: streams then see both changes.
     """
     frm = set(frm)
     with repo.transaction():
@@ -96,7 +97,7 @@ def change_subtask_state(repo: P.Repository, hub: EventHub | None, subtask_id: s
                           reason=reason, version=version)
         if publish_done and to in P.TERMINAL_STATES:
             hub.publish_done(sub.task_id, to, failed_modules=failed_modules(repo, sub.task_id),
-                             subtask_id=subtask_id, version=version)
+                             subtask_id=subtask_id, reason=reason, version=version)
     return True
 
 

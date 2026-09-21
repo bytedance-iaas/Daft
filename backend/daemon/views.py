@@ -1,10 +1,8 @@
 """Repository rows -> C4 response bodies (``Task``, ``TaskListItem``, ``Subtask``, ``UsageReport``...).
 
 Everything a route returns goes through here, and the tests validate each body
-against its OpenAPI schema. Two contract gaps are bridged on purpose (see the
-W4 report): ``Task.vlm`` never carries ``snapshot`` (``VlmChoice`` forbids extra
-keys inside its ``allOf``), and a deleted access key shows as ``credential: ""``
-(``InputRef`` / ``OutputRef`` require the field).
+against its OpenAPI schema (C4 1.2: ``Task.vlm`` is a ``TaskVlm`` with the
+snapshot frozen at start; a deleted access key shows as ``credential: null``).
 """
 from __future__ import annotations
 
@@ -75,11 +73,16 @@ def summary(value: dict | None) -> dict | None:
     return {k: value[k] for k in _SUMMARY_KEYS}
 
 
+def _count(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
 def pending_adjudication(task: P.Task) -> int:
-    """W5 keeps ``summary.pending_adjudication`` current; before that, every review item counts."""
+    """W5 keeps ``summary.pending_adjudication`` current; before that, every review item counts.
+    (``daemon.repo.extras.adjudication_backlog`` counts the same way.)"""
     s = task.summary if isinstance(task.summary, dict) else {}
     for key in ("pending_adjudication", "review"):
-        if isinstance(s.get(key), int) and s[key] >= 0:
+        if _count(s.get(key)) is not None:
             return s[key]
     return 0
 
@@ -143,18 +146,19 @@ class Names:
 
     def __init__(self, repo: P.Repository, owner: str):
         self._repo, self._owner = repo, owner
-        self._creds: dict[str, str] = {}
+        self._creds: dict[str, str | None] = {}
         self._models: dict[str, tuple[str, str]] | None = None
 
-    def credential(self, cred_id: str | None) -> str:
-        """``""`` when the key was deleted (the task keeps its report; rebind gives a new one)."""
+    def credential(self, cred_id: str | None) -> str | None:
+        """The key's name; None when there is none or it was deleted (the task keeps its
+        report, rebind-credentials gives it a new one)."""
         if not cred_id:
-            return ""
+            return None
         if cred_id not in self._creds:
             try:
                 self._creds[cred_id] = self._repo.get_credential(cred_id, owner=self._owner).name
             except P.NotFound:
-                self._creds[cred_id] = ""
+                self._creds[cred_id] = None
         return self._creds[cred_id]
 
     def model(self, model_id: str | None) -> tuple[str, str] | None:
@@ -182,15 +186,18 @@ def output_ref(task: P.Task, names: Names) -> dict:
     return out
 
 
-def vlm_choice(task: P.Task, names: Names) -> dict | None:
+def task_vlm(task: P.Task, names: Names) -> dict | None:
+    """C4 ``TaskVlm``: the chosen backend and model by name, and what start froze (P17).
+    A backend deleted after the task finished leaves the names in the snapshot."""
+    snap = task.vlm_snapshot if isinstance(task.vlm_snapshot, dict) else None
     pair = names.model(task.vlm_model_id)
     if pair is None:
-        snap = task.vlm_snapshot or {}
-        backend, model = snap.get("backend"), snap.get("model")
+        backend, model = (snap or {}).get("backend"), (snap or {}).get("model")
         if not (isinstance(backend, str) and isinstance(model, str)):
             return None
         pair = (backend, model)
-    return {"backend": pair[0], "model": pair[1], "reasoning_effort": task.vlm_reasoning_effort}
+    return {"backend": pair[0], "model": pair[1], "reasoning_effort": task.vlm_reasoning_effort,
+            "snapshot": snap}
 
 
 def source_summary(fp: dict | None) -> dict | None:
@@ -208,7 +215,7 @@ def task_detail(task: P.Task, *, repo: P.Repository, names: Names, links: Links,
         "state_reason": task.state_reason, "pause_reason": task.pause_reason,
         "input": input_ref(task, names), "dataset_id": task.dataset_id, "output": output_ref(task, names),
         "run_id": task.run_id, "episodes": task.episode_selector,
-        "embodiment_id": task.embodiment_id, "vlm": vlm_choice(task, names),
+        "embodiment_id": task.embodiment_id, "vlm": task_vlm(task, names),
         "params": params(task.params), "source": source_summary(task.source_fingerprint),
         "progress": stage_progress(task.progress),
         "modules": [module_state(m, now) for m in mods],
@@ -225,6 +232,7 @@ def task_detail(task: P.Task, *, repo: P.Repository, names: Names, links: Links,
 
 def task_list_item(task: P.Task, *, repo: P.Repository) -> dict:
     active = repo.active_subtask(task.id)
+    mods = sorted_modules(repo.get_task_modules(task.id))
     return {
         "id": task.id, "name": task.name, "state": task.state, "pause_reason": task.pause_reason,
         "dataset": dataset_name(task.input_uri), "created_at": task.created_at,
@@ -232,9 +240,9 @@ def task_list_item(task: P.Task, *, repo: P.Repository) -> dict:
         "pending_adjudication": pending_adjudication(task),
         "delivery_stale": bool(task.delivery_stale),
         "active_subtask": active.id if active else None,
-        "modules": [m.module_id for m in sorted_modules(repo.get_task_modules(task.id)) if m.selected],
+        "modules": [m.module_id for m in mods if m.selected],
         "dataset_id": task.dataset_id,
-        "module_counts": module_counts(repo.get_task_modules(task.id)),
+        "module_counts": module_counts(mods),
         "usage": usage_totals(repo.usage_buckets(task.id, ledger="actual")),
         "deleted_at": task.deleted_at,
     }

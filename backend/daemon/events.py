@@ -23,6 +23,8 @@ stderr can call them directly.
   id of the audit event written with the change, which grows in commit order):
   one older than what was already published for that task (or subtask) is
   dropped, so two threads racing never leave the stream on a stale state.
+* ``state`` and ``done`` always carry ``subtask_id`` (null for the task itself)
+  and ``reason`` (the new state_reason, or null), C4 1.2.
 * A subscriber that falls ``max_queue`` events behind gets nothing more after the
   gap; its stream sends ``reset`` and ends.
 * ``progress`` and ``usage`` carry cumulative values, so a replayed or repeated
@@ -72,6 +74,20 @@ def format_event(event: str, data: dict, event_id: str | None = None) -> bytes:
 def parse_event_id(raw: str | None) -> tuple[int, int] | None:
     m = _EVENT_ID_RE.match((raw or "").strip())
     return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def state_data(state: str, *, at: int, pause_reason: str | None = None,
+               subtask_id: str | None = None, reason: str | None = None) -> dict:
+    """C4 ``SseState``: ``subtask_id`` is null for the task itself, ``reason`` its state_reason."""
+    return {"state": state, "pause_reason": pause_reason, "subtask_id": subtask_id or None,
+            "reason": reason or None, "at": int(at)}
+
+
+def done_data(state: str, *, failed_modules: Iterable[str] = (), subtask_id: str | None = None,
+              reason: str | None = None) -> dict:
+    """C4 ``SseDone``."""
+    return {"state": state, "failed_modules": sorted(set(failed_modules)),
+            "subtask_id": subtask_id or None, "reason": reason or None}
 
 
 class Subscription:
@@ -224,19 +240,15 @@ class EventHub:
         :mod:`daemon.transitions` passes the id of the audit event written with the
         state change, which grows in commit order. Returns None when dropped.
         """
-        data: dict[str, Any] = {"state": state, "pause_reason": pause_reason,
-                                "at": int(at if at is not None else self._wall())}
-        if subtask_id:
-            data["subtask_id"] = subtask_id
-        if reason:
-            data["reason"] = reason
+        data = state_data(state, pause_reason=pause_reason,
+                          at=int(at if at is not None else self._wall()),
+                          subtask_id=subtask_id, reason=reason)
         return self._publish_now(task_id, "state", data, version=version, subtask_id=subtask_id)
 
     def publish_done(self, task_id: str, state: str, *, failed_modules: Iterable[str] = (),
-                     subtask_id: str | None = None, version: int | None = None) -> str | None:
-        data: dict[str, Any] = {"state": state, "failed_modules": sorted(set(failed_modules))}
-        if subtask_id:
-            data["subtask_id"] = subtask_id
+                     subtask_id: str | None = None, reason: str | None = None,
+                     version: int | None = None) -> str | None:
+        data = done_data(state, failed_modules=failed_modules, subtask_id=subtask_id, reason=reason)
         return self._publish_now(task_id, "done", data, version=version, subtask_id=subtask_id)
 
     def publish_progress(self, task_id: str, stage: dict) -> str | None:
