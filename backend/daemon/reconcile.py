@@ -8,14 +8,13 @@ look busy with nobody running them. Before requests are accepted:
 | ``running`` | ``pausing`` -> ``paused`` (system) -> ``queued`` |
 | ``pausing`` with pause reason empty or ``system`` | ``paused`` (system) -> ``queued`` |
 | ``pausing`` (user) | ``paused`` (user), stays paused |
-| ``paused`` (system; graceful shutdown) | ``queued`` |
+| ``paused`` (system or empty; graceful shutdown) | ``queued`` |
 | ``stopping`` | ``stopped`` |
 | ``queued`` | unchanged (W5 re-enqueues it) |
 
 C5 has no ``running -> paused`` edge, so that step is two legal compare-and-sets.
-Subtasks follow the same table; their pause reason comes from their audit events
-(C5 gap). A pausing or paused subtask whose reason cannot be found stays paused:
-resuming work somebody may have paused on purpose is worse than one extra click.
+Subtasks follow the same table, with their own ``pause_reason`` (C5 1.2); they
+are found with ``subtasks_in_states``, their owner is their parent task's.
 Every step is an audit event (``task.state`` / ``subtask.state`` with
 ``by: reconcile``) plus one ``daemon.reconcile`` summary, so "why did this task
 stop for a while" has an answer. Running the queue is W5's job.
@@ -29,19 +28,21 @@ from typing import Callable
 from .events import EventHub
 from .logs import TaskLogs
 from .repo import protocol as P
-from .transitions import change_subtask_state, change_task_state, subtask_pause_reason
+from .transitions import change_subtask_state, change_task_state
 
 log = logging.getLogger("daemon.reconcile")
 
 SYSTEM_PAUSE_REASON = "Daemon 重启时任务还在运行"
 BY = "reconcile"
 
+#: The states nobody may be left in after a restart.
+_BUSY = frozenset({"running", "pausing", "stopping"})
+
 #: What the task's own log (stage ``system``) says about each step; English like the CLI's lines.
 _LOG_LINES = {
     ("paused", "system"): ("warn", "daemon restarted while this was running: paused by the "
                                    "system, it resumes on its own"),
     ("paused", "user"): ("info", "daemon restarted while pausing: kept paused as requested"),
-    ("paused", None): ("info", "daemon restarted while pausing: kept paused, resume it by hand"),
     ("queued", None): ("info", "auto-resuming after the daemon restart: queued again"),
     ("stopped", None): ("info", "daemon restarted while stopping: stopped"),
 }
@@ -65,58 +66,52 @@ def reconcile(repo: P.Repository, hub: EventHub | None, clock: Callable[[], int]
         except (OSError, ValueError) as err:
             log.warning("could not write the system log line of %s: %s", task_id, err)
 
-    def task_step(t: P.Task, frm: str, to: str, **kw) -> bool:
-        ok = change_task_state(repo, hub, t.id, {frm}, to, at=clock(), by=BY, owner=t.owner_id,
-                               **kw)
-        if ok:
-            counts[f"task:{frm}->{to}"] += 1
-            note(t.id, to, kw.get("pause_reason"))
-        return ok
+    def walk(state: str, pause_reason: str | None, state_reason: str | None, step) -> None:
+        """The table above, for a task or a subtask; ``step(frm, to, **kw)`` does one CAS."""
+        if state == "running":
+            step("running", "pausing", pause_reason="system", reason=SYSTEM_PAUSE_REASON)
+            step("pausing", "paused", pause_reason="system", reason=SYSTEM_PAUSE_REASON)
+            step("paused", "queued")
+        elif state == "pausing" and pause_reason == "user":
+            step("pausing", "paused", pause_reason="user", reason=state_reason)
+        elif state == "pausing":
+            step("pausing", "paused", pause_reason="system", reason=SYSTEM_PAUSE_REASON)
+            step("paused", "queued")
+        elif state == "paused" and pause_reason != "user":
+            step("paused", "queued")
+        elif state == "stopping":
+            step("stopping", "stopped", reason=state_reason)
 
-    for t in repo.tasks_in_states({"running", "pausing", "stopping"}):
-        if t.state == "running":
-            task_step(t, "running", "pausing", pause_reason="system", reason=SYSTEM_PAUSE_REASON)
-            task_step(t, "pausing", "paused", pause_reason="system", reason=SYSTEM_PAUSE_REASON)
-        elif t.state == "pausing":
-            if t.pause_reason == "user":
-                task_step(t, "pausing", "paused", pause_reason="user", reason=t.state_reason)
-            else:
-                task_step(t, "pausing", "paused", pause_reason="system", reason=SYSTEM_PAUSE_REASON)
-        elif t.state == "stopping":
-            task_step(t, "stopping", "stopped", reason=t.state_reason)
-    for t in repo.tasks_in_states({"paused"}):
-        if t.pause_reason != "user":
-            task_step(t, "paused", "queued")
-
-    for parent in repo.tasks_in_states(P.TERMINAL_STATES):
-        sub = repo.active_subtask(parent.id)
-        if sub is None:
-            continue
-
-        def sub_step(frm: str, to: str, **kw) -> bool:
-            ok = change_subtask_state(repo, hub, sub.id, {frm}, to, at=clock(), by=BY,
-                                      owner=parent.owner_id, **kw)
+    for t in repo.tasks_in_states(_BUSY | {"paused"}):
+        def task_step(frm: str, to: str, _t=t, **kw) -> bool:
+            ok = change_task_state(repo, hub, _t.id, {frm}, to, at=clock(), by=BY,
+                                   owner=_t.owner_id, **kw)
             if ok:
-                counts[f"subtask:{frm}->{to}"] += 1
-                note(sub.task_id, to, kw.get("pause_reason"), subtask_id=sub.id)
+                counts[f"task:{frm}->{to}"] += 1
+                note(_t.id, to, kw.get("pause_reason"))
             return ok
 
-        reason = (subtask_pause_reason(repo, sub, owner=parent.owner_id)
-                  if sub.state in ("pausing", "paused") else None)
-        if sub.state == "running":
-            sub_step("running", "pausing", pause_reason="system", reason=SYSTEM_PAUSE_REASON)
-            sub_step("pausing", "paused", pause_reason="system", reason=SYSTEM_PAUSE_REASON)
-            sub_step("paused", "queued")
-        elif sub.state == "pausing":
-            if reason == "system":
-                sub_step("pausing", "paused", pause_reason="system", reason=SYSTEM_PAUSE_REASON)
-                sub_step("paused", "queued")
-            else:                                # user, or unknown: keep it paused
-                sub_step("pausing", "paused", pause_reason=reason, reason=sub.state_reason)
-        elif sub.state == "paused" and reason == "system":
-            sub_step("paused", "queued")
-        elif sub.state == "stopping":
-            sub_step("stopping", "stopped", reason=sub.state_reason)
+        walk(t.state, t.pause_reason, t.state_reason, task_step)
+
+    subtasks = repo.subtasks_in_states(_BUSY | {"paused"})
+    # every subtask hangs off a finished task (SUBTASK_PARENT_STATES); one scan finds the owners
+    owners = {t.id: t.owner_id for t in repo.tasks_in_states(P.TERMINAL_STATES)} if subtasks else {}
+    for sub in subtasks:
+        owner = owners.get(sub.task_id)
+        if owner is None:
+            log.warning("subtask %s is %s but its task %s is not finished; left alone",
+                        sub.id, sub.state, sub.task_id)
+            continue
+
+        def sub_step(frm: str, to: str, _s=sub, _owner=owner, **kw) -> bool:
+            ok = change_subtask_state(repo, hub, _s.id, {frm}, to, at=clock(), by=BY,
+                                      owner=_owner, **kw)
+            if ok:
+                counts[f"subtask:{frm}->{to}"] += 1
+                note(_s.task_id, to, kw.get("pause_reason"), subtask_id=_s.id)
+            return ok
+
+        walk(sub.state, sub.pause_reason, sub.state_reason, sub_step)
 
     summary = dict(sorted(counts.items()))
     repo.append_event(actor="system", action="daemon.reconcile", resource="daemon", at=clock(),

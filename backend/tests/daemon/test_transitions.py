@@ -57,8 +57,10 @@ def test_subtask_transitions_remember_their_pause_reason(repo):
     last = repo.list_events(resource=t.id).items[0]
     assert (last.action, last.detail["to"], last.detail["pause_reason"]) == \
         ("subtask.state", "paused", "user")
+    assert repo.get_subtask(sub.id).pause_reason == "user"            # on the row (C5 1.2)
     assert change_subtask_state(repo, hub, sub.id, {"paused"}, "queued", at=T0)
     assert repo.list_events(resource=t.id).items[0].detail["prev_pause_reason"] == "user"
+    assert repo.get_subtask(sub.id).pause_reason is None
     states = [e.data for e in hub.buffered(t.id) if e.data.get("subtask_id") == sub.id]
     assert [s["state"] for s in states] == ["running", "pausing", "paused", "queued"]
 

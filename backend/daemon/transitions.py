@@ -65,35 +65,15 @@ def change_task_state(repo: P.Repository, hub: EventHub | None, task_id: str, fr
     return True
 
 
-def subtask_pause_reason(repo: P.Repository, sub: P.Subtask, *, owner: str = P.DEFAULT_OWNER,
-                         scan: int = 500) -> str | None:
-    """Subtasks have no ``pause_reason`` column (C5 gap): read it from their audit events.
-
-    None when no pausing event is found (never recorded, or purged after 90 days).
-    """
-    cursor, seen = None, 0
-    while seen < scan:
-        page = repo.list_events(resource=sub.task_id, cursor=cursor, limit=100, owner=owner)
-        for ev in page.items:
-            d = ev.detail or {}
-            if ev.action == "subtask.state" and d.get("subtask_id") == sub.id \
-                    and d.get("to") in _PAUSING:
-                return d.get("pause_reason")
-        seen += len(page.items)
-        if not page.has_more:
-            break
-        cursor = page.next_cursor
-    return None
-
-
 def change_subtask_state(repo: P.Repository, hub: EventHub | None, subtask_id: str,
                          frm: Iterable[str], to: str, *, at: int, actor: str = "system",
                          reason: str | None = None, pause_reason: str | None = None,
                          by: str = "", publish_done: bool = False,
                          owner: str = P.DEFAULT_OWNER) -> bool:
-    """CAS on a subtask; its pause reason lives in the audit event (see above).
+    """CAS on a subtask, like :func:`change_task_state`; ``owner`` is the parent task's.
 
-    ``owner`` is the parent task's owner.
+    ``done`` is off by default: the parent's terminal state is recomputed after a
+    subtask ends (D25), and that change publishes the task's own ``done``.
     """
     frm = set(frm)
     with repo.transaction():
@@ -101,10 +81,10 @@ def change_subtask_state(repo: P.Repository, hub: EventHub | None, subtask_id: s
         if sub.state not in frm:
             return False
         task = repo.get_task(sub.task_id, owner=owner, include_deleted=True)
-        prev_pause = subtask_pause_reason(repo, sub, owner=task.owner_id) \
-            if sub.state in _PAUSING else None
-        if not repo.update_subtask_state(subtask_id, {sub.state}, to, reason=reason, at=at):
+        if not repo.update_subtask_state(subtask_id, {sub.state}, to, reason=reason,
+                                         pause_reason=pause_reason, at=at):
             return False
+        prev_pause = sub.pause_reason if sub.state in _PAUSING else None
         new_pause = (pause_reason or prev_pause) if to in _PAUSING else None
         version = repo.append_event(
             actor=actor, action="subtask.state", resource=sub.task_id, at=at, owner=task.owner_id,
