@@ -1,0 +1,41 @@
+# Curator v2 · 机器人数据质检平台
+
+Physical AI Kit 的数据质检平台（Curator）第二版。v1 是 Gradio 单体加 Python CLI，在 `release_v1` 分支上运行。
+v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中文前端，以 Helm Chart 交付，跑在 VKE 上。
+**质检算法一行不改**，本期做的是骨架、契约和产品化能力。
+
+- 设计：[docs/design/](docs/design/)（12 篇，入口 [00-overview.md](docs/design/00-overview.md)，§7 是全部冻结决策）
+- 需求账本与进度：[feature_list.md](feature_list.md)、[claude-progress.txt](claude-progress.txt)
+- v1 的使用文档与发布说明：[docs/v1/](docs/v1/)
+
+## 目录
+
+| 路径 | 内容 |
+|---|---|
+| `backend/curation/` | 质检内核（从 v1 原样搬来）、v1 的编排与 CLI；测试在包内 `tests/` |
+| `backend/curation/ui/` | 已下线的 v1 界面里待移植的逻辑（鉴权、深链解析、报告数据整形），移植完成后整包删除 |
+| `frontend/mockups/` | 静态 HTML 预览稿（F3.1） |
+| `tools/parity/` | 对账工具与黄金基线流程（W0） |
+| `deploy/Dockerfile` | 镜像，构建上下文是仓库根：`docker build -f deploy/Dockerfile .` |
+| `docs/design/`、`docs/contracts/` | 设计文档、机器可读的契约（JSON Schema） |
+
+## 本地环境
+
+依赖装在仓库根目录的 `.venv`，配方见 [tools/parity/README.md](tools/parity/README.md) 的「本地环境」一节。
+
+## 手动验证步骤
+
+在仓库根目录执行：
+
+1. **对账工具离线自检**（约 1 分钟，不需要任何密钥）：按 [tools/parity/README.md](tools/parity/README.md) 的「手动验证步骤」执行，
+   最后一行应为 `conclusion: PASS`。
+2. **v1 单测**：`cd backend && ../.venv/bin/python -m pytest -q curation/tests`。
+   在 macOS 上有几条已知失败：本机没有 GPU / torch 的环境检查、Linux 专属的进程测试、
+   两条 `*_survives_fsx_visibility_gap`。
+3. **对账工具测试**：`PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests`（约 40 秒）。
+4. **静态预览稿**：`python3 -m http.server 4173 --directory frontend/mockups`，
+   浏览器打开 <http://localhost:4173/tasks.html>，逐页核对项见 [frontend/mockups/README.md](frontend/mockups/README.md)。
+
+## License
+
+Apache 2.0（见 [LICENSE](LICENSE)）。

@@ -14,7 +14,7 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
 | `archive` / `fetch` | 导出结果连同 `MANIFEST.json`（逐文件 sha256）上传到 TOS / 取回并校验 |
 | `v1-manifest` | 从 git 重新生成 `v1_manifest.json`（冻结点逐文件的 blob 哈希） |
 
-所有命令都在 `robot-curation/` 目录下、以 `PYTHONPATH=tools` 运行。
+所有命令都在仓库根目录、以 `PYTHONPATH=tools` 运行。
 
 ## 它怎么工作
 
@@ -36,10 +36,9 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
 
 ## 本地环境
 
-v1 的依赖按 `robot-curation/requirements.txt` 的版本装在独立的 venv 里（本目录的测试也用它）：
+v1 的依赖按 `backend/requirements.txt` 的版本装在仓库根目录的 `.venv` 里（本目录的测试也用它）：
 
 ```bash
-cd robot-curation
 /opt/homebrew/bin/python3.12 -m venv .venv
 .venv/bin/python -m pip install --use-feature=truststore daft==0.7.16 numpy==2.2.6 pandas==2.3.3 \
   pyarrow==24.0.0 opencv-python-headless==4.12.0.88 av==15.1.0 requests==2.34.2 PyYAML==6.0.3 \
@@ -55,22 +54,25 @@ cd robot-curation
 
 ## 手动验证步骤（离线，不需要任何密钥）
 
-在 `robot-curation/` 下执行，约 1 分钟：
+在仓库根目录执行，约 1 分钟：
 
 ```bash
 export PYTHONPATH=tools
 python=.venv/bin/python
 W=$(mktemp -d)
 
+# 0. 从 git 取出冻结点的 v1（工作区里的 v1 已在重组中改动，不能再当基线用）
+V1=$($python -m parity v1-src --out $W/v1)
+
 # 1. 合成数据集：8 条，含一条时间戳跳变、一条残段、一对字节级重复、两条无标注
 $python -m parity make-fixture --out $W/mini
 
 # 2. 用内置的假模型跑一遍 v1，录制全部调用 → 期望 [dump-v1] clean，退出码 0
-$python -m parity dump-v1 --out $W/rec --fake-vlm -- run --input $W/mini --output $W/rec-out \
+$python -m parity dump-v1 --out $W/rec --v1-src $V1 --fake-vlm -- run --input $W/mini --output $W/rec-out \
   --vlm-endpoint http://fake-vlm.local/v1 --vlm-model fake-vlm
 
 # 3. 不连任何模型，用录制带回放再跑一遍
-$python -m parity dump-v1 --out $W/rep --replay $W/rec/vlm_tape.jsonl.gz -- run --input $W/mini \
+$python -m parity dump-v1 --out $W/rep --v1-src $V1 --replay $W/rec/vlm_tape.jsonl.gz -- run --input $W/mini \
   --output $W/rep-out --vlm-endpoint http://fake-vlm.local/v1 --vlm-model fake-vlm
 
 # 4. 回放对账：九项全部逐位一致、回放 misses=0 → 最后一行 conclusion: PASS
@@ -93,10 +95,10 @@ $python -m parity compare --golden $W/rec --candidate $W/rep --all-strict
 另外跑几遍 v1，量出模型输出的自然波动，作为噪声底。具体为 droid 50 条跑两遍，umi 前 64 条另跑两遍。
 下面的 `<…>` 换成实际值。
 
-1. **本机打包**（仓库根目录；包里是冻结点的 v1 源码 + 当前提交的对账工具）
+1. **本机打包**（仓库根目录；包里是冻结点的 v1 源码 + 当前提交的对账工具，解开后统一在 `robot-curation/` 下）
 
    ```bash
-   PYTHONPATH=robot-curation/tools robot-curation/.venv/bin/python -m parity pack --out parity-pod.tar.gz
+   PYTHONPATH=tools .venv/bin/python -m parity pack --out parity-pod.tar.gz
    ```
 
 2. **放进 Pod 并解开**
@@ -150,7 +152,7 @@ $python -m parity compare --golden $W/rec --candidate $W/rep --all-strict
    确定性六项必须全 PASS（F1.1 验收①）；VLM 三项的差异率就是 v1 自身的噪声底，记进进度文件。
 
 8. **存档**：`python -m parity archive --dump /tmp/golden/droid50-a --to tos://<交付桶>/<前缀>/golden/v1/droid50-a/dump --manifest-out /tmp/golden/droid50-a.manifest.json`，
-   把 `*.manifest.json` 拷回本机，放进仓库的 `robot-curation/golden/manifests/`，随代码提交。
+   把 `*.manifest.json` 拷回本机，放进仓库的 `tools/parity/golden/`，随代码提交。
 
 ## 导出目录里有什么
 

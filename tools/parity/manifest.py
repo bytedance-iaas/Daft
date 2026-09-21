@@ -122,7 +122,7 @@ def pack_main(argv: list[str]) -> int:
     info = pack(args.repo, args.commit, args.out)
     print(json.dumps(info, indent=1))
     if info["tools_uncommitted_changes"]:
-        print("warning: robot-curation/tools/parity has uncommitted changes; the pack "
+        print("warning: the parity tools have uncommitted changes; the pack "
               "contains HEAD, not the working tree")
     return 0
 

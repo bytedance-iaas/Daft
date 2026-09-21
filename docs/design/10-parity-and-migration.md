@@ -26,6 +26,8 @@ B 类文件按意图移植到对应的 stage。新的输入格式（如开发中
 ⑤ 冒烟                       CLI 能跑、测试能过、镜像能构建
 ```
 
+执行情况（2026-09-20）：①② 已完成，实际落点：`backend/curation`（v1 的测试仍在包内 `backend/curation/tests`，免得改几百处 import）、`backend/pyproject.toml`、`backend/requirements.txt`、`backend/scripts`、`deploy/Dockerfile`（构建上下文改为仓库根）、`docs/design`、`docs/contracts`、`frontend/`、`tools/parity`；v1 的使用文档与发布说明归档到 `docs/v1/`。
+
 **为什么从 `release_v1` 派生而不是空分支**：保留 git blame。搬运算法时，
 每个阈值都能追回它是哪次实测定的（代码注释里全是这类依据）。真出了对账不一致，
 blame 是最快的排查路径。最终产物一样：一个不含上游 daft 的分支。
@@ -208,7 +210,7 @@ python -m parity compare --golden golden/v1/droid50-a --candidate <导出> \
 ```
 
 默认 `--strict` 为确定性六项、`--verdict-only` 为 VLM 三项；终判清单比对时，两边任一侧 `error` 的条目排除并单列。
-工具与录制带格式在 `robot-curation/tools/parity/`（W1 后挪到根下 `tools/parity/`），
+工具在 `tools/parity/`，
 录制带的格式见 `docs/contracts/parity/vlm-tape-entry.schema.json`，v2 的回放后端读同一种格式、用同一个请求哈希函数。
 
 输出：逐模块一致/不一致计数、差异条目明细、结论。**这个工具是工作包 W0 的一部分，

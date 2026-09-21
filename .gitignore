@@ -26,3 +26,11 @@ data/
 
 # Claude Code local state (worktrees of background agents)
 .claude/worktrees/
+
+# v1 intermediates (from robot-curation/.gitignore)
+.pip_install.log
+smoke_out/
+spikes/smoke_out/
+# large data files never go into git
+*.parquet
+*.mp4

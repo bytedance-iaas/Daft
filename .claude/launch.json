@@ -4,7 +4,7 @@
     {
       "name": "curator-mockups",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "4173", "--directory", "robot-curation/frontend/mockups"],
+      "runtimeArgs": ["-m", "http.server", "4173", "--directory", "frontend/mockups"],
       "port": 4173
     }
   ]

@@ -1,7 +1,7 @@
 # Curator v2 需求账本
 
 > 需求来源：《Physical AI Kit - Curator 设计文档Prompt》+ 两轮澄清（冻结决策见
-> `robot-curation/docs/design/00-overview.md` §7）。
+> `docs/design/00-overview.md` §7）。
 > **纪律**：feature 的描述、验收标准一经写入不得改写；只允许更新 `status` 字段。
 > `status` 取值：`not_completed` / `completed`。
 
@@ -19,7 +19,7 @@
 
 ### F0.3 设计文档评审与完善
 - 描述：对照需求文档、v1 代码、v1 使用文档与方舟 API 文档评审 12 篇设计文档；澄清遗留问题；逐项修订并同步飞书评审副本
-- 验收：①`robot-curation/docs/design/review-2026-09-20.md` 中每一项都有结论（已修订 / 不改及理由）；②需求方拍板的问题记入 `00-overview.md` §7 决策表；③仓库 Markdown 与飞书副本内容一致
+- 验收：①`docs/design/review-2026-09-20.md` 中每一项都有结论（已修订 / 不改及理由）；②需求方拍板的问题记入 `00-overview.md` §7 决策表；③仓库 Markdown 与飞书副本内容一致
 - status: **completed**
 
 ### F0.4 第二、三轮评审意见整合
@@ -119,7 +119,7 @@
 ## 修订记录（2026-09-20 设计评审）
 
 > 原有条款一字未改。下面是需求方在评审中拍板的决策对各 feature 的追加与替换说明，
-> 与原文冲突处以本节为准。决策编号见 `robot-curation/docs/design/00-overview.md` §7。
+> 与原文冲突处以本节为准。决策编号见 `docs/design/00-overview.md` §7。
 
 - **F1.1 / F4.2（D19）追加**：黄金基线为两个数据集 —— `umi_640_notask` 与 `droid_lerobot` 前 50 条，两个都要过。
   对账比较的是规范化记录，v1 一侧由 `tools/parity/dump_v1.py` 导出；F1.1 验收①的「完全一致」指确定性六项，

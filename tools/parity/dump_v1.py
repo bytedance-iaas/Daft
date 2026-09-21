@@ -454,6 +454,10 @@ def main(argv: list[str]) -> int:
         print("dump-v1: v1 source differs from the freeze manifest "
               f"(commit {src['commit']}): modified={src['modified'][:10]} "
               f"missing={src['missing'][:10]} extra={src['extra'][:10]}", file=sys.stderr)
+        if not os.path.isdir(os.path.join(args.v1_src, "curation")):
+            print("dump-v1: no v1 package there; in the repo, extract it first with "
+                  "`python -m parity v1-src --out DIR` and pass `--v1-src <printed path>`",
+                  file=sys.stderr)
         _write_json(os.path.join(args.out, "dump.json"),
                     {"dump_schema_version": DUMP_SCHEMA_VERSION, "status": "refused",
                      "v1_source": src})

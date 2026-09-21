@@ -69,9 +69,10 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
 # 开关:`curation ui --terminal`(或 CURATION_TERMINAL=1);不开则页签不渲染、
 # /ws/term 路由根本不注册。
 
-# 构建上下文=本目录(火山 CI 的 ContextPath 填 robot-curation;本地在包目录下 build)
+# 构建上下文=仓库根目录(F1.2 起):docker build -f deploy/Dockerfile .
+# (火山 CI 的 ContextPath 从 robot-curation 改为仓库根,Dockerfile 路径填 deploy/Dockerfile)
 WORKDIR /app
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 质检台 UI 字体离线补丁(2026-07-27):gradio 前端在 index.html(preconnect)与
@@ -84,8 +85,8 @@ RUN T=$(python -c "import gradio,os;print(os.path.dirname(gradio.__file__))")/te
        | xargs -r sed -i 's|https://fonts.googleapis.com|/offline-fonts|g; s|https://fonts.gstatic.com|/offline-fonts|g' \
     && [ $(grep -rl 'fonts\.googleapis\.com' $T | wc -l) -eq 0 ]
 
-COPY curation/ ./curation/
-COPY pyproject.toml README.md* ./
+COPY backend/curation/ ./curation/
+COPY backend/pyproject.toml ./
 RUN pip install --no-cache-dir --no-deps -e .
 
 # 数据/输出经挂载进出(VKE 挂 TOS/PVC 到这两个路径)
