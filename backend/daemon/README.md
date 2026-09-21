@@ -13,6 +13,7 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `__main__.py` | `python -m daemon`：读配置、校验主密钥、起 uvicorn；收到 SIGTERM 先结束 SSE 流再优雅退出 |
 | `app.py` | `create_app(settings)`、`Runtime`（仓储、事件中心、鉴权、钩子）、就绪检查、维护线程 |
 | `settings.py` / `masterkey.py` | 环境变量配置；主密钥缺失或格式不对就拒绝启动 |
+| `instance.py` | 一个数据卷只跑一个 Daemon：启动时对 `curator.db.lock` 加排它锁，第二个进程等 10 秒拿不到锁就退出（退出码 2） |
 | `repo/sqlite.py`、`repo/migrations.py` | C5 的 SQLite 实现：WAL、单写线程、显式事务、CAS、迁移（`PRAGMA user_version`） |
 | `auth.py` | Basic 鉴权（搬自 v1 `ui/auth.py`）：htpasswd（bcrypt / apr1）优先，单用户环境变量兼容 |
 | `events.py`、`routes/sse.py` | SSE 事件中心与 `GET {base}/events/tasks/{id}` |

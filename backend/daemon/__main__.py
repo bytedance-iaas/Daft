@@ -10,6 +10,7 @@ import logging
 import sys
 
 from . import logconfig
+from .instance import AlreadyRunning
 from .masterkey import MasterKeyError, scrub_environment
 from .settings import ConfigError, Settings
 
@@ -42,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         app = create_app(settings)
-    except (ConfigError, MasterKeyError) as err:
+    except (ConfigError, MasterKeyError, AlreadyRunning) as err:
         print(f"curator-daemon: 启动失败：{err}", file=sys.stderr)
         return EXIT_CONFIG
     runtime = app.state.runtime

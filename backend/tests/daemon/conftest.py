@@ -102,11 +102,18 @@ def make_settings(tmp_path, *, base_path="", **overrides):
 
 @pytest.fixture
 def make_app(tmp_path, clean_env, clock):
-    """``make_app(base_path=..., **settings)`` -> a FastAPI app on a fresh database."""
+    """``make_app(base_path=..., **settings)`` -> a FastAPI app on a fresh database.
+
+    Each app gets its own data volume (one Daemon per volume, see ``daemon.instance``).
+    """
     from daemon.app import create_app
 
+    count = [0]
+
     def build(*, clock_fn=None, **kw):
-        return create_app(make_settings(tmp_path, **kw), clock=clock_fn or clock)
+        count[0] += 1
+        return create_app(make_settings(tmp_path / f"app{count[0]}", **kw),
+                          clock=clock_fn or clock)
 
     return build
 

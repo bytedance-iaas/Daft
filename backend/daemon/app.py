@@ -35,6 +35,7 @@ from . import errors
 from .auth import AuthMiddleware, build_provider
 from .events import EventHub
 from .idempotency import Idempotency
+from .instance import InstanceLock
 from .logs import TaskLogs
 from .masterkey import MasterKey, MasterKeyError
 from .reconcile import reconcile
@@ -93,6 +94,8 @@ class Runtime:
         self._threads: list[threading.Thread] = []
         self._probe_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="readyz")
         self._probe_future: concurrent.futures.Future | None = None
+        self.instance_lock: InstanceLock | None = None
+        self.frontend = None
 
     # -- lifecycle ---------------------------------------------------------------
     def startup(self) -> None:
@@ -142,6 +145,9 @@ class Runtime:
         close = getattr(self.repo, "close", None)
         if close is not None:
             close()
+        if self.instance_lock is not None:
+            self.instance_lock.release()
+            self.instance_lock = None
 
     def _spawn(self, name: str, target) -> None:
         th = threading.Thread(target=target, name=name, daemon=True)
@@ -207,15 +213,27 @@ class Runtime:
 
 
 def create_app(settings: Settings, *, repo: P.Repository | None = None,
-               clock: Callable[[], int] = now_ms) -> FastAPI:
-    """Build the ASGI app. Raises :class:`MasterKeyError` without a valid master key."""
+               clock: Callable[[], int] = now_ms, lock_wait_s: float = 10.0) -> FastAPI:
+    """Build the ASGI app.
+
+    Raises :class:`MasterKeyError` without a valid master key and
+    :class:`~daemon.instance.AlreadyRunning` when another Daemon owns the database.
+    """
     if not isinstance(getattr(settings, "master_key", None), MasterKey):
         raise MasterKeyError("没有加载主密钥（CURATOR_MASTER_KEY），Daemon 拒绝启动")
+    lock = None
     if repo is None:
         from .repo.sqlite import SqliteRepository
 
-        repo = SqliteRepository(settings.db_path, clock=clock)
+        lock = InstanceLock(settings.db_path.with_name(settings.db_path.name + ".lock"))
+        lock.acquire(wait_s=lock_wait_s)
+        try:
+            repo = SqliteRepository(settings.db_path, clock=clock)
+        except BaseException:
+            lock.release()
+            raise
     rt = Runtime(settings, repo, clock)
+    rt.instance_lock = lock
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
