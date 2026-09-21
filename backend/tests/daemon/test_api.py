@@ -608,7 +608,7 @@ def test_unknown_routes_and_methods_answer_with_the_error_body(client_for):
     c = client_for(base_path="/curation")
     assert_error(c.get("/curation/api/v1/nope"), "not_found")
     assert_error(c.post("/curation/api/v1/tasks", json={}), "not_found")            # W5, pending
-    assert_error(c.get("/curation/api/v1/credentials"), "not_found")                # W8, pending
+    assert_error(c.get("/curation/api/v1/tasks/x/report"), "not_found")             # W5, pending
     assert_error(c.put("/curation/api/v1/tasks/x", json={}), "not_found")
     r = c.post("/curation/healthz")
     assert_error(r, "method_not_allowed", status=405)
