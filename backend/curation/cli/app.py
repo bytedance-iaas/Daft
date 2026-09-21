@@ -8,11 +8,12 @@ functions move into atomic commands (doc 10, section 2.3).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 
 from . import preflight, snapshot, task_client, verify
-from .errors import UsageError
+from .errors import EXIT_INTERRUPTED, UsageError
 from .framework import LEVELS, emit_usage_error, run_command
 
 #: Handed to the v1 command line as they are (``reprofile`` is v1's hidden command).
@@ -99,6 +100,7 @@ def scrub(tokens: list[str]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    process_entry = argv is None
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] in LEGACY_COMMANDS:
         from . import legacy
@@ -113,4 +115,15 @@ def main(argv: list[str] | None = None) -> int:
         return emit_usage_error(e.message, json_mode=json_mode)
     except SystemExit as e:                        # --help / --version
         return e.code if isinstance(e.code, int) else 0
-    return run_command(args.func, args)
+    rc = run_command(args.func, args)
+    if process_entry and rc == EXIT_INTERRUPTED:
+        # SIGINT means "stop now" (doc 02, section 4): model calls still in flight run on
+        # pool threads the interpreter would join at exit, for up to a few timeouts. The
+        # envelope is written and every result is already on disk, so leave right away.
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except (OSError, ValueError):
+                pass
+        os._exit(rc)
+    return rc
