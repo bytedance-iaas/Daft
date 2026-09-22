@@ -1,47 +1,21 @@
-import { Alert, Button, Card, Message, Modal, Select, Space, Spin, Tabs, Tooltip, Typography } from '@arco-design/web-react';
+import { Alert, Button, Card, Message, Select, Space, Spin, Tabs, Tooltip, Typography } from '@arco-design/web-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, idempotencyKey, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { moduleName, qk, useModules, useTask } from '../../api/queries';
-import type { AdjudicationCard, AdjudicationCounts, DecisionValue, Task } from '../../api/types';
+import type { AdjudicationCard, AdjudicationCounts, Task } from '../../api/types';
 import { Sentinel } from '../../components/LazyVisible';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
-import { keepCard, statusQuery, viewCard, type CardView } from '../../lib/adjudication';
+import { keepCard, statusQuery, viewCard } from '../../lib/adjudication';
 import { isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 import { AppealsTab } from './AppealsTab';
+import { ApplyDialog, type RelabelRerun } from './ApplyDialog';
 import { EpisodeCard } from './EpisodeCard';
 import { useAdjudicationList, useDecisions, type AdjTab } from './useAdjudication';
-
-function describe(v: CardView): string {
-  const text = (d: DecisionValue) => zh.adjudication.decisionText[d] ?? d;
-  const parts = v.unapplied.map((u) => (u.decision === 'custom_label' && u.new_label ? `${text(u.decision)}「${u.new_label}」` : text(u.decision)));
-  const effect = v.discarded || v.unapplied.every((u) => u.line === 'reject_appeal') ? '' : v.rerunsModel ? zh.adjudication.rerun : zh.adjudication.noRerun;
-  return `${zh.report.episode(v.ep)}：${parts.join('，')}${effect ? ` → ${effect}` : ''}`;
-}
-
-function ApplyDialog({ visible, views, counts, busy, onCancel, onOk }: { visible: boolean; views: CardView[]; counts: AdjudicationCounts | null; busy: boolean; onCancel: () => void; onOk: () => void }) {
-  const listed = views.filter((v) => v.unapplied.length);
-  const more = Math.max(0, (counts?.unapplied ?? 0) - listed.length);
-  return (
-    <Modal title={zh.adjudication.applyTitle} visible={visible} onCancel={onCancel} onOk={onOk} confirmLoading={busy} okText={zh.adjudication.applyOk} cancelText={zh.common.cancel} unmountOnExit>
-      <Typography.Paragraph>{zh.adjudication.applyIntro}</Typography.Paragraph>
-      <ul data-testid="apply-list" style={{ paddingLeft: 18, maxHeight: 260, overflow: 'auto' }}>
-        {listed.map((v) => (
-          <li key={v.ep}>{describe(v)}</li>
-        ))}
-      </ul>
-      {more ? <Typography.Paragraph type="secondary">{zh.adjudication.applyMore(more)}</Typography.Paragraph> : null}
-      <Typography.Paragraph type="secondary">{zh.adjudication.applyNote}</Typography.Paragraph>
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-        {zh.adjudication.applyChecks}
-      </Typography.Paragraph>
-    </Modal>
-  );
-}
 
 function applyBlocked(task: Task, counts: AdjudicationCounts | null): string | null {
   if (!counts || counts.unapplied === 0) return zh.adjudication.applyNothing;
@@ -91,10 +65,11 @@ export function AdjudicationPage() {
     setParams(next, { replace: true });
   };
 
-  const apply = async () => {
+  const apply = async (relabelRerun: RelabelRerun) => {
     setApplying(true);
     try {
-      await unwrap(api().POST('/tasks/{id}/adjudication/apply', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } } }));
+      // The body is optional in C4 1.4; sending it always makes the choice explicit (D39).
+      await unwrap(api().POST('/tasks/{id}/adjudication/apply', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } }, body: { relabel_rerun: relabelRerun } }));
       Message.success(zh.actions.done.apply);
       setApplyOpen(false);
       decisions.reset();
@@ -223,7 +198,7 @@ export function AdjudicationPage() {
           </div>
         </>
       ) : null}
-      <ApplyDialog visible={applyOpen} views={[...reviewCards.map((c) => viewCard(c, decisions.local)), ...appealViews]} counts={counts} busy={applying} onCancel={() => setApplyOpen(false)} onOk={() => void apply()} />
+      <ApplyDialog taskId={id} visible={applyOpen} local={decisions.local} busy={applying} onCancel={() => setApplyOpen(false)} onOk={(r) => void apply(r)} />
     </div>
   );
 }

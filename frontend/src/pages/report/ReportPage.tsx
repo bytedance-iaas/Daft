@@ -49,6 +49,7 @@ function OverviewCard({ task, report, readOnly, onRetryHeld }: { task: Task; rep
   const t = o.token_usage;
   const reasons = o.reject_reasons.map((r) => ({ name: moduleName(reg.data, r.module), value: r.count }));
   const blocked = readOnly ? zh.report.historyDisabled : retryBlocked(task);
+  const skipped = skippedOf(report).count;
   return (
     <Card title={zh.report.overview} extra={<span className="muted">{zh.report.overviewDesc}</span>}>
       <div className="equation" data-testid="report-equation">
@@ -65,6 +66,10 @@ function OverviewCard({ task, report, readOnly, onRetryHeld }: { task: Task; rep
         <Stat label={zh.report.duration} value={zh.time.duration(o.duration_s)} />
         <Stat label={zh.report.tokens} value={compactNumber(t.prompt + t.completion)} foot={zh.report.tokensFoot(compactNumber(t.prompt), compactNumber(t.completion))} />
       </div>
+      {skipped ? (
+        // D40: not part of the equation above, not in any list, and no retry - the source is frozen.
+        <Alert type="info" style={{ marginTop: 12 }} data-testid="skipped-note" title={zh.report.skippedNote(skipped)} content={zh.report.skippedNoteDesc} />
+      ) : null}
       {c.held ? (
         <Alert
           type="warning"
@@ -103,8 +108,17 @@ function OverviewCard({ task, report, readOnly, onRetryHeld }: { task: Task; rep
   );
 }
 
+type SkippedEpisode = NonNullable<Report['integrity']['skipped_episodes']>[number];
+
+/** Episodes left out because source files are missing (D40): the count, and the list when the report has it. */
+export function skippedOf(report: Report): { count: number; list: SkippedEpisode[] } {
+  const list = report.integrity?.skipped_episodes ?? [];
+  return { count: report.overview.counts.skipped ?? list.length, list };
+}
+
 function IntegrityCard({ report }: { report: Report }) {
-  const entries = Object.entries(report.integrity ?? {});
+  const entries = Object.entries(report.integrity ?? {}).filter(([k]) => k !== 'skipped_episodes');
+  const skipped = skippedOf(report);
   return (
     <Card title={zh.report.integrity} extra={<span className="muted">{zh.report.integrityDesc}</span>}>
       {entries.length ? (
@@ -114,6 +128,36 @@ function IntegrityCard({ report }: { report: Report }) {
       ) : (
         <Typography.Text type="secondary">—</Typography.Text>
       )}
+      {skipped.list.length ? (
+        <div style={{ marginTop: 16 }} data-testid="skipped-episodes">
+          <Typography.Title heading={6} style={{ margin: '0 0 4px' }}>
+            {zh.report.skippedTitle(skipped.list.length)}
+          </Typography.Title>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
+            {zh.report.skippedNoteDesc}
+          </Typography.Paragraph>
+          <Table
+            rowKey="episode_index"
+            size="small"
+            pagination={false}
+            data={skipped.list}
+            columns={[
+              { title: zh.report.columns.episode_index, dataIndex: 'episode_index', width: 110, render: (ep: number) => <span className="mono">{zh.report.episode(ep)}</span> },
+              {
+                title: zh.report.skippedMissing,
+                dataIndex: 'missing',
+                render: (files: string[]) => (
+                  <div className="mono">
+                    {files.map((f) => (
+                      <div key={f}>{f}</div>
+                    ))}
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </div>
+      ) : null}
     </Card>
   );
 }
