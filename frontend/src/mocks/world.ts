@@ -1122,10 +1122,18 @@ export function mainReport(revision: 1 | 2): Report {
           ],
         },
         tables: [{ id: 'task_success', rows: 49, file: 'tables/task_success.parquet' }],
-        adjudication: { pending: 6 },
+        // 6 abstentions to decide; its 5 rejects may be appealed (not pending, D42).
+        adjudication: { pending: 6, appealable: 5 },
         episodes_error: 2,
       },
-      { id: 'dedup', state: 'succeeded', gate: 'dedup', summary: { checked: 42, groups: 1, removed: 1 }, tables: [{ id: 'dedup_groups', rows: 2, file: 'tables/dedup_groups.parquet' }], adjudication: null },
+      {
+        id: 'dedup',
+        state: 'succeeded',
+        gate: 'dedup',
+        summary: { checked: 42, groups: 1, removed: 1 },
+        tables: [{ id: 'dedup_groups', rows: 2, file: 'tables/dedup_groups.parquet' }],
+        adjudication: { pending: 0, appealable: 1 },
+      },
       failedProfile
         ? { id: 'skill_profile', state: 'failed', gate: 'none', summary: {}, tables: [], adjudication: null, error: 'skill_profile: 429 QuotaExceeded x20, circuit open, exit 4' }
         : {
@@ -1297,6 +1305,20 @@ export function appealQuestions(): Map<number, AdjudicationCard['questions']> {
   for (const ep of TS_REJECTS) {
     out.set(ep, [{ line: 'reject_appeal', source_module: 'task_success', reason: chains[ep], annotation: taskText(ep).text, caption: null, suggestion: null, priority: null, latest_decision: null }]);
   }
+  // D42: a dedup reject can be appealed too; the card names the episode it duplicates.
+  out.set(44, [
+    {
+      line: 'reject_appeal',
+      source_module: 'dedup',
+      reason: '动作数据与视频字节级完全一致；保留遍历顺序里先出现的那一条',
+      duplicate_of: 43,
+      annotation: taskText(44).text,
+      caption: null,
+      suggestion: null,
+      priority: null,
+      latest_decision: null,
+    },
+  ]);
   return out;
 }
 

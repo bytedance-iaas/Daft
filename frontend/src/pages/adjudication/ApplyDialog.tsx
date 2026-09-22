@@ -5,14 +5,14 @@ import { api, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { qk } from '../../api/queries';
 import type { AdjudicationCard, AdjudicationPage, DecisionValue } from '../../api/types';
-import { applySummary, viewCard, type CardView, type LocalDecisions } from '../../lib/adjudication';
+import { applySummary, decisionTitle, viewCard, type CardView, type LocalDecisions, type ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
 
 export type RelabelRerun = 'v1' | 'full';
 
-function describe(v: CardView): string {
-  const text = (d: DecisionValue) => zh.adjudication.decisionText[d] ?? d;
-  const parts = v.unapplied.map((u) => (u.decision === 'custom_label' && u.new_label ? `${text(u.decision)}「${u.new_label}」` : text(u.decision)));
+function describe(v: CardView, catalog: ReviewCatalog | undefined): string {
+  const text = (line: string, d: DecisionValue) => (d === 'custom_label' ? zh.adjudication.decisionText.custom_label : decisionTitle(catalog, line, d));
+  const parts = v.unapplied.map((u) => (u.decision === 'custom_label' && u.new_label ? `${text(u.line, u.decision)}「${u.new_label}」` : text(u.line, u.decision)));
   const effect = v.discarded || v.unapplied.every((u) => u.line === 'reject_appeal') ? '' : v.rerunsModel ? zh.adjudication.rerun : zh.adjudication.noRerun;
   return `${zh.report.episode(v.ep)}：${parts.join('，')}${effect ? ` → ${effect}` : ''}`;
 }
@@ -42,6 +42,7 @@ export function ApplyDialog({
   taskId,
   visible,
   local,
+  catalog,
   busy,
   onCancel,
   onOk,
@@ -49,6 +50,7 @@ export function ApplyDialog({
   taskId: string;
   visible: boolean;
   local: LocalDecisions;
+  catalog: ReviewCatalog | undefined;
   busy: boolean;
   onCancel: () => void;
   onOk: (relabelRerun: RelabelRerun) => void;
@@ -64,7 +66,7 @@ export function ApplyDialog({
     staleTime: 0,
     gcTime: 0,
   });
-  const summary = q.data ? applySummary(q.data.map((c) => viewCard(c, local))) : null;
+  const summary = q.data ? applySummary(q.data.map((c) => viewCard(c, local, catalog))) : null;
   const hasRelabels = Boolean(summary && (summary.rerun || summary.humanJudged));
   return (
     <Modal
@@ -89,7 +91,7 @@ export function ApplyDialog({
           {hasRelabels ? <Typography.Paragraph style={{ marginBottom: 4 }}>{zh.adjudication.applyHumanJudged(summary.humanJudged)}</Typography.Paragraph> : null}
           <ul data-testid="apply-list" style={{ paddingLeft: 18, maxHeight: 220, overflow: 'auto' }}>
             {summary.views.map((v) => (
-              <li key={v.ep}>{describe(v)}</li>
+              <li key={v.ep}>{describe(v, catalog)}</li>
             ))}
           </ul>
           {summary.rerun ? (

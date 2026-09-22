@@ -184,6 +184,9 @@ const calls = (): Call[] => [
   { op: 'getPerf', method: 'GET', path: `/tasks/${T}/perf?scope=subtask&subtask=sub_retry1` },
   { op: 'listAdjudication', method: 'GET', path: `/tasks/${T}/adjudication?status=all` },
   { op: 'listAdjudication', method: 'GET', path: `/tasks/${T}/adjudication?tab=appeals&status=all&source=task_success` },
+  // D42: a dedup reject's appeal card names duplicate_of
+  { op: 'listAdjudication', method: 'GET', path: `/tasks/${T}/adjudication?tab=appeals&status=all&source=dedup` },
+  { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 44, line: 'reject_appeal', decision: 'restore' }] } },
   { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 29, line: 'label', decision: 'custom_label', new_label: 'pour rice into the bowl' }] } },
   { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 18, line: 'reject_appeal', decision: 'restore' }] } },
   { op: 'applyAdjudication', method: 'POST', path: `/tasks/${T}/adjudication/apply`, body: { relabel_rerun: 'full' } },

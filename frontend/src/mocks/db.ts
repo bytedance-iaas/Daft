@@ -6,6 +6,7 @@ import type {
   Decision,
   LogLine,
   PreflightResult,
+  ReviewLine,
   Subtask,
   Task,
   TaskListItem,
@@ -53,6 +54,10 @@ export interface MockDb {
   /** Idempotency-Key → first response body and status (doc 03 §8). */
   idempotency: Map<string, { status: number; body: unknown }>;
   seq: number;
+  /** Review lines a test adds to the registry catalog (D43); the mock world itself has none. */
+  extraReviewLines: ReviewLine[];
+  /** Questions a test adds to a task's review tab: task id → episode → questions. */
+  extraQuestions: Map<string, Map<number, AdjudicationCard['questions']>>;
 }
 
 export const db: MockDb = {
@@ -68,6 +73,8 @@ export const db: MockDb = {
   preflights: new Map(),
   idempotency: new Map(),
   seq: 1,
+  extraReviewLines: [],
+  extraQuestions: new Map(),
 };
 
 export function resetDb(now: number = Date.now()): MockDb {
@@ -88,6 +95,8 @@ export function resetDb(now: number = Date.now()): MockDb {
   db.decisions = new Map([[MAIN_TASK, seedDecisions(now)]]);
   db.preflights = new Map();
   db.idempotency = new Map();
+  db.extraReviewLines = [];
+  db.extraQuestions = new Map();
   db.seq = 100;
   // Datasets know their tasks (newest first) and their last task.
   for (const d of db.datasets) {
@@ -146,7 +155,20 @@ export function toListItem(t: Task): TaskListItem {
 
 // ------------------------------------------------------------------ adjudication
 
+/** The registry's review_lines catalog as the mock serves it (plus lines a test added). */
+export function reviewCatalog(): ReviewLine[] {
+  return [...registry.review_lines, ...db.extraReviewLines];
+}
+
 function questionsFor(taskId: string, tab: 'review' | 'appeals'): Map<number, AdjudicationCard['questions']> {
+  const out = baseQuestionsFor(taskId, tab);
+  if (tab === 'review') {
+    for (const [ep, qs] of db.extraQuestions.get(taskId) ?? []) out.set(ep, [...(out.get(ep) ?? []), ...qs]);
+  }
+  return out;
+}
+
+function baseQuestionsFor(taskId: string, tab: 'review' | 'appeals'): Map<number, AdjudicationCard['questions']> {
   if (taskId === MAIN_TASK) return tab === 'review' ? baseQuestions() : appealQuestions();
   const t = findTask(taskId);
   const out = new Map<number, AdjudicationCard['questions']>();
@@ -203,11 +225,18 @@ export function cardsOf(taskId: string, tab: 'review' | 'appeals'): Adjudication
   return cards;
 }
 
+/**
+ * AdjudicationCounts as C4 1.5 spells them out: cards (episodes) over the whole task; pending and
+ * decided only cover cards with a question on a line that counts as pending (appeals never do);
+ * unapplied covers both tabs.
+ */
 export function countsOf(taskId: string): { decided: number; pending: number; unapplied: number } {
-  const cards = cardsOf(taskId, 'review');
-  const appeals = cardsOf(taskId, 'appeals');
-  const decided = cards.filter((c) => c.status === 'decided' || c.status === 'applied').length;
-  const pending = cards.length - decided;
-  const unapplied = [...cards, ...appeals].filter((c) => c.questions.some((q) => q.latest_decision && !q.latest_decision.applied && q.latest_decision.decision !== 'unsure')).length;
+  const catalog = reviewCatalog();
+  const countsAsPending = (line: string) => catalog.find((l) => l.id === line)?.counts_as_pending ?? line !== 'reject_appeal';
+  const all = [...cardsOf(taskId, 'review'), ...cardsOf(taskId, 'appeals')];
+  const counted = all.filter((c) => c.questions.some((q) => countsAsPending(q.line)));
+  const decided = counted.filter((c) => c.status === 'decided' || c.status === 'applied').length;
+  const pending = counted.length - decided;
+  const unapplied = all.filter((c) => c.questions.some((q) => q.latest_decision && !q.latest_decision.applied && q.latest_decision.decision !== 'unsure')).length;
   return { decided, pending, unapplied };
 }
