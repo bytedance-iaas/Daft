@@ -8,19 +8,31 @@ import type { paths } from './schema';
 
 let cached: { url: string; client: Client<paths> } | null = null;
 
+const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * Every write says `Content-Type: application/json`, even without a body (openapi-fetch only sets
+ * it when there is one). C4 1.2 requires it and the Daemon refuses writes that do not; 1.1 allows it.
+ */
+export function withJsonContentType(request: Request): Request {
+  if (READS.has(request.method.toUpperCase()) || request.headers.has('Content-Type')) return request;
+  const headers = new Headers(request.headers);
+  headers.set('Content-Type', 'application/json');
+  return new Request(request, { headers });
+}
+
 /** The client for the current mount prefix (recreated if the prefix changes, e.g. in tests). */
 export function api(): Client<paths> {
   const url = apiBaseUrl();
   if (!cached || cached.url !== url) {
-    cached = {
-      url,
-      client: createClient<paths>({
-        baseUrl: url,
-        // Resolve fetch at call time so test doubles and MSW interceptors are always honoured.
-        fetch: (input: Request) => globalThis.fetch(input),
-        headers: { Accept: 'application/json' },
-      }),
-    };
+    const client = createClient<paths>({
+      baseUrl: url,
+      // Resolve fetch at call time so test doubles and MSW interceptors are always honoured.
+      fetch: (input: Request) => globalThis.fetch(input),
+      headers: { Accept: 'application/json' },
+    });
+    client.use({ onRequest: ({ request }) => withJsonContentType(request) });
+    cached = { url, client };
   }
   return cached.client;
 }

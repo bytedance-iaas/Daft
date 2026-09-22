@@ -356,10 +356,11 @@ function MoreInfo({ task }: { task: Task }) {
   const data = [
     { label: zh.taskDetail.cfgDataset, value: <span className="mono">{task.input.uri}</span> },
     { label: zh.taskDetail.cfgRegion, value: task.input.source === 'public' ? zh.taskForm.publicRegion : regionLabel(task.input.region) },
-    { label: zh.taskDetail.cfgKey, value: task.input.credential ?? zh.taskForm.publicKey },
+    // C4 1.2 sends null once the key was deleted (rebind-credentials gives the task another one).
+    { label: zh.taskDetail.cfgKey, value: task.input.source === 'public' ? zh.taskForm.publicKey : task.input.credential ?? zh.datasets.credentialGone },
     { label: zh.taskDetail.cfgOutput, value: <span className="mono">{task.output.uri}</span> },
     { label: zh.taskDetail.cfgRunId, value: task.run_id ? <span className="mono">{task.run_id}/</span> : '—' },
-    { label: zh.taskDetail.cfgOutputKey, value: task.output.credential },
+    { label: zh.taskDetail.cfgOutputKey, value: task.output.credential ?? zh.datasets.credentialGone },
     { label: zh.taskDetail.cfgEpisodes, value: episodesText(task) },
     { label: zh.taskDetail.cfgSource, value: task.source ? zh.taskDetail.cfgSourceValue(task.source.objects ?? 0, bytes(task.source.bytes)) : '—' },
     { label: zh.taskDetail.cfgModules, value: selected.join('、') },

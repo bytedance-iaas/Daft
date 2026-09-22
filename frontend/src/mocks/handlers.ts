@@ -636,7 +636,7 @@ function startChecks(t: Task): StartFailure {
       ? { id: 'input', ok: false, code: 'auth_failed', reason: `用访问密钥 ${t.input.credential ?? '（匿名）'} 读不到 meta/info.json`, target: `${t.input.uri}/meta/info.json`, elapsed_ms: 212 }
       : { id: 'input', ok: true, target: `${t.input.uri}/meta/info.json`, elapsed_ms: 188 },
   );
-  const p = probe(t.output.uri, t.output.credential);
+  const p = probe(t.output.uri, t.output.credential ?? '');
   checks.push(
     p.ok
       ? { id: 'output', ok: true, ...(p.error ? { code: p.error.code, reason: p.error.message } : {}), target: t.output.uri, elapsed_ms: 305 }

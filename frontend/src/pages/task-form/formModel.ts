@@ -292,7 +292,8 @@ export function fromTask(t: Task, reg: ModuleRegistry | undefined): FormValues {
     datasetId: t.dataset_id ?? null,
     outputUri: t.output.uri,
     outputRegion: t.output.region && t.output.region !== t.input.region ? t.output.region : '',
-    outputCredential: t.output.credential !== t.input.credential ? t.output.credential : '',
+    // C4 1.2: a deleted key comes back as null; the copy then asks for a key again.
+    outputCredential: t.output.credential !== t.input.credential ? t.output.credential ?? '' : '',
     episodeMode: t.episodes.mode,
     headN: t.episodes.mode === 'head' ? t.episodes.n : v.headN,
     expr: t.episodes.mode === 'explicit' ? t.episodes.expr : '',

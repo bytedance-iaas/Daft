@@ -74,6 +74,28 @@ describe('unwrap and the one Error body (doc 03 §1)', () => {
     expect(net.message).toBe('连不上服务，请检查网络后重试');
   });
 
+  it('every write carries Content-Type: application/json, even without a body (C4 1.2)', async () => {
+    const seen: Record<string, string | null> = {};
+    server.use(
+      http.post('*/api/v1/datasets/:id/recheck', ({ request }) => {
+        seen.post = request.headers.get('Content-Type');
+        return HttpResponse.json({ at: 1, trigger: 'recheck', result: 'same' });
+      }),
+      http.delete('*/api/v1/datasets/:id', ({ request }) => {
+        seen.delete = request.headers.get('Content-Type');
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get('*/api/v1/modules', ({ request }) => {
+        seen.get = request.headers.get('Content-Type');
+        return HttpResponse.json({ registry_version: '1.1', stages: [], modules: [] });
+      }),
+    );
+    await unwrap(api().POST('/datasets/{id}/recheck', { params: { path: { id: 'x' } } }));
+    await unwrap(api().DELETE('/datasets/{id}', { params: { path: { id: 'x' } } }));
+    await unwrap(api().GET('/modules'));
+    expect(seen).toEqual({ post: 'application/json', delete: 'application/json', get: null });
+  });
+
   it('idempotency keys are unique per action', () => {
     const a = idempotencyKey();
     const b = idempotencyKey();

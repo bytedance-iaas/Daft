@@ -4,9 +4,10 @@
 //
 // KNOWN_CONTRACT_DEFECTS: three C4 1.1.0 schemas compose a *closed* base (additionalProperties:
 // false) with extra members through allOf, which JSON Schema makes unsatisfiable (the base
-// rejects the extra keys). We validate against a copy with exactly those three compositions
-// merged into one closed object, and a test asserts the defect is still there, so the patch is
-// removed the day the contract is fixed. Everything else is validated verbatim.
+// rejects the extra keys). We validate against a copy with exactly those compositions merged
+// into one closed object, only where the contract still has them, and a test asserts each defect
+// is still there until the revision that fixes it (C4 1.2.0 fixed Task.vlm), so the patch goes
+// the day the contract is fixed. Everything else is validated verbatim.
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
@@ -14,7 +15,8 @@ import addFormatsModule from 'ajv-formats';
 import { parse } from 'yaml';
 
 // Tests run from frontend/ (npm test); the contracts live next to it in docs/contracts.
-const CONTRACTS = `${resolve(process.cwd(), '..', 'docs', 'contracts')}/`;
+// CURATOR_CONTRACTS points at another copy, e.g. to try a contract revision before it lands.
+const CONTRACTS = `${process.env.CURATOR_CONTRACTS ?? resolve(process.cwd(), '..', 'docs', 'contracts')}/`;
 const BASE = 'https://curator.contracts/';
 
 type Json = Record<string, unknown>;
@@ -31,11 +33,33 @@ function loadCliSchemas(): Record<string, Json> {
   return out;
 }
 
-export const KNOWN_CONTRACT_DEFECTS = [
-  'components.schemas.DatasetDetail (allOf DatasetItem[closed] + extra required fields)',
-  'components.schemas.Decision (allOf DecisionInput[closed] + id/decided_by/decided_at/applied)',
-  'components.schemas.Task.properties.vlm (allOf VlmChoice[closed] + snapshot)',
-] as const;
+export interface ContractDefect {
+  id: 'DatasetDetail' | 'Decision' | 'Task.vlm';
+  what: string;
+  /** The C4 revision that fixed it; the test then expects the unpatched schema to work. */
+  fixedIn?: string;
+}
+
+export const KNOWN_CONTRACT_DEFECTS: readonly ContractDefect[] = [
+  { id: 'DatasetDetail', what: 'components.schemas.DatasetDetail (allOf DatasetItem[closed] + extra required fields)' },
+  { id: 'Decision', what: 'components.schemas.Decision (allOf DecisionInput[closed] + id/decided_by/decided_at/applied)' },
+  { id: 'Task.vlm', what: 'components.schemas.Task.properties.vlm (allOf VlmChoice[closed] + snapshot)', fixedIn: '1.2.0' },
+];
+
+/** The contract revision (info.version). */
+export function contractVersion(doc: Json = loadOpenApi()): string {
+  return String((doc.info as Json | undefined)?.version ?? '0');
+}
+
+/** a < b for dotted versions. */
+export function versionBefore(a: string, b: string): boolean {
+  const x = a.split('.').map(Number);
+  const y = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i += 1) {
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0);
+  }
+  return false;
+}
 
 function merge(doc: Json, parts: Json[]): Json {
   const props: Json = {};
@@ -49,16 +73,19 @@ function merge(doc: Json, parts: Json[]): Json {
   return { type: 'object', additionalProperties: false, required: [...required], properties: props };
 }
 
-/** The contract with the three known unsatisfiable compositions merged (see header). */
+/** The contract with the known unsatisfiable compositions merged, where it still has them (see header). */
 export function patchedOpenApi(): Json {
   const doc = structuredClone(loadOpenApi());
   const schemas = (doc.components as Json).schemas as Json;
-  schemas.DatasetDetail = merge(doc, (schemas.DatasetDetail as Json).allOf as Json[]);
-  schemas.Decision = merge(doc, (schemas.Decision as Json).allOf as Json[]);
+  for (const name of ['DatasetDetail', 'Decision']) {
+    const allOf = (schemas[name] as Json).allOf;
+    if (Array.isArray(allOf)) schemas[name] = merge(doc, allOf as Json[]);
+  }
   const task = schemas.Task as Json;
   const vlm = (task.properties as Json).vlm as Json;
-  const branches = vlm.oneOf as Json[];
-  (task.properties as Json).vlm = { oneOf: [branches[0], merge(doc, branches[1].allOf as Json[])] };
+  const branches = vlm.oneOf as Json[] | undefined;
+  const composed = branches?.[1]?.allOf;
+  if (branches && Array.isArray(composed)) (task.properties as Json).vlm = { oneOf: [branches[0], merge(doc, composed as Json[])] };
   return doc;
 }
 

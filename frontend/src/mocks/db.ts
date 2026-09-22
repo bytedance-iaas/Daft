@@ -32,7 +32,7 @@ import {
 export interface StoredPreflight {
   id: string;
   expiresAt: number;
-  input: { source: string; uri: string; region?: string; credential?: string; datasetId?: string };
+  input: { source: string; uri: string; region?: string; credential?: string | null; datasetId?: string };
   result: PreflightResult;
 }
 

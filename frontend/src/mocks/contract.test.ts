@@ -2,7 +2,7 @@
 // against docs/contracts/openapi.yaml (C4 1.1.0) and the C2 schemas it references; request bodies
 // the UI sends are validated by the hook installed in src/test/setup.ts.
 import { describe, expect, it } from 'vitest';
-import { formatErrors, loadOpenApi, makeContract, KNOWN_CONTRACT_DEFECTS } from '../test/contract';
+import { contractVersion, formatErrors, loadOpenApi, makeContract, versionBefore, KNOWN_CONTRACT_DEFECTS, type ContractDefect } from '../test/contract';
 import { contract } from '../test/setup';
 import { cardsOf, db, toListItem } from './db';
 import {
@@ -63,16 +63,23 @@ describe('fixtures match the contract', () => {
 });
 
 describe('the known contract defects are still there (remove the patch when they are fixed)', () => {
-  it(`unpatched C4 rejects valid instances: ${KNOWN_CONTRACT_DEFECTS.length} compositions`, () => {
-    const raw = makeContract(loadOpenApi());
-    const detail = db.datasets[0];
-    expect(raw.validator(raw.schemaRef('DatasetDetail'))(detail)).toBe(false);
-    const decision = cardsOf(MAIN_TASK, 'review').flatMap((c) => c.questions).find((q) => q.latest_decision)?.latest_decision;
-    expect(decision).toBeTruthy();
-    expect(raw.validator(raw.schemaRef('Decision'))(decision)).toBe(false);
-    const withSnapshot = { ...db.tasks[3], vlm: { backend: 'ark-prod', model: 'm', reasoning_effort: null, snapshot: {} } };
-    expect(raw.validator(raw.schemaRef('Task'))(withSnapshot)).toBe(false);
-  });
+  const doc = loadOpenApi();
+  const version = contractVersion(doc);
+  const raw = makeContract(doc);
+  const instances: Record<ContractDefect['id'], () => [string, unknown]> = {
+    DatasetDetail: () => ['DatasetDetail', db.datasets[0]],
+    Decision: () => ['Decision', cardsOf(MAIN_TASK, 'review').flatMap((c) => c.questions).find((q) => q.latest_decision)?.latest_decision],
+    'Task.vlm': () => ['Task', { ...db.tasks[3], vlm: { backend: 'ark-prod', model: 'm', reasoning_effort: null, snapshot: {} } }],
+  };
+  for (const d of KNOWN_CONTRACT_DEFECTS) {
+    const fixed = d.fixedIn !== undefined && !versionBefore(version, d.fixedIn);
+    it(`C4 ${version}: ${d.what} ${fixed ? `is fixed (since ${d.fixedIn})` : 'still rejects valid instances'}`, () => {
+      const [schema, instance] = instances[d.id]();
+      expect(instance).toBeTruthy();
+      // A defect that disappears before its recorded fix means: delete it from KNOWN_CONTRACT_DEFECTS.
+      expect(raw.validator(raw.schemaRef(schema))(instance)).toBe(fixed);
+    });
+  }
 });
 
 // ------------------------------------------------------------------ every operation, over HTTP
