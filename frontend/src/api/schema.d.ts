@@ -1033,6 +1033,8 @@ export interface components {
         };
         VlmModel: {
             id: string;
+            /** @description the model a new task starts with; at most one per owner across every backend. Without one the form asks, as before. Deleting the model or its backend leaves none. */
+            is_default: boolean;
             /** @description Model ID or inference endpoint ID (ep-...) */
             model_name: string;
             reasoning_effort: components["schemas"]["ReasoningEffort"];
@@ -1054,6 +1056,8 @@ export interface components {
         VlmModelPatch: {
             reasoning_effort?: components["schemas"]["ReasoningEffort"];
             max_concurrency?: number | null;
+            /** @description true makes it the one default and clears the flag on every other model of every backend; false clears it and leaves none */
+            is_default?: boolean;
         };
         VlmBackend: {
             id: string;

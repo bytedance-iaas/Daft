@@ -150,9 +150,9 @@ export function seedBackends(now: number): VlmBackend[] {
       last_verify_error: null,
       models_listed: true,
       models: [
-        { id: 'vm_pro', model_name: 'doubao-seed-2-0-pro-260215', reasoning_effort: null, max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
-        { id: 'vm_lite', model_name: 'doubao-seed-2-0-lite-260215', reasoning_effort: 'minimal', max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
-        { id: 'vm_16', model_name: 'doubao-seed-1-6-251015', reasoning_effort: null, max_concurrency: 32, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
+        { id: 'vm_pro', is_default: false, model_name: 'doubao-seed-2-0-pro-260215', reasoning_effort: null, max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
+        { id: 'vm_lite', is_default: false, model_name: 'doubao-seed-2-0-lite-260215', reasoning_effort: 'minimal', max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
+        { id: 'vm_16', is_default: false, model_name: 'doubao-seed-1-6-251015', reasoning_effort: null, max_concurrency: 32, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
       ],
       created_at: now - 19 * DAY,
       updated_at: now - 2 * HOUR,
@@ -169,7 +169,7 @@ export function seedBackends(now: number): VlmBackend[] {
       last_verify_error: null,
       models_listed: false,
       models: [
-        { id: 'vm_ep', model_name: 'ep-20260915173012-x7k2p', reasoning_effort: null, max_concurrency: null, capabilities: { vision: null, reasoning_effort_levels: [...ALL_LEVELS] }, source: 'manual' },
+        { id: 'vm_ep', is_default: false, model_name: 'ep-20260915173012-x7k2p', reasoning_effort: null, max_concurrency: null, capabilities: { vision: null, reasoning_effort_levels: [...ALL_LEVELS] }, source: 'manual' },
       ],
       created_at: now - 6 * DAY,
       updated_at: now - DAY,
@@ -186,7 +186,7 @@ export function seedBackends(now: number): VlmBackend[] {
       last_verify_error: '连接超时：10 秒内没有响应',
       models_listed: true,
       models: [
-        { id: 'vm_qwen', model_name: 'Qwen2.5-VL-72B-Instruct', reasoning_effort: null, max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
+        { id: 'vm_qwen', is_default: false, model_name: 'Qwen2.5-VL-72B-Instruct', reasoning_effort: null, max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
       ],
       created_at: now - 4 * DAY,
       updated_at: now - 3 * HOUR,
