@@ -56,6 +56,33 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 13. **任务编排（W5a）**：`cd backend && ../.venv/bin/python -m pytest -q tests/orchestr -m "not slow"`（约 1.5 分钟；去掉 `-m` 跑全部约 6 分钟，含真跑 CLI 的端到端），应全部通过；再按 [backend/daemon/orchestr/README.md](backend/daemon/orchestr/README.md) 的 10 步真起 Daemon 核对。
 14. **前端（W10）**：`cd frontend && npm ci && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build`；用模拟数据看页面是 `npm run dev`，逐页核对项见 [frontend/README.md](frontend/README.md)。由真的 Daemon 托管构建产物（`/curation` 前缀、不鉴权、开发用主密钥）：用 `.claude/launch.json` 里的 `curator-daemon-dev`，浏览器打开 <http://localhost:8080/curation/>。
 
+## 跑通一次完整质检（真数据）
+
+上面第 1–14 步都不碰真数据和真密钥。真跑一次是这样，界面上的每一步都在
+[frontend/README.md](frontend/README.md) 的「手动验证（模拟数据）」里有对应的模拟版本：
+
+1. **起服务**：集群上按 [deploy/README.md](deploy/README.md) 第 3–4 节建 Secret、`helm install`，
+   经网关访问见第 6 节；只在本机跑就用 `.claude/launch.json` 里的 `curator-daemon-dev`，
+   打开 <http://localhost:8080/curation/>。
+2. **填密钥**（只能由使用者本人在界面里填，不写进仓库、不写进 CI、不进设计文档）：
+   「密钥与资源」→「添加访问密钥」填对象存储的 AK/SK 与地域；「VLM 后端」页签添加模型服务
+   （火山方舟填 endpoint 与 API Key，自建 vLLM 填 endpoint），保存后状态应为「已验证」。
+   拉出模型列表后给常用的那个点「设为默认」，之后新建任务会预选它。
+3. **登记数据集**：「数据集」→「添加数据集」，填 `tos://<bucket>/<path>` 并选访问密钥，
+   等自动预检出条目数、缺失文件与模块可用性，保存进详情页。
+4. **新建任务**：数据集详情点「新建质检任务」，第一屏选 episode 范围（先用「前 50 条」试）、
+   勾模块、填交付目录与它的访问密钥；第二屏按模块填参数（运动学极限要选机器人型号或跳过）。
+   点「创建并开始」。
+5. **看进度**：详情页有分档进度、模块表与执行时间线，页头写着实时通道是 SSE 还是 5 秒轮询；
+   运行中可暂停 / 继续 / 停止。滚动升级时运行中的任务会被系统暂停，升级完自动续跑（F4.1 验收②）。
+6. **看报告**：跑完点「查看详细报告」，核对总览的「输入 = 判废 + 交付 + 待补跑」、判废原因分布、
+   数据包完整性（缺源文件被跳过的条目列在这里）、各模块小节，再点任一 `ep N` 下钻看逐条结论与视频。
+7. **人工裁决**：报告里点「去裁决」，逐条判完点「执行裁决」；被去重或任务成败判定拒掉的条目
+   在「被拒复议」页签里可以恢复。
+8. **导出交付**：裁决的子任务跑完后，在任务详情点「导出」（已导出过的显示「重新导出」，
+   只补差异），产物用官方 LeRobot loader 验证，步骤见
+   [INCREMENTAL.md](backend/curation/export/INCREMENTAL.md)。
+
 ## CI
 
 `.github/workflows/ci.yml`：v1 单测、契约测试与漂移锁、Daemon 测试、密钥与资源管理测试、读结果测试、任务编排测试（含真跑 CLI 的端到端）、镜像与 Chart 检查、v2 命令行测试、planner 测试、对账工具测试（含合成数据上的端到端回放对账），各组测试互不遮挡（前一组失败，后面照跑）；A 类算法文件保护检查、镜像构建（并在镜像里起一次 Daemon 与命令行）、前端（Node 20 与 22 各跑一遍 lint、类型、测试和构建）；另有一个独立 job 用官方 LeRobot loader 检查增量重导出的产物（lerobot 0.3.3 读 v2.1，0.6.1 读 v3.0）。
