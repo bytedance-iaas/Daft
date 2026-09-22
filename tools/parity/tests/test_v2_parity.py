@@ -15,7 +15,7 @@ import os
 import pytest
 
 from .conftest import run_parity
-from .test_dump_v1_e2e import rewrite_tape
+from .test_dump_v1_e2e import kept_task_text, of_task, rewrite_tape
 
 pytestmark = pytest.mark.e2e
 
@@ -66,15 +66,20 @@ def test_v2_live_on_the_fake_model_agrees(v1_golden, mini_dataset, tmp_path):
 
 
 def test_a_request_v1_never_sent_fails_the_comparison(v1_golden, mini_dataset, tmp_path):
+    # the end-state votes on a task only episodes v1 kept have (picked by text: the
+    # request hash covers image bytes, which differ between platforms)
+    task = kept_task_text(v1_golden, mini_dataset)
+
     def edit(entries):
-        e = min((e for e in entries if e.get("tag") == "endstate"), key=lambda e: e["hash"])
-        return [x for x in entries if x is not e]
+        gone = of_task(entries, "endstate", task)
+        assert gone
+        return [x for x in entries if not any(x is e for e in gone)]
 
     tape = rewrite_tape(os.path.join(v1_golden, "vlm_tape.jsonl.gz"),
                         str(tmp_path / "short.jsonl.gz"), edit)
     out, proc, doc = run_v2(tmp_path, "v2-short", mini_dataset, "--replay", tape)
-    # the missing answer is an execution error of that episode (held back), so the kept
-    # set changes and the taxonomy prompt with it: not on the tape either, and
+    # the missing answers are execution errors of those episodes (held back), so the
+    # kept set changes and the taxonomy prompt with it: not on the tape either, and
     # skill_profile fails as a module (exit 4), which stops the chain
     assert proc.returncode == 1
     last = doc["steps"][-1]

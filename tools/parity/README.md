@@ -39,6 +39,11 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
   `--replay` 用 v1 的录制带回答；`--fake-vlm` 用内置假模型现答并录一盘新带。调模型的命令都带 `--hedge`
   （v1 总是对冲，挂钩替换的正是对冲函数）和 `--concurrency 64`（N=64 时八把闸门与 v1 出厂值逐项相等）。
   `/models` 探活不算模型调用：v2 每条命令探一次、v1 一次运行探两次，回放时这类请求可重复取用，不计入命中和剩余。
+- **假模型**（`fakevlm.py`，`--fake-vlm` 与 CLI 测试的假端点都用它）：按提示词的格式作答，答案由请求的文字、图片张数和
+  每张图的像素尺寸决定（`FakeVlm.answer_key`），不看图片字节——同一帧在 macOS 和 Linux 上编出的 JPEG 字节不同，
+  按字节选答案会让同一个测试在两个平台上得到不同的判决。录制带的请求哈希仍按字节算，回放要逐字节对上。
+  同一任务的条目发的文字相同，答案由 `SEED` 决定：取 11，合成数据集的 task_success 走遍各条路径
+  （0、3、7 弃权，1、4、6 靠仲裁判成功，4、6 的补打描述与原标注不同）。
 - **调用图一致**：`compare --all-strict` 的回放一项要求 misses 为 0（v2 的每个请求都在 v1 的带子上）且
   没有剩余（带子上的每个请求 v2 都发了）。多一个、少一个、提示词差一个字，都会失败。
 - **干净的基线**：导出结束时汇总所有「执行出错」的迹象，包括录制带里失败的调用、打分回答解析不了、v1 降级留下的痕迹和解码失败。
@@ -107,6 +112,8 @@ $python -m parity compare --golden $W/rec --candidate $W/v2 --all-strict
 - 第 2 步的 `$W/rec/final.json` 里，`passed` 是 `[0, 1, 3, 4, 6]`，`reject` 是 `[2, 5, 7]`
   （2 是时间戳跳变，5 是残段，7 与 3 字节级重复）；`v1_views.passed_json` 里却有 7：
   这是 v1 的一个小问题，`passed.json` 没扣掉被去重剔除的条目（交付数据集里是扣掉了的）。
+  `review` 是 `[0, 3, 7]`：三条都在 task_success 上弃权。第 6 步比 review 时把 7 摘出来单列
+  （「left out of review (rejected by v1 …)」）：v1 还在问一条被它拒掉的副本成败，v2 里被拒的条目没有成败问题，只有复议（D42）。
 - `$python -m parity tape-summary $W/rec/vlm_tape.jsonl.gz` 应列出 probe / endstate / arbitration / caption 各类调用，`0 failed calls`。
 - 单元测试与端到端测试：`$python -m pytest -q tools/parity/tests`（约 1 分钟；`test_v2_parity.py` 就是第 5、6 步，
   外加「带子上少一个请求时对账必须失败」的反例，CI 的对账工具一步里一起跑）。

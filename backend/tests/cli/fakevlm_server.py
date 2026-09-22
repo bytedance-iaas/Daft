@@ -1,12 +1,15 @@
 """A local OpenAI-compatible endpoint answering like ``tools/parity``'s fake model.
 
 Real HTTP on 127.0.0.1, so the CLI runs unchanged (in process or as a subprocess
-that gets signals). Answers depend only on the request body (the parity fake's
-rule), so a run is reproducible; ``delay_s`` slows every answer down (to stop a
-run half way) and ``fail(prompt_text, payload) -> status | None`` makes chosen
-requests fail with an HTTP status. ``max_in_flight`` is the most requests it
-was ever answering at once. ``port`` (default: any free one) is for running it
-by hand (``backend/curation/cli/README.md``, manual steps).
+that gets signals). ``delay_s`` slows every answer down (to stop a run half way)
+and ``fail(prompt_text, payload) -> status | None`` makes chosen requests fail
+with an HTTP status. ``max_in_flight`` is the most requests it was ever
+answering at once. ``port`` (default: any free one) is for running it by hand
+(``backend/curation/cli/README.md``, manual steps).
+
+The answers are the parity fake's (``tools/parity/fakevlm.py``): picked from the
+request's texts and its images' pixel sizes, never their bytes, so a test gets
+the same verdicts on every platform.
 """
 from __future__ import annotations
 

@@ -279,7 +279,8 @@ with FakeVlmServer(port=8766) as s:
    $C report --run-dir "$R" --revision 1
    ```
 
-   应看到：autolabel 给 2 条（4、6）补了描述；数值档 8 条里 2 条（2 时间戳跳变、5 残段）被硬门拦下；task_success 6 条里 4 条 pass、2 条（3 和它的字节级副本 7）abstain，`error 0`；dedup 剔除 7（与 3 重复）；final 为 `passed 5, reject 3, held 0, review 2`。
+   应看到：autolabel 给 2 条（4、6）补了描述；数值档 8 条里 2 条（2 时间戳跳变、5 残段）被硬门拦下；task_success 6 条里 3 条 pass（1、4、6，都是仲裁救回的）、3 条（0、3 和 3 的字节级副本 7）abstain，`error 0`；dedup 剔除 7（与 3 重复）；final 为 `passed 5, reject 3, held 0, review 3`（0 和 3 问成败，7 是可复议的去重拒绝）。
+   假模型的回答只看请求的文字、图片张数和像素尺寸，不看图片字节，所以这些数在 macOS 和 Linux 上一样（`tests/cli/test_fake_model.py`）。
    `cat "$R/revisions/r0001/report.md"` 是中文报告，含「通过 5」和各项检查的拦截数；`tail -3 "$R/usage.jsonl"` 是按模块记的 token 用量。
    没给 `--concurrency`，所以整个过程中任何时刻只有一个模型请求在飞（`tests/cli/test_pipeline_chain.py` 在假模型那边量过）。
 
@@ -374,4 +375,4 @@ with FakeVlmServer(port=8766) as s:
    (cd .. && PYTHONPATH=tools $PY -m pytest -q tools/parity/tests)               # 对账工具，含 v1 对 v2 的逐位对账
    ```
 
-   `tests/cli` 里：`test_pipeline_chain.py` 在夹具上按上面的顺序跑完整条链并逐个校验契约；`test_check_resume.py` 是 SIGTERM / SIGKILL 后续跑；`test_errors_and_policy.py` 是出错与弃权的区分、默认不并发不重试、源数据变化；`test_aggregate.py` 是聚合与裁决的规则；`test_revision_flow.py` 是第 7 步的第二个版本与增量导出。
+   `tests/cli` 里：`test_pipeline_chain.py` 在夹具上按上面的顺序跑完整条链并逐个校验契约；`test_check_resume.py` 是 SIGTERM / SIGKILL 后续跑；`test_errors_and_policy.py` 是出错与弃权的区分、默认不并发不重试、源数据变化；`test_aggregate.py` 是聚合与裁决的规则；`test_revision_flow.py` 是第 7 步的第二个版本与增量导出；`test_fake_model.py` 钉住假模型的答案与图片字节无关（换一种 JPEG 质量重编码，判决不变）。

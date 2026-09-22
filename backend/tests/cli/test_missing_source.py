@@ -75,7 +75,9 @@ def test_snapshot_lists_them_and_no_command_reads_them(flow):
 
 def test_they_are_in_no_list_and_not_in_the_total(flow):
     lists = {n: _eps(flow.rd, n) for n in ("passed", "reject", "held", "review")}
-    assert lists == {"passed": [0, 3, 6], "reject": [2, 5, 7], "held": [], "review": [3, 7]}
+    # 0 and 3 abstained (task_verdict), 7 is a duplicate that can be appealed
+    assert lists == {"passed": [0, 3, 6], "reject": [2, 5, 7], "held": [],
+                     "review": [0, 3, 7]}
     assert flow.steps["funnel"].doc["counts"]["total"] == 6
     assert flow.steps["final"].doc["counts"]["skipped"] == 2
     report = _json(flow.rd, "revisions", "r0001", "report.json")

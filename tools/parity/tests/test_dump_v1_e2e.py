@@ -6,6 +6,7 @@ run. Deselect with ``-m "not e2e"``.
 """
 from __future__ import annotations
 
+import collections
 import glob
 import gzip
 import json
@@ -16,6 +17,7 @@ import jsonschema
 import pytest
 
 from parity import vlm_tape as T
+from parity.fakevlm import _texts
 
 from .conftest import V1_RUN, load_schema, run_parity
 
@@ -55,6 +57,29 @@ def rewrite_tape(src, dst, edit):
         for e in entries:
             fh.write(json.dumps(e, ensure_ascii=False) + "\n")
     return dst
+
+
+def kept_task_text(golden: str, dataset: str) -> str:
+    """The task text of an episode v1 kept, picked by what is the same on every
+    platform: one no other episode has, else the one the fewest share (then the
+    smallest). A tape entry has no episode index; its text names the task, and the
+    image bytes (hence the request hash) differ between platforms."""
+    with open(os.path.join(dataset, "meta", "episodes.jsonl"), encoding="utf-8") as fh:
+        texts = {row["episode_index"]: (row.get("tasks") or [""])[0]
+                 for row in map(json.loads, fh)}
+    with open(os.path.join(golden, "autolabel.jsonl"), encoding="utf-8") as fh:
+        texts.update({row["episode_index"]: row["caption"] for row in map(json.loads, fh)
+                      if row.get("caption")})
+    with open(os.path.join(golden, "final.json"), encoding="utf-8") as fh:
+        kept = json.load(fh)["passed"]
+    shared = collections.Counter(texts.values())
+    return min((shared[texts[e]], texts[e]) for e in kept if texts.get(e))[1]
+
+
+def of_task(entries: list[dict], tag: str, text: str) -> list[dict]:
+    """The ``tag`` entries whose prompt is about the task ``text``."""
+    return [e for e in entries if e.get("tag") == tag
+            and f"Task: {text}\n" in _texts((e.get("request") or {}).get("body") or {})]
 
 
 @pytest.fixture(scope="module")
@@ -113,15 +138,18 @@ def test_v1_run_twice_is_identical(recorded, mini_dataset):
 
 def test_a_changed_model_answer_is_caught(recorded, mini_dataset, tmp_path):
     _, out = recorded
+    task = kept_task_text(out, mini_dataset)
 
     def edit(entries):
-        # Tape order follows thread scheduling during the recording, so pick the answer by
-        # request hash: the same probe is edited on every run.
-        e = min((e for e in entries if e.get("tag") == "probe"), key=lambda e: e["hash"])
-        body = json.loads(e["body"])
-        old = body["choices"][0]["message"]["content"]
-        body["choices"][0]["message"]["content"] = "0" if old != "0" else "100"
-        e["body"] = json.dumps(body)
+        # Neither tape order (thread scheduling) nor the request hash (image bytes) is
+        # the same everywhere: change every probe answer about one kept episode's task
+        probes = of_task(entries, "probe", task)
+        assert probes
+        for e in probes:
+            body = json.loads(e["body"])
+            old = body["choices"][0]["message"]["content"]
+            body["choices"][0]["message"]["content"] = "0" if old != "0" else "100"
+            e["body"] = json.dumps(body)
         return entries
 
     tape = rewrite_tape(os.path.join(out, "vlm_tape.jsonl.gz"),

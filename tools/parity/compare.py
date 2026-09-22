@@ -13,7 +13,10 @@ Checks (all on by default):
   ``--noise-floor`` (a second v1 dump of the same data), under
   ``--noise-multiplier`` x v1's own difference rate.
 * **final** lists (passed / reject / review) - episodes that are ``error`` on
-  either side are left out and listed separately (D24, D33).
+  either side are left out and listed separately (D24, D33). v1 still asks about
+  an episode it rejected (a copy dedup removed that also abstained); a rejected
+  episode has no task or label question in v2 (D42), so a v1 side's review
+  leaves out its own rejects, and they are listed.
 * **replay** - when the candidate was replayed, every request must have been on
   the tape.
 
@@ -336,13 +339,31 @@ def compare_verdict_module(g: Side, c: Side, module: str, *, noise: Side | None,
 # Final lists and replay
 # ---------------------------------------------------------------------------
 
+def _review(side: Side, final: dict) -> tuple[set[int], list[int]]:
+    """(the review list to compare, the rejects left out of it).
+
+    v1 queues a task_success abstention even when it rejected the episode (a copy
+    that dedup removed); in v2 a rejected episode has no task or label question,
+    only an appeal (D42), and the v2 side's review has no pure appeals.
+    """
+    review = set(final.get("review") or [])
+    if isinstance(side, V2Side):
+        return review, []
+    rejected = sorted(review & set(final.get("reject") or []))
+    return review - set(rejected), rejected
+
+
 def compare_final(g: Side, c: Side, exclude: set[int], max_diffs: int) -> dict:
     gf, cf = g.final(), c.final()
     if not gf or not cf:
         return {"status": "skipped", "note": "final.json missing"}
-    out, ok = {"excluded_errors": sorted(exclude)}, True
+    (g_review, g_rejected), (c_review, c_rejected) = _review(g, gf), _review(c, cf)
+    out, ok = {"excluded_errors": sorted(exclude),
+               "review_excluded_rejects": sorted(set(g_rejected) | set(c_rejected))}, True
     for key in ("passed", "reject", "review"):
         gs, cs = set(gf.get(key) or []) - exclude, set(cf.get(key) or []) - exclude
+        if key == "review":
+            gs, cs = g_review - exclude, c_review - exclude
         miss, extra = sorted(gs - cs), sorted(cs - gs)
         out[key] = {"golden": len(gs), "candidate": len(cs),
                     "missing_in_candidate": miss[:max_diffs],
@@ -448,6 +469,9 @@ def render(result: dict) -> str:
                              f"extra {f[key]['extra_in_candidate']}")
         if f.get("excluded_errors"):
             lines.append(f"           excluded (error on either side): {f['excluded_errors']}")
+        if f.get("review_excluded_rejects"):
+            lines.append("           left out of review (rejected by v1, no question under "
+                         f"D42): {f['review_excluded_rejects']}")
     r = result["replay"]
     lines.append(f"  {r['status'].upper():7} replay         "
                  + (f"hits={r.get('hits')} misses={r.get('misses')}" if "hits" in r

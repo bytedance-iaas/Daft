@@ -105,6 +105,24 @@ def test_final_lists_leave_out_error_episodes(tmp_path):
     assert res["final"]["status"] == "pass" and res["final"]["excluded_errors"] == [1]
 
 
+def test_a_reject_v1_still_asks_about_is_left_out_of_review_and_listed(tmp_path):
+    """v1 queues the abstention of a copy dedup removed (7); in v2 a rejected episode
+    has no task question (D42): v1's review leaves out its own rejects."""
+    g = _dump(tmp_path / "g", final={"passed": [0, 3], "reject": [2, 7],
+                                     "review": [3, 7], "held": []})
+    c = _dump(tmp_path / "c", final={"passed": [0, 3], "reject": [2, 7],
+                                     "review": [3], "held": []})
+    res = C.run_compare(_args(g, c))
+    assert res["final"]["status"] == "pass"
+    assert res["final"]["review"]["golden"] == 1
+    assert res["final"]["review_excluded_rejects"] == [7]
+    assert "rejected by v1" in C.render(res)
+    # a question on a passed episode still has to match
+    c = _dump(tmp_path / "c2", final={"passed": [0, 3], "reject": [2, 7],
+                                      "review": [], "held": []})
+    assert C.run_compare(_args(g, c))["final"]["review"]["missing_in_candidate"] == [3]
+
+
 def test_replay_misses_fail(tmp_path):
     g = _dump(tmp_path / "g")
     c = _dump(tmp_path / "c", tape_mode="replay", misses=2)

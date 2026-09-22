@@ -1,15 +1,23 @@
 """A deterministic stand-in for an OpenAI-compatible VLM endpoint.
 
 It answers each v1 prompt family in the format that prompt asks for, and the
-answer depends only on the request content (hash of the canonical request),
-so the same request always gets the same answer. That is all the parity tests
-need: v1 run twice against it must agree bit for bit, and a recorded run must
-replay exactly.
+answer depends only on the request (``FakeVlm.answer_key``), so the same
+request always gets the same answer. That is all the parity tests need: v1 run
+twice against it must agree bit for bit, and a recorded run must replay exactly.
+
+The answer is picked from the request's texts and, of each image, only its
+pixel size - never its bytes. The JPEG bytes a frame encodes to differ between
+platforms (PyAV/FFmpeg decode the video, OpenCV's libjpeg-turbo encodes the
+frame), so answering from them gave the same test other verdicts on Linux than
+on macOS. The tape still hashes the bytes (``canonical_request``): replay must
+match a request exactly, and v1 and v2 are compared on one machine.
 
 Plug it in through ``TapeHooks(transport=FakeVlm(...).transport())``.
 """
 from __future__ import annotations
 
+import base64
+import io
 import json
 import re
 
@@ -39,16 +47,76 @@ def _bullets_after(text: str, marker: str) -> list[str]:
     return [line[2:].strip() for line in tail.splitlines() if line.startswith("- ")]
 
 
+#: Mixed into every answer key. Episodes with the same task send the same texts, so
+#: the seed decides the synthetic dataset's verdicts; 11 makes it walk every
+#: task_success path: eps 0, 3 and 7 abstain, arbitration rescues ep 1 (it has
+#: fewer wrist frames around the release), and the captions of eps 4 and 6 differ
+#: from the annotated task.
+SEED = 11
+
+
+def _image_size(raw: bytes) -> tuple[int, int]:
+    try:
+        from PIL import Image
+    except ImportError:                     # pragma: no cover - Pillow comes with matplotlib
+        import cv2
+        import numpy as np
+
+        img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED)
+        return int(img.shape[1]), int(img.shape[0])
+    with Image.open(io.BytesIO(raw)) as img:     # reads the header only
+        return img.size
+
+
+def _pixel_size(url) -> str:
+    """``<width>x<height>`` of an inline image; any other URL as it is."""
+    if not isinstance(url, str) or not url.startswith("data:"):
+        return str(url)
+    try:
+        width, height = _image_size(base64.b64decode(url.partition(",")[2], validate=False))
+    except Exception:  # noqa: BLE001 - not an image a model could read
+        return "unreadable"
+    return f"{width}x{height}"
+
+
+def answer_view(payload: dict) -> dict:
+    """What an answer depends on: each message's role and texts in order, each image
+    replaced by its pixel size; model parameters and image bytes left out."""
+    messages = []
+    for msg in payload.get("messages") or []:
+        content = msg.get("content")
+        if isinstance(content, (list, tuple)):
+            parts = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text":
+                    parts.append({"type": "text", "text": part.get("text", "")})
+                elif part.get("type") == "image_url":
+                    image = part.get("image_url")
+                    url = image.get("url") if isinstance(image, dict) else image
+                    parts.append({"type": "image_url",
+                                  "image_url": {"url": "pixels:" + _pixel_size(url)}})
+            content = parts
+        messages.append({"role": msg.get("role"), "content": content})
+    return {"seed": SEED, "messages": messages}
+
+
 class FakeVlm:
     def __init__(self, model: str = "fake-vlm"):
         self.model = model
         self.calls = 0
 
+    @staticmethod
+    def answer_key(payload: dict) -> str:
+        """The platform-stable key an answer is picked from (``sha256:<hex>``): the
+        request's texts, how many images it has and their pixel sizes."""
+        return canonical_request(answer_view(payload))[1]
+
     # -- answers ---------------------------------------------------------------
     def answer(self, payload: dict) -> str:
         text = _texts(payload)
-        _, digest = canonical_request(payload)
-        n = int(digest.split(":")[1][:8], 16)
+        n = int(self.answer_key(payload).split(":")[1][:8], 16)
         if "Build a TWO-LEVEL skill taxonomy" in text:
             caps = _bullets_after(text, "CAPTIONS:")
             return json.dumps({"families": [{
