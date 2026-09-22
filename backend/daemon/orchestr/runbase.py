@@ -525,6 +525,9 @@ class Run:
                                          / "commit.json").is_file():
             raise TaskFailure("no_result", f"交付目录 {where}/ 里没有结果版本 "
                                            f"r{int(self.task.result_rev):04d}（可能已被清理），没法接着做")
+        if not self.wd.manifest.is_file():
+            raise TaskFailure("workdir_incomplete", f"交付目录 {where}/ 里也没有源文件清单，"
+                                                    "没法接着做：请复制为新任务")
 
     def export(self, stage: str, delivery, rev: int, *, incremental: bool) -> dict:
         self.progress(stage, state="running", done=0, total=0)

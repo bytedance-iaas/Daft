@@ -36,12 +36,12 @@ def world(daemon):
     return d
 
 
-def _finished(d, *, ended_at: int, files=True, state="succeeded") -> P.Task:
+def _finished(d, *, ended_at: int, files=True, state="succeeded", run_id=RUN_ID) -> P.Task:
     rt = d.rt
     cred = rt.repo.get_credential_by_name("out-key")
     t = seed_task(rt.repo, state="created", delivery="tos://deliveries/mini",
                   output_cred_id=cred.id)
-    rt.repo.freeze_task_inputs(t.id, run_id=RUN_ID, preflight={}, source_fingerprint={},
+    rt.repo.freeze_task_inputs(t.id, run_id=run_id, preflight={}, source_fingerprint={},
                                vlm_snapshot=None)
     for frm, to in (("created", "queued"), ("queued", "running"), ("running", state)):
         assert rt.repo.update_task_state(t.id, {frm}, to, at=ended_at)
@@ -51,7 +51,7 @@ def _finished(d, *, ended_at: int, files=True, state="succeeded") -> P.Task:
     (wd.start_mark).write_text("{}")
     (wd.journal("main")).write_text(json.dumps({"stages": {"numeric": {"done": True}}}))
     if files:
-        batch = pathlib.Path(d.delivery(RUN_ID))
+        batch = pathlib.Path(d.delivery(run_id))
         for rel, text in {**LOCAL, **DELIVERED_ONLY}.items():
             path = batch / rel
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,7 +60,7 @@ def _finished(d, *, ended_at: int, files=True, state="succeeded") -> P.Task:
             path = wd.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
-        D.mark_synced(wd.sync_state, RUN_ID, wd.root, list(LOCAL))
+        D.mark_synced(wd.sync_state, run_id, wd.root, list(LOCAL))
     scratch = pathlib.Path(rt.settings.scratch_dir) / t.id / "curation-export-x"
     scratch.mkdir(parents=True, exist_ok=True)
     return rt.repo.get_task(t.id)
@@ -166,6 +166,25 @@ def test_a_purged_batch_is_not_uploaded_again(world):
     assert d.orch.janitor.sweep(now=now) == [task.id]
     assert not batch.exists()
     assert d.orch.restorer.hook(task, "revisions/r0001/commit.json") is False
+
+
+def test_a_subtask_on_a_cleaned_task_restores_first_and_says_what_is_missing(world):
+    from daemon.orchestr.runbase import Run, TaskFailure
+
+    d = world
+    task = _finished(d, ended_at=now_ms() - 10 * DAY)
+    assert d.orch.janitor.sweep() == [task.id]
+    run = Run(d.orch, task)
+    run.ensure_local()                                      # back from the delivery
+    assert (pathlib.Path(d.run_dir(task.id)) / "revisions" / "r0001" / "commit.json").is_file()
+    run.ensure_local()                                      # nothing to do the second time
+
+    gone = _finished(d, ended_at=now_ms() - 10 * DAY, files=False,   # nothing was delivered
+                     run_id="20260901-130000")
+    WorkDir(d.rt.settings.work_dir, gone.id).cleaned_mark.write_text("{}")
+    with pytest.raises(TaskFailure) as err:
+        Run(d.orch, gone).ensure_local()
+    assert err.value.code == "no_result" and "r0001" in err.value.reason_zh
 
 
 def test_directories_without_a_task_go_when_old(world):
