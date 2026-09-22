@@ -232,6 +232,7 @@ def _profile(ctx, args, run_dir, input_dir, episodes, part, plan_stage, guard):
 
     gates = runctx.vlm_gates(args, plan_stage)
     cfg = runctx.stage_config(ctx, ["skill_profile"], gates=gates, args=args)
+    episodes, restored = _profile_members(ctx, run_dir, episodes)
     if guard is not None:
         guard(episodes)
     rows = runctx.meta_rows(input_dir, episodes, args, what="check:skill_profile")
@@ -251,9 +252,35 @@ def _profile(ctx, args, run_dir, input_dir, episodes, part, plan_stage, guard):
                               int(sp.get("audit_concurrency", 16))))
         payload = run_skill_profile(ctx, run_dir, rows, cfg, captioner, llm_ask, auto_caps,
                                     part, incremental=args.incremental,
-                                    relabels=load_relabels(run_dir))
+                                    relabels=load_relabels(run_dir), restored=restored)
     errors = set(payload["modules"]["skill_profile"]["error_episodes"])
     return payload, [e for e in episodes if e not in errors]
+
+
+def _profile_members(ctx, run_dir: str, episodes: list[int]) -> tuple[list[int], set[int]]:
+    """The given episodes skill_profile files, and the ones a person restored.
+
+    The byte copies dedup found are left out: after an adjudication ``--episodes``
+    is the new ``keep.txt`` and dedup is not run again, its first result stands
+    (v1's rejudge). An episode a person brought into the delivery is never
+    deduplicated and is filed from its text (v1's ``_sync_profile``).
+    """
+    from ..pipeline import aggregate as agg
+    from ..pipeline.adjudication import Decisions
+    from ..pipeline.records import latest_results
+
+    decisions = Decisions.of(run_dir)
+    if not latest_results(run_dir, "dedup") and not decisions.applied:
+        return list(episodes), set()
+    task = [m for m in runctx.selected_modules(argparse.Namespace(modules=None), run_dir)
+            if m in agg.FUNNEL_MODULES or m == "dedup"]
+    state = agg.RunState(run_dir, task, episodes, runctx.stage_config(ctx, task))
+    members, restored = agg.profile_members(state, decisions)
+    left_out = len(episodes) - len(members)
+    if left_out:
+        ctx.log("info", f"skill_profile: {left_out} episode(s) dedup found to be byte copies "
+                        f"are left out")
+    return members, restored
 
 
 def render(payload: dict) -> str:

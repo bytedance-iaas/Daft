@@ -5,7 +5,10 @@ Pure computation in seconds, recomputed in full every time:
 * ``--phase funnel``: the six funnel checks -> ``verdicts.jsonl`` (keep / drop /
   held per episode, v1's ``pipeline/verdict.py`` rules plus D35) and
   ``keep.txt`` (the input of dedup and skill_profile), into
-  ``revisions/r<NNNN>/`` with ``--revision``, else into ``<run-dir>/funnel/``;
+  ``revisions/r<NNNN>/`` with ``--revision``, else into ``<run-dir>/funnel/``.
+  ``keep.txt`` follows the applied human decisions: a discarded episode or one
+  judged failed leaves it, a restored appeal joins it (``decided_in`` /
+  ``decided_out`` count them); dedup is not run again after an adjudication;
 * ``--phase final --revision N``: adds dedup, skill_profile and the applied
   human decisions and writes ``passed`` / ``reject`` / ``held`` (disjoint and
   complete) and the ``review`` view into ``revisions/r<NNNN>/``. A revision that
@@ -84,11 +87,21 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
                else os.path.join(run_dir, "funnel"))
     ctx.progress(f"aggregate:{args.phase}", 0, 1)
     if args.phase == "funnel":
+        from ..pipeline.adjudication import Decisions
+
         lines = agg.funnel(state)
-        files = agg.write_funnel(out_dir, lines)
+        decided = agg.decide_all(state, Decisions.of(run_dir), lines)
+        keep = [e for e, d in decided.items() if d.kept]
+        files = agg.write_funnel(out_dir, lines, keep)
         counts = {"total": len(lines), "keep": 0, "drop": 0, "held": 0}
         for ln in lines:
             counts[ln.verdict] += 1
+        machine_keep = {ln.episode_index for ln in lines if ln.verdict == "keep"}
+        counts["decided_in"] = len(set(keep) - machine_keep)
+        counts["decided_out"] = len(machine_keep - set(keep))
+        if counts["decided_in"] or counts["decided_out"]:
+            ctx.log("info", f"keep.txt follows the applied human decisions: "
+                            f"{counts['decided_in']} in, {counts['decided_out']} out")
     else:
         from ..pipeline.adjudication import Decisions
         from ..pipeline.dataset_stages import load_profile
@@ -130,7 +143,11 @@ def render(payload: dict) -> str:
     c = payload["counts"]
     where = f" (revision {payload['revision']})" if payload["revision"] else ""
     if payload["phase"] == "funnel":
-        return (f"funnel{where}: {c['total']} episodes - keep {c['keep']}, drop {c['drop']}, "
+        text = (f"funnel{where}: {c['total']} episodes - keep {c['keep']}, drop {c['drop']}, "
                 f"held {c['held']}")
+        if c.get("decided_in") or c.get("decided_out"):
+            text += (f"; keep.txt after the human decisions: {c['decided_in']} in, "
+                     f"{c['decided_out']} out")
+        return text
     return (f"final{where}: {c['total']} episodes - passed {c['passed']}, reject "
             f"{c['reject']}, held {c['held']}; {c['review']} to review")

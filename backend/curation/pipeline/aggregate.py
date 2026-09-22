@@ -20,9 +20,19 @@ episode that errored does not go on to later stages (their results are not
 expected); a module that failed as a whole leaves its gate open, so the walk
 goes on.
 
+``verdicts.jsonl`` is the machine's funnel verdict. ``keep.txt`` - what dedup
+and skill_profile work on - also follows the applied human decisions (v1's
+rejudge moves entries between its lists, and its profile follows the delivered
+set): a discarded episode or one a person judged failed leaves it, a restored
+appeal (or a human "success" on a reject) joins it. Before any decision the two
+agree.
+
 **Final phase** - adds dedup, skill_profile and the applied human decisions
 (``pipeline.adjudication``), and writes ``passed`` / ``reject`` / ``held``
-(disjoint, complete) and the ``review`` view into ``revisions/r<NNNN>/``.
+(disjoint, complete) and the ``review`` view into ``revisions/r<NNNN>/``. Dedup
+runs once, on the first revision's keep set; after an adjudication its result
+stands, and an episode a person brought into the delivery is never deduplicated
+- exactly as v1's rejudge, which never deduplicates again.
 """
 from __future__ import annotations
 
@@ -178,15 +188,81 @@ def funnel(state: RunState) -> list[Line]:
     return [funnel_line(state, e) for e in state.episodes]
 
 
-def write_funnel(out_dir: str, lines: list[Line]) -> dict:
+@dataclass
+class Decided:
+    """One episode after the applied human decisions, before dedup and skill_profile."""
+
+    machine: Line                         # the funnel verdict of the checks alone
+    line: Line                            # with a human task verdict / restored appeal
+    state: str                            # keep / drop / held
+    reasons: list = field(default_factory=list)
+    human_note: dict | None = None
+    discard: dict | None = None           # the "discard" decision, when there is one
+    #: a person brought a machine reject into the delivery (an appeal restore, or a
+    #: "success" verdict on a reject): v1's rejudge never deduplicates it
+    restored: bool = False
+
+    @property
+    def kept(self) -> bool:
+        """In ``keep.txt``: what dedup and skill_profile work on."""
+        return self.state == "keep" and self.discard is None
+
+
+def decide(state: RunState, ep: int, decisions: Decisions,
+           machine: Line | None = None) -> Decided:
+    """The human decisions on one episode, in v1's order (``pipeline/rejudge.py``)."""
+    machine = machine or funnel_line(state, ep)
+    line, reasons, human_note = machine, [], None
+    selected = set(state.modules)
+    # human task verdicts and appeals act as a task_success result (v1 moves the entry)
+    tv = decisions.human_task_verdict(ep)
+    appeal = decisions.appeal(ep)
+    ts_rec = (state.results.get("task_success") or {}).get(ep)
+    if "task_success" in selected and ts_rec is not None and ts_rec["verdict"] != "error":
+        if tv is not None:
+            override = dict(_struct(ts_rec), passed=(tv == "success"))
+            line = funnel_line(state, ep, {"task_success": override})
+            human_note = {"module": "task_success",
+                          "text": "人工裁决判成功" if tv == "success"
+                          else "人工裁决判失败(任务未完成)", "kind": "human"}
+        elif appeal == "restore" and _task_reject_only(line):
+            override = dict(_struct(ts_rec), passed=True)
+            line = funnel_line(state, ep, {"task_success": override})
+    state_ = line.verdict                          # keep / drop / held
+    # relabelled but not judged again with the new label yet -> held
+    relabel = decisions.relabel(ep)
+    if relabel and tv is None and "task_success" in selected and state_ == "keep" \
+            and ts_rec is not None and ts_rec["verdict"] != "error":
+        judged = (ts_rec.get("details") or {})
+        if judged.get("task_desc_source") != "人工改标" \
+                or str(judged.get("task_desc") or "") != relabel[:80]:
+            state_ = "held"
+            reasons.append({"module": "task_success", "kind": "execution_error",
+                            "text": "改标后尚未按新标注重跑任务成败判定"})
+    restored = machine.verdict == "drop" and state_ == "keep" \
+        and (tv == "success" or appeal == "restore")
+    return Decided(machine, line, state_, reasons, human_note, decisions.discarded(ep),
+                   restored)
+
+
+def decide_all(state: RunState, decisions: Decisions,
+               lines: list[Line] | None = None) -> dict[int, Decided]:
+    machine = {ln.episode_index: ln for ln in (lines or funnel(state))}
+    return {e: decide(state, e, decisions, machine.get(e)) for e in state.episodes}
+
+
+def write_funnel(out_dir: str, lines: list[Line], keep: list[int] | None = None) -> dict:
+    """``verdicts.jsonl`` (the machine's funnel verdicts) and ``keep.txt`` (``keep``: the
+    episodes kept after the human decisions; without any, the machine's keeps)."""
     os.makedirs(out_dir, exist_ok=True)
     verdicts = os.path.join(out_dir, "verdicts.jsonl")
-    keep = os.path.join(out_dir, "keep.txt")
+    keep_path = os.path.join(out_dir, "keep.txt")
+    if keep is None:
+        keep = [ln.episode_index for ln in lines if ln.verdict == "keep"]
     write_text_atomic(verdicts, "".join(json.dumps(ln.to_json(), ensure_ascii=False,
                                                    allow_nan=True) + "\n" for ln in lines))
-    write_text_atomic(keep, "".join(f"{ln.episode_index}\n" for ln in lines
-                                    if ln.verdict == "keep"))
-    return {"verdicts": verdicts, "keep": keep}
+    write_text_atomic(keep_path, "".join(f"{e}\n" for e in sorted(keep)))
+    return {"verdicts": verdicts, "keep": keep_path}
 
 
 # ---------------------------------------------------------------- final phase
@@ -225,6 +301,7 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
     selected = set(state.modules)
     passed, reject, held, review = [], [], [], []
     machine = {e: funnel_line(state, e) for e in state.episodes}
+    decided = decide_all(state, decisions, list(machine.values()))
     audit = merged_label_audit(state, profile_audit) if "skill_profile" in selected \
         or "task_success" in selected else None
     audit_items: dict[int, list] = {}
@@ -239,35 +316,12 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
     profile = state.results.get("skill_profile") or {}
 
     for ep in state.episodes:
-        line = machine[ep]
-        reasons: list[dict] = []
-        human_note: dict | None = None
-        # human task verdicts and appeals act as a task_success result (v1 moves the entry)
-        tv = decisions.human_task_verdict(ep)
-        appeal = decisions.appeal(ep)
-        ts_rec = (state.results.get("task_success") or {}).get(ep)
-        if "task_success" in selected and ts_rec is not None and ts_rec["verdict"] != "error":
-            if tv is not None:
-                override = dict(_struct(ts_rec), passed=(tv == "success"))
-                line = funnel_line(state, ep, {"task_success": override})
-                human_note = {"module": "task_success",
-                              "text": "人工裁决判成功" if tv == "success"
-                              else "人工裁决判失败(任务未完成)", "kind": "human"}
-            elif appeal == "restore" and _task_reject_only(line):
-                override = dict(_struct(ts_rec), passed=True)
-                line = funnel_line(state, ep, {"task_success": override})
-        state_ = line.verdict                      # keep / drop / held
-        # relabelled but not judged again with the new label yet -> held
-        relabel = decisions.relabel(ep)
-        if relabel and tv is None and "task_success" in selected and state_ == "keep" \
-                and ts_rec is not None and ts_rec["verdict"] != "error":
-            judged = (ts_rec.get("details") or {})
-            if judged.get("task_desc_source") != "人工改标" \
-                    or str(judged.get("task_desc") or "") != relabel[:80]:
-                state_ = "held"
-                reasons.append({"module": "task_success", "kind": "execution_error",
-                                "text": "改标后尚未按新标注重跑任务成败判定"})
-        if state_ == "keep" and "dedup" in selected:
+        d = decided[ep]
+        line, state_, human_note = d.line, d.state, d.human_note
+        reasons: list[dict] = list(d.reasons)
+        # dedup ran on the first revision's keep set; an episode a person brought in
+        # afterwards was never compared, and v1 never deduplicates it
+        if state_ == "keep" and "dedup" in selected and not d.restored:
             rec = dedup.get(ep)
             if rec is None or rec["verdict"] == "error":
                 state_ = "held"
@@ -287,7 +341,7 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
                 state_ = "held"
                 reasons.append({"module": "skill_profile", "kind": "execution_error",
                                 "text": f"「技能画像」执行出错({_cause(rec)})"})
-        discard = decisions.discarded(ep)
+        discard = d.discard
         if discard is not None:                    # rule 1: discard wins, even over held
             state_ = "drop"
             reasons = [{"module": "skill_profile" if discard["line"] == "label"
@@ -328,7 +382,8 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
 
     return {"passed": doc("passed", passed), "reject": doc("reject", reject),
             "held": doc("held", held), "review": doc("review", review),
-            "label_audit": audit, "funnel": [machine[e] for e in state.episodes]}
+            "label_audit": audit, "funnel": [machine[e] for e in state.episodes],
+            "keep": [e for e in state.episodes if decided[e].kept]}
 
 
 def _drop_reasons(line: Line) -> list[dict]:
@@ -388,9 +443,24 @@ def write_final(rev_dir: str, result: dict) -> dict:
         write_json_atomic(path, result[name])
         files[name] = path
     write_json_atomic(os.path.join(rev_dir, "label_audit.json"), result["label_audit"] or {})
-    files.update(write_funnel(rev_dir, result["funnel"]))
+    files.update(write_funnel(rev_dir, result["funnel"], result["keep"]))
     return files
 
 
 def revision_path(run_dir: str, revision: int) -> str:
     return revision_dir(run_dir, revision)
+
+
+def profile_members(state: RunState, decisions: Decisions) -> tuple[list[int], set[int]]:
+    """(the episodes of ``state`` skill_profile files, the ones a person restored).
+
+    Leaves out the byte copies dedup found (its first run stands after an
+    adjudication, D9 / v1's rejudge), except an episode a person brought into
+    the delivery: v1 never deduplicates it (``_sync_profile`` files it back).
+    """
+    dedup = latest_results(state.run_dir, "dedup")
+    decided = decide_all(state, decisions)
+    restored = {e for e, d in decided.items() if d.restored}
+    members = [e for e in state.episodes
+               if e in restored or (dedup.get(e) or {}).get("verdict") != "fail"]
+    return members, restored
