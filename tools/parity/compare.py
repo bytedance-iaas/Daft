@@ -20,6 +20,13 @@ Checks (all on by default):
 * **replay** - when the candidate was replayed, every request must have been on
   the tape.
 
+An **adjudication** golden (``dump-v1 -- rejudge``: v1 applying human decisions)
+is compared with v2's adjudication sequence (``run-v2 --from ... --decisions``):
+the task_success records of the episodes judged again, exactly (v2's record also
+names the text and the protocol it judged with - the new label, ``人工改标``,
+``v1`` - which v1 keeps on the delivered entry instead); the skill assignments
+after the decisions; the final lists; the replay. The other modules did not run.
+
 Exit code 0 when every enabled check passes, 1 otherwise, 2 on bad input.
 """
 from __future__ import annotations
@@ -94,6 +101,10 @@ class Side:
 
     def final(self) -> dict:
         return self._json("final.json", {})
+
+    def judged_again(self, module: str) -> set[int]:
+        """An adjudication dump holds only the episodes v1 judged again."""
+        return set(self.records(module))
 
     def error_episodes(self) -> set[int]:
         out = set()
@@ -197,6 +208,17 @@ class V2Side(Side):
             out[name] = sorted(int(e["episode_index"]) for e in eps)
         return out
 
+    def judged_again(self, module: str) -> set[int]:
+        """Episodes whose current record comes from a part after the first run's."""
+        d = os.path.join(self.path, "checks", module, "parts")
+        parts = sorted(n[:-len(".jsonl")] for n in (os.listdir(d) if os.path.isdir(d) else [])
+                       if n.endswith(".jsonl"))
+        latest: dict[int, str] = {}
+        for part in parts:
+            for rec in R.read_jsonl(os.path.join(d, f"{part}.jsonl")):
+                latest[int(rec["episode_index"])] = part
+        return {e for e, part in latest.items() if parts and part != parts[0]}
+
     def error_episodes(self) -> set[int]:
         out = set()
         base = os.path.join(self.path, "checks")
@@ -241,19 +263,7 @@ def compare_strict_module(g: Side, c: Side, module: str, max_diffs: int) -> dict
     grows, crows = _strict_rows(g, module), _strict_rows(c, module)
     if grows is None and crows is None:
         return {"mode": "strict", "status": "skipped", "note": "no output on either side"}
-    gr, cr = grows or {}, crows or {}
-    only_g, only_c = sorted(set(gr) - set(cr)), sorted(set(cr) - set(gr))
-    diffs, n_diff = [], 0
-    for idx in sorted(set(gr) & set(cr)):
-        d = R.diff_values(gr[idx], cr[idx], limit=10)
-        if d:
-            n_diff += 1
-            if len(diffs) < max_diffs:
-                diffs.append({"episode_index": idx, "differences": d})
-    ok = not (only_g or only_c or n_diff)
-    return {"mode": "strict", "status": "pass" if ok else "fail",
-            "compared": len(set(gr) & set(cr)), "different": n_diff,
-            "only_in_golden": only_g, "only_in_candidate": only_c, "examples": diffs}
+    return _strict_diff(grows or {}, crows or {}, max_diffs)
 
 
 def compare_dedup(g: Side, c: Side, max_diffs: int) -> dict:
@@ -268,6 +278,69 @@ def compare_dedup(g: Side, c: Side, max_diffs: int) -> dict:
             "golden_dropped": len(gd.get("dropped") or []),
             "candidate_dropped": len(cd.get("dropped") or []),
             "examples": problems[:max_diffs]}
+
+
+# ---------------------------------------------------------------------------
+# Adjudication (a v1 rejudge against v2's adjudication sequence)
+# ---------------------------------------------------------------------------
+
+#: what v2's record of a relabelled episode adds to v1's re-judge detail: the text it
+#: was judged with, where the text came from and how it was judged (D39)
+BOOKKEEPING = ("task_desc", "task_desc_source", "relabel_rerun")
+
+
+def _strict_diff(gr: dict, cr: dict, max_diffs: int) -> dict:
+    only_g, only_c = sorted(set(gr) - set(cr)), sorted(set(cr) - set(gr))
+    diffs, n_diff = [], 0
+    for idx in sorted(set(gr) & set(cr)):
+        d = R.diff_values(gr[idx], cr[idx], limit=10)
+        if d:
+            n_diff += 1
+            if len(diffs) < max_diffs:
+                diffs.append({"episode_index": idx, "differences": d})
+    ok = not (only_g or only_c or n_diff)
+    return {"mode": "strict", "status": "pass" if ok else "fail",
+            "compared": len(set(gr) & set(cr)), "different": n_diff,
+            "only_in_golden": only_g, "only_in_candidate": only_c, "examples": diffs}
+
+
+def compare_adjudicated_task(g: Side, c: Side, max_diffs: int) -> dict:
+    """task_success of the episodes the adjudication judged again, exactly."""
+    relabels = {int(k): str(v) for k, v in
+                ((g.meta.get("adjudication") or {}).get("relabels") or {}).items()}
+    g_eps, c_eps = g.judged_again("task_success"), c.judged_again("task_success")
+    gr = {i: R.comparable(r) for i, r in g.records("task_success").items() if i in g_eps}
+    cr, texts = {}, []
+    for i, rec in c.records("task_success").items():
+        if i not in c_eps:
+            continue
+        details = dict(rec.get("details") or {})
+        if isinstance(c, V2Side):
+            kept = {k: details.pop(k) for k in BOOKKEEPING if k in details}
+            want = {"task_desc": relabels.get(i, "")[:80], "task_desc_source": "人工改标",
+                    "relabel_rerun": "v1"}
+            if kept != want:
+                texts.append({"episode_index": i, "golden": want, "candidate": kept})
+        cr[i] = R.comparable({**rec, "details": details})
+    out = _strict_diff(gr, cr, max_diffs)
+    out["judged_again"] = sorted(set(gr) | set(cr))
+    if texts:
+        out["status"], out["judged_with"] = "fail", texts[:max_diffs]
+    return out
+
+
+def compare_assignments(g: Side, c: Side, max_diffs: int) -> dict:
+    """The skill assignments after the decisions (v1's ``_sync_profile``), exactly."""
+    def rows(side):
+        sp = side.skill_profile()
+        if not sp.get("ran"):
+            return None
+        return {a["episode_index"]: a for a in sp.get("assignments") or []}
+
+    ga, ca = rows(g), rows(c)
+    if ga is None and ca is None:
+        return {"mode": "strict", "status": "skipped", "note": "no profile on either side"}
+    return _strict_diff(ga or {}, ca or {}, max_diffs)
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +503,14 @@ def run_compare(args) -> dict:
     if args.all_strict:
         strict, verdict_only = list(STRICT_DEFAULT) + list(VERDICT_DEFAULT), []
     result: dict = {"golden": args.golden, "candidate": args.candidate, "modules": {}}
+    if isinstance(g, Side) and not isinstance(g, V2Side) \
+            and g.meta.get("command") == "rejudge":
+        adj = g.meta.get("adjudication") or {}
+        result["adjudication"] = {k: adj.get(k) for k in ("relabels", "rejudged",
+                                                          "rerun_failed", "human_concluded")}
+        strict, verdict_only = [], []
+        result["modules"]["task_success"] = compare_adjudicated_task(g, c, args.max_diffs)
+        result["modules"]["skill_profile"] = compare_assignments(g, c, args.max_diffs)
     for module in strict:
         result["modules"][module] = compare_strict_module(g, c, module, args.max_diffs)
     for module in verdict_only:
@@ -447,6 +528,10 @@ def run_compare(args) -> dict:
 
 def render(result: dict) -> str:
     lines = [f"golden:    {result['golden']}", f"candidate: {result['candidate']}", ""]
+    if "adjudication" in result:
+        adj = result["adjudication"]
+        lines += [f"adjudication: relabels {adj.get('relabels')}, v1 judged again "
+                  f"{adj.get('rejudged')}", ""]
     for name, m in result["modules"].items():
         extra = ""
         if m.get("mode") == "verdict" and m.get("status") != "skipped":
@@ -459,6 +544,8 @@ def render(result: dict) -> str:
         lines.append(f"  {m['status'].upper():7} {name:18} {m.get('mode', ''):8} {count}{extra}")
         for ex in (m.get("examples") or [])[:3]:
             lines.append(f"           e.g. {json.dumps(ex, ensure_ascii=False)[:240]}")
+        for ex in (m.get("judged_with") or [])[:3]:
+            lines.append(f"           judged with {json.dumps(ex, ensure_ascii=False)[:240]}")
     if "final" in result:
         f = result["final"]
         lines.append(f"  {f['status'].upper():7} final lists")

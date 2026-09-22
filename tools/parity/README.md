@@ -6,9 +6,9 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
 
 | 命令（`python -m parity …`） | 作用 |
 |---|---|
-| `dump-v1` | 在同一进程里跑一遍 v1 原版 `curation run`，挂钩取数，导出规范化结果；同时录制或回放全部模型调用 |
-| `run-v2` | 按 Daemon 的顺序跑一遍 v2 的原子命令（preflight → … → verify），模型调用走同一套录制带挂钩（W3） |
-| `compare` | 比较两份导出（或 v2 运行目录）：确定性六项逐位比，VLM 三项按判决比（可带噪声底），终判清单比，回放命中率与调用图 |
+| `dump-v1` | 在同一进程里跑一遍 v1 原版 `curation run`（或 `curation rejudge`：执行人工裁决），挂钩取数，导出规范化结果；同时录制或回放全部模型调用 |
+| `run-v2` | 按 Daemon 的顺序跑一遍 v2 的原子命令（preflight → … → verify），模型调用走同一套录制带挂钩（W3）；带 `--from … --decisions …` 时在一份已跑完的运行目录副本上跑裁决序列 |
+| `compare` | 比较两份导出（或 v2 运行目录）：确定性六项逐位比，VLM 三项按判决比（可带噪声底），终判清单比，回放命中率与调用图；金标是 v1 的 rejudge 时比裁决（见下） |
 | `make-fixture` | 生成 8 条 episode 的合成 LeRobot v2 数据集（真视频），离线测试用 |
 | `tape-summary` | 看一盘录制带：各类调用多少次、有没有失败 |
 | `pack` | 打一个带进 Pod 的包：冻结点的 v1 源码 + 当前的对账工具 |
@@ -26,7 +26,8 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
   - 包 `daft.DataFrame.collect`，在硬门过滤**之前**截下每条的检查结果（v1 自己的报告里，被硬门拦下的条目只剩拦下它的那一项）；
   - 包 `requests` 与 `vlm_client.hedged_request`，录下或回放每一次模型调用（对冲补发只认赢的那一发）；
   - 包 `run_pipeline`、`save_report`、`_skill_profile_stage`、`caption_episodes`、`action_hash`、`episode_fingerprint`、`decode_window`，
-    拿到判决、报告、技能画像、补打的任务描述、去重遍历顺序和解码失败。
+    拿到判决、报告、技能画像、补打的任务描述、去重遍历顺序和解码失败；
+  - 跑 `rejudge` 时再包 `run_rejudge` 与 `apply_decisions`，拿到它改的是哪次跑批、每条改标重判的结果。
 - **录制带**（`vlm_tape.jsonl.gz`）：每行一次调用，存请求的规范形式（提示词全文、每张图的 sha256、模型参数，不存图片本身）
   和当时的响应。回放时按请求哈希取回响应；v2 的请求只要和 v1 差一个字、一帧、一个 JPEG 参数，哈希就对不上。
   格式见 [`docs/contracts/parity/vlm-tape-entry.schema.json`](../../docs/contracts/parity/vlm-tape-entry.schema.json)。
@@ -44,6 +45,13 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
   按字节选答案会让同一个测试在两个平台上得到不同的判决。录制带的请求哈希仍按字节算，回放要逐字节对上。
   同一任务的条目发的文字相同，答案由 `SEED` 决定：取 11，合成数据集的 task_success 走遍各条路径
   （0、3、7 弃权，1、4、6 靠仲裁判成功，4、6 的补打描述与原标注不同）。
+- **人工裁决也对账**（D39）：`dump-v1 … -- rejudge` 让 v1 在自己的交付上执行 `human-decisions/` 里的裁决，
+  挂钩取出它按新标注重判的每条（`_build_rerun`：多视角打分 + 逐机位复核两层）、裁决后的三件套和技能归类，并录下这期间的调用；
+  `run-v2 --from <v2 运行目录> --decisions <decisions.json> --replay <这盘带>` 在 v2 运行目录的副本上按 Daemon 的顺序跑
+  adjudicate-apply → 重判改标条目 → 漏斗 → 增量技能画像 → 终判 → 报告（下一个结果版本）。`compare` 认出金标是 rejudge，
+  只比这几样：重判的 task_success 记录逐位一致（v2 的记录另外写明用哪段文字、按哪种口径判的——新标注、`人工改标`、`v1`，
+  v1 把它们记在交付条目上），裁决后的技能归类逐条一致，终判清单一致，回放无缺无余。
+  v1 的 rejudge 不探活端点，v2 每条命令探一次；带子上没有 `/models` 时 `run-v2` 自己应答（探活不是模型调用）。
 - **调用图一致**：`compare --all-strict` 的回放一项要求 misses 为 0（v2 的每个请求都在 v1 的带子上）且
   没有剩余（带子上的每个请求 v2 都发了）。多一个、少一个、提示词差一个字，都会失败。
 - **干净的基线**：导出结束时汇总所有「执行出错」的迹象，包括录制带里失败的调用、打分回答解析不了、v1 降级留下的痕迹和解码失败。
@@ -115,8 +123,33 @@ $python -m parity compare --golden $W/rec --candidate $W/v2 --all-strict
   `review` 是 `[0, 3, 7]`：三条都在 task_success 上弃权。第 6 步比 review 时把 7 摘出来单列
   （「left out of review (rejected by v1 …)」）：v1 还在问一条被它拒掉的副本成败，v2 里被拒的条目没有成败问题，只有复议（D42）。
 - `$python -m parity tape-summary $W/rec/vlm_tape.jsonl.gz` 应列出 probe / endstate / arbitration / caption 各类调用，`0 failed calls`。
-- 单元测试与端到端测试：`$python -m pytest -q tools/parity/tests`（约 1 分钟；`test_v2_parity.py` 就是第 5、6 步，
-  外加「带子上少一个请求时对账必须失败」的反例，CI 的对账工具一步里一起跑）。
+- 单元测试与端到端测试：`$python -m pytest -q tools/parity/tests`（约 1 分钟；`test_v2_parity.py` 就是第 5–8 步，
+  外加「带子上少一个请求时对账必须失败」「按首轮完整流程重判的改标对不上 v1 的 rejudge」两个反例，CI 的对账工具一步里一起跑）。
+
+人工裁决的对账（D39，约半分钟）：v1 的 rejudge 在交付上执行两条改标，v2 的裁决序列回放它录下的带子：
+
+```bash
+# 7. v1 执行裁决：0、1 两条改标 → [dump-v1] clean: {'records': {'task_success': 2}, … 'passed': 5, 'reject': 3, 'review': 3}
+cp -R $W/rec-out $W/rej-delivery && mkdir -p $W/rej-delivery/human-decisions
+printf 'episode_id,decision,new_label,note,at\nep000001,采纳建议改标,stack the cups,,2026-09-22 01:00:00\nep000000,采纳建议改标,wipe the table,,2026-09-22 01:00:01\n' \
+  > $W/rej-delivery/human-decisions/label_decisions.csv
+printf 'checks:\n  task_success:\n    vlm:\n      endpoint: http://fake-vlm.local/v1\n      model: fake-vlm\n' > $W/fake.yaml
+$python -m parity dump-v1 --out $W/rej --v1-src $V1 --fake-vlm -- rejudge --delivery $W/rej-delivery --input $W/mini --config $W/fake.yaml
+
+# 8. v2 的裁决序列，同样两条改标（relabel_rerun 缺省 v1），回放第 7 步的带子
+#    → [run-v2] done; tape replay: hits=26 misses=0 unused=0；compare 的结论 PASS
+cat > $W/decisions.json <<'EOF'
+{"schema_version": "1.0", "decisions": [
+ {"id": 1, "episode_index": 1, "line": "label", "decision": "custom_label", "new_label": "stack the cups", "note": null, "decided_by": "me", "decided_at": 1790000000001},
+ {"id": 2, "episode_index": 0, "line": "label", "decision": "custom_label", "new_label": "wipe the table", "note": null, "decided_by": "me", "decided_at": 1790000000002}]}
+EOF
+$python -m parity run-v2 --out $W/v2-adj --from $W/v2 --input $W/mini --decisions $W/decisions.json --replay $W/rej/vlm_tape.jsonl.gz
+$python -m parity compare --golden $W/rej --candidate $W/v2-adj --all-strict
+```
+
+逐项核对：第 7 步的带子有 26 条（16 次打分、8 次逐机位复核、2 次技能画像归类的文本调用），没有仲裁——v1 的 rejudge 只跑两层；
+1 按新标注判成功，0 仍弃权、回到待裁决；第 8 步 `task_success 0/2 differ`、`skill_profile 0/5 differ`，终判清单一致（7 照样单列）。
+把 `decisions.json` 加上 `"relabel_rerun": "full"` 再跑第 8 步：v2 按首轮完整流程重判，发出 v1 没发过的请求，回放出现 misses，结论 FAIL。
 
 ## 在现网 Pod 里生成黄金基线
 
@@ -209,4 +242,6 @@ $python -m parity compare --golden $W/rec --candidate $W/v2 --all-strict
 - **字节级重复的两条 episode** 发出的请求完全相同，回放时它们的响应可能对调。真模型对这两条给了不同回答时，
   会表现为两条互换的差异，对账时对照 `dedup.json` 人工确认。
 - 除打分外，其它回答解析不了（比如仲裁返回的 JSON 坏了）时，导出只能认出「这条降级了」，定位不到是哪次请求，只能整份重跑。
-- `compare` 读 v2 运行目录时，取 `revisions/` 下最新的已提交版本（有 `commit.json` 的），没有就取编号最大的；`run-v2` 只产生 r0001。
+- `compare` 读 v2 运行目录时，取 `revisions/` 下最新的已提交版本（有 `commit.json` 的），没有就取编号最大的；`run-v2` 产生 r0001，
+  带 `--from` 的裁决序列产生下一个版本。
+- 裁决的对账目前只覆盖改标（唯一要调模型的一条线）；成败裁决与复议不调模型，它们对清单的作用由 `backend/tests/cli/test_aggregate.py` 按 v1 的规则钉住。
