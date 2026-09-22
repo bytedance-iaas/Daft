@@ -22,10 +22,12 @@ opens a follow-up gains that question - v1's relabel card: after ``adopt_suggest
 ``custom_label`` a label-only card also takes the task verdict (``success`` /
 ``failure`` / ``unsure``); answered, the machine takes it and does not re-judge; left
 open, the episode is judged again with the new label (rule 4). It is listed on the card
-while open (same source module as the question that opened it), it is optional - it
-never makes a card pending and never blocks ``decided`` - and its answer lapses once the
-answer that opened it changes: a lapsed answer is not shown, not counted and not handed
-to the CLI (:meth:`Queue.executable`).
+while open, with ``follow_up_of`` naming the line whose answer opened it (C4 1.5.2; the
+card's own questions carry null) and the source module of that line's question; it is
+optional - it never makes a card pending and never blocks ``decided`` - and its answer
+lapses once the answer that opened it changes: a lapsed answer is not shown, not
+counted and not handed to the CLI (:meth:`Queue.executable`); once no answer opens it,
+the question leaves the card.
 
 **Decisions** are the repository's rows, append only; the latest per (task, line,
 episode) counts. They never cross tasks (D32): the queue is this task's revision and
@@ -185,8 +187,9 @@ class Card:
         for q in self.questions:
             d = standing.get((q.episode, q.line))
             qs.append({"line": q.line, "source_module": q.source_module, "reason": q.reason,
-                       "duplicate_of": q.duplicate_of, "annotation": q.annotation,
-                       "caption": q.caption, "suggestion": q.suggestion, "priority": q.priority,
+                       "duplicate_of": q.duplicate_of, "follow_up_of": q.follow_up_of,
+                       "annotation": q.annotation, "caption": q.caption,
+                       "suggestion": q.suggestion, "priority": q.priority,
                        "latest_decision": decision_json(d) if d is not None else None})
         return {"episode_index": self.episode, "status": self.status, "questions": qs}
 

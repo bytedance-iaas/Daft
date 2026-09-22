@@ -65,7 +65,8 @@ def test_the_queue_of_the_first_revision(world):
     assert [q["line"] for q in cards[5]["questions"]] == ["label", "task_verdict"]
     label = cards[4]["questions"][0]
     assert label == {"line": "label", "source_module": "skill_profile",
-                     "reason": label["reason"], "duplicate_of": None, "annotation": TEXT[4],
+                     "reason": label["reason"], "duplicate_of": None, "follow_up_of": None,
+                     "annotation": TEXT[4],
                      "caption": CAPTION[4], "suggestion": CAPTION[4], "priority": "参考",
                      "latest_decision": None}
     assert cards[5]["questions"][0]["priority"] == "重点"
@@ -239,6 +240,8 @@ def test_a_relabel_opens_the_optional_verdict_on_a_label_only_card(world):
     follow = card["questions"][1]
     assert follow["source_module"] == "skill_profile"      # the card's source stays the label's
     assert "选填" in follow["reason"] and follow["latest_decision"] is None
+    assert follow["follow_up_of"] == "label"               # C4 1.5.2
+    assert card["questions"][0]["follow_up_of"] is None     # the card's own question
     assert follow["annotation"] == TEXT[4]
     assert card["status"] == "decided"                     # an open follow-up never blocks
     assert_error(world.decide((4, "task_verdict", "discard")), "validation_failed")
@@ -253,8 +256,8 @@ def test_a_relabel_opens_the_optional_verdict_on_a_label_only_card(world):
         "success"
     # a card that asks the verdict itself is not a follow-up: all of its decisions stay
     _ok(world.decide((5, "label", "adopt_suggestion"), (5, "task_verdict", "discard")))
-    assert [q["line"] for q in _cards(world, status="all")[5]["questions"]] == [
-        "label", "task_verdict"]
+    own = _cards(world, status="all")[5]["questions"]
+    assert [(q["line"], q["follow_up_of"]) for q in own] == [("label", None), ("task_verdict", None)]
 
 
 def test_a_follow_up_answer_lapses_when_the_answer_that_opened_it_changes(world):
@@ -263,7 +266,7 @@ def test_a_follow_up_answer_lapses_when_the_answer_that_opened_it_changes(world)
     # the label kept after all: the verdict lapses - not shown, not counted, not executed
     counts = _ok(world.decide((4, "label", "keep_label")))
     card = _cards(world, status="all")[4]
-    assert [q["line"] for q in card["questions"]] == ["label"]
+    assert [q["line"] for q in card["questions"]] == ["label"]   # the follow-up left the card
     assert card["status"] == "decided" and counts["unapplied"] == 1
     assert [(d.line, d.decision) for d in _queue(world).executable()] == [("label", "keep_label")]
     assert_error(world.decide((4, "task_verdict", "success")), "validation_failed")
