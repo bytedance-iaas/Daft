@@ -304,11 +304,15 @@ def _strict_diff(gr: dict, cr: dict, max_diffs: int) -> dict:
             "only_in_golden": only_g, "only_in_candidate": only_c, "examples": diffs}
 
 
-def compare_adjudicated_task(g: Side, c: Side, max_diffs: int) -> dict:
-    """task_success of the episodes the adjudication judged again, exactly."""
+def compare_adjudicated_task(g: Side, c: Side, max_diffs: int,
+                             exclude: set[int] = frozenset()) -> dict:
+    """task_success of the episodes the adjudication judged again, exactly; a re-judge
+    that failed on either side (v1 leaves the entry as it was, v2 holds it) is left out
+    and listed."""
     relabels = {int(k): str(v) for k, v in
                 ((g.meta.get("adjudication") or {}).get("relabels") or {}).items()}
-    g_eps, c_eps = g.judged_again("task_success"), c.judged_again("task_success")
+    g_eps = g.judged_again("task_success") - set(exclude)
+    c_eps = c.judged_again("task_success") - set(exclude)
     gr = {i: R.comparable(r) for i, r in g.records("task_success").items() if i in g_eps}
     cr, texts = {}, []
     for i, rec in c.records("task_success").items():
@@ -324,6 +328,8 @@ def compare_adjudicated_task(g: Side, c: Side, max_diffs: int) -> dict:
         cr[i] = R.comparable({**rec, "details": details})
     out = _strict_diff(gr, cr, max_diffs)
     out["judged_again"] = sorted(set(gr) | set(cr))
+    out["excluded_errors"] = sorted(set(exclude) & (g.judged_again("task_success")
+                                                   | c.judged_again("task_success")))
     if texts:
         out["status"], out["judged_with"] = "fail", texts[:max_diffs]
     return out
@@ -509,7 +515,8 @@ def run_compare(args) -> dict:
         result["adjudication"] = {k: adj.get(k) for k in ("relabels", "rejudged",
                                                           "rerun_failed", "human_concluded")}
         strict, verdict_only = [], []
-        result["modules"]["task_success"] = compare_adjudicated_task(g, c, args.max_diffs)
+        result["modules"]["task_success"] = compare_adjudicated_task(g, c, args.max_diffs,
+                                                                     exclude)
         result["modules"]["skill_profile"] = compare_assignments(g, c, args.max_diffs)
     for module in strict:
         result["modules"][module] = compare_strict_module(g, c, module, args.max_diffs)

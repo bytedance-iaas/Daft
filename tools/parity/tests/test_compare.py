@@ -123,6 +123,37 @@ def test_a_reject_v1_still_asks_about_is_left_out_of_review_and_listed(tmp_path)
     assert C.run_compare(_args(g, c))["final"]["review"]["missing_in_candidate"] == [3]
 
 
+def test_an_adjudication_golden_compares_what_was_judged_again(tmp_path):
+    """A v1 rejudge dump: task_success of the re-judged episodes only (a re-judge that
+    failed is left out and listed), the skill assignments, the final lists."""
+    err = [{"step": "probe", "cause": "timeout"}]
+
+    def rejudge_dump(root, records, final):
+        path = _dump(root, records={"task_success": records}, final=final,
+                     skill={"ran": True, "assignments": [{"episode_index": 0,
+                                                          "family": "f", "subskill": "s"}],
+                            "label_audit_queue": []})
+        with open(os.path.join(path, "dump.json")) as fh:
+            meta = json.load(fh)
+        meta.update(command="rejudge", adjudication={"relabels": {"0": "a", "1": "b"},
+                                                     "rejudged": [0, 1]})
+        with open(os.path.join(path, "dump.json"), "w") as fh:
+            json.dump(meta, fh)
+        return path
+
+    lists = {"passed": [0, 2], "reject": [3], "review": [], "held": []}
+    g = rejudge_dump(tmp_path / "g", [_task(0, True), _task(1, None, incidents=err)], lists)
+    c = rejudge_dump(tmp_path / "c", [_task(0, True), _task(1, True)], lists)
+    res = C.run_compare(_args(g, c, all_strict=True))
+    ts = res["modules"]["task_success"]
+    assert ts["status"] == "pass" and ts["compared"] == 1 and ts["excluded_errors"] == [1]
+    assert set(res["modules"]) == {"task_success", "skill_profile"}
+    assert res["modules"]["skill_profile"]["status"] == "pass"
+    assert res["adjudication"]["relabels"] == {"0": "a", "1": "b"}
+    c = rejudge_dump(tmp_path / "c2", [_task(0, False), _task(1, True)], lists)
+    assert C.run_compare(_args(g, c))["modules"]["task_success"]["different"] == 1
+
+
 def test_replay_misses_fail(tmp_path):
     g = _dump(tmp_path / "g")
     c = _dump(tmp_path / "c", tape_mode="replay", misses=2)
