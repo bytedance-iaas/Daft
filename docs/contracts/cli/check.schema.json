@@ -21,6 +21,7 @@
           "episodes": {"$ref": "common.schema.json#/$defs/verdict_counts"},
           "error_episodes": {"$ref": "common.schema.json#/$defs/episode_list"},
           "skipped_existing": {"type": "integer", "minimum": 0, "description": "--resume: episodes that already had a non-error result"},
+          "skipped_missing_source": {"$ref": "common.schema.json#/$defs/skipped_episodes", "description": "episodes found without their source files at read time (no manifest named them): no result line, left out like v1 does (D40)"},
           "merge": {
             "type": "object",
             "additionalProperties": false,
