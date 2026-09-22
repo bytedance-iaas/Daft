@@ -339,6 +339,70 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(within(dialog).getByTestId('apply-list')).toHaveTextContent('ep 36：采纳新标注 → 按新标注重跑任务成败判定');
   });
 
+  it('a follow-up the server lists (follow_up_of, C4 1.5.2) is the optional block after a reload; only a new label answer makes its answer lapse', async () => {
+    // Answered before this visit: 采纳新标注 on ep 36, then 判失败 on its optional verdict.
+    const list = decisionsOf(MAIN_TASK);
+    const at = Date.now() - 5 * 60_000;
+    list.push({ id: list.length + 1, episode_index: 36, line: 'label', decision: 'adopt_suggestion', new_label: null, note: null, decided_by: 'galbot', decided_at: at, applied: false });
+    list.push({ id: list.length + 1, episode_index: 36, line: 'task_verdict', decision: 'failure', new_label: null, note: null, decided_by: 'galbot', decided_at: at + 1000, applied: false });
+    const seen = recordRequests();
+    const { user } = renderApp(PAGE);
+    await screen.findByTestId('card-29');
+    expect(screen.getByTestId('adj-counts')).toHaveTextContent('已裁 4 条 · 待裁 6 条 · 4 条尚未应用');
+    // Listed while open, like the Daemon: follow_up_of names the label, with the label question's source module.
+    const ep36 = async () => {
+      const page = await unwrap(api().GET('/tasks/{id}/adjudication', { params: { path: { id: MAIN_TASK }, query: { tab: 'review', status: 'all' } } }));
+      return page.items?.find((c) => c.episode_index === 36)?.questions.map((q) => [q.line, q.source_module, q.follow_up_of ?? null, q.latest_decision?.decision ?? null]);
+    };
+    expect(await ep36()).toEqual([
+      ['label', 'skill_profile', null, 'adopt_suggestion'],
+      ['task_verdict', 'skill_profile', 'label', 'failure'],
+    ]);
+    await pick(user, '状态', '全部');
+    await screen.findByTestId('card-36');
+    // The optional block with its answer, not a verdict question of the card.
+    expect(within(card(36)).queryByTestId('q-36-task_verdict')).toBeNull();
+    const f = within(card(36)).getByTestId('followup-36-task_verdict');
+    expect(f).toHaveTextContent('② 顺手给成败结论（选填）');
+    expect(within(f).getByRole('radio', { name: '判失败' })).toBeChecked();
+    expect(f).toHaveTextContent('galbot');
+    expect(within(card(36)).getByText('来源：技能画像')).toBeInTheDocument();
+    expect(within(card(36)).getByTestId('status-36')).toHaveTextContent('已裁');
+    // Opening the rewrite box and going back to 采纳新标注 sends nothing: a repeated label
+    // answer is still a new one to the server, and the verdict would lapse.
+    await user.click(within(card(36)).getByText('自行改写标注'));
+    await user.click(within(card(36)).getByText('采纳新标注'));
+    expect(within(within(card(36)).getByTestId('followup-36-task_verdict')).getByRole('radio', { name: '判失败' })).toBeChecked();
+    // A rewritten label keeps the block open, but the verdict given for the old label lapses.
+    await user.click(within(card(36)).getByText('自行改写标注'));
+    const q = within(card(36)).getByTestId('q-36-label');
+    await user.type(within(q).getByLabelText('改写后的标注'), 'push the plate back');
+    await user.click(within(q).getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 36, line: 'label', decision: 'custom_label', new_label: 'push the plate back' }]));
+    for (const r of within(within(card(36)).getByTestId('followup-36-task_verdict')).getAllByRole('radio')) expect(r).not.toBeChecked();
+    expect(await ep36()).toEqual([
+      ['label', 'skill_profile', null, 'custom_label'],
+      ['task_verdict', 'skill_profile', 'label', null],
+    ]);
+    // Saving the same text again sends nothing either.
+    await user.click(within(q).getByRole('button', { name: '保存' }));
+    // 执行裁决: ep 36 is judged again with the new label; the lapsed verdict is neither counted nor executed.
+    await user.click(screen.getByRole('button', { name: '执行裁决' }));
+    const dialog = await screen.findByRole('dialog', { name: '执行裁决' });
+    const summary = await within(dialog).findByTestId('apply-summary');
+    expect(summary).toHaveTextContent('本次应用 4 条裁决（4 条 episode）。');
+    expect(summary).toHaveTextContent('其中 2 条改了标，要按新标注重判任务成败。');
+    expect(within(dialog).getByTestId('apply-list')).toHaveTextContent('ep 36：改写标注「push the plate back」 → 按新标注重跑任务成败判定');
+    await user.click(within(dialog).getByRole('button', { name: '执行' }));
+    expect(await screen.findByText('已创建执行裁决的子任务')).toBeInTheDocument();
+    expect(posts(seen)).toHaveLength(1);
+    expect(decisionsOf(MAIN_TASK).filter((d) => d.episode_index === 36).map((d) => [d.line, d.decision, d.applied])).toEqual([
+      ['label', 'adopt_suggestion', false],
+      ['task_verdict', 'failure', false],
+      ['label', 'custom_label', true],
+    ]);
+  });
+
   it('without relabels to judge again there is no protocol to pick; the body still says v1', async () => {
     // The earlier relabel (ep 4) was applied already.
     for (const d of decisionsOf(MAIN_TASK)) if (d.episode_index === 4) d.applied = true;
