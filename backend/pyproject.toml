@@ -14,3 +14,4 @@ include = ["curation*", "daemon*"]
 [project.scripts]
 curation = "curation.cli:main"
 curator-daemon = "daemon.__main__:main"
+curator-rotate-master-key = "daemon.secrets.rotate:main"
