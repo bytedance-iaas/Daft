@@ -191,6 +191,36 @@ def test_credential_roles_and_fallback():
         creds.require_tos_credentials("input", {})
 
 
+def test_the_cli_reads_the_environment_the_daemon_builds(monkeypatch):
+    """The Daemon starts every command with ``daemon.secrets.cli_env.build_env`` (W8): the
+    two role key sets, the VLM key under the CLI's default ``--vlm-api-key-env``, inherited
+    ``TOS_*`` stripped (only ``TOS_ENDPOINT`` set again). The CLI reads exactly these."""
+    from curation.adapters import vlm_client
+    from curation.pipeline.config import load_config
+    from daemon.secrets.cli_env import INPUT_ENV, OUTPUT_ENV, VLM_API_KEY_ENV, build_env
+    from daemon.secrets.tos import TosKey
+
+    assert INPUT_ENV == creds.ROLE_ENV["input"] and OUTPUT_ENV == creds.ROLE_ENV["output"]
+    inherited = {"TOS_ACCESS_KEY": "daemon-ak", "TOS_SECRET_KEY": "daemon-sk", "PATH": "/bin"}
+    env = build_env(inherited, input_key=TosKey("in-ak", "in-sk", "in-tok"),
+                    output_key=TosKey("out-ak", "out-sk"), vlm_api_key="vlm-secret",
+                    tos_endpoint="https://tos-cn-beijing.ivolces.com")
+    ci, co = creds.tos_credentials("input", env), creds.tos_credentials("output", env)
+    assert (ci.access_key, ci.secret_key, ci.session_token) == ("in-ak", "in-sk", "in-tok")
+    assert (co.access_key, co.secret_key, co.session_token) == ("out-ak", "out-sk", None)
+    # a public input: no input key, and nothing inherited to fall back on
+    public = build_env(inherited, output_key=TosKey("out-ak", "out-sk"))
+    assert creds.tos_credentials("input", public) is None
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("TOS_REGION", raising=False)
+    assert creds.resolve_region("cn-beijing") == ("cn-beijing",
+                                                  "https://tos-cn-beijing.ivolces.com")
+    key_env = load_config(None)["checks"]["task_success"]["vlm"]["api_key_env"]
+    assert key_env == VLM_API_KEY_ENV
+    assert vlm_client.auth_headers(key_env) == {"Authorization": "Bearer vlm-secret"}
+
+
 def test_region_and_endpoint_rules(monkeypatch):
     monkeypatch.setenv("TOS_ENDPOINT", "https://tos-s3-cn-beijing.ivolces.com")
     assert creds.resolve_region(None) == ("cn-beijing", "https://tos-cn-beijing.ivolces.com")
