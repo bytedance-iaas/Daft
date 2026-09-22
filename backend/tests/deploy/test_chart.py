@@ -520,7 +520,7 @@ def test_ingress_routes_the_prefix_without_rewriting_it(base, path):
     assert rule["host"] == "kit.example.com"
     service = only(docs, "StatefulSet")["metadata"]["name"]
     assert rule["http"]["paths"] == [{"path": path, "pathType": "Prefix", "backend": {
-        "service": {"name": service, "port": {"name": "http"}}}}]
+        "service": {"name": service, "port": {"number": 8080}}}}]    # APIG needs the number
     assert not any("rewrite" in k for k in (ingress["metadata"].get("annotations") or {}))
 
 

@@ -223,6 +223,8 @@ curl -s -u alice localhost:8080/curation/api/v1/tasks/<任务 id>/timeline | pyt
   `ingress.vke.volcengine.com/apig-instance-name` 与 `ingress.vke.volcengine.com/loadbalancer-id`（照同一实例上已有的
   Ingress 抄）。这个 APIG 实例的监听命名空间（`apiginstances` 资源的 `spec.ingress.watchNamespaces`）必须包含部署所在的
   命名空间，否则 Ingress 不会被接管，`kubectl get ingress` 的 ADDRESS 一直为空。实例是共享配置，找它的维护者加。
+  Ingress 的后端要按端口号引用 Service（Chart 已这样写）：按端口名引用时，APIG 控制器建上游报
+  `MissingParameter.UpstreamSpec.K8SService.Port`，同步失败（`kubectl describe ingress` 的事件里能看到）。
 - `/metrics` 目前没有；设计要求它将来只在集群内端口监听，不经 Ingress / APIG 暴露（P7）。
 
 ## 7. 主密钥轮换（08 篇 §2.1）

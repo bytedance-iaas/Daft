@@ -33,7 +33,9 @@ spec:
               service:
                 name: {{ $fullname }}
                 port:
-                  name: http
+                  # a number, not the port name: the VKE APIG controller cannot create its upstream from a
+                  # named port (MissingParameter.UpstreamSpec.K8SService.Port)
+                  number: {{ $.Values.service.port }}
       {{- with .host }}
       host: {{ . | quote }}
       {{- end }}
