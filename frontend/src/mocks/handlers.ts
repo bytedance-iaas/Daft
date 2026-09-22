@@ -1188,12 +1188,14 @@ const report = [
     return HttpResponse.json(countsOf(t.id));
   }),
   http.post(`${API}/tasks/:id/adjudication/apply`, ({ request, params }) =>
-    idempotent(request, () => {
+    idempotent(request, async () => {
       const t = findTask(String(params.id));
       if (!t) return err(404, 'not_found', '任务不存在');
+      // C4 1.4: optional AdjudicationApply body; v1's two layers unless full is asked for (D39).
+      const b = await body<{ relabel_rerun?: 'v1' | 'full' }>(request, 'applyAdjudication');
       if (t.active_subtask) return err(409, 'subtask_active', '这个任务已有未结束的子任务，等它结束后再执行裁决');
       if (countsOf(t.id).unapplied === 0) return err(400, 'validation_failed', '没有尚未应用的裁决');
-      const s = newSubtask(t, 'apply_adjudication', {});
+      const s = newSubtask(t, 'apply_adjudication', { relabel_rerun: b.relabel_rerun ?? 'v1' });
       for (const d of decisionsOf(t.id)) if (d.decision !== 'unsure') d.applied = true;
       t.delivery_stale = true;
       return HttpResponse.json({ subtask: s, links: t.links }, { status: 202 });

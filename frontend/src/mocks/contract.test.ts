@@ -170,7 +170,7 @@ const calls = (): Call[] => [
   { op: 'listAdjudication', method: 'GET', path: `/tasks/${T}/adjudication?tab=appeals&status=all&source=task_success` },
   { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 29, line: 'label', decision: 'custom_label', new_label: 'pour rice into the bowl' }] } },
   { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 18, line: 'reject_appeal', decision: 'restore' }] } },
-  { op: 'applyAdjudication', method: 'POST', path: `/tasks/${T}/adjudication/apply` },
+  { op: 'applyAdjudication', method: 'POST', path: `/tasks/${T}/adjudication/apply`, body: { relabel_rerun: 'full' } },
   { op: 'signMedia', method: 'GET', path: `/media/sign?task=${T}&scope=input&path=videos/chunk-000/wrist/file-000.mp4&ttl=600` },
 ];
 
