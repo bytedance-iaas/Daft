@@ -109,6 +109,18 @@ describe('任务详情 (07 §4.2)', () => {
     expect(await screen.findByText('任务已经开始，只能改名称和备注；要换数据、模块、模型或参数，请复制为新任务')).toBeInTheDocument();
   });
 
+  it('the timeline says how an adjudication judged its relabels again (scope.relabel_rerun, D39)', async () => {
+    renderApp('/tasks/task_01HXPZ2K');
+    // The summary also counts the episodes skipped for missing source files (D40).
+    expect(await screen.findByTestId('report-summary')).toHaveTextContent('缺源文件3未参与质检，不计入总数');
+    const timeline = await screen.findByTestId('timeline');
+    const tags = await within(timeline).findAllByTestId('relabel-rerun-tag');
+    // The apply_adjudication subtask's start and end; the re-export after it has no such tag.
+    expect(tags.map((t) => t.textContent)).toEqual(['改标重判：首轮完整流程', '改标重判：首轮完整流程']);
+    expect(tags[0].closest('.arco-timeline-item')).toHaveTextContent('执行裁决：应用 12 条裁决');
+    expect(within(timeline).getByText('重新导出：只处理变动的 episode。').closest('.arco-timeline-item')).not.toHaveTextContent('改标重判');
+  });
+
   it('a finished task whose access key was deleted offers 重新绑定访问密钥 (rebind-credentials)', async () => {
     db.credentials = db.credentials.filter((c) => c.name !== 'readonly-tos');
     const seen: unknown[] = [];

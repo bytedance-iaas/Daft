@@ -1092,6 +1092,8 @@ export interface components {
         ModuleRegistry: {
             registry_version: string;
             stages: ("numeric" | "frame" | "vlm" | "post_verdict")[];
+            /** @description The questions a person can be asked on the adjudication page (D43). A page shows a line it has no dedicated view for from this entry: its title, the question's reason and one button per decision. */
+            review_lines: components["schemas"]["ReviewLine"][];
             modules: {
                 id: components["schemas"]["ModuleId"];
                 name_zh: string;
@@ -1104,7 +1106,12 @@ export interface components {
                 /** @enum {unknown} */
                 stage: "numeric" | "frame" | "vlm" | "post_verdict";
                 depends_on: ("numeric_gates" | "frame_gates" | "autolabel" | "funnel_verdict" | "dedup")[];
+                /** @description raises review items or its rejects may be appealed */
                 produces_adjudication: boolean;
+                /** @description the lines it raises */
+                review_lines: components["schemas"]["ReviewLineId"][];
+                /** @description a reject attributed to it may be appealed (D42) */
+                appealable: boolean;
                 param_schema: Record<string, unknown>;
                 tables: {
                     id: string;
@@ -1113,6 +1120,25 @@ export interface components {
                     default_sort: string;
                 }[];
                 mergeable: boolean;
+            }[];
+        };
+        /** @description a line of the registry's review_lines; today label, task_verdict, reject_appeal */
+        ReviewLineId: string;
+        ReviewLine: {
+            id: components["schemas"]["ReviewLineId"];
+            /** @description the kind of its review.json items (C2); label_conflict for label */
+            review_kind: string;
+            title_zh: string;
+            /**
+             * @description the list its episodes are in when asked
+             * @enum {unknown}
+             */
+            applies_to: "passed" | "reject";
+            /** @description an open item must be decided; false = a person may act (appeals) */
+            counts_as_pending: boolean;
+            decisions: {
+                const: string;
+                title: string;
             }[];
         };
         BrowsedDataset: {
@@ -1663,10 +1689,11 @@ export interface components {
             redone_after_interruption?: number;
         };
         AdjudicationQuestion: {
-            /** @enum {unknown} */
-            line: "label" | "task_verdict" | "reject_appeal";
+            line: components["schemas"]["ReviewLineId"];
             source_module: components["schemas"]["ModuleId"];
             reason: string;
+            /** @description an appeal of a dedup reject: the episode it duplicates */
+            duplicate_of?: number | null;
             annotation?: string | null;
             caption?: string | null;
             /** @description suggested new label */
@@ -1680,6 +1707,7 @@ export interface components {
             status: "pending" | "decided" | "unsure" | "applied";
             questions: components["schemas"]["AdjudicationQuestion"][];
         };
+        /** @description All three count cards (episodes) over the whole task, not the filtered page. pending and decided cover the cards whose questions belong to lines with counts_as_pending - appeal candidates are optional and never pending; unapplied covers both tabs: cards with an answer that was not executed yet ('unsure' is not one). pending is what the task's pending_adjudication shows. */
         AdjudicationCounts: {
             decided: number;
             pending: number;
@@ -1687,10 +1715,9 @@ export interface components {
         };
         DecisionFields: {
             episode_index: number;
-            /** @enum {unknown} */
-            line: "label" | "task_verdict" | "reject_appeal";
-            /** @enum {unknown} */
-            decision: "adopt_suggestion" | "custom_label" | "keep_label" | "success" | "failure" | "restore" | "keep_rejected" | "unsure" | "discard";
+            line: components["schemas"]["ReviewLineId"];
+            /** @description one of the line's decisions in the registry, on a question the episode's card has; anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label, keep_label, unsure, discard; task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure */
+            decision: string;
             new_label?: string | null;
             note?: string | null;
         };
@@ -1899,7 +1926,10 @@ export interface components {
                 file: string;
             }[];
             adjudication: null | {
+                /** @description open questions this module raised that must be decided */
                 pending: number;
+                /** @description rejects attributed to this module a person may appeal (D42); not pending */
+                appealable?: number;
             };
             episodes_error?: number;
             error?: string;
@@ -3437,7 +3467,7 @@ export interface operations {
             query?: {
                 source?: components["schemas"]["ModuleId"];
                 status?: "pending" | "decided" | "unapplied" | "all";
-                /** @description appeals lists only rejects attributed to task_success */
+                /** @description appeals lists rejects attributed to an appealable module (registry `appealable`; today task_success alone and dedup); physical and structural gates and soft scores are final */
                 tab?: "review" | "appeals";
                 /** @description opaque, from next_cursor */
                 cursor?: components["parameters"]["Cursor"];

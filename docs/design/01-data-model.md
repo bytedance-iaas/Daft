@@ -271,7 +271,7 @@ CREATE TABLE adjudication (
   owner_id    TEXT NOT NULL DEFAULT 'default',
   task_id     TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
   episode_index INTEGER NOT NULL,
-  line        TEXT NOT NULL,              -- 'label'|'task_verdict'|'reject_appeal'
+  line        TEXT NOT NULL,              -- 注册表复核目录里的种类：现在是 'label'|'task_verdict'|'reject_appeal'（D43）
   decision    TEXT NOT NULL,
   new_label   TEXT,                       -- 仅 line='label' 且采纳改标时有值
   note        TEXT,
@@ -283,7 +283,7 @@ CREATE INDEX idx_adj_lookup ON adjudication(task_id, line, episode_index, id);
 ```
 
 三条裁决线与 v1 一致（标注分歧 / 任务成败弃权 / 被拒复议），语义见
-`06-delivery-and-report.md` §5。两条落在表结构上的规则：
+`06-delivery-and-report.md` §5。种类和判断的取值由注册表的复核目录定（D43），表里不写死枚举，加一种复核不改表结构。两条落在表结构上的规则：
 
 - **裁决只属于产生它的任务**（D32）。同一个数据集再跑一个任务、或者写进同一个交付目录，
   都不会带上之前的裁决 —— 每个任务管好自己的数据。这是和 v1 的一处有意差异：

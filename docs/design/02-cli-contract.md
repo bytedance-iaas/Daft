@@ -255,7 +255,8 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 判决规则原样搬运 v1 `pipeline/verdict.py`，不得重写：硬门 `passed=False` 才 drop；
 硬门弃权（`passed=None`）只记入未决项，**不 drop**；软分加权均值低于阈值 drop。
 `passed` / `reject` / `held` 三份互斥，除缺源文件被剔除的条目（D40）外完备；`review` 是独立的复核视图，不和它们并列 ——
-里面的条目多数在 `passed` 里（保守放行、等人确认），也可以在 `reject` 里（被拒复议的候选）。
+里面的条目多数在 `passed` 里（保守放行、等人确认），也可以在 `reject` 里（被拒复议的候选：归因于可复议模块的拒绝，
+现在是只归因于任务成败判定的、和去重的，D42）。已被拒绝的条目不再问成败；`held` 里的条目在补跑出结论之前不进 `review`。
 任何一个已勾选的模块对某条 episode 是 `error`，这一条进 `held`（待补跑），既不算通过也不算拒绝，见 06 篇 §3。
 例外（D35）：正常判完的模块已经足以拒绝它 —— 某个硬门确定失败，或者所有已勾选的软分模块都给了分、加权分低于阈值 ——
 就直接 `drop`，出错的模块照样记在判决行的 `error_modules` 里。出错模块重跑出什么结果，都改变不了这个拒绝。

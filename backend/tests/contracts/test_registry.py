@@ -32,9 +32,29 @@ def test_v1_facts():
     """Design doc 05 section 1: the six funnel checks then dedup and profile on the kept set."""
     assert {m.id for m in M.by_stage("post_verdict")} == {"dedup", "skill_profile"}
     assert M.get("dedup").gate == "dedup" and M.get("skill_profile").gate == "none"
-    assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "skill_profile"}
+    assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "dedup",
+                                                                    "skill_profile"}
     assert {m.id for m in M.MODULES if "vlm" in m.needs} == {"task_success", "skill_profile"}
     assert "autolabel" not in M.ids()
+
+
+def test_review_lines():
+    """D42 / D43: the review catalog is v1's three lines; modules name the lines they raise."""
+    assert [line.id for line in M.REVIEW_LINES] == ["label", "task_verdict", "reject_appeal"]
+    for line in M.REVIEW_LINES:
+        assert line.decisions and len({c for c, _ in line.decisions}) == len(line.decisions)
+        assert M.review_line_of_kind(line.review_kind) is line
+    assert M.review_line("reject_appeal").applies_to == "reject"
+    assert not M.review_line("reject_appeal").counts_as_pending     # an appeal is optional
+    assert all(M.review_line(x).counts_as_pending for x in ("label", "task_verdict"))
+    raised = {x for m in M.MODULES for x in m.review_lines}
+    assert raised <= {line.id for line in M.REVIEW_LINES}
+    assert {m.id for m in M.MODULES if m.appealable} == {"task_success", "dedup"}
+    for m in M.MODULES:
+        assert m.produces_adjudication == bool(m.review_lines or m.appealable), m.id
+    # physical and structural gates and soft scores are final
+    assert not any(M.appealable(m.id) for m in M.MODULES if m.gate in ("soft", "none")
+                   or m.id in ("timestamp_check", "kinematic_limits", "video_action_sync"))
 
 
 def test_params_validate():

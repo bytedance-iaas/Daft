@@ -30,6 +30,12 @@ describe('任务列表 (07 §4.1)', () => {
     expect(screen.getByText('有未结束的任务，每 5 秒自动刷新')).toBeInTheDocument();
   });
 
+  it('a task summary shows the episodes skipped for missing source files when there are any (D40)', async () => {
+    renderApp('/tasks?q=so101');
+    await screen.findByRole('link', { name: 'so101 夜间批次' });
+    expect(row('so101 夜间批次')).toHaveTextContent('通过 968 · 拒绝 56 · 缺源文件 3');
+  });
+
   it('summarises the modules column and names the preset (data driven from the registry)', async () => {
     renderApp('/tasks');
     await screen.findByRole('link', { name: 'droid 前 50 条质检' });

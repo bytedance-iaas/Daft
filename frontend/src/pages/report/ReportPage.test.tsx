@@ -174,6 +174,31 @@ describe('质检报告 (07 §5)', () => {
     await waitFor(() => expect(currentLocation()).toBe(REPORT));
   });
 
+  it('episodes skipped for missing source files are counted apart and listed, with no retry (D40)', async () => {
+    renderApp('/tasks/task_01HXPZ2K/report');
+    const note = await screen.findByTestId('skipped-note');
+    expect(note).toHaveTextContent('另有 3 条缺源文件，未参与质检。');
+    expect(note).toHaveTextContent('补齐文件后另建任务');
+    expect(within(note).queryByRole('button')).toBeNull();
+    // Not part of the equation: the input stays the checked total.
+    expect(within(screen.getByTestId('report-equation')).getByTestId('eq-total')).toHaveTextContent('1024');
+    const list = screen.getByTestId('skipped-episodes');
+    expect(list).toHaveTextContent('缺源文件、未参与质检的 episode（3 条）');
+    const row = (ep: number) => within(list).getByText(`ep ${ep}`).closest('tr') as HTMLElement;
+    expect(row(212)).toHaveTextContent('videos/chunk-000/observation.images.wrist/episode_000212.mp4');
+    expect(row(587)).toHaveTextContent('data/chunk-000/episode_000587.parquet');
+    expect(within(row(901)).getAllByText(/episode_000901\.mp4$/)).toHaveLength(2);
+    // The generic integrity rows do not repeat the list as JSON.
+    expect(screen.getByTestId('integrity')).not.toHaveTextContent('skipped_episodes');
+  });
+
+  it('a report without skipped episodes says nothing about them', async () => {
+    renderApp(REPORT);
+    await screen.findByTestId('report-equation');
+    expect(screen.queryByTestId('skipped-note')).toBeNull();
+    expect(screen.queryByTestId('skipped-episodes')).toBeNull();
+  });
+
   it('a task without results says so', async () => {
     renderApp('/tasks/task_01HXR6T3/report');
     expect(await screen.findByText('任务还没有生成报告：主流程跑完后才有。')).toBeInTheDocument();
