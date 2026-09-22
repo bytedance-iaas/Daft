@@ -190,26 +190,27 @@ def card_status(episode: int, questions: list[Question], decisions: dict) -> str
 class Queue:
     """The task's questions, decisions and cards at its current revision."""
 
-    def __init__(self, store: ResultStore, repo: P.Repository, task: P.Task):
+    def __init__(self, store: ResultStore, repo: P.Repository, task: P.Task, *,
+                 backfill: bool = True):
         self.task = task
-        self.rev = store.current(task)
+        self.rev = store.current(task, backfill=backfill)
         self.revision = self.rev.number if self.rev is not None else 0
         self.decisions = {(int(a.episode_index), a.line): a
                           for a in repo.latest_adjudications(task.id)}
         self.selected = {m.module_id for m in repo.get_task_modules(task.id) if m.selected}
         self.questions: dict[tuple[int, str], Question] = {}
         if self.rev is not None:
-            self._build(store)
+            self._build(store, backfill)
         self._cards: dict[str, list[Card]] = {}
 
-    def _build(self, store: ResultStore) -> None:
+    def _build(self, store: ResultStore, backfill: bool) -> None:
         qs = dict(questions_of(self.rev))
         missing = [k for k in self.decisions if k not in qs]
         for n in range(self.revision - 1, 0, -1):             # answered, then left the review
             if not missing:
                 break
             try:
-                older = store.revision(self.task, n)
+                older = store.revision(self.task, n, backfill=backfill)
             except ApiError:
                 continue
             found = questions_of(older)
@@ -406,10 +407,10 @@ def refresh_summary(store: ResultStore, repo: P.Repository, task_id: str, *,
     task = repo.get_task(task_id, owner=owner)
     if int(task.result_rev or 0) < 1:
         return None, {"decided": 0, "pending": 0, "unapplied": 0}
-    Queue(store, repo, task)                                  # warm the file caches
+    Queue(store, repo, task)                  # warm the file caches (and backfill) first
     with repo.transaction():
         cur = repo.get_task(task_id, owner=owner)
-        queue = Queue(store, repo, cur)
+        queue = Queue(store, repo, cur, backfill=False)
         counts = queue.counts()
         if queue.rev is None:
             return None, counts

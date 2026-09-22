@@ -68,8 +68,12 @@ class ResultStore:
             return False
 
     # -- revisions --------------------------------------------------------------------
-    def revision(self, task: P.Task, rev: int | None = None) -> Revision:
-        """The revision a request reads: ``rev``, or the task's current one."""
+    def revision(self, task: P.Task, rev: int | None = None, *, backfill: bool = True) -> Revision:
+        """The revision a request reads: ``rev``, or the task's current one.
+
+        ``backfill=False`` never calls the hook - for callers inside a repository
+        transaction, where the hook must not run (it may use the repository itself).
+        """
         current = int(task.result_rev or 0)
         if current < 1:
             raise ApiError("not_found", "这个任务还没有结果：第一个结果版本提交之后才有报告和裁决队列",
@@ -82,7 +86,7 @@ class ResultStore:
         run_dir = self.task_dir(task.id)
         missing = f"{revision_rel(number)}/{COMMIT_NAME}"
         if not (run_dir / missing).is_file() and not (
-                self._backfilled(task, missing) and (run_dir / missing).is_file()):
+                backfill and self._backfilled(task, missing) and (run_dir / missing).is_file()):
             if not run_dir.is_dir():
                 raise ApiError("not_found",
                                f"这个任务的本地工作目录已不在（任务结束 7 天后会清理），结果版本 "
@@ -93,11 +97,11 @@ class ResultStore:
                            details={"revision": number, "reason": "revision_missing"})
         return Revision(self, task, number, run_dir)
 
-    def current(self, task: P.Task) -> Revision | None:
+    def current(self, task: P.Task, *, backfill: bool = True) -> Revision | None:
         """The current revision, or None when the task has none yet."""
         if int(task.result_rev or 0) < 1:
             return None
-        return self.revision(task)
+        return self.revision(task, backfill=backfill)
 
 
 def default_input_opener(runtime) -> InputOpener:
