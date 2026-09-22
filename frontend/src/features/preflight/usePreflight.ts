@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, unwrap } from '../../api/client';
 import type { PreflightRequest, PreflightResponse, PreflightResult, ProbeResult } from '../../api/types';
+import { zh } from '../../locales/zh';
 
 /** 07 §3: the preflight fires by itself 600 ms after the address stops changing. */
 export const PREFLIGHT_DEBOUNCE = { ms: 600 };
@@ -78,33 +79,44 @@ export function usePreflight(req: PreflightRequest | null) {
 
 export interface ProbeState {
   key: string;
-  status: 'idle' | 'running' | 'ok' | 'fail';
+  /** warn: written, but the probe object could not be removed (W8 `leftover`, sent with ok: true). */
+  status: 'idle' | 'running' | 'ok' | 'warn' | 'fail';
   message: string;
+  /** forbidden, not_found, auth_failed, unreachable, server_error, failed, leftover (W8). */
+  code: string;
   at: number;
   credential: string;
 }
 
+/** The probe's message, or a Chinese fallback by error code when the Daemon sent none. */
+export function probeMessage(code: string | undefined, message: string | undefined): string {
+  if (message) return message;
+  return (code && zh.taskForm.probeCode[code]) || zh.taskForm.probeCode.failed;
+}
+
 /** The delivery write probe (07 §3: on blur, a real write; v1 behaviour kept). */
 export function useDeliveryProbe() {
-  const [state, setState] = useState<ProbeState>({ key: '', status: 'idle', message: '', at: 0, credential: '' });
+  const [state, setState] = useState<ProbeState>({ key: '', status: 'idle', message: '', code: '', at: 0, credential: '' });
   const seq = useRef(0);
   const probe = useCallback(async (uri: string, region: string, credential: string): Promise<ProbeResult | null> => {
     const k = `${uri}|${region}|${credential}`;
     seq.current += 1;
     const my = seq.current;
-    setState({ key: k, status: 'running', message: '', at: 0, credential });
+    setState({ key: k, status: 'running', message: '', code: '', at: 0, credential });
     try {
       const res = await unwrap(api().POST('/deliveries/probe', { body: { uri, credential, ...(region ? { region } : {}) } }));
-      if (my === seq.current) setState({ key: k, status: res.ok ? 'ok' : 'fail', message: res.error?.message ?? '', at: Date.now(), credential });
+      const code = res.error?.code ?? '';
+      const status = res.ok ? (res.error ? 'warn' : 'ok') : 'fail';
+      if (my === seq.current) setState({ key: k, status, message: res.error ? probeMessage(code, res.error.message) : '', code, at: Date.now(), credential });
       return res;
     } catch (e) {
-      if (my === seq.current) setState({ key: k, status: 'fail', message: e instanceof Error ? e.message : String(e), at: Date.now(), credential });
+      if (my === seq.current) setState({ key: k, status: 'fail', message: e instanceof Error ? e.message : String(e), code: 'failed', at: Date.now(), credential });
       return null;
     }
   }, []);
   const reset = useCallback(() => {
     seq.current += 1;
-    setState({ key: '', status: 'idle', message: '', at: 0, credential: '' });
+    setState({ key: '', status: 'idle', message: '', code: '', at: 0, credential: '' });
   }, []);
   return { ...state, probe, reset };
 }

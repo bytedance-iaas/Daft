@@ -32,6 +32,14 @@ function record(): Seen[] {
 const s1 = () => screen.getByTestId('screen-1');
 const s2 = () => screen.getByTestId('screen-2');
 
+/** The form item whose label starts with `label` (labels may carry a hint in brackets). */
+function formItem(label: string): HTMLElement {
+  const l = [...document.querySelectorAll('label')].find((x) => (x.textContent ?? '').replace(/\s+/g, '').startsWith(label.replace(/\s+/g, '')));
+  const item = l?.closest('.arco-form-item');
+  if (!(item instanceof HTMLElement)) throw new Error(`no form item ${label}`);
+  return item;
+}
+
 describe('新建任务 · 第一屏 (07 §3)', () => {
   it('marks every required field with a red * and validates them before 下一步', async () => {
     const { user } = renderApp('/tasks/new');
@@ -200,7 +208,24 @@ describe('新建任务 · 两屏与提交', () => {
     await user.click(screen.getByRole('button', { name: '创建并开始' }));
     expect(await screen.findByText('任务已保存为待启动，但开始前检查没过：按标出的地方改好后再开始')).toBeInTheDocument();
     await waitFor(() => expect(s1()).toBeVisible());
-    expect(within(s1()).getByText(/对访问密钥 readonly-tos 只读/)).toBeInTheDocument();
+    // details.checks = [{id, ok, code, reason, target, elapsed_ms}] (W8): each failure under its field.
+    expect(within(formItem('交付目录')).getByText(/对访问密钥 readonly-tos 只读/)).toBeInTheDocument();
+    expect(within(formItem('数据集地址')).queryByText(/读不到/)).toBeNull();
+  });
+
+  it('the delivery write probe: a failure is an error, a leftover probe object only a warning (W8)', async () => {
+    const { user } = renderApp('/tasks/new');
+    await screen.findByText('基本信息');
+    await fill(user, '数据集地址', 'tos://pai-kit-datasets/lerobot/new_set');
+    await pick(user, '访问密钥', 'readonly-tos');
+    await pick(user, '交付目录访问密钥', 'prod-tos');
+    await fill(user, '交付目录', 'tos://pai-kit-scratch/out');
+    await user.tab();
+    const out = formItem('交付目录');
+    expect(await within(out).findByRole('status')).toHaveTextContent('写探针通过，但留下了探针对象：探针对象 tos://pai-kit-scratch/out/.curator-probe 已写入，但没能删掉');
+    expect(fieldErrors(out)).toEqual([]);
+    await pick(user, '交付目录访问密钥', /^old-ci/);
+    expect(await within(formItem('交付目录')).findByText('写不进去：访问密钥 old-ci 签名不对（SignatureDoesNotMatch）')).toBeInTheDocument();
   });
 
   it('保存为待启动 creates a created task; editing it later PATCHes with If-Match (D20)', async () => {

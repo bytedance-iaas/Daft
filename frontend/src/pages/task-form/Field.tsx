@@ -12,6 +12,7 @@ export function Field({
   extra,
   notes,
   ok,
+  warn,
   children,
   testId,
 }: {
@@ -21,13 +22,20 @@ export function Field({
   extra?: ReactNode;
   notes?: readonly string[];
   ok?: ReactNode;
+  /** Passed, but with something to fix by hand (a leftover probe object). */
+  warn?: ReactNode;
   children: ReactNode;
   testId?: string;
 }) {
   return (
-    <Form.Item label={label} required={required} validateStatus={error ? 'error' : undefined} help={error} extra={extra} data-testid={testId}>
+    <Form.Item label={label} required={required} validateStatus={error ? 'error' : warn ? 'warning' : undefined} help={error} extra={extra} data-testid={testId}>
       {children}
       {ok ? <div className="field-note-ok">{ok}</div> : null}
+      {warn ? (
+        <div className="field-note-warn" role="status">
+          {warn}
+        </div>
+      ) : null}
       {notes?.map((n) => (
         <div className="field-note-error" key={n} role="alert">
           {n}

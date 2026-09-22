@@ -244,6 +244,10 @@ function backendInUse(b: VlmBackend, model?: string): number {
   return db.tasks.filter((t) => !t.deleted_at && NON_TERMINAL.includes(t.state) && t.vlm?.backend === b.name && (!model || t.vlm.model === model)).length;
 }
 
+function backendHistorical(b: VlmBackend): number {
+  return db.tasks.filter((t) => TERMINAL.includes(t.state) && t.vlm?.backend === b.name).length;
+}
+
 const backends = [
   http.get(`${API}/vlm-backends`, () => HttpResponse.json({ items: db.backends })),
   http.post(`${API}/vlm-backends`, async ({ request }) => {
@@ -281,11 +285,15 @@ const backends = [
     vb.updated_at = clock();
     return HttpResponse.json(vb);
   }),
-  http.delete(`${API}/vlm-backends/:id`, ({ params }) => {
+  http.delete(`${API}/vlm-backends/:id`, ({ request, params }) => {
     const vb = db.backends.find((x) => x.id === params.id);
     if (!vb) return err(404, 'not_found', 'VLM 后端不存在');
+    // W8: an unfinished task is a plain 409; finished ones only need confirm=true.
     const n = backendInUse(vb);
     if (n) return err(409, 'backend_in_use', `VLM 后端「${vb.name}」正被 ${n} 个未结束的任务使用，不能删除`);
+    const hist = backendHistorical(vb);
+    const confirm = new URL(request.url).searchParams.get('confirm') === 'true';
+    if (hist && !confirm) return err(409, 'backend_in_use', `VLM 后端「${vb.name}」被 ${hist} 个已结束的任务引用，删除要确认`, { historical_tasks: hist, confirm_required: true });
     db.backends = db.backends.filter((x) => x !== vb);
     return new HttpResponse(null, { status: 204 });
   }),
@@ -510,14 +518,22 @@ const datasets = [
   }),
 ];
 
+/**
+ * The delivery write probe as the W8 Daemon answers it: error.code is one of forbidden,
+ * not_found, auth_failed, unreachable, server_error, failed; `leftover` comes with ok: true
+ * (written, but the probe object could not be removed).
+ */
 function probe(uri: string, credential: string): { ok: boolean; error?: { code: string; message: string } } {
   const bucket = uri.replace(/^tos:\/\//, '').split('/')[0];
-  if (bucket === PUBLIC_BUCKET) return { ok: false, error: { code: 'readonly', message: 'HuggingFace 缓存桶是只读的，不能当交付目录' } };
+  if (bucket === PUBLIC_BUCKET) return { ok: false, error: { code: 'forbidden', message: 'HuggingFace 缓存桶是只读的，不能当交付目录' } };
   if (credential === 'readonly-tos' || bucket === 'pai-kit-datasets') {
-    return { ok: false, error: { code: 'readonly', message: `存储桶 ${bucket} 对访问密钥 ${credential} 只读，写不进去 —— 换一个可写的存储桶或访问密钥` } };
+    return { ok: false, error: { code: 'forbidden', message: `存储桶 ${bucket} 对访问密钥 ${credential} 只读，写不进去 —— 换一个可写的存储桶或访问密钥` } };
   }
-  if (credential === 'old-ci') return { ok: false, error: { code: 'forbidden', message: '访问密钥 old-ci 签名不对（SignatureDoesNotMatch）' } };
-  if (!db.credentials.some((c) => c.name === credential)) return { ok: false, error: { code: 'not_found', message: `访问密钥「${credential}」不存在` } };
+  if (credential === 'old-ci') return { ok: false, error: { code: 'auth_failed', message: '访问密钥 old-ci 签名不对（SignatureDoesNotMatch）' } };
+  if (!db.credentials.some((c) => c.name === credential)) return { ok: false, error: { code: 'failed', message: `访问密钥「${credential}」不存在` } };
+  if (bucket.includes('nosuch')) return { ok: false, error: { code: 'not_found', message: `存储桶 ${bucket} 不存在（NoSuchBucket）` } };
+  if (bucket.includes('offline')) return { ok: false, error: { code: 'unreachable', message: '连不上 TOS 端点：10 秒内没有响应' } };
+  if (bucket.includes('scratch')) return { ok: true, error: { code: 'leftover', message: `探针对象 ${uri.replace(/\/+$/, '')}/.curator-probe 已写入，但没能删掉（没有 DeleteObject 权限），请手动清理` } };
   return { ok: true };
 }
 
@@ -602,17 +618,39 @@ function moduleIds(choices: ModuleChoice[]): string[] {
 
 type StartFailure = Response | null;
 
-/** The three pre-start checks (D30) and the fingerprint check (D37). */
+interface PrecheckResult {
+  id: 'input' | 'output' | 'vlm';
+  ok: boolean;
+  code?: string;
+  reason?: string;
+  target: string;
+  elapsed_ms: number;
+}
+
+/** The three pre-start checks (D30) and the fingerprint check (D37); details.checks as W8 sends it. */
 function startChecks(t: Task): StartFailure {
-  const checks: { check: 'input' | 'output' | 'vlm'; ok: boolean; reason?: string }[] = [];
+  const checks: PrecheckResult[] = [];
   const inBad = t.input.credential === 'old-ci' || /nope|missing/.test(t.input.uri);
-  checks.push(inBad ? { check: 'input', ok: false, reason: `用访问密钥 ${t.input.credential ?? '（匿名）'} 读不到 meta/info.json` } : { check: 'input', ok: true });
+  checks.push(
+    inBad
+      ? { id: 'input', ok: false, code: 'auth_failed', reason: `用访问密钥 ${t.input.credential ?? '（匿名）'} 读不到 meta/info.json`, target: `${t.input.uri}/meta/info.json`, elapsed_ms: 212 }
+      : { id: 'input', ok: true, target: `${t.input.uri}/meta/info.json`, elapsed_ms: 188 },
+  );
   const p = probe(t.output.uri, t.output.credential);
-  checks.push(p.ok ? { check: 'output', ok: true } : { check: 'output', ok: false, reason: p.error?.message ?? '交付目录写不进去' });
+  checks.push(
+    p.ok
+      ? { id: 'output', ok: true, ...(p.error ? { code: p.error.code, reason: p.error.message } : {}), target: t.output.uri, elapsed_ms: 305 }
+      : { id: 'output', ok: false, code: p.error?.code ?? 'failed', reason: p.error?.message ?? '交付目录写不进去', target: t.output.uri, elapsed_ms: 290 },
+  );
   if (t.vlm) {
     const vb = db.backends.find((b) => b.name === t.vlm!.backend);
     const bad = !vb || vb.verify_state === 'failed';
-    checks.push(bad ? { check: 'vlm', ok: false, reason: vb ? `用 ${vb.name} 的 ${t.vlm.model} 发最小请求失败：${vb.last_verify_error ?? '调不通'}` : `VLM 后端「${t.vlm.backend}」不存在` } : { check: 'vlm', ok: true });
+    const target = `${t.vlm.backend} / ${t.vlm.model}`;
+    checks.push(
+      bad
+        ? { id: 'vlm', ok: false, code: vb ? 'unreachable' : 'not_found', reason: vb ? `用 ${vb.name} 的 ${t.vlm.model} 发最小请求失败：${vb.last_verify_error ?? '调不通'}` : `VLM 后端「${t.vlm.backend}」不存在`, target, elapsed_ms: 10_004 }
+        : { id: 'vlm', ok: true, target, elapsed_ms: 1_320 },
+    );
   }
   if (checks.some((c) => !c.ok)) {
     return err(422, 'precheck_failed', `开始前检查没过：${checks.filter((c) => !c.ok).map((c) => c.reason).join('；')}`, { checks });

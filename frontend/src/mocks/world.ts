@@ -511,6 +511,7 @@ interface TaskSeed {
   pauseReason?: Task['pause_reason'];
   stateReason?: string | null;
   vlm?: boolean;
+  vlmChoice?: { backend: string; model: string };
   note?: string | null;
   runId?: string | null;
   embodiment?: string | null;
@@ -537,7 +538,7 @@ function buildTask(s: TaskSeed): Task {
     episodes: s.episodes,
     embodiment_id: s.embodiment ?? null,
     // No `snapshot`: C4 1.1.0 composes it with the closed VlmChoice, so no instance with it validates.
-    vlm: vlm ? { backend: 'ark-prod', model: 'doubao-seed-2-0-pro-260215', reasoning_effort: null } : null,
+    vlm: vlm ? { backend: s.vlmChoice?.backend ?? 'ark-prod', model: s.vlmChoice?.model ?? 'doubao-seed-2-0-pro-260215', reasoning_effort: null } : null,
     params: { start_now: s.state !== 'created', export: true, vlm_retry: 3, vlm_hedge: true, clips: false },
     source: started ? { objects: 204, bytes: 1_520_331_122, digest: DIGEST2 } : null,
     progress: { stages: s.stages },
@@ -778,6 +779,8 @@ export function seedTasks(now: number): Task[] {
       usage: usageTotals(300_000, 9_000, 3_000, 100_000, 200),
       embodiment: 'aloha',
       resultRev: 0,
+      // A finished task on ark-ep: deleting that backend needs confirm=true (W8 behaviour).
+      vlmChoice: { backend: 'ark-ep', model: 'ep-20260915173012-x7k2p' },
     },
   ];
   // Older finished tasks, so the list really paginates.

@@ -70,7 +70,8 @@ export function SignedVideo({ task, video, playSignal = 0, caption }: { task: st
   const failures = useRef(0);
   const wantPlay = useRef(false);
   const resume = useRef<{ time: number; play: boolean } | null>(null);
-  const url = sign.data ? withFragment(sign.data.url, sign.data.from_ts ?? video.from_ts, sign.data.to_ts ?? video.to_ts) : null;
+  // The episode's time range comes from the episode endpoint (W8 does not return it when signing).
+  const url = sign.data ? withFragment(sign.data.url, video.from_ts, video.to_ts) : null;
 
   useEffect(() => {
     if (!playSignal) return;

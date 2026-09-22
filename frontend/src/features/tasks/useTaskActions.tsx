@@ -23,14 +23,18 @@ export interface ActionTarget {
 }
 
 export interface PrecheckItem {
+  /** input | output | vlm */
   check: string;
   ok: boolean;
+  code?: string;
   reason?: string;
+  target?: string;
 }
 
 /**
- * precheck_failed carries «a per-check reason» (C4) without a fixed shape; accept a list of
- * {check, ok, reason}, or a map {input: {ok, reason} | "reason"}.
+ * precheck_failed: C4 1.1.0 only says «a per-check reason». The W8 Daemon sends
+ * details.checks = [{id: input|output|vlm, ok, code, reason (Chinese), target, elapsed_ms}];
+ * older shapes ({check|name, ok, reason} or a map {input: {ok, reason} | "reason"}) still read.
  */
 export function precheckItems(details: Record<string, unknown> | undefined): PrecheckItem[] {
   if (!details) return [];
@@ -38,7 +42,13 @@ export function precheckItems(details: Record<string, unknown> | undefined): Pre
   if (Array.isArray(raw)) {
     return raw
       .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === 'object')
-      .map((x) => ({ check: String(x.check ?? x.name ?? ''), ok: Boolean(x.ok), reason: x.reason ? String(x.reason) : undefined }));
+      .map((x) => ({
+        check: String(x.id ?? x.check ?? x.name ?? ''),
+        ok: Boolean(x.ok),
+        code: typeof x.code === 'string' ? x.code : undefined,
+        reason: x.reason ? String(x.reason) : undefined,
+        target: typeof x.target === 'string' && x.target ? x.target : undefined,
+      }));
   }
   if (raw && typeof raw === 'object') {
     return Object.entries(raw as Record<string, unknown>)
@@ -61,6 +71,7 @@ export function showPrecheckFailure(err: ApiError): void {
         {items.map((i) => (
           <li key={i.check} style={{ color: i.ok ? 'var(--c-success)' : 'var(--c-danger)' }}>
             {zh.actions.precheck[i.check] ?? i.check}：{i.ok ? '通过' : i.reason ?? '没过'}
+            {!i.ok && i.target ? <div className="mono muted">{i.target}</div> : null}
           </li>
         ))}
       </ul>

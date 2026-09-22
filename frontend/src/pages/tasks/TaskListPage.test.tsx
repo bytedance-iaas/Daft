@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
 import { describe, expect, it } from 'vitest';
+import { findTask } from '../../mocks/db';
 import { server } from '../../mocks/server';
 import { requiredFieldLabels } from '../../test/forms';
 import { currentLocation, renderApp } from '../../test/render';
@@ -110,6 +111,18 @@ describe('任务列表 (07 §4.1)', () => {
     await user.type(input, 'droid 前 50 条质检');
     await user.click(within(dialog).getByRole('button', { name: '清理' }));
     expect(await screen.findByText(/已开始清理 tos:\/\/pai-kit-deliveries\/droid-50\/20260920-130514\//)).toBeInTheDocument();
+  });
+
+  it('启动 that fails the pre-start checks lists every check with its reason and target (W8 details.checks)', async () => {
+    findTask('task_01HXR6T3')!.output.credential = 'readonly-tos';
+    const { user } = renderApp('/tasks');
+    await screen.findByRole('link', { name: 'libero-10 抽检' });
+    await user.click(within(row('libero-10 抽检')).getByRole('button', { name: '启动' }));
+    const dialog = await screen.findByRole('dialog', { name: '开始前检查没过，任务没有开始' });
+    const list = within(dialog).getByTestId('precheck-list');
+    expect(list).toHaveTextContent('数据集能读：通过');
+    expect(list).toHaveTextContent('交付目录能写：存储桶 pai-kit-deliveries 对访问密钥 readonly-tos 只读');
+    expect(list).toHaveTextContent('tos://pai-kit-deliveries/libero_10-0920');
   });
 
   it('shows the page-level error with the Daemon message when the list cannot load', async () => {

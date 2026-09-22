@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { db } from '../../mocks/db';
 import { findDrawer, fill, pick } from '../../test/arco';
 import { fieldErrors, requiredFieldLabels } from '../../test/forms';
 import { recordRequests } from '../../test/record';
@@ -8,6 +9,8 @@ import { currentLocation, renderApp } from '../../test/render';
 function row(table: HTMLElement, name: string): HTMLElement {
   return within(table).getByText(name).closest('tr') as HTMLElement;
 }
+
+const findCredential = (id: string) => db.credentials.find((c) => c.id === id);
 
 describe('密钥与资源管理 (07 §7)', () => {
   it('lists keys with verify states and references; secrets never appear', async () => {
@@ -81,6 +84,41 @@ describe('密钥与资源管理 (07 §7)', () => {
     expect(del?.path).toBe('/credentials/cred_oldci');
     expect(del?.query.get('confirm')).toBe('true');
     await waitFor(() => expect(within(screen.getByTestId('keys-table')).queryByText('old-ci')).toBeNull());
+  });
+
+  it('删除 a backend only finished tasks use: 409 confirm_required, a second dialog, then confirm=true (W8)', async () => {
+    const seen = recordRequests();
+    const { user } = renderApp('/credentials#vlm');
+    const table = await screen.findByTestId('backends-table');
+    await within(table).findByText('ark-ep');
+    await user.click(within(row(table, 'ark-ep')).getByRole('button', { name: '删除' }));
+    const first = await screen.findByRole('dialog', { name: '删除 VLM 后端「ark-ep」' });
+    await user.click(within(first).getByRole('button', { name: '删除' }));
+    const again = await screen.findByTestId('delete-confirm-again');
+    expect(again).toHaveTextContent('VLM 后端「ark-ep」被 1 个已结束的任务引用，删除要确认');
+    const deletes = () => seen.filter((r) => r.method === 'DELETE' && r.path === '/vlm-backends/vb_ark_ep');
+    expect(deletes().map((r) => r.query.get('confirm'))).toEqual([null]);
+    await user.click(screen.getByRole('button', { name: '仍然删除' }));
+    expect(await screen.findByText('已删除')).toBeInTheDocument();
+    expect(deletes().map((r) => r.query.get('confirm'))).toEqual([null, 'true']);
+    await waitFor(() => expect(within(screen.getByTestId('backends-table')).queryByText('ark-ep')).toBeNull());
+  });
+
+  it('a key whose references changed since the list loaded still gets the second confirmation', async () => {
+    const seen = recordRequests();
+    const { user } = renderApp('/credentials');
+    const table = await screen.findByTestId('keys-table');
+    await within(table).findByText('partner-upload');
+    // A task finished with this key after the list was loaded.
+    findCredential('cred_partner')!.references = { active_tasks: 0, historical_tasks: 2 };
+    await user.click(within(row(table, 'partner-upload')).getByRole('button', { name: '删除' }));
+    const first = await screen.findByRole('dialog', { name: '删除访问密钥「partner-upload」' });
+    expect(first).toHaveTextContent('删除后不能恢复。');
+    await user.click(within(first).getByRole('button', { name: '删除' }));
+    expect(await screen.findByTestId('delete-confirm-again')).toHaveTextContent('被 2 个已结束的任务引用');
+    await user.click(screen.getByRole('button', { name: '仍然删除' }));
+    expect(await screen.findByText('已删除')).toBeInTheDocument();
+    expect(seen.filter((r) => r.method === 'DELETE').map((r) => r.query.get('confirm'))).toEqual([null, 'true']);
   });
 
   it('重新验证 shows the result with its reason', async () => {

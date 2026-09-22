@@ -2,10 +2,10 @@ import { Alert, Button, Card, Message, Modal, Space, Table, Tabs, Tag } from '@a
 import type { ColumnProps } from '@arco-design/web-react/es/Table';
 import { IconPlus } from '@arco-design/web-react/icon';
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
-import { errorMessage } from '../../api/errors';
+import { ApiError, errorMessage } from '../../api/errors';
 import { qk, useBackends, useCredentials } from '../../api/queries';
 import type { Credential, VerifyResult, VlmBackend } from '../../api/types';
 import { PageError } from '../../components/PageError';
@@ -77,6 +77,38 @@ export function KeysPage() {
     }
   };
 
+  /**
+   * Delete, the W8 way: a resource that only finished tasks reference answers 409 with
+   * details.confirm_required; after a second dialog the DELETE is repeated with confirm=true.
+   * A reference by an unfinished task is a plain 409 whose message is shown as is.
+   */
+  const confirmDelete = (o: { title: string; content: ReactNode; again: string; confirmed: boolean; call: (confirm: boolean) => Promise<unknown>; done: () => void }) => {
+    const run = async (confirm: boolean) => {
+      try {
+        await o.call(confirm);
+        Message.success(zh.credentials.deleted);
+        o.done();
+      } catch (e) {
+        if (!confirm && e instanceof ApiError && e.details?.confirm_required === true) {
+          Modal.confirm({
+            title: o.title,
+            content: (
+              <div data-testid="delete-confirm-again">
+                <p style={{ marginTop: 0 }}>{e.message}</p>
+                <p style={{ marginBottom: 0 }}>{o.again}</p>
+              </div>
+            ),
+            okText: zh.credentials.deleteAnyway,
+            cancelText: zh.common.cancel,
+            okButtonProps: { status: 'danger' },
+            onOk: () => run(true),
+          });
+        } else Message.error(errorMessage(e));
+      }
+    };
+    Modal.confirm({ title: o.title, content: o.content, okText: zh.common.delete, cancelText: zh.common.cancel, okButtonProps: { status: 'danger' }, onOk: () => run(o.confirmed) });
+  };
+
   const deleteKey = (c: Credential) => {
     const active = c.references?.active_tasks ?? 0;
     const historical = c.references?.historical_tasks ?? 0;
@@ -84,42 +116,26 @@ export function KeysPage() {
       Modal.info({ title: zh.credentials.deleteKeyTitle(c.name), content: zh.credentials.deleteKeyActive(active), okText: zh.common.ok });
       return;
     }
-    Modal.confirm({
+    confirmDelete({
       title: zh.credentials.deleteKeyTitle(c.name),
       content: historical ? zh.credentials.deleteKeyHistorical(historical) : zh.credentials.deleteKeyPlain,
-      okText: zh.common.delete,
-      cancelText: zh.common.cancel,
-      okButtonProps: { status: 'danger' },
-      onOk: async () => {
-        try {
-          // Keys referenced only by finished tasks need confirm=true: the dialog above is that confirmation.
-          await unwrap(api().DELETE('/credentials/{id}', { params: { path: { id: c.id }, query: historical ? { confirm: true } : {} } }));
-          Message.success(zh.credentials.deleted);
-          void qc.invalidateQueries({ queryKey: qk.credentials });
-        } catch (e) {
-          Message.error(errorMessage(e));
-        }
-      },
+      again: zh.credentials.deleteAgainKey,
+      // The reference counts are on the key, so the first dialog already said what confirm=true means.
+      confirmed: historical > 0,
+      call: (confirm) => unwrap(api().DELETE('/credentials/{id}', { params: { path: { id: c.id }, query: confirm ? { confirm: true } : {} } })),
+      done: () => void qc.invalidateQueries({ queryKey: qk.credentials }),
     });
   };
 
+  // C4 has no reference counts for backends: the Daemon tells (confirm_required) after the first DELETE.
   const deleteBackend = (b: VlmBackend) =>
-    Modal.confirm({
+    confirmDelete({
       title: zh.credentials.deleteBackendTitle(b.name),
       content: zh.credentials.deleteBackendContent,
-      okText: zh.common.delete,
-      cancelText: zh.common.cancel,
-      okButtonProps: { status: 'danger' },
-      onOk: async () => {
-        try {
-          // C4 has no reference counts for backends, so the dialog always counts as the confirmation.
-          await unwrap(api().DELETE('/vlm-backends/{id}', { params: { path: { id: b.id }, query: { confirm: true } } }));
-          Message.success(zh.credentials.deleted);
-          void qc.invalidateQueries({ queryKey: qk.backends });
-        } catch (e) {
-          Message.error(errorMessage(e));
-        }
-      },
+      again: zh.credentials.deleteAgainBackend,
+      confirmed: false,
+      call: (confirm) => unwrap(api().DELETE('/vlm-backends/{id}', { params: { path: { id: b.id }, query: confirm ? { confirm: true } : {} } })),
+      done: () => void qc.invalidateQueries({ queryKey: qk.backends }),
     });
 
   const keyColumns: ColumnProps<Credential>[] = [

@@ -57,6 +57,7 @@ export function BasicSection(p: BasicSectionProps) {
   const probeForField = p.probe.key.startsWith(`${v.outputUri.trim()}|`) && Boolean(v.outputUri.trim());
   const probeOk = probeForField && p.probe.status === 'ok' ? zh.taskForm.probeOk(shortTime(p.probe.at), p.probe.credential) : undefined;
   const probeError = probeForField && p.probe.status === 'fail' ? zh.taskForm.probeFail(p.probe.message) : undefined;
+  const probeWarn = probeForField && p.probe.status === 'warn' ? zh.taskForm.probeLeftover(p.probe.message) : undefined;
   const registeredOptions = p.registered
     .filter((d) => d.source === 'tos' && (!v.datasetUri || d.uri.includes(v.datasetUri) || d.name.includes(v.datasetUri)))
     .slice(0, 20)
@@ -200,6 +201,7 @@ export function BasicSection(p: BasicSectionProps) {
             required
             error={errors.outputUri ?? probeError}
             ok={probeOk ?? (probeForField && p.probe.status === 'running' ? zh.taskForm.probeRunning : undefined)}
+            warn={errors.outputUri ? undefined : probeWarn}
             notes={p.outputNote ? [p.outputNote] : undefined}
           >
             <Input
