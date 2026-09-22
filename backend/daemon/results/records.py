@@ -9,10 +9,10 @@ directory restored from the delivery location may only have the compacted file; 
 that file is read instead.
 
 An index maps each episode to the byte range of its winning line, so a lookup reads
-one line instead of every part. Building it scans the lines for the top-level
-``episode_index`` without parsing each one (the CLI writes records with sorted keys,
-where the top-level key is the last match); every lookup parses its line and checks
-it, and a mismatch rebuilds the index with full parsing.
+one line instead of every part. Building it finds ``"episode_index": N`` in each line
+without parsing it; a line where the key appears more than once (nested in
+``details``) is parsed. Every lookup parses its line and checks it, and a mismatch
+rebuilds the index with full parsing.
 
 This is exact as long as a part is never appended to after a revision that used it
 was committed - the CLI writes a new part for every ``check`` call.
@@ -80,8 +80,8 @@ class RecordIndex:
             return None
         if not self.exact:
             matches = _EP_RE.findall(line)
-            if matches:
-                return int(matches[-1])
+            if len(matches) == 1:                        # unambiguous; several = nested keys
+                return int(matches[0])
         try:
             rec = json.loads(line)
         except ValueError:
