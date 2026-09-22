@@ -904,6 +904,7 @@ export const zh = {
     colNote: '说明',
     usesVlm: '调用模型',
     goAdjudicate: (n: number) => `去裁决（${n}）`,
+    goAppeal: (n: number) => `可复议（${n}）`,
     fromSubtask: (name: string) => `这一节的结果来自子任务「${name}」。`,
     episodesError: (n: number) => `出错 ${n} 条（待补跑）`,
     failedTitle: '这个模块没有跑完',
