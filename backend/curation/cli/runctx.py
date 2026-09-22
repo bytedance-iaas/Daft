@@ -67,6 +67,9 @@ def add_vlm(p: argparse.ArgumentParser) -> None:
     g.add_argument("--vlm-api-key-env", metavar="VAR",
                    default=os.environ.get("CURATION_VLM_API_KEY_ENV") or None,
                    help="the environment variable holding the API key (default ARK_API_KEY)")
+    g.add_argument("--vlm-reasoning-effort", metavar="LEVEL",
+                   help="send reasoning_effort=LEVEL with every model request (default: "
+                        "none sent, as v1); the level is not checked here")
 
 
 def add_behaviour(p: argparse.ArgumentParser) -> None:
@@ -426,8 +429,9 @@ class VlmSession:
         self.booker = vlm_policy.UsageBooker(self.module, str(self._vlm()["model"]),
                                              emit=self.ctx.emitter.emit,
                                              persist=self._usage_log.write)
-        policy = vlm_policy.TransportPolicy(hedge=bool(self.args.hedge),
-                                            retry=RetryPolicy(max_retries=int(self.args.retry or 0)))
+        policy = vlm_policy.TransportPolicy(
+            hedge=bool(self.args.hedge), retry=RetryPolicy(max_retries=int(self.args.retry or 0)),
+            reasoning_effort=getattr(self.args, "vlm_reasoning_effort", None) or None)
         self._installed = vlm_policy.installed(policy, usage=self.booker)
         self._installed.__enter__()
         self._mark = latency_mark()

@@ -34,7 +34,10 @@ under the command's module (``autolabel``, ``task_success``, ``skill_profile``)
 and the request's latency tag as ``call_kind``, and every line is emitted as a
 C3 ``usage`` event and appended to the run directory's ``usage.jsonl``.
 
-Nothing here changes a request body, so the VLM call graph stays v1's.
+Nothing here changes a request body, so the VLM call graph stays v1's - with
+one opt-in exception: ``--vlm-reasoning-effort <level>`` (``reasoning_effort``)
+adds that field to every chat request while the policy is installed. Without
+it nothing is added (v1 never sent a thinking parameter; parity runs without).
 """
 from __future__ import annotations
 
@@ -57,9 +60,26 @@ class TransportPolicy:
     sleep: Callable[[float], None] = time.sleep
     #: called with (tag, "ok" | failure cause) for every logical call (the throttle's feed)
     on_outcome: Callable[[str, str], None] | None = None
+    #: sent as ``reasoning_effort`` in every chat request when set (the Daemon checks
+    #: it against the model); None sends nothing
+    reasoning_effort: str | None = None
 
 
 _ACTIVE: dict = {"policy": None, "orig": None}
+
+
+def _with_reasoning_effort(post, effort: str):
+    """``requests.post`` adding ``reasoning_effort`` to chat-completion bodies. v1's
+    clients look ``requests.post`` up when they send, so every model request gets it."""
+
+    def post_with_effort(url, *args, **kwargs):
+        payload = kwargs.get("json")
+        if isinstance(payload, dict) and "reasoning_effort" not in payload \
+                and str(url).rstrip("/").endswith("/chat/completions"):
+            kwargs["json"] = {**payload, "reasoning_effort": effort}
+        return post(url, *args, **kwargs)
+
+    return post_with_effort
 _LOCK = threading.Lock()
 
 
@@ -306,13 +326,19 @@ class installed:
         with _LOCK:
             if _ACTIVE["policy"] is not None:
                 raise RuntimeError("a transport policy is already installed")
+            import requests
+
             _ACTIVE["orig"] = {"hedged_request": vlm_client.hedged_request,
                                "make_llm_ask": vlm_client.make_llm_ask,
-                               "_map_concurrent": vlm_client._map_concurrent}
+                               "_map_concurrent": vlm_client._map_concurrent,
+                               "post": requests.post}
             _ACTIVE["policy"] = self.policy
             vlm_client.hedged_request = policy_hedged_request
             vlm_client.make_llm_ask = policy_make_llm_ask
             vlm_client._map_concurrent = policy_map_concurrent
+            if self.policy.reasoning_effort:
+                requests.post = _with_reasoning_effort(requests.post,
+                                                       str(self.policy.reasoning_effort))
             if self.usage is not None:
                 vlm_client.set_usage_sink(self.usage.note)
         return self
@@ -323,9 +349,12 @@ class installed:
         with _LOCK:
             orig = _ACTIVE["orig"] or {}
             if orig:
+                import requests
+
                 vlm_client.hedged_request = orig["hedged_request"]
                 vlm_client.make_llm_ask = orig["make_llm_ask"]
                 vlm_client._map_concurrent = orig["_map_concurrent"]
+                requests.post = orig["post"]
             vlm_client.set_usage_sink(None)
             _ACTIVE["policy"] = None
             _ACTIVE["orig"] = None

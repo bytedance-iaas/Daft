@@ -125,6 +125,29 @@ def test_one_attempt_per_request_unless_retry_is_given(vlm_stage, tmp_path):
     _same_as_reference(rd, vlm_stage)
 
 
+def test_reasoning_effort_is_sent_only_when_given(vlm_stage, tmp_path):
+    """--vlm-reasoning-effort puts reasoning_effort into every model request of check
+    and autolabel; without it no request has the field (v1 never sent one)."""
+    rd = _copy(vlm_stage, tmp_path, "plain")
+    with FakeVlmServer() as vlm:
+        assert _vlm_check(vlm_stage, rd, vlm.url).rc == 0
+    assert _posts(vlm) and not any("reasoning_effort" in c["payload"] for c in _posts(vlm))
+
+    before = requests.post
+    rd = _copy(vlm_stage, tmp_path, "effort")
+    with FakeVlmServer() as vlm:
+        assert _vlm_check(vlm_stage, rd, vlm.url, "--vlm-reasoning-effort", "minimal").rc == 0
+        os.remove(os.path.join(rd, "autolabel", "captions.jsonl"))
+        al = run("autolabel", "--input", vlm_stage["dataset"], "--run-dir", rd, "--episodes",
+                 "0-7", "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm",
+                 "--vlm-reasoning-effort", "minimal")
+        assert al.rc == 0, al.doc
+    posts = _posts(vlm)
+    assert any("All cameras show the SAME robot episode" in c["text"] for c in posts)
+    assert posts and all(c["payload"]["reasoning_effort"] == "minimal" for c in posts)
+    assert requests.post is before                      # restored after each command
+
+
 def test_text_calls_are_one_request_with_v1s_body(tmp_path):
     """v1's text client tries four times on its own; under the CLI a text call is one
     request, the outer retry adds tries, and the request body is v1's."""
