@@ -89,14 +89,32 @@ Current summary:
         F2.6 保持 not_completed：「拿验证失败的密钥开始任务会被拦」要等 W5 调用检查库。W8 的 10 处契约缺口记入 SUMMARY §七（1.3 待改）；
         设计 08 跟进（轮换步骤、拉到的模型不逐个试调、子进程环境只放回 TOS_ENDPOINT）
       · 18:40 前再次因会话额度中断（W4 续作、W3 后半、W10），18:43 用原上下文恢复
+      · 合并 W3 后半（b3939f0d1）：其余原子命令（autolabel、check、aggregate、export、report、adjudicate-apply）建在 v1 流水线上，
+        B 类编排按需改、A 类未动；合成数据上冻结点 v1 对 v2 逐位对账 all-strict 通过（调用图 hits=121、misses=0），进 CI。
+        随后修掉「恢复为可用的复议条目被放进 held」「裁决后又跑一次去重」两个问题（bf68f5208）
+      · 合并 W4 续作（2332d26cc）：数据集登记与浏览、概览、仓储与只读接口跟上契约 1.1/1.2
+      · 契约 1.3（075fcce9a）：Decision / DatasetDetail 改成共享字段 + unevaluatedProperties，终于能通过校验；19 个写接口补
+        Idempotency-Key；PrecheckDetails、探针错误码、删除被已结束任务引用的密钥需确认、签名前缀、会话令牌、Subtask.pause_reason；
+        C5 并入概览等六个查询和两个引用计数
+      · 合并 W10 前端（53a1cf3e6、126938cbd）：八页 React（Arco），对着按契约校验的 mock 开发，181 条测试，接入 CI（Node 20/22）；
+        Daemon + 前端在 /curation 下对真接口实测：概览、密钥、任务、数据集四页正常，只有 datasets/browse 404（归 W5a）
+      · W3 核对 v1 找出三处差异，需求方拍板（评审记录 §12）：D39 改标重判默认用 v1 的两层（打分 + 逐机位复核），页面说明并可选
+        首轮完整流程；D40 源文件缺失的 episode 照 v1 剔除，报告列出；D41 技能画像整体失败维持全部待补跑、等重试。
+        未被否决的默认：review 种类照 v1；重复项又被人判成功仍按重复项拒绝；--vlm-reasoning-effort 给了才发
+      · 契约 1.4：C4 1.4.0 执行裁决可选请求体 relabel_rerun（v1 / full）并记进子任务 scope、Summary.skipped；C2 共用的
+        skipped_episodes（源文件清单、check 输出、report 完整性）、decisions / adjudicate-apply 的 relabel_rerun、final-list
+        的 review 口径；设计 00–03、06、07、10 与账本跟进；契约 74、Daemon 312、v2 全部 1194 条、前端 181 条测试通过
+      · 在跑：W5a 编排与执行器、W5b 读结果的接口（worktree 均从 126938cbd 起）
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
-  - 批次 2：W8 已合并；W3 后半、W10、W4 续作进行中；W5 待 W4 续作合并后开
-  - compare 目前只读导出目录；v2 运行目录的读取随 W3 补（行格式已由 C2 冻结）
+  - F2.1：D39、D40、review 口径、--vlm-reasoning-effort 待 W3 实现（契约 1.4 已定）
+  - F2.2：裁决队列与 episode 列表的游标接口在 W5b；F2.6「拿验证失败的密钥开始任务会被拦」、F2.7 D37 在 W5a
+  - F2.4 的 planner 已接入 check（W3 后半），编排侧的计划下发随 W5a；F3.2 / F3.3 等 W5 合并后对真接口联调
+  - W11 镜像（Node 构建阶段、COPY daemon 与 docs/contracts）与 Helm（CURATOR_TZ_OFFSET）未开始
 
 Next steps:
-  1. 各 agent 交付后逐个合并验证：W4 续作 → 开 W5（执行器、编排、CLI 驱动的接口、读报告的接口、D37 开始前核对）；
-     W8、W3 后半、W10 合并时按各自报告落地公共文件改动
-  2. W5 做完裁决队列与 episode 列表的游标接口后，F2.2 置 completed
-  3. 真实数据的两个基线在 F4.2 黄金对账之前补
+  1. 恢复 W3 做 D39 / D40 / review 口径 / --vlm-reasoning-effort；通知 W10 做执行裁决确认框的口径说明与选项、报告的跳过清单；
+     通知 W5a 把 relabel_rerun 传给 CLI、Summary.skipped 从报告取
+  2. W5a、W5b 交付后逐个合并验证（边界检查、测试、公共文件改动），F2.2、F2.6、F2.7 按验收置位
+  3. 之后开 W11；真实数据的两个基线在 F4.2 黄金对账之前补

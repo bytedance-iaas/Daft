@@ -23,6 +23,7 @@
         "oneOf": [{"required": ["etag"]}, {"required": ["mtime_ns"]}]
       }
     },
+    "skipped_episodes": {"$ref": "common.schema.json#/$defs/skipped_episodes", "description": "selected episodes whose parquet or a camera's video is not in the listing; commands given this manifest never read them (D40). Absent or empty when every selected episode is complete"},
     "summary": {
       "type": "object",
       "additionalProperties": false,

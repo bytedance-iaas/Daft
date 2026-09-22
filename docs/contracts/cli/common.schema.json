@@ -5,6 +5,19 @@
     "schema_version": {"const": "1.0"},
     "episode_index": {"type": "integer", "minimum": 0},
     "episode_list": {"type": "array", "items": {"$ref": "#/$defs/episode_index"}, "uniqueItems": true},
+    "skipped_episodes": {
+      "type": "array",
+      "description": "episodes left out because source files are missing (D40, as v1 does): never read, no result line, in none of the lists, not part of total",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["episode_index", "missing"],
+        "properties": {
+          "episode_index": {"$ref": "#/$defs/episode_index"},
+          "missing": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "the missing object keys, relative to the input"}
+        }
+      }
+    },
     "module_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
     "module_list": {"type": "array", "items": {"$ref": "#/$defs/module_id"}, "uniqueItems": true},
     "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},

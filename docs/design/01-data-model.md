@@ -124,7 +124,7 @@ CREATE TABLE task (
 
   run_id         TEXT,                    -- 交付目录下的批次名（时间戳）
   progress       TEXT,                    -- JSON: {"stages":[{id,state,done,total,elapsed_s,eta_s}]}
-  summary        TEXT,                    -- JSON: 报告概览快照（总数/通过/拒绝/待裁决/通过率），列表页直接用
+  summary        TEXT,                    -- JSON: 报告概览快照（总数/通过/拒绝/待裁决/通过率，缺源跳过数），列表页直接用
   delivery_stale INTEGER NOT NULL DEFAULT 0,  -- 1 = 判决已变，交付数据集待重新导出
   started_at     INTEGER,
   finished_at    INTEGER,

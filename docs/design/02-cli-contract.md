@@ -131,13 +131,16 @@ curation snapshot --input tos://... --episodes 0-199 --out <run-dir>/source_mani
 ```
 
 只列目录，不读内容：一万条 episode 也就几十次 LIST 请求。本地路径用大小 + 修改时间代替 ETag。
+所选 episode 里缺 parquet 或某路视频的，照 v1 剔除（D40）：记进清单的 `skipped_episodes`（每条缺哪些键），
+带这份清单的命令都不读它们，它们不进任何清单、不计入总数，报告的完整性一节列出来。
 之后的每条命令带上 `--source-manifest` 去读，就保证了一个任务从头到尾只认这一个版本的源数据（D27）。
 
 ### 3.4 `curation autolabel` — 给没有任务标注的条目补描述
 
 ```bash
 curation autolabel --input tos://... --run-dir <dir> --episodes @unlabeled.txt \
-                   --vlm-backend <name> [--concurrency N] [--retry N] [--hedge] --json
+                   --vlm-backend <name> [--vlm-reasoning-effort <档位>] \
+                   [--concurrency N] [--retry N] [--hedge] --json
 ```
 
 v1 的既有行为（`pipeline/run.py` 漏斗前的 caption 兜底）：没有任务标注的条目，VLM 无从判断任务成败，
@@ -156,8 +159,8 @@ v1 的既有行为（`pipeline/run.py` 漏斗前的 caption 兜底）：没有�
 ```bash
 curation check --modules visual_quality,video_action_sync --input tos://... --run-dir <dir> \
                --episodes @survivors.txt --part 0003 \
-               [--resume] [--vlm-backend <name>] [--plan-stage stage.json] \
-               [--concurrency N] [--retry N] [--hedge] --json
+               [--resume] [--vlm-backend <name>] [--vlm-reasoning-effort <档位>] \
+               [--plan-stage stage.json] [--concurrency N] [--retry N] [--hedge] --json
 ```
 
 **这是整个 CLI 最重要的命令。**
@@ -225,6 +228,17 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 
 `--plan-stage <file>` 传入 planner 为这一档生成的 VLM 请求合并分组；不传就逐模块单发。
 
+`--vlm-reasoning-effort <档位>`（`autolabel` 同样接受）：给了才在每个请求里带 `reasoning_effort`，
+不给什么都不发 —— v1 从不发思考参数，对账固定不给。档位是否在模型的有效档位内，由 Daemon 建任务时校验（03 篇）。
+
+**改了标的条目怎么重判**（D39）：有已应用的人工改标、又没有人工成败结论的 episode，`task_success` 用改标时记下的口径判：
+`v1`（缺省）照 v1 `rejudge._build_rerun`，只跑多视角打分和逐机位复核两层，结论与调用和 v1 一致；
+`full` 走首轮的完整判定（多了任务类型判定、机位提示、判废护栏和取证仲裁）。口径由 `adjudicate-apply` 从
+`decisions.json` 读进来、随每条改标记在批次目录里（§3.9），之后重试这几条沿用同一口径。
+
+没带 `--source-manifest` 时，读到才发现缺源文件的 episode 同样剔除（D40）：不写结果行，
+列在输出的 `skipped_missing_source` 里；带了清单的，清单的 `skipped_episodes` 已经把它们排除在外。
+
 ### 3.6 `curation aggregate` — 聚合判决
 
 ```bash
@@ -240,7 +254,7 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 
 判决规则原样搬运 v1 `pipeline/verdict.py`，不得重写：硬门 `passed=False` 才 drop；
 硬门弃权（`passed=None`）只记入未决项，**不 drop**；软分加权均值低于阈值 drop。
-`passed` / `reject` / `held` 三份互斥且完备；`review` 是独立的复核视图，不和它们并列 ——
+`passed` / `reject` / `held` 三份互斥，除缺源文件被剔除的条目（D40）外完备；`review` 是独立的复核视图，不和它们并列 ——
 里面的条目多数在 `passed` 里（保守放行、等人确认），也可以在 `reject` 里（被拒复议的候选）。
 任何一个已勾选的模块对某条 episode 是 `error`，这一条进 `held`（待补跑），既不算通过也不算拒绝，见 06 篇 §3。
 例外（D35）：正常判完的模块已经足以拒绝它 —— 某个硬门确定失败，或者所有已勾选的软分模块都给了分、加权分低于阈值 ——
@@ -285,8 +299,12 @@ v1 `rejudge` 拆出来的第一步：把裁决落到判决上，**不调模型�
 ```jsonc
 {"applied": 14, "skipped_already_applied": 0,
  "rerun_task_success": [17, 29],     // 改了标、且没有人工成败结论的条目，要按新标注重跑
- "profile_resync": [14, 17, 29, 31]} // 技能画像里要重新归位或移除的条目
+ "profile_resync": [14, 17, 29, 31], // 技能画像里要重新归位或移除的条目
+ "relabel_rerun": "v1"}             // 这一批改标的重判口径（D39），照抄 decisions.json
 ```
+
+`decisions.json` 顶层的 `relabel_rerun`（`v1` / `full`，缺省 `v1`）来自「执行裁决」的请求体，
+随本次应用的每条改标记在批次目录里；`check --modules task_success` 重判 `rerun_task_success` 时照它选流程（§3.5）。
 
 Daemon 据此接着调 `check --modules task_success --episodes 17,29` →
 `aggregate` → `check --modules skill_profile --incremental` → `report`。

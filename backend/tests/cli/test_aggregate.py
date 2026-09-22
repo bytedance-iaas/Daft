@@ -183,7 +183,8 @@ def test_the_modules_come_from_the_plan(tmp_path):
     with open(os.path.join(rd, "plan.json"), "w", encoding="utf-8") as fh:
         json.dump(plan, fh)
     res = run("aggregate", "--run-dir", rd, "--phase", "funnel", "--episodes", "0")
-    assert res.rc == 0 and res.doc["counts"] == {"total": 1, "keep": 1, "drop": 0, "held": 0}
+    assert res.rc == 0 and res.doc["counts"] == {"total": 1, "keep": 1, "drop": 0, "held": 0,
+                                              "decided_in": 0, "decided_out": 0}
 
 
 # ---------------------------------------------------------------- final
@@ -269,6 +270,87 @@ def test_human_decisions_follow_v1s_priorities(tmp_path):
     third = final(run_dir, "0-7", revision=3)
     assert 6 in third["passed"]
     assert third["passed"][6]["task_text"] == {"text": "stack the cups", "source": "人工改标"}
+
+
+def _keep_txt(run_dir: str, revision: int) -> list[int]:
+    with open(os.path.join(run_dir, "revisions", f"r{revision:04d}", "keep.txt"),
+              encoding="utf-8") as fh:
+        return [int(x) for x in fh.read().split()]
+
+
+def _funnel_phase(run_dir: str, revision: int, episodes: str) -> dict:
+    res = run("aggregate", "--run-dir", run_dir, "--phase", "funnel", "--revision",
+              str(revision), "--modules", ",".join(ALL), "--episodes", episodes)
+    assert res.rc == 0, res.doc
+    return res.doc["counts"]
+
+
+def test_a_restored_appeal_is_never_held_for_dedup_or_profile(tmp_path):
+    """The run order the Daemon uses: ep 1 was rejected by task_success alone, so it
+    was not in keep.txt and neither dedup nor skill_profile ever saw it. A person
+    restores it: keep.txt of the next revision takes it in, so the incremental
+    profile files it, and dedup - not run again - is not asked about it."""
+    rd = RunDir(str(tmp_path / "run")).good(0, 2)
+    for m in ("timestamp_check", "kinematic_limits", "video_action_sync"):
+        rd.put(m, 1, "pass")
+    for m in ("motion_quality", "visual_quality"):
+        rd.put(m, 1, "scored")
+    rd.put("task_success", 1, "fail")
+    run_dir = rd.write()
+    assert _funnel_phase(run_dir, 1, "0-2")["keep"] == 2
+    assert _keep_txt(run_dir, 1) == [0, 2]
+    first = final(run_dir, "0-2")
+    assert sorted(first["reject"]) == [1] and first["reject"][1]["reasons"][0]["kind"] \
+        == "hard_gate"
+
+    apply(run_dir, decisions(str(tmp_path / "d.json"), (1, "reject_appeal", "restore", None)))
+    counts = _funnel_phase(run_dir, 2, "0-2")
+    assert (counts["keep"], counts["decided_in"], counts["decided_out"]) == (2, 1, 0)
+    assert _keep_txt(run_dir, 2) == [0, 1, 2]
+    # what `check skill_profile --incremental --episodes @r0002/keep.txt` adds for it
+    rd.put("skill_profile", 1, "pass", part="0002")
+    rd.write()
+    after = final(run_dir, "0-2", revision=2)
+    assert sorted(after["passed"]) == [0, 1, 2] and after["held"] == {}
+    assert _keep_txt(run_dir, 2) == [0, 1, 2]                 # final writes the same set
+
+
+def test_dedup_is_not_run_again_after_an_adjudication(tmp_path):
+    """The first dedup result stands; an episode a person brought in is never
+    deduplicated; a kept episode dedup has no result for still waits for it."""
+    from curation.pipeline import aggregate as agg
+    from curation.pipeline.adjudication import Decisions
+    from curation.pipeline.config import load_config
+
+    rd = RunDir(str(tmp_path / "run")).good(0, 3, 6, 7)
+    rd.replace("dedup", 7, "fail", details={"duplicate_of": 3})        # 7 copies 3
+    rd.drop("dedup", 6)                                                  # never compared
+    for m in ("timestamp_check", "kinematic_limits", "video_action_sync", "skill_profile"):
+        rd.put(m, 5, "pass")
+    for m in ("motion_quality", "visual_quality"):
+        rd.put(m, 5, "scored")
+    rd.put("task_success", 5, "fail")
+    # as if dedup had been run again with 5 in its input: v1 never asks about it
+    rd.put("dedup", 5, "fail", details={"duplicate_of": 0})
+    run_dir = rd.write()
+    apply(run_dir, decisions(str(tmp_path / "d.json"),
+                             (3, "task_verdict", "failure", None),     # 7's original goes
+                             (7, "task_verdict", "success", None),     # still a copy
+                             (5, "reject_appeal", "restore", None)))
+    assert _funnel_phase(run_dir, 1, "0,3,5,6,7") and _keep_txt(run_dir, 1) == [0, 5, 6, 7]
+    lists = final(run_dir, "0,3,5,6,7")
+    assert sorted(lists["passed"]) == [0, 5]
+    assert sorted(lists["reject"]) == [3, 7]
+    assert lists["reject"][7]["reasons"][0] == {
+        "module": "dedup", "kind": "duplicate", "text": "与 ep000003 字节级完全重复",
+        "duplicate_of": 3}
+    assert lists["reject"][3]["reasons"][0]["text"] == "人工裁决判失败(任务未完成)"
+    assert [r["module"] for r in lists["held"][6]["reasons"]] == ["dedup"]
+
+    state = agg.RunState(run_dir, list(ALL), [0, 3, 5, 6, 7], load_config(None))
+    members, restored = agg.profile_members(state, Decisions.of(run_dir))
+    assert restored == {5}
+    assert members == [0, 3, 5, 6]                  # 7 is a copy; 5 counts as none
 
 
 def test_decisions_are_copied_in_v1s_csv_words(tmp_path):

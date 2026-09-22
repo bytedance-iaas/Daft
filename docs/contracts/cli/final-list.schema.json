@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "passed.json / reject.json / held.json / review.json (schema 1.0)",
-  "description": "aggregate --phase final writes the four lists into revisions/r<NNNN>/ (design doc 06, sections 1 and 3). passed, reject and held are disjoint and together cover every episode of the task; review is an orthogonal view: mostly passed episodes waiting for a human, plus rejects attributed to task_success that may be appealed. Dedup-removed episodes are only in reject (v1's passed.json also listed them; see design doc 10, section 3.0).",
+  "description": "aggregate --phase final writes the four lists into revisions/r<NNNN>/ (design doc 06, sections 1 and 3). passed, reject and held are disjoint and together cover every episode of the task except those skipped for missing source files (D40); review is an orthogonal view: mostly passed episodes waiting for a human, plus rejects attributed to task_success that may be appealed. Dedup-removed episodes are only in reject (v1's passed.json also listed them; see design doc 10, section 3.0). Review items (v1's queues): task_verdict only for task_success abstentions - other undecidable modules stay in the verdict line and the report; label_conflict from skill_profile; reject_appeal for every reject attributed to task_success alone (no other hard gate, not a soft-score reject) that has no effective appeal decision and is not discarded - an 'unsure' appeal keeps it listed. Skipped episodes are in none of the four lists; the report lists them under integrity.skipped_episodes.",
   "type": "object",
   "additionalProperties": false,
   "required": [

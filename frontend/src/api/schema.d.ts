@@ -829,7 +829,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Execute the recorded decisions as a subtask (D10); never exports (D9) */
+        /**
+         * Execute the recorded decisions as a subtask (D10); never exports (D9)
+         * @description The body is optional; without one (or with `{}`) relabelled episodes are judged again the
+         *     way v1 does (D39). The choice is kept in the subtask's `scope.relabel_rerun`.
+         */
         post: operations["applyAdjudication"];
         delete?: never;
         options?: never;
@@ -1441,6 +1445,8 @@ export interface components {
             held: number;
             review: number;
             pass_rate: number | null;
+            /** @description episodes left out because source files are missing (D40, as v1 does): not checked, in none of the lists and not part of total; the report lists them */
+            skipped?: number;
         };
         UsageTotals: {
             prompt_tokens: number;
@@ -1524,6 +1530,11 @@ export interface components {
                 modules?: components["schemas"]["ModuleId"][];
                 /** @enum {unknown} */
                 episodes?: "errors" | "all";
+                /**
+                 * @description apply_adjudication only (D39)
+                 * @enum {unknown}
+                 */
+                relabel_rerun?: "v1" | "full";
             };
             state: components["schemas"]["TaskState"];
             state_reason?: string | null;
@@ -1682,6 +1693,14 @@ export interface components {
             decision: "adopt_suggestion" | "custom_label" | "keep_label" | "success" | "failure" | "restore" | "keep_rejected" | "unsure" | "discard";
             new_label?: string | null;
             note?: string | null;
+        };
+        AdjudicationApply: {
+            /**
+             * @description How task success is judged again for relabelled episodes that have no human task verdict (D39). v1: what v1's rejudge runs - multi-view scoring and the per-camera end-state vote only, no task-type step, camera hints, reject guard or evidence arbitration; verdicts and calls match v1. full: the first run's complete flow, so the same decisions may end differently from v1. Episodes a person judged success or failure are not judged again either way.
+             * @default v1
+             * @enum {unknown}
+             */
+            relabel_rerun?: "v1" | "full";
         };
         DecisionInput: components["schemas"]["DecisionFields"];
         Decision: components["schemas"]["DecisionFields"] & {
@@ -1887,6 +1906,13 @@ export interface components {
             /** @description code / prompt hashes when the result came from a subtask (design doc 06, section 2) */
             fingerprints?: Record<string, unknown>;
         } & unknown;
+        episode_index: number;
+        /** @description episodes left out because source files are missing (D40, as v1 does): never read, no result line, in none of the lists, not part of total */
+        skipped_episodes: {
+            episode_index: components["schemas"]["episode_index"];
+            /** @description the missing object keys, relative to the input */
+            missing: string[];
+        }[];
         /**
          * revisions/r<NNNN>/report.json (schema 1.0)
          * @description Report structure (design doc 06, section 6). modules[] follows the selected modules one to one, in registry order; a module that failed keeps its section with the error. URLs are not part of the file: the REST layer adds links.
@@ -1903,6 +1929,8 @@ export interface components {
                     rejected: number;
                     held: number;
                     review: number;
+                    /** @description episodes left out because source files are missing (D40); not part of total */
+                    skipped?: number;
                 };
                 /** @description passed / total; held is neither */
                 pass_rate: number | null;
@@ -1919,7 +1947,12 @@ export interface components {
                 reason: string;
             }[];
             /** @description data package integrity: format, missing fields, unlabeled count, semantics profile / action semantics preflight */
-            integrity: Record<string, unknown>;
+            integrity: {
+                /** @description what was not checked and why: the source manifest's list plus any found at read time */
+                skipped_episodes?: components["schemas"]["skipped_episodes"];
+            } & {
+                [key: string]: unknown;
+            };
             /** @description summary; the full profile is perf.json in the same revision */
             perf: Record<string, unknown>;
         };
@@ -3477,7 +3510,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AdjudicationApply"];
+            };
+        };
         responses: {
             /** @description subtask created */
             202: {

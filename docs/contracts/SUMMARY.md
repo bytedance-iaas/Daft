@@ -1,4 +1,4 @@
-# 契约要点与冻结时的取舍（2026-09-21，1.3 修订后）
+# 契约要点与冻结时的取舍（2026-09-21，1.4 修订后）
 
 一页读懂 C1–C5：每份管什么、冻结时定下了哪些原文没写死的细节，以及需求方拍板的那一处（D35）。
 文件索引和改契约的流程见同目录 `README.md`；以契约文件本身为准，本页是导读。
@@ -8,9 +8,9 @@
 | # | 管什么 | 要点 |
 |---|---|---|
 | C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 8 个模块 = 6 项漏斗检查 + 去重、技能画像两项数据集级模块；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38） |
-| C2 CLI 输出与中间文件 `cli/*.schema.json`（20 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥且完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
+| C2 CLI 输出与中间文件 `cli/*.schema.json`（20 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
-| C4 REST API `openapi.yaml`（OpenAPI 3.1，1.3.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
+| C4 REST API `openapi.yaml`（OpenAPI 3.1，1.4.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
 | C5 Repository 与状态机 `backend/daemon/repo/protocol.py` | Daemon 内部读写状态的唯一入口 | 10 个任务状态，允许的迁移逐条列出（契约测试逐条对照 01 篇 §3.1）；状态变更一律比较后交换（CAS），不许先读后写；事务由调用方显式开启；每个查询都带 owner（本期固定为 `default`，为以后接 IAM 留路）；结果版本切换也是 CAS |
 
 防漂移：26 份契约文件的 sha256 记在 `CONTRACTS.lock`，改了契约而没刷新锁，CI 变红；
@@ -136,19 +136,29 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 并写明一致性测试钉住的几条行为（resume 结束时的 `finished_at`、重新预检的四项一起刷新、过时的核对不改状态、
 登记只能用同一 owner 的 TOS 访问密钥、模型服务的 API Key 行命名为 `vlm-backend/<id>`）。
 
-## 八、下一版（1.4）待修订
+## 八、1.4 修订（2026-09-21，已完成）
+
+需求方对 W3 三个问题的拍板（D39–D41），以及 W3 核对 v1 后定下的 review 口径：
+
+| # | 契约 | 改了什么 | 依据 |
+|---|---|---|---|
+| 1 | C4 执行裁决，C2 `decisions.json`、`adjudicate-apply` | 可选请求体 `{relabel_rerun: v1 \| full}`，缺省 `v1`：改了标、又没有人工成败结论的条目，照 v1 的 `rejudge` 只跑多视角打分和逐机位复核两层，结论和调用与 v1 一致；`full` 走首轮的完整判定（多了任务类型、机位提示、判废护栏、取证仲裁），同样的裁决可能判得和 v1 不同。选择记在子任务的 `scope.relabel_rerun` 和每条改标上，之后重试这几条沿用同一口径；裁决页的执行对话框要说明两者的差别 | D39 |
+| 2 | C2 `source-manifest`、`check`、`report`、`final-list`，C4 `Summary` | 源文件缺失（parquet 或某路视频不在）的 episode 照 v1 剔除：不质检、不进四份清单、不计入 total。`snapshot` 从列表里就能认出来，记进清单的 `skipped_episodes`（缺哪些键），带清单的命令都不读它们；没带清单时读到才发现的，`check` 不写结果行、列在输出的 `skipped_missing_source` 里。报告 `integrity.skipped_episodes` 列出全部，`overview.counts.skipped` 与任务汇总的 `skipped` 给出条数。四份清单共用 `common.schema.json` 里的 `skipped_episodes` 定义 | D40 |
+| 3 | 设计 04、06（契约不变） | 技能画像整个模块失败时维持 P10 + P11：全部待补跑，一条都不交付，等「重试」成功；和 v1 不同（v1 从不因画像挡交付），记进 10 篇 §3.0 | D41 |
+| 4 | C2 `final-list`（原待修订第 3 条） | review 的种类：`task_verdict` 只收任务成败判定的弃权，别的模块判不了的留在判决行和报告里；`label_conflict` 来自技能画像；`reject_appeal` 收所有只归因于任务成败判定（没有别的硬门失败、不是软分拒绝）、没有生效复议、没被弃用的拒绝，复议选了「拿不准」的仍留在队列 | W3 核对 v1 |
+| 5 | 设计 02（原待修订第 1 条） | `check`、`autolabel` 的 `--vlm-reasoning-effort <档位>`：给了才在每个请求里带 `reasoning_effort`，不给什么都不发，对账口径不变；档位是否有效由 Daemon 建任务时按模型校验 | W3 |
+
+## 九、下一版（1.5）待修订
 
 | # | 契约 | 要改什么 | 来源 |
 |---|---|---|---|
-| 1 | 设计 02 / CLI | `--vlm-reasoning-effort`：给了才在请求里带 `reasoning_effort`，不给什么都不发（保持对账口径） | W3 |
-| 2 | 设计 02 §2 | 分角色的 TOS endpoint 变量（现在只认 `TOS_ENDPOINT`） | W3、W8 |
-| 3 | C2 `final-list` | review 的种类：非 task_success 的弃权怎么记；可复议的拒绝条目是否进 review | W3，待核对 v1 |
-| 4 | C2 / C4 `Perf` | `vlm_latency.csv` 没有 subtask_id；CLI 算不出 `duration_s` | W3 |
-| 5 | C2 | 辅助命令（backends probe、creds verify、datasets …、clips）没有输出 schema | W3 |
-| 6 | C4 `GET /tasks` | 按「有待裁决」「交付过期」筛选 | W10 |
-| 7 | C4 `Task` | 记下所用的预设（完整 / 快速 / 自选），列表的预设名不必反推 | W10 |
-| 8 | C4 | 站点配置接口（公共缓存桶是否可用、本地路径开关、所在地域） | W10 |
-| 9 | C4 `SignedUrl` | `expires_at` 写明单位（毫秒）；`from_ts` / `to_ts` 挪到 episode 接口 | W10、W8 |
-| 10 | C4 报告 | 各模块 `summary` 与专用视图（卡顿时间线、同步曲线、判决卡、两级技能表）的数据形状；平均质量分、复议的「关键读数」 | W10 |
-| 11 | C4 | 查某模块出错的是哪几条；裁决卡片带视频引用；裁决列表的 `source` 多选与「拿不准」状态；`DecisionInput` 的「撤回」 | W10 |
+| 1 | 设计 02 §2 | 分角色的 TOS endpoint 变量（现在只认 `TOS_ENDPOINT`） | W3、W8 |
+| 2 | C2 / C4 `Perf` | `vlm_latency.csv` 没有 subtask_id；CLI 算不出 `duration_s` | W3 |
+| 3 | C2 | 辅助命令（backends probe、creds verify、datasets …、clips）没有输出 schema | W3 |
+| 4 | C4 `GET /tasks` | 按「有待裁决」「交付过期」筛选 | W10 |
+| 5 | C4 `Task` | 记下所用的预设（完整 / 快速 / 自选），列表的预设名不必反推 | W10 |
+| 6 | C4 | 站点配置接口（公共缓存桶是否可用、本地路径开关、所在地域） | W10 |
+| 7 | C4 `SignedUrl` | `expires_at` 写明单位（毫秒）；`from_ts` / `to_ts` 挪到 episode 接口 | W10、W8 |
+| 8 | C4 报告 | 各模块 `summary` 与专用视图（卡顿时间线、同步曲线、判决卡、两级技能表）的数据形状；平均质量分、复议的「关键读数」 | W10 |
+| 9 | C4 | 查某模块出错的是哪几条；裁决卡片带视频引用；裁决列表的 `source` 多选与「拿不准」状态；`DecisionInput` 的「撤回」 | W10 |
 
