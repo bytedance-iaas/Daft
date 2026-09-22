@@ -1,0 +1,468 @@
+"""The adjudication queue of one task (design doc 06 §5, 07 §6; C4 ``listAdjudication`` /
+``submitAdjudication``; F3.3).
+
+**Questions** come from the task's current revision:
+
+* ``label`` - a label conflict (``review.json`` kind ``label_conflict``, from
+  skill_profile's audit or task_success's kill guard); the original annotation and the
+  model's description come from the revision's ``label_audit.json``, and the suggested
+  new label is that description (v1 adopts it);
+* ``task_verdict`` - a task_success abstention. Abstentions of other modules stay in
+  ``review.json`` but not in the queue (v1: a person cannot settle them by watching the
+  video);
+* ``reject_appeal`` - the appeals tab: rejects attributed to task_success and nothing
+  else. The physical and structural gates are final, and so are duplicates, soft scores
+  and human decisions (rule 2).
+
+A question that was answered keeps its card after the answer was applied and the
+episode left the newer revision's review: the question is taken from the newest older
+revision that asked it, so ``decided`` / ``applied`` cards stay visible and can be
+changed. A task verdict given after a relabel on a label-only card (the optional
+verdict of v1's card, rule 4) shows as a ``task_verdict`` question.
+
+**Decisions** are the repository's rows, append only; the latest per (task, line,
+episode) counts. They never cross tasks (D32): the queue is this task's revision and
+this task's rows only.
+
+**Card status**: a ``discard`` on any line decides the card (rule 1: it wins over
+every verdict); else any ``unsure`` keeps it ``unsure`` - still pending, still in the
+queue (rule 3); else every question answered makes it ``decided`` (``applied`` once
+every answer was executed); a relabel not executed yet also decides it, because
+executing re-judges the task with the new label; anything else is ``pending``.
+
+**Counts** (the whole task, not the filtered page): ``pending`` and ``decided`` over
+the review cards - appeals are optional - and ``unapplied`` over both tabs: cards with
+an answer that was not executed yet (``unsure`` is not one). ``pending`` is what
+``summary.pending_adjudication`` holds for the task list and the overview.
+"""
+from __future__ import annotations
+
+import bisect
+import logging
+import threading
+from dataclasses import dataclass
+from typing import Iterable
+
+from curation.contracts import modules as registry
+from curation.pipeline.adjudication import LINE_DECISIONS
+
+from ..errors import ApiError
+from ..pagination import CursorError, decode_cursor, encode_cursor
+from ..repo import protocol as P
+from .revision import Revision
+from .store import ResultStore
+
+log = logging.getLogger("daemon.results")
+
+CURSOR_KIND = "adjudication"
+REVIEW_LINES = ("label", "task_verdict")
+APPEAL_LINES = ("reject_appeal",)
+RELABEL = ("adopt_suggestion", "custom_label")
+VERDICTS = ("success", "failure")
+OPTIONAL_REASON = "改标之后可以直接判成败：判了就以人的结论为准，不再按新标注重跑任务成败判定"
+
+
+@dataclass(frozen=True)
+class Question:
+    episode: int
+    line: str
+    source_module: str
+    reason: str
+    annotation: str | None = None
+    caption: str | None = None
+    suggestion: str | None = None
+    priority: str | None = None
+    revision: int = 0
+
+
+def _str(v) -> str | None:
+    return v if isinstance(v, str) and v else None
+
+
+def _join(texts: Iterable[str]) -> str:
+    return "；".join(dict.fromkeys(t for t in texts if t)) or "未注明"
+
+
+def appealable(entry: dict) -> bool:
+    """v1's appeal gate: the reject is attributed to task_success and to nothing else.
+    Execution errors of other modules (D35: they change nothing) do not count."""
+    deciding = [r for r in entry.get("reasons") or []
+                if isinstance(r, dict) and r.get("kind") != "execution_error"]
+    return bool(deciding) and all(r.get("module") == "task_success" and r.get("kind") == "hard_gate"
+                                  for r in deciding)
+
+
+def _task_text(rev: Revision, episode: int) -> str | None:
+    hit = rev.entries().get(episode)
+    if hit is not None:
+        tt = hit[1].get("task_text")
+        if isinstance(tt, dict) and _str(tt.get("text")):
+            return tt["text"]
+    rec = rev.record("task_success", episode)
+    return _str(((rec or {}).get("details") or {}).get("task_desc"))
+
+
+def questions_of(rev: Revision) -> dict[tuple[int, str], Question]:
+    """Every question revision ``rev`` asks, by (episode, line)."""
+    def make():
+        out: dict[tuple[int, str], Question] = {}
+        audit = rev.audit_entries()
+        for ep, entry in rev.review().items():
+            items = [i for i in entry.get("review") or [] if isinstance(i, dict)]
+            labels = [i for i in items if i.get("kind") == "label_conflict"]
+            verdicts = [i for i in items if i.get("kind") == "task_verdict"
+                        and i.get("source_module") == "task_success"]
+            if labels:
+                a = audit.get(ep) or {}
+                caption = _str(a.get("caption"))
+                out[(ep, "label")] = Question(
+                    ep, "label", str(labels[0].get("source_module") or "skill_profile"),
+                    _join(str(i.get("reason") or "") for i in labels),
+                    annotation=_str(a.get("label")) or _task_text(rev, ep), caption=caption,
+                    suggestion=caption,
+                    priority=_str(labels[0].get("priority")) or _str(a.get("priority")),
+                    revision=rev.number)
+            if verdicts:
+                out[(ep, "task_verdict")] = Question(
+                    ep, "task_verdict", "task_success",
+                    _join(str(i.get("reason") or "") for i in verdicts),
+                    annotation=_task_text(rev, ep), priority=_str(verdicts[0].get("priority")),
+                    revision=rev.number)
+        for ep, (name, entry) in rev.entries().items():
+            if name == "reject" and appealable(entry):
+                out[(ep, "reject_appeal")] = Question(
+                    ep, "reject_appeal", "task_success",
+                    _join(str(r.get("text") or "") for r in entry.get("reasons") or []
+                          if isinstance(r, dict) and r.get("kind") == "hard_gate"),
+                    annotation=_task_text(rev, ep), revision=rev.number)
+        return out
+
+    return rev.store.derived.get_or_make(("questions", rev.key), make)
+
+
+def decision_json(a: P.Adjudication) -> dict:
+    """C4 ``Decision``."""
+    return {"episode_index": int(a.episode_index), "line": a.line, "decision": a.decision,
+            "new_label": a.new_label, "note": a.note, "id": int(a.id),
+            "decided_by": a.decided_by, "decided_at": int(a.decided_at),
+            "applied": a.applied_in_subtask is not None}
+
+
+@dataclass
+class Card:
+    episode: int
+    questions: list[Question]
+    status: str
+
+    def unapplied(self, decisions: dict) -> bool:
+        return any((d := decisions.get((q.episode, q.line))) is not None
+                   and d.applied_in_subtask is None and d.decision != "unsure"
+                   for q in self.questions)
+
+    def to_json(self, decisions: dict) -> dict:
+        qs = []
+        for q in self.questions:
+            d = decisions.get((q.episode, q.line))
+            qs.append({"line": q.line, "source_module": q.source_module, "reason": q.reason,
+                       "annotation": q.annotation, "caption": q.caption,
+                       "suggestion": q.suggestion, "priority": q.priority,
+                       "latest_decision": decision_json(d) if d is not None else None})
+        return {"episode_index": self.episode, "status": self.status, "questions": qs}
+
+
+def card_status(episode: int, questions: list[Question], decisions: dict) -> str:
+    decs = [decisions.get((q.episode, q.line)) for q in questions]
+    discard = next((d for d in decs if d is not None and d.decision == "discard"), None)
+    if discard is not None:                             # rule 1
+        return "applied" if discard.applied_in_subtask else "decided"
+    if any(d is not None and d.decision == "unsure" for d in decs):
+        return "unsure"                                 # rule 3: stays in the queue
+    if all(d is not None for d in decs):
+        return "applied" if all(d.applied_in_subtask for d in decs) else "decided"
+    label = decisions.get((episode, "label"))
+    if label is not None and label.decision in RELABEL and label.applied_in_subtask is None:
+        return "decided"                                # rule 4: executing re-judges it
+    return "pending"
+
+
+class Queue:
+    """The task's questions, decisions and cards at its current revision."""
+
+    def __init__(self, store: ResultStore, repo: P.Repository, task: P.Task):
+        self.task = task
+        self.rev = store.current(task)
+        self.revision = self.rev.number if self.rev is not None else 0
+        self.decisions = {(int(a.episode_index), a.line): a
+                          for a in repo.latest_adjudications(task.id)}
+        self.selected = {m.module_id for m in repo.get_task_modules(task.id) if m.selected}
+        self.questions: dict[tuple[int, str], Question] = {}
+        if self.rev is not None:
+            self._build(store)
+        self._cards: dict[str, list[Card]] = {}
+
+    def _build(self, store: ResultStore) -> None:
+        qs = dict(questions_of(self.rev))
+        missing = [k for k in self.decisions if k not in qs]
+        for n in range(self.revision - 1, 0, -1):             # answered, then left the review
+            if not missing:
+                break
+            try:
+                older = store.revision(self.task, n)
+            except ApiError:
+                continue
+            found = questions_of(older)
+            for k in [k for k in missing if k in found]:
+                qs[k] = found[k]
+                missing.remove(k)
+        for ep, line in missing:                              # the optional verdict (rule 4)
+            d = self.decisions[(ep, line)]
+            if line == "task_verdict" and (ep, "label") in qs and d.decision != "unsure":
+                label = qs[(ep, "label")]
+                qs[(ep, line)] = Question(ep, "task_verdict", "task_success", OPTIONAL_REASON,
+                                          annotation=label.annotation, revision=label.revision)
+        self.questions = qs
+
+    # -- cards ------------------------------------------------------------------------
+    def cards(self, tab: str) -> list[Card]:
+        if tab not in self._cards:
+            lines = REVIEW_LINES if tab == "review" else APPEAL_LINES
+            by_ep: dict[int, list[Question]] = {}
+            for (ep, line), q in self.questions.items():
+                if line in lines:
+                    by_ep.setdefault(ep, []).append(q)
+            cards = []
+            for ep in sorted(by_ep):
+                qs = sorted(by_ep[ep], key=lambda q: lines.index(q.line))
+                cards.append(Card(ep, qs, card_status(ep, qs, self.decisions)))
+            self._cards[tab] = cards
+        return self._cards[tab]
+
+    def counts(self) -> dict:
+        review = self.cards("review")
+        decided = sum(1 for c in review if c.status in ("decided", "applied"))
+        unapplied = sum(1 for tab in ("review", "appeals") for c in self.cards(tab)
+                        if c.unapplied(self.decisions))
+        return {"decided": decided, "pending": len(review) - decided, "unapplied": unapplied}
+
+    def page(self, *, tab: str, status: str, source: str | None, cursor: str | None,
+             limit: int) -> dict:
+        """C4 ``listAdjudication``: cards by episode, a cursor bound to the revision."""
+        cards = [c for c in self.cards(tab) if _keep(c, status, source, self.decisions)]
+        scope = {"task": self.task.id, "tab": tab, "status": status, "source": source}
+        start = 0
+        if cursor:
+            key = decode_cursor(cursor, CURSOR_KIND, scope=scope)
+            if not (isinstance(key, list) and len(key) == 2 and all(
+                    isinstance(v, int) and not isinstance(v, bool) for v in key)):
+                raise CursorError("cursor has no revision and episode")
+            rev, last = key
+            if rev != self.revision:
+                raise ApiError("result_changed",
+                               f"结果版本已从 r{rev} 换成 r{self.revision}，裁决队列请从头重新加载",
+                               details={"cursor_revision": rev, "revision": self.revision})
+            start = bisect.bisect_right([c.episode for c in cards], last)
+        chunk = cards[start:start + limit]
+        more = start + len(chunk) < len(cards)
+        next_cursor = encode_cursor(CURSOR_KIND, [self.revision, chunk[-1].episode],
+                                    scope=scope) if more else None
+        return {"items": [c.to_json(self.decisions) for c in chunk], "next_cursor": next_cursor,
+                "has_more": more, "counts": self.counts()}
+
+    # -- submissions ------------------------------------------------------------------
+    def check(self, items: list[dict]) -> list[dict]:
+        """Validate a submission against the queue, all or nothing; the rows to append.
+
+        Each decision must answer a question of this task's queue with a decision its
+        line allows (``label``: adopt / custom / keep / unsure / discard; ``task_verdict``:
+        success / failure / unsure / discard; ``reject_appeal``: restore / keep_rejected /
+        unsure), ``new_label`` only for adopt and custom (adopt without one takes the
+        suggestion), no verdict next to a discard on the label, and a verdict on a
+        label-only card only after the label was changed. Later items see earlier ones.
+        """
+        if self.rev is None:
+            raise ApiError("task_state_conflict",
+                           "这个任务还没有结果版本，没有可以裁决的条目；任务跑完之后再来",
+                           details={"state": self.task.state, "result_rev": 0})
+        label_of = {ep: d.decision for (ep, line), d in self.decisions.items() if line == "label"}
+        rows = []
+        for i, item in enumerate(items):
+            ep, line, decision = int(item["episode_index"]), item["line"], item["decision"]
+            where = f"decisions.{i}"
+            name = f"ep{ep:06d}"
+            if decision not in LINE_DECISIONS[line]:
+                raise _bad(f"{name}：{_LINE_ZH[line]}不能选 {decision}（可以选："
+                           f"{'、'.join(LINE_DECISIONS[line])}）", f"{where}.decision")
+            new_label = item.get("new_label")
+            if isinstance(new_label, str):
+                new_label = new_label.strip() or None
+            if new_label is not None and decision not in RELABEL:
+                raise _bad(f"{name}：只有「采纳建议改标」和「自行改写标注」可以带 new_label",
+                           f"{where}.new_label")
+            q = self.questions.get((ep, line))
+            if line == "label":
+                if q is None:
+                    raise _bad(f"{name} 没有待裁决的标注分歧，不能裁决标注", f"{where}.episode_index")
+                if decision == "adopt_suggestion" and new_label is None:
+                    new_label = q.suggestion
+                    if new_label is None:
+                        raise _bad(f"{name} 没有建议的新标注，请用「自行改写标注」填写",
+                                   f"{where}.new_label")
+                if decision == "custom_label" and new_label is None:
+                    raise _bad(f"{name}：自行改写标注要填写新标注", f"{where}.new_label")
+                label_of[ep] = decision
+            elif line == "task_verdict":
+                if q is None:
+                    self._optional_verdict(ep, decision, label_of, name, where)
+                if decision in VERDICTS and label_of.get(ep) == "discard":
+                    raise _bad(f"{name} 已经「整条弃用」，弃用的条目不再判成败；要判成败，先撤销弃用",
+                               f"{where}.decision")
+            elif q is None:                                     # reject_appeal
+                raise _bad(f"{name} 不是被任务成败判定拒掉的条目，不能复议：时间戳、运动学、同步等"
+                           f"物理与结构检查的拒绝是终局", f"{where}.episode_index")
+            rows.append({"episode_index": ep, "line": line, "decision": decision,
+                         "new_label": new_label, "note": item.get("note")})
+        return rows
+
+    def _optional_verdict(self, ep: int, decision: str, label_of: dict, name: str,
+                          where: str) -> None:
+        if (ep, "label") not in self.questions:
+            raise _bad(f"{name} 不在这个任务的待裁决队列里（没有要人判成败的问题）",
+                       f"{where}.episode_index")
+        if decision == "discard":
+            return                                              # the card-level discard
+        if "task_success" not in self.selected:
+            raise _bad(f"{name}：这个任务没有勾选任务成败判定，不能判成败", f"{where}.line")
+        if label_of.get(ep) not in RELABEL:
+            raise _bad(f"{name} 只有标注问题：先「采纳建议改标」或「自行改写标注」，才能直接判成败",
+                       f"{where}.line")
+
+
+_LINE_ZH = {"label": "标注分歧", "task_verdict": "任务成败", "reject_appeal": "被拒复议"}
+
+
+def _bad(message: str, field: str) -> ApiError:
+    return ApiError("validation_failed", message,
+                    details={"errors": [{"field": field, "problem": message}]})
+
+
+def _keep(card: Card, status: str, source: str | None, decisions: dict) -> bool:
+    if source and not any(q.source_module == source for q in card.questions):
+        return False
+    if status == "pending":
+        return card.status in ("pending", "unsure")
+    if status == "decided":
+        return card.status in ("decided", "applied")
+    if status == "unapplied":
+        return card.unapplied(decisions)
+    return True
+
+
+def known_source(source: str | None) -> None:
+    if source is not None and source not in registry.ids():
+        raise ApiError("validation_failed",
+                       f"没有 {source} 这个质检模块（可选：{'、'.join(registry.ids())}）",
+                       details={"errors": [{"field": "source", "problem": "unknown module"}]})
+
+
+# ---------------------------------------------------------------------------
+# recording decisions, the CSV copy and the task summary
+# ---------------------------------------------------------------------------
+
+_SUMMARY_COUNTS = ("total", "passed", "rejected", "held", "review")
+_copy_locks: dict[str, threading.Lock] = {}
+_copy_guard = threading.Lock()
+
+
+def _copy_lock(task_id: str) -> threading.Lock:
+    with _copy_guard:
+        return _copy_locks.setdefault(task_id, threading.Lock())
+
+
+def summary_of(rev: Revision, counts: dict) -> dict:
+    """The task summary of revision ``rev`` (C4 ``Summary``) plus ``pending_adjudication``."""
+    overview = rev.report().get("overview") or {}
+    c = overview.get("counts") or {}
+    out: dict = {k: c[k] for k in _SUMMARY_COUNTS
+                 if isinstance(c.get(k), int) and not isinstance(c.get(k), bool) and c[k] >= 0}
+    rate = overview.get("pass_rate")
+    if rate is None or isinstance(rate, (int, float)) and not isinstance(rate, bool):
+        out["pass_rate"] = rate
+    out["pending_adjudication"] = int(counts["pending"])
+    return out
+
+
+def refresh_summary(store: ResultStore, repo: P.Repository, task_id: str, *,
+                    owner: str = P.DEFAULT_OWNER) -> tuple[dict | None, dict]:
+    """Recompute the task's summary from its current revision and decisions; returns
+    ``(summary written or kept, counts)``. The orchestration calls it after every
+    revision switch, the adjudication endpoints after every submission.
+
+    The counts are taken inside one repository transaction, so the last refresh to run
+    has seen every decision appended before it (the file reads are cached beforehand).
+    """
+    task = repo.get_task(task_id, owner=owner)
+    if int(task.result_rev or 0) < 1:
+        return None, {"decided": 0, "pending": 0, "unapplied": 0}
+    Queue(store, repo, task)                                  # warm the file caches
+    with repo.transaction():
+        cur = repo.get_task(task_id, owner=owner)
+        queue = Queue(store, repo, cur)
+        counts = queue.counts()
+        if queue.rev is None:
+            return None, counts
+        merged = {**(cur.summary if isinstance(cur.summary, dict) else {}),
+                  **summary_of(queue.rev, counts)}
+        if merged != cur.summary:
+            repo.set_task_summary(task_id, merged)
+    return merged, counts
+
+
+def write_copies(store: ResultStore, repo: P.Repository, task: P.Task) -> bool:
+    """``<run dir>/human-decisions/*.csv``: this task's decisions in v1's columns and words,
+    written by the CLI's own writer (``pipeline.adjudication.write_human_copies``). The
+    database is the authority (design doc 01 §2.7); a failed copy is only a warning.
+
+    C5 reads back the latest decision per line and episode only, so the copy holds those
+    rows, oldest first - v1's readers take the last row per episode, the same answer.
+    """
+    from curation.pipeline.adjudication import Decisions, write_human_copies
+
+    run_dir = store.task_dir(task.id)
+    if not run_dir.is_dir():
+        log.warning("no local run directory for task %s; decisions not copied to "
+                    "human-decisions/ yet", task.id)
+        return False
+    with _copy_lock(task.id):
+        rows = [{"id": int(a.id), "episode_index": int(a.episode_index), "line": a.line,
+                 "decision": a.decision, "new_label": a.new_label, "note": a.note,
+                 "decided_at": int(a.decided_at)} for a in repo.latest_adjudications(task.id)]
+        try:
+            write_human_copies(str(run_dir), Decisions(rows))
+        except Exception:  # noqa: BLE001 - the database already has them
+            log.warning("writing human-decisions/ of task %s failed", task.id, exc_info=True)
+            return False
+    return True
+
+
+def submit(store: ResultStore, repo: P.Repository, task_id: str, items: list[dict], *,
+           owner: str, actor: str, at: int) -> dict:
+    """Record decisions (append only; nothing is executed, D10) -> C4 ``AdjudicationCounts``."""
+    from ..transitions import record
+
+    task = repo.get_task(task_id, owner=owner)
+    rows = Queue(store, repo, task).check(items)
+    created = repo.append_adjudication(
+        [P.AdjudicationCreate(task_id=task.id, episode_index=r["episode_index"], line=r["line"],
+                              decision=r["decision"], decided_by=actor, new_label=r["new_label"],
+                              note=r["note"], owner_id=task.owner_id) for r in rows], at=at)
+    record(repo, action="task.adjudicate", task_id=task.id, actor=actor, at=at,
+           owner=task.owner_id, detail={"decisions": len(created),
+                                        "ids": [a.id for a in created][:50]})
+    write_copies(store, repo, task)
+    try:
+        _, counts = refresh_summary(store, repo, task.id, owner=owner)
+    except Exception:  # noqa: BLE001 - the decisions are recorded; the list catches up later
+        log.warning("summary of task %s not refreshed after a submission", task.id,
+                    exc_info=True)
+        counts = Queue(store, repo, repo.get_task(task.id, owner=owner)).counts()
+    return counts

@@ -252,7 +252,9 @@ def create_app(settings: Settings, *, repo: P.Repository | None = None,
     base = settings.base_path
     system.install(app, base)
     from .routes import access_keys, media, vlm       # W8
-    app.state.api_routers = [m.router for m in (access_keys, vlm, media, api, datasets, overview)]
+    from .routes import adjudication, results         # W5b
+    app.state.api_routers = [m.router for m in (access_keys, vlm, media, api, datasets, overview,
+                                                results, adjudication)]
     for router in app.state.api_routers:                # new routers go here, before the fallback
         app.include_router(router, prefix=f"{base}/api/v1")
     app.include_router(api.fallback, prefix=f"{base}/api/v1")       # unknown paths: 404 / 405

@@ -47,6 +47,13 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "updateDataset": ("PATCH", "/api/v1/datasets/{id}"),
     "deleteDataset": ("DELETE", "/api/v1/datasets/{id}"),
     "getOverview": ("GET", "/api/v1/overview"),
+    # W5b result readers (daemon/results, routes/results.py, routes/adjudication.py)
+    "getReport": ("GET", "/api/v1/tasks/{id}/report"),
+    "getReportTable": ("GET", "/api/v1/tasks/{id}/report/tables/{table}"),
+    "getEpisode": ("GET", "/api/v1/tasks/{id}/episodes/{index}"),
+    "getPerf": ("GET", "/api/v1/tasks/{id}/perf"),
+    "listAdjudication": ("GET", "/api/v1/tasks/{id}/adjudication"),
+    "submitAdjudication": ("POST", "/api/v1/tasks/{id}/adjudication"),
 }
 
 #: operationId -> (owner, what it still needs)
@@ -64,12 +71,6 @@ PENDING: dict[str, tuple[str, str]] = {
     "reexportTask": ("W5", "reexport subtask (W7 incremental export)"),
     "purgeTaskArtifacts": ("W5", "delete <delivery>/<run_id>/ on TOS with confirm_path (D28), needs W8"),
     "getTaskPlan": ("W5", "plan.json written at start by W6's planner"),
-    "getReport": ("W5", "committed result revisions (report.json) from the work dir / TOS"),
-    "getReportTable": ("W5", "Parquet slices with revision-bound cursors (03 §6)"),
-    "getEpisode": ("W5", "one episode across modules from the committed revision"),
-    "getPerf": ("W5", "perf.json of the revision"),
-    "listAdjudication": ("W5", "review.json of the revision + repo.latest_adjudications"),
-    "submitAdjudication": ("W5", "append + CSV copy in the run directory (double write)"),
     "applyAdjudication": ("W5", "apply_adjudication subtask"),
     # contract 1.1 (D36, D37): registering and checking datasets runs the CLI
     "createDataset": ("W5", "curation preflight + snapshot through the executor; register_dataset"),
