@@ -85,7 +85,7 @@ def test_a_finished_task_is_cleaned_after_the_retention_and_restored_on_demand(w
     assert d.orch.janitor.sweep(now=now) == [task.id]
     assert _local(d, task.id) == set()                          # only .orchestr/ is left
     mark = json.loads(wd.cleaned_mark.read_text())
-    assert mark["synced"] is True and mark["bytes"] > 0
+    assert mark["purged"] is False and mark["bytes"] > 0
     assert wd.started() and wd.journal("main").is_file()       # the task can go on later
     assert not (pathlib.Path(d.rt.settings.scratch_dir) / task.id).exists()
     batch = pathlib.Path(d.delivery(RUN_ID))
@@ -130,7 +130,7 @@ def test_what_keeps_a_directory(world):
     assert d.orch.janitor.sweep(now=now + 6 * DAY) == [busy.id]
 
 
-def test_a_failed_final_upload_postpones_the_cleaning_once(world, monkeypatch):
+def test_what_the_delivery_does_not_hold_is_never_removed(world, monkeypatch):
     d = world
     now = now_ms()
     task = _finished(d, ended_at=now - 10 * DAY, state="failed")
@@ -139,11 +139,18 @@ def test_a_failed_final_upload_postpones_the_cleaning_once(world, monkeypatch):
     def broken(t):
         raise D.DeliveryError("交付目录写不进去", "AccessDenied")
 
+    working = d.orch.restorer.open
     monkeypatch.setattr(d.orch.restorer, "open", broken)
-    assert d.orch.janitor.sweep(now=now) == []                  # 10 days, the upload failed
-    assert d.orch.janitor.sweep(now=now + 5 * DAY) == [task.id]  # 15 days: it goes anyway
-    mark = json.loads(WorkDir(d.rt.settings.work_dir, task.id).cleaned_mark.read_text())
-    assert mark["synced"] is False
+    assert d.orch.janitor.sweep(now=now) == []                  # the last upload failed
+    assert d.orch.janitor.sweep(now=now + 365 * DAY) == []      # however long it has been
+    assert _local(d, task.id) == set(LOCAL) | {"logs/system.jsonl"}
+    no_batch = _finished(d, ended_at=now - 10 * DAY, files=False, run_id="20260901-140000")
+    d.rt.repo.freeze_task_inputs(no_batch.id, run_id="", preflight={}, source_fingerprint={},
+                                 vlm_snapshot=None)                 # (as if it never had one)
+    (pathlib.Path(d.run_dir(no_batch.id)) / "plan.json").write_text("{}")
+    monkeypatch.setattr(d.orch.restorer, "open", working)
+    assert d.orch.janitor.sweep(now=now) == [task.id]           # uploaded now, then cleaned
+    assert (pathlib.Path(d.run_dir(no_batch.id)) / "plan.json").is_file()
     # and a reader does not hammer an unreachable delivery
     calls = []
     monkeypatch.setattr(d.orch.restorer, "open", lambda t: calls.append(t) or broken(t))

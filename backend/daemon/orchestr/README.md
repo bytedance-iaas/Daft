@@ -73,8 +73,9 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
     用 W5b 的 `write_copies` 放回全部裁决的 CSV 副本，随后的发布把它们传到交付目录；改标的条目按新标注重跑任务成败判定，
     画像对新 `keep.txt` 增量同步，去重不重跑；新版本，不导出（D9）；执行完标记这些裁决已应用。
   - `reexport`：当前版本 `export --incremental`，再核验；交付不再过期，`latest` 可能移动。
-- **清理与取回**（00 篇 §4.2）：任务到终态、最后一次运行结束 7 天后（`CURATOR_WORK_RETENTION_DAYS`），先把交付目录缺的传上去
-  （被清理过交付产物的不传），再删掉工作目录里除 `.orchestr/` 之外的一切，导出临时目录也删；上传失败就等下一轮，超过两倍保留期照删。
+- **清理与取回**（00 篇 §4.2）：任务到终态、最后一次运行结束 7 天后（`CURATOR_WORK_RETENTION_DAYS`），先把交付目录缺的传上去，
+  再删掉工作目录里除 `.orchestr/` 之外的一切，导出临时目录也删。交付目录没接住的一律不删：上传失败（密钥删了、桶不通）或任务根本没有批次，
+  目录留着，下一轮（每小时）再试；只有被清理过交付产物（D28）的任务不上传、直接删。
   之后来的子任务、W5b 读结果的接口（`ResultStore.backfill` 钩子）从交付目录取回：只取本地没有的文件，不覆盖本地的，
   交付数据集、审片片段、证据帧、同步曲线不取回。取回算一次活动，保留期从取回时重新计。
   数据库里已没有的任务（删除 30 天后被清掉的）的目录，旧于保留期就整个删除。
@@ -142,7 +143,7 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
 9. **清理与取回**：停掉 Daemon，加上 `CURATOR_WORK_RETENTION_DAYS=0.0001`（约 9 秒）重启，一分钟后 `ls -a $D/data/runs/$T`
    只剩 `.orchestr`，Daemon 日志里有 `janitor: task … cleaned`；`c $B/tasks/$T/report` 照样 200，工作目录从交付目录取回了，
    但大文件不取回：`ls $D/data/runs/$T/export` 只有两份清单，没有 `lerobot_curated/`。
-   **注意**：保留期对数据目录里所有已结束的任务都生效，别拿有别的数据的目录做这一步。
+   **注意**：保留期对数据目录里所有已结束的任务都生效（交付目录接得住的就会被清理），别拿存着别的数据的目录做这一步。
 10. **停机**：再建一个任务，趁它在跑 `kill -TERM` Daemon：日志里 `shutdown: 1 running job(s) asked to pause`，
     任务停在 `paused`（`pause_reason: system`，原因「Daemon 停机」）；重启 Daemon（去掉上一步的保留期）后启动对账把它放回队列，
     它自己跑完。

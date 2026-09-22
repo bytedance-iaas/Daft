@@ -10,9 +10,10 @@ export scratch goes as well.
 
 Before removing, whatever the delivery lacks is uploaded - the last log lines of a
 run, a stopped task's partial results, decision copies written after the last
-publish - unless the batch was purged on request. When that upload fails the
-directory is kept for another round, up to twice the retention; then it goes all the
-same: the retention is the rule, and the delivery is where results live.
+publish. Nothing is removed that the delivery does not hold: when that upload fails
+(the key deleted, the bucket unreachable), or the task never had a batch, the
+directory stays and the next round tries again. The one exception is a batch purged
+on request (D28): its local copy goes without an upload.
 
 Directories of tasks that are no longer in the database (purged 30 days after they
 were deleted) are removed whole once they are older than the retention.
@@ -157,9 +158,9 @@ class Janitor:
         with self.orch.restorer.lock(task.id):
             if self._busy(task.id):                         # a subtask came meanwhile
                 return False
-            synced = self._final_sync(task, wd)
-            if not synced and now - last < 2 * retention_ms:
-                return False
+            purged = wd.purged_mark.is_file()
+            if not purged and not self._final_sync(task, wd):
+                return False                                # never remove the only copy
             freed = 0
             for name in self._content(wd):
                 path = wd.root / name
@@ -173,11 +174,11 @@ class Janitor:
                     except FileNotFoundError:
                         pass
             wd.restored_mark.unlink(missing_ok=True)
-            write_json_atomic(wd.cleaned_mark, {"at": now, "bytes": freed, "synced": synced})
+            write_json_atomic(wd.cleaned_mark, {"at": now, "bytes": freed, "purged": purged})
             self._drop_scratch(task.id)
         log.info("janitor: task %s ended %s ago; its local work directory was cleaned "
                  "(%d bytes)%s", task.id, _age(now - last), freed,
-                 "" if synced else " without a final upload to the delivery")
+                 " (its batch had been purged)" if purged else "")
         return True
 
     @staticmethod
@@ -188,16 +189,19 @@ class Janitor:
             return []
 
     def _final_sync(self, task: P.Task, wd: WorkDir) -> bool:
-        """Upload what the delivery lacks; True when nothing is left behind."""
-        if not task.run_id or not task.output_uri or wd.purged_mark.is_file():
-            return True
+        """Upload what the delivery lacks; True when the delivery holds it all."""
+        if not task.run_id or not task.output_uri:
+            log.warning("janitor: task %s ended long ago but has no batch to hold its work "
+                        "directory; kept", task.id)
+            return False
         try:
             with self.orch.restorer.open(task) as d:
                 sync_run_dir(d, task.run_id, wd.root, wd.sync_state)
             return True
         except (DeliveryError, OSError) as err:
-            log.warning("janitor: task %s - the last upload to %s/%s failed: %s", task.id,
-                        task.output_uri.rstrip("/"), task.run_id, err)
+            log.warning("janitor: task %s - the last upload to %s/%s failed, its work "
+                        "directory is kept for now: %s", task.id, task.output_uri.rstrip("/"),
+                        task.run_id, err)
             return False
 
     def _remove_orphan(self, path: pathlib.Path, now: int, retention_ms: int) -> bool:
