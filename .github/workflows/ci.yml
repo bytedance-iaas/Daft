@@ -59,6 +59,10 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: python -m pytest -q -rfE tests/results
+      - name: Orchestration (W5a; the slow tests run the real CLI end to end)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: backend
+        run: python -m pytest -q -rfE tests/orchestr
       - name: Image and chart checks (W11)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend

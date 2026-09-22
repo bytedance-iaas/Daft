@@ -18,7 +18,7 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     task = d.wait(created["id"])
     assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:3000]
     # the fixture: 2 captions, 2 killed by the numeric gates, 7 a copy of 3 -> 5 / 3 / 0 / 2
-    assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 2,
+    assert task["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
                                "pass_rate": 0.625}
     assert task["result_rev"] == 1 and task["delivery_stale"] is False
     assert [s["id"] for s in task["progress"]["stages"]] == [

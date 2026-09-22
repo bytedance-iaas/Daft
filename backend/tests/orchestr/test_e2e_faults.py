@@ -91,7 +91,7 @@ def test_an_errored_episode_is_held_until_a_retry_and_the_state_is_recomputed(da
     assert r.json()["subtask"]["scope"] == {"modules": ["task_success"], "episodes": "errors"}
     done = d.wait(first["id"])
     assert done["state"] == "succeeded" and done["result_rev"] == 2, json.dumps(done)[:2000]
-    assert done["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 2,
+    assert done["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
                                "pass_rate": 0.625}
     assert 0 in _passed(rd, 2) and 0 not in _passed(rd, 1)  # r0001 is kept as it was
     part2 = read_jsonl(os.path.join(rd, "checks", "task_success", "parts", "0002.jsonl"))

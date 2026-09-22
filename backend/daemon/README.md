@@ -27,7 +27,8 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `overview.py` | 概览的各项数字怎么算（口径写在模块说明里） |
 | `routes/static.py`、`deeplink.py` | 前端静态资源、SPA 回退、v1 旧深链 302（解析规则搬自 v1 `ui/runner.py`） |
 | `errors.py`、`idempotency.py`、`pagination.py`、`logs.py`、`views.py`、`taskspec.py` | 统一错误体、幂等键、游标、任务日志、响应组装、任务配置校验 |
-| `operations.py` | C4 全部操作的去向：已实现的，和留给 W3 / W5 的 |
+| `operations.py` | C4 全部操作的去向；W5a 之后全部已实现，`PENDING` 为空 |
+| `exec/`、`orchestr/`、`routes/runs.py`、`routes/datasets_exec.py` | W5a：CLI 执行器（独立进程组、C3 解析、用量批写）与任务编排（运行、分档、worker 池、暂停 / 停止 / 继续、崩溃恢复、发布、数据集操作、工作目录清理与取回），说明、配置与 10 步手动验证见 [`orchestr/README.md`](orchestr/README.md) |
 
 ## 已实现的接口
 
@@ -45,9 +46,9 @@ W5b 的接口（读已提交的结果版本，见 [`results/README.md`](results/
 `GET /tasks/{id}/report/tables/{table}`、`GET /tasks/{id}/episodes/{index}`、`GET /tasks/{id}/perf`、
 `GET/POST /tasks/{id}/adjudication`（裁决队列与记录裁决；执行裁决归 W5a）。
 
-登记数据集（`POST /datasets`）、重新核对、重新预检都要跑 CLI，归 W5；这里只有读、改名改备注和删除登记。
+W5a 的接口（跑 CLI 的操作，见 [`orchestr/README.md`](orchestr/README.md)）：建任务、开始 / 暂停 / 恢复 / 停止 / 继续运行、重试、执行裁决、重新导出、清理交付产物、计划、预检与重新预检、登记数据集与重新核对、浏览数据集与 episode 列表，共 16 个操作。
 
-其余操作一个都没注册（访问返回 404 `not_found`），去向写在 `operations.py`，测试保证两张表合起来正好是 `openapi.yaml` 的全部操作。
+至此 C4 的全部操作都已实现（`operations.py` 的 `PENDING` 为空），测试保证实现的操作正好是 `openapi.yaml` 的全部操作。
 路径存在、方法不对时返回 405 `method_not_allowed`，带 `Allow`（比如 `PUT /tasks/{id}`）；还没实现的操作不算，仍是 404。
 
 ## 配置
