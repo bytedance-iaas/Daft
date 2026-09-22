@@ -251,6 +251,43 @@ function AppealQuestion({ index, view, q, catalog, onDecide }: { index: number; 
   );
 }
 
+/**
+ * A follow-up the card gained (registry follow_ups, C4 1.5.1) — v1's optional task verdict after
+ * adopting or rewriting a label: answered, the person's verdict stands; left open or 拿不准, the
+ * episode is judged again with the new label. Only the follow-up's own decisions are offered.
+ */
+function FollowUpQuestion({ index, view, f, catalog, onDecide }: { index: number; view: CardView; f: CardView['followUps'][number]; catalog: ReviewCatalog | undefined; onDecide: Decide }) {
+  const verdict = f.line === 'task_verdict';
+  const title = verdict ? zh.adjudication.optionalVerdict : zh.adjudication.followUpTitle(lineTitle(catalog, f.line), f.optional);
+  return (
+    <div className="question" data-testid={`followup-${view.ep}-${f.line}`}>
+      <b>{zh.adjudication.followUpHead(index, title)}</b>
+      {verdict ? (
+        <>
+          <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
+            {zh.adjudication.optionalVerdictDesc}
+          </div>
+          <div style={{ marginBottom: 8 }}>{zh.adjudication.verdictAsk(view.newLabel ?? '', true)}</div>
+        </>
+      ) : null}
+      <Space wrap>
+        <Radio.Group type="button" value={f.effective?.decision ?? ''} aria-label={title} onChange={(d: DecisionValue) => void onDecide(f.line, d)}>
+          {f.decisions.map((d) => (
+            <Radio key={d.const} value={d.const}>
+              {d.title}
+            </Radio>
+          ))}
+        </Radio.Group>
+        {f.effective ? (
+          <span className="muted" style={{ fontSize: 12 }}>
+            {zh.adjudication.saved}
+          </span>
+        ) : null}
+      </Space>
+    </div>
+  );
+}
+
 /** A line without a dedicated view (D43): its catalog title, the question's reason, one button per decision. */
 function GenericQuestion({ index, view, q, catalog, onDecide }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide }) {
   const known = Boolean(catalogLine(catalog, q.line));
@@ -326,6 +363,12 @@ export function EpisodeCard({
         if (q.line === 'reject_appeal') return <AppealQuestion key={q.line} {...props} />;
         return <GenericQuestion key={q.line} {...props} />;
       })}
+      {/* Follow-ups are shown only while the answer that opens them stands (they lapse otherwise). */}
+      {view.followUps
+        .filter((f) => f.open && !view.discarded)
+        .map((f, i) => (
+          <FollowUpQuestion key={`fu-${f.line}`} index={view.questions.length + i} view={view} f={f} catalog={catalog} onDecide={onDecide} />
+        ))}
       {view.status === 'unsure' ? (
         <Typography.Paragraph style={{ color: 'var(--c-warning)', fontSize: 12, margin: '8px 0 0' }}>{view.optional ? zh.adjudication.unsureNoteOptional : zh.adjudication.unsureNote}</Typography.Paragraph>
       ) : null}
