@@ -320,6 +320,8 @@ def test_one_default_model_per_owner(repo):
 
     repo.set_default_vlm_model(first.models[0].id)
     assert defaults() == [first.models[0].id]
+    repo.upsert_vlm_model(P.VlmModel(id="", backend_id=first.id, model_name="a", source="listed"))
+    assert defaults() == [first.models[0].id]                     # a list refresh keeps the flag
     repo.set_default_vlm_model(second.models[0].id)               # takes it from the other backend
     assert defaults() == [second.models[0].id]
     repo.set_default_vlm_model(None)                              # an owner may have none

@@ -231,6 +231,7 @@ function listModels(b: Pick<VlmBackend, 'endpoint' | 'kind'>): { listed: boolean
       listed: true,
       models: ['doubao-seed-2-0-pro-260215', 'doubao-seed-2-0-lite-260215', 'doubao-seed-1-6-251015'].map((name) => ({
         id: nextId('vm'),
+        is_default: false,
         model_name: name,
         reasoning_effort: null,
         max_concurrency: null,
@@ -239,7 +240,7 @@ function listModels(b: Pick<VlmBackend, 'endpoint' | 'kind'>): { listed: boolean
       })),
     };
   }
-  return { listed: true, models: [{ id: nextId('vm'), model_name: 'Qwen2.5-VL-72B-Instruct', reasoning_effort: null, max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: ALL7 }, source: 'listed' }] };
+  return { listed: true, models: [{ id: nextId('vm'), is_default: false, model_name: 'Qwen2.5-VL-72B-Instruct', reasoning_effort: null, max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: ALL7 }, source: 'listed' }] };
 }
 
 function backendInUse(b: VlmBackend, model?: string): number {
@@ -326,7 +327,7 @@ const backends = [
       return err(422, 'model_check_failed', `用「${name}」发了一次最小请求，没调通：InvalidEndpointOrModel.NotFound`);
     }
     if (vb.models.some((m) => m.model_name === name)) return err(409, 'name_taken', `模型「${name}」已经在列表里了`);
-    const m: VlmModel = { id: nextId('vm'), model_name: name, reasoning_effort: b.reasoning_effort ?? null, max_concurrency: b.max_concurrency ?? null, capabilities: { vision: null, reasoning_effort_levels: levelsFor(name) }, source: 'manual' };
+    const m: VlmModel = { id: nextId('vm'), is_default: false, model_name: name, reasoning_effort: b.reasoning_effort ?? null, max_concurrency: b.max_concurrency ?? null, capabilities: { vision: null, reasoning_effort_levels: levelsFor(name) }, source: 'manual' };
     vb.models.push(m);
     return HttpResponse.json(m, { status: 201 });
   }),

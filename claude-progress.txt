@@ -150,6 +150,16 @@ Current summary:
 
       · CI 自 #16 以来第一次全绿（41a7ac70d，19 分 42 秒，所有测试组都跑）；按验收把 F2.1、F2.2、F2.3、F2.4、F2.6、F2.7
         置为 completed（20 项中 14 项完成）
+      · APIG 接通（2026-09-22）：需求方把 curation 加进 physicalai-apig 实例的监听命名空间；Ingress 后端引用服务端口
+        必须用端口号（用名字时 APIG 控制器报 MissingParameter.UpstreamSpec.K8SService.Port），Chart 已改（6ba597e6f）；
+        网关上 https://sls9lfu8l6u30taht8cc7.apigateway-cn-beijing.volceapi.com/curation/ 已通（401 即 Basic Auth 生效，账号同 v1）
+      · 需求方试用后提了三处界面改动（账本修订记录 2026-09-22）：VLM 模型列表分页 10 个一屏 + 模糊搜索 + 「设为默认」；
+        「开始」等操作点下去立刻切状态；各表格列宽留余量。W10 在做前端，后端已先行：
+        契约 C4 1.6.0（VlmModel.is_default 必填、VlmModelPatch.is_default）、C5 set_default_vlm_model（清旧设新一把事务，
+        每位用户跨后端至多一个默认），迁移第 3 步加列与部分索引；删模型或删后端默认即消失，刷新模型列表不清默认（86217fd2b、535c7817e）
+      · README 补「跑通一次完整质检（真数据）」八步（F4.3 的验收路径，b01974471）
+      · CI：任务编排的并发策略测试在 Linux 上偶发红（客户端读到答复就发下一条，处理线程还没退出 → 假模型数到 2 个在途），
+        改成答复发出前先把这条计数出去（5e611e465）
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
