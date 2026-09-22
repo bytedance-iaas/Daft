@@ -32,7 +32,7 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         # test_environment checks a GPU host (torch, nvidia-smi); not available here
-        run: python -m pytest -q -rfE curation/tests --ignore=curation/tests/test_environment.py
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE curation/tests --ignore=curation/tests/test_environment.py
       - name: Contracts (C1-C5 tests and the drift lock)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
@@ -42,41 +42,41 @@ jobs:
       - name: v2 command line (W3)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
-        run: python -m pytest -q -rfE tests/cli
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/cli
       - name: Planner and VLM request merge framework (W6)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
-        run: python -m pytest -q -rfE tests/planner
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/planner
       - name: Daemon skeleton (W4)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
-        run: python -m pytest -q -rfE tests/daemon
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/daemon
       - name: Secrets and resources (W8)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
-        run: python -m pytest -q -rfE tests/secrets
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/secrets
       - name: Result readers (W5b)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
-        run: python -m pytest -q -rfE tests/results
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/results
       - name: Orchestration (W5a; the slow tests run the real CLI end to end)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
-        run: python -m pytest -q -rfE tests/orchestr
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/orchestr
       - name: Image and chart checks (W11)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
-        run: python -m pytest -q -rfE tests/deploy
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/deploy
       - name: Incremental re-export (W7)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         # the official lerobot loader cases skip here; the lerobot-loader job runs them
-        run: python -m pytest -q -rfE tests/export
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/export
       - name: Parity tools (unit + end-to-end on the synthetic dataset)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:
           PYTHONPATH: tools
-        run: python -m pytest -q -rfE tools/parity/tests
+        run: bash .github/scripts/pytest-summary.sh -q -rfE tools/parity/tests
 
   lerobot-loader:
     # The official LeRobot loaders read the incremental re-exports without warnings (F2.5).
