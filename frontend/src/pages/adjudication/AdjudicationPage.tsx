@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, idempotencyKey, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
-import { moduleName, qk, useModules, useTask } from '../../api/queries';
+import { moduleName, qk, showSubtask, useModules, useTask } from '../../api/queries';
 import type { AdjudicationCard, AdjudicationCounts, Task } from '../../api/types';
 import { Sentinel } from '../../components/LazyVisible';
 import { PageError } from '../../components/PageError';
@@ -72,7 +72,8 @@ export function AdjudicationPage() {
     setApplying(true);
     try {
       // The body is optional in C4 1.4; sending it always makes the choice explicit (D39).
-      await unwrap(api().POST('/tasks/{id}/adjudication/apply', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } }, body: { relabel_rerun: relabelRerun } }));
+      const r = await unwrap(api().POST('/tasks/{id}/adjudication/apply', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } }, body: { relabel_rerun: relabelRerun } }));
+      showSubtask(qc, id, r.subtask);
       Message.success(zh.actions.done.apply);
       setApplyOpen(false);
       decisions.reset();

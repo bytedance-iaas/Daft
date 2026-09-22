@@ -1,4 +1,5 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
+import { http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EVENTS_CONFIG, setEventSourceFactory } from '../../api/events';
 import { db } from '../../mocks/db';
@@ -39,6 +40,28 @@ describe('任务详情 (07 §4.2)', () => {
     expect(within(banner).getByRole('button', { name: '导出' })).toBeInTheDocument();
     const summary = screen.getByTestId('report-summary');
     for (const t of ['50', '41', '7', '2', '10', '82%', '含待裁决 10 条']) expect(summary).toHaveTextContent(t);
+  });
+
+  it('重试 shows the subtask its answer carries at once, without waiting for the next poll (07 §4.2)', async () => {
+    // Every refetch of the task is held: the banner can only come from the answer of the action.
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    let gets = 0;
+    server.use(
+      http.get(`*/api/v1/tasks/${MAIN}`, async () => {
+        gets += 1;
+        if (gets > 1) await held;
+      }),
+    );
+    const { user } = renderApp(`/tasks/${MAIN}`);
+    expect(await screen.findByRole('heading', { name: /droid 前 50 条质检/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '更多' }));
+    await user.click(await screen.findByText(/^重试（2 条）$/));
+    const dialog = await screen.findByRole('dialog', { name: '重试出错的条目' });
+    await user.click(within(dialog).getByRole('button', { name: '开始重试' }));
+    expect(await screen.findByText('子任务「重试」排队中，完成前不能再建子任务')).toBeInTheDocument();
+    expect(gets).toBeGreaterThan(1);
+    release();
   });
 
   it('stage bars explain why the total dropped; module errors expand to the episodes', async () => {

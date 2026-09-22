@@ -205,7 +205,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
   const skipped = task.modules.filter((m) => !m.selected && m.availability !== 'available');
   const terminal = isTerminalState(task.state);
   const retry = (m: ModuleState) =>
-    confirmModuleRetry({ taskId: task.id, moduleId: m.id, name: moduleName(reg.data, m.id) || m.name, onDone: () => void qc.invalidateQueries({ queryKey: ['task', task.id] }) });
+    confirmModuleRetry({ taskId: task.id, moduleId: m.id, name: moduleName(reg.data, m.id) || m.name, qc, onDone: () => void qc.invalidateQueries({ queryKey: ['task', task.id] }) });
   const columns: ColumnProps<ModuleState>[] = [
     { title: zh.taskDetail.colModule, dataIndex: 'name', render: (_: unknown, m) => <b>{moduleName(reg.data, m.id) || m.name}</b> },
     { title: zh.taskDetail.colStage, dataIndex: 'id', render: (_: unknown, m) => stageLabel(reg.data?.modules.find((x) => x.id === m.id)?.stage ?? '') },

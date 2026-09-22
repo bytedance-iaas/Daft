@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, idempotencyKey, unwrap } from '../../api/client';
 import { ApiError, errorMessage } from '../../api/errors';
-import { qk } from '../../api/queries';
+import { qk, showTaskState } from '../../api/queries';
 import type {
   BrowsedDataset,
   Credential,
@@ -337,7 +337,8 @@ export function TaskForm(p: TaskFormProps) {
   const startTask = async (id: string, warnings: string[]) => {
     setPhase('start');
     try {
-      await unwrap(api().POST('/tasks/{id}/actions/{action}', { params: { path: { id, action: 'start' }, header: { 'Idempotency-Key': idempotencyKey() } } }));
+      const task = await unwrap(api().POST('/tasks/{id}/actions/{action}', { params: { path: { id, action: 'start' }, header: { 'Idempotency-Key': idempotencyKey() } } }));
+      showTaskState(qc, task);
       Message.success(zh.taskForm.started);
       warnings.forEach((w) => Notification.warning({ title: zh.taskForm.titleNew, content: w }));
       void qc.invalidateQueries({ queryKey: qk.tasksAll });

@@ -131,6 +131,27 @@ describe('任务列表 (07 §4.1)', () => {
     expect(list).toHaveTextContent('tos://pai-kit-deliveries/libero_10-0920');
   });
 
+  it('启动 shows the state the answer carries at once, without waiting for the next poll (07 §4.1)', async () => {
+    // Every refetch of the list is held: what the row shows after the click can only come from
+    // the answer of the action itself.
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    let gets = 0;
+    server.use(
+      http.get('*/api/v1/tasks', async () => {
+        gets += 1;
+        if (gets > 1) await held;
+      }),
+    );
+    const { user } = renderApp('/tasks');
+    await screen.findByRole('link', { name: 'libero-10 抽检' });
+    expect(within(row('libero-10 抽检')).getByText('待启动')).toBeInTheDocument();
+    await user.click(within(row('libero-10 抽检')).getByRole('button', { name: '启动' }));
+    await waitFor(() => expect(within(row('libero-10 抽检')).getByText('排队中')).toBeInTheDocument());
+    expect(gets).toBeGreaterThan(1);
+    release();
+  });
+
   it('shows the page-level error with the Daemon message when the list cannot load', async () => {
     server.use(http.get('*/api/v1/tasks', () => HttpResponse.json({ error: { code: 'internal', message: '数据库暂时不可用，请稍后重试' } }, { status: 500 })));
     renderApp('/tasks');

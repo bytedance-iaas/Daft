@@ -7,7 +7,7 @@ import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, idempotencyKey, unwrap } from '../../api/client';
 import { ApiError, errorMessage } from '../../api/errors';
-import { qk } from '../../api/queries';
+import { qk, showSubtask, showTaskState } from '../../api/queries';
 import type { SourceChange } from '../../api/types';
 import type { TaskActionKey } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
@@ -101,7 +101,8 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
 
   const act = async (id: string, action: 'start' | 'pause' | 'resume' | 'stop', done: string) => {
     try {
-      await unwrap(api().POST('/tasks/{id}/actions/{action}', { params: { path: { id, action }, header: { 'Idempotency-Key': idempotencyKey() } } }));
+      const task = await unwrap(api().POST('/tasks/{id}/actions/{action}', { params: { path: { id, action }, header: { 'Idempotency-Key': idempotencyKey() } } }));
+      showTaskState(qc, task);
       Message.success(done);
       refresh(id);
     } catch (e) {
@@ -153,7 +154,8 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
           zh.actions.confirmRetry.content(t.held ?? 0),
           async () => {
             try {
-              await unwrap(api().POST('/tasks/{id}/retry', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } }, body: {} }));
+              const r = await unwrap(api().POST('/tasks/{id}/retry', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } }, body: {} }));
+              showSubtask(qc, id, r.subtask);
               Message.success(zh.actions.done.retry);
               refresh(id);
             } catch (e) {
@@ -169,7 +171,8 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
           zh.actions.confirmContinue.content,
           async () => {
             try {
-              await unwrap(api().POST('/tasks/{id}/continue', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } } }));
+              const r = await unwrap(api().POST('/tasks/{id}/continue', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } } }));
+              showSubtask(qc, id, r.subtask);
               Message.success(zh.actions.done.continue);
               refresh(id);
             } catch (e) {
@@ -185,7 +188,8 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
           zh.actions.confirmExport.content(t.deliveryUri ?? zh.taskForm.outputUri),
           async () => {
             try {
-              await unwrap(api().POST('/tasks/{id}/reexport', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } } }));
+              const r = await unwrap(api().POST('/tasks/{id}/reexport', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } } }));
+              showSubtask(qc, id, r.subtask);
               Message.success(zh.actions.done.reexport);
               refresh(id);
             } catch (e) {
@@ -215,7 +219,8 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
       case 'restore':
         void (async () => {
           try {
-            await unwrap(api().POST('/tasks/{id}/restore', { params: { path: { id } } }));
+            const task = await unwrap(api().POST('/tasks/{id}/restore', { params: { path: { id } } }));
+            showTaskState(qc, task);
             Message.success(zh.actions.done.restore);
             refresh(id);
           } catch (e) {

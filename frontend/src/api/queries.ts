@@ -1,8 +1,8 @@
 // Query keys and the small read hooks shared by several pages. Everything is fetched from the
 // Daemon (D17); nothing here is kept beyond the query cache.
-import { useQuery, type Query } from '@tanstack/react-query';
+import { useQuery, type Query, type QueryClient } from '@tanstack/react-query';
 import { api, unwrap } from './client';
-import type { ModuleRegistry, ModuleSpec, Task } from './types';
+import type { ModuleRegistry, ModuleSpec, Subtask, Task, TaskListItem, TaskListPage } from './types';
 
 export const qk = {
   modules: ['modules'] as const,
@@ -62,6 +62,36 @@ export function useTask(id: string | undefined, refetchInterval?: number | false
     enabled: Boolean(id),
     refetchInterval,
   });
+}
+
+/**
+ * An action answers with the new state (07 §4.1): show it at once instead of waiting for the next
+ * poll. The task the detail page reads and every cached list row take it; the invalidation that
+ * follows refetches both, so the server has the last word.
+ */
+export function showTaskState(qc: QueryClient, task: Task): void {
+  qc.setQueryData(qk.task(task.id), task);
+  patchTaskRow(qc, task.id, (row) => ({
+    ...row,
+    state: task.state,
+    pause_reason: task.pause_reason ?? null,
+    active_subtask: task.active_subtask?.id ?? null,
+    progress: task.progress,
+    delivery_stale: task.delivery_stale,
+    pending_adjudication: task.pending_adjudication,
+  }));
+}
+
+/** The same for the actions whose answer is the subtask they created (202 `SubtaskCreated`). */
+export function showSubtask(qc: QueryClient, id: string, subtask: Subtask): void {
+  qc.setQueryData(qk.task(id), (t: Task | undefined) => (t ? { ...t, active_subtask: subtask } : t));
+  patchTaskRow(qc, id, (row) => ({ ...row, active_subtask: subtask.id }));
+}
+
+function patchTaskRow(qc: QueryClient, id: string, patch: (row: TaskListItem) => TaskListItem): void {
+  qc.setQueriesData({ queryKey: qk.tasksAll }, (page: TaskListPage | undefined) =>
+    page?.items?.some((t) => t.id === id) ? { ...page, items: page.items.map((t) => (t.id === id ? patch(t) : t)) } : page,
+  );
 }
 
 /**

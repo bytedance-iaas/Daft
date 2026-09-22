@@ -273,7 +273,7 @@ function ReportBody({
           subtasks={subtasks}
           readOnly={readOnly}
           retryBlocked={blocked}
-          onRetry={(moduleId, name) => confirmModuleRetry({ taskId: task.id, moduleId, name, onDone: refresh })}
+          onRetry={(moduleId, name) => confirmModuleRetry({ taskId: task.id, moduleId, name, qc, onDone: refresh })}
           onTable={openTable}
         />
       ))}
