@@ -706,7 +706,8 @@ export function seedTasks(now: number): Task[] {
       episodes: { mode: 'all' },
       total: 1024,
       stages: allDone(1024),
-      summary: { total: 1024, passed: 968, rejected: 56, held: 0, review: 0, pass_rate: 0.945 },
+      // 1027 selected; 3 miss source files and are left out (D40): see SO101_SKIPPED.
+      summary: { total: 1024, passed: 968, rejected: 56, held: 0, review: 0, pass_rate: 0.945, skipped: 3 },
       usage: usageTotals(4_900_000, 170_000, 90_000, 2_300_000, 5200),
       embodiment: 'so101',
       resultRev: 2,

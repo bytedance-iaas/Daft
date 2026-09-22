@@ -17,6 +17,7 @@ import {
   mainUsage,
   preflightFor,
   registry,
+  SO101_SKIPPED,
   so101Subtasks,
   so101Timeline,
 } from './world';
@@ -63,11 +64,14 @@ describe('fixtures match the contract', () => {
     [...cardsOf(MAIN_TASK, 'review'), ...cardsOf(MAIN_TASK, 'appeals')].forEach((c) => expectValid(S('AdjudicationCard'), c));
   });
 
-  it('the so101 sample: an adjudication whose relabels were judged with the full flow (D39)', () => {
+  it('the so101 sample: an adjudication whose relabels were judged with the full flow (D39) and skipped episodes (D40)', () => {
     const subs = so101Subtasks(Date.now());
     subs.forEach((s) => expectValid(S('Subtask'), s));
     expect(subs[0].scope.relabel_rerun).toBe('full');
     so101Timeline(Date.now()).forEach((e) => expectValid(S('TimelineEntry'), e));
+    const so101 = db.tasks.find((t) => t.id === 'task_01HXPZ2K')!;
+    expect(so101.summary?.skipped).toBe(SO101_SKIPPED.length);
+    expectValid('https://curator.contracts/cli/common.schema.json#/$defs/skipped_episodes', SO101_SKIPPED);
   });
 });
 
@@ -171,6 +175,9 @@ const calls = (): Call[] => [
   { op: 'getReport', method: 'GET', path: `/tasks/${T}/report` },
   { op: 'getReport', method: 'GET', path: `/tasks/${T}/report?rev=1` },
   { op: 'getReport', method: 'GET', path: '/tasks/task_01HXQ5R9/report' },
+  // so101: overview.counts.skipped and integrity.skipped_episodes (D40)
+  { op: 'getReport', method: 'GET', path: '/tasks/task_01HXPZ2K/report' },
+  { op: 'listSubtasks', method: 'GET', path: '/tasks/task_01HXPZ2K/subtasks' },
   { op: 'getReportTable', method: 'GET', path: `/tasks/${T}/report/tables/visual_quality?limit=100&sort=score&order=desc` },
   { op: 'getReportTable', method: 'GET', path: `/tasks/${T}/report/tables/visual_quality?sort=nope` },
   { op: 'getEpisode', method: 'GET', path: `/tasks/${T}/episodes/29` },

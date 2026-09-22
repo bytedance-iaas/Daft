@@ -41,6 +41,8 @@ import {
   preflightFor,
   profileFor,
   registry,
+  SO101_SKIPPED,
+  SO101_TASK,
   tableRows,
 } from './world';
 import { cardsOf, clock, countsOf, datasetName, db, decisionsOf, findTask, nextId, toListItem } from './db';
@@ -1052,7 +1054,7 @@ function genericReport(t: Task, revision: number): Report {
     overview: {
       dataset: { name: datasetName(t) },
       run: { run_id: t.run_id },
-      counts: { total: s.total, passed: s.passed, rejected: s.rejected, held: s.held, review: s.review },
+      counts: { total: s.total, passed: s.passed, rejected: s.rejected, held: s.held, review: s.review, ...(s.skipped !== undefined ? { skipped: s.skipped } : {}) },
       pass_rate: s.pass_rate,
       reject_reasons: s.rejected ? [{ module: 'timestamp_check', count: s.rejected }] : [],
       token_usage: { prompt: t.usage.prompt_tokens, completion: t.usage.completion_tokens, reasoning: t.usage.reasoning_tokens, cached: t.usage.cached_tokens, requests: t.usage.requests, requests_unknown_usage: t.usage.requests_unknown_usage },
@@ -1072,7 +1074,7 @@ function genericReport(t: Task, revision: number): Report {
         };
       }),
     skipped_modules: t.modules.filter((m) => !m.selected && m.availability !== 'available').map((m) => ({ id: m.id, reason: m.unavailable_reason ?? '未运行' })),
-    integrity: { format: 'LeRobot v2' },
+    integrity: { format: 'LeRobot v2', ...(t.id === SO101_TASK ? { skipped_episodes: SO101_SKIPPED } : {}) },
     perf: {},
   };
 }

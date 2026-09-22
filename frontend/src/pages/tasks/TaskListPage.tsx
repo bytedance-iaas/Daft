@@ -45,7 +45,11 @@ function ProgressCell({ t }: { t: TaskListItem }) {
     const s = t.summary;
     return (
       <div>
-        <div>{zh.taskList.resultLine(s.passed, s.rejected, s.held)}</div>
+        <div>
+          {zh.taskList.resultLine(s.passed, s.rejected, s.held)}
+          {/* D40: episodes left out for missing source files are not part of total */}
+          {s.skipped ? <span className="muted"> · {zh.taskList.skippedPart(s.skipped)}</span> : null}
+        </div>
         <div className="muted" style={{ fontSize: 12 }}>
           {zh.taskList.passRate(percent(s.pass_rate))}
         </div>

@@ -63,6 +63,7 @@ function ReportSummary({ task }: { task: Task }) {
             <Stat label={zh.taskDetail.held} value={s.held} foot={zh.taskDetail.heldFoot} />
             <Stat label={zh.taskDetail.review} value={task.pending_adjudication} />
             <Stat label={zh.taskDetail.passRate} value={percent(s.pass_rate)} foot={zh.taskDetail.passRateFoot} />
+            {s.skipped ? <Stat label={zh.taskDetail.skipped} value={s.skipped} foot={zh.taskDetail.skippedFoot} /> : null}
           </div>
           <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
             {zh.taskDetail.summaryNote}
