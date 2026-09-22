@@ -60,6 +60,39 @@
      ]
     }
    ]
+  },
+  {
+   "schema_version": "1.0",
+   "list": "review",
+   "revision": 3,
+   "count": 2,
+   "episodes": [
+    {
+     "episode_index": 6,
+     "current_list": "reject",
+     "review": [
+      {
+       "source_module": "task_success",
+       "kind": "reject_appeal",
+       "line": "reject_appeal",
+       "reason": "未通过「任务成败判定」:抓取后物体滑落"
+      }
+     ]
+    },
+    {
+     "episode_index": 41,
+     "current_list": "reject",
+     "review": [
+      {
+       "source_module": "dedup",
+       "kind": "reject_appeal",
+       "line": "reject_appeal",
+       "reason": "与 episode 40 字节级完全重复",
+       "duplicate_of": 40
+      }
+     ]
+    }
+   ]
   }
  ],
  "invalid": [
@@ -80,6 +113,39 @@
    "revision": 2,
    "count": 0,
    "episodes": []
+  },
+  {
+   "schema_version": "1.0",
+   "list": "review",
+   "revision": 3,
+   "count": 2,
+   "episodes": [
+    {
+     "episode_index": 6,
+     "current_list": "reject",
+     "review": [
+      {
+       "source_module": "task_success",
+       "kind": "reject_appeal",
+       "line": "reject_appeal",
+       "reason": "未通过「任务成败判定」:抓取后物体滑落"
+      }
+     ]
+    },
+    {
+     "episode_index": 41,
+     "current_list": "reject",
+     "review": [
+      {
+       "source_module": "dedup",
+       "kind": "Reject Appeal",
+       "line": "reject_appeal",
+       "reason": "与 episode 40 字节级完全重复",
+       "duplicate_of": 40
+      }
+     ]
+    }
+   ]
   }
  ]
 }
