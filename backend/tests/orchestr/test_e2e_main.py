@@ -53,3 +53,26 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     rd = d.run_dir(task["id"])
     assert set(results(rd, "task_success")) == {0, 1, 3, 4, 6, 7}
     assert read_jsonl(os.path.join(rd, "usage.jsonl"))
+
+
+def test_episodes_the_listing_skips_are_left_out_of_the_plan_and_the_totals(daemon, monkeypatch):
+    """D40: an episode whose source files are missing is never read, in no list, not in total."""
+    from daemon.orchestr import datasets
+
+    original = datasets.DatasetOps.listing
+
+    def listing(self, src, owner, out):
+        doc = original(self, src, owner, out)
+        doc["skipped_episodes"] = [{"episode_index": 5, "missing": [
+            "videos/chunk-000/observation.images.wrist/episode_000005.mp4"]}]
+        return doc
+
+    monkeypatch.setattr(datasets.DatasetOps, "listing", listing)
+    d = daemon()
+    task = d.wait(d.create(modules=["timestamp_check"])["id"])
+    assert task["state"] == "succeeded", json.dumps(task, ensure_ascii=False)[:2000]
+    assert task["summary"]["total"] == 7
+    numeric = {s["id"]: s for s in task["progress"]["stages"]}["numeric"]
+    assert (numeric["done"], numeric["total"]) == (7, 7)
+    assert 5 not in results(d.run_dir(task["id"]), "timestamp_check")
+    assert {m["id"]: m for m in task["modules"]}["timestamp_check"]["episodes_total"] == 7

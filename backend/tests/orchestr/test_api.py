@@ -441,3 +441,16 @@ def test_episode_preview_on_tos_signs_every_camera(api):
     assert cam["name"] == "wrist" and "X-Tos-Signature" in cam["url"]
     assert "videos/chunk-000/observation.images.wrist/episode_000001.mp4" in cam["url"]
     assert body["items"][0]["length_s"] == 2.0
+
+
+def test_the_summary_says_how_many_episodes_were_skipped(api):
+    c, _, _ = api()
+    t = _seeded(c, "succeeded")
+    summary = {"total": 7, "passed": 5, "rejected": 2, "held": 0, "review": 0,
+               "pass_rate": 0.714, "pending_adjudication": 0}
+    _rt(c).repo.set_task_summary(t.id, {**summary, "skipped": 1})
+    body = c.get(f"{API}/tasks/{t.id}").json()
+    assert_schema("Task", body)
+    assert body["summary"]["skipped"] == 1 and body["summary"]["total"] == 7
+    _rt(c).repo.set_task_summary(t.id, summary)
+    assert "skipped" not in c.get(f"{API}/tasks/{t.id}").json()["summary"]   # none: left out
