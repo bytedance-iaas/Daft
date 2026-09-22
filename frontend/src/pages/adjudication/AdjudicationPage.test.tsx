@@ -1,8 +1,8 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { decisionsOf, findTask } from '../../mocks/db';
+import { db, decisionsOf, findTask } from '../../mocks/db';
 import { MAIN_TASK } from '../../mocks/world';
-import { findDrawer, pick } from '../../test/arco';
+import { pick } from '../../test/arco';
 import { fieldErrors } from '../../test/forms';
 import { recordRequests, type SeenRequest } from '../../test/record';
 import { renderApp } from '../../test/render';
@@ -11,7 +11,7 @@ import { ADJ_CONFIG } from './useAdjudication';
 const PAGE = `/tasks/${MAIN_TASK}/adjudication`;
 const card = (ep: number) => screen.getByTestId(`card-${ep}`);
 const posts = (seen: SeenRequest[]) => seen.filter((r) => r.method === 'POST' && r.path === `/tasks/${MAIN_TASK}/adjudication`).map((r) => (r.body as { decisions: unknown[] }).decisions[0]);
-const shownCards = () => [...document.querySelectorAll('[data-testid^="card-"]')].map((e) => Number(e.getAttribute('data-testid')!.slice(5)));
+const shownCards = (root: ParentNode = document) => [...root.querySelectorAll('[data-testid^="card-"]')].map((e) => Number(e.getAttribute('data-testid')!.slice(5)));
 
 afterEach(() => {
   ADJ_CONFIG.pageSize = 20;
@@ -73,7 +73,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(screen.getByTestId('adj-counts')).toHaveTextContent('待裁 7 条 · 3 条尚未应用');
   });
 
-  it('自行改写标注 needs the new label; a relabel without a verdict offers the optional verdict', async () => {
+  it('自行改写标注 needs the new label; a card only answers the questions it has (C4 1.5)', async () => {
     const seen = recordRequests();
     const { user } = renderApp(PAGE);
     await screen.findByTestId('card-36');
@@ -84,10 +84,9 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     await user.type(within(q).getByLabelText('改写后的标注'), 'push the plate back');
     await user.click(within(q).getByRole('button', { name: '保存' }));
     await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 36, line: 'label', decision: 'custom_label', new_label: 'push the plate back' }]));
-    const optional = await within(card(36)).findByTestId('optional-verdict-36');
-    expect(optional).toHaveTextContent('顺手给成败结论（选填）');
-    await user.click(within(optional).getByText('判成功'));
-    await waitFor(() => expect(posts(seen)[1]).toEqual({ episode_index: 36, line: 'task_verdict', decision: 'success' }));
+    // No task-verdict buttons on a card without that question: the Daemon would refuse the decision.
+    expect(within(card(36)).queryByText('判成功')).toBeNull();
+    expect(within(card(36)).queryByTestId('q-36-task_verdict')).toBeNull();
   });
 
   it('filters: ?source= from the report preselects on the server; several sources filter on the page', async () => {
@@ -118,23 +117,104 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(shownCards()).toHaveLength(7);
   });
 
-  it('rule 2: appeals list only task_success rejects, explain the final ones, and use 恢复为可用 / 维持拒绝', async () => {
+  it('rule 2: 被拒复议 lists rejects of appealable modules as optional cards and explains the final ones (D42)', async () => {
     const seen = recordRequests();
     const { user } = renderApp(PAGE);
     await screen.findByTestId('card-29');
-    await user.click(screen.getByRole('tab', { name: '任务失败复议' }));
-    const table = await screen.findByTestId('appeals');
-    await within(table).findByText('ep 6');
-    expect(within(table).getAllByText(/^ep \d+$/).map((e) => e.textContent)).toEqual(['ep 6', 'ep 11', 'ep 23', 'ep 38', 'ep 45']);
+    await user.click(screen.getByRole('tab', { name: '被拒复议' }));
+    const list = await screen.findByTestId('appeals');
+    await within(list).findByTestId('card-6');
+    // task_success rejects and the dedup reject (D42).
+    expect(shownCards(list)).toEqual([6, 11, 23, 38, 45, 44]);
+    // Appeals are optional: the cards say so and the pending count does not move.
+    expect(within(card(6)).getByTestId('status-6')).toHaveTextContent('可复议');
     await user.click(screen.getByText('为什么有的被拒条目不在这里'));
-    expect(await screen.findByTestId('final-rejects')).toHaveTextContent('时间戳检查：1 条');
-    expect(screen.getByTestId('final-rejects')).toHaveTextContent('精确去重：1 条');
-    expect(screen.getByTestId('final-rejects')).not.toHaveTextContent('任务成败判定');
-    const row = within(table).getByText('ep 6').closest('tr') as HTMLElement;
-    await user.click(within(row).getByText('恢复为可用'));
+    const final = await screen.findByTestId('final-rejects');
+    expect(final).toHaveTextContent('时间戳检查：1 条');
+    // dedup is appealable now: not among the final ones.
+    expect(final).not.toHaveTextContent('精确去重');
+    expect(final).not.toHaveTextContent('任务成败判定');
+    expect(screen.getByText(/物理与结构硬门.*和软分拒绝是终局/)).toHaveTextContent('可复议的只有：任务成败判定、精确去重');
+    // Buttons come from the catalog: 恢复为可用 / 维持拒绝 / 拿不准, no 整条弃用.
+    const q = within(card(6)).getByTestId('q-6-reject_appeal');
+    expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['恢复为可用', '维持拒绝', '拿不准']);
+    expect(within(card(6)).queryByRole('button', { name: '其它原因，整条弃用' })).toBeNull();
+    await user.click(within(q).getByText('恢复为可用'));
     await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 6, line: 'reject_appeal', decision: 'restore' }]));
-    await user.click(within(row).getByRole('button', { name: '看视频' }));
-    expect(await findDrawer('ep 6')).toBeInTheDocument();
+    expect(screen.getByTestId('adj-counts')).toHaveTextContent('待裁 7 条');
+  });
+
+  it('a dedup appeal names the episode it duplicates and shows both side by side (D42)', async () => {
+    const seen = recordRequests();
+    const { user } = renderApp(`${PAGE}?tab=appeals&source=dedup`);
+    const c = await screen.findByTestId('card-44');
+    // ?source=dedup filters on the server: only the dedup card.
+    expect(shownCards(screen.getByTestId('appeals'))).toEqual([44]);
+    const lists = seen.filter((r) => r.method === 'GET' && r.path === `/tasks/${MAIN_TASK}/adjudication`);
+    expect([lists.at(-1)?.query.get('tab'), lists.at(-1)?.query.get('source')]).toEqual(['appeals', 'dedup']);
+    expect(c).toHaveTextContent('来源：精确去重');
+    expect(within(c).getByTestId('duplicate-44')).toHaveTextContent('与 episode 43 字节级完全重复');
+    const compare = within(c).getByTestId('compare-44');
+    expect(compare).toHaveTextContent('ep 44（本条，被判重复）');
+    expect(compare).toHaveTextContent('ep 43（保留的那条）');
+    // Both episodes' videos: the rejected one from the source, the kept one from the delivery.
+    expect(await within(compare).findByTestId('media-44')).toBeInTheDocument();
+    expect(await within(compare).findByTestId('media-43')).toBeInTheDocument();
+    const q = within(c).getByTestId('q-44-reject_appeal');
+    await user.click(within(q).getByText('维持拒绝'));
+    await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 44, line: 'reject_appeal', decision: 'keep_rejected' }]));
+    expect(within(c).getByTestId('status-44')).toHaveTextContent('已裁');
+  });
+
+  it('a line without a dedicated view renders from the registry catalog, and counts as pending as the catalog says (D43)', async () => {
+    // Test fixture only: a catalog entry and a question on it; the mock world has neither.
+    db.extraReviewLines = [
+      {
+        id: 'grip_check',
+        review_kind: 'grip_check',
+        title_zh: '夹爪状态核对',
+        applies_to: 'passed',
+        counts_as_pending: true,
+        decisions: [
+          { const: 'grip_ok', title: '夹爪正常' },
+          { const: 'grip_broken', title: '夹爪异常' },
+          { const: 'unsure', title: '拿不准' },
+        ],
+      },
+    ];
+    db.extraQuestions = new Map([
+      [
+        MAIN_TASK,
+        new Map([
+          [12, [{ line: 'grip_check', source_module: 'motion_quality', reason: '夹爪开度读数 3 秒不变，画面里夹爪在动', latest_decision: null }]],
+          // A line the catalog does not declare: shown, but no buttons to press.
+          [14, [{ line: 'mystery_line', source_module: 'motion_quality', reason: '未知问题', latest_decision: null }]],
+        ]),
+      ],
+    ]);
+    const seen = recordRequests();
+    const { user } = renderApp(PAGE);
+    const c = await screen.findByTestId('card-12');
+    // One more pending card: grip_check counts as pending (7 → 9 with the undeclared one).
+    expect(screen.getByTestId('adj-counts')).toHaveTextContent('待裁 9 条');
+    const q = within(c).getByTestId('q-12-grip_check');
+    expect(q).toHaveTextContent('① 来源：运动质量 · 夹爪状态核对');
+    expect(q).toHaveTextContent('夹爪开度读数 3 秒不变，画面里夹爪在动');
+    expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['夹爪正常', '夹爪异常', '拿不准']);
+    // Not a line that offers 整条弃用.
+    expect(within(c).queryByRole('button', { name: '其它原因，整条弃用' })).toBeNull();
+    await user.click(within(q).getByText('夹爪异常'));
+    await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 12, line: 'grip_check', decision: 'grip_broken' }]));
+    await waitFor(() => expect(screen.getByTestId('adj-counts')).toHaveTextContent('已裁 4 条 · 待裁 8 条'));
+    expect(within(c).getByTestId('status-12')).toHaveTextContent('已裁');
+    // The question type filter lists the catalog's lines for this tab.
+    await pick(user, '问题类型', /^夹爪状态核对/);
+    await waitFor(() => expect(shownCards()).toEqual([12]));
+    const unknown = screen.queryByTestId('q-14-mystery_line');
+    expect(unknown).toBeNull();
+    await pick(user, '问题类型', '全部');
+    expect(await screen.findByTestId('q-14-mystery_line')).toHaveTextContent('注册表里没有「mystery_line」这种复核，这一问没法作答');
+    expect(within(screen.getByTestId('q-14-mystery_line')).queryByRole('radio')).toBeNull();
   });
 
   it('执行裁决 confirms what will be applied and which relabels are judged again, then builds the subtask once (D39)', async () => {

@@ -147,6 +147,21 @@ export function ModuleSection({
       </Link>
     )
   ) : null;
+  // D42: rejects attributed to this module that a person may appeal (optional, not pending).
+  const appealable = section.adjudication?.appealable ?? 0;
+  const appeal = appealable ? (
+    readOnly ? (
+      <Tooltip content={zh.report.historyDisabled}>
+        <Button size="small" disabled>
+          {zh.report.goAppeal(appealable)}
+        </Button>
+      </Tooltip>
+    ) : (
+      <Link to={`/tasks/${taskId}/adjudication?tab=appeals&source=${encodeURIComponent(section.id)}`}>
+        <Button size="small">{zh.report.goAppeal(appealable)}</Button>
+      </Link>
+    )
+  ) : null;
   return (
     <Card
       id={`module-${section.id}`}
@@ -172,7 +187,14 @@ export function ModuleSection({
           ) : null}
         </div>
       }
-      extra={adjudicate}
+      extra={
+        adjudicate || appeal ? (
+          <Space size={8}>
+            {adjudicate}
+            {appeal}
+          </Space>
+        ) : null
+      }
     >
       <Space direction="vertical" style={{ width: '100%' }} size={12}>
         {fromSubtask || fpRest.length ? (

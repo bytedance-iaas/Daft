@@ -1,5 +1,5 @@
 {
- "registry_version": "1.2",
+ "registry_version": "1.3",
  "stages": [
   "numeric",
   "frame",
@@ -34,6 +34,21 @@
      "const": "discard",
      "title": "其它原因，整条弃用"
     }
+   ],
+   "follow_ups": [
+    {
+     "after": [
+      "adopt_suggestion",
+      "custom_label"
+     ],
+     "line": "task_verdict",
+     "decisions": [
+      "success",
+      "failure",
+      "unsure"
+     ],
+     "optional": true
+    }
    ]
   },
   {
@@ -59,7 +74,8 @@
      "const": "discard",
      "title": "其它原因，整条弃用"
     }
-   ]
+   ],
+   "follow_ups": []
   },
   {
    "id": "reject_appeal",
@@ -80,7 +96,8 @@
      "const": "unsure",
      "title": "拿不准"
     }
-   ]
+   ],
+   "follow_ups": []
   }
  ],
  "modules": [

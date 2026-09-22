@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.5.0
+  version: 1.5.1
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -48,6 +48,12 @@ info:
     Daemon checks against that catalog. Rejects attributed to dedup may be appealed and a
     question can name `duplicate_of`; already-rejected episodes get no task-verdict question
     (D42). Appeal candidates never count as pending.
+
+    1.5.1 (2026-09-22): v1's optional task verdict after a relabel is back as a catalog
+    `follow_ups` entry (a card gains the question once its label answer adopts a new label;
+    answered, the machine takes it and does not judge again); the `status` filter, the label an
+    adopted suggestion gets without `new_label`, the episode view's `reasons` / `review` items
+    and the 404 reasons of the result readers are spelled out.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -68,7 +74,11 @@ tags:
   - name: tasks
     description: tasks and subtasks
   - name: report
-    description: report, detail tables, episodes, performance, adjudication
+    description: >-
+      report, detail tables, episodes, performance, adjudication. They read a committed result
+      revision; when its files are not on the Daemon's disk and cannot be fetched back from the
+      delivery directory, the answer is 404 not_found with details.reason run_dir_missing or
+      revision_missing.
   - name: system
     description: media signing, events, probes
 
@@ -1127,6 +1137,10 @@ paths:
           schema: {$ref: "#/components/schemas/ModuleId"}
         - name: status
           in: query
+          description: >-
+            by card status, the same on both tabs: pending = not answered yet (on the appeals tab
+            too, although appeals never count in AdjudicationCounts.pending) or answered unsure;
+            decided; unapplied = answered but not executed yet
           schema: {enum: [pending, decided, unapplied, all], default: pending}
         - name: tab
           in: query
@@ -1658,6 +1672,25 @@ components:
             properties:
               const: {type: string, pattern: "^[a-z][a-z0-9_]*$"}
               title: {type: string}
+        follow_ups:
+          type: array
+          default: []
+          description: >-
+            Questions a card gains once its answer on this line is one of `after` - only on a
+            card that does not ask that line already. v1: after adopting a new label a person
+            may give the task verdict (the machine takes it, no re-judging); left open, the
+            episode is judged again with the new label. An optional follow-up never counts as
+            pending, and its answer lapses (not executed, not counted) once the answer that
+            opened it changes.
+          items:
+            type: object
+            additionalProperties: false
+            required: [after, line, decisions, optional]
+            properties:
+              after: {type: array, minItems: 1, items: {type: string}}
+              line: {$ref: "#/components/schemas/ReviewLineId"}
+              decisions: {type: array, minItems: 1, items: {type: string}}
+              optional: {type: boolean}
     BrowsedDataset:
       type: object
       additionalProperties: false
@@ -2289,8 +2322,13 @@ components:
         episode_index: {type: integer, minimum: 0}
         revision: {type: integer, minimum: 1}
         list: {enum: [passed, reject, held]}
-        reasons: {type: array, items: {type: object}}
-        review: {type: array, items: {type: object}}
+        reasons: {type: array, items: {$ref: "#/components/schemas/EpisodeNote"}, description: "why it is in its list"}
+        review:
+          type: array
+          items: {$ref: "#/components/schemas/EpisodeNote"}
+          description: >-
+            what a person is asked about it, questions of the adjudication page first; the
+            abstentions of other modules follow (shown, never queued)
         task_text:
           type: object
           properties:
@@ -2322,6 +2360,19 @@ components:
               path: {type: string}
               from_ts: {type: number}
               to_ts: {type: number}
+    EpisodeNote:
+      type: object
+      additionalProperties: false
+      required: [module, text]
+      description: >-
+        one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list
+        (hard_gate, soft_score, duplicate, human, execution_error) or a review kind
+      properties:
+        module: {$ref: "#/components/schemas/ModuleId"}
+        kind: {type: string}
+        text: {type: string}
+        priority: {type: string}
+        duplicate_of: {type: integer, minimum: 0}
     Perf:
       type: object
       additionalProperties: false
@@ -2414,11 +2465,12 @@ components:
           type: string
           pattern: "^[a-z][a-z0-9_]*$"
           description: >-
-            one of the line's decisions in the registry, on a question the episode's card has;
-            anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label,
+            one of the line's decisions in the registry, on a question the episode's card has or
+            a follow-up the card's answer on another line opened (registry follow_ups); anything
+            else is 400 validation_failed. Today: label - adopt_suggestion, custom_label,
             keep_label, unsure, discard; task_verdict - success, failure, unsure, discard;
             reject_appeal - restore, keep_rejected, unsure
-        new_label: {type: [string, "null"]}
+        new_label: {type: [string, "null"], description: "custom_label: required; adopt_suggestion: may be left out, the question's suggestion is taken"}
         note: {type: [string, "null"]}
     AdjudicationApply:
       type: object

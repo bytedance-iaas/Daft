@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AdjudicationCard, AdjudicationQuestion, Decision } from '../api/types';
-import { applySummary, decisionKey, keepCard, statusQuery, viewCard } from './adjudication';
+import type { AdjudicationCard, AdjudicationQuestion, Decision, ReviewLine } from '../api/types';
+import { applySummary, countsAsPending, decisionKey, decisionTitle, keepCard, lineDecisions, lineTitle, offersDiscard, statusQuery, viewCard } from './adjudication';
 
 const labelQ: AdjudicationQuestion = {
   line: 'label',
@@ -57,11 +57,11 @@ describe('adjudication rules (06 §5.1)', () => {
     const w = viewCard(card([labelQ, verdictQ]), { ...relabel, [decisionKey(29, 'task_verdict')]: { decision: 'failure', new_label: null, applied: false } });
     expect(w.rerunsModel).toBe(false);
     expect(w.humanVerdict).toBe('failure');
-    // The optional verdict on a card without a verdict question counts too.
+    // C4 1.5: a decision answers a question the card has; a verdict without one is not part of the card.
     const x = viewCard(card([labelQ]), { ...relabel, [decisionKey(29, 'task_verdict')]: { decision: 'success', new_label: null, applied: false } });
     expect(x.hasVerdictQuestion).toBe(false);
-    expect(x.rerunsModel).toBe(false);
-    expect(x.unapplied.map((u) => u.line)).toEqual(['label', 'task_verdict']);
+    expect(x.rerunsModel).toBe(true);
+    expect(x.unapplied.map((u) => u.line)).toEqual(['label']);
   });
 
   it('a rewritten label carries the new text; keeping the label leaves an open verdict pending', () => {
@@ -90,6 +90,27 @@ describe('adjudication rules (06 §5.1)', () => {
     const s = applySummary([a, b, c, d]);
     expect([s.episodes, s.decisions, s.rerun, s.humanJudged]).toEqual([3, 4, 1, 1]);
     expect(s.views.map((v) => v.ep)).toEqual([1, 2, 4]);
+  });
+
+  it('the registry catalog gives titles, decisions, pending and 整条弃用 per line (D43)', () => {
+    const catalog: ReviewLine[] = [
+      { id: 'reject_appeal', review_kind: 'reject_appeal', title_zh: '被拒复议', applies_to: 'reject', counts_as_pending: false, decisions: [{ const: 'restore', title: '恢复为可用' }, { const: 'keep_rejected', title: '维持拒绝' }, { const: 'unsure', title: '拿不准' }] },
+      { id: 'grip_check', review_kind: 'grip_check', title_zh: '夹爪状态核对', applies_to: 'passed', counts_as_pending: true, decisions: [{ const: 'grip_ok', title: '夹爪正常' }, { const: 'discard', title: '整条不要' }] },
+    ];
+    expect(lineTitle(catalog, 'grip_check')).toBe('夹爪状态核对');
+    expect(lineTitle(catalog, 'label')).toBe('标注分歧');
+    expect(lineTitle(undefined, 'weird')).toBe('weird');
+    expect(decisionTitle(catalog, 'reject_appeal', 'restore')).toBe('恢复为可用');
+    expect(decisionTitle(catalog, 'grip_check', 'nope')).toBe('nope');
+    expect(lineDecisions(catalog, 'grip_check').map((d) => d.const)).toEqual(['grip_ok', 'discard']);
+    expect(lineDecisions(undefined, 'task_verdict', ['success', 'failure']).map((d) => d.title)).toEqual(['判成功', '判失败']);
+    expect([countsAsPending(catalog, 'reject_appeal'), countsAsPending(catalog, 'grip_check'), countsAsPending(undefined, 'reject_appeal')]).toEqual([false, true, false]);
+    expect([offersDiscard(catalog, 'grip_check'), offersDiscard(catalog, 'reject_appeal'), offersDiscard(undefined, 'label')]).toEqual([true, false, true]);
+    const appeal: AdjudicationQuestion = { line: 'reject_appeal', source_module: 'dedup', reason: '重复', duplicate_of: 43, latest_decision: null };
+    const a = viewCard({ episode_index: 44, status: 'pending', questions: [appeal] }, {}, catalog);
+    expect([a.optional, a.discardLine]).toEqual([true, null]);
+    const g = viewCard({ episode_index: 12, status: 'pending', questions: [{ line: 'grip_check', source_module: 'motion_quality', reason: 'r', latest_decision: null }] }, {}, catalog);
+    expect([g.optional, g.discardLine]).toEqual([false, 'grip_check']);
   });
 
   it('maps the status filter onto the C4 query and client-side filters', () => {

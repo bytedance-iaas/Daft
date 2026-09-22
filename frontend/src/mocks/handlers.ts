@@ -45,7 +45,7 @@ import {
   SO101_TASK,
   tableRows,
 } from './world';
-import { cardsOf, clock, countsOf, datasetName, db, decisionsOf, findTask, nextId, toListItem } from './db';
+import { cardsOf, clock, countsOf, datasetName, db, decisionsOf, findTask, nextId, reviewCatalog, toListItem } from './db';
 
 // ------------------------------------------------------------------ plumbing
 
@@ -383,7 +383,8 @@ function datasetKey(ref: InputRef): string {
 const DROID200_CHANGE: SourceChange = { meta_changed: true, added: 12, removed: 0, modified: 1, sample_keys: ['data/chunk-000/episode_000200.parquet', 'meta/info.json'], preflighted_at: 0 };
 
 const datasets = [
-  http.get(`${API}/modules`, () => HttpResponse.json(registry)),
+  // Tests may add review lines to the catalog (D43); the mock world itself serves the contract file.
+  http.get(`${API}/modules`, () => HttpResponse.json({ ...registry, review_lines: reviewCatalog() })),
   http.get(`${API}/overview`, () => HttpResponse.json(overview())),
   http.get(`${API}/datasets`, ({ request }) => {
     const url = new URL(request.url);
@@ -1165,23 +1166,16 @@ const report = [
     const t = findTask(String(params.id));
     if (!t) return err(404, 'not_found', '任务不存在');
     const b = await body<{ decisions: DecisionInput[] }>(request, 'submitAdjudication');
-    const review = cardsOf(t.id, 'review');
-    const appeals = cardsOf(t.id, 'appeals');
+    // C4 1.5 (D43): a decision must be one of its line's catalog decisions, on a question the
+    // episode's card has; anything else is 400. Appeal cards only exist for appealable modules (D42).
+    const catalog = reviewCatalog();
     for (const d of b.decisions) {
-      if (d.line === 'reject_appeal') {
-        // Rule 2: appeals only for rejects attributed to task_success; the server checks again.
-        const card = appeals.find((c) => c.episode_index === d.episode_index);
-        if (!card || !card.questions.some((q) => q.source_module === 'task_success')) {
-          return err(400, 'validation_failed', `ep ${d.episode_index} 不是任务成败判定拒掉的，不能复议`);
-        }
-        if (!['restore', 'keep_rejected'].includes(d.decision)) return err(400, 'validation_failed', '复议只能「恢复为可用」或「维持拒绝」');
-      } else {
-        const card = review.find((c) => c.episode_index === d.episode_index);
-        if (!card) return err(400, 'validation_failed', `ep ${d.episode_index} 不在待裁决队列里`);
-        const allowed = d.line === 'label' ? ['adopt_suggestion', 'custom_label', 'keep_label', 'unsure', 'discard'] : ['success', 'failure', 'unsure', 'discard'];
-        if (!allowed.includes(d.decision)) return err(400, 'validation_failed', `这一问不能选 ${d.decision}`);
-        if (d.decision === 'custom_label' && !d.new_label?.trim()) return err(400, 'validation_failed', '自行改写标注要填新标注');
-      }
+      const line = catalog.find((l) => l.id === d.line);
+      if (!line) return err(400, 'validation_failed', `没有「${d.line}」这种复核`);
+      const card = cardsOf(t.id, line.applies_to === 'reject' ? 'appeals' : 'review').find((c) => c.episode_index === d.episode_index);
+      if (!card || !card.questions.some((q) => q.line === d.line)) return err(400, 'validation_failed', `ep ${d.episode_index} 没有「${line.title_zh}」这一问`);
+      if (!line.decisions.some((x) => x.const === d.decision)) return err(400, 'validation_failed', `「${line.title_zh}」不能选 ${d.decision}`);
+      if (d.decision === 'custom_label' && !d.new_label?.trim()) return err(400, 'validation_failed', '自行改写标注要填新标注');
     }
     const list = decisionsOf(t.id);
     for (const d of b.decisions) {

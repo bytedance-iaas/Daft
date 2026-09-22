@@ -27,7 +27,7 @@
 | `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`） |
 | `frontend/mockups/` | 静态 HTML 预览稿 |
 | `tools/parity/` | 对账工具与黄金基线流程 |
-| `deploy/Dockerfile` | 镜像，构建上下文是仓库根 |
+| `deploy/` | 镜像（`deploy/Dockerfile`，构建上下文是仓库根）与 Helm Chart（`deploy/charts/curator/`），说明见 `deploy/README.md` |
 | `docs/design/`、`docs/contracts/`、`docs/v1/` | 设计、契约、v1 的使用文档与发布说明 |
 
 ## 开发环境

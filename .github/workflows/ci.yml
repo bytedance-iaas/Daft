@@ -52,6 +52,14 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: python -m pytest -q -rfE tests/secrets
+      - name: Result readers (W5b)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: backend
+        run: python -m pytest -q -rfE tests/results
+      - name: Image and chart checks (W11; helm comes with the runner)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: backend
+        run: python -m pytest -q -rfE tests/deploy
       - name: Incremental re-export (W7)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
@@ -145,5 +153,8 @@ jobs:
           --build-arg NO_MIRROR=1
           --build-arg PIP_INDEX_URL=https://pypi.org/simple
           --build-arg APT_MIRROR=http://deb.debian.org .
-      - name: CLI runs in the image
-        run: docker run --rm curator:ci --help
+      - name: The Daemon and the CLI start in the image
+        run: |
+          docker run --rm curator:ci --help
+          docker run --rm curator:ci curation --help
+          docker run --rm --entrypoint curator-daemon curator:ci --help

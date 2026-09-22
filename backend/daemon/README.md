@@ -41,6 +41,10 @@ W8 的接口（见 [`secrets/README.md`](secrets/README.md)）：`GET/POST /cred
 `POST /vlm-backends/{id}/verify|refresh-models`、`POST /vlm-backends/{id}/models`、
 `PATCH/DELETE /vlm-backends/{id}/models/{model_id}`、`POST /deliveries/probe`、`GET /media/sign`。
 
+W5b 的接口（读已提交的结果版本，见 [`results/README.md`](results/README.md)）：`GET /tasks/{id}/report`、
+`GET /tasks/{id}/report/tables/{table}`、`GET /tasks/{id}/episodes/{index}`、`GET /tasks/{id}/perf`、
+`GET/POST /tasks/{id}/adjudication`（裁决队列与记录裁决；执行裁决归 W5a）。
+
 登记数据集（`POST /datasets`）、重新核对、重新预检都要跑 CLI，归 W5；这里只有读、改名改备注和删除登记。
 
 其余操作一个都没注册（访问返回 404 `not_found`），去向写在 `operations.py`，测试保证两张表合起来正好是 `openapi.yaml` 的全部操作。
