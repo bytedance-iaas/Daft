@@ -90,6 +90,11 @@ def test_pypi_defaults_to_the_internal_mirror_and_apt_to_the_public_one():
     assert env_of(RUNTIME)["PIP_INDEX_URL"] == "${PIP_INDEX_URL}"
     # v1 lesson 3: the apt layer is not gated, so its default must resolve outside Volcano
     assert args["APT_MIRROR"] == "https://mirrors.volces.com"
+    # what the Volcano mirror lacks comes from Aliyun's PyPI; an empty build arg turns it off
+    assert args["PIP_EXTRA_INDEX_URL"] == "https://mirrors.aliyun.com/pypi/simple/"
+    run = next(i.args for i in stage(RUNTIME) if i.op == "RUN" and "-r requirements.txt" in i.args)
+    assert '${PIP_EXTRA_INDEX_URL:+--extra-index-url "$PIP_EXTRA_INDEX_URL"}' in run
+    assert "PIP_EXTRA_INDEX_URL" not in env_of(RUNTIME)      # never baked into the image
 
 
 def test_internal_only_hosts_are_behind_the_no_mirror_gate():
@@ -174,7 +179,7 @@ def test_backend_packages_are_installed_after_their_requirements():
         return next(n for n, (o, a) in enumerate(order) if o == op and needle in a)
 
     requirements = index("COPY", "backend/requirements.txt")
-    installed = index("RUN", "pip install --no-cache-dir -r requirements.txt")
+    installed = index("RUN", "-r requirements.txt")
     sources = [index("COPY", p) for p in ("backend/pyproject.toml", "backend/curation/",
                                           "backend/daemon/")]
     package = index("RUN", "pip install --no-cache-dir --no-deps -e .")

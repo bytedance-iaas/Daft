@@ -55,6 +55,10 @@ FROM ${BASE_IMAGE}
 # 或官方源 https://pypi.org/simple
 ARG PIP_INDEX_URL=https://mirrors.ivolces.com/pypi/simple
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} PIP_DEFAULT_TIMEOUT=120
+# 补充源(2026-09-22):火山源缺新版本 —— 火山 CP 构建实测内网源上 uvicorn 只到 0.44.0,v2 锁的是
+# 0.53.0。按以往经验 apt / pip 用火山源,缺的从阿里云 PyPI 补:pip 在两个源里挑满足版本要求的那个。
+# 只想用一个源(比如 GitHub CI 走官方 PyPI):--build-arg PIP_EXTRA_INDEX_URL=
+ARG PIP_EXTRA_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 # 运维基础件:curl(pod 内探查 OpenAI 端点/健康检查用;slim 镜像默认没有,
 # 以前靠 pod 里临时 apt 装,一重建就丢——2026-07-26 进镜像固化)。
@@ -106,7 +110,8 @@ RUN groupadd --gid 10001 curator \
 
 WORKDIR /app
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir ${PIP_EXTRA_INDEX_URL:+--extra-index-url "$PIP_EXTRA_INDEX_URL"} \
+        -r requirements.txt
 
 # 后端两个包：curation（质检内核与 CLI）、daemon（API Daemon），入口见 pyproject.toml 的
 # [project.scripts]：curation、curator-daemon、curator-rotate-master-key。
