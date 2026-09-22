@@ -72,6 +72,9 @@ def test_pause_then_resume_gives_the_results_of_an_uninterrupted_run(daemon, fak
     stages = {s["id"]: s["state"] for s in paused["progress"]["stages"]}
     assert stages["numeric"] == "succeeded" and stages["vlm"] != "succeeded"
     assert {m["id"]: m["state"] for m in paused["modules"]}["task_success"] != "running"
+    batch = d.delivery(paused["run_id"])                   # finished stages are delivered
+    assert os.path.isfile(os.path.join(batch, "checks", "timestamp_check", "results.jsonl"))
+    assert not os.path.exists(os.path.join(batch, "_COMPLETE"))
 
     fake_vlm.delay_s = 0.0
     r = d.action(task_id, "resume")

@@ -272,6 +272,8 @@ class MainRun(StageRun):
                 survivors["profile"] = self.check_stage(st, source, fresh=True)
             elif st.get("phase") == "final":
                 self.aggregate(sid, "final", rev, modules, selection)
+            if st.get("command") == "check" or st.get("command") == "autolabel":
+                self.sync_quietly(sid)                 # checks/<module>/ goes up as it is done
         self.check_intent()
         self.report(rev, modules)
         self.check_intent()

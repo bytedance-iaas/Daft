@@ -253,6 +253,32 @@ def test_the_daemon_asks_for_a_lower_oom_score_and_children_a_higher_one(monkeyp
     assert written == [(os.getpid(), -500)]
 
 
+def test_model_arguments_carry_the_reasoning_effort_only_when_there_is_one():
+    from daemon.orchestr.runbase import Run, TaskFailure
+
+    run = Run.__new__(Run)                       # vlm_args only reads the task
+    run.task = P.Task(id="t", name="n", state="running", input_source="local", input_uri="/x",
+                      output_uri="tos://b/o", delivery_key="tos://b/o",
+                      episode_selector={"mode": "all"},
+                      params={"vlm_retry": 2, "vlm_hedge": False,
+                              "vlm_timeouts_s": {"probe": 90}},
+                      vlm_snapshot={"endpoint": "http://m/v1", "model": "m1",
+                                    "reasoning_effort": None})
+    args = run.vlm_args()
+    assert args[:4] == ["--vlm-endpoint", "http://m/v1", "--vlm-model", "m1"]
+    assert args[args.index("--retry") + 1] == "2" and "--hedge" not in args
+    assert "--vlm-reasoning-effort" not in args            # v1 never sends it (parity)
+    assert "checks.task_success.vlm.timeouts_s.probe=90" in args
+    run.task.vlm_snapshot["reasoning_effort"] = "low"
+    run.task.params = {}
+    args = run.vlm_args()
+    assert args[args.index("--vlm-reasoning-effort") + 1] == "low"
+    assert "--hedge" in args and args[args.index("--retry") + 1] == "3"   # the defaults
+    run.task.vlm_snapshot = None
+    with pytest.raises(TaskFailure):
+        run.vlm_args()
+
+
 def test_workdir_layout(tmp_path):
     from daemon.orchestr.workdir import Journal, WorkDir, read_lines, write_lines
 

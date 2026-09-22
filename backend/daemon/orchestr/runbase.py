@@ -530,6 +530,25 @@ class Run:
                  + (f"；退回全量的原因：{doc['full_reason']}" if doc.get("full_reason") else ""))
         return doc
 
+    def sync_quietly(self, stage: str) -> None:
+        """What a stage produced goes to the delivery at once (00 §4.2, "随产随传").
+
+        Only the main run does this: before its first publish the batch has no
+        ``_COMPLETE`` that a half-synced change could contradict. A failure here costs
+        nothing but time - the publish step syncs and verifies everything anyway.
+        """
+        if not self.task.run_id:
+            return
+        try:
+            with self.delivery() as d:
+                sync_run_dir(d, self.task.run_id, self.wd.root, self.wd.sync_state,
+                             check_stop=self.check_intent)
+        except Interrupt:
+            raise
+        except (DeliveryError, TaskFailure, OSError) as err:
+            reason = err.reason_zh if isinstance(err, TaskFailure) else str(err)
+            self.log(stage, "warn", f"这一档的产物暂时没传到交付目录（{reason}），发布时再传")
+
     def sync_and_verify(self, stage: str, delivery) -> dict:
         """Upload the run directory, read it back (``curation verify``); twice at most."""
         run_id = self.task.run_id
