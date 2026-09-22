@@ -173,6 +173,7 @@ class VlmModel:
     max_concurrency: int | None = None       # None = the backend's
     capabilities: dict = field(default_factory=dict)
     source: ModelSource = "manual"
+    is_default: bool = False                 # the model a new task starts with (C4 1.6)
     created_at: int = 0
     updated_at: int = 0
 
@@ -475,6 +476,14 @@ class Repository(Protocol):
         """Unique per (backend, model_name)."""
 
     def update_vlm_model(self, model_id: str, **fields) -> VlmModel: ...
+
+    def set_default_vlm_model(self, model_id: str | None, *, owner: str = DEFAULT_OWNER) -> None:
+        """Make this model the owner's only default; ``None`` leaves the owner without one.
+
+        One statement per call (the clearing and the setting are one transaction): at most one
+        model of one backend carries the flag, and deleting the model or its backend takes it
+        with them (C4 1.6).
+        """
 
     def delete_vlm_model(self, model_id: str) -> None: ...
 

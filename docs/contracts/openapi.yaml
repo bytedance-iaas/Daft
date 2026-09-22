@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.5.2
+  version: 1.6.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -57,6 +57,10 @@ info:
 
     1.5.2 (2026-09-22): a question a card gained as a follow-up says so (`follow_up_of`), and
     a follow-up whose opening answer changed is left out of the card.
+
+    1.6.0 (2026-09-22): a model may be the default one (`VlmModel.is_default`, set through
+    `VlmModelPatch`): the new-task form starts with it instead of asking, and there is at most
+    one per owner across all backends.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1531,9 +1535,14 @@ components:
     VlmModel:
       type: object
       additionalProperties: false
-      required: [id, model_name, reasoning_effort, max_concurrency, capabilities, source]
+      required: [id, model_name, reasoning_effort, max_concurrency, capabilities, source, is_default]
       properties:
         id: {type: string}
+        is_default:
+          type: boolean
+          description: >-
+            the model a new task starts with; at most one per owner across every backend. Without
+            one the form asks, as before. Deleting the model or its backend leaves none.
         model_name: {type: string, description: "Model ID or inference endpoint ID (ep-...)"}
         reasoning_effort: {$ref: "#/components/schemas/ReasoningEffort"}
         max_concurrency: {type: [integer, "null"], minimum: 1, description: "null = the backend's"}
@@ -1562,6 +1571,11 @@ components:
       properties:
         reasoning_effort: {$ref: "#/components/schemas/ReasoningEffort"}
         max_concurrency: {type: [integer, "null"], minimum: 1}
+        is_default:
+          type: boolean
+          description: >-
+            true makes it the one default and clears the flag on every other model of every
+            backend; false clears it and leaves none
     VlmBackend:
       type: object
       additionalProperties: false

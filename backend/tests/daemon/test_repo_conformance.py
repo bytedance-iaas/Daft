@@ -241,9 +241,9 @@ def test_credentials_below_key_version_for_rotation(repo):
 # VLM backends and models
 # ---------------------------------------------------------------------------
 
-def _backend(name="ark-prod", models=("doubao-seed-2-0-pro-260215",)):
+def _backend(name="ark-prod", models=("doubao-seed-2-0-pro-260215",), owner=P.DEFAULT_OWNER):
     return P.VlmBackend(id="", name=name, kind="ark", endpoint="https://ark.example/api/v3",
-                        credential_id=None,
+                        credential_id=None, owner_id=owner,
                         models=[P.VlmModel(id="", backend_id="", model_name=m) for m in models])
 
 
@@ -307,6 +307,36 @@ def test_model_upsert_update_delete(repo):
     with pytest.raises(P.NotFound):
         repo.upsert_vlm_model(P.VlmModel(id="", backend_id="vb_missing", model_name="x"))
 
+
+def test_one_default_model_per_owner(repo):
+    """C4 1.6: the flag moves between backends, and goes away with the model."""
+    def defaults(owner=P.DEFAULT_OWNER):
+        return [m.id for b in repo.list_vlm_backends(owner=owner) for m in b.models if m.is_default]
+
+    first = repo.create_vlm_backend(_backend(models=("a", "b")), None)
+    second = repo.create_vlm_backend(_backend(name="ark-dev", models=("c",)), None)
+    mine = repo.create_vlm_backend(_backend(name="theirs", owner=OTHER), None)
+    assert defaults() == []
+
+    repo.set_default_vlm_model(first.models[0].id)
+    assert defaults() == [first.models[0].id]
+    repo.set_default_vlm_model(second.models[0].id)               # takes it from the other backend
+    assert defaults() == [second.models[0].id]
+    repo.set_default_vlm_model(None)                              # an owner may have none
+    assert defaults() == []
+
+    repo.set_default_vlm_model(mine.models[0].id, owner=OTHER)    # owners do not share the flag
+    repo.set_default_vlm_model(first.models[1].id)
+    assert defaults() == [first.models[1].id] and defaults(OTHER) == [mine.models[0].id]
+    repo.delete_vlm_model(first.models[1].id)
+    assert defaults() == []
+    repo.delete_vlm_backend(mine.id, owner=OTHER)
+    assert defaults(OTHER) == []
+
+    for call in (lambda: repo.set_default_vlm_model("vm_missing"),
+                 lambda: repo.set_default_vlm_model(second.models[0].id, owner=OTHER)):
+        with pytest.raises(P.NotFound):
+            call()
 
 def test_backend_and_model_in_use_rules(repo):
     b = repo.create_vlm_backend(_backend(), _cred("key", kind="ark"))

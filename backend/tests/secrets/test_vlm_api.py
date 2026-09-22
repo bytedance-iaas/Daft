@@ -289,3 +289,42 @@ def test_another_owners_backend_is_invisible(secret_client, vlm_stub):
     assert_error(c.post(f"{API}/vlm-backends/{other.id}/verify", headers=JSON), "not_found")
     assert_error(c.post(f"{API}/vlm-backends/{other.id}/models", json={"model_name": "x"},
                         headers=JSON), "not_found")
+
+
+def test_one_model_is_the_default_a_new_task_starts_with(secret_client, vlm_stub):
+    """C4 1.6: at most one default across every backend; deleting it leaves none."""
+    vlm_stub.models = ["Qwen2.5-VL-72B-Instruct", "glm-4.5v"]
+    c = secret_client()
+    first = add_backend(c, vlm_stub, name="vllm", kind="custom")
+    second = add_backend(c, vlm_stub, name="vllm-2", kind="custom")
+    a, b = first["models"][0], first["models"][1]
+    other = second["models"][0]
+    assert [m["is_default"] for m in first["models"] + second["models"]] == [False] * 4
+
+    def url(backend, model):
+        return f"{API}/vlm-backends/{backend['id']}/models/{model['id']}"
+
+    def defaults():
+        return [(m["model_name"], b_["name"]) for b_ in c.get(f"{API}/vlm-backends").json()["items"]
+                for m in b_["models"] if m["is_default"]]
+
+    r = c.patch(url(first, a), json={"is_default": True}, headers=JSON)
+    assert r.status_code == 200 and r.json()["is_default"] is True
+    assert_schema("VlmModel", r.json())
+    assert defaults() == [(a["model_name"], "vllm")]
+
+    # a second one takes the flag from the first, across backends
+    assert c.patch(url(second, other), json={"is_default": True}, headers=JSON).status_code == 200
+    assert defaults() == [(other["model_name"], "vllm-2")]
+
+    # other fields still patch, and leave the flag where it is
+    assert c.patch(url(first, b), json={"max_concurrency": 4}, headers=JSON).status_code == 200
+    assert defaults() == [(other["model_name"], "vllm-2")]
+
+    # clearing leaves none, and deleting the default takes it with the model
+    assert c.patch(url(second, other), json={"is_default": False}, headers=JSON).json()[
+        "is_default"] is False
+    assert defaults() == []
+    assert c.patch(url(first, a), json={"is_default": True}, headers=JSON).status_code == 200
+    assert c.delete(url(first, a), headers=JSON).status_code == 204
+    assert defaults() == []

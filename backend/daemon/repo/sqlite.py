@@ -334,6 +334,7 @@ def _model(row) -> VlmModel:
         id=row["id"], backend_id=row["backend_id"], model_name=row["model_name"],
         reasoning_effort=row["reasoning_effort"], max_concurrency=row["max_concurrency"],
         capabilities=_loads(row["capabilities"]) or {}, source=row["source"],
+        is_default=bool(row["is_default"]),
         created_at=row["created_at"], updated_at=row["updated_at"])
 
 
@@ -852,6 +853,25 @@ class SqliteRepository:
             return _model(c.execute("SELECT * FROM vlm_model WHERE id=?", (model_id,)).fetchone())
 
         return self._write(op)
+
+    def set_default_vlm_model(self, model_id: str | None, *,
+                              owner: str = DEFAULT_OWNER) -> None:
+        """The owner's one default model (C4 1.6); ``None`` leaves them without one."""
+        now = self._clock()
+        mine = ("backend_id IN (SELECT id FROM vlm_backend WHERE owner_id=?)", (owner,))
+
+        def op(c):
+            if model_id is not None and c.execute(
+                    f"SELECT 1 FROM vlm_model WHERE id=? AND {mine[0]}",
+                    (model_id, *mine[1])).fetchone() is None:
+                raise NotFound(f"model {model_id}")
+            c.execute(f"UPDATE vlm_model SET is_default=0, updated_at=MAX(?, updated_at + 1)"
+                      f" WHERE is_default=1 AND {mine[0]}", (now, *mine[1]))
+            if model_id is not None:
+                c.execute("UPDATE vlm_model SET is_default=1,"
+                          " updated_at=MAX(?, updated_at + 1) WHERE id=?", (now, model_id))
+
+        self._write(op)
 
     def delete_vlm_model(self, model_id: str) -> None:
         def op(c):
