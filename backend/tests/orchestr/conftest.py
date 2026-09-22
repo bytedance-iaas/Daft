@@ -27,6 +27,7 @@ from ..daemon.conftest import (  # noqa: F401 - fixtures are registered by impor
     clock,
     make_app,
     make_settings,
+    seed_dataset,
     seed_task,
 )
 from ..secrets.fakes import AK, AK2, SK, SK2, FakeTos
@@ -184,6 +185,58 @@ def daemon(client_for, tmp_path, mini_source, fake_vlm, monkeypatch):
         return Daemon(c, str(root), str(delivery_root), str(dataset), url)
 
     return build
+
+
+class _Listing:
+    def __init__(self, contents, prefixes):
+        self.contents = contents
+        self.common_prefixes = prefixes
+        self.is_truncated = False
+        self.next_continuation_token = None
+
+
+class _Obj:
+    def __init__(self, key: str, size: int):
+        self.key, self.size, self.etag = key, size, f'"{abs(hash(key)) % 10**8}"'
+
+
+class _Prefix:
+    def __init__(self, prefix: str):
+        self.prefix = prefix
+
+
+class ListingTos(FakeTos):
+    """W8's fake TOS plus ``list_objects_type2`` (with ``delimiter``) and ``put_object_from_file``."""
+
+    def factory(self, endpoint, region, key):
+        client = super().factory(endpoint, region, key)
+        tos = self
+
+        def list_objects_type2(bucket, prefix="", delimiter=None, continuation_token=None,
+                               max_keys=1000):
+            ak = client._call("list_objects", bucket, prefix)
+            client._bucket(bucket)
+            client._allowed(ak, bucket, "read")
+            keys = sorted(k for (b, k) in tos.objects if b == bucket and k.startswith(prefix))
+            if delimiter:
+                subs, files = set(), []
+                for k in keys:
+                    rest = k[len(prefix):]
+                    if delimiter in rest:
+                        subs.add(prefix + rest.split(delimiter, 1)[0] + delimiter)
+                    else:
+                        files.append(k)
+                return _Listing([_Obj(k, len(tos.objects[(bucket, k)])) for k in files],
+                                [_Prefix(p) for p in sorted(subs)])
+            return _Listing([_Obj(k, len(tos.objects[(bucket, k)])) for k in keys[:max_keys]], [])
+
+        def put_object_from_file(bucket, key, path):
+            with open(path, "rb") as fh:
+                client.put_object(bucket, key, content=fh.read())
+
+        client.list_objects_type2 = list_objects_type2
+        client.put_object_from_file = put_object_from_file
+        return client
 
 
 def read_jsonl(path: str) -> list[dict]:
