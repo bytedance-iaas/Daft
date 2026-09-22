@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Callable
 
 from ..repo import protocol as P
@@ -25,12 +26,15 @@ _Key = tuple[str, str, str, str, str]      # ledger, subtask, module, call_kind,
 
 class UsageAccumulator:
     def __init__(self, repo: P.Repository, task_id: str, *, subtask_id: str = "",
-                 clock: Callable[[], int], publish: Callable[[dict], None] | None = None):
+                 clock: Callable[[], int], publish: Callable[[dict], None] | None = None,
+                 every_s: float = FLUSH_EVERY_S):
         self.repo = repo
         self.task_id = task_id
         self.subtask_id = subtask_id or ""
         self.clock = clock
         self.publish = publish
+        self.every_s = every_s
+        self._last_flush = time.monotonic()
         self._lock = threading.Lock()
         self._pending: dict[_Key, dict[str, int]] = {}
         self._totals = {k: 0 for k in USAGE_COUNTERS}
@@ -56,6 +60,12 @@ class UsageAccumulator:
                 self.publish(totals)
             except Exception:  # noqa: BLE001 - SSE is best effort, the ledger is the truth
                 log.debug("usage publish failed", exc_info=True)
+        if time.monotonic() - self._last_flush >= self.every_s:
+            try:                               # about every 5 s while requests come in
+                self.flush()
+            except Exception:  # noqa: BLE001 - kept for the next flush (see flush)
+                log.warning("could not store token usage of %s yet", self.task_id,
+                            exc_info=True)
 
     def totals(self) -> dict[str, int]:
         with self._lock:
@@ -65,6 +75,7 @@ class UsageAccumulator:
         """Write what accumulated since the last flush; returns the number of buckets."""
         with self._lock:
             pending, self._pending = self._pending, {}
+            self._last_flush = time.monotonic()
         if not pending:
             return 0
         deltas = [P.UsageDelta(task_id=self.task_id, ledger=ledger, subtask_id=sub,

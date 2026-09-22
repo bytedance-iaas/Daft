@@ -223,3 +223,33 @@ def test_usage_accumulates_per_bucket_and_flushes_in_one_call():
     assert by[("actual", "sub_1")].prompt_tokens == 20 and by[("actual", "sub_1")].requests == 2
     assert by[("attributed", "sub_1")].prompt_tokens == 10
     assert acc.flush() == 0
+
+
+def test_usage_is_written_about_every_few_seconds_while_requests_come_in():
+    calls = []
+
+    class Repo:
+        def usage_buckets(self, task_id, *, ledger):
+            return []
+
+        def add_usage(self, deltas, *, at):
+            calls.append(len(deltas))
+
+    ev = c3.parse('{"kind": "usage", "model": "m", "module": "x", "call_kind": "probe", '
+                  '"requests": 1, "prompt_tokens": 1}')
+    lazy = UsageAccumulator(Repo(), "t", clock=lambda: 1, every_s=3600)
+    lazy.add(ev)
+    assert calls == []                                       # not due yet: kept in memory
+    eager = UsageAccumulator(Repo(), "t", clock=lambda: 1, every_s=0)
+    eager.add(ev)
+    eager.add(ev)
+    assert calls == [1, 1]                                   # due: written as it comes
+
+    class Broken(Repo):
+        def add_usage(self, deltas, *, at):
+            raise OSError("disk full")
+
+    kept = UsageAccumulator(Broken(), "t", clock=lambda: 1, every_s=0)
+    kept.add(ev)                                             # the failure is logged, not raised
+    kept.repo = Repo()
+    assert kept.flush() == 1 and calls[-1] == 1              # ... and the tokens are not lost

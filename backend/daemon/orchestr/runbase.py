@@ -93,7 +93,7 @@ class Run:
         self.run_key = self.journal_key()
         self.journal = Journal(self.wd.journal(self.run_key))
         self.usage = UsageAccumulator(self.repo, task.id, subtask_id=self.sub_id or "",
-                                      clock=self.clock,
+                                      clock=self.clock, every_s=self.cfg.usage_flush_s,
                                       publish=lambda totals: self.hub.publish_usage(task.id, totals))
         self.stages: collections.OrderedDict[str, dict] = collections.OrderedDict()
         self._stage_started: dict[str, float] = {}
