@@ -445,17 +445,17 @@ class Orchestrator:
         return sub
 
     def decisions_to_apply(self, task: P.Task) -> tuple[list, list]:
-        """``(to execute, lapsed)``: the latest unapplied decisions, minus follow-up answers
-        whose opening answer changed since (C4 1.5.1, :func:`rules.standing_decisions`).
-        Without the revision's ``review.json`` at hand nothing is taken for lapsed."""
-        latest = self.repo.latest_adjudications(task.id)
-        unapplied = [a for a in latest if a.applied_in_subtask is None]
-        rev = int(task.result_rev or 0)
-        review = rules.read_list(WorkDir(self.work_root, task.id).revision_dir(rev), "review") \
-            if rev and unapplied else None
-        if review is None:
-            return unapplied, []
-        return rules.standing_decisions(unapplied, latest, rules.review_lines_asked(review))
+        """``(to execute, lapsed)``: what an adjudication run hands to ``curation
+        adjudicate-apply`` is W5b's ``Queue.executable()`` - the latest unapplied decisions
+        that still stand, oldest first; follow-up answers whose opening answer changed since
+        have lapsed (C4 1.5.1) and are only reported."""
+        from ..results import Queue, store_of
+
+        todo = Queue(store_of(self.rt), self.repo, task).executable()
+        ids = {a.id for a in todo}
+        lapsed = [a for a in self.repo.latest_adjudications(task.id, unapplied_only=True)
+                  if a.id not in ids]
+        return todo, lapsed
 
     # ================================================================== D37 again
     def compatibility(self, task: P.Task, preflight: dict) -> list[dict]:

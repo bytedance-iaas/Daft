@@ -48,6 +48,14 @@ def _tree_size(path: pathlib.Path) -> int:
     return total
 
 
+def _age(ms: int) -> str:
+    if ms < 3_600_000:
+        return f"{ms / 60_000:.0f} min"
+    if ms < 2 * 86_400_000:
+        return f"{ms / 3_600_000:.1f} h"
+    return f"{ms / 86_400_000:.1f} days"
+
+
 def _newest_mtime_ms(path: pathlib.Path) -> int:
     """The newest modification time of ``path`` and its direct entries (and ``.orchestr/``)."""
     newest = 0.0
@@ -167,8 +175,8 @@ class Janitor:
             wd.restored_mark.unlink(missing_ok=True)
             write_json_atomic(wd.cleaned_mark, {"at": now, "bytes": freed, "synced": synced})
             self._drop_scratch(task.id)
-        log.info("janitor: task %s ended %.1f days ago; its local work directory was cleaned "
-                 "(%d bytes)%s", task.id, (now - last) / 86400000, freed,
+        log.info("janitor: task %s ended %s ago; its local work directory was cleaned "
+                 "(%d bytes)%s", task.id, _age(now - last), freed,
                  "" if synced else " without a final upload to the delivery")
         return True
 
