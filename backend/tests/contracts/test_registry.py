@@ -52,6 +52,14 @@ def test_review_lines():
     assert {m.id for m in M.MODULES if m.appealable} == {"task_success", "dedup"}
     for m in M.MODULES:
         assert m.produces_adjudication == bool(m.review_lines or m.appealable), m.id
+    # v1: after adopting a new label a person may give the task verdict (no re-judge)
+    f = M.follow_up("label", "adopt_suggestion", "task_verdict")
+    assert f is not None and f.optional and set(f.decisions) == {"success", "failure", "unsure"}
+    assert M.follow_up("label", "keep_label", "task_verdict") is None
+    for line in M.REVIEW_LINES:
+        for fu in line.follow_ups:
+            target = {c for c, _ in M.review_line(fu.line).decisions}
+            assert set(fu.decisions) <= target and set(fu.after) <= {c for c, _ in line.decisions}
     # physical and structural gates and soft scores are final
     assert not any(M.appealable(m.id) for m in M.MODULES if m.gate in ("soft", "none")
                    or m.id in ("timestamp_check", "kinematic_limits", "video_action_sync"))

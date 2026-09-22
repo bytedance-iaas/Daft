@@ -1037,11 +1037,11 @@ export function episodeView(ep: number, revision: number): EpisodeView {
       modules.task_success = record(ep, 'task_success', 'hard', 'pass', null, { completion_end: 0.93 });
     }
   }
-  const reasons: Record<string, unknown>[] = [];
+  const reasons: NonNullable<EpisodeView['reasons']> = [];
   if (ep === 18) reasons.push({ module: 'timestamp_check', text: '残段：全程 0.5 秒（8 帧）' });
   if (ep === 44) reasons.push({ module: 'dedup', text: '与 ep 43 字节级完全重复' });
   if (TS_REJECTS.includes(ep)) reasons.push({ module: 'task_success', text: '3 路复核一致判未完成' });
-  const review: Record<string, unknown>[] = [];
+  const review: NonNullable<EpisodeView['review']> = [];
   if (LABEL_REVIEW.includes(ep)) review.push({ module: 'skill_profile', text: '标注与画面归入不同技能族' });
   if (VERDICT_REVIEW.includes(ep)) review.push({ module: 'task_success', text: '证据不足，弃权' });
   const scope: 'delivery' | 'input' = list === 'passed' ? 'delivery' : 'input';
