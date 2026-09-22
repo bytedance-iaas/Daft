@@ -20,6 +20,16 @@
       ],
       "port": 8080,
       "autoPort": true
+    },
+    {
+      "name": "curator-frontend-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd frontend && npm run dev -- --port ${PORT:-5173} --strictPort"
+      ],
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }
