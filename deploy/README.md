@@ -322,7 +322,22 @@ Daemon 起来后照常迁移和对账：快照那一刻在跑的任务被置为�
 | PVC 一直 `Pending` | 存储类不存在或不是块存储；`WaitForFirstConsumer` 的类在 Pod 调度之前本来就是 Pending |
 | 所有请求都是 401，密码没错 | 账号表里没有可用的行（只认 bcrypt 和 apr1），日志有 `htpasswd configured but has no usable account`；改好 Secret 后重启 |
 | Pod 不 Ready，`/readyz` 503 | 看响应里的 `checks`：`db_writable`（卷满或写不进）、`workdir_writable`、`scratch_writable`、`reconciled`（启动对账还没做完，会自动重试） |
+| autolabel（caption）整批 `status: error`、`cause: timeout`，重试 4 次都超时 | 模型答得比分类型超时慢。出厂默认 caption / probe / 端态 / 仲裁 60 秒、纯文本 120 秒（`adapters/vlm_client.py` 的 `DEFAULT_TIMEOUTS_S`，A 类不改）。先换个快的模型试；确实要等，就用站点配置抬高（见下） |
 | `helm install/upgrade` 直接报错 | Chart 拒绝了 Daemon 做不到的配置：`replicaCount` 不是 1、`server.maxRunningTasks` 不是 1、`backup.enabled`、宽限期短于 preStop + 100 秒、`auth` 配了一半等，报错里写明了哪一项 |
+
+分类型超时按站点配置覆盖（09 篇 §3 的深合并，D5 只允许调上限，不改算法）：
+
+```yaml
+# curator-values.yaml
+pipelineConfigOverride:
+  checks:
+    task_success:
+      vlm:
+        timeouts_s:
+          caption: 180        # 出厂 60；probe / endstate / arbitration 同理，llm 出厂 120
+```
+
+`helm upgrade` 之后 ConfigMap 就变了，新起的任务按新值跑（跑到一半的任务要停掉再继续运行）。
 
 ## 10. 不连集群的检查
 
