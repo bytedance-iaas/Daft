@@ -14,9 +14,9 @@ priority}`` - with the questions a person can answer on the adjudication page fi
 from __future__ import annotations
 
 from ..errors import ApiError
-from .files import json_safe
+from .files import cached_json, json_safe
 from .revision import Revision
-from .videos import episode_videos
+from .videos import SOURCE_MANIFEST, episode_videos
 
 _ADJUDICABLE = ("label_conflict", "reject_appeal")
 
@@ -57,10 +57,35 @@ def _task_text(entry: dict, records: dict[str, dict]) -> dict | None:
     return None
 
 
+def skipped_episodes(rev: Revision) -> dict[int, list[str]]:
+    """Episodes left out for missing source files (D40): the report's
+    ``integrity.skipped_episodes``, else the task's source manifest's list."""
+    items = (rev.report().get("integrity") or {}).get("skipped_episodes")
+    if not isinstance(items, list):
+        try:
+            manifest = cached_json(rev.store.docs, rev.run_dir / SOURCE_MANIFEST)
+        except (FileNotFoundError, ValueError):
+            manifest = {}
+        items = (manifest or {}).get("skipped_episodes") or []
+    out: dict[int, list[str]] = {}
+    for it in items if isinstance(items, list) else []:
+        if isinstance(it, dict) and isinstance(it.get("episode_index"), int):
+            out[int(it["episode_index"])] = [str(k) for k in it.get("missing") or []]
+    return out
+
+
 def episode_view(rev: Revision, episode: int) -> dict:
     hit = rev.entries().get(int(episode))
     if hit is None:
-        raise ApiError("not_found", f"结果版本 r{rev.number} 里没有 ep{int(episode):06d}（不在这个任务的质检范围里）",
+        name = f"ep{int(episode):06d}"
+        missing = skipped_episodes(rev).get(int(episode))
+        if missing is not None:
+            shown = "、".join(missing[:3]) + ("等" if len(missing) > 3 else "")
+            raise ApiError("not_found", f"{name} 没有参与质检：它的源文件缺失（{shown}），照 v1 的做法剔除，"
+                                        f"不在任何清单里；补齐文件后另建任务",
+                           details={"episode_index": int(episode), "revision": rev.number,
+                                    "reason": "source_missing", "missing": missing})
+        raise ApiError("not_found", f"结果版本 r{rev.number} 里没有 {name}（不在这个任务的质检范围里）",
                        details={"episode_index": int(episode), "revision": rev.number})
     list_name, entry = hit
     records: dict[str, dict] = {}

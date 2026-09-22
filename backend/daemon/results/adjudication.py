@@ -1,18 +1,20 @@
 """The adjudication queue of one task (design doc 06 §5, 07 §6; C4 ``listAdjudication`` /
 ``submitAdjudication``; F3.3).
 
-**Questions** come from the task's current revision:
+**Questions** are the current revision's ``review.json`` items, read as the CLI wrote
+them (C2 1.4 ``final-list``: v1's queues) - the queue never re-derives them:
 
-* ``label`` - a label conflict (``review.json`` kind ``label_conflict``, from
-  skill_profile's audit or task_success's kill guard); the original annotation and the
-  model's description come from the revision's ``label_audit.json``, and the suggested
-  new label is that description (v1 adopts it);
-* ``task_verdict`` - a task_success abstention. Abstentions of other modules stay in
-  ``review.json`` but not in the queue (v1: a person cannot settle them by watching the
-  video);
-* ``reject_appeal`` - the appeals tab: rejects attributed to task_success and nothing
-  else. The physical and structural gates are final, and so are duplicates, soft scores
-  and human decisions (rule 2).
+* ``label`` - kind ``label_conflict`` (skill_profile's audit, or task_success's kill
+  guard); the original annotation and the model's description come from the revision's
+  ``label_audit.json``, and the suggested new label is that description (v1 adopts it);
+* ``task_verdict`` - kind ``task_verdict``: task_success abstentions. A ``review.json``
+  written before C2 1.4 also listed other modules' undecidable readings under this kind;
+  those are not asked (v1: nobody settles them by watching the video, and a verdict
+  would land on task_success);
+* ``reject_appeal`` - the appeals tab, kind ``reject_appeal``: every reject attributed to
+  task_success alone that has no effective appeal and was not discarded (an ``unsure``
+  appeal keeps it listed). The physical and structural gates are final, and so are
+  duplicates, soft scores and human decisions (rule 2).
 
 A question that was answered keeps its card after the answer was applied and the
 episode left the newer revision's review: the question is taken from the newest older
@@ -83,13 +85,12 @@ def _join(texts: Iterable[str]) -> str:
     return "；".join(dict.fromkeys(t for t in texts if t)) or "未注明"
 
 
-def appealable(entry: dict) -> bool:
-    """v1's appeal gate: the reject is attributed to task_success and to nothing else.
-    Execution errors of other modules (D35: they change nothing) do not count."""
-    deciding = [r for r in entry.get("reasons") or []
-                if isinstance(r, dict) and r.get("kind") != "execution_error"]
-    return bool(deciding) and all(r.get("module") == "task_success" and r.get("kind") == "hard_gate"
-                                  for r in deciding)
+def _reject_reasons(rev: Revision, episode: int) -> str:
+    hit = rev.entries().get(episode)
+    if hit is None or hit[0] != "reject":
+        return ""
+    return _join(str(r.get("text") or "") for r in hit[1].get("reasons") or []
+                 if isinstance(r, dict) and r.get("kind") != "execution_error")
 
 
 def _task_text(rev: Revision, episode: int) -> str | None:
@@ -112,6 +113,7 @@ def questions_of(rev: Revision) -> dict[tuple[int, str], Question]:
             labels = [i for i in items if i.get("kind") == "label_conflict"]
             verdicts = [i for i in items if i.get("kind") == "task_verdict"
                         and i.get("source_module") == "task_success"]
+            appeals = [i for i in items if i.get("kind") == "reject_appeal"]
             if labels:
                 a = audit.get(ep) or {}
                 caption = _str(a.get("caption"))
@@ -128,13 +130,13 @@ def questions_of(rev: Revision) -> dict[tuple[int, str], Question]:
                     _join(str(i.get("reason") or "") for i in verdicts),
                     annotation=_task_text(rev, ep), priority=_str(verdicts[0].get("priority")),
                     revision=rev.number)
-        for ep, (name, entry) in rev.entries().items():
-            if name == "reject" and appealable(entry):
+            if appeals:
+                reasons = [str(i.get("reason") or "") for i in appeals] + [_reject_reasons(rev, ep)]
                 out[(ep, "reject_appeal")] = Question(
-                    ep, "reject_appeal", "task_success",
-                    _join(str(r.get("text") or "") for r in entry.get("reasons") or []
-                          if isinstance(r, dict) and r.get("kind") == "hard_gate"),
-                    annotation=_task_text(rev, ep), revision=rev.number)
+                    ep, "reject_appeal", str(appeals[0].get("source_module") or "task_success"),
+                    _join(r for r in reasons if r and r != "未注明"),
+                    annotation=_task_text(rev, ep), priority=_str(appeals[0].get("priority")),
+                    revision=rev.number)
         return out
 
     return rev.store.derived.get_or_make(("questions", rev.key), make)
@@ -368,7 +370,8 @@ def known_source(source: str | None) -> None:
 # recording decisions, the CSV copy and the task summary
 # ---------------------------------------------------------------------------
 
-_SUMMARY_COUNTS = ("total", "passed", "rejected", "held", "review")
+#: ``skipped`` (D40) is there only when the report has episodes left out for missing sources
+_SUMMARY_COUNTS = ("total", "passed", "rejected", "held", "review", "skipped")
 _copy_locks: dict[str, threading.Lock] = {}
 _copy_guard = threading.Lock()
 
@@ -410,8 +413,10 @@ def refresh_summary(store: ResultStore, repo: P.Repository, task_id: str, *,
         counts = queue.counts()
         if queue.rev is None:
             return None, counts
-        merged = {**(cur.summary if isinstance(cur.summary, dict) else {}),
-                  **summary_of(queue.rev, counts)}
+        owned = (*_SUMMARY_COUNTS, "pass_rate", "pending_adjudication")
+        kept = {k: v for k, v in (cur.summary if isinstance(cur.summary, dict) else {}).items()
+                if k not in owned}                     # other writers' keys stay
+        merged = {**kept, **summary_of(queue.rev, counts)}
         if merged != cur.summary:
             repo.set_task_summary(task_id, merged)
     return merged, counts

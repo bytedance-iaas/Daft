@@ -18,7 +18,7 @@ ep    what happens                                            where it ends (r1)
 5     label conflict and a task_success abstention            passed + review (both)
 6     task_success execution error                            held
 7     byte-for-byte duplicate of ep 0                         reject - final
-8     motion_quality cannot score it                          passed + review, no card
+8     motion_quality cannot score it                          passed (no review item, C2 1.4)
 ====  =====================================================  ==========================
 """
 from __future__ import annotations
@@ -239,6 +239,42 @@ def main_latency() -> list[tuple]:
             ("arbitration", 60.0, False, t + 200, "c5", 0, "timeout")]
 
 
+def review_as_of_c2_1_4(run_dir: Path, n: int) -> None:
+    """Make revision ``n``'s ``review.json`` what the C2 1.4 CLI writes (``final-list``):
+    ``task_verdict`` items only for task_success abstentions, and a ``reject_appeal`` item
+    for every reject attributed to task_success alone that has no effective appeal and
+    was not discarded (an ``unsure`` appeal keeps it). W3's fix for this is on its way;
+    once it lands this is a no-op. Runs before ``report``, so the commit covers it."""
+    rev = run_dir / "revisions" / f"r{n:04d}"
+    review = json.loads((rev / "review.json").read_text(encoding="utf-8"))
+    reject = json.loads((rev / "reject.json").read_text(encoding="utf-8"))
+    effective: dict[int, str] = {}
+    applied = run_dir / "adjudication" / "applied.jsonl"
+    if applied.is_file():
+        for line in sorted((json.loads(x) for x in applied.read_text(encoding="utf-8").splitlines()
+                            if x.strip()), key=lambda d: d["id"]):
+            if line["line"] == "reject_appeal" and line["decision"] != "unsure":
+                effective[int(line["episode_index"])] = line["decision"]
+    by_ep: dict[int, dict] = {}
+    for entry in review["episodes"]:
+        items = [i for i in entry["review"]
+                 if not (i["kind"] == "task_verdict" and i["source_module"] != "task_success")]
+        if items:
+            by_ep[entry["episode_index"]] = {**entry, "review": items}
+    for entry in reject["episodes"]:
+        ep = entry["episode_index"]
+        deciding = [r for r in entry.get("reasons") or [] if r.get("kind") != "execution_error"]
+        if deciding and ep not in effective and all(
+                r["module"] == "task_success" and r.get("kind") == "hard_gate" for r in deciding):
+            item = by_ep.setdefault(ep, {"episode_index": ep, "review": [], "current_list": "reject"})
+            if not any(i["kind"] == "reject_appeal" for i in item["review"]):
+                item["review"].append({"source_module": "task_success", "kind": "reject_appeal",
+                                       "reason": "被任务成败判定拒掉，可以复议"})
+    review["episodes"] = [by_ep[ep] for ep in sorted(by_ep)]
+    review["count"] = len(review["episodes"])
+    (rev / "review.json").write_text(json.dumps(review, ensure_ascii=False), encoding="utf-8")
+
+
 @dataclass
 class World:
     client: object
@@ -276,6 +312,7 @@ class World:
         rd = str(self.run_dir)
         cli("aggregate", "--run-dir", rd, "--phase", "final", "--revision", str(n),
             "--modules", ",".join(MODULES), "--episodes", "0-8")
+        review_as_of_c2_1_4(self.run_dir, n)
         argv = ["report", "--run-dir", rd, "--revision", str(n), "--modules", ",".join(MODULES)]
         if subtask_id:
             argv += ["--subtask-id", subtask_id]
