@@ -80,6 +80,9 @@ def test_notes_render_and_warn_about_a_generated_master_key():
                         values=values)
         if proc.returncode and "unknown flag" in proc.stderr:
             pytest.skip("this helm has no --dry-run=client")
+        if proc.returncode and "cluster unreachable" in proc.stderr:
+            # helm 3 checks the cluster before a client-side dry run; helm 4 does not (CI pins 4)
+            pytest.skip("this helm needs a cluster even for --dry-run=client (helm 3)")
         assert proc.returncode == 0, proc.stderr
         return proc.stdout.split("NOTES:", 1)[1]
 

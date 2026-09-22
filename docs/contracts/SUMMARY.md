@@ -1,4 +1,4 @@
-# 契约要点与冻结时的取舍（2026-09-22，1.5.1 修订后）
+# 契约要点与冻结时的取舍（2026-09-22，1.5.2 修订后）
 
 一页读懂 C1–C5：每份管什么、冻结时定下了哪些原文没写死的细节，以及需求方拍板的那一处（D35）。
 文件索引和改契约的流程见同目录 `README.md`；以契约文件本身为准，本页是导读。
@@ -10,7 +10,7 @@
 | C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 8 个模块 = 6 项漏斗检查 + 去重、技能画像两项数据集级模块；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（20 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
-| C4 REST API `openapi.yaml`（OpenAPI 3.1，1.5.1） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
+| C4 REST API `openapi.yaml`（OpenAPI 3.1，1.5.2） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
 | C5 Repository 与状态机 `backend/daemon/repo/protocol.py` | Daemon 内部读写状态的唯一入口 | 10 个任务状态，允许的迁移逐条列出（契约测试逐条对照 01 篇 §3.1）；状态变更一律比较后交换（CAS），不许先读后写；事务由调用方显式开启；每个查询都带 owner（本期固定为 `default`，为以后接 IAM 留路）；结果版本切换也是 CAS |
 
 防漂移：26 份契约文件的 sha256 记在 `CONTRACTS.lock`，改了契约而没刷新锁，CI 变红；
@@ -168,6 +168,8 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 （复议卡没答也是 pending，只是不计入待裁数）；「采纳新标注」可以不带 `new_label`，取问题里的建议；单条 episode 视图的
 `reasons` / `review` 条目形状（`EpisodeNote`，同 C2 的拒绝原因）；读结果的接口在本地没有文件、又取不回来时回
 404 `not_found`，`details.reason` 为 `run_dir_missing` 或 `revision_missing`。
+
+**1.5.2**：卡片上由后续问题带出的问题标 `follow_up_of`（由哪条线的回答带出），打开它的回答一变，这个问题就不再出现在卡片上（W10 报告的缺口）。
 
 ## 十、下一版（1.6）待修订
 

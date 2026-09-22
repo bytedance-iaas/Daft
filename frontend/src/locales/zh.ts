@@ -1074,6 +1074,11 @@ export const zh = {
     verdictAsk: (label: string, relabeled: boolean) => `按${relabeled ? '新标注' : '任务文本'}「${label}」，这条做成了吗？`,
     success: '判成功',
     failure: '判失败',
+    // A follow-up question a card gains after certain answers (registry follow_ups, C4 1.5.1)
+    optionalVerdict: '顺手给成败结论（选填）',
+    optionalVerdictDesc: '你改了标注。给了成败结论就直接采用、不再重判；留空或拿不准则按新标注重判任务成败。',
+    followUpTitle: (line: string, optional: boolean) => `${line}${optional ? '（选填）' : ''}`,
+    followUpHead: (n: number, title: string) => `${'①②③④⑤⑥⑦⑧⑨'[n] ?? n + 1} ${title}`,
     discard: '其它原因，整条弃用',
     undiscard: '撤销整条弃用',
     discarded: '这一条已整条弃用，不再判成败（「这条不要了」和「判它成功」互相矛盾）。',

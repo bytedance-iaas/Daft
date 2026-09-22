@@ -49,12 +49,16 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
   - 状态：任一问题「整条弃用」→ 已裁（执行后为已应用），压过一切成败结论（规则 1）；否则有「拿不准」→ `unsure`，
     仍算待裁、仍在队列里（规则 3）；否则全部答了 → 已裁 / 已应用；只改了标、还没执行 → 已裁（执行时按新标注重判，规则 4）；其余待裁。
   - 计数：待裁、已裁只数有 `counts_as_pending` 线上问题的卡片（复议候选不是必做的事），尚未应用数两个页签都算；这就是 `summary.pending_adjudication`。
+  - 追问（C1 1.3 的 `follow_ups`，C4 1.5.1）：只有标注问题的卡片，标注最新的回答是「采纳新标注」或「自行改写标注」时，
+    卡片多出一个选填的成败问题（`follow_up_of: "label"`，卡片自己的问题为 null；只收判成功、判失败、拿不准；来源模块同标注问题）。答了机器直接采信、不再重判，
+    留空则按新标注重判；它不算待裁，也不妨碍卡片算「已裁」。打开它的那个回答一变（例如改成「维持原标注」，或重新改标），
+    之前的回答就作废：不显示、不计数、不交给 CLI 执行。
   - 去重剔除的复议问题带 `duplicate_of`（与哪一条重复）。
 - **提交裁决**：只记录（追加一行，后写者胜），全部合法才写入。C4 1.5 的 `line`、`decision` 是开放字符串，
   由 `Queue.answerable` 一处校验：线必须在目录里、且这条 episode 的卡片上有这条线的问题（v1 的可选成败例外），结论必须是这条线在目录里的结论；
   `new_label` 只给「采纳建议改标」「自行改写标注」，自行改写必须填，采纳时不填就用建议的新标注；
   复议只收当前（或曾经）在复议页签里的条目 —— 也就是只归因于一个可复议模块的拒绝（任务成败判定、D42 起的去重；规则 2）；
-  标注上已经「整条弃用」的不再收成败结论；只有标注问题的卡片，改了标之后才收成败结论（v1 的可选成败）。
+  标注上已经「整条弃用」的不再收成败结论；只有标注问题的卡片，改了标之后才收成败结论（追问，只收追问的几种结论）。
   裁决只属于路径上的这个任务（D32）。之后重写运行目录里的 `human-decisions/*.csv`（v1 的列与用词，用 CLI 同一个写法），
   并按当前版本重算任务汇总（含 `pending_adjudication`、1.4 的 `skipped`）。支持 `Idempotency-Key`。
   列队列时发现库里的待裁数过时了，也顺手改对。
@@ -62,7 +66,7 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
 ## 给 W5a 的接口
 
 ```python
-from daemon.results import store_of, refresh_summary, write_copies
+from daemon.results import Queue, store_of, refresh_summary, write_copies
 
 store = store_of(runtime)
 store.backfill = lambda task, missing: ...   # 本地运行目录不在时把它（至少小文件）从交付目录取回，成功返回 True
@@ -75,7 +79,9 @@ refresh_summary(store, runtime.repo, task.id, owner=task.owner_id)
 write_copies(store, runtime.repo, task)
 ```
 
-- 执行裁决时导出给 CLI 的是 `repo.latest_adjudications(task.id, unapplied_only=True)`（每条线、每条 episode 最新且未应用的一行）。
+- 执行裁决时导出给 CLI 的是 `Queue(store, runtime.repo, task).executable()`：每条线、每条 episode 最新且未应用、并且仍然成立的那一行
+  （作废的追问回答不在其中），按 id 排好；执行完用 `repo.mark_adjudications_applied([d.id for d in rows], subtask.id)` 标记。
+  不要直接用 `latest_adjudications(unapplied_only=True)`，那样会把作废的回答也交出去。
 - 每次提交裁决后本地 `human-decisions/` 会变，需要同步到交付目录（文件很小）；在下一次同步时带上即可。
 
 ## 手动验证步骤
