@@ -104,7 +104,7 @@
 ### F4.1 镜像与 Helm Chart
 - 描述：多阶段 Dockerfile、Chart（单副本、PVC、Secret、探针、优雅停机）
 - 验收：①VKE 上 helm install 一次成功；②滚动升级时运行中任务置 paused 且可恢复；③帧缓存卷非 FSX 挂载
-- status: not_completed
+- status: **completed**
 
 ### F4.2 黄金对账验收
 - 描述：对 `umi_640_notask` 全量执行对账
