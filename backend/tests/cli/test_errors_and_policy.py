@@ -20,6 +20,8 @@ import threading
 import pytest
 import requests
 
+from curation.pipeline.records import module_dir
+
 from .fakevlm_server import FakeVlmServer
 from .pipeline import Chain, comparable, read_jsonl, results, run
 
@@ -273,6 +275,55 @@ def test_a_failed_taxonomy_call_fails_the_skill_profile_module(vlm_stage, tmp_pa
     assert res.doc["error"]["details"]["incidents"][0] == {
         "step": "llm", "call_kind": "llm", "cause": "server_error", "attempts": 1}
     assert vlm.count(taxonomy) == 1                     # one request: no retry by default
+
+
+def test_a_failed_skill_profile_module_holds_every_episode_until_a_retry(vlm_stage, tmp_path):
+    """D41: when skill_profile fails as a whole, every episode it should have filed is
+    held and none is delivered; a retry that succeeds releases them all."""
+    rd = str(tmp_path / "run")
+    shutil.copytree(vlm_stage["reference_dir"], rd)
+    _funnel(rd)
+    keep = os.path.join(rd, "revisions", "r0001", "keep.txt")
+    survivors_file = str(tmp_path / "dedup.txt")
+    res = run("check", "--modules", "dedup", "--input", vlm_stage["dataset"], "--run-dir", rd,
+              "--episodes", "@" + keep, "--survivors-out", survivors_file)
+    assert res.rc == 0, res.doc
+    survivors = [int(x) for x in open(survivors_file, encoding="utf-8").read().split()]
+    assert survivors
+    assert not os.path.exists(module_dir(rd, "skill_profile"))    # no earlier results
+
+    def profile(**server):
+        with FakeVlmServer(**server) as vlm:
+            return run("check", "--modules", "skill_profile", "--input", vlm_stage["dataset"],
+                       "--run-dir", rd, "--episodes", "@" + survivors_file,
+                       "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
+
+    def final():
+        res = run("aggregate", "--run-dir", rd, "--phase", "final", "--revision", "1",
+                  "--episodes", "0-7", "--input", vlm_stage["dataset"])
+        assert res.rc == 0, res.doc
+        lists = {}
+        for name in ("passed", "held", "reject"):
+            with open(os.path.join(rd, "revisions", "r0001", f"{name}.json"),
+                      encoding="utf-8") as fh:
+                lists[name] = {e["episode_index"]: e for e in json.load(fh)["episodes"]}
+        return lists
+
+    taxonomy = "Build a TWO-LEVEL skill taxonomy"
+    res = profile(fail=lambda text, payload: 503 if taxonomy in text else None)
+    assert res.rc == 4 and res.doc["error"]["code"] == "module_failed", res.doc
+    lists = final()
+    assert lists["passed"] == {}                        # nothing is delivered
+    assert sorted(lists["held"]) == survivors           # every episode it had to file
+    for e in survivors:
+        assert [(r["module"], r["kind"]) for r in lists["held"][e]["reasons"]] == \
+            [("skill_profile", "execution_error")]
+        assert "技能画像" in lists["held"][e]["reasons"][0]["text"]
+
+    assert profile().rc == 0                             # the retry succeeds
+    lists = final()
+    assert lists["held"] == {}
+    assert sorted(lists["passed"]) == survivors
 
 
 # ---------------------------------------------------------------- source guard
