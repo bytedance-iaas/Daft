@@ -14,8 +14,10 @@ v1's rules survive unchanged (``pipeline/rejudge.py``), in its order:
 2. a relabel is judged again by task_success with the new label - **unless a
    human already gave the task verdict for that episode**, which then stands and
    is recorded as human (no model re-checks a person's conclusion);
-3. an appeal is only admitted for a reject attributed to task_success alone; the
-   physical and structural gates are final whatever the decision file says;
+3. an appeal is only admitted for a reject by one appealable module alone
+   (:func:`appealable`, D42: task_success, and dedup's byte-copy finding); the
+   physical and structural gates and the soft score are final whatever the
+   decision file says. "restore" overturns that module only;
 4. "unsure" is a legal answer: recorded, the episode stays in the queue, nothing
    changes.
 
@@ -44,6 +46,16 @@ APPLIED_FILE = f"{ADJUDICATION_DIR}/applied.jsonl"
 HUMAN_DIR = "human-decisions"
 
 RELABEL_RERUN = ("v1", "full")
+
+
+def appealable(module_id: str) -> bool:
+    """Whether a reject by this module alone may be appealed (D42).
+
+    The one place that says which: task_success (v1's semantic kill) and dedup
+    (a byte copy). Contract 1.5 moves the answer into the module registry
+    (C1 ``appealable``); nothing else names these modules.
+    """
+    return module_id in ("task_success", "dedup")
 RELABEL_DECISIONS = ("adopt_suggestion", "custom_label")
 
 LINE_DECISIONS = {
@@ -155,8 +167,13 @@ def relabel_rerun_of(doc: dict) -> str:
     return mode
 
 
-def apply(run_dir: str, doc: dict, *, now_ms: int | None = None) -> dict:
-    """Record ``decisions.json`` as applied; returns ``adjudicate-apply --json``."""
+def apply(run_dir: str, doc: dict, *, now_ms: int | None = None,
+          appeal_admissible=None) -> dict:
+    """Record ``decisions.json`` as applied; returns ``adjudicate-apply --json``.
+
+    ``appeal_admissible(episode) -> bool``: whether that episode is now a reject a
+    person may appeal (D42); an appeal on any other episode is refused.
+    """
     new = list(doc.get("decisions") or [])
     mode = relabel_rerun_of(doc)
     for d in new:
@@ -167,6 +184,13 @@ def apply(run_dir: str, doc: dict, *, now_ms: int | None = None) -> dict:
     before = load_applied(run_dir)
     seen = {int(d["id"]) for d in before}
     fresh = [d for d in new if d["id"] not in seen]
+    if appeal_admissible is not None:
+        for d in fresh:
+            if d["line"] == "reject_appeal" and not appeal_admissible(int(d["episode_index"])):
+                raise DecisionError(
+                    f"decision {d['id']}: episode {d['episode_index']} has no reject a person "
+                    f"may appeal (a hard gate of its own, a soft score, a discarded episode "
+                    f"and an episode that is not rejected are final)")
     stamp = int(time.time() * 1000) if now_ms is None else int(now_ms)
     # every relabel applied now carries how it is judged again (D39)
     fresh = [dict(d, relabel_rerun=mode) if d["line"] == "label"

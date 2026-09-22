@@ -46,12 +46,30 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
         raise UsageError(f"--decisions {args.decisions}: not a decisions.json "
                          f"(schema_version 1.0 with a decisions list)")
     try:
-        payload = adjudication.apply(run_dir, doc)
+        payload = adjudication.apply(run_dir, doc,
+                                     appeal_admissible=_appeal_admissible(ctx, run_dir, doc))
     except adjudication.DecisionError as e:
         raise UsageError(f"--decisions {args.decisions}: {e}") from None
     ctx.log("info", f"applied {payload['applied']} decision(s), skipped "
                     f"{payload['skipped_already_applied']} already applied")
     return Result(payload, human=render(payload))
+
+
+def _appeal_admissible(ctx: Context, run_dir: str, doc: dict):
+    """``episode -> bool``: a reject a person may appeal now, from the results and the
+    decisions already applied (D42); None when the file has no appeal."""
+    eps = sorted({int(d["episode_index"]) for d in doc.get("decisions") or []
+                  if isinstance(d, dict) and d.get("line") == "reject_appeal"
+                  and isinstance(d.get("episode_index"), int)})
+    if not eps:
+        return None
+    from ..pipeline import aggregate as agg
+    from ..pipeline.adjudication import Decisions
+
+    modules = runctx.selected_modules(argparse.Namespace(modules=None), run_dir)
+    state = agg.RunState(run_dir, modules, eps, runctx.stage_config(ctx, modules))
+    decided = agg.decide_all(state, Decisions.of(run_dir))
+    return lambda ep: ep in decided and decided[ep].appeal_target is not None
 
 
 def render(p: dict) -> str:
