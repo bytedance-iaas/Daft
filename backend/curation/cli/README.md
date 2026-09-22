@@ -159,12 +159,14 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - **出错与弃权严格分开**（D33）：模型正常答了「看不清 / 拿不准」是 `abstain`（或 `unclear`），不是错；一次模型调用最终失败、一路机位解码失败、样本读不了、进程两次死在这条上，这条就是 `verdict = error`，`error.incidents` 写明步骤、调用类型、机位、原因和尝试次数——即使 v1 的兜底逻辑仍给出了结论（结论照旧留在 `passed` / `score` / `details` 里备查）。单条出错不影响其他条，命令仍以 0 退出；`--json` 给逐状态计数、`error_episodes` 和输入集合的指纹 `input_digest`。
 - `--resume`：跳过已有非错误结果的条。SIGTERM 时做完在手的条再退出（退出码 5）；SIGKILL 后 `inflight.json` 留着当时在手的条，下次 `--resume` 把它们的崩溃次数加一，重跑；同一条两次出现在死掉的进程手里就记为 `error`（步骤 `crash`）并跳过（P14）。中断后续跑的结果与一次跑完逐字段相同（耗时字段除外）。
 - VLM 档熔断（P15）：开头连续 20 条都因为基础设施原因出错（连不上、超时、5xx、限流），整个模块以退出码 4 结束，不再烧配额。
-- 技能画像：`--incremental` 保留已有的分类体系，只给新增、改标、移除的条重新归档（v1 的 `_sync_profile`）；分类体系要的文本调用最终失败，模块以退出码 4 结束。
+- 技能画像：dedup 判定为字节级重复的条不进画像（由人捞回的条除外，见 aggregate）。`--incremental` 保留已有的分类体系，只动变化的部分（v1 的 `_sync_profile`）：不在 `--episodes` 里的条移出画像（弃用、人工判失败、改标重判仍失败），改标的条按新标注重新归类，由人带回交付的条（复议捞回、对拒绝条目人工判成功）不调模型打 caption、直接按文本归类（人工改标，否则原始标注，否则 autolabel 的 caption，都没有就留「未归类」），其余新加入的条先打 caption 再归类。分类体系要的文本调用最终失败，模块以退出码 4 结束。
 
 **aggregate**：`curation aggregate --run-dir … --phase funnel|final [--revision N] [--modules a,b] [--episodes 表达式] [--input …] --json`
 
 - 纯计算、秒级、每次全量重算。模块取 `--modules`，否则取 `plan.json`；episode 取 `--episodes`，否则取有结果的全部。
 - `funnel`：六项漏斗检查 → 每条 keep / drop / held（`verdicts.jsonl`）和 `keep.txt`。硬门拦下的条不看后面的档；某档有模块出错时停在这一档：如果正常判完的模块已经判它不合格（硬门失败，或各软分都有、加权低于阈值），照样 drop，出错的模块写进原因「另有…执行出错，不影响结论」（D35）；否则 held（「待补跑」）。弃权不是错，照常 keep 并进 review。不给 `--revision` 时写到 `<run-dir>/funnel/`。
+- `verdicts.jsonl` 始终是检查本身的漏斗判决；`keep.txt`（dedup 与技能画像的输入）还要跟着已应用的人工裁决走：弃用的、人工判失败的移出，复议捞回的、对拒绝条目人工判成功的加入（`counts` 里的 `decided_in` / `decided_out`）。没有裁决时两者一致。
+- **dedup 只在第一个结果版本跑一次**，人工裁决之后不再跑：它的结论保持不变（被人判失败的那条原件去掉了，它的副本仍按副本拒绝），由人带回交付的条从不去重（v1 的 rejudge 同样如此）。
 - `final --revision N`：再叠加 dedup、skill_profile 和已应用的人工裁决，写 passed / reject / held（三者不相交、合起来是全部）和 review 视图。人工裁决按 v1 的优先级：「弃用」压过一切（包括 held）；人工判了任务成败就以人为准，改标后不再重判；复议只对仅被 task_success 拒掉的条有效，物理与结构的硬门是终判；「拿不准」只记录，这条留在队列里。改了标还没按新标注重判的条 held。
 - `--input` 给了才在 passed 里写出交付用的任务描述（原始标注要从数据集的元数据里读）。已有 `commit.json` 的版本拒绝改写。
 
@@ -215,10 +217,13 @@ preflight → plan → snapshot → autolabel
 
 ```
 adjudicate-apply → check task_success --episodes <rerun_task_success>（写新分片）
-→ aggregate --phase funnel --revision N+1 → check dedup（keep 集合变了才需要）
-→ check skill_profile --incremental → aggregate --phase final --revision N+1
+→ aggregate --phase funnel --revision N+1
+→ check skill_profile --incremental --episodes @revisions/rN+1/keep.txt
+→ aggregate --phase final --revision N+1
 → report --revision N+1 → export --revision N+1 --incremental --output … → verify
 ```
+
+裁决之后**不再跑 dedup**：第一次的去重结论保持不变，技能画像自己跳过其中的副本，`final` 对由人带回的条不做去重（与 v1 相同）。`keep.txt` 已经按裁决增减过，直接交给技能画像。
 
 ## 手动验证步骤
 
@@ -329,14 +334,13 @@ with FakeVlmServer(port=8766) as s:
    $C adjudicate-apply --run-dir "$R" --decisions "$D/decisions.json"      # re-judge task_success: 4
    $C check --modules task_success $S --episodes 4
    $C aggregate --run-dir "$R" --phase funnel --revision 2 --episodes 0-7
-   $C check --modules dedup $S --episodes "@$R/revisions/r0002/keep.txt" --survivors-out "$R/stages/dedup2.txt"
-   $C check --modules skill_profile $S --episodes "@$R/stages/dedup2.txt" --incremental
+   $C check --modules skill_profile $S --episodes "@$R/revisions/r0002/keep.txt" --incremental
    $C aggregate --run-dir "$R" --phase final --revision 2 --episodes 0-7 --input "$D/mini"
    $C report --run-dir "$R" --revision 2
    $C export --run-dir "$R" --input "$D/mini" --output "$D/delivery" --revision 2 --incremental
    ```
 
-   应看到：第二版 `passed 4, reject 4`（3 被人工判失败）；再跑一次 `adjudicate-apply` 显示 `applied 0 decision(s) (2 already applied)`；导出是增量的：`diff` 为 `keep 2, renumber 2, drop 1`，没有复制任何视频；`revisions/r0001/` 原样未动。
+   应看到：第二版的漏斗行末尾是 `keep.txt after the human decisions: 0 in, 1 out`（3 被人工判失败，移出 `keep.txt`）；没有再跑 dedup（`ls "$R/checks/dedup/parts"` 仍只有 `0001.jsonl`），7 仍按 3 的副本拒绝；技能画像这次只归 4 条（3 移出，7 是副本不归）；第二版 `passed 4, reject 4`；再跑一次 `adjudicate-apply` 显示 `applied 0 decision(s) (2 already applied)`；导出是增量的：`diff` 为 `keep 2, renumber 2, drop 1`，没有复制任何视频；`revisions/r0001/` 原样未动。
 
 8. `curation task …`（用测试里的桩服务代替 Daemon）。另开一个终端，在 `backend/` 下启动桩：
 

@@ -4,10 +4,11 @@ The Daemon's adjudication sequence (doc 02 §3.9, doc 06 §5) on the fixture,
 after a complete first run:
 
     adjudicate-apply -> check task_success (the relabelled episodes, a new part)
-    -> aggregate funnel -> check dedup -> check skill_profile --incremental
+    -> aggregate funnel -> check skill_profile --incremental on its keep.txt
     -> aggregate final -> report -> export --incremental -> verify
 
-all on revision 2, with revision 1 left as it was.
+all on revision 2, with revision 1 left as it was. Dedup is not run again: its
+first result stands, as in v1's rejudge.
 """
 from __future__ import annotations
 
@@ -67,11 +68,8 @@ def flow(tmp_path_factory, mini_dataset):
             c.step("funnel2", "aggregate", "--run-dir", c.rd, "--phase", "funnel",
                    "--revision", "2", "--episodes", "0-7")
             keep = c.path("revisions", "r0002", "keep.txt")
-            c.step("dedup2", "check", "--modules", "dedup", *c.common(), "--episodes",
-                   "@" + keep, "--survivors-out", c.path("stages", "dedup2.txt"))
             c.step("profile2", "check", "--modules", "skill_profile", *c.common(),
-                   "--episodes", "@" + c.path("stages", "dedup2.txt"), "--incremental",
-                   *c.vlm)
+                   "--episodes", "@" + keep, "--incremental", *c.vlm)
             c.step("final2", "aggregate", "--run-dir", c.rd, "--phase", "final",
                    "--revision", "2", "--episodes", "0-7", "--input", c.ds)
             c.step("report2", "report", "--run-dir", c.rd, "--revision", "2")
@@ -91,6 +89,26 @@ def test_decisions_name_what_runs_next(flow):
     assert rec["episode_index"] == 4
     assert rec["details"]["task_desc"] == NEW_LABEL
     assert rec["details"]["task_desc_source"] == "人工改标"
+
+
+def test_the_first_dedup_stands_and_the_profile_follows_the_decisions(flow):
+    """keep.txt of revision 2 drops the episode a person judged failed; dedup is not
+    run again (7 stays the copy of 3); the profile loses 3 and never files 7."""
+    with open(flow.path("revisions", "r0002", "keep.txt"), encoding="utf-8") as fh:
+        assert fh.read().split() == ["0", "1", "4", "6", "7"]
+    counts = flow.steps["funnel2"].doc["counts"]
+    assert counts["keep"] == 6 and counts["decided_out"] == 1 and counts["decided_in"] == 0
+    assert sorted(os.listdir(flow.path("checks", "dedup", "parts"))) == ["0001.jsonl"]
+    profile = flow.steps["profile2"].doc["modules"]["skill_profile"]
+    assert profile["episodes"]["total"] == 4                  # 0 1 4 6: not 3, not 7
+    filed = {r["episode_index"] for r in
+             read_jsonl(flow.path("checks", "skill_profile", "parts", "0002.jsonl"))}
+    assert filed == {0, 1, 4, 6}
+    rows = read_jsonl(flow.path("checks", "skill_profile", "assignments.jsonl"))
+    assert sorted(r["episode_id"] for r in rows) == ["ep000000", "ep000001", "ep000004",
+                                                     "ep000006"]
+    relabelled = next(r for r in rows if r["episode_id"] == "ep000004")
+    assert relabelled["grouping_text"] == NEW_LABEL
 
 
 def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
