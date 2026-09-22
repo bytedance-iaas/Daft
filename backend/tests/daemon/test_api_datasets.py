@@ -21,16 +21,14 @@ LIST_SCHEMA = "openapi.yaml#/paths/~1datasets/get/responses/200/content/applicat
 UNKNOWN = "这个接口不存在（或还没有实现）"
 
 _SPEC = schemas.load("openapi.yaml")["components"]["schemas"]
-ITEM_KEYS = set(_SPEC["DatasetItem"]["properties"])
+ITEM_KEYS = set(_SPEC["DatasetItemFields"]["properties"])
 DETAIL_KEYS = ITEM_KEYS | set(_SPEC["DatasetDetail"]["allOf"][1]["properties"])
 
 
 def assert_dataset_detail(body: dict) -> None:
-    """C4 1.2 ``DatasetDetail`` is ``allOf`` [``DatasetItem``, the extra fields], and
-    ``DatasetItem`` forbids extra keys, so no document satisfies both branches (a
-    contract gap, see the W4 report): check each half and the exact key set instead."""
-    assert_schema("DatasetItem", {k: v for k, v in body.items() if k in ITEM_KEYS})
-    assert_schema("openapi.yaml#/components/schemas/DatasetDetail/allOf/1", body)
+    """C4 1.3 ``DatasetDetail`` validates as a whole (shared fields plus
+    ``unevaluatedProperties: false``); the key set is checked exactly on top."""
+    assert_schema("DatasetDetail", body)
     assert set(body) == DETAIL_KEYS
 
 

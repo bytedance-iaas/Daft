@@ -146,6 +146,10 @@ class CursorPage(Generic[T]):
 
 @dataclass
 class Credential:
+    """A sealed secret. Access keys have ``kind="tos"``; a VLM backend's API key is a row too
+    (``ark`` / ``custom_vlm``) named ``vlm-backend/<backend id>`` and owned by its backend, so
+    user-created keys may not use that prefix."""
+
     id: str
     name: str
     kind: CredentialKind
@@ -189,6 +193,16 @@ class VlmBackend:
     created_at: int = 0
     updated_at: int = 0
 
+
+
+
+@dataclass(frozen=True)
+class FinishedResults:
+    """What finished in a window: the overview's "last 7 days" (C5 1.3)."""
+
+    tasks: int          # tasks that finished succeeded / completed_with_errors
+    episodes: int       # sum of their summary.total
+    passed: int         # sum of their summary.passed
 
 
 @dataclass
@@ -451,6 +465,9 @@ class Repository(Protocol):
     def set_vlm_backend_verification(self, backend_id: str, state: VerifyState, at: int,
                                      error: str | None) -> None: ...
 
+    def vlm_backend_references(self, backend_id: str) -> tuple[int, int]:
+        """(unfinished, finished or deleted) tasks whose model belongs to this backend."""
+
     def delete_vlm_backend(self, backend_id: str, *, owner: str = DEFAULT_OWNER) -> None:
         """Raises Conflict('backend_in_use'); cascades to its models and key."""
 
@@ -463,7 +480,9 @@ class Repository(Protocol):
 
     # -- datasets (D36, D37) ----------------------------------------------------------
     def register_dataset(self, dataset: Dataset) -> tuple[Dataset, bool]:
-        """Get-or-create by (owner, source, uri, region); returns (dataset, created)."""
+        """Get-or-create by (owner, source, uri, region), no region and an empty one being the
+        same; returns (dataset, created). The id is generated (``ds_…``); the access key, if
+        any, must be the same owner's ``kind='tos'`` key."""
 
     def get_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER) -> Dataset:
         """Raises NotFound."""
@@ -474,10 +493,14 @@ class Repository(Protocol):
         """Newest first; ``fmt`` is lerobot_v2 | lerobot_v3 | unsupported, read from the preflight."""
 
     def update_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER, **fields) -> Dataset:
-        """Name and note (PATCH), or a refreshed preflight with both fingerprints (repreflight)."""
+        """Name and note (PATCH), a replacement access key, or a refreshed preflight: a
+        repreflight gives ``preflight``, ``meta_fingerprint``, ``source_fingerprint`` and
+        ``preflighted_at`` together and sets ``check_state`` back to ``ok``."""
 
     def record_dataset_check(self, check: DatasetCheck) -> DatasetCheck:
-        """Appends the check and sets the dataset's check_state and checked_at in one step."""
+        """Appends the check and sets the dataset's check_state and checked_at in one step. A
+        check older than the dataset's ``checked_at`` is kept in the history but does not
+        change the state, and a ``repreflight`` check leaves the state to update_dataset."""
 
     def list_dataset_checks(self, dataset_id: str, *, limit: int = 20) -> list[DatasetCheck]:
         """Newest first."""
@@ -485,6 +508,13 @@ class Repository(Protocol):
     def delete_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER) -> None:
         """Raises Conflict('dataset_in_use') while an unfinished task uses it; tasks keep their
         own copy of the input, so finished ones only lose the link (dataset_id set to NULL)."""
+
+    def find_dataset(self, *, source: str, uri: str, region: str | None,
+                     owner: str = DEFAULT_OWNER) -> Dataset | None:
+        """The registration of this address (the key register_dataset uses), or None."""
+
+    def credential_dataset_references(self, cred_id: str) -> int:
+        """Registrations that use this access key; deleting the key clears their reference."""
 
     # -- tasks --------------------------------------------------------------------
     def create_task(self, spec: TaskCreate) -> Task:
@@ -509,7 +539,9 @@ class Repository(Protocol):
     def update_task_state(self, task_id: str, frm: set[str] | frozenset[str], to: TaskState, *,
                           reason: str | None = None,
                           pause_reason: PauseReason | None = None, at: int) -> bool:
-        """CAS; returns whether it applied. Never called with an illegal transition."""
+        """CAS; returns whether it applied. Never called with an illegal transition. When a
+        resume moves a stopped or failed task to a terminal state, ``finished_at`` becomes the
+        new end."""
 
     def set_task_progress(self, task_id: str, progress: dict) -> None: ...
 
@@ -609,6 +641,29 @@ class Repository(Protocol):
     def get_preflight(self, preflight_id: str, *, max_age_ms: int, now: int,
                       owner: str = DEFAULT_OWNER) -> dict | None:
         """None when missing or expired (-> preflight_expired)."""
+
+    # -- overview figures (C5 1.3; design doc 07 §4.3, doc 03 §12) ----------------------------
+    # Soft-deleted tasks never count here, except in the token timeline.
+    def adjudication_backlog(self, *, owner: str = DEFAULT_OWNER) -> tuple[int, int]:
+        """(tasks, episodes) waiting for human judgement: tasks whose
+        ``summary.pending_adjudication`` is positive, and the sum of those numbers."""
+
+    def delivery_pending_count(self, *, owner: str = DEFAULT_OWNER) -> int:
+        """Finished tasks with a result (``result_rev >= 1``) whose delivered dataset is
+        stale or was never exported (``export_fingerprint`` is null)."""
+
+    def finished_results(self, *, since: int, owner: str = DEFAULT_OWNER) -> FinishedResults:
+        """Tasks that ended succeeded or completed_with_errors at or after ``since`` (epoch
+        ms), with the sums of their summary ``total`` and ``passed``."""
+
+    def unfinished_subtasks(self, *, owner: str = DEFAULT_OWNER) -> list[tuple[Subtask, Task]]:
+        """``(subtask, its task)`` for every subtask not in a terminal state, newest first."""
+
+    def token_timeline(self, *, since: int, until: int,
+                       owner: str = DEFAULT_OWNER) -> list[tuple[int, int]]:
+        """``(slot start, tokens)`` of the actual ledger (prompt + completion) in 15-minute UTC
+        slots within ``[since, until)`` that have tokens, oldest first; add_usage feeds it
+        and the tokens stay counted whatever happens to their task later."""
 
     # -- idempotency keys (24 hours) ------------------------------------------------
     def get_idempotent(self, *, key: str, route: str,

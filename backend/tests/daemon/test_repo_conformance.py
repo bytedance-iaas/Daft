@@ -1143,3 +1143,32 @@ def test_idempotency_records_and_expiry(repo):
     repo.put_preflight(request_hash="h", result={}, at=T0)
     assert repo.purge_expired(now=T0 + 25 * 3600 * 1000) == 2
     assert repo.get_idempotent(key="k-12345678", route="createTask") is None
+
+
+# ---------------------------------------------------------------------------
+# C5 1.3: reference counts for the delete prompts
+# ---------------------------------------------------------------------------
+
+def test_vlm_backend_references(repo):
+    b = repo.create_vlm_backend(_backend(), _cred("ark-refs-key", kind="ark"))
+    model = b.models[0]
+    assert repo.vlm_backend_references(b.id) == (0, 0)
+    running = repo.create_task(_spec("running", vlm_model=model.id))
+    done = repo.create_task(_spec("done", vlm_model=model.id))
+    _drive(repo, done.id, "running", "succeeded")
+    assert repo.vlm_backend_references(b.id) == (1, 1)
+    repo.soft_delete_task(done.id, at=T0)
+    assert repo.vlm_backend_references(b.id) == (1, 1)               # deleted counts as finished
+    _drive(repo, running.id, "running", "failed")
+    assert repo.vlm_backend_references(b.id) == (0, 2)
+    assert repo.vlm_backend_references("vb_missing") == (0, 0)
+
+
+def test_credential_dataset_references(repo):
+    c = repo.create_credential(_cred())
+    assert repo.credential_dataset_references(c.id) == 0
+    repo.register_dataset(_dataset(cred=c.id))
+    repo.register_dataset(_dataset("tos://bucket/datasets/other", cred=c.id))
+    assert repo.credential_dataset_references(c.id) == 2
+    repo.delete_credential(c.id)                                       # registrations never block
+    assert repo.credential_dataset_references(c.id) == 0

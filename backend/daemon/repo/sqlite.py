@@ -639,6 +639,11 @@ class SqliteRepository:
     def credential_references(self, cred_id: str) -> tuple[int, int]:
         return self._read(lambda c: self._credential_refs(c, cred_id), snapshot=True)
 
+    def credential_dataset_references(self, cred_id: str) -> int:
+        return self._read(lambda c: int(c.execute(
+            "SELECT COUNT(*) FROM dataset WHERE credential_id=?", (cred_id,)).fetchone()[0]),
+            snapshot=True)
+
     def delete_credential(self, cred_id: str, *, owner: str = DEFAULT_OWNER) -> None:
         def op(c):
             self._get_credential(c, cred_id, owner)
@@ -777,6 +782,17 @@ class SqliteRepository:
         return c.execute(
             f"SELECT COUNT(*) FROM task WHERE vlm_model_id IN (SELECT id FROM vlm_model WHERE {where})"
             f" AND state NOT IN {_TERMINAL_SQL} AND deleted_at IS NULL", args).fetchone()[0]
+
+    def vlm_backend_references(self, backend_id: str) -> tuple[int, int]:
+        def op(c):
+            row = c.execute(
+                "SELECT"
+                f" SUM(CASE WHEN state NOT IN {_TERMINAL_SQL} AND deleted_at IS NULL THEN 1 ELSE 0 END),"
+                f" SUM(CASE WHEN state IN {_TERMINAL_SQL} OR deleted_at IS NOT NULL THEN 1 ELSE 0 END)"
+                " FROM task WHERE vlm_model_id IN (SELECT id FROM vlm_model WHERE backend_id=?)",
+                (backend_id,)).fetchone()
+            return int(row[0] or 0), int(row[1] or 0)
+        return self._read(op, snapshot=True)
 
     def delete_vlm_backend(self, backend_id: str, *, owner: str = DEFAULT_OWNER) -> None:
         def op(c):

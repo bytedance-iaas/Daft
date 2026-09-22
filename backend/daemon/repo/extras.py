@@ -1,4 +1,7 @@
-"""Repository queries the Daemon needs beyond C5 1.2 (proposed for C5 1.3).
+"""Helpers around the repository queries that joined C5 in 1.3 (overview, dataset lookup).
+
+The queries themselves are now part of :class:`daemon.repo.protocol.Repository`;
+``RepositoryExtras`` remains as an alias for older imports.
 
 C5 (``protocol.py``) is frozen, so the few reads the overview page and the task
 configuration need are declared here until a contract revision takes them in.
@@ -31,10 +34,7 @@ every implementation counts the same things:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol
-
-from .protocol import DEFAULT_OWNER, Dataset, Subtask, Task
+from .protocol import DEFAULT_OWNER, Dataset, FinishedResults, Repository, Subtask, Task  # noqa: F401
 
 #: Width of one token-timeline slot.
 TOKEN_SLOT_MS = 15 * 60 * 1000
@@ -61,32 +61,5 @@ def token_slot(at: int) -> int:
     return int(at) - int(at) % TOKEN_SLOT_MS
 
 
-@dataclass(frozen=True)
-class FinishedResults:
-    tasks: int          # tasks that finished succeeded / completed_with_errors
-    episodes: int       # sum of their summary.total
-    passed: int         # sum of their summary.passed
-
-
-class RepositoryExtras(Protocol):
-    def find_dataset(self, *, source: str, uri: str, region: str | None,
-                     owner: str = DEFAULT_OWNER) -> Dataset | None:
-        """The registration of this address - the key ``register_dataset`` gets or creates
-        by, with an empty region and no region being the same - or None."""
-
-    def adjudication_backlog(self, *, owner: str = DEFAULT_OWNER) -> tuple[int, int]:
-        """(tasks, episodes) waiting for human judgement (see the module docstring)."""
-
-    def delivery_pending_count(self, *, owner: str = DEFAULT_OWNER) -> int:
-        """Finished tasks whose delivery is stale or was never exported."""
-
-    def finished_results(self, *, since: int, owner: str = DEFAULT_OWNER) -> FinishedResults:
-        """What finished at or after ``since`` (epoch ms)."""
-
-    def unfinished_subtasks(self, *, owner: str = DEFAULT_OWNER) -> list[tuple[Subtask, Task]]:
-        """``(subtask, its task)`` for every subtask not in a terminal state (see above)."""
-
-    def token_timeline(self, *, since: int, until: int,
-                       owner: str = DEFAULT_OWNER) -> list[tuple[int, int]]:
-        """``(slot start, tokens)`` for the slots in ``[since, until)`` that have tokens,
-        oldest first; ``add_usage`` feeds it."""
+#: C5 1.3 took these queries into the protocol.
+RepositoryExtras = Repository

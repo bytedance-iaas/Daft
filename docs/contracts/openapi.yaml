@@ -1,13 +1,15 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.2.0
+  version: 1.3.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
     production; the gateway does not strip it). Write operations are asynchronous: they
     return the resource and its state, progress arrives over SSE or polling.
     Errors use one body, `Error`; `code` is stable for machines, `message` is Chinese for people.
+    `precheck_failed` (422, any write that starts work) carries `error.details` shaped as
+    `PrecheckDetails`: one entry per pre-start check (D30).
     Responses that point people at a page carry `links` (D22): absolute URLs when
     `server.publicBaseUrl` is configured, otherwise relative paths with `absolute: false`.
     Write endpoints accept only `application/json` - send the header on every write, even without
@@ -25,6 +27,13 @@ info:
     has its own schema with `snapshot`; access-key names are null in responses once the key
     was deleted; SSE `state` and `done` carry `subtask_id` and `reason`; the log order and the
     `subtask` filter are spelled out; call kinds and stage ids are open like in C2/C3 1.1.
+
+    1.3.0 (2026-09-21): `Idempotency-Key` is declared on every write; `Decision` and
+    `DatasetDetail` validate (shared fields plus `unevaluatedProperties: false` instead of an
+    allOf over a closed base); `precheck_failed` details (`PrecheckDetails`), probe error codes,
+    the confirmation rule for deleting keys and backends that finished tasks used, the media
+    signing prefix, optional session tokens on access keys, `Subtask.pause_reason`, `rel:
+    dataset` links, dataset ids and the overview's counting rules are spelled out.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -75,6 +84,8 @@ paths:
         Saving never fails because verification failed: the key is stored and marked
         `failed` or `unverified`. Read and write permissions are checked against concrete
         buckets when a task starts.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -94,6 +105,8 @@ paths:
       tags: [credentials]
       operationId: updateCredential
       summary: Update; a secret left empty stays unchanged
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -114,6 +127,7 @@ paths:
         Referenced only by finished tasks: requires `confirm=true`. Those tasks keep their
         reports, which then say the key is gone; rebind-credentials gives them another one.
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
         - name: confirm
           in: query
           schema: {type: boolean, default: false}
@@ -127,6 +141,8 @@ paths:
       tags: [credentials]
       operationId: verifyCredential
       summary: Verify identity again
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           description: verification result (also stored on the key)
@@ -157,6 +173,8 @@ paths:
       operationId: createVlmBackend
       summary: Add a backend with its API key; then try GET {endpoint}/models once (D8)
       description: Not listing any models is not an error; the user adds model IDs by hand.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -176,6 +194,8 @@ paths:
       tags: [vlm]
       operationId: updateVlmBackend
       summary: Update; an API key left empty stays unchanged
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -192,7 +212,12 @@ paths:
       tags: [vlm]
       operationId: deleteVlmBackend
       summary: Delete with its models and key (409 backend_in_use while a non-terminal task uses it)
+      description: |
+        An unfinished task using it answers 409 in_use. When only finished (or deleted) tasks
+        use it, the 409 carries `error.details.confirm_required: true`; repeating the call
+        with `confirm=true` deletes it and those tasks lose the reference.
       parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
         - name: confirm
           in: query
           schema: {type: boolean, default: false}
@@ -206,6 +231,8 @@ paths:
       tags: [vlm]
       operationId: verifyVlmBackend
       summary: Probe the endpoint (GET /models, else a minimal chat call)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           description: result
@@ -220,6 +247,8 @@ paths:
       tags: [vlm]
       operationId: refreshVlmModels
       summary: List models again; an empty result means "enter them by hand"
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           description: listing result
@@ -240,6 +269,8 @@ paths:
       tags: [vlm]
       operationId: addVlmModel
       summary: Add a model ID or inference endpoint ID (ep-...), checked with one minimal call
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -263,6 +294,8 @@ paths:
       tags: [vlm]
       operationId: updateVlmModel
       summary: Set reasoning effort and parallelism
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -279,6 +312,8 @@ paths:
       tags: [vlm]
       operationId: deleteVlmModel
       summary: Remove a model (409 backend_in_use while a non-terminal task uses it)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "204": {description: removed}
         default: {$ref: "#/components/responses/Error"}
@@ -447,6 +482,8 @@ paths:
       tags: [datasets]
       operationId: updateDataset
       summary: Rename, or change the note
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -463,6 +500,8 @@ paths:
       tags: [datasets]
       operationId: deleteDataset
       summary: Remove the registration; the data on TOS is untouched. In use by an unfinished task -> 409 dataset_in_use
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "204": {description: removed}
         default: {$ref: "#/components/responses/Error"}
@@ -473,6 +512,8 @@ paths:
       tags: [datasets]
       operationId: recheckDataset
       summary: Recompute both fingerprints and compare, nothing else changes; a difference sets check_state=changed
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           description: the check
@@ -501,6 +542,8 @@ paths:
       tags: [datasets]
       operationId: preflight
       summary: Preflight a dataset (metadata only, seconds); the result is kept 30 minutes
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -518,6 +561,8 @@ paths:
       tags: [datasets]
       operationId: probeDelivery
       summary: Write and delete one object under the delivery directory with the given key
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -561,7 +606,7 @@ paths:
           schema: {type: string}
         - name: module
           in: query
-          description: comma-separated module ids; only tasks that selected every one of them
+          description: comma-separated module ids; only tasks that selected every one of them (an unknown id is 400 validation_failed)
           schema: {type: string}
         - name: dataset_id
           in: query
@@ -695,6 +740,8 @@ paths:
       tags: [tasks]
       operationId: purgeTaskArtifacts
       summary: Delete this task's run directory on TOS; the exact path must be echoed back (D28)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -1091,6 +1138,8 @@ paths:
       tags: [report]
       operationId: submitAdjudication
       summary: Record decisions (append only, last one wins, nothing is executed)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -1147,7 +1196,10 @@ paths:
         - name: path
           in: query
           required: true
-          description: relative to the scope's prefix; normalized and checked against it
+          description: >-
+            relative to the scope's prefix - scope=delivery: the task's run directory
+            <delivery>/<run_id>/; scope=input: the dataset root - normalized and checked
+            against it. Clip start and end times come from the episode endpoint.
           schema: {type: string}
         - name: ttl
           in: query
@@ -1314,7 +1366,7 @@ components:
       additionalProperties: false
       required: [rel, title, url]
       properties:
-        rel: {enum: [task, report, adjudication, plan, logs, credentials]}
+        rel: {enum: [task, report, adjudication, plan, logs, credentials, dataset]}
         title: {type: string}
         url: {type: string}
         absolute: {type: boolean, default: true, description: "false when publicBaseUrl is not configured"}
@@ -1347,6 +1399,24 @@ components:
         verify_state: {$ref: "#/components/schemas/VerifyState"}
         last_verified_at: {type: integer}
         error: {type: [string, "null"]}
+    PrecheckDetails:
+      type: object
+      description: error.details of precheck_failed - one entry per pre-start check (D30)
+      required: [checks]
+      properties:
+        checks:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, ok, code, reason]
+            properties:
+              id: {enum: [input, output, vlm]}
+              ok: {type: boolean}
+              code: {type: string, description: "stable reason of a failed check, e.g. forbidden, not_found, unreachable"}
+              reason: {type: string, description: "Chinese, shown under the form field"}
+              target: {type: string, description: "what was checked: a tos:// path or the model"}
+              elapsed_ms: {type: integer, minimum: 0}
     ProbeResult:
       type: object
       additionalProperties: false
@@ -1355,8 +1425,11 @@ components:
         ok: {type: boolean}
         error:
           type: object
+          description: >-
+            Why it failed; with ok true only leftover appears (written, but the probe object
+            could not be removed), which deserves a warning.
           properties:
-            code: {type: string}
+            code: {enum: [forbidden, not_found, auth_failed, unreachable, server_error, failed, leftover]}
             message: {type: string}
 
     # ---------- credentials
@@ -1398,6 +1471,7 @@ components:
         region: {$ref: "#/components/schemas/Region"}
         endpoint: {type: string}
         test_bucket: {type: string}
+        session_token: {type: string, writeOnly: true, description: "temporary credentials only; empty = none"}
     CredentialUpdate:
       type: object
       additionalProperties: false
@@ -1409,6 +1483,7 @@ components:
         region: {$ref: "#/components/schemas/Region"}
         endpoint: {type: string}
         test_bucket: {type: string}
+        session_token: {type: string, writeOnly: true, description: "temporary credentials only; empty = none"}
 
     # ---------- vlm
     VlmModel:
@@ -1534,13 +1609,12 @@ components:
         format_hint: {enum: [lerobot_v2, lerobot_v3, rrd, unknown]}
         episodes: {type: [integer, "null"]}
     DatasetFormat: {enum: [lerobot_v2, lerobot_v3, unsupported]}
-    DatasetItem:
+    DatasetItemFields:
       type: object
-      additionalProperties: false
       required: [id, name, source, uri, region, format, episode_count, robot_type, check_state, checked_at,
                  preflighted_at, created_at, last_task]
       properties:
-        id: {type: string}
+        id: {type: string, pattern: "^ds_", description: "ds_ followed by a generated id"}
         name: {type: string}
         source: {enum: [tos, public, local]}
         uri: {type: string}
@@ -1556,9 +1630,13 @@ components:
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/TaskRef"
+    DatasetItem:
+      allOf:
+        - $ref: "#/components/schemas/DatasetItemFields"
+      unevaluatedProperties: false
     DatasetDetail:
       allOf:
-        - $ref: "#/components/schemas/DatasetItem"
+        - $ref: "#/components/schemas/DatasetItemFields"
         - type: object
           required: [note, credential, preflight, meta_fingerprint, listing, checks, tasks, links]
           properties:
@@ -1571,12 +1649,13 @@ components:
               description: summary of the file listing kept at the last preflight (source-manifest summary)
               required: [objects, bytes, digest]
               properties:
-                objects: {type: integer, minimum: 0}
+                objects: {type: integer, minimum: 0, description: "C2 source-manifest summary.count"}
                 bytes: {type: integer, minimum: 0}
                 digest: {type: string}
             checks: {type: array, maxItems: 20, items: {$ref: "#/components/schemas/DatasetCheck"}, description: "newest first"}
             tasks: {type: array, maxItems: 20, items: {$ref: "#/components/schemas/TaskRef"}, description: "newest first"}
             links: {$ref: "#/components/schemas/Links"}
+      unevaluatedProperties: false
     DatasetCreate:
       type: object
       additionalProperties: false
@@ -1645,6 +1724,13 @@ components:
         task: {$ref: "#/components/schemas/Task"}
     Overview:
       type: object
+      description: >-
+        Soft-deleted tasks never count, except in tokens. running counts what workers are busy
+        with - main runs and subtasks in running, pausing or stopping - and queued / paused those
+        states; recent covers the last 7 days in the site's time zone (CURATOR_TZ_OFFSET): tasks
+        that ended succeeded or completed_with_errors, their summary totals, passed / total over
+        episodes, and actual-ledger prompt + completion tokens per day; credentials_failed counts
+        access keys (kind tos) only, a backend's key failing counts in backends_failed.
       additionalProperties: false
       required: [todo, running, recent, datasets, generated_at]
       properties:
@@ -2067,6 +2153,7 @@ components:
             episodes: {enum: [errors, all]}
         state: {$ref: "#/components/schemas/TaskState"}
         state_reason: {type: [string, "null"]}
+        pause_reason: {enum: [user, system, null], description: "only while pausing or paused"}
         progress: {type: [object, "null"]}
         created_at: {type: integer}
         started_at: {type: [integer, "null"]}
@@ -2244,9 +2331,8 @@ components:
         decided: {type: integer, minimum: 0}
         pending: {type: integer, minimum: 0}
         unapplied: {type: integer, minimum: 0}
-    DecisionInput:
+    DecisionFields:
       type: object
-      additionalProperties: false
       required: [episode_index, line, decision]
       properties:
         episode_index: {type: integer, minimum: 0}
@@ -2254,9 +2340,13 @@ components:
         decision: {enum: [adopt_suggestion, custom_label, keep_label, success, failure, restore, keep_rejected, unsure, discard]}
         new_label: {type: [string, "null"]}
         note: {type: [string, "null"]}
+    DecisionInput:
+      allOf:
+        - $ref: "#/components/schemas/DecisionFields"
+      unevaluatedProperties: false
     Decision:
       allOf:
-        - $ref: "#/components/schemas/DecisionInput"
+        - $ref: "#/components/schemas/DecisionFields"
         - type: object
           required: [id, decided_by, decided_at, applied]
           properties:
@@ -2264,6 +2354,7 @@ components:
             decided_by: {type: string}
             decided_at: {type: integer}
             applied: {type: boolean}
+      unevaluatedProperties: false
 
     # ---------- system
     SignedUrl:

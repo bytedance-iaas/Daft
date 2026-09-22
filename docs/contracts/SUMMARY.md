@@ -1,4 +1,4 @@
-# 契约要点与冻结时的取舍（2026-09-21，1.2 修订后）
+# 契约要点与冻结时的取舍（2026-09-21，1.3 修订后）
 
 一页读懂 C1–C5：每份管什么、冻结时定下了哪些原文没写死的细节，以及需求方拍板的那一处（D35）。
 文件索引和改契约的流程见同目录 `README.md`；以契约文件本身为准，本页是导读。
@@ -10,7 +10,7 @@
 | C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 8 个模块 = 6 项漏斗检查 + 去重、技能画像两项数据集级模块；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（20 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥且完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
-| C4 REST API `openapi.yaml`（OpenAPI 3.1，1.2.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
+| C4 REST API `openapi.yaml`（OpenAPI 3.1，1.3.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
 | C5 Repository 与状态机 `backend/daemon/repo/protocol.py` | Daemon 内部读写状态的唯一入口 | 10 个任务状态，允许的迁移逐条列出（契约测试逐条对照 01 篇 §3.1）；状态变更一律比较后交换（CAS），不许先读后写；事务由调用方显式开启；每个查询都带 owner（本期固定为 `default`，为以后接 IAM 留路）；结果版本切换也是 CAS |
 
 防漂移：26 份契约文件的 sha256 记在 `CONTRACTS.lock`，改了契约而没刷新锁，CI 变红；
@@ -110,9 +110,9 @@ W4 报告的缺口，外加任务编排（W5）开工前必须补的状态机缺
 
 设计文档跟进：01 §2.8（`dataset_check.change`、区域为空时的唯一索引）、§3.1（新迁移和说明），03 §1、§8（写请求规则）。
 
-## 七、下一版（1.3）待修订（攒着，和 W5 的缺口一起改）
+## 七、1.3 修订（2026-09-21，已完成）
 
-W8 合并时报告的，在那之前按括号里的现状实现（前端 W10 已按现状做 mock）：
+W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条留到下一版，第 10 条是 W5 的实现要求）：
 
 | # | 契约 | 要改什么 | 现状 |
 |---|---|---|---|
@@ -128,4 +128,27 @@ W8 合并时报告的，在那之前按括号里的现状实现（前端 W10 已
 | 10 | 编排（W5） | 任务级思考强度要校验在模型的有效档位内 | `taskspec.resolve_vlm` 不查；W5 建任务时调 `svc.check_task_effort(...)` |
 
 数据集登记引用的访问密钥被删时不阻止删除，登记上的 `credential_id` 置空（与已结束任务相同），交 W4 续作实现。
+
+1.3 同时落地的还有 W4 续作报告的缺口：`Decision`、`DatasetDetail` 改成「共享字段 + `unevaluatedProperties: false`」，
+终于能通过校验；19 个写接口补声明 `Idempotency-Key`；`Link.rel` 加 `dataset`；`Subtask.pause_reason`；数据集 id 以 `ds_` 开头；
+概览各数字的口径写进 `Overview` 的说明；C5 并入原来放在 `repo/extras.py` 的六个查询（按地址找登记、待裁决积压、
+交付待导出、近期完成、未结束的子任务、Token 时间线），新增 `vlm_backend_references`、`credential_dataset_references`，
+并写明一致性测试钉住的几条行为（resume 结束时的 `finished_at`、重新预检的四项一起刷新、过时的核对不改状态、
+登记只能用同一 owner 的 TOS 访问密钥、模型服务的 API Key 行命名为 `vlm-backend/<id>`）。
+
+## 八、下一版（1.4）待修订
+
+| # | 契约 | 要改什么 | 来源 |
+|---|---|---|---|
+| 1 | 设计 02 / CLI | `--vlm-reasoning-effort`：给了才在请求里带 `reasoning_effort`，不给什么都不发（保持对账口径） | W3 |
+| 2 | 设计 02 §2 | 分角色的 TOS endpoint 变量（现在只认 `TOS_ENDPOINT`） | W3、W8 |
+| 3 | C2 `final-list` | review 的种类：非 task_success 的弃权怎么记；可复议的拒绝条目是否进 review | W3，待核对 v1 |
+| 4 | C2 / C4 `Perf` | `vlm_latency.csv` 没有 subtask_id；CLI 算不出 `duration_s` | W3 |
+| 5 | C2 | 辅助命令（backends probe、creds verify、datasets …、clips）没有输出 schema | W3 |
+| 6 | C4 `GET /tasks` | 按「有待裁决」「交付过期」筛选 | W10 |
+| 7 | C4 `Task` | 记下所用的预设（完整 / 快速 / 自选），列表的预设名不必反推 | W10 |
+| 8 | C4 | 站点配置接口（公共缓存桶是否可用、本地路径开关、所在地域） | W10 |
+| 9 | C4 `SignedUrl` | `expires_at` 写明单位（毫秒）；`from_ts` / `to_ts` 挪到 episode 接口 | W10、W8 |
+| 10 | C4 报告 | 各模块 `summary` 与专用视图（卡顿时间线、同步曲线、判决卡、两级技能表）的数据形状；平均质量分、复议的「关键读数」 | W10 |
+| 11 | C4 | 查某模块出错的是哪几条；裁决卡片带视频引用；裁决列表的 `source` 多选与「拿不准」状态；`DecisionInput` 的「撤回」 | W10 |
 
