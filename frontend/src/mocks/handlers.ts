@@ -335,9 +335,15 @@ const backends = [
     const vb = db.backends.find((x) => x.id === params.id);
     const m = vb?.models.find((x) => x.id === params.modelId);
     if (!vb || !m) return err(404, 'not_found', '模型不存在');
-    const b = await body<{ reasoning_effort?: ReasoningLevel | null; max_concurrency?: number | null }>(request, 'updateVlmModel');
+    const b = await body<{ reasoning_effort?: ReasoningLevel | null; max_concurrency?: number | null; is_default?: boolean }>(request, 'updateVlmModel');
     if ('reasoning_effort' in b) m.reasoning_effort = b.reasoning_effort ?? null;
     if ('max_concurrency' in b) m.max_concurrency = b.max_concurrency ?? null;
+    // C4 1.6.0: at most one default per owner, across every backend (the Daemon does it in one
+    // transaction); false leaves the owner without one.
+    if (typeof b.is_default === 'boolean') {
+      if (b.is_default) for (const x of db.backends) for (const y of x.models) y.is_default = false;
+      m.is_default = b.is_default;
+    }
     return HttpResponse.json(m);
   }),
   http.delete(`${API}/vlm-backends/:id/models/:modelId`, ({ params }) => {

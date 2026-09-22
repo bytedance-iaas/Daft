@@ -88,7 +88,7 @@ export function ModelSection({
               status={errors.vlmModel ? 'error' : undefined}
               disabled={!backend}
               onChange={(x: string) => set({ vlmModel: x, effort: '' }, 'vlmModel')}
-              options={(backend?.models ?? []).map((m) => ({ label: m.model_name, value: m.model_name }))}
+              options={(backend?.models ?? []).map((m) => ({ label: m.is_default ? `${m.model_name}（${zh.credentials.modelDefault}）` : m.model_name, value: m.model_name }))}
             />
           </Field>
         </Col>

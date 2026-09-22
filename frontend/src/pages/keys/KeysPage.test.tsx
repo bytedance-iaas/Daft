@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import type { ReasoningLevel } from '../../api/types';
 import { db } from '../../mocks/db';
 import { findDrawer, fill, pick } from '../../test/arco';
 import { fieldErrors, requiredFieldLabels } from '../../test/forms';
@@ -9,6 +10,9 @@ import { currentLocation, renderApp } from '../../test/render';
 function row(table: HTMLElement, name: string): HTMLElement {
   return within(table).getByText(name).closest('tr') as HTMLElement;
 }
+
+const ADD_MODEL = '搜索已有模型，或填 Model ID、推理接入点 ID（ep-…）添加';
+const modelRows = (models: HTMLElement) => [...models.querySelectorAll('tbody tr')].map((r) => r.querySelector('.mono')?.textContent ?? '');
 
 const findCredential = (id: string) => db.credentials.find((c) => c.id === id);
 
@@ -129,6 +133,50 @@ describe('密钥与资源管理 (07 §7)', () => {
     expect(await screen.findByText('验证结果：未验证（这对密钥没有列存储桶的权限，也没填测试用存储桶）')).toBeInTheDocument();
   });
 
+  it('模型列表: 10 条一页，搜索框同时筛选和添加，设为默认只留一个 (C4 1.6.0)', async () => {
+    const backend = db.backends.find((b) => b.id === 'vb_ark_prod')!;
+    backend.models = [
+      ...backend.models,
+      ...Array.from({ length: 12 }, (_, i) => ({
+        id: `vm_extra_${i}`,
+        is_default: false,
+        model_name: `doubao-seed-1-6-lite-2510${String(i).padStart(2, '0')}`,
+        reasoning_effort: null,
+        max_concurrency: null,
+        capabilities: { vision: true, reasoning_effort_levels: ['minimal', 'low', 'medium', 'high'] as ReasoningLevel[] },
+        source: 'listed' as const,
+      })),
+    ];
+    const seen = recordRequests();
+    const { user } = renderApp('/credentials#vlm');
+    const table = await screen.findByTestId('backends-table');
+    await within(table).findByText('ark-prod');
+    await user.click(within(row(table, 'ark-prod')).getByRole('button', { name: '编辑' }));
+    const drawer = await findDrawer('编辑 VLM 后端');
+    const models = within(drawer).getByTestId('backend-models');
+    // 15 models, 10 per page.
+    expect(modelRows(models)).toHaveLength(10);
+    expect(within(models).getByText('共 15 条')).toBeInTheDocument();
+    // The box filters as you type — the letters only have to appear in order.
+    await fill(user, ADD_MODEL, 'd20lite', drawer);
+    await waitFor(() => expect(modelRows(models)).toEqual(['doubao-seed-2-0-lite-260215']));
+    expect(within(drawer).getByText('筛出 1 / 15 个模型；列表里没有就直接添加')).toBeInTheDocument();
+    // A name the list already has is not added again.
+    await fill(user, ADD_MODEL, 'doubao-seed-2-0-lite-260215', drawer);
+    await waitFor(() => expect(within(drawer).getByRole('button', { name: '添加并验证' })).toBeDisabled());
+    expect(within(drawer).getByText('这个模型已经在列表里了')).toBeInTheDocument();
+    // 设为默认 moves the flag: the seeded default (pro) loses it.
+    await fill(user, ADD_MODEL, 'doubao-seed-1-6-251015', drawer);
+    await waitFor(() => expect(modelRows(models)).toEqual(['doubao-seed-1-6-251015']));
+    await user.click(within(models).getByRole('button', { name: '设为默认' }));
+    await waitFor(() => expect(seen.find((r) => r.method === 'PATCH')?.body).toEqual({ is_default: true }));
+    expect(await screen.findByText('新建任务默认用「doubao-seed-1-6-251015」')).toBeInTheDocument();
+    await waitFor(() => expect(db.backends.flatMap((b) => b.models).filter((m) => m.is_default).map((m) => m.model_name)).toEqual(['doubao-seed-1-6-251015']));
+    await waitFor(() => expect(within(models).getByText('默认')).toBeInTheDocument());
+    await user.click(within(models).getByRole('button', { name: '取消默认' }));
+    await waitFor(() => expect(db.backends.flatMap((b) => b.models).some((m) => m.is_default)).toBe(false));
+  });
+
   it('VLM 后端 (#vlm): list, models in the drawer, manual model check, delete refused while in use', async () => {
     const seen = recordRequests();
     const { user } = renderApp('/credentials#vlm');
@@ -141,9 +189,10 @@ describe('密钥与资源管理 (07 §7)', () => {
     const drawer = await findDrawer('编辑 VLM 后端');
     const models = within(drawer).getByTestId('backend-models');
     expect(models).toHaveTextContent('ep-20260915173012-x7k2p');
-    await fill(user, '请输入 Model ID 或推理接入点 ID（ep-…）', 'bad-model', drawer);
+    await fill(user, ADD_MODEL, 'bad-model', drawer);
     await user.click(within(drawer).getByRole('button', { name: '添加并验证' }));
     expect(await within(drawer).findByText('用「bad-model」发了一次最小请求，没调通：InvalidEndpointOrModel.NotFound')).toBeInTheDocument();
+    await fill(user, ADD_MODEL, '', drawer); // the box also filters the list: clear it to see every model
     await pick(user, 'ep-20260915173012-x7k2p 思考强度', 'high', drawer);
     await waitFor(() => expect(seen.find((r) => r.method === 'PATCH')?.body).toEqual({ reasoning_effort: 'high' }));
     await user.click(within(drawer).getByRole('button', { name: '关闭' }));

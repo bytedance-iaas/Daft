@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { db } from '../../mocks/db';
 import { server } from '../../mocks/server';
 import { fill, pick } from '../../test/arco';
 import { fieldErrors, requiredFieldLabels } from '../../test/forms';
@@ -17,6 +18,9 @@ interface Seen {
   body: unknown;
   headers: Record<string, string>;
 }
+
+/** The label a Select shows for what is picked (Arco keeps it next to the combobox). */
+const chosen = (label: string) => screen.getByRole('combobox', { name: label }).closest('.arco-select')?.textContent ?? '';
 
 function record(): Seen[] {
   const seen: Seen[] = [];
@@ -126,8 +130,7 @@ describe('新建任务 · 两屏与提交', () => {
     await fill(user, '任务名称', 'droid 200');
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/droid-200-x');
     await pick(user, '交付目录访问密钥', 'prod-tos');
-    await pick(user, 'VLM 后端', /^ark-prod/);
-    await pick(user, '模型', 'doubao-seed-2-0-pro-260215');
+    // The backend and the model come from the default model (C4 1.6.0).
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
     const needs = within(s2()).getByTestId('needs-kinematic_limits');
@@ -137,6 +140,24 @@ describe('新建任务 · 两屏与提交', () => {
     await user.click(within(needs).getByRole('button', { name: '跳过该模块' }));
     expect(within(s2()).getByText('已跳过')).toBeInTheDocument();
     expect(screen.getByTestId('footer-summary')).toHaveTextContent('开启 6 个模块');
+  });
+
+  it('the form starts with the default model, marked in the list, and it can still be changed (C4 1.6.0)', async () => {
+    const { user } = renderApp('/tasks/new?dataset=tos://pai-kit-datasets/lerobot/droid-200');
+    await screen.findByText(/LeRobot v2 · 200 条 episode/);
+    await waitFor(() => expect(chosen('VLM 后端')).toContain('ark-prod'));
+    expect(chosen('模型')).toContain('doubao-seed-2-0-pro-260215');
+    await pick(user, '模型', /^doubao-seed-2-0-pro-260215（默认）$/);
+    await pick(user, '模型', 'doubao-seed-2-0-lite-260215');
+    await waitFor(() => expect(chosen('模型')).toContain('doubao-seed-2-0-lite-260215'));
+  });
+
+  it('without a default model the form asks for the backend and the model, as before (C4 1.6.0)', async () => {
+    for (const b of db.backends) for (const m of b.models) m.is_default = false;
+    renderApp('/tasks/new?dataset=tos://pai-kit-datasets/lerobot/droid-200');
+    await screen.findByText(/LeRobot v2 · 200 条 episode/);
+    expect(chosen('VLM 后端')).toContain('选择 VLM 后端');
+    expect(chosen('模型')).toContain('选择模型');
   });
 
   it('409 source_changed at start → fingerprint dialog → 重新预检 → started (D37)', async () => {

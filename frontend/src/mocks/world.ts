@@ -150,7 +150,7 @@ export function seedBackends(now: number): VlmBackend[] {
       last_verify_error: null,
       models_listed: true,
       models: [
-        { id: 'vm_pro', is_default: false, model_name: 'doubao-seed-2-0-pro-260215', reasoning_effort: null, max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
+        { id: 'vm_pro', is_default: true, model_name: 'doubao-seed-2-0-pro-260215', reasoning_effort: null, max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
         { id: 'vm_lite', is_default: false, model_name: 'doubao-seed-2-0-lite-260215', reasoning_effort: 'minimal', max_concurrency: null, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
         { id: 'vm_16', is_default: false, model_name: 'doubao-seed-1-6-251015', reasoning_effort: null, max_concurrency: 32, capabilities: { vision: true, reasoning_effort_levels: [...DOUBAO_LEVELS] }, source: 'listed' },
       ],

@@ -87,12 +87,19 @@ export function buildInitial(a: InitArgs): Init {
   if (v.source === 'public' && !v.outputCredential) v.outputCredential = pickDefault(keyNames, a.prefs.lastOutputCredential ?? a.prefs.lastCredential);
   if (v.source === 'public' && !v.outputRegion) v.outputRegion = a.credentials.find((c) => c.name === v.outputCredential)?.meta.region ?? a.prefs.lastRegion ?? 'cn-beijing';
   if (!v.vlmBackend) {
-    v.vlmBackend = pickDefault(
-      a.backends.map((b) => b.name),
-      a.prefs.lastBackend,
-    );
-    const b = a.backends.find((x) => x.name === v.vlmBackend);
-    if (b && !v.vlmModel) v.vlmModel = pickDefault(b.models.map((m) => m.model_name), a.prefs.lastModel);
+    // C4 1.6.0: the default model, whatever was used last; without one, 07 §2.1 decides.
+    const owner = a.backends.find((b) => b.models.some((m) => m.is_default));
+    if (owner) {
+      v.vlmBackend = owner.name;
+      if (!v.vlmModel) v.vlmModel = owner.models.find((m) => m.is_default)!.model_name;
+    } else {
+      v.vlmBackend = pickDefault(
+        a.backends.map((b) => b.name),
+        a.prefs.lastBackend,
+      );
+      const b = a.backends.find((x) => x.name === v.vlmBackend);
+      if (b && !v.vlmModel) v.vlmModel = pickDefault(b.models.map((m) => m.model_name), a.prefs.lastModel);
+    }
   }
   return { values: v, linkNotes: notes, batch, keepSelection };
 }
