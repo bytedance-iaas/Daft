@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   tests:
+    # Every suite runs even when an earlier one fails, so one red suite cannot hide another.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,33 +23,42 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - name: Install
+        id: install
         run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
       - name: v1 unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         # test_environment checks a GPU host (torch, nvidia-smi); not available here
         run: python -m pytest -q -rfE curation/tests --ignore=curation/tests/test_environment.py
       - name: Contracts (C1-C5 tests and the drift lock)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: |
           python -m pytest -q -rfE tests/contracts
           python -m curation.contracts check
       - name: v2 command line (W3)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: python -m pytest -q -rfE tests/cli
       - name: Planner and VLM request merge framework (W6)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: python -m pytest -q -rfE tests/planner
       - name: Daemon skeleton (W4)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: python -m pytest -q -rfE tests/daemon
       - name: Secrets and resources (W8)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: python -m pytest -q -rfE tests/secrets
       - name: Incremental re-export (W7)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         # the official lerobot loader cases skip here; the lerobot-loader job runs them
         run: python -m pytest -q -rfE tests/export
       - name: Parity tools (unit + end-to-end on the synthetic dataset)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:
           PYTHONPATH: tools
         run: python -m pytest -q -rfE tools/parity/tests

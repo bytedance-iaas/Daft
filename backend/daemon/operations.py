@@ -47,6 +47,13 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "updateDataset": ("PATCH", "/api/v1/datasets/{id}"),
     "deleteDataset": ("DELETE", "/api/v1/datasets/{id}"),
     "getOverview": ("GET", "/api/v1/overview"),
+    # W5b result readers (daemon/results, routes/results.py, routes/adjudication.py)
+    "getReport": ("GET", "/api/v1/tasks/{id}/report"),
+    "getReportTable": ("GET", "/api/v1/tasks/{id}/report/tables/{table}"),
+    "getEpisode": ("GET", "/api/v1/tasks/{id}/episodes/{index}"),
+    "getPerf": ("GET", "/api/v1/tasks/{id}/perf"),
+    "listAdjudication": ("GET", "/api/v1/tasks/{id}/adjudication"),
+    "submitAdjudication": ("POST", "/api/v1/tasks/{id}/adjudication"),
     # W5a orchestration (daemon/exec, daemon/orchestr, routes/runs.py, routes/datasets_exec.py)
     "createTask": ("POST", "/api/v1/tasks"),
     "createTasksBatch": ("POST", "/api/v1/tasks/batch"),
@@ -66,16 +73,8 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "repreflightDataset": ("POST", "/api/v1/datasets/{id}/repreflight"),
 }
 
-#: operationId -> (owner, what it still needs)
-PENDING: dict[str, tuple[str, str]] = {
-    # W5b: reading results (report, tables, episodes, perf, the adjudication queue)
-    "getReport": ("W5", "committed result revisions (report.json) from the work dir / TOS"),
-    "getReportTable": ("W5", "Parquet slices with revision-bound cursors (03 §6)"),
-    "getEpisode": ("W5", "one episode across modules from the committed revision"),
-    "getPerf": ("W5", "perf.json of the revision"),
-    "listAdjudication": ("W5", "review.json of the revision + repo.latest_adjudications"),
-    "submitAdjudication": ("W5", "append + CSV copy in the run directory (double write)"),
-}
+#: operationId -> (owner, what it still needs); empty since W5a and W5b landed
+PENDING: dict[str, tuple[str, str]] = {}
 
 
 def contract_operations() -> dict[str, tuple[str, str]]:

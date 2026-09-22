@@ -72,7 +72,7 @@ def summary(value: dict | None) -> dict | None:
     if not isinstance(value, dict) or not set(_SUMMARY_KEYS) <= set(value):
         return None
     out = {k: value[k] for k in _SUMMARY_KEYS}
-    if _count(value.get("skipped")):                  # C4 1.4: only when some were left out
+    if _count(value.get("skipped")):                  # C4 1.4: only when some were (D40)
         out["skipped"] = value["skipped"]
     return out
 
