@@ -343,7 +343,7 @@ def test_bad_base_paths_are_refused_before_the_daemon_would(raw):
 
 
 @pytest.mark.parametrize("values,needle", [
-    ({"server": {"maxRunningTasks": 2}}, "maxRunningTasks"),
+    ({"server": {"maxRunningTasks": 0}}, "maxRunningTasks"),
     ({"backup": {"enabled": True}}, "backup.enabled"),
     ({"auth": {"mode": "none"}}, "auth.mode"),
     ({"auth": {"mode": "basic", "username": "demo"}}, "existingPasswordSecret"),
@@ -366,13 +366,26 @@ def test_values_have_no_place_for_a_secret():
     values = chart_values()
     # names of Secrets and of their keys only; a plaintext password field would fail here
     assert set(values["auth"]) == {"mode", "htpasswdSecret", "htpasswdKey", "username",
-                                   "existingPasswordSecret", "passwordKey"}
+                                   "usernameKey", "existingPasswordSecret", "passwordKey"}
     assert set(values["masterKey"]) == {"existingSecret", "key", "nextKey", "versionKey"}
     for path in sorted(CHART.rglob("*")):
         if path.is_file():
             text = path.read_text(encoding="utf-8")
             assert not re.search(r"[A-Za-z0-9+/]{40,}={0,2}", text), f"{path}: a key-like blob"
             assert "PRIVATE KEY" not in text, path
+
+
+def test_basic_auth_can_take_the_user_name_from_the_password_secret():
+    """v1's curation-ui-auth (keys user / password) serves as is: nothing is copied."""
+    docs = render({"auth": {"mode": "basic", "usernameKey": "user",
+                            "existingPasswordSecret": "curation-ui-auth"},
+                   "server": {"maxRunningTasks": 2, "workRetentionDays": 3}})
+    env = env_entries(docs)
+    assert env["CURATOR_AUTH_USER"]["valueFrom"]["secretKeyRef"] == {"name": "curation-ui-auth",
+                                                                      "key": "user"}
+    assert env["CURATOR_AUTH_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"] == "curation-ui-auth"
+    assert env["CURATOR_MAX_RUNNING_TASKS"]["value"] == "2"
+    assert env["CURATOR_WORK_RETENTION_DAYS"]["value"] == "3"
 
 
 @pytest.mark.parametrize("values", [{}, FULL], ids=["defaults", "full"])

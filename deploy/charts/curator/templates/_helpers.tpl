@@ -85,8 +85,8 @@ it needs to persist that and exit. The pod's grace period must cover preStop + t
 {{- if ne (int .Values.replicaCount) 1 }}
 {{- fail (printf "replicaCount 只能是 1（现在是 %v）：SQLite 只能有一个进程写，多个副本就是多份互不相干的库（09 篇 §2、D2）" .Values.replicaCount) }}
 {{- end }}
-{{- if ne (int .Values.server.maxRunningTasks) 1 }}
-{{- fail "server.maxRunningTasks 目前只能是 1：Daemon 还不读这一项，要等任务编排（W5）接上（04 篇 §2.3、P1）" }}
+{{- if lt (int .Values.server.maxRunningTasks) 1 }}
+{{- fail "server.maxRunningTasks 至少是 1（04 篇 §2.3、P1）" }}
 {{- end }}
 {{- if not (has .Values.auth.mode (list "htpasswd" "basic")) }}
 {{- fail (printf "auth.mode 只能是 htpasswd 或 basic，现在是 %q" .Values.auth.mode) }}
@@ -94,8 +94,8 @@ it needs to persist that and exit. The pod's grace period must cover preStop + t
 {{- if and (eq .Values.auth.mode "htpasswd") (not .Values.auth.htpasswdSecret) }}
 {{- fail "auth.mode=htpasswd 需要 auth.htpasswdSecret：存放账号表的 Secret 名" }}
 {{- end }}
-{{- if and (eq .Values.auth.mode "basic") (not (and .Values.auth.username .Values.auth.existingPasswordSecret)) }}
-{{- fail "auth.mode=basic 需要 auth.username 和 auth.existingPasswordSecret 两个都配（半配的鉴权最危险，08 篇 §5.1）" }}
+{{- if and (eq .Values.auth.mode "basic") (not (and (or .Values.auth.username .Values.auth.usernameKey) .Values.auth.existingPasswordSecret)) }}
+{{- fail "auth.mode=basic 需要用户名（auth.username，或 auth.usernameKey 从同一个 Secret 取）和 auth.existingPasswordSecret（半配的鉴权最危险，08 篇 §5.1）" }}
 {{- end }}
 {{- if not .Values.masterKey.key }}
 {{- fail "masterKey.key 不能为空：主密钥在 Secret 里的键名" }}
@@ -161,6 +161,10 @@ ever come through secretKeyRef.
 - name: TOS_ENDPOINT
   value: {{ . | quote }}
 {{- end }}
+- name: CURATOR_MAX_RUNNING_TASKS
+  value: {{ .Values.server.maxRunningTasks | quote }}
+- name: CURATOR_WORK_RETENTION_DAYS
+  value: {{ .Values.server.workRetentionDays | quote }}
 - name: CURATION_CONFIG
   value: {{ printf "%s/site.yaml" (include "curator.siteConfigDir" .) | quote }}
 {{- if .Values.reasoningEffortTable }}
@@ -174,7 +178,14 @@ ever come through secretKeyRef.
   value: {{ include "curator.htpasswdFile" . | quote }}
 {{- else }}
 - name: CURATOR_AUTH_USER
+{{- if .Values.auth.usernameKey }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.auth.existingPasswordSecret | quote }}
+      key: {{ .Values.auth.usernameKey | quote }}
+{{- else }}
   value: {{ .Values.auth.username | quote }}
+{{- end }}
 - name: CURATOR_AUTH_PASSWORD
   valueFrom:
     secretKeyRef:

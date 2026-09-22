@@ -29,11 +29,12 @@ Curator v2 的 Helm Chart：单副本 StatefulSet，API Daemon 同进程托管�
 | `server.tzOffset` | `+08:00` | `CURATOR_TZ_OFFSET` | 概览按它切分每一天 |
 | `server.sseHeartbeatSeconds` | 空（15） | `CURATOR_SSE_HEARTBEAT_S` | 网关空闲超时比 15 秒短时调小 |
 | `server.tosEndpoint` | 空 | `TOS_ENDPOINT` | 同地域走内网端点 |
-| `server.maxRunningTasks` | `1` | —— | Daemon 还不读，只能是 1 |
+| `server.maxRunningTasks` | `1` | `CURATOR_MAX_RUNNING_TASKS` | 同时运行的任务数，其余排队 |
+| `server.workRetentionDays` | `7` | `CURATOR_WORK_RETENTION_DAYS` | 任务结束多久后清理本地工作目录，0 = 不清理 |
 | `logging.format` / `level` | `json` / `INFO` | `CURATOR_LOG_FORMAT` / `CURATOR_LOG_LEVEL` | |
 | `auth.mode` | `htpasswd` | `CURATOR_AUTH_MODE` | `htpasswd` 或 `basic`，配置不全时 Daemon 拒绝所有请求 |
 | `auth.htpasswdSecret` / `htpasswdKey` | `curator-users` / `htpasswd` | 挂成文件，`CURATOR_HTPASSWD_FILE=/etc/curator/auth/htpasswd` | 可与 rerun viewer 共用 |
-| `auth.username` / `existingPasswordSecret` / `passwordKey` | 空 / 空 / `password` | `CURATOR_AUTH_USER` / `CURATOR_AUTH_PASSWORD`（secretKeyRef） | basic 模式，两个都要配 |
+| `auth.username` 或 `usernameKey` / `existingPasswordSecret` / `passwordKey` | 空 / 空 / 空 / `password` | `CURATOR_AUTH_USER`（值或 secretKeyRef）/ `CURATOR_AUTH_PASSWORD`（secretKeyRef） | basic 模式；用户名写明文或从同一个 Secret 取（沿用 v1 的 `curation-ui-auth`：`usernameKey: user`），密码只走 Secret |
 | `masterKey.existingSecret` | 空（Chart 生成） | —— | 生产环境必配 |
 | `masterKey.key` / `nextKey` / `versionKey` | `masterKey` / `masterKeyNext` / `masterKeyVersion` | `CURATOR_MASTER_KEY` / `_NEXT` / `_VERSION`（secretKeyRef，后两个可缺） | 轮换见 deploy/README.md |
 | `persistence.data.*` | 100Gi、集群默认存储类、`/data` | PVC、`CURATOR_DATA_DIR` | 必须是块存储（EBS）；`existingClaim` 改用已有 PVC |

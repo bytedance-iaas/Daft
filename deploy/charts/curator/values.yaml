@@ -19,7 +19,8 @@ replicaCount: 1                 # ⚠️ 单副本。>1 目前不支持（SQLite
 server:
   basePath: ""                  # 挂载前缀，现网为 /curation，见 §2.4；经 APIG 分流且不剥前缀时要和分流路径一致
   publicBaseUrl: ""             # 生成给 Agent 的绝对链接用；为空则 links 给相对路径。例：https://kit.example.com
-  maxRunningTasks: 1            # 同时运行的任务数，其余排队，见 04 篇 §2.3。Daemon 还不读这一项（任务编排 W5），填 1 以外的值报错
+  maxRunningTasks: 1            # 同时运行的任务数（CURATOR_MAX_RUNNING_TASKS），其余排队，见 04 篇 §2.3；大于 1 时按任务数均分 VLM 并发预算
+  workRetentionDays: 7          # 任务结束多久后清理本地工作目录（CURATOR_WORK_RETENTION_DAYS，0 = 不清理）；清理前补传交付目录，之后按需取回
   port: 8080                    # 容器内的监听端口（CURATOR_PORT）
   tzOffset: "+08:00"            # 站点时区的 UTC 偏移（CURATOR_TZ_OFFSET），概览「近 7 天」按它切分每一天
   sseHeartbeatSeconds: ""       # SSE 空闲心跳（CURATOR_SSE_HEARTBEAT_S）；空 = Daemon 默认 15 秒，网关空闲超时比它短时调小
@@ -34,8 +35,10 @@ auth:
   mode: htpasswd                # htpasswd | basic（CURATOR_AUTH_MODE）。配置不全时 Daemon 拒绝所有请求，不会退回「不鉴权」
   htpasswdSecret: curator-users # 外部 Secret，键名 htpasswd；可与 rerun viewer 共用同一张表
   htpasswdKey: htpasswd
-  # basic 模式（单用户）：用户名写这里，密码放在外部 Secret 里
+  # basic 模式（单用户）：密码放在外部 Secret 里；用户名写这里，或用 usernameKey 从同一个 Secret 取（例：沿用 v1 的
+  # curation-ui-auth，usernameKey: user、passwordKey: password）
   username: ""
+  usernameKey: ""
   existingPasswordSecret: ""
   passwordKey: password
 
