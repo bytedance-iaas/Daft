@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 
 from ..contracts import modules as registry
 from ..export.report import CHECK_CN, check_detail_reason, hard_fail_reason
-from .adjudication import Decisions
+from .adjudication import Decisions, judged_with
 from .records import latest_results, revision_dir, write_json_atomic, write_text_atomic
 from .tasktext import TaskText, load_autolabel
 from .verdict import episode_verdict
@@ -265,9 +265,7 @@ def decide(state: RunState, ep: int, decisions: Decisions,
     relabel = decisions.relabel(ep)
     if relabel and tv is None and "task_success" in selected and state_ == "keep" \
             and ts_rec is not None and ts_rec["verdict"] != "error":
-        judged = (ts_rec.get("details") or {})
-        if judged.get("task_desc_source") != "人工改标" \
-                or str(judged.get("task_desc") or "") != relabel[:80]:
+        if not judged_with(ts_rec, relabel):
             state_ = "held"
             reasons.append({"module": "task_success", "kind": "execution_error",
                             "text": "改标后尚未按新标注重跑任务成败判定"})

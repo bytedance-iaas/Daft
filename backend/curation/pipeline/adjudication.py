@@ -22,6 +22,13 @@ v1's rules survive unchanged (``pipeline/rejudge.py``), in its order:
 4. "unsure" is a legal answer: recorded, the episode stays in the queue, nothing
    changes.
 
+A task verdict on an episode task_success did not abstain on is not the card's own
+question but v1's verdict after a relabel - the registry's follow-up of the label
+line (C1 1.3 ``follow_ups``). It counts only while the label's latest answer opens
+that follow-up and was given before it; once the label answer changes it lapses:
+no effect, and a relabel still in force is judged again (``Decisions.stands``, the
+Daemon's ``Queue._stands``).
+
 Decisions never cross tasks (D32): only this task's decisions are given, and
 nothing is read from the delivery root.
 
@@ -39,8 +46,10 @@ import io
 import json
 import os
 import time
+from typing import Callable
 
-from .records import ADJUDICATION_DIR, read_jsonl, write_json_atomic, write_text_atomic
+from .records import (ADJUDICATION_DIR, latest_results, read_jsonl, write_json_atomic,
+                      write_text_atomic)
 from .tasktext import LABELS_FILE
 
 APPLIED_FILE = f"{ADJUDICATION_DIR}/applied.jsonl"
@@ -88,14 +97,52 @@ def load_applied(run_dir: str) -> list[dict]:
     return read_jsonl(os.path.join(run_dir, APPLIED_FILE))
 
 
-class Decisions:
-    """The applied decisions in force, per episode and line."""
+def own_questions(run_dir: str) -> Callable[[int, str], bool]:
+    """``asks(episode, line)``: whether the episode's card asks ``line`` itself, from the
+    current results. It matters only for a line a follow-up asks as well: the task
+    verdict is the card's own question where task_success abstained (the task_verdict
+    item); anywhere else it is v1's verdict after a relabel (C1 1.3)."""
+    abstained = {e for e, r in latest_results(run_dir, "task_success").items()
+                 if r.get("verdict") == "abstain"}
+    return lambda episode, line: line != "task_verdict" or int(episode) in abstained
 
-    def __init__(self, applied: list[dict]):
+
+def judged_with(record: dict | None, text: str) -> bool:
+    """Whether a task_success record judged its episode with the relabel ``text``."""
+    details = (record or {}).get("details") or {}
+    return details.get("task_desc_source") == "人工改标" \
+        and str(details.get("task_desc") or "") == str(text)[:80]
+
+
+def _follow_up_owners(line: str) -> tuple[str, ...]:
+    """The registry lines with a follow-up that asks ``line`` (C1 1.3)."""
+    from ..contracts import modules as registry
+
+    return tuple(ln.id for ln in registry.REVIEW_LINES
+                 if any(f.line == line for f in ln.follow_ups))
+
+
+class Decisions:
+    """The applied decisions in force, per episode and line.
+
+    ``asks(episode, line)`` says whether the episode's card asks a line itself
+    (:func:`own_questions`; None: every answer counts as one to the card's own
+    question). An answer to a follow-up counts only while it stands (:meth:`stands`).
+    """
+
+    def __init__(self, applied: list[dict],
+                 asks: Callable[[int, str], bool] | None = None):
         self.applied = sorted(applied, key=lambda d: int(d["id"]))
-        self.effective: dict[tuple[int, str], dict] = {}    # latest non-unsure
-        self.latest: dict[tuple[int, str], dict] = {}       # latest of all
+        self.asks = asks
+        #: the latest answer per episode and line, standing or not (it opens follow-ups)
+        self.answered: dict[tuple[int, str], dict] = {}
         for d in self.applied:
+            self.answered[(int(d["episode_index"]), d["line"])] = d
+        self.effective: dict[tuple[int, str], dict] = {}    # latest standing non-unsure
+        self.latest: dict[tuple[int, str], dict] = {}       # latest standing
+        for d in self.applied:
+            if not self.stands(d):
+                continue
             key = (int(d["episode_index"]), d["line"])
             self.latest[key] = d
             if d["decision"] != "unsure":
@@ -103,7 +150,28 @@ class Decisions:
 
     @classmethod
     def of(cls, run_dir: str) -> Decisions:
-        return cls(load_applied(run_dir))
+        return cls(load_applied(run_dir), asks=own_questions(run_dir))
+
+    def stands(self, d: dict) -> bool:
+        """Whether an applied answer counts - the one place of the lapse rule (C1 1.3
+        ``follow_ups``, as the Daemon's ``Queue._stands``). An answer to a question the
+        card asks itself always counts. An answer on a line only a follow-up asks (v1's
+        task verdict after adopting a new label, on an episode task_success did not
+        abstain on) counts while the owner line's latest answer opens that follow-up
+        and was given before it (by decision id), and only with one of the follow-up's
+        decisions; otherwise it lapsed and has no effect."""
+        from ..contracts import modules as registry
+
+        episode, line = int(d["episode_index"]), d["line"]
+        owners = _follow_up_owners(line)
+        if not owners or self.asks is None or self.asks(episode, line):
+            return True
+        for owner in owners:
+            opener = self.answered.get((episode, owner))
+            f = registry.follow_up(owner, opener["decision"], line) if opener else None
+            if f is not None:
+                return int(d["id"]) > int(opener["id"]) and d["decision"] in f.decisions
+        return False
 
     def ids(self) -> list[int]:
         return [int(d["id"]) for d in self.applied]
@@ -177,6 +245,7 @@ def apply(run_dir: str, doc: dict, *, now_ms: int | None = None,
     if len(set(ids)) != len(ids):
         raise DecisionError("decision ids repeat in decisions.json")
     before = load_applied(run_dir)
+    asks = own_questions(run_dir)
     seen = {int(d["id"]) for d in before}
     fresh = [d for d in new if d["id"] not in seen]
     if appeal_admissible is not None:
@@ -199,16 +268,17 @@ def apply(run_dir: str, doc: dict, *, now_ms: int | None = None,
             with open(path, encoding="utf-8") as fh:
                 existing = fh.read()
         write_text_atomic(path, existing + text)
-    decisions = Decisions(before + [{**d, "applied_at": stamp} for d in fresh])
+    decisions = Decisions(before + [{**d, "applied_at": stamp} for d in fresh], asks=asks)
     write_labels(run_dir, decisions)
     write_human_copies(run_dir, decisions)
     touched = sorted({int(d["episode_index"]) for d in fresh})
+    # a relabel in force that no person concluded and task_success has not judged with
+    # its text yet: a fresh relabel, or one whose follow-up verdict just lapsed
+    judged = latest_results(run_dir, "task_success")
     rerun = sorted(e for e in touched
                    if decisions.relabel(e) and decisions.human_task_verdict(e) is None
                    and decisions.discarded(e) is None
-                   and any(d["line"] == "label" and int(d["episode_index"]) == e
-                           and d["decision"] in ("adopt_suggestion", "custom_label")
-                           for d in fresh))
+                   and not judged_with(judged.get(e), decisions.relabel(e)))
     resync = sorted(e for e in touched
                     if any(int(d["episode_index"]) == e and d["decision"] != "unsure"
                            and d["decision"] != "keep_rejected" for d in fresh))

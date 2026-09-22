@@ -3,8 +3,10 @@
 The first step of v1's ``rejudge``: decisions are recorded as applied - no model
 call, no export (D9) - and the command names what runs next:
 
-* ``rerun_task_success``: relabelled episodes without a human task verdict,
-  judged again by ``check --modules task_success`` with the new label, the way
+* ``rerun_task_success``: relabels in force that no person concluded and that
+  task_success has not judged with their text yet - a fresh relabel, or one whose
+  follow-up task verdict just lapsed (C1 1.3) - judged again by ``check --modules
+  task_success`` with the new label, the way
   ``relabel_rerun`` says (D39: ``v1``, the default, is v1's rejudge; ``full`` the
   first run's flow), recorded with each relabel;
 * ``profile_resync``: episodes the skill profile has to re-file or drop

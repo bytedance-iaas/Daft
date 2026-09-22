@@ -175,7 +175,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - `funnel`：六项漏斗检查 → 每条 keep / drop / held（`verdicts.jsonl`）和 `keep.txt`。硬门拦下的条不看后面的档；某档有模块出错时停在这一档：如果正常判完的模块已经判它不合格（硬门失败，或各软分都有、加权低于阈值），照样 drop，出错的模块写进原因「另有…执行出错，不影响结论」（D35）；否则 held（「待补跑」）。弃权不是错，照常 keep 并进 review。不给 `--revision` 时写到 `<run-dir>/funnel/`。
 - `verdicts.jsonl` 始终是检查本身的漏斗判决；`keep.txt`（dedup 与技能画像的输入）还要跟着已应用的人工裁决走：弃用的、人工判失败的移出，复议捞回的、对拒绝条目人工判成功的加入（`counts` 里的 `decided_in` / `decided_out`）。没有裁决时两者一致。
 - **dedup 只在第一个结果版本跑一次**，人工裁决之后不再跑：它的结论保持不变（被人判失败的那条原件去掉了，它的副本仍按副本拒绝），由人带回交付的条从不去重（v1 的 rejudge 同样如此）。
-- `final --revision N`：再叠加 dedup、skill_profile 和已应用的人工裁决，写 passed / reject / held（三者不相交、合起来是全部）和 review 视图。人工裁决按 v1 的优先级：「弃用」压过一切（包括 held）；人工判了任务成败就以人为准，改标后不再重判（改标时顺手给的成败结论同样采信，C1 1.3）；复议只对注册表标为可复议的拒绝有效（`curation.contracts.modules.appealable`：只被 task_success 拒掉的、被 dedup 判为重复的），物理与结构的硬门和软分是终判；恢复只推翻被复议那个模块的结论——去重的复议恢复后回到 passed（技能画像给它归档，它在 task_success 上的弃权从下一版起进 review），另有模块对它执行出错的恢复后 held（P11）；「拿不准」只记录，这条留在队列里。改了标还没按新标注重判的条 held。
+- `final --revision N`：再叠加 dedup、skill_profile 和已应用的人工裁决，写 passed / reject / held（三者不相交、合起来是全部）和 review 视图。人工裁决按 v1 的优先级：「弃用」压过一切（包括 held）；人工判了任务成败就以人为准，改标后不再重判（改标时顺手给的成败结论同样采信，C1 1.3；改标的回答一变它就作废，见 adjudicate-apply）；复议只对注册表标为可复议的拒绝有效（`curation.contracts.modules.appealable`：只被 task_success 拒掉的、被 dedup 判为重复的），物理与结构的硬门和软分是终判；恢复只推翻被复议那个模块的结论——去重的复议恢复后回到 passed（技能画像给它归档，它在 task_success 上的弃权从下一版起进 review），另有模块对它执行出错的恢复后 held（P11）；「拿不准」只记录，这条留在队列里。改了标还没按新标注重判的条 held。
 - review 视图按 v1 的队列，复核种类取自注册表的目录（D42、D43）：成败弃权（`task_verdict`）只问在 passed 里、task_success 弃权、人还没下结论的条；标注分歧（`label`）只问 passed 里的条；被拒的条没有这两种问题，拒绝可复议时给一项 `reject_appeal`（去重的写明 `duplicate_of`）；held 的条什么都不问。每一项都写明注册表的 `line`。
 - 缺源文件被跳过的条（D40）不进任何清单、不计入总数（`counts.skipped`）。技能画像整个模块失败（退出码 4，没写出结果）时，它本该归档的每一条都 held（「技能画像执行出错」），一条都不交付，等重试成功（D41）。
 - `--input` 给了才在 passed 里写出交付用的任务描述（原始标注要从数据集的元数据里读）。已有 `commit.json` 的版本拒绝改写。
@@ -186,6 +186,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - `--json` 的 `rerun_task_success` 是要按新标注重判的条（改了标、且没有人工判定成败的），`profile_resync` 是技能画像要重新归档的条。
 - `decisions.json` 顶层的 `relabel_rerun`（`v1` 缺省 / `full`，D39）随每条改标记进 `applied.jsonl` 和 `labels.json`，`--json` 原样带回；之后重试这些条也按记下的口径判。
 - 改标的同时给了成败结论（判成功 / 判失败）的条不重判，以人为准（注册表 1.3 的后续问题，v1 的 `human_concluded`）；给的是「拿不准」照常重判。
+- 这种跟着改标给的结论（task_success 没有弃权的条上的成败结论）只在改标的回答仍是最新、且结论在它之后给出（按裁决 id）时算数；改标的回答一变（维持原标注、拿不准、换一段新标注），它就作废：不起作用，仍在生效的改标照常重判（`rerun_task_success` 列出），与 Daemon 的 `Queue._stands` 是同一条规则。task_success 弃权的条，成败结论是卡片自己的问题，不会这样作废。
 - 没有执行规则的复核种类（`line` 不是 `label`、`task_verdict`、`reject_appeal`）报参数错误（退出码 2）并写明是哪一种，不会跳过；对没有可复议拒绝的条目复议（被自己的硬门或软分拒掉、已弃用、根本没被拒）同样报参数错误（D42），一条也不应用。
 
 **report**：`curation report --run-dir … --revision N [--format md,json] [--modules a,b] [--subtask-id ID] --json`
