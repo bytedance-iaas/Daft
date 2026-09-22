@@ -93,11 +93,14 @@ def test_pypi_defaults_to_the_internal_mirror_and_apt_to_the_public_one():
     # what the Volcano mirror lacks comes from Aliyun's PyPI, those pins alone and without
     # dependencies (as an --extra-index-url pip would fetch most packages from Aliyun, slowly);
     # an empty build arg turns it off
-    assert args["PIP_EXTRA_INDEX_URL"] == "https://mirrors.aliyun.com/pypi/simple/"
+    assert args["SUPPLEMENT_PYPI_URL"] == "https://mirrors.aliyun.com/pypi/simple/"
     run = next(i.args for i in stage(RUNTIME) if i.op == "RUN" and "-r requirements.txt" in i.args)
-    assert '--no-deps --index-url "$PIP_EXTRA_INDEX_URL" -r pip-extra-index.txt' in run
+    assert '--no-deps --index-url "$SUPPLEMENT_PYPI_URL" -r pip-extra-index.txt' in run
     assert "--extra-index-url" not in run
-    assert "PIP_EXTRA_INDEX_URL" not in env_of(RUNTIME)      # never baked into the image
+    assert "SUPPLEMENT_PYPI_URL" not in env_of(RUNTIME)      # never baked into the image
+    # pip reads every PIP_* variable as an option, and build args are variables inside RUN:
+    # no build arg of this stage may look like one
+    assert not [a for a in args if a.startswith("PIP_") and a != "PIP_INDEX_URL"], args
 
 
 def test_pins_from_the_extra_index_match_the_requirements():

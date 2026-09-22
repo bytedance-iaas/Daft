@@ -25,7 +25,7 @@ K8s 上用 `charts/curator`：单副本 StatefulSet，SQLite 和任务工作目�
 docker build -f deploy/Dockerfile -t curator:dev \
   --build-arg NO_MIRROR=1 \
   --build-arg PIP_INDEX_URL=https://pypi.org/simple \
-  --build-arg PIP_EXTRA_INDEX_URL= \
+  --build-arg SUPPLEMENT_PYPI_URL= \
   --build-arg APT_MIRROR=http://deb.debian.org .
 ```
 
@@ -46,7 +46,7 @@ docker push <镜像仓库>/curator:<版本>
 | `NODE_IMAGE` | `node:20-bookworm-slim` | 同上；只用于构建控制台，不进最终镜像 |
 | `NPM_REGISTRY` | 空 = lock 文件里的 registry.npmjs.org | 官方源慢时，例如 `https://registry.npmmirror.com`（火山镜像站没有 npm 源） |
 | `PIP_INDEX_URL` | `https://mirrors.ivolces.com/pypi/simple`（火山内网） | 火山网络之外必须改：`https://pypi.org/simple` 或 `https://mirrors.volces.com/pypi/simple` |
-| `PIP_EXTRA_INDEX_URL` | `https://mirrors.aliyun.com/pypi/simple/`（阿里云） | 火山源缺的版本从这里补：只装 `deploy/pip-extra-index.txt` 里列的几个（现在是 uvicorn 0.53.0，火山内网源只到 0.44.0），不带依赖，其余全走 `PIP_INDEX_URL`；火山源补齐后删掉对应那一行。传空则只用 `PIP_INDEX_URL` |
+| `SUPPLEMENT_PYPI_URL` | `https://mirrors.aliyun.com/pypi/simple/`（阿里云） | 火山源缺的版本从这里补：只装 `deploy/pip-extra-index.txt` 里列的几个（现在是 uvicorn 0.53.0，火山内网源只到 0.44.0），不带依赖，其余全走 `PIP_INDEX_URL`；火山源补齐后删掉对应那一行。传空则只用 `PIP_INDEX_URL` |
 | `APT_MIRROR` | `https://mirrors.volces.com`（公网可达） | 火山内网可改 `http://mirrors.ivolces.com`，更快；缺省值不要改成内网域名，公开 CI 会直接失败 |
 | `NO_MIRROR` | 空 | 火山网络之外设为 `1`：跳过 oniond（`curation fetch` 不可用，其余照常） |
 

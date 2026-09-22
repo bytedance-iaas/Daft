@@ -159,7 +159,7 @@ jobs:
           docker build -f deploy/Dockerfile -t curator:ci
           --build-arg NO_MIRROR=1
           --build-arg PIP_INDEX_URL=https://pypi.org/simple
-          --build-arg PIP_EXTRA_INDEX_URL=
+          --build-arg SUPPLEMENT_PYPI_URL=
           --build-arg APT_MIRROR=http://deb.debian.org .
       - name: The Daemon and the CLI start in the image
         run: |

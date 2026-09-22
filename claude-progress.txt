@@ -126,8 +126,17 @@ Current summary:
         修了一条会被本机 .DS_Store 弄红的构建上下文检查；CI 加读结果与部署两组测试、镜像里起 Daemon 与命令行（f8be9ba21）
       · 契约 1.5.1（8194f558e）：1.5 的严格校验挡掉了 v1「改标后顺手给成败结论（选填）」，由注册表 1.3 的 follow_ups 补回；
         另写明 status 筛选、采纳建议不带 new_label、单条视图的 EpisodeNote、读结果的 404 原因
-      · 在跑：W3（D39/D40/D42 与假模型平台无关）、W5a（编排与执行器 + W5b 的对接清单）、W5b（follow-up 校验与作废）、
-        W10（恢复选填的成败结论）
+      · 合并 W5b 续作（375a289e3，follow-up 校验与作废、Queue.executable）、W10 续作（ef28687b7，follow_up_of）、
+        W3（db878deeb：D39 v1 两层重判且与 v1 rejudge 逐位对账、D40 缺源剔除、D42/D43 复核种类、思考强度参数、
+        假模型改为与平台无关）、W5a（137b5d709：任务编排与 CLI 执行器，105 条测试覆盖 F2.3 全部验收，F2.6 开始前检查、
+        F2.7 D37 流程、数据集 episode 列表）；C4 1.5.2（follow_up_of）；v2 全部测试、v1 1407、对账 68、A 类 57/0 通过
+      · 需求方授权上集群联调（2026-09-22）：kubectl 部署 StatefulSet；APIG 复用 physicalai-apig、新服务 curation-v2；
+        Basic Auth 沿用 v1 的 Secret curation-ui-auth（Chart 加 auth.usernameKey，不复制密钥）；主密钥 Secret 已建
+      · 镜像：需求方建了火山 CP 流水线 build-data_curation-v2（推送 iaas-us-cn-beijing.cr.volces.com/physicalai/robot_curator:<提交号>）。
+        推送触发没生效（代码源 Webhook 没接上，要在 GitHub 仓库或 CP 侧补），先在控制台手动运行；
+        修了两处：ContextPath 还是 v1 的 robot-curation → 改为仓库根「.」；火山内网 PyPI 缺 uvicorn 0.53.0 →
+        deploy/pip-extra-index.txt 列出的包不带依赖从阿里云装，其余照旧走火山源（整体加 --extra-index-url 会让大半包走阿里云、只有 ~300 kB/s）
+      · CI：失败的 pytest 步骤把输出尾部写进公开可见的 job summary（日志要登录才能看）；任务编排那一步在 CI 上以退出码 2 结束，待查
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
