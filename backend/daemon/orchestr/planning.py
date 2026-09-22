@@ -8,7 +8,8 @@ delivery), read back by every stage (``--plan-stage``), served read-only by
 * the upper bounds (D31): the task's ``params.limits``, the model's and the
   backend's parallelism from the VLM snapshot (P17), the node's CPU cores, and the
   number of tasks running when this one starts (P1: the VLM budget is shared);
-* the site settings (``CURATOR_SITE_CONFIG``: ``concurrency`` and ``vlm`` blocks).
+* the site settings (the ``concurrency`` and ``vlm`` blocks of the site.yaml at
+  ``CURATOR_SITE_CONFIG``, else ``CURATION_CONFIG`` - the file the chart writes).
 """
 from __future__ import annotations
 

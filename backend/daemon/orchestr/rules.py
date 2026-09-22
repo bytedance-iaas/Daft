@@ -92,6 +92,57 @@ def summary(rev_dir: pathlib.Path) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- adjudication
+
+def review_lines_asked(review: dict | None) -> set[tuple[int, str]]:
+    """``(episode, line)`` of every question a revision's ``review.json`` asks: the item's
+    ``line`` (C2 1.5), else the registry's line for its ``kind`` (C1 1.2, D43)."""
+    from curation.contracts import modules as registry
+
+    out: set[tuple[int, str]] = set()
+    for entry in (review or {}).get("episodes") or []:
+        ep = int(entry.get("episode_index", -1))
+        for item in entry.get("review") or []:
+            line = item.get("line") if isinstance(item, dict) else None
+            if not line:
+                try:
+                    line = registry.review_line_of_kind((item or {}).get("kind")).id
+                except (KeyError, AttributeError):
+                    continue
+            out.add((ep, str(line)))
+    return out
+
+
+def standing_decisions(unapplied: Iterable[P.Adjudication], latest: Iterable[P.Adjudication],
+                       asked: set[tuple[int, str]]
+                       ) -> tuple[list[P.Adjudication], list[P.Adjudication]]:
+    """``(to execute, lapsed)`` of the unapplied decisions an adjudication run exports.
+
+    C1 1.3 / C4 1.5.1: a card that does not ask a line may gain it as a follow-up of an
+    answer on another line (v1's optional task verdict after adopting or writing a new
+    label). That answer lapses once the answer that opened it changed - the owning
+    line's latest decision no longer opens it, or came after it - and a lapsed answer
+    is neither executed nor counted. Answers to questions the revision asks stand.
+    """
+    from curation.contracts import modules as registry
+
+    by_key = {(int(a.episode_index), a.line): a for a in latest}
+    keep: list[P.Adjudication] = []
+    lapsed: list[P.Adjudication] = []
+    for a in unapplied:
+        ep = int(a.episode_index)
+        owners = [(ln.id, f) for ln in registry.REVIEW_LINES for f in ln.follow_ups
+                  if f.line == a.line]
+        answered = [(by_key[(ep, lid)], f) for lid, f in owners if (ep, lid) in by_key]
+        if (ep, a.line) in asked or not answered:
+            keep.append(a)
+        elif any(o.decision in f.after and int(o.id) < int(a.id) for o, f in answered):
+            keep.append(a)
+        else:
+            lapsed.append(a)
+    return keep, lapsed
+
+
 # ---------------------------------------------------------------- batches
 
 def run_id_for(now_ms: int, tz_offset_minutes: int = 8 * 60) -> str:

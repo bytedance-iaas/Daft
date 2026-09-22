@@ -423,7 +423,7 @@ class Orchestrator:
                 raise conflict(task, "没有出错的条目或整体失败的模块，不需要重试")
             scope = {"modules": [m for m in registry.ids() if m in wanted], "episodes": "errors"}
         elif kind == "apply_adjudication":
-            if not self.repo.latest_adjudications(task_id, unapplied_only=True):
+            if not self.decisions_to_apply(task)[0]:
                 raise conflict(task, "没有待执行的裁决：先在裁决页做出判断")
             scope = {"relabel_rerun": scope.get("relabel_rerun") or "v1"}
         elif kind == "reexport":
@@ -443,6 +443,19 @@ class Orchestrator:
         self.hub.publish_state(task_id, "queued", subtask_id=sub.id, at=self.clock())
         self.scheduler.enqueue(task_id, sub.id, owner=task.owner_id)
         return sub
+
+    def decisions_to_apply(self, task: P.Task) -> tuple[list, list]:
+        """``(to execute, lapsed)``: the latest unapplied decisions, minus follow-up answers
+        whose opening answer changed since (C4 1.5.1, :func:`rules.standing_decisions`).
+        Without the revision's ``review.json`` at hand nothing is taken for lapsed."""
+        latest = self.repo.latest_adjudications(task.id)
+        unapplied = [a for a in latest if a.applied_in_subtask is None]
+        rev = int(task.result_rev or 0)
+        review = rules.read_list(WorkDir(self.work_root, task.id).revision_dir(rev), "review") \
+            if rev and unapplied else None
+        if review is None:
+            return unapplied, []
+        return rules.standing_decisions(unapplied, latest, rules.review_lines_asked(review))
 
     # ================================================================== D37 again
     def compatibility(self, task: P.Task, preflight: dict) -> list[dict]:

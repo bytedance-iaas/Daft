@@ -411,7 +411,10 @@ class AdjudicationRun(StageRun):
         if entry.get("done"):
             return entry.get("applied") or {}
         self.progress(sid, state="running", done=0, total=1)
-        rows = self.repo.latest_adjudications(self.task_id, unapplied_only=True)
+        rows, lapsed = self.orch.decisions_to_apply(self.reload())
+        if lapsed:
+            self.log(sid, "info", f"{len(lapsed)} 条追问的回答已作废（打开它的标注判断后来改了），不执行："
+                     + "、".join(f"ep{a.episode_index:06d}" for a in lapsed[:20]))
         rerun_how = (self.subtask.scope or {}).get("relabel_rerun") or "v1"
         doc = {"schema_version": "1.0", "relabel_rerun": rerun_how, "decisions": [
             {"id": a.id, "episode_index": a.episode_index, "line": a.line, "decision": a.decision,

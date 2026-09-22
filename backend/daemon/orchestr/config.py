@@ -4,7 +4,7 @@
 |---|---|---|
 | ``CURATOR_MAX_RUNNING_TASKS`` | 1 | tasks (main runs and subtasks together) running at once (P1) |
 | ``CURATOR_CLI`` | ``<python> -m curation.cli`` | the command line of the CLI (shell-split) |
-| ``CURATOR_SITE_CONFIG`` | empty | planner site settings, YAML or JSON: ``concurrency`` and ``vlm`` blocks of values.yaml |
+| ``CURATOR_SITE_CONFIG`` | ``$CURATION_CONFIG`` | planner site settings, YAML or JSON: the ``concurrency`` and ``vlm`` blocks of the site.yaml the chart writes (the CLI reads the same file through ``CURATION_CONFIG``) |
 | ``CURATOR_CPU_CORES`` | the container's CPU quota, else ``os.cpu_count()`` | cores the planner plans for |
 | ``CURATOR_MEMORY_ADMISSION`` | 0.8 | a frame stage waits while memory use is above this share (0 = off) |
 | ``CURATOR_TERM_GRACE_S`` / ``CURATOR_INT_GRACE_S`` | 90 / 10 | SIGTERM -> SIGKILL, SIGINT -> SIGKILL (02 §4) |
@@ -67,7 +67,7 @@ def load_site_config(path: str | None) -> dict:
     try:
         text = p.read_text(encoding="utf-8")
     except OSError as err:
-        raise OrchestratorConfigError(f"CURATOR_SITE_CONFIG 读不了：{p}（{err}）") from None
+        raise OrchestratorConfigError(f"站点配置读不了：{p}（{err}）") from None
     try:
         if p.suffix.lower() == ".json":
             data = json.loads(text)
@@ -76,10 +76,9 @@ def load_site_config(path: str | None) -> dict:
 
             data = yaml.safe_load(text) or {}
     except Exception as err:  # noqa: BLE001 - yaml and json raise different things
-        raise OrchestratorConfigError(f"CURATOR_SITE_CONFIG 不是合法的 YAML / JSON：{err}") \
-            from None
+        raise OrchestratorConfigError(f"站点配置 {p} 不是合法的 YAML / JSON：{err}") from None
     if not isinstance(data, dict):
-        raise OrchestratorConfigError("CURATOR_SITE_CONFIG 的顶层应该是一个对象")
+        raise OrchestratorConfigError(f"站点配置 {p} 的顶层应该是一个对象")
     return {k: data[k] for k in ("concurrency", "vlm") if k in data}
 
 
@@ -122,12 +121,13 @@ class OrchestratorConfig:
         cores = _number(env, "CURATOR_CPU_CORES", 0, minimum=0, integer=True)
         max_running = _number(env, "CURATOR_MAX_RUNNING_TASKS", 1, minimum=1, integer=True)
         term = _number(env, "CURATOR_TERM_GRACE_S", 90.0)
+        site = (str(env.get("CURATOR_SITE_CONFIG", "") or "").strip()
+                or str(env.get("CURATION_CONFIG", "") or "").strip())
         return cls(
             enabled=enabled,
             max_running=int(max_running),
             program=program,
-            site_config=load_site_config(str(env.get("CURATOR_SITE_CONFIG", "") or "").strip()
-                                         or None),
+            site_config=load_site_config(site or None),
             cpu_cores=int(cores) or container_cpu_cores(),
             memory_admission=float(_number(env, "CURATOR_MEMORY_ADMISSION", 0.8)),
             term_grace_s=float(term),

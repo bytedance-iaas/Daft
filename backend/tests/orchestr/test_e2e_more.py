@@ -30,9 +30,12 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     assert first["pending_adjudication"] == len(must_decide)  # appeals are not pending (D42)
     r = d.api("POST", f"/tasks/{task_id}/adjudication/apply")
     assert r.status_code == 409 and "没有待执行的裁决" in r.json()["error"]["message"]
+    r = d.api("POST", f"/tasks/{task_id}/adjudication", json={"decisions": [   # W5b records
+        {"episode_index": 3, "line": "task_verdict", "decision": "failure"}]})
+    assert r.status_code == 200, r.text
+    # the fixture raises no label conflict to answer on the page; a relabel recorded all the
+    # same keeps the re-judging path covered (the CLI executes it as v1 does)
     d.rt.repo.append_adjudication([
-        P.AdjudicationCreate(task_id=task_id, episode_index=3, line="task_verdict",
-                             decision="failure", decided_by="tester"),
         P.AdjudicationCreate(task_id=task_id, episode_index=4, line="label",
                              decision="custom_label", new_label="wipe the table",
                              decided_by="tester")], at=d.rt.clock())
@@ -47,6 +50,16 @@ def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     assert (done["summary"]["passed"], done["summary"]["rejected"]) == (4, 4)
     assert done["delivery_stale"] is True                  # D9: no export, it is stale now
     assert d.rt.repo.latest_adjudications(task_id, unapplied_only=True) == []
+    queue = d.api("GET", f"/tasks/{task_id}/adjudication", params={"status": "all"}).json()
+    assert {c["episode_index"]: c["status"] for c in queue["items"]}.get(3) == "applied"
+    assert done["pending_adjudication"] == queue["counts"]["pending"]    # one way of counting
+    for where in (rd, d.delivery(done["run_id"])):          # every decision, and delivered
+        with open(os.path.join(where, "human-decisions", "task_verdicts.csv"),
+                  encoding="utf-8") as fh:
+            assert "ep000003" in fh.read()
+        with open(os.path.join(where, "human-decisions", "label_decisions.csv"),
+                  encoding="utf-8") as fh:
+            assert "wipe the table" in fh.read()
     sub_id = d.api("GET", f"/tasks/{task_id}/subtasks").json()["items"][0]["id"]
     with open(os.path.join(rd, ".orchestr", sub_id, "decisions.json"), encoding="utf-8") as fh:
         decisions = json.load(fh)

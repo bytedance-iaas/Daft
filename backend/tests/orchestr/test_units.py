@@ -41,6 +41,32 @@ def test_episode_selections():
     assert rules.max_episodes({"mode": "all"}) is None
 
 
+def _adj(id_, ep, line, decision, applied=None):
+    return P.Adjudication(id=id_, task_id="t", episode_index=ep, line=line, decision=decision,
+                          decided_by="x", decided_at=id_, applied_in_subtask=applied)
+
+
+def test_follow_up_answers_lapse_when_the_answer_that_opened_them_changes():
+    review = {"episodes": [
+        {"episode_index": 1, "review": [{"kind": "label_conflict"}]},
+        {"episode_index": 2, "review": [{"kind": "label_conflict", "line": "label"}]},
+        {"episode_index": 3, "review": [{"kind": "label_conflict"}, {"kind": "task_verdict"}]},
+        {"episode_index": 4, "review": [{"kind": "label_conflict"}]},
+        {"episode_index": 5, "review": [{"kind": "no_such_kind"}]}]}
+    asked = rules.review_lines_asked(review)
+    assert asked == {(1, "label"), (2, "label"), (3, "label"), (3, "task_verdict"), (4, "label")}
+    latest = [
+        _adj(1, 1, "label", "adopt_suggestion"), _adj(2, 1, "task_verdict", "success"),  # stands
+        _adj(3, 2, "task_verdict", "failure"), _adj(4, 2, "label", "custom_label"),  # reopened
+        _adj(5, 3, "task_verdict", "success"), _adj(6, 3, "label", "keep_label"),    # asked
+        _adj(7, 4, "label", "keep_label", applied="sub_1"), _adj(8, 4, "task_verdict", "failure"),
+    ]
+    unapplied = [a for a in latest if a.applied_in_subtask is None]
+    keep, lapsed = rules.standing_decisions(unapplied, latest, asked)
+    assert [a.id for a in keep] == [1, 2, 4, 5, 6]
+    assert [a.id for a in lapsed] == [3, 8]           # 2: the label changed after it; 4: not opened
+
+
 def test_the_fallback_summary_of_a_revision(tmp_path):
     def write(name, count, extra=None):
         (tmp_path / f"{name}.json").write_text(json.dumps(
@@ -204,6 +230,9 @@ def test_settings_from_the_environment(tmp_path):
     assert cfg.max_running == 3 and cfg.program == ("python", "-m", "curation.cli")
     assert cfg.site_config == {"concurrency": {"cpu": 2}, "vlm": {"merge": {"enabled": False}}}
     assert not cfg.enabled
+    # the chart's site.yaml, which the CLI reads through CURATION_CONFIG
+    assert OrchestratorConfig.from_env({"CURATION_CONFIG": str(site)}).site_config == \
+        cfg.site_config
     with pytest.raises(OrchestratorConfigError):
         OrchestratorConfig.from_env({"CURATOR_MAX_RUNNING_TASKS": "0"})
     with pytest.raises(OrchestratorConfigError):
