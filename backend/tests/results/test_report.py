@@ -131,6 +131,15 @@ def test_backfill_hook_brings_the_run_directory_back(world, tmp_path):
     assert calls == [(world.task_id, "revisions/r0001/commit.json")]
 
 
+def test_other_methods_answer_405_with_allow(world):
+    for method, rel, allow in (("PUT", "/report", "GET"), ("DELETE", "/adjudication", "GET, POST"),
+                               ("POST", "/episodes/3", "GET"), ("PATCH", "/perf", "GET")):
+        r = world.client.request(method, f"{API}/tasks/{world.task_id}{rel}", headers=JSON)
+        body = assert_error(r, "method_not_allowed")
+        assert set(r.headers["allow"].split(", ")) >= set(allow.split(", ")), (rel, r.headers)
+        assert body["error"]["details"]["allow"]
+
+
 def test_foreign_and_unknown_tasks_are_404(world, tmp_path):
     other = make_task(world.repo, world.dataset, owner="someone-else")
     for tid in (other.id, "task_nope", "..", "task_x%2F.."):
