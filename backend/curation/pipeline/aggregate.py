@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 
 from ..contracts import modules as registry
 from ..export.report import CHECK_CN, check_detail_reason, hard_fail_reason
-from .adjudication import Decisions, appealable
+from .adjudication import Decisions
 from .records import latest_results, revision_dir, write_json_atomic, write_text_atomic
 from .tasktext import TaskText, load_autolabel
 from .verdict import episode_verdict
@@ -213,11 +213,14 @@ class Decided:
 def appeal_target(state: RunState, ep: int, machine: Line, decisions: Decisions) -> str | None:
     """The module a person may overturn this episode's reject on (D42), or None.
 
-    A funnel reject by one hard gate alone (never a soft score) whose module is
-    :func:`~.adjudication.appealable` and that no human task verdict settled, or
-    dedup's byte-copy finding on an episode the funnel kept. A discarded episode
-    has none: the discard is final.
+    The one admission rule (adjudicate-apply and review.json both use it): a
+    funnel reject attributed to one hard gate alone - v1's
+    ``is_task_success_reject``: no other hard gate, never a soft score - whose
+    module the registry marks ``appealable`` and that no human task verdict
+    settled, or dedup's byte-copy finding on an episode the funnel kept (when
+    dedup is appealable). A discarded episode has none: the discard is final.
     """
+    appealable = registry.appealable
     if decisions.discarded(ep) is not None:
         return None
     tv = decisions.human_task_verdict(ep)
@@ -449,6 +452,7 @@ def _review_items(state: RunState, ep: int, line: Line, state_: str, d: Decided,
       (:func:`appeal_target`) with no appeal decided yet - "unsure" keeps it listed.
     """
     items = []
+    current = "passed" if state_ == "keep" else "reject"
     if state_ == "keep" and "task_success" in line.undecidable \
             and decisions.human_task_verdict(ep) is None:
         why = check_detail_reason(line.checks.get("task_success") or {})
@@ -469,9 +473,20 @@ def _review_items(state: RunState, ep: int, line: Line, state_: str, d: Decided,
                    "")
         if decisions.pending(ep, "reject_appeal"):
             why = f"{why}(复议拿不准,待定)" if why else "复议拿不准,待定"
-        items.append({"source_module": d.appeal_target, "kind": "reject_appeal",
-                      "reason": why or "可复议"})
-    return items
+        item = {"source_module": d.appeal_target, "kind": "reject_appeal",
+                "reason": why or "可复议"}
+        dup = next((r["duplicate_of"] for r in reasons if r.get("module") == d.appeal_target
+                    and "duplicate_of" in r), None)
+        if dup is not None:
+            item["duplicate_of"] = int(dup)
+        items.append(item)
+    # each item names its registry line and is only asked where that line applies (C1)
+    out = []
+    for item in items:
+        spec = registry.review_line_of_kind(item["kind"])
+        if spec.applies_to == current:
+            out.append({**item, "line": spec.id})
+    return out
 
 
 def write_final(rev_dir: str, result: dict) -> dict:

@@ -284,12 +284,7 @@ def module_sections(rev: Revision) -> list[dict]:
         if errors:
             sec["episodes_error"] = len(errors)
         if spec.produces_adjudication:
-            kind = "task_verdict" if m == "task_success" else "label_conflict"
-            pending = sum(1 for e in review
-                          if any(i["kind"] == kind and (kind == "label_conflict"
-                                                        or i["source_module"] == m)
-                                 for i in e["review"]))
-            sec["adjudication"] = {"pending": pending}
+            sec["adjudication"] = _adjudication(review, m, spec)
         sections.append(sec)
     return sections
 
@@ -300,6 +295,25 @@ def skipped_modules(rev: Revision) -> list[dict]:
         head, sep, reason = str(note).partition(" skipped: ")
         if sep and head in registry.ids():
             out.append({"id": head, "reason": reason})
+    return out
+
+
+def _adjudication(review: list, module: str, spec) -> dict:
+    """A module's open review items, per episode (C1 review lines): ``pending`` - the
+    questions it raised that must be decided (``counts_as_pending``); for an
+    appealable module ``appealable`` - its rejects with an open appeal item (never
+    pending: an appeal is a choice)."""
+    def has(entry, pending: bool) -> bool:
+        for item in entry["review"]:
+            line = registry.review_line(item["line"]) if item.get("line") \
+                else registry.review_line_of_kind(item["kind"])
+            if item["source_module"] == module and line.counts_as_pending == pending:
+                return True
+        return False
+
+    out = {"pending": sum(1 for e in review if has(e, True))}
+    if spec.appealable:
+        out["appealable"] = sum(1 for e in review if has(e, False))
     return out
 
 

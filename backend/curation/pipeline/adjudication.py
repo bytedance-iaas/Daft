@@ -15,9 +15,10 @@ v1's rules survive unchanged (``pipeline/rejudge.py``), in its order:
    human already gave the task verdict for that episode**, which then stands and
    is recorded as human (no model re-checks a person's conclusion);
 3. an appeal is only admitted for a reject by one appealable module alone
-   (:func:`appealable`, D42: task_success, and dedup's byte-copy finding); the
-   physical and structural gates and the soft score are final whatever the
-   decision file says. "restore" overturns that module only;
+   (the registry's ``appealable``, D42: task_success, and dedup's byte-copy
+   finding; ``aggregate.appeal_target``); the physical and structural gates and
+   the soft score are final whatever the decision file says. "restore"
+   overturns that module only;
 4. "unsure" is a legal answer: recorded, the episode stays in the queue, nothing
    changes.
 
@@ -46,16 +47,6 @@ APPLIED_FILE = f"{ADJUDICATION_DIR}/applied.jsonl"
 HUMAN_DIR = "human-decisions"
 
 RELABEL_RERUN = ("v1", "full")
-
-
-def appealable(module_id: str) -> bool:
-    """Whether a reject by this module alone may be appealed (D42).
-
-    The one place that says which: task_success (v1's semantic kill) and dedup
-    (a byte copy). Contract 1.5 moves the answer into the module registry
-    (C1 ``appealable``); nothing else names these modules.
-    """
-    return module_id in ("task_success", "dedup")
 RELABEL_DECISIONS = ("adopt_suggestion", "custom_label")
 
 LINE_DECISIONS = {
@@ -63,6 +54,9 @@ LINE_DECISIONS = {
     "task_verdict": ("success", "failure", "unsure", "discard"),
     "reject_appeal": ("restore", "keep_rejected", "unsure"),
 }
+#: The lines adjudicate-apply has an apply rule for, with the decisions each rule
+#: knows (the registry's review lines, C1; a test keeps them equal). A line or a
+#: decision without a rule is refused, never skipped.
 #: v1's words in the self-contained CSV copies (``dataset_level/decisions.py``)
 V1_WORDS = {"adopt_suggestion": "采纳建议改标", "custom_label": "采纳建议改标",
             "keep_label": "维持原标注", "unsure": "拿不准", "discard": "弃用该条",
@@ -77,7 +71,8 @@ class DecisionError(ValueError):
 def check_decision(d: dict) -> None:
     line, decision = d.get("line"), d.get("decision")
     if line not in LINE_DECISIONS:
-        raise DecisionError(f"decision {d.get('id')}: unknown line {line!r}")
+        raise DecisionError(f"decision {d.get('id')}: line {line!r} has no apply rule in "
+                            f"adjudicate-apply (it applies {', '.join(LINE_DECISIONS)})")
     if decision not in LINE_DECISIONS[line]:
         raise DecisionError(f"decision {d.get('id')}: {decision!r} is not a {line} decision")
     if decision in ("adopt_suggestion", "custom_label") \

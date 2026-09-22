@@ -463,10 +463,65 @@ def test_an_appeal_on_a_final_reject_is_refused(tmp_path, episode, why):
     assert ok.rc == 0, ok.doc
 
 
-def test_appealable_is_the_one_place_that_names_the_modules():
-    from curation.pipeline.adjudication import appealable
+def test_what_can_be_appealed_comes_from_the_registry(tmp_path, monkeypatch):
+    """C1 ``appealable`` decides (task_success and dedup today): made appealable, a
+    video_action_sync-only reject gets an appeal item, admits an appeal and a restore
+    overturns it; nothing else in the code names the modules."""
+    from curation.contracts import modules as registry
 
-    assert [m for m in ALL if appealable(m)] == ["task_success", "dedup"]
+    assert [m for m in ALL if registry.appealable(m)] == ["task_success", "dedup"]
+    rd = _gate_reject(RunDir(str(tmp_path / "run")).good(0), 1, "video_action_sync")
+    run_dir = rd.write()
+    assert _kinds(final(run_dir, "0,1")) == {}
+    refused = run("adjudicate-apply", "--run-dir", run_dir, "--decisions",
+                  decisions(str(tmp_path / "d0.json"), (1, "reject_appeal", "restore", None)))
+    assert refused.rc == 2
+    real = registry.appealable
+    monkeypatch.setattr(registry, "appealable",
+                        lambda m: m == "video_action_sync" or real(m))
+    assert _kinds(final(run_dir, "0,1")) == {1: [("reject_appeal", "video_action_sync")]}
+    apply(run_dir, decisions(str(tmp_path / "d1.json"), (1, "reject_appeal", "restore", None)))
+    assert sorted(final(run_dir, "0,1", revision=2)["passed"]) == [0, 1]
+
+
+def test_items_name_their_registry_line_and_where_it_applies(tmp_path):
+    """Every item carries its C1 line (label for label_conflict); a dedup appeal names
+    the original; a line is only asked where it applies (label: passed episodes)."""
+    rd = RunDir(str(tmp_path / "run")).good(0, 3)
+    rd.replace("task_success", 0, "abstain")
+    rd.replace("dedup", 3, "fail", details={"duplicate_of": 0})
+    run_dir = rd.write()
+    audit = {"high": [{"id": "ep000000", "reason": "标注与画面不一致"},
+                      {"id": "ep000003", "reason": "标注与画面不一致"}]}
+    os.makedirs(os.path.join(run_dir, "checks", "skill_profile"), exist_ok=True)
+    with open(os.path.join(run_dir, "checks", "skill_profile", "profile.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump({"families": []}, fh)
+    with open(os.path.join(run_dir, "checks", "skill_profile", "label_audit.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump(audit, fh)
+    lists = final(run_dir, "0,3")
+    items = {e: v["review"] for e, v in lists["review"].items()}
+    assert [(i["kind"], i["line"]) for i in items[0]] == [("task_verdict", "task_verdict"),
+                                                         ("label_conflict", "label")]
+    assert items[3] == [{"source_module": "dedup", "kind": "reject_appeal",
+                         "line": "reject_appeal", "duplicate_of": 0,
+                         "reason": "与 ep000000 字节级完全重复"}]
+
+
+def test_a_line_adjudicate_apply_has_no_rule_for_is_refused(tmp_path):
+    """decisions.json lines are open strings (C2 1.5); applying one without a rule is
+    refused, naming it - never skipped. The rules cover the registry's lines."""
+    from curation.contracts import modules as registry
+    from curation.pipeline.adjudication import LINE_DECISIONS
+
+    assert {line: set(ds) for line, ds in LINE_DECISIONS.items()} == \
+        {line.id: {c for c, _ in line.decisions} for line in registry.REVIEW_LINES}
+    rd = RunDir(str(tmp_path / "run")).good(0).write()
+    res = run("adjudicate-apply", "--run-dir", rd, "--decisions",
+              decisions(str(tmp_path / "d.json"), (0, "retrim", "cut_tail", None)))
+    assert res.rc == 2 and "line 'retrim' has no apply rule" in res.doc["error"]["message"]
+    assert not os.path.exists(os.path.join(rd, "adjudication", "applied.jsonl"))
 
 
 def test_decisions_are_copied_in_v1s_csv_words(tmp_path):
@@ -487,7 +542,7 @@ def test_decisions_are_copied_in_v1s_csv_words(tmp_path):
 @pytest.mark.parametrize("bad, words", [
     ({"line": "task_verdict", "decision": "restore"}, "is not a task_verdict decision"),
     ({"line": "label", "decision": "adopt_suggestion", "new_label": ""}, "needs new_label"),
-    ({"line": "verdict", "decision": "success"}, "unknown line"),
+    ({"line": "verdict", "decision": "success"}, "has no apply rule"),
 ])
 def test_a_decision_that_breaks_the_contract_is_a_usage_error(tmp_path, bad, words):
     rd = RunDir(str(tmp_path / "run")).good(0).write()
