@@ -50,22 +50,22 @@
 ### F2.1 CLI 原子命令
 - 描述：preflight / plan / decode / check / aggregate / export / report / adjudicate-apply 八条命令
 - 验收：①每条命令 `--json` 通过 schema 校验；②全链路跑通 8 条 episode；③默认不并发不重试，并发与重试为显式参数；④凭证只经环境变量，不入 argv
-- status: not_completed
+- status: **completed**
 
 ### F2.2 Daemon 骨架
 - 描述：FastAPI 应用、SQLite Repository、鉴权中间件、SSE、静态资源托管、健康探针
 - 验收：①探针豁免鉴权；②SSE 支持 Last-Event-ID 重放；③主密钥缺失时拒绝启动；④游标分页无重复无遗漏
-- status: not_completed
+- status: **completed**
 
 ### F2.3 任务编排
 - 描述：任务/子任务状态机、worker 池、暂停恢复、停止、优雅停机
 - 验收：①暂停恢复后结果与不暂停一致；②停止后无孤儿子进程；③进程重启后任务状态可恢复；④非法状态迁移返回 409
-- status: not_completed
+- status: **completed**
 
 ### F2.4 planner 与 VLM 请求合并
 - 描述：执行计划生成、CPU/VLM 两档并发、同 episode 多模块合并、usage 采集
 - 验收：①合并与单发模式判决一致率 ≥98%，差异条目人工确认无系统性偏差；②token 摊派总和等于实际用量；③合并可通过配置一键关闭
-- status: not_completed
+- status: **completed**
 
 ### F2.5 增量重新导出
 - 描述：export manifest、diff 算法、LeRobot v2/v3 两条增量路径
@@ -75,12 +75,12 @@
 ### F2.6 密钥与资源管理
 - 描述：AES-GCM 加密存储、连通性校验、方舟拉模型列表、自定义端点
 - 验收：①任何 API 响应与日志都不含密钥本体；②TOS 凭证校验含写探针；③删除被运行中任务引用的凭证返回 409
-- status: not_completed
+- status: **completed**
 
 ### F2.7 预检
 - 描述：格式识别、模块可用性三态、机器人型号追问
 - 验收：①非 LeRobot v2/v3 全模块标灰并给出原因；②规格库不支持的型号 → 整项跳过且任务不失败；③读不到型号 → needs_input；④未勾选该模块则不追问
-- status: not_completed
+- status: **completed**
 
 ## 阶段 3：前端
 
