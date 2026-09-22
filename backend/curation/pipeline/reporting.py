@@ -284,12 +284,7 @@ def module_sections(rev: Revision) -> list[dict]:
         if errors:
             sec["episodes_error"] = len(errors)
         if spec.produces_adjudication:
-            kind = "task_verdict" if m == "task_success" else "label_conflict"
-            pending = sum(1 for e in review
-                          if any(i["kind"] == kind and (kind == "label_conflict"
-                                                        or i["source_module"] == m)
-                                 for i in e["review"]))
-            sec["adjudication"] = {"pending": pending}
+            sec["adjudication"] = _adjudication(review, m, spec)
         sections.append(sec)
     return sections
 
@@ -300,6 +295,25 @@ def skipped_modules(rev: Revision) -> list[dict]:
         head, sep, reason = str(note).partition(" skipped: ")
         if sep and head in registry.ids():
             out.append({"id": head, "reason": reason})
+    return out
+
+
+def _adjudication(review: list, module: str, spec) -> dict:
+    """A module's open review items, per episode (C1 review lines): ``pending`` - the
+    questions it raised that must be decided (``counts_as_pending``); for an
+    appealable module ``appealable`` - its rejects with an open appeal item (never
+    pending: an appeal is a choice)."""
+    def has(entry, pending: bool) -> bool:
+        for item in entry["review"]:
+            line = registry.review_line(item["line"]) if item.get("line") \
+                else registry.review_line_of_kind(item["kind"])
+            if item["source_module"] == module and line.counts_as_pending == pending:
+                return True
+        return False
+
+    out = {"pending": sum(1 for e in review if has(e, True))}
+    if spec.appealable:
+        out["appealable"] = sum(1 for e in review if has(e, False))
     return out
 
 
@@ -317,9 +331,13 @@ def integrity(rev: Revision) -> dict:
 
 def build(rev: Revision) -> tuple[dict, dict]:
     """(report.json, perf.json)."""
+    from .skipped import all_skipped, as_list
+
+    skipped = as_list(all_skipped(rev.run_dir))
     counts = {"total": sum(rev.lists[n]["count"] for n in ("passed", "reject", "held")),
               "passed": rev.lists["passed"]["count"], "rejected": rev.lists["reject"]["count"],
-              "held": rev.lists["held"]["count"], "review": rev.lists["review"]["count"]}
+              "held": rev.lists["held"]["count"], "review": rev.lists["review"]["count"],
+              "skipped": len(skipped)}
     reasons: dict[str, int] = {}
     for e in rev.episodes("reject"):
         for mod in dict.fromkeys(r["module"] for r in e.get("reasons") or []
@@ -351,7 +369,9 @@ def build(rev: Revision) -> tuple[dict, dict]:
             "redone_after_interruption": redone_after_interruption(rev.run_dir, rev.modules)}
     report = {"schema_version": SCHEMA_VERSION, "revision": rev.revision,
               "overview": overview, "modules": module_sections(rev),
-              "skipped_modules": skipped_modules(rev), "integrity": integrity(rev),
+              "skipped_modules": skipped_modules(rev),
+              # what was not checked and why (D40): the manifest's list and read-time finds
+              "integrity": {**integrity(rev), "skipped_episodes": skipped},
               "perf": {"vlm_requests": lat["requests"], "vlm_wall_s": lat["wall_s"],
                        "effective_concurrency": lat["effective_concurrency"],
                        "redone_after_interruption": perf["redone_after_interruption"]}}
@@ -373,6 +393,9 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
              f"待补跑 {c['held']}(三者不重不漏)",
              f"- 通过率:{rate}(待补跑既不算通过也不算拒绝)",
              f"- 待人工确认:{c['review']} 条(多数在通过里,保守放行、等人确认)"]
+    if c.get("skipped"):
+        lines.append(f"- 缺源文件未质检:{c['skipped']} 条(照 v1 剔除,不计入参与质检的总数,"
+                     f"明细见文末「未质检的条目」)")
     if ov["reject_reasons"]:
         lines.append("- 拒绝原因:" + ";".join(
             f"「{NAMES_CN.get(r['module'], r['module'])}」{r['count']} 条"
@@ -413,6 +436,12 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines.append(f"- 待人工裁决:{sec['adjudication']['pending']} 条")
         if sec.get("error"):
             lines.append(f"- ⚠️ {sec['error']}")
+        lines.append("")
+    if report["integrity"].get("skipped_episodes"):
+        lines.append("## 未质检的条目(源文件缺失,照 v1 剔除)")
+        for s in report["integrity"]["skipped_episodes"][:50]:
+            lines.append(f"- ep{s['episode_index']:06d}:缺 " + "、".join(s["missing"]))
+        lines.append("- 补齐文件后另建任务即可")
         lines.append("")
     if report["skipped_modules"]:
         lines.append("## 未执行的模块")

@@ -58,7 +58,7 @@ def test_the_funnel_takes_the_survivors_of_each_stage(chain):
     assert s["numeric"].doc["modules"]["timestamp_check"]["episodes"]["fail"] == 2
     assert s["frame"].doc["modules"]["video_action_sync"]["episodes"]["total"] == 6
     ts = s["vlm"].doc["modules"]["task_success"]["episodes"]
-    assert ts == {"total": 6, "pass": 4, "fail": 0, "abstain": 2, "scored": 0, "error": 0}
+    assert ts == {"total": 6, "pass": 3, "fail": 0, "abstain": 3, "scored": 0, "error": 0}
     assert s["autolabel"].doc["counts"] == {"total": 2, "ok": 2, "unclear": 0, "error": 0}
     assert s["dedup"].doc["modules"]["dedup"]["episodes"]["fail"] == 1       # 7 copies 3
     assert s["profile"].doc["modules"]["skill_profile"]["episodes"]["total"] == 5
@@ -99,7 +99,7 @@ def test_final_lists_are_v1s_verdicts(chain):
     assert eps("passed") == [0, 1, 3, 4, 6]
     assert eps("reject") == [2, 5, 7]
     assert eps("held") == []
-    assert eps("review") == [3, 7]
+    assert eps("review") == [0, 3, 7]                 # 0 and 3 abstained, 7 is a copy
     reject = json.load(open(os.path.join(rev, "reject.json"), encoding="utf-8"))
     dup = [e for e in reject["episodes"] if e["episode_index"] == 7][0]
     assert dup["reasons"][0]["kind"] == "duplicate" and dup["reasons"][0]["duplicate_of"] == 3
@@ -147,10 +147,13 @@ def test_report_follows_the_registry(chain):
     assert [m["id"] for m in report["modules"]] == MODULES
     assert all(m["state"] == "succeeded" for m in report["modules"])
     by_id = {m["id"]: m for m in report["modules"]}
-    assert by_id["task_success"]["adjudication"] == {"pending": 2}
+    # 7 is a copy (D42): no task question; dedup's appeal candidate never counts as pending
+    assert by_id["task_success"]["adjudication"] == {"pending": 2, "appealable": 0}
+    assert by_id["dedup"]["adjudication"] == {"pending": 0, "appealable": 1}
     assert by_id["timestamp_check"]["adjudication"] is None
     assert report["overview"]["counts"] == {"total": 8, "passed": 5, "rejected": 3,
-                                            "held": 0, "review": 2}
+                                            "held": 0, "review": 3, "skipped": 0}
+    assert report["integrity"]["skipped_episodes"] == []
     for m in report["modules"]:
         for t in m["tables"]:
             assert os.path.isfile(os.path.join(rev, t["file"]))

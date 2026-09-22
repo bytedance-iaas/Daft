@@ -89,6 +89,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     episodes, warning = runctx.resolve_episodes(args, available)
     if warning:
         ctx.log("warn", warning)
+    episodes = runctx.leave_out_skipped(ctx, args, episodes)
     part = args.part or records.next_part(run_dir, modules)
     guard = runctx.source_guard(ctx, args, storage)
     input_dir = storage.root if not storage.remote else storage.uri
@@ -215,7 +216,10 @@ def _dedup(ctx, args, run_dir, input_dir, episodes, part, guard):
                         embodiment_id=args.embodiment_id)
     dups = {e for e, rec in _latest(run_dir, "dedup").items() if rec["verdict"] == "fail"}
     errors = set(payload["modules"]["dedup"]["error_episodes"])
-    return payload, [e for e in episodes if e not in dups and e not in errors]
+    left_out = {s["episode_index"] for s in
+                payload["modules"]["dedup"].get("skipped_missing_source") or []}
+    return payload, [e for e in episodes if e not in dups and e not in errors
+                     and e not in left_out]
 
 
 def _latest(run_dir, module):
@@ -236,6 +240,13 @@ def _profile(ctx, args, run_dir, input_dir, episodes, part, plan_stage, guard):
     if guard is not None:
         guard(episodes)
     rows = runctx.meta_rows(input_dir, episodes, args, what="check:skill_profile")
+    from ..pipeline.dataset_stages import leave_out_missing_source
+    from ..pipeline.rows import index_of
+    from ..pipeline.skipped import as_list
+
+    got = {index_of(r["episode_id"]) for r in rows}
+    missing = leave_out_missing_source(ctx, run_dir, input_dir,
+                                       [e for e in episodes if e not in got])
     auto_caps = {f"ep{i:06d}": c
                  for i, c in precomputed_captions(load_autolabel(run_dir)).items()}
     sp = cfg.get("skill_profile") or {}
@@ -253,8 +264,10 @@ def _profile(ctx, args, run_dir, input_dir, episodes, part, plan_stage, guard):
         payload = run_skill_profile(ctx, run_dir, rows, cfg, captioner, llm_ask, auto_caps,
                                     part, incremental=args.incremental,
                                     relabels=load_relabels(run_dir), restored=restored)
+    if missing:
+        payload["modules"]["skill_profile"]["skipped_missing_source"] = as_list(missing)
     errors = set(payload["modules"]["skill_profile"]["error_episodes"])
-    return payload, [e for e in episodes if e not in errors]
+    return payload, [e for e in episodes if e not in errors and e not in missing]
 
 
 def _profile_members(ctx, run_dir: str, episodes: list[int]) -> tuple[list[int], set[int]]:

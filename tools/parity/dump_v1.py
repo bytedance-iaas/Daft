@@ -3,6 +3,7 @@
 Usage (``--`` separates our options from the v1 command line):
 
     python -m parity dump-v1 --out DIR [options] -- run --input ... --output ...
+    python -m parity dump-v1 --out DIR [options] -- rejudge --delivery ... --input ...
 
 The v1 command is executed in this process by ``curation.cli.main`` exactly as
 ``curation run`` would run it. Nothing in v1 is edited; this module only wraps
@@ -16,7 +17,14 @@ a few functions for the duration of the run:
 * ``run_pipeline``, ``save_report``, ``_skill_profile_stage``,
   ``caption_episodes``, ``action_hash``, ``episode_fingerprint``,
   ``decode_window``                 - verdicts, report, profile, autolabel
-                                      captions, dedup traversal and decode failures.
+                                      captions, dedup traversal and decode failures;
+* ``run_rejudge``, ``apply_decisions`` (``rejudge`` only) - the run directory it
+                                      updates and each relabelled episode's re-judge.
+
+A ``rejudge`` dump (v1 applying the human decisions of a delivery, design doc 11
+§3) holds the task_success records of the episodes v1 judged again, the final
+lists and the skill assignments after the decisions, and ``adjudication`` in
+``dump.json``: ``compare`` then checks v2's adjudication sequence against it.
 
 Before importing v1 the source tree is checked file by file against
 ``v1_manifest.json`` (git blob hashes at the freeze commit).
@@ -105,6 +113,7 @@ class Taps:
         self.fingerprints: dict[str, str] = {}
         self.decode_failures: list[dict] = []
         self.tap_errors: list[str] = []
+        self.rejudge: dict = {}             # rejudge: run_dir, summary, decisions, ...
         self._undo: list[tuple] = []
 
     def _patch(self, obj, name, new):
@@ -116,7 +125,9 @@ class Taps:
             obj, name, old = self._undo.pop()
             setattr(obj, name, old)
 
-    def install(self):
+    def install(self, command: str = "run"):
+        if command == "rejudge":
+            self._install_rejudge()
         import daft
 
         import curation.adapters.decode as decode_mod
@@ -247,6 +258,34 @@ class Taps:
         self._patch(decode_mod, "decode_window", decode_window)
 
 
+    def _install_rejudge(self):
+        import curation.pipeline.rejudge as rejudge_mod
+
+        taps = self
+        orig_run = rejudge_mod.run_rejudge
+
+        def run_rejudge(delivery, *a, **kw):
+            taps.rejudge["run_dir"] = str(delivery)
+            out = orig_run(delivery, *a, **kw)
+            taps.rejudge["summary"] = out
+            return out
+
+        self._patch(rejudge_mod, "run_rejudge", run_rejudge)
+        orig_apply = rejudge_mod.apply_decisions
+
+        def apply_decisions(passed, review, reject, decisions, rejudged, *a, **kw):
+            try:
+                taps.rejudge.update(decisions=json.loads(json.dumps(decisions, default=str)),
+                                    rejudged=json.loads(json.dumps(rejudged, default=str)),
+                                    human_concluded=sorted(kw.get("human_concluded")
+                                                           or ()))
+            except Exception as e:  # noqa: BLE001 - a tap must never break the run
+                taps.tap_errors.append(f"apply_decisions: {type(e).__name__}: {e}")
+            return orig_apply(passed, review, reject, decisions, rejudged, *a, **kw)
+
+        self._patch(rejudge_mod, "apply_decisions", apply_decisions)
+
+
 # ---------------------------------------------------------------------------
 # Normalization
 # ---------------------------------------------------------------------------
@@ -363,6 +402,75 @@ def build_final(summary: dict, report: dict, skill: dict) -> dict:
                      "review_json": ids(undecidable)},
         "n_delivered": summary.get("n_delivered"),
     }
+
+
+RELABEL_V1 = "采纳建议改标"
+
+
+def build_rejudge(taps: Taps) -> tuple[dict[str, list[dict]], dict, dict, dict]:
+    """(records, final lists, skill profile, ``adjudication``) of a v1 ``rejudge``.
+
+    * records: task_success of each episode v1 judged again with its new label
+      (``_build_rerun``: multi-view scoring and the per-camera end-state vote);
+    * final: the run's ``passed`` / ``reject`` / ``review`` after the decisions,
+      under v2 semantics as ``build_final`` has them: passed is what v1 delivers -
+      ``passed.json`` keeps a duplicate that ``reject.json`` also lists, and a
+      relabel that abstained again moves to ``review.json`` alone while its row
+      stays in the delivered dataset; ``review`` is the abstentions plus the label
+      questions nobody answered. A relabel whose re-judge failed is left as it was
+      by v1 and ``held`` here (v2 holds it, D24);
+    * skill profile: ``details/skill_assignment.csv`` after v1's ``_sync_profile``.
+    """
+    import csv
+
+    rj = taps.rejudge
+    run_dir = rj.get("run_dir") or ""
+    files = {}
+    for name in ("passed", "review", "reject"):
+        path = os.path.join(run_dir, f"{name}.json")
+        with open(path, encoding="utf-8") as fh:
+            files[name] = json.load(fh)
+    eps = {n: {_idx(e) for e in (files[n].get("episodes") or {})} for n in files}
+    decisions = rj.get("decisions") or {}
+    rejudged = rj.get("rejudged") or {}
+    concluded = set(rj.get("human_concluded") or [])
+    attempted = sorted(_idx(e) for e, d in decisions.items()
+                       if d.get("decision") == RELABEL_V1
+                       and str(d.get("new_label") or "").strip() and e not in concluded)
+    records = [R.record_from_v1_struct("task_success", eid,
+                                       {"passed": r.get("passed"), "score": None,
+                                        "detail": r.get("detail")})
+               for eid, r in rejudged.items() if r is not None]
+    failed = sorted(set(attempted) - {_idx(e) for e in rejudged})
+    audit = files["passed"].get("label_audit") or {}
+    asked = {_idx(e.get("id")) for tier in _AUDIT_TIERS for e in audit.get(tier) or []}
+    labelled = {_idx(e) for e in decisions}
+    final = {"passed": sorted((eps["passed"] | eps["review"]) - eps["reject"] - set(failed)),
+             "reject": sorted(eps["reject"]),
+             "held": failed,
+             "review": sorted((eps["review"] | (asked - labelled)) - set(failed)),
+             "v1_views": {"passed_json": sorted(eps["passed"]),
+                          "reject_json": sorted(eps["reject"]),
+                          "review_json": sorted(eps["review"])}}
+    assignments = []
+    csv_path = os.path.join(run_dir, "details", "skill_assignment.csv")
+    if os.path.isfile(csv_path):
+        with open(csv_path, newline="", encoding="utf-8") as fh:
+            for row in csv.DictReader(fh):
+                assignments.append({"episode_index": _idx(row["episode_id"]),
+                                    **{k: row.get(k) or "" for k in (
+                                        "family", "subskill", "caption", "grouping_text",
+                                        "grouping_text_source")}})
+    skill = {"ran": os.path.isfile(csv_path),
+             "assignments": sorted(assignments, key=lambda r: r["episode_index"]),
+             "label_audit_queue": []}
+    adjudication = {
+        "relabels": {str(_idx(e)): str(d.get("new_label") or "").strip()
+                     for e, d in decisions.items() if d.get("decision") == RELABEL_V1},
+        "attempted": attempted, "rejudged": sorted(_idx(e) for e in rejudged),
+        "rerun_failed": failed, "human_concluded": sorted(_idx(e) for e in concluded),
+        "summary": rj.get("summary")}
+    return {"task_success": R.sort_records(records)}, final, skill, adjudication
 
 
 def suspect_probe_hashes(tape_path: str) -> list[str]:
@@ -496,10 +604,11 @@ def main(argv: list[str]) -> int:
                         tape_meta={"v1_commit": src["commit"], "v1_args": v1_args,
                                    "label": args.label})
     taps = Taps()
+    command = v1_args[0]
     started = time.time()
     exit_code, crash = None, None
     hooks.install(vlm_client)
-    taps.install()
+    taps.install(command)
     try:
         try:
             exit_code = v1_cli.main(list(v1_args))
@@ -514,19 +623,25 @@ def main(argv: list[str]) -> int:
     finished = time.time()
 
     summary, report = taps.summary or {}, taps.report or {}
-    recs = build_records(taps)
+    adjudication = None
     os.makedirs(os.path.join(args.out, "records"), exist_ok=True)
+    if command == "rejudge" and taps.rejudge.get("run_dir") and exit_code == 0 and not crash:
+        recs, final, skill, adjudication = build_rejudge(taps)
+    elif command == "rejudge":
+        recs, final, skill = {}, {}, {"ran": False, "assignments": [], "label_audit_queue": []}
+    else:
+        recs = build_records(taps)
+        R.write_jsonl(os.path.join(args.out, "verdicts.jsonl"), build_verdicts(summary))
+        R.write_jsonl(os.path.join(args.out, "autolabel.jsonl"), build_autolabel(taps))
+        _write_json(os.path.join(args.out, "dedup.json"), build_dedup(taps, report))
+        skill = build_skill_profile(taps, report) if report else {
+            "ran": False, "assignments": [], "label_audit_queue": [], "raw": {}}
+        final = build_final(summary, report, skill)
     for module, rows in recs.items():
         R.write_jsonl(os.path.join(args.out, "records", f"{module}.jsonl"), rows)
-    R.write_jsonl(os.path.join(args.out, "verdicts.jsonl"), build_verdicts(summary))
-    R.write_jsonl(os.path.join(args.out, "autolabel.jsonl"), build_autolabel(taps))
-    dedup = build_dedup(taps, report)
-    _write_json(os.path.join(args.out, "dedup.json"), dedup)
-    skill = build_skill_profile(taps, report) if report else {
-        "ran": False, "assignments": [], "label_audit_queue": [], "raw": {}}
     _write_json(os.path.join(args.out, "skill_profile.json"), skill)
-    final = build_final(summary, report, skill)
-    _write_json(os.path.join(args.out, "final.json"), final)
+    if final:
+        _write_json(os.path.join(args.out, "final.json"), final)
     if hooks.store is not None:
         R.write_jsonl(os.path.join(args.out, "replay_misses.jsonl"), hooks.store.misses)
 
@@ -573,9 +688,11 @@ def main(argv: list[str]) -> int:
         "config_path": os.environ.get("CURATION_CONFIG") or None,
         "dump_schema_version": DUMP_SCHEMA_VERSION,
         "record_schema_version": R.RECORD_SCHEMA_VERSION,
-        "label": args.label, "status": status, "problems": problems,
+        "label": args.label, "status": status, "problems": problems, "command": command,
+        "adjudication": adjudication,
         "v1_source": src, "v1_args": v1_args, "v1_exit_code": exit_code,
-        "v1_run_dir": summary.get("run_dir"), "v1_delivery_dir": summary.get("delivery_dir"),
+        "v1_run_dir": summary.get("run_dir") or taps.rejudge.get("run_dir"),
+        "v1_delivery_dir": summary.get("delivery_dir"),
         "dataset": summary.get("dataset_name"), "robot": summary.get("robot"),
         "tape": {"mode": mode, "path": tape_out, "replayed_from": args.replay,
                  "hooks": hooks.stats(), "summary": (
@@ -584,8 +701,9 @@ def main(argv: list[str]) -> int:
                  "fake_vlm": bool(fake)},
         "counts": {"records": {m: len(r) for m, r in recs.items()},
                    "verdicts": len(summary.get("verdicts") or {}),
-                   "passed": len(final["passed"]), "reject": len(final["reject"]),
-                   "review": len(final["review"])},
+                   "passed": len(final.get("passed") or []),
+                   "reject": len(final.get("reject") or []),
+                   "review": len(final.get("review") or [])},
         "versions": _versions(),
         "started_at": _dt.datetime.fromtimestamp(started).isoformat(timespec="seconds"),
         "finished_at": _dt.datetime.fromtimestamp(finished).isoformat(timespec="seconds"),

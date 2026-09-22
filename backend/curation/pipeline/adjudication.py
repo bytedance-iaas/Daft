@@ -14,13 +14,30 @@ v1's rules survive unchanged (``pipeline/rejudge.py``), in its order:
 2. a relabel is judged again by task_success with the new label - **unless a
    human already gave the task verdict for that episode**, which then stands and
    is recorded as human (no model re-checks a person's conclusion);
-3. an appeal is only admitted for a reject attributed to task_success alone; the
-   physical and structural gates are final whatever the decision file says;
+3. an appeal is only admitted for a reject by one appealable module alone
+   (the registry's ``appealable``, D42: task_success, and dedup's byte-copy
+   finding; ``aggregate.appeal_target``); the physical and structural gates and
+   the soft score are final whatever the decision file says. "restore"
+   overturns that module only;
 4. "unsure" is a legal answer: recorded, the episode stays in the queue, nothing
    changes.
 
+A task verdict on an episode task_success did not abstain on is not the card's own
+question but v1's verdict after a relabel - the registry's follow-up of the label
+line (C1 1.3 ``follow_ups``). It counts only while the label's latest answer opens
+that follow-up and was given before it; once the label answer changes it lapses:
+no effect, and a relabel still in force is judged again (``Decisions.stands``, the
+Daemon's ``Queue._stands``).
+
 Decisions never cross tasks (D32): only this task's decisions are given, and
 nothing is read from the delivery root.
+
+How a relabel is judged again (D39) comes with the decisions: ``relabel_rerun``
+of ``decisions.json`` - ``v1`` (default: what v1's rejudge runs, multi-view
+scoring and the per-camera end-state vote) or ``full`` (the first run's whole
+task_success flow). It is recorded with every relabel it applies, in
+``applied.jsonl`` and ``labels.json``, so a later retry of those episodes
+judges them the same way.
 """
 from __future__ import annotations
 
@@ -29,18 +46,26 @@ import io
 import json
 import os
 import time
+from typing import Callable
 
-from .records import ADJUDICATION_DIR, read_jsonl, write_json_atomic, write_text_atomic
+from .records import (ADJUDICATION_DIR, latest_results, read_jsonl, write_json_atomic,
+                      write_text_atomic)
 from .tasktext import LABELS_FILE
 
 APPLIED_FILE = f"{ADJUDICATION_DIR}/applied.jsonl"
 HUMAN_DIR = "human-decisions"
+
+RELABEL_RERUN = ("v1", "full")
+RELABEL_DECISIONS = ("adopt_suggestion", "custom_label")
 
 LINE_DECISIONS = {
     "label": ("adopt_suggestion", "custom_label", "keep_label", "unsure", "discard"),
     "task_verdict": ("success", "failure", "unsure", "discard"),
     "reject_appeal": ("restore", "keep_rejected", "unsure"),
 }
+#: The lines adjudicate-apply has an apply rule for, with the decisions each rule
+#: knows (the registry's review lines, C1; a test keeps them equal). A line or a
+#: decision without a rule is refused, never skipped.
 #: v1's words in the self-contained CSV copies (``dataset_level/decisions.py``)
 V1_WORDS = {"adopt_suggestion": "采纳建议改标", "custom_label": "采纳建议改标",
             "keep_label": "维持原标注", "unsure": "拿不准", "discard": "弃用该条",
@@ -55,7 +80,8 @@ class DecisionError(ValueError):
 def check_decision(d: dict) -> None:
     line, decision = d.get("line"), d.get("decision")
     if line not in LINE_DECISIONS:
-        raise DecisionError(f"decision {d.get('id')}: unknown line {line!r}")
+        raise DecisionError(f"decision {d.get('id')}: line {line!r} has no apply rule in "
+                            f"adjudicate-apply (it applies {', '.join(LINE_DECISIONS)})")
     if decision not in LINE_DECISIONS[line]:
         raise DecisionError(f"decision {d.get('id')}: {decision!r} is not a {line} decision")
     if decision in ("adopt_suggestion", "custom_label") \
@@ -71,14 +97,52 @@ def load_applied(run_dir: str) -> list[dict]:
     return read_jsonl(os.path.join(run_dir, APPLIED_FILE))
 
 
-class Decisions:
-    """The applied decisions in force, per episode and line."""
+def own_questions(run_dir: str) -> Callable[[int, str], bool]:
+    """``asks(episode, line)``: whether the episode's card asks ``line`` itself, from the
+    current results. It matters only for a line a follow-up asks as well: the task
+    verdict is the card's own question where task_success abstained (the task_verdict
+    item); anywhere else it is v1's verdict after a relabel (C1 1.3)."""
+    abstained = {e for e, r in latest_results(run_dir, "task_success").items()
+                 if r.get("verdict") == "abstain"}
+    return lambda episode, line: line != "task_verdict" or int(episode) in abstained
 
-    def __init__(self, applied: list[dict]):
+
+def judged_with(record: dict | None, text: str) -> bool:
+    """Whether a task_success record judged its episode with the relabel ``text``."""
+    details = (record or {}).get("details") or {}
+    return details.get("task_desc_source") == "人工改标" \
+        and str(details.get("task_desc") or "") == str(text)[:80]
+
+
+def _follow_up_owners(line: str) -> tuple[str, ...]:
+    """The registry lines with a follow-up that asks ``line`` (C1 1.3)."""
+    from ..contracts import modules as registry
+
+    return tuple(ln.id for ln in registry.REVIEW_LINES
+                 if any(f.line == line for f in ln.follow_ups))
+
+
+class Decisions:
+    """The applied decisions in force, per episode and line.
+
+    ``asks(episode, line)`` says whether the episode's card asks a line itself
+    (:func:`own_questions`; None: every answer counts as one to the card's own
+    question). An answer to a follow-up counts only while it stands (:meth:`stands`).
+    """
+
+    def __init__(self, applied: list[dict],
+                 asks: Callable[[int, str], bool] | None = None):
         self.applied = sorted(applied, key=lambda d: int(d["id"]))
-        self.effective: dict[tuple[int, str], dict] = {}    # latest non-unsure
-        self.latest: dict[tuple[int, str], dict] = {}       # latest of all
+        self.asks = asks
+        #: the latest answer per episode and line, standing or not (it opens follow-ups)
+        self.answered: dict[tuple[int, str], dict] = {}
         for d in self.applied:
+            self.answered[(int(d["episode_index"]), d["line"])] = d
+        self.effective: dict[tuple[int, str], dict] = {}    # latest standing non-unsure
+        self.latest: dict[tuple[int, str], dict] = {}       # latest standing
+        for d in self.applied:
+            if not self.stands(d):
+                continue
             key = (int(d["episode_index"]), d["line"])
             self.latest[key] = d
             if d["decision"] != "unsure":
@@ -86,7 +150,28 @@ class Decisions:
 
     @classmethod
     def of(cls, run_dir: str) -> Decisions:
-        return cls(load_applied(run_dir))
+        return cls(load_applied(run_dir), asks=own_questions(run_dir))
+
+    def stands(self, d: dict) -> bool:
+        """Whether an applied answer counts - the one place of the lapse rule (C1 1.3
+        ``follow_ups``, as the Daemon's ``Queue._stands``). An answer to a question the
+        card asks itself always counts. An answer on a line only a follow-up asks (v1's
+        task verdict after adopting a new label, on an episode task_success did not
+        abstain on) counts while the owner line's latest answer opens that follow-up
+        and was given before it (by decision id), and only with one of the follow-up's
+        decisions; otherwise it lapsed and has no effect."""
+        from ..contracts import modules as registry
+
+        episode, line = int(d["episode_index"]), d["line"]
+        owners = _follow_up_owners(line)
+        if not owners or self.asks is None or self.asks(episode, line):
+            return True
+        for owner in owners:
+            opener = self.answered.get((episode, owner))
+            f = registry.follow_up(owner, opener["decision"], line) if opener else None
+            if f is not None:
+                return int(d["id"]) > int(opener["id"]) and d["decision"] in f.decisions
+        return False
 
     def ids(self) -> list[int]:
         return [int(d["id"]) for d in self.applied]
@@ -115,9 +200,15 @@ class Decisions:
 
     def relabel(self, episode: int) -> str | None:
         d = self.get(episode, "label")
-        if d is not None and d["decision"] in ("adopt_suggestion", "custom_label"):
+        if d is not None and d["decision"] in RELABEL_DECISIONS:
             return str(d["new_label"]).strip()
         return None
+
+    def relabel_rerun(self, episode: int) -> str:
+        """How the relabel in force is judged again (D39): recorded when it was applied."""
+        d = self.get(episode, "label")
+        mode = (d or {}).get("relabel_rerun") or "v1"
+        return mode if mode in RELABEL_RERUN else "v1"
 
     def label_resolved(self, episode: int) -> bool:
         return self.get(episode, "label") is not None
@@ -130,18 +221,44 @@ class Decisions:
         return {int(d["episode_index"]) for d in self.applied}
 
 
-def apply(run_dir: str, doc: dict, *, now_ms: int | None = None) -> dict:
-    """Record ``decisions.json`` as applied; returns ``adjudicate-apply --json``."""
+def relabel_rerun_of(doc: dict) -> str:
+    """``relabel_rerun`` of a ``decisions.json`` (default ``v1``, D39)."""
+    mode = doc.get("relabel_rerun", "v1")
+    if mode not in RELABEL_RERUN:
+        raise DecisionError(f"relabel_rerun must be one of {', '.join(RELABEL_RERUN)}, "
+                            f"got {mode!r}")
+    return mode
+
+
+def apply(run_dir: str, doc: dict, *, now_ms: int | None = None,
+          appeal_admissible=None) -> dict:
+    """Record ``decisions.json`` as applied; returns ``adjudicate-apply --json``.
+
+    ``appeal_admissible(episode) -> bool``: whether that episode is now a reject a
+    person may appeal (D42); an appeal on any other episode is refused.
+    """
     new = list(doc.get("decisions") or [])
+    mode = relabel_rerun_of(doc)
     for d in new:
         check_decision(d)
     ids = [d["id"] for d in new]
     if len(set(ids)) != len(ids):
         raise DecisionError("decision ids repeat in decisions.json")
     before = load_applied(run_dir)
+    asks = own_questions(run_dir)
     seen = {int(d["id"]) for d in before}
     fresh = [d for d in new if d["id"] not in seen]
+    if appeal_admissible is not None:
+        for d in fresh:
+            if d["line"] == "reject_appeal" and not appeal_admissible(int(d["episode_index"])):
+                raise DecisionError(
+                    f"decision {d['id']}: episode {d['episode_index']} has no reject a person "
+                    f"may appeal (a hard gate of its own, a soft score, a discarded episode "
+                    f"and an episode that is not rejected are final)")
     stamp = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    # every relabel applied now carries how it is judged again (D39)
+    fresh = [dict(d, relabel_rerun=mode) if d["line"] == "label"
+             and d["decision"] in RELABEL_DECISIONS else dict(d) for d in fresh]
     if fresh:
         text = "".join(json.dumps({**d, "applied_at": stamp}, ensure_ascii=False,
                                   sort_keys=True) + "\n" for d in sorted(fresh, key=lambda d: d["id"]))
@@ -151,16 +268,17 @@ def apply(run_dir: str, doc: dict, *, now_ms: int | None = None) -> dict:
             with open(path, encoding="utf-8") as fh:
                 existing = fh.read()
         write_text_atomic(path, existing + text)
-    decisions = Decisions(before + [{**d, "applied_at": stamp} for d in fresh])
+    decisions = Decisions(before + [{**d, "applied_at": stamp} for d in fresh], asks=asks)
     write_labels(run_dir, decisions)
     write_human_copies(run_dir, decisions)
     touched = sorted({int(d["episode_index"]) for d in fresh})
+    # a relabel in force that no person concluded and task_success has not judged with
+    # its text yet: a fresh relabel, or one whose follow-up verdict just lapsed
+    judged = latest_results(run_dir, "task_success")
     rerun = sorted(e for e in touched
                    if decisions.relabel(e) and decisions.human_task_verdict(e) is None
                    and decisions.discarded(e) is None
-                   and any(d["line"] == "label" and int(d["episode_index"]) == e
-                           and d["decision"] in ("adopt_suggestion", "custom_label")
-                           for d in fresh))
+                   and not judged_with(judged.get(e), decisions.relabel(e)))
     resync = sorted(e for e in touched
                     if any(int(d["episode_index"]) == e and d["decision"] != "unsure"
                            and d["decision"] != "keep_rejected" for d in fresh))
@@ -170,7 +288,8 @@ def apply(run_dir: str, doc: dict, *, now_ms: int | None = None) -> dict:
                        and d["decision"] in ("adopt_suggestion", "custom_label") for d in fresh)]
     return {"schema_version": "1.0", "applied": len(fresh),
             "skipped_already_applied": len(new) - len(fresh),
-            "rerun_task_success": rerun, "profile_resync": resync, "label_changes": changes}
+            "rerun_task_success": rerun, "profile_resync": resync, "label_changes": changes,
+            "relabel_rerun": mode}
 
 
 def write_labels(run_dir: str, decisions: Decisions) -> None:
@@ -178,7 +297,8 @@ def write_labels(run_dir: str, decisions: Decisions) -> None:
     for e in sorted(decisions.episodes()):
         text = decisions.relabel(e)
         if text and decisions.discarded(e) is None:
-            labels[str(e)] = {"text": text, "decision_id": int(decisions.get(e, "label")["id"])}
+            labels[str(e)] = {"text": text, "decision_id": int(decisions.get(e, "label")["id"]),
+                              "relabel_rerun": decisions.relabel_rerun(e)}
     write_json_atomic(os.path.join(run_dir, LABELS_FILE), {"labels": labels})
 
 

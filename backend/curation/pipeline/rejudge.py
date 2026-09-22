@@ -1385,6 +1385,47 @@ def _episode_row_reader(input_dir: str, cfg: dict) -> Callable:
     return read
 
 
+def rerun_task_success(cfg: dict, video: dict, new_label: str, vlm, voter,
+                       decode: Callable | None = None):
+    """One relabelled episode judged again, v1's way -> ``CheckResult``.
+
+    The body of ``_build_rerun``'s ``rerun`` (v2 lifted it out so ``curation check``
+    runs the very same code, D39): multi-view scoring, then the per-camera
+    end-state vote - no task-type step, camera hints, reject guard or evidence
+    arbitration. ``video`` is the episode row's video pointers; ``decode``
+    defaults to ``adapters.decode.decode_window``.
+    """
+    from ..core.checks.task_success import endstate_review, task_success
+
+    if decode is None:
+        from ..adapters.decode import decode_window as decode
+    pcfg = cfg.get("pipeline", {})
+    interval = pcfg.get("frame_sample_interval_s", 0.5)
+    max_side = pcfg.get("frame_max_side", 448)
+    max_cams = pcfg.get("max_endstate_cams", 4)
+    es_frames = pcfg.get("endstate_frames", 8)
+    p_task = cfg["checks"]["task_success"].get("params", {})
+    cam_frames = {}
+    for cam in sorted(video)[:max_cams]:
+        v = video[cam]
+        try:
+            fr, _ = decode(v["path"], v["from_ts"], v["to_ts"],
+                           sample_interval_s=interval, max_side=max_side)
+            if fr:
+                cam_frames[cam.split(".")[-1]] = fr
+        except Exception:  # noqa: BLE001
+            continue
+    if not cam_frames:
+        raise RuntimeError("所有相机解码失败")
+    nmin = min(len(f) for f in cam_frames.values())
+    names = list(cam_frames)
+    mv = [[(n, cam_frames[n][i]) for n in names] for i in range(nmin)]
+    res = task_success(mv, new_label, vlm, **p_task)
+    res = endstate_review(res, new_label, voter, cam_frames,
+                          endstate_frames=es_frames)
+    return res
+
+
 def _build_rerun(cfg: dict) -> Callable:
     """生产重判器:与漏斗同源的构件组装(多视角联合打分 + 逐机位投票复核)。
 
@@ -1392,14 +1433,7 @@ def _build_rerun(cfg: dict) -> Callable:
     """
     from ..adapters.decode import decode_window
     from ..adapters.vlm_client import make_endstate_voter, vlm_completion_from_config
-    from ..core.checks.task_success import endstate_review, task_success
 
-    pcfg = cfg.get("pipeline", {})
-    interval = pcfg.get("frame_sample_interval_s", 0.5)
-    max_side = pcfg.get("frame_max_side", 448)
-    max_cams = pcfg.get("max_endstate_cams", 4)
-    es_frames = pcfg.get("endstate_frames", 8)
-    p_task = cfg["checks"]["task_success"].get("params", {})
     vcfg = cfg["checks"]["task_success"]["vlm"]
     vlm = vlm_completion_from_config(cfg)
     from ..adapters.vlm_client import timeout_for
@@ -1414,24 +1448,8 @@ def _build_rerun(cfg: dict) -> Callable:
         rows = read_rows(input_dir, episode_indices={int(episode_id[2:])},
                          validate=True)
         row = next(r for r in rows if r["episode_id"] == episode_id)
-        cam_frames = {}
-        for cam in sorted(row["video"])[:max_cams]:
-            v = row["video"][cam]
-            try:
-                fr, _ = decode_window(v["path"], v["from_ts"], v["to_ts"],
-                                      sample_interval_s=interval, max_side=max_side)
-                if fr:
-                    cam_frames[cam.split(".")[-1]] = fr
-            except Exception:  # noqa: BLE001
-                continue
-        if not cam_frames:
-            raise RuntimeError("所有相机解码失败")
-        nmin = min(len(f) for f in cam_frames.values())
-        names = list(cam_frames)
-        mv = [[(n, cam_frames[n][i]) for n in names] for i in range(nmin)]
-        res = task_success(mv, new_label, vlm, **p_task)
-        res = endstate_review(res, new_label, voter, cam_frames,
-                              endstate_frames=es_frames)
+        res = rerun_task_success(cfg, row["video"], new_label, vlm, voter,
+                                 decode=decode_window)
         return {"passed": res.passed, "verdict": res.detail.get("verdict", ""),
                 "detail": json.dumps(res.detail, ensure_ascii=False, default=str)}
 

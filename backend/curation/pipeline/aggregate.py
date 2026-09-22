@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 
 from ..contracts import modules as registry
 from ..export.report import CHECK_CN, check_detail_reason, hard_fail_reason
-from .adjudication import Decisions
+from .adjudication import Decisions, judged_with
 from .records import latest_results, revision_dir, write_json_atomic, write_text_atomic
 from .tasktext import TaskText, load_autolabel
 from .verdict import episode_verdict
@@ -198,14 +198,42 @@ class Decided:
     reasons: list = field(default_factory=list)
     human_note: dict | None = None
     discard: dict | None = None           # the "discard" decision, when there is one
-    #: a person brought a machine reject into the delivery (an appeal restore, or a
-    #: "success" verdict on a reject): v1's rejudge never deduplicates it
+    #: a person brought a reject into the delivery (an appeal restore, or a "success"
+    #: verdict on a reject): v1's rejudge never deduplicates it
     restored: bool = False
+    #: the module a person may overturn this episode's reject on (D42), if any
+    appeal_target: str | None = None
 
     @property
     def kept(self) -> bool:
         """In ``keep.txt``: what dedup and skill_profile work on."""
         return self.state == "keep" and self.discard is None
+
+
+def appeal_target(state: RunState, ep: int, machine: Line, decisions: Decisions) -> str | None:
+    """The module a person may overturn this episode's reject on (D42), or None.
+
+    The one admission rule (adjudicate-apply and review.json both use it): a
+    funnel reject attributed to one hard gate alone - v1's
+    ``is_task_success_reject``: no other hard gate, never a soft score - whose
+    module the registry marks ``appealable`` and that no human task verdict
+    settled, or dedup's byte-copy finding on an episode the funnel kept (when
+    dedup is appealable). A discarded episode has none: the discard is final.
+    """
+    appealable = registry.appealable
+    if decisions.discarded(ep) is not None:
+        return None
+    tv = decisions.human_task_verdict(ep)
+    if machine.verdict == "drop":
+        if tv is None and len(machine.hard_fails) == 1 and appealable(machine.hard_fails[0]):
+            return machine.hard_fails[0]
+        return None
+    if machine.verdict == "keep" and tv != "failure" and "dedup" in state.modules \
+            and appealable("dedup"):
+        rec = (state.results.get("dedup") or {}).get(ep)
+        if rec is not None and rec["verdict"] == "fail":
+            return "dedup"
+    return None
 
 
 def decide(state: RunState, ep: int, decisions: Decisions,
@@ -214,35 +242,38 @@ def decide(state: RunState, ep: int, decisions: Decisions,
     machine = machine or funnel_line(state, ep)
     line, reasons, human_note = machine, [], None
     selected = set(state.modules)
-    # human task verdicts and appeals act as a task_success result (v1 moves the entry)
+    # human task verdicts and appeals act as a module result (v1 moves the entry)
     tv = decisions.human_task_verdict(ep)
     appeal = decisions.appeal(ep)
+    target = appeal_target(state, ep, machine, decisions)
     ts_rec = (state.results.get("task_success") or {}).get(ep)
-    if "task_success" in selected and ts_rec is not None and ts_rec["verdict"] != "error":
-        if tv is not None:
-            override = dict(_struct(ts_rec), passed=(tv == "success"))
-            line = funnel_line(state, ep, {"task_success": override})
-            human_note = {"module": "task_success",
-                          "text": "人工裁决判成功" if tv == "success"
-                          else "人工裁决判失败(任务未完成)", "kind": "human"}
-        elif appeal == "restore" and _task_reject_only(line):
-            override = dict(_struct(ts_rec), passed=True)
-            line = funnel_line(state, ep, {"task_success": override})
+    if tv is not None and "task_success" in selected and ts_rec is not None \
+            and ts_rec["verdict"] != "error":
+        override = dict(_struct(ts_rec), passed=(tv == "success"))
+        line = funnel_line(state, ep, {"task_success": override})
+        human_note = {"module": "task_success",
+                      "text": "人工裁决判成功" if tv == "success"
+                      else "人工裁决判失败(任务未完成)", "kind": "human"}
+    elif appeal == "restore" and target is not None and target != "dedup":
+        # restore overturns the appealed gate only: another module that could not
+        # judge the episode still holds it (P11)
+        rec = (state.results.get(target) or {}).get(ep)
+        if rec is not None and rec["verdict"] != "error":
+            line = funnel_line(state, ep, {target: dict(_struct(rec), passed=True)})
     state_ = line.verdict                          # keep / drop / held
     # relabelled but not judged again with the new label yet -> held
     relabel = decisions.relabel(ep)
     if relabel and tv is None and "task_success" in selected and state_ == "keep" \
             and ts_rec is not None and ts_rec["verdict"] != "error":
-        judged = (ts_rec.get("details") or {})
-        if judged.get("task_desc_source") != "人工改标" \
-                or str(judged.get("task_desc") or "") != relabel[:80]:
+        if not judged_with(ts_rec, relabel):
             state_ = "held"
             reasons.append({"module": "task_success", "kind": "execution_error",
                             "text": "改标后尚未按新标注重跑任务成败判定"})
-    restored = machine.verdict == "drop" and state_ == "keep" \
-        and (tv == "success" or appeal == "restore")
+    restored = (machine.verdict == "drop" and state_ == "keep"
+                and (tv == "success" or (appeal == "restore" and target is not None))) \
+        or (target == "dedup" and appeal == "restore" and state_ == "keep")
     return Decided(machine, line, state_, reasons, human_note, decisions.discarded(ep),
-                   restored)
+                   restored, target)
 
 
 def decide_all(state: RunState, decisions: Decisions,
@@ -290,11 +321,6 @@ def merged_label_audit(state: RunState, profile_audit: dict | None) -> dict | No
     return attach_task_context(audit, task_of)
 
 
-def _task_reject_only(line: Line) -> bool:
-    """v1's appeal gate: the reject is attributed to task_success and nothing else."""
-    return line.verdict == "drop" and line.hard_fails == ["task_success"]
-
-
 def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskText | None,
           profile_audit: dict | None) -> dict:
     """The four lists (``cli/final-list.schema.json``) plus the merged label audit."""
@@ -320,7 +346,8 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
         line, state_, human_note = d.line, d.state, d.human_note
         reasons: list[dict] = list(d.reasons)
         # dedup ran on the first revision's keep set; an episode a person brought in
-        # afterwards was never compared, and v1 never deduplicates it
+        # afterwards was never compared, and v1 never deduplicates it; a restored dedup
+        # appeal overturns dedup's finding (D42)
         if state_ == "keep" and "dedup" in selected and not d.restored:
             rec = dedup.get(ep)
             if rec is None or rec["verdict"] == "error":
@@ -368,13 +395,15 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
             reject.append({**entry, "reasons": reasons})
         else:
             held.append({**entry, "reasons": reasons})
-        if state_ in ("keep", "drop") and discard is None:
-            items = _review_items(state, ep, line, decisions, audit_items.get(ep) or [],
-                                  appeal_pending=decisions.pending(ep, "reject_appeal")
-                                  and _task_reject_only(machine[ep]))
+        if state_ in ("keep", "drop") and discard is None:     # held: nothing to ask yet
+            items = _review_items(state, ep, line, state_, d, decisions,
+                                  audit_items.get(ep) or [], reasons)
             if items:
-                review.append({"episode_index": ep, "review": items,
-                               "current_list": "passed" if state_ == "keep" else "reject"})
+                item_entry = {"episode_index": ep, "review": items,
+                              "current_list": "passed" if state_ == "keep" else "reject"}
+                if state_ == "drop":
+                    item_entry["reasons"] = reasons          # what the appeal is about
+                review.append(item_entry)
 
     def doc(name, eps):
         return {"schema_version": "1.0", "list": name, "revision": int(revision),
@@ -409,17 +438,25 @@ def _drop_reasons(line: Line) -> list[dict]:
     return out
 
 
-def _review_items(state: RunState, ep: int, line: Line, decisions: Decisions,
-                  audit_entries: list, *, appeal_pending: bool) -> list[dict]:
-    """What a person is asked to decide about one episode (v1's review.json + label queue)."""
+def _review_items(state: RunState, ep: int, line: Line, state_: str, d: Decided,
+                  decisions: Decisions, audit_entries: list, reasons: list) -> list[dict]:
+    """What a person is asked to decide about one episode (v1's queues, D42).
+
+    * ``task_verdict``: a delivered episode (in passed) that task_success could not
+      judge and no person has - other modules' abstentions stay in the verdict line
+      and the report; asking whether the task succeeded is moot for a reject;
+    * ``label_conflict``: skill_profile's audit (and the kill guard's holds);
+    * ``reject_appeal``: a reject by one appealable module alone
+      (:func:`appeal_target`) with no appeal decided yet - "unsure" keeps it listed.
+    """
     items = []
-    for m in line.undecidable:
-        if m == "task_success" and decisions.human_task_verdict(ep) is not None:
-            continue                              # a person already decided it
-        why = check_detail_reason(line.checks.get(m) or {})
-        if (line.checks.get(m, {}).get("detail") or {}).get("internal_error"):
+    current = "passed" if state_ == "keep" else "reject"
+    if state_ == "keep" and "task_success" in line.undecidable \
+            and decisions.human_task_verdict(ep) is None:
+        why = check_detail_reason(line.checks.get("task_success") or {})
+        if (line.checks.get("task_success", {}).get("detail") or {}).get("internal_error"):
             why = f"系统内部错误(非数据问题):{why}"
-        items.append({"source_module": m, "kind": "task_verdict",
+        items.append({"source_module": "task_success", "kind": "task_verdict",
                       "reason": why or "未注明"})
     if not decisions.label_resolved(ep):
         for tier, entry in audit_entries:
@@ -429,10 +466,25 @@ def _review_items(state: RunState, ep: int, line: Line, decisions: Decisions,
             if entry.get("priority"):
                 item["priority"] = str(entry["priority"])
             items.append(item)
-    if appeal_pending:
-        items.append({"source_module": "task_success", "kind": "reject_appeal",
-                      "reason": "被拒复议待定(拿不准)"})
-    return items
+    if state_ == "drop" and d.appeal_target is not None and decisions.appeal(ep) is None:
+        why = next((r["text"] for r in reasons if r.get("module") == d.appeal_target),
+                   "")
+        if decisions.pending(ep, "reject_appeal"):
+            why = f"{why}(复议拿不准,待定)" if why else "复议拿不准,待定"
+        item = {"source_module": d.appeal_target, "kind": "reject_appeal",
+                "reason": why or "可复议"}
+        dup = next((r["duplicate_of"] for r in reasons if r.get("module") == d.appeal_target
+                    and "duplicate_of" in r), None)
+        if dup is not None:
+            item["duplicate_of"] = int(dup)
+        items.append(item)
+    # each item names its registry line and is only asked where that line applies (C1)
+    out = []
+    for item in items:
+        spec = registry.review_line_of_kind(item["kind"])
+        if spec.applies_to == current:
+            out.append({**item, "line": spec.id})
+    return out
 
 
 def write_final(rev_dir: str, result: dict) -> dict:

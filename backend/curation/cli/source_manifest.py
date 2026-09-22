@@ -33,12 +33,18 @@ def entry(obj: ObjectInfo) -> dict:
     return out
 
 
-def build(input_uri: str, objects: Iterable[ObjectInfo]) -> dict:
+def build(input_uri: str, objects: Iterable[ObjectInfo],
+          skipped: list[dict] | None = None) -> dict:
+    """``skipped``: selected episodes whose source files are missing (D40), already in
+    the contract's shape; they are left out of the task and of ``objects``."""
     objs = sorted(objects, key=lambda o: o.key)
-    return {"schema_version": SCHEMA_VERSION, "input": input_uri,
-            "objects": [entry(o) for o in objs],
-            "summary": {"count": len(objs), "bytes": sum(int(o.size) for o in objs),
-                        "digest": fingerprint(objs)}}
+    doc = {"schema_version": SCHEMA_VERSION, "input": input_uri,
+           "objects": [entry(o) for o in objs]}
+    if skipped:
+        doc["skipped_episodes"] = sorted(skipped, key=lambda s: s["episode_index"])
+    doc["summary"] = {"count": len(objs), "bytes": sum(int(o.size) for o in objs),
+                      "digest": fingerprint(objs)}
+    return doc
 
 
 def normalize_uri(uri: str) -> str:
@@ -69,6 +75,10 @@ class SourceManifest:
         for o in doc["objects"]:
             self.objects[o["key"]] = ObjectInfo(o["key"], int(o["size"]), etag=o.get("etag"),
                                                 mtime_ns=o.get("mtime_ns"))
+        #: episodes left out for missing source files (D40): never read
+        self.skipped: dict[int, list[str]] = {
+            int(s["episode_index"]): list(s.get("missing") or [])
+            for s in doc.get("skipped_episodes") or [] if isinstance(s, dict)}
 
     @classmethod
     def load(cls, path: str) -> SourceManifest:

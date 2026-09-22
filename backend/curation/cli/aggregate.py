@@ -81,6 +81,12 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
                          f"revision is never rewritten - use a new one")
     modules = runctx.selected_modules(args, run_dir)
     episodes = _episodes(args, run_dir, modules)
+    # left out for missing source files (D40, as v1 does): in no list, not in total
+    from ..pipeline.skipped import all_skipped
+
+    skipped = all_skipped(run_dir)
+    left_out = [e for e in episodes if e in skipped]
+    episodes = [e for e in episodes if e not in skipped]
     cfg = runctx.stage_config(ctx, modules)
     state = agg.RunState(run_dir, modules, episodes, cfg)
     out_dir = (revision_dir(run_dir, args.revision) if args.revision is not None
@@ -118,6 +124,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
         counts = {"total": len(episodes), "passed": result["passed"]["count"],
                   "reject": result["reject"]["count"], "held": result["held"]["count"],
                   "review": result["review"]["count"]}
+    counts["skipped"] = len(left_out)
     ctx.progress(f"aggregate:{args.phase}", 1, 1)
     rel = {k: os.path.relpath(v, run_dir).replace(os.sep, "/") for k, v in files.items()}
     payload = {"schema_version": SCHEMA_VERSION, "phase": args.phase,
@@ -149,5 +156,8 @@ def render(payload: dict) -> str:
             text += (f"; keep.txt after the human decisions: {c['decided_in']} in, "
                      f"{c['decided_out']} out")
         return text
-    return (f"final{where}: {c['total']} episodes - passed {c['passed']}, reject "
+    text = (f"final{where}: {c['total']} episodes - passed {c['passed']}, reject "
             f"{c['reject']}, held {c['held']}; {c['review']} to review")
+    if c.get("skipped"):
+        text += f"; {c['skipped']} left out for missing source files"
+    return text

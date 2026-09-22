@@ -94,11 +94,18 @@ def test_episode_selection_errors(cli, dataset, tmp_path):
 
 
 def test_files_missing_from_the_dataset_are_left_out_with_a_warning(cli, dataset, tmp_path):
+    """v1's rule (D40): a LeRobot v2 episode without its parquet or a camera's video is
+    left out - listed in skipped_episodes with what it lacks, none of its objects kept."""
     os.remove(os.path.join(dataset, _episode_keys(4)[2]))
     res = cli("snapshot", "--input", dataset, "--out", str(tmp_path / "m.json"))
     assert res.rc == 0
-    assert _episode_keys(4)[2] not in _keys(res.doc)
-    assert any("miss data or video files (4)" in e.get("msg", "") for e in res.events)
+    doc = _valid(res.doc)
+    assert doc["skipped_episodes"] == [{"episode_index": 4, "missing": [_episode_keys(4)[2]]}]
+    assert not set(_episode_keys(4)) & set(_keys(doc))   # never read: nothing to pin
+    assert any("left out like v1 does" in e.get("msg", "") for e in res.events)
+    complete = _valid(cli("snapshot", "--input", dataset, "--episodes", "0-3",
+                          "--out", str(tmp_path / "m2.json")).doc)
+    assert "skipped_episodes" not in complete
 
 
 def test_not_a_lerobot_dataset(cli, tmp_path):

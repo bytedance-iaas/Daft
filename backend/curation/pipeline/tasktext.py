@@ -39,15 +39,24 @@ def autolabel_ran(run_dir: str) -> bool:
     return os.path.isfile(os.path.join(run_dir, AUTOLABEL_FILE))
 
 
-def load_relabels(run_dir: str) -> dict[int, str]:
-    """``adjudication/labels.json``: the human label in force per episode."""
+def _labels(run_dir: str) -> dict[int, dict]:
     path = os.path.join(run_dir, LABELS_FILE)
     if not os.path.isfile(path):
         return {}
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
-    return {int(k): str(v["text"]) for k, v in (doc.get("labels") or {}).items()
+    return {int(k): v for k, v in (doc.get("labels") or {}).items()
             if isinstance(v, dict) and str(v.get("text") or "").strip()}
+
+
+def load_relabels(run_dir: str) -> dict[int, str]:
+    """``adjudication/labels.json``: the human label in force per episode."""
+    return {i: str(v["text"]) for i, v in _labels(run_dir).items()}
+
+
+def load_relabel_reruns(run_dir: str) -> dict[int, str]:
+    """How each relabel in force is judged again (D39): ``v1`` (default) or ``full``."""
+    return {i: str(v.get("relabel_rerun") or "v1") for i, v in _labels(run_dir).items()}
 
 
 def precomputed_captions(autolabel: dict[int, dict]) -> dict[int, str]:
@@ -64,6 +73,14 @@ class TaskText:
         self.instructions = instructions
         self.autolabel = load_autolabel(run_dir)
         self.relabels = load_relabels(run_dir)
+        self.relabel_reruns = load_relabel_reruns(run_dir)
+
+    def relabel_rerun(self, episode_index: int) -> str | None:
+        """``v1`` / ``full`` for an episode judged under a human relabel, else None."""
+        idx = int(episode_index)
+        if idx not in self.relabels:
+            return None
+        return self.relabel_reruns.get(idx, "v1")
 
     def resolve(self, episode_index: int) -> tuple[str, str, str | None]:
         """(text, source, problem): ``problem`` is set when the episode has no usable text."""

@@ -40,7 +40,7 @@ from .incidents import (IncidentLog, camera_names, wrap_arbitration, wrap_call, 
 from .records import (CRASHES_NAME, Inflight, PartWriter, compact, latest_results,
                       module_dir, pid_alive, read_inflight, record_from_struct,
                       write_json_atomic)
-from .rows import EpisodeReadError, RowSource, column
+from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column
 
 FUNNEL_STAGES = ("numeric", "frame", "vlm")
 NUMERIC_ORDER = ("timestamp_check", "kinematic_limits", "motion_quality")
@@ -134,6 +134,8 @@ class StageRun:
         self.label = "check:" + "+".join(opts.modules)
         self._lock = threading.Lock()
         self.done = 0
+        #: episodes found without their source files (D40): no result line
+        self.missing: dict[int, list[str]] = {}
 
     # ------------------------------------------------------------ bookkeeping
     def _stale_inflight(self) -> dict[int, int]:
@@ -256,19 +258,33 @@ class StageRun:
             cam_voter=wrap_voter(clients.cam_voter, log),
             arb_deps=wrap_arbitration(clients.arb_deps, log),
             decode=wrap_decode(funnel._default_decode, log, camera_names(row.get("video"))))
-        # a human relabel is judged as an annotation (label guard, arbitration intent)
-        protocol_src = "原始标注" if src == "人工改标" else src
+        # D39: a human relabel is judged again the way adjudicate-apply recorded -
+        # "v1" (default) is v1's rejudge itself, multi-view scoring and the
+        # per-camera vote; "full" is the first run's whole flow with the relabel as
+        # the annotation (label guard, arbitration intent)
+        rerun = self.o.task_text.relabel_rerun(ep) if src == "人工改标" else None
         try:
-            struct = funnel.task_check_episode(
-                self.o.cfg, self.registry, deps, row["video"], text, protocol_src, row["fps"],
-                row["action"], row["timestamps"], row["embodiment_id"],
-                column(row, "semantics_extras", "{}"))
+            if rerun == "v1":
+                from .rejudge import rerun_task_success
+
+                struct = funnel.result_to_struct(rerun_task_success(
+                    self.o.cfg, row["video"], text, deps.vlm_completion, deps.cam_voter,
+                    decode=deps.decode))
+            else:
+                protocol_src = "原始标注" if src == "人工改标" else src
+                struct = funnel.task_check_episode(
+                    self.o.cfg, self.registry, deps, row["video"], text, protocol_src,
+                    row["fps"], row["action"], row["timestamps"], row["embodiment_id"],
+                    column(row, "semantics_extras", "{}"))
         except Exception as e:  # noqa: BLE001 - v1 turns it into internal_error; so do we
             struct = funnel.internal_error_struct(e)
             log.add("internal", cause=f"{type(e).__name__}: {e}")
         if src == "人工改标":
             detail = json.loads(struct.get("detail") or "{}")
+            # what aggregate checks the relabel was judged with, and how
+            detail["task_desc"] = str(text)[:80]
             detail["task_desc_source"] = src
+            detail["relabel_rerun"] = rerun
             struct = dict(struct, detail=json.dumps(detail, ensure_ascii=False, default=str))
         evidence = self._evidence(ep, row, struct)
         return {"task_success": struct}, {"task_success": evidence}
@@ -295,12 +311,17 @@ class StageRun:
             return []
         return [f"details/evidence/{r}".replace(os.sep, "/") for r in written.get(eid, [])]
 
-    def _work(self, source: RowSource, ep: int) -> dict[str, dict]:
+    def _work(self, source: RowSource, ep: int) -> dict[str, dict] | None:
+        """The records of one episode; None when its source files are missing (D40)."""
         t0 = time.monotonic()
         logs = {m: IncidentLog() for m in self.o.modules}
         evidence = None
         try:
             row = source.get(ep)
+        except EpisodeMissingSource as e:          # v1 leaves it out: no result line
+            with self._lock:
+                self.missing[int(ep)] = list(e.missing)
+            return None
         except EpisodeReadError as e:
             for m in self.o.modules:
                 logs[m].add("read", cause=str(e))
@@ -346,6 +367,12 @@ class StageRun:
                 inflight.clear()        # SIGINT / a crash leave it for the next --resume
             for m in o.modules:
                 compact(o.run_dir, m)
+            if self.missing:
+                from .skipped import record
+
+                record(o.run_dir, self.missing)
+                ctx.log("warn", f"{len(self.missing)} episode(s) have missing source files and "
+                                f"are left out like v1 does: {sorted(self.missing)[:10]}")
         ctx.check_stop(f"{self.label}: {self.done}/{total} episodes done")
         return self.summary(skipped)
 
@@ -371,6 +398,11 @@ class StageRun:
                 for fut in finished:
                     ep = pending.pop(fut)
                     records = fut.result()
+                    if records is None:                # left out: missing source (D40)
+                        inflight.remove(ep)
+                        self.done += 1
+                        ctx.progress(self.label, self.done, total, episode_index=ep)
+                        continue
                     for rec in records.values():
                         writer.write(rec)
                     inflight.remove(ep)
@@ -392,15 +424,18 @@ class StageRun:
                                {"modules": list(o.modules), "episodes_done": self.done})
 
     def summary(self, skipped: int) -> dict:
+        from .skipped import as_list
+
         o = self.o
         digest = input_digest(o.episodes)
+        judged = [e for e in o.episodes if e not in self.missing]
         out: dict = {}
         for m in o.modules:
             cur = latest_results(o.run_dir, m)
-            counts = {"total": len(o.episodes), "pass": 0, "fail": 0, "abstain": 0,
+            counts = {"total": len(judged), "pass": 0, "fail": 0, "abstain": 0,
                       "scored": 0, "error": 0}
             errors = []
-            for e in o.episodes:
+            for e in judged:
                 rec = cur.get(e)
                 verdict = rec["verdict"] if rec else "error"
                 counts[verdict] += 1
@@ -410,6 +445,8 @@ class StageRun:
                      "error_episodes": errors}
             if o.resume:
                 entry["skipped_existing"] = skipped
+            if self.missing:
+                entry["skipped_missing_source"] = as_list(self.missing)
             out[m] = entry
         return {"schema_version": "1.0", "modules": out}
 

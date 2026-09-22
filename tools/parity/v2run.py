@@ -19,6 +19,16 @@ its endpoint once, v1 probed twice per run, and a probe is not a model call.
 The VLM commands run with ``--hedge`` (v1 always hedges; the tape hooks replace
 ``hedged_request``) and ``--concurrency 64`` (the gates of v1's factory defaults).
 
+With ``--from RUN_DIR --decisions FILE`` it runs the Daemon's adjudication sequence
+instead (doc 02 section 3.9) on a copy of a finished run directory -
+
+    adjudicate-apply -> check task_success (the relabelled episodes, a new part)
+    -> aggregate funnel -> check skill_profile --incremental
+    -> aggregate final -> report
+
+on the next result revision; its tape is the one ``dump-v1 -- rejudge`` recorded
+while v1 applied the same decisions, and ``compare`` checks the two (D39).
+
 Exit code 0 when every command succeeded, 1 otherwise; ``parity.json`` in the
 run directory records the steps and the tape statistics.
 """
@@ -76,6 +86,26 @@ class Chain:
             raise StepFailed(f"{name}: exit {rc}: {json.dumps(doc, ensure_ascii=False)[:600]}")
         return doc
 
+    def adjudicate(self, decisions: str, episodes: str) -> None:
+        rd, ds = self.run_dir, self.dataset
+        common = ["--input", ds, "--run-dir", rd, "--source-manifest",
+                  os.path.join(rd, "source_manifest.json")]
+        revision = str(next_revision(rd))
+        applied = self.run("adjudicate-apply", "adjudicate-apply", "--run-dir", rd,
+                           "--decisions", decisions)
+        rerun = (applied or {}).get("rerun_task_success") or []
+        if rerun:
+            self.run("check task_success", "check", "--modules", "task_success", *common,
+                     "--episodes", ",".join(str(e) for e in rerun), *self.vlm)
+        self.run("aggregate funnel", "aggregate", "--run-dir", rd, "--phase", "funnel",
+                 "--revision", revision, "--episodes", episodes)
+        keep = os.path.join(rd, "revisions", f"r{int(revision):04d}", "keep.txt")
+        self.run("check skill_profile", "check", "--modules", "skill_profile", *common,
+                 "--episodes", f"@{keep}", "--incremental", *self.vlm)
+        self.run("aggregate final", "aggregate", "--run-dir", rd, "--phase", "final",
+                 "--revision", revision, "--episodes", episodes, "--input", ds)
+        self.run("report", "report", "--run-dir", rd, "--revision", revision)
+
     def stage_file(self, name: str) -> str:
         path = os.path.join(self.run_dir, "stages", f"{name}.txt")
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -121,6 +151,22 @@ class Chain:
                      "--visibility-timeout", "0")
 
 
+def models_probe_entry(model: str) -> dict:
+    """A tape entry answering ``GET /models``. v1's rejudge never probes its endpoint and
+    every v2 command does; a probe is not a model call (served, never counted)."""
+    canonical, digest = T.canonical_request(None, method="GET", path="/models")
+    return {"kind": "direct", "hash": digest, "tag": "models", "request": canonical,
+            "outcome": "response", "status": 200, "reason": "OK",
+            "body": json.dumps({"object": "list", "data": [{"id": model, "object": "model"}]})}
+
+
+def next_revision(run_dir: str) -> int:
+    base = os.path.join(run_dir, "revisions")
+    done = [int(n[1:]) for n in (os.listdir(base) if os.path.isdir(base) else [])
+            if len(n) == 5 and n[0] == "r" and n[1:].isdigit()]
+    return max(done, default=0) + 1
+
+
 def _mirror(run_dir: str, delivery: str) -> None:
     """Copy the run directory into the delivery, as the Daemon's sync does (the dataset
     itself went there through ``export --output``)."""
@@ -143,6 +189,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="episode expression (default: every episode of the dataset)")
     p.add_argument("--delivery", help="a local directory standing in for the delivery (export "
                                       "and verify run when given)")
+    p.add_argument("--from", dest="from_run", metavar="RUN_DIR",
+                   help="adjudicate: copy this finished v2 run directory to --out and run the "
+                        "adjudication sequence on it (needs --decisions)")
+    p.add_argument("--decisions", metavar="FILE",
+                   help="with --from: the decisions.json adjudicate-apply applies")
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--replay", metavar="TAPE", help="serve model calls from this tape")
     mode.add_argument("--fake-vlm", action="store_true",
@@ -157,6 +208,15 @@ def main(argv: list[str]) -> int:
     if os.path.exists(args.out) and os.listdir(args.out):
         print(f"run-v2: {args.out} is not empty", file=sys.stderr)
         return 2
+    if bool(args.from_run) != bool(args.decisions):
+        print("run-v2: --from and --decisions go together", file=sys.stderr)
+        return 2
+    if args.from_run:
+        import shutil
+
+        if os.path.isdir(args.out):
+            os.rmdir(args.out)                       # empty (checked above)
+        shutil.copytree(args.from_run, args.out)
     os.makedirs(args.out, exist_ok=True)
     if BACKEND not in sys.path:
         sys.path.insert(0, BACKEND)
@@ -168,12 +228,17 @@ def main(argv: list[str]) -> int:
               file=sys.stderr)
         return 2
     episodes = args.episodes
+    if episodes is None and args.from_run:
+        with open(os.path.join(args.from_run, "parity.json"), encoding="utf-8") as fh:
+            episodes = json.load(fh).get("episodes")
     if episodes is None:
         with open(os.path.join(args.input, "meta", "info.json"), encoding="utf-8") as fh:
             n = int(json.load(fh)["total_episodes"])
         episodes = f"0-{n - 1}"
     if args.replay:
         _, entries = T.read_tape(args.replay)
+        if not any(e.get("tag") == "models" for e in entries):
+            entries.append(models_probe_entry(args.vlm_model))
         hooks = T.TapeHooks("replay", replay_entries=entries, sticky_tags=("models",))
         mode = "replay"
     else:
@@ -189,13 +254,17 @@ def main(argv: list[str]) -> int:
     failure = None
     hooks.install(vlm_client)
     try:
-        chain.all(episodes)
+        if args.from_run:
+            chain.adjudicate(os.path.abspath(args.decisions), episodes)
+        else:
+            chain.all(episodes)
     except StepFailed as e:
         failure = str(e)
     finally:
         hooks.uninstall()
         chain.close()
-    doc = {"kind": "v2-run", "input": args.input, "episodes": episodes,
+    doc = {"kind": "v2-adjudication" if args.from_run else "v2-run", "input": args.input,
+           "episodes": episodes, "from": args.from_run, "decisions": args.decisions,
            "tape": {"mode": mode, "replayed_from": args.replay, "hooks": hooks.stats()},
            "steps": chain.steps, "failure": failure}
     if hooks.store is not None:

@@ -67,6 +67,9 @@ def add_vlm(p: argparse.ArgumentParser) -> None:
     g.add_argument("--vlm-api-key-env", metavar="VAR",
                    default=os.environ.get("CURATION_VLM_API_KEY_ENV") or None,
                    help="the environment variable holding the API key (default ARK_API_KEY)")
+    g.add_argument("--vlm-reasoning-effort", metavar="LEVEL",
+                   help="send reasoning_effort=LEVEL with every model request (default: "
+                        "none sent, as v1); the level is not checked here")
 
 
 def add_behaviour(p: argparse.ArgumentParser) -> None:
@@ -279,6 +282,13 @@ def source_guard(ctx: Context, args, storage):
             except lerobot_meta.MetaError as e:
                 raise InputUnreachable(f"{storage.uri}: {e}") from None
             for ep in lerobot_meta.semantics_sample(meta, getattr(args, "max_episodes", None)):
+                if ep.index in manifest.skipped:
+                    continue
+                # v1's LeRobot v2 sample drops an incomplete episode: its parquet counts
+                # only if the snapshot recorded it or the episode is complete now
+                if fmt.version == "v2" and not lerobot_meta.complete(ep, listing) \
+                        and not any(k in manifest.objects for k in ep.data_keys):
+                    continue
                 keys.update(ep.data_keys)
             state.update(listing=listing, verified=set(),
                          episodes={ep.index: ep for ep in meta.episodes}, first=keys)
@@ -298,6 +308,22 @@ def source_guard(ctx: Context, args, storage):
         ctx.log("info", f"source manifest: {len(state['verified'])} objects unchanged")
 
     return check
+
+
+def leave_out_skipped(ctx: Context, args, episodes: list[int]) -> list[int]:
+    """``episodes`` without the ones ``--source-manifest`` left out for missing source
+    files (D40): no command given the manifest reads them."""
+    from . import source_manifest
+
+    path = getattr(args, "source_manifest", None)
+    if not path:
+        return list(episodes)
+    skipped = source_manifest.SourceManifest.load(path).skipped
+    kept = [e for e in episodes if e not in skipped]
+    if len(kept) < len(episodes):
+        ctx.log("info", f"{len(episodes) - len(kept)} episode(s) the source manifest left out "
+                        f"for missing source files are not read")
+    return kept
 
 
 def meta_rows(input_dir: str, episodes, args, *, what: str) -> list[dict]:
@@ -403,8 +429,9 @@ class VlmSession:
         self.booker = vlm_policy.UsageBooker(self.module, str(self._vlm()["model"]),
                                              emit=self.ctx.emitter.emit,
                                              persist=self._usage_log.write)
-        policy = vlm_policy.TransportPolicy(hedge=bool(self.args.hedge),
-                                            retry=RetryPolicy(max_retries=int(self.args.retry or 0)))
+        policy = vlm_policy.TransportPolicy(
+            hedge=bool(self.args.hedge), retry=RetryPolicy(max_retries=int(self.args.retry or 0)),
+            reasoning_effort=getattr(self.args, "vlm_reasoning_effort", None) or None)
         self._installed = vlm_policy.installed(policy, usage=self.booker)
         self._installed.__enter__()
         self._mark = latency_mark()
