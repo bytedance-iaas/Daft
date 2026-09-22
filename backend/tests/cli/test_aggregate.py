@@ -509,6 +509,54 @@ def test_items_name_their_registry_line_and_where_it_applies(tmp_path):
                          "reason": "与 ep000000 字节级完全重复"}]
 
 
+def _label_questions(run_dir: str, *eps: int) -> None:
+    audit = {"high": [{"id": f"ep{e:06d}", "reason": "标注与画面不一致"} for e in eps]}
+    os.makedirs(os.path.join(run_dir, "checks", "skill_profile"), exist_ok=True)
+    with open(os.path.join(run_dir, "checks", "skill_profile", "profile.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump({"families": []}, fh)
+    with open(os.path.join(run_dir, "checks", "skill_profile", "label_audit.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump(audit, fh)
+
+
+def test_a_task_verdict_after_a_relabel_is_taken_instead_of_a_re_judge(tmp_path):
+    """C1 1.3's follow-up (v1's relabel card): on an episode asked only about its label,
+    a person who adopts a new label may also conclude the task. A success or failure is
+    taken as it is and the episode is not judged again; "unsure" leaves the re-judge."""
+    run_dir = RunDir(str(tmp_path / "run")).good(0, 1, 2).write()
+    _label_questions(run_dir, 0, 1, 2)
+    first = final(run_dir, "0-2")
+    assert {e: [i["line"] for i in v["review"]] for e, v in first["review"].items()} == \
+        {0: ["label"], 1: ["label"], 2: ["label"]}                  # label questions only
+
+    out = apply(run_dir, decisions(str(tmp_path / "d.json"),
+                                   (0, "label", "adopt_suggestion", "stack the cups"),
+                                   (0, "task_verdict", "success", None),
+                                   (1, "label", "custom_label", "wipe the table"),
+                                   (1, "task_verdict", "unsure", None),
+                                   (2, "label", "adopt_suggestion", "stack the cups"),
+                                   (2, "task_verdict", "failure", None)))
+    assert out["applied"] == 6
+    assert out["rerun_task_success"] == [1]              # 0 and 2 were concluded by a person
+    after = final(run_dir, "0-2", revision=2)
+    assert sorted(after["passed"]) == [0] and sorted(after["held"]) == [1]
+    assert after["passed"][0]["task_text"] == {"text": "stack the cups", "source": "人工改标"}
+    assert after["reject"][2]["reasons"][0]["text"].startswith("人工裁决判失败")
+    assert after["held"][1]["reasons"][0]["text"] == "改标后尚未按新标注重跑任务成败判定"
+    assert after["review"] == {}                          # every question answered
+
+    # the re-judge of 1 with its new label abstains: now the task question is asked
+    rd = RunDir(run_dir)
+    rd.put("task_success", 1, "abstain", part="0002",
+           details={"verdict": "review_conflict", "task_desc": "wipe the table",
+                    "task_desc_source": "人工改标"})
+    rd.write()
+    third = final(run_dir, "0-2", revision=3)
+    assert sorted(third["passed"]) == [0, 1]
+    assert [i["line"] for i in third["review"][1]["review"]] == ["task_verdict"]
+
+
 def test_a_line_adjudicate_apply_has_no_rule_for_is_refused(tmp_path):
     """decisions.json lines are open strings (C2 1.5); applying one without a rule is
     refused, naming it - never skipped. The rules cover the registry's lines."""
