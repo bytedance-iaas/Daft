@@ -420,6 +420,16 @@ button.video-placeholder {
   border-color: var(--c-warning);
 }
 
+.dup-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.dup-compare .video-grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
 .adj-bar {
   position: sticky;
   top: 60px;

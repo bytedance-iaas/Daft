@@ -57,11 +57,11 @@ describe('adjudication rules (06 §5.1)', () => {
     const w = viewCard(card([labelQ, verdictQ]), { ...relabel, [decisionKey(29, 'task_verdict')]: { decision: 'failure', new_label: null, applied: false } });
     expect(w.rerunsModel).toBe(false);
     expect(w.humanVerdict).toBe('failure');
-    // The optional verdict on a card without a verdict question counts too.
+    // C4 1.5: a decision answers a question the card has; a verdict without one is not part of the card.
     const x = viewCard(card([labelQ]), { ...relabel, [decisionKey(29, 'task_verdict')]: { decision: 'success', new_label: null, applied: false } });
     expect(x.hasVerdictQuestion).toBe(false);
-    expect(x.rerunsModel).toBe(false);
-    expect(x.unapplied.map((u) => u.line)).toEqual(['label', 'task_verdict']);
+    expect(x.rerunsModel).toBe(true);
+    expect(x.unapplied.map((u) => u.line)).toEqual(['label']);
   });
 
   it('a rewritten label carries the new text; keeping the label leaves an open verdict pending', () => {

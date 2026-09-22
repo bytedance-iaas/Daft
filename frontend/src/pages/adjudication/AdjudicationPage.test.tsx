@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { decisionsOf, findTask } from '../../mocks/db';
 import { MAIN_TASK } from '../../mocks/world';
-import { findDrawer, pick } from '../../test/arco';
+import { pick } from '../../test/arco';
 import { fieldErrors } from '../../test/forms';
 import { recordRequests, type SeenRequest } from '../../test/record';
 import { renderApp } from '../../test/render';
@@ -11,7 +11,7 @@ import { ADJ_CONFIG } from './useAdjudication';
 const PAGE = `/tasks/${MAIN_TASK}/adjudication`;
 const card = (ep: number) => screen.getByTestId(`card-${ep}`);
 const posts = (seen: SeenRequest[]) => seen.filter((r) => r.method === 'POST' && r.path === `/tasks/${MAIN_TASK}/adjudication`).map((r) => (r.body as { decisions: unknown[] }).decisions[0]);
-const shownCards = () => [...document.querySelectorAll('[data-testid^="card-"]')].map((e) => Number(e.getAttribute('data-testid')!.slice(5)));
+const shownCards = (root: ParentNode = document) => [...root.querySelectorAll('[data-testid^="card-"]')].map((e) => Number(e.getAttribute('data-testid')!.slice(5)));
 
 afterEach(() => {
   ADJ_CONFIG.pageSize = 20;
@@ -73,7 +73,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(screen.getByTestId('adj-counts')).toHaveTextContent('待裁 7 条 · 3 条尚未应用');
   });
 
-  it('自行改写标注 needs the new label; a relabel without a verdict offers the optional verdict', async () => {
+  it('自行改写标注 needs the new label; a card only answers the questions it has (C4 1.5)', async () => {
     const seen = recordRequests();
     const { user } = renderApp(PAGE);
     await screen.findByTestId('card-36');
@@ -84,10 +84,9 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     await user.type(within(q).getByLabelText('改写后的标注'), 'push the plate back');
     await user.click(within(q).getByRole('button', { name: '保存' }));
     await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 36, line: 'label', decision: 'custom_label', new_label: 'push the plate back' }]));
-    const optional = await within(card(36)).findByTestId('optional-verdict-36');
-    expect(optional).toHaveTextContent('顺手给成败结论（选填）');
-    await user.click(within(optional).getByText('判成功'));
-    await waitFor(() => expect(posts(seen)[1]).toEqual({ episode_index: 36, line: 'task_verdict', decision: 'success' }));
+    // No task-verdict buttons on a card without that question: the Daemon would refuse the decision.
+    expect(within(card(36)).queryByText('判成功')).toBeNull();
+    expect(within(card(36)).queryByTestId('q-36-task_verdict')).toBeNull();
   });
 
   it('filters: ?source= from the report preselects on the server; several sources filter on the page', async () => {
@@ -118,23 +117,30 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(shownCards()).toHaveLength(7);
   });
 
-  it('rule 2: appeals list only task_success rejects, explain the final ones, and use 恢复为可用 / 维持拒绝', async () => {
+  it('rule 2: 被拒复议 lists rejects of appealable modules as optional cards and explains the final ones (D42)', async () => {
     const seen = recordRequests();
     const { user } = renderApp(PAGE);
     await screen.findByTestId('card-29');
-    await user.click(screen.getByRole('tab', { name: '任务失败复议' }));
-    const table = await screen.findByTestId('appeals');
-    await within(table).findByText('ep 6');
-    expect(within(table).getAllByText(/^ep \d+$/).map((e) => e.textContent)).toEqual(['ep 6', 'ep 11', 'ep 23', 'ep 38', 'ep 45']);
+    await user.click(screen.getByRole('tab', { name: '被拒复议' }));
+    const list = await screen.findByTestId('appeals');
+    await within(list).findByTestId('card-6');
+    expect(shownCards(list)).toEqual([6, 11, 23, 38, 45]);
+    // Appeals are optional: the cards say so and the pending count does not move.
+    expect(within(card(6)).getByTestId('status-6')).toHaveTextContent('可复议');
     await user.click(screen.getByText('为什么有的被拒条目不在这里'));
-    expect(await screen.findByTestId('final-rejects')).toHaveTextContent('时间戳检查：1 条');
-    expect(screen.getByTestId('final-rejects')).toHaveTextContent('精确去重：1 条');
-    expect(screen.getByTestId('final-rejects')).not.toHaveTextContent('任务成败判定');
-    const row = within(table).getByText('ep 6').closest('tr') as HTMLElement;
-    await user.click(within(row).getByText('恢复为可用'));
+    const final = await screen.findByTestId('final-rejects');
+    expect(final).toHaveTextContent('时间戳检查：1 条');
+    // dedup is appealable now: not among the final ones.
+    expect(final).not.toHaveTextContent('精确去重');
+    expect(final).not.toHaveTextContent('任务成败判定');
+    expect(screen.getByText(/物理与结构硬门.*和软分拒绝是终局/)).toHaveTextContent('可复议的只有：任务成败判定、精确去重');
+    // Buttons come from the catalog: 恢复为可用 / 维持拒绝 / 拿不准, no 整条弃用.
+    const q = within(card(6)).getByTestId('q-6-reject_appeal');
+    expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['恢复为可用', '维持拒绝', '拿不准']);
+    expect(within(card(6)).queryByRole('button', { name: '其它原因，整条弃用' })).toBeNull();
+    await user.click(within(q).getByText('恢复为可用'));
     await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 6, line: 'reject_appeal', decision: 'restore' }]));
-    await user.click(within(row).getByRole('button', { name: '看视频' }));
-    expect(await findDrawer('ep 6')).toBeInTheDocument();
+    expect(screen.getByTestId('adj-counts')).toHaveTextContent('待裁 7 条');
   });
 
   it('执行裁决 confirms what will be applied and which relabels are judged again, then builds the subtask once (D39)', async () => {

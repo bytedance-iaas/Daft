@@ -92,6 +92,8 @@ export type AdjudicationQuestion = S['AdjudicationQuestion'];
 export type AdjudicationCard = S['AdjudicationCard'];
 export type AdjudicationCounts = S['AdjudicationCounts'];
 export type AdjudicationLine = AdjudicationQuestion['line'];
+/** A kind of question from the registry's review_lines catalog (D43). */
+export type ReviewLine = S['ReviewLine'];
 export type DecisionInput = S['DecisionInput'];
 export type DecisionValue = DecisionInput['decision'];
 export type Decision = S['Decision'];
