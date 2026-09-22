@@ -773,6 +773,7 @@ export const zh = {
       revision: '结果版本',
     } as Record<string, string>,
     openRevision: (r: number) => `查看 r${String(r).padStart(4, '0')} 报告`,
+    relabelRerun: { v1: '改标重判：与旧版一致（两层）', full: '改标重判：首轮完整流程' } as Record<string, string>,
     currentRevision: '当前版本',
     more: '更多信息',
     moreDesc: '任务配置与执行计划，只读',

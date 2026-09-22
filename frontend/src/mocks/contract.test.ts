@@ -17,6 +17,8 @@ import {
   mainUsage,
   preflightFor,
   registry,
+  so101Subtasks,
+  so101Timeline,
 } from './world';
 
 function expectValid(ref: string, value: unknown) {
@@ -59,6 +61,13 @@ describe('fixtures match the contract', () => {
     expectValid(S('UsageReport'), mainUsage());
     for (let ep = 0; ep < 50; ep += 1) expectValid(S('EpisodeView'), episodeView(ep, 2));
     [...cardsOf(MAIN_TASK, 'review'), ...cardsOf(MAIN_TASK, 'appeals')].forEach((c) => expectValid(S('AdjudicationCard'), c));
+  });
+
+  it('the so101 sample: an adjudication whose relabels were judged with the full flow (D39)', () => {
+    const subs = so101Subtasks(Date.now());
+    subs.forEach((s) => expectValid(S('Subtask'), s));
+    expect(subs[0].scope.relabel_rerun).toBe('full');
+    so101Timeline(Date.now()).forEach((e) => expectValid(S('TimelineEntry'), e));
   });
 });
 

@@ -846,6 +846,68 @@ export function mainSubtasks(now: number): Subtask[] {
   ];
 }
 
+// «so101 夜间批次»: 3 episodes skipped for missing source files (D40), and an adjudication whose
+// relabels were judged again with the first run's full flow (D39), then re-exported.
+export const SO101_TASK = 'task_01HXPZ2K';
+
+/** Episodes of so101 left out because source files are missing (D40). */
+export const SO101_SKIPPED: { episode_index: number; missing: string[] }[] = [
+  { episode_index: 212, missing: ['videos/chunk-000/observation.images.wrist/episode_000212.mp4'] },
+  { episode_index: 587, missing: ['data/chunk-000/episode_000587.parquet'] },
+  {
+    episode_index: 901,
+    missing: ['videos/chunk-000/observation.images.front/episode_000901.mp4', 'videos/chunk-000/observation.images.wrist/episode_000901.mp4'],
+  },
+];
+
+export function so101Subtasks(now: number): Subtask[] {
+  const at = now - 9 * HOUR;
+  return [
+    {
+      id: 'sub_apply1',
+      task_id: SO101_TASK,
+      kind: 'apply_adjudication',
+      scope: { relabel_rerun: 'full' },
+      state: 'succeeded',
+      state_reason: null,
+      progress: null,
+      created_at: at,
+      started_at: at,
+      finished_at: at + 6 * MIN,
+      result_rev: 2,
+    },
+    {
+      id: 'sub_export1',
+      task_id: SO101_TASK,
+      kind: 'reexport',
+      scope: {},
+      state: 'succeeded',
+      state_reason: null,
+      progress: null,
+      created_at: at + 20 * MIN,
+      started_at: at + 20 * MIN,
+      finished_at: at + 31 * MIN,
+      result_rev: null,
+    },
+  ];
+}
+
+export function so101Timeline(now: number): TimelineEntry[] {
+  const t0 = now - 14 * HOUR;
+  const at = now - 9 * HOUR;
+  return [
+    { at: t0, kind: 'created', text: '创建并开始。开始前检查通过。', state: 'queued', subtask_id: null, revision: null },
+    { at: t0 + 2000, kind: 'started', text: '源文件清单固化：选中 1027 条，其中 3 条缺源文件，不参与质检。', state: 'running', subtask_id: null, revision: null },
+    { at: t0 + 3 * HOUR, kind: 'finished', text: '主流程结束：通过 968 · 拒绝 56；另有 3 条缺源文件，未参与质检。', state: 'succeeded', subtask_id: null, revision: 1 },
+    { at: t0 + 3 * HOUR + 1000, kind: 'revision', text: '结果版本 r0001', state: null, subtask_id: null, revision: 1 },
+    { at, kind: 'subtask_started', text: '执行裁决：应用 12 条裁决，其中 4 条改了标，按首轮的完整流程重判任务成败。', state: null, subtask_id: 'sub_apply1', revision: null },
+    { at: at + 6 * MIN, kind: 'subtask_finished', text: '执行裁决结束：4 条改标重判完成。', state: 'succeeded', subtask_id: 'sub_apply1', revision: 2 },
+    { at: at + 6 * MIN + 1000, kind: 'revision', text: '结果版本 r0002：判决更新。', state: null, subtask_id: 'sub_apply1', revision: 2 },
+    { at: at + 20 * MIN, kind: 'subtask_started', text: '重新导出：只处理变动的 episode。', state: null, subtask_id: 'sub_export1', revision: null },
+    { at: at + 31 * MIN, kind: 'subtask_finished', text: '重新导出完成，逐文件核验通过。', state: 'succeeded', subtask_id: 'sub_export1', revision: null },
+  ];
+}
+
 export function mainTimeline(now: number): TimelineEntry[] {
   const t0 = now - 2 * HOUR;
   return [
