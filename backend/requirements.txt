@@ -22,3 +22,4 @@ bcrypt==4.3.0           # UI 鉴权的 htpasswd 多用户模式:核验 bcrypt �
 fastapi==0.141.1        # API Daemon (W4); brings starlette 1.6.0, pydantic 2, anyio
 uvicorn==0.53.0         # python -m daemon / curator-daemon
 jsonschema==4.26.0      # the Daemon validates request bodies against docs/contracts at runtime
+cryptography==50.0.1    # W8: AES-256-GCM sealing of stored secrets

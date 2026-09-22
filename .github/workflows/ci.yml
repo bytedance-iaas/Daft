@@ -41,6 +41,9 @@ jobs:
       - name: Daemon skeleton (W4)
         working-directory: backend
         run: python -m pytest -q -rfE tests/daemon
+      - name: Secrets and resources (W8)
+        working-directory: backend
+        run: python -m pytest -q -rfE tests/secrets
       - name: Incremental re-export (W7)
         working-directory: backend
         # the official lerobot loader cases skip here; the lerobot-loader job runs them

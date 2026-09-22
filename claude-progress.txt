@@ -83,10 +83,16 @@ Current summary:
         所有写接口接受 Idempotency-Key、method_not_allowed、TaskVlm、密钥删除后名称为 null、SSE 带 subtask_id/reason、
         日志顺序与 subtask 筛选、call_kind 与 stage id 放开
       · 在跑：W3 后半、W10 前端、W4 续作（仓储与只读接口跟上 1.1/1.2）、W8 密钥与资源管理（新派，从 bc6b2e644 起）
+      · 合并 W8（bbc6262bb、5f9bc80a0）：daemon/secrets/（AES-GCM 加密存储与可续做的主密钥轮换、访问密钥与模型服务、
+        写探针与预签名、开始前三项检查库、CLI 子进程环境）+ 三组路由；140 条测试，含「埋下密钥后在响应、日志、审计、
+        数据库文件里搜不到」的验收用例；requirements 加 cryptography、CI 加 tests/secrets、console script curator-rotate-master-key。
+        F2.6 保持 not_completed：「拿验证失败的密钥开始任务会被拦」要等 W5 调用检查库。W8 的 10 处契约缺口记入 SUMMARY §七（1.3 待改）；
+        设计 08 跟进（轮换步骤、拉到的模型不逐个试调、子进程环境只放回 TOS_ENDPOINT）
+      · 18:40 前再次因会话额度中断（W4 续作、W3 后半、W10），18:43 用原上下文恢复
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
-  - 批次 1 全部合并；批次 2 进行中（W3 后半、W10、W4 续作、W8），W5 待 W4 续作合并后开
+  - 批次 2：W8 已合并；W3 后半、W10、W4 续作进行中；W5 待 W4 续作合并后开
   - compare 目前只读导出目录；v2 运行目录的读取随 W3 补（行格式已由 C2 冻结）
 
 Next steps:
