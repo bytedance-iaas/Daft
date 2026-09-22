@@ -2,7 +2,7 @@
 
 把任务运行目录里已提交的结果版本读出来，提供六个接口：报告、明细表、单条 episode、性能剖析、裁决队列、提交裁决。
 设计依据：`docs/design/06-delivery-and-report.md` §1、§3、§5、§6，`03-rest-api.md` §6、§7，`07-frontend.md` §5–§6，
-`01-data-model.md` §2.7；决策 D16、D21、D22、D25、D29、D32、D35、D40。契约：C4 `openapi.yaml`（1.4.0）、
+`01-data-model.md` §2.7；决策 D16、D21、D22、D25、D29、D32、D35、D40、D42、D43。契约：C4 `openapi.yaml`（1.5.0）、C1 注册表（1.2 的 `REVIEW_LINES`）、
 C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-manifest`。
 
 ## 文件
@@ -15,7 +15,7 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
 | `tables.py` | 明细表：pyarrow 读 Parquet 的行组，排序只认 C1 `TableSpec.sortable`，游标带结果版本 |
 | `episode.py` / `videos.py` | 单条 episode 的全模块视图；各机位视频从哪里放（片段 → 交付数据集 → 源数据集） |
 | `perf.py` | 性能剖析：全部 / 仅主流程 / 某次子任务 |
-| `catalog.py` | 裁决线目录：有哪些线、`review.json` 的哪种条目问哪条线、在哪个页签、收哪些结论、每个结论意味着什么（C1 1.5 的注册表接进来时只换这一处） |
+| `catalog.py` | 裁决线目录，取自 C1 注册表的 `REVIEW_LINES`（D43）：有哪些线、`review.json` 的哪种条目问哪条线、在哪个页签（`applies_to: reject` 的在复议页签）、算不算待裁（`counts_as_pending`）、收哪些结论及按钮名；v1 各结论的含义（改标、弃用、拿不准、判成败）作为标记叠在上面 |
 | `adjudication.py` | 裁决队列：问题、卡片、状态、计数、逐线校验（`Queue.answerable` 一处）、追加记录、CSV 副本、`summary.pending_adjudication` |
 | `files.py` | 按文件身份（mtime、大小）缓存的 JSON、有界 LRU、把 NaN 之类转成合法 JSON |
 | `../routes/results.py`、`../routes/adjudication.py` | 路由 |
@@ -42,14 +42,16 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
   并去掉该版本提交之后才发出的请求。延迟分桶沿用 v1（次数 = 发起次数，失败 = 补发、重试后仍没拿到结果的调用，
   分位数只算成功的请求，墙钟 = 忙碌区间的并集）。stage 墙钟取自库里的分档进度，合并请求数取自实际调用账；
   外层重试次数没有落盘，`retries` 不给；`container` 是本容器的 cgroup 配额（CLI 与 Daemon 同一个容器）。
-- **裁决队列**：问题就是当前版本 `review.json` 的条目，原样读，不重新推导（C2 1.4、D42）：`label_conflict` → 标注分歧，
+- **裁决队列**：问题就是当前版本 `review.json` 的条目，原样读，不重新推导（C2 1.5、D42、D43）；条目带 `line` 就用它，没有就按 `kind` 查目录：`label_conflict` → 标注分歧，
   `task_verdict` → 判成败，`reject_appeal` → 复议页签（任务成败判定的拒绝，D42 起还有去重剔除的重复项）；目录里没有的种类不问。原始标注、画面描述来自该版本的 `label_audit.json`，
   建议的新标注就是画面描述（v1 采纳的就是它）。答过的问题在后来的版本里不再出现时，从最近一个问过它的版本取回，
   所以「已裁 / 已应用」的卡片一直在，还能改。一条 episode 一张卡片，按 episode 下标排，游标同样带结果版本。
   - 状态：任一问题「整条弃用」→ 已裁（执行后为已应用），压过一切成败结论（规则 1）；否则有「拿不准」→ `unsure`，
     仍算待裁、仍在队列里（规则 3）；否则全部答了 → 已裁 / 已应用；只改了标、还没执行 → 已裁（执行时按新标注重判，规则 4）；其余待裁。
-  - 计数：待裁、已裁只数复议之外的卡片（复议不是必做的事），尚未应用数两个页签都算；这就是 `summary.pending_adjudication`。
-- **提交裁决**：只记录（追加一行，后写者胜），全部合法才写入。逐线校验：每条线只收自己的几种结论；
+  - 计数：待裁、已裁只数有 `counts_as_pending` 线上问题的卡片（复议候选不是必做的事），尚未应用数两个页签都算；这就是 `summary.pending_adjudication`。
+  - 去重剔除的复议问题带 `duplicate_of`（与哪一条重复）。
+- **提交裁决**：只记录（追加一行，后写者胜），全部合法才写入。C4 1.5 的 `line`、`decision` 是开放字符串，
+  由 `Queue.answerable` 一处校验：线必须在目录里、且这条 episode 的卡片上有这条线的问题（v1 的可选成败例外），结论必须是这条线在目录里的结论；
   `new_label` 只给「采纳建议改标」「自行改写标注」，自行改写必须填，采纳时不填就用建议的新标注；
   复议只收当前（或曾经）在复议页签里的条目 —— 也就是只归因于一个可复议模块的拒绝（任务成败判定、D42 起的去重；规则 2）；
   标注上已经「整条弃用」的不再收成败结论；只有标注问题的卡片，改了标之后才收成败结论（v1 的可选成败）。
