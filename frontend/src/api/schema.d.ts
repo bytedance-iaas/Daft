@@ -1,0 +1,3481 @@
+/**
+ * Generated from docs/contracts/openapi.yaml (C4) by `npm run gen:api`. Do not edit by hand.
+ * The contract is the only source of request and response shapes; CI fails when this file is stale.
+ */
+
+export interface paths {
+    "/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List TOS access keys (never returns secrets) */
+        get: operations["listCredentials"];
+        put?: never;
+        /**
+         * Save an access key; verifies identity only (D30, doc 08 §4)
+         * @description Saving never fails because verification failed: the key is stored and marked
+         *     `failed` or `unverified`. Read and write permissions are checked against concrete
+         *     buckets when a task starts.
+         */
+        post: operations["createCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credentials/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Update; a secret left empty stays unchanged */
+        put: operations["updateCredential"];
+        post?: never;
+        /**
+         * Delete (409 credential_in_use while a non-terminal task uses it)
+         * @description Referenced only by finished tasks: requires `confirm=true`. Those tasks keep their
+         *     reports, which then say the key is gone; rebind-credentials gives them another one.
+         */
+        delete: operations["deleteCredential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credentials/{id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify identity again */
+        post: operations["verifyCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vlm-backends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List backends with their models */
+        get: operations["listVlmBackends"];
+        put?: never;
+        /**
+         * Add a backend with its API key; then try GET {endpoint}/models once (D8)
+         * @description Not listing any models is not an error; the user adds model IDs by hand.
+         */
+        post: operations["createVlmBackend"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vlm-backends/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Update; an API key left empty stays unchanged */
+        put: operations["updateVlmBackend"];
+        post?: never;
+        /** Delete with its models and key (409 backend_in_use while a non-terminal task uses it) */
+        delete: operations["deleteVlmBackend"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vlm-backends/{id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Probe the endpoint (GET /models, else a minimal chat call) */
+        post: operations["verifyVlmBackend"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vlm-backends/{id}/refresh-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** List models again; an empty result means "enter them by hand" */
+        post: operations["refreshVlmModels"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vlm-backends/{id}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add a model ID or inference endpoint ID (ep-...), checked with one minimal call */
+        post: operations["addVlmModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vlm-backends/{id}/models/{model_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a model (409 backend_in_use while a non-terminal task uses it) */
+        delete: operations["deleteVlmModel"];
+        options?: never;
+        head?: never;
+        /** Set reasoning effort and parallelism */
+        patch: operations["updateVlmModel"];
+        trace?: never;
+    };
+    "/modules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The module registry (C1); the frontend's module list comes only from here */
+        get: operations["getModules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The overview page in one call - what needs attention, what runs, the last 7 days (D36) */
+        get: operations["getOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Registered datasets, page-number pagination, newest first (D36) */
+        get: operations["listDatasets"];
+        put?: never;
+        /**
+         * Register a dataset - preflight plus the full file listing, both fingerprints kept (D36)
+         * @description Registering the same source + address + region again returns the existing registration
+         *     with 200 instead of creating a second one.
+         */
+        post: operations["createDataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/browse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List datasets under a private TOS prefix or in the HuggingFace cache bucket, to pick one to register */
+        get: operations["browseDatasets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/episodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Episodes for the preview grid; metadata only, no decoding on the server (doc 03 §10)
+         * @description Give `dataset_id`, or `source` + `uri` (+ `region`, `credential`).
+         */
+        get: operations["listDatasetEpisodes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** One registration with its preflight result, recent fingerprint checks and tasks */
+        get: operations["getDataset"];
+        put?: never;
+        post?: never;
+        /** Remove the registration; the data on TOS is untouched. In use by an unfinished task -> 409 dataset_in_use */
+        delete: operations["deleteDataset"];
+        options?: never;
+        head?: never;
+        /** Rename, or change the note */
+        patch: operations["updateDataset"];
+        trace?: never;
+    };
+    "/datasets/{id}/recheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Recompute both fingerprints and compare, nothing else changes; a difference sets check_state=changed */
+        post: operations["recheckDataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/datasets/{id}/repreflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run preflight again and keep the new result and fingerprints; check_state returns to ok */
+        post: operations["repreflightDataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preflight a dataset (metadata only, seconds); the result is kept 30 minutes */
+        post: operations["preflight"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deliveries/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Write and delete one object under the delivery directory with the given key */
+        post: operations["probeDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Task list, page-number pagination (D21), newest first */
+        get: operations["listTasks"];
+        put?: never;
+        /**
+         * Create a task - the requirement's run_modules() (D5)
+         * @description The only way to submit work. The Daemon always plans internally; callers may only give
+         *     upper bounds (D31). With `start_now` the three pre-start checks run first (D30): input
+         *     readable, delivery writable, VLM callable; any failure returns `precheck_failed` with
+         *     a per-check reason and nothing starts.
+         */
+        post: operations["createTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** One configuration, several datasets, one task each (deep link with many datasets) */
+        post: operations["createTasksBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getTask"];
+        put?: never;
+        post?: never;
+        /** Soft-delete the platform record; TOS is untouched (D28); created or terminal only */
+        delete: operations["deleteTask"];
+        options?: never;
+        head?: never;
+        /**
+         * created - any field; after start - only name and note (D20)
+         * @description Other fields after start return task_state_conflict. Concurrent edits are guarded by If-Match.
+         */
+        patch: operations["updateTask"];
+        trace?: never;
+    };
+    "/tasks/{id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["restoreTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/purge-artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete this task's run directory on TOS; the exact path must be echoed back (D28) */
+        post: operations["purgeTaskArtifacts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/rebind-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Give a finished task a new access key after the old one was deleted */
+        post: operations["rebindTaskCredentials"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/actions/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                action: "start" | "pause" | "resume" | "stop";
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * start / pause / resume / stop; illegal transitions return 409 task_state_conflict
+         * @description `start` first re-checks the dataset fingerprints against its registration (D37). On a
+         *     mismatch nothing starts: 409 `source_changed` whose `error.details` is a `SourceChange`;
+         *     after the user confirms, call `POST /tasks/{id}/repreflight`.
+         */
+        post: operations["taskAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/repreflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * After a source_changed at start, run preflight again and start if the task still fits (D37)
+         * @description Refreshes the dataset registration. Compatible (selected modules still available, explicit
+         *     episodes still in range, needed inputs present) -> the task starts as with `start`; otherwise
+         *     it stays `created` and `incompatibilities` says what to change in the form.
+         */
+        post: operations["repreflightTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-run only the error episodes, from the stage they failed in (D25, D33) */
+        post: operations["retryTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/continue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume a stopped or failed task from its checkpoints (not after source_changed) */
+        post: operations["continueTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/reexport": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Incremental re-export of the delivered dataset (also the first export when export=false) */
+        post: operations["reexportTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/subtasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listSubtasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** Execution timeline - main run, subtasks, pauses and resumes, result revisions */
+        get: operations["getTaskTimeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** The execution plan, read only (404 before the task starts) */
+        get: operations["getTaskPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** Full logs, cursor paginated; SSE only carries what is happening now */
+        get: operations["getTaskLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** Token usage by module, call kind, model and subtask; totals use the actual ledger only */
+        get: operations["getTaskUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/report": {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** Report of the current (or given) result revision */
+        get: operations["getReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/report/tables/{table}": {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description a table id declared in the module registry */
+                table: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * One slice of a detail table, read from Parquet by the Daemon (doc 03 §6)
+         * @description The cursor carries the revision; if the revision changed since the cursor was issued the
+         *     server returns result_changed and the client starts again from the first page.
+         */
+        get: operations["getReportTable"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}": {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                index: number;
+            };
+            cookie?: never;
+        };
+        /** One episode across all modules (the v1 trajectory page) */
+        get: operations["getEpisode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/perf": {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** Performance profile - all calls, main run only, or one subtask */
+        get: operations["getPerf"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/adjudication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** The adjudication queue, one card per episode, grouped by source module */
+        get: operations["listAdjudication"];
+        put?: never;
+        /** Record decisions (append only, last one wins, nothing is executed) */
+        post: operations["submitAdjudication"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/adjudication/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute the recorded decisions as a subtask (D10); never exports (D9) */
+        post: operations["applyAdjudication"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/sign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A presigned TOS URL for a video or evidence frame (D16); browsers fetch it directly */
+        get: operations["signMedia"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/tasks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Server-sent events for one task (doc 03 §5)
+         * @description Events: `state`, `progress`, `log`, `usage`, `done`, `reset`; data payloads are the
+         *     Sse* schemas. Every event has `id: <epoch>-<seq>`. Reconnect with `Last-Event-ID`: same
+         *     epoch and seq still buffered (last 200) resumes; otherwise the server sends `reset`
+         *     and the client reloads GET /api/v1/tasks/{id}. usage and progress carry cumulative
+         *     values. Progress is throttled to 2/s and logs to 20/s; the full log is in /logs.
+         *     Clients must keep working without SSE by polling every 5 s.
+         */
+        get: operations["taskEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/healthz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Liveness; no authentication, no dependency checks */
+        get: operations["healthz"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/readyz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Readiness; no authentication (doc 09 §2.2) */
+        get: operations["readyz"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
+export type webhooks = Record<string, never>;
+export interface components {
+    schemas: {
+        Error: {
+            error: {
+                /** @enum {unknown} */
+                code: "validation_failed" | "unauthorized" | "not_found" | "task_state_conflict" | "subtask_active" | "credential_in_use" | "backend_in_use" | "dataset_in_use" | "name_taken" | "preflight_expired" | "precheck_failed" | "source_changed" | "result_changed" | "confirm_path_mismatch" | "model_check_failed" | "idempotency_conflict" | "precondition_failed" | "internal";
+                /** @description Chinese, shown to people as is */
+                message: string;
+                details?: Record<string, unknown>;
+            };
+        };
+        Link: {
+            /** @enum {unknown} */
+            rel: "task" | "report" | "adjudication" | "plan" | "logs" | "credentials";
+            title: string;
+            url: string;
+            /**
+             * @description false when publicBaseUrl is not configured
+             * @default true
+             */
+            absolute?: boolean;
+        };
+        Links: components["schemas"]["Link"][];
+        CursorPage: {
+            items: unknown[];
+            next_cursor: string | null;
+            has_more: boolean;
+        };
+        Region: string;
+        ModuleId: string;
+        /**
+         * @description Ark's native values; null = the field is not sent (the model's default, and the parity setting)
+         * @enum {unknown}
+         */
+        ReasoningEffort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
+        /** @enum {unknown} */
+        VerifyState: "unverified" | "ok" | "failed";
+        VerifyResult: {
+            verify_state: components["schemas"]["VerifyState"];
+            last_verified_at: number;
+            error?: string | null;
+        };
+        ProbeResult: {
+            ok: boolean;
+            error?: {
+                code?: string;
+                message?: string;
+            };
+        };
+        Credential: {
+            id: string;
+            name: string;
+            /** @constant */
+            kind: "tos";
+            meta: {
+                region: components["schemas"]["Region"];
+                endpoint?: string;
+                /** @description HeadBucket target when the key cannot ListBuckets */
+                test_bucket?: string;
+                /** @description last 4 characters only */
+                access_key_id_hint?: string;
+            };
+            verify_state: components["schemas"]["VerifyState"];
+            last_verified_at?: number | null;
+            last_verify_error?: string | null;
+            references?: {
+                active_tasks?: number;
+                historical_tasks?: number;
+            };
+            created_at: number;
+            updated_at: number;
+        };
+        CredentialCreate: {
+            name: string;
+            access_key_id: string;
+            secret_access_key: string;
+            region: components["schemas"]["Region"];
+            endpoint?: string;
+            test_bucket?: string;
+        };
+        CredentialUpdate: {
+            name?: string;
+            access_key_id?: string;
+            /** @description empty = unchanged */
+            secret_access_key?: string;
+            region?: components["schemas"]["Region"];
+            endpoint?: string;
+            test_bucket?: string;
+        };
+        VlmModel: {
+            id: string;
+            /** @description Model ID or inference endpoint ID (ep-...) */
+            model_name: string;
+            reasoning_effort: components["schemas"]["ReasoningEffort"];
+            /** @description null = the backend's */
+            max_concurrency: number | null;
+            capabilities: {
+                vision?: boolean | null;
+                /** @description effective levels to offer (from the site's mapping table; all 7 when unknown) */
+                reasoning_effort_levels?: ("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max")[];
+            };
+            /** @enum {unknown} */
+            source: "listed" | "manual";
+        };
+        VlmModelCreate: {
+            model_name: string;
+            reasoning_effort?: components["schemas"]["ReasoningEffort"];
+            max_concurrency?: number | null;
+        };
+        VlmModelPatch: {
+            reasoning_effort?: components["schemas"]["ReasoningEffort"];
+            max_concurrency?: number | null;
+        };
+        VlmBackend: {
+            id: string;
+            name: string;
+            /** @enum {unknown} */
+            kind: "ark" | "custom";
+            endpoint: string;
+            /** @default 64 */
+            max_concurrency: number;
+            has_api_key: boolean;
+            verify_state: components["schemas"]["VerifyState"];
+            last_verified_at?: number | null;
+            last_verify_error?: string | null;
+            models: components["schemas"]["VlmModel"][];
+            /** @description whether GET /models worked last time */
+            models_listed?: boolean;
+            created_at: number;
+            updated_at: number;
+        };
+        VlmBackendCreate: {
+            name: string;
+            /** @enum {unknown} */
+            kind: "ark" | "custom";
+            endpoint: string;
+            /** @description required for ark */
+            api_key?: string;
+            max_concurrency?: number;
+        };
+        VlmBackendUpdate: {
+            name?: string;
+            endpoint?: string;
+            /** @description empty = unchanged */
+            api_key?: string;
+            max_concurrency?: number;
+        };
+        ModuleRegistry: {
+            registry_version: string;
+            stages: ("numeric" | "frame" | "vlm" | "post_verdict")[];
+            modules: {
+                id: components["schemas"]["ModuleId"];
+                name_zh: string;
+                summary_zh: string;
+                /** @enum {unknown} */
+                level: "episode" | "dataset";
+                /** @enum {unknown} */
+                gate: "hard" | "soft" | "dedup" | "none";
+                needs: ("timestamps" | "action" | "state" | "video" | "embodiment_profile" | "vlm" | "raw_bytes")[];
+                /** @enum {unknown} */
+                stage: "numeric" | "frame" | "vlm" | "post_verdict";
+                depends_on: ("numeric_gates" | "frame_gates" | "autolabel" | "funnel_verdict" | "dedup")[];
+                produces_adjudication: boolean;
+                param_schema: Record<string, unknown>;
+                tables: {
+                    id: string;
+                    title_zh: string;
+                    sortable: string[];
+                    default_sort: string;
+                }[];
+                mergeable: boolean;
+            }[];
+        };
+        BrowsedDataset: {
+            name: string;
+            uri: string;
+            /** @enum {unknown} */
+            format_hint?: "lerobot_v2" | "lerobot_v3" | "rrd" | "unknown";
+            episodes?: number | null;
+        };
+        /** @enum {unknown} */
+        DatasetFormat: "lerobot_v2" | "lerobot_v3" | "unsupported";
+        DatasetItem: {
+            id: string;
+            name: string;
+            /** @enum {unknown} */
+            source: "tos" | "public" | "local";
+            uri: string;
+            region: string | null;
+            format: components["schemas"]["DatasetFormat"];
+            episode_count: number | null;
+            robot_type: string | null;
+            /**
+             * @description changed: the fingerprints differ from the kept ones; preflight again
+             * @enum {unknown}
+             */
+            check_state: "ok" | "changed";
+            checked_at: number | null;
+            preflighted_at: number;
+            created_at: number;
+            last_task: null | components["schemas"]["TaskRef"];
+        };
+        DatasetDetail: components["schemas"]["DatasetItem"] & {
+            note: string | null;
+            /** @description access key name; null for the public bucket, or once the key is deleted */
+            credential: string | null;
+            preflight: components["schemas"]["preflight.schema"];
+            meta_fingerprint: string;
+            /** @description summary of the file listing kept at the last preflight (source-manifest summary) */
+            listing: {
+                objects: number;
+                bytes: number;
+                digest: string;
+            };
+            /** @description newest first */
+            checks: components["schemas"]["DatasetCheck"][];
+            /** @description newest first */
+            tasks: components["schemas"]["TaskRef"][];
+            links: components["schemas"]["Links"];
+        };
+        DatasetCreate: {
+            input: components["schemas"]["InputRef"];
+            /** @description defaults to the last path segment */
+            name?: string;
+            note?: string;
+        };
+        DatasetPatch: {
+            name?: string;
+            note?: string | null;
+        };
+        DatasetCheck: {
+            at: number;
+            /** @enum {unknown} */
+            trigger: "add" | "recheck" | "task_start" | "repreflight";
+            /** @enum {unknown} */
+            result: "same" | "changed";
+            change: null | components["schemas"]["SourceChange"];
+        };
+        /** @description what differs from the fingerprints kept at registration or at the last preflight (D37) */
+        SourceChange: {
+            meta_changed: boolean;
+            added: number;
+            removed: number;
+            modified: number;
+            /** @description a few affected keys, added ones first */
+            sample_keys: string[];
+            preflighted_at: number;
+        };
+        TaskRef: {
+            id: string;
+            name: string;
+            state: components["schemas"]["TaskState"];
+            created_at: number;
+        };
+        RepreflightResult: {
+            compatible: boolean;
+            incompatibilities: {
+                /** @description form field to fix, e.g. modules, episodes, embodiment_id */
+                field: string;
+                module?: components["schemas"]["ModuleId"];
+                reason_code: string;
+                /** @description Chinese, shown as is */
+                reason: string;
+            }[];
+            task: components["schemas"]["Task"];
+        };
+        Overview: {
+            todo: {
+                /** @description completed_with_errors, can be retried */
+                error_tasks: number;
+                adjudication: {
+                    tasks: number;
+                    episodes: number;
+                };
+                /** @description tasks whose delivered dataset is stale or was never exported */
+                delivery_pending: number;
+                datasets_changed: number;
+                credentials_failed: number;
+                backends_failed: number;
+            };
+            running: {
+                running: number;
+                queued: number;
+                paused: number;
+                active: {
+                    task: components["schemas"]["TaskRef"];
+                    stage: string | null;
+                    done: number;
+                    total: number;
+                }[];
+            };
+            recent: {
+                /** @constant */
+                days: 7;
+                tasks_finished: number;
+                episodes_checked: number;
+                pass_rate: number | null;
+                /** @description actual-ledger totals only, oldest day first */
+                tokens_per_day: {
+                    date: string;
+                    tokens: number;
+                }[];
+            };
+            datasets: {
+                total: number;
+                changed: number;
+            };
+            generated_at: number;
+        };
+        EpisodePreview: {
+            index: number;
+            length_s: number | null;
+            task: string;
+            /** @enum {unknown} */
+            task_source: "原始标注" | "无";
+            cameras: {
+                name: string;
+                /** @description presigned, or anonymous for the public bucket */
+                url: string;
+                from_ts?: number;
+                to_ts?: number;
+            }[];
+        };
+        InputRef: {
+            /** @enum {unknown} */
+            source: "tos" | "public" | "local";
+            uri: string;
+            region?: components["schemas"]["Region"];
+            /** @description access key name; not for source=public */
+            credential?: string;
+        };
+        /** @description a registered dataset (D36), or an input given in full */
+        InputSpec: {
+            dataset_id: string;
+        } | components["schemas"]["InputRef"];
+        OutputRef: {
+            uri: string;
+            region?: components["schemas"]["Region"];
+            credential: string;
+        };
+        PreflightRequest: {
+            input: components["schemas"]["InputSpec"];
+            vlm_backend?: string;
+            embodiment_id?: string;
+        };
+        PreflightResponse: {
+            preflight_id: string;
+            expires_at: number;
+            result: components["schemas"]["preflight.schema"];
+        };
+        DeliveryProbeRequest: {
+            uri: string;
+            region?: components["schemas"]["Region"];
+            credential: string;
+        };
+        /** @enum {unknown} */
+        TaskState: "created" | "queued" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "succeeded" | "completed_with_errors" | "failed";
+        EpisodeSelector: {
+            /** @constant */
+            mode: "all";
+        } | {
+            /** @constant */
+            mode: "head";
+            n: number;
+        } | {
+            /** @constant */
+            mode: "explicit";
+            /** @description 3,10-12 / @file is CLI only; validated and expanded on the server */
+            expr: string;
+            readonly indices?: number[];
+        };
+        ModuleChoice: components["schemas"]["ModuleId"] | {
+            id: components["schemas"]["ModuleId"];
+            /** @description validated against the module's param_schema */
+            params?: Record<string, unknown>;
+        };
+        VlmChoice: {
+            backend: string;
+            model: string;
+            reasoning_effort?: components["schemas"]["ReasoningEffort"];
+        };
+        /** @description task-level parameters (doc 03 §3.1); concurrency values are upper bounds only (D31) */
+        TaskParams: {
+            /** @default true */
+            start_now?: boolean;
+            /** @default true */
+            export?: boolean;
+            /** @default 3 */
+            vlm_retry?: number;
+            /** @default true */
+            vlm_hedge?: boolean;
+            vlm_timeouts_s?: {
+                /** @default 60 */
+                probe?: number;
+                /** @default 60 */
+                endstate?: number;
+                /** @default 60 */
+                arbitration?: number;
+                /** @default 60 */
+                caption?: number;
+                /** @default 120 */
+                llm?: number;
+            };
+            /** @default false */
+            clips?: boolean;
+            limits?: {
+                cpu_concurrency?: number;
+                vlm_parallelism?: number;
+            };
+        };
+        TaskCreate: {
+            name: string;
+            note?: string;
+            input: components["schemas"]["InputSpec"];
+            output: components["schemas"]["OutputRef"];
+            preflight_id: string;
+            episodes: components["schemas"]["EpisodeSelector"];
+            modules: components["schemas"]["ModuleChoice"][];
+            embodiment_id?: string;
+            vlm?: components["schemas"]["VlmChoice"];
+            params?: components["schemas"]["TaskParams"];
+        };
+        TaskBatchCreate: {
+            items: {
+                name: string;
+                input: components["schemas"]["InputSpec"];
+                output: components["schemas"]["OutputRef"];
+                preflight_id: string;
+            }[];
+            shared: {
+                note?: string;
+                episodes: components["schemas"]["EpisodeSelector"];
+                modules: components["schemas"]["ModuleChoice"][];
+                embodiment_id?: string;
+                vlm?: components["schemas"]["VlmChoice"];
+                params?: components["schemas"]["TaskParams"];
+            };
+        };
+        TaskCreated: {
+            id: string;
+            state: components["schemas"]["TaskState"];
+            created_at: number;
+            warnings: string[];
+            links: components["schemas"]["Links"];
+        };
+        /** @description after start only name and note are accepted */
+        TaskPatch: {
+            name?: string;
+            note?: string;
+            input?: components["schemas"]["InputSpec"];
+            output?: components["schemas"]["OutputRef"];
+            preflight_id?: string;
+            episodes?: components["schemas"]["EpisodeSelector"];
+            modules?: components["schemas"]["ModuleChoice"][];
+            embodiment_id?: string | null;
+            vlm?: components["schemas"]["VlmChoice"];
+            params?: components["schemas"]["TaskParams"];
+        };
+        StageProgress: {
+            /** @enum {unknown} */
+            id: "autolabel" | "numeric" | "frame" | "vlm" | "verdict" | "dedup" | "profile" | "final" | "export" | "report" | "verify";
+            /** @enum {unknown} */
+            state: "pending" | "running" | "succeeded" | "completed_with_errors" | "failed" | "skipped";
+            done: number;
+            total: number;
+            elapsed_s?: number | null;
+            eta_s?: number | null;
+            /** @description e.g. why total dropped from 50 to 49 */
+            note?: string;
+        };
+        ModuleState: {
+            id: components["schemas"]["ModuleId"];
+            name: string;
+            selected: boolean;
+            /** @enum {unknown} */
+            availability: "available" | "needs_input" | "unsupported";
+            unavailable_reason?: string | null;
+            /** @enum {unknown} */
+            state: "pending" | "running" | "succeeded" | "completed_with_errors" | "failed" | "skipped" | "stale";
+            episodes_total: number;
+            episodes_error: number;
+            elapsed_s?: number | null;
+            error?: string | null;
+        };
+        Summary: {
+            total: number;
+            passed: number;
+            rejected: number;
+            held: number;
+            review: number;
+            pass_rate: number | null;
+        };
+        UsageTotals: {
+            prompt_tokens: number;
+            completion_tokens: number;
+            reasoning_tokens: number;
+            cached_tokens: number;
+            requests: number;
+            requests_unknown_usage: number;
+        };
+        TaskListItem: {
+            id: string;
+            name: string;
+            state: components["schemas"]["TaskState"];
+            /** @enum {unknown} */
+            pause_reason?: "user" | "system" | null;
+            dataset: string;
+            dataset_id?: string | null;
+            created_at: number;
+            progress: {
+                stages: components["schemas"]["StageProgress"][];
+            };
+            summary: null | components["schemas"]["Summary"];
+            pending_adjudication: number;
+            delivery_stale: boolean;
+            active_subtask?: string | null;
+            /** @description selected modules, registry order */
+            modules: components["schemas"]["ModuleId"][];
+            /** @description selected modules per ModuleState state */
+            module_counts: {
+                [key: string]: number;
+            };
+            usage: components["schemas"]["UsageTotals"];
+            deleted_at?: number | null;
+        };
+        Task: {
+            id: string;
+            name: string;
+            note?: string | null;
+            state: components["schemas"]["TaskState"];
+            state_reason?: string | null;
+            /** @enum {unknown} */
+            pause_reason?: "user" | "system" | null;
+            input: components["schemas"]["InputRef"];
+            /** @description the registered dataset (D36) */
+            dataset_id?: string | null;
+            output: components["schemas"]["OutputRef"];
+            run_id?: string | null;
+            episodes: components["schemas"]["EpisodeSelector"];
+            embodiment_id?: string | null;
+            vlm?: null | (components["schemas"]["VlmChoice"] & {
+                /** @description effective settings frozen at start (P17) */
+                snapshot?: Record<string, unknown> | null;
+            });
+            params: components["schemas"]["TaskParams"];
+            /** @description source manifest summary frozen at start (D27) */
+            source?: {
+                objects?: number;
+                bytes?: number;
+                digest?: string;
+            } | null;
+            progress: {
+                stages: components["schemas"]["StageProgress"][];
+            };
+            modules: components["schemas"]["ModuleState"][];
+            summary?: null | components["schemas"]["Summary"];
+            result_rev: number;
+            usage: components["schemas"]["UsageTotals"];
+            pending_adjudication: number;
+            delivery_stale: boolean;
+            active_subtask?: null | components["schemas"]["Subtask"];
+            created_at: number;
+            updated_at: number;
+            started_at?: number | null;
+            finished_at?: number | null;
+            deleted_at?: number | null;
+            links: components["schemas"]["Links"];
+        };
+        Subtask: {
+            id: string;
+            task_id: string;
+            /** @enum {unknown} */
+            kind: "retry" | "resume" | "apply_adjudication" | "reexport";
+            scope: {
+                modules?: components["schemas"]["ModuleId"][];
+                /** @enum {unknown} */
+                episodes?: "errors" | "all";
+            };
+            state: components["schemas"]["TaskState"];
+            state_reason?: string | null;
+            progress?: Record<string, unknown> | null;
+            created_at: number;
+            started_at?: number | null;
+            finished_at?: number | null;
+            /** @description the revision this subtask produced */
+            result_rev?: number | null;
+        };
+        SubtaskCreated: {
+            subtask: components["schemas"]["Subtask"];
+            links: components["schemas"]["Links"];
+        };
+        TimelineEntry: {
+            at: number;
+            /** @enum {unknown} */
+            kind: "created" | "started" | "system_pause" | "system_resume" | "user_pause" | "user_resume" | "stopped" | "failed" | "finished" | "subtask_started" | "subtask_finished" | "revision";
+            subtask_id?: string | null;
+            revision?: number | null;
+            state?: null | components["schemas"]["TaskState"];
+            text: string;
+        };
+        LogLine: {
+            ts: number;
+            stage: string;
+            subtask_id?: string | null;
+            /** @enum {unknown} */
+            level: "error" | "warn" | "info" | "debug";
+            msg: string;
+            episode_index?: number | null;
+        };
+        UsageRow: {
+            /** @description empty = main run */
+            subtask_id: string;
+            module_id: string;
+            /** @enum {unknown} */
+            call_kind: "probe" | "endstate" | "arbitration" | "caption" | "llm" | "merged";
+            model_name: string;
+            prompt_tokens: number;
+            completion_tokens: number;
+            reasoning_tokens: number;
+            cached_tokens: number;
+            requests: number;
+            requests_unknown_usage: number;
+        };
+        /** @description totals sum the actual ledger only; attributed splits merged requests across modules and must never be added to it */
+        UsageReport: {
+            totals: components["schemas"]["UsageTotals"];
+            actual: components["schemas"]["UsageRow"][];
+            attributed: components["schemas"]["UsageRow"][];
+        };
+        EpisodeView: {
+            episode_index: number;
+            revision: number;
+            /** @enum {unknown} */
+            list: "passed" | "reject" | "held";
+            reasons?: Record<string, unknown>[];
+            review?: Record<string, unknown>[];
+            task_text?: {
+                text?: string;
+                source?: string;
+            };
+            /** @description module id -> result record (cli/result-record.schema.json) */
+            modules: {
+                [key: string]: components["schemas"]["result-record.schema"];
+            };
+            evidence?: {
+                module: string;
+                /** @description sign with scope=delivery */
+                path: string;
+                kind?: string;
+            }[];
+            videos: {
+                camera: string;
+                /** @enum {unknown} */
+                scope: "delivery" | "input";
+                /** @enum {unknown} */
+                origin?: "clip" | "delivery_dataset" | "source_dataset";
+                path: string;
+                from_ts?: number;
+                to_ts?: number;
+            }[];
+        };
+        Perf: {
+            revision: number;
+            /** @enum {unknown} */
+            scope: "all" | "main" | "subtask";
+            subtask_id?: string | null;
+            /** @description model service used (v1 perf_backend) */
+            backend?: Record<string, unknown>;
+            /** @description CPU / memory quota (v1 perf_env) */
+            container?: Record<string, unknown>;
+            latency: {
+                /** @enum {unknown} */
+                call_kind: "probe" | "endstate" | "arbitration" | "caption" | "llm" | "merged";
+                count: number;
+                failed?: number;
+                hedged?: number;
+                p50_s: number;
+                p90_s: number;
+                p99_s: number;
+                /** @description first sent to last returned - never count x mean */
+                wall_s: number;
+            }[];
+            effective_concurrency?: number | null;
+            stages: {
+                id: string;
+                wall_s: number;
+                share?: number;
+            }[];
+            retries?: {
+                outer_attempts?: number;
+                rescued?: number;
+            };
+            merge?: {
+                requests?: number;
+                estimated_unmerged?: number;
+            };
+            /** @description D26 */
+            redone_after_interruption?: number;
+        };
+        AdjudicationQuestion: {
+            /** @enum {unknown} */
+            line: "label" | "task_verdict" | "reject_appeal";
+            source_module: components["schemas"]["ModuleId"];
+            reason: string;
+            annotation?: string | null;
+            caption?: string | null;
+            /** @description suggested new label */
+            suggestion?: string | null;
+            priority?: string | null;
+            latest_decision?: null | components["schemas"]["Decision"];
+        };
+        AdjudicationCard: {
+            episode_index: number;
+            /** @enum {unknown} */
+            status: "pending" | "decided" | "unsure" | "applied";
+            questions: components["schemas"]["AdjudicationQuestion"][];
+        };
+        AdjudicationCounts: {
+            decided: number;
+            pending: number;
+            unapplied: number;
+        };
+        DecisionInput: {
+            episode_index: number;
+            /** @enum {unknown} */
+            line: "label" | "task_verdict" | "reject_appeal";
+            /** @enum {unknown} */
+            decision: "adopt_suggestion" | "custom_label" | "keep_label" | "success" | "failure" | "restore" | "keep_rejected" | "unsure" | "discard";
+            new_label?: string | null;
+            note?: string | null;
+        };
+        Decision: components["schemas"]["DecisionInput"] & {
+            id: number;
+            decided_by: string;
+            decided_at: number;
+            applied: boolean;
+        };
+        SignedUrl: {
+            url: string;
+            expires_at: number;
+            /** @description v3 sources: play url#t=from,to */
+            from_ts?: number;
+            to_ts?: number;
+        };
+        Readiness: {
+            /** @enum {unknown} */
+            status: "ok" | "not_ready";
+            checks: {
+                db_writable: boolean;
+                master_key: boolean;
+                workdir_writable: boolean;
+                scratch_writable: boolean;
+                reconciled: boolean;
+            };
+        };
+        SseState: {
+            state: components["schemas"]["TaskState"];
+            /** @enum {unknown} */
+            pause_reason?: "user" | "system" | null;
+            at: number;
+        };
+        SseProgress: components["schemas"]["StageProgress"];
+        SseLog: {
+            stage: string;
+            /** @enum {unknown} */
+            level: "error" | "warn" | "info" | "debug";
+            msg: string;
+        };
+        SseUsage: components["schemas"]["UsageTotals"];
+        SseDone: {
+            state: components["schemas"]["TaskState"];
+            failed_modules?: components["schemas"]["ModuleId"][];
+        };
+        module_id: string;
+        /** @constant */
+        schema_version: "1.0";
+        module_availability: {
+            id: components["schemas"]["module_id"];
+            /** @enum {unknown} */
+            availability: "available" | "needs_input" | "unsupported";
+            /** @description English, for the terminal and logs; UIs render reason_code instead */
+            reason?: string;
+            /** @description Stable reason for UIs to translate. Known codes: format_unsupported {detected}, metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing. New modules may add codes; a UI that does not know one shows reason. */
+            reason_code?: string;
+            /** @description parameters of reason_code, listed with each code */
+            reason_args?: Record<string, unknown>;
+            input_hint?: {
+                /** @enum {unknown} */
+                field: "embodiment_id" | "vlm";
+                options?: string[];
+            };
+            notes?: string[];
+        } & (unknown & unknown);
+        digest: string;
+        /**
+         * curation preflight --json (schema 1.0)
+         * @description Design doc 02, section 3.1; availability rules in doc 05, section 4. Reads metadata only.
+         */
+        "preflight.schema": {
+            schema_version: components["schemas"]["schema_version"];
+            format: {
+                /** @enum {unknown} */
+                kind: "lerobot" | "mcap" | "lancedb" | "rrd" | "unknown";
+                /** @enum {unknown} */
+                version: "v2" | "v3" | null;
+                /** @description false => every module is unsupported */
+                supported: boolean;
+                detail: string;
+            };
+            /** @description info.json problems, shown to the user verbatim; non-empty => supported=false */
+            validation: string[];
+            dataset: null | {
+                /** @description episodes are 0 .. count-1 */
+                episode_count: number;
+                /** @description short camera names: the video feature key without the observation.images. prefix */
+                cameras: string[];
+                fps: number | null;
+                robot_type: string | null;
+                total_frames: number | null;
+                labels: {
+                    with_task: number;
+                    without_task: number;
+                };
+                profile: null | {
+                    matched: string;
+                    by: string;
+                };
+            };
+            modules: components["schemas"]["module_availability"][];
+            /** @description the listing fingerprint (source-manifest summary.digest) computed over the metadata objects only */
+            meta_fingerprint: components["schemas"]["digest"];
+            warnings: string[];
+        };
+        module_list: components["schemas"]["module_id"][];
+        /** @description which episode set a stage consumes */
+        episodes_ref: string;
+        /** @description Concurrency gates of a stage. The eight named ones are v1's; a new module may declare its own, named like a module id. */
+        gates: {
+            episode?: number;
+            probe?: number;
+            endstate?: number;
+            arbitration?: number;
+            guard_caption?: number;
+            caption?: number;
+            llm?: number;
+            audit?: number;
+        } & {
+            [key: string]: number;
+        };
+        merge: {
+            /** @enum {unknown} */
+            strategy: "none" | "per_episode_multi_module";
+            groups: {
+                modules: components["schemas"]["module_list"];
+                frame_policy: string;
+            }[];
+        };
+        limit: {
+            value: number;
+            /** @enum {unknown} */
+            bound_by: "task" | "model" | "backend" | "site" | "planner" | "running_tasks";
+        };
+        stage: {
+            /** @description v1's stages are autolabel, numeric, frame, vlm, verdict, dedup, profile, final; stages of new modules follow the same pattern */
+            id: string;
+            /** @enum {unknown} */
+            kind: "cpu" | "vlm" | "aggregate";
+            /** @enum {unknown} */
+            command?: "autolabel" | "check" | "aggregate";
+            modules?: components["schemas"]["module_list"];
+            episodes?: components["schemas"]["episodes_ref"];
+            concurrency?: number;
+            hard_gates?: components["schemas"]["module_list"];
+            gates?: components["schemas"]["gates"];
+            merge?: components["schemas"]["merge"];
+            /** @enum {unknown} */
+            phase?: "funnel" | "final";
+        } & (unknown & unknown);
+        /**
+         * curation plan --json / plan.json (schema 1.0)
+         * @description The execution plan the planner derives (design doc 04, section 3). It is data: the Daemon stores it with the task, schedules by it and serves it read-only. Callers can only lower the limits it is derived from (D31).
+         */
+        "plan.schema": {
+            schema_version: components["schemas"]["schema_version"];
+            /** @description the effective N the VLM gates are derived from */
+            vlm_parallelism: number;
+            /** @description The upper bounds the plan honoured, and where each came from. */
+            limits: {
+                cpu_concurrency: components["schemas"]["limit"];
+                vlm_parallelism: components["schemas"]["limit"];
+            };
+            stages: components["schemas"]["stage"][];
+            estimates: {
+                vlm_requests: number;
+                wall_clock_s: number;
+                notes: string[];
+            };
+        };
+        revision: number;
+        token_usage: {
+            prompt: number;
+            completion: number;
+            reasoning: number;
+            cached: number;
+            requests: number;
+            requests_unknown_usage: number;
+        };
+        module_section: {
+            id: components["schemas"]["module_id"];
+            /** @enum {unknown} */
+            state: "succeeded" | "completed_with_errors" | "failed";
+            /** @enum {unknown} */
+            gate: "hard" | "soft" | "dedup" | "none";
+            summary: Record<string, unknown>;
+            tables: {
+                id: string;
+                rows: number;
+                /** @description tables/<id>.parquet, sorted by episode_index */
+                file: string;
+            }[];
+            adjudication: null | {
+                pending: number;
+            };
+            episodes_error?: number;
+            error?: string;
+            /** @description code / prompt hashes when the result came from a subtask (design doc 06, section 2) */
+            fingerprints?: Record<string, unknown>;
+        } & unknown;
+        /**
+         * revisions/r<NNNN>/report.json (schema 1.0)
+         * @description Report structure (design doc 06, section 6). modules[] follows the selected modules one to one, in registry order; a module that failed keeps its section with the error. URLs are not part of the file: the REST layer adds links.
+         */
+        "report.schema": {
+            schema_version: components["schemas"]["schema_version"];
+            revision: components["schemas"]["revision"];
+            overview: {
+                dataset: Record<string, unknown>;
+                run: Record<string, unknown>;
+                counts: {
+                    total: number;
+                    passed: number;
+                    rejected: number;
+                    held: number;
+                    review: number;
+                };
+                /** @description passed / total; held is neither */
+                pass_rate: number | null;
+                reject_reasons: {
+                    module: components["schemas"]["module_id"];
+                    count: number;
+                }[];
+                token_usage: components["schemas"]["token_usage"];
+                duration_s: number | null;
+            };
+            modules: components["schemas"]["module_section"][];
+            skipped_modules: {
+                id: components["schemas"]["module_id"];
+                reason: string;
+            }[];
+            /** @description data package integrity: format, missing fields, unlabeled count, semantics profile / action semantics preflight */
+            integrity: Record<string, unknown>;
+            /** @description summary; the full profile is perf.json in the same revision */
+            perf: Record<string, unknown>;
+        };
+        /**
+         * Per-episode check result record (schema 1.0)
+         * @description One line of checks/<module>/results.jsonl (v2) and of records/<module>.jsonl in a parity dump of v1. Frozen early by W0 because the parity tool consumes it; W2 adopts it as part of C2.
+         */
+        "result-record.schema": {
+            episode_index: number;
+            module: string;
+            /**
+             * @description pass/fail: hard gate passed=True/False; abstain: passed=null and no score; scored: soft module with a score (never votes); error: the module could not judge this episode properly (D33).
+             * @enum {unknown}
+             */
+            verdict: "pass" | "fail" | "abstain" | "scored" | "error";
+            passed: boolean | null;
+            score: number | null;
+            /** @enum {unknown} */
+            gate: "hard" | "soft" | "dedup" | "none";
+            /** @description Module-specific, field names kept from v1. */
+            details: Record<string, unknown>;
+            evidence: string[];
+            elapsed_s: number | null;
+            error: null | {
+                /** @constant */
+                kind: "execution";
+                incidents: {
+                    step: string;
+                    cause?: string;
+                    camera?: string;
+                    call_kind?: string;
+                    attempts?: number;
+                }[];
+            };
+        } & unknown;
+    };
+    responses: {
+        /**
+         * @description 400 validation_failed, 401 unauthorized, 404 not_found, 409 task_state_conflict /
+         *     subtask_active / credential_in_use / backend_in_use / name_taken / preflight_expired /
+         *     source_changed / result_changed / idempotency_conflict, 412 precondition_failed,
+         *     422 precheck_failed / confirm_path_mismatch / model_check_failed, 500 internal
+         */
+        Error: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+    };
+    parameters: {
+        PathId: string;
+        /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+        IdempotencyKey: string;
+        /** @description opaque, from next_cursor */
+        Cursor: string;
+        Limit: number;
+        /** @description result revision; omitted = the current one (task.result_rev) */
+        Rev: number;
+        Source: "tos" | "public" | "local";
+        Region: components["schemas"]["Region"];
+        /** @description access key name (not needed for source=public) */
+        CredentialName: string;
+    };
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
+}
+export interface operations {
+    listCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description all access keys of the owner */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Credential"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialCreate"];
+            };
+        };
+        responses: {
+            /** @description saved */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Credential"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialUpdate"];
+            };
+        };
+        responses: {
+            /** @description updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Credential"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteCredential: {
+        parameters: {
+            query?: {
+                confirm?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    verifyCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description verification result (also stored on the key) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listVlmBackends: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description backends */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["VlmBackend"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createVlmBackend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VlmBackendCreate"];
+            };
+        };
+        responses: {
+            /** @description saved */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VlmBackend"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateVlmBackend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VlmBackendUpdate"];
+            };
+        };
+        responses: {
+            /** @description updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VlmBackend"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteVlmBackend: {
+        parameters: {
+            query?: {
+                confirm?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    verifyVlmBackend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    refreshVlmModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description false when GET /models is not available */
+                        listed: boolean;
+                        models: components["schemas"]["VlmModel"][];
+                        note?: string;
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    addVlmModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VlmModelCreate"];
+            };
+        };
+        responses: {
+            /** @description added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VlmModel"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteVlmModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateVlmModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VlmModelPatch"];
+            };
+        };
+        responses: {
+            /** @description updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VlmModel"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getModules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description registry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleRegistry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description overview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Overview"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listDatasets: {
+        parameters: {
+            query?: {
+                page?: number;
+                page_size?: 10 | 20 | 50 | 100;
+                /** @description search by name or address */
+                q?: string;
+                format?: components["schemas"]["DatasetFormat"];
+                check_state?: "ok" | "changed";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description one page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["DatasetItem"][];
+                        page: number;
+                        page_size: number;
+                        total: number;
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createDataset: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetCreate"];
+            };
+        };
+        responses: {
+            /** @description already registered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetDetail"];
+                };
+            };
+            /** @description registered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    browseDatasets: {
+        parameters: {
+            query: {
+                source: components["parameters"]["Source"];
+                /** @description tos:// prefix to list (source=tos) */
+                uri?: string;
+                region?: components["parameters"]["Region"];
+                /** @description access key name (not needed for source=public) */
+                credential?: components["parameters"]["CredentialName"];
+                /** @description opaque, from next_cursor */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description datasets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        items?: components["schemas"]["BrowsedDataset"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listDatasetEpisodes: {
+        parameters: {
+            query?: {
+                dataset_id?: string;
+                source?: "tos" | "public" | "local";
+                uri?: string;
+                region?: components["parameters"]["Region"];
+                /** @description access key name (not needed for source=public) */
+                credential?: components["parameters"]["CredentialName"];
+                /** @description opaque, from next_cursor */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description episodes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        items?: components["schemas"]["EpisodePreview"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description dataset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetPatch"];
+            };
+        };
+        responses: {
+            /** @description updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    recheckDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the check */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetCheck"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    repreflightDataset: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description refreshed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    preflight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreflightRequest"];
+            };
+        };
+        responses: {
+            /** @description preflight result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreflightResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    probeDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeliveryProbeRequest"];
+            };
+        };
+        responses: {
+            /** @description probe result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listTasks: {
+        parameters: {
+            query?: {
+                page?: number;
+                page_size?: 10 | 20 | 50 | 100;
+                /** @description a task state, or `deleted` for soft-deleted tasks (restorable for 30 days) */
+                state?: components["schemas"]["TaskState"] | "deleted";
+                /** @description search by name or id */
+                q?: string;
+                /** @description tasks writing to this delivery directory */
+                delivery?: string;
+                /** @description comma-separated module ids; only tasks that selected every one of them */
+                module?: string;
+                /** @description tasks on this registered dataset */
+                dataset_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description one page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["TaskListItem"][];
+                        page: number;
+                        page_size: number;
+                        total: number;
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createTask: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskCreate"];
+            };
+        };
+        responses: {
+            /** @description created (state queued, or created when start_now=false) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createTasksBatch: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskBatchCreate"];
+            };
+        };
+        responses: {
+            /** @description created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tasks: components["schemas"]["TaskCreated"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description task detail (doc 03 §3.3) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description deleted; restorable for 30 days */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateTask: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description the task's updated_at as returned by GET; a stale value returns 412 */
+                "If-Match": string;
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskPatch"];
+            };
+        };
+        responses: {
+            /** @description updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    restoreTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description restored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    purgeTaskArtifacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description tos://.../<run_id>/ exactly as the server computes it */
+                    confirm_path: string;
+                };
+            };
+        };
+        responses: {
+            /** @description purge started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        path: string;
+                        bytes: number;
+                        latest_removed?: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    rebindTaskCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    input_credential?: string;
+                    output_credential?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description rebound */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    taskAction: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+                action: "start" | "pause" | "resume" | "stop";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description new state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Task"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    repreflightTask: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepreflightResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    retryTask: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description omitted = every module with error episodes or a whole-module failure */
+                    modules?: components["schemas"]["ModuleId"][];
+                };
+            };
+        };
+        responses: {
+            /** @description subtask created */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubtaskCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    continueTask: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description subtask created */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubtaskCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    reexportTask: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description subtask created */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubtaskCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSubtasks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description subtasks, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Subtask"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskTimeline: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description timeline, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["TimelineEntry"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["plan.schema"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskLogs: {
+        parameters: {
+            query?: {
+                stage?: string;
+                /** @description empty = main run */
+                subtask?: string;
+                level?: "error" | "warn" | "info" | "debug";
+                /** @description opaque, from next_cursor */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description log lines */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        items?: components["schemas"]["LogLine"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getTaskUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description usage */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageReport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getReport: {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        revision: number;
+                        report: components["schemas"]["report.schema"];
+                        links: components["schemas"]["Links"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getReportTable: {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+                /** @description opaque, from next_cursor */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: number;
+                /** @description a column from the table's sortable whitelist */
+                sort?: string;
+                order?: "asc" | "desc";
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                /** @description a table id declared in the module registry */
+                table: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description rows */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        columns: string[];
+                        revision: number;
+                        items?: Record<string, unknown>[];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getEpisode: {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description episode view */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EpisodeView"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getPerf: {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+                scope?: "all" | "main" | "subtask";
+                subtask?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description profile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Perf"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAdjudication: {
+        parameters: {
+            query?: {
+                source?: components["schemas"]["ModuleId"];
+                status?: "pending" | "decided" | "unapplied" | "all";
+                /** @description appeals lists only rejects attributed to task_success */
+                tab?: "review" | "appeals";
+                /** @description opaque, from next_cursor */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description cards */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        items?: components["schemas"]["AdjudicationCard"][];
+                        counts: components["schemas"]["AdjudicationCounts"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    submitAdjudication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    decisions: components["schemas"]["DecisionInput"][];
+                };
+            };
+        };
+        responses: {
+            /** @description recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdjudicationCounts"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    applyAdjudication: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description subtask created */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubtaskCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    signMedia: {
+        parameters: {
+            query: {
+                task: string;
+                /** @description delivery (output key) or input (input key; the public cache bucket is not signed) */
+                scope: "delivery" | "input";
+                /** @description relative to the scope's prefix; normalized and checked against it */
+                path: string;
+                ttl?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description signed URL (public endpoint) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignedUrl"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    taskEvents: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Last-Event-ID"?: string;
+            };
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description event stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    healthz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description alive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        status: "ok";
+                    };
+                };
+            };
+        };
+    };
+    readyz: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ready */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Readiness"];
+                };
+            };
+            /** @description not ready */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Readiness"];
+                };
+            };
+        };
+    };
+}
