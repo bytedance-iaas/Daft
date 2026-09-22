@@ -65,7 +65,8 @@ def test_the_queue_of_the_first_revision(world):
     assert [q["line"] for q in cards[5]["questions"]] == ["label", "task_verdict"]
     label = cards[4]["questions"][0]
     assert label == {"line": "label", "source_module": "skill_profile",
-                     "reason": label["reason"], "duplicate_of": None, "annotation": TEXT[4],
+                     "reason": label["reason"], "duplicate_of": None, "follow_up_of": None,
+                     "annotation": TEXT[4],
                      "caption": CAPTION[4], "suggestion": CAPTION[4], "priority": "参考",
                      "latest_decision": None}
     assert cards[5]["questions"][0]["priority"] == "重点"
@@ -168,7 +169,7 @@ def test_each_line_accepts_only_its_own_decisions(world):
         ((4, "label", "custom_label"), "要填写新标注"),
         ((4, "label", "custom_label", "   "), "要填写新标注"),
         ((4, "label", "keep_label", "a label"), "可以带 new_label"),
-        ((4, "task_verdict", "success"), "才能直接判成败"),      # label-only card, no relabel yet
+        ((4, "task_verdict", "success"), "才能回答"),          # label-only card, no relabel yet
     ]
     for item, words in cases:
         body = assert_error(world.decide(item), "validation_failed")
@@ -206,7 +207,7 @@ def test_a_submission_is_all_or_nothing(world):
     assert _page(world)["counts"] == {"decided": 0, "pending": 3, "unapplied": 0}
 
 
-def test_adopting_the_suggestion_takes_its_text_and_opens_the_optional_verdict(world):
+def test_adopting_the_suggestion_takes_its_text(world):
     _ok(world.decide((4, "label", "adopt_suggestion")))
     card = _cards(world, status="all")[4]
     assert card["status"] == "decided"                     # executing re-judges the new label
@@ -215,27 +216,95 @@ def test_adopting_the_suggestion_takes_its_text_and_opens_the_optional_verdict(w
     card = _cards(world, status="all")[5]
     assert card["status"] == "decided"                     # verdict open, relabel re-judges it
     assert card["questions"][0]["latest_decision"]["new_label"] == "open the top drawer"
-    # a label-only card takes a verdict once the label changed (v1's optional verdict)
-    _ok(world.decide((4, "task_verdict", "failure")))
+
+
+# ---------------------------------------------------------------------------
+# follow-ups (C1 1.3 follow_ups, C4 1.5.1): v1's task verdict after a relabel
+# ---------------------------------------------------------------------------
+
+def _queue(world):
+    from daemon.results import Queue, store_of
+
+    return Queue(store_of(world.rt), world.repo, world.task())
+
+
+def test_a_relabel_opens_the_optional_verdict_on_a_label_only_card(world):
+    """The card lists the follow-up once its label answer adopts a new label; it takes only
+    the follow-up's decisions, it is optional, and it never makes the card pending."""
+    assert [q["line"] for q in _cards(world, status="all")[4]["questions"]] == ["label"]
+    body = assert_error(world.decide((4, "task_verdict", "success")), "validation_failed")
+    assert "才能回答" in body["error"]["message"]           # not open before a relabel
+    _ok(world.decide((4, "label", "adopt_suggestion")))
     card = _cards(world, status="all")[4]
     assert [q["line"] for q in card["questions"]] == ["label", "task_verdict"]
-    assert card["questions"][1]["source_module"] == "task_success"
-    assert card["questions"][1]["latest_decision"]["decision"] == "failure"
-    # the label kept after all: the recorded verdict stays visible (it would still apply)
-    # and can be changed or withdrawn; once withdrawn, a kept label takes no verdict
-    _ok(world.decide((4, "label", "keep_label")))
+    follow = card["questions"][1]
+    assert follow["source_module"] == "skill_profile"      # the card's source stays the label's
+    assert "选填" in follow["reason"] and follow["latest_decision"] is None
+    assert follow["follow_up_of"] == "label"               # C4 1.5.2
+    assert card["questions"][0]["follow_up_of"] is None     # the card's own question
+    assert follow["annotation"] == TEXT[4]
+    assert card["status"] == "decided"                     # an open follow-up never blocks
+    assert_error(world.decide((4, "task_verdict", "discard")), "validation_failed")
+    counts = _ok(world.decide((4, "task_verdict", "unsure")))
     card = _cards(world, status="all")[4]
-    assert [q["line"] for q in card["questions"]] == ["label", "task_verdict"]
-    assert card["status"] == "decided"
-    _ok(world.decide((4, "task_verdict", "unsure")))
+    assert card["status"] == "decided"                     # unsure on it: left to the model
+    assert card["questions"][1]["latest_decision"]["decision"] == "unsure"
+    assert counts == {"decided": 1, "pending": 2, "unapplied": 1}
+    counts = _ok(world.decide((4, "task_verdict", "success")))
+    assert counts == {"decided": 1, "pending": 2, "unapplied": 1}   # one card, not two
+    assert _cards(world, status="all")[4]["questions"][1]["latest_decision"]["decision"] == \
+        "success"
+    # a card that asks the verdict itself is not a follow-up: all of its decisions stay
+    _ok(world.decide((5, "label", "adopt_suggestion"), (5, "task_verdict", "discard")))
+    own = _cards(world, status="all")[5]["questions"]
+    assert [(q["line"], q["follow_up_of"]) for q in own] == [("label", None), ("task_verdict", None)]
+
+
+def test_a_follow_up_answer_lapses_when_the_answer_that_opened_it_changes(world):
+    _ok(world.decide((4, "label", "adopt_suggestion"), (4, "task_verdict", "failure")))
+    assert [d.line for d in _queue(world).executable()] == ["label", "task_verdict"]
+    # the label kept after all: the verdict lapses - not shown, not counted, not executed
+    counts = _ok(world.decide((4, "label", "keep_label")))
     card = _cards(world, status="all")[4]
-    assert [q["line"] for q in card["questions"]] == ["label"] and card["status"] == "decided"
+    assert [q["line"] for q in card["questions"]] == ["label"]   # the follow-up left the card
+    assert card["status"] == "decided" and counts["unapplied"] == 1
+    assert [(d.line, d.decision) for d in _queue(world).executable()] == [("label", "keep_label")]
     assert_error(world.decide((4, "task_verdict", "success")), "validation_failed")
-    # in one submission, a relabel then its verdict
-    _ok(world.decide((4, "label", "custom_label", "wipe it"), (4, "task_verdict", "success")))
+    # adopting again opens the follow-up afresh: the old verdict belonged to the old answer
+    _ok(world.decide((4, "label", "custom_label", "wipe it")))
     card = _cards(world, status="all")[4]
-    assert card["questions"][0]["latest_decision"]["new_label"] == "wipe it"
-    assert card["questions"][1]["latest_decision"]["decision"] == "success"
+    assert [q["line"] for q in card["questions"]] == ["label", "task_verdict"]
+    assert card["questions"][1]["latest_decision"] is None
+    assert [(d.line, d.decision) for d in _queue(world).executable()] == [
+        ("label", "custom_label")]
+    # in one submission, a relabel and then its verdict; a later change of the label in the
+    # same submission lapses it again
+    _ok(world.decide((4, "label", "adopt_suggestion"), (4, "task_verdict", "success")))
+    assert [(d.line, d.decision) for d in _queue(world).executable()] == [
+        ("label", "adopt_suggestion"), ("task_verdict", "success")]
+    _ok(world.decide((4, "label", "adopt_suggestion", "put it back"), (4, "label", "keep_label")))
+    assert [(d.line, d.decision) for d in _queue(world).executable()] == [("label", "keep_label")]
+
+
+def test_follow_up_answers_are_executed_and_stand_without_re_judging(world):
+    """Executed: the CLI takes the person's verdict and does not re-judge the relabel."""
+    _ok(world.decide((4, "label", "adopt_suggestion"), (4, "task_verdict", "failure"),
+                     (5, "label", "adopt_suggestion")))
+    sub = world.start_subtask(at=T0 + 10 * MIN)
+    out = world.apply(sub)
+    assert out["rerun_task_success"] == [5]                 # ep 4 was judged by the person
+    world.revision(2, subtask_id=sub.id)
+    world.finish_subtask(sub, at=T0 + 11 * MIN)
+    world.switch(2)
+    assert world.get("/episodes/4").json()["list"] == "reject"
+    card = _cards(world, status="all")[4]
+    assert card["status"] == "applied"
+    assert [q["latest_decision"]["applied"] for q in card["questions"]] == [True, True]
+    # an applied label with an open, unanswered follow-up is applied; a new answer on the
+    # follow-up makes it something to execute again
+    _ok(world.decide((4, "task_verdict", "success")))
+    assert _cards(world, status="all")[4]["status"] == "decided"
+    assert _page(world)["counts"]["unapplied"] == 1
 
 
 def test_discard_wins_over_the_task_verdict(world):
