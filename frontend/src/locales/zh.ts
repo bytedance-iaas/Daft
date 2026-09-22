@@ -803,6 +803,14 @@ export const zh = {
     logsNote: '日志原文来自命令行，保持英文。运行中的任务会实时追加；往上翻加载更早的日志。',
     logsNoMore: '已经是最早的日志',
     notFound: '任务不存在，可能已被删除',
+    keyGone: '这个任务用的访问密钥已删除',
+    keyGoneDesc: '报告还在，但视频和证据帧读不了。重新绑定一个访问密钥就能恢复，只影响报告读取与媒体签名，不会重跑任务。',
+    rebind: '重新绑定访问密钥',
+    rebindTitle: '重新绑定访问密钥',
+    rebindIntro: '给这个已结束的任务换一个访问密钥：只用于读报告和给视频、证据帧签名。',
+    rebindInput: '数据集访问密钥',
+    rebindOutput: '交付目录访问密钥',
+    rebound: '已重新绑定',
   },
 
   report: {

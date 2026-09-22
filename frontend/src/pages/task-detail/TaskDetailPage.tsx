@@ -11,6 +11,7 @@ import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
 import { RelTime } from '../../components/RelTime';
 import { StateTag } from '../../components/StateTag';
+import { RebindKeysBanner } from '../../features/tasks/RebindKeys';
 import { TaskActionButtons } from '../../features/tasks/TaskActionButtons';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
 import { actionsFor, exportedBefore, isTerminalState, type ActionPlan } from '../../lib/taskView';
@@ -134,6 +135,7 @@ export function TaskDetailPage() {
             data-testid="delivery-banner"
           />
         ) : null}
+        <RebindKeysBanner task={t} />
         {live ? (
           <Typography.Text type="secondary" style={{ fontSize: 12 }} data-testid="live-mode" data-mode={mode}>
             {mode === 'sse' ? zh.taskDetail.liveSse : zh.taskDetail.livePolling}

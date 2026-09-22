@@ -1,7 +1,9 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EVENTS_CONFIG, setEventSourceFactory } from '../../api/events';
+import { db } from '../../mocks/db';
 import { server } from '../../mocks/server';
+import { pick } from '../../test/arco';
 import { FakeEventSource } from '../../test/fakeEventSource';
 import { fieldErrors, requiredFieldLabels } from '../../test/forms';
 import { currentLocation, renderApp } from '../../test/render';
@@ -105,6 +107,28 @@ describe('任务详情 (07 §4.2)', () => {
     renderApp('/tasks/new?edit=task_01HXR2D8');
     await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN}`));
     expect(await screen.findByText('任务已经开始，只能改名称和备注；要换数据、模块、模型或参数，请复制为新任务')).toBeInTheDocument();
+  });
+
+  it('a finished task whose access key was deleted offers 重新绑定访问密钥 (rebind-credentials)', async () => {
+    db.credentials = db.credentials.filter((c) => c.name !== 'readonly-tos');
+    const seen: unknown[] = [];
+    server.events.on('request:start', async ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/rebind-credentials')) seen.push(await request.clone().json());
+    });
+    const { user } = renderApp(`/tasks/${MAIN}`);
+    const banner = await screen.findByTestId('rebind-banner');
+    expect(banner).toHaveTextContent('这个任务用的访问密钥已删除');
+    await user.click(within(banner).getByRole('button', { name: '重新绑定访问密钥' }));
+    const dialog = await screen.findByRole('dialog', { name: '重新绑定访问密钥' });
+    // Only the deleted one is asked for, and it is required.
+    expect(requiredFieldLabels(dialog)).toEqual(['数据集访问密钥']);
+    await user.click(within(dialog).getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(fieldErrors(dialog)).toEqual(['请选择数据集访问密钥']));
+    await pick(user, '数据集访问密钥', 'partner-upload', dialog);
+    await user.click(within(dialog).getByRole('button', { name: '保存' }));
+    expect(await screen.findByText('已重新绑定')).toBeInTheDocument();
+    expect(seen).toEqual([{ input_credential: 'partner-upload' }]);
+    await waitFor(() => expect(screen.queryByTestId('rebind-banner')).toBeNull());
   });
 });
 
