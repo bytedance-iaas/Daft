@@ -1,37 +1,89 @@
-"""What a person can be asked on the adjudication page and what they can answer: one catalog.
+"""What a person can be asked on the adjudication page and what they can answer.
 
-C4 1.4 fixes three lines (``DecisionFields.line``) and their decisions, the same as C2
-``decisions.json`` and the CLI's ``pipeline.adjudication.LINE_DECISIONS`` (a test keeps
-them equal). C1 1.5 will declare the review kinds in the module registry (line id,
-title, decisions with titles, which modules' rejects are appealable) and C4 opens
-``line`` / ``decision`` to strings the Daemon validates against that catalog and the
-card's questions. Everything that says which lines exist, which ``review.json`` kind
-asks which line, which tab shows it, which decisions it takes and what a decision
-means lives here, so that switch replaces this module and nothing else.
+The lines come from the module registry (C1 1.2 ``REVIEW_LINES``, D43): id, the
+``review.json`` kind that asks it, title, the list its episodes are in, whether an open
+question counts as pending, and the decisions with their titles. C4 1.5 carries
+``line`` and ``decision`` as open strings that the Daemon checks against this catalog
+and the card's questions; a new kind of review is a new registry entry and needs no
+change here.
 
-What a decision means is carried as flags, never by comparing names elsewhere:
+Derived here, and nowhere else:
 
-* ``relabel`` - sets a new task text (``new_label``); ``needs_label`` - the person must
-  type it (otherwise the question's suggestion is taken);
-* ``discard`` - drops the whole episode; it wins over every verdict on the card (rule 1);
-* ``unsure`` - recorded, changes nothing, the card stays pending (rule 3);
-* ``verdict`` - a person's task verdict; next to a discard it is refused, and after a
-  relabel it stands without re-judging (rule 4).
+* the tab a line is shown on - ``appeals`` for lines about rejected episodes
+  (``applies_to: reject``), ``review`` otherwise;
+* whether a card counts as pending or decided - lines with ``counts_as_pending``
+  (appeal candidates are optional);
+* what a decision *means* for the rules on top of the catalog. The registry gives values
+  and titles only, so v1's decisions carry their meaning as flags (a value the table does
+  not know is a plain answer):
+
+  - ``relabel`` - sets a new task text (``new_label``); ``needs_label`` - the person must
+    type it (otherwise the question's suggestion is taken);
+  - ``discard`` - drops the whole episode; it wins over every verdict on the card (rule 1);
+  - ``unsure`` - recorded, changes nothing, the card stays pending (rule 3);
+  - ``verdict`` - a person's task verdict; next to a discard it is refused, and after a
+    relabel it stands without re-judging (rule 4).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from curation.contracts import modules as registry
+
+TABS = ("review", "appeals")
+
+#: v1's optional verdict (rule 4, ``manifest.success_block_mode``): on a card whose label
+#: was changed, the task verdict can be given although no module asked for it.
+OPTIONAL_VERDICT = ("task_verdict", "task_success")      # (line, the module it answers for)
+OPTIONAL_REASON = "改标之后可以直接判成败：判了就以人的结论为准，不再按新标注重跑任务成败判定"
+
+
+@dataclass(frozen=True)
+class Meaning:
+    relabel: bool = False
+    needs_label: bool = False
+    discard: bool = False
+    unsure: bool = False
+    verdict: bool = False
+
+
+#: What v1's decision values mean (design doc 06 §5.1).
+MEANINGS: dict[str, Meaning] = {
+    "adopt_suggestion": Meaning(relabel=True),
+    "custom_label": Meaning(relabel=True, needs_label=True),
+    "discard": Meaning(discard=True),
+    "unsure": Meaning(unsure=True),
+    "success": Meaning(verdict=True),
+    "failure": Meaning(verdict=True),
+}
+_PLAIN = Meaning()
 
 
 @dataclass(frozen=True)
 class DecisionSpec:
     id: str
     title_zh: str
-    relabel: bool = False
-    needs_label: bool = False
-    discard: bool = False
-    unsure: bool = False
-    verdict: bool = False
+    meaning: Meaning = _PLAIN
+
+    @property
+    def relabel(self) -> bool:
+        return self.meaning.relabel
+
+    @property
+    def needs_label(self) -> bool:
+        return self.meaning.needs_label
+
+    @property
+    def discard(self) -> bool:
+        return self.meaning.discard
+
+    @property
+    def unsure(self) -> bool:
+        return self.meaning.unsure
+
+    @property
+    def verdict(self) -> bool:
+        return self.meaning.verdict
 
 
 @dataclass(frozen=True)
@@ -40,6 +92,7 @@ class LineSpec:
     title_zh: str
     kind: str                           # the review.json item kind that asks it
     tab: str                            # review | appeals
+    counts_as_pending: bool
     decisions: tuple[DecisionSpec, ...]
 
     def decision(self, decision_id: str) -> DecisionSpec | None:
@@ -49,56 +102,49 @@ class LineSpec:
         return tuple(d.id for d in self.decisions)
 
 
-_UNSURE = DecisionSpec("unsure", "拿不准", unsure=True)
-_DISCARD = DecisionSpec("discard", "整条弃用", discard=True)
+def _spec(line: registry.ReviewLine) -> LineSpec:
+    return LineSpec(line.id, line.title_zh, line.review_kind,
+                    "appeals" if line.applies_to == "reject" else "review", line.counts_as_pending,
+                    tuple(DecisionSpec(value, title, MEANINGS.get(value, _PLAIN))
+                          for value, title in line.decisions))
 
-#: v1's three lines (design doc 06 §5.1), in the order a card shows its questions.
-LINES: tuple[LineSpec, ...] = (
-    LineSpec("label", "标注分歧", "label_conflict", "review", (
-        DecisionSpec("adopt_suggestion", "采纳建议改标", relabel=True),
-        DecisionSpec("custom_label", "自行改写标注", relabel=True, needs_label=True),
-        DecisionSpec("keep_label", "维持原标注"), _UNSURE, _DISCARD)),
-    LineSpec("task_verdict", "任务成败", "task_verdict", "review", (
-        DecisionSpec("success", "判成功", verdict=True),
-        DecisionSpec("failure", "判失败", verdict=True), _UNSURE, _DISCARD)),
-    LineSpec("reject_appeal", "被拒复议", "reject_appeal", "appeals", (
-        DecisionSpec("restore", "恢复为可用"), DecisionSpec("keep_rejected", "维持拒绝"), _UNSURE)),
-)
-TABS = ("review", "appeals")
 
-#: v1's optional verdict (rule 4, ``manifest.success_block_mode``): on a card whose label
-#: was changed, the task verdict can be given even though no module asked for it.
-OPTIONAL_VERDICT = ("task_verdict", "task_success")      # (line, the module it answers for)
-OPTIONAL_REASON = "改标之后可以直接判成败：判了就以人的结论为准，不再按新标注重跑任务成败判定"
-
+LINES: tuple[LineSpec, ...] = tuple(_spec(line) for line in registry.REVIEW_LINES)
 _BY_ID = {ln.id: ln for ln in LINES}
 _BY_KIND = {ln.kind: ln for ln in LINES}
 
 
-def line(line_id: str) -> LineSpec | None:
-    return _BY_ID.get(line_id)
+def line(line_id: str | None) -> LineSpec | None:
+    return _BY_ID.get(line_id) if isinstance(line_id, str) else None
 
 
-def line_for_kind(kind: str) -> LineSpec | None:
-    """The line a ``review.json`` item of ``kind`` asks, None for a kind nobody answers."""
-    return _BY_KIND.get(kind)
+def line_of_item(item: dict) -> LineSpec | None:
+    """The line a ``review.json`` item asks: its ``line`` (C2 1.5), else the line of its
+    ``kind``; None for one the catalog does not know (it is not asked)."""
+    if item.get("line") is not None:
+        return line(item.get("line"))
+    return _BY_KIND.get(item.get("kind")) if isinstance(item.get("kind"), str) else None
 
 
 def tab_lines(tab: str) -> tuple[str, ...]:
     return tuple(ln.id for ln in LINES if ln.tab == tab)
 
 
+def pending_lines() -> tuple[str, ...]:
+    return tuple(ln.id for ln in LINES if ln.counts_as_pending)
+
+
 def order(line_id: str) -> int:
     return next((i for i, ln in enumerate(LINES) if ln.id == line_id), len(LINES))
 
 
-def decision(line_id: str, decision_id: str) -> DecisionSpec | None:
+def decision(line_id: str | None, decision_id: str | None) -> DecisionSpec | None:
     ln = line(line_id)
-    return ln.decision(decision_id) if ln is not None else None
+    return ln.decision(decision_id) if ln is not None and decision_id else None
 
 
 def is_relabel(line_id: str, decision_id: str | None) -> bool:
-    d = decision(line_id, decision_id) if decision_id else None
+    d = decision(line_id, decision_id)
     return bool(d and d.relabel)
 
 

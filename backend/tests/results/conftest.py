@@ -261,9 +261,11 @@ def review_as_of_c2_1_4(run_dir: Path, n: int) -> None:
             if line["line"] == "reject_appeal" and line["decision"] != "unsure":
                 effective[int(line["episode_index"])] = line["decision"]
     rejected = {e["episode_index"] for e in reject["episodes"]}
+    line_of = {"label_conflict": "label"}                       # C2 1.5: items name their line
     by_ep: dict[int, dict] = {}
     for entry in review["episodes"]:
-        items = [i for i in entry["review"]
+        items = [{**i, "line": i.get("line") or line_of.get(i["kind"], i["kind"])}
+                 for i in entry["review"]
                  if not (i["kind"] == "task_verdict" and (i["source_module"] != "task_success"
                                                           or entry["episode_index"] in rejected))]
         if items:
@@ -278,8 +280,12 @@ def review_as_of_c2_1_4(run_dir: Path, n: int) -> None:
         if APPEALABLE.get(module) and all(r.get("kind") == APPEALABLE[module] for r in deciding):
             item = by_ep.setdefault(ep, {"episode_index": ep, "review": [], "current_list": "reject"})
             if not any(i["kind"] == "reject_appeal" for i in item["review"]):
-                item["review"].append({"source_module": module, "kind": "reject_appeal",
-                                       "reason": "被拒的条目可以复议"})
+                appeal = {"source_module": module, "kind": "reject_appeal",
+                          "line": "reject_appeal", "reason": "被拒的条目可以复议"}
+                dup = next((r["duplicate_of"] for r in deciding if "duplicate_of" in r), None)
+                if dup is not None:
+                    appeal["duplicate_of"] = dup
+                item["review"].append(appeal)
     review["episodes"] = [by_ep[ep] for ep in sorted(by_ep)]
     review["count"] = len(review["episodes"])
     (rev / "review.json").write_text(json.dumps(review, ensure_ascii=False), encoding="utf-8")

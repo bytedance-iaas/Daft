@@ -65,8 +65,9 @@ def test_the_queue_of_the_first_revision(world):
     assert [q["line"] for q in cards[5]["questions"]] == ["label", "task_verdict"]
     label = cards[4]["questions"][0]
     assert label == {"line": "label", "source_module": "skill_profile",
-                     "reason": label["reason"], "annotation": TEXT[4], "caption": CAPTION[4],
-                     "suggestion": CAPTION[4], "priority": "参考", "latest_decision": None}
+                     "reason": label["reason"], "duplicate_of": None, "annotation": TEXT[4],
+                     "caption": CAPTION[4], "suggestion": CAPTION[4], "priority": "参考",
+                     "latest_decision": None}
     assert cards[5]["questions"][0]["priority"] == "重点"
     verdict = cards[3]["questions"][0]
     assert (verdict["line"], verdict["source_module"], verdict["annotation"]) == (
@@ -78,8 +79,9 @@ def test_the_queue_of_the_first_revision(world):
     q = appeals["items"][0]["questions"][0]
     assert (q["line"], q["source_module"], q["annotation"]) == ("reject_appeal", "task_success", TEXT[2])
     assert "3 路复核一致判未完成" in q["reason"]
+    assert q["duplicate_of"] is None
     dup = appeals["items"][1]["questions"][0]            # D42: a duplicate can be restored
-    assert (dup["line"], dup["source_module"]) == ("reject_appeal", "dedup")
+    assert (dup["line"], dup["source_module"], dup["duplicate_of"]) == ("reject_appeal", "dedup", 0)
     assert "与 ep000000 字节级完全重复" in dup["reason"]
     assert appeals["counts"] == body["counts"]            # counts are the whole task's
 
@@ -155,7 +157,7 @@ def test_decisions_are_appended_and_the_latest_wins(world):
 def test_each_line_accepts_only_its_own_decisions(world):
     cases = [
         ((4, "label", "success"), "标注分歧不能选 success"),
-        ((3, "task_verdict", "restore"), "任务成败不能选 restore"),
+        ((3, "task_verdict", "restore"), "任务成败弃权不能选 restore"),
         ((2, "reject_appeal", "discard"), "被拒复议不能选 discard"),
         ((2, "reject_appeal", "failure"), "被拒复议不能选 failure"),
         ((3, "label", "keep_label"), "没有待裁决的标注分歧"),
