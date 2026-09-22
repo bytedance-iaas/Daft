@@ -1,8 +1,10 @@
 """``curation snapshot`` - fix the source objects a task will read (design doc 02 §3.3).
 
 Lists (never reads) the input and records every object the task needs - all of
-``meta/`` plus the data parquet and videos of the selected episodes - with its
-size and ETag (TOS) or modification time (local). The document is written to
+``meta/``, the data parquet and videos of the selected episodes, and the data
+parquet of the dataset's first 100 episodes, from which v1 resolves the dataset
+semantics whatever the selection - with its size and ETag (TOS) or
+modification time (local). The document is written to
 ``--out`` atomically and printed with ``--json``
 (``docs/contracts/cli/source-manifest.schema.json``). Later commands given it
 as ``--source-manifest`` refuse to read anything that changed (exit 6, D27).
@@ -79,6 +81,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
         if len(present) < len(wanted):
             incomplete.append(ep.index)
         keys.update(present)
+    for ep in lerobot_meta.semantics_sample(meta):
+        keys.update(k for k in ep.data_keys if k in listing)
     if incomplete:
         ctx.log("warn", f"{len(incomplete)} selected episodes miss data or video files "
                         f"({episode_sel.preview(incomplete)}); they are skipped at run time")

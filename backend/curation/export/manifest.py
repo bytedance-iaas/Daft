@@ -142,8 +142,13 @@ class EpisodeEntry:
         art: dict = {"parquet": self.parquet, "videos": dict(self.videos)}
         if self.data_file is not None:
             art["chunk"] = int(self.data_file)
-        return {"episode_index": int(self.episode_index), "new_index": int(self.new_index),
-                "content_key": self.content_key, "task_key": self.task_key, "artifacts": art}
+        out = {"episode_index": int(self.episode_index), "new_index": int(self.new_index),
+               "content_key": self.content_key, "task_key": self.task_key, "artifacts": art}
+        if self.task_source in TASK_SOURCES:
+            # C2 1.1: the task text written for the episode and where it came from
+            out["task"] = {"text": str(self.tasks[0]) if self.tasks else "",
+                           "source": self.task_source}
+        return out
 
     def detail_entry(self) -> dict:
         d = {"episode_index": int(self.episode_index), "new_index": int(self.new_index),
@@ -206,7 +211,10 @@ class ExportState:
         return {"schema_version": SCHEMA_VERSION, "source_format": self.source_format,
                 "fingerprint": self.fingerprint,
                 "episodes": [e.manifest_entry() for e in self.episodes],
-                "meta_files": list(self.meta_files)}
+                "meta_files": list(self.meta_files),
+                # C2 1.1: every delivered file with size and sha256, for curation verify
+                "files": {k: {"size": int(v.size), "sha256": v.sha256}
+                          for k, v in sorted(self.files.items())}}
 
     def detail(self) -> dict:
         return {"schema": DETAIL_SCHEMA, "impl": EXPORT_IMPL_VERSION,
@@ -261,11 +269,19 @@ def check_manifest(doc: Any) -> list[str]:
     out: list[str] = []
     if not isinstance(doc, dict):
         return ["not an object"]
-    allowed = {"schema_version", "source_format", "fingerprint", "episodes", "meta_files"}
+    required = {"schema_version", "source_format", "fingerprint", "episodes", "meta_files"}
+    allowed = required | {"files"}
     out += [f"unexpected key {k}" for k in doc if k not in allowed]
-    out += [f"missing {k}" for k in sorted(allowed) if k not in doc]
+    out += [f"missing {k}" for k in sorted(required) if k not in doc]
     if out:
         return out
+    files = doc.get("files")
+    if files is not None:
+        if not isinstance(files, dict) or not all(
+                isinstance(v, dict) and set(v) == {"size", "sha256"}
+                and isinstance(v["size"], int) and v["size"] >= 0 and _is_digest(v["sha256"])
+                for v in files.values()):
+            out.append("files must map each path to {size, sha256}")
     if doc["schema_version"] != SCHEMA_VERSION:
         out.append(f"schema_version {doc['schema_version']!r}")
     if doc["source_format"] not in SOURCE_FORMATS:
@@ -280,9 +296,14 @@ def check_manifest(doc: Any) -> list[str]:
     ekeys = {"episode_index", "new_index", "content_key", "task_key", "artifacts"}
     for i, e in enumerate(doc["episodes"]):
         where = f"episodes[{i}]"
-        if not isinstance(e, dict) or set(e) != ekeys:
-            out.append(f"{where}: keys must be {sorted(ekeys)}")
+        if not isinstance(e, dict) or not ekeys <= set(e) or not set(e) <= ekeys | {"task"}:
+            out.append(f"{where}: keys must be {sorted(ekeys)} (and optionally task)")
             continue
+        if "task" in e:
+            t = e["task"]
+            if not isinstance(t, dict) or set(t) != {"text", "source"} \
+                    or not isinstance(t["text"], str) or t["source"] not in TASK_SOURCES:
+                out.append(f"{where}.task must be {{text, source}} with a known source")
         for k in ("episode_index", "new_index"):
             if not isinstance(e[k], int) or isinstance(e[k], bool) or e[k] < 0:
                 out.append(f"{where}.{k} must be a non-negative integer")

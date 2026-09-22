@@ -12,7 +12,7 @@ import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from .errors import InputUnreachable, UsageError
+from .errors import UsageError, unreachable
 
 TOS_PREFIX = "tos://"
 _LIST_PAGE = 1000
@@ -63,6 +63,14 @@ class Storage:
     def put_bytes(self, key: str, data: bytes) -> None:
         raise NotImplementedError
 
+    def put_file(self, key: str, local_path: str) -> None:
+        """Upload a whole local file (streamed; videos can be large)."""
+        raise NotImplementedError
+
+    def copy(self, src_key: str, dst_key: str) -> None:
+        """Copy an object inside this storage (server side on TOS)."""
+        raise NotImplementedError
+
     def delete(self, key: str) -> None:
         raise NotImplementedError
 
@@ -70,9 +78,10 @@ class Storage:
 class LocalStorage(Storage):
     remote = False
 
-    def __init__(self, root: str):
+    def __init__(self, root: str, *, role: str = "input"):
         self.root = os.path.abspath(os.path.expanduser(root))
         self.uri = self.root
+        self.role = role
 
     def _path(self, key: str) -> str:
         return os.path.join(self.root, *key.split("/"))
@@ -82,8 +91,8 @@ class LocalStorage(Storage):
 
     def list(self) -> dict[str, ObjectInfo]:
         if not os.path.isdir(self.root):
-            raise InputUnreachable(f"{self.root} does not exist or is not a directory",
-                                   {"path": self.root})
+            raise unreachable(self.role, f"{self.root} does not exist or is not a directory",
+                              {"path": self.root, "role": self.role})
         out: dict[str, ObjectInfo] = {}
         for dirpath, dirnames, filenames in os.walk(self.root):
             dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
@@ -105,7 +114,7 @@ class LocalStorage(Storage):
         except FileNotFoundError:
             return None
         except OSError as e:
-            raise InputUnreachable(f"cannot stat {self._path(key)}: {e}") from None
+            raise unreachable(self.role, f"cannot stat {self._path(key)}: {e}") from None
         return ObjectInfo(key, st.st_size, mtime_ns=st.st_mtime_ns)
 
     def read_bytes(self, key: str) -> bytes:
@@ -115,7 +124,7 @@ class LocalStorage(Storage):
         except FileNotFoundError:
             raise ObjectMissing(key) from None
         except OSError as e:
-            raise InputUnreachable(f"cannot read {self._path(key)}: {e}") from None
+            raise unreachable(self.role, f"cannot read {self._path(key)}: {e}") from None
 
     def read_range(self, key: str, start: int, length: int) -> bytes:
         try:
@@ -125,7 +134,7 @@ class LocalStorage(Storage):
         except FileNotFoundError:
             raise ObjectMissing(key) from None
         except OSError as e:
-            raise InputUnreachable(f"cannot read {self._path(key)}: {e}") from None
+            raise unreachable(self.role, f"cannot read {self._path(key)}: {e}") from None
 
     def put_bytes(self, key: str, data: bytes) -> None:
         path = self._path(key)
@@ -136,6 +145,21 @@ class LocalStorage(Storage):
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+
+    def put_file(self, key: str, local_path: str) -> None:
+        import shutil
+
+        path = self._path(key)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = f"{path}.tmp-{os.getpid()}"
+            shutil.copyfile(local_path, tmp)
+            os.replace(tmp, path)
+        except OSError as e:
+            raise unreachable(self.role, f"cannot write {path}: {e}") from None
+
+    def copy(self, src_key: str, dst_key: str) -> None:
+        self.put_file(dst_key, self._path(src_key))
 
     def delete(self, key: str) -> None:
         try:
@@ -191,9 +215,9 @@ class TosStorage(Storage):
     def _full(self, key: str) -> str:
         return f"{self.prefix}/{key}" if self.prefix else key
 
-    def _fail(self, what: str, e: Exception) -> InputUnreachable:
-        return InputUnreachable(
-            f"{what} {self.uri} (region {self.region}): {describe_tos_error(e)}",
+    def _fail(self, what: str, e: Exception):
+        return unreachable(
+            self.role, f"{what} {self.uri} (region {self.region}): {describe_tos_error(e)}",
             {"uri": self.uri, "region": self.region, "tos_code": _tos_code(e) or None,
              "role": self.role})
 
@@ -260,6 +284,26 @@ class TosStorage(Storage):
         except Exception as e:  # noqa: BLE001
             raise self._fail(f"cannot write {key} to", e) from None
 
+    def put_file(self, key: str, local_path: str) -> None:
+        put = getattr(self._c, "put_object_from_file", None)
+        try:
+            if put is not None:
+                put(self.bucket, self._full(key), local_path)
+            else:                                   # clients without it (test fakes)
+                with open(local_path, "rb") as fh:
+                    self._c.put_object(self.bucket, self._full(key), content=fh.read())
+        except OSError as e:
+            raise unreachable(self.role, f"cannot read {local_path}: {e}") from None
+        except Exception as e:  # noqa: BLE001
+            raise self._fail(f"cannot write {key} to", e) from None
+
+    def copy(self, src_key: str, dst_key: str) -> None:
+        try:
+            self._c.copy_object(self.bucket, self._full(dst_key), self.bucket,
+                                self._full(src_key))
+        except Exception as e:  # noqa: BLE001
+            raise self._fail(f"cannot copy {src_key} to {dst_key} in", e) from None
+
     def delete(self, key: str) -> None:
         try:
             self._c.delete_object(self.bucket, self._full(key))
@@ -278,4 +322,4 @@ def open_storage(uri: str, *, role: str, region: str | None = None,
         return TosStorage(uri, client, want, role=role)
     if not str(uri or "").strip():
         raise UsageError("an empty path was given")
-    return LocalStorage(uri)
+    return LocalStorage(uri, role=role)

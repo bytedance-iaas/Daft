@@ -14,6 +14,7 @@ import pytest
 from curation.cli import app, creds, framework
 from curation.cli.errors import (
     InputUnreachable,
+    ModuleFailed,
     SourceChanged,
     Terminated,
     UsageError,
@@ -78,7 +79,8 @@ def test_human_mode_keeps_library_prints_off_stdout(capsys):
     (SourceChanged("moved", {"key": "meta/info.json"}), 6, "source_changed"),
     (Terminated("stop"), 5, "terminated"),
     (KeyboardInterrupt(), 130, "interrupted"),
-    (RuntimeError("boom"), 4, "module_failed"),
+    (ModuleFailed("endpoint down"), 4, "module_failed"),
+    (RuntimeError("boom"), 1, "internal"),
 ])
 def test_every_failure_ends_in_the_envelope(capsys, exc, rc, code):
     def fails(ctx, args):
@@ -90,7 +92,7 @@ def test_every_failure_ends_in_the_envelope(capsys, exc, rc, code):
     assert schemas.errors("cli/error.schema.json", doc) == []
     assert doc["exit_code"] == rc and doc["error"]["code"] == code
     events = _events(err)
-    if code == "module_failed":                      # a bug: the traceback is logged
+    if code == "internal":                           # a bug: the traceback is logged
         assert any(e["level"] == "error" and "RuntimeError: boom" in e["msg"] for e in events)
 
 
@@ -167,7 +169,8 @@ def test_no_option_takes_a_credential():
     assert "--json" in opts and "--input" in opts                  # the walk works
     secretish = {o for o in opts
                  if any(w in o for w in ("key", "secret", "password", "token", "credential"))}
-    assert secretish == {"--idempotency-key"}                      # a request id, not a secret
+    # a request id, and the NAME of the variable that holds the model's API key
+    assert secretish == {"--idempotency-key", "--vlm-api-key-env"}
 
 
 # ---------------------------------------------------------------- credentials
@@ -186,6 +189,36 @@ def test_credential_roles_and_fallback():
         creds.tos_credentials("output", {"CURATION_OUTPUT_TOS_SECRET_KEY": "x"})
     with pytest.raises(UsageError, match="CURATION_INPUT_TOS_ACCESS_KEY and"):
         creds.require_tos_credentials("input", {})
+
+
+def test_the_cli_reads_the_environment_the_daemon_builds(monkeypatch):
+    """The Daemon starts every command with ``daemon.secrets.cli_env.build_env`` (W8): the
+    two role key sets, the VLM key under the CLI's default ``--vlm-api-key-env``, inherited
+    ``TOS_*`` stripped (only ``TOS_ENDPOINT`` set again). The CLI reads exactly these."""
+    from curation.adapters import vlm_client
+    from curation.pipeline.config import load_config
+    from daemon.secrets.cli_env import INPUT_ENV, OUTPUT_ENV, VLM_API_KEY_ENV, build_env
+    from daemon.secrets.tos import TosKey
+
+    assert INPUT_ENV == creds.ROLE_ENV["input"] and OUTPUT_ENV == creds.ROLE_ENV["output"]
+    inherited = {"TOS_ACCESS_KEY": "daemon-ak", "TOS_SECRET_KEY": "daemon-sk", "PATH": "/bin"}
+    env = build_env(inherited, input_key=TosKey("in-ak", "in-sk", "in-tok"),
+                    output_key=TosKey("out-ak", "out-sk"), vlm_api_key="vlm-secret",
+                    tos_endpoint="https://tos-cn-beijing.ivolces.com")
+    ci, co = creds.tos_credentials("input", env), creds.tos_credentials("output", env)
+    assert (ci.access_key, ci.secret_key, ci.session_token) == ("in-ak", "in-sk", "in-tok")
+    assert (co.access_key, co.secret_key, co.session_token) == ("out-ak", "out-sk", None)
+    # a public input: no input key, and nothing inherited to fall back on
+    public = build_env(inherited, output_key=TosKey("out-ak", "out-sk"))
+    assert creds.tos_credentials("input", public) is None
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("TOS_REGION", raising=False)
+    assert creds.resolve_region("cn-beijing") == ("cn-beijing",
+                                                  "https://tos-cn-beijing.ivolces.com")
+    key_env = load_config(None)["checks"]["task_success"]["vlm"]["api_key_env"]
+    assert key_env == VLM_API_KEY_ENV
+    assert vlm_client.auth_headers(key_env) == {"Authorization": "Bearer vlm-secret"}
 
 
 def test_region_and_endpoint_rules(monkeypatch):

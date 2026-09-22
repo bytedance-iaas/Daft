@@ -12,8 +12,8 @@ Design doc 02, sections 2, 4 and 5:
   replaced by line sinks that turn stray lines into ``log`` events.
 * SIGTERM asks the command to stop starting new work (``Context.check_stop``
   raises :class:`Terminated`, exit 5); SIGINT interrupts at once (exit 130).
-* Any exit code is one of 0 / 2 / 3 / 4 / 5 / 6 / 130; an unexpected exception
-  becomes ``module_failed`` (4) with its traceback logged at ``error`` level.
+* Every exit code is one of the contract's (``errors.py``); an unexpected
+  exception becomes ``internal`` (1) with its traceback logged at ``error`` level.
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ from typing import Any
 
 from .errors import (
     CliError,
+    Internal,
     Interrupted,
-    ModuleFailed,
     Terminated,
     UsageError,
 )
@@ -363,11 +363,10 @@ def run_command(func: Callable[[Context, argparse.Namespace], Result],
         except KeyboardInterrupt:
             error = Interrupted("interrupted by SIGINT; results already written are kept")
         except SystemExit as e:
-            error = ModuleFailed(f"the command exited early (status {e.code})")
+            error = Internal(f"the command exited early (status {e.code})")
         except Exception as e:  # noqa: BLE001 - every failure must end in an envelope
             emitter.log("error", "".join(traceback.format_exception(e)).rstrip())
-            error = ModuleFailed(f"{type(e).__name__}: {e}",
-                                 {"exception": type(e).__name__})
+            error = Internal(f"{type(e).__name__}: {e}", {"exception": type(e).__name__})
         finally:
             out_sink.drain()
             err_sink.drain()

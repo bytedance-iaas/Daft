@@ -7,20 +7,39 @@ built (:data:`GATE_SITES`), resolves the local names it uses back through the
 enclosing functions' assignments, and evaluates it against a config. Nothing
 here is a copy of a v1 number: if v1 changes a default or a formula, the
 values read here change with it.
+
+"v1" is the frozen release (D34, ``release_v1@45bdf9292``), taken from git: the
+working tree's orchestration shell has been split into v2 stages (W3), so its
+call sites no longer look like v1's.
 """
 from __future__ import annotations
 
 import ast
 import copy
 import functools
+import os
 import pathlib
+import subprocess
+import tempfile
 from typing import Any
 
 import yaml
 
 from curation.pipeline import config as v1_config
 
-V1_ROOT = pathlib.Path(v1_config.__file__).resolve().parent.parent      # backend/curation
+FREEZE_COMMIT = "45bdf929222e7aa08b6ec1827876af3571515202"
+
+
+@functools.lru_cache(maxsize=1)
+def v1_root() -> pathlib.Path:
+    """The frozen v1 ``curation`` package, extracted from git once per test session."""
+    from parity.manifest import extract_v1
+
+    repo = subprocess.run(["git", "-C", os.path.dirname(os.path.abspath(__file__)),
+                           "rev-parse", "--show-toplevel"], check=True,
+                          capture_output=True, text=True).stdout.strip()
+    out = tempfile.mkdtemp(prefix="v1-freeze-")
+    return pathlib.Path(extract_v1(repo, FREEZE_COMMIT, out)) / "curation"
 
 #: Where v1 sizes each gate: (file, top-level function, callee, argument), where the
 #: argument is a positional index or a keyword name. Every site of a gate must agree.
@@ -47,7 +66,7 @@ _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 def factory_config() -> dict:
     """v1's factory configuration: ``pipeline/default.yaml`` as ``load_config`` builds it
     (no site file, whatever ``CURATION_CONFIG`` says)."""
-    with open(v1_config.DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
+    with open(v1_root() / "pipeline" / "default.yaml", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     v1_config.validate_config(cfg, v1_config.DEFAULT_CONFIG_PATH)
     cfg.setdefault("pipeline", {})
@@ -64,7 +83,7 @@ def _callee(node: ast.Call) -> str | None:
 
 class _Source:
     def __init__(self, rel: str) -> None:
-        self.path = V1_ROOT / rel
+        self.path = v1_root() / rel
         self.tree = ast.parse(self.path.read_text(encoding="utf-8"), filename=str(self.path))
         self.parents = {child: parent for parent in ast.walk(self.tree)
                         for child in ast.iter_child_nodes(parent)}

@@ -155,7 +155,7 @@ def test_unknown_usage_is_counted_not_estimated():
         ledger.record(model="m", call_kind="probe", shares={"a": (1, 1)}, usage=Usage(1, 1), count=2)
 
 
-@pytest.mark.parametrize("kw", [dict(call_kind="vision"), dict(shares={}),
+@pytest.mark.parametrize("kw", [dict(call_kind="Vision"), dict(call_kind=""), dict(shares={}),
                                 dict(shares={"a": (1, 1), "b": (1, 1)}), dict(count=0),
                                 dict(model=None)])
 def test_record_rejects_bad_input(kw):
@@ -163,6 +163,13 @@ def test_record_rejects_bad_input(kw):
     args.update(kw)
     with pytest.raises(ValueError):
         UsageLedger().record(**args)
+
+
+def test_a_new_module_books_under_its_own_call_kind():
+    """C3 1.1: call kinds are open; a new module's single requests use its own kind."""
+    lines = UsageLedger().record(model="m", call_kind="example_grasp",
+                                 shares={"example_grasp": (1, 1)}, usage=Usage(3, 1))
+    assert {ln["call_kind"] for ln in lines} == {"example_grasp"}
 
 
 def test_task_totals_come_from_the_actual_ledger_only():

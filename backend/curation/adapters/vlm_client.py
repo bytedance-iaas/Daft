@@ -181,6 +181,30 @@ LATENCY_CSV_HEADER = ["call_type", "seconds", "ok", "started_at",
                       "call_id", "attempt", "fail_kind"]
 
 
+#: Token usage side channel (v2, design doc 04 §5). None = off, exactly as v1. The v2 CLI
+#: installs a callable(tag, response_or_None) that books every HTTP request this module
+#: sends: the usage block of a response it can read, or one request of unknown usage (a
+#: timeout, a connection error, an error status). It is called after the fact, next to
+#: latency_record, and never changes what is sent, returned or recorded above.
+_USAGE_SINK: dict = {"fn": None}
+
+
+def set_usage_sink(fn) -> None:
+    """Install (or with None remove) the usage sink; returns nothing."""
+    _USAGE_SINK["fn"] = fn
+
+
+def usage_note(tag: str, response) -> None:
+    """Hand one sent request to the usage sink; a failing sink is ignored."""
+    fn = _USAGE_SINK["fn"]
+    if fn is None:
+        return
+    try:
+        fn(tag, response)
+    except Exception:  # noqa: BLE001  bookkeeping must never break a model call
+        pass
+
+
 def http_stats() -> tuple[int, float]:
     """返回 (请求数, 请求耗时总和秒)。"""
     with _HTTP_LOCK:
@@ -335,6 +359,7 @@ def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
                 raise _rq.exceptions.Timeout(f"{tag}: 2×timeout 总预算已耗尽,不再发起")
             t1 = _time.time()
             ok, kind = False, "connect_error"
+            resp = None
             try:
                 resp = send(hard)
                 ok = bool(resp.ok)
@@ -347,6 +372,7 @@ def hedged_request(send, *, tag: str, timeout_s: float, gate=None):
             finally:
                 latency_record(tag, _time.time() - t1, ok, started_at=t1,
                                call_id=call_id, attempt=attempt_no, fail_kind=kind)
+                usage_note(tag, resp)
         finally:
             if gate is not None:
                 gate.release()
@@ -1203,8 +1229,9 @@ def make_llm_ask(endpoint: str, model: str,
                 raise requests.exceptions.Timeout("VLM 等待并发闸门超时")
             started = _time.time()
             ok, fail_kind = False, "connect_error"
+            sent = None
             try:
-                r = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
+                r = sent = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
                 fail_kind = "http_error"
                 r.raise_for_status()
                 ok, fail_kind = True, ""
@@ -1221,6 +1248,7 @@ def make_llm_ask(endpoint: str, model: str,
                 gate.release()
                 latency_record("llm", _time.time() - started, ok, started_at=started,
                                call_id=call_id, attempt=attempt, fail_kind=fail_kind)
+                usage_note("llm", sent)
             _time.sleep(2 ** attempt)
         choice = r.json()["choices"][0]
         if choice.get("finish_reason") == "length":

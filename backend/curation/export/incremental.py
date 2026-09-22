@@ -141,10 +141,15 @@ def export_dataset(source: str, passed, output_dir: str, *, incremental: bool = 
             f"; videos copied {c.videos_copied}, re-encoded {c.videos_reencoded}, "
             f"renamed {c.renamed}; {len(exporter.deleted)} stale file(s) deleted")
     manifest_path = target.path(MANIFEST_NAME)
+    full_reason = None
+    if incremental and prev.state is None:
+        # C2 1.1: why an --incremental export fell back to a full one
+        full_reason = "; ".join(prev.reasons) or "no previous export"
     result = {"schema_version": SCHEMA_VERSION, "format": cls.fmt,
               "incremental": prev.state is not None, "episodes": len(entries),
               "diff": counts, "fingerprint": fingerprint, "manifest": manifest_path,
-              "videos_copied": c.videos_copied, "videos_reencoded": c.videos_reencoded}
+              "videos_copied": c.videos_copied, "videos_reencoded": c.videos_reencoded,
+              "videos_renamed": c.renamed, "full_reason": full_reason}
     return ExportOutcome(result=result, manifest_path=manifest_path, state=state, diff=report,
                          rebuild_reasons=[] if prev.state is not None else list(prev.reasons),
                          written=list(exporter.placer.written), renamed=list(exporter.renamed),

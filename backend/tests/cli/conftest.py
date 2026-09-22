@@ -46,6 +46,41 @@ def mini_dataset(tmp_path_factory) -> str:
     return make_mini_lerobot(str(tmp_path_factory.mktemp("mini") / "mini"))
 
 
+@pytest.fixture(scope="session")
+def vlm_stage(tmp_path_factory, mini_dataset) -> dict:
+    """A run directory ready for the VLM stage, and that stage's records when it runs.
+
+    ``base`` went through preflight, plan, snapshot, autolabel and the numeric and
+    frame stages against the fake model; ``reference`` holds the task_success
+    records of ``check --modules task_success`` run with default options on a
+    copy of it; ``episodes`` is the frame stage's survivors (``@file``). Tests copy
+    ``base`` before changing anything.
+    """
+    from .fakevlm_server import FakeVlmServer
+    from .pipeline import Chain, results, run
+
+    tmp = tmp_path_factory.mktemp("vlm-stage")
+    with pytest.MonkeyPatch.context() as mp:
+        for name in ENV_VARS:
+            mp.delenv(name, raising=False)
+        with FakeVlmServer() as vlm:
+            c = Chain(mini_dataset, str(tmp / "base"), vlm.url)
+            c.front()
+            c.before_vlm()
+            ref = str(tmp / "reference")
+            shutil.copytree(c.rd, ref)
+            episodes = "@" + c.path("stages", "frame.txt")
+            before = len(vlm.calls)
+            res = run("check", "--modules", "task_success", "--input", mini_dataset,
+                      "--run-dir", ref, "--episodes", episodes, *c.vlm)
+            assert res.rc == 0, res.doc
+            calls = len([x for x in vlm.calls[before:]
+                         if x["path"].endswith("/chat/completions")])
+    return {"base": c.rd, "reference": results(ref, "task_success"), "reference_dir": ref,
+            "reference_posts": calls, "episodes": episodes, "dataset": mini_dataset,
+            "tmp": tmp}
+
+
 @pytest.fixture
 def dataset(mini_dataset, tmp_path) -> str:
     """A private, writable copy of the mini dataset."""

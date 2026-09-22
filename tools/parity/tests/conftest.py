@@ -48,3 +48,19 @@ def mini_dataset(tmp_path_factory) -> str:
     from parity.fixtures import make_mini_lerobot
 
     return make_mini_lerobot(str(tmp_path_factory.mktemp("mini") / "mini"))
+
+
+#: v1's command line against the fake model (the tape hooks answer it)
+V1_RUN = ["run", "--vlm-endpoint", "http://fake-vlm.local/v1", "--vlm-model", "fake-vlm"]
+
+
+@pytest.fixture(scope="session")
+def v1_golden(tmp_path_factory, mini_dataset, v1_src) -> str:
+    """``dump-v1 --fake-vlm`` of the synthetic dataset: the golden baseline the end-to-end
+    tests compare with (recorded once per session, about half a minute)."""
+    tmp = tmp_path_factory.mktemp("golden")
+    out = str(tmp / "rec1")
+    proc = run_parity("dump-v1", "--out", out, "--v1-src", v1_src, "--fake-vlm", "--",
+                      *V1_RUN, "--input", mini_dataset, "--output", str(tmp / "rec1-delivery"))
+    assert proc.returncode == 0, proc.stderr[-4000:]
+    return out

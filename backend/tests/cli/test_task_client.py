@@ -103,11 +103,11 @@ def test_wait_polls_until_the_task_and_its_subtask_finish(cli, stub):
     assert any(e["kind"] == "progress" and e["stage"] == "task:vlm" for e in res.events)
 
 
-def test_wait_timeout_returns_the_task_as_it_is(cli, stub):
+def test_wait_timeout_exits_8_with_the_last_task(cli, stub):
     res = cli("task", "wait", "task_01", "--poll-interval", "0.01", "--timeout", "0.05")
-    assert res.rc == 0 and res.doc["state"] == "running"
-    assert any(e["kind"] == "log" and e["level"] == "warn" and "stopped waiting" in e["msg"]
-               for e in res.events)
+    assert res.rc == 8 and res.doc["error"]["code"] == "wait_timeout"
+    assert res.doc["error"]["details"]["task"]["state"] == "running"
+    assert "stopped waiting" in res.doc["error"]["message"]
 
 
 def test_actions(cli, stub):
@@ -120,13 +120,39 @@ def test_actions(cli, stub):
     assert res.rc == 0 and res.doc["state"] == "pausing"
 
 
-def test_illegal_transition_is_a_usage_error_with_the_rest_error(cli, stub):
+def test_bodyless_writes_carry_the_json_content_type(cli, stub):
+    """C4 1.2: the Daemon refuses a write without Content-Type: application/json,
+    even when there is no body (actions, continue, retry without modules)."""
+    stub.tasks["task_02"] = make_task("task_02", "created")
+    for argv in (("start", "task_02"), ("continue", "task_01"), ("retry", "task_01")):
+        res = cli("task", *argv)
+        assert res.rc == 0, res.doc
+        last = _last(stub)
+        assert last["method"] == "POST" and last["body"] is None
+        assert last["headers"]["content-type"] == "application/json"
+    cli("task", "get", "task_01")
+    assert "content-type" not in _last(stub)["headers"]         # reads stay plain GETs
+
+
+def test_illegal_transition_is_rejected_with_the_rest_error(cli, stub):
     res = cli("task", "resume", "task_01")                  # running cannot resume
-    assert res.rc == 2
+    assert res.rc == 7 and res.doc["error"]["code"] == "rejected"
     details = res.doc["error"]["details"]
     assert details["http_status"] == 409
     assert details["rest_error"]["code"] == "task_state_conflict"
     assert details["rest_error"]["details"] == {"state": "running"}
+
+
+def test_method_not_allowed_is_rejected(stub, monkeypatch):
+    from curation.cli.errors import Rejected
+    from curation.cli.task_client import DaemonClient
+
+    client = DaemonClient(stub.url, stub.user, stub.password)
+    with pytest.raises(Rejected) as info:
+        client.call("POST", "/tasks/task_01")
+    assert info.value.exit_code == 7 and info.value.code == "rejected"
+    assert info.value.details["http_status"] == 405
+    assert info.value.details["rest_error"]["code"] == "method_not_allowed"
 
 
 def test_retry_and_continue(cli, stub):
@@ -140,11 +166,11 @@ def test_retry_and_continue(cli, stub):
     assert res.rc == 0 and res.doc["subtask"]["kind"] == "resume"
 
 
-def test_continue_after_source_change_exits_6(cli, stub):
+def test_continue_after_source_change_is_rejected_with_its_code(cli, stub):
     stub.tasks["task_01"]["state"] = "failed"
     stub.tasks["task_01"]["state_reason"] = "source_changed"
     res = cli("task", "continue", "task_01")
-    assert res.rc == 6 and res.doc["error"]["code"] == "source_changed"
+    assert res.rc == 7 and res.doc["error"]["code"] == "rejected"
     assert res.doc["error"]["details"]["rest_error"]["code"] == "source_changed"
 
 
@@ -167,12 +193,13 @@ def test_adjudication(cli, stub):
 
 def test_daemon_errors_map_to_exit_codes(cli, stub, monkeypatch):
     res = cli("task", "get", "task_missing")
-    assert res.rc == 2 and res.doc["error"]["details"]["rest_error"]["code"] == "not_found"
+    assert res.rc == 7 and res.doc["error"]["details"]["rest_error"]["code"] == "not_found"
     res = cli("task", "get", "task_boom")                   # 500
-    assert res.rc == 3 and res.doc["error"]["details"]["http_status"] == 500
+    assert res.rc == 7 and res.doc["error"]["details"]["http_status"] == 500
     monkeypatch.setenv("CURATOR_PASSWORD", "wrong")
     res = cli("task", "get", "task_01")
-    assert res.rc == 3 and res.doc["error"]["details"]["http_status"] == 401
+    assert res.rc == 7 and res.doc["error"]["details"]["http_status"] == 401
+    assert res.doc["error"]["details"]["rest_error"]["code"] == "unauthorized"
     assert "wrong" not in res.out + res.err
 
 
@@ -186,7 +213,7 @@ def test_connection_settings(cli, stub, monkeypatch):
     assert res.rc == 2 and "CURATOR_PASSWORD" in res.doc["error"]["message"]
     monkeypatch.setenv("CURATOR_PASSWORD", stub.password)
     res = cli("task", "get", "task_01", "--url", "http://127.0.0.1:9")   # nothing listens
-    assert res.rc == 3 and res.doc["error"]["code"] == "input_unreachable"
+    assert res.rc == 3 and res.doc["error"]["code"] == "daemon_unreachable"
     assert cli("task", "get", "task_01", "--url", "ftp://x").rc == 2
 
 
