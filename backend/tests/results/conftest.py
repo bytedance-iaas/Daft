@@ -350,8 +350,10 @@ class World:
         assert self.repo.update_subtask_state(sub.id, {"running"}, "succeeded", at=at)
 
     def apply(self, sub: P.Subtask) -> dict:
-        """What the apply subtask does first: this task's unapplied decisions -> the CLI."""
-        rows = self.repo.latest_adjudications(self.task_id, unapplied_only=True)
+        """What the apply subtask does first: the decisions that still stand -> the CLI."""
+        from daemon.results import Queue, store_of
+
+        rows = Queue(store_of(self.rt), self.repo, self.task()).executable()
         doc = {"schema_version": "1.0", "decisions": [
             {"id": a.id, "episode_index": a.episode_index, "line": a.line, "decision": a.decision,
              "new_label": a.new_label, "note": a.note, "decided_by": a.decided_by,

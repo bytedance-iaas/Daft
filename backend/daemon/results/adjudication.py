@@ -15,21 +15,33 @@ structural gates are final - rule 2). A line the catalog does not know is not as
 A question that was answered keeps its card after the answer was applied and the
 episode left the newer revision's review: the question is taken from the newest older
 revision that asked it, so ``decided`` / ``applied`` cards stay visible and can be
-changed. A task verdict given after a relabel on a label-only card (the optional verdict
-of v1's card, rule 4) shows as a verdict question.
+changed.
+
+**Follow-ups** (C1 1.3 ``follow_ups``, C4 1.5.1): a card whose latest answer on a line
+opens a follow-up gains that question - v1's relabel card: after ``adopt_suggestion`` /
+``custom_label`` a label-only card also takes the task verdict (``success`` /
+``failure`` / ``unsure``); answered, the machine takes it and does not re-judge; left
+open, the episode is judged again with the new label (rule 4). It is listed on the card
+while open (same source module as the question that opened it), it is optional - it
+never makes a card pending and never blocks ``decided`` - and its answer lapses once the
+answer that opened it changes: a lapsed answer is not shown, not counted and not handed
+to the CLI (:meth:`Queue.executable`).
 
 **Decisions** are the repository's rows, append only; the latest per (task, line,
 episode) counts. They never cross tasks (D32): the queue is this task's revision and
 this task's rows only. C4 1.5 carries ``line`` and ``decision`` as open strings;
 :meth:`Queue.answerable` is the one place that says whether a decision may answer a line
-of an episode: a catalog line the episode's card has a question for (or v1's optional
-verdict), one of that line's catalog decisions, and the rules below on top.
+of an episode: a catalog line the episode's card asks (then any of the line's catalog
+decisions) or a follow-up the card's answers open (then only the follow-up's decisions),
+and the rules below on top. :meth:`Queue._stands` is the one place of the lapse rule.
 
-**Card status**: a discard on any line decides the card (rule 1: it wins over every
-verdict); else any ``unsure`` keeps it ``unsure`` - still pending, still in the queue
-(rule 3); else every question answered makes it ``decided`` (``applied`` once every
-answer was executed); a relabel not executed yet also decides it, because executing
-re-judges the task with the new label; anything else is ``pending``.
+**Card status** (optional follow-ups left out, except that their answers must be
+executed before a card is ``applied``): a discard on any line decides the card (rule 1:
+it wins over every verdict); else any ``unsure`` keeps it ``unsure`` - still pending,
+still in the queue (rule 3); else every question answered makes it ``decided``
+(``applied`` once every answer was executed); a relabel not executed yet also decides
+it, because executing re-judges the task with the new label; anything else is
+``pending``.
 
 **Counts** (C4 ``AdjudicationCounts``: cards of the whole task, not the filtered page):
 ``pending`` and ``decided`` over the cards with a question on a ``counts_as_pending``
@@ -71,6 +83,8 @@ class Question:
     priority: str | None = None
     duplicate_of: int | None = None
     revision: int = 0
+    optional: bool = False              # an optional follow-up: never pending, never blocking
+    follow_up_of: str | None = None     # the line whose answer opened it (C1 1.3 follow_ups)
 
 
 def _str(v) -> str | None:
@@ -147,23 +161,29 @@ def _spec(a: P.Adjudication | None) -> C.DecisionSpec | None:
     return C.decision(a.line, a.decision) if a is not None else None
 
 
+def _unsure(a: P.Adjudication | None) -> bool:
+    spec = _spec(a)
+    return bool(spec and spec.unsure)
+
+
 @dataclass
 class Card:
     episode: int
     questions: list[Question]
     status: str
 
-    def unapplied(self, decisions: dict) -> bool:
+    def unapplied(self, standing: dict) -> bool:
+        """Something to execute: a standing answer not applied yet (``unsure`` is not one)."""
         for q in self.questions:
-            d = decisions.get((q.episode, q.line))
-            if d is not None and d.applied_in_subtask is None and not getattr(_spec(d), "unsure", False):
+            d = standing.get((q.episode, q.line))
+            if d is not None and d.applied_in_subtask is None and not _unsure(d):
                 return True
         return False
 
-    def to_json(self, decisions: dict) -> dict:
+    def to_json(self, standing: dict) -> dict:
         qs = []
         for q in self.questions:
-            d = decisions.get((q.episode, q.line))
+            d = standing.get((q.episode, q.line))
             qs.append({"line": q.line, "source_module": q.source_module, "reason": q.reason,
                        "duplicate_of": q.duplicate_of, "annotation": q.annotation,
                        "caption": q.caption, "suggestion": q.suggestion, "priority": q.priority,
@@ -172,11 +192,19 @@ class Card:
 
     def counts_as_pending(self) -> bool:
         pending = C.pending_lines()
-        return any(q.line in pending for q in self.questions)
+        return any(q.line in pending and not q.optional for q in self.questions)
 
 
-def card_status(questions: list[Question], decisions: dict) -> str:
-    decs = [decisions.get((q.episode, q.line)) for q in questions]
+def card_status(questions: list[Question], standing: dict) -> str:
+    """pending / decided / unsure / applied of one card, from its standing answers.
+
+    An optional follow-up never blocks ``decided`` and never makes a card pending or
+    unsure; an answer on it still has to be executed before the card is ``applied``.
+    """
+    required = [q for q in questions if not q.optional]
+    decs = [standing.get((q.episode, q.line)) for q in required]
+    extra = [d for q in questions if q.optional
+             if (d := standing.get((q.episode, q.line))) is not None and not _unsure(d)]
     specs = [_spec(d) for d in decs]
     discard = next((d for d, s in zip(decs, specs) if s is not None and s.discard), None)
     if discard is not None:                             # rule 1
@@ -184,7 +212,8 @@ def card_status(questions: list[Question], decisions: dict) -> str:
     if any(s is not None and s.unsure for s in specs):
         return "unsure"                                 # rule 3: stays in the queue
     if all(d is not None for d in decs):
-        return "applied" if all(d.applied_in_subtask for d in decs) else "decided"
+        done = all(d.applied_in_subtask for d in decs + extra)
+        return "applied" if done else "decided"
     if any(s is not None and s.relabel and d.applied_in_subtask is None
            for d, s in zip(decs, specs)):
         return "decided"                                # rule 4: executing re-judges it
@@ -192,7 +221,13 @@ def card_status(questions: list[Question], decisions: dict) -> str:
 
 
 class Queue:
-    """The task's questions, decisions and cards at its current revision."""
+    """The task's questions, decisions and cards at its current revision.
+
+    ``asked`` are the questions modules asked (current revision, or an older one for an
+    answered question); ``questions`` add the follow-ups that are open now; ``decisions``
+    are the latest rows per (episode, line); ``standing`` are those that count - a
+    follow-up answer lapses once the answer that opened it changes (:meth:`_stands`).
+    """
 
     def __init__(self, store: ResultStore, repo: P.Repository, task: P.Task, *,
                  backfill: bool = True):
@@ -202,12 +237,14 @@ class Queue:
         self.decisions = {(int(a.episode_index), a.line): a
                           for a in repo.latest_adjudications(task.id)}
         self.selected = {m.module_id for m in repo.get_task_modules(task.id) if m.selected}
-        self.questions: dict[tuple[int, str], Question] = {}
+        self.asked: dict[tuple[int, str], Question] = {}
         if self.rev is not None:
-            self._build(store, backfill)
+            self.asked = self._asked(store, backfill)
+        self.questions = {**self.asked, **self._open_follow_ups()}
+        self.standing = {key: d for key, d in self.decisions.items() if self._stands(key, d)}
         self._cards: dict[str, list[Card]] = {}
 
-    def _build(self, store: ResultStore, backfill: bool) -> None:
+    def _asked(self, store: ResultStore, backfill: bool) -> dict[tuple[int, str], Question]:
         qs = dict(questions_of(self.rev))
         missing = [k for k in self.decisions if k not in qs]
         for n in range(self.revision - 1, 0, -1):             # answered, then left the review
@@ -221,14 +258,48 @@ class Queue:
             for k in [k for k in missing if k in found]:
                 qs[k] = found[k]
                 missing.remove(k)
-        verdict_line, verdict_module = C.OPTIONAL_VERDICT
-        for ep, line in missing:                              # the optional verdict (rule 4)
-            spec = _spec(self.decisions[(ep, line)])
-            label = next((qs[(ep, r)] for r in C.relabel_lines() if (ep, r) in qs), None)
-            if line == verdict_line and label is not None and spec is not None and not spec.unsure:
-                qs[(ep, line)] = Question(ep, line, verdict_module, C.OPTIONAL_REASON,
-                                          annotation=label.annotation, revision=label.revision)
-        self.questions = qs
+        return qs
+
+    # -- follow-ups (C1 1.3 follow_ups; v1's verdict after a relabel) --------------------
+    def _follow_up(self, ep: int, line_id: str, answers: dict) -> tuple[C.FollowUpSpec, Question] | None:
+        """The follow-up on ``line_id`` that ``answers`` open on episode ``ep``'s card, with
+        the question it asks; None when the card asks that line itself or nothing opens it."""
+        if (ep, line_id) in self.asked:
+            return None
+        for f in C.follow_ups_onto(line_id):
+            owner = self.asked.get((ep, f.owner))
+            opener = answers.get((ep, f.owner))
+            opener = opener.decision if isinstance(opener, P.Adjudication) else opener
+            if owner is not None and f.opened_by(opener):
+                return f, Question(ep, line_id, owner.source_module, C.follow_up_reason(f),
+                                   annotation=owner.annotation, revision=owner.revision,
+                                   optional=f.optional, follow_up_of=f.owner)
+        return None
+
+    def _open_follow_ups(self) -> dict[tuple[int, str], Question]:
+        out = {}
+        for ep, owner_line in list(self.asked):
+            for f in C.line(owner_line).follow_ups if C.line(owner_line) else ():
+                hit = self._follow_up(ep, f.line, self.decisions)
+                if hit is not None:
+                    out[(ep, f.line)] = hit[1]
+        return out
+
+    def _stands(self, key: tuple[int, str], d: P.Adjudication) -> bool:
+        """Whether a latest answer counts. The one place of the lapse rule: an answer on a
+        follow-up counts only while the answer that opened it is still the owner's latest
+        and was given before it, and only with one of the follow-up's decisions."""
+        ep, line_id = key
+        if key in self.asked:
+            return True
+        hit = self._follow_up(ep, line_id, self.decisions)
+        if hit is None:
+            # no follow-up open on it: an answer on a follow-up line lapsed; anything else
+            # has no question left (an older revision's files are gone) and still counts
+            return not C.follow_ups_onto(line_id)
+        f, _ = hit
+        opener = self.decisions[(ep, f.owner)]
+        return d.id > opener.id and d.decision in f.decisions
 
     # -- cards ------------------------------------------------------------------------
     def cards(self, tab: str) -> list[Card]:
@@ -240,8 +311,8 @@ class Queue:
                     by_ep.setdefault(ep, []).append(q)
             cards = []
             for ep in sorted(by_ep):
-                qs = sorted(by_ep[ep], key=lambda q: C.order(q.line))
-                cards.append(Card(ep, qs, card_status(qs, self.decisions)))
+                qs = sorted(by_ep[ep], key=lambda q: (q.optional, C.order(q.line)))
+                cards.append(Card(ep, qs, card_status(qs, self.standing)))
             self._cards[tab] = cards
         return self._cards[tab]
 
@@ -251,13 +322,21 @@ class Queue:
         cards = [c for tab in C.TABS for c in self.cards(tab)]
         counted = [c for c in cards if c.counts_as_pending()]
         decided = sum(1 for c in counted if c.status in ("decided", "applied"))
-        unapplied = sum(1 for c in cards if c.unapplied(self.decisions))
+        unapplied = sum(1 for c in cards if c.unapplied(self.standing))
         return {"decided": decided, "pending": len(counted) - decided, "unapplied": unapplied}
+
+    def executable(self) -> list[P.Adjudication]:
+        """The decisions an apply subtask hands to ``curation adjudicate-apply``: the latest
+        per episode and line that still stand and were not applied yet, oldest first.
+        Lapsed follow-up answers are left out; ``unsure`` rows go along (they change nothing
+        and keep the CLI's record complete)."""
+        return sorted((d for d in self.standing.values() if d.applied_in_subtask is None),
+                      key=lambda d: d.id)
 
     def page(self, *, tab: str, status: str, source: str | None, cursor: str | None,
              limit: int) -> dict:
         """C4 ``listAdjudication``: cards by episode, a cursor bound to the revision."""
-        cards = [c for c in self.cards(tab) if _keep(c, status, source, self.decisions)]
+        cards = [c for c in self.cards(tab) if _keep(c, status, source, self.standing)]
         scope = {"task": self.task.id, "tab": tab, "status": status, "source": source}
         start = 0
         if cursor:
@@ -275,7 +354,7 @@ class Queue:
         more = start + len(chunk) < len(cards)
         next_cursor = encode_cursor(CURSOR_KIND, [self.revision, chunk[-1].episode],
                                     scope=scope) if more else None
-        return {"items": [c.to_json(self.decisions) for c in chunk], "next_cursor": next_cursor,
+        return {"items": [c.to_json(self.standing) for c in chunk], "next_cursor": next_cursor,
                 "has_more": more, "counts": self.counts()}
 
     # -- submissions ------------------------------------------------------------------
@@ -301,8 +380,12 @@ class Queue:
     def answerable(self, ep: int, line_id: str, decision_id: str, latest: dict,
                    where: str) -> tuple[Question, C.DecisionSpec]:
         """Whether ``decision_id`` may answer ``line_id`` of episode ``ep`` - the one place
-        that says so. ``latest`` holds the answers in force, the submission's so far included.
-        Raises ``validation_failed`` naming the field; returns the question and the decision."""
+        that says so. ``latest`` holds the answers in force (decision values), the
+        submission's so far included. The line must be a catalog line; the card must ask
+        it, or a follow-up the card's answers open must answer on it (then only the
+        follow-up's decisions); the decision must be one of the line's; a verdict next to
+        a discard on the card is refused (rule 1). Raises ``validation_failed`` naming the
+        field; returns the question and the decision."""
         name = f"ep{ep:06d}"
         ln = C.line(line_id)
         if ln is None:
@@ -313,37 +396,41 @@ class Queue:
             raise _bad(f"{name}：{ln.title_zh}不能选 {decision_id}（可以选："
                        f"{'、'.join(f'{d.title_zh}（{d.id}）' for d in ln.decisions)}）",
                        f"{where}.decision")
-        question = self.questions.get((ep, line_id)) or self._optional(ep, ln, spec, latest, where)
+        question = self.asked.get((ep, line_id))
+        if question is None:
+            hit = self._follow_up(ep, line_id, latest)
+            if hit is None:
+                raise self._not_asked(ep, ln, latest, where)
+            f, question = hit
+            if decision_id not in f.decisions:
+                raise _bad(f"{name}：这里的{ln.title_zh}只能选{ln.titles(f.decisions)}",
+                           f"{where}.decision")
+            if not any(f.line in registry.get(m).review_lines for m in self.selected
+                       if m in registry.ids()):
+                raise _bad(f"{name}：这个任务没有勾选产生「{ln.title_zh}」的模块，不能回答",
+                           f"{where}.line")
         if spec.verdict and any(
-                getattr(C.decision(r, latest.get((ep, r)) or ""), "discard", False)
+                getattr(C.decision(r, latest.get((ep, r))), "discard", False)
                 for r in C.relabel_lines() if r != line_id):
             raise _bad(f"{name} 已经「整条弃用」，弃用的条目不再判成败；要判成败，先撤销弃用",
                        f"{where}.decision")
         return question, spec
 
-    def _optional(self, ep: int, ln: C.LineSpec, spec: C.DecisionSpec, latest: dict,
-                  where: str) -> Question:
-        """A line no module asked about this episode: only v1's optional verdict (rule 4)."""
+    def _not_asked(self, ep: int, ln: C.LineSpec, latest: dict, where: str) -> ApiError:
         name = f"ep{ep:06d}"
-        verdict_line, verdict_module = C.OPTIONAL_VERDICT
-        labels = [r for r in C.relabel_lines() if (ep, r) in self.questions]
-        if ln.id != verdict_line or not labels:
-            if ln.tab == "appeals":
-                raise _bad(f"{name} 不在复议列表里，不能复议：只有可复议模块判的拒绝能复议，"
-                           f"物理与结构检查的拒绝是终局", f"{where}.episode_index")
-            if ln.id in C.relabel_lines():
-                raise _bad(f"{name} 没有待裁决的标注分歧，不能裁决标注", f"{where}.episode_index")
-            raise _bad(f"{name} 不在这个任务的待裁决队列里（没有要人判成败的问题）",
-                       f"{where}.episode_index")
-        if not spec.discard:                                    # a discard is the card's
-            if verdict_module not in self.selected:
-                raise _bad(f"{name}：这个任务没有勾选任务成败判定，不能判成败", f"{where}.line")
-            if not any(C.is_relabel(r, latest.get((ep, r))) for r in labels):
-                raise _bad(f"{name} 只有标注问题：先{_relabel_titles('或')}，才能直接判成败",
-                           f"{where}.line")
-        label = self.questions[(ep, labels[0])]
-        return Question(ep, ln.id, verdict_module, C.OPTIONAL_REASON,
-                        annotation=label.annotation, revision=label.revision)
+        if ln.tab == "appeals":
+            return _bad(f"{name} 不在复议列表里，不能复议：只有可复议模块判的拒绝能复议，"
+                        f"物理与结构检查的拒绝是终局", f"{where}.episode_index")
+        closed = [f for f in C.follow_ups_onto(ln.id) if (ep, f.owner) in self.asked]
+        if closed:
+            f = closed[0]
+            owner = C.line(f.owner)
+            return _bad(f"{name} 先在「{owner.title_zh}」选{owner.titles(f.after, '或')}，才能回答"
+                        f"「{ln.title_zh}」", f"{where}.line")
+        if ln.id in C.relabel_lines():
+            return _bad(f"{name} 没有待裁决的标注分歧，不能裁决标注", f"{where}.episode_index")
+        return _bad(f"{name} 不在这个任务的待裁决队列里（没有要人判成败的问题）",
+                    f"{where}.episode_index")
 
 
 def _relabel_titles(joiner: str) -> str:
@@ -373,7 +460,7 @@ def _bad(message: str, field: str) -> ApiError:
                     details={"errors": [{"field": field, "problem": message}]})
 
 
-def _keep(card: Card, status: str, source: str | None, decisions: dict) -> bool:
+def _keep(card: Card, status: str, source: str | None, standing: dict) -> bool:
     if source and not any(q.source_module == source for q in card.questions):
         return False
     if status == "pending":
@@ -381,7 +468,7 @@ def _keep(card: Card, status: str, source: str | None, decisions: dict) -> bool:
     if status == "decided":
         return card.status in ("decided", "applied")
     if status == "unapplied":
-        return card.unapplied(decisions)
+        return card.unapplied(standing)
     return True
 
 
