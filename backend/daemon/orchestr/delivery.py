@@ -89,8 +89,16 @@ class Delivery:
     def get_bytes(self, rel: str) -> bytes | None:
         raise NotImplementedError
 
+    def get_file(self, rel: str, path: pathlib.Path) -> None:
+        """Download ``rel`` to ``path`` - atomically, a partial file is never left there."""
+        raise NotImplementedError
+
     def delete(self, rel: str) -> None:
         raise NotImplementedError
+
+
+def _part_of(path: pathlib.Path) -> pathlib.Path:
+    return path.with_name(f".{path.name}.part-{os.getpid()}-{threading.get_ident()}")
 
 
 class LocalDelivery(Delivery):
@@ -159,6 +167,17 @@ class LocalDelivery(Delivery):
         except FileNotFoundError:
             return None
         except OSError as err:
+            raise DeliveryError("交付目录读不了", f"{rel}: {err.strerror or err}") from None
+
+    def get_file(self, rel: str, path: pathlib.Path) -> None:
+        path = pathlib.Path(path)
+        tmp = _part_of(path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self._p(rel), tmp)
+            os.replace(tmp, path)
+        except OSError as err:
+            tmp.unlink(missing_ok=True)
             raise DeliveryError("交付目录读不了", f"{rel}: {err.strerror or err}") from None
 
     def delete(self, rel: str) -> None:
@@ -255,6 +274,24 @@ class TosDelivery(Delivery):
             code = str(getattr(err, "code", "") or "")
             if code in ("NoSuchKey", "NotFound") or getattr(err, "status_code", None) == 404:
                 return None
+            raise self._fail("交付目录读不了", err) from None
+
+    def get_file(self, rel: str, path: pathlib.Path) -> None:
+        path = pathlib.Path(path)
+        tmp = _part_of(path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fetch = getattr(self.client, "get_object_to_file", None)
+            if fetch is not None:                      # the SDK streams it to disk
+                fetch(self.bucket, self._key(rel), str(tmp))
+            else:
+                tmp.write_bytes(self.client.get_object(self.bucket, self._key(rel)).read())
+            os.replace(tmp, path)
+        except OSError as err:
+            tmp.unlink(missing_ok=True)
+            raise DeliveryError("本地工作目录写不进去", f"{path}: {err.strerror or err}") from None
+        except Exception as err:  # noqa: BLE001 - the SDK raises many kinds
+            tmp.unlink(missing_ok=True)
             raise self._fail("交付目录读不了", err) from None
 
     def delete(self, rel: str) -> None:
@@ -355,6 +392,34 @@ def sync_run_dir(delivery: Delivery, run_id: str, root: pathlib.Path, state_path
 def forget_sync(state_path: pathlib.Path) -> None:
     with contextlib.suppress(FileNotFoundError):
         state_path.unlink()
+
+
+#: What a restore from the delivery leaves there (00 §4.2 "大文件不回灌", v1's
+#: ``REPROFILE_SKIP_DIRS``): the delivered dataset, review clips, evidence frames and
+#: plot data - nothing local reads them; readers sign their delivery URLs.
+RESTORE_SKIP = (EXPORT_DATASET + "/", "details/audit_clips/", "details/evidence/",
+                "details/plots/", "checks/video_action_sync/curves/")
+
+
+def restorable(rel: str) -> bool:
+    """Whether ``<run_id>/<rel>`` in the delivery goes back into a cleaned run directory."""
+    return _delivered(rel) and not rel.startswith(RESTORE_SKIP)
+
+
+def mark_synced(state_path: pathlib.Path, run_id: str, root: pathlib.Path,
+                rels: list[str]) -> None:
+    """Files just fetched from ``<run_id>/`` are what the delivery has: no upload for them."""
+    state = read_json(state_path, {}) or {}
+    if state.get("run_id") != run_id:
+        state = {"run_id": run_id, "files": {}}
+    files: dict = state.setdefault("files", {})
+    for rel in rels:
+        try:
+            st = (pathlib.Path(root) / rel).stat()
+        except OSError:
+            continue
+        files[rel] = [st.st_size, st.st_mtime_ns]
+    write_json_atomic(state_path, state)
 
 
 def read_latest(delivery: Delivery) -> str:

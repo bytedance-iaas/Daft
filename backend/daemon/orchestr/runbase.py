@@ -506,19 +506,43 @@ class Run:
         return open_delivery(self.task.output_uri, local_root=self.cfg.local_delivery_root,
                              svc=self.orch.svc, key=key, region=region)
 
+    def ensure_local(self) -> None:
+        """A subtask on a task whose work directory the janitor cleaned (7 days after the
+        end) first brings back from the delivery what it builds on (00 §4.2)."""
+        restorer = self.orch.restorer
+        if not restorer.needed(self.task):
+            return
+        where = f"{self.task.output_uri.rstrip('/')}/{self.task.run_id}"
+        self.log("system", "info", f"本地工作目录已清理，从交付目录 {where}/ 取回（大文件不取回）")
+        try:
+            n = restorer.restore(self.task, check_stop=self.check_intent)
+        except DeliveryError as err:
+            raise TaskFailure("output_unreachable",
+                              f"本地工作目录已清理，从交付目录取回时出错：{err.message_zh}：{err.cause}"
+                              ) from None
+        self.log("system", "info", f"从交付目录取回 {n} 个文件")
+        if self.task.result_rev and not (self.wd.revision_dir(int(self.task.result_rev))
+                                         / "commit.json").is_file():
+            raise TaskFailure("no_result", f"交付目录 {where}/ 里没有结果版本 "
+                                           f"r{int(self.task.result_rev):04d}（可能已被清理），没法接着做")
+
     def export(self, stage: str, delivery, rev: int, *, incremental: bool) -> dict:
         self.progress(stage, state="running", done=0, total=0)
         run_uri = delivery.cli_uri(self.task.run_id)
         scratch = pathlib.Path(self.orch.settings.scratch_dir) / self.task_id
+        shutil.rmtree(scratch, ignore_errors=True)         # what a killed export left behind
         (scratch / "tmp").mkdir(parents=True, exist_ok=True)
         argv = ["export", "--run-dir", str(self.wd.root),
                 *self.source_args(manifest=True, semantics=False), "--revision", str(rev),
                 "--output", run_uri, "--scratch", str(scratch)]
         if incremental:
             argv.append("--incremental")
-        outcome = self.cli(stage, argv, need_input=True, need_output=True,
-                           extra_env={"CURATION_EXPORT_SCRATCH": str(scratch),
-                                      "TMPDIR": str(scratch / "tmp")})
+        try:
+            outcome = self.cli(stage, argv, need_input=True, need_output=True,
+                               extra_env={"CURATION_EXPORT_SCRATCH": str(scratch),
+                                          "TMPDIR": str(scratch / "tmp")})
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
         if not outcome.ok:
             self.fail_on(outcome, stage)
         doc = outcome.doc
@@ -571,6 +595,7 @@ class Run:
             doc = outcome.doc
             if not doc.get("failed") and doc.get("complete_marker"):
                 self.stages.get(stage, {}).pop("note", None)
+                self.wd.purged_mark.unlink(missing_ok=True)   # the batch is there again
                 return doc
             bad = doc.get("failed") or []
             shown = "、".join(f"{f.get('path')}（{f.get('reason')}）" for f in bad[:5])
@@ -594,9 +619,19 @@ class Run:
         self.reload()
 
     def refresh_results(self, rev: int) -> None:
-        """Summary and ``delivery_stale`` after a revision switched (01 §2.3)."""
-        latest = self.repo.latest_adjudications(self.task_id)
-        self.repo.set_task_summary(self.task_id, rules.summary(self.wd.revision_dir(rev), latest))
+        """Summary and ``delivery_stale`` after a revision switched (01 §2.3).
+
+        The summary is the result readers' (W5b ``refresh_summary``): its
+        ``pending_adjudication`` counts the adjudication queue the way the queue does.
+        """
+        from ..results import refresh_summary, store_of
+
+        try:
+            refresh_summary(store_of(self.orch.rt), self.repo, self.task_id, owner=self.owner)
+        except Exception:  # noqa: BLE001 - the counts must follow the revision regardless
+            log.warning("summary of task %s not refreshed by the result readers; counting "
+                        "the lists of r%04d", self.task_id, rev, exc_info=True)
+            self.repo.set_task_summary(self.task_id, rules.summary(self.wd.revision_dir(rev)))
         current = self.current_fingerprint(rev)
         self.reload()
         stale = current is None or current != self.task.export_fingerprint

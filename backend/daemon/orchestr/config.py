@@ -11,6 +11,7 @@
 | ``CURATOR_VERIFY_VISIBILITY_S`` | 60 | ``curation verify --visibility-timeout`` |
 | ``CURATOR_LOCAL_DELIVERY_ROOT`` | empty | **experimental, debugging only**: deliveries ``tos://bucket/prefix`` are written to ``<root>/bucket/prefix`` on the local disk instead of TOS |
 | ``CURATOR_ORCHESTRATOR`` | on | ``off`` keeps the worker pool from running anything (maintenance) |
+| ``CURATOR_WORK_RETENTION_DAYS`` | 7 | a finished task's local work directory is removed this long after its last run ended (00 §4.2; 0 = never) |
 """
 from __future__ import annotations
 
@@ -103,6 +104,10 @@ class OrchestratorConfig:
     blank_crash_limit: int = 3
     #: how long a graceful shutdown waits for the running commands to wind down
     shutdown_wait_s: float = 100.0
+    #: a finished task's work directory is cleaned this long after its last run (0 = never)
+    work_retention_s: float = 7 * 86400.0
+    #: how often the janitor looks for work directories to clean
+    janitor_interval_s: float = 3600.0
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "OrchestratorConfig":
@@ -130,6 +135,7 @@ class OrchestratorConfig:
             verify_visibility_s=float(_number(env, "CURATOR_VERIFY_VISIBILITY_S", 60.0)),
             local_delivery_root=pathlib.Path(local) if local else None,
             shutdown_wait_s=max(float(term) + 10.0, 30.0),
+            work_retention_s=float(_number(env, "CURATOR_WORK_RETENTION_DAYS", 7.0)) * 86400.0,
         )
 
     def with_(self, **changes: Any) -> "OrchestratorConfig":

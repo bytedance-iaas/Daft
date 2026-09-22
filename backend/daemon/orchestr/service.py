@@ -1,11 +1,13 @@
 """``Orchestrator`` - one per Daemon (``runtime.orchestrator``): what the routes call.
 
 It owns the executor (every CLI child), the worker pool, the per-delivery publish
-locks, and the lifecycle hooks of the runtime:
+locks, the work-directory janitor and restorer (7 days after the end, back from the
+delivery on demand - also for W5b's readers), and the lifecycle hooks of the runtime:
 
 * ``on_ready`` (after the startup reconciliation): reap children a killed Daemon left
   behind, lower the Daemon's oom_score_adj, rebuild the queue and start the pool -
-  system-paused work that reconciliation re-queued resumes by itself (D26);
+  system-paused work that reconciliation re-queued resumes by itself (D26) - and the
+  janitor;
 * ``on_stopping`` (SIGTERM): take nothing new, move every running task / subtask to
   ``pausing`` (system) and SIGTERM its command; they end ``paused`` (system), never
   ``failed``, even when SIGKILL has to follow after 90 s (09 §2.3);
@@ -37,15 +39,17 @@ from ..secrets import service_of
 from ..secrets.effort import EffortNotAllowed
 from ..util import canonical_json, sha256_hex
 from . import rules
+from .backfill import Restorer
 from .browse import Browser
 from .config import OrchestratorConfig
 from .datasets import DatasetOps, Source, format_supported
 from .delivery import DeliveryError, DeliveryLocks, forget_sync, open_delivery, read_latest
+from .janitor import Janitor
 from .resources import lower_daemon_oom_score
 from .runbase import PROC_FILE, SHUTDOWN_REASON
 from .scheduler import Scheduler
 from .start import Draft, StartChecks
-from .workdir import WorkDir, read_json
+from .workdir import WorkDir, read_json, write_json_atomic
 
 log = logging.getLogger("daemon.orchestr")
 
@@ -80,6 +84,8 @@ class Orchestrator:
         self.checks = StartChecks(self)
         self.datasets = DatasetOps(self)
         self.browser = Browser(self)
+        self.restorer = Restorer(self)
+        self.janitor = Janitor(self)
         self._preflight_inputs: dict[str, tuple] = {}
         self._shutting_down = threading.Event()
 
@@ -93,13 +99,16 @@ class Orchestrator:
         self.reap_orphans()
         if self.cfg.enabled:
             self.scheduler.start()
+            self.janitor.start()
         else:
             log.warning("CURATOR_ORCHESTRATOR=off: queued tasks are not run")
 
     def on_stopping(self, rt) -> None:
+        self.janitor.stop()
         self.system_pause_all()
 
     def on_shutdown(self, rt) -> None:
+        self.janitor.stop()
         self.system_pause_all()
         if not self.scheduler.wait_idle(self.cfg.shutdown_wait_s):
             n = self.executor.kill_all()
@@ -547,7 +556,10 @@ class Orchestrator:
                         d.delete(rel)
                     if latest_removed:
                         d.delete("latest")
-                forget_sync(WorkDir(self.work_root, task_id).sync_state)
+                wd = WorkDir(self.work_root, task_id)
+                forget_sync(wd.sync_state)
+                wd.ensure()
+                write_json_atomic(wd.purged_mark, {"at": self.clock(), "path": path})
                 self.repo.set_export_fingerprint(task_id, None, True)
                 log.info("purged %s (%d objects, %d bytes)", path, len(listing), total)
             except Exception:  # noqa: BLE001
@@ -629,12 +641,15 @@ def _stop_group(pid: int, grace_s: float) -> None:
 
 def install(app) -> Orchestrator:
     """Create the orchestrator of an app and hook it into the runtime's lifecycle."""
+    from ..results import store_of
+
     rt = app.state.runtime
     orch = Orchestrator(rt)
     rt.orchestrator = orch
     rt.on_ready.append(orch.on_ready)
     rt.on_stopping.append(orch.on_stopping)
     rt.on_shutdown.append(orch.on_shutdown)
+    store_of(rt).backfill = orch.restorer.hook       # W5b's readers restore cleaned run dirs
     return orch
 
 

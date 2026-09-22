@@ -15,7 +15,13 @@ neither delivered nor verified (``curation verify`` skips hidden files):
 * ``<run>/`` - the episode lists handed between stages (``@file`` arguments), the
   decisions of an adjudication run;
 * ``sync.json`` - what has been uploaded to the delivery, so a sync only sends
-  what changed.
+  what changed;
+* ``cleaned.json`` - the rest of the directory was removed 7 days after the task
+  ended (:mod:`.janitor`); what was delivered comes back on demand (:mod:`.backfill`,
+  which leaves ``restored.json``). ``.orchestr/`` itself stays: it is small and lets
+  a later subtask go on;
+* ``purged.json`` - the batch was deleted from the delivery on request (D28): no
+  sync puts it back until the next publish does so on purpose.
 """
 from __future__ import annotations
 
@@ -28,6 +34,9 @@ from typing import Any, Iterable
 PRIVATE = ".orchestr"
 START_MARK = "start.json"
 SYNC_STATE = "sync.json"
+CLEANED_MARK = "cleaned.json"
+RESTORED_MARK = "restored.json"
+PURGED_MARK = "purged.json"
 
 
 def write_json_atomic(path: pathlib.Path, doc: Any) -> None:
@@ -105,6 +114,18 @@ class WorkDir:
     @property
     def sync_state(self) -> pathlib.Path:
         return self.private / SYNC_STATE
+
+    @property
+    def cleaned_mark(self) -> pathlib.Path:
+        return self.private / CLEANED_MARK
+
+    @property
+    def restored_mark(self) -> pathlib.Path:
+        return self.private / RESTORED_MARK
+
+    @property
+    def purged_mark(self) -> pathlib.Path:
+        return self.private / PURGED_MARK
 
     def journal(self, run: str) -> pathlib.Path:
         return self.private / f"{run}.json"

@@ -245,6 +245,8 @@ class MainRun(StageRun):
 
     def execute(self) -> str:
         self.reload()
+        if self.sub_id is not None:                      # a resume, maybe days later
+            self.ensure_local()
         plan = planning.ensure_plan(self)
         self.plan_progress(self.stage_ids(plan))
         modules = self.plan_modules(plan)
@@ -292,6 +294,7 @@ class RetryRun(StageRun):
 
     def execute(self) -> str:
         self.reload()
+        self.ensure_local()
         plan = self.plan_doc()
         modules = self.plan_modules(plan)
         cur = int(self.task.result_rev or 0)
@@ -364,6 +367,7 @@ class AdjudicationRun(StageRun):
 
     def execute(self) -> str:
         self.reload()
+        self.ensure_local()
         plan = self.plan_doc()
         modules = self.plan_modules(plan)
         stages = {s["id"]: s for s in plan["stages"]}
@@ -419,6 +423,7 @@ class AdjudicationRun(StageRun):
                                  "--decisions", str(path)], need_input=False)
         if not outcome.ok:
             self.fail_on(outcome, sid)
+        self.copy_decisions()
         res = outcome.doc
         applied = {"ids": [a.id for a in rows], "rerun": list(res.get("rerun_task_success") or []),
                    "resync": list(res.get("profile_resync") or [])}
@@ -426,6 +431,18 @@ class AdjudicationRun(StageRun):
                               f"条之前已应用）；按新标注重跑任务成败判定 {len(applied['rerun'])} 条")
         self.stage_done(sid, "succeeded", applied=applied)
         return applied
+
+    def copy_decisions(self) -> None:
+        """``adjudicate-apply`` rewrote ``human-decisions/*.csv`` with the applied decisions
+        only; every recorded one goes back (W5b's writer, the database is the authority).
+        The publish that follows delivers them."""
+        from ..results import store_of, write_copies
+
+        try:
+            write_copies(store_of(self.orch.rt), self.repo, self.reload())
+        except Exception:  # noqa: BLE001 - a copy; the database has the decisions
+            log.warning("task %s: human-decisions/ not rewritten after adjudicate-apply",
+                        self.task_id, exc_info=True)
 
     def rejudge(self, st: dict, episodes: list[int]) -> None:
         """task_success again for relabelled episodes (not ``--resume``: they have results)."""
@@ -486,6 +503,7 @@ class ReexportRun(StageRun):
         rev = int(self.task.result_rev or 0)
         if rev < 1:
             raise TaskFailure("no_result", "这个任务还没有结果，没什么可导出的")
+        self.ensure_local()
         self.plan_progress(["export", "verify"])
         with self.orch.locks.lock(self.task.delivery_key):
             with self.delivery() as d:

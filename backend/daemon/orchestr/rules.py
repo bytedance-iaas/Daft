@@ -7,8 +7,8 @@
   and ``held`` empty -> ``succeeded``, else ``completed_with_errors``. An episode a
   module erred on but another module rejected for good is not held (the CLI's
   aggregate already put it in ``reject``);
-* the summary the task list and the overview read (``total``, ``passed``,
-  ``rejected``, ``held``, ``review``, ``pass_rate``, ``pending_adjudication``);
+* the counts of a committed revision, for when the result readers' summary
+  (W5b ``refresh_summary``, with ``pending_adjudication``) cannot be had;
 * episode selections, the ``run_id`` of a batch, listing fingerprints and what
   changed between two listings (D37's ``SourceChange``).
 """
@@ -23,9 +23,6 @@ from typing import Iterable
 from ..repo import protocol as P
 
 FUNNEL_STAGES = ("numeric", "frame", "vlm")
-#: review.json item kind -> adjudication line (06 §5.1)
-REVIEW_LINE = {"task_verdict": "task_verdict", "label_conflict": "label",
-               "reject_appeal": "reject_appeal"}
 SAMPLE_KEYS = 20
 
 
@@ -76,42 +73,10 @@ def read_list(rev_dir: pathlib.Path, name: str) -> dict | None:
     return doc if isinstance(doc, dict) else None
 
 
-def _review_line(item: dict) -> tuple[str, bool]:
-    """(the adjudication line of a review.json item, whether an open one is pending).
-
-    C2 1.5 items carry ``line``; older ones only ``kind``. The registry's catalog (C1 1.2,
-    D43) says whether the line must be decided: appeals are optional and never pending
-    (D42). A line the catalog does not know counts as pending - better asked than lost.
-    """
-    from curation.contracts import modules as registry
-
-    line_id, kind = item.get("line"), item.get("kind")
-    try:
-        spec = registry.review_line(line_id) if line_id else registry.review_line_of_kind(kind)
-    except KeyError:
-        return str(line_id or REVIEW_LINE.get(kind, kind)), True
-    return spec.id, bool(spec.counts_as_pending)
-
-
-def pending_adjudication(review: dict | None, latest: Iterable[P.Adjudication]) -> int:
-    """Episodes of ``review.json`` with a question that must be decided and is not yet.
-
-    A question is answered by the latest decision on its line for that episode;
-    "unsure" is a legal answer that keeps the episode in the queue (06 §5.1, rule 3).
-    """
-    answered = {(a.episode_index, a.line) for a in latest if a.decision != "unsure"}
-    n = 0
-    for entry in (review or {}).get("episodes") or []:
-        ep = int(entry.get("episode_index", -1))
-        lines = {line for line, pending in map(_review_line, entry.get("review") or [])
-                 if pending}
-        if any((ep, line) not in answered for line in lines):
-            n += 1
-    return n
-
-
-def summary(rev_dir: pathlib.Path, latest: Iterable[P.Adjudication] = ()) -> dict:
-    """C4 ``Summary`` of a committed revision, plus ``pending_adjudication``."""
+def summary(rev_dir: pathlib.Path) -> dict:
+    """C4 ``Summary`` from the lists of a committed revision - the fallback when the result
+    readers cannot give theirs; without ``pending_adjudication`` (the task views then
+    count ``review``) rather than a second way of counting the queue."""
     counts = {}
     for name in ("passed", "reject", "held", "review"):
         doc = read_list(rev_dir, name)
@@ -119,8 +84,7 @@ def summary(rev_dir: pathlib.Path, latest: Iterable[P.Adjudication] = ()) -> dic
     total = counts["passed"] + counts["reject"] + counts["held"]
     out = {"total": total, "passed": counts["passed"], "rejected": counts["reject"],
            "held": counts["held"], "review": counts["review"],
-           "pass_rate": round(counts["passed"] / total, 4) if total else None,
-           "pending_adjudication": pending_adjudication(read_list(rev_dir, "review"), latest)}
+           "pass_rate": round(counts["passed"] / total, 4) if total else None}
     report = read_list(rev_dir, "report") or {}
     skipped = ((report.get("overview") or {}).get("counts") or {}).get("skipped")
     if isinstance(skipped, int) and not isinstance(skipped, bool) and skipped > 0:

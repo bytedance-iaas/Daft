@@ -41,30 +41,7 @@ def test_episode_selections():
     assert rules.max_episodes({"mode": "all"}) is None
 
 
-def _adj(ep, line, decision):
-    return P.Adjudication(id=1, task_id="t", episode_index=ep, line=line, decision=decision,
-                          decided_by="x", decided_at=1)
-
-
-def test_pending_adjudication_counts_unanswered_questions():
-    review = {"episodes": [
-        {"episode_index": 3, "review": [{"kind": "task_verdict"}], "current_list": "passed"},
-        {"episode_index": 4, "review": [{"kind": "label_conflict", "line": "label"},
-                                        {"kind": "task_verdict", "line": "task_verdict"}],
-         "current_list": "passed"},
-        {"episode_index": 5, "review": [{"kind": "reject_appeal"}], "current_list": "reject"},
-        {"episode_index": 6, "review": [{"kind": "new_kind", "line": "new_line"}],
-         "current_list": "passed"}]}
-    assert rules.pending_adjudication(review, []) == 3           # appeals are never pending
-    latest = [_adj(3, "task_verdict", "success"), _adj(4, "label", "keep_label"),
-              _adj(6, "new_line", "unsure")]
-    assert rules.pending_adjudication(review, latest) == 2       # 4 half answered, 6 unsure
-    latest.append(_adj(4, "task_verdict", "failure"))
-    assert rules.pending_adjudication(review, latest) == 1
-    assert rules.pending_adjudication(None, latest) == 0
-
-
-def test_summary_of_a_revision(tmp_path):
+def test_the_fallback_summary_of_a_revision(tmp_path):
     def write(name, count, extra=None):
         (tmp_path / f"{name}.json").write_text(json.dumps(
             {"list": name, "count": count, "episodes": extra or []}))
@@ -74,7 +51,7 @@ def test_summary_of_a_revision(tmp_path):
     write("review", 1, [{"episode_index": 1, "review": [{"kind": "task_verdict"}]}])
     out = rules.summary(tmp_path)
     assert out == {"total": 8, "passed": 5, "rejected": 2, "held": 1, "review": 1,
-                   "pass_rate": 0.625, "pending_adjudication": 1}
+                   "pass_rate": 0.625}               # the queue is counted by W5b's readers only
     (tmp_path / "report.json").write_text(json.dumps({"overview": {"counts": {"skipped": 2}}}))
     assert rules.summary(tmp_path)["skipped"] == 2               # D40, not part of total
 
@@ -129,6 +106,11 @@ def test_local_delivery_basics(tmp_path):
     d.put_file("r1/sub/f.bin", str(src))
     assert d.exists("r1") and d.list("r1") == {"r1/a.json": 2, "r1/sub/f.bin": 5}
     assert d.get_bytes("r1/a.json") == b"{}" and d.get_bytes("nope") is None
+    d.get_file("r1/sub/f.bin", tmp_path / "back" / "f.bin")
+    assert (tmp_path / "back" / "f.bin").read_bytes() == b"12345"
+    with pytest.raises(D.DeliveryError):
+        d.get_file("r1/none", tmp_path / "back" / "none")
+    assert sorted(os.listdir(tmp_path / "back")) == ["f.bin"]            # no partial file
     d.delete("r1/sub/f.bin")
     assert not (tmp_path / "deliveries" / "x" / "r1" / "sub").exists()   # empty dirs tidied
     with pytest.raises(D.DeliveryError):
@@ -149,6 +131,11 @@ def test_tos_delivery_through_the_client(tmp_path):
     d.put_bytes("latest", b"r1\n")
     assert d.exists("r1") and d.list("r1") == {"r1/report.md": 5}
     assert D.read_latest(d) == "r1" and d.get_bytes("r1/none") is None
+    d.get_file("r1/report.md", tmp_path / "back" / "report.md")
+    assert (tmp_path / "back" / "report.md").read_text() == "hello"
+    with pytest.raises(D.DeliveryError):
+        d.get_file("r1/none", tmp_path / "back" / "none")
+    assert os.listdir(tmp_path / "back") == ["report.md"]
     d.delete("r1/report.md")
     assert d.list("r1") == {}
     tos.pairs[AK2] = "revoked"
@@ -185,6 +172,21 @@ def test_the_sync_sends_what_changed_and_never_work_in_progress(tmp_path):
     D.forget_sync(state)
     assert D.sync_run_dir(d, "r1", root, state) == {"uploaded": 4}
     assert D.sync_run_dir(d, "r2", root, state) == {"uploaded": 4}   # another batch: from zero
+    D.forget_sync(state)
+    D.mark_synced(state, "r2", root, ["plan.json", "logs/numeric.jsonl", "gone.json"])
+    assert D.sync_run_dir(d, "r2", root, state) == {"uploaded": 2}   # fetched ones stay put
+
+
+def test_what_a_restore_brings_back():
+    for rel in ("plan.json", "revisions/r0001/commit.json", "checks/dedup/groups.json",
+                "logs/numeric.jsonl", "human-decisions/task_verdicts.csv",
+                "details/vlm_latency.csv", "export/manifest.json"):
+        assert D.restorable(rel), rel
+    for rel in ("_COMPLETE", "export/lerobot_curated/meta/info.json", ".orchestr/main.json",
+                "details/evidence/task_success/ep000001_0.jpg", "details/audit_clips/a.mp4",
+                "checks/video_action_sync/curves/ep000001.json", "checks/a/inflight.json",
+                "report.md.tmp-1"):
+        assert not D.restorable(rel), rel
 
 
 # ---------------------------------------------------------------- settings and admission
