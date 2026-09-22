@@ -1,7 +1,7 @@
 {
  "files": {
   "backend/curation/contracts/modules.py": "sha256:a5913b355fc666944d7c50e8207ab9dfc7c34b18566d7c44ba6d67c1f8003a23",
-  "backend/daemon/repo/protocol.py": "sha256:c6961980cff6fc38ae2d9a04ba12c77b9e6aabefb87312090594110c106e984e",
+  "backend/daemon/repo/protocol.py": "sha256:bfad294ec723d4bf980e3da5ddb0f2021563ff74c0692239f25cf6d0841018e3",
   "docs/contracts/cli/adjudicate-apply.schema.json": "sha256:d3b6addebf932f486781bae0cb5c0489d09145cd2ea9e7d11a4efe98fc196e1f",
   "docs/contracts/cli/aggregate.schema.json": "sha256:c8a7ebfc8e49106ffbf3615295b08e48b5aaaf9e5b0868bde6e43c237def8860",
   "docs/contracts/cli/autolabel-line.schema.json": "sha256:962a1cadd9d66d5910a113ba00dfc72f6cb43fb9bcc504357b6bb0feacc9ee0d",
@@ -23,7 +23,7 @@
   "docs/contracts/cli/verdict-line.schema.json": "sha256:71fc35e2c3bd3dd93a0ef9011acb6dda0e0cd3bb6fff7abcbd3a71e673ce155a",
   "docs/contracts/cli/verify.schema.json": "sha256:bdface3671e9400ae9f1a40d9fbf54986701b1db0c578c99976e69701ddb00dc",
   "docs/contracts/modules.json": "sha256:aff620edb0622fa0c46722a8599c104a5b350771c7c9caaa9d6856972a167e49",
-  "docs/contracts/openapi.yaml": "sha256:7c7d6be49cf0c8513cf1ee120248b94eea3a082b4486daca99322b413e261b2d",
+  "docs/contracts/openapi.yaml": "sha256:e1429ec44829f7e50f5b7237f217579f9021d8b9c2a592003fb95eed7e698fe1",
   "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:014d924766cdfe13c79a400e4c31134bb2c1e8a3830644d3644135ab1c9f5058",
   "docs/contracts/progress.schema.json": "sha256:ecb75b41143af25a34e1ae33aebca5d0dca9dd4bae61dc941b805153496d8487"
  },

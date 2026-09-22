@@ -39,7 +39,7 @@ def model(m: P.VlmModel, levels: tuple[str, ...]) -> dict:
         "max_concurrency": m.max_concurrency,
         "capabilities": {"vision": vision if isinstance(vision, bool) else None,
                          "reasoning_effort_levels": list(levels)},
-        "source": m.source,
+        "source": m.source, "is_default": bool(m.is_default),
     }
 
 

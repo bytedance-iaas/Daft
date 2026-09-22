@@ -440,8 +440,15 @@ async def update_model(request: Request, backend_id: str, model_id: str):
             fields["max_concurrency"] = body["max_concurrency"]
         with rt.repo.transaction():
             updated = rt.repo.update_vlm_model(model.id, **fields)
+            if "is_default" in body:
+                # one default per owner across every backend (C4 1.6): the repository clears
+                # the old one and sets this one together
+                rt.repo.set_default_vlm_model(model.id if body["is_default"] else None,
+                                              owner=owner)
+                _, updated = _owned_model(rt.repo, backend_id, model_id, owner)
             audit(request, "vlm_model.update", backend.id,
-                  {"model": model.model_name, "model_id": model.id, **fields})
+                  {"model": model.model_name, "model_id": model.id, **fields,
+                   **({"is_default": bool(body["is_default"])} if "is_default" in body else {})})
         return JSONResponse(views.model(updated, svc.levels_for(updated)))
 
     return await write(request, "updateVlmModel", handler, body=body)

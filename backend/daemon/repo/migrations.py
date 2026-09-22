@@ -29,6 +29,11 @@ Step 2 (C5 1.1 / 1.2) adds the dataset registry of design doc 01, section 2.8,
 * ``token_timeline`` sums actual-ledger tokens per owner and 15-minute UTC slot;
   ``token_usage`` has no time axis, and the overview charts tokens per day
   (see ``daemon.repo.extras``).
+
+Step 3 (C4 1.6) adds ``vlm_model.is_default``: the model a new task starts with.
+At most one per owner across every backend, which no index can express (the owner
+sits on the backend), so ``set_default_vlm_model`` clears and sets in one statement
+pair inside one transaction; the partial index is for finding it.
 """
 from __future__ import annotations
 
@@ -288,10 +293,16 @@ CREATE TABLE token_timeline (
 CREATE INDEX idx_token_timeline_slot ON token_timeline(slot);
 """
 
+_V3 = """
+ALTER TABLE vlm_model ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX idx_vlm_model_default ON vlm_model(is_default) WHERE is_default = 1;
+"""
+
 #: (version, script). Append only.
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _V1),
     (2, _V2),
+    (3, _V3),
 )
 
 LATEST_VERSION = MIGRATIONS[-1][0]
