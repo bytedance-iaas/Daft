@@ -17,7 +17,10 @@ K8s 上用 `charts/curator`：单副本 StatefulSet，SQLite 和任务工作目�
 
 ## 1. 构建镜像
 
-构建上下文是仓库根，Dockerfile 路径是 `deploy/Dockerfile`（火山 CI：ContextPath 填仓库根）。
+构建上下文是仓库根，Dockerfile 路径是 `deploy/Dockerfile`（火山 CI：ContextPath 填仓库根 `.`；从 v1 流水线复制来的
+`robot-curation` 会让 buildkit 报 `lstat robot-curation: no such file or directory`）。火山 CP 流水线的镜像版本用
+`${SCM_COMMIT_ID}`，即完整提交号，与 v1 相同。代码源触发靠 Webhook：推送后流水线没动静，先查 GitHub 仓库的
+Webhook 是否指向触发器的 HookURL，没有就先在控制台手动运行。
 
 火山网络之外（GitHub Actions、自己的电脑）：内网源一律不可达，用公网源并跳过 oniond 那一层：
 
@@ -216,6 +219,10 @@ curl -s -u alice localhost:8080/curation/api/v1/tasks/<任务 id>/timeline | pyt
   响应带 `X-Accel-Buffering: no`；网关若会缓冲响应体，要对这条路径关掉。
 - v1 的旧深链 `/curation/?dataset=…` 由 Daemon 302 到新建任务页，参数原样带上。
 - 不经 APIG 时可以用 Ingress：`ingress.enabled: true`、`ingress.hosts: [{host: <域名>}]`，路径就是 `server.basePath`（前缀匹配，不改写）。
+- VKE 的 APIG 也可以直接接 Ingress：`ingress.className` 填 APIG 实例绑定的类名，`ingress.annotations` 带上
+  `ingress.vke.volcengine.com/apig-instance-name` 与 `ingress.vke.volcengine.com/loadbalancer-id`（照同一实例上已有的
+  Ingress 抄）。这个 APIG 实例的监听命名空间（`apiginstances` 资源的 `spec.ingress.watchNamespaces`）必须包含部署所在的
+  命名空间，否则 Ingress 不会被接管，`kubectl get ingress` 的 ADDRESS 一直为空。实例是共享配置，找它的维护者加。
 - `/metrics` 目前没有；设计要求它将来只在集群内端口监听，不经 Ingress / APIG 暴露（P7）。
 
 ## 7. 主密钥轮换（08 篇 §2.1）

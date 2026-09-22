@@ -134,19 +134,28 @@ Current summary:
         Basic Auth 沿用 v1 的 Secret curation-ui-auth（Chart 加 auth.usernameKey，不复制密钥）；主密钥 Secret 已建
       · 镜像：需求方建了火山 CP 流水线 build-data_curation-v2（推送 iaas-us-cn-beijing.cr.volces.com/physicalai/robot_curator:<提交号>）。
         推送触发没生效（代码源 Webhook 没接上，要在 GitHub 仓库或 CP 侧补），先在控制台手动运行；
-        修了两处：ContextPath 还是 v1 的 robot-curation → 改为仓库根「.」；火山内网 PyPI 缺 uvicorn 0.53.0 →
-        deploy/pip-extra-index.txt 列出的包不带依赖从阿里云装，其余照旧走火山源（整体加 --extra-index-url 会让大半包走阿里云、只有 ~300 kB/s）
-      · CI：失败的 pytest 步骤把输出尾部写进公开可见的 job summary（日志要登录才能看）；任务编排那一步在 CI 上以退出码 2 结束，待查
+        修了三处：ContextPath 还是 v1 的 robot-curation → 改为仓库根「.」；火山内网 PyPI 缺 uvicorn 0.53.0、
+        cryptography 50.0.1 → deploy/pip-extra-index.txt 列出的包连同依赖从阿里云装，其余照旧走火山源（整体加
+        --extra-index-url 会让大半包走阿里云、只有 ~300 kB/s）；构建参数不能以 PIP_ 开头（pip 会当成自己的选项）。
+        第 6 次构建成功（69a890428，2 分 41 秒）
+      · 集群部署（2026-09-22）：helm install curator-v2 到命名空间 curation（StatefulSet 1 副本、ebs-ssd 100Gi、
+        Service、ConfigMap、physicalai-apig 的 Ingress curation-v2.apig.local /curation）；Pod 就绪、零重启；
+        集群内实测：/healthz /readyz 200，不带账号 401、v1 的账号 200，注册表 8 模块 + 复核目录，控制台 200；
+        公共数据集（ai-infra）浏览 7 个；登记集群内 vLLM（a30-8b，Cosmos-Reason2-8B）连通、模型列出；
+        公共数据集 aloha_sim_transfer_cube_human 预检 1.2 秒通过（LeRobot v3、50 条、8 模块全部可用）
+      · APIG 没接上：physicalai-apig 实例的 watchNamespaces 只有 dataverse/default/rlinf/autumn，不含 curation，
+        Ingress 没被接管（ADDRESS 为空）；追加 curation 要改共享的 apiginstances 资源，被权限系统拦下，等需求方决定
+      · CI：失败的 pytest 步骤把输出尾部写成公开可见的错误注解；据此查到任务编排那一步的退出码 2 是 CI 没装 httpx
+        （恢复测试用它连真起的 Daemon），已补进 requirements-dev（3781e6ca8）；同分支新推送取消在跑的旧运行
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
-  - F2.1：D39、D40、D42、review 口径、--vlm-reasoning-effort 待 W3 实现（契约 1.5 已定）
-  - F2.2：裁决队列与 episode 列表的游标接口在 W5b；F2.6「拿验证失败的密钥开始任务会被拦」、F2.7 D37 在 W5a
-  - F2.4 的 planner 已接入 check（W3 后半），编排侧的计划下发随 W5a；F3.2 / F3.3 等 W5 合并后对真接口联调
-  - W11 镜像（Node 构建阶段、COPY daemon 与 docs/contracts）与 Helm（CURATOR_TZ_OFFSET）未开始
+  - APIG：需要在 physicalai-apig 实例的监听命名空间里加 curation（需求方或实例维护者）
+  - 完整跑一次质检要一把能写交付目录的 TOS 访问密钥（在 v2 的「密钥与资源」页填）；之后验 F4.1 的「升级时暂停、新 Pod 续跑」
+  - 火山 CP 流水线的推送触发没生效（GitHub 仓库的 Webhook），目前手动运行
+  - F2.x 各项待这轮 CI 全绿后按验收置位；F3.2 待对真接口联调与需求方的文案统一修改
 
 Next steps:
-  1. 恢复 W3 做 D39 / D40 / review 口径 / --vlm-reasoning-effort；通知 W10 做执行裁决确认框的口径说明与选项、报告的跳过清单；
-     通知 W5a 把 relabel_rerun 传给 CLI、Summary.skipped 从报告取
-  2. W5a、W5b 交付后逐个合并验证（边界检查、测试、公共文件改动），F2.2、F2.6、F2.7 按验收置位
-  3. 之后开 W11；真实数据的两个基线在 F4.2 黄金对账之前补
+  1. 看 3781e6ca8 那轮 CI；全绿后把 F2.1、F2.2、F2.3、F2.4、F2.6、F2.7 按验收置位
+  2. APIG 接通、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
+  3. 真实数据的两个基线在 F4.2 黄金对账之前补
