@@ -549,6 +549,7 @@ class Run:
                 self.fail_on(outcome, stage)
             doc = outcome.doc
             if not doc.get("failed") and doc.get("complete_marker"):
+                self.stages.get(stage, {}).pop("note", None)
                 return doc
             bad = doc.get("failed") or []
             shown = "、".join(f"{f.get('path')}（{f.get('reason')}）" for f in bad[:5])
