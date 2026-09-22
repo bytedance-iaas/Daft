@@ -90,11 +90,22 @@ def test_pypi_defaults_to_the_internal_mirror_and_apt_to_the_public_one():
     assert env_of(RUNTIME)["PIP_INDEX_URL"] == "${PIP_INDEX_URL}"
     # v1 lesson 3: the apt layer is not gated, so its default must resolve outside Volcano
     assert args["APT_MIRROR"] == "https://mirrors.volces.com"
-    # what the Volcano mirror lacks comes from Aliyun's PyPI; an empty build arg turns it off
+    # what the Volcano mirror lacks comes from Aliyun's PyPI, those pins alone and without
+    # dependencies (as an --extra-index-url pip would fetch most packages from Aliyun, slowly);
+    # an empty build arg turns it off
     assert args["PIP_EXTRA_INDEX_URL"] == "https://mirrors.aliyun.com/pypi/simple/"
     run = next(i.args for i in stage(RUNTIME) if i.op == "RUN" and "-r requirements.txt" in i.args)
-    assert '${PIP_EXTRA_INDEX_URL:+--extra-index-url "$PIP_EXTRA_INDEX_URL"}' in run
+    assert '--no-deps --index-url "$PIP_EXTRA_INDEX_URL" -r pip-extra-index.txt' in run
+    assert "--extra-index-url" not in run
     assert "PIP_EXTRA_INDEX_URL" not in env_of(RUNTIME)      # never baked into the image
+
+
+def test_pins_from_the_extra_index_match_the_requirements():
+    def pins(path):
+        return {ln.split("#")[0].strip() for ln in path.read_text(encoding="utf-8").splitlines()
+                if ln.split("#")[0].strip()}
+    extra = pins(REPO / "deploy" / "pip-extra-index.txt")
+    assert extra and extra <= pins(REPO / "backend" / "requirements.txt"), extra
 
 
 def test_internal_only_hosts_are_behind_the_no_mirror_gate():
