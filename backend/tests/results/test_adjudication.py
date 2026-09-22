@@ -415,7 +415,7 @@ def test_pending_adjudication_follows_every_submission(world):
     task = world.client.get(task_url).json()
     assert task["pending_adjudication"] == 1
     assert task["summary"] == {"total": 9, "passed": 5, "rejected": 3, "held": 1, "review": 5,
-                               "pass_rate": 0.5556}
+                               "pass_rate": 0.5556}     # skipped only when some were (D40)
     link = [ln for ln in task["links"] if ln["rel"] == "adjudication"][0]
     assert link["title"] == "1 episode needs human judgement"
     item = world.client.get(f"{API}/tasks").json()["items"][0]

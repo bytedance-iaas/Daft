@@ -18,7 +18,8 @@ def test_current_report_is_the_committed_report_json_plus_links(world):
     assert_schema("cli/report.schema.json", body["report"])
     assert body["revision"] == 1 and body["report"]["revision"] == 1
     counts = body["report"]["overview"]["counts"]
-    assert counts == {"total": 9, "passed": 5, "rejected": 3, "held": 1, "review": 5}
+    assert counts == {"total": 9, "passed": 5, "rejected": 3, "held": 1, "review": 5,
+                      "skipped": 0}                  # D40: the CLI always writes it
     assert [m["id"] for m in body["report"]["modules"]] == [
         "timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
         "video_action_sync", "task_success", "dedup", "skill_profile"]

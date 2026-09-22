@@ -11,7 +11,7 @@
     "skipped_already_applied": {"type": "integer", "minimum": 0},
     "rerun_task_success": {"$ref": "common.schema.json#/$defs/episode_list"},
     "profile_resync": {"$ref": "common.schema.json#/$defs/episode_list"},
-    "relabel_rerun": {"enum": ["v1", "full"], "description": "the protocol recorded for this application's relabels (D39); check --modules task_success judges rerun_task_success with it"},
+    "relabel_rerun": {"enum": ["v1", "full"], "description": "the protocol recorded for this application's relabels (D39); check --modules task_success judges rerun_task_success with it. A relabel listed again because its follow-up verdict lapsed keeps the protocol recorded when it was applied"},
     "label_changes": {
       "type": "array",
       "items": {

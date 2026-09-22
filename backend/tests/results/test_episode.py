@@ -66,7 +66,12 @@ def test_unknown_negative_and_skipped_episodes(world):
     assert body["error"]["details"] == {"episode_index": 99, "revision": 1}
     assert_error(world.get("/episodes/-1"), "validation_failed")
     assert_error(world.get("/episodes/x"), "validation_failed")
-    # D40: an episode left out for missing source files, named by the source manifest
+    # D40: an episode left out for missing source files, named by the source manifest when
+    # the report does not list them (a report written before contract 1.4)
+    report = world.run_dir / "revisions" / "r0001" / "report.json"
+    doc = json.loads(report.read_text(encoding="utf-8"))
+    (doc.get("integrity") or {}).pop("skipped_episodes", None)
+    report.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
     manifest = json.loads((world.run_dir / "source_manifest.json").read_text(encoding="utf-8"))
     manifest["skipped_episodes"] = [
         {"episode_index": 9, "missing": ["videos/observation.images.wrist/chunk-000/file-001.mp4"]}]
