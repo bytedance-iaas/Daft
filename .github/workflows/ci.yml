@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# a newer push to the same branch supersedes a run still in flight
+concurrency:
+  group: curator-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     # Every suite runs even when an earlier one fails, so one red suite cannot hide another.
