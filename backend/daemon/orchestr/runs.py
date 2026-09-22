@@ -349,7 +349,9 @@ class RetryRun(StageRun):
             return episodes
         if changed and row is not None and row.state in ("succeeded", "completed_with_errors"):
             self.repo.mark_modules_stale(self.task_id, [module])
-        full = row is None or row.state == "failed" or not incremental
+        # --incremental builds on an existing profile; without one (never ran, failed, empty)
+        # the module runs in full
+        full = row is None or row.state == "failed" or row.episodes_total == 0 or not incremental
         return self.check_stage(st, episodes, fresh=True, incremental=incremental and not full)
 
 
