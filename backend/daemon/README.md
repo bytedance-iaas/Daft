@@ -1,7 +1,8 @@
 # Daemon 骨架（W4 / F2.2）
 
 FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权、SSE、探针、静态资源与挂载前缀、启动对账，
-以及只靠数据库和工作目录就能做完的接口。建任务、跑任务（W5）和密钥管理（W8）会接在这副骨架上。
+以及只靠数据库和工作目录就能做完的接口。密钥与资源管理（W8）已经接上，见 [`secrets/README.md`](secrets/README.md)；
+建任务、跑任务（W5）会接在这副骨架上。
 续作把 Daemon 对齐到契约 1.1 / 1.2：数据集登记（D36、D37）的仓储与只读接口、概览、任务列表的模块与数据集筛选，
 以及 C4 1.2 的响应格式。
 
@@ -22,10 +23,11 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `events.py`、`routes/sse.py` | SSE 事件中心与 `GET {base}/events/tasks/{id}` |
 | `transitions.py`、`timeline.py`、`reconcile.py` | 状态迁移（CAS + 审计事件 + SSE 一处做完）、执行时间线、启动对账 |
 | `routes/api.py`、`routes/datasets.py`、`routes/overview.py` | 已实现的 `{base}/api/v1` 接口：任务、数据集登记、概览；未知路径统一由 `api.fallback` 兜底 |
+| `secrets/`、`routes/access_keys.py`、`routes/vlm.py`、`routes/media.py` | W8：密钥封存、访问密钥与 VLM 后端、交付目录写探针、媒体预签名，说明见 [`secrets/README.md`](secrets/README.md) |
 | `overview.py` | 概览的各项数字怎么算（口径写在模块说明里） |
 | `routes/static.py`、`deeplink.py` | 前端静态资源、SPA 回退、v1 旧深链 302（解析规则搬自 v1 `ui/runner.py`） |
 | `errors.py`、`idempotency.py`、`pagination.py`、`logs.py`、`views.py`、`taskspec.py` | 统一错误体、幂等键、游标、任务日志、响应组装、任务配置校验 |
-| `operations.py` | C4 全部 48 个操作的去向：已实现的，和留给 W3/W5/W8 的 |
+| `operations.py` | C4 全部操作的去向：已实现的，和留给 W3 / W5 的 |
 
 ## 已实现的接口
 
@@ -34,9 +36,15 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 `POST /tasks/{id}/restore`、`POST /tasks/{id}/rebind-credentials`、`GET /tasks/{id}/subtasks|timeline|logs|usage`、
 `GET /datasets`、`GET/PATCH/DELETE /datasets/{id}`、`GET /overview`；`GET {base}/events/tasks/{id}`。
 
+W8 的接口（见 [`secrets/README.md`](secrets/README.md)）：`GET/POST /credentials`、`PUT/DELETE /credentials/{id}`、
+`POST /credentials/{id}/verify`、`GET/POST /vlm-backends`、`PUT/DELETE /vlm-backends/{id}`、
+`POST /vlm-backends/{id}/verify|refresh-models`、`POST /vlm-backends/{id}/models`、
+`PATCH/DELETE /vlm-backends/{id}/models/{model_id}`、`POST /deliveries/probe`、`GET /media/sign`。
+
 登记数据集（`POST /datasets`）、重新核对、重新预检都要跑 CLI，归 W5；这里只有读、改名改备注和删除登记。
 
 其余操作一个都没注册（访问返回 404 `not_found`），去向写在 `operations.py`，测试保证两张表合起来正好是 `openapi.yaml` 的全部操作。
+路径存在、方法不对时返回 405 `method_not_allowed`，带 `Allow`（比如 `PUT /tasks/{id}`）；还没实现的操作不算，仍是 404。
 
 ## 配置
 
@@ -57,7 +65,9 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `CURATOR_SSE_HEARTBEAT_S` | 15 | SSE 空闲时每隔多久发一行 `: ping` |
 | `CURATOR_HOST` / `CURATOR_PORT` | `0.0.0.0` / 8080 | 监听地址 |
 | `CURATOR_LOG_LEVEL` / `CURATOR_LOG_FORMAT` | `INFO` / `json` | 日志写到 stdout，密钥类字段一律打成 `***` |
-| `CURATOR_TZ_OFFSET` | `+08:00` | 站点所在时区的 UTC 偏移（形如 `+08:00`、`-05:30`、`Z`），决定概览「近 7 天」每天从几点算起 |
+| `CURATOR_TZ_OFFSET` | `+08:00` | 站点所在时区的 UTC 偏移（形如 `+08:00`、`-05:30`、`Z`，按一刻钟取整），决定概览「近 7 天」每天从几点算起 |
+| `TOS_ENDPOINT` | 空 | W8：部署所在地域的 TOS 端点（v1 同名变量）。是内网端点（`*.ivolces.com`）时同地域的调用走内网，也原样交给 CLI |
+| `CURATOR_REASONING_EFFORT_TABLE` | 空 | W8：覆盖思考强度映射表，JSON 文件路径或 JSON 本身，写法见 [`secrets/README.md`](secrets/README.md) |
 
 htpasswd 和单用户都没配、也没指定 `CURATOR_AUTH_MODE` 时不做鉴权，日志里会有一条警告，只适合本机调试。
 
@@ -311,7 +321,10 @@ EOF
     子任务的终态那一步默认会发带 `subtask_id` 的 `done`，之后已结束任务的 SSE 流就会收尾：所以子任务结束时，
     先按当前结果重算父任务终态（D25，含 C5 1.2 新增的 `stopped / failed → succeeded / completed_with_errors`，只对任务），再结束子任务。
     任务从 `stopped` / `failed` 因 resume 结束时 `finished_at` 取新的结束时间，`succeeded` 与 `completed_with_errors` 之间重算时保留原值。
+    SSE 上只有一个结束信号：子任务结束时，先 `change_task_state(..., publish_done=False)` 重算父任务（发 `state` 不发 `done`），
+    再用 `change_subtask_state` 结束子任务（它发带 `subtask_id` 的 `done`，之后流才收尾）；这样客户端收到 `done` 时两处变化都已送达。
     子任务的暂停原因现在是子任务上的一列（C5 1.2），`change_subtask_state(pause_reason=...)` 会写进去；启动对账对子任务和任务用同一张表。
+    从第 1 步升级上来、查不到暂停原因的子任务按「用户暂停」处理，不会被自动恢复。
   - 进度、日志、用量推给 `runtime.hub.publish_progress / publish_log / publish_usage`（线程安全、不阻塞；进度和用量发累计值，
     发 `state` / `done` 之前会先把积压的进度和用量发出去）。
   - 日志文件按 `logs.TaskLogs` 的布局写：主流程 `runs/<task_id>/logs/<stage>.jsonl`，子任务 `runs/<task_id>/logs/<subtask_id>/<stage>.jsonl`，
@@ -324,19 +337,24 @@ EOF
     `input` 给 `{dataset_id}` 时由 `taskspec.resolve_input` 换成登记的来源、地址、地域和访问密钥，并记下 `dataset_id`；
     给完整地址时按地址找已有登记（`repo.find_dataset`），找不到就是 `None`，登记新地址（预检加 `curation snapshot`）是 W5 的事。
   - 数据集登记：`repo.register_dataset` 按（来源、地址、地域）取或建，地址先用 `taskspec.normalize_tos_uri` 归一，空地域等同于没有；
+    `id` 留空由仓储生成（`ds_...`，REST 路径只认这种 id），`credential_id` 必须是同一 owner 的 TOS 访问密钥，否则 `NotFound`；
     `source_fingerprint` 存 `{objects, bytes, digest}`（`listing` 也认 C2 `source-manifest` 的 `count`）。每次核对都 `record_dataset_check`
     （`add` / `recheck` / `task_start` / `repreflight`），它会同时更新 `check_state` 和 `checked_at`；重新预检用
     `update_dataset(preflight=, meta_fingerprint=, source_fingerprint=, preflighted_at=, manifest_path=)` 一次换掉基线，`check_state` 回到 `ok`，
     `repreflight` 那条核对记录不会再把它改回 `changed`。已登记的地址再登记一次时，若原来的访问密钥已被删除，请用 `update_dataset(credential_id=...)` 换上新的。
   - 概览读 `summary` 里的 `total`、`passed`、`pending_adjudication`，Token 按 `add_usage` 被调用的时刻计入某一天：用量请照常每 5 秒汇总一次。
+    「运行情况」也数子任务（`repo.unfinished_subtasks`），进度条取子任务自己的 `progress`：请用 `set_subtask_progress` 写同样的 `stages` 结构。
+  - 删除登记时，已软删除的待启动草稿不算占用，会被解绑（恢复后 `dataset_id` 为空）；开始任务时没有 `dataset_id` 的，请按地址先登记（取或建）再做 D37 核对。
   - 任务列表的「待裁决」徽标读 `summary.pending_adjudication`：提交裁决后请更新这个数。
   - 裁决队列等内存里排好序的列表，可以用 `pagination.keyset_page` 做游标分页，`scope` 里带上结果版本。
   - 接上一个接口，就把它从 `operations.PENDING` 挪到 `IMPLEMENTED`，测试会检查路由和表是否一致。
     新路由加在 `app.py` 那组 `include_router` 里、`api.fallback` 之前；`/datasets/{id}` 只匹配 `ds_` 开头的 id，
     W3 的 `/datasets/browse`、`/datasets/episodes` 放在哪个路由表里都不会被它挡住。
 - **W8（密钥）**：主密钥在 `runtime.master_key`（`key`、`version`、`next_key`）；进程启动后已从 `os.environ` 删掉，CLI 子进程不会继承。
-  仓储里凭证与模型服务的方法都已实现并有一致性测试。访问密钥删掉后，任务和数据集的响应里 `credential` 为 `null`（C4 1.2），
-  数据集上的引用会被置空；概览的「验证失败」只数 TOS 访问密钥和 VLM 后端，VLM 的 API Key 跟着后端算。
+  仓储里凭证与模型服务的方法都已实现并有一致性测试。访问密钥删掉后，任务和数据集的响应里 `credential` 为 `null`（C4 1.2）：
+  登记用着的密钥可以直接删（`credential_references` 只数任务），登记上的引用置空，之后在重新登记时换上新的。
+  概览的 `credentials_failed` 只数 `kind='tos'` 的访问密钥；VLM 后端的 API Key 虽然也是一条密钥行（`ark` / `custom_vlm`，
+  名字 `vlm-backend/<后端 id>`），但跟着后端算进 `backends_failed`。`Task.vlm.snapshot` 会原样出现在任务详情里，里面不能有 API Key。
 - **W10（前端）与 W3（`curation task …` 客户端）**：写请求（POST / PUT / PATCH / DELETE）一律带
   `Content-Type: application/json`，没有请求体也要带，否则 400；浏览器的跨站写请求（`Sec-Fetch-Site` 不是 `same-origin`）会被拒。
   路由基址取 `window.__CURATOR_BASE__`；`index.html` 里已注入 `<base href="{base}/">`，Vite 用 `base: './'` 即可。
