@@ -18,7 +18,7 @@ def test_current_report_is_the_committed_report_json_plus_links(world):
     assert_schema("cli/report.schema.json", body["report"])
     assert body["revision"] == 1 and body["report"]["revision"] == 1
     counts = body["report"]["overview"]["counts"]
-    assert counts == {"total": 9, "passed": 5, "rejected": 3, "held": 1, "review": 4}
+    assert counts == {"total": 9, "passed": 5, "rejected": 3, "held": 1, "review": 5}
     assert [m["id"] for m in body["report"]["modules"]] == [
         "timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
         "video_action_sync", "task_success", "dedup", "skill_profile"]
@@ -65,7 +65,7 @@ def test_old_revisions_stay_readable_and_newer_ones_are_404(world):
     assert old.status_code == 200
     body = old.json()
     assert_schema(REPORT, body)
-    assert body["revision"] == 1 and body["report"]["overview"]["counts"]["review"] == 4
+    assert body["revision"] == 1 and body["report"]["overview"]["counts"]["review"] == 5
     report_links = [ln for ln in body["links"] if ln["rel"] == "report"]
     assert report_links[0]["url"].endswith("/report?rev=1")
     assert not [ln for ln in body["links"] if ln["rel"] == "adjudication"]   # not adjudicable

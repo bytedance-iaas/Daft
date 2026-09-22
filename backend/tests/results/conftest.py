@@ -17,7 +17,7 @@ ep    what happens                                            where it ends (r1)
 4     label conflict (skill_profile's audit)                  passed + review (label)
 5     label conflict and a task_success abstention            passed + review (both)
 6     task_success execution error                            held
-7     byte-for-byte duplicate of ep 0                         reject - final
+7     byte-for-byte duplicate of ep 0                         reject - appealable (D42)
 8     motion_quality cannot score it                          passed (no review item, C2 1.4)
 ====  =====================================================  ==========================
 """
@@ -239,12 +239,17 @@ def main_latency() -> list[tuple]:
             ("arbitration", 60.0, False, t + 200, "c5", 0, "timeout")]
 
 
+#: the modules whose rejects can be appealed (C2 1.4; dedup since D42), and the reason kind
+APPEALABLE = {"task_success": "hard_gate", "dedup": "duplicate"}
+
+
 def review_as_of_c2_1_4(run_dir: Path, n: int) -> None:
-    """Make revision ``n``'s ``review.json`` what the C2 1.4 CLI writes (``final-list``):
-    ``task_verdict`` items only for task_success abstentions, and a ``reject_appeal`` item
-    for every reject attributed to task_success alone that has no effective appeal and
-    was not discarded (an ``unsure`` appeal keeps it). W3's fix for this is on its way;
-    once it lands this is a no-op. Runs before ``report``, so the commit covers it."""
+    """Make revision ``n``'s ``review.json`` what the C2 1.4 CLI writes (``final-list``, and
+    D42): ``task_verdict`` items only for task_success abstentions of episodes that are not
+    rejected, and a ``reject_appeal`` item for every reject attributed to one appealable
+    module alone (task_success, or dedup since D42) that has no effective appeal and was
+    not discarded (an ``unsure`` appeal keeps it). W3's fix for this is on its way; once
+    it lands this is a no-op. Runs before ``report``, so the commit covers it."""
     rev = run_dir / "revisions" / f"r{n:04d}"
     review = json.loads((rev / "review.json").read_text(encoding="utf-8"))
     reject = json.loads((rev / "reject.json").read_text(encoding="utf-8"))
@@ -255,21 +260,26 @@ def review_as_of_c2_1_4(run_dir: Path, n: int) -> None:
                             if x.strip()), key=lambda d: d["id"]):
             if line["line"] == "reject_appeal" and line["decision"] != "unsure":
                 effective[int(line["episode_index"])] = line["decision"]
+    rejected = {e["episode_index"] for e in reject["episodes"]}
     by_ep: dict[int, dict] = {}
     for entry in review["episodes"]:
         items = [i for i in entry["review"]
-                 if not (i["kind"] == "task_verdict" and i["source_module"] != "task_success")]
+                 if not (i["kind"] == "task_verdict" and (i["source_module"] != "task_success"
+                                                          or entry["episode_index"] in rejected))]
         if items:
             by_ep[entry["episode_index"]] = {**entry, "review": items}
     for entry in reject["episodes"]:
         ep = entry["episode_index"]
         deciding = [r for r in entry.get("reasons") or [] if r.get("kind") != "execution_error"]
-        if deciding and ep not in effective and all(
-                r["module"] == "task_success" and r.get("kind") == "hard_gate" for r in deciding):
+        modules = {r["module"] for r in deciding}
+        if len(modules) != 1 or ep in effective:
+            continue
+        module = modules.pop()
+        if APPEALABLE.get(module) and all(r.get("kind") == APPEALABLE[module] for r in deciding):
             item = by_ep.setdefault(ep, {"episode_index": ep, "review": [], "current_list": "reject"})
             if not any(i["kind"] == "reject_appeal" for i in item["review"]):
-                item["review"].append({"source_module": "task_success", "kind": "reject_appeal",
-                                       "reason": "被任务成败判定拒掉，可以复议"})
+                item["review"].append({"source_module": module, "kind": "reject_appeal",
+                                       "reason": "被拒的条目可以复议"})
     review["episodes"] = [by_ep[ep] for ep in sorted(by_ep)]
     review["count"] = len(review["episodes"])
     (rev / "review.json").write_text(json.dumps(review, ensure_ascii=False), encoding="utf-8")

@@ -15,7 +15,8 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
 | `tables.py` | 明细表：pyarrow 读 Parquet 的行组，排序只认 C1 `TableSpec.sortable`，游标带结果版本 |
 | `episode.py` / `videos.py` | 单条 episode 的全模块视图；各机位视频从哪里放（片段 → 交付数据集 → 源数据集） |
 | `perf.py` | 性能剖析：全部 / 仅主流程 / 某次子任务 |
-| `adjudication.py` | 裁决队列：问题、卡片、状态、计数、逐线校验、追加记录、CSV 副本、`summary.pending_adjudication` |
+| `catalog.py` | 裁决线目录：有哪些线、`review.json` 的哪种条目问哪条线、在哪个页签、收哪些结论、每个结论意味着什么（C1 1.5 的注册表接进来时只换这一处） |
+| `adjudication.py` | 裁决队列：问题、卡片、状态、计数、逐线校验（`Queue.answerable` 一处）、追加记录、CSV 副本、`summary.pending_adjudication` |
 | `files.py` | 按文件身份（mtime、大小）缓存的 JSON、有界 LRU、把 NaN 之类转成合法 JSON |
 | `../routes/results.py`、`../routes/adjudication.py` | 路由 |
 
@@ -41,8 +42,8 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
   并去掉该版本提交之后才发出的请求。延迟分桶沿用 v1（次数 = 发起次数，失败 = 补发、重试后仍没拿到结果的调用，
   分位数只算成功的请求，墙钟 = 忙碌区间的并集）。stage 墙钟取自库里的分档进度，合并请求数取自实际调用账；
   外层重试次数没有落盘，`retries` 不给；`container` 是本容器的 cgroup 配额（CLI 与 Daemon 同一个容器）。
-- **裁决队列**：问题就是当前版本 `review.json` 的条目，原样读，不重新推导（C2 1.4）：`label_conflict` → 标注分歧，
-  任务成败判定的 `task_verdict` → 判成败，`reject_appeal` → 复议页签。原始标注、画面描述来自该版本的 `label_audit.json`，
+- **裁决队列**：问题就是当前版本 `review.json` 的条目，原样读，不重新推导（C2 1.4、D42）：`label_conflict` → 标注分歧，
+  `task_verdict` → 判成败，`reject_appeal` → 复议页签（任务成败判定的拒绝，D42 起还有去重剔除的重复项）；目录里没有的种类不问。原始标注、画面描述来自该版本的 `label_audit.json`，
   建议的新标注就是画面描述（v1 采纳的就是它）。答过的问题在后来的版本里不再出现时，从最近一个问过它的版本取回，
   所以「已裁 / 已应用」的卡片一直在，还能改。一条 episode 一张卡片，按 episode 下标排，游标同样带结果版本。
   - 状态：任一问题「整条弃用」→ 已裁（执行后为已应用），压过一切成败结论（规则 1）；否则有「拿不准」→ `unsure`，
@@ -50,7 +51,7 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
   - 计数：待裁、已裁只数复议之外的卡片（复议不是必做的事），尚未应用数两个页签都算；这就是 `summary.pending_adjudication`。
 - **提交裁决**：只记录（追加一行，后写者胜），全部合法才写入。逐线校验：每条线只收自己的几种结论；
   `new_label` 只给「采纳建议改标」「自行改写标注」，自行改写必须填，采纳时不填就用建议的新标注；
-  复议只收当前（或曾经）在复议页签里的条目 —— 也就是只归因于任务成败判定的拒绝（规则 2）；
+  复议只收当前（或曾经）在复议页签里的条目 —— 也就是只归因于一个可复议模块的拒绝（任务成败判定、D42 起的去重；规则 2）；
   标注上已经「整条弃用」的不再收成败结论；只有标注问题的卡片，改了标之后才收成败结论（v1 的可选成败）。
   裁决只属于路径上的这个任务（D32）。之后重写运行目录里的 `human-decisions/*.csv`（v1 的列与用词，用 CLI 同一个写法），
   并按当前版本重算任务汇总（含 `pending_adjudication`、1.4 的 `skipped`）。支持 `Idempotency-Key`。
@@ -96,7 +97,7 @@ task = make_task(repo, ds); finish_main_run(repo, task.id)
 run_dir = data / "runs" / task.id; build_run_dir(run_dir, ds)
 mods = ",".join(MODULES)
 cli("aggregate", "--run-dir", str(run_dir), "--phase", "final", "--revision", "1", "--modules", mods, "--episodes", "0-8")
-review_as_of_c2_1_4(run_dir, 1)      # W3 的 C2 1.4 review.json 修正合入之后这一步什么也不改
+review_as_of_c2_1_4(run_dir, 1)      # W3 的 C2 1.4 / D42 review.json 修正合入之后这一步什么也不改
 cli("report", "--run-dir", str(run_dir), "--revision", "1", "--modules", mods)
 repo.switch_result_rev(task.id, 0, 1); refresh_summary(ResultStore(data / "runs"), repo, task.id)
 repo.close(); print(f"export T={task.id}")
@@ -112,7 +113,7 @@ export CURATOR_MASTER_KEY=$(openssl rand -base64 32) CURATOR_BASE_PATH=/curation
 B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"; }
 ```
 
-1. **报告**：`c $B/report | python3 -m json.tool | head -40` —— `revision` 1，`counts` 为 total 9、passed 5、rejected 3、held 1、review 4；
+1. **报告**：`c $B/report | python3 -m json.tool | head -40` —— `revision` 1，`counts` 为 total 9、passed 5、rejected 3、held 1、review 5；
    `links` 里有任务、报告，以及 `?source=task_success`、`?source=skill_profile` 两条裁决页链接。
    `c "$B/report?rev=2"` 是 404「没有结果版本 r2……」；`c "$B/report?rev=0"` 是 400。
 2. **明细表**：`c "$B/report/tables/visual_quality?sort=score&order=desc&limit=3"` —— 最高分的三行（ep8 的两路、ep7 的一路），
@@ -125,7 +126,7 @@ B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"
    stage 占比 numeric 0.1、frame 0.3、vlm 0.6。`c "$B/perf?scope=subtask"` 是 400（要给 `subtask`）。
 5. **裁决队列**：`c "$B/adjudication?status=all"` —— 三张卡片：ep3（判成败）、ep4（标注分歧）、ep5（两个问题），
    计数 `{"decided": 0, "pending": 3, "unapplied": 0}`；ep8（运动质量打不出分）不在里面。
-   `c "$B/adjudication?tab=appeals&status=all"` 只有 ep2：时间戳残段 ep1、重复的 ep7 都不能复议。
+   `c "$B/adjudication?tab=appeals&status=all"` 是 ep2（任务成败判定判失败）和 ep7（与 ep0 重复，D42 起可以复议）；时间戳残段 ep1 不能复议。
 6. **提交裁决**：
 
    ```bash
@@ -155,4 +156,4 @@ B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"
 测试的运行目录都是手写的：各模块的结果行写成分片，结果版本由真正的 `curation aggregate --phase final` 和 `curation report`
 在进程内写出（每条命令的 `--json` 都按 C2 校验），执行裁决按 W5a 的做法调 `curation adjudicate-apply`。
 每个响应都按 C4 1.4.0 校验，错误响应也校验错误体。W3 的 C2 1.4 `review.json` 修正合入之前，`review_as_of_c2_1_4`
-把 CLI 写的 `review.json` 改成 1.4 的样子（合入之后它什么也不改）。
+把 CLI 写的 `review.json` 改成 1.4（含 D42）的样子（合入之后它什么也不改）。

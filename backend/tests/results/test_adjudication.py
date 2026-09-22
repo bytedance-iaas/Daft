@@ -74,10 +74,13 @@ def test_the_queue_of_the_first_revision(world):
     assert verdict["reason"] == "两层证据矛盾，进人工"
     # ep 8 (motion_quality could not score it) is no question for a person
     appeals = _page(world, tab="appeals", status="all")
-    assert [c["episode_index"] for c in appeals["items"]] == [2]
+    assert [c["episode_index"] for c in appeals["items"]] == [2, 7]
     q = appeals["items"][0]["questions"][0]
     assert (q["line"], q["source_module"], q["annotation"]) == ("reject_appeal", "task_success", TEXT[2])
     assert "3 路复核一致判未完成" in q["reason"]
+    dup = appeals["items"][1]["questions"][0]            # D42: a duplicate can be restored
+    assert (dup["line"], dup["source_module"]) == ("reject_appeal", "dedup")
+    assert "与 ep000000 字节级完全重复" in dup["reason"]
     assert appeals["counts"] == body["counts"]            # counts are the whole task's
 
 
@@ -86,6 +89,7 @@ def test_source_and_status_filters(world):
     assert list(_cards(world, status="all", source="task_success")) == [3, 5]
     assert list(_cards(world, status="all", source="timestamp_check")) == []
     assert list(_cards(world, tab="appeals", status="all", source="task_success")) == [2]
+    assert list(_cards(world, tab="appeals", status="all", source="dedup")) == [7]
     assert_error(world.get("/adjudication", source="nope"), "validation_failed")
     assert_error(world.get("/adjudication", status="done"), "validation_failed")
     assert_error(world.get("/adjudication", tab="other"), "validation_failed")
@@ -156,7 +160,6 @@ def test_each_line_accepts_only_its_own_decisions(world):
         ((2, "reject_appeal", "failure"), "被拒复议不能选 failure"),
         ((3, "label", "keep_label"), "没有待裁决的标注分歧"),
         ((1, "reject_appeal", "restore"), "不能复议"),          # timestamp fragment: final
-        ((7, "reject_appeal", "restore"), "不能复议"),          # duplicate: final
         ((0, "reject_appeal", "restore"), "不能复议"),          # not rejected at all
         ((99, "task_verdict", "success"), "不在这个任务的待裁决队列里"),
         ((6, "task_verdict", "success"), "不在这个任务的待裁决队列里"),   # held: nothing to judge
@@ -259,8 +262,14 @@ def test_discard_wins_over_the_task_verdict(world):
     _ok(world.decide((5, "task_verdict", "success")))
 
 
-def test_appeals_only_for_task_success_rejects(world):
-    """F3.3 rule 2: only rejects attributed to task_success can be appealed."""
+def test_appeals_only_for_rejects_of_appealable_modules(world):
+    """F3.3 rule 2: only rejects attributed to an appealable module - task_success, and
+    dedup since D42 - can be appealed; the physical and structural gates are final."""
+    assert_error(world.decide((1, "reject_appeal", "restore")), "validation_failed")
+    assert _ok(world.decide((7, "reject_appeal", "keep_rejected")))["unapplied"] == 1
+    assert _cards(world, tab="appeals", status="all")[7]["status"] == "decided"
+    assert _ok(world.decide((7, "reject_appeal", "unsure")))["unapplied"] == 0
+    assert _cards(world, tab="appeals", status="all")[7]["status"] == "unsure"
     assert _ok(world.decide((2, "reject_appeal", "restore")))["unapplied"] == 1
     card = _cards(world, tab="appeals", status="all")[2]
     assert card["status"] == "decided"
@@ -334,7 +343,7 @@ def test_pending_adjudication_follows_every_submission(world):
     _ok(world.decide((3, "task_verdict", "success"), (4, "label", "keep_label")))
     task = world.client.get(task_url).json()
     assert task["pending_adjudication"] == 1
-    assert task["summary"] == {"total": 9, "passed": 5, "rejected": 3, "held": 1, "review": 4,
+    assert task["summary"] == {"total": 9, "passed": 5, "rejected": 3, "held": 1, "review": 5,
                                "pass_rate": 0.5556}
     link = [ln for ln in task["links"] if ln["rel"] == "adjudication"][0]
     assert link["title"] == "1 episode needs human judgement"
