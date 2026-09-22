@@ -253,13 +253,16 @@ def create_app(settings: Settings, *, repo: P.Repository | None = None,
     system.install(app, base)
     from .routes import access_keys, media, vlm       # W8
     from .routes import adjudication, results         # W5b
+    from .routes import datasets_exec, runs           # W5a
     app.state.api_routers = [m.router for m in (access_keys, vlm, media, api, datasets, overview,
-                                                results, adjudication)]
+                                                results, adjudication, runs, datasets_exec)]
     for router in app.state.api_routers:                # new routers go here, before the fallback
         app.include_router(router, prefix=f"{base}/api/v1")
     app.include_router(api.fallback, prefix=f"{base}/api/v1")       # unknown paths: 404 / 405
     app.include_router(sse.router, prefix=f"{base}/events")
     rt.frontend = static.install(app, settings.static_dir, base)
+    from .orchestr.service import install as install_orchestrator    # W5a: the worker pool
+    install_orchestrator(app)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(AuthMiddleware, provider=rt.auth, exempt=system.probe_paths(base))
     log.info("daemon ready to start: base_path=%r db=%s auth=%s epoch=%s", base or "/",

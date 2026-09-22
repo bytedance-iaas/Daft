@@ -54,30 +54,27 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "getPerf": ("GET", "/api/v1/tasks/{id}/perf"),
     "listAdjudication": ("GET", "/api/v1/tasks/{id}/adjudication"),
     "submitAdjudication": ("POST", "/api/v1/tasks/{id}/adjudication"),
+    # W5a orchestration (daemon/exec, daemon/orchestr, routes/runs.py, routes/datasets_exec.py)
+    "createTask": ("POST", "/api/v1/tasks"),
+    "createTasksBatch": ("POST", "/api/v1/tasks/batch"),
+    "taskAction": ("POST", "/api/v1/tasks/{id}/actions/{action}"),
+    "repreflightTask": ("POST", "/api/v1/tasks/{id}/repreflight"),
+    "retryTask": ("POST", "/api/v1/tasks/{id}/retry"),
+    "continueTask": ("POST", "/api/v1/tasks/{id}/continue"),
+    "reexportTask": ("POST", "/api/v1/tasks/{id}/reexport"),
+    "applyAdjudication": ("POST", "/api/v1/tasks/{id}/adjudication/apply"),
+    "purgeTaskArtifacts": ("POST", "/api/v1/tasks/{id}/purge-artifacts"),
+    "getTaskPlan": ("GET", "/api/v1/tasks/{id}/plan"),
+    "preflight": ("POST", "/api/v1/preflight"),
+    "browseDatasets": ("GET", "/api/v1/datasets/browse"),
+    "listDatasetEpisodes": ("GET", "/api/v1/datasets/episodes"),
+    "createDataset": ("POST", "/api/v1/datasets"),
+    "recheckDataset": ("POST", "/api/v1/datasets/{id}/recheck"),
+    "repreflightDataset": ("POST", "/api/v1/datasets/{id}/repreflight"),
 }
 
-#: operationId -> (owner, what it still needs)
-PENDING: dict[str, tuple[str, str]] = {
-    # W3 CLI-backed (run through W5's executor)
-    "preflight": ("W3", "curation preflight --json; cache with repo.put_preflight"),
-    "browseDatasets": ("W3", "curation datasets list (TOS listing / public catalog), needs W8 keys"),
-    "listDatasetEpisodes": ("W3", "episodes.jsonl metadata + W8 presigned camera URLs"),
-    # W5 orchestration: queue, subprocesses, prechecks, work directory and result revisions
-    "createTask": ("W5", "prechecks (D30), start, planner (W6); reuse daemon.taskspec.resolve_config"),
-    "createTasksBatch": ("W5", "one task per dataset with the shared configuration"),
-    "taskAction": ("W5", "start/pause/resume/stop through daemon.transitions + the worker pool"),
-    "retryTask": ("W5", "retry subtask (D25, D35)"),
-    "continueTask": ("W5", "resume subtask; its end recomputes the parent (C5 1.2 edges)"),
-    "reexportTask": ("W5", "reexport subtask (W7 incremental export)"),
-    "purgeTaskArtifacts": ("W5", "delete <delivery>/<run_id>/ on TOS with confirm_path (D28), needs W8"),
-    "getTaskPlan": ("W5", "plan.json written at start by W6's planner"),
-    "applyAdjudication": ("W5", "apply_adjudication subtask"),
-    # contract 1.1 (D36, D37): registering and checking datasets runs the CLI
-    "createDataset": ("W5", "curation preflight + snapshot through the executor; register_dataset"),
-    "recheckDataset": ("W5", "curation snapshot, compare with the kept listing"),
-    "repreflightDataset": ("W5", "curation preflight + snapshot, refresh the registration"),
-    "repreflightTask": ("W5", "D37: re-preflight, compatibility check, then start"),
-}
+#: operationId -> (owner, what it still needs); empty since W5a and W5b landed
+PENDING: dict[str, tuple[str, str]] = {}
 
 
 def contract_operations() -> dict[str, tuple[str, str]]:

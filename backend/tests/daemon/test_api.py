@@ -710,7 +710,7 @@ def test_timeline_falls_back_to_the_row_without_events(client_for):
 def test_unknown_routes_and_methods_answer_with_the_error_body(client_for):
     c = client_for(base_path="/curation")
     assert_error(c.get("/curation/api/v1/nope"), "not_found")
-    assert_error(c.post("/curation/api/v1/tasks", json={}), "not_found")            # W5, pending
+    assert_error(c.post("/curation/api/v1/tasks", json={}), "validation_failed")    # W5a: served
     assert_error(c.get("/curation/api/v1/tasks/x/report"), "not_found")             # W5, pending
     r = c.put("/curation/api/v1/tasks/x", json={})           # the path exists, the method not
     body = assert_error(r, "method_not_allowed", status=405)
@@ -718,8 +718,9 @@ def test_unknown_routes_and_methods_answer_with_the_error_body(client_for):
     assert body["error"]["details"]["allow"] == ["DELETE", "GET", "HEAD", "PATCH"]
     assert_error(c.delete("/curation/api/v1/overview", headers=JSON), "method_not_allowed",
                  status=405)
-    assert_error(c.post("/curation/api/v1/datasets", json={}), "not_found")         # W5, pending
-    assert_error(c.put("/curation/api/v1/datasets/browse", json={}), "not_found")    # not an id
+    assert_error(c.post("/curation/api/v1/datasets", json={}), "validation_failed")  # W5a
+    assert_error(c.put("/curation/api/v1/datasets/browse", json={}), "method_not_allowed",
+                 status=405)                                  # GET only; not an id either
     r = c.post("/curation/healthz")
     assert_error(r, "method_not_allowed", status=405)
 
