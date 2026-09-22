@@ -1,0 +1,47 @@
+# Build context of deploy/Dockerfile is the repository root (docker build -f deploy/Dockerfile .).
+# The image only takes backend/requirements.txt, backend/pyproject.toml, backend/curation/,
+# backend/daemon/, docs/contracts/, frontend/ and deploy/docker-entrypoint.sh; the rest is
+# kept out so the context stays small and host artefacts never reach the image. The one
+# that breaks builds: a host frontend/node_modules (macOS esbuild binaries) copied over the
+# Linux one by `COPY frontend/ ./`. backend/tests/deploy checks every COPY source against
+# this file.
+
+# VCS, local environments, agent worktrees (each a full checkout)
+.git
+**/.git
+.github
+.claude
+.venv
+**/venv
+
+# Node: dependencies are installed in the image with npm ci; dist is rebuilt there
+**/node_modules
+frontend/dist
+frontend/coverage
+**/*.tsbuildinfo
+
+# Python caches and build leftovers
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/build
+**/dist
+
+# Not used by the image
+tools
+docs/design
+docs/v1
+backend/tests
+backend/scripts
+deploy/charts
+
+# Local secrets, data and editor files
+**/.env
+**/.env.*
+**/*.swp
+**/.DS_Store
+.idea
+.vscode
