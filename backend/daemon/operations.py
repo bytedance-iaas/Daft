@@ -77,3 +77,17 @@ PENDING: dict[str, tuple[str, str]] = {
     "repreflightDataset": ("W5", "curation preflight + snapshot, refresh the registration"),
     "repreflightTask": ("W5", "D37: re-preflight, compatibility check, then start"),
 }
+
+
+def contract_operations() -> dict[str, tuple[str, str]]:
+    """operationId -> (METHOD, path relative to the mount prefix) for every C4 operation."""
+    from curation.contracts import schemas
+
+    out: dict[str, tuple[str, str]] = {}
+    for path, item in schemas.load("openapi.yaml")["paths"].items():
+        for method, op in item.items():
+            if method in ("get", "post", "put", "patch", "delete"):
+                prefix = "" if path in ("/healthz", "/readyz") or path.startswith("/events/") \
+                    else "/api/v1"
+                out[op["operationId"]] = (method.upper(), prefix + path)
+    return out

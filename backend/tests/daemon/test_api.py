@@ -187,6 +187,8 @@ def test_task_list_filters_and_item_fields(client_for, clock):
     assert "nope" in body["error"]["message"]
 
     assert_error(c.get("/curation/api/v1/tasks", params={"page_size": 7}), "validation_failed")
+    far = c.get("/curation/api/v1/tasks", params={"page": 10**20}).json()
+    assert far["items"] == [] and far["total"] == 2                  # far away: empty, not a 500
     assert_error(c.get("/curation/api/v1/tasks", params={"page": 0}), "validation_failed")
     assert_error(c.get("/curation/api/v1/tasks", params={"state": "exploded"}), "validation_failed")
     assert_error(c.get("/curation/api/v1/tasks", params={"delivery": "s3://x/y"}), "validation_failed")
@@ -655,9 +657,12 @@ def test_timeline_of_a_resumed_task(client_for, clock):
     rt.repo.set_subtask_result_rev(sub.id, 1)
     record_revision(rt.repo, t.id, 1, at=clock.advance(1000), subtask_id=sub.id)
     assert change_task_state(rt.repo, rt.hub, t.id, {"stopped"}, "succeeded",
-                             at=clock.advance(1000))       # the parent first, then the subtask
+                             at=clock.advance(1000), publish_done=False)   # the parent first,
     assert change_subtask_state(rt.repo, rt.hub, sub.id, {"running"}, "succeeded",
-                                at=clock.advance(1000))
+                                at=clock.advance(1000))                    # then the subtask
+    tail = [(e.event, e.data["state"], e.data["subtask_id"]) for e in rt.hub.buffered(t.id)][-3:]
+    assert tail == [("state", "succeeded", None), ("state", "succeeded", sub.id),
+                    ("done", "succeeded", sub.id)]          # one done, after both changes
     body = c.get(f"/api/v1/tasks/{t.id}/timeline").json()
     assert_schema("openapi.yaml#/paths/~1tasks~1{id}~1timeline/get/responses/200/content/"
                   "application~1json/schema", body)
@@ -707,7 +712,14 @@ def test_unknown_routes_and_methods_answer_with_the_error_body(client_for):
     assert_error(c.get("/curation/api/v1/nope"), "not_found")
     assert_error(c.post("/curation/api/v1/tasks", json={}), "not_found")            # W5, pending
     assert_error(c.get("/curation/api/v1/tasks/x/report"), "not_found")             # W5, pending
-    assert_error(c.put("/curation/api/v1/tasks/x", json={}), "not_found")
+    r = c.put("/curation/api/v1/tasks/x", json={})           # the path exists, the method not
+    body = assert_error(r, "method_not_allowed", status=405)
+    assert r.headers["allow"] == "DELETE, GET, HEAD, PATCH"
+    assert body["error"]["details"]["allow"] == ["DELETE", "GET", "HEAD", "PATCH"]
+    assert_error(c.delete("/curation/api/v1/overview", headers=JSON), "method_not_allowed",
+                 status=405)
+    assert_error(c.post("/curation/api/v1/datasets", json={}), "not_found")         # W5, pending
+    assert_error(c.put("/curation/api/v1/datasets/browse", json={}), "not_found")    # not an id
     r = c.post("/curation/healthz")
     assert_error(r, "method_not_allowed", status=405)
 

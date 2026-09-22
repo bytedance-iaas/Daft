@@ -1,11 +1,12 @@
 """``{base}/api/v1`` task routes that need only the repository and the work directory (W4).
 
-Datasets and the overview are in their own modules; everything else in C4 is
-owned by W5 / W8 / W3 and not registered yet (see :mod:`daemon.operations`).
+Datasets, the overview and W8's secrets have their own modules; what C4 still
+lacks belongs to W5 / W3 and is not registered yet (see :mod:`daemon.operations`).
 :data:`fallback` answers unknown API paths and is mounted after every other router.
 """
 from __future__ import annotations
 
+import functools
 import re
 
 from fastapi import APIRouter, Query, Request
@@ -291,8 +292,46 @@ def get_usage(request: Request, task_id: str):
                               rt.repo.usage_buckets(task_id, ledger="attributed"))
 
 
+@functools.lru_cache(maxsize=1)
+def _pending_routes() -> tuple[tuple[str, re.Pattern], ...]:
+    """(METHOD, path regex below ``/api/v1``) of the C4 operations still to be built."""
+    from ..operations import PENDING, contract_operations
+
+    ops, out = contract_operations(), []
+    for op in PENDING:
+        method, path = ops[op]
+        if path.startswith("/api/v1/"):
+            parts = re.split(r"\{[^}]+\}", path[len("/api/v1"):])
+            out.append((method, re.compile("^" + "[^/]+".join(map(re.escape, parts)) + "$")))
+    return tuple(out)
+
+
+def _other_methods(request: Request, path: str) -> set[str]:
+    """Methods the API routers (``app.state.api_routers``) serve on this path."""
+    allowed: set[str] = set()
+    for router in getattr(request.app.state, "api_routers", ()):
+        for route in router.routes:
+            rx = getattr(route, "path_regex", None)
+            if rx is not None and rx.match(path):
+                allowed |= set(getattr(route, "methods", None) or ())
+    if "GET" in allowed:
+        allowed.add("HEAD")
+    return allowed
+
+
 @fallback.api_route("/{rest:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
                     include_in_schema=False)
-def unknown(rest: str):
-    """Unknown API paths are JSON 404s - never the frontend's index.html."""
+def unknown(request: Request, rest: str):
+    """Unknown API paths are JSON 404s - never the frontend's index.html.
+
+    A path served with other methods answers 405 ``method_not_allowed`` with
+    ``Allow`` (C4 1.2), unless the request is a C4 operation still to be built
+    (:data:`daemon.operations.PENDING`): that stays a 404 like any missing route.
+    """
+    method, path = request.method.upper(), "/" + rest
+    if not any(m == method and rx.match(path) for m, rx in _pending_routes()):
+        allowed = _other_methods(request, path)
+        if allowed and method not in allowed:
+            raise ApiError("method_not_allowed", details={"allow": sorted(allowed)},
+                           headers={"Allow": ", ".join(sorted(allowed))})
     raise ApiError("not_found", "这个接口不存在（或还没有实现）")

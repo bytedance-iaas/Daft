@@ -6,7 +6,7 @@ import re
 import pytest
 
 from curation.contracts import schemas
-from daemon.operations import IMPLEMENTED, PENDING
+from daemon.operations import IMPLEMENTED, PENDING, contract_operations
 
 METHODS = ("get", "post", "put", "patch", "delete")
 OWNERS = {"W3", "W5", "W6", "W7", "W8", "W10"}
@@ -22,6 +22,7 @@ def _contract_ops() -> dict[str, tuple[str, str]]:
                 prefix = "" if path in ("/healthz", "/readyz") or path.startswith("/events/") \
                     else "/api/v1"
                 out[op["operationId"]] = (method.upper(), prefix + path)
+    assert out == contract_operations()                     # the Daemon reads it the same way
     return out
 
 
