@@ -103,6 +103,26 @@ def test_finished_results_since(repo):
     assert repo.finished_results(since=since, owner=OTHER).tasks == 1
 
 
+def test_unfinished_subtasks_with_their_tasks(repo, clock):
+    a, b, c = (seed_task(repo, n) for n in "abc")
+    theirs = seed_task(repo, "theirs", owner=OTHER)
+    for t in (a, b, c, theirs):
+        _finish(repo, t.id, "completed_with_errors")
+    subs = {}
+    for t in (a, b, c, theirs):
+        clock.advance(1)
+        subs[t.name] = repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="retry", scope={},
+                                                     state="queued"))
+    repo.update_subtask_state(subs["a"].id, {"queued"}, "running", at=T0)
+    repo.update_subtask_state(subs["b"].id, {"queued"}, "running", at=T0)
+    repo.update_subtask_state(subs["b"].id, {"running"}, "succeeded", at=T0)
+    got = repo.unfinished_subtasks()
+    assert [(s.id, s.state, t.id) for s, t in got] == [
+        (subs["c"].id, "queued", c.id), (subs["a"].id, "running", a.id)]   # newest first
+    assert got[0][1].state == "completed_with_errors"
+    assert [t.id for _, t in repo.unfinished_subtasks(owner=OTHER)] == [theirs.id]
+
+
 def test_token_timeline_follows_the_actual_ledger(repo):
     a = seed_task(repo, "a")
     b = seed_task(repo, "b")

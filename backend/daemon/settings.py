@@ -62,7 +62,11 @@ _TZ_RE = re.compile(r"^([+-])([0-9]{1,2})(?::?([0-9]{2}))?$")
 
 
 def parse_tz_offset(raw: str | None) -> int:
-    """``+08:00`` / ``-0530`` / ``+8`` / ``Z`` / ``UTC`` -> minutes east of UTC."""
+    """``+08:00`` / ``-0530`` / ``+8`` / ``Z`` / ``UTC`` -> minutes east of UTC.
+
+    Every offset in use is a whole quarter of an hour, which is also the token
+    timeline's slot; anything else would split slots across days, so it is refused.
+    """
     s = (raw or "").strip().upper()
     if s in ("Z", "UTC", "GMT"):
         return 0
@@ -71,8 +75,8 @@ def parse_tz_offset(raw: str | None) -> int:
     if m and int(m.group(3) or 0) < 60:
         minutes = int(m.group(2)) * 60 + int(m.group(3) or 0)
         minutes = -minutes if m.group(1) == "-" else minutes
-    if minutes is None or not -12 * 60 <= minutes <= 14 * 60:
-        raise ConfigError(f"CURATOR_TZ_OFFSET 写法不对：{raw!r}（形如 +08:00）")
+    if minutes is None or not -12 * 60 <= minutes <= 14 * 60 or minutes % 15:
+        raise ConfigError(f"CURATOR_TZ_OFFSET 写法不对：{raw!r}（形如 +08:00，按一刻钟取整）")
     return minutes
 
 
@@ -119,8 +123,8 @@ class Settings:
                               f"{self.public_base_url!r}")
         if self.sse_heartbeat_s <= 0:
             raise ConfigError("CURATOR_SSE_HEARTBEAT_S 必须大于 0")
-        if not -12 * 60 <= int(self.tz_offset_minutes) <= 14 * 60:
-            raise ConfigError("CURATOR_TZ_OFFSET 超出范围（-12:00 到 +14:00）")
+        if not -12 * 60 <= int(self.tz_offset_minutes) <= 14 * 60 or int(self.tz_offset_minutes) % 15:
+            raise ConfigError("CURATOR_TZ_OFFSET 超出范围（-12:00 到 +14:00，按一刻钟取整）")
 
     def with_(self, **changes) -> "Settings":
         return replace(self, **changes)

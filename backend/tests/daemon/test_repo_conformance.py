@@ -451,6 +451,11 @@ def test_dataset_checks_are_the_change_history(repo):
     assert history[2].change == change and history[2].dataset_id == ds.id
     assert [c.at for c in repo.list_dataset_checks(ds.id, limit=2)] == [T0 + 4, T0 + 3]
     assert repo.list_dataset_checks("ds_missing") == []
+    late = repo.record_dataset_check(P.DatasetCheck(dataset_id=ds.id, at=T0 + 1, trigger="recheck",
+                                                    result="changed"))       # arrives out of order
+    got = repo.get_dataset(ds.id)
+    assert (got.check_state, got.checked_at) == ("ok", T0 + 4)        # the newer check stands
+    assert late.id in {c.id for c in repo.list_dataset_checks(ds.id)}  # but it is in the history
     with pytest.raises(P.NotFound):
         repo.record_dataset_check(P.DatasetCheck(dataset_id="ds_missing", at=T0, trigger="add",
                                                  result="same"))
@@ -490,16 +495,59 @@ def test_delete_dataset_rules(repo):
 
 
 def test_a_deleted_access_key_leaves_the_dataset_without_one(repo):
+    """Registrations never block deleting an access key (only unfinished tasks do);
+    like a finished task, the registration then has no key until one is bound again."""
     c = repo.create_credential(_cred())
     ds, _ = repo.register_dataset(_dataset(cred=c.id))
     assert ds.credential_id == c.id
+    draft = repo.create_task(_spec("draft on the dataset", state="created", dataset=ds.id))
+    assert repo.credential_references(c.id) == (0, 0)                # datasets are not counted
     repo.delete_credential(c.id)
     assert repo.get_dataset(ds.id).credential_id is None
+    assert repo.get_task(draft.id).dataset_id == ds.id              # the task keeps its link
     other = repo.create_credential(_cred("new-key"))
     assert repo.update_dataset(ds.id, credential_id=other.id).credential_id == other.id
     with pytest.raises(P.NotFound):
         repo.update_dataset(ds.id, credential_id="cred_missing")
     assert repo.get_dataset(ds.id).credential_id == other.id
+    assert repo.update_dataset(ds.id, credential_id=None).credential_id is None
+
+
+def test_a_registration_reads_with_an_access_key_of_its_owner(repo):
+    ark = repo.create_vlm_backend(_backend("ark"), _cred("vlm-backend/vb_ark", kind="ark"))
+    theirs = repo.create_credential(_cred("their-key", owner=OTHER))
+    mine = repo.create_credential(_cred("my-key"))
+    ds, _ = repo.register_dataset(_dataset("tos://bucket/x", cred=mine.id))
+    for cred in (ark.credential_id, theirs.id, "cred_missing"):
+        with pytest.raises(P.NotFound):
+            repo.register_dataset(_dataset(cred=cred))
+        with pytest.raises(P.NotFound):
+            repo.update_dataset(ds.id, credential_id=cred)
+    assert [d.id for d in repo.list_datasets(page=1, page_size=10).items] == [ds.id]
+    assert repo.get_dataset(ds.id).credential_id == mine.id
+
+
+def test_register_and_update_refuse_malformed_rows(repo):
+    for bad in ({"id": "custom-id"}, {"id": "ds_with-dash"}, {"name": None},
+                {"meta_fingerprint": None}):
+        spec = _dataset()
+        for k, v in bad.items():
+            setattr(spec, k, v)
+        with pytest.raises(ValueError):
+            repo.register_dataset(spec)
+    given = _dataset()
+    given.id = "ds_01GIVEN"
+    ds, created = repo.register_dataset(given)
+    assert created and ds.id == "ds_01GIVEN"
+    other = _dataset("tos://bucket/elsewhere")
+    other.id = "ds_01GIVEN"
+    with pytest.raises(ValueError):                                     # the id is taken
+        repo.register_dataset(other)
+    for bad in ({"name": None}, {"preflight": None, "meta_fingerprint": "m",
+                                 "source_fingerprint": {}, "preflighted_at": T0}):
+        with pytest.raises(ValueError):
+            repo.update_dataset(ds.id, **bad)
+    assert repo.get_dataset(ds.id).name == "droid_lerobot"
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +639,10 @@ def test_list_tasks_by_dataset_and_selected_modules(repo, clock):
     assert ids(modules=[]) == [all_three.id, ts_only.id, both.id]        # no filter
     assert ids(modules=["timestamp_check"], dataset_id=ds.id, q="both") == [both.id]
     assert repo.list_tasks(page=1, page_size=1, modules=["timestamp_check"]).total == 3
+    far = repo.list_tasks(page=10**20, page_size=100)                   # far away: empty, no error
+    assert (far.items, far.total) == ([], 3)
+    far = repo.list_datasets(page=10**20, page_size=100)
+    assert (far.items, far.total) == ([], 1)
 
 
 def test_task_points_at_a_dataset_of_its_own_owner(repo):

@@ -309,7 +309,7 @@ class EventHub:
             return self._emit(task_id, "log", data)
 
     def publish(self, task_id: str, event: str, data: dict) -> str | None:
-        """Generic entry point with the same throttling rules as the typed ones."""
+        """Generic entry point with the same rules (and payload shapes) as the typed ones."""
         if event == "progress":
             return self.publish_progress(task_id, data)
         if event == "usage":
@@ -317,6 +317,14 @@ class EventHub:
         if event == "log":
             extra = {k: v for k, v in data.items() if k not in ("stage", "level", "msg")}
             return self.publish_log(task_id, data["stage"], data["level"], data["msg"], **extra)
+        if event == "state":
+            return self.publish_state(task_id, data["state"], pause_reason=data.get("pause_reason"),
+                                      at=data.get("at"), subtask_id=data.get("subtask_id"),
+                                      reason=data.get("reason"))
+        if event == "done":
+            return self.publish_done(task_id, data["state"],
+                                     failed_modules=data.get("failed_modules") or (),
+                                     subtask_id=data.get("subtask_id"), reason=data.get("reason"))
         if event not in EVENT_KINDS:
             raise ValueError(f"unknown SSE event {event!r}")
         return self._publish_now(task_id, event, dict(data))

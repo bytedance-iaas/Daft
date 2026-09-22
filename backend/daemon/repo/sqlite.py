@@ -31,6 +31,7 @@ import dataclasses
 import json
 import os
 import queue
+import re
 import sqlite3
 import threading
 from typing import Any, Callable, Iterable, Iterator
@@ -76,6 +77,8 @@ TOKEN_TIMELINE_TTL_MS = 90 * 24 * 60 * 60 * 1000
 
 #: Upper bound for one cursor page, whatever the caller asks for.
 MAX_PAGE = 1000
+#: Page-number lists never skip more rows than this (a far-away page is simply empty).
+MAX_OFFSET = 1 << 62
 
 _TERMINAL_SQL = "('stopped','succeeded','completed_with_errors','failed')"
 
@@ -99,6 +102,9 @@ _DATASET_FIELDS = frozenset({"name", "note", "credential_id"})
 _DATASET_REFRESH = frozenset({"preflight", "meta_fingerprint", "source_fingerprint",
                               "preflighted_at"})
 _DATASET_JSON = frozenset({"preflight", "source_fingerprint"})
+_DATASET_REQUIRED = frozenset({"name"}) | _DATASET_REFRESH
+#: Dataset ids are the repository's own (``new_id("ds")``); the REST path only routes these.
+_DATASET_ID_RE = re.compile(r"^ds_[0-9A-Za-z]+$")
 
 
 # ---------------------------------------------------------------------------
@@ -852,9 +858,24 @@ class SqliteRepository:
             raise NotFound(f"dataset {dataset_id}")
         return _dataset(row)
 
+    @staticmethod
+    def _check_access_key(c, cred_id: str | None, owner: str) -> None:
+        """A registration reads with a TOS access key of its own owner."""
+        if cred_id is not None and c.execute(
+                "SELECT 1 FROM credential WHERE id=? AND owner_id=? AND kind='tos'",
+                (cred_id, owner)).fetchone() is None:
+            raise NotFound(f"access key {cred_id}")
+
     def register_dataset(self, dataset: Dataset) -> tuple[Dataset, bool]:
         """Get-or-create by (owner, source, uri, region); an existing registration comes
-        back unchanged. An empty region is the same as none."""
+        back unchanged. An empty region is the same as none. ``id`` is normally left
+        empty (the repository makes one); a given one must look like ``ds_...``.
+        Raises NotFound when ``credential_id`` is not a TOS access key of the owner."""
+        if dataset.id and not _DATASET_ID_RE.match(dataset.id):
+            raise ValueError(f"dataset ids look like ds_<letters and digits>, not {dataset.id!r}")
+        missing = sorted(k for k in _DATASET_REQUIRED if getattr(dataset, k) is None)
+        if missing:
+            raise ValueError(f"a registration needs {missing}")
         now = self._clock()
         ds_id = dataset.id or new_id("ds")
         region = dataset.region or None
@@ -863,6 +884,9 @@ class SqliteRepository:
             found = self._find_dataset(c, dataset.owner_id, dataset.source, dataset.uri, region)
             if found is not None:
                 return found, False
+            if c.execute("SELECT 1 FROM dataset WHERE id=?", (ds_id,)).fetchone() is not None:
+                raise ValueError(f"dataset id {ds_id} is taken by another address")
+            self._check_access_key(c, dataset.credential_id, dataset.owner_id)
             c.execute(
                 "INSERT INTO dataset (id, owner_id, name, note, source, uri, region, credential_id,"
                 " preflight, format, meta_fingerprint, source_fingerprint, manifest_path,"
@@ -899,11 +923,14 @@ class SqliteRepository:
             args.append(check_state)
         clause = " AND ".join(where)
 
+        offset = min((page - 1) * page_size, MAX_OFFSET)
+        page_size = min(page_size, MAX_OFFSET)
+
         def op(c):
             total = c.execute(f"SELECT COUNT(*) FROM dataset WHERE {clause}", args).fetchone()[0]
             rows = c.execute(f"SELECT * FROM dataset WHERE {clause}"
                              " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-                             (*args, page_size, (page - 1) * page_size)).fetchall()
+                             (*args, page_size, offset)).fetchall()
             return PagedResult(items=[_dataset(r) for r in rows], page=page, page_size=page_size,
                                total=total)
 
@@ -912,7 +939,8 @@ class SqliteRepository:
     def update_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER, **fields) -> Dataset:
         """``name`` / ``note`` / ``credential_id``, or a refresh: ``preflight``, both
         fingerprints and ``preflighted_at`` together (``manifest_path`` may come along).
-        A refresh is the new baseline, so ``check_state`` goes back to ``ok``."""
+        A refresh is the new baseline, so ``check_state`` goes back to ``ok``.
+        ``credential_id`` must be a TOS access key of the owner (else NotFound)."""
         unknown = set(fields) - _DATASET_FIELDS - _DATASET_REFRESH - {"manifest_path"}
         if unknown:
             raise ValueError(f"not editable on a dataset: {sorted(unknown)}")
@@ -922,6 +950,9 @@ class SqliteRepository:
                              f"and preflighted_at together (missing {sorted(_DATASET_REFRESH - refresh)})")
         if "manifest_path" in fields and not refresh:
             raise ValueError("manifest_path changes only with a refresh")
+        nulls = sorted(k for k in _DATASET_REQUIRED & set(fields) if fields[k] is None)
+        if nulls:
+            raise ValueError(f"cannot clear {nulls}")
         values = {k: (_dumps(v or {}) if k in _DATASET_JSON else v) for k, v in fields.items()}
         if refresh:
             values["format"] = dataset_format(fields["preflight"])
@@ -932,12 +963,11 @@ class SqliteRepository:
             current = self._get_dataset(c, dataset_id, owner)
             if not values:
                 return current
+            if "credential_id" in values:
+                self._check_access_key(c, values["credential_id"], current.owner_id)
             cols = ", ".join(f"{k}=?" for k in values)
-            try:
-                c.execute(f"UPDATE dataset SET {cols}, updated_at=MAX(?, updated_at + 1) WHERE id=?",
-                          (*values.values(), now, dataset_id))
-            except sqlite3.IntegrityError:
-                raise NotFound("credential to bind does not exist") from None
+            c.execute(f"UPDATE dataset SET {cols}, updated_at=MAX(?, updated_at + 1) WHERE id=?",
+                      (*values.values(), now, dataset_id))
             return self._get_dataset(c, dataset_id, owner)
 
         return self._write(op)
@@ -945,7 +975,8 @@ class SqliteRepository:
     def record_dataset_check(self, check: DatasetCheck) -> DatasetCheck:
         """Appends the check; the dataset's ``checked_at`` becomes ``check.at`` and its
         ``check_state`` follows the result - except after a ``repreflight``, which adopts
-        what it found as the new baseline and so leaves the dataset ``ok``."""
+        what it found as the new baseline and so leaves the dataset ``ok``. A check older
+        than the dataset's ``checked_at`` is only kept in the history."""
         if check.result not in ("same", "changed"):
             raise ValueError(f"a check is same or changed, not {check.result}")
         if check.trigger not in ("add", "recheck", "task_start", "repreflight"):
@@ -959,8 +990,9 @@ class SqliteRepository:
                             " VALUES (?,?,?,?,?)", (check.dataset_id, int(check.at), check.trigger,
                                                     check.result, _dumps(check.change)))
             c.execute("UPDATE dataset SET check_state=?, checked_at=?,"
-                      " updated_at=MAX(?, updated_at + 1) WHERE id=?",
-                      (state, int(check.at), now, check.dataset_id))
+                      " updated_at=MAX(?, updated_at + 1)"
+                      " WHERE id=? AND (checked_at IS NULL OR checked_at <= ?)",
+                      (state, int(check.at), now, check.dataset_id, int(check.at)))
             return _dataset_check(c.execute("SELECT * FROM dataset_check WHERE id=?",
                                             (cur.lastrowid,)).fetchone())
 
@@ -1082,11 +1114,13 @@ class SqliteRepository:
                          " GROUP BY task_id HAVING COUNT(*)=?)")
             args += [*wanted, len(wanted)]
         clause = " AND ".join(where)
+        offset = min((page - 1) * page_size, MAX_OFFSET)
+        page_size = min(page_size, MAX_OFFSET)
 
         def op(c):
             total = c.execute(f"SELECT COUNT(*) FROM task WHERE {clause}", args).fetchone()[0]
             rows = c.execute(f"SELECT * FROM task WHERE {clause} ORDER BY created_at DESC, id DESC"
-                             " LIMIT ? OFFSET ?", (*args, page_size, (page - 1) * page_size)).fetchall()
+                             " LIMIT ? OFFSET ?", (*args, page_size, offset)).fetchall()
             return PagedResult(items=[_task(r) for r in rows], page=page, page_size=page_size,
                                total=total)
 
@@ -1592,6 +1626,23 @@ class SqliteRepository:
             return FinishedResults(tasks=int(row[0]), episodes=int(row[1]), passed=int(row[2]))
 
         return self._read(op)
+
+    def unfinished_subtasks(self, *, owner: str = DEFAULT_OWNER) -> list[tuple[Subtask, Task]]:
+        def op(c):
+            subs = [_subtask(r) for r in c.execute(
+                "SELECT s.* FROM subtask s JOIN task t ON t.id = s.task_id"
+                f" WHERE t.owner_id=? AND t.deleted_at IS NULL AND s.state NOT IN {_TERMINAL_SQL}"
+                " ORDER BY s.created_at DESC, s.id DESC", (owner,)).fetchall()]
+            parents: dict[str, Task] = {}
+            ids = sorted({s.task_id for s in subs})
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                for r in c.execute(f"SELECT * FROM task WHERE id IN ({_placeholders(len(chunk))})",
+                                   chunk).fetchall():
+                    parents[r["id"]] = _task(r)
+            return [(s, parents[s.task_id]) for s in subs]
+
+        return self._read(op, snapshot=True)
 
     def token_timeline(self, *, since: int, until: int,
                        owner: str = DEFAULT_OWNER) -> list[tuple[int, int]]:

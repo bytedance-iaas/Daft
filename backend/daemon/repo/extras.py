@@ -19,19 +19,22 @@ every implementation counts the same things:
   ``completed_with_errors`` at or after ``since``, with the sums of their
   ``summary.total`` and ``summary.passed``; stopped and failed tasks are not
   "finished" here, soft-deleted ones do not count;
+* **unfinished subtasks** - retries, resumes, adjudication runs and re-exports
+  not in a terminal state, with their parent task (newest first); their parents
+  are finished, so the task states alone never show this work;
 * **token timeline** - the actual ledger only (never the attributed one, which
   splits the same requests), ``prompt_tokens + completion_tokens`` (reasoning
   tokens are part of completion, cached ones part of prompt, as the model
   reports them), summed per owner into 15-minute UTC slots by the time
   ``add_usage`` was called; slots cover every UTC offset in use, so days can be
-  cut in any time zone.
+  cut in any time zone. Tokens stay counted whatever happens to their task later.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
 
-from .protocol import DEFAULT_OWNER, Dataset
+from .protocol import DEFAULT_OWNER, Dataset, Subtask, Task
 
 #: Width of one token-timeline slot.
 TOKEN_SLOT_MS = 15 * 60 * 1000
@@ -79,6 +82,9 @@ class RepositoryExtras(Protocol):
 
     def finished_results(self, *, since: int, owner: str = DEFAULT_OWNER) -> FinishedResults:
         """What finished at or after ``since`` (epoch ms)."""
+
+    def unfinished_subtasks(self, *, owner: str = DEFAULT_OWNER) -> list[tuple[Subtask, Task]]:
+        """``(subtask, its task)`` for every subtask not in a terminal state (see above)."""
 
     def token_timeline(self, *, since: int, until: int,
                        owner: str = DEFAULT_OWNER) -> list[tuple[int, int]]:

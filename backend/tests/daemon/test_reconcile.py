@@ -143,6 +143,19 @@ def test_subtasks_follow_the_same_table(repo, clock):
     assert reconcile(repo, hub, clock) == {}                              # idempotent
 
 
+def test_default_owner_subtasks_need_no_scan_of_finished_tasks(repo, clock, monkeypatch):
+    parent = seed_task(repo)
+    _to(repo, parent.id, "running", "completed_with_errors")
+    sub = _sub(repo, parent.id, "running")
+    scans = []
+    real = repo.tasks_in_states
+    monkeypatch.setattr(repo, "tasks_in_states",
+                        lambda states: scans.append(set(states)) or real(states))
+    reconcile(repo, EventHub(1), clock)
+    assert repo.get_subtask(sub.id).state == "queued"
+    assert P.TERMINAL_STATES not in [frozenset(s) for s in scans]
+
+
 def test_tasks_of_other_owners_are_reconciled_too(repo, clock):
     """IAM later: owners other than default must not make the start-up loop fail forever."""
     t = seed_task(repo, owner="alice")

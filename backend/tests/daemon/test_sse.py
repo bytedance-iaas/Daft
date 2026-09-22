@@ -140,6 +140,18 @@ def test_payloads_always_fit_the_contract():
         hub.publish_progress("t", {"id": "vlm", "done": 1})
 
 
+def test_the_generic_publish_gives_state_and_done_their_full_shape():
+    hub = EventHub(1)
+    hub.publish("t", "state", {"state": "running", "at": 5})
+    hub.publish("t", "done", {"state": "failed", "reason": "密钥失效"})
+    states = [e.data for e in hub.buffered("t")]
+    assert states == [{"state": "running", "pause_reason": None, "subtask_id": None,
+                       "reason": None, "at": 5},
+                      {"state": "failed", "failed_modules": [], "subtask_id": None,
+                       "reason": "密钥失效"}]
+    check_payloads([{"event": e.event, "data": e.data} for e in hub.buffered("t")])
+
+
 def test_log_rate_limit_counts_what_it_dropped():
     tick = Tick()
     hub = EventHub(1, clock=tick)

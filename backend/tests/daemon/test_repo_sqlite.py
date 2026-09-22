@@ -73,7 +73,8 @@ def test_upgrading_a_first_release_database(tmp_path):
     try:
         assert repo.schema_version() == migrations.LATEST_VERSION
         reasons = {s.id: s.pause_reason for s in repo.list_subtasks("task_1")}
-        assert reasons == {"sub_user": "user", "sub_system": "system", "sub_unknown": None,
+        assert reasons == {"sub_user": "user", "sub_system": "system",
+                           "sub_unknown": "user",          # events gone: kept paused, as before
                            "sub_done": None}
         task = repo.get_task("task_1")
         assert task.dataset_id is None and task.state == "completed_with_errors"

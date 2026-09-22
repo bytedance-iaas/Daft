@@ -23,7 +23,9 @@ Step 2 (C5 1.1 / 1.2) adds the dataset registry of design doc 01, section 2.8,
 * The address is unique through an expression index over ``COALESCE(region, '')``:
   SQLite never treats two NULL regions as equal, so a plain ``UNIQUE`` would not do.
 * ``subtask.pause_reason`` is filled from the audit events for subtasks that were
-  pausing or paused when the step ran (step 1 kept the reason only there).
+  pausing or paused when the step ran (step 1 kept the reason only there); one
+  whose events are gone counts as paused by the user, so it is not resumed behind
+  anybody's back (step 1 kept such subtasks paused too).
 * ``token_timeline`` sums actual-ledger tokens per owner and 15-minute UTC slot;
   ``token_usage`` has no time axis, and the overview charts tokens per day
   (see ``daemon.repo.extras``).
@@ -268,13 +270,13 @@ CREATE INDEX idx_task_finished ON task(owner_id, finished_at);
 
 ALTER TABLE subtask ADD COLUMN pause_reason TEXT CHECK (pause_reason IN ('user','system'));
 CREATE INDEX idx_subtask_state ON subtask(state);
-UPDATE subtask SET pause_reason = (
+UPDATE subtask SET pause_reason = COALESCE((
   SELECT json_extract(e.detail, '$.pause_reason') FROM event e
   WHERE e.resource = subtask.task_id AND e.action = 'subtask.state'
     AND json_extract(e.detail, '$.subtask_id') = subtask.id
     AND json_extract(e.detail, '$.to') IN ('pausing','paused')
     AND json_extract(e.detail, '$.pause_reason') IN ('user','system')
-  ORDER BY e.id DESC LIMIT 1)
+  ORDER BY e.id DESC LIMIT 1), 'user')
 WHERE state IN ('pausing','paused');
 
 CREATE TABLE token_timeline (

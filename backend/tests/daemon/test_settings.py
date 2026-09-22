@@ -62,7 +62,8 @@ def test_tz_offset(raw, minutes):
     assert parse_tz_offset(raw) == minutes
 
 
-@pytest.mark.parametrize("raw", ["8", "+15:00", "-12:30", "+08:60", "Asia/Shanghai", "", "+"])
+@pytest.mark.parametrize("raw", ["8", "+15:00", "-12:30", "+08:60", "Asia/Shanghai", "", "+",
+                                 "+05:07"])
 def test_bad_tz_offsets(raw):
     with pytest.raises(ConfigError, match="CURATOR_TZ_OFFSET"):
         parse_tz_offset(raw)

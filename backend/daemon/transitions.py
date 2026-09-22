@@ -73,8 +73,10 @@ def change_subtask_state(repo: P.Repository, hub: EventHub | None, subtask_id: s
     """CAS on a subtask, like :func:`change_task_state`; ``owner`` is the parent task's.
 
     A terminal step publishes ``done`` with the subtask's id, after which a stream on
-    a finished task ends. So when a subtask ends, recompute the parent's terminal
-    state (D25) first and end the subtask last: streams then see both changes.
+    a finished task ends. So when a subtask ends: recompute the parent's terminal
+    state first (D25) with ``change_task_state(..., publish_done=False)`` - its
+    ``state`` event goes out, but no ``done`` that clients would close on - and end
+    the subtask last. Its ``done`` is then the one end signal, after both changes.
     """
     frm = set(frm)
     with repo.transaction():

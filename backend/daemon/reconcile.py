@@ -93,11 +93,25 @@ def reconcile(repo: P.Repository, hub: EventHub | None, clock: Callable[[], int]
 
         walk(t.state, t.pause_reason, t.state_reason, task_step)
 
-    subtasks = repo.subtasks_in_states(_BUSY | {"paused"})
-    # every subtask hangs off a finished task (SUBTASK_PARENT_STATES); one scan finds the owners
-    owners = {t.id: t.owner_id for t in repo.tasks_in_states(P.TERMINAL_STATES)} if subtasks else {}
-    for sub in subtasks:
-        owner = owners.get(sub.task_id)
+    owners: dict[str, str] = {}
+    scanned = [False]
+
+    def owner_of(sub: P.Subtask) -> str | None:
+        """The parent's owner: the default one (this release) without a scan; other
+        owners from one scan of the finished tasks (subtasks hang off those)."""
+        if sub.task_id not in owners:
+            try:
+                repo.get_task(sub.task_id, owner=P.DEFAULT_OWNER, include_deleted=True)
+                owners[sub.task_id] = P.DEFAULT_OWNER
+            except P.NotFound:
+                if not scanned[0]:
+                    scanned[0] = True
+                    owners.update({t.id: t.owner_id
+                                   for t in repo.tasks_in_states(P.TERMINAL_STATES)})
+        return owners.get(sub.task_id)
+
+    for sub in repo.subtasks_in_states(_BUSY | {"paused"}):
+        owner = owner_of(sub)
         if owner is None:
             log.warning("subtask %s is %s but its task %s is not finished; left alone",
                         sub.id, sub.state, sub.task_id)

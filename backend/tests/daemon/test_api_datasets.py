@@ -104,6 +104,8 @@ def test_dataset_list_pages_filters_and_last_task(client_for, clock):
     assert [x["id"] for x in page2["items"]] == ids[::-1][8:] and page2["total"] == 14
     for params in ({"page_size": 7}, {"page": 0}, {"format": "rrd"}, {"check_state": "unknown"}):
         assert_error(c.get("/curation/api/v1/datasets", params=params), "validation_failed")
+    far = c.get("/curation/api/v1/datasets", params={"page": 10**20})
+    assert far.status_code == 200 and far.json()["items"] == [] and far.json()["total"] == 14
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +160,21 @@ def test_dataset_detail_with_checks_tasks_and_listing(client_for, clock):
     assert_dataset_detail(body)
     assert (body["credential"], body["region"], body["checks"], body["tasks"],
             body["last_task"], body["checked_at"]) == (None, None, [], [], None, None)
+
+
+def test_deleting_the_access_key_of_a_registration_is_not_blocked(client_for):
+    """W8's DELETE /credentials/{id}: registrations never hold a key back; the detail
+    then shows ``credential: null`` until a key is bound again (C4 1.2)."""
+    c = client_for()
+    rt = _rt(c)
+    key = _cred(rt.repo, "readonly-tos")
+    ds = seed_dataset(rt.repo, credential_id=key.id)
+    assert c.get(f"/api/v1/datasets/{ds.id}").json()["credential"] == "readonly-tos"
+    r = c.delete(f"/api/v1/credentials/{key.id}", headers=JSON)
+    assert r.status_code == 204, r.text
+    body = c.get(f"/api/v1/datasets/{ds.id}").json()
+    assert_dataset_detail(body)
+    assert body["credential"] is None and body["uri"] == ds.uri
 
 
 def test_dataset_listing_takes_the_source_manifest_summary_too(client_for):
@@ -328,13 +345,15 @@ def test_overview_counts(client_for, clock):
     bad_key = _cred(rt.repo, "bad")
     _cred(rt.repo, "good")
     rt.repo.set_credential_verification(bad_key.id, "failed", T0, "AccessDenied")
-    for name, state in (("ark-bad", "failed"), ("ark-ok", "ok")):
+    for name, state, kind in (("ark-bad", "failed", "ark"), ("ark-ok", "ok", "ark"),
+                              ("vllm", "ok", "custom_vlm")):
         b = rt.repo.create_vlm_backend(P.VlmBackend(
-            id="", name=name, kind="ark", endpoint="https://ark.example", credential_id=None),
-            P.Credential(id="", name=f"{name}-key", kind="ark", payload_enc=b"x", key_version=1,
-                         payload_meta={}))
+            id=f"vb_{name}", name=name, kind="ark" if kind == "ark" else "custom",
+            endpoint="https://ark.example", credential_id=None),
+            P.Credential(id="", name=f"vlm-backend/vb_{name}", kind=kind, payload_enc=b"x",
+                         key_version=1, payload_meta={}))           # W8's key row of a backend
         rt.repo.set_vlm_backend_verification(b.id, state, T0, None)
-        rt.repo.set_credential_verification(b.credential_id, "failed", T0, None)  # not counted
+        rt.repo.set_credential_verification(b.credential_id, "failed", T0, None)  # not a TOS key
 
     _usage(rt, running.id, 1000, T0)                           # today (+08:00)
     _usage(rt, errors.id, 500, T0 - 41 * 60 * 1000)            # 23:59 yesterday, local time
@@ -360,6 +379,48 @@ def test_overview_counts(client_for, clock):
                                              {"date": "2025-09-20", "tokens": 1000}]
     assert sum(d["tokens"] for d in recent["tokens_per_day"]) == 1500
     assert body["datasets"] == {"total": 2, "changed": 1}
+
+
+def test_overview_counts_subtasks_as_work(client_for, clock):
+    """A retry, resume, adjudication run or re-export hangs off a finished task and still
+    keeps a worker busy: the running figures and the active list include it."""
+    c = client_for()
+    rt = _rt(c)
+    from daemon.transitions import change_subtask_state
+
+    def parent(name, to):
+        t = seed_task(rt.repo, name)
+        _to(rt, t.id, "running", to)
+        return t
+
+    resumed = parent("resumed", "failed")
+    sub = rt.repo.create_subtask(P.Subtask(id="", task_id=resumed.id, kind="resume", scope={},
+                                           state="queued"))
+    change_subtask_state(rt.repo, rt.hub, sub.id, {"queued"}, "running", at=T0)
+    rt.repo.set_subtask_progress(sub.id, {"stages": [
+        {"id": "vlm", "state": "running", "done": 7, "total": 20}]})
+    clock.advance(1)
+    waiting = parent("retry waiting", "completed_with_errors")
+    rt.repo.create_subtask(P.Subtask(id="", task_id=waiting.id, kind="retry", scope={},
+                                     state="queued"))
+    clock.advance(1)
+    held = parent("export paused", "succeeded")
+    paused = rt.repo.create_subtask(P.Subtask(id="", task_id=held.id, kind="reexport", scope={},
+                                              state="queued"))
+    for frm, to, kw in (("queued", "running", {}), ("running", "pausing", {"pause_reason": "user"}),
+                        ("pausing", "paused", {})):
+        change_subtask_state(rt.repo, rt.hub, paused.id, {frm}, to, at=T0, **kw)
+    main = seed_task(rt.repo, "main run")
+    _to(rt, main.id, "running")
+
+    body = c.get(OVERVIEW).json()
+    assert_schema("Overview", body)
+    running = body["running"]
+    assert (running["running"], running["queued"], running["paused"]) == (2, 1, 1)
+    assert [(a["task"]["id"], a["task"]["state"], a["stage"], a["done"], a["total"])
+            for a in running["active"]] == [
+        (main.id, "running", None, 0, 0),
+        (resumed.id, "failed", "vlm", 7, 20)]          # the task, with its subtask's progress
 
 
 def test_overview_days_follow_the_site_offset(client_for):
