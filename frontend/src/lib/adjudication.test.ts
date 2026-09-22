@@ -113,6 +113,39 @@ describe('adjudication rules (06 §5.1)', () => {
     expect([g.optional, g.discardLine]).toEqual([false, 'grip_check']);
   });
 
+  it('a follow-up opens after its `after` answers, never counts as pending and lapses (C4 1.5.1)', () => {
+    const catalog: ReviewLine[] = [
+      {
+        id: 'label',
+        review_kind: 'label_conflict',
+        title_zh: '标注分歧',
+        applies_to: 'passed',
+        counts_as_pending: true,
+        decisions: [{ const: 'adopt_suggestion', title: '采纳新标注' }, { const: 'keep_label', title: '维持原标注' }, { const: 'discard', title: '其它原因，整条弃用' }],
+        follow_ups: [{ after: ['adopt_suggestion', 'custom_label'], line: 'task_verdict', decisions: ['success', 'failure', 'unsure'], optional: true }],
+      },
+      { id: 'task_verdict', review_kind: 'task_verdict', title_zh: '任务成败弃权', applies_to: 'passed', counts_as_pending: true, decisions: [{ const: 'success', title: '判成功' }, { const: 'failure', title: '判失败' }, { const: 'unsure', title: '拿不准' }] },
+    ];
+    const answer = (decision: string) => ({ decision, new_label: null, applied: false });
+    const labelOnly = card([labelQ]);
+    // Closed before a relabel.
+    expect(viewCard(labelOnly, {}, catalog).followUps.map((f) => [f.line, f.open])).toEqual([['task_verdict', false]]);
+    // Open after adopting; answered success: the person's verdict stands, not judged again.
+    const yes = viewCard(labelOnly, { [decisionKey(29, 'label')]: answer('adopt_suggestion'), [decisionKey(29, 'task_verdict')]: answer('success') }, catalog);
+    expect(yes.followUps[0]).toMatchObject({ open: true, optional: true, decisions: [{ const: 'success', title: '判成功' }, { const: 'failure', title: '判失败' }, { const: 'unsure', title: '拿不准' }] });
+    expect([yes.humanVerdict, yes.rerunsModel, yes.status]).toEqual(['success', false, 'decided']);
+    expect(yes.unapplied.map((u) => `${u.line}:${u.decision}`)).toEqual(['label:adopt_suggestion', 'task_verdict:success']);
+    // 拿不准 on it is like leaving it open: judged again, and the card stays 已裁.
+    const unsure = viewCard(labelOnly, { [decisionKey(29, 'label')]: answer('adopt_suggestion'), [decisionKey(29, 'task_verdict')]: answer('unsure') }, catalog);
+    expect([unsure.humanVerdict, unsure.rerunsModel, unsure.status]).toEqual([null, true, 'decided']);
+    // Lapsed once the label answer changes: not counted, not applied.
+    const lapsed = viewCard(labelOnly, { [decisionKey(29, 'label')]: answer('keep_label'), [decisionKey(29, 'task_verdict')]: answer('success') }, catalog);
+    expect([lapsed.followUps[0].open, lapsed.humanVerdict]).toEqual([false, null]);
+    expect(lapsed.unapplied.map((u) => u.line)).toEqual(['label']);
+    // A card that asks the verdict itself gets no follow-up.
+    expect(viewCard(card([labelQ, verdictQ]), { [decisionKey(29, 'label')]: answer('adopt_suggestion') }, catalog).followUps).toEqual([]);
+  });
+
   it('maps the status filter onto the C4 query and client-side filters', () => {
     expect(statusQuery('unsure')).toEqual({ status: 'pending', onlyUnsure: true });
     expect(statusQuery('unapplied')).toEqual({ status: 'unapplied', onlyUnsure: false });
