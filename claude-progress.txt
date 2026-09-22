@@ -1,4 +1,4 @@
-Date: 2026-09-21
+Date: 2026-09-22
 TaskStatus: not_completed
 
 Task scope:
@@ -114,12 +114,12 @@ Current summary:
         duplicate_of，decisions.json 已知三种仍钉住，报告小节可带 appealable；设计 00–02、05–07、10 与评审记录跟进；
         飞书副本已同步；契约 75、v2 后端 1195、前端 189 条测试通过
       · 新开 W11 镜像与 Helm Chart（worktree 从 98cd72780 起）；W3、W5b、W10 已收到 1.5 的改动
-      · 需求账本的 D39–D43 修订说明已写（D39–D41 那段在 98cd72780）；D42–D43 那段待补：账本当时在需求方的编辑器里开着，没动
+      · 需求账本的 D39–D43 修订说明已写（D42–D43 那段等需求方关掉编辑器后补上）
+      · 23:40 前五个 agent（W3、W5a、W5b、W10、W11）因会话额度中断；额度重置后逐个用原上下文恢复
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
   - F2.1：D39、D40、D42、review 口径、--vlm-reasoning-effort 待 W3 实现（契约 1.5 已定）
-  - 需求账本补 D42–D43 的修订说明（F2.1、F2.2、F3.3）
   - F2.2：裁决队列与 episode 列表的游标接口在 W5b；F2.6「拿验证失败的密钥开始任务会被拦」、F2.7 D37 在 W5a
   - F2.4 的 planner 已接入 check（W3 后半），编排侧的计划下发随 W5a；F3.2 / F3.3 等 W5 合并后对真接口联调
   - W11 镜像（Node 构建阶段、COPY daemon 与 docs/contracts）与 Helm（CURATOR_TZ_OFFSET）未开始
