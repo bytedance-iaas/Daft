@@ -5,7 +5,7 @@ import { api, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { qk } from '../../api/queries';
 import type { AdjudicationCounts, AdjudicationLine, AdjudicationPage, DecisionValue } from '../../api/types';
-import { decisionKey, type LocalDecisions } from '../../lib/adjudication';
+import { clicked, decisionKey, type LocalDecisions } from '../../lib/adjudication';
 
 /** Cards per page of the queue (cursor paging, the next page loads when the end scrolls into view). */
 export const ADJ_CONFIG = { pageSize: 20 };
@@ -42,10 +42,12 @@ export function useDecisions(taskId: string) {
   const save = useCallback(
     async (ep: number, line: AdjudicationLine, decision: DecisionValue, newLabel: string | null = null): Promise<boolean> => {
       const key = decisionKey(ep, line);
+      // Numbered in click order: a follow-up's answer stands only when newer than the one that opened it.
+      const entry = clicked(decision, newLabel);
       let previous: LocalDecisions[string] | undefined;
       setLocal((cur) => {
         previous = cur[key];
-        return { ...cur, [key]: { decision, new_label: newLabel, applied: false } };
+        return { ...cur, [key]: entry };
       });
       setSaving((s) => ({ ...s, [key]: true }));
       try {
