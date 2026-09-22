@@ -87,6 +87,31 @@ jobs:
           python -c "import lerobot"
           python -m pytest -q -rfE -rs tests/export/test_lerobot_loader.py tests/export/test_lerobot_loader_expected.py
 
+  frontend:
+    # the React console (W10): lint, types generated from the frozen C4, tests on the
+    # contract-checked mock, production build; runs on both supported Node lines
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22"]
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check:api
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
   a-class-guard:
     runs-on: ubuntu-latest
     steps:

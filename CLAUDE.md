@@ -24,6 +24,7 @@
 | `backend/curation/` | 质检内核与 v1 的编排、CLI（测试在包内 `tests/`）；W3 起按设计拆成原子命令 |
 | `backend/daemon/` | API Daemon：FastAPI、SQLite 仓储（实现 C5）、鉴权、SSE、启动对账；`python -m daemon` 或 `curator-daemon` |
 | `backend/curation/ui/` | 已下线的 v1 界面，只剩待移植的逻辑（鉴权、深链解析、报告数据整形），移植完整包删除；新代码不要 import 它 |
+| `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`） |
 | `frontend/mockups/` | 静态 HTML 预览稿 |
 | `tools/parity/` | 对账工具与黄金基线流程 |
 | `deploy/Dockerfile` | 镜像，构建上下文是仓库根 |

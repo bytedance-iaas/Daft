@@ -104,7 +104,12 @@ export interface paths {
         /** Update; an API key left empty stays unchanged */
         put: operations["updateVlmBackend"];
         post?: never;
-        /** Delete with its models and key (409 backend_in_use while a non-terminal task uses it) */
+        /**
+         * Delete with its models and key (409 backend_in_use while a non-terminal task uses it)
+         * @description An unfinished task using it answers 409 in_use. When only finished (or deleted) tasks
+         *     use it, the 409 carries `error.details.confirm_required: true`; repeating the call
+         *     with `confirm=true` deletes it and those tasks lose the reference.
+         */
         delete: operations["deleteVlmBackend"];
         options?: never;
         head?: never;
@@ -666,7 +671,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Full logs, cursor paginated; SSE only carries what is happening now */
+        /**
+         * Full logs, cursor paginated; SSE only carries what is happening now
+         * @description Newest first; the next page goes back in time. Without `subtask` the main run and every subtask are listed, `subtask=` (empty) keeps the main run only, `subtask=<id>` that subtask only.
+         */
         get: operations["getTaskLogs"];
         put?: never;
         post?: never;
@@ -914,7 +922,7 @@ export interface components {
         Error: {
             error: {
                 /** @enum {unknown} */
-                code: "validation_failed" | "unauthorized" | "not_found" | "task_state_conflict" | "subtask_active" | "credential_in_use" | "backend_in_use" | "dataset_in_use" | "name_taken" | "preflight_expired" | "precheck_failed" | "source_changed" | "result_changed" | "confirm_path_mismatch" | "model_check_failed" | "idempotency_conflict" | "precondition_failed" | "internal";
+                code: "validation_failed" | "unauthorized" | "not_found" | "task_state_conflict" | "subtask_active" | "credential_in_use" | "backend_in_use" | "dataset_in_use" | "name_taken" | "preflight_expired" | "precheck_failed" | "source_changed" | "result_changed" | "confirm_path_mismatch" | "model_check_failed" | "idempotency_conflict" | "precondition_failed" | "method_not_allowed" | "internal";
                 /** @description Chinese, shown to people as is */
                 message: string;
                 details?: Record<string, unknown>;
@@ -922,7 +930,7 @@ export interface components {
         };
         Link: {
             /** @enum {unknown} */
-            rel: "task" | "report" | "adjudication" | "plan" | "logs" | "credentials";
+            rel: "task" | "report" | "adjudication" | "plan" | "logs" | "credentials" | "dataset";
             title: string;
             url: string;
             /**
@@ -951,10 +959,27 @@ export interface components {
             last_verified_at: number;
             error?: string | null;
         };
+        /** @description error.details of precheck_failed - one entry per pre-start check (D30) */
+        PrecheckDetails: {
+            checks: {
+                /** @enum {unknown} */
+                id: "input" | "output" | "vlm";
+                ok: boolean;
+                /** @description stable reason of a failed check, e.g. forbidden, not_found, unreachable */
+                code: string;
+                /** @description Chinese, shown under the form field */
+                reason: string;
+                /** @description what was checked: a tos:// path or the model */
+                target?: string;
+                elapsed_ms?: number;
+            }[];
+        };
         ProbeResult: {
             ok: boolean;
+            /** @description Why it failed; with ok true only leftover appears (written, but the probe object could not be removed), which deserves a warning. */
             error?: {
-                code?: string;
+                /** @enum {unknown} */
+                code?: "forbidden" | "not_found" | "auth_failed" | "unreachable" | "server_error" | "failed" | "leftover";
                 message?: string;
             };
         };
@@ -988,6 +1013,8 @@ export interface components {
             region: components["schemas"]["Region"];
             endpoint?: string;
             test_bucket?: string;
+            /** @description temporary credentials only; empty = none */
+            session_token?: string;
         };
         CredentialUpdate: {
             name?: string;
@@ -997,6 +1024,8 @@ export interface components {
             region?: components["schemas"]["Region"];
             endpoint?: string;
             test_bucket?: string;
+            /** @description temporary credentials only; empty = none */
+            session_token?: string;
         };
         VlmModel: {
             id: string;
@@ -1091,7 +1120,8 @@ export interface components {
         };
         /** @enum {unknown} */
         DatasetFormat: "lerobot_v2" | "lerobot_v3" | "unsupported";
-        DatasetItem: {
+        DatasetItemFields: {
+            /** @description ds_ followed by a generated id */
             id: string;
             name: string;
             /** @enum {unknown} */
@@ -1111,7 +1141,8 @@ export interface components {
             created_at: number;
             last_task: null | components["schemas"]["TaskRef"];
         };
-        DatasetDetail: components["schemas"]["DatasetItem"] & {
+        DatasetItem: components["schemas"]["DatasetItemFields"];
+        DatasetDetail: components["schemas"]["DatasetItemFields"] & {
             note: string | null;
             /** @description access key name; null for the public bucket, or once the key is deleted */
             credential: string | null;
@@ -1119,6 +1150,7 @@ export interface components {
             meta_fingerprint: string;
             /** @description summary of the file listing kept at the last preflight (source-manifest summary) */
             listing: {
+                /** @description C2 source-manifest summary.count */
                 objects: number;
                 bytes: number;
                 digest: string;
@@ -1175,6 +1207,7 @@ export interface components {
             }[];
             task: components["schemas"]["Task"];
         };
+        /** @description Soft-deleted tasks never count, except in tokens. running counts what workers are busy with - main runs and subtasks in running, pausing or stopping - and queued / paused those states; recent covers the last 7 days in the site's time zone (CURATOR_TZ_OFFSET): tasks that ended succeeded or completed_with_errors, their summary totals, passed / total over episodes, and actual-ledger prompt + completion tokens per day; credentials_failed counts access keys (kind tos) only, a backend's key failing counts in backends_failed. */
         Overview: {
             todo: {
                 /** @description completed_with_errors, can be retried */
@@ -1237,8 +1270,8 @@ export interface components {
             source: "tos" | "public" | "local";
             uri: string;
             region?: components["schemas"]["Region"];
-            /** @description access key name; not for source=public */
-            credential?: string;
+            /** @description access key name; not for source=public. Requests name one; responses give null once the key was deleted (see rebind-credentials) */
+            credential?: string | null;
         };
         /** @description a registered dataset (D36), or an input given in full */
         InputSpec: {
@@ -1247,7 +1280,8 @@ export interface components {
         OutputRef: {
             uri: string;
             region?: components["schemas"]["Region"];
-            credential: string;
+            /** @description access key name; null in responses once the key was deleted */
+            credential: string | null;
         };
         PreflightRequest: {
             input: components["schemas"]["InputSpec"];
@@ -1284,6 +1318,13 @@ export interface components {
             id: components["schemas"]["ModuleId"];
             /** @description validated against the module's param_schema */
             params?: Record<string, unknown>;
+        };
+        TaskVlm: {
+            backend: string;
+            model: string;
+            reasoning_effort?: components["schemas"]["ReasoningEffort"];
+            /** @description effective settings frozen at start (P17) */
+            snapshot?: Record<string, unknown> | null;
         };
         VlmChoice: {
             backend: string;
@@ -1368,8 +1409,8 @@ export interface components {
             params?: components["schemas"]["TaskParams"];
         };
         StageProgress: {
-            /** @enum {unknown} */
-            id: "autolabel" | "numeric" | "frame" | "vlm" | "verdict" | "dedup" | "profile" | "final" | "export" | "report" | "verify";
+            /** @description v1: autolabel, numeric, frame, vlm, verdict, dedup, profile, final; then export, report, verify; new modules may add stages */
+            id: string;
             /** @enum {unknown} */
             state: "pending" | "running" | "succeeded" | "completed_with_errors" | "failed" | "skipped";
             done: number;
@@ -1449,10 +1490,7 @@ export interface components {
             run_id?: string | null;
             episodes: components["schemas"]["EpisodeSelector"];
             embodiment_id?: string | null;
-            vlm?: null | (components["schemas"]["VlmChoice"] & {
-                /** @description effective settings frozen at start (P17) */
-                snapshot?: Record<string, unknown> | null;
-            });
+            vlm?: null | components["schemas"]["TaskVlm"];
             params: components["schemas"]["TaskParams"];
             /** @description source manifest summary frozen at start (D27) */
             source?: {
@@ -1489,6 +1527,11 @@ export interface components {
             };
             state: components["schemas"]["TaskState"];
             state_reason?: string | null;
+            /**
+             * @description only while pausing or paused
+             * @enum {unknown}
+             */
+            pause_reason?: "user" | "system" | null;
             progress?: Record<string, unknown> | null;
             created_at: number;
             started_at?: number | null;
@@ -1522,8 +1565,8 @@ export interface components {
             /** @description empty = main run */
             subtask_id: string;
             module_id: string;
-            /** @enum {unknown} */
-            call_kind: "probe" | "endstate" | "arbitration" | "caption" | "llm" | "merged";
+            /** @description v1: probe, endstate, arbitration, caption, llm; merged; new modules name their own */
+            call_kind: string;
             model_name: string;
             prompt_tokens: number;
             completion_tokens: number;
@@ -1580,8 +1623,8 @@ export interface components {
             /** @description CPU / memory quota (v1 perf_env) */
             container?: Record<string, unknown>;
             latency: {
-                /** @enum {unknown} */
-                call_kind: "probe" | "endstate" | "arbitration" | "caption" | "llm" | "merged";
+                /** @description v1: probe, endstate, arbitration, caption, llm; merged; new modules name their own */
+                call_kind: string;
                 count: number;
                 failed?: number;
                 hedged?: number;
@@ -1631,7 +1674,7 @@ export interface components {
             pending: number;
             unapplied: number;
         };
-        DecisionInput: {
+        DecisionFields: {
             episode_index: number;
             /** @enum {unknown} */
             line: "label" | "task_verdict" | "reject_appeal";
@@ -1640,7 +1683,8 @@ export interface components {
             new_label?: string | null;
             note?: string | null;
         };
-        Decision: components["schemas"]["DecisionInput"] & {
+        DecisionInput: components["schemas"]["DecisionFields"];
+        Decision: components["schemas"]["DecisionFields"] & {
             id: number;
             decided_by: string;
             decided_at: number;
@@ -1668,6 +1712,10 @@ export interface components {
             state: components["schemas"]["TaskState"];
             /** @enum {unknown} */
             pause_reason?: "user" | "system" | null;
+            /** @description set when the change is a subtask's */
+            subtask_id?: string | null;
+            /** @description state_reason, Chinese */
+            reason?: string | null;
             at: number;
         };
         SseProgress: components["schemas"]["StageProgress"];
@@ -1681,6 +1729,8 @@ export interface components {
         SseDone: {
             state: components["schemas"]["TaskState"];
             failed_modules?: components["schemas"]["ModuleId"][];
+            subtask_id?: string | null;
+            reason?: string | null;
         };
         module_id: string;
         /** @constant */
@@ -1967,7 +2017,10 @@ export interface operations {
     createCredential: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -1992,7 +2045,10 @@ export interface operations {
     updateCredential: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2021,7 +2077,10 @@ export interface operations {
             query?: {
                 confirm?: boolean;
             };
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2042,7 +2101,10 @@ export interface operations {
     verifyCredential: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2088,7 +2150,10 @@ export interface operations {
     createVlmBackend: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -2113,7 +2178,10 @@ export interface operations {
     updateVlmBackend: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2142,7 +2210,10 @@ export interface operations {
             query?: {
                 confirm?: boolean;
             };
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2163,7 +2234,10 @@ export interface operations {
     verifyVlmBackend: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2186,7 +2260,10 @@ export interface operations {
     refreshVlmModels: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2214,7 +2291,10 @@ export interface operations {
     addVlmModel: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2241,7 +2321,10 @@ export interface operations {
     deleteVlmModel: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
                 model_id: string;
@@ -2263,7 +2346,10 @@ export interface operations {
     updateVlmModel: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
                 model_id: string;
@@ -2492,7 +2578,10 @@ export interface operations {
     deleteDataset: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2513,7 +2602,10 @@ export interface operations {
     updateDataset: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2540,7 +2632,10 @@ export interface operations {
     recheckDataset: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2589,7 +2684,10 @@ export interface operations {
     preflight: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -2614,7 +2712,10 @@ export interface operations {
     probeDelivery: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -2647,7 +2748,7 @@ export interface operations {
                 q?: string;
                 /** @description tasks writing to this delivery directory */
                 delivery?: string;
-                /** @description comma-separated module ids; only tasks that selected every one of them */
+                /** @description comma-separated module ids; only tasks that selected every one of them (an unknown id is 400 validation_failed) */
                 module?: string;
                 /** @description tasks on this registered dataset */
                 dataset_id?: string;
@@ -2759,7 +2860,10 @@ export interface operations {
     deleteTask: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2781,6 +2885,8 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
                 /** @description the task's updated_at as returned by GET; a stale value returns 412 */
                 "If-Match": string;
             };
@@ -2810,7 +2916,10 @@ export interface operations {
     restoreTask: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2833,7 +2942,10 @@ export interface operations {
     purgeTaskArtifacts: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -2867,7 +2979,10 @@ export interface operations {
     rebindTaskCredentials: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -3109,7 +3224,7 @@ export interface operations {
         parameters: {
             query?: {
                 stage?: string;
-                /** @description empty = main run */
+                /** @description absent = everything, empty = main run only, an id = that subtask only */
                 subtask?: string;
                 level?: "error" | "warn" | "info" | "debug";
                 /** @description opaque, from next_cursor */
@@ -3321,7 +3436,10 @@ export interface operations {
     submitAdjudication: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 id: components["parameters"]["PathId"];
             };
@@ -3379,7 +3497,7 @@ export interface operations {
                 task: string;
                 /** @description delivery (output key) or input (input key; the public cache bucket is not signed) */
                 scope: "delivery" | "input";
-                /** @description relative to the scope's prefix; normalized and checked against it */
+                /** @description relative to the scope's prefix - scope=delivery: the task's run directory <delivery>/<run_id>/; scope=input: the dataset root - normalized and checked against it. Clip start and end times come from the episode endpoint. */
                 path: string;
                 ttl?: number;
             };

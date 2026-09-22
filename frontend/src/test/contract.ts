@@ -6,7 +6,7 @@
 // false) with extra members through allOf, which JSON Schema makes unsatisfiable (the base
 // rejects the extra keys). We validate against a copy with exactly those compositions merged
 // into one closed object, only where the contract still has them, and a test asserts each defect
-// is still there until the revision that fixes it (C4 1.2.0 fixed Task.vlm), so the patch goes
+// is still there until the revision that fixes it (C4 1.2.0 fixed Task.vlm, 1.3.0 the other two), so the patch goes
 // the day the contract is fixed. Everything else is validated verbatim.
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -41,8 +41,8 @@ export interface ContractDefect {
 }
 
 export const KNOWN_CONTRACT_DEFECTS: readonly ContractDefect[] = [
-  { id: 'DatasetDetail', what: 'components.schemas.DatasetDetail (allOf DatasetItem[closed] + extra required fields)' },
-  { id: 'Decision', what: 'components.schemas.Decision (allOf DecisionInput[closed] + id/decided_by/decided_at/applied)' },
+  { id: 'DatasetDetail', what: 'components.schemas.DatasetDetail (allOf DatasetItem[closed] + extra required fields)', fixedIn: '1.3.0' },
+  { id: 'Decision', what: 'components.schemas.Decision (allOf DecisionInput[closed] + id/decided_by/decided_at/applied)', fixedIn: '1.3.0' },
   { id: 'Task.vlm', what: 'components.schemas.Task.properties.vlm (allOf VlmChoice[closed] + snapshot)', fixedIn: '1.2.0' },
 ];
 
@@ -77,9 +77,14 @@ function merge(doc: Json, parts: Json[]): Json {
 export function patchedOpenApi(): Json {
   const doc = structuredClone(loadOpenApi());
   const schemas = (doc.components as Json).schemas as Json;
-  for (const name of ['DatasetDetail', 'Decision']) {
+  const version = contractVersion(doc);
+  const open = (id: ContractDefect['id']) => {
+    const d = KNOWN_CONTRACT_DEFECTS.find((x) => x.id === id);
+    return !d?.fixedIn || versionBefore(version, d.fixedIn);
+  };
+  for (const name of ['DatasetDetail', 'Decision'] as const) {
     const allOf = (schemas[name] as Json).allOf;
-    if (Array.isArray(allOf)) schemas[name] = merge(doc, allOf as Json[]);
+    if (open(name) && Array.isArray(allOf)) schemas[name] = merge(doc, allOf as Json[]);
   }
   const task = schemas.Task as Json;
   const vlm = (task.properties as Json).vlm as Json;
