@@ -28,10 +28,11 @@ K8s Secret (curator-master-key)
 
 ### 2.1 主密钥轮换
 
-Pod 内的管理命令 `curator-admin rotate-master-key`：读旧 key 解密 → 用新 key 重新加密 → 逐行替换并把该行的
+Pod 内的管理命令 `curator-rotate-master-key`（即 `python -m daemon.secrets.rotate`）：读旧 key 解密 → 用新 key 重新加密 → 逐行替换并把该行的
 `key_version` +1。每行记着自己是哪一版主密钥加密的，轮换中途断了可以接着做，新旧两版在轮换期间同时可读。
 不做成独立的 Job —— SQLite 在 RWO 的数据卷上，另起一个 Pod 挂不上它。步骤（写进 README）：
-把新 key 写进 Secret 的 `masterKeyNext` → `kubectl exec` 执行轮换 → 把新 key 挪到 `masterKey`、重启。
+把新 key 写进 Secret 的 `masterKeyNext` → 重启一次，让 Daemon 同时认得新旧两版 → `kubectl exec` 执行轮换 →
+把新 key 挪到 `masterKey`、`CURATOR_MASTER_KEY_VERSION` 改为 N+1 → 再重启。
 本期只提供命令和文档，不做自动轮换。
 
 ## 3. 密钥的使用路径
@@ -44,6 +45,9 @@ Pod 内的管理命令 `curator-admin rotate-master-key`：读旧 key 解密 →
 
 1. **绝不进 argv**：`ps` 在容器内外都可见。CLI 的所有凭证参数都是「环境变量名」而非值
    （v1 的 `--vlm-api-key-env` 就是这个设计，保留并推广到 TOS 访问密钥）。
+   Daemon 给子进程拼环境时先剥掉继承来的全部 `TOS_*`，只设 `CURATION_INPUT_TOS_*`、`CURATION_OUTPUT_TOS_*` 两组，
+   输入、输出的身份绝不串用；唯一放回去的是 `TOS_ENDPOINT` —— 它只表示「这个地域走内网端点」，不带身份，
+   没有公网出口的 Pod 里少了它 CLI 就连不上 TOS。
 2. **绝不进日志**：日志中间件对 `TOS_SECRET_KEY` / `ARK_API_KEY` / `Authorization` 做脱敏，
    统一打 `***`。异常栈也要过滤（Python 的异常里可能带上下文变量）。
 3. **绝不回显**：API 响应里没有任何一个字段会包含密钥本体。编辑时留空 = 不修改。
@@ -77,7 +81,8 @@ Pod 内的管理命令 `curator-admin rotate-master-key`：读旧 key 解密 →
 1. 保存后端时试一次 `GET {endpoint}/models`（v1 既有做法）—— 自托管 vLLM 一定支持；方舟通了就用。
 2. 拉不出来不算错，界面直接给手填：Model ID 或推理接入点 ID（`ep-…`）。
 
-无论哪条路来的模型，保存前都用它发一次最小请求，确认账号已开通、接入点可用。
+手填的模型保存前先发一次最小请求，确认账号已开通、接入点可用，不通就不保存（`model_check_failed`）。
+从 `/models` 拉到的模型不逐个试调 —— 方舟一次可能列出上百个；真正要用的那一个，任务开始前的三项检查里会实调一次（D30）。
 
 ### 4.1 思考强度：方舟的 `reasoning_effort`
 

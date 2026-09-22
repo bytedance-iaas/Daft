@@ -110,3 +110,22 @@ W4 报告的缺口，外加任务编排（W5）开工前必须补的状态机缺
 
 设计文档跟进：01 §2.8（`dataset_check.change`、区域为空时的唯一索引）、§3.1（新迁移和说明），03 §1、§8（写请求规则）。
 
+## 七、下一版（1.3）待修订（攒着，和 W5 的缺口一起改）
+
+W8 合并时报告的，在那之前按括号里的现状实现（前端 W10 已按现状做 mock）：
+
+| # | 契约 | 要改什么 | 现状 |
+|---|---|---|---|
+| 1 | C4 `precheck_failed` | 给 `details` 定格式 | `details.checks: [{id: input/output/vlm, ok, code, reason, target, elapsed_ms}]` |
+| 2 | C4 `ProbeResult.error.code` | 定枚举 | forbidden / not_found / auth_failed / unreachable / server_error / failed；写成但探针没删掉是 `leftover`，此时 `ok: true` |
+| 3 | C4 `/media/sign` | 写明可签的前缀 | 任务批次目录 `<交付目录>/<run_id>/`；片段起止时间由 episode 接口给，不由签名接口算 |
+| 4 | C4 删除访问密钥 / 模型服务 | 只被已结束任务引用时的「需确认」 | 409 `credential_in_use` / `backend_in_use` + `details.confirm_required: true`，带 `?confirm=true` 再删 |
+| 5 | C5 | 模型服务被多少任务引用的计数查询；后端的 `models_listed`、`has_api_key` 两列 | 删后端时扫描任务表；两列暂存在后端 API Key 那一行的 `payload_meta` 里 |
+| 6 | C5 / 设计 01 §2.1 | 写明后端的 API Key 也是 credential 表的一行（`kind` 为 ark / custom_vlm，名字 `vlm-backend/<后端 id>`），用户建的访问密钥不能用这个前缀 | 已这样实现；概览的 `credentials_failed` 只数 `kind='tos'` |
+| 7 | C4 `CredentialCreate` | 加可选的 `session_token` | CLI 环境已支持会话令牌，接口还设不进来 |
+| 8 | 设计 02 §2 | 访问密钥上自定义的 endpoint 怎么传给 CLI（分角色的 endpoint 变量） | 只对 Daemon 自己的调用生效 |
+| 9 | 设计 08 §4 | `unverified` 的用法：列桶被拒、又没填测试用存储桶时记 `unverified` 并附提示（签名已被接受，身份没问题），不记 `failed` | 已这样实现 |
+| 10 | 编排（W5） | 任务级思考强度要校验在模型的有效档位内 | `taskspec.resolve_vlm` 不查；W5 建任务时调 `svc.check_task_effort(...)` |
+
+数据集登记引用的访问密钥被删时不阻止删除，登记上的 `credential_id` 置空（与已结束任务相同），交 W4 续作实现。
+
