@@ -23,7 +23,7 @@
   "docs/contracts/cli/verdict-line.schema.json": "sha256:71fc35e2c3bd3dd93a0ef9011acb6dda0e0cd3bb6fff7abcbd3a71e673ce155a",
   "docs/contracts/cli/verify.schema.json": "sha256:bdface3671e9400ae9f1a40d9fbf54986701b1db0c578c99976e69701ddb00dc",
   "docs/contracts/modules.json": "sha256:aff620edb0622fa0c46722a8599c104a5b350771c7c9caaa9d6856972a167e49",
-  "docs/contracts/openapi.yaml": "sha256:1067551db21c949e3a66149a18d2addf86f9b1366f712865c66947cd003a2aef",
+  "docs/contracts/openapi.yaml": "sha256:7c7d6be49cf0c8513cf1ee120248b94eea3a082b4486daca99322b413e261b2d",
   "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:014d924766cdfe13c79a400e4c31134bb2c1e8a3830644d3644135ab1c9f5058",
   "docs/contracts/progress.schema.json": "sha256:ecb75b41143af25a34e1ae33aebca5d0dca9dd4bae61dc941b805153496d8487"
  },

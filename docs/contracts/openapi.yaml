@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.5.1
+  version: 1.5.2
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -54,6 +54,9 @@ info:
     answered, the machine takes it and does not judge again); the `status` filter, the label an
     adopted suggestion gets without `new_label`, the episode view's `reasons` / `review` items
     and the 404 reasons of the result readers are spelled out.
+
+    1.5.2 (2026-09-22): a question a card gained as a follow-up says so (`follow_up_of`), and
+    a follow-up whose opening answer changed is left out of the card.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -2428,6 +2431,12 @@ components:
         source_module: {$ref: "#/components/schemas/ModuleId"}
         reason: {type: string}
         duplicate_of: {type: [integer, "null"], minimum: 0, description: "an appeal of a dedup reject: the episode it duplicates"}
+        follow_up_of:
+          oneOf: [{type: "null"}, {$ref: "#/components/schemas/ReviewLineId"}]
+          description: >-
+            set on a question the card gained as a follow-up of its answer on that line
+            (registry follow_ups), absent or null on the card's own questions; a follow-up whose
+            opening answer changed is left out of the card
         annotation: {type: [string, "null"]}
         caption: {type: [string, "null"]}
         suggestion: {type: [string, "null"], description: "suggested new label"}

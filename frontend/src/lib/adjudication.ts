@@ -58,9 +58,28 @@ export function offersDiscard(catalog: ReviewCatalog | undefined, line: string):
   return l ? l.decisions.some((d) => d.const === 'discard') : line === 'label' || line === 'task_verdict';
 }
 
+/**
+ * A question a card gains after certain answers on another of its lines (registry follow_ups,
+ * C4 1.5.1): v1's optional task verdict after adopting or rewriting a label. Only on cards that
+ * do not ask that line themselves; never pending, never keeps a card from 已裁; its answer
+ * lapses — not shown, not applied, not counted — once the opening answer changes.
+ */
+export interface FollowUpView {
+  line: AdjudicationLine;
+  /** The line whose answer opens it. */
+  openedBy: AdjudicationLine;
+  decisions: { const: string; title: string }[];
+  optional: boolean;
+  /** The opening answer is one of `after`: the question is shown and its answer counts. */
+  open: boolean;
+  effective: EffectiveDecision | null;
+}
+
 export interface CardView {
   ep: number;
   questions: (AdjudicationQuestion & { effective: EffectiveDecision | null })[];
+  /** Follow-up questions the catalog defines for this card, open or lapsed. */
+  followUps: FollowUpView[];
   sources: string[];
   /** A 「整条弃用」 on any line: it overrides every verdict on the card (rule 1). */
   discarded: boolean;
@@ -90,16 +109,41 @@ function effectiveOf(card: AdjudicationCard, line: AdjudicationLine, local: Loca
   return d ? { decision: d.decision, new_label: d.new_label ?? null, applied: d.applied } : null;
 }
 
+/** The follow-ups the catalog gives this card: lines it does not ask itself, opened by lines it does. */
+function followUpsOf(card: AdjudicationCard, local: LocalDecisions, catalog: ReviewCatalog | undefined, byLine: Map<string, EffectiveDecision | null>): FollowUpView[] {
+  const asked = new Set(card.questions.map((q) => q.line));
+  const out: FollowUpView[] = [];
+  for (const line of asked) {
+    for (const f of catalogLine(catalog, line)?.follow_ups ?? []) {
+      if (asked.has(f.line) || out.some((x) => x.line === f.line)) continue;
+      const opening = byLine.get(line)?.decision;
+      out.push({
+        line: f.line,
+        openedBy: line,
+        decisions: f.decisions.map((d) => ({ const: d, title: decisionTitle(catalog, f.line, d) })),
+        optional: f.optional,
+        open: Boolean(opening && f.after.includes(opening)),
+        // The card carries no question for it, so only this session's answer is known here.
+        effective: local[decisionKey(card.episode_index, f.line)] ?? null,
+      });
+    }
+  }
+  return out;
+}
+
 export function viewCard(card: AdjudicationCard, local: LocalDecisions = {}, catalog?: ReviewCatalog): CardView {
   const questions = card.questions.map((q) => ({ ...q, effective: effectiveOf(card, q.line, local) }));
-  // C4 1.5: a decision always answers a question the card has (anything else is 400).
+  // C4 1.5: a decision answers a question the card has, or an open follow-up (1.5.1).
   const lines = [...new Set(card.questions.map((q) => q.line))];
-  const byLine = new Map(lines.map((l) => [l, effectiveOf(card, l, local)] as const));
+  const byLine = new Map<string, EffectiveDecision | null>(lines.map((l) => [l, effectiveOf(card, l, local)] as const));
+  const followUps = followUpsOf(card, local, catalog, byLine);
+  const answeredFollowUps = followUps.filter((f) => f.open && f.effective);
   const discardOn = lines.find((l) => byLine.get(l)?.decision === 'discard') ?? null;
   const discard = discardOn ? byLine.get(discardOn)! : null;
   const label = byLine.get('label');
   const newLabel = label && (label.decision === 'adopt_suggestion' || label.decision === 'custom_label') ? label.new_label ?? card.questions.find((q) => q.line === 'label')?.suggestion ?? null : null;
-  const verdict = byLine.get('task_verdict');
+  // A person's verdict: the card's own task-verdict question, or the open follow-up that asks it.
+  const verdict = byLine.get('task_verdict') ?? answeredFollowUps.find((f) => f.line === 'task_verdict')?.effective ?? null;
   const humanVerdict = !discard && verdict && (verdict.decision === 'success' || verdict.decision === 'failure') ? verdict.decision : null;
   const sources = [...new Set(card.questions.map((q) => q.source_module))];
 
@@ -110,18 +154,19 @@ export function viewCard(card: AdjudicationCard, local: LocalDecisions = {}, cat
   else if (newLabel) status = 'decided';
   else status = 'pending';
 
+  // Status reads the card's own questions only: a follow-up never makes it pending or unsure.
   const unapplied = discard
     ? discard.applied
       ? []
       : [{ line: discardOn!, decision: 'discard', new_label: null }]
-    : lines
-        .map((line) => ({ line, d: byLine.get(line) }))
+    : [...lines.map((line) => ({ line, d: byLine.get(line) ?? null })), ...answeredFollowUps.map((f) => ({ line: f.line, d: f.effective }))]
         .filter((x): x is { line: AdjudicationLine; d: EffectiveDecision } => Boolean(x.d) && !x.d!.applied && x.d!.decision !== 'unsure')
         .map((x) => ({ line: x.line, decision: x.d.decision, new_label: x.d.new_label }));
 
   return {
     ep: card.episode_index,
     questions,
+    followUps,
     sources,
     discarded: Boolean(discard),
     discardLine: card.questions.find((q) => offersDiscard(catalog, q.line))?.line ?? null,
