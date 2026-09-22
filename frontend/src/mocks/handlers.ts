@@ -45,7 +45,7 @@ import {
   SO101_TASK,
   tableRows,
 } from './world';
-import { cardsOf, clock, countsOf, datasetName, db, decisionsOf, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
+import { cardsOf, clock, countsOf, datasetName, db, decisionsOf, executable, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
 
 // ------------------------------------------------------------------ plumbing
 
@@ -1178,9 +1178,11 @@ const report = [
       if (!line.decisions.some((x) => x.const === d.decision)) return err(400, 'validation_failed', `「${line.title_zh}」不能选 ${d.decision}`);
       const card = cardsOf(t.id, line.applies_to === 'reject' ? 'appeals' : 'review').find((c) => c.episode_index === d.episode_index);
       if (!card) return err(400, 'validation_failed', `ep ${d.episode_index} 不在这个任务的待裁决队列里`);
-      if (!card.questions.some((q) => q.line === d.line)) {
+      // The card's own questions; a listed follow-up (C4 1.5.2) is checked against its opening answer.
+      const own = card.questions.filter((q) => !q.follow_up_of);
+      if (!own.some((q) => q.line === d.line)) {
         const answers = (l: string) => inForce.get(`${d.episode_index}:${l}`) ?? latest(t.id, d.episode_index, l)?.decision;
-        const opened = openFollowUp(t.id, d.episode_index, card.questions, d.line, answers);
+        const opened = openFollowUp(t.id, d.episode_index, own, d.line, answers);
         if (!opened) return err(400, 'validation_failed', `ep ${d.episode_index} 没有「${line.title_zh}」这一问：先采纳新标注或自行改写标注，才能直接判成败`);
         if (!opened.followUp.decisions.includes(d.decision)) return err(400, 'validation_failed', `这里只能选：${opened.followUp.decisions.join('、')}`);
       }
@@ -1202,7 +1204,8 @@ const report = [
       if (t.active_subtask) return err(409, 'subtask_active', '这个任务已有未结束的子任务，等它结束后再执行裁决');
       if (countsOf(t.id).unapplied === 0) return err(400, 'validation_failed', '没有尚未应用的裁决');
       const s = newSubtask(t, 'apply_adjudication', { relabel_rerun: b.relabel_rerun ?? 'v1' });
-      for (const d of decisionsOf(t.id)) if (d.decision !== 'unsure') d.applied = true;
+      // The answers in force; a lapsed follow-up answer is not executed (C1 follow_ups).
+      for (const d of executable(t.id)) if (d.decision !== 'unsure') d.applied = true;
       t.delivery_stale = true;
       return HttpResponse.json({ subtask: s, links: t.links }, { status: 202 });
     }),
