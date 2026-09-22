@@ -42,7 +42,7 @@ from .config import OrchestratorConfig
 from .datasets import DatasetOps, Source, format_supported
 from .delivery import DeliveryError, DeliveryLocks, forget_sync, open_delivery, read_latest
 from .resources import lower_daemon_oom_score
-from .runbase import PROC_FILE
+from .runbase import PROC_FILE, SHUTDOWN_REASON
 from .scheduler import Scheduler
 from .start import Draft, StartChecks
 from .workdir import WorkDir, read_json
@@ -116,7 +116,7 @@ class Orchestrator:
         self.scheduler.stop_accepting()
         now = self.clock()
         for job in self.scheduler.jobs():
-            reason = "Daemon 停机，任务被系统暂停，重启后自动恢复"
+            reason = SHUTDOWN_REASON
             if job.sub_id is None:
                 transitions.change_task_state(self.repo, self.hub, job.task_id, {"running"},
                                               "pausing", at=now, pause_reason="system",

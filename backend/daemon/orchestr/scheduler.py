@@ -22,7 +22,7 @@ from typing import Iterable
 
 from .. import transitions
 from ..repo import protocol as P
-from .runbase import ALL_MODULE_STATES, Interrupt, TaskFailure
+from .runbase import ALL_MODULE_STATES, SHUTDOWN_REASON, Interrupt, TaskFailure
 from .runs import run_for
 from .workdir import WorkDir
 
@@ -147,10 +147,12 @@ class Job:
                                                 owner=self.owner, **kw)
 
     def _settle_task(self) -> None:
-        """Wherever a pause or stop left the task, bring it to rest."""
-        if self._step({"pausing"}, "paused"):
+        """Wherever a pause or stop left the task, bring it to rest (keeping its reason)."""
+        reason = self.orch.repo.get_task(self.task_id, owner=self.owner,
+                                         include_deleted=True).state_reason
+        if self._step({"pausing"}, "paused", reason=reason):
             return
-        if self._step({"stopping"}, "stopped", reason="用户停止"):
+        if self._step({"stopping"}, "stopped", reason=reason or "用户停止"):
             return
 
     def _end_task(self, kind, state, intent, failure) -> None:
@@ -165,7 +167,7 @@ class Job:
                 self._step({"stopping"}, "stopped", reason="用户停止")
                 return
             pause_reason = "system" if intent == "shutdown" else "user"
-            reason = "Daemon 停机，任务被系统暂停" if pause_reason == "system" else None
+            reason = SHUTDOWN_REASON if pause_reason == "system" else None
             self._step({"running"}, "pausing", pause_reason=pause_reason, reason=reason)
             self._settle_task()
             return
@@ -192,7 +194,7 @@ class Job:
                 self._sub_step({"stopping"}, "stopped", reason="用户停止")
                 return
             pause_reason = "system" if intent == "shutdown" else "user"
-            reason = "Daemon 停机，子任务被系统暂停" if pause_reason == "system" else None
+            reason = SHUTDOWN_REASON if pause_reason == "system" else None
             self._sub_step({"running"}, "pausing", pause_reason=pause_reason, reason=reason)
             self._settle_subtask()
             return
@@ -201,9 +203,10 @@ class Job:
         self._settle_subtask()
 
     def _settle_subtask(self) -> None:
-        if self._sub_step({"pausing"}, "paused"):
+        reason = self.orch.repo.get_subtask(self.sub_id).state_reason
+        if self._sub_step({"pausing"}, "paused", reason=reason):
             return
-        self._sub_step({"stopping"}, "stopped", reason="用户停止")
+        self._sub_step({"stopping"}, "stopped", reason=reason or "用户停止")
 
 
 class Scheduler:

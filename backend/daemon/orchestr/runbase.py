@@ -48,6 +48,8 @@ _STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note")
 _FINAL_STAGE_STATES = ("succeeded", "completed_with_errors", "failed", "skipped")
 #: the child a run has in flight (pid = its process group), for reaping after a crash
 PROC_FILE = "proc.json"
+#: the state reason of a system pause at shutdown; the timeline reads "被系统暂停：…，将自动恢复"
+SHUTDOWN_REASON = "Daemon 停机"
 
 
 class Interrupt(Exception):
