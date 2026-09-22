@@ -15,6 +15,15 @@ function devBase(env: Record<string, string>): string {
   return raw;
 }
 
+/**
+ * What the Daemon puts at <!-- curator:base -->: a static base element (so even the browser's
+ * preload scanner resolves ./assets/* under the prefix) and the prefix for the app itself.
+ * `base` is validated to URL path characters, so it is safe in both places.
+ */
+function baseTags(base: string): string {
+  return `<base href="${base}/"><script>window.__CURATOR_BASE__ = ${JSON.stringify(base)};</script>`;
+}
+
 function curatorDevPlugin(base: string, emitWorker: boolean, injectBase: boolean): Plugin {
   return {
     name: 'curator-dev',
@@ -31,7 +40,7 @@ function curatorDevPlugin(base: string, emitWorker: boolean, injectBase: boolean
     transformIndexHtml(html) {
       // Mimic the Daemon (doc 07 §2.3): inject the mount prefix before the base bootstrap script.
       if (!injectBase) return html;
-      return html.replace('<!-- curator:base -->', `<script>window.__CURATOR_BASE__ = ${JSON.stringify(base)};</script>`);
+      return html.replace('<!-- curator:base -->', baseTags(base));
     },
     generateBundle() {
       if (emitWorker) {
@@ -70,10 +79,15 @@ export default defineConfig(({ command, mode }) => {
       chunkSizeWarningLimit: 1200,
       rollupOptions: {
         output: {
+          // Match whole package names: a loose «node_modules/react» also caught react-transition-group,
+          // which pulled Arco's helpers into the react chunk and made the two chunks import each
+          // other (React was undefined when Arco evaluated).
           manualChunks(id) {
-            if (id.includes('node_modules/echarts') || id.includes('node_modules/zrender')) return 'echarts';
-            if (id.includes('node_modules/@arco-design')) return 'arco';
-            if (id.includes('node_modules/react') || id.includes('node_modules/scheduler')) return 'react';
+            const pkg = /node_modules\/((?:@[^/]+\/)?[^/]+)\//.exec(id.replace(/\\/g, '/'))?.[1];
+            if (!pkg) return undefined;
+            if (pkg === 'echarts' || pkg === 'zrender') return 'echarts';
+            if (pkg === 'react' || pkg === 'react-dom' || pkg === 'scheduler') return 'react';
+            if (pkg.startsWith('@arco-design/')) return 'arco';
             return undefined;
           },
         },

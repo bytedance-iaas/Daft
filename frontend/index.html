@@ -4,10 +4,12 @@
     <meta charset="UTF-8" />
     <!-- curator:base -->
     <script>
-      // Mount prefix bootstrap (doc 07 §2.3). The Daemon replaces the marker above with a script
-      // element that sets window.__CURATOR_BASE__ = "/curation" (see frontend/README.md). Assets
-      // are relative, so a base element pointing at the prefix keeps deep links (for example
-      // /curation/tasks/1/report) loading ./assets/* from the prefix, not from the current path.
+      // Mount prefix bootstrap (doc 07 §2.3). The Daemon replaces the marker above with a static
+      // base element (href "/curation/") and a script element that sets
+      // window.__CURATOR_BASE__ = "/curation" (see frontend/README.md). Assets are relative, so the
+      // base element keeps deep links (for example /curation/tasks/1/report) loading ./assets/*
+      // from the prefix; being static, it also steers the browser's preload scanner. Without
+      // injection (a plain static server) the prefix is inferred and the base element added here.
       (function () {
         var known = ['overview', 'datasets', 'tasks', 'credentials'];
         var base = window.__CURATOR_BASE__;
@@ -23,9 +25,11 @@
         }
         base = String(base).replace(/\/+$/, '');
         window.__CURATOR_BASE__ = base;
-        var el = document.createElement('base');
-        el.href = base + '/';
-        document.head.appendChild(el);
+        if (!document.querySelector('base[href]')) {
+          var el = document.createElement('base');
+          el.href = base + '/';
+          document.head.appendChild(el);
+        }
       })();
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
