@@ -1,0 +1,31 @@
+{{- /*
+Site configuration (design doc 09 §3): factory defaults <- site.yaml <- task params <- --set.
+site.yaml is what CURATION_CONFIG points at; the CLI deep-merges it over
+backend/curation/pipeline/default.yaml, and the planner reads its concurrency / vlm blocks
+(curation.planner.SiteConfig). The dedicated values win over the same keys in
+pipelineConfigOverride.
+*/ -}}
+{{- $site := deepCopy (.Values.pipelineConfigOverride | default dict) -}}
+{{- with .Values.publicDatasets -}}
+{{- if .bucket -}}
+{{- $public := dict "bucket" .bucket "prefix" (.prefix | default "dataset") "manifest" (.manifest | default "dataset_files.json") -}}
+{{- with .region }}{{ $_ := set $public "region" . }}{{ end -}}
+{{- with .label }}{{ $_ := set $public "label" . }}{{ end -}}
+{{- $_ := set $site "public_datasets" $public -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $site "concurrency" (deepCopy (.Values.concurrency | default dict)) -}}
+{{- $_ := set $site "vlm" (deepCopy (.Values.vlm | default dict)) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "curator.fullname" . }}-site
+  labels:
+    {{- include "curator.labels" . | nindent 4 }}
+data:
+  site.yaml: |
+    {{- toYaml $site | nindent 4 }}
+  {{- with .Values.reasoningEffortTable }}
+  # CURATOR_REASONING_EFFORT_TABLE: site rows over the built-in table (design doc 08 §4.1)
+  reasoning-effort.json: {{ toJson . | quote }}
+  {{- end }}

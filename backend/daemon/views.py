@@ -71,7 +71,10 @@ def stage_progress(progress: dict | None) -> dict:
 def summary(value: dict | None) -> dict | None:
     if not isinstance(value, dict) or not set(_SUMMARY_KEYS) <= set(value):
         return None
-    return {k: value[k] for k in _SUMMARY_KEYS}
+    out = {k: value[k] for k in _SUMMARY_KEYS}
+    if _count(value.get("skipped")) is not None:        # C4 1.4: only when some were (D40)
+        out["skipped"] = value["skipped"]
+    return out
 
 
 def _count(value: Any) -> int | None:

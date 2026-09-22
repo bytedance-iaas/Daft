@@ -7,12 +7,15 @@ import type { AdjudicationLine, DecisionValue } from '../../api/types';
 import { LazyVisible } from '../../components/LazyVisible';
 import { RelTime } from '../../components/RelTime';
 import { SignedImage, SignedVideo } from '../../features/media/SignedMedia';
-import type { CardView } from '../../lib/adjudication';
+import { catalogLine, lineDecisions, lineTitle, type CardView, type ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
 
-export const STATUS_COLOR: Record<string, string> = { pending: 'arcoblue', decided: 'green', unsure: 'orange', applied: 'gray' };
+export const STATUS_COLOR: Record<string, string> = { pending: 'arcoblue', optional: 'cyan', decided: 'green', unsure: 'orange', applied: 'gray' };
 
-/** Videos and evidence frames of a card, loaded when the card scrolls into view (03 §7). */
+type Question = CardView['questions'][number];
+type Decide = (line: AdjudicationLine, d: DecisionValue, label?: string) => Promise<boolean>;
+
+/** Videos and evidence frames of one episode, loaded when the card scrolls into view (03 §7). */
 function CardMedia({ taskId, ep, rev }: { taskId: string; ep: number; rev: number }) {
   const reg = useModules();
   const [playSignal, setPlaySignal] = useState(0);
@@ -26,7 +29,7 @@ function CardMedia({ taskId, ep, rev }: { taskId: string; ep: number; rev: numbe
   const v = q.data;
   const origin = v.videos[0]?.origin;
   return (
-    <div>
+    <div data-testid={`media-${ep}`}>
       {v.videos.length ? (
         <>
           <div className="video-grid">
@@ -57,7 +60,27 @@ function CardMedia({ taskId, ep, rev }: { taskId: string; ep: number; rev: numbe
   );
 }
 
-function DecidedNote({ q }: { q: CardView['questions'][number] }) {
+/** A dedup appeal: this episode and the one it duplicates, side by side (07 §6, D42). */
+function CompareMedia({ taskId, ep, other, rev }: { taskId: string; ep: number; other: number; rev: number }) {
+  return (
+    <div className="dup-compare" data-testid={`compare-${ep}`}>
+      <div>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+          {zh.adjudication.thisEpisode(ep)}
+        </div>
+        <CardMedia taskId={taskId} ep={ep} rev={rev} />
+      </div>
+      <div>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+          {zh.adjudication.keptEpisode(other)}
+        </div>
+        <CardMedia taskId={taskId} ep={other} rev={rev} />
+      </div>
+    </div>
+  );
+}
+
+function DecidedNote({ q }: { q: Question }) {
   const d = q.latest_decision;
   if (q.effective?.applied) return <Tag size="small">{zh.adjudication.applied}</Tag>;
   if (d && q.effective && d.decision === q.effective.decision && (d.new_label ?? null) === q.effective.new_label) {
@@ -71,16 +94,22 @@ function DecidedNote({ q }: { q: CardView['questions'][number] }) {
   return null;
 }
 
-function LabelQuestion({ index, view, q, onDecide }: { index: number; view: CardView; q: CardView['questions'][number]; onDecide: (line: AdjudicationLine, d: DecisionValue, label?: string) => Promise<boolean> }) {
+function QuestionHead({ index, q, catalog }: { index: number; q: Question; catalog: ReviewCatalog | undefined }) {
   const reg = useModules();
+  return <b>{zh.adjudication.questionHead(index, moduleName(reg.data, q.source_module), lineTitle(catalog, q.line))}</b>;
+}
+
+function LabelQuestion({ index, view, q, catalog, onDecide }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide }) {
   const current = q.effective?.decision;
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(q.effective?.decision === 'custom_label' ? q.effective.new_label ?? '' : '');
   const [error, setError] = useState('');
   const selected = editing ? 'custom_label' : current && current !== 'discard' ? current : undefined;
+  // Button titles from the catalog; 整条弃用 has its own button at the bottom of the card.
+  const options = lineDecisions(catalog, 'label', ['adopt_suggestion', 'keep_label', 'unsure', 'custom_label']).filter((d) => d.const !== 'discard');
   return (
     <div className="question" data-testid={`q-${view.ep}-label`}>
-      <b>{zh.adjudication.questionHead(index, moduleName(reg.data, q.source_module), zh.adjudication.lineName.label)}</b>
+      <QuestionHead index={index} q={q} catalog={catalog} />
       <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
         {q.reason}
       </div>
@@ -101,7 +130,7 @@ function LabelQuestion({ index, view, q, onDecide }: { index: number; view: Card
           type="button"
           value={selected ?? ''}
           disabled={view.discarded}
-          aria-label={zh.adjudication.lineName.label}
+          aria-label={lineTitle(catalog, 'label')}
           onChange={(v: DecisionValue) => {
             if (v === 'custom_label') {
               setEditing(true);
@@ -111,10 +140,11 @@ function LabelQuestion({ index, view, q, onDecide }: { index: number; view: Card
             void onDecide('label', v);
           }}
         >
-          <Radio value="adopt_suggestion">{zh.adjudication.adopt}</Radio>
-          <Radio value="keep_label">{zh.adjudication.keep}</Radio>
-          <Radio value="unsure">{zh.adjudication.unsure}</Radio>
-          <Radio value="custom_label">{zh.adjudication.custom}</Radio>
+          {options.map((d) => (
+            <Radio key={d.const} value={d.const}>
+              {d.title}
+            </Radio>
+          ))}
         </Radio.Group>
         <DecidedNote q={q} />
       </Space>
@@ -155,23 +185,32 @@ function LabelQuestion({ index, view, q, onDecide }: { index: number; view: Card
   );
 }
 
-function VerdictChoice({ view, value, withUnsure, onDecide }: { view: CardView; value: DecisionValue | undefined; withUnsure: boolean; onDecide: (line: AdjudicationLine, d: DecisionValue) => Promise<boolean> }) {
+/** Buttons for one line's decisions (catalog titles), 整条弃用 left to the card's own button. */
+function Choice({ view, q, catalog, fallback, onDecide }: { view: CardView; q: Question; catalog: ReviewCatalog | undefined; fallback: readonly string[]; onDecide: Decide }) {
+  const current = q.effective?.decision;
+  const options = lineDecisions(catalog, q.line, fallback).filter((d) => d.const !== 'discard');
   return (
-    <Radio.Group type="button" value={value ?? ''} disabled={view.discarded} aria-label={zh.adjudication.lineName.task_verdict} onChange={(v: DecisionValue) => void onDecide('task_verdict', v)}>
-      <Radio value="success">{zh.adjudication.success}</Radio>
-      <Radio value="failure">{zh.adjudication.failure}</Radio>
-      {withUnsure ? <Radio value="unsure">{zh.adjudication.unsure}</Radio> : null}
+    <Radio.Group
+      type="button"
+      value={current && current !== 'discard' ? current : ''}
+      disabled={view.discarded}
+      aria-label={`${lineTitle(catalog, q.line)} ${zh.report.episode(view.ep)}`}
+      onChange={(d: DecisionValue) => void onDecide(q.line, d)}
+    >
+      {options.map((d) => (
+        <Radio key={d.const} value={d.const}>
+          {d.title}
+        </Radio>
+      ))}
     </Radio.Group>
   );
 }
 
-function VerdictQuestion({ index, view, q, onDecide }: { index: number; view: CardView; q: CardView['questions'][number]; onDecide: (line: AdjudicationLine, d: DecisionValue) => Promise<boolean> }) {
-  const reg = useModules();
-  const current = q.effective?.decision;
+function VerdictQuestion({ index, view, q, catalog, onDecide }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide }) {
   const text = view.newLabel ?? q.annotation ?? '';
   return (
     <div className={`question${view.discarded ? ' overridden' : ''}`} data-testid={`q-${view.ep}-task_verdict`}>
-      <b>{zh.adjudication.questionHead(index, moduleName(reg.data, q.source_module), zh.adjudication.lineName.task_verdict)}</b>
+      <QuestionHead index={index} q={q} catalog={catalog} />
       <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
         {q.reason}
       </div>
@@ -179,7 +218,7 @@ function VerdictQuestion({ index, view, q, onDecide }: { index: number; view: Ca
         {zh.adjudication.verdictAsk(text, Boolean(view.newLabel))}
       </div>
       <Space wrap>
-        <VerdictChoice view={view} value={current && current !== 'discard' ? current : undefined} withUnsure onDecide={onDecide} />
+        <Choice view={view} q={q} catalog={catalog} fallback={['success', 'failure', 'unsure']} onDecide={onDecide} />
         <DecidedNote q={q} />
       </Space>
       {view.discarded ? (
@@ -191,25 +230,72 @@ function VerdictQuestion({ index, view, q, onDecide }: { index: number; view: Ca
   );
 }
 
+/** 被拒复议 (D42): why it was rejected — for dedup, which episode it duplicates. */
+function AppealQuestion({ index, view, q, catalog, onDecide }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide }) {
+  return (
+    <div className="question" data-testid={`q-${view.ep}-reject_appeal`}>
+      <QuestionHead index={index} q={q} catalog={catalog} />
+      {q.duplicate_of !== null && q.duplicate_of !== undefined ? (
+        <div style={{ margin: '4px 0' }} data-testid={`duplicate-${view.ep}`}>
+          {zh.adjudication.duplicateOf(q.duplicate_of)}
+        </div>
+      ) : null}
+      <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
+        {q.reason}
+      </div>
+      <Space wrap>
+        <Choice view={view} q={q} catalog={catalog} fallback={['restore', 'keep_rejected', 'unsure']} onDecide={onDecide} />
+        <DecidedNote q={q} />
+      </Space>
+    </div>
+  );
+}
+
+/** A line without a dedicated view (D43): its catalog title, the question's reason, one button per decision. */
+function GenericQuestion({ index, view, q, catalog, onDecide }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide }) {
+  const known = Boolean(catalogLine(catalog, q.line));
+  return (
+    <div className={`question${view.discarded ? ' overridden' : ''}`} data-testid={`q-${view.ep}-${q.line}`}>
+      <QuestionHead index={index} q={q} catalog={catalog} />
+      <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
+        {q.reason}
+      </div>
+      {known ? (
+        <Space wrap>
+          <Choice view={view} q={q} catalog={catalog} fallback={[]} onDecide={onDecide} />
+          <DecidedNote q={q} />
+        </Space>
+      ) : (
+        <Typography.Text type="warning">{zh.adjudication.unknownLine(q.line)}</Typography.Text>
+      )}
+    </div>
+  );
+}
+
 /**
- * One card per episode (07 §6): the source modules, the videos once, then every question with
- * its own buttons; 「其它原因，整条弃用」 at the bottom overrides the verdict (rule 1).
+ * One card per episode (07 §6): the source modules, the videos once (both episodes for a dedup
+ * appeal), then every question — label, task_verdict and reject_appeal with their own views, any
+ * other line from the registry catalog (D43); 「其它原因，整条弃用」 where the lines offer it.
  */
 export function EpisodeCard({
   taskId,
   rev,
   view,
+  catalog,
   onDecide,
 }: {
   taskId: string;
   rev: number;
   view: CardView;
-  onDecide: (line: AdjudicationLine, d: DecisionValue, label?: string) => Promise<boolean>;
+  catalog: ReviewCatalog | undefined;
+  onDecide: Decide;
 }) {
   const reg = useModules();
   const labelQ = view.questions.find((q) => q.line === 'label');
   const annotation = view.questions.find((q) => q.annotation)?.annotation;
-  const optionalVerdict = labelQ && !view.hasVerdictQuestion && view.newLabel;
+  const duplicateOf = view.questions.find((q) => q.duplicate_of !== null && q.duplicate_of !== undefined)?.duplicate_of;
+  const statusKey = view.optional && view.status === 'pending' ? 'optional' : view.status;
+  const discardLine = view.discardOn ?? view.discardLine;
   return (
     <Card
       className={`adj-card ${view.status}`}
@@ -224,43 +310,32 @@ export function EpisodeCard({
       extra={
         <Space>
           <span className="muted">{zh.adjudication.sources(view.sources.map((s) => moduleName(reg.data, s)).join('、'))}</span>
-          <Tag color={STATUS_COLOR[view.status]} data-testid={`status-${view.ep}`}>
-            {zh.adjudication.status[view.status]}
+          <Tag color={STATUS_COLOR[statusKey]} data-testid={`status-${view.ep}`}>
+            {zh.adjudication.status[statusKey]}
           </Tag>
         </Space>
       }
     >
       <LazyVisible placeholder={<div style={{ height: 120 }} />}>
-        <CardMedia taskId={taskId} ep={view.ep} rev={rev} />
+        {duplicateOf !== undefined && duplicateOf !== null ? <CompareMedia taskId={taskId} ep={view.ep} other={duplicateOf} rev={rev} /> : <CardMedia taskId={taskId} ep={view.ep} rev={rev} />}
       </LazyVisible>
-      {view.questions.map((q, i) =>
-        q.line === 'label' ? (
-          <LabelQuestion key={q.line} index={i} view={view} q={q} onDecide={onDecide} />
-        ) : q.line === 'task_verdict' ? (
-          <VerdictQuestion key={q.line} index={i} view={view} q={q} onDecide={onDecide} />
-        ) : null,
-      )}
-      {optionalVerdict ? (
-        <div className={`question${view.discarded ? ' overridden' : ''}`} data-testid={`optional-verdict-${view.ep}`}>
-          <b>{`${'①②③④⑤'[view.questions.length] ?? ''} ${zh.adjudication.optionalVerdict}`}</b>
-          <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
-            {zh.adjudication.optionalVerdictDesc}
-          </div>
-          <VerdictChoice view={view} value={view.humanVerdict ?? undefined} withUnsure={false} onDecide={onDecide} />
+      {view.questions.map((q, i) => {
+        const props = { index: i, view, q, catalog, onDecide };
+        if (q.line === 'label') return <LabelQuestion key={q.line} {...props} />;
+        if (q.line === 'task_verdict') return <VerdictQuestion key={q.line} {...props} />;
+        if (q.line === 'reject_appeal') return <AppealQuestion key={q.line} {...props} />;
+        return <GenericQuestion key={q.line} {...props} />;
+      })}
+      {view.status === 'unsure' ? (
+        <Typography.Paragraph style={{ color: 'var(--c-warning)', fontSize: 12, margin: '8px 0 0' }}>{view.optional ? zh.adjudication.unsureNoteOptional : zh.adjudication.unsureNote}</Typography.Paragraph>
+      ) : null}
+      {discardLine ? (
+        <div style={{ marginTop: 12, textAlign: 'right' }}>
+          <Button status={view.discarded ? 'default' : 'danger'} type={view.discarded ? 'secondary' : 'outline'} onClick={() => void onDecide(discardLine, view.discarded ? 'unsure' : 'discard')}>
+            {view.discarded ? zh.adjudication.undiscard : (catalogLine(catalog, discardLine)?.decisions.find((d) => d.const === 'discard')?.title ?? zh.adjudication.discard)}
+          </Button>
         </div>
       ) : null}
-      {view.status === 'unsure' ? (
-        <Typography.Paragraph style={{ color: 'var(--c-warning)', fontSize: 12, margin: '8px 0 0' }}>{zh.adjudication.unsureNote}</Typography.Paragraph>
-      ) : null}
-      <div style={{ marginTop: 12, textAlign: 'right' }}>
-        <Button
-          status={view.discarded ? 'default' : 'danger'}
-          type={view.discarded ? 'secondary' : 'outline'}
-          onClick={() => void onDecide(view.discardOn ?? view.discardLine, view.discarded ? 'unsure' : 'discard')}
-        >
-          {view.discarded ? zh.adjudication.undiscard : zh.adjudication.discard}
-        </Button>
-      </div>
     </Card>
   );
 }

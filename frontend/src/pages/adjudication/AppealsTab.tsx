@@ -1,24 +1,25 @@
-import { Alert, Button, Collapse, Radio, Space, Table, Tag, Typography } from '@arco-design/web-react';
+import { Alert, Card, Collapse, Spin, Typography } from '@arco-design/web-react';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
 import { moduleName, qk, useModules } from '../../api/queries';
 import type { AdjudicationLine, DecisionValue } from '../../api/types';
 import { PageError } from '../../components/PageError';
 import { Sentinel } from '../../components/LazyVisible';
-import { EpisodeDrawer } from '../../features/report/EpisodeDrawer';
-import type { CardView } from '../../lib/adjudication';
+import type { CardView, ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
+import { EpisodeCard } from './EpisodeCard';
 
 /**
- * 任务失败复议 (07 §6, rule 2): only rejects attributed to task_success are listed and can be
- * appealed; the page explains why the other rejects (physical / structural hard gates, dedup)
- * are final. The server checks the rule again.
+ * 被拒复议 (07 §6, rule 2, D42): rejects attributed to an appealable module (registry
+ * `appealable`: today task_success — rejects attributed to it alone — and dedup), one card each.
+ * The page explains why the other rejects are final (physical and structural gates, soft scores);
+ * the server checks the rule again. Appeals are optional and never count as pending.
  */
 export function AppealsTab({
   taskId,
   rev,
   views,
+  catalog,
   loading,
   error,
   hasMore,
@@ -30,96 +31,59 @@ export function AppealsTab({
   taskId: string;
   rev: number;
   views: CardView[];
+  catalog: ReviewCatalog | undefined;
   loading: boolean;
   error: unknown;
   hasMore: boolean;
   pages: number;
   onMore: () => void;
   onRetry: () => void;
-  onDecide: (ep: number, line: AdjudicationLine, d: DecisionValue) => Promise<boolean>;
+  onDecide: (ep: number, line: AdjudicationLine, d: DecisionValue, label?: string) => Promise<boolean>;
 }) {
   const reg = useModules();
-  const [watching, setWatching] = useState<number | null>(null);
   const report = useQuery({
     queryKey: qk.report(taskId, rev),
     queryFn: () => unwrap(api().GET('/tasks/{id}/report', { params: { path: { id: taskId }, query: { rev } } })),
     enabled: rev > 0,
   });
+  const appealable = (reg.data?.modules ?? []).filter((m) => m.appealable);
+  const appealableNames = appealable.map((m) => m.name_zh).join('、');
   const reasons = report.data?.report.overview.reject_reasons ?? [];
-  const others = reasons.filter((r) => r.module !== 'task_success' && r.count > 0);
+  const final = reasons.filter((r) => r.count > 0 && !appealable.some((m) => m.id === r.module));
   const total = reasons.reduce((n, r) => n + r.count, 0);
-  const otherCount = others.reduce((n, r) => n + r.count, 0);
+  const finalCount = final.reduce((n, r) => n + r.count, 0);
   return (
     <div className="card-gap">
-      <Alert type="info" content={zh.adjudication.appealsIntro} />
-      {otherCount ? (
+      <Alert type="info" content={zh.adjudication.appealsIntro(appealableNames)} />
+      {finalCount ? (
         <Collapse>
           <Collapse.Item name="why" header={zh.adjudication.whyNotHere}>
-            <Typography.Paragraph>{zh.adjudication.whyNotHereBody(total, otherCount)}</Typography.Paragraph>
+            <Typography.Paragraph>{zh.adjudication.whyNotHereBody(total, finalCount)}</Typography.Paragraph>
             <ul style={{ marginTop: 0 }} data-testid="final-rejects">
-              {others.map((r) => (
-                <li key={r.module}>
-                  {zh.adjudication.finalReject(moduleName(reg.data, r.module), r.count)}
-                </li>
+              {final.map((r) => (
+                <li key={r.module}>{zh.adjudication.finalReject(moduleName(reg.data, r.module), r.count)}</li>
               ))}
             </ul>
-            <Typography.Paragraph type="secondary">{zh.adjudication.whyNotHereRule}</Typography.Paragraph>
+            <Typography.Paragraph type="secondary">{zh.adjudication.whyNotHereRule(appealableNames)}</Typography.Paragraph>
           </Collapse.Item>
         </Collapse>
       ) : null}
       {error && !views.length ? (
         <PageError error={error} onRetry={onRetry} />
+      ) : loading && !views.length ? (
+        <Spin style={{ display: 'block', margin: '48px auto' }} />
+      ) : !views.length ? (
+        <Card>
+          <Typography.Text type="secondary">{zh.adjudication.appealsEmpty}</Typography.Text>
+        </Card>
       ) : (
-        <Table
-          rowKey="ep"
-          loading={loading}
-          pagination={false}
-          data={views}
-          data-testid="appeals"
-          noDataElement={<Typography.Text type="secondary">{zh.adjudication.appealsEmpty}</Typography.Text>}
-          columns={[
-            { title: zh.adjudication.colEpisode, dataIndex: 'ep', width: 90, render: (ep: number) => <b>{zh.report.episode(ep)}</b> },
-            { title: zh.adjudication.colText, dataIndex: 'questions', render: (_: unknown, v: CardView) => <span className="mono">{v.questions[0]?.annotation ?? '—'}</span> },
-            { title: zh.adjudication.colChain, dataIndex: 'sources', render: (_: unknown, v: CardView) => <span style={{ fontSize: 12 }}>{v.questions[0]?.reason}</span> },
-            {
-              title: zh.adjudication.colVideo,
-              dataIndex: 'status',
-              width: 90,
-              render: (_: unknown, v: CardView) => (
-                <Button type="text" size="mini" onClick={() => setWatching(v.ep)}>
-                  {zh.adjudication.watch}
-                </Button>
-              ),
-            },
-            {
-              title: zh.adjudication.colVerdict,
-              dataIndex: 'unapplied',
-              render: (_: unknown, v: CardView) => {
-                const q = v.questions.find((x) => x.line === 'reject_appeal');
-                const current = q?.effective?.decision;
-                return (
-                  <Space>
-                    <Radio.Group
-                      type="button"
-                      size="small"
-                      value={current ?? ''}
-                      aria-label={`${zh.adjudication.colVerdict} ${zh.report.episode(v.ep)}`}
-                      disabled={Boolean(q?.effective?.applied)}
-                      onChange={(d: DecisionValue) => void onDecide(v.ep, 'reject_appeal', d)}
-                    >
-                      <Radio value="restore">{zh.adjudication.restore}</Radio>
-                      <Radio value="keep_rejected">{zh.adjudication.keepRejected}</Radio>
-                    </Radio.Group>
-                    {q?.effective?.applied ? <Tag size="small">{zh.adjudication.applied}</Tag> : null}
-                  </Space>
-                );
-              },
-            },
-          ]}
-        />
+        <div className="card-gap" data-testid="appeals">
+          {views.map((v) => (
+            <EpisodeCard key={v.ep} taskId={taskId} rev={rev} view={v} catalog={catalog} onDecide={(l, d, label) => onDecide(v.ep, l, d, label)} />
+          ))}
+        </div>
       )}
       <Sentinel onVisible={onMore} disabled={!hasMore || loading} version={pages} />
-      <EpisodeDrawer taskId={taskId} ep={watching} rev={rev} readOnly onClose={() => setWatching(null)} />
     </div>
   );
 }

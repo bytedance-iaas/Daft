@@ -1140,6 +1140,16 @@ export interface components {
                 const: string;
                 title: string;
             }[];
+            /**
+             * @description Questions a card gains once its answer on this line is one of `after` - only on a card that does not ask that line already. v1: after adopting a new label a person may give the task verdict (the machine takes it, no re-judging); left open, the episode is judged again with the new label. An optional follow-up never counts as pending, and its answer lapses (not executed, not counted) once the answer that opened it changes.
+             * @default []
+             */
+            follow_ups?: {
+                after: string[];
+                line: components["schemas"]["ReviewLineId"];
+                decisions: string[];
+                optional: boolean;
+            }[];
         };
         BrowsedDataset: {
             name: string;
@@ -1623,8 +1633,10 @@ export interface components {
             revision: number;
             /** @enum {unknown} */
             list: "passed" | "reject" | "held";
-            reasons?: Record<string, unknown>[];
-            review?: Record<string, unknown>[];
+            /** @description why it is in its list */
+            reasons?: components["schemas"]["EpisodeNote"][];
+            /** @description what a person is asked about it, questions of the adjudication page first; the abstentions of other modules follow (shown, never queued) */
+            review?: components["schemas"]["EpisodeNote"][];
             task_text?: {
                 text?: string;
                 source?: string;
@@ -1649,6 +1661,14 @@ export interface components {
                 from_ts?: number;
                 to_ts?: number;
             }[];
+        };
+        /** @description one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list (hard_gate, soft_score, duplicate, human, execution_error) or a review kind */
+        EpisodeNote: {
+            module: components["schemas"]["ModuleId"];
+            kind?: string;
+            text: string;
+            priority?: string;
+            duplicate_of?: number;
         };
         Perf: {
             revision: number;
@@ -1716,8 +1736,9 @@ export interface components {
         DecisionFields: {
             episode_index: number;
             line: components["schemas"]["ReviewLineId"];
-            /** @description one of the line's decisions in the registry, on a question the episode's card has; anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label, keep_label, unsure, discard; task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure */
+            /** @description one of the line's decisions in the registry, on a question the episode's card has or a follow-up the card's answer on another line opened (registry follow_ups); anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label, keep_label, unsure, discard; task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure */
             decision: string;
+            /** @description custom_label: required; adopt_suggestion: may be left out, the question's suggestion is taken */
             new_label?: string | null;
             note?: string | null;
         };
@@ -3466,6 +3487,7 @@ export interface operations {
         parameters: {
             query?: {
                 source?: components["schemas"]["ModuleId"];
+                /** @description by card status, the same on both tabs: pending = not answered yet (on the appeals tab too, although appeals never count in AdjudicationCounts.pending) or answered unsure; decided; unapplied = answered but not executed yet */
                 status?: "pending" | "decided" | "unapplied" | "all";
                 /** @description appeals lists rejects attributed to an appealable module (registry `appealable`; today task_success alone and dedup); physical and structural gates and soft scores are final */
                 tab?: "review" | "appeals";

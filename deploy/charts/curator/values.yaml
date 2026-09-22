@@ -1,0 +1,143 @@
+# Curator v2 Helm Chart 的可调项（设计：docs/design/09-deployment.md §2；运维步骤：deploy/README.md）。
+#
+# 这里不放任何密钥：主密钥、登录账号表、登录密码都从已有的 K8s Secret 读，
+# 建 Secret 的命令见 deploy/README.md「创建 Secret」。
+
+image:
+  repository: registry.example.com/curator   # 必改：镜像仓库地址（示例值，构建与推送见 deploy/README.md）
+  tag: ""                       # 默认用 Chart.appVersion
+  digest: ""                    # 可选，形如 sha256:…；配了就按摘要拉取，tag 只作标注
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []            # 私有镜像仓库的拉取凭证（Secret 名），例：[{name: cr-pull}]
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 1                 # ⚠️ 单副本。>1 目前不支持（SQLite 各副本独立），填别的值 Chart 直接报错
+
+server:
+  basePath: ""                  # 挂载前缀，现网为 /curation，见 §2.4；经 APIG 分流且不剥前缀时要和分流路径一致
+  publicBaseUrl: ""             # 生成给 Agent 的绝对链接用；为空则 links 给相对路径。例：https://kit.example.com
+  maxRunningTasks: 1            # 同时运行的任务数，其余排队，见 04 篇 §2.3。Daemon 还不读这一项（任务编排 W5），填 1 以外的值报错
+  port: 8080                    # 容器内的监听端口（CURATOR_PORT）
+  tzOffset: "+08:00"            # 站点时区的 UTC 偏移（CURATOR_TZ_OFFSET），概览「近 7 天」按它切分每一天
+  sseHeartbeatSeconds: ""       # SSE 空闲心跳（CURATOR_SSE_HEARTBEAT_S）；空 = Daemon 默认 15 秒，网关空闲超时比它短时调小
+  tosEndpoint: ""               # TOS_ENDPOINT：部署所在地域的 TOS 端点；填内网端点（如 tos-cn-beijing.ivolces.com）时
+                                # 同地域的调用走内网，也原样交给 CLI。没有公网出口的集群必须配
+
+logging:
+  format: json                  # json | text（CURATOR_LOG_FORMAT）；每行一个 JSON 对象，密钥类字段一律打成 ***
+  level: INFO                   # CURATOR_LOG_LEVEL
+
+auth:
+  mode: htpasswd                # htpasswd | basic（CURATOR_AUTH_MODE）。配置不全时 Daemon 拒绝所有请求，不会退回「不鉴权」
+  htpasswdSecret: curator-users # 外部 Secret，键名 htpasswd；可与 rerun viewer 共用同一张表
+  htpasswdKey: htpasswd
+  # basic 模式（单用户）：用户名写这里，密码放在外部 Secret 里
+  username: ""
+  existingPasswordSecret: ""
+  passwordKey: password
+
+masterKey:
+  existingSecret: ""            # 留空则 Chart 生成一个（仅适合试用）；生产环境用自己建的 Secret，并另行备份主密钥
+  key: masterKey                # 当前主密钥：32 字节，base64（openssl rand -base64 32）
+  nextKey: masterKeyNext        # 轮换中的新主密钥（08 篇 §2.1），平时没有这个键
+  versionKey: masterKeyVersion  # 当前主密钥的版本号，平时没有这个键（= 第 1 版）；轮换收尾时和 masterKey 一起改
+
+persistence:
+  data:                         # SQLite + 任务工作目录 + 裁决副本 + 库备份
+    size: 100Gi
+    storageClass: ""            # ⚠️ 必须是块存储（EBS）。NAS / TOS-FSX 这类网络盘会损坏 SQLite。留空 = 集群默认存储类
+    existingClaim: ""           # 改用一个已有的 PVC（恢复、迁移时）；留空由 StatefulSet 按模板建 data-<名字>-0
+    mountPath: /data            # CURATOR_DATA_DIR
+  scratch:                      # 导出时的视频临时文件；可丢
+    type: emptyDir              # emptyDir | pvc
+    size: 200Gi                 # emptyDir 时是 sizeLimit：容器里 df 看不到这个上限，写超了 kubelet 会驱逐 Pod；
+                                # 留空 = 不设上限。长期跑建议 type: pvc
+    storageClass: ""            # type: pvc 时用；同样不能是 FSX 挂载（PyAV 收尾要 seek 回文件头，FSX 拒绝随机写）
+    mountPath: /scratch         # CURATOR_SCRATCH_DIR 与 CURATION_EXPORT_SCRATCH
+
+resources:
+  requests: {cpu: "8",  memory: 32Gi}
+  limits:   {cpu: "30", memory: 110Gi}    # 目标节点 32C128G；按节点 allocatable 留余量，别照抄规格
+
+# 以下几段写进站点配置 site.yaml（ConfigMap，CURATION_CONFIG 指向它，09 篇 §3）。
+publicDatasets:                 # HuggingFace 缓存桶；不配则新建页不出现这个数据来源
+  bucket: ""
+  region: ""
+  prefix: dataset
+  manifest: dataset_files.json
+  label: HuggingFace 缓存桶
+
+localDataRoot: ""               # 留空 = 关闭「本地挂载路径」来源；配了则只允许这个根目录之下（目录经 extraVolumes 挂进来）
+
+concurrency:                    # 站点级默认与上限，见 04 篇 §2；任务只能在上限之内再往下压（planner 读 site.yaml 的这一段）
+  cpu: 8
+  cpuMax: 16
+  vlmParallelism: 64
+  vlmParallelismMax: 128
+
+vlm:                            # 04 篇 §2.2、§4.2
+  merge:
+    enabled: true               # 请求合并的一键开关；关了之后 planner 一律出 strategy=none
+  gates: {}                     # 逐把覆盖由 N 推导出的闸门，例如 {probe: 48}；只在调优时用
+
+reasoningEffortTable: []        # 思考强度映射表的站点覆盖（08 篇 §4.1，CURATOR_REASONING_EFFORT_TABLE），例：
+                                # [{prefix: glm-4.5, levels: [low, medium, high], default: medium}]
+
+pipelineConfigOverride: {}      # 流水线站点配置，只写与出厂默认（backend/curation/pipeline/default.yaml）不同的部分；
+                                # 与上面几段同名的键以上面为准
+
+backup:                         # 09 篇 §6。Daemon 还没有触发备份的内部接口，enabled: true 会报错；手动备份见 deploy/README.md
+  enabled: false
+  schedule: "0 3 * * *"
+  tosUri: ""                    # 备份上传到哪；需要一个有写权限的访问密钥名
+  credential: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}               # 例如内网负载均衡的注解（经 APIG 分流时按网关的要求配）
+
+ingress:                        # 可选；经 APIG 分流时一般不用
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []                     # 例：[{host: kit.example.com}]；路径取 server.basePath（为空则 /），不剥前缀
+  tls: []                       # 例：[{secretName: kit-tls, hosts: [kit.example.com]}]
+
+# 优雅停机（09 篇 §2.3）：SIGTERM 后 Daemon 让运行中的 CLI 子进程收尾当前 episode（最多 90 秒）、
+# 把任务置为系统暂停并退出，新 Pod 起来后自动续跑。宽限期至少 = preStop + 90 秒 + 10 秒余量，不够 Chart 报错。
+terminationGracePeriodSeconds: 120
+preStopSleepSeconds: 5          # 收到 SIGTERM 之前先等几秒，让 Service / 网关先摘掉这个 Pod；0 = 不要 preStop
+
+probes:                         # 09 篇 §2.2。路径固定：根路径的 /healthz、/readyz，免鉴权
+  liveness:  {periodSeconds: 10, failureThreshold: 6, timeoutSeconds: 3}
+  readiness: {periodSeconds: 5, failureThreshold: 3, timeoutSeconds: 3}    # /readyz 里的写库检查最多等 2 秒
+  startup:   {periodSeconds: 5, failureThreshold: 60, timeoutSeconds: 3}   # 给足 5 分钟：启动时跑迁移与任务状态对账
+
+podSecurityContext:             # 与镜像里的运行用户一致（uid/gid 10001）；fsGroup 让数据卷对它可写
+  runAsUser: 10001
+  runAsGroup: 10001
+  runAsNonRoot: true
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+maintenance:
+  enabled: false                # 维护模式：Pod 只 sleep、不起 Daemon，数据卷照挂（恢复备份等离线操作），见 deploy/README.md
+
+serviceAccountName: ""          # Daemon 不调 K8s API；Pod 不挂 ServiceAccount 令牌
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+extraEnv: []                    # 追加的环境变量（name/value 或 valueFrom），例：CURATION_EPHEMERAL_LIMIT_BYTES
+extraVolumes: []
+extraVolumeMounts: []

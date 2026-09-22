@@ -42,20 +42,23 @@ export function AdjudicationPage() {
   const [statusFilter, setStatusFilter] = useState('pending');
   const sq = statusQuery(statusFilter);
   const review = useAdjudicationList(id, { tab: 'review', status: sq.status, source: sources.length === 1 ? sources[0] : null }, Boolean(t) && tab === 'review');
-  const appeals = useAdjudicationList(id, { tab: 'appeals', status: 'all', source: null }, Boolean(t) && tab === 'appeals');
+  const appeals = useAdjudicationList(id, { tab: 'appeals', status: 'all', source: sources.length === 1 ? sources[0] : null }, Boolean(t) && tab === 'appeals');
   const decisions = useDecisions(id);
   const [applyOpen, setApplyOpen] = useState(false);
   const [applying, setApplying] = useState(false);
 
   const reviewCards: AdjudicationCard[] = useMemo(() => (review.data?.pages ?? []).flatMap((p) => p.items ?? []), [review.data]);
   const appealCards: AdjudicationCard[] = useMemo(() => (appeals.data?.pages ?? []).flatMap((p) => p.items ?? []), [appeals.data]);
-  const shown = reviewCards.filter((c) => keepCard(c, { sources, line, onlyUnsure: sq.onlyUnsure })).map((c) => viewCard(c, decisions.local));
-  const appealViews = appealCards.map((c) => viewCard(c, decisions.local));
+  // Review kinds, their titles and decisions come from the registry catalog (D43).
+  const catalog = reg.data?.review_lines;
+  const shown = reviewCards.filter((c) => keepCard(c, { sources, line, onlyUnsure: sq.onlyUnsure })).map((c) => viewCard(c, decisions.local, catalog));
+  const appealViews = appealCards.filter((c) => keepCard(c, { sources, line: '', onlyUnsure: false })).map((c) => viewCard(c, decisions.local, catalog));
   const counts = decisions.counts ?? (tab === 'review' ? review.data?.pages[0]?.counts : appeals.data?.pages[0]?.counts) ?? review.data?.pages[0]?.counts ?? appeals.data?.pages[0]?.counts ?? null;
   const moduleOptions = (reg.data?.modules ?? []).filter((m) => m.produces_adjudication).map((m) => ({ label: m.name_zh, value: m.id }));
-  const typeOptions = (['label', 'task_verdict'] as const).map((l) => {
-    const owner = reviewCards.flatMap((c) => c.questions).find((q) => q.line === l)?.source_module;
-    return { label: owner ? zh.adjudication.typeOption(zh.adjudication.lineName[l], moduleName(reg.data, owner)) : zh.adjudication.lineName[l], value: l };
+  // The review tab asks about episodes still in passed; appeals (applies_to reject) have their own tab.
+  const typeOptions = (catalog ?? []).filter((l) => l.applies_to === 'passed').map((l) => {
+    const owner = reviewCards.flatMap((c) => c.questions).find((q) => q.line === l.id)?.source_module;
+    return { label: owner ? zh.adjudication.typeOption(l.title_zh, moduleName(reg.data, owner)) : l.title_zh, value: l.id };
   });
 
   const setParam = (key: string, value: string | null) => {
@@ -134,20 +137,22 @@ export function AdjudicationPage() {
           )}
         </Space>
       </div>
+      <Space wrap style={{ marginBottom: 12 }}>
+        <span>{zh.adjudication.filterSource}</span>
+        <Select
+          mode="multiple"
+          allowClear
+          style={{ minWidth: 220 }}
+          placeholder={zh.adjudication.all}
+          aria-label={zh.adjudication.filterSource}
+          value={sources}
+          onChange={(v: string[]) => setParam('source', v.join(','))}
+          options={moduleOptions}
+        />
+      </Space>
       <Tabs activeTab={tab} onChange={(k) => setParam('tab', k === 'appeals' ? 'appeals' : null)}>
         <Tabs.TabPane key="review" title={zh.adjudication.tabReview}>
           <Space wrap style={{ marginBottom: 12 }}>
-            <span>{zh.adjudication.filterSource}</span>
-            <Select
-              mode="multiple"
-              allowClear
-              style={{ minWidth: 220 }}
-              placeholder={zh.adjudication.all}
-              aria-label={zh.adjudication.filterSource}
-              value={sources}
-              onChange={(v: string[]) => setParam('source', v.join(','))}
-              options={moduleOptions}
-            />
             <span>{zh.adjudication.filterType}</span>
             <Select style={{ width: 260 }} aria-label={zh.adjudication.filterType} value={line} onChange={setLine} options={[{ label: zh.adjudication.all, value: '' }, ...typeOptions]} />
             <span>{zh.adjudication.filterStatus}</span>
@@ -170,7 +175,7 @@ export function AdjudicationPage() {
           ) : (
             <div className="card-gap" data-testid="cards">
               {shown.map((v) => (
-                <EpisodeCard key={v.ep} taskId={id} rev={rev} view={v} onDecide={(l, d, label) => decisions.save(v.ep, l, d, label ?? null)} />
+                <EpisodeCard key={v.ep} taskId={id} rev={rev} view={v} catalog={catalog} onDecide={(l, d, label) => decisions.save(v.ep, l, d, label ?? null)} />
               ))}
             </div>
           )}
@@ -180,13 +185,14 @@ export function AdjudicationPage() {
             taskId={id}
             rev={rev}
             views={appealViews}
+            catalog={catalog}
             loading={appeals.isLoading || appeals.isFetchingNextPage}
             error={appeals.error}
             hasMore={Boolean(appeals.hasNextPage)}
             pages={appeals.data?.pages.length ?? 0}
             onMore={() => void appeals.fetchNextPage()}
             onRetry={() => void appeals.refetch()}
-            onDecide={(ep, l, d) => decisions.save(ep, l, d)}
+            onDecide={(ep, l, d, label) => decisions.save(ep, l, d, label ?? null)}
           />
         </Tabs.TabPane>
       </Tabs>
@@ -198,7 +204,7 @@ export function AdjudicationPage() {
           </div>
         </>
       ) : null}
-      <ApplyDialog taskId={id} visible={applyOpen} local={decisions.local} busy={applying} onCancel={() => setApplyOpen(false)} onOk={(r) => void apply(r)} />
+      <ApplyDialog taskId={id} visible={applyOpen} local={decisions.local} catalog={catalog} busy={applying} onCancel={() => setApplyOpen(false)} onOk={(r) => void apply(r)} />
     </div>
   );
 }

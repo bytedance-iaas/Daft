@@ -54,7 +54,24 @@ describe('质检报告 (07 §5)', () => {
     expect(within(sp).getByRole('button', { name: '重试此模块' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '重试这 43 条' })).toBeDisabled();
     expect(within(screen.getByTestId('section-task_success')).getByRole('button', { name: '去裁决（6）' })).toBeDisabled();
+    expect(within(screen.getByTestId('section-task_success')).getByRole('button', { name: '可复议（5）' })).toBeDisabled();
     expect(screen.queryByRole('link', { name: '去裁决（10）' })).toBeNull();
+  });
+
+  it('a section with appealable rejects offers 可复议（N） next to 去裁决（N）, filtered to that module (D42)', async () => {
+    const { user } = renderApp(REPORT);
+    const ts = await screen.findByTestId('section-task_success');
+    expect(within(ts).getByRole('link', { name: '去裁决（6）' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?source=task_success`);
+    expect(within(ts).getByRole('link', { name: '可复议（5）' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?tab=appeals&source=task_success`);
+    const dedup = screen.getByTestId('section-dedup');
+    // Nothing pending for dedup, one reject a person may appeal.
+    expect(within(dedup).queryByRole('link', { name: /去裁决/ })).toBeNull();
+    await user.click(within(dedup).getByRole('link', { name: '可复议（1）' }));
+    await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN_TASK}/adjudication?tab=appeals&source=dedup`));
+    const list = await screen.findByTestId('appeals');
+    expect(await within(list).findByTestId('card-44')).toBeInTheDocument();
+    expect(within(list).queryByTestId('card-6')).toBeNull();
+    expect(screen.getByRole('tab', { name: '被拒复议' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('switching revisions and back to the current one', async () => {

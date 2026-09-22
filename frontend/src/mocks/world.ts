@@ -1037,11 +1037,11 @@ export function episodeView(ep: number, revision: number): EpisodeView {
       modules.task_success = record(ep, 'task_success', 'hard', 'pass', null, { completion_end: 0.93 });
     }
   }
-  const reasons: Record<string, unknown>[] = [];
+  const reasons: NonNullable<EpisodeView['reasons']> = [];
   if (ep === 18) reasons.push({ module: 'timestamp_check', text: '残段：全程 0.5 秒（8 帧）' });
   if (ep === 44) reasons.push({ module: 'dedup', text: '与 ep 43 字节级完全重复' });
   if (TS_REJECTS.includes(ep)) reasons.push({ module: 'task_success', text: '3 路复核一致判未完成' });
-  const review: Record<string, unknown>[] = [];
+  const review: NonNullable<EpisodeView['review']> = [];
   if (LABEL_REVIEW.includes(ep)) review.push({ module: 'skill_profile', text: '标注与画面归入不同技能族' });
   if (VERDICT_REVIEW.includes(ep)) review.push({ module: 'task_success', text: '证据不足，弃权' });
   const scope: 'delivery' | 'input' = list === 'passed' ? 'delivery' : 'input';
@@ -1122,10 +1122,18 @@ export function mainReport(revision: 1 | 2): Report {
           ],
         },
         tables: [{ id: 'task_success', rows: 49, file: 'tables/task_success.parquet' }],
-        adjudication: { pending: 6 },
+        // 6 abstentions to decide; its 5 rejects may be appealed (not pending, D42).
+        adjudication: { pending: 6, appealable: 5 },
         episodes_error: 2,
       },
-      { id: 'dedup', state: 'succeeded', gate: 'dedup', summary: { checked: 42, groups: 1, removed: 1 }, tables: [{ id: 'dedup_groups', rows: 2, file: 'tables/dedup_groups.parquet' }], adjudication: null },
+      {
+        id: 'dedup',
+        state: 'succeeded',
+        gate: 'dedup',
+        summary: { checked: 42, groups: 1, removed: 1 },
+        tables: [{ id: 'dedup_groups', rows: 2, file: 'tables/dedup_groups.parquet' }],
+        adjudication: { pending: 0, appealable: 1 },
+      },
       failedProfile
         ? { id: 'skill_profile', state: 'failed', gate: 'none', summary: {}, tables: [], adjudication: null, error: 'skill_profile: 429 QuotaExceeded x20, circuit open, exit 4' }
         : {
@@ -1297,6 +1305,20 @@ export function appealQuestions(): Map<number, AdjudicationCard['questions']> {
   for (const ep of TS_REJECTS) {
     out.set(ep, [{ line: 'reject_appeal', source_module: 'task_success', reason: chains[ep], annotation: taskText(ep).text, caption: null, suggestion: null, priority: null, latest_decision: null }]);
   }
+  // D42: a dedup reject can be appealed too; the card names the episode it duplicates.
+  out.set(44, [
+    {
+      line: 'reject_appeal',
+      source_module: 'dedup',
+      reason: '动作数据与视频字节级完全一致；保留遍历顺序里先出现的那一条',
+      duplicate_of: 43,
+      annotation: taskText(44).text,
+      caption: null,
+      suggestion: null,
+      priority: null,
+      latest_decision: null,
+    },
+  ]);
   return out;
 }
 
