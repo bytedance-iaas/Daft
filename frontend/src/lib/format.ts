@@ -2,6 +2,7 @@
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/zh-cn';
+import { zh } from '../locales/zh';
 
 dayjs.extend(relativeTime);
 dayjs.locale('zh-cn');
@@ -58,7 +59,7 @@ export function shortTime(ms: number | null | undefined): string {
 /** Relative time in Chinese: 「3 分钟前」 */
 export function relativeTimeText(ms: number | null | undefined, now: number = Date.now()): string {
   if (!ms) return '—';
-  if (Math.abs(now - ms) < 45_000) return '刚刚';
+  if (Math.abs(now - ms) < 45_000) return zh.time.justNow;
   return dayjs(ms).from(dayjs(now));
 }
 

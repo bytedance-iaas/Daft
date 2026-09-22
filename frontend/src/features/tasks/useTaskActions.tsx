@@ -70,7 +70,7 @@ export function showPrecheckFailure(err: ApiError): void {
       <ul style={{ margin: 0, paddingLeft: 18 }} data-testid="precheck-list">
         {items.map((i) => (
           <li key={i.check} style={{ color: i.ok ? 'var(--c-success)' : 'var(--c-danger)' }}>
-            {zh.actions.precheck[i.check] ?? i.check}：{i.ok ? '通过' : i.reason ?? '没过'}
+            {zh.actions.precheck[i.check] ?? i.check}：{i.ok ? zh.actions.precheckPass : i.reason ?? zh.actions.precheckFail}
             {!i.ok && i.target ? <div className="mono muted">{i.target}</div> : null}
           </li>
         ))}
@@ -182,7 +182,7 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
       case 'export':
         confirm(
           t.exported ? zh.actions.confirmExport.titleAgain : zh.actions.confirmExport.titleFirst,
-          zh.actions.confirmExport.content(t.deliveryUri ?? '交付目录'),
+          zh.actions.confirmExport.content(t.deliveryUri ?? zh.taskForm.outputUri),
           async () => {
             try {
               await unwrap(api().POST('/tasks/{id}/reexport', { params: { path: { id }, header: { 'Idempotency-Key': idempotencyKey() } } }));

@@ -40,7 +40,7 @@ function CardMedia({ taskId, ep, rev }: { taskId: string; ep: number; rev: numbe
                 {zh.report.playAll}
               </Button>
             ) : null}
-            {origin ? <span className="muted" style={{ fontSize: 12 }}>{`视频来自${zh.report.videoOrigin[origin] ?? origin}，经预签名地址直连 TOS`}</span> : null}
+            {origin ? <span className="muted" style={{ fontSize: 12 }}>{zh.report.videoFrom(zh.report.videoOrigin[origin] ?? origin)}</span> : null}
           </Space>
         </>
       ) : (

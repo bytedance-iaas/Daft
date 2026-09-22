@@ -65,7 +65,7 @@ export function PurgeDialog({ taskId, onClose }: { taskId: string | null; onClos
               field="name"
               label={zh.actions.purgeDialog.confirmLabel(t.name)}
               rules={[
-                { required: true, message: zh.errors.required('任务名称') },
+                { required: true, message: zh.errors.required(zh.taskForm.name) },
                 {
                   validator: (v: string | undefined, cb: (msg?: string) => void) => cb(v && v !== t.name ? zh.actions.purgeDialog.mismatch : undefined),
                 },

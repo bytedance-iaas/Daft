@@ -31,7 +31,7 @@ export function ModelSection({
   const names = (registry?.modules ?? [])
     .filter((m) => needsVlm(m) && activeModules(v).includes(m.id))
     .map((m) => m.name_zh)
-    .join('与');
+    .join(zh.common.and);
   const slow = ['high', 'xhigh', 'max'].includes(v.effort);
   return (
     <Card

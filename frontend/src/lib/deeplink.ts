@@ -131,12 +131,12 @@ export function deeplinkEndpoint(qp: QueryInput): { host: string | null; present
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 
 /** v1 safe_name: returns the problem in Chinese, or null when the name is fine. */
-export function safeNameError(name: string, what = '名字'): string | null {
+export function safeNameError(name: string, what: string = zh.deeplink.nameWhat): string | null {
   const s = String(name ?? '').trim();
-  if (!s) return `${what}不能为空`;
-  if (s.includes('/') || s.includes('\\')) return `${what}里不能带路径分隔符：${JSON.stringify(s)}（只填名字，目录由系统拼）`;
-  if (s === '.' || s === '..' || s.startsWith('.')) return `${what}不能以点开头：${JSON.stringify(s)}`;
-  if (!NAME_RE.test(s)) return `${what}只能用字母、数字、点、下划线、连字符，且以字母或数字开头，最长 80 个字符：${JSON.stringify(s)}`;
+  if (!s) return zh.deeplink.nameEmpty(what);
+  if (s.includes('/') || s.includes('\\')) return zh.deeplink.nameSeparator(what, JSON.stringify(s));
+  if (s === '.' || s === '..' || s.startsWith('.')) return zh.deeplink.nameDot(what, JSON.stringify(s));
+  if (!NAME_RE.test(s)) return zh.deeplink.nameChars(what, JSON.stringify(s));
   return null;
 }
 

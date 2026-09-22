@@ -49,7 +49,7 @@ export function splitSummary(summary: Record<string, unknown> | null | undefined
 
 export function formatScalar(v: SummaryScalar['value']): string {
   if (v === null) return '—';
-  if (typeof v === 'boolean') return v ? '是' : '否';
+  if (typeof v === 'boolean') return v ? zh.common.yes : zh.common.no;
   if (typeof v === 'number') return Number.isInteger(v) ? v.toLocaleString('en-US') : String(Number(v.toFixed(3)));
   return v;
 }

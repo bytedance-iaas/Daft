@@ -30,8 +30,17 @@ export default tseslint.config(
           selector: "Literal[value=/^\\/(api|events)\\//]",
           message: 'Build API and SSE URLs from src/base.ts; never hard-code the root path.',
         },
+        // All UI text lives in src/locales/zh.ts (doc 07 §9), so it can be reviewed in one place.
+        { selector: 'Literal[value=/[\\u4e00-\\u9fff]/]', message: 'Put UI text in src/locales/zh.ts.' },
+        { selector: 'TemplateElement[value.raw=/[\\u4e00-\\u9fff]/]', message: 'Put UI text in src/locales/zh.ts.' },
+        { selector: 'JSXText[value=/[\\u4e00-\\u9fff]/]', message: 'Put UI text in src/locales/zh.ts.' },
       ],
     },
+  },
+  {
+    // The text itself.
+    files: ['src/locales/**'],
+    rules: { 'no-restricted-syntax': 'off' },
   },
   {
     files: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/mocks/**'],

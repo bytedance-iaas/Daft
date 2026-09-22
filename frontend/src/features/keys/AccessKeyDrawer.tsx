@@ -118,7 +118,7 @@ export function AccessKeyDrawer({
         <Form.Item
           label={zh.credentials.name}
           field="name"
-          rules={editing ? [] : [required(zh.credentials.name), { maxLength: 64, message: '名称最多 64 个字符' }]}
+          rules={editing ? [] : [required(zh.credentials.name), { maxLength: 64, message: zh.errors.maxLength(zh.credentials.name, 64) }]}
           extra={zh.credentials.nameHelp}
         >
           <Input placeholder={zh.credentials.namePlaceholder} disabled={Boolean(editing)} />
@@ -128,7 +128,7 @@ export function AccessKeyDrawer({
           field="region"
           rules={[
             { required: true, message: zh.errors.requiredSelect(zh.credentials.region) },
-            { validator: (v: string | undefined, cb: (m?: string) => void) => cb(v && !REGION_RE.test(v) ? '地域写法不对（形如 cn-beijing）' : undefined) },
+            { validator: (v: string | undefined, cb: (m?: string) => void) => cb(v && !REGION_RE.test(v) ? zh.errors.regionBad : undefined) },
           ]}
         >
           <RegionField />

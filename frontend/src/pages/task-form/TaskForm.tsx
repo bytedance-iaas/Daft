@@ -538,7 +538,7 @@ export function TaskForm(p: TaskFormProps) {
             {e.dataset.uri}{' '}
             {e.status === 'ok' && e.result ? (
               <Tag size="small" color={e.result.format.supported ? 'green' : 'red'}>
-                {e.result.format.supported ? `${zh.taskForm.preflightOk} · ${e.result.dataset?.episode_count ?? '?'} 条` : zh.taskForm.preflightUnsupported}
+                {e.result.format.supported ? `${zh.taskForm.preflightOk} · ${e.result.dataset ? zh.common.items(e.result.dataset.episode_count) : '?'}` : zh.taskForm.preflightUnsupported}
               </Tag>
             ) : e.status === 'error' ? (
               <Tag size="small" color="red">

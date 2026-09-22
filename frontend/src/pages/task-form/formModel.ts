@@ -128,8 +128,8 @@ export function effectiveOutputRegion(v: FormValues): string {
 export function validateScreen1(v: FormValues, ctx: ValidationContext): Errors {
   const e: Errors = {};
   if (!v.name.trim()) e.name = zh.errors.required(zh.taskForm.name);
-  else if (v.name.length > 128) e.name = '任务名称最多 128 个字符';
-  if (v.note.length > 2000) e.note = '备注最多 2000 个字符';
+  else if (v.name.length > 128) e.name = zh.errors.maxLength(zh.taskForm.name, 128);
+  if (v.note.length > 2000) e.note = zh.errors.maxLength(zh.taskForm.note, 2000);
   if (!ctx.batch) {
     if (v.source === 'tos') {
       if (!v.datasetUri.trim()) e.datasetUri = zh.errors.required(zh.taskForm.datasetUri);
@@ -145,11 +145,11 @@ export function validateScreen1(v: FormValues, ctx: ValidationContext): Errors {
   }
   if (v.source === 'tos') {
     if (!v.region) e.region = zh.errors.requiredSelect(zh.taskForm.region);
-    else if (!REGION_RE.test(v.region)) e.region = '地域写法不对（形如 cn-beijing）';
+    else if (!REGION_RE.test(v.region)) e.region = zh.errors.regionBad;
   }
   if (!v.outputUri.trim()) e.outputUri = zh.errors.required(zh.taskForm.outputUri);
   else if (!TOS_URI.test(v.outputUri.trim())) e.outputUri = zh.taskForm.outputUriBad;
-  if (v.outputRegion && !REGION_RE.test(v.outputRegion)) e.outputRegion = '地域写法不对（形如 cn-beijing）';
+  if (v.outputRegion && !REGION_RE.test(v.outputRegion)) e.outputRegion = zh.errors.regionBad;
   if (!effectiveOutputRegion(v) && v.source !== 'tos') e.outputRegion = zh.errors.requiredSelect(zh.taskForm.outputRegion);
   if (!effectiveOutputCredential(v)) e.outputCredential = zh.errors.requiredSelect(zh.taskForm.outputCredential);
   const total = ctx.preflight?.dataset?.episode_count ?? null;
@@ -162,7 +162,7 @@ export function validateScreen1(v: FormValues, ctx: ValidationContext): Errors {
     if (!v.expr.trim()) e.expr = zh.errors.required(zh.taskForm.expr);
     else {
       const p = parseForDisplay(v.expr, null);
-      if (p.ok && total !== null && !ctx.batch && [...p.indices].some((i) => i >= total)) e.expr = `超出了范围：数据集只有 ${total} 条（ep 0–${total - 1}）`;
+      if (p.ok && total !== null && !ctx.batch && [...p.indices].some((i) => i >= total)) e.expr = zh.errors.rangeTooLarge(total);
     }
   }
   if (!v.modules.length) e.modules = zh.taskForm.noModule;
@@ -172,10 +172,10 @@ export function validateScreen1(v: FormValues, ctx: ValidationContext): Errors {
   }
   for (const k of Object.keys(v.timeouts) as TimeoutKey[]) {
     const t = v.timeouts[k];
-    if (typeof t !== 'number' || !(t > 0)) e[`timeouts.${k}`] = '超时要大于 0 秒';
+    if (typeof t !== 'number' || !(t > 0)) e[`timeouts.${k}`] = zh.errors.timeoutPositive;
   }
-  if (v.cpuLimit !== undefined && (!Number.isInteger(v.cpuLimit) || v.cpuLimit < 1)) e.cpuLimit = '上限要是不小于 1 的整数，留空表示不限';
-  if (v.vlmLimit !== undefined && (!Number.isInteger(v.vlmLimit) || v.vlmLimit < 1)) e.vlmLimit = '上限要是不小于 1 的整数，留空表示不限';
+  if (v.cpuLimit !== undefined && (!Number.isInteger(v.cpuLimit) || v.cpuLimit < 1)) e.cpuLimit = zh.errors.limitInteger;
+  if (v.vlmLimit !== undefined && (!Number.isInteger(v.vlmLimit) || v.vlmLimit < 1)) e.vlmLimit = zh.errors.limitInteger;
   return e;
 }
 

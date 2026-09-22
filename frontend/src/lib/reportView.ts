@@ -51,7 +51,7 @@ export function recordError(e: ResultRecord['error']): string {
   if (!e || typeof e !== 'object') return '';
   const incidents = (e as { incidents?: { step: string; cause?: string; attempts?: number; camera?: string }[] }).incidents ?? [];
   return incidents
-    .map((i) => `${i.step}${i.camera ? `（${i.camera}）` : ''}${i.cause ? `：${i.cause}` : ''}${i.attempts ? `（${i.attempts} 次）` : ''}`)
+    .map((i) => `${i.step}${i.camera ? `（${i.camera}）` : ''}${i.cause ? `：${i.cause}` : ''}${i.attempts ? zh.report.attempts(i.attempts) : ''}`)
     .join('；');
 }
 
@@ -132,5 +132,5 @@ export function callKindLabel(kind: string): string {
 export function seconds(v: number | null | undefined): string {
   if (v === null || v === undefined) return '—';
   if (v >= 90) return zh.time.duration(v);
-  return `${Number(v.toFixed(1))} 秒`;
+  return zh.common.seconds(Number(v.toFixed(1)));
 }

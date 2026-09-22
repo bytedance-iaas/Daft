@@ -59,7 +59,7 @@ export function AppealsTab({
             <ul style={{ marginTop: 0 }} data-testid="final-rejects">
               {others.map((r) => (
                 <li key={r.module}>
-                  {moduleName(reg.data, r.module)}：{r.count} 条
+                  {zh.adjudication.finalReject(moduleName(reg.data, r.module), r.count)}
                 </li>
               ))}
             </ul>

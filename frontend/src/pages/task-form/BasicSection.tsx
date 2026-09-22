@@ -107,7 +107,7 @@ export function BasicSection(p: BasicSectionProps) {
                 placeholder={zh.taskForm.publicDataset}
                 aria-label={zh.taskForm.publicDataset}
                 showSearch
-                options={(p.publicCatalog ?? []).map((d) => ({ label: `${d.name}${d.episodes ? ` · ${d.episodes} 条` : ''}`, value: d.uri }))}
+                options={(p.publicCatalog ?? []).map((d) => ({ label: `${d.name}${d.episodes ? ` · ${zh.common.items(d.episodes)}` : ''}`, value: d.uri }))}
               />
             </Field>
           </Col>
@@ -197,7 +197,7 @@ export function BasicSection(p: BasicSectionProps) {
       <Row gutter={24}>
         <Col span={12}>
           <Field
-            label={`${p.batch ? '交付根目录' : zh.taskForm.outputUri}（${zh.taskForm.outputHelp}）`}
+            label={`${p.batch ? zh.taskForm.outputRoot : zh.taskForm.outputUri}（${zh.taskForm.outputHelp}）`}
             required
             error={errors.outputUri ?? probeError}
             ok={probeOk ?? (probeForField && p.probe.status === 'running' ? zh.taskForm.probeRunning : undefined)}
@@ -209,7 +209,7 @@ export function BasicSection(p: BasicSectionProps) {
               value={v.outputUri}
               onChange={(x) => set({ outputUri: x }, 'outputUri')}
               onBlur={p.onOutputBlur}
-              placeholder="tos://存储桶名/目录"
+              placeholder={zh.taskForm.outputPlaceholder}
               aria-label={zh.taskForm.outputUri}
               status={errors.outputUri || probeError ? 'error' : undefined}
             />

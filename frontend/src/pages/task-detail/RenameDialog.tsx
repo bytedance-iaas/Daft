@@ -38,10 +38,10 @@ export function RenameDialog({ task, visible, onClose }: { task: Task; visible: 
   return (
     <Modal title={zh.taskDetail.renameTitle} visible={visible} onCancel={onClose} onOk={() => void save()} confirmLoading={busy} okText={zh.common.save} cancelText={zh.common.cancel} unmountOnExit>
       <Form form={form} layout="vertical">
-        <Form.Item label={zh.taskForm.name} field="name" rules={[{ required: true, message: zh.errors.required(zh.taskForm.name) }, { maxLength: 128, message: '任务名称最多 128 个字符' }]}>
+        <Form.Item label={zh.taskForm.name} field="name" rules={[{ required: true, message: zh.errors.required(zh.taskForm.name) }, { maxLength: 128, message: zh.errors.maxLength(zh.taskForm.name, 128) }]}>
           <Input placeholder={zh.taskForm.namePlaceholder} />
         </Form.Item>
-        <Form.Item label={zh.taskForm.note} field="note" rules={[{ maxLength: 2000, message: '备注最多 2000 个字符' }]}>
+        <Form.Item label={zh.taskForm.note} field="note" rules={[{ maxLength: 2000, message: zh.errors.maxLength(zh.taskForm.note, 2000) }]}>
           <Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} placeholder={zh.taskForm.notePlaceholder} />
         </Form.Item>
       </Form>

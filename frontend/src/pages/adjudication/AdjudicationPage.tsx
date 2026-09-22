@@ -16,20 +16,9 @@ import { AppealsTab } from './AppealsTab';
 import { EpisodeCard } from './EpisodeCard';
 import { useAdjudicationList, useDecisions, type AdjTab } from './useAdjudication';
 
-const DECISION_TEXT: Record<DecisionValue, string> = {
-  adopt_suggestion: '采纳新标注',
-  custom_label: '改写标注',
-  keep_label: '维持原标注',
-  success: '判成功',
-  failure: '判失败',
-  restore: '恢复为可用',
-  keep_rejected: '维持拒绝',
-  unsure: '拿不准',
-  discard: '整条弃用',
-};
-
 function describe(v: CardView): string {
-  const parts = v.unapplied.map((u) => (u.decision === 'custom_label' && u.new_label ? `${DECISION_TEXT[u.decision]}「${u.new_label}」` : DECISION_TEXT[u.decision]));
+  const text = (d: DecisionValue) => zh.adjudication.decisionText[d] ?? d;
+  const parts = v.unapplied.map((u) => (u.decision === 'custom_label' && u.new_label ? `${text(u.decision)}「${u.new_label}」` : text(u.decision)));
   const effect = v.discarded || v.unapplied.every((u) => u.line === 'reject_appeal') ? '' : v.rerunsModel ? zh.adjudication.rerun : zh.adjudication.noRerun;
   return `${zh.report.episode(v.ep)}：${parts.join('，')}${effect ? ` → ${effect}` : ''}`;
 }

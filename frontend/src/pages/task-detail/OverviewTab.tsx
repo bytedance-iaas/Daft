@@ -133,7 +133,7 @@ function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
   const usage = useQuery({ queryKey: qk.usage(task.id), queryFn: () => unwrap(api().GET('/tasks/{id}/usage', { params: { path: { id: task.id } } })) });
   const u = task.usage;
   const subtaskLabel = (id: string) => subtaskName(subtasks, id);
-  const moduleLabel = (id: string) => (id.includes('+') ? `合并请求（${id.split('+').map((m) => moduleName(reg.data, m)).join('、')}）` : moduleName(reg.data, id));
+  const moduleLabel = (id: string) => (id.includes('+') ? zh.taskDetail.mergedModules(id.split('+').map((m) => moduleName(reg.data, m)).join('、')) : moduleName(reg.data, id));
   const cols = (label: string) => [
     { title: label, dataIndex: 'key' },
     { title: zh.taskDetail.tokenInput, dataIndex: 'prompt', render: (v: number) => compactNumber(v) },
@@ -148,8 +148,8 @@ function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
       <div className="stat-grid" data-testid="token-totals">
         <Stat label={zh.taskDetail.tokenInput} value={compactNumber(u.prompt_tokens)} foot={zh.taskDetail.tokenInputFoot} />
         <Stat label={zh.taskDetail.tokenOutput} value={compactNumber(u.completion_tokens)} foot={zh.taskDetail.tokenOutputFoot} />
-        <Stat label={zh.taskDetail.tokenReasoning} value={compactNumber(u.reasoning_tokens)} foot={u.completion_tokens ? zh.taskDetail.tokenShare(`输出 ${percent(u.reasoning_tokens / u.completion_tokens, 0)}`) : undefined} />
-        <Stat label={zh.taskDetail.tokenCached} value={compactNumber(u.cached_tokens)} foot={u.prompt_tokens ? zh.taskDetail.tokenShare(`输入 ${percent(u.cached_tokens / u.prompt_tokens, 0)}`) : undefined} />
+        <Stat label={zh.taskDetail.tokenReasoning} value={compactNumber(u.reasoning_tokens)} foot={u.completion_tokens ? zh.taskDetail.tokenShareOf(zh.taskDetail.tokenOutput, percent(u.reasoning_tokens / u.completion_tokens, 0)) : undefined} />
+        <Stat label={zh.taskDetail.tokenCached} value={compactNumber(u.cached_tokens)} foot={u.prompt_tokens ? zh.taskDetail.tokenShareOf(zh.taskDetail.tokenInput, percent(u.cached_tokens / u.prompt_tokens, 0)) : undefined} />
         <Stat label={zh.taskDetail.tokenRequests} value={u.requests.toLocaleString('en-US')} foot={u.requests_unknown_usage ? zh.taskDetail.tokenUnknown(u.requests_unknown_usage) : undefined} />
       </div>
       {rows.length ? (
@@ -335,7 +335,7 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
             title: zh.taskDetail.planCols.concurrency,
             dataIndex: 'concurrency',
             render: (_: unknown, s: Plan['stages'][number]) =>
-              [s.concurrency ? `CPU ${s.concurrency}` : '', s.gates ? Object.entries(s.gates).map(([k, n]) => `${k} ${n}`).join(' · ') : '', s.hard_gates?.length ? `硬门：${s.hard_gates.map((m) => moduleName(reg.data, m)).join('、')}` : '', s.merge ? `merge = ${s.merge.strategy}` : '']
+              [s.concurrency ? `CPU ${s.concurrency}` : '', s.gates ? Object.entries(s.gates).map(([k, n]) => `${k} ${n}`).join(' · ') : '', s.hard_gates?.length ? zh.taskDetail.planHardGates(s.hard_gates.map((m) => moduleName(reg.data, m)).join('、')) : '', s.merge ? `merge = ${s.merge.strategy}` : '']
                 .filter(Boolean)
                 .join(' · ') || '—',
           },
@@ -367,7 +367,7 @@ function MoreInfo({ task }: { task: Task }) {
     { label: zh.taskDetail.cfgRobot, value: task.embodiment_id ?? '—' },
     { label: zh.taskDetail.cfgVlm, value: task.vlm ? `${task.vlm.backend} · ${task.vlm.model}` : '—' },
     { label: zh.taskDetail.cfgEffort, value: task.vlm ? task.vlm.reasoning_effort ?? zh.taskDetail.cfgEffortDefault : '—' },
-    { label: zh.taskDetail.cfgRetry, value: task.vlm ? `${p.vlm_retry ?? 3} 次 · 超时对冲${p.vlm_hedge === false ? '关' : '开'}` : '—' },
+    { label: zh.taskDetail.cfgRetry, value: task.vlm ? zh.taskDetail.cfgRetryValue(p.vlm_retry ?? 3, p.vlm_hedge !== false) : '—' },
     { label: zh.taskDetail.cfgLimits, value: `CPU ${p.limits?.cpu_concurrency ?? zh.common.unlimited} · VLM ${p.limits?.vlm_parallelism ?? zh.common.unlimited}` },
     { label: zh.taskDetail.cfgExport, value: `${p.export === false ? zh.taskDetail.noExport : zh.taskDetail.yesExport}${p.clips ? ` · ${zh.taskDetail.clipsOn}` : ''}` },
   ];

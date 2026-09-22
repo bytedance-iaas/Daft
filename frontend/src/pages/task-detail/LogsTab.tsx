@@ -69,7 +69,7 @@ export function LogsTab({ task, subtasks, mode, live }: { task: Task; subtasks: 
           value={stage}
           onChange={setStage}
           aria-label={zh.taskDetail.logsStage}
-          options={[{ label: zh.taskDetail.logsAllStages, value: '' }, ...stageIds.map((s) => ({ label: s === 'system' ? '系统' : stageLabel(s), value: s }))]}
+          options={[{ label: zh.taskDetail.logsAllStages, value: '' }, ...stageIds.map((s) => ({ label: s === 'system' ? zh.taskDetail.logsSystem : stageLabel(s), value: s }))]}
         />
         <Select
           style={{ width: 180 }}

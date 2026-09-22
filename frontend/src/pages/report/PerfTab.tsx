@@ -31,7 +31,7 @@ function latencyOption(rows: Perf['latency']): ChartOption {
     legend: { top: 0 },
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     xAxis: { type: 'category', data: names, axisTick: { show: false } },
-    yAxis: { type: 'value', name: '秒', splitLine: { lineStyle: { color: '#E5E6EB' } } },
+    yAxis: { type: 'value', name: zh.report.secondsUnit, splitLine: { lineStyle: { color: '#E5E6EB' } } },
     series,
   };
 }
@@ -164,7 +164,7 @@ export function PerfTab({ taskId, rev, subtasks }: { taskId: string; rev: number
                     columns={[
                       { title: zh.taskDetail.colStage, dataIndex: 'id', render: (v: string) => stageLabel(v) },
                       { title: zh.report.colWall, dataIndex: 'wall_s', render: (v: number) => seconds(v) },
-                      { title: '占比', dataIndex: 'share', render: (v?: number) => percent(v ?? null, 0) },
+                      { title: zh.report.colShare, dataIndex: 'share', render: (v?: number) => percent(v ?? null, 0) },
                     ]}
                   />
                 </Col>

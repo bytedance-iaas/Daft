@@ -135,13 +135,13 @@ export function actionsFor(t: ActionSubject): ActionPlan {
       if (t.pause_reason === 'system') disabled.resume = zh.actions.systemPausedResume;
       return { primary: 'resume', more: ['view', 'stop', 'delete'], disabled };
     case 'completed_with_errors':
-      if (busy) disabled.retry = '已有子任务在运行';
+      if (busy) disabled.retry = zh.actions.subtaskBusy;
       return { primary: 'report', more: ['retry', ...common], disabled };
     case 'succeeded':
       return { primary: 'report', more: common, disabled };
     case 'stopped':
     case 'failed':
-      if (busy) disabled.continue = '已有子任务在运行';
+      if (busy) disabled.continue = zh.actions.subtaskBusy;
       return { primary: 'continue', more: ['view', ...(hasReport ? (['report'] as TaskActionKey[]) : []), ...common], disabled };
     default:
       return { primary: 'view', more: [], disabled };

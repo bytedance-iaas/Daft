@@ -120,7 +120,7 @@ export function AddDatasetDrawer({ visible, onClose }: { visible: boolean; onClo
         {source === 'tos' ? (
           <>
             <Field label={zh.taskForm.datasetUri} required error={errors.uri}>
-              <Input className="mono" value={uri} onChange={setUri} placeholder="tos://存储桶名/前缀/数据集名" aria-label={zh.taskForm.datasetUri} />
+              <Input className="mono" value={uri} onChange={setUri} placeholder={zh.taskForm.datasetUriPlaceholderShort} aria-label={zh.taskForm.datasetUri} />
             </Field>
             <Row gutter={16}>
               <Col span={12}>

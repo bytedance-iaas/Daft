@@ -14,7 +14,7 @@ const ALL_LEVELS: ReasoningLevel[] = ['none', 'minimal', 'low', 'medium', 'high'
 export function effortOptions(model: Pick<VlmModel, 'capabilities'> | undefined, kind: VlmBackend['kind'] | undefined): { label: string; value: string }[] {
   const levels = model?.capabilities.reasoning_effort_levels?.length ? model.capabilities.reasoning_effort_levels : ALL_LEVELS;
   return [
-    { label: kind === 'custom' ? '不传（默认）' : zh.taskForm.effortDefault, value: '' },
+    { label: kind === 'custom' ? zh.taskForm.effortNotSent : zh.taskForm.effortDefault, value: '' },
     ...levels.map((l) => ({ label: l === 'minimal' && kind === 'ark' ? zh.taskForm.effortMinimal : l, value: l })),
   ];
 }
@@ -263,7 +263,7 @@ export function BackendDrawer({
             <Radio value="custom">{zh.credentials.kindCustom}</Radio>
           </Radio.Group>
         </Form.Item>
-        <Form.Item label={zh.credentials.name} field="name" rules={current ? [] : [{ required: true, message: zh.errors.required(zh.credentials.name) }, { maxLength: 64, message: '名称最多 64 个字符' }]} extra={zh.credentials.nameHelp}>
+        <Form.Item label={zh.credentials.name} field="name" rules={current ? [] : [{ required: true, message: zh.errors.required(zh.credentials.name) }, { maxLength: 64, message: zh.errors.maxLength(zh.credentials.name, 64) }]} extra={zh.credentials.nameHelp}>
           <Input placeholder={zh.credentials.namePlaceholder} disabled={Boolean(current)} />
         </Form.Item>
         <Form.Item label={zh.credentials.endpoint} field="endpoint" rules={[{ required: true, message: zh.errors.required(zh.credentials.endpoint) }]}>

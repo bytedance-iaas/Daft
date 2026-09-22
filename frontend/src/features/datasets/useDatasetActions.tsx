@@ -45,10 +45,10 @@ function EditDialog({ target, onClose }: { target: Target | null; onClose: () =>
       }}
     >
       <Form form={form} layout="vertical">
-        <Form.Item label={zh.datasets.name} field="name" rules={[{ required: true, message: zh.errors.required(zh.datasets.name) }, { maxLength: 128, message: '名称最多 128 个字符' }]}>
+        <Form.Item label={zh.datasets.name} field="name" rules={[{ required: true, message: zh.errors.required(zh.datasets.name) }, { maxLength: 128, message: zh.errors.maxLength(zh.datasets.name, 128) }]}>
           <Input />
         </Form.Item>
-        <Form.Item label={zh.datasets.note} field="note" rules={[{ maxLength: 2000, message: '备注最多 2000 个字符' }]}>
+        <Form.Item label={zh.datasets.note} field="note" rules={[{ maxLength: 2000, message: zh.errors.maxLength(zh.datasets.note, 2000) }]}>
           <Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} />
         </Form.Item>
       </Form>

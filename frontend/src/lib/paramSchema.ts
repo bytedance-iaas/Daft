@@ -1,6 +1,7 @@
 // Screen 2 of the new-task form is generated from each module's param_schema (C1, D38): a new
 // module with parameters needs no front-end change. Supported JSON Schema shapes: oneOf/anyOf of
 // {const, title} (choices), enum, boolean, integer / number (with bounds), string.
+import { zh } from '../locales/zh';
 
 export type ParamKind = 'choice' | 'boolean' | 'integer' | 'number' | 'string';
 
@@ -95,16 +96,16 @@ export function defaultParams(schema: unknown): Record<string, unknown> {
 /** Validates one value; returns the Chinese problem or null. */
 export function validateParam(f: ParamField, value: unknown): string | null {
   const empty = value === undefined || value === null || value === '';
-  if (empty) return f.required ? `请填写${f.title}` : null;
-  if (f.kind === 'choice' && f.options && !f.options.some((o) => o.value === value)) return `${f.title}的取值不在可选范围内`;
-  if (f.kind === 'integer' && !Number.isInteger(value)) return `${f.title}要填整数`;
+  if (empty) return f.required ? zh.errors.paramRequired(f.title) : null;
+  if (f.kind === 'choice' && f.options && !f.options.some((o) => o.value === value)) return zh.errors.paramChoice(f.title);
+  if (f.kind === 'integer' && !Number.isInteger(value)) return zh.errors.paramInteger(f.title);
   if ((f.kind === 'integer' || f.kind === 'number') && typeof value === 'number') {
-    if (f.min !== undefined && (f.exclusiveMin ? value <= f.min : value < f.min)) return `${f.title}要${f.exclusiveMin ? '大于' : '不小于'} ${f.min}`;
-    if (f.max !== undefined && value > f.max) return `${f.title}不能大于 ${f.max}`;
+    if (f.min !== undefined && (f.exclusiveMin ? value <= f.min : value < f.min)) return zh.errors.paramMin(f.title, f.min, Boolean(f.exclusiveMin));
+    if (f.max !== undefined && value > f.max) return zh.errors.paramMax(f.title, f.max);
   }
   if (f.kind === 'string' && typeof value === 'string') {
-    if (f.maxLength !== undefined && value.length > f.maxLength) return `${f.title}最多 ${f.maxLength} 个字符`;
-    if (f.pattern && !new RegExp(f.pattern).test(value)) return `${f.title}的格式不对`;
+    if (f.maxLength !== undefined && value.length > f.maxLength) return zh.errors.maxLength(f.title, f.maxLength);
+    if (f.pattern && !new RegExp(f.pattern).test(value)) return zh.errors.paramPattern(f.title);
   }
   return null;
 }
