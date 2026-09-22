@@ -31,6 +31,8 @@ REVISIONS_DIR = "revisions"
 COMMIT_NAME = "commit.json"
 #: passed / reject / held are disjoint and cover every episode; review is a view (C2 final-list)
 LISTS = ("passed", "reject", "held")
+_KEY_FILES = (COMMIT_NAME, "report.json", "passed.json", "reject.json", "held.json", "review.json",
+              "label_audit.json")
 
 
 def revision_name(number: int) -> str:
@@ -50,7 +52,9 @@ class Revision:
         self.number = int(number)
         self.run_dir = Path(run_dir)
         self.dir = self.run_dir / REVISIONS_DIR / revision_name(number)
-        self.key = (str(self.dir), identity(self.dir / COMMIT_NAME))
+        # a committed revision never changes; the identities of the files derived data is
+        # built from still go into the key, so files restored or rewritten by hand are seen
+        self.key = (str(self.dir),) + tuple(identity(self.dir / name) for name in _KEY_FILES)
 
     # -- files ----------------------------------------------------------------------
     def _doc(self, name: str, *, required: bool = True) -> Any:

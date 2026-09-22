@@ -344,6 +344,14 @@ class World:
         path.write_text(json.dumps(doc), encoding="utf-8")
         out = cli("adjudicate-apply", "--run-dir", str(self.run_dir), "--decisions", str(path))
         self.repo.mark_adjudications_applied([a.id for a in rows], sub.id)
+        # stands in for ``check --modules skill_profile --incremental``: re-filed episodes
+        parts = self.run_dir / "checks" / "skill_profile" / "parts"
+        part = f"{len(list(parts.glob('*.jsonl'))) + 1:04d}"
+        with open(parts / f"{part}.jsonl", "w", encoding="utf-8") as fh:
+            for ep in out["profile_resync"]:
+                fh.write(json.dumps(record("skill_profile", ep, "pass", details={
+                    "family": "放置", "subskill": "放进容器", "caption": TEXT[ep]}),
+                    ensure_ascii=False, sort_keys=True) + "\n")
         return out
 
 
