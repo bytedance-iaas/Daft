@@ -1714,6 +1714,8 @@ export interface components {
             reason: string;
             /** @description an appeal of a dedup reject: the episode it duplicates */
             duplicate_of?: number | null;
+            /** @description set on a question the card gained as a follow-up of its answer on that line (registry follow_ups), absent or null on the card's own questions; a follow-up whose opening answer changed is left out of the card */
+            follow_up_of?: null | components["schemas"]["ReviewLineId"];
             annotation?: string | null;
             caption?: string | null;
             /** @description suggested new label */

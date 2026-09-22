@@ -27,8 +27,19 @@ def test_what_the_page_and_the_rules_derive():
     assert all(ln.decision("unsure").unsure for ln in C.LINES)
     assert C.line("label").decision("custom_label").needs_label
     assert not C.line("label").decision("adopt_suggestion").needs_label
-    assert C.OPTIONAL_VERDICT[0] in C.tab_lines("review")
-    assert "task_verdict" in registry.get(C.OPTIONAL_VERDICT[1]).review_lines
+
+
+def test_follow_ups_come_from_the_registry():
+    """C1 1.3: after a relabel the label line opens an optional task verdict (v1's card)."""
+    (f,) = C.line("label").follow_ups
+    expected = registry.follow_up("label", "adopt_suggestion", "task_verdict")
+    assert (f.owner, f.after, f.line, f.decisions, f.optional) == (
+        "label", tuple(expected.after), expected.line, tuple(expected.decisions), expected.optional)
+    assert f.opened_by("custom_label") and not f.opened_by("keep_label")
+    assert "discard" not in f.decisions
+    assert C.follow_ups_onto("task_verdict") == (f,)
+    assert C.follow_ups_onto("label") == () and C.follow_ups_onto("reject_appeal") == ()
+    assert "选填" in C.follow_up_reason(f)
 
 
 def test_items_name_their_line_or_their_kind():

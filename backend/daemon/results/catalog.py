@@ -1,11 +1,11 @@
 """What a person can be asked on the adjudication page and what they can answer.
 
-The lines come from the module registry (C1 1.2 ``REVIEW_LINES``, D43): id, the
+The lines come from the module registry (C1 1.3 ``REVIEW_LINES``, D43): id, the
 ``review.json`` kind that asks it, title, the list its episodes are in, whether an open
-question counts as pending, and the decisions with their titles. C4 1.5 carries
-``line`` and ``decision`` as open strings that the Daemon checks against this catalog
-and the card's questions; a new kind of review is a new registry entry and needs no
-change here.
+question counts as pending, the decisions with their titles, and the follow-ups it
+opens. C4 1.5 carries ``line`` and ``decision`` as open strings that the Daemon checks
+against this catalog and the card's questions; a new kind of review is a new registry
+entry and needs no change here.
 
 Derived here, and nowhere else:
 
@@ -13,6 +13,12 @@ Derived here, and nowhere else:
   (``applies_to: reject``), ``review`` otherwise;
 * whether a card counts as pending or decided - lines with ``counts_as_pending``
   (appeal candidates are optional);
+* follow-ups (C1 1.3 ``follow_ups``, C4 1.5.1): a question a card gains once its answer
+  on the owning line is one of ``after`` - only on a card that does not ask that line
+  already - with a subset of that line's decisions. v1's relabel card: after adopting a
+  new label a person may give the task verdict (the machine takes it, no re-judging);
+  left open, the episode is judged again with the new label. An optional follow-up never
+  counts as pending, and its answer lapses once the answer that opened it changes;
 * what a decision *means* for the rules on top of the catalog. The registry gives values
   and titles only, so v1's decisions carry their meaning as flags (a value the table does
   not know is a plain answer):
@@ -31,11 +37,6 @@ from dataclasses import dataclass
 from curation.contracts import modules as registry
 
 TABS = ("review", "appeals")
-
-#: v1's optional verdict (rule 4, ``manifest.success_block_mode``): on a card whose label
-#: was changed, the task verdict can be given although no module asked for it.
-OPTIONAL_VERDICT = ("task_verdict", "task_success")      # (line, the module it answers for)
-OPTIONAL_REASON = "改标之后可以直接判成败：判了就以人的结论为准，不再按新标注重跑任务成败判定"
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,13 @@ MEANINGS: dict[str, Meaning] = {
     "failure": Meaning(verdict=True),
 }
 _PLAIN = Meaning()
+
+#: The reason a follow-up question shows, by (owning line, follow-up line); the registry
+#: has no text for it. Other follow-ups get a reason made of the titles.
+FOLLOW_UP_REASONS: dict[tuple[str, str], str] = {
+    ("label", "task_verdict"): "改标之后可以一并判成败（选填）：判了就以人的结论为准，不再按新标注重判；"
+                               "不判则按新标注重新判定",
+}
 
 
 @dataclass(frozen=True)
@@ -87,6 +95,18 @@ class DecisionSpec:
 
 
 @dataclass(frozen=True)
+class FollowUpSpec:
+    owner: str                          # the line whose answer opens it
+    after: tuple[str, ...]              # the owner's decisions that open it
+    line: str                           # the line it answers on
+    decisions: tuple[str, ...]          # the subset of that line's decisions it offers
+    optional: bool
+
+    def opened_by(self, decision_id: str | None) -> bool:
+        return decision_id in self.after
+
+
+@dataclass(frozen=True)
 class LineSpec:
     id: str
     title_zh: str
@@ -94,6 +114,7 @@ class LineSpec:
     tab: str                            # review | appeals
     counts_as_pending: bool
     decisions: tuple[DecisionSpec, ...]
+    follow_ups: tuple[FollowUpSpec, ...] = ()
 
     def decision(self, decision_id: str) -> DecisionSpec | None:
         return next((d for d in self.decisions if d.id == decision_id), None)
@@ -101,12 +122,18 @@ class LineSpec:
     def ids(self) -> tuple[str, ...]:
         return tuple(d.id for d in self.decisions)
 
+    def titles(self, ids, joiner: str = "、") -> str:
+        return joiner.join(f"「{d.title_zh}」" for d in self.decisions if d.id in set(ids))
+
 
 def _spec(line: registry.ReviewLine) -> LineSpec:
     return LineSpec(line.id, line.title_zh, line.review_kind,
                     "appeals" if line.applies_to == "reject" else "review", line.counts_as_pending,
                     tuple(DecisionSpec(value, title, MEANINGS.get(value, _PLAIN))
-                          for value, title in line.decisions))
+                          for value, title in line.decisions),
+                    tuple(FollowUpSpec(line.id, tuple(f.after), f.line, tuple(f.decisions),
+                                       bool(f.optional))
+                          for f in getattr(line, "follow_ups", ()) or ()))
 
 
 LINES: tuple[LineSpec, ...] = tuple(_spec(line) for line in registry.REVIEW_LINES)
@@ -151,3 +178,19 @@ def is_relabel(line_id: str, decision_id: str | None) -> bool:
 def relabel_lines() -> tuple[str, ...]:
     """Lines whose answers can set a new task text (v1: the label line)."""
     return tuple(ln.id for ln in LINES if any(d.relabel for d in ln.decisions))
+
+
+def follow_ups_onto(line_id: str) -> tuple[FollowUpSpec, ...]:
+    """The follow-ups that answer on ``line_id`` (their owners are other lines)."""
+    return tuple(f for ln in LINES for f in ln.follow_ups if f.line == line_id)
+
+
+def follow_up_reason(f: FollowUpSpec) -> str:
+    known = FOLLOW_UP_REASONS.get((f.owner, f.line))
+    if known:
+        return known
+    owner, target = line(f.owner), line(f.line)
+    opened = owner.titles(f.after, "或") if owner else "、".join(f.after)
+    title = target.title_zh if target else f.line
+    return f"{owner.title_zh if owner else f.owner}选了{opened}之后可以一并回答「{title}」" + (
+        "（选填）" if f.optional else "")

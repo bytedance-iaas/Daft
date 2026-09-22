@@ -45,7 +45,7 @@ import {
   SO101_TASK,
   tableRows,
 } from './world';
-import { cardsOf, clock, countsOf, datasetName, db, decisionsOf, findTask, nextId, reviewCatalog, toListItem } from './db';
+import { cardsOf, clock, countsOf, datasetName, db, decisionsOf, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
 
 // ------------------------------------------------------------------ plumbing
 
@@ -1167,15 +1167,25 @@ const report = [
     if (!t) return err(404, 'not_found', '任务不存在');
     const b = await body<{ decisions: DecisionInput[] }>(request, 'submitAdjudication');
     // C4 1.5 (D43): a decision must be one of its line's catalog decisions, on a question the
-    // episode's card has; anything else is 400. Appeal cards only exist for appealable modules (D42).
+    // episode's card has; 1.5.1 adds a follow-up the card's answer on another line opened (and
+    // only that follow-up's decisions). Anything else is 400. Appeal cards only exist for
+    // appealable modules (D42). Answers earlier in the same submission count as in force.
     const catalog = reviewCatalog();
+    const inForce = new Map<string, string>();
     for (const d of b.decisions) {
       const line = catalog.find((l) => l.id === d.line);
       if (!line) return err(400, 'validation_failed', `没有「${d.line}」这种复核`);
-      const card = cardsOf(t.id, line.applies_to === 'reject' ? 'appeals' : 'review').find((c) => c.episode_index === d.episode_index);
-      if (!card || !card.questions.some((q) => q.line === d.line)) return err(400, 'validation_failed', `ep ${d.episode_index} 没有「${line.title_zh}」这一问`);
       if (!line.decisions.some((x) => x.const === d.decision)) return err(400, 'validation_failed', `「${line.title_zh}」不能选 ${d.decision}`);
+      const card = cardsOf(t.id, line.applies_to === 'reject' ? 'appeals' : 'review').find((c) => c.episode_index === d.episode_index);
+      if (!card) return err(400, 'validation_failed', `ep ${d.episode_index} 不在这个任务的待裁决队列里`);
+      if (!card.questions.some((q) => q.line === d.line)) {
+        const answers = (l: string) => inForce.get(`${d.episode_index}:${l}`) ?? latest(t.id, d.episode_index, l)?.decision;
+        const opened = openFollowUp(t.id, d.episode_index, card.questions, d.line, answers);
+        if (!opened) return err(400, 'validation_failed', `ep ${d.episode_index} 没有「${line.title_zh}」这一问：先采纳新标注或自行改写标注，才能直接判成败`);
+        if (!opened.followUp.decisions.includes(d.decision)) return err(400, 'validation_failed', `这里只能选：${opened.followUp.decisions.join('、')}`);
+      }
       if (d.decision === 'custom_label' && !d.new_label?.trim()) return err(400, 'validation_failed', '自行改写标注要填新标注');
+      inForce.set(`${d.episode_index}:${d.line}`, d.decision);
     }
     const list = decisionsOf(t.id);
     for (const d of b.decisions) {
