@@ -260,6 +260,20 @@ def test_no_secret_is_baked_into_the_image():
 _BUILD_LEFTOVERS = {"node_modules", "__pycache__", "dist", "coverage", ".pytest_cache", "build"}
 
 
+def _context_files(path: pathlib.Path) -> list[pathlib.Path]:
+    """The files under ``path`` a clean checkout has: git-tracked ones when git is here
+    (a developer's untracked junk, such as Finder's .DS_Store, is not part of CI's
+    context), otherwise everything on disk."""
+    if path.is_file():
+        return [path]
+    try:
+        out = subprocess.run(["git", "ls-files", "-z", "--", str(path.relative_to(REPO))],
+                             cwd=REPO, capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return [p for p in path.rglob("*") if p.is_file()]
+    return [REPO / name for name in out.decode().split("\0") if name]
+
+
 def test_every_copy_source_is_in_the_build_context():
     for index in (WEB, RUNTIME):
         for flags, sources, _ in copies(index):
@@ -269,8 +283,7 @@ def test_every_copy_source_is_in_the_build_context():
                 path = REPO / src
                 assert path.exists(), f"COPY {src}: no such path"
                 assert not dockerignored(src), f"COPY {src}: excluded by .dockerignore"
-                files = [path] if path.is_file() else [p for p in path.rglob("*") if p.is_file()]
-                for f in files:
+                for f in _context_files(path):
                     rel = f.relative_to(REPO).as_posix()
                     if _BUILD_LEFTOVERS & set(rel.split("/")) or rel.endswith((".pyc", ".swp")):
                         continue
