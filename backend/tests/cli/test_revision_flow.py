@@ -116,7 +116,8 @@ def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     assert _eps(r1, "passed") == [0, 1, 3, 4, 6]
     assert _eps(r2, "passed") == [0, 1, 4, 6]
     assert _eps(r2, "reject") == [2, 3, 5, 7] and _eps(r2, "held") == []
-    assert _eps(r2, "review") == [7]                  # 3 was decided; 7's question stays
+    # 3 was decided; 7's question stays; v1's two layers (D39) abstain on 4's new label
+    assert _eps(r2, "review") == [4, 7]
     reject = {e["episode_index"]: e for e in _json(r2, "reject.json")["episodes"]}
     assert reject[3]["reasons"] == [{"module": "task_success", "kind": "human",
                                      "text": "人工裁决判失败(任务未完成)"}]
@@ -127,7 +128,7 @@ def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     assert commit["parts"]["task_success"] == ["0001", "0002"]
     report = _json(r2, "report.json")
     assert report["overview"]["counts"] == {"total": 8, "passed": 4, "rejected": 4,
-                                            "held": 0, "review": 1}
+                                            "held": 0, "review": 2}
 
 
 def test_the_second_export_is_incremental(flow):

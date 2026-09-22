@@ -21,6 +21,13 @@ v1's rules survive unchanged (``pipeline/rejudge.py``), in its order:
 
 Decisions never cross tasks (D32): only this task's decisions are given, and
 nothing is read from the delivery root.
+
+How a relabel is judged again (D39) comes with the decisions: ``relabel_rerun``
+of ``decisions.json`` - ``v1`` (default: what v1's rejudge runs, multi-view
+scoring and the per-camera end-state vote) or ``full`` (the first run's whole
+task_success flow). It is recorded with every relabel it applies, in
+``applied.jsonl`` and ``labels.json``, so a later retry of those episodes
+judges them the same way.
 """
 from __future__ import annotations
 
@@ -35,6 +42,9 @@ from .tasktext import LABELS_FILE
 
 APPLIED_FILE = f"{ADJUDICATION_DIR}/applied.jsonl"
 HUMAN_DIR = "human-decisions"
+
+RELABEL_RERUN = ("v1", "full")
+RELABEL_DECISIONS = ("adopt_suggestion", "custom_label")
 
 LINE_DECISIONS = {
     "label": ("adopt_suggestion", "custom_label", "keep_label", "unsure", "discard"),
@@ -115,9 +125,15 @@ class Decisions:
 
     def relabel(self, episode: int) -> str | None:
         d = self.get(episode, "label")
-        if d is not None and d["decision"] in ("adopt_suggestion", "custom_label"):
+        if d is not None and d["decision"] in RELABEL_DECISIONS:
             return str(d["new_label"]).strip()
         return None
+
+    def relabel_rerun(self, episode: int) -> str:
+        """How the relabel in force is judged again (D39): recorded when it was applied."""
+        d = self.get(episode, "label")
+        mode = (d or {}).get("relabel_rerun") or "v1"
+        return mode if mode in RELABEL_RERUN else "v1"
 
     def label_resolved(self, episode: int) -> bool:
         return self.get(episode, "label") is not None
@@ -130,9 +146,19 @@ class Decisions:
         return {int(d["episode_index"]) for d in self.applied}
 
 
+def relabel_rerun_of(doc: dict) -> str:
+    """``relabel_rerun`` of a ``decisions.json`` (default ``v1``, D39)."""
+    mode = doc.get("relabel_rerun", "v1")
+    if mode not in RELABEL_RERUN:
+        raise DecisionError(f"relabel_rerun must be one of {', '.join(RELABEL_RERUN)}, "
+                            f"got {mode!r}")
+    return mode
+
+
 def apply(run_dir: str, doc: dict, *, now_ms: int | None = None) -> dict:
     """Record ``decisions.json`` as applied; returns ``adjudicate-apply --json``."""
     new = list(doc.get("decisions") or [])
+    mode = relabel_rerun_of(doc)
     for d in new:
         check_decision(d)
     ids = [d["id"] for d in new]
@@ -142,6 +168,9 @@ def apply(run_dir: str, doc: dict, *, now_ms: int | None = None) -> dict:
     seen = {int(d["id"]) for d in before}
     fresh = [d for d in new if d["id"] not in seen]
     stamp = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    # every relabel applied now carries how it is judged again (D39)
+    fresh = [dict(d, relabel_rerun=mode) if d["line"] == "label"
+             and d["decision"] in RELABEL_DECISIONS else dict(d) for d in fresh]
     if fresh:
         text = "".join(json.dumps({**d, "applied_at": stamp}, ensure_ascii=False,
                                   sort_keys=True) + "\n" for d in sorted(fresh, key=lambda d: d["id"]))
@@ -170,7 +199,8 @@ def apply(run_dir: str, doc: dict, *, now_ms: int | None = None) -> dict:
                        and d["decision"] in ("adopt_suggestion", "custom_label") for d in fresh)]
     return {"schema_version": "1.0", "applied": len(fresh),
             "skipped_already_applied": len(new) - len(fresh),
-            "rerun_task_success": rerun, "profile_resync": resync, "label_changes": changes}
+            "rerun_task_success": rerun, "profile_resync": resync, "label_changes": changes,
+            "relabel_rerun": mode}
 
 
 def write_labels(run_dir: str, decisions: Decisions) -> None:
@@ -178,7 +208,8 @@ def write_labels(run_dir: str, decisions: Decisions) -> None:
     for e in sorted(decisions.episodes()):
         text = decisions.relabel(e)
         if text and decisions.discarded(e) is None:
-            labels[str(e)] = {"text": text, "decision_id": int(decisions.get(e, "label")["id"])}
+            labels[str(e)] = {"text": text, "decision_id": int(decisions.get(e, "label")["id"]),
+                              "relabel_rerun": decisions.relabel_rerun(e)}
     write_json_atomic(os.path.join(run_dir, LABELS_FILE), {"labels": labels})
 
 

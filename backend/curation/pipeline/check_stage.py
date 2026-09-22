@@ -256,19 +256,33 @@ class StageRun:
             cam_voter=wrap_voter(clients.cam_voter, log),
             arb_deps=wrap_arbitration(clients.arb_deps, log),
             decode=wrap_decode(funnel._default_decode, log, camera_names(row.get("video"))))
-        # a human relabel is judged as an annotation (label guard, arbitration intent)
-        protocol_src = "原始标注" if src == "人工改标" else src
+        # D39: a human relabel is judged again the way adjudicate-apply recorded -
+        # "v1" (default) is v1's rejudge itself, multi-view scoring and the
+        # per-camera vote; "full" is the first run's whole flow with the relabel as
+        # the annotation (label guard, arbitration intent)
+        rerun = self.o.task_text.relabel_rerun(ep) if src == "人工改标" else None
         try:
-            struct = funnel.task_check_episode(
-                self.o.cfg, self.registry, deps, row["video"], text, protocol_src, row["fps"],
-                row["action"], row["timestamps"], row["embodiment_id"],
-                column(row, "semantics_extras", "{}"))
+            if rerun == "v1":
+                from .rejudge import rerun_task_success
+
+                struct = funnel.result_to_struct(rerun_task_success(
+                    self.o.cfg, row["video"], text, deps.vlm_completion, deps.cam_voter,
+                    decode=deps.decode))
+            else:
+                protocol_src = "原始标注" if src == "人工改标" else src
+                struct = funnel.task_check_episode(
+                    self.o.cfg, self.registry, deps, row["video"], text, protocol_src,
+                    row["fps"], row["action"], row["timestamps"], row["embodiment_id"],
+                    column(row, "semantics_extras", "{}"))
         except Exception as e:  # noqa: BLE001 - v1 turns it into internal_error; so do we
             struct = funnel.internal_error_struct(e)
             log.add("internal", cause=f"{type(e).__name__}: {e}")
         if src == "人工改标":
             detail = json.loads(struct.get("detail") or "{}")
+            # what aggregate checks the relabel was judged with, and how
+            detail["task_desc"] = str(text)[:80]
             detail["task_desc_source"] = src
+            detail["relabel_rerun"] = rerun
             struct = dict(struct, detail=json.dumps(detail, ensure_ascii=False, default=str))
         evidence = self._evidence(ep, row, struct)
         return {"task_success": struct}, {"task_success": evidence}
