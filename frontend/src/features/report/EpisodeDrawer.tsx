@@ -31,16 +31,16 @@ function Readings({ view }: { view: EpisodeView }) {
       data={rows}
       data-testid="episode-readings"
       columns={[
-        { title: zh.taskDetail.colModule, dataIndex: 'id', render: (id: string) => moduleName(reg.data, id) },
-        { title: zh.report.colVerdict, dataIndex: 'verdict', render: (v: string) => <Tag color={VERDICT_COLOR[v]}>{zh.report.verdict[v] ?? v}</Tag> },
-        { title: zh.report.colScore, dataIndex: 'score', render: (v: number | null) => (v === null ? '—' : formatScalar(v)) },
+        { title: zh.taskDetail.colModule, dataIndex: 'id', width: 140, render: (id: string) => moduleName(reg.data, id) },
+        { title: zh.report.colVerdict, dataIndex: 'verdict', width: 100, render: (v: string) => <Tag color={VERDICT_COLOR[v]}>{zh.report.verdict[v] ?? v}</Tag> },
+        { title: zh.report.colScore, dataIndex: 'score', width: 90, render: (v: number | null) => (v === null ? '—' : formatScalar(v)) },
         {
           title: zh.report.colDetails,
           dataIndex: 'details',
           render: (_: unknown, r: ResultRecord & { id: string }) =>
             r.verdict === 'error' ? <span style={{ color: 'var(--c-danger)' }}>{recordError(r.error)}</span> : <span className="muted">{detailsDigest(r.details)}</span>,
         },
-        { title: zh.report.colElapsed, dataIndex: 'elapsed_s', render: (v: number | null) => seconds(v) },
+        { title: zh.report.colElapsed, dataIndex: 'elapsed_s', width: 100, render: (v: number | null) => seconds(v) },
       ]}
     />
   );

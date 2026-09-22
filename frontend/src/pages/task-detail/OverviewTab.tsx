@@ -206,21 +206,29 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
   const terminal = isTerminalState(task.state);
   const retry = (m: ModuleState) =>
     confirmModuleRetry({ taskId: task.id, moduleId: m.id, name: moduleName(reg.data, m.id) || m.name, qc, onDone: () => void qc.invalidateQueries({ queryKey: ['task', task.id] }) });
+  // Widths (07 §4.2): the state, the count and the duration read on one line at any window size;
+  // only the summary column gives way.
   const columns: ColumnProps<ModuleState>[] = [
-    { title: zh.taskDetail.colModule, dataIndex: 'name', render: (_: unknown, m) => <b>{moduleName(reg.data, m.id) || m.name}</b> },
-    { title: zh.taskDetail.colStage, dataIndex: 'id', render: (_: unknown, m) => stageLabel(reg.data?.modules.find((x) => x.id === m.id)?.stage ?? '') },
+    { title: zh.taskDetail.colModule, dataIndex: 'name', width: 140, render: (_: unknown, m) => <b>{moduleName(reg.data, m.id) || m.name}</b> },
+    { title: zh.taskDetail.colStage, dataIndex: 'id', width: 100, render: (_: unknown, m) => stageLabel(reg.data?.modules.find((x) => x.id === m.id)?.stage ?? '') },
     {
       title: zh.taskDetail.colState,
       dataIndex: 'state',
+      width: 110,
       render: (_: unknown, m) => (
-        <span>
+        <span className="nowrap">
           <span className="dot" style={{ background: MODULE_STATE_COLOR[m.selected ? m.state : 'skipped'] }} />
           {m.selected ? zh.moduleState[m.state] ?? m.state : zh.moduleState.skipped}
         </span>
       ),
     },
-    { title: zh.taskDetail.colTotal, dataIndex: 'episodes_total', render: (_: unknown, m) => (m.selected ? m.episodes_total : '—') },
-    { title: zh.taskDetail.colElapsed, dataIndex: 'elapsed_s', render: (_: unknown, m) => (m.elapsed_s !== null && m.elapsed_s !== undefined ? zh.time.duration(m.elapsed_s) : '—') },
+    { title: zh.taskDetail.colTotal, dataIndex: 'episodes_total', width: 100, render: (_: unknown, m) => (m.selected ? m.episodes_total : '—') },
+    {
+      title: zh.taskDetail.colElapsed,
+      dataIndex: 'elapsed_s',
+      width: 110,
+      render: (_: unknown, m) => <span className="nowrap">{m.elapsed_s !== null && m.elapsed_s !== undefined ? zh.time.duration(m.elapsed_s) : '—'}</span>,
+    },
     {
       title: zh.taskDetail.colSummary,
       dataIndex: 'error',
@@ -230,6 +238,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
     {
       title: zh.taskDetail.colErrors,
       dataIndex: 'episodes_error',
+      width: 120,
       render: (_: unknown, m) =>
         m.episodes_error ? (
           <Button type="text" size="mini" status="warning" onClick={() => setOpen((o) => (o.includes(m.id) ? o.filter((x) => x !== m.id) : [...o, m.id]))}>
@@ -242,6 +251,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
     {
       title: zh.taskDetail.colOps,
       dataIndex: 'id',
+      width: 90,
       render: (_: unknown, m) =>
         m.selected && terminal && (m.episodes_error > 0 || m.state === 'failed') ? (
           <Button size="mini" type="text" disabled={Boolean(task.active_subtask)} onClick={() => retry(m)}>
@@ -258,6 +268,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
         pagination={false}
         columns={columns}
         data={[...selected, ...skipped]}
+        scroll={{ x: 980 }}
         expandedRowKeys={open}
         expandedRowRender={(m) => (m.episodes_error ? <ErrorEpisodes taskId={task.id} stage={logStageOf(plan, m.id, reg.data?.modules.find((x) => x.id === m.id)?.stage)} /> : null)}
         onExpand={(m) => setOpen((o) => (o.includes(m.id) ? o.filter((x) => x !== m.id) : [...o, m.id]))}

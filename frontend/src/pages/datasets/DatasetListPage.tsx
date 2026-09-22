@@ -64,32 +64,38 @@ export function DatasetListPage() {
     if (resetPage) next.delete('page');
     setParams(next);
   };
+  // Widths (07 §3.1): the state of the last task goes under its name, so a 「运行中」 tag does
+  // not widen the column and shift the whole table.
   const columns: ColumnProps<DatasetItem>[] = [
-    { title: zh.datasets.colName, dataIndex: 'name', render: (_: unknown, d) => <Link to={`/datasets/${d.id}`}>{d.name}</Link> },
-    { title: zh.datasets.colSource, dataIndex: 'source', render: (v: string) => zh.source[v] ?? v },
-    { title: zh.datasets.colUri, dataIndex: 'uri', render: (v: string) => <span className="mono">{v}</span> },
-    { title: zh.datasets.colFormat, dataIndex: 'format', render: (_: unknown, d) => <FormatTag format={d.format} /> },
-    { title: zh.datasets.colEpisodes, dataIndex: 'episode_count', render: (v: number | null) => grouped(v) },
-    { title: zh.datasets.colRobot, dataIndex: 'robot_type', render: (v: string | null) => v ?? <span className="muted">{zh.common.unknown}</span> },
-    { title: zh.datasets.colCheck, dataIndex: 'check_state', render: (_: unknown, d) => <CheckTag d={d} /> },
+    { title: zh.datasets.colName, dataIndex: 'name', width: 160, render: (_: unknown, d) => <Link to={`/datasets/${d.id}`}>{d.name}</Link> },
+    { title: zh.datasets.colSource, dataIndex: 'source', width: 110, render: (v: string) => zh.source[v] ?? v },
+    { title: zh.datasets.colUri, dataIndex: 'uri', width: 220, render: (v: string) => <span className="mono">{v}</span> },
+    { title: zh.datasets.colFormat, dataIndex: 'format', width: 100, render: (_: unknown, d) => <FormatTag format={d.format} /> },
+    { title: zh.datasets.colEpisodes, dataIndex: 'episode_count', width: 100, render: (v: number | null) => grouped(v) },
+    { title: zh.datasets.colRobot, dataIndex: 'robot_type', width: 130, render: (v: string | null) => v ?? <span className="muted">{zh.common.unknown}</span> },
+    { title: zh.datasets.colCheck, dataIndex: 'check_state', width: 120, render: (_: unknown, d) => <CheckTag d={d} /> },
     {
       title: zh.datasets.colLastTask,
       dataIndex: 'last_task',
+      width: 170,
       render: (_: unknown, d) =>
         d.last_task ? (
-          <Space size={4}>
+          <div>
             <Link to={`/tasks/${d.last_task.id}`}>{d.last_task.name}</Link>
-            <StateTag state={d.last_task.state} size="small" />
-          </Space>
+            <div style={{ marginTop: 2 }}>
+              <StateTag state={d.last_task.state} size="small" />
+            </div>
+          </div>
         ) : (
           <span className="muted">—</span>
         ),
     },
-    { title: zh.datasets.colCreated, dataIndex: 'created_at', render: (v: number) => <RelTime ms={v} /> },
+    { title: zh.datasets.colCreated, dataIndex: 'created_at', width: 100, render: (v: number) => <RelTime ms={v} /> },
     {
       title: zh.datasets.colOps,
       dataIndex: 'id',
       fixed: 'right',
+      width: 220,
       render: (_: unknown, d) => (
         <Space size={4}>
           <Button type="text" size="small" disabled={d.format === 'unsupported'} onClick={() => actions.newTask(d)}>
@@ -147,7 +153,7 @@ export function DatasetListPage() {
             loading={list.isLoading}
             columns={columns}
             data={list.data?.items ?? []}
-            scroll={{ x: 1200 }}
+            scroll={{ x: 1430 }}
             noDataElement={<Typography.Text type="secondary">{q || format || check ? zh.datasets.emptyFiltered : zh.datasets.empty}</Typography.Text>}
             pagination={{
               current: page,

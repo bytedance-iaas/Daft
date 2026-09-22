@@ -118,10 +118,11 @@ export function DatasetDetailPage() {
             data={moduleRows}
             data-testid="dataset-modules"
             columns={[
-              { title: zh.taskDetail.colModule, dataIndex: 'name' },
+              { title: zh.taskDetail.colModule, dataIndex: 'name', width: 160 },
               {
                 title: zh.datasets.colAvailability,
                 dataIndex: 'availability',
+                width: 130,
                 render: (v: string) => <Tag color={v === 'available' ? 'green' : v === 'needs_input' ? 'orange' : 'gray'}>{zh.datasets.availability[v] ?? v}</Tag>,
               },
               { title: zh.datasets.colReason, dataIndex: 'reason', render: (v: string) => <span className="muted">{v || '—'}</span> },
@@ -136,9 +137,9 @@ export function DatasetDetailPage() {
             data={d.checks}
             data-testid="dataset-checks"
             columns={[
-              { title: zh.datasets.colCheckAt, dataIndex: 'at', render: (v: number) => <RelTime ms={v} /> },
-              { title: zh.datasets.colTrigger, dataIndex: 'trigger', render: (v: string) => zh.datasets.trigger[v] ?? v },
-              { title: zh.datasets.colResult, dataIndex: 'result', render: (v: string) => <Tag color={v === 'same' ? 'green' : 'orange'}>{zh.datasets.result[v] ?? v}</Tag> },
+              { title: zh.datasets.colCheckAt, dataIndex: 'at', width: 130, render: (v: number) => <RelTime ms={v} /> },
+              { title: zh.datasets.colTrigger, dataIndex: 'trigger', width: 130, render: (v: string) => zh.datasets.trigger[v] ?? v },
+              { title: zh.datasets.colResult, dataIndex: 'result', width: 110, render: (v: string) => <Tag color={v === 'same' ? 'green' : 'orange'}>{zh.datasets.result[v] ?? v}</Tag> },
               {
                 title: zh.datasets.colChange,
                 dataIndex: 'change',
@@ -166,8 +167,8 @@ export function DatasetDetailPage() {
               data={d.tasks}
               columns={[
                 { title: zh.taskList.colName, dataIndex: 'name', render: (_: unknown, t: TaskRef) => <Link to={`/tasks/${t.id}`}>{t.name}</Link> },
-                { title: zh.taskList.colState, dataIndex: 'state', render: (_: unknown, t: TaskRef) => <StateTag state={t.state} size="small" /> },
-                { title: zh.taskList.colCreated, dataIndex: 'created_at', render: (v: number) => <RelTime ms={v} /> },
+                { title: zh.taskList.colState, dataIndex: 'state', width: 130, render: (_: unknown, t: TaskRef) => <StateTag state={t.state} size="small" /> },
+                { title: zh.taskList.colCreated, dataIndex: 'created_at', width: 130, render: (v: number) => <RelTime ms={v} /> },
               ]}
             />
           )}

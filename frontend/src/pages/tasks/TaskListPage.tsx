@@ -112,10 +112,13 @@ export function TaskListPage() {
   const live = query.data?.items.some((i) => !isTerminalState(i.state) && !i.deleted_at);
   const deletedView = state === 'deleted';
 
+  // Widths (07 §4.1): every column has room for its longest value, so a state tag or a longer
+  // name scrolls the table rather than squeezing the others.
   const columns: ColumnProps<TaskListItem>[] = [
     {
       title: zh.taskList.colName,
       dataIndex: 'name',
+      width: 260,
       render: (_: unknown, t) => (
         <div style={{ minWidth: 160 }}>
           <Link to={`/tasks/${t.id}`}>{t.name}</Link>
@@ -140,11 +143,13 @@ export function TaskListPage() {
     {
       title: zh.taskList.colState,
       dataIndex: 'state',
+      width: 130,
       render: (_: unknown, t) => <StateTag state={t.state} pauseReason={t.pause_reason} />,
     },
     {
       title: zh.taskList.colDataset,
       dataIndex: 'dataset',
+      width: 170,
       render: (_: unknown, t) => (
         <div>
           {t.dataset_id ? <Link to={`/datasets/${t.dataset_id}`}>{t.dataset}</Link> : t.dataset}
@@ -152,22 +157,25 @@ export function TaskListPage() {
         </div>
       ),
     },
-    { title: zh.taskList.colModules, dataIndex: 'modules', render: (_: unknown, t) => <ModuleSummaryCell item={t} /> },
-    { title: zh.taskList.colProgress, dataIndex: 'progress', render: (_: unknown, t) => <ProgressCell t={t} /> },
+    { title: zh.taskList.colModules, dataIndex: 'modules', width: 150, render: (_: unknown, t) => <ModuleSummaryCell item={t} /> },
+    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 250, render: (_: unknown, t) => <ProgressCell t={t} /> },
     {
       title: zh.taskList.colTokens,
       dataIndex: 'usage',
+      width: 120,
       render: (_: unknown, t) => <span className="mono">{totalTokens(t.usage) ? compactNumber(totalTokens(t.usage)) : '—'}</span>,
     },
     {
       title: deletedView ? zh.taskList.deletedAt : zh.taskList.colCreated,
       dataIndex: 'created_at',
+      width: 120,
       render: (_: unknown, t) => <RelTime ms={deletedView ? t.deleted_at : t.created_at} />,
     },
     {
       title: zh.taskList.colActions,
       dataIndex: 'id',
       fixed: 'right',
+      width: 160,
       render: (_: unknown, t) => (
         <TaskActionButtons
           plan={actionsFor(t)}
@@ -234,7 +242,7 @@ export function TaskListPage() {
             loading={query.isLoading}
             columns={columns}
             data={query.data?.items ?? []}
-            scroll={{ x: 1200 }}
+            scroll={{ x: 1360 }}
             noDataElement={<div className="muted" style={{ padding: 24 }}>{q || state || moduleFilter.length || datasetId ? zh.taskList.emptyFiltered : zh.taskList.empty}</div>}
             pagination={{
               current: page,

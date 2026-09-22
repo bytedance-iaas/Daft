@@ -129,6 +129,12 @@ body {
   white-space: nowrap;
 }
 
+/* A table header reads on one line; every table below carries its own column widths, so a
+   longer value scrolls the table instead of re-flowing every column (07 §2.4). */
+.arco-table-th-item-title {
+  white-space: nowrap;
+}
+
 .field-note-error {
   color: var(--c-danger);
   font-size: 12px;
