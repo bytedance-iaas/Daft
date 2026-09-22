@@ -15,10 +15,12 @@ read back, ``_COMPLETE`` written; only then does ``result_rev`` switch (D25) and
 * ``retry`` re-runs the held episodes from the stage they erred in (whole failed
   modules in full), then syncs dedup / profile when their input changed, into a
   new revision (D25, D35).
-* ``apply_adjudication``: adjudicate-apply -> task_success on the relabelled
-  episodes without a human verdict -> aggregate funnel (new revision) -> dedup
-  only if the kept set changed -> skill_profile ``--incremental`` -> aggregate
-  final -> report -> verify. It never exports (D9); the delivery becomes stale.
+* ``apply_adjudication``: adjudicate-apply (``relabel_rerun`` v1 or full, D39) ->
+  task_success on the relabelled episodes without a human verdict -> aggregate
+  funnel (new revision; its ``keep.txt`` follows the decisions) -> skill_profile
+  ``--incremental`` on that ``keep.txt`` -> aggregate final -> report -> verify.
+  dedup is not run again (its first result stands, as in v1's rejudge). It never
+  exports (D9); the delivery becomes stale.
 * ``reexport``: ``export --incremental`` of the current revision, then verify.
 """
 from __future__ import annotations
@@ -362,7 +364,7 @@ class AdjudicationRun(StageRun):
         modules = self.plan_modules(plan)
         stages = {s["id"]: s for s in plan["stages"]}
         ids = ["adjudicate"] + (["vlm"] if "vlm" in stages else []) + ["verdict"]
-        ids += [s for s in ("dedup", "profile") if s in stages] + ["final", "report", "verify"]
+        ids += (["profile"] if "profile" in stages else []) + ["final", "report", "verify"]
         self.plan_progress(ids)
         rev = self.allocate_revision()
         selection = self.selection()
@@ -371,28 +373,19 @@ class AdjudicationRun(StageRun):
         if "vlm" in stages and "task_success" in stages["vlm"].get("modules", []):
             self.rejudge(stages["vlm"], rerun)
         self.check_intent()
-        before = set(self.keep_of(int(self.task.result_rev or 0)))
         self.aggregate("verdict", "funnel", rev, modules, selection)
-        keep = self.keep_of(rev)
+        keep = self.keep_of(rev)                  # already follows the applied decisions
         rows = self.module_rows()
-        if "dedup" in stages:
-            if set(keep) != before and not self.journal.done("dedup"):
-                self.repo.mark_modules_stale(self.task_id, ["dedup"])
-                self.check_stage(stages["dedup"], keep, fresh=True)
-            elif not self.journal.done("dedup"):
-                self.stage_done("dedup", "skipped")
-                self.progress("dedup", note="保留集合没有变化，不重跑去重", force=True)
-        if "profile" in stages:
-            base = self.minus_duplicates(keep) if "dedup" in stages else keep
+        if "profile" in stages and not self.journal.done("profile"):
             row = rows.get("skill_profile")
-            if not self.journal.done("profile"):
-                if applied.get("resync") or row is None or row.input_digest != input_digest(base):
-                    self.repo.mark_modules_stale(self.task_id, ["skill_profile"])
-                    full = row is None or row.state == "failed"
-                    self.check_stage(stages["profile"], base, fresh=True, incremental=not full)
-                else:
-                    self.stage_done("profile", "skipped")
-                    self.progress("profile", note="画像的输入没有变化", force=True)
+            if applied.get("resync") or row is None or row.input_digest != input_digest(keep) \
+                    or row.state in ("failed", "stale"):
+                self.repo.mark_modules_stale(self.task_id, ["skill_profile"])
+                full = row is None or row.state == "failed"
+                self.check_stage(stages["profile"], keep, fresh=True, incremental=not full)
+            else:
+                self.stage_done("profile", "skipped")
+                self.progress("profile", note="画像的输入没有变化", force=True)
         self.check_intent()
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
@@ -411,7 +404,8 @@ class AdjudicationRun(StageRun):
             return entry.get("applied") or {}
         self.progress(sid, state="running", done=0, total=1)
         rows = self.repo.latest_adjudications(self.task_id, unapplied_only=True)
-        doc = {"schema_version": "1.0", "decisions": [
+        rerun_how = (self.subtask.scope or {}).get("relabel_rerun") or "v1"
+        doc = {"schema_version": "1.0", "relabel_rerun": rerun_how, "decisions": [
             {"id": a.id, "episode_index": a.episode_index, "line": a.line, "decision": a.decision,
              "new_label": a.new_label, "note": a.note, "decided_by": a.decided_by,
              "decided_at": a.decided_at} for a in sorted(rows, key=lambda r: r.id)]}

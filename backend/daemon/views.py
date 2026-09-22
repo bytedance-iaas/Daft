@@ -71,7 +71,10 @@ def stage_progress(progress: dict | None) -> dict:
 def summary(value: dict | None) -> dict | None:
     if not isinstance(value, dict) or not set(_SUMMARY_KEYS) <= set(value):
         return None
-    return {k: value[k] for k in _SUMMARY_KEYS}
+    out = {k: value[k] for k in _SUMMARY_KEYS}
+    if _count(value.get("skipped")):                  # C4 1.4: only when some were left out
+        out["skipped"] = value["skipped"]
+    return out
 
 
 def _count(value: Any) -> int | None:
@@ -136,7 +139,8 @@ def module_counts(rows: list[P.TaskModule]) -> dict:
 
 
 def subtask(s: P.Subtask) -> dict:
-    scope = {k: v for k, v in (s.scope or {}).items() if k in ("modules", "episodes")}
+    scope = {k: v for k, v in (s.scope or {}).items()
+             if k in ("modules", "episodes", "relabel_rerun")}
     return {"id": s.id, "task_id": s.task_id, "kind": s.kind, "scope": scope, "state": s.state,
             "state_reason": s.state_reason, "progress": s.progress, "created_at": s.created_at,
             "started_at": s.started_at, "finished_at": s.finished_at, "result_rev": s.result_rev}

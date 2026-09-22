@@ -100,10 +100,15 @@ def summary(rev_dir: pathlib.Path, latest: Iterable[P.Adjudication] = ()) -> dic
         doc = read_list(rev_dir, name)
         counts[name] = int((doc or {}).get("count") or 0)
     total = counts["passed"] + counts["reject"] + counts["held"]
-    return {"total": total, "passed": counts["passed"], "rejected": counts["reject"],
-            "held": counts["held"], "review": counts["review"],
-            "pass_rate": round(counts["passed"] / total, 4) if total else None,
-            "pending_adjudication": pending_adjudication(read_list(rev_dir, "review"), latest)}
+    out = {"total": total, "passed": counts["passed"], "rejected": counts["reject"],
+           "held": counts["held"], "review": counts["review"],
+           "pass_rate": round(counts["passed"] / total, 4) if total else None,
+           "pending_adjudication": pending_adjudication(read_list(rev_dir, "review"), latest)}
+    report = read_list(rev_dir, "report") or {}
+    skipped = ((report.get("overview") or {}).get("counts") or {}).get("skipped")
+    if isinstance(skipped, int) and not isinstance(skipped, bool) and skipped > 0:
+        out["skipped"] = skipped                   # D40: missing source files, not in total
+    return out
 
 
 # ---------------------------------------------------------------- batches

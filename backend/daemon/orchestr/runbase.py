@@ -38,7 +38,7 @@ from ..repo import protocol as P
 from ..secrets import Unavailable, cli_environment
 from . import rules
 from .delivery import (DeliveryError, open_delivery, read_latest, sync_run_dir, write_latest)
-from .workdir import Journal, WorkDir, read_json, read_lines, write_lines
+from .workdir import Journal, WorkDir, read_json, read_lines, write_json_atomic, write_lines
 
 log = logging.getLogger("daemon.orchestr")
 
@@ -46,6 +46,8 @@ ALL_MODULE_STATES = frozenset({"pending", "running", "succeeded", "completed_wit
                                "failed", "skipped", "stale"})
 _STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note")
 _FINAL_STAGE_STATES = ("succeeded", "completed_with_errors", "failed", "skipped")
+#: the child a run has in flight (pid = its process group), for reaping after a crash
+PROC_FILE = "proc.json"
 
 
 class Interrupt(Exception):
@@ -140,6 +142,12 @@ class Run:
         with self._lock:
             self._proc = proc
             intent = self._intent
+        try:                                   # who to reap if the Daemon dies meanwhile
+            write_json_atomic(self.wd.private / PROC_FILE,
+                              {"pid": proc.pid, "stage": proc.cmd.stage,
+                               "command": proc.cmd.argv[:1], "started_at": self.clock()})
+        except OSError:
+            pass
         if intent == "stop":
             proc.interrupt()
         elif intent is not None:
@@ -148,6 +156,10 @@ class Run:
     def _detach(self) -> None:
         with self._lock:
             self._proc = None
+        try:
+            (self.wd.private / PROC_FILE).unlink()
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------ logs
     def log(self, stage: str, level: str, msg: str, **extra: Any) -> None:
@@ -360,7 +372,16 @@ class Run:
         return int(ds.get("episode_count") or 0)
 
     def selection(self) -> list[int]:
-        return rules.selected_episodes(self.task.episode_selector, self.episode_count())
+        """The task's episodes, without the ones whose source files are missing (D40)."""
+        chosen = rules.selected_episodes(self.task.episode_selector, self.episode_count())
+        skipped = self.skipped_episodes()
+        return [e for e in chosen if e not in skipped] if skipped else chosen
+
+    def skipped_episodes(self) -> set[int]:
+        """``skipped_episodes`` of the source manifest: missing parquet or video (C2 1.4)."""
+        doc = read_json(self.wd.manifest, {}) or {}
+        return {int(e["episode_index"]) for e in doc.get("skipped_episodes") or []
+                if isinstance(e, dict) and isinstance(e.get("episode_index"), int)}
 
     def source_args(self, *, manifest: bool = True, semantics: bool = True) -> list[str]:
         t = self.task
@@ -384,6 +405,9 @@ class Run:
                "--retry", str(int(params.get("vlm_retry", 3)))]
         if params.get("vlm_hedge", True):
             out.append("--hedge")
+        if snap.get("reasoning_effort"):
+            # only when there is one: v1 never sends the field, parity depends on it (C2 1.4)
+            out += ["--vlm-reasoning-effort", str(snap["reasoning_effort"])]
         for kind, seconds in sorted((params.get("vlm_timeouts_s") or {}).items()):
             out += ["--set", f"checks.task_success.vlm.timeouts_s.{kind}={float(seconds):g}"]
         return out

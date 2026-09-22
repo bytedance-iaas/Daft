@@ -191,9 +191,10 @@ def test_unknown_datasets_and_neighbouring_paths(client_for):
     c = client_for()
     body = assert_error(c.get("/api/v1/datasets/ds_missing"), "not_found")
     assert body["error"]["message"] != UNKNOWN                 # the handler said so
-    for path in ("/api/v1/datasets/browse", "/api/v1/datasets/episodes",
-                 "/api/v1/datasets/task_x"):                  # W3's routes, not an id (yet)
-        assert assert_error(c.get(path), "not_found")["error"]["message"] == UNKNOWN
+    assert assert_error(c.get("/api/v1/datasets/task_x"), "not_found")["error"]["message"] \
+        == UNKNOWN                                            # not an id
+    for path in ("/api/v1/datasets/browse", "/api/v1/datasets/episodes"):   # W5a serves them
+        assert_error(c.get(path), "validation_failed")        # and wants their parameters
     assert_error(c.patch("/api/v1/datasets/ds_missing", json={"name": "x"}), "not_found")
     assert_error(c.delete("/api/v1/datasets/ds_missing", headers=JSON), "not_found")
 
