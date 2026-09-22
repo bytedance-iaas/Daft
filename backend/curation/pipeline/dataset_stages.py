@@ -356,8 +356,13 @@ def _audit_ids(label_audit: dict | None) -> set[str]:
 
 def run_skill_profile(ctx, run_dir: str, rows: list[dict], cfg: dict, captioner: Callable,
                       llm_ask: Callable, auto_caps: dict[str, str], part: str, *,
-                      incremental: bool = False, relabels: dict[int, str] | None = None) -> dict:
-    """Profile the kept, de-duplicated meta ``rows`` (ascending); returns ``check --json``."""
+                      incremental: bool = False, relabels: dict[int, str] | None = None,
+                      restored: set[int] | frozenset = frozenset()) -> dict:
+    """Profile the kept, de-duplicated meta ``rows`` (ascending); returns ``check --json``.
+
+    ``restored``: episodes a person brought into the delivery; ``--incremental``
+    files them from their text, never captioning them (v1's ``_sync_profile``).
+    """
     from .run import _skill_profile_stage
 
     episodes = [index_of(r["episode_id"]) for r in rows]
@@ -377,7 +382,7 @@ def run_skill_profile(ctx, run_dir: str, rows: list[dict], cfg: dict, captioner:
             else:
                 profile, caption_of, gtext_of, gsrc_of, label_audit = _incremental_profile(
                     ctx, rows, cfg, captioner, ask, auto_caps, previous, logs, lock,
-                    relabels or {})
+                    relabels or {}, restored)
     except Exception as e:
         # a text call the taxonomy needs failed for good: no episode can be filed, the
         # module as a whole failed (exit 4); anything else is a bug and stays one
@@ -418,11 +423,19 @@ def run_skill_profile(ctx, run_dir: str, rows: list[dict], cfg: dict, captioner:
 
 
 def _incremental_profile(ctx, rows, cfg, captioner, llm_ask, auto_caps, previous, logs,
-                         lock, relabels):
-    """Re-file what changed on the existing taxonomy (v1's ``_sync_profile``)."""
-    from ..dataset_level.reassign import (NO_SUBSKILL, SRC_LABEL, UNASSIGNED,
-                                          grouping_text_and_source, member_map_of,
-                                          rebuild_profile, reassign_texts,
+                         lock, relabels, restored=frozenset()):
+    """Re-file what changed on the existing taxonomy (v1's ``_sync_profile``).
+
+    Episodes no longer in ``rows`` leave the profile (discarded, judged failed,
+    rejected again after a relabel); relabelled ones are filed again under the
+    new label. An episode that joins is filed from its text without a model
+    caption when a person brought it in (``restored``) or relabelled it - the
+    human label, else the annotation, else the autolabel caption, else it stays
+    unassigned, as v1 does; any other newcomer is captioned first.
+    """
+    from ..dataset_level.reassign import (NO_SUBSKILL, SRC_CAPTION, SRC_LABEL, SRC_NONE,
+                                          UNASSIGNED, grouping_text_and_source,
+                                          member_map_of, rebuild_profile, reassign_texts,
                                           taxonomy_from_profile)
 
     old_rows = {str(r["episode_id"]): r for r in previous["assignments"]}
@@ -447,12 +460,31 @@ def _incremental_profile(ctx, rows, cfg, captioner, llm_ask, auto_caps, previous
             to_assign[eid] = lab
             new_text[eid], new_src[eid] = lab, SRC_LABEL
     caps = previous["captions"]
-    if added:
+    by_person = [r for r in added if index_of(r["episode_id"]) in restored
+                 or str(relabels.get(index_of(r["episode_id"])) or "").strip()]
+    newcomers = [r for r in added if r not in by_person]
+    for r in by_person:                     # v1's _sync_profile: no model call
+        eid = r["episode_id"]
+        lab = (str(relabels.get(index_of(eid)) or "").strip()
+               or str(r.get("instruction") or "").strip())
+        cap = str(auto_caps.get(eid) or "").strip()
+        if lab:
+            text, src = lab, SRC_LABEL
+        elif cap:
+            text, src = cap, SRC_CAPTION
+        else:
+            text, src = "", SRC_NONE
+        new_text[eid], new_src[eid] = text, src
+        assignment[eid] = (UNASSIGNED, NO_SUBSKILL)
+        if text:
+            to_assign[eid] = text
+    if newcomers:
         fresh = _PerEpisodeCaptions(logs, lock)(
-            added, captioner, n_frames=int((cfg.get("skill_profile") or {}).get("n_frames", 8)),
+            newcomers, captioner,
+            n_frames=int((cfg.get("skill_profile") or {}).get("n_frames", 8)),
             precomputed=auto_caps,
             max_concurrency=int((cfg.get("skill_profile") or {}).get("caption_concurrency", 8)))
-        for r, cap in zip(added, fresh):
+        for r, cap in zip(newcomers, fresh):
             eid = r["episode_id"]
             caps[index_of(eid)] = cap
             lab = str(relabels.get(index_of(eid)) or "").strip() or r.get("instruction")
@@ -471,6 +503,7 @@ def _incremental_profile(ctx, rows, cfg, captioner, llm_ask, auto_caps, previous
     audit = {tier: [e for e in entries if e.get("id") in wanted]
              for tier, entries in (previous["label_audit"] or {}).items()
              if isinstance(entries, list)}
-    ctx.log("info", f"skill_profile --incremental: {len(removed)} removed, {len(added)} added, "
+    ctx.log("info", f"skill_profile --incremental: {len(removed)} removed, {len(added)} added "
+                    f"({len(by_person)} brought in by a person, filed from their text), "
                     f"{len(to_assign)} re-filed; the taxonomy is kept")
     return new_profile, cap_of, new_text, new_src, audit

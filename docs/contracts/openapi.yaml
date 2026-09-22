@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.3.0
+  version: 1.4.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -34,6 +34,12 @@ info:
     the confirmation rule for deleting keys and backends that finished tasks used, the media
     signing prefix, optional session tokens on access keys, `Subtask.pause_reason`, `rel:
     dataset` links, dataset ids and the overview's counting rules are spelled out.
+
+    1.4.0 (2026-09-21): applying an adjudication takes an optional `AdjudicationApply` body -
+    `relabel_rerun` picks how relabelled episodes are judged again, v1's two layers by default
+    or the first run's full flow (D39) - and the subtask's `scope` records the choice;
+    `Summary.skipped` counts episodes left out because source files are missing (D40), which
+    the report lists under `integrity.skipped_episodes`.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1167,8 +1173,16 @@ paths:
       tags: [report]
       operationId: applyAdjudication
       summary: Execute the recorded decisions as a subtask (D10); never exports (D9)
+      description: |
+        The body is optional; without one (or with `{}`) relabelled episodes are judged again the
+        way v1 does (D39). The choice is kept in the subtask's `scope.relabel_rerun`.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AdjudicationApply"}
       responses:
         "202":
           description: subtask created
@@ -2053,6 +2067,12 @@ components:
         held: {type: integer, minimum: 0}
         review: {type: integer, minimum: 0}
         pass_rate: {type: [number, "null"]}
+        skipped:
+          type: integer
+          minimum: 0
+          description: >-
+            episodes left out because source files are missing (D40, as v1 does): not checked, in
+            none of the lists and not part of total; the report lists them
     UsageTotals:
       type: object
       additionalProperties: false
@@ -2151,6 +2171,7 @@ components:
           properties:
             modules: {type: array, items: {$ref: "#/components/schemas/ModuleId"}}
             episodes: {enum: [errors, all]}
+            relabel_rerun: {enum: [v1, full], description: "apply_adjudication only (D39)"}
         state: {$ref: "#/components/schemas/TaskState"}
         state_reason: {type: [string, "null"]}
         pause_reason: {enum: [user, system, null], description: "only while pausing or paused"}
@@ -2340,6 +2361,20 @@ components:
         decision: {enum: [adopt_suggestion, custom_label, keep_label, success, failure, restore, keep_rejected, unsure, discard]}
         new_label: {type: [string, "null"]}
         note: {type: [string, "null"]}
+    AdjudicationApply:
+      type: object
+      additionalProperties: false
+      properties:
+        relabel_rerun:
+          enum: [v1, full]
+          default: v1
+          description: >-
+            How task success is judged again for relabelled episodes that have no human task
+            verdict (D39). v1: what v1's rejudge runs - multi-view scoring and the per-camera
+            end-state vote only, no task-type step, camera hints, reject guard or evidence
+            arbitration; verdicts and calls match v1. full: the first run's complete flow, so
+            the same decisions may end differently from v1. Episodes a person judged success
+            or failure are not judged again either way.
     DecisionInput:
       allOf:
         - $ref: "#/components/schemas/DecisionFields"

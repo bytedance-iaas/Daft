@@ -93,7 +93,7 @@
 | GET | `/api/v1/tasks/{id}/perf` | 性能剖析 |
 | GET | `/api/v1/tasks/{id}/adjudication` | 裁决队列，游标分页，`source` / `status` 过滤 |
 | POST | `/api/v1/tasks/{id}/adjudication` | 提交裁决（只记录，不执行，可反复改） |
-| POST | `/api/v1/tasks/{id}/adjudication/apply` | 执行裁决 → 建子任务 |
+| POST | `/api/v1/tasks/{id}/adjudication/apply` | 执行裁决 → 建子任务；可选请求体 `{"relabel_rerun": "v1" \| "full"}`，缺省 `v1`（改标重判的口径，D39），记在子任务的 `scope.relabel_rerun` |
 
 **其它**
 
@@ -219,6 +219,7 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
      "episodes_total": 49, "episodes_error": 2, "elapsed_s": 408}
   ],
   "summary": {"total": 50, "passed": 41, "rejected": 7, "held": 2, "review": 10, "pass_rate": 0.82},
+                                    // 有缺源文件被剔除的条目时另带 "skipped": N（D40），不计入 total
   "usage": {"prompt_tokens": 1820000, "completion_tokens": 64000,
             "reasoning_tokens": 41000, "cached_tokens": 903000, "requests": 742},
   "pending_adjudication": 10, "delivery_stale": false,

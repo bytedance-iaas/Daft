@@ -7,7 +7,8 @@
   "required": ["schema_version", "decisions"],
   "properties": {
     "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
-    "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}}
+    "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}},
+    "relabel_rerun": {"enum": ["v1", "full"], "default": "v1", "description": "how relabelled episodes without a human task verdict are judged again (D39): v1 = what v1's rejudge runs (multi-view scoring and the per-camera end-state vote only); full = the first run's complete task_success flow. Recorded with each relabel it applies, so a later retry of those episodes judges them the same way"}
   },
   "$defs": {
     "decision": {

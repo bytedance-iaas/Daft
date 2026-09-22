@@ -24,7 +24,8 @@
             "passed": {"type": "integer", "minimum": 0},
             "rejected": {"type": "integer", "minimum": 0},
             "held": {"type": "integer", "minimum": 0},
-            "review": {"type": "integer", "minimum": 0}
+            "review": {"type": "integer", "minimum": 0},
+            "skipped": {"type": "integer", "minimum": 0, "description": "episodes left out because source files are missing (D40); not part of total"}
           }
         },
         "pass_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "passed / total; held is neither"},
@@ -54,7 +55,14 @@
         "properties": {"id": {"$ref": "common.schema.json#/$defs/module_id"}, "reason": {"type": "string"}}
       }
     },
-    "integrity": {"type": "object", "description": "data package integrity: format, missing fields, unlabeled count, semantics profile / action semantics preflight"},
+    "integrity": {
+      "type": "object",
+      "description": "data package integrity: format, missing fields, unlabeled count, semantics profile / action semantics preflight",
+      "additionalProperties": true,
+      "properties": {
+        "skipped_episodes": {"$ref": "common.schema.json#/$defs/skipped_episodes", "description": "what was not checked and why: the source manifest's list plus any found at read time"}
+      }
+    },
     "perf": {"type": "object", "description": "summary; the full profile is perf.json in the same revision"}
   },
   "$defs": {
