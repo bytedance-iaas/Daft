@@ -108,7 +108,10 @@
               "type": "object",
               "additionalProperties": false,
               "required": ["pending"],
-              "properties": {"pending": {"type": "integer", "minimum": 0}}
+              "properties": {
+                "pending": {"type": "integer", "minimum": 0, "description": "open questions this module raised that must be decided"},
+                "appealable": {"type": "integer", "minimum": 0, "description": "rejects attributed to this module a person may appeal (D42); not pending"}
+              }
             }
           ]
         },

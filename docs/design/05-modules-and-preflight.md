@@ -15,7 +15,9 @@ class ModuleSpec:
     needs: frozenset[str]                           # 能力需求，见 §2
     stage: Literal["numeric", "frame", "vlm", "post_verdict"]   # 档，见 04 篇 §2
     depends_on: tuple[str, ...]                     # 输入依赖谁的结果；上游变了本模块变 stale
-    produces_adjudication: bool                     # 是否会产生人工裁决条目
+    produces_adjudication: bool                     # 是否会产生人工裁决条目（含可被复议的拒绝）
+    review_lines: tuple[str, ...]                   # 产生哪几种复核，取自复核目录 REVIEW_LINES（D43）
+    appealable: bool                                # 归因于它的拒绝可否复议（D42）
     param_schema: dict                              # 任务里可覆盖的模块参数（JSON Schema）
     merge_units: Callable | None                    # VLM 模块可选：声明可合并的提问，见 04 篇 §4.2
 ```
@@ -30,7 +32,7 @@ class ModuleSpec:
 | `visual_quality` | 视觉质量 | episode | soft | `video` | frame | 硬门① | 否 |
 | `video_action_sync` | 视频-动作同步 | episode | hard | `video`,`action` | frame | 硬门① | 否 |
 | `task_success` | 任务成败判定 | episode | hard | `video`,`vlm` | vlm | 硬门②，autolabel | **是** |
-| `dedup` | 精确去重 | dataset | dedup | `raw_bytes` | post_verdict | 漏斗判决 | 否 |
+| `dedup` | 精确去重 | dataset | dedup | `raw_bytes` | post_verdict | 漏斗判决 | 可复议（D42） |
 | `skill_profile` | 技能画像 | dataset | none | `video`,`vlm` | post_verdict | 漏斗判决，dedup，autolabel | **是** |
 
 几点要说明，都来自 v1 代码：
@@ -53,6 +55,17 @@ class ModuleSpec:
   它对某条 episode 失败（调用重试用尽、或解码失败）时，这一条按执行出错处理：不再往后走，待补跑（D24、D33）。
   v1 在这种情况下给空串、让成败判定拿空任务文本照跑，v2 不这么做。
 - `task_success` 和 `skill_profile` 是仅有的两个 VLM 模块。它们之间能不能合并请求，见 04 篇 §4。
+
+人工复核也由注册表声明（D43，注册表 1.2）。`REVIEW_LINES` 是复核种类目录，每一种写明编号、标题、
+条目在哪份清单里（`passed` 还是 `reject`）、未判时算不算「待裁」、可选的判断和按钮名：
+
+| 种类 | 标题 | 条目在 | 算待裁 | 判断 | 由谁产生 |
+|---|---|---|---|---|---|
+| `label` | 标注分歧 | passed | 是 | 采纳新标注 / 自行改写标注 / 维持原标注 / 拿不准 / 整条弃用 | `skill_profile`，`task_success` 的判废护栏 |
+| `task_verdict` | 任务成败弃权 | passed | 是 | 判成功 / 判失败 / 拿不准 / 整条弃用 | `task_success` |
+| `reject_appeal` | 被拒复议 | reject | 否（可以复议，不是必须） | 恢复为可用 / 维持拒绝 / 拿不准 | `appealable` 的模块：`task_success`（只归因于它的拒绝）、`dedup` |
+
+物理与结构硬门（时间戳、运动学、同步）和软分拒绝不可复议，是终局。
 
 ## 2. 能力需求（`needs`）与预检的对应
 
@@ -187,6 +200,9 @@ v1 还有一个名字相近的东西：`ingest/semantics_preflight.py`。数据�
    帧策略相同的模块会被自动合进同一个请求（见 04 篇 §4.2）。多步证据链式的模块不用声明，按自己的方式调用。
    新模块的调用种类用自己的名字（形如模块 id，C3 1.1），不必借 v1 的五种。
 5. 报告小节渲染器：给一个默认表格渲染器兜底，需要定制才写。
+   要人工复核的，在 `review_lines` 里写它产生哪几种；是新的种类就往复核目录加一项（标题、条目所在的清单、
+   是否算待裁、判断和按钮名），再在 `adjudicate-apply` 里加这种判断的执行规则。裁决页对没有专用视图的种类
+   按目录通用渲染（标题 + 理由 + 每个判断一个按钮），契约不用改（D43）。
 6. 前端：零改动 —— 模块清单、中文名、标灰原因全部来自 API。
 
 **第 6 条是这次重构的核心收益之一**：v1 里加一个模块要同时改 Gradio 页面，

@@ -63,6 +63,7 @@ function ReportSummary({ task }: { task: Task }) {
             <Stat label={zh.taskDetail.held} value={s.held} foot={zh.taskDetail.heldFoot} />
             <Stat label={zh.taskDetail.review} value={task.pending_adjudication} />
             <Stat label={zh.taskDetail.passRate} value={percent(s.pass_rate)} foot={zh.taskDetail.passRateFoot} />
+            {s.skipped ? <Stat label={zh.taskDetail.skipped} value={s.skipped} foot={zh.taskDetail.skippedFoot} /> : null}
           </div>
           <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 12 }}>
             {zh.taskDetail.summaryNote}
@@ -267,16 +268,29 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
   );
 }
 
-function TimelineCard({ task, entries }: { task: Task; entries: TimelineEntry[] }) {
+/** An apply_adjudication subtask records how relabels were judged again (D39, `scope.relabel_rerun`). */
+function relabelRerunOf(subtasks: readonly Subtask[], id: string | null | undefined): 'v1' | 'full' | null {
+  const s = id ? subtasks.find((x) => x.id === id) : undefined;
+  return s?.kind === 'apply_adjudication' ? s.scope.relabel_rerun ?? null : null;
+}
+
+function TimelineCard({ task, entries, subtasks }: { task: Task; entries: TimelineEntry[]; subtasks: readonly Subtask[] }) {
   return (
     <Card title={zh.taskDetail.timeline} extra={<span className="muted">{zh.taskDetail.timelineDesc}</span>}>
       {!entries.length ? (
         <Empty />
       ) : (
         <Timeline data-testid="timeline">
-          {entries.map((e, i) => (
+          {entries.map((e, i) => {
+            const rerun = e.kind === 'subtask_started' || e.kind === 'subtask_finished' ? relabelRerunOf(subtasks, e.subtask_id) : null;
+            return (
             <Timeline.Item key={i} label={<RelTime ms={e.at} />} dotColor={e.kind === 'failed' ? 'var(--c-danger)' : e.kind === 'system_pause' ? 'var(--c-warning)' : undefined}>
               <b>{zh.taskDetail.timelineKind[e.kind] ?? e.kind}</b>
+              {rerun ? (
+                <Tag size="small" color={rerun === 'full' ? 'orangered' : 'arcoblue'} style={{ marginLeft: 8 }} data-testid="relabel-rerun-tag">
+                  {zh.taskDetail.relabelRerun[rerun]}
+                </Tag>
+              ) : null}
               {e.revision && e.kind === 'revision' ? (
                 <Space style={{ marginLeft: 8 }}>
                   <Link to={`/tasks/${task.id}/report?rev=${e.revision}`}>{zh.taskDetail.openRevision(e.revision)}</Link>
@@ -287,7 +301,8 @@ function TimelineCard({ task, entries }: { task: Task; entries: TimelineEntry[] 
                 {e.text}
               </div>
             </Timeline.Item>
-          ))}
+            );
+          })}
         </Timeline>
       )}
     </Card>
@@ -424,7 +439,7 @@ export function OverviewTab({ task, subtasks, timeline }: { task: Task; subtasks
       <StagesCard task={task} />
       <TokensCard task={task} subtasks={subtasks} />
       <ModulesCard task={task} plan={plan.data} digest={digest} />
-      <TimelineCard task={task} entries={timeline} />
+      <TimelineCard task={task} entries={timeline} subtasks={subtasks} />
       <MoreInfo task={task} />
       <div className="muted" style={{ fontSize: 12 }}>
         {absoluteTime(task.updated_at)}

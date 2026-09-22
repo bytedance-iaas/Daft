@@ -1,10 +1,87 @@
 {
- "registry_version": "1.1",
+ "registry_version": "1.2",
  "stages": [
   "numeric",
   "frame",
   "vlm",
   "post_verdict"
+ ],
+ "review_lines": [
+  {
+   "id": "label",
+   "review_kind": "label_conflict",
+   "title_zh": "标注分歧",
+   "applies_to": "passed",
+   "counts_as_pending": true,
+   "decisions": [
+    {
+     "const": "adopt_suggestion",
+     "title": "采纳新标注"
+    },
+    {
+     "const": "custom_label",
+     "title": "自行改写标注"
+    },
+    {
+     "const": "keep_label",
+     "title": "维持原标注"
+    },
+    {
+     "const": "unsure",
+     "title": "拿不准"
+    },
+    {
+     "const": "discard",
+     "title": "其它原因，整条弃用"
+    }
+   ]
+  },
+  {
+   "id": "task_verdict",
+   "review_kind": "task_verdict",
+   "title_zh": "任务成败弃权",
+   "applies_to": "passed",
+   "counts_as_pending": true,
+   "decisions": [
+    {
+     "const": "success",
+     "title": "判成功"
+    },
+    {
+     "const": "failure",
+     "title": "判失败"
+    },
+    {
+     "const": "unsure",
+     "title": "拿不准"
+    },
+    {
+     "const": "discard",
+     "title": "其它原因，整条弃用"
+    }
+   ]
+  },
+  {
+   "id": "reject_appeal",
+   "review_kind": "reject_appeal",
+   "title_zh": "被拒复议",
+   "applies_to": "reject",
+   "counts_as_pending": false,
+   "decisions": [
+    {
+     "const": "restore",
+     "title": "恢复为可用"
+    },
+    {
+     "const": "keep_rejected",
+     "title": "维持拒绝"
+    },
+    {
+     "const": "unsure",
+     "title": "拿不准"
+    }
+   ]
+  }
  ],
  "modules": [
   {
@@ -19,6 +96,8 @@
    "stage": "numeric",
    "depends_on": [],
    "produces_adjudication": false,
+   "review_lines": [],
+   "appealable": false,
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -51,6 +130,8 @@
    "stage": "numeric",
    "depends_on": [],
    "produces_adjudication": false,
+   "review_lines": [],
+   "appealable": false,
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -83,6 +164,8 @@
    "stage": "numeric",
    "depends_on": [],
    "produces_adjudication": false,
+   "review_lines": [],
+   "appealable": false,
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -115,6 +198,8 @@
     "numeric_gates"
    ],
    "produces_adjudication": false,
+   "review_lines": [],
+   "appealable": false,
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -149,6 +234,8 @@
     "numeric_gates"
    ],
    "produces_adjudication": false,
+   "review_lines": [],
+   "appealable": false,
    "param_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -204,6 +291,11 @@
     "autolabel"
    ],
    "produces_adjudication": true,
+   "review_lines": [
+    "task_verdict",
+    "label"
+   ],
+   "appealable": true,
    "param_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -255,7 +347,9 @@
    "depends_on": [
     "funnel_verdict"
    ],
-   "produces_adjudication": false,
+   "produces_adjudication": true,
+   "review_lines": [],
+   "appealable": true,
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -291,6 +385,10 @@
     "autolabel"
    ],
    "produces_adjudication": true,
+   "review_lines": [
+    "label"
+   ],
+   "appealable": false,
    "param_schema": {
     "type": "object",
     "properties": {},

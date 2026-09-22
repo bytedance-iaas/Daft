@@ -14,6 +14,7 @@ import type {
 } from '../api/types';
 import {
   MAIN_TASK,
+  SO101_TASK,
   appealQuestions,
   baseQuestions,
   mainLogs,
@@ -26,6 +27,8 @@ import {
   seedDecisions,
   seedDeletedTask,
   seedTasks,
+  so101Subtasks,
+  so101Timeline,
   taskText,
 } from './world';
 
@@ -73,8 +76,14 @@ export function resetDb(now: number = Date.now()): MockDb {
   db.backends = seedBackends(now);
   db.datasets = seedDatasets(now);
   db.tasks = [...seedTasks(now), seedDeletedTask(now)];
-  db.subtasks = new Map([[MAIN_TASK, mainSubtasks(now)]]);
-  db.timelines = new Map([[MAIN_TASK, mainTimeline(now)]]);
+  db.subtasks = new Map([
+    [MAIN_TASK, mainSubtasks(now)],
+    [SO101_TASK, so101Subtasks(now)],
+  ]);
+  db.timelines = new Map([
+    [MAIN_TASK, mainTimeline(now)],
+    [SO101_TASK, so101Timeline(now)],
+  ]);
   db.logs = new Map([[MAIN_TASK, mainLogs(now)]]);
   db.decisions = new Map([[MAIN_TASK, seedDecisions(now)]]);
   db.preflights = new Map();

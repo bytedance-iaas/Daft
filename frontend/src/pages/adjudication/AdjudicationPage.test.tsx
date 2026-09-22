@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { findTask } from '../../mocks/db';
+import { decisionsOf, findTask } from '../../mocks/db';
 import { MAIN_TASK } from '../../mocks/world';
 import { findDrawer, pick } from '../../test/arco';
 import { fieldErrors } from '../../test/forms';
@@ -137,7 +137,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(await findDrawer('ep 6')).toBeInTheDocument();
   });
 
-  it('执行裁决 lists what will run, then builds the subtask once', async () => {
+  it('执行裁决 confirms what will be applied and which relabels are judged again, then builds the subtask once (D39)', async () => {
     const seen = recordRequests();
     const { user } = renderApp(PAGE);
     await screen.findByTestId('card-29');
@@ -147,19 +147,70 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     await waitFor(() => expect(screen.getByTestId('adj-counts')).toHaveTextContent('5 条尚未应用'));
     await user.click(screen.getByRole('button', { name: '执行裁决' }));
     const dialog = await screen.findByRole('dialog', { name: '执行裁决' });
+    // Counted over every unapplied card, not only the loaded (pending) ones: ep 4, 13, 9 were decided earlier.
+    const summary = await within(dialog).findByTestId('apply-summary');
+    expect(summary).toHaveTextContent('本次应用 5 条裁决（5 条 episode）。');
+    expect(summary).toHaveTextContent('其中 2 条改了标，要按新标注重判任务成败。');
+    expect(summary).toHaveTextContent('人已判了成功或失败的改标条目不重判。');
     const items = within(dialog).getByTestId('apply-list');
     expect(items).toHaveTextContent('ep 29：采纳新标注 → 按新标注重跑任务成败判定');
+    expect(items).toHaveTextContent('ep 4：采纳新标注 → 按新标注重跑任务成败判定');
     expect(items).toHaveTextContent('ep 40：判成功 → 不跑模型，人说了算');
-    // ep 4, 13, 9 were decided earlier and are not in the loaded (pending) list.
-    expect(dialog).toHaveTextContent('另有 3 条不在当前已加载的列表里，也会一并执行。');
+    // The protocol: v1's two layers by default, the first run's full flow on request.
+    const choice = within(dialog).getByTestId('relabel-rerun');
+    expect(within(choice).getByRole('radio', { name: /与旧版一致（默认）/ })).toBeChecked();
+    expect(choice).toHaveTextContent('只跑多视角打分和逐机位复核两层');
+    expect(choice).toHaveTextContent('同样的裁决可能得出和旧版不同的结论');
     await user.click(within(dialog).getByRole('button', { name: '执行' }));
     expect(await screen.findByText('已创建执行裁决的子任务')).toBeInTheDocument();
     const applies = seen.filter((r) => r.method === 'POST' && r.path === `/tasks/${MAIN_TASK}/adjudication/apply`);
     expect(applies).toHaveLength(1);
+    expect(applies[0].body).toEqual({ relabel_rerun: 'v1' });
     expect(applies[0].headers['idempotency-key']).toBeTruthy();
+    expect(findTask(MAIN_TASK)!.active_subtask?.scope.relabel_rerun).toBe('v1');
     await waitFor(() => expect(screen.getByTestId('adj-counts')).toHaveTextContent('0 条尚未应用'));
     expect(screen.getByRole('button', { name: '执行裁决' })).toBeDisabled();
     expect(findTask(MAIN_TASK)!.delivery_stale).toBe(true);
+  });
+
+  it('按首轮的完整流程重判 sends relabel_rerun: full; a relabel a person judged is not counted as re-judged', async () => {
+    const seen = recordRequests();
+    const { user } = renderApp(PAGE);
+    await screen.findByTestId('card-29');
+    await user.click(within(card(29)).getByText('采纳新标注'));
+    await waitFor(() => expect(screen.getByTestId('adj-counts')).toHaveTextContent('4 条尚未应用'));
+    await user.click(within(card(29)).getByText('判失败'));
+    await waitFor(() => expect(posts(seen)).toHaveLength(2));
+    await user.click(screen.getByRole('button', { name: '执行裁决' }));
+    const dialog = await screen.findByRole('dialog', { name: '执行裁决' });
+    const summary = await within(dialog).findByTestId('apply-summary');
+    expect(summary).toHaveTextContent('本次应用 5 条裁决（4 条 episode）。');
+    expect(summary).toHaveTextContent('其中 1 条改了标，要按新标注重判任务成败。');
+    expect(summary).toHaveTextContent('人已判了成功或失败的改标条目不重判（本次 1 条）。');
+    await user.click(within(dialog).getByText('按首轮的完整流程重判'));
+    await user.click(within(dialog).getByRole('button', { name: '执行' }));
+    expect(await screen.findByText('已创建执行裁决的子任务')).toBeInTheDocument();
+    const apply = seen.find((r) => r.method === 'POST' && r.path === `/tasks/${MAIN_TASK}/adjudication/apply`);
+    expect(apply?.body).toEqual({ relabel_rerun: 'full' });
+    expect(findTask(MAIN_TASK)!.active_subtask?.scope.relabel_rerun).toBe('full');
+  });
+
+  it('without relabels to judge again there is no protocol to pick; the body still says v1', async () => {
+    // The earlier relabel (ep 4) was applied already.
+    for (const d of decisionsOf(MAIN_TASK)) if (d.episode_index === 4) d.applied = true;
+    const seen = recordRequests();
+    const { user } = renderApp(PAGE);
+    await screen.findByTestId('card-29');
+    await waitFor(() => expect(screen.getByTestId('adj-counts')).toHaveTextContent('2 条尚未应用'));
+    await user.click(screen.getByRole('button', { name: '执行裁决' }));
+    const dialog = await screen.findByRole('dialog', { name: '执行裁决' });
+    const summary = await within(dialog).findByTestId('apply-summary');
+    expect(summary).toHaveTextContent('本次应用 2 条裁决（2 条 episode）。');
+    expect(summary).not.toHaveTextContent('改了标');
+    expect(within(dialog).queryByTestId('relabel-rerun')).toBeNull();
+    await user.click(within(dialog).getByRole('button', { name: '执行' }));
+    expect(await screen.findByText('已创建执行裁决的子任务')).toBeInTheDocument();
+    expect(seen.find((r) => r.method === 'POST' && r.path.endsWith('/adjudication/apply'))?.body).toEqual({ relabel_rerun: 'v1' });
   });
 
   it('card videos are signed on demand and signed again when a URL fails', async () => {
