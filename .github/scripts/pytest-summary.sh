@@ -10,10 +10,8 @@ rc=${PIPESTATUS[0]}
 if [ "$rc" -ne 0 ]; then
   tail_text="$(grep -v -i -E 'token|secret|password' "$log" | tail -n 30)"
   if [ -n "${GITHUB_ACTIONS:-}" ]; then
-    # workflow-command escaping: % first, then CR and LF
-    esc="${tail_text//'%'/'%25'}"
-    esc="${esc//$'\r'/'%0D'}"
-    esc="${esc//$'\n'/'%0A'}"
+    # workflow-command escaping: % first, then CR and LF (python: bash versions disagree on quoting)
+    esc="$(printf '%s' "$tail_text" | python -c 'import sys; s = sys.stdin.read(); print(s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"), end="")')"
     echo "::error title=pytest $* (exit $rc)::${esc}"
   fi
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
