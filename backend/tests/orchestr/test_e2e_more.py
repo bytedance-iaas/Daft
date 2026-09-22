@@ -16,10 +16,18 @@ pytestmark = pytest.mark.slow
 def test_applying_decisions_builds_a_new_revision_without_exporting(daemon):
     from daemon.repo import protocol as P
 
+    from curation.contracts import modules as registry
+
     d = daemon()
     first = d.wait(d.create()["id"])
-    assert first["state"] == "succeeded" and first["pending_adjudication"] == 2
     task_id, rd = first["id"], d.run_dir(first["id"])
+    with open(os.path.join(rd, "revisions", "r0001", "review.json"), encoding="utf-8") as fh:
+        review = json.load(fh)["episodes"]
+    must_decide = [e["episode_index"] for e in review if any(
+        registry.review_line_of_kind(i["kind"]).counts_as_pending for i in e["review"])]
+    assert 3 in must_decide                                  # task_success abstained on it
+    assert first["state"] == "succeeded"
+    assert first["pending_adjudication"] == len(must_decide)  # appeals are not pending (D42)
     r = d.api("POST", f"/tasks/{task_id}/adjudication/apply")
     assert r.status_code == 409 and "没有待执行的裁决" in r.json()["error"]["message"]
     d.rt.repo.append_adjudication([

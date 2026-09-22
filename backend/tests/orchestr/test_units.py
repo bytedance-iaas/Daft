@@ -49,13 +49,18 @@ def _adj(ep, line, decision):
 def test_pending_adjudication_counts_unanswered_questions():
     review = {"episodes": [
         {"episode_index": 3, "review": [{"kind": "task_verdict"}], "current_list": "passed"},
-        {"episode_index": 4, "review": [{"kind": "label_conflict"}, {"kind": "task_verdict"}],
+        {"episode_index": 4, "review": [{"kind": "label_conflict", "line": "label"},
+                                        {"kind": "task_verdict", "line": "task_verdict"}],
          "current_list": "passed"},
-        {"episode_index": 5, "review": [{"kind": "reject_appeal"}], "current_list": "reject"}]}
-    assert rules.pending_adjudication(review, []) == 3
+        {"episode_index": 5, "review": [{"kind": "reject_appeal"}], "current_list": "reject"},
+        {"episode_index": 6, "review": [{"kind": "new_kind", "line": "new_line"}],
+         "current_list": "passed"}]}
+    assert rules.pending_adjudication(review, []) == 3           # appeals are never pending
     latest = [_adj(3, "task_verdict", "success"), _adj(4, "label", "keep_label"),
-              _adj(5, "reject_appeal", "unsure")]
-    assert rules.pending_adjudication(review, latest) == 2       # 4 half answered, 5 unsure
+              _adj(6, "new_line", "unsure")]
+    assert rules.pending_adjudication(review, latest) == 2       # 4 half answered, 6 unsure
+    latest.append(_adj(4, "task_verdict", "failure"))
+    assert rules.pending_adjudication(review, latest) == 1
     assert rules.pending_adjudication(None, latest) == 0
 
 

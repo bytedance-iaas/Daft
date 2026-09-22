@@ -76,8 +76,25 @@ def read_list(rev_dir: pathlib.Path, name: str) -> dict | None:
     return doc if isinstance(doc, dict) else None
 
 
+def _review_line(item: dict) -> tuple[str, bool]:
+    """(the adjudication line of a review.json item, whether an open one is pending).
+
+    C2 1.5 items carry ``line``; older ones only ``kind``. The registry's catalog (C1 1.2,
+    D43) says whether the line must be decided: appeals are optional and never pending
+    (D42). A line the catalog does not know counts as pending - better asked than lost.
+    """
+    from curation.contracts import modules as registry
+
+    line_id, kind = item.get("line"), item.get("kind")
+    try:
+        spec = registry.review_line(line_id) if line_id else registry.review_line_of_kind(kind)
+    except KeyError:
+        return str(line_id or REVIEW_LINE.get(kind, kind)), True
+    return spec.id, bool(spec.counts_as_pending)
+
+
 def pending_adjudication(review: dict | None, latest: Iterable[P.Adjudication]) -> int:
-    """Episodes of ``review.json`` with a question nobody has answered yet.
+    """Episodes of ``review.json`` with a question that must be decided and is not yet.
 
     A question is answered by the latest decision on its line for that episode;
     "unsure" is a legal answer that keeps the episode in the queue (06 §5.1, rule 3).
@@ -86,8 +103,8 @@ def pending_adjudication(review: dict | None, latest: Iterable[P.Adjudication]) 
     n = 0
     for entry in (review or {}).get("episodes") or []:
         ep = int(entry.get("episode_index", -1))
-        lines = {REVIEW_LINE.get(item.get("kind"), item.get("kind"))
-                 for item in entry.get("review") or []}
+        lines = {line for line, pending in map(_review_line, entry.get("review") or [])
+                 if pending}
         if any((ep, line) not in answered for line in lines):
             n += 1
     return n
