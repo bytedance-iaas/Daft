@@ -5,7 +5,9 @@
 * an episode a module erred on is held: it goes to no later stage and is not
   delivered; a retry re-runs it alone and the terminal state is recomputed (D24, D25);
 * a module that fails as a whole is ``failed``, the other modules go on; a retry runs
-  it in full (04 §7).
+  it in full (04 §7);
+* a revision whose batch cannot be delivered is never switched to: the task fails,
+  its report stays unpublished, and ``continue`` only publishes (D25, D29).
 """
 from __future__ import annotations
 
@@ -128,3 +130,33 @@ def test_a_module_that_fails_as_a_whole_leaves_the_rest_running_and_a_retry_runs
     assert done["state"] == "succeeded", json.dumps(done)[:2000]
     assert done["summary"]["passed"] == 5 and done["summary"]["held"] == 0
     assert {m["id"]: m["state"] for m in done["modules"]}["task_success"] == "succeeded"
+
+
+def test_a_revision_that_cannot_be_delivered_is_never_switched_to(daemon, monkeypatch):
+    from daemon.orchestr import delivery as D
+
+    original = D.LocalDelivery.put_file
+
+    def unwritable(self, rel, path):
+        raise D.DeliveryError("交付目录写不进去", "injected: AccessDenied")
+
+    d = daemon()
+    monkeypatch.setattr(D.LocalDelivery, "put_file", unwritable)
+    task = d.wait(d.create(modules=NUMERIC)["id"])
+    assert task["state"] == "failed" and "交付目录写不进去" in task["state_reason"], task
+    assert task["result_rev"] == 0                          # built, never switched to
+    rd = d.run_dir(task["id"])
+    assert os.path.isfile(os.path.join(rd, "revisions", "r0001", "commit.json"))
+    report = d.api("GET", f"/tasks/{task['id']}/report")
+    assert report.status_code == 404 and report.json()["error"]["code"] == "not_found"
+    assert not os.path.exists(os.path.join(d.delivery(), "latest"))
+
+    monkeypatch.setattr(D.LocalDelivery, "put_file", original)   # the delivery is back
+    r = d.api("POST", f"/tasks/{task['id']}/continue")
+    assert r.status_code == 202, r.text
+    done = d.wait(task["id"])
+    assert done["state"] == "succeeded" and done["result_rev"] == 1, json.dumps(done)[:2000]
+    assert os.listdir(os.path.join(rd, "checks", "timestamp_check", "parts")) == ["0001.jsonl"]
+    assert d.api("GET", f"/tasks/{task['id']}/report").status_code == 200
+    with open(os.path.join(d.delivery(), "latest"), encoding="utf-8") as fh:
+        assert fh.read().strip() == task["run_id"]
