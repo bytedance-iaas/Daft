@@ -38,7 +38,7 @@ from ..repo import protocol as P
 from ..secrets import Unavailable, cli_environment
 from . import rules
 from .delivery import (DeliveryError, open_delivery, read_latest, sync_run_dir, write_latest)
-from .workdir import Journal, WorkDir, read_json, read_lines, write_json_atomic, write_lines
+from .workdir import Journal, WorkDir, read_json, write_json_atomic, write_lines
 
 log = logging.getLogger("daemon.orchestr")
 
@@ -189,9 +189,9 @@ class Run:
                 self.progress(stage, done=ev["done"], total=ev["total"], eta_s=ev.get("eta_s"))
             elif kind == "usage":
                 self.usage.add(ev)
-            elif kind == "throttle":
+            elif kind == "throttle":                 # a log line too: the logs page keeps it
                 msg = (f"模型服务 {ev['backend']} 限流：并发降到 {ev['limit']}（{ev['reason']}）")
-                self.hub.publish_log(self.task_id, stage, "warn", msg, subtask_id=self.sub_id)
+                self.log(stage, "warn", msg)
                 log.warning("task %s: %s", self.task_id, msg)
         return handle
 

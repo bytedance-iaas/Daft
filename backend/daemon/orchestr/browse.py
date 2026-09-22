@@ -21,7 +21,6 @@ import dataclasses
 import io
 import json
 import logging
-import os
 import pathlib
 import threading
 import time
@@ -363,7 +362,3 @@ class Browser:
             return []
         with concurrent.futures.ThreadPoolExecutor(min(8, len(items))) as ex:
             return list(ex.map(hint, items))
-
-
-def env_flag(name: str) -> bool:
-    return str(os.environ.get(name, "")).strip().lower() in ("1", "true", "yes", "on")
