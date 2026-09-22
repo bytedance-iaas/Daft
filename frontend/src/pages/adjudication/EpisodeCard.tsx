@@ -3,11 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
 import { moduleName, qk, useModules } from '../../api/queries';
-import type { AdjudicationLine, DecisionValue } from '../../api/types';
+import type { AdjudicationLine, Decision, DecisionValue } from '../../api/types';
 import { LazyVisible } from '../../components/LazyVisible';
 import { RelTime } from '../../components/RelTime';
 import { SignedImage, SignedVideo } from '../../features/media/SignedMedia';
-import { catalogLine, lineDecisions, lineTitle, type CardView, type ReviewCatalog } from '../../lib/adjudication';
+import { answerOn, catalogLine, lineDecisions, lineTitle, repeats, type CardView, type EffectiveDecision, type ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
 
 export const STATUS_COLOR: Record<string, string> = { pending: 'arcoblue', optional: 'cyan', decided: 'green', unsure: 'orange', applied: 'gray' };
@@ -80,17 +80,17 @@ function CompareMedia({ taskId, ep, other, rev }: { taskId: string; ep: number; 
   );
 }
 
-function DecidedNote({ q }: { q: Question }) {
-  const d = q.latest_decision;
-  if (q.effective?.applied) return <Tag size="small">{zh.adjudication.applied}</Tag>;
-  if (d && q.effective && d.decision === q.effective.decision && (d.new_label ?? null) === q.effective.new_label) {
+/** Who decided and when (the server's record), 已执行 once applied, or 已保存 for this session's click. */
+function DecidedNote({ latest, effective }: { latest: Decision | null | undefined; effective: EffectiveDecision | null }) {
+  if (effective?.applied) return <Tag size="small">{zh.adjudication.applied}</Tag>;
+  if (latest && effective && latest.decision === effective.decision && (latest.new_label ?? null) === effective.new_label) {
     return (
       <span className="muted" style={{ fontSize: 12 }}>
-        {d.decided_by} · <RelTime ms={d.decided_at} />
+        {latest.decided_by} · <RelTime ms={latest.decided_at} />
       </span>
     );
   }
-  if (q.effective) return <span className="muted" style={{ fontSize: 12 }}>{zh.adjudication.saved}</span>;
+  if (effective) return <span className="muted" style={{ fontSize: 12 }}>{zh.adjudication.saved}</span>;
   return null;
 }
 
@@ -146,7 +146,7 @@ function LabelQuestion({ index, view, q, catalog, onDecide }: { index: number; v
             </Radio>
           ))}
         </Radio.Group>
-        <DecidedNote q={q} />
+        <DecidedNote latest={q.latest_decision} effective={q.effective} />
       </Space>
       {editing || current === 'custom_label' ? (
         <Form layout="vertical" style={{ marginTop: 8 }}>
@@ -219,7 +219,7 @@ function VerdictQuestion({ index, view, q, catalog, onDecide }: { index: number;
       </div>
       <Space wrap>
         <Choice view={view} q={q} catalog={catalog} fallback={['success', 'failure', 'unsure']} onDecide={onDecide} />
-        <DecidedNote q={q} />
+        <DecidedNote latest={q.latest_decision} effective={q.effective} />
       </Space>
       {view.discarded ? (
         <div className="field-note" style={{ color: 'var(--c-warning)' }}>
@@ -245,7 +245,7 @@ function AppealQuestion({ index, view, q, catalog, onDecide }: { index: number; 
       </div>
       <Space wrap>
         <Choice view={view} q={q} catalog={catalog} fallback={['restore', 'keep_rejected', 'unsure']} onDecide={onDecide} />
-        <DecidedNote q={q} />
+        <DecidedNote latest={q.latest_decision} effective={q.effective} />
       </Space>
     </div>
   );
@@ -255,21 +255,21 @@ function AppealQuestion({ index, view, q, catalog, onDecide }: { index: number; 
  * A follow-up the card gained (registry follow_ups, C4 1.5.1) — v1's optional task verdict after
  * adopting or rewriting a label: answered, the person's verdict stands; left open or 拿不准, the
  * episode is judged again with the new label. Only the follow-up's own decisions are offered.
+ * The same block whether this session opened it or the server listed it (C4 1.5.2 `follow_up_of`).
  */
 function FollowUpQuestion({ index, view, f, catalog, onDecide }: { index: number; view: CardView; f: CardView['followUps'][number]; catalog: ReviewCatalog | undefined; onDecide: Decide }) {
   const verdict = f.line === 'task_verdict';
   const title = verdict ? zh.adjudication.optionalVerdict : zh.adjudication.followUpTitle(lineTitle(catalog, f.line), f.optional);
+  const desc = verdict ? zh.adjudication.optionalVerdictDesc : f.question?.reason;
   return (
     <div className="question" data-testid={`followup-${view.ep}-${f.line}`}>
       <b>{zh.adjudication.followUpHead(index, title)}</b>
-      {verdict ? (
-        <>
-          <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
-            {zh.adjudication.optionalVerdictDesc}
-          </div>
-          <div style={{ marginBottom: 8 }}>{zh.adjudication.verdictAsk(view.newLabel ?? '', true)}</div>
-        </>
+      {desc ? (
+        <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
+          {desc}
+        </div>
       ) : null}
+      {verdict ? <div style={{ marginBottom: 8 }}>{zh.adjudication.verdictAsk(view.newLabel ?? '', true)}</div> : null}
       <Space wrap>
         <Radio.Group type="button" value={f.effective?.decision ?? ''} aria-label={title} onChange={(d: DecisionValue) => void onDecide(f.line, d)}>
           {f.decisions.map((d) => (
@@ -278,11 +278,7 @@ function FollowUpQuestion({ index, view, f, catalog, onDecide }: { index: number
             </Radio>
           ))}
         </Radio.Group>
-        {f.effective ? (
-          <span className="muted" style={{ fontSize: 12 }}>
-            {zh.adjudication.saved}
-          </span>
-        ) : null}
+        <DecidedNote latest={f.decided} effective={f.effective} />
       </Space>
     </div>
   );
@@ -300,7 +296,7 @@ function GenericQuestion({ index, view, q, catalog, onDecide }: { index: number;
       {known ? (
         <Space wrap>
           <Choice view={view} q={q} catalog={catalog} fallback={[]} onDecide={onDecide} />
-          <DecidedNote q={q} />
+          <DecidedNote latest={q.latest_decision} effective={q.effective} />
         </Space>
       ) : (
         <Typography.Text type="warning">{zh.adjudication.unknownLine(q.line)}</Typography.Text>
@@ -328,6 +324,9 @@ export function EpisodeCard({
   onDecide: Decide;
 }) {
   const reg = useModules();
+  // Nothing to send when a click only repeats the answer in force (e.g. back to 采纳新标注 from
+  // the rewrite box, or saving the same text): it would lapse the follow-up's answer (C1 follow_ups).
+  const decide: Decide = async (line, d, label) => (repeats(answerOn(view, line), d, label ?? null) ? true : onDecide(line, d, label));
   const labelQ = view.questions.find((q) => q.line === 'label');
   const annotation = view.questions.find((q) => q.annotation)?.annotation;
   const duplicateOf = view.questions.find((q) => q.duplicate_of !== null && q.duplicate_of !== undefined)?.duplicate_of;
@@ -357,24 +356,24 @@ export function EpisodeCard({
         {duplicateOf !== undefined && duplicateOf !== null ? <CompareMedia taskId={taskId} ep={view.ep} other={duplicateOf} rev={rev} /> : <CardMedia taskId={taskId} ep={view.ep} rev={rev} />}
       </LazyVisible>
       {view.questions.map((q, i) => {
-        const props = { index: i, view, q, catalog, onDecide };
+        const props = { index: i, view, q, catalog, onDecide: decide };
         if (q.line === 'label') return <LabelQuestion key={q.line} {...props} />;
         if (q.line === 'task_verdict') return <VerdictQuestion key={q.line} {...props} />;
         if (q.line === 'reject_appeal') return <AppealQuestion key={q.line} {...props} />;
         return <GenericQuestion key={q.line} {...props} />;
       })}
-      {/* Follow-ups are shown only while the answer that opens them stands (they lapse otherwise). */}
+      {/* Follow-ups are shown only while the answer that opens them is in force (they lapse otherwise). */}
       {view.followUps
         .filter((f) => f.open && !view.discarded)
         .map((f, i) => (
-          <FollowUpQuestion key={`fu-${f.line}`} index={view.questions.length + i} view={view} f={f} catalog={catalog} onDecide={onDecide} />
+          <FollowUpQuestion key={`fu-${f.line}`} index={view.questions.length + i} view={view} f={f} catalog={catalog} onDecide={decide} />
         ))}
       {view.status === 'unsure' ? (
         <Typography.Paragraph style={{ color: 'var(--c-warning)', fontSize: 12, margin: '8px 0 0' }}>{view.optional ? zh.adjudication.unsureNoteOptional : zh.adjudication.unsureNote}</Typography.Paragraph>
       ) : null}
       {discardLine ? (
         <div style={{ marginTop: 12, textAlign: 'right' }}>
-          <Button status={view.discarded ? 'default' : 'danger'} type={view.discarded ? 'secondary' : 'outline'} onClick={() => void onDecide(discardLine, view.discarded ? 'unsure' : 'discard')}>
+          <Button status={view.discarded ? 'default' : 'danger'} type={view.discarded ? 'secondary' : 'outline'} onClick={() => void decide(discardLine, view.discarded ? 'unsure' : 'discard')}>
             {view.discarded ? zh.adjudication.undiscard : (catalogLine(catalog, discardLine)?.decisions.find((d) => d.const === 'discard')?.title ?? zh.adjudication.discard)}
           </Button>
         </div>

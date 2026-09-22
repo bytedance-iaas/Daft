@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AdjudicationCard, AdjudicationQuestion, Decision, ReviewLine } from '../api/types';
-import { applySummary, countsAsPending, decisionKey, decisionTitle, keepCard, lineDecisions, lineTitle, offersDiscard, statusQuery, viewCard } from './adjudication';
+import { answerOn, applySummary, clicked, countsAsPending, decisionKey, decisionTitle, keepCard, lineDecisions, lineTitle, offersDiscard, repeats, statusQuery, viewCard } from './adjudication';
 
 const labelQ: AdjudicationQuestion = {
   line: 'label',
@@ -27,6 +27,20 @@ const decided = (line: Decision['line'], decision: Decision['decision'], applied
 });
 
 const card = (questions: AdjudicationQuestion[], status: AdjudicationCard['status'] = 'pending'): AdjudicationCard => ({ episode_index: 29, status, questions });
+
+/** The registry's label line with v1's optional verdict as its follow-up (C1 1.3). */
+const followUpCatalog: ReviewLine[] = [
+  {
+    id: 'label',
+    review_kind: 'label_conflict',
+    title_zh: '标注分歧',
+    applies_to: 'passed',
+    counts_as_pending: true,
+    decisions: [{ const: 'adopt_suggestion', title: '采纳新标注' }, { const: 'custom_label', title: '自行改写标注' }, { const: 'keep_label', title: '维持原标注' }, { const: 'discard', title: '其它原因，整条弃用' }],
+    follow_ups: [{ after: ['adopt_suggestion', 'custom_label'], line: 'task_verdict', decisions: ['success', 'failure', 'unsure'], optional: true }],
+  },
+  { id: 'task_verdict', review_kind: 'task_verdict', title_zh: '任务成败弃权', applies_to: 'passed', counts_as_pending: true, decisions: [{ const: 'success', title: '判成功' }, { const: 'failure', title: '判失败' }, { const: 'unsure', title: '拿不准' }] },
+];
 
 describe('adjudication rules (06 §5.1)', () => {
   it('rule 1: 整条弃用 overrides the verdict and decides the card', () => {
@@ -114,18 +128,7 @@ describe('adjudication rules (06 §5.1)', () => {
   });
 
   it('a follow-up opens after its `after` answers, never counts as pending and lapses (C4 1.5.1)', () => {
-    const catalog: ReviewLine[] = [
-      {
-        id: 'label',
-        review_kind: 'label_conflict',
-        title_zh: '标注分歧',
-        applies_to: 'passed',
-        counts_as_pending: true,
-        decisions: [{ const: 'adopt_suggestion', title: '采纳新标注' }, { const: 'keep_label', title: '维持原标注' }, { const: 'discard', title: '其它原因，整条弃用' }],
-        follow_ups: [{ after: ['adopt_suggestion', 'custom_label'], line: 'task_verdict', decisions: ['success', 'failure', 'unsure'], optional: true }],
-      },
-      { id: 'task_verdict', review_kind: 'task_verdict', title_zh: '任务成败弃权', applies_to: 'passed', counts_as_pending: true, decisions: [{ const: 'success', title: '判成功' }, { const: 'failure', title: '判失败' }, { const: 'unsure', title: '拿不准' }] },
-    ];
+    const catalog = followUpCatalog;
     const answer = (decision: string) => ({ decision, new_label: null, applied: false });
     const labelOnly = card([labelQ]);
     // Closed before a relabel.
@@ -144,6 +147,53 @@ describe('adjudication rules (06 §5.1)', () => {
     expect(lapsed.unapplied.map((u) => u.line)).toEqual(['label']);
     // A card that asks the verdict itself gets no follow-up.
     expect(viewCard(card([labelQ, verdictQ]), { [decisionKey(29, 'label')]: answer('adopt_suggestion') }, catalog).followUps).toEqual([]);
+  });
+
+  it('a follow-up the server lists (follow_up_of, C4 1.5.2) is the optional block; its answer lapses on a newer label answer', () => {
+    const catalog = followUpCatalog;
+    const opened: AdjudicationQuestion = { ...labelQ, latest_decision: { ...decided('label', 'adopt_suggestion'), id: 5 } };
+    const listed: AdjudicationQuestion = {
+      line: 'task_verdict',
+      source_module: 'skill_profile',
+      reason: '改标之后可以一并判成败（选填）',
+      annotation: labelQ.annotation,
+      follow_up_of: 'label',
+      latest_decision: { ...decided('task_verdict', 'failure'), id: 6 },
+    };
+    const c = card([opened, listed]);
+    const v = viewCard(c, {}, catalog);
+    // Not a question of the card: no verdict question; sources and filters come from the label alone.
+    expect(v.questions.map((q) => q.line)).toEqual(['label']);
+    expect([v.hasVerdictQuestion, v.sources, keepCard(c, { sources: [], line: 'task_verdict', onlyUnsure: false })]).toEqual([false, ['skill_profile'], false]);
+    expect(v.followUps).toHaveLength(1);
+    expect(v.followUps[0]).toMatchObject({ line: 'task_verdict', openedBy: 'label', open: true, effective: { decision: 'failure' }, question: listed, decided: listed.latest_decision });
+    expect([v.humanVerdict, v.rerunsModel, v.status]).toEqual(['failure', false, 'decided']);
+    expect(v.unapplied.map((u) => `${u.line}:${u.decision}`)).toEqual(['label:adopt_suggestion', 'task_verdict:failure']);
+    // Before the registry has loaded, the listed question alone gives the block.
+    expect(viewCard(c, {}, undefined).followUps.map((f) => [f.open, f.effective?.decision, f.decisions.map((d) => d.const).join()])).toEqual([[true, 'failure', 'success,failure,unsure']]);
+    // A new answer on the label, even one that keeps the block open, makes the earlier verdict lapse ...
+    const relabel = clicked('custom_label', 'push the plate back');
+    const lapsed = viewCard(c, { [decisionKey(29, 'label')]: relabel }, catalog);
+    expect([lapsed.followUps[0].open, lapsed.followUps[0].effective, lapsed.humanVerdict, lapsed.rerunsModel]).toEqual([true, null, null, true]);
+    expect(lapsed.unapplied.map((u) => u.line)).toEqual(['label']);
+    // ... an answer given after it stands ...
+    const again = viewCard(c, { [decisionKey(29, 'label')]: relabel, [decisionKey(29, 'task_verdict')]: clicked('success') }, catalog);
+    expect([again.followUps[0].effective?.decision, again.followUps[0].decided, again.humanVerdict]).toEqual(['success', null, 'success']);
+    // ... and one clicked before the relabel lapses as well.
+    const early = clicked('success');
+    expect(viewCard(c, { [decisionKey(29, 'task_verdict')]: early, [decisionKey(29, 'label')]: clicked('custom_label', 'x') }, catalog).followUps[0].effective).toBeNull();
+    // The label executed, the verdict not yet: 已裁 until the verdict is executed too.
+    const done = card([{ ...opened, latest_decision: { ...opened.latest_decision!, applied: true } }, listed]);
+    expect(viewCard(done, {}, catalog).status).toBe('decided');
+    expect(viewCard(card([done.questions[0], { ...listed, latest_decision: { ...listed.latest_decision!, applied: true } }]), {}, catalog).status).toBe('applied');
+    // Nothing is sent when a click only repeats the answer in force: a new label answer would lapse the verdict.
+    expect([answerOn(v, 'label')?.decision, answerOn(v, 'task_verdict')?.decision, answerOn(lapsed, 'task_verdict')]).toEqual(['adopt_suggestion', 'failure', null]);
+    const stored = { decision: 'adopt_suggestion', new_label: 'pour rice into the green bowl', applied: false };
+    expect([repeats(stored, 'adopt_suggestion'), repeats(stored, 'keep_label'), repeats(null, 'adopt_suggestion')]).toEqual([true, false, false]);
+    expect([repeats(relabel, 'custom_label', 'push the plate back'), repeats(relabel, 'custom_label', 'push it back')]).toEqual([true, false]);
+    // Without the flag (a server before 1.5.2) the same question reads as the card's own.
+    const own = viewCard(card([opened, { ...listed, follow_up_of: null }]), {}, catalog);
+    expect([own.questions.map((q) => q.line), own.followUps, own.hasVerdictQuestion]).toEqual([['label', 'task_verdict'], [], true]);
   });
 
   it('maps the status filter onto the C4 query and client-side filters', () => {
