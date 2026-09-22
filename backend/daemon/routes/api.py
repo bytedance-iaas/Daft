@@ -1,10 +1,12 @@
-"""``{base}/api/v1`` routes that need only the repository and the work directory (W4).
+"""``{base}/api/v1`` task routes that need only the repository and the work directory (W4).
 
-Everything else in C4 is owned by W5 / W8 / W3 and not registered yet; see
-:mod:`daemon.operations`.
+Datasets, the overview and W8's secrets have their own modules; what C4 still
+lacks belongs to W5 / W3 and is not registered yet (see :mod:`daemon.operations`).
+:data:`fallback` answers unknown API paths and is mounted after every other router.
 """
 from __future__ import annotations
 
+import functools
 import re
 
 from fastapi import APIRouter, Query, Request
@@ -17,13 +19,21 @@ from ..errors import ApiError
 from ..logs import ALL_RUNS, LEVEL_RANK
 from ..repo import protocol as P
 from ..transitions import record
-from .common import idempotency_key, in_thread, principal, read_json_body, runtime, validate
+from .common import (
+    check_page_size,
+    idempotency_key,
+    in_thread,
+    principal,
+    read_json_body,
+    runtime,
+    validate,
+)
 
 router = APIRouter()
+fallback = APIRouter()
 
 #: Soft-deleted tasks can be restored for 30 days (P12).
 RESTORE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
-PAGE_SIZES = (10, 20, 50, 100)
 _TASK_STATES = tuple(P.TASK_TRANSITIONS)
 _REBIND_BODY = ("openapi.yaml#/paths/~1tasks~1{id}~1rebind-credentials/post/requestBody/content/"
                 "application~1json/schema")
@@ -58,19 +68,33 @@ def get_modules():
 # task list and detail
 # ---------------------------------------------------------------------------
 
+def _module_filter(raw: str | None) -> list[str] | None:
+    """``module=a,b``: tasks that selected every one of them (C4 1.1)."""
+    if raw is None:
+        return None
+    wanted = [m.strip() for m in raw.split(",") if m.strip()]
+    unknown = [m for m in wanted if m not in registry.ids()]
+    if unknown:
+        raise ApiError("validation_failed",
+                       f"没有这些质检模块：{', '.join(unknown)}（可选：{', '.join(registry.ids())}）",
+                       details={"errors": [{"field": "module", "problem": "unknown module"}]})
+    return wanted
+
+
 @router.get("/tasks")
 def list_tasks(request: Request, page: int = Query(1, ge=1), page_size: int = Query(20),
-               state: str | None = None, q: str | None = None, delivery: str | None = None):
-    if page_size not in PAGE_SIZES:
-        raise ApiError("validation_failed", "每页条数只能是 10、20、50 或 100",
-                       details={"errors": [{"field": "page_size", "problem": "not in 10/20/50/100"}]})
+               state: str | None = None, q: str | None = None, delivery: str | None = None,
+               module: str | None = None, dataset_id: str | None = None):
+    check_page_size(page_size)
     if state is not None and state not in _TASK_STATES and state != "deleted":
         raise ApiError("validation_failed", f"没有 {state} 这个任务状态",
                        details={"errors": [{"field": "state", "problem": "unknown state"}]})
+    modules = _module_filter(module)
     rt, owner = runtime(request), principal(request).owner_id
     key = taskspec.normalize_tos_uri(delivery, field_name="delivery") if delivery else None
     result = rt.repo.list_tasks(owner=owner, page=page, page_size=page_size, state=state,
-                                q=(q or "").strip() or None, delivery_key=key)
+                                q=(q or "").strip() or None, delivery_key=key,
+                                dataset_id=(dataset_id or "").strip() or None, modules=modules)
     return {"items": [views.task_list_item(t, repo=rt.repo) for t in result.items],
             "page": result.page, "page_size": result.page_size, "total": result.total}
 
@@ -135,10 +159,14 @@ async def delete_task(request: Request, task_id: str):
             try:
                 rt.repo.soft_delete_task(task_id, at=rt.clock())
             except P.StateConflict:
+                raise ApiError("task_state_conflict",
+                               "只有待启动或已结束的任务可以删除；运行中的任务请先停止",
+                               details={"state": task.state}) from None
+            except P.Conflict as err:
+                if err.code != "subtask_active":
+                    raise
                 active = rt.repo.active_subtask(task_id)
-                message = ("任务还有子任务在运行，等它结束后再删除" if active is not None else
-                           "只有待启动或已结束的任务可以删除；运行中的任务请先停止")
-                raise ApiError("task_state_conflict", message,
+                raise ApiError("subtask_active", "任务还有子任务没结束，等它结束后再删除",
                                details={"state": task.state,
                                         "active_subtask": active.id if active else None}) from None
             record(rt.repo, action="task.delete", task_id=task_id, actor=who.display_name,
@@ -264,8 +292,46 @@ def get_usage(request: Request, task_id: str):
                               rt.repo.usage_buckets(task_id, ledger="attributed"))
 
 
-@router.api_route("/{rest:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
-                  include_in_schema=False)
-def unknown(rest: str):
-    """Unknown API paths are JSON 404s - never the frontend's index.html."""
+@functools.lru_cache(maxsize=1)
+def _pending_routes() -> tuple[tuple[str, re.Pattern], ...]:
+    """(METHOD, path regex below ``/api/v1``) of the C4 operations still to be built."""
+    from ..operations import PENDING, contract_operations
+
+    ops, out = contract_operations(), []
+    for op in PENDING:
+        method, path = ops[op]
+        if path.startswith("/api/v1/"):
+            parts = re.split(r"\{[^}]+\}", path[len("/api/v1"):])
+            out.append((method, re.compile("^" + "[^/]+".join(map(re.escape, parts)) + "$")))
+    return tuple(out)
+
+
+def _other_methods(request: Request, path: str) -> set[str]:
+    """Methods the API routers (``app.state.api_routers``) serve on this path."""
+    allowed: set[str] = set()
+    for router in getattr(request.app.state, "api_routers", ()):
+        for route in router.routes:
+            rx = getattr(route, "path_regex", None)
+            if rx is not None and rx.match(path):
+                allowed |= set(getattr(route, "methods", None) or ())
+    if "GET" in allowed:
+        allowed.add("HEAD")
+    return allowed
+
+
+@fallback.api_route("/{rest:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+                    include_in_schema=False)
+def unknown(request: Request, rest: str):
+    """Unknown API paths are JSON 404s - never the frontend's index.html.
+
+    A path served with other methods answers 405 ``method_not_allowed`` with
+    ``Allow`` (C4 1.2), unless the request is a C4 operation still to be built
+    (:data:`daemon.operations.PENDING`): that stays a 404 like any missing route.
+    """
+    method, path = request.method.upper(), "/" + rest
+    if not any(m == method and rx.match(path) for m, rx in _pending_routes()):
+        allowed = _other_methods(request, path)
+        if allowed and method not in allowed:
+            raise ApiError("method_not_allowed", details={"allow": sorted(allowed)},
+                           headers={"Allow": ", ".join(sorted(allowed))})
     raise ApiError("not_found", "这个接口不存在（或还没有实现）")

@@ -42,6 +42,11 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "getTaskLogs": ("GET", "/api/v1/tasks/{id}/logs"),
     "getTaskUsage": ("GET", "/api/v1/tasks/{id}/usage"),
     "taskEvents": ("GET", "/events/tasks/{id}"),
+    "listDatasets": ("GET", "/api/v1/datasets"),
+    "getDataset": ("GET", "/api/v1/datasets/{id}"),
+    "updateDataset": ("PATCH", "/api/v1/datasets/{id}"),
+    "deleteDataset": ("DELETE", "/api/v1/datasets/{id}"),
+    "getOverview": ("GET", "/api/v1/overview"),
 }
 
 #: operationId -> (owner, what it still needs)
@@ -55,7 +60,7 @@ PENDING: dict[str, tuple[str, str]] = {
     "createTasksBatch": ("W5", "one task per dataset with the shared configuration"),
     "taskAction": ("W5", "start/pause/resume/stop through daemon.transitions + the worker pool"),
     "retryTask": ("W5", "retry subtask (D25, D35)"),
-    "continueTask": ("W5", "resume subtask; needs stopped/failed -> terminal edges (C5 gap)"),
+    "continueTask": ("W5", "resume subtask; its end recomputes the parent (C5 1.2 edges)"),
     "reexportTask": ("W5", "reexport subtask (W7 incremental export)"),
     "purgeTaskArtifacts": ("W5", "delete <delivery>/<run_id>/ on TOS with confirm_path (D28), needs W8"),
     "getTaskPlan": ("W5", "plan.json written at start by W6's planner"),
@@ -66,14 +71,23 @@ PENDING: dict[str, tuple[str, str]] = {
     "listAdjudication": ("W5", "review.json of the revision + repo.latest_adjudications"),
     "submitAdjudication": ("W5", "append + CSV copy in the run directory (double write)"),
     "applyAdjudication": ("W5", "apply_adjudication subtask"),
-    # contract 1.1 (D36, D37): registered datasets and the overview
-    "listDatasets": ("W4", "registered datasets from the repository (C5 1.1)"),
-    "getDataset": ("W4", "registration, recent checks and tasks from the repository"),
-    "updateDataset": ("W4", "name and note"),
-    "deleteDataset": ("W4", "dataset_in_use while an unfinished task uses it"),
-    "getOverview": ("W4", "aggregates over tasks, datasets, credentials and backends"),
-    "createDataset": ("W5", "curation preflight + snapshot through the executor"),
+    # contract 1.1 (D36, D37): registering and checking datasets runs the CLI
+    "createDataset": ("W5", "curation preflight + snapshot through the executor; register_dataset"),
     "recheckDataset": ("W5", "curation snapshot, compare with the kept listing"),
     "repreflightDataset": ("W5", "curation preflight + snapshot, refresh the registration"),
     "repreflightTask": ("W5", "D37: re-preflight, compatibility check, then start"),
 }
+
+
+def contract_operations() -> dict[str, tuple[str, str]]:
+    """operationId -> (METHOD, path relative to the mount prefix) for every C4 operation."""
+    from curation.contracts import schemas
+
+    out: dict[str, tuple[str, str]] = {}
+    for path, item in schemas.load("openapi.yaml")["paths"].items():
+        for method, op in item.items():
+            if method in ("get", "post", "put", "patch", "delete"):
+                prefix = "" if path in ("/healthz", "/readyz") or path.startswith("/events/") \
+                    else "/api/v1"
+                out[op["operationId"]] = (method.upper(), prefix + path)
+    return out

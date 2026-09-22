@@ -15,11 +15,13 @@
 | ``CURATOR_SSE_HEARTBEAT_S`` | 15 | idle SSE streams get a comment line this often |
 | ``CURATOR_HOST`` / ``CURATOR_PORT`` | ``0.0.0.0`` / 8080 | listen address |
 | ``CURATOR_LOG_LEVEL`` / ``CURATOR_LOG_FORMAT`` | ``INFO`` / ``json`` | logging (``json`` or ``text``) |
+| ``CURATOR_TZ_OFFSET`` | ``+08:00`` | the site's UTC offset; where the overview's days begin and end |
 """
 from __future__ import annotations
 
 import os
 import pathlib
+import re
 import tempfile
 from dataclasses import dataclass, field, replace
 from typing import Mapping
@@ -56,6 +58,28 @@ def normalize_base_path(raw: str | None) -> str:
     return "/" + s
 
 
+_TZ_RE = re.compile(r"^([+-])([0-9]{1,2})(?::?([0-9]{2}))?$")
+
+
+def parse_tz_offset(raw: str | None) -> int:
+    """``+08:00`` / ``-0530`` / ``+8`` / ``Z`` / ``UTC`` -> minutes east of UTC.
+
+    Every offset in use is a whole quarter of an hour, which is also the token
+    timeline's slot; anything else would split slots across days, so it is refused.
+    """
+    s = (raw or "").strip().upper()
+    if s in ("Z", "UTC", "GMT"):
+        return 0
+    m = _TZ_RE.match(s)
+    minutes = None
+    if m and int(m.group(3) or 0) < 60:
+        minutes = int(m.group(2)) * 60 + int(m.group(3) or 0)
+        minutes = -minutes if m.group(1) == "-" else minutes
+    if minutes is None or not -12 * 60 <= minutes <= 14 * 60 or minutes % 15:
+        raise ConfigError(f"CURATOR_TZ_OFFSET 写法不对：{raw!r}（形如 +08:00，按一刻钟取整）")
+    return minutes
+
+
 def _default_static_dir() -> pathlib.Path | None:
     repo_dist = pathlib.Path(__file__).resolve().parents[2] / "frontend" / "dist"
     for cand in (pathlib.Path("/app/web"), repo_dist):
@@ -82,6 +106,7 @@ class Settings:
     port: int = 8080
     log_level: str = "INFO"
     log_format: str = "json"
+    tz_offset_minutes: int = 8 * 60
 
     def __post_init__(self) -> None:
         # frozen dataclass: fill derived paths through object.__setattr__
@@ -98,6 +123,8 @@ class Settings:
                               f"{self.public_base_url!r}")
         if self.sse_heartbeat_s <= 0:
             raise ConfigError("CURATOR_SSE_HEARTBEAT_S 必须大于 0")
+        if not -12 * 60 <= int(self.tz_offset_minutes) <= 14 * 60 or int(self.tz_offset_minutes) % 15:
+            raise ConfigError("CURATOR_TZ_OFFSET 超出范围（-12:00 到 +14:00，按一刻钟取整）")
 
     def with_(self, **changes) -> "Settings":
         return replace(self, **changes)
@@ -142,4 +169,5 @@ class Settings:
             port=port,
             log_level=get("CURATOR_LOG_LEVEL", "INFO").upper(),
             log_format=log_format,
+            tz_offset_minutes=parse_tz_offset(get("CURATOR_TZ_OFFSET") or "+08:00"),
         )

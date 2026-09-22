@@ -10,6 +10,12 @@ preflight snapshot's availability (design doc 05, section 4).
 What a task stores for a ``created`` (not yet started) task:
 ``task.preflight`` holds the preflight result (C2 ``preflight.schema.json``) the
 configuration was checked against; starting re-checks it (W5, design doc 03 §3).
+
+The input (C4 ``InputSpec``) is a registered dataset, ``{"dataset_id": ...}``,
+or an address given in full; both end up as the same task fields (03 §12). A
+full address is linked to the registration of that address when there is one;
+registering a new address runs the CLI and is W5's (``POST /datasets``, and
+``POST /tasks`` after its preflight).
 """
 from __future__ import annotations
 
@@ -119,7 +125,22 @@ def credential_id(repo: P.Repository, name: str, owner: str, where: str) -> str:
     return cred.id
 
 
-def resolve_input(repo: P.Repository, settings: Settings, ref: dict, owner: str) -> dict:
+def local_path(settings: Settings, uri: str, field_name: str = "input.uri") -> str:
+    """A local input path, which must stay under ``localDataRoot`` (the experimental source)."""
+    root = settings.local_data_root
+    if root is None:
+        raise _bad("「本地挂载路径」这个数据来源没有开启（站点配置 localDataRoot）", "input.source")
+    path = pathlib.Path(os.path.normpath(str(uri)))
+    if not path.is_absolute():
+        path = pathlib.Path(root) / path
+    try:
+        path.resolve().relative_to(pathlib.Path(root).resolve())
+    except ValueError:
+        raise _bad(f"本地路径必须在 {root} 之下", field_name) from None
+    return str(path)
+
+
+def _input_ref(repo: P.Repository, settings: Settings, ref: dict, owner: str) -> dict:
     source = ref["source"]
     fields: dict[str, Any] = {"input_source": source, "input_region": ref.get("region")}
     if source == "tos":
@@ -131,18 +152,33 @@ def resolve_input(repo: P.Repository, settings: Settings, ref: dict, owner: str)
     fields["input_cred_id"] = None
     if source == "public":
         fields["input_uri"] = normalize_tos_uri(ref["uri"], field_name="input.uri")
-        return fields
-    root = settings.local_data_root
-    if root is None:
-        raise _bad("「本地挂载路径」这个数据来源没有开启（站点配置 localDataRoot）", "input.source")
-    path = pathlib.Path(os.path.normpath(str(ref["uri"])))
-    if not path.is_absolute():
-        path = pathlib.Path(root) / path
+    else:
+        fields["input_uri"] = local_path(settings, ref["uri"])
+    return fields
+
+
+def _registered_input(repo: P.Repository, settings: Settings, dataset_id: str, owner: str) -> dict:
     try:
-        path.resolve().relative_to(pathlib.Path(root).resolve())
-    except ValueError:
-        raise _bad(f"本地路径必须在 {root} 之下", "input.uri") from None
-    fields["input_uri"] = str(path)
+        ds = repo.get_dataset(dataset_id, owner=owner)
+    except P.NotFound:
+        raise _bad(f"数据集 {dataset_id} 不存在（可能已删除登记）", "input.dataset_id") from None
+    if ds.source == "tos" and not ds.credential_id:
+        raise _bad(f"数据集「{ds.name}」登记时用的访问密钥已被删除；请直接填写地址并选一个访问密钥",
+                   "input.dataset_id")
+    uri = local_path(settings, ds.uri, "input.dataset_id") if ds.source == "local" else ds.uri
+    return {"input_source": ds.source, "input_uri": uri, "input_region": ds.region,
+            "input_cred_id": ds.credential_id if ds.source == "tos" else None,
+            "dataset_id": ds.id}
+
+
+def resolve_input(repo: P.Repository, settings: Settings, spec: dict, owner: str) -> dict:
+    """C4 ``InputSpec`` -> task fields, ``dataset_id`` included (None: no registration)."""
+    if "dataset_id" in spec:
+        return _registered_input(repo, settings, spec["dataset_id"], owner)
+    fields = _input_ref(repo, settings, spec, owner)
+    found = repo.find_dataset(source=fields["input_source"], uri=fields["input_uri"],
+                              region=fields["input_region"], owner=owner)
+    fields["dataset_id"] = found.id if found is not None else None
     return fields
 
 

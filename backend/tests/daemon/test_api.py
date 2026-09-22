@@ -7,7 +7,7 @@ from curation.contracts import modules as registry
 from daemon.repo import protocol as P
 from daemon.transitions import change_task_state
 
-from .conftest import T0, assert_error, assert_schema, seed_task
+from .conftest import T0, assert_error, assert_schema, seed_dataset, seed_task
 
 BASES = ("", "/curation")
 #: Every write says it is JSON, even without a body (routes/common.py).
@@ -173,8 +173,22 @@ def test_task_list_filters_and_item_fields(client_for, clock):
     assert item["module_counts"] == {"selected": 2, "pending": 1, "failed": 1}
     assert item["usage"]["prompt_tokens"] == 100 and item["usage"]["requests"] == 2
     assert item["active_subtask"] is None and item["deleted_at"] is None
+    assert item["modules"] == [m for m in registry.ids() if m in ("timestamp_check", "dedup")]
+    assert item["dataset_id"] is None
+
+    assert ids(module="dedup")[0] == [b.id]                          # C4 1.1: every listed module
+    assert ids(module="timestamp_check,dedup")[0] == [b.id]
+    assert ids(module=" timestamp_check ,")[0] == [b.id, a.id]
+    assert ids(module="")[0] == [b.id, a.id]
+    assert ids(module="dedup", q="droid")[0] == []
+    assert ids(dataset_id="ds_unknown")[0] == []
+    body = assert_error(c.get("/curation/api/v1/tasks", params={"module": "dedup,nope"}),
+                        "validation_failed")
+    assert "nope" in body["error"]["message"]
 
     assert_error(c.get("/curation/api/v1/tasks", params={"page_size": 7}), "validation_failed")
+    far = c.get("/curation/api/v1/tasks", params={"page": 10**20}).json()
+    assert far["items"] == [] and far["total"] == 2                  # far away: empty, not a 500
     assert_error(c.get("/curation/api/v1/tasks", params={"page": 0}), "validation_failed")
     assert_error(c.get("/curation/api/v1/tasks", params={"state": "exploded"}), "validation_failed")
     assert_error(c.get("/curation/api/v1/tasks", params={"delivery": "s3://x/y"}), "validation_failed")
@@ -212,10 +226,13 @@ def test_task_detail_fits_the_contract(client_for):
     rt.repo.set_task_summary(t.id, {"total": 50, "passed": 41, "rejected": 7, "held": 2,
                                     "review": 10, "pass_rate": 0.82, "pending_adjudication": 4})
     rt.repo.switch_result_rev(t.id, 0, 1)
+    snapshot = {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
+                "endpoint": "https://ark.example/api/v3", "reasoning_effort": None,
+                "timeouts_s": {"probe": 60}, "parallelism": 64}
     rt.repo.freeze_task_inputs(t.id, run_id="20260920-130514", preflight={},
                                source_fingerprint={"objects": 204, "bytes": 1520331122,
                                                    "digest": "sha256:abc"},
-                               vlm_snapshot={"backend": "ark-prod", "model": "doubao"})
+                               vlm_snapshot=snapshot)
     r = c.get(f"/curation/api/v1/tasks/{t.id}")
     assert r.status_code == 200
     body = r.json()
@@ -224,7 +241,7 @@ def test_task_detail_fits_the_contract(client_for):
     assert body["input"] == {"source": "tos", "uri": "tos://bucket/datasets/droid_100",
                              "region": "cn-beijing", "credential": "prod-tos"}
     assert body["vlm"] == {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
-                           "reasoning_effort": None}
+                           "reasoning_effort": None, "snapshot": snapshot}
     assert body["source"] == {"objects": 204, "bytes": 1520331122, "digest": "sha256:abc"}
     assert [m["id"] for m in body["modules"]] == list(registry.ids())
     assert body["modules"][0]["name"] == "时间戳检查"
@@ -235,9 +252,12 @@ def test_task_detail_fits_the_contract(client_for):
         "adjudication": f"https://kit.example.com/curation/tasks/{t.id}/adjudication?status=pending"}
 
     rt.repo.delete_credential(cred.id)                       # finished task keeps its report
+    rt.repo.delete_vlm_backend(backend.id)
     body = c.get(f"/curation/api/v1/tasks/{t.id}").json()
     assert_schema("Task", body)
-    assert body["input"]["credential"] == "" and body["output"]["credential"] == ""
+    assert body["input"]["credential"] is None and body["output"]["credential"] is None
+    assert body["vlm"] == {"backend": "ark-prod", "model": "doubao-seed-2-0-pro-260215",
+                           "reasoning_effort": None, "snapshot": snapshot}   # names from start
 
 
 def test_links_are_relative_without_public_base_url(client_for):
@@ -360,7 +380,8 @@ def test_patch_a_created_task_resolves_every_field(client_for, tmp_path):
                             "region": "cn-shanghai", "credential": "src"}
     assert got["output"] == {"uri": "tos://out/deliveries/x", "credential": "dst"}
     assert got["episodes"] == {"mode": "explicit", "expr": "3,10-12", "indices": [3, 10, 11, 12]}
-    assert got["vlm"] == {"backend": "ark-prod", "model": "doubao", "reasoning_effort": "low"}
+    assert got["vlm"] == {"backend": "ark-prod", "model": "doubao", "reasoning_effort": "low",
+                          "snapshot": None}                     # frozen only at start
     assert got["params"] == {"export": False, "limits": {"cpu_concurrency": 4}}
     mods = {m["id"]: m for m in got["modules"]}
     assert [m for m in mods if mods[m]["selected"]] == ["timestamp_check", "kinematic_limits",
@@ -438,6 +459,50 @@ def test_local_input_stays_under_its_root(client_for, tmp_path):
     assert "之下" in err["error"]["message"]
 
 
+def test_patch_input_may_name_a_registered_dataset(client_for):
+    """C4 1.1: ``input: {dataset_id}`` is the same as giving that dataset's address in full."""
+    c = client_for()
+    rt = _rt(c)
+    key = _cred(rt.repo, "ds-key")
+    _cred(rt.repo, "src")
+    ds = seed_dataset(rt.repo, "tos://bucket/datasets/umi_640", region="cn-shanghai",
+                      credential_id=key.id)
+    t = seed_task(rt.repo, state="created")
+    assert rt.repo.get_task(t.id).dataset_id is None
+
+    err = assert_error(_patch(c, t.id, {"input": {"dataset_id": ds.id}}), "validation_failed")
+    assert "重新预检" in err["error"]["message"]                     # a new input, a new preflight
+    r = _patch(c, t.id, {"input": {"dataset_id": ds.id}, "preflight_id": _preflight(rt)})
+    assert r.status_code == 200, r.text
+    assert_schema("Task", r.json())
+    assert r.json()["dataset_id"] == ds.id
+    assert r.json()["input"] == {"source": "tos", "uri": "tos://bucket/datasets/umi_640",
+                                 "region": "cn-shanghai", "credential": "ds-key"}
+    listed = c.get("/api/v1/tasks", params={"dataset_id": ds.id}).json()
+    assert [x["id"] for x in listed["items"]] == [t.id] and listed["items"][0]["dataset_id"] == ds.id
+
+    # the same address in full links the registration; another address drops the link
+    r = _patch(c, t.id, {"input": {"source": "tos", "uri": "tos://bucket/datasets/umi_640/",
+                                   "region": "cn-shanghai", "credential": "src"}})
+    assert r.status_code == 200 and r.json()["dataset_id"] == ds.id
+    r = _patch(c, t.id, {"input": {"source": "tos", "uri": "tos://bucket/datasets/other",
+                                   "credential": "src"}, "preflight_id": _preflight(rt)})
+    assert r.status_code == 200 and r.json()["dataset_id"] is None
+
+    err = assert_error(_patch(c, t.id, {"input": {"dataset_id": "ds_missing"}}),
+                       "validation_failed")["error"]
+    assert "不存在" in err["message"] and err["details"]["errors"][0]["field"] == "input.dataset_id"
+    rt.repo.delete_credential(key.id)                         # the registration loses its key
+    assert rt.repo.get_dataset(ds.id).credential_id is None
+    err = assert_error(_patch(c, t.id, {"input": {"dataset_id": ds.id},
+                                        "preflight_id": _preflight(rt)}), "validation_failed")
+    assert "访问密钥已被删除" in err["error"]["message"]
+    public = seed_dataset(rt.repo, "tos://hf-cache/lerobot/aloha_sim", source="public", region=None)
+    r = _patch(c, t.id, {"input": {"dataset_id": public.id}, "preflight_id": _preflight(rt)})
+    assert r.status_code == 200, r.text
+    assert r.json()["input"] == {"source": "public", "uri": "tos://hf-cache/lerobot/aloha_sim"}
+
+
 # ---------------------------------------------------------------------------
 # delete / restore (D28, P12) and rebind
 # ---------------------------------------------------------------------------
@@ -475,7 +540,7 @@ def test_delete_waits_for_an_active_subtask(client_for):
     t = seed_task(rt.repo)
     _finish(rt, t.id)
     rt.repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="reexport", scope={}, state="queued"))
-    body = assert_error(c.delete(f"/api/v1/tasks/{t.id}", headers=JSON), "task_state_conflict")
+    body = assert_error(c.delete(f"/api/v1/tasks/{t.id}", headers=JSON), "subtask_active")
     assert "子任务" in body["error"]["message"] and body["error"]["details"]["active_subtask"]
 
 
@@ -493,7 +558,7 @@ def test_rebind_credentials(client_for):
     r = c.post(f"/api/v1/tasks/{t.id}/rebind-credentials", json={"output_credential": "new"})
     assert r.status_code == 200, r.text
     assert_schema("Task", r.json())
-    assert r.json()["output"]["credential"] == "new" and r.json()["input"]["credential"] == ""
+    assert r.json()["output"]["credential"] == "new" and r.json()["input"]["credential"] is None
     assert_error(c.post(f"/api/v1/tasks/{t.id}/rebind-credentials", json={}), "validation_failed")
     assert_error(c.post(f"/api/v1/tasks/{t.id}/rebind-credentials",
                         json={"input_credential": "missing"}), "validation_failed")
@@ -573,6 +638,44 @@ def test_timeline_from_events_and_subtasks(client_for, clock):
     assert body["items"][-1]["revision"] == 2 and body["items"][-2]["subtask_id"] == sub.id
 
 
+def test_timeline_of_a_resumed_task(client_for, clock):
+    """C5 1.2: a resume subtask that finishes ends the main run - the timeline says so."""
+    from daemon.transitions import change_subtask_state, record_revision
+
+    c = client_for()
+    rt = _rt(c)
+    t = seed_task(rt.repo)
+    for frm, to, kw in (("queued", "running", {}), ("running", "stopping", {}),
+                        ("stopping", "stopped", {"reason": "用户停止"})):
+        clock.advance(1000)
+        assert change_task_state(rt.repo, rt.hub, t.id, {frm}, to, at=clock(), **kw)
+    sub = rt.repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="resume", scope={},
+                                           state="queued"))
+    assert change_subtask_state(rt.repo, rt.hub, sub.id, {"queued"}, "running",
+                                at=clock.advance(1000))
+    rt.repo.switch_result_rev(t.id, 0, 1)
+    rt.repo.set_subtask_result_rev(sub.id, 1)
+    record_revision(rt.repo, t.id, 1, at=clock.advance(1000), subtask_id=sub.id)
+    assert change_task_state(rt.repo, rt.hub, t.id, {"stopped"}, "succeeded",
+                             at=clock.advance(1000), publish_done=False)   # the parent first,
+    assert change_subtask_state(rt.repo, rt.hub, sub.id, {"running"}, "succeeded",
+                                at=clock.advance(1000))                    # then the subtask
+    tail = [(e.event, e.data["state"], e.data["subtask_id"]) for e in rt.hub.buffered(t.id)][-3:]
+    assert tail == [("state", "succeeded", None), ("state", "succeeded", sub.id),
+                    ("done", "succeeded", sub.id)]          # one done, after both changes
+    body = c.get(f"/api/v1/tasks/{t.id}/timeline").json()
+    assert_schema("openapi.yaml#/paths/~1tasks~1{id}~1timeline/get/responses/200/content/"
+                  "application~1json/schema", body)
+    assert [(e["kind"], e["state"]) for e in body["items"]] == [
+        ("created", None), ("started", "running"), ("stopped", "stopped"),
+        ("subtask_started", "running"), ("revision", None), ("finished", "succeeded"),
+        ("subtask_finished", "succeeded")]
+    assert body["items"][5]["text"] == "继续运行后主流程结束：已完成"
+    assert body["items"][6]["revision"] == 1 and body["items"][6]["subtask_id"] == sub.id
+    task = rt.repo.get_task(t.id)
+    assert task.finished_at == body["items"][5]["at"]              # the resume's end
+
+
 def test_timeline_mixes_row_and_events(client_for, clock):
     """Started without an event (e.g. purged), then paused by the startup reconciliation."""
     from daemon.reconcile import reconcile
@@ -609,7 +712,14 @@ def test_unknown_routes_and_methods_answer_with_the_error_body(client_for):
     assert_error(c.get("/curation/api/v1/nope"), "not_found")
     assert_error(c.post("/curation/api/v1/tasks", json={}), "not_found")            # W5, pending
     assert_error(c.get("/curation/api/v1/tasks/x/report"), "not_found")             # W5, pending
-    assert_error(c.put("/curation/api/v1/tasks/x", json={}), "not_found")
+    r = c.put("/curation/api/v1/tasks/x", json={})           # the path exists, the method not
+    body = assert_error(r, "method_not_allowed", status=405)
+    assert r.headers["allow"] == "DELETE, GET, HEAD, PATCH"
+    assert body["error"]["details"]["allow"] == ["DELETE", "GET", "HEAD", "PATCH"]
+    assert_error(c.delete("/curation/api/v1/overview", headers=JSON), "method_not_allowed",
+                 status=405)
+    assert_error(c.post("/curation/api/v1/datasets", json={}), "not_found")         # W5, pending
+    assert_error(c.put("/curation/api/v1/datasets/browse", json={}), "not_found")    # not an id
     r = c.post("/curation/healthz")
     assert_error(r, "method_not_allowed", status=405)
 

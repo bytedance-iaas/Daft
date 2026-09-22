@@ -13,7 +13,7 @@ Start-up order (``create_app`` then the lifespan):
    in the background when it fails; ``/readyz`` says ``reconciled: false`` until it
    succeeds), then the ``on_ready`` hooks (W5 starts its worker pool there), then
    a maintenance thread (expired preflight / idempotency rows, deleted tasks after
-   30 days, audit events after 90 days).
+   30 days, audit events and the token timeline after 90 days).
 
 Lifespan end runs the ``on_shutdown`` hooks (W5 pauses running tasks there,
 design doc 09 §2.3), stops the threads and closes the database.
@@ -40,7 +40,7 @@ from .logs import TaskLogs
 from .masterkey import MasterKey, MasterKeyError
 from .reconcile import reconcile
 from .repo import protocol as P
-from .routes import api, sse, static, system
+from .routes import api, datasets, overview, sse, static, system
 from .settings import Settings
 from .util import now_ms
 from .views import Links
@@ -251,10 +251,11 @@ def create_app(settings: Settings, *, repo: P.Repository | None = None,
     errors.install(app)
     base = settings.base_path
     system.install(app, base)
-    from .routes import access_keys, media, vlm       # W8; before api.router and its catch-all 404
-    for w8 in (access_keys, vlm, media):
-        app.include_router(w8.router, prefix=f"{base}/api/v1")
-    app.include_router(api.router, prefix=f"{base}/api/v1")
+    from .routes import access_keys, media, vlm       # W8
+    app.state.api_routers = [m.router for m in (access_keys, vlm, media, api, datasets, overview)]
+    for router in app.state.api_routers:                # new routers go here, before the fallback
+        app.include_router(router, prefix=f"{base}/api/v1")
+    app.include_router(api.fallback, prefix=f"{base}/api/v1")       # unknown paths: 404 / 405
     app.include_router(sse.router, prefix=f"{base}/events")
     rt.frontend = static.install(app, settings.static_dir, base)
     app.add_middleware(GZipMiddleware, minimum_size=1024)

@@ -6,10 +6,10 @@ import re
 import pytest
 
 from curation.contracts import schemas
-from daemon.operations import IMPLEMENTED, PENDING
+from daemon.operations import IMPLEMENTED, PENDING, contract_operations
 
 METHODS = ("get", "post", "put", "patch", "delete")
-OWNERS = {"W3", "W4", "W5", "W6", "W7", "W8", "W10"}   # W4: its follow-up (C5 1.1 datasets)
+OWNERS = {"W3", "W5", "W6", "W7", "W8", "W10"}
 UNKNOWN = "这个接口不存在（或还没有实现）"      # the catch-all's words: no handler matched
 
 
@@ -22,6 +22,7 @@ def _contract_ops() -> dict[str, tuple[str, str]]:
                 prefix = "" if path in ("/healthz", "/readyz") or path.startswith("/events/") \
                     else "/api/v1"
                 out[op["operationId"]] = (method.upper(), prefix + path)
+    assert out == contract_operations()                     # the Daemon reads it the same way
     return out
 
 
@@ -40,7 +41,8 @@ def test_implemented_and_pending_cover_the_contract_exactly():
 
 def _call(client, op, base="/curation"):
     method, path = _contract_ops()[op]
-    url = base + path.replace("{id}", "task_x").replace("{model_id}", "vm_x") \
+    some_id = "ds_x" if path.startswith("/api/v1/datasets/") else "task_x"
+    url = base + path.replace("{id}", some_id).replace("{model_id}", "vm_x") \
         .replace("{action}", "start").replace("{index}", "3").replace("{table}", "t")
     return client.request(method, url, json={} if method in ("POST", "PUT", "PATCH") else None)
 

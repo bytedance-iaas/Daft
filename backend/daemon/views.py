@@ -1,10 +1,8 @@
 """Repository rows -> C4 response bodies (``Task``, ``TaskListItem``, ``Subtask``, ``UsageReport``...).
 
 Everything a route returns goes through here, and the tests validate each body
-against its OpenAPI schema. Two contract gaps are bridged on purpose (see the
-W4 report): ``Task.vlm`` never carries ``snapshot`` (``VlmChoice`` forbids extra
-keys inside its ``allOf``), and a deleted access key shows as ``credential: ""``
-(``InputRef`` / ``OutputRef`` require the field).
+against its OpenAPI schema (C4 1.2: ``Task.vlm`` is a ``TaskVlm`` with the
+snapshot frozen at start; a deleted access key shows as ``credential: null``).
 """
 from __future__ import annotations
 
@@ -15,6 +13,7 @@ from urllib.parse import quote
 from curation.contracts import modules as registry
 
 from .repo import protocol as P
+from .repo.extras import dataset_format
 
 _STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note")
 _SUMMARY_KEYS = ("total", "passed", "rejected", "held", "review", "pass_rate")
@@ -75,11 +74,16 @@ def summary(value: dict | None) -> dict | None:
     return {k: value[k] for k in _SUMMARY_KEYS}
 
 
+def _count(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
 def pending_adjudication(task: P.Task) -> int:
-    """W5 keeps ``summary.pending_adjudication`` current; before that, every review item counts."""
+    """W5 keeps ``summary.pending_adjudication`` current; before that, every review item counts.
+    (``daemon.repo.extras.adjudication_backlog`` counts the same way.)"""
     s = task.summary if isinstance(task.summary, dict) else {}
     for key in ("pending_adjudication", "review"):
-        if isinstance(s.get(key), int) and s[key] >= 0:
+        if _count(s.get(key)) is not None:
             return s[key]
     return 0
 
@@ -143,18 +147,19 @@ class Names:
 
     def __init__(self, repo: P.Repository, owner: str):
         self._repo, self._owner = repo, owner
-        self._creds: dict[str, str] = {}
+        self._creds: dict[str, str | None] = {}
         self._models: dict[str, tuple[str, str]] | None = None
 
-    def credential(self, cred_id: str | None) -> str:
-        """``""`` when the key was deleted (the task keeps its report; rebind gives a new one)."""
+    def credential(self, cred_id: str | None) -> str | None:
+        """The key's name; None when there is none or it was deleted (the task keeps its
+        report, rebind-credentials gives it a new one)."""
         if not cred_id:
-            return ""
+            return None
         if cred_id not in self._creds:
             try:
                 self._creds[cred_id] = self._repo.get_credential(cred_id, owner=self._owner).name
             except P.NotFound:
-                self._creds[cred_id] = ""
+                self._creds[cred_id] = None
         return self._creds[cred_id]
 
     def model(self, model_id: str | None) -> tuple[str, str] | None:
@@ -182,15 +187,18 @@ def output_ref(task: P.Task, names: Names) -> dict:
     return out
 
 
-def vlm_choice(task: P.Task, names: Names) -> dict | None:
+def task_vlm(task: P.Task, names: Names) -> dict | None:
+    """C4 ``TaskVlm``: the chosen backend and model by name, and what start froze (P17).
+    A backend deleted after the task finished leaves the names in the snapshot."""
+    snap = task.vlm_snapshot if isinstance(task.vlm_snapshot, dict) else None
     pair = names.model(task.vlm_model_id)
     if pair is None:
-        snap = task.vlm_snapshot or {}
-        backend, model = snap.get("backend"), snap.get("model")
+        backend, model = (snap or {}).get("backend"), (snap or {}).get("model")
         if not (isinstance(backend, str) and isinstance(model, str)):
             return None
         pair = (backend, model)
-    return {"backend": pair[0], "model": pair[1], "reasoning_effort": task.vlm_reasoning_effort}
+    return {"backend": pair[0], "model": pair[1], "reasoning_effort": task.vlm_reasoning_effort,
+            "snapshot": snap}
 
 
 def source_summary(fp: dict | None) -> dict | None:
@@ -208,7 +216,7 @@ def task_detail(task: P.Task, *, repo: P.Repository, names: Names, links: Links,
         "state_reason": task.state_reason, "pause_reason": task.pause_reason,
         "input": input_ref(task, names), "dataset_id": task.dataset_id, "output": output_ref(task, names),
         "run_id": task.run_id, "episodes": task.episode_selector,
-        "embodiment_id": task.embodiment_id, "vlm": vlm_choice(task, names),
+        "embodiment_id": task.embodiment_id, "vlm": task_vlm(task, names),
         "params": params(task.params), "source": source_summary(task.source_fingerprint),
         "progress": stage_progress(task.progress),
         "modules": [module_state(m, now) for m in mods],
@@ -225,6 +233,7 @@ def task_detail(task: P.Task, *, repo: P.Repository, names: Names, links: Links,
 
 def task_list_item(task: P.Task, *, repo: P.Repository) -> dict:
     active = repo.active_subtask(task.id)
+    mods = sorted_modules(repo.get_task_modules(task.id))
     return {
         "id": task.id, "name": task.name, "state": task.state, "pause_reason": task.pause_reason,
         "dataset": dataset_name(task.input_uri), "created_at": task.created_at,
@@ -232,9 +241,9 @@ def task_list_item(task: P.Task, *, repo: P.Repository) -> dict:
         "pending_adjudication": pending_adjudication(task),
         "delivery_stale": bool(task.delivery_stale),
         "active_subtask": active.id if active else None,
-        "modules": [m.module_id for m in sorted_modules(repo.get_task_modules(task.id)) if m.selected],
+        "modules": [m.module_id for m in mods if m.selected],
         "dataset_id": task.dataset_id,
-        "module_counts": module_counts(repo.get_task_modules(task.id)),
+        "module_counts": module_counts(mods),
         "usage": usage_totals(repo.usage_buckets(task.id, ledger="actual")),
         "deleted_at": task.deleted_at,
     }
@@ -242,6 +251,55 @@ def task_list_item(task: P.Task, *, repo: P.Repository) -> dict:
 
 def etag(task: P.Task) -> str:
     return f'"{task.updated_at}"'
+
+
+# ---------------------------------------------------------------------------
+# datasets (D36, D37)
+# ---------------------------------------------------------------------------
+
+def task_ref(task: P.Task) -> dict:
+    return {"id": task.id, "name": task.name, "state": task.state, "created_at": task.created_at}
+
+
+def dataset_item(ds: P.Dataset, last_task: P.Task | None) -> dict:
+    """C4 ``DatasetItem``; format, episode count and robot type come from the kept preflight."""
+    pf = ds.preflight if isinstance(ds.preflight, dict) else {}
+    info = pf.get("dataset") if isinstance(pf.get("dataset"), dict) else {}
+    robot = info.get("robot_type")
+    return {"id": ds.id, "name": ds.name, "source": ds.source, "uri": ds.uri, "region": ds.region,
+            "format": dataset_format(pf), "episode_count": _count(info.get("episode_count")),
+            "robot_type": robot if isinstance(robot, str) else None,
+            "check_state": ds.check_state, "checked_at": ds.checked_at,
+            "preflighted_at": ds.preflighted_at, "created_at": ds.created_at,
+            "last_task": task_ref(last_task) if last_task is not None else None}
+
+
+def dataset_check(check: P.DatasetCheck) -> dict:
+    change = check.change if isinstance(check.change, dict) else None
+    return {"at": check.at, "trigger": check.trigger, "result": check.result, "change": change}
+
+
+def listing(fp: dict | None) -> dict:
+    """The kept file listing's summary; C2 ``source-manifest`` calls the object count ``count``."""
+    fp = fp if isinstance(fp, dict) else {}
+    objects = fp.get("objects", fp.get("count"))
+    digest = fp.get("digest")
+    return {"objects": _count(objects) or 0, "bytes": _count(fp.get("bytes")) or 0,
+            "digest": digest if isinstance(digest, str) else ""}
+
+
+def dataset_detail(ds: P.Dataset, *, tasks: list[P.Task], checks: list[P.DatasetCheck],
+                   names: Names) -> dict:
+    """C4 ``DatasetDetail``: ``tasks`` newest first (the first is ``last_task``).
+
+    ``links`` stays empty: C4 ``Link.rel`` has no value for a dataset page yet.
+    """
+    return {**dataset_item(ds, tasks[0] if tasks else None),
+            "note": ds.note, "credential": names.credential(ds.credential_id),
+            "preflight": ds.preflight, "meta_fingerprint": ds.meta_fingerprint,
+            "listing": listing(ds.source_fingerprint),
+            "checks": [dataset_check(c) for c in checks],
+            "tasks": [task_ref(t) for t in tasks], "links": []}
 
 
 def is_under(path: pathlib.Path, root: pathlib.Path) -> bool:

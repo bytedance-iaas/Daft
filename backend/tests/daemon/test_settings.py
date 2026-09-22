@@ -12,7 +12,7 @@ import pytest
 from daemon import masterkey
 from daemon.app import create_app
 from daemon.masterkey import MasterKey, MasterKeyError
-from daemon.settings import ConfigError, Settings, normalize_base_path
+from daemon.settings import ConfigError, Settings, normalize_base_path, parse_tz_offset
 
 BACKEND = pathlib.Path(__file__).resolve().parents[2]
 
@@ -51,6 +51,32 @@ def test_from_env(clean_env, tmp_path, master_key_b64):
 def test_config_errors(clean_env, master_key_b64, name, value):
     clean_env.setenv("CURATOR_MASTER_KEY", master_key_b64)
     clean_env.setenv(name, value)
+    with pytest.raises(ConfigError):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("raw, minutes", [
+    ("+08:00", 480), ("+8", 480), ("-05:30", -330), ("+0545", 345), ("Z", 0), ("utc", 0),
+    ("-00:00", 0), ("+14:00", 840), ("-12:00", -720)])
+def test_tz_offset(raw, minutes):
+    assert parse_tz_offset(raw) == minutes
+
+
+@pytest.mark.parametrize("raw", ["8", "+15:00", "-12:30", "+08:60", "Asia/Shanghai", "", "+",
+                                 "+05:07"])
+def test_bad_tz_offsets(raw):
+    with pytest.raises(ConfigError, match="CURATOR_TZ_OFFSET"):
+        parse_tz_offset(raw)
+
+
+def test_tz_offset_from_env(clean_env, master_key_b64):
+    clean_env.setenv("CURATOR_MASTER_KEY", master_key_b64)
+    assert Settings.from_env().tz_offset_minutes == 480                 # China, no DST
+    clean_env.setenv("CURATOR_TZ_OFFSET", "")                           # an empty Helm value
+    assert Settings.from_env().tz_offset_minutes == 480
+    clean_env.setenv("CURATOR_TZ_OFFSET", "-03:00")
+    assert Settings.from_env().tz_offset_minutes == -180
+    clean_env.setenv("CURATOR_TZ_OFFSET", "Beijing")
     with pytest.raises(ConfigError):
         Settings.from_env()
 

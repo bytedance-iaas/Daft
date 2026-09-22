@@ -25,7 +25,7 @@ import logging
 from fastapi import APIRouter, Request
 from starlette.responses import StreamingResponse
 
-from ..events import format_event
+from ..events import done_data, format_event, state_data
 from ..repo import protocol as P
 from ..transitions import failed_modules
 from .common import in_thread, principal, runtime
@@ -44,18 +44,20 @@ def _snapshot(repo: P.Repository, task_id: str, owner: str, event_id: str) -> tu
         task = repo.get_task(task_id, owner=owner)
     except P.NotFound:
         return [], True                               # deleted meanwhile: just end the stream
-    frames = [format_event("state", {"state": task.state, "pause_reason": task.pause_reason,
-                                     "at": task.updated_at}, event_id)]
+    frames = [format_event("state", state_data(task.state, pause_reason=task.pause_reason,
+                                               at=task.updated_at, reason=task.state_reason),
+                           event_id)]
     active = repo.active_subtask(task_id)
     if active is not None:
-        frames.append(format_event("state", {"state": active.state, "pause_reason": None,
-                                             "at": active.started_at or active.created_at,
-                                             "subtask_id": active.id}, event_id))
+        frames.append(format_event("state", state_data(
+            active.state, pause_reason=active.pause_reason,
+            at=active.started_at or active.created_at, subtask_id=active.id,
+            reason=active.state_reason), event_id))
         return frames, False
     if task.state in P.TERMINAL_STATES:
-        frames.append(format_event("done", {"state": task.state,
-                                            "failed_modules": failed_modules(repo, task_id)},
-                                   event_id))
+        frames.append(format_event("done", done_data(
+            task.state, failed_modules=failed_modules(repo, task_id), reason=task.state_reason),
+            event_id))
         return frames, True
     return frames, False
 

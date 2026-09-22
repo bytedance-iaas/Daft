@@ -6,8 +6,13 @@ listed in ``repo_impls.py``.
 
 Behaviour the protocol leaves open is pinned here so every implementation agrees:
 ``list_events`` is newest first; ``rebind_task_credentials`` treats ``None`` as
-"unchanged"; ``soft_delete_task`` also refuses while a subtask is active;
-``create_subtask`` checks the parent state table (``SUBTASK_PARENT_STATES``).
+"unchanged"; ``soft_delete_task`` refuses with ``Conflict('subtask_active')`` while a
+subtask is active; ``create_subtask`` checks the parent state table
+(``SUBTASK_PARENT_STATES``). Beyond C5 1.2 (proposed for 1.3): a task that ends again
+after a resume takes the new ``finished_at``; ``update_dataset`` takes the refreshed
+preflight, both fingerprints and ``preflighted_at`` together and sets ``check_state``
+back to ``ok``; a ``repreflight`` check leaves the dataset ``ok`` whatever it found;
+a task may only point at a dataset of its own owner.
 """
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ import pytest
 from daemon.pagination import CursorError
 from daemon.repo import protocol as P
 
-from .conftest import T0
+from .conftest import LISTING_DIGEST, META_DIGEST, T0, sample_preflight
 
 OTHER = "someone-else"
 
@@ -29,13 +34,23 @@ def _module_rows(selected=("timestamp_check", "task_success")):
 
 
 def _spec(name="droid 前 50 条质检", *, state="queued", owner=P.DEFAULT_OWNER, delivery="tos://b/d",
-          input_cred=None, output_cred=None, vlm_model=None):
+          input_cred=None, output_cred=None, vlm_model=None, dataset=None, selected=None):
+    modules = _module_rows() if selected is None else _module_rows(selected)
     return P.TaskCreate(
         name=name, input_source="tos", input_uri="tos://bucket/datasets/droid_lerobot",
         output_uri=delivery, delivery_key=delivery, episode_selector={"mode": "head", "n": 50},
-        params={"export": True}, modules=_module_rows(), state=state, owner_id=owner,
+        params={"export": True}, modules=modules, state=state, owner_id=owner,
         input_cred_id=input_cred, output_cred_id=output_cred, vlm_model_id=vlm_model,
-        input_region="cn-beijing")
+        input_region="cn-beijing", dataset_id=dataset)
+
+
+def _dataset(uri="tos://bucket/datasets/droid_lerobot", *, name=None, region="cn-beijing",
+             source="tos", owner=P.DEFAULT_OWNER, cred=None, at=T0, note=None, **preflight):
+    return P.Dataset(id="", name=name or uri.rsplit("/", 1)[-1], source=source, uri=uri,
+                     region=region, credential_id=cred, owner_id=owner, note=note,
+                     preflight=sample_preflight(**preflight), meta_fingerprint=META_DIGEST,
+                     source_fingerprint={"objects": 204, "bytes": 1024, "digest": LISTING_DIGEST},
+                     preflighted_at=at)
 
 
 def _cred(name="prod-tos", *, kind="tos", owner=P.DEFAULT_OWNER, key_version=1):
@@ -311,6 +326,231 @@ def test_backend_and_model_in_use_rules(repo):
 
 
 # ---------------------------------------------------------------------------
+# datasets (D36, D37)
+# ---------------------------------------------------------------------------
+
+def test_register_dataset_gets_or_creates_by_address(repo, clock):
+    ds, created = repo.register_dataset(_dataset(note="抽检用"))
+    assert created and ds.id.startswith("ds_") and ds.created_at == clock() == ds.updated_at
+    assert (ds.name, ds.note, ds.check_state, ds.checked_at, ds.region) == \
+        ("droid_lerobot", "抽检用", "ok", None, "cn-beijing")
+    assert ds.preflight["dataset"]["episode_count"] == 200 and ds.meta_fingerprint == META_DIGEST
+    assert ds.source_fingerprint == {"objects": 204, "bytes": 1024, "digest": LISTING_DIGEST}
+    assert repo.get_dataset(ds.id).uri == "tos://bucket/datasets/droid_lerobot"
+
+    clock.advance(10)
+    again, created = repo.register_dataset(_dataset(name="another name", version="v3"))
+    assert not created and again.id == ds.id and again.name == "droid_lerobot"   # unchanged
+    assert again.preflight["format"]["version"] == "v2"
+    other_region, created = repo.register_dataset(_dataset(region="cn-shanghai"))
+    assert created and other_region.id != ds.id
+    public, created = repo.register_dataset(_dataset(source="public", region=None))
+    assert created
+    same, created = repo.register_dataset(_dataset(source="public", region=""))   # "" == no region
+    assert not created and same.id == public.id and same.region is None
+    theirs, created = repo.register_dataset(_dataset(owner=OTHER))
+    assert created and theirs.id != ds.id
+    with pytest.raises(P.NotFound):
+        repo.get_dataset(theirs.id)
+    with pytest.raises(P.NotFound):
+        repo.get_dataset("ds_missing")
+
+
+def test_list_datasets_pages_filters_and_total(repo, clock):
+    ids = []
+    for i in range(12):
+        clock.advance(1000)
+        ids.append(repo.register_dataset(_dataset(f"tos://bucket/sets/set_{i:02d}"))[0].id)
+    repo.register_dataset(_dataset("tos://bucket/sets/theirs", owner=OTHER))
+    pages = [repo.list_datasets(page=p, page_size=5) for p in (1, 2, 3, 4)]
+    assert [pg.total for pg in pages] == [12] * 4
+    assert [d.id for pg in pages for d in pg.items] == ids[::-1]            # newest first
+    assert pages[3].items == []
+    with pytest.raises(ValueError):
+        repo.list_datasets(page=0, page_size=5)
+
+    clock.advance(1000)
+    v3 = repo.register_dataset(_dataset("tos://bucket/other/umi_640", name="UMI 640",
+                                        version="v3"))[0].id
+    clock.advance(1000)
+    bad = repo.register_dataset(_dataset("tos://bucket/other/broken", version="v3",
+                                         supported=False))[0].id
+
+    def ids_of(**kw):
+        page = repo.list_datasets(page=1, page_size=50, **kw)
+        assert page.total == len(page.items)
+        return [d.id for d in page.items]
+
+    assert ids_of(fmt="lerobot_v3") == [v3]
+    assert ids_of(fmt="unsupported") == [bad]
+    assert len(ids_of(fmt="lerobot_v2")) == 12
+    assert ids_of(q="umi") == [v3]                                   # name, case-insensitive
+    assert ids_of(q="other/br") == [bad]                             # or a piece of the address
+    assert ids_of(q="set_1") == [ids[11], ids[10]]
+    assert ids_of(q="%") == [] and ids_of(q="set_0_") == []            # wildcards are literal
+    repo.record_dataset_check(P.DatasetCheck(dataset_id=ids[3], at=T0, trigger="recheck",
+                                             result="changed", change={"meta_changed": True}))
+    assert ids_of(check_state="changed") == [ids[3]]
+    assert ids_of(check_state="changed", q="set_1") == []
+    assert len(ids_of(check_state="ok")) == 13
+
+
+def test_update_dataset_renames_or_refreshes(repo, clock):
+    ds, _ = repo.register_dataset(_dataset(note="old note"))
+    clock.advance(5)
+    u = repo.update_dataset(ds.id, name="DROID 全量", note=None)
+    assert (u.name, u.note, u.updated_at > ds.updated_at) == ("DROID 全量", None, True)
+    assert repo.update_dataset(ds.id).updated_at == u.updated_at        # nothing to change
+    repo.record_dataset_check(P.DatasetCheck(dataset_id=ds.id, at=T0 + 1, trigger="recheck",
+                                             result="changed"))
+    assert repo.get_dataset(ds.id).check_state == "changed"
+
+    fresh = sample_preflight(version="v3", episodes=210)
+    r = repo.update_dataset(ds.id, preflight=fresh, meta_fingerprint="sha256:" + "c" * 64,
+                            source_fingerprint={"objects": 210, "bytes": 2048, "digest": "d"},
+                            preflighted_at=T0 + 2, manifest_path="datasets/ds/manifest.json")
+    assert (r.check_state, r.preflighted_at, r.manifest_path) == ("ok", T0 + 2,
+                                                                  "datasets/ds/manifest.json")
+    assert r.preflight["dataset"]["episode_count"] == 210 and r.source_fingerprint["objects"] == 210
+    assert repo.list_datasets(page=1, page_size=5, fmt="lerobot_v3").total == 1   # format follows
+    assert r.name == "DROID 全量"
+
+    for bad in ({"preflight": fresh}, {"meta_fingerprint": "x", "source_fingerprint": {}},
+                {"manifest_path": "x"}, {"check_state": "ok"}, {"owner_id": OTHER},
+                {"uri": "tos://b/other"}):
+        with pytest.raises(ValueError):
+            repo.update_dataset(ds.id, **bad)
+    with pytest.raises(P.NotFound):
+        repo.update_dataset(ds.id, owner=OTHER, name="x")
+    with pytest.raises(P.NotFound):
+        repo.update_dataset("ds_missing", name="x")
+
+
+def test_dataset_checks_are_the_change_history(repo):
+    ds, _ = repo.register_dataset(_dataset())
+    change = {"meta_changed": False, "added": 12, "removed": 0, "modified": 1,
+              "sample_keys": ["data/chunk-000/episode_000200.parquet"], "preflighted_at": T0}
+    first = repo.record_dataset_check(P.DatasetCheck(dataset_id=ds.id, at=T0 + 1, trigger="add",
+                                                     result="same"))
+    assert first.id is not None and first.change is None
+    got = repo.get_dataset(ds.id)
+    assert (got.check_state, got.checked_at) == ("ok", T0 + 1)
+    repo.record_dataset_check(P.DatasetCheck(dataset_id=ds.id, at=T0 + 2, trigger="task_start",
+                                             result="changed", change=change))
+    got = repo.get_dataset(ds.id)
+    assert (got.check_state, got.checked_at) == ("changed", T0 + 2)
+    repo.record_dataset_check(P.DatasetCheck(dataset_id=ds.id, at=T0 + 3, trigger="repreflight",
+                                             result="changed", change=change))
+    assert repo.get_dataset(ds.id).check_state == "ok"         # a repreflight is the new baseline
+    repo.record_dataset_check(P.DatasetCheck(dataset_id=ds.id, at=T0 + 4, trigger="recheck",
+                                             result="same"))
+
+    history = repo.list_dataset_checks(ds.id)
+    assert [(c.trigger, c.result) for c in history] == [
+        ("recheck", "same"), ("repreflight", "changed"), ("task_start", "changed"), ("add", "same")]
+    assert history[2].change == change and history[2].dataset_id == ds.id
+    assert [c.at for c in repo.list_dataset_checks(ds.id, limit=2)] == [T0 + 4, T0 + 3]
+    assert repo.list_dataset_checks("ds_missing") == []
+    late = repo.record_dataset_check(P.DatasetCheck(dataset_id=ds.id, at=T0 + 1, trigger="recheck",
+                                                    result="changed"))       # arrives out of order
+    got = repo.get_dataset(ds.id)
+    assert (got.check_state, got.checked_at) == ("ok", T0 + 4)        # the newer check stands
+    assert late.id in {c.id for c in repo.list_dataset_checks(ds.id)}  # but it is in the history
+    with pytest.raises(P.NotFound):
+        repo.record_dataset_check(P.DatasetCheck(dataset_id="ds_missing", at=T0, trigger="add",
+                                                 result="same"))
+    with pytest.raises(ValueError):
+        repo.record_dataset_check(P.DatasetCheck(dataset_id=ds.id, at=T0, trigger="add",
+                                                 result="different"))
+    with pytest.raises(ValueError):
+        repo.list_dataset_checks(ds.id, limit=0)
+
+
+def test_delete_dataset_rules(repo):
+    ds, _ = repo.register_dataset(_dataset())
+    created = repo.create_task(_spec("created", state="created", dataset=ds.id))
+    queued = repo.create_task(_spec("queued", dataset=ds.id))
+    done = repo.create_task(_spec("done", dataset=ds.id))
+    _drive(repo, done.id, "running", "succeeded")
+    repo.record_dataset_check(P.DatasetCheck(dataset_id=ds.id, at=T0, trigger="add", result="same"))
+
+    with pytest.raises(P.Conflict) as err:
+        repo.delete_dataset(ds.id)
+    assert err.value.code == "dataset_in_use"
+    _drive(repo, queued.id, "stopped")
+    with pytest.raises(P.Conflict):
+        repo.delete_dataset(ds.id)                                # the created one still counts
+    repo.soft_delete_task(created.id, at=T0)
+    with pytest.raises(P.NotFound):
+        repo.delete_dataset(ds.id, owner=OTHER)
+    repo.delete_dataset(ds.id)
+    with pytest.raises(P.NotFound):
+        repo.get_dataset(ds.id)
+    assert repo.list_dataset_checks(ds.id) == []
+    for t in (created, queued, done):                             # the tasks keep their input
+        got = repo.get_task(t.id, include_deleted=True)
+        assert got.dataset_id is None and got.input_uri == "tos://bucket/datasets/droid_lerobot"
+    with pytest.raises(P.NotFound):
+        repo.delete_dataset(ds.id)
+
+
+def test_a_deleted_access_key_leaves_the_dataset_without_one(repo):
+    """Registrations never block deleting an access key (only unfinished tasks do);
+    like a finished task, the registration then has no key until one is bound again."""
+    c = repo.create_credential(_cred())
+    ds, _ = repo.register_dataset(_dataset(cred=c.id))
+    assert ds.credential_id == c.id
+    draft = repo.create_task(_spec("draft on the dataset", state="created", dataset=ds.id))
+    assert repo.credential_references(c.id) == (0, 0)                # datasets are not counted
+    repo.delete_credential(c.id)
+    assert repo.get_dataset(ds.id).credential_id is None
+    assert repo.get_task(draft.id).dataset_id == ds.id              # the task keeps its link
+    other = repo.create_credential(_cred("new-key"))
+    assert repo.update_dataset(ds.id, credential_id=other.id).credential_id == other.id
+    with pytest.raises(P.NotFound):
+        repo.update_dataset(ds.id, credential_id="cred_missing")
+    assert repo.get_dataset(ds.id).credential_id == other.id
+    assert repo.update_dataset(ds.id, credential_id=None).credential_id is None
+
+
+def test_a_registration_reads_with_an_access_key_of_its_owner(repo):
+    ark = repo.create_vlm_backend(_backend("ark"), _cred("vlm-backend/vb_ark", kind="ark"))
+    theirs = repo.create_credential(_cred("their-key", owner=OTHER))
+    mine = repo.create_credential(_cred("my-key"))
+    ds, _ = repo.register_dataset(_dataset("tos://bucket/x", cred=mine.id))
+    for cred in (ark.credential_id, theirs.id, "cred_missing"):
+        with pytest.raises(P.NotFound):
+            repo.register_dataset(_dataset(cred=cred))
+        with pytest.raises(P.NotFound):
+            repo.update_dataset(ds.id, credential_id=cred)
+    assert [d.id for d in repo.list_datasets(page=1, page_size=10).items] == [ds.id]
+    assert repo.get_dataset(ds.id).credential_id == mine.id
+
+
+def test_register_and_update_refuse_malformed_rows(repo):
+    for bad in ({"id": "custom-id"}, {"id": "ds_with-dash"}, {"name": None},
+                {"meta_fingerprint": None}):
+        spec = _dataset()
+        for k, v in bad.items():
+            setattr(spec, k, v)
+        with pytest.raises(ValueError):
+            repo.register_dataset(spec)
+    given = _dataset()
+    given.id = "ds_01GIVEN"
+    ds, created = repo.register_dataset(given)
+    assert created and ds.id == "ds_01GIVEN"
+    other = _dataset("tos://bucket/elsewhere")
+    other.id = "ds_01GIVEN"
+    with pytest.raises(ValueError):                                     # the id is taken
+        repo.register_dataset(other)
+    for bad in ({"name": None}, {"preflight": None, "meta_fingerprint": "m",
+                                 "source_fingerprint": {}, "preflighted_at": T0}):
+        with pytest.raises(ValueError):
+            repo.update_dataset(ds.id, **bad)
+    assert repo.get_dataset(ds.id).name == "droid_lerobot"
+
+
+# ---------------------------------------------------------------------------
 # tasks
 # ---------------------------------------------------------------------------
 
@@ -375,6 +615,52 @@ def test_list_tasks_filters_keep_total_consistent(repo, clock):
     assert ids(state="deleted") == [c.id]
 
 
+def test_list_tasks_by_dataset_and_selected_modules(repo, clock):
+    ds, _ = repo.register_dataset(_dataset())
+    both = repo.create_task(_spec("both", dataset=ds.id, selected=("timestamp_check", "task_success")))
+    clock.advance(1)
+    ts_only = repo.create_task(_spec("ts only", selected=("timestamp_check",)))
+    clock.advance(1)
+    all_three = repo.create_task(_spec("all", dataset=ds.id,
+                                       selected=("timestamp_check", "kinematic_limits", "task_success")))
+
+    def ids(**kw):
+        page = repo.list_tasks(page=1, page_size=20, **kw)
+        assert page.total == len(page.items)
+        return [t.id for t in page.items]
+
+    assert ids(dataset_id=ds.id) == [all_three.id, both.id]
+    assert ids(dataset_id="ds_missing") == []
+    assert ids(modules=["task_success"]) == [all_three.id, both.id]
+    assert ids(modules=["task_success", "timestamp_check"]) == [all_three.id, both.id]
+    assert ids(modules=["kinematic_limits", "task_success"]) == [all_three.id]  # every one of them
+    assert ids(modules=["kinematic_limits", "kinematic_limits"]) == [all_three.id]
+    assert ids(modules=["dedup"]) == []                                 # no row at all
+    assert ids(modules=[]) == [all_three.id, ts_only.id, both.id]        # no filter
+    assert ids(modules=["timestamp_check"], dataset_id=ds.id, q="both") == [both.id]
+    assert repo.list_tasks(page=1, page_size=1, modules=["timestamp_check"]).total == 3
+    far = repo.list_tasks(page=10**20, page_size=100)                   # far away: empty, no error
+    assert (far.items, far.total) == ([], 3)
+    far = repo.list_datasets(page=10**20, page_size=100)
+    assert (far.items, far.total) == ([], 1)
+
+
+def test_task_points_at_a_dataset_of_its_own_owner(repo):
+    mine, _ = repo.register_dataset(_dataset())
+    theirs, _ = repo.register_dataset(_dataset(owner=OTHER))
+    t = repo.create_task(_spec(state="created", dataset=mine.id))
+    assert repo.get_task(t.id).dataset_id == mine.id
+    with pytest.raises(P.NotFound):
+        repo.create_task(_spec(dataset=theirs.id))
+    with pytest.raises(P.NotFound):
+        repo.create_task(_spec(dataset="ds_missing"))
+    assert repo.list_tasks(page=1, page_size=10).total == 1              # nothing half-created
+    with pytest.raises(P.NotFound):
+        repo.update_task_fields(t.id, if_updated_at=None, dataset_id=theirs.id)
+    assert repo.update_task_fields(t.id, if_updated_at=None, dataset_id=None).dataset_id is None
+    assert repo.update_task_fields(t.id, if_updated_at=None, dataset_id=mine.id).dataset_id == mine.id
+
+
 def test_update_task_fields_if_match(repo, clock):
     t = repo.create_task(_spec(state="created"))
     with pytest.raises(P.PreconditionFailed):
@@ -429,6 +715,38 @@ def test_terminal_recompute_keeps_first_finish_time(repo):
     assert repo.update_task_state(t.id, {"completed_with_errors"}, "succeeded", at=T0 + 99)
     got = repo.get_task(t.id)
     assert (got.state, got.finished_at) == ("succeeded", T0 + 10)
+
+
+def test_a_finished_resume_ends_the_task_again(repo):
+    """stopped / failed -> succeeded / completed_with_errors, for tasks only (C5 1.2)."""
+    stopped = repo.create_task(_spec("stopped"))
+    _drive(repo, stopped.id, "running", "stopping")
+    assert repo.update_task_state(stopped.id, {"stopping"}, "stopped", at=T0 + 10)
+    assert repo.update_task_state(stopped.id, {"stopped"}, "succeeded", at=T0 + 500)
+    got = repo.get_task(stopped.id)
+    assert (got.state, got.finished_at, got.started_at) == ("succeeded", T0 + 500, T0)
+
+    failed = repo.create_task(_spec("failed"))
+    _drive(repo, failed.id, "running")
+    assert repo.update_task_state(failed.id, {"running"}, "failed", reason="密钥失效", at=T0 + 10)
+    assert repo.update_task_state(failed.id, {"failed"}, "completed_with_errors", at=T0 + 600)
+    got = repo.get_task(failed.id)
+    assert (got.state, got.finished_at, got.state_reason) == ("completed_with_errors", T0 + 600, None)
+
+    _drive(repo, failed.id, "succeeded")
+    assert repo.get_task(failed.id).finished_at == T0 + 600            # a recompute keeps it
+    for frm, to in (("stopped", "queued"), ("failed", "running"), ("stopped", "failed")):
+        with pytest.raises(ValueError):
+            repo.update_task_state(stopped.id, {frm}, to, at=T0)
+
+    parent = repo.create_task(_spec("parent"))
+    _drive(repo, parent.id, "running", "failed")
+    sub = repo.create_subtask(P.Subtask(id="", task_id=parent.id, kind="resume", scope={},
+                                        state="queued"))
+    _sub_drive(repo, sub.id, "running", "failed")
+    for to in ("succeeded", "completed_with_errors"):
+        with pytest.raises(ValueError):                              # subtasks stay final
+            repo.update_subtask_state(sub.id, {"failed"}, to, at=T0)
 
 
 def test_concurrent_cas_has_exactly_one_winner(repo):
@@ -508,8 +826,9 @@ def test_soft_delete_restore_purge(repo, clock):
     done = repo.create_task(_spec("done"))
     _drive(repo, done.id, "running", "succeeded")
     repo.create_subtask(P.Subtask(id="", task_id=done.id, kind="reexport", scope={}, state="queued"))
-    with pytest.raises(P.StateConflict):
+    with pytest.raises(P.Conflict) as err:
         repo.soft_delete_task(done.id, at=T0)                           # its subtask is still active
+    assert err.value.code == "subtask_active"
     sub = repo.active_subtask(done.id)
     _sub_drive(repo, sub.id, "running", "succeeded")
     repo.append_adjudication([P.AdjudicationCreate(task_id=done.id, episode_index=3, line="label",
@@ -618,6 +937,54 @@ def test_resume_needs_a_stopped_or_failed_parent(repo):
     _drive(repo, t.id, "running", "failed")
     s = repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="resume", scope={}, state="queued"))
     assert s.kind == "resume"
+
+
+def test_subtask_pause_reason_is_kept_while_pausing_and_paused(repo):
+    t = repo.create_task(_spec())
+    _drive(repo, t.id, "running", "completed_with_errors")
+    s = repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="retry", scope={}, state="queued"))
+    assert s.pause_reason is None
+    _sub_drive(repo, s.id, "running")
+    assert repo.update_subtask_state(s.id, {"running"}, "pausing", pause_reason="user", at=T0 + 1)
+    assert repo.update_subtask_state(s.id, {"pausing"}, "paused", at=T0 + 2)
+    assert repo.get_subtask(s.id).pause_reason == "user"               # kept through paused
+    assert [x.pause_reason for x in repo.list_subtasks(t.id)] == ["user"]
+    assert repo.active_subtask(t.id).pause_reason == "user"
+    assert repo.update_subtask_state(s.id, {"paused"}, "queued", at=T0 + 3)
+    assert repo.get_subtask(s.id).pause_reason is None                  # only while pausing/paused
+    _sub_drive(repo, s.id, "running")
+    assert repo.update_subtask_state(s.id, {"running"}, "pausing", pause_reason="system",
+                                     reason="Daemon 重启时任务还在运行", at=T0 + 4)
+    got = repo.get_subtask(s.id)
+    assert (got.pause_reason, got.state_reason) == ("system", "Daemon 重启时任务还在运行")
+    assert repo.update_subtask_state(s.id, {"pausing"}, "stopping", pause_reason="user", at=T0 + 5)
+    assert repo.get_subtask(s.id).pause_reason is None
+
+
+def test_subtask_result_revision(repo):
+    t = repo.create_task(_spec())
+    _drive(repo, t.id, "running", "completed_with_errors")
+    s = repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="retry", scope={}, state="queued"))
+    assert s.result_rev is None
+    repo.set_subtask_result_rev(s.id, 2)
+    assert repo.get_subtask(s.id).result_rev == 2
+    with pytest.raises(P.NotFound):
+        repo.set_subtask_result_rev("sub_missing", 2)
+
+
+def test_subtasks_in_states_across_tasks(repo, clock):
+    subs = []
+    for name in ("a", "b", "c"):
+        t = repo.create_task(_spec(name))
+        _drive(repo, t.id, "running", "completed_with_errors")
+        clock.advance(1)
+        subs.append(repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="retry", scope={},
+                                                  state="queued")))
+    _sub_drive(repo, subs[0].id, "running")
+    _sub_drive(repo, subs[2].id, "running", "succeeded")
+    assert [s.id for s in repo.subtasks_in_states({"queued", "running"})] == [subs[0].id, subs[1].id]
+    assert [s.id for s in repo.subtasks_in_states(["succeeded"])] == [subs[2].id]
+    assert repo.subtasks_in_states([]) == []
 
 
 # ---------------------------------------------------------------------------

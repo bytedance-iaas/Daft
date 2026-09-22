@@ -121,15 +121,39 @@ def test_subtasks_follow_the_same_table(repo, clock):
     change_subtask_state(repo, hub, subs["paused-user"].id, {"pausing"}, "paused", at=T0)
 
     counts = reconcile(repo, hub, clock)
-    got = {name: repo.get_subtask(s.id).state for name, s in subs.items()}
-    assert got == {"running": "queued", "pausing-system": "queued", "pausing-user": "paused",
-                   "paused-user": "paused", "stopping": "stopped", "queued": "queued",
-                   "paused-unknown": "paused"}                  # no recorded reason: stay paused
-    assert counts["subtask:paused->queued"] == 2
+    got = {name: (repo.get_subtask(s.id).state, repo.get_subtask(s.id).pause_reason)
+           for name, s in subs.items()}
+    assert got == {"running": ("queued", None), "pausing-system": ("queued", None),
+                   "pausing-user": ("paused", "user"), "paused-user": ("paused", "user"),
+                   "stopping": ("stopped", None), "queued": ("queued", None),
+                   "paused-unknown": ("queued", None)}          # no reason recorded: like a task
+    assert counts == {"subtask:running->pausing": 1, "subtask:pausing->paused": 3,
+                      "subtask:paused->queued": 3, "subtask:stopping->stopped": 1}
     for t in parents:
         assert repo.get_task(t.id).state == "completed_with_errors"        # parents never move
-    user_paused = [e for e in hub.buffered(parents[3].id) if e.data.get("subtask_id")]
-    assert user_paused[-1].data["pause_reason"] == "user"
+    user_paused = [e for e in hub.buffered(parents[2].id) if e.data.get("subtask_id")]
+    assert [(e.data["state"], e.data["pause_reason"]) for e in user_paused] == [
+        ("pausing", "user"), ("paused", "user")]
+    trail = [(e.detail["from"], e.detail["to"], e.detail["pause_reason"], e.detail["by"])
+             for e in reversed(repo.list_events(resource=parents[0].id).items)
+             if e.action == "subtask.state"]
+    assert trail == [("running", "pausing", "system", "reconcile"),
+                     ("pausing", "paused", "system", "reconcile"),
+                     ("paused", "queued", None, "reconcile")]
+    assert reconcile(repo, hub, clock) == {}                              # idempotent
+
+
+def test_default_owner_subtasks_need_no_scan_of_finished_tasks(repo, clock, monkeypatch):
+    parent = seed_task(repo)
+    _to(repo, parent.id, "running", "completed_with_errors")
+    sub = _sub(repo, parent.id, "running")
+    scans = []
+    real = repo.tasks_in_states
+    monkeypatch.setattr(repo, "tasks_in_states",
+                        lambda states: scans.append(set(states)) or real(states))
+    reconcile(repo, EventHub(1), clock)
+    assert repo.get_subtask(sub.id).state == "queued"
+    assert P.TERMINAL_STATES not in [frozenset(s) for s in scans]
 
 
 def test_tasks_of_other_owners_are_reconciled_too(repo, clock):

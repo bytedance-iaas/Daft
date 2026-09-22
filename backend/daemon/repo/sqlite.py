@@ -31,6 +31,7 @@ import dataclasses
 import json
 import os
 import queue
+import re
 import sqlite3
 import threading
 from typing import Any, Callable, Iterable, Iterator
@@ -38,6 +39,7 @@ from typing import Any, Callable, Iterable, Iterator
 from ..pagination import CursorError, decode_cursor, encode_cursor
 from ..util import new_id, now_ms
 from . import migrations
+from .extras import FinishedResults, dataset_format, token_slot
 from .protocol import (
     DEFAULT_OWNER,
     SUBTASK_PARENT_STATES,
@@ -49,6 +51,8 @@ from .protocol import (
     Conflict,
     Credential,
     CursorPage,
+    Dataset,
+    DatasetCheck,
     Event,
     IdempotencyRecord,
     NotFound,
@@ -68,15 +72,19 @@ from .protocol import (
 #: Retention the repository applies in ``purge_expired`` (design doc 01, section 2.8).
 PREFLIGHT_TTL_MS = 30 * 60 * 1000
 IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000
+#: The token timeline (``daemon.repo.extras``) is kept as long as the audit events.
+TOKEN_TIMELINE_TTL_MS = 90 * 24 * 60 * 60 * 1000
 
 #: Upper bound for one cursor page, whatever the caller asks for.
 MAX_PAGE = 1000
+#: Page-number lists never skip more rows than this (a far-away page is simply empty).
+MAX_OFFSET = 1 << 62
 
 _TERMINAL_SQL = "('stopped','succeeded','completed_with_errors','failed')"
 
 #: Columns ``update_task_fields`` may touch (configuration; D20 decides which in what state).
 _TASK_EDITABLE = frozenset({
-    "name", "note", "input_source", "input_uri", "input_region", "input_cred_id",
+    "name", "note", "input_source", "input_uri", "input_region", "input_cred_id", "dataset_id",
     "output_uri", "output_region", "output_cred_id", "delivery_key", "episode_selector",
     "embodiment_id", "vlm_model_id", "vlm_reasoning_effort", "params", "preflight",
 })
@@ -89,6 +97,14 @@ _MODEL_FIELDS = frozenset({"model_name", "reasoning_effort", "max_concurrency", 
                            "source"})
 _USAGE_COUNTERS = ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens",
                    "requests", "requests_unknown_usage")
+#: ``update_dataset``: what PATCH may change, and what a re-preflight refreshes together.
+_DATASET_FIELDS = frozenset({"name", "note", "credential_id"})
+_DATASET_REFRESH = frozenset({"preflight", "meta_fingerprint", "source_fingerprint",
+                              "preflighted_at"})
+_DATASET_JSON = frozenset({"preflight", "source_fingerprint"})
+_DATASET_REQUIRED = frozenset({"name"}) | _DATASET_REFRESH
+#: Dataset ids are the repository's own (``new_id("ds")``); the REST path only routes these.
+_DATASET_ID_RE = re.compile(r"^ds_[0-9A-Za-z]+$")
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +353,7 @@ def _task(row) -> Task:
         episode_selector=_loads(row["episode_selector"]), params=_loads(row["params"]),
         note=row["note"], state_reason=row["state_reason"], pause_reason=row["pause_reason"],
         input_region=row["input_region"], input_cred_id=row["input_cred_id"],
+        dataset_id=row["dataset_id"],
         output_region=row["output_region"], output_cred_id=row["output_cred_id"],
         embodiment_id=row["embodiment_id"], vlm_model_id=row["vlm_model_id"],
         vlm_reasoning_effort=row["vlm_reasoning_effort"],
@@ -362,9 +379,31 @@ def _task_module(row) -> TaskModule:
 def _subtask(row) -> Subtask:
     return Subtask(
         id=row["id"], task_id=row["task_id"], kind=row["kind"], scope=_loads(row["scope"]) or {},
-        state=row["state"], state_reason=row["state_reason"], progress=_loads(row["progress"]),
-        result_rev=row["result_rev"], created_at=row["created_at"],
-        started_at=row["started_at"], finished_at=row["finished_at"])
+        state=row["state"], state_reason=row["state_reason"], pause_reason=row["pause_reason"],
+        progress=_loads(row["progress"]), result_rev=row["result_rev"],
+        created_at=row["created_at"], started_at=row["started_at"],
+        finished_at=row["finished_at"])
+
+
+def _dataset(row) -> Dataset:
+    return Dataset(
+        id=row["id"], name=row["name"], source=row["source"], uri=row["uri"],
+        preflight=_loads(row["preflight"]) or {}, meta_fingerprint=row["meta_fingerprint"],
+        source_fingerprint=_loads(row["source_fingerprint"]) or {},
+        preflighted_at=row["preflighted_at"], note=row["note"], region=row["region"],
+        credential_id=row["credential_id"], manifest_path=row["manifest_path"],
+        check_state=row["check_state"], checked_at=row["checked_at"], owner_id=row["owner_id"],
+        created_at=row["created_at"], updated_at=row["updated_at"])
+
+
+def _dataset_check(row) -> DatasetCheck:
+    return DatasetCheck(dataset_id=row["dataset_id"], at=row["at"], trigger=row["trigger"],
+                        result=row["result"], change=_loads(row["change"]), id=row["id"])
+
+
+def _like(q: str) -> str:
+    """``%q%`` for ``LIKE ... ESCAPE '\\'``, with the wildcards in ``q`` taken literally."""
+    return "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
 def _adjudication(row) -> Adjudication:
@@ -807,6 +846,177 @@ class SqliteRepository:
             c.execute("DELETE FROM vlm_model WHERE id=?", (model_id,))
         self._write(op)
 
+    # -- datasets (D36, D37) -------------------------------------------------------------
+    @staticmethod
+    def _get_dataset(c, dataset_id: str, owner: str | None) -> Dataset:
+        sql, args = "SELECT * FROM dataset WHERE id=?", [dataset_id]
+        if owner is not None:
+            sql += " AND owner_id=?"
+            args.append(owner)
+        row = c.execute(sql, args).fetchone()
+        if row is None:
+            raise NotFound(f"dataset {dataset_id}")
+        return _dataset(row)
+
+    @staticmethod
+    def _check_access_key(c, cred_id: str | None, owner: str) -> None:
+        """A registration reads with a TOS access key of its own owner."""
+        if cred_id is not None and c.execute(
+                "SELECT 1 FROM credential WHERE id=? AND owner_id=? AND kind='tos'",
+                (cred_id, owner)).fetchone() is None:
+            raise NotFound(f"access key {cred_id}")
+
+    def register_dataset(self, dataset: Dataset) -> tuple[Dataset, bool]:
+        """Get-or-create by (owner, source, uri, region); an existing registration comes
+        back unchanged. An empty region is the same as none. ``id`` is normally left
+        empty (the repository makes one); a given one must look like ``ds_...``.
+        Raises NotFound when ``credential_id`` is not a TOS access key of the owner."""
+        if dataset.id and not _DATASET_ID_RE.match(dataset.id):
+            raise ValueError(f"dataset ids look like ds_<letters and digits>, not {dataset.id!r}")
+        missing = sorted(k for k in _DATASET_REQUIRED if getattr(dataset, k) is None)
+        if missing:
+            raise ValueError(f"a registration needs {missing}")
+        now = self._clock()
+        ds_id = dataset.id or new_id("ds")
+        region = dataset.region or None
+
+        def op(c):
+            found = self._find_dataset(c, dataset.owner_id, dataset.source, dataset.uri, region)
+            if found is not None:
+                return found, False
+            if c.execute("SELECT 1 FROM dataset WHERE id=?", (ds_id,)).fetchone() is not None:
+                raise ValueError(f"dataset id {ds_id} is taken by another address")
+            self._check_access_key(c, dataset.credential_id, dataset.owner_id)
+            c.execute(
+                "INSERT INTO dataset (id, owner_id, name, note, source, uri, region, credential_id,"
+                " preflight, format, meta_fingerprint, source_fingerprint, manifest_path,"
+                " check_state, checked_at, preflighted_at, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (ds_id, dataset.owner_id, dataset.name, dataset.note, dataset.source, dataset.uri,
+                 region, dataset.credential_id, _dumps(dataset.preflight or {}),
+                 dataset_format(dataset.preflight), dataset.meta_fingerprint,
+                 _dumps(dataset.source_fingerprint or {}), dataset.manifest_path,
+                 dataset.check_state, dataset.checked_at, dataset.preflighted_at,
+                 dataset.created_at or now, dataset.updated_at or now))
+            return self._get_dataset(c, ds_id, dataset.owner_id), True
+
+        return self._write(op)
+
+    def get_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER) -> Dataset:
+        return self._read(lambda c: self._get_dataset(c, dataset_id, owner))
+
+    def list_datasets(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
+                      q: str | None = None, fmt: str | None = None,
+                      check_state: str | None = None) -> PagedResult[Dataset]:
+        page, page_size = int(page), int(page_size)
+        if page < 1 or page_size < 1:
+            raise ValueError("page and page_size start at 1")
+        where, args = ["owner_id=?"], [owner]
+        if q:
+            where.append("(name LIKE ? ESCAPE '\\' OR uri LIKE ? ESCAPE '\\')")
+            args += [_like(q), _like(q)]
+        if fmt is not None:
+            where.append("format=?")
+            args.append(fmt)
+        if check_state is not None:
+            where.append("check_state=?")
+            args.append(check_state)
+        clause = " AND ".join(where)
+
+        offset = min((page - 1) * page_size, MAX_OFFSET)
+        page_size = min(page_size, MAX_OFFSET)
+
+        def op(c):
+            total = c.execute(f"SELECT COUNT(*) FROM dataset WHERE {clause}", args).fetchone()[0]
+            rows = c.execute(f"SELECT * FROM dataset WHERE {clause}"
+                             " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                             (*args, page_size, offset)).fetchall()
+            return PagedResult(items=[_dataset(r) for r in rows], page=page, page_size=page_size,
+                               total=total)
+
+        return self._read(op, snapshot=True)
+
+    def update_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER, **fields) -> Dataset:
+        """``name`` / ``note`` / ``credential_id``, or a refresh: ``preflight``, both
+        fingerprints and ``preflighted_at`` together (``manifest_path`` may come along).
+        A refresh is the new baseline, so ``check_state`` goes back to ``ok``.
+        ``credential_id`` must be a TOS access key of the owner (else NotFound)."""
+        unknown = set(fields) - _DATASET_FIELDS - _DATASET_REFRESH - {"manifest_path"}
+        if unknown:
+            raise ValueError(f"not editable on a dataset: {sorted(unknown)}")
+        refresh = _DATASET_REFRESH & set(fields)
+        if refresh and refresh != _DATASET_REFRESH:
+            raise ValueError("a refresh gives preflight, meta_fingerprint, source_fingerprint "
+                             f"and preflighted_at together (missing {sorted(_DATASET_REFRESH - refresh)})")
+        if "manifest_path" in fields and not refresh:
+            raise ValueError("manifest_path changes only with a refresh")
+        nulls = sorted(k for k in _DATASET_REQUIRED & set(fields) if fields[k] is None)
+        if nulls:
+            raise ValueError(f"cannot clear {nulls}")
+        values = {k: (_dumps(v or {}) if k in _DATASET_JSON else v) for k, v in fields.items()}
+        if refresh:
+            values["format"] = dataset_format(fields["preflight"])
+            values["check_state"] = "ok"
+        now = self._clock()
+
+        def op(c):
+            current = self._get_dataset(c, dataset_id, owner)
+            if not values:
+                return current
+            if "credential_id" in values:
+                self._check_access_key(c, values["credential_id"], current.owner_id)
+            cols = ", ".join(f"{k}=?" for k in values)
+            c.execute(f"UPDATE dataset SET {cols}, updated_at=MAX(?, updated_at + 1) WHERE id=?",
+                      (*values.values(), now, dataset_id))
+            return self._get_dataset(c, dataset_id, owner)
+
+        return self._write(op)
+
+    def record_dataset_check(self, check: DatasetCheck) -> DatasetCheck:
+        """Appends the check; the dataset's ``checked_at`` becomes ``check.at`` and its
+        ``check_state`` follows the result - except after a ``repreflight``, which adopts
+        what it found as the new baseline and so leaves the dataset ``ok``. A check older
+        than the dataset's ``checked_at`` is only kept in the history."""
+        if check.result not in ("same", "changed"):
+            raise ValueError(f"a check is same or changed, not {check.result}")
+        if check.trigger not in ("add", "recheck", "task_start", "repreflight"):
+            raise ValueError(f"unknown check trigger {check.trigger}")
+        state = "changed" if check.result == "changed" and check.trigger != "repreflight" else "ok"
+        now = self._clock()
+
+        def op(c):
+            self._get_dataset(c, check.dataset_id, None)
+            cur = c.execute("INSERT INTO dataset_check (dataset_id, at, \"trigger\", result, change)"
+                            " VALUES (?,?,?,?,?)", (check.dataset_id, int(check.at), check.trigger,
+                                                    check.result, _dumps(check.change)))
+            c.execute("UPDATE dataset SET check_state=?, checked_at=?,"
+                      " updated_at=MAX(?, updated_at + 1)"
+                      " WHERE id=? AND (checked_at IS NULL OR checked_at <= ?)",
+                      (state, int(check.at), now, check.dataset_id, int(check.at)))
+            return _dataset_check(c.execute("SELECT * FROM dataset_check WHERE id=?",
+                                            (cur.lastrowid,)).fetchone())
+
+        return self._write(op)
+
+    def list_dataset_checks(self, dataset_id: str, *, limit: int = 20) -> list[DatasetCheck]:
+        limit = int(limit)
+        if limit < 1:
+            raise ValueError("limit starts at 1")
+        return self._read(lambda c: [_dataset_check(r) for r in c.execute(
+            "SELECT * FROM dataset_check WHERE dataset_id=? ORDER BY at DESC, id DESC LIMIT ?",
+            (dataset_id, min(limit, MAX_PAGE))).fetchall()])
+
+    def delete_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER) -> None:
+        def op(c):
+            self._get_dataset(c, dataset_id, owner)
+            users = c.execute("SELECT COUNT(*) FROM task WHERE dataset_id=? AND deleted_at IS NULL"
+                              f" AND state NOT IN {_TERMINAL_SQL}", (dataset_id,)).fetchone()[0]
+            if users:
+                raise Conflict("dataset_in_use",
+                               f"dataset {dataset_id} is used by {users} unfinished task(s)")
+            c.execute("DELETE FROM dataset WHERE id=?", (dataset_id,))   # tasks: SET NULL
+        self._write(op)
+
     # -- tasks ---------------------------------------------------------------------
     @staticmethod
     def _get_task(c, task_id: str, owner: str | None = None, include_deleted: bool = True) -> Task:
@@ -838,6 +1048,13 @@ class SqliteRepository:
                  m.state, m.error, m.input_digest, int(m.episodes_total), int(m.episodes_error),
                  _dumps(m.params), m.started_at, m.finished_at))
 
+    @staticmethod
+    def _check_dataset_ref(c, dataset_id: str | None, owner: str) -> None:
+        """A task may only point at a registration of its own owner."""
+        if dataset_id is not None and c.execute(
+                "SELECT 1 FROM dataset WHERE id=? AND owner_id=?", (dataset_id, owner)).fetchone() is None:
+            raise NotFound(f"dataset {dataset_id}")
+
     def create_task(self, spec: TaskCreate) -> Task:
         if spec.state not in ("created", "queued"):
             raise ValueError(f"a task starts as created or queued, not {spec.state}")
@@ -845,15 +1062,16 @@ class SqliteRepository:
         task_id = new_id("task")
 
         def op(c):
+            self._check_dataset_ref(c, spec.dataset_id, spec.owner_id)
             c.execute(
                 "INSERT INTO task (id, owner_id, name, note, state, input_source, input_uri,"
-                " input_region, input_cred_id, output_uri, output_region, output_cred_id,"
-                " delivery_key, episode_selector, embodiment_id, vlm_model_id,"
+                " input_region, input_cred_id, dataset_id, output_uri, output_region,"
+                " output_cred_id, delivery_key, episode_selector, embodiment_id, vlm_model_id,"
                 " vlm_reasoning_effort, params, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (task_id, spec.owner_id, spec.name, spec.note, spec.state, spec.input_source,
-                 spec.input_uri, spec.input_region, spec.input_cred_id, spec.output_uri,
-                 spec.output_region, spec.output_cred_id, spec.delivery_key,
+                 spec.input_uri, spec.input_region, spec.input_cred_id, spec.dataset_id,
+                 spec.output_uri, spec.output_region, spec.output_cred_id, spec.delivery_key,
                  _dumps(spec.episode_selector), spec.embodiment_id, spec.vlm_model_id,
                  spec.vlm_reasoning_effort, _dumps(spec.params or {}), now, now))
             self._upsert_modules(c, task_id, spec.modules)
@@ -867,7 +1085,8 @@ class SqliteRepository:
 
     def list_tasks(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
                    state: str | None = None, q: str | None = None,
-                   delivery_key: str | None = None) -> PagedResult[Task]:
+                   delivery_key: str | None = None, dataset_id: str | None = None,
+                   modules: list[str] | None = None) -> PagedResult[Task]:
         page, page_size = int(page), int(page_size)
         if page < 1 or page_size < 1:
             raise ValueError("page and page_size start at 1")
@@ -880,18 +1099,28 @@ class SqliteRepository:
                 where.append("state=?")
                 args.append(state)
         if q:
-            needle = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             where.append("(name LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')")
-            args += [f"%{needle}%", f"%{needle}%"]
+            args += [_like(q), _like(q)]
         if delivery_key is not None:
             where.append("delivery_key=?")
             args.append(delivery_key)
+        if dataset_id is not None:
+            where.append("dataset_id=?")
+            args.append(dataset_id)
+        wanted = sorted(set(modules or ()))
+        if wanted:                                  # every listed module is selected
+            where.append("id IN (SELECT task_id FROM task_module WHERE selected=1"
+                         f" AND module_id IN ({_placeholders(len(wanted))})"
+                         " GROUP BY task_id HAVING COUNT(*)=?)")
+            args += [*wanted, len(wanted)]
         clause = " AND ".join(where)
+        offset = min((page - 1) * page_size, MAX_OFFSET)
+        page_size = min(page_size, MAX_OFFSET)
 
         def op(c):
             total = c.execute(f"SELECT COUNT(*) FROM task WHERE {clause}", args).fetchone()[0]
             rows = c.execute(f"SELECT * FROM task WHERE {clause} ORDER BY created_at DESC, id DESC"
-                             " LIMIT ? OFFSET ?", (*args, page_size, (page - 1) * page_size)).fetchall()
+                             " LIMIT ? OFFSET ?", (*args, page_size, offset)).fetchall()
             return PagedResult(items=[_task(r) for r in rows], page=page, page_size=page_size,
                                total=total)
 
@@ -912,6 +1141,8 @@ class SqliteRepository:
                     f"task {task_id} changed (updated_at {current.updated_at} != {if_updated_at})")
             if not values:
                 return current
+            if "dataset_id" in values:
+                self._check_dataset_ref(c, values["dataset_id"], current.owner_id)
             cols = ", ".join(f"{k}=?" for k in values)
             c.execute(f"UPDATE task SET {cols}, updated_at=MAX(?, updated_at + 1) WHERE id=?",
                       (*values.values(), now, task_id))
@@ -921,6 +1152,10 @@ class SqliteRepository:
 
     def update_task_state(self, task_id: str, frm, to: str, *, reason: str | None = None,
                           pause_reason: str | None = None, at: int) -> bool:
+        """CAS. ``finished_at`` is the first terminal time, except that a task which ends
+        again after a resume (stopped / failed -> succeeded / completed_with_errors) takes
+        the new end: the work finished then. A recompute between succeeded and
+        completed_with_errors keeps it."""
         states = _check_transitions(frm, to, TASK_TRANSITIONS)
         pausing = to in ("pausing", "paused")
         terminal = to in TERMINAL_STATES
@@ -930,11 +1165,13 @@ class SqliteRepository:
                 "UPDATE task SET state=?, state_reason=?,"
                 " pause_reason=CASE WHEN ? THEN COALESCE(?, pause_reason) ELSE NULL END,"
                 " started_at=CASE WHEN ?='running' THEN COALESCE(started_at, ?) ELSE started_at END,"
-                " finished_at=CASE WHEN ? THEN COALESCE(finished_at, ?) ELSE finished_at END,"
+                " finished_at=CASE WHEN NOT ? THEN finished_at"
+                "   WHEN state IN ('stopped','failed') AND ? IN ('succeeded','completed_with_errors')"
+                "   THEN ? ELSE COALESCE(finished_at, ?) END,"
                 " updated_at=MAX(?, updated_at + 1)"
                 f" WHERE id=? AND deleted_at IS NULL AND state IN ({_placeholders(len(states))})",
-                (to, reason, int(pausing), pause_reason, to, at, int(terminal), at, at, task_id,
-                 *states))
+                (to, reason, int(pausing), pause_reason, to, at, int(terminal), to, at, at, at,
+                 task_id, *states))
             return cur.rowcount == 1
 
         return self._write(op)
@@ -1013,7 +1250,7 @@ class SqliteRepository:
             if task.state != "created" and task.state not in TERMINAL_STATES:
                 raise StateConflict(f"task {task_id} is {task.state}; stop it before deleting")
             if self._active_subtask(c, task_id) is not None:
-                raise StateConflict(f"task {task_id} has a subtask running")
+                raise Conflict("subtask_active", f"task {task_id} has a subtask that is not finished")
             c.execute("UPDATE task SET deleted_at=?, updated_at=MAX(?, updated_at + 1) WHERE id=?",
                       (at, at, task_id))
         self._write(op)
@@ -1040,6 +1277,14 @@ class SqliteRepository:
             return []
         return self._read(lambda c: [_task(r) for r in c.execute(
             f"SELECT * FROM task WHERE state IN ({_placeholders(len(states))})"
+            " ORDER BY created_at, id", states).fetchall()])
+
+    def subtasks_in_states(self, states: Iterable[str]) -> list[Subtask]:
+        states = sorted(set(states))
+        if not states:
+            return []
+        return self._read(lambda c: [_subtask(r) for r in c.execute(
+            f"SELECT * FROM subtask WHERE state IN ({_placeholders(len(states))})"
             " ORDER BY created_at, id", states).fetchall()])
 
     # -- task modules ----------------------------------------------------------------
@@ -1102,11 +1347,12 @@ class SqliteRepository:
             if self._active_subtask(c, subtask.task_id) is not None:
                 raise Conflict("subtask_active",
                                f"task {subtask.task_id} already has an unfinished subtask")
-            c.execute("INSERT INTO subtask (id, task_id, kind, scope, state, state_reason, progress,"
-                      " result_rev, created_at, started_at, finished_at)"
-                      " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            pause = subtask.pause_reason if subtask.state in ("pausing", "paused") else None
+            c.execute("INSERT INTO subtask (id, task_id, kind, scope, state, state_reason,"
+                      " pause_reason, progress, result_rev, created_at, started_at, finished_at)"
+                      " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                       (sub_id, subtask.task_id, subtask.kind, _dumps(subtask.scope or {}),
-                       subtask.state, subtask.state_reason, _dumps(subtask.progress),
+                       subtask.state, subtask.state_reason, pause, _dumps(subtask.progress),
                        subtask.result_rev, subtask.created_at or now, subtask.started_at,
                        subtask.finished_at))
             return _subtask(c.execute("SELECT * FROM subtask WHERE id=?", (sub_id,)).fetchone())
@@ -1129,20 +1375,30 @@ class SqliteRepository:
         return self._read(lambda c: self._active_subtask(c, task_id))
 
     def update_subtask_state(self, subtask_id: str, frm, to: str, *, reason: str | None = None,
-                             at: int) -> bool:
+                             pause_reason: str | None = None, at: int) -> bool:
         states = _check_transitions(frm, to, SUBTASK_TRANSITIONS)
+        pausing = to in ("pausing", "paused")
         terminal = to in TERMINAL_STATES
 
         def op(c):
             cur = c.execute(
                 "UPDATE subtask SET state=?, state_reason=?,"
+                " pause_reason=CASE WHEN ? THEN COALESCE(?, pause_reason) ELSE NULL END,"
                 " started_at=CASE WHEN ?='running' THEN COALESCE(started_at, ?) ELSE started_at END,"
                 " finished_at=CASE WHEN ? THEN COALESCE(finished_at, ?) ELSE finished_at END"
                 f" WHERE id=? AND state IN ({_placeholders(len(states))})",
-                (to, reason, to, at, int(terminal), at, subtask_id, *states))
+                (to, reason, int(pausing), pause_reason, to, at, int(terminal), at, subtask_id,
+                 *states))
             return cur.rowcount == 1
 
         return self._write(op)
+
+    def set_subtask_result_rev(self, subtask_id: str, result_rev: int) -> None:
+        def op(c):
+            cur = c.execute("UPDATE subtask SET result_rev=? WHERE id=?", (int(result_rev), subtask_id))
+            if cur.rowcount == 0:
+                raise NotFound(f"subtask {subtask_id}")
+        self._write(op)
 
     def set_subtask_progress(self, subtask_id: str, progress: dict) -> None:
         def op(c):
@@ -1157,8 +1413,10 @@ class SqliteRepository:
             return
         counters = ", ".join(_USAGE_COUNTERS)
         adds = ", ".join(f"{k}={k}+excluded.{k}" for k in _USAGE_COUNTERS)
+        slot = token_slot(at)
 
         def op(c):
+            spent: dict[str, int] = {}
             for d in deltas:
                 c.execute(
                     f"INSERT INTO token_usage (task_id, ledger, subtask_id, module_id, call_kind,"
@@ -1167,6 +1425,15 @@ class SqliteRepository:
                     f" DO UPDATE SET {adds}, updated_at=excluded.updated_at",
                     (d.task_id, d.ledger, d.subtask_id or "", d.module_id, d.call_kind, d.model_name,
                      *(int(getattr(d, k)) for k in _USAGE_COUNTERS), at))
+                if d.ledger == "actual":
+                    spent[d.task_id] = spent.get(d.task_id, 0) + int(d.prompt_tokens) \
+                        + int(d.completion_tokens)
+            for task_id, tokens in spent.items():
+                if tokens:
+                    c.execute("INSERT INTO token_timeline (owner_id, slot, tokens)"
+                              " SELECT owner_id, ?, ? FROM task WHERE id=?"
+                              " ON CONFLICT(owner_id, slot) DO UPDATE SET tokens=tokens+excluded.tokens",
+                              (slot, tokens, task_id))
 
         self._write(op)
 
@@ -1299,10 +1566,86 @@ class SqliteRepository:
                                     _dumps(record.response), record.created_at)))
 
     def purge_expired(self, *, now: int) -> int:
+        """Expired preflight results and idempotency keys (the count), and token-timeline
+        slots older than ``TOKEN_TIMELINE_TTL_MS`` (not counted)."""
         def op(c):
             n = c.execute("DELETE FROM preflight_cache WHERE created_at < ?",
                           (now - PREFLIGHT_TTL_MS,)).rowcount
             n += c.execute("DELETE FROM idempotency_key WHERE created_at < ?",
                            (now - IDEMPOTENCY_TTL_MS,)).rowcount
+            c.execute("DELETE FROM token_timeline WHERE slot < ?", (now - TOKEN_TIMELINE_TTL_MS,))
             return n
         return self._write(op)
+
+    # -- queries beyond C5 1.2 (daemon.repo.extras) ------------------------------------------------
+    @staticmethod
+    def _find_dataset(c, owner: str, source: str, uri: str, region: str | None) -> Dataset | None:
+        row = c.execute("SELECT * FROM dataset WHERE owner_id=? AND source=? AND uri=?"
+                        " AND COALESCE(region, '')=COALESCE(?, '')",
+                        (owner, source, uri, region)).fetchone()
+        return None if row is None else _dataset(row)
+
+    def find_dataset(self, *, source: str, uri: str, region: str | None,
+                     owner: str = DEFAULT_OWNER) -> Dataset | None:
+        return self._read(lambda c: self._find_dataset(c, owner, source, uri, region))
+
+    def adjudication_backlog(self, *, owner: str = DEFAULT_OWNER) -> tuple[int, int]:
+        def pick(key: str) -> str:
+            return (f"WHEN json_type(summary, '$.{key}')='integer'"
+                    f" AND json_extract(summary, '$.{key}') >= 0"
+                    f" THEN json_extract(summary, '$.{key}')")
+
+        def op(c):
+            row = c.execute(
+                "SELECT COUNT(*), COALESCE(SUM(n), 0) FROM ("
+                f" SELECT CASE {pick('pending_adjudication')} {pick('review')} ELSE 0 END AS n"
+                " FROM task WHERE owner_id=? AND deleted_at IS NULL AND summary IS NOT NULL"
+                ") WHERE n > 0", (owner,)).fetchone()
+            return int(row[0]), int(row[1])
+
+        return self._read(op)
+
+    def delivery_pending_count(self, *, owner: str = DEFAULT_OWNER) -> int:
+        return self._read(lambda c: c.execute(
+            "SELECT COUNT(*) FROM task WHERE owner_id=? AND deleted_at IS NULL"
+            f" AND state IN {_TERMINAL_SQL} AND result_rev >= 1"
+            " AND (delivery_stale=1 OR export_fingerprint IS NULL)", (owner,)).fetchone()[0])
+
+    def finished_results(self, *, since: int, owner: str = DEFAULT_OWNER) -> FinishedResults:
+        def total(key: str) -> str:
+            return (f"COALESCE(SUM(CASE WHEN json_type(summary, '$.{key}')='integer'"
+                    f" AND json_extract(summary, '$.{key}') >= 0"
+                    f" THEN json_extract(summary, '$.{key}') ELSE 0 END), 0)")
+
+        def op(c):
+            row = c.execute(
+                f"SELECT COUNT(*), {total('total')}, {total('passed')} FROM task"
+                " WHERE owner_id=? AND deleted_at IS NULL"
+                " AND state IN ('succeeded','completed_with_errors') AND finished_at >= ?",
+                (owner, int(since))).fetchone()
+            return FinishedResults(tasks=int(row[0]), episodes=int(row[1]), passed=int(row[2]))
+
+        return self._read(op)
+
+    def unfinished_subtasks(self, *, owner: str = DEFAULT_OWNER) -> list[tuple[Subtask, Task]]:
+        def op(c):
+            subs = [_subtask(r) for r in c.execute(
+                "SELECT s.* FROM subtask s JOIN task t ON t.id = s.task_id"
+                f" WHERE t.owner_id=? AND t.deleted_at IS NULL AND s.state NOT IN {_TERMINAL_SQL}"
+                " ORDER BY s.created_at DESC, s.id DESC", (owner,)).fetchall()]
+            parents: dict[str, Task] = {}
+            ids = sorted({s.task_id for s in subs})
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                for r in c.execute(f"SELECT * FROM task WHERE id IN ({_placeholders(len(chunk))})",
+                                   chunk).fetchall():
+                    parents[r["id"]] = _task(r)
+            return [(s, parents[s.task_id]) for s in subs]
+
+        return self._read(op, snapshot=True)
+
+    def token_timeline(self, *, since: int, until: int,
+                       owner: str = DEFAULT_OWNER) -> list[tuple[int, int]]:
+        return self._read(lambda c: [(r[0], r[1]) for r in c.execute(
+            "SELECT slot, tokens FROM token_timeline WHERE owner_id=? AND slot >= ? AND slot < ?"
+            " AND tokens > 0 ORDER BY slot", (owner, int(since), int(until))).fetchall()])

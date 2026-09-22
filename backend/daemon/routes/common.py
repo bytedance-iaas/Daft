@@ -29,6 +29,9 @@ OPENAPI = "openapi.yaml#/components/schemas/"
 #: Write bodies are small JSON documents; anything bigger is refused before parsing.
 MAX_BODY_BYTES = 1024 * 1024
 
+#: Page sizes of the page-number lists (tasks, datasets; D21).
+PAGE_SIZES = (10, 20, 50, 100)
+
 
 def runtime(request: Request):
     return request.app.state.runtime
@@ -92,6 +95,12 @@ def validate(ref: str, instance: Any) -> None:
 async def in_thread(fn: Callable, *args, **kwargs):
     """Run blocking work (the repository, files) off the event loop."""
     return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+
+
+def check_page_size(page_size: int) -> None:
+    if page_size not in PAGE_SIZES:
+        raise ApiError("validation_failed", "每页条数只能是 10、20、50 或 100",
+                       details={"errors": [{"field": "page_size", "problem": "not in 10/20/50/100"}]})
 
 
 def idempotency_key(request: Request) -> str | None:
