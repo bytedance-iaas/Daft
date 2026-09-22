@@ -128,7 +128,7 @@ def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     assert commit["parts"]["task_success"] == ["0001", "0002"]
     report = _json(r2, "report.json")
     assert report["overview"]["counts"] == {"total": 8, "passed": 4, "rejected": 4,
-                                            "held": 0, "review": 2}
+                                            "held": 0, "review": 2, "skipped": 0}
 
 
 def test_the_second_export_is_incremental(flow):

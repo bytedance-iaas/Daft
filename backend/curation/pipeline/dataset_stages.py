@@ -219,10 +219,16 @@ def run_dedup(ctx, run_dir: str, input_dir: str, episodes: list[int], part: str,
                                   "duplicate_of": index_of(d["duplicate_of"])}
                                  for d in dropped), key=lambda d: d["episode_index"])}
     write_json_atomic(os.path.join(module_dir(run_dir, "dedup"), "groups.json"), groups)
+    # the reader left out an episode whose source files are missing: so does v2 (D40)
+    missing = leave_out_missing_source(ctx, run_dir, input_dir,
+                              [index_of(e) for e, why in unread.items()
+                               if why == "missing source file(s)"])
     writer = PartWriter(run_dir, ["dedup"], part)
     try:
         for eid in keep_ids:
             ep = index_of(eid)
+            if ep in missing:
+                continue
             if eid in unread:
                 log = IncidentLog()
                 log.add("read", cause=unread[eid])
@@ -241,11 +247,27 @@ def run_dedup(ctx, run_dir: str, input_dir: str, episodes: list[int], part: str,
         writer.close()
     compact(run_dir, "dedup")
     ctx.progress(label, len(keep_ids), len(keep_ids))
-    return summary(run_dir, ["dedup"], episodes, part)
+    return summary(run_dir, ["dedup"], [e for e in episodes if e not in missing], part,
+                   missing=missing)
+
+
+def leave_out_missing_source(ctx, run_dir: str, input_dir: str, episodes) -> dict[int, list[str]]:
+    """Of ``episodes`` the reader did not return, the ones missing source files (D40):
+    recorded for the run directory, left out of this call."""
+    from .skipped import missing_source, record
+
+    found = missing_source(input_dir, episodes) if episodes else {}
+    if found:
+        record(run_dir, found)
+        ctx.log("warn", f"{len(found)} episode(s) have missing source files and are left "
+                        f"out like v1 does: {sorted(found)[:10]}")
+    return found
 
 
 def summary(run_dir: str, modules: list[str], episodes: list[int], part: str,
-            skipped: int | None = None) -> dict:
+            skipped: int | None = None, missing: dict[int, list[str]] | None = None) -> dict:
+    from .skipped import as_list
+
     out = {}
     for m in modules:
         cur = latest_results(run_dir, m)
@@ -262,6 +284,8 @@ def summary(run_dir: str, modules: list[str], episodes: list[int], part: str,
                  "error_episodes": errors}
         if skipped is not None:
             entry["skipped_existing"] = skipped
+        if missing:
+            entry["skipped_missing_source"] = as_list(missing)
         out[m] = entry
     return {"schema_version": "1.0", "modules": out}
 

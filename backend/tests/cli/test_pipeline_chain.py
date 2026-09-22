@@ -150,7 +150,8 @@ def test_report_follows_the_registry(chain):
     assert by_id["task_success"]["adjudication"] == {"pending": 2}
     assert by_id["timestamp_check"]["adjudication"] is None
     assert report["overview"]["counts"] == {"total": 8, "passed": 5, "rejected": 3,
-                                            "held": 0, "review": 2}
+                                            "held": 0, "review": 2, "skipped": 0}
+    assert report["integrity"]["skipped_episodes"] == []
     for m in report["modules"]:
         for t in m["tables"]:
             assert os.path.isfile(os.path.join(rev, t["file"]))

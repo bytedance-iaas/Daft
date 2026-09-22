@@ -317,9 +317,13 @@ def integrity(rev: Revision) -> dict:
 
 def build(rev: Revision) -> tuple[dict, dict]:
     """(report.json, perf.json)."""
+    from .skipped import all_skipped, as_list
+
+    skipped = as_list(all_skipped(rev.run_dir))
     counts = {"total": sum(rev.lists[n]["count"] for n in ("passed", "reject", "held")),
               "passed": rev.lists["passed"]["count"], "rejected": rev.lists["reject"]["count"],
-              "held": rev.lists["held"]["count"], "review": rev.lists["review"]["count"]}
+              "held": rev.lists["held"]["count"], "review": rev.lists["review"]["count"],
+              "skipped": len(skipped)}
     reasons: dict[str, int] = {}
     for e in rev.episodes("reject"):
         for mod in dict.fromkeys(r["module"] for r in e.get("reasons") or []
@@ -351,7 +355,9 @@ def build(rev: Revision) -> tuple[dict, dict]:
             "redone_after_interruption": redone_after_interruption(rev.run_dir, rev.modules)}
     report = {"schema_version": SCHEMA_VERSION, "revision": rev.revision,
               "overview": overview, "modules": module_sections(rev),
-              "skipped_modules": skipped_modules(rev), "integrity": integrity(rev),
+              "skipped_modules": skipped_modules(rev),
+              # what was not checked and why (D40): the manifest's list and read-time finds
+              "integrity": {**integrity(rev), "skipped_episodes": skipped},
               "perf": {"vlm_requests": lat["requests"], "vlm_wall_s": lat["wall_s"],
                        "effective_concurrency": lat["effective_concurrency"],
                        "redone_after_interruption": perf["redone_after_interruption"]}}
@@ -373,6 +379,9 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
              f"待补跑 {c['held']}(三者不重不漏)",
              f"- 通过率:{rate}(待补跑既不算通过也不算拒绝)",
              f"- 待人工确认:{c['review']} 条(多数在通过里,保守放行、等人确认)"]
+    if c.get("skipped"):
+        lines.append(f"- 缺源文件未质检:{c['skipped']} 条(照 v1 剔除,不计入参与质检的总数,"
+                     f"明细见文末「未质检的条目」)")
     if ov["reject_reasons"]:
         lines.append("- 拒绝原因:" + ";".join(
             f"「{NAMES_CN.get(r['module'], r['module'])}」{r['count']} 条"
@@ -413,6 +422,12 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines.append(f"- 待人工裁决:{sec['adjudication']['pending']} 条")
         if sec.get("error"):
             lines.append(f"- ⚠️ {sec['error']}")
+        lines.append("")
+    if report["integrity"].get("skipped_episodes"):
+        lines.append("## 未质检的条目(源文件缺失,照 v1 剔除)")
+        for s in report["integrity"]["skipped_episodes"][:50]:
+            lines.append(f"- ep{s['episode_index']:06d}:缺 " + "、".join(s["missing"]))
+        lines.append("- 补齐文件后另建任务即可")
         lines.append("")
     if report["skipped_modules"]:
         lines.append("## 未执行的模块")

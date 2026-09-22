@@ -9,9 +9,10 @@ helpers, so every value a check sees - the float32 action, the float64
 timestamps, the video pointers, the semantics columns - is what v1's UDFs saw
 (daft's struct/tensor round trip returns the same values, verified in W3).
 
-Differences on purpose, all about isolating one bad episode (D24): a missing
-file, a failed validation or an unreadable parquet is an error of that episode,
-not an exception that ends the whole run.
+Differences on purpose, all about isolating one bad episode (D24): a failed
+validation or an unreadable parquet is an error of that episode, not an
+exception that ends the whole run. An episode whose source files are missing
+is left out, as v1 does (D40): :class:`EpisodeMissingSource`.
 """
 from __future__ import annotations
 
@@ -24,6 +25,15 @@ from ..ingest import lerobot_reader as lr
 
 class EpisodeReadError(Exception):
     """This episode's source data cannot be read (reported as a ``read`` incident)."""
+
+
+class EpisodeMissingSource(EpisodeReadError):
+    """v1's ``_v2_missing``: the data parquet or a camera's video is not there. The
+    episode is left out like v1 does (D40): no result line, listed as skipped."""
+
+    def __init__(self, missing: list[str]):
+        super().__init__(f"missing source file(s): {missing[:3]}")
+        self.missing = list(missing)
 
 
 class RowSource:
@@ -80,9 +90,12 @@ class RowSource:
                     raise EpisodeReadError(f"episode {idx} is not in the episode table")
                 data_path, videos = lr._v2_episode_paths(self.input_dir, self.info, ep)
                 if lr._v2_missing(data_path, videos):
-                    missing = [p for p in [data_path] + [v["path"] for v in videos.values()]
-                               if not lr.dsfs.exists(p)]
-                    raise EpisodeReadError(f"missing source file(s): {missing[:3]}")
+                    from .skipped import relative_key
+
+                    raise EpisodeMissingSource([
+                        relative_key(self.input_dir, p)
+                        for p in [data_path] + [v["path"] for v in videos.values()]
+                        if not lr.dsfs.exists(p)])
                 row = self._finish([lr._row_v2(self.input_dir, self.info, ep)])[0]
             validate_episode_row(row)
             return row

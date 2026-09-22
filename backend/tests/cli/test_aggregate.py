@@ -184,7 +184,8 @@ def test_the_modules_come_from_the_plan(tmp_path):
         json.dump(plan, fh)
     res = run("aggregate", "--run-dir", rd, "--phase", "funnel", "--episodes", "0")
     assert res.rc == 0 and res.doc["counts"] == {"total": 1, "keep": 1, "drop": 0, "held": 0,
-                                              "decided_in": 0, "decided_out": 0}
+                                              "decided_in": 0, "decided_out": 0,
+                                              "skipped": 0}
 
 
 # ---------------------------------------------------------------- final

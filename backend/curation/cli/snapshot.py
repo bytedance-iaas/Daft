@@ -4,7 +4,9 @@ Lists (never reads) the input and records every object the task needs - all of
 ``meta/``, the data parquet and videos of the selected episodes, and the data
 parquet of the dataset's first 100 episodes, from which v1 resolves the dataset
 semantics whatever the selection - with its size and ETag (TOS) or
-modification time (local). The document is written to
+modification time (local). A selected LeRobot v2 episode whose parquet or any
+camera's video is not in the listing is left out, as v1 does (D40): it goes to
+``skipped_episodes`` with the keys it lacks, and no command reads it. The document is written to
 ``--out`` atomically and printed with ``--json``
 (``docs/contracts/cli/source-manifest.schema.json``). Later commands given it
 as ``--source-manifest`` refuse to read anything that changed (exit 6, D27).
@@ -72,29 +74,43 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if warning:
         ctx.log("warn", warning)
     keys = set(lerobot_meta.meta_keys(listing))
-    incomplete = []
+    v2 = fmt.version == "v2"
+    skipped, incomplete = [], []
     for ep in meta.episodes:
         if selected is not None and ep.index not in selected:
             continue
         wanted = list(ep.data_keys) + list(ep.video_keys.values())
-        present = [k for k in wanted if k in listing]
-        if len(present) < len(wanted):
+        missing = [k for k in wanted if k not in listing]
+        if missing and v2:                  # v1's _v2_missing: left out (D40)
+            skipped.append({"episode_index": ep.index, "missing": sorted(missing)})
+            continue
+        if missing:
             incomplete.append(ep.index)
-        keys.update(present)
+        keys.update(k for k in wanted if k in listing)
     for ep in lerobot_meta.semantics_sample(meta):
+        if v2 and not lerobot_meta.complete(ep, listing):
+            continue                        # v1's sample drops it as well
         keys.update(k for k in ep.data_keys if k in listing)
+    if skipped:
+        ctx.log("warn", f"{len(skipped)} selected episodes miss their parquet or a camera's "
+                        f"video ({episode_sel.preview([s['episode_index'] for s in skipped])})"
+                        f"; they are left out like v1 does: not checked, in no list, "
+                        f"listed in the report")
     if incomplete:
         ctx.log("warn", f"{len(incomplete)} selected episodes miss data or video files "
-                        f"({episode_sel.preview(incomplete)}); they are skipped at run time")
-    doc = source_manifest.build(storage.uri, [listing[k] for k in keys])
+                        f"({episode_sel.preview(incomplete)}); LeRobot v3 episodes are not "
+                        f"left out (v1 reads them): their checks will fail to read them")
+    doc = source_manifest.build(storage.uri, [listing[k] for k in keys], skipped=skipped)
     ctx.check_stop("before writing the manifest")
     try:
         source_manifest.write(args.out, doc)
     except OSError as e:
         raise UsageError(f"--out {args.out}: cannot write it: {e}") from None
     ctx.progress(STAGE, 2, 2)
-    n_eps = len(selected) if selected is not None else len(meta.episodes)
+    n_eps = (len(selected) if selected is not None else len(meta.episodes)) - len(skipped)
     summary = doc["summary"]
     human = (f"{summary['count']} objects, {summary['bytes']} bytes for {n_eps} episodes of "
              f"{storage.uri}\nwrote {args.out} ({summary['digest']})")
+    if skipped:
+        human += f"\n{len(skipped)} episode(s) left out for missing source files"
     return Result(doc, human=human)

@@ -232,8 +232,14 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
     if missing_eps:
         from .episodes import preview
 
-        warnings.append(f"{_plural(len(missing_eps), 'episode')} miss data or video files "
-                        f"({preview(missing_eps)}); they are skipped at run time")
+        if meta.fmt.version == "v2":
+            warnings.append(f"{_plural(len(missing_eps), 'episode')} miss their parquet or a "
+                            f"camera's video ({preview(missing_eps)}); they are left out like "
+                            f"v1 does: not checked, in no list, listed in the report")
+        else:
+            warnings.append(f"{_plural(len(missing_eps), 'episode')} miss data or video files "
+                            f"({preview(missing_eps)}); LeRobot v3 episodes are not left out "
+                            f"(v1 reads them): their checks will fail to read them")
     for cam in meta.cameras:
         if cam not in cams_with_files and n:
             warnings.append(f"camera {lerobot_meta.short_camera(cam)} has no video files")

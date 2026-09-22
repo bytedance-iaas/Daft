@@ -30,6 +30,11 @@ V3_EPISODES_GLOB = "meta/episodes/chunk-*/file-*.parquet"
 SEMANTICS_SAMPLE = 100
 
 
+def complete(ep: "Episode", listing) -> bool:
+    """v1's ``_v2_missing`` in reverse: the data parquet and every camera's video are listed."""
+    return all(k in listing for k in list(ep.data_keys) + list(ep.video_keys.values()))
+
+
 def semantics_sample(meta: "DatasetMeta", max_episodes: int | None = None) -> list["Episode"]:
     """The episodes whose data v1 reads to resolve the dataset's semantics."""
     n = SEMANTICS_SAMPLE if not max_episodes else min(SEMANTICS_SAMPLE, int(max_episodes))

@@ -50,6 +50,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     episodes, warning = runctx.resolve_episodes(args, available)
     if warning:
         ctx.log("warn", warning)
+    episodes = runctx.leave_out_skipped(ctx, args, episodes)
     input_dir = storage.root if not storage.remote else storage.uri
     guard = runctx.source_guard(ctx, args, storage)
     if guard is not None:
