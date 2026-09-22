@@ -1,4 +1,7 @@
-# Pins the Volcano PyPI mirror lacks, installed without dependencies from SUPPLEMENT_PYPI_URL
-# (Aliyun by default) before everything else comes from PIP_INDEX_URL. Keep each line identical
-# to backend/requirements.txt (a test checks); drop a line once the Volcano mirror has it.
+# Pins the Volcano PyPI mirror lacks (it lags PyPI by a month or two), installed with their
+# dependencies from SUPPLEMENT_PYPI_URL (Aliyun by default) before everything else comes from
+# PIP_INDEX_URL: their dependencies can be too new for the mirror as well. Keep each line
+# identical to backend/requirements.txt (a test checks); drop a line once the mirror has it.
+# 2026-09-22 Volcano CP builds: the mirror stops at uvicorn 0.44.0 and cryptography 49.0.0.
 uvicorn==0.53.0
+cryptography==50.0.1

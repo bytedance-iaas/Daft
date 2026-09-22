@@ -56,8 +56,9 @@ FROM ${BASE_IMAGE}
 ARG PIP_INDEX_URL=https://mirrors.ivolces.com/pypi/simple
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} PIP_DEFAULT_TIMEOUT=120
 # 补充源(2026-09-22):火山源缺新版本 —— 火山 CP 构建实测内网源上 uvicorn 只到 0.44.0,v2 锁的是
-# 0.53.0。按以往经验 apt / pip 用火山源,uvicorn 用阿里云:缺的几个列在 deploy/pip-extra-index.txt,
-# 先从补充源不带依赖单独装,其余照旧全走火山源。⚠️ 别把补充源做成 pip 的 --extra-index-url:
+# 0.53.0,cryptography 只到 49.0.0(v2 要 50.0.1)。按以往经验 apt / pip 用火山源,缺的从阿里云补:
+# 列在 deploy/pip-extra-index.txt,连同依赖先从补充源装(依赖也可能比火山源新),其余照旧全走火山源。
+# ⚠️ 别把补充源做成 pip 的 --extra-index-url:
 # 两个源都有的包 pip 会随手挑一个,实测大半从阿里云下,构建集群出公网只有约 300 kB/s(内网源 300 MB/s)。
 # 只想用一个源(比如 GitHub CI 走官方 PyPI):--build-arg SUPPLEMENT_PYPI_URL=
 # ⚠️ 这个参数名不能以 PIP_ 开头:构建参数在 RUN 里就是环境变量,pip 会把 PIP_EXTRA_INDEX_URL 之类
@@ -115,7 +116,7 @@ RUN groupadd --gid 10001 curator \
 WORKDIR /app
 COPY backend/requirements.txt deploy/pip-extra-index.txt ./
 RUN if [ -n "$SUPPLEMENT_PYPI_URL" ]; then \
-        pip install --no-cache-dir --no-deps --index-url "$SUPPLEMENT_PYPI_URL" -r pip-extra-index.txt; \
+        pip install --no-cache-dir --index-url "$SUPPLEMENT_PYPI_URL" -r pip-extra-index.txt; \
     fi \
     && pip install --no-cache-dir -r requirements.txt
 
