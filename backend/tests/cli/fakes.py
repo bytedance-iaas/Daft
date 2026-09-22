@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
@@ -226,7 +227,15 @@ class StubDaemon:
             def do_POST(self):
                 stub._handle(self, "POST")
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        class Server(ThreadingHTTPServer):
+            def handle_error(self, request, client_address):
+                # a client that hangs up mid-answer is not a test failure, and the
+                # traceback socketserver prints lands in the stderr the CLI test parses
+                # as C3 events (CI, 2026-09-22)
+                if not isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+                    super().handle_error(request, client_address)
+
+        self._server = Server(("127.0.0.1", self.port), Handler)
         threading.Thread(target=self._server.serve_forever, kwargs={"poll_interval": 0.02},
                          daemon=True).start()
         return self

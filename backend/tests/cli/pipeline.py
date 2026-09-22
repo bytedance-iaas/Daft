@@ -53,7 +53,10 @@ def run(*argv, check_schema: bool = True) -> Run:
     doc = json.loads(lines[0])
     events = []
     for line in err.getvalue().splitlines():
-        event = json.loads(line)
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:                 # say which line, not "char 0"
+            raise AssertionError(f"stderr is not one C3 event per line: {line!r}") from None
         problems = schemas.errors("progress.schema.json", event)
         assert not problems, f"stderr line breaks C3: {line} -> {problems}"
         events.append(event)

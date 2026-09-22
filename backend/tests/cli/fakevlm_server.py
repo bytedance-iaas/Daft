@@ -14,6 +14,7 @@ the same verdicts on every platform.
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -103,6 +104,12 @@ class FakeVlmServer:
 
         class Server(ThreadingHTTPServer):
             request_queue_size = 256            # every call opens a connection (v1's clients)
+
+            def handle_error(self, request, client_address):
+                # a client that hangs up mid-answer is normal; its traceback would end up
+                # in the stderr a CLI test parses as C3 events
+                if not isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+                    super().handle_error(request, client_address)
 
         self._server = Server(("127.0.0.1", self.port), Handler)
         self._server.daemon_threads = True
