@@ -91,6 +91,30 @@ export function viewCard(card: AdjudicationCard, local: LocalDecisions = {}): Ca
   };
 }
 
+export interface ApplySummary {
+  /** Episodes with something to apply. */
+  episodes: number;
+  /** Decisions that will be applied (拿不准 never is). */
+  decisions: number;
+  /** Relabelled episodes judged again by task_success (no human verdict, not discarded). */
+  rerun: number;
+  /** Relabelled episodes a person already judged success/failure: not judged again (rule 4). */
+  humanJudged: number;
+  views: CardView[];
+}
+
+/** What 执行裁决 will do (07 §6, D39): counted from every card with unapplied decisions. */
+export function applySummary(views: readonly CardView[]): ApplySummary {
+  const pending = views.filter((v) => v.unapplied.length);
+  return {
+    episodes: pending.length,
+    decisions: pending.reduce((n, v) => n + v.unapplied.length, 0),
+    rerun: pending.filter((v) => v.rerunsModel).length,
+    humanJudged: pending.filter((v) => Boolean(v.newLabel) && Boolean(v.humanVerdict) && !v.discarded).length,
+    views: pending,
+  };
+}
+
 /** The status filter of the page: the C4 query value plus the client-side part (拿不准). */
 export function statusQuery(filter: string): { status: 'pending' | 'decided' | 'unapplied' | 'all'; onlyUnsure: boolean } {
   if (filter === 'unsure') return { status: 'pending', onlyUnsure: true };

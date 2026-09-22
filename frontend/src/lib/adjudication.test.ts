@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AdjudicationCard, AdjudicationQuestion, Decision } from '../api/types';
-import { decisionKey, keepCard, statusQuery, viewCard } from './adjudication';
+import { applySummary, decisionKey, keepCard, statusQuery, viewCard } from './adjudication';
 
 const labelQ: AdjudicationQuestion = {
   line: 'label',
@@ -76,6 +76,20 @@ describe('adjudication rules (06 §5.1)', () => {
     expect(v.status).toBe('applied');
     expect(v.unapplied).toEqual([]);
     expect(v.sources).toEqual(['task_success']);
+  });
+
+  it('summarises what 执行裁决 applies and which relabels are judged again (D39)', () => {
+    const relabel = { decision: 'adopt_suggestion' as const, new_label: null, applied: false };
+    const a = viewCard({ episode_index: 1, status: 'decided', questions: [labelQ, verdictQ] }, { [decisionKey(1, 'label')]: relabel });
+    const b = viewCard({ episode_index: 2, status: 'decided', questions: [labelQ, verdictQ] }, {
+      [decisionKey(2, 'label')]: relabel,
+      [decisionKey(2, 'task_verdict')]: { decision: 'success', new_label: null, applied: false },
+    });
+    const c = viewCard({ episode_index: 3, status: 'pending', questions: [verdictQ] }, { [decisionKey(3, 'task_verdict')]: { decision: 'unsure', new_label: null, applied: false } });
+    const d = viewCard({ episode_index: 4, status: 'decided', questions: [labelQ, verdictQ] }, { [decisionKey(4, 'label')]: { decision: 'discard', new_label: null, applied: false } });
+    const s = applySummary([a, b, c, d]);
+    expect([s.episodes, s.decisions, s.rerun, s.humanJudged]).toEqual([3, 4, 1, 1]);
+    expect(s.views.map((v) => v.ep)).toEqual([1, 2, 4]);
   });
 
   it('maps the status filter onto the C4 query and client-side filters', () => {

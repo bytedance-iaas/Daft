@@ -18,8 +18,8 @@
       "properties": {
         "id": {"type": "integer", "minimum": 1},
         "episode_index": {"$ref": "common.schema.json#/$defs/episode_index"},
-        "line": {"enum": ["label", "task_verdict", "reject_appeal"]},
-        "decision": {"enum": ["adopt_suggestion", "custom_label", "keep_label", "success", "failure", "restore", "keep_rejected", "unsure", "discard"]},
+        "line": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "a registry review line (C1, D43); adjudicate-apply refuses a line it has no apply rule for"},
+        "decision": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "one of the line's decisions in the registry; the known lines are pinned below"},
         "new_label": {"type": ["string", "null"]},
         "note": {"type": ["string", "null"]},
         "decided_by": {"type": "string", "minLength": 1},

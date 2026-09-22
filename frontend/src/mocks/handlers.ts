@@ -41,6 +41,8 @@ import {
   preflightFor,
   profileFor,
   registry,
+  SO101_SKIPPED,
+  SO101_TASK,
   tableRows,
 } from './world';
 import { cardsOf, clock, countsOf, datasetName, db, decisionsOf, findTask, nextId, toListItem } from './db';
@@ -1052,7 +1054,7 @@ function genericReport(t: Task, revision: number): Report {
     overview: {
       dataset: { name: datasetName(t) },
       run: { run_id: t.run_id },
-      counts: { total: s.total, passed: s.passed, rejected: s.rejected, held: s.held, review: s.review },
+      counts: { total: s.total, passed: s.passed, rejected: s.rejected, held: s.held, review: s.review, ...(s.skipped !== undefined ? { skipped: s.skipped } : {}) },
       pass_rate: s.pass_rate,
       reject_reasons: s.rejected ? [{ module: 'timestamp_check', count: s.rejected }] : [],
       token_usage: { prompt: t.usage.prompt_tokens, completion: t.usage.completion_tokens, reasoning: t.usage.reasoning_tokens, cached: t.usage.cached_tokens, requests: t.usage.requests, requests_unknown_usage: t.usage.requests_unknown_usage },
@@ -1072,7 +1074,7 @@ function genericReport(t: Task, revision: number): Report {
         };
       }),
     skipped_modules: t.modules.filter((m) => !m.selected && m.availability !== 'available').map((m) => ({ id: m.id, reason: m.unavailable_reason ?? '未运行' })),
-    integrity: { format: 'LeRobot v2' },
+    integrity: { format: 'LeRobot v2', ...(t.id === SO101_TASK ? { skipped_episodes: SO101_SKIPPED } : {}) },
     perf: {},
   };
 }
@@ -1188,12 +1190,14 @@ const report = [
     return HttpResponse.json(countsOf(t.id));
   }),
   http.post(`${API}/tasks/:id/adjudication/apply`, ({ request, params }) =>
-    idempotent(request, () => {
+    idempotent(request, async () => {
       const t = findTask(String(params.id));
       if (!t) return err(404, 'not_found', '任务不存在');
+      // C4 1.4: optional AdjudicationApply body; v1's two layers unless full is asked for (D39).
+      const b = await body<{ relabel_rerun?: 'v1' | 'full' }>(request, 'applyAdjudication');
       if (t.active_subtask) return err(409, 'subtask_active', '这个任务已有未结束的子任务，等它结束后再执行裁决');
       if (countsOf(t.id).unapplied === 0) return err(400, 'validation_failed', '没有尚未应用的裁决');
-      const s = newSubtask(t, 'apply_adjudication', {});
+      const s = newSubtask(t, 'apply_adjudication', { relabel_rerun: b.relabel_rerun ?? 'v1' });
       for (const d of decisionsOf(t.id)) if (d.decision !== 'unsure') d.applied = true;
       t.delivery_stale = true;
       return HttpResponse.json({ subtask: s, links: t.links }, { status: 202 });

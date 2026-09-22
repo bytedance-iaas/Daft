@@ -18,13 +18,22 @@ parameter carries ``title`` (the field label), ``description`` (help text) and
 ``default``; a choice lists its options as ``oneOf`` of ``{const, title}``, and
 required parameters go into the object's ``required``. Adding a module with
 parameters needs no frontend change.
+
+Human review is declared here too (D42, D43). ``REVIEW_LINES`` is the catalog of
+the questions a person can be asked - line id, the list its episodes are in,
+whether an open item counts as pending, the decisions with their titles - and
+every module names the lines it raises (``review_lines``) and whether a reject
+attributed to it may be appealed (``appealable``). A new kind of review is a new
+catalog entry plus its apply rule in ``adjudicate-apply``; the REST and CLI
+contracts carry lines and decisions as open strings, and the frontend renders a
+line it has no dedicated view for from this catalog.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.1"
+REGISTRY_VERSION = "1.2"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
@@ -62,6 +71,38 @@ class TableSpec:
 
 
 @dataclass(frozen=True)
+class ReviewLine:
+    """One kind of question a person answers on the adjudication page (design doc 06 §5)."""
+
+    id: str                              # C4 ``line`` and decisions.json ``line``
+    review_kind: str                     # the ``kind`` of review.json items (v1's queue names)
+    title_zh: str
+    applies_to: Literal["passed", "reject"]   # the list its episodes are in when asked
+    counts_as_pending: bool              # an open item must be decided (vs. may be appealed)
+    decisions: tuple[tuple[str, str], ...]    # (value, button title), in display order
+
+    def to_json(self) -> dict:
+        return {"id": self.id, "review_kind": self.review_kind, "title_zh": self.title_zh,
+                "applies_to": self.applies_to, "counts_as_pending": self.counts_as_pending,
+                "decisions": [{"const": c, "title": title} for c, title in self.decisions]}
+
+
+#: The review lines of v1 (design doc 06 §5.1). ``discard`` drops the whole
+#: episode and wins over any task verdict; ``unsure`` is recorded and changes nothing.
+REVIEW_LINES: tuple[ReviewLine, ...] = (
+    ReviewLine("label", "label_conflict", "标注分歧", "passed", True,
+               (("adopt_suggestion", "采纳新标注"), ("custom_label", "自行改写标注"),
+                ("keep_label", "维持原标注"), ("unsure", "拿不准"),
+                ("discard", "其它原因，整条弃用"))),
+    ReviewLine("task_verdict", "task_verdict", "任务成败弃权", "passed", True,
+               (("success", "判成功"), ("failure", "判失败"), ("unsure", "拿不准"),
+                ("discard", "其它原因，整条弃用"))),
+    ReviewLine("reject_appeal", "reject_appeal", "被拒复议", "reject", False,
+               (("restore", "恢复为可用"), ("keep_rejected", "维持拒绝"), ("unsure", "拿不准"))),
+)
+
+
+@dataclass(frozen=True)
 class ModuleSpec:
     id: str
     name_zh: str
@@ -75,12 +116,15 @@ class ModuleSpec:
     param_schema: dict[str, Any]         # JSON Schema of task-level ``modules[].params``
     tables: tuple[TableSpec, ...] = ()
     merge_units: Callable | None = field(default=None, compare=False)  # design doc 04 §4.2
+    review_lines: tuple[str, ...] = ()   # REVIEW_LINES ids this module raises
+    appealable: bool = False             # a reject attributed to it may be appealed (D42)
 
     def to_json(self) -> dict:
         return {"id": self.id, "name_zh": self.name_zh, "summary_zh": self.summary_zh,
                 "level": self.level, "gate": self.gate, "needs": sorted(self.needs),
                 "stage": self.stage, "depends_on": list(self.depends_on),
                 "produces_adjudication": self.produces_adjudication,
+                "review_lines": list(self.review_lines), "appealable": self.appealable,
                 "param_schema": self.param_schema,
                 "tables": [t.to_json() for t in self.tables],
                 "mergeable": self.merge_units is not None}
@@ -146,24 +190,28 @@ MODULES: tuple[ModuleSpec, ...] = (
             "evidence_frames", "证据帧",
             {"flagged": "拒绝与待裁决的", "all": "全部", "off": "不存"},
             "为哪些条目保存判定时看过的画面"),
-        tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),)),
+        tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),),
+        review_lines=("task_verdict", "label"), appealable=True),
     ModuleSpec(
         id="dedup", name_zh="精确去重",
         summary_zh="找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",
         level="dataset", gate="dedup", needs=frozenset({"raw_bytes"}), stage="post_verdict",
-        depends_on=("funnel_verdict",), produces_adjudication=False,
+        depends_on=("funnel_verdict",), produces_adjudication=True,
         param_schema=_no_params(),
-        tables=(TableSpec("dedup_groups", "重复组", ("episode_index", "duplicate_of")),)),
+        tables=(TableSpec("dedup_groups", "重复组", ("episode_index", "duplicate_of")),),
+        appealable=True),
     ModuleSpec(
         id="skill_profile", name_zh="技能画像",
         summary_zh="归纳两级技能体系并统计分布，检出标注与画面不一致的条目",
         level="dataset", gate="none", needs=frozenset({"video", "vlm"}), stage="post_verdict",
         depends_on=("funnel_verdict", "dedup", "autolabel"), produces_adjudication=True,
         param_schema=_no_params(),
-        tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),)),
+        tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),),
+        review_lines=("label",)),
 )
 
 _BY_ID = {m.id: m for m in MODULES}
+_LINES = {line.id: line for line in REVIEW_LINES}
 
 
 def get(module_id: str) -> ModuleSpec:
@@ -188,7 +236,28 @@ def validate_params(module_id: str, params: dict | None) -> None:
     jsonschema.validate(params or {}, get(module_id).param_schema)
 
 
+def review_line(line_id: str) -> ReviewLine:
+    try:
+        return _LINES[line_id]
+    except KeyError:
+        raise KeyError(f"unknown review line {line_id!r}; known: {', '.join(_LINES)}") from None
+
+
+def review_line_of_kind(review_kind: str) -> ReviewLine:
+    """The line of a review.json item ``kind``."""
+    for line in REVIEW_LINES:
+        if line.review_kind == review_kind:
+            return line
+    raise KeyError(f"unknown review kind {review_kind!r}")
+
+
+def appealable(module_id: str) -> bool:
+    """Whether a reject attributed to ``module_id`` may be appealed (D42)."""
+    return get(module_id).appealable
+
+
 def export() -> dict:
     """The registry as JSON (``GET /api/v1/modules`` and ``docs/contracts/modules.json``)."""
     return {"registry_version": REGISTRY_VERSION, "stages": list(STAGE_ORDER),
+            "review_lines": [line.to_json() for line in REVIEW_LINES],
             "modules": [m.to_json() for m in MODULES]}

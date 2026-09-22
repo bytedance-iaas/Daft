@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.4.0
+  version: 1.5.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -40,6 +40,14 @@ info:
     or the first run's full flow (D39) - and the subtask's `scope` records the choice;
     `Summary.skipped` counts episodes left out because source files are missing (D40), which
     the report lists under `integrity.skipped_episodes`.
+
+    1.5.0 (2026-09-21): review kinds are declared by the registry (D43): `ModuleRegistry`
+    carries the `review_lines` catalog (id, title, the list its episodes are in, whether an
+    open item counts as pending, the decisions with their titles) and every module its
+    `review_lines` and `appealable`; adjudication `line` and `decision` are open strings the
+    Daemon checks against that catalog. Rejects attributed to dedup may be appealed and a
+    question can name `duplicate_of`; already-rejected episodes get no task-verdict question
+    (D42). Appeal candidates never count as pending.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1122,7 +1130,10 @@ paths:
           schema: {enum: [pending, decided, unapplied, all], default: pending}
         - name: tab
           in: query
-          description: appeals lists only rejects attributed to task_success
+          description: >-
+            appeals lists rejects attributed to an appealable module (registry `appealable`;
+            today task_success alone and dedup); physical and structural gates and soft scores
+            are final
           schema: {enum: [review, appeals], default: review}
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -1580,16 +1591,24 @@ components:
     ModuleRegistry:
       type: object
       additionalProperties: false
-      required: [registry_version, stages, modules]
+      required: [registry_version, stages, review_lines, modules]
       properties:
         registry_version: {type: string}
         stages: {type: array, items: {enum: [numeric, frame, vlm, post_verdict]}}
+        review_lines:
+          type: array
+          description: >-
+            The questions a person can be asked on the adjudication page (D43). A page shows a
+            line it has no dedicated view for from this entry: its title, the question's reason
+            and one button per decision.
+          items: {$ref: "#/components/schemas/ReviewLine"}
         modules:
           type: array
           items:
             type: object
             additionalProperties: false
-            required: [id, name_zh, summary_zh, level, gate, needs, stage, depends_on, produces_adjudication, param_schema, tables, mergeable]
+            required: [id, name_zh, summary_zh, level, gate, needs, stage, depends_on, produces_adjudication, review_lines,
+                       appealable, param_schema, tables, mergeable]
             properties:
               id: {$ref: "#/components/schemas/ModuleId"}
               name_zh: {type: string}
@@ -1599,7 +1618,9 @@ components:
               needs: {type: array, items: {enum: [timestamps, action, state, video, embodiment_profile, vlm, raw_bytes]}}
               stage: {enum: [numeric, frame, vlm, post_verdict]}
               depends_on: {type: array, items: {enum: [numeric_gates, frame_gates, autolabel, funnel_verdict, dedup]}}
-              produces_adjudication: {type: boolean}
+              produces_adjudication: {type: boolean, description: "raises review items or its rejects may be appealed"}
+              review_lines: {type: array, items: {$ref: "#/components/schemas/ReviewLineId"}, description: "the lines it raises"}
+              appealable: {type: boolean, description: "a reject attributed to it may be appealed (D42)"}
               param_schema: {type: object}
               tables:
                 type: array
@@ -1613,6 +1634,30 @@ components:
                     sortable: {type: array, items: {type: string}}
                     default_sort: {type: string}
               mergeable: {type: boolean}
+    ReviewLineId:
+      type: string
+      pattern: "^[a-z][a-z0-9_]*$"
+      description: a line of the registry's review_lines; today label, task_verdict, reject_appeal
+    ReviewLine:
+      type: object
+      additionalProperties: false
+      required: [id, review_kind, title_zh, applies_to, counts_as_pending, decisions]
+      properties:
+        id: {$ref: "#/components/schemas/ReviewLineId"}
+        review_kind: {type: string, description: "the kind of its review.json items (C2); label_conflict for label"}
+        title_zh: {type: string}
+        applies_to: {enum: [passed, reject], description: "the list its episodes are in when asked"}
+        counts_as_pending: {type: boolean, description: "an open item must be decided; false = a person may act (appeals)"}
+        decisions:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [const, title]
+            properties:
+              const: {type: string, pattern: "^[a-z][a-z0-9_]*$"}
+              title: {type: string}
     BrowsedDataset:
       type: object
       additionalProperties: false
@@ -2328,9 +2373,10 @@ components:
       additionalProperties: false
       required: [line, source_module, reason]
       properties:
-        line: {enum: [label, task_verdict, reject_appeal]}
+        line: {$ref: "#/components/schemas/ReviewLineId"}
         source_module: {$ref: "#/components/schemas/ModuleId"}
         reason: {type: string}
+        duplicate_of: {type: [integer, "null"], minimum: 0, description: "an appeal of a dedup reject: the episode it duplicates"}
         annotation: {type: [string, "null"]}
         caption: {type: [string, "null"]}
         suggestion: {type: [string, "null"], description: "suggested new label"}
@@ -2347,6 +2393,12 @@ components:
     AdjudicationCounts:
       type: object
       additionalProperties: false
+      description: >-
+        All three count cards (episodes) over the whole task, not the filtered page. pending and
+        decided cover the cards whose questions belong to lines with counts_as_pending - appeal
+        candidates are optional and never pending; unapplied covers both tabs: cards with an
+        answer that was not executed yet ('unsure' is not one). pending is what the task's
+        pending_adjudication shows.
       required: [decided, pending, unapplied]
       properties:
         decided: {type: integer, minimum: 0}
@@ -2357,8 +2409,15 @@ components:
       required: [episode_index, line, decision]
       properties:
         episode_index: {type: integer, minimum: 0}
-        line: {enum: [label, task_verdict, reject_appeal]}
-        decision: {enum: [adopt_suggestion, custom_label, keep_label, success, failure, restore, keep_rejected, unsure, discard]}
+        line: {$ref: "#/components/schemas/ReviewLineId"}
+        decision:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*$"
+          description: >-
+            one of the line's decisions in the registry, on a question the episode's card has;
+            anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label,
+            keep_label, unsure, discard; task_verdict - success, failure, unsure, discard;
+            reject_appeal - restore, keep_rejected, unsure
         new_label: {type: [string, "null"]}
         note: {type: [string, "null"]}
     AdjudicationApply:

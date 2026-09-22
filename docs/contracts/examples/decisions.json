@@ -71,6 +71,21 @@
     }
    ],
    "relabel_rerun": "full"
+  },
+  {
+   "schema_version": "1.0",
+   "decisions": [
+    {
+     "id": 7,
+     "episode_index": 41,
+     "line": "reject_appeal",
+     "decision": "restore",
+     "new_label": null,
+     "note": "两条画面其实不同",
+     "decided_by": "alice",
+     "decided_at": 1758300003000
+    }
+   ]
   }
  ],
  "invalid": [
@@ -139,6 +154,21 @@
     }
    ],
    "relabel_rerun": "fast"
+  },
+  {
+   "schema_version": "1.0",
+   "decisions": [
+    {
+     "id": 7,
+     "episode_index": 41,
+     "line": "reject_appeal",
+     "decision": "success",
+     "new_label": null,
+     "note": "两条画面其实不同",
+     "decided_by": "alice",
+     "decided_at": 1758300003000
+    }
+   ]
   }
  ]
 }

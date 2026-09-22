@@ -105,10 +105,21 @@ Current summary:
         skipped_episodes（源文件清单、check 输出、report 完整性）、decisions / adjudicate-apply 的 relabel_rerun、final-list
         的 review 口径；设计 00–03、06、07、10 与账本跟进；契约 74、Daemon 312、v2 全部 1194 条、前端 181 条测试通过
       · 在跑：W5a 编排与执行器、W5b 读结果的接口（worktree 均从 126938cbd 起）
+      · 合并 W10 续作（c1d1cbdef）：执行裁决确认框说明改标重判口径并可选完整流程、时间线标明口径、报告列出缺源跳过的条目；
+        前端 189 条测试
+      · 需求方答复三条默认做法：D42 已被拒绝的条目不再问成败，去重的拒绝可在「被拒复议」里恢复（推翻去重的结论）；
+        D43 复核种类由注册表声明、接口留好；思考参数只在设置了才发送（维持）
+      · 契约 1.5（8001712db）：C1 1.2 复核种类目录 + 每个模块的 review_lines / appealable；C4 1.5.0 裁决 line / decision
+        改开放字符串、Daemon 按目录校验、duplicate_of、复议覆盖可复议模块、计数口径写明；C2 review 种类开放、带 line 与
+        duplicate_of，decisions.json 已知三种仍钉住，报告小节可带 appealable；设计 00–02、05–07、10 与评审记录跟进；
+        飞书副本已同步；契约 75、v2 后端 1195、前端 189 条测试通过
+      · 新开 W11 镜像与 Helm Chart（worktree 从 98cd72780 起）；W3、W5b、W10 已收到 1.5 的改动
+      · 需求账本的 D39–D43 修订说明已写（D39–D41 那段在 98cd72780）；D42–D43 那段待补：账本当时在需求方的编辑器里开着，没动
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
-  - F2.1：D39、D40、review 口径、--vlm-reasoning-effort 待 W3 实现（契约 1.4 已定）
+  - F2.1：D39、D40、D42、review 口径、--vlm-reasoning-effort 待 W3 实现（契约 1.5 已定）
+  - 需求账本补 D42–D43 的修订说明（F2.1、F2.2、F3.3）
   - F2.2：裁决队列与 episode 列表的游标接口在 W5b；F2.6「拿验证失败的密钥开始任务会被拦」、F2.7 D37 在 W5a
   - F2.4 的 planner 已接入 check（W3 后半），编排侧的计划下发随 W5a；F3.2 / F3.3 等 W5 合并后对真接口联调
   - W11 镜像（Node 构建阶段、COPY daemon 与 docs/contracts）与 Helm（CURATOR_TZ_OFFSET）未开始

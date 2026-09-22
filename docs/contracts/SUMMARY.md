@@ -1,4 +1,4 @@
-# 契约要点与冻结时的取舍（2026-09-21，1.4 修订后）
+# 契约要点与冻结时的取舍（2026-09-21，1.5 修订后）
 
 一页读懂 C1–C5：每份管什么、冻结时定下了哪些原文没写死的细节，以及需求方拍板的那一处（D35）。
 文件索引和改契约的流程见同目录 `README.md`；以契约文件本身为准，本页是导读。
@@ -7,10 +7,10 @@
 
 | # | 管什么 | 要点 |
 |---|---|---|
-| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 8 个模块 = 6 项漏斗检查 + 去重、技能画像两项数据集级模块；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38） |
+| C1 模块注册表 `backend/curation/contracts/modules.py` → `modules.json` | 有哪些模块、中文名、需要什么输入、在哪一档跑、依赖谁、有哪些参数 | 8 个模块 = 6 项漏斗检查 + 去重、技能画像两项数据集级模块；档序 numeric → frame → vlm → post_verdict；`depends_on` 决定上游结果变了谁要作废重算；只有两个参数：`video_action_sync.sync_plots`、`task_success.evidence_frames`，取值 `flagged / all / off`；参数带表单用的 `title` 与选项名，新建任务第二屏按它生成（D38）；带一份复核种类目录，每个模块写明产生哪几种复核、它的拒绝可否复议（D43） |
 | C2 CLI 输出与中间文件 `cli/*.schema.json`（20 份） | 每条命令 `--json` 的输出，以及命令之间传递的文件 | 退出码 0 / 2 / 3 / 4 / 5 / 6 / 130，非零时打统一的错误信封；**退出码 0 不等于每条都成功**，Daemon 看逐状态计数定模块状态；每条结果的判定只有 `pass / fail / abstain / scored / error` 五种，`error` 必须带出错明细；漏斗判决 `keep / drop / held`；终判四份清单 `passed / reject / held` 互斥，除了缺源文件被剔除的条目（D40）之外完备，`review` 是正交的复核视图；`commit.json` 最后写，没有它的结果版本一律不认 |
 | C3 进度协议 `progress.schema.json` | CLI 子进程往 stderr 写的 JSON Lines，Daemon 转成 SSE | 四种行：进度、日志、token 用量、降并发通知；进度行是累计值，**用量行是增量**，由 Daemon 按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加；推给浏览器的 SSE 一律是累计值 |
-| C4 REST API `openapi.yaml`（OpenAPI 3.1，1.4.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
+| C4 REST API `openapi.yaml`（OpenAPI 3.1，1.5.0） | 前端、Agent、`curation task …` 客户端看到的全部接口 | 45 个路径、57 个操作，全部挂在 `{base}/api/v1` 下（生产环境是 `/curation`）；Basic 鉴权，探针免鉴权；一种错误体，`code` 19 个给程序判断、`message` 中文给人看；写接口支持 `Idempotency-Key`（24 小时内同 key 返回首次结果）；任务列表用页码 + 总数，日志、裁决队列、episode 列表用游标；报告、计划、预检等结构直接引用 C2，不另写一份 |
 | C5 Repository 与状态机 `backend/daemon/repo/protocol.py` | Daemon 内部读写状态的唯一入口 | 10 个任务状态，允许的迁移逐条列出（契约测试逐条对照 01 篇 §3.1）；状态变更一律比较后交换（CAS），不许先读后写；事务由调用方显式开启；每个查询都带 owner（本期固定为 `default`，为以后接 IAM 留路）；结果版本切换也是 CAS |
 
 防漂移：26 份契约文件的 sha256 记在 `CONTRACTS.lock`，改了契约而没刷新锁，CI 变红；
@@ -148,7 +148,20 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 | 4 | C2 `final-list`（原待修订第 3 条） | review 的种类：`task_verdict` 只收任务成败判定的弃权，别的模块判不了的留在判决行和报告里；`label_conflict` 来自技能画像；`reject_appeal` 收所有只归因于任务成败判定（没有别的硬门失败、不是软分拒绝）、没有生效复议、没被弃用的拒绝，复议选了「拿不准」的仍留在队列 | W3 核对 v1 |
 | 5 | 设计 02（原待修订第 1 条） | `check`、`autolabel` 的 `--vlm-reasoning-effort <档位>`：给了才在每个请求里带 `reasoning_effort`，不给什么都不发，对账口径不变；档位是否有效由 Daemon 建任务时按模型校验 | W3 |
 
-## 九、下一版（1.5）待修订
+## 九、1.5 修订（2026-09-21，已完成）
+
+需求方对 1.4 里三条默认做法的答复：重复项与复议改了一处（D42），复核种类要留好扩展的接口（D43），思考参数只在设置了才发送不变。
+
+| # | 契约 | 改了什么 | 依据 |
+|---|---|---|---|
+| 1 | C1 注册表 1.2 | 顶层加复核种类目录 `review_lines`：每种写明编号、标题、`review_kind`（review.json 里的叫法）、条目所在的清单（`passed` / `reject`）、未判时算不算待裁、可选的判断与按钮名；现有三种照 v1。每个模块加 `review_lines`（产生哪几种）与 `appealable`（归因于它的拒绝可否复议）；`dedup` 的 `produces_adjudication` 改为 true | D43、D42 |
+| 2 | C4 1.5.0 | `ModuleRegistry` 带上目录与两个新字段；裁决的 `line`、`decision` 从枚举改为开放字符串（`^[a-z][a-z0-9_]*$`），由 Daemon 按目录和卡片上的问题校验，不合法 400；问题可带 `duplicate_of`；`tab=appeals` 列出归因于可复议模块的拒绝；`AdjudicationCounts` 写明三个数都按卡片（episode）计、复议不算待裁 | D42、D43、W10 |
+| 3 | C2 `final-list`、`decisions.json`、`report.json` | review 条目的 `kind` 开放，另带 `line` 与 `duplicate_of`；已被拒绝的条目不再有成败裁决项，`held` 里的在补跑出结论前没有任何复核项；复议项覆盖只归因于任务成败判定的拒绝和去重的拒绝；恢复只推翻被复议的那个模块，另有模块出错的恢复后进 `held`。`decisions.json` 的 `line`、`decision` 开放，已知三种的取值仍逐一钉住；报告模块小节的 `adjudication` 加可选的 `appealable`（可复议条数，不算待裁） | D42、D43 |
+
+加一种复核以后只需要：目录加一项、产生它的模块在 `review_lines` 里写上、`adjudicate-apply` 加这种判断的执行规则；
+裁决页对没有专用视图的种类按目录通用渲染，C2、C4 都不用改。
+
+## 十、下一版（1.6）待修订
 
 | # | 契约 | 要改什么 | 来源 |
 |---|---|---|---|
@@ -161,4 +174,4 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 | 7 | C4 `SignedUrl` | `expires_at` 写明单位（毫秒）；`from_ts` / `to_ts` 挪到 episode 接口 | W10、W8 |
 | 8 | C4 报告 | 各模块 `summary` 与专用视图（卡顿时间线、同步曲线、判决卡、两级技能表）的数据形状；平均质量分、复议的「关键读数」 | W10 |
 | 9 | C4 | 查某模块出错的是哪几条；裁决卡片带视频引用；裁决列表的 `source` 多选与「拿不准」状态；`DecisionInput` 的「撤回」 | W10 |
-
+| 10 | C4 裁决卡片 | 只有改标问题的卡片上，改标之后给的成败结论没有问题可挂，卡片上显示不出来（v1 允许改标的同时判成败，此时不重判）；刷新后确认框可能把它算成「要重判」，服务端照样做对 | W10 |
