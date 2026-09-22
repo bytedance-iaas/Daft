@@ -41,7 +41,22 @@ class FakeVlmServer:
             def log_message(self, *a):
                 pass
 
+            _in_flight = False                  # only a POST is counted
+
+            def _leave(self) -> None:
+                """Stop counting this request before its answer goes out.
+
+                A client that sends its next request the moment it reads this
+                answer is not an overlap, but the handler thread may not have
+                returned yet on a loaded machine - count it out first.
+                """
+                if self._in_flight:
+                    self._in_flight = False
+                    with srv._lock:
+                        srv.in_flight -= 1
+
             def _send(self, status: int, doc: dict) -> None:
+                self._leave()
                 body = json.dumps(doc).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
@@ -56,14 +71,14 @@ class FakeVlmServer:
                 self._send(404, {"error": "not found"})
 
             def do_POST(self):
+                self._in_flight = True
                 with srv._lock:
                     srv.in_flight += 1
                     srv.max_in_flight = max(srv.max_in_flight, srv.in_flight)
                 try:
                     self._post()
                 finally:
-                    with srv._lock:
-                        srv.in_flight -= 1
+                    self._leave()                # if _send never ran
 
             def _post(self):
                 n = int(self.headers.get("Content-Length") or 0)
