@@ -6,7 +6,10 @@ import { zh } from '../../locales/zh';
 import './pipelineActivity.css';
 
 const copy = zh.taskDetail.pipelineActivity;
-const COLORS: Record<string, string> = { numeric: '#6366f1', frame: '#0891b2', vlm: '#e87925' };
+const COLORS: Record<string, string> = {
+  numeric: '#6366f1', frame: '#0891b2', vlm: '#e87925',
+  profile_vlm: '#a855f7', profile: '#a855f7',
+};
 
 export function PipelineActivity({ task, stages }: { task: Task; stages: StageProgress[] }) {
   const [now, setNow] = useState(Date.now);
