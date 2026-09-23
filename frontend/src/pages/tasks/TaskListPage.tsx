@@ -213,6 +213,7 @@ export function TaskListPage() {
         <TaskActionButtons
           plan={actionsFor(t)}
           held={t.summary?.held}
+          pending={t.pending_adjudication}
           exported={exportedBefore(t.progress.stages)}
           onAction={(key) => actions.run(key, { id: t.id, name: t.name, held: t.summary?.held, exported: exportedBefore(t.progress.stages) })}
         />

@@ -1,5 +1,5 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
-import { http } from 'msw';
+import { HttpResponse, http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EVENTS_CONFIG, setEventSourceFactory } from '../../api/events';
 import type { Subtask } from '../../api/types';
@@ -210,6 +210,50 @@ describe('任务详情 (07 §4.2)', () => {
     expect(within(fold).getByText(/^重试花掉的也算在合计里/)).toBeInTheDocument();
     await user.click(within(fold).getByText('明细'));
     await waitFor(() => expect(fold).not.toHaveClass('arco-collapse-item-active'));
+  });
+
+  it('the header has 人工裁决（N）, the one primary button while items are pending (D47)', async () => {
+    const { user } = renderApp(`/tasks/${MAIN}`);
+    const adj = await screen.findByTestId('header-adjudicate');
+    expect(adj).toHaveTextContent(/^人工裁决（10）$/);
+    expect(adj).toHaveClass('arco-btn-primary');
+    // 查看报告 steps back so the page has one primary button.
+    expect(screen.getByRole('button', { name: '查看报告' })).not.toHaveClass('arco-btn-primary');
+    // Not repeated under 更多.
+    await user.click(screen.getByRole('button', { name: '更多' }));
+    expect(await screen.findByRole('menuitem', { name: '复制为新任务' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /人工裁决/ })).toBeNull();
+    await user.click(adj);
+    await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN}/adjudication`));
+  });
+
+  it('人工裁决 stands without pending items; with only appealable rejects left it leads to 被拒复议 (D47)', async () => {
+    findTask(MAIN)!.pending_adjudication = 0;
+    // The review queue is empty: everything left is an appeal.
+    server.use(
+      http.get(`*/api/v1/tasks/${MAIN}/adjudication`, ({ request }) => {
+        if (new URL(request.url).searchParams.get('tab') === 'appeals') return undefined;
+        return HttpResponse.json({ items: [], next_cursor: null, has_more: false, counts: { decided: 0, pending: 0, unapplied: 0 } });
+      }),
+    );
+    const { user } = renderApp(`/tasks/${MAIN}`);
+    const adj = await screen.findByTestId('header-adjudicate');
+    expect(adj).toHaveTextContent(/^人工裁决$/);
+    expect(adj).not.toHaveClass('arco-btn-primary');
+    expect(screen.getByRole('button', { name: '查看报告' })).toHaveClass('arco-btn-primary');
+    await user.click(adj);
+    const hint = await screen.findByTestId('review-empty-appeals');
+    expect(hint).toHaveTextContent('被拒的条目在「被拒复议」里，觉得判错了可以复议。');
+    await user.click(within(hint).getByRole('button', { name: '去被拒复议' }));
+    await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN}/adjudication?tab=appeals`));
+    expect(await within(await screen.findByTestId('appeals')).findByTestId('card-44')).toBeInTheDocument();
+  });
+
+  it('a task without a result has no 人工裁决 in its header', async () => {
+    renderApp(`/tasks/${RUNNING}`);
+    await screen.findByRole('heading', { name: /umi_640 全量质检/ });
+    expect(screen.queryByTestId('header-adjudicate')).toBeNull();
+    expect(screen.getByRole('button', { name: '暂停' })).toHaveClass('arco-btn-primary');
   });
 
   it('no second report link and no gray notes next to the card titles (requester items 10, 21)', async () => {

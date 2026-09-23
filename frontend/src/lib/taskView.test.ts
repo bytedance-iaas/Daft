@@ -8,6 +8,7 @@ import {
   displayState,
   exportedBefore,
   groupStages,
+  hasResult,
   mergedStageState,
   moduleProblems,
   overallPercent,
@@ -181,5 +182,20 @@ describe('actionsFor (07 §4.1)', () => {
     expect(actionsFor({ ...base, state: 'stopped' }).primary).toBe('continue');
     expect(actionsFor({ ...base, state: 'succeeded', pending_adjudication: 3, delivery_stale: true }).more).toEqual(['adjudicate', 'export', 'copy', 'purge', 'delete']);
     expect(actionsFor({ ...base, state: 'succeeded', deleted_at: 1 })).toEqual({ primary: 'restore', more: [], disabled: {} });
+  });
+
+  it('人工裁决 stands once there is a result, pending items or not (D47)', () => {
+    const summary = { total: 10, passed: 9, rejected: 1, held: 0, review: 0, pass_rate: 0.9 };
+    expect(actionsFor({ ...base, state: 'succeeded', summary }).more).toEqual(['adjudicate', 'copy', 'purge', 'delete']);
+    expect(actionsFor({ ...base, state: 'completed_with_errors', summary }).more).toEqual(['retry', 'adjudicate', 'copy', 'purge', 'delete']);
+    // The detail page's Task knows its revision even without a summary.
+    expect(actionsFor({ ...base, state: 'succeeded', result_rev: 2 }).more).toContain('adjudicate');
+    // No result: no entry (a stopped run without a report, or one not finished).
+    expect(actionsFor({ ...base, state: 'stopped' }).more).not.toContain('adjudicate');
+    expect(actionsFor({ ...base, state: 'succeeded' }).more).not.toContain('adjudicate');
+    expect(actionsFor({ ...base, state: 'running' }).more).not.toContain('adjudicate');
+    expect(actionsFor({ ...base, state: 'created' }).more).not.toContain('adjudicate');
+    expect(hasResult({ summary: null, result_rev: 0, pending_adjudication: 0 })).toBe(false);
+    expect(hasResult({ summary, pending_adjudication: 0 })).toBe(true);
   });
 });

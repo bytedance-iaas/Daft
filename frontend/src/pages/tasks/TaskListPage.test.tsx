@@ -71,6 +71,26 @@ describe('任务列表 (07 §4.1)', () => {
     }
   });
 
+  it('「更多」 has 人工裁决 for every task with a result, with the count when items are pending (D47)', async () => {
+    const { user } = renderApp('/tasks');
+    await screen.findByRole('link', { name: 'droid 前 50 条质检' });
+    await user.click(within(row('so101 夜间批次')).getByRole('button', { name: /更多/ }));
+    // Nothing pending on so101, and still the entry.
+    await user.click(await screen.findByRole('menuitem', { name: '人工裁决' }));
+    await waitFor(() => expect(currentLocation()).toBe('/tasks/task_01HXPZ2K/adjudication'));
+  });
+
+  it('人工裁决（N） in 「更多」 when items are pending; none for a task without a result', async () => {
+    const { user } = renderApp('/tasks');
+    await screen.findByRole('link', { name: 'droid 前 50 条质检' });
+    await user.click(within(row('droid 前 50 条质检')).getByRole('button', { name: /更多/ }));
+    expect(await screen.findByRole('menuitem', { name: '人工裁决（10）' })).toBeInTheDocument();
+    await user.click(within(row('aloha 手眼标定')).getByRole('button', { name: /更多/ }));
+    await waitFor(() => expect(screen.getAllByRole('menuitem', { name: '复制为新任务' }).length).toBeGreaterThan(1));
+    const menus = [...document.querySelectorAll('.arco-dropdown-menu')];
+    expect(menus[menus.length - 1]).not.toHaveTextContent('人工裁决');
+  });
+
   it('a task summary shows the episodes skipped for missing source files when there are any (D40)', async () => {
     renderApp('/tasks?q=so101');
     await screen.findByRole('link', { name: 'so101 夜间批次' });

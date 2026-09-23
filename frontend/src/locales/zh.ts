@@ -290,6 +290,7 @@ export const zh = {
     report: '查看报告',
     view: '查看',
     adjudicate: '人工裁决',
+    adjudicateCount: (n: number) => `人工裁决（${n}）`,
     export: '导出',
     reexport: '重新导出',
     purge: '清理交付产物',
@@ -1165,6 +1166,8 @@ export const zh = {
     loadedAll: (n: number) => `已加载全部 ${n} 条`,
     empty: '没有符合筛选条件的条目',
     emptyAll: '这个任务没有要人工裁决的条目',
+    emptyToAppeals: '被拒的条目在「被拒复议」里，觉得判错了可以复议。',
+    toAppeals: '去被拒复议',
     videos: '视频',
     // appeals
     appealsIntro: (modules: string) => `这里列出可复议模块拒掉的条目（${modules}）。看完视频，认为判错了就恢复为可用。复议是可选的，不计入「待裁」；结论同样要点「执行裁决」才生效。`,

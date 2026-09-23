@@ -282,8 +282,15 @@ export interface ActionSubject {
   pending_adjudication: number;
   delivery_stale: boolean;
   summary?: TaskListItem['summary'];
+  /** Only the detail page's Task has it; a list row has `summary`. */
+  result_rev?: number;
   deleted_at?: number | null;
   active_subtask?: unknown;
+}
+
+/** Whether the task has a result (a report, a revision): what 人工裁决 and 查看报告 need. */
+export function hasResult(t: Pick<ActionSubject, 'summary' | 'result_rev' | 'pending_adjudication'>): boolean {
+  return Boolean(t.summary) || (t.result_rev ?? 0) > 0 || t.pending_adjudication > 0;
 }
 
 export function actionsFor(t: ActionSubject): ActionPlan {
@@ -291,9 +298,11 @@ export function actionsFor(t: ActionSubject): ActionPlan {
   const disabled: ActionPlan['disabled'] = {};
   const terminal = isTerminalState(t.state);
   if (!terminal && t.state !== 'created') disabled.delete = zh.actions.deleteDisabled;
-  const hasReport = Boolean(t.summary);
+  const hasReport = hasResult(t);
   const common: TaskActionKey[] = [];
-  if (t.pending_adjudication > 0 && (t.state === 'succeeded' || t.state === 'completed_with_errors')) common.push('adjudicate');
+  // D47: 人工裁决 stands as soon as there is a result, pending items or not (appeals of rejected
+  // episodes are there too); the label carries the count when there are pending ones.
+  if (hasReport) common.push('adjudicate');
   if (terminal && t.delivery_stale) common.push('export');
   if (terminal) common.push('copy', 'purge', 'delete');
   const busy = Boolean(t.active_subtask);

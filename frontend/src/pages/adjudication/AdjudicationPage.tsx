@@ -172,6 +172,15 @@ export function AdjudicationPage() {
           ) : !shown.length && !review.hasNextPage ? (
             <Card>
               <Typography.Text type="secondary">{reviewCards.length || statusFilter !== 'all' ? zh.adjudication.empty : zh.adjudication.emptyAll}</Typography.Text>
+              {/* D47: the entry stands even when nothing is pending; rejects may still be appealed. */}
+              {!reviewCards.length ? (
+                <div style={{ marginTop: 8 }} data-testid="review-empty-appeals">
+                  <Typography.Text type="secondary">{zh.adjudication.emptyToAppeals}</Typography.Text>
+                  <Button type="text" size="small" onClick={() => setParam('tab', 'appeals')}>
+                    {zh.adjudication.toAppeals}
+                  </Button>
+                </div>
+              ) : null}
             </Card>
           ) : (
             <div className="card-gap" data-testid="cards">
