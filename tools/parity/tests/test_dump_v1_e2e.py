@@ -18,6 +18,7 @@ import pytest
 
 from parity import vlm_tape as T
 from parity.fakevlm import _texts
+from parity.manifest import DEFAULT_COMMIT
 
 from .conftest import V1_RUN, load_schema, run_parity
 
@@ -92,7 +93,7 @@ def test_record_run_is_clean_and_walks_the_whole_funnel(recorded):
     _, out = recorded
     m = meta(out)
     assert m["status"] == "clean", m["problems"]
-    assert m["v1_source"]["ok"] and m["v1_source"]["commit"].startswith("45bdf929")
+    assert m["v1_source"]["ok"] and m["v1_source"]["commit"] == DEFAULT_COMMIT
     assert m["counts"]["records"] == {"timestamp_check": 8, "kinematic_limits": 8,
                                       "motion_quality": 8, "visual_quality": 6,
                                       "video_action_sync": 6, "task_success": 6}

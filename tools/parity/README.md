@@ -2,7 +2,12 @@
 
 v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之后每搬一块代码，都拿 v2 的结果和基线逐条比。
 口径见 [`docs/design/10-parity-and-migration.md`](../../docs/design/10-parity-and-migration.md) §3，
-决策见 `00-overview.md` §7 的 D15、D19、D33、D34。
+决策见 `00-overview.md` §7 的 D15、D19、D33、D34、D44。
+
+**冻结点**：`dev` 的 `eb637ba40`（2026-09-22，PR #155「mcap 与 lance 格式的质检」合入后的头部，D44）。
+此前是 `release_v1` 的 `45bdf9292`（D34）；两者之间只有 PR #155，它对 LeRobot 数据集的判决没有影响
+（格式嗅探多认两种格式、收尾多清两种缓存），合成数据集上 v1 对 v2 的逐位对账照样全过。
+`manifest.py` 的 `DEFAULT_COMMIT` 是唯一出处，`v1-manifest`、`v1-src`、`pack` 和测试都从它取。
 
 | 命令（`python -m parity …`） | 作用 |
 |---|---|
@@ -21,7 +26,7 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
 
 ## 它怎么工作
 
-- **只读 v1**：`dump-v1` 启动时按 `v1_manifest.json` 逐文件核对 v1 源码（冻结点 `45bdf9292`，D34），
+- **只读 v1**：`dump-v1` 启动时按 `v1_manifest.json` 逐文件核对 v1 源码（冻结点 `eb637ba40`，D44），
   对不上就拒跑。之后只在运行期间包几个函数取数，v1 的文件一个字不改：
   - 包 `daft.DataFrame.collect`，在硬门过滤**之前**截下每条的检查结果（v1 自己的报告里，被硬门拦下的条目只剩拦下它的那一项）；
   - 包 `requests` 与 `vlm_client.hedged_request`，录下或回放每一次模型调用（对冲补发只认赢的那一发）；

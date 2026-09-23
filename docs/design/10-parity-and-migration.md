@@ -12,6 +12,15 @@
 B 类文件按意图移植到对应的 stage。新的输入格式（如开发中的 mcap / lance 读取）按 `.rrd` 的办法处理：
 代码照搬、默认关闭、预检判为不支持（D6）。每次同步在 `claude-progress.txt` 里记下同步到了哪个提交。
 
+**冻结点前移**（D44，2026-09-23）：冻结点改为 `dev` 的 `eb637ba40`（2026-09-22，PR #155「mcap 与 lance 格式的质检」
+合入后的头部；内容提交 `0b89bcb45`）。`dev` 比 `45bdf9292` 只多这一个补丁，`release_v1` 此后没有新提交。
+同步方式（F6.5）：A 类文件与 v2 没动过的文件逐字取新版（`ingest/mcap_reader.py`、`ingest/lance_reader.py` 两个新 A 类文件、
+`ingest/lerobot_reader.py`、`export/mcap_writer.py`、`export/report.py`、`pipeline/default.yaml`、`ui/runner.py`、v1 的三份测试）；
+v2 改过的 B 类文件三方合并、v2 的改动一处不丢（`pipeline/run.py`、`pipeline/rejudge.py`、`cli/legacy.py`）。
+mcap / lance 不再照 `.rrd` 的办法处理，而是全量接入 v2（预检、快照、质检、交付，含 TOS 上的数据，见 02 篇 §3.1、05 篇 §2）；
+`.rrd` 维持原样。补丁对 LeRobot 数据集的判决没有影响，合成数据集上新冻结点的 v1 与 v2 逐位对账照样全过。
+`tools/parity/manifest.py` 的 `DEFAULT_COMMIT` 与 `v1_manifest.json` 随之更新，A 类清单多了两个文件（共 59 个）。
+
 清理步骤，**每步一个独立 commit，可回滚**：
 
 ```
@@ -43,7 +52,7 @@ blame 是最快的排查路径。最终产物一样：一个不含上游 daft �
 
 | 类别 | 范围 | 策略 |
 |---|---|---|
-| **A 原样搬运** | `core/*`（含 `checks/`、`contract.py`、`task_type.py`）、`registry/*`、`ingest/*`（含数据集语义 profile、动作语义预检、schema 校验、公共数据集目录）、`export/lerobot_writer.py`、`export/safe_write.py`、`pipeline/verdict.py`、`dataset_level/*`、`episode_select.py`、`vlm_call_kinds.py` | **逐字复制，连中文注释一起**。只允许改 import 路径。任何其他改动都要在 PR 里单独说明理由 |
+| **A 原样搬运** | `core/*`（含 `checks/`、`contract.py`、`task_type.py`）、`registry/*`、`ingest/*`（含数据集语义 profile、动作语义预检、schema 校验、公共数据集目录，D44 起还有 mcap / lance 两个读取器）、`export/lerobot_writer.py`、`export/safe_write.py`、`pipeline/verdict.py`、`dataset_level/*`、`episode_select.py`、`vlm_call_kinds.py` | **逐字复制，连中文注释一起**。只允许改 import 路径。任何其他改动都要在 PR 里单独说明理由 |
 | **B 改造搬运** | `pipeline/run.py`、`pipeline/funnel.py`、`pipeline/rejudge.py`、`pipeline/reprofile.py`、`adapters/vlm_client.py`、`adapters/decode.py`、`export/publish.py`、`export/report.py`、`tos_store.py`、`delivery.py`、`fetch.py`；以及 `ui/` 里要留下的三样：`auth.py`（鉴权中间件）、`runner.py` 的深链与地址解析函数、`manifest.py` 的数据整形函数 | 拆成 stage / 加 usage 采集 / 加增量导出 / 从 Gradio 里剥出来。**算法调用顺序和参数不变**，只改编排外壳 |
 | **C 全新编写** | `cli/`、`daemon/`、`frontend/`、`deploy/charts/` | 英文注释，按本册契约实现 |
 
@@ -96,6 +105,7 @@ v1 的 CLI 和界面上的每一项能力，在 v2 里去哪了。原则：需�
 | 人工裁决随交付目录跨批次沿用 | **不保留**（D32）。裁决只属于产生它的任务 |
 | `latest` =「最近跑的是哪一次」 | 改为「最近一次发布成功的完整版本」（D29） |
 | `.rrd` 输入 | 维持 v1 现状：代码原样搬运，默认关闭（`ingest.rrd_enabled: false`），预检按「不支持的格式」处理 |
+| mcap / lance 输入（D44） | 全量接入：读取器与 `export/mcap_writer.py` 原样搬运，开关 `ingest.mcap_enabled` / `ingest.lance_enabled` 照 v1 默认开；预检识别、快照、质检、交付都支持，TOS 上的数据先拉到本地缓存再读（02 篇 §3.1、05 篇 §2）；交付照 v1：mcap 是 `mcap_curated/` 逐字节拷贝 + `index.json`，lance 是 `episodes_parquet/`（原格式交付未做） |
 | 本地路径 / FSX 挂载作输入输出 | 输入保留为 experimental；交付目录只支持 `tos://` |
 
 ## 3. 黄金对账
@@ -143,7 +153,7 @@ v3 的读取和导出路径（多条拼接的 parquet / mp4、按 chunk 重编�
   解码时的 RGB 转换（swscale）与缩放（`cv2.resize`）跨 CPU 架构不保证逐位一致，所以基线和 v2 的对账跑批
   必须在同一平台、同一套库版本下进行；在 Mac 上生成的基线只能在 Mac 上用。
   Pod 里的镜像可能比冻结点旧，所以 `dump_v1.py` 自带冻结点的 v1 源码，只借用镜像里的 Python 依赖。
-- 用 v1（冻结点 `45bdf9292`，D34）跑完整质检，交付目录整个存档为 `golden/v1/<数据集>/`。
+- 用 v1（冻结点 `eb637ba40`，D44；D34 时是 `45bdf9292`，两者对 LeRobot 数据集的判决相同）跑完整质检，交付目录整个存档为 `golden/v1/<数据集>/`。
   这一步在动任何 B 类代码之前做，**基线必须由 v1 的代码生成**。
 - v1 的交付目录里**没有**逐模块逐条的原始结果文件（没有 `results.jsonl`，也没有 `report.json`），
   明细 CSV 还是给人看的、可能取过整。所以另写一个 `tools/parity/dump_v1.py`：在同一个进程里跑 v1 原版的
