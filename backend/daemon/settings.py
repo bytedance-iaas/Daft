@@ -7,7 +7,7 @@
 | ``CURATOR_DB_PATH`` | ``<data>/curator.db`` | SQLite file (block storage only, never NAS / FSX) |
 | ``CURATOR_WORK_DIR`` | ``<data>/runs`` | ``<work>/<task_id>/`` is a task's work directory (00 §4.2) |
 | ``CURATOR_SCRATCH_DIR`` | ``$TMPDIR/curator-scratch`` | disposable temp space (export videos) |
-| ``CURATOR_SOURCE_CACHE_DIR`` | ``<data>/source-cache`` | ``<dir>/<task_id>/``: a task's local copy of a remote mcap / lance dataset while a run of it goes (D44) |
+| ``CURATOR_SOURCE_CACHE_DIR`` | ``<data>/source-cache`` | ``<dir>/<task_id>/``: a task's local copy of a remote mcap / lance dataset while a run of it goes (D44); the chart points it at the scratch volume (``<scratch>/source-cache``), never the database's |
 | ``CURATOR_STATIC_DIR`` | ``/app/web`` or ``frontend/dist`` if present | built frontend |
 | ``CURATOR_PUBLIC_BASE_URL`` | empty | absolute links for agents; empty = relative links |
 | ``CURATOR_LOCAL_DATA_ROOT`` | empty | enables the experimental local-path input under this root |
