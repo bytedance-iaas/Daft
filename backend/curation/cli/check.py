@@ -131,6 +131,12 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if args.survivors_out:
         records.write_text_atomic(os.path.abspath(args.survivors_out),
                                   "".join(f"{e}\n" for e in survivors))
+    if src.container and stage in ("numeric", "frame", "vlm"):
+        from .containers import write_source_info
+
+        if guard is not None and src.kind == "mcap":
+            guard([min(src.numbering())])     # the episode v1 takes the dataset info from
+        write_source_info(run_dir, src, args.embodiment_id)
     return Result(payload, human=render(payload))
 
 
@@ -153,7 +159,7 @@ def _container_options(args, src) -> dict:
     if not src.container:
         return {}
     return {"selection": runctx.selection_of(args), "fetch": src.fetch,
-            "row_instructions": True}
+            "row_instructions": True, "fmt": src.kind}
 
 
 def _funnel_cpu(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard,

@@ -91,6 +91,7 @@ class StageOptions:
     selection: list[int] | None = None
     fetch: Callable[[list[int]], None] | None = None
     row_instructions: bool = False
+    fmt: str | None = None                              # mcap | lance; None: v1's sniffing
     stage: str = field(init=False, default="")
 
     def __post_init__(self) -> None:
@@ -189,7 +190,7 @@ class StageRun:
         try:
             return open_row_source(o.input_dir, todo, embodiment_id=o.embodiment_id,
                                    max_episodes=o.max_episodes, selection=o.selection,
-                                   fetch=o.fetch)
+                                   fetch=o.fetch, fmt=o.fmt)
         except CliError:
             raise                              # a changed source (exit 6), an unreachable one
         except Exception as e:  # noqa: BLE001 - reader errors are many

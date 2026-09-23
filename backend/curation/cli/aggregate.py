@@ -49,6 +49,9 @@ def add_parser(sub, parents) -> None:
     p.add_argument("--source", choices=("tos", "public", "local"), default=None)
     p.add_argument("--embodiment-id", metavar="ID")
     p.add_argument("--max-episodes", type=int, metavar="N")
+    p.add_argument("--selection", metavar="EXPR",
+                   help="accepted like the other reading commands (mcap / lance); the task "
+                        "texts aggregate reads do not depend on it")
     p.set_defaults(func=run)
 
 

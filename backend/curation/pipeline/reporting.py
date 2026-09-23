@@ -330,9 +330,39 @@ def integrity(rev: Revision) -> dict:
     if not pf:
         return {}
     ds = pf.get("dataset") or {}
-    return {"format": pf.get("format"), "validation": pf.get("validation") or [],
-            "warnings": pf.get("warnings") or [], "labels": ds.get("labels"),
-            "profile": ds.get("profile"), "robot_type": ds.get("robot_type")}
+    out = {"format": pf.get("format"), "validation": pf.get("validation") or [],
+           "warnings": pf.get("warnings") or [], "labels": ds.get("labels"),
+           "profile": ds.get("profile"), "robot_type": ds.get("robot_type")}
+    container = container_integrity(rev)
+    if container:
+        out["container"] = container
+    return out
+
+
+def container_integrity(rev: Revision) -> dict | None:
+    """mcap / lance (D44): v1's container findings (``export/report.container_findings``
+    over what ``check`` recorded in ``source_info.json``) and how the dataset is delivered
+    - for lance, that the native delivery is not done (v1's report line)."""
+    kind = ((rev.preflight.get("format") or {}).get("kind"))
+    if kind not in ("mcap", "lance"):
+        return None
+    n = rev.lists["passed"]["count"]
+    if kind == "mcap":
+        delivery = (f"mcap_curated/（{n} 个 .mcap，原格式逐字节；清单见 index.json；"
+                    f"改标只写进清单，文件本体不动）")
+    else:
+        delivery = (f"lance_episodes/episodes_parquet/（{n} 条，轨迹级）与 videos/；"
+                    f"lance 原格式交付本版本未做，判决清单见 passed / reject / held")
+    out: dict = {"format": kind, "delivery": delivery, "findings": []}
+    facts = _read(os.path.join(rev.run_dir, "source_info.json"), None)
+    if isinstance(facts, dict) and isinstance(facts.get("info"), dict):
+        from ..export.report import container_findings
+
+        try:
+            out["findings"] = container_findings(kind, facts["info"], facts.get("robot") or {})
+        except Exception:  # noqa: BLE001 - findings are an attachment of the report
+            out["findings"] = []
+    return out
 
 
 # ---------------------------------------------------------------- the report
@@ -471,6 +501,13 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines.append(f"- 待人工裁决:{sec['adjudication']['pending']} 条")
         if sec.get("error"):
             lines.append(f"- ⚠️ {sec['error']}")
+        lines.append("")
+    container = report["integrity"].get("container")
+    if container:                               # mcap / lance (D44)
+        lines.append(f"## 数据包({container['format']})")
+        lines.append(f"- 交付数据集:{container['delivery']}")
+        for f in container.get("findings") or []:
+            lines.append(f"- {f.get('项')}:{f.get('状态')} —— {f.get('说明')}")
         lines.append("")
     if report["integrity"].get("skipped_episodes"):
         lines.append("## 未质检的条目(源文件缺失,照 v1 剔除)")

@@ -211,7 +211,8 @@ def _fresh(root: str, marker: str, overwrite: bool) -> bool:
     return True
 
 
-def _write_episode_mcap(path: str, ep: int) -> None:
+def _write_episode_mcap(path: str, ep: int, *, robot_type: str | None = "franka") -> None:
+    """One episode's file; ``robot_type=None`` leaves the metadata record out."""
     import cv2
     from mcap_ros2.writer import Writer as Ros2Writer
 
@@ -220,7 +221,8 @@ def _write_episode_mcap(path: str, ep: int) -> None:
     frames = {cam: _frames(q, cam, src) for cam in CAMERAS}
     with open(path, "wb") as fh:
         w = Ros2Writer(fh)
-        w._writer.add_metadata("curation", {"robot_type": "franka"})
+        if robot_type:
+            w._writer.add_metadata("curation", {"robot_type": robot_type})
         s_arr = w.register_msgdef("curation_msgs/msg/FloatArray", "float64[] data")
         s_txt = w.register_msgdef("std_msgs/msg/String", "string data")
         s_img = w.register_msgdef("sensor_msgs/msg/CompressedImage",

@@ -120,16 +120,23 @@ def mapping_of(cfg: dict | None) -> dict | None:
 # ---------------------------------------------------------------- mcap summaries
 
 
-class RangeFile(io.RawIOBase):
-    """A read-only, seekable file over ``read_range(start, length)`` with a block cache:
-    the mcap reader seeks to the footer and the summary section, so a summary costs a
-    few small ranged GETs instead of the whole file."""
+class RangeFile:
+    """A read-only, seekable file over ``read_range(start, length)``: the mcap reader reads
+    the magic at the start, then seeks to the footer and the summary section at the end,
+    so a summary costs two or three small ranged GETs instead of the whole file. Reads
+    are cached as segments; a read near the end fetches the whole tail (``tail`` bytes)
+    at once, where the summary section lives.
 
-    def __init__(self, read_range, size: int, block: int = 1 << 18):
-        super().__init__()
-        self._read_range, self._size, self._block = read_range, int(size), int(block)
+    Deliberately not an ``io.RawIOBase``: the mcap reader wraps those in a
+    ``BufferedReader`` per record stream, whose garbage collection closes the raw file
+    under the next one."""
+
+    def __init__(self, read_range, size: int, *, readahead: int = 1 << 14,
+                 tail: int = 1 << 16):
+        self._read_range, self._size = read_range, int(size)
+        self._readahead, self._tail = int(readahead), int(tail)
         self._pos = 0
-        self._cache: dict[int, bytes] = {}
+        self._segments: list[tuple[int, bytes]] = []
 
     def readable(self) -> bool:
         return True
@@ -145,24 +152,42 @@ class RangeFile(io.RawIOBase):
         self._pos = max(0, base + int(offset))
         return self._pos
 
-    def _blk(self, n: int) -> bytes:
-        if n not in self._cache:
-            start = n * self._block
-            self._cache[n] = self._read_range(start, min(self._block, self._size - start))
-        return self._cache[n]
+    def _segment(self, pos: int) -> tuple[int, bytes] | None:
+        for start, data in self._segments:
+            if start <= pos < start + len(data):
+                return start, data
+        return None
 
-    def readinto(self, buf) -> int:
-        want = min(len(buf), max(0, self._size - self._pos))
-        got = 0
-        while got < want:
-            n, off = divmod(self._pos, self._block)
-            chunk = self._blk(n)[off:off + (want - got)]
+    def _fetch(self, pos: int, n: int) -> tuple[int, bytes]:
+        if pos >= self._size - self._tail:            # the tail, whole (a small file: all of it)
+            start = max(0, self._size - self._tail)
+            length = self._size - start
+        else:
+            start = pos
+            length = min(self._size - start, max(n, self._readahead))
+        data = self._read_range(start, length)
+        self._segments.append((start, data))
+        return start, data
+
+    def read(self, size: int = -1) -> bytes:
+        want = max(0, self._size - self._pos)
+        if size is not None and size >= 0:
+            want = min(want, size)
+        out = bytearray()
+        while len(out) < want:
+            seg = self._segment(self._pos) or self._fetch(self._pos, want - len(out))
+            start, data = seg
+            chunk = data[self._pos - start:self._pos - start + (want - len(out))]
             if not chunk:
                 break
-            buf[got:got + len(chunk)] = chunk
-            got += len(chunk)
+            out += chunk
             self._pos += len(chunk)
-        return got
+        return bytes(out)
+
+    def readinto(self, buf) -> int:
+        data = self.read(len(buf))
+        buf[:len(data)] = data
+        return len(data)
 
 
 @dataclass
@@ -371,6 +396,54 @@ def lance_meta(storage: Storage, listing) -> LanceMeta:
             return LanceMeta(info, _episodes_from_parquet(found), LANCE_META_TABLE)
         finally:
             lance_reader.cleanup_video_cache(root_dir)
+
+
+# ---------------------------------------------------------------- the report's facts
+
+SOURCE_INFO = "source_info.json"
+#: the info.json-shaped facts v1's report reads about a container (export/report.py)
+_INFO_KEYS = ("codebase_version", "storage_format", "fps", "robot_type", "robot_type_source",
+              "robot_type_file", "time_source", "has_task_text", "task_source")
+
+
+def write_source_info(run_dir: str, src, embodiment_id: str | None) -> None:
+    """``<run-dir>/source_info.json``, once per run directory: what v1's run knows about an
+    mcap / lance dataset when it writes its report - the dataset info of its reader
+    (``mcap_dataset_info``: the first episode's robot type and where it came from, the
+    time source, a task text or not; ``lance_dataset_info``: meta/info.json) and the robot
+    it used (``run.py``'s identity line). ``report`` turns it into v1's container findings
+    (``export/report.container_findings``)."""
+    path = os.path.join(run_dir, SOURCE_INFO)
+    if not getattr(src, "container", False) or os.path.isfile(path):
+        return
+    from ..pipeline.records import write_json_atomic
+    from ..pipeline.rows import _INGEST
+    from ..registry.registry import EmbodimentRegistry
+
+    if src.kind == MCAP:
+        from ..ingest.mcap_reader import mcap_dataset_info
+
+        num = src.numbering()
+        src.fetch([min(num)])
+        info = mcap_dataset_info(src.input_dir, mapping=_INGEST["mcap_mapping"],
+                                 embodiment_id=embodiment_id)
+    else:
+        from ..ingest.lance_reader import lance_dataset_info
+
+        src.fetch([])
+        info = lance_dataset_info(src.input_dir)
+    rt = str(info.get("robot_type") or "unknown")
+    emb = embodiment_id or rt
+    try:
+        prof = EmbodimentRegistry().get(emb)
+        robot = {"robot_type": rt, "embodiment_id": emb,
+                 "registry_profile": prof.embodiment_id, "quality": prof.quality}
+    except Exception:  # noqa: BLE001 - not in the registry: v1's "(未注册)"
+        robot = {"robot_type": rt, "embodiment_id": emb, "registry_profile": "(未注册)",
+                 "quality": None}
+    write_json_atomic(path, {"format": src.kind,
+                             "info": {k: info[k] for k in _INFO_KEYS if k in info},
+                             "robot": robot})
 
 
 # ---------------------------------------------------------------- the source cache

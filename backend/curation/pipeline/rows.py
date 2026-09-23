@@ -307,9 +307,10 @@ class ContainerRowSource:
 def open_row_source(input_dir: str, episodes: Iterable[int], *,
                     embodiment_id: str | None = None, max_episodes: int | None = None,
                     selection: Iterable[int] | None = None,
-                    fetch: Callable[[list[int]], None] | None = None):
-    """The per-episode row source of the input's format."""
-    fmt = input_format(input_dir)
+                    fetch: Callable[[list[int]], None] | None = None, fmt: str | None = None):
+    """The per-episode row source of the input's format (``fmt``: the caller knows it -
+    a remote dataset's local copy may not hold the files v1 sniffs by yet)."""
+    fmt = fmt or input_format(input_dir)
     if fmt == "lerobot":
         return RowSource(input_dir, episodes, embodiment_id=embodiment_id,
                          max_episodes=max_episodes)
