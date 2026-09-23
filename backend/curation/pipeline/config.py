@@ -28,13 +28,6 @@ def validate_config(cfg: dict, origin: str = "config") -> None:
         raise ConfigError("pipeline must be a mapping")
     if "optimizations" in pipeline:
         raise ConfigError("pipeline.optimizations has been removed; engineering optimizations run automatically")
-    if pipeline.get("thinking") is not None and type(pipeline["thinking"]) is not bool:
-        raise ConfigError("pipeline.thinking must be true/false/null")
-    if pipeline.get("thinking") is not None:
-        from .thinking import thinking_request_fields
-        model = cfg.get("checks", {}).get("task_success", {}).get("vlm", {}).get("model")
-        if model:
-            thinking_request_fields(model, pipeline["thinking"])
     concurrency = pipeline.get("vlm_episode_concurrency", 8)
     if type(concurrency) is not int or concurrency < 1:
         raise ConfigError("vlm_episode_concurrency must be a positive integer")

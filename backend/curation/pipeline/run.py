@@ -456,15 +456,6 @@ def _sanitize_config_snapshot(cfg: dict) -> dict:
     ce = copy.deepcopy(cfg)
     if isinstance(ce.get('pipeline'), dict):
         ce['pipeline'].pop('optimizations', None)
-        thinking = ce['pipeline'].get('thinking')
-        model = ce.get('checks', {}).get('task_success', {}).get('vlm', {}).get('model')
-        if thinking is not None and model:
-            from .thinking import thinking_request_fields
-            fields = thinking_request_fields(model, thinking)
-            ce['pipeline']['thinking_effective'] = {
-                'enabled': fields['thinking']['type'] == 'enabled',
-                'reasoning_effort': fields.get('reasoning_effort'),
-            }
     for k in _SNAPSHOT_SITE_KEYS:
         ce.pop(k, None)
     sp = ce.get("skill_profile")
@@ -624,12 +615,6 @@ def _run_pipeline(
             print(f"[curation] VLM 模型自动发现: {_v['model']} @ {_v['endpoint']}",
                   flush=True)
             _validate_config(cfg)
-    from .thinking import thinking_notice
-    _model = cfg.get("checks", {}).get("task_success", {}).get("vlm", {}).get("model", "")
-    _notice = thinking_notice(_model, cfg.get("pipeline", {}).get("thinking"))
-    if _notice:
-        print(_notice, flush=True)
-
     # 延时档案清零(2026-07-28):每个 run 一份独立的 VLM 调用延时统计
     from ..adapters.vlm_client import latency_reset
     latency_reset()
