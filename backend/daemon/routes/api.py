@@ -92,9 +92,11 @@ def list_tasks(request: Request, page: int = Query(1, ge=1), page_size: int = Qu
     modules = _module_filter(module)
     rt, owner = runtime(request), principal(request).owner_id
     key = taskspec.normalize_tos_uri(delivery, field_name="delivery") if delivery else None
+    # state=running also lists finished tasks whose subtask is queued or running (D46)
     result = rt.repo.list_tasks(owner=owner, page=page, page_size=page_size, state=state,
                                 q=(q or "").strip() or None, delivery_key=key,
-                                dataset_id=(dataset_id or "").strip() or None, modules=modules)
+                                dataset_id=(dataset_id or "").strip() or None, modules=modules,
+                                running_subtasks=True)
     return {"items": [views.task_list_item(t, repo=rt.repo) for t in result.items],
             "page": result.page, "page_size": result.page_size, "total": result.total}
 

@@ -555,9 +555,13 @@ class Repository(Protocol):
     def list_tasks(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
                    state: str | None = None, q: str | None = None,
                    delivery_key: str | None = None, dataset_id: str | None = None,
-                   modules: list[str] | None = None) -> PagedResult[Task]:
+                   modules: list[str] | None = None,
+                   running_subtasks: bool = False) -> PagedResult[Task]:
         """Newest first. ``state='deleted'`` lists soft-deleted tasks; ``modules`` keeps tasks that
-        selected every one of them."""
+        selected every one of them. ``state`` is the task's own state, except that with
+        ``running_subtasks`` (what ``GET /tasks`` asks for, D46) ``state='running'`` also keeps
+        finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or
+        running: the console shows those as running while their own state stays terminal."""
 
     def update_task_fields(self, task_id: str, *, if_updated_at: int | None,
                            owner: str = DEFAULT_OWNER, **fields) -> Task:

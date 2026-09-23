@@ -248,7 +248,11 @@ GET /api/v1/tasks?page=1&page_size=20&state=running&q=droid
 ```
 
 - 页码 + 每页条数 + 总数，与火山控制台的表格一致（D21）。`page_size` 取 10 / 20 / 50 / 100。
-- 按创建时间倒序。列表行里带 `progress`、`summary`、`pending_adjudication` 和各状态的模块数，
+- `state` 按任务自己的状态筛，只有一处例外（D46，C4 1.10.0）：`state=running` 同时列出子任务（重试、继续运行、执行裁决、
+  重新导出）正在排队或运行的已结束任务 —— 界面上它们显示为「运行中」。这些行的 `state` 仍是任务自己的终态，
+  `active_subtask` 是那个子任务；按终态筛（如 `state=completed_with_errors`）照样列出它们。子任务暂停时不算运行中。
+  概览的运行情况照旧按「任务或子任务」逐份工作计数（§12），不受这条影响。
+- 按创建时间倒序（同一毫秒建的按建的先后）。列表行里带 `progress`、`summary`、`pending_adjudication` 和各状态的模块数，
   够渲染列表页和「已完成任务的报告概览」，不用再逐个查详情。
 - 往下翻的内容（裁决队列、日志、episode 列表、报告明细表）用游标：`?cursor=<opaque>&limit=50`
   → `{"items": [...], "next_cursor": "...", "has_more": true}`。

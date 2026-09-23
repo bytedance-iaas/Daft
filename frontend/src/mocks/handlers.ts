@@ -844,8 +844,10 @@ const tasks = [
     const delivery = url.searchParams.get('delivery');
     const mods = (url.searchParams.get('module') ?? '').split(',').filter(Boolean);
     const datasetId = url.searchParams.get('dataset_id');
+    // C4 1.10.0 (D46): state=running also lists finished tasks whose subtask is queued or running.
+    const subtaskRuns = (t: Task) => state === 'running' && ['queued', 'running'].includes(t.active_subtask?.state ?? '');
     const items = db.tasks
-      .filter((t) => (state === 'deleted' ? Boolean(t.deleted_at) : !t.deleted_at && (!state || t.state === state)))
+      .filter((t) => (state === 'deleted' ? Boolean(t.deleted_at) : !t.deleted_at && (!state || t.state === state || subtaskRuns(t))))
       .filter((t) => !q || t.name.toLowerCase().includes(q) || t.id.toLowerCase().includes(q))
       .filter((t) => !delivery || t.output.uri === delivery)
       .filter((t) => mods.every((m) => t.modules.some((x) => x.id === m && x.selected)))

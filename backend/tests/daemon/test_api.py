@@ -194,6 +194,52 @@ def test_task_list_filters_and_item_fields(client_for, clock):
     assert_error(c.get("/curation/api/v1/tasks", params={"delivery": "s3://x/y"}), "validation_failed")
 
 
+def test_running_filter_includes_tasks_whose_subtask_runs(client_for, clock):
+    """D46: a retry (resume, adjudication run, re-export) that is queued or running shows its
+    finished task as running, so ?state=running lists it; the item keeps the task's own state
+    and names the subtask. The task's other filters do not change."""
+    from daemon.transitions import change_subtask_state
+
+    c = client_for()
+    rt = _rt(c)
+    main = seed_task(rt.repo, "main run")
+    change_task_state(rt.repo, rt.hub, main.id, {"queued"}, "running", at=rt.clock())
+    clock.advance(1)
+    retried = seed_task(rt.repo, "retried")
+    _finish(rt, retried.id, "completed_with_errors")
+    sub = rt.repo.create_subtask(P.Subtask(id="", task_id=retried.id, kind="retry", scope={},
+                                           state="queued"))
+    clock.advance(1)
+    exported = seed_task(rt.repo, "export paused")
+    _finish(rt, exported.id)
+    paused = rt.repo.create_subtask(P.Subtask(id="", task_id=exported.id, kind="reexport",
+                                              scope={}, state="queued"))
+    for frm, to, kw in (("queued", "running", {}), ("running", "pausing", {"pause_reason": "user"}),
+                        ("pausing", "paused", {})):
+        change_subtask_state(rt.repo, rt.hub, paused.id, {frm}, to, at=T0, **kw)
+
+    def listed(**params):
+        body = c.get("/api/v1/tasks", params=params).json()
+        assert body["total"] == len(body["items"])
+        for item in body["items"]:
+            assert_schema("TaskListItem", item)
+        return {t["id"]: t for t in body["items"]}
+
+    running = listed(state="running")
+    assert list(running) == [retried.id, main.id]                     # newest first
+    assert (running[retried.id]["state"], running[retried.id]["active_subtask"]) == \
+        ("completed_with_errors", sub.id)
+    change_subtask_state(rt.repo, rt.hub, sub.id, {"queued"}, "running", at=T0)
+    assert list(listed(state="running")) == [retried.id, main.id]     # queued, then running
+    assert list(listed(state="completed_with_errors")) == [retried.id]
+    assert list(listed(state="succeeded")) == [exported.id]           # a paused subtask: not running
+    change_subtask_state(rt.repo, rt.hub, sub.id, {"running"}, "succeeded", at=T0)
+    assert list(listed(state="running")) == [main.id]                 # the retry ended
+    # the overview's counts stay per piece of work: one main run, one paused subtask
+    running = c.get("/api/v1/overview").json()["running"]
+    assert (running["running"], running["paused"]) == (1, 1)
+
+
 def test_deleted_filter_lists_soft_deleted_tasks(client_for):
     c = client_for()
     rt = _rt(c)

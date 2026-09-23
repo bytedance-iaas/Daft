@@ -3000,7 +3000,7 @@ export interface operations {
             query?: {
                 page?: number;
                 page_size?: 10 | 20 | 50 | 100;
-                /** @description a task state, or `deleted` for soft-deleted tasks (restorable for 30 days) */
+                /** @description a task state, or `deleted` for soft-deleted tasks (restorable for 30 days). `running` also lists finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or running: the console shows them as running (D46); their `state` stays terminal and `active_subtask` names the subtask */
                 state?: components["schemas"]["TaskState"] | "deleted";
                 /** @description search by name or id */
                 q?: string;

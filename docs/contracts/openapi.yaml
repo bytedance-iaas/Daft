@@ -81,6 +81,7 @@ info:
     dataset ids, `UploadId` and upload handles take both formats. `GET /overview?days=7|30|90|365`
     picks the period of `recent`, which says its `bucket` (day / week / month) and `since`;
     `recent.tokens_per_bucket` (`start`, `label`, `tokens`) replaces `tokens_per_day`.
+    `GET /tasks?state=running` also lists finished tasks whose subtask is queued or running (D46).
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -705,7 +706,11 @@ paths:
           schema: {enum: [10, 20, 50, 100], default: 20}
         - name: state
           in: query
-          description: a task state, or `deleted` for soft-deleted tasks (restorable for 30 days)
+          description: >-
+            a task state, or `deleted` for soft-deleted tasks (restorable for 30 days). `running` also
+            lists finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or
+            running: the console shows them as running (D46); their `state` stays terminal and
+            `active_subtask` names the subtask
           schema:
             oneOf:
               - $ref: "#/components/schemas/TaskState"

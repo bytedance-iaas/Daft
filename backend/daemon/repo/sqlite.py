@@ -83,6 +83,9 @@ MAX_PAGE = 1000
 MAX_OFFSET = 1 << 62
 
 _TERMINAL_SQL = "('stopped','succeeded','completed_with_errors','failed')"
+#: Subtask states that make ``list_tasks(state='running', running_subtasks=True)`` list their
+#: (finished) task: the console shows it as running meanwhile (D46).
+_SUBTASK_SHOWN_RUNNING = ("queued", "running")
 
 #: Columns ``update_task_fields`` may touch (configuration; D20 decides which in what state).
 _TASK_EDITABLE = frozenset({
@@ -1149,7 +1152,8 @@ class SqliteRepository:
     def list_tasks(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
                    state: str | None = None, q: str | None = None,
                    delivery_key: str | None = None, dataset_id: str | None = None,
-                   modules: list[str] | None = None) -> PagedResult[Task]:
+                   modules: list[str] | None = None,
+                   running_subtasks: bool = False) -> PagedResult[Task]:
         page, page_size = int(page), int(page_size)
         if page < 1 or page_size < 1:
             raise ValueError("page and page_size start at 1")
@@ -1158,7 +1162,12 @@ class SqliteRepository:
             where.append("deleted_at IS NOT NULL")
         else:
             where.append("deleted_at IS NULL")
-            if state is not None:
+            if state == "running" and running_subtasks:
+                # D46: a finished task whose subtask is queued or running shows as running
+                where.append("(state='running' OR id IN (SELECT task_id FROM subtask"
+                             f" WHERE state IN ({_placeholders(len(_SUBTASK_SHOWN_RUNNING))})))")
+                args += list(_SUBTASK_SHOWN_RUNNING)
+            elif state is not None:
                 where.append("state=?")
                 args.append(state)
         if q:

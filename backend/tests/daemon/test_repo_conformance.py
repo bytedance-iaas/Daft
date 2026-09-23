@@ -661,6 +661,54 @@ def test_list_tasks_filters_keep_total_consistent(repo, clock):
     assert ids(state="deleted") == [c.id]
 
 
+def test_running_can_include_finished_tasks_whose_subtask_runs(repo, clock):
+    """D46: with running_subtasks, state='running' also keeps a finished task whose subtask is
+    queued or running (the console shows it as running); its own state stays terminal."""
+    def finished(name, to):
+        clock.advance(1)
+        t = repo.create_task(_spec(name))
+        _drive(repo, t.id, "running", to)
+        return t
+
+    clock.advance(1)
+    main = repo.create_task(_spec("main run"))
+    _drive(repo, main.id, "running")
+    retry_waits = finished("retry queued", "completed_with_errors")
+    repo.create_subtask(P.Subtask(id="", task_id=retry_waits.id, kind="retry", scope={},
+                                  state="queued"))
+    export_runs = finished("reexport running", "succeeded")
+    s = repo.create_subtask(P.Subtask(id="", task_id=export_runs.id, kind="reexport", scope={},
+                                      state="queued"))
+    _sub_drive(repo, s.id, "running")
+    resume_paused = finished("resume paused", "failed")
+    s = repo.create_subtask(P.Subtask(id="", task_id=resume_paused.id, kind="resume", scope={},
+                                      state="queued"))
+    _sub_drive(repo, s.id, "running", "pausing", "paused")
+    retried = finished("retry done", "completed_with_errors")
+    s = repo.create_subtask(P.Subtask(id="", task_id=retried.id, kind="retry", scope={},
+                                      state="queued"))
+    _sub_drive(repo, s.id, "running", "succeeded")
+    theirs = repo.create_task(_spec("not mine", owner=OTHER))
+    for frm, to in (("queued", "running"), ("running", "succeeded")):
+        assert repo.update_task_state(theirs.id, {frm}, to, at=T0)
+    repo.create_subtask(P.Subtask(id="", task_id=theirs.id, kind="reexport", scope={},
+                                  state="queued"))
+
+    def ids(**kw):
+        page = repo.list_tasks(page=1, page_size=20, **kw)
+        assert page.total == len(page.items)
+        return [t.id for t in page.items]
+
+    assert ids(state="running") == [main.id]                                # the task's own state
+    assert ids(state="running", running_subtasks=True) == [export_runs.id, retry_waits.id, main.id]
+    assert ids(state="running", running_subtasks=True, q="retry") == [retry_waits.id]
+    assert repo.list_tasks(page=1, page_size=1, state="running", running_subtasks=True).total == 3
+    assert ids(state="completed_with_errors", running_subtasks=True) == [retried.id, retry_waits.id]
+    assert repo.get_task(export_runs.id).state == "succeeded"             # display only
+    assert [t.id for t in repo.list_tasks(page=1, page_size=5, state="running", running_subtasks=True,
+                                          owner=OTHER).items] == [theirs.id]
+
+
 def test_list_tasks_by_dataset_and_selected_modules(repo, clock):
     ds, _ = repo.register_dataset(_dataset())
     both = repo.create_task(_spec("both", dataset=ds.id, selected=("timestamp_check", "task_success")))
