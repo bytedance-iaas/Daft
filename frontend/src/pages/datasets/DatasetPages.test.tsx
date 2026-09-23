@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { http } from 'msw';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { PREFLIGHT_DEBOUNCE } from '../../features/preflight/usePreflight';
+import { db } from '../../mocks/db';
 import { server } from '../../mocks/server';
 import { fill, findDrawer, pick } from '../../test/arco';
 import { fieldErrors, requiredFieldLabels } from '../../test/forms';
@@ -28,28 +29,66 @@ describe('数据集列表 (07 §4.4)', () => {
     expect(screen.getByText('共 5 条')).toBeInTheDocument();
   });
 
+  it('row operations are 可视化, 新建任务 and a red 删除; 可视化 opens the ReRun viewer in a new tab (requester item 22)', async () => {
+    renderApp('/datasets');
+    await screen.findByRole('link', { name: 'droid_100' });
+    const ops = row('droid_100').querySelector('td:last-child') as HTMLElement;
+    expect([...ops.querySelectorAll('a, button')].map((b) => b.textContent)).toEqual(['可视化', '新建任务', '删除']);
+    expect(within(ops).getByRole('button', { name: '删除' })).toHaveClass('arco-btn-status-danger');
+    expect(within(row('droid-200')).queryByRole('button', { name: '重新检查' })).toBeNull();
+    const viz = within(ops).getByRole('link', { name: '可视化' });
+    expect(viz).toHaveAttribute('target', '_blank');
+    expect(viz).toHaveAttribute('href', `${window.location.origin}/?url=${encodeURIComponent('tos://pai-kit-datasets/lerobot/droid_100/?region=cn-beijing')}`);
+    // A public dataset works the same way (no region registered, none appended).
+    expect(within(row('libero_10')).getByRole('link', { name: '可视化' })).toHaveAttribute('href', `${window.location.origin}/?url=${encodeURIComponent('tos://hf-cache/lerobot/libero_10/')}`);
+  });
+
+  it('the viewer is one level above the mount prefix (/dataverse/curation → /dataverse/)', async () => {
+    window.__CURATOR_BASE__ = '/dataverse/curation';
+    try {
+      renderApp('/datasets');
+      await screen.findByRole('link', { name: 'droid_100' });
+      expect(within(row('droid_100')).getByRole('link', { name: '可视化' })).toHaveAttribute('href', `${window.location.origin}/dataverse/?url=${encodeURIComponent('tos://pai-kit-datasets/lerobot/droid_100/?region=cn-beijing')}`);
+    } finally {
+      delete window.__CURATOR_BASE__;
+    }
+  });
+
+  it('a locally mounted dataset cannot be visualized, and says why', async () => {
+    const base = db.datasets.find((d) => d.id === 'ds_droid100')!;
+    db.datasets.push({ ...base, id: 'ds_local', name: 'local_droid', source: 'local', uri: '/mnt/datasets/local_droid', region: null, credential: null, created_at: base.created_at + 1 });
+    const { user } = renderApp('/datasets');
+    await screen.findByRole('link', { name: 'local_droid' });
+    const viz = within(row('local_droid')).getByRole('button', { name: '可视化' });
+    expect(viz).toBeDisabled();
+    await user.hover(viz.parentElement!);
+    expect(await screen.findByText('本地挂载的数据集不支持可视化')).toBeInTheDocument();
+  });
+
   it('filters by fingerprint state through the API', async () => {
     renderApp('/datasets?check_state=changed');
     await screen.findByRole('link', { name: 'droid-200' });
     expect(screen.queryByRole('link', { name: 'droid_100' })).toBeNull();
   });
 
-  it('重新检查: a change opens the fingerprint dialog, 重新预检 refreshes it', async () => {
-    const { user } = renderApp('/datasets');
-    await screen.findByRole('link', { name: 'droid-200' });
-    await user.click(within(row('droid-200')).getByRole('button', { name: '重新检查' }));
+  it('重新检查 (on the detail page): a change opens the fingerprint dialog, 重新预检 refreshes it', async () => {
+    const { user } = renderApp('/datasets/ds_droid200');
+    await screen.findByRole('heading', { name: /droid-200/ });
+    await user.click(screen.getByRole('button', { name: '重新检查' }));
     const dialog = await screen.findByRole('dialog', { name: '数据集和添加时不一样了' });
     expect(within(dialog).getByTestId('source-change')).toHaveTextContent('新增 12 个');
     await user.click(within(dialog).getByRole('button', { name: '重新预检' }));
     expect(await screen.findByText('已重新预检，指纹已更新')).toBeInTheDocument();
-    await waitFor(() => expect(within(row('droid-200')).getByText('一致')).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('数据和上次预检时不一样了：重新预检后才能在上面开始新任务。')).toBeNull());
   });
 
   it('重新检查 with no change says so; deleting a dataset in use is refused with the reason', async () => {
-    const { user } = renderApp('/datasets');
-    await screen.findByRole('link', { name: 'umi_640_notask' });
-    await user.click(within(row('umi_640_notask')).getByRole('button', { name: '重新检查' }));
+    const { user } = renderApp('/datasets/ds_umi');
+    await screen.findByRole('heading', { name: /umi_640_notask/ });
+    await user.click(screen.getByRole('button', { name: '重新检查' }));
     expect(await screen.findByText('指纹一致，数据没有变化')).toBeInTheDocument();
+    await user.click(screen.getByRole('link', { name: '数据集' }));
+    await screen.findByRole('link', { name: 'umi_640_notask' });
     await user.click(within(row('umi_640_notask')).getByRole('button', { name: '删除' }));
     const dialog = await screen.findByRole('dialog', { name: '删除数据集「umi_640_notask」的登记' });
     await user.click(within(dialog).getByRole('button', { name: '删除' }));
@@ -111,6 +150,8 @@ describe('数据集详情', () => {
     expect(within(checks).getByText('meta 有变化；新增 12 · 删除 0 · 改动 1 个文件')).toBeInTheDocument();
     expect(screen.getByText('数据和上次预检时不一样了：重新预检后才能在上面开始新任务。')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'droid-200 抽检' })).toBeInTheDocument();
+    // The header can open the dataset in the ReRun viewer too (requester item 22).
+    expect(screen.getByRole('link', { name: '可视化' })).toHaveAttribute('href', `${window.location.origin}/?url=${encodeURIComponent('tos://pai-kit-datasets/lerobot/droid-200/?region=cn-beijing')}`);
     await user.click(screen.getByRole('button', { name: '新建质检任务' }));
     await waitFor(() => expect(currentLocation()).toBe('/tasks/new?dataset_id=ds_droid200'));
     expect(await screen.findByDisplayValue('tos://pai-kit-datasets/lerobot/droid-200')).toBeInTheDocument();

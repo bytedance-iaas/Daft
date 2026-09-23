@@ -647,6 +647,10 @@ export const zh = {
     colCreated: '添加时间',
     colOps: '操作',
     newTask: '新建质检任务',
+    newTaskShort: '新建任务',
+    // Requester item 22: the ReRun viewer of the same deployment
+    visualize: '可视化',
+    visualizeLocal: '本地挂载的数据集不支持可视化',
     recheck: '重新检查',
     repreflight: '重新预检',
     delete: '删除',
