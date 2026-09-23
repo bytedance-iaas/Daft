@@ -51,6 +51,9 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "getReport": ("GET", "/api/v1/tasks/{id}/report"),
     "getReportTable": ("GET", "/api/v1/tasks/{id}/report/tables/{table}"),
     "getEpisode": ("GET", "/api/v1/tasks/{id}/episodes/{index}"),
+    # F6.2 the report's Episode tab (results/episode_list.py, results/sync_curves.py)
+    "listTaskEpisodes": ("GET", "/api/v1/tasks/{id}/episodes"),
+    "getEpisodeSyncCurves": ("GET", "/api/v1/tasks/{id}/episodes/{index}/sync-curves"),
     "getPerf": ("GET", "/api/v1/tasks/{id}/perf"),
     "listAdjudication": ("GET", "/api/v1/tasks/{id}/adjudication"),
     "submitAdjudication": ("POST", "/api/v1/tasks/{id}/adjudication"),
