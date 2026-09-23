@@ -240,6 +240,34 @@ def test_running_filter_includes_tasks_whose_subtask_runs(client_for, clock):
     assert (running["running"], running["paused"]) == (1, 1)
 
 
+def test_tasks_made_before_d45_keep_their_links(client_for, monkeypatch, clock):
+    """A task whose id predates D45 (task_<26 Crockford characters>) still opens, lists,
+    changes and deletes; newer ones are task-<9 letters>; the list orders them by creation."""
+    import re
+
+    from daemon.repo import sqlite as S
+
+    c = client_for(base_path="/curation")
+    rt = _rt(c)
+    legacy, fresh = "task_01HXR2D8QZ7N4Y0M5K3J2H1G0F", S.new_id
+    with monkeypatch.context() as m:
+        m.setattr(S, "new_id", lambda prefix: legacy if prefix == "task" else fresh(prefix))
+        old = seed_task(rt.repo, "made before D45", state="created")
+    clock.advance(1)
+    new = seed_task(rt.repo, "made after", state="created")
+    assert old.id == legacy and re.fullmatch(r"task-[a-z]{9}", new.id)
+    for t in (old, new):
+        r = c.get(f"/curation/api/v1/tasks/{t.id}")
+        assert r.status_code == 200, r.text
+        assert_schema("Task", r.json())
+        assert r.json()["links"][0]["url"].endswith(f"/curation/tasks/{t.id}")
+        assert _patch(c, t.id, {"note": "still here"}, base="/curation").status_code == 200
+    assert [x["id"] for x in c.get("/curation/api/v1/tasks").json()["items"]] == [new.id, old.id]
+    assert c.get("/curation/api/v1/tasks", params={"q": legacy[-8:]}).json()["total"] == 1
+    assert c.delete(f"/curation/api/v1/tasks/{legacy}", headers=JSON).status_code == 204
+    assert c.post(f"/curation/api/v1/tasks/{legacy}/restore", headers=JSON).status_code == 200
+
+
 def test_deleted_filter_lists_soft_deleted_tasks(client_for):
     c = client_for()
     rt = _rt(c)
