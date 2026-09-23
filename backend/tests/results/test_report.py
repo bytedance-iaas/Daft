@@ -1,6 +1,7 @@
 """GET /tasks/{id}/report: revision resolution (``?rev=N``, commit.json only) and links (D22)."""
 from __future__ import annotations
 
+import json
 import shutil
 
 from daemon.results import store_of
@@ -31,6 +32,33 @@ def test_current_report_is_the_committed_report_json_plus_links(world):
     assert ("adjudication", f"/curation/tasks/{tid}/adjudication?source=task_success") in links
     assert ("adjudication", f"/curation/tasks/{tid}/adjudication?source=skill_profile") in links
     assert all(ln.get("absolute") is False for ln in body["links"])
+
+
+def test_module_summaries_carry_chart_ready_statistics(world):
+    """06 §6.2 (F6.2): the served summaries have the 1.0 keys and the chart-ready ones,
+    and name no episode (the Episode tab reads episodes one at a time)."""
+    body = world.get("/report").json()
+    s = {m["id"]: m["summary"] for m in body["report"]["modules"]}
+    assert s["timestamp_check"]["fail_kinds"] == {"fragment": 1}
+    assert {x["name"]: x["count"] for x in s["timestamp_check"]["fail_reasons"]}["fragment"] == 1
+    assert s["timestamp_check"]["duration_min_s"] == 0.5
+    kin = s["kinematic_limits"]
+    assert kin["violation_episodes"] == 1
+    assert kin["violations_by_type"] == [{"name": "velocity", "count": 1}]
+    assert kin["violations_by_joint"] == [{"name": "3", "count": 1}]
+    vq = s["visual_quality"]
+    assert [c["camera"] for c in vq["cameras"]] == ["exterior_1", "wrist"]
+    assert sum(sum(c["hist"]) for c in vq["cameras"]) == 15           # ep3's second camera has no score
+    task = s["task_success"]
+    assert {x["name"]: x["count"] for x in task["judgements"]} == {
+        "success": 4, "review_conflict": 2, "failure": 1}
+    assert task["error_steps"] == [{"name": "arbitration", "count": 1}]
+    assert task["text_sources"] == [{"name": "原始标注", "count": 7}]
+    assert s["dedup"]["counts"]["fail"] == 1 and s["dedup"]["group_sizes"] == []   # no groups.json here
+    assert s["skill_profile"]["family_distribution"] == [{"name": "放置", "count": 5}]
+    assert s["skill_profile"]["disagreement_high"] == 2
+    for m, summary in s.items():
+        assert "ep0000" not in json.dumps(summary, ensure_ascii=False), m
 
 
 def test_links_are_absolute_with_a_public_base_url(client_for, tmp_path):
