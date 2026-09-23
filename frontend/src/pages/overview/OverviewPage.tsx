@@ -1,73 +1,162 @@
-import { Button, Card, Empty, Grid, Popover, Progress, Space, Typography } from '@arco-design/web-react';
+import { Button, Card, Pagination, Progress, Select, Spin, Typography } from '@arco-design/web-react';
 import { IconPlus } from '@arco-design/web-react/icon';
-import { useQuery } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { qk } from '../../api/queries';
-import type { TaskListItem } from '../../api/types';
+import type { Overview } from '../../api/types';
 import { Chart, barOption, chartSummary } from '../../components/Chart';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
 import { RelTime } from '../../components/RelTime';
 import { StateTag } from '../../components/StateTag';
 import { compactNumber, grouped, percent } from '../../lib/format';
+import { OVERVIEW_PERIODS, activePageSize, readOverviewPeriod, writeOverviewPeriod, type OverviewPeriod } from '../../lib/overview';
 import { stageLabel } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
-const { Row, Col } = Grid;
-
-function TodoCard({ label, value, foot, to, extra, testId }: { label: string; value: number; foot?: string; to?: string; extra?: ReactNode; testId: string }) {
+function StatCell({ label, value, to, testId }: { label: string; value: ReactNode; to?: string; testId: string }) {
   const body = (
-    <div className="stat-cell" style={{ borderColor: value ? 'var(--c-warning)' : undefined, cursor: to ? 'pointer' : 'default' }} data-testid={testId}>
+    <div className="stat-cell" style={{ cursor: to ? 'pointer' : 'default' }} data-testid={testId}>
       <div className="stat-label">{label}</div>
-      <div className="stat-value" style={{ color: value ? 'var(--c-text-1)' : 'var(--c-text-3)' }}>
-        {value}
-      </div>
-      {foot ? <div className="stat-foot">{foot}</div> : null}
-      {extra}
+      <div className="stat-value">{value}</div>
     </div>
   );
-  return to && value ? <Link to={to} style={{ color: 'inherit' }}>{body}</Link> : body;
+  return to ? (
+    <Link to={to} style={{ color: 'inherit' }}>
+      {body}
+    </Link>
+  ) : (
+    body
+  );
+}
+
+/** The height of `ref`'s element, measured before paint and again whenever it changes. */
+function useHeight<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [height, setHeight] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => setHeight(el.clientHeight);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, height] as const;
 }
 
 /**
- * C4 cannot filter the task list by 「有待裁决」 or 「交付过期」, so the overview lists those tasks
- * itself from the newest page of tasks (see README «契约缺口»).
+ * 运行情况: the counts and the busy tasks with their progress. The card is as tall as the period
+ * card next to it (styles.css «概览»); the list pages when the tasks do not fit in that height.
  */
-function TaskPicker({ tasks, to, empty }: { tasks: TaskListItem[]; to: (t: TaskListItem) => string; empty: string }) {
-  if (!tasks.length) return <Typography.Text type="secondary">{empty}</Typography.Text>;
+function RunningCard({ running }: { running: Overview['running'] }) {
+  const [area, height] = useHeight<HTMLDivElement>();
+  const [page, setPage] = useState(1);
+  const items = running.active;
+  const size = activePageSize(height, items.length);
+  const current = Math.min(page, Math.max(1, Math.ceil(items.length / size)));
   return (
-    <ul style={{ margin: 0, paddingLeft: 18, maxHeight: 240, overflow: 'auto' }}>
-      {tasks.map((t) => (
-        <li key={t.id}>
-          <Link to={to(t)}>{t.name}</Link>
-          {t.pending_adjudication ? <span className="muted"> · {zh.taskList.pendingBadge(t.pending_adjudication)}</span> : null}
-        </li>
-      ))}
-    </ul>
+    <Card className="overview-running" title={zh.overview.running}>
+      <div className="stat-grid">
+        <StatCell testId="run-running" label={zh.overview.runningCount} value={running.running} to="/tasks?state=running" />
+        <StatCell testId="run-queued" label={zh.overview.queuedCount} value={running.queued} to="/tasks?state=queued" />
+        <StatCell testId="run-paused" label={zh.overview.pausedCount} value={running.paused} to="/tasks?state=paused" />
+      </div>
+      <div ref={area} className="overview-active" data-testid="active-tasks">
+        {!items.length ? <Typography.Text type="secondary">{zh.overview.noActive}</Typography.Text> : null}
+        {items.slice((current - 1) * size, current * size).map((a) => (
+          <div key={a.task.id} className="overview-active-row" data-testid="active-task">
+            <div className="overview-active-head">
+              <Link to={`/tasks/${a.task.id}`} className="overview-active-name" title={a.task.name}>
+                {a.task.name}
+              </Link>
+              <StateTag state={a.task.state} size="small" />
+              <span className="muted nowrap" style={{ fontSize: 12 }}>
+                {a.stage ? stageLabel(a.stage) : ''} {a.done} / {a.total}
+              </span>
+            </div>
+            <Progress percent={a.total ? Math.round((a.done / a.total) * 100) : 0} size="small" />
+          </div>
+        ))}
+        {items.length > size ? (
+          <div className="overview-pager">
+            <Pagination simple size="mini" current={current} pageSize={size} total={items.length} onChange={setPage} />
+          </div>
+        ) : null}
+      </div>
+    </Card>
   );
 }
 
-/** 概览 (07 §4.3, D36): what needs attention, what runs, the last 7 days, datasets. */
+/** The chosen period: what finished, how many episodes, the pass rate and the tokens per bucket. */
+function PeriodCard({ recent, days, onDays, switching }: { recent: Overview['recent']; days: OverviewPeriod; onDays: (d: OverviewPeriod) => void; switching: boolean }) {
+  const bars = recent.tokens_per_bucket.map((b) => ({ name: b.label, value: b.tokens }));
+  const total = bars.reduce((a, b) => a + b.value, 0);
+  const base = barOption(bars);
+  // Token counts run to millions: size the grid to its axis labels instead of a fixed margin; with
+  // 30 days or 13 weeks in a half-width card, date labels that would overlap are left out.
+  const option = {
+    ...base,
+    grid: { ...(base.grid as object), left: 8, containLabel: true },
+    xAxis: { ...(base.xAxis as object), axisLabel: { hideOverlap: true } },
+  };
+  return (
+    <Card
+      className="overview-period"
+      title={
+        <Select
+          className="overview-period-select"
+          aria-label={zh.overview.period}
+          bordered={false}
+          value={days}
+          onChange={(v: OverviewPeriod) => onDays(v)}
+          options={OVERVIEW_PERIODS.map((d) => ({ label: zh.overview.periods[d], value: d }))}
+          triggerProps={{ autoAlignPopupWidth: false }}
+        />
+      }
+      extra={switching ? <Spin size={14} /> : null}
+    >
+      <div className="stat-grid">
+        <StatCell testId="recent-finished" label={zh.overview.finished} value={grouped(recent.tasks_finished)} />
+        <StatCell testId="recent-episodes" label={zh.overview.episodesChecked} value={grouped(recent.episodes_checked)} />
+        <StatCell testId="recent-pass" label={zh.overview.passRate} value={percent(recent.pass_rate)} />
+        <StatCell testId="recent-tokens" label={zh.overview.tokens} value={compactNumber(total)} />
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }} data-testid="tokens-chart-title">
+          {zh.overview.tokensChart(recent.bucket)}
+        </Typography.Text>
+        <Chart option={option} height={160} summary={chartSummary(bars)} />
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * 概览 (07 §4.3, D36; F6.1): two cards of one height side by side - 运行情况 and the chosen period
+ * (近 7 天 / 近 1 月 / 近 3 月 / 近 1 年, remembered per browser).
+ */
 export function OverviewPage() {
   const navigate = useNavigate();
+  const [days, setDays] = useState<OverviewPeriod>(readOverviewPeriod);
   const q = useQuery({
-    queryKey: qk.overview,
-    queryFn: () => unwrap(api().GET('/overview')),
+    queryKey: [...qk.overview, { days }],
+    queryFn: () => unwrap(api().GET('/overview', { params: { query: { days } } })),
+    placeholderData: keepPreviousData,
     refetchInterval: (qr) => {
       const r = qr.state.data?.running;
       return r && r.running + r.queued + r.paused > 0 ? 5000 : false;
     },
   });
+  const choose = (d: OverviewPeriod) => {
+    setDays(d);
+    writeOverviewPeriod(d);
+  };
   const o = q.data;
-  const needTasks = Boolean(o && (o.todo.adjudication.tasks || o.todo.delivery_pending));
-  const recentTasks = useQuery({
-    queryKey: qk.tasks({ page: 1, pageSize: 100, purpose: 'overview' }),
-    queryFn: () => unwrap(api().GET('/tasks', { params: { query: { page: 1, page_size: 100 } } })),
-    enabled: needTasks,
-  });
-  const tasks = recentTasks.data?.items ?? [];
   const header = (
     <PageHeader
       crumbs={[{ label: zh.overview.title }]}
@@ -90,118 +179,24 @@ export function OverviewPage() {
   }
   if (!o) return header;
   const live = o.running.running + o.running.queued + o.running.paused > 0;
-  const days = o.recent.tokens_per_bucket.map((d) => ({ name: d.label, value: d.tokens }));
-  const totalTokens = o.recent.tokens_per_bucket.reduce((a, d) => a + d.tokens, 0);
-  const todoCount = o.todo.error_tasks + o.todo.adjudication.tasks + o.todo.delivery_pending + o.todo.datasets_changed + o.todo.credentials_failed + o.todo.backends_failed;
   return (
     <div>
       {header}
       <div className="card-gap">
-        <Card title={zh.overview.todo} extra={live ? <span className="muted">{zh.overview.autoRefresh}</span> : null}>
-          {!todoCount ? <Typography.Text type="secondary">{zh.overview.todoNone}</Typography.Text> : null}
-          <div className="stat-grid">
-            <TodoCard testId="todo-errors" label={zh.overview.errorTasks} value={o.todo.error_tasks} foot={zh.overview.errorTasksFoot} to="/tasks?state=completed_with_errors" />
-            <TodoCard
-              testId="todo-adjudication"
-              label={zh.overview.adjudication}
-              value={o.todo.adjudication.episodes}
-              foot={zh.overview.adjudicationFoot(o.todo.adjudication.tasks)}
-              extra={
-                o.todo.adjudication.tasks ? (
-                  <Popover trigger="click" content={<TaskPicker tasks={tasks.filter((t) => t.pending_adjudication > 0)} to={(t) => `/tasks/${t.id}/adjudication`} empty={zh.common.loading} />}>
-                    <Button type="text" size="mini" style={{ padding: 0 }}>
-                      {zh.overview.showTasks}
-                    </Button>
-                  </Popover>
-                ) : null
-              }
-            />
-            <TodoCard
-              testId="todo-delivery"
-              label={zh.overview.delivery}
-              value={o.todo.delivery_pending}
-              foot={zh.overview.deliveryFoot}
-              extra={
-                o.todo.delivery_pending ? (
-                  <Popover trigger="click" content={<TaskPicker tasks={tasks.filter((t) => t.delivery_stale)} to={(t) => `/tasks/${t.id}`} empty={zh.common.loading} />}>
-                    <Button type="text" size="mini" style={{ padding: 0 }}>
-                      {zh.overview.showTasks}
-                    </Button>
-                  </Popover>
-                ) : null
-              }
-            />
-            <TodoCard testId="todo-datasets" label={zh.overview.datasetsChanged} value={o.todo.datasets_changed} foot={zh.overview.datasetsChangedFoot} to="/datasets?check_state=changed" />
-            <TodoCard testId="todo-keys" label={zh.overview.keysFailed} value={o.todo.credentials_failed} to="/credentials" />
-            <TodoCard testId="todo-backends" label={zh.overview.backendsFailed} value={o.todo.backends_failed} to="/credentials#vlm" />
+        <div className="overview-cards">
+          <div className="overview-running-cell">
+            <RunningCard running={o.running} />
           </div>
-        </Card>
-        <Row gutter={16}>
-          <Col span={12}>
-            <Card title={zh.overview.running} style={{ height: '100%' }}>
-              <div className="stat-grid">
-                <TodoCard testId="run-running" label={zh.overview.runningCount} value={o.running.running} to="/tasks?state=running" />
-                <TodoCard testId="run-queued" label={zh.overview.queuedCount} value={o.running.queued} to="/tasks?state=queued" />
-                <TodoCard testId="run-paused" label={zh.overview.pausedCount} value={o.running.paused} to="/tasks?state=paused" />
-              </div>
-              <div style={{ marginTop: 12 }} data-testid="active-tasks">
-                {!o.running.active.length ? (
-                  <Typography.Text type="secondary">{zh.overview.noActive}</Typography.Text>
-                ) : (
-                  o.running.active.map((a) => (
-                    <div key={a.task.id} style={{ marginBottom: 8 }}>
-                      <Space>
-                        <Link to={`/tasks/${a.task.id}`}>{a.task.name}</Link>
-                        <StateTag state={a.task.state} size="small" />
-                        <span className="muted" style={{ fontSize: 12 }}>
-                          {a.stage ? stageLabel(a.stage) : ''} {a.done} / {a.total}
-                        </span>
-                      </Space>
-                      <Progress percent={a.total ? Math.round((a.done / a.total) * 100) : 0} size="small" />
-                    </div>
-                  ))
-                )}
-              </div>
-            </Card>
-          </Col>
-          <Col span={12}>
-            <Card title={zh.overview.recent} style={{ height: '100%' }}>
-              <div className="stat-grid">
-                <TodoCard testId="recent-finished" label={zh.overview.finished} value={o.recent.tasks_finished} />
-                <div className="stat-cell" data-testid="recent-episodes">
-                  <div className="stat-label">{zh.overview.episodesChecked}</div>
-                  <div className="stat-value">{grouped(o.recent.episodes_checked)}</div>
-                </div>
-                <div className="stat-cell" data-testid="recent-pass">
-                  <div className="stat-label">{zh.overview.passRate}</div>
-                  <div className="stat-value">{percent(o.recent.pass_rate)}</div>
-                </div>
-                <div className="stat-cell" data-testid="recent-tokens">
-                  <div className="stat-label">{zh.overview.tokens}</div>
-                  <div className="stat-value">{compactNumber(totalTokens)}</div>
-                </div>
-              </div>
-              {days.length ? (
-                <div style={{ marginTop: 12 }}>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {zh.overview.tokensChart}
-                  </Typography.Text>
-                  <Chart option={barOption(days)} height={160} summary={chartSummary(days)} />
-                </div>
-              ) : (
-                <Empty />
-              )}
-            </Card>
-          </Col>
-        </Row>
-        <Card title={zh.overview.datasets} extra={<Link to="/datasets">{zh.nav.datasets}</Link>}>
-          <div className="stat-grid">
-            <TodoCard testId="ds-total" label={zh.overview.datasetsTotal} value={o.datasets.total} to="/datasets" />
-            <TodoCard testId="ds-changed" label={zh.overview.datasetsChanged} value={o.datasets.changed} to="/datasets?check_state=changed" />
-          </div>
-        </Card>
+          <PeriodCard recent={o.recent} days={days} onDays={choose} switching={q.isPlaceholderData} />
+        </div>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {zh.overview.generatedAt} <RelTime ms={o.generated_at} />
+          {live ? (
+            <>
+              {' · '}
+              <span>{zh.overview.autoRefresh}</span>
+            </>
+          ) : null}
         </Typography.Text>
       </div>
     </div>

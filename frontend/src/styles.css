@@ -473,3 +473,95 @@ button.video-placeholder {
   min-width: 0;
   word-break: break-all;
 }
+
+/* 概览 (07 §4.3, F6.1): 运行情况 and the period card side by side, one height. The period card
+   sets the row's height; the running card is laid over its cell (absolute) so its task list never
+   makes the row taller, and it pages to fit (lib/overview.ts: ACTIVE_ROW_PX, ACTIVE_PAGER_PX). */
+.overview-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.overview-running-cell {
+  position: relative;
+  min-height: 320px;
+}
+
+.overview-running {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.overview-running > .arco-card-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.overview-active {
+  flex: 1;
+  min-height: 0;
+  margin-top: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.overview-active-row {
+  flex: none;
+  height: 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.overview-active-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.overview-active-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-pager {
+  flex: none;
+  height: 32px;
+  margin-top: auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+
+.overview-period .stat-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.overview-period-select {
+  width: 100px;
+}
+
+/* the range picker is the card's title: title size, flush with the card's padding */
+.overview-period .overview-period-select.arco-select-single .arco-select-view {
+  padding-left: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--c-text-1);
+}
+
+@media (max-width: 960px) {
+  .overview-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
