@@ -967,7 +967,14 @@ export const zh = {
       labels: '任务标注',
       missing_fields: '缺失字段',
       source: '源文件清单',
+      container: '数据包（mcap / Lance）',
     } as Record<string, string>,
+    containerValue: (format: string, delivery: string, findings: string) =>
+      `${format} · 交付：${delivery}${findings ? ` · 体检：${findings}` : ''}`,
+    /** One of v1's container findings ({项, 状态, 说明}, export/report.container_findings). */
+    containerFinding: (f: Record<string, unknown>) =>
+      `${String(f['项'] ?? '')}：${String(f['状态'] ?? '')}${f['说明'] ? `（${String(f['说明'])}）` : ''}`,
+    containerFindingSep: '；',
     labelsValue: (withTask: number, without: number) => `${withTask} 条有；${without} 条没有`,
     notRead: '未读到',
     none: '无',

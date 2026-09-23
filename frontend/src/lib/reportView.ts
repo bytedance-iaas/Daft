@@ -30,6 +30,18 @@ export function integrityValue(key: string, v: unknown): string {
     if (typeof o.with_task === 'number' && typeof o.without_task === 'number') return zh.report.labelsValue(o.with_task, o.without_task);
   }
   if (key === 'fps' && typeof v === 'number') return `${v} fps`;
+  if (key === 'container' && v && typeof v === 'object' && !Array.isArray(v)) {
+    // mcap / lance (D44): how the dataset is delivered and v1's container findings
+    // ([{项, 状态, 说明}], export/report.container_findings)
+    const o = v as { format?: unknown; delivery?: unknown; findings?: unknown };
+    const findings = Array.isArray(o.findings)
+      ? o.findings
+          .filter((f): f is Record<string, unknown> => Boolean(f) && typeof f === 'object')
+          .map((f) => zh.report.containerFinding(f))
+          .join(zh.report.containerFindingSep)
+      : '';
+    return zh.report.containerValue(String(o.format ?? ''), String(o.delivery ?? '—'), findings);
+  }
   if (v && typeof v === 'object' && !Array.isArray(v)) {
     return Object.entries(v as Record<string, unknown>)
       .map(([k, x]) => `${fieldLabel(k)} ${formatValue(x)}`)
