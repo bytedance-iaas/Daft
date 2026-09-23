@@ -123,7 +123,6 @@ export const zh = {
     verdict: '判决',
     dedup: '去重',
     profile: '技能画像',
-    profile_vlm: '技能画像 VLM 档',
     final: '终判',
     export: '导出',
     report: '报告',

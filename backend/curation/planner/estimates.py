@@ -77,7 +77,7 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
             seconds += AGGREGATE_S
         elif sid == "dedup":
             seconds += selected * DEDUP_S_PER_EPISODE
-        elif sid in ("profile", "profile_vlm"):
+        elif sid == "profile":
             for module in stage["modules"]:
                 if module == "skill_profile":
                     n = max(0, selected - autolabelled) * CAPTIONS_PER_EPISODE
@@ -91,7 +91,7 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
     if any(s["id"] == "vlm" and "task_success" in s.get("modules", ()) for s in stages):
         notes.append("task_success arbitration and label-guard calls depend on the data "
                      "and are not counted")
-    if any(s["id"] in ("profile", "profile_vlm") and "skill_profile" in s.get("modules", ()) for s in stages):
+    if any(s["id"] == "profile" and "skill_profile" in s.get("modules", ()) for s in stages):
         notes.append("skill_profile text calls (taxonomy, label audit) are per dataset "
                      "and not counted")
     if uncounted:

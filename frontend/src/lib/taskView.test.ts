@@ -123,7 +123,7 @@ describe('merged stages (requester item 11)', () => {
       stage('numeric', 'succeeded', 640, 640),
       stage('frame', 'succeeded', 631, 631),
       stage('vlm', 'running', 410, 631),
-      ...['verdict', 'dedup', 'profile_vlm', 'final', 'report', 'export', 'verify'].map((id) => stage(id, 'pending')),
+      ...['verdict', 'dedup', 'profile', 'final', 'report', 'export', 'verify'].map((id) => stage(id, 'pending')),
     ];
     // 9 rows once 报告生成 and 交付 are merged: (3 + 0.65) / 9
     expect(overallPercent(groupStages(running))).toBe(41);
@@ -166,7 +166,7 @@ describe('display state while a subtask runs (D46)', () => {
 });
 
 function allDoneStages(): StageProgress[] {
-  return ['autolabel', 'numeric', 'frame', 'vlm', 'verdict', 'dedup', 'profile_vlm', 'final', 'export', 'report', 'verify'].map((id) => stage(id, 'succeeded', 1, 1));
+  return ['autolabel', 'numeric', 'frame', 'vlm', 'verdict', 'dedup', 'profile', 'final', 'export', 'report', 'verify'].map((id) => stage(id, 'succeeded', 1, 1));
 }
 
 describe('actionsFor (07 §4.1)', () => {

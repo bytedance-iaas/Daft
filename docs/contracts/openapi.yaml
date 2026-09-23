@@ -1767,7 +1767,7 @@ components:
       required: [registry_version, stages, review_lines, modules]
       properties:
         registry_version: {type: string}
-        stages: {type: array, items: {enum: [numeric, frame, vlm, post_verdict, profile_vlm]}}
+        stages: {type: array, items: {enum: [numeric, frame, vlm, post_verdict]}}
         review_lines:
           type: array
           description: >-
@@ -1789,7 +1789,7 @@ components:
               level: {enum: [episode, dataset]}
               gate: {enum: [hard, soft, dedup, none]}
               needs: {type: array, items: {enum: [timestamps, action, state, video, embodiment_profile, vlm, raw_bytes, eef_input]}}
-              stage: {enum: [numeric, frame, vlm, post_verdict, profile_vlm]}
+              stage: {enum: [numeric, frame, vlm, post_verdict]}
               depends_on:
                 type: array
                 items: {enum: [numeric_gates, frame_gates, autolabel, funnel_verdict, dedup, eef_video_consistency]}

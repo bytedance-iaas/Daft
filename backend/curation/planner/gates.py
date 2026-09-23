@@ -35,7 +35,6 @@ STAGE_GATES: dict[str, tuple[str, ...]] = {
     "autolabel": ("caption",),
     "vlm": ("episode", "probe", "endstate", "arbitration", "guard_caption"),
     "profile": ("caption", "llm", "audit"),
-    "profile_vlm": ("caption", "llm", "audit"),
 }
 
 #: Where each gate lives in v1's pipeline config. The three gates missing here are

@@ -91,7 +91,7 @@
      "episodes": "keep"
     },
     {
-     "id": "profile_vlm",
+     "id": "profile",
      "kind": "vlm",
      "command": "check",
      "modules": [
@@ -208,7 +208,7 @@
      "episodes": "keep"
     },
     {
-     "id": "profile_vlm",
+     "id": "profile",
      "kind": "vlm",
      "command": "check",
      "modules": [
@@ -324,7 +324,7 @@
      "episodes": "keep"
     },
     {
-     "id": "profile_vlm",
+     "id": "profile",
      "kind": "vlm",
      "command": "check",
      "modules": [
@@ -440,7 +440,7 @@
      "episodes": "keep"
     },
     {
-     "id": "profile_vlm",
+     "id": "profile",
      "kind": "vlm",
      "command": "check",
      "modules": [

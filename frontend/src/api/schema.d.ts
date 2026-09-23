@@ -1171,7 +1171,7 @@ export interface components {
         };
         ModuleRegistry: {
             registry_version: string;
-            stages: ("numeric" | "frame" | "vlm" | "post_verdict" | "profile_vlm")[];
+            stages: ("numeric" | "frame" | "vlm" | "post_verdict")[];
             /** @description The questions a person can be asked on the adjudication page (D43). A page shows a line it has no dedicated view for from this entry: its title, the question's reason and one button per decision. */
             review_lines: components["schemas"]["ReviewLine"][];
             modules: {
@@ -1184,7 +1184,7 @@ export interface components {
                 gate: "hard" | "soft" | "dedup" | "none";
                 needs: ("timestamps" | "action" | "state" | "video" | "embodiment_profile" | "vlm" | "raw_bytes" | "eef_input")[];
                 /** @enum {unknown} */
-                stage: "numeric" | "frame" | "vlm" | "post_verdict" | "profile_vlm";
+                stage: "numeric" | "frame" | "vlm" | "post_verdict";
                 /** @description a module id (registry 1.4) means that module's own results */
                 depends_on: ("numeric_gates" | "frame_gates" | "autolabel" | "funnel_verdict" | "dedup" | "eef_video_consistency")[];
                 /**
@@ -2098,7 +2098,7 @@ export interface components {
             bound_by: "task" | "model" | "backend" | "site" | "planner" | "running_tasks";
         };
         stage: {
-            /** @description v1's stages are autolabel, numeric, frame, vlm, verdict, dedup, profile_vlm, final; stages of new modules follow the same pattern */
+            /** @description v1's stages are autolabel, numeric, frame, vlm, verdict, dedup, profile, final; stages of new modules follow the same pattern */
             id: string;
             /** @enum {unknown} */
             kind: "cpu" | "vlm" | "aggregate";

@@ -42,7 +42,7 @@ def chain(tmp_path_factory, mini_dataset):
 
 def test_every_step_ran_and_fits_its_contract(chain):
     assert list(chain.steps) == ["preflight", "plan", "snapshot", "autolabel", "numeric",
-                                 "frame", "vlm", "funnel", "dedup", "profile_vlm", "final",
+                                 "frame", "vlm", "funnel", "dedup", "profile", "final",
                                  "report", "export", "verify"]
     assert all(s.rc == 0 for s in chain.steps.values())
 
@@ -61,7 +61,7 @@ def test_the_funnel_takes_the_survivors_of_each_stage(chain):
     assert ts == {"total": 6, "pass": 3, "fail": 0, "abstain": 3, "scored": 0, "error": 0}
     assert s["autolabel"].doc["counts"] == {"total": 2, "ok": 2, "unclear": 0, "error": 0}
     assert s["dedup"].doc["modules"]["dedup"]["episodes"]["fail"] == 1       # 7 copies 3
-    assert s["profile_vlm"].doc["modules"]["skill_profile"]["episodes"]["total"] == 5
+    assert s["profile"].doc["modules"]["skill_profile"]["episodes"]["total"] == 5
 
 
 def test_files_fit_their_contracts(chain):
@@ -123,7 +123,7 @@ def test_export_delivers_passed_and_verify_writes_complete(chain):
 
 def test_usage_is_booked_per_module_on_both_ledgers(chain):
     lines = []
-    for name in ("autolabel", "vlm", "profile_vlm"):
+    for name in ("autolabel", "vlm", "profile"):
         lines += [e for e in chain.steps[name].events if e["kind"] == "usage"]
     assert {e["module"] for e in lines} == {"autolabel", "task_success", "skill_profile"}
     assert {e["ledger"] for e in lines} == {"actual", "attributed"}

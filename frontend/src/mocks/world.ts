@@ -577,7 +577,7 @@ const allDone = (total: number, withProfile = true): StageProgress[] => [
   stage('vlm', 'succeeded', total, total, 408),
   stage('verdict', 'succeeded', 1, 1, 1),
   stage('dedup', 'succeeded', total, total, 11),
-  ...(withProfile ? [stage('profile_vlm', 'succeeded', total, total, 131)] : []),
+  ...(withProfile ? [stage('profile', 'succeeded', total, total, 131)] : []),
   stage('final', 'succeeded', 1, 1, 1),
   stage('export', 'succeeded', total, total, 64),
   stage('report', 'succeeded', 1, 1, 6),
@@ -633,7 +633,7 @@ export function seedTasks(now: number): Task[] {
         stage('numeric', 'succeeded', 640, 640, 5),
         stage('frame', 'succeeded', 631, 631, 1033, { note: '数值档拦下了 9 条（时间戳异常），后面的档只处理剩下的 631 条' }),
         stage('vlm', 'running', 410, 631, 1102, { eta_s: 1440 }),
-        ...notYet('verdict', 'dedup', 'profile_vlm', 'final', 'report', 'export', 'verify'),
+        ...notYet('verdict', 'dedup', 'profile', 'final', 'report', 'export', 'verify'),
       ],
       modules: {
         kinematic_limits: { availability: 'unsupported', unavailable_reason: '机器人型号 umi_dual_handheld_gripper 不在规格库，整项跳过', state: 'skipped' },
@@ -665,7 +665,7 @@ export function seedTasks(now: number): Task[] {
         stage('vlm', 'completed_with_errors', 49, 49, 542, { note: '2 条出错（ep 7、ep 31），暂不交付，等待补跑' }),
         stage('verdict', 'succeeded', 1, 1, 1),
         stage('dedup', 'succeeded', 42, 42, 11),
-        stage('profile_vlm', 'succeeded', 41, 41, 131),
+        stage('profile', 'succeeded', 41, 41, 131),
         stage('final', 'succeeded', 1, 1, 1),
         stage('export', 'skipped', 0, 0, null, { note: '主流程结束时没有可交付的条目，没有导出' }),
         stage('report', 'succeeded', 1, 1, 6),
@@ -742,7 +742,7 @@ export function seedTasks(now: number): Task[] {
         stage('numeric', 'succeeded', 430, 430, 4),
         stage('frame', 'succeeded', 430, 430, 700),
         stage('vlm', 'running', 180, 430, 900),
-        ...notYet('verdict', 'dedup', 'profile_vlm', 'final', 'report', 'export', 'verify'),
+        ...notYet('verdict', 'dedup', 'profile', 'final', 'report', 'export', 'verify'),
       ],
       modules: { task_success: { state: 'running' }, dedup: { state: 'pending', episodes_total: 0 }, skill_profile: { state: 'pending', episodes_total: 0 } },
       usage: usageTotals(640_000, 20_000, 9_000, 300_000, 400),
@@ -764,7 +764,7 @@ export function seedTasks(now: number): Task[] {
         stage('autolabel', 'succeeded', 800, 800, 1900),
         stage('numeric', 'succeeded', 3200, 3200, 30),
         stage('frame', 'running', 1216, 3200, 4100),
-        ...notYet('vlm', 'verdict', 'dedup', 'profile_vlm', 'final', 'report', 'export', 'verify'),
+        ...notYet('vlm', 'verdict', 'dedup', 'profile', 'final', 'report', 'export', 'verify'),
       ],
       modules: { visual_quality: { state: 'running' }, video_action_sync: { state: 'running' }, task_success: { state: 'pending', episodes_total: 0 }, dedup: { state: 'pending', episodes_total: 0 }, skill_profile: { state: 'pending', episodes_total: 0 } },
       usage: usageTotals(910_000, 30_000, 12_000, 400_000, 800),
@@ -960,7 +960,7 @@ export function mainPlan(): Plan {
       { id: 'vlm', kind: 'vlm', command: 'check', modules: ['task_success'], episodes: 'survivors:frame', gates: { episode: 32, probe: 64, endstate: 64, arbitration: 32, guard_caption: 32 }, merge: { strategy: 'none', groups: [] } },
       { id: 'verdict', kind: 'aggregate', command: 'aggregate', phase: 'funnel' },
       { id: 'dedup', kind: 'cpu', command: 'check', concurrency: 1, modules: ['dedup'], episodes: 'keep' },
-      { id: 'profile_vlm', kind: 'vlm', command: 'check', modules: ['skill_profile'], episodes: 'keep-minus-duplicates', gates: { caption: 32, llm: 16, audit: 16 }, merge: { strategy: 'none', groups: [] } },
+      { id: 'profile', kind: 'vlm', command: 'check', modules: ['skill_profile'], episodes: 'keep-minus-duplicates', gates: { caption: 32, llm: 16, audit: 16 }, merge: { strategy: 'none', groups: [] } },
       { id: 'final', kind: 'aggregate', command: 'aggregate', phase: 'final' },
     ],
     estimates: { vlm_requests: 780, wall_clock_s: 900, notes: ['现有两个 VLM 模块不参与请求合并（merge = none）'] },
@@ -1251,7 +1251,7 @@ export function mainPerf(scope: Perf['scope'], subtask: string | null, revision:
       { id: 'frame', wall_s: Math.round(144 * k), share: 0.14 },
       { id: 'vlm', wall_s: Math.round(542 * k), share: 0.55 },
       { id: 'dedup', wall_s: Math.round(11 * k), share: 0.01 },
-      { id: 'profile_vlm', wall_s: Math.round(131 * k), share: 0.13 },
+      { id: 'profile', wall_s: Math.round(131 * k), share: 0.13 },
       { id: 'report', wall_s: Math.round(6 * k), share: 0.01 },
     ],
     retries: { outer_attempts: Math.round(12 * k), rescued: Math.round(9 * k) },
@@ -1369,12 +1369,12 @@ export function mainLogs(now: number): LogLine[] {
   }
   push(6 * MIN, 'system', 'warn', 'system pause: daemon upgrade v2.0.3 -> v2.0.4; stopping after in-flight episodes');
   push(8 * MIN, 'system', 'info', 'system resume: continuing from checkpoint (3 in-flight episodes will be re-requested)');
-  push(15 * MIN, 'profile_vlm', 'error', 'skill_profile: 429 QuotaExceeded x20, circuit open, exit 4');
+  push(15 * MIN, 'profile', 'error', 'skill_profile: 429 QuotaExceeded x20, circuit open, exit 4');
   push(17 * MIN, 'system', 'info', 'main run finished: completed_with_errors (revision 1)');
   push(62 * MIN, 'system', 'info', 'subtask retry #1 started', null, 'sub_retry1');
   push(63 * MIN, 'vlm', 'error', 'episode 7: arbitration request timed out after 60s (attempt 3/3); marked as error', 7, 'sub_retry1');
   push(63 * MIN + 2000, 'vlm', 'error', 'episode 31: arbitration request timed out after 60s (attempt 3/3); marked as error', 31, 'sub_retry1');
-  push(68 * MIN, 'profile_vlm', 'info', 'skill_profile: 41 captions, 6 families, 5 label divergences', null, 'sub_retry1');
+  push(68 * MIN, 'profile', 'info', 'skill_profile: 41 captions, 6 families, 5 label divergences', null, 'sub_retry1');
   push(69 * MIN, 'system', 'info', 'subtask retry #1 finished (revision 2)', null, 'sub_retry1');
   return out.sort((a, b) => a.ts - b.ts);
 }

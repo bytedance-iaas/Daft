@@ -22,7 +22,7 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
                                "pass_rate": 0.625}
     assert task["result_rev"] == 1 and task["delivery_stale"] is False
     assert [s["id"] for s in task["progress"]["stages"]] == [
-        "autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile_vlm", "final", "report",
+        "autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile", "final", "report",
         "export", "verify"]
     assert all(s["state"] in ("succeeded", "completed_with_errors")
                for s in task["progress"]["stages"]), task["progress"]

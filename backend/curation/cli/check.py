@@ -82,7 +82,7 @@ def _modules(raw: str) -> tuple[list[str], str]:
     if advisory and len(advisory) != len(mods):
         raise UsageError(f"advisory module(s) {advisory} run in a call of their own (they read every "
                          f"selected episode, not the survivors); leave them out of this call")
-    if stage in ("post_verdict", "profile_vlm") and len(mods) != 1:
+    if stage == "post_verdict" and len(mods) != 1:
         raise UsageError("dedup and skill_profile run one at a time (profile reads the "
                          "kept set after dedup)")
     ordered = [m for m in registry.ids() if m in mods]
