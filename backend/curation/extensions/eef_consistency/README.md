@@ -113,7 +113,7 @@
    cat $G/observations_seed/*/*.jsonl > /tmp/seeds.jsonl
    ```
 
-   第一次上传返回 201，`handle` 是 `upload:upl_…`，`validation.summary` 里 `samples: 7`、`frames: 2009`、
+   第一次上传返回 201，`handle` 是 `upload:upl-…`（9 位小写字母，D45），`validation.summary` 里 `samples: 7`、`frames: 2009`、
    `max_reprojection_difference_px` 约 0.013；第二次返回 400 `validation_failed`，`details.errors` 每条带
    `field`（JSON 路径）、`sample_id`、`frame_index`、`camera_id`、`point_id`，`code: forbidden_key`。
    然后在浏览器打开 <http://localhost:8080/curation/tasks/new>：数据来源选本地路径 `eef_ds2_lr3`，「快速质检」不会勾上
