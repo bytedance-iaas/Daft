@@ -38,6 +38,9 @@ interface ChartSpec {
   colors?: (string | undefined)[];
   band?: [number, number];
   valueName?: string;
+  valueRange?: [number, number];
+  /** A line under the chart (per-camera means...). */
+  foot?: ReactNode;
   /** A ready option (grouped bars...) with its accessible summary. */
   option?: ChartOption;
   summary?: string;
@@ -77,7 +80,7 @@ function chartHeight(c: ChartSpec): number {
 }
 
 function ChartBlock({ spec }: { spec: ChartSpec }) {
-  const option = spec.option ?? barOption(spec.items ?? [], { horizontal: spec.horizontal, colors: spec.colors, band: spec.band, valueName: spec.valueName });
+  const option = spec.option ?? barOption(spec.items ?? [], { horizontal: spec.horizontal, colors: spec.colors, band: spec.band, valueName: spec.valueName, valueRange: spec.valueRange });
   const summary = `${spec.title}：${spec.summary ?? chartSummary(spec.items ?? [])}`;
   return (
     <div className="section-chart" data-testid={`chart-${spec.key}`}>
@@ -88,6 +91,7 @@ function ChartBlock({ spec }: { spec: ChartSpec }) {
       <LazyVisible placeholder={<div style={{ height: chartHeight(spec) }} />}>
         <Chart option={option} summary={summary} height={chartHeight(spec)} />
       </LazyVisible>
+      {spec.foot ? <div className="section-note muted">{spec.foot}</div> : null}
     </div>
   );
 }
@@ -159,6 +163,13 @@ const scoreHist = (s: Summary): ChartSpec | null => {
   return items?.length ? { key: 'score', title: S().score.hist, desc: S().score.histDesc, items } : null;
 };
 
+/** A lag axis that shows the tolerance band and every reading, on round tenths. */
+function lagRange(lags: number[], tol: number): [number, number] {
+  const lo = Math.min(-tol, ...lags) * 1.2;
+  const hi = Math.max(tol, ...lags) * 1.2;
+  return [Math.floor(lo * 10) / 10, Math.ceil(hi * 10) / 10];
+}
+
 const pieces = (items: Item[] | null, names: Record<string, string> = {}) => (items ?? []).map((i) => `${names[i.name] ?? i.name} ${i.value}`).join(' · ');
 
 // -------------------------------------------------------------------------- the modules
@@ -229,6 +240,7 @@ function motionModel(s: Summary): ViewModel {
       items: scored.map((x) => ({ name: `${Z.sub[x.name] ?? x.name}（${x.in_total ? Z.inTotal : Z.reportOnly}）`, value: Number(x.mean!.toFixed(3)) })),
       colors: scored.map((x) => (x.in_total ? CHART_COLORS[0] : CHART_COLORS[1])),
       horizontal: true,
+      valueRange: [0, 1],
     });
   }
   const hist = scoreHist(s);
@@ -258,8 +270,16 @@ function visualModel(s: Summary): ViewModel {
   const bins = (seriesOf(s.score_hist) ?? Array.from({ length: 10 }, (_, i) => ({ name: `${(i / 10).toFixed(1)}–${((i + 1) / 10).toFixed(1)}`, value: 0 }))).map((b) => b.name);
   const withHist = cams.filter((x) => Array.isArray(x.hist) && x.hist.length === bins.length);
   if (withHist.length) {
-    const series = withHist.map((x) => ({ name: Z.cameraMean(x.camera, fmt(x.mean)), data: x.hist }));
-    charts.push({ key: 'cameras', title: Z.cameraChart, desc: Z.cameraChartDesc, option: groupedBarOption(bins, series), summary: withHist.map((x) => Z.cameraSummary(x.camera, fmt(x.mean), x.low)).join('；'), height: 240 });
+    const series = withHist.map((x) => ({ name: x.camera, data: x.hist }));
+    charts.push({
+      key: 'cameras',
+      title: Z.cameraChart,
+      desc: Z.cameraChartDesc,
+      option: groupedBarOption(bins, series),
+      summary: withHist.map((x) => Z.cameraSummary(x.camera, fmt(x.mean), x.low)).join('；'),
+      foot: withHist.map((x) => Z.cameraMean(x.camera, fmt(x.mean))).join('；'),
+      height: 240,
+    });
   }
   const hist = scoreHist(s);
   if (hist) charts.push(hist);
@@ -297,6 +317,7 @@ function syncModel(s: Summary): ViewModel {
       summary: measured.map((x) => Z.lagSummary(x.camera, signed(x.median_lag_s))).join('，'),
       horizontal: true,
       band: [-tol, tol],
+      valueRange: lagRange(measured.map((x) => x.median_lag_s!), tol),
       height: Math.max(140, measured.length * 34 + 44),
     });
   }

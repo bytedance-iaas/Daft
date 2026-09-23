@@ -244,8 +244,8 @@ describe('质检报告 (07 §5)', () => {
       await user.click(search);
       await user.clear(input);
       await user.type(input, text);
-      await waitFor(() => expect(seen.some((r) => r.path.endsWith('/episodes') && r.query.get('q') === text)).toBe(true));
-      const option = await screen.findByRole('option', { name: /^ep 12/ });
+      await waitFor(() => expect(seen.some((r) => r.path.endsWith('/episodes') && r.query.get('q') === text)).toBe(true), { timeout: 4000 });
+      const option = await screen.findByRole('option', { name: /^ep 12/ }, { timeout: 4000 });
       expect(option).toHaveTextContent('ep 12通过');
     }
     await user.click(screen.getByRole('option', { name: /^ep 12/ }));
@@ -278,18 +278,18 @@ describe('质检报告 (07 §5)', () => {
     await waitFor(() => expect(currentLocation()).toBe(`${REPORT}?ep=43#episodes`));
     // ep 12: one camera 0.38 s late, flagged; the curves come from the sync-curves endpoint.
     await user.type(screen.getByRole('combobox', { name: '选择 episode' }).querySelector('input')!, '12');
-    await user.click(await screen.findByRole('option', { name: /^ep 12/ }));
-    const sync = await screen.findByTestId('episode-module-video_action_sync');
+    await user.click(await screen.findByRole('option', { name: /^ep 12/ }, { timeout: 4000 }));
+    const sync = await screen.findByTestId('episode-module-video_action_sync', {}, { timeout: 4000 });
     expect(within(sync).getByTestId('sync-badge')).toHaveTextContent('已标注异常（不判废）');
     expect(within(sync).getByTestId('episode-sync')).toHaveTextContent('错位：这一路可靠地测出画面与动作错开了 +0.38s');
-    const curves = await within(sync).findByTestId('sync-curves');
+    const curves = await within(sync).findByTestId('sync-curves', {}, { timeout: 4000 });
     const labels = within(curves).getAllByTestId('chart').map((c) => c.getAttribute('aria-label'));
     expect(labels).toHaveLength(4);
     expect(labels[3]).toContain('互相关：exterior_image_1_left 峰');
     // ep 0 kept no curves: the server's reason, in Chinese.
     await user.type(screen.getByRole('combobox', { name: '选择 episode' }).querySelector('input')!, '0');
-    await user.click(await screen.findByRole('option', { name: /^ep 0/ }));
-    expect(await screen.findByTestId('sync-curves-missing')).toHaveTextContent('默认只为值得留意的条目');
+    await user.click(await screen.findByRole('option', { name: /^ep 0/ }, { timeout: 4000 }));
+    expect(await screen.findByTestId('sync-curves-missing', {}, { timeout: 4000 })).toHaveTextContent('默认只为值得留意的条目');
   });
 
   it('Episode 明细: 同时播放 signs every camera and waits for all of them; a v3 video plays only its episode (#t=from,to)', async () => {

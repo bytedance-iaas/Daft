@@ -47,12 +47,20 @@ export const BAND_COLOR = 'rgba(0, 180, 42, 0.1)';
  */
 export function barOption(
   items: { name: string; value: number }[],
-  opts: { horizontal?: boolean; unit?: string; colors?: (string | undefined)[]; band?: [number, number]; valueName?: string } = {},
+  opts: { horizontal?: boolean; unit?: string; colors?: (string | undefined)[]; band?: [number, number]; valueName?: string; valueRange?: [number, number] } = {},
 ): ChartOption {
   const names = items.map((i) => i.name);
   const values = items.map((i, k) => (opts.colors?.[k] ? { value: i.value, itemStyle: { color: opts.colors[k] } } : i.value));
   const cat = { type: 'category', data: names, axisTick: { show: false } };
-  const val = { type: 'value', splitLine: { lineStyle: { color: '#E5E6EB' } }, ...(opts.valueName ? { name: opts.valueName, nameGap: 8 } : {}) };
+  // Counts never get a 0.2 tick; a given range (scores 0-1, lags around the band) is kept.
+  const counts = items.every((i) => Number.isInteger(i.value));
+  const val = {
+    type: 'value',
+    splitLine: { lineStyle: { color: '#E5E6EB' } },
+    ...(counts ? { minInterval: 1 } : {}),
+    ...(opts.valueRange ? { min: opts.valueRange[0], max: opts.valueRange[1] } : {}),
+    ...(opts.valueName ? { name: opts.valueName, nameGap: 8 } : {}),
+  };
   const band = opts.band ? { markArea: { silent: true, itemStyle: { color: BAND_COLOR }, data: [[opts.horizontal ? { xAxis: opts.band[0] } : { yAxis: opts.band[0] }, opts.horizontal ? { xAxis: opts.band[1] } : { yAxis: opts.band[1] }]] } } : {};
   return {
     grid: { left: opts.horizontal ? 112 : 40, right: 24, top: opts.valueName && !opts.horizontal ? 28 : 16, bottom: 28, containLabel: Boolean(opts.horizontal) },
@@ -70,7 +78,7 @@ export function groupedBarOption(categories: string[], series: { name: string; d
     legend: { top: 0, type: 'scroll' },
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     xAxis: { type: 'category', data: categories, axisTick: { show: false } },
-    yAxis: { type: 'value', splitLine: { lineStyle: { color: '#E5E6EB' } }, ...(opts.valueName ? { name: opts.valueName } : {}) },
+    yAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { color: '#E5E6EB' } }, ...(opts.valueName ? { name: opts.valueName } : {}) },
     series: series.map((s, i) => ({ type: 'bar', name: s.name, data: s.data, barMaxWidth: 14, itemStyle: { color: CHART_COLORS[i % CHART_COLORS.length] } })),
   };
 }

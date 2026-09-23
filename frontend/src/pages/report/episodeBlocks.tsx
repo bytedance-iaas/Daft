@@ -279,7 +279,7 @@ function SyncBlock({ taskId, rev, ep, record }: BlockProps) {
           data-testid="episode-sync"
           rowClassName={(r: SyncCameraRow) => (r.flagged ? 'row-warn' : '')}
           columns={[
-            { title: C.camera, dataIndex: 'camera', width: 180, render: (v: string) => <span className="mono">{v}</span> },
+            { title: C.camera, dataIndex: 'camera', width: 210, render: (v: string) => <span className="mono nowrap">{v}</span> },
             { title: C.lag, dataIndex: 'lag', width: 90, align: 'right' },
             { title: C.peak, dataIndex: 'peak', width: 90, align: 'right' },
             { title: C.zero, dataIndex: 'zero', width: 90, align: 'right' },

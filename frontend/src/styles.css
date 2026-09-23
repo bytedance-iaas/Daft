@@ -499,7 +499,7 @@ button.video-placeholder {
 
 .section-charts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
   gap: 16px 32px;
 }
 
