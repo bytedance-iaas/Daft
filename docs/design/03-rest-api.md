@@ -20,6 +20,9 @@
 
 - 响应里的 `links` 是给 Agent 的可点链接（D22）：绝对 URL = `publicBaseUrl` + `{base}` + 前端路由；
   没配 `publicBaseUrl` 时给相对路径并带 `"absolute": false`。
+- **ID 是不透明的字符串**（D45，C4 1.10.0）：新记录是「前缀-9 位小写字母」，前缀 task、sub、ds、pf、cred、vb、vm、upl
+  （如 `task-kqzmrtbwe`、上传句柄 `upload:upl-kqzmrtbwe`）；之前建的记录保留原来的 `前缀_…`，两种都照常可用，
+  调用方不要解析 ID。ID 不带时间，列表按创建时间排。
 
 ## 2. 端点总表
 
@@ -122,7 +125,7 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
              "region": "cn-beijing", "credential": "prod-tos"},   // source=public 时不需要 credential
   "output": {"uri": "tos://bucket/deliveries/droid-50", "region": "cn-beijing",
              "credential": "prod-tos"},
-  "preflight_id": "pf_01HX...",
+  "preflight_id": "pf-kqzmrtbwe",
   "episodes": {"mode": "head", "n": 50},          // all | head | explicit（"expr": "3,10-12"）
   "modules": ["timestamp_check", "motion_quality",
               {"id": "kinematic_limits"},
@@ -136,10 +139,10 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
 }
 
 // 响应 201
-{"id": "task_01HX...", "state": "queued", "created_at": 1758300000000,
+{"id": "task-kqzmrtbwe", "state": "queued", "created_at": 1758300000000,
  "warnings": [],
  "links": [{"rel": "task", "title": "Open task",
-            "url": "https://<host>/curation/tasks/task_01HX..."}]}
+            "url": "https://<host>/curation/tasks/task-kqzmrtbwe"}]}
 ```
 
 服务端行为：
@@ -206,7 +209,7 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
 
 ```jsonc
 {
-  "id": "task_01HX...", "name": "droid 前 50 条质检", "note": "第一轮抽检",
+  "id": "task-kqzmrtbwe", "name": "droid 前 50 条质检", "note": "第一轮抽检",
   "state": "completed_with_errors", "state_reason": null, "pause_reason": null,
   "result_rev": 1, "source": {"objects": 204, "bytes": 1520331122, "digest": "sha256:…"},
   "input": {...}, "output": {...}, "episodes": {...}, "vlm": {...}, "params": {...},
@@ -227,9 +230,9 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
   "pending_adjudication": 10, "delivery_stale": false,
   "active_subtask": null,
   "links": [
-    {"rel": "report", "title": "Open QA report", "url": "https://<host>/curation/tasks/task_01HX.../report"},
+    {"rel": "report", "title": "Open QA report", "url": "https://<host>/curation/tasks/task-kqzmrtbwe/report"},
     {"rel": "adjudication", "title": "10 episodes need human judgement",
-     "url": "https://<host>/curation/tasks/task_01HX.../adjudication?status=pending"}
+     "url": "https://<host>/curation/tasks/task-kqzmrtbwe/adjudication?status=pending"}
   ]
 }
 ```
@@ -302,7 +305,7 @@ GET /api/v1/tasks/{id}/report/tables/visual_quality?cursor=...&limit=100&sort=sc
 ## 7. 媒体访问：预签名 URL
 
 ```
-GET /api/v1/media/sign?task=task_01HX...&scope=delivery&path=details/clips/ep000034.mp4&ttl=1800
+GET /api/v1/media/sign?task=task-kqzmrtbwe&scope=delivery&path=details/clips/ep000034.mp4&ttl=1800
 → {"url": "https://bucket.tos-cn-beijing.volces.com/...&X-Tos-Signature=...", "expires_at": ...}
 ```
 

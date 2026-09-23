@@ -24,11 +24,17 @@ Owner(预留) ──┬── Credential (TOS 访问密钥；VLM 后端的 API K
 所有表带 `owner_id`（本期恒为 `default`，为 IAM 预留）、`created_at`、`updated_at`。
 时间统一存 epoch 毫秒整数，避免时区问题。
 
+**ID 格式（D45）**：新记录的 ID 是「前缀-9 位小写字母」（如 `task-kqzmrtbwe`），前缀有 task、sub、ds、pf、cred、vb、vm，
+上传文件是 upl（不进库，见 12 篇 §11.1）。字母由系统的密码学随机数生成，26⁹ 约 5.4 万亿种；撞上已有的 ID 就重新生成，
+不会因此报错。2026-09-23 之前建的记录保留原 ID（`前缀_` 加 26 位 Crockford base32，由 UUIDv7 编码），两种格式并存，
+各处（接口、路由、工作目录清理）都认，旧链接照常可用。ID 不再带时间：列表一律按 `created_at` 排，同一毫秒建的按插入先后排，
+ID 不参与排序。
+
 ### 2.1 credential — 密钥
 
 ```sql
 CREATE TABLE credential (
-  id           TEXT PRIMARY KEY,          -- cred_<uuid7>
+  id           TEXT PRIMARY KEY,          -- cred-<9 位小写字母>，见 §2 开头
   owner_id     TEXT NOT NULL DEFAULT 'default',
   name         TEXT NOT NULL,             -- 用户起的名字，任务里按名字引用
   kind         TEXT NOT NULL,             -- 'tos' | 'ark' | 'custom_vlm'
@@ -58,7 +64,7 @@ CREATE TABLE credential (
 
 ```sql
 CREATE TABLE vlm_backend (
-  id            TEXT PRIMARY KEY,         -- vb_<uuid7>
+  id            TEXT PRIMARY KEY,         -- vb-<9 位小写字母>
   owner_id      TEXT NOT NULL DEFAULT 'default',
   name          TEXT NOT NULL,
   kind          TEXT NOT NULL,            -- 'ark' | 'custom'
@@ -69,7 +75,7 @@ CREATE TABLE vlm_backend (
 );
 
 CREATE TABLE vlm_model (
-  id              TEXT PRIMARY KEY,       -- vm_<uuid7>
+  id              TEXT PRIMARY KEY,       -- vm-<9 位小写字母>
   backend_id      TEXT NOT NULL REFERENCES vlm_backend(id) ON DELETE CASCADE,
   model_name      TEXT NOT NULL,          -- Model ID 或推理接入点 ID（ep-…）
   reasoning_effort TEXT,                  -- 方舟原生取值 none|minimal|low|medium|high|xhigh|max
@@ -91,7 +97,7 @@ CREATE TABLE vlm_model (
 
 ```sql
 CREATE TABLE task (
-  id             TEXT PRIMARY KEY,        -- task_<uuid7>
+  id             TEXT PRIMARY KEY,        -- task-<9 位小写字母>
   owner_id       TEXT NOT NULL DEFAULT 'default',
   name           TEXT NOT NULL,
   note           TEXT,                    -- 备注。名称和备注是启动后仅有的两个可改字段
@@ -192,7 +198,7 @@ CREATE TABLE task_module (
 
 ```sql
 CREATE TABLE subtask (
-  id         TEXT PRIMARY KEY,            -- sub_<uuid7>
+  id         TEXT PRIMARY KEY,            -- sub-<9 位小写字母>
   task_id    TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
   kind       TEXT NOT NULL,               -- 'retry' | 'resume' | 'apply_adjudication' | 'reexport'
   scope      TEXT NOT NULL,               -- JSON: {"modules":[...], "episodes":"errors"|"all"}，仅 retry 有意义
@@ -298,7 +304,7 @@ CREATE INDEX idx_adj_lookup ON adjudication(task_id, line, episode_index, id);
 
 ```sql
 CREATE TABLE dataset (
-  id              TEXT PRIMARY KEY,         -- ds_<uuid7>
+  id              TEXT PRIMARY KEY,         -- ds-<9 位小写字母>
   owner_id        TEXT NOT NULL DEFAULT 'default',
   name            TEXT NOT NULL,            -- 默认取地址的最后一段，可改
   note            TEXT,
