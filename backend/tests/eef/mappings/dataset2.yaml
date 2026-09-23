@@ -1,0 +1,47 @@
+# eef-mapping/1.0 for galbot/dataset2 (LeRobot v3.0, two exterior cameras) - design 12 §3.3 regression.
+# Calibration: intrinsics from the dataset's calibration.json, extrinsics from the per-frame columns
+# (the declaration of each episode, a wrong one included). corruption_type is never read.
+schema_version: eef-mapping/1.0
+dataset_id: galbot/dataset2
+eef:
+  pose_key: observation.state.cartesian_position
+  layout: xyz_rpy_xyz_extrinsic
+  frame_id: panda_link8
+  reference_frame: robot_base
+  units: {position: m, angle: rad}
+  pose_type: absolute
+gripper:
+  key: observation.state.gripper_position
+  closed_fraction: identity
+tool:
+  tcp_offset_m: [0, 0, 0.16]
+  max_opening_m: 0.085
+  finger_axis: local_y
+  axes: {from: tcp, length_m: 0.06}
+  assurance: model_assumed
+cameras:
+  exterior_1_left:
+    video_key: observation.images.exterior_1_left
+    camera_id: 27432424_left
+    mount: fixed_external
+    image_size_wh: [1280, 720]
+    calibration:
+      intrinsics_fx_cx_fy_cy: [524.2842407226562, 645.3157958984375, 524.2842407226562, 365.47967529296875]
+      distortion: {model: pinhole, image_space: rectified, coefficients: []}
+      extrinsics: {mode: static, cam2base_xyz_rpy_key: camera_extrinsics.exterior_1_left}
+    media_transform: identity
+  exterior_2_left:
+    video_key: observation.images.exterior_2_left
+    camera_id: 28221883_left
+    mount: fixed_external
+    image_size_wh: [1280, 720]
+    calibration:
+      intrinsics_fx_cx_fy_cy: [522.4346923828125, 646.51904296875, 522.4346923828125, 365.7990417480469]
+      distortion: {model: pinhole, image_space: rectified, coefficients: []}
+      extrinsics: {mode: static, cam2base_xyz_rpy_key: camera_extrinsics.exterior_2_left}
+    media_transform: identity
+timing:
+  source_clocks:
+    - {channel: robot_state, key: timestamp_robot_ms, unit: ms, clock_id: droid_recorded_ms, semantics: robot read_start}
+    - {channel: exterior_1_left, key: timestamp_cam_exterior_1_left_ms, unit: ms, clock_id: droid_recorded_ms, semantics: estimated camera capture}
+    - {channel: exterior_2_left, key: timestamp_cam_exterior_2_left_ms, unit: ms, clock_id: droid_recorded_ms, semantics: estimated camera capture}

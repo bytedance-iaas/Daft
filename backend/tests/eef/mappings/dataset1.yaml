@@ -1,0 +1,40 @@
+# eef-mapping/1.0 for galbot/dataset1 (LeRobot v2.1, one exterior camera) - design 12 §3.3 regression.
+# Position from observation.state[0:3], orientation from its own quaternion column; K and the camera pose
+# copied from the dataset's calibration.json. No tool model: the flange origin and its local axes.
+schema_version: eef-mapping/1.0
+dataset_id: galbot/dataset1
+eef:
+  pose_key: observation.state
+  slice: [0, 3]
+  layout: xyz_quat_xyzw
+  quaternion_key: observation.eef_quaternion_xyzw
+  frame_id: panda_link8
+  reference_frame: robot_base
+  units: {position: m, angle: rad}
+  pose_type: absolute
+gripper:
+  key: observation.state
+  index: 6
+  closed_fraction: identity
+tool:
+  tcp_offset_m: null
+  axes: {from: eef_origin, length_m: 0.08}
+  assurance: declared
+cameras:
+  exterior_image_1_left:
+    video_key: observation.images.exterior_image_1_left
+    camera_id: 27432424_left
+    mount: fixed_external
+    image_size_wh: [1280, 720]
+    calibration:
+      K: [[524.2842407226562, 0.0, 645.3157958984375], [0.0, 524.2842407226562, 365.47967529296875], [0.0, 0.0, 1.0]]
+      distortion: {model: pinhole, image_space: rectified, coefficients: []}
+      extrinsics:
+        mode: static
+        T_reference_camera: [[0.8311022674990027, -0.22825080212035662, 0.5071198993230599, 0.05263647502861234], [-0.5560974491537928, -0.3492404043367637, 0.754179532355088, -0.5090224900091741], [0.004964675484000092, -0.9088084018703326, -0.4171841807729902, 0.5175861987258059], [0.0, 0.0, 0.0, 1.0]]
+    media_transform: identity
+timing:
+  source_state_index_key: source.state_step_index
+  source_clocks:
+    - {channel: exterior_image_1_left, key: source.camera_capture_timestamp_ms, unit: ms, clock_id: droid_recorded_ms, semantics: estimated camera capture for paired state}
+    - {channel: robot_state, key: source.robot_read_start_timestamp_ms, unit: ms, clock_id: droid_recorded_ms, semantics: robot read_start}

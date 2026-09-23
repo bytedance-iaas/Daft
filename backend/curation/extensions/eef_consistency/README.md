@@ -29,8 +29,8 @@
 | `preflight.py` | `curation preflight` 里两个模块的条目：文件校验、逐分项能力表、按 episode 计数；没给文件报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，F5.5 起控制台第二屏上传）；复核模块跟随它复核的模块（不可用报 `eef_base_unavailable`、缺文件同样要上传），再要 VLM 后端 |
 | `review.py` | VLM 复核（F5.6）：窗口（同分项、时间重叠的 CPU 候选段合并成一个候选窗口，加均匀抽查窗口，每路相机各至多 N 个、超出记 `truncated`）、请求包（缩小的整帧、每帧原始裁剪与投影红圈 / 观测绿十字的标记裁剪，都印帧号；点与轴定义、机位限制；不给故障名、真值和 CPU 结论）、答复校验（`eef/review_output.schema.json`、帧号必须来自请求、解释里不许有测量值，不合格给一次修复）、按发送字节的缓存、与 CPU 的冲突判定、汇总 |
 | `report.py` | 报告小节摘要（候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率）与三张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis`；复核小节摘要（完整 / 未完成 / 未复核、窗口、冲突、待人工、失败原因）与 `eef_review_windows` 表 |
-| `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像） |
-| `__main__.py` | 离线命令：`validate`、`run` |
+| `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像）、`lerobot_mapping`（按显式的 `eef-mapping/1.0` 映射从 LeRobot 列生成 `trajectory.json`，形态 B，设计 §3.3；不是平台入口） |
+| `__main__.py` | 离线命令：`validate`、`run`、`export` |
 
 ## 手动验证
 
@@ -140,4 +140,15 @@
     （红圈是声明投影，绿十字是独立观测）；`report.md` 的「EEF–视频一致性 · VLM 复核」一节写「建议性复核，不影响判决」，
     `tables/eef_review_windows.parquet` 是逐窗口明细；keep / 终判清单与不跑复核时相同。控制台里勾「EEF–视频一致性 · VLM 复核」会
     自动带上「EEF–视频一致性」，取消后者也会取消复核；第二屏多两个复核参数（每路相机的窗口数、每窗口帧数）。
+11. 从 LeRobot 列生成 trajectory.json（设计 §3.3）：`../.venv/bin/python -m pytest -q tests/eef/test_mapping.py`（约 15 秒），应全部通过；再手动：
+
+    ```bash
+    ../.venv/bin/python -m curation.extensions.eef_consistency export --mapping tests/eef/mappings/dataset2.yaml \
+      --lerobot-root ~/ws/ws_general/galbot/dataset2/eef_ds2_lr3 --out /tmp/ds2_mapped.json
+    ../.venv/bin/python -m curation.extensions.eef_consistency validate --trajectory /tmp/ds2_mapped.json \
+      --lerobot-root ~/ws/ws_general/galbot/dataset2/eef_ds2_lr3 --all-points-observable | head -20
+    ```
+
+    第一条打印 `samples: 7`、`frames: 2009`；第二条 `report.valid: true`、七条 episode 都 `available`（投影由平台按位姿与标定重算，
+    包里 `projection` 为 `null`）。把映射里的 `layout` 删掉或写成 `auto`，`export` 以退出码 2 报「eef.layout」——映射必须写明，不猜列宽。
 

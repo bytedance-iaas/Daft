@@ -4,6 +4,8 @@ validate   check a trajectory.json (container, Schemas, semantics, media, self-c
            the validation report plus the per-episode capability table
 run        assess episodes offline: one detail line per episode (JSON Lines) plus observations, curves and
            evidence under --out
+export     write trajectory.json from a LeRobot dataset's columns by an explicit eef-mapping/1.0 file
+           (design 12 §3.3; a convenience, the platform itself only reads the uploaded file)
 """
 from __future__ import annotations
 
@@ -52,6 +54,26 @@ def _run(a: argparse.Namespace) -> int:
     return 0
 
 
+def _export(a: argparse.Namespace) -> int:
+    from .adapters import lerobot_mapping as M
+
+    try:
+        bundle = M.export(M.load_mapping(a.mapping), a.lerobot_root, episodes=a.episodes)
+    except M.MappingError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    data = json.dumps(bundle, ensure_ascii=False, allow_nan=False).encode()
+    r = load.load_bundle(data, lerobot_root=a.lerobot_root)
+    if not r.ok:                                    # never write a file the platform would refuse
+        json.dump({"report": r.report}, sys.stdout, ensure_ascii=False, indent=1, default=str)
+        return 1
+    with open(a.out, "wb") as fh:
+        fh.write(data)
+    print(json.dumps({"out": a.out, "sha256": r.sha256, "samples": len(r.samples),
+                      "frames": r.report["total_frames"]}))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m curation.extensions.eef_consistency", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -72,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--evidence-mode", choices=["flagged", "all", "off"], default="flagged")
     r.add_argument("--out", required=True)
     r.set_defaults(fn=_run)
+    x = sub.add_parser("export", help="trajectory.json from LeRobot columns by a mapping file")
+    x.add_argument("--mapping", required=True, help="eef-mapping/1.0 file (YAML or JSON)")
+    x.add_argument("--lerobot-root", required=True)
+    x.add_argument("--episodes", type=int, nargs="*", default=None)
+    x.add_argument("--out", required=True)
+    x.set_defaults(fn=_export)
     a = ap.parse_args(argv)
     return a.fn(a)
 

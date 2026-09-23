@@ -222,6 +222,9 @@ Current summary:
         表（C1 1.6）；前端勾复核自动带上基础模块；验证：固定 tape 下两种冲突 / 修复 / 超时 / 未知帧 / 测量值录制后离线回放
         逐项相同，CLI 全链路加复核后判决与清单不变，Daemon 端到端带复核，dataset2 用假模型跑通（12 篇附录 C.6）；
         未做：跟错目标后的独立重定位（DEMO 没有第二个 provider）；没有真实 VLM 后端验证 prompt 效果
+      · §3.3 映射导出工具（缺口补齐，不在账本条目里）：adapters/lerobot_mapping.py + `export` 离线命令，按 eef-mapping/1.0
+        从 LeRobot v2.1 / v3.0 列生成形态 B 的 trajectory.json；dataset1 / dataset2 两份映射作回归（重算投影与参考包逐点比较：
+        13376 点逐位一致、28126 点最大差 0.005 px）；12 篇附录 C.7
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
@@ -232,8 +235,8 @@ Main gaps:
     F4.3 待按 README 完整跑一次质检
 
 Next steps:
-  0. EEF–视频一致性：F5.1–F5.6 已完成。待做：F5.7 验收与试用（需要真实 VLM 后端验证复核 prompt）；§3.3 mapping.yaml
-     导出工具；§13.3 补充扫描（检出下限）
+  0. EEF–视频一致性：F5.1–F5.6 与 §3.3 导出工具已完成。待做：F5.7 验收与试用（需要真实 VLM 后端验证复核 prompt）、
+     §13.3 补充扫描（检出下限，随 F5.7 的留出集一起做）
   1. APIG 接通（physicalai-apig 监听 curation）、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
   2. 按 README 走查一次完整质检，F3.3、F4.1、F4.3 按验收置位；请需求方统一过一遍界面文案（F3.2）
   3. 真实数据的两个基线在 F4.2 黄金对账之前补

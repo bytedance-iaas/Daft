@@ -693,3 +693,8 @@ eef_video_review:
 - **接入**：预检里复核跟随被复核模块，再要 VLM 后端；Daemon 要求两者一起勾（控制台勾复核自动带上基础模块，取消基础模块也取消复核），复核阶段 `advisory_vlm` 在 `advisory_frame` 之后，参数把被复核模块的文件一起传；报告小节摘要（完整 / 未完成 / 未复核、窗口、冲突、待人工、失败原因）与明细表 `eef_review_windows`（C1 1.6）。
 - **验证**：固定 tape 下各分支（两种冲突、修复、超时、未知帧、测量值）在迷你数据集上录制后离线回放逐项相同（`tests/cli/test_eef_review.py`）；Daemon 端到端任务带复核（`tests/orchestr/test_eef_tasks.py`）；dataset2 上用假模型跑通：7 条、64 个窗口（候选合并后），每条约 1 秒（不含模型耗时）。**没有真实 VLM 后端验证过 prompt 的效果**（需求方提供后端后在 F5.7 里做）。
 
+### C.7 §3.3 映射导出工具（2026-09-23）
+
+- `adapters/lerobot_mapping.py` 与离线命令 `python -m curation.extensions.eef_consistency export --mapping M --lerobot-root D --out trajectory.json`：按 `eef-mapping/1.0` 映射从 LeRobot 列生成单文件包，产品入口仍只有上传件。映射必须写明位姿列与布局（`xyz_rpy_xyz_extrinsic` / `xyz_quat_xyzw` / `xyz_quat_wxyz` / `xyz_rotmat`，可取列的切片、四元数可来自另一列）、单位、夹爪列与换算、工具模型（TCP、线性夹爪两指、局部轴端点）、每路相机（视频键、相机 id、机位、内参、外参内联或来自逐帧列、媒体变换）和源时钟；不靠列宽猜。输出是形态 B（位姿 + 标定，`projection: null`），投影交给平台重算；写出前用平台自己的读取器校验，不合格不写。
+- v2.1 按每条 episode 一个文件读，v3.0 按 episodes 表的 `data/*_index` 与 `videos/<键>/from_timestamp` 定位拼接文件；逐帧外参列要求 episode 内不变（只导出静态外参）。
+- 回归：`tests/eef/mappings/dataset1.yaml`、`dataset2.yaml`（dataset2 从 `camera_extrinsics.*` 列取每条 episode 声明的外参，含声明错误的那条；从不读 `corruption_type` 列）导出的包与参考包逐点比较平台重算投影：dataset1 13376 点逐位一致，dataset2 28126 点最大差 0.005 px（float32 列的量化）。迷你数据集上测 v2.1 读取、片段地址与含糊映射的拒收（CI 可跑）。
