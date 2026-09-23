@@ -222,6 +222,10 @@ def check_modules(selected: list[str], availability: dict[str, dict], *,
     """The rules of design doc 05 §4 for the modules a task will run."""
     for mid in selected:
         spec = registry.get(mid)
+        lacking = [d for d in spec.depends_on if d in registry.ids() and d not in selected]
+        if lacking:                          # registry 1.4: it re-examines that module's results
+            raise _bad(f"「{spec.name_zh}」复核的是「{'」「'.join(registry.get(d).name_zh for d in lacking)}」"
+                       "的结果，要一起勾选", "modules")
         entry = availability.get(mid, {})
         state = entry.get("availability", "available")
         if state == "unsupported":
@@ -248,8 +252,10 @@ def check_modules(selected: list[str], availability: dict[str, dict], *,
             elif hint.get("field") == "vlm" and not has_vlm:
                 raise _bad(f"「{spec.name_zh}」需要先选择 VLM 后端和模型", "vlm")
             elif hint.get("field") == "trajectory_json":
-                raise _bad(f"「{spec.name_zh}」需要上传 trajectory.json（约定格式 eef-video/1.0.0），"
-                           "或者不勾选这个模块", f"modules.{mid}.params.trajectory_json")
+                holder = mid if "trajectory_json" in (spec.param_schema.get("properties") or {}) else \
+                    next((d for d in spec.depends_on if d in registry.ids()), mid)
+                raise _bad(f"「{registry.get(holder).name_zh}」需要上传 trajectory.json（约定格式 eef-video/1.0.0），"
+                           "或者不勾选这个模块", f"modules.{holder}.params.trajectory_json")
         if "vlm" in spec.needs and not has_vlm:
             raise _bad(f"勾选了「{spec.name_zh}」，需要选择 VLM 后端和模型", "vlm")
 
@@ -336,7 +342,7 @@ def resolve_config(repo: P.Repository, settings: Settings, task: P.Task, body: d
                 raise ApiError("internal", "这个模块要按任务的文件预检，但执行器没有装上")
             source = {k: out.fields.get(k, getattr(task, k, None))
                       for k in ("input_source", "input_uri", "input_region", "input_cred_id")}
-            entries = module_preflight(source, own_files, owner)
+            entries = module_preflight(source, own_files, owner, has_vlm=has_vlm)
             availability = {**availability, **entries}
             if isinstance(preflight, dict):
                 kept = [m for m in preflight.get("modules") or [] if m.get("id") not in entries]

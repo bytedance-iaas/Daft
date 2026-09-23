@@ -104,7 +104,12 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
 
     from ..contracts import modules as registry
 
-    if all(m in registry.advisory_ids() for m in modules):
+    if all(m in registry.advisory_ids() for m in modules) and stage == "vlm":
+        from . import eef_review
+
+        payload, survivors = eef_review.run(ctx, args, modules, run_dir, storage, episodes, part, guard,
+                                            plan_stage)
+    elif all(m in registry.advisory_ids() for m in modules):
         from . import eef_check
 
         payload, survivors = eef_check.run(ctx, args, modules, run_dir, storage, episodes, part, guard)

@@ -243,7 +243,7 @@ class Orchestrator:
             write_json_atomic(wd.root / "inputs" / "uploads.json", table)
         return table
 
-    def module_preflight(self, fields: dict, choices, owner: str) -> dict[str, dict]:
+    def module_preflight(self, fields: dict, choices, owner: str, *, has_vlm: bool = False) -> dict[str, dict]:
         """Preflight entries of modules whose availability depends on the task's own files
         (``eef_input``): ``curation preflight --modules ... --param ...`` against this dataset with the
         uploaded files (design doc 12 §5, F5.5). The dataset's own preflight cannot know them."""
@@ -254,7 +254,9 @@ class Orchestrator:
         argv = self.module_params_argv(choices, owner, resolve=resolve)
         src = Source(fields["input_source"], fields["input_uri"], fields.get("input_region"),
                      fields.get("input_cred_id"))
-        doc = self.datasets.preflight(src, owner, modules=[mid for mid, _ in choices], params=argv)
+        # the EEF review asks for a VLM backend; the task's own choice answers it (F5.6)
+        doc = self.datasets.preflight(src, owner, modules=[mid for mid, _ in choices], params=argv,
+                                      vlm_backend="task" if has_vlm else None)
         return {m["id"]: m for m in doc.get("modules") or [] if isinstance(m, dict) and "id" in m}
 
     def _draft(self, fields: dict, modules: list[P.TaskModule], owner: str) -> Draft:

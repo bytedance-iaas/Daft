@@ -62,6 +62,7 @@ DECODE_FAILED = "decode_failed"
 VLM_BACKEND_MISSING = "vlm_backend_missing"
 # additions of the first cut (documented in design 12 §5.1 revision notes)
 TRAJECTORY_MISSING = "trajectory_missing"
+EEF_BASE_UNAVAILABLE = "eef_base_unavailable"          # the review: the module it reviews is unusable
 TRAJECTORY_INVALID = "trajectory_invalid"
 OBSERVATION_SEED_MISSING = "observation_seed_missing"
 TIMEBASE_INDEX_ONLY = "timebase_index_only"

@@ -155,6 +155,15 @@ class FakeVlm:
             return CAPTIONS[n % len(CAPTIONS)]
         if "robot episode" in text and ("0 to 100" in text or "Score" in text):
             return str(n % 101)
+        if "You review whether a robot trajectory, projected into a camera image" in text:
+            # the EEF-video review (design doc 12 §10.2): a well-formed, cautious answer
+            frames = [int(x) for x in re.findall(r"\d+", text.split("Frames ", 1)[1].split("(", 1)[0])][:1]
+            return json.dumps({"review_status": "uncertain", "target_visible": True,
+                               "tracking_target_correct": "support",
+                               "position_support": "support" if n % 2 else "uncertain",
+                               "orientation_support": "uncertain", "background_motion_support": "support",
+                               "offset_direction": "none", "offset_magnitude_class": "none",
+                               "evidence_frame_ids": frames, "reason_codes": [], "explanation": "fake"})
         if text.strip() == "ping":
             return "pong"
         return "unclear"

@@ -1,7 +1,7 @@
 # EEF–视频一致性（DEMO 模块，阶段 5）
 
-接入 v2（F5.4）：注册表 1.4 的两个建议性模块 `eef_video_consistency`（frame 档）与 `eef_video_review`（vlm 档，第一刀不提供）；
-命令行的 `check` 分派在 `backend/curation/cli/eef_check.py`，模块参数 `--param` 在 `backend/curation/cli/modparams.py`，
+接入 v2（F5.4）：注册表 1.4 的两个建议性模块 `eef_video_consistency`（frame 档）与 `eef_video_review`（vlm 档，F5.6 的 VLM 复核）；
+命令行的 `check` 分派在 `backend/curation/cli/eef_check.py` 与 `eef_review.py`，模块参数 `--param` 在 `backend/curation/cli/modparams.py`，
 `aggregate` 在调用边界把它滤出判决，`report` 给它一节建议性摘要。
 
 设计：[docs/design/12-eef-video-consistency.md](../../../../docs/design/12-eef-video-consistency.md)；
@@ -26,8 +26,9 @@
 | `diagnosis.py` | 诊断假设（只在对应分项已 suspect 时算，不改状态）：PnP 外参修正、时间偏移、恒定朝向错（三维拟合 EEF 本体系恒定旋转）、TCP 轴向偏移（一维拟合）、位姿漂移、抖动来源 |
 | `profile.py`、`profiles/demo.yaml` | 阈值 profile；`demo` 标 `calibrated: false`，每个数都注明来自哪条基准的噪声底、乘了多少倍 |
 | `runner.py` | 单 episode 的流式执行：解码 → 观测 → 测量 → 判定 → 诊断 → 产物（`observations/`、`curves/*.parquet`、`evidence/` 叠加图），输出 §11.3 的 `detail` |
-| `preflight.py` | `curation preflight` 里两个模块的条目：文件校验、逐分项能力表、按 episode 计数；没给文件报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，F5.5 起控制台第二屏上传），复核模块一律 `unsupported` |
-| `report.py` | 报告小节摘要（候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率）与三张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis` |
+| `preflight.py` | `curation preflight` 里两个模块的条目：文件校验、逐分项能力表、按 episode 计数；没给文件报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，F5.5 起控制台第二屏上传）；复核模块跟随它复核的模块（不可用报 `eef_base_unavailable`、缺文件同样要上传），再要 VLM 后端 |
+| `review.py` | VLM 复核（F5.6）：窗口（同分项、时间重叠的 CPU 候选段合并成一个候选窗口，加均匀抽查窗口，每路相机各至多 N 个、超出记 `truncated`）、请求包（缩小的整帧、每帧原始裁剪与投影红圈 / 观测绿十字的标记裁剪，都印帧号；点与轴定义、机位限制；不给故障名、真值和 CPU 结论）、答复校验（`eef/review_output.schema.json`、帧号必须来自请求、解释里不许有测量值，不合格给一次修复）、按发送字节的缓存、与 CPU 的冲突判定、汇总 |
+| `report.py` | 报告小节摘要（候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率）与三张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis`；复核小节摘要（完整 / 未完成 / 未复核、窗口、冲突、待人工、失败原因）与 `eef_review_windows` 表 |
 | `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像） |
 | `__main__.py` | 离线命令：`validate`、`run` |
 
@@ -121,3 +122,22 @@
    先选 `/tmp/bad.json` 能看到逐条定位的错误。创建并开始后：任务的运行目录有 `inputs/uploads.json` 与两份文件副本，
    `plan.json` 有 `advisory_frame` 阶段，报告里有「EEF–视频一致性」一节（与第 8 步的命令行结果一致），keep / 终判清单与不勾这个模块时相同。
    直接在 `modules[].params` 里填服务器路径会被 400 拒收（Daemon 只认 `upload:` 句柄）。
+10. VLM 复核（F5.6）：`../.venv/bin/python -m pytest -q tests/eef/test_review.py tests/cli/test_eef_review.py`（约 15 秒），
+    应全部通过——后者在迷你数据集上把每个分支（CPU ok 被模型否定、候选被模型认可两种冲突、答复不是 JSON 后修复、超时、
+    引用请求里没有的帧、解释里写了「约 2 cm」）录进 tape，再在新的运行目录离线回放，记录逐项相同；缓存命中不再发请求，
+    `--resume` 跳过当前行。有 VLM 后端时在第 8 步的运行目录上接着跑（没有时可以不跑，Daemon 的端到端测试用假模型走过一遍）：
+
+    ```bash
+    ../.venv/bin/python -m curation.cli check --modules eef_video_review --input $G/eef_ds2_lr3 --run-dir $R --episodes 0-6 $P \
+      --vlm-backend ark --json | python3 -m json.tool | head -20
+    ../.venv/bin/python -m curation.cli aggregate --run-dir $R --phase funnel --revision 2 --episodes 0-6
+    ../.venv/bin/python -m curation.cli aggregate --run-dir $R --phase final --revision 2 --episodes 0-6 --input $G/eef_ds2_lr3
+    ../.venv/bin/python -m curation.cli report --run-dir $R --revision 2
+    ```
+
+    每条 episode 一行记录（`checks/eef_video_review/results.jsonl`），`details.cameras.<相机>.windows` 列出每个窗口送了哪几帧、
+    模型的分类答复或失败原因、与 CPU 是否冲突；冲突与被否定的窗口在 `checks/eef_video_review/evidence/` 下留了送给模型的标记裁剪
+    （红圈是声明投影，绿十字是独立观测）；`report.md` 的「EEF–视频一致性 · VLM 复核」一节写「建议性复核，不影响判决」，
+    `tables/eef_review_windows.parquet` 是逐窗口明细；keep / 终判清单与不跑复核时相同。控制台里勾「EEF–视频一致性 · VLM 复核」会
+    自动带上「EEF–视频一致性」，取消后者也会取消复核；第二屏多两个复核参数（每路相机的窗口数、每窗口帧数）。
+

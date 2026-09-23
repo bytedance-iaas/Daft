@@ -40,7 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.5"
+REGISTRY_VERSION = "1.6"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
@@ -319,7 +319,10 @@ MODULES: tuple[ModuleSpec, ...] = (
         summary_zh="对候选与抽查窗口请多模态模型复核跟踪目标与偏移方向，只做分类不做测量",
         level="episode", gate="none", needs=frozenset({"video", "vlm", "eef_input"}), stage="vlm",
         depends_on=("eef_video_consistency",), produces_adjudication=False,
-        param_schema=_eef_review_params(), input_scope="all_selected", affects_dataset_verdict=False),
+        param_schema=_eef_review_params(),
+        tables=(TableSpec("eef_review_windows", "复核窗口", ("episode_index", "camera", "kind", "status",
+                                                          "review_status", "conflict")),),
+        input_scope="all_selected", affects_dataset_verdict=False),
     ModuleSpec(
         id="dedup", name_zh="精确去重",
         summary_zh="找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",

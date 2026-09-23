@@ -691,6 +691,9 @@ function buildNewTask(req: TaskCreate): Task | Response {
   const selected = moduleIds(req.modules);
   const unknown = selected.filter((id) => !registry.modules.some((m) => m.id === id));
   if (unknown.length) return err(400, 'validation_failed', `不认识的模块：${unknown.join(', ')}`);
+  // registry 1.4: a module that re-examines another one needs it ticked too (the EEF review, F5.6)
+  const orphan = selected.find((id) => ((registry.modules.find((m) => m.id === id)?.depends_on ?? []) as string[]).some((d) => registry.modules.some((m) => m.id === d) && !selected.includes(d)));
+  if (orphan) return err(400, 'validation_failed', `「${registry.modules.find((m) => m.id === orphan)?.name_zh}」复核的模块要一起勾选`, { field: 'modules' });
   const unsupported = selected.filter((id) => pf.result.modules.find((m) => m.id === id)?.availability === 'unsupported');
   if (unsupported.length) return err(400, 'validation_failed', `这些模块在预检里不可用：${unsupported.join(', ')}`);
   if (selected.includes('kinematic_limits') && pf.result.modules.find((m) => m.id === 'kinematic_limits')?.availability === 'needs_input' && !req.embodiment_id) {

@@ -1,7 +1,7 @@
 import { Button, Card, Checkbox, Divider, Grid, Modal, Radio, Space, Tag, Typography } from '@arco-design/web-react';
 import { useState } from 'react';
 import type { ModuleAvailability, ModuleRegistry, ModuleSpec } from '../../api/types';
-import { needsVlm, optIn, reasonText } from '../../lib/preflight';
+import { needsVlm, optIn, reasonText, toggleModule } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import type { Errors, FormValues } from './formModel';
 
@@ -73,8 +73,8 @@ export function ModuleSection({
   const usable = modules.filter((m) => state(m.id) === 'available' || state(m.id) === 'needs_input');
   const unsupported = modules.filter((m) => state(m.id) === 'unsupported');
   const toggle = (id: string) => {
-    const on = v.modules.includes(id);
-    set({ modules: on ? v.modules.filter((x) => x !== id) : [...v.modules, id], preset: 'custom', skipped: v.skipped.filter((x) => x !== id) });
+    const modules = toggleModule(registry, v.modules, id);
+    set({ modules, preset: 'custom', skipped: v.skipped.filter((x) => x !== id) });
   };
   const help = v.preset === 'full' ? zh.taskForm.presetFullHelp : v.preset === 'quick' ? zh.taskForm.presetQuickHelp : zh.taskForm.presetCustomHelp;
   return (

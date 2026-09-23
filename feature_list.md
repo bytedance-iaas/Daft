@@ -149,7 +149,7 @@
 ### F5.6 VLM 复核
 - 描述：均匀抽查 + 候选窗口；请求包（原图、裁剪、观测与投影异色叠加、短序列）；严格输出 Schema；预算、缓存、tape 录制回放；`eef_review` 调用种类；CPU 与 VLM 冲突转人工
 - 验收：①固定 tape 下 malformed / timeout / 引用不存在帧 / 冲突分支全覆盖；②复核失败显示「未完成」，不影响旧判决；③VLM 不产生像素或厘米数值
-- status: not_completed
+- status: completed
 
 ### F5.7 验收与试用
 - 描述：冻结阈值后在独立 episode 上报误报、漏报、定位与方向误差、覆盖与弃权率；性能记录；对指定数据集开 advisory 试用

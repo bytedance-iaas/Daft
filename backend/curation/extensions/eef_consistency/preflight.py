@@ -3,7 +3,8 @@
 The file is a module parameter (``trajectory_json``): a path on the command line, an upload handle in
 the console (F5.5), which the Daemon turns into a path before it calls the CLI. Without it the module
 ``needs_input`` (``input_hint.field = trajectory_json``); the console never pre-selects an advisory module,
-it is opted into and then asks for the upload. The VLM review is not provided yet and is unsupported.
+it is opted into and then asks for the upload. The VLM review follows the module it reviews and
+then needs a VLM backend.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from . import contracts as C
 from . import load
 from .observations import seeded_points
 
+MODULE_ID = C.MODULE_ID
 MOUNTS = {"fixed_external_and_wrist": ("fixed_external", "wrist"), "fixed_external": ("fixed_external",)}
 
 
@@ -38,9 +40,22 @@ def _unsupported(reason: str, code: str, args: dict | None = None) -> dict:
     return out
 
 
-def review_entry() -> dict:
-    return _unsupported("the VLM review of EEF-video consistency is not part of the DEMO's first cut",
-                        "eef_review_not_available")
+def review_entry(base: dict, *, vlm_backend: bool) -> dict:
+    """``eef_video_review`` re-examines what ``eef_video_consistency`` found (F5.6): unusable when
+    that module is, asking for the same file when that is missing, then for a VLM backend."""
+    if base.get("availability") == C.UNSUPPORTED:
+        return _unsupported(f"the EEF-video consistency module it reviews is unavailable: {base.get('reason')}",
+                            C.EEF_BASE_UNAVAILABLE, {"base_reason_code": base.get("reason_code")})
+    if base.get("availability") == C.NEEDS_INPUT:
+        return {k: v for k, v in base.items() if k in ("availability", "reason", "reason_code", "input_hint")}
+    if not vlm_backend:
+        return {"availability": C.NEEDS_INPUT, "reason_code": C.VLM_BACKEND_MISSING,
+                "reason": "no VLM backend chosen; pick one (add one first if there is none)",
+                "input_hint": {"field": "vlm"}}
+    out = {"availability": C.AVAILABLE}
+    if base.get("episode_counts"):
+        out["episode_counts"] = base["episode_counts"]
+    return out
 
 
 def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Callable[[str], bool] | None,

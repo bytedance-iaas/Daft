@@ -31,6 +31,38 @@ export function optIn(m: ModuleSpec): boolean {
   return !m.affects_dataset_verdict;
 }
 
+/** Modules this one re-examines (registry 1.4: a `depends_on` entry may be a module id, e.g. the
+ * EEF VLM review needs the EEF module's results). Ticking it ticks them; unticking them unticks it. */
+export function moduleDependencies(reg: ModuleRegistry | undefined, id: string): string[] {
+  const ids = new Set((reg?.modules ?? []).map((m) => m.id));
+  return ((reg?.modules.find((m) => m.id === id)?.depends_on ?? []) as string[]).filter((d) => ids.has(d));
+}
+
+/** The selection after ticking or unticking `id`, with module dependencies kept consistent. */
+export function toggleModule(reg: ModuleRegistry | undefined, selected: string[], id: string): string[] {
+  if (selected.includes(id)) {
+    const off = new Set([id]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const x of selected) {
+        if (!off.has(x) && moduleDependencies(reg, x).some((d) => off.has(d))) {
+          off.add(x);
+          grew = true;
+        }
+      }
+    }
+    return selected.filter((x) => !off.has(x));
+  }
+  const out = [...selected];
+  const add = (x: string) => {
+    if (out.includes(x)) return;
+    moduleDependencies(reg, x).forEach(add);
+    out.push(x);
+  };
+  add(id);
+  return out;
+}
+
 /** The modules a preset turns on for this preflight (07 §3: 完整 / 快速 / 自选). */
 export function presetSelection(preset: 'full' | 'quick', reg: ModuleRegistry, result: PreflightResult | null | undefined): string[] {
   return reg.modules

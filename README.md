@@ -58,7 +58,7 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 14. **前端（W10）**：`cd frontend && npm ci && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build`；用模拟数据看页面是 `npm run dev`，逐页核对项见 [frontend/README.md](frontend/README.md)。由真的 Daemon 托管构建产物（`/curation` 前缀、不鉴权、开发用主密钥）：用 `.claude/launch.json` 里的 `curator-daemon-dev`，浏览器打开 <http://localhost:8080/curation/>。
 15. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
     校验上传件、看能力表、真值键拒绝与自洽警告、离线评估、受控异常矩阵、在 v2 命令行链路上跑一遍、控制台上传与 Daemon 执行（F5.5，
-    `tests/orchestr/test_eef_tasks.py`）的逐项核对见 [其 README](backend/curation/extensions/eef_consistency/README.md)。
+    `tests/orchestr/test_eef_tasks.py`）、VLM 复核（F5.6，固定 tape 下各分支与离线回放）的逐项核对见 [其 README](backend/curation/extensions/eef_consistency/README.md)。
 
 ## 跑通一次完整质检（真数据）
 

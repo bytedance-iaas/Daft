@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EEF-video VLM review answer (eef-review/1.0)",
+  "description": "What the model returns for one review window (design doc 12 §10.2). Classes only: no pixel, millimetre or angle values. evidence_frame_ids must be frame ids shown in the request (checked by the runner, not by this Schema).",
+  "type": "object",
+  "properties": {
+    "review_status": {
+      "enum": ["support", "refute", "uncertain", "not_observable"],
+      "description": "Overall: does the declared projection (red) sit on the physical point it defines, over this window?"
+    },
+    "target_visible": {
+      "type": "boolean",
+      "description": "The gripper and the defined point are visible in most frames of the window"
+    },
+    "tracking_target_correct": {
+      "enum": ["support", "refute", "uncertain"],
+      "description": "The independent observation (green) follows the defined point, not another object"
+    },
+    "position_support": {
+      "enum": ["support", "refute", "uncertain", "not_observable"],
+      "description": "support: the declared point is on the defined physical point; refute: it is visibly off"
+    },
+    "orientation_support": {
+      "enum": ["support", "refute", "uncertain", "not_observable"],
+      "description": "support: the declared axis points the way the gripper does; refute: it visibly does not"
+    },
+    "background_motion_support": {
+      "enum": ["support", "refute", "uncertain"],
+      "description": "support: the scene behind the gripper stays still (camera not shaking)"
+    },
+    "offset_direction": {
+      "enum": ["none", "up", "down", "left", "right", "toward_fingers", "away_from_fingers", "unclear"]
+    },
+    "offset_magnitude_class": {
+      "enum": ["none", "within_finger_width", "one_to_two_finger_widths", "over_two_finger_widths", "unclear"]
+    },
+    "evidence_frame_ids": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 0},
+      "maxItems": 12,
+      "uniqueItems": true
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "enum": ["occlusion", "motion_blur", "out_of_frame", "low_resolution", "gripper_not_visible",
+                 "point_ambiguous", "wrong_target", "lighting", "other"]
+      },
+      "maxItems": 5,
+      "uniqueItems": true
+    },
+    "explanation": {
+      "type": "string",
+      "maxLength": 400,
+      "description": "Short reason in words; measured values (px, mm, cm, degrees) are refused by the runner"
+    }
+  },
+  "required": ["review_status", "target_visible", "tracking_target_correct", "position_support",
+               "orientation_support", "background_motion_support", "offset_direction",
+               "offset_magnitude_class", "evidence_frame_ids", "reason_codes", "explanation"],
+  "additionalProperties": false
+}

@@ -1,0 +1,125 @@
+{
+  "schema": "eef/review_output.schema.json",
+  "valid": [
+    {
+      "review_status": "refute",
+      "target_visible": true,
+      "tracking_target_correct": "support",
+      "position_support": "refute",
+      "orientation_support": "uncertain",
+      "background_motion_support": "support",
+      "offset_direction": "left",
+      "offset_magnitude_class": "one_to_two_finger_widths",
+      "evidence_frame_ids": [
+        120,
+        126,
+        132
+      ],
+      "reason_codes": [],
+      "explanation": "红圈一直在夹爪左侧、没有落在两指之间；绿十字跟着夹爪中心"
+    },
+    {
+      "review_status": "not_observable",
+      "target_visible": false,
+      "tracking_target_correct": "uncertain",
+      "position_support": "not_observable",
+      "orientation_support": "not_observable",
+      "background_motion_support": "uncertain",
+      "offset_direction": "unclear",
+      "offset_magnitude_class": "unclear",
+      "evidence_frame_ids": [],
+      "reason_codes": [
+        "occlusion",
+        "gripper_not_visible"
+      ],
+      "explanation": "夹爪被手臂挡住"
+    }
+  ],
+  "invalid": [
+    {
+      "review_status": "refute",
+      "target_visible": true,
+      "tracking_target_correct": "support",
+      "position_support": "refute",
+      "orientation_support": "uncertain",
+      "background_motion_support": "support",
+      "offset_direction": "left",
+      "offset_magnitude_class": "one_to_two_finger_widths",
+      "evidence_frame_ids": [
+        120,
+        126,
+        132
+      ],
+      "reason_codes": [],
+      "explanation": "红圈一直在夹爪左侧、没有落在两指之间；绿十字跟着夹爪中心",
+      "offset_px": 12.5
+    },
+    {
+      "review_status": "maybe",
+      "target_visible": true,
+      "tracking_target_correct": "support",
+      "position_support": "refute",
+      "orientation_support": "uncertain",
+      "background_motion_support": "support",
+      "offset_direction": "left",
+      "offset_magnitude_class": "one_to_two_finger_widths",
+      "evidence_frame_ids": [
+        120,
+        126,
+        132
+      ],
+      "reason_codes": [],
+      "explanation": "红圈一直在夹爪左侧、没有落在两指之间；绿十字跟着夹爪中心"
+    },
+    {
+      "review_status": "refute",
+      "target_visible": true,
+      "tracking_target_correct": "support",
+      "position_support": "refute",
+      "orientation_support": "uncertain",
+      "background_motion_support": "support",
+      "offset_direction": "left",
+      "offset_magnitude_class": "one_to_two_finger_widths",
+      "evidence_frame_ids": [
+        120,
+        126,
+        132
+      ],
+      "reason_codes": []
+    },
+    {
+      "review_status": "refute",
+      "target_visible": true,
+      "tracking_target_correct": "support",
+      "position_support": "refute",
+      "orientation_support": "uncertain",
+      "background_motion_support": "support",
+      "offset_direction": "left",
+      "offset_magnitude_class": "one_to_two_finger_widths",
+      "evidence_frame_ids": [
+        -1
+      ],
+      "reason_codes": [],
+      "explanation": "红圈一直在夹爪左侧、没有落在两指之间；绿十字跟着夹爪中心"
+    },
+    {
+      "review_status": "refute",
+      "target_visible": true,
+      "tracking_target_correct": "support",
+      "position_support": "refute",
+      "orientation_support": "uncertain",
+      "background_motion_support": "support",
+      "offset_direction": "left",
+      "offset_magnitude_class": "one_to_two_finger_widths",
+      "evidence_frame_ids": [
+        120,
+        126,
+        132
+      ],
+      "reason_codes": [
+        "fault_injected"
+      ],
+      "explanation": "红圈一直在夹爪左侧、没有落在两指之间；绿十字跟着夹爪中心"
+    }
+  ]
+}

@@ -339,10 +339,9 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
   const modules: PreflightResult['modules'] = registry.modules.map((m) => {
     const needs = m.needs as string[];
     if (needs.includes('eef_input')) {
-      // like the CLI (design doc 12): the dataset preflight cannot know the task's trajectory.json
-      return needs.includes('vlm')
-        ? { id: m.id, availability: 'unsupported', reason: 'the VLM review of EEF-video consistency is not provided yet', reason_code: 'eef_review_not_available' }
-        : { id: m.id, availability: 'needs_input', reason: 'no trajectory.json given', reason_code: 'trajectory_missing', input_hint: { field: 'trajectory_json' } };
+      // like the CLI (design doc 12): the dataset preflight cannot know the task's trajectory.json;
+      // the VLM review follows the module it reviews (F5.6)
+      return { id: m.id, availability: 'needs_input', reason: 'no trajectory.json given', reason_code: 'trajectory_missing', input_hint: { field: 'trajectory_json' } };
     }
     if (needs.includes('state') && p.missing.includes('state')) {
       return {

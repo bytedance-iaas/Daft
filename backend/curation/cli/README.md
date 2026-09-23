@@ -226,6 +226,13 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
   `report` 给它一节建议性摘要与三张表。没给文件时 `preflight` 报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`）。
   `check` 的每行记录带 `input_file_sha256`、`config_hash`、`seeds_sha256`，`--resume` 只跳过三者都相同的行，`input_digest` 也包含它们
   （换文件、换种子或改参数就是新输入）；远端（TOS）数据集按需把用到的视频分段读到临时目录，调用结束删掉。
+- EEF 的 VLM 复核（`eef_video_review`，F5.6）：vlm 档的建议性模块，单独一次 `check`，读同一运行目录里 `eef_video_consistency`
+  的记录与逐帧曲线和同一个文件（`--param eef_video_consistency.trajectory_json=PATH`，Daemon 会把被复核模块的参数一起传），
+  VLM 参数与其他 VLM 模块相同（`--vlm-backend` / `--vlm-endpoint` / `--vlm-model` / `--retry` / `--hedge`），调用种类 `eef_review`，
+  超时默认 120 秒（`--set checks.task_success.vlm.timeouts_s.eef_review=S`）；答复缓存在 `checks/eef_video_review/cache/`，
+  `--resume` 只跳过文件、复核配置（窗口数、帧数、模型、prompt / Schema 版本、预处理）与被复核记录都没变的行。
+  窗口没拿到合格答复记 `failed`（episode 为 `incomplete`，不是执行出错）；整次调用失败（如 VLM 探活不过）是模块失败，判决不受影响。
+  实现在 `cli/eef_review.py`，复核逻辑在 `extensions/eef_consistency/review.py`。
   实现在 `cli/eef_check.py`、`cli/modparams.py`，模块本身在 `extensions/eef_consistency/`（见其 README）。
 
 ## Daemon 的调用顺序

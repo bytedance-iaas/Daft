@@ -214,6 +214,14 @@ Current summary:
         前端第二屏文件项（JSONL 种子转数组、定位错误）、预设与「全选可用」不勾建议性模块；验证：tests/orchestr/test_eef_tasks.py
         （含真跑 CLI 的端到端）、CLI 换文件重做与远端取视频、前端 210 条；真起 Daemon 用 dataset2 走了一遍控制台上传
         （12 篇附录 C.5）；控制台的「本地挂载路径」来源没有 Daemon 注入开关，是既有缺口，已另开任务
+      · F5.6 VLM 复核 completed：extensions/eef_consistency/review.py（窗口：同分项重叠的 CPU 段合并成候选 + 均匀抽查，超出记
+        truncated；请求包：缩小整帧 + 每帧原始裁剪与红圈 / 绿十字标记裁剪，印帧号，不给故障名 / 真值 / CPU 结论；答复：严格
+        Schema eef/review_output.schema.json、帧号属于请求、解释无测量值，一次修复；缓存；冲突 → needs_human；跟错目标 →
+        tracking_suspect）；cli/eef_review.py（VlmSession、调用种类 eef_review、默认超时 120 s、--resume）；预检跟随被复核模块
+        （eef_base_unavailable）再要 VLM；Daemon 要求一起勾、复核阶段带上被复核模块的文件；报告小节与 eef_review_windows
+        表（C1 1.6）；前端勾复核自动带上基础模块；验证：固定 tape 下两种冲突 / 修复 / 超时 / 未知帧 / 测量值录制后离线回放
+        逐项相同，CLI 全链路加复核后判决与清单不变，Daemon 端到端带复核，dataset2 用假模型跑通（12 篇附录 C.6）；
+        未做：跟错目标后的独立重定位（DEMO 没有第二个 provider）；没有真实 VLM 后端验证 prompt 效果
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
@@ -224,8 +232,8 @@ Main gaps:
     F4.3 待按 README 完整跑一次质检
 
 Next steps:
-  0. EEF–视频一致性：F5.1–F5.5 已完成。待做：F5.6 VLM 复核；F5.7 验收与试用；§3.3 mapping.yaml 导出工具；
-     §13.3 补充扫描（检出下限）
+  0. EEF–视频一致性：F5.1–F5.6 已完成。待做：F5.7 验收与试用（需要真实 VLM 后端验证复核 prompt）；§3.3 mapping.yaml
+     导出工具；§13.3 补充扫描（检出下限）
   1. APIG 接通（physicalai-apig 监听 curation）、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
   2. 按 README 走查一次完整质检，F3.3、F4.1、F4.3 按验收置位；请需求方统一过一遍界面文案（F3.2）
   3. 真实数据的两个基线在 F4.2 黄金对账之前补

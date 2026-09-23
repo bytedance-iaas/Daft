@@ -108,6 +108,8 @@ def _camera_rows(ep: int, d: dict) -> list[dict]:
 
 
 def table_rows(table: str, results: dict) -> list[dict]:
+    if table == "eef_review_windows":
+        return review_rows(results)
     out: list[dict] = []
     for ep, rec in sorted(results.items()):
         d = rec.get("details") or {}
@@ -130,3 +132,66 @@ def table_rows(table: str, results: dict) -> list[dict]:
                             "residual_before_px": _num(h.get("residual_before_px")),
                             "residual_after_px": _num(h.get("residual_after_px"))})
     return out
+
+
+def review_summary(results: dict) -> dict:
+    """The review's section (F5.6): how many episodes were reviewed completely, how many windows got
+    an answer, the conflicts with the CPU that wait for a person and the observations to verify."""
+    status: dict[str, int] = {}
+    classes: dict[str, int] = {}
+    failures: dict[str, int] = {}
+    n = {"windows": 0, "answered": 0, "failed": 0, "conflicts": 0, "tracking_suspect": 0, "requests": 0,
+         "cache_hits": 0, "needs_human": 0, "truncated": 0}
+    for rec in results.values():
+        d = rec.get("details") or {}
+        st = d.get("status") or ("error" if rec.get("verdict") == "error" else "not_reviewed")
+        status[st] = status.get(st, 0) + 1
+        sm = d.get("summary") or {}
+        for k in ("windows", "answered", "failed", "conflicts", "tracking_suspect", "requests", "cache_hits"):
+            n[k] += int(sm.get(k) or 0)
+        n["needs_human"] += bool(d.get("needs_human"))
+        n["truncated"] += bool(sm.get("truncated"))
+        for k in ("support", "refute", "uncertain", "not_observable"):
+            if sm.get(k):
+                classes[k] = classes.get(k, 0) + int(sm[k])
+        for cam in (d.get("cameras") or {}).values():
+            for w in cam.get("windows") or []:
+                code = (w.get("failure") or {}).get("code")
+                if code:
+                    failures[code] = failures.get(code, 0) + 1
+    series = lambda counts: [{"name": k, "count": v} for k, v in counts.items() if v]  # noqa: E731
+    return {"assessment_mode": "advisory", "affects_dataset_verdict": False,
+            "reviewed": status.get("completed", 0), "incomplete": status.get("incomplete", 0),
+            "not_reviewed": status.get("not_reviewed", 0), "errors": status.get("error", 0),
+            "needs_human": n["needs_human"], "conflicts": n["conflicts"], "tracking_suspect": n["tracking_suspect"],
+            "windows": n["windows"], "windows_answered": n["answered"], "windows_failed": n["failed"],
+            "truncated_episodes": n["truncated"], "vlm_requests": n["requests"], "cache_hits": n["cache_hits"],
+            "review_classes": series(classes), "failure_codes": series(failures)}
+
+
+def review_rows(results: dict) -> list[dict]:
+    out: list[dict] = []
+    for ep, rec in sorted(results.items()):
+        d = rec.get("details") or {}
+        for cid, cam in (d.get("cameras") or {}).items():
+            for w in cam.get("windows") or []:
+                a = w.get("answer") or {}
+                c = w.get("conflict") or {}
+                seg = w.get("segment") or {}
+                out.append({"episode_index": int(ep), "camera": cid, "kind": w.get("kind"),
+                            "subitem": w.get("subitem") or "", "frames": ",".join(str(f) for f in w.get("frames") or []),
+                            "start_s": _num(seg.get("start_s")), "status": w.get("status"),
+                            "review_status": a.get("review_status") or "",
+                            "position_support": a.get("position_support") or "",
+                            "orientation_support": a.get("orientation_support") or "",
+                            "tracking_target_correct": a.get("tracking_target_correct") or "",
+                            "offset": (f"{a.get('offset_direction')}/{a.get('offset_magnitude_class')}"
+                                       if a else ""),
+                            "conflict": f"{c.get('subitem')}: CPU {c.get('cpu')} / VLM {c.get('vlm')}" if c else "",
+                            "failure": (w.get("failure") or {}).get("code") or "",
+                            "explanation": a.get("explanation") or "", "attempts": w.get("attempts")})
+        if not d.get("cameras"):
+            out.append({"episode_index": int(ep), "camera": "", "kind": "", "status": d.get("status") or "",
+                        "review_status": "", "conflict": "", "failure": ";".join(d.get("reasons") or [])})
+    return out
+

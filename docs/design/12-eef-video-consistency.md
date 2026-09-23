@@ -682,3 +682,14 @@ eef_video_review:
 - **远端数据集**：TOS 上的数据集按需把本条用到的视频分段读进临时目录（`.partial` 写完再改名），调用结束删掉；文件校验里的媒体存在性用 `stat` 查。
 - 验证：`tests/orchestr/test_eef_tasks.py`（上传校验与定位、句柄规则、带文件的模块预检、真跑 CLI 的端到端任务）、`tests/cli/test_eef_check.py`（换文件 / 换种子 / 改参数后 `--resume` 重做、远端数据集取视频）、前端（参数 schema 的 upload 类型、预设不选建议性模块、JSONL 转换、第二屏上传坏文件看到定位错误再换好文件后提交）；真起 Daemon 用 dataset2 走了一遍控制台上传（7 个样本、2009 帧、重算投影差 ≤ 0.013 px；种子 280 行；任务级预检把模块判为 available）。
 
+### C.6 F5.6 VLM 复核（2026-09-23）
+
+- **窗口**：每路相机至多 N 个候选窗口（`review_windows_per_camera`，默认 3）加 N 个均匀抽查窗口（约 1 秒，只取声明点在画面里的帧），每窗口至多 F 帧（`review_frames_per_window`，默认 6，先放最差帧）。CPU 按点（或轴）各出一段，同一分项、时间重叠的段先合并成一个候选窗口（dataset2 上合并前同一路相机常有 3 个几乎相同的窗口）；候选超出 N 个时按时长取、记 `truncated`。预算就是这两个参数，没有另设全局请求上限。
+- **请求包**：一张缩小的整帧作上下文；每帧一张原始裁剪（不画任何东西，先让模型自己找点）和一张标记裁剪（声明投影红圈、独立观测绿十字），都印帧号；小于 256 px 的裁剪放大后再标注。文字只有点与轴的定义、机位限制（腕部相机不判运动）和答复格式；不给故障名、真值、注入幅度，也不给 CPU 的结论。
+- **答复**：严格 Schema `eef/review_output.schema.json`（只有分类、布尔与帧号，偏移量用「指宽」分级）；`evidence_frame_ids` 必须来自本次请求；解释里出现「数字 + px / mm / cm / 度 / °」一律拒收（`measured_value`）；不合格（`malformed_json` / `schema_violation` / `unknown_frame` / `measured_value`）给一次修复，仍不合格该窗口 `failed`；超时、HTTP 错误同样 `failed` 并记原因码。
+- **冲突与转人工**：候选窗口里模型说对应分项 support（投影落在该点上），或均匀窗口里 CPU 为 ok 而模型 refute，记一处冲突，双方都保留，episode `needs_human`；报告摘要给「待人工看」条数，冲突与被否定的窗口保存送给模型的标记裁剪作证据。模型说绿十字跟错了目标记 `tracking_suspect`（观测待核实）。**与 12 篇 §10.2 的出入**：DEMO 没有第二个独立定位 provider，「触发一次独立重定位」没有做，只标记待核实；「转人工」是记录与报告里的标记，不进裁决队列（建议性模块 `produces_adjudication=false`）。
+- **状态**：episode `completed`（窗口都有答复）/ `incomplete`（有窗口失败，报告里叫「未完成」）/ `not_reviewed`（文件里没有、CPU 结果缺失 / 出错 / 与本次文件不符、没有可复核的窗口）；窗口失败不是执行出错，整次调用失败（如 VLM 探活不过）是模块失败、可重试；三种情况判决都不受影响（CLI 全链路加上复核后 verdicts / keep 逐字节不变）。
+- **运行控制**：走共享的 VLM client（`vlm_client.hedged_request` 与 `requests.post` 调用时查找），所以重试、对冲、推理强度、用量记账（模块 `eef_video_review`、调用种类 `eef_review`）与 parity 录制回放带都照常生效；超时默认 120 秒，可用 `checks.task_success.vlm.timeouts_s.eef_review` 覆盖；答复按发送内容（图像字节哈希、帧号、文字、模型、prompt / Schema 版本、预处理参数）缓存，`--resume` 只跳过文件、复核配置与被复核记录都没变的行。
+- **接入**：预检里复核跟随被复核模块，再要 VLM 后端；Daemon 要求两者一起勾（控制台勾复核自动带上基础模块，取消基础模块也取消复核），复核阶段 `advisory_vlm` 在 `advisory_frame` 之后，参数把被复核模块的文件一起传；报告小节摘要（完整 / 未完成 / 未复核、窗口、冲突、待人工、失败原因）与明细表 `eef_review_windows`（C1 1.6）。
+- **验证**：固定 tape 下各分支（两种冲突、修复、超时、未知帧、测量值）在迷你数据集上录制后离线回放逐项相同（`tests/cli/test_eef_review.py`）；Daemon 端到端任务带复核（`tests/orchestr/test_eef_tasks.py`）；dataset2 上用假模型跑通：7 条、64 个窗口（候选合并后），每条约 1 秒（不含模型耗时）。**没有真实 VLM 后端验证过 prompt 的效果**（需求方提供后端后在 F5.7 里做）。
+

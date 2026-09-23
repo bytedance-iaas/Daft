@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseForDisplay, selectionCount, toExpr, toggleInExpr } from './episodes';
-import { availability, optIn, presetSelection, reasonText } from './preflight';
+import { availability, moduleDependencies, optIn, presetSelection, reasonText, toggleModule } from './preflight';
 import { DATASET_PROFILES, preflightFor, registry } from '../mocks/world';
 
 describe('episode expressions (display only; the server validates)', () => {
@@ -46,6 +46,16 @@ describe('preflight → availability and reasons', () => {
     expect(presetSelection('full', registry, r)).toEqual(['timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile']);
     expect(presetSelection('quick', registry, r)).toEqual(['timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'dedup']);
     expect(presetSelection('full', registry, preflightFor(mcap, {}))).toEqual([]);
+  });
+
+  it('ticking the EEF review ticks the EEF module; unticking the EEF module unticks the review (F5.6)', () => {
+    expect(moduleDependencies(registry, 'eef_video_review')).toEqual(['eef_video_consistency']);
+    expect(moduleDependencies(registry, 'task_success')).toEqual([]);
+    const on = toggleModule(registry, ['timestamp_check'], 'eef_video_review');
+    expect(on).toEqual(['timestamp_check', 'eef_video_consistency', 'eef_video_review']);
+    expect(toggleModule(registry, on, 'eef_video_review')).toEqual(['timestamp_check', 'eef_video_consistency']);
+    expect(toggleModule(registry, on, 'eef_video_consistency')).toEqual(['timestamp_check']);
+    expect(toggleModule(registry, ['dedup'], 'dedup')).toEqual([]);
   });
 
   it('an advisory module is opted into by hand, never by a preset (registry 1.4, F5.5)', () => {

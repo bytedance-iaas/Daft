@@ -174,7 +174,7 @@ def _summary(rev: Revision, m: str) -> dict:
     if not registry.get(m).affects_dataset_verdict:        # advisory (registry 1.4, design doc 12)
         from ..extensions.eef_consistency import report as eef_report
 
-        out.update(eef_report.summary(res))
+        out.update(eef_report.review_summary(res) if m == "eef_video_review" else eef_report.summary(res))
     if m == "timestamp_check":
         why: dict[str, int] = {}
         for r in res.values():
@@ -423,6 +423,17 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                  "failed": "失败"}[sec["state"]]
         lines.append(f"### {cn}({state})")
         cnt = sec["summary"]["counts"]
+        if spec is not None and not spec.affects_dataset_verdict and sec["id"] == "eef_video_review":
+            s = sec["summary"]
+            lines.append(f"- 建议性复核，不影响判决:完整复核 {s.get('reviewed', 0)} · 未完成 {s.get('incomplete', 0)} · "
+                         f"未复核 {s.get('not_reviewed', 0)} · 出错 {cnt['error']}")
+            lines.append(f"- 窗口 {s.get('windows', 0)}(有答复 {s.get('windows_answered', 0)},"
+                         f"失败 {s.get('windows_failed', 0)});与 CPU 冲突 {s.get('conflicts', 0)} 处,"
+                         f"待人工看 {s.get('needs_human', 0)} 条;观测待核实 {s.get('tracking_suspect', 0)} 处")
+            fails = "、".join(f"{x['name']} {x['count']}" for x in s.get("failure_codes") or []) or "无"
+            lines.append(f"- 失败原因:{fails}")
+            lines.append("")
+            continue
         if spec is not None and not spec.affects_dataset_verdict:
             # advisory (registry 1.4): no pass / fail / abstain, never part of the verdict
             s = sec["summary"]

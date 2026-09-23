@@ -1,5 +1,5 @@
 {
- "registry_version": "1.5",
+ "registry_version": "1.6",
  "stages": [
   "numeric",
   "frame",
@@ -561,7 +561,21 @@
      }
     }
    },
-   "tables": [],
+   "tables": [
+    {
+     "id": "eef_review_windows",
+     "title_zh": "复核窗口",
+     "sortable": [
+      "episode_index",
+      "camera",
+      "kind",
+      "status",
+      "review_status",
+      "conflict"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
    "mergeable": false
   },
   {

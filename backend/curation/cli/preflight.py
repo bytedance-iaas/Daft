@@ -299,6 +299,7 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
                     f"the model will caption them first") if without_task else ""
 
     modules = []
+    eef_base = None
     for spec in specs:
         entry: dict = {"id": spec.id}
         lacking = [c for c in ("timestamps", "action", "state", "video")
@@ -314,14 +315,16 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
         elif "eef_input" in spec.needs:
             from ..extensions.eef_consistency import preflight as eef_preflight
 
-            if "vlm" in spec.needs:
-                entry.update(eef_preflight.review_entry())
-            else:
-                root = None if "://" in uri else uri
-                entry.update(eef_preflight.consistency_entry(
-                    modparams.with_defaults(spec.id, getattr(args, "module_params", {}).get(spec.id)),
+            if eef_base is None:              # the review reads the module it reviews: same file
+                eef_base = eef_preflight.consistency_entry(
+                    modparams.with_defaults(eef_preflight.MODULE_ID,
+                                            getattr(args, "module_params", {}).get(eef_preflight.MODULE_ID)),
                     episodes=[ep.index for ep in episodes], media_exists=lambda key: key in listing,
-                    lerobot_root=root))
+                    lerobot_root=None if "://" in uri else uri)
+            if "vlm" in spec.needs:
+                entry.update(eef_preflight.review_entry(eef_base, vlm_backend=bool(vlm_backend)))
+            else:
+                entry.update(eef_base)
         elif "embodiment_profile" in spec.needs and emb_state != "ok":
             if emb_state == "unsupported":
                 who = "embodiment" if override else "robot_type"

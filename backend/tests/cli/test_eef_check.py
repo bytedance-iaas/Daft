@@ -74,7 +74,7 @@ def _entry(ep: int, *, shift: int = 0, offset: float = 0.0) -> dict:
     return {"episode_index": ep, "sample": sample, "calibration": None, "frames": frames}
 
 
-def _files(tmp_path, *, corrupt: bool = False) -> str:
+def _files(tmp_path, *, corrupt: bool = False, seed_every: int = 15) -> str:
     """trajectory.json for episodes 0-6 plus observations_seed/ next to it; returns its path."""
     d = tmp_path / "eef"
     entries = [_entry(ep, shift=4 if ep == 1 else 0, offset=9.0 if ep == 2 else 0.0) for ep in range(7)]
@@ -92,7 +92,7 @@ def _files(tmp_path, *, corrupt: bool = False) -> str:
                  "model_version": "test", "input_image_sha256": "0" * 64, "projection_visible_to_localizer": False,
                  "points": {"block_center": {"uv_px": [float(uv[i, 0]), float(uv[i, 1])], "visibility": "visible",
                                              "confidence": 1.0, "uncertainty_px": None}}}
-                for i in range(0, len(uv), 15)]
+                for i in range(0, len(uv), seed_every)]
         (d / "observations_seed" / f"mini_{ep:06d}").mkdir()
         (d / "observations_seed" / f"mini_{ep:06d}" / f"{CAM}.jsonl").write_text(
             "".join(json.dumps(r) + "\n" for r in rows))
@@ -105,7 +105,8 @@ def test_preflight_reports_the_file_and_the_sub_items(mini_dataset, tmp_path):
     by = {m["id"]: m for m in doc["modules"]}
     assert by[EEF]["availability"] == "needs_input" and by[EEF]["reason_code"] == "trajectory_missing"
     assert by[EEF]["input_hint"] == {"field": "trajectory_json"}          # C1 1.5: the console asks for it
-    assert by["eef_video_review"]["reason_code"] == "eef_review_not_available"
+    assert by["eef_video_review"]["availability"] == "needs_input"      # F5.6: it follows the module it
+    assert by["eef_video_review"]["input_hint"] == {"field": "trajectory_json"}   # reviews
     doc = run("preflight", "--input", mini_dataset, "--modules", EEF,
               "--param", f"{EEF}.trajectory_json={traj}").doc
     (entry,) = doc["modules"]
@@ -115,6 +116,15 @@ def test_preflight_reports_the_file_and_the_sub_items(mini_dataset, tmp_path):
     assert entry["subitems"]["orientation_2d"] == {"availability": "unsupported",
                                                    "reason_code": "axis_mapping_missing"}
     assert entry["subitems"]["state_motion"]["reason_code"] == "pose_semantics_unknown"
+    rev = {m["id"]: m for m in run("preflight", "--input", mini_dataset, "--modules", f"{EEF},eef_video_review",
+                                   "--param", f"{EEF}.trajectory_json={traj}").doc["modules"]}["eef_video_review"]
+    assert rev["availability"] == "needs_input" and rev["input_hint"] == {"field": "vlm"}
+    rev = {m["id"]: m for m in run("preflight", "--input", mini_dataset, "--modules", "eef_video_review",
+                                   "--vlm-backend", "ark", "--param", f"{EEF}.trajectory_json={traj}").doc["modules"]}
+    assert rev["eef_video_review"]["availability"] == "available"
+    gone = run("preflight", "--input", mini_dataset, "--modules", "eef_video_review", "--vlm-backend", "ark",
+               "--param", f"{EEF}.trajectory_json={traj}.nope").doc["modules"][0]
+    assert gone["availability"] == "unsupported" and gone["reason_code"] == "eef_base_unavailable"
     bad = run("preflight", "--input", mini_dataset, "--param", f"{EEF}.no_such=1")
     assert bad.rc != 0 and "no parameter" in bad.doc["error"]["message"]
 
@@ -198,12 +208,16 @@ def chain(vlm_stage, tmp_path_factory):
         c.post(revision=1)
         eef = c.step("eef", "check", "--modules", EEF, *c.common(), "--episodes", "0-7",
                      "--param", f"{EEF}.trajectory_json={traj}", "--survivors-out", c.path("stages", "eef.txt"))
+        review = c.step("review", "check", "--modules", "eef_video_review", *c.common(), *c.vlm, "--episodes",
+                        "0-7", "--param", f"{EEF}.trajectory_json={traj}", "--survivors-out",
+                        c.path("stages", "review.txt"))
+        mods = f"{MODS},{EEF},eef_video_review"
         c.step("funnel2", "aggregate", "--run-dir", rd, "--phase", "funnel", "--revision", "2",
-               "--episodes", "0-7", "--modules", f"{MODS},{EEF}")
+               "--episodes", "0-7", "--modules", mods)
         c.step("final2", "aggregate", "--run-dir", rd, "--phase", "final", "--revision", "2", "--episodes", "0-7",
-               "--modules", f"{MODS},{EEF}", "--input", ds)
-        c.step("report2", "report", "--run-dir", rd, "--revision", "2", "--modules", f"{MODS},{EEF}")
-    return {"rd": rd, "chain": c, "eef": eef}
+               "--modules", mods, "--input", ds)
+        c.step("report2", "report", "--run-dir", rd, "--revision", "2", "--modules", mods)
+    return {"rd": rd, "chain": c, "eef": eef, "review": review}
 
 
 def test_every_selected_episode_is_assessed_including_rejected_ones(chain):
@@ -229,6 +243,20 @@ def test_every_selected_episode_is_assessed_including_rejected_ones(chain):
     for rec in recs.values():
         for path in rec["evidence"]:
             assert os.path.isfile(os.path.join(rd, path))
+
+
+def test_the_review_runs_on_every_selected_episode_and_reports(chain):
+    rd = chain["rd"]
+    assert chain["review"].doc["modules"]["eef_video_review"]["episodes"]["abstain"] == 8
+    recs = results(rd, "eef_video_review")
+    assert sorted(recs) == list(range(8)) and recs[7]["details"]["reasons"] == ["projection_missing"]
+    assert open(os.path.join(rd, "stages", "review.txt")).read().split() == [str(e) for e in range(8)]
+    rep = json.load(open(os.path.join(rd, "revisions", "r0002", "report.json")))
+    (sec,) = [s for s in rep["modules"] if s["id"] == "eef_video_review"]
+    assert sec["summary"]["reviewed"] == 7 and sec["summary"]["not_reviewed"] == 1
+    assert os.path.isfile(os.path.join(rd, "revisions", "r0002", "tables", "eef_review_windows.parquet"))
+    md = open(os.path.join(rd, "revisions", "r0002", "report.md"), encoding="utf-8").read()
+    assert "建议性复核，不影响判决" in md
 
 
 def test_the_verdict_and_the_delivered_lists_do_not_move(chain):

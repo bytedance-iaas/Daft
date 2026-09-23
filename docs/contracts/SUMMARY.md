@@ -199,3 +199,5 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - 口径：第一刀里界面拿不到文件，所以不给文件时预检报 `unsupported: trajectory_missing`；F5.5 上传落地后已改为 `needs_input`（见下）。
 - 建议性模块的记录 `passed = score = null`（所以 `verdict` 按 C2 推导为 `abstain`），分项进 `details`；报告里它的小节不按通过 / 判废 / 弃权计数，而是候选、分项可疑数、被支持的诊断与覆盖率。
 - **F5.5（2026-09-23）**：C1 1.5 文件型参数（`format: upload`、`x-upload-kind`、`x-accept`、`x-max-mb`；Daemon 里值是 `upload:<id>` 句柄，CLI 里是路径）；C4 1.8.0 `POST /uploads`（请求体即文件，上传即校验，400 `validation_failed` 的 `details.errors[]` 定位到字段 / 样本 / 帧 / 相机 / 点位）与 `GET /uploads/{id}`，新 schema `Upload`、`UploadKind`、`UploadIssue`；C2 预检的 `input_hint.field` 枚举加 `trajectory_json`，EEF 模块没给文件时是 `needs_input: trajectory_missing`。
+- **F5.6（2026-09-23）**：C1 1.6，`eef_video_review` 加明细表 `eef_review_windows`；新 Schema `eef/review_output.schema.json`（模型对一个复核窗口的答复：只有分类、布尔与帧号，`additionalProperties: false`；帧号属于本次请求、解释里没有测量值由执行方另查）；C2 预检加原因码 `eef_base_unavailable {base_reason_code}`，复核条目跟随被复核模块（缺文件同样 `needs_input: trajectory_missing`），再要 VLM 后端（`vlm_backend_missing`）；调用种类 `eef_review`（C3 1.1 的模块 id 形式，C3 本身不变）。
+

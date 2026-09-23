@@ -22,7 +22,6 @@ import time
 from .errors import ModuleFailed, UsageError
 
 MODULE = "eef_video_consistency"
-REVIEW = "eef_video_review"
 MOUNTS = {"fixed_external_and_wrist": ("fixed_external", "wrist"), "fixed_external": ("fixed_external",)}
 
 
@@ -74,9 +73,6 @@ def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: st
                                     module_dir)
     from . import modparams
 
-    if REVIEW in modules:
-        raise ModuleFailed(f"{REVIEW}: the VLM review is not part of the DEMO's first cut; "
-                           f"preflight marks it unsupported", {"module": REVIEW})
     params = modparams.with_defaults(MODULE, modparams.parse(getattr(args, "param", None)).get(MODULE))
     try:
         registry.validate_params(MODULE, params)

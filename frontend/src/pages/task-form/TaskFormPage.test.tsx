@@ -135,8 +135,14 @@ describe('新建任务 · 两屏与提交', () => {
     await screen.findByText(/LeRobot v2 · 120 条 episode/);
     await user.click(screen.getByText('快速质检（不调用模型的模块）'));
     const eef = screen.getByRole('checkbox', { name: 'EEF–视频一致性' });
+    const review = screen.getByRole('checkbox', { name: 'EEF–视频一致性 · VLM 复核' });
     expect(eef).not.toBeChecked();
-    await user.click(eef);
+    expect(review).not.toBeChecked();
+    await user.click(review);                                 // ticking the review brings the module it reviews
+    expect(eef).toBeChecked();
+    await user.click(eef);                                    // and unticking that module drops the review
+    expect(review).not.toBeChecked();
+    await user.click(review);
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
@@ -155,8 +161,10 @@ describe('新建任务 · 两屏与提交', () => {
     await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task_/));
     const up = seen.filter((x) => x.method === 'POST' && x.path.startsWith('/uploads'));
     expect(up).toHaveLength(2);
-    const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: unknown[] };
+    const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: unknown[]; vlm?: unknown };
     expect(body.modules).toContainEqual({ id: 'eef_video_consistency', params: { trajectory_json: expect.stringMatching(/^upload:upl_/) } });
+    expect(body.modules).toContain('eef_video_review');
+    expect(body.vlm).toBeTruthy();
   });
 
   it('screen 2 asks for the robot type (required) or 跳过该模块', async () => {
