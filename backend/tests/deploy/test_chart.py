@@ -266,6 +266,25 @@ def test_maintenance_mode_runs_no_daemon_on_the_same_volumes():
     assert env_entries(maint) == env_entries(normal)
 
 
+def test_volume_permissions_hand_the_volumes_to_the_daemon_user_only_when_asked():
+    """VCI ignores fsGroup: an opt-in init container chowns the two volumes, as root with
+    CHOWN / FOWNER only; the Daemon itself still runs as 10001 with nothing added."""
+    sts = only(render(), "StatefulSet")
+    assert "initContainers" not in sts["spec"]["template"]["spec"]
+    sts = only(render({"volumePermissions": {"enabled": True}}), "StatefulSet")
+    pod = sts["spec"]["template"]["spec"]
+    (init,) = pod["initContainers"]
+    assert init["name"] == "volume-permissions"
+    assert init["securityContext"]["runAsUser"] == 0
+    assert init["securityContext"]["capabilities"] == {"drop": ["ALL"], "add": ["CHOWN", "FOWNER"]}
+    assert init["securityContext"]["allowPrivilegeEscalation"] is False
+    assert {m["mountPath"] for m in init["volumeMounts"]} == {"/data", "/scratch"}
+    assert "chown -R 10001:10001" in init["command"][-1]
+    assert pod["securityContext"]["runAsUser"] == 10001
+    main = pod["containers"][0]
+    assert main["securityContext"]["capabilities"] == {"drop": ["ALL"]}
+
+
 # ---------------------------------------------------------------------------
 # environment and settings
 # ---------------------------------------------------------------------------

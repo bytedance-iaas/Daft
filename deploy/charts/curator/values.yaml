@@ -130,6 +130,9 @@ securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop: ["ALL"]
+volumePermissions:             # 不执行 fsGroup 的运行环境（火山 VCI）：新挂的块存储是 root:root 755，Daemon 的用户写不进去。
+  enabled: false                # true 时先以 root 起一个初始化容器，把数据卷和临时卷的属主改成上面的 runAsUser / fsGroup
+                                # （属主已对就不动），主容器照旧以非 root 运行
 
 maintenance:
   enabled: false                # 维护模式：Pod 只 sleep、不起 Daemon，数据卷照挂（恢复备份等离线操作），见 deploy/README.md

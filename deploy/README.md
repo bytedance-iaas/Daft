@@ -404,6 +404,7 @@ masterKey: {existingSecret: curator-v2-master-key}
 persistence:
   data: {storageClass: ebs-essd, size: 100Gi}
   scratch: {type: pvc, storageClass: ebs-essd, size: 200Gi}   # VCI 系统盘只有 40 GiB，导出的临时文件放块存储
+volumePermissions: {enabled: true}                  # VCI 不执行 fsGroup：新块存储是 root:root 755，先由初始化容器改属主
 podAnnotations:
   vke.volcengine.com/burst-to-vci: enforce
   vci.vke.volcengine.com/preferred-instance-family: vci.n3a

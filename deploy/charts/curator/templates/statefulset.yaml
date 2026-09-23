@@ -56,6 +56,37 @@ spec:
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.volumePermissions.enabled }}
+      {{- $uid := .Values.podSecurityContext.runAsUser | default 10001 }}
+      {{- $gid := .Values.podSecurityContext.fsGroup | default (.Values.podSecurityContext.runAsGroup | default 10001) }}
+      # Runtimes that ignore fsGroup (VCI) mount a new block volume as root:root 755, which the
+      # Daemon's user cannot write. Hand the data and scratch volumes to it first - only where the
+      # owner is wrong, so a restart costs a stat - then the main container runs as before.
+      initContainers:
+        - name: volume-permissions
+          image: {{ include "curator.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              for d in {{ .Values.persistence.data.mountPath }} {{ .Values.persistence.scratch.mountPath }}; do
+                [ "$(stat -c %u:%g "$d")" = "{{ $uid }}:{{ $gid }}" ] || chown -R {{ $uid }}:{{ $gid }} "$d"
+              done
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER"]
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.persistence.data.mountPath }}
+            - name: scratch
+              mountPath: {{ .Values.persistence.scratch.mountPath }}
+      {{- end }}
       containers:
         - name: curator
           image: {{ include "curator.image" . | quote }}
