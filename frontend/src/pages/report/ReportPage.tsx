@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Descriptions, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography } from '@arco-design/web-react';
+import { Alert, Button, Card, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography } from '@arco-design/web-react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -13,7 +13,8 @@ import { EpisodeDrawer } from '../../features/report/EpisodeDrawer';
 import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
 import { compactNumber, percent } from '../../lib/format';
-import { fieldLabel, integrityValue, revisionOptions } from '../../lib/reportView';
+import { integrityItems } from '../../lib/integrity';
+import { revisionOptions, runParts, type RunPart } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
 import { isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
@@ -36,13 +37,38 @@ function Stat({ label, value, foot, testId }: { label: string; value: string | n
   );
 }
 
+/**
+ * The standing entry to adjudication (D47): whenever the task has a result, with the number of
+ * pending cards (and primary) when there are any; history revisions are read only.
+ */
+function AdjudicateButton({ task, readOnly }: { task: Task; readOnly: boolean }) {
+  const n = task.pending_adjudication;
+  const label = n ? zh.reportPage.adjudicateN(n) : zh.reportPage.adjudicate;
+  if (readOnly) {
+    return (
+      <Tooltip content={zh.report.historyDisabled}>
+        <Button disabled data-testid="adjudicate-entry">
+          {label}
+        </Button>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tooltip content={zh.reportPage.adjudicateHint}>
+      <Link to={`/tasks/${task.id}/adjudication`} data-testid="adjudicate-entry">
+        <Button type={n ? 'primary' : 'default'}>{label}</Button>
+      </Link>
+    </Tooltip>
+  );
+}
+
 /** Why a new subtask cannot start now (one active subtask per task, and only once it has stopped running). */
 function retryBlocked(task: Task): string | null {
   if (task.active_subtask || !isTerminalState(task.state)) return zh.report.retryBusy;
   return null;
 }
 
-function OverviewCard({ task, report, readOnly, onRetryHeld }: { task: Task; report: Report; readOnly: boolean; onRetryHeld: () => void }) {
+function OverviewCard({ task, report, readOnly, runs, onRetryHeld }: { task: Task; report: Report; readOnly: boolean; runs: RunPart[]; onRetryHeld: () => void }) {
   const reg = useModules();
   const o = report.overview;
   const c = o.counts;
@@ -63,7 +89,11 @@ function OverviewCard({ task, report, readOnly, onRetryHeld }: { task: Task; rep
       </div>
       <div className="stat-grid" style={{ marginTop: 12 }}>
         <Stat label={zh.report.passRate} value={percent(o.pass_rate, 0)} />
-        <Stat label={zh.report.duration} value={zh.time.duration(o.duration_s)} />
+        {o.duration_s !== null && o.duration_s !== undefined ? (
+          <Stat label={zh.report.duration} value={zh.time.duration(o.duration_s)} />
+        ) : runs.length ? (
+          <Stat label={zh.report.duration} value={zh.reportPage.durationParts(runs.map((r) => zh.time.duration(r.seconds)))} foot={zh.reportPage.durationParts(runs.map((r) => r.label))} testId="report-duration" />
+        ) : null}
         <Stat label={zh.report.tokens} value={compactNumber(t.prompt + t.completion)} foot={zh.report.tokensFoot(compactNumber(t.prompt), compactNumber(t.completion))} />
       </div>
       {skipped ? (
@@ -116,18 +146,19 @@ export function skippedOf(report: Report): { count: number; list: SkippedEpisode
   return { count: report.overview.counts.skipped ?? list.length, list };
 }
 
-function IntegrityCard({ report }: { report: Report }) {
-  const entries = Object.entries(report.integrity ?? {}).filter(([k]) => k !== 'skipped_episodes');
+function IntegrityCard({ task, report }: { task: Task; report: Report }) {
+  const items = integrityItems(report, task);
   const skipped = skippedOf(report);
   return (
     <Card title={zh.report.integrity} extra={<span className="muted">{zh.report.integrityDesc}</span>}>
-      {entries.length ? (
-        <div data-testid="integrity">
-          <Descriptions column={1} data={entries.map(([k, v]) => ({ label: fieldLabel(k), value: integrityValue(k, v) }))} />
-        </div>
-      ) : (
-        <Typography.Text type="secondary">—</Typography.Text>
-      )}
+      <dl className="desc-grid" data-testid="integrity">
+        {items.map((it) => (
+          <div key={it.key} className={`desc-item${it.full ? ' full' : ''}${it.warn ? ' warn' : ''}`}>
+            <dt>{it.label}</dt>
+            <dd>{it.value}</dd>
+          </div>
+        ))}
+      </dl>
       {skipped.list.length ? (
         <div style={{ marginTop: 16 }} data-testid="skipped-episodes">
           <Typography.Title heading={6} style={{ margin: '0 0 4px' }}>
@@ -237,6 +268,7 @@ function ReportBody({
   rev,
   readOnly,
   subtasks,
+  runs,
   table,
   setTable,
 }: {
@@ -245,6 +277,7 @@ function ReportBody({
   rev: number;
   readOnly: boolean;
   subtasks: readonly Subtask[];
+  runs: RunPart[];
   table: string | null;
   setTable: (table: string) => void;
 }) {
@@ -260,8 +293,8 @@ function ReportBody({
   const blocked = retryBlocked(task);
   return (
     <div className="card-gap">
-      <OverviewCard task={task} report={report} readOnly={readOnly} onRetryHeld={() => actions.run('retry', { id: task.id, name: task.name, held: report.overview.counts.held })} />
-      <IntegrityCard report={report} />
+      <OverviewCard task={task} report={report} readOnly={readOnly} runs={runs} onRetryHeld={() => actions.run('retry', { id: task.id, name: task.name, held: report.overview.counts.held })} />
+      <IntegrityCard task={task} report={report} />
       <ScopeCard report={report} />
       {report.modules.map((s: ReportModuleSection, i: number) => (
         <ModuleSection
@@ -367,7 +400,6 @@ export function ReportPage() {
               onChange={(v: number) => setParam('rev', v === current ? null : String(v))}
               options={options}
             />
-            {report.data ? <span className="muted">· {zh.report.sectionsDesc(report.data.report.modules.length)}</span> : null}
           </Space>
         ) : (
           t.name
@@ -378,11 +410,7 @@ export function ReportPage() {
           <Link to={`/tasks/${t.id}`}>
             <Button>{zh.report.back}</Button>
           </Link>
-          {t.pending_adjudication && !readOnly ? (
-            <Link to={`/tasks/${t.id}/adjudication`}>
-              <Button type="primary">{zh.report.goAdjudicate(t.pending_adjudication)}</Button>
-            </Link>
-          ) : null}
+          {current ? <AdjudicateButton task={t} readOnly={readOnly} /> : null}
         </>
       }
     />
@@ -422,7 +450,7 @@ export function ReportPage() {
           ) : !report.data ? (
             <PageError error={report.error} onRetry={() => void report.refetch()} />
           ) : (
-            <ReportBody task={t} report={report.data.report} rev={report.data.revision} readOnly={readOnly} subtasks={subs} table={table} setTable={setTable} />
+            <ReportBody task={t} report={report.data.report} rev={report.data.revision} readOnly={readOnly} subtasks={subs} runs={runParts(t, timeline.data?.items ?? [], subs, report.data.revision)} table={table} setTable={setTable} />
           )}
         </Tabs.TabPane>
         <Tabs.TabPane key="perf" title={zh.report.tabPerf}>

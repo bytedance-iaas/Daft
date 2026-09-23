@@ -1,7 +1,8 @@
-// Pure helpers for the report page (07 §5): field labels, value formatting, revision options,
-// subtask names. Report contents are free-form objects per module (C2), so everything here
-// degrades to the raw key or a compact JSON rendering instead of guessing.
-import type { ModuleRegistry, ResultRecord, Subtask, TimelineEntry, UsageRow } from '../api/types';
+// Pure helpers for the report page (07 §5): field labels, readable values, revision options,
+// subtask names, run durations. Report contents are free-form objects per module (C2), so
+// everything here degrades to the raw key and a readable rendering instead of guessing - and
+// never to JSON.
+import type { ModuleRegistry, ResultRecord, Subtask, Task, TimelineEntry, UsageRow } from '../api/types';
 import { zh } from '../locales/zh';
 import { shortTime } from './format';
 import { formatScalar } from './summary';
@@ -11,31 +12,31 @@ export function fieldLabel(key: string): string {
   return zh.report.columns[key] ?? zh.summaryKeys[key] ?? zh.report.integrityKeys[key] ?? key;
 }
 
-/** One cell or reading: numbers trimmed, null as a dash, lists joined, objects as compact JSON. */
-export function formatValue(v: unknown): string {
+/**
+ * Any value as text for people: numbers trimmed, null as a dash, lists joined, objects as
+ * labelled pairs (nested ones in brackets) - never JSON.
+ */
+export function readable(v: unknown): string {
   if (v === null || v === undefined || v === '') return '—';
   if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') return formatScalar(v);
   if (Array.isArray(v)) {
     if (!v.length) return zh.report.none;
-    return v.every((x) => x === null || ['string', 'number', 'boolean'].includes(typeof x)) ? v.map((x) => formatValue(x)).join('、') : JSON.stringify(v);
+    if (v.every((x) => x === null || ['string', 'number', 'boolean'].includes(typeof x))) return v.map((x) => readable(x)).join('、');
+    return v.map((x) => readable(x)).join('；');
   }
-  return JSON.stringify(v);
+  if (typeof v === 'object') {
+    const parts = Object.entries(v as Record<string, unknown>).map(([k, x]) => {
+      const inner = readable(x);
+      return `${fieldLabel(k)} ${x && typeof x === 'object' && !Array.isArray(x) ? `（${inner}）` : inner}`;
+    });
+    return parts.join(' · ') || '—';
+  }
+  return String(v);
 }
 
-/** Integrity values: a few shapes the report writer is known to use, generic otherwise. */
-export function integrityValue(key: string, v: unknown): string {
-  if (v === null || v === undefined) return zh.report.notRead;
-  if (key === 'labels' && v && typeof v === 'object' && !Array.isArray(v)) {
-    const o = v as Record<string, unknown>;
-    if (typeof o.with_task === 'number' && typeof o.without_task === 'number') return zh.report.labelsValue(o.with_task, o.without_task);
-  }
-  if (key === 'fps' && typeof v === 'number') return `${v} fps`;
-  if (v && typeof v === 'object' && !Array.isArray(v)) {
-    return Object.entries(v as Record<string, unknown>)
-      .map(([k, x]) => `${fieldLabel(k)} ${formatValue(x)}`)
-      .join(' · ');
-  }
-  return formatValue(v);
+/** One cell or reading (see readable). */
+export function formatValue(v: unknown): string {
+  return readable(v);
 }
 
 /** A result record's module-specific readings as one line. */
@@ -59,7 +60,7 @@ export function recordError(e: ResultRecord['error']): string {
 export function reasonLine(item: Record<string, unknown>, registry: ModuleRegistry | undefined): string {
   const module = typeof item.module === 'string' ? registry?.modules.find((m) => m.id === item.module)?.name_zh ?? item.module : '';
   const text = typeof item.text === 'string' ? item.text : typeof item.reason === 'string' ? item.reason : '';
-  if (!module && !text) return JSON.stringify(item);
+  if (!module && !text) return readable(item);
   return [module, text].filter(Boolean).join(' · ');
 }
 
@@ -71,6 +72,29 @@ export function subtaskName(subtasks: readonly Subtask[], id: string | null | un
   const s = subtasks[i];
   const n = subtasks.filter((x, j) => x.kind === s.kind && j <= i).length;
   return `${zh.taskDetail.subtaskKind[s.kind] ?? s.kind} #${n}`;
+}
+
+export interface RunPart {
+  label: string;
+  seconds: number;
+}
+
+/**
+ * The wall time behind a revision when report.json does not say (the CLI cannot know it): the
+ * main run (started → finished on the timeline), then every subtask that produced a revision up
+ * to this one. «16 分 56 秒 + 6 分 52 秒 · 主流程 + 重试 #1».
+ */
+export function runParts(task: Task, timeline: readonly TimelineEntry[], subtasks: readonly Subtask[], rev: number): RunPart[] {
+  const parts: RunPart[] = [];
+  const start = task.started_at ?? timeline.find((e) => e.kind === 'started' && !e.subtask_id)?.at ?? null;
+  const end = timeline.find((e) => ['finished', 'failed', 'stopped'].includes(e.kind) && !e.subtask_id)?.at ?? null;
+  if (start && end && end >= start) parts.push({ label: zh.reportPage.durationMain, seconds: (end - start) / 1000 });
+  for (const s of subtasks) {
+    if (s.result_rev && s.result_rev <= rev && s.started_at && s.finished_at && s.finished_at >= s.started_at) {
+      parts.push({ label: subtaskName(subtasks, s.id), seconds: (s.finished_at - s.started_at) / 1000 });
+    }
+  }
+  return parts;
 }
 
 export interface RevisionOption {

@@ -43,6 +43,32 @@ describe('质检报告 (07 §5)', () => {
     expect(within(screen.getByTestId('section-visual_quality')).getByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('0.5–0.6 1'));
   });
 
+  it('the header has a standing 人工裁决 entry and no 「小节和…一一对应」 line; integrity is Chinese side by side (D47, F6.2)', async () => {
+    renderApp(REPORT);
+    await screen.findByTestId('report-equation');
+    const entry = screen.getByTestId('adjudicate-entry');
+    expect(entry).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication`);
+    expect(within(entry).getByRole('button', { name: '人工裁决（10）' })).toHaveClass('arco-btn-primary');
+    expect(document.body).not.toHaveTextContent('一一对应');
+    const integrity = screen.getByTestId('integrity');
+    expect(integrity.tagName).toBe('DL');
+    const pairs = [...integrity.querySelectorAll('.desc-item')].map((d) => [d.querySelector('dt')?.textContent, d.querySelector('dd')?.textContent]);
+    expect(pairs).toContainEqual(['格式', 'LeRobot v3（结构校验通过）']);
+    expect(pairs).toContainEqual(['Episode', '数据集 100 条，本次前 50 条（ep 0–49）']);
+    expect(pairs).toContainEqual(['语义档案', '命中 droid_100（按 repo_id 匹配）']);
+    expect(pairs).toContainEqual(['源文件清单', '204 个对象 · 1.42 GiB · sha256:4be1…c3d2（启动时固化）']);
+    expect(integrity).not.toHaveTextContent(/[{}]|with_task|supported|matched|robot_type/);
+    // The CLI does not know the wall time: the main run plus the retry that produced r0002.
+    expect(screen.getByTestId('report-duration')).toHaveTextContent('主流程 + 重试 #1');
+  });
+
+  it('a task with results but nothing pending still offers 人工裁决 (D47)', async () => {
+    renderApp('/tasks/task_01HXPZ2K/report');
+    const entry = await screen.findByTestId('adjudicate-entry');
+    const button = within(entry).getByRole('button', { name: '人工裁决' });
+    expect(button).not.toHaveClass('arco-btn-primary');
+  });
+
   it('a history revision is read only and shows the failed module with its error', async () => {
     renderApp(`${REPORT}?rev=1`);
     expect(await screen.findByTestId('history-banner')).toHaveTextContent('你在看历史版本 r0001。当前生效的是 r0002。');
@@ -52,7 +78,9 @@ describe('质检报告 (07 §5)', () => {
     expect(screen.getByRole('button', { name: '重试这 43 条' })).toBeDisabled();
     expect(within(screen.getByTestId('section-task_success')).getByRole('button', { name: '去裁决（6）' })).toBeDisabled();
     expect(within(screen.getByTestId('section-task_success')).getByRole('button', { name: '可复议（5）' })).toBeDisabled();
-    expect(screen.queryByRole('link', { name: '去裁决（10）' })).toBeNull();
+    expect(screen.queryByRole('link', { name: '人工裁决（10）' })).toBeNull();
+    expect(within(screen.getByTestId('adjudicate-entry')).queryByRole('link')).toBeNull();
+    expect(screen.getByRole('button', { name: '人工裁决（10）' })).toBeDisabled();
   });
 
   it('a section with appealable rejects offers 可复议（N） next to 去裁决（N）, filtered to that module (D42)', async () => {
