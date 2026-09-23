@@ -818,8 +818,32 @@ def run_funnel(
     vlm_completion: Callable | None = None,       # M4c 依赖注入(生产=vLLM 端点;None=跳过)
 ) -> tuple["object", dict]:
     """输入 M1 DataFrame → 输出 (带 check_*/verdict 列的 DataFrame, 漏斗统计)。"""
+    from contextlib import nullcontext
+    from .execution import _executor_scope
+    from .frame_cache import _cache_scope
+    from .optimizations import _validate_execution
+
+    flags = _validate_execution(cfg)
+    if flags["checkpoint"]:
+        from .config import ConfigError
+        raise ConfigError("checkpoint/resume require run_pipeline output context")
+    scope = (_executor_scope(int(cfg.get("pipeline", {}).get("vlm_episode_concurrency", 8)) + 8)
+             if flags["dedicated_executor"] else nullcontext(None))
+    with scope as executor_key, (_cache_scope() if flags['frame_cache']
+                                else nullcontext(None)) as cache_key:
+        if flags["streaming_funnel"]:
+            from .streaming import _execute_funnel
+            return _execute_funnel(df, cfg, registry, vlm_completion, executor_key, cache_key=cache_key)
+        return _run_funnel_legacy(df, cfg, registry, vlm_completion, executor_key, cache_key)
+
+
+def _run_funnel_legacy(df, cfg, registry, vlm_completion, executor_key=None, cache_key=None):
     import daft
     from daft import col, lit
+    from .execution import _to_thread
+    from functools import partial
+    from .frame_cache import _decode_cached
+    decode = partial(_decode_cached, cache_key) if cache_key else None
 
     stats = {"input": df.count_rows()}
     pcfg = cfg.get("pipeline", {})
@@ -932,7 +956,7 @@ def run_funnel(
         _frame_label = (" + ".join(_frame_names)
                         + ("(共用一次解码)" if len(_frame_names) > 1 else "(需解码视频)"))
         _pk_frame = _progress_init("frame", stats["after_numeric_gates"], _frame_label)
-        _frame_body = make_frame_checks(cfg, registry)
+        _frame_body = make_frame_checks(cfg, registry, decode=decode)
 
         @daft.func(return_dtype=daft.DataType.struct({
             "visual": _result_dtype(), "sync": _result_dtype(),
@@ -979,7 +1003,8 @@ def run_funnel(
             # 同复核投票器:构造失败要出声,否则弃权条目静默维持人工,看不出仲裁没启动
             print(f"[curation] ⚠️ 取证仲裁链不可用({type(_e).__name__}:{_e}),"
                   "弃权条目维持进人工", flush=True)
-        deps = TaskDeps(vlm_completion=vlm_completion, cam_voter=cam_voter, arb_deps=arb_deps)
+        deps = TaskDeps(vlm_completion=vlm_completion, cam_voter=cam_voter,
+                        arb_deps=arb_deps, decode=decode)
 
         def _task_check_sync(video, task_desc, task_src, fps,
                              action, timestamps, embodiment_id, semantics_extras=""):
@@ -1022,8 +1047,8 @@ def run_funnel(
                 # 兜底纪律:单条轨迹判决的任何异常都不得外泄(见 _internal_error_struct)。
                 if not os.environ.get("CURATION_DEBUG_CONCURRENCY"):
                     try:
-                        return await asyncio.to_thread(
-                            _task_check_sync, video, task_desc, task_src, fps,
+                        return await _to_thread(
+                            executor_key, _task_check_sync, video, task_desc, task_src, fps,
                             action, timestamps, embodiment_id, semantics_extras)
                     except Exception as e:  # noqa: BLE001
                         return _internal_error_struct(e)
@@ -1034,8 +1059,8 @@ def run_funnel(
                 _INFLIGHT["max"] = max(_INFLIGHT["max"], _INFLIGHT["n"])
                 t_in = time.time()
                 try:
-                    return await asyncio.to_thread(
-                        _task_check_sync, video, task_desc, task_src, fps,
+                    return await _to_thread(
+                        executor_key, _task_check_sync, video, task_desc, task_src, fps,
                         action, timestamps, embodiment_id, semantics_extras)
                 except Exception as e:  # noqa: BLE001
                     return _internal_error_struct(e)   # finally 照常跑,在飞计数不漏

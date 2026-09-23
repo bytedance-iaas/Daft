@@ -23,6 +23,8 @@ class ConfigError(ValueError):
 
 def validate_config(cfg: dict, origin: str = "config") -> None:
     """结构校验(load 与 --set 覆盖后都要过):配置错误不能静默跑偏。"""
+    from .optimizations import _flags
+    _flags(cfg)
     checks = cfg.get("checks")
     if not checks:
         raise ConfigError(f"{origin}: 缺 checks 段")

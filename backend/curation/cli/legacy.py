@@ -217,6 +217,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--episodes", default=None, metavar="表达式",
                      help="只跑指定 episode(调试/复现单条):单条 34;多条 34,56,78;"
                           "区间 10-20;可混用 3,10-12。与 --max-episodes 同时给时先选本参数再截断")
+    run.add_argument("--enable", action="append", metavar="FLAG",
+                     help="启用单项执行优化(可重复,默认全关)")
+    run.add_argument("--disable", action="append", metavar="FLAG",
+                     help="关闭单项执行优化;all 恢复原执行路径")
     run.add_argument("--only", default=None,
                      help="只跑这些模块(逗号分隔,如 visual_quality,motion_quality;"
                           "含数据集级模块 skill_profile(技能画像)/dedup(精确去重))")
@@ -766,6 +770,19 @@ def main(argv: list[str] | None = None) -> int:
         args.command = "reprofile"
     else:
         args = build_parser().parse_args(_argv)
+    if args.command == "run":
+        from ..pipeline.config import ConfigError, apply_overrides, load_config
+        from ..pipeline.optimizations import _cli_overrides, _validate_execution
+        try:
+            args.set_overrides = list(args.set_overrides or []) + _cli_overrides(
+                args.enable, args.disable)
+            _opt = _validate_execution(apply_overrides(load_config(args.config), args.set_overrides))
+            if _opt['checkpoint'] and (str(args.input).startswith('tos://')
+                                       or str(args.output).startswith('tos://')):
+                raise ConfigError('Checkpoint currently requires local input and output')
+        except (ConfigError, OSError, ValueError) as e:
+            print(f"[输入错误] {e}", file=sys.stderr)
+            return 2
     if args.command == "review-page":
         from ..export.review_page import build_delivery_clips, build_review_page
         from ..ingest.rrd_reader import cleanup_video_cache, is_rrd_dataset
