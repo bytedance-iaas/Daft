@@ -78,7 +78,7 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
    经网关访问见第 6 节；只在本机跑就用 `.claude/launch.json` 里的 `curator-daemon-dev`，
    打开 <http://localhost:8080/curation/>。
 2. **填密钥**（只能由使用者本人在界面里填，不写进仓库、不写进 CI、不进设计文档）：
-   「密钥与资源」→「添加访问密钥」填对象存储的 AK/SK 与地域；「VLM 后端」页签添加模型服务
+   「系统和资源配置」→「添加访问密钥」填对象存储的 AK/SK 与地域；「VLM 后端」页签添加模型服务
    （火山方舟填 endpoint 与 API Key，自建 vLLM 填 endpoint），保存后状态应为「已验证」。
    拉出模型列表后给常用的那个点「设为默认」，之后新建任务会预选它。
 3. **登记数据集**：「数据集」→「添加数据集」，填 `tos://<bucket>/<path>` 并选访问密钥，

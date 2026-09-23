@@ -38,7 +38,7 @@ function Refs({ c }: { c: Credential }) {
 }
 
 /**
- * 密钥与资源管理 (07 §7): TOS access keys and VLM backends, list + drawer like the VKE secret
+ * 系统和资源配置 (07 §7; the nav item was 密钥与资源 before 2026-09-23): TOS access keys and VLM backends, list + drawer like the VKE secret
  * pages. Only non-secret fields are ever shown; verification states come with their reason, and
  * saving never fails because a verification failed (D30).
  */

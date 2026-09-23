@@ -28,7 +28,7 @@ function openDocs(): void {
   window.open(HELP_LINKS.docs, '_blank', 'noopener,noreferrer');
 }
 
-/** Header + sidebar (概览、质检任务、数据集、密钥与资源, then 帮助; doc 07 §2) around the routed page. */
+/** Header + sidebar (概览、质检任务、数据集、系统和资源配置, then 帮助; doc 07 §2) around the routed page. */
 export function AppLayout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();

@@ -16,7 +16,7 @@ export const zh = {
     overview: '概览',
     datasets: '数据集',
     tasks: '质检任务',
-    credentials: '密钥与资源',
+    credentials: '系统和资源配置',
     breadcrumbRoot: '数据质检平台',
     groupHelp: '帮助',
     docs: '使用文档',
@@ -541,7 +541,7 @@ export const zh = {
     addBackend: '去添加',
     model: '模型',
     modelPlaceholder: '选择模型',
-    noModel: '这个后端还没有模型，去「密钥与资源」里添加',
+    noModel: '这个后端还没有模型，去「系统和资源配置」里添加',
     effort: '思考强度',
     effortDefault: '模型默认',
     effortNotSent: '不传（默认）',
@@ -1554,8 +1554,8 @@ export const zh = {
   },
 
   credentials: {
-    title: '密钥与资源管理',
-    navTitle: '密钥与资源',
+    title: '系统和资源配置',
+    navTitle: '系统和资源配置',
     desc: '质检任务按名字引用这里的访问密钥和 VLM 后端。密钥只写不读：保存之后页面上不会再显示。',
     tabKeys: 'TOS 访问密钥',
     tabBackends: 'VLM 后端',

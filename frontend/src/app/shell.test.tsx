@@ -16,7 +16,7 @@ describe('app shell', () => {
     renderApp('/');
     const nav = await screen.findByRole('navigation', { name: '数据质检' });
     const items = within(nav).getAllByRole('menuitem').map((el) => el.textContent);
-    expect(items).toEqual(['概览', '质检任务', '数据集', '密钥与资源', '使用文档']);
+    expect(items).toEqual(['概览', '质检任务', '数据集', '系统和资源配置', '使用文档']);
     expect(within(nav).getByText('帮助')).toBeInTheDocument();
     await waitFor(() => expect(currentLocation()).toBe('/overview'));
   });

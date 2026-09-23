@@ -17,7 +17,7 @@ const modelRows = (models: HTMLElement) => [...models.querySelectorAll('tbody tr
 
 const findCredential = (id: string) => db.credentials.find((c) => c.id === id);
 
-describe('密钥与资源管理 (07 §7)', () => {
+describe('系统和资源配置 (07 §7)', () => {
   it('lists keys with verify states and references; secrets never appear', async () => {
     renderApp('/credentials');
     const table = await screen.findByTestId('keys-table');
