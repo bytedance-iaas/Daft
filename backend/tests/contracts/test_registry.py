@@ -10,9 +10,10 @@ from curation.contracts import modules as M
 from curation.contracts import schemas
 
 
-def test_eight_modules_in_stage_order():
+def test_modules_in_stage_order():
     assert M.ids() == ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-                       "video_action_sync", "task_success", "dedup", "skill_profile")
+                       "video_action_sync", "eef_video_consistency", "task_success", "eef_video_review",
+                       "dedup", "skill_profile")
     order = [M.STAGE_ORDER.index(m.stage) for m in M.MODULES]
     assert order == sorted(order), "registry order must follow the stage order"
 
@@ -34,8 +35,25 @@ def test_v1_facts():
     assert M.get("dedup").gate == "dedup" and M.get("skill_profile").gate == "none"
     assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "dedup",
                                                                     "skill_profile"}
-    assert {m.id for m in M.MODULES if "vlm" in m.needs} == {"task_success", "skill_profile"}
+    verdict = [m for m in M.MODULES if m.affects_dataset_verdict]
+    assert {m.id for m in verdict if "vlm" in m.needs} == {"task_success", "skill_profile"}
+    assert all(m.input_scope == "funnel" for m in verdict)
     assert "autolabel" not in M.ids()
+
+
+def test_advisory_modules():
+    """Design doc 12 §11.1: the EEF pair runs on every selected episode and never touches the verdict."""
+    assert M.advisory_ids() == ("eef_video_consistency", "eef_video_review")
+    for mid in M.advisory_ids():
+        spec = M.get(mid)
+        assert spec.gate == "none" and spec.input_scope == "all_selected" and not spec.produces_adjudication
+        assert "eef_input" in spec.needs and "video" in spec.needs
+    assert M.get("eef_video_review").depends_on == ("eef_video_consistency",)
+    assert M.get("eef_video_consistency").stage == "frame" and M.get("eef_video_review").stage == "vlm"
+    assert "trajectory_json" in M.get("eef_video_consistency").param_schema["required"]
+    exported = {m["id"]: m for m in M.export()["modules"]}
+    assert exported["eef_video_consistency"]["affects_dataset_verdict"] is False
+    assert exported["timestamp_check"]["input_scope"] == "funnel"
 
 
 def test_review_lines():
@@ -66,6 +84,11 @@ def test_review_lines():
 
 
 def test_params_validate():
+    M.validate_params("eef_video_consistency", {"trajectory_json": "/data/trajectory.json", "lag_search_s": 0.5})
+    with pytest.raises(jsonschema.ValidationError):
+        M.validate_params("eef_video_consistency", {})                  # the file is required
+    with pytest.raises(jsonschema.ValidationError):
+        M.validate_params("eef_video_consistency", {"trajectory_json": "x", "threshold_profile": "strict"})
     M.validate_params("video_action_sync", {"sync_plots": "all"})
     M.validate_params("timestamp_check", {})
     with pytest.raises(jsonschema.ValidationError):

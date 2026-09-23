@@ -197,6 +197,15 @@ Current summary:
         拟合值与注入量一致（ep6 外参 29.75 mm / 2.01°；lag −0.201 / −0.535 / +0.330 s）；tests/eef 101 条
       · 口径（12 篇附录 C.3）：0.1 草稿把拟合后中位数残差与 P95 噪声比，误支持了 d2 ep1 的外参假设，0.2 已改；
         恒定朝向用三维拟合（二维角随位姿变）；未做 §13.3 的补充扫描（检出下限）
+      · F5.4 接入 v2（advisory）completed：C1 1.4（input_scope、affects_dataset_verdict、eef_input、两个模块、三张表）、
+        C4 1.7.0（ModuleRegistry）、C2 预检兼容扩充（subitems、episode_counts、新原因码）、锁已刷新；preflight / check 的
+        --param（cli/modparams.py）；check 的建议性分支 cli/eef_check.py（全部选中条目、passed=score=null、分项进 details）；
+        planner 的 advisory_<档> 阶段（episodes: selected）；aggregate 在 FUNNEL_MODULES 处滤掉、runctx.stage_config 不交给 v1；
+        报告小节（扁平摘要 + 三张表 + report.md 的建议性写法）；前端：类型重新生成、模拟预检与 CLI 一致、预设推断把 eef_input
+        当可选、三个原因码与摘要键的中文；验证：迷你数据集 CLI 全链路加入模块后 verdicts / keep 逐字节不变、终判清单除
+        revision 外相同，合成数据 v1 对 v2 对账全过，dataset2 上 CLI 链路的报告能看到逐相机分项、覆盖率与诊断
+      · 口径（12 篇附录 C.4）：第一刀界面拿不到文件，不给文件时预检报 unsupported: trajectory_missing（不是 needs_input），
+        Daemon 不改、选不到这个模块；Daemon 传参、advisory 阶段执行与上传控件都在 F5.5
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
@@ -207,8 +216,9 @@ Main gaps:
     F4.3 待按 README 完整跑一次质检
 
 Next steps:
-  0. EEF–视频一致性 DEMO 第一刀：F5.4 接入 v2（注册表 1.4、预检、check 分派、parts、aggregate 隔离、报告表；
-     check 目前没有模块参数通道，要补）；
+  0. EEF–视频一致性：第一刀（F5.1–F5.4）已完成。第二刀 F5.5：上传控件与 Daemon 上传接口、Daemon 把 modules[].params
+     传给 CLI、MainRun 执行 advisory_<档> 阶段、预检改回 needs_input；F5.6 VLM 复核；§3.3 mapping.yaml 导出工具与
+     §13.3 补充扫描（检出下限）待做；
      §3.3 mapping.yaml 导出工具留作后续
   1. APIG 接通（physicalai-apig 监听 curation）、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
   2. 按 README 走查一次完整质检，F3.3、F4.1、F4.3 按验收置位；请需求方统一过一遍界面文案（F3.2）

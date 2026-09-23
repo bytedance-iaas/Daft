@@ -210,6 +210,9 @@ export const zh = {
         ? `info.json 里的机器人型号 ${String(a.robot_type)} 认不出，请补充型号，或跳过该模块`
         : '未读到机器人型号（info.json 里没有 robot_type），请补充型号，或跳过该模块',
     vlm_backend_missing: () => '还没选 VLM 后端，在「模型配置」里选一个',
+    trajectory_missing: () => '需要约定格式的 trajectory.json；DEMO 第一刀只能在命令行给出，上传在第二刀提供',
+    trajectory_invalid: () => 'trajectory.json 没有通过校验，详情见预检结果',
+    eef_review_not_available: () => 'EEF–视频一致性的 VLM 复核不在 DEMO 第一刀里',
   } as Record<string, (args: Record<string, unknown>) => string>,
 
   preset: {
@@ -650,6 +653,22 @@ export const zh = {
 
   /** Labels for keys that module summaries (report.json, free-form per module) commonly use. */
   summaryKeys: {
+    assessment_mode: '评估方式',
+    affects_dataset_verdict: '影响判决',
+    uncalibrated: '阈值未校准',
+    threshold_profile: '阈值 profile',
+    candidates: '候选（有可疑分项）',
+    assessed: '全部分项可评估',
+    partially_assessable: '部分可评估',
+    not_assessable: '无法评估',
+    errors: '执行出错',
+    coverage_median: '可比覆盖率中位数',
+    coverage_min: '可比覆盖率最低',
+    cameras_measured: '参与比较的相机路数',
+    suspect_by_subitem: '可疑分项（条数）',
+    unknown_by_subitem: '无法评估的分项（条数）',
+    supported_hypotheses: '被支持的诊断假设（条数）',
+    subitem_status: '分项状态矩阵',
     checked: '检查条数',
     total: '总数',
     failed: '不合格',

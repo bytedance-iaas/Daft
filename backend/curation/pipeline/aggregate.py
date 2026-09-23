@@ -48,7 +48,10 @@ from .tasktext import TaskText, load_autolabel
 from .verdict import episode_verdict
 
 FUNNEL_STAGES = ("numeric", "frame", "vlm")
-FUNNEL_MODULES = tuple(m.id for m in registry.MODULES if m.stage in FUNNEL_STAGES)
+#: The modules that vote on keep / drop / held. Advisory modules (registry 1.4,
+#: ``affects_dataset_verdict=False``) are filtered here, at the call boundary; verdict.py is v1's.
+FUNNEL_MODULES = tuple(m.id for m in registry.MODULES if m.stage in FUNNEL_STAGES
+                       and m.affects_dataset_verdict)
 NAMES_CN = {**CHECK_CN, "dedup": "精确去重", "skill_profile": "技能画像",
             "autolabel": "无标注补描述"}
 

@@ -171,6 +171,10 @@ def _summary(rev: Revision, m: str) -> dict:
         out["families"] = len([f for f in fams if f != "未归类"])
         out["subskills"] = sum(len((f.get("subskills") or {})) for f in fams.values())
         out["undersampled"] = list(prof.get("undersampled") or [])[:20]
+    if not registry.get(m).affects_dataset_verdict:        # advisory (registry 1.4, design doc 12)
+        from ..extensions.eef_consistency import report as eef_report
+
+        out.update(eef_report.summary(res))
     if m == "timestamp_check":
         why: dict[str, int] = {}
         for r in res.values():
@@ -206,6 +210,10 @@ def _tables(rev: Revision, m: str, out_dir: str) -> list[dict]:
 
 
 def _table_rows(rev: Revision, m: str, table: str, res: dict) -> list[dict]:
+    if table.startswith("eef_"):
+        from ..extensions.eef_consistency import report as eef_report
+
+        return eef_report.table_rows(table, res)
     out = []
     for ep, r in sorted(res.items()):
         d = r.get("details") or {}
@@ -409,11 +417,27 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
     lines.append("")
     lines.append("## 各模块")
     for sec in report["modules"]:
-        cn = NAMES_CN.get(sec["id"], sec["id"])
+        spec = registry.get(sec["id"]) if sec["id"] in registry.ids() else None
+        cn = NAMES_CN.get(sec["id"]) or (spec.name_zh if spec else sec["id"])
         state = {"succeeded": "完成", "completed_with_errors": "完成(部分出错)",
                  "failed": "失败"}[sec["state"]]
         lines.append(f"### {cn}({state})")
         cnt = sec["summary"]["counts"]
+        if spec is not None and not spec.affects_dataset_verdict:
+            # advisory (registry 1.4): no pass / fail / abstain, never part of the verdict
+            s = sec["summary"]
+            lines.append(f"- 建议性结果，不影响判决{'（阈值未校准）' if s.get('uncalibrated') else ''}:"
+                         f"候选 {s.get('candidates', 0)} · 全部可评估 {s.get('assessed', 0)} · "
+                         f"部分可评估 {s.get('partially_assessable', 0)} · 无法评估 {s.get('not_assessable', 0)} · "
+                         f"出错 {cnt['error']}")
+            sus = "、".join(f"{x['name']} {x['count']}" for x in s.get("suspect_by_subitem") or []) or "无"
+            lines.append(f"- 可疑分项(条数):{sus}")
+            hyp = "、".join(f"{x['name']} {x['count']}" for x in s.get("supported_hypotheses") or []) or "无"
+            lines.append(f"- 被支持的诊断假设:{hyp}")
+            if s.get("coverage_median") is not None:
+                lines.append(f"- 可比覆盖率中位数 {s['coverage_median']}(最低 {s.get('coverage_min')})")
+            lines.append("")
+            continue
         lines.append(f"- 通过 {cnt['pass']} · 判废 {cnt['fail']} · 弃权 {cnt['abstain']}"
                      f" · 打分 {cnt['scored']} · 出错 {cnt['error']}")
         if "mean_score" in sec["summary"]:

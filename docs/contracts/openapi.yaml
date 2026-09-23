@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.6.0
+  version: 1.7.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -61,6 +61,11 @@ info:
     1.6.0 (2026-09-22): a model may be the default one (`VlmModel.is_default`, set through
     `VlmModelPatch`): the new-task form starts with it instead of asking, and there is at most
     one per owner across all backends.
+
+    1.7.0 (2026-09-23): the module registry 1.4 (design doc 12): every module says its
+    `input_scope` (funnel / all_selected) and whether it `affects_dataset_verdict`; the need
+    `eef_input` and a module id as `depends_on` (eef_video_review on eef_video_consistency).
+    The two EEF-video consistency modules are advisory: they never change keep / drop / held.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1639,16 +1644,28 @@ components:
             type: object
             additionalProperties: false
             required: [id, name_zh, summary_zh, level, gate, needs, stage, depends_on, produces_adjudication, review_lines,
-                       appealable, param_schema, tables, mergeable]
+                       appealable, input_scope, affects_dataset_verdict, param_schema, tables, mergeable]
             properties:
               id: {$ref: "#/components/schemas/ModuleId"}
               name_zh: {type: string}
               summary_zh: {type: string}
               level: {enum: [episode, dataset]}
               gate: {enum: [hard, soft, dedup, none]}
-              needs: {type: array, items: {enum: [timestamps, action, state, video, embodiment_profile, vlm, raw_bytes]}}
+              needs: {type: array, items: {enum: [timestamps, action, state, video, embodiment_profile, vlm, raw_bytes, eef_input]}}
               stage: {enum: [numeric, frame, vlm, post_verdict]}
-              depends_on: {type: array, items: {enum: [numeric_gates, frame_gates, autolabel, funnel_verdict, dedup]}}
+              depends_on:
+                type: array
+                items: {enum: [numeric_gates, frame_gates, autolabel, funnel_verdict, dedup, eef_video_consistency]}
+                description: "a module id (registry 1.4) means that module's own results"
+              input_scope:
+                enum: [funnel, all_selected]
+                description: "funnel: the survivors of the stages before; all_selected: every selected episode (1.4)"
+              affects_dataset_verdict:
+                type: boolean
+                description: >-
+                  false: an advisory module (1.4); aggregate never counts it, keep / drop / held and the delivered
+                  lists do not depend on it, and its records carry passed = score = null with the sub-item
+                  statuses in details (shown as advisory, not as an abstention)
               produces_adjudication: {type: boolean, description: "raises review items or its rejects may be appealed"}
               review_lines: {type: array, items: {$ref: "#/components/schemas/ReviewLineId"}, description: "the lines it raises"}
               appealable: {type: boolean, description: "a reject attributed to it may be appealed (D42)"}

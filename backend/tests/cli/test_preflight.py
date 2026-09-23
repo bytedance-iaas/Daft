@@ -106,8 +106,12 @@ def test_robot_type_outside_the_registry_skips_only_kinematics(cli, dataset):
     assert kin["reason_code"] == "embodiment_unsupported"
     assert kin["reason_args"]["given_by"] == "robot_type"
     assert "franka" in kin["reason"]                    # names what is supported
-    others = [m for m in doc["modules"] if m["id"] != "kinematic_limits"]
+    advisory = {"eef_video_consistency": "trajectory_missing", "eef_video_review": "eef_review_not_available"}
+    others = [m for m in doc["modules"] if m["id"] != "kinematic_limits" and m["id"] not in advisory]
     assert all(m["availability"] == "available" for m in others)
+    for m in doc["modules"]:                             # no trajectory.json given: greyed out, never asked
+        if m["id"] in advisory:
+            assert m["availability"] == "unsupported" and m["reason_code"] == advisory[m["id"]]
 
 
 @pytest.mark.parametrize("robot_type", [None, "", "unknown"])
@@ -223,7 +227,7 @@ def test_other_formats_grey_out_every_module(cli, tmp_path, kind, files, words):
     assert doc["format"]["kind"] == kind and doc["format"]["supported"] is False
     assert doc["format"]["version"] is None and doc["dataset"] is None
     assert words in doc["format"]["detail"]
-    assert len(doc["modules"]) == 8
+    assert len(doc["modules"]) == len(registry_ids())
     for m in doc["modules"]:
         assert m["availability"] == "unsupported"
         assert m["reason"].startswith("only LeRobot v2/v3 is supported in this version")
@@ -415,3 +419,9 @@ def test_human_output(cli, dataset):
     assert res.out.startswith("LeRobot v2.1, 8 episodes, 2 cameras (supported)")
     assert "task_success" in res.out and "needs input" in res.out
     assert "listed" in res.err                     # logs stay on stderr
+
+
+def registry_ids():
+    from curation.contracts import modules as registry
+
+    return registry.ids()

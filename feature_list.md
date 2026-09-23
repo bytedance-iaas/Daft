@@ -139,7 +139,7 @@
 ### F5.4 接入 v2（advisory）
 - 描述：注册表 1.4（`eef_video_consistency` frame 档、`eef_video_review` vlm 档、`eef_input` 能力、`input_scope`、`affects_dataset_verdict`）；预检逐分项能力；`check` 分派新 runner；parts 输出（result-record，`passed=None, score=None`，分项进 detail）；aggregate 调用边界过滤；报告默认表格与三张 TableSpec；`trajectory.json` 走 CLI 参数
 - 验收：①关闭模块时黄金基线与接口快照逐位一致（parity）；②开启模块（含缺输入、异常、报错）旧 keep / drop / held 与交付清单一致；③报告里能看到逐相机分项、覆盖率与诊断；④被旧硬门拒绝的样本仍被本模块评估
-- status: not_completed
+- status: **completed**
 
 ### F5.5 上传控件与 Daemon 上传接口
 - 描述：`param_schema` 文件型参数（`format: upload`）；Daemon 任务输入文件上传接口（存任务 inputs 目录，返回句柄与 hash）；前端新建任务第二屏的文件项；C4 修订

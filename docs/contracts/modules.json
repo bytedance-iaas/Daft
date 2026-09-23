@@ -1,5 +1,5 @@
 {
- "registry_version": "1.3",
+ "registry_version": "1.4",
  "stages": [
   "numeric",
   "frame",
@@ -115,6 +115,8 @@
    "produces_adjudication": false,
    "review_lines": [],
    "appealable": false,
+   "input_scope": "funnel",
+   "affects_dataset_verdict": true,
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -149,6 +151,8 @@
    "produces_adjudication": false,
    "review_lines": [],
    "appealable": false,
+   "input_scope": "funnel",
+   "affects_dataset_verdict": true,
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -183,6 +187,8 @@
    "produces_adjudication": false,
    "review_lines": [],
    "appealable": false,
+   "input_scope": "funnel",
+   "affects_dataset_verdict": true,
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -217,6 +223,8 @@
    "produces_adjudication": false,
    "review_lines": [],
    "appealable": false,
+   "input_scope": "funnel",
+   "affects_dataset_verdict": true,
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -253,6 +261,8 @@
    "produces_adjudication": false,
    "review_lines": [],
    "appealable": false,
+   "input_scope": "funnel",
+   "affects_dataset_verdict": true,
    "param_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -293,6 +303,149 @@
    "mergeable": false
   },
   {
+   "id": "eef_video_consistency",
+   "name_zh": "EEF–视频一致性",
+   "summary_zh": "把声明的末端执行器投影与画面里独立定位的夹爪逐帧比较，报告位置、方向、时间错位、数值抖动与画面运动（DEMO，建议性，不影响判决）",
+   "level": "episode",
+   "gate": "none",
+   "needs": [
+    "eef_input",
+    "video"
+   ],
+   "stage": "frame",
+   "depends_on": [],
+   "produces_adjudication": false,
+   "review_lines": [],
+   "appealable": false,
+   "input_scope": "all_selected",
+   "affects_dataset_verdict": false,
+   "param_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "trajectory_json"
+    ],
+    "properties": {
+     "trajectory_json": {
+      "type": "string",
+      "minLength": 1,
+      "title": "trajectory.json",
+      "description": "约定格式 eef-video/1.0.0 的单文件包（每条 episode 的点与轴定义、标定、逐帧位姿与投影）；第一刀填本机路径，上传在第二刀提供",
+      "default": ""
+     },
+     "observation_seeds": {
+      "type": "string",
+      "title": "观测种子目录",
+      "description": "P-A 跟踪的种子（observation 格式，<目录>/<sample_id>/<相机>.jsonl）；为空时取 trajectory.json 同目录下的 observations_seed/",
+      "default": ""
+     },
+     "threshold_profile": {
+      "title": "阈值",
+      "description": "demo 由基准噪声底定、未校准，分项显示 ok / suspect 并标「未校准」；不判定时只出曲线与测量值",
+      "default": "demo",
+      "oneOf": [
+       {
+        "const": "demo",
+        "title": "demo（未校准）"
+       },
+       {
+        "const": "none",
+        "title": "不判定，只出曲线"
+       }
+      ]
+     },
+     "camera_mounts": {
+      "title": "参与的相机",
+      "description": "腕部相机只做位置与方向（D-E9）；移动相机不支持",
+      "default": "fixed_external_and_wrist",
+      "oneOf": [
+       {
+        "const": "fixed_external_and_wrist",
+        "title": "外部固定与腕部"
+       },
+       {
+        "const": "fixed_external",
+        "title": "只看外部固定相机"
+       }
+      ]
+     },
+     "lag_search_s": {
+      "type": "number",
+      "title": "时间错位搜索范围（秒）",
+      "description": "在 ±这么多秒内找画面与记录的时间错位",
+      "default": 1.0,
+      "minimum": 0.2,
+      "maximum": 3.0
+     },
+     "interpolation_gap_factor": {
+      "type": "number",
+      "title": "插值缺口倍数",
+      "description": "相邻采样间隔超过局部中位间隔的这么多倍就不跨缺口插值",
+      "default": 2.0,
+      "minimum": 1.0,
+      "maximum": 10.0
+     },
+     "evidence_mode": {
+      "title": "证据图",
+      "description": "为哪些条目保存声明投影与独立观测的叠加图",
+      "default": "flagged",
+      "oneOf": [
+       {
+        "const": "flagged",
+        "title": "有可疑分项的"
+       },
+       {
+        "const": "all",
+        "title": "全部"
+       },
+       {
+        "const": "off",
+        "title": "不存"
+       }
+      ]
+     }
+    }
+   },
+   "tables": [
+    {
+     "id": "eef_camera_metrics",
+     "title_zh": "逐相机分项",
+     "sortable": [
+      "episode_index",
+      "camera",
+      "position_median_px",
+      "orientation_median_deg",
+      "lag_s",
+      "coverage"
+     ],
+     "default_sort": "episode_index"
+    },
+    {
+     "id": "eef_segments",
+     "title_zh": "候选段",
+     "sortable": [
+      "episode_index",
+      "camera",
+      "subitem",
+      "start_s",
+      "duration_s"
+     ],
+     "default_sort": "episode_index"
+    },
+    {
+     "id": "eef_diagnosis",
+     "title_zh": "诊断假设",
+     "sortable": [
+      "episode_index",
+      "camera",
+      "hypothesis"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
+   "mergeable": false
+  },
+  {
    "id": "task_success",
    "name_zh": "任务成败判定",
    "summary_zh": "由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
@@ -313,6 +466,8 @@
     "label"
    ],
    "appealable": true,
+   "input_scope": "funnel",
+   "affects_dataset_verdict": true,
    "param_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -352,6 +507,51 @@
    "mergeable": false
   },
   {
+   "id": "eef_video_review",
+   "name_zh": "EEF–视频一致性 · VLM 复核",
+   "summary_zh": "对候选与抽查窗口请多模态模型复核跟踪目标与偏移方向，只做分类不做测量（第二刀提供）",
+   "level": "episode",
+   "gate": "none",
+   "needs": [
+    "eef_input",
+    "video",
+    "vlm"
+   ],
+   "stage": "vlm",
+   "depends_on": [
+    "eef_video_consistency"
+   ],
+   "produces_adjudication": false,
+   "review_lines": [],
+   "appealable": false,
+   "input_scope": "all_selected",
+   "affects_dataset_verdict": false,
+   "param_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "review_windows_per_camera": {
+      "type": "integer",
+      "title": "每路相机的复核窗口数",
+      "description": "均匀抽查与候选窗口各取至多这么多个",
+      "default": 3,
+      "minimum": 0,
+      "maximum": 6
+     },
+     "review_frames_per_window": {
+      "type": "integer",
+      "title": "每个窗口的帧数",
+      "description": "每个复核窗口最多送给模型的帧数",
+      "default": 6,
+      "minimum": 1,
+      "maximum": 12
+     }
+    }
+   },
+   "tables": [],
+   "mergeable": false
+  },
+  {
    "id": "dedup",
    "name_zh": "精确去重",
    "summary_zh": "找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",
@@ -367,6 +567,8 @@
    "produces_adjudication": true,
    "review_lines": [],
    "appealable": true,
+   "input_scope": "funnel",
+   "affects_dataset_verdict": true,
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -406,6 +608,8 @@
     "label"
    ],
    "appealable": false,
+   "input_scope": "funnel",
+   "affects_dataset_verdict": true,
    "param_schema": {
     "type": "object",
     "properties": {},

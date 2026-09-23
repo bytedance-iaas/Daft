@@ -216,6 +216,16 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - `wait` 每 `--poll-interval` 秒（默认 5）查一次，直到任务进入终态且没有运行中的子任务；`--timeout` 到了以退出码 8 结束，当时的任务 JSON 在 `error.details.task`。
 - Daemon 连不上或回的不是 JSON：退出码 3（`daemon_unreachable`）；Daemon 回了错误（含 401、403、404、409、405 `method_not_allowed`、5xx）：退出码 7（`rejected`），REST 错误体原样放在 `error.details.rest_error`。
 
+### 建议性模块与 `--param`（registry 1.4，F5.4）
+
+- `--param MODULE.KEY=VALUE`（`preflight`、`check`，可重复）：任务级模块参数，值按该模块的 `param_schema` 转成数字 / 布尔 / 选项并校验；
+  未知模块或参数是用法错误。第一个用它的是 EEF–视频一致性：`--param eef_video_consistency.trajectory_json=PATH`。
+- 建议性模块（`affects_dataset_verdict=false`，现在是 `eef_video_consistency`）：`plan` 把它放进单独的 `advisory_<档>` 阶段、
+  `episodes: selected`（全部选中条目，含被旧硬门拒掉的）；`check` 要单独一次调用、不与漏斗模块混跑，`--survivors-out` 列出全部条目；
+  记录 `passed = score = null`，分项在 `details`；`aggregate` 在调用边界把它滤掉（`FUNNEL_MODULES`），`verdict.py` 不变；
+  `report` 给它一节建议性摘要与三张表。没给文件时 `preflight` 报 `unsupported: trajectory_missing`。
+  实现在 `cli/eef_check.py`、`cli/modparams.py`，模块本身在 `extensions/eef_consistency/`（见其 README）。
+
 ## Daemon 的调用顺序
 
 一次完整运行（00 篇 §4，每档读上一档的幸存者）：

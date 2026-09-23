@@ -1106,10 +1106,18 @@ export interface components {
                 level: "episode" | "dataset";
                 /** @enum {unknown} */
                 gate: "hard" | "soft" | "dedup" | "none";
-                needs: ("timestamps" | "action" | "state" | "video" | "embodiment_profile" | "vlm" | "raw_bytes")[];
+                needs: ("timestamps" | "action" | "state" | "video" | "embodiment_profile" | "vlm" | "raw_bytes" | "eef_input")[];
                 /** @enum {unknown} */
                 stage: "numeric" | "frame" | "vlm" | "post_verdict";
-                depends_on: ("numeric_gates" | "frame_gates" | "autolabel" | "funnel_verdict" | "dedup")[];
+                /** @description a module id (registry 1.4) means that module's own results */
+                depends_on: ("numeric_gates" | "frame_gates" | "autolabel" | "funnel_verdict" | "dedup" | "eef_video_consistency")[];
+                /**
+                 * @description funnel: the survivors of the stages before; all_selected: every selected episode (1.4)
+                 * @enum {unknown}
+                 */
+                input_scope: "funnel" | "all_selected";
+                /** @description false: an advisory module (1.4); aggregate never counts it, keep / drop / held and the delivered lists do not depend on it, and its records carry passed = score = null with the sub-item statuses in details (shown as advisory, not as an abstention) */
+                affects_dataset_verdict: boolean;
                 /** @description raises review items or its rejects may be appealed */
                 produces_adjudication: boolean;
                 /** @description the lines it raises */
@@ -1814,7 +1822,7 @@ export interface components {
             availability: "available" | "needs_input" | "unsupported";
             /** @description English, for the terminal and logs; UIs render reason_code instead */
             reason?: string;
-            /** @description Stable reason for UIs to translate. Known codes: format_unsupported {detected}, metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing. New modules may add codes; a UI that does not know one shows reason. */
+            /** @description Stable reason for UIs to translate. Known codes: format_unsupported {detected}, metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing; EEF-video consistency (design doc 12 §5.1): trajectory_missing {path?}, trajectory_invalid {errors, sha256}, eef_review_not_available, and as sub-item reasons projection_missing, observation_seed_missing and the rest of that catalogue. New modules may add codes; a UI that does not know one shows reason. */
             reason_code?: string;
             /** @description parameters of reason_code, listed with each code */
             reason_args?: Record<string, unknown>;
@@ -1824,6 +1832,18 @@ export interface components {
                 options?: string[];
             };
             notes?: string[];
+            /** @description Per sub-item capability of a module that has sub-items (EEF-video consistency, design doc 12 §5.1): the best availability of each sub-item over the selected episodes, with a reason when none is available */
+            subitems?: {
+                [key: string]: {
+                    /** @enum {unknown} */
+                    availability: "available" | "needs_input" | "unsupported";
+                    reason_code: string | null;
+                };
+            };
+            /** @description Modules with per-episode inputs (EEF-video consistency): the selected episodes by availability */
+            episode_counts?: {
+                [key: string]: number;
+            };
         } & (unknown & unknown);
         digest: string;
         /**

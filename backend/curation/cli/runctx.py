@@ -135,12 +135,23 @@ def selected_modules(args, run_dir: str) -> list[str]:
 def stage_config(ctx: Context, modules, *, gates: dict | None = None,
                  args: argparse.Namespace | None = None) -> dict:
     """The pipeline config for this call: exactly ``modules`` enabled (v1's ``--only``),
-    the VLM settings from the arguments and the gate sizes as v1 config keys."""
+    the VLM settings from the arguments and the gate sizes as v1 config keys.
+
+    Advisory modules (registry 1.4) are not v1 checks and never enter v1's config: they are
+    left out here, and a call that selects nothing else runs with every v1 check off."""
+    from ..contracts import modules as registry
     from ..pipeline.config import apply_check_selection, apply_overrides, validate_config
 
     cfg = copy.deepcopy(ctx.config())
+    v1 = [m for m in modules if m not in registry.advisory_ids()]
     try:
-        cfg = apply_check_selection(cfg, only=",".join(modules))
+        if v1:
+            cfg = apply_check_selection(cfg, only=",".join(v1))
+        else:
+            for entry in cfg["checks"].values():
+                entry["enable"] = False
+            for extra in ("skill_profile", "dedup"):
+                cfg.setdefault(extra, {})["enable"] = False
     except ValueError as e:
         raise UsageError(str(e)) from None
     if args is not None and hasattr(args, "vlm_endpoint"):

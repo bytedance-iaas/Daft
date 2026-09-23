@@ -13,6 +13,7 @@ from curation.planner import PlanError, build_plan, derive_gates, validate_plan
 from . import examples as X
 
 ALL = list(C1.ids())
+V1 = [m.id for m in C1.MODULES if m.affects_dataset_verdict]          # the design example's eight
 VLM_MODULES = [m.id for m in C1.MODULES if "vlm" in m.needs]
 
 
@@ -39,7 +40,7 @@ def test_example_preflight_is_valid():
 
 
 def test_full_plan_matches_the_design_example():
-    p = plan(preflight=X.preflight(200, without_task=88))
+    p = plan(V1, preflight=X.preflight(200, without_task=88))
     assert ids(p) == ["autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile", "final"]
     assert p["vlm_parallelism"] == 64
     assert p["limits"] == {"cpu_concurrency": {"value": 8, "bound_by": "planner"},
@@ -67,6 +68,23 @@ def test_full_plan_matches_the_design_example():
     assert profile["episodes"] == "keep-minus-duplicates"
     assert profile["gates"] == {"caption": 32, "llm": 16, "audit": 16}
     assert stage(p, "final")["phase"] == "final"
+
+
+def test_advisory_modules_run_on_every_selected_episode_outside_the_funnel():
+    """Registry 1.4 / design doc 12 §11.1: the EEF pair never joins a funnel stage."""
+    p = plan(preflight=X.preflight(200, without_task=88))
+    assert ids(p) == ["autolabel", "numeric", "frame", "vlm", "advisory_frame", "advisory_vlm", "verdict",
+                      "dedup", "profile", "final"]
+    assert stage(p, "frame")["modules"] == ["visual_quality", "video_action_sync"]
+    assert stage(p, "vlm")["modules"] == ["task_success"]
+    assert stage(p, "advisory_frame") == {"id": "advisory_frame", "kind": "cpu", "command": "check",
+                                          "modules": ["eef_video_consistency"], "episodes": "selected",
+                                          "concurrency": 8}
+    rev = stage(p, "advisory_vlm")
+    assert rev["modules"] == ["eef_video_review"] and rev["episodes"] == "selected"
+    assert "hard_gates" not in stage(p, "advisory_frame")
+    only = plan(["eef_video_consistency"])
+    assert ids(only) == ["advisory_frame", "verdict", "final"]
 
 
 def test_unselected_modules_and_empty_stages_disappear():

@@ -5,9 +5,11 @@ The most important command. One call runs the modules of **one** stage (D18):
 ``visual_quality,video_action_sync`` (frame: one shared decode per camera),
 ``task_success`` (vlm), or one dataset-level module, ``dedup`` or
 ``skill_profile`` (the whole kept set in one call). Mixing stages is a usage
-error. Results go to ``<run-dir>/checks/<module>/parts/<part>.jsonl``, one line
-per episode as soon as it is done; the highest part wins, ``results.jsonl`` is
-the compacted view.
+error. Advisory modules (registry 1.4: ``eef_video_consistency``) run in a call
+of their own, on every episode given, with their parameters as ``--param``.
+Results go to ``<run-dir>/checks/<module>/parts/<part>.jsonl``, one line per
+episode as soon as it is done; the highest part wins, ``results.jsonl`` is the
+compacted view.
 
 Exit 0 does not mean every episode succeeded: ``--json`` gives per-verdict
 counts and the error episodes, and the Daemon sets the module state from them.
@@ -20,7 +22,7 @@ from __future__ import annotations
 import argparse
 import os
 
-from . import runctx
+from . import modparams, runctx
 from .errors import ModuleFailed, UsageError
 from .framework import Context, Result
 
@@ -52,6 +54,7 @@ def add_parser(sub, parents) -> None:
                    help="write the episodes that go on to the next stage, one per line")
     runctx.add_vlm(p)
     runctx.add_behaviour(p)
+    modparams.add_argument(p)
     p.set_defaults(func=run)
 
 
@@ -69,6 +72,10 @@ def _modules(raw: str) -> tuple[list[str], str]:
         raise UsageError(f"--modules {','.join(mods)} spans stages {sorted(stages)}; "
                          f"one call runs one stage")
     stage = stages.pop()
+    advisory = [m for m in mods if m in registry.advisory_ids()]
+    if advisory and len(advisory) != len(mods):
+        raise UsageError(f"advisory module(s) {advisory} run in a call of their own (they read every "
+                         f"selected episode, not the survivors); leave them out of this call")
     if stage == "post_verdict" and len(mods) != 1:
         raise UsageError("dedup and skill_profile run one at a time (profile reads the "
                          "kept set after dedup)")
@@ -95,7 +102,13 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     input_dir = storage.root if not storage.remote else storage.uri
     ctx.log("info", f"check {','.join(modules)}: {len(episodes)} episode(s), part {part}")
 
-    if stage in ("numeric", "frame"):
+    from ..contracts import modules as registry
+
+    if all(m in registry.advisory_ids() for m in modules):
+        from . import eef_check
+
+        payload, survivors = eef_check.run(ctx, args, modules, run_dir, storage, episodes, part, guard)
+    elif stage in ("numeric", "frame"):
         payload, survivors = _funnel_cpu(ctx, args, modules, run_dir, input_dir, episodes,
                                          part, plan_stage, guard, info)
     elif stage == "vlm":

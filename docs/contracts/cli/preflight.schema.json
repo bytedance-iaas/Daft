@@ -72,7 +72,7 @@
         "reason_code": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "Stable reason for UIs to translate. Known codes: format_unsupported {detected}, metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing. New modules may add codes; a UI that does not know one shows reason."
+          "description": "Stable reason for UIs to translate. Known codes: format_unsupported {detected}, metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing; EEF-video consistency (design doc 12 §5.1): trajectory_missing {path?}, trajectory_invalid {errors, sha256}, eef_review_not_available, and as sub-item reasons projection_missing, observation_seed_missing and the rest of that catalogue. New modules may add codes; a UI that does not know one shows reason."
         },
         "reason_args": {"type": "object", "description": "parameters of reason_code, listed with each code"},
         "input_hint": {
@@ -84,7 +84,26 @@
             "options": {"type": "array", "items": {"type": "string"}}
           }
         },
-        "notes": {"type": "array", "items": {"type": "string"}}
+        "notes": {"type": "array", "items": {"type": "string"}},
+        "subitems": {
+          "type": "object",
+          "description": "Per sub-item capability of a module that has sub-items (EEF-video consistency, design doc 12 §5.1): the best availability of each sub-item over the selected episodes, with a reason when none is available",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["availability", "reason_code"],
+            "properties": {
+              "availability": {"enum": ["available", "needs_input", "unsupported"]},
+              "reason_code": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]*$"}
+            }
+          }
+        },
+        "episode_counts": {
+          "type": "object",
+          "description": "Modules with per-episode inputs (EEF-video consistency): the selected episodes by availability",
+          "propertyNames": {"enum": ["available", "needs_input", "unsupported"]},
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        }
       },
       "allOf": [
         {"if": {"properties": {"availability": {"const": "unsupported"}}}, "then": {"required": ["reason", "reason_code"]}},

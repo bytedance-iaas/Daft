@@ -17,7 +17,7 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 | `backend/curation/export/` | 导出器：v1 的全量导出（A 类，原样）+ 增量重新导出（W7）。说明与手动验证见 [INCREMENTAL.md](backend/curation/export/INCREMENTAL.md) |
 | `backend/curation/planner/` | 执行计划与 VLM 请求合并框架（W6）：闸门推导、合并执行器、Token 两本账、外层重试与自适应降并发。说明与手动验证见 [其 README](backend/curation/planner/README.md) |
 | `backend/daemon/secrets/` | 密钥与资源管理（W8）：AES-GCM 加密存储与主密钥轮换、访问密钥与模型服务的校验、开始前三项检查、命令行子进程的环境、预签名；说明与手动验证见 [其 README](backend/daemon/secrets/README.md) |
-| `backend/curation/extensions/eef_consistency/` | EEF–视频一致性（阶段 5，DEMO 模块，建议性、不影响判决）：`trajectory.json` 读取与校验、几何、能力预检、L0 数值轨迹；说明与手动验证见 [其 README](backend/curation/extensions/eef_consistency/README.md) |
+| `backend/curation/extensions/eef_consistency/` | EEF–视频一致性（阶段 5，DEMO 模块，建议性、不影响判决）：`trajectory.json` 读取与校验、几何、能力预检、L0 数值轨迹、P-A 独立观测、五项指标与诊断、离线报告；接入 v2 的 `preflight` / `plan` / `check --param` / `aggregate` / `report`；说明与手动验证见 [其 README](backend/curation/extensions/eef_consistency/README.md)，离线评估器在 `tools/eef_eval/` |
 | `backend/curation/ui/` | 已下线的 v1 界面里待移植的逻辑（鉴权、深链解析、报告数据整形），移植完成后整包删除 |
 | `backend/curation/contracts/` | C1 模块注册表与契约校验工具 |
 | `backend/daemon/` | API Daemon（W4 骨架：FastAPI、SQLite 仓储、鉴权、SSE、探针、静态资源与挂载前缀、启动对账）；用法与手动验证见 [其 README](backend/daemon/README.md) |
@@ -56,8 +56,8 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 12. **镜像与 Chart（W11）**：`cd backend && ../.venv/bin/python -m pytest -q tests/deploy`（约 10 秒，需要本机有 `helm`）；本机没有 docker，镜像构建看 CI；集群上的安装、升级续跑与网关挂载按 [deploy/README.md](deploy/README.md) 核对。
 13. **任务编排（W5a）**：`cd backend && ../.venv/bin/python -m pytest -q tests/orchestr -m "not slow"`（约 1.5 分钟；去掉 `-m` 跑全部约 6 分钟，含真跑 CLI 的端到端），应全部通过；再按 [backend/daemon/orchestr/README.md](backend/daemon/orchestr/README.md) 的 10 步真起 Daemon 核对。
 14. **前端（W10）**：`cd frontend && npm ci && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build`；用模拟数据看页面是 `npm run dev`，逐页核对项见 [frontend/README.md](frontend/README.md)。由真的 Daemon 托管构建产物（`/curation` 前缀、不鉴权、开发用主密钥）：用 `.claude/launch.json` 里的 `curator-daemon-dev`，浏览器打开 <http://localhost:8080/curation/>。
-15. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
-    校验上传件、看能力表、真值键拒绝与自洽警告的逐项核对见 [其 README](backend/curation/extensions/eef_consistency/README.md)。
+15. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
+    校验上传件、看能力表、真值键拒绝与自洽警告、离线评估、受控异常矩阵、在 v2 命令行链路上跑一遍的逐项核对见 [其 README](backend/curation/extensions/eef_consistency/README.md)。
 
 ## 跑通一次完整质检（真数据）
 

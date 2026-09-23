@@ -175,8 +175,10 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
                        "episodes": "unlabeled", "gates": stage_gates("autolabel", gates)})
 
     previous = None
+    advisory = [s for s in chosen if s.input_scope == "all_selected"]
+    funnel = [s for s in chosen if s.input_scope != "all_selected"]
     for stage_id in FUNNEL_STAGES:
-        members = [s for s in chosen if s.stage == stage_id]
+        members = [s for s in funnel if s.stage == stage_id]
         if not members:
             continue
         kind = "vlm" if any("vlm" in s.needs for s in members) else "cpu"
@@ -193,6 +195,20 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
             stage["merge"] = _merge_proposal(members, site, notes)
         stages.append(stage)
         previous = stage_id
+    # advisory modules (registry 1.4): every selected episode, never a gate, outside the verdict
+    for stage_id in FUNNEL_STAGES:
+        members = [s for s in advisory if s.stage == stage_id]
+        if not members:
+            continue
+        kind = "vlm" if any("vlm" in s.needs for s in members) else "cpu"
+        stage = {"id": f"advisory_{stage_id}", "kind": kind, "command": "check",
+                 "modules": [s.id for s in members], "episodes": "selected"}
+        if kind == "cpu":
+            stage["concurrency"] = cpu.value
+        else:
+            stage["gates"] = stage_gates("vlm", gates)
+            stage["merge"] = _merge_proposal(members, site, notes)
+        stages.append(stage)
     stages.append({"id": "verdict", "kind": "aggregate", "command": "aggregate", "phase": "funnel"})
 
     post = [s for s in chosen if s.stage == "post_verdict"]

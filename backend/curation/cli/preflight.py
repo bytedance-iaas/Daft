@@ -19,13 +19,17 @@ Rules (F2.7, doc 05 §2-§4, D6, D34):
   which a note says.
 * ``--modules`` narrows the report to the selected modules: nothing is asked
   about a module that is not selected.
+* EEF-video consistency (registry 1.4, design doc 12): ``--param
+  eef_video_consistency.trajectory_json=PATH`` is validated against the dataset and
+  the entry carries the per sub-item capability table; without the file the module
+  is unsupported (the console cannot take the file before F5.5).
 """
 from __future__ import annotations
 
 import argparse
 
 from ..contracts import modules as registry_modules
-from . import inputs, lerobot_meta, source_manifest
+from . import inputs, lerobot_meta, modparams, source_manifest
 from .errors import InputUnreachable, UsageError
 from .framework import Context, Result
 from .lerobot_meta import Format, MetaError
@@ -57,6 +61,7 @@ def add_parser(sub, parents) -> None:
                         "asked about the others")
     p.add_argument("--source-manifest", metavar="FILE",
                    help="source_manifest.json from snapshot; exit 6 if the metadata changed")
+    modparams.add_argument(p)
     p.set_defaults(func=run)
 
 
@@ -96,6 +101,7 @@ def _describe_kind(fmt: Format) -> str:
 
 def run(ctx: Context, args: argparse.Namespace) -> Result:
     specs = parse_modules(args.modules)
+    args.module_params = modparams.parse(getattr(args, "param", None))
     storage = inputs.open_input(ctx, args)
     ctx.progress(STAGE, 0, 3)
     listing = storage.list()
@@ -305,6 +311,17 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
             entry.update(availability="unsupported", reason="; ".join(
                 video_reason if c == "video" else _CAP_REASON[c] for c in lacking),
                 reason_code="missing_input", reason_args=args)
+        elif "eef_input" in spec.needs:
+            from ..extensions.eef_consistency import preflight as eef_preflight
+
+            if "vlm" in spec.needs:
+                entry.update(eef_preflight.review_entry())
+            else:
+                root = None if "://" in uri else uri
+                entry.update(eef_preflight.consistency_entry(
+                    modparams.with_defaults(spec.id, getattr(args, "module_params", {}).get(spec.id)),
+                    episodes=[ep.index for ep in episodes], media_exists=lambda key: key in listing,
+                    lerobot_root=root))
         elif "embodiment_profile" in spec.needs and emb_state != "ok":
             if emb_state == "unsupported":
                 who = "embodiment" if override else "robot_type"
@@ -338,10 +355,11 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
                     and override.lower() != str(rt or "").strip().lower():
                 notes.append(f"embodiment {emb_value} given by the caller "
                              f"(info.json robot_type: {rt!r})")
-        if "vlm" in spec.needs and caption_note and entry["availability"] != "unsupported":
+        if "vlm" in spec.needs and caption_note and entry["availability"] != "unsupported" \
+                and "eef_input" not in spec.needs:
             notes.append(caption_note)
         if notes:
-            entry["notes"] = notes
+            entry["notes"] = entry.get("notes", []) + notes
         modules.append(entry)
     doc["modules"] = modules
     doc["warnings"] = warnings

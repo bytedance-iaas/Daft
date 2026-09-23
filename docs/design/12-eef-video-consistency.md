@@ -659,3 +659,13 @@ eef_video_review:
 - 背景运动：半分辨率逐帧取背景角点，RANSAC 相似变换累积成画面轨迹，遮掉独立观测到的夹爪（不用投影），忽略外圈 12 px（dataset1 平移抖动用镜像填边）。
 - 结果：§13.3 矩阵 18 条全过（114 格，含「不出现不该出的诊断」），轻重档 4 组全对；拟合值与注入量一致（外参 29.75 mm / 2.01°，恒定旋转 15.2° / 40.1° / 29.9°，lag −0.201 / −0.535 / +0.330 s）。报告在 `tools/eef_eval/reports/`。18 条约 2 分钟，每分钟视频每路约 13 秒 CPU。
 - 未做：§13.3 的补充扫描（换种子与幅度找各类检出下限）；本 DEMO 的定位噪声 P95 约 4 px，按 §7.2 的 1/3 规则可靠检出的像素异常约 12 px 以上，dataset1 轻度漂移（注入残差中位数 5.4 px）是靠中位数门检出的，属于测量精度边缘。
+
+### C.4 F5.4 接入 v2（advisory，2026-09-23）
+
+- **注册表 1.4**：`ModuleSpec` 加 `input_scope`（`funnel` / `all_selected`）与 `affects_dataset_verdict`；`NEEDS` 加 `eef_input`；`DEPENDENCIES` 允许模块 id（`eef_video_review` 依赖 `eef_video_consistency`）。两个模块按阶段顺序排在 `video_action_sync` 与 `task_success` 之后。参数表单只用前端已支持的形状（字符串、数值、选项）：`trajectory_json`（必填）、`observation_seeds`、`threshold_profile`（demo / none）、`camera_mounts`（外部 + 腕部 / 只外部）、`lag_search_s`、`interpolation_gap_factor`、`evidence_mode`。C4 升 1.7.0，C2 预检兼容扩充 `subitems` / `episode_counts`。
+- **参数通道**：`check` 原来没有模块参数（只有全局 `--set`，且 v1 的 `validate_config` 拒绝未知检查名），新增可重复的 `--param MODULE.KEY=VALUE`（`preflight` 与 `check`），按 `param_schema` 转类型、校验。Daemon 目前不把 `modules[].params` 传给 CLI，F5.5 补。
+- **预检口径**：不给文件时报 `unsupported: trajectory_missing` 而不是 `needs_input`——前端「完整」预设会勾上 needs_input 的模块，而第一刀界面没法交文件；这样控制台置灰、预设不选、Daemon 现有的 `check_modules` 规则兜底，Daemon 代码不改。F5.5 后改回 needs_input。
+- **执行**：planner 把建议性模块放进 `advisory_<档>` 阶段、`episodes: selected`，不进漏斗阶段；Daemon 的 `MainRun` 只认漏斗三档，未知阶段静默跳过——第一刀里 Daemon 选不到这个模块，F5.5 接入时要一起补。`check` 走 `cli/eef_check.py`：每条选中 episode 一行记录（文件里没有的写 `projection_missing`，单条出错写 error 行，整份文件坏了整体失败退出码 4），产物在 `checks/eef_video_consistency/{observations,curves,evidence}/`。
+- **隔离**：`aggregate.FUNNEL_MODULES` 滤掉 `affects_dataset_verdict=false` 的模块，`runctx.stage_config` 不把它们交给 v1 的 `apply_check_selection`（只选建议性模块时显式关掉全部 v1 检查）；`verdict.py` 与 A 类目录未动。验证：迷你数据集的 CLI 全链路上，加入这个模块后 `verdicts.jsonl`、`keep.txt` 逐字节不变，四份终判清单与标注审计除自身的 `revision` 外相同；合成数据上 v1 对 v2 逐位对账（tools/parity/tests）照旧全过。
+- **报告**：小节不按通过 / 判废 / 弃权计数，摘要是扁平键（候选、全部 / 部分可评估、无法评估、分项可疑数与无法评估数、被支持的诊断、覆盖率），前端默认视图直接画成统计格与条形图；三张表按 detail 生成；`report.md` 写「建议性结果，不影响判决（阈值未校准）」。
+- **迷你数据集上的诚实弃权**：128×96、纯色方块只有 4 个角点，P-A 在锚点之间凑不够刚体特征，位置报 `unknown: coverage_insufficient`，不伪造 ok。

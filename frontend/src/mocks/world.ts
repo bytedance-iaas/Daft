@@ -338,6 +338,12 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
   const robot = opts.embodiment || p.robotType;
   const modules: PreflightResult['modules'] = registry.modules.map((m) => {
     const needs = m.needs as string[];
+    if (needs.includes('eef_input')) {
+      // like the CLI (design doc 12, first cut): no trajectory.json can be given here yet
+      return needs.includes('vlm')
+        ? { id: m.id, availability: 'unsupported', reason: 'the VLM review of EEF-video consistency is not part of the DEMO first cut', reason_code: 'eef_review_not_available' }
+        : { id: m.id, availability: 'unsupported', reason: 'no trajectory.json given', reason_code: 'trajectory_missing' };
+    }
     if (needs.includes('state') && p.missing.includes('state')) {
       return {
         id: m.id,
@@ -486,8 +492,10 @@ export function seedDatasets(now: number): DatasetDetail[] {
 export const MAIN_TASK = 'task_01HXR2D8';
 export const RUNNING_TASK = 'task_01HXR4M7';
 
-const ALL_MODULES = registry.modules.map((m) => m.id);
-const NON_VLM = registry.modules.filter((m) => !(m.needs as string[]).includes('vlm')).map((m) => m.id);
+// the mock tasks select v1's eight; the advisory EEF modules cannot be selected before F5.5
+const V1_MODULES = registry.modules.filter((m) => m.affects_dataset_verdict);
+const ALL_MODULES = V1_MODULES.map((m) => m.id);
+const NON_VLM = V1_MODULES.filter((m) => !(m.needs as string[]).includes('vlm')).map((m) => m.id);
 
 interface TaskSeed {
   id: string;

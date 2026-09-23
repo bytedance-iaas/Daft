@@ -163,6 +163,7 @@ def dataset_capability(result: LoadResult | None, episodes: Iterable[int], *,
         cap = sample_capability(sample, observable=obs, vlm_backend=vlm_backend, allowed_mounts=allowed_mounts)
         per[ep] = {"availability": cap["availability"],
                    "subitems": {k: v["availability"] for k, v in cap["subitems"].items()},
+                   "subitem_reasons": {k: v["reason_code"] for k, v in cap["subitems"].items()},
                    "reasons": sorted({v["reason_code"] for v in cap["subitems"].values() if v["reason_code"]})}
     counts: dict[str, int] = {}
     for v in per.values():

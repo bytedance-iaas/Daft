@@ -68,7 +68,11 @@ def _lowpass(x: np.ndarray, fs: float, cutoff: float) -> np.ndarray:
 
 
 def _rolling_rms(x: np.ndarray, width: int) -> np.ndarray:
-    width = max(1, int(width))
+    """Centered rolling RMS, same length as ``x`` (a window longer than ``x`` is clipped to it)."""
+    x = np.asarray(x, float)
+    if len(x) == 0:
+        return x.copy()
+    width = max(1, min(int(width), len(x)))
     k = np.ones(width) / width
     return np.sqrt(np.convolve(np.nan_to_num(x) ** 2, k, mode="same"))
 

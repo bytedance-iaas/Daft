@@ -78,3 +78,10 @@ def test_main_timeline_fallback_without_robot_clock():
     s = motion.state_series(_sample(e))
     assert s.time_source == "main_timeline"
     np.testing.assert_allclose(np.diff(s.t), 1 / synth.FPS, atol=1e-9)
+
+
+def test_rolling_rms_keeps_the_length_of_short_series():
+    from curation.extensions.eef_consistency.motion import _rolling_rms
+
+    for n in (0, 1, 6, 40):
+        assert len(_rolling_rms(np.ones(n), 15)) == n

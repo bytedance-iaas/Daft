@@ -27,30 +27,39 @@ attributed to it may be appealed (``appealable``). A new kind of review is a new
 catalog entry plus its apply rule in ``adjudicate-apply``; the REST and CLI
 contracts carry lines and decisions as open strings, and the frontend renders a
 line it has no dedicated view for from this catalog.
+
+Advisory modules (1.4, design doc 12): ``input_scope="all_selected"`` runs a module
+on every selected episode instead of the survivors of the funnel, and
+``affects_dataset_verdict=False`` keeps its results out of keep / drop / held -
+``aggregate`` never counts it and the delivered lists do not change with it. The
+EEF-video consistency pair is the first such module; it needs ``eef_input``, a
+validated ``trajectory.json`` given as a module parameter.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.3"
+REGISTRY_VERSION = "1.4"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
 Stage = Literal["numeric", "frame", "vlm", "post_verdict"]
+InputScope = Literal["funnel", "all_selected"]
 
 #: Stages in execution order (design doc 04, section 2).
 STAGE_ORDER: tuple[str, ...] = ("numeric", "frame", "vlm", "post_verdict")
 
 #: Capabilities a dataset or task must provide (design doc 05, section 2).
 NEEDS: frozenset[str] = frozenset({"timestamps", "action", "state", "video",
-                                   "embodiment_profile", "vlm", "raw_bytes"})
+                                   "embodiment_profile", "vlm", "raw_bytes", "eef_input"})
 
 #: What a module's input depends on. A change upstream makes the module stale.
 #: numeric_gates / frame_gates: survivors of the hard gates of that stage;
 #: funnel_verdict: the keep set after the funnel verdict.
+#: A module id (1.4) means its own results: eef_video_review re-examines eef_video_consistency.
 DEPENDENCIES: frozenset[str] = frozenset({"numeric_gates", "frame_gates", "autolabel",
-                                          "funnel_verdict", "dedup"})
+                                          "funnel_verdict", "dedup", "eef_video_consistency"})
 
 #: v1's evidence modes (``pipeline.sync_plots`` / ``pipeline.evidence_frames``).
 EVIDENCE_MODES = ("flagged", "all", "off")
@@ -142,6 +151,8 @@ class ModuleSpec:
     merge_units: Callable | None = field(default=None, compare=False)  # design doc 04 §4.2
     review_lines: tuple[str, ...] = ()   # REVIEW_LINES ids this module raises
     appealable: bool = False             # a reject attributed to it may be appealed (D42)
+    input_scope: InputScope = "funnel"   # all_selected: every selected episode, not the survivors
+    affects_dataset_verdict: bool = True  # False: advisory, never part of keep / drop / held
 
     def to_json(self) -> dict:
         return {"id": self.id, "name_zh": self.name_zh, "summary_zh": self.summary_zh,
@@ -149,6 +160,8 @@ class ModuleSpec:
                 "stage": self.stage, "depends_on": list(self.depends_on),
                 "produces_adjudication": self.produces_adjudication,
                 "review_lines": list(self.review_lines), "appealable": self.appealable,
+                "input_scope": self.input_scope,
+                "affects_dataset_verdict": self.affects_dataset_verdict,
                 "param_schema": self.param_schema,
                 "tables": [t.to_json() for t in self.tables],
                 "mergeable": self.merge_units is not None}
@@ -163,6 +176,61 @@ def _evidence_param(name: str, title: str, labels: dict[str, str], description: 
     return {"type": "object", "additionalProperties": False,
             "properties": {name: {"title": title, "description": description,
                                   "default": "flagged", "oneOf": options}}}
+
+
+def _eef_params() -> dict:
+    """design doc 12 §11.1 / §12. The file comes as a path in the DEMO's first cut (CLI
+    ``--param eef_video_consistency.trajectory_json=PATH``); the upload control is F5.5."""
+    return {
+        "type": "object", "additionalProperties": False, "required": ["trajectory_json"],
+        "properties": {
+            "trajectory_json": {
+                "type": "string", "minLength": 1, "title": "trajectory.json",
+                "description": "约定格式 eef-video/1.0.0 的单文件包（每条 episode 的点与轴定义、标定、逐帧位姿与投影）；"
+                               "第一刀填本机路径，上传在第二刀提供",
+                "default": ""},
+            "observation_seeds": {
+                "type": "string", "title": "观测种子目录",
+                "description": "P-A 跟踪的种子（observation 格式，<目录>/<sample_id>/<相机>.jsonl）；"
+                               "为空时取 trajectory.json 同目录下的 observations_seed/",
+                "default": ""},
+            "threshold_profile": {
+                "title": "阈值", "description": "demo 由基准噪声底定、未校准，分项显示 ok / suspect 并标「未校准」；"
+                                                "不判定时只出曲线与测量值",
+                "default": "demo",
+                "oneOf": [{"const": "demo", "title": "demo（未校准）"}, {"const": "none", "title": "不判定，只出曲线"}]},
+            "camera_mounts": {
+                "title": "参与的相机", "description": "腕部相机只做位置与方向（D-E9）；移动相机不支持",
+                "default": "fixed_external_and_wrist",
+                "oneOf": [{"const": "fixed_external_and_wrist", "title": "外部固定与腕部"},
+                          {"const": "fixed_external", "title": "只看外部固定相机"}]},
+            "lag_search_s": {
+                "type": "number", "title": "时间错位搜索范围（秒）",
+                "description": "在 ±这么多秒内找画面与记录的时间错位", "default": 1.0,
+                "minimum": 0.2, "maximum": 3.0},
+            "interpolation_gap_factor": {
+                "type": "number", "title": "插值缺口倍数",
+                "description": "相邻采样间隔超过局部中位间隔的这么多倍就不跨缺口插值", "default": 2.0,
+                "minimum": 1.0, "maximum": 10.0},
+            "evidence_mode": {
+                "title": "证据图", "description": "为哪些条目保存声明投影与独立观测的叠加图",
+                "default": "flagged",
+                "oneOf": [{"const": "flagged", "title": "有可疑分项的"}, {"const": "all", "title": "全部"},
+                          {"const": "off", "title": "不存"}]},
+        }}
+
+
+def _eef_review_params() -> dict:
+    return {
+        "type": "object", "additionalProperties": False,
+        "properties": {
+            "review_windows_per_camera": {
+                "type": "integer", "title": "每路相机的复核窗口数",
+                "description": "均匀抽查与候选窗口各取至多这么多个", "default": 3, "minimum": 0, "maximum": 6},
+            "review_frames_per_window": {
+                "type": "integer", "title": "每个窗口的帧数", "description": "每个复核窗口最多送给模型的帧数",
+                "default": 6, "minimum": 1, "maximum": 12},
+        }}
 
 
 MODULES: tuple[ModuleSpec, ...] = (
@@ -206,6 +274,19 @@ MODULES: tuple[ModuleSpec, ...] = (
         tables=(TableSpec("video_action_sync", "逐机位同步读数",
                           ("episode_index", "lag_s", "corr_peak")),)),
     ModuleSpec(
+        id="eef_video_consistency", name_zh="EEF–视频一致性",
+        summary_zh="把声明的末端执行器投影与画面里独立定位的夹爪逐帧比较，报告位置、方向、时间错位、"
+                   "数值抖动与画面运动（DEMO，建议性，不影响判决）",
+        level="episode", gate="none", needs=frozenset({"video", "eef_input"}), stage="frame",
+        depends_on=(), produces_adjudication=False, param_schema=_eef_params(),
+        tables=(TableSpec("eef_camera_metrics", "逐相机分项",
+                          ("episode_index", "camera", "position_median_px", "orientation_median_deg",
+                           "lag_s", "coverage")),
+                TableSpec("eef_segments", "候选段", ("episode_index", "camera", "subitem", "start_s",
+                                                   "duration_s")),
+                TableSpec("eef_diagnosis", "诊断假设", ("episode_index", "camera", "hypothesis"))),
+        input_scope="all_selected", affects_dataset_verdict=False),
+    ModuleSpec(
         id="task_success", name_zh="任务成败判定",
         summary_zh="由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
         level="episode", gate="hard", needs=frozenset({"video", "vlm"}), stage="vlm",
@@ -216,6 +297,12 @@ MODULES: tuple[ModuleSpec, ...] = (
             "为哪些条目保存判定时看过的画面"),
         tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),),
         review_lines=("task_verdict", "label"), appealable=True),
+    ModuleSpec(
+        id="eef_video_review", name_zh="EEF–视频一致性 · VLM 复核",
+        summary_zh="对候选与抽查窗口请多模态模型复核跟踪目标与偏移方向，只做分类不做测量（第二刀提供）",
+        level="episode", gate="none", needs=frozenset({"video", "vlm", "eef_input"}), stage="vlm",
+        depends_on=("eef_video_consistency",), produces_adjudication=False,
+        param_schema=_eef_review_params(), input_scope="all_selected", affects_dataset_verdict=False),
     ModuleSpec(
         id="dedup", name_zh="精确去重",
         summary_zh="找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",
@@ -233,6 +320,11 @@ MODULES: tuple[ModuleSpec, ...] = (
         tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),),
         review_lines=("label",)),
 )
+
+
+def advisory_ids() -> tuple[str, ...]:
+    """Modules outside keep / drop / held (``affects_dataset_verdict=False``)."""
+    return tuple(m.id for m in MODULES if not m.affects_dataset_verdict)
 
 _BY_ID = {m.id: m for m in MODULES}
 _LINES = {line.id: line for line in REVIEW_LINES}

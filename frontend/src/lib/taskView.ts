@@ -4,8 +4,9 @@ import { zh } from '../locales/zh';
 
 export type Preset = 'full' | 'quick' | 'custom';
 
-/** Capabilities that depend on the dataset; a module needing one may have been unavailable. */
-const DATASET_DEPENDENT = new Set(['action', 'state', 'embodiment_profile']);
+/** Capabilities that depend on the dataset or an extra input; a module needing one may have been unavailable
+ * (`eef_input`: a trajectory.json the task must bring, registry 1.4). */
+const DATASET_DEPENDENT = new Set(['action', 'state', 'embodiment_profile', 'eef_input']);
 
 /**
  * Which preset a selection looks like (07 §4.1 shows the preset name under the module count).
