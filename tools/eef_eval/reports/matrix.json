@@ -1,0 +1,1170 @@
+{
+ "schema_version": "eef-matrix-report/1.0",
+ "profile": {
+  "name": "demo",
+  "version": "0.2",
+  "calibrated": false,
+  "sha256": "b47d7b4afdc8beec7b1f6e3424c394d0d0f0b9421a60f2169fdda5473269455b"
+ },
+ "note": "same-source synthetic variants; functional regression only, not a generalisation accuracy",
+ "episodes": [
+  {
+   "dataset": "dataset1",
+   "episode_index": 0,
+   "fault": "baseline",
+   "row": "baseline",
+   "elapsed_s": 5.33,
+   "summary": {
+    "position_2d": "ok",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [],
+   "cells": [
+    {
+     "cell": "position_2d",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "orientation_2d",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "position coverage reported",
+     "expected": "> 0",
+     "actual": 0.658,
+     "ok": true
+    },
+    {
+     "cell": "no supported hypothesis",
+     "expected": "[]",
+     "actual": [],
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": "none",
+     "actual": [],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset1",
+   "episode_index": 1,
+   "fault": "trajectory_drift",
+   "row": "drift",
+   "elapsed_s": 4.42,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "pose_drift_or_kinematics"
+   ],
+   "cells": [
+    {
+     "cell": "position_2d",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "pose_drift_or_kinematics",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "pose_drift_or_kinematics"
+     ],
+     "actual": [
+      "pose_drift_or_kinematics"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset1",
+   "episode_index": 2,
+   "fault": "trajectory_drift",
+   "row": "drift",
+   "elapsed_s": 4.43,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "pose_drift_or_kinematics"
+   ],
+   "cells": [
+    {
+     "cell": "position_2d",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "pose_drift_or_kinematics",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "pose_drift_or_kinematics"
+     ],
+     "actual": [
+      "pose_drift_or_kinematics"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset1",
+   "episode_index": 3,
+   "fault": "orientation",
+   "row": "orientation",
+   "elapsed_s": 4.48,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "suspect",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "constant_orientation_error"
+   ],
+   "cells": [
+    {
+     "cell": "orientation_2d",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "constant_orientation_error",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "constant_orientation_error"
+     ],
+     "actual": [
+      "constant_orientation_error"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset1",
+   "episode_index": 4,
+   "fault": "orientation",
+   "row": "orientation",
+   "elapsed_s": 4.48,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "suspect",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "constant_orientation_error"
+   ],
+   "cells": [
+    {
+     "cell": "orientation_2d",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "constant_orientation_error",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "constant_orientation_error"
+     ],
+     "actual": [
+      "constant_orientation_error"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset1",
+   "episode_index": 5,
+   "fault": "trajectory_jitter",
+   "row": "state_jitter",
+   "elapsed_s": 4.26,
+   "summary": {
+    "position_2d": "ok",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "suspect"
+   },
+   "supported_hypotheses": [
+    "jitter_source=record"
+   ],
+   "cells": [
+    {
+     "cell": "state_motion",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "jitter_source=record",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "jitter_source=record"
+     ],
+     "actual": [
+      "jitter_source=record"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset1",
+   "episode_index": 6,
+   "fault": "trajectory_jitter",
+   "row": "state_jitter",
+   "elapsed_s": 4.46,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "suspect"
+   },
+   "supported_hypotheses": [
+    "jitter_source=record"
+   ],
+   "cells": [
+    {
+     "cell": "state_motion",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "jitter_source=record",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "jitter_source=record"
+     ],
+     "actual": [
+      "jitter_source=record"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset1",
+   "episode_index": 7,
+   "fault": "video_jitter",
+   "row": "video_jitter",
+   "elapsed_s": 4.52,
+   "summary": {
+    "position_2d": "ok",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "suspect",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "jitter_source=video"
+   ],
+   "cells": [
+    {
+     "cell": "camera_motion[27432424_left]",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "jitter_source=video on the shaken camera",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "jitter_source=video"
+     ],
+     "actual": [
+      "jitter_source=video"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset1",
+   "episode_index": 8,
+   "fault": "video_jitter",
+   "row": "video_jitter",
+   "elapsed_s": 4.52,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "suspect",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "jitter_source=video"
+   ],
+   "cells": [
+    {
+     "cell": "camera_motion[27432424_left]",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "jitter_source=video on the shaken camera",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "jitter_source=video"
+     ],
+     "actual": [
+      "jitter_source=video"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset1",
+   "episode_index": 9,
+   "fault": "video_lag",
+   "row": "lag",
+   "elapsed_s": 4.51,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "ok",
+    "temporal_alignment": "suspect",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "time_offset"
+   ],
+   "cells": [
+    {
+     "cell": "temporal_alignment",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "lag_frames[27432424_left]",
+     "expected": "-3 (+/-0.5), -0.200 s",
+     "actual": -3.0168,
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "time_offset with the right sign",
+     "actual": [
+      -0.2011
+     ],
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "time_offset"
+     ],
+     "actual": [
+      "time_offset"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset1",
+   "episode_index": 10,
+   "fault": "video_lag",
+   "row": "lag",
+   "elapsed_s": 4.48,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "suspect",
+    "temporal_alignment": "suspect",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "time_offset"
+   ],
+   "cells": [
+    {
+     "cell": "temporal_alignment",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "lag_frames[27432424_left]",
+     "expected": "-8 (+/-0.5), -0.533 s",
+     "actual": -8.0288,
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "time_offset with the right sign",
+     "actual": [
+      -0.5353
+     ],
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "time_offset"
+     ],
+     "actual": [
+      "time_offset"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset2",
+   "episode_index": 0,
+   "fault": "baseline",
+   "row": "baseline",
+   "elapsed_s": 8.36,
+   "summary": {
+    "position_2d": "ok",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [],
+   "cells": [
+    {
+     "cell": "position_2d",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "orientation_2d",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "position coverage reported",
+     "expected": "> 0",
+     "actual": 0.659,
+     "ok": true
+    },
+    {
+     "cell": "no supported hypothesis",
+     "expected": "[]",
+     "actual": [],
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": "none",
+     "actual": [],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset2",
+   "episode_index": 1,
+   "fault": "traj_drift",
+   "row": "drift",
+   "elapsed_s": 8.85,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "pose_drift_or_kinematics"
+   ],
+   "cells": [
+    {
+     "cell": "position_2d",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "pose_drift_or_kinematics",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "pose_drift_or_kinematics"
+     ],
+     "actual": [
+      "pose_drift_or_kinematics"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset2",
+   "episode_index": 2,
+   "fault": "gripper_orient",
+   "row": "orientation",
+   "elapsed_s": 8.85,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "suspect",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "constant_orientation_error"
+   ],
+   "cells": [
+    {
+     "cell": "orientation_2d",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "constant_orientation_error",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "constant_orientation_error"
+     ],
+     "actual": [
+      "constant_orientation_error"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset2",
+   "episode_index": 3,
+   "fault": "traj_jitter",
+   "row": "state_jitter",
+   "elapsed_s": 8.83,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "suspect"
+   },
+   "supported_hypotheses": [
+    "jitter_source=record"
+   ],
+   "cells": [
+    {
+     "cell": "state_motion",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "jitter_source=record",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "jitter_source=record"
+     ],
+     "actual": [
+      "jitter_source=record"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset2",
+   "episode_index": 4,
+   "fault": "video_shake",
+   "row": "video_jitter",
+   "elapsed_s": 8.67,
+   "summary": {
+    "position_2d": "ok",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "suspect",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "jitter_source=video"
+   ],
+   "cells": [
+    {
+     "cell": "camera_motion[27432424_left]",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion[28221883_left]",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "jitter_source=video on the shaken camera",
+     "actual": true,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "jitter_source=video"
+     ],
+     "actual": [
+      "jitter_source=video"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset2",
+   "episode_index": 5,
+   "fault": "sync_offset",
+   "row": "lag",
+   "elapsed_s": 8.84,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "ok",
+    "temporal_alignment": "suspect",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "time_offset"
+   ],
+   "cells": [
+    {
+     "cell": "temporal_alignment",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "lag_frames[27432424_left]",
+     "expected": "+5 (+/-0.5), +0.333 s",
+     "actual": 4.9573,
+     "ok": true
+    },
+    {
+     "cell": "lag_frames[28221883_left]",
+     "expected": "+5 (+/-0.5), +0.333 s",
+     "actual": 4.949,
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis",
+     "expected": "time_offset with the right sign",
+     "actual": [
+      0.3305,
+      0.3299
+     ],
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "time_offset"
+     ],
+     "actual": [
+      "time_offset"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  },
+  {
+   "dataset": "dataset2",
+   "episode_index": 6,
+   "fault": "calib_offset",
+   "row": "extrinsics",
+   "elapsed_s": 8.72,
+   "summary": {
+    "position_2d": "suspect",
+    "orientation_2d": "ok",
+    "temporal_alignment": "ok",
+    "camera_motion": "ok",
+    "input_consistency": "ok",
+    "state_motion": "ok"
+   },
+   "supported_hypotheses": [
+    "extrinsics_error"
+   ],
+   "cells": [
+    {
+     "cell": "position_2d[27432424_left]",
+     "expected": "suspect",
+     "actual": "suspect",
+     "ok": true
+    },
+    {
+     "cell": "position_2d[28221883_left]",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "temporal_alignment",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "state_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "camera_motion",
+     "expected": "ok",
+     "actual": "ok",
+     "ok": true
+    },
+    {
+     "cell": "diagnosis extrinsics_error[27432424_left]",
+     "expected": "~30 mm, ~2 deg",
+     "actual": {
+      "delta_translation_mm": 29.75,
+      "declared_origin_in_fitted_camera_m": [
+       0.0297,
+       0.0015,
+       -0.0018
+      ],
+      "delta_rotation_deg": 2.011
+     },
+     "ok": true
+    },
+    {
+     "cell": "no extrinsics hypothesis on the good camera",
+     "expected": "none",
+     "actual": 0,
+     "ok": true
+    },
+    {
+     "cell": "no unexpected supported hypothesis",
+     "expected": [
+      "extrinsics_error"
+     ],
+     "actual": [
+      "extrinsics_error"
+     ],
+     "ok": true
+    }
+   ],
+   "pass": true
+  }
+ ],
+ "ordering": [
+  {
+   "cell": "heavy > light: drift (ep2 vs ep1, median_px)",
+   "expected": "heavy > light",
+   "actual": [
+    4.356,
+    9.578
+   ],
+   "ok": true
+  },
+  {
+   "cell": "heavy > light: orientation (ep4 vs ep3, median_deg)",
+   "expected": "heavy > light",
+   "actual": [
+    13.215,
+    38.838
+   ],
+   "ok": true
+  },
+  {
+   "cell": "heavy > light: video jitter (ep8 vs ep7, hf_rms_max_px)",
+   "expected": "heavy > light",
+   "actual": [
+    3.115,
+    10.151
+   ],
+   "ok": true
+  },
+  {
+   "cell": "heavy > light: state jitter (ep6 vs ep5, hf_pos_rms_max_mm)",
+   "expected": "heavy > light",
+   "actual": [
+    4.829769,
+    13.943307
+   ],
+   "ok": true
+  }
+ ],
+ "summary": {
+  "episodes": 18,
+  "passed": 18,
+  "cells": 114,
+  "cells_ok": 114,
+  "seconds": 117.8
+ }
+}

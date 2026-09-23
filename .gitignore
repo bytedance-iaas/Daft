@@ -34,3 +34,6 @@ spikes/smoke_out/
 # large data files never go into git
 *.parquet
 *.mp4
+
+# EEF evaluator run artifacts (evidence images, curves); the summary JSONs next to them are kept
+tools/eef_eval/reports/run/

@@ -145,3 +145,88 @@ def _unwrap_rotvec(rv: np.ndarray) -> np.ndarray:
             if np.linalg.norm(alt - out[i - 1]) < np.linalg.norm(out[i] - out[i - 1]):
                 out[i] = alt
     return out
+
+
+# --- background / camera motion (design 12 §8.5) ------------------------------------------------
+
+BG_SCALE = 0.5                # background features are tracked at half resolution; pixels are rescaled
+BG_BORDER_PX = 12             # dataset1 mirror-pads shifted frames: ignore the outer ring
+
+
+def background_motion(frames, n: int, *, exclude: dict[int, list] | None = None, exclude_radius_px: float = 140.0,
+                      max_features: int = 400, min_inliers: int = 25) -> dict:
+    """Frame-to-frame similarity of the static background, accumulated into an image trajectory.
+
+    ``frames`` yields ``DecodedFrame``; ``exclude`` maps a media frame to pixel positions to mask out
+    (the independently observed gripper - never the declared projection). Robust (RANSAC) fitting keeps
+    the static majority; a frame whose background support is too thin gets NaN. Returns per media frame:
+    ``dx, dy`` (media px, cumulative), ``rot_deg``, ``inliers`` and ``support`` (inlier ratio).
+    """
+    import cv2
+
+    dx = np.full(n, np.nan)
+    dy = np.full(n, np.nan)
+    rot = np.full(n, np.nan)
+    inliers = np.zeros(n, int)
+    support = np.full(n, np.nan)
+    prev = None
+    prev_idx = None
+    acc = np.eye(3)
+    lk = dict(winSize=(21, 21), maxLevel=3, criteria=(cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 30, 0.01))
+    for fr in frames:
+        if fr.index >= n:
+            break
+        g = cv2.resize(fr.gray, None, fx=BG_SCALE, fy=BG_SCALE, interpolation=cv2.INTER_AREA)
+        if prev is None:
+            prev, prev_idx = g, fr.index
+            dx[fr.index] = dy[fr.index] = rot[fr.index] = 0.0
+            continue
+        h, w = prev.shape
+        mask = np.zeros_like(prev)
+        b = int(BG_BORDER_PX * BG_SCALE) + 1
+        mask[b:h - b, b:w - b] = 255
+        for uv in (exclude or {}).get(prev_idx, []):
+            cv2.circle(mask, (int(uv[0] * BG_SCALE), int(uv[1] * BG_SCALE)), int(exclude_radius_px * BG_SCALE), 0, -1)
+        p0 = cv2.goodFeaturesToTrack(prev, max_features, 0.01, 8, mask=mask, blockSize=7)
+        ok_frame = False
+        if p0 is not None and len(p0) >= min_inliers:
+            p1, st, _ = cv2.calcOpticalFlowPyrLK(prev, g, p0, None, **lk)
+            pr, st2, _ = cv2.calcOpticalFlowPyrLK(g, prev, p1, None, **lk)
+            fb = np.linalg.norm((pr - p0).reshape(-1, 2), axis=1)
+            good = (st.ravel() == 1) & (st2.ravel() == 1) & (fb < 0.5)
+            if good.sum() >= min_inliers:
+                M, inl = cv2.estimateAffinePartial2D(p0[good], p1[good], method=cv2.RANSAC,
+                                                     ransacReprojThreshold=0.5)
+                if M is not None and inl is not None and inl.sum() >= min_inliers:
+                    ok_frame = True
+                    step = np.eye(3)
+                    step[:2] = M
+                    step[:2, 2] /= BG_SCALE
+                    acc = step @ acc
+                    inliers[fr.index] = int(inl.sum())
+                    support[fr.index] = float(inl.sum() / len(p0))
+        if ok_frame:
+            dx[fr.index], dy[fr.index] = acc[0, 2], acc[1, 2]
+            rot[fr.index] = float(np.degrees(np.arctan2(acc[1, 0], acc[0, 0])))
+        prev, prev_idx = g, fr.index
+    return {"dx_px": dx, "dy_px": dy, "rot_deg": rot, "inliers": inliers, "support": support}
+
+
+def background_hf(bg: dict, fps: float, *, cutoff_hz: float = 1.0, rolling_window_s: float = ROLLING_WINDOW_S) -> dict:
+    """High-frequency part of the background trajectory (camera shake) and its rolling RMS."""
+    n = len(bg["dx_px"])
+    xy = np.stack([bg["dx_px"], bg["dy_px"]], 1)
+    ok = np.isfinite(xy).all(1)
+    hf = np.full(n, np.nan)
+    if ok.sum() >= 16:
+        idx = np.flatnonzero(ok)
+        full = TL.interp_track(idx.astype(float), xy[ok], np.arange(n, dtype=float), gap_factor=6.0)
+        good = np.isfinite(full).all(1)
+        seg = full[good]
+        hp = seg - _lowpass(seg, fps, cutoff_hz)
+        hf_all = np.full(n, np.nan)
+        hf_all[good] = np.linalg.norm(hp, axis=1)
+        hf = np.where(ok, hf_all, np.nan)
+    rms = _rolling_rms(hf, int(round(rolling_window_s * fps)))
+    rms[~np.isfinite(hf)] = np.nan
+    return {"hf_px": hf, "hf_rms_px": rms}

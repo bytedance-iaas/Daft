@@ -15,8 +15,15 @@
 | `video.py` | 按真实 PTS 流式解码一路视图的片段：v3 拼接视频从 `clip_start_s` 起 seek，帧号从片段第一帧记 0，不留整段 |
 | `observations.py` | 独立观测：`ObservationProvider` 协议、provider 输入白名单（只有媒体位置、点 id、种子，没有投影 / 位姿 / 标定）、种子文件读取校验、观测文件（observation Schema） |
 | `tracking.py` | P-A provider：种子锚点 + 夹爪刚体特征簇的金字塔 LK（逐步前后向校验）；成员由前后两个锚点决定（受种子约束的 RANSAC），逐帧相似变换带种子走，远端锚点的已知误差线性校正，前后向一致才采纳；遮挡、失跟、分歧一律 `uncertain`，不插值冒充观测 |
+| `metrics.py` | 位置残差（像素与毫米等效）、方向夹角（有向 0–180°、无向 0–90°，投影过短为 not_observable）、全局与滑窗 lag（`u_visual(t) ≈ u_declared(t+lag)`，同一掩码、去常量偏移、亚帧抛物线）、残差高频占比 |
+| `motion.py`（续） | 背景 / 相机运动：半分辨率逐帧背景特征 + RANSAC 相似变换累积成画面轨迹（遮掉独立观测到的夹爪，不用投影），1 Hz 以上滚动 RMS |
+| `segments.py` | 迟滞分段（开 / 关阈值、最短持续、允许短缺口）、滚动中位数、证据帧挑选 |
+| `assess.py` | 分项状态：`ok / suspect / unknown / unsupported / error`；无 profile 只出曲线（`threshold_uncalibrated`），覆盖不足 `unknown`；episode 级只做「任一相机 suspect 即候选」汇总 |
+| `diagnosis.py` | 诊断假设（只在对应分项已 suspect 时算，不改状态）：PnP 外参修正、时间偏移、恒定朝向错（三维拟合 EEF 本体系恒定旋转）、TCP 轴向偏移（一维拟合）、位姿漂移、抖动来源 |
+| `profile.py`、`profiles/demo.yaml` | 阈值 profile；`demo` 标 `calibrated: false`，每个数都注明来自哪条基准的噪声底、乘了多少倍 |
+| `runner.py` | 单 episode 的流式执行：解码 → 观测 → 测量 → 判定 → 诊断 → 产物（`observations/`、`curves/*.parquet`、`evidence/` 叠加图），输出 §11.3 的 `detail` |
 | `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像） |
-| `__main__.py` | 离线命令：`validate` |
+| `__main__.py` | 离线命令：`validate`、`run` |
 
 ## 手动验证
 
@@ -49,3 +56,20 @@
    逐 episode × 相机打印「点=可见比例/对真值 P95 像素」，最后是汇总与独立性实验：25 路的可见比例中位数约 0.66、
    P95 误差中位数约 3.2 px；两条 `observations_identical: true`（投影平移 30 px，观测逐位不变）。
    种子与真值都是 `synthetic_fixture`，这些数只说明跟踪器在 DEMO 数据上的表现，不是精度验收。
+6. 离线评估一条 episode（F5.3，在 `backend/` 下）：
+
+   ```bash
+   ../.venv/bin/python -m curation.extensions.eef_consistency run \
+     --trajectory ~/ws/ws_general/galbot/dataset2/trajectory.json \
+     --lerobot-root ~/ws/ws_general/galbot/dataset2/eef_ds2_lr3 \
+     --seeds ~/ws/ws_general/galbot/dataset2/observations_seed --episodes 0 5 6 --out /tmp/eef_run
+   ```
+
+   每条打印 `overall` 与分项状态：ep0 全 `ok`（`overall: assessed`）；ep5 `temporal_alignment: suspect`；
+   ep6 `position_2d: suspect`。`/tmp/eef_run/details.jsonl` 里 ep6 的 `cameras` 只有 `27432424_left` 的位置是 suspect，
+   `diagnosis` 里 `extrinsics_error` 为 `supported: true`、`delta_translation_mm` 约 30、`delta_rotation_deg` 约 2；
+   ep5 两路的 `lag_s` 约 +0.33。`evidence/000006/27432424_left/*.jpg` 上红圈是声明投影、绿叉是独立观测。
+   `--profile none` 时所有分项都是 `unknown`（`threshold_uncalibrated`），只出曲线。
+7. 受控异常矩阵（F5.3 验收，约 2 分钟；在仓库根执行）：
+   `PYTHONPATH=backend:tools .venv/bin/python -m eef_eval.matrix`，应打印 18 行 `PASS`、`"cells_ok": 114`
+   与 4 行轻重档 `PASS`；说明见 [tools/eef_eval/README.md](../../../../tools/eef_eval/README.md)。

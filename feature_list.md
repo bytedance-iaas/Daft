@@ -134,7 +134,7 @@
 ### F5.3 CPU 指标、诊断与离线报告
 - 描述：位置、方向、局部 lag、数值轨迹、画面共同运动五项指标；迟滞分段；诊断假设（PnP 外参修正、lag、恒定朝向、轴向偏移、漂移、抖动来源）；曲线与证据；`demo` 阈值 profile（标 uncalibrated）；离线评估器读真值算命中
 - 验收：①12 篇 §13.3 受控异常矩阵逐行符合（dataset1 + dataset2，共 18 条）；②基准两条各分项 ok 且覆盖率有报告；③lag 符号按 `u_visual(t) ≈ u_declared(t + lag)`，dataset2 ep5 为 +0.333 s、dataset1 ep9/10 为 −0.200 / −0.533 s；④ep6 只在 ext1 报外参偏差，ext2 正常
-- status: not_completed
+- status: **completed**
 
 ### F5.4 接入 v2（advisory）
 - 描述：注册表 1.4（`eef_video_consistency` frame 档、`eef_video_review` vlm 档、`eef_input` 能力、`input_scope`、`affects_dataset_verdict`）；预检逐分项能力；`check` 分派新 runner；parts 输出（result-record，`passed=None, score=None`，分项进 detail）；aggregate 调用边界过滤；报告默认表格与三张 TableSpec；`trajectory.json` 走 CLI 参数

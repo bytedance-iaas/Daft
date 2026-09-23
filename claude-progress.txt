@@ -190,6 +190,13 @@ Current summary:
         输入白名单、种子与观测文件）、tracking（P-A：种子锚点 + 夹爪刚体特征簇 LK，锚点定成员、漂移校正、前后向一致才采纳，
         遮挡 / 失跟 / 分歧一律 uncertain）；dataset1 种子与两套逐帧真值由仓库外 galbot/tools 生成（真值只进 evaluation/）；
         tools/eef_eval/observation_report：25 路可见比例中位数 0.66、对真值 P95 中位数 3.2 px，投影平移 30 px 观测逐位不变
+      · F5.3 CPU 指标、诊断与离线报告 completed：metrics（位置、方向、去常量偏移的全局 / 滑窗 lag）、motion 的背景运动、
+        segments（迟滞）、assess（分项状态、episode 汇总）、diagnosis（PnP 外参、时间偏移、三维恒定旋转、轴向偏移、漂移、
+        抖动来源）、profile + profiles/demo.yaml（0.2，uncalibrated，按基准噪声底 × 固定倍数）、runner（detail、observations、
+        curves parquet、evidence 叠加图）、__main__ run；tools/eef_eval/matrix：§13.3 18 条全过、114 格全对、轻重档 4 组全对，
+        拟合值与注入量一致（ep6 外参 29.75 mm / 2.01°；lag −0.201 / −0.535 / +0.330 s）；tests/eef 101 条
+      · 口径（12 篇附录 C.3）：0.1 草稿把拟合后中位数残差与 P95 噪声比，误支持了 d2 ep1 的外参假设，0.2 已改；
+        恒定朝向用三维拟合（二维角随位姿变）；未做 §13.3 的补充扫描（检出下限）
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
@@ -200,7 +207,8 @@ Main gaps:
     F4.3 待按 README 完整跑一次质检
 
 Next steps:
-  0. EEF–视频一致性 DEMO 第一刀：F5.3 指标与诊断、§13.3 矩阵 → F5.4 接入 v2；
+  0. EEF–视频一致性 DEMO 第一刀：F5.4 接入 v2（注册表 1.4、预检、check 分派、parts、aggregate 隔离、报告表；
+     check 目前没有模块参数通道，要补）；
      §3.3 mapping.yaml 导出工具留作后续
   1. APIG 接通（physicalai-apig 监听 curation）、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
   2. 按 README 走查一次完整质检，F3.3、F4.1、F4.3 按验收置位；请需求方统一过一遍界面文案（F3.2）

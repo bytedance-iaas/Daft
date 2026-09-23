@@ -261,3 +261,49 @@ def write_seeds(path: pathlib.Path, truth: dict[str, np.ndarray], *, sample_id: 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     return path
+
+
+def make_entry_2d(truth: dict[str, np.ndarray], *, ep: int = 0, shift_frames: int = 0,
+                  offset_px: tuple[float, float] = (0.0, 0.0), video_uri: str = "videos/cam/episode_000000.mp4",
+                  dataset: str = "synthetic") -> dict:
+    """Form A entry (2D projections only, no pose / calibration) declaring the rendered gripper points.
+
+    ``shift_frames=k`` declares frame i with the truth of frame i-k (the record lags the video by k frames,
+    lag = +k/FPS under D-E8); ``offset_px`` adds a constant image offset.
+    """
+    n = len(next(iter(truth.values())))
+    sid = f"{dataset}_{ep:06d}"
+    cam = "cam0"
+    prov = {"source": "synthetic", "method": "rendered", "assurance": "synthetic"}
+    points = {pid: {"meaning": f"rendered {pid}", "frame_id": None, "model": "external_2d", "position_eef_m": None,
+                    "position_open_eef_m": None, "position_closed_eef_m": None, "provenance": prov}
+              for pid in GRIPPER_POINTS}
+    sample = {
+        "schema_version": "eef-video/1.0.0", "sample_id": sid,
+        "source": {"dataset": dataset, "episode_id": str(ep), "instruction": None},
+        "frame_count": n, "timebase": "video_pts", "annotations_path": "#frames", "calibration_path": None,
+        "eef_frame": None, "reference_frame": None,
+        "views": [{"view_id": cam, "kind": "camera", "camera_id": cam, "mount": "fixed_external",
+                   "media": {"kind": "video", "uri": video_uri, "image_size_wh": [W, H], "frame_count": n,
+                             "fps": FPS, "clip_start_s": 0.0, "clip_end_s": n / FPS}}],
+        "point_definitions": points,
+        "axis_definitions": {"finger_line": {"start_point_id": "finger_minus_y", "end_point_id": "finger_plus_y",
+                                             "physical_meaning": "finger line", "directed": False, "length_m": None}},
+        "raw_pose_sequence": None, "notes": ["synthetic 2D-only scene"]}
+    frames = []
+    for i in range(n):
+        src = min(max(i - shift_frames, 0), n - 1)
+        pts = {}
+        for pid, uv in truth.items():
+            u, v = float(uv[src, 0] + offset_px[0]), float(uv[src, 1] + offset_px[1])
+            inside = 0 <= u < W and 0 <= v < H
+            pts[pid] = {"uv_px": [u, v], "depth_m": None, "status": "valid" if inside else "out_of_frame",
+                        "in_frame": inside}
+        frames.append({"schema_version": "eef-video/1.0.0", "sample_id": sid, "frame_index": i, "timestamp_s": i / FPS,
+                       "source_state_index": None, "source_timing": [], "eef": None, "gripper": None,
+                       "cameras": {cam: {"video_frame_index": i, "video_timestamp_s": i / FPS, "image_size_wh": [W, H],
+                                         "calibration_id": None, "T_reference_camera": None,
+                                         "H_media_from_calibration": np.eye(3).tolist(),
+                                         "projection": {"source": "provided", "pixel_space": "media",
+                                                        "points": pts}}}})
+    return {"episode_index": ep, "sample": sample, "calibration": None, "frames": frames}

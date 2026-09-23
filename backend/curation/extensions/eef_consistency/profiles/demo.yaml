@@ -1,0 +1,57 @@
+# DEMO threshold profile (design 12 §12, appendix C.3). calibrated: false - every status it yields is
+# advisory and reported as uncalibrated. Numbers come from the noise floor of the two baselines only
+# (galbot dataset1 ep0, dataset2 ep0, both cameras) measured with the synthetic_fixture P-A tracker on
+# 2026-09-23, times a factor fixed before looking at the faulty episodes (x3 for medians, x1.5-2.5 for
+# peaks). Never tuned on fault labels. Baseline worst values are in the comments.
+name: demo
+version: "0.2"
+calibrated: false
+source: >-
+  baseline noise floor (dataset1 ep0, dataset2 ep0) of the synthetic_fixture P-A tracker and the recorded
+  state, 2026-09-23; factors fixed a priori; not calibrated on independent annotations
+coverage:
+  min_valid_fraction: 0.3            # valid comparisons / requested frames, per camera and point
+  min_valid_frames: 30
+position:                            # raw residual |u_declared - u_visual|, media px
+  median_px: 3.0                     # baseline worst median 1.05 px (x3)
+  rolling_median_frames: 5
+  on_px: 10.0                        # baseline worst 5-frame rolling median 6.2 px (x1.6)
+  off_px: 7.0
+  min_duration_s: 1.0
+  max_gap_s: 0.4
+  local_hf_px: 2.5                   # residual RMS above 2 Hz; baseline worst 0.81 px (x3)
+orientation:                         # angle between declared and observed 2D direction
+  min_axis_len_px: 25.0              # shorter projected axes are not_observable
+  min_valid_frames: 15
+  median_deg: 5.0                    # baseline worst median 0.5 deg (x3, floored at 5 deg)
+  rolling_median_frames: 5
+  on_deg: 8.0                        # baseline worst P95 3.1 deg (x2.5)
+  off_deg: 5.0
+  min_duration_s: 1.0
+  max_gap_s: 0.4
+temporal:
+  min_lag_frames: 2.0                # baseline worst |lag| 0.07 frame
+  min_improvement: 1.5               # residual(0) / residual(lag); baseline 1.00
+  min_drop_px: 2.0
+  min_motion_px_s: 20.0              # below this the lag is not identifiable
+state_motion:                        # rolling RMS (1 s) of the > 2 Hz recorded position
+  hf_on_mm: 2.5                      # baseline worst 1.09 mm (x2.3)
+  hf_off_mm: 1.8
+  min_duration_s: 1.0
+  max_gap_s: 0.4
+  spikes_suspect: 2
+camera_motion:                       # rolling RMS (1 s) of the > 1 Hz background trajectory
+  hf_on_px: 2.0                      # baseline worst 0.67 px (x3)
+  hf_off_px: 1.4
+  min_duration_s: 1.0
+  max_gap_s: 0.4
+  min_support_fraction: 0.5          # frames with a background fit / requested
+diagnosis:                           # PnP, constant body rotation and axial-offset fits
+  fit_min_improvement: 0.6           # the median residual must drop by 60 % ...
+  fit_max_residual_px: 2.5           # ... to below 2.5 px: a median, so against the baseline worst median
+                                     # residual 1.05 px (x2.4); the 0.1 draft compared it with the P95 floor
+  pnp_max_translation_mm: 100.0      # design 12 §8.6: a wrong extrinsic is a small correction (cm / deg)
+  pnp_max_rotation_deg: 10.0
+  lag_min_improvement: 1.5
+  orientation_max_iqr_deg: 8.0
+  drift_max_hf_share: 0.3
