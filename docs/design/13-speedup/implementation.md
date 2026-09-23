@@ -1,5 +1,7 @@
 # 工程优化实施记录
 
+> 13 篇的附件，历史规划与实验假设见 [13-curation-speedup.md](../13-curation-speedup.md)。
+
 已落地的 v1 工程优化已并入默认执行路径。判定算法及正式结果结构保持不变。
 `curation run` 只保留 `thinking` 开关：`--thinking` / `--no-thinking`，
 也可用 `--set pipeline.thinking=true/false`。请求参数由模型策略决定。

@@ -1,6 +1,6 @@
 # Curation 提速计划(10 万条量级)
 
-本页保留历史规划与实验假设；当前实施状态见 [implementation.md](implementation.md)。
+本页保留历史规划与实验假设；当前实施状态见 [实施记录](13-speedup/implementation.md)。
 下文的工程开关表已不适用于当前代码：工程优化已并入默认路径，只有 API 的 `thinking` 可配置。该开关按模型映射参数；GLM-5.3-Flash 不能关闭思考，`--no-thinking` 只设 `reasoning_effort=low`，仍在思考。下文“thinking 关”的提速数字不能用于该模型。
 P1 的运行检查点现已使用 SQLite；下文旧开关描述仅保留为历史方案。
 
