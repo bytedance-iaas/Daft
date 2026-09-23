@@ -150,6 +150,10 @@ def check_input(svc: SecretsService, target: InputTarget, *,
         ends = svc.tos_endpoints(key, target.region)
         failure = T.classify(exc, scrub)
         if failure.kind == "no_object":
+            found = _container_object(svc, key, target, bucket, prefix)   # mcap (D44)
+            if found:
+                how = f"用{key.label}" if key is not None else "匿名"
+                return CheckResult("input", True, "ok", f"{how}读到了 {found}", target.uri)
             text = f"{target.uri} 下没有 {META_INFO}：地址不对，或者不是 LeRobot 数据集"
         else:
             text = T.reason(failure, action="读取", uri=target.uri, key=key, region=ends.region,
@@ -157,6 +161,32 @@ def check_input(svc: SecretsService, target: InputTarget, *,
         return _tos_result("input", failure, text, target.uri)
     how = f"用{key.label}" if key is not None else "匿名"
     return CheckResult("input", True, "ok", f"{how}读到了 {META_INFO}", target.uri)
+
+
+def _container_object(svc: SecretsService, key, target: InputTarget, bucket: str,
+                      prefix: str) -> str | None:
+    """An mcap dataset (D44) has no ``meta/info.json``: its first episode file read with
+    the same key stands for it (a few bytes); lerobot-lance-convert's layout without
+    ``meta/`` answers with a table version file. None when neither is there or readable."""
+    start = (prefix.strip("/") + "/") if prefix.strip("/") else ""
+    try:
+        with svc.tos(key, target.region) as (client, _):
+            page = client.list_objects_type2(bucket, prefix=start, delimiter="/",
+                                             max_keys=1000)
+            names = sorted(str(o.key)[len(start):] for o in getattr(page, "contents", None) or [])
+            pick = next((n for n in names if n.endswith(".mcap") and not n.startswith(".")),
+                        None)
+            if pick is None:
+                versions = client.list_objects_type2(
+                    bucket, prefix=f"{start}meta.lance/_versions/", max_keys=1)
+                objs = getattr(versions, "contents", None) or []
+                if not objs:
+                    return None
+                pick = str(objs[0].key)[len(start):]
+            T.read_object(client, bucket, T.join_key(prefix, pick), limit=64)
+        return pick
+    except Exception:  # noqa: BLE001 - the LeRobot message stands
+        return None
 
 
 def _check_local_input(svc: SecretsService, target: InputTarget) -> CheckResult:
@@ -173,6 +203,9 @@ def _check_local_input(svc: SecretsService, target: InputTarget) -> CheckResult:
         with open(path, "rb") as fh:
             fh.read(1 << 20)
     except FileNotFoundError:
+        found = _local_container_file(pathlib.Path(os.path.normpath(target.uri)))
+        if found is not None:                               # mcap / lance (D44)
+            return CheckResult("input", True, "ok", f"读到了 {found}", target.uri)
         return CheckResult("input", False, "not_found",
                            f"{target.uri} 下没有 {META_INFO}：路径不对，或者不是 LeRobot 数据集",
                            target.uri)
@@ -180,6 +213,25 @@ def _check_local_input(svc: SecretsService, target: InputTarget) -> CheckResult:
         return CheckResult("input", False, "failed",
                            f"读不了 {path}：{err.strerror or type(err).__name__}", target.uri)
     return CheckResult("input", True, "ok", f"读到了 {META_INFO}", target.uri)
+
+
+def _local_container_file(root: pathlib.Path) -> str | None:
+    """The first episode file of a local mcap dataset, or a lance table version file of a
+    layout without ``meta/`` - read a little to prove it is readable."""
+    try:
+        names = sorted(p.name for p in root.iterdir()
+                       if p.is_file() and p.name.endswith(".mcap") and not p.name.startswith("."))
+        rel = names[0] if names else None
+        if rel is None:
+            versions = sorted((root / "meta.lance" / "_versions").iterdir())
+            rel = f"meta.lance/_versions/{versions[0].name}" if versions else None
+        if rel is None:
+            return None
+        with open(root / rel, "rb") as fh:
+            fh.read(64)
+        return rel
+    except OSError:
+        return None
 
 
 def check_output(svc: SecretsService, target: OutputTarget, *,

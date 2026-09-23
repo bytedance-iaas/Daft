@@ -293,6 +293,8 @@ class Run:
         while True:
             self.check_intent()
             env = self.env(need_input=need_input, need_output=need_output, need_vlm=need_vlm)
+            if need_input:
+                env.update(self.source_env())
             if extra_env:
                 env.update(extra_env)
             full = list(argv)
@@ -396,7 +398,39 @@ class Run:
             n = rules.max_episodes(t.episode_selector)
             if n:
                 out += ["--max-episodes", str(n)]
+            if self.container_kind():
+                # mcap / lance (D44): v1 resolves their semantics on the first 100 episodes of
+                # the whole selection, whichever stage's survivors a command reads
+                out += ["--selection", self.episodes_arg("selection", self.selection())]
         return out
+
+    # -- mcap / lance (D44) ----------------------------------------------------------
+    def container_kind(self) -> str | None:
+        from .datasets import container_kind
+
+        return container_kind(self.preflight)
+
+    def source_cache_dir(self) -> pathlib.Path:
+        """The task's local copy of a remote mcap / lance dataset, on the data volume."""
+        return pathlib.Path(self.orch.settings.source_cache_dir) / self.task_id
+
+    def source_env(self) -> dict:
+        """What every CLI command of a run on an mcap / lance dataset gets: the task's
+        source cache (a remote dataset's local copy, kept across the run's commands,
+        removed when the run ends) and a temporary directory next to it for the readers'
+        muxed / extracted videos (the data volume, not the container's /tmp). Empty for
+        LeRobot, whose commands run exactly as before."""
+        if not self.container_kind():
+            return {}
+        root = self.source_cache_dir()
+        (root / "tmp").mkdir(parents=True, exist_ok=True)
+        return {"CURATION_SOURCE_CACHE": str(root), "TMPDIR": str(root / "tmp")}
+
+    def drop_source_cache(self) -> None:
+        root = self.source_cache_dir()
+        if root.exists():
+            shutil.rmtree(root, ignore_errors=True)
+            log.info("task %s: source cache %s removed", self.task_id, root)
 
     def vlm_args(self) -> list[str]:
         snap = self.task.vlm_snapshot if isinstance(self.task.vlm_snapshot, dict) else None
@@ -477,6 +511,9 @@ class Run:
 
     # ------------------------------------------------------------------ publishing
     def export_format(self) -> str:
+        kind = self.container_kind()
+        if kind:
+            return kind                                  # mcap / lance (D44)
         version = (self.preflight.get("format") or {}).get("version")
         return "lerobot_v3" if version == "v3" else "lerobot_v2"
 
@@ -554,7 +591,10 @@ class Run:
                  f"导出 {doc.get('episodes')} 条（{'增量' if doc.get('incremental') else '全量'}）："
                  f"保留 {d.get('keep', 0)}、改标 {d.get('relabel', 0)}、改号 {d.get('renumber', 0)}、"
                  f"新增 {d.get('add', 0)}、剔除 {d.get('drop', 0)}"
+                 + (f"；交付数据集在 {doc['dataset_dir']}/" if doc.get("dataset_dir") else "")
                  + (f"；退回全量的原因：{doc['full_reason']}" if doc.get("full_reason") else ""))
+        if doc.get("note"):                                # lance (D44): no native delivery yet
+            self.log(stage, "info", doc["note"])
         return doc
 
     def sync_quietly(self, stage: str) -> None:
@@ -676,3 +716,7 @@ class Run:
         except Exception:  # noqa: BLE001
             log.warning("could not store the token usage of %s", self.task_id, exc_info=True)
         self.persist_progress(force=True)
+        try:
+            self.drop_source_cache()          # D44: the next run fetches what it needs again
+        except Exception:  # noqa: BLE001 - the janitor sweeps what is left
+            log.warning("could not remove the source cache of %s", self.task_id, exc_info=True)

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.8.0
+  version: 1.11.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -73,6 +73,13 @@ info:
     value in `TaskCreate.modules[].params`; `GET /uploads/{upload_id}` reads it back. Creating a
     task that selects a module needing `eef_input` preflights that module against the dataset with
     the uploaded file; the task's preflight snapshot carries that entry.
+
+    1.11.0 (2026-09-23): mcap and lance datasets (D44, v1's PR #155). `DatasetFormat` and the
+    `format` filter of `GET /datasets` take `mcap` and `lance` (lerobot-lance-convert >= 0.3.0);
+    `BrowsedDataset.format_hint` takes them too. `EpisodePreview` of such a dataset has no
+    cameras (their videos are inside the files / tables); an mcap episode whose task text is in
+    a task topic, which the preview does not read, says so with `task_unread`. The preflight
+    (C2) reports `kind` mcap / lance; exports of these datasets name their `dataset_dir`.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1795,9 +1802,9 @@ components:
       properties:
         name: {type: string}
         uri: {type: string}
-        format_hint: {enum: [lerobot_v2, lerobot_v3, rrd, unknown]}
+        format_hint: {enum: [lerobot_v2, lerobot_v3, mcap, lance, rrd, unknown]}
         episodes: {type: [integer, "null"]}
-    DatasetFormat: {enum: [lerobot_v2, lerobot_v3, unsupported]}
+    DatasetFormat: {enum: [lerobot_v2, lerobot_v3, mcap, lance, unsupported]}
     DatasetItemFields:
       type: object
       required: [id, name, source, uri, region, format, episode_count, robot_type, check_state, checked_at,
@@ -1995,6 +2002,11 @@ components:
         length_s: {type: [number, "null"]}
         task: {type: string}
         task_source: {enum: [原始标注, 无]}
+        task_unread:
+          type: boolean
+          description: >-
+            mcap (1.11): the episode has a task topic the preview does not read (its text is
+            inside the file; the checks read it) - task is empty, but not because there is none
         cameras:
           type: array
           items:

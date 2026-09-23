@@ -298,12 +298,56 @@ ALTER TABLE vlm_model ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX idx_vlm_model_default ON vlm_model(is_default) WHERE is_default = 1;
 """
 
+_DATASET_COLUMNS = ("id, owner_id, name, note, source, uri, region, credential_id, preflight, "
+                    "format, meta_fingerprint, source_fingerprint, manifest_path, check_state, "
+                    "checked_at, preflighted_at, created_at, updated_at")
+
+# Step 4 (C4 1.11, D44): mcap and lance datasets. SQLite cannot widen a CHECK constraint in
+# place, so ``dataset`` is rebuilt the documented way (new table, copy, drop, rename, the
+# indexes again) with foreign keys off for the step (:data:`REBUILDS`): the rows keep their
+# ids, so the tasks and checks that refer to them stay valid. Datasets registered before
+# keep ``unsupported`` until they are preflighted again.
+_V4 = f"""
+CREATE TABLE dataset_v4 (
+  id                 TEXT PRIMARY KEY,
+  owner_id           TEXT NOT NULL DEFAULT 'default',
+  name               TEXT NOT NULL,
+  note               TEXT,
+  source             TEXT NOT NULL CHECK (source IN ('tos','public','local')),
+  uri                TEXT NOT NULL,
+  region             TEXT,
+  credential_id      TEXT REFERENCES credential(id) ON DELETE SET NULL,
+  preflight          TEXT NOT NULL,
+  format             TEXT NOT NULL
+                     CHECK (format IN ('lerobot_v2','lerobot_v3','mcap','lance','unsupported')),
+  meta_fingerprint   TEXT NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  manifest_path      TEXT,
+  check_state        TEXT NOT NULL DEFAULT 'ok' CHECK (check_state IN ('ok','changed')),
+  checked_at         INTEGER,
+  preflighted_at     INTEGER NOT NULL,
+  created_at         INTEGER NOT NULL,
+  updated_at         INTEGER NOT NULL
+);
+INSERT INTO dataset_v4 ({_DATASET_COLUMNS}) SELECT {_DATASET_COLUMNS} FROM dataset;
+DROP TABLE dataset;
+ALTER TABLE dataset_v4 RENAME TO dataset;
+CREATE UNIQUE INDEX idx_dataset_address ON dataset(owner_id, source, uri, COALESCE(region, ''));
+CREATE INDEX idx_dataset_list ON dataset(owner_id, created_at DESC, id DESC);
+CREATE INDEX idx_dataset_credential ON dataset(credential_id);
+"""
+
 #: (version, script). Append only.
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _V1),
     (2, _V2),
     (3, _V3),
+    (4, _V4),
 )
+
+#: steps that rebuild a table: foreign keys are off while they run (SQLite's procedure for
+#: schema changes ALTER TABLE cannot make; with them on, DROP TABLE would cascade)
+REBUILDS = frozenset({4})
 
 LATEST_VERSION = MIGRATIONS[-1][0]
 
@@ -318,11 +362,18 @@ def migrate(conn) -> list[int]:
     for version, script in MIGRATIONS:
         if version <= current:
             continue
+        fks = None
+        if version in REBUILDS:              # outside any transaction, or it is ignored
+            fks = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+            conn.execute("PRAGMA foreign_keys = OFF")
         try:
             conn.executescript(f"BEGIN IMMEDIATE;\n{script}\nPRAGMA user_version = {version};\nCOMMIT;")
         except BaseException:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
             raise
+        finally:
+            if fks is not None:
+                conn.execute(f"PRAGMA foreign_keys = {'ON' if fks else 'OFF'}")
         applied.append(version)
     return applied

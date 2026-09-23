@@ -39,20 +39,24 @@ from .protocol import DEFAULT_OWNER, Dataset, FinishedResults, Repository, Subta
 #: Width of one token-timeline slot.
 TOKEN_SLOT_MS = 15 * 60 * 1000
 
-#: Values of C4 ``DatasetFormat``.
-DATASET_FORMATS = ("lerobot_v2", "lerobot_v3", "unsupported")
+#: Values of C4 ``DatasetFormat`` (mcap and lance since C4 1.11, D44).
+DATASET_FORMATS = ("lerobot_v2", "lerobot_v3", "mcap", "lance", "unsupported")
 
 
 def dataset_format(preflight: dict | None) -> str:
     """C4 ``DatasetFormat`` of a preflight result (C2 ``preflight.schema.json``).
 
-    A supported LeRobot v2 / v3 dataset is ``lerobot_v2`` / ``lerobot_v3``; anything
-    the preflight could not use (other formats, invalid metadata) is ``unsupported``.
+    A supported LeRobot v2 / v3 dataset is ``lerobot_v2`` / ``lerobot_v3``, a supported
+    mcap / lance one (D44) ``mcap`` / ``lance``; anything the preflight could not use
+    (other formats, invalid metadata, a format the site switched off) is ``unsupported``.
     """
     fmt = preflight.get("format") if isinstance(preflight, dict) else None
-    if isinstance(fmt, dict) and fmt.get("supported") is True and fmt.get("kind") == "lerobot" \
-            and fmt.get("version") in ("v2", "v3"):
+    if not isinstance(fmt, dict) or fmt.get("supported") is not True:
+        return "unsupported"
+    if fmt.get("kind") == "lerobot" and fmt.get("version") in ("v2", "v3"):
         return f"lerobot_{fmt['version']}"
+    if fmt.get("kind") in ("mcap", "lance"):
+        return str(fmt["kind"])
     return "unsupported"
 
 

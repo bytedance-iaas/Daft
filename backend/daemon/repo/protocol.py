@@ -499,7 +499,8 @@ class Repository(Protocol):
     def list_datasets(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
                       q: str | None = None, fmt: str | None = None,
                       check_state: DatasetCheckState | None = None) -> PagedResult[Dataset]:
-        """Newest first; ``fmt`` is lerobot_v2 | lerobot_v3 | unsupported, read from the preflight."""
+        """Newest first; ``fmt`` is lerobot_v2 | lerobot_v3 | mcap | lance | unsupported, read
+        from the preflight (mcap and lance since schema step 4, C4 1.11)."""
 
     def update_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER, **fields) -> Dataset:
         """Name and note (PATCH), a replacement access key, or a refreshed preflight: a
