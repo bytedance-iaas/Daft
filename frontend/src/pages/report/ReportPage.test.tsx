@@ -208,7 +208,8 @@ describe('质检报告 (07 §5)', () => {
     const summary = await screen.findByTestId('episode-summary');
     expect(within(summary).getByTestId('episode-list')).toHaveTextContent('通过');
     expect(within(summary).getByTestId('episode-review')).toHaveTextContent('技能画像 · 标注与画面归入不同技能族');
-    expect(within(summary).getAllByRole('link', { name: '去裁决' })[0]).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?source=skill_profile`);
+    const asks = within(summary).getAllByRole('link', { name: '去裁决' }).map((a) => a.getAttribute('href'));
+    expect(asks.sort()).toEqual([`/tasks/${MAIN_TASK}/adjudication?source=skill_profile`, `/tasks/${MAIN_TASK}/adjudication?source=task_success`]);
     expect(within(summary).getByTestId('episode-task-text')).toHaveTextContent('任务文本：pour rice into the cup（来源：自产描述）');
     await waitFor(() => expect(within(summary).getByText('待裁')).toBeInTheDocument());
     const blocks = [...document.querySelectorAll('[data-testid^="episode-module-"]')].map((e) => e.getAttribute('data-testid')!.replace('episode-module-', ''));
