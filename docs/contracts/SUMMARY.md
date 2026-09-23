@@ -201,3 +201,20 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **F5.5（2026-09-23）**：C1 1.5 文件型参数（`format: upload`、`x-upload-kind`、`x-accept`、`x-max-mb`；Daemon 里值是 `upload:<id>` 句柄，CLI 里是路径）；C4 1.8.0 `POST /uploads`（请求体即文件，上传即校验，400 `validation_failed` 的 `details.errors[]` 定位到字段 / 样本 / 帧 / 相机 / 点位）与 `GET /uploads/{id}`，新 schema `Upload`、`UploadKind`、`UploadIssue`；C2 预检的 `input_hint.field` 枚举加 `trajectory_json`，EEF 模块没给文件时是 `needs_input: trajectory_missing`。
 - **F5.6（2026-09-23）**：C1 1.6，`eef_video_review` 加明细表 `eef_review_windows`；新 Schema `eef/review_output.schema.json`（模型对一个复核窗口的答复：只有分类、布尔与帧号，`additionalProperties: false`；帧号属于本次请求、解释里没有测量值由执行方另查）；C2 预检加原因码 `eef_base_unavailable {base_reason_code}`，复核条目跟随被复核模块（缺文件同样 `needs_input: trajectory_missing`），再要 VLM 后端（`vlm_backend_missing`）；调用种类 `eef_review`（C3 1.1 的模块 id 形式，C3 本身不变）。
 
+
+## 十二、mcap 与 Lance 数据集（2026-09-23，F6.5，D44）
+
+全部是兼容扩充：C2 的 `schema_version` 仍是 1.0，C4 升到 1.11.0，C5 只改注释；C1、C3 不变。
+
+- **C2 预检**（`cli/preflight.schema.json`）：`format.kind` 多一个 `lance`（lerobot-lance-convert 0.3.0 起的三表布局；别的 Lance 表仍是 `lancedb`，不支持），
+  `mcap` 与 `lance` 可以 `supported: true`；`format.version` 对 Lance 是元数据的 LeRobot 版本 `v3`，对 mcap 是 null；`dataset.fps` 对 mcap 是 null（时间轴取动作 topic 的 `log_time`）。
+  新原因码：`format_disabled {format}`（站点用 `ingest.mcap_enabled` / `ingest.lance_enabled` 关掉了这种格式）、
+  `format_unsupported_by_module {format}`（模块读不了这种格式：EEF–视频一致性与它的复核只读 LeRobot 的视频）。
+- **C2 导出**（`cli/export.schema.json`、`cli/export-manifest.schema.json`）：`format` / `source_format` 多 `mcap`、`lance`；
+  新字段 `dataset_dir`（交付数据集所在目录：缺省 `lerobot_curated`，mcap 是 `mcap_curated`，Lance 是 `lance_episodes`）和 `note`（Lance：原格式交付未做）；
+  产物清单每条的 `artifacts` 三选一：LeRobot 的 `parquet` + `videos`、mcap 的 `file`、Lance 的 `videos` + `windows`（每路相机在视频文件里的起止秒）。
+- **C2 报告**：`integrity` 本来就允许附加字段，mcap / Lance 源多一个 `container`（交付形态与 v1 的数据包体检），不改 schema。
+- **C2 命令参数**：`autolabel`、`check`、`aggregate` 多一个 `--selection`（整个任务的所选，mcap / Lance 的语义样本取它的前 100 条）；环境变量 `CURATION_SOURCE_CACHE`（TOS 上的数据先拉到这里再读）。
+- **C4 1.11.0**：`DatasetFormat` 与 `GET /datasets` 的 `format` 筛选多 `mcap`、`lance`；`BrowsedDataset.format_hint` 多 `mcap`、`lance`；
+  `EpisodePreview` 多一个可选的 `task_unread`（mcap 的任务文本在 `/task` topic 里、预览读不到）；这两种格式的 `cameras` 为空。前端类型已重新生成。
+- **C5**：`list_datasets` 的 `fmt` 说明加上 `mcap | lance`；SQLite 的第 4 步迁移重建 `dataset` 表，放宽 `format` 的 CHECK（01 篇 §2.8）。

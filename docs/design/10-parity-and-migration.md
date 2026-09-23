@@ -17,7 +17,7 @@ B 类文件按意图移植到对应的 stage。新的输入格式（如开发中
 同步方式（F6.5）：A 类文件与 v2 没动过的文件逐字取新版（`ingest/mcap_reader.py`、`ingest/lance_reader.py` 两个新 A 类文件、
 `ingest/lerobot_reader.py`、`export/mcap_writer.py`、`export/report.py`、`pipeline/default.yaml`、`ui/runner.py`、v1 的三份测试）；
 v2 改过的 B 类文件三方合并、v2 的改动一处不丢（`pipeline/run.py`、`pipeline/rejudge.py`、`cli/legacy.py`）。
-mcap / lance 不再照 `.rrd` 的办法处理，而是全量接入 v2（预检、快照、质检、交付，含 TOS 上的数据，见 02 篇 §3.1、05 篇 §2）；
+mcap / lance 不再照 `.rrd` 的办法处理，而是全量接入 v2（预检、快照、质检、交付，含 TOS 上的数据，见 02 篇 §2 与 §3.1、05 篇 §3、06 篇 §1.1）；
 `.rrd` 维持原样。补丁对 LeRobot 数据集的判决没有影响，合成数据集上新冻结点的 v1 与 v2 逐位对账照样全过。
 `tools/parity/manifest.py` 的 `DEFAULT_COMMIT` 与 `v1_manifest.json` 随之更新，A 类清单多了两个文件（共 59 个）。
 
@@ -105,7 +105,7 @@ v1 的 CLI 和界面上的每一项能力，在 v2 里去哪了。原则：需�
 | 人工裁决随交付目录跨批次沿用 | **不保留**（D32）。裁决只属于产生它的任务 |
 | `latest` =「最近跑的是哪一次」 | 改为「最近一次发布成功的完整版本」（D29） |
 | `.rrd` 输入 | 维持 v1 现状：代码原样搬运，默认关闭（`ingest.rrd_enabled: false`），预检按「不支持的格式」处理 |
-| mcap / lance 输入（D44） | 全量接入：读取器与 `export/mcap_writer.py` 原样搬运，开关 `ingest.mcap_enabled` / `ingest.lance_enabled` 照 v1 默认开；预检识别、快照、质检、交付都支持，TOS 上的数据先拉到本地缓存再读（02 篇 §3.1、05 篇 §2）；交付照 v1：mcap 是 `mcap_curated/` 逐字节拷贝 + `index.json`，lance 是 `episodes_parquet/`（原格式交付未做） |
+| mcap / lance 输入（D44） | 全量接入：读取器与 `export/mcap_writer.py` 原样搬运，开关 `ingest.mcap_enabled` / `ingest.lance_enabled` 照 v1 默认开；预检识别、快照、质检、交付都支持，TOS 上的数据先拉到本地缓存再读（02 篇 §2 与 §3.1、05 篇 §3）；交付照 v1：mcap 是 `mcap_curated/` 逐字节拷贝 + `index.json`，lance 是 `episodes_parquet/`（原格式交付未做） |
 | 本地路径 / FSX 挂载作输入输出 | 输入保留为 experimental；交付目录只支持 `tos://` |
 
 ## 3. 黄金对账
@@ -129,6 +129,9 @@ v1 的 CLI 和界面上的每一项能力，在 v2 里去哪了。原则：需�
 | 技能画像整个模块失败（D41） | 不挡交付，画像小节标失败 | 全部待补跑，一条都不交付，等重试 | 基线要求零失败，不会出现；不对账 |
 | 改标之后又重新提交另一段标注 | 沿用之前给的成败结论，不重判 | 之前顺手给的成败结论作废，按新标注重判（follow-up 的作废规则） | 裁决对账只覆盖改标这一条线；成败结论与复议对清单的影响由 CLI 测试钉住 |
 | 重复项的人工处理（D42） | 重复项若有成败弃权，照样进成败裁决，人判成功就写回 `passed`、交付；复议只认任务成败判定的拒绝 | 已被拒绝的条目不再问成败；重复项可在「被拒复议」里恢复为可用 | 裁决对账排除重复项和被恢复的重复项，单独列出 |
+| mcap / lance 的语义样本（D44） | 一次跑完，所选的前 100 条 | 每档只读幸存者，Daemon 另传整个任务的所选（`--selection`），同样取前 100 条 | 合成数据的 mcap / lance 两份上 v1 对 v2 回放逐位一致（`tools/parity/tests/test_containers_parity.py`） |
+| mcap / lance 交付里自产描述的来源用词（D44） | `自产caption补标` | `自产caption`（与 v2 其他交付一致） | 交付清单不对账 |
+| mcap / lance 交付的形态（D44） | 每种格式都另写一份 `episodes_parquet/`；mcap 再交 `mcap_curated/` | mcap 只交 `mcap_curated/`（与 LeRobot 源只交 `lerobot_curated/` 一致）；lance 交 `episodes_parquet/` 与 `videos/` | 不对账 |
 
 ### 3.1 基线
 
