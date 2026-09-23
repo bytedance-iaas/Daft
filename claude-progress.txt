@@ -2,8 +2,8 @@ Date: 2026-09-23
 TaskStatus: not_completed
 
 Task scope:
-  开工：开工前核对设计 → F1.1（W0 对账工具与黄金基线）→ F1.2（W1 清理与重组）→ F3.1 第二批静态稿（并行）→ F1.3（W2 契约冻结）
-  → 契约核对（D35）→ 批次 1：W3 前半（F2.1 骨架、F2.7）、W4（F2.2）、W6（F2.4 不碰 B 类的部分）、W7（F2.5）。
+  2026-09-23 第二轮：需求方 24 条修改意见 → 阶段 6（F6.1–F6.6，账本「修订记录（2026-09-23 第二轮反馈）」，决策 D44–D48）。
+  此前的范围（开工 → 批次 1/2 → EEF 阶段 5）见下方历史记录。
 
 Current summary:
   - 开工前核对完成（评审记录 §9）：D33 执行出错取宽口径；D34 冻结点 release_v1@45bdf9292；基线在现网 Pod 里生成；
@@ -231,18 +231,27 @@ Current summary:
         峰值约 0.5 GB、复核每条 6–12 个请求；回退 = 不勾选（附录 C.8）；galbot/tools 的导出与种子脚本改为按根目录名命名样本
         阻塞：需求方指定试用数据集与真实 VLM 后端（复核 prompt 未在真实模型上验证）
 
+  - 2026-09-23 · 第二轮修改意见（24 条）立项：
+      · 摸底：dev 比 release_v1 冻结点只多 PR #155（mcap / lance，+2790 行，改到 A 类 ingest/lerobot_reader.py）；release_v1 无新提交；
+        dataverse Chart（~/ws/rerun/deploy/helm/dataverse）的 curation 是 StatefulSet + emptyDir、没有 PVC，/curation → galbot-dataverse-curation:7860，
+        登录用 viewer 共用的 htpasswd（v2 已支持）；ReRun web viewer 支持 /?url=<tos://…/?region=…> 直接打开 TOS 数据集；
+        报告模块 summary 很薄、没有任务 episode 列表接口、同步曲线没接口；ID 是 前缀_26 位 UUIDv7；
+        重试时任务状态不变是 01 §3 的设计（前端另有两处缺口：SSE 把子任务事件当任务状态、列表不刷新）
+      · 需求方拍板：mcap / lance 全量接入并支持 TOS（D44）；ID 只改新建的（D45）；子任务运行时显示「运行中」（D46）；
+        裁决入口页面内常驻（D47）；galbot 单独装 + 迁盘（D48）；其余默认做法见本次会话的计划，需求方未否决
+      · 账本新增阶段 6（F6.1 导航概览任务页、F6.2 报告改版与 Episode 明细、F6.3 表单数据集密钥页、F6.4 ID、F6.5 mcap / lance、
+        F6.6 替换 dataverse curation），00 篇 §7 加 D44–D48
+
 Main gaps:
+  - 阶段 6 全部 not_completed（进行中）
+  - 集群连不上：kubeconfig 走 socks5://localhost:1080，本机隧道没开；F6.6 部署前需要需求方打开
+  - 镜像：CP 流水线推送触发仍未生效，出镜像要手动运行
   - EEF F5.7 试用：待需求方指定数据集与 VLM 后端
-  - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
-  - APIG：需要在 physicalai-apig 实例的监听命名空间里加 curation（需求方或实例维护者）
-  - 完整跑一次质检要一把能写交付目录的 TOS 访问密钥（在 v2 的「密钥与资源」页填）；之后验 F4.1 的「升级时暂停、新 Pod 续跑」
-  - 火山 CP 流水线的推送触发没生效（GitHub 仓库的 Webhook），目前手动运行
-  - F3.2 待需求方的文案统一修改；F3.3 待集群上用真 TOS 数据走一遍（视频预签名与重签）；F4.1 待验升级续跑；
-    F4.3 待按 README 完整跑一次质检
+  - F1.1 基线暂缓；F3.2 / F3.3 / F4.3 待走查
 
 Next steps:
-  0. EEF–视频一致性：F5.1–F5.6、§3.3 导出工具、§13.3 补充扫描（F5.7 留出集）已完成；F5.7 只差试用：请需求方指定试用数据集
-     （trajectory.json 或 LeRobot 映射）并提供 VLM 后端，届时在控制台勾选两个模块跑一次，并用真实模型检查复核答复
-  1. APIG 接通（physicalai-apig 监听 curation）、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
-  2. 按 README 走查一次完整质检，F3.3、F4.1、F4.3 按验收置位；请需求方统一过一遍界面文案（F3.2）
-  3. 真实数据的两个基线在 F4.2 黄金对账之前补
+  1. 从基线提交并行派 4 个 agent：F6.2 报告改版、F6.1 + F6.3 界面（概览除外）、F6.4 ID + 概览（F6.1 第 8 条）、F6.5 mcap / lance；
+     逐个评审合并，解决 openapi / 锁 / schema.d.ts / 文案文件的冲突，合并后全量测试、本机逐页核对
+  2. 推送、看 CI；手动触发镜像构建
+  3. F6.6：需求方打开集群隧道后，按 D48 迁盘替换 dataverse 的 curation，集群上逐项验收
+  4. 设计文档（03、06、07）与飞书副本同步
