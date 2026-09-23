@@ -640,3 +640,11 @@ eef_video_review:
 - 能力表多一个 `input_consistency` 分项（形态 A+B 同时提供时可用）；模块顶层可用性只看五个核心分项（位置、方向、时间、数值、画面），VLM 复核不参与。
 - L0 只看实际状态：同一 `source_state_index` 的相邻行（dataset1 的 17 帧重采样）或逐位相同的位姿先折叠；时间轴优先用样本声明的 `robot_state` 时钟（DROID 约 14.1 Hz），没有才用主时间线。高频能量取 2 Hz 以上（零相位二阶 Butterworth），再算 1 秒滚动 RMS。两套数据的基准滚动 RMS 最大 1.09 mm，轻 / 重抖动 4.8 / 13.9 mm（dataset1）、12.9 mm（dataset2 ep3）——§12 的实验起点「> 5 mm」会漏掉 dataset1 ep5，`demo` profile 的数值轨迹阈值改由基准噪声底定（见 C.3）。
 - 适配器先做两件：三文件目录 ↔ 单文件包条目（`unified_sample`）、客户 World_Policy 参考样本 → 形态 C / 纯图像（`world_policy`，droid / LVP 各 10 个全部收录且一律 `unsupported`）。§3.3 按 `mapping.yaml` 从 LeRobot 列导出 `trajectory.json` 的离线工具未做（DEMO 两套数据已有上传件），留作 P1 后续。
+
+### C.2 F5.2 独立视觉观测（2026-09-23）
+
+- P-A 跟踪不跟单个像素：TCP 在两指之间是空气、指尖在轮廓上，单点 LK 在基准上只有约一半帧可用、最大误差 20 px。改为跟「夹爪刚体特征簇」：锚点处在种子周围 60 px 内取角点，逐帧 LK（每步前后向往返 < 1 px）；前后两个锚点的种子决定哪些特征属于夹爪（两点采样的 RANSAC 相似变换必须把起点种子送到终点种子附近，背景、桌面、滑动的物体被排除）；逐帧用成员拟合相似变换带种子走，远端锚点的已知误差线性校正（误差超过容差整段弃权），前后两向一致（< 4 px）才采纳。最后一个锚点之后只用上一段已确认的夹爪特征单向跟 ≤ 15 帧。
+- 观测的 `method` 写 `optical_flow`，`model_version` 带上种子来源（`seeds=synthetic_fixture:…`），报告据此标「不作精度验收」。
+- dataset1 没有工具模型，种子取声明里落在腕部刚体上的两点：`eef_origin`（法兰中心）与 `z_endpoint`（沿接近轴 8 cm），可观测的方向因此只有 z 轴。种子与逐帧真值由仓库外的 `galbot/tools/make_seed_observations_dataset1.py` 按 `ground_truth/` 生成（视频真正显示的那一帧的基准位姿 + 数据集标定 + 视频仿射）。
+- 两套数据 25 路：可见比例中位数 0.66（最低 0.60），对真值 P95 误差中位数 3.2 px、最大 4.2 px（`tools/eef_eval/reports/observations.json`）；§7.2 的「P95 < 最小可检异常的 1/3」换算下来，本 DEMO 能可靠检出的像素异常约 12 px 以上。失跟集中在倒糖阶段：合成种子按几何投影一律标「可见」，实际法兰 / 指尖被第 7 关节外壳挡住；跟踪器在这些帧弃权是正确行为，真人标注会标遮挡。
+- 独立性：provider 的输入只有 `ProviderContext`（样本 / 相机 id、媒体路径与尺寸、帧数、fps、片段起止）与 `PointTargets`（点 id、种子）；合成场景与真实数据上把声明投影平移 30 px，观测逐位不变。

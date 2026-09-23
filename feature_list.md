@@ -129,7 +129,7 @@
 ### F5.2 独立视觉观测
 - 描述：ObservationProvider 协议与观测文件（observation Schema）；P-A provider：种子（`observations_seed/`）+ 多尺度 LK 跟踪 + 前后向校验 + 周期重定位 + 遮挡弃权；投影扰动的独立性实验
 - 验收：①provider 输入不含投影、真值、注入参数；②投影平移 30 px 时观测不变；③失跟不用插值冒充观测；④dataset2 两路相机的可见帧定位覆盖与弃权率有报告
-- status: not_completed
+- status: **completed**
 
 ### F5.3 CPU 指标、诊断与离线报告
 - 描述：位置、方向、局部 lag、数值轨迹、画面共同运动五项指标；迟滞分段；诊断假设（PnP 外参修正、lag、恒定朝向、轴向偏移、漂移、抖动来源）；曲线与证据；`demo` 阈值 profile（标 uncalibrated）；离线评估器读真值算命中

@@ -186,6 +186,10 @@ Current summary:
       · 口径（12 篇附录 C.1）：投影自洽超差是警告 input_inconsistent、两份都保留；L0 折叠重采样重复帧、用机器人时钟；
         基准高频滚动 RMS 最大 1.09 mm，§12 的 5 mm 起点会漏掉 dataset1 ep5，demo 阈值按基准噪声底定
       · 从仓库根跑 v1 单测有一条起子进程的用例找不到包（CI 在 backend/ 下跑，没问题）；CLAUDE.md 与 12 篇的命令已改
+      · F5.2 独立视觉观测 completed：video（按 PTS 流式解码，v3 片段从 clip_start 起 seek）、observations（provider 协议、
+        输入白名单、种子与观测文件）、tracking（P-A：种子锚点 + 夹爪刚体特征簇 LK，锚点定成员、漂移校正、前后向一致才采纳，
+        遮挡 / 失跟 / 分歧一律 uncertain）；dataset1 种子与两套逐帧真值由仓库外 galbot/tools 生成（真值只进 evaluation/）；
+        tools/eef_eval/observation_report：25 路可见比例中位数 0.66、对真值 P95 中位数 3.2 px，投影平移 30 px 观测逐位不变
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
@@ -196,7 +200,7 @@ Main gaps:
     F4.3 待按 README 完整跑一次质检
 
 Next steps:
-  0. EEF–视频一致性 DEMO 第一刀：F5.2 独立观测（P-A 跟踪；dataset1 的种子要按真值补）→ F5.3 指标与诊断、§13.3 矩阵 → F5.4 接入 v2；
+  0. EEF–视频一致性 DEMO 第一刀：F5.3 指标与诊断、§13.3 矩阵 → F5.4 接入 v2；
      §3.3 mapping.yaml 导出工具留作后续
   1. APIG 接通（physicalai-apig 监听 curation）、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
   2. 按 README 走查一次完整质检，F3.3、F4.1、F4.3 按验收置位；请需求方统一过一遍界面文案（F3.2）

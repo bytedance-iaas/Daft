@@ -163,3 +163,101 @@ def make_bundle(entries: list[dict], *, dataset: str = "synthetic") -> dict:
 def write_bundle(path: pathlib.Path, bundle: dict) -> pathlib.Path:
     path.write_text(json.dumps(bundle), encoding="utf-8")
     return path
+
+
+# --- rendered video ----------------------------------------------------------------------------
+
+GRIPPER_POINTS = {"finger_plus_y": (-15.0, 22.0), "finger_minus_y": (15.0, 22.0), "tcp": (0.0, 22.0)}
+
+
+def _texture(h, w, seed):
+    rng = np.random.default_rng(seed)
+    tex = cv2.resize(rng.integers(0, 256, (h // 6 + 1, w // 6 + 1), dtype=np.uint8), (w, h),
+                     interpolation=cv2.INTER_NEAREST)
+    return cv2.GaussianBlur(tex, (3, 3), 0)
+
+
+def gripper_motion(n: int):
+    t = np.arange(n) / FPS
+    centre = np.stack([160 + 55 * np.sin(0.9 * t), 115 + 30 * np.sin(1.3 * t + 0.4)], 1)
+    angle = np.radians(12.0 * np.sin(0.8 * t))
+    return centre, angle
+
+
+def gripper_truth(n: int, *, shake: np.ndarray | None = None) -> dict[str, np.ndarray]:
+    centre, angle = gripper_motion(n)
+    out = {}
+    for pid, (x, y) in GRIPPER_POINTS.items():
+        c, s = np.cos(angle), np.sin(angle)
+        out[pid] = np.stack([centre[:, 0] + c * x - s * y, centre[:, 1] + s * x + c * y], 1)
+        if shake is not None:
+            out[pid] = out[pid] + shake
+    return out
+
+
+def render_gripper_video(path: pathlib.Path, n: int = 60, *, occlude: tuple[int, int] | None = None,
+                         shake: np.ndarray | None = None, lead_frames: int = 0) -> dict[str, np.ndarray]:
+    """Encode an H.264 clip of a textured rigid 'gripper' over a textured static background.
+
+    ``occlude=(f0, f1)`` hides the gripper behind a static board for frames [f0, f1);
+    ``shake`` (n, 2) moves the whole frame (camera shake); ``lead_frames`` prepends frames of another
+    'episode' so the clip starts at ``lead_frames / FPS`` in the file (LeRobot v3 concatenation).
+    Returns the true pixels of GRIPPER_POINTS on the clip's frames.
+    """
+    import av
+
+    bg = cv2.cvtColor(_texture(H, W, 1), cv2.COLOR_GRAY2BGR)
+    tex = cv2.cvtColor(_texture(70, 50, 2), cv2.COLOR_GRAY2BGR)
+    tex = cv2.rectangle(tex, (0, 0), (49, 69), (255, 255, 255), 2)
+    centre, angle = gripper_motion(n)
+    board = cv2.cvtColor(_texture(H, 120, 3), cv2.COLOR_GRAY2BGR)
+    container = av.open(str(path), "w")
+    stream = container.add_stream("libx264", rate=int(FPS))
+    stream.width, stream.height, stream.pix_fmt = W, H, "yuv420p"
+    stream.options = {"crf": "12", "g": "10"}
+
+    def emit(img):
+        for pkt in stream.encode(av.VideoFrame.from_ndarray(img, format="bgr24")):
+            container.mux(pkt)
+
+    for i in range(lead_frames):
+        emit(np.full((H, W, 3), (i * 7) % 255, np.uint8))
+    for i in range(n):
+        img = bg.copy()
+        c, s = np.cos(angle[i]), np.sin(angle[i])
+        M = np.array([[c, -s, 0], [s, c, 0]], float)
+        M[:, 2] = centre[i] - M[:, :2] @ np.array([25.0, 35.0])
+        warped = cv2.warpAffine(tex, M, (W, H))
+        mask = cv2.warpAffine(np.full((70, 50), 255, np.uint8), M, (W, H))
+        img[mask > 127] = warped[mask > 127]
+        if occlude and occlude[0] <= i < occlude[1]:
+            img[:, 100:220] = board
+        if shake is not None:
+            img = cv2.warpAffine(img, np.array([[1, 0, shake[i, 0]], [0, 1, shake[i, 1]]], float), (W, H),
+                                 borderMode=cv2.BORDER_REFLECT)
+        emit(img)
+    for pkt in stream.encode():
+        container.mux(pkt)
+    container.close()
+    return gripper_truth(n, shake=shake)
+
+
+def write_seeds(path: pathlib.Path, truth: dict[str, np.ndarray], *, sample_id: str, camera_id: str,
+                every: int = 15, occluded: tuple[int, int] | None = None, hashes: dict[int, str] | None = None):
+    """Seed rows (observation schema, synthetic_fixture) at every ``every`` frames from the truth."""
+    n = len(next(iter(truth.values())))
+    rows = []
+    for i in range(0, n, every):
+        hidden = occluded is not None and occluded[0] <= i < occluded[1]
+        pts = {pid: ({"uv_px": None, "visibility": "occluded", "confidence": 0.0, "uncertainty_px": None} if hidden
+                     else {"uv_px": [round(float(uv[i, 0]), 2), round(float(uv[i, 1]), 2)], "visibility": "visible",
+                           "confidence": 1.0, "uncertainty_px": None})
+               for pid, uv in truth.items()}
+        rows.append({"schema_version": "eef-video/1.0.0", "sample_id": sample_id, "frame_index": i,
+                     "camera_id": camera_id, "video_frame_index": i, "pixel_space": "media",
+                     "method": "synthetic_fixture", "model_version": "synthetic-test/1.0",
+                     "input_image_sha256": (hashes or {}).get(i, "0" * 64),
+                     "projection_visible_to_localizer": False, "points": pts})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    return path
