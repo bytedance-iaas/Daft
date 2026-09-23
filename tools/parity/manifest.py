@@ -8,7 +8,8 @@ import subprocess
 
 from .dump_v1 import DEFAULT_MANIFEST
 
-DEFAULT_COMMIT = "45bdf929222e7aa08b6ec1827876af3571515202"   # D34 freeze point
+#: the freeze point: dev@eb637ba40 (PR #155, mcap / lance) since D44; release_v1@45bdf9292 before (D34)
+DEFAULT_COMMIT = "eb637ba40562c0117d17d7f850d5f8d65cec3aec"
 DEFAULT_PREFIX = "robot-curation/curation"
 
 

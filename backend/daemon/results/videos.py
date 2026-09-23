@@ -169,6 +169,17 @@ def delivered_videos(rev: Revision, episode: int) -> dict[str, Window]:
     if entry is None:
         return {}
     videos = ((entry.get("artifacts") or {}).get("videos") or {})
+    if manifest.get("source_format") in ("mcap", "lance"):
+        # D44: an mcap delivery has no mp4 (the files are the source's); a lance one keeps
+        # each episode's window of its video file in the manifest
+        root = f"{EXPORT_DIR}/{manifest.get('dataset_dir') or 'lance_episodes'}"
+        windows = (entry.get("artifacts") or {}).get("windows") or {}
+        out = {}
+        for vk, rel in videos.items():
+            win = windows.get(vk)
+            if isinstance(rel, str) and isinstance(win, list) and len(win) == 2:
+                out[M.short_camera(vk)] = (f"{root}/{rel}", _num(win[0]), _num(win[1]))
+        return out
     if manifest.get("source_format") != "lerobot_v3":
         return {M.short_camera(vk): (f"{DATASET_DIR}/{rel}", None, None)
                 for vk, rel in videos.items() if isinstance(rel, str)}
@@ -204,6 +215,13 @@ def _delivered_index(rev: Revision) -> LeRobotVideos | None:
 
 
 def source_videos(rev: Revision, episode: int) -> dict[str, Window]:
+    try:
+        kind = ((cached_json(rev.store.docs, rev.run_dir / PREFLIGHT) or {}).get("format")
+                or {}).get("kind")
+    except (FileNotFoundError, ValueError):
+        kind = None
+    if kind in ("mcap", "lance"):
+        return {}            # D44: their videos sit inside the files / tables, not as mp4s
     index = source_index(rev)
     return index.of(episode) if index is not None else {}
 

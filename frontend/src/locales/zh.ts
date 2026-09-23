@@ -172,6 +172,8 @@ export const zh = {
   format: {
     lerobot_v2: 'LeRobot v2',
     lerobot_v3: 'LeRobot v3',
+    mcap: 'mcap',
+    lance: 'Lance',
     unsupported: '不支持',
   } as Record<string, string>,
 
@@ -189,8 +191,12 @@ export const zh = {
 
   /** Preflight reason_code → Chinese (C2 preflight). Unknown codes fall back to `reason`. */
   reason: {
-    format_unsupported: (a: { detected?: unknown }) => `当前版本仅支持 LeRobot v2/v3，检测到 ${String(a.detected ?? '未知格式')}`,
-    metadata_invalid: (a: { problem?: unknown }) => `数据集的 meta/info.json 有问题：${String(a.problem ?? '')}`,
+    format_unsupported: (a: { detected?: unknown }) =>
+      `当前支持 LeRobot v2/v3、mcap 与 Lance（lerobot-lance-convert 0.3.0 起），检测到 ${String(a.detected ?? '未知格式')}`,
+    format_disabled: (a: { format?: unknown }) =>
+      `本实例关闭了 ${String(a.format ?? '')} 格式的质检（站点配置 ingest.${String(a.format ?? '')}_enabled），请联系管理员`,
+    format_unsupported_by_module: (a: { format?: unknown }) => `该模块只能读 LeRobot 数据集，不支持 ${String(a.format ?? '')}`,
+    metadata_invalid: (a: { problem?: unknown }) => `数据集的元数据有问题：${String(a.problem ?? '')}`,
     missing_input: (a: { missing?: unknown; video_cause?: unknown }) => {
       const names: Record<string, string> = {
         timestamps: '时间戳列',
@@ -217,7 +223,7 @@ export const zh = {
     robot_type_unknown: (a: { robot_type?: unknown }) =>
       a.robot_type
         ? `info.json 里的机器人型号 ${String(a.robot_type)} 认不出，请补充型号，或跳过该模块`
-        : '未读到机器人型号（info.json 里没有 robot_type），请补充型号，或跳过该模块',
+        : '未读到机器人型号（数据集没有声明 robot_type），请补充型号，或跳过该模块',
     vlm_backend_missing: () => '还没选 VLM 后端，在「模型配置」里选一个',
     trajectory_missing: () => '需要上传约定格式的 trajectory.json（勾选后在第二屏上传）',
     trajectory_invalid: () => 'trajectory.json 没有通过校验，详情见预检结果',
@@ -485,6 +491,9 @@ export const zh = {
     preflightSummary: (fmt: string, n: number, cams: number, camNames: string, fps: string, frames: string) =>
       `${fmt} · ${n} 条 episode · ${cams} 路相机${camNames ? `（${camNames}）` : ''}${fps ? ` · ${fps} fps` : ''}${frames ? ` · 共 ${frames} 帧` : ''}`,
     preflightReadOnly: '读取 info.json、episodes.jsonl 与 tasks.jsonl，未读取样本数据',
+    preflightReadOnlyMcap: '只读每个 mcap 文件的摘要（通道、消息数与元数据记录），未读取消息',
+    preflightReadOnlyLance: '读取 meta/ 下的 LeRobot v3 元数据，未读取 frames / videos 表',
+    preflightLanceFormat: (version: string) => `Lance（LeRobot ${version} 元数据）`,
     unlabeled: (n: number) => `${n} 条没有任务标注：开跑时先由模型给它们补一句任务描述（来源记为「自产描述」），任务成败判定和技能画像都用它。`,
     profileHit: (name: string, by: string) => `命中数据集语义档案 ${name}（依据 ${by}）`,
     profileMiss: '没有命中数据集语义档案：运行时会先做动作语义判断',
@@ -507,6 +516,7 @@ export const zh = {
     gridEmpty: '预检完成后这里显示首帧预览',
     gridLoadMore: '继续加载',
     gridTaskNone: '（没有任务标注）',
+    gridTaskUnread: '（任务文本在 mcap 文件里，质检时读取）',
     sectionModules: '质检范围',
     selectAll: '全选可用',
     clearAll: '清空',
@@ -1002,7 +1012,14 @@ export const zh = {
       labels: '任务标注',
       missing_fields: '缺失字段',
       source: '源文件清单',
+      container: '数据包（mcap / Lance）',
     } as Record<string, string>,
+    containerValue: (format: string, delivery: string, findings: string) =>
+      `${format} · 交付：${delivery}${findings ? ` · 体检：${findings}` : ''}`,
+    /** One of v1's container findings ({项, 状态, 说明}, export/report.container_findings). */
+    containerFinding: (f: Record<string, unknown>) =>
+      `${String(f['项'] ?? '')}：${String(f['状态'] ?? '')}${f['说明'] ? `（${String(f['说明'])}）` : ''}`,
+    containerFindingSep: '；',
     none: '无',
     scope: '本次质检范围',
     scopeDesc: '报告小节按下面的顺序排列，点名称跳到对应小节',

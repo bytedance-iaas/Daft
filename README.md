@@ -4,6 +4,10 @@ Physical AI Kit 的数据质检平台（Curator）第二版。v1 是 Gradio 单�
 v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中文前端，以 Helm Chart 交付，跑在 VKE 上。
 **质检算法一行不改**，本期做的是骨架、契约和产品化能力。
 
+**能质检的数据格式**：LeRobot v2 / v3、mcap（一个 `.mcap` 文件一条 episode）、Lance（lerobot-lance-convert 0.3.0 起的三表布局），
+本地目录和 `tos://` 都行（TOS 上的 mcap / Lance 先拉到本地再读，D44）；`.rrd` 暂不支持。交付：LeRobot 源交 `lerobot_curated/`，
+mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原格式交付本版本未做），见 [06 篇 §1.1](docs/design/06-delivery-and-report.md)。
+
 - 设计：[docs/design/](docs/design/)（12 篇，入口 [00-overview.md](docs/design/00-overview.md)，§7 是全部冻结决策）
 - 需求账本与进度：[feature_list.md](feature_list.md)、[claude-progress.txt](claude-progress.txt)
 - v1 的使用文档与发布说明：[docs/v1/](docs/v1/)
@@ -56,13 +60,18 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 12. **镜像与 Chart（W11）**：`cd backend && ../.venv/bin/python -m pytest -q tests/deploy`（约 10 秒，需要本机有 `helm`）；本机没有 docker，镜像构建看 CI；集群上的安装、升级续跑与网关挂载按 [deploy/README.md](deploy/README.md) 核对。
 13. **任务编排（W5a）**：`cd backend && ../.venv/bin/python -m pytest -q tests/orchestr -m "not slow"`（约 1.5 分钟；去掉 `-m` 跑全部约 6 分钟，含真跑 CLI 的端到端），应全部通过；再按 [backend/daemon/orchestr/README.md](backend/daemon/orchestr/README.md) 的 10 步真起 Daemon 核对。
 14. **前端（W10）**：`cd frontend && npm ci && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build`；用模拟数据看页面是 `npm run dev`，逐页核对项见 [frontend/README.md](frontend/README.md)。由真的 Daemon 托管构建产物（`/curation` 前缀、不鉴权、开发用主密钥）：用 `.claude/launch.json` 里的 `curator-daemon-dev`，浏览器打开 <http://localhost:8080/curation/>。
-15. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
+15. **mcap 与 Lance（F6.5，D44）**：`cd backend && ../.venv/bin/python -m pytest -q tests/cli/test_containers.py tests/daemon/test_dataset_formats.py tests/orchestr/test_containers.py`，
+    再 `cd .. && PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests/test_containers_parity.py`（合成数据的 mcap / Lance 两份上 v1 对 v2 回放逐位一致），应全部通过；
+    用 `python -m parity make-fixture --format mcap|lance` 做两份 8 条的数据，命令行逐条跑一遍见 [CLI README](backend/curation/cli/README.md) 手动验证第 10 步
+    （判决与 LeRobot 版本相同：passed 5、reject 3；mcap 交 `mcap_curated/` 逐字节拷贝，Lance 交 `lance_episodes/`），
+    真起 Daemon 登记、浏览、建任务到交付见 [orchestr README](backend/daemon/orchestr/README.md) 第 11 步，界面上的格式标签与预检文案用 `npm run dev` 看模拟数据集 `warehouse_mcap`、`pusht_lance`。
+16. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
     校验上传件、看能力表、真值键拒绝与自洽警告、离线评估、受控异常矩阵、在 v2 命令行链路上跑一遍、控制台上传与 Daemon 执行（F5.5，
     `tests/orchestr/test_eef_tasks.py`）、VLM 复核（F5.6，固定 tape 下各分支与离线回放）的逐项核对见 [其 README](backend/curation/extensions/eef_consistency/README.md)。
 
 ## 跑通一次完整质检（真数据）
 
-上面第 1–14 步都不碰真数据和真密钥。真跑一次是这样，界面上的每一步都在
+上面第 1–16 步都不碰真数据和真密钥。真跑一次是这样，界面上的每一步都在
 [frontend/README.md](frontend/README.md) 的「手动验证（模拟数据）」里有对应的模拟版本：
 
 1. **起服务**：集群上按 [deploy/README.md](deploy/README.md) 第 3–4 节建 Secret、`helm install`，
@@ -73,7 +82,8 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
    （火山方舟填 endpoint 与 API Key，自建 vLLM 填 endpoint），保存后状态应为「已验证」。
    拉出模型列表后给常用的那个点「设为默认」，之后新建任务会预选它。
 3. **登记数据集**：「数据集」→「添加数据集」，填 `tos://<bucket>/<path>` 并选访问密钥，
-   等自动预检出条目数、缺失文件与模块可用性，保存进详情页。
+   等自动预检出条目数、缺失文件与模块可用性，保存进详情页。mcap / Lance 数据集同样填目录地址
+   （mcap 是放 `.mcap` 文件的那一层，Lance 是放 `frames.lance` 等三张表和 `meta/` 的那一层），格式一栏显示 mcap / Lance。
 4. **新建任务**：数据集详情点「新建质检任务」，第一屏选 episode 范围（先用「前 50 条」试）、
    勾模块、填交付目录与它的访问密钥；第二屏按模块填参数（运动学极限要选机器人型号或跳过）。
    点「创建并开始」。
@@ -87,7 +97,8 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
    在「被拒复议」页签里可以恢复。
 8. **导出交付**：裁决的子任务跑完后，在任务详情点「导出」（已导出过的显示「重新导出」，
    只补差异），产物用官方 LeRobot loader 验证，步骤见
-   [INCREMENTAL.md](backend/curation/export/INCREMENTAL.md)。
+   [INCREMENTAL.md](backend/curation/export/INCREMENTAL.md)。mcap / Lance 源每次都是全量导出（没变的文件不重传），
+   产物在 `export/mcap_curated/`、`export/lance_episodes/`。
 
 ## CI
 

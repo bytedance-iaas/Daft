@@ -161,13 +161,17 @@ class FakeTosClient:
             raise FakeTosError(403, "", "")
         return {"status": 200}
 
-    def get_object(self, bucket: str, key: str):
+    def get_object(self, bucket: str, key: str, range_start: int | None = None,
+                   range_end: int | None = None):
         ak = self._call("get_object", bucket, key)
         self._bucket(bucket)
         self._allowed(ak, bucket, "read")
         if (bucket, key) not in self.tos.objects:
             raise FakeTosError(404, "NoSuchKey", "The specified key does not exist.")
-        return _Body(self.tos.objects[(bucket, key)])
+        data = self.tos.objects[(bucket, key)]
+        if range_start is not None:                    # a ranged read (mcap summaries, D44)
+            data = data[range_start:(range_end + 1) if range_end is not None else None]
+        return _Body(data)
 
     def put_object(self, bucket: str, key: str, content: bytes = b""):
         ak = self._call("put_object", bucket, key)

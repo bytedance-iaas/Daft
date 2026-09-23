@@ -30,7 +30,7 @@ deliveries/<delivery-name>/
 │   ├── logs/<stage>.jsonl         各 stage 的完整日志
 │   ├── export/
 │   │   ├── manifest.json          ★ 产物清单，增量导出的依据
-│   │   └── lerobot_curated/       交付数据集
+│   │   └── lerobot_curated/       交付数据集（mcap 源是 mcap_curated/，Lance 源是 lance_episodes/，D44，见 §1.1）
 │   └── _COMPLETE                  完整性标志，交付核验通过后最后写
 └── latest                         指向最近一次发布成功的完整版本
 ```
@@ -53,6 +53,20 @@ deliveries/<delivery-name>/
 v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/info.json` → `passed.json` → `latest`」的
 上传顺序来保证读方看不到半成品。v2 改用显式的 `_COMPLETE`，但**上传顺序的纪律保留**：
 `_COMPLETE` 和 `latest` 永远最后传，且不参与按大小跳过的续传判断。
+
+### 1.1 mcap 与 Lance 源的交付数据集（D44）
+
+判决清单、报告、版本目录与 LeRobot 源完全一样，只有交付数据集照 v1 PR #155 的做法换了形态，
+`export/manifest.json` 的 `dataset_dir` 写明是哪个目录（核验与 Daemon 的同步、视频查找都按它找文件）：
+
+| 源格式 | 交付目录 | 内容 |
+|---|---|---|
+| mcap | `export/mcap_curated/` | v1 的 `export/mcap_writer.export_mcap_curated` 原样：passed 各条的 `.mcap` 逐字节拷贝（源文件不叫 `episode_<N>.mcap` 的改成这个名字），`index.json` 列每条的任务文本、来源与原文件。自产描述、人工改标只写进 `index.json`，文件本体不动（改 mcap 要重写整个容器，v1 不做） |
+| Lance | `export/lance_episodes/` | **Lance 原格式交付本版本未做**。交的是 v1 的 `episodes_parquet/`：passed 各条的轨迹级数值，任务文本写进 `instruction` / `instruction_source`；视频存到 `videos/`，指针改写到交付位置；`index.json`、导出结果的 `note` 和报告的「数据包」一节都写明这一点 |
+
+这两种都没有增量重导出（§4 的算法只认 LeRobot 的两种布局）：每次全量导出，`--incremental` 在 `full_reason` 里说明；
+内容没变的文件不重新上传。交付数据集里的任务文本来源与 LeRobot 源一样取自本任务（原始标注 / 自产描述 / 人工改标），
+用词沿用 v2 的 `自产caption`、`人工改标`，与 v1 PR #155 的 `自产caption补标` 略有不同。
 
 ## 2. 版本指纹
 
@@ -319,6 +333,8 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
   "skipped_modules": [{"id": "kinematic_limits",
                        "reason": "机器人型号 umi_dual_handheld_gripper 不在规格库"}],
   "integrity": {...,                 // 数据包完整性：格式、缺失字段、无标注条数、语义 profile / 动作语义预检结论
+                "container": {"format": "mcap", "delivery": "mcap_curated/（…）",   // mcap / Lance 源才有（D44）：交付形态与
+                              "findings": [{"项": "机器人型号", "状态": "正常", "说明": "…"}]},  // v1 的数据包体检（型号、时间轴、任务文本）
                 "skipped_episodes": [{"episode_index": 12,
                                       "missing": ["videos/chunk-000/observation.images.wrist/episode_000012.mp4"]}]},
   "perf": {"url": "/tasks/<id>/perf"}

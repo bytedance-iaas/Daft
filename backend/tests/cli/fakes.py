@@ -66,6 +66,20 @@ class FakeCloud:
         return FakeTos(self, creds.access_key)
 
 
+class _Body:
+    """A GetObjectOutput: ``read()`` everything or ``read(n)`` in pieces, and the ETag."""
+
+    def __init__(self, data: bytes, etag: str):
+        import io
+
+        self._buf = io.BytesIO(data)
+        self.etag = etag
+        self.content_length = len(data)
+
+    def read(self, amt=None):
+        return self._buf.read(-1 if amt is None else amt)
+
+
 class FakeTos:
     """The five TosClientV2 methods the CLI uses."""
 
@@ -104,7 +118,7 @@ class FakeTos:
         data = objs[key]
         if range_start is not None:
             data = data[range_start:(range_end + 1) if range_end is not None else None]
-        return SimpleNamespace(read=lambda: data)
+        return _Body(data, FakeCloud.etag(objs[key]))
 
     def head_object(self, bucket, key, **kw):
         self.cloud.calls.append(("head", bucket, key))

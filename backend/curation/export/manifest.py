@@ -40,7 +40,8 @@ JOURNAL_SCHEMA = "curation.export.journal/1"
 #: deliveries stale and the next export rebuilds them instead of patching them.
 EXPORT_IMPL_VERSION = "1"
 
-SOURCE_FORMATS = ("lerobot_v2", "lerobot_v3")
+#: mcap / lance (D44) are exported by ``export/containers.py`` (always in full)
+SOURCE_FORMATS = ("lerobot_v2", "lerobot_v3", "mcap", "lance")
 
 #: task_text.source values (common.schema.json#/$defs/task_text_source).
 TASK_SOURCE_ORIGINAL = "原始标注"
@@ -270,7 +271,7 @@ def check_manifest(doc: Any) -> list[str]:
     if not isinstance(doc, dict):
         return ["not an object"]
     required = {"schema_version", "source_format", "fingerprint", "episodes", "meta_files"}
-    allowed = required | {"files"}
+    allowed = required | {"files", "dataset_dir"}
     out += [f"unexpected key {k}" for k in doc if k not in allowed]
     out += [f"missing {k}" for k in sorted(required) if k not in doc]
     if out:
@@ -311,6 +312,15 @@ def check_manifest(doc: Any) -> list[str]:
             if not _is_digest(e[k]):
                 out.append(f"{where}.{k} is not a sha256 digest")
         art = e["artifacts"]
+        if doc["source_format"] in ("mcap", "lance"):       # D44: export/containers.py
+            if not isinstance(art, dict) or not set(art) <= {"file", "videos", "windows"}:
+                out.append(f"{where}.artifacts may have file, videos and windows only")
+            elif doc["source_format"] == "mcap" and not isinstance(art.get("file"), str):
+                out.append(f"{where}.artifacts of an mcap episode must name its file")
+            elif doc["source_format"] == "lance" and not (
+                    isinstance(art.get("videos"), dict) and isinstance(art.get("windows"), dict)):
+                out.append(f"{where}.artifacts of a lance episode must have videos and windows")
+            continue
         if not isinstance(art, dict) or not {"parquet", "videos"} <= set(art) \
                 or not set(art) <= {"parquet", "videos", "chunk"}:
             out.append(f"{where}.artifacts must have parquet and videos (and optionally chunk)")

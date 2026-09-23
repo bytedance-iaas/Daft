@@ -131,7 +131,7 @@ export function DatasetListPage() {
             value={format}
             onChange={(v: string) => update({ format: v || null })}
             aria-label={zh.datasets.colFormat}
-            options={[{ label: zh.datasets.allFormats, value: '' }, ...(['lerobot_v2', 'lerobot_v3', 'unsupported'] as const).map((f) => ({ label: zh.format[f], value: f }))]}
+            options={[{ label: zh.datasets.allFormats, value: '' }, ...(['lerobot_v2', 'lerobot_v3', 'mcap', 'lance', 'unsupported'] as const).map((f) => ({ label: zh.format[f], value: f }))]}
           />
           <Select
             style={{ width: 200 }}

@@ -100,9 +100,13 @@ class Chain:
     NUMERIC = "timestamp_check,kinematic_limits,motion_quality"
     FRAME = "visual_quality,video_action_sync"
 
-    def __init__(self, dataset: str, run_dir: str, vlm_url: str, *, extra_vlm=()):
+    def __init__(self, dataset: str, run_dir: str, vlm_url: str, *, extra_vlm=(),
+                 extra_source=()):
+        """``extra_source``: more source arguments of every reading command (mcap / lance:
+        ``--selection``, as the Daemon passes it)."""
         self.ds, self.rd = dataset, run_dir
         self.vlm = ["--vlm-endpoint", vlm_url, "--vlm-model", "fake-vlm", *extra_vlm]
+        self.extra_source = list(extra_source)
         self.steps: dict[str, Run] = {}
         os.makedirs(run_dir, exist_ok=True)
 
@@ -129,7 +133,7 @@ class Chain:
 
     def common(self) -> list[str]:
         return ["--input", self.ds, "--run-dir", self.rd,
-                "--source-manifest", self.path("source_manifest.json")]
+                "--source-manifest", self.path("source_manifest.json"), *self.extra_source]
 
     def before_vlm(self, episodes: str = "0-7") -> None:
         """autolabel, check numeric, check frame: everything the VLM stage reads."""
@@ -164,9 +168,10 @@ class Chain:
 
         self.step("export", "export", "--run-dir", self.rd, "--input", self.ds,
                   "--output", delivery, *extra)
-        skip = os.path.join(self.rd, "export", "lerobot_curated")
+        skip = {os.path.join(self.rd, "export", name)            # export uploads them itself
+                for name in ("lerobot_curated", "mcap_curated", "lance_episodes")}
         shutil.copytree(self.rd, delivery, dirs_exist_ok=True,
                         ignore=lambda d, names: [n for n in names
-                                                 if os.path.join(d, n) == skip])
+                                                 if os.path.join(d, n) in skip])
         self.step("verify", "verify", "--run-dir", self.rd, "--output", delivery,
                   "--visibility-timeout", "0")

@@ -96,7 +96,11 @@ def _unsupported(specs, reason: str, code: str, args: dict | None = None) -> lis
 
 def _describe_kind(fmt: Format) -> str:
     return {"rrd": ".rrd (rerun) files", "mcap": "mcap files",
-            "lancedb": "LanceDB (Lance) tables"}.get(fmt.kind, fmt.kind)
+            "lancedb": f"LanceDB (Lance) tables - {fmt.note}"}.get(fmt.kind, fmt.kind)
+
+
+#: what this version reads (D44): LeRobot v2 / v3, mcap, lance (lerobot-lance-convert)
+SUPPORTED = "LeRobot v2/v3, mcap and lance (lerobot-lance-convert >= 0.3.0)"
 
 
 def run(ctx: Context, args: argparse.Namespace) -> Result:
@@ -120,12 +124,20 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
            "warnings": []}
 
     fmt = lerobot_meta.detect_format(listing)
+    if fmt.kind in ("mcap", "lance"):
+        from . import preflight_containers
+
+        doc["meta_fingerprint"] = lerobot_meta.fingerprint(
+            [listing[k] for k in lerobot_meta.fingerprint_keys(listing, fmt.kind)])
+        if manifest is not None:
+            preflight_containers.verify_manifest(manifest, listing, fmt.kind)
+        preflight_containers.fill(ctx, args, storage, listing, fmt, specs, doc)
+        return _done(ctx, doc)
     if fmt.kind != "lerobot":
-        reason = (f"only LeRobot v2/v3 is supported in this version; detected "
-                  f"{_describe_kind(fmt)}")
+        reason = f"only {SUPPORTED} are supported; detected {_describe_kind(fmt)}"
         if fmt.kind == "unknown":
-            reason = (f"only LeRobot v2/v3 is supported in this version; the input is not a "
-                      f"recognised dataset ({fmt.note})")
+            reason = (f"only {SUPPORTED} are supported; the input is not a recognised dataset "
+                      f"({fmt.note})")
         doc["format"] = {"kind": fmt.kind, "version": None, "supported": False,
                          "detail": reason}
         detected = {"detected": fmt.kind}
@@ -181,12 +193,17 @@ def _validate(info: dict, uri: str, listing, fmt: Format) -> list[str]:
 
 
 def _invalid(ctx: Context, doc: dict, specs, fmt: Format, problems: list[str]) -> Result:
-    doc["format"] = {"kind": "lerobot", "version": fmt.version, "supported": False,
-                     "detail": "LeRobot dataset with invalid metadata: " + problems[0]}
+    mark_invalid(doc, specs, fmt, problems)
+    return _done(ctx, doc)
+
+
+def mark_invalid(doc: dict, specs, fmt: Format, problems: list[str]) -> None:
+    what = {"mcap": "mcap dataset", "lance": "lance dataset"}.get(fmt.kind, "LeRobot dataset")
+    doc["format"] = {"kind": fmt.kind, "version": fmt.version, "supported": False,
+                     "detail": f"{what} with invalid metadata: " + problems[0]}
     doc["validation"] = problems
     doc["modules"] = _unsupported(specs, "the dataset metadata is invalid (see validation): "
                                   + problems[0], "metadata_invalid", {"problem": problems[0]})
-    return _done(ctx, doc)
 
 
 def _profile(info: dict, dataset_name: str) -> tuple[dict | None, str]:
@@ -223,18 +240,26 @@ def _embodiment(info: dict, override: str | None):
         return "unsupported", wanted, registry.ids()
 
 
-def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
+def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
+                    container: dict | None = None) -> None:
+    """``container`` (D44, ``preflight_containers``): an mcap / lance dataset described as
+    LeRobot metadata - ``kind``, ``detail``, ``cameras_present`` (the cameras whose videos
+    exist; they live in the files / tables, not as mp4 objects), ``profile_name`` (the
+    name v1 matches semantics profiles with), ``robot_where`` (where the robot type is
+    read) and ``total_frames``."""
     info, episodes = meta.info, meta.episodes
     n = len(episodes)
     warnings = list(meta.warnings)
 
     # files behind every episode (listing only)
     missing_eps, cams_with_files = [], set()
-    for ep in episodes:
+    for ep in episodes if container is None else ():
         present = [cam for cam, key in ep.video_keys.items() if key in listing]
         cams_with_files.update(present)
         if any(k not in listing for k in ep.data_keys) or len(present) < len(ep.video_keys):
             missing_eps.append(ep.index)
+    if container is not None:
+        cams_with_files = set(container["cameras_present"])
     if missing_eps:
         from .episodes import preview
 
@@ -261,16 +286,23 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
     total_frames = info.get("total_frames")
     if not isinstance(total_frames, int) or isinstance(total_frames, bool):
         total_frames = sum(ep.length for ep in episodes)
+    if container is not None and "total_frames" in container:
+        total_frames = container["total_frames"]
     fps = info.get("fps")
     with_task = sum(1 for ep in episodes if ep.task.strip())
     without_task = n - with_task
     rt = info.get("robot_type")
     dataset_name = uri.rstrip("/").rsplit("/", 1)[-1]
+    if container is not None:
+        dataset_name = container["profile_name"]
     profile, suggested = _profile(info, dataset_name)
+    where = container["robot_where"] if container is not None else "info.json"
 
     doc["format"] = {"kind": "lerobot", "version": meta.fmt.version, "supported": True,
                      "detail": f"LeRobot {meta.fmt.codebase_version}, "
                                f"{_plural(n, 'episode')}, {_plural(len(meta.cameras), 'camera')}"}
+    if container is not None:
+        doc["format"].update(kind=container["kind"], detail=container["detail"])
     doc["dataset"] = {
         "episode_count": n,
         "cameras": [lerobot_meta.short_camera(c) for c in meta.cameras],
@@ -312,6 +344,12 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
             entry.update(availability="unsupported", reason="; ".join(
                 video_reason if c == "video" else _CAP_REASON[c] for c in lacking),
                 reason_code="missing_input", reason_args=args)
+        elif "eef_input" in spec.needs and container is not None:
+            entry.update(availability="unsupported",
+                         reason=f"EEF-video consistency reads LeRobot datasets only, not "
+                                f"{container['kind']}",
+                         reason_code="format_unsupported_by_module",
+                         reason_args={"format": container["kind"]})
         elif "eef_input" in spec.needs:
             from ..extensions.eef_consistency import preflight as eef_preflight
 
@@ -336,8 +374,8 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
                                           "given_by": "embodiment_id" if override else "robot_type",
                                           "supported": list(emb_value)})
             else:
-                said = (f"robot_type is '{emb_subject}' in info.json" if emb_subject
-                        else "robot_type not found in info.json")
+                said = (f"robot_type is '{emb_subject}' in {where}" if emb_subject
+                        else f"robot_type not found in {where}")
                 entry.update(availability="needs_input",
                              reason=f"{said}; pick a model or skip this module",
                              reason_code="robot_type_unknown",
@@ -357,7 +395,7 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str) -> None:
             if "embodiment_profile" in spec.needs and override \
                     and override.lower() != str(rt or "").strip().lower():
                 notes.append(f"embodiment {emb_value} given by the caller "
-                             f"(info.json robot_type: {rt!r})")
+                             f"({where} robot_type: {rt!r})")
         if "vlm" in spec.needs and caption_note and entry["availability"] != "unsupported" \
                 and "eef_input" not in spec.needs:
             notes.append(caption_note)

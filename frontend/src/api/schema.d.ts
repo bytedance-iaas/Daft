@@ -1306,11 +1306,11 @@ export interface components {
             name: string;
             uri: string;
             /** @enum {unknown} */
-            format_hint?: "lerobot_v2" | "lerobot_v3" | "rrd" | "unknown";
+            format_hint?: "lerobot_v2" | "lerobot_v3" | "mcap" | "lance" | "rrd" | "unknown";
             episodes?: number | null;
         };
         /** @enum {unknown} */
-        DatasetFormat: "lerobot_v2" | "lerobot_v3" | "unsupported";
+        DatasetFormat: "lerobot_v2" | "lerobot_v3" | "mcap" | "lance" | "unsupported";
         DatasetItemFields: {
             /** @description ds- and 9 lowercase letters (D45); registrations made before 1.10.0 keep ds_ and their old id */
             id: string;
@@ -1461,6 +1461,8 @@ export interface components {
             task: string;
             /** @enum {unknown} */
             task_source: "原始标注" | "无";
+            /** @description mcap (1.12): the episode has a task topic the preview does not read (its text is inside the file; the checks read it) - task is empty, but not because there is none */
+            task_unread?: boolean;
             cameras: {
                 name: string;
                 /** @description presigned, or anonymous for the public bucket */
@@ -2129,7 +2131,7 @@ export interface components {
             availability: "available" | "needs_input" | "unsupported";
             /** @description English, for the terminal and logs; UIs render reason_code instead */
             reason?: string;
-            /** @description Stable reason for UIs to translate. Known codes: format_unsupported {detected}, metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing; EEF-video consistency (design doc 12 §5.1): trajectory_missing {path?}, trajectory_invalid {errors, sha256}, eef_review_not_available (before F5.6), eef_base_unavailable {base_reason_code} (the review: the module it reviews is unusable), and as sub-item reasons projection_missing, observation_seed_missing and the rest of that catalogue. New modules may add codes; a UI that does not know one shows reason. */
+            /** @description Stable reason for UIs to translate. Known codes: format_unsupported {detected}, format_disabled {format} (mcap / lance switched off by the site: ingest.mcap_enabled / ingest.lance_enabled, D44), format_unsupported_by_module {format} (a module that cannot read this format: EEF-video consistency on mcap / lance), metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing; EEF-video consistency (design doc 12 §5.1): trajectory_missing {path?}, trajectory_invalid {errors, sha256}, eef_review_not_available (before F5.6), eef_base_unavailable {base_reason_code} (the review: the module it reviews is unusable), and as sub-item reasons projection_missing, observation_seed_missing and the rest of that catalogue. New modules may add codes; a UI that does not know one shows reason. */
             reason_code?: string;
             /** @description parameters of reason_code, listed with each code */
             reason_args?: Record<string, unknown>;
@@ -2163,9 +2165,15 @@ export interface components {
         "preflight.schema": {
             schema_version: components["schemas"]["schema_version"];
             format: {
-                /** @enum {unknown} */
-                kind: "lerobot" | "mcap" | "lancedb" | "rrd" | "unknown";
-                /** @enum {unknown} */
+                /**
+                 * @description lerobot, mcap and lance (lerobot-lance-convert >= 0.3.0, D44) can be supported; lancedb (other Lance tables), rrd and unknown never are
+                 * @enum {unknown}
+                 */
+                kind: "lerobot" | "mcap" | "lance" | "lancedb" | "rrd" | "unknown";
+                /**
+                 * @description the LeRobot version of the metadata: v2 / v3 for lerobot, v3 for lance (its meta/ is LeRobot v3.0), null for mcap
+                 * @enum {unknown}
+                 */
                 version: "v2" | "v3" | null;
                 /** @description false => every module is unsupported */
                 supported: boolean;
@@ -2178,6 +2186,7 @@ export interface components {
                 episode_count: number;
                 /** @description short camera names: the video feature key without the observation.images. prefix */
                 cameras: string[];
+                /** @description null for mcap: its time axis is the action topic's log_time */
                 fps: number | null;
                 robot_type: string | null;
                 total_frames: number | null;

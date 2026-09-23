@@ -74,10 +74,10 @@ class ModuleSpec:
 
 | 能力 | 预检怎么判 | 判不到的后果 |
 |---|---|---|
-| `timestamps` | LeRobot parquet 有时间列 | `unsupported` |
-| `action` / `state` | `info.json` 的 features 里有 `action` / `observation.state` | `unsupported` |
-| `video` | `info.json` 声明了相机，且文件清单里有对应视频 | `unsupported` |
-| `embodiment_profile` | `info.json` 的 `robot_type`（或用户补选的型号）能在规格库里查到 | 见 §4 三态 |
+| `timestamps` | LeRobot parquet 有时间列（mcap 总有：时间轴是动作 topic 的 `log_time`） | `unsupported` |
+| `action` / `state` | `info.json` 的 features 里有 `action` / `observation.state`（mcap：摘要区里有动作 / 状态 topic） | `unsupported` |
+| `video` | `info.json` 声明了相机，且文件清单里有对应视频（mcap：有相机 topic；Lance：视频在 `videos.lance` 表里） | `unsupported` |
+| `embodiment_profile` | `info.json` 的 `robot_type`（mcap：元数据记录里的型号；或用户补选的型号）能在规格库里查到 | 见 §4 三态 |
 | `vlm` | 任务里选了 VLM 后端 | `needs_input`：去选一个或先去添加 |
 | `raw_bytes` | 总是满足 | — |
 
@@ -92,10 +92,11 @@ class ModuleSpec:
 curation preflight --input ...
    │
    ├─ ① 探测格式：看目录结构与 meta 文件
-   │     lerobot v2 / lerobot v3 / mcap / lancedb / rrd / unknown
+   │     lerobot v2 / lerobot v3 / mcap / lance / lancedb / rrd / unknown
    │
-   ├─ ② 非 LeRobot v2/v3 → supported=false，八个模块**全部标灰**，结束（D6）
-   │     标灰原因文案：「当前版本仅支持 LeRobot v2/v3，检测到 <格式>」
+   ├─ ② 不是 LeRobot v2/v3、mcap、Lance → supported=false，模块**全部标灰**，结束（D6；mcap 与 Lance 自 D44 起支持）
+   │     标灰原因文案：「当前支持 LeRobot v2/v3、mcap 与 Lance（lerobot-lance-convert 0.3.0 起），检测到 <格式>」
+   │     站点关掉了 mcap / Lance（ingest.mcap_enabled / ingest.lance_enabled）时同样全部标灰，原因码 format_disabled
    │
    ├─ ③ 结构校验：搬 v1 `ingest/validate.py` 的 validate_info
    │     必需字段缺失 → supported=false，把缺什么原样告诉用户（拒收要说清楚，客户能照着修）
@@ -112,6 +113,18 @@ curation preflight --input ...
 **只读 metadata，不读样本数据**：预检要在新建任务页面上秒级返回。
 代价是有些问题（某条 episode 的视频损坏）要到跑起来才发现 —— 这是对的取舍，
 那些问题本来就该由质检模块报告，而不是预检。
+
+**mcap 与 Lance**（D44）的 ③④ 换一种读法，⑤⑥ 不变：
+
+| | mcap | Lance（lerobot-lance-convert 0.3.0 起） |
+|---|---|---|
+| 元数据从哪来 | 每个 `.mcap` 文件的摘要区（通道、消息数、元数据记录）；TOS 上是几次按范围读，不读消息。没有摘要区的文件预检看不到 topic，给警告，质检时整读 | `meta/`（LeRobot v3.0，带 `storage_format: "lance"`），读法与校验同 LeRobot v3；缺了读 `meta.lance` 镜像 |
+| 结构校验 | 全部 episode 都缺动作 topic 或都没有相机 topic → `metadata_invalid`，原因照 v1 写出实际见到的 topic 与 `ingest.mcap_mapping` 的用法 | v1 的 `validate_info`；三表齐但没有 `storage_format` 标记 → `metadata_invalid`（旧插件布局，v1 的原话） |
+| 相机、帧率、型号 | topic 规则（缺省 `/action`、`/observation.state`、`/observation.images.<相机>`，UMI 的 topic 自动认）；时间轴取动作 topic 的 `log_time`，`fps` 为 null；型号在元数据记录里 | 同 LeRobot v3 |
+| 任务标注 | `/task` topic 或元数据记录；只在 topic 里的，预检数它有标注，文字到质检时才读 | `meta/episodes` 的 `tasks` |
+| 指纹（⑥） | 全部 `.mcap` 文件（它们既是元数据也是数据） | `meta/`，没有就 `meta.lance/` |
+
+两种格式都不支持 EEF–视频一致性与它的复核（只读 LeRobot 的视频），这两个模块 `unsupported`，原因码 `format_unsupported_by_module`。
 
 ### 3.1 别和运行期的「动作语义预检」混了
 

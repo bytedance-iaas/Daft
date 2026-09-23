@@ -135,6 +135,8 @@ ever come through secretKeyRef.
   value: {{ .Values.persistence.scratch.mountPath | quote }}
 - name: CURATION_EXPORT_SCRATCH
   value: {{ .Values.persistence.scratch.mountPath | quote }}
+- name: CURATOR_SOURCE_CACHE_DIR
+  value: {{ printf "%s/source-cache" (trimSuffix "/" .Values.persistence.scratch.mountPath) | quote }}
 {{- with (include "curator.basePath" .) }}
 - name: CURATOR_BASE_PATH
   value: {{ . | quote }}

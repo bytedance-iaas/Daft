@@ -7,6 +7,7 @@
 | ``CURATOR_DB_PATH`` | ``<data>/curator.db`` | SQLite file (block storage only, never NAS / FSX) |
 | ``CURATOR_WORK_DIR`` | ``<data>/runs`` | ``<work>/<task_id>/`` is a task's work directory (00 §4.2) |
 | ``CURATOR_SCRATCH_DIR`` | ``$TMPDIR/curator-scratch`` | disposable temp space (export videos) |
+| ``CURATOR_SOURCE_CACHE_DIR`` | ``<data>/source-cache`` | ``<dir>/<task_id>/``: a task's local copy of a remote mcap / lance dataset while a run of it goes (D44); the chart points it at the scratch volume (``<scratch>/source-cache``), never the database's |
 | ``CURATOR_STATIC_DIR`` | ``/app/web`` or ``frontend/dist`` if present | built frontend |
 | ``CURATOR_PUBLIC_BASE_URL`` | empty | absolute links for agents; empty = relative links |
 | ``CURATOR_LOCAL_DATA_ROOT`` | empty | enables the experimental local-path input under this root |
@@ -96,6 +97,7 @@ class Settings:
     db_path: pathlib.Path | None = None
     work_dir: pathlib.Path | None = None
     scratch_dir: pathlib.Path | None = None
+    source_cache_dir: pathlib.Path | None = None
     static_dir: pathlib.Path | None = None
     public_base_url: str = ""
     local_data_root: pathlib.Path | None = None
@@ -117,6 +119,8 @@ class Settings:
         object.__setattr__(self, "work_dir", pathlib.Path(self.work_dir or data / "runs"))
         object.__setattr__(self, "scratch_dir", pathlib.Path(
             self.scratch_dir or pathlib.Path(tempfile.gettempdir()) / "curator-scratch"))
+        object.__setattr__(self, "source_cache_dir",
+                           pathlib.Path(self.source_cache_dir or data / "source-cache"))
         object.__setattr__(self, "public_base_url", (self.public_base_url or "").strip().rstrip("/"))
         if self.public_base_url and not self.public_base_url.startswith(("http://", "https://")):
             raise ConfigError(f"CURATOR_PUBLIC_BASE_URL 必须以 http:// 或 https:// 开头："
@@ -160,6 +164,7 @@ class Settings:
             db_path=path("CURATOR_DB_PATH"),
             work_dir=path("CURATOR_WORK_DIR"),
             scratch_dir=path("CURATOR_SCRATCH_DIR"),
+            source_cache_dir=path("CURATOR_SOURCE_CACHE_DIR"),
             static_dir=static if static is not None else _default_static_dir(),
             public_base_url=get("CURATOR_PUBLIC_BASE_URL"),
             local_data_root=path("CURATOR_LOCAL_DATA_ROOT"),

@@ -72,7 +72,8 @@ def list_datasets(request: Request, page: int = Query(1, ge=1), page_size: int =
                   check_state: str | None = None):
     check_page_size(page_size)
     if fmt is not None and fmt not in DATASET_FORMATS:
-        raise ApiError("validation_failed", "format 只能是 lerobot_v2、lerobot_v3 或 unsupported",
+        raise ApiError("validation_failed",
+                       "format 只能是 lerobot_v2、lerobot_v3、mcap、lance 或 unsupported",
                        details={"errors": [{"field": "format", "problem": "unknown format"}]})
     if check_state is not None and check_state not in _CHECK_STATES:
         raise ApiError("validation_failed", "check_state 只能是 ok 或 changed",

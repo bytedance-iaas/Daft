@@ -42,6 +42,15 @@ HuggingFace 缓存桶匿名读，不需要输入密钥。
 episode 一律用**整数下标**表达，语法沿用 v1：`34`、`10-20`、`3,10-12`，或 `@file`（每行一个下标）。
 负数、倒序区间、跨度超过 100 万的区间直接拒绝。
 
+**mcap / Lance 数据集**（D44）另有两处约定：
+
+- 读源数据的命令（`autolabel`、`check`、`aggregate --phase final`）接受 `--selection <整个任务的所选>`。
+  v1 用所选 episode 的前 100 条判定这两种数据集的语义（控制模式、单位等），而 v2 的一条命令只读某一档的幸存者，
+  所以 Daemon 把整个任务的所选另外传进来；不传时取 `--episodes`。LeRobot 数据集的语义样本是数据集本身的前 100 条，不看它。
+- v1 的两个读取器只认本地目录，`tos://` 上的数据先拉到本地副本再读：环境变量 `CURATION_SOURCE_CACHE` 指定副本放在哪
+  （Daemon 给每个任务一个目录，同一任务的各条命令复用，运行结束时删掉）；不设时每条命令用自己的临时目录，结束就删。
+  mcap 读到哪条下载哪条的文件，Lance 整表下载。每个副本按列举时的大小与 ETag 核对，对不上退出码 6；只读源桶，从不往里写。
+
 ## 3. 命令清单
 
 ### 3.1 `curation preflight` — 预检
@@ -58,8 +67,8 @@ curation preflight --input tos://bucket/datasets/my_dataset --input-region cn-be
 {
   "schema_version": "1.0",
   "format": {
-    "kind": "lerobot",            // lerobot | mcap | lancedb | rrd | unknown
-    "version": "v2",              // v2 | v3 | null
+    "kind": "lerobot",            // lerobot | mcap | lance | lancedb | rrd | unknown（前三种可支持，D44）
+    "version": "v2",              // v2 | v3 | null；lance 是元数据的 LeRobot 版本 v3，mcap 为 null
     "supported": true,            // false ⇒ 全部模块不支持
     "detail": "LeRobot v2, 200 episodes, 3 cameras"
   },
@@ -104,6 +113,19 @@ curation preflight --input tos://bucket/datasets/my_dataset --input-region cn-be
 三态 `availability` 的判定规则见 `05-modules-and-preflight.md` §4。
 没传 `--vlm-backend` 时，VLM 模块是 `needs_input`（`input_hint.field = "vlm"`），不是 `unsupported`。
 
+mcap 与 Lance（D44，v1 PR #155）同样只读元数据、秒级返回：
+
+- **mcap**：数据集根目录下一个 `.mcap` 文件一条 episode，编号照 v1（`episode_<N>.mcap` 按 N，混进来的其他 `.mcap` 不读；一个都不是就按文件名排序）。
+  每个文件只读摘要区（通道、消息数、元数据记录），TOS 上是几次按范围读，不读消息。动作、状态、相机、任务文本、机器人型号
+  按 v1 的 topic 规则认（站点的 `ingest.mcap_mapping` 优先）；时间轴取动作 topic 的 `log_time`，`fps` 为 null。
+  全部 episode 都缺动作或都没有相机时是 `metadata_invalid`（v1 读不了）。
+- **Lance**：lerobot-lance-convert（0.3.0 起）的三表布局，`meta/` 是 LeRobot v3.0 元数据、带 `storage_format: "lance"`，
+  预检像 LeRobot v3 一样读 `meta/`（含 v1 的 `validate_info`）。三表齐但没有这个标记的旧插件布局是 `metadata_invalid`；
+  只有别的 Lance 表的是 `lancedb`，不支持。
+- 两种格式下 EEF–视频一致性与它的复核是 `unsupported`（`format_unsupported_by_module`：它们只读 LeRobot 的视频）；
+  站点关掉了这种格式（`ingest.mcap_enabled` / `ingest.lance_enabled`，默认开）时全部模块 `unsupported`（`format_disabled`）。
+  `.rrd` 维持不支持。
+
 ### 3.2 `curation plan` — 并发与合并计划
 
 ```bash
@@ -131,6 +153,8 @@ curation snapshot --input tos://... --episodes 0-199 --out <run-dir>/source_mani
 ```
 
 只列目录，不读内容：一万条 episode 也就几十次 LIST 请求。本地路径用大小 + 修改时间代替 ETag。
+mcap 数据集记全部 `.mcap` 文件（v1 按目录里有哪些文件编号，每个文件又是一条的数据），Lance 数据集记 `meta/` 与三张表的全部对象
+（读取器整表读）；这两种格式没有缺文件剔除的规则。
 所选 episode 里缺 parquet 或某路视频的，照 v1 剔除（D40）：记进清单的 `skipped_episodes`（每条缺哪些键），
 带这份清单的命令都不读它们，它们不进任何清单、不计入总数，报告的完整性一节列出来。
 之后的每条命令带上 `--source-manifest` 去读，就保证了一个任务从头到尾只认这一个版本的源数据（D27）。
@@ -274,6 +298,11 @@ curation export --run-dir <dir> --input tos://... --output tos://... \
 `--revision` 省略时取编号最大、带 `commit.json` 的结果版本。上次导出中断、产物缺失或格式参数变了，
 `--incremental` 会自动退回全量导出，原因写在输出的 `full_reason` 里。
 
+mcap / Lance 源照 v1 交付（D44），输出的 `dataset_dir` 写明交付目录：mcap 是 `export/mcap_curated/`（passed 各条的 `.mcap`
+逐字节拷贝，`index.json` 列任务文本与来源，改标只写进清单）；Lance 原格式交付本版本未做，交的是 `export/lance_episodes/`
+（v1 的 `episodes_parquet/` 加 `videos/`），输出带 `note` 说明。这两种每次都是全量导出，`--incremental` 在 `full_reason` 里说明；
+内容没变的文件不重新上传。
+
 ### 3.8 `curation report` — 生成报告
 
 ```bash
@@ -317,6 +346,7 @@ curation verify --run-dir <dir> --output tos://... --json
 ```
 
 逐个回读交付目录里的关键文件：存在、大小对、能解析（JSON / parquet 头 / mp4 的 moov / JPEG 魔数）。
+交付数据集的文件按 `export/manifest.json` 的 `files` 与 `dataset_dir`（mcap / Lance 源，D44）去找。
 搬 v1 的 `_verify_delivery_visible`：写成功不等于读得到，读回来全零的文件 v1 见过六次。
 核验通过才写 `_COMPLETE`。
 
@@ -342,7 +372,7 @@ curation verify --run-dir <dir> --output tos://... --json
 | 命令 | 作用 | 来源 |
 |---|---|---|
 | `curation datasets list [--source public]` | 列数据集（私有 TOS 前缀 / HuggingFace 缓存桶） | 搬 v1 的 `public` + 目录扫描 |
-| `curation datasets episodes` | 分页列 episode：下标、时长、任务文本、各机位视频位置 | 新增，供新建页的预览 |
+| `curation datasets episodes` | 分页列 episode：下标、时长、任务文本、各机位视频位置（mcap / Lance 的视频在文件或表里，没有位置） | 新增，供新建页的预览 |
 | `curation fetch` | 从数据来源站把公开数据集拉到自己的桶（调外部 `oniond`，长任务） | 原样搬运，CLI-only |
 | `curation backends probe` | VLM 端点探活 + 列模型（`GET /models` 能拉就拉；拉不出不算错，退回一次最小 chat 探活） | 搬 v1 的 `backends` |
 | `curation creds verify` | 校验 TOS 访问密钥 / VLM API Key | 新增 |

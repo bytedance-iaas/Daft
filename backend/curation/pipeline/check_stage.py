@@ -41,7 +41,7 @@ from .incidents import (IncidentLog, camera_names, wrap_arbitration, wrap_call, 
 from .records import (CRASHES_NAME, Inflight, PartWriter, compact, latest_results,
                       module_dir, pid_alive, read_inflight, record_from_struct,
                       write_json_atomic)
-from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column
+from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column, open_row_source
 
 FUNNEL_STAGES = ("numeric", "frame", "vlm")
 NUMERIC_ORDER = ("timestamp_check", "kinematic_limits", "motion_quality")
@@ -90,6 +90,12 @@ class StageOptions:
     pipeline_state: str | None = None
     pipeline_next: str = "done"
     episode_stream: object | None = None
+    #: mcap / lance (D44): the task's selection (the semantics sample) and the hook that
+    #: makes an episode's source objects local before it is read (a remote dataset)
+    selection: list[int] | None = None
+    fetch: Callable[[list[int]], None] | None = None
+    row_instructions: bool = False
+    fmt: str | None = None                              # mcap | lance; None: v1's sniffing
     stage: str = field(init=False, default="")
 
     def __post_init__(self) -> None:
@@ -188,12 +194,15 @@ class StageRun:
     def _source(self, todo: list[int]) -> RowSource:
         """v1's data source for these episodes. It reads the dataset's first episodes to
         resolve its semantics; when that fails no episode can be judged (exit 4)."""
-        from ..cli.errors import ModuleFailed
+        from ..cli.errors import CliError, ModuleFailed
 
         o = self.o
         try:
-            return RowSource(o.input_dir, todo, embodiment_id=o.embodiment_id,
-                             max_episodes=o.max_episodes)
+            return open_row_source(o.input_dir, todo, embodiment_id=o.embodiment_id,
+                                   max_episodes=o.max_episodes, selection=o.selection,
+                                   fetch=o.fetch, fmt=o.fmt)
+        except CliError:
+            raise                              # a changed source (exit 6), an unreachable one
         except Exception as e:  # noqa: BLE001 - reader errors are many
             raise ModuleFailed(f"{self.label}: the dataset cannot be read: "
                                f"{type(e).__name__}: {e}"[:600],
@@ -257,6 +266,10 @@ class StageRun:
 
     def _vlm(self, ep: int, row: dict, logs) -> tuple[dict, dict]:
         log = logs["task_success"]
+        if self.o.row_instructions:
+            # mcap / lance: the annotation comes with the row (v1's meta and data reads of
+            # these formats build it the same way), no separate metadata pass
+            self.o.task_text.instructions[int(ep)] = str(row.get("instruction") or "")
         text, src, problem = self.o.task_text.resolve(ep)
         if problem is not None:
             log.add("autolabel", cause=problem)
@@ -336,12 +349,17 @@ class StageRun:
             for m in self.o.modules:
                 logs[m].add("read", cause=str(e))
             return self._records(ep, {}, logs, time.monotonic() - t0)
-        if self.o.stage == "numeric":
-            structs = self._numeric(ep, row, logs)
-        elif self.o.stage == "frame":
-            structs = self._frame(ep, row, logs)
-        else:
-            structs, evidence = self._vlm(ep, row, logs)
+        try:
+            if self.o.stage == "numeric":
+                structs = self._numeric(ep, row, logs)
+            elif self.o.stage == "frame":
+                structs = self._frame(ep, row, logs)
+            else:
+                structs, evidence = self._vlm(ep, row, logs)
+        finally:
+            release = getattr(source, "release", None)
+            if release is not None:                    # mcap: this episode's muxed videos
+                release(row)
         return self._records(ep, structs, logs, time.monotonic() - t0, evidence)
 
     # ------------------------------------------------------------ the run

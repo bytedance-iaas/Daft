@@ -89,12 +89,14 @@ def relative_key(input_dir: str, path: str) -> str:
 def missing_source(input_dir: str, episodes) -> dict[int, list[str]]:
     """v1's rule on ``episodes``: the object keys missing per LeRobot v2 episode.
 
-    Episodes of a LeRobot v3 dataset are never reported (v1 does not drop them).
+    Episodes of a LeRobot v3 dataset are never reported (v1 does not drop them), nor
+    those of an mcap / lance dataset: v1 has no missing-file rule for them (D44).
     """
     from ..ingest import lerobot_reader as lr
+    from .rows import input_format
 
     wanted = {int(e) for e in episodes}
-    if not wanted:
+    if not wanted or input_format(input_dir) != "lerobot":
         return {}
     info = lr._load_info(input_dir)
     if not str(info.get("codebase_version", "")).startswith("v2"):

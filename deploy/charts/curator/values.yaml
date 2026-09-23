@@ -54,12 +54,12 @@ persistence:
     storageClass: ""            # ⚠️ 必须是块存储（EBS）。NAS / TOS-FSX 这类网络盘会损坏 SQLite。留空 = 集群默认存储类
     existingClaim: ""           # 改用一个已有的 PVC（恢复、迁移时）；留空由 StatefulSet 按模板建 data-<名字>-0
     mountPath: /data            # CURATOR_DATA_DIR
-  scratch:                      # 导出时的视频临时文件；可丢
+  scratch:                      # 导出时的视频临时文件、TOS 上 mcap / Lance 数据集的本地副本（source-cache/，D44）；可丢
     type: emptyDir              # emptyDir | pvc
     size: 200Gi                 # emptyDir 时是 sizeLimit：容器里 df 看不到这个上限，写超了 kubelet 会驱逐 Pod；
                                 # 留空 = 不设上限。长期跑建议 type: pvc
     storageClass: ""            # type: pvc 时用；同样不能是 FSX 挂载（PyAV 收尾要 seek 回文件头，FSX 拒绝随机写）
-    mountPath: /scratch         # CURATOR_SCRATCH_DIR 与 CURATION_EXPORT_SCRATCH
+    mountPath: /scratch         # CURATOR_SCRATCH_DIR 与 CURATION_EXPORT_SCRATCH；CURATOR_SOURCE_CACHE_DIR 是它下面的 source-cache
 
 resources:
   requests: {cpu: "8",  memory: 32Gi}

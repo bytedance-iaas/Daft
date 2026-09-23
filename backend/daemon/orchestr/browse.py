@@ -13,6 +13,12 @@
 
 Both read in the Daemon, not through a CLI process: they are a couple of small
 metadata reads, like the pre-start input check, and the CLI has no command for them.
+
+mcap and lance (D44): a folder of ``episode_N.mcap`` is hinted ``mcap`` with its episode
+count, lerobot-lance-convert's layout ``lance``; their episode grids have no camera URLs
+(the videos are inside the files / ``videos.lance``). An mcap page reads the summary
+section of each of its episodes (a few ranged reads) for the length and a metadata task
+text; a task that only lives in a ``/task`` topic is ``task_unread``.
 """
 from __future__ import annotations
 
@@ -45,6 +51,9 @@ class EpisodeRow:
     task: str
     videos: dict[str, str]                    # short camera name -> key relative to the dataset
     windows: dict[str, tuple[float, float]]    # v3: camera -> (from_ts, to_ts)
+    #: mcap (D44): the episode's file; its summary gives the length and a metadata task text
+    key: str | None = None
+    size: int = 0
 
 
 class _MetaStorage:
@@ -74,6 +83,38 @@ class _MetaStorage:
                 return None
             raise
 
+    def top(self) -> tuple[dict[str, int], list[str]]:
+        """The top level of the dataset: ({file name: size}, [directory names])."""
+        if self.root is not None:
+            files, dirs = {}, []
+            for entry in sorted(self.root.iterdir(), key=lambda p: p.name):
+                if entry.is_dir():
+                    dirs.append(entry.name)
+                elif entry.is_file():
+                    files[entry.name] = entry.stat().st_size
+            return files, dirs
+        start = self.prefix.strip("/") + "/" if self.prefix.strip("/") else ""
+        files, dirs, token = {}, [], None
+        while True:
+            page = self.client.list_objects_type2(self.bucket, prefix=start, delimiter="/",
+                                                  continuation_token=token, max_keys=1000)
+            for o in getattr(page, "contents", None) or []:
+                files[o.key[len(start):]] = int(getattr(o, "size", 0) or 0)
+            for cp in getattr(page, "common_prefixes", None) or []:
+                dirs.append(str(getattr(cp, "prefix", cp))[len(start):].strip("/"))
+            if not getattr(page, "is_truncated", False):
+                return files, sorted(dirs)
+            token = page.next_continuation_token
+
+    def read_range(self, rel: str, start: int, length: int) -> bytes:
+        if self.root is not None:
+            with open(self.root / rel, "rb") as fh:
+                fh.seek(start)
+                return fh.read(length)
+        out = self.client.get_object(self.bucket, self._key(rel), range_start=start,
+                                     range_end=start + length - 1)
+        return out.read()
+
     def list(self, rel_prefix: str) -> list[str]:
         if self.root is not None:
             base = self.root / rel_prefix
@@ -101,10 +142,19 @@ def _short(feature: str) -> str:
 
 
 def read_episode_table(st: _MetaStorage) -> tuple[list[EpisodeRow], float | None]:
-    """The episodes of a LeRobot v2 / v3 dataset from its metadata; (rows, fps)."""
+    """The episodes of a dataset from its metadata; (rows, fps).
+
+    LeRobot v2 / v3 from ``meta/``; lance (lerobot-lance-convert, D44) from its ``meta/``
+    too, without cameras - its videos are inside ``videos.lance``, no URL can play them;
+    mcap (D44) from the file names, numbered by v1's rule - :meth:`Browser.episodes` reads
+    the summaries of the episodes on a page for their length and metadata task text."""
     raw = st.read(_INFO)
     if raw is None:
-        raise ApiError("validation_failed", f"{st.uri} 下没有 meta/info.json：地址不对，或者不是 LeRobot 数据集",
+        rows = _mcap_rows(st)
+        if rows:
+            return rows, None
+        raise ApiError("validation_failed", f"{st.uri} 下没有 meta/info.json，也没有 episode_N.mcap："
+                                            f"地址不对，或者不是可质检的数据集",
                        details={"errors": [{"field": "uri", "problem": "no meta/info.json"}]})
     try:
         info = json.loads(raw.decode("utf-8"))
@@ -114,11 +164,41 @@ def read_episode_table(st: _MetaStorage) -> tuple[list[EpisodeRow], float | None
     cams = [k for k, v in feats.items() if isinstance(v, dict) and v.get("dtype") == "video"]
     fps = info.get("fps") if isinstance(info.get("fps"), (int, float)) else None
     version = str(info.get("codebase_version") or "")
+    if str(info.get("storage_format") or "") == "lance" and version.startswith("v3"):
+        rows = _v3_rows(st, info, cams)
+        for r in rows:                         # the mp4s are blobs of videos.lance
+            r.videos, r.windows = {}, {}
+        return rows, fps
     if version.startswith("v2"):
         return _v2_rows(st, info, cams), fps
     if version.startswith("v3"):
         return _v3_rows(st, info, cams), fps
     raise ApiError("validation_failed", f"不支持的 LeRobot 版本 {version or '（未写）'}：本期只支持 v2 / v3")
+
+
+def _mcap_rows(st: _MetaStorage) -> list[EpisodeRow]:
+    from curation.cli.containers import mcap_episodes
+
+    files, _dirs = st.top()
+    numbering = mcap_episodes(files)
+    return [EpisodeRow(i, 0, "", {}, {}, key=k, size=int(files[k]))
+            for i, k in sorted(numbering.items())]
+
+
+def _mcap_facts(st: _MetaStorage, row: EpisodeRow) -> tuple[float | None, str, bool]:
+    """(length in seconds, metadata task text, has a task topic) of one mcap episode, from
+    its summary section (a few ranged reads, never the messages)."""
+    from curation.cli.containers import RangeFile, mcap_facts, read_summary
+
+    summary = read_summary(RangeFile(lambda s, n: st.read_range(row.key, s, n), row.size),
+                           row.key)
+    if not summary.indexed:
+        return None, "", False
+    facts = mcap_facts(summary, None)
+    length = None
+    if summary.start_ns is not None and summary.end_ns is not None:
+        length = round((summary.end_ns - summary.start_ns) / 1e9, 3)
+    return length, facts.task, facts.has_task
 
 
 def _v2_rows(st: _MetaStorage, info: dict, cams: list[str]) -> list[EpisodeRow]:
@@ -236,6 +316,34 @@ class Browser:
             self._cache[cache_key] = (now, rows, fps)
         return rows, fps
 
+    def _mcap_page(self, rows: list[EpisodeRow], source: str, uri: str, region: str | None,
+                   cred_id: str | None, owner: str) -> dict[int, tuple]:
+        """mcap (D44): length and metadata task of a page's episodes, from their summaries
+        (read in parallel; a file that cannot be read keeps its row without them)."""
+        todo = [r for r in rows if r.key]
+        if not todo:
+            return {}
+
+        def one(st: _MetaStorage, r: EpisodeRow):
+            try:
+                return r.index, _mcap_facts(st, r)
+            except Exception:  # noqa: BLE001 - one bad file does not spoil the page
+                return r.index, (None, "", False)
+
+        workers = min(8, len(todo))
+        if source == "local":
+            st = _MetaStorage(uri, root=self._local_root(uri))
+            with concurrent.futures.ThreadPoolExecutor(workers) as ex:
+                return dict(ex.map(lambda r: one(st, r), todo))
+        key = self._key(source, cred_id, owner)
+        try:
+            with self.orch.svc.tos(key, region) as (client, _):
+                st = _MetaStorage(uri, client=client)
+                with concurrent.futures.ThreadPoolExecutor(workers) as ex:
+                    return dict(ex.map(lambda r: one(st, r), todo))
+        except Exception as err:  # noqa: BLE001 - SDK errors, network
+            raise self._tos_error(err, uri) from None
+
     def episodes(self, *, source: str, uri: str, region: str | None, cred_id: str | None,
                  owner: str, cursor: str | None, limit: int, ttl_s: int = 1800) -> dict:
         rows, fps = self.episode_rows(source, uri, region, cred_id, owner)
@@ -243,8 +351,17 @@ class Browser:
                            scope={"source": source, "uri": uri, "region": region},
                            cursor=cursor, limit=limit)
         key = self._key(source, cred_id, owner) if source == "tos" else None
+        mcap = self._mcap_page(page.items, source, uri, region, cred_id, owner)
         items = []
         for r in page.items:
+            if r.index in mcap:                          # an mcap episode (D44)
+                length_s, task, has_task = mcap[r.index]
+                item = {"index": r.index, "length_s": length_s, "task": task,
+                        "task_source": "原始标注" if task else "无", "cameras": []}
+                if has_task and not task:
+                    item["task_unread"] = True           # in a /task topic, read by the checks
+                items.append(item)
+                continue
             cams = []
             if source != "local":
                 for name, rel in sorted(r.videos.items()):
@@ -336,24 +453,40 @@ class Browser:
     def _hints(self, items: list[dict], source: str, region: str | None, cred_id: str | None,
                owner: str) -> list[dict]:
         """Format hint and episode count per entry, from its ``meta/info.json`` (in parallel)."""
+        def guess(st: _MetaStorage, out: dict) -> None:
+            raw = st.read(_INFO)
+            if raw is None:
+                # D44: mcap episode files, lerobot-lance-convert's tables without meta/, .rrd
+                from curation.cli.containers import mcap_episodes
+
+                files, dirs = st.top()
+                numbering = mcap_episodes(files)
+                if numbering:
+                    out["format_hint"], out["episodes"] = "mcap", len(numbering)
+                elif {"frames.lance", "videos.lance"} <= set(dirs):
+                    out["format_hint"] = "lance"
+                elif any(name.endswith(".rrd") for name in files):
+                    out["format_hint"] = "rrd"
+                return
+            info = json.loads(raw.decode("utf-8"))
+            version = str(info.get("codebase_version") or "")
+            out["format_hint"] = "lerobot_v3" if version.startswith("v3") else (
+                "lerobot_v2" if version.startswith("v2") else "unknown")
+            if str(info.get("storage_format") or "") == "lance":
+                out["format_hint"] = "lance"
+            te = info.get("total_episodes")
+            out["episodes"] = int(te) if isinstance(te, (int, float)) else None
+
         def hint(entry: dict) -> dict:
             out = {"name": entry["name"], "uri": entry["uri"], "format_hint": "unknown",
                    "episodes": None}
             try:
                 if source == "local":
-                    raw = _MetaStorage(entry["uri"], root=pathlib.Path(entry["uri"])).read(_INFO)
+                    guess(_MetaStorage(entry["uri"], root=pathlib.Path(entry["uri"])), out)
                 else:
                     key = self._key(source, cred_id, owner)
                     with self.orch.svc.tos(key, region) as (client, _):
-                        raw = _MetaStorage(entry["uri"], client=client).read(_INFO)
-                if raw is None:
-                    return out
-                info = json.loads(raw.decode("utf-8"))
-                version = str(info.get("codebase_version") or "")
-                out["format_hint"] = "lerobot_v3" if version.startswith("v3") else (
-                    "lerobot_v2" if version.startswith("v2") else "unknown")
-                te = info.get("total_episodes")
-                out["episodes"] = int(te) if isinstance(te, (int, float)) else None
+                        guess(_MetaStorage(entry["uri"], client=client), out)
             except Exception:  # noqa: BLE001 - one bad entry does not spoil the listing
                 pass
             return out

@@ -407,6 +407,11 @@ GET /api/v1/datasets/episodes?source=tos&uri=tos://…&region=…&credential=pro
 配合视口懒加载，一屏只加载看得见的那几十个。v2 源每条一个 mp4；v3 源用 `from_ts` 定位。
 列表只读 metadata（`episodes.jsonl` / 任务表），秒级返回。
 
+mcap 与 Lance 数据集（C4 1.11，D44）的视频在文件或表里，没有可签名的 URL，`cameras` 为空。mcap 的条目按 v1 的规则从文件名编号，
+这一页每个文件读一次摘要区（几次按范围读）拿时长和元数据里的任务文本；任务文本只在 `/task` topic 里的读不到，
+`task` 为空并带 `task_unread: true`（质检时才读）。Lance 从 `meta/` 读，与 LeRobot v3 相同。
+浏览 TOS 前缀（`GET /datasets/browse`）时，`format_hint` 也认得 `mcap`、`lance` 与 `rrd`。
+
 ## 11. 任务日志
 
 ```

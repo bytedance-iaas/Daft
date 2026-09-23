@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "curation export --json (schema 1.0)",
-  "description": "Exports passed (review episodes included, held excluded) into export/lerobot_curated/ (design doc 02, section 3.7; doc 06, section 4).",
+  "description": "Exports passed (review episodes included, held excluded) into export/lerobot_curated/ (design doc 02, section 3.7; doc 06, section 4); an mcap source into export/mcap_curated/ and a lance source into export/lance_episodes/ (D44, always a full export).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "format", "incremental", "episodes", "diff", "fingerprint", "manifest", "videos_copied", "videos_reencoded"],
   "properties": {
     "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
-    "format": {"enum": ["lerobot_v2", "lerobot_v3"]},
+    "format": {"enum": ["lerobot_v2", "lerobot_v3", "mcap", "lance"]},
     "incremental": {"type": "boolean"},
     "episodes": {"type": "integer", "minimum": 0},
     "diff": {
@@ -27,6 +27,8 @@
     "videos_copied": {"type": "integer", "minimum": 0, "description": "video files whose bytes were copied from the source"},
     "videos_reencoded": {"type": "integer", "minimum": 0, "description": "video files produced by encoding (v3 files that lost or gained an episode)"},
     "videos_renamed": {"type": "integer", "minimum": 0, "description": "v2 videos only renumbered: renamed in place, no bytes copied"},
-    "full_reason": {"type": ["string", "null"], "description": "why an --incremental run fell back to a full export (interrupted last export, missing or changed files, other format or parameters); null otherwise"}
+    "full_reason": {"type": ["string", "null"], "description": "why an --incremental run fell back to a full export (interrupted last export, missing or changed files, other format or parameters); null otherwise"},
+    "dataset_dir": {"type": "string", "description": "the delivered dataset, relative to the run directory: export/lerobot_curated (default when absent), export/mcap_curated or export/lance_episodes (D44)"},
+    "note": {"type": "string", "description": "what people should know about this delivery; lance: the native lance delivery is not done (episodes_parquet and videos instead)"}
   }
 }

@@ -64,7 +64,23 @@ function episodesValue(report: Report, task: Task | undefined, dataset: Record<s
   return P().episodesValue(count, scope) + (c.skipped ? P().episodesSkipped(c.skipped) : '');
 }
 
-const KNOWN = new Set(['format', 'validation', 'warnings', 'labels', 'profile', 'robot_type', 'skipped_episodes']);
+/**
+ * mcap / lance (D44): how the run's dataset is delivered and v1's container findings
+ * ([{项, 状态, 说明}], export/report.container_findings) as one line.
+ */
+export function containerValue(v: unknown): string | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = v as { format?: unknown; delivery?: unknown; findings?: unknown };
+  const findings = Array.isArray(o.findings)
+    ? o.findings
+        .filter((f): f is Record<string, unknown> => Boolean(f) && typeof f === 'object')
+        .map((f) => zh.report.containerFinding(f))
+        .join(zh.report.containerFindingSep)
+    : '';
+  return zh.report.containerValue(String(o.format ?? ''), String(o.delivery ?? '—'), findings);
+}
+
+const KNOWN = new Set(['format', 'validation', 'warnings', 'labels', 'profile', 'robot_type', 'skipped_episodes', 'container']);
 
 /**
  * The integrity grid: format, episodes, cameras, frame rate, robot type, semantics profile, task
@@ -102,6 +118,8 @@ export function integrityItems(report: Report, task?: Task): IntegrityItem[] {
   const digest = shortDigest(src?.digest ?? dataset.source_digest);
   if (src && typeof src.objects === 'number') items.push({ key: 'source', label: L.source, value: P().sourceValue(src.objects, bytes(src.bytes), digest ?? '—') });
   else if (digest) items.push({ key: 'source', label: L.source, value: P().sourceDigest(digest) });
+  const container = containerValue(integ.container);
+  if (container) items.push({ key: 'container', label: fieldLabel('container'), value: container, full: true });
   if ('validation' in integ) items.push({ key: 'validation', label: L.validation, value: validation.length ? validation.join('；') : P().validationOk, full: validation.length > 0, warn: validation.length > 0 });
   if ('warnings' in integ) items.push({ key: 'warnings', label: L.warnings, value: warnings.length ? warnings.map(warningText).join('；') : P().none, full: warnings.length > 0, warn: warnings.length > 0 });
   // Anything else the report carries (older or newer writers): labelled and readable.

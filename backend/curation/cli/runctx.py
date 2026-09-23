@@ -15,7 +15,7 @@ import copy
 import json
 import os
 
-from .errors import InputUnreachable, ModuleFailed, UsageError
+from .errors import CliError, InputUnreachable, ModuleFailed, UsageError
 from .framework import Context
 
 GATE_CONFIG_KEYS = {
@@ -47,6 +47,10 @@ def add_source(p: argparse.ArgumentParser, *, required: bool = True) -> None:
     p.add_argument("--max-episodes", type=int, metavar="N",
                    help="v1's head-N selection: the first N episodes (also the sample the "
                         "dataset semantics are resolved on)")
+    p.add_argument("--selection", metavar="EXPR",
+                   help="mcap / lance: the task's whole episode selection when --episodes is "
+                        "one stage's part of it; v1 resolves these formats' semantics on the "
+                        "first 100 episodes of the selection (default: --episodes)")
 
 
 def add_episodes(p: argparse.ArgumentParser, *, required: bool = True) -> None:
@@ -269,6 +273,95 @@ def open_input(ctx: Context, args):
     return storage
 
 
+class Source:
+    """A source-reading command's input: the storage, its format and the directory v1's
+    readers are given - the dataset itself (a local path), its ``tos://`` URI (LeRobot,
+    which v1 reads through dsfs) or, for mcap / lance on TOS (D44), a local copy of what
+    the command reads (``containers.SourceCache``: :meth:`fetch` before reading).
+
+    One listing per command: format detection, the episode numbering, the source guard
+    and the cache all work on it. Temporary files of the container readers (v1's muxed
+    and extracted videos) and a command's own cache go when the command ends.
+    """
+
+    def __init__(self, ctx: Context, args, storage, *, listing=None, cache: bool = True):
+        """``listing``: one the caller already has; ``cache=False``: a command that reads
+        metadata only (snapshot) needs no local copy."""
+        from ..pipeline import rows
+        from . import containers, lerobot_meta
+
+        self.ctx, self.args, self.storage = ctx, args, storage
+        self.uri, self.remote = storage.uri, bool(storage.remote)
+        self.listing = listing if listing is not None else storage.list()
+        if not self.listing:
+            raise InputUnreachable(f"nothing found at {storage.uri}", {"uri": storage.uri})
+        self.format = lerobot_meta.detect_format(self.listing)
+        self.kind = self.format.kind
+        self.cache = None
+        self._numbering: dict[int, str] | None = None
+        self.input_dir = storage.root if not storage.remote else storage.uri
+        if self.kind not in containers.FORMATS:
+            return
+        cfg = ctx.config()
+        rows.configure_ingest(cfg)
+        on, why = containers.enabled(self.kind, cfg)
+        if not on:
+            raise UsageError(why, {"format": self.kind})
+        ctx.on_exit(self.close)
+        if self.remote and cache:
+            self.cache = containers.SourceCache(storage, self.listing, self.kind)
+            self.input_dir = self.cache.data
+
+    @property
+    def container(self) -> bool:
+        return self.kind in ("mcap", "lance")
+
+    def numbering(self) -> dict[int, str]:
+        """mcap: ``{episode: key}`` by v1's rule."""
+        from . import containers
+
+        if self._numbering is None:
+            self._numbering = containers.mcap_episodes(self.listing)
+        return self._numbering
+
+    def episode_keys(self, episodes) -> list[str]:
+        """The objects reading ``episodes`` touches: one file per mcap episode, the whole
+        layout for lance, nothing to add for LeRobot (its guard knows its own keys)."""
+        from . import containers
+
+        if self.kind == "mcap":
+            num = self.numbering()
+            return sorted({num[int(e)] for e in episodes if int(e) in num})
+        if self.kind == "lance":
+            return containers.lance_keys(self.listing)
+        return []
+
+    def fetch(self, episodes) -> None:
+        """Make the source objects of ``episodes`` local (a remote mcap / lance dataset)."""
+        if self.cache is None:
+            return
+        n = self.cache.fetch(self.episode_keys(episodes))
+        if n:
+            self.ctx.log("info", f"source cache: {n} more object(s); {self.cache.describe()}")
+
+    def close(self) -> None:
+        from ..pipeline import rows
+
+        rows.cleanup(self.input_dir)
+        if self.cache is not None:
+            self.cache.close()
+
+
+def open_source(ctx: Context, args) -> Source:
+    """:func:`open_input` plus what the readers need: format, listing, local directory."""
+    return Source(ctx, args, open_input(ctx, args))
+
+
+def selection_of(args) -> list[int] | None:
+    """``--selection`` (the task's whole selection, for mcap / lance semantics)."""
+    return read_episode_file(getattr(args, "selection", None))
+
+
 def source_guard(ctx: Context, args, storage):
     """A callable(episodes) that checks the source objects of those episodes against
     ``--source-manifest`` (meta files included); a no-op without one.
@@ -276,13 +369,18 @@ def source_guard(ctx: Context, args, storage):
     v1's readers (``read_lerobot_meta``, ``LeRobotDataSource``) resolve the dataset's
     semantics from the data files of its first ``min(100, --max-episodes)`` episodes
     whatever the selection; those files are checked too, since they shape every
-    selected episode's judgement.
+    selected episode's judgement. ``storage`` may be a :class:`Source`; an mcap / lance
+    source is checked by :func:`_container_guard`.
     """
     from . import lerobot_meta, source_manifest
 
+    src = storage if isinstance(storage, Source) else None
+    storage = src.storage if src is not None else storage
     manifest = source_manifest.guard(getattr(args, "source_manifest", None), storage.uri)
     if manifest is None:
         return None
+    if src is not None and src.container:
+        return _container_guard(ctx, args, src, manifest)
     state: dict = {}
 
     def check(episodes) -> None:
@@ -326,6 +424,51 @@ def source_guard(ctx: Context, args, storage):
     return check
 
 
+def _container_guard(ctx: Context, args, src: Source, manifest):
+    """The guard of an mcap / lance source (D44), on the command's one listing.
+
+    What stands for a LeRobot dataset's ``meta/`` must be unchanged: an mcap dataset's
+    set of episode files (v1 numbers them by what is there), a lance dataset's whole
+    layout (``meta/`` and the three tables are read as a whole). Then, per call, the
+    files of the episodes about to be read - the semantics sample (the first episodes of
+    ``--selection``) the first time. The cache then checks each copy against this listing.
+    """
+    from . import containers
+
+    listing = src.listing
+    state: dict = {"verified": set()}
+
+    def first() -> set[str]:
+        if src.kind == "lance":
+            then = {k for k in manifest.objects if k.startswith(containers.LANCE_PREFIXES)}
+            now = set(containers.lance_keys(listing))
+        else:
+            then = {k for k in manifest.objects if "/" not in k and k.endswith(".mcap")}
+            now = set(containers.mcap_keys(listing))
+        for key in sorted(now - then):
+            raise manifest._changed(key, "added", None, listing[key])
+        for key in sorted(then - now):
+            raise manifest._changed(key, "missing", manifest.objects[key], None)
+        if src.kind == "lance":
+            return then
+        chosen = selection_of(args) or read_episode_file(getattr(args, "episodes", None)) or []
+        n = getattr(args, "max_episodes", None) or 100
+        return set(src.episode_keys(sorted(chosen)[:min(100, int(n))]))
+
+    def check(episodes) -> None:
+        keys = set(src.episode_keys(episodes))
+        if "first" not in state:
+            state["first"] = True
+            keys |= first()
+        keys -= state["verified"]
+        if keys:
+            manifest.verify(listing, keys=sorted(keys))
+            state["verified"] |= keys
+        ctx.log("info", f"source manifest: {len(state['verified'])} objects unchanged")
+
+    return check
+
+
 def leave_out_skipped(ctx: Context, args, episodes: list[int]) -> list[int]:
     """``episodes`` without the ones ``--source-manifest`` left out for missing source
     files (D40): no command given the manifest reads them."""
@@ -342,18 +485,26 @@ def leave_out_skipped(ctx: Context, args, episodes: list[int]) -> list[int]:
     return kept
 
 
-def meta_rows(input_dir: str, episodes, args, *, what: str) -> list[dict]:
+def meta_rows(source, episodes, args, *, what: str) -> list[dict]:
     """v1's metadata rows of ``episodes`` in index order (``pipeline.rows.meta_rows``).
 
     v1 reads the semantics sample here as well; when that fails nothing can be
-    judged: exit 4 with the reader's reason instead of an internal error.
+    judged: exit 4 with the reader's reason instead of an internal error. ``source`` is
+    a :class:`Source` (a remote mcap / lance dataset's episodes are made local first) or
+    the readers' input directory.
     """
     from ..pipeline.rows import index_of
     from ..pipeline.rows import meta_rows as read
 
+    input_dir = source
+    if isinstance(source, Source):
+        source.fetch(sorted(episodes))
+        input_dir = source.input_dir
     try:
         rows = read(input_dir, episodes, embodiment_id=getattr(args, "embodiment_id", None),
                     max_episodes=getattr(args, "max_episodes", None))
+    except CliError:
+        raise
     except Exception as e:  # noqa: BLE001 - reader errors are many
         raise ModuleFailed(f"{what}: the dataset cannot be read: {type(e).__name__}: {e}"[:600],
                            {"exception": type(e).__name__}) from None
@@ -370,10 +521,19 @@ def resolve_episodes(args, available, *, what: str = "the dataset") -> tuple[lis
 
 
 def dataset_episodes(ctx: Context, storage) -> tuple[list[int], dict]:
-    """The episode indices of the input dataset (metadata only) and its info.json."""
+    """The episode indices of the input dataset (metadata only) and its info.json.
+
+    ``storage`` may be a :class:`Source`: its listing is used, and an mcap / lance
+    dataset answers too (:func:`container_episodes`)."""
     from . import lerobot_meta
 
-    listing = storage.list()
+    if isinstance(storage, Source):
+        src, storage = storage, storage.storage
+        if src.container:
+            return container_episodes(src)
+        listing = src.listing
+    else:
+        listing = storage.list()
     if not listing:
         raise InputUnreachable(f"nothing found at {storage.uri}", {"uri": storage.uri})
     fmt = lerobot_meta.detect_format(listing)
@@ -391,6 +551,34 @@ def dataset_episodes(ctx: Context, storage) -> tuple[list[int], dict]:
     except lerobot_meta.MetaError as e:
         raise UsageError(f"{storage.uri}: {e}; run preflight for the full list") from None
     return [ep.index for ep in meta.episodes], info
+
+
+def container_episodes(src: Source) -> tuple[list[int], dict]:
+    """(episode indices, dataset info) of an mcap / lance dataset without reading samples.
+
+    mcap: the files numbered by v1's rule; the info carries the robot type v1 reads
+    from the first episode's metadata records (``mcap_dataset_info``). lance: ``meta/``
+    (LeRobot v3.0: ``info.json`` and the episode table)."""
+    from . import containers
+
+    if src.kind == "mcap":
+        num = src.numbering()
+        if not num:
+            raise UsageError(f"{src.uri}: no episode_<N>.mcap files")
+        first = num[min(num)]
+        summary = containers.mcap_summary(src.storage, first, int(src.listing[first].size),
+                                          scan=True)
+        facts = containers.mcap_facts(summary, containers.mapping_of(src.ctx.config()))
+        return sorted(num), {"robot_type": facts.robot_type or "unknown", "fps": None,
+                             "codebase_version": "mcap"}
+    try:
+        meta = containers.lance_meta(src.storage, src.listing)
+    except CliError:
+        raise
+    except Exception as e:  # noqa: BLE001 - a broken meta/ or meta.lance
+        raise UsageError(f"{src.uri}: the lance dataset's meta/ cannot be read: "
+                         f"{type(e).__name__}: {e}; run preflight for the full list") from None
+    return sorted(int(r["episode_index"]) for r in meta.episodes), meta.info
 
 
 def read_episode_file(expr: str | None) -> list[int] | None:

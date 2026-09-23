@@ -47,7 +47,7 @@ class MetaError(Exception):
 
 @dataclass
 class Format:
-    kind: str                            # lerobot | mcap | lancedb | rrd | unknown
+    kind: str                            # lerobot | mcap | lance | lancedb | rrd | unknown
     version: str | None = None           # v2 | v3 | None
     codebase_version: str | None = None
     note: str = ""                       # why an unsupported kind was chosen
@@ -76,22 +76,36 @@ def _count_suffix(keys, suffix: str) -> int:
 
 
 def detect_format(listing: dict[str, ObjectInfo]) -> Format:
-    """Sniff the input layout from the listing alone.
+    """Sniff the input layout from the listing alone, in v1's order (``run.py``, D44):
 
-    ``meta/info.json`` at the root means LeRobot (version decided from info.json).
-    Otherwise ``.rrd`` / ``.mcap`` files or Lance tables name the format - all of
-    them unsupported in this version (D6, D34) - and anything else is unknown.
+    * lerobot-lance-convert's tables (``frames.lance`` + ``videos.lance``) -> ``lance``,
+      with or without ``meta/`` (then ``meta.lance`` holds it);
+    * ``meta/info.json`` at the root -> LeRobot (version decided from info.json);
+    * ``*.mcap`` files at the root -> ``mcap`` (v1 reads ``<dir>/*.mcap``);
+    * ``.rrd`` files -> ``rrd``, other Lance tables -> ``lancedb`` (both unsupported:
+      ``.rrd`` stays as in v1, D6 / D34; single-table Lance layouts are what
+      lerobot-lance-convert 0.3.0 retired); anything else is unknown.
     """
+    from . import containers
+
     keys = list(listing)
+    if containers.is_lance_layout(listing):
+        return Format("lance", note="lerobot-lance-convert tables (frames.lance, videos.lance)")
     if INFO_KEY in listing:
         return Format("lerobot")
+    top = containers.mcap_keys(listing)
+    if top:
+        return Format("mcap", note=f"{len(top)} .mcap files")
     if _count_suffix(keys, ".rrd"):
         return Format("rrd", note=f"{_count_suffix(keys, '.rrd')} .rrd files")
-    if _count_suffix(keys, ".mcap"):
-        return Format("mcap", note=f"{_count_suffix(keys, '.mcap')} .mcap files")
     if any(seg.endswith(".lance") for k in keys for seg in k.split("/")[:-1]) \
             or any(k.endswith("_latest.manifest") or "/_versions/" in f"/{k}" for k in keys):
-        return Format("lancedb", note="Lance tables")
+        return Format("lancedb", note=("Lance tables that are not lerobot-lance-convert's "
+                                       "layout (frames.lance + videos.lance + meta)"))
+    if _count_suffix(keys, ".mcap"):
+        return Format("unknown", note=(f"{_count_suffix(keys, '.mcap')} .mcap files, all in "
+                                       f"sub-directories; point --input at the directory that "
+                                       f"holds them"))
     nested = sorted({k[:-len("/" + INFO_KEY)] for k in keys if k.endswith("/" + INFO_KEY)})
     if nested:
         shown = ", ".join(nested[:5]) + (", ..." if len(nested) > 5 else "")
@@ -292,6 +306,20 @@ def read_dataset(storage: Storage, listing: dict[str, ObjectInfo], info: dict,
 
 def meta_keys(listing: dict[str, ObjectInfo]) -> list[str]:
     return sorted(k for k in listing if k.startswith("meta/"))
+
+
+def fingerprint_keys(listing: dict[str, ObjectInfo], kind: str) -> list[str]:
+    """The objects a dataset's ``meta_fingerprint`` covers - the same rule as the Daemon's
+    ``rules.meta_fingerprint`` over a snapshot: ``meta/``; a lance root without it, its
+    ``meta.lance`` mirror; an mcap dataset, its episode files (it has no other metadata)."""
+    from . import containers
+
+    if kind == "mcap":
+        return containers.mcap_keys(listing)
+    keys = meta_keys(listing)
+    if not keys and kind == "lance":
+        keys = sorted(k for k in listing if k.startswith(containers.LANCE_META_TABLE + "/"))
+    return keys
 
 
 def fingerprint(objects: list[ObjectInfo]) -> str:

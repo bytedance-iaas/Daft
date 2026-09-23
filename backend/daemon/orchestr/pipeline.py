@@ -310,7 +310,9 @@ def _exchange_batch(run, sid, argv, episodes_arg, out_file, child, offset, total
                 full += ["--input-region", cli.input_region]
             if vlm and cli.vlm_api_key_env:
                 full += ["--vlm-api-key-env", cli.vlm_api_key_env]
-            cmd = CliCommand(full, env=dict(cli.env), stage=sid, cwd=str(run.wd.root))
+            # an mcap / lance run shares its source cache with every command (D44)
+            cmd = CliCommand(full, env={**cli.env, **run.source_env()}, stage=sid,
+                             cwd=str(run.wd.root))
             proc = StageWorker(cmd, run._line_handler(sid, progress_offset=offset,
                                                       progress_total=total),
                                term_grace_s=run.orch.executor.term_grace_s,

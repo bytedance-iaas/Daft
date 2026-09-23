@@ -83,7 +83,9 @@ class Janitor:
 
     # -- lifecycle ------------------------------------------------------------------------
     def start(self) -> None:
-        if self.orch.cfg.work_retention_s <= 0 or self._thread is not None:
+        """Runs whatever the work retention: with it off (0) a round still sweeps the
+        source caches a crash left (D44), which are never worth keeping."""
+        if self._thread is not None:
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="orchestr-janitor", daemon=True)
@@ -103,8 +105,30 @@ class Janitor:
             delay = interval
 
     # -- one round ------------------------------------------------------------------------
+    def sweep_source_caches(self) -> list[str]:
+        """Source caches (D44: a remote mcap / lance dataset's local copy) of tasks with no
+        run going: a run removes its own when it ends; these are what a crash left."""
+        root = pathlib.Path(self.orch.settings.source_cache_dir)
+        try:
+            names = sorted(e.name for e in os.scandir(root) if e.is_dir(follow_symlinks=False))
+        except FileNotFoundError:
+            return []
+        out = []
+        for task_id in names:
+            if self._busy(task_id):
+                continue
+            freed = _tree_size(root / task_id)
+            shutil.rmtree(root / task_id, ignore_errors=True)
+            log.info("janitor: removed the source cache of task %s (%d bytes)", task_id, freed)
+            out.append(task_id)
+        return out
+
     def sweep(self, now: int | None = None) -> list[str]:
         """Clean what is due; returns the ids of the tasks whose directories went."""
+        try:
+            self.sweep_source_caches()
+        except Exception:  # noqa: BLE001 - the work directories are swept all the same
+            log.exception("janitor: source caches")
         retention_ms = int(self.orch.cfg.work_retention_s * 1000)
         if retention_ms <= 0:
             return []

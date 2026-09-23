@@ -13,7 +13,7 @@
 | `curation aggregate` | `funnel`：每条 keep / drop / held 与 `keep.txt`；`final`：passed / reject / held 三个清单和 review 视图 | `cli/aggregate.schema.json` |
 | `curation adjudicate-apply` | 应用本任务的人工裁决（不调模型、不导出），列出接下来要重跑什么 | `cli/adjudicate-apply.schema.json` |
 | `curation report` | 一个结果版本的 `report.md` / `report.json` / `perf.json` / 明细表，最后写 `commit.json` | `cli/report-output.schema.json` |
-| `curation export` | 把一个结果版本的 passed 导出成 LeRobot 数据集（可增量），并把变化同步到交付目录 | `cli/export.schema.json` |
+| `curation export` | 把一个结果版本的 passed 导出成交付数据集（LeRobot 可增量；mcap / Lance 照 v1 交付，见「mcap 与 Lance 数据集」），并把变化同步到交付目录 | `cli/export.schema.json` |
 | `curation verify` | 从交付目录逐个回读关键文件，全部通过才最后写 `_COMPLETE` | `cli/verify.schema.json` |
 | `curation task …` | Daemon REST API 的薄客户端，给 Agent 和脚本用，输出带 `links` | `openapi.yaml` 里对应接口的响应，原样打印 |
 
@@ -31,6 +31,7 @@ v1 的子命令（`run`、`rejudge`、`review-page`、`prune`、`ls`、`fetch`�
 | `creds.py` | 凭证只从环境变量读；输入、输出两套访问密钥 |
 | `storage.py` | 本地目录与 `tos://` 的统一读写（列举、按范围读、上传、删除、写 `_COMPLETE`） |
 | `lerobot_meta.py` | 不读样本数据的 LeRobot 元数据读取：格式识别、episode 表、每条的文件键 |
+| `containers.py` / `preflight_containers.py` | mcap 与 Lance（D44）：识别、按 v1 的规则给 mcap 文件编号、按范围读 mcap 的摘要区、读 Lance 的 `meta/`、TOS 数据的本地副本（`SourceCache`）、`source_info.json`；这两种格式的预检 |
 | `runctx.py` | 流水线命令共用的部分：运行目录、`--input` / `--source-manifest`、VLM 参数与三个行为开关、闸门、配置、`VlmSession`（探活、传输策略、用量记账） |
 | `preflight.py` / `plan.py` / `snapshot.py` / `autolabel.py` / `check.py` / `aggregate.py` / `adjudicate.py` / `report_cmd.py` / `export_cmd.py` / `verify.py` / `task_client.py` | 各条命令 |
 | `source_manifest.py` | `source_manifest.json` 的生成与校验（`--source-manifest`，对不上退出码 6） |
@@ -42,7 +43,7 @@ v1 的子命令（`run`、`rejudge`、`review-page`、`prune`、`ls`、`fetch`�
 |---|---|
 | `records.py` | 结果行格式（`cli/result-record.schema.json`）、分片文件、`results.jsonl` 压实、`inflight.json`、原子写 |
 | `check_stage.py` | 一次 `check` 调用：自建线程池、`--resume`、崩溃计数、VLM 档熔断 |
-| `rows.py` | 逐条取样本行，与 v1 惰性扫描（`LeRobotDataSource`）同一个源对象、同一套字段 |
+| `rows.py` | 逐条取样本行，与 v1 惰性扫描（`LeRobotDataSource`）同一个源对象、同一套字段；mcap / Lance 用 v1 的两个读取器（`ContainerRowSource`） |
 | `incidents.py` | D33 的执行事故登记：模型调用、机位解码、崩溃，登记后原样抛出，算法看到的和以前一样 |
 | `vlm_policy.py` | 传输策略：对冲开关、外层重试、文本调用一次一发、用量记账（W6 的两本账） |
 | `tasktext.py` | 任务描述的来源：原始标注 / 自产 caption / 人工改标（改标的重判口径） |
@@ -51,6 +52,8 @@ v1 的子命令（`run`、`rejudge`、`review-page`、`prune`、`ls`、`fetch`�
 | `aggregate.py` / `adjudication.py` / `reporting.py` | 聚合判决、人工裁决、报告 |
 | `funnel.py` / `run.py` | v1 的编排（B 类），只把闭包里的构建函数提到模块级、给技能画像留了逐条 caption 的钩子；`curation run` 仍走它们 |
 | `rejudge.py` | v1 的 rejudge（B 类）；改标重判的函数体提成 `rerun_task_success`，`check` 按 v1 口径重判时调的就是它（D39） |
+
+交付（`curation/export/`）：LeRobot 的全量与增量导出见 [INCREMENTAL.md](../export/INCREMENTAL.md)；mcap / Lance 的交付在 `export/containers.py`（D44）。
 
 ## 全局约定
 
@@ -124,7 +127,8 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
                                                tables/*.parquet，最后是 commit.json（有它才算提交，之后不再改写）
   details/vlm_latency.csv  details/evidence/   每次模型请求的时延、取证图
   usage.jsonl                                  token 用量（C3 usage 行的落盘副本）
-  export/{manifest.json, manifest.detail.json, lerobot_curated/}
+  source_info.json                             mcap / Lance（D44）：读取器给出的数据集信息与用到的机器人规格，report 据此写「数据包」一节
+  export/{manifest.json, manifest.detail.json, lerobot_curated/}   mcap 源是 mcap_curated/，Lance 源是 lance_episodes/
   logs/
 ```
 
@@ -132,8 +136,8 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 
 **preflight**：`curation preflight --input <tos://… | 本地目录 | 公共数据集名> [--source tos|public|local] [--vlm-backend 名] [--embodiment-id 型号] [--modules a,b] [--source-manifest 文件] --json`
 
-- 只列目录、只读 `meta/` 下的文件，不读 parquet 和视频。
-- 不是 LeRobot v2/v3（`.rrd`、mcap、Lance、其他 LeRobot 版本、认不出的目录）时，所有模块都是 `unsupported`，原因写明检测到的格式。
+- 只列目录、只读 `meta/` 下的文件，不读 parquet 和视频（mcap 只读每个文件的摘要区，见下文「mcap 与 Lance 数据集」）。
+- 认得 LeRobot v2/v3、mcap 与 Lance（lerobot-lance-convert 0.3.0 起的三表布局，D44）。其余（`.rrd`、别的 Lance 表、其他 LeRobot 版本、认不出的目录）所有模块都是 `unsupported`，原因写明检测到的格式（`format_unsupported`）。
 - `info.json` 结构校验沿用 v1 的 `validate_info`，报错原文放进 `validation`（中文，照抄给用户）。
 - 运动学极限：型号读到且在规格库里是 `available`；读到但不在规格库里是 `unsupported`，只跳过这一项，其余模块照常；读不到（缺失、空串或 `unknown`）是 `needs_input`，`input_hint.options` 列出规格库的 9 个型号。`--embodiment-id` 覆盖 `robot_type`，与 v1 相同。
 - 两个 VLM 模块：没传 `--vlm-backend` 是 `needs_input`（`input_hint.field = "vlm"`）；没有任务标注不会让它们标灰，只在 `notes` 里提示会先补描述。
@@ -150,6 +154,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 记录 `meta/` 下全部文件、所选 episode 的 parquet 与各机位视频，以及数据集**前 100 条**的 parquet：v1 不管选了哪些条，都用前 100 条的数值判定数据集语义（控制模式、单位等），它们一变，所选各条的判定就可能变。TOS 记 ETag，本地记 `mtime_ns`。
 - `--episodes` 支持 `34`、`10-20`、`3,10-12` 和 `@文件`（每行一个表达式，`#` 之后是注释）；全部越界报参数错误，部分越界跑交集并警告。
 - 之后任何读源数据的命令带上 `--source-manifest`，它要读的对象（元数据、语义样本、所选各条的文件）有一个变了就以退出码 6 结束，在读之前就停。快照时就缺的文件、现在仍缺，不算变化。
+- mcap / Lance 记的对象不同（全部 mcap 文件；Lance 的 `meta/` 与三张表），见下文。
 - LeRobot v2 的某条缺数据 parquet 或任一机位的视频（v1 的 `_v2_missing`）时，这条照 v1 跳过（D40）：记进 `skipped_episodes`（写明缺了哪些文件），带 `--source-manifest` 的命令都不读它；它不进任何清单、不计入总数，报告的完整性一块列出。v3 数据集不跳（v1 会去读），缺文件的条在检查时读不了，记为出错。
 
 **autolabel**：`curation autolabel --input … --run-dir … --episodes 表达式 [--source-manifest …] [--resume] [--plan-stage …] [VLM 参数] [行为开关] --json`
@@ -235,6 +240,26 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
   实现在 `cli/eef_review.py`，复核逻辑在 `extensions/eef_consistency/review.py`。
   实现在 `cli/eef_check.py`、`cli/modparams.py`，模块本身在 `extensions/eef_consistency/`（见其 README）。
 
+### mcap 与 Lance 数据集（D44，F6.5）
+
+v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_reader.py`、`ingest/lance_reader.py` 与交付用的 `export/mcap_writer.py` 是 A 类代码，原样搬来（冻结点随之前移到 `dev@eb637ba40`）；v2 的命令在外面包了一层 `cli/containers.py`，判决仍全部出自 v1 的读取器与算法（合成数据上 v1 对 v2 逐位对账，`tools/parity/tests/test_containers_parity.py`）。
+
+| | mcap | Lance |
+|---|---|---|
+| 认什么 | 数据集根目录下的 `*.mcap`，一个文件一条 episode（子目录里的不算）。编号照 v1：文件名是 `episode_<N>.mcap` 的按 N（混进来的其他 `.mcap` 不读，预检给警告），一个都不是就按文件名排序从 0 编 | lerobot-lance-convert（0.3.0 起）的布局：`frames.lance`、`videos.lance`、`meta.lance` 三张表加 `meta/`，`meta/info.json` 带 `storage_format: "lance"`（LeRobot v3.0 元数据）。三表齐但没有这个标记的是旧插件布局，预检报元数据无效（v1 的原话）；只有别的 Lance 表的是 `lancedb`，不支持 |
+| 预检读什么 | 每个文件只读摘要区（通道、消息数、元数据记录），TOS 上是几次按范围读，不读消息。动作、状态、相机、任务文本、机器人型号按 v1 的 topic 规则认（站点的 `ingest.mcap_mapping` 优先，UMI 的 `/robotN/vio/eef_pose` 自动认）。时间轴取动作 topic 的 `log_time`，没有要配的帧率，`fps` 为 null。任务文本只在 `/task` topic 里的，预检数它有标注但读不到文字（真正的文字质检时读） | `meta/`，读法同 LeRobot v3（含 v1 的 `validate_info`）；缺了 `meta/` 就读 `meta.lance` 里的镜像并给一条警告 |
+| 快照记什么 | 全部 `*.mcap`（v1 按目录里有哪些文件来编号，每个文件又是一条 episode 的数据）；`meta_fingerprint` 覆盖全部 mcap 文件 | `meta/` 与三张表的全部对象（读的时候整表读）；`meta_fingerprint` 覆盖 `meta/`，没有 `meta/` 时覆盖 `meta.lance/` |
+| 交付 | `export/mcap_curated/`：v1 的 `export_mcap_curated` 原样。passed 各条的 `.mcap` 逐字节拷贝（源文件不是 `episode_<N>.mcap` 命名的改成这个名字），`index.json` 列每条的任务文本与来源；自产描述与人工改标只写进 `index.json`，文件本体不动 | `export/lance_episodes/`：Lance 原格式交付本版本未做，交的是 v1 的 `episodes_parquet/`（passed 各条的轨迹级数值，任务文本写进 `instruction` / `instruction_source`）和 `videos/`（视频指针改写到交付位置）。`index.json`、导出结果的 `note`、报告的「数据包」一节都写明这一点 |
+| 增量导出 | 没有：`--incremental` 退回全量，`full_reason` 写明原因；内容没变的文件不重新上传 | 同左（daft 每次给 parquet 分片起新名字，这一个文件每次都换） |
+| 不能用的模块 | EEF–视频一致性与它的 VLM 复核只读 LeRobot 的视频：`unsupported`，原因码 `format_unsupported_by_module` | 同左 |
+
+- **数据集语义取整个任务的所选**：v1 用所选 episode 的前 100 条判定数据集语义（控制模式、单位等）。v2 的命令只读某一档的幸存者，所以读源数据的命令（`autolabel`、`check`、`aggregate --phase final`）要带 `--selection <整个任务的所选>`（语法同 `--episodes`，Daemon 自动传；不带时取 `--episodes`），判定取它的前 100 条，与 v1 一致。LeRobot 数据集不受影响（它的语义样本一直是数据集的前 100 条）。
+- **TOS 上的数据先拉到本地再读**：v1 的两个读取器只认本地目录。`tos://` 上的数据由 `SourceCache` 在本地留一份副本：mcap 先给每个文件放一个空占位（v1 按目录里的文件名编号，占位不会被读），读到哪条才下载哪条；Lance 第一次读时整表下载（读取器要整表）。设了 `CURATION_SOURCE_CACHE` 就放在它下面（`<目录>/<格式>-<地址哈希>/<数据集名>/`，同一任务后面的命令复用，Daemon 在运行结束时删掉），没设就放在这条命令自己的临时目录里、命令结束就删。每个副本按列举时的大小和 ETag 核对，对不上以退出码 6 结束（`source_changed`）；带 `--source-manifest` 时照常先核对快照。只读源桶，从不往源桶写；凭证只从 `CURATION_INPUT_TOS_*` 环境变量读。
+- **临时视频**：读取器转出来的视频（mcap 里 JPEG / H.264 消息转成的 mp4、Lance 里取出的视频）写在 `$TMPDIR`，命令结束时清掉。Daemon 把 `TMPDIR` 指到任务的缓存目录下，不占容器的 `/tmp`。
+- **`source_info.json`**：第一条读源数据的命令在运行目录里写下 v1 报告要用的信息（读取器的 `mcap_dataset_info` / `lance_dataset_info`：型号从哪来、时间轴从哪来、有没有任务文本；用到的机器人规格），`report` 据此写出 v1 的数据包体检（`report.json` 的 `integrity.container`、`report.md` 的「数据包」一节）。
+- **站点开关**：`ingest.mcap_enabled` / `ingest.lance_enabled`（默认开；v1 的环境变量 `CURATION_MCAP_ENABLED` / `CURATION_LANCE_ENABLED` 优先于配置）。关掉后预检把全部模块标为不支持（原因码 `format_disabled`），读源数据的命令以参数错误（退出码 2）结束。Helm 里写在 `pipelineConfigOverride.ingest` 下。
+- **依赖**：`pylance`（Lance）、`mcap`、`mcap-ros2-support`（cdr 消息）、`mcap-protobuf-support`（protobuf 消息），版本钉在 `backend/requirements.txt`；都是懒导入，不质检这两种格式时用不到。
+
 ## Daemon 的调用顺序
 
 一次完整运行（00 篇 §4，每档读上一档的幸存者）：
@@ -259,6 +284,8 @@ adjudicate-apply → check task_success --episodes <rerun_task_success>（写新
 ```
 
 裁决之后**不再跑 dedup**：第一次的去重结论保持不变，技能画像自己跳过其中的副本，`final` 对由人带回的条不做去重（与 v1 相同）。`keep.txt` 已经按裁决增减过，直接交给技能画像。
+
+mcap / Lance 数据集的顺序相同，`autolabel`、`check`、`aggregate --phase final` 多带 `--selection <任务的所选>`；数据在 TOS 上时，每条命令的环境里有 `CURATION_SOURCE_CACHE`（任务的本地副本）和 `TMPDIR`，运行结束后 Daemon 删掉这个目录。
 
 ## 手动验证步骤
 
@@ -401,7 +428,40 @@ with FakeVlmServer(port=8766) as s:
    CURATOR_URL=http://127.0.0.1:9/curation $C task get task_01 --json; echo "exit=$?"   # 连不上 → exit=3
    ```
 
-9. 自动化测试（约 4 分钟）：
+10. mcap 与 Lance（D44）。同一份 8 条合成数据换成两种格式，按第 3、4 步的顺序跑（假模型照旧在另一个终端）：
+
+    ```bash
+    PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap"     # episode_0.mcap … episode_7.mcap（cdr 编码）
+    PYTHONPATH=../tools $PY -m parity make-fixture --format lance --out "$D/mini_lance"   # frames / videos / meta 三张表 + meta/
+    for F in mcap lance; do
+      IN=$D/mini_$F; R=$D/run_$F; mkdir -p "$R/stages"
+      $C preflight --input "$IN" --vlm-backend ark --json > "$R/preflight.json"
+      $C snapshot --input "$IN" --episodes 0-7 --out "$R/source_manifest.json"
+      S="--input $IN --run-dir $R --source-manifest $R/source_manifest.json --selection 0-7"
+      $C autolabel $S --episodes 0-7
+      $C check --modules timestamp_check,kinematic_limits,motion_quality $S --episodes 0-7 --survivors-out "$R/stages/numeric.txt"
+      $C check --modules visual_quality,video_action_sync $S --episodes "@$R/stages/numeric.txt" --survivors-out "$R/stages/frame.txt"
+      $C check --modules task_success $S --episodes "@$R/stages/frame.txt"
+      $C aggregate --run-dir "$R" --phase funnel --revision 1 --episodes 0-7
+      $C check --modules dedup $S --episodes "@$R/revisions/r0001/keep.txt" --survivors-out "$R/stages/dedup.txt"
+      $C check --modules skill_profile $S --episodes "@$R/stages/dedup.txt"
+      $C aggregate --run-dir "$R" --phase final --revision 1 --episodes 0-7 --input "$IN" --selection 0-7
+      $C report --run-dir "$R" --revision 1
+      $C export --run-dir "$R" --input "$IN" --output "$D/delivery_$F"
+      rsync -a --exclude export/mcap_curated --exclude export/lance_episodes --exclude inflight.json "$R/" "$D/delivery_$F/"
+      $C verify --run-dir "$R" --output "$D/delivery_$F" --visibility-timeout 0 --json | grep -E '"failed"|complete_marker'
+    done
+    ```
+
+    应看到：预检 `kind` 分别是 `mcap`（`version: null`，`fps: null`，detail 写着时间轴取自动作 topic 的 `log_time`）和 `lance`（`version: v3`），8 条、2 路相机、`robot_type: franka`、6 条有标注；EEF 两个模块是 `unsupported`（`format_unsupported_by_module`），其余可用。
+    判决与第 3 步的 LeRobot 数据集完全相同：数值档拦下 2、5，task_success 3 pass 3 abstain，dedup 剔除 7，final 为 `passed 5, reject 3, held 0; 3 to review`。
+    `report.md` 多一节「数据包(mcap)」/「数据包(lance)」：mcap 写着交付 `mcap_curated/`（5 个 .mcap，原格式逐字节）和型号、时间轴、任务文本三项体检；Lance 写着「lance 原格式交付本版本未做」。
+    导出：mcap 是 `export/mcap_curated/` 下 `episode_0/1/3/4/6.mcap` 与 `index.json`（`cmp "$D/mini_mcap/episode_0.mcap" "$D/delivery_mcap/export/mcap_curated/episode_0.mcap"` 无输出），日志写「改标 2 条记入 index.json,文件本体不动」（4、6 是自产描述）；
+    Lance 是 `export/lance_episodes/` 下 `episodes_parquet/`、`videos/` 与 `index.json`，导出结果带 `note`。两边 `verify` 都是 `"failed": []`、`"complete_marker": true`。`ls $TMPDIR` 里不留读取器转出的视频。
+    TOS 上的读法（本地副本、按范围读摘要、源对象变化退出码 6、只读源桶）由 `tests/cli/test_containers.py` 在假 TOS 上核对；有自己的桶时，把两个目录传上去，
+    设好 `CURATION_INPUT_TOS_ACCESS_KEY` / `CURATION_INPUT_TOS_SECRET_KEY` 与 `CURATION_SOURCE_CACHE=$D/cache`，把上面的 `IN` 换成 `tos://…` 再跑一遍，判决应不变，`$D/cache` 里是 mcap 读过的那几条文件和 Lance 的整表。
+
+11. 自动化测试（约 4 分钟）：
 
    ```bash
    $PY -m pytest -q tests/cli tests/contracts tests/planner tests/export

@@ -336,6 +336,9 @@ CREATE TABLE dataset_check (              -- 指纹核对记录：数据集详�
   一致就沿用已有的预检结果，同一份清单固化为任务的 `source_fingerprint`；不一致就不开始，把变化写进 `dataset_check`，
   `check_state` 置为 `changed`，等用户确认后重新预检。重新预检会刷新 `preflight` 和两个指纹，`check_state` 回到 `ok`。
 - 运行中的核对不变：任务的每一步读源数据都按它自己固化的 `source_manifest.json` 校验（D27）。
+- 实现里另有一列 `format`（C4 `DatasetFormat`，由预检结果推出，列表按它筛选）。mcap / Lance 自 schema 第 4 步起可取
+  （C4 1.11，D44）：SQLite 不能原地放宽 CHECK 约束，第 4 步照 SQLite 的做法重建 `dataset` 表（关外键、建新表、复制、删旧表、改名、
+  重建索引），id 不变，引用它的任务与核对记录不受影响。之前登记的 mcap / Lance 数据集当时预检为不支持，重新预检后才变成新格式。
 
 ### 2.9 其余小表
 
