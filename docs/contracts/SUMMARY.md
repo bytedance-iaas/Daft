@@ -214,3 +214,24 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   模块说明写明 ID 随机、两种格式都认、同一毫秒建的行按插入先后排；`list_tasks` 加关键字 `running_subtasks`（`GET /tasks` 用它实现上一条）；
   `usage_buckets` 写明主流程在前、子任务按建的先后；Token 时间线至少保留 400 天（概览的「近 1 年」按月统计要用）。
 
+## 十三、报告改版与 Episode 明细（2026-09-23，F6.2）
+
+- **C4 1.11.0**（分支上写作 1.9.0，合并在 1.10.1 之后）：`GET /tasks/{id}/episodes`（`TaskEpisodePage`：结果版本里的 episode 按下标排，带所在清单、`reason_modules`、`review` / `review_modules`；按 `list`、`review`、`q`（编号子串，去掉 `ep` 前缀与前导零）筛选；游标带结果版本、绑定筛选条件；`total` 是筛选后的条数，`counts` 是整版的）与 `GET /tasks/{id}/episodes/{index}/sync-curves`（`SyncCurves`：逐相机的画面运动 / 机械臂运动曲线、互相关曲线与读数点，每条序列最多 600 点；没勾选、没走到或没保存曲线时 404，`details.reason` 分别是 `module_not_run`、`no_record`、`no_curves`）。示例 `examples/rest-episode-list.json`、`examples/rest-sync-curves.json`。上表第 11 条里「同步曲线没有对应的形状」由此解决。
+- **C2 不变**：`report.json` 的模块 `summary` 仍是自由对象；1.9.0 起 CLI 在里面写入画图用的汇总键（计数、均值、按相机的小数组，不含 episode 清单），键名见设计 06 篇 §6.2。
+
+## 十四、mcap 与 Lance 数据集（2026-09-23，F6.5，D44）
+
+全部是兼容扩充：C2 的 `schema_version` 仍是 1.0，C4 升到 1.12.0（分支上写作 1.11.0，合并在报告改版的 1.11.0 之后），C5 只改注释；C1、C3 不变。
+
+- **C2 预检**（`cli/preflight.schema.json`）：`format.kind` 多一个 `lance`（lerobot-lance-convert 0.3.0 起的三表布局；别的 Lance 表仍是 `lancedb`，不支持），
+  `mcap` 与 `lance` 可以 `supported: true`；`format.version` 对 Lance 是元数据的 LeRobot 版本 `v3`，对 mcap 是 null；`dataset.fps` 对 mcap 是 null（时间轴取动作 topic 的 `log_time`）。
+  新原因码：`format_disabled {format}`（站点用 `ingest.mcap_enabled` / `ingest.lance_enabled` 关掉了这种格式）、
+  `format_unsupported_by_module {format}`（模块读不了这种格式：EEF–视频一致性与它的复核只读 LeRobot 的视频）。
+- **C2 导出**（`cli/export.schema.json`、`cli/export-manifest.schema.json`）：`format` / `source_format` 多 `mcap`、`lance`；
+  新字段 `dataset_dir`（交付数据集所在目录：缺省 `lerobot_curated`，mcap 是 `mcap_curated`，Lance 是 `lance_episodes`）和 `note`（Lance：原格式交付未做）；
+  产物清单每条的 `artifacts` 三选一：LeRobot 的 `parquet` + `videos`、mcap 的 `file`、Lance 的 `videos` + `windows`（每路相机在视频文件里的起止秒）。
+- **C2 报告**：`integrity` 本来就允许附加字段，mcap / Lance 源多一个 `container`（交付形态与 v1 的数据包体检），不改 schema。
+- **C2 命令参数**：`autolabel`、`check`、`aggregate` 多一个 `--selection`（整个任务的所选，mcap / Lance 的语义样本取它的前 100 条）；环境变量 `CURATION_SOURCE_CACHE`（TOS 上的数据先拉到这里再读）。
+- **C4 1.12.0**：`DatasetFormat` 与 `GET /datasets` 的 `format` 筛选多 `mcap`、`lance`；`BrowsedDataset.format_hint` 多 `mcap`、`lance`；
+  `EpisodePreview` 多一个可选的 `task_unread`（mcap 的任务文本在 `/task` topic 里、预览读不到）；这两种格式的 `cameras` 为空。前端类型已重新生成。
+- **C5**：`list_datasets` 的 `fmt` 说明加上 `mcap | lance`；SQLite 的第 4 步迁移重建 `dataset` 表，放宽 `format` 的 CHECK（01 篇 §2.8）。

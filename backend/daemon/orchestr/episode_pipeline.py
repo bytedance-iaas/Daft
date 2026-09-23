@@ -90,7 +90,9 @@ def _start_worker(run, layer, selection, path, next_stage):
         argv += ["--input-region", cli.input_region]
     if vlm and cli.vlm_api_key_env:
         argv += ["--vlm-api-key-env", cli.vlm_api_key_env]
-    proc = StageWorker(CliCommand(argv, env=dict(cli.env), stage=sid, cwd=str(run.wd.root)),
+    # an mcap / lance run shares its source cache with every command (D44)
+    proc = StageWorker(CliCommand(argv, env={**cli.env, **run.source_env()}, stage=sid,
+                                  cwd=str(run.wd.root)),
                        run._line_handler(sid, progress_offset=layer.completed,
                                          progress_total=len(selection)),
                        term_grace_s=run.orch.executor.term_grace_s,

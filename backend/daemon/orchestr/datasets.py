@@ -49,9 +49,19 @@ class Source:
         return cls(ds.source, ds.uri, ds.region, ds.credential_id)
 
 
+#: the formats a task can run on (mcap and lance since D44); snapshot lists them all
+SUPPORTED_KINDS = ("lerobot", "mcap", "lance")
+
+
 def format_supported(preflight: dict | None) -> bool:
     fmt = (preflight or {}).get("format") or {}
-    return bool(fmt.get("supported")) and fmt.get("kind") == "lerobot"
+    return bool(fmt.get("supported")) and fmt.get("kind") in SUPPORTED_KINDS
+
+
+def container_kind(preflight: dict | None) -> str | None:
+    """``mcap`` / ``lance`` for a dataset v2 reads from a local copy when it is on TOS."""
+    kind = ((preflight or {}).get("format") or {}).get("kind")
+    return kind if kind in ("mcap", "lance") else None
 
 
 class DatasetOps:

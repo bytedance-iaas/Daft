@@ -148,8 +148,7 @@ def build_arbitration_deps(cfg: dict, gates: dict | None = None) -> dict | None:
         "captioner": make_vlm_captioner(ep, model,
                                         timeout_s=timeout_for("caption", vcfg),
                                         api_key_env=key,
-                                        max_in_flight=int(gates.get("guard_caption", _epc)),
-                                        thinking=thinking),
+                                        max_in_flight=int(gates.get("guard_caption", _epc))),
         "caption_n_frames": int(cfg.get("skill_profile", {}).get("n_frames", 8)),
         "params": {
             "kill_min_lines": int(acfg.get("kill_min_lines", 2)),

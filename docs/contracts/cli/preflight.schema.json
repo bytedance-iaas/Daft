@@ -12,8 +12,8 @@
       "additionalProperties": false,
       "required": ["kind", "version", "supported", "detail"],
       "properties": {
-        "kind": {"enum": ["lerobot", "mcap", "lancedb", "rrd", "unknown"]},
-        "version": {"enum": ["v2", "v3", null]},
+        "kind": {"enum": ["lerobot", "mcap", "lance", "lancedb", "rrd", "unknown"], "description": "lerobot, mcap and lance (lerobot-lance-convert >= 0.3.0, D44) can be supported; lancedb (other Lance tables), rrd and unknown never are"},
+        "version": {"enum": ["v2", "v3", null], "description": "the LeRobot version of the metadata: v2 / v3 for lerobot, v3 for lance (its meta/ is LeRobot v3.0), null for mcap"},
         "supported": {"type": "boolean", "description": "false => every module is unsupported"},
         "detail": {"type": "string"}
       }
@@ -29,7 +29,7 @@
           "properties": {
             "episode_count": {"type": "integer", "minimum": 0, "description": "episodes are 0 .. count-1"},
             "cameras": {"type": "array", "items": {"type": "string"}, "description": "short camera names: the video feature key without the observation.images. prefix"},
-            "fps": {"type": ["number", "null"]},
+            "fps": {"type": ["number", "null"], "description": "null for mcap: its time axis is the action topic's log_time"},
             "robot_type": {"type": ["string", "null"]},
             "total_frames": {"type": ["integer", "null"]},
             "labels": {
@@ -72,7 +72,7 @@
         "reason_code": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "Stable reason for UIs to translate. Known codes: format_unsupported {detected}, metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing; EEF-video consistency (design doc 12 §5.1): trajectory_missing {path?}, trajectory_invalid {errors, sha256}, eef_review_not_available (before F5.6), eef_base_unavailable {base_reason_code} (the review: the module it reviews is unusable), and as sub-item reasons projection_missing, observation_seed_missing and the rest of that catalogue. New modules may add codes; a UI that does not know one shows reason."
+          "description": "Stable reason for UIs to translate. Known codes: format_unsupported {detected}, format_disabled {format} (mcap / lance switched off by the site: ingest.mcap_enabled / ingest.lance_enabled, D44), format_unsupported_by_module {format} (a module that cannot read this format: EEF-video consistency on mcap / lance), metadata_invalid {problem}, missing_input {missing: [timestamps|action|state|video], video_cause?: none_declared|files_missing}, embodiment_unsupported {subject, given_by: robot_type|embodiment_id, supported}, robot_type_unknown {robot_type}, vlm_backend_missing; EEF-video consistency (design doc 12 §5.1): trajectory_missing {path?}, trajectory_invalid {errors, sha256}, eef_review_not_available (before F5.6), eef_base_unavailable {base_reason_code} (the review: the module it reviews is unusable), and as sub-item reasons projection_missing, observation_seed_missing and the rest of that catalogue. New modules may add codes; a UI that does not know one shows reason."
         },
         "reason_args": {"type": "object", "description": "parameters of reason_code, listed with each code"},
         "input_hint": {

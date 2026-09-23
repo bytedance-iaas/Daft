@@ -45,17 +45,17 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
 
     run_dir = runctx.run_dir_of(args, create=True)
     plan_stage = runctx.load_plan_stage(args.plan_stage, [], stage_id="autolabel")
-    storage = runctx.open_input(ctx, args)
-    available, _info = runctx.dataset_episodes(ctx, storage)
+    src = runctx.open_source(ctx, args)
+    available, _info = runctx.dataset_episodes(ctx, src)
     episodes, warning = runctx.resolve_episodes(args, available)
     if warning:
         ctx.log("warn", warning)
     episodes = runctx.leave_out_skipped(ctx, args, episodes)
-    input_dir = storage.root if not storage.remote else storage.uri
-    guard = runctx.source_guard(ctx, args, storage)
+    guard = runctx.source_guard(ctx, args, src)
     if guard is not None:
-        guard([])                        # metadata and the semantics sample, read next
-    rows = runctx.meta_rows(input_dir, episodes, args, what="autolabel")
+        # metadata and the semantics sample, read next (mcap / lance: every episode read)
+        guard(episodes if src.container else [])
+    rows = runctx.meta_rows(src, episodes, args, what="autolabel")
     unlabeled = [index_of(r["episode_id"]) for r in rows
                  if not (r.get("instruction") or "").strip()]
     if guard is not None and unlabeled:
@@ -73,8 +73,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
         captioner = make_vlm_captioner(v["endpoint"], v["model"],
                                        timeout_s=vlm_client.timeout_for("caption", v),
                                        api_key_env=v.get("api_key_env"),
-                                       max_in_flight=int(gates["caption"]),
-                                       thinking=cfg.get("pipeline", {}).get("thinking"))
+                                       max_in_flight=int(gates["caption"]))
         payload = run_autolabel(ctx, run_dir, rows, captioner, n_frames=n_frames,
                                 concurrency=int(gates["caption"]), resume=args.resume)
     return Result(payload, human=render(payload))

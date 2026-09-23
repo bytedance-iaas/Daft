@@ -143,6 +143,9 @@ def _missing(rev: Revision, module: str) -> list[int]:
 
 
 def _summary(rev: Revision, m: str) -> dict:
+    """A section's summary: ``counts`` for every module, the keys each module has had
+    since 1.0 (kept as they are), then the chart-ready aggregates of
+    :mod:`.report_stats` (06 §6.2) for the modules that take part in the verdict."""
     res = rev.results[m]
     out: dict = {"counts": _counts(res)}
     scores = [r["score"] for r in res.values() if r.get("score") is not None]
@@ -184,7 +187,62 @@ def _summary(rev: Revision, m: str) -> dict:
                     "gap" if d.get("gap_frames") else "other")
                 why[key] = why.get(key, 0) + 1
         out["fail_kinds"] = why
+    if res and registry.get(m).affects_dataset_verdict:
+        out.update(_chart_stats(rev, m, [res[e] for e in sorted(res)], scores))
     return out
+
+
+def _chart_stats(rev: Revision, m: str, records: list[dict], scores: list) -> dict:
+    """The chart-ready aggregates of one module (:mod:`.report_stats`): statistics only,
+    never a list of episodes."""
+    from . import report_stats as S
+
+    out = S.generic(records, scores)
+    if m == "timestamp_check":
+        out.update(S.timestamp_stats(records))
+    elif m == "kinematic_limits":
+        out.update(S.kinematic_stats(records))
+    elif m == "motion_quality":
+        out.update(S.motion_stats(records))
+    elif m == "visual_quality":
+        out.update(S.visual_stats(records))
+    elif m == "video_action_sync":
+        out.update(S.sync_stats(records, sync_tolerance(rev.run_dir)))
+    elif m == "task_success":
+        out.update(S.task_stats(records))
+    elif m == "dedup":
+        out.update(S.dedup_stats(_read(os.path.join(module_dir(rev.run_dir, "dedup"),
+                                                    "groups.json"), {}) or {}))
+    elif m == "skill_profile":
+        base = module_dir(rev.run_dir, "skill_profile")
+        out.update(S.skill_stats(records, _read(os.path.join(base, "profile.json"), {}) or {},
+                                 _read(os.path.join(base, "label_audit.json"), {}) or {}))
+    return out
+
+
+def sync_tolerance(run_dir: str) -> float:
+    """The ``lag_tol_s`` the sync check ran with: the curves files record it; without
+    them, the factory default (v2 runs the v1 modules with factory parameters)."""
+    from . import report_stats as S
+
+    curves = os.path.join(module_dir(run_dir, "video_action_sync"), "curves")
+    try:
+        names = sorted(n for n in os.listdir(curves) if n.endswith(".json"))
+    except OSError:
+        names = []
+    for name in names[:1]:
+        try:
+            v = S.num((_read(os.path.join(curves, name), {}) or {}).get("lag_tol_s"))
+        except ValueError:
+            v = None
+        if v:
+            return v
+    try:
+        from .config import load_config
+
+        return float(load_config()["checks"]["video_action_sync"]["params"]["lag_tol_s"])
+    except Exception:  # noqa: BLE001 - a missing default must not fail the report
+        return 0.25
 
 
 def _tables(rev: Revision, m: str, out_dir: str) -> list[dict]:
@@ -330,9 +388,39 @@ def integrity(rev: Revision) -> dict:
     if not pf:
         return {}
     ds = pf.get("dataset") or {}
-    return {"format": pf.get("format"), "validation": pf.get("validation") or [],
-            "warnings": pf.get("warnings") or [], "labels": ds.get("labels"),
-            "profile": ds.get("profile"), "robot_type": ds.get("robot_type")}
+    out = {"format": pf.get("format"), "validation": pf.get("validation") or [],
+           "warnings": pf.get("warnings") or [], "labels": ds.get("labels"),
+           "profile": ds.get("profile"), "robot_type": ds.get("robot_type")}
+    container = container_integrity(rev)
+    if container:
+        out["container"] = container
+    return out
+
+
+def container_integrity(rev: Revision) -> dict | None:
+    """mcap / lance (D44): v1's container findings (``export/report.container_findings``
+    over what ``check`` recorded in ``source_info.json``) and how the dataset is delivered
+    - for lance, that the native delivery is not done (v1's report line)."""
+    kind = ((rev.preflight.get("format") or {}).get("kind"))
+    if kind not in ("mcap", "lance"):
+        return None
+    n = rev.lists["passed"]["count"]
+    if kind == "mcap":
+        delivery = (f"mcap_curated/（{n} 个 .mcap，原格式逐字节；清单见 index.json；"
+                    f"改标只写进清单，文件本体不动）")
+    else:
+        delivery = (f"lance_episodes/episodes_parquet/（{n} 条，轨迹级）与 videos/；"
+                    f"lance 原格式交付本版本未做，判决清单见 passed / reject / held")
+    out: dict = {"format": kind, "delivery": delivery, "findings": []}
+    facts = _read(os.path.join(rev.run_dir, "source_info.json"), None)
+    if isinstance(facts, dict) and isinstance(facts.get("info"), dict):
+        from ..export.report import container_findings
+
+        try:
+            out["findings"] = container_findings(kind, facts["info"], facts.get("robot") or {})
+        except Exception:  # noqa: BLE001 - findings are an attachment of the report
+            out["findings"] = []
+    return out
 
 
 # ---------------------------------------------------------------- the report
@@ -471,6 +559,13 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines.append(f"- 待人工裁决:{sec['adjudication']['pending']} 条")
         if sec.get("error"):
             lines.append(f"- ⚠️ {sec['error']}")
+        lines.append("")
+    container = report["integrity"].get("container")
+    if container:                               # mcap / lance (D44)
+        lines.append(f"## 数据包({container['format']})")
+        lines.append(f"- 交付数据集:{container['delivery']}")
+        for f in container.get("findings") or []:
+            lines.append(f"- {f.get('项')}:{f.get('状态')} —— {f.get('说明')}")
         lines.append("")
     if report["integrity"].get("skipped_episodes"):
         lines.append("## 未质检的条目(源文件缺失,照 v1 剔除)")

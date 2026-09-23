@@ -14,7 +14,8 @@
 ## 纪律
 
 - **算法一行不改**：A 类代码（`core/`、`registry/`、`ingest/`、`dataset_level/` 等，清单见设计 10 篇 §2）逐字搬运，只允许改 import 路径。
-  冻结点是 `release_v1` 的 `45bdf9292`（D34），`tools/parity/v1_manifest.json` 记着它逐文件的哈希。
+  冻结点是 `dev` 的 `eb637ba40`（PR #155 mcap / lance 合入后，D44；此前是 D34 的 `release_v1@45bdf9292`），
+  `tools/parity/v1_manifest.json` 记着它逐文件的哈希。
 - 任何可能影响判决的改动，先用对账工具证明与 v1 一致（`python -m parity compare`）。
 - 代码注释、提交信息用英文；文档、界面文案用中文。
 

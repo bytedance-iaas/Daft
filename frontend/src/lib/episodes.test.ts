@@ -28,6 +28,7 @@ describe('episode expressions (display only; the server validates)', () => {
 
 describe('preflight → availability and reasons', () => {
   const droid200 = DATASET_PROFILES.find((p) => p.name === 'droid-200')!;
+  const rrd = DATASET_PROFILES.find((p) => p.name === 'warehouse_rrd')!;
   const mcap = DATASET_PROFILES.find((p) => p.name === 'warehouse_mcap')!;
   const umi = DATASET_PROFILES.find((p) => p.name === 'umi_640_notask')!;
 
@@ -37,7 +38,13 @@ describe('preflight → availability and reasons', () => {
     expect(reasonText(r.modules.find((m) => m.id === 'kinematic_limits'))).toContain('未读到机器人型号');
     expect(reasonText(preflightFor(umi, {}).modules.find((m) => m.id === 'kinematic_limits'))).toContain('umi_dual_handheld_gripper 不在规格库');
     expect(reasonText({ reason: 'something new happened', reason_code: 'brand_new_code' })).toBe('something new happened');
-    expect(reasonText(preflightFor(mcap, {}).modules[0])).toBe('当前版本仅支持 LeRobot v2/v3，检测到 mcap');
+    expect(reasonText(preflightFor(rrd, {}).modules[0])).toBe('当前支持 LeRobot v2/v3、mcap 与 Lance（lerobot-lance-convert 0.3.0 起），检测到 rrd');
+    // D44: an mcap dataset is read; only the EEF modules (LeRobot videos) are out
+    const eef = preflightFor(mcap, {}).modules.find((m) => m.id === 'eef_video_consistency');
+    expect(reasonText(eef)).toBe('该模块只能读 LeRobot 数据集，不支持 mcap');
+    expect(reasonText({ reason: 'x', reason_code: 'format_disabled', reason_args: { format: 'lance' } })).toBe(
+      '本实例关闭了 lance 格式的质检（站点配置 ingest.lance_enabled），请联系管理员',
+    );
   });
 
   it('presets follow availability', () => {
@@ -45,7 +52,8 @@ describe('preflight → availability and reasons', () => {
     expect(availability(r, 'motion_quality')).toBe('unsupported');
     expect(presetSelection('full', registry, r)).toEqual(['timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile']);
     expect(presetSelection('quick', registry, r)).toEqual(['timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'dedup']);
-    expect(presetSelection('full', registry, preflightFor(mcap, {}))).toEqual([]);
+    expect(presetSelection('full', registry, preflightFor(rrd, {}))).toEqual([]);
+    expect(presetSelection('quick', registry, preflightFor(mcap, {}))).toEqual(['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'dedup']);
   });
 
   it('ticking the EEF review ticks the EEF module; unticking the EEF module unticks the review (F5.6)', () => {

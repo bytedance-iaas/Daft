@@ -23,6 +23,11 @@
   GLM-5.3-Flash 始终思考，`--no-thinking` 映射为 `thinking.type=enabled` 加
   `reasoning_effort=low`，运行时明确提示“仍在思考”，报告配置快照也记录实际模式。
   未登记模型显式使用开关会报配置错误。
+- 打标（caption，给没有任务标注的 episode 补描述）不跟 `thinking` 开关（2026-09-23 需求方决定）：
+  构造打标器的 `dataset_level/caption.py` 是 A 类代码，保持冻结点原样。打标请求跟随模型的「思考强度」——
+  控制台里 VLM 后端上为模型设的默认值（存在 Daemon 的库里，建任务时可改，随任务快照交给命令行的
+  `--vlm-reasoning-effort`），由 `pipeline/vlm_policy.py` 统一加进这个任务的每一个模型请求，打标也在内；
+  没设就不传，沿用模型默认。
 
 流式漏斗、帧缓存、动作指纹复用及有序并行视频哈希默认启用。
 本地输入/输出自动保存检查点；同一输入、配置和实现版本再次运行时，

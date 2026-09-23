@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "export/manifest.json (schema 1.0)",
-  "description": "What the delivered dataset holds, the basis of incremental re-export (design doc 06, section 4.3).",
+  "description": "What the delivered dataset holds, the basis of incremental re-export (design doc 06, section 4.3). mcap / lance sources (D44) are exported in full by export/containers.py: dataset_dir names the delivered directory, artifacts name an mcap file or the lance videos with their windows.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "source_format", "fingerprint", "episodes", "meta_files"],
   "properties": {
     "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
-    "source_format": {"enum": ["lerobot_v2", "lerobot_v3"]},
+    "source_format": {"enum": ["lerobot_v2", "lerobot_v3", "mcap", "lance"]},
+    "dataset_dir": {"type": "string", "description": "the delivered dataset's directory under export/: lerobot_curated when absent, mcap_curated or lance_episodes (D44); artifacts and files are relative to it"},
     "fingerprint": {"$ref": "common.schema.json#/$defs/digest", "description": "export fingerprint: passed list and order, task texts and sources, source digest, format and parameters"},
     "episodes": {
       "type": "array",
@@ -30,11 +31,15 @@
           "artifacts": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["parquet", "videos"],
+            "description": "LeRobot: parquet and videos; mcap: file; lance: videos and windows (D44)",
+            "anyOf": [{"required": ["parquet", "videos"]}, {"required": ["file"]},
+                      {"required": ["videos", "windows"]}],
             "properties": {
               "parquet": {"type": "string"},
               "videos": {"type": "object", "additionalProperties": {"type": "string"}},
-              "chunk": {"type": "integer", "minimum": 0, "description": "v3: linear index of the data file the episode lives in, chunk_index * chunks_size + file_index"}
+              "chunk": {"type": "integer", "minimum": 0, "description": "v3: linear index of the data file the episode lives in, chunk_index * chunks_size + file_index"},
+              "file": {"type": "string", "description": "mcap: the episode's delivered .mcap file"},
+              "windows": {"type": "object", "description": "lance: camera -> [from_ts, to_ts], the episode's window in its video file", "additionalProperties": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}}
             }
           }
         }
@@ -43,7 +48,7 @@
     "meta_files": {"type": "array", "items": {"type": "string"}},
     "files": {
       "type": "object",
-      "description": "every file of the delivered dataset, relative to export/lerobot_curated/, with size and sha256; verify reads it back against these",
+      "description": "every file of the delivered dataset, relative to export/<dataset_dir>/ (export/lerobot_curated/ by default), with size and sha256; verify reads it back against these",
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,

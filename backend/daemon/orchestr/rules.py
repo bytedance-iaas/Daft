@@ -121,9 +121,16 @@ def listing_digest(objects: Iterable[dict]) -> str:
 
 
 def meta_fingerprint(manifest: dict) -> str:
-    """The preflight's ``meta_fingerprint`` recomputed from a snapshot: the metadata objects."""
-    return listing_digest(o for o in manifest.get("objects") or []
-                          if str(o.get("key", "")).startswith("meta/"))
+    """The preflight's ``meta_fingerprint`` recomputed from a snapshot: the metadata objects
+    (``curation.cli.lerobot_meta.fingerprint_keys``): ``meta/``; a lance root without it,
+    its ``meta.lance`` mirror; an mcap dataset, whose snapshot is its episode files, all of it."""
+    objects = [o for o in manifest.get("objects") or [] if isinstance(o, dict)]
+    meta = [o for o in objects if str(o.get("key", "")).startswith("meta/")]
+    if not meta:
+        meta = [o for o in objects if str(o.get("key", "")).startswith("meta.lance/")]
+    if not meta and any(str(o.get("key", "")).endswith(".mcap") for o in objects):
+        meta = objects
+    return listing_digest(meta)
 
 
 def fingerprint_of(manifest: dict) -> dict:

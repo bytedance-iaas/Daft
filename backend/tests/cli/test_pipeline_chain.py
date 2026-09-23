@@ -164,6 +164,43 @@ def test_report_follows_the_registry(chain):
     assert "通过 5" in md and "「时间戳检查」2 条" in md
 
 
+def test_report_summaries_are_chart_ready(chain):
+    """06 §6.2 (F6.2): statistics from the real details, the 1.0 keys kept, no episode lists."""
+    rev = os.path.join(chain.rd, "revisions", "r0001")
+    report = json.load(open(os.path.join(rev, "report.json"), encoding="utf-8"))
+    s = {m["id"]: m["summary"] for m in report["modules"]}
+    for m, summary in s.items():
+        assert "counts" in summary, m
+        assert "ep0000" not in json.dumps(summary), f"{m} lists episodes"
+    ts = s["timestamp_check"]
+    assert ts["fail_kinds"] == {"gap": 1, "fragment": 1}                       # kept as in 1.0
+    assert {x["name"]: x["count"] for x in ts["fail_reasons"]} == {
+        "out_of_order": 0, "gap": 1, "fragment": 1, "jitter": 0}
+    assert sum(b["count"] for b in ts["duration_hist"]) == 8 and ts["duration_total_s"] > 0
+    assert s["kinematic_limits"]["violation_episodes"] == 0
+    assert s["kinematic_limits"]["limits_profile"] == "franka"
+    mq = s["motion_quality"]
+    assert sum(b["count"] for b in mq["score_hist"]) == 8 and "mean_score" in mq
+    subs = {x["name"]: x for x in mq["subscores"]}
+    assert subs["smoothness"]["n"] == 8 and subs["smoothness"]["in_total"] is True
+    assert subs["actuator_saturation"]["mean"] is None and subs["actuator_saturation"]["na_reason"]
+    vq = s["visual_quality"]
+    assert [c["camera"] for c in vq["cameras"]] == ["exterior", "wrist"]
+    assert all(c["n"] == 6 and sum(c["hist"]) == 6 for c in vq["cameras"])
+    sync = s["video_action_sync"]
+    assert sum(v["count"] for v in sync["verdicts"]) == 6 and sync["lag_tol_s"] == 0.25
+    assert [c["camera"] for c in sync["cameras"]] == ["exterior", "wrist"] and sync["sync_advice"]
+    task = s["task_success"]
+    assert sum(j["count"] for j in task["judgements"]) == task["counts"]["total"] - task["counts"]["error"]
+    assert [x["name"] for x in task["layers"]] == ["probe", "endstate", "label_guard", "arbitration"]
+    assert "arbitration" in task and "abstain_reasons" in task                # kept as in 1.0
+    assert s["dedup"]["group_sizes"] == [{"name": "2", "count": 1}]
+    assert (s["dedup"]["collision_groups"], s["dedup"]["removed"]) == (1, 1)
+    sp = s["skill_profile"]
+    assert sum(f["count"] for f in sp["family_distribution"]) == sp["counts"]["total"]
+    assert sp["families"] == len([f for f in sp["family_tree"] if f["name"] != "未归类"])
+
+
 def test_a_committed_revision_is_never_rewritten(chain):
     from .pipeline import run
 

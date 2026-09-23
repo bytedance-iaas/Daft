@@ -38,7 +38,7 @@ Curator v2 的 Helm Chart：单副本 StatefulSet，API Daemon 同进程托管�
 | `masterKey.existingSecret` | 空（Chart 生成） | —— | 生产环境必配 |
 | `masterKey.key` / `nextKey` / `versionKey` | `masterKey` / `masterKeyNext` / `masterKeyVersion` | `CURATOR_MASTER_KEY` / `_NEXT` / `_VERSION`（secretKeyRef，后两个可缺） | 轮换见 deploy/README.md |
 | `persistence.data.*` | 100Gi、集群默认存储类、`/data` | PVC、`CURATOR_DATA_DIR` | 必须是块存储（EBS）；`existingClaim` 改用已有 PVC |
-| `persistence.scratch.*` | emptyDir 200Gi、`/scratch` | `CURATOR_SCRATCH_DIR`、`CURATION_EXPORT_SCRATCH` | `type: pvc` 改用块存储卷；不能是 FSX |
+| `persistence.scratch.*` | emptyDir 200Gi、`/scratch` | `CURATOR_SCRATCH_DIR`、`CURATION_EXPORT_SCRATCH`、`CURATOR_SOURCE_CACHE_DIR`（`<挂载点>/source-cache`） | `type: pvc` 改用块存储卷；不能是 FSX。TOS 上 mcap / Lance 数据集的本地副本也在这里（Lance 整表），按要质检的数据集大小定容量 |
 | `publicDatasets.*` | 桶为空（关闭） | `site.yaml` 的 `public_datasets` | HuggingFace 缓存桶 |
 | `localDataRoot` | 空（关闭） | `CURATOR_LOCAL_DATA_ROOT` | 目录用 `extraVolumes` 挂进来 |
 | `concurrency.*`、`vlm.*` | 04 篇 §2 的默认 | `site.yaml` 的 `concurrency`、`vlm` | planner 的站点默认与上限、合并开关、闸门覆盖 |

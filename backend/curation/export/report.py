@@ -167,6 +167,44 @@ def container_findings(input_format: str, info: dict, robot: dict,
                         "说明": "属性里没有原始数据集路径。建议转换时写入 "
                                 "source_dataset 与 source_episode_index(各一行),"
                                 "此后缺失元数据即可自动回源补全。"})
+    elif input_format == "mcap":
+        # mcap(2026-09-18):留痕口径与 RRD 同族但字段更少 —— 没有溯源约定,
+        # 型号/时间/标注三项该说清"文件自带还是人工补的"。
+        # (lance V1 的 meta/ 就是标准 info.json,走下面 else 的 LeRobot 口径。)
+        _carrier = "metadata 记录"
+        rt_src = str(info.get("robot_type_source") or "")
+        file_rt = str(info.get("robot_type_file") or "")
+        if registry_hit and emb != "unknown":
+            if rt_src == "embedded":
+                out.append({"项": "机器人型号", "状态": "正常",
+                            "说明": f"{_carrier}内嵌 robot_type={emb},规格类检查全自动。"})
+            else:
+                note = ""
+                if file_rt and file_rt != emb:
+                    note = (f" ⚠️ 但文件派生的型号是 {file_rt},与人工指定不一致 —— "
+                            "已按人工指定为准,请核实哪个才对。")
+                out.append({"项": "机器人型号", "状态": "缺失(已补)",
+                            "说明": f"数据不带 robot_type;已按 --embodiment {emb} "
+                                    f"人工指定,规格类检查照常执行。{note}"})
+        elif emb and emb != "unknown":
+            out.append({"项": "机器人型号", "状态": "已跳过",
+                        "说明": f"型号 {emb} 不在规格库,运动学极限整项跳过(其余检查"
+                                "照常);需要支持请提供该机器人的关节规格。"})
+        else:
+            out.append({"项": "机器人型号", "状态": "缺失",
+                        "说明": f"数据的 {_carrier}不带 robot_type,又未指定 "
+                                "--embodiment,运动学极限无规格可查,本次整项跳过。"
+                                "要检查请重跑时加 --embodiment <型号>。"})
+        if str(info.get("time_source") or "") == "log_time":
+            out.append({"项": "帧时间信息", "状态": "正常",
+                        "说明": "消息自带 log_time,时间轴取自 action topic,全自动。"})
+        if info.get("has_task_text"):
+            out.append({"项": "任务文本", "状态": "正常",
+                        "说明": "数据自带任务描述,按有标注数据处理。"})
+        else:
+            out.append({"项": "任务文本", "状态": "缺失",
+                        "说明": "数据里没有任务文本,按无标注数据处理"
+                                "(任务意图走自产描述补标线)。"})
     else:
         rt = str(robot.get("robot_type") or "unknown")
         # 说法与管道实际行为对齐(2026-09-16):查不到规格表 = 运动学极限整项跳过

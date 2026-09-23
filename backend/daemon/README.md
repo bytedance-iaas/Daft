@@ -61,6 +61,7 @@ W5a 的接口（跑 CLI 的操作，见 [`orchestr/README.md`](orchestr/README.m
 | `CURATOR_DATA_DIR` | `/data` | 数据卷：`curator.db` 和任务工作目录 `runs/<task_id>/` |
 | `CURATOR_DB_PATH`、`CURATOR_WORK_DIR` | 数据卷下 | 单独指定数据库文件、工作目录 |
 | `CURATOR_SCRATCH_DIR` | 系统临时目录下 `curator-scratch` | 可丢的临时卷 |
+| `CURATOR_SOURCE_CACHE_DIR` | 数据卷下 `source-cache`（Chart 里是临时卷下的 `source-cache`） | mcap / Lance 任务的源数据本地副本，`<目录>/<task_id>/`，运行结束即删（D44，见 [orchestr/README.md](orchestr/README.md)） |
 | `CURATOR_STATIC_DIR` | `/app/web` 或仓库 `frontend/dist`（存在时） | 前端构建产物 |
 | `CURATOR_PUBLIC_BASE_URL` | 空 | 给 Agent 的绝对链接；不配就给相对路径并带 `absolute: false` |
 | `CURATOR_HTPASSWD_FILE`（旧名 `CURATION_UI_HTPASSWD_FILE`） | 空 | 多用户账号表，可与 rerun viewer 共用 |

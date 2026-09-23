@@ -6,9 +6,17 @@ import { needsVlm, reasonText } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import type { PreflightState } from './usePreflight';
 
+/** What preflight read, per format (D44: mcap summaries, lance's meta/). */
+function readOnlyNote(r: PreflightResult): string {
+  if (r.format.kind === 'mcap') return zh.taskForm.preflightReadOnlyMcap;
+  if (r.format.kind === 'lance') return zh.taskForm.preflightReadOnlyLance;
+  return zh.taskForm.preflightReadOnly;
+}
+
 function formatName(r: PreflightResult): string {
   if (r.format.kind === 'lerobot') return `LeRobot ${r.format.version ?? ''}`.trim();
-  return r.format.kind;
+  if (r.format.kind === 'lance') return zh.taskForm.preflightLanceFormat(r.format.version ?? 'v3');
+  return zh.format[r.format.kind] ?? r.format.kind;
 }
 
 /**
@@ -69,7 +77,7 @@ export function PreflightCard({ state, registry, onRerun }: { state: PreflightSt
                     )}
                   </div>
                   <div className="muted" style={{ fontSize: 12 }}>
-                    {zh.taskForm.preflightReadOnly}
+                    {readOnlyNote(r)}
                   </div>
                 </div>
               }

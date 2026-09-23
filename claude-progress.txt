@@ -248,6 +248,16 @@ Current summary:
       · 合并界面批（761d51fbb，F6.1 除概览 + F6.3）：侧边栏与面包屑、子任务运行时显示「运行中」（SSE 子任务事件不再覆盖任务状态、
         列表在子任务运行时轮询）、档合并显示与两行进度、详情页并排卡片与 Token 明细与横向时间线、常驻人工裁决、删除可同时清理、
         表单文案、VLM 模型筛选 / 添加、数据集「可视化」跳 ReRun；前端 250 条测试、lint、类型检查通过；D28 补修订说明（d8af4a7bb）
+      · 合并 ID 与概览（328454556，F6.4 + F6.1 第 8 条，C4 1.10.0）：新记录 ID「前缀-9 位小写字母」、旧 ID 照常可用、撞号重抽；
+        GET /overview?days=7|30|90|365（日 / 周 / 月分桶）与两卡等高的概览页；state=running 含子任务在跑的任务（D46）
+      · 同事 dongmao.zhang 往 feat/curator-v2 推了流式执行（7 个提交后强推成 2 个，内容相同）；合并（2095743e4）时修了：
+        daemon/orchestr/runs.py 语法错误（Daemon 起不来、镜像构建失败）、C4 版本号与锁（记为 1.10.1）、测试调 parity 缺 PYTHONPATH、
+        CI 加 tests/optimizations；他的两份文档按需求方要求挪成 docs/design/13-curation-speedup.md 与 13-speedup/implementation.md（5bfba677b）
+      · 合并报告改版（332a7383a，F6.2，C4 1.11.0）：模块统计与图、可折叠、Episode 明细页签、同步播放、完整性中文横排、报告页头人工裁决；
+        合并时修了 routes/results.py 两个模块都导入成 L 的冲突
+      · 合并 mcap / lance（7c73d79f4，F6.5，C4 1.12.0，冻结点 dev@eb637ba40）：与流式执行的 check.py / check_stage / runbase 冲突按语义合，
+        流式 worker 补上源数据缓存环境；「数据包」一行移进新的完整性卡片
+      · 需求方决定：打标（caption）复用库里模型的「思考强度」，不跟 thinking 开关；caption.py 恢复冻结点原样，A 类检查 59/0（3c5f57f75）
 Main gaps:
   - 阶段 6 全部 not_completed（进行中）
   - 集群连不上：kubeconfig 走 socks5://localhost:1080，本机隧道没开；F6.6 部署前需要需求方打开

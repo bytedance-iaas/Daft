@@ -23,7 +23,7 @@ describe('数据集列表 (07 §4.4)', () => {
     expect(within(row('droid-200')).getByText('有变化，待重新预检')).toBeInTheDocument();
     expect(within(row('droid_100')).getByText('一致')).toBeInTheDocument();
     expect(within(row('umi_640_notask')).getByText('未检查')).toBeInTheDocument();
-    expect(within(row('warehouse_mcap')).getByText('不支持')).toBeInTheDocument();
+    expect(within(row('warehouse_mcap')).getByText('mcap')).toBeInTheDocument(); // D44
     expect(within(row('libero_10')).getByText('HuggingFace 缓存桶')).toBeInTheDocument();
     expect(within(row('droid_100')).getByRole('link', { name: 'droid 前 50 条质检' })).toBeInTheDocument();
     expect(screen.getByText('共 5 条')).toBeInTheDocument();

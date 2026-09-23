@@ -481,6 +481,15 @@ button.video-placeholder {
   cursor: pointer;
 }
 
+.sync-note {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.sync-note.waiting {
+  color: var(--c-warning);
+}
+
 .video-box figcaption {
   font-size: 12px;
   margin-top: 4px;
@@ -724,5 +733,215 @@ button.video-placeholder {
 @media (max-width: 960px) {
   .overview-cards {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Report sections (F6.2): key figures, then charts two to a row, then tables and notes */
+.section-card.collapsed .arco-card-body {
+  display: none;
+}
+
+.section-card .arco-card-header {
+  height: auto;
+  min-height: 46px;
+}
+
+.section-view > * + * {
+  margin-top: 16px;
+}
+
+.section-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 16px 32px;
+}
+
+.section-chart {
+  min-width: 0;
+}
+
+.section-sub {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.section-sub .muted {
+  font-weight: normal;
+  font-size: 12px;
+}
+
+.section-note {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--c-text-2);
+}
+
+.section-lines {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--c-text-2);
+}
+
+.stat-cell.tone-bad .stat-value {
+  color: var(--c-danger);
+}
+
+.stat-cell.tone-warn .stat-value {
+  color: var(--c-warning);
+}
+
+.stat-cell.tone-good .stat-value {
+  color: var(--c-success);
+}
+
+/* Episode 明细 (F6.2): the picker, then one card per module */
+.episode-items {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  line-height: 1.8;
+}
+
+.episode-block > .arco-card-body > * + * {
+  margin-top: 10px;
+}
+
+.episode-line,
+.episode-reason {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.episode-line.warn,
+.episode-reason.warn {
+  color: var(--c-warning);
+}
+
+.episode-line.bad,
+.episode-reason.bad {
+  color: var(--c-danger);
+}
+
+.episode-rest summary {
+  cursor: pointer;
+  color: var(--c-text-3);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.episode-sub {
+  margin-top: 12px;
+}
+
+.row-warn td {
+  background: #fff7e8 !important;
+}
+
+.trail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trail-step {
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  min-width: 120px;
+  background: #fff;
+}
+
+.trail-step.off {
+  border-style: dashed;
+  color: var(--c-text-4);
+}
+
+.trail-step.good {
+  border-color: var(--c-success);
+}
+
+.trail-step.bad {
+  border-color: var(--c-danger);
+}
+
+.trail-step.warn {
+  border-color: var(--c-warning);
+}
+
+.trail-layer {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.trail-step.off .trail-layer {
+  color: var(--c-text-4);
+}
+
+.trail-text {
+  font-size: 13px;
+}
+
+.sync-curves {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.sync-curves-cams > * + * {
+  margin-top: 8px;
+}
+
+@media (max-width: 1100px) {
+  .sync-curves {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 数据包完整性 (F6.2): label / value pairs side by side, three columns like the mockup's .desc */
+.desc-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 32px;
+  margin: 0;
+}
+
+.desc-grid .desc-item {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  min-width: 0;
+}
+
+.desc-grid .desc-item.full {
+  grid-column: 1 / -1;
+}
+
+.desc-grid dt {
+  flex: none;
+  width: 84px;
+  color: var(--c-text-3);
+}
+
+.desc-grid dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--c-text-1);
+}
+
+.desc-grid .desc-item.warn dd {
+  color: var(--c-warning);
+}
+
+@media (max-width: 1200px) {
+  .desc-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

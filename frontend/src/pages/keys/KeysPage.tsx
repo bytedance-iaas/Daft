@@ -38,7 +38,7 @@ function Refs({ c }: { c: Credential }) {
 }
 
 /**
- * 密钥与资源管理 (07 §7): TOS access keys and VLM backends, list + drawer like the VKE secret
+ * 系统和资源配置 (07 §7; the nav item was 密钥与资源 before 2026-09-23): TOS access keys and VLM backends, list + drawer like the VKE secret
  * pages. Only non-secret fields are ever shown; verification states come with their reason, and
  * saving never fails because a verification failed (D30).
  */
@@ -152,7 +152,7 @@ export function KeysPage() {
       title: zh.credentials.colActions,
       dataIndex: 'updated_at',
       fixed: 'right',
-      width: 210,
+      width: 250,
       render: (_: unknown, c) => (
         <Space size={4}>
           <Button type="text" size="small" onClick={() => setKeyDrawer({ open: true, editing: c })}>
@@ -195,7 +195,7 @@ export function KeysPage() {
       title: zh.credentials.colActions,
       dataIndex: 'updated_at',
       fixed: 'right',
-      width: 210,
+      width: 250,
       render: (_: unknown, b) => (
         <Space size={4}>
           <Button type="text" size="small" onClick={() => setBackendDrawer({ open: true, editing: b })}>
@@ -239,7 +239,7 @@ export function KeysPage() {
             {keys.isError && !keys.data ? (
               <PageError error={keys.error} onRetry={() => void keys.refetch()} />
             ) : (
-              <Table rowKey="id" loading={keys.isLoading} columns={keyColumns} data={keyItems} pagination={false} scroll={{ x: 1220 }} data-testid="keys-table" noDataElement={<span className="muted">{zh.credentials.noItems}</span>} />
+              <Table rowKey="id" loading={keys.isLoading} columns={keyColumns} data={keyItems} pagination={false} scroll={{ x: 1260 }} data-testid="keys-table" noDataElement={<span className="muted">{zh.credentials.noItems}</span>} />
             )}
           </Tabs.TabPane>
           <Tabs.TabPane key="vlm" title={`${zh.credentials.tabBackends}（${backendItems.length}）`}>
@@ -253,7 +253,7 @@ export function KeysPage() {
                 columns={backendColumns}
                 data={backendItems}
                 pagination={false}
-                scroll={{ x: 1260 }}
+                scroll={{ x: 1300 }}
                 data-testid="backends-table"
                 noDataElement={<span className="muted">{zh.credentials.noItems}</span>}
               />

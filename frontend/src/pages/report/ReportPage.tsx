@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Descriptions, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography } from '@arco-design/web-react';
+import { Alert, Button, Card, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography } from '@arco-design/web-react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -9,15 +9,16 @@ import { Chart, barOption, chartSummary } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
-import { EpisodeDrawer } from '../../features/report/EpisodeDrawer';
 import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
 import { compactNumber, percent } from '../../lib/format';
-import { fieldLabel, integrityValue, revisionOptions } from '../../lib/reportView';
+import { integrityItems } from '../../lib/integrity';
+import { revisionOptions, runParts, type RunPart } from '../../lib/reportView';
+import { readCollapsedSections, writeCollapsedSections } from '../../lib/prefs';
 import { summaryDigest } from '../../lib/summary';
 import { isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
-import { DetailTables } from './DetailTables';
+import { EpisodesTab } from './EpisodesTab';
 import { ModuleSection, SECTION_STATE_COLOR } from './ModuleSection';
 import { PerfTab } from './PerfTab';
 
@@ -36,13 +37,73 @@ function Stat({ label, value, foot, testId }: { label: string; value: string | n
   );
 }
 
+/** An episode number that opens the Episode tab on it (?ep=N#episodes), keeping ?rev. */
+export function EpisodeLink({ ep }: { ep: number }) {
+  const [params] = useSearchParams();
+  const next = new URLSearchParams(params);
+  next.set('ep', String(ep));
+  return (
+    <Link to={{ search: `?${next.toString()}`, hash: '#episodes' }} className="mono">
+      {zh.report.episode(ep)}
+    </Link>
+  );
+}
+
+/** The episodes waiting for a retry, as links (a few; «ep 7、ep 31»). */
+function HeldEpisodes({ taskId, rev }: { taskId: string; rev: number }) {
+  const q = useQuery({
+    queryKey: qk.episodes(taskId, rev, { list: 'held', limit: 20 }),
+    queryFn: () => unwrap(api().GET('/tasks/{id}/episodes', { params: { path: { id: taskId }, query: { rev, list: 'held', limit: 20 } } })),
+    retry: false,
+  });
+  const items = q.data?.items ?? [];
+  if (!items.length) return null;
+  return (
+    <div data-testid="held-episodes">
+      {zh.reportPage.heldList}：
+      {items.map((e, i) => (
+        <span key={e.episode_index}>
+          {i ? '、' : ''}
+          <EpisodeLink ep={e.episode_index} />
+        </span>
+      ))}
+      {q.data?.has_more ? '…' : ''}
+    </div>
+  );
+}
+
+/**
+ * The standing entry to adjudication (D47): whenever the task has a result, with the number of
+ * pending cards (and primary) when there are any; history revisions are read only.
+ */
+function AdjudicateButton({ task, readOnly }: { task: Task; readOnly: boolean }) {
+  const n = task.pending_adjudication;
+  const label = n ? zh.reportPage.adjudicateN(n) : zh.reportPage.adjudicate;
+  if (readOnly) {
+    return (
+      <Tooltip content={zh.report.historyDisabled}>
+        <Button disabled data-testid="adjudicate-entry">
+          {label}
+        </Button>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tooltip content={zh.reportPage.adjudicateHint}>
+      <Link to={`/tasks/${task.id}/adjudication`} data-testid="adjudicate-entry">
+        <Button type={n ? 'primary' : 'default'}>{label}</Button>
+      </Link>
+    </Tooltip>
+  );
+}
+
 /** Why a new subtask cannot start now (one active subtask per task, and only once it has stopped running). */
 function retryBlocked(task: Task): string | null {
   if (task.active_subtask || !isTerminalState(task.state)) return zh.report.retryBusy;
   return null;
 }
 
-function OverviewCard({ task, report, readOnly, onRetryHeld }: { task: Task; report: Report; readOnly: boolean; onRetryHeld: () => void }) {
+function OverviewCard({ task, report, readOnly, runs, onRetryHeld }: { task: Task; report: Report; readOnly: boolean; runs: RunPart[]; onRetryHeld: () => void }) {
   const reg = useModules();
   const o = report.overview;
   const c = o.counts;
@@ -63,7 +124,11 @@ function OverviewCard({ task, report, readOnly, onRetryHeld }: { task: Task; rep
       </div>
       <div className="stat-grid" style={{ marginTop: 12 }}>
         <Stat label={zh.report.passRate} value={percent(o.pass_rate, 0)} />
-        <Stat label={zh.report.duration} value={zh.time.duration(o.duration_s)} />
+        {o.duration_s !== null && o.duration_s !== undefined ? (
+          <Stat label={zh.report.duration} value={zh.time.duration(o.duration_s)} />
+        ) : runs.length ? (
+          <Stat label={zh.report.duration} value={zh.reportPage.durationParts(runs.map((r) => zh.time.duration(r.seconds)))} foot={zh.reportPage.durationParts(runs.map((r) => r.label))} testId="report-duration" />
+        ) : null}
         <Stat label={zh.report.tokens} value={compactNumber(t.prompt + t.completion)} foot={zh.report.tokensFoot(compactNumber(t.prompt), compactNumber(t.completion))} />
       </div>
       {skipped ? (
@@ -75,7 +140,12 @@ function OverviewCard({ task, report, readOnly, onRetryHeld }: { task: Task; rep
           type="warning"
           style={{ marginTop: 12 }}
           title={zh.report.heldTitle(c.held)}
-          content={zh.report.heldDesc}
+          content={
+            <>
+              <div>{zh.report.heldDesc}</div>
+              <HeldEpisodes taskId={task.id} rev={report.revision} />
+            </>
+          }
           action={
             blocked ? (
               <Tooltip content={blocked}>
@@ -116,18 +186,19 @@ export function skippedOf(report: Report): { count: number; list: SkippedEpisode
   return { count: report.overview.counts.skipped ?? list.length, list };
 }
 
-function IntegrityCard({ report }: { report: Report }) {
-  const entries = Object.entries(report.integrity ?? {}).filter(([k]) => k !== 'skipped_episodes');
+function IntegrityCard({ task, report }: { task: Task; report: Report }) {
+  const items = integrityItems(report, task);
   const skipped = skippedOf(report);
   return (
     <Card title={zh.report.integrity} extra={<span className="muted">{zh.report.integrityDesc}</span>}>
-      {entries.length ? (
-        <div data-testid="integrity">
-          <Descriptions column={1} data={entries.map(([k, v]) => ({ label: fieldLabel(k), value: integrityValue(k, v) }))} />
-        </div>
-      ) : (
-        <Typography.Text type="secondary">—</Typography.Text>
-      )}
+      <dl className="desc-grid" data-testid="integrity">
+        {items.map((it) => (
+          <div key={it.key} className={`desc-item${it.full ? ' full' : ''}${it.warn ? ' warn' : ''}`}>
+            <dt>{it.label}</dt>
+            <dd>{it.value}</dd>
+          </div>
+        ))}
+      </dl>
       {skipped.list.length ? (
         <div style={{ marginTop: 16 }} data-testid="skipped-episodes">
           <Typography.Title heading={6} style={{ margin: '0 0 4px' }}>
@@ -172,7 +243,7 @@ interface ScopeRow {
   failed: boolean;
 }
 
-function ScopeCard({ report }: { report: Report }) {
+function ScopeCard({ report, onJump, onCollapseAll, onExpandAll }: { report: Report; onJump: (id: string) => void; onCollapseAll: () => void; onExpandAll: () => void }) {
   const reg = useModules();
   const rows: ScopeRow[] = [
     ...report.modules.map((s, i) => ({
@@ -186,9 +257,21 @@ function ScopeCard({ report }: { report: Report }) {
     })),
     ...report.skipped_modules.map((s) => ({ key: `skip-${s.id}`, order: null, id: s.id, gate: moduleById(reg.data, s.id)?.gate ?? '', state: 'skipped', note: s.reason, failed: false })),
   ];
-  const jump = (id: string) => document.getElementById(`module-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   return (
-    <Card title={zh.report.scope} extra={<span className="muted">{zh.report.scopeDesc}</span>}>
+    <Card
+      title={zh.report.scope}
+      extra={
+        <Space size={8}>
+          <span className="muted">{zh.report.scopeDesc}</span>
+          <Button size="small" onClick={onCollapseAll}>
+            {zh.reportPage.collapseAll}
+          </Button>
+          <Button size="small" onClick={onExpandAll}>
+            {zh.reportPage.expandAll}
+          </Button>
+        </Space>
+      }
+    >
       <Table
         rowKey="key"
         size="small"
@@ -202,7 +285,7 @@ function ScopeCard({ report }: { report: Report }) {
             dataIndex: 'id',
             render: (_: unknown, r: ScopeRow) =>
               r.order ? (
-                <Button type="text" size="mini" style={{ padding: 0 }} onClick={() => jump(r.id)}>
+                <Button type="text" size="mini" style={{ padding: 0 }} onClick={() => onJump(r.id)}>
                   {moduleName(reg.data, r.id)}
                 </Button>
               ) : (
@@ -237,32 +320,47 @@ function ReportBody({
   rev,
   readOnly,
   subtasks,
-  table,
-  setTable,
+  runs,
 }: {
   task: Task;
   report: Report;
   rev: number;
   readOnly: boolean;
   subtasks: readonly Subtask[];
-  table: string | null;
-  setTable: (table: string) => void;
+  runs: RunPart[];
 }) {
   const qc = useQueryClient();
   const actions = useTaskActions();
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: qk.task(task.id) });
   };
-  const openTable = (id: string) => {
-    setTable(id);
-    document.getElementById('detail-tables')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
   const blocked = retryBlocked(task);
+  // Folded sections are a per-browser preference (F6.2): the same modules stay folded on every report.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => readCollapsedSections());
+  const update = (next: Set<string>) => {
+    setCollapsed(next);
+    writeCollapsedSections(next);
+  };
+  const toggle = (id: string) => {
+    const next = new Set(collapsed);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    update(next);
+  };
+  const jump = (id: string) => {
+    if (collapsed.has(id)) {
+      const next = new Set(collapsed);
+      next.delete(id);
+      update(next);
+    }
+    requestAnimationFrame(() => document.getElementById(`module-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+  const ids = report.modules.map((m) => m.id);
   return (
     <div className="card-gap">
-      <OverviewCard task={task} report={report} readOnly={readOnly} onRetryHeld={() => actions.run('retry', { id: task.id, name: task.name, held: report.overview.counts.held })} />
-      <IntegrityCard report={report} />
-      <ScopeCard report={report} />
+      <OverviewCard task={task} report={report} readOnly={readOnly} runs={runs} onRetryHeld={() => actions.run('retry', { id: task.id, name: task.name, held: report.overview.counts.held })} />
+      <IntegrityCard task={task} report={report} />
+      <ScopeCard report={report} onJump={jump} onCollapseAll={() => update(new Set([...collapsed, ...ids]))} onExpandAll={() => update(new Set([...collapsed].filter((id) => !ids.includes(id))))} />
       {report.modules.map((s: ReportModuleSection, i: number) => (
         <ModuleSection
           key={s.id}
@@ -273,36 +371,24 @@ function ReportBody({
           subtasks={subtasks}
           readOnly={readOnly}
           retryBlocked={blocked}
+          collapsed={collapsed.has(s.id)}
+          onToggle={() => toggle(s.id)}
           onRetry={(moduleId, name) => confirmModuleRetry({ taskId: task.id, moduleId, name, qc, onDone: refresh })}
-          onTable={openTable}
         />
       ))}
-      <LazyVisible placeholder={<Card title={zh.report.tables} id="detail-tables" />}>
-        <DetailTables
-          taskId={task.id}
-          rev={rev}
-          sections={report.modules}
-          selected={table}
-          onSelect={setTable}
-          onResultChanged={() => {
-            void qc.invalidateQueries({ queryKey: qk.task(task.id) });
-            void qc.invalidateQueries({ queryKey: ['task', task.id, 'report'] });
-          }}
-        />
-      </LazyVisible>
       {actions.dialogs}
     </div>
   );
 }
 
 /**
- * 质检报告 (07 §5): overview and integrity, one section per selected module in report.json order,
- * detail tables with server paging, the episode drawer (?ep=), history revisions (?rev=, read
- * only) and the performance profile (#perf).
+ * 质检报告 (07 §5, F6.2): three tabs - 报告 (overview, integrity, one section of statistics and
+ * charts per selected module in report.json order), Episode 明细 (#episodes, `?ep=N` picks the
+ * episode) and 性能剖析 (#perf); history revisions (?rev=) are read only in all of them.
  */
 export function ReportPage() {
   const { id = '' } = useParams();
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
   const task = useTask(id, (q) => {
@@ -315,9 +401,8 @@ export function ReportPage() {
   const rev = revParam ?? current;
   const readOnly = revParam !== null && revParam !== current;
   const ep = positiveInt(params.get('ep'));
-  const tab = location.hash === '#perf' ? 'perf' : 'report';
-  // The detail table picked at the bottom survives a revision change (the page stays mounted).
-  const [table, setTable] = useState<string | null>(null);
+  const hashTab = location.hash === '#perf' ? 'perf' : location.hash === '#episodes' ? 'episodes' : location.hash === '#report' ? 'report' : null;
+  const tab = hashTab ?? (ep !== null ? 'episodes' : 'report');
   const report = useQuery({
     queryKey: qk.report(id, rev),
     queryFn: () => unwrap(api().GET('/tasks/{id}/report', { params: { path: { id }, query: { rev } } })),
@@ -329,12 +414,16 @@ export function ReportPage() {
   const subtasks = useQuery({ queryKey: qk.subtasks(id), queryFn: () => unwrap(api().GET('/tasks/{id}/subtasks', { params: { path: { id } } })), enabled: current > 0 });
   const subs = subtasks.data?.items ?? [];
 
-  const setParam = (key: string, value: string | null) => {
+  // Changing ?rev / ?ep keeps the tab (the hash); an episode picked anywhere opens the Episode tab.
+  const setParam = (key: string, value: string | null, hash: string = location.hash) => {
     const next = new URLSearchParams(params);
     if (value === null) next.delete(key);
     else next.set(key, value);
-    setParams(next);
+    const search = next.toString();
+    navigate({ search: search ? `?${search}` : '', hash });
   };
+  const selectEpisode = (n: number) => setParam('ep', String(n), '#episodes');
+  const onTab = (k: string) => navigate({ search: location.search, hash: k === 'report' ? (ep !== null ? '#report' : '') : `#${k}` });
 
   const crumbs = [{ label: zh.taskList.title, to: '/tasks' }, { label: t?.name ?? id, to: `/tasks/${id}` }, { label: zh.report.title }];
   if (task.isError && !t) {
@@ -367,7 +456,6 @@ export function ReportPage() {
               onChange={(v: number) => setParam('rev', v === current ? null : String(v))}
               options={options}
             />
-            {report.data ? <span className="muted">· {zh.report.sectionsDesc(report.data.report.modules.length)}</span> : null}
           </Space>
         ) : (
           t.name
@@ -378,11 +466,7 @@ export function ReportPage() {
           <Link to={`/tasks/${t.id}`}>
             <Button>{zh.report.back}</Button>
           </Link>
-          {t.pending_adjudication && !readOnly ? (
-            <Link to={`/tasks/${t.id}/adjudication`}>
-              <Button type="primary">{zh.report.goAdjudicate(t.pending_adjudication)}</Button>
-            </Link>
-          ) : null}
+          {current ? <AdjudicateButton task={t} readOnly={readOnly} /> : null}
         </>
       }
     />
@@ -415,21 +499,23 @@ export function ReportPage() {
           }
         />
       ) : null}
-      <Tabs activeTab={tab} onChange={(k) => navigate({ search: location.search, hash: k === 'perf' ? '#perf' : '' })}>
+      <Tabs activeTab={tab} onChange={onTab}>
         <Tabs.TabPane key="report" title={zh.report.tabReport}>
           {report.isLoading ? (
             <Spin style={{ display: 'block', margin: '48px auto' }} />
           ) : !report.data ? (
             <PageError error={report.error} onRetry={() => void report.refetch()} />
           ) : (
-            <ReportBody task={t} report={report.data.report} rev={report.data.revision} readOnly={readOnly} subtasks={subs} table={table} setTable={setTable} />
+            <ReportBody task={t} report={report.data.report} rev={report.data.revision} readOnly={readOnly} subtasks={subs} runs={runParts(t, timeline.data?.items ?? [], subs, report.data.revision)} />
           )}
+        </Tabs.TabPane>
+        <Tabs.TabPane key="episodes" title={zh.reportPage.tabEpisodes}>
+          {tab === 'episodes' ? <EpisodesTab taskId={t.id} rev={rev} readOnly={readOnly} report={report.data?.report} ep={ep} onSelect={selectEpisode} /> : null}
         </Tabs.TabPane>
         <Tabs.TabPane key="perf" title={zh.report.tabPerf}>
           {tab === 'perf' ? <PerfTab taskId={t.id} rev={rev} subtasks={subs} /> : null}
         </Tabs.TabPane>
       </Tabs>
-      <EpisodeDrawer taskId={t.id} ep={ep} rev={rev} readOnly={readOnly} onClose={() => setParam('ep', null)} />
     </div>
   );
 }

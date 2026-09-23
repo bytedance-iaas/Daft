@@ -162,6 +162,10 @@ def test_scratch_volume(daemon_env_cleared):
     # the Daemon's temp space and the export encoders' scratch (CLI) are the same volume
     assert env["CURATOR_SCRATCH_DIR"] == env["CURATION_EXPORT_SCRATCH"] == path
     assert str(Settings.from_env(daemon_environ(docs)).scratch_dir) == path
+    # D44: the local copies of remote mcap / lance datasets are disposable too - the
+    # scratch volume, not the data volume that holds the database
+    assert env["CURATOR_SOURCE_CACHE_DIR"] == f"{path}/source-cache"
+    assert str(Settings.from_env(daemon_environ(docs)).source_cache_dir) == f"{path}/source-cache"
     assert pod_volumes(render({"persistence": {"scratch": {"size": ""}}}))["scratch"]["emptyDir"] == {}
     docs = render({"persistence": {"scratch": {"type": "pvc", "storageClass": "ebs-ssd"}}})
     assert "scratch" not in pod_volumes(docs)

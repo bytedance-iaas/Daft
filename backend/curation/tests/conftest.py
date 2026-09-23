@@ -13,6 +13,18 @@ def _rrd_capability_on():
 
 
 @pytest.fixture(autouse=True)
+def _lance_mcap_capability_on():
+    """lance/mcap 默认**开**(2026-09-21 用户定);fixture 仍强设为开,隔离开发机上
+    偶设的 CURATION_*_ENABLED 环境变量;"关时怎么表现"由各自的开关用例覆盖。"""
+    from curation.ingest import lance_reader, mcap_reader
+    lance_reader.set_enabled(True)
+    mcap_reader.set_enabled(True)
+    yield
+    lance_reader.set_enabled(None)
+    mcap_reader.set_enabled(None)
+
+
+@pytest.fixture(autouse=True)
 def _clear_discover_cache():
     """discover_deliveries 带 5 秒 TTL 缓存(2026-08-20):同一进程里连跑的测试
     各自造交付目录,不清缓存会让后一条看到前一条的扫描结果。"""

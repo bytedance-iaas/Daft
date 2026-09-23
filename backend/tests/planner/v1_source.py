@@ -8,9 +8,9 @@ enclosing functions' assignments, and evaluates it against a config. Nothing
 here is a copy of a v1 number: if v1 changes a default or a formula, the
 values read here change with it.
 
-"v1" is the frozen release (D34, ``release_v1@45bdf9292``), taken from git: the
-working tree's orchestration shell has been split into v2 stages (W3), so its
-call sites no longer look like v1's.
+"v1" is the frozen release (D44, ``dev@eb637ba40``; ``release_v1@45bdf9292`` under
+D34), taken from git: the working tree's orchestration shell has been split into
+v2 stages (W3), so its call sites no longer look like v1's.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ import yaml
 
 from curation.pipeline import config as v1_config
 
-FREEZE_COMMIT = "45bdf929222e7aa08b6ec1827876af3571515202"
+FREEZE_COMMIT = "eb637ba40562c0117d17d7f850d5f8d65cec3aec"   # D44: dev, PR #155 (mcap / lance)
 
 
 @functools.lru_cache(maxsize=1)

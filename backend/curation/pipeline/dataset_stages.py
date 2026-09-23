@@ -155,7 +155,9 @@ def run_dedup(ctx, run_dir: str, input_dir: str, episodes: list[int], part: str,
               embodiment_id: str | None = None) -> dict:
     """v1's two-pass exact dedup (``run.py``) on ``episodes``; returns ``check --json``."""
     from ..dataset_level.dedup import action_hash, episode_fingerprint
-    from ..ingest.lerobot_reader import read_lerobot_rows
+    # v1 reads dedup's chunks with the reader of the input's format (run.py: read_rows,
+    # bound to mcap's topic mapping for mcap)
+    from .rows import read_rows
 
     keep_ids = [_eid(e) for e in sorted(set(episodes))]
     order: list[str] = []
@@ -168,9 +170,8 @@ def run_dedup(ctx, run_dir: str, input_dir: str, episodes: list[int], part: str,
         ctx.check_stop("dedup")
         chunk = {int(e[2:]) for e in keep_ids[i0:i0 + 200]}
         try:
-            rows = read_lerobot_rows(input_dir, episode_indices=chunk,
-                                     embodiment_id=embodiment_id, validate=False,
-                                     skip_missing=True)
+            rows = read_rows(input_dir, episode_indices=chunk, embodiment_id=embodiment_id,
+                             validate=False, skip_missing=True)
         except Exception as e:  # noqa: BLE001 - this chunk cannot be read
             for idx in chunk:
                 unread[_eid(idx)] = f"{type(e).__name__}: {e}"
@@ -195,9 +196,8 @@ def run_dedup(ctx, run_dir: str, input_dir: str, episodes: list[int], part: str,
         idxs = {int(e[2:]) for e in eps}
         seen: dict[str, str] = {}
         try:
-            rows = read_lerobot_rows(input_dir, episode_indices=idxs,
-                                     embodiment_id=embodiment_id, validate=False,
-                                     skip_missing=True)
+            rows = read_rows(input_dir, episode_indices=idxs, embodiment_id=embodiment_id,
+                             validate=False, skip_missing=True)
         except Exception as e:  # noqa: BLE001
             for eid in eps:
                 unread[eid] = f"{type(e).__name__}: {e}"

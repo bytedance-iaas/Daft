@@ -92,6 +92,15 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 - **数据集**：登记、核对、重新预检都跑 CLI（`preflight`、`snapshot`），清单按内容寻址保存，核对只比清单（D37）；
   浏览：公共数据集读目录、本地目录列子目录、TOS 列公共前缀并读 `info.json` 提示；episode 列表读 v2 `episodes.jsonl` 或 v3 的 parquet，
   游标分页，TOS 上的相机视频给预签名地址（v3 带 `from_ts` / `to_ts`）。
+- **mcap 与 Lance**（D44，C4 1.11）：登记、核对、浏览、建任务、D37 与 LeRobot 走同一条路，`Dataset.format` 是 `mcap` / `lance`。
+  开始前的输入检查在没有 `meta/info.json` 时改读第一个 `.mcap` 文件（或 `meta.lance` 的一个版本文件）的开头几个字节。
+  浏览时没有 `info.json` 的目录按文件认 `mcap` / `lance` / `rrd`；episode 列表对 mcap 按 v1 的规则从文件名编号，这一页每个文件读一次摘要区
+  （几次按范围读）拿时长与元数据里的任务文本，任务文本只在 `/task` topic 里的给 `task_unread`；这两种格式都没有相机地址。
+  运行时，读源数据的命令多带 `--selection <任务的所选>`（数据集语义取它的前 100 条，与 v1 一致），环境里多 `CURATION_SOURCE_CACHE`
+  （TOS 上的数据先拉到 `CURATOR_SOURCE_CACHE_DIR/<task_id>/`，同一次运行的各条命令复用）和指向它下面 `tmp/` 的 `TMPDIR`（读取器转出的视频）。
+  运行结束（完成、失败、暂停、停止都算）就删掉这个目录，下次运行重新拉；崩溃留下的由清理线程在任务没有运行时删掉。
+  导出的数据集在 `export/mcap_curated/` 或 `export/lance_episodes/`，和 `lerobot_curated/` 一样由 CLI 自己上传、同步时跳过、不取回；
+  Lance 导出的说明（原格式交付未做）写进任务日志。
 
 ## 配置
 
@@ -157,6 +166,22 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
 10. **停机**：再建一个任务，趁它在跑 `kill -TERM` Daemon：日志里 `shutdown: 1 running job(s) asked to pause`，
     任务停在 `paused`（`pause_reason: system`，原因「Daemon 停机」）；重启 Daemon（去掉上一步的保留期）后启动对账把它放回队列，
     它自己跑完。
+11. **mcap 与 Lance（D44）**：把同一份数据做成两种格式，放在本地数据根下：
+
+    ```bash
+    PYTHONPATH=../tools ../.venv/bin/python -m parity make-fixture --format mcap --out $D/inputs/mini_mcap
+    PYTHONPATH=../tools ../.venv/bin/python -m parity make-fixture --format lance --out $D/inputs/mini_lance
+    c "$B/datasets/browse?source=local&uri=$D/inputs"                         # mini_lance: lance 8、mini_mcap: mcap 8
+    c "$B/datasets/episodes?source=local&uri=$D/inputs/mini_mcap&limit=3"     # cameras 为空、length_s 约 5 秒、task_unread: true
+    ```
+
+    然后按第 1、2 步各建一个任务（`uri` 换成 `$D/inputs/mini_mcap` / `$D/inputs/mini_lance`，交付目录换成
+    `tos://deliveries/mini_mcap` / `tos://deliveries/mini_lance`，模块同第 2 步）。预检的 `format` 分别是
+    `{"kind": "mcap", "version": null, …}` 与 `{"kind": "lance", "version": "v3", …}`。十几秒后两个任务都是 `succeeded`，
+    `summary` 为 `total 8, passed 5, rejected 3, held 0`，和 LeRobot 版本相同；`ls $D/tos/deliveries/mini_mcap/*/export/mcap_curated/`
+    是 `episode_0/1/3/4/6.mcap` 与 `index.json`，`ls $D/tos/deliveries/mini_lance/*/export/lance_episodes/` 是 `episodes_parquet`、`index.json`、`videos`；
+    Lance 任务的日志（`c "$B/tasks/$T/logs?stage=export"`）里有「lance 原格式交付本版本未做」。`c "$B/datasets?format=mcap"` 只列出 `mini_mcap`。
+    跑完之后 `$D/data/source-cache/` 下没有任务目录（本地数据不用拉副本，读取器的临时视频目录随运行删掉；TOS 上的数据拉到这里，同样随运行删掉）。
 
 ## 自动化测试
 
@@ -164,6 +189,9 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
 ../.venv/bin/python -m pytest -q tests/orchestr -m "not slow"    # 约 1.5 分钟：执行器、规则、交付目录、worker 池、接口与校验
 ../.venv/bin/python -m pytest -q tests/orchestr                  # 全部，含真跑 CLI 的端到端（slow）
 ```
+
+`test_containers.py` 是 mcap / Lance（D44）：登记、核对与重新预检、浏览提示、episode 列表，慢测试里两种格式各真跑一个任务到交付，
+另有一个是 D37 在 mcap 文件变了时拦下开始。
 
 端到端测试用对账工具的合成数据集、CLI 测试的假模型服务、本地交付替身；密钥按 W8 的方式真实封存（假 TOS），
 启动前的检查、D37、固化都按生产路径走。`faultycli.py` 往 CLI 注入崩溃、出错条目、整体失败；

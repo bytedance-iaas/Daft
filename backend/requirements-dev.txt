@@ -5,3 +5,5 @@ openapi-spec-validator
 pytest-github-actions-annotate-failures   # failed tests show up as run annotations, readable without log access
 httpx2==2.13.0          # Starlette 1.x TestClient (Daemon tests)
 httpx==0.28.1           # tests/orchestr/test_e2e_recovery.py talks to a real Daemon process
+foxglove-schemas-protobuf==0.3.0   # message classes for the synthetic protobuf (UMI) mcap files of
+                                   # test_mcap_reader.py and the v2 mcap tests; production never needs it

@@ -4,11 +4,12 @@
 import { Button, Spin } from '@arco-design/web-react';
 import { IconPlayArrow } from '@arco-design/web-react/icon';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { LazyVisible } from '../../components/LazyVisible';
 import { zh } from '../../locales/zh';
+import type { SyncController } from './syncPlayback';
 
 export type MediaScope = 'delivery' | 'input';
 
@@ -59,38 +60,53 @@ export function withFragment(url: string, from?: number | null, to?: number | nu
 }
 
 /**
- * One camera's video. Nothing is signed until the user asks for it (click, or 「同时播放」 via
- * `playSignal`), so opening a page never signs every video on it (07 §9).
+ * One camera's video. Nothing is signed until the user asks for it (a click on the placeholder,
+ * or `load` from 「同时播放」), so opening a page never signs every video on it (07 §9), and
+ * nothing ever starts playing by itself: playing together is the sync controller's (F6.2), which
+ * takes the <video> element when `controller` is given.
  */
-export function SignedVideo({ task, video, playSignal = 0, caption }: { task: string; video: VideoRef; playSignal?: number; caption?: ReactNode }) {
-  const [requested, setRequested] = useState(false);
+export function SignedVideo({
+  task,
+  video,
+  load = false,
+  caption,
+  controller,
+  syncId,
+}: {
+  task: string;
+  video: VideoRef;
+  load?: boolean;
+  caption?: ReactNode;
+  controller?: SyncController;
+  syncId?: string;
+}) {
+  const [clicked, setClicked] = useState(false);
+  const requested = clicked || load;
   const [failed, setFailed] = useState(false);
   const sign = useSignedUrl({ task, scope: video.scope, path: video.path }, requested);
   const el = useRef<HTMLVideoElement | null>(null);
   const failures = useRef(0);
-  const wantPlay = useRef(false);
   const resume = useRef<{ time: number; play: boolean } | null>(null);
   // The episode's time range comes from the episode endpoint (W8 does not return it when signing).
   const url = sign.data ? withFragment(sign.data.url, video.from_ts, video.to_ts) : null;
+  const synced = () => Boolean(controller?.isActive());
 
-  useEffect(() => {
-    if (!playSignal) return;
-    wantPlay.current = true;
-    setRequested(true);
-    if (url && el.current) {
-      wantPlay.current = false;
-      void el.current.play()?.catch(() => undefined);
-    }
-    // Only a new signal plays; url changes are handled below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playSignal]);
+  // The element joins the synced group as it mounts and leaves it as it unmounts.
+  const from = video.from_ts;
+  const to = video.to_ts;
+  const setEl = useCallback(
+    (node: HTMLVideoElement | null) => {
+      if (el.current && el.current !== node && controller && syncId) controller.detach(syncId, el.current);
+      el.current = node;
+      if (node && controller && syncId) controller.attach(syncId, node, { from, to });
+    },
+    [controller, syncId, from, to],
+  );
 
+  const gaveUp = failed || Boolean(sign.error && !sign.data);
   useEffect(() => {
-    if (url && wantPlay.current && el.current) {
-      wantPlay.current = false;
-      void el.current.play()?.catch(() => undefined);
-    }
-  }, [url]);
+    if (gaveUp && controller && syncId) controller.fail(syncId);
+  }, [gaveUp, controller, syncId]);
 
   const retryFromScratch = () => {
     failures.current = 0;
@@ -105,7 +121,8 @@ export function SignedVideo({ task, video, playSignal = 0, caption }: { task: st
     }
     failures.current += 1;
     const v = el.current;
-    resume.current = v ? { time: v.currentTime, play: !v.paused } : null;
+    // While synced the controller puts the new URL back at the group's moment.
+    resume.current = v && !synced() ? { time: v.currentTime, play: !v.paused } : null;
     void sign.resign();
   };
 
@@ -113,7 +130,7 @@ export function SignedVideo({ task, video, playSignal = 0, caption }: { task: st
     const v = el.current;
     const r = resume.current;
     resume.current = null;
-    if (!v || !r) return;
+    if (!v || !r || synced()) return;
     if (r.time) v.currentTime = r.time;
     if (r.play) void v.play()?.catch(() => undefined);
   };
@@ -126,12 +143,12 @@ export function SignedVideo({ task, video, playSignal = 0, caption }: { task: st
   let body: ReactNode;
   if (!requested) {
     body = (
-      <button type="button" className="video-placeholder" onClick={() => setRequested(true)} aria-label={`${zh.report.videoLoad}：${video.camera}`}>
+      <button type="button" className="video-placeholder" onClick={() => setClicked(true)} aria-label={`${zh.report.videoLoad}：${video.camera}`}>
         <IconPlayArrow style={{ fontSize: 28 }} />
         <span>{zh.report.videoLoad}</span>
       </button>
     );
-  } else if (failed || (sign.error && !sign.data)) {
+  } else if (gaveUp) {
     body = (
       <div className="video-placeholder" role="alert">
         <span>{sign.error && !sign.data ? errorMessage(sign.error) : zh.report.videoFailed}</span>
@@ -150,12 +167,12 @@ export function SignedVideo({ task, video, playSignal = 0, caption }: { task: st
   } else {
     body = (
       <video
-        ref={el}
+        ref={setEl}
         src={url}
         controls
         muted
         playsInline
-        preload="metadata"
+        preload={load ? 'auto' : 'metadata'}
         onError={onError}
         onLoadedMetadata={onLoaded}
         onLoadedData={() => {

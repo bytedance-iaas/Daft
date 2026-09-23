@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.11.0
+  version: 1.13.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -88,6 +88,24 @@ info:
     `TaskParams.batch_size` lets API clients set the maximum number of episodes handed from
     one funnel layer to the next per batch. (Written on 2026-09-22 as 1.7.0 / 1.7.1 on a branch
     that predates 1.8.0-1.10.0; renumbered when merged.)
+
+    1.11.0 (2026-09-23): the report's Episode tab (F6.2). `GET /tasks/{id}/episodes` lists the
+    episodes of a result revision - list, the modules behind it, whether a person still has to
+    answer something about it - filtered by list, by open questions and by an episode number
+    (`q`: `12`, `ep12`, `ep 12`), in episode order with a revision-bound cursor;
+    `GET /tasks/{id}/episodes/{index}/sync-curves` serves one episode's video-action sync curves
+    (picture motion and arm motion over time, the cross-correlation over the lag, the reading on
+    it). Module summaries in `report.json` gain chart-ready aggregates (design doc 06 §6.2);
+    their schema stays a free object. (Written as 1.9.0 on the F6.2 branch; renumbered when
+    merged after 1.10.1.)
+
+    1.12.0 (2026-09-23): mcap and lance datasets (D44, v1's PR #155). `DatasetFormat` and the
+    `format` filter of `GET /datasets` take `mcap` and `lance` (lerobot-lance-convert >= 0.3.0);
+    `BrowsedDataset.format_hint` takes them too. `EpisodePreview` of such a dataset has no
+    cameras (their videos are inside the files / tables); an mcap episode whose task text is in
+    a task topic, which the preview does not read, says so with `task_unread`. The preflight
+    (C2) reports `kind` mcap / lance; exports of these datasets name their `dataset_dir`.
+    (Written as 1.11.0 on the F6.5 branch; renumbered when merged after the report's 1.11.0.)
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1184,6 +1202,46 @@ paths:
                       revision: {type: integer, minimum: 1}
                       items: {type: array, items: {type: object}}
         default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - $ref: "#/components/parameters/Rev"
+    get:
+      tags: [report]
+      operationId: listTaskEpisodes
+      summary: The episodes of a result revision, for the report's Episode tab (F6.2)
+      description: |
+        Every episode of the three final lists in episode order: its list, the modules that put
+        it there, and whether a person still has to answer something about it (on the current
+        revision the adjudication cards still to decide - pending or unsure; on a history
+        revision the questions that revision asked). `q` is an episode number matched as a
+        substring of the index; a leading `ep` and leading zeros are dropped, so `12`, `ep12`,
+        `ep 12` and `ep000012` all find ep 12. The cursor carries the revision and is bound to
+        the filters (another filter set is 400 validation_failed, another revision 409
+        result_changed). `total` counts the filtered set, `counts` the whole revision.
+      parameters:
+        - name: list
+          in: query
+          schema: {enum: [passed, reject, held]}
+        - name: review
+          in: query
+          description: only episodes with (true) or without (false) an open question
+          schema: {type: boolean}
+        - name: q
+          in: query
+          description: "an episode number, optionally with the ep prefix: 12, ep12, ep 12"
+          schema: {type: string, maxLength: 64}
+        - $ref: "#/components/parameters/Cursor"
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500, default: 50}
+      responses:
+        "200":
+          description: episodes
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TaskEpisodePage"}
+        default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/episodes/{index}:
     parameters:
       - $ref: "#/components/parameters/PathId"
@@ -1250,6 +1308,32 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/PipelineEpisode"}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/episodes/{index}/sync-curves:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - name: index
+        in: path
+        required: true
+        schema: {type: integer, minimum: 0}
+      - $ref: "#/components/parameters/Rev"
+    get:
+      tags: [report]
+      operationId: getEpisodeSyncCurves
+      summary: One episode's video-action sync curves (F6.2)
+      description: |
+        Per camera: picture motion (optical-flow energy) and arm motion (joint speed) over time,
+        the cross-correlation of the two within the check's scan window, and the check's reading
+        on that curve. Values are raw; the page normalizes them to compare shapes. At most 600
+        points per series. 404 not_found with details.reason module_not_run (the sync check was not
+        selected), no_record (the episode never reached it, or it failed there) or no_curves
+        (nothing was kept: by default only episodes worth a look keep their curves).
+      responses:
+        "200":
+          description: curves
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SyncCurves"}
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/perf:
     parameters:
@@ -1869,9 +1953,9 @@ components:
       properties:
         name: {type: string}
         uri: {type: string}
-        format_hint: {enum: [lerobot_v2, lerobot_v3, rrd, unknown]}
+        format_hint: {enum: [lerobot_v2, lerobot_v3, mcap, lance, rrd, unknown]}
         episodes: {type: [integer, "null"]}
-    DatasetFormat: {enum: [lerobot_v2, lerobot_v3, unsupported]}
+    DatasetFormat: {enum: [lerobot_v2, lerobot_v3, mcap, lance, unsupported]}
     DatasetItemFields:
       type: object
       required: [id, name, source, uri, region, format, episode_count, robot_type, check_state, checked_at,
@@ -2079,6 +2163,11 @@ components:
         length_s: {type: [number, "null"]}
         task: {type: string}
         task_source: {enum: [原始标注, 无]}
+        task_unread:
+          type: boolean
+          description: >-
+            mcap (1.12): the episode has a task topic the preview does not read (its text is
+            inside the file; the checks read it) - task is empty, but not because there is none
         cameras:
           type: array
           items:
@@ -2650,6 +2739,80 @@ components:
               path: {type: string}
               from_ts: {type: number}
               to_ts: {type: number}
+    TaskEpisode:
+      type: object
+      additionalProperties: false
+      required: [episode_index, list, review, reason_modules, review_modules]
+      properties:
+        episode_index: {type: integer, minimum: 0}
+        list: {enum: [passed, reject, held]}
+        review: {type: boolean, description: "a person still has to answer something about it (see listTaskEpisodes)"}
+        reason_modules:
+          type: array
+          items: {$ref: "#/components/schemas/ModuleId"}
+          description: the modules that put it in its list - the deciding modules of a reject, the failed modules of a held one, none when passed
+        review_modules:
+          type: array
+          items: {$ref: "#/components/schemas/ModuleId"}
+          description: the source modules of the open questions
+    TaskEpisodePage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor, has_more, total, counts, revision]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/TaskEpisode"}}
+        next_cursor: {type: [string, "null"]}
+        has_more: {type: boolean}
+        total: {type: integer, minimum: 0, description: "episodes matching the filters"}
+        counts:
+          type: object
+          additionalProperties: false
+          required: [all, passed, reject, held, review]
+          description: the whole revision, filters ignored
+          properties:
+            all: {type: integer, minimum: 0}
+            passed: {type: integer, minimum: 0}
+            reject: {type: integer, minimum: 0}
+            held: {type: integer, minimum: 0}
+            review: {type: integer, minimum: 0}
+        revision: {type: integer, minimum: 1}
+    SyncCurves:
+      type: object
+      additionalProperties: false
+      required: [episode_index, revision, verdict, lag_tol_s, window_s, cameras]
+      properties:
+        episode_index: {type: integer, minimum: 0}
+        revision: {type: integer, minimum: 1}
+        verdict: {type: [string, "null"], description: "the episode-level reading: aligned, annotated, undecidable, misaligned_all"}
+        consensus_lag_s: {type: [number, "null"], description: "the lag every trusted camera agrees on, when they do"}
+        lag_tol_s: {type: number, description: "readings within +/- this are aligned (the green band)"}
+        window_s: {type: number, description: "the cross-correlation is drawn for lags within +/- this"}
+        cameras: {type: array, items: {$ref: "#/components/schemas/SyncCurveCamera"}}
+    SyncCurveCamera:
+      type: object
+      additionalProperties: false
+      required: [camera, t, flow, speed, lags, xcorr, peak]
+      properties:
+        camera: {type: string}
+        t: {type: array, items: {type: [number, "null"]}, description: "seconds from the episode start"}
+        flow: {type: array, items: {type: [number, "null"]}, description: "picture motion (optical-flow energy) at t"}
+        speed: {type: array, items: {type: [number, "null"]}, description: "arm motion (joint speed) at t"}
+        lags: {type: array, items: {type: [number, "null"]}, description: "seconds; > 0 = the picture is later than the motion"}
+        xcorr: {type: array, items: {type: [number, "null"]}, description: "cross-correlation at each lag"}
+        lag_s: {type: [number, "null"], description: "the check's reading"}
+        corr_peak: {type: [number, "null"]}
+        code: {type: [string, "null"], description: "aligned, misaligned, ambiguous_peak, flat_peak, low_corr, no_motion"}
+        trusted: {type: [boolean, "null"]}
+        peak:
+          description: the reading on the drawn curve; null when there is none or it lies outside the window
+          oneOf:
+            - {type: "null"}
+            - type: object
+              additionalProperties: false
+              required: [lag_s, corr]
+              properties:
+                lag_s: {type: number}
+                corr: {type: number}
     EpisodeNote:
       type: object
       additionalProperties: false

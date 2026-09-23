@@ -49,7 +49,7 @@ docker push <镜像仓库>/curator:<版本>
 | `NODE_IMAGE` | `node:20-bookworm-slim` | 同上；只用于构建控制台，不进最终镜像 |
 | `NPM_REGISTRY` | 空 = lock 文件里的 registry.npmjs.org | 官方源慢时，例如 `https://registry.npmmirror.com`（火山镜像站没有 npm 源） |
 | `PIP_INDEX_URL` | `https://mirrors.ivolces.com/pypi/simple`（火山内网） | 火山网络之外必须改：`https://pypi.org/simple` 或 `https://mirrors.volces.com/pypi/simple` |
-| `SUPPLEMENT_PYPI_URL` | `https://mirrors.aliyun.com/pypi/simple/`（阿里云） | 火山源缺的版本从这里补：只装 `deploy/pip-extra-index.txt` 里列的几个及其依赖（现在是 uvicorn 0.53.0、cryptography 50.0.1，火山内网源只到 0.44.0、49.0.0），其余全走 `PIP_INDEX_URL`；火山源补齐后删掉对应那一行。传空则只用 `PIP_INDEX_URL` |
+| `SUPPLEMENT_PYPI_URL` | `https://mirrors.aliyun.com/pypi/simple/`（阿里云） | 火山源缺的版本从这里补：只装 `deploy/pip-extra-index.txt` 里列的几个及其依赖（现在是 uvicorn 0.53.0、cryptography 50.0.1，火山内网源只到 0.44.0、49.0.0；F6.5 又加了 mcap / Lance 读取要的 pylance 8.0.0、mcap 1.4.0，是按发布日期推测火山源还没有，下一次构建确认后删掉已有的那行），其余全走 `PIP_INDEX_URL`；火山源补齐后删掉对应那一行。传空则只用 `PIP_INDEX_URL` |
 | `APT_MIRROR` | `https://mirrors.volces.com`（公网可达） | 火山内网可改 `http://mirrors.ivolces.com`，更快；缺省值不要改成内网域名，公开 CI 会直接失败 |
 | `NO_MIRROR` | 空 | 火山网络之外设为 `1`：跳过 oniond（`curation fetch` 不可用，其余照常） |
 
@@ -91,7 +91,8 @@ docker run --rm -p 8080:8080 -v curator-data:/data -e CURATOR_BASE_PATH=/curatio
 7. **想和 rerun viewer 免二次登录**：同域、共用同一张 htpasswd、realm 不改（Daemon 固定为 `Robot Data Curation`）。
 8. **节点规格**：缺省按 32 核 128G 节点给 `requests 8 核 / 32Gi`、`limits 30 核 / 110Gi`，照节点的 allocatable 调，别照抄规格。
 9. **集群没有公网出口**：配 `server.tosEndpoint` 为部署地域的 TOS 内网端点（如 `tos-cn-beijing.ivolces.com`），否则 Daemon 和 CLI 都连不上 TOS。
-10. **镜像能拉到**：`image.repository` / `image.tag` 填真实值；私有仓库按 VKE 的镜像仓库凭证配置（或自己建 `kubernetes.io/dockerconfigjson` 类型的 Secret），名字写进 `imagePullSecrets`。
+10. **临时卷够大**：`persistence.scratch` 除了导出时的视频临时文件，还放 TOS 上 mcap / Lance 数据集的本地副本（`CURATOR_SOURCE_CACHE_DIR=<挂载点>/source-cache`，D44）：mcap 读到哪条下载哪条，Lance 整表下载，任务跑完就删。要质检大的 Lance 数据集，按数据集大小加上导出的余量来定 `size`，长期跑用 `type: pvc`；emptyDir 写超上限 kubelet 会驱逐 Pod。副本不放数据卷：数据卷写满会让 SQLite 写不进去。
+11. **镜像能拉到**：`image.repository` / `image.tag` 填真实值；私有仓库按 VKE 的镜像仓库凭证配置（或自己建 `kubernetes.io/dockerconfigjson` 类型的 Secret），名字写进 `imagePullSecrets`。
 
 ## 3. 创建 Secret
 

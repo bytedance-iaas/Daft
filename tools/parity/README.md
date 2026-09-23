@@ -2,14 +2,19 @@
 
 v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之后每搬一块代码，都拿 v2 的结果和基线逐条比。
 口径见 [`docs/design/10-parity-and-migration.md`](../../docs/design/10-parity-and-migration.md) §3，
-决策见 `00-overview.md` §7 的 D15、D19、D33、D34。
+决策见 `00-overview.md` §7 的 D15、D19、D33、D34、D44。
+
+**冻结点**：`dev` 的 `eb637ba40`（2026-09-22，PR #155「mcap 与 lance 格式的质检」合入后的头部，D44）。
+此前是 `release_v1` 的 `45bdf9292`（D34）；两者之间只有 PR #155，它对 LeRobot 数据集的判决没有影响
+（格式嗅探多认两种格式、收尾多清两种缓存），合成数据集上 v1 对 v2 的逐位对账照样全过。
+`manifest.py` 的 `DEFAULT_COMMIT` 是唯一出处，`v1-manifest`、`v1-src`、`pack` 和测试都从它取。
 
 | 命令（`python -m parity …`） | 作用 |
 |---|---|
 | `dump-v1` | 在同一进程里跑一遍 v1 原版 `curation run`（或 `curation rejudge`：执行人工裁决），挂钩取数，导出规范化结果；同时录制或回放全部模型调用 |
 | `run-v2` | 按 Daemon 的顺序跑一遍 v2 的原子命令（preflight → … → verify），模型调用走同一套录制带挂钩（W3）；带 `--from … --decisions …` 时在一份已跑完的运行目录副本上跑裁决序列 |
 | `compare` | 比较两份导出（或 v2 运行目录）：确定性六项逐位比，VLM 三项按判决比（可带噪声底），终判清单比，回放命中率与调用图；金标是 v1 的 rejudge 时比裁决（见下） |
-| `make-fixture` | 生成 8 条 episode 的合成 LeRobot v2 数据集（真视频），离线测试用 |
+| `make-fixture` | 生成 8 条 episode 的合成 LeRobot v2 数据集（真视频），离线测试用；`--format mcap` / `--format lance` 是同样 8 条的 mcap（每条一个 cdr 编码的 `.mcap`）与 Lance（lerobot-lance-convert 的三表布局）版本（D44） |
 | `tape-summary` | 看一盘录制带：各类调用多少次、有没有失败 |
 | `pack` | 打一个带进 Pod 的包：冻结点的 v1 源码 + 当前的对账工具 |
 | `archive` / `fetch` | 导出结果连同 `MANIFEST.json`（逐文件 sha256）上传到 TOS / 取回并校验 |
@@ -21,7 +26,7 @@ v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之�
 
 ## 它怎么工作
 
-- **只读 v1**：`dump-v1` 启动时按 `v1_manifest.json` 逐文件核对 v1 源码（冻结点 `45bdf9292`，D34），
+- **只读 v1**：`dump-v1` 启动时按 `v1_manifest.json` 逐文件核对 v1 源码（冻结点 `eb637ba40`，D44），
   对不上就拒跑。之后只在运行期间包几个函数取数，v1 的文件一个字不改：
   - 包 `daft.DataFrame.collect`，在硬门过滤**之前**截下每条的检查结果（v1 自己的报告里，被硬门拦下的条目只剩拦下它的那一项）；
   - 包 `requests` 与 `vlm_client.hedged_request`，录下或回放每一次模型调用（对冲补发只认赢的那一发）；
@@ -125,6 +130,23 @@ $python -m parity compare --golden $W/rec --candidate $W/v2 --all-strict
 - `$python -m parity tape-summary $W/rec/vlm_tape.jsonl.gz` 应列出 probe / endstate / arbitration / caption 各类调用，`0 failed calls`。
 - 单元测试与端到端测试：`$python -m pytest -q tools/parity/tests`（约 1 分钟；`test_v2_parity.py` 就是第 5–8 步，
   外加「带子上少一个请求时对账必须失败」「按首轮完整流程重判的改标对不上 v1 的 rejudge」两个反例，CI 的对账工具一步里一起跑）。
+
+mcap 与 Lance 的对账（D44，每种约半分钟）：同样 8 条做成两种新格式，v1（新冻结点，带 PR #155）跑一遍录带子，
+v2 的命令链回放它（`run-v2` 与 Daemon 一样给读源数据的命令带 `--selection`），标准与 LeRobot 相同：
+
+```bash
+for F in mcap lance; do
+  $python -m parity make-fixture --format $F --out $W/mini-$F
+  $python -m parity dump-v1 --out $W/rec-$F --v1-src $V1 --fake-vlm -- run --input $W/mini-$F --output $W/rec-$F-out \
+    --vlm-endpoint http://fake-vlm.local/v1 --vlm-model fake-vlm
+  $python -m parity run-v2 --out $W/v2-$F --input $W/mini-$F --delivery $W/v2-$F-delivery --replay $W/rec-$F/vlm_tape.jsonl.gz
+  $python -m parity compare --golden $W/rec-$F --candidate $W/v2-$F --all-strict      # conclusion: PASS
+done
+```
+
+v1 的 `final.json` 与 LeRobot 版本相同（`passed` `[0, 1, 3, 4, 6]`、`reject` `[2, 5, 7]`），回放 `misses=0 unused=0`；
+v2 的交付在 `$W/v2-mcap-delivery/export/mcap_curated/` 与 `$W/v2-lance-delivery/export/lance_episodes/`。
+自动化的版本是 `tools/parity/tests/test_containers_parity.py`。
 
 人工裁决的对账（D39，约半分钟）：v1 的 rejudge 在交付上执行两条改标，v2 的裁决序列回放它录下的带子：
 

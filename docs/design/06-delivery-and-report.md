@@ -30,7 +30,7 @@ deliveries/<delivery-name>/
 │   ├── logs/<stage>.jsonl         各 stage 的完整日志
 │   ├── export/
 │   │   ├── manifest.json          ★ 产物清单，增量导出的依据
-│   │   └── lerobot_curated/       交付数据集
+│   │   └── lerobot_curated/       交付数据集（mcap 源是 mcap_curated/，Lance 源是 lance_episodes/，D44，见 §1.1）
 │   └── _COMPLETE                  完整性标志，交付核验通过后最后写
 └── latest                         指向最近一次发布成功的完整版本
 ```
@@ -53,6 +53,20 @@ deliveries/<delivery-name>/
 v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/info.json` → `passed.json` → `latest`」的
 上传顺序来保证读方看不到半成品。v2 改用显式的 `_COMPLETE`，但**上传顺序的纪律保留**：
 `_COMPLETE` 和 `latest` 永远最后传，且不参与按大小跳过的续传判断。
+
+### 1.1 mcap 与 Lance 源的交付数据集（D44）
+
+判决清单、报告、版本目录与 LeRobot 源完全一样，只有交付数据集照 v1 PR #155 的做法换了形态，
+`export/manifest.json` 的 `dataset_dir` 写明是哪个目录（核验与 Daemon 的同步、视频查找都按它找文件）：
+
+| 源格式 | 交付目录 | 内容 |
+|---|---|---|
+| mcap | `export/mcap_curated/` | v1 的 `export/mcap_writer.export_mcap_curated` 原样：passed 各条的 `.mcap` 逐字节拷贝（源文件不叫 `episode_<N>.mcap` 的改成这个名字），`index.json` 列每条的任务文本、来源与原文件。自产描述、人工改标只写进 `index.json`，文件本体不动（改 mcap 要重写整个容器，v1 不做） |
+| Lance | `export/lance_episodes/` | **Lance 原格式交付本版本未做**。交的是 v1 的 `episodes_parquet/`：passed 各条的轨迹级数值，任务文本写进 `instruction` / `instruction_source`；视频存到 `videos/`，指针改写到交付位置；`index.json`、导出结果的 `note` 和报告的「数据包」一节都写明这一点 |
+
+这两种都没有增量重导出（§4 的算法只认 LeRobot 的两种布局）：每次全量导出，`--incremental` 在 `full_reason` 里说明；
+内容没变的文件不重新上传。交付数据集里的任务文本来源与 LeRobot 源一样取自本任务（原始标注 / 自产描述 / 人工改标），
+用词沿用 v2 的 `自产caption`、`人工改标`，与 v1 PR #155 的 `自产caption补标` 略有不同。
 
 ## 2. 版本指纹
 
@@ -319,6 +333,8 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
   "skipped_modules": [{"id": "kinematic_limits",
                        "reason": "机器人型号 umi_dual_handheld_gripper 不在规格库"}],
   "integrity": {...,                 // 数据包完整性：格式、缺失字段、无标注条数、语义 profile / 动作语义预检结论
+                "container": {"format": "mcap", "delivery": "mcap_curated/（…）",   // mcap / Lance 源才有（D44）：交付形态与
+                              "findings": [{"项": "机器人型号", "状态": "正常", "说明": "…"}]},  // v1 的数据包体检（型号、时间轴、任务文本）
                 "skipped_episodes": [{"episode_index": 12,
                                       "missing": ["videos/chunk-000/observation.images.wrist/episode_000012.mp4"]}]},
   "perf": {"url": "/tasks/<id>/perf"}
@@ -352,19 +368,32 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
 每个小节的渲染器按 `module.id` 从一张注册表里查，查不到就用默认表格渲染器 —— 
 这样加模块不需要改前端（见 `05-modules-and-preflight.md` §7）。
 
-现有八个模块的小节内容沿用 v1 报告已有的东西，不是一张默认表格能撑起来的：
+**报告小节只放统计和图，不列具体的 episode**（2026-09-23 需求方第 1 条，F6.2）：一条一条的读数在报告的
+「Episode 明细」页签里按模块逐块看（07 篇 §5），不再放在小节里，也不再有底部明细表和右侧抽屉。
+为此 `curation report` 在每个模块的 `summary` 里写入「画图就能用」的汇总，全部从该版本已有的结果记录
+（`details` 原样）算出，只有计数、均值和按相机的小数组，**不含 episode 清单**；它们不回流到任何判决或清单，
+生成报告前后判决逐位一致（合成数据上的 v1 / v2 对账覆盖了这一点）。实现在 `backend/curation/pipeline/report_stats.py`。
 
-| 模块 | 摘要指标 | 图 / 专用视图 | 明细 |
-|---|---|---|---|
-| 时间戳检查 | 不合格条数，按原因（乱序 / 跳变 / 残段） | — | 逐条的异常位置 |
-| 运动学极限 | 越限条数、涉及的关节 | — | 逐条逐关节的越限幅度；速度域标定结论 |
-| 运动质量 | 平均分、子项适用性（哪些子项自弃权） | **卡顿动作时间线**：每条一根三色条（卡顿 / 空闲 / 正常），可按卡顿时长排序 | `motion_details.csv` 切片；执行器卡死单列、不进总分 |
-| 视觉质量 | 平均分、逐相机分布 | — | 逐相机打分明细；生效的质检参数 |
-| 视频-动作同步 | 错位条数；被标注的相机数 | **同步曲线卡片**：逐相机的画面动量 / 关节速度曲线 + 互相关曲线，附逐相机诊断（入镜晚 / 信号弱 / 假峰）；可筛「只看有标注或异常的」 | 逐相机 lag 与相关峰值 |
-| 任务成败判定 | 通过 / 判废 / 弃权条数；弃权原因分布 | 判决卡：初判 → 复核汇票 → 护栏 → 仲裁的留痕 | `task_details.json`；右上角「去裁决（N）」 |
-| 精确去重 | 重复组数、被剔除条数 | — | 重复组清单 |
-| 技能画像 | 技能族数、样本偏少的族 | **技能分布条形图** + **两级技能体系表**（按族着色，列出每个子技能下的 episode） | 标注分歧队列入口「去裁决（N）」 |
+约定：序列是 `[{name, count}]`（画柱状图），`name` 是与语言无关的代码（页面翻成中文）或数据自己的名字（技能族、原因摘要）；
+按相机的行是 `[{camera, …}]`，相机用短名；其余是标量。1.0 就有的键（`counts`、`mean_score`、`fail_kinds`、`arbitration`、
+`abstain_reasons`、`collision_groups`、`removed`、`families`、`subskills`、`undersampled`，以及两个 EEF 模块的全部键）原样保留，
+新键只加不改；老报告没有新键，页面照样显示已有的内容并注明。
+
+| 模块 | 新增的汇总键（1.0 的键之外） |
+|---|---|
+| 所有参与判决的模块 | `score_hist`（有分数时：0–1 十格，`0.0–0.1` … `0.9–1.0`）；`abstain_reason_counts`（弃权原因摘要：原因文本截到第一个标点、数字换成 `…`，前 6 项 + 「其它」）；`error_steps`（出错条目停在哪一步：`probe` / `arbitration` / `decode` / `read` …） |
+| 时间戳检查 | `fail_reasons`（`out_of_order` 乱序 / `gap` 跳变 / `fragment` 残段 / `jitter` 抖动，另有 `other`）；`duration_total_s`、`duration_median_s`、`duration_min_s`、`duration_max_s`；`duration_hist`（按整齐的秒数分格，最多 12 格） |
+| 运动学极限 | `violation_episodes`；`violations_by_type`、`violations_by_joint`（按类型 / 关节数条目，一条在同一类型或关节上只算一次）；`limits_profile`（用的规格档） |
+| 运动质量 | `subscores`：`[{name, mean, n, na, in_total, na_reason?}]`，平滑度、尖刺、夹爪抖动、执行器饱和计入总分，路径效率、末态稳定、流畅度只报不罚，`mean` 为 null 的是对本数据集不适用；`stuck_episodes`、`stuck_unassessable`、`stuck_na_reason`；`idle_episodes`（开头 / 中途 / 结尾有空闲的条数）；`active_ratio_mean` |
+| 视觉质量 | `cameras`：`[{camera, n, mean, low, placeholder, hist, weight}]`（`low` 为低于 0.6 的读数，`placeholder` 为占位黑帧路，`hist` 是十格计数）；`low_camera_readings`、`placeholder_readings`；`blur_ref_var`、`frame_max_side` |
+| 视频-动作同步 | `verdicts`（`aligned` 同步正常 / `annotated` 已标注异常 / `suspect` 疑似错位 / `undecidable` 测不准 / `misaligned` 整体错位）；`flagged_camera_readings`；`lag_tol_s`；`cameras`：v1 `sync_health()` 的逐相机健康度 `[{camera, readings, n, median_lag_s, iqr_s, n_flagged, n_suspect, n_noisy, n_abstained}]`；`sync_advice`（数据集级结论，一段话）；`negative_lag_episodes`（负滞后条数） |
+| 任务成败判定 | `judgements`（判定代码分布：`success`、`recovery`、`endstate_success`、`arbitration_success`、`failure`、`arbitration_failure`、`uncertain`、`gap_violation`、`voc_tripwire`、`endstate_failure_suspect`、`endstate_unconfirmed`、`review_conflict`、`label_conflict_suspect`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `自产caption` / `人工改标`）；`layers`（走到各层的条数：`probe` 打分、`endstate` 逐机位复核、`label_guard` 判废护栏、`arbitration` 取证仲裁） |
+| 精确去重 | `group_sizes`（按组大小数重复组） |
+| 技能画像 | `family_distribution`；`family_tree`：`[{name, count, pct, undersampled, subskills: [{name, count}]}]`（条数取自每条的归类，名字取画像里的中文名）；`label_disagreements`、`disagreement_high`、`disagreement_review`、`unstable`；`grouping_sources` |
+
+`overview.duration_s` 仍是 null：运行目录里没有主流程和子任务的墙钟记录（那是 Daemon 库里的进度），
+CLI 算不出一个诚实的耗时，页面在这种情况下不显示耗时。
 
 报告开头另有两块不属于任何模块：**质检总览**（输入 = 判废 + 交付，判废原因分布，平均质量分）
-和**数据包完整性**。任一明细表里点某条 episode，打开逐条下钻抽屉（03 篇 §6），看它在所有模块下的读数、
-证据帧和各机位视频，支持多机位同时播放 —— 这是 v1「轨迹」页的对应物，与「小节和模块一一对应」不冲突。
+和**数据包完整性**。看某一条 episode 在所有模块下的读数、证据帧和各机位视频（支持多机位同步播放）去
+「Episode 明细」页签（03 篇 §6），这是 v1「轨迹」页的对应物，与「小节和模块一一对应」不冲突。

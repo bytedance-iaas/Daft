@@ -211,6 +211,20 @@ class Context:
         self.stop_requested = False
         self._stop_logged = False
         self._config: dict | None = None
+        self._on_exit: list[Callable[[], None]] = []
+
+    def on_exit(self, fn: Callable[[], None]) -> None:
+        """Run ``fn`` when the command ends, however it ends (temporary files of a source:
+        v1's muxed videos, a command's own source cache)."""
+        self._on_exit.append(fn)
+
+    def run_exit_hooks(self) -> None:
+        while self._on_exit:
+            fn = self._on_exit.pop()
+            try:
+                fn()
+            except Exception as e:  # noqa: BLE001 - cleaning up never fails a command
+                self.log("warn", f"cleanup: {type(e).__name__}: {e}")
 
     # events
     def log(self, level: str, msg: str, **fields: Any) -> None:
@@ -368,6 +382,7 @@ def run_command(func: Callable[[Context, argparse.Namespace], Result],
             emitter.log("error", "".join(traceback.format_exception(e)).rstrip())
             error = Internal(f"{type(e).__name__}: {e}", {"exception": type(e).__name__})
         finally:
+            ctx.run_exit_hooks()
             out_sink.drain()
             err_sink.drain()
             sys.stdout, sys.stderr = real_out, real_err
