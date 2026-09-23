@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { moduleName, qk, useModules } from '../../api/queries';
-import type { EpisodeView, Report, TaskEpisode, TaskEpisodePage } from '../../api/types';
+import type { EpisodeView, ModuleRegistry, Report, TaskEpisode, TaskEpisodePage } from '../../api/types';
 import { SignedImage } from '../../features/media/SignedMedia';
 import { SyncedVideos } from '../../features/media/SyncedVideos';
 import { reasonLine, recordError } from '../../lib/reportView';
@@ -85,7 +85,7 @@ function EpisodePicker({
   // The current episode's neighbours need the order up to just past it.
   const lastLoaded = items.length ? items[items.length - 1].episode_index : -1;
   useEffect(() => {
-    if (ep !== null && order.hasNextPage && !order.isFetchingNextPage && lastLoaded <= ep) void order.fetchNextPage();
+    if (ep !== null && order.hasNextPage && !order.isFetchingNextPage && !order.isFetchNextPageError && lastLoaded <= ep) void order.fetchNextPage();
   }, [ep, lastLoaded, order]);
   const prev = ep === null ? undefined : [...items].reverse().find((i) => i.episode_index < ep);
   const next = ep === null ? items[0] : items.find((i) => i.episode_index > ep);
@@ -150,9 +150,31 @@ function EpisodePicker({
   );
 }
 
+/**
+ * Whether a review item is a question the adjudication page asks (the registry's review lines, D43):
+ * its module declares a line of that kind, or it is an appeal of an appealable module. Other
+ * modules' abstentions are shown, never queued.
+ */
+export function askable(reg: ModuleRegistry | undefined, item: { module: string; kind?: string }): boolean {
+  const spec = reg?.modules.find((m) => m.id === item.module);
+  if (!spec || !item.kind) return false;
+  if (item.kind === 'reject_appeal') return Boolean(spec.appealable);
+  const lines = (reg?.review_lines ?? []).filter((l) => l.review_kind === item.kind).map((l) => l.id);
+  return ((spec.review_lines ?? []) as string[]).some((id) => lines.includes(id));
+}
+
 function SummaryCard({ taskId, view, readOnly, review }: { taskId: string; view: EpisodeView; readOnly: boolean; review: boolean }) {
   const reg = useModules();
-  const sources = (view.review ?? []).map((r) => r.module).filter((m): m is string => typeof m === 'string');
+  // one 去裁决 per page the questions are on (module × tab)
+  const seen = new Set<string>();
+  const target = (r: { module: string; kind?: string }) => {
+    if (!askable(reg.data, r)) return null;
+    const appeal = r.kind === 'reject_appeal';
+    const key = `${appeal ? 'appeals' : 'review'}|${r.module}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    return `/tasks/${taskId}/adjudication?${appeal ? 'tab=appeals&' : ''}source=${encodeURIComponent(r.module)}`;
+  };
   return (
     <Card title={E().summary} size="small" data-testid="episode-summary">
       <Space direction="vertical" style={{ width: '100%' }}>
@@ -176,28 +198,31 @@ function SummaryCard({ taskId, view, readOnly, review }: { taskId: string; view:
           <div>
             <b>{E().review}</b>
             <ul className="episode-items" data-testid="episode-review">
-              {view.review.map((r, i) => (
-                <li key={i}>
-                  <Space size={8} wrap>
-                    <span>{reasonLine(r, reg.data)}</span>
-                    {i === 0 || r.module !== sources[i - 1] ? (
-                      readOnly ? (
-                        <Tooltip content={zh.report.historyDisabled}>
-                          <Button size="mini" disabled>
-                            {E().goAdjudicate}
-                          </Button>
-                        </Tooltip>
-                      ) : (
-                        <Link to={`/tasks/${taskId}/adjudication?${r.kind === 'reject_appeal' ? 'tab=appeals&' : ''}source=${encodeURIComponent(r.module)}`}>
-                          <Button size="mini" type="primary">
-                            {E().goAdjudicate}
-                          </Button>
-                        </Link>
-                      )
-                    ) : null}
-                  </Space>
-                </li>
-              ))}
+              {view.review.map((r, i) => {
+                const to = target(r);
+                return (
+                  <li key={i}>
+                    <Space size={8} wrap>
+                      <span>{reasonLine(r, reg.data)}</span>
+                      {to ? (
+                        readOnly ? (
+                          <Tooltip content={zh.report.historyDisabled}>
+                            <Button size="mini" disabled>
+                              {E().goAdjudicate}
+                            </Button>
+                          </Tooltip>
+                        ) : (
+                          <Link to={to}>
+                            <Button size="mini" type="primary">
+                              {E().goAdjudicate}
+                            </Button>
+                          </Link>
+                        )
+                      ) : null}
+                    </Space>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ) : null}
