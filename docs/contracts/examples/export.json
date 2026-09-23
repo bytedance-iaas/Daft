@@ -17,6 +17,47 @@
    "manifest": "export/manifest.json",
    "videos_copied": 30,
    "videos_reencoded": 0
+  },
+  {
+   "schema_version": "1.0",
+   "format": "mcap",
+   "incremental": false,
+   "episodes": 5,
+   "diff": {
+    "keep": 0,
+    "relabel": 0,
+    "renumber": 0,
+    "add": 5,
+    "drop": 0
+   },
+   "fingerprint": "sha256:3ff9dfdea4eed7532deb21af62dea2549fa3914c193adc19f0b1696495b34a20",
+   "manifest": "export/manifest.json",
+   "videos_copied": 0,
+   "videos_reencoded": 0,
+   "videos_renamed": 0,
+   "full_reason": null,
+   "dataset_dir": "export/mcap_curated"
+  },
+  {
+   "schema_version": "1.0",
+   "format": "lance",
+   "incremental": false,
+   "episodes": 5,
+   "diff": {
+    "keep": 0,
+    "relabel": 0,
+    "renumber": 0,
+    "add": 5,
+    "drop": 0
+   },
+   "fingerprint": "sha256:679c31bb74559beb3dab9da935c87c9891bbfbc0e203048245d2400bb780c1eb",
+   "manifest": "export/manifest.json",
+   "videos_copied": 10,
+   "videos_reencoded": 0,
+   "videos_renamed": 0,
+   "full_reason": null,
+   "dataset_dir": "export/lance_episodes",
+   "note": "lance 原格式交付本版本未做：交付的是 episodes_parquet（轨迹级数值与任务文本）和视频，判决清单见本结果版本的 passed / reject / held"
   }
  ],
  "invalid": [
@@ -32,6 +73,26 @@
    "manifest": "m",
    "videos_copied": 0,
    "videos_reencoded": 0
+  },
+  {
+   "schema_version": "1.0",
+   "format": "rrd",
+   "incremental": false,
+   "episodes": 5,
+   "diff": {
+    "keep": 0,
+    "relabel": 0,
+    "renumber": 0,
+    "add": 5,
+    "drop": 0
+   },
+   "fingerprint": "sha256:3ff9dfdea4eed7532deb21af62dea2549fa3914c193adc19f0b1696495b34a20",
+   "manifest": "export/manifest.json",
+   "videos_copied": 0,
+   "videos_reencoded": 0,
+   "videos_renamed": 0,
+   "full_reason": null,
+   "dataset_dir": "export/mcap_curated"
   }
  ]
 }

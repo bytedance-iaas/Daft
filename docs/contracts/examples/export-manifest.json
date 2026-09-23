@@ -25,6 +25,130 @@
     "meta/tasks.jsonl",
     "meta/stats.json"
    ]
+  },
+  {
+   "schema_version": "1.0",
+   "source_format": "mcap",
+   "fingerprint": "sha256:3ff9dfdea4eed7532deb21af62dea2549fa3914c193adc19f0b1696495b34a20",
+   "episodes": [
+    {
+     "episode_index": 0,
+     "new_index": 0,
+     "content_key": "sha256:7e116321a4358108a08a9914b64a97193152a55756955544dee71717f35bcec2",
+     "task_key": "sha256:444eae74ab68d2eb1294cd90d34e542d7afb4362a5cf260eacfe7bce233419fa",
+     "task": {
+      "text": "pick up the red block and place it in the bin",
+      "source": "原始标注"
+     },
+     "artifacts": {
+      "file": "episode_0.mcap"
+     }
+    },
+    {
+     "episode_index": 1,
+     "new_index": 1,
+     "content_key": "sha256:605ca1256f9ea15aea92af10e16260b02852f80968d9b2b6bfc224aa0e1c9106",
+     "task_key": "sha256:444eae74ab68d2eb1294cd90d34e542d7afb4362a5cf260eacfe7bce233419fa",
+     "task": {
+      "text": "pick up the red block and place it in the bin",
+      "source": "原始标注"
+     },
+     "artifacts": {
+      "file": "episode_1.mcap"
+     }
+    }
+   ],
+   "meta_files": [],
+   "files": {
+    "episode_0.mcap": {
+     "size": 26069,
+     "sha256": "sha256:0f624899a5d908063a068ef37c53d66cf60d22449769eacc596195ad4da4dacb"
+    },
+    "episode_1.mcap": {
+     "size": 28712,
+     "sha256": "sha256:1c30f8ace82ee2acac1c6d950ce96fce5258234bade544b5ba7d41b62638e1de"
+    },
+    "episode_3.mcap": {
+     "size": 24275,
+     "sha256": "sha256:dabaaf2e1f2293837d1a13ce7fd0480305eced4a67bf7538b5b5adc83510c759"
+    }
+   },
+   "dataset_dir": "mcap_curated"
+  },
+  {
+   "schema_version": "1.0",
+   "source_format": "lance",
+   "fingerprint": "sha256:679c31bb74559beb3dab9da935c87c9891bbfbc0e203048245d2400bb780c1eb",
+   "episodes": [
+    {
+     "episode_index": 0,
+     "new_index": 0,
+     "content_key": "sha256:0f12d1d600555ec49d7571d3c82e7f5a5ec2d51b82918ab1ddd7b905a494a854",
+     "task_key": "sha256:444eae74ab68d2eb1294cd90d34e542d7afb4362a5cf260eacfe7bce233419fa",
+     "task": {
+      "text": "pick up the red block and place it in the bin",
+      "source": "原始标注"
+     },
+     "artifacts": {
+      "videos": {
+       "observation.images.exterior": "videos/observation_images_exterior__c0f0.mp4",
+       "observation.images.wrist": "videos/observation_images_wrist__c0f0.mp4"
+      },
+      "windows": {
+       "observation.images.exterior": [
+        0.0,
+        5.0
+       ],
+       "observation.images.wrist": [
+        0.0,
+        5.0
+       ]
+      }
+     }
+    },
+    {
+     "episode_index": 1,
+     "new_index": 1,
+     "content_key": "sha256:7e344ceb34f2f56472887e9b95829b5612a4bebdc003311c5121e76ab36ba722",
+     "task_key": "sha256:444eae74ab68d2eb1294cd90d34e542d7afb4362a5cf260eacfe7bce233419fa",
+     "task": {
+      "text": "pick up the red block and place it in the bin",
+      "source": "原始标注"
+     },
+     "artifacts": {
+      "videos": {
+       "observation.images.exterior": "videos/observation_images_exterior__c0f1.mp4",
+       "observation.images.wrist": "videos/observation_images_wrist__c0f1.mp4"
+      },
+      "windows": {
+       "observation.images.exterior": [
+        0.0,
+        6.0
+       ],
+       "observation.images.wrist": [
+        0.0,
+        6.0
+       ]
+      }
+     }
+    }
+   ],
+   "meta_files": [],
+   "files": {
+    "index.json": {
+     "size": 1025,
+     "sha256": "sha256:978764303d35f5305abef21eca8e9e82440b17b5dce3857f37c50e10c07ca18f"
+    },
+    "episodes_parquet/9812ee23-b7f9-4036-ae5a-82b32caad943-0.parquet": {
+     "size": 35746,
+     "sha256": "sha256:cea9aa7ea55bb8feb305c7b23d85c012ae891dde438aa1107d47a97b76f676cc"
+    },
+    "videos/observation_images_exterior__c0f0.mp4": {
+     "size": 13244,
+     "sha256": "sha256:e9cc5a033ee8fecf266c9a0bfe1a7f512c0bff9057ec86407b75e360c139a3de"
+    }
+   },
+   "dataset_dir": "lance_episodes"
   }
  ],
  "invalid": [
@@ -34,6 +158,53 @@
    "fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
    "episodes": [],
    "meta_files": []
+  },
+  {
+   "schema_version": "1.0",
+   "source_format": "mcap",
+   "fingerprint": "sha256:3ff9dfdea4eed7532deb21af62dea2549fa3914c193adc19f0b1696495b34a20",
+   "episodes": [
+    {
+     "episode_index": 0,
+     "new_index": 0,
+     "content_key": "sha256:7e116321a4358108a08a9914b64a97193152a55756955544dee71717f35bcec2",
+     "task_key": "sha256:444eae74ab68d2eb1294cd90d34e542d7afb4362a5cf260eacfe7bce233419fa",
+     "task": {
+      "text": "pick up the red block and place it in the bin",
+      "source": "原始标注"
+     },
+     "artifacts": {}
+    },
+    {
+     "episode_index": 1,
+     "new_index": 1,
+     "content_key": "sha256:605ca1256f9ea15aea92af10e16260b02852f80968d9b2b6bfc224aa0e1c9106",
+     "task_key": "sha256:444eae74ab68d2eb1294cd90d34e542d7afb4362a5cf260eacfe7bce233419fa",
+     "task": {
+      "text": "pick up the red block and place it in the bin",
+      "source": "原始标注"
+     },
+     "artifacts": {
+      "file": "episode_1.mcap"
+     }
+    }
+   ],
+   "meta_files": [],
+   "files": {
+    "episode_0.mcap": {
+     "size": 26069,
+     "sha256": "sha256:0f624899a5d908063a068ef37c53d66cf60d22449769eacc596195ad4da4dacb"
+    },
+    "episode_1.mcap": {
+     "size": 28712,
+     "sha256": "sha256:1c30f8ace82ee2acac1c6d950ce96fce5258234bade544b5ba7d41b62638e1de"
+    },
+    "episode_3.mcap": {
+     "size": 24275,
+     "sha256": "sha256:dabaaf2e1f2293837d1a13ce7fd0480305eced4a67bf7538b5b5adc83510c759"
+    }
+   },
+   "dataset_dir": "mcap_curated"
   }
  ]
 }

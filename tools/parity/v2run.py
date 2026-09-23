@@ -122,6 +122,10 @@ class Chain:
                  "--episodes", episodes, "--out", os.path.join(rd, "plan.json"))
         self.run("snapshot", "snapshot", "--input", ds, "--episodes", episodes, "--out", sm)
         common = ["--input", ds, "--run-dir", rd, "--source-manifest", sm]
+        if not os.path.isfile(os.path.join(ds, "meta", "info.json")) \
+                or os.path.isdir(os.path.join(ds, "frames.lance")):
+            # mcap / lance: the Daemon names the task's selection (their semantics sample)
+            common += ["--selection", episodes]
         self.run("autolabel", "autolabel", *common, "--episodes", episodes, *self.vlm)
         num, frame = self.stage_file("numeric"), self.stage_file("frame")
         self.run("check numeric", "check", "--modules",
@@ -160,6 +164,23 @@ def models_probe_entry(model: str) -> dict:
             "body": json.dumps({"object": "list", "data": [{"id": model, "object": "model"}]})}
 
 
+def all_episodes(dataset: str) -> str:
+    """Every episode of a local dataset as an expression: LeRobot and lance from
+    ``meta/info.json``, mcap by v1's numbering of its files (D44)."""
+    info = os.path.join(dataset, "meta", "info.json")
+    if os.path.isfile(info):
+        with open(info, encoding="utf-8") as fh:
+            n = int(json.load(fh)["total_episodes"])
+        return f"0-{n - 1}"
+    from curation.cli import containers
+
+    names = {n: None for n in os.listdir(dataset)}
+    indices = sorted(containers.mcap_episodes(names))
+    if not indices:
+        raise SystemExit(f"run-v2: {dataset} holds neither meta/info.json nor episode files")
+    return ",".join(str(i) for i in indices)
+
+
 def next_revision(run_dir: str) -> int:
     base = os.path.join(run_dir, "revisions")
     done = [int(n[1:]) for n in (os.listdir(base) if os.path.isdir(base) else [])
@@ -172,7 +193,8 @@ def _mirror(run_dir: str, delivery: str) -> None:
     itself went there through ``export --output``)."""
     import shutil
 
-    skip = {os.path.join(run_dir, "export", "lerobot_curated")}
+    skip = {os.path.join(run_dir, "export", name)
+            for name in ("lerobot_curated", "mcap_curated", "lance_episodes")}
 
     def ignore(d, names):
         return [n for n in names if os.path.join(d, n) in skip or n == "inflight.json"
@@ -232,9 +254,7 @@ def main(argv: list[str]) -> int:
         with open(os.path.join(args.from_run, "parity.json"), encoding="utf-8") as fh:
             episodes = json.load(fh).get("episodes")
     if episodes is None:
-        with open(os.path.join(args.input, "meta", "info.json"), encoding="utf-8") as fh:
-            n = int(json.load(fh)["total_episodes"])
-        episodes = f"0-{n - 1}"
+        episodes = all_episodes(args.input)
     if args.replay:
         _, entries = T.read_tape(args.replay)
         if not any(e.get("tag") == "models" for e in entries):

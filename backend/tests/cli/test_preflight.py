@@ -213,9 +213,12 @@ def _touch(path, data=b"x"):
 
 @pytest.mark.parametrize("kind,files,words", [
     ("rrd", ["episode_000000.rrd", "episode_000001.rrd"], "detected .rrd"),
-    ("mcap", ["bags/ep0/data.mcap"], "detected mcap"),
+    # mcap and lance are read since D44 (tests/cli/test_containers.py); these layouts are not
+    ("unknown", ["bags/ep0/data.mcap"], "all in sub-directories"),
     ("lancedb", ["table.lance/_versions/1.manifest", "table.lance/data/a.lance"],
      "detected LanceDB"),
+    ("lancedb", ["frames.lance/_versions/1.manifest", "frames.lance/data/a.lance"],
+     "not lerobot-lance-convert's layout"),
     ("unknown", ["README.md"], "not a recognised dataset"),
     ("unknown", ["a/meta/info.json", "b/meta/info.json"], "a directory of 2 LeRobot datasets"),
 ])
@@ -231,7 +234,7 @@ def test_other_formats_grey_out_every_module(cli, tmp_path, kind, files, words):
     assert len(doc["modules"]) == len(registry_ids())
     for m in doc["modules"]:
         assert m["availability"] == "unsupported"
-        assert m["reason"].startswith("only LeRobot v2/v3 is supported in this version")
+        assert m["reason"].startswith("only LeRobot v2/v3, mcap and lance")
         assert m["reason_code"] == "format_unsupported"
 
 

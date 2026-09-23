@@ -63,6 +63,13 @@ class Storage:
     def put_bytes(self, key: str, data: bytes) -> None:
         raise NotImplementedError
 
+    def download(self, key: str, local_path: str) -> ObjectInfo:
+        """Stream one object into ``local_path`` (written in place; the caller renames it).
+
+        Returns what was read: the byte count and, on TOS, the ETag of the response - the
+        caller compares them with the listing it trusts (a source cache, D44)."""
+        raise NotImplementedError
+
     def put_file(self, key: str, local_path: str) -> None:
         """Upload a whole local file (streamed; videos can be large)."""
         raise NotImplementedError
@@ -145,6 +152,17 @@ class LocalStorage(Storage):
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+
+    def download(self, key: str, local_path: str) -> ObjectInfo:
+        import shutil
+
+        try:
+            shutil.copyfile(self._path(key), local_path)
+        except FileNotFoundError:
+            raise ObjectMissing(key) from None
+        except OSError as e:
+            raise unreachable(self.role, f"cannot copy {self._path(key)}: {e}") from None
+        return ObjectInfo(key, os.path.getsize(local_path))
 
     def put_file(self, key: str, local_path: str) -> None:
         import shutil
@@ -277,6 +295,26 @@ class TosStorage(Storage):
             if getattr(e, "status_code", None) == 416:     # range beyond the end
                 return b""
             raise self._fail(f"cannot read {key} from", e) from None
+
+    def download(self, key: str, local_path: str, *, chunk: int = 1 << 20) -> ObjectInfo:
+        size = 0
+        try:
+            out = self._c.get_object(self.bucket, self._full(key))
+            with open(local_path, "wb") as fh:
+                while True:
+                    block = out.read(chunk)
+                    if not block:
+                        break
+                    fh.write(block)
+                    size += len(block)
+        except OSError as e:
+            raise unreachable(self.role, f"cannot write {local_path}: {e}") from None
+        except Exception as e:  # noqa: BLE001 - SDK and network errors are many
+            if _is_not_found(e):
+                raise ObjectMissing(key) from None
+            raise self._fail(f"cannot read {key} from", e) from None
+        etag = getattr(out, "etag", None)
+        return ObjectInfo(key, size, etag=str(etag) if etag else None)
 
     def put_bytes(self, key: str, data: bytes) -> None:
         try:

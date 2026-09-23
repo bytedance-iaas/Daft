@@ -79,8 +79,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     run_dir = runctx.run_dir_of(args)
     if args.concurrency < 1:
         raise UsageError("--concurrency must be at least 1")
-    storage = runctx.open_input(ctx, args)
-    source = storage.root if not storage.remote else storage.uri
+    src = runctx.open_source(ctx, args)
+    source = src.input_dir
     output = None
     if args.output:
         from .storage import open_storage
@@ -97,16 +97,19 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
             last["t"] = now
             ctx.progress("export", done, total)
 
+    def log(level, msg):
+        ctx.log(level if level in ("debug", "info", "warn", "error") else "info", msg)
+
     try:
-        outcome = export_run(run_dir, source, revision=args.revision,
-                             incremental=bool(args.incremental),
-                             source_manifest=args.source_manifest,
-                             camera_health=camera_health(run_dir, ctx.config()),
-                             scratch_dir=args.scratch, concurrency=args.concurrency,
-                             log=lambda level, msg: ctx.log(level if level in
-                                                            ("debug", "info", "warn", "error")
-                                                            else "info", msg),
-                             progress=progress)
+        if src.container:
+            outcome = _export_container(ctx, args, run_dir, src, log, progress)
+        else:
+            outcome = export_run(run_dir, source, revision=args.revision,
+                                 incremental=bool(args.incremental),
+                                 source_manifest=args.source_manifest,
+                                 camera_health=camera_health(run_dir, ctx.config()),
+                                 scratch_dir=args.scratch, concurrency=args.concurrency,
+                                 log=log, progress=progress)
     except SourceChangedError as e:
         raise SourceChanged(str(e)) from None
     except ExportInputError as e:
@@ -121,13 +124,46 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     return Result(result, human=render(result, outcome))
 
 
+def _export_container(ctx: Context, args, run_dir: str, src, log, progress):
+    """mcap / lance (D44): ``export/containers.py``, always a full export. The source
+    objects are checked against the task's source manifest first, like any read."""
+    from ..export.containers import export_container
+
+    manifest_path = args.source_manifest or os.path.join(run_dir, "source_manifest.json")
+    if not os.path.isfile(manifest_path):
+        manifest_path = None
+    ns = argparse.Namespace(**{**vars(args), "source_manifest": manifest_path})
+    guard = runctx.source_guard(ctx, ns, src)
+    digest = ""
+    if manifest_path:
+        with open(manifest_path, encoding="utf-8") as fh:
+            digest = str((json.load(fh).get("summary") or {}).get("digest") or "")
+
+    def fetch(episodes):
+        if guard is not None:
+            guard(episodes)
+        src.fetch(episodes)
+
+    def content_of(ep: int):
+        keys = src.episode_keys([ep]) if src.kind == "mcap" else []
+        return [[k, int(src.listing[k].size), src.listing[k].identity()] for k in keys] \
+            or (digest or None)
+
+    return export_container(run_dir, src.kind, src.input_dir, revision=args.revision,
+                            incremental=bool(args.incremental), source_digest=digest,
+                            content_of=content_of, fetch=fetch,
+                            output_uri=args.output, log=log, progress=progress)
+
+
 def sync(ctx: Context, run_dir: str, outcome, output) -> dict:
     """Mirror the export directory's change to the delivery; manifest.json last."""
     local = os.path.join(run_dir, EXPORT_DIR)
+    name = getattr(outcome, "dataset_dir", None) or "lerobot_curated"
+    prefix = f"{EXPORT_DIR}/{name}"
     with open(os.path.join(local, "manifest.detail.json"), encoding="utf-8") as fh:
         wanted = json.load(fh).get("files") or {}
-    remote = {k[len(DATASET_DIR) + 1:]: info for k, info in output.list().items()
-              if k.startswith(DATASET_DIR + "/")}
+    remote = {k[len(prefix) + 1:]: info for k, info in output.list().items()
+              if k.startswith(prefix + "/")}
     changed = set(outcome.written) | {dst for _src, dst in outcome.renamed}
     uploads = sorted(rel for rel, rec in wanted.items()
                      if rel in changed or rel not in remote
@@ -135,11 +171,10 @@ def sync(ctx: Context, run_dir: str, outcome, output) -> dict:
     stale = sorted(rel for rel in remote if rel not in wanted)
     for n, rel in enumerate(uploads, 1):
         ctx.check_stop("while uploading the export")
-        output.put_file(f"{DATASET_DIR}/{rel}", os.path.join(local, "lerobot_curated",
-                                                             *rel.split("/")))
+        output.put_file(f"{prefix}/{rel}", os.path.join(local, name, *rel.split("/")))
         ctx.progress("export:upload", n, len(uploads))
     for rel in stale:
-        output.delete(f"{DATASET_DIR}/{rel}")
+        output.delete(f"{prefix}/{rel}")
     output.put_file(f"{EXPORT_DIR}/manifest.detail.json",
                     os.path.join(local, "manifest.detail.json"))
     output.put_file(f"{EXPORT_DIR}/manifest.json", os.path.join(local, "manifest.json"))
@@ -153,6 +188,10 @@ def render(result: dict, outcome) -> str:
             f"{d['keep']}, relabel {d['relabel']}, renumber {d['renumber']}, add {d['add']}, "
             f"drop {d['drop']}; videos copied {result['videos_copied']}, re-encoded "
             f"{result['videos_reencoded']}, renamed {result.get('videos_renamed', 0)}")
+    if result.get("dataset_dir"):
+        text += f"\n  delivered dataset: {result['dataset_dir']}/"
     if result.get("full_reason"):
         text += f"\n  full export because: {result['full_reason']}"
+    if result.get("note"):
+        text += f"\n  note: {result['note']}"
     return text

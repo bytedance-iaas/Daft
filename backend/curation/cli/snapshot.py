@@ -53,6 +53,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     ctx.check_stop("after listing the input")
 
     fmt = lerobot_meta.detect_format(listing)
+    if fmt.kind in ("mcap", "lance"):
+        return _container(ctx, args, storage, listing, fmt, requested)
     if fmt.kind != "lerobot":
         raise UsageError(f"{storage.uri} is not a LeRobot dataset ({fmt.kind}: {fmt.note}); "
                          f"run preflight first")
@@ -113,4 +115,34 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
              f"{storage.uri}\nwrote {args.out} ({summary['digest']})")
     if skipped:
         human += f"\n{len(skipped)} episode(s) left out for missing source files"
+    return Result(doc, human=human)
+
+
+def _container(ctx: Context, args, storage, listing, fmt, requested) -> Result:
+    """mcap / lance (D44): what stands for their ``meta/`` is recorded whole, whatever the
+    selection - an mcap dataset's episode files (v1 numbers them by what is there; each is
+    also one episode's data), a lance dataset's ``meta/`` and three tables (read whole).
+    ``--episodes`` is checked against the dataset; no episode is left out (v1 has no
+    missing-file rule for these formats)."""
+    from . import containers, runctx
+    from .runctx import Source
+
+    src = Source(ctx, args, storage, listing=listing, cache=False)   # checks the switch
+    available, _info = runctx.container_episodes(src)
+    selected, warning = episode_sel.reconcile(requested, available)
+    if warning:
+        ctx.log("warn", warning)
+    ctx.progress(STAGE, 1, 2)
+    keys = containers.mcap_keys(listing) if fmt.kind == "mcap" else containers.lance_keys(listing)
+    doc = source_manifest.build(storage.uri, [listing[k] for k in keys])
+    ctx.check_stop("before writing the manifest")
+    try:
+        source_manifest.write(args.out, doc)
+    except OSError as e:
+        raise UsageError(f"--out {args.out}: cannot write it: {e}") from None
+    ctx.progress(STAGE, 2, 2)
+    n_eps = len(selected) if selected is not None else len(available)
+    summary = doc["summary"]
+    human = (f"{summary['count']} objects, {summary['bytes']} bytes ({fmt.kind}) for {n_eps} "
+             f"episodes of {storage.uri}\nwrote {args.out} ({summary['digest']})")
     return Result(doc, human=human)

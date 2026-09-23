@@ -40,6 +40,7 @@ COMPLETE = "_COMPLETE"
 EXPORT_MANIFEST = "export/manifest.json"
 EXPORT_ROOT = "export/lerobot_curated"
 _HEAD_BYTES = 4096
+_MCAP_MAGIC = b"\x89MCAP0\r\n"
 _POLL_S = 2.0
 _TEXT_EXT = {"md", "txt", "csv", "tsv", "yaml", "yml", "html", "log"}
 
@@ -91,8 +92,12 @@ def collect_expected(run_dir: str, output: Storage) -> dict[str, Expected]:
         raise UsageError(f"--run-dir {run_dir} holds no delivered file to verify")
     manifest = _export_manifest(run_dir, output)
     sizes = _manifest_sizes(manifest)
+    root = EXPORT_ROOT
+    if isinstance(manifest, dict) and isinstance(manifest.get("dataset_dir"), str) \
+            and manifest["dataset_dir"].strip("/"):
+        root = f"export/{manifest['dataset_dir'].strip('/')}"     # mcap / lance (D44)
     for rel in _manifest_artifacts(manifest) + sorted(sizes):
-        key = f"{EXPORT_ROOT}/{rel}"
+        key = f"{root}/{rel}"
         if key in out and out[key].size is not None:
             continue                      # a local copy: its size is the reference
         out[key] = Expected(key, sizes.get(rel))
@@ -129,6 +134,8 @@ def _manifest_artifacts(manifest) -> list[str]:
             continue
         if isinstance(art.get("parquet"), str):
             rels.append(art["parquet"])
+        if isinstance(art.get("file"), str):                   # an mcap episode (D44)
+            rels.append(art["file"])
         rels += [v for v in (art.get("videos") or {}).values() if isinstance(v, str)]
     rels += [m for m in manifest.get("meta_files") or [] if isinstance(m, str)]
     return [r.strip("/") for r in rels if r.strip("/")]
@@ -166,13 +173,16 @@ def content_problem(storage: Storage, key: str, size: int) -> str | None:
         except ValueError:
             return "unparseable"
         return None
-    if ext not in ("parquet", "mp4", "m4v", "mov", "jpg", "jpeg", "png"):
+    if ext not in ("parquet", "mp4", "m4v", "mov", "jpg", "jpeg", "png", "mcap"):
         return None                              # existence and size only
     head = storage.read_range(key, 0, min(size, _HEAD_BYTES))
     if _all_zero(head):
         return "zero_filled"
     if ext == "parquet":
         return _parquet_problem(storage, key, size, head)
+    if ext == "mcap":                            # D44: magic at both ends of the file
+        tail = storage.read_range(key, max(0, size - 8), 8)
+        return None if head[:8] == _MCAP_MAGIC and tail == _MCAP_MAGIC else "unparseable"
     if ext in ("mp4", "m4v", "mov"):
         return _mp4_problem(storage, key, size)
     if ext in ("jpg", "jpeg"):

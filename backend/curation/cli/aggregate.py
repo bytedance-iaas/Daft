@@ -138,11 +138,9 @@ def _task_text(ctx, args, run_dir: str, episodes: list[int]):
 
     instructions: dict[int, str] = {}
     if args.input:
-        storage = runctx.open_input(ctx, args)
-        input_dir = storage.root if not storage.remote else storage.uri
+        src = runctx.open_source(ctx, args)
         instructions = {index_of(r["episode_id"]): str(r.get("instruction") or "")
-                        for r in runctx.meta_rows(input_dir, episodes, args,
-                                                  what="aggregate")}
+                        for r in runctx.meta_rows(src, episodes, args, what="aggregate")}
     return TaskText(run_dir, instructions)
 
 

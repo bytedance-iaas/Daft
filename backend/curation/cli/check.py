@@ -91,19 +91,23 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if args.part is not None and not (len(args.part) == 4 and args.part.isdigit()):
         raise UsageError(f"--part must be four digits such as 0003, got {args.part!r}")
     plan_stage = runctx.load_plan_stage(args.plan_stage, modules)
-    storage = runctx.open_input(ctx, args)
-    available, info = runctx.dataset_episodes(ctx, storage)
+    src = runctx.open_source(ctx, args)
+    storage = src.storage
+    available, info = runctx.dataset_episodes(ctx, src)
     episodes, warning = runctx.resolve_episodes(args, available)
     if warning:
         ctx.log("warn", warning)
     episodes = runctx.leave_out_skipped(ctx, args, episodes)
     part = args.part or records.next_part(run_dir, modules)
-    guard = runctx.source_guard(ctx, args, storage)
-    input_dir = storage.root if not storage.remote else storage.uri
+    guard = runctx.source_guard(ctx, args, src)
     ctx.log("info", f"check {','.join(modules)}: {len(episodes)} episode(s), part {part}")
 
     from ..contracts import modules as registry
 
+    if all(m in registry.advisory_ids() for m in modules) and src.container:
+        raise ModuleFailed(f"{', '.join(modules)}: EEF-video consistency reads LeRobot datasets "
+                           f"only, not {src.kind}; preflight marks it unsupported, leave it out",
+                           {"modules": modules, "format": src.kind})
     if all(m in registry.advisory_ids() for m in modules) and stage == "vlm":
         from . import eef_review
 
@@ -114,15 +118,15 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
 
         payload, survivors = eef_check.run(ctx, args, modules, run_dir, storage, episodes, part, guard)
     elif stage in ("numeric", "frame"):
-        payload, survivors = _funnel_cpu(ctx, args, modules, run_dir, input_dir, episodes,
+        payload, survivors = _funnel_cpu(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard, info)
     elif stage == "vlm":
-        payload, survivors = _funnel_vlm(ctx, args, modules, run_dir, input_dir, episodes,
+        payload, survivors = _funnel_vlm(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard)
     elif modules == ["dedup"]:
-        payload, survivors = _dedup(ctx, args, run_dir, input_dir, episodes, part, guard)
+        payload, survivors = _dedup(ctx, args, run_dir, src, episodes, part, guard)
     else:
-        payload, survivors = _profile(ctx, args, run_dir, input_dir, episodes, part,
+        payload, survivors = _profile(ctx, args, run_dir, src, episodes, part,
                                       plan_stage, guard)
     if args.survivors_out:
         records.write_text_atomic(os.path.abspath(args.survivors_out),
@@ -142,7 +146,17 @@ def _check_embodiment(args, info: dict) -> None:
                            {"embodiment_id": emb}) from None
 
 
-def _funnel_cpu(ctx, args, modules, run_dir, input_dir, episodes, part, plan_stage, guard,
+def _container_options(args, src) -> dict:
+    """StageOptions of an mcap / lance source (D44): the task's selection resolves the
+    semantics like v1's one read of it, a remote dataset's episodes are fetched before
+    they are read, and the task text comes with each row."""
+    if not src.container:
+        return {}
+    return {"selection": runctx.selection_of(args), "fetch": src.fetch,
+            "row_instructions": True}
+
+
+def _funnel_cpu(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard,
                 info):
     from ..pipeline.check_stage import StageOptions, StageRun
     from ..registry.registry import EmbodimentRegistry
@@ -150,11 +164,11 @@ def _funnel_cpu(ctx, args, modules, run_dir, input_dir, episodes, part, plan_sta
     if "kinematic_limits" in modules:
         _check_embodiment(args, info)
     cfg = runctx.stage_config(ctx, modules)
-    opts = StageOptions(run_dir=run_dir, input_dir=input_dir, modules=modules,
+    opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
                         episodes=episodes, part=part, cfg=cfg, resume=args.resume,
                         concurrency=runctx.cpu_workers(args, plan_stage),
                         embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
-                        verify_source=guard)
+                        verify_source=guard, **_container_options(args, src))
     stage = StageRun(ctx, opts, EmbodimentRegistry())
     return stage.run(), stage.survivors()
 
@@ -178,7 +192,7 @@ def _merge_strategy(ctx, plan_stage, cfg, modules):
     return strategy
 
 
-def _funnel_vlm(ctx, args, modules, run_dir, input_dir, episodes, part, plan_stage, guard):
+def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard):
     from ..pipeline import funnel
     from ..pipeline.check_stage import StageOptions, StageRun, TaskClients
     from ..pipeline.rows import index_of
@@ -190,9 +204,11 @@ def _funnel_vlm(ctx, args, modules, run_dir, input_dir, episodes, part, plan_sta
     _merge_strategy(ctx, plan_stage, cfg, modules)
     if guard is not None:
         guard([])                        # metadata and the semantics sample, read next
-    instructions = {index_of(r["episode_id"]): str(r.get("instruction") or "")
-                    for r in runctx.meta_rows(input_dir, episodes, args,
-                                              what="check:task_success")}
+    instructions: dict[int, str] = {}
+    if not src.container:                # mcap / lance: each row brings its own
+        instructions = {index_of(r["episode_id"]): str(r.get("instruction") or "")
+                        for r in runctx.meta_rows(src, episodes, args,
+                                                  what="check:task_success")}
     task_text = TaskText(run_dir, instructions)
     with runctx.VlmSession(ctx, args, cfg, "task_success", run_dir):
         from ..adapters.vlm_client import vlm_completion_from_config
@@ -209,7 +225,7 @@ def _funnel_vlm(ctx, args, modules, run_dir, input_dir, episodes, part, plan_sta
         except Exception as e:  # noqa: BLE001 - v1: abstentions stay with people
             arb_deps = None
             ctx.log("warn", f"evidence arbitration unavailable ({type(e).__name__}: {e})")
-        opts = StageOptions(run_dir=run_dir, input_dir=input_dir, modules=modules,
+        opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
                             episodes=episodes, part=part, cfg=cfg, resume=args.resume,
                             concurrency=int(gates["episode"]),
                             embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
@@ -217,20 +233,21 @@ def _funnel_vlm(ctx, args, modules, run_dir, input_dir, episodes, part, plan_sta
                             task_text=task_text,
                             evidence_mode=str(cfg.get("pipeline", {})
                                               .get("evidence_frames", "flagged")),
-                            verify_source=guard)
+                            verify_source=guard, **_container_options(args, src))
         stage = StageRun(ctx, opts, EmbodimentRegistry())
         payload = stage.run()
     return payload, stage.survivors()
 
 
-def _dedup(ctx, args, run_dir, input_dir, episodes, part, guard):
+def _dedup(ctx, args, run_dir, src, episodes, part, guard):
     from ..pipeline.dataset_stages import run_dedup
 
     if args.resume:
         ctx.log("info", "--resume: dedup always runs on the whole kept set")
     if guard is not None:
         guard(episodes)
-    payload = run_dedup(ctx, run_dir, input_dir, episodes, part,
+    src.fetch(episodes)
+    payload = run_dedup(ctx, run_dir, src.input_dir, episodes, part,
                         embodiment_id=args.embodiment_id)
     dups = {e for e, rec in _latest(run_dir, "dedup").items() if rec["verdict"] == "fail"}
     errors = set(payload["modules"]["dedup"]["error_episodes"])
@@ -246,7 +263,7 @@ def _latest(run_dir, module):
     return latest_results(run_dir, module)
 
 
-def _profile(ctx, args, run_dir, input_dir, episodes, part, plan_stage, guard):
+def _profile(ctx, args, run_dir, src, episodes, part, plan_stage, guard):
     from ..adapters import vlm_client
     from ..dataset_level.caption import make_vlm_captioner
     from ..pipeline.dataset_stages import run_skill_profile
@@ -257,13 +274,13 @@ def _profile(ctx, args, run_dir, input_dir, episodes, part, plan_stage, guard):
     episodes, restored = _profile_members(ctx, run_dir, episodes)
     if guard is not None:
         guard(episodes)
-    rows = runctx.meta_rows(input_dir, episodes, args, what="check:skill_profile")
+    rows = runctx.meta_rows(src, episodes, args, what="check:skill_profile")
     from ..pipeline.dataset_stages import leave_out_missing_source
     from ..pipeline.rows import index_of
     from ..pipeline.skipped import as_list
 
     got = {index_of(r["episode_id"]) for r in rows}
-    missing = leave_out_missing_source(ctx, run_dir, input_dir,
+    missing = leave_out_missing_source(ctx, run_dir, src.input_dir,
                                        [e for e in episodes if e not in got])
     auto_caps = {f"ep{i:06d}": c
                  for i, c in precomputed_captions(load_autolabel(run_dir)).items()}

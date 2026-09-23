@@ -236,6 +236,281 @@
    "warnings": [
     "episodes_stats.json missing; per-episode stats will be recomputed"
    ]
+  },
+  {
+   "schema_version": "1.0",
+   "format": {
+    "kind": "mcap",
+    "version": null,
+    "supported": true,
+    "detail": "mcap, 8 episodes, 2 cameras; time axis from the action topic's log_time"
+   },
+   "validation": [],
+   "dataset": {
+    "episode_count": 8,
+    "cameras": [
+     "exterior",
+     "wrist"
+    ],
+    "fps": null,
+    "robot_type": "franka",
+    "total_frames": 516,
+    "labels": {
+     "with_task": 6,
+     "without_task": 2
+    },
+    "profile": null
+   },
+   "modules": [
+    {
+     "id": "timestamp_check",
+     "availability": "available"
+    },
+    {
+     "id": "kinematic_limits",
+     "availability": "available"
+    },
+    {
+     "id": "motion_quality",
+     "availability": "available"
+    },
+    {
+     "id": "visual_quality",
+     "availability": "available"
+    },
+    {
+     "id": "video_action_sync",
+     "availability": "available"
+    },
+    {
+     "id": "eef_video_consistency",
+     "availability": "unsupported",
+     "reason": "EEF-video consistency reads LeRobot datasets only, not mcap",
+     "reason_code": "format_unsupported_by_module",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "task_success",
+     "availability": "available",
+     "notes": [
+      "2 episodes have no task text; the model will caption them first"
+     ]
+    },
+    {
+     "id": "eef_video_review",
+     "availability": "unsupported",
+     "reason": "EEF-video consistency reads LeRobot datasets only, not mcap",
+     "reason_code": "format_unsupported_by_module",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "dedup",
+     "availability": "available"
+    },
+    {
+     "id": "skill_profile",
+     "availability": "available",
+     "notes": [
+      "2 episodes have no task text; the model will caption them first"
+     ]
+    }
+   ],
+   "meta_fingerprint": "sha256:4450c07e01abf90d2e4e985a052a35577885ca7befa308da825123b6d104c94b",
+   "warnings": []
+  },
+  {
+   "schema_version": "1.0",
+   "format": {
+    "kind": "lance",
+    "version": "v3",
+    "supported": true,
+    "detail": "LeRobot v3.0 in lance tables (lerobot-lance-convert), 8 episodes, 2 cameras"
+   },
+   "validation": [],
+   "dataset": {
+    "episode_count": 8,
+    "cameras": [
+     "exterior",
+     "wrist"
+    ],
+    "fps": 15.0,
+    "robot_type": "franka",
+    "total_frames": 516,
+    "labels": {
+     "with_task": 6,
+     "without_task": 2
+    },
+    "profile": null
+   },
+   "modules": [
+    {
+     "id": "timestamp_check",
+     "availability": "available"
+    },
+    {
+     "id": "kinematic_limits",
+     "availability": "available"
+    },
+    {
+     "id": "motion_quality",
+     "availability": "available"
+    },
+    {
+     "id": "visual_quality",
+     "availability": "available"
+    },
+    {
+     "id": "video_action_sync",
+     "availability": "available"
+    },
+    {
+     "id": "eef_video_consistency",
+     "availability": "unsupported",
+     "reason": "EEF-video consistency reads LeRobot datasets only, not lance",
+     "reason_code": "format_unsupported_by_module",
+     "reason_args": {
+      "format": "lance"
+     }
+    },
+    {
+     "id": "task_success",
+     "availability": "available",
+     "notes": [
+      "2 episodes have no task text; the model will caption them first"
+     ]
+    },
+    {
+     "id": "eef_video_review",
+     "availability": "unsupported",
+     "reason": "EEF-video consistency reads LeRobot datasets only, not lance",
+     "reason_code": "format_unsupported_by_module",
+     "reason_args": {
+      "format": "lance"
+     }
+    },
+    {
+     "id": "dedup",
+     "availability": "available"
+    },
+    {
+     "id": "skill_profile",
+     "availability": "available",
+     "notes": [
+      "2 episodes have no task text; the model will caption them first"
+     ]
+    }
+   ],
+   "meta_fingerprint": "sha256:6d540cc16c051b1aa5f07af381ba463e4d2a0978dc7342ea648c42fc6c7c99ce",
+   "warnings": []
+  },
+  {
+   "schema_version": "1.0",
+   "format": {
+    "kind": "mcap",
+    "version": null,
+    "supported": false,
+    "detail": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检"
+   },
+   "validation": [],
+   "dataset": null,
+   "modules": [
+    {
+     "id": "timestamp_check",
+     "availability": "unsupported",
+     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
+     "reason_code": "format_disabled",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "kinematic_limits",
+     "availability": "unsupported",
+     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
+     "reason_code": "format_disabled",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "motion_quality",
+     "availability": "unsupported",
+     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
+     "reason_code": "format_disabled",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "visual_quality",
+     "availability": "unsupported",
+     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
+     "reason_code": "format_disabled",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "video_action_sync",
+     "availability": "unsupported",
+     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
+     "reason_code": "format_disabled",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "eef_video_consistency",
+     "availability": "unsupported",
+     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
+     "reason_code": "format_disabled",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "task_success",
+     "availability": "unsupported",
+     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
+     "reason_code": "format_disabled",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "eef_video_review",
+     "availability": "unsupported",
+     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
+     "reason_code": "format_disabled",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "dedup",
+     "availability": "unsupported",
+     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
+     "reason_code": "format_disabled",
+     "reason_args": {
+      "format": "mcap"
+     }
+    },
+    {
+     "id": "skill_profile",
+     "availability": "unsupported",
+     "reason": "这是 mcap 格式的数据集;本实例已关闭 mcap 质检",
+     "reason_code": "format_disabled",
+     "reason_args": {
+      "format": "mcap"
+     }
+    }
+   ],
+   "meta_fingerprint": "sha256:4450c07e01abf90d2e4e985a052a35577885ca7befa308da825123b6d104c94b",
+   "warnings": []
   }
  ],
  "invalid": [
@@ -639,6 +914,91 @@
    "warnings": [
     "episodes_stats.json missing; per-episode stats will be recomputed"
    ]
+  },
+  {
+   "schema_version": "1.0",
+   "format": {
+    "kind": "lance_v1",
+    "version": "v3",
+    "supported": true,
+    "detail": "LeRobot v3.0 in lance tables (lerobot-lance-convert), 8 episodes, 2 cameras"
+   },
+   "validation": [],
+   "dataset": {
+    "episode_count": 8,
+    "cameras": [
+     "exterior",
+     "wrist"
+    ],
+    "fps": 15.0,
+    "robot_type": "franka",
+    "total_frames": 516,
+    "labels": {
+     "with_task": 6,
+     "without_task": 2
+    },
+    "profile": null
+   },
+   "modules": [
+    {
+     "id": "timestamp_check",
+     "availability": "available"
+    },
+    {
+     "id": "kinematic_limits",
+     "availability": "available"
+    },
+    {
+     "id": "motion_quality",
+     "availability": "available"
+    },
+    {
+     "id": "visual_quality",
+     "availability": "available"
+    },
+    {
+     "id": "video_action_sync",
+     "availability": "available"
+    },
+    {
+     "id": "eef_video_consistency",
+     "availability": "unsupported",
+     "reason": "EEF-video consistency reads LeRobot datasets only, not lance",
+     "reason_code": "format_unsupported_by_module",
+     "reason_args": {
+      "format": "lance"
+     }
+    },
+    {
+     "id": "task_success",
+     "availability": "available",
+     "notes": [
+      "2 episodes have no task text; the model will caption them first"
+     ]
+    },
+    {
+     "id": "eef_video_review",
+     "availability": "unsupported",
+     "reason": "EEF-video consistency reads LeRobot datasets only, not lance",
+     "reason_code": "format_unsupported_by_module",
+     "reason_args": {
+      "format": "lance"
+     }
+    },
+    {
+     "id": "dedup",
+     "availability": "available"
+    },
+    {
+     "id": "skill_profile",
+     "availability": "available",
+     "notes": [
+      "2 episodes have no task text; the model will caption them first"
+     ]
+    }
+   ],
+   "meta_fingerprint": "sha256:6d540cc16c051b1aa5f07af381ba463e4d2a0978dc7342ea648c42fc6c7c99ce",
+   "warnings": []
   }
  ]
 }
