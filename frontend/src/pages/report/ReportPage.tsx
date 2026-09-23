@@ -15,10 +15,10 @@ import { useTaskActions } from '../../features/tasks/useTaskActions';
 import { compactNumber, percent } from '../../lib/format';
 import { integrityItems } from '../../lib/integrity';
 import { revisionOptions, runParts, type RunPart } from '../../lib/reportView';
+import { readCollapsedSections, writeCollapsedSections } from '../../lib/prefs';
 import { summaryDigest } from '../../lib/summary';
 import { isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
-import { DetailTables } from './DetailTables';
 import { ModuleSection, SECTION_STATE_COLOR } from './ModuleSection';
 import { PerfTab } from './PerfTab';
 
@@ -203,7 +203,7 @@ interface ScopeRow {
   failed: boolean;
 }
 
-function ScopeCard({ report }: { report: Report }) {
+function ScopeCard({ report, onJump, onCollapseAll, onExpandAll }: { report: Report; onJump: (id: string) => void; onCollapseAll: () => void; onExpandAll: () => void }) {
   const reg = useModules();
   const rows: ScopeRow[] = [
     ...report.modules.map((s, i) => ({
@@ -217,9 +217,21 @@ function ScopeCard({ report }: { report: Report }) {
     })),
     ...report.skipped_modules.map((s) => ({ key: `skip-${s.id}`, order: null, id: s.id, gate: moduleById(reg.data, s.id)?.gate ?? '', state: 'skipped', note: s.reason, failed: false })),
   ];
-  const jump = (id: string) => document.getElementById(`module-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   return (
-    <Card title={zh.report.scope} extra={<span className="muted">{zh.report.scopeDesc}</span>}>
+    <Card
+      title={zh.report.scope}
+      extra={
+        <Space size={8}>
+          <span className="muted">{zh.report.scopeDesc}</span>
+          <Button size="small" onClick={onCollapseAll}>
+            {zh.reportPage.collapseAll}
+          </Button>
+          <Button size="small" onClick={onExpandAll}>
+            {zh.reportPage.expandAll}
+          </Button>
+        </Space>
+      }
+    >
       <Table
         rowKey="key"
         size="small"
@@ -233,7 +245,7 @@ function ScopeCard({ report }: { report: Report }) {
             dataIndex: 'id',
             render: (_: unknown, r: ScopeRow) =>
               r.order ? (
-                <Button type="text" size="mini" style={{ padding: 0 }} onClick={() => jump(r.id)}>
+                <Button type="text" size="mini" style={{ padding: 0 }} onClick={() => onJump(r.id)}>
                   {moduleName(reg.data, r.id)}
                 </Button>
               ) : (
@@ -269,8 +281,6 @@ function ReportBody({
   readOnly,
   subtasks,
   runs,
-  table,
-  setTable,
 }: {
   task: Task;
   report: Report;
@@ -278,24 +288,39 @@ function ReportBody({
   readOnly: boolean;
   subtasks: readonly Subtask[];
   runs: RunPart[];
-  table: string | null;
-  setTable: (table: string) => void;
 }) {
   const qc = useQueryClient();
   const actions = useTaskActions();
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: qk.task(task.id) });
   };
-  const openTable = (id: string) => {
-    setTable(id);
-    document.getElementById('detail-tables')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
   const blocked = retryBlocked(task);
+  // Folded sections are a per-browser preference (F6.2): the same modules stay folded on every report.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => readCollapsedSections());
+  const update = (next: Set<string>) => {
+    setCollapsed(next);
+    writeCollapsedSections(next);
+  };
+  const toggle = (id: string) => {
+    const next = new Set(collapsed);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    update(next);
+  };
+  const jump = (id: string) => {
+    if (collapsed.has(id)) {
+      const next = new Set(collapsed);
+      next.delete(id);
+      update(next);
+    }
+    requestAnimationFrame(() => document.getElementById(`module-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+  const ids = report.modules.map((m) => m.id);
   return (
     <div className="card-gap">
       <OverviewCard task={task} report={report} readOnly={readOnly} runs={runs} onRetryHeld={() => actions.run('retry', { id: task.id, name: task.name, held: report.overview.counts.held })} />
       <IntegrityCard task={task} report={report} />
-      <ScopeCard report={report} />
+      <ScopeCard report={report} onJump={jump} onCollapseAll={() => update(new Set([...collapsed, ...ids]))} onExpandAll={() => update(new Set([...collapsed].filter((id) => !ids.includes(id))))} />
       {report.modules.map((s: ReportModuleSection, i: number) => (
         <ModuleSection
           key={s.id}
@@ -306,23 +331,11 @@ function ReportBody({
           subtasks={subtasks}
           readOnly={readOnly}
           retryBlocked={blocked}
+          collapsed={collapsed.has(s.id)}
+          onToggle={() => toggle(s.id)}
           onRetry={(moduleId, name) => confirmModuleRetry({ taskId: task.id, moduleId, name, qc, onDone: refresh })}
-          onTable={openTable}
         />
       ))}
-      <LazyVisible placeholder={<Card title={zh.report.tables} id="detail-tables" />}>
-        <DetailTables
-          taskId={task.id}
-          rev={rev}
-          sections={report.modules}
-          selected={table}
-          onSelect={setTable}
-          onResultChanged={() => {
-            void qc.invalidateQueries({ queryKey: qk.task(task.id) });
-            void qc.invalidateQueries({ queryKey: ['task', task.id, 'report'] });
-          }}
-        />
-      </LazyVisible>
       {actions.dialogs}
     </div>
   );
@@ -349,8 +362,6 @@ export function ReportPage() {
   const readOnly = revParam !== null && revParam !== current;
   const ep = positiveInt(params.get('ep'));
   const tab = location.hash === '#perf' ? 'perf' : 'report';
-  // The detail table picked at the bottom survives a revision change (the page stays mounted).
-  const [table, setTable] = useState<string | null>(null);
   const report = useQuery({
     queryKey: qk.report(id, rev),
     queryFn: () => unwrap(api().GET('/tasks/{id}/report', { params: { path: { id }, query: { rev } } })),
@@ -450,7 +461,7 @@ export function ReportPage() {
           ) : !report.data ? (
             <PageError error={report.error} onRetry={() => void report.refetch()} />
           ) : (
-            <ReportBody task={t} report={report.data.report} rev={report.data.revision} readOnly={readOnly} subtasks={subs} runs={runParts(t, timeline.data?.items ?? [], subs, report.data.revision)} table={table} setTable={setTable} />
+            <ReportBody task={t} report={report.data.report} rev={report.data.revision} readOnly={readOnly} subtasks={subs} runs={runParts(t, timeline.data?.items ?? [], subs, report.data.revision)} />
           )}
         </Tabs.TabPane>
         <Tabs.TabPane key="perf" title={zh.report.tabPerf}>

@@ -974,6 +974,7 @@ export const zh = {
     goAdjudicate: (n: number) => `去裁决（${n}）`,
     goAppeal: (n: number) => `可复议（${n}）`,
     fromSubtask: (name: string) => `这一节的结果来自子任务「${name}」。`,
+    fingerprint: { prompt: '提示词版本', code: '代码版本', module: '模块实现', params: '参数' } as Record<string, string>,
     episodesError: (n: number) => `出错 ${n} 条（待补跑）`,
     failedTitle: '这个模块没有跑完',
     retryModule: '重试此模块',
@@ -1147,6 +1148,21 @@ export const zh = {
     warnRaw: (text: string) => `命令行原文：${text}`,
   },
 
+  /** The one-line essence of a report section (本次质检范围, the task detail's 判决摘要). */
+  summaryDigest: {
+    syncVerdicts: (misaligned: number, annotated: number) => `错位判废 ${misaligned} 条，已标注 ${annotated} 条`,
+    families: (n: number) => `${n} 个技能族`,
+    disagreements: (n: number) => `标注分歧 ${n} 条`,
+    removed: (n: number) => `剔除 ${n} 条`,
+    candidates: (n: number) => `候选 ${n} 条`,
+    mean: (v: string) => `平均分 ${v}`,
+    fail: (n: number) => `判废 ${n} 条`,
+    abstain: (n: number) => `转人工 ${n} 条`,
+    error: (n: number) => `出错 ${n} 条`,
+    allPass: (n: number) => `${n} 条全部通过`,
+    nothing: '没有条目',
+  },
+
   /** Report sections (06 §6.2, F6.2): statistics and charts only, never a list of episodes. */
   sections: {
     counts: '判决分布',
@@ -1196,6 +1212,7 @@ export const zh = {
       reportOnly: '只报不罚',
       notApplicable: (name: string, reason: string) => `${name}：本数据集不适用——${reason}`,
       partlyApplicable: (name: string, n: number, reason: string) => `${name}：${n} 条不适用——${reason}`,
+      naGeneric: '缺少计算它所需的读数',
       idle: '有空闲的条目',
       idleDesc: '开头、中途、结尾各有多少条出现空闲（无指令也不动）',
       idleKinds: { head: '开头空闲', mid: '中途停顿', tail: '结尾空闲' } as Record<string, string>,
@@ -1212,6 +1229,7 @@ export const zh = {
       cameraChart: '逐相机分布',
       cameraChartDesc: '横轴是视觉总分，纵轴是读数条数，每路相机一条线',
       cameraMean: (cam: string, mean: string) => `${cam} · 均分 ${mean}`,
+      cameraSummary: (cam: string, mean: string, low: number) => `${cam} 均分 ${mean}，低于 0.6 的 ${low} 条`,
     },
     sync: {
       verdicts: { aligned: '同步正常', annotated: '已标注异常', suspect: '疑似错位', undecidable: '测不准', misaligned: '整体错位（判废）' } as Record<string, string>,
@@ -1226,6 +1244,7 @@ export const zh = {
       note: '典型滞后：这一路画面比动作晚多少（正 = 画面晚），越接近 0 越好。逐条波动：各条之间这个数跳得厉不厉害。判废只发生在「所有可信相机一致指向同一个偏移」这一种情况。',
       advice: '数据集结论',
       negative: (n: number) => `${n} 条出现负滞后（画面早于动作），多半是数据装配出错`,
+      lagSummary: (cam: string, lag: string) => `${cam} ${lag} 秒`,
     },
     task: {
       checked: '判定条数',

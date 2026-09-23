@@ -483,6 +483,71 @@ button.video-placeholder {
   word-break: break-all;
 }
 
+/* Report sections (F6.2): key figures, then charts two to a row, then tables and notes */
+.section-card.collapsed .arco-card-body {
+  display: none;
+}
+
+.section-card .arco-card-header {
+  height: auto;
+  min-height: 46px;
+}
+
+.section-view > * + * {
+  margin-top: 16px;
+}
+
+.section-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px 32px;
+}
+
+.section-chart {
+  min-width: 0;
+}
+
+.section-sub {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.section-sub .muted {
+  font-weight: normal;
+  font-size: 12px;
+}
+
+.section-note {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--c-text-2);
+}
+
+.section-lines {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--c-text-2);
+}
+
+.stat-cell.tone-bad .stat-value {
+  color: var(--c-danger);
+}
+
+.stat-cell.tone-warn .stat-value {
+  color: var(--c-warning);
+}
+
+.stat-cell.tone-good .stat-value {
+  color: var(--c-success);
+}
+
 /* 数据包完整性 (F6.2): label / value pairs side by side, three columns like the mockup's .desc */
 .desc-grid {
   display: grid;

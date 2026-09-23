@@ -1,6 +1,5 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { findTask } from '../../mocks/db';
 import { MAIN_TASK } from '../../mocks/world';
 import { findDrawer, pick } from '../../test/arco';
 import { recordRequests } from '../../test/record';
@@ -10,10 +9,6 @@ const REPORT = `/tasks/${MAIN_TASK}/report`;
 
 function sectionIds(): string[] {
   return [...document.querySelectorAll('[id^="module-"]')].map((e) => e.id.replace('module-', ''));
-}
-
-function bodyRows(el: HTMLElement): HTMLElement[] {
-  return [...el.querySelectorAll('tbody tr')].filter((r) => !r.classList.contains('arco-table-empty-row')) as HTMLElement[];
 }
 
 describe('质检报告 (07 §5)', () => {
@@ -38,9 +33,10 @@ describe('质检报告 (07 §5)', () => {
     expect(within(ts).getByText('出错 2 条（待补跑）')).toBeInTheDocument();
     expect(within(ts).getByRole('link', { name: '去裁决（6）' })).toHaveAttribute('href', `/tasks/${MAIN_TASK}/adjudication?source=task_success`);
     expect(screen.getByTestId('section-skill_profile')).toHaveTextContent('这一节的结果来自子任务「重试 #1」。');
-    // Summary scalars and {name, count} series.
+    // Key figures and charts from the summary's chart-ready aggregates.
     expect(screen.getByTestId('summary-visual_quality')).toHaveTextContent('平均分0.87');
-    expect(within(screen.getByTestId('section-visual_quality')).getByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('0.5–0.6 1'));
+    const scoreChart = within(within(screen.getByTestId('section-visual_quality')).getByTestId('chart-score')).getByTestId('chart');
+    expect(scoreChart).toHaveAttribute('aria-label', expect.stringContaining('0.5–0.6 1'));
   });
 
   it('the header has a standing 人工裁决 entry and no 「小节和…一一对应」 line; integrity is Chinese side by side (D47, F6.2)', async () => {
@@ -122,41 +118,72 @@ describe('质检报告 (07 §5)', () => {
     expect(call?.headers['idempotency-key']).toBeTruthy();
   });
 
-  it('detail tables: 100 rows a page, cursor paging, whitelisted sort, result_changed back to page one', async () => {
+  it('every module section has key figures and charts, no episode lists and no JSON (F6.2)', async () => {
     const seen = recordRequests();
-    const { user } = renderApp(REPORT);
-    const vq = await screen.findByTestId('section-visual_quality');
-    await user.click(within(vq).getByRole('button', { name: '明细：逐机位打分（147 行）' }));
-    const table = await screen.findByTestId('detail-table');
-    await waitFor(() => expect(bodyRows(table)).toHaveLength(100));
-    expect(screen.getByTestId('table-page')).toHaveTextContent('第 1 / 2 页');
-    await user.click(screen.getByRole('button', { name: '下一页' }));
-    await waitFor(() => expect(bodyRows(screen.getByTestId('detail-table'))).toHaveLength(47));
-    expect(screen.getByTestId('table-page')).toHaveTextContent('第 2 / 2 页');
-    expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled();
-    const tableCalls = seen.filter((r) => r.path === `/tasks/${MAIN_TASK}/report/tables/visual_quality`);
-    expect(tableCalls.at(-1)?.query.get('cursor')).toBeTruthy();
-    expect(tableCalls.at(-1)?.query.get('limit')).toBe('100');
+    renderApp(REPORT);
+    await screen.findByTestId('report-equation');
+    const charts = (id: string) => within(screen.getByTestId(`section-${id}`)).getAllByTestId('chart').map((c) => c.getAttribute('aria-label') ?? '');
+    const figures = (id: string) => screen.getByTestId(`summary-${id}`).textContent ?? '';
+    expect(figures('timestamp_check')).toContain('不合格1');
+    expect(figures('timestamp_check')).toContain('残段1');
+    expect(charts('timestamp_check')).toEqual([expect.stringContaining('残段 1'), expect.stringContaining('时长分布：0–5 1')]);
+    expect(figures('motion_quality')).toContain('执行器卡死4');
+    expect(charts('motion_quality')[0]).toContain('子项均分：平滑度（计入总分） 0.86');
+    expect(screen.getByTestId('section-motion_quality')).toHaveTextContent('执行器饱和：本数据集不适用——速度型指令和位置读数含义不同');
+    expect(charts('visual_quality')[0]).toContain('逐相机分布：exterior_image_1_left 均分 0.89');
+    expect(figures('video_action_sync')).toContain('已标注异常2不判废');
+    expect(charts('video_action_sync')).toEqual([expect.stringContaining('判定分布：同步正常 43'), expect.stringContaining('逐相机典型滞后：exterior_image_1_left +0.03 秒')]);
+    expect(within(screen.getByTestId('sync-cameras')).getByText('wrist_image_left')).toBeInTheDocument();
+    expect(screen.getByTestId('sync-advice')).toHaveTextContent('数据集结论：全库逐相机中位滞后均在容差内');
+    expect(figures('task_success')).toContain('任务文本来源原始标注 26 · 自产描述 21');
+    expect(charts('task_success')).toEqual([
+      expect.stringContaining('判定结论分布：打分层判成功 30'),
+      expect.stringContaining('弃权原因：末态物证 … 在灰区 3'),
+      expect.stringContaining('各层判定条数：打分层 47'),
+      expect.stringContaining('出错停在哪一步：取证仲裁 2'),
+    ]);
+    expect(charts('dedup')).toEqual([expect.stringContaining('重复组大小：2 条一组 1')]);
+    expect(figures('skill_profile')).toContain('标注分歧5高置信 3 · 人工复核 2');
+    expect(charts('skill_profile')[1]).toContain('子技能分布：放置 › 放入容器 8');
+    for (const id of ['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile']) {
+      const section = screen.getByTestId(`section-${id}`);
+      expect(section.textContent, id).not.toMatch(/[{}"]|ep \d+/);
+      expect(within(section).queryByRole('link', { name: /^ep \d+$/ })).toBeNull();
+    }
+    // Statistics only: the report page never pages through the detail tables any more.
+    expect(screen.queryByText('明细表')).toBeNull();
+    expect(seen.filter((r) => r.path.includes('/report/tables/'))).toHaveLength(0);
+  });
 
-    // Sort options are the registry whitelist only.
-    await user.click(screen.getByRole('combobox', { name: '排序' }));
-    const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
-    expect(options).toEqual(expect.arrayContaining(['Episode', '分数', '相机']));
-    expect(options).not.toContain('清晰度');
-    await user.click(screen.getAllByRole('option').find((o) => o.textContent === '分数')!);
-    await user.click(screen.getByText('降序'));
-    await waitFor(() => expect(screen.getByTestId('table-page')).toHaveTextContent('第 1 / 2 页'));
-    await waitFor(() => {
-      const last = seen.filter((r) => r.path.endsWith('/tables/visual_quality')).at(-1)!;
-      expect([last.query.get('sort'), last.query.get('order'), last.query.get('cursor')]).toEqual(['score', 'desc', null]);
-    });
-    await waitFor(() => expect(bodyRows(screen.getByTestId('detail-table'))[0]).toHaveTextContent('0.94'));
+  it('each section folds away with the toggle on its right, remembered per browser; 全部折叠 / 全部展开', async () => {
+    const { user, unmount } = renderApp(REPORT);
+    await screen.findByTestId('report-equation');
+    await user.click(screen.getByRole('button', { name: '收起：视觉质量' }));
+    expect(within(screen.getByTestId('section-visual_quality')).queryByTestId('summary-visual_quality')).toBeNull();
+    expect(screen.getByRole('button', { name: '展开：视觉质量' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByTestId('summary-motion_quality')).toBeInTheDocument();
+    unmount();
+    // Another visit: still folded.
+    const second = renderApp(REPORT);
+    await screen.findByTestId('report-equation');
+    expect(screen.getByRole('button', { name: '展开：视觉质量' })).toBeInTheDocument();
+    await second.user.click(screen.getByRole('button', { name: '全部折叠' }));
+    for (const id of ['timestamp_check', 'task_success', 'skill_profile']) expect(screen.queryByTestId(`summary-${id}`)).toBeNull();
+    expect(screen.getByTestId('report-equation')).toBeInTheDocument(); // the overview never folds
+    // Jumping from 本次质检范围 unfolds the section it jumps to.
+    await second.user.click(within(screen.getByTestId('report-scope')).getByRole('button', { name: '精确去重' }));
+    expect(await screen.findByTestId('summary-dedup')).toBeInTheDocument();
+    await second.user.click(screen.getByRole('button', { name: '全部展开' }));
+    for (const id of ['timestamp_check', 'visual_quality', 'skill_profile']) expect(screen.getByTestId(`summary-${id}`)).toBeInTheDocument();
+  });
 
-    // A new result revision while paging: the table starts again from the first page.
-    findTask(MAIN_TASK)!.result_rev = 3;
-    await user.click(screen.getByRole('button', { name: '下一页' }));
-    expect(await screen.findByText('结果版本已经更新，明细表回到第一页')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId('table-page')).toHaveTextContent('第 1 / 2 页'));
+  it('a report written before the chart-ready aggregates still shows what it has (06 §6.2)', async () => {
+    renderApp('/tasks/task_01HXPZ2K/report');
+    const ts = await screen.findByTestId('section-timestamp_check');
+    expect(within(ts).getAllByTestId('chart').length).toBeGreaterThan(0);
+    // the so101 task's report has every v1 module, kinematics included
+    expect(screen.getByTestId('summary-kinematic_limits')).toHaveTextContent('越限条数');
+    expect(within(screen.getByTestId('section-kinematic_limits')).getAllByTestId('chart')[0]).toHaveAttribute('aria-label', expect.stringContaining('按越限类型：关节超速'));
   });
 
   it('逐条下钻: verdict, readings, evidence and every camera, played together and re-signed on failure', async () => {

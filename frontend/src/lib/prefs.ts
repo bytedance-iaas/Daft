@@ -19,6 +19,8 @@ export interface Prefs {
   lastRegion?: string;
   /** Log tab: follow latest. */
   followLogs?: boolean;
+  /** Report sections folded away, by module id (F6.2). */
+  collapsedSections?: string[];
 }
 
 function storage(): Storage | null {
@@ -65,4 +67,14 @@ export function readPageSize(table: string, fallback: PageSize = 20): PageSize {
 export function writePageSize(table: string, size: number): void {
   const prefs = readPrefs();
   writePrefs({ pageSize: { ...prefs.pageSize, [table]: size } });
+}
+
+/** The report sections this browser keeps folded (module ids). */
+export function readCollapsedSections(): Set<string> {
+  const v = readPrefs().collapsedSections;
+  return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+}
+
+export function writeCollapsedSections(ids: Iterable<string>): void {
+  writePrefs({ collapsedSections: [...new Set(ids)].sort() });
 }
