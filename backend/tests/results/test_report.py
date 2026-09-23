@@ -119,7 +119,8 @@ def test_no_result_yet_is_404(client_for, tmp_path):
     c = client_for(base_path="/curation")
     rt = c.app.state.runtime
     task = make_task(rt.repo, make_dataset(tmp_path / "ds"))
-    for rel in ("/report", "/perf", "/episodes/0", "/report/tables/motion_quality"):
+    for rel in ("/report", "/perf", "/episodes", "/episodes/0", "/episodes/0/sync-curves",
+                "/report/tables/motion_quality"):
         body = assert_error(c.get(f"{API}/tasks/{task.id}{rel}"), "not_found")
         assert body["error"]["details"] == {"result_rev": 0}
     r = c.get(f"{API}/tasks/{task.id}/adjudication")
@@ -135,7 +136,8 @@ def test_missing_run_directory_and_uncommitted_revision_are_reported(world):
     assert body["error"]["details"] == {"revision": 1, "reason": "revision_missing"}
     # the whole run directory is gone (cleaned locally; W5a owns backfill)
     shutil.rmtree(world.run_dir)
-    for rel in ("/report", "/perf", "/episodes/0", "/report/tables/motion_quality", "/adjudication"):
+    for rel in ("/report", "/perf", "/episodes", "/episodes/0", "/episodes/3/sync-curves",
+                "/report/tables/motion_quality", "/adjudication"):
         body = assert_error(world.get(rel), "not_found")
         assert body["error"]["details"] == {"revision": 1, "reason": "run_dir_missing"}, rel
         assert "交付目录" in body["error"]["message"]
@@ -172,8 +174,8 @@ def test_other_methods_answer_405_with_allow(world):
 def test_foreign_and_unknown_tasks_are_404(world, tmp_path):
     other = make_task(world.repo, world.dataset, owner="someone-else")
     for tid in (other.id, "task_nope", "..", "task_x%2F.."):
-        for rel in ("/report", "/report/tables/motion_quality", "/episodes/0", "/perf",
-                    "/adjudication"):
+        for rel in ("/report", "/report/tables/motion_quality", "/episodes", "/episodes/0",
+                    "/episodes/0/sync-curves", "/perf", "/adjudication"):
             r = world.client.get(f"{API}/tasks/{tid}{rel}")
             assert r.status_code == 404, (tid, rel, r.text)
             assert_schema("Error", r.json())
