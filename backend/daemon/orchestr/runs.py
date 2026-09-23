@@ -64,7 +64,7 @@ class StageRun(Run):
         out_file = self.wd.episodes_file(self.run_key, f"{sid}.out")
         if self.journal.done(sid):
             return read_lines(out_file) or []
-        post = sid in ("dedup", "profile")
+        post = sid in ("dedup", "profile", "profile_vlm")
         self.progress(sid, state="running", done=0, total=len(episodes))
         if not episodes:
             if fresh:
@@ -319,9 +319,9 @@ class MainRun(StageRun):
                 self.aggregate(sid, "funnel", rev, modules, selection)
             elif sid == "dedup":
                 survivors["dedup"] = self.check_stage(st, self.keep_of(rev), fresh=True)
-            elif sid == "profile":
+            elif sid in ("profile", "profile_vlm"):
                 source = survivors["dedup"] if "dedup" in stages else self.keep_of(rev)
-                survivors["profile"] = self.check_stage(st, source, fresh=True)
+                survivors[sid] = self.check_stage(st, source, fresh=True)
             elif st.get("phase") == "final":
                 self.aggregate(sid, "final", rev, modules, selection)
             if (st.get("command") == "check" and not (pipeline and sid in FUNNEL)) \
@@ -364,7 +364,7 @@ class RetryRun(StageRun):
                                              or m in scope) for m in s["modules"])]
         ids = (["autolabel"] if any(s.get("command") == "autolabel" for s in plan["stages"])
                else []) + [s["id"] for s in funnel] + [s["id"] for s in advisory] + ["verdict"]
-        post = {s["id"]: s for s in plan["stages"] if s["id"] in ("dedup", "profile")}
+        post = {s["id"]: s for s in plan["stages"] if s["id"] in ("dedup", "profile", "profile_vlm")}
         ids += list(post) + ["final", "report", "verify"]
         self.plan_progress(ids)
         self.journal.set(episodes=held, failed_modules=sorted(failed))
@@ -386,9 +386,10 @@ class RetryRun(StageRun):
         keep = self.keep_of(rev)
         if "dedup" in post:
             self.sync_post("dedup", post["dedup"], keep, scope, rows)
-        if "profile" in post:
+        profile_sid = "profile_vlm" if "profile_vlm" in post else "profile"
+        if profile_sid in post:
             base = self.minus_duplicates(keep) if "dedup" in post else keep
-            self.sync_post("profile", post["profile"], base, scope, rows, incremental=True)
+            self.sync_post(profile_sid, post[profile_sid], base, scope, rows, incremental=True)
         self.check_intent()
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)
@@ -429,7 +430,8 @@ class AdjudicationRun(StageRun):
         modules = self.plan_modules(plan)
         stages = {s["id"]: s for s in plan["stages"]}
         ids = ["adjudicate"] + (["vlm"] if "vlm" in stages else []) + ["verdict"]
-        ids += (["profile"] if "profile" in stages else []) + ["final", "report", "verify"]
+        profile_sid = "profile_vlm" if "profile_vlm" in stages else "profile"
+        ids += ([profile_sid] if profile_sid in stages else []) + ["final", "report", "verify"]
         self.plan_progress(ids)
         rev = self.allocate_revision()
         selection = self.selection()
@@ -441,16 +443,16 @@ class AdjudicationRun(StageRun):
         self.aggregate("verdict", "funnel", rev, modules, selection)
         keep = self.keep_of(rev)                  # already follows the applied decisions
         rows = self.module_rows()
-        if "profile" in stages and not self.journal.done("profile"):
+        if profile_sid in stages and not self.journal.done(profile_sid):
             row = rows.get("skill_profile")
             if applied.get("resync") or row is None or row.input_digest != input_digest(keep) \
                     or row.state in ("failed", "stale"):
                 self.repo.mark_modules_stale(self.task_id, ["skill_profile"])
                 full = row is None or row.state == "failed"
-                self.check_stage(stages["profile"], keep, fresh=True, incremental=not full)
+                self.check_stage(stages[profile_sid], keep, fresh=True, incremental=not full)
             else:
-                self.stage_done("profile", "skipped")
-                self.progress("profile", note="画像的输入没有变化", force=True)
+                self.stage_done(profile_sid, "skipped")
+                self.progress(profile_sid, note="画像的输入没有变化", force=True)
         self.check_intent()
         self.aggregate("final", "final", rev, modules, selection)
         self.report(rev, modules)

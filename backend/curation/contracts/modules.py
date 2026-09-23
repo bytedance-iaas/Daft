@@ -6,8 +6,9 @@ frontend through ``GET /api/v1/modules``). Nobody hard-codes a module list.
 
 Two facts from v1 shape it (design doc 05, section 1):
 
-* v1 has "six + two": the six funnel checks run per episode and vote on the
-  verdict; ``dedup`` and ``skill_profile`` run afterwards on the kept set only.
+* v1 has “six + two”: the six funnel checks run per episode and vote on the
+  verdict; ``dedup`` and the separate ``skill_profile`` VLM stage run afterwards
+  on the kept set only.
   ``stage`` and ``depends_on`` carry that, so the planner can order the stages
   and knows which results go stale when an upstream verdict changes.
 * ``autolabel`` (captioning episodes without a task text) is not a module; it
@@ -44,11 +45,11 @@ REGISTRY_VERSION = "1.6"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
-Stage = Literal["numeric", "frame", "vlm", "post_verdict"]
+Stage = Literal["numeric", "frame", "vlm", "post_verdict", "profile_vlm"]
 InputScope = Literal["funnel", "all_selected"]
 
 #: Stages in execution order (design doc 04, section 2).
-STAGE_ORDER: tuple[str, ...] = ("numeric", "frame", "vlm", "post_verdict")
+STAGE_ORDER: tuple[str, ...] = ("numeric", "frame", "vlm", "post_verdict", "profile_vlm")
 
 #: Capabilities a dataset or task must provide (design doc 05, section 2).
 NEEDS: frozenset[str] = frozenset({"timestamps", "action", "state", "video",
@@ -334,7 +335,7 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(
         id="skill_profile", name_zh="技能画像",
         summary_zh="归纳两级技能体系并统计分布，检出标注与画面不一致的条目",
-        level="dataset", gate="none", needs=frozenset({"video", "vlm"}), stage="post_verdict",
+        level="dataset", gate="none", needs=frozenset({"video", "vlm"}), stage="profile_vlm",
         depends_on=("funnel_verdict", "dedup", "autolabel"), produces_adjudication=True,
         param_schema=_no_params(),
         tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),),

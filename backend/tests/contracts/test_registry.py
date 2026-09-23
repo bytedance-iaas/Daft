@@ -31,7 +31,8 @@ def test_module_spec(spec):
 
 def test_v1_facts():
     """Design doc 05 section 1: the six funnel checks then dedup and profile on the kept set."""
-    assert {m.id for m in M.by_stage("post_verdict")} == {"dedup", "skill_profile"}
+    assert {m.id for m in M.by_stage("post_verdict")} == {"dedup"}
+    assert {m.id for m in M.by_stage("profile_vlm")} == {"skill_profile"}
     assert M.get("dedup").gate == "dedup" and M.get("skill_profile").gate == "none"
     assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "dedup",
                                                                     "skill_profile"}
