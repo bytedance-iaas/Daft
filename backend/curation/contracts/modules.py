@@ -40,7 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.4"
+REGISTRY_VERSION = "1.5"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
@@ -178,22 +178,39 @@ def _evidence_param(name: str, title: str, labels: dict[str, str], description: 
                                   "default": "flagged", "oneOf": options}}}
 
 
+#: File parameters (1.5): ``format: upload`` plus the kind of file, the extensions the picker offers
+#: and a size cap. In a task (C4) the value is an upload handle ``upload:<upload_id>`` returned by
+#: ``POST /uploads``; on the command line it is a path. The Daemon resolves handles to paths.
+UPLOAD_FORMAT = "upload"
+UPLOAD_PREFIX = "upload:"
+
+
+def _upload(kind: str, accept: list[str], max_mb: int, **fields) -> dict:
+    return {"type": "string", "format": UPLOAD_FORMAT, "x-upload-kind": kind, "x-accept": accept,
+            "x-max-mb": max_mb, **fields}
+
+
+def upload_params(module_id: str) -> dict[str, str]:
+    """param key -> upload kind of the module's file parameters."""
+    props = get(module_id).param_schema.get("properties") or {}
+    return {k: p["x-upload-kind"] for k, p in props.items() if p.get("format") == UPLOAD_FORMAT}
+
+
 def _eef_params() -> dict:
-    """design doc 12 §11.1 / §12. The file comes as a path in the DEMO's first cut (CLI
-    ``--param eef_video_consistency.trajectory_json=PATH``); the upload control is F5.5."""
+    """design doc 12 §11.1 / §12. ``trajectory_json`` is required; ``observation_seeds`` are the P-A
+    tracker's seeds (optional: without them position, orientation and time cannot be measured)."""
     return {
         "type": "object", "additionalProperties": False, "required": ["trajectory_json"],
         "properties": {
-            "trajectory_json": {
-                "type": "string", "minLength": 1, "title": "trajectory.json",
-                "description": "约定格式 eef-video/1.0.0 的单文件包（每条 episode 的点与轴定义、标定、逐帧位姿与投影）；"
-                               "第一刀填本机路径，上传在第二刀提供",
-                "default": ""},
-            "observation_seeds": {
-                "type": "string", "title": "观测种子目录",
-                "description": "P-A 跟踪的种子（observation 格式，<目录>/<sample_id>/<相机>.jsonl）；"
-                               "为空时取 trajectory.json 同目录下的 observations_seed/",
-                "default": ""},
+            "trajectory_json": _upload(
+                "eef_trajectory", [".json"], 64, minLength=1, title="trajectory.json",
+                description="约定格式 eef-video/1.0.0 的单文件包（每条 episode 的点与轴定义、标定、逐帧位姿与投影），"
+                            "上传即校验，错误会定位到样本、帧和字段", default=""),
+            "observation_seeds": _upload(
+                "eef_observation_seeds", [".jsonl", ".json"], 64, title="观测种子",
+                description="P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），"
+                            "每行是某个样本、某路相机、某一帧里人点出的点；不给时只做数值轨迹与画面运动",
+                default=""),
             "threshold_profile": {
                 "title": "阈值", "description": "demo 由基准噪声底定、未校准，分项显示 ok / suspect 并标「未校准」；"
                                                 "不判定时只出曲线与测量值",
@@ -299,7 +316,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         review_lines=("task_verdict", "label"), appealable=True),
     ModuleSpec(
         id="eef_video_review", name_zh="EEF–视频一致性 · VLM 复核",
-        summary_zh="对候选与抽查窗口请多模态模型复核跟踪目标与偏移方向，只做分类不做测量（第二刀提供）",
+        summary_zh="对候选与抽查窗口请多模态模型复核跟踪目标与偏移方向，只做分类不做测量",
         level="episode", gate="none", needs=frozenset({"video", "vlm", "eef_input"}), stage="vlm",
         depends_on=("eef_video_consistency",), produces_adjudication=False,
         param_schema=_eef_review_params(), input_scope="all_selected", affects_dataset_verdict=False),

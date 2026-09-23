@@ -156,6 +156,7 @@ class StartChecks:
         orch, repo = self.orch, self.orch.repo
         wd = WorkDir(orch.work_root, task.id)
         wd.ensure()
+        orch.materialize_uploads(task, wd)          # module input files into the run dir (F5.5)
         try:
             run_id = self.claim_run_id(task)
         except (DeliveryError, Unavailable) as err:

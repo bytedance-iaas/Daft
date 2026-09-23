@@ -19,7 +19,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `service.py` | `Orchestrator`：路由调用的入口；生命周期钩子（就绪后收拾孤儿进程、启动 worker 池和清理线程；停机时系统暂停）；动作、子任务、D37 重新预检、清理交付产物、执行计划、预检 |
 | `scheduler.py` | 队列与 worker 池：`maxRunningTasks` 个槽，主流程与子任务共用，先进先出；重启后从库里重建队列 |
 | `runbase.py` | 所有运行共用的部分：意图（暂停 / 停止 / 停机）、日志、进度、按档调用 CLI（崩溃后带 `--resume` 重新拉起并点名在处理的 episode）、参数、结果版本、同步与核验、`latest` |
-| `runs.py` | 主流程与四种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`、`ReexportRun` |
+| `runs.py` | 主流程与四种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`、`ReexportRun`；建议性模块的 `advisory_<档>` 阶段（全部选中条目，任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径，F5.5） |
 | `planning.py` | 第一次运行时调 W6 的 planner 生成 `plan.json`、`run.json` |
 | `rules.py` | 纯函数：模块状态与终态规则（D35）、episode 选择、批次名、清单指纹与变化（D37）、读不到 W5b 的汇总时按清单兜底计数 |
 | `start.py` | 启动前：三项检查（D30）、数据集指纹核对（D37）、固化输入并入队 |
@@ -29,6 +29,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `workdir.py` | 任务工作目录 `CURATOR_WORK_DIR/<task_id>/` 与编排自己的 `.orchestr/`（启动标记、各次运行的日志本、同步记录、清理 / 取回 / 清理交付产物的标记） |
 | `janitor.py` / `backfill.py` | 终态 7 天后清理本地工作目录；子任务或读结果时从交付目录取回（大文件不取回） |
 | `resources.py` | 帧档按内存准入；Daemon 自己的 `oom_score_adj` 尽力降到 −500（没有 CAP_SYS_RESOURCE 时只记一行日志） |
+| `../uploads.py`、`../routes/uploads.py` | 模块参数的输入文件（F5.5）：`POST /uploads` 上传即校验、按属主存在 `<data>/uploads/`；任务只认 `upload:` 句柄，建任务时带文件做模块预检（`service.module_preflight`），开始时复制进 `inputs/`（`service.materialize_uploads`） |
 | `../routes/runs.py`、`../routes/datasets_exec.py` | 路由 |
 
 ## 接口
@@ -36,7 +37,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 `POST /tasks`、`POST /tasks/batch`、`POST /tasks/{id}/actions/{start|pause|resume|stop}`、`POST /tasks/{id}/repreflight`、
 `POST /tasks/{id}/retry`、`POST /tasks/{id}/continue`、`POST /tasks/{id}/reexport`、`POST /tasks/{id}/adjudication/apply`、
 `POST /tasks/{id}/purge-artifacts`、`GET /tasks/{id}/plan`、`POST /preflight`、`GET /datasets/browse`、`GET /datasets/episodes`、
-`POST /datasets`、`POST /datasets/{id}/recheck`、`POST /datasets/{id}/repreflight`。写接口都支持 `Idempotency-Key`，
+`POST /datasets`、`POST /datasets/{id}/recheck`、`POST /datasets/{id}/repreflight`、`POST /uploads`、`GET /uploads/{id}`。写接口都支持 `Idempotency-Key`，
 每个响应在测试里按 C4 校验。
 
 ## 行为要点

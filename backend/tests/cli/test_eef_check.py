@@ -103,7 +103,8 @@ def test_preflight_reports_the_file_and_the_sub_items(mini_dataset, tmp_path):
     traj = _files(tmp_path)
     doc = run("preflight", "--input", mini_dataset, "--modules", f"{EEF},eef_video_review").doc
     by = {m["id"]: m for m in doc["modules"]}
-    assert by[EEF]["availability"] == "unsupported" and by[EEF]["reason_code"] == "trajectory_missing"
+    assert by[EEF]["availability"] == "needs_input" and by[EEF]["reason_code"] == "trajectory_missing"
+    assert by[EEF]["input_hint"] == {"field": "trajectory_json"}          # C1 1.5: the console asks for it
     assert by["eef_video_review"]["reason_code"] == "eef_review_not_available"
     doc = run("preflight", "--input", mini_dataset, "--modules", EEF,
               "--param", f"{EEF}.trajectory_json={traj}").doc
@@ -132,6 +133,54 @@ def test_check_usage_and_whole_module_failures(mini_dataset, tmp_path):
     review = run("check", "--modules", "eef_video_review", "--input", mini_dataset, "--run-dir", rd,
                  "--episodes", "0-1", "--param", f"{EEF}.trajectory_json={corrupt}")
     assert review.rc != 0
+
+
+def _check(cli, dataset, rd, traj, *extra):
+    res = cli("check", "--modules", EEF, "--input", dataset, "--run-dir", rd, "--episodes", "0-2",
+              "--param", f"{EEF}.trajectory_json={traj}", *extra)
+    assert res.rc == 0, res.doc
+    return res.doc["modules"][EEF]
+
+
+def test_another_file_or_other_seeds_are_another_input(cli, mini_dataset, tmp_path):
+    """F5.5 acceptance 2: the file's hash is part of the input; --resume redoes what another file made."""
+    rd = str(tmp_path / "run")
+    traj = _files(tmp_path / "a")
+    first = _check(cli, mini_dataset, rd, traj)
+    same = _check(cli, mini_dataset, rd, traj, "--resume")
+    assert same["skipped_existing"] == 3 and same["input_digest"] == first["input_digest"]
+    doc = json.loads(open(traj).read())                              # another file: one point moved
+    doc["samples"][0]["frames"][0]["cameras"][CAM]["projection"]["points"]["block_center"]["uv_px"][0] += 1.0
+    other = _files(tmp_path / "b")
+    open(other, "w").write(json.dumps(doc))
+    moved = _check(cli, mini_dataset, rd, other, "--resume")
+    assert moved["skipped_existing"] == 0 and moved["input_digest"] != first["input_digest"]
+    import hashlib
+
+    sha = {r["details"]["input_file_sha256"] for r in results(rd, EEF).values()}
+    assert sha == {hashlib.sha256(open(other, "rb").read()).hexdigest()}
+    seed = os.path.join(os.path.dirname(other), "observations_seed", "mini_000001", f"{CAM}.jsonl")
+    rows = open(seed).read().splitlines()
+    open(seed, "w").write("\n".join(rows[:-1]) + "\n")                # other seeds for episode 1 only
+    reseeded = _check(cli, mini_dataset, rd, other, "--resume")
+    assert reseeded["skipped_existing"] == 2 and reseeded["input_digest"] != moved["input_digest"]
+    changed = _check(cli, mini_dataset, rd, other, "--resume", "--param", f"{EEF}.lag_search_s=0.5")
+    assert changed["skipped_existing"] == 0                          # another configuration
+
+
+def test_a_remote_dataset_streams_the_media_it_needs(cli, cloud, mini_dataset, tmp_path, monkeypatch):
+    cloud.upload_dir(mini_dataset, "src-bucket", "datasets/mini")
+    monkeypatch.setenv("CURATION_INPUT_TOS_ACCESS_KEY", "in-ak")
+    monkeypatch.setenv("CURATION_INPUT_TOS_SECRET_KEY", "in-sk")
+    rd = str(tmp_path / "run")
+    doc = _check(cli, "tos://src-bucket/datasets/mini", rd, _files(tmp_path))
+    assert doc["episodes"]["error"] == 0 and doc["episodes"]["abstain"] == 3
+    recs = results(rd, EEF)
+    assert all(recs[e]["details"]["cameras"][CAM]["subitems"]["position_2d"]["points"]["block_center"]
+               ["coverage"]["requested"] == len(_truth(e)) for e in range(3))
+    fetched = {c[2] for c in cloud.calls if c[0] == "get" and "/videos/" in c[2]}
+    assert fetched == {f"datasets/mini/videos/chunk-000/observation.images.exterior/episode_{e:06d}.mp4"
+                       for e in range(3)}
 
 
 @pytest.fixture(scope="module")

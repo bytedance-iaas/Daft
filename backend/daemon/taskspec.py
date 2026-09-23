@@ -225,6 +225,14 @@ def check_modules(selected: list[str], availability: dict[str, dict], *,
         entry = availability.get(mid, {})
         state = entry.get("availability", "available")
         if state == "unsupported":
+            located = (entry.get("reason_args") or {}).get("errors")
+            if isinstance(located, list) and located:       # a module's own file failed (design doc 12)
+                raise ApiError("validation_failed",
+                               f"「{spec.name_zh}」用不了：{entry.get('reason', '')}".rstrip("："),
+                               details={"errors": [{"field": f"modules.{mid}", "problem": str(e.get("message", e))}
+                                                   | {k: e[k] for k in ("sample_id", "episode_index", "frame_index",
+                                                                        "camera_id", "point_id", "path") if k in e}
+                                                   for e in located[:50] if isinstance(e, dict)]})
             raise _bad(f"「{spec.name_zh}」在这个数据集上不可用：{entry.get('reason', '')}".rstrip("："),
                        "modules")
         if state == "needs_input":
@@ -239,6 +247,9 @@ def check_modules(selected: list[str], availability: dict[str, dict], *,
                                "embodiment_id")
             elif hint.get("field") == "vlm" and not has_vlm:
                 raise _bad(f"「{spec.name_zh}」需要先选择 VLM 后端和模型", "vlm")
+            elif hint.get("field") == "trajectory_json":
+                raise _bad(f"「{spec.name_zh}」需要上传 trajectory.json（约定格式 eef-video/1.0.0），"
+                           "或者不勾选这个模块", f"modules.{mid}.params.trajectory_json")
         if "vlm" in spec.needs and not has_vlm:
             raise _bad(f"勾选了「{spec.name_zh}」，需要选择 VLM 后端和模型", "vlm")
 
@@ -257,11 +268,14 @@ def module_rows(task_id: str, choices: list[tuple[str, dict | None]],
 
 
 def resolve_config(repo: P.Repository, settings: Settings, task: P.Task, body: dict, *,
-                   now: int, owner: str) -> Resolved:
+                   now: int, owner: str, module_preflight=None) -> Resolved:
     """``body`` already fits ``TaskPatch``; returns what to write, or raises :class:`ApiError`.
 
     ``task`` is the current row (for PATCH) - its values fill in whatever ``body``
-    leaves out when cross-field rules are checked.
+    leaves out when cross-field rules are checked. ``module_preflight(input_fields, choices,
+    owner) -> {module: entry}`` preflights the modules whose availability depends on the task's
+    own files (registry 1.4 ``eef_input``); their entries replace the dataset preflight's in the
+    task's snapshot (design doc 12 §5, F5.5).
     """
     if task.state != "created":
         locked = sorted(set(body) - EDITABLE_AFTER_START)
@@ -316,6 +330,18 @@ def resolve_config(repo: P.Repository, settings: Settings, task: P.Task, body: d
                        if m.selected and m.module_id in known]
         embodiment = out.fields.get("embodiment_id", task.embodiment_id)
         has_vlm = bool(out.fields.get("vlm_model_id", task.vlm_model_id))
+        own_files = [(mid, params) for mid, params in choices if "eef_input" in registry.get(mid).needs]
+        if own_files:
+            if module_preflight is None:
+                raise ApiError("internal", "这个模块要按任务的文件预检，但执行器没有装上")
+            source = {k: out.fields.get(k, getattr(task, k, None))
+                      for k in ("input_source", "input_uri", "input_region", "input_cred_id")}
+            entries = module_preflight(source, own_files, owner)
+            availability = {**availability, **entries}
+            if isinstance(preflight, dict):
+                kept = [m for m in preflight.get("modules") or [] if m.get("id") not in entries]
+                preflight = {**preflight, "modules": kept + list(entries.values())}
+                out.fields["preflight"] = preflight
         check_modules([mid for mid, _ in choices], availability, embodiment_id=embodiment,
                       has_vlm=has_vlm)
         if "modules" in body or "preflight_id" in body:

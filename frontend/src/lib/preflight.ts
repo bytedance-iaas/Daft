@@ -25,9 +25,16 @@ export function needsVlm(m: ModuleSpec | undefined): boolean {
   return Boolean(m && (m.needs as string[]).includes('vlm'));
 }
 
+/** Advisory modules (registry 1.4, `affects_dataset_verdict: false`) are opted into by hand: no
+ * preset and no 全选可用 turns them on (the EEF module also needs an uploaded file). */
+export function optIn(m: ModuleSpec): boolean {
+  return !m.affects_dataset_verdict;
+}
+
 /** The modules a preset turns on for this preflight (07 §3: 完整 / 快速 / 自选). */
 export function presetSelection(preset: 'full' | 'quick', reg: ModuleRegistry, result: PreflightResult | null | undefined): string[] {
   return reg.modules
+    .filter((m) => !optIn(m))
     .filter((m) => availability(result, m.id) !== 'unsupported' && availability(result, m.id) !== null)
     .filter((m) => preset === 'full' || !needsVlm(m))
     .map((m) => m.id);

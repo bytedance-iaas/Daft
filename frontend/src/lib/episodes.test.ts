@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseForDisplay, selectionCount, toExpr, toggleInExpr } from './episodes';
-import { availability, presetSelection, reasonText } from './preflight';
+import { availability, optIn, presetSelection, reasonText } from './preflight';
 import { DATASET_PROFILES, preflightFor, registry } from '../mocks/world';
 
 describe('episode expressions (display only; the server validates)', () => {
@@ -46,5 +46,15 @@ describe('preflight → availability and reasons', () => {
     expect(presetSelection('full', registry, r)).toEqual(['timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile']);
     expect(presetSelection('quick', registry, r)).toEqual(['timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'dedup']);
     expect(presetSelection('full', registry, preflightFor(mcap, {}))).toEqual([]);
+  });
+
+  it('an advisory module is opted into by hand, never by a preset (registry 1.4, F5.5)', () => {
+    const r = preflightFor(droid200, { vlmBackend: 'ark-prod' });
+    expect(availability(r, 'eef_video_consistency')).toBe('needs_input');
+    expect(reasonText(r.modules.find((m) => m.id === 'eef_video_consistency'))).toContain('trajectory.json');
+    const eef = registry.modules.find((m) => m.id === 'eef_video_consistency')!;
+    expect(optIn(eef)).toBe(true);
+    expect(registry.modules.filter(optIn).map((m) => m.id)).toEqual(['eef_video_consistency', 'eef_video_review']);
+    expect(presetSelection('full', registry, r)).not.toContain('eef_video_consistency');
   });
 });

@@ -1247,4 +1247,53 @@ const system = [
   http.get('*/readyz', () => HttpResponse.json({ status: 'ok', checks: { db_writable: true, master_key: true, workdir_writable: true, scratch_writable: true, reconciled: true } })),
 ];
 
-export const handlers = [...credentials, ...backends, ...datasets, ...tasks, ...report, ...system];
+// ------------------------------------------------------------------ uploads (C4 1.8.0)
+
+const uploads = new Map<string, Record<string, unknown>>();
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const uploadHandlers = [
+  http.post(`${API}/uploads`, async ({ request }) => {
+    const url = new URL(request.url);
+    const kind = url.searchParams.get('kind') ?? '';
+    const name = url.searchParams.get('name') ?? 'upload.json';
+    const text = await request.text();
+    if (!['eef_trajectory', 'eef_observation_seeds'].includes(kind)) return err(400, 'validation_failed', `不认识的上传类型 ${kind}`);
+    let doc: unknown;
+    try {
+      doc = JSON.parse(text);
+    } catch {
+      return err(400, 'validation_failed', '文件不是合法的 JSON', { errors: [{ field: null, problem: 'not JSON' }] });
+    }
+    let summary: Record<string, unknown>;
+    if (kind === 'eef_trajectory') {
+      const samples = (doc as { samples?: { episode_index: number; frames?: unknown[]; sample?: { sample_id?: string } }[] }).samples;
+      if (!Array.isArray(samples) || !samples.length)
+        return err(400, 'validation_failed', 'trajectory.json 没有通过校验：samples 为空', { errors: [{ field: 'samples', problem: 'at least one sample', code: 'schema' }] });
+      if (text.includes('"truth"')) {
+        const i = samples.findIndex((s) => JSON.stringify(s).includes('"truth"'));
+        return err(400, 'validation_failed', `trajectory.json 没有通过校验：评估字段不能进检测输入（样本 ${samples[i]?.sample?.sample_id ?? i}）`, {
+          errors: [{ field: `samples/${i}/…/truth`, problem: 'evaluation field is not allowed in detector input: truth', code: 'forbidden_key', sample_id: samples[i]?.sample?.sample_id }],
+        });
+      }
+      summary = { samples: samples.length, episodes: samples.map((s) => s.episode_index), frames: samples.reduce((n, s) => n + (s.frames?.length ?? 0), 0) };
+    } else {
+      if (!Array.isArray(doc) || !doc.length) return err(400, 'validation_failed', '种子文件应是 observation 行的 JSON 数组', { errors: [{ field: null, problem: 'expected an array' }] });
+      summary = { rows: doc.length, samples: new Set((doc as { sample_id: string }[]).map((r) => r.sample_id)).size };
+    }
+    const id = `upl_${(await sha256Hex(text + clock())).slice(0, 20)}`;
+    const up = { upload_id: id, handle: `upload:${id}`, kind, name, sha256: await sha256Hex(text), size_bytes: text.length, created_at: clock(), validation: { valid: true, summary, warnings: [] } };
+    uploads.set(id, up);
+    return HttpResponse.json(up, { status: 201 });
+  }),
+  http.get(`${API}/uploads/:id`, ({ params }) => {
+    const up = uploads.get(String(params.id));
+    return up ? HttpResponse.json(up) : err(404, 'not_found', '没有这个上传件');
+  }),
+];
+
+export const handlers = [...credentials, ...backends, ...datasets, ...tasks, ...report, ...system, ...uploadHandlers];

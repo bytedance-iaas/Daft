@@ -106,6 +106,16 @@ def test_invalid_inputs_are_rejected_with_a_location(entry, name):
     assert first.path or first.frame_index is not None or first.episode_index is not None
 
 
+def test_a_truth_key_is_located_at_its_sample_frame_camera_and_point(entry):
+    r = _load(_mutated(entry, REJECTIONS["nested truth key"][0]))
+    (err,) = r.errors
+    frame = entry["frames"][3]["frame_index"]
+    assert (err.episode_index, err.sample_id, err.frame_index, err.camera_id, err.point_id) == \
+        (entry["episode_index"], entry["sample"]["sample_id"], frame, "cam0", "tcp")
+    (err,) = _load(_mutated(entry, REJECTIONS["corruption_type anywhere"][0])).errors
+    assert err.sample_id == entry["sample"]["sample_id"] and err.frame_index is None
+
+
 def test_nan_is_rejected_before_anything_else():
     r = load.load_bundle(b'{"schema_version": NaN}')
     assert not r.ok and r.errors[0].code == load.PARSE_ERROR

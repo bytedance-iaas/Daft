@@ -196,5 +196,6 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **C1 1.4**：每个模块多两个字段 `input_scope`（`funnel` / `all_selected`）与 `affects_dataset_verdict`；需求多一个 `eef_input`；`depends_on` 可以是模块 id。新增两个建议性模块 `eef_video_consistency`（frame 档）与 `eef_video_review`（vlm 档，第一刀不提供）：`gate=none`、`all_selected`、不影响判决；三张明细表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis`。
 - **C4 1.7.0**：`ModuleRegistry` 跟上 1.4（两个必填字段、needs 与 depends_on 的枚举）；前端类型已重新生成。
 - **C2（兼容扩充，schema_version 仍 1.0）**：预检的模块条目可带 `subitems`（逐分项能力）与 `episode_counts`；新原因码 `trajectory_missing`、`trajectory_invalid`、`eef_review_not_available`。`preflight` 与 `check` 多一个可重复的 `--param MODULE.KEY=VALUE`（值按模块 param_schema 转类型并校验）。
-- 口径：第一刀里界面拿不到文件（上传在 F5.5），所以不给文件时预检报 `unsupported: trajectory_missing` 而不是 `needs_input`——控制台自然置灰、预设不选、Daemon 的 `check_modules` 已有规则拒收，Daemon 不用改；F5.5 上传落地后改为 `needs_input`（`input_hint.field` 届时加 `trajectory_json`）。
+- 口径：第一刀里界面拿不到文件，所以不给文件时预检报 `unsupported: trajectory_missing`；F5.5 上传落地后已改为 `needs_input`（见下）。
 - 建议性模块的记录 `passed = score = null`（所以 `verdict` 按 C2 推导为 `abstain`），分项进 `details`；报告里它的小节不按通过 / 判废 / 弃权计数，而是候选、分项可疑数、被支持的诊断与覆盖率。
+- **F5.5（2026-09-23）**：C1 1.5 文件型参数（`format: upload`、`x-upload-kind`、`x-accept`、`x-max-mb`；Daemon 里值是 `upload:<id>` 句柄，CLI 里是路径）；C4 1.8.0 `POST /uploads`（请求体即文件，上传即校验，400 `validation_failed` 的 `details.errors[]` 定位到字段 / 样本 / 帧 / 相机 / 点位）与 `GET /uploads/{id}`，新 schema `Upload`、`UploadKind`、`UploadIssue`；C2 预检的 `input_hint.field` 枚举加 `trajectory_json`，EEF 模块没给文件时是 `needs_input: trajectory_missing`。

@@ -1,9 +1,9 @@
 """The two EEF modules' entries of ``curation preflight`` (C2 preflight.schema, design 12 §5.1, §11.1).
 
-First cut (design 12 §0.6): the file is a module parameter given on the command line; screen 2 of the
-new-task form cannot take it yet (the upload is F5.5), so a missing file is ``unsupported:
-trajectory_missing`` rather than ``needs_input`` - the console greys the module out with the reason and
-never pre-selects it. The VLM review is not in the first cut and is always unsupported.
+The file is a module parameter (``trajectory_json``): a path on the command line, an upload handle in
+the console (F5.5), which the Daemon turns into a path before it calls the CLI. Without it the module
+``needs_input`` (``input_hint.field = trajectory_json``); the console never pre-selects an advisory module,
+it is opted into and then asks for the upload. The VLM review is not provided yet and is unsupported.
 """
 from __future__ import annotations
 
@@ -48,8 +48,10 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
     """The preflight entry of ``eef_video_consistency`` for the task's episodes."""
     traj = (params.get("trajectory_json") or "").strip()
     if not traj:
-        return _unsupported("no trajectory.json given; pass --param eef_video_consistency.trajectory_json=PATH "
-                            "(the upload control comes with F5.5)", C.TRAJECTORY_MISSING)
+        return {"availability": C.NEEDS_INPUT, "reason_code": C.TRAJECTORY_MISSING,
+                "reason": "no trajectory.json given: upload one (console) or pass "
+                          "--param eef_video_consistency.trajectory_json=PATH",
+                "input_hint": {"field": "trajectory_json"}}
     path = pathlib.Path(os.path.expanduser(traj))
     if not path.is_file():
         return _unsupported(f"trajectory.json not found: {path}", C.TRAJECTORY_MISSING, {"path": str(path)})

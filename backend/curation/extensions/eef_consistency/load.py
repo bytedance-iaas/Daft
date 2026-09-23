@@ -154,6 +154,31 @@ def parse_json_bytes(data: bytes) -> Any:
     return json.loads(data, parse_constant=_reject_constant)
 
 
+def locate(payload: Any, path: str) -> dict[str, Any]:
+    """Sample, episode, frame, camera and point of a JSON path inside a bundle, as far as it goes
+    (``samples/3/frames/12/cameras/ext/projection/points/tcp/...``), for errors found before parsing."""
+    parts = path.split("/")
+    out: dict[str, Any] = {}
+    try:
+        if parts[0] != "samples":
+            return out
+        entry = payload["samples"][int(parts[1])]
+        out["episode_index"] = entry.get("episode_index")
+        out["sample_id"] = (entry.get("sample") or {}).get("sample_id")
+        if len(parts) > 3 and parts[2] == "frames":
+            frame = entry["frames"][int(parts[3])]
+            out["frame_index"] = frame.get("frame_index", int(parts[3]))
+            if len(parts) > 5 and parts[4] == "cameras":
+                out["camera_id"] = parts[5]
+                if "points" in parts[6:]:
+                    k = parts.index("points", 6)
+                    if len(parts) > k + 1:
+                        out["point_id"] = parts[k + 1]
+    except (KeyError, IndexError, TypeError, ValueError):
+        pass
+    return {k: v for k, v in out.items() if isinstance(v, (str, int)) and not isinstance(v, bool)}
+
+
 def find_forbidden_keys(value: Any, path: str = "") -> Iterable[str]:
     """JSON paths of every evaluation-truth key (design 12 §3.7 FORBIDDEN, D-E5)."""
     stack = [(value, path)]
@@ -198,7 +223,7 @@ def load_bundle(source: str | os.PathLike | bytes | dict, *, lerobot_root: str |
     leaked = list(find_forbidden_keys(payload))
     if leaked:
         issues += [C.Issue("error", FORBIDDEN_KEY, f"evaluation field is not allowed in detector input: {p}",
-                           path=p) for p in leaked[:MAX_ERRORS_PER_SAMPLE]]
+                           path=p, **locate(payload, p)) for p in leaked[:MAX_ERRORS_PER_SAMPLE]]
         return LoadResult(False, digest, {}, {}, issues, _report([], issues, digest))
     from curation.contracts import schemas
 

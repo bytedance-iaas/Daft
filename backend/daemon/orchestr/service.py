@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import pathlib
 import signal
 import subprocess
 import threading
@@ -88,6 +89,9 @@ class Orchestrator:
         self.janitor = Janitor(self)
         self._preflight_inputs: dict[str, tuple] = {}
         self._shutting_down = threading.Event()
+        from ..uploads import UploadStore
+
+        self.uploads = UploadStore(pathlib.Path(self.settings.data_dir) / "uploads", self.clock)
 
     @property
     def svc(self):
@@ -180,7 +184,8 @@ class Orchestrator:
                              input_source="", input_uri="", output_uri="", delivery_key="",
                              episode_selector={"mode": "all"}, params={}, owner_id=who.owner_id)
         resolved = taskspec.resolve_config(self.repo, self.settings, placeholder, body,
-                                           now=self.clock(), owner=who.owner_id)
+                                           now=self.clock(), owner=who.owner_id,
+                                           module_preflight=self.module_preflight)
         fields = resolved.fields
         if fields.get("vlm_model_id"):
             try:
@@ -196,6 +201,61 @@ class Orchestrator:
                            details={"errors": [{"field": "preflight_id",
                                                 "problem": "preflight of another input"}]})
         return resolved, fields
+
+    def module_params_argv(self, choices, owner: str, *, resolve) -> list[str]:
+        """``--param MODULE.KEY=VALUE`` of the chosen modules; file parameters through ``resolve``."""
+        out = []
+        for mid, params in choices:
+            kinds = registry.upload_params(mid)
+            for key, value in (params or {}).items():
+                if key in kinds:
+                    if value in (None, ""):
+                        continue
+                    value = resolve(mid, key, kinds[key], value)
+                out.append(f"{mid}.{key}={value}")
+        return out
+
+    def materialize_uploads(self, task: P.Task, wd: WorkDir) -> dict:
+        """Copy the task's uploaded files into its run directory (``inputs/``) when it starts, so the
+        batch carries its inputs and a resume never depends on the upload store; ``inputs/uploads.json``
+        maps each handle to its copy."""
+        import shutil
+
+        table: dict[str, dict] = {}
+        for m in self.repo.get_task_modules(task.id):
+            if not m.selected:
+                continue
+            for key, kind in registry.upload_params(m.module_id).items():
+                value = (m.params or {}).get(key)
+                if not value:
+                    continue
+                src, meta = self.uploads.resolve(task.owner_id, value, kind=kind,
+                                                 field=f"modules.{m.module_id}.params.{key}")
+                dest = wd.root / "inputs" / f"{meta['sha256'][:12]}-{meta['name']}"
+                if not dest.is_file():
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = dest.with_name(dest.name + ".tmp")
+                    shutil.copyfile(src, tmp)
+                    os.replace(tmp, dest)
+                table[value] = {"path": f"inputs/{dest.name}", "upload_id": meta["upload_id"],
+                                "kind": kind, "name": meta["name"], "sha256": meta["sha256"]}
+        if table:
+            write_json_atomic(wd.root / "inputs" / "uploads.json", table)
+        return table
+
+    def module_preflight(self, fields: dict, choices, owner: str) -> dict[str, dict]:
+        """Preflight entries of modules whose availability depends on the task's own files
+        (``eef_input``): ``curation preflight --modules ... --param ...`` against this dataset with the
+        uploaded files (design doc 12 §5, F5.5). The dataset's own preflight cannot know them."""
+        def resolve(mid, key, kind, value):
+            path, _meta = self.uploads.resolve(owner, value, kind=kind, field=f"modules.{mid}.params.{key}")
+            return str(path)
+
+        argv = self.module_params_argv(choices, owner, resolve=resolve)
+        src = Source(fields["input_source"], fields["input_uri"], fields.get("input_region"),
+                     fields.get("input_cred_id"))
+        doc = self.datasets.preflight(src, owner, modules=[mid for mid, _ in choices], params=argv)
+        return {m["id"]: m for m in doc.get("modules") or [] if isinstance(m, dict) and "id" in m}
 
     def _draft(self, fields: dict, modules: list[P.TaskModule], owner: str) -> Draft:
         selected = [m.module_id for m in modules if m.selected]

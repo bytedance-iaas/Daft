@@ -72,6 +72,7 @@ export const zh = {
     // Parameters generated from a module's param_schema (07 §3 screen 2)
     paramRequired: (title: string) => `请填写${title}`,
     paramChoice: (title: string) => `${title}的取值不在可选范围内`,
+    paramUpload: (title: string) => `${title}要先上传文件`,
     paramInteger: (title: string) => `${title}要填整数`,
     paramMin: (title: string, min: number, exclusive: boolean) => `${title}要${exclusive ? '大于' : '不小于'} ${min}`,
     paramMax: (title: string, max: number) => `${title}不能大于 ${max}`,
@@ -210,7 +211,7 @@ export const zh = {
         ? `info.json 里的机器人型号 ${String(a.robot_type)} 认不出，请补充型号，或跳过该模块`
         : '未读到机器人型号（info.json 里没有 robot_type），请补充型号，或跳过该模块',
     vlm_backend_missing: () => '还没选 VLM 后端，在「模型配置」里选一个',
-    trajectory_missing: () => '需要约定格式的 trajectory.json；DEMO 第一刀只能在命令行给出，上传在第二刀提供',
+    trajectory_missing: () => '需要上传约定格式的 trajectory.json（勾选后在第二屏上传）',
     trajectory_invalid: () => 'trajectory.json 没有通过校验，详情见预检结果',
     eef_review_not_available: () => 'EEF–视频一致性的 VLM 复核不在 DEMO 第一刀里',
   } as Record<string, (args: Record<string, unknown>) => string>,
@@ -368,6 +369,37 @@ export const zh = {
   } as Record<string, string>,
 
   taskForm: {
+    uploadChoose: '选择文件',
+    uploadReplace: '换一个文件',
+    uploading: '上传并校验中…',
+    uploadAccept: (exts: string[], maxMb?: number) => `接受 ${exts.join('、')}${maxMb ? `，不超过 ${maxMb} MiB` : ''}`,
+    uploadTooBig: (maxMb: number) => `文件超过 ${maxMb} MiB`,
+    uploadDone: (name: string, sha: string) => `已上传并通过校验：${name}（sha256 ${sha.slice(0, 12)}…）`,
+    uploadSummary: (s: Record<string, unknown>) =>
+      [
+        typeof s.samples === 'number' ? `${s.samples} 个样本` : null,
+        typeof s.frames === 'number' ? `${s.frames} 帧` : null,
+        typeof s.rows === 'number' ? `${s.rows} 行` : null,
+        Array.isArray(s.cameras) ? `相机 ${(s.cameras as string[]).join('、')}` : null,
+        typeof s.max_reprojection_difference_px === 'number' ? `重算投影差 ≤ ${Number(s.max_reprojection_difference_px).toFixed(3)} px` : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    uploadWarnings: (n: number) => `${n} 条警告（不影响使用）`,
+    uploadBadLine: (n: number) => `第 ${n} 行不是合法的 JSON`,
+    uploadReadFailed: '读取文件失败',
+    uploadFailed: '上传失败：',
+    uploadMore: (n: number) => `共 ${n} 处，前几处：`,
+    uploadWhere: (e: { field?: string | null; problem?: string; sample_id?: string; frame_index?: number; camera_id?: string; point_id?: string }) =>
+      [
+        e.sample_id ? `样本 ${e.sample_id}` : null,
+        e.frame_index !== undefined ? `第 ${e.frame_index} 帧` : null,
+        e.camera_id ? `相机 ${e.camera_id}` : null,
+        e.point_id ? `点 ${e.point_id}` : null,
+        e.field && !(e.problem ?? '').includes(e.field) ? e.field : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
     titleNew: '新建质检任务',
     titleEdit: '编辑待启动任务',
     titleCopy: '复制为新任务',

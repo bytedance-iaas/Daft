@@ -223,7 +223,9 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 建议性模块（`affects_dataset_verdict=false`，现在是 `eef_video_consistency`）：`plan` 把它放进单独的 `advisory_<档>` 阶段、
   `episodes: selected`（全部选中条目，含被旧硬门拒掉的）；`check` 要单独一次调用、不与漏斗模块混跑，`--survivors-out` 列出全部条目；
   记录 `passed = score = null`，分项在 `details`；`aggregate` 在调用边界把它滤掉（`FUNNEL_MODULES`），`verdict.py` 不变；
-  `report` 给它一节建议性摘要与三张表。没给文件时 `preflight` 报 `unsupported: trajectory_missing`。
+  `report` 给它一节建议性摘要与三张表。没给文件时 `preflight` 报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`）。
+  `check` 的每行记录带 `input_file_sha256`、`config_hash`、`seeds_sha256`，`--resume` 只跳过三者都相同的行，`input_digest` 也包含它们
+  （换文件、换种子或改参数就是新输入）；远端（TOS）数据集按需把用到的视频分段读到临时目录，调用结束删掉。
   实现在 `cli/eef_check.py`、`cli/modparams.py`，模块本身在 `extensions/eef_consistency/`（见其 README）。
 
 ## Daemon 的调用顺序

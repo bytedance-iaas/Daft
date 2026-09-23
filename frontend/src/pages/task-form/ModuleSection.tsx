@@ -1,7 +1,7 @@
 import { Button, Card, Checkbox, Divider, Grid, Modal, Radio, Space, Tag, Typography } from '@arco-design/web-react';
 import { useState } from 'react';
 import type { ModuleAvailability, ModuleRegistry, ModuleSpec } from '../../api/types';
-import { needsVlm, reasonText } from '../../lib/preflight';
+import { needsVlm, optIn, reasonText } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import type { Errors, FormValues } from './formModel';
 
@@ -82,7 +82,7 @@ export function ModuleSection({
       title={zh.taskForm.sectionModules}
       extra={
         <Space>
-          <Button size="small" type="text" disabled={!availability} onClick={() => set({ modules: usable.map((m) => m.id), preset: 'custom', skipped: [] })}>
+          <Button size="small" type="text" disabled={!availability} onClick={() => set({ modules: usable.filter((m) => !optIn(m)).map((m) => m.id), preset: 'custom', skipped: [] })}>
             {zh.taskForm.selectAll}
           </Button>
           <Button size="small" type="text" onClick={() => set({ modules: [], preset: 'custom' })}>
@@ -96,7 +96,7 @@ export function ModuleSection({
         value={v.preset}
         onChange={(x: FormValues['preset']) => {
           if (x === 'custom') return set({ preset: 'custom' });
-          const ids = usable.filter((m) => x === 'full' || !needsVlm(m)).map((m) => m.id);
+          const ids = usable.filter((m) => !optIn(m) && (x === 'full' || !needsVlm(m))).map((m) => m.id);
           set({ preset: x, modules: ids, skipped: [] });
         }}
         aria-label={zh.taskForm.sectionModules}

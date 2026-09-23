@@ -7,11 +7,16 @@ statuses, coverage, segments and diagnosis go into ``details`` (the per-episode 
 design doc 12 §11.3). Observations, per-frame curves and evidence overlays are written under
 ``checks/eef_video_consistency/{observations,curves,evidence}/<episode>/``. An episode the file does
 not declare gets a line saying ``unsupported: projection_missing``; an episode the module fails on
-gets an error line - neither changes keep / drop / held, which never read this module.
+gets an error line - neither changes keep / drop / held, which never read this module. A remote
+dataset's media are streamed into a temporary directory for the call; ``--resume`` redoes a line made
+with another trajectory.json, other seeds or another configuration, and ``input_digest`` covers them.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import tempfile
 import time
 
 from .errors import ModuleFailed, UsageError
@@ -32,9 +37,37 @@ def _unsupported_detail(episode: int, reason: str) -> dict:
             "cameras": {}, "segments": [], "diagnosis": [], "evidence": []}
 
 
+FETCH_CHUNK = 8 * 1024 * 1024
+
+
+def _fetch_media(storage, sample, root: str) -> None:
+    """A remote dataset's media for one sample into ``root`` (kept for the call: a LeRobot v3 file holds
+    many episodes). Streamed in ranges, written to a temporary name and renamed when complete."""
+    for cam in sample.cameras.values():
+        key = cam.media["uri"]
+        dest = os.path.join(root, *key.split("/"))
+        if os.path.isfile(dest):
+            continue
+        info = storage.stat(key)
+        if info is None:
+            raise FileNotFoundError(f"{storage.uri}/{key}")
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        part = dest + ".partial"
+        with open(part, "wb") as fh:
+            done = 0
+            while done < info.size:
+                chunk = storage.read_range(key, done, min(FETCH_CHUNK, info.size - done))
+                if not chunk:
+                    break
+                fh.write(chunk)
+                done += len(chunk)
+        os.replace(part, dest)
+
+
 def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: str, guard) -> tuple[dict, list[int]]:
     from ..contracts import modules as registry
     from ..extensions.eef_consistency import load, profile, runner
+    from ..extensions.eef_consistency.observations import seeds_digest
     from ..extensions.eef_consistency.preflight import seed_dir
     from ..pipeline.check_stage import input_digest
     from ..pipeline.records import (Inflight, PartWriter, compact, derive_verdict, latest_results,
@@ -50,28 +83,43 @@ def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: st
     except Exception as e:  # noqa: BLE001 - jsonschema's message names the field
         raise UsageError(f"{MODULE}: {getattr(e, 'message', e)} (pass --param {MODULE}.trajectory_json=PATH)") \
             from None
-    if storage.remote:
-        raise ModuleFailed(f"{MODULE}: the DEMO reads a local LeRobot directory; {storage.uri} is remote",
-                           {"input": storage.uri})
     traj = os.path.expanduser(params["trajectory_json"])
     if not os.path.isfile(traj):
         raise UsageError(f"{MODULE}: trajectory.json not found: {traj}")
-    result = load.load_bundle(traj, lerobot_root=storage.root, episodes=episodes)
+    media_exists = (lambda key: storage.stat(key) is not None) if storage.remote else None
+    result = load.load_bundle(traj, lerobot_root=None if storage.remote else storage.root,
+                              media_exists=media_exists, episodes=episodes)
     if not result.ok:
         first = result.errors[0]
         raise ModuleFailed(f"{MODULE}: trajectory.json is invalid: {first.message}",
                            {"errors": [i.as_dict() for i in result.errors[:10]], "sha256": result.sha256})
     lag = float(params["lag_search_s"])
     out_dir = module_dir(run_dir, MODULE)
-    cfg = runner.RunConfig(lerobot_root=storage.root, seed_root=seed_dir(params),
+    scratch = tempfile.TemporaryDirectory(prefix="eef-media-") if storage.remote else None
+    cfg = runner.RunConfig(lerobot_root=scratch.name if scratch else storage.root, seed_root=seed_dir(params),
                            profile=profile.load(params["threshold_profile"]), out_dir=out_dir,
                            evidence_mode=params["evidence_mode"], allowed_mounts=MOUNTS[params["camera_mounts"]],
                            lag_search_s=(-lag, lag), interpolation_gap_factor=float(params["interpolation_gap_factor"]))
+    config = runner.config_digest(cfg)
     todo = list(episodes)
     skipped = 0
     if args.resume:
+        # a line counts as done only for the same file, seeds and configuration (design doc 12 §3.7:
+        # another trajectory.json is another input)
         done = latest_results(run_dir, MODULE)
-        todo = [e for e in episodes if not (e in done and done[e]["verdict"] != "error")]
+
+        def current(e: int) -> bool:
+            if e not in done or done[e]["verdict"] == "error":
+                return False
+            d = done[e].get("details") or {}
+            if d.get("input_file_sha256") != result.sha256:
+                return False
+            s = result.samples.get(e)
+            if s is None:
+                return True
+            return d.get("config_hash") == config and d.get("seeds_sha256") == seeds_digest(cfg.seed_root, s.sample_id)
+
+        todo = [e for e in episodes if not current(e)]
         skipped = len(episodes) - len(todo)
     if guard is not None and todo:
         guard(todo)
@@ -96,6 +144,8 @@ def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: st
                 detail = _unsupported_detail(ep, "projection_missing")
             else:
                 try:
+                    if scratch is not None:
+                        _fetch_media(storage, sample, scratch.name)
                     detail, _ = runner.run_episode(sample, cfg)
                     evidence = [os.path.relpath(os.path.join(out_dir, e["path"]), run_dir).replace(os.sep, "/")
                                 for e in detail.get("evidence", [])]
@@ -119,6 +169,8 @@ def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: st
         if drained:
             inflight.clear()
         compact(run_dir, MODULE)
+        if scratch is not None:
+            scratch.cleanup()
     cur = latest_results(run_dir, MODULE)
     counts = {"total": len(episodes), "pass": 0, "fail": 0, "abstain": 0, "scored": 0, "error": 0}
     errors = []
@@ -127,7 +179,12 @@ def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: st
         counts[verdict] += 1
         if verdict == "error":
             errors.append(e)
-    entry = {"part": part, "input_digest": input_digest(episodes), "episodes": counts, "error_episodes": errors}
+    digest = hashlib.sha256(json.dumps({"episodes": input_digest(episodes), "trajectory": result.sha256,
+                                        "config": config,
+                                        "seeds": [seeds_digest(cfg.seed_root, s.sample_id)
+                                                  for _, s in sorted(result.samples.items())]},
+                                       sort_keys=True).encode()).hexdigest()
+    entry = {"part": part, "input_digest": f"sha256:{digest}", "episodes": counts, "error_episodes": errors}
     if args.resume:
         entry["skipped_existing"] = skipped
     return {"schema_version": "1.0", "modules": {MODULE: entry}}, list(episodes)

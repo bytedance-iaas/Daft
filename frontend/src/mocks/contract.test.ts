@@ -215,9 +215,22 @@ const createAndRepreflight = async (): Promise<Call[]> => {
   ];
 };
 
+const uploadCalls = async (): Promise<Call[]> => {
+  // C4 1.8.0: a trajectory.json upload, a rejected seed file (400 with located errors), reading one back.
+  const trajectory = { schema_version: 'eef-video/1.0.0', container: 'trajectory-bundle/1.0', samples: [{ episode_index: 0, sample: { sample_id: 'mini_000000' }, frames: [] }] };
+  const q = '/uploads?kind=eef_trajectory&name=trajectory.json';
+  const up = await (await fetch(`http://localhost/api/v1${q}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(trajectory) })).json();
+  return [
+    { op: 'createUpload', method: 'POST', path: q, body: trajectory },
+    { op: 'createUpload', method: 'POST', path: '/uploads?kind=eef_observation_seeds&name=seeds.jsonl', body: { rows: 'x' } },
+    { op: 'getUpload', method: 'GET', path: `/uploads/${up.upload_id}` },
+    { op: 'getUpload', method: 'GET', path: '/uploads/upl_0000000000' },
+  ];
+};
+
 describe('every mocked operation answers what the contract says', () => {
   it('responses validate against the operation schema for their status', async () => {
-    const all = [...calls(), ...(await createAndRepreflight())];
+    const all = [...calls(), ...(await createAndRepreflight()), ...(await uploadCalls())];
     const seen = new Set<string>();
     for (const c of all) {
       const res = await fetch(`http://localhost/api/v1${c.path}`, {

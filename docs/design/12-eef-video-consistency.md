@@ -669,3 +669,16 @@ eef_video_review:
 - **隔离**：`aggregate.FUNNEL_MODULES` 滤掉 `affects_dataset_verdict=false` 的模块，`runctx.stage_config` 不把它们交给 v1 的 `apply_check_selection`（只选建议性模块时显式关掉全部 v1 检查）；`verdict.py` 与 A 类目录未动。验证：迷你数据集的 CLI 全链路上，加入这个模块后 `verdicts.jsonl`、`keep.txt` 逐字节不变，四份终判清单与标注审计除自身的 `revision` 外相同；合成数据上 v1 对 v2 逐位对账（tools/parity/tests）照旧全过。
 - **报告**：小节不按通过 / 判废 / 弃权计数，摘要是扁平键（候选、全部 / 部分可评估、无法评估、分项可疑数与无法评估数、被支持的诊断、覆盖率），前端默认视图直接画成统计格与条形图；三张表按 detail 生成；`report.md` 写「建议性结果，不影响判决（阈值未校准）」。
 - **迷你数据集上的诚实弃权**：128×96、纯色方块只有 4 个角点，P-A 在锚点之间凑不够刚体特征，位置报 `unknown: coverage_insufficient`，不伪造 ok。
+
+### C.5 F5.5 上传控件与 Daemon 上传接口（2026-09-23）
+
+- **注册表 1.5**：文件型参数写成 `{"type": "string", "format": "upload", "x-upload-kind": …, "x-accept": […], "x-max-mb": 64}`；`trajectory_json`（`eef_trajectory`，`.json`）与 `observation_seeds`（`eef_observation_seeds`，`.jsonl` / `.json`）两项。值在 Daemon 里是句柄 `upload:<upload_id>`，在 CLI 里仍是路径（`--param`）。
+- **C4 1.8.0**：`POST /uploads?kind=&name=`（请求体就是文件，仍按写接口规则要求 `Content-Type: application/json`、同源；上限 64 MiB）返回 `Upload`（句柄、sha256、大小、`validation.summary` 与警告）；`GET /uploads/{id}`。校验不过是 400 `validation_failed`，`details.errors[]` 每条带 `field`（JSON 路径）、`problem`、`code`，以及能定位到的 `episode_index` / `sample_id` / `frame_index` / `camera_id` / `point_id`；真值键这类在解析前就拒收的错误也从 JSON 路径反查出样本、帧、相机与点位。种子文件在控制台里由 JSONL 转成 JSON 数组再传。上传件按属主隔离，存数据卷 `uploads/<属主>/<id>/`，没有数据库行。
+- **Daemon 只收句柄**：任务参数里的文件项必须是本人、同类型的 `upload:` 句柄，给服务器路径直接 400——不让任务把 Daemon 指向它自己挑的文件。
+- **预检两层**：数据集级预检（缓存 30 分钟、与任务无关）不知道任务的文件，EEF 报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，C2 的枚举加了这一项）；建任务 / 改任务时 `taskspec.resolve_config` 对勾选且需要 `eef_input` 的模块用上传件再跑一次模块预检（`preflight --modules … --param …`），结果并进任务的预检快照，计划因此有 `advisory_<档>` 阶段。模块预检里文件与数据集对不上（例如全部 episode 都不在文件里）按 `unsupported` 拒收并把定位后的错误带回。
+- **预设不选建议性模块**：`affects_dataset_verdict=false` 的模块只能手动勾（「完整」「快速」「全选可用」都不选），所以 `needs_input` 不会把预设拖进必填上传。
+- **执行**：开始时把上传件复制进运行目录 `inputs/<sha 前 12 位>-<文件名>`，`inputs/uploads.json` 记句柄到副本的映射；`MainRun` 执行 `advisory_<档>` 阶段（全部选中条目、`--param` 换成副本路径），`RetryRun` 在漏斗阶段之后重跑出错或过期的建议性模块；运行目录同步到交付目录时 `inputs/` 一起过去。
+- **换文件即新输入**：每行记录带 `input_file_sha256`、`config_hash`（profile、lag 范围、跟踪参数、机位、缺口倍数、模块版本）与 `seeds_sha256`；`--resume` 只跳过三者都相同的行，`input_digest` 也包含它们。
+- **远端数据集**：TOS 上的数据集按需把本条用到的视频分段读进临时目录（`.partial` 写完再改名），调用结束删掉；文件校验里的媒体存在性用 `stat` 查。
+- 验证：`tests/orchestr/test_eef_tasks.py`（上传校验与定位、句柄规则、带文件的模块预检、真跑 CLI 的端到端任务）、`tests/cli/test_eef_check.py`（换文件 / 换种子 / 改参数后 `--resume` 重做、远端数据集取视频）、前端（参数 schema 的 upload 类型、预设不选建议性模块、JSONL 转换、第二屏上传坏文件看到定位错误再换好文件后提交）；真起 Daemon 用 dataset2 走了一遍控制台上传（7 个样本、2009 帧、重算投影差 ≤ 0.013 px；种子 280 行；任务级预检把模块判为 available）。
+

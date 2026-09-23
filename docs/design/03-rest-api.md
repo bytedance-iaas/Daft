@@ -57,6 +57,8 @@
 | GET | `/api/v1/datasets/browse` | 列私有 TOS 前缀下或 HuggingFace 缓存桶里的数据集，供登记时挑选。`source=tos`（需 uri + 访问密钥）或 `source=public`（匿名） |
 | GET | `/api/v1/datasets/episodes` | 分页列 episode，供新建页预览勾选；给 `dataset_id`，或来源 + 地址，见 §10 |
 | POST | `/api/v1/preflight` | 预检，同步返回，结果带 `preflight_id` |
+| POST | `/api/v1/uploads` | 上传模块参数里的输入文件（注册表 1.5 的 `format: upload`，现为 EEF 的 trajectory.json 与观测种子），上传即校验、错误定位到样本 / 帧 / 字段，返回句柄 `upload:<id>` 与 sha256（12 篇 §11.1，F5.5） |
+| GET | `/api/v1/uploads/{id}` | 读回上传件的元数据与校验摘要 |
 | POST | `/api/v1/deliveries/probe` | 交付目录写探针：用指定的访问密钥真实写一个对象再删掉。新建页交付目录失焦时调 |
 
 **任务**

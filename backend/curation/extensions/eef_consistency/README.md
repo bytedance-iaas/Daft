@@ -26,7 +26,7 @@
 | `diagnosis.py` | 诊断假设（只在对应分项已 suspect 时算，不改状态）：PnP 外参修正、时间偏移、恒定朝向错（三维拟合 EEF 本体系恒定旋转）、TCP 轴向偏移（一维拟合）、位姿漂移、抖动来源 |
 | `profile.py`、`profiles/demo.yaml` | 阈值 profile；`demo` 标 `calibrated: false`，每个数都注明来自哪条基准的噪声底、乘了多少倍 |
 | `runner.py` | 单 episode 的流式执行：解码 → 观测 → 测量 → 判定 → 诊断 → 产物（`observations/`、`curves/*.parquet`、`evidence/` 叠加图），输出 §11.3 的 `detail` |
-| `preflight.py` | `curation preflight` 里两个模块的条目：文件校验、逐分项能力表、按 episode 计数；没给文件报 `unsupported: trajectory_missing`（第一刀界面拿不到文件），复核模块一律 `unsupported` |
+| `preflight.py` | `curation preflight` 里两个模块的条目：文件校验、逐分项能力表、按 episode 计数；没给文件报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，F5.5 起控制台第二屏上传），复核模块一律 `unsupported` |
 | `report.py` | 报告小节摘要（候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率）与三张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis` |
 | `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像） |
 | `__main__.py` | 离线命令：`validate`、`run` |
@@ -94,7 +94,30 @@
    ```
 
    `preflight.json` 里 `eef_video_consistency` 是 `available`，带 `subitems` 与 `episode_counts: {available: 7}`（不给 `--param` 时是
-   `unsupported: trajectory_missing`）；`plan.json` 多一个 `advisory_frame` 阶段、`episodes: selected`；EEF 的 `check` 打印
+   `needs_input: trajectory_missing`）；`plan.json` 多一个 `advisory_frame` 阶段、`episodes: selected`；EEF 的 `check` 打印
    「abstain 7」（建议性模块不投票）；`aggregate` 的 keep / 终判清单与不选这个模块时相同；`revisions/r0001/report.md` 里
    「EEF–视频一致性」一节写着「建议性结果，不影响判决（阈值未校准）：候选 6 · 全部可评估 1 …」，`tables/` 下有
    `eef_camera_metrics`、`eef_segments`、`eef_diagnosis` 三张表（ep6 只有 `27432424_left` 位置 suspect，诊断 `extrinsics_error`）。
+9. 控制台上传与 Daemon 执行（F5.5）：先跑 `../.venv/bin/python -m pytest -q tests/orchestr/test_eef_tasks.py -m "slow or not slow"`
+   （约 45 秒，含一个真跑 CLI 的端到端任务），应全部通过。再真起 Daemon（仓库根的 `.claude/launch.json` 里的
+   `curator-daemon-eef`：开发用主密钥、不鉴权、本地数据根是 `~/ws/ws_general/galbot/dataset2`），在 `backend/` 下：
+
+   ```bash
+   G=~/ws/ws_general/galbot/dataset2; U='http://localhost:8080/curation/api/v1/uploads'
+   curl -s -X POST "$U?kind=eef_trajectory&name=trajectory.json" -H 'Content-Type: application/json' \
+     --data-binary @$G/trajectory.json | python3 -m json.tool | head -30
+   sed 's/"status": "valid"/"status": "valid", "truth": 1/' $G/trajectory.json > /tmp/bad.json
+   curl -s -X POST "$U?kind=eef_trajectory&name=bad.json" -H 'Content-Type: application/json' --data-binary @/tmp/bad.json \
+     | python3 -m json.tool | head -20
+   cat $G/observations_seed/*/*.jsonl > /tmp/seeds.jsonl
+   ```
+
+   第一次上传返回 201，`handle` 是 `upload:upl_…`，`validation.summary` 里 `samples: 7`、`frames: 2009`、
+   `max_reprojection_difference_px` 约 0.013；第二次返回 400 `validation_failed`，`details.errors` 每条带
+   `field`（JSON 路径）、`sample_id`、`frame_index`、`camera_id`、`point_id`，`code: forbidden_key`。
+   然后在浏览器打开 <http://localhost:8080/curation/tasks/new>：数据来源选本地路径 `eef_ds2_lr3`，「快速质检」不会勾上
+   「EEF–视频一致性」（卡片上写「需要上传约定格式的 trajectory.json」），手动勾上；第二屏的 trajectory.json 选
+   `$G/trajectory.json`（上传后显示文件名、sha256 前 12 位与摘要），观测种子选 `/tmp/seeds.jsonl`（`.jsonl` 由控制台转成 JSON 数组）；
+   先选 `/tmp/bad.json` 能看到逐条定位的错误。创建并开始后：任务的运行目录有 `inputs/uploads.json` 与两份文件副本，
+   `plan.json` 有 `advisory_frame` 阶段，报告里有「EEF–视频一致性」一节（与第 8 步的命令行结果一致），keep / 终判清单与不勾这个模块时相同。
+   直接在 `modules[].params` 里填服务器路径会被 400 拒收（Daemon 只认 `upload:` 句柄）。

@@ -132,8 +132,10 @@ async def update_task(request: Request, task_id: str):
             task = _owned_task(rt, task_id, who.owner_id)
             if task.updated_at != expected:
                 raise ApiError("precondition_failed", details={"updated_at": task.updated_at})
+            orch = getattr(rt, "orchestrator", None)
             resolved = taskspec.resolve_config(rt.repo, rt.settings, task, body, now=rt.clock(),
-                                               owner=who.owner_id)
+                                               owner=who.owner_id,
+                                               module_preflight=orch.module_preflight if orch else None)
             fields = resolved.fields or {"name": task.name}      # still bump updated_at
             updated = rt.repo.update_task_fields(task_id, if_updated_at=expected,
                                                  owner=who.owner_id, **fields)

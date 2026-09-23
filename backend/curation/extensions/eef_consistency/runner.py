@@ -186,11 +186,19 @@ def to_jsonable(x: Any) -> Any:
 
 # --- assessment, detail and artifacts ----------------------------------------------------------
 
+def config_digest(cfg: RunConfig) -> str:
+    """Everything besides the input that changes a result: profile, search range, tracker, mounts."""
+    from .profile import config_hash
+
+    return config_hash(cfg.profile, {"lag_search_s": cfg.lag_search_s, "tracker": dataclasses.asdict(cfg.tracker),
+                                     "allowed_mounts": cfg.allowed_mounts, "gap_factor": cfg.interpolation_gap_factor,
+                                     "module_version": C.MODULE_VERSION})
+
+
 def assess(measure: EpisodeMeasure, cfg: RunConfig) -> dict:
     """The per-episode ``detail`` payload (design 12 §11.3), statuses by sub-item and camera."""
     from . import assess as AS
     from . import diagnosis as DG
-    from .profile import config_hash
 
     s = measure.sample
     prof = cfg.profile
@@ -233,9 +241,8 @@ def assess(measure: EpisodeMeasure, cfg: RunConfig) -> dict:
     return {
         "schema_version": C.DETAIL_SCHEMA_VERSION, "module_version": C.MODULE_VERSION,
         "assessment_mode": "advisory", "sample_id": s.sample_id, "input_hash": s.input_hash,
-        "config_hash": config_hash(prof, {"lag_search_s": cfg.lag_search_s, "tracker": dataclasses.asdict(cfg.tracker),
-                                          "allowed_mounts": cfg.allowed_mounts,
-                                          "gap_factor": cfg.interpolation_gap_factor}),
+        "config_hash": config_digest(cfg),
+        "seeds_sha256": O.seeds_digest(cfg.seed_root, s.sample_id),
         "threshold_profile": prof.summary() if prof else None,
         "uncalibrated": prof is None or not prof.calibrated,
         "overall": overall, "summary": summary,

@@ -22,6 +22,16 @@
       "autoPort": true
     },
     {
+      "name": "curator-daemon-eef",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && CURATOR_BASE_PATH=/curation CURATOR_PORT=${PORT:-8080} CURATOR_DATA_DIR=${CURATOR_DATA_DIR:-${TMPDIR:-/tmp}/curator-eef} CURATOR_LOCAL_DATA_ROOT=${CURATOR_LOCAL_DATA_ROOT:-$HOME/ws/ws_general/galbot/dataset2} CURATOR_AUTH_MODE=none CURATOR_MASTER_KEY=${CURATOR_MASTER_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=} CURATOR_STATIC_DIR=../frontend/dist CURATOR_LOG_FORMAT=text ../.venv/bin/python -m daemon"
+      ],
+      "port": 8080,
+      "autoPort": true
+    },
+    {
       "name": "curator-frontend-dev",
       "runtimeExecutable": "sh",
       "runtimeArgs": [

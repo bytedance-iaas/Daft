@@ -1,15 +1,93 @@
 import { Button, Card, Divider, Input, InputNumber, Radio, Select, Space, Switch, Typography } from '@arco-design/web-react';
-import type { ModuleRegistry, PreflightResult } from '../../api/types';
-import { paramFields, type ParamField } from '../../lib/paramSchema';
+import { useRef, useState } from 'react';
+import { ApiError } from '../../api/errors';
+import type { ModuleRegistry, PreflightResult, Upload, UploadIssue, UploadKind } from '../../api/types';
+import { uploadFile } from '../../api/uploads';
+import { paramFields, UPLOAD_PREFIX, type ParamField } from '../../lib/paramSchema';
 import { availabilityOf, embodimentHint, reasonText } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
 import type { Errors, FormValues } from './formModel';
 import { activeModules } from './formModel';
 
+/**
+ * A file parameter (registry 1.5 `format: upload`): pick a file, POST /uploads validates it on
+ * arrival, the handle `upload:<id>` becomes the value. A rejected file shows its located errors.
+ */
+export function UploadInput({ f, value, onChange }: { f: ParamField; value: unknown; onChange: (v: unknown) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<Upload | null>(null);
+  const [problem, setProblem] = useState<{ message: string; errors: UploadIssue[] } | null>(null);
+  const has = typeof value === 'string' && value.startsWith(UPLOAD_PREFIX);
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    setProblem(null);
+    if (f.maxMb && file.size > f.maxMb * 1024 * 1024) {
+      setProblem({ message: zh.taskForm.uploadTooBig(f.maxMb), errors: [] });
+      return;
+    }
+    setBusy(true);
+    try {
+      const up = await uploadFile(file, (f.uploadKind ?? 'eef_trajectory') as UploadKind);
+      setDone(up);
+      onChange(up.handle);
+    } catch (e) {
+      const details = e instanceof ApiError ? (e.details as { errors?: UploadIssue[] } | undefined) : undefined;
+      setProblem({ message: e instanceof Error ? e.message : String(e), errors: details?.errors ?? [] });
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = '';
+    }
+  };
+  return (
+    <div data-testid={`upload-${f.key}`}>
+      <input ref={input} type="file" accept={(f.accept ?? []).join(',')} style={{ display: 'none' }} aria-label={f.title} onChange={(e) => void pick(e.target.files?.[0])} />
+      <Space>
+        <Button size="small" loading={busy} onClick={() => input.current?.click()}>
+          {busy ? zh.taskForm.uploading : has ? zh.taskForm.uploadReplace : zh.taskForm.uploadChoose}
+        </Button>
+        {f.accept ? <span className="muted" style={{ fontSize: 12 }}>{zh.taskForm.uploadAccept(f.accept, f.maxMb)}</span> : null}
+      </Space>
+      {done ? (
+        <div style={{ fontSize: 12, marginTop: 4 }} data-testid={`upload-done-${f.key}`}>
+          {zh.taskForm.uploadDone(done.name, done.sha256)}
+          <div className="muted">{zh.taskForm.uploadSummary(done.validation.summary as Record<string, unknown>)}</div>
+          {done.validation.warnings.length ? <div className="muted">{zh.taskForm.uploadWarnings(done.validation.warnings.length)}</div> : null}
+        </div>
+      ) : has ? (
+        <div className="muted mono" style={{ fontSize: 12, marginTop: 4 }}>
+          {String(value)}
+        </div>
+      ) : null}
+      {problem ? (
+        <div className="field-note-error" style={{ marginTop: 4 }} data-testid={`upload-error-${f.key}`}>
+          {zh.taskForm.uploadFailed}
+          {problem.message}
+          {problem.errors.length > 1 ? (
+            <>
+              <div className="muted">{zh.taskForm.uploadMore(problem.errors.length)}</div>
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                {problem.errors.slice(0, 5).map((e, i) => (
+                  <li key={i}>
+                    {e.problem}
+                    {zh.taskForm.uploadWhere(e) ? <span className="muted">（{zh.taskForm.uploadWhere(e)}）</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ParamInput({ f, value, onChange, error }: { f: ParamField; value: unknown; onChange: (v: unknown) => void; error?: string }) {
   const v = value ?? f.default;
   switch (f.kind) {
+    case 'upload':
+      return <UploadInput f={f} value={value} onChange={onChange} />;
     case 'choice':
       return f.options && f.options.length <= 4 ? (
         <Radio.Group value={v} onChange={onChange} aria-label={f.title}>

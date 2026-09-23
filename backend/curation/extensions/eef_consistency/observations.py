@@ -10,6 +10,8 @@ its inputs and copies whitelisted fields only. Observation files carry
 from __future__ import annotations
 
 import dataclasses
+import functools
+import hashlib
 import json
 import os
 import pathlib
@@ -52,7 +54,49 @@ class SeedError(ValueError):
     pass
 
 
-def load_seed_file(path: str | os.PathLike, *, sample_id: str, camera_id: str) -> Seeds:
+def _parse_rows(path: pathlib.Path, text: str) -> list[tuple[str, dict]]:
+    """(location, row) for a JSONL file, a JSON array, or ``{"rows": [...]}``."""
+    stripped = text.lstrip()
+    if path.suffix == ".json" or stripped.startswith("["):
+        doc = json.loads(text)
+        rows = doc.get("rows") if isinstance(doc, dict) else doc
+        if not isinstance(rows, list):
+            raise SeedError(f"{path}: expected a JSON array of observation rows")
+        return [(f"{path}[{i}]", r) for i, r in enumerate(rows)]
+    return [(f"{path}:{n}", json.loads(line)) for n, line in enumerate(text.splitlines(), 1) if line.strip()]
+
+
+@functools.lru_cache(maxsize=8)
+def _file_rows(path: str, mtime_ns: int, size: int) -> tuple[tuple[str, dict], ...]:
+    p = pathlib.Path(path)
+    return tuple(_parse_rows(p, p.read_text(encoding="utf-8")))
+
+
+def seed_rows(seed_root: str | os.PathLike | None, sample_id: str, camera_id: str | None = None
+              ) -> list[tuple[str, dict]]:
+    """Seed rows of one sample (and camera). ``seed_root`` is a directory laid out as
+    ``<sample_id>/<camera_id>.jsonl``, or one file (JSONL or a JSON array) holding rows of any
+    sample and camera - the form the console uploads."""
+    if not seed_root:
+        return []
+    root = pathlib.Path(seed_root)
+    if root.is_dir():
+        files = [root / sample_id / f"{camera_id}.jsonl"] if camera_id else \
+            sorted((root / sample_id).glob("*.jsonl")) if (root / sample_id).is_dir() else []
+        out = []
+        for f in files:
+            if f.is_file():
+                out += _parse_rows(f, f.read_text(encoding="utf-8"))
+        return out
+    if root.is_file():
+        st = root.stat()
+        return [(loc, r) for loc, r in _file_rows(str(root), st.st_mtime_ns, st.st_size)
+                if isinstance(r, dict) and r.get("sample_id") == sample_id
+                and (camera_id is None or r.get("camera_id") == camera_id)]
+    return []
+
+
+def _seeds_from_rows(rows: list[tuple[str, dict]], *, sample_id: str, camera_id: str) -> Seeds:
     from curation.contracts import schemas
 
     validator = schemas.validator("eef/observation.schema.json")
@@ -60,15 +104,12 @@ def load_seed_file(path: str | os.PathLike, *, sample_id: str, camera_id: str) -
     hashes: dict[int, str] = {}
     methods = set()
     versions = set()
-    for n, line in enumerate(pathlib.Path(path).read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        row = json.loads(line)
+    for loc, row in rows:
         errs = [e.message for e in validator.iter_errors(row)]
         if errs:
-            raise SeedError(f"{path}:{n}: {errs[0]}")
+            raise SeedError(f"{loc}: {errs[0]}")
         if row["sample_id"] != sample_id or row["camera_id"] != camera_id:
-            raise SeedError(f"{path}:{n}: row is for {row['sample_id']}/{row['camera_id']}")
+            raise SeedError(f"{loc}: row is for {row['sample_id']}/{row['camera_id']}")
         vf = int(row["video_frame_index"])
         by_frame[vf] = {pid: SeedPoint(tuple(p["uv_px"]) if p["uv_px"] is not None else None, p["visibility"],
                                        float(p["confidence"])) for pid, p in row["points"].items()}
@@ -76,17 +117,20 @@ def load_seed_file(path: str | os.PathLike, *, sample_id: str, camera_id: str) -
         methods.add(row["method"])
         versions.add(row["model_version"])
     if not by_frame:
-        raise SeedError(f"{path}: no seed rows")
+        raise SeedError(f"no seed rows for {sample_id}/{camera_id}")
     return Seeds(sample_id, camera_id, "+".join(sorted(methods)), "+".join(sorted(versions)), by_frame, hashes)
 
 
+def load_seed_file(path: str | os.PathLike, *, sample_id: str, camera_id: str) -> Seeds:
+    p = pathlib.Path(path)
+    return _seeds_from_rows(_parse_rows(p, p.read_text(encoding="utf-8")), sample_id=sample_id, camera_id=camera_id)
+
+
 def find_seeds(seed_root: str | os.PathLike | None, sample_id: str, camera_id: str) -> Seeds | None:
-    if not seed_root:
+    rows = seed_rows(seed_root, sample_id, camera_id)
+    if not rows:
         return None
-    p = pathlib.Path(seed_root) / sample_id / f"{camera_id}.jsonl"
-    if not p.is_file():
-        return None
-    return load_seed_file(p, sample_id=sample_id, camera_id=camera_id)
+    return _seeds_from_rows(rows, sample_id=sample_id, camera_id=camera_id)
 
 
 def seeded_points(seed_root: str | os.PathLike | None, sample: EefSample) -> dict[str, set[str]] | None:
@@ -95,14 +139,19 @@ def seeded_points(seed_root: str | os.PathLike | None, sample: EefSample) -> dic
         return None
     out = {}
     for cid in sample.cameras:
-        p = pathlib.Path(seed_root) / sample.sample_id / f"{cid}.jsonl"
-        if p.is_file():
-            pts = set()
-            for line in p.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    pts |= set(json.loads(line)["points"])
-            out[cid] = pts
+        rows = seed_rows(seed_root, sample.sample_id, cid)
+        if rows:
+            out[cid] = {pid for _, r in rows for pid in (r.get("points") or {})}
     return out
+
+
+def seeds_digest(seed_root: str | os.PathLike | None, sample_id: str) -> str | None:
+    """sha256 of one sample's seed rows (any camera), so a changed seed file reads as a new input."""
+    rows = seed_rows(seed_root, sample_id)
+    if not rows:
+        return None
+    text = json.dumps(sorted((json.dumps(r, sort_keys=True) for _, r in rows)), separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 # --- provider interface ----------------------------------------------------------------------

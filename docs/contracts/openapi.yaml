@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.7.0
+  version: 1.8.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -66,6 +66,13 @@ info:
     `input_scope` (funnel / all_selected) and whether it `affects_dataset_verdict`; the need
     `eef_input` and a module id as `depends_on` (eef_video_review on eef_video_consistency).
     The two EEF-video consistency modules are advisory: they never change keep / drop / held.
+
+    1.8.0 (2026-09-23): file parameters (registry 1.5). `POST /uploads` stores an input file of a
+    module parameter after validating it (errors located to sample / frame / camera / point /
+    JSON path) and returns an `Upload` whose `handle` (`upload:<upload_id>`) is the parameter's
+    value in `TaskCreate.modules[].params`; `GET /uploads/{upload_id}` reads it back. Creating a
+    task that selects a module needing `eef_input` preflights that module against the dataset with
+    the uploaded file; the task's preflight snapshot carries that entry.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -93,6 +100,8 @@ tags:
       revision_missing.
   - name: system
     description: media signing, events, probes
+  - name: uploads
+    description: input files of module parameters (registry 1.5, format upload), validated on arrival
 
 paths:
   # ---------------------------------------------------------------- credentials
@@ -610,6 +619,60 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/ProbeResult"}
+        default: {$ref: "#/components/responses/Error"}
+
+  # ---------------------------------------------------------------- uploads
+  /uploads:
+    post:
+      tags: [uploads]
+      operationId: createUpload
+      summary: Store the input file of a module parameter after validating it (registry 1.5)
+      description: >-
+        The body is the file itself, sent as JSON like every write: a trajectory.json as it is
+        (kind eef_trajectory), or the seed rows as a JSON array (kind eef_observation_seeds; the
+        console turns a .jsonl file into that array). Up to 64 MiB. An invalid file is not stored:
+        400 validation_failed with details.errors, each located as precisely as the file allows
+        (field = JSON path, plus sample_id / episode_index / frame_index / camera_id / point_id).
+        The dataset is not known yet, so media are checked when a task uses the file.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: kind
+          in: query
+          required: true
+          schema: {$ref: "#/components/schemas/UploadKind"}
+        - name: name
+          in: query
+          required: true
+          description: the file name as picked (kept for display)
+          schema: {type: string, minLength: 1, maxLength: 200}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {description: "the file content (see above)"}
+      responses:
+        "201":
+          description: stored and validated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Upload"}
+        default: {$ref: "#/components/responses/Error"}
+  /uploads/{upload_id}:
+    get:
+      tags: [uploads]
+      operationId: getUpload
+      summary: An upload's metadata and validation summary (the caller's own uploads only)
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema: {$ref: "#/components/schemas/UploadId"}
+      responses:
+        "200":
+          description: the upload
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Upload"}
         default: {$ref: "#/components/responses/Error"}
 
   # ---------------------------------------------------------------- tasks
@@ -1973,6 +2036,53 @@ components:
         uri: {type: string, pattern: "^tos://"}
         region: {$ref: "#/components/schemas/Region"}
         credential: {type: [string, "null"], description: "access key name; null in responses once the key was deleted"}
+    UploadKind:
+      enum: [eef_trajectory, eef_observation_seeds]
+      description: the x-upload-kind of a file parameter (registry 1.5)
+    UploadId:
+      type: string
+      pattern: "^upl_[0-9a-z]{10,40}$"
+    UploadIssue:
+      type: object
+      additionalProperties: false
+      required: [problem]
+      properties:
+        field: {type: [string, "null"], description: JSON path inside the file}
+        problem: {type: string}
+        code: {type: string}
+        severity: {enum: [error, warning]}
+        sample_id: {type: string}
+        episode_index: {type: integer}
+        frame_index: {type: integer}
+        camera_id: {type: string}
+        point_id: {type: string}
+    Upload:
+      type: object
+      additionalProperties: false
+      required: [upload_id, handle, kind, name, sha256, size_bytes, created_at, validation]
+      properties:
+        upload_id: {$ref: "#/components/schemas/UploadId"}
+        handle:
+          type: string
+          pattern: "^upload:upl_[0-9a-z]{10,40}$"
+          description: the value of the file parameter in TaskCreate.modules[].params
+        kind: {$ref: "#/components/schemas/UploadKind"}
+        name: {type: string}
+        sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+        size_bytes: {type: integer, minimum: 0}
+        created_at: {type: integer}
+        validation:
+          type: object
+          additionalProperties: false
+          required: [valid, summary, warnings]
+          properties:
+            valid: {const: true}
+            summary:
+              type: object
+              description: >-
+                eef_trajectory: dataset, samples, episodes, frames, cameras, points_checked,
+                max_reprojection_difference_px; eef_observation_seeds: rows, samples, cameras, points
+            warnings: {type: array, items: {$ref: "#/components/schemas/UploadIssue"}}
     PreflightRequest:
       type: object
       additionalProperties: false

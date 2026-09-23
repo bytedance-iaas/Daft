@@ -66,6 +66,9 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "purgeTaskArtifacts": ("POST", "/api/v1/tasks/{id}/purge-artifacts"),
     "getTaskPlan": ("GET", "/api/v1/tasks/{id}/plan"),
     "preflight": ("POST", "/api/v1/preflight"),
+    # F5.5 input files of module parameters (routes/uploads.py, daemon/uploads.py)
+    "createUpload": ("POST", "/api/v1/uploads"),
+    "getUpload": ("GET", "/api/v1/uploads/{upload_id}"),
     "browseDatasets": ("GET", "/api/v1/datasets/browse"),
     "listDatasetEpisodes": ("GET", "/api/v1/datasets/episodes"),
     "createDataset": ("POST", "/api/v1/datasets"),

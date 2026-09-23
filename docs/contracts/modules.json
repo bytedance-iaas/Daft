@@ -1,5 +1,5 @@
 {
- "registry_version": "1.4",
+ "registry_version": "1.5",
  "stages": [
   "numeric",
   "frame",
@@ -328,15 +328,28 @@
     "properties": {
      "trajectory_json": {
       "type": "string",
+      "format": "upload",
+      "x-upload-kind": "eef_trajectory",
+      "x-accept": [
+       ".json"
+      ],
+      "x-max-mb": 64,
       "minLength": 1,
       "title": "trajectory.json",
-      "description": "约定格式 eef-video/1.0.0 的单文件包（每条 episode 的点与轴定义、标定、逐帧位姿与投影）；第一刀填本机路径，上传在第二刀提供",
+      "description": "约定格式 eef-video/1.0.0 的单文件包（每条 episode 的点与轴定义、标定、逐帧位姿与投影），上传即校验，错误会定位到样本、帧和字段",
       "default": ""
      },
      "observation_seeds": {
       "type": "string",
-      "title": "观测种子目录",
-      "description": "P-A 跟踪的种子（observation 格式，<目录>/<sample_id>/<相机>.jsonl）；为空时取 trajectory.json 同目录下的 observations_seed/",
+      "format": "upload",
+      "x-upload-kind": "eef_observation_seeds",
+      "x-accept": [
+       ".jsonl",
+       ".json"
+      ],
+      "x-max-mb": 64,
+      "title": "观测种子",
+      "description": "P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），每行是某个样本、某路相机、某一帧里人点出的点；不给时只做数值轨迹与画面运动",
       "default": ""
      },
      "threshold_profile": {
@@ -509,7 +522,7 @@
   {
    "id": "eef_video_review",
    "name_zh": "EEF–视频一致性 · VLM 复核",
-   "summary_zh": "对候选与抽查窗口请多模态模型复核跟踪目标与偏移方向，只做分类不做测量（第二刀提供）",
+   "summary_zh": "对候选与抽查窗口请多模态模型复核跟踪目标与偏移方向，只做分类不做测量",
    "level": "episode",
    "gate": "none",
    "needs": [

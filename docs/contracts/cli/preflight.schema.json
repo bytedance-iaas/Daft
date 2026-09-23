@@ -80,7 +80,7 @@
           "additionalProperties": false,
           "required": ["field"],
           "properties": {
-            "field": {"enum": ["embodiment_id", "vlm"]},
+            "field": {"enum": ["embodiment_id", "vlm", "trajectory_json"], "description": "trajectory_json (C1 1.5): the module's upload parameter of that name"},
             "options": {"type": "array", "items": {"type": "string"}}
           }
         },

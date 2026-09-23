@@ -124,6 +124,41 @@ describe('新建任务 · 两屏与提交', () => {
     expect(await screen.findByText('任务已创建，进入队列')).toBeInTheDocument();
   });
 
+  it('an advisory module is opted into by hand and takes its trajectory.json as an upload (F5.5)', async () => {
+    const seen = record();
+    const { user } = renderApp('/tasks/new');
+    await screen.findByText('基本信息');
+    await fill(user, '任务名称', 'eef demo');
+    await fill(user, '数据集地址', 'tos://pai-kit-datasets/lerobot/new_set');
+    await pick(user, '访问密钥', 'prod-tos');
+    await fill(user, '交付目录', 'tos://pai-kit-deliveries/eef-demo');
+    await screen.findByText(/LeRobot v2 · 120 条 episode/);
+    await user.click(screen.getByText('快速质检（不调用模型的模块）'));
+    const eef = screen.getByRole('checkbox', { name: 'EEF–视频一致性' });
+    expect(eef).not.toBeChecked();
+    await user.click(eef);
+    await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
+    await waitFor(() => expect(s2()).toBeVisible());
+    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
+    await waitFor(() => expect(fieldErrors(s2())).toEqual(['请填写trajectory.json']));
+    const input = within(s2()).getByLabelText('trajectory.json', { selector: 'input[type=file]' });
+    const bad = { samples: [{ episode_index: 0, sample: { sample_id: 'new_set_000000' }, frames: [{ truth: [1, 2] }] }] };
+    await user.upload(input, new File([JSON.stringify(bad)], 'trajectory.json', { type: 'application/json' }));
+    const problem = await within(s2()).findByTestId('upload-error-trajectory_json');
+    expect(problem).toHaveTextContent('评估字段不能进检测输入');
+    expect(problem).toHaveTextContent('new_set_000000');
+    const good = { schema_version: 'eef-video/1.0.0', samples: [0, 1].map((i) => ({ episode_index: i, sample: { sample_id: `new_set_00000${i}` }, frames: [{}, {}, {}] })) };
+    await user.upload(input, new File([JSON.stringify(good)], 'trajectory.json', { type: 'application/json' }));
+    expect(await within(s2()).findByTestId('upload-done-trajectory_json')).toHaveTextContent('trajectory.json');
+    expect(within(s2()).queryByTestId('upload-error-trajectory_json')).toBeNull();
+    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
+    await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task_/));
+    const up = seen.filter((x) => x.method === 'POST' && x.path.startsWith('/uploads'));
+    expect(up).toHaveLength(2);
+    const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: unknown[] };
+    expect(body.modules).toContainEqual({ id: 'eef_video_consistency', params: { trajectory_json: expect.stringMatching(/^upload:upl_/) } });
+  });
+
   it('screen 2 asks for the robot type (required) or 跳过该模块', async () => {
     const { user } = renderApp('/tasks/new?dataset=tos://pai-kit-datasets/lerobot/droid-200');
     await screen.findByText(/LeRobot v2 · 200 条 episode/);

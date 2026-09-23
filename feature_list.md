@@ -144,7 +144,7 @@
 ### F5.5 上传控件与 Daemon 上传接口
 - 描述：`param_schema` 文件型参数（`format: upload`）；Daemon 任务输入文件上传接口（存任务 inputs 目录，返回句柄与 hash）；前端新建任务第二屏的文件项；C4 修订
 - 验收：①上传即校验，错误定位到样本 / 帧 / 字段；②文件 hash 进 input_hash，换文件重跑视为新输入；③openapi 更新并 `npm run gen:api`
-- status: not_completed
+- status: completed
 
 ### F5.6 VLM 复核
 - 描述：均匀抽查 + 候选窗口；请求包（原图、裁剪、观测与投影异色叠加、短序列）；严格输出 Schema；预算、缓存、tape 录制回放；`eef_review` 调用种类；CPU 与 VLM 冲突转人工

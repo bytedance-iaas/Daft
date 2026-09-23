@@ -101,12 +101,18 @@ class DatasetOps:
 
     # -- preflight and listing -----------------------------------------------------------
     def preflight(self, src: Source, owner: str, *, vlm_backend: str | None = None,
-                  embodiment_id: str | None = None) -> dict:
+                  embodiment_id: str | None = None, modules: list[str] | None = None,
+                  params: list[str] | None = None) -> dict:
+        """``modules`` narrows the report; ``params`` are ``--param MODULE.KEY=VALUE`` (registry 1.4)."""
         argv = ["preflight", *self._input_args(src)]
         if vlm_backend:
             argv += ["--vlm-backend", vlm_backend]
         if embodiment_id:
             argv += ["--embodiment-id", embodiment_id]
+        if modules:
+            argv += ["--modules", ",".join(modules)]
+        for item in params or []:
+            argv += ["--param", item]
         outcome = self._run(src, owner, argv, stage="preflight",
                             timeout_s=self.orch.cfg.preflight_timeout_s)
         if not outcome.ok:

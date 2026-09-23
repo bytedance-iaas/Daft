@@ -380,6 +380,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Store the input file of a module parameter after validating it (registry 1.5)
+         * @description The body is the file itself, sent as JSON like every write: a trajectory.json as it is (kind eef_trajectory), or the seed rows as a JSON array (kind eef_observation_seeds; the console turns a .jsonl file into that array). Up to 64 MiB. An invalid file is not stored: 400 validation_failed with details.errors, each located as precisely as the file allows (field = JSON path, plus sample_id / episode_index / frame_index / camera_id / point_id). The dataset is not known yet, so media are checked when a task uses the file.
+         */
+        post: operations["createUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/uploads/{upload_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An upload's metadata and validation summary (the caller's own uploads only) */
+        get: operations["getUpload"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks": {
         parameters: {
             query?: never;
@@ -1335,6 +1372,42 @@ export interface components {
             /** @description access key name; null in responses once the key was deleted */
             credential: string | null;
         };
+        /**
+         * @description the x-upload-kind of a file parameter (registry 1.5)
+         * @enum {unknown}
+         */
+        UploadKind: "eef_trajectory" | "eef_observation_seeds";
+        UploadId: string;
+        UploadIssue: {
+            /** @description JSON path inside the file */
+            field?: string | null;
+            problem: string;
+            code?: string;
+            /** @enum {unknown} */
+            severity?: "error" | "warning";
+            sample_id?: string;
+            episode_index?: number;
+            frame_index?: number;
+            camera_id?: string;
+            point_id?: string;
+        };
+        Upload: {
+            upload_id: components["schemas"]["UploadId"];
+            /** @description the value of the file parameter in TaskCreate.modules[].params */
+            handle: string;
+            kind: components["schemas"]["UploadKind"];
+            name: string;
+            sha256: string;
+            size_bytes: number;
+            created_at: number;
+            validation: {
+                /** @constant */
+                valid: true;
+                /** @description eef_trajectory: dataset, samples, episodes, frames, cameras, points_checked, max_reprojection_difference_px; eef_observation_seeds: rows, samples, cameras, points */
+                summary: Record<string, unknown>;
+                warnings: components["schemas"]["UploadIssue"][];
+            };
+        };
         PreflightRequest: {
             input: components["schemas"]["InputSpec"];
             vlm_backend?: string;
@@ -1827,8 +1900,11 @@ export interface components {
             /** @description parameters of reason_code, listed with each code */
             reason_args?: Record<string, unknown>;
             input_hint?: {
-                /** @enum {unknown} */
-                field: "embodiment_id" | "vlm";
+                /**
+                 * @description trajectory_json (C1 1.5): the module's upload parameter of that name
+                 * @enum {unknown}
+                 */
+                field: "embodiment_id" | "vlm" | "trajectory_json";
                 options?: string[];
             };
             notes?: string[];
@@ -2842,6 +2918,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProbeResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createUpload: {
+        parameters: {
+            query: {
+                kind: components["schemas"]["UploadKind"];
+                /** @description the file name as picked (kept for display) */
+                name: string;
+            };
+            header?: {
+                /** @description the same key within 24 hours returns the first response (doc 03 §8) */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            /** @description stored and validated */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upload"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                upload_id: components["schemas"]["UploadId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the upload */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upload"];
                 };
             };
             default: components["responses"]["Error"];

@@ -206,6 +206,14 @@ Current summary:
         revision 外相同，合成数据 v1 对 v2 对账全过，dataset2 上 CLI 链路的报告能看到逐相机分项、覆盖率与诊断
       · 口径（12 篇附录 C.4）：第一刀界面拿不到文件，不给文件时预检报 unsupported: trajectory_missing（不是 needs_input），
         Daemon 不改、选不到这个模块；Daemon 传参、advisory 阶段执行与上传控件都在 F5.5
+      · F5.5 上传控件与 Daemon 上传接口 completed：C1 1.5 文件型参数（format: upload）、C4 1.8.0 POST /uploads 与
+        GET /uploads/{id}（上传即校验，400 的 details.errors 定位到字段 / 样本 / 帧 / 相机 / 点位）、C2 input_hint 加 trajectory_json，
+        锁已刷新；预检改回 needs_input: trajectory_missing；Daemon 只收本人同类型的 upload: 句柄，建任务时带文件做模块预检并进
+        任务预检快照，开始时复制进 inputs/（uploads.json），MainRun 执行 advisory_<档>、RetryRun 重跑建议性模块；记录带
+        input_file_sha256 / config_hash / seeds_sha256，--resume 与 input_digest 都认它们；远端数据集按需取视频到临时目录；
+        前端第二屏文件项（JSONL 种子转数组、定位错误）、预设与「全选可用」不勾建议性模块；验证：tests/orchestr/test_eef_tasks.py
+        （含真跑 CLI 的端到端）、CLI 换文件重做与远端取视频、前端 210 条；真起 Daemon 用 dataset2 走了一遍控制台上传
+        （12 篇附录 C.5）；控制台的「本地挂载路径」来源没有 Daemon 注入开关，是既有缺口，已另开任务
 
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
@@ -216,10 +224,8 @@ Main gaps:
     F4.3 待按 README 完整跑一次质检
 
 Next steps:
-  0. EEF–视频一致性：第一刀（F5.1–F5.4）已完成。第二刀 F5.5：上传控件与 Daemon 上传接口、Daemon 把 modules[].params
-     传给 CLI、MainRun 执行 advisory_<档> 阶段、预检改回 needs_input；F5.6 VLM 复核；§3.3 mapping.yaml 导出工具与
-     §13.3 补充扫描（检出下限）待做；
-     §3.3 mapping.yaml 导出工具留作后续
+  0. EEF–视频一致性：F5.1–F5.5 已完成。待做：F5.6 VLM 复核；F5.7 验收与试用；§3.3 mapping.yaml 导出工具；
+     §13.3 补充扫描（检出下限）
   1. APIG 接通（physicalai-apig 监听 curation）、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
   2. 按 README 走查一次完整质检，F3.3、F4.1、F4.3 按验收置位；请需求方统一过一遍界面文案（F3.2）
   3. 真实数据的两个基线在 F4.2 黄金对账之前补

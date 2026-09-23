@@ -1,9 +1,13 @@
 // Screen 2 of the new-task form is generated from each module's param_schema (C1, D38): a new
 // module with parameters needs no front-end change. Supported JSON Schema shapes: oneOf/anyOf of
-// {const, title} (choices), enum, boolean, integer / number (with bounds), string.
+// {const, title} (choices), enum, boolean, integer / number (with bounds), string, and a file
+// (`format: upload` with x-upload-kind / x-accept / x-max-mb, registry 1.5: the value is the
+// handle `upload:<id>` that POST /uploads returns).
 import { zh } from '../locales/zh';
 
-export type ParamKind = 'choice' | 'boolean' | 'integer' | 'number' | 'string';
+export type ParamKind = 'choice' | 'boolean' | 'integer' | 'number' | 'string' | 'upload';
+
+export const UPLOAD_PREFIX = 'upload:';
 
 export interface ParamOption {
   value: string | number | boolean;
@@ -23,6 +27,9 @@ export interface ParamField {
   exclusiveMin?: boolean;
   maxLength?: number;
   pattern?: string;
+  uploadKind?: string;
+  accept?: string[];
+  maxMb?: number;
 }
 
 type Schema = Record<string, unknown>;
@@ -46,6 +53,7 @@ function optionsOf(prop: Schema): ParamOption[] | undefined {
 }
 
 function kindOf(prop: Schema, options: ParamOption[] | undefined): ParamKind {
+  if (prop.format === 'upload') return 'upload';
   if (options) return 'choice';
   const t = Array.isArray(prop.type) ? (prop.type as string[]).find((x) => x !== 'null') : prop.type;
   if (t === 'boolean') return 'boolean';
@@ -78,6 +86,13 @@ export function paramFields(schema: unknown): ParamField[] {
       exclusiveMin: exclusive || undefined,
       maxLength: typeof prop.maxLength === 'number' ? prop.maxLength : undefined,
       pattern: typeof prop.pattern === 'string' ? prop.pattern : undefined,
+      ...(kind === 'upload'
+        ? {
+            uploadKind: typeof prop['x-upload-kind'] === 'string' ? (prop['x-upload-kind'] as string) : undefined,
+            accept: Array.isArray(prop['x-accept']) ? (prop['x-accept'] as string[]) : undefined,
+            maxMb: typeof prop['x-max-mb'] === 'number' ? (prop['x-max-mb'] as number) : undefined,
+          }
+        : {}),
     };
   });
 }
@@ -97,6 +112,7 @@ export function defaultParams(schema: unknown): Record<string, unknown> {
 export function validateParam(f: ParamField, value: unknown): string | null {
   const empty = value === undefined || value === null || value === '';
   if (empty) return f.required ? zh.errors.paramRequired(f.title) : null;
+  if (f.kind === 'upload') return typeof value === 'string' && value.startsWith(UPLOAD_PREFIX) ? null : zh.errors.paramUpload(f.title);
   if (f.kind === 'choice' && f.options && !f.options.some((o) => o.value === value)) return zh.errors.paramChoice(f.title);
   if (f.kind === 'integer' && !Number.isInteger(value)) return zh.errors.paramInteger(f.title);
   if ((f.kind === 'integer' || f.kind === 'number') && typeof value === 'number') {

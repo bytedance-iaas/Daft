@@ -37,6 +37,8 @@ from .workdir import read_json, read_lines, write_json_atomic, write_lines
 log = logging.getLogger("daemon.orchestr")
 
 FUNNEL = ("numeric", "frame", "vlm")
+#: plan stages of the advisory modules (``advisory_<stage>``, registry 1.4): all selected episodes
+ADVISORY = "advisory_"
 #: the module names people read in the logs (the registry's Chinese names)
 _NAME = {spec.id: spec.name_zh for spec in registry.MODULES}
 _NAME["autolabel"] = "无标注补描述"
@@ -84,6 +86,7 @@ class StageRun(Run):
             argv.append("--incremental")
         if vlm:
             argv += self.vlm_args()
+        argv += self.module_param_args(mods)
         if sid == "frame":
             resources.admit_memory(self, sid)
         outcome = self.cli(sid, argv, need_input=True, need_vlm=vlm, crash_retry=not post,
@@ -121,6 +124,29 @@ class StageRun(Run):
             return list(episodes)
         self.fail_on(outcome, sid)
         raise AssertionError("unreachable")
+
+    def module_param_args(self, mods: list[str]) -> list[str]:
+        """``--param`` for the advisory modules of a stage (registry 1.4): their ``modules[].params``,
+        upload handles replaced by the copies made at start (``inputs/uploads.json``). v1's modules
+        take their settings from the site configuration as before."""
+        rows = {m.module_id: m for m in self.repo.get_task_modules(self.task_id)}
+        table = read_json(self.wd.root / "inputs" / "uploads.json", {}) or {}
+        out: list[str] = []
+        for mid in mods:
+            if registry.get(mid).affects_dataset_verdict or mid not in rows:
+                continue
+            kinds = registry.upload_params(mid)
+            for key, value in (rows[mid].params or {}).items():
+                if key in kinds:
+                    if not value:
+                        continue
+                    entry = table.get(value)
+                    if entry is None:
+                        raise TaskFailure("upload_missing", f"{names([mid])}的输入文件 {value} 没有随任务拷进运行目录："
+                                                            "请复制为新任务")
+                    value = str(self.wd.root / entry["path"])
+                out += ["--param", f"{mid}.{key}={value}"]
+        return out
 
     # -- autolabel ------------------------------------------------------------------
     def autolabel(self, episodes: list[int]) -> None:
@@ -265,6 +291,9 @@ class MainRun(StageRun):
                 source = selection if ref == "selected" else survivors.get(
                     ref.split(":", 1)[1], [])
                 survivors[sid] = self.check_stage(st, source, fresh=True)
+            elif sid.startswith(ADVISORY):
+                # every selected episode, never a gate (registry 1.4): nothing reads its survivors
+                self.check_stage(st, selection, fresh=True)
             elif st.get("phase") == "funnel":
                 self.aggregate(sid, "funnel", rev, modules, selection)
             elif sid == "dedup":
@@ -308,8 +337,11 @@ class RetryRun(StageRun):
         failed = {m for m in modules if rows.get(m) and rows[m].state == "failed"
                   and (not scope or m in scope)}
         funnel = [s for s in plan["stages"] if s["id"] in FUNNEL]
+        advisory = [s for s in plan["stages"] if s["id"].startswith(ADVISORY)
+                    and any(rows.get(m) and (rows[m].state in ("failed", "stale") or rows[m].episodes_error > 0
+                                             or m in scope) for m in s["modules"])]
         ids = (["autolabel"] if any(s.get("command") == "autolabel" for s in plan["stages"])
-               else []) + [s["id"] for s in funnel] + ["verdict"]
+               else []) + [s["id"] for s in funnel] + [s["id"] for s in advisory] + ["verdict"]
         post = {s["id"]: s for s in plan["stages"] if s["id"] in ("dedup", "profile")}
         ids += list(post) + ["final", "report", "verify"]
         self.plan_progress(ids)
@@ -324,6 +356,9 @@ class RetryRun(StageRun):
         for st in funnel:
             self.check_intent()
             todo = self.check_stage(st, todo, fresh=False)
+        for st in advisory:                 # --resume redoes only their error lines
+            self.check_intent()
+            self.check_stage(st, selection, fresh=False)
         self.check_intent()
         self.aggregate("verdict", "funnel", rev, modules, selection)
         keep = self.keep_of(rev)
