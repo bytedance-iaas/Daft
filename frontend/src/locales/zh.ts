@@ -18,6 +18,9 @@ export const zh = {
     tasks: '质检任务',
     credentials: '密钥与资源',
     breadcrumbRoot: '数据质检平台',
+    groupHelp: '帮助',
+    docs: '使用文档',
+    docsMissing: '使用文档还没配置',
   },
 
   common: {
