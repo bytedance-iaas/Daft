@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import shutil
 import time
 
@@ -127,11 +128,12 @@ def test_subtasks_need_their_parent_state(api, state, path, message):
 def test_one_subtask_at_a_time(api):
     c, _, _ = api()
     t = _seeded(c, "completed_with_errors")
-    _rt(c).repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="reexport", scope={},
-                                         state="paused"))
+    sub = _rt(c).repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="reexport", scope={},
+                                               state="paused"))
     body = assert_error(c.post(f"{API}/tasks/{t.id}/retry", headers=JSON, json={}),
                         "subtask_active")
-    assert body["error"]["details"]["active_subtask"].startswith("sub_")
+    assert body["error"]["details"]["active_subtask"] == sub.id
+    assert re.fullmatch(r"sub-[a-z]{9}", sub.id)                          # D45
 
 
 def test_subtask_bodies_are_validated(api):

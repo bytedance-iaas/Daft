@@ -44,6 +44,16 @@ describe('fixtures match the contract', () => {
     db.tasks.forEach((t) => expectValid(S('TaskListItem'), toListItem(t)));
   });
 
+  it('ids of both styles fit the contract, look-alikes do not (D45)', () => {
+    const valid = (name: string, value: unknown) => contract.validator(S(name))(value);
+    const upload = (id: string) => valid('UploadId', id);
+    expect(['upl-kqzmrtbwe', 'upl_0123456789'].every(upload)).toBe(true);
+    expect(['upl-kqzmrtbw', 'upl-KQZMRTBWE', 'upl-kqzmrtbwex', 'upl_xyz'].some(upload)).toBe(false);
+    const dataset = (id: string) => valid('DatasetDetail', { ...db.datasets[0], id });
+    expect(['ds-kqzmrtbwe', 'ds_droid200', 'ds_01HXR2D8QZ7N4Y0M5K3J2H1G0F'].every(dataset)).toBe(true);
+    expect(['ds-kqzmrtbw', 'ds_with-dash', 'task-kqzmrtbwe'].some(dataset)).toBe(false);
+  });
+
   it('preflight results for every dataset profile and input combination', () => {
     for (const p of DATASET_PROFILES) {
       for (const opts of [{}, { vlmBackend: 'ark-prod' }, { embodiment: 'franka' }, { embodiment: 'koch' }]) {
@@ -128,6 +138,9 @@ const calls = (): Call[] => [
   { op: 'deleteVlmBackend', method: 'DELETE', path: '/vlm-backends/vb_vllm' },
   { op: 'getModules', method: 'GET', path: '/modules' },
   { op: 'getOverview', method: 'GET', path: '/overview' },
+  { op: 'getOverview', method: 'GET', path: '/overview?days=90' },
+  { op: 'getOverview', method: 'GET', path: '/overview?days=365' },
+  { op: 'getOverview', method: 'GET', path: '/overview?days=14' },
   { op: 'listDatasets', method: 'GET', path: '/datasets?page=1&page_size=10&check_state=changed' },
   { op: 'createDataset', method: 'POST', path: '/datasets', body: { input: { source: 'tos', uri: 'tos://pai-kit-datasets/lerobot/new_set', region: 'cn-beijing', credential: 'readonly-tos' } } },
   { op: 'createDataset', method: 'POST', path: '/datasets', body: { input: { source: 'tos', uri: 'tos://pai-kit-datasets/lerobot/droid_100', region: 'cn-beijing', credential: 'readonly-tos' } } },

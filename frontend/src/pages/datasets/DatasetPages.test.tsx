@@ -121,7 +121,7 @@ describe('数据集列表 (07 §4.4)', () => {
     await waitFor(() => expect(within(drawer).getByRole('button', { name: '保存' })).toHaveClass('arco-btn-loading'));
     expect(drawer).not.toHaveTextContent('正在登记');
     release();
-    await waitFor(() => expect(currentLocation()).toMatch(/^\/datasets\/ds_/));
+    await waitFor(() => expect(currentLocation()).toMatch(/^\/datasets\/ds-[a-z]{9}\b/));
     expect(seen[0]).toEqual({ input: { source: 'tos', uri: 'tos://pai-kit-datasets/lerobot/brand_new', region: 'cn-beijing', credential: 'readonly-tos' } });
     expect(await screen.findByText('已添加')).toBeInTheDocument();
     server.events.removeAllListeners();

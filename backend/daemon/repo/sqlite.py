@@ -37,7 +37,7 @@ import threading
 from typing import Any, Callable, Iterable, Iterator
 
 from ..pagination import CursorError, decode_cursor, encode_cursor
-from ..util import new_id, now_ms
+from ..util import ID_ATTEMPTS, id_regex, new_id, now_ms
 from . import migrations
 from .extras import FinishedResults, dataset_format, token_slot
 from .protocol import (
@@ -55,6 +55,7 @@ from .protocol import (
     DatasetCheck,
     Event,
     IdempotencyRecord,
+    IdTaken,
     NotFound,
     PagedResult,
     PreconditionFailed,
@@ -72,8 +73,9 @@ from .protocol import (
 #: Retention the repository applies in ``purge_expired`` (design doc 01, section 2.8).
 PREFLIGHT_TTL_MS = 30 * 60 * 1000
 IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000
-#: The token timeline (``daemon.repo.extras``) is kept as long as the audit events.
-TOKEN_TIMELINE_TTL_MS = 90 * 24 * 60 * 60 * 1000
+#: The token timeline (``daemon.repo.extras``) covers the overview's longest period - 12
+#: calendar months (C4 1.10.0) - with a margin for the site's time zone.
+TOKEN_TIMELINE_TTL_MS = 400 * 24 * 60 * 60 * 1000
 
 #: Upper bound for one cursor page, whatever the caller asks for.
 MAX_PAGE = 1000
@@ -81,6 +83,9 @@ MAX_PAGE = 1000
 MAX_OFFSET = 1 << 62
 
 _TERMINAL_SQL = "('stopped','succeeded','completed_with_errors','failed')"
+#: Subtask states that make ``list_tasks(state='running', running_subtasks=True)`` list their
+#: (finished) task: the console shows it as running meanwhile (D46).
+_SUBTASK_SHOWN_RUNNING = ("queued", "running")
 
 #: Columns ``update_task_fields`` may touch (configuration; D20 decides which in what state).
 _TASK_EDITABLE = frozenset({
@@ -104,7 +109,8 @@ _DATASET_REFRESH = frozenset({"preflight", "meta_fingerprint", "source_fingerpri
 _DATASET_JSON = frozenset({"preflight", "source_fingerprint"})
 _DATASET_REQUIRED = frozenset({"name"}) | _DATASET_REFRESH
 #: Dataset ids are the repository's own (``new_id("ds")``); the REST path only routes these.
-_DATASET_ID_RE = re.compile(r"^ds_[0-9A-Za-z]+$")
+#: Registrations made before D45 keep their ``ds_<letters and digits>`` ids.
+_DATASET_ID_RE = re.compile(rf"^{id_regex('ds', r'ds_[0-9A-Za-z]+')}$")
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +324,30 @@ def _check_transitions(frm: Iterable[str], to: str, table: dict) -> list[str]:
 
 def _is_unique_violation(err: sqlite3.IntegrityError) -> bool:
     return "UNIQUE" in str(err) or "PRIMARY KEY" in str(err)
+
+
+def _id_used(c, table: str, row_id: str) -> bool:
+    return c.execute(f"SELECT 1 FROM {table} WHERE id=?", (row_id,)).fetchone() is not None
+
+
+def _fresh_id(c, table: str, prefix: str) -> str:
+    """A new id no row of ``table`` has (D45: a random id that collides is drawn again).
+    Called on the writer inside the insert's transaction, so the check holds until it."""
+    for _ in range(ID_ATTEMPTS):
+        candidate = new_id(prefix)
+        if not _id_used(c, table, candidate):
+            return candidate
+    raise RuntimeError(f"no free {prefix} id after {ID_ATTEMPTS} draws")
+
+
+def _row_id(c, table: str, prefix: str, given: str | None) -> str:
+    """The id a new row gets: ``given`` when the caller chose one (IdTaken if another row
+    has it), otherwise a fresh one."""
+    if not given:
+        return _fresh_id(c, table, prefix)
+    if _id_used(c, table, given):
+        raise IdTaken(f"{table} id {given} is taken")
+    return given
 
 
 def _credential(row) -> Credential:
@@ -539,9 +569,9 @@ class SqliteRepository:
     # -- credentials ---------------------------------------------------------------
     def create_credential(self, cred: Credential) -> Credential:
         now = self._clock()
-        cred_id = cred.id or new_id("cred")
 
         def op(c):
+            cred_id = _row_id(c, "credential", "cred", cred.id)
             try:
                 c.execute(
                     "INSERT INTO credential (id, owner_id, name, kind, payload_enc, key_version,"
@@ -586,7 +616,7 @@ class SqliteRepository:
         if kind is not None:
             sql += " AND kind=?"
             args.append(kind)
-        sql += " ORDER BY created_at, id"
+        sql += " ORDER BY created_at, rowid"
         return self._read(lambda c: [_credential(r) for r in c.execute(sql, args).fetchall()])
 
     def update_credential(self, cred_id: str, *, owner: str = DEFAULT_OWNER, name: str | None = None,
@@ -669,7 +699,7 @@ class SqliteRepository:
     @staticmethod
     def _models_of(c, backend_id: str) -> list[VlmModel]:
         return [_model(r) for r in c.execute(
-            "SELECT * FROM vlm_model WHERE backend_id=? ORDER BY created_at, id",
+            "SELECT * FROM vlm_model WHERE backend_id=? ORDER BY created_at, rowid",
             (backend_id,)).fetchall()]
 
     def _get_backend(self, c, where: str, args: tuple, what: str) -> VlmBackend:
@@ -679,7 +709,7 @@ class SqliteRepository:
         return _backend(row, self._models_of(c, row["id"]))
 
     def _insert_model(self, c, model: VlmModel, now: int) -> str:
-        model_id = model.id or new_id("vm")
+        model_id = _row_id(c, "vlm_model", "vm", model.id)
         c.execute("INSERT INTO vlm_model (id, backend_id, model_name, reasoning_effort,"
                   " max_concurrency, capabilities, source, created_at, updated_at)"
                   " VALUES (?,?,?,?,?,?,?,?,?)",
@@ -690,12 +720,12 @@ class SqliteRepository:
 
     def create_vlm_backend(self, backend: VlmBackend, credential: Credential | None) -> VlmBackend:
         now = self._clock()
-        backend_id = backend.id or new_id("vb")
 
         def op(c):
+            backend_id = _row_id(c, "vlm_backend", "vb", backend.id)
             cred_id = backend.credential_id
             if credential is not None:
-                cred_id = credential.id or new_id("cred")
+                cred_id = _row_id(c, "credential", "cred", credential.id)
                 try:
                     c.execute(
                         "INSERT INTO credential (id, owner_id, name, kind, payload_enc, key_version,"
@@ -740,7 +770,7 @@ class SqliteRepository:
 
     def list_vlm_backends(self, *, owner: str = DEFAULT_OWNER) -> list[VlmBackend]:
         def op(c):
-            rows = c.execute("SELECT * FROM vlm_backend WHERE owner_id=? ORDER BY created_at, id",
+            rows = c.execute("SELECT * FROM vlm_backend WHERE owner_id=? ORDER BY created_at, rowid",
                              (owner,)).fetchall()
             return [_backend(r, self._models_of(c, r["id"])) for r in rows]
         return self._read(op, snapshot=True)
@@ -905,23 +935,23 @@ class SqliteRepository:
     def register_dataset(self, dataset: Dataset) -> tuple[Dataset, bool]:
         """Get-or-create by (owner, source, uri, region); an existing registration comes
         back unchanged. An empty region is the same as none. ``id`` is normally left
-        empty (the repository makes one); a given one must look like ``ds_...``.
-        Raises NotFound when ``credential_id`` is not a TOS access key of the owner."""
+        empty (the repository makes one); a given one must look like ``ds-<9 lowercase
+        letters>`` or, as before D45, ``ds_<letters and digits>``, and IdTaken says another
+        address has it. Raises NotFound when ``credential_id`` is not a TOS access key of the
+        owner."""
         if dataset.id and not _DATASET_ID_RE.match(dataset.id):
-            raise ValueError(f"dataset ids look like ds_<letters and digits>, not {dataset.id!r}")
+            raise ValueError(f"dataset ids look like ds-<9 lowercase letters>, not {dataset.id!r}")
         missing = sorted(k for k in _DATASET_REQUIRED if getattr(dataset, k) is None)
         if missing:
             raise ValueError(f"a registration needs {missing}")
         now = self._clock()
-        ds_id = dataset.id or new_id("ds")
         region = dataset.region or None
 
         def op(c):
             found = self._find_dataset(c, dataset.owner_id, dataset.source, dataset.uri, region)
             if found is not None:
                 return found, False
-            if c.execute("SELECT 1 FROM dataset WHERE id=?", (ds_id,)).fetchone() is not None:
-                raise ValueError(f"dataset id {ds_id} is taken by another address")
+            ds_id = _row_id(c, "dataset", "ds", dataset.id)
             self._check_access_key(c, dataset.credential_id, dataset.owner_id)
             c.execute(
                 "INSERT INTO dataset (id, owner_id, name, note, source, uri, region, credential_id,"
@@ -965,7 +995,7 @@ class SqliteRepository:
         def op(c):
             total = c.execute(f"SELECT COUNT(*) FROM dataset WHERE {clause}", args).fetchone()[0]
             rows = c.execute(f"SELECT * FROM dataset WHERE {clause}"
-                             " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                             " ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
                              (*args, page_size, offset)).fetchall()
             return PagedResult(items=[_dataset(r) for r in rows], page=page, page_size=page_size,
                                total=total)
@@ -1095,10 +1125,10 @@ class SqliteRepository:
         if spec.state not in ("created", "queued"):
             raise ValueError(f"a task starts as created or queued, not {spec.state}")
         now = self._clock()
-        task_id = new_id("task")
 
         def op(c):
             self._check_dataset_ref(c, spec.dataset_id, spec.owner_id)
+            task_id = _fresh_id(c, "task", "task")
             c.execute(
                 "INSERT INTO task (id, owner_id, name, note, state, input_source, input_uri,"
                 " input_region, input_cred_id, dataset_id, output_uri, output_region,"
@@ -1122,7 +1152,8 @@ class SqliteRepository:
     def list_tasks(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
                    state: str | None = None, q: str | None = None,
                    delivery_key: str | None = None, dataset_id: str | None = None,
-                   modules: list[str] | None = None) -> PagedResult[Task]:
+                   modules: list[str] | None = None,
+                   running_subtasks: bool = False) -> PagedResult[Task]:
         page, page_size = int(page), int(page_size)
         if page < 1 or page_size < 1:
             raise ValueError("page and page_size start at 1")
@@ -1131,7 +1162,12 @@ class SqliteRepository:
             where.append("deleted_at IS NOT NULL")
         else:
             where.append("deleted_at IS NULL")
-            if state is not None:
+            if state == "running" and running_subtasks:
+                # D46: a finished task whose subtask is queued or running shows as running
+                where.append("(state='running' OR id IN (SELECT task_id FROM subtask"
+                             f" WHERE state IN ({_placeholders(len(_SUBTASK_SHOWN_RUNNING))})))")
+                args += list(_SUBTASK_SHOWN_RUNNING)
+            elif state is not None:
                 where.append("state=?")
                 args.append(state)
         if q:
@@ -1155,7 +1191,7 @@ class SqliteRepository:
 
         def op(c):
             total = c.execute(f"SELECT COUNT(*) FROM task WHERE {clause}", args).fetchone()[0]
-            rows = c.execute(f"SELECT * FROM task WHERE {clause} ORDER BY created_at DESC, id DESC"
+            rows = c.execute(f"SELECT * FROM task WHERE {clause} ORDER BY created_at DESC, rowid DESC"
                              " LIMIT ? OFFSET ?", (*args, page_size, offset)).fetchall()
             return PagedResult(items=[_task(r) for r in rows], page=page, page_size=page_size,
                                total=total)
@@ -1313,7 +1349,7 @@ class SqliteRepository:
             return []
         return self._read(lambda c: [_task(r) for r in c.execute(
             f"SELECT * FROM task WHERE state IN ({_placeholders(len(states))})"
-            " ORDER BY created_at, id", states).fetchall()])
+            " ORDER BY created_at, rowid", states).fetchall()])
 
     def subtasks_in_states(self, states: Iterable[str]) -> list[Subtask]:
         states = sorted(set(states))
@@ -1321,7 +1357,7 @@ class SqliteRepository:
             return []
         return self._read(lambda c: [_subtask(r) for r in c.execute(
             f"SELECT * FROM subtask WHERE state IN ({_placeholders(len(states))})"
-            " ORDER BY created_at, id", states).fetchall()])
+            " ORDER BY created_at, rowid", states).fetchall()])
 
     # -- task modules ----------------------------------------------------------------
     def get_task_modules(self, task_id: str) -> list[TaskModule]:
@@ -1364,7 +1400,7 @@ class SqliteRepository:
     @staticmethod
     def _active_subtask(c, task_id: str) -> Subtask | None:
         row = c.execute(f"SELECT * FROM subtask WHERE task_id=? AND state NOT IN {_TERMINAL_SQL}"
-                        " ORDER BY created_at DESC, id DESC LIMIT 1", (task_id,)).fetchone()
+                        " ORDER BY created_at DESC, rowid DESC LIMIT 1", (task_id,)).fetchone()
         return None if row is None else _subtask(row)
 
     def create_subtask(self, subtask: Subtask) -> Subtask:
@@ -1373,7 +1409,6 @@ class SqliteRepository:
         if subtask.kind not in SUBTASK_PARENT_STATES:
             raise ValueError(f"unknown subtask kind {subtask.kind}")
         now = self._clock()
-        sub_id = subtask.id or new_id("sub")
 
         def op(c):
             parent = self._get_task(c, subtask.task_id, include_deleted=False)
@@ -1384,6 +1419,7 @@ class SqliteRepository:
                 raise Conflict("subtask_active",
                                f"task {subtask.task_id} already has an unfinished subtask")
             pause = subtask.pause_reason if subtask.state in ("pausing", "paused") else None
+            sub_id = _row_id(c, "subtask", "sub", subtask.id)
             c.execute("INSERT INTO subtask (id, task_id, kind, scope, state, state_reason,"
                       " pause_reason, progress, result_rev, created_at, started_at, finished_at)"
                       " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -1405,7 +1441,8 @@ class SqliteRepository:
 
     def list_subtasks(self, task_id: str) -> list[Subtask]:
         return self._read(lambda c: [_subtask(r) for r in c.execute(
-            "SELECT * FROM subtask WHERE task_id=? ORDER BY created_at, id", (task_id,)).fetchall()])
+            "SELECT * FROM subtask WHERE task_id=? ORDER BY created_at, rowid",
+            (task_id,)).fetchall()])
 
     def active_subtask(self, task_id: str) -> Subtask | None:
         return self._read(lambda c: self._active_subtask(c, task_id))
@@ -1475,8 +1512,11 @@ class SqliteRepository:
 
     def usage_buckets(self, task_id: str, *, ledger: str) -> list[UsageBucket]:
         def op(c):
-            rows = c.execute("SELECT * FROM token_usage WHERE task_id=? AND ledger=?"
-                             " ORDER BY subtask_id, module_id, call_kind, model_name",
+            # the main run first, then the subtasks as they were created (ids carry no time)
+            rows = c.execute("SELECT u.* FROM token_usage u LEFT JOIN subtask s"
+                             " ON s.id = u.subtask_id WHERE u.task_id=? AND u.ledger=?"
+                             " ORDER BY u.subtask_id <> '', s.created_at, s.rowid, u.subtask_id,"
+                             " u.module_id, u.call_kind, u.model_name",
                              (task_id, ledger)).fetchall()
             return [UsageBucket(task_id=r["task_id"], ledger=r["ledger"], module_id=r["module_id"],
                                 call_kind=r["call_kind"], model_name=r["model_name"],
@@ -1566,11 +1606,12 @@ class SqliteRepository:
     # -- preflight cache --------------------------------------------------------------------------
     def put_preflight(self, *, request_hash: str, result: dict, at: int,
                       owner: str = DEFAULT_OWNER) -> str:
-        preflight_id = new_id("pf")
-        self._write(lambda c: c.execute(
-            "INSERT INTO preflight_cache (id, owner_id, request_hash, result, created_at)"
-            " VALUES (?,?,?,?,?)", (preflight_id, owner, request_hash, _dumps(result), at)))
-        return preflight_id
+        def op(c):
+            preflight_id = _fresh_id(c, "preflight_cache", "pf")
+            c.execute("INSERT INTO preflight_cache (id, owner_id, request_hash, result, created_at)"
+                      " VALUES (?,?,?,?,?)", (preflight_id, owner, request_hash, _dumps(result), at))
+            return preflight_id
+        return self._write(op)
 
     def get_preflight(self, preflight_id: str, *, max_age_ms: int, now: int,
                       owner: str = DEFAULT_OWNER) -> dict | None:
@@ -1668,7 +1709,7 @@ class SqliteRepository:
             subs = [_subtask(r) for r in c.execute(
                 "SELECT s.* FROM subtask s JOIN task t ON t.id = s.task_id"
                 f" WHERE t.owner_id=? AND t.deleted_at IS NULL AND s.state NOT IN {_TERMINAL_SQL}"
-                " ORDER BY s.created_at DESC, s.id DESC", (owner,)).fetchall()]
+                " ORDER BY s.created_at DESC, s.rowid DESC", (owner,)).fetchall()]
             parents: dict[str, Task] = {}
             ids = sorted({s.task_id for s in subs})
             for i in range(0, len(ids), 500):

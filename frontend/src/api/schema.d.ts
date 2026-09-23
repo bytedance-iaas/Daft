@@ -218,7 +218,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The overview page in one call - what needs attention, what runs, the last 7 days (D36) */
+        /** The overview page in one call - what needs attention, what runs, the chosen period (D36) */
         get: operations["getOverview"];
         put?: never;
         post?: never;
@@ -1210,7 +1210,7 @@ export interface components {
         /** @enum {unknown} */
         DatasetFormat: "lerobot_v2" | "lerobot_v3" | "unsupported";
         DatasetItemFields: {
-            /** @description ds_ followed by a generated id */
+            /** @description ds- and 9 lowercase letters (D45); registrations made before 1.10.0 keep ds_ and their old id */
             id: string;
             name: string;
             /** @enum {unknown} */
@@ -1296,7 +1296,7 @@ export interface components {
             }[];
             task: components["schemas"]["Task"];
         };
-        /** @description Soft-deleted tasks never count, except in tokens. running counts what workers are busy with - main runs and subtasks in running, pausing or stopping - and queued / paused those states; recent covers the last 7 days in the site's time zone (CURATOR_TZ_OFFSET): tasks that ended succeeded or completed_with_errors, their summary totals, passed / total over episodes, and actual-ledger prompt + completion tokens per day; credentials_failed counts access keys (kind tos) only, a backend's key failing counts in backends_failed. */
+        /** @description Soft-deleted tasks never count, except in tokens. running counts what workers are busy with - main runs and subtasks in running, pausing or stopping - and queued / paused those states; recent covers the period `days` asked for in the site's time zone (CURATOR_TZ_OFFSET), cut into buckets that end with the current one (7 or 30 days, 13 calendar weeks from Monday, or 12 calendar months) and starting at `since`: tasks that ended succeeded or completed_with_errors since then, their summary totals, passed / total over episodes, and actual-ledger prompt + completion tokens per bucket; credentials_failed counts access keys (kind tos) only, a backend's key failing counts in backends_failed. */
         Overview: {
             todo: {
                 /** @description completed_with_errors, can be retried */
@@ -1323,14 +1323,27 @@ export interface components {
                 }[];
             };
             recent: {
-                /** @constant */
-                days: 7;
+                /**
+                 * @description the period asked for
+                 * @enum {unknown}
+                 */
+                days: 7 | 30 | 90 | 365;
+                /**
+                 * @description day for 7 and 30, week for 90, month for 365
+                 * @enum {unknown}
+                 */
+                bucket: "day" | "week" | "month";
+                /** @description epoch ms where the first bucket starts; the figures count from here */
+                since: number;
                 tasks_finished: number;
                 episodes_checked: number;
                 pass_rate: number | null;
-                /** @description actual-ledger totals only, oldest day first */
-                tokens_per_day: {
-                    date: string;
+                /** @description actual-ledger totals only, oldest bucket first, every bucket listed (7, 30, 13 or 12) */
+                tokens_per_bucket: {
+                    /** @description epoch ms, local midnight in the site's time zone */
+                    start: number;
+                    /** @description 09-23 (a day), 09-21 周 (the week from that Monday), 2026-09 (a month) */
+                    label: string;
                     tokens: number;
                 }[];
             };
@@ -1377,6 +1390,7 @@ export interface components {
          * @enum {unknown}
          */
         UploadKind: "eef_trajectory" | "eef_observation_seeds";
+        /** @description upl- and 9 lowercase letters (D45); uploads made before 1.10.0 keep upl_ and hex digits */
         UploadId: string;
         UploadIssue: {
             /** @description JSON path inside the file */
@@ -2583,7 +2597,10 @@ export interface operations {
     };
     getOverview: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description the period of `recent`: 7 or 30 days (by day), 90 = the 13 calendar weeks up to this one (by week), 365 = the 12 calendar months up to this one (by month); anything else is 400 */
+                days?: 7 | 30 | 90 | 365;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2983,7 +3000,7 @@ export interface operations {
             query?: {
                 page?: number;
                 page_size?: 10 | 20 | 50 | 100;
-                /** @description a task state, or `deleted` for soft-deleted tasks (restorable for 30 days) */
+                /** @description a task state, or `deleted` for soft-deleted tasks (restorable for 30 days). `running` also lists finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or running: the console shows them as running (D46); their `state` stays terminal and `active_subtask` names the subtask */
                 state?: components["schemas"]["TaskState"] | "deleted";
                 /** @description search by name or id */
                 q?: string;

@@ -149,5 +149,8 @@ def test_token_timeline_follows_the_actual_ledger(repo):
     assert repo.token_timeline(since=slot0, until=slot0 + 1, owner=OTHER) == [(slot0, 7)]
     assert repo.token_timeline(since=0, until=slot0) == []
 
-    repo.purge_expired(now=slot0 + 91 * DAY)                             # kept 90 days, like events
-    assert repo.token_timeline(since=0, until=slot0 + 100 * DAY) == [(slot0 + 3 * DAY, 120)]
+    repo.purge_expired(now=slot0 + 400 * DAY)                 # a year of history for the overview
+    assert repo.token_timeline(since=0, until=slot0 + 500 * DAY) == [
+        (slot0, 240), (slot0 + TOKEN_SLOT_MS, 120), (slot0 + 3 * DAY, 120)]
+    repo.purge_expired(now=slot0 + 401 * DAY)                            # kept 400 days
+    assert repo.token_timeline(since=0, until=slot0 + 500 * DAY) == [(slot0 + 3 * DAY, 120)]

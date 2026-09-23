@@ -19,6 +19,8 @@ export interface Prefs {
   lastRegion?: string;
   /** Log tab: follow latest. */
   followLogs?: boolean;
+  /** The overview's period: 7, 30, 90 or 365 days (lib/overview.ts). */
+  overviewDays?: number;
 }
 
 function storage(): Storage | null {

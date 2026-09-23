@@ -19,6 +19,14 @@ Rules every implementation keeps:
   cursors built from the last row's sort key.
 * Times are integer epoch milliseconds. Secrets are stored encrypted by the
   caller (``payload_enc``); the repository never sees plaintext keys.
+* **Ids are random** (D45): new rows get ``<prefix>-<9 lowercase letters>``
+  (``task``, ``sub``, ``ds``, ``pf``, ``cred``, ``vb``, ``vm``); rows made before
+  keep their ``<prefix>_<26 Crockford base32 characters>`` id, and every method
+  takes both. An id the repository makes never collides with an existing row (it
+  draws again); an id the caller chose that is already taken raises
+  :class:`IdTaken`, so the caller draws again. Ids carry no time: lists sort by
+  ``created_at``, and rows created in the same millisecond keep the order in which
+  they were inserted.
 """
 from __future__ import annotations
 
@@ -119,6 +127,14 @@ class Conflict(RepositoryError):
 
 class PreconditionFailed(RepositoryError):
     """``If-Match`` did not match ``updated_at`` -> 412 precondition_failed."""
+
+
+class IdTaken(RepositoryError):
+    """An id the caller chose is already used by another row (random ids can collide, D45).
+
+    Draw a new id - redoing whatever is bound to it, such as a payload sealed for that id -
+    and try again. Never shown to a client; a name conflict is still Conflict('name_taken').
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +437,8 @@ class Repository(Protocol):
 
     # -- credentials (TOS keys; VLM keys are created with their backend) -------
     def create_credential(self, cred: Credential) -> Credential:
-        """Raises Conflict('name_taken')."""
+        """Raises Conflict('name_taken'), or IdTaken when ``cred.id`` is given and taken (the
+        payload is sealed for its id, so the caller picks the id; an empty one is made here)."""
 
     def get_credential(self, cred_id: str, *, owner: str = DEFAULT_OWNER) -> Credential:
         """Raises NotFound."""
@@ -451,7 +468,9 @@ class Repository(Protocol):
 
     # -- VLM backends and models ------------------------------------------------
     def create_vlm_backend(self, backend: VlmBackend, credential: Credential | None) -> VlmBackend:
-        """Creates the backend and its API-key credential together (one user action)."""
+        """Creates the backend and its API-key credential together (one user action). Empty ids
+        (backend, credential, models) are made here; a given one that is taken raises IdTaken
+        and nothing is created."""
 
     def get_vlm_backend(self, backend_id: str, *, owner: str = DEFAULT_OWNER) -> VlmBackend: ...
 
@@ -490,7 +509,7 @@ class Repository(Protocol):
     # -- datasets (D36, D37) ----------------------------------------------------------
     def register_dataset(self, dataset: Dataset) -> tuple[Dataset, bool]:
         """Get-or-create by (owner, source, uri, region), no region and an empty one being the
-        same; returns (dataset, created). The id is generated (``ds_…``); the access key, if
+        same; returns (dataset, created). The id is generated (``ds-…``, D45); the access key, if
         any, must be the same owner's ``kind='tos'`` key."""
 
     def get_dataset(self, dataset_id: str, *, owner: str = DEFAULT_OWNER) -> Dataset:
@@ -536,9 +555,13 @@ class Repository(Protocol):
     def list_tasks(self, *, owner: str = DEFAULT_OWNER, page: int, page_size: int,
                    state: str | None = None, q: str | None = None,
                    delivery_key: str | None = None, dataset_id: str | None = None,
-                   modules: list[str] | None = None) -> PagedResult[Task]:
+                   modules: list[str] | None = None,
+                   running_subtasks: bool = False) -> PagedResult[Task]:
         """Newest first. ``state='deleted'`` lists soft-deleted tasks; ``modules`` keeps tasks that
-        selected every one of them."""
+        selected every one of them. ``state`` is the task's own state, except that with
+        ``running_subtasks`` (what ``GET /tasks`` asks for, D46) ``state='running'`` also keeps
+        finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or
+        running: the console shows those as running while their own state stays terminal."""
 
     def update_task_fields(self, task_id: str, *, if_updated_at: int | None,
                            owner: str = DEFAULT_OWNER, **fields) -> Task:
@@ -622,7 +645,8 @@ class Repository(Protocol):
     def add_usage(self, deltas: list[UsageDelta], *, at: int) -> None:
         """Accumulate into the buckets (called every 5 s and at each stage end)."""
 
-    def usage_buckets(self, task_id: str, *, ledger: Ledger) -> list[UsageBucket]: ...
+    def usage_buckets(self, task_id: str, *, ledger: Ledger) -> list[UsageBucket]:
+        """The main run's buckets first, then each subtask's in the order they were created."""
 
     # -- adjudication (append only, the latest row per task/line/episode wins) --
     def append_adjudication(self, rows: list[AdjudicationCreate], *, at: int) -> list[Adjudication]: ...
@@ -672,7 +696,8 @@ class Repository(Protocol):
                        owner: str = DEFAULT_OWNER) -> list[tuple[int, int]]:
         """``(slot start, tokens)`` of the actual ledger (prompt + completion) in 15-minute UTC
         slots within ``[since, until)`` that have tokens, oldest first; add_usage feeds it
-        and the tokens stay counted whatever happens to their task later."""
+        and the tokens stay counted whatever happens to their task later. Slots are kept at
+        least 400 days: the overview reaches back 12 calendar months (C4 1.10.0)."""
 
     # -- idempotency keys (24 hours) ------------------------------------------------
     def get_idempotent(self, *, key: str, route: str,
@@ -681,4 +706,5 @@ class Repository(Protocol):
     def put_idempotent(self, record: IdempotencyRecord) -> None: ...
 
     def purge_expired(self, *, now: int) -> int:
-        """Drop expired preflight results and idempotency keys."""
+        """Drop expired preflight results and idempotency keys (the count), and token-timeline
+        slots older than the overview needs (see token_timeline)."""

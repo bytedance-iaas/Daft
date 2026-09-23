@@ -20,6 +20,9 @@
 
 - 响应里的 `links` 是给 Agent 的可点链接（D22）：绝对 URL = `publicBaseUrl` + `{base}` + 前端路由；
   没配 `publicBaseUrl` 时给相对路径并带 `"absolute": false`。
+- **ID 是不透明的字符串**（D45，C4 1.10.0）：新记录是「前缀-9 位小写字母」，前缀 task、sub、ds、pf、cred、vb、vm、upl
+  （如 `task-kqzmrtbwe`、上传句柄 `upload:upl-kqzmrtbwe`）；之前建的记录保留原来的 `前缀_…`，两种都照常可用，
+  调用方不要解析 ID。ID 不带时间，列表按创建时间排。
 
 ## 2. 端点总表
 
@@ -49,7 +52,7 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/v1/modules` | 模块注册表：id、中文名、所属档、参数 schema。前端的模块清单只从这里来 |
-| GET | `/api/v1/overview` | 概览页一次取回：待处理事项、运行情况、近 7 天统计（D36，§12） |
+| GET | `/api/v1/overview` | 概览页一次取回：待处理事项、运行情况、所选时间段的统计（`?days=7\|30\|90\|365`，D36，§12） |
 | GET / POST | `/api/v1/datasets` | 已登记的数据集（页码分页，按名称搜索，按格式、指纹状态筛选）/ 登记：预检 + 取文件清单，记下两个指纹（D36，§12） |
 | GET / PATCH / DELETE | `/api/v1/datasets/{id}` | 登记详情 / 改名称和备注 / 删除登记（不动 TOS；有非终态任务在用 → 409 `dataset_in_use`） |
 | POST | `/api/v1/datasets/{id}/recheck` | 重新核对指纹，只比较、不改任何任务 |
@@ -122,7 +125,7 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
              "region": "cn-beijing", "credential": "prod-tos"},   // source=public 时不需要 credential
   "output": {"uri": "tos://bucket/deliveries/droid-50", "region": "cn-beijing",
              "credential": "prod-tos"},
-  "preflight_id": "pf_01HX...",
+  "preflight_id": "pf-kqzmrtbwe",
   "episodes": {"mode": "head", "n": 50},          // all | head | explicit（"expr": "3,10-12"）
   "modules": ["timestamp_check", "motion_quality",
               {"id": "kinematic_limits"},
@@ -136,10 +139,10 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
 }
 
 // 响应 201
-{"id": "task_01HX...", "state": "queued", "created_at": 1758300000000,
+{"id": "task-kqzmrtbwe", "state": "queued", "created_at": 1758300000000,
  "warnings": [],
  "links": [{"rel": "task", "title": "Open task",
-            "url": "https://<host>/curation/tasks/task_01HX..."}]}
+            "url": "https://<host>/curation/tasks/task-kqzmrtbwe"}]}
 ```
 
 服务端行为：
@@ -206,7 +209,7 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
 
 ```jsonc
 {
-  "id": "task_01HX...", "name": "droid 前 50 条质检", "note": "第一轮抽检",
+  "id": "task-kqzmrtbwe", "name": "droid 前 50 条质检", "note": "第一轮抽检",
   "state": "completed_with_errors", "state_reason": null, "pause_reason": null,
   "result_rev": 1, "source": {"objects": 204, "bytes": 1520331122, "digest": "sha256:…"},
   "input": {...}, "output": {...}, "episodes": {...}, "vlm": {...}, "params": {...},
@@ -227,9 +230,9 @@ CLI 的客户端命令（`curation task create`）和 UI 的「高级设置」�
   "pending_adjudication": 10, "delivery_stale": false,
   "active_subtask": null,
   "links": [
-    {"rel": "report", "title": "Open QA report", "url": "https://<host>/curation/tasks/task_01HX.../report"},
+    {"rel": "report", "title": "Open QA report", "url": "https://<host>/curation/tasks/task-kqzmrtbwe/report"},
     {"rel": "adjudication", "title": "10 episodes need human judgement",
-     "url": "https://<host>/curation/tasks/task_01HX.../adjudication?status=pending"}
+     "url": "https://<host>/curation/tasks/task-kqzmrtbwe/adjudication?status=pending"}
   ]
 }
 ```
@@ -245,7 +248,11 @@ GET /api/v1/tasks?page=1&page_size=20&state=running&q=droid
 ```
 
 - 页码 + 每页条数 + 总数，与火山控制台的表格一致（D21）。`page_size` 取 10 / 20 / 50 / 100。
-- 按创建时间倒序。列表行里带 `progress`、`summary`、`pending_adjudication` 和各状态的模块数，
+- `state` 按任务自己的状态筛，只有一处例外（D46，C4 1.10.0）：`state=running` 同时列出子任务（重试、继续运行、执行裁决、
+  重新导出）正在排队或运行的已结束任务 —— 界面上它们显示为「运行中」。这些行的 `state` 仍是任务自己的终态，
+  `active_subtask` 是那个子任务；按终态筛（如 `state=completed_with_errors`）照样列出它们。子任务暂停时不算运行中。
+  概览的运行情况照旧按「任务或子任务」逐份工作计数（§12），不受这条影响。
+- 按创建时间倒序（同一毫秒建的按建的先后）。列表行里带 `progress`、`summary`、`pending_adjudication` 和各状态的模块数，
   够渲染列表页和「已完成任务的报告概览」，不用再逐个查详情。
 - 往下翻的内容（裁决队列、日志、episode 列表、报告明细表）用游标：`?cursor=<opaque>&limit=50`
   → `{"items": [...], "next_cursor": "...", "has_more": true}`。
@@ -302,7 +309,7 @@ GET /api/v1/tasks/{id}/report/tables/visual_quality?cursor=...&limit=100&sort=sc
 ## 7. 媒体访问：预签名 URL
 
 ```
-GET /api/v1/media/sign?task=task_01HX...&scope=delivery&path=details/clips/ep000034.mp4&ttl=1800
+GET /api/v1/media/sign?task=task-kqzmrtbwe&scope=delivery&path=details/clips/ep000034.mp4&ttl=1800
 → {"url": "https://bucket.tos-cn-beijing.volces.com/...&X-Tos-Signature=...", "expires_at": ...}
 ```
 
@@ -385,6 +392,12 @@ GET /api/v1/tasks/{id}/logs?stage=vlm&subtask=&level=warn&cursor=…&limit=200
   重新预检并判断与任务配置是否相容（所选模块仍可用、自选的 episode 仍在范围内、需要补充的输入都有）。
   相容就直接开始，不用再点一次；不相容则任务留在待启动，`incompatibilities` 逐项说明，前端带用户回编辑页。
 - **概览**（`GET /overview`）一次返回：待处理事项（错误的任务、待裁决、交付待导出、有变化的数据集、
-  验证失败的密钥与后端）、运行情况、近 7 天统计（Token 只算实际调用账）。
+  验证失败的密钥与后端）、运行情况、所选时间段的统计（Token 只算实际调用账）。概览页 2026-09-23 起只用运行情况和时间段两块（07 篇 §4.3），
+  待处理事项和数据集计数仍在响应里，给 Agent 用。
+- **时间段**（C4 1.10.0）：`?days=` 取 7、30、90、365，缺省 7，其它值 400 `validation_failed`。7、30 按天切；90 按周切，
+  是本周和之前 12 周（周一开头）；365 按月切，是本月和之前 11 个月。`recent` 带 `days`、`bucket`（day / week / month）、
+  `since`（第一段的起点），`tokens_per_bucket` 逐段列出 `{start, label, tokens}`（最早的在前，没有用量的段也列出，
+  标签如 `09-23`、`09-21 周`、`2026-09`）；完成的任务、episode 数、通过率都从 `since` 算到现在。
+  天、周、月的边界按站点时区（`CURATOR_TZ_OFFSET`）。Token 时间线保留 400 天，够一年的月统计。
 - 任务列表的 `module` 参数是逗号分隔的模块 id，只看**勾选了其中每一个**的任务；列表条目带所选模块的 id
   （质检模块列显示预设名要用，07 篇 §4.1）。请求里的 `input` 可以只给 `dataset_id`，与给全来源和地址等价。

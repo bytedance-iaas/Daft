@@ -201,3 +201,16 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **F5.5（2026-09-23）**：C1 1.5 文件型参数（`format: upload`、`x-upload-kind`、`x-accept`、`x-max-mb`；Daemon 里值是 `upload:<id>` 句柄，CLI 里是路径）；C4 1.8.0 `POST /uploads`（请求体即文件，上传即校验，400 `validation_failed` 的 `details.errors[]` 定位到字段 / 样本 / 帧 / 相机 / 点位）与 `GET /uploads/{id}`，新 schema `Upload`、`UploadKind`、`UploadIssue`；C2 预检的 `input_hint.field` 枚举加 `trajectory_json`，EEF 模块没给文件时是 `needs_input: trajectory_missing`。
 - **F5.6（2026-09-23）**：C1 1.6，`eef_video_review` 加明细表 `eef_review_windows`；新 Schema `eef/review_output.schema.json`（模型对一个复核窗口的答复：只有分类、布尔与帧号，`additionalProperties: false`；帧号属于本次请求、解释里没有测量值由执行方另查）；C2 预检加原因码 `eef_base_unavailable {base_reason_code}`，复核条目跟随被复核模块（缺文件同样 `needs_input: trajectory_missing`），再要 VLM 后端（`vlm_backend_missing`）；调用种类 `eef_review`（C3 1.1 的模块 id 形式，C3 本身不变）。
 
+## 十二、ID 风格、概览时间段与「运行中」筛选（2026-09-23，F6.4 / F6.1，D45 / D46）
+
+- **C4 1.10.0 · ID（D45）**：新记录的 ID 是「前缀-9 位小写字母」，旧记录保留 `前缀_…`，两种都照常可用。
+  数据集 ID 的 pattern 改为 `^(ds-[a-z]{9}|ds_[0-9A-Za-z]+)$`（原来只写了前缀 `^ds_`，仓储和路由一直只认 `ds_` 加字母数字），
+  `UploadId` 为 `^(upl-[a-z]{9}|upl_[0-9a-z]{10,40})$`，上传句柄为 `^upload:(upl-[a-z]{9}|upl_[0-9a-z]{10,40})$`；其余 ID 本来就没有 pattern。
+- **C4 1.10.0 · 概览**：`GET /overview?days=7|30|90|365`（缺省 7，其它值 400）；`recent` 加 `bucket`（day / week / month）与 `since`，
+  `tokens_per_bucket`（`start`、`label`、`tokens`）取代 `tokens_per_day`。90 是本周和之前 12 周（周一开头），365 是本月和之前 11 个月。
+  唯一的调用方是前端概览页，已一起改。
+- **C4 1.10.0 · 任务列表**：`state=running` 同时列出子任务正在排队或运行的已结束任务（D46，只是显示，行里的 `state` 不变）。
+- **C5**：新异常 `IdTaken`（调用方自选的 ID 已被占用，重新生成后再试；与 `Conflict('name_taken')` 分开，不会出现在接口上）；
+  模块说明写明 ID 随机、两种格式都认、同一毫秒建的行按插入先后排；`list_tasks` 加关键字 `running_subtasks`（`GET /tasks` 用它实现上一条）；
+  `usage_buckets` 写明主流程在前、子任务按建的先后；Token 时间线至少保留 400 天（概览的「近 1 年」按月统计要用）。
+

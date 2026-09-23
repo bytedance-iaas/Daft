@@ -17,25 +17,34 @@ What each figure counts (soft-deleted tasks never count, except in tokens):
   (``running``, ``pausing``, ``stopping``), ``queued`` and ``paused`` are those
   states; ``active`` lists the busy ones, newest first, each with its task and
   the stage that is running now (or the last one that started) and its counts;
-* ``recent`` - the last 7 days, today included, in the site's time zone
-  (``CURATOR_TZ_OFFSET``): tasks that finished ``succeeded`` or
-  ``completed_with_errors``, the episodes they checked (their summary's
-  ``total``), the pass rate over those episodes (``passed / total``, null without
-  any), and actual-ledger tokens per day (``prompt + completion``), oldest first,
-  every day listed - tokens stay counted when their task is deleted later.
+* ``recent`` - the period the page picked (``days``: 7, 30, 90 or 365; the console
+  offers 近 7 天 / 近 1 月 / 近 3 月 / 近 1 年) in the site's time zone
+  (``CURATOR_TZ_OFFSET``), cut into buckets that end with the current one: 7 or 30
+  days; for 90 the 13 calendar weeks (Monday to Sunday) up to this one; for 365 the
+  12 calendar months up to this one. ``since`` is where the first bucket starts, and
+  the figures cover ``since`` up to now: tasks that finished ``succeeded`` or
+  ``completed_with_errors``, the episodes they checked (their summary's ``total``),
+  the pass rate over those episodes (``passed / total``, null without any), and
+  actual-ledger tokens (``prompt + completion``) per bucket, oldest first, every
+  bucket listed - tokens stay counted when their task is deleted later.
 """
 from __future__ import annotations
 
+import bisect
 import datetime as dt
 
 from .repo import protocol as P
 from .views import stage_progress, task_ref
 
 DAY_MS = 24 * 60 * 60 * 1000
-RECENT_DAYS = 7
+#: ``days`` a request may ask for -> (bucket, how many buckets, the current one included).
+RANGES: dict[int, tuple[str, int]] = {7: ("day", 7), 30: ("day", 30), 90: ("week", 13),
+                                      365: ("month", 12)}
+DEFAULT_DAYS = 7
 #: The overview shows at most this many busy tasks; the task list has the rest.
 ACTIVE_LIMIT = 20
 _BUSY = ("running", "pausing", "stopping")
+_EPOCH = dt.date(1970, 1, 1)
 
 
 def _count(value) -> int:
@@ -59,20 +68,41 @@ def _active(task: P.Task, progress: dict | None) -> dict:
             "total": _count(stage["total"]) if stage else 0}
 
 
-def day_window(now: int, tz_offset_minutes: int, days: int = RECENT_DAYS) -> list[tuple[int, str]]:
-    """``(start in epoch ms, local date)`` of the last ``days`` days, today last."""
+def _midnight(day: dt.date, offset_ms: int) -> int:
+    """Epoch ms of 00:00 on ``day`` in the site's time zone (a fixed UTC offset)."""
+    return (day - _EPOCH).days * DAY_MS - offset_ms
+
+
+def _month_start(day: dt.date, months_back: int) -> dt.date:
+    index = day.year * 12 + day.month - 1 - months_back
+    return dt.date(index // 12, index % 12 + 1, 1)
+
+
+def buckets(now: int, tz_offset_minutes: int,
+            days: int = DEFAULT_DAYS) -> tuple[str, list[tuple[int, str]]]:
+    """``(bucket, [(start in epoch ms, label), ...])`` of a ``days`` range: the bucket that
+    holds ``now`` and the ones before it, oldest first. Labels are ``09-23`` for a day,
+    ``09-21 周`` for the week that starts on Monday 09-21 and ``2026-09`` for a month."""
+    kind, count = RANGES[days]
     offset = tz_offset_minutes * 60_000
-    today = (now + offset) - (now + offset) % DAY_MS - offset
-    out = []
-    for i in range(days - 1, -1, -1):
-        start = today - i * DAY_MS
-        date = dt.datetime.fromtimestamp((start + offset) / 1000, tz=dt.timezone.utc)
-        out.append((start, date.strftime("%Y-%m-%d")))
-    return out
+    today = _EPOCH + dt.timedelta(days=(now + offset) // DAY_MS)
+    back = range(count - 1, -1, -1)
+    if kind == "day":
+        firsts = [(today - dt.timedelta(days=i), "{:%m-%d}") for i in back]
+    elif kind == "week":
+        monday = today - dt.timedelta(days=today.weekday())
+        firsts = [(monday - dt.timedelta(weeks=i), "{:%m-%d} 周") for i in back]
+    else:
+        firsts = [(_month_start(today, i), "{:%Y-%m}") for i in back]
+    return kind, [(_midnight(day, offset), label.format(day)) for day, label in firsts]
 
 
-def build(repo, *, owner: str, now: int, tz_offset_minutes: int) -> dict:
-    """``repo`` is a C5 repository with :class:`daemon.repo.extras.RepositoryExtras`."""
+def build(repo, *, owner: str, now: int, tz_offset_minutes: int,
+          days: int = DEFAULT_DAYS) -> dict:
+    """``repo`` is a C5 repository (1.3 took the overview's queries in)."""
+    if days not in RANGES:
+        raise ValueError(f"the overview covers {sorted(RANGES)} days, not {days}")
+
     def total(state: str) -> int:
         return repo.list_tasks(owner=owner, page=1, page_size=1, state=state).total
 
@@ -95,14 +125,14 @@ def build(repo, *, owner: str, now: int, tz_offset_minutes: int) -> dict:
     changed = repo.list_datasets(owner=owner, page=1, page_size=1, check_state="changed").total
     tasks, episodes = repo.adjudication_backlog(owner=owner)
 
-    days = day_window(now, tz_offset_minutes)
-    since, until = days[0][0], days[-1][0] + DAY_MS
-    per_day = dict.fromkeys((start for start, _ in days), 0)
-    for slot, tokens in repo.token_timeline(since=since, until=until, owner=owner):
-        start = since + (slot - since) // DAY_MS * DAY_MS
-        if start in per_day:
-            per_day[start] += int(tokens)
-    finished = repo.finished_results(since=since, owner=owner)
+    kind, spans = buckets(now, tz_offset_minutes, days)
+    starts = [start for start, _ in spans]
+    offset = tz_offset_minutes * 60_000
+    until = (now + offset) // DAY_MS * DAY_MS - offset + DAY_MS       # the end of today
+    tokens = [0] * len(spans)
+    for slot, spent in repo.token_timeline(since=starts[0], until=until, owner=owner):
+        tokens[bisect.bisect_right(starts, slot) - 1] += int(spent)
+    finished = repo.finished_results(since=starts[0], owner=owner)
 
     return {
         "todo": {
@@ -118,12 +148,15 @@ def build(repo, *, owner: str, now: int, tz_offset_minutes: int) -> dict:
         "running": {"running": busy_total, "queued": queued, "paused": paused,
                     "active": [item for _, _, item in busy[:ACTIVE_LIMIT]]},
         "recent": {
-            "days": RECENT_DAYS,
+            "days": days,
+            "bucket": kind,
+            "since": starts[0],
             "tasks_finished": finished.tasks,
             "episodes_checked": finished.episodes,
             "pass_rate": (round(min(1.0, finished.passed / finished.episodes), 4)
                           if finished.episodes else None),
-            "tokens_per_day": [{"date": date, "tokens": per_day[start]} for start, date in days],
+            "tokens_per_bucket": [{"start": start, "label": label, "tokens": spent}
+                                  for (start, label), spent in zip(spans, tokens)],
         },
         "datasets": {"total": repo.list_datasets(owner=owner, page=1, page_size=1).total,
                      "changed": changed},

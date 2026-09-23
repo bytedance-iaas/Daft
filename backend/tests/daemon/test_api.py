@@ -194,6 +194,80 @@ def test_task_list_filters_and_item_fields(client_for, clock):
     assert_error(c.get("/curation/api/v1/tasks", params={"delivery": "s3://x/y"}), "validation_failed")
 
 
+def test_running_filter_includes_tasks_whose_subtask_runs(client_for, clock):
+    """D46: a retry (resume, adjudication run, re-export) that is queued or running shows its
+    finished task as running, so ?state=running lists it; the item keeps the task's own state
+    and names the subtask. The task's other filters do not change."""
+    from daemon.transitions import change_subtask_state
+
+    c = client_for()
+    rt = _rt(c)
+    main = seed_task(rt.repo, "main run")
+    change_task_state(rt.repo, rt.hub, main.id, {"queued"}, "running", at=rt.clock())
+    clock.advance(1)
+    retried = seed_task(rt.repo, "retried")
+    _finish(rt, retried.id, "completed_with_errors")
+    sub = rt.repo.create_subtask(P.Subtask(id="", task_id=retried.id, kind="retry", scope={},
+                                           state="queued"))
+    clock.advance(1)
+    exported = seed_task(rt.repo, "export paused")
+    _finish(rt, exported.id)
+    paused = rt.repo.create_subtask(P.Subtask(id="", task_id=exported.id, kind="reexport",
+                                              scope={}, state="queued"))
+    for frm, to, kw in (("queued", "running", {}), ("running", "pausing", {"pause_reason": "user"}),
+                        ("pausing", "paused", {})):
+        change_subtask_state(rt.repo, rt.hub, paused.id, {frm}, to, at=T0, **kw)
+
+    def listed(**params):
+        body = c.get("/api/v1/tasks", params=params).json()
+        assert body["total"] == len(body["items"])
+        for item in body["items"]:
+            assert_schema("TaskListItem", item)
+        return {t["id"]: t for t in body["items"]}
+
+    running = listed(state="running")
+    assert list(running) == [retried.id, main.id]                     # newest first
+    assert (running[retried.id]["state"], running[retried.id]["active_subtask"]) == \
+        ("completed_with_errors", sub.id)
+    change_subtask_state(rt.repo, rt.hub, sub.id, {"queued"}, "running", at=T0)
+    assert list(listed(state="running")) == [retried.id, main.id]     # queued, then running
+    assert list(listed(state="completed_with_errors")) == [retried.id]
+    assert list(listed(state="succeeded")) == [exported.id]           # a paused subtask: not running
+    change_subtask_state(rt.repo, rt.hub, sub.id, {"running"}, "succeeded", at=T0)
+    assert list(listed(state="running")) == [main.id]                 # the retry ended
+    # the overview's counts stay per piece of work: one main run, one paused subtask
+    running = c.get("/api/v1/overview").json()["running"]
+    assert (running["running"], running["paused"]) == (1, 1)
+
+
+def test_tasks_made_before_d45_keep_their_links(client_for, monkeypatch, clock):
+    """A task whose id predates D45 (task_<26 Crockford characters>) still opens, lists,
+    changes and deletes; newer ones are task-<9 letters>; the list orders them by creation."""
+    import re
+
+    from daemon.repo import sqlite as S
+
+    c = client_for(base_path="/curation")
+    rt = _rt(c)
+    legacy, fresh = "task_01HXR2D8QZ7N4Y0M5K3J2H1G0F", S.new_id
+    with monkeypatch.context() as m:
+        m.setattr(S, "new_id", lambda prefix: legacy if prefix == "task" else fresh(prefix))
+        old = seed_task(rt.repo, "made before D45", state="created")
+    clock.advance(1)
+    new = seed_task(rt.repo, "made after", state="created")
+    assert old.id == legacy and re.fullmatch(r"task-[a-z]{9}", new.id)
+    for t in (old, new):
+        r = c.get(f"/curation/api/v1/tasks/{t.id}")
+        assert r.status_code == 200, r.text
+        assert_schema("Task", r.json())
+        assert r.json()["links"][0]["url"].endswith(f"/curation/tasks/{t.id}")
+        assert _patch(c, t.id, {"note": "still here"}, base="/curation").status_code == 200
+    assert [x["id"] for x in c.get("/curation/api/v1/tasks").json()["items"]] == [new.id, old.id]
+    assert c.get("/curation/api/v1/tasks", params={"q": legacy[-8:]}).json()["total"] == 1
+    assert c.delete(f"/curation/api/v1/tasks/{legacy}", headers=JSON).status_code == 204
+    assert c.post(f"/curation/api/v1/tasks/{legacy}/restore", headers=JSON).status_code == 200
+
+
 def test_deleted_filter_lists_soft_deleted_tasks(client_for):
     c = client_for()
     rt = _rt(c)

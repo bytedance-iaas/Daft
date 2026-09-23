@@ -1,6 +1,8 @@
 """``/credentials``: identity-only verification on save, marks, sealed storage, delete rules."""
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from daemon.repo import protocol as P
@@ -122,6 +124,23 @@ def test_names_are_unique_and_the_backend_prefix_is_reserved(secret_client):
                                            "secret_access_key": SK, "region": "cn-beijing"},
                headers=JSON)
     assert_error(r, "validation_failed")
+
+
+def test_a_colliding_id_is_drawn_again_not_reported_as_a_taken_name(secret_client, monkeypatch):
+    """D45: a key's id is 9 random letters. When another row has it, the save draws a new
+    one and seals the secret again for it - no 409 name_taken, no 500."""
+    from daemon.routes import access_keys as routes
+
+    c = secret_client()
+    first = add_access_key(c, name="first")
+    fresh, draws = routes.new_id, [first["id"]]
+    monkeypatch.setattr(routes, "new_id", lambda prefix: draws.pop() if draws else fresh(prefix))
+    second = add_access_key(c, name="second")
+    assert not draws and re.fullmatch(r"cred-[a-z]{9}", second["id"]) and second["id"] != first["id"]
+    # each payload opens with its own row id (the AEAD binds it), so the second was sealed again
+    assert service(c).tos_key(second["id"]).secret_access_key == SK
+    assert service(c).tos_key(first["id"]).secret_access_key == SK
+    assert [i["name"] for i in c.get(f"{API}/credentials").json()["items"]] == ["first", "second"]
 
 
 @pytest.mark.parametrize("body", [

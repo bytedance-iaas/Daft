@@ -73,7 +73,8 @@ describe('param_schema → form fields (C1, D38)', () => {
     expect(seeds).toMatchObject({ key: 'observation_seeds', kind: 'upload', required: false, uploadKind: 'eef_observation_seeds', accept: ['.jsonl', '.json'] });
     expect(validateParam(traj, '')).toBe('请填写trajectory.json');
     expect(validateParam(traj, '/data/trajectory.json')).toBe('trajectory.json要先上传文件');
-    expect(validateParam(traj, 'upload:upl_0123456789')).toBeNull();
+    expect(validateParam(traj, 'upload:upl-kqzmrtbwe')).toBeNull();
+    expect(validateParam(traj, 'upload:upl_0123456789')).toBeNull(); // made before D45
     expect(validateParam(seeds, '')).toBeNull();
     expect(changedParams(schemaOf('eef_video_consistency'), { trajectory_json: 'upload:upl_0123456789', lag_search_s: 1.0 })).toEqual({ trajectory_json: 'upload:upl_0123456789' });
   });

@@ -27,8 +27,8 @@ Step 2 (C5 1.1 / 1.2) adds the dataset registry of design doc 01, section 2.8,
   whose events are gone counts as paused by the user, so it is not resumed behind
   anybody's back (step 1 kept such subtasks paused too).
 * ``token_timeline`` sums actual-ledger tokens per owner and 15-minute UTC slot;
-  ``token_usage`` has no time axis, and the overview charts tokens per day
-  (see ``daemon.repo.extras``).
+  ``token_usage`` has no time axis, and the overview charts tokens per day, week or
+  month (see ``daemon.repo.extras`` and ``daemon.overview``).
 
 Step 3 (C4 1.6) adds ``vlm_model.is_default``: the model a new task starts with.
 At most one per owner across every backend, which no index can express (the owner

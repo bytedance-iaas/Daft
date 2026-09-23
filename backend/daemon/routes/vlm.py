@@ -32,7 +32,7 @@ from ..secrets.effort import EffortNotAllowed
 from ..secrets.http import audit, bad, secrets, validate_hiding, write
 from ..secrets.service import BACKEND_KEY_PREFIX, VLM_SECRET_FIELDS, SecretsService
 from ..util import new_id
-from .common import principal, read_json_body, runtime
+from .common import principal, read_json_body, runtime, with_fresh_ids
 
 router = APIRouter()
 
@@ -168,7 +168,6 @@ async def create_backend(request: Request):
 
     def handler() -> Response:
         _name_free(rt.repo, name, owner)
-        backend_id, cred_id = new_id("vb"), new_id("cred")
         listing = svc.vlm.list_models(endpoint, api_key)   # network: outside any transaction
         now = rt.clock()
         verdict = _listing_verification(listing)
@@ -176,22 +175,30 @@ async def create_backend(request: Request):
             state, error = "unverified", listing.failure.reason
         else:
             state, error = verdict
-        blob, version = svc.sealer.seal(cred_id, {"api_key": api_key or ""})
-        key_row = P.Credential(
-            id=cred_id, name=f"{BACKEND_KEY_PREFIX}{backend_id}", kind=_KEY_KIND[kind],
-            payload_enc=blob, key_version=version, owner_id=owner,
-            payload_meta=_key_meta(endpoint, bool(api_key), listing.ok, backend_id))
-        backend = P.VlmBackend(
-            id=backend_id, name=name, kind=kind, endpoint=endpoint, credential_id=cred_id,
-            max_concurrency=max_concurrency, verify_state=state, last_verified_at=now,
-            last_verify_error=error, owner_id=owner,
-            models=_listed_models(svc, backend_id, listing.models))
-        with rt.repo.transaction():
-            created = rt.repo.create_vlm_backend(backend, key_row)
-            audit(request, "vlm_backend.create", created.id,
-                  {"name": name, "kind": kind, "endpoint": endpoint, "models_listed": listing.ok,
-                   "models": len(listing.models), "verify_state": state})
-        return JSONResponse(_view(svc, created, key_row.payload_meta), status_code=201)
+
+        def save() -> tuple[P.VlmBackend, dict]:
+            # the key row is named after the backend and its payload is sealed for its own id
+            backend_id, cred_id = new_id("vb"), new_id("cred")
+            blob, version = svc.sealer.seal(cred_id, {"api_key": api_key or ""})
+            key_row = P.Credential(
+                id=cred_id, name=f"{BACKEND_KEY_PREFIX}{backend_id}", kind=_KEY_KIND[kind],
+                payload_enc=blob, key_version=version, owner_id=owner,
+                payload_meta=_key_meta(endpoint, bool(api_key), listing.ok, backend_id))
+            backend = P.VlmBackend(
+                id=backend_id, name=name, kind=kind, endpoint=endpoint, credential_id=cred_id,
+                max_concurrency=max_concurrency, verify_state=state, last_verified_at=now,
+                last_verify_error=error, owner_id=owner,
+                models=_listed_models(svc, backend_id, listing.models))
+            with rt.repo.transaction():
+                created = rt.repo.create_vlm_backend(backend, key_row)
+                audit(request, "vlm_backend.create", created.id,
+                      {"name": name, "kind": kind, "endpoint": endpoint,
+                       "models_listed": listing.ok, "models": len(listing.models),
+                       "verify_state": state})
+            return created, key_row.payload_meta
+
+        created, meta = with_fresh_ids(save)
+        return JSONResponse(_view(svc, created, meta), status_code=201)
 
     return await write(request, "createVlmBackend", handler, body=body,
                        secret_fields=VLM_SECRET_FIELDS)
@@ -226,36 +233,41 @@ async def update_backend(request: Request, backend_id: str):
             fields["endpoint"] = endpoint
         if "max_concurrency" in body:
             fields["max_concurrency"] = int(body["max_concurrency"])
-        with rt.repo.transaction():
-            key_id = cred.id if cred is not None else None
-            meta = dict(cred.payload_meta or {}) if cred is not None else {}
-            listed = verification.listed if verification is not None else meta.get("models_listed")
-            meta.update(_key_meta(endpoint, bool(api_key), listed, backend.id))
-            if cred is None and api_key:
-                key_id = new_id("cred")
-                blob, version = svc.sealer.seal(key_id, {"api_key": api_key})
-                rt.repo.create_credential(P.Credential(
-                    id=key_id, name=f"{BACKEND_KEY_PREFIX}{backend.id}",
-                    kind=_KEY_KIND[backend.kind], payload_enc=blob, key_version=version,
-                    payload_meta=meta, owner_id=owner))
-                fields["credential_id"] = key_id
-            elif cred is not None:
-                sealed = {}
-                if new_key and new_key != old_key:
-                    sealed["payload_enc"], sealed["key_version"] = svc.sealer.seal(
-                        cred.id, {"api_key": new_key})
-                if meta != cred.payload_meta:
-                    sealed["payload_meta"] = meta
-                if sealed:
-                    rt.repo.update_credential(cred.id, owner=cred.owner_id, **sealed)
-            updated = rt.repo.update_vlm_backend(backend.id, owner=owner, **fields)
-            if verification is not None:
-                rt.repo.set_vlm_backend_verification(backend.id, verification.state,
-                                                     verification.at, verification.error)
-                updated = rt.repo.get_vlm_backend(backend.id, owner=owner)
-            audit(request, "vlm_backend.update", backend.id,
-                  {"name": updated.name, "fields": sorted(body)})
-        return JSONResponse(_view(svc, updated))
+
+        def save() -> P.VlmBackend:
+            changes = dict(fields)
+            with rt.repo.transaction():
+                meta = dict(cred.payload_meta or {}) if cred is not None else {}
+                listed = (verification.listed if verification is not None
+                          else meta.get("models_listed"))
+                meta.update(_key_meta(endpoint, bool(api_key), listed, backend.id))
+                if cred is None and api_key:
+                    key_id = new_id("cred")               # a new key row, sealed for its id
+                    blob, version = svc.sealer.seal(key_id, {"api_key": api_key})
+                    rt.repo.create_credential(P.Credential(
+                        id=key_id, name=f"{BACKEND_KEY_PREFIX}{backend.id}",
+                        kind=_KEY_KIND[backend.kind], payload_enc=blob, key_version=version,
+                        payload_meta=meta, owner_id=owner))
+                    changes["credential_id"] = key_id
+                elif cred is not None:
+                    sealed = {}
+                    if new_key and new_key != old_key:
+                        sealed["payload_enc"], sealed["key_version"] = svc.sealer.seal(
+                            cred.id, {"api_key": new_key})
+                    if meta != cred.payload_meta:
+                        sealed["payload_meta"] = meta
+                    if sealed:
+                        rt.repo.update_credential(cred.id, owner=cred.owner_id, **sealed)
+                updated = rt.repo.update_vlm_backend(backend.id, owner=owner, **changes)
+                if verification is not None:
+                    rt.repo.set_vlm_backend_verification(backend.id, verification.state,
+                                                         verification.at, verification.error)
+                    updated = rt.repo.get_vlm_backend(backend.id, owner=owner)
+                audit(request, "vlm_backend.update", backend.id,
+                      {"name": updated.name, "fields": sorted(body)})
+            return updated
+
+        return JSONResponse(_view(svc, with_fresh_ids(save)))
 
     return await write(request, "updateVlmBackend", handler, body=body,
                        secret_fields=VLM_SECRET_FIELDS)

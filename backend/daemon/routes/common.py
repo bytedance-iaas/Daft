@@ -23,6 +23,8 @@ from curation.contracts import schemas
 
 from ..auth import Principal, principal_of
 from ..errors import ApiError, validation_error
+from ..repo import protocol as P
+from ..util import ID_ATTEMPTS
 
 OPENAPI = "openapi.yaml#/components/schemas/"
 
@@ -90,6 +92,19 @@ def validate(ref: str, instance: Any) -> None:
     errors = list(_validator(ref).iter_errors(instance))
     if errors:
         raise validation_error(errors)
+
+
+def with_fresh_ids(make: Callable[[], Any]) -> Any:
+    """Run ``make`` - which draws the ids it stores and seals what is bound to them - again
+    while the repository says an id it drew is taken (``IdTaken``; random ids, D45). One
+    collision of two 9-letter ids is already rare; ``ID_ATTEMPTS`` in a row means a broken
+    generator, and that error goes through."""
+    for _ in range(ID_ATTEMPTS - 1):
+        try:
+            return make()
+        except P.IdTaken:
+            continue
+    return make()
 
 
 async def in_thread(fn: Callable, *args, **kwargs):

@@ -135,12 +135,12 @@ describe('新建任务 · 两屏与提交', () => {
     expect(screen.getByRole('button', { name: '创建并开始' })).toHaveClass('arco-btn-loading');
     expect(document.body).not.toHaveTextContent('正在做开始前检查');
     release();
-    await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task_/));
+    await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
     const reg = seen.find((s) => s.method === 'POST' && s.path === '/datasets');
     expect(reg?.body).toEqual({ input: { source: 'tos', uri: 'tos://pai-kit-datasets/lerobot/new_set', region: 'cn-beijing', credential: 'prod-tos' } });
     const create = seen.find((s) => s.method === 'POST' && s.path === '/tasks');
     const body = create?.body as Record<string, unknown>;
-    expect(body.input).toEqual({ dataset_id: expect.stringMatching(/^ds_/) });
+    expect(body.input).toEqual({ dataset_id: expect.stringMatching(/^ds-[a-z]{9}$/) });
     expect(body.output).toEqual({ uri: 'tos://pai-kit-deliveries/new-set-0921', region: 'cn-beijing', credential: 'prod-tos' });
     expect(body.modules).toEqual(['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', { id: 'video_action_sync', params: { sync_plots: 'all' } }, 'dedup']);
     expect(body).not.toHaveProperty('vlm');
@@ -199,11 +199,11 @@ describe('新建任务 · 两屏与提交', () => {
     expect(await within(s2()).findByTestId('upload-done-trajectory_json')).toHaveTextContent('trajectory.json');
     expect(within(s2()).queryByTestId('upload-error-trajectory_json')).toBeNull();
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
-    await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task_/));
+    await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
     const up = seen.filter((x) => x.method === 'POST' && x.path.startsWith('/uploads'));
     expect(up).toHaveLength(2);
     const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: unknown[]; vlm?: unknown };
-    expect(body.modules).toContainEqual({ id: 'eef_video_consistency', params: { trajectory_json: expect.stringMatching(/^upload:upl_/) } });
+    expect(body.modules).toContainEqual({ id: 'eef_video_consistency', params: { trajectory_json: expect.stringMatching(/^upload:upl-[a-z]{9}$/) } });
     expect(body.modules).toContain('eef_video_review');
     expect(body.vlm).toBeTruthy();
   });
@@ -261,7 +261,7 @@ describe('新建任务 · 两屏与提交', () => {
     expect(within(dialog).getByTestId('source-change')).toHaveTextContent('文件：新增 12 个 · 删除 0 个 · 改动 1 个');
     expect(within(dialog).getByText('data/chunk-000/episode_000200.parquet')).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: '重新预检' }));
-    await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task_/));
+    await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
     expect(seen.some((s) => /\/repreflight$/.test(s.path))).toBe(true);
     expect(await screen.findByText('重新预检通过，任务已开始')).toBeInTheDocument();
   });
@@ -297,7 +297,7 @@ describe('新建任务 · 两屏与提交', () => {
     await waitFor(() => expect(s1()).toBeVisible());
     expect(within(s1()).getByText('前 150 条超出了范围：数据集现在只有 120 条')).toBeInTheDocument();
     expect(screen.getByTestId('module-dedup')).toHaveClass('marked');
-    expect(currentLocation()).toMatch(/^\/tasks\/new\?edit=task_/);
+    expect(currentLocation()).toMatch(/^\/tasks\/new\?edit=task-[a-z]{9}\b/);
   });
 
   it('pre-start check failures stay on the form, under the field concerned (D30)', async () => {

@@ -415,9 +415,9 @@ Daemon 要把进度透传给前端 SSE，所以 CLI 的进度必须是结构化�
 {
   "links": [
     {"rel": "report",       "title": "Open QA report",
-     "url": "https://<host>/curation/tasks/task_01H.../report"},
+     "url": "https://<host>/curation/tasks/task-kqzmrtbwe/report"},
     {"rel": "adjudication", "title": "3 episodes need human judgement",
-     "url": "https://<host>/curation/tasks/task_01H.../adjudication?status=pending"}
+     "url": "https://<host>/curation/tasks/task-kqzmrtbwe/adjudication?status=pending"}
   ]
 }
 ```

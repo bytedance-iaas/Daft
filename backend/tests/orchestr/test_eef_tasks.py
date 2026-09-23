@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 import pytest
 
@@ -56,6 +57,7 @@ def test_upload_is_validated_on_arrival_with_located_errors(daemon):
     d = daemon()
     up = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
     assert up["handle"] == f"upload:{up['upload_id']}" and len(up["sha256"]) == 64
+    assert re.fullmatch(r"upl-[a-z]{9}", up["upload_id"])                 # D45
     s = up["validation"]["summary"]
     assert s["samples"] == 7 and s["episodes"] == list(range(7)) and s["cameras"] == [CAM]
     got = d.client.get(f"{API}/uploads/{up['upload_id']}")
@@ -77,8 +79,30 @@ def test_upload_is_validated_on_arrival_with_located_errors(daemon):
     plain = d.client.post(f"{API}/uploads", params={"kind": "eef_trajectory", "name": "t.json"},
                           headers={"Content-Type": "text/plain"}, content=b"{}")
     assert plain.status_code == 400
-    assert d.client.get(f"{API}/uploads/upl_0000000000").status_code == 404
+    for unknown in ("upl_0000000000", "upl-aaaaaaaaa", "upl-AAAAAAAAA", "../etc"):
+        assert d.client.get(f"{API}/uploads/{unknown}").status_code == 404
     assert _upload(d, "no_such_kind", "x.json", {}, status=400)["error"]["code"] == "validation_failed"
+
+
+def test_uploads_made_before_d45_keep_working_and_a_taken_id_is_drawn_again(daemon, monkeypatch):
+    from daemon import uploads as U
+
+    d = daemon()
+    legacy, fresh = "upl_0123456789abcdef0123", U.new_id
+    with monkeypatch.context() as m:                           # an upload from before D45
+        m.setattr(U, "new_id", lambda prefix: legacy)
+        old = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
+    assert (old["upload_id"], old["handle"]) == (legacy, f"upload:{legacy}")
+    draws = [legacy]                                           # the next draw hits it
+    with monkeypatch.context() as m:
+        m.setattr(U, "new_id", lambda prefix: draws.pop() if draws else fresh(prefix))
+        new = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
+    assert re.fullmatch(r"upl-[a-z]{9}", new["upload_id"]) and not draws
+    assert d.client.get(f"{API}/uploads/{legacy}").json() == old       # untouched, still readable
+    created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": old["handle"]}}],
+                       start_now=False)
+    (row,) = [m for m in d.get(created["id"])["modules"] if m["id"] == EEF]
+    assert row["selected"] and row["availability"] == "available"
 
 
 def test_the_dataset_preflight_asks_for_the_file(daemon):

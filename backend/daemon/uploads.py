@@ -11,7 +11,8 @@
 An error is reported with its location (JSON path, sample, episode, frame, camera, point). Files
 live on the data volume as ``uploads/<owner key>/<upload_id>/{file, meta.json}``: no database row,
 the metadata is the sidecar. Uploads are owner-scoped; a task refers to one by its handle
-``upload:<upload_id>`` and gets a copy in its run directory when it starts.
+``upload:<upload_id>`` and gets a copy in its run directory when it starts. Upload ids are
+``upl-<9 lowercase letters>`` (D45); uploads made before keep their ``upl_<hex>`` ids.
 """
 from __future__ import annotations
 
@@ -20,26 +21,22 @@ import json
 import os
 import pathlib
 import re
-import secrets
 import threading
 from typing import Any
 
 from curation.contracts import modules as registry
 
 from .errors import ApiError
+from .util import ID_ATTEMPTS, id_regex, new_id
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 KINDS = ("eef_trajectory", "eef_observation_seeds")
-_ID_RE = re.compile(r"^upl_[0-9a-z]{10,40}$")
+_ID_RE = re.compile(rf"^{id_regex('upl', r'upl_[0-9a-z]{10,40}')}$")
 _MAX_ERRORS = 50
 
 
 def _owner_key(owner: str) -> str:
     return hashlib.sha256(owner.encode()).hexdigest()[:16]
-
-
-def _new_id() -> str:
-    return "upl_" + secrets.token_hex(10)
 
 
 def _invalid(message: str, errors: list[dict]) -> ApiError:
@@ -128,6 +125,19 @@ class UploadStore:
             raise ApiError("not_found", "没有这个上传件", details={"upload_id": upload_id})
         return self.root / _owner_key(owner) / upload_id
 
+    def _claim(self, owner: str) -> tuple[str, pathlib.Path]:
+        """A new upload id and its directory, created here so no other upload can take it; a
+        random id that is already there is drawn again (D45)."""
+        for _ in range(ID_ATTEMPTS):
+            upload_id = new_id("upl")
+            d = self._dir(owner, upload_id)
+            try:
+                d.mkdir(parents=True, exist_ok=False)
+            except FileExistsError:
+                continue
+            return upload_id, d
+        raise RuntimeError(f"no free upload id after {ID_ATTEMPTS} draws")
+
     def put(self, owner: str, kind: str, name: str, data: bytes) -> dict:
         if kind not in KINDS:
             raise ApiError("validation_failed", f"不认识的上传类型 {kind!r}（可选：{'、'.join(KINDS)}）",
@@ -136,9 +146,7 @@ class UploadStore:
             raise ApiError("validation_failed", f"文件太大（上限 {MAX_UPLOAD_BYTES // (1024 * 1024)} MiB）")
         clean = pathlib.PurePath(name).name.strip() or "upload.json"
         validation = VALIDATORS[kind](data)
-        upload_id = _new_id()
-        d = self._dir(owner, upload_id)
-        d.mkdir(parents=True, exist_ok=False)
+        upload_id, d = self._claim(owner)
         (d / clean).write_bytes(data)
         meta = {"upload_id": upload_id, "handle": registry.UPLOAD_PREFIX + upload_id, "kind": kind, "name": clean,
                 "sha256": hashlib.sha256(data).hexdigest(), "size_bytes": len(data), "created_at": self.clock(),

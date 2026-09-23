@@ -8,9 +8,10 @@ removing the registration (the data on TOS is never touched).
 Audit events (resource = the dataset id): ``dataset.update`` [fields],
 ``dataset.delete`` [name, source, uri].
 
-``/datasets/{id}`` only matches ids the repository hands out (``ds_...``), so the
-fixed paths next to it (``/datasets/browse``, ``/datasets/episodes``, W3) reach
-their own handlers whichever router is included first.
+``/datasets/{id}`` only matches ids the repository hands out (``ds-<9 letters>``, or
+``ds_...`` for registrations made before D45), so the fixed paths next to it
+(``/datasets/browse``, ``/datasets/episodes``, W3) reach their own handlers whichever
+router is included first.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from .. import views
 from ..errors import ApiError
 from ..repo import protocol as P
 from ..repo.extras import DATASET_FORMATS
+from ..util import id_regex
 from .common import (
     check_page_size,
     idempotency_key,
@@ -34,7 +36,7 @@ from .common import (
 
 
 class _DatasetId(Convertor):
-    regex = "ds_[0-9A-Za-z]+"
+    regex = id_regex("ds", "ds_[0-9A-Za-z]+")
 
     def convert(self, value: str) -> str:
         return value

@@ -27,7 +27,7 @@ from ..secrets import views
 from ..secrets.http import audit, bad, secrets, validate_hiding, write
 from ..secrets.service import BACKEND_KEY_PREFIX, TOS_SECRET_FIELDS, tos_meta, tos_payload
 from ..util import new_id
-from .common import principal, read_json_body, runtime
+from .common import principal, read_json_body, runtime, with_fresh_ids
 
 router = APIRouter()
 
@@ -100,20 +100,24 @@ async def create_access_key(request: Request):
 
     def handler() -> Response:
         _name_free(rt.repo, name, owner)
-        cred_id = new_id("cred")
-        key = T.TosKey(access_key_id, secret_key, None, cred_id, name, body["region"], endpoint,
+        key = T.TosKey(access_key_id, secret_key, None, None, name, body["region"], endpoint,
                        test_bucket)
         verification = svc.verify_tos(key)            # a network call: outside any transaction
-        blob, version = svc.sealer.seal(cred_id, tos_payload(access_key_id, secret_key))
-        with rt.repo.transaction():
-            cred = rt.repo.create_credential(P.Credential(
-                id=cred_id, name=name, kind="tos", payload_enc=blob, key_version=version,
-                payload_meta=tos_meta(key), verify_state=verification.state,
-                last_verified_at=verification.at, last_verify_error=verification.error,
-                owner_id=owner))
-            audit(request, "credential.create", cred.id,
-                  {"name": name, "kind": "tos", "verify_state": verification.state})
-        return JSONResponse(views.credential(cred, (0, 0)), status_code=201)
+
+        def save() -> P.Credential:
+            cred_id = new_id("cred")                  # the sealed payload is bound to its id
+            blob, version = svc.sealer.seal(cred_id, tos_payload(access_key_id, secret_key))
+            with rt.repo.transaction():
+                cred = rt.repo.create_credential(P.Credential(
+                    id=cred_id, name=name, kind="tos", payload_enc=blob, key_version=version,
+                    payload_meta=tos_meta(key), verify_state=verification.state,
+                    last_verified_at=verification.at, last_verify_error=verification.error,
+                    owner_id=owner))
+                audit(request, "credential.create", cred.id,
+                      {"name": name, "kind": "tos", "verify_state": verification.state})
+            return cred
+
+        return JSONResponse(views.credential(with_fresh_ids(save), (0, 0)), status_code=201)
 
     return await write(request, "createCredential", handler, body=body,
                        secret_fields=TOS_SECRET_FIELDS)

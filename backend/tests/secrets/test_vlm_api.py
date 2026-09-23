@@ -2,6 +2,8 @@
 effort limited to each model's levels (null = no field), and the delete rules."""
 from __future__ import annotations
 
+import re
+
 from daemon.repo import protocol as P
 from daemon.transitions import change_task_state
 
@@ -227,6 +229,43 @@ def test_a_keyless_custom_backend_gets_a_key_later(secret_client, vlm_stub):
     r = c.put(f"{API}/vlm-backends/{backend['id']}", json={"api_key": API_KEY}, headers=JSON)
     assert r.json()["has_api_key"] is True
     assert vlm_stub.requests[-1]["auth"] == f"Bearer {API_KEY}"
+
+
+def test_colliding_ids_are_drawn_again(secret_client, vlm_stub, monkeypatch):
+    """D45: the backend's and its key row's ids are random. When one is taken the save draws
+    both again (the key row is named after the backend and sealed for its own id)."""
+    from daemon.routes import vlm as routes
+
+    vlm_stub.keys = {API_KEY, API_KEY2}
+    vlm_stub.models = ["Qwen2.5-VL-72B-Instruct"]
+    c = secret_client()
+    rt = runtime(c)
+    first = add_backend(c, vlm_stub, name="first", kind="custom", api_key=API_KEY)
+    first_key = rt.repo.get_vlm_backend(first["id"]).credential_id
+    fresh = routes.new_id
+    draws = {"vb": [first["id"]], "cred": [first_key]}
+    monkeypatch.setattr(routes, "new_id",
+                        lambda prefix: draws[prefix].pop() if draws.get(prefix) else fresh(prefix))
+    second = add_backend(c, vlm_stub, name="second", kind="custom", api_key=API_KEY2)
+    assert draws == {"vb": [], "cred": []}
+    assert re.fullmatch(r"vb-[a-z]{9}", second["id"]) and second["id"] != first["id"]
+    backend = rt.repo.get_vlm_backend(second["id"])
+    key_row = rt.repo.get_credential(backend.credential_id)
+    assert key_row.id != first_key and key_row.name == f"vlm-backend/{second['id']}"
+    assert service(c).backend_api_key(backend) == API_KEY2          # sealed for its own id
+    assert service(c).backend_api_key(rt.repo.get_vlm_backend(first["id"])) == API_KEY
+    assert [m["model_name"] for m in second["models"]] == ["Qwen2.5-VL-72B-Instruct"]
+
+    # a backend without a key row gets one on update: that id may collide too
+    bare = rt.repo.create_vlm_backend(P.VlmBackend(
+        id="", name="bare", kind="custom", endpoint=first["endpoint"], credential_id=None), None)
+    draws["cred"] = [first_key]
+    r = c.put(f"{API}/vlm-backends/{bare.id}", json={"api_key": API_KEY2}, headers=JSON)
+    assert r.status_code == 200, r.text
+    assert r.json()["has_api_key"] is True and draws["cred"] == []
+    updated = rt.repo.get_vlm_backend(bare.id)
+    assert updated.credential_id not in (None, first_key)
+    assert service(c).backend_api_key(updated) == API_KEY2
 
 
 def test_backend_bodies_are_validated_without_echoing_the_key(secret_client, vlm_stub):

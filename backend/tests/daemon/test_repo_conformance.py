@@ -12,10 +12,15 @@ subtask is active; ``create_subtask`` checks the parent state table
 after a resume takes the new ``finished_at``; ``update_dataset`` takes the refreshed
 preflight, both fingerprints and ``preflighted_at`` together and sets ``check_state``
 back to ``ok``; a ``repreflight`` check leaves the dataset ``ok`` whatever it found;
-a task may only point at a dataset of its own owner.
+a task may only point at a dataset of its own owner. Since D45: ids are
+``<prefix>-<9 lowercase letters>``, rows made with an old-style id keep working, a
+caller-chosen id that is taken raises ``IdTaken`` (a taken name is still
+``name_taken``), and rows created in the same millisecond list in insertion order.
 """
 from __future__ import annotations
 
+import dataclasses
+import re
 import threading
 
 import pytest
@@ -26,6 +31,11 @@ from daemon.repo import protocol as P
 from .conftest import LISTING_DIGEST, META_DIGEST, T0, sample_preflight
 
 OTHER = "someone-else"
+
+
+def _is_new_id(value: str, prefix: str) -> bool:
+    """D45: ``<prefix>-<9 lowercase letters>``."""
+    return re.fullmatch(rf"{prefix}-[a-z]{{9}}", value) is not None
 
 
 def _module_rows(selected=("timestamp_check", "task_success")):
@@ -363,7 +373,7 @@ def test_backend_and_model_in_use_rules(repo):
 
 def test_register_dataset_gets_or_creates_by_address(repo, clock):
     ds, created = repo.register_dataset(_dataset(note="抽检用"))
-    assert created and ds.id.startswith("ds_") and ds.created_at == clock() == ds.updated_at
+    assert created and _is_new_id(ds.id, "ds") and ds.created_at == clock() == ds.updated_at
     assert (ds.name, ds.note, ds.check_state, ds.checked_at, ds.region) == \
         ("droid_lerobot", "抽检用", "ok", None, "cn-beijing")
     assert ds.preflight["dataset"]["episode_count"] == 200 and ds.meta_fingerprint == META_DIGEST
@@ -560,7 +570,8 @@ def test_a_registration_reads_with_an_access_key_of_its_owner(repo):
 
 
 def test_register_and_update_refuse_malformed_rows(repo):
-    for bad in ({"id": "custom-id"}, {"id": "ds_with-dash"}, {"name": None},
+    for bad in ({"id": "custom-id"}, {"id": "ds_with-dash"}, {"id": "ds-abcdefgh"},
+                {"id": "ds-ABCDEFGHI"}, {"id": "ds-abcdefghij"}, {"name": None},
                 {"meta_fingerprint": None}):
         spec = _dataset()
         for k, v in bad.items():
@@ -568,13 +579,16 @@ def test_register_and_update_refuse_malformed_rows(repo):
         with pytest.raises(ValueError):
             repo.register_dataset(spec)
     given = _dataset()
-    given.id = "ds_01GIVEN"
+    given.id = "ds_01GIVEN"                                              # the pre-D45 style
     ds, created = repo.register_dataset(given)
-    assert created and ds.id == "ds_01GIVEN"
+    assert created and ds.id == "ds_01GIVEN" and repo.get_dataset("ds_01GIVEN").id == ds.id
     other = _dataset("tos://bucket/elsewhere")
     other.id = "ds_01GIVEN"
-    with pytest.raises(ValueError):                                     # the id is taken
+    with pytest.raises(P.IdTaken):                                      # the id is taken
         repo.register_dataset(other)
+    other.id = "ds-givenidab"
+    new_style, created = repo.register_dataset(other)
+    assert created and new_style.id == "ds-givenidab"
     for bad in ({"name": None}, {"preflight": None, "meta_fingerprint": "m",
                                  "source_fingerprint": {}, "preflighted_at": T0}):
         with pytest.raises(ValueError):
@@ -588,7 +602,7 @@ def test_register_and_update_refuse_malformed_rows(repo):
 
 def test_create_and_get_task(repo, clock):
     t = repo.create_task(_spec(state="created"))
-    assert t.id.startswith("task_") and t.state == "created" and t.created_at == clock()
+    assert _is_new_id(t.id, "task") and t.state == "created" and t.created_at == clock()
     assert t.updated_at == t.created_at and t.result_rev == 0 and t.deleted_at is None
     assert t.episode_selector == {"mode": "head", "n": 50} and t.params == {"export": True}
     assert t.owner_id == P.DEFAULT_OWNER and t.delivery_stale is False
@@ -645,6 +659,54 @@ def test_list_tasks_filters_keep_total_consistent(repo, clock):
     repo.soft_delete_task(c.id, at=T0)
     assert ids(q="droid") == [a.id]
     assert ids(state="deleted") == [c.id]
+
+
+def test_running_can_include_finished_tasks_whose_subtask_runs(repo, clock):
+    """D46: with running_subtasks, state='running' also keeps a finished task whose subtask is
+    queued or running (the console shows it as running); its own state stays terminal."""
+    def finished(name, to):
+        clock.advance(1)
+        t = repo.create_task(_spec(name))
+        _drive(repo, t.id, "running", to)
+        return t
+
+    clock.advance(1)
+    main = repo.create_task(_spec("main run"))
+    _drive(repo, main.id, "running")
+    retry_waits = finished("retry queued", "completed_with_errors")
+    repo.create_subtask(P.Subtask(id="", task_id=retry_waits.id, kind="retry", scope={},
+                                  state="queued"))
+    export_runs = finished("reexport running", "succeeded")
+    s = repo.create_subtask(P.Subtask(id="", task_id=export_runs.id, kind="reexport", scope={},
+                                      state="queued"))
+    _sub_drive(repo, s.id, "running")
+    resume_paused = finished("resume paused", "failed")
+    s = repo.create_subtask(P.Subtask(id="", task_id=resume_paused.id, kind="resume", scope={},
+                                      state="queued"))
+    _sub_drive(repo, s.id, "running", "pausing", "paused")
+    retried = finished("retry done", "completed_with_errors")
+    s = repo.create_subtask(P.Subtask(id="", task_id=retried.id, kind="retry", scope={},
+                                      state="queued"))
+    _sub_drive(repo, s.id, "running", "succeeded")
+    theirs = repo.create_task(_spec("not mine", owner=OTHER))
+    for frm, to in (("queued", "running"), ("running", "succeeded")):
+        assert repo.update_task_state(theirs.id, {frm}, to, at=T0)
+    repo.create_subtask(P.Subtask(id="", task_id=theirs.id, kind="reexport", scope={},
+                                  state="queued"))
+
+    def ids(**kw):
+        page = repo.list_tasks(page=1, page_size=20, **kw)
+        assert page.total == len(page.items)
+        return [t.id for t in page.items]
+
+    assert ids(state="running") == [main.id]                                # the task's own state
+    assert ids(state="running", running_subtasks=True) == [export_runs.id, retry_waits.id, main.id]
+    assert ids(state="running", running_subtasks=True, q="retry") == [retry_waits.id]
+    assert repo.list_tasks(page=1, page_size=1, state="running", running_subtasks=True).total == 3
+    assert ids(state="completed_with_errors", running_subtasks=True) == [retried.id, retry_waits.id]
+    assert repo.get_task(export_runs.id).state == "succeeded"             # display only
+    assert [t.id for t in repo.list_tasks(page=1, page_size=5, state="running", running_subtasks=True,
+                                          owner=OTHER).items] == [theirs.id]
 
 
 def test_list_tasks_by_dataset_and_selected_modules(repo, clock):
@@ -939,7 +1001,7 @@ def test_subtask_rules(repo, clock):
     _drive(repo, t.id, "running", "completed_with_errors")
     s1 = repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="retry", state="queued",
                                        scope={"modules": ["task_success"], "episodes": "errors"}))
-    assert s1.id.startswith("sub_") and s1.created_at == clock() and s1.scope["episodes"] == "errors"
+    assert _is_new_id(s1.id, "sub") and s1.created_at == clock() and s1.scope["episodes"] == "errors"
     with pytest.raises(P.Conflict) as err:
         repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="reexport", scope={},
                                       state="queued"))
@@ -1152,7 +1214,7 @@ def test_purge_events(repo):
 
 def test_preflight_cache_max_age_and_owner(repo):
     pf = repo.put_preflight(request_hash="sha256:req", result={"schema_version": "1.0"}, at=T0)
-    assert pf.startswith("pf_")
+    assert _is_new_id(pf, "pf")
     assert repo.get_preflight(pf, max_age_ms=30 * 60_000, now=T0 + 60_000) == {"schema_version": "1.0"}
     assert repo.get_preflight(pf, max_age_ms=30 * 60_000, now=T0 + 31 * 60_000) is None
     assert repo.get_preflight(pf, max_age_ms=30 * 60_000, now=T0, owner=OTHER) is None
@@ -1204,3 +1266,124 @@ def test_credential_dataset_references(repo):
     assert repo.credential_dataset_references(c.id) == 2
     repo.delete_credential(c.id)                                       # registrations never block
     assert repo.credential_dataset_references(c.id) == 0
+
+
+# ---------------------------------------------------------------------------
+# ids and ordering (D45)
+# ---------------------------------------------------------------------------
+
+def test_new_rows_get_letter_ids(repo):
+    cred = repo.create_credential(_cred())
+    b = repo.create_vlm_backend(_backend(models=("a",)), _cred("ark-key", kind="ark"))
+    m = repo.upsert_vlm_model(P.VlmModel(id="", backend_id=b.id, model_name="b"))
+    assert _is_new_id(cred.id, "cred") and _is_new_id(b.id, "vb")
+    assert _is_new_id(b.credential_id, "cred") and _is_new_id(b.models[0].id, "vm")
+    assert _is_new_id(m.id, "vm")
+    ids = {cred.id, b.id, b.credential_id, b.models[0].id, m.id}
+    assert len(ids) == 5
+
+
+def test_rows_with_old_style_ids_keep_working(repo):
+    """Records made before D45 keep their ``<prefix>_<26 Crockford characters>`` ids."""
+    old_key = "cred_01HXR2D8QZ7N4Y0M5K3J2H1G0F"
+    repo.create_credential(dataclasses.replace(_cred("old-key"), id=old_key))
+    b = repo.create_vlm_backend(P.VlmBackend(
+        id="vb_01HXR2D8QZ7N4Y0M5K3J2H1G0G", name="old-backend", kind="ark",
+        endpoint="https://ark.example/api/v3", credential_id=None,
+        models=[P.VlmModel(id="vm_01HXR2D8QZ7N4Y0M5K3J2H1G0H", backend_id="", model_name="m")]),
+        None)
+    assert (b.id, b.models[0].id) == ("vb_01HXR2D8QZ7N4Y0M5K3J2H1G0G", "vm_01HXR2D8QZ7N4Y0M5K3J2H1G0H")
+    ds = _dataset()
+    ds.id = "ds_01HXR2D8QZ7N4Y0M5K3J2H1G0J"
+    ds, _ = repo.register_dataset(ds)
+    t = repo.create_task(_spec(input_cred=old_key, vlm_model=b.models[0].id, dataset=ds.id))
+    _drive(repo, t.id, "running", "completed_with_errors")
+    sub = repo.create_subtask(P.Subtask(id="sub_01HXR2D8QZ7N4Y0M5K3J2H1G0K", task_id=t.id,
+                                        kind="retry", scope={}, state="queued"))
+    assert repo.active_subtask(t.id).id == sub.id == "sub_01HXR2D8QZ7N4Y0M5K3J2H1G0K"
+    assert repo.update_credential(old_key, name="renamed").name == "renamed"
+    assert repo.list_tasks(page=1, page_size=5, dataset_id=ds.id).items[0].input_cred_id == old_key
+    assert repo.credential_references(old_key) == (0, 1)
+    assert repo.vlm_backend_references(b.id) == (0, 1)
+
+
+def test_a_taken_id_is_not_a_taken_name(repo):
+    """A caller-chosen id that another row has raises IdTaken and creates nothing; a name
+    that is taken is still Conflict('name_taken')."""
+    key = repo.create_credential(_cred("prod-tos"))
+    with pytest.raises(P.IdTaken):
+        repo.create_credential(dataclasses.replace(_cred("other"), id=key.id))
+    with pytest.raises(P.Conflict) as err:
+        repo.create_credential(dataclasses.replace(_cred("prod-tos"), id="cred-freshidab"))
+    assert err.value.code == "name_taken"
+    assert repo.create_credential(
+        dataclasses.replace(_cred("other"), id="cred-freshidab")).id == "cred-freshidab"
+
+    b = repo.create_vlm_backend(_backend(), None)
+    other = _backend("other")
+    other.id = b.id
+    with pytest.raises(P.IdTaken):                                      # the backend's id
+        repo.create_vlm_backend(other, _cred("other-key", kind="ark"))
+    other.id = "vb-freshidab"
+    with pytest.raises(P.IdTaken):                                      # its key's id
+        repo.create_vlm_backend(other, dataclasses.replace(_cred("other-key", kind="ark"),
+                                                           id=key.id))
+    with pytest.raises(P.IdTaken):                                      # one of its models' id
+        repo.create_vlm_backend(P.VlmBackend(
+            id="vb-freshidab", name="other", kind="ark", endpoint="https://ark.example/api/v3",
+            credential_id=None, models=[P.VlmModel(id=b.models[0].id, backend_id="",
+                                                   model_name="m")]), None)
+    with pytest.raises(P.NotFound):                                     # nothing slipped through
+        repo.get_vlm_backend_by_name("other")
+    with pytest.raises(P.NotFound):
+        repo.get_credential_by_name("other-key")
+
+    t = repo.create_task(_spec())
+    _drive(repo, t.id, "running", "completed_with_errors")
+    s = repo.create_subtask(P.Subtask(id="", task_id=t.id, kind="retry", scope={}, state="queued"))
+    t2 = repo.create_task(_spec("second"))
+    _drive(repo, t2.id, "running", "completed_with_errors")
+    with pytest.raises(P.IdTaken):
+        repo.create_subtask(P.Subtask(id=s.id, task_id=t2.id, kind="retry", scope={},
+                                      state="queued"))
+    assert repo.active_subtask(t2.id) is None
+
+
+def test_rows_created_in_the_same_millisecond_keep_insertion_order(repo):
+    """The clock stands still here: every row has the same created_at, and random ids must
+    not shuffle the lists."""
+    tasks = [repo.create_task(_spec(f"t{i}")).id for i in range(12)]
+    assert [t.id for t in repo.list_tasks(page=1, page_size=20).items] == tasks[::-1]
+    assert [t.id for t in repo.list_tasks(page=2, page_size=5).items] == tasks[::-1][5:10]
+    assert [t.id for t in repo.tasks_in_states(["queued"])] == tasks
+    keys = [repo.create_credential(_cred(f"k{i}")).id for i in range(8)]
+    assert [c.id for c in repo.list_credentials()] == keys
+    b = repo.create_vlm_backend(_backend(models=tuple("mnopqrst")), None)
+    assert [m.model_name for m in b.models] == list("mnopqrst")
+    assert [m.model_name for m in repo.get_vlm_backend(b.id).models] == list("mnopqrst")
+    backends = [b.id] + [repo.create_vlm_backend(_backend(f"b{i}", models=()), None).id
+                         for i in range(6)]
+    assert [x.id for x in repo.list_vlm_backends()] == backends
+    datasets = [repo.register_dataset(_dataset(f"tos://bucket/ds{i}"))[0].id for i in range(8)]
+    assert [d.id for d in repo.list_datasets(page=1, page_size=20).items] == datasets[::-1]
+
+    t = tasks[0]
+    _drive(repo, t, "running", "completed_with_errors")
+    subs = []
+    for _ in range(6):
+        s = repo.create_subtask(P.Subtask(id="", task_id=t, kind="retry", scope={},
+                                          state="queued"))
+        _sub_drive(repo, s.id, "running", "completed_with_errors")
+        subs.append(s.id)
+    assert [s.id for s in repo.list_subtasks(t)] == subs
+    assert [s.id for s in repo.subtasks_in_states(["completed_with_errors"])] == subs
+
+    def spend(subtask_id: str) -> P.UsageDelta:
+        return P.UsageDelta(task_id=t, ledger="actual", module_id="task_success",
+                            call_kind="probe", model_name="m", subtask_id=subtask_id,
+                            prompt_tokens=10, requests=1)
+
+    repo.add_usage([spend(subs[4]), spend(subs[1]), spend(""), spend(subs[3]), spend(subs[0])],
+                   at=T0)
+    assert [b.subtask_id for b in repo.usage_buckets(t, ledger="actual")] == \
+        ["", subs[0], subs[1], subs[3], subs[4]]              # the main run, then as created
