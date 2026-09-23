@@ -352,19 +352,32 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
 每个小节的渲染器按 `module.id` 从一张注册表里查，查不到就用默认表格渲染器 —— 
 这样加模块不需要改前端（见 `05-modules-and-preflight.md` §7）。
 
-现有八个模块的小节内容沿用 v1 报告已有的东西，不是一张默认表格能撑起来的：
+**报告小节只放统计和图，不列具体的 episode**（2026-09-23 需求方第 1 条，F6.2）：一条一条的读数在报告的
+「Episode 明细」页签里按模块逐块看（07 篇 §5），不再放在小节里，也不再有底部明细表和右侧抽屉。
+为此 `curation report` 在每个模块的 `summary` 里写入「画图就能用」的汇总，全部从该版本已有的结果记录
+（`details` 原样）算出，只有计数、均值和按相机的小数组，**不含 episode 清单**；它们不回流到任何判决或清单，
+生成报告前后判决逐位一致（合成数据上的 v1 / v2 对账覆盖了这一点）。实现在 `backend/curation/pipeline/report_stats.py`。
 
-| 模块 | 摘要指标 | 图 / 专用视图 | 明细 |
-|---|---|---|---|
-| 时间戳检查 | 不合格条数，按原因（乱序 / 跳变 / 残段） | — | 逐条的异常位置 |
-| 运动学极限 | 越限条数、涉及的关节 | — | 逐条逐关节的越限幅度；速度域标定结论 |
-| 运动质量 | 平均分、子项适用性（哪些子项自弃权） | **卡顿动作时间线**：每条一根三色条（卡顿 / 空闲 / 正常），可按卡顿时长排序 | `motion_details.csv` 切片；执行器卡死单列、不进总分 |
-| 视觉质量 | 平均分、逐相机分布 | — | 逐相机打分明细；生效的质检参数 |
-| 视频-动作同步 | 错位条数；被标注的相机数 | **同步曲线卡片**：逐相机的画面动量 / 关节速度曲线 + 互相关曲线，附逐相机诊断（入镜晚 / 信号弱 / 假峰）；可筛「只看有标注或异常的」 | 逐相机 lag 与相关峰值 |
-| 任务成败判定 | 通过 / 判废 / 弃权条数；弃权原因分布 | 判决卡：初判 → 复核汇票 → 护栏 → 仲裁的留痕 | `task_details.json`；右上角「去裁决（N）」 |
-| 精确去重 | 重复组数、被剔除条数 | — | 重复组清单 |
-| 技能画像 | 技能族数、样本偏少的族 | **技能分布条形图** + **两级技能体系表**（按族着色，列出每个子技能下的 episode） | 标注分歧队列入口「去裁决（N）」 |
+约定：序列是 `[{name, count}]`（画柱状图），`name` 是与语言无关的代码（页面翻成中文）或数据自己的名字（技能族、原因摘要）；
+按相机的行是 `[{camera, …}]`，相机用短名；其余是标量。1.0 就有的键（`counts`、`mean_score`、`fail_kinds`、`arbitration`、
+`abstain_reasons`、`collision_groups`、`removed`、`families`、`subskills`、`undersampled`，以及两个 EEF 模块的全部键）原样保留，
+新键只加不改；老报告没有新键，页面照样显示已有的内容并注明。
+
+| 模块 | 新增的汇总键（1.0 的键之外） |
+|---|---|
+| 所有参与判决的模块 | `score_hist`（有分数时：0–1 十格，`0.0–0.1` … `0.9–1.0`）；`abstain_reason_counts`（弃权原因摘要：原因文本截到第一个标点、数字换成 `…`，前 6 项 + 「其它」）；`error_steps`（出错条目停在哪一步：`probe` / `arbitration` / `decode` / `read` …） |
+| 时间戳检查 | `fail_reasons`（`out_of_order` 乱序 / `gap` 跳变 / `fragment` 残段 / `jitter` 抖动，另有 `other`）；`duration_total_s`、`duration_median_s`、`duration_min_s`、`duration_max_s`；`duration_hist`（按整齐的秒数分格，最多 12 格） |
+| 运动学极限 | `violation_episodes`；`violations_by_type`、`violations_by_joint`（按类型 / 关节数条目，一条在同一类型或关节上只算一次）；`limits_profile`（用的规格档） |
+| 运动质量 | `subscores`：`[{name, mean, n, na, in_total, na_reason?}]`，平滑度、尖刺、夹爪抖动、执行器饱和计入总分，路径效率、末态稳定、流畅度只报不罚，`mean` 为 null 的是对本数据集不适用；`stuck_episodes`、`stuck_unassessable`、`stuck_na_reason`；`idle_episodes`（开头 / 中途 / 结尾有空闲的条数）；`active_ratio_mean` |
+| 视觉质量 | `cameras`：`[{camera, n, mean, low, placeholder, hist, weight}]`（`low` 为低于 0.6 的读数，`placeholder` 为占位黑帧路，`hist` 是十格计数）；`low_camera_readings`、`placeholder_readings`；`blur_ref_var`、`frame_max_side` |
+| 视频-动作同步 | `verdicts`（`aligned` 同步正常 / `annotated` 已标注异常 / `suspect` 疑似错位 / `undecidable` 测不准 / `misaligned` 整体错位）；`flagged_camera_readings`；`lag_tol_s`；`cameras`：v1 `sync_health()` 的逐相机健康度 `[{camera, readings, n, median_lag_s, iqr_s, n_flagged, n_suspect, n_noisy, n_abstained}]`；`sync_advice`（数据集级结论，一段话）；`negative_lag_episodes`（负滞后条数） |
+| 任务成败判定 | `judgements`（判定代码分布：`success`、`recovery`、`endstate_success`、`arbitration_success`、`failure`、`arbitration_failure`、`uncertain`、`gap_violation`、`voc_tripwire`、`endstate_failure_suspect`、`endstate_unconfirmed`、`review_conflict`、`label_conflict_suspect`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `自产caption` / `人工改标`）；`layers`（走到各层的条数：`probe` 打分、`endstate` 逐机位复核、`label_guard` 判废护栏、`arbitration` 取证仲裁） |
+| 精确去重 | `group_sizes`（按组大小数重复组） |
+| 技能画像 | `family_distribution`；`family_tree`：`[{name, count, pct, undersampled, subskills: [{name, count}]}]`（条数取自每条的归类，名字取画像里的中文名）；`label_disagreements`、`disagreement_high`、`disagreement_review`、`unstable`；`grouping_sources` |
+
+`overview.duration_s` 仍是 null：运行目录里没有主流程和子任务的墙钟记录（那是 Daemon 库里的进度），
+CLI 算不出一个诚实的耗时，页面在这种情况下不显示耗时。
 
 报告开头另有两块不属于任何模块：**质检总览**（输入 = 判废 + 交付，判废原因分布，平均质量分）
-和**数据包完整性**。任一明细表里点某条 episode，打开逐条下钻抽屉（03 篇 §6），看它在所有模块下的读数、
-证据帧和各机位视频，支持多机位同时播放 —— 这是 v1「轨迹」页的对应物，与「小节和模块一一对应」不冲突。
+和**数据包完整性**。看某一条 episode 在所有模块下的读数、证据帧和各机位视频（支持多机位同步播放）去
+「Episode 明细」页签（03 篇 §6），这是 v1「轨迹」页的对应物，与「小节和模块一一对应」不冲突。
