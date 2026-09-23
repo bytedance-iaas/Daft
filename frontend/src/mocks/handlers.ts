@@ -32,6 +32,7 @@ import {
   PUBLIC_BUCKET,
   ZERO_USAGE,
   DATASET_PROFILES,
+  datasetFormatOf,
   episodePreviews,
   episodeView,
   mainPerf,
@@ -379,8 +380,7 @@ function readCheck(ref: InputRef): Response | null {
 }
 
 function formatOf(r: PreflightResult): DatasetDetail['format'] {
-  if (!r.format.supported) return 'unsupported';
-  return r.format.version === 'v3' ? 'lerobot_v3' : 'lerobot_v2';
+  return datasetFormatOf(r.format);
 }
 
 function datasetKey(ref: InputRef): string {
@@ -456,7 +456,11 @@ const datasets = [
     const prefix = (url.searchParams.get('uri') ?? '').replace(/\/+$/, '');
     if (!prefix.startsWith('tos://')) return err(400, 'validation_failed', '要给 tos:// 前缀');
     if (!url.searchParams.get('credential')) return err(400, 'validation_failed', '私有 TOS 要选访问密钥');
-    const items = DATASET_PROFILES.filter((p) => p.source === 'tos' && p.uri.startsWith(`${prefix}/`)).map((p) => ({ name: p.name, uri: p.uri, format_hint: (p.format.supported ? (p.format.version === 'v3' ? 'lerobot_v3' : 'lerobot_v2') : 'unknown') as 'lerobot_v2' | 'lerobot_v3' | 'unknown', episodes: p.format.supported ? p.episodes : null }));
+    const hint = (p: (typeof DATASET_PROFILES)[number]) => {
+      const f = datasetFormatOf(p.format);
+      return (f === 'unsupported' ? (p.format.kind === 'rrd' ? 'rrd' : 'unknown') : f) as 'lerobot_v2' | 'lerobot_v3' | 'mcap' | 'lance' | 'rrd' | 'unknown';
+    };
+    const items = DATASET_PROFILES.filter((p) => p.source === 'tos' && p.uri.startsWith(`${prefix}/`)).map((p) => ({ name: p.name, uri: p.uri, format_hint: hint(p), episodes: p.format.supported ? p.episodes : null }));
     return HttpResponse.json(cursorPage(items, url));
   }),
   http.get(`${API}/datasets/episodes`, ({ request }) => {

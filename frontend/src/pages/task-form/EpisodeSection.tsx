@@ -67,7 +67,7 @@ function PreviewGrid({ source, expr, onToggle, disabled }: { source: PreviewSour
                 {ep.length_s ? <span className="muted"> · {ep.length_s}s</span> : null}
               </div>
               <div className="muted" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={ep.task}>
-                {ep.task || zh.taskForm.gridTaskNone}
+                {ep.task || (ep.task_unread ? zh.taskForm.gridTaskUnread : zh.taskForm.gridTaskNone)}
               </div>
             </div>
           </div>

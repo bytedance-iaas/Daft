@@ -203,7 +203,7 @@ export interface DatasetProfile {
   format: PreflightResult['format'];
   episodes: number;
   cameras: string[];
-  fps: number;
+  fps: number | null; // null: mcap, whose time axis is the action topic's log_time
   robotType: string | null;
   withTask: number;
   missing: string[];
@@ -277,10 +277,37 @@ export const DATASET_PROFILES: DatasetProfile[] = [
     profile: null,
   },
   {
+    // D44: mcap and lance are read since F6.5
     uri: 'tos://pai-kit-datasets/raw/warehouse_mcap',
     source: 'tos',
     name: 'warehouse_mcap',
-    format: { kind: 'mcap', version: null, supported: false, detail: '当前版本仅支持 LeRobot v2/v3，检测到 mcap' },
+    format: { kind: 'mcap', version: null, supported: true, detail: "mcap, 12 episodes, 2 cameras; time axis from the action topic's log_time" },
+    episodes: 12,
+    cameras: ['front', 'wrist'],
+    fps: null,
+    robotType: 'franka',
+    withTask: 12,
+    missing: [],
+    profile: null,
+  },
+  {
+    uri: 'tos://pai-kit-datasets/raw/pusht_lance',
+    source: 'tos',
+    name: 'pusht_lance',
+    format: { kind: 'lance', version: 'v3', supported: true, detail: 'LeRobot v3.0 in lance tables (lerobot-lance-convert), 206 episodes, 1 camera' },
+    episodes: 206,
+    cameras: ['image'],
+    fps: 10,
+    robotType: 'pusht',
+    withTask: 206,
+    missing: [],
+    profile: null,
+  },
+  {
+    uri: 'tos://pai-kit-datasets/raw/warehouse_rrd',
+    source: 'tos',
+    name: 'warehouse_rrd',
+    format: { kind: 'rrd', version: null, supported: false, detail: 'only LeRobot v2/v3, mcap and lance (lerobot-lance-convert >= 0.3.0) are supported; detected .rrd (rerun) files' },
     episodes: 0,
     cameras: [],
     fps: 0,
@@ -327,7 +354,7 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
       modules: registry.modules.map((m) => ({
         id: m.id,
         availability: 'unsupported' as const,
-        reason: `only LeRobot v2/v3 is supported in this version; detected ${p.format.kind} files`,
+        reason: `only LeRobot v2/v3, mcap and lance (lerobot-lance-convert >= 0.3.0) are supported; detected ${p.format.kind} files`,
         reason_code: 'format_unsupported',
         reason_args: { detected: p.format.kind },
       })),
@@ -338,6 +365,16 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
   const robot = opts.embodiment || p.robotType;
   const modules: PreflightResult['modules'] = registry.modules.map((m) => {
     const needs = m.needs as string[];
+    if (needs.includes('eef_input') && (p.format.kind === 'mcap' || p.format.kind === 'lance')) {
+      // like the CLI (D44): EEF-video consistency reads LeRobot videos only
+      return {
+        id: m.id,
+        availability: 'unsupported',
+        reason: `EEF-video consistency reads LeRobot datasets only, not ${p.format.kind}`,
+        reason_code: 'format_unsupported_by_module',
+        reason_args: { format: p.format.kind },
+      };
+    }
     if (needs.includes('eef_input')) {
       // like the CLI (design doc 12): the dataset preflight cannot know the task's trajectory.json;
       // the VLM review follows the module it reviews (F5.6)
@@ -410,6 +447,13 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
 
 // ------------------------------------------------------------------ datasets
 
+/** C4 ``DatasetFormat`` of a preflight format, like the Daemon's ``dataset_format`` (D44). */
+export function datasetFormatOf(f: PreflightResult['format']): DatasetDetail['format'] {
+  if (!f.supported) return 'unsupported';
+  if (f.kind === 'mcap' || f.kind === 'lance') return f.kind;
+  return f.version === 'v3' ? 'lerobot_v3' : 'lerobot_v2';
+}
+
 function datasetDetail(
   id: string,
   p: DatasetProfile,
@@ -422,7 +466,7 @@ function datasetDetail(
     name: p.name,
     source: p.source,
     uri: p.uri,
-    format: p.format.supported ? (p.format.version === 'v3' ? 'lerobot_v3' : 'lerobot_v2') : 'unsupported',
+    format: datasetFormatOf(p.format),
     episode_count: p.format.supported ? p.episodes : null,
     robot_type: p.robotType,
     check_state: 'ok',
@@ -1364,6 +1408,18 @@ export function mainLogs(now: number): LogLine[] {
 
 export function episodePreviews(uri: string, count: number): EpisodePreview[] {
   const p = profileFor(uri);
+  if (p.format.kind === 'mcap' || p.format.kind === 'lance') {
+    // D44: their videos are inside the files / tables - no camera URLs; an mcap task topic
+    // is not read by the preview
+    return Array.from({ length: count }, (_, i) => ({
+      index: i,
+      length_s: Number((8 + ((i * 7) % 17) + 0.4).toFixed(1)),
+      task: p.format.kind === 'lance' && i < p.withTask ? TASK_TEXTS[i % TASK_TEXTS.length] : '',
+      task_source: p.format.kind === 'lance' && i < p.withTask ? ('原始标注' as const) : ('无' as const),
+      cameras: [],
+      ...(p.format.kind === 'mcap' && i < p.withTask ? { task_unread: true } : {}),
+    }));
+  }
   const cams = p.cameras.length ? p.cameras : ['front'];
   return Array.from({ length: count }, (_, i) => ({
     index: i,
