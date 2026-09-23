@@ -17,7 +17,15 @@ rerun-sdk==0.35.0       # RRD 输入格式的读/写(ingest/rrd_reader + export/
                         # 稳定性承诺保护,且组件列名("Scalars:scalars" 之类)是我们
                         # 认数据的依据,小版本改名就会静默读错。升级前先跑
                         # test_rrd_reader.py + test_rrd_writer.py 全绿。
-bcrypt==4.3.0           # UI 鉴权的 htpasswd 多用户模式:核验 bcrypt 哈希($2y$,
+pylance==8.0.0          # lance(lerobot-lance-convert ≥0.3.0 三表布局)输入格式的读端
+                        # (ingest/lance_reader,v1 PR #155)。懒导入:不装它 LeRobot/mcap
+                        # 路径照常;质检 lance 数据才必需。
+mcap==1.4.0             # mcap 输入格式的容器读端(ingest/mcap_reader);懒导入同上。
+mcap-ros2-support==0.5.7  # mcap 里 cdr(ROS2)编码消息的解码器;纯 json 编码的
+                        # mcap 不需要它,含 cdr 通道时缺了会报可照抄的安装命令。
+mcap-protobuf-support==0.5.4  # mcap 里 protobuf(foxglove)编码消息的解码器
+                        # (2026-09-21 客户真数据实证:UMI das_gripper 录制全 protobuf)。
+bcrypt==4.3.0          # UI 鉴权的 htpasswd 多用户模式:核验 bcrypt 哈希($2y$,
                         # htpasswd -B 的缺省输出)。apr1 是纯标准库实现,不需要它。
 fastapi==0.141.1        # API Daemon (W4); brings starlette 1.6.0, pydantic 2, anyio
 uvicorn==0.53.0         # python -m daemon / curator-daemon
