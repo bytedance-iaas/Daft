@@ -34,6 +34,26 @@ ingest:
   # 时间(VideoFrameReference 时间戳/录制属性)时以文件为准,推不出才用这里的值。
   # 留空 = 不替客户猜:推不出时间就报错,让他显式给(--set ingest.rrd_fps=30)。
   rrd_fps: null
+  # lance 格式总开关(2026-09-21 用户定:**默认开**,多格式是产品要支持的能力;
+  # 个别实例要关走站点配置/环境变量)。只支持官方 lerobot-lance-convert ≥0.3.0
+  # 的三表布局 frames/videos/meta(info.json 带 storage_format:"lance" 标记;
+  # 0.3.0 前旧插件的单表布局官方已废弃,不支持)。--input 指转换产出的根目录即可
+  # 质检 —— meta/ 就是标准 LeRobot v3 元数据,型号/任务/fps 全自动。
+  # 原格式交付本版本未做,交付以 episodes_parquet + 判决清单为准。
+  lance_enabled: true
+  # mcap 格式总开关(2026-09-21 用户定:**默认开**,同上)。--input 指一目录 N 个
+  # episode_N.mcap 即可质检(topic 约定见 ingest/mcap_reader.DEFAULT_MAPPING;
+  # 时间轴取 action topic 的 log_time,不需要 fps 配置),交付落 mcap_curated/。
+  mcap_enabled: true
+  # topic 指认覆盖(2026-09-21):默认约定认不出、内置 UMI 识别(/robotN/vio/eef_pose
+  # 形状零配置命中)也不命中时,在站点配置里显式指认。action 散在多路时用来源列表:
+  #   mcap_mapping:
+  #     action:
+  #       - {topic: /robot0/vio/eef_pose, fields: pose}          # 7 维(xyz+四元数)
+  #       - {topic: /robot0/sensor/magnetic_encoder, fields: value}  # 夹爪开度 1 维
+  #     video_prefix: /observation.images.
+  # 第 0 号来源定时间轴,其余按最近时间对齐后按序横拼。留空 = 默认约定 + 自动识别。
+  mcap_mapping: null
 
 checks:
   # 漏斗顺序按成本:纯数值 → 抽帧 → VLM(垫底只跑幸存者)

@@ -18,6 +18,16 @@ rerun-sdk==0.35.0       # RRD 输入格式的读/写(ingest/rrd_reader + export/
                         # 稳定性承诺保护,且组件列名("Scalars:scalars" 之类)是我们
                         # 认数据的依据,小版本改名就会静默读错。升级前先跑
                         # test_rrd_reader.py + test_rrd_writer.py 全绿。
+pylance==8.0.0          # lance/lancedb 输入格式的读端 + lance_curated 交付写端
+                        # (ingest/lance_reader + export/lance_writer)。懒导入:
+                        # 不装它 LeRobot/RRD/mcap 路径照常;质检 lance 数据才必需。
+mcap==1.4.0             # mcap 输入格式的容器读端(ingest/mcap_reader);懒导入同上。
+mcap-ros2-support==0.5.7  # mcap 里 cdr(ROS2)编码消息的解码器;纯 json 编码的
+                        # mcap 不需要它,含 cdr 通道时缺了会报可照抄的安装命令。
+mcap-protobuf-support==0.5.4  # mcap 里 protobuf(foxglove)编码消息的解码器
+                        # (2026-09-21 客户真数据实证:UMI das_gripper 录制全 protobuf)。
+foxglove-schemas-protobuf==0.3.0  # 仅测试用:合成 protobuf mcap 的消息类
+                        # (test_mcap_reader 的 UMI 形态用例);生产读取不依赖它。
 websockets==15.0.1      # uvicorn 的 WebSocket 实现(内嵌终端 /ws/term 必需)。
                         # ⚠️ gradio 只带 uvicorn 不带它,缺了 uvicorn 会把 Upgrade 请求
                         # 直接判 404("Unsupported upgrade request"),终端页签必黑屏。
