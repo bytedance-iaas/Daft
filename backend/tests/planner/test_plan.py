@@ -41,7 +41,7 @@ def test_example_preflight_is_valid():
 
 def test_full_plan_matches_the_design_example():
     p = plan(V1, preflight=X.preflight(200, without_task=88))
-    assert ids(p) == ["autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile", "final"]
+    assert ids(p) == ["autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile_vlm", "final"]
     assert p["vlm_parallelism"] == 64
     assert p["limits"] == {"cpu_concurrency": {"value": 8, "bound_by": "planner"},
                            "vlm_parallelism": {"value": 64, "bound_by": "planner"}}
@@ -64,7 +64,7 @@ def test_full_plan_matches_the_design_example():
                                    "phase": "funnel"}
     assert stage(p, "dedup") == {"id": "dedup", "kind": "cpu", "command": "check",
                                  "concurrency": 1, "modules": ["dedup"], "episodes": "keep"}
-    profile = stage(p, "profile")
+    profile = stage(p, "profile_vlm")
     assert profile["episodes"] == "keep-minus-duplicates"
     assert profile["gates"] == {"caption": 32, "llm": 16, "audit": 16}
     assert stage(p, "final")["phase"] == "final"
@@ -74,7 +74,7 @@ def test_advisory_modules_run_on_every_selected_episode_outside_the_funnel():
     """Registry 1.4 / design doc 12 §11.1: the EEF pair never joins a funnel stage."""
     p = plan(preflight=X.preflight(200, without_task=88))
     assert ids(p) == ["autolabel", "numeric", "frame", "vlm", "advisory_frame", "advisory_vlm", "verdict",
-                      "dedup", "profile", "final"]
+                      "dedup", "profile_vlm", "final"]
     assert stage(p, "frame")["modules"] == ["visual_quality", "video_action_sync"]
     assert stage(p, "vlm")["modules"] == ["task_success"]
     assert stage(p, "advisory_frame") == {"id": "advisory_frame", "kind": "cpu", "command": "check",
@@ -237,7 +237,7 @@ def test_caps_flow_into_the_plan():
     g = derive_gates(16)
     assert stage(p, "vlm")["gates"] == {k: g[k] for k in
                                         ("episode", "probe", "endstate", "arbitration", "guard_caption")}
-    assert stage(p, "profile")["gates"] == {k: g[k] for k in ("caption", "llm", "audit")}
+    assert stage(p, "profile_vlm")["gates"] == {k: g[k] for k in ("caption", "llm", "audit")}
     assert stage(p, "numeric")["concurrency"] == stage(p, "frame")["concurrency"] == 2
     assert stage(p, "dedup")["concurrency"] == 1                 # never above 1 (05 §1)
 
@@ -259,7 +259,7 @@ def test_site_gate_overrides_reach_the_plan():
 
 
 def test_profile_reads_keep_without_dedup():
-    assert stage(plan(["skill_profile"]), "profile")["episodes"] == "keep"
+    assert stage(plan(["skill_profile"]), "profile_vlm")["episodes"] == "keep"
 
 
 # ---------------------------------------------------------------- estimates

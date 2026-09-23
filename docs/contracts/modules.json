@@ -4,7 +4,8 @@
   "numeric",
   "frame",
   "vlm",
-  "post_verdict"
+  "post_verdict",
+  "profile_vlm"
  ],
  "review_lines": [
   {
@@ -624,7 +625,7 @@
     "video",
     "vlm"
    ],
-   "stage": "post_verdict",
+   "stage": "profile_vlm",
    "depends_on": [
     "funnel_verdict",
     "dedup",
