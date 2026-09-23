@@ -67,6 +67,11 @@ describe('任务详情 (07 §4.2)', () => {
   it('stage bars explain why the total dropped; module errors expand to the episodes', async () => {
     const { user } = renderApp(`/tasks/${MAIN}`);
     expect(await screen.findByTestId('stage-frame')).toHaveTextContent('数值档拦下了 1 条（ep 18，残段），所以后面的档是 49 条');
+    // 终判 + 报告 read as one bar, 导出 + 交付核验 as another (requester item 11).
+    expect(screen.getByTestId('stage-report_generation')).toHaveTextContent(/^报告生成 已完成2 \/ 2 · 用时 7 秒$/);
+    expect(screen.getByTestId('stage-delivery')).toHaveTextContent('交付 跳过');
+    expect(screen.getByTestId('stage-delivery')).toHaveTextContent('主流程结束时没有可交付的条目，没有导出');
+    for (const raw of ['final', 'report', 'export', 'verify']) expect(screen.queryByTestId(`stage-${raw}`)).toBeNull();
     const table = screen.getByTestId('modules-table');
     await user.click(await within(table).findByRole('button', { name: /2 条待补跑/ }));
     const list = await screen.findByTestId('error-episodes');
@@ -118,6 +123,9 @@ describe('任务详情 (07 §4.2)', () => {
   it('the running task shows the header actions by state', async () => {
     const { user } = renderApp(`/tasks/${RUNNING}`);
     await screen.findByRole('heading', { name: /umi_640 全量质检/ });
+    // 分档进度 gives counts and time used, never an estimate (requester item 20).
+    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('410 / 631 · 用时 18 分 22 秒');
+    expect(screen.getByTestId('stages')).not.toHaveTextContent('预计');
     // On the detail page 「查看」 makes no sense: 暂停 becomes the primary action.
     expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '更多' }));

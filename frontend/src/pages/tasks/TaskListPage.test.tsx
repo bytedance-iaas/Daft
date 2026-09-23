@@ -30,6 +30,20 @@ describe('任务列表 (07 §4.1)', () => {
     expect(screen.getByText('有未结束的任务，每 5 秒自动刷新')).toBeInTheDocument();
   });
 
+  it('an unfinished task shows two progress lines, the current stage and the whole task, without time estimates', async () => {
+    renderApp('/tasks');
+    await screen.findByRole('link', { name: 'umi_640 全量质检' });
+    const umi = row('umi_640 全量质检');
+    expect(within(umi).getByTestId('progress-stage')).toHaveTextContent('VLM 档410 / 631');
+    // 3 of 9 stages done (报告生成 and 交付 count once each) plus 410 / 631 of the current one.
+    expect(within(umi).getByTestId('progress-overall')).toHaveTextContent('总进度41%');
+    expect(umi).not.toHaveTextContent(/剩余|预计/);
+    // A paused task keeps both lines (its bars turn gray).
+    const widowx = row('widowx 回归');
+    expect(within(widowx).getByTestId('progress-stage')).toHaveTextContent('VLM 档180 / 430');
+    expect(within(widowx).getByTestId('progress-overall')).toHaveTextContent('总进度38%');
+  });
+
   it('a task summary shows the episodes skipped for missing source files when there are any (D40)', async () => {
     renderApp('/tasks?q=so101');
     await screen.findByRole('link', { name: 'so101 夜间批次' });

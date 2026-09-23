@@ -97,7 +97,6 @@ export const zh = {
       if (m) return `${m} 分 ${String(sec).padStart(2, '0')} 秒`;
       return `${sec} 秒`;
     },
-    eta: (s: number) => `预计还要 ${zh.time.duration(s)}`,
   },
 
   /** Task states (doc 07 §8). completed_with_errors is 「错误」 since 2026-09-21. */
@@ -129,6 +128,12 @@ export const zh = {
     report: '报告',
     verify: '交付核验',
     post_verdict: '判决之后',
+  } as Record<string, string>,
+
+  /** Stages that progress views show as one (requester item 11): 终判 + 报告, 导出 + 交付核验. */
+  stageGroup: {
+    report_generation: '报告生成',
+    delivery: '交付',
   } as Record<string, string>,
 
   stageState: {
@@ -256,11 +261,7 @@ export const zh = {
     modulePopoverLoading: '正在取各模块状态…',
     created: '还没启动，配置都能改',
     queued: '排队中，等前面的任务结束',
-    pausedAt: (stage: string, done: number, total: number) => `停在${stage} ${done} / ${total}`,
-    resumeHint: '恢复后从断点继续',
-    systemResumeHint: 'Daemon 重启后自动续跑',
-    running: (stage: string) => `${stage}`,
-    etaShort: (text: string) => `剩余约 ${text}`,
+    overall: '总进度',
     resultLine: (p: number, r: number, h: number) => (h ? `通过 ${p} · 拒绝 ${r} · 待补跑 ${h}` : `通过 ${p} · 拒绝 ${r}`),
     skippedPart: (n: number) => `缺源文件 ${n}`,
     passRate: (text: string) => `通过率 ${text}`,
@@ -794,7 +795,6 @@ export const zh = {
     noReport: '还没有结果：任务跑完后这里显示报告概览。',
     stages: '分档进度',
     stageTime: (elapsed: string) => `用时 ${elapsed}`,
-    stageEta: (eta: string) => `预计还要 ${eta}`,
     noStages: '任务还没开始，没有分档进度',
     tokens: 'Token 消耗',
     tokensDesc: '只统计用量，不换算金额',

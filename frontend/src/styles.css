@@ -209,6 +209,45 @@ body {
   margin-top: 2px;
 }
 
+/* 进度 / 结果 in the task list (07 §4.1): the current stage and the whole task, each a name,
+   a bar and a number on one line. */
+.progress-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 240px;
+}
+
+.progress-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.progress-line-label {
+  flex: 0 0 64px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.progress-line-bar {
+  flex: 1;
+  min-width: 60px;
+}
+
+.progress-line-text {
+  flex: none;
+  min-width: 36px;
+  text-align: right;
+  color: var(--c-text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .dot {
   display: inline-block;
   width: 8px;

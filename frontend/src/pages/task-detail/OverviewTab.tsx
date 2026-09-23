@@ -14,7 +14,7 @@ import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { absoluteTime, bytes, compactNumber, percent } from '../../lib/format';
 import { subtaskName } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
-import { isTerminalState, stageLabel, stagePercent } from '../../lib/taskView';
+import { groupStages, isTerminalState, stageLabel } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 function Stat({ label, value, foot }: { label: string; value: string | number; foot?: string }) {
@@ -76,8 +76,12 @@ function ReportSummary({ task }: { task: Task }) {
   );
 }
 
+/**
+ * 分档进度 (07 §4.2): one bar per stage, 终判 + 报告 and 导出 + 交付核验 each shown as one
+ * (requester item 11), with counts and time used; no time estimate (item 20).
+ */
 function StagesCard({ task }: { task: Task }) {
-  const stages = task.progress.stages;
+  const stages = groupStages(task.progress.stages);
   return (
     <Card title={zh.taskDetail.stages}>
       {!stages.length ? (
@@ -87,18 +91,17 @@ function StagesCard({ task }: { task: Task }) {
           {stages.map((s) => {
             const status = s.state === 'failed' ? 'error' : s.state === 'completed_with_errors' ? 'warning' : s.state === 'succeeded' ? 'success' : 'normal';
             return (
-              <div key={s.id} style={{ marginBottom: 12 }} data-testid={`stage-${s.id}`}>
+              <div key={s.key} style={{ marginBottom: 12 }} data-testid={`stage-${s.key}`}>
                 <Space style={{ justifyContent: 'space-between', width: '100%' }}>
                   <span>
-                    <b>{stageLabel(s.id)}</b> <span className="muted">{zh.stageState[s.state] ?? s.state}</span>
+                    <b>{s.label}</b> <span className="muted">{zh.stageState[s.state] ?? s.state}</span>
                   </span>
                   <span className="muted" style={{ fontSize: 12 }}>
                     {s.total ? `${s.done} / ${s.total}` : ''}
-                    {s.elapsed_s !== null && s.elapsed_s !== undefined ? ` · ${zh.taskDetail.stageTime(zh.time.duration(s.elapsed_s))}` : ''}
-                    {s.state === 'running' && s.eta_s ? ` · ${zh.taskDetail.stageEta(zh.time.duration(s.eta_s))}` : ''}
+                    {s.elapsed_s !== null ? ` · ${zh.taskDetail.stageTime(zh.time.duration(s.elapsed_s))}` : ''}
                   </span>
                 </Space>
-                <Progress percent={s.state === 'skipped' ? 0 : stagePercent(s)} status={status} showText={false} size="small" />
+                <Progress percent={s.percent} status={status} showText={false} size="small" />
                 {s.note ? (
                   <div className="muted" style={{ fontSize: 12 }}>
                     {s.note}

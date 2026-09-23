@@ -16,28 +16,38 @@ import { TaskActionButtons } from '../../features/tasks/TaskActionButtons';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
 import { compactNumber, percent, totalTokens } from '../../lib/format';
 import { PAGE_SIZES, readPageSize, writePageSize } from '../../lib/prefs';
-import { actionsFor, currentStage, exportedBefore, isTerminalState, stageLabel, stagePercent } from '../../lib/taskView';
+import { actionsFor, currentStage, exportedBefore, groupStages, isTerminalState, overallPercent } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 const STATES: TaskState[] = ['created', 'queued', 'running', 'pausing', 'paused', 'stopping', 'stopped', 'succeeded', 'completed_with_errors', 'failed'];
 
+/** One line of the progress cell: a name, its bar and a number. */
+function ProgressLine({ label, percent, text, muted, testId }: { label: string; percent: number; text: string; muted: boolean; testId: string }) {
+  return (
+    <div className="progress-line" data-testid={testId}>
+      <span className="progress-line-label">{label}</span>
+      <Progress className="progress-line-bar" percent={percent} size="small" showText={false} color={muted ? 'var(--c-text-4)' : undefined} />
+      <span className="progress-line-text">{text}</span>
+    </div>
+  );
+}
+
+/**
+ * 进度 / 结果 (07 §4.1, requester item 20): an unfinished task shows two lines, the current stage
+ * (merged names, item 11) with its count, then the whole task in percent. No time estimates.
+ */
 function ProgressCell({ t }: { t: TaskListItem }) {
-  const stages = t.progress.stages;
   if (t.state === 'created') return <span className="muted">{zh.taskList.created}</span>;
   if (t.state === 'queued') return <span className="muted">{zh.taskList.queued}</span>;
-  const cur = currentStage(stages);
+  const views = groupStages(t.progress.stages);
+  const cur = currentStage(views);
   if (!isTerminalState(t.state)) {
-    const pct = stagePercent(cur);
-    const label = cur ? stageLabel(cur.id) : '';
     const paused = t.state === 'paused' || t.state === 'pausing';
+    const overall = overallPercent(views);
     return (
-      <div style={{ minWidth: 160 }}>
-        <Progress percent={pct} size="small" status={paused ? 'normal' : undefined} color={paused ? 'var(--c-text-4)' : undefined} />
-        <div className="muted" style={{ fontSize: 12 }}>
-          {paused && cur ? zh.taskList.pausedAt(label, cur.done, cur.total) : label}
-          {!paused && cur?.eta_s ? ` · ${zh.taskList.etaShort(zh.time.duration(cur.eta_s))}` : ''}
-        </div>
-        {paused ? <div className="muted" style={{ fontSize: 12 }}>{t.pause_reason === 'system' ? zh.taskList.systemResumeHint : zh.taskList.resumeHint}</div> : null}
+      <div className="progress-cell">
+        <ProgressLine label={cur?.label ?? '—'} percent={cur?.percent ?? 0} text={cur?.total ? `${cur.done} / ${cur.total}` : ''} muted={paused} testId="progress-stage" />
+        <ProgressLine label={zh.taskList.overall} percent={overall} text={`${overall}%`} muted={paused} testId="progress-overall" />
       </div>
     );
   }
@@ -158,7 +168,7 @@ export function TaskListPage() {
       ),
     },
     { title: zh.taskList.colModules, dataIndex: 'modules', width: 150, render: (_: unknown, t) => <ModuleSummaryCell item={t} /> },
-    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 250, render: (_: unknown, t) => <ProgressCell t={t} /> },
+    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 320, render: (_: unknown, t) => <ProgressCell t={t} /> },
     {
       title: zh.taskList.colTokens,
       dataIndex: 'usage',
@@ -242,7 +252,7 @@ export function TaskListPage() {
             loading={query.isLoading}
             columns={columns}
             data={query.data?.items ?? []}
-            scroll={{ x: 1360 }}
+            scroll={{ x: 1430 }}
             noDataElement={<div className="muted" style={{ padding: 24 }}>{q || state || moduleFilter.length || datasetId ? zh.taskList.emptyFiltered : zh.taskList.empty}</div>}
             pagination={{
               current: page,
