@@ -1227,7 +1227,7 @@ export const zh = {
       weights: '相机权重',
       weightsSame: (w: number) => `各路 ${w}`,
       cameraChart: '逐相机分布',
-      cameraChartDesc: '横轴是视觉总分，纵轴是读数条数，每路相机一条线',
+      cameraChartDesc: '横轴是视觉总分，纵轴是读数条数，每路相机一组柱',
       cameraMean: (cam: string, mean: string) => `${cam} · 均分 ${mean}`,
       cameraSummary: (cam: string, mean: string, low: number) => `${cam} 均分 ${mean}，低于 0.6 的 ${low} 条`,
     },

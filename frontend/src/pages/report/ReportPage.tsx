@@ -9,7 +9,6 @@ import { Chart, barOption, chartSummary } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
-import { EpisodeDrawer } from '../../features/report/EpisodeDrawer';
 import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
 import { compactNumber, percent } from '../../lib/format';
@@ -19,6 +18,7 @@ import { readCollapsedSections, writeCollapsedSections } from '../../lib/prefs';
 import { summaryDigest } from '../../lib/summary';
 import { isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
+import { EpisodesTab } from './EpisodesTab';
 import { ModuleSection, SECTION_STATE_COLOR } from './ModuleSection';
 import { PerfTab } from './PerfTab';
 
@@ -33,6 +33,41 @@ function Stat({ label, value, foot, testId }: { label: string; value: string | n
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
       {foot ? <div className="stat-foot">{foot}</div> : null}
+    </div>
+  );
+}
+
+/** An episode number that opens the Episode tab on it (?ep=N#episodes), keeping ?rev. */
+export function EpisodeLink({ ep }: { ep: number }) {
+  const [params] = useSearchParams();
+  const next = new URLSearchParams(params);
+  next.set('ep', String(ep));
+  return (
+    <Link to={{ search: `?${next.toString()}`, hash: '#episodes' }} className="mono">
+      {zh.report.episode(ep)}
+    </Link>
+  );
+}
+
+/** The episodes waiting for a retry, as links (a few; «ep 7、ep 31»). */
+function HeldEpisodes({ taskId, rev }: { taskId: string; rev: number }) {
+  const q = useQuery({
+    queryKey: qk.episodes(taskId, rev, { list: 'held', limit: 20 }),
+    queryFn: () => unwrap(api().GET('/tasks/{id}/episodes', { params: { path: { id: taskId }, query: { rev, list: 'held', limit: 20 } } })),
+    retry: false,
+  });
+  const items = q.data?.items ?? [];
+  if (!items.length) return null;
+  return (
+    <div data-testid="held-episodes">
+      {zh.reportPage.heldList}：
+      {items.map((e, i) => (
+        <span key={e.episode_index}>
+          {i ? '、' : ''}
+          <EpisodeLink ep={e.episode_index} />
+        </span>
+      ))}
+      {q.data?.has_more ? '…' : ''}
     </div>
   );
 }
@@ -105,7 +140,12 @@ function OverviewCard({ task, report, readOnly, runs, onRetryHeld }: { task: Tas
           type="warning"
           style={{ marginTop: 12 }}
           title={zh.report.heldTitle(c.held)}
-          content={zh.report.heldDesc}
+          content={
+            <>
+              <div>{zh.report.heldDesc}</div>
+              <HeldEpisodes taskId={task.id} rev={report.revision} />
+            </>
+          }
           action={
             blocked ? (
               <Tooltip content={blocked}>
@@ -342,13 +382,13 @@ function ReportBody({
 }
 
 /**
- * 质检报告 (07 §5): overview and integrity, one section per selected module in report.json order,
- * detail tables with server paging, the episode drawer (?ep=), history revisions (?rev=, read
- * only) and the performance profile (#perf).
+ * 质检报告 (07 §5, F6.2): three tabs - 报告 (overview, integrity, one section of statistics and
+ * charts per selected module in report.json order), Episode 明细 (#episodes, `?ep=N` picks the
+ * episode) and 性能剖析 (#perf); history revisions (?rev=) are read only in all of them.
  */
 export function ReportPage() {
   const { id = '' } = useParams();
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
   const task = useTask(id, (q) => {
@@ -361,7 +401,8 @@ export function ReportPage() {
   const rev = revParam ?? current;
   const readOnly = revParam !== null && revParam !== current;
   const ep = positiveInt(params.get('ep'));
-  const tab = location.hash === '#perf' ? 'perf' : 'report';
+  const hashTab = location.hash === '#perf' ? 'perf' : location.hash === '#episodes' ? 'episodes' : location.hash === '#report' ? 'report' : null;
+  const tab = hashTab ?? (ep !== null ? 'episodes' : 'report');
   const report = useQuery({
     queryKey: qk.report(id, rev),
     queryFn: () => unwrap(api().GET('/tasks/{id}/report', { params: { path: { id }, query: { rev } } })),
@@ -373,12 +414,16 @@ export function ReportPage() {
   const subtasks = useQuery({ queryKey: qk.subtasks(id), queryFn: () => unwrap(api().GET('/tasks/{id}/subtasks', { params: { path: { id } } })), enabled: current > 0 });
   const subs = subtasks.data?.items ?? [];
 
-  const setParam = (key: string, value: string | null) => {
+  // Changing ?rev / ?ep keeps the tab (the hash); an episode picked anywhere opens the Episode tab.
+  const setParam = (key: string, value: string | null, hash: string = location.hash) => {
     const next = new URLSearchParams(params);
     if (value === null) next.delete(key);
     else next.set(key, value);
-    setParams(next);
+    const search = next.toString();
+    navigate({ search: search ? `?${search}` : '', hash });
   };
+  const selectEpisode = (n: number) => setParam('ep', String(n), '#episodes');
+  const onTab = (k: string) => navigate({ search: location.search, hash: k === 'report' ? (ep !== null ? '#report' : '') : `#${k}` });
 
   const crumbs = [{ label: zh.taskList.title, to: '/tasks' }, { label: t?.name ?? id, to: `/tasks/${id}` }, { label: zh.report.title }];
   if (task.isError && !t) {
@@ -454,7 +499,7 @@ export function ReportPage() {
           }
         />
       ) : null}
-      <Tabs activeTab={tab} onChange={(k) => navigate({ search: location.search, hash: k === 'perf' ? '#perf' : '' })}>
+      <Tabs activeTab={tab} onChange={onTab}>
         <Tabs.TabPane key="report" title={zh.report.tabReport}>
           {report.isLoading ? (
             <Spin style={{ display: 'block', margin: '48px auto' }} />
@@ -464,11 +509,13 @@ export function ReportPage() {
             <ReportBody task={t} report={report.data.report} rev={report.data.revision} readOnly={readOnly} subtasks={subs} runs={runParts(t, timeline.data?.items ?? [], subs, report.data.revision)} />
           )}
         </Tabs.TabPane>
+        <Tabs.TabPane key="episodes" title={zh.reportPage.tabEpisodes}>
+          {tab === 'episodes' ? <EpisodesTab taskId={t.id} rev={rev} readOnly={readOnly} report={report.data?.report} ep={ep} onSelect={selectEpisode} /> : null}
+        </Tabs.TabPane>
         <Tabs.TabPane key="perf" title={zh.report.tabPerf}>
           {tab === 'perf' ? <PerfTab taskId={t.id} rev={rev} subtasks={subs} /> : null}
         </Tabs.TabPane>
       </Tabs>
-      <EpisodeDrawer taskId={t.id} ep={ep} rev={rev} readOnly={readOnly} onClose={() => setParam('ep', null)} />
     </div>
   );
 }

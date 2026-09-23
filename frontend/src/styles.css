@@ -548,6 +548,108 @@ button.video-placeholder {
   color: var(--c-success);
 }
 
+/* Episode 明细 (F6.2): the picker, then one card per module */
+.episode-items {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  line-height: 1.8;
+}
+
+.episode-block > .arco-card-body > * + * {
+  margin-top: 10px;
+}
+
+.episode-line,
+.episode-reason {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.episode-line.warn,
+.episode-reason.warn {
+  color: var(--c-warning);
+}
+
+.episode-line.bad,
+.episode-reason.bad {
+  color: var(--c-danger);
+}
+
+.episode-rest summary {
+  cursor: pointer;
+  color: var(--c-text-3);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.episode-sub {
+  margin-top: 12px;
+}
+
+.row-warn td {
+  background: #fff7e8 !important;
+}
+
+.trail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trail-step {
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  min-width: 120px;
+  background: #fff;
+}
+
+.trail-step.off {
+  border-style: dashed;
+  color: var(--c-text-4);
+}
+
+.trail-step.good {
+  border-color: var(--c-success);
+}
+
+.trail-step.bad {
+  border-color: var(--c-danger);
+}
+
+.trail-step.warn {
+  border-color: var(--c-warning);
+}
+
+.trail-layer {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.trail-step.off .trail-layer {
+  color: var(--c-text-4);
+}
+
+.trail-text {
+  font-size: 13px;
+}
+
+.sync-curves {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.sync-curves-cams > * + * {
+  margin-top: 8px;
+}
+
+@media (max-width: 1100px) {
+  .sync-curves {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* 数据包完整性 (F6.2): label / value pairs side by side, three columns like the mockup's .desc */
 .desc-grid {
   display: grid;
