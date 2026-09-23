@@ -191,7 +191,7 @@ export function TaskListPage() {
       ),
     },
     { title: zh.taskList.colModules, dataIndex: 'modules', width: 150, render: (_: unknown, t) => <ModuleSummaryCell item={t} /> },
-    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 320, render: (_: unknown, t) => <ProgressCell t={t} /> },
+    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 280, render: (_: unknown, t) => <ProgressCell t={t} /> },
     {
       title: zh.taskList.colTokens,
       dataIndex: 'usage',
@@ -276,7 +276,7 @@ export function TaskListPage() {
             loading={query.isLoading}
             columns={columns}
             data={query.data?.items ?? []}
-            scroll={{ x: 1430 }}
+            scroll={{ x: 1390 }}
             noDataElement={<div className="muted" style={{ padding: 24 }}>{q || state || moduleFilter.length || datasetId ? zh.taskList.emptyFiltered : zh.taskList.empty}</div>}
             pagination={{
               current: page,

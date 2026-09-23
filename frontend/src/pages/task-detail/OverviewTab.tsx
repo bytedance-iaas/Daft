@@ -170,8 +170,9 @@ function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
     { key: 'cached', title: zh.taskDetail.tokenCached, fmt: tokens },
   ];
   const columns: ColumnProps<UsageSum>[] = [
-    { title: view === 'module' ? zh.taskDetail.colModule : zh.taskDetail.tokenColRun, dataIndex: 'key' },
-    ...numbers.map((n) => ({ title: n.title, dataIndex: n.key, align: 'right' as const, render: (v: number) => n.fmt(v) })),
+    // Room for a six-character module name on one line; merged-request names may wrap.
+    { title: view === 'module' ? zh.taskDetail.colModule : zh.taskDetail.tokenColRun, dataIndex: 'key', width: 136 },
+    ...numbers.map((n) => ({ title: n.title, dataIndex: n.key, align: 'right' as const, render: (v: number) => <span className="nowrap">{n.fmt(v)}</span> })),
   ];
   return (
     <Card title={zh.taskDetail.tokens}>

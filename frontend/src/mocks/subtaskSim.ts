@@ -5,7 +5,7 @@ import type { StageProgress, Subtask, Task, TaskState } from '../api/types';
 import { clock, db, decisionsOf, findTask } from './db';
 
 /** Dev and demo builds switch it on (browser.ts); timings in ms. */
-export const SUBTASK_SIM = { enabled: false, queuedMs: 2_000, runMs: 15_000 };
+export const SUBTASK_SIM = { enabled: false, queuedMs: 3_000, runMs: 30_000 };
 
 const KIND_NAME: Record<Subtask['kind'], string> = { retry: '重试', resume: '继续运行', apply_adjudication: '执行裁决', reexport: '重新导出' };
 
