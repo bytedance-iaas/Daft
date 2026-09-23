@@ -67,7 +67,8 @@ def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: st
     from ..contracts import modules as registry
     from ..extensions.eef_consistency import load, profile, runner
     from ..extensions.eef_consistency.observations import seeds_digest
-    from ..extensions.eef_consistency.preflight import seed_dir
+    from ..extensions.eef_consistency import template as TP
+    from ..extensions.eef_consistency.preflight import seed_dir, template_path
     from ..pipeline.check_stage import input_digest
     from ..pipeline.records import (Inflight, PartWriter, compact, derive_verdict, latest_results,
                                     module_dir)
@@ -90,12 +91,21 @@ def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: st
         raise ModuleFailed(f"{MODULE}: trajectory.json is invalid: {first.message}",
                            {"errors": [i.as_dict() for i in result.errors[:10]], "sha256": result.sha256})
     lag = float(params["lag_search_s"])
+    tpath = template_path(params)
+    template = None
+    if tpath:
+        try:
+            template = TP.load_template(tpath)
+        except (TP.TemplateError, OSError) as e:
+            raise ModuleFailed(f"{MODULE}: gripper template is invalid: {e}", {"path": tpath}) from None
+    template_sha = template.sha256 if template is not None else None
     out_dir = module_dir(run_dir, MODULE)
     scratch = tempfile.TemporaryDirectory(prefix="eef-media-") if storage.remote else None
     cfg = runner.RunConfig(lerobot_root=scratch.name if scratch else storage.root, seed_root=seed_dir(params),
                            profile=profile.load(params["threshold_profile"]), out_dir=out_dir,
                            evidence_mode=params["evidence_mode"], allowed_mounts=MOUNTS[params["camera_mounts"]],
-                           lag_search_s=(-lag, lag), interpolation_gap_factor=float(params["interpolation_gap_factor"]))
+                           lag_search_s=(-lag, lag), interpolation_gap_factor=float(params["interpolation_gap_factor"]),
+                           template=template)
     config = runner.config_digest(cfg)
     todo = list(episodes)
     skipped = 0
@@ -113,7 +123,8 @@ def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: st
             s = result.samples.get(e)
             if s is None:
                 return True
-            return d.get("config_hash") == config and d.get("seeds_sha256") == seeds_digest(cfg.seed_root, s.sample_id)
+            return (d.get("config_hash") == config and d.get("seeds_sha256") == seeds_digest(cfg.seed_root, s.sample_id)
+                    and d.get("template_sha256") == template_sha)
 
         todo = [e for e in episodes if not current(e)]
         skipped = len(episodes) - len(todo)
@@ -121,7 +132,7 @@ def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: st
         guard(todo)
     ctx.log("info", f"{MODULE}: trajectory.json sha256 {result.sha256[:12]}, {len(result.samples)} of "
                     f"{len(episodes)} episode(s) declared, profile {params['threshold_profile']}, "
-                    f"seeds {cfg.seed_root or 'none'}")
+                    f"seeds {cfg.seed_root or 'none'}, gripper template {template_sha[:12] if template_sha else 'none'}")
     writer = PartWriter(run_dir, [MODULE], part)
     inflight = Inflight(run_dir, [MODULE], part)
     total = len(episodes)
@@ -178,7 +189,8 @@ def run(ctx, args, modules, run_dir: str, storage, episodes: list[int], part: st
     digest = hashlib.sha256(json.dumps({"episodes": input_digest(episodes), "trajectory": result.sha256,
                                         "config": config,
                                         "seeds": [seeds_digest(cfg.seed_root, s.sample_id)
-                                                  for _, s in sorted(result.samples.items())]},
+                                                  for _, s in sorted(result.samples.items())],
+                                        "template": template_sha},
                                        sort_keys=True).encode()).hexdigest()
     entry = {"part": part, "input_digest": f"sha256:{digest}", "episodes": counts, "error_episodes": errors}
     if args.resume:

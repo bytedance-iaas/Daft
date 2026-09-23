@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gripper-template/1.0 - appearance template of one gripper (automatic anchors for the tracker)",
+  "description": "A small library of gripper patches cut from frames of the same camera, each with the physical points marked in patch coordinates. The re-detector matches a frame against the entries of its camera and turns the matched points into an anchor, exactly like a person's click (design doc 12 §7.2, F5.8). It never sees the declared projection.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "gripper-template/1.0"
+    },
+    "tool": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "point_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "name",
+        "point_ids"
+      ],
+      "additionalProperties": false
+    },
+    "feature": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "orb"
+          ]
+        },
+        "entry_features": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 5000
+        },
+        "frame_features": {
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 20000
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "matching": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "enum": [
+            "similarity"
+          ]
+        },
+        "min_inliers": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 500
+        },
+        "ransac_px": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 50
+        },
+        "ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "scale_range": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "agree_px": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "every_frames": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "min_inlier_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "rng_seed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "additionalProperties": false
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "entry_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "camera_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_fraction": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "roi_xywh": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "patch_png_base64": {
+            "type": "string",
+            "minLength": 16
+          },
+          "points_patch_px": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "number"
+              }
+            }
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "dataset": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sample_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "camera_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "frame_index": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "image_sha256": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "dataset",
+              "sample_id",
+              "camera_id",
+              "frame_index",
+              "image_sha256"
+            ],
+            "additionalProperties": false
+          },
+          "provenance": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "enum": [
+                  "human_click",
+                  "synthetic_fixture",
+                  "tool_export"
+                ]
+              },
+              "created_at": {
+                "type": "string",
+                "minLength": 1
+              },
+              "note": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "method",
+              "created_at",
+              "note"
+            ],
+            "additionalProperties": false
+          },
+          "mask_png_base64": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 16
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "optional PNG mask of the patch (white = gripper): features are taken only there; built from the rigid motion of the marked points between two frames"
+          }
+        },
+        "required": [
+          "entry_id",
+          "camera_id",
+          "closed_fraction",
+          "roi_xywh",
+          "patch_png_base64",
+          "points_patch_px",
+          "source",
+          "provenance",
+          "mask_png_base64"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "tool",
+    "feature",
+    "matching",
+    "entries"
+  ],
+  "additionalProperties": false
+}

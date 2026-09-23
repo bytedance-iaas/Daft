@@ -1353,7 +1353,7 @@ const uploadHandlers = [
     const kind = url.searchParams.get('kind') ?? '';
     const name = url.searchParams.get('name') ?? 'upload.json';
     const text = await request.text();
-    if (!['eef_trajectory', 'eef_observation_seeds'].includes(kind)) return err(400, 'validation_failed', `不认识的上传类型 ${kind}`);
+    if (!['eef_trajectory', 'eef_observation_seeds', 'eef_gripper_template'].includes(kind)) return err(400, 'validation_failed', `不认识的上传类型 ${kind}`);
     let doc: unknown;
     try {
       doc = JSON.parse(text);

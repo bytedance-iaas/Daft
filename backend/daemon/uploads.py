@@ -6,7 +6,9 @@
   library, like the planner): container and section Schemas, cross-section semantics, the
   provided-vs-recomputed projection check, evaluation keys rejected; media are checked later,
   when a task binds the file to a dataset;
-* ``eef_observation_seeds`` - a JSON array of observation rows (C2 ``eef/observation.schema.json``).
+* ``eef_observation_seeds`` - a JSON array of observation rows (C2 ``eef/observation.schema.json``);
+* ``eef_gripper_template`` - a ``gripper-template/1.0`` file (C2 ``eef/gripper_template.schema.json``), read by
+  the module's own loader: patches decoded, features counted, entries with too few features reported.
 
 An error is reported with its location (JSON path, sample, episode, frame, camera, point). Files
 live on the data volume as ``uploads/<owner key>/<upload_id>/{file, meta.json}``: no database row,
@@ -30,7 +32,7 @@ from .errors import ApiError
 from .util import ID_ATTEMPTS, id_regex, new_id
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
-KINDS = ("eef_trajectory", "eef_observation_seeds")
+KINDS = ("eef_trajectory", "eef_observation_seeds", "eef_gripper_template")
 _ID_RE = re.compile(rf"^{id_regex('upl', r'upl_[0-9a-z]{10,40}')}$")
 _MAX_ERRORS = 50
 
@@ -111,7 +113,28 @@ def validate_seeds(data: bytes) -> dict:
     return {"valid": True, "summary": summary, "warnings": []}
 
 
-VALIDATORS = {"eef_trajectory": validate_trajectory, "eef_observation_seeds": validate_seeds}
+def validate_template(data: bytes) -> dict:
+    """The ``validation`` of a gripper-template upload, or raises validation_failed (400)."""
+    from curation.extensions.eef_consistency import template as TP
+
+    try:
+        t = TP.load_template(data)
+    except TP.TemplateError as err:
+        raise _invalid(f"夹爪外观模板不合格：{err}", [{"field": None, "problem": str(err), "code": "template_invalid",
+                                                   "severity": "error"}]) from None
+    weak = [e.entry_id for e in t.entries if len(e.descriptors) < t.matching.min_inliers]
+    summary = {"entries": len(t.entries), "usable_entries": len(t.entries) - len(weak),
+               "cameras": sorted({e.camera_id for e in t.entries if e.camera_id}), "points": list(t.point_ids),
+               "methods": list(t.methods), "masked_entries": sum(e.mask is not None for e in t.entries)}
+    warnings = [f"{len(weak)} entries have fewer than {t.matching.min_inliers} features and will never match: "
+                + ", ".join(weak[:5])] if weak else []
+    if "synthetic_fixture" in t.methods:
+        warnings.append("entries are synthetic_fixture (DEMO): not for visual-accuracy acceptance")
+    return {"valid": True, "summary": summary, "warnings": warnings}
+
+
+VALIDATORS = {"eef_trajectory": validate_trajectory, "eef_observation_seeds": validate_seeds,
+              "eef_gripper_template": validate_template}
 
 
 class UploadStore:

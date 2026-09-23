@@ -1,6 +1,6 @@
 {
  "files": {
-  "backend/curation/contracts/modules.py": "sha256:f49407f9b8704745a346397568a2f89d756a313bdc65fbf2cacdeba53d54270d",
+  "backend/curation/contracts/modules.py": "sha256:c5c209777d8abfe9896035e30a405d9e9576294f69a6add7d931868d5db1c266",
   "backend/daemon/repo/protocol.py": "sha256:c841668d448e4f0957a9a0d0aecdfc8d5e6bd9d39ceb7e78a6804138cd706505",
   "docs/contracts/cli/adjudicate-apply.schema.json": "sha256:d3b6addebf932f486781bae0cb5c0489d09145cd2ea9e7d11a4efe98fc196e1f",
   "docs/contracts/cli/aggregate.schema.json": "sha256:c8a7ebfc8e49106ffbf3615295b08e48b5aaaf9e5b0868bde6e43c237def8860",
@@ -24,12 +24,13 @@
   "docs/contracts/cli/verify.schema.json": "sha256:bdface3671e9400ae9f1a40d9fbf54986701b1db0c578c99976e69701ddb00dc",
   "docs/contracts/eef/calibration.schema.json": "sha256:75a319c2d66867b1097abd70e825b9ed70478a53e3ece93b82af9de26d23de5e",
   "docs/contracts/eef/frame.schema.json": "sha256:97e4af86cdf2a44e0a41d7f21aaca987bf4692a82931542447ceb0b6ecd9c1d7",
+  "docs/contracts/eef/gripper_template.schema.json": "sha256:bf89143a6e574840075d305423bc44bf77d7f5d666fd259f259f54b9901a1b2f",
   "docs/contracts/eef/observation.schema.json": "sha256:44194891fc2ad499cc723da848987b28f347bffd81326ba0f8329d5079e4d90a",
   "docs/contracts/eef/review_output.schema.json": "sha256:75a972b90dd4df9f4803f5dad5398a2de5bad61e9d1430c3112f167a9bbab12c",
   "docs/contracts/eef/sample.schema.json": "sha256:6cf2de7bb69cdb7e3f495c39ef473cc18389a2c5084a0ea57caf1f741581b20b",
   "docs/contracts/eef/trajectory_bundle.schema.json": "sha256:6ce8c5f5b6ffe1ddcab680b21a70f4a4ac4d30cff3040037c77f5ee5e2417b2e",
-  "docs/contracts/modules.json": "sha256:299bb891887fc9def40386f0f4dca28d84e6f45339a4f3047150a2d96911ba27",
-  "docs/contracts/openapi.yaml": "sha256:22c4933c87db476875451b85ec5c6a331cdc55ddaf09c5637b49363ebfb5a7d0",
+  "docs/contracts/modules.json": "sha256:625beed8e3db60d5e96909c9666cb66ec242cbd838c2695e479b6da0e3dc6d8c",
+  "docs/contracts/openapi.yaml": "sha256:7b9c0154bfa4667a43e60dd9047051f8d57e4141c12d0f645f9bcd09fbb7b6a8",
   "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:014d924766cdfe13c79a400e4c31134bb2c1e8a3830644d3644135ab1c9f5058",
   "docs/contracts/progress.schema.json": "sha256:ecb75b41143af25a34e1ae33aebca5d0dca9dd4bae61dc941b805153496d8487"
  },
