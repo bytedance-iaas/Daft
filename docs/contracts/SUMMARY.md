@@ -214,3 +214,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   模块说明写明 ID 随机、两种格式都认、同一毫秒建的行按插入先后排；`list_tasks` 加关键字 `running_subtasks`（`GET /tasks` 用它实现上一条）；
   `usage_buckets` 写明主流程在前、子任务按建的先后；Token 时间线至少保留 400 天（概览的「近 1 年」按月统计要用）。
 
+## 十三、报告改版与 Episode 明细（2026-09-23，F6.2）
+
+- **C4 1.11.0**（分支上写作 1.9.0，合并在 1.10.1 之后）：`GET /tasks/{id}/episodes`（`TaskEpisodePage`：结果版本里的 episode 按下标排，带所在清单、`reason_modules`、`review` / `review_modules`；按 `list`、`review`、`q`（编号子串，去掉 `ep` 前缀与前导零）筛选；游标带结果版本、绑定筛选条件；`total` 是筛选后的条数，`counts` 是整版的）与 `GET /tasks/{id}/episodes/{index}/sync-curves`（`SyncCurves`：逐相机的画面运动 / 机械臂运动曲线、互相关曲线与读数点，每条序列最多 600 点；没勾选、没走到或没保存曲线时 404，`details.reason` 分别是 `module_not_run`、`no_record`、`no_curves`）。示例 `examples/rest-episode-list.json`、`examples/rest-sync-curves.json`。上表第 11 条里「同步曲线没有对应的形状」由此解决。
+- **C2 不变**：`report.json` 的模块 `summary` 仍是自由对象；1.9.0 起 CLI 在里面写入画图用的汇总键（计数、均值、按相机的小数组，不含 episode 清单），键名见设计 06 篇 §6.2。

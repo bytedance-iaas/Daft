@@ -15,6 +15,8 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
 | `tables.py` | 明细表：pyarrow 读 Parquet 的行组，排序只认 C1 `TableSpec.sortable`，游标带结果版本 |
 | `episode.py` / `videos.py` | 单条 episode 的全模块视图；各机位视频从哪里放（片段 → 交付数据集 → 源数据集） |
 | `live.py` | 运行中的 episode 进度、模块记录与即时漏斗判定；不要求结果版本已提交 |
+| `episode_list.py` | 报告「Episode 明细」页签的 episode 列表（F6.2）：所在清单、归因模块、是否待裁，按清单 / 待裁 / 编号筛选，游标带结果版本 |
+| `sync_curves.py` | 单条 episode 的同步曲线（F6.2）：逐相机的画面运动与机械臂运动、互相关曲线与这一版的读数 |
 | `perf.py` | 性能剖析：全部 / 仅主流程 / 某次子任务 |
 | `catalog.py` | 裁决线目录，取自 C1 注册表的 `REVIEW_LINES`（D43）：有哪些线、`review.json` 的哪种条目问哪条线、在哪个页签（`applies_to: reject` 的在复议页签）、算不算待裁（`counts_as_pending`）、收哪些结论及按钮名；v1 各结论的含义（改标、弃用、拿不准、判成败）作为标记叠在上面 |
 | `adjudication.py` | 裁决队列：问题、卡片、状态、计数、逐线校验（`Queue.answerable` 一处）、追加记录、CSV 副本、`summary.pending_adjudication` |
@@ -39,6 +41,14 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
   判定与交付用的任务文本、该版本看到的每个模块的结果行（C2 `result-record`）、证据帧路径（签名用 `scope=delivery`）、
   各机位视频。LeRobot v3 的多条拼在一个 mp4 里，视频项带 `from_ts` / `to_ts`（取自源数据集或交付数据集的 episode 表），
   签名接口不算时间。缺源文件被剔除的 episode（D40）返回 404，说明缺了哪些文件。
+- **episode 列表**（F6.2）：按下标列出这一版三份清单里的全部条目，带所在清单、`reason_modules`（拒绝：判它不过的模块；
+  待补跑：出错的模块）、`review`（当前版本：裁决页上待裁或拿不准的卡片；历史版本：那一版提过的问题）。
+  `q` 按下标子串匹配，去掉 `ep` 前缀和前导零（`12`、`ep12`、`ep 12`、`ep000012` 都找得到 ep 12），不是编号的是 400；
+  游标里是「结果版本 + 最后一条下标」，换了筛选条件是 400，版本变了是 409 `result_changed`；`total` 是筛选后的条数，`counts` 是整版的。
+- **同步曲线**（F6.2）：读帧档留下的 `checks/video_action_sync/curves/ep<NNNNNN>.json`，互相关按正式判定的预处理重算
+  （`export.sync_plots._xcorr_curve`，剔首尾静止段），只取 ±2 秒扫描窗；读数（滞后、峰值、代码、是否可信）取这一版的结果记录，
+  点位按读数的横坐标在曲线上插值。每条序列最多 600 点。没勾选同步是 404 `module_not_run`，这一条没走到或出错是 `no_record`，
+  没保存曲线（默认只存值得留意的条目）是 `no_curves`。
 - **源数据集的元数据**用任务的输入密钥读（`open_input` 钩子，缺省走 W8 的 `svc.tos`；HuggingFace 缓存桶匿名读；本地路径直接读），
   每个任务读一次、按源清单核对大小；读不到（密钥被删、TOS 不通、元数据变了）就不给源数据集这一路，一分钟后再试，不让请求失败。
 - **性能剖析**：`scope=all` 是该版本提交时的 `perf.json`；`main` / `subtask` 按运行窗口切分 `details/vlm_latency.csv`
@@ -134,6 +144,11 @@ B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"
 3. **单条 episode**：`c $B/episodes/2 | python3 -m json.tool` —— `list: reject`，原因「未通过「任务成败判定」:3 路复核一致判未完成」，
    证据帧 `details/evidence/task_success/ep000002_0.jpg`，两路视频来自源数据集，`from_ts` 28、`to_ts` 42（v3 拼接文件里的一段）。
    `c $B/episodes/99` 是 404。
+   **episode 列表**：`c "$B/episodes?limit=4"` —— ep0–3，`has_more: true`，`counts` 为 all 9、passed 5、reject 3、held 1、review 3；
+   `c "$B/episodes?review=true"` 是 ep3、ep4、ep5；`c "$B/episodes?list=reject"` 是 ep1、ep2、ep7（`reason_modules` 分别是时间戳检查、
+   任务成败判定、精确去重）；`c "$B/episodes?q=ep%208"` 只有 ep8；`c "$B/episodes?q=abc"` 是 400。
+   **同步曲线**：`c $B/episodes/3/sync-curves` 是 404 `no_curves`（手写的运行目录没有曲线文件），`c $B/episodes/1/sync-curves`
+   是 404 `no_record`（ep1 在数值档就被判废）；有曲线的条目返回逐相机的 `t` / `flow` / `speed`、`lags` / `xcorr` 和 `peak`。
 4. **性能剖析**：`c $B/perf` —— probe 4 次（1 次对冲补发）、P50 3 秒、墙钟 62 秒，arbitration 1 次失败；
    stage 占比 numeric 0.1、frame 0.3、vlm 0.6。`c "$B/perf?scope=subtask"` 是 400（要给 `subtask`）。
 5. **裁决队列**：`c "$B/adjudication?status=all"` —— 三张卡片：ep3（判成败）、ep4（标注分歧）、ep5（两个问题），

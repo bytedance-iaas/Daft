@@ -790,6 +790,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/episodes": {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The episodes of a result revision, for the report's Episode tab (F6.2)
+         * @description Every episode of the three final lists in episode order: its list, the modules that put
+         *     it there, and whether a person still has to answer something about it (on the current
+         *     revision the adjudication cards still to decide - pending or unsure; on a history
+         *     revision the questions that revision asked). `q` is an episode number matched as a
+         *     substring of the index; a leading `ep` and leading zeros are dropped, so `12`, `ep12`,
+         *     `ep 12` and `ep000012` all find ep 12. The cursor carries the revision and is bound to
+         *     the filters (another filter set is 400 validation_failed, another revision 409
+         *     result_changed). `total` counts the filtered set, `counts` the whole revision.
+         */
+        get: operations["listTaskEpisodes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/episodes/{index}": {
         parameters: {
             query?: {
@@ -844,6 +876,37 @@ export interface paths {
         };
         /** Immediate funnel result and module records of one episode */
         get: operations["getPipelineEpisode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/episodes/{index}/sync-curves": {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                index: number;
+            };
+            cookie?: never;
+        };
+        /**
+         * One episode's video-action sync curves (F6.2)
+         * @description Per camera: picture motion (optical-flow energy) and arm motion (joint speed) over time,
+         *     the cross-correlation of the two within the check's scan window, and the check's reading
+         *     on that curve. Values are raw; the page normalizes them to compare shapes. At most 600
+         *     points per series. 404 not_found with details.reason module_not_run (the sync check was not
+         *     selected), no_record (the episode never reached it, or it failed there) or no_curves
+         *     (nothing was kept: by default only episodes worth a look keep their curves).
+         */
+        get: operations["getEpisodeSyncCurves"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1853,6 +1916,70 @@ export interface components {
                 from_ts?: number;
                 to_ts?: number;
             }[];
+        };
+        TaskEpisode: {
+            episode_index: number;
+            /** @enum {unknown} */
+            list: "passed" | "reject" | "held";
+            /** @description a person still has to answer something about it (see listTaskEpisodes) */
+            review: boolean;
+            /** @description the modules that put it in its list - the deciding modules of a reject, the failed modules of a held one, none when passed */
+            reason_modules: components["schemas"]["ModuleId"][];
+            /** @description the source modules of the open questions */
+            review_modules: components["schemas"]["ModuleId"][];
+        };
+        TaskEpisodePage: {
+            items: components["schemas"]["TaskEpisode"][];
+            next_cursor: string | null;
+            has_more: boolean;
+            /** @description episodes matching the filters */
+            total: number;
+            /** @description the whole revision, filters ignored */
+            counts: {
+                all: number;
+                passed: number;
+                reject: number;
+                held: number;
+                review: number;
+            };
+            revision: number;
+        };
+        SyncCurves: {
+            episode_index: number;
+            revision: number;
+            /** @description the episode-level reading: aligned, annotated, undecidable, misaligned_all */
+            verdict: string | null;
+            /** @description the lag every trusted camera agrees on, when they do */
+            consensus_lag_s?: number | null;
+            /** @description readings within +/- this are aligned (the green band) */
+            lag_tol_s: number;
+            /** @description the cross-correlation is drawn for lags within +/- this */
+            window_s: number;
+            cameras: components["schemas"]["SyncCurveCamera"][];
+        };
+        SyncCurveCamera: {
+            camera: string;
+            /** @description seconds from the episode start */
+            t: (number | null)[];
+            /** @description picture motion (optical-flow energy) at t */
+            flow: (number | null)[];
+            /** @description arm motion (joint speed) at t */
+            speed: (number | null)[];
+            /** @description seconds; > 0 = the picture is later than the motion */
+            lags: (number | null)[];
+            /** @description cross-correlation at each lag */
+            xcorr: (number | null)[];
+            /** @description the check's reading */
+            lag_s?: number | null;
+            corr_peak?: number | null;
+            /** @description aligned, misaligned, ambiguous_peak, flat_peak, low_corr, no_motion */
+            code?: string | null;
+            trusted?: boolean | null;
+            /** @description the reading on the drawn curve; null when there is none or it lies outside the window */
+            peak: null | {
+                lag_s: number;
+                corr: number;
+            };
         };
         /** @description one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list (hard_gate, soft_score, duplicate, human, execution_error) or a review kind */
         EpisodeNote: {
@@ -3695,6 +3822,40 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listTaskEpisodes: {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+                list?: "passed" | "reject" | "held";
+                /** @description only episodes with (true) or without (false) an open question */
+                review?: boolean;
+                /** @description an episode number, optionally with the ep prefix: 12, ep12, ep 12 */
+                q?: string;
+                /** @description opaque, from next_cursor */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description episodes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskEpisodePage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getEpisode: {
         parameters: {
             query?: {
@@ -3773,6 +3934,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PipelineEpisode"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getEpisodeSyncCurves: {
+        parameters: {
+            query?: {
+                /** @description result revision; omitted = the current one (task.result_rev) */
+                rev?: components["parameters"]["Rev"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description curves */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncCurves"];
                 };
             };
             default: components["responses"]["Error"];

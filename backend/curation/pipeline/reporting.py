@@ -143,6 +143,9 @@ def _missing(rev: Revision, module: str) -> list[int]:
 
 
 def _summary(rev: Revision, m: str) -> dict:
+    """A section's summary: ``counts`` for every module, the keys each module has had
+    since 1.0 (kept as they are), then the chart-ready aggregates of
+    :mod:`.report_stats` (06 §6.2) for the modules that take part in the verdict."""
     res = rev.results[m]
     out: dict = {"counts": _counts(res)}
     scores = [r["score"] for r in res.values() if r.get("score") is not None]
@@ -184,7 +187,62 @@ def _summary(rev: Revision, m: str) -> dict:
                     "gap" if d.get("gap_frames") else "other")
                 why[key] = why.get(key, 0) + 1
         out["fail_kinds"] = why
+    if res and registry.get(m).affects_dataset_verdict:
+        out.update(_chart_stats(rev, m, [res[e] for e in sorted(res)], scores))
     return out
+
+
+def _chart_stats(rev: Revision, m: str, records: list[dict], scores: list) -> dict:
+    """The chart-ready aggregates of one module (:mod:`.report_stats`): statistics only,
+    never a list of episodes."""
+    from . import report_stats as S
+
+    out = S.generic(records, scores)
+    if m == "timestamp_check":
+        out.update(S.timestamp_stats(records))
+    elif m == "kinematic_limits":
+        out.update(S.kinematic_stats(records))
+    elif m == "motion_quality":
+        out.update(S.motion_stats(records))
+    elif m == "visual_quality":
+        out.update(S.visual_stats(records))
+    elif m == "video_action_sync":
+        out.update(S.sync_stats(records, sync_tolerance(rev.run_dir)))
+    elif m == "task_success":
+        out.update(S.task_stats(records))
+    elif m == "dedup":
+        out.update(S.dedup_stats(_read(os.path.join(module_dir(rev.run_dir, "dedup"),
+                                                    "groups.json"), {}) or {}))
+    elif m == "skill_profile":
+        base = module_dir(rev.run_dir, "skill_profile")
+        out.update(S.skill_stats(records, _read(os.path.join(base, "profile.json"), {}) or {},
+                                 _read(os.path.join(base, "label_audit.json"), {}) or {}))
+    return out
+
+
+def sync_tolerance(run_dir: str) -> float:
+    """The ``lag_tol_s`` the sync check ran with: the curves files record it; without
+    them, the factory default (v2 runs the v1 modules with factory parameters)."""
+    from . import report_stats as S
+
+    curves = os.path.join(module_dir(run_dir, "video_action_sync"), "curves")
+    try:
+        names = sorted(n for n in os.listdir(curves) if n.endswith(".json"))
+    except OSError:
+        names = []
+    for name in names[:1]:
+        try:
+            v = S.num((_read(os.path.join(curves, name), {}) or {}).get("lag_tol_s"))
+        except ValueError:
+            v = None
+        if v:
+            return v
+    try:
+        from .config import load_config
+
+        return float(load_config()["checks"]["video_action_sync"]["params"]["lag_tol_s"])
+    except Exception:  # noqa: BLE001 - a missing default must not fail the report
+        return 0.25
 
 
 def _tables(rev: Revision, m: str, out_dir: str) -> list[dict]:

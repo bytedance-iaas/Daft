@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Subtask, TimelineEntry, UsageRow } from '../api/types';
-import { callKindLabel, detailsDigest, fieldLabel, formatValue, integrityValue, reasonLine, recordError, revisionOptions, seconds, subtaskName, usageByCallKind } from './reportView';
+import type { Subtask, Task, TimelineEntry, UsageRow } from '../api/types';
+import { callKindLabel, detailsDigest, fieldLabel, formatValue, readable, reasonLine, recordError, revisionOptions, runParts, seconds, subtaskName, usageByCallKind } from './reportView';
 
 const sub = (id: string, kind: Subtask['kind']): Subtask => ({ id, task_id: 't', kind, scope: {}, state: 'succeeded', created_at: 1 });
 
@@ -19,15 +19,16 @@ describe('report view helpers', () => {
     expect(formatValue(true)).toBe('是');
     expect(formatValue([])).toBe('无');
     expect(formatValue(['a', 'b'])).toBe('a、b');
-    expect(formatValue({ a: 1 })).toBe('{"a":1}');
+    expect(formatValue({ a: 1 })).toBe('a 1');
   });
 
-  it('formats integrity values', () => {
-    expect(integrityValue('robot_type', null)).toBe('未读到');
-    expect(integrityValue('labels', { with_task: 28, without_task: 22 })).toBe('28 条有；22 条没有');
-    expect(integrityValue('fps', 15)).toBe('15 fps');
-    expect(integrityValue('missing_fields', [])).toBe('无');
-    expect(integrityValue('other', { mean: 0.5 })).toBe('平均分 0.5');
+  it('renders any value readably, never as JSON', () => {
+    expect(readable({ mean: 0.5, n: 3 })).toBe('平均分 0.5 · n 3');
+    expect(readable({ outer: { mean: 0.5 } })).toBe('outer （平均分 0.5）');
+    expect(readable([{ a: 1 }, { a: 2 }])).toBe('a 1；a 2');
+    expect(readable([])).toBe('无');
+    expect(readable(null)).toBe('—');
+    for (const v of [{ a: { b: [1, { c: 2 }] } }, [{ x: null }]]) expect(readable(v)).not.toMatch(/[{}"]/);
   });
 
   it('digests readings and execution errors', () => {
@@ -40,7 +41,25 @@ describe('report view helpers', () => {
   it('reads reason items leniently', () => {
     const reg = { registry_version: '1', stages: [], modules: [{ id: 'dedup', name_zh: '精确去重' }] } as never;
     expect(reasonLine({ module: 'dedup', text: '与 ep 43 重复' }, reg)).toBe('精确去重 · 与 ep 43 重复');
-    expect(reasonLine({ foo: 1 }, reg)).toBe('{"foo":1}');
+    expect(reasonLine({ foo: 1 }, reg)).toBe('foo 1');
+  });
+
+  it('adds up the runs behind a revision when the report has no duration', () => {
+    const task = { started_at: 1_000, finished_at: 9_999_999 } as Task;
+    const timeline: TimelineEntry[] = [
+      { at: 1_000, kind: 'started', text: '', subtask_id: null, revision: null },
+      { at: 1_017_000, kind: 'finished', text: '', subtask_id: null, revision: 1 },
+    ];
+    const subs = [
+      { ...sub('a', 'retry'), started_at: 2_000_000, finished_at: 2_412_000, result_rev: 2 },
+      { ...sub('b', 'reexport'), started_at: 3_000_000, finished_at: 3_060_000, result_rev: null },
+    ];
+    expect(runParts(task, timeline, subs, 2)).toEqual([
+      { label: '主流程', seconds: 1016 },
+      { label: '重试 #1', seconds: 412 },
+    ]);
+    expect(runParts(task, timeline, subs, 1)).toEqual([{ label: '主流程', seconds: 1016 }]);
+    expect(runParts({ started_at: null } as Task, [], [], 1)).toEqual([]);
   });
 
   it('names subtasks by kind and ordinal', () => {

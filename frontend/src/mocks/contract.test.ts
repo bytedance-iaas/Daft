@@ -10,13 +10,16 @@ import {
   EMBODIMENTS,
   MAIN_TASK,
   episodeView,
+  mainEpisodes,
   mainPerf,
   mainPlan,
   mainReport,
+  mainSyncCurves,
   mainTimeline,
   mainUsage,
   preflightFor,
   registry,
+  sampleSummary,
   SO101_SKIPPED,
   so101Subtasks,
   so101Timeline,
@@ -71,6 +74,13 @@ describe('fixtures match the contract', () => {
     mainTimeline(Date.now()).forEach((e) => expectValid(S('TimelineEntry'), e));
     expectValid(S('UsageReport'), mainUsage());
     for (let ep = 0; ep < 50; ep += 1) expectValid(S('EpisodeView'), episodeView(ep, 2));
+    for (const ep of [5, 12, 20, 26, 35, 41]) expectValid(S('SyncCurves'), mainSyncCurves(ep, 2));
+    expect(mainSyncCurves(0, 2)).toBeNull();
+    expectValid(S('TaskEpisodePage'), { items: mainEpisodes(new Map([[29, ['task_success', 'skill_profile']]])), next_cursor: null, has_more: false, total: 50, counts: { all: 50, passed: 41, reject: 7, held: 2, review: 1 }, revision: 2 });
+    for (const id of registry.modules.map((m) => m.id)) {
+      const summary = sampleSummary(id, 40);
+      expect(summary.counts, id).toBeTruthy();
+    }
     [...cardsOf(MAIN_TASK, 'review'), ...cardsOf(MAIN_TASK, 'appeals')].forEach((c) => expectValid(S('AdjudicationCard'), c));
   });
 
@@ -196,6 +206,13 @@ const calls = (): Call[] => [
   { op: 'getEpisode', method: 'GET', path: `/tasks/${T}/episodes/29` },
   { op: 'listPipelineEpisodes', method: 'GET', path: `/tasks/${T}/pipeline/episodes?limit=30` },
   { op: 'getPipelineEpisode', method: 'GET', path: `/tasks/${T}/pipeline/episodes/29` },
+  // C4 1.9.0: the Episode tab's list (filters, number search, paging) and one episode's sync curves
+  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${T}/episodes?limit=20` },
+  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${T}/episodes?list=reject&review=false&q=ep%204&rev=1` },
+  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${T}/episodes?q=wipe` },
+  { op: 'listTaskEpisodes', method: 'GET', path: '/tasks/task_01HXPZ2K/episodes?review=true&limit=500' },
+  { op: 'getEpisodeSyncCurves', method: 'GET', path: `/tasks/${T}/episodes/12/sync-curves` },
+  { op: 'getEpisodeSyncCurves', method: 'GET', path: `/tasks/${T}/episodes/0/sync-curves` },
   { op: 'getPerf', method: 'GET', path: `/tasks/${T}/perf?scope=subtask&subtask=sub_retry1` },
   { op: 'listAdjudication', method: 'GET', path: `/tasks/${T}/adjudication?status=all` },
   { op: 'listAdjudication', method: 'GET', path: `/tasks/${T}/adjudication?tab=appeals&status=all&source=task_success` },

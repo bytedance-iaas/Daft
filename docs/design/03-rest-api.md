@@ -94,7 +94,9 @@
 |---|---|---|
 | GET | `/api/v1/tasks/{id}/report` | 报告（概览 + 各模块小节） |
 | GET | `/api/v1/tasks/{id}/report/tables/{table}` | 明细表分页切片 |
+| GET | `/api/v1/tasks/{id}/episodes` | 结果版本里的 episode 列表（报告「Episode 明细」页签用）：所在清单、归因模块、是否待裁；按清单、待裁、编号（`q`，如 `12` / `ep12`）筛选，游标分页（F6.2，§6） |
 | GET | `/api/v1/tasks/{id}/episodes/{index}` | 单条 episode 的全模块视图：判决卡、各模块读数、证据、视频位置 |
+| GET | `/api/v1/tasks/{id}/episodes/{index}/sync-curves` | 单条 episode 的同步曲线：逐相机的画面运动与机械臂运动、互相关曲线与读数（F6.2，§6） |
 | GET | `/api/v1/tasks/{id}/perf` | 性能剖析 |
 | GET | `/api/v1/tasks/{id}/adjudication` | 裁决队列，游标分页，`source` / `status` 过滤 |
 | POST | `/api/v1/tasks/{id}/adjudication` | 提交裁决（只记录，不执行，可反复改） |
@@ -108,7 +110,7 @@
 | GET | `/events/tasks/{id}` | SSE：进度、日志、状态变更 |
 | GET | `/healthz`、`/readyz` | 探针，免鉴权，根路径与 `{base}` 下都可达 |
 
-报告、明细表、单条 episode、性能剖析四个接口都接受 `?rev=N` 查看历史结果版本，缺省是当前版本。
+报告、明细表、episode 列表、单条 episode、同步曲线、性能剖析六个接口都接受 `?rev=N` 查看历史结果版本，缺省是当前版本。
 全部接口的请求与响应结构以 `docs/contracts/openapi.yaml`（C4）为准，本篇是它的说明。
 
 ## 3. 新建任务：`POST /api/v1/tasks`
@@ -304,7 +306,44 @@ GET /api/v1/tasks/{id}/report/tables/visual_quality?cursor=...&limit=100&sort=sc
 
 报告按模块组织，但看一条具体的 episode 时需要横着看所有模块：
 `GET /tasks/{id}/episodes/{index}` 返回这一条的判决卡、各模块读数、证据帧和各机位视频位置，
-供报告页的逐条下钻抽屉使用（v1「轨迹」页的对应物）。
+供报告页的「Episode 明细」页签使用（v1「轨迹」页的对应物；F6.2 起取代右侧抽屉和底部明细表，07 篇 §5）。
+报告小节只放统计和图，不列逐条明细（06 篇 §6.2）。
+
+「Episode 明细」页签还用到两个接口（F6.2，C4 1.9.0）：
+
+```
+GET /api/v1/tasks/{id}/episodes?rev=2&list=reject&review=true&q=ep12&cursor=…&limit=50
+→ {"items": [{"episode_index": 12, "list": "reject", "review": false,
+              "reason_modules": ["timestamp_check"], "review_modules": []}, …],
+   "next_cursor": "…", "has_more": true, "total": 14,
+   "counts": {"all": 640, "passed": 508, "reject": 96, "held": 36, "review": 32}, "revision": 2}
+```
+
+- 按 episode 下标升序，覆盖三份清单（通过 / 拒绝 / 待补跑）的全部条目；`reason_modules` 是把它放进这份清单的模块
+  （拒绝：判它不过的模块；待补跑：执行出错的模块；通过：空）。
+- `review`：当前版本上是「还有人要回答的问题」，即裁决页上待裁或拿不准的卡片（可复议的被拒条目不算）；
+  历史版本已不能裁决，按那一版提出过的问题算。`review_modules` 是这些问题的来源模块。
+- `q` 是 episode 编号，按下标的子串匹配：去掉开头的 `ep` 和前导零，所以 `12`、`ep12`、`ep 12`、`ep000012` 都能找到 ep 12
+  （也会找到 ep 112、ep 120）；不是编号的输入返回 400。
+- 游标里是「结果版本 + 最后一条的下标」，筛选条件绑在游标上：换了筛选条件是 400，结果版本变了是 409 `result_changed`。
+  `total` 是筛选后的条数，`counts` 是整个版本的条数（不受筛选影响），`limit` 1–500，缺省 50。
+
+```
+GET /api/v1/tasks/{id}/episodes/{index}/sync-curves?rev=2
+→ {"episode_index": 26, "revision": 2, "verdict": "annotated", "consensus_lag_s": null,
+   "lag_tol_s": 0.25, "window_s": 2.0,
+   "cameras": [{"camera": "wrist", "t": [...], "flow": [...], "speed": [...],
+                "lags": [...], "xcorr": [...], "lag_s": 0.41, "corr_peak": 0.46,
+                "code": "flat_peak", "trusted": false, "peak": {"lag_s": 0.41, "corr": 0.45}}]}
+```
+
+- 逐相机：画面运动（光流能量）与机械臂运动（关节速度）随时间的两条曲线，两者在检查扫描窗（±2 秒）内的互相关曲线，
+  以及这一版记录里的读数落在曲线上的位置（`peak`）。数值是原值，页面自己归一化后比形状；每条序列最多 600 个点。
+- 曲线来自帧档保存的 `checks/video_action_sync/curves/ep<NNNNNN>.json`；互相关用与正式判定同一套预处理重算
+  （剔除首尾静止段），读数取该版本的结果记录，所以点一定落在曲线上。
+- 默认只为值得留意的条目保存曲线（没对齐、有相机被标注或测不准，`pipeline.sync_plots: flagged`）。
+  拿不到时 404 `not_found`，`details.reason` 说明原因：`module_not_run`（没勾选同步检查）、
+  `no_record`（这一条没走到这一档，或在这一档出错）、`no_curves`（没有保存曲线）。
 
 ## 7. 媒体访问：预签名 URL
 

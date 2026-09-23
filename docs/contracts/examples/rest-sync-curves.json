@@ -1,0 +1,51 @@
+{
+ "schema": "openapi.yaml#/components/schemas/SyncCurves",
+ "valid": [
+  {
+   "episode_index": 26,
+   "revision": 2,
+   "verdict": "annotated",
+   "consensus_lag_s": null,
+   "lag_tol_s": 0.25,
+   "window_s": 2.0,
+   "cameras": [
+    {
+     "camera": "exterior_image_1_left",
+     "t": [0.0, 0.067, 0.133],
+     "flow": [0.8, 1.4, null],
+     "speed": [0.02, 0.05, 0.04],
+     "lags": [-0.133, -0.067, 0.0, 0.067, 0.133],
+     "xcorr": [0.12, 0.3, 0.41, 0.46, 0.38],
+     "lag_s": 0.41,
+     "corr_peak": 0.46,
+     "code": "flat_peak",
+     "trusted": false,
+     "peak": null
+    },
+    {
+     "camera": "wrist_image_left",
+     "t": [0.0, 0.067, 0.133],
+     "flow": [0.3, 0.9, 1.1],
+     "speed": [0.02, 0.05, 0.04],
+     "lags": [-0.067, 0.0, 0.067],
+     "xcorr": [0.6, 0.83, 0.7],
+     "lag_s": 0.0,
+     "corr_peak": 0.83,
+     "code": "aligned",
+     "trusted": true,
+     "peak": {"lag_s": 0.0, "corr": 0.83}
+    }
+   ]
+  }
+ ],
+ "invalid": [
+  {
+   "episode_index": 26, "revision": 2, "verdict": "aligned", "lag_tol_s": 0.25, "window_s": 2.0,
+   "cameras": [{"camera": "wrist", "t": [0.0], "flow": [1.0], "speed": [1.0], "lags": [], "xcorr": []}]
+  },
+  {
+   "episode_index": 26, "revision": 2, "verdict": "aligned", "lag_tol_s": 0.25, "window_s": 2.0,
+   "cameras": [{"camera": "wrist", "t": [0.0], "flow": [1.0], "speed": [1.0], "lags": [0.0], "xcorr": [0.9], "peak": {"lag_s": 0.0}}]
+  }
+ ]
+}
