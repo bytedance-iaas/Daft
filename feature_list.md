@@ -151,6 +151,11 @@
 - 验收：①固定 tape 下 malformed / timeout / 引用不存在帧 / 冲突分支全覆盖；②复核失败显示「未完成」，不影响旧判决；③VLM 不产生像素或厘米数值
 - status: completed
 
+### F5.8 夹爪外观模板（锚点的第二种来源）
+- 描述：`gripper-template/1.0` 格式与 Schema（`docs/contracts/eef/`）、示例；`template.py`（读取校验、ORB + RANSAC 相似变换重检测、由锚点间刚性运动得到的夹爪掩膜、构建与检查）；跟踪器的 P-A′ 模式（模板命中即锚点，锚点间沿用双锚点跟踪）；离线命令 `run --template`、`template-build`、`template-check`；模块参数 `gripper_template`（文件，与 `observation_seeds` 二选一，同一路相机以种子为准）；预检、`check --param`、Daemon 上传种类 `eef_gripper_template` 与校验、OpenAPI 与前端类型；dataset2 的模板素材
+- 验收：①合成场景：重检测误差 < 3 px、模板模式跟踪可见率 > 0.8 且 P95 < 2.5 px、无掩膜时能锁到静止背景（掩膜的必要性）；②dataset2：模板从 ep0 建，`template-check` 对种子 P95 ≤ 1 px，`run --template` 的 ep0 / ep5 / ep6 结论与种子模式一致，模板模式与种子模式的观测 P95 差 < 8 px；③只有模板没有种子时预检 available、命令行 check 出结果；④契约测试、EEF 测试、前端 lint / 类型 / 测试通过；⑤旧判决与 parity 不变
+- status: completed
+
 ### F5.7 验收与试用
 - 描述：冻结阈值后在独立 episode 上报误报、漏报、定位与方向误差、覆盖与弃权率；性能记录；对指定数据集开 advisory 试用
 - 验收：①独立 episode 分组验收报告；②每分钟视频的 CPU 耗时、峰值内存、VLM 请求数有记录；③回退 = 取消勾选，旧流程不受影响

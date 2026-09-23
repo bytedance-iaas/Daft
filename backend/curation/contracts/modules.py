@@ -201,8 +201,9 @@ def upload_params(module_id: str) -> dict[str, str]:
 
 
 def _eef_params() -> dict:
-    """design doc 12 §11.1 / §12. ``trajectory_json`` is required; ``observation_seeds`` are the P-A
-    tracker's seeds (optional: without them position, orientation and time cannot be measured)."""
+    """design doc 12 §11.1 / §12. ``trajectory_json`` is required; ``observation_seeds`` (a person's anchors)
+    or ``gripper_template`` (automatic anchors, F5.8) give the tracker its anchors - one of the two per camera,
+    seeds win where both exist; without either, position, orientation and time cannot be measured."""
     return {
         "type": "object", "additionalProperties": False, "required": ["trajectory_json"],
         "properties": {
@@ -213,7 +214,12 @@ def _eef_params() -> dict:
             "observation_seeds": _upload(
                 "eef_observation_seeds", [".jsonl", ".json"], 64, title="观测种子",
                 description="P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），"
-                            "每行是某个样本、某路相机、某一帧里人点出的点；不给时只做数值轨迹与画面运动",
+                            "每行是某个样本、某路相机、某一帧里人点出的点；与「夹爪外观模板」二选一，同一路相机两样都给时以种子为准",
+                default=""),
+            "gripper_template": _upload(
+                "eef_gripper_template", [".json"], 64, title="夹爪外观模板",
+                description="gripper-template/1.0：同一夹爪在各路相机里的若干小图与标好的物理点，跟踪器用它自动找锚点，"
+                            "不用逐条 episode 点种子；与「观测种子」二选一，两样都不给时只做数值轨迹与画面运动",
                 default=""),
             "threshold_profile": {
                 "title": "阈值", "description": "demo 由基准噪声底定、未校准，分项显示 ok / suspect 并标「未校准」；"

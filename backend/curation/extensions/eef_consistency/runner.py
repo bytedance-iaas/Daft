@@ -22,6 +22,7 @@ from . import motion as MO
 from . import observations as O
 from . import timeline as TL
 from . import tracking as TR
+from . import template as TP
 from . import video as V
 from .load import EefSample, declared_point_ids
 from .profile import Profile
@@ -41,6 +42,7 @@ class RunConfig:
     lag_search_s: tuple[float, float] = (-1.0, 1.0)
     interpolation_gap_factor: float = 2.0
     tracker: TR.TrackerConfig = dataclasses.field(default_factory=TR.TrackerConfig)
+    template: TP.GripperTemplate | None = None       # automatic anchors (F5.8); a camera with seeds keeps the seeds
 
 
 @dataclasses.dataclass
@@ -91,8 +93,9 @@ def measure_camera(sample: EefSample, camera_id: str, cap: dict, cfg: RunConfig)
                                          point_ids=cap["comparable_points"])
         t0 = time.perf_counter()
         try:
-            cm.batch = TR.SeededLKProvider(cfg.tracker).locate(_frames(sample, camera_id, cfg.lerobot_root),
-                                                               targets, ctx)
+            provider = (TR.TemplateLKProvider(cfg.template, cfg.tracker) if seeds is None and cfg.template is not None
+                        else TR.SeededLKProvider(cfg.tracker))
+            cm.batch = provider.locate(_frames(sample, camera_id, cfg.lerobot_root), targets, ctx)
         except V.DecodeError as exc:
             cm.errors.append(f"{C.DECODE_FAILED}: {exc}")
         cm.timing["track_s"] = round(time.perf_counter() - t0, 3)
@@ -146,6 +149,8 @@ def _to_sample_frames(bg: dict, vf: np.ndarray) -> dict:
 def measure_episode(sample: EefSample, cfg: RunConfig) -> EpisodeMeasure:
     t0 = time.perf_counter()
     observable = O.seeded_points(cfg.seed_root, sample) if cfg.seed_root else None
+    if cfg.template is not None:                    # a camera with seeds keeps them (human anchors win)
+        observable = {**cfg.template.observable_points(sample.cameras), **(observable or {})} or None
     cap = CAP.sample_capability(sample, observable=observable, allowed_mounts=cfg.allowed_mounts)
     cams = {}
     for cid in sample.cameras:
@@ -243,6 +248,7 @@ def assess(measure: EpisodeMeasure, cfg: RunConfig) -> dict:
         "assessment_mode": "advisory", "sample_id": s.sample_id, "input_hash": s.input_hash,
         "config_hash": config_digest(cfg),
         "seeds_sha256": O.seeds_digest(cfg.seed_root, s.sample_id),
+        "template_sha256": cfg.template.sha256 if cfg.template is not None else None,
         "threshold_profile": prof.summary() if prof else None,
         "uncalibrated": prof is None or not prof.calibrated,
         "overall": overall, "summary": summary,
@@ -260,7 +266,11 @@ def _obs_summary(cm: CameraMeasure) -> dict | None:
     return {"method": cm.batch.method, "model_version": cm.batch.model_version,
             "seed_method": st.get("seed_method"), "anchors": st.get("anchors"),
             "seed_image_hash_match": f"{st.get('seed_hash_matches')}/{st.get('seed_hash_checked')}",
-            "not_for_accuracy_acceptance": st.get("seed_method") == "synthetic_fixture"}
+            "template_sha256": st.get("template_sha256"), "template_methods": st.get("template_methods"),
+            "redetections": (f"{st.get('redetections_ok')}/{st.get('redetections_tried')}"
+                             if st.get("redetections_tried") is not None else None),
+            "not_for_accuracy_acceptance": st.get("seed_method") == "synthetic_fixture"
+            or "synthetic_fixture" in (st.get("template_methods") or [])}
 
 
 def _overall(summary: dict) -> str:

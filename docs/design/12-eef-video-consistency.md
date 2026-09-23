@@ -62,6 +62,7 @@
 4. 第一刀不含 VLM 复核，只留 tape 钩子。
 5. 直接在 feat/curator-v2 上按 feature 提交并推送，同步 `feature_list.md` 与 `claude-progress.txt`，每次提交前过 v1 单测、契约测试与 parity。
 6. dataset1 也转成 `trajectory.json` 作为第二套 DEMO 数据。
+7. （2026-09-23 补）人工点种子的负担太大：加「夹爪外观模板」作为锚点的第二种来源，模块配置里种子与模板二选一（F5.8，§7.2 的 P-A′）。
 
 ## 1. 目标、范围与非目标
 
@@ -234,6 +235,7 @@ dataset1（v2.1，`observation.state=[x,y,z,rpy,gripper]`）与 dataset2（v3.0�
 | 覆盖 | 文件可只含数据集的一部分 episode；缺的 episode 该模块 `unsupported: projection_missing` |
 | 体量 | DEMO 只收 `.json`；dataset2 七条两路相机约 3 MB。后续 `.jsonl.gz` 或分片再议 |
 | 版本 | 文件 hash 进 `input_hash`；换文件重跑视为新输入，旧结果按 revision 保留 |
+| 锚点来源 | 模块配置里再传**其一**：`observation_seeds`（人点的观测行）或 `gripper_template`（`gripper-template/1.0` 单文件，Schema 在 `12-eef/schemas/`、冻结版在 `docs/contracts/eef/`）；同一路相机两样都给以种子为准；两样都没有时位置、方向、时间三项 `needs_input: observation_seed_missing` |
 
 产出与工具（本机 `~/ws/ws_general/galbot/`）：`tools/export_trajectory_json.py`（原生标注 → `trajectory.json`），`tools/validate_trajectory_json.py`（校验 + 可拆回三文件目录）。dataset2 的七条已产出并校验通过（`dataset2/reports_trajectory_validation.json`：2009 帧、28126 个投影点、最大重投影差 0.013 px）。
 
@@ -359,6 +361,7 @@ class ObservationProvider(Protocol):
 | 阶 | 方法 | 用途 | 通过条件 |
 |---|---|---|---|
 | P-A 人工初始化 + CPU 跟踪 | 人在若干帧点出指尖 / 壳体角点，多尺度 LK 传播，前后向误差、patch 一致性、形状约束，每窗口重定位 | P2 测量实验、建立噪声底 | 留出验收帧上 P95 定位误差 < 最小可检异常像素幅度的 1/3 |
+| P-A′ 模板锚点 + 跟踪（F5.8，已实现） | 一个数据集建一次「夹爪外观模板」（`gripper-template/1.0`，§3.7）：若干帧的夹爪小图 + 标好的物理点 + 由锚点间刚性运动得到的掩膜；运行时每 15 帧用 ORB + RANSAC 相似变换在整幅画面里重检测，命中即锚点，锚点之间仍是 P-A 的双锚点跟踪 | v1 生产（无需逐条 episode 点种子） | dataset2：重检测对真值 P95 ≤ 1 px（ext2）/ 0.5 px（ext1），模板模式与种子模式的观测 P95 差 < 8 px，ep0 / ep5 / ep6 的分项与诊断结论与种子模式一致 |
 | P-B 自动初始化 + 跟踪 + 周期重定位 | 开放词汇检测 / 分割给出夹爪区域与指尖候选，LK 跟踪，遮挡后重新确认；跟踪质量差即弃权 | v1 生产 | 在 P-A 的验收集上达到同等误差，且错目标率、遮挡弃权率可接受 |
 | P-C 客户夹爪关键点模型 | 用合格数据的投影做伪标签自举训练，人工验收集校准 | v2 生产 | 同上，且跨 episode 分组验收 |
 | P-X VLM 定位 | 实验 provider | 仅实验 | 同一套独立标注验证后才能进数值主链 |
@@ -481,7 +484,7 @@ class ObservationProvider(Protocol):
 - `input_scope=all_selected`：planner 不按漏斗筛选，对任务选中的全部样本运行，包括已被旧硬门拒绝的。
 - `affects_dataset_verdict=false`：`aggregate` 在调用边界过滤掉它，`verdict.py` 不改；`records` 里 `passed=None, score=None`，分项进 `detail`，界面不把它译成弃权。
 - 前端展示为一个模块「EEF–视频一致性」加可选「VLM 复核」开关；选复核自动带上基础模块。
-- 参数（`param_schema`，按 D38 每项带 title / description / default）：**`trajectory_json`（文件，必填）**、`observation_provider`、`threshold_profile`、`lag_search_s`、`interpolation_gap_factor`、`allowed_camera_mounts`、`evidence_mode`、`review_enabled`、`review_windows_per_camera`、`review_frames_per_window`。
+- 参数（`param_schema`，按 D38 每项带 title / description / default）：**`trajectory_json`（文件，必填）**、`observation_seeds` 与 `gripper_template`（文件，二选一，F5.8）、`observation_provider`、`threshold_profile`、`lag_search_s`、`interpolation_gap_factor`、`allowed_camera_mounts`、`evidence_mode`、`review_enabled`、`review_windows_per_camera`、`review_frames_per_window`。
 - 文件型参数是新的表单控件：`param_schema` 用 `{"type": "string", "format": "upload", "x-accept": [".json"], "x-max-mb": 64}` 声明；Daemon 新增上传接口把文件存到任务的 inputs 目录并返回句柄与 hash；CLI 侧对应 `--param eef_video_consistency.trajectory_json=<path>`。DEMO 第一刀先做 CLI 路径参数，上传控件在 P4 补。
 
 ### 11.2 改动清单（对照 05 篇 §7 与参考设计 §10）

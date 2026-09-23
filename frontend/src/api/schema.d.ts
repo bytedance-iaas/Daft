@@ -1493,7 +1493,7 @@ export interface components {
          * @description the x-upload-kind of a file parameter (registry 1.5)
          * @enum {unknown}
          */
-        UploadKind: "eef_trajectory" | "eef_observation_seeds";
+        UploadKind: "eef_trajectory" | "eef_observation_seeds" | "eef_gripper_template";
         /** @description upl- and 9 lowercase letters (D45); uploads made before 1.10.0 keep upl_ and hex digits */
         UploadId: string;
         UploadIssue: {

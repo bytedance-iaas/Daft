@@ -221,3 +221,24 @@ JSON Schema 检查类型与枚举，不能证明以下事项，生产读取器�
 7. 可评估性逐项判断：未知点定义、不可见、严重模糊、方向退化分别处理，不能合并成零误差。
 
 本次 helper 检查其中能由样例直接验证的结构、几何和路径条件；完整媒体与语义认证属于实施计划。格式通过只说明数据可解释，不证明客户轨迹正确。
+
+## 8. 夹爪外观模板：`gripper-template/1.0`（F5.8）
+
+Schema：[gripper_template.schema.json](gripper_template.schema.json)，示例：`docs/contracts/examples/eef-gripper-template.json`。
+它不是逐帧记录，而是**同一夹爪的外观库**：每个条目是从某路相机某一帧裁下来的小图（`patch_png_base64`）、
+小图坐标系里标好的物理点（`points_patch_px`，key 必须在 `tool.point_ids` 里）、可选的夹爪掩膜（`mask_png_base64`，
+白色 = 夹爪，只在掩膜里提特征）、该条目来自哪路相机（`camera_id`，`null` 表示任意相机）与开合状态（`closed_fraction`）、
+来源（`source`）与出处等级（`provenance.method`：`human_click` / `synthetic_fixture` / `tool_export`）。
+
+运行时（跟踪器的 P-A′ 模式）：每隔 `matching.every_frames` 帧，在整幅画面里提 ORB 特征，与本路相机的所有条目做比率检验匹配，
+用 RANSAC 拟合二维相似变换（`matching.model`），内点数须不少于 `min_inliers` 且不少于条目特征数的 `min_inlier_ratio`，
+尺度在 `scale_range` 内；把条目上标的点变换到当前帧，就是一个锚点，与人点的种子完全同等地进入锚点间的跟踪。
+两个条目给出的位置相差超过 `agree_px` 且内点数相近时视为歧义，放弃这一帧。RANSAC 按 `rng_seed` 固定随机数，同一帧同一答案。
+
+构建：`python -m curation.extensions.eef_consistency template-build` 从若干帧的观测行（人点的，或 DEMO 的 `synthetic_fixture`）裁条目；
+掩膜来自相邻两个锚点之间的跟踪：只保留跟着标记点刚性运动的特征所在的圆盘，静止的背景、桌面和滑动的物体都被剔除。
+两个锚点之间夹爪移动不足 20 像素时分不出夹爪和背景，这样的帧默认不做成条目（`skipped_static`）。
+
+与观测种子的关系：模块参数里两者**二选一**；同一路相机两样都给时以种子为准（人点的锚点等级更高）。
+模板描述的是夹爪长什么样，与账本对不对无关，所以从一个数据集的合格 episode 建一次，可以查这个数据集的全部 episode。
+条目 `provenance.method = synthetic_fixture` 的模板只用于 DEMO，不能用于视觉精度验收。

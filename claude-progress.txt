@@ -269,6 +269,13 @@ Main gaps:
   - 阶段 6 全部 not_completed（进行中）
   - 集群连不上：kubeconfig 走 socks5://localhost:1080，本机隧道没开；F6.6 部署前需要需求方打开
   - 镜像：CP 流水线推送触发仍未生效，出镜像要手动运行
+  - EEF F5.8 夹爪外观模板（2026-09-23，分支 feat/eef-gripper-template，worktree ~/ws/daft-eef-template；主工作区当时有另一位 agent 的暂存改动，
+    故未直接在 feat/curator-v2 上提交）：格式 gripper-template/1.0 + Schema + 示例；template.py（加载、Redetector、掩膜、构建、检查）；
+    tracking.py 的 _track 循环抽出锚点回调，TemplateLKProvider 复用；runner / preflight / eef_check / __main__ 接模板；注册表 1.7 的
+    gripper_template 文件参数（与种子二选一）；Daemon 上传种类 eef_gripper_template；OpenAPI 1.11.0；前端类型与 mock；
+    dataset2/gripper_template.json（从 ep0 种子建，27 条目、13 静止帧跳过）。实测：重检测对种子 P95 ≤ 1 px，模板模式的 ep0/ep5/ep6
+    结论与种子模式一致；只有模板时预检 available、check 出结果；tests/eef/test_template.py 8 条；契约 92 条；前端 261 条。
+    合回 feat/curator-v2 时注意：另一位 agent 的暂存改动也动了 CONTRACTS.lock 与 openapi.yaml，合并后重跑 export-modules + lock
   - EEF F5.7 试用：待需求方指定数据集与 VLM 后端
   - F1.1 基线暂缓；F3.2 / F3.3 / F4.3 待走查
 

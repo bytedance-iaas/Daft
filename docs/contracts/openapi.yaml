@@ -2214,7 +2214,7 @@ components:
         region: {$ref: "#/components/schemas/Region"}
         credential: {type: [string, "null"], description: "access key name; null in responses once the key was deleted"}
     UploadKind:
-      enum: [eef_trajectory, eef_observation_seeds]
+      enum: [eef_trajectory, eef_observation_seeds, eef_gripper_template]
       description: the x-upload-kind of a file parameter (registry 1.5)
     UploadId:
       type: string

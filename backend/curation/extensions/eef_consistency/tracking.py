@@ -282,10 +282,6 @@ class SeededLKProvider:
         anchors = sorted(f for f in (seeds.by_media_frame if seeds else {}) if 0 <= f < n)
         batch.stats["anchors"] = len(anchors)
         anchor_set = set(anchors)
-        buf: list[np.ndarray] = []
-        buf_first = None
-        prev = None
-        self._tail = None
 
         def anchor_pts(f):
             pts = np.full((len(pids), 2), np.nan)
@@ -303,15 +299,30 @@ class SeededLKProvider:
                     batch.visibility[pid][f] = sp.visibility if sp.visibility in (OCCLUDED, OUT_OF_FRAME) else UNCERTAIN
             return pts
 
+        def anchor_at(fr: DecodedFrame):
+            if fr.index not in anchor_set:
+                return None
+            batch.stats["seed_hash_checked"] += 1
+            batch.stats["seed_hash_matches"] += int(seeds.image_sha256.get(fr.index) == batch.image_sha256[fr.index])
+            return anchor_pts(fr.index)
+
+        return self._track(frames, n, pids, batch, anchor_at)
+
+    def _track(self, frames: Iterable[DecodedFrame], n: int, pids: list[str], batch: ObservationBatch,
+               anchor_at) -> ObservationBatch:
+        """The anchor-to-anchor loop. ``anchor_at(frame)`` returns the anchor points (k, 2; NaN = not
+        placed) when the frame is an anchor, else None; seeds, or a re-detection, decide that."""
+        buf: list[np.ndarray] = []
+        buf_first = None
+        prev = None
+        self._tail = None
         for fr in frames:
             if fr.index >= n:
                 break
             batch.stats["frames_decoded"] += 1
             batch.image_sha256[fr.index] = fr.sha256()
-            if fr.index in anchor_set:
-                batch.stats["seed_hash_checked"] += 1
-                batch.stats["seed_hash_matches"] += int(seeds.image_sha256.get(fr.index) == batch.image_sha256[fr.index])
-                pts = anchor_pts(fr.index)
+            pts = anchor_at(fr)
+            if pts is not None:
                 self._tail = None
                 if buf and prev is not None:
                     self._segment(buf + [fr.gray], prev, pts, batch, pids, buf_first)
@@ -331,3 +342,66 @@ class SeededLKProvider:
         m = batch.stats.pop("members")
         batch.stats["members_median"] = float(np.median(m)) if m else 0.0
         return batch
+
+
+TEMPLATE_MODEL_VERSION = "pa-template-rigid-lk/1.0"
+
+
+class TemplateLKProvider(SeededLKProvider):
+    """P-A with automatic anchors (design 12 §7.2, F5.8): a gripper template re-detects the gripper
+    every ``every_frames`` frames (and on every frame until the first hit); each hit is an anchor for
+    the same segment tracking as the seeded provider. No seeds, no projection, no pose."""
+
+    model_version = TEMPLATE_MODEL_VERSION
+
+    def __init__(self, template, config: TrackerConfig | None = None):
+        super().__init__(config)
+        self.template = template
+
+    def locate(self, frames: Iterable[DecodedFrame], targets: PointTargets, ctx: ProviderContext) -> ObservationBatch:
+        from .template import SEED_METHOD, Redetector
+
+        n = ctx.media_frame_count
+        pids = list(targets.point_ids)
+        red = Redetector(self.template, ctx.camera_id)
+        batch = ObservationBatch.empty(ctx.camera_id, METHOD,
+                                       f"{TEMPLATE_MODEL_VERSION}; template={self.template.method}:{self.template.sha256[:12]}",
+                                       n, pids)
+        batch.stats = {"seed_method": SEED_METHOD, "template_methods": list(self.template.methods),
+                       "template_sha256": self.template.sha256, "template_entries": len(red.entries),
+                       "anchors": 0, "redetections_tried": 0, "redetections_ok": 0, "entries_used": {},
+                       "disagreements": 0, "lost": 0, "members": [], "seed_hash_matches": 0, "seed_hash_checked": 0,
+                       "frames_decoded": 0}
+        every = self.template.matching.every_frames
+        state = {"last": None}
+
+        def anchor_at(fr: DecodedFrame):
+            if not red.usable:
+                return None
+            if state["last"] is not None and fr.index - state["last"] < every:
+                return None
+            batch.stats["redetections_tried"] += 1
+            det = red.detect(fr.gray)
+            if det is None:                          # try again on the next frame
+                return None
+            batch.stats["redetections_ok"] += 1
+            batch.stats["anchors"] += 1
+            batch.stats["entries_used"][det.entry_id] = batch.stats["entries_used"].get(det.entry_id, 0) + 1
+            state["last"] = fr.index
+            h, w = fr.gray.shape
+            pts = np.full((len(pids), 2), np.nan)
+            for k, pid in enumerate(pids):
+                uv = det.points.get(pid)
+                if uv is None:
+                    batch.visibility[pid][fr.index] = UNCERTAIN
+                elif not (0 <= uv[0] < w and 0 <= uv[1] < h):
+                    batch.visibility[pid][fr.index] = OUT_OF_FRAME
+                else:
+                    pts[k] = uv
+                    batch.uv[pid][fr.index] = uv
+                    batch.visibility[pid][fr.index] = VISIBLE
+                    batch.confidence[pid][fr.index] = det.confidence
+                    batch.uncertainty[pid][fr.index] = det.uncertainty_px
+            return pts
+
+        return self._track(frames, n, pids, batch, anchor_at)
