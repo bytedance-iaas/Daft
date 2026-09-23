@@ -76,6 +76,16 @@ describe('新建任务 · 第一屏 (07 §3)', () => {
     expect(await screen.findByText('运动质量：为什么不能开启')).toBeInTheDocument();
   });
 
+  it('screen-1 texts: 快速质检, no note by 高级设置, 全部 for every episode (requester item 15)', async () => {
+    renderApp('/tasks/new');
+    await screen.findByText('基本信息');
+    expect(within(screen.getByRole('radiogroup', { name: '质检范围' })).getByRole('radio', { name: '快速质检' })).toBeInTheDocument();
+    expect(within(screen.getByRole('radiogroup', { name: 'Episode 选择' })).getByRole('radio', { name: '全部' })).toBeInTheDocument();
+    expect(screen.getByText('高级设置')).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('不改也能跑');
+    expect(document.body).not.toHaveTextContent('不调用模型的模块）');
+  });
+
   it('quick preset hides the model block; any manual change switches to 自选', async () => {
     const { user } = renderApp('/tasks/new');
     await screen.findByText('基本信息');
@@ -83,7 +93,7 @@ describe('新建任务 · 第一屏 (07 §3)', () => {
     await pick(user, '访问密钥', 'readonly-tos');
     await screen.findByText(/LeRobot v2 · 200 条 episode/);
     expect(await screen.findByText('模型配置')).toBeInTheDocument();
-    await user.click(screen.getByText('快速质检（不调用模型的模块）'));
+    await user.click(screen.getByText('快速质检'));
     await waitFor(() => expect(screen.queryByText('模型配置')).toBeNull());
     expect(within(screen.getByTestId('module-task_success')).getByRole('checkbox')).not.toBeChecked();
     await user.click(within(screen.getByTestId('module-dedup')).getByRole('checkbox'));
@@ -101,15 +111,30 @@ describe('新建任务 · 两屏与提交', () => {
     await pick(user, '访问密钥', 'prod-tos');
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/new-set-0921');
     await screen.findByText(/LeRobot v2 · 120 条 episode/);
-    await user.click(screen.getByText('快速质检（不调用模型的模块）'));
+    await user.click(screen.getByText('快速质检'));
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
     // Screen 2 is generated from param_schema: video_action_sync has one parameter
     const params = within(s2()).getByTestId('params-video_action_sync');
     expect(within(params).getByText('同步曲线证据图')).toBeInTheDocument();
     await user.click(within(params).getByText('全部'));
-    expect(within(s2()).getByTestId('no-settings')).toHaveTextContent('无需额外设置：时间戳检查、运动学极限、运动质量、视觉质量、精确去重');
+    // Modules without extra settings are not listed (requester item 16).
+    expect(s2()).not.toHaveTextContent('无需额外设置');
+    expect(within(s2()).queryByTestId('nothing-to-set')).toBeNull();
+    // While the start checks run, the buttons show their loading state and nothing else is said
+    // (requester item 12).
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    server.use(
+      http.post('*/api/v1/tasks/:id/actions/start', async () => {
+        await held;
+      }),
+    );
     await user.click(screen.getByRole('button', { name: '创建并开始' }));
+    await waitFor(() => expect(seen.some((s) => s.method === 'POST' && /\/actions\/start$/.test(s.path))).toBe(true));
+    expect(screen.getByRole('button', { name: '创建并开始' })).toHaveClass('arco-btn-loading');
+    expect(document.body).not.toHaveTextContent('正在做开始前检查');
+    release();
     await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task_/));
     const reg = seen.find((s) => s.method === 'POST' && s.path === '/datasets');
     expect(reg?.body).toEqual({ input: { source: 'tos', uri: 'tos://pai-kit-datasets/lerobot/new_set', region: 'cn-beijing', credential: 'prod-tos' } });
@@ -124,6 +149,22 @@ describe('新建任务 · 两屏与提交', () => {
     expect(await screen.findByText('任务已创建，进入队列')).toBeInTheDocument();
   });
 
+  it('screen 2 with nothing to set says so instead of showing an empty card', async () => {
+    const { user } = renderApp('/tasks/new');
+    await screen.findByText('基本信息');
+    await fill(user, '任务名称', 'ts only');
+    await fill(user, '数据集地址', 'tos://pai-kit-datasets/lerobot/new_set');
+    await pick(user, '访问密钥', 'prod-tos');
+    await fill(user, '交付目录', 'tos://pai-kit-deliveries/ts-only');
+    await screen.findByText(/LeRobot v2 · 120 条 episode/);
+    await user.click(screen.getByRole('button', { name: '清空' }));
+    await user.click(within(screen.getByTestId('module-timestamp_check')).getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
+    await waitFor(() => expect(s2()).toBeVisible());
+    expect(within(s2()).getByTestId('nothing-to-set')).toHaveTextContent('开启的模块都不需要额外设置，可以直接创建。');
+    expect(s2()).not.toHaveTextContent('时间戳检查');
+  });
+
   it('an advisory module is opted into by hand and takes its trajectory.json as an upload (F5.5)', async () => {
     const seen = record();
     const { user } = renderApp('/tasks/new');
@@ -133,7 +174,7 @@ describe('新建任务 · 两屏与提交', () => {
     await pick(user, '访问密钥', 'prod-tos');
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/eef-demo');
     await screen.findByText(/LeRobot v2 · 120 条 episode/);
-    await user.click(screen.getByText('快速质检（不调用模型的模块）'));
+    await user.click(screen.getByText('快速质检'));
     const eef = screen.getByRole('checkbox', { name: 'EEF–视频一致性' });
     const review = screen.getByRole('checkbox', { name: 'EEF–视频一致性 · VLM 复核' });
     expect(eef).not.toBeChecked();
@@ -210,7 +251,7 @@ describe('新建任务 · 两屏与提交', () => {
     await fill(user, '任务名称', 'droid 200 recheck');
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/droid-200-y');
     await pick(user, '交付目录访问密钥', 'prod-tos');
-    await user.click(screen.getByText('快速质检（不调用模型的模块）'));
+    await user.click(screen.getByText('快速质检'));
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await pick(user, '机器人型号', 'franka', s2());
     await user.click(screen.getByRole('button', { name: '创建并开始' }));
@@ -244,7 +285,7 @@ describe('新建任务 · 两屏与提交', () => {
     await fill(user, '任务名称', 'droid 200 shrink');
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/droid-200-z');
     await pick(user, '交付目录访问密钥', 'prod-tos');
-    await user.click(screen.getByText('快速质检（不调用模型的模块）'));
+    await user.click(screen.getByText('快速质检'));
     await user.click(screen.getByText('前 N 条'));
     await fill(user, '条数', '150');
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
@@ -267,7 +308,7 @@ describe('新建任务 · 两屏与提交', () => {
     await pick(user, '访问密钥', 'readonly-tos');
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/x');
     await screen.findByText(/LeRobot v2 · 120 条 episode/);
-    await user.click(screen.getByText('快速质检（不调用模型的模块）'));
+    await user.click(screen.getByText('快速质检'));
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await user.click(screen.getByRole('button', { name: '创建并开始' }));
     expect(await screen.findByText('任务已保存为待启动，但开始前检查没过：按标出的地方改好后再开始')).toBeInTheDocument();
@@ -365,7 +406,7 @@ describe('v1 deep links on /tasks/new (07 §2.1)', () => {
     await fill(user, '任务名称', '夜间批');
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/nightly');
     await pick(user, '交付目录访问密钥', 'prod-tos');
-    await user.click(screen.getByText('快速质检（不调用模型的模块）'));
+    await user.click(screen.getByText('快速质检'));
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await user.click(screen.getByRole('button', { name: '创建并开始' }));
     await waitFor(() => expect(currentLocation()).toBe('/tasks'));

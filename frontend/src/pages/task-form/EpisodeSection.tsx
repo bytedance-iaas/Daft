@@ -109,7 +109,7 @@ export function EpisodeSection({
       }
     >
       <Radio.Group type="button" value={v.episodeMode} onChange={(x: FormValues['episodeMode']) => set({ episodeMode: x })} aria-label={zh.taskForm.sectionEpisodes}>
-        <Radio value="all">{zh.taskForm.episodesAll(total ?? '')}</Radio>
+        <Radio value="all">{zh.taskForm.episodesAll}</Radio>
         <Radio value="head">{zh.taskForm.episodesHead}</Radio>
         <Radio value="explicit">{zh.taskForm.episodesExplicit}</Radio>
       </Radio.Group>

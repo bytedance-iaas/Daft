@@ -113,14 +113,7 @@ export function AdvancedSection({ v, set, errors, vlm }: { v: FormValues; set: (
     <Collapse defaultActiveKey={hasError ? ['adv'] : []} key={hasError ? 'open' : 'closed'}>
       <Collapse.Item
         name="adv"
-        header={
-          <Space>
-            <b>{zh.taskForm.sectionAdvanced}</b>
-            <span className="muted" style={{ fontSize: 12 }}>
-              {zh.taskForm.advancedDesc}
-            </span>
-          </Space>
-        }
+        header={<b>{zh.taskForm.sectionAdvanced}</b>}
       >
         <Alert type="info" content={zh.taskForm.advancedNote} style={{ marginBottom: 12 }} />
         <Row gutter={24}>

@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react';
+import { http } from 'msw';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { PREFLIGHT_DEBOUNCE } from '../../features/preflight/usePreflight';
 import { server } from '../../mocks/server';
@@ -69,7 +70,18 @@ describe('数据集列表 (07 §4.4)', () => {
     await fill(user, '数据集地址', 'tos://pai-kit-datasets/lerobot/brand_new', drawer);
     await pick(user, '访问密钥', 'readonly-tos', drawer);
     expect(await within(drawer).findByText(/LeRobot v2 · 120 条 episode/)).toBeInTheDocument();
+    // While it registers, the button keeps its label and only shows it is loading (requester item 17).
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    server.use(
+      http.post('*/api/v1/datasets', async () => {
+        await held;
+      }),
+    );
     await user.click(within(drawer).getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(within(drawer).getByRole('button', { name: '保存' })).toHaveClass('arco-btn-loading'));
+    expect(drawer).not.toHaveTextContent('正在登记');
+    release();
     await waitFor(() => expect(currentLocation()).toMatch(/^\/datasets\/ds_/));
     expect(seen[0]).toEqual({ input: { source: 'tos', uri: 'tos://pai-kit-datasets/lerobot/brand_new', region: 'cn-beijing', credential: 'readonly-tos' } });
     expect(await screen.findByText('已添加')).toBeInTheDocument();

@@ -103,8 +103,9 @@ export function AddDatasetDrawer({ visible, onClose }: { visible: boolean; onClo
       footer={
         <Space>
           <Button onClick={onClose}>{zh.common.cancel}</Button>
+          {/* The label stays while saving: the loading state says enough (requester item 17). */}
           <Button type="primary" loading={busy} onClick={() => void save()}>
-            {busy ? zh.datasets.saving : zh.common.save}
+            {zh.common.save}
           </Button>
         </Space>
       }
