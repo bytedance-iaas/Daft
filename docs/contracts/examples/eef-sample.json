@@ -1,0 +1,1030 @@
+{
+ "schema": "eef/sample.schema.json",
+ "valid": [
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "source": {
+    "dataset": "dataset1",
+    "episode_id": "0",
+    "instruction": "Pour the contents from the transparent bowl into the white bowl"
+   },
+   "frame_count": 1,
+   "timebase": "video_pts",
+   "annotations_path": "#frames",
+   "calibration_path": "#calibration",
+   "eef_frame": "panda_link8",
+   "reference_frame": "robot_base",
+   "views": [
+    {
+     "view_id": "27432424_left",
+     "kind": "camera",
+     "camera_id": "27432424_left",
+     "mount": "fixed_external",
+     "media": {
+      "kind": "video",
+      "uri": "videos/chunk-000/observation.images.exterior_image_1_left/episode_000000.mp4",
+      "image_size_wh": [
+       1280,
+       720
+      ],
+      "frame_count": 304,
+      "fps": 15.0,
+      "clip_start_s": 0.0,
+      "clip_end_s": 20.266666666666666
+     }
+    }
+   ],
+   "point_definitions": {
+    "eef_origin": {
+     "meaning": "DROID recorded EEF origin (flange frame panda_link8); not independently identified in the image",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "x_endpoint": {
+     "meaning": "Local x axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0.08,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "y_endpoint": {
+     "meaning": "Local y axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0.08,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "z_endpoint": {
+     "meaning": "Local z axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0.08
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    }
+   },
+   "axis_definitions": {
+    "x": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "x_endpoint",
+     "physical_meaning": "local_x",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "y": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "y_endpoint",
+     "physical_meaning": "local_y",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "z": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "z_endpoint",
+     "physical_meaning": "local_z",
+     "directed": true,
+     "length_m": 0.08
+    }
+   },
+   "raw_pose_sequence": null,
+   "notes": [
+    "完整 episode，每条一个 MP4；LeRobot v2.1 固定 15 Hz 网格，原始帧按最近网格时刻映射，有重复映射帧。",
+    "EEF 原点是 panda_link8，不等于指尖中心；没有工具模型，也没有独立视觉观测。",
+    "标定为数据集声明值；未重新拟合。"
+   ]
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset2_000006",
+   "source": {
+    "dataset": "dataset2",
+    "episode_id": "6",
+    "instruction": "Transfer the candy to the white bowl"
+   },
+   "frame_count": 1,
+   "timebase": "video_pts",
+   "annotations_path": "#frames",
+   "calibration_path": "#calibration",
+   "eef_frame": "panda_link8",
+   "reference_frame": "robot_base",
+   "views": [
+    {
+     "view_id": "27432424_left",
+     "kind": "camera",
+     "camera_id": "27432424_left",
+     "mount": "fixed_external",
+     "media": {
+      "kind": "video",
+      "uri": "videos/observation.images.exterior_1_left/chunk-000/file-000.mp4",
+      "image_size_wh": [
+       1280,
+       720
+      ],
+      "frame_count": 287,
+      "fps": 15.0,
+      "clip_start_s": 114.8,
+      "clip_end_s": 133.93333333333334
+     }
+    },
+    {
+     "view_id": "28221883_left",
+     "kind": "camera",
+     "camera_id": "28221883_left",
+     "mount": "fixed_external",
+     "media": {
+      "kind": "video",
+      "uri": "videos/observation.images.exterior_2_left/chunk-000/file-000.mp4",
+      "image_size_wh": [
+       1280,
+       720
+      ],
+      "frame_count": 287,
+      "fps": 15.0,
+      "clip_start_s": 114.8,
+      "clip_end_s": 133.93333333333334
+     }
+    }
+   ],
+   "point_definitions": {
+    "eef_origin": {
+     "meaning": "Recorded EEF origin (flange frame panda_link8)",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset2/eef.origin_xyz",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "tcp": {
+     "meaning": "Model assumed finger center",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0.16
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset2/calibration.json",
+      "method": "tool geometry",
+      "assurance": "model_assumed"
+     }
+    },
+    "tcp_x": {
+     "meaning": "Model axis endpoint from TCP",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0.06,
+      0,
+      0.16
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset2/calibration.json",
+      "method": "tool geometry",
+      "assurance": "model_assumed"
+     }
+    },
+    "tcp_y": {
+     "meaning": "Model axis endpoint from TCP",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0.06,
+      0.16
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset2/calibration.json",
+      "method": "tool geometry",
+      "assurance": "model_assumed"
+     }
+    },
+    "tcp_z": {
+     "meaning": "Model axis endpoint from TCP",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0.22
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset2/calibration.json",
+      "method": "tool geometry",
+      "assurance": "model_assumed"
+     }
+    },
+    "finger_plus_y": {
+     "meaning": "Model assumed finger tip; sign is local Y, not anatomical left/right",
+     "frame_id": "panda_link8",
+     "model": "linear_gripper",
+     "position_eef_m": null,
+     "position_open_eef_m": [
+      0,
+      0.0425,
+      0.16
+     ],
+     "position_closed_eef_m": [
+      0,
+      0,
+      0.16
+     ],
+     "provenance": {
+      "source": "dataset2/calibration.json",
+      "method": "tool geometry",
+      "assurance": "model_assumed"
+     }
+    },
+    "finger_minus_y": {
+     "meaning": "Model assumed finger tip; sign is local Y, not anatomical left/right",
+     "frame_id": "panda_link8",
+     "model": "linear_gripper",
+     "position_eef_m": null,
+     "position_open_eef_m": [
+      0,
+      -0.0425,
+      0.16
+     ],
+     "position_closed_eef_m": [
+      0,
+      0,
+      0.16
+     ],
+     "provenance": {
+      "source": "dataset2/calibration.json",
+      "method": "tool geometry",
+      "assurance": "model_assumed"
+     }
+    }
+   },
+   "axis_definitions": {
+    "x": {
+     "start_point_id": "tcp",
+     "end_point_id": "tcp_x",
+     "physical_meaning": "local_x",
+     "directed": true,
+     "length_m": 0.06
+    },
+    "y": {
+     "start_point_id": "tcp",
+     "end_point_id": "tcp_y",
+     "physical_meaning": "local_y",
+     "directed": true,
+     "length_m": 0.06
+    },
+    "z": {
+     "start_point_id": "tcp",
+     "end_point_id": "tcp_z",
+     "physical_meaning": "local_z",
+     "directed": true,
+     "length_m": 0.06
+    },
+    "finger_line": {
+     "start_point_id": "finger_minus_y",
+     "end_point_id": "finger_plus_y",
+     "physical_meaning": "model_assumed_finger_line",
+     "directed": false,
+     "length_m": null
+    }
+   },
+   "raw_pose_sequence": null,
+   "notes": [
+    "完整 episode，视频为 LeRobot v3 拼接文件，通过 clip_start_s 定位到本 episode。",
+    "标定为该 episode 声明的有效标定；未重新拟合，也没有独立视觉观测。",
+    "TCP 16 cm、沿局部 Y 开合与 85 mm 最大开口为工具模型假设（model_assumed）。"
+   ]
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "source": {
+    "dataset": "dataset1",
+    "episode_id": "0",
+    "instruction": "Pour the contents from the transparent bowl into the white bowl"
+   },
+   "frame_count": 1,
+   "timebase": "video_pts",
+   "annotations_path": "#frames",
+   "calibration_path": "#calibration",
+   "eef_frame": "panda_link8",
+   "reference_frame": "robot_base",
+   "views": [
+    {
+     "view_id": "27432424_left",
+     "kind": "camera",
+     "camera_id": "27432424_left",
+     "mount": "fixed_external",
+     "media": {
+      "kind": "video",
+      "uri": "videos/chunk-000/observation.images.exterior_image_1_left/episode_000000.mp4",
+      "image_size_wh": [
+       1280,
+       720
+      ],
+      "frame_count": 304,
+      "fps": 15.0,
+      "clip_start_s": 0.0,
+      "clip_end_s": 20.266666666666666
+     }
+    }
+   ],
+   "point_definitions": {
+    "eef_origin": {
+     "meaning": "DROID recorded EEF origin (flange frame panda_link8); not independently identified in the image",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "x_endpoint": {
+     "meaning": "Local x axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0.08,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "y_endpoint": {
+     "meaning": "Local y axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0.08,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "z_endpoint": {
+     "meaning": "Local z axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0.08
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    }
+   },
+   "axis_definitions": {
+    "x": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "x_endpoint",
+     "physical_meaning": "local_x",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "y": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "y_endpoint",
+     "physical_meaning": "local_y",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "z": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "z_endpoint",
+     "physical_meaning": "local_z",
+     "directed": true,
+     "length_m": 0.08
+    }
+   },
+   "raw_pose_sequence": null,
+   "notes": [
+    "完整 episode，每条一个 MP4；LeRobot v2.1 固定 15 Hz 网格，原始帧按最近网格时刻映射，有重复映射帧。",
+    "EEF 原点是 panda_link8，不等于指尖中心；没有工具模型，也没有独立视觉观测。",
+    "标定为数据集声明值；未重新拟合。"
+   ],
+   "typo": 1
+  },
+  {
+   "schema_version": "eef-video/2.0.0",
+   "sample_id": "dataset1_000000",
+   "source": {
+    "dataset": "dataset1",
+    "episode_id": "0",
+    "instruction": "Pour the contents from the transparent bowl into the white bowl"
+   },
+   "frame_count": 1,
+   "timebase": "video_pts",
+   "annotations_path": "#frames",
+   "calibration_path": "#calibration",
+   "eef_frame": "panda_link8",
+   "reference_frame": "robot_base",
+   "views": [
+    {
+     "view_id": "27432424_left",
+     "kind": "camera",
+     "camera_id": "27432424_left",
+     "mount": "fixed_external",
+     "media": {
+      "kind": "video",
+      "uri": "videos/chunk-000/observation.images.exterior_image_1_left/episode_000000.mp4",
+      "image_size_wh": [
+       1280,
+       720
+      ],
+      "frame_count": 304,
+      "fps": 15.0,
+      "clip_start_s": 0.0,
+      "clip_end_s": 20.266666666666666
+     }
+    }
+   ],
+   "point_definitions": {
+    "eef_origin": {
+     "meaning": "DROID recorded EEF origin (flange frame panda_link8); not independently identified in the image",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "x_endpoint": {
+     "meaning": "Local x axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0.08,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "y_endpoint": {
+     "meaning": "Local y axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0.08,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "z_endpoint": {
+     "meaning": "Local z axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0.08
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    }
+   },
+   "axis_definitions": {
+    "x": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "x_endpoint",
+     "physical_meaning": "local_x",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "y": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "y_endpoint",
+     "physical_meaning": "local_y",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "z": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "z_endpoint",
+     "physical_meaning": "local_z",
+     "directed": true,
+     "length_m": 0.08
+    }
+   },
+   "raw_pose_sequence": null,
+   "notes": [
+    "完整 episode，每条一个 MP4；LeRobot v2.1 固定 15 Hz 网格，原始帧按最近网格时刻映射，有重复映射帧。",
+    "EEF 原点是 panda_link8，不等于指尖中心；没有工具模型，也没有独立视觉观测。",
+    "标定为数据集声明值；未重新拟合。"
+   ]
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "source": {
+    "dataset": "dataset1",
+    "episode_id": "0",
+    "instruction": "Pour the contents from the transparent bowl into the white bowl"
+   },
+   "frame_count": 1,
+   "timebase": "video_pts",
+   "annotations_path": "#frames",
+   "calibration_path": "#calibration",
+   "eef_frame": "panda_link8",
+   "reference_frame": "robot_base",
+   "views": [
+    {
+     "view_id": "27432424_left",
+     "kind": "camera",
+     "camera_id": "27432424_left",
+     "mount": "fixed_external",
+     "media": {
+      "kind": "video",
+      "uri": "videos/chunk-000/observation.images.exterior_image_1_left/episode_000000.mp4",
+      "image_size_wh": [
+       1280,
+       720
+      ],
+      "frame_count": 304,
+      "fps": 15.0,
+      "clip_start_s": 0.0,
+      "clip_end_s": 20.266666666666666
+     }
+    }
+   ],
+   "point_definitions": {
+    "eef_origin": {
+     "meaning": "DROID recorded EEF origin (flange frame panda_link8); not independently identified in the image",
+     "frame_id": "panda_link8",
+     "model": "linear_gripper",
+     "position_eef_m": [
+      0,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "x_endpoint": {
+     "meaning": "Local x axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0.08,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "y_endpoint": {
+     "meaning": "Local y axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0.08,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "z_endpoint": {
+     "meaning": "Local z axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0.08
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    }
+   },
+   "axis_definitions": {
+    "x": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "x_endpoint",
+     "physical_meaning": "local_x",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "y": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "y_endpoint",
+     "physical_meaning": "local_y",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "z": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "z_endpoint",
+     "physical_meaning": "local_z",
+     "directed": true,
+     "length_m": 0.08
+    }
+   },
+   "raw_pose_sequence": null,
+   "notes": [
+    "完整 episode，每条一个 MP4；LeRobot v2.1 固定 15 Hz 网格，原始帧按最近网格时刻映射，有重复映射帧。",
+    "EEF 原点是 panda_link8，不等于指尖中心；没有工具模型，也没有独立视觉观测。",
+    "标定为数据集声明值；未重新拟合。"
+   ]
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "source": {
+    "dataset": "dataset1",
+    "episode_id": "0",
+    "instruction": "Pour the contents from the transparent bowl into the white bowl"
+   },
+   "frame_count": 1,
+   "timebase": "video_pts",
+   "annotations_path": "#frames",
+   "calibration_path": "#calibration",
+   "eef_frame": "panda_link8",
+   "reference_frame": "robot_base",
+   "views": [
+    {
+     "view_id": "27432424_left",
+     "kind": "camera",
+     "camera_id": "27432424_left",
+     "mount": "fixed_external",
+     "media": {
+      "kind": "image",
+      "uri": "videos/chunk-000/observation.images.exterior_image_1_left/episode_000000.mp4",
+      "image_size_wh": [
+       1280,
+       720
+      ],
+      "frame_count": 304,
+      "fps": 15.0,
+      "clip_start_s": 0.0,
+      "clip_end_s": 20.266666666666666
+     }
+    }
+   ],
+   "point_definitions": {
+    "eef_origin": {
+     "meaning": "DROID recorded EEF origin (flange frame panda_link8); not independently identified in the image",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "x_endpoint": {
+     "meaning": "Local x axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0.08,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "y_endpoint": {
+     "meaning": "Local y axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0.08,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "z_endpoint": {
+     "meaning": "Local z axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0.08
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    }
+   },
+   "axis_definitions": {
+    "x": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "x_endpoint",
+     "physical_meaning": "local_x",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "y": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "y_endpoint",
+     "physical_meaning": "local_y",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "z": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "z_endpoint",
+     "physical_meaning": "local_z",
+     "directed": true,
+     "length_m": 0.08
+    }
+   },
+   "raw_pose_sequence": null,
+   "notes": [
+    "完整 episode，每条一个 MP4；LeRobot v2.1 固定 15 Hz 网格，原始帧按最近网格时刻映射，有重复映射帧。",
+    "EEF 原点是 panda_link8，不等于指尖中心；没有工具模型，也没有独立视觉观测。",
+    "标定为数据集声明值；未重新拟合。"
+   ]
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "source": {
+    "dataset": "dataset1",
+    "episode_id": "0",
+    "instruction": "Pour the contents from the transparent bowl into the white bowl"
+   },
+   "frame_count": 1,
+   "timebase": "video_pts",
+   "annotations_path": "#frames",
+   "calibration_path": "#calibration",
+   "eef_frame": "panda_link8",
+   "reference_frame": "robot_base",
+   "views": [
+    {
+     "view_id": "27432424_left",
+     "kind": "camera",
+     "camera_id": null,
+     "mount": "fixed_external",
+     "media": {
+      "kind": "video",
+      "uri": "videos/chunk-000/observation.images.exterior_image_1_left/episode_000000.mp4",
+      "image_size_wh": [
+       1280,
+       720
+      ],
+      "frame_count": 304,
+      "fps": 15.0,
+      "clip_start_s": 0.0,
+      "clip_end_s": 20.266666666666666
+     }
+    }
+   ],
+   "point_definitions": {
+    "eef_origin": {
+     "meaning": "DROID recorded EEF origin (flange frame panda_link8); not independently identified in the image",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "x_endpoint": {
+     "meaning": "Local x axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0.08,
+      0,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "y_endpoint": {
+     "meaning": "Local y axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0.08,
+      0
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    },
+    "z_endpoint": {
+     "meaning": "Local z axis endpoint",
+     "frame_id": "panda_link8",
+     "model": "fixed",
+     "position_eef_m": [
+      0,
+      0,
+      0.08
+     ],
+     "position_open_eef_m": null,
+     "position_closed_eef_m": null,
+     "provenance": {
+      "source": "dataset1/calibration.json",
+      "method": "tool geometry",
+      "assurance": "declared"
+     }
+    }
+   },
+   "axis_definitions": {
+    "x": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "x_endpoint",
+     "physical_meaning": "local_x",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "y": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "y_endpoint",
+     "physical_meaning": "local_y",
+     "directed": true,
+     "length_m": 0.08
+    },
+    "z": {
+     "start_point_id": "eef_origin",
+     "end_point_id": "z_endpoint",
+     "physical_meaning": "local_z",
+     "directed": true,
+     "length_m": 0.08
+    }
+   },
+   "raw_pose_sequence": null,
+   "notes": [
+    "完整 episode，每条一个 MP4；LeRobot v2.1 固定 15 Hz 网格，原始帧按最近网格时刻映射，有重复映射帧。",
+    "EEF 原点是 panda_link8，不等于指尖中心；没有工具模型，也没有独立视觉观测。",
+    "标定为数据集声明值；未重新拟合。"
+   ]
+  }
+ ]
+}

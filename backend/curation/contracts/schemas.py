@@ -19,7 +19,8 @@ from urllib.parse import unquote, urlparse
 CONTRACTS_ENV = "CURATOR_CONTRACTS_DIR"
 
 #: Every contract file, relative to the contracts directory, grouped by kind.
-JSON_SCHEMA_GLOBS = ("cli/*.schema.json", "parity/*.schema.json", "progress.schema.json")
+JSON_SCHEMA_GLOBS = ("cli/*.schema.json", "parity/*.schema.json", "progress.schema.json",
+                     "eef/*.schema.json")
 OPENAPI = "openapi.yaml"
 MODULES_JSON = "modules.json"
 

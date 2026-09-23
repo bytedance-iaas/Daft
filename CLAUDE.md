@@ -9,7 +9,7 @@
 - 需求账本与进度：根目录 `feature_list.md`、`claude-progress.txt`
 - 对账工具（W0）：`tools/parity/README.md`
 - 契约：`docs/contracts/`
-- EEF–视频一致性（DEMO 模块，阶段 5）：`docs/design/12-eef-video-consistency.md`（首节是开工指引），格式规范与 Schema 在 `docs/design/12-eef/`
+- EEF–视频一致性（DEMO 模块，阶段 5）：`docs/design/12-eef-video-consistency.md`（首节是开工指引），格式规范与 Schema 在 `docs/contracts/eef/`（F5.1 冻结），模块代码在 `backend/curation/extensions/eef_consistency/`
 
 ## 纪律
 
@@ -36,6 +36,6 @@
 依赖装在仓库根目录的 `.venv`（配方见对账工具 README 的「本地环境」一节；macOS 27 上 scipy 用 1.16.3）：
 
 ```bash
-.venv/bin/python -m pytest -q backend/curation/tests --ignore=backend/curation/tests/test_environment.py   # v1 单测（test_environment 要 GPU）
+cd backend && ../.venv/bin/python -m pytest -q curation/tests --ignore=curation/tests/test_environment.py   # v1 单测，在 backend/ 下跑（有一条起子进程的用例靠工作目录找包；test_environment 要 GPU）
 PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests   # 对账工具，约 40 秒
 ```

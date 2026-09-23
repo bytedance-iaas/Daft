@@ -11,6 +11,7 @@
 | C3 | 进度协议（stderr 上的 JSON Lines） | `progress.schema.json` | Daemon → SSE |
 | C4 | REST API | `openapi.yaml`（报告、计划、预检等直接引用 C2 的 Schema） | 前端、Agent、`curation task …` |
 | C5 | Repository 接口与状态机 | `backend/daemon/repo/protocol.py` | Daemon 内部 |
+| EEF | EEF–视频一致性的输入格式（`eef-video/1.0.0` 四段 + `trajectory-bundle/1.0` 单文件容器），规范正文 `eef/format.md`、迁移规则 `eef/migration.md` | `eef/*.schema.json` | `check` 的 EEF runner、预检、（F5.5 起）Daemon 上传校验 |
 
 C2 各文件对应的命令与产物：
 
@@ -62,6 +63,9 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 - `examples/` 下每个文件的 `valid` 都能通过、`invalid` 都会被拒；测试里对应 `test_examples[...]`。
 - `modules.json` 与 `GET /api/v1/modules` 的内容一致（前端的模块清单只从这里来）。
 
-## 待冻结
+## EEF 输入格式（F5.1 冻结，2026-09-23）
 
-EEF–视频一致性模块的输入格式（`eef-video/1.0.0` 三段 + `trajectory-bundle/1.0` 单文件容器）目前在 `docs/design/12-eef/`，随 F5.1 迁入本目录 `eef/` 并刷新 `CONTRACTS.lock`（12 篇 §3、§11）。
+`eef/` 下是 EEF–视频一致性模块（12 篇）的输入契约：`sample`、`frame`、`calibration`、`observation` 四份 Schema 与单文件容器
+`trajectory_bundle`，规范正文在 `eef/format.md`，现有数据的迁移规则在 `eef/migration.md`。Schema 只管结构；跨段语义（引用一致、
+单位四元数、SO(3)、时间单调、提供投影与重算投影之差等）由 `backend/curation/extensions/eef_consistency/load.py` 检查，
+测试在 `backend/tests/eef/`。最小的合法与不合法示例在 `examples/eef-*.json`。

@@ -1,4 +1,4 @@
-> 本文件是 EEF–视频一致性模块的输入格式规范，随 12 篇设计文档进仓库（2026-09-22）。原件与六组可打开的样例、校验器在 `~/ws/ws_general/galbot/eef_video_consistency/`；DEMO 上传件的实例是 `~/ws/ws_general/galbot/dataset2/trajectory.json`。冻结时（F5.1）整体迁入 `docs/contracts/eef/` 并刷新 CONTRACTS.lock。
+> 本文件是 EEF–视频一致性模块的输入格式规范，随 12 篇设计文档进仓库（2026-09-22），F5.1（2026-09-23）冻结在 `docs/contracts/eef/`，五份 Schema 与本文件同目录、受 `CONTRACTS.lock` 保护；合法与不合法的最小示例在 `docs/contracts/examples/eef-*.json`。原件与六组可打开的样例、参考校验器在 `~/ws/ws_general/galbot/eef_video_consistency/`；DEMO 上传件的实例是 `~/ws/ws_general/galbot/dataset2/trajectory.json`。平台的读取与校验实现在 `backend/curation/extensions/eef_consistency/load.py`。
 
 # EEF–视频一致性统一格式 1.0
 
@@ -37,7 +37,7 @@ Schema 使用 [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12)
 
 ## 3. sample.json：样本入口
 
-Schema：[sample.schema.json](schemas/sample.schema.json)。完整实例见 [dataset2 样例](examples/dataset2_000006/sample.json)。
+Schema：[sample.schema.json](sample.schema.json)。完整实例见参考设计的 `examples/dataset2_000006/sample.json`（仓库外）。
 
 | 字段 | 说明 |
 |---|---|
@@ -94,7 +94,7 @@ VFR 视频 `fps` 可以为空，有效时间必须来自逐帧 PTS；CFR 只有�
 
 ## 4. frames.jsonl：逐帧数据
 
-Schema：[frame.schema.json](schemas/frame.schema.json)。一行一个完整 JSON，不允许 NaN／Infinity；不能用零位置代替缺失值。
+Schema：[frame.schema.json](frame.schema.json)。一行一个完整 JSON，不允许 NaN／Infinity；不能用零位置代替缺失值。
 
 | 字段 | 必须表达的内容 |
 |---|---|
@@ -171,7 +171,7 @@ T_reference_eef(t) = anchor_pose × ΔT_t
 
 ## 5. calibration.json：已解析的声明标定
 
-Schema：[calibration.schema.json](schemas/calibration.schema.json)。顶层为 `schema_version` 和按 `calibration_id` 索引的 `calibrations`。
+Schema：[calibration.schema.json](calibration.schema.json)。顶层为 `schema_version` 和按 `calibration_id` 索引的 `calibrations`。
 
 每份标定记录相机 ID、参考系、标定分辨率、`K`、图像空间、畸变模型、外参模式与 provenance。`K` 为普通 3×3 矩阵，不能存为容易误读的 `[fx,cx,fy,cy]`。
 
@@ -200,7 +200,7 @@ H 表达已知的数据预处理，不包含从故障答案拿到的画面抖动
 
 ## 6. 独立视觉观测
 
-Schema：[observation.schema.json](schemas/observation.schema.json)。运行后保存到 `observations/<sample_id>/<camera_id>.jsonl`，不回写输入 `frames.jsonl`。
+Schema：[observation.schema.json](observation.schema.json)。运行后保存到 `observations/<sample_id>/<camera_id>.jsonl`，不回写输入 `frames.jsonl`。
 
 观察记录包含：sample/frame/camera/media 帧对应、`pixel_space=media`、`method`、模型或标注协议版本、原始输入图像 hash、`projection_visible_to_localizer=false`，以及按物理点 ID 索引的点。
 

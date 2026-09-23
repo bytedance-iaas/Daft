@@ -124,7 +124,7 @@
 ### F5.1 契约与读取
 - 描述：`backend/curation/extensions/eef_consistency/` 的 contracts / load / geometry / timeline / adapters；读取并校验 `trajectory.json`（`trajectory-bundle/1.0` 容器 + `eef-video/1.0.0` 三段）；逐分项能力预检；几何投影与「提供 vs 重算」自洽；L0 数值轨迹（速度、旋转增量、尖峰、高频能量）；格式与 Schema 从 `docs/design/12-eef/` 冻结进 `docs/contracts/eef/` 并刷新 lock
 - 验收：①dataset2 七条与 dataset1 十一条的 `trajectory.json` 读通，能力表正确（形态 B 全部 available）；②重算投影与提供投影之差在源量化精度内（< 0.05 px）；③真值键出现即拒绝；④几何单测与 OpenCV `projectPoints` 交叉一致；⑤契约测试与 lock 检查通过
-- status: not_completed
+- status: **completed**
 
 ### F5.2 独立视觉观测
 - 描述：ObservationProvider 协议与观测文件（observation Schema）；P-A provider：种子（`observations_seed/`）+ 多尺度 LK 跟踪 + 前后向校验 + 周期重定位 + 遮挡弃权；投影扰动的独立性实验

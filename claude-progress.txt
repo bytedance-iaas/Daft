@@ -1,4 +1,4 @@
-Date: 2026-09-22
+Date: 2026-09-23
 TaskStatus: not_completed
 
 Task scope:
@@ -177,6 +177,16 @@ Current summary:
         dataset1 = v2.1 十一条（单相机、十种轻重两档故障）+ trajectory.json + ground_truth/
       · 实施由另一位 agent 按 12 篇「开工指引」在 feat/curator-v2 上直接做：第一刀 F5.1–F5.4 纯 CPU，不接 VLM，不做上传控件
 
+  - 2026-09-23 · EEF–视频一致性 DEMO 第一刀（F5.1–F5.4，本会话在 feat/curator-v2 上直接做）：
+      · F5.1 契约与读取 completed：格式与五份 Schema 迁入 docs/contracts/eef/ 并入锁（示例 examples/eef-*.json）；
+        backend/curation/extensions/eef_consistency/（contracts、load、geometry、timeline、capability、motion 的 L0、
+        adapters 的 unified_sample 与 world_policy、__main__ validate）；dataset2 七条（2009 帧、28126 点、最大差 0.013 px）
+        与 dataset1 十一条（3344 帧、13376 点）读通，形态 B 全部 available；真值键拒收并给路径；几何与 OpenCV 针孔 /
+        Brown / 鱼眼交叉一致；客户 droid / LVP 各 10 个收录且 unsupported；tests/eef 65 条（CI 加一步，DEMO 数据缺失时跳过）
+      · 口径（12 篇附录 C.1）：投影自洽超差是警告 input_inconsistent、两份都保留；L0 折叠重采样重复帧、用机器人时钟；
+        基准高频滚动 RMS 最大 1.09 mm，§12 的 5 mm 起点会漏掉 dataset1 ep5，demo 阈值按基准噪声底定
+      · 从仓库根跑 v1 单测有一条起子进程的用例找不到包（CI 在 backend/ 下跑，没问题）；CLAUDE.md 与 12 篇的命令已改
+
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
   - APIG：需要在 physicalai-apig 实例的监听命名空间里加 curation（需求方或实例维护者）
@@ -186,7 +196,8 @@ Main gaps:
     F4.3 待按 README 完整跑一次质检
 
 Next steps:
-  0. EEF–视频一致性 DEMO 第一刀（F5.1–F5.4）：读 docs/design/12-eef-video-consistency.md 的开工指引，先做 F5.1 契约与读取
+  0. EEF–视频一致性 DEMO 第一刀：F5.2 独立观测（P-A 跟踪；dataset1 的种子要按真值补）→ F5.3 指标与诊断、§13.3 矩阵 → F5.4 接入 v2；
+     §3.3 mapping.yaml 导出工具留作后续
   1. APIG 接通（physicalai-apig 监听 curation）、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
   2. 按 README 走查一次完整质检，F3.3、F4.1、F4.3 按验收置位；请需求方统一过一遍界面文案（F3.2）
   3. 真实数据的两个基线在 F4.2 黄金对账之前补

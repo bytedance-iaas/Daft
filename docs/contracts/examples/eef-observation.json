@@ -1,0 +1,206 @@
+{
+ "schema": "eef/observation.schema.json",
+ "valid": [
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset2_000000",
+   "frame_index": 0,
+   "camera_id": "27432424_left",
+   "video_frame_index": 0,
+   "pixel_space": "media",
+   "method": "synthetic_fixture",
+   "model_version": "seed-from-evaluation-truth/1.0",
+   "input_image_sha256": "941c01f358ea6a44f4f9d7fb12f7614a68cfabc74c7132c68f251d4f727eb429",
+   "projection_visible_to_localizer": false,
+   "points": {
+    "finger_plus_y": {
+     "uv_px": [
+      518.43,
+      344.31
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    },
+    "finger_minus_y": {
+     "uv_px": [
+      486.29,
+      335.68
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    },
+    "tcp": {
+     "uv_px": [
+      501.54,
+      339.77
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    }
+   }
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset2_000000",
+   "frame_index": 0,
+   "camera_id": "27432424_left",
+   "video_frame_index": 0,
+   "pixel_space": "media",
+   "method": "synthetic_fixture",
+   "model_version": "seed-from-evaluation-truth/1.0",
+   "input_image_sha256": "941c01f358ea6a44f4f9d7fb12f7614a68cfabc74c7132c68f251d4f727eb429",
+   "projection_visible_to_localizer": false,
+   "points": {
+    "finger_plus_y": {
+     "uv_px": [
+      518.43,
+      344.31
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    },
+    "finger_minus_y": {
+     "uv_px": [
+      486.29,
+      335.68
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    },
+    "tcp": {
+     "uv_px": null,
+     "visibility": "occluded",
+     "confidence": 0.0,
+     "uncertainty_px": null
+    }
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset2_000000",
+   "frame_index": 0,
+   "camera_id": "27432424_left",
+   "video_frame_index": 0,
+   "pixel_space": "media",
+   "method": "synthetic_fixture",
+   "model_version": "seed-from-evaluation-truth/1.0",
+   "input_image_sha256": "941c01f358ea6a44f4f9d7fb12f7614a68cfabc74c7132c68f251d4f727eb429",
+   "projection_visible_to_localizer": true,
+   "points": {
+    "finger_plus_y": {
+     "uv_px": [
+      518.43,
+      344.31
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    },
+    "finger_minus_y": {
+     "uv_px": [
+      486.29,
+      335.68
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    },
+    "tcp": {
+     "uv_px": [
+      501.54,
+      339.77
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    }
+   }
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset2_000000",
+   "frame_index": 0,
+   "camera_id": "27432424_left",
+   "video_frame_index": 0,
+   "pixel_space": "media",
+   "method": "synthetic_fixture",
+   "model_version": "seed-from-evaluation-truth/1.0",
+   "input_image_sha256": "941c01f358ea6a44f4f9d7fb12f7614a68cfabc74c7132c68f251d4f727eb429",
+   "projection_visible_to_localizer": false,
+   "points": {
+    "finger_plus_y": {
+     "uv_px": [
+      518.43,
+      344.31
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    },
+    "finger_minus_y": {
+     "uv_px": [
+      486.29,
+      335.68
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    },
+    "tcp": {
+     "uv_px": null,
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    }
+   }
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset2_000000",
+   "frame_index": 0,
+   "camera_id": "27432424_left",
+   "video_frame_index": 0,
+   "pixel_space": "media",
+   "method": "projection_copy",
+   "model_version": "seed-from-evaluation-truth/1.0",
+   "input_image_sha256": "941c01f358ea6a44f4f9d7fb12f7614a68cfabc74c7132c68f251d4f727eb429",
+   "projection_visible_to_localizer": false,
+   "points": {
+    "finger_plus_y": {
+     "uv_px": [
+      518.43,
+      344.31
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    },
+    "finger_minus_y": {
+     "uv_px": [
+      486.29,
+      335.68
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    },
+    "tcp": {
+     "uv_px": [
+      501.54,
+      339.77
+     ],
+     "visibility": "visible",
+     "confidence": 1.0,
+     "uncertainty_px": null
+    }
+   }
+  }
+ ]
+}

@@ -48,7 +48,7 @@ dataset1 当前原生格式为 v2.1，单条 episode 304 帧，11 条共 3,344 �
 
 当前目录虽然名叫 `lerobot_v2/`，`meta/info.json` 实际声明 v3.0。状态 `observation.state` 是关节状态，EEF 在 `observation.state.cartesian_position`；适配器不得把前 6 个关节数当作 XYZ＋旋转。
 
-样例使用 episode 6，它的第一路相机声明存在外参偏差，用于验证迁移后错误仍然保留。该信息写在迁移与评估文档中，不能传给检测器。两路相机的有效声明已分别解析进 [calibration.json](examples/dataset2_000006/calibration.json)，不再需要运行时猜 override 优先级。
+样例使用 episode 6，它的第一路相机声明存在外参偏差，用于验证迁移后错误仍然保留。该信息写在迁移与评估文档中，不能传给检测器。两路相机的有效声明已分别解析进 参考设计的 `examples/dataset2_000006/calibration.json`（仓库外），不再需要运行时猜 override 优先级。
 
 TCP 16 cm、沿局部 Y 开合、85 mm 最大开口都是源构建工具假设，没有独立安装标定证明。位置误差报告必须带上物理点与来源等级；不能直接称作“真实夹指中心偏差”。
 

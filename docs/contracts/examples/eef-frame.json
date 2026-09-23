@@ -1,0 +1,1017 @@
+{
+ "schema": "eef/frame.schema.json",
+ "valid": [
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "frame_index": 0,
+   "timestamp_s": 0.0,
+   "source_state_index": 0,
+   "source_timing": [
+    {
+     "channel": "27432424_left",
+     "timestamp": "1704137533667",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "estimated camera capture for paired state"
+    },
+    {
+     "channel": "robot_state",
+     "timestamp": "1704137533708",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "robot read_start"
+    }
+   ],
+   "eef": {
+    "pose_type": "absolute",
+    "frame_id": "panda_link8",
+    "reference_frame": "robot_base",
+    "position_m": [
+     0.2754237949848175,
+     0.09660562872886658,
+     0.4362668991088867
+    ],
+    "quaternion_xyzw": [
+     0.9843395596222111,
+     0.05160422378471853,
+     -0.13974675882361828,
+     0.094252208720123
+    ],
+    "relative_to": null,
+    "provenance": {
+     "source": "dataset1/eef_pose_base",
+     "method": "copy; quaternion normalized",
+     "assurance": "declared"
+    }
+   },
+   "gripper": {
+    "closed_fraction": 0.0,
+    "opening_m": null,
+    "provenance": {
+     "source": "dataset1/gripper_closed_fraction",
+     "method": "copy",
+     "assurance": "declared"
+    }
+   },
+   "cameras": {
+    "27432424_left": {
+     "video_frame_index": 0,
+     "video_timestamp_s": 0.0,
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "calibration_id": "27432424_left_declared",
+     "T_reference_camera": null,
+     "H_media_from_calibration": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "projection": {
+      "source": "provided",
+      "pixel_space": "media",
+      "points": {
+       "eef_origin": {
+        "uv_px": [
+         513.273222207061,
+         201.80186189859378
+        ],
+        "depth_m": 0.6036573400293097,
+        "status": "valid",
+        "in_frame": true
+       },
+       "x_endpoint": {
+        "uv_px": [
+         571.8757768347604,
+         215.8947558704166
+        ],
+        "depth_m": 0.6564729938389342,
+        "status": "valid",
+        "in_frame": true
+       },
+       "y_endpoint": {
+        "uv_px": [
+         548.9761657967869,
+         195.97549044273492
+        ],
+        "depth_m": 0.5441951529123392,
+        "status": "valid",
+        "in_frame": true
+       },
+       "z_endpoint": {
+        "uv_px": [
+         507.32587117616936,
+         271.76223681051727
+        ],
+        "depth_m": 0.6123034383359609,
+        "status": "valid",
+        "in_frame": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset2_000006",
+   "frame_index": 0,
+   "timestamp_s": 0.0,
+   "source_state_index": null,
+   "source_timing": [
+    {
+     "channel": "robot_state",
+     "timestamp": "1704137533708",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "robot read_start"
+    },
+    {
+     "channel": "27432424_left",
+     "timestamp": "1704137533667",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "estimated camera capture"
+    },
+    {
+     "channel": "28221883_left",
+     "timestamp": "1704137533655",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "estimated camera capture"
+    }
+   ],
+   "eef": {
+    "pose_type": "absolute",
+    "frame_id": "panda_link8",
+    "reference_frame": "robot_base",
+    "position_m": [
+     0.27542,
+     0.09661,
+     0.43627
+    ],
+    "quaternion_xyzw": [
+     0.9843395469086109,
+     0.051599976248536406,
+     -0.13974993567311944,
+     0.09424995661675496
+    ],
+    "relative_to": null,
+    "provenance": {
+     "source": "dataset2/eef",
+     "method": "copy; quaternion normalized",
+     "assurance": "declared"
+    }
+   },
+   "gripper": {
+    "closed_fraction": 0.0,
+    "opening_m": 0.085,
+    "provenance": {
+     "source": "dataset2/gripper",
+     "method": "opening = .085 * (1 - closed_fraction)",
+     "assurance": "model_assumed"
+    }
+   },
+   "cameras": {
+    "27432424_left": {
+     "video_frame_index": 0,
+     "video_timestamp_s": 0.0,
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "calibration_id": "27432424_left_declared",
+     "T_reference_camera": null,
+     "H_media_from_calibration": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "projection": {
+      "source": "provided",
+      "pixel_space": "media",
+      "points": {
+       "eef_origin": {
+        "uv_px": [
+         467.03,
+         199.96
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       },
+       "tcp": {
+        "uv_px": [
+         455.77,
+         339.47
+        ],
+        "depth_m": 0.6136,
+        "status": "valid",
+        "in_frame": true
+       },
+       "tcp_x": {
+        "uv_px": [
+         502.64,
+         341.8
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       },
+       "tcp_y": {
+        "uv_px": [
+         478.69,
+         346.12
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       },
+       "tcp_z": {
+        "uv_px": [
+         451.7,
+         389.85
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       },
+       "finger_plus_y": {
+        "uv_px": [
+         471.66,
+         344.08
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       },
+       "finger_minus_y": {
+        "uv_px": [
+         441.39,
+         335.29
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       }
+      }
+     }
+    },
+    "28221883_left": {
+     "video_frame_index": 0,
+     "video_timestamp_s": 0.0,
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "calibration_id": "28221883_left_declared",
+     "T_reference_camera": null,
+     "H_media_from_calibration": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "projection": {
+      "source": "provided",
+      "pixel_space": "media",
+      "points": {
+       "eef_origin": {
+        "uv_px": [
+         831.73,
+         203.33
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       },
+       "tcp": {
+        "uv_px": [
+         865.31,
+         363.01
+        ],
+        "depth_m": 0.5124,
+        "status": "valid",
+        "in_frame": true
+       },
+       "tcp_x": {
+        "uv_px": [
+         804.63,
+         367.47
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       },
+       "tcp_y": {
+        "uv_px": [
+         873.97,
+         334.91
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       },
+       "tcp_z": {
+        "uv_px": [
+         875.94,
+         413.59
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       },
+       "finger_plus_y": {
+        "uv_px": [
+         871.59,
+         342.64
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       },
+       "finger_minus_y": {
+        "uv_px": [
+         858.22,
+         386.02
+        ],
+        "depth_m": null,
+        "status": "valid",
+        "in_frame": true
+       }
+      }
+     }
+    }
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "frame_index": 0,
+   "timestamp_s": 0.0,
+   "source_state_index": 0,
+   "source_timing": [
+    {
+     "channel": "27432424_left",
+     "timestamp": "1704137533667",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "estimated camera capture for paired state"
+    },
+    {
+     "channel": "robot_state",
+     "timestamp": "1704137533708",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "robot read_start"
+    }
+   ],
+   "eef": {
+    "pose_type": "absolute",
+    "frame_id": "panda_link8",
+    "reference_frame": "robot_base",
+    "position_m": [
+     0.2754237949848175,
+     0.09660562872886658,
+     0.4362668991088867
+    ],
+    "quaternion_xyzw": [
+     0.9843395596222111,
+     0.05160422378471853,
+     -0.13974675882361828,
+     0.094252208720123
+    ],
+    "relative_to": null,
+    "provenance": {
+     "source": "dataset1/eef_pose_base",
+     "method": "copy; quaternion normalized",
+     "assurance": "declared"
+    }
+   },
+   "gripper": {
+    "closed_fraction": 0.0,
+    "opening_m": null,
+    "provenance": {
+     "source": "dataset1/gripper_closed_fraction",
+     "method": "copy",
+     "assurance": "declared"
+    }
+   },
+   "cameras": {
+    "27432424_left": {
+     "video_frame_index": 0,
+     "video_timestamp_s": 0.0,
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "calibration_id": "27432424_left_declared",
+     "T_reference_camera": null,
+     "H_media_from_calibration": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "projection": {
+      "source": "provided",
+      "pixel_space": "media",
+      "points": {
+       "eef_origin": {
+        "uv_px": [
+         513.273222207061,
+         201.80186189859378
+        ],
+        "depth_m": 0.6036573400293097,
+        "status": "valid",
+        "in_frame": true
+       },
+       "x_endpoint": {
+        "uv_px": [
+         571.8757768347604,
+         215.8947558704166
+        ],
+        "depth_m": 0.6564729938389342,
+        "status": "valid",
+        "in_frame": true
+       },
+       "y_endpoint": {
+        "uv_px": [
+         548.9761657967869,
+         195.97549044273492
+        ],
+        "depth_m": 0.5441951529123392,
+        "status": "valid",
+        "in_frame": true
+       },
+       "z_endpoint": {
+        "uv_px": [
+         507.32587117616936,
+         271.76223681051727
+        ],
+        "depth_m": 0.6123034383359609,
+        "status": "valid",
+        "in_frame": true
+       }
+      }
+     }
+    }
+   },
+   "truth": {}
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "frame_index": 0,
+   "timestamp_s": 0.0,
+   "source_state_index": 0,
+   "source_timing": [
+    {
+     "channel": "27432424_left",
+     "timestamp": "1704137533667",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "estimated camera capture for paired state"
+    },
+    {
+     "channel": "robot_state",
+     "timestamp": "1704137533708",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "robot read_start"
+    }
+   ],
+   "eef": {
+    "pose_type": "absolute",
+    "frame_id": "panda_link8",
+    "reference_frame": "robot_base",
+    "position_m": [
+     0.2754237949848175,
+     0.09660562872886658,
+     0.4362668991088867
+    ],
+    "quaternion_xyzw": [
+     0.9843395596222111,
+     0.05160422378471853,
+     -0.13974675882361828,
+     0.094252208720123
+    ],
+    "relative_to": {
+     "frame_index": 0,
+     "convention": "inverse_T0_times_Tt",
+     "anchor_pose": null
+    },
+    "provenance": {
+     "source": "dataset1/eef_pose_base",
+     "method": "copy; quaternion normalized",
+     "assurance": "declared"
+    }
+   },
+   "gripper": {
+    "closed_fraction": 0.0,
+    "opening_m": null,
+    "provenance": {
+     "source": "dataset1/gripper_closed_fraction",
+     "method": "copy",
+     "assurance": "declared"
+    }
+   },
+   "cameras": {
+    "27432424_left": {
+     "video_frame_index": 0,
+     "video_timestamp_s": 0.0,
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "calibration_id": "27432424_left_declared",
+     "T_reference_camera": null,
+     "H_media_from_calibration": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "projection": {
+      "source": "provided",
+      "pixel_space": "media",
+      "points": {
+       "eef_origin": {
+        "uv_px": [
+         513.273222207061,
+         201.80186189859378
+        ],
+        "depth_m": 0.6036573400293097,
+        "status": "valid",
+        "in_frame": true
+       },
+       "x_endpoint": {
+        "uv_px": [
+         571.8757768347604,
+         215.8947558704166
+        ],
+        "depth_m": 0.6564729938389342,
+        "status": "valid",
+        "in_frame": true
+       },
+       "y_endpoint": {
+        "uv_px": [
+         548.9761657967869,
+         195.97549044273492
+        ],
+        "depth_m": 0.5441951529123392,
+        "status": "valid",
+        "in_frame": true
+       },
+       "z_endpoint": {
+        "uv_px": [
+         507.32587117616936,
+         271.76223681051727
+        ],
+        "depth_m": 0.6123034383359609,
+        "status": "valid",
+        "in_frame": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "frame_index": 0,
+   "timestamp_s": 0.0,
+   "source_state_index": 0,
+   "source_timing": [
+    {
+     "channel": "27432424_left",
+     "timestamp": "1704137533667",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "estimated camera capture for paired state"
+    },
+    {
+     "channel": "robot_state",
+     "timestamp": "1704137533708",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "robot read_start"
+    }
+   ],
+   "eef": {
+    "pose_type": "absolute",
+    "frame_id": "panda_link8",
+    "reference_frame": "robot_base",
+    "position_m": [
+     0.2754237949848175,
+     0.09660562872886658,
+     0.4362668991088867
+    ],
+    "quaternion_xyzw": [
+     0.9843395596222111,
+     0.05160422378471853,
+     -0.13974675882361828,
+     0.094252208720123
+    ],
+    "relative_to": null,
+    "provenance": {
+     "source": "dataset1/eef_pose_base",
+     "method": "copy; quaternion normalized",
+     "assurance": "declared"
+    }
+   },
+   "gripper": {
+    "closed_fraction": 0.0,
+    "opening_m": null,
+    "provenance": {
+     "source": "dataset1/gripper_closed_fraction",
+     "method": "copy",
+     "assurance": "declared"
+    }
+   },
+   "cameras": {
+    "27432424_left": {
+     "video_frame_index": 0,
+     "video_timestamp_s": 0.0,
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "calibration_id": "27432424_left_declared",
+     "T_reference_camera": null,
+     "H_media_from_calibration": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "projection": {
+      "source": "provided",
+      "pixel_space": "media",
+      "points": {
+       "eef_origin": {
+        "uv_px": [
+         513.273222207061,
+         201.80186189859378
+        ],
+        "depth_m": 0.6036573400293097,
+        "status": "behind_camera",
+        "in_frame": true
+       },
+       "x_endpoint": {
+        "uv_px": [
+         571.8757768347604,
+         215.8947558704166
+        ],
+        "depth_m": 0.6564729938389342,
+        "status": "valid",
+        "in_frame": true
+       },
+       "y_endpoint": {
+        "uv_px": [
+         548.9761657967869,
+         195.97549044273492
+        ],
+        "depth_m": 0.5441951529123392,
+        "status": "valid",
+        "in_frame": true
+       },
+       "z_endpoint": {
+        "uv_px": [
+         507.32587117616936,
+         271.76223681051727
+        ],
+        "depth_m": 0.6123034383359609,
+        "status": "valid",
+        "in_frame": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "frame_index": 0,
+   "timestamp_s": 0.0,
+   "source_state_index": 0,
+   "source_timing": [
+    {
+     "channel": "27432424_left",
+     "timestamp": 1704137533.667,
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "estimated camera capture for paired state"
+    },
+    {
+     "channel": "robot_state",
+     "timestamp": "1704137533708",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "robot read_start"
+    }
+   ],
+   "eef": {
+    "pose_type": "absolute",
+    "frame_id": "panda_link8",
+    "reference_frame": "robot_base",
+    "position_m": [
+     0.2754237949848175,
+     0.09660562872886658,
+     0.4362668991088867
+    ],
+    "quaternion_xyzw": [
+     0.9843395596222111,
+     0.05160422378471853,
+     -0.13974675882361828,
+     0.094252208720123
+    ],
+    "relative_to": null,
+    "provenance": {
+     "source": "dataset1/eef_pose_base",
+     "method": "copy; quaternion normalized",
+     "assurance": "declared"
+    }
+   },
+   "gripper": {
+    "closed_fraction": 0.0,
+    "opening_m": null,
+    "provenance": {
+     "source": "dataset1/gripper_closed_fraction",
+     "method": "copy",
+     "assurance": "declared"
+    }
+   },
+   "cameras": {
+    "27432424_left": {
+     "video_frame_index": 0,
+     "video_timestamp_s": 0.0,
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "calibration_id": "27432424_left_declared",
+     "T_reference_camera": null,
+     "H_media_from_calibration": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "projection": {
+      "source": "provided",
+      "pixel_space": "media",
+      "points": {
+       "eef_origin": {
+        "uv_px": [
+         513.273222207061,
+         201.80186189859378
+        ],
+        "depth_m": 0.6036573400293097,
+        "status": "valid",
+        "in_frame": true
+       },
+       "x_endpoint": {
+        "uv_px": [
+         571.8757768347604,
+         215.8947558704166
+        ],
+        "depth_m": 0.6564729938389342,
+        "status": "valid",
+        "in_frame": true
+       },
+       "y_endpoint": {
+        "uv_px": [
+         548.9761657967869,
+         195.97549044273492
+        ],
+        "depth_m": 0.5441951529123392,
+        "status": "valid",
+        "in_frame": true
+       },
+       "z_endpoint": {
+        "uv_px": [
+         507.32587117616936,
+         271.76223681051727
+        ],
+        "depth_m": 0.6123034383359609,
+        "status": "valid",
+        "in_frame": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "sample_id": "dataset1_000000",
+   "frame_index": 0,
+   "timestamp_s": 0.0,
+   "source_state_index": 0,
+   "source_timing": [
+    {
+     "channel": "27432424_left",
+     "timestamp": "1704137533667",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "estimated camera capture for paired state"
+    },
+    {
+     "channel": "robot_state",
+     "timestamp": "1704137533708",
+     "unit": "ms",
+     "clock_id": "droid_recorded_ms",
+     "semantics": "robot read_start"
+    }
+   ],
+   "eef": {
+    "pose_type": "absolute",
+    "frame_id": "panda_link8",
+    "reference_frame": "robot_base",
+    "position_m": [
+     0.2754237949848175,
+     0.09660562872886658,
+     0.4362668991088867
+    ],
+    "quaternion_xyzw": [
+     0.9843395596222111,
+     0.05160422378471853,
+     -0.13974675882361828,
+     0.094252208720123
+    ],
+    "relative_to": null,
+    "provenance": {
+     "source": "dataset1/eef_pose_base",
+     "method": "copy; quaternion normalized",
+     "assurance": "declared"
+    }
+   },
+   "gripper": {
+    "closed_fraction": 1.5,
+    "opening_m": null,
+    "provenance": {
+     "source": "dataset1/gripper_closed_fraction",
+     "method": "copy",
+     "assurance": "declared"
+    }
+   },
+   "cameras": {
+    "27432424_left": {
+     "video_frame_index": 0,
+     "video_timestamp_s": 0.0,
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "calibration_id": "27432424_left_declared",
+     "T_reference_camera": null,
+     "H_media_from_calibration": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       1.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "projection": {
+      "source": "provided",
+      "pixel_space": "media",
+      "points": {
+       "eef_origin": {
+        "uv_px": [
+         513.273222207061,
+         201.80186189859378
+        ],
+        "depth_m": 0.6036573400293097,
+        "status": "valid",
+        "in_frame": true
+       },
+       "x_endpoint": {
+        "uv_px": [
+         571.8757768347604,
+         215.8947558704166
+        ],
+        "depth_m": 0.6564729938389342,
+        "status": "valid",
+        "in_frame": true
+       },
+       "y_endpoint": {
+        "uv_px": [
+         548.9761657967869,
+         195.97549044273492
+        ],
+        "depth_m": 0.5441951529123392,
+        "status": "valid",
+        "in_frame": true
+       },
+       "z_endpoint": {
+        "uv_px": [
+         507.32587117616936,
+         271.76223681051727
+        ],
+        "depth_m": 0.6123034383359609,
+        "status": "valid",
+        "in_frame": true
+       }
+      }
+     }
+    }
+   }
+  }
+ ]
+}

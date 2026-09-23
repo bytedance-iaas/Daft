@@ -2,13 +2,13 @@
 
 > 状态：**v1.2 草案**（2026-09-22 晚）。§0.4 的 D-E1–D-E10 已由需求方确认；本版按需求方的产品口径改为「不动 LeRobot、模块配置上传 trajectory.json」（§0.5、§3.7）。评审通过后落到 daft 仓库 `docs/design/12-eef-video-consistency.md`，格式与 Schema 落到 `docs/contracts/eef/`。
 > 工程基线：`070eed9e092240684991e97b78c4bc3870dce67b`（feat/curator-v2）。
-> 依据：需求原文 → 2026-09-22 的三层方案 → 参考设计（格式 [12-eef/format.md](12-eef/format.md)、迁移 [12-eef/migration.md](12-eef/migration.md)，其工程稿与计划稿在 `~/ws/ws_general/galbot/eef_video_consistency/03-*.md`、`04-*.md`，已被本篇吸收）→ 验证数据 `~/ws/ws_general/galbot/dataset1`（v2.1，11 条）与 `dataset2`（v3.0，7 条）→ 客户参考 `~/ws/ws_general/galbot/reference/{droid,LVP}`。
+> 依据：需求原文 → 2026-09-22 的三层方案 → 参考设计（格式 [contracts/eef/format.md](../contracts/eef/format.md)、迁移 [contracts/eef/migration.md](../contracts/eef/migration.md)，其工程稿与计划稿在 `~/ws/ws_general/galbot/eef_video_consistency/03-*.md`、`04-*.md`，已被本篇吸收）→ 验证数据 `~/ws/ws_general/galbot/dataset1`（v2.1，11 条）与 `dataset2`（v3.0，7 条）→ 客户参考 `~/ws/ws_general/galbot/reference/{droid,LVP}`。
 > 与参考设计的关系：**格式、独立观测、真值隔离、advisory 先行、工程限制清单全部采纳**；本篇在其上补齐产品化路径（统一入口、预检、注册表、CLI/Daemon/前端接入、诊断归因、验收矩阵、分期与停止条件），并把两处口径改掉（§0.3）。
 
 ## 给实施 agent 的开工指引（先读这一节）
 
-1. **分支与纪律**：直接在 `feat/curator-v2` 上做，不开 worktree。A 类目录（`core/`、`registry/`、`ingest/` 等，见 `CLAUDE.md`）一行不改，新代码放 `backend/curation/extensions/eef_consistency/`。每个 feature 一个 commit，提交前跑 `.venv/bin/python -m pytest -q backend/curation/tests --ignore=backend/curation/tests/test_environment.py`、`.venv/bin/python -m pytest -q backend/tests/contracts`、`PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests`（合成数据逐位对账进 CI，旧判决不能变）；提交后推 origin；提交信息英文，不加模型 co-author。每个阶段完成点更新根目录 `feature_list.md`（F5.x）与 `claude-progress.txt`。
-2. **读什么，按顺序**：本篇全文（§0.4 决策已拍板、§0.5 产品形态、§0.6 开工前六点、§3.7 单文件包、§11 接入清单、§13 验收矩阵、§14 DEMO 第一刀）→ [12-eef/format.md](12-eef/format.md)（字段、单位、坐标变换、时间）→ [12-eef/schemas/](12-eef/schemas)（sample / frame / calibration / observation / trajectory_bundle 五份 Schema）→ [12-eef/migration.md](12-eef/migration.md)（dataset1、dataset2、客户参考的适配规则）→ `05-modules-and-preflight.md` §7（加一个模块要改哪些地方）→ `02-cli-contract.md` §3.5（`check`）、`06-delivery-and-report.md` §6（报告小节）。
+1. **分支与纪律**：直接在 `feat/curator-v2` 上做，不开 worktree。A 类目录（`core/`、`registry/`、`ingest/` 等，见 `CLAUDE.md`）一行不改，新代码放 `backend/curation/extensions/eef_consistency/`。每个 feature 一个 commit，提交前在 `backend/` 下跑 `../.venv/bin/python -m pytest -q curation/tests --ignore=curation/tests/test_environment.py`（从仓库根跑会有一条起子进程的用例找不到包）、`../.venv/bin/python -m pytest -q tests/contracts tests/eef`，再在仓库根跑 `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests`（合成数据逐位对账进 CI，旧判决不能变）；提交后推 origin；提交信息英文，不加模型 co-author。每个阶段完成点更新根目录 `feature_list.md`（F5.x）与 `claude-progress.txt`。
+2. **读什么，按顺序**：本篇全文（§0.4 决策已拍板、§0.5 产品形态、§0.6 开工前六点、§3.7 单文件包、§11 接入清单、§13 验收矩阵、§14 DEMO 第一刀）→ [contracts/eef/format.md](../contracts/eef/format.md)（字段、单位、坐标变换、时间）→ [contracts/eef/](../contracts/eef)（sample / frame / calibration / observation / trajectory_bundle 五份 Schema）→ [contracts/eef/migration.md](../contracts/eef/migration.md)（dataset1、dataset2、客户参考的适配规则）→ `05-modules-and-preflight.md` §7（加一个模块要改哪些地方）→ `02-cli-contract.md` §3.5（`check`）、`06-delivery-and-report.md` §6（报告小节）。
 3. **数据在哪（本机）**：`~/ws/ws_general/galbot/dataset2/`：`eef_ds2_lr3/` 是 LeRobot v3.0 数据集（Curator 已能读）、`trajectory.json` 是上传件（七条、两路相机，已校验）、`observations_seed/` 是 P-A 跟踪的种子（`synthetic_fixture`，只供 DEMO）、`corruptions.json` 是真值（只给评估器，检测器与 VLM 输入禁止读）、`preview/` 是叠加与曲线示例；`~/ws/ws_general/galbot/dataset1/`：`eef_ds1_lr2/` 是 v2.1 数据集、`trajectory.json`（单相机、十种轻重两档故障）、`ground_truth/` 真值。工具（导出、校验、叠加、曲线、三维图、种子）在 `~/ws/ws_general/galbot/tools/`，venv 在 `galbot/.venv`；几何与绘制可直接借用 `tools/common.py`。
 4. **DEMO 第一刀（F5.1–F5.4，都是 CPU）**：① `trajectory.json` 读取、Schema 与语义校验、逐分项能力预检、几何投影与自洽、L0 数值轨迹 → ② ObservationProvider 协议、P-A（种子 + 多尺度 LK + 前后向校验 + 周期重定位）、观测文件、投影扰动的独立性实验 → ③ 位置 / 方向 / 局部 lag / 数值 / 画面五项指标、迟滞分段、诊断假设、曲线与证据，在 dataset1 + dataset2 上跑出 §13.3 矩阵 → ④ 注册表 1.4（两个模块、`eef_input`、`input_scope`、`affects_dataset_verdict`）、预检、`check` 分派、parts 输出、aggregate 隔离、报告默认表格；`trajectory.json` 先走 CLI 参数 `--param eef_video_consistency.trajectory_json=<path>`。阈值用明确标 `uncalibrated` 的 `demo` profile。
 5. **第一刀不做**：不改 LeRobot；不改 `pipeline/verdict.py`；不接 VLM（只留 tape 钩子）；不做上传控件与 Daemon 上传接口（第二刀 F5.5）；不训练模型；不给客户像素精度承诺。
@@ -109,7 +109,7 @@
 
 ### 3.1 采用 `eef-video/1.0.0`
 
-格式本体见 [12-eef/format.md](12-eef/format.md) 与 [12-eef/schemas](12-eef/schemas)，本篇不重复；采纳理由：它把「哪个点、哪个坐标系、什么单位、什么时间、哪个像素空间」全部显式化，缺失填 `null` 而不是零，投影 / 观测 / 真值三分离，且已有六组样例与校验器通过。
+格式本体见 [contracts/eef/format.md](../contracts/eef/format.md) 与 [contracts/eef](../contracts/eef)，本篇不重复；采纳理由：它把「哪个点、哪个坐标系、什么单位、什么时间、哪个像素空间」全部显式化，缺失填 `null` 而不是零，投影 / 观测 / 真值三分离，且已有六组样例与校验器通过。
 
 ```text
 <dataset>/
@@ -191,7 +191,7 @@ dataset1（v2.1，`observation.state=[x,y,z,rpy,gripper]`）与 dataset2（v3.0�
 
 ### 3.5 客户参考样本的适配规则
 
-沿用 [12-eef/migration.md §3–§4](12-eef/migration.md)：网格视频拆成三路相机视图加一格 `pose_visualization`（不作相机，不作观测源）；无序列号时用 `source_view_0/1/2` 局部稳定 ID；`eef_delta_gt` 原样进 `raw_pose_sequence.json`，`eef=null`，`timebase=index_only`，直到 §3.4 签认后再转成 `relative_to_start` + `anchor_pose`；LVP 收录为纯图像，`unsupported`。
+沿用 [contracts/eef/migration.md §3–§4](../contracts/eef/migration.md)：网格视频拆成三路相机视图加一格 `pose_visualization`（不作相机，不作观测源）；无序列号时用 `source_view_0/1/2` 局部稳定 ID；`eef_delta_gt` 原样进 `raw_pose_sequence.json`，`eef=null`，`timebase=index_only`，直到 §3.4 签认后再转成 `relative_to_start` + `anchor_pose`；LVP 收录为纯图像，`unsupported`。
 
 补充两条产品规则：
 
@@ -211,7 +211,7 @@ dataset1（v2.1，`observation.state=[x,y,z,rpy,gripper]`）与 dataset2（v3.0�
 
 ### 3.7 平台入口：`trajectory.json` 单文件包
 
-约定格式的三个文件（sample / frames / calibration）在产品上打成**一个文件**上传，容器 Schema 见 [12-eef/schemas/trajectory_bundle.schema.json](12-eef/schemas/trajectory_bundle.schema.json)：
+约定格式的三个文件（sample / frames / calibration）在产品上打成**一个文件**上传，容器 Schema 见 [contracts/eef/trajectory_bundle.schema.json](../contracts/eef/trajectory_bundle.schema.json)：
 
 ```json
 {"schema_version": "eef-video/1.0.0", "container": "trajectory-bundle/1.0",
@@ -627,3 +627,16 @@ eef_video_review:
 ## 附录 B · 名词对照
 
 `eef_origin` 记录原点 · `tcp` 模型指尖中心 · `finger_line` 两指连线（无向） · `approach axis` 接近轴（EEF z） · `provided / recomputed` 客户投影 / 平台重算 · `observation` 独立观测 · `assurance` 来源等级 `declared / model_assumed / independently_calibrated / unknown / synthetic` · `advisory` 建议性、不判废 · `input_scope` 运行范围 · `affects_dataset_verdict` 是否影响判决。
+
+## 附录 C · 实施记录（第一刀，F5.1 起）
+
+按实施顺序记录与正文的出入和实施时定下的细节；正文不改写。
+
+### C.1 F5.1 契约与读取（2026-09-23）
+
+- 格式、迁移规则与五份 Schema 从 `docs/design/12-eef/` 整体迁入 `docs/contracts/eef/`，纳入 `CONTRACTS.lock`（`schemas.JSON_SCHEMA_GLOBS` 加 `eef/*.schema.json`），合法 / 不合法示例在 `docs/contracts/examples/eef-*.json`。
+- §3.7「校验」与 §6.1「自洽」两处口径的落法：结构、引用、单位四元数、SO(3)、时间单调、媒体存在、真值键等是**错误**（整份文件拒收，逐条定位到样本 / 帧 / 相机 / 点 / JSON 路径）；提供投影与重算投影之差 ≥ 0.05 px（或深度差 ≥ 0.1 mm）是**警告** `input_inconsistent`，两份都保留，检测用的仍是客户提供的投影。
+- reason code 目录的补充：`trajectory_missing`（没给文件）、`trajectory_invalid`（文件校验失败）、`observation_seed_missing`（P-A 没有种子，用户可补，`needs_input`）、`timebase_index_only`、`camera_mount_not_allowed`、`too_few_states`，以及状态判定里用的 `input_inconsistent`、`threshold_uncalibrated`、`coverage_insufficient`、`orientation_not_observable`、`lag_not_identifiable`、`background_support_insufficient`、`tracking_unstable`、`execution_failed`。
+- 能力表多一个 `input_consistency` 分项（形态 A+B 同时提供时可用）；模块顶层可用性只看五个核心分项（位置、方向、时间、数值、画面），VLM 复核不参与。
+- L0 只看实际状态：同一 `source_state_index` 的相邻行（dataset1 的 17 帧重采样）或逐位相同的位姿先折叠；时间轴优先用样本声明的 `robot_state` 时钟（DROID 约 14.1 Hz），没有才用主时间线。高频能量取 2 Hz 以上（零相位二阶 Butterworth），再算 1 秒滚动 RMS。两套数据的基准滚动 RMS 最大 1.09 mm，轻 / 重抖动 4.8 / 13.9 mm（dataset1）、12.9 mm（dataset2 ep3）——§12 的实验起点「> 5 mm」会漏掉 dataset1 ep5，`demo` profile 的数值轨迹阈值改由基准噪声底定（见 C.3）。
+- 适配器先做两件：三文件目录 ↔ 单文件包条目（`unified_sample`）、客户 World_Policy 参考样本 → 形态 C / 纯图像（`world_policy`，droid / LVP 各 10 个全部收录且一律 `unsupported`）。§3.3 按 `mapping.yaml` 从 LeRobot 列导出 `trajectory.json` 的离线工具未做（DEMO 两套数据已有上传件），留作 P1 后续。

@@ -1,0 +1,346 @@
+{
+ "schema": "eef/calibration.schema.json",
+ "valid": [
+  {
+   "schema_version": "eef-video/1.0.0",
+   "calibrations": {
+    "27432424_left_declared": {
+     "camera_id": "27432424_left",
+     "reference_frame": "robot_base",
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "image_space": "rectified",
+     "model": "pinhole",
+     "K": [
+      [
+       524.2842407226562,
+       0,
+       645.3157958984375
+      ],
+      [
+       0,
+       524.2842407226562,
+       365.47967529296875
+      ],
+      [
+       0,
+       0,
+       1
+      ]
+     ],
+     "distortion_coefficients": [],
+     "extrinsics_mode": "static",
+     "T_reference_camera": [
+      [
+       0.8311022674990027,
+       -0.22825080212035662,
+       0.5071198993230599,
+       0.05263647502861234
+      ],
+      [
+       -0.5560974491537928,
+       -0.3492404043367637,
+       0.754179532355088,
+       -0.5090224900091741
+      ],
+      [
+       0.004964675484000092,
+       -0.9088084018703326,
+       -0.4171841807729902,
+       0.5175861987258059
+      ],
+      [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "provenance": {
+      "source": "dataset1/calibration.json; declared",
+      "method": "copy",
+      "assurance": "declared"
+     }
+    }
+   }
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "calibrations": {
+    "27432424_left_declared": {
+     "camera_id": "27432424_left",
+     "reference_frame": "robot_base",
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "image_space": "distorted",
+     "model": "opencv_brown",
+     "K": [
+      [
+       524.2842407226562,
+       0,
+       645.3157958984375
+      ],
+      [
+       0,
+       524.2842407226562,
+       365.47967529296875
+      ],
+      [
+       0,
+       0,
+       1
+      ]
+     ],
+     "distortion_coefficients": [
+      0.1,
+      -0.05,
+      0.001,
+      0.0005,
+      0.01
+     ],
+     "extrinsics_mode": "static",
+     "T_reference_camera": [
+      [
+       0.8311022674990027,
+       -0.22825080212035662,
+       0.5071198993230599,
+       0.05263647502861234
+      ],
+      [
+       -0.5560974491537928,
+       -0.3492404043367637,
+       0.754179532355088,
+       -0.5090224900091741
+      ],
+      [
+       0.004964675484000092,
+       -0.9088084018703326,
+       -0.4171841807729902,
+       0.5175861987258059
+      ],
+      [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "provenance": {
+      "source": "dataset1/calibration.json; declared",
+      "method": "copy",
+      "assurance": "declared"
+     }
+    }
+   }
+  }
+ ],
+ "invalid": [
+  {
+   "schema_version": "eef-video/1.0.0",
+   "calibrations": {
+    "27432424_left_declared": {
+     "camera_id": "27432424_left",
+     "reference_frame": "robot_base",
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "image_space": "rectified",
+     "model": "pinhole",
+     "K": [
+      [
+       524.2842407226562,
+       0,
+       645.3157958984375
+      ],
+      [
+       0,
+       524.2842407226562,
+       365.47967529296875
+      ],
+      [
+       0,
+       0,
+       1
+      ]
+     ],
+     "distortion_coefficients": [
+      0.1
+     ],
+     "extrinsics_mode": "static",
+     "T_reference_camera": [
+      [
+       0.8311022674990027,
+       -0.22825080212035662,
+       0.5071198993230599,
+       0.05263647502861234
+      ],
+      [
+       -0.5560974491537928,
+       -0.3492404043367637,
+       0.754179532355088,
+       -0.5090224900091741
+      ],
+      [
+       0.004964675484000092,
+       -0.9088084018703326,
+       -0.4171841807729902,
+       0.5175861987258059
+      ],
+      [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "provenance": {
+      "source": "dataset1/calibration.json; declared",
+      "method": "copy",
+      "assurance": "declared"
+     }
+    }
+   }
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "calibrations": {
+    "27432424_left_declared": {
+     "camera_id": "27432424_left",
+     "reference_frame": "robot_base",
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "image_space": "rectified",
+     "model": "pinhole",
+     "K": [
+      [
+       524.2842407226562,
+       0,
+       645.3157958984375
+      ],
+      [
+       0,
+       524.2842407226562,
+       365.47967529296875
+      ],
+      [
+       0,
+       0,
+       1
+      ]
+     ],
+     "distortion_coefficients": [],
+     "extrinsics_mode": "per_frame",
+     "T_reference_camera": [
+      [
+       0.8311022674990027,
+       -0.22825080212035662,
+       0.5071198993230599,
+       0.05263647502861234
+      ],
+      [
+       -0.5560974491537928,
+       -0.3492404043367637,
+       0.754179532355088,
+       -0.5090224900091741
+      ],
+      [
+       0.004964675484000092,
+       -0.9088084018703326,
+       -0.4171841807729902,
+       0.5175861987258059
+      ],
+      [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "provenance": {
+      "source": "dataset1/calibration.json; declared",
+      "method": "copy",
+      "assurance": "declared"
+     }
+    }
+   }
+  },
+  {
+   "schema_version": "eef-video/1.0.0",
+   "calibrations": {
+    "27432424_left_declared": {
+     "camera_id": "27432424_left",
+     "reference_frame": "robot_base",
+     "image_size_wh": [
+      1280,
+      720
+     ],
+     "image_space": "rectified",
+     "model": "opencv_brown",
+     "K": [
+      [
+       524.2842407226562,
+       0,
+       645.3157958984375
+      ],
+      [
+       0,
+       524.2842407226562,
+       365.47967529296875
+      ],
+      [
+       0,
+       0,
+       1
+      ]
+     ],
+     "distortion_coefficients": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "extrinsics_mode": "static",
+     "T_reference_camera": [
+      [
+       0.8311022674990027,
+       -0.22825080212035662,
+       0.5071198993230599,
+       0.05263647502861234
+      ],
+      [
+       -0.5560974491537928,
+       -0.3492404043367637,
+       0.754179532355088,
+       -0.5090224900091741
+      ],
+      [
+       0.004964675484000092,
+       -0.9088084018703326,
+       -0.4171841807729902,
+       0.5175861987258059
+      ],
+      [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "provenance": {
+      "source": "dataset1/calibration.json; declared",
+      "method": "copy",
+      "assurance": "declared"
+     }
+    }
+   }
+  }
+ ]
+}

@@ -77,6 +77,10 @@ jobs:
         working-directory: backend
         # the official lerobot loader cases skip here; the lerobot-loader job runs them
         run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/export
+      - name: EEF-video consistency module (F5; DEMO-data cases skip without the local datasets)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: backend
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE -rs tests/eef
       - name: Parity tools (unit + end-to-end on the synthetic dataset)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         env:
