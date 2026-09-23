@@ -78,7 +78,9 @@ info:
     the uploaded file; the task's preflight snapshot carries that entry.
 
     1.10.0 (2026-09-23): new ids are `<prefix>-<9 lowercase letters>` (D45): the patterns of
-    dataset ids, `UploadId` and upload handles take both formats.
+    dataset ids, `UploadId` and upload handles take both formats. `GET /overview?days=7|30|90|365`
+    picks the period of `recent`, which says its `bucket` (day / week / month) and `since`;
+    `recent.tokens_per_bucket` (`start`, `label`, `tokens`) replaces `tokens_per_day`.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -386,7 +388,14 @@ paths:
     get:
       tags: [overview]
       operationId: getOverview
-      summary: The overview page in one call - what needs attention, what runs, the last 7 days (D36)
+      summary: The overview page in one call - what needs attention, what runs, the chosen period (D36)
+      parameters:
+        - name: days
+          in: query
+          description: >-
+            the period of `recent`: 7 or 30 days (by day), 90 = the 13 calendar weeks up to this one
+            (by week), 365 = the 12 calendar months up to this one (by month); anything else is 400
+          schema: {enum: [7, 30, 90, 365], default: 7}
       responses:
         "200":
           description: overview
@@ -1925,10 +1934,12 @@ components:
       description: >-
         Soft-deleted tasks never count, except in tokens. running counts what workers are busy
         with - main runs and subtasks in running, pausing or stopping - and queued / paused those
-        states; recent covers the last 7 days in the site's time zone (CURATOR_TZ_OFFSET): tasks
-        that ended succeeded or completed_with_errors, their summary totals, passed / total over
-        episodes, and actual-ledger prompt + completion tokens per day; credentials_failed counts
-        access keys (kind tos) only, a backend's key failing counts in backends_failed.
+        states; recent covers the period `days` asked for in the site's time zone
+        (CURATOR_TZ_OFFSET), cut into buckets that end with the current one (7 or 30 days, 13
+        calendar weeks from Monday, or 12 calendar months) and starting at `since`: tasks that
+        ended succeeded or completed_with_errors since then, their summary totals, passed / total
+        over episodes, and actual-ledger prompt + completion tokens per bucket; credentials_failed
+        counts access keys (kind tos) only, a backend's key failing counts in backends_failed.
       additionalProperties: false
       required: [todo, running, recent, datasets, generated_at]
       properties:
@@ -1971,21 +1982,26 @@ components:
         recent:
           type: object
           additionalProperties: false
-          required: [days, tasks_finished, episodes_checked, pass_rate, tokens_per_day]
+          required: [days, bucket, since, tasks_finished, episodes_checked, pass_rate, tokens_per_bucket]
           properties:
-            days: {const: 7}
+            days: {enum: [7, 30, 90, 365], description: "the period asked for"}
+            bucket: {enum: [day, week, month], description: "day for 7 and 30, week for 90, month for 365"}
+            since: {type: integer, description: "epoch ms where the first bucket starts; the figures count from here"}
             tasks_finished: {type: integer, minimum: 0}
             episodes_checked: {type: integer, minimum: 0}
             pass_rate: {type: [number, "null"], minimum: 0, maximum: 1}
-            tokens_per_day:
+            tokens_per_bucket:
               type: array
-              description: actual-ledger totals only, oldest day first
+              description: actual-ledger totals only, oldest bucket first, every bucket listed (7, 30, 13 or 12)
+              minItems: 7
+              maxItems: 30
               items:
                 type: object
                 additionalProperties: false
-                required: [date, tokens]
+                required: [start, label, tokens]
                 properties:
-                  date: {type: string, pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+                  start: {type: integer, description: "epoch ms, local midnight in the site's time zone"}
+                  label: {type: string, description: "09-23 (a day), 09-21 周 (the week from that Monday), 2026-09 (a month)"}
                   tokens: {type: integer, minimum: 0}
         datasets:
           type: object

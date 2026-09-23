@@ -70,7 +70,7 @@ W5a 的接口（跑 CLI 的操作，见 [`orchestr/README.md`](orchestr/README.m
 | `CURATOR_SSE_HEARTBEAT_S` | 15 | SSE 空闲时每隔多久发一行 `: ping` |
 | `CURATOR_HOST` / `CURATOR_PORT` | `0.0.0.0` / 8080 | 监听地址 |
 | `CURATOR_LOG_LEVEL` / `CURATOR_LOG_FORMAT` | `INFO` / `json` | 日志写到 stdout，密钥类字段一律打成 `***` |
-| `CURATOR_TZ_OFFSET` | `+08:00` | 站点所在时区的 UTC 偏移（形如 `+08:00`、`-05:30`、`Z`，按一刻钟取整），决定概览「近 7 天」每天从几点算起 |
+| `CURATOR_TZ_OFFSET` | `+08:00` | 站点所在时区的 UTC 偏移（形如 `+08:00`、`-05:30`、`Z`，按一刻钟取整），决定概览按天、周、月统计时每段从几点算起 |
 | `TOS_ENDPOINT` | 空 | W8：部署所在地域的 TOS 端点（v1 同名变量）。是内网端点（`*.ivolces.com`）时同地域的调用走内网，也原样交给 CLI |
 | `CURATOR_REASONING_EFFORT_TABLE` | 空 | W8：覆盖思考强度映射表，JSON 文件路径或 JSON 本身，写法见 [`secrets/README.md`](secrets/README.md) |
 
@@ -285,9 +285,19 @@ EOF
 
     预期：`todo` 里 `error_tasks` 1、`adjudication` 为 `{"tasks": 1, "episodes": 4}`、`delivery_pending` 1（有结果但从没导出过）、
     `datasets_changed` 1；`running` 里 `queued` 22（对账后运行中的那条也回到了排队）；
-    `recent` 的 `tasks_finished` 1、`episodes_checked` 50、`pass_rate` 0.82，`tokens_per_day` 列出 7 天、最早的在前，
-    今天是 188400（只算实际调用账的 `prompt + completion`）；`datasets` 为 `{"total": 2, "changed": 1}`。
-    日期按 `CURATOR_TZ_OFFSET`（默认北京时间）切分。
+    `recent` 的 `days` 7、`bucket` `day`，`tasks_finished` 1、`episodes_checked` 50、`pass_rate` 0.82，
+    `tokens_per_bucket` 列出 7 天、最早的在前（`label` 形如 `09-23`），今天是 188400（只算实际调用账的 `prompt + completion`）；
+    `datasets` 为 `{"total": 2, "changed": 1}`。日期按 `CURATOR_TZ_OFFSET`（默认北京时间）切分。
+
+    ```bash
+    for d in 30 90 365 14; do
+      c "localhost:18080/curation/api/v1/overview?days=$d" | python3 -c 'import json,sys; b=json.load(sys.stdin); r=b.get("recent"); print(r["bucket"], len(r["tokens_per_bucket"]), r["tokens_per_bucket"][0]["label"], r["tokens_per_bucket"][-1]["label"]) if r else print(b)'
+    done
+    ```
+
+    预期：`day 30 …`（今天往前 30 天）、`week 13 … 周`（本周和之前 12 周，每周从周一算起，标签是那个周一）、
+    `month 12 …`（本月和之前 11 个月，标签形如 `2026-09`），最后一条是 400 `validation_failed`（时间范围只有 7、30、90、365）。
+    `since` 是第一个时段的起点，完成的任务、episode 数和通过率都从那时算起。
 
 14. **改名、备注与删除登记**
 
@@ -347,7 +357,7 @@ EOF
     （`add` / `recheck` / `task_start` / `repreflight`），它会同时更新 `check_state` 和 `checked_at`；重新预检用
     `update_dataset(preflight=, meta_fingerprint=, source_fingerprint=, preflighted_at=, manifest_path=)` 一次换掉基线，`check_state` 回到 `ok`，
     `repreflight` 那条核对记录不会再把它改回 `changed`。已登记的地址再登记一次时，若原来的访问密钥已被删除，请用 `update_dataset(credential_id=...)` 换上新的。
-  - 概览读 `summary` 里的 `total`、`passed`、`pending_adjudication`，Token 按 `add_usage` 被调用的时刻计入某一天：用量请照常每 5 秒汇总一次。
+  - 概览读 `summary` 里的 `total`、`passed`、`pending_adjudication`，Token 按 `add_usage` 被调用的时刻计入某一天（按周、按月的统计由天累加），时间线保留 400 天：用量请照常每 5 秒汇总一次。
     「运行情况」也数子任务（`repo.unfinished_subtasks`），进度条取子任务自己的 `progress`：请用 `set_subtask_progress` 写同样的 `stages` 结构。
   - 删除登记时，已软删除的待启动草稿不算占用，会被解绑（恢复后 `dataset_id` 为空）；开始任务时没有 `dataset_id` 的，请按地址先登记（取或建）再做 D37 核对。
   - 任务列表的「待裁决」徽标读 `summary.pending_adjudication`：提交裁决后请更新这个数。

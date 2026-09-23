@@ -392,7 +392,14 @@ const DROID200_CHANGE: SourceChange = { meta_changed: true, added: 12, removed: 
 const datasets = [
   // Tests may add review lines to the catalog (D43); the mock world itself serves the contract file.
   http.get(`${API}/modules`, () => HttpResponse.json({ ...registry, review_lines: reviewCatalog() })),
-  http.get(`${API}/overview`, () => HttpResponse.json(overview())),
+  http.get(`${API}/overview`, ({ request }) => {
+    const raw = new URL(request.url).searchParams.get('days') ?? '7';
+    const days = Number(raw);
+    if (!OVERVIEW_DAYS.includes(days)) {
+      return err(400, 'validation_failed', '时间范围只能是近 7 天、近 1 月、近 3 月或近 1 年（days 取 7、30、90 或 365）', { errors: [{ field: 'days', problem: 'not one of 7, 30, 90, 365' }] });
+    }
+    return HttpResponse.json(overview(days));
+  }),
   http.get(`${API}/datasets`, ({ request }) => {
     const url = new URL(request.url);
     const q = (url.searchParams.get('q') ?? '').toLowerCase();
@@ -576,18 +583,57 @@ function repreflightDataset(d: DatasetDetail): void {
 
 // ------------------------------------------------------------------ overview
 
-function overview(): Overview {
+const OVERVIEW_DAYS = [7, 30, 90, 365];
+
+/**
+ * The buckets of an overview period as the Daemon cuts them (C4 1.10.0), in the browser's time
+ * zone: 7 or 30 days, the 13 calendar weeks (Monday first) or the 12 calendar months up to now.
+ */
+export function overviewBuckets(now: number, days: number): { bucket: Overview['recent']['bucket']; spans: { start: number; label: string }[] } {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const md = (d: Date) => `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const spans: { start: number; label: string }[] = [];
+  if (days === 90) {
+    const monday = new Date(today);
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    for (let i = 12; i >= 0; i -= 1) {
+      const d = new Date(monday);
+      d.setDate(d.getDate() - 7 * i);
+      spans.push({ start: d.getTime(), label: `${md(d)} 周` });
+    }
+    return { bucket: 'week', spans };
+  }
+  if (days === 365) {
+    for (let i = 11; i >= 0; i -= 1) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      spans.push({ start: d.getTime(), label: `${d.getFullYear()}-${pad(d.getMonth() + 1)}` });
+    }
+    return { bucket: 'month', spans };
+  }
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    spans.push({ start: d.getTime(), label: md(d) });
+  }
+  return { bucket: 'day', spans };
+}
+
+function overview(days: number): Overview {
   const live = db.tasks.filter((t) => !t.deleted_at);
   const now = clock();
-  const finished = live.filter((t) => TERMINAL.includes(t.state) && (t.finished_at ?? 0) > now - 7 * 86_400_000);
-  const withSummary = finished.filter((t) => t.summary && t.summary.pass_rate !== null);
-  const days: Overview['recent']['tokens_per_day'] = [];
-  for (let i = 6; i >= 0; i -= 1) {
-    const d = new Date(now - i * 86_400_000);
-    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const tokens = live.filter((t) => Math.floor((now - t.created_at) / 86_400_000) === i).reduce((a, t) => a + t.usage.prompt_tokens + t.usage.completion_tokens, 0);
-    days.push({ date, tokens });
-  }
+  const { bucket, spans } = overviewBuckets(now, days);
+  const since = spans[0].start;
+  // What the Daemon counts: tasks that ended succeeded or completed_with_errors since `since`.
+  const finished = live.filter((t) => (t.state === 'succeeded' || t.state === 'completed_with_errors') && (t.finished_at ?? 0) >= since);
+  const episodes = finished.reduce((a, t) => a + (t.summary?.total ?? 0), 0);
+  const passed = finished.reduce((a, t) => a + (t.summary?.passed ?? 0), 0);
+  // The mock has no token timeline: a task's tokens count where it was created.
+  const tokens = spans.map((s, i) => {
+    const end = spans[i + 1]?.start ?? Infinity;
+    return live.filter((t) => t.created_at >= s.start && t.created_at < end).reduce((a, t) => a + t.usage.prompt_tokens + t.usage.completion_tokens, 0);
+  });
   return {
     todo: {
       error_tasks: live.filter((t) => t.state === 'completed_with_errors').length,
@@ -609,11 +655,13 @@ function overview(): Overview {
         }),
     },
     recent: {
-      days: 7,
+      days: days as Overview['recent']['days'],
+      bucket,
+      since,
       tasks_finished: finished.length,
-      episodes_checked: finished.reduce((a, t) => a + (t.summary?.total ?? 0), 0),
-      pass_rate: withSummary.length ? withSummary.reduce((a, t) => a + (t.summary!.pass_rate ?? 0), 0) / withSummary.length : null,
-      tokens_per_day: days,
+      episodes_checked: episodes,
+      pass_rate: episodes ? Math.round(Math.min(1, passed / episodes) * 10_000) / 10_000 : null,
+      tokens_per_bucket: spans.map((s, i) => ({ start: s.start, label: s.label, tokens: tokens[i] })),
     },
     datasets: { total: db.datasets.length, changed: db.datasets.filter((d) => d.check_state === 'changed').length },
     generated_at: now,

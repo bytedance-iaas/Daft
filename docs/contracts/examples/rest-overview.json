@@ -20,7 +20,7 @@
     "active": [
      {
       "task": {
-       "id": "task_01HX",
+       "id": "task-kqzmrtbwe",
        "name": "droid 前 50 条质检",
        "state": "running",
        "created_at": 1758300000000
@@ -28,30 +28,88 @@
       "stage": "vlm",
       "done": 31,
       "total": 49
+     },
+     {
+      "task": {
+       "id": "task_01HX",
+       "name": "umi_640 重试",
+       "state": "completed_with_errors",
+       "created_at": 1758200000000
+      },
+      "stage": "vlm",
+      "done": 2,
+      "total": 5
      }
     ]
    },
    "recent": {
     "days": 7,
+    "bucket": "day",
+    "since": 1790092800000,
     "tasks_finished": 9,
     "episodes_checked": 1480,
     "pass_rate": 0.81,
-    "tokens_per_day": [
-     {
-      "date": "2026-09-15",
-      "tokens": 1200000
-     },
-     {
-      "date": "2026-09-21",
-      "tokens": 2077500
-     }
+    "tokens_per_bucket": [
+     {"start": 1790092800000, "label": "09-23", "tokens": 1200000},
+     {"start": 1790179200000, "label": "09-24", "tokens": 0},
+     {"start": 1790265600000, "label": "09-25", "tokens": 0},
+     {"start": 1790352000000, "label": "09-26", "tokens": 0},
+     {"start": 1790438400000, "label": "09-27", "tokens": 2077500},
+     {"start": 1790524800000, "label": "09-28", "tokens": 0},
+     {"start": 1790611200000, "label": "09-29", "tokens": 310000}
     ]
    },
    "datasets": {
     "total": 12,
     "changed": 1
    },
-   "generated_at": 1758400000000
+   "generated_at": 1790650000000
+  },
+  {
+   "todo": {
+    "error_tasks": 0,
+    "adjudication": {
+     "tasks": 0,
+     "episodes": 0
+    },
+    "delivery_pending": 0,
+    "datasets_changed": 0,
+    "credentials_failed": 0,
+    "backends_failed": 0
+   },
+   "running": {
+    "running": 0,
+    "queued": 0,
+    "paused": 0,
+    "active": []
+   },
+   "recent": {
+    "days": 365,
+    "bucket": "month",
+    "since": 1759248000000,
+    "tasks_finished": 0,
+    "episodes_checked": 0,
+    "pass_rate": null,
+    "tokens_per_bucket": [
+     {"start": 1759248000000, "label": "2025-10", "tokens": 0},
+     {"start": 1761926400000, "label": "2025-11", "tokens": 0},
+     {"start": 1764518400000, "label": "2025-12", "tokens": 0},
+     {"start": 1767196800000, "label": "2026-01", "tokens": 0},
+     {"start": 1769875200000, "label": "2026-02", "tokens": 0},
+     {"start": 1772294400000, "label": "2026-03", "tokens": 0},
+     {"start": 1774972800000, "label": "2026-04", "tokens": 0},
+     {"start": 1777564800000, "label": "2026-05", "tokens": 0},
+     {"start": 1780243200000, "label": "2026-06", "tokens": 0},
+     {"start": 1782835200000, "label": "2026-07", "tokens": 0},
+     {"start": 1785513600000, "label": "2026-08", "tokens": 0},
+     {"start": 1788192000000, "label": "2026-09", "tokens": 0}
+    ]
+   },
+   "datasets": {
+    "total": 0,
+    "changed": 0
+   },
+   "generated_at": 1790650000000
   }
  ],
  "invalid": [
@@ -81,7 +139,48 @@
     "active": []
    },
    "recent": {
-    "days": 30,
+    "days": 14,
+    "bucket": "day",
+    "since": 1790092800000,
+    "tasks_finished": 0,
+    "episodes_checked": 0,
+    "pass_rate": null,
+    "tokens_per_bucket": [
+     {"start": 1790092800000, "label": "09-23", "tokens": 0},
+     {"start": 1790179200000, "label": "09-24", "tokens": 0},
+     {"start": 1790265600000, "label": "09-25", "tokens": 0},
+     {"start": 1790352000000, "label": "09-26", "tokens": 0},
+     {"start": 1790438400000, "label": "09-27", "tokens": 0},
+     {"start": 1790524800000, "label": "09-28", "tokens": 0},
+     {"start": 1790611200000, "label": "09-29", "tokens": 0}
+    ]
+   },
+   "datasets": {
+    "total": 0,
+    "changed": 0
+   },
+   "generated_at": 1
+  },
+  {
+   "todo": {
+    "error_tasks": 0,
+    "adjudication": {
+     "tasks": 0,
+     "episodes": 0
+    },
+    "delivery_pending": 0,
+    "datasets_changed": 0,
+    "credentials_failed": 0,
+    "backends_failed": 0
+   },
+   "running": {
+    "running": 0,
+    "queued": 0,
+    "paused": 0,
+    "active": []
+   },
+   "recent": {
+    "days": 7,
     "tasks_finished": 0,
     "episodes_checked": 0,
     "pass_rate": null,

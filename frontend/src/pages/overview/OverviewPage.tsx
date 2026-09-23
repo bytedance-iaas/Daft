@@ -90,8 +90,8 @@ export function OverviewPage() {
   }
   if (!o) return header;
   const live = o.running.running + o.running.queued + o.running.paused > 0;
-  const days = o.recent.tokens_per_day.map((d) => ({ name: d.date.slice(5), value: d.tokens }));
-  const totalTokens = o.recent.tokens_per_day.reduce((a, d) => a + d.tokens, 0);
+  const days = o.recent.tokens_per_bucket.map((d) => ({ name: d.label, value: d.tokens }));
+  const totalTokens = o.recent.tokens_per_bucket.reduce((a, d) => a + d.tokens, 0);
   const todoCount = o.todo.error_tasks + o.todo.adjudication.tasks + o.todo.delivery_pending + o.todo.datasets_changed + o.todo.credentials_failed + o.todo.backends_failed;
   return (
     <div>

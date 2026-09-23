@@ -73,8 +73,9 @@ from .protocol import (
 #: Retention the repository applies in ``purge_expired`` (design doc 01, section 2.8).
 PREFLIGHT_TTL_MS = 30 * 60 * 1000
 IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000
-#: The token timeline (``daemon.repo.extras``) is kept as long as the audit events.
-TOKEN_TIMELINE_TTL_MS = 90 * 24 * 60 * 60 * 1000
+#: The token timeline (``daemon.repo.extras``) covers the overview's longest period - 12
+#: calendar months (C4 1.10.0) - with a margin for the site's time zone.
+TOKEN_TIMELINE_TTL_MS = 400 * 24 * 60 * 60 * 1000
 
 #: Upper bound for one cursor page, whatever the caller asks for.
 MAX_PAGE = 1000

@@ -692,7 +692,8 @@ class Repository(Protocol):
                        owner: str = DEFAULT_OWNER) -> list[tuple[int, int]]:
         """``(slot start, tokens)`` of the actual ledger (prompt + completion) in 15-minute UTC
         slots within ``[since, until)`` that have tokens, oldest first; add_usage feeds it
-        and the tokens stay counted whatever happens to their task later."""
+        and the tokens stay counted whatever happens to their task later. Slots are kept at
+        least 400 days: the overview reaches back 12 calendar months (C4 1.10.0)."""
 
     # -- idempotency keys (24 hours) ------------------------------------------------
     def get_idempotent(self, *, key: str, route: str,
@@ -701,4 +702,5 @@ class Repository(Protocol):
     def put_idempotent(self, record: IdempotencyRecord) -> None: ...
 
     def purge_expired(self, *, now: int) -> int:
-        """Drop expired preflight results and idempotency keys."""
+        """Drop expired preflight results and idempotency keys (the count), and token-timeline
+        slots older than the overview needs (see token_timeline)."""

@@ -1,6 +1,7 @@
 """Registered datasets and the overview (C4 1.1, D36, D37); every body is validated against C4."""
 from __future__ import annotations
 
+import datetime as dt
 import re
 
 from curation.contracts import schemas
@@ -313,12 +314,22 @@ def test_overview_of_an_empty_site(client_for):
                             "delivery_pending": 0, "datasets_changed": 0,
                             "credentials_failed": 0, "backends_failed": 0}
     assert body["running"] == {"running": 0, "queued": 0, "paused": 0, "active": []}
-    assert body["recent"]["pass_rate"] is None and body["recent"]["days"] == 7
-    assert [d["tokens"] for d in body["recent"]["tokens_per_day"]] == [0] * 7
+    recent = body["recent"]
+    assert recent["pass_rate"] is None and (recent["days"], recent["bucket"]) == (7, "day")
+    assert [d["tokens"] for d in recent["tokens_per_bucket"]] == [0] * 7
     # T0 is 2025-09-19 16:40 UTC, already the 20th at +08:00 (the default site offset)
-    assert [d["date"] for d in body["recent"]["tokens_per_day"]] == [
-        f"2025-09-{d}" for d in range(14, 21)]
+    assert [d["label"] for d in recent["tokens_per_bucket"]] == [f"09-{d}" for d in range(14, 21)]
+    assert [d["start"] for d in recent["tokens_per_bucket"]] == [
+        _local(2025, 9, d) for d in range(14, 21)]
+    assert recent["since"] == _local(2025, 9, 14)
     assert body["datasets"] == {"total": 0, "changed": 0} and body["generated_at"] == T0
+    assert c.get(OVERVIEW, params={"days": 7}).json() == body
+
+
+def _local(y, m, d, hh=0, mm=0, *, tz=8 * 60) -> int:
+    """Epoch ms of a wall-clock time at a fixed UTC offset (minutes; the site's is +08:00)."""
+    zone = dt.timezone(dt.timedelta(minutes=tz))
+    return int(dt.datetime(y, m, d, hh, mm, tzinfo=zone).timestamp()) * 1000
 
 
 def _usage(rt, task_id, tokens, at):
@@ -408,9 +419,10 @@ def test_overview_counts(client_for, clock):
     recent = body["recent"]
     assert (recent["tasks_finished"], recent["episodes_checked"], recent["pass_rate"]) == \
         (2, 80, 0.875)
-    assert recent["tokens_per_day"][-2:] == [{"date": "2025-09-19", "tokens": 500},
-                                             {"date": "2025-09-20", "tokens": 1000}]
-    assert sum(d["tokens"] for d in recent["tokens_per_day"]) == 1500
+    assert recent["tokens_per_bucket"][-2:] == [
+        {"start": _local(2025, 9, 19), "label": "09-19", "tokens": 500},
+        {"start": _local(2025, 9, 20), "label": "09-20", "tokens": 1000}]
+    assert sum(d["tokens"] for d in recent["tokens_per_bucket"]) == 1500
     assert body["datasets"] == {"total": 2, "changed": 1}
 
 
@@ -462,6 +474,76 @@ def test_overview_days_follow_the_site_offset(client_for):
     t = seed_task(rt.repo)
     _usage(rt, t.id, 1000, T0)
     _usage(rt, t.id, 500, T0 - 41 * 60 * 1000)
-    days = c.get(OVERVIEW).json()["recent"]["tokens_per_day"]
-    assert days[-1] == {"date": "2025-09-19", "tokens": 1500}   # one UTC day
-    assert days[0]["date"] == "2025-09-13"
+    days = c.get(OVERVIEW).json()["recent"]["tokens_per_bucket"]
+    assert days[-1] == {"start": _local(2025, 9, 19, tz=0), "label": "09-19",
+                        "tokens": 1500}                                # one UTC day
+    assert days[0]["label"] == "09-13"
+
+
+def test_overview_periods_cut_into_days_weeks_and_months(client_for):
+    """近 7 天 / 近 1 月 by day, 近 3 月 by calendar week (13, Monday first), 近 1 年 by
+    calendar month (12); every bucket is listed and the figures start where the first does."""
+    c = client_for()                                  # +08:00: T0 is Saturday 2025-09-20 00:40
+    rt = _rt(c)
+    t = seed_task(rt.repo)
+    for tokens, at in ((100, T0),                                      # today
+                       (200, _local(2025, 9, 14, 23, 59)),             # Sunday: last week
+                       (300, _local(2025, 9, 15)),                     # Monday: this week
+                       (400, _local(2025, 8, 31, 23, 59)),             # August's last minute
+                       (500, _local(2024, 10, 1)),                     # 近 1 年's first minute
+                       (600, _local(2024, 9, 30, 23, 59))):            # ... and just before it
+        _usage(rt, t.id, tokens, at)
+    summary = {"total": 10, "passed": 5, "rejected": 5, "held": 0, "review": 0, "pass_rate": 0.5}
+    for name, ended in (("this week", _local(2025, 9, 16)), ("september", _local(2025, 9, 1)),
+                        ("july", _local(2025, 7, 1)), ("last october", _local(2024, 10, 2)),
+                        ("too old", _local(2024, 9, 30, 12))):
+        done = seed_task(rt.repo, name)
+        _to(rt, done.id, "running", "succeeded", at=ended)
+        rt.repo.set_task_summary(done.id, summary)
+
+    def recent(days):
+        r = c.get(OVERVIEW, params={"days": days})
+        assert r.status_code == 200, r.text
+        assert_schema("Overview", r.json())
+        body = r.json()["recent"]
+        assert body["days"] == days and body["since"] == body["tokens_per_bucket"][0]["start"]
+        starts = [b["start"] for b in body["tokens_per_bucket"]]
+        assert starts == sorted(starts)
+        return body, {b["label"]: b["tokens"] for b in body["tokens_per_bucket"]}
+
+    week, tokens = recent(7)
+    assert week["bucket"] == "day" and list(tokens) == [f"09-{d}" for d in range(14, 21)]
+    assert (tokens["09-14"], tokens["09-15"], tokens["09-20"], sum(tokens.values())) == \
+        (200, 300, 100, 600)
+    assert (week["tasks_finished"], week["episodes_checked"], week["pass_rate"]) == (1, 10, 0.5)
+
+    month, tokens = recent(30)
+    assert month["bucket"] == "day" and len(tokens) == 30
+    assert (list(tokens)[0], list(tokens)[-1], month["since"]) == ("08-22", "09-20",
+                                                                     _local(2025, 8, 22))
+    assert (tokens["08-31"], sum(tokens.values())) == (400, 1000)
+    assert month["tasks_finished"] == 2
+
+    quarter, tokens = recent(90)
+    assert quarter["bucket"] == "week" and len(tokens) == 13
+    assert (list(tokens)[0], list(tokens)[-1], quarter["since"]) == ("06-23 周", "09-15 周",
+                                                                       _local(2025, 6, 23))
+    assert (tokens["09-15 周"], tokens["09-08 周"], tokens["08-25 周"], sum(tokens.values())) == \
+        (400, 200, 400, 1000)
+    assert quarter["tasks_finished"] == 3 and quarter["pass_rate"] == 0.5
+
+    year, tokens = recent(365)
+    assert year["bucket"] == "month" and list(tokens) == [
+        "2024-10", "2024-11", "2024-12", "2025-01", "2025-02", "2025-03", "2025-04", "2025-05",
+        "2025-06", "2025-07", "2025-08", "2025-09"]
+    assert year["since"] == _local(2024, 10, 1)
+    assert (tokens["2024-10"], tokens["2025-08"], tokens["2025-09"], sum(tokens.values())) == \
+        (500, 400, 600, 1500)                             # 2024-09-30 23:59 is outside
+    assert (year["tasks_finished"], year["episodes_checked"]) == (4, 40)
+
+
+def test_overview_refuses_other_periods(client_for):
+    c = client_for()
+    for days in ("14", "0", "-7", "abc", "7.5"):
+        body = assert_error(c.get(OVERVIEW, params={"days": days}), "validation_failed")
+        assert "days" in str(body["error"])
