@@ -242,6 +242,12 @@ Current summary:
       · 账本新增阶段 6（F6.1 导航概览任务页、F6.2 报告改版与 Episode 明细、F6.3 表单数据集密钥页、F6.4 ID、F6.5 mcap / lance、
         F6.6 替换 dataverse curation），00 篇 §7 加 D44–D48
 
+      · 13:10 前四个 agent 同时因会话额度（HTTP 429）中断，额度恢复后用原上下文逐个恢复，改为每一步都提交
+      · 需求方核对 galbot 后的答复：旧 v2 数据盘在 cn-beijing-e、galbot 跑 VCI（只有 b/c/d 区）→ 不挪盘、拷数据到新 ebs-essd 盘，
+        v2 跑 VCI（D48 与 deploy/README.md §12 已改）；VCI 能拉 iaas-us 仓库的镜像（需求方确认，不做拉取测试）
+      · 合并界面批（761d51fbb，F6.1 除概览 + F6.3）：侧边栏与面包屑、子任务运行时显示「运行中」（SSE 子任务事件不再覆盖任务状态、
+        列表在子任务运行时轮询）、档合并显示与两行进度、详情页并排卡片与 Token 明细与横向时间线、常驻人工裁决、删除可同时清理、
+        表单文案、VLM 模型筛选 / 添加、数据集「可视化」跳 ReRun；前端 250 条测试、lint、类型检查通过；D28 补修订说明（d8af4a7bb）
 Main gaps:
   - 阶段 6 全部 not_completed（进行中）
   - 集群连不上：kubeconfig 走 socks5://localhost:1080，本机隧道没开；F6.6 部署前需要需求方打开
