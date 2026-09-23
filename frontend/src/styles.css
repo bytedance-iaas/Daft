@@ -320,6 +320,15 @@ button.video-placeholder {
   cursor: pointer;
 }
 
+.sync-note {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.sync-note.waiting {
+  color: var(--c-warning);
+}
+
 .video-box figcaption {
   font-size: 12px;
   margin-top: 4px;

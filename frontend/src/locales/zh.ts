@@ -1025,6 +1025,9 @@ export const zh = {
     taskTextSource: (s: string) => `来源：${s}`,
     videos: '各机位视频',
     playAll: '同时播放',
+    stopSync: '停止同步',
+    // Synced playback (F6.2): shown next to the button while synced
+    syncStatus: { loading: '缓冲中…', buffering: '缓冲中…', playing: '同步播放中', paused: '已暂停', ended: '播放完毕', idle: '' } as Record<string, string>,
     videoOrigin: { clip: '裁决片段', delivery_dataset: '交付数据集', source_dataset: '源数据集' } as Record<string, string>,
     videoFrom: (origin: string) => `视频来自${origin}，经预签名地址直连 TOS`,
     videoLoad: '点击加载视频',

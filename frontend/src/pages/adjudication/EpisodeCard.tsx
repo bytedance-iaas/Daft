@@ -6,7 +6,8 @@ import { moduleName, qk, useModules } from '../../api/queries';
 import type { AdjudicationLine, Decision, DecisionValue } from '../../api/types';
 import { LazyVisible } from '../../components/LazyVisible';
 import { RelTime } from '../../components/RelTime';
-import { SignedImage, SignedVideo } from '../../features/media/SignedMedia';
+import { SignedImage } from '../../features/media/SignedMedia';
+import { SyncedVideos } from '../../features/media/SyncedVideos';
 import { answerOn, catalogLine, lineDecisions, lineTitle, repeats, type CardView, type EffectiveDecision, type ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
 
@@ -15,10 +16,12 @@ export const STATUS_COLOR: Record<string, string> = { pending: 'arcoblue', optio
 type Question = CardView['questions'][number];
 type Decide = (line: AdjudicationLine, d: DecisionValue, label?: string) => Promise<boolean>;
 
-/** Videos and evidence frames of one episode, loaded when the card scrolls into view (03 §7). */
+/**
+ * Videos and evidence frames of one episode, loaded when the card scrolls into view (03 §7).
+ * 「同时播放」 plays the cameras in sync and never starts by itself (F6.2).
+ */
 function CardMedia({ taskId, ep, rev }: { taskId: string; ep: number; rev: number }) {
   const reg = useModules();
-  const [playSignal, setPlaySignal] = useState(0);
   const q = useQuery({
     queryKey: qk.episode(taskId, ep, rev),
     queryFn: () => unwrap(api().GET('/tasks/{id}/episodes/{index}', { params: { path: { id: taskId, index: ep }, query: { rev } } })),
@@ -31,21 +34,12 @@ function CardMedia({ taskId, ep, rev }: { taskId: string; ep: number; rev: numbe
   return (
     <div data-testid={`media-${ep}`}>
       {v.videos.length ? (
-        <>
-          <div className="video-grid">
-            {v.videos.map((video) => (
-              <SignedVideo key={`${video.camera}-${video.path}`} task={taskId} video={video} playSignal={playSignal} />
-            ))}
-          </div>
-          <Space style={{ marginTop: 6 }}>
-            {v.videos.length > 1 ? (
-              <Button size="mini" onClick={() => setPlaySignal((n) => n + 1)}>
-                {zh.report.playAll}
-              </Button>
-            ) : null}
-            {origin ? <span className="muted" style={{ fontSize: 12 }}>{zh.report.videoFrom(zh.report.videoOrigin[origin] ?? origin)}</span> : null}
-          </Space>
-        </>
+        <SyncedVideos
+          key={`${ep}-${rev}`}
+          task={taskId}
+          videos={v.videos}
+          extra={origin ? <span className="muted" style={{ fontSize: 12 }}>{zh.report.videoFrom(zh.report.videoOrigin[origin] ?? origin)}</span> : null}
+        />
       ) : (
         <Empty description={zh.report.videos} />
       )}

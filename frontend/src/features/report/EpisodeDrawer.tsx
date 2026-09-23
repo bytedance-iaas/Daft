@@ -1,6 +1,5 @@
 import { Alert, Button, Card, Drawer, Empty, Space, Spin, Table, Tag, Typography } from '@arco-design/web-react';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
@@ -9,7 +8,8 @@ import type { EpisodeView, ResultRecord } from '../../api/types';
 import { detailsDigest, reasonLine, recordError, seconds } from '../../lib/reportView';
 import { formatScalar } from '../../lib/summary';
 import { zh } from '../../locales/zh';
-import { SignedImage, SignedVideo } from '../media/SignedMedia';
+import { SignedImage } from '../media/SignedMedia';
+import { SyncedVideos } from '../media/SyncedVideos';
 
 export const LIST_COLOR: Record<string, string> = { passed: 'green', reject: 'red', held: 'orange' };
 const VERDICT_COLOR: Record<string, string> = { pass: 'green', fail: 'red', abstain: 'orange', scored: 'arcoblue', error: 'orangered' };
@@ -52,7 +52,6 @@ function Readings({ view }: { view: EpisodeView }) {
  */
 export function EpisodeDrawer({ taskId, ep, rev, readOnly, onClose }: { taskId: string; ep: number | null; rev: number; readOnly?: boolean; onClose: () => void }) {
   const reg = useModules();
-  const [playSignal, setPlaySignal] = useState(0);
   const q = useQuery({
     queryKey: qk.episode(taskId, ep ?? -1, rev),
     queryFn: () => unwrap(api().GET('/tasks/{id}/episodes/{index}', { params: { path: { id: taskId, index: ep! }, query: { rev } } })),
@@ -107,26 +106,8 @@ export function EpisodeDrawer({ taskId, ep, rev, readOnly, onClose }: { taskId: 
             ) : null}
           </Space>
         </Card>
-        <Card
-          title={zh.report.videos}
-          size="small"
-          extra={
-            v.videos.length > 1 ? (
-              <Button size="mini" type="primary" onClick={() => setPlaySignal((n) => n + 1)}>
-                {zh.report.playAll}
-              </Button>
-            ) : null
-          }
-        >
-          {v.videos.length ? (
-            <div className="video-grid">
-              {v.videos.map((video) => (
-                <SignedVideo key={`${video.camera}-${video.path}`} task={taskId} video={video} playSignal={playSignal} caption={video.origin ? zh.report.videoOrigin[video.origin] : undefined} />
-              ))}
-            </div>
-          ) : (
-            <Empty />
-          )}
+        <Card title={zh.report.videos} size="small">
+          {v.videos.length ? <SyncedVideos key={`${v.episode_index}-${v.revision}`} task={taskId} videos={v.videos} caption={(video) => (video.origin ? zh.report.videoOrigin[video.origin] : undefined)} /> : <Empty />}
         </Card>
         <Card title={zh.report.evidence} size="small">
           {v.evidence?.length ? (
