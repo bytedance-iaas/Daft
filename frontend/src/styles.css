@@ -733,6 +733,8 @@ button.video-placeholder {
 @media (max-width: 960px) {
   .overview-cards {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
 
 /* Report sections (F6.2): key figures, then charts two to a row, then tables and notes */
 .section-card.collapsed .arco-card-body {
