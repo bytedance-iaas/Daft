@@ -96,7 +96,7 @@ export function DatasetListPage() {
       title: zh.datasets.colOps,
       dataIndex: 'id',
       fixed: 'right',
-      width: 220,
+      width: 260,
       // Requester item 22: 可视化 / 新建任务 / 删除; 重新检查 stays on the detail page.
       render: (_: unknown, d) => (
         <Space size={4}>
@@ -153,7 +153,7 @@ export function DatasetListPage() {
             loading={list.isLoading}
             columns={columns}
             data={list.data?.items ?? []}
-            scroll={{ x: 1430 }}
+            scroll={{ x: 1470 }}
             noDataElement={<Typography.Text type="secondary">{q || format || check ? zh.datasets.emptyFiltered : zh.datasets.empty}</Typography.Text>}
             pagination={{
               current: page,
