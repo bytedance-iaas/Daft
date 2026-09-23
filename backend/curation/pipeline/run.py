@@ -836,8 +836,7 @@ def _run_pipeline(
             capper = make_vlm_captioner(vcfg0["endpoint"], vcfg0["model"],
                                         timeout_s=timeout_for("caption", vcfg0),
                                         api_key_env=vcfg0.get("api_key_env"),
-                                        max_in_flight=_cc0,
-                                        thinking=cfg.get("pipeline", {}).get("thinking"))
+                                        max_in_flight=_cc0)
             _pk_cap0 = _progress_init("precap", len(unlabeled),
                                       f"无标注补 caption({len(unlabeled)} 条,并发 {_cc0})")
             if _checkpoint is None:
@@ -1051,8 +1050,7 @@ def _run_pipeline(
         captioner = make_vlm_captioner(vcfg["endpoint"], vcfg["model"],
                                        timeout_s=_timeout_for("caption", vcfg),
                                        api_key_env=vcfg.get("api_key_env"),
-                                       max_in_flight=_cap_conc,
-                                       thinking=cfg.get("pipeline", {}).get("thinking"))
+                                       max_in_flight=_cap_conc)
         # 闸门按文本调用里最大的结构并发给(守规合并 / 标注判官都从多线程调它)
         llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"],
                                timeout_s=_timeout_for("llm", vcfg),

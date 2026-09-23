@@ -73,8 +73,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
         captioner = make_vlm_captioner(v["endpoint"], v["model"],
                                        timeout_s=vlm_client.timeout_for("caption", v),
                                        api_key_env=v.get("api_key_env"),
-                                       max_in_flight=int(gates["caption"]),
-                                       thinking=cfg.get("pipeline", {}).get("thinking"))
+                                       max_in_flight=int(gates["caption"]))
         payload = run_autolabel(ctx, run_dir, rows, captioner, n_frames=n_frames,
                                 concurrency=int(gates["caption"]), resume=args.resume)
     return Result(payload, human=render(payload))

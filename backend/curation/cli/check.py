@@ -340,8 +340,7 @@ def _profile(ctx, args, run_dir, src, episodes, part, plan_stage, guard):
         captioner = make_vlm_captioner(v["endpoint"], v["model"],
                                        timeout_s=vlm_client.timeout_for("caption", v),
                                        api_key_env=v.get("api_key_env"),
-                                       max_in_flight=int(sp.get("caption_concurrency", 8)),
-                                       thinking=cfg.get("pipeline", {}).get("thinking"))
+                                       max_in_flight=int(sp.get("caption_concurrency", 8)))
         llm_ask = vlm_client.make_llm_ask(
             v["endpoint"], v["model"], timeout_s=vlm_client.timeout_for("llm", v),
             api_key_env=v.get("api_key_env"),
