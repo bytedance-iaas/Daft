@@ -1234,7 +1234,7 @@ export interface components {
         };
         ModuleRegistry: {
             registry_version: string;
-            stages: ("numeric" | "frame" | "vlm" | "post_verdict")[];
+            stages: ("numeric" | "frame" | "vlm" | "post_verdict" | "profile_vlm")[];
             /** @description The questions a person can be asked on the adjudication page (D43). A page shows a line it has no dedicated view for from this entry: its title, the question's reason and one button per decision. */
             review_lines: components["schemas"]["ReviewLine"][];
             modules: {
@@ -1247,7 +1247,7 @@ export interface components {
                 gate: "hard" | "soft" | "dedup" | "none";
                 needs: ("timestamps" | "action" | "state" | "video" | "embodiment_profile" | "vlm" | "raw_bytes" | "eef_input")[];
                 /** @enum {unknown} */
-                stage: "numeric" | "frame" | "vlm" | "post_verdict";
+                stage: "numeric" | "frame" | "vlm" | "post_verdict" | "profile_vlm";
                 /** @description a module id (registry 1.4) means that module's own results */
                 depends_on: ("numeric_gates" | "frame_gates" | "autolabel" | "funnel_verdict" | "dedup" | "eef_video_consistency")[];
                 /**

@@ -3,19 +3,10 @@ import pytest
 from curation.pipeline.config import ConfigError, apply_overrides, load_config, validate_config
 
 
-def test_thinking_is_the_only_pipeline_switch():
+def test_pipeline_has_no_thinking_switch():
     cfg = load_config()
-    assert cfg['pipeline']['thinking'] is None
     assert 'optimizations' not in cfg['pipeline']
-    apply_overrides(cfg, ['pipeline.thinking=false'])
-    assert cfg['pipeline']['thinking'] is False
     validate_config(cfg)
-
-
-@pytest.mark.parametrize('value', [0, 'false', [], {}])
-def test_thinking_requires_boolean(value):
-    with pytest.raises(ConfigError, match='pipeline.thinking'):
-        validate_config({'pipeline': {'thinking': value}})
 
 
 def test_old_engineering_switches_are_rejected():
@@ -23,12 +14,12 @@ def test_old_engineering_switches_are_rejected():
         validate_config({'pipeline': {'optimizations': {'frame_cache': False}}})
 
 
-def test_cli_exposes_only_thinking_switch():
+def test_cli_has_no_legacy_thinking_switch():
     from curation.cli.legacy import build_parser
     parser = build_parser()
     args = parser.parse_args(['run', '--input', '/missing', '--output', '/tmp/unused',
-                              '--no-thinking'])
-    assert args.thinking is False
+                              '--set', 'pipeline.vlm_episode_concurrency=1'])
+    assert not hasattr(args, 'thinking')
     with pytest.raises(SystemExit):
         parser.parse_args(['run', '--input', '/missing', '--output', '/tmp/unused',
                            '--enable', 'frame_cache'])
@@ -40,34 +31,15 @@ def test_active_execution_rejects_invalid_concurrency(concurrency):
         validate_config({'pipeline': {'vlm_episode_concurrency': concurrency}})
 
 
-def test_formal_snapshot_retains_thinking_setting():
+def test_formal_snapshot_does_not_add_thinking_policy():
     from curation.pipeline.run import _sanitize_config_snapshot
     cfg = load_config()
     snapshot = _sanitize_config_snapshot(cfg)
     assert 'optimizations' not in snapshot['pipeline']
-    assert snapshot['pipeline']['thinking'] is None
+    assert 'thinking' not in snapshot['pipeline']
 
 
-def test_formal_snapshot_marks_glm_53_flash_as_still_thinking():
-    from curation.pipeline.run import _sanitize_config_snapshot
-    cfg = load_config()
-    cfg['pipeline']['thinking'] = False
-    cfg['checks']['task_success']['vlm']['model'] = 'glm-5.3-flash'
-    snapshot = _sanitize_config_snapshot(cfg)
-    assert snapshot['pipeline']['thinking'] is False
-    assert snapshot['pipeline']['thinking_effective'] == {
-        'enabled': True, 'reasoning_effort': 'low'}
-
-
-@pytest.mark.parametrize('model,thinking,expected', [
-    ('ark-glm5.2', None, {}),
-    ('ark-glm5.2', True, {'thinking': {'type': 'enabled'}}),
-    ('ark-glm5.2', False, {'thinking': {'type': 'disabled'}}),
-    ('glm-5.3-flash', True, {'thinking': {'type': 'enabled'}}),
-    ('glm-5.3-flash', False, {'thinking': {'type': 'enabled'},
-                             'reasoning_effort': 'low'}),
-])
-def test_thinking_switch_reaches_chat_api(monkeypatch, model, thinking, expected):
+def test_legacy_thinking_argument_is_ignored_by_chat_api(monkeypatch):
     import requests
     from curation.adapters.vlm_client import make_llm_ask
 
@@ -85,37 +57,12 @@ def test_thinking_switch_reaches_chat_api(monkeypatch, model, thinking, expected
         return Response()
 
     monkeypatch.setattr(requests, 'post', post)
-    assert make_llm_ask('https://example.test/v3', model, thinking=thinking)('hello') == 'ok'
+    assert make_llm_ask('https://example.test/v3', 'doubao-seed-2-0-pro-260215', thinking=False)('hello') == 'ok'
     payload = {
-        'model': model, 'temperature': 0.0, 'max_tokens': 8192,
+        'model': 'doubao-seed-2-0-pro-260215', 'temperature': 0.0, 'max_tokens': 8192,
         'messages': [{'role': 'user', 'content': 'hello'}],
     }
-    payload.update(expected)
     assert sent == [('https://example.test/v3/chat/completions', payload)]
-
-
-def test_unknown_model_requires_explicit_policy_for_thinking_switch():
-    from curation.pipeline.thinking import thinking_request_fields
-    with pytest.raises(ConfigError, match='no verified thinking policy'):
-        thinking_request_fields('unknown/model', False)
-    assert thinking_request_fields('unknown/model', None) == {}
-
-
-def test_run_rejects_unknown_model_policy_before_creating_output(tmp_path):
-    from curation.pipeline.run import run_pipeline
-    output = tmp_path / 'output'
-    with pytest.raises(ConfigError, match='no verified thinking policy'):
-        run_pipeline(None, str(tmp_path / 'input'), str(output),
-                     vlm_model='unknown/model',
-                     set_overrides=['pipeline.thinking=false'])
-    assert not output.exists()
-
-
-def test_glm_53_flash_off_notice_says_still_thinking():
-    from curation.pipeline.thinking import thinking_notice
-    notice = thinking_notice('ark-glm5.3-flash', False)
-    assert 'reasoning_effort=low' in notice
-    assert '仍在思考' in notice
 
 
 def test_pipeline_thinking_setting_reaches_visual_request(monkeypatch):
@@ -137,9 +84,8 @@ def test_pipeline_thinking_setting_reaches_visual_request(monkeypatch):
     monkeypatch.setattr(requests, 'post', lambda _url, **kw:
                         (sent.append(kw['json']) or Response()))
     cfg = load_config()
-    cfg['pipeline']['thinking'] = False
     cfg['checks']['task_success']['vlm']['model'] = 'ark-glm5.2'
     frame = np.zeros((4, 4, 3), dtype=np.uint8)
     complete = vlm_completion_from_config(cfg)
     assert complete([('cam', frame)], [[('cam', frame)]], 'pick up the cup') == [0.5]
-    assert len(sent) == 1 and sent[0]['thinking'] == {'type': 'disabled'}
+    assert len(sent) == 1 and 'thinking' not in sent[0]

@@ -74,9 +74,9 @@ function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask
   const active = activeSubtask(task);
   const listed = active ? subtasks.find((s) => s.id === active.id) : undefined;
   const raw = active ? (progressStages(listed?.progress).length ? progressStages(listed?.progress) : progressStages(active.progress)) : task.progress.stages;
-  const funnel = raw.filter((s) => ['numeric', 'frame', 'vlm'].includes(s.id));
-  const showPipeline = funnel.some((s) => s.pipeline);
-  const stages = groupStages(showPipeline ? raw.filter((s) => !funnel.includes(s)) : raw);
+  const lanes = raw.filter((s) => ['numeric', 'frame', 'vlm'].includes(s.id));
+  const showPipeline = lanes.some((s) => s.pipeline);
+  const stages = groupStages(showPipeline ? raw.filter((s) => !lanes.includes(s)) : raw);
   return (
     <Card
       title={
@@ -94,7 +94,7 @@ function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask
         <Typography.Text type="secondary">{active ? zh.taskDetail.subtaskNoStages : zh.taskDetail.noStages}</Typography.Text>
       ) : (
         <div data-testid="stages">
-          {showPipeline ? <PipelineActivity task={task} stages={funnel} /> : null}
+          {showPipeline ? <PipelineActivity task={task} stages={lanes} /> : null}
           {stages.map((s) => {
             const status = s.state === 'failed' ? 'error' : s.state === 'completed_with_errors' ? 'warning' : s.state === 'succeeded' ? 'success' : 'normal';
             return (

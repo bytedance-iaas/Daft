@@ -43,9 +43,14 @@ _LAT_ROWS: list = []
 
 
 def _with_thinking(payload: dict, thinking: bool | None) -> dict:
-    """Add the model-specific Chat API controls requested by the caller."""
-    from ..pipeline.thinking import thinking_request_fields
-    return {**payload, **thinking_request_fields(payload.get("model", ""), thinking)}
+    """Keep the legacy argument harmless; reasoning is selected by the Curation API.
+
+    The Daemon freezes ``vlm.reasoning_effort`` on the task and passes it through the
+    transport policy.  A separate boolean thinking switch could conflict with that
+    value, so it is deliberately not emitted here.
+    """
+    del thinking
+    return dict(payload)
 
 
 def latency_record(tag: str, dt: float, ok: bool = True,

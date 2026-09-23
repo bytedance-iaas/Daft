@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.12.0
+  version: 1.13.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -106,6 +106,10 @@ info:
     a task topic, which the preview does not read, says so with `task_unread`. The preflight
     (C2) reports `kind` mcap / lance; exports of these datasets name their `dataset_dir`.
     (Written as 1.11.0 on the F6.5 branch; renumbered when merged after the report's 1.11.0.)
+
+    1.13.0 (2026-09-23): the module registry's stages take `profile_vlm` (registry 1.7): the
+    skill profile runs in a VLM stage of its own after dedup instead of `post_verdict`; the plan's
+    stage id for it is `profile_vlm`.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1851,7 +1855,7 @@ components:
       required: [registry_version, stages, review_lines, modules]
       properties:
         registry_version: {type: string}
-        stages: {type: array, items: {enum: [numeric, frame, vlm, post_verdict]}}
+        stages: {type: array, items: {enum: [numeric, frame, vlm, post_verdict, profile_vlm]}}
         review_lines:
           type: array
           description: >-
@@ -1873,7 +1877,7 @@ components:
               level: {enum: [episode, dataset]}
               gate: {enum: [hard, soft, dedup, none]}
               needs: {type: array, items: {enum: [timestamps, action, state, video, embodiment_profile, vlm, raw_bytes, eef_input]}}
-              stage: {enum: [numeric, frame, vlm, post_verdict]}
+              stage: {enum: [numeric, frame, vlm, post_verdict, profile_vlm]}
               depends_on:
                 type: array
                 items: {enum: [numeric_gates, frame_gates, autolabel, funnel_verdict, dedup, eef_video_consistency]}

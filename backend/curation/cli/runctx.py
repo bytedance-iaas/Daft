@@ -165,11 +165,6 @@ def stage_config(ctx: Context, modules, *, gates: dict | None = None,
                 if g in GATE_CONFIG_KEYS]
         cfg = apply_overrides(cfg, sets)
     validate_config(cfg, "stage config")
-    from ..pipeline.thinking import thinking_notice
-    model = cfg.get("checks", {}).get("task_success", {}).get("vlm", {}).get("model", "")
-    notice = thinking_notice(model, cfg.get("pipeline", {}).get("thinking"))
-    if notice:
-        print(notice, flush=True)
     return cfg
 
 

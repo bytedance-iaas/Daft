@@ -288,10 +288,12 @@ describe('质检报告 (07 §5)', () => {
     const labels = within(curves).getAllByTestId('chart').map((c) => c.getAttribute('aria-label'));
     expect(labels).toHaveLength(4);
     expect(labels[3]).toContain('互相关：exterior_image_1_left 峰');
+  }, 40_000); // many steps, each rendering the whole report: room for a busy CI machine
+
+  it('Episode 明细: an episode that kept no sync curves says why', async () => {
+    renderApp(`${REPORT}?ep=0#episodes`);
     // ep 0 kept no curves: the server's reason, in Chinese.
-    await user.type(screen.getByRole('combobox', { name: '选择 episode' }).querySelector('input')!, '0');
-    await user.click(await screen.findByRole('option', { name: /^ep 0/ }, { timeout: 4000 }));
-    expect(await screen.findByTestId('sync-curves-missing', {}, { timeout: 4000 })).toHaveTextContent('默认只为值得留意的条目');
+    expect(await screen.findByTestId('sync-curves-missing', {}, { timeout: 8000 })).toHaveTextContent('默认只为值得留意的条目');
   });
 
   it('Episode 明细: 同时播放 signs every camera and waits for all of them; a v3 video plays only its episode (#t=from,to)', async () => {

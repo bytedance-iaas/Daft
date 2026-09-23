@@ -157,7 +157,7 @@ class Chain:
         keep = self.path("revisions", f"r{revision:04d}", "keep.txt")
         self.step("dedup", "check", "--modules", "dedup", *self.common(), "--episodes",
                   "@" + keep, "--survivors-out", self.path("stages", "dedup.txt"))
-        self.step("profile", "check", "--modules", "skill_profile", *self.common(),
+        self.step("profile_vlm", "check", "--modules", "skill_profile", *self.common(),
                   "--episodes", "@" + self.path("stages", "dedup.txt"), *self.vlm)
         self.step("final", "aggregate", "--run-dir", self.rd, "--phase", "final",
                   "--revision", r, "--episodes", episodes, "--input", self.ds)
