@@ -74,10 +74,7 @@ function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask
   const active = activeSubtask(task);
   const listed = active ? subtasks.find((s) => s.id === active.id) : undefined;
   const raw = active ? (progressStages(listed?.progress).length ? progressStages(listed?.progress) : progressStages(active.progress)) : task.progress.stages;
-  // The profile VLM stage is a separate fourth execution lane. It does not
-  // stream episode batches like the funnel, but it still belongs in the same
-  // progress card so the user can see all configured lanes at a glance.
-  const lanes = raw.filter((s) => ['numeric', 'frame', 'vlm', 'profile_vlm', 'profile'].includes(s.id));
+  const lanes = raw.filter((s) => ['numeric', 'frame', 'vlm'].includes(s.id));
   const showPipeline = lanes.some((s) => s.pipeline);
   const stages = groupStages(showPipeline ? raw.filter((s) => !lanes.includes(s)) : raw);
   return (
