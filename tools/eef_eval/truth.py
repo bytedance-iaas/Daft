@@ -4,7 +4,7 @@ Layout (outside the repo, ``$CURATOR_EEF_DEMO_DATA``, default ``~/ws/ws_general/
 * ``<dataset>/evaluation/truth_pixels/<sample_id>/<camera_id>.jsonl`` - dense per-frame true pixels of the
   seeded points (same construction as the seeds: the geometry the video really shows, true calibration,
   video affine), in the observation schema with ``method=synthetic_fixture``;
-* dataset2 ``corruptions.json`` and dataset1 ``ground_truth/episodes.jsonl`` + per-frame files - the
+* dataset2 / dataset3 ``corruptions.json`` and dataset1 ``ground_truth/episodes.jsonl`` + per-frame files - the
   injected fault, its parameters and the evaluation masks.
 """
 from __future__ import annotations
@@ -17,6 +17,8 @@ import numpy as np
 
 ROOT = pathlib.Path(os.environ.get("CURATOR_EEF_DEMO_DATA", "~/ws/ws_general/galbot")).expanduser()
 DATASETS = {"dataset1": "eef_ds1_lr2", "dataset2": "eef_ds2_lr3"}
+#: held out from the thresholds (F5.7): another seed and a magnitude sweep, built like dataset2
+HELD_OUT = {"dataset3": "lerobot"}
 
 
 def dataset_dir(name: str) -> pathlib.Path:
@@ -24,7 +26,7 @@ def dataset_dir(name: str) -> pathlib.Path:
 
 
 def lerobot_root(name: str) -> pathlib.Path:
-    return ROOT / name / DATASETS[name]
+    return ROOT / name / {**DATASETS, **HELD_OUT}[name]
 
 
 def seed_root(name: str) -> pathlib.Path:
@@ -49,7 +51,7 @@ def faults(name: str) -> dict[int, dict]:
     """episode -> {kind, params, evaluate_mask (per frame) or None, cameras (affected) or None}."""
     base = ROOT / name
     out = {}
-    if name == "dataset2":
+    if name in ("dataset2", "dataset3"):
         c = json.loads((base / "corruptions.json").read_text())
         for ep, e in c["episodes"].items():
             kind = "baseline" if e["type"] == "original" else e["type"]

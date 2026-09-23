@@ -225,8 +225,14 @@ Current summary:
       · §3.3 映射导出工具（缺口补齐，不在账本条目里）：adapters/lerobot_mapping.py + `export` 离线命令，按 eef-mapping/1.0
         从 LeRobot v2.1 / v3.0 列生成形态 B 的 trajectory.json；dataset1 / dataset2 两份映射作回归（重算投影与参考包逐点比较：
         13376 点逐位一致、28126 点最大差 0.005 px）；12 篇附录 C.7
+      · F5.7 验收与试用 not_completed（验收①②③已做，试用待需求方）：tools/eef_eval/acceptance.py + 仓库外留出集 galbot/dataset3
+        （同一原始 episode、新种子、六类故障幅度扫描 23 条 + 原版）；冻结的 demo 0.2：检出 19/23、零误报、弃权中位数 0、
+        定位 P95 中位数 2.75 px，漏检都在阈值以下；检出下限、拟合 vs 注入、每分钟视频 CPU 约 33 s / 墙钟约 18 s（4 路）、
+        峰值约 0.5 GB、复核每条 6–12 个请求；回退 = 不勾选（附录 C.8）；galbot/tools 的导出与种子脚本改为按根目录名命名样本
+        阻塞：需求方指定试用数据集与真实 VLM 后端（复核 prompt 未在真实模型上验证）
 
 Main gaps:
+  - EEF F5.7 试用：待需求方指定数据集与 VLM 后端
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
   - APIG：需要在 physicalai-apig 实例的监听命名空间里加 curation（需求方或实例维护者）
   - 完整跑一次质检要一把能写交付目录的 TOS 访问密钥（在 v2 的「密钥与资源」页填）；之后验 F4.1 的「升级时暂停、新 Pod 续跑」
@@ -235,8 +241,8 @@ Main gaps:
     F4.3 待按 README 完整跑一次质检
 
 Next steps:
-  0. EEF–视频一致性：F5.1–F5.6 与 §3.3 导出工具已完成。待做：F5.7 验收与试用（需要真实 VLM 后端验证复核 prompt）、
-     §13.3 补充扫描（检出下限，随 F5.7 的留出集一起做）
+  0. EEF–视频一致性：F5.1–F5.6、§3.3 导出工具、§13.3 补充扫描（F5.7 留出集）已完成；F5.7 只差试用：请需求方指定试用数据集
+     （trajectory.json 或 LeRobot 映射）并提供 VLM 后端，届时在控制台勾选两个模块跑一次，并用真实模型检查复核答复
   1. APIG 接通（physicalai-apig 监听 curation）、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
   2. 按 README 走查一次完整质检，F3.3、F4.1、F4.3 按验收置位；请需求方统一过一遍界面文案（F3.2）
   3. 真实数据的两个基线在 F4.2 黄金对账之前补

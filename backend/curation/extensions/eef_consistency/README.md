@@ -151,4 +151,12 @@
 
     第一条打印 `samples: 7`、`frames: 2009`；第二条 `report.valid: true`、七条 episode 都 `available`（投影由平台按位姿与标定重算，
     包里 `projection` 为 `null`）。把映射里的 `layout` 删掉或写成 `auto`，`export` 以退出码 2 报「eef.layout」——映射必须写明，不猜列宽。
+12. 留出集验收（F5.7，在仓库根执行，约 2 分钟）：`PYTHONPATH=backend:tools .venv/bin/python -m eef_eval.acceptance --dataset dataset3 --jobs 4`，
+    需要仓库外的 `galbot/dataset3`（构建方法见 `tools/eef_eval/README.md`）。末尾打印的汇总应为 `detected: 19`、`false_alarm_episodes: 0`；
+    分组报告写在 `tools/eef_eval/reports/acceptance.md`。
+
+## 回退
+
+两个模块都是建议性的：回退就是新建任务时不勾选（预设与「全选可用」本来不勾）；不勾时任务计划里没有 `advisory_*` 阶段，旧流程与之前
+逐字节相同。勾了也不改 keep / drop / held 与交付清单，只在报告里多建议性小节。
 
