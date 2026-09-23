@@ -1,7 +1,7 @@
-import { Button, Card, Collapse, Descriptions, Empty, Progress, Space, Spin, Table, Tabs, Tag, Timeline, Typography } from '@arco-design/web-react';
+import { Button, Card, Collapse, Descriptions, Empty, Popover, Progress, Radio, Space, Spin, Table, Tag, Typography } from '@arco-design/web-react';
 import type { ColumnProps } from '@arco-design/web-react/es/Table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { errorMessage, isApiError } from '../../api/errors';
@@ -14,7 +14,7 @@ import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { absoluteTime, bytes, compactNumber, percent } from '../../lib/format';
 import { subtaskName } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
-import { isTerminalState, stageLabel, stagePercent } from '../../lib/taskView';
+import { activeSubtask, groupStages, isTerminalState, progressStages, stageLabel, subtaskLabel } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 function Stat({ label, value, foot }: { label: string; value: string | number; foot?: string }) {
@@ -37,23 +37,8 @@ function ReportSummary({ task }: { task: Task }) {
           {task.result_rev ? <Tag size="small">{zh.taskDetail.resultRev(task.result_rev)}</Tag> : null}
         </Space>
       }
-      extra={
-        s ? (
-          <Space>
-            {task.pending_adjudication ? (
-              <Link to={`/tasks/${task.id}/adjudication`}>
-                <Button size="small">{zh.taskDetail.goAdjudicate(task.pending_adjudication)}</Button>
-              </Link>
-            ) : null}
-            <Link to={`/tasks/${task.id}/report`}>
-              <Button size="small" type="primary">
-                {zh.taskDetail.openReport}
-              </Button>
-            </Link>
-          </Space>
-        ) : null
-      }
     >
+      {/* The header carries 查看报告 and 人工裁决: no second set of links here (requester item 10). */}
       {s ? (
         <>
           <div className="stat-grid" data-testid="report-summary">
@@ -76,29 +61,47 @@ function ReportSummary({ task }: { task: Task }) {
   );
 }
 
-function StagesCard({ task }: { task: Task }) {
-  const stages = task.progress.stages;
+/**
+ * 分档进度 (07 §4.2): one bar per stage, 终判 + 报告 and 导出 + 交付核验 each shown as one
+ * (requester item 11), with counts and time used; no time estimate (item 20). While a subtask
+ * runs, its own stages (Subtask.progress) replace the finished main run's (D46).
+ */
+function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask[] }) {
+  const active = activeSubtask(task);
+  const listed = active ? subtasks.find((s) => s.id === active.id) : undefined;
+  const raw = active ? (progressStages(listed?.progress).length ? progressStages(listed?.progress) : progressStages(active.progress)) : task.progress.stages;
+  const stages = groupStages(raw);
   return (
-    <Card title={zh.taskDetail.stages}>
+    <Card
+      title={
+        <Space>
+          {zh.taskDetail.stages}
+          {active ? (
+            <Tag size="small" color="arcoblue" data-testid="stages-subtask">
+              {zh.taskDetail.stagesOfSubtask(subtaskLabel(active, subtasks))}
+            </Tag>
+          ) : null}
+        </Space>
+      }
+    >
       {!stages.length ? (
-        <Typography.Text type="secondary">{zh.taskDetail.noStages}</Typography.Text>
+        <Typography.Text type="secondary">{active ? zh.taskDetail.subtaskNoStages : zh.taskDetail.noStages}</Typography.Text>
       ) : (
         <div data-testid="stages">
           {stages.map((s) => {
             const status = s.state === 'failed' ? 'error' : s.state === 'completed_with_errors' ? 'warning' : s.state === 'succeeded' ? 'success' : 'normal';
             return (
-              <div key={s.id} style={{ marginBottom: 12 }} data-testid={`stage-${s.id}`}>
+              <div key={s.key} style={{ marginBottom: 12 }} data-testid={`stage-${s.key}`}>
                 <Space style={{ justifyContent: 'space-between', width: '100%' }}>
                   <span>
-                    <b>{stageLabel(s.id)}</b> <span className="muted">{zh.stageState[s.state] ?? s.state}</span>
+                    <b>{s.label}</b> <span className="muted">{zh.stageState[s.state] ?? s.state}</span>
                   </span>
                   <span className="muted" style={{ fontSize: 12 }}>
                     {s.total ? `${s.done} / ${s.total}` : ''}
-                    {s.elapsed_s !== null && s.elapsed_s !== undefined ? ` · ${zh.taskDetail.stageTime(zh.time.duration(s.elapsed_s))}` : ''}
-                    {s.state === 'running' && s.eta_s ? ` · ${zh.taskDetail.stageEta(zh.time.duration(s.eta_s))}` : ''}
+                    {s.elapsed_s !== null ? ` · ${zh.taskDetail.stageTime(zh.time.duration(s.elapsed_s))}` : ''}
                   </span>
                 </Space>
-                <Progress percent={s.state === 'skipped' ? 0 : stagePercent(s)} status={status} showText={false} size="small" />
+                <Progress percent={s.percent} status={status} showText={false} size="small" />
                 {s.note ? (
                   <div className="muted" style={{ fontSize: 12 }}>
                     {s.note}
@@ -113,8 +116,19 @@ function StagesCard({ task }: { task: Task }) {
   );
 }
 
-function sumRows(rows: UsageRow[], key: (r: UsageRow) => string) {
-  const out = new Map<string, { key: string; prompt: number; completion: number; reasoning: number; cached: number; requests: number; unknown: number }>();
+interface UsageSum {
+  key: string;
+  prompt: number;
+  completion: number;
+  reasoning: number;
+  cached: number;
+  requests: number;
+  unknown: number;
+}
+
+/** Usage rows added up by `key`, in the order the keys first appear. */
+function sumRows(rows: readonly UsageRow[], key: (r: UsageRow) => string): UsageSum[] {
+  const out = new Map<string, UsageSum>();
   for (const r of rows) {
     const k = key(r);
     const cur = out.get(k) ?? { key: k, prompt: 0, completion: 0, reasoning: 0, cached: 0, requests: 0, unknown: 0 };
@@ -129,23 +143,39 @@ function sumRows(rows: UsageRow[], key: (r: UsageRow) => string) {
   return [...out.values()];
 }
 
+type TokenView = 'module' | 'subtask';
+
+/**
+ * Token 消耗 (07 §4.2, D12: usage only, never money). The totals, then a 明细 fold (requester
+ * item 13, as in the task-detail mockup) by module or by main run / subtask, with a 合计 row.
+ * Only the actual-call ledger is summed (01 §2.6).
+ */
 function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
   const reg = useModules();
   const usage = useQuery({ queryKey: qk.usage(task.id), queryFn: () => unwrap(api().GET('/tasks/{id}/usage', { params: { path: { id: task.id } } })) });
+  const [view, setView] = useState<TokenView>('module');
   const u = task.usage;
-  const subtaskLabel = (id: string) => subtaskName(subtasks, id);
-  const moduleLabel = (id: string) => (id.includes('+') ? zh.taskDetail.mergedModules(id.split('+').map((m) => moduleName(reg.data, m)).join('、')) : moduleName(reg.data, id));
-  const cols = (label: string) => [
-    { title: label, dataIndex: 'key' },
-    { title: zh.taskDetail.tokenInput, dataIndex: 'prompt', render: (v: number) => compactNumber(v) },
-    { title: zh.taskDetail.tokenOutput, dataIndex: 'completion', render: (v: number) => compactNumber(v) },
-    { title: zh.taskDetail.tokenReasoning, dataIndex: 'reasoning', render: (v: number) => compactNumber(v) },
-    { title: zh.taskDetail.tokenCached, dataIndex: 'cached', render: (v: number) => compactNumber(v) },
-    { title: zh.taskDetail.tokenRequests, dataIndex: 'requests', render: (v: number) => v.toLocaleString('en-US') },
-  ];
+  const moduleLabel = (id: string) =>
+    id === 'autolabel' ? zh.stage.autolabel : id.includes('+') ? zh.taskDetail.mergedModules(id.split('+').map((m) => moduleName(reg.data, m)).join('、')) : moduleName(reg.data, id);
   const rows = usage.data?.actual ?? [];
+  const data = sumRows(rows, view === 'module' ? (r) => moduleLabel(r.module_id) : (r) => subtaskName(subtasks, r.subtask_id));
+  const total = sumRows(rows, () => zh.taskDetail.tokenTotal)[0];
+  const tokens = (v: number) => compactNumber(v);
+  const count = (v: number) => v.toLocaleString('en-US');
+  const numbers: { key: keyof UsageSum; title: string; fmt: (v: number) => string }[] = [
+    { key: 'requests', title: zh.taskDetail.tokenColRequests, fmt: count },
+    { key: 'prompt', title: zh.taskDetail.tokenInput, fmt: tokens },
+    { key: 'completion', title: zh.taskDetail.tokenOutput, fmt: tokens },
+    { key: 'reasoning', title: zh.taskDetail.tokenReasoning, fmt: tokens },
+    { key: 'cached', title: zh.taskDetail.tokenCached, fmt: tokens },
+  ];
+  const columns: ColumnProps<UsageSum>[] = [
+    // Room for a six-character module name on one line; merged-request names may wrap.
+    { title: view === 'module' ? zh.taskDetail.colModule : zh.taskDetail.tokenColRun, dataIndex: 'key', width: 136 },
+    ...numbers.map((n) => ({ title: n.title, dataIndex: n.key, align: 'right' as const, render: (v: number) => <span className="nowrap">{n.fmt(v)}</span> })),
+  ];
   return (
-    <Card title={zh.taskDetail.tokens} extra={<span className="muted">{zh.taskDetail.tokensDesc}</span>}>
+    <Card title={zh.taskDetail.tokens}>
       <div className="stat-grid" data-testid="token-totals">
         <Stat label={zh.taskDetail.tokenInput} value={compactNumber(u.prompt_tokens)} foot={zh.taskDetail.tokenInputFoot} />
         <Stat label={zh.taskDetail.tokenOutput} value={compactNumber(u.completion_tokens)} foot={zh.taskDetail.tokenOutputFoot} />
@@ -153,19 +183,49 @@ function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
         <Stat label={zh.taskDetail.tokenCached} value={compactNumber(u.cached_tokens)} foot={u.prompt_tokens ? zh.taskDetail.tokenShareOf(zh.taskDetail.tokenInput, percent(u.cached_tokens / u.prompt_tokens, 0)) : undefined} />
         <Stat label={zh.taskDetail.tokenRequests} value={u.requests.toLocaleString('en-US')} foot={u.requests_unknown_usage ? zh.taskDetail.tokenUnknown(u.requests_unknown_usage) : undefined} />
       </div>
-      {rows.length ? (
-        <Tabs defaultActiveTab="module" size="small" style={{ marginTop: 12 }}>
-          <Tabs.TabPane key="module" title={zh.taskDetail.tokenByModule}>
-            <Table rowKey="key" size="small" pagination={false} columns={cols(zh.taskDetail.colModule)} data={sumRows(rows, (r) => moduleLabel(r.module_id))} />
-          </Tabs.TabPane>
-          <Tabs.TabPane key="subtask" title={zh.taskDetail.tokenBySubtask}>
-            <Table rowKey="key" size="small" pagination={false} columns={cols(zh.taskDetail.tokenBySubtask)} data={sumRows(rows, (r) => subtaskLabel(r.subtask_id))} />
-          </Tabs.TabPane>
-        </Tabs>
-      ) : null}
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
-        {zh.taskDetail.tokenNote}
-      </Typography.Paragraph>
+      <Collapse className="token-fold" bordered={false} defaultActiveKey={['detail']}>
+        <Collapse.Item
+          name="detail"
+          header={zh.taskDetail.tokenDetail}
+          extra={
+            <Radio.Group type="button" size="mini" value={view} onChange={(v: TokenView) => setView(v)} aria-label={zh.taskDetail.tokenDetail}>
+              <Radio value="module">{zh.taskDetail.tokenByModule}</Radio>
+              <Radio value="subtask">{zh.taskDetail.tokenBySubtask}</Radio>
+            </Radio.Group>
+          }
+        >
+          {rows.length ? (
+            <Table
+              rowKey="key"
+              size="small"
+              pagination={false}
+              columns={columns}
+              data={data}
+              scroll={{ x: 520 }}
+              data-testid="token-table"
+              summary={() =>
+                total ? (
+                  <Table.Summary.Row>
+                    <Table.Summary.Cell>
+                      <b>{zh.taskDetail.tokenTotal}</b>
+                    </Table.Summary.Cell>
+                    {numbers.map((n) => (
+                      <Table.Summary.Cell key={n.key} style={{ textAlign: 'right' }}>
+                        <b>{n.fmt(total[n.key] as number)}</b>
+                      </Table.Summary.Cell>
+                    ))}
+                  </Table.Summary.Row>
+                ) : null
+              }
+            />
+          ) : (
+            <Typography.Text type="secondary">{zh.taskDetail.tokenNone}</Typography.Text>
+          )}
+          <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+            {zh.taskDetail.tokenNote}
+          </div>
+        </Collapse.Item>
+      </Collapse>
     </Card>
   );
 }
@@ -210,7 +270,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
   // only the summary column gives way.
   const columns: ColumnProps<ModuleState>[] = [
     { title: zh.taskDetail.colModule, dataIndex: 'name', width: 140, render: (_: unknown, m) => <b>{moduleName(reg.data, m.id) || m.name}</b> },
-    { title: zh.taskDetail.colStage, dataIndex: 'id', width: 100, render: (_: unknown, m) => stageLabel(reg.data?.modules.find((x) => x.id === m.id)?.stage ?? '') },
+    { title: zh.taskDetail.colStage, key: 'stage', dataIndex: 'id', width: 100, render: (_: unknown, m) => stageLabel(reg.data?.modules.find((x) => x.id === m.id)?.stage ?? '') },
     {
       title: zh.taskDetail.colState,
       dataIndex: 'state',
@@ -250,6 +310,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
     },
     {
       title: zh.taskDetail.colOps,
+      key: 'ops',
       dataIndex: 'id',
       width: 90,
       render: (_: unknown, m) =>
@@ -261,7 +322,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
     },
   ];
   return (
-    <Card title={zh.taskDetail.modulesTitle} extra={<span className="muted">{zh.taskDetail.modulesDesc(selected.length, skipped.map((m) => m.name).join('、'))}</span>}>
+    <Card title={zh.taskDetail.modulesTitle}>
       <Table
         rowKey="id"
         size="small"
@@ -285,36 +346,77 @@ function relabelRerunOf(subtasks: readonly Subtask[], id: string | null | undefi
   return s?.kind === 'apply_adjudication' ? s.scope.relabel_rerun ?? null : null;
 }
 
+/** A timeline node's title: subtask entries name the subtask (「子任务 · 重试 #1」「重试 #1 结束」). */
+function timelineTitle(e: TimelineEntry, subtasks: readonly Subtask[]): string {
+  const named = e.subtask_id && subtasks.some((s) => s.id === e.subtask_id) ? subtaskName(subtasks, e.subtask_id) : null;
+  if (named && e.kind === 'subtask_started') return zh.taskDetail.subtaskStartedTitle(named);
+  if (named && e.kind === 'subtask_finished') return zh.taskDetail.subtaskFinishedTitle(named);
+  return zh.taskDetail.timelineKind[e.kind] ?? e.kind;
+}
+
+function timelineColor(e: TimelineEntry): string {
+  if (e.kind === 'failed' || e.state === 'failed') return 'var(--c-danger)';
+  if (e.kind === 'system_pause' || e.state === 'completed_with_errors') return 'var(--c-warning)';
+  if (e.state === 'succeeded') return 'var(--c-success)';
+  return 'var(--c-primary)';
+}
+
+/**
+ * 执行时间线 (07 §4.2), laid out horizontally (requester item 21): one node per entry in a row
+ * that scrolls sideways when it does not fit, opened at the newest end. Each node shows its title
+ * and time, the relabel tag, the revision's report link and 当前版本 on the node itself; the entry's
+ * text is clamped to two lines, the full text in a popover.
+ */
 function TimelineCard({ task, entries, subtasks }: { task: Task; entries: TimelineEntry[]; subtasks: readonly Subtask[] }) {
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (row.current) row.current.scrollLeft = row.current.scrollWidth;
+  }, [entries.length]);
   return (
-    <Card title={zh.taskDetail.timeline} extra={<span className="muted">{zh.taskDetail.timelineDesc}</span>}>
+    <Card title={zh.taskDetail.timeline}>
       {!entries.length ? (
         <Empty />
       ) : (
-        <Timeline data-testid="timeline">
-          {entries.map((e, i) => {
-            const rerun = e.kind === 'subtask_started' || e.kind === 'subtask_finished' ? relabelRerunOf(subtasks, e.subtask_id) : null;
-            return (
-            <Timeline.Item key={i} label={<RelTime ms={e.at} />} dotColor={e.kind === 'failed' ? 'var(--c-danger)' : e.kind === 'system_pause' ? 'var(--c-warning)' : undefined}>
-              <b>{zh.taskDetail.timelineKind[e.kind] ?? e.kind}</b>
-              {rerun ? (
-                <Tag size="small" color={rerun === 'full' ? 'orangered' : 'arcoblue'} style={{ marginLeft: 8 }} data-testid="relabel-rerun-tag">
-                  {zh.taskDetail.relabelRerun[rerun]}
-                </Tag>
-              ) : null}
-              {e.revision && e.kind === 'revision' ? (
-                <Space style={{ marginLeft: 8 }}>
-                  <Link to={`/tasks/${task.id}/report?rev=${e.revision}`}>{zh.taskDetail.openRevision(e.revision)}</Link>
-                  {e.revision === task.result_rev ? <Tag size="small" color="green">{zh.taskDetail.currentRevision}</Tag> : null}
-                </Space>
-              ) : null}
-              <div className="muted" style={{ fontSize: 12 }}>
-                {e.text}
-              </div>
-            </Timeline.Item>
-            );
-          })}
-        </Timeline>
+        <div className="htl" ref={row} data-testid="timeline">
+          <ol className="htl-track">
+            {entries.map((e, i) => {
+              const rerun = e.kind === 'subtask_started' || e.kind === 'subtask_finished' ? relabelRerunOf(subtasks, e.subtask_id) : null;
+              const revision = e.kind === 'revision' && e.revision ? e.revision : null;
+              return (
+                <li key={i} className="htl-node" data-kind={e.kind}>
+                  <div className="htl-axis" aria-hidden>
+                    <span className="htl-dot" style={{ borderColor: timelineColor(e) }} />
+                    <span className="htl-line" />
+                  </div>
+                  <div className="htl-title">{timelineTitle(e, subtasks)}</div>
+                  <div className="htl-time">
+                    <RelTime ms={e.at} />
+                  </div>
+                  {rerun || revision ? (
+                    <div className="htl-extra">
+                      {rerun ? (
+                        <Tag size="small" color={rerun === 'full' ? 'orangered' : 'arcoblue'} data-testid="relabel-rerun-tag">
+                          {zh.taskDetail.relabelRerun[rerun]}
+                        </Tag>
+                      ) : null}
+                      {revision ? <Link to={`/tasks/${task.id}/report?rev=${revision}`}>{zh.taskDetail.openRevision(revision)}</Link> : null}
+                      {revision && revision === task.result_rev ? (
+                        <Tag size="small" color="green">
+                          {zh.taskDetail.currentRevision}
+                        </Tag>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <Popover content={<div className="htl-popover">{e.text}</div>} position="bottom">
+                    <div className="htl-text" tabIndex={0}>
+                      {e.text}
+                    </div>
+                  </Popover>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
       )}
     </Card>
   );
@@ -401,26 +503,13 @@ function MoreInfo({ task }: { task: Task }) {
     <Collapse>
       <Collapse.Item
         name="more"
-        header={
-          <Space>
-            <b>{zh.taskDetail.more}</b>
-            <span className="muted" style={{ fontSize: 12 }}>
-              {zh.taskDetail.moreDesc}
-            </span>
-          </Space>
-        }
+        header={<b>{zh.taskDetail.more}</b>}
       >
         <Typography.Title heading={6}>{zh.taskDetail.config}</Typography.Title>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {zh.taskDetail.configDesc}
-        </Typography.Text>
         <Descriptions column={2} data={data} style={{ marginTop: 8 }} />
         <Typography.Title heading={6} style={{ marginTop: 16 }}>
           {zh.taskDetail.plan}
         </Typography.Title>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {zh.taskDetail.planDesc}
-        </Typography.Text>
         <div style={{ marginTop: 8 }}>
           <PlanView taskId={task.id} started={Boolean(task.started_at)} />
         </div>
@@ -447,8 +536,11 @@ export function OverviewTab({ task, subtasks, timeline }: { task: Task; subtasks
   return (
     <div className="card-gap">
       <ReportSummary task={task} />
-      <StagesCard task={task} />
-      <TokensCard task={task} subtasks={subtasks} />
+      {/* Side by side, equal height (requester item 13). */}
+      <div className="grid-2">
+        <StagesCard task={task} subtasks={subtasks} />
+        <TokensCard task={task} subtasks={subtasks} />
+      </div>
       <ModulesCard task={task} plan={plan.data} digest={digest} />
       <TimelineCard task={task} entries={timeline} subtasks={subtasks} />
       <MoreInfo task={task} />

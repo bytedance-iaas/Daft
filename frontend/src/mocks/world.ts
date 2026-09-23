@@ -56,6 +56,11 @@ function stage(id: StageProgress['id'], state: StageProgress['state'], done: num
   return { id, state, done, total, elapsed_s: elapsed, eta_s: null, ...extra };
 }
 
+/** The stages a running main run has not reached yet: the Daemon lists the whole plan from the start. */
+function notYet(...ids: StageProgress['id'][]): StageProgress[] {
+  return ids.map((id) => stage(id, 'pending', 0, 0, null));
+}
+
 type ModId = string;
 
 /** ModuleState rows for every registry module (unselected ones keep their availability). */
@@ -628,6 +633,7 @@ export function seedTasks(now: number): Task[] {
         stage('numeric', 'succeeded', 640, 640, 5),
         stage('frame', 'succeeded', 631, 631, 1033, { note: '数值档拦下了 9 条（时间戳异常），后面的档只处理剩下的 631 条' }),
         stage('vlm', 'running', 410, 631, 1102, { eta_s: 1440 }),
+        ...notYet('verdict', 'dedup', 'profile', 'final', 'report', 'export', 'verify'),
       ],
       modules: {
         kinematic_limits: { availability: 'unsupported', unavailable_reason: '机器人型号 umi_dual_handheld_gripper 不在规格库，整项跳过', state: 'skipped' },
@@ -731,7 +737,13 @@ export function seedTasks(now: number): Task[] {
       selected: ALL_MODULES,
       episodes: { mode: 'all' },
       total: 430,
-      stages: [stage('autolabel', 'succeeded', 120, 120, 300), stage('numeric', 'succeeded', 430, 430, 4), stage('frame', 'succeeded', 430, 430, 700), stage('vlm', 'running', 180, 430, 900)],
+      stages: [
+        stage('autolabel', 'succeeded', 120, 120, 300),
+        stage('numeric', 'succeeded', 430, 430, 4),
+        stage('frame', 'succeeded', 430, 430, 700),
+        stage('vlm', 'running', 180, 430, 900),
+        ...notYet('verdict', 'dedup', 'profile', 'final', 'report', 'export', 'verify'),
+      ],
       modules: { task_success: { state: 'running' }, dedup: { state: 'pending', episodes_total: 0 }, skill_profile: { state: 'pending', episodes_total: 0 } },
       usage: usageTotals(640_000, 20_000, 9_000, 300_000, 400),
       embodiment: 'widowx',
@@ -748,7 +760,12 @@ export function seedTasks(now: number): Task[] {
       selected: ALL_MODULES,
       episodes: { mode: 'all' },
       total: 3200,
-      stages: [stage('autolabel', 'succeeded', 800, 800, 1900), stage('numeric', 'succeeded', 3200, 3200, 30), stage('frame', 'running', 1216, 3200, 4100)],
+      stages: [
+        stage('autolabel', 'succeeded', 800, 800, 1900),
+        stage('numeric', 'succeeded', 3200, 3200, 30),
+        stage('frame', 'running', 1216, 3200, 4100),
+        ...notYet('vlm', 'verdict', 'dedup', 'profile', 'final', 'report', 'export', 'verify'),
+      ],
       modules: { visual_quality: { state: 'running' }, video_action_sync: { state: 'running' }, task_success: { state: 'pending', episodes_total: 0 }, dedup: { state: 'pending', episodes_total: 0 }, skill_profile: { state: 'pending', episodes_total: 0 } },
       usage: usageTotals(910_000, 30_000, 12_000, 400_000, 800),
       embodiment: 'agibot',

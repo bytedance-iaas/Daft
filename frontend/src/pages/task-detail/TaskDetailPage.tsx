@@ -10,11 +10,11 @@ import type { Task } from '../../api/types';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
 import { RelTime } from '../../components/RelTime';
-import { StateTag } from '../../components/StateTag';
+import { TaskStateTag } from '../../components/StateTag';
 import { RebindKeysBanner } from '../../features/tasks/RebindKeys';
-import { TaskActionButtons } from '../../features/tasks/TaskActionButtons';
+import { actionLabel, TaskActionButtons } from '../../features/tasks/TaskActionButtons';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
-import { actionsFor, exportedBefore, isTerminalState, type ActionPlan } from '../../lib/taskView';
+import { actionsFor, activeSubtask, exportedBefore, isTerminalState, subtaskLabel, type ActionPlan } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 import { LogsTab } from './LogsTab';
 import { OverviewTab } from './OverviewTab';
@@ -22,13 +22,16 @@ import { RenameDialog } from './RenameDialog';
 
 /** A task is «live» while it or one of its subtasks can still change on its own. */
 export function isLive(t: Task): boolean {
-  return !isTerminalState(t.state) || Boolean(t.active_subtask);
+  return !isTerminalState(t.state) || Boolean(activeSubtask(t));
 }
 
-/** Header actions: the list's plan without 「查看」 (we are on the page already). */
+/**
+ * Header actions: the list's plan without 「查看」 (we are on the page already) and without
+ * 人工裁决, which stands on its own next to the primary action (D47).
+ */
 function headerPlan(t: Task): ActionPlan {
   const p = actionsFor(t);
-  const more = p.more.filter((k) => k !== 'view');
+  const more = p.more.filter((k) => k !== 'view' && k !== 'adjudicate');
   if (p.primary === 'view') return { ...p, primary: more[0] ?? null, more: more.slice(1) };
   return { ...p, more };
 }
@@ -75,6 +78,8 @@ export function TaskDetailPage() {
   const t = task.data;
   const subs = subtasks.data?.items ?? [];
   const exported = exportedBefore(t.progress.stages, subs);
+  const running = activeSubtask(t);
+  const adjudicable = actionsFor(t).more.includes('adjudicate');
   const run = (key: Parameters<typeof actions.run>[0]) => actions.run(key, { id: t.id, name: t.name, held: t.summary?.held, deliveryUri: t.output.uri, exported });
 
   return (
@@ -85,7 +90,7 @@ export function TaskDetailPage() {
         docTitle={t.name}
         titleExtra={
           <Space size={6}>
-            <StateTag state={t.state} pauseReason={t.pause_reason} />
+            <TaskStateTag task={t} subtasks={subs} />
             {t.pending_adjudication ? (
               <Link to={`/tasks/${t.id}/adjudication`}>
                 <Tag color="arcoblue">{zh.taskList.pendingBadge(t.pending_adjudication)}</Tag>
@@ -112,16 +117,34 @@ export function TaskDetailPage() {
             </Button>
           </Space>
         }
-        extra={<TaskActionButtons plan={headerPlan(t)} held={t.summary?.held} exported={exported} primaryType="primary" size="default" onAction={run} />}
+        extra={
+          <>
+            {/* D47: standing once there is a result; with pending items it carries the count and
+                is the one primary button (the plan's primary steps back to secondary). */}
+            {adjudicable ? (
+              <Link to={`/tasks/${t.id}/adjudication`}>
+                <Button type={t.pending_adjudication ? 'primary' : 'secondary'} data-testid="header-adjudicate">
+                  {actionLabel('adjudicate', { pending: t.pending_adjudication })}
+                </Button>
+              </Link>
+            ) : null}
+            <TaskActionButtons
+              plan={headerPlan(t)}
+              held={t.summary?.held}
+              exported={exported}
+              primaryType={adjudicable && t.pending_adjudication ? 'secondary' : 'primary'}
+              size="default"
+              onAction={run}
+            />
+          </>
+        }
       />
       <div className="card-gap">
         {notice ? <Alert type="info" content={notice} /> : null}
         {t.state_reason && (t.state === 'failed' || t.state === 'stopped' || t.state === 'completed_with_errors') ? (
           <Alert type="error" content={`${zh.taskDetail.stateReason}${t.state_reason}`} />
         ) : null}
-        {t.active_subtask ? (
-          <Alert type="info" content={zh.taskDetail.subtaskRunning(zh.taskDetail.subtaskKind[t.active_subtask.kind] ?? t.active_subtask.kind, zh.state[t.active_subtask.state])} />
-        ) : null}
+        {running ? <Alert type="info" content={zh.taskDetail.subtaskRunning(subtaskLabel(running, subs), zh.state[running.state])} /> : null}
         {t.delivery_stale ? (
           <Alert
             type="warning"

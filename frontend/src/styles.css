@@ -116,6 +116,128 @@ body {
   margin-top: 16px;
 }
 
+/* Two cards side by side, as tall as each other (task detail: 分档进度 and Token 消耗). */
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.grid-2 > .arco-card {
+  height: 100%;
+}
+
+@media (max-width: 1100px) {
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The 明细 fold inside the Token card (task-detail mockup). */
+.token-fold {
+  margin-top: 12px;
+}
+
+.token-fold .arco-collapse-item-header {
+  padding-left: 20px;
+}
+
+.token-fold .arco-collapse-item-content {
+  background: none;
+}
+
+.token-fold .arco-collapse-item-content-box {
+  padding: 8px 0 0;
+}
+
+/* 执行时间线, horizontal (07 §4.2): nodes in one row that scrolls sideways. */
+.htl {
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.htl-track {
+  display: flex;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: min-content;
+}
+
+.htl-node {
+  flex: 1 0 200px;
+  max-width: 320px;
+  padding-right: 16px;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.htl-axis {
+  display: flex;
+  align-items: center;
+  height: 14px;
+  margin-bottom: 8px;
+}
+
+.htl-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 3px solid var(--c-primary);
+  background: #fff;
+}
+
+.htl-line {
+  flex: 1;
+  height: 2px;
+  margin: 0 -16px 0 6px;
+  background: var(--c-border);
+}
+
+.htl-node:last-child .htl-line {
+  visibility: hidden;
+}
+
+.htl-title {
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.htl-time {
+  font-size: 12px;
+  color: var(--c-text-3);
+  line-height: 18px;
+}
+
+.htl-extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.htl-text {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--c-text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  cursor: default;
+}
+
+.htl-popover {
+  max-width: 360px;
+  font-size: 12px;
+  line-height: 20px;
+}
+
 .muted {
   color: var(--c-text-3);
 }
@@ -207,6 +329,45 @@ body {
   color: var(--c-text-3);
   font-size: 12px;
   margin-top: 2px;
+}
+
+/* 进度 / 结果 in the task list (07 §4.1): the current stage and the whole task, each a name,
+   a bar and a number on one line. */
+.progress-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 240px;
+}
+
+.progress-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.progress-line-label {
+  flex: 0 0 64px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.progress-line-bar {
+  flex: 1;
+  min-width: 60px;
+}
+
+.progress-line-text {
+  flex: none;
+  min-width: 36px;
+  text-align: right;
+  color: var(--c-text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .dot {

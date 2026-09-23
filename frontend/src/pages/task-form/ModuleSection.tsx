@@ -102,7 +102,7 @@ export function ModuleSection({
         aria-label={zh.taskForm.sectionModules}
       >
         <Radio value="full">{zh.preset.full}</Radio>
-        <Radio value="quick">{zh.preset.quickLong}</Radio>
+        <Radio value="quick">{zh.preset.quick}</Radio>
         <Radio value="custom">{zh.preset.custom}</Radio>
       </Radio.Group>
       <div className="muted" style={{ margin: '8px 0 12px', fontSize: 12 }}>

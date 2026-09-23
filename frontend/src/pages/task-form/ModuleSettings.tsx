@@ -122,8 +122,8 @@ function ParamInput({ f, value, onChange, error }: { f: ParamField; value: unkno
 
 /**
  * Screen 2 (D38, 07 §3): only the enabled modules, what they still need first (必填, e.g. the
- * robot type, or 「跳过该模块」), then their optional parameters generated from param_schema, and
- * one line for modules without extra settings.
+ * robot type, or 「跳过该模块」), then their optional parameters generated from param_schema.
+ * Modules without extra settings are left out.
  */
 export function ModuleSettings({
   v,
@@ -144,7 +144,6 @@ export function ModuleSettings({
   const active = activeModules(v);
   const needing = specs.filter((m) => active.includes(m.id) && embodimentHint(preflight, m.id));
   const withParams = specs.filter((m) => active.includes(m.id) && paramFields(m.param_schema).length);
-  const plain = specs.filter((m) => active.includes(m.id) && !needing.includes(m) && !withParams.includes(m));
   const skipped = specs.filter((m) => v.skipped.includes(m.id));
   const setParam = (mod: string, key: string, value: unknown) => set({ params: { ...v.params, [mod]: { ...(v.params[mod] ?? {}), [key]: value } } });
   const options = embodimentOptions.length ? embodimentOptions : needing.flatMap((m) => embodimentHint(preflight, m.id)?.options ?? []);
@@ -207,9 +206,11 @@ export function ModuleSettings({
         </>
       ) : null}
 
-      {plain.length ? (
-        <Typography.Paragraph type="secondary" data-testid="no-settings">
-          {zh.taskForm.noSettings(plain.map((m) => m.name_zh).join('、'))}
+      {/* Modules without extra settings are not listed (requester item 16); a screen with nothing
+          to set says so instead of showing an empty card. */}
+      {!needing.length && !withParams.length && !skipped.length ? (
+        <Typography.Paragraph type="secondary" data-testid="nothing-to-set">
+          {zh.taskForm.nothingToSet}
         </Typography.Paragraph>
       ) : null}
 

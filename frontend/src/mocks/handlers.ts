@@ -46,6 +46,7 @@ import {
   tableRows,
 } from './world';
 import { cardsOf, clock, countsOf, datasetName, db, decisionsOf, executable, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
+import { tickSubtasks } from './subtaskSim';
 
 // ------------------------------------------------------------------ plumbing
 
@@ -790,6 +791,7 @@ function newSubtask(t: Task, kind: Subtask['kind'], scope: Subtask['scope']): Su
 
 const tasks = [
   http.get(`${API}/tasks`, ({ request }) => {
+    tickSubtasks();
     const url = new URL(request.url);
     const state = url.searchParams.get('state');
     const q = (url.searchParams.get('q') ?? '').toLowerCase();
@@ -840,6 +842,7 @@ const tasks = [
     }),
   ),
   http.get(`${API}/tasks/:id`, ({ params }) => {
+    tickSubtasks();
     const t = findTask(String(params.id));
     return t ? HttpResponse.json(t) : err(404, 'not_found', '任务不存在，可能已被删除');
   }),
@@ -991,8 +994,12 @@ const tasks = [
       return HttpResponse.json({ subtask: s, links: t.links }, { status: 202 });
     }),
   ),
-  http.get(`${API}/tasks/:id/subtasks`, ({ params }) => HttpResponse.json({ items: db.subtasks.get(String(params.id)) ?? [] })),
+  http.get(`${API}/tasks/:id/subtasks`, ({ params }) => {
+    tickSubtasks();
+    return HttpResponse.json({ items: db.subtasks.get(String(params.id)) ?? [] });
+  }),
   http.get(`${API}/tasks/:id/timeline`, ({ params }) => {
+    tickSubtasks();
     const t = findTask(String(params.id));
     return t ? HttpResponse.json({ items: timeline(t.id) }) : err(404, 'not_found', '任务不存在');
   }),

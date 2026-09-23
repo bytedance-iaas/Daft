@@ -28,7 +28,10 @@ export function PageHeader({
   return (
     <div className="page-header">
       <Breadcrumb>
-        <Breadcrumb.Item>{zh.nav.breadcrumbRoot}</Breadcrumb.Item>
+        {/* The root leads home, like the product name in the console's other breadcrumbs. */}
+        <Breadcrumb.Item>
+          <Link to="/overview">{zh.nav.breadcrumbRoot}</Link>
+        </Breadcrumb.Item>
         {crumbs.map((c, i) => (
           <Breadcrumb.Item key={i}>{c.to ? <Link to={c.to}>{c.label}</Link> : c.label}</Breadcrumb.Item>
         ))}

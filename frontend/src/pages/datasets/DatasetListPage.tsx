@@ -14,6 +14,7 @@ import { SearchInput } from '../../components/SearchInput';
 import { StateTag } from '../../components/StateTag';
 import { AddDatasetDrawer } from '../../features/datasets/AddDatasetDrawer';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
+import { VisualizeButton } from '../../features/datasets/VisualizeButton';
 import { grouped } from '../../lib/format';
 import { PAGE_SIZES, readPageSize, writePageSize } from '../../lib/prefs';
 import { zh } from '../../locales/zh';
@@ -96,13 +97,12 @@ export function DatasetListPage() {
       dataIndex: 'id',
       fixed: 'right',
       width: 220,
+      // Requester item 22: 可视化 / 新建任务 / 删除; 重新检查 stays on the detail page.
       render: (_: unknown, d) => (
         <Space size={4}>
+          <VisualizeButton d={d} />
           <Button type="text" size="small" disabled={d.format === 'unsupported'} onClick={() => actions.newTask(d)}>
-            {zh.datasets.newTask}
-          </Button>
-          <Button type="text" size="small" onClick={() => actions.recheck(d)}>
-            {zh.datasets.recheck}
+            {zh.datasets.newTaskShort}
           </Button>
           <Button type="text" size="small" status="danger" onClick={() => actions.remove(d)}>
             {zh.datasets.delete}

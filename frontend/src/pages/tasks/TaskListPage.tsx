@@ -4,40 +4,72 @@ import { IconPlus, IconRefresh } from '@arco-design/web-react/icon';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
+import { EVENTS_CONFIG } from '../../api/events';
 import { qk, useModules } from '../../api/queries';
 import type { TaskListItem, TaskState } from '../../api/types';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
 import { RelTime } from '../../components/RelTime';
 import { SearchInput } from '../../components/SearchInput';
-import { StateTag } from '../../components/StateTag';
+import { TaskStateTag } from '../../components/StateTag';
 import { ModuleSummaryCell } from '../../features/tasks/ModuleSummary';
 import { TaskActionButtons } from '../../features/tasks/TaskActionButtons';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
 import { compactNumber, percent, totalTokens } from '../../lib/format';
 import { PAGE_SIZES, readPageSize, writePageSize } from '../../lib/prefs';
-import { actionsFor, currentStage, exportedBefore, isTerminalState, stageLabel, stagePercent } from '../../lib/taskView';
+import { actionsFor, activeSubtask, currentStage, exportedBefore, groupStages, isTerminalState, overallPercent } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 const STATES: TaskState[] = ['created', 'queued', 'running', 'pausing', 'paused', 'stopping', 'stopped', 'succeeded', 'completed_with_errors', 'failed'];
 
+/** A row that can change without anyone touching it: the list keeps polling while one is shown. */
+function changing(t: TaskListItem): boolean {
+  return !t.deleted_at && (!isTerminalState(t.state) || Boolean(activeSubtask(t)));
+}
+
+/** One line of the progress cell: a name, its bar and a number. */
+function ProgressLine({ label, percent, text, muted, testId }: { label: string; percent: number; text: string; muted: boolean; testId: string }) {
+  return (
+    <div className="progress-line" data-testid={testId}>
+      <span className="progress-line-label">{label}</span>
+      <Progress className="progress-line-bar" percent={percent} size="small" showText={false} color={muted ? 'var(--c-text-4)' : undefined} />
+      <span className="progress-line-text">{text}</span>
+    </div>
+  );
+}
+
+/**
+ * 进度 / 结果 (07 §4.1, requester item 20): an unfinished task shows two lines, the current stage
+ * (merged names, item 11) with its count, then the whole task in percent. No time estimates.
+ */
 function ProgressCell({ t }: { t: TaskListItem }) {
-  const stages = t.progress.stages;
+  // D46: a subtask under way (the row only knows its id); the result it may replace stays below.
+  if (activeSubtask(t)) {
+    return (
+      <div data-testid="progress-subtask">
+        <span className="nowrap">
+          <span className="dot" style={{ background: 'var(--c-primary)' }} />
+          {zh.taskList.subtaskRunning}
+        </span>
+        {t.summary ? (
+          <div className="muted" style={{ fontSize: 12 }}>
+            {zh.taskList.resultLine(t.summary.passed, t.summary.rejected, t.summary.held)}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
   if (t.state === 'created') return <span className="muted">{zh.taskList.created}</span>;
   if (t.state === 'queued') return <span className="muted">{zh.taskList.queued}</span>;
-  const cur = currentStage(stages);
+  const views = groupStages(t.progress.stages);
+  const cur = currentStage(views);
   if (!isTerminalState(t.state)) {
-    const pct = stagePercent(cur);
-    const label = cur ? stageLabel(cur.id) : '';
     const paused = t.state === 'paused' || t.state === 'pausing';
+    const overall = overallPercent(views);
     return (
-      <div style={{ minWidth: 160 }}>
-        <Progress percent={pct} size="small" status={paused ? 'normal' : undefined} color={paused ? 'var(--c-text-4)' : undefined} />
-        <div className="muted" style={{ fontSize: 12 }}>
-          {paused && cur ? zh.taskList.pausedAt(label, cur.done, cur.total) : label}
-          {!paused && cur?.eta_s ? ` · ${zh.taskList.etaShort(zh.time.duration(cur.eta_s))}` : ''}
-        </div>
-        {paused ? <div className="muted" style={{ fontSize: 12 }}>{t.pause_reason === 'system' ? zh.taskList.systemResumeHint : zh.taskList.resumeHint}</div> : null}
+      <div className="progress-cell">
+        <ProgressLine label={cur?.label ?? '—'} percent={cur?.percent ?? 0} text={cur?.total ? `${cur.done} / ${cur.total}` : ''} muted={paused} testId="progress-stage" />
+        <ProgressLine label={zh.taskList.overall} percent={overall} text={`${overall}%`} muted={paused} testId="progress-overall" />
       </div>
     );
   }
@@ -89,8 +121,9 @@ export function TaskListPage() {
           },
         }),
       ),
-    // Poll every 5 s while the page shows a task that is not finished (07 §4.1, P8).
-    refetchInterval: (qr) => (qr.state.data?.items.some((i) => !isTerminalState(i.state) && !i.deleted_at) ? 5000 : false),
+    // Poll every 5 s while the page shows a task that can still change on its own: one not
+    // finished, or one with a subtask under way (07 §4.1, P8; D46).
+    refetchInterval: (qr) => (qr.state.data?.items.some(changing) ? EVENTS_CONFIG.pollMs : false),
   });
 
   const dataset = useQuery({
@@ -109,7 +142,7 @@ export function TaskListPage() {
     setParams(next);
   };
 
-  const live = query.data?.items.some((i) => !isTerminalState(i.state) && !i.deleted_at);
+  const live = query.data?.items.some(changing);
   const deletedView = state === 'deleted';
 
   // Widths (07 §4.1): every column has room for its longest value, so a state tag or a longer
@@ -144,7 +177,7 @@ export function TaskListPage() {
       title: zh.taskList.colState,
       dataIndex: 'state',
       width: 130,
-      render: (_: unknown, t) => <StateTag state={t.state} pauseReason={t.pause_reason} />,
+      render: (_: unknown, t) => <TaskStateTag task={t} />,
     },
     {
       title: zh.taskList.colDataset,
@@ -158,7 +191,7 @@ export function TaskListPage() {
       ),
     },
     { title: zh.taskList.colModules, dataIndex: 'modules', width: 150, render: (_: unknown, t) => <ModuleSummaryCell item={t} /> },
-    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 250, render: (_: unknown, t) => <ProgressCell t={t} /> },
+    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 280, render: (_: unknown, t) => <ProgressCell t={t} /> },
     {
       title: zh.taskList.colTokens,
       dataIndex: 'usage',
@@ -180,6 +213,7 @@ export function TaskListPage() {
         <TaskActionButtons
           plan={actionsFor(t)}
           held={t.summary?.held}
+          pending={t.pending_adjudication}
           exported={exportedBefore(t.progress.stages)}
           onAction={(key) => actions.run(key, { id: t.id, name: t.name, held: t.summary?.held, exported: exportedBefore(t.progress.stages) })}
         />
@@ -242,7 +276,7 @@ export function TaskListPage() {
             loading={query.isLoading}
             columns={columns}
             data={query.data?.items ?? []}
-            scroll={{ x: 1360 }}
+            scroll={{ x: 1390 }}
             noDataElement={<div className="muted" style={{ padding: 24 }}>{q || state || moduleFilter.length || datasetId ? zh.taskList.emptyFiltered : zh.taskList.empty}</div>}
             pagination={{
               current: page,

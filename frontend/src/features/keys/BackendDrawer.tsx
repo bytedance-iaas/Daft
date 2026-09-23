@@ -1,4 +1,5 @@
 import { Alert, Button, Divider, Drawer, Form, Input, InputNumber, Message, Popconfirm, Radio, Select, Space, Table, Tag, Typography } from '@arco-design/web-react';
+import { IconSearch } from '@arco-design/web-react/icon';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { api, unwrap } from '../../api/client';
@@ -36,9 +37,15 @@ interface Values {
   max_concurrency: number | undefined;
 }
 
+/**
+ * The models of a saved backend (07 §7, requester item 9). Above the table, one box whose job
+ * depends on the backend: when GET /models listed its models, it filters them as you type (fuzzy,
+ * query only); when it could not, it takes a model ID to add (checked with a minimal request).
+ * Ten models a page; 设为默认 / 取消默认 and 移除 sit together in one operations column.
+ */
 function Models({ backend }: { backend: VlmBackend }) {
   const qc = useQueryClient();
-  // One box for both jobs: it filters the list as you type, and adds what it does not find.
+  const [filter, setFilter] = useState('');
   const [manual, setManual] = useState('');
   const [manualError, setManualError] = useState('');
   const [page, setPage] = useState(1);
@@ -89,29 +96,75 @@ function Models({ backend }: { backend: VlmBackend }) {
     },
     onError: (e) => Message.error(errorMessage(e)),
   });
+  const listed = backend.models_listed;
   const unknownLevels = backend.models.some((m) => !knowsLevels(m));
-  const query = manual.trim();
+  const query = listed ? filter.trim() : '';
   const shown = useMemo(() => fuzzyFilter(backend.models, query, (m) => m.model_name), [backend.models, query]);
-  const known = backend.models.some((m) => m.model_name === query);
+  const newId = manual.trim();
+  const known = backend.models.some((m) => m.model_name === newId);
+  const lastPage = Math.max(1, Math.ceil(shown.length / MODELS_PAGE_SIZE));
+  const empty = listed ? (query ? zh.credentials.modelFilterNone : zh.credentials.modelsNoneListed) : zh.credentials.modelsNoneManual;
   return (
     <div data-testid="backend-models">
       <Space style={{ justifyContent: 'space-between', width: '100%', marginBottom: 8 }}>
-        <Typography.Text type="secondary">{backend.models_listed ? zh.credentials.modelsListed(backend.models.length) : zh.credentials.modelsNotListed}</Typography.Text>
+        <Typography.Text type="secondary">{listed ? zh.credentials.modelsListed(backend.models.length) : zh.credentials.modelsNotListed}</Typography.Text>
         <Button size="small" loading={relist.isPending} onClick={() => relist.mutate()}>
           {zh.credentials.refreshModels}
         </Button>
       </Space>
+      <div style={{ marginBottom: 8 }} data-testid={listed ? 'model-filter' : 'model-add'}>
+        {listed ? (
+          <>
+            <Input
+              style={{ width: 380 }}
+              value={filter}
+              allowClear
+              prefix={<IconSearch />}
+              onChange={(v) => {
+                setFilter(v);
+                setPage(1);
+              }}
+              placeholder={zh.credentials.modelFilterPlaceholder}
+              aria-label={zh.credentials.modelFilterPlaceholder}
+            />
+            {query ? <div className="field-note">{zh.credentials.modelFilterHint(shown.length, backend.models.length)}</div> : null}
+          </>
+        ) : (
+          <Space align="start">
+            <div>
+              <Input
+                style={{ width: 380 }}
+                value={manual}
+                allowClear
+                onChange={(v) => {
+                  setManual(v);
+                  setManualError('');
+                }}
+                onPressEnter={() => newId && !known && add.mutate(newId)}
+                placeholder={zh.credentials.modelIdPlaceholder}
+                aria-label={zh.credentials.modelIdPlaceholder}
+                status={manualError ? 'error' : undefined}
+              />
+              {manualError ? <div className="field-note-error">{manualError}</div> : null}
+              {newId && known && !manualError ? <div className="field-note">{zh.credentials.modelAlreadyThere}</div> : null}
+            </div>
+            <Button type="primary" loading={add.isPending} disabled={!newId || known} onClick={() => add.mutate(newId)}>
+              {zh.credentials.addModel}
+            </Button>
+          </Space>
+        )}
+      </div>
       <Table
         rowKey="id"
         size="small"
         data={shown}
-        scroll={{ x: 860 }}
+        scroll={{ x: 820 }}
         pagination={
           shown.length > MODELS_PAGE_SIZE
-            ? { current: page, pageSize: MODELS_PAGE_SIZE, total: shown.length, size: 'mini', showTotal: (total: number) => zh.common.total(total), onChange: (p: number) => setPage(p) }
+            ? { current: Math.min(page, lastPage), pageSize: MODELS_PAGE_SIZE, total: shown.length, size: 'mini', showTotal: (total: number) => zh.common.total(total), onChange: (p: number) => setPage(p) }
             : false
         }
-        noDataElement={<span className="muted">{query ? zh.credentials.modelAlreadyThere : zh.credentials.modelsNotListed}</span>}
+        noDataElement={<span className="muted">{empty}</span>}
         columns={[
           { title: zh.credentials.modelColName, dataIndex: 'model_name', width: 240, render: (v: string) => <span className="mono">{v}</span> },
           { title: zh.credentials.modelColSource, dataIndex: 'source', width: 100, render: (v: string) => <Tag size="small">{zh.credentials.modelSource[v] ?? v}</Tag> },
@@ -151,35 +204,31 @@ function Models({ backend }: { backend: VlmBackend }) {
             ),
           },
           {
-            title: zh.credentials.modelColDefault,
-            dataIndex: 'is_default',
-            width: 150,
-            render: (_: unknown, m: VlmModel) =>
-              m.is_default ? (
-                <Space size={4}>
-                  <Tag size="small" color="arcoblue">
-                    {zh.credentials.modelDefault}
-                  </Tag>
-                  <Button size="mini" type="text" loading={setDefault.isPending} onClick={() => setDefault.mutate({ id: m.id, on: false })}>
-                    {zh.credentials.clearDefaultModel}
-                  </Button>
-                </Space>
-              ) : (
-                <Button size="mini" type="text" loading={setDefault.isPending} onClick={() => setDefault.mutate({ id: m.id, on: true })}>
-                  {zh.credentials.setDefaultModel}
-                </Button>
-              ),
-          },
-          {
-            title: '',
+            title: zh.credentials.colActions,
             dataIndex: 'id',
-            width: 90,
+            width: 200,
             render: (_: unknown, m: VlmModel) => (
-              <Popconfirm title={`${zh.credentials.removeModel}「${m.model_name}」？`} onOk={() => remove.mutate(m.id)}>
-                <Button size="mini" type="text" status="danger">
-                  {zh.credentials.removeModel}
-                </Button>
-              </Popconfirm>
+              <Space size={4} data-testid={`model-ops-${m.id}`}>
+                {m.is_default ? (
+                  <>
+                    <Tag size="small" color="arcoblue">
+                      {zh.credentials.modelDefault}
+                    </Tag>
+                    <Button size="mini" type="text" loading={setDefault.isPending} onClick={() => setDefault.mutate({ id: m.id, on: false })}>
+                      {zh.credentials.clearDefaultModel}
+                    </Button>
+                  </>
+                ) : (
+                  <Button size="mini" type="text" loading={setDefault.isPending} onClick={() => setDefault.mutate({ id: m.id, on: true })}>
+                    {zh.credentials.setDefaultModel}
+                  </Button>
+                )}
+                <Popconfirm title={`${zh.credentials.removeModel}「${m.model_name}」？`} onOk={() => remove.mutate(m.id)}>
+                  <Button size="mini" type="text" status="danger">
+                    {zh.credentials.removeModel}
+                  </Button>
+                </Popconfirm>
+              </Space>
             ),
           },
         ]}
@@ -187,28 +236,6 @@ function Models({ backend }: { backend: VlmBackend }) {
       <div className="field-note">{zh.credentials.defaultModelNote}</div>
       {backend.kind === 'custom' ? <div className="field-note">{zh.credentials.customEffortNote}</div> : null}
       {unknownLevels ? <div className="field-note">{zh.credentials.unknownLevelsNote}</div> : null}
-      <Space style={{ marginTop: 12 }} align="start">
-        <div>
-          <Input
-            style={{ width: 380 }}
-            value={manual}
-            allowClear
-            onChange={(v) => {
-              setManual(v);
-              setManualError('');
-              setPage(1);
-            }}
-            placeholder={zh.credentials.addModelPlaceholder}
-            aria-label={zh.credentials.addModelPlaceholder}
-            status={manualError ? 'error' : undefined}
-          />
-          {manualError ? <div className="field-note-error">{manualError}</div> : null}
-          {query && !manualError ? <div className="field-note">{known ? zh.credentials.modelAlreadyThere : zh.credentials.modelSearchHint(shown.length, backend.models.length)}</div> : null}
-        </div>
-        <Button type="primary" loading={add.isPending} disabled={!query || known} onClick={() => add.mutate(query)}>
-          {zh.credentials.addModel}
-        </Button>
-      </Space>
     </div>
   );
 }
