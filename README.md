@@ -22,7 +22,7 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 | `backend/curation/contracts/` | C1 模块注册表与契约校验工具 |
 | `backend/daemon/` | API Daemon（W4 骨架：FastAPI、SQLite 仓储、鉴权、SSE、探针、静态资源与挂载前缀、启动对账）；用法与手动验证见 [其 README](backend/daemon/README.md) |
 | `backend/daemon/orchestr/`、`backend/daemon/exec/` | 任务编排与 CLI 执行器（W5a）：运行、分档、worker 池、暂停 / 停止 / 继续、崩溃恢复、发布、数据集操作、工作目录清理；说明、配置与手动验证见 [其 README](backend/daemon/orchestr/README.md) |
-| `backend/daemon/results/` | 读结果（W5b）：报告、明细表切片、单条 episode 下钻、性能剖析、裁决队列与记录裁决；说明与手动验证见 [其 README](backend/daemon/results/README.md) |
+| `backend/daemon/results/` | 读结果（W5b、F6.2）：报告、明细表切片、episode 列表（按清单 / 待裁 / 编号筛选）、单条 episode 下钻与同步曲线、性能剖析、裁决队列与记录裁决；说明与手动验证见 [其 README](backend/daemon/results/README.md) |
 | `backend/tests/` | v2 的测试：`contracts/`、`daemon/`、`secrets/`、`results/`、`orchestr/`、`cli/`、`planner/`、`export/`、`deploy/`、`eef/` |
 | `frontend/` | 网页控制台（W10）：React 18 + TypeScript + Arco Design，按 C4 开发，接口类型由 `openapi.yaml` 生成；安装、运行、测试、构建与逐页手动验证见 [frontend/README.md](frontend/README.md) |
 | `frontend/mockups/` | 静态 HTML 预览稿（F3.1） |
@@ -79,8 +79,10 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
    点「创建并开始」。
 5. **看进度**：详情页有分档进度、模块表与执行时间线，页头写着实时通道是 SSE 还是 5 秒轮询；
    运行中可暂停 / 继续 / 停止。滚动升级时运行中的任务会被系统暂停，升级完自动续跑（F4.1 验收②）。
-6. **看报告**：跑完点「查看详细报告」，核对总览的「输入 = 判废 + 交付 + 待补跑」、判废原因分布、
-   数据包完整性（缺源文件被跳过的条目列在这里）、各模块小节，再点任一 `ep N` 下钻看逐条结论与视频。
+6. **看报告**：跑完打开任务的质检报告，核对总览的「输入 = 判废 + 交付 + 待补跑」、判废原因分布、
+   数据包完整性（中文、横向排版；缺源文件被跳过的条目列在这里）、各模块小节的统计与图（小节可以折叠）；
+   逐条的结论、各模块读数、同步曲线和视频在「Episode 明细」页签：搜 `12` 或 `ep12`，或按清单 / 待裁筛选后上一条、下一条地看，
+   「同时播放」会等各机位都缓冲好才一起开始，任一路卡住就全部暂停。
 7. **人工裁决**：报告里点「去裁决」，逐条判完点「执行裁决」；被去重或任务成败判定拒掉的条目
    在「被拒复议」页签里可以恢复。
 8. **导出交付**：裁决的子任务跑完后，在任务详情点「导出」（已导出过的显示「重新导出」，
