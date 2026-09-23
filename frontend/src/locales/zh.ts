@@ -305,6 +305,7 @@ export const zh = {
       continue: '已创建继续运行的子任务，从断点接着跑',
       reexport: '已创建导出子任务，完成后逐文件核验',
       delete: '已删除，30 天内可以在「已删除」筛选里恢复',
+      deletePurged: (path: string, size: string) => `已删除，并开始清理 ${path}（${size}）。任务记录 30 天内可以恢复，交付产物不能`,
       restore: '已恢复',
       purge: (path: string, size: string) => `已开始清理 ${path}（${size}）`,
       apply: '已创建执行裁决的子任务',
@@ -315,7 +316,16 @@ export const zh = {
     },
     confirmDelete: {
       title: '删除任务',
-      content: (name: string) => `删除「${name}」？只删平台里的任务记录，TOS 上的交付产物不动。30 天内可以在「已删除」筛选里恢复，之后连同裁决记录、Token 统计一起清除。要删 TOS 上的产物，用「清理交付产物」。`,
+      content: (name: string) => `删除「${name}」？删的是平台里的任务记录，30 天内可以在「已删除」筛选里恢复，之后连同裁决记录、Token 统计一起清除。`,
+    },
+    // Requester item 19: the delete dialog can purge the run directory first
+    deleteDialog: {
+      purge: '同时清理交付产物',
+      keepArtifacts: '不勾选时，TOS 上的交付产物不动；以后也可以用「清理交付产物」单独清理。',
+      purgeScope: '同一交付目录下别的任务的批次不动；latest 如果指向这个批次，会一并移除。先清理，清理开始了才删除任务记录；清理没能开始，就什么都不删。',
+      noArtifacts: '这个任务还没有写过交付产物。',
+      purgeFailed: (msg: string) => `交付产物没能清理，任务也没有删除：${msg}`,
+      deleteFailedAfterPurge: (path: string, msg: string) => `已开始清理 ${path}，但任务记录没删掉：${msg}`,
     },
     confirmRetry: {
       title: '重试出错的条目',

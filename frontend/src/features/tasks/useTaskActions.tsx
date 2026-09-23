@@ -11,6 +11,7 @@ import { qk, showSubtask, showTaskState } from '../../api/queries';
 import type { SourceChange } from '../../api/types';
 import type { TaskActionKey } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
+import { DeleteDialog } from './DeleteDialog';
 import { FingerprintDialog, asSourceChange } from './FingerprintDialog';
 import { PurgeDialog } from './PurgeDialog';
 
@@ -85,6 +86,7 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [purgeId, setPurgeId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(null);
   const [fp, setFp] = useState<{ taskId: string; change: SourceChange | null } | null>(null);
   const [repreflighting, setRepreflighting] = useState(false);
 
@@ -200,21 +202,7 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
         );
         return;
       case 'delete':
-        confirm(
-          zh.actions.confirmDelete.title,
-          zh.actions.confirmDelete.content(t.name),
-          async () => {
-            try {
-              await unwrap(api().DELETE('/tasks/{id}', { params: { path: { id } } }));
-              Message.success(zh.actions.done.delete);
-              refresh(id);
-            } catch (e) {
-              fail(e);
-            }
-          },
-          zh.actions.delete,
-          true,
-        );
+        setDeleting({ id, name: t.name });
         return;
       case 'restore':
         void (async () => {
@@ -260,6 +248,7 @@ export function useTaskActions(): { run: (action: TaskActionKey, t: ActionTarget
   const dialogs = (
     <>
       <PurgeDialog taskId={purgeId} onClose={() => setPurgeId(null)} />
+      <DeleteDialog target={deleting} onClose={() => setDeleting(null)} onDone={refresh} />
       <FingerprintDialog visible={Boolean(fp)} change={fp?.change ?? null} loading={repreflighting} onCancel={() => setFp(null)} onConfirm={() => void confirmRepreflight()} />
     </>
   );

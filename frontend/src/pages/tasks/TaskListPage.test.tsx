@@ -6,6 +6,7 @@ import { db, findTask } from '../../mocks/db';
 import { server } from '../../mocks/server';
 import { finishSubtask } from '../../mocks/subtaskSim';
 import { requiredFieldLabels } from '../../test/forms';
+import { recordRequests } from '../../test/record';
 import { currentLocation, renderApp } from '../../test/render';
 
 function row(name: string): HTMLElement {
@@ -152,6 +153,68 @@ describe('任务列表 (07 §4.1)', () => {
     await user.click(within(row('widowx 回归')).getByRole('button', { name: /更多/ }));
     const del = await screen.findByRole('menuitem', { name: '删除' });
     expect(del).toHaveClass('arco-dropdown-menu-disabled');
+  });
+
+  it('删除 deletes the record only by default; 同时清理交付产物 starts unticked (requester item 19)', async () => {
+    const seen = recordRequests();
+    const { user } = renderApp('/tasks');
+    await screen.findByRole('link', { name: 'so101 夜间批次' });
+    await user.click(within(row('so101 夜间批次')).getByRole('button', { name: /更多/ }));
+    await user.click(await screen.findByRole('menuitem', { name: '删除' }));
+    const dialog = await screen.findByRole('dialog', { name: '删除任务' });
+    const box = await within(dialog).findByRole('checkbox', { name: '同时清理交付产物' });
+    expect(box).not.toBeChecked();
+    expect(dialog).toHaveTextContent('不勾选时，TOS 上的交付产物不动');
+    expect(within(dialog).queryByTestId('delete-purge-path')).toBeNull();
+    await user.click(within(dialog).getByRole('button', { name: '删除' }));
+    expect(await screen.findByText('已删除，30 天内可以在「已删除」筛选里恢复')).toBeInTheDocument();
+    const writes = seen.filter((r) => r.method !== 'GET');
+    expect(writes.map((r) => `${r.method} ${r.path}`)).toEqual(['DELETE /tasks/task_01HXPZ2K']);
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'so101 夜间批次' })).toBeNull());
+  });
+
+  it('删除 with 同时清理交付产物 shows the exact run directory, purges it, then deletes the record', async () => {
+    const seen = recordRequests();
+    const { user } = renderApp('/tasks');
+    await screen.findByRole('link', { name: 'droid 前 50 条质检' });
+    await user.click(within(row('droid 前 50 条质检')).getByRole('button', { name: /更多/ }));
+    await user.click(await screen.findByRole('menuitem', { name: '删除' }));
+    const dialog = await screen.findByRole('dialog', { name: '删除任务' });
+    await user.click(await within(dialog).findByRole('checkbox', { name: '同时清理交付产物' }));
+    expect(within(dialog).getByTestId('delete-purge-path')).toHaveTextContent('tos://pai-kit-deliveries/droid-50/20260920-130514/');
+    expect(dialog).toHaveTextContent('会删掉这个任务在 TOS 上的批次目录，删了不能恢复');
+    await user.click(within(dialog).getByRole('button', { name: '删除' }));
+    expect(await screen.findByText(/^已删除，并开始清理 tos:\/\/pai-kit-deliveries\/droid-50\/20260920-130514\/（212 MiB）/)).toBeInTheDocument();
+    const writes = seen.filter((r) => r.method !== 'GET');
+    expect(writes.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /tasks/task_01HXR2D8/purge-artifacts', 'DELETE /tasks/task_01HXR2D8']);
+    expect(writes[0].body).toEqual({ confirm_path: 'tos://pai-kit-deliveries/droid-50/20260920-130514/' });
+    expect(findTask('task_01HXR2D8')!.deleted_at).toBeTruthy();
+  });
+
+  it('when the purge fails nothing is deleted and the dialog stays with the reason', async () => {
+    server.use(http.post('*/api/v1/tasks/:id/purge-artifacts', () => HttpResponse.json({ error: { code: 'validation_failed', message: '连不上 TOS：timeout' } }, { status: 400 })));
+    const seen = recordRequests();
+    const { user } = renderApp('/tasks');
+    await screen.findByRole('link', { name: 'droid 前 50 条质检' });
+    await user.click(within(row('droid 前 50 条质检')).getByRole('button', { name: /更多/ }));
+    await user.click(await screen.findByRole('menuitem', { name: '删除' }));
+    const dialog = await screen.findByRole('dialog', { name: '删除任务' });
+    await user.click(await within(dialog).findByRole('checkbox', { name: '同时清理交付产物' }));
+    await user.click(within(dialog).getByRole('button', { name: '删除' }));
+    expect(await screen.findByText('交付产物没能清理，任务也没有删除：连不上 TOS：timeout')).toBeInTheDocument();
+    expect(seen.some((r) => r.method === 'DELETE')).toBe(false);
+    expect(findTask('task_01HXR2D8')!.deleted_at).toBeNull();
+    expect(screen.getByRole('dialog', { name: '删除任务' })).toBeInTheDocument();
+  });
+
+  it('a task that never wrote a run directory has nothing to purge', async () => {
+    const { user } = renderApp('/tasks');
+    await screen.findByRole('link', { name: 'libero-10 抽检' });
+    await user.click(within(row('libero-10 抽检')).getByRole('button', { name: /更多/ }));
+    await user.click(await screen.findByRole('menuitem', { name: '删除' }));
+    const dialog = await screen.findByRole('dialog', { name: '删除任务' });
+    expect(await within(dialog).findByText('这个任务还没有写过交付产物。')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('checkbox')).toBeNull();
   });
 
   it('deleted tasks are listed under 已删除 and can be restored', async () => {
