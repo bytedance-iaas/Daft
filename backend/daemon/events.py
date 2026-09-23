@@ -47,7 +47,7 @@ log = logging.getLogger("daemon.events")
 EVENT_KINDS = ("state", "progress", "log", "usage", "done", "reset")
 LOG_LEVELS = ("error", "warn", "info", "debug")
 #: C4 ``StageProgress`` and ``UsageTotals`` allow no other keys.
-_STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note")
+_STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note", "pipeline")
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens",
                "requests", "requests_unknown_usage")
 _FINAL_STAGE_STATES = frozenset({"succeeded", "completed_with_errors", "failed", "skipped"})

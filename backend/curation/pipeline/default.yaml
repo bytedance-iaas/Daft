@@ -1,14 +1,7 @@
 # 默认流水线配置(L1 配置层,DESIGN.md §11.1)。客户从这份改,不从零配。
 # ⚠️ 权重/阈值当前为工程默认,P5.1 校准集扫 ROC 后固化正式值。
 pipeline:
-  optimizations:               # Opt-in v1 execution flags; missing keys are false.
-    dedicated_executor: false
-    streaming_funnel: false
-    checkpoint: false
-    resume: false
-    action_hash_reuse: false
-    parallel_video_hash: false
-    frame_cache: false
+  thinking: null                 # 默认不传; true/false 按模型策略映射到 Chat API 参数
   sync_plots: flagged            # 同步曲线证据图:flagged=只画非'过'(默认)/all=全画/off=不画
   evidence_frames: flagged       # 任务成败证据帧:flagged=只存拒绝/待裁决(默认)/all=全存/off=不存
   frame_sample_interval_s: 0.5     # 视觉/同步检查的抽帧间隔

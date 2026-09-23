@@ -284,8 +284,6 @@ class Context:
                 if sets:
                     cfg = apply_overrides(cfg, sets)
                     validate_config(cfg, "--set")
-                from ..pipeline.optimizations import _validate_execution
-                _validate_execution(cfg, v2=True)
             except (ConfigError, OSError, yaml.YAMLError) as e:
                 raise UsageError(f"configuration: {e}") from None
             self._config = cfg

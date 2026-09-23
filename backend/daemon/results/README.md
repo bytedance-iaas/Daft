@@ -1,8 +1,8 @@
 # 结果读取（W5b）
 
-把任务运行目录里已提交的结果版本读出来，提供六个接口：报告、明细表、单条 episode、性能剖析、裁决队列、提交裁决。
+读取任务运行目录里的已提交结果版本，并从 SQLite 读取运行中的逐条漏斗结果。
 设计依据：`docs/design/06-delivery-and-report.md` §1、§3、§5、§6，`03-rest-api.md` §6、§7，`07-frontend.md` §5–§6，
-`01-data-model.md` §2.7；决策 D16、D21、D22、D25、D29、D32、D35、D40、D42、D43。契约：C4 `openapi.yaml`（1.5.0）、C1 注册表（1.2 的 `REVIEW_LINES`）、
+`01-data-model.md` §2.7；决策 D16、D21、D22、D25、D29、D32、D35、D40、D42、D43。契约：C4 `openapi.yaml`（1.7.0）、C1 注册表（1.2 的 `REVIEW_LINES`）、
 C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-manifest`。
 
 ## 文件
@@ -14,6 +14,7 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
 | `records.py` | 模块结果的行索引：只认该版本用过的分片，高编号的分片、靠后的行优先（与 CLI 的 `load_parts` 一致） |
 | `tables.py` | 明细表：pyarrow 读 Parquet 的行组，排序只认 C1 `TableSpec.sortable`，游标带结果版本 |
 | `episode.py` / `videos.py` | 单条 episode 的全模块视图；各机位视频从哪里放（片段 → 交付数据集 → 源数据集） |
+| `live.py` | 运行中的 episode 进度、模块记录与即时漏斗判定；不要求结果版本已提交 |
 | `perf.py` | 性能剖析：全部 / 仅主流程 / 某次子任务 |
 | `catalog.py` | 裁决线目录，取自 C1 注册表的 `REVIEW_LINES`（D43）：有哪些线、`review.json` 的哪种条目问哪条线、在哪个页签（`applies_to: reject` 的在复议页签）、算不算待裁（`counts_as_pending`）、收哪些结论及按钮名；v1 各结论的含义（改标、弃用、拿不准、判成败）作为标记叠在上面 |
 | `adjudication.py` | 裁决队列：问题、卡片、状态、计数、逐线校验（`Queue.answerable` 一处）、追加记录、CSV 副本、`summary.pending_adjudication` |
@@ -22,6 +23,9 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
 
 ## 行为要点
 
+- **即时逐条结果**：`GET /tasks/{id}/pipeline/episodes` 分页读取已完成至少一层的 episode；
+  `GET /tasks/{id}/pipeline/episodes/{index}` 读取这条的当前模块结果。漏斗完成时立即给出机器漏斗判定；
+  去重和画像仍需全量输入，最终通过 / 拒绝 / 待补跑以提交后的结果版本为准。
 - **读哪个版本**：缺省读 `task.result_rev`；`?rev=N` 可读 1 到 `result_rev` 之间任一已提交的版本。
   没有 `commit.json` 的版本不认；`result_rev` 之后已提交、还没切换过去的版本也不给看（D25）。
   任务还没有结果、版本号越界、本地文件不全，一律 404 `not_found`，`details.reason` 说明是

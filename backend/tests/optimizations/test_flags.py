@@ -1,82 +1,145 @@
 import pytest
 
-from curation.pipeline.config import ConfigError, apply_overrides, load_config
-from curation.pipeline.optimizations import FLAGS, _cli_overrides, _flags, _validate_execution
+from curation.pipeline.config import ConfigError, apply_overrides, load_config, validate_config
 
 
-def test_defaults_and_disable_all():
+def test_thinking_is_the_only_pipeline_switch():
     cfg = load_config()
-    assert not any(_flags(cfg).values())
-    cfg['pipeline']['optimizations'] = {'skip_review': True}
-    apply_overrides(cfg, _cli_overrides([], ['all']))
-    assert not any(_validate_execution(cfg).values())
+    assert cfg['pipeline']['thinking'] is None
+    assert 'optimizations' not in cfg['pipeline']
+    apply_overrides(cfg, ['pipeline.thinking=false'])
+    assert cfg['pipeline']['thinking'] is False
+    validate_config(cfg)
 
 
-@pytest.mark.parametrize('on,off', [(['missing'], []), (['all'], []),
-                                   (['frame_cache'], ['frame_cache']),
-                                   (['frame_cache'], ['all'])])
-def test_invalid_cli(on, off):
-    with pytest.raises(ConfigError):
-        _cli_overrides(on, off)
+@pytest.mark.parametrize('value', [0, 'false', [], {}])
+def test_thinking_requires_boolean(value):
+    with pytest.raises(ConfigError, match='pipeline.thinking'):
+        validate_config({'pipeline': {'thinking': value}})
 
 
-@pytest.mark.parametrize('values', [{'unknown': False}, {'frame_cache': 'false'},
-                                   {'frame_cache': 1}, None])
-def test_strict_types(values):
-    with pytest.raises(ConfigError):
-        _flags({'pipeline': {'optimizations': values}})
+def test_old_engineering_switches_are_rejected():
+    with pytest.raises(ConfigError, match='removed'):
+        validate_config({'pipeline': {'optimizations': {'frame_cache': False}}})
 
 
-def test_cli_overrides_win_without_mutating_inputs():
-    cfg = load_config()
-    apply_overrides(cfg, ['pipeline.optimizations.frame_cache=true'] +
-                    _cli_overrides([], ['frame_cache']))
-    assert _flags(cfg)['frame_cache'] is False
-
-
-@pytest.mark.parametrize('values,match', [({'resume': True}, 'requires'),
-    ({'skip_review': True, 'review_merge': True}, 'Conflicting'),
-    ({'skip_strong_review': True}, 'unavailable')])
-def test_unsupported_and_dependencies(values, match):
-    with pytest.raises(ConfigError, match=match):
-        _validate_execution({'pipeline': {'optimizations': values}})
-
-
-def test_cli_rejects_before_creating_output(tmp_path):
-    from curation.cli.legacy import main
-    out = tmp_path / 'output'
-    assert main(['run', '--input', '/missing', '--output', str(out),
-                 '--enable', 'skip_strong_review']) == 2
-    assert not out.exists()
-
-
-def test_python_rejects_before_creating_output(tmp_path):
-    from curation.pipeline.run import run_pipeline
-    with pytest.raises(ConfigError, match='unavailable'):
-        run_pipeline(None, '/missing', str(tmp_path / 'out'),
-                     set_overrides=['pipeline.optimizations.skip_strong_review=true'])
-    assert not (tmp_path / 'out').exists()
-
-
-def test_v2_rejects_opt_in(monkeypatch):
-    from curation.pipeline import optimizations
-    monkeypatch.setattr(optimizations, 'IMPLEMENTED', frozenset({'frame_cache'}))
-    cfg = {'pipeline': {'optimizations': {'frame_cache': True}}}
-    assert _validate_execution(cfg)['frame_cache']
-    with pytest.raises(ConfigError, match='unavailable'):
-        _validate_execution(cfg, v2=True)
+def test_cli_exposes_only_thinking_switch():
+    from curation.cli.legacy import build_parser
+    parser = build_parser()
+    args = parser.parse_args(['run', '--input', '/missing', '--output', '/tmp/unused',
+                              '--no-thinking'])
+    assert args.thinking is False
+    with pytest.raises(SystemExit):
+        parser.parse_args(['run', '--input', '/missing', '--output', '/tmp/unused',
+                           '--enable', 'frame_cache'])
 
 
 @pytest.mark.parametrize('concurrency', [0, -1, True, 1.5, '8'])
 def test_active_execution_rejects_invalid_concurrency(concurrency):
     with pytest.raises(ConfigError, match='positive integer'):
-        _validate_execution({'pipeline': {'vlm_episode_concurrency': concurrency,
-                                         'optimizations': {'streaming_funnel': True}}})
+        validate_config({'pipeline': {'vlm_episode_concurrency': concurrency}})
 
 
-def test_formal_snapshot_does_not_expose_private_flags():
+def test_formal_snapshot_retains_thinking_setting():
     from curation.pipeline.run import _sanitize_config_snapshot
     cfg = load_config()
-    cfg['pipeline']['optimizations']['streaming_funnel'] = True
-    assert 'optimizations' not in _sanitize_config_snapshot(cfg)['pipeline']
-    assert cfg['pipeline']['optimizations']['streaming_funnel'] is True
+    snapshot = _sanitize_config_snapshot(cfg)
+    assert 'optimizations' not in snapshot['pipeline']
+    assert snapshot['pipeline']['thinking'] is None
+
+
+def test_formal_snapshot_marks_glm_53_flash_as_still_thinking():
+    from curation.pipeline.run import _sanitize_config_snapshot
+    cfg = load_config()
+    cfg['pipeline']['thinking'] = False
+    cfg['checks']['task_success']['vlm']['model'] = 'glm-5.3-flash'
+    snapshot = _sanitize_config_snapshot(cfg)
+    assert snapshot['pipeline']['thinking'] is False
+    assert snapshot['pipeline']['thinking_effective'] == {
+        'enabled': True, 'reasoning_effort': 'low'}
+
+
+@pytest.mark.parametrize('model,thinking,expected', [
+    ('ark-glm5.2', None, {}),
+    ('ark-glm5.2', True, {'thinking': {'type': 'enabled'}}),
+    ('ark-glm5.2', False, {'thinking': {'type': 'disabled'}}),
+    ('glm-5.3-flash', True, {'thinking': {'type': 'enabled'}}),
+    ('glm-5.3-flash', False, {'thinking': {'type': 'enabled'},
+                             'reasoning_effort': 'low'}),
+])
+def test_thinking_switch_reaches_chat_api(monkeypatch, model, thinking, expected):
+    import requests
+    from curation.adapters.vlm_client import make_llm_ask
+
+    sent = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {'choices': [{'message': {'content': 'ok'}, 'finish_reason': 'stop'}]}
+
+    def post(url, **kwargs):
+        sent.append((url, kwargs['json']))
+        return Response()
+
+    monkeypatch.setattr(requests, 'post', post)
+    assert make_llm_ask('https://example.test/v3', model, thinking=thinking)('hello') == 'ok'
+    payload = {
+        'model': model, 'temperature': 0.0, 'max_tokens': 8192,
+        'messages': [{'role': 'user', 'content': 'hello'}],
+    }
+    payload.update(expected)
+    assert sent == [('https://example.test/v3/chat/completions', payload)]
+
+
+def test_unknown_model_requires_explicit_policy_for_thinking_switch():
+    from curation.pipeline.thinking import thinking_request_fields
+    with pytest.raises(ConfigError, match='no verified thinking policy'):
+        thinking_request_fields('unknown/model', False)
+    assert thinking_request_fields('unknown/model', None) == {}
+
+
+def test_run_rejects_unknown_model_policy_before_creating_output(tmp_path):
+    from curation.pipeline.run import run_pipeline
+    output = tmp_path / 'output'
+    with pytest.raises(ConfigError, match='no verified thinking policy'):
+        run_pipeline(None, str(tmp_path / 'input'), str(output),
+                     vlm_model='unknown/model',
+                     set_overrides=['pipeline.thinking=false'])
+    assert not output.exists()
+
+
+def test_glm_53_flash_off_notice_says_still_thinking():
+    from curation.pipeline.thinking import thinking_notice
+    notice = thinking_notice('ark-glm5.3-flash', False)
+    assert 'reasoning_effort=low' in notice
+    assert '仍在思考' in notice
+
+
+def test_pipeline_thinking_setting_reaches_visual_request(monkeypatch):
+    import numpy as np
+    import requests
+    from curation.adapters.vlm_client import vlm_completion_from_config
+
+    sent = []
+
+    class Response:
+        ok = True
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {'choices': [{'message': {'content': '50'}}]}
+
+    monkeypatch.setattr(requests, 'post', lambda _url, **kw:
+                        (sent.append(kw['json']) or Response()))
+    cfg = load_config()
+    cfg['pipeline']['thinking'] = False
+    cfg['checks']['task_success']['vlm']['model'] = 'ark-glm5.2'
+    frame = np.zeros((4, 4, 3), dtype=np.uint8)
+    complete = vlm_completion_from_config(cfg)
+    assert complete([('cam', frame)], [[('cam', frame)]], 'pick up the cup') == [0.5]
+    assert len(sent) == 1 and sent[0]['thinking'] == {'type': 'disabled'}

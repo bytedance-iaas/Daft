@@ -42,11 +42,9 @@ def test_pipeline_dedup_equivalence_and_no_first_pass_reread(tmp_path, monkeypat
     base = run_pipeline(None, data, str(tmp_path / 'base'), **common)
     base_calls = len(calls)
     calls.clear()
-    optimized = run_pipeline(None, data, str(tmp_path / 'optimized'), **common,
-                             set_overrides=['pipeline.optimizations.action_hash_reuse=true',
-                                            'pipeline.optimizations.parallel_video_hash=true'])
+    optimized = run_pipeline(None, data, str(tmp_path / 'optimized'), **common)
     assert base['verdicts'] == optimized['verdicts']
     assert base['stats'] == optimized['stats']
-    assert len(calls) < base_calls
+    assert len(calls) == base_calls
     assert reports[0] == reports[1]
     assert reports[0], 'fixture must exercise duplicate_of'

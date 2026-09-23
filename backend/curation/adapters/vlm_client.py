@@ -42,6 +42,12 @@ _HTTP_LOCK = threading.Lock()          # 模块级,不进 UDF 闭包 → 不参�
 _LAT_ROWS: list = []
 
 
+def _with_thinking(payload: dict, thinking: bool | None) -> dict:
+    """Add the model-specific Chat API controls requested by the caller."""
+    from ..pipeline.thinking import thinking_request_fields
+    return {**payload, **thinking_request_fields(payload.get("model", ""), thinking)}
+
+
 def latency_record(tag: str, dt: float, ok: bool = True,
                    started_at: float | None = None, *,
                    call_id: str | None = None, attempt: int = 0,
@@ -685,6 +691,7 @@ def make_vlm_completion(
     max_tokens: int = 2048,       # 推理模型(Cosmos-Reason)的 CoT 需要余量
     api_key_env: str | None = None,   # 托管端点(方舟 MaaS)鉴权;自托管 vLLM 留空
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,   # 逐帧问询的并发度;1=串行
+    thinking: bool | None = None,
 ):
     """构造批式 vlm(reference, shuffled_frames, instruction) -> list[float](注入给 task_success)。
 
@@ -701,8 +708,8 @@ def make_vlm_completion(
     gate = SharedGate(max_concurrency)
 
     def _post(content: list) -> str:
-        payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
-                   "messages": [{"role": "user", "content": content}]}
+        payload = _with_thinking({"model": model, "temperature": temperature, "max_tokens": max_tokens,
+                   "messages": [{"role": "user", "content": content}]}, thinking)
         resp = hedged_request(
             lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
             tag="probe", timeout_s=timeout_s, gate=gate)
@@ -825,6 +832,7 @@ def make_multiview_completion(
     max_tokens: int = 2048,
     api_key_env: str | None = None,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    thinking: bool | None = None,
 ):
     """多视角联合打分工厂。**帧 = [(相机名, 图), ...]**(同一时刻各相机,标签随数据走)。
 
@@ -840,8 +848,8 @@ def make_multiview_completion(
     gate = SharedGate(max_concurrency)
 
     def _post(content):
-        payload = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
-                   "messages": [{"role": "user", "content": content}]}
+        payload = _with_thinking({"model": model, "temperature": temperature, "max_tokens": max_tokens,
+                   "messages": [{"role": "user", "content": content}]}, thinking)
         resp = hedged_request(
             lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
             tag="probe", timeout_s=timeout_s, gate=gate)
@@ -920,7 +928,7 @@ def parse_vote_word(text: str) -> str:
 def make_endstate_voter(endpoint: str, model: str,
                         timeout_s: float = DEFAULT_TIMEOUTS_S["endstate"],
                         api_key_env: str | None = None,
-                        max_in_flight: int = 16):
+                        max_in_flight: int = 16, thinking: bool | None = None):
     """逐机位复核投票器(v7.2,取代旧 make_endstate_judge 的多机位混问——旧法
     24 张图一锅烩一个答案,好机位的清晰证据被烂机位稀释,droid ep19 实锤)。
 
@@ -942,8 +950,8 @@ def make_endstate_voter(endpoint: str, model: str,
         content = [{"type": "text", "text": text}] + [
             {"type": "image_url", "image_url": {"url": _frame_to_data_uri(f)}}
             for f in imgs]
-        payload = {"model": model, "temperature": 0.0, "max_tokens": 2048,
-                   "messages": [{"role": "user", "content": content}]}
+        payload = _with_thinking({"model": model, "temperature": 0.0, "max_tokens": 2048,
+                   "messages": [{"role": "user", "content": content}]}, thinking)
         r = hedged_request(
             lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
             tag="endstate", timeout_s=timeout_s, gate=gate)
@@ -975,6 +983,7 @@ def vlm_completion_from_config(cfg: dict):
         raise ValueError("配置 checks.task_success.vlm.endpoint 缺失")
     return make_multiview_completion(vlm["endpoint"], vlm["model"],
                                      api_key_env=vlm.get("api_key_env"),
+                                     thinking=cfg.get("pipeline", {}).get("thinking"),
                                      timeout_s=timeout_for("probe", vlm),
                                      max_concurrency=int(vlm.get("max_concurrency",
                                                                  DEFAULT_MAX_CONCURRENCY)))
@@ -1081,7 +1090,8 @@ def parse_evidence_verdict(text: str) -> str:
 
 
 def _make_arb_post(endpoint: str, model: str, timeout_s: float,
-                   api_key_env: str | None, max_tokens: int, gate=None):
+                   api_key_env: str | None, max_tokens: int, gate=None,
+                   thinking: bool | None = None):
     """仲裁链共用的一次调用闭包(文本+图,延时记入 arbitration 桶)。
 
     gate:仲裁链四个工厂共享**同一个**对冲闸门(build_arbitration_deps 建一次
@@ -1098,8 +1108,8 @@ def _make_arb_post(endpoint: str, model: str, timeout_s: float,
         content = [{"type": "text", "text": text}] + [
             {"type": "image_url", "image_url": {"url": _frame_to_data_uri(f)}}
             for f in frames]
-        payload = {"model": model, "temperature": 0.0, "max_tokens": max_tokens,
-                   "messages": [{"role": "user", "content": content}]}
+        payload = _with_thinking({"model": model, "temperature": 0.0, "max_tokens": max_tokens,
+                   "messages": [{"role": "user", "content": content}]}, thinking)
         r = hedged_request(
             lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
             tag="arbitration", timeout_s=timeout_s, gate=gate)
@@ -1111,12 +1121,13 @@ def _make_arb_post(endpoint: str, model: str, timeout_s: float,
 
 def make_question_writer(endpoint: str, model: str,
                          timeout_s: float = DEFAULT_TIMEOUTS_S["arbitration"],
-                         api_key_env: str | None = None, gate=None):
+                         api_key_env: str | None = None, gate=None,
+                         thinking: bool | None = None):
     """问题生成器工厂:writer(intent) -> 校验过的 spec dict(缺关键键即抛,
     调用方把整条意图链转弃权——半张检查单没法取证,不硬凑)。"""
 
     _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=400,
-                           gate=gate)
+                           gate=gate, thinking=thinking)
 
     def writer(intent: str, task_type: str | None = None) -> dict:
         import json as _json
@@ -1140,11 +1151,12 @@ def make_question_writer(endpoint: str, model: str,
 
 def make_grounder(endpoint: str, model: str,
                   timeout_s: float = DEFAULT_TIMEOUTS_S["arbitration"],
-                  api_key_env: str | None = None, gate=None):
+                  api_key_env: str | None = None, gate=None,
+                  thinking: bool | None = None):
     """定位器工厂:grounder(img, target, visual, obj) -> 像素框列表(空=不可见)。"""
 
     _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=400,
-                           gate=gate)
+                           gate=gate, thinking=thinking)
 
     def grounder(img, target: str, visual: str, obj: str) -> list:
         arr = np.asarray(img)
@@ -1158,7 +1170,8 @@ def make_grounder(endpoint: str, model: str,
 
 def make_evidence_judge(endpoint: str, model: str,
                         timeout_s: float = DEFAULT_TIMEOUTS_S["arbitration"],
-                        api_key_env: str | None = None, gate=None):
+                        api_key_env: str | None = None, gate=None,
+                        thinking: bool | None = None):
     """判官工厂:judge(imgs, *, target, question, scene) -> 'yes'/'no'/'unclear'。
 
     一次调用一票;三票多数在 core(_arb_line_verdict)。scene 是语义化场景名
@@ -1166,7 +1179,7 @@ def make_evidence_judge(endpoint: str, model: str,
     对应的开场白措辞只在本模块。"""
 
     _post = _make_arb_post(endpoint, model, timeout_s, api_key_env, max_tokens=1024,
-                           gate=gate)
+                           gate=gate, thinking=thinking)
 
     def judge(imgs: list, *, target: str, question: str, scene: str) -> str:
         intro = _ARB_SCENE_INTRO.get(scene, "")
@@ -1179,7 +1192,8 @@ def make_evidence_judge(endpoint: str, model: str,
 
 def make_intent_comparer(endpoint: str, model: str,
                          timeout_s: float = DEFAULT_TIMEOUTS_S["arbitration"],
-                         api_key_env: str | None = None, gate=None):
+                         api_key_env: str | None = None, gate=None,
+                         thinking: bool | None = None):
     """意图语义比对工厂:same(annotation, caption) -> True=同一任务(判废护栏/仲裁用)。
 
     2026-09-03 统一尺子:不再自带 SAME/DIFFERENT 短提示,改走打标审计的单对判官
@@ -1189,14 +1203,14 @@ def make_intent_comparer(endpoint: str, model: str,
     from ..dataset_level.audit import make_pair_comparer
 
     llm_ask = make_llm_ask(endpoint, model, timeout_s=timeout_s, max_tokens=1024,
-                           api_key_env=api_key_env, gate=gate)
+                           api_key_env=api_key_env, gate=gate, thinking=thinking)
     return make_pair_comparer(llm_ask)
 
 
 def make_llm_ask(endpoint: str, model: str,
                  timeout_s: float = DEFAULT_TIMEOUTS_S["llm"],
                  max_tokens: int = 8192, api_key_env: str | None = None,
-                 max_in_flight: int = 2, gate=None):
+                 max_in_flight: int = 2, gate=None, thinking: bool | None = None):
     """纯文本 LLM 调用工厂(M7 taxonomy/audit 用)。
 
     HTTP 408/429/5xx、连接错误和超时最多请求 4 次,退避 1/2/4 秒。
@@ -1221,8 +1235,8 @@ def make_llm_ask(endpoint: str, model: str,
                   requests.exceptions.ChunkedEncodingError))
 
     def llm_ask(prompt_text: str) -> str:
-        payload = {"model": model, "temperature": 0.0, "max_tokens": max_tokens,
-                   "messages": [{"role": "user", "content": prompt_text}]}
+        payload = _with_thinking({"model": model, "temperature": 0.0, "max_tokens": max_tokens,
+                   "messages": [{"role": "user", "content": prompt_text}]}, thinking)
         call_id = uuid.uuid4().hex[:12]
         for attempt in range(4):
             if not gate.acquire(timeout=GATE_WAIT_FUSE_S):

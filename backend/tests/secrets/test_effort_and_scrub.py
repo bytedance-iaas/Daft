@@ -29,6 +29,18 @@ def test_defaults_follow_the_table():
     assert t.lookup("doubao-seed-2-0-pro-260215").default == "medium"
 
 
+def test_glm_models_have_distinct_effective_levels():
+    t = EffortTable()
+    flash = t.lookup("glm-5-3-flash-260828")
+    assert flash.known and flash.levels == ("low", "high", "max")
+    assert flash.default == "max"
+    with pytest.raises(EffortNotAllowed):
+        t.check("glm-5-3-flash-260828", "none")
+    older = t.lookup("glm-5-2-260617")
+    assert older.known and older.levels == ("none", "high", "max")
+    assert older.mapped["minimal"] == "none"
+
+
 @pytest.mark.parametrize("model", ["glm-4.5v", "deepseek-v3", "ep-20260921-abcde",
                                    "doubao-seed-1-6-flash-250715", "Qwen2.5-VL-72B", ""])
 def test_unknown_models_get_all_seven_levels(model):

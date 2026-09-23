@@ -1,4 +1,4 @@
-"""Private, checksummed JSONL journals for opt-in local v1 runs."""
+"""Private SQLite checkpoints for standalone local runs."""
 from __future__ import annotations
 
 import base64
@@ -6,6 +6,8 @@ import copy
 import hashlib
 import json
 import os
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import numpy as np
@@ -58,16 +60,10 @@ def _identity(input_dir, cfg, options):
             st = path.stat()
             files.append((str(path.relative_to(root)), st.st_size, st.st_mtime_ns))
     config = copy.deepcopy(cfg)
-    config.setdefault('pipeline', {}).setdefault('optimizations', {}).pop('resume', None)
-    # Missing and explicit false flags are the same execution policy.
-    from .optimizations import _flags
-    flags = _flags(config)
-    flags.pop('resume')
-    config['pipeline']['optimizations'] = flags
     src = Path(__file__).resolve().parents[1]
     code = [(str(p.relative_to(src)), hashlib.sha256(p.read_bytes()).hexdigest())
             for p in sorted(src.rglob('*.py'))]
-    return _digest({'format': 1, 'input': str(root), 'files': files,
+    return _digest({'format': 2, 'input': str(root), 'files': files,
                     'config': config, 'options': options, 'implementation': code})
 
 
@@ -79,65 +75,63 @@ class _Checkpoint:
         self.directory = Path(run_dir) / '.curation-checkpoint'
         self.directory.mkdir(exist_ok=True)
         self._lock = (self.directory / 'lock').open('a')
+        self._conn = None
         try:
             fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             self._lock.close()
             raise ConfigError('Checkpoint is already in use by another run') from None
         self.records = {}
-        self.path = self.directory / 'records.jsonl'
-        header = self.directory / 'identity.json'
+        self.path = self.directory / 'checkpoint.sqlite3'
         try:
-            if header.exists():
-                if json.loads(header.read_text()).get('identity') != identity:
-                    raise ConfigError('Checkpoint identity does not match')
-            else:
-                with header.open('x') as fh:
-                    json.dump({'identity': identity}, fh)
-                    fh.flush()
-                    os.fsync(fh.fileno())
+            self._conn = sqlite3.connect(self.path)
+            self._conn.execute('PRAGMA synchronous=FULL')
+            self._conn.execute('CREATE TABLE IF NOT EXISTS metadata '
+                               '(key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+            self._conn.execute('CREATE TABLE IF NOT EXISTS records '
+                               '(kind TEXT NOT NULL, episode_id TEXT NOT NULL, '
+                               'record TEXT NOT NULL, checksum TEXT NOT NULL, '
+                               'PRIMARY KEY (kind, episode_id))')
+            row = self._conn.execute("SELECT value FROM metadata WHERE key='identity'").fetchone()
+            if row is None:
+                if self._conn.execute('SELECT 1 FROM records LIMIT 1').fetchone():
+                    raise ConfigError('Checkpoint identity is missing')
+                self._conn.execute("INSERT INTO metadata (key, value) VALUES ('identity', ?)",
+                                   (identity,))
+                self._conn.commit()
+            elif row[0] != identity:
+                raise ConfigError('Checkpoint identity does not match')
             self._load()
         except BaseException:
             self.close()
             raise
 
     def _load(self):
-        if not self.path.exists():
-            return
-        valid_end = 0
-        with self.path.open('rb') as fh:
-            for line in fh:
-                if not line.endswith(b'\n'):
-                    break
-                try:
-                    entry = json.loads(line)
-                    payload = entry['payload']
-                    if entry['sha256'] != _digest(payload) or payload['identity'] != self.identity:
-                        raise ValueError('Invalid checkpoint checksum or identity')
-                    item = _decode(payload['record'])
-                    self.records[(payload['kind'], payload['episode_id'])] = item
-                except (ValueError, KeyError, TypeError):
-                    break
-                valid_end = fh.tell()
-        # Discard only the invalid tail, retaining all verified durable records.
-        with self.path.open('r+b') as fh:
-            fh.truncate(valid_end)
-            fh.flush()
-            os.fsync(fh.fileno())
+        for kind, episode_id, raw, checksum in self._conn.execute(
+                'SELECT kind, episode_id, record, checksum FROM records'):
+            try:
+                encoded = json.loads(raw)
+                payload = {'identity': self.identity, 'kind': kind,
+                           'episode_id': episode_id, 'record': encoded}
+                if checksum != _digest(payload):
+                    raise ValueError('Invalid checksum')
+                self.records[(kind, episode_id)] = _decode(encoded)
+            except (ValueError, TypeError, KeyError) as exc:
+                raise ConfigError(f'Checkpoint record is invalid: {kind}/{episode_id}') from exc
 
     def append(self, kind, episode_id, record):
         payload = {'identity': self.identity, 'kind': kind, 'episode_id': episode_id,
                    'record': _encode(record)}
-        entry = {'payload': payload, 'sha256': _digest(payload)}
-        with self.path.open('a') as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + '\n')
-            fh.flush()
-            os.fsync(fh.fileno())
+        raw = json.dumps(payload['record'], ensure_ascii=False, separators=(',', ':'))
+        self._conn.execute('INSERT INTO records (kind, episode_id, record, checksum) '
+                           'VALUES (?, ?, ?, ?) ON CONFLICT(kind, episode_id) DO UPDATE SET '
+                           'record=excluded.record, checksum=excluded.checksum',
+                           (kind, episode_id, raw, _digest(payload)))
+        self._conn.commit()
         self.records[(kind, episode_id)] = record
 
     def validate_runtime(self, cfg, vlm_available, vlm_ready):
         config = copy.deepcopy(cfg)
-        config.setdefault('pipeline', {}).setdefault('optimizations', {}).pop('resume', None)
         runtime = {'config': _digest(config), 'vlm_available': vlm_available,
                    'vlm_ready': vlm_ready}
         key = ('runtime', '')
@@ -147,28 +141,45 @@ class _Checkpoint:
             self.append(*key, runtime)
 
     def complete(self):
-        with (self.directory / 'complete').open('w') as fh:
-            fh.write(self.identity)
-            fh.flush()
-            os.fsync(fh.fileno())
+        self._conn.execute("INSERT INTO metadata (key, value) VALUES ('complete', '1') "
+                           'ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+        self._conn.commit()
 
     def close(self):
-        self._lock.close()
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+        if not self._lock.closed:
+            self._lock.close()
+
+
+def _matching_runs(delivery, name, identity):
+    matches = []
+    for path in Path(delivery).glob('*/.curation-checkpoint/checkpoint.sqlite3'):
+        if name is not None and path.parent.parent.name != name:
+            continue
+        try:
+            with closing(sqlite3.connect(f'{path.as_uri()}?mode=ro', uri=True)) as conn:
+                metadata = dict(conn.execute('SELECT key, value FROM metadata'))
+        except sqlite3.Error:
+            continue
+        if metadata.get('identity') == identity and metadata.get('complete') != '1':
+            matches.append(path.parent.parent)
+    return matches
 
 
 def _open_checkpoint(delivery, name, identity, resume):
     from ..delivery import allocate_run_dir
+    if resume is None:
+        matches = _matching_runs(delivery, None, identity)
+        if matches:
+            # When older interrupted runs coexist, continue the most recent one.
+            return _Checkpoint(max(matches, key=lambda path: (
+                path / '.curation-checkpoint' / 'checkpoint.sqlite3').stat().st_mtime_ns),
+                               identity)
+        resume = False
     if resume:
-        matches = []
-        for header in Path(delivery).glob('*/.curation-checkpoint/identity.json'):
-            if name is not None and header.parent.parent.name != name:
-                continue
-            try:
-                matches_identity = json.loads(header.read_text()).get('identity') == identity
-            except (ValueError, OSError):
-                continue
-            if matches_identity and not (header.parent / 'complete').exists():
-                matches.append(header.parent.parent)
+        matches = _matching_runs(delivery, name, identity)
         if len(matches) != 1:
             raise ConfigError(f'Resume requires exactly one matching incomplete run; found {len(matches)}')
         return _Checkpoint(matches[0], identity)

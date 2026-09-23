@@ -4,12 +4,11 @@ What is stored is the API's own value or NULL (01 §2.2). NULL means the request
 ``reasoning_effort`` field at all and the model uses its own default - the factory setting
 and the parity setting, because v1 never sent a thinking parameter.
 
-Ark accepts all seven values for every model that supports the field and maps them onto the
-model's effective levels. The table below (08 §4.1, from Ark's Chat API and Deep Thinking
-docs, read 2026-09-20) says which levels are effective for which model family, matched by
-model-name prefix. It only decides which levels are offered and accepted for a model; it is
-not a model catalogue and does not decide which models can be used. Models it does not know
-get all seven levels ("the server maps them").
+Models differ in which values are accepted and which values have distinct effects. The table
+below says which levels are effective for each known model family, matched by model-name
+prefix. It only decides which levels are offered and accepted for a model; it is not a model
+catalogue and does not decide which models can be used. Unknown models retain the existing
+seven-level fallback until their model-specific policy is established.
 
 Site override: ``CURATOR_REASONING_EFFORT_TABLE`` - a JSON file path, or the JSON itself -
 a list of ``{"prefix": "glm-4.5", "levels": ["low", "medium", "high"], "default": "medium"}``
@@ -44,6 +43,12 @@ class EffortRule:
 
 
 BUILTIN_RULES: tuple[EffortRule, ...] = (
+    # GLM-5.3-Flash always thinks; low is its lightest supported level.
+    EffortRule(("glm-5-3-flash", "glm-5.3-flash"), ("low", "high", "max"), "max"),
+    # Ark GLM-5.2: none/minimal disable thinking; low/medium collapse to high,
+    # and xhigh collapses to max. Keep one representative for each effect.
+    EffortRule(("glm-5-2", "glm-5.2"), ("none", "high", "max"), "high",
+               {"minimal": "none", "low": "high", "medium": "high", "xhigh": "max"}),
     # doubao-seed-2-1-pro / turbo, doubao-seed-evolving: default high; minimal turns thinking off
     EffortRule(("doubao-seed-2-1-pro", "doubao-seed-2-1-turbo", "doubao-seed-evolving"),
                _DOUBAO_LEVELS, "high", _DOUBAO_MAPPED),

@@ -217,10 +217,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--episodes", default=None, metavar="表达式",
                      help="只跑指定 episode(调试/复现单条):单条 34;多条 34,56,78;"
                           "区间 10-20;可混用 3,10-12。与 --max-episodes 同时给时先选本参数再截断")
-    run.add_argument("--enable", action="append", metavar="FLAG",
-                     help="启用单项执行优化(可重复,默认全关)")
-    run.add_argument("--disable", action="append", metavar="FLAG",
-                     help="关闭单项执行优化;all 恢复原执行路径")
+    thinking = run.add_mutually_exclusive_group()
+    thinking.add_argument("--thinking", dest="thinking", action="store_true", default=None,
+                          help="按模型策略启用思考(默认不传相关字段,由模型决定)")
+    thinking.add_argument("--no-thinking", dest="thinking", action="store_false",
+                          help="按模型策略降低/关闭思考；GLM-5.3-Flash 映射为 low，仍在思考")
     run.add_argument("--only", default=None,
                      help="只跑这些模块(逗号分隔,如 visual_quality,motion_quality;"
                           "含数据集级模块 skill_profile(技能画像)/dedup(精确去重))")
@@ -772,14 +773,12 @@ def main(argv: list[str] | None = None) -> int:
         args = build_parser().parse_args(_argv)
     if args.command == "run":
         from ..pipeline.config import ConfigError, apply_overrides, load_config
-        from ..pipeline.optimizations import _cli_overrides, _validate_execution
         try:
-            args.set_overrides = list(args.set_overrides or []) + _cli_overrides(
-                args.enable, args.disable)
-            _opt = _validate_execution(apply_overrides(load_config(args.config), args.set_overrides))
-            if _opt['checkpoint'] and (str(args.input).startswith('tos://')
-                                       or str(args.output).startswith('tos://')):
-                raise ConfigError('Checkpoint currently requires local input and output')
+            args.set_overrides = list(args.set_overrides or [])
+            if args.thinking is not None:
+                args.set_overrides.append(f"pipeline.thinking={str(args.thinking).lower()}")
+            from ..pipeline.config import validate_config
+            validate_config(apply_overrides(load_config(args.config), args.set_overrides), "--set")
         except (ConfigError, OSError, ValueError) as e:
             print(f"[输入错误] {e}", file=sys.stderr)
             return 2

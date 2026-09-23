@@ -126,6 +126,7 @@ def build_arbitration_deps(cfg: dict, gates: dict | None = None) -> dict | None:
 
     vcfg = cfg["checks"]["task_success"]["vlm"]
     ep, model, key = vcfg["endpoint"], vcfg["model"], vcfg.get("api_key_env")
+    thinking = cfg.get("pipeline", {}).get("thinking")
     # 仲裁链的对冲闸门:一条 episode 内链是串行的 ⇒ 结构并发 = episode 并发;
     # 四个工厂共享同一个闸门(各建一闸会让补发在四类间叠加,在飞总数超结构并发)。
     # ⚠️ 必须是 SharedGate 不能是裸 threading.Semaphore:这四个闭包最终进 task_check
@@ -137,17 +138,18 @@ def build_arbitration_deps(cfg: dict, gates: dict | None = None) -> dict | None:
     t_arb = timeout_for("arbitration", vcfg)
     return {
         "question_writer": make_question_writer(ep, model, timeout_s=t_arb,
-                                                api_key_env=key, gate=arb_gate),
+                                                api_key_env=key, gate=arb_gate, thinking=thinking),
         "grounder": make_grounder(ep, model, timeout_s=t_arb,
-                                  api_key_env=key, gate=arb_gate),
+                                  api_key_env=key, gate=arb_gate, thinking=thinking),
         "judge": make_evidence_judge(ep, model, timeout_s=t_arb,
-                                     api_key_env=key, gate=arb_gate),
+                                     api_key_env=key, gate=arb_gate, thinking=thinking),
         "same_task": make_intent_comparer(ep, model, timeout_s=t_arb,
-                                          api_key_env=key, gate=arb_gate),
+                                          api_key_env=key, gate=arb_gate, thinking=thinking),
         "captioner": make_vlm_captioner(ep, model,
                                         timeout_s=timeout_for("caption", vcfg),
                                         api_key_env=key,
-                                        max_in_flight=int(gates.get("guard_caption", _epc))),
+                                        max_in_flight=int(gates.get("guard_caption", _epc)),
+                                        thinking=thinking),
         "caption_n_frames": int(cfg.get("skill_profile", {}).get("n_frames", 8)),
         "params": {
             "kill_min_lines": int(acfg.get("kill_min_lines", 2)),
@@ -176,7 +178,8 @@ def build_endstate_voter(cfg: dict, gates: dict | None = None):
     return make_endstate_voter(vcfg_t["endpoint"], vcfg_t["model"],
                                timeout_s=timeout_for("endstate", vcfg_t),
                                api_key_env=vcfg_t.get("api_key_env"),
-                               max_in_flight=cap)
+                               max_in_flight=cap,
+                               thinking=cfg.get("pipeline", {}).get("thinking"))
 
 
 # 进度显示已抽到 pipeline/progress.py(M7 在 run.py 里也要用,不该 import funnel 私有名)
@@ -818,29 +821,17 @@ def run_funnel(
     vlm_completion: Callable | None = None,       # M4c 依赖注入(生产=vLLM 端点;None=跳过)
 ) -> tuple["object", dict]:
     """输入 M1 DataFrame → 输出 (带 check_*/verdict 列的 DataFrame, 漏斗统计)。"""
-    from contextlib import nullcontext
-    from .execution import _executor_scope
     from .frame_cache import _cache_scope
-    from .optimizations import _validate_execution
-
-    flags = _validate_execution(cfg)
-    if flags["checkpoint"]:
-        from .config import ConfigError
-        raise ConfigError("checkpoint/resume require run_pipeline output context")
-    scope = (_executor_scope(int(cfg.get("pipeline", {}).get("vlm_episode_concurrency", 8)) + 8)
-             if flags["dedicated_executor"] else nullcontext(None))
-    with scope as executor_key, (_cache_scope() if flags['frame_cache']
-                                else nullcontext(None)) as cache_key:
-        if flags["streaming_funnel"]:
-            from .streaming import _execute_funnel
-            return _execute_funnel(df, cfg, registry, vlm_completion, executor_key, cache_key=cache_key)
-        return _run_funnel_legacy(df, cfg, registry, vlm_completion, executor_key, cache_key)
+    from .config import validate_config
+    validate_config(cfg)
+    with _cache_scope() as cache_key:
+        from .streaming import _execute_funnel
+        return _execute_funnel(df, cfg, registry, vlm_completion, cache_key=cache_key)
 
 
-def _run_funnel_legacy(df, cfg, registry, vlm_completion, executor_key=None, cache_key=None):
+def _run_funnel_legacy(df, cfg, registry, vlm_completion, cache_key=None):
     import daft
     from daft import col, lit
-    from .execution import _to_thread
     from functools import partial
     from .frame_cache import _decode_cached
     decode = partial(_decode_cached, cache_key) if cache_key else None
@@ -1047,8 +1038,8 @@ def _run_funnel_legacy(df, cfg, registry, vlm_completion, executor_key=None, cac
                 # 兜底纪律:单条轨迹判决的任何异常都不得外泄(见 _internal_error_struct)。
                 if not os.environ.get("CURATION_DEBUG_CONCURRENCY"):
                     try:
-                        return await _to_thread(
-                            executor_key, _task_check_sync, video, task_desc, task_src, fps,
+                        return await asyncio.to_thread(
+                            _task_check_sync, video, task_desc, task_src, fps,
                             action, timestamps, embodiment_id, semantics_extras)
                     except Exception as e:  # noqa: BLE001
                         return _internal_error_struct(e)
@@ -1059,8 +1050,8 @@ def _run_funnel_legacy(df, cfg, registry, vlm_completion, executor_key=None, cac
                 _INFLIGHT["max"] = max(_INFLIGHT["max"], _INFLIGHT["n"])
                 t_in = time.time()
                 try:
-                    return await _to_thread(
-                        executor_key, _task_check_sync, video, task_desc, task_src, fps,
+                    return await asyncio.to_thread(
+                        _task_check_sync, video, task_desc, task_src, fps,
                         action, timestamps, embodiment_id, semantics_extras)
                 except Exception as e:  # noqa: BLE001
                     return _internal_error_struct(e)   # finally 照常跑,在飞计数不漏

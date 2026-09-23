@@ -1,6 +1,8 @@
 # Curation 提速计划(10 万条量级)
 
-实施进度与已验证能力见 [implementation.md](implementation.md)。开关清单包含待实现实验项,以该记录及代码 IMPLEMENTED 注册表为当前可用范围。
+本页保留历史规划与实验假设；当前实施状态见 [implementation.md](implementation.md)。
+下文的工程开关表已不适用于当前代码：工程优化已并入默认路径，只有 API 的 `thinking` 可配置。该开关按模型映射参数；GLM-5.3-Flash 不能关闭思考，`--no-thinking` 只设 `reasoning_effort=low`，仍在思考。下文“thinking 关”的提速数字不能用于该模型。
+P1 的运行检查点现已使用 SQLite；下文旧开关描述仅保留为历史方案。
 
 ## 现状基线
 
@@ -156,30 +158,30 @@ verdict 在最后一次才算出来,所以最早能落盘的时刻是整批跑�
    todo = _remaining_in_input_order(requested, done)
    df = _build_funnel_chain(read_lazy(..., episode_indices=todo), cfg, ...)
    for row in df.iter_rows(results_buffer_size="num_cpus"):
-       _sink_internal_record(row)               # 追加检查点 + flush + fsync
+       _sink_internal_record(row)               # SQLite 事务提交
        _accumulate_legacy_result(row)           # 维护旧返回值/统计,不再执行惰性链
    ```
    `episode_indices` 管道已经是通的:`read_lazy` → `LeRobotDataSource.get_tasks`
    → `episode_select.reconcile_episodes`,resume 在内部计算 `requested - done`,
    不扩展 `read_lazy` 的公开签名。
 
-3. **私有 JSONL 检查点**:完整保存重建旧返回值、统计和后续处理所需的字段,
+3. **私有 SQLite 检查点**:完整保存重建旧返回值、统计和后续处理所需的字段,
    包括原始行序号;`run_id`、配置/输入/实现版本指纹、`kind`、`ts` 等放在内部封装中。
-   从已有输出路径派生私有检查点位置,仅通过 `checkpoint` / `resume` 开关控制,不改变正式产物 schema;
+   从已有输出路径派生私有检查点位置,本地运行自动启用并恢复身份匹配的未完成批次,不改变正式产物 schema;
    正式 `per_episode` 不增加检查点元数据。
 
 4. **pre-funnel caption 也要落盘**
    `run.py:702-720` 给无标注条目补 caption,**每条 1 次 VLM**。不落盘则 resume 整批重烧。
-   同一份 jsonl 加 `kind: "caption"` 即可。
+   同一张记录表以 `kind: "caption"` 区分。
 
 5. 跑完由私有适配层合并历史记录与本次结果,恢复原顺序、完整 schema 与统计,
    再交给原有去重/画像/导出流程。不能仅保存简化版 verdict 就声称能重建旧结果。
 
 ### 纪律
 - **幂等**:同一运行身份下按 `(kind, episode_id)` 取最后一条完整记录,caption 与判定不互相覆盖;配置、输入或实现版本变了不复用旧结果
-- **恢复边界**:仅 `resume=enable` 时复用相同运行身份的未完成运行;关闭时按原行为新建运行,损坏或截断记录不计入 done
-- **写盘**:`flush()` + `os.fsync()`。这个仓库有过写坏文件的事故(`run.py:1545`)
-- **Ray**:每 worker 一份 jsonl 再合并,不指望多进程 append 原子
+- **恢复边界**:复用相同运行身份的未完成运行；SQLite 记录校验失败时明确报错
+- **写盘**:每条记录提交 SQLite 事务,使用 `synchronous=FULL`
+- **Ray**:多进程写入需单写者或分库合并,不共享单个连接
 
 ### 附带收益
 流式执行减少中间全库物化,解码段与 VLM 段可以重叠(见 P7)。
@@ -450,11 +452,11 @@ P2 的内部实验会比较 2 路复核机位,同步检查是否也只需要前 
 
 两阶段:
 ```
-阶段 A  全库枚举 probe 请求 → 批量接口提交 → 结果落 jsonl
-阶段 B  读 jsonl 算打分层结论 → 只对需要的条目跑复核/仲裁(在线)
+阶段 A  全库枚举 probe 请求 → 批量接口提交 → 结果落 SQLite
+阶段 B  读 SQLite 算打分层结论 → 只对需要的条目跑复核/仲裁(在线)
 ```
 
-和 P1 的 jsonl 检查点是**同一套地基**,阶段 A 的产物天然就是可续跑的。
+和 P1 的 SQLite 检查点是**同一套地基**,阶段 A 的产物天然就是可续跑的。
 收益取决于方舟批量推理的实际折扣与配额(**待确认**);代价是延迟以小时计,
 不适合"跑 10 条看一眼"的调试循环。先由 `batch_probe` 实验开关控制,默认关闭;
 端点能力与超时/错误/返回契约未验证前,只在隔离测试中启用,不接入正式结果路径。
@@ -547,7 +549,7 @@ schema、统计、留痕、结果顺序与异常行为;覆盖空输入、全 dro
 ### 与 P1 的关系
 
 **是同一个改动。** `collect()` → `iter_rows()` 一次给两样:
-行一条条流出来 → 立刻落 jsonl(P1);整条链恢复流式 → 解码与 VLM 重叠(P7)。
+行一条条流出来 → 立刻提交 SQLite(P1);整条链恢复流式 → 解码与 VLM 重叠(P7)。
 变化都在私有执行层内,调用方继续使用原入口和返回值。
 
 所以 P1 不要写成"分块驱动 + 每块落盘"——那是把栅栏从五个减到 N 个,

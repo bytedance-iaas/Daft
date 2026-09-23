@@ -813,6 +813,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/pipeline/episodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        /** Recent per-episode funnel progress, available while the task runs */
+        get: operations["listPipelineEpisodes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/pipeline/episodes/{index}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                index: number;
+            };
+            cookie?: never;
+        };
+        /** Immediate funnel result and module records of one episode */
+        get: operations["getPipelineEpisode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/perf": {
         parameters: {
             query?: {
@@ -1462,6 +1501,8 @@ export interface components {
             start_now?: boolean;
             /** @default true */
             export?: boolean;
+            /** @description Maximum episodes per funnel dispatch. Persistent workers hand off completed episodes immediately and refill up to the plan concurrency, independently of this size. External CLI wrappers retain batch handoff. If omitted, derived from parallelism (8–64) and reduced for small selections. */
+            batch_size?: number;
             /** @default 3 */
             vlm_retry?: number;
             /** @default true */
@@ -1544,6 +1585,36 @@ export interface components {
             eta_s?: number | null;
             /** @description e.g. why total dropped from 50 to 49 */
             note?: string;
+            pipeline?: components["schemas"]["PipelineActivity"];
+        };
+        /** @description Current invocation of the persistent funnel. Inflight counts admitted episodes awaiting durable completion, including worker setup. Dispatches are layer-local arrivals, not a barrier shared across layers. */
+        PipelineActivity: {
+            inflight: number;
+            queued: number;
+            capacity: number;
+            dispatches: number;
+            /** @description Epoch milliseconds */
+            started_at: number | null;
+            /** @description Epoch milliseconds */
+            finished_at: number | null;
+            /** @description Epoch milliseconds of this snapshot */
+            updated_at: number;
+            /** @description Per-episode processing durations; excludes dispatch and CPU admission waits. Shared module execution is counted once per episode in this layer. */
+            processing?: {
+                count: number;
+                total_s: number;
+                mean_s: number | null;
+                min_s: number | null;
+                max_s: number | null;
+            };
+            recent: {
+                number: number;
+                count: number;
+                /** @description First 16 episode indices of this dispatch */
+                episodes: number[];
+                /** @description Epoch milliseconds of dispatch */
+                at: number;
+            }[];
         };
         ModuleState: {
             id: components["schemas"]["ModuleId"];
@@ -1712,6 +1783,28 @@ export interface components {
             totals: components["schemas"]["UsageTotals"];
             actual: components["schemas"]["UsageRow"][];
             attributed: components["schemas"]["UsageRow"][];
+        };
+        PipelineEpisode: {
+            episode_index: number;
+            /** @enum {unknown} */
+            last_stage: "numeric" | "frame" | "vlm";
+            /** @enum {unknown} */
+            next_stage: "frame" | "vlm" | "done";
+            reason: string | null;
+            /** @enum {string|null} */
+            verdict: "keep" | "drop" | "held" | null;
+            verdict_reason: string | null;
+            /** @description Sum of completed layer processing times for this episode; excludes queue and CPU admission waits */
+            processing_s?: number | null;
+            stage_processing_s?: {
+                numeric?: number;
+                frame?: number;
+                vlm?: number;
+            };
+            /** @description Present on the single-episode endpoint */
+            modules?: {
+                [key: string]: components["schemas"]["result-record.schema"];
+            };
         };
         EpisodeView: {
             episode_index: number;
@@ -3607,6 +3700,62 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EpisodeView"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listPipelineEpisodes: {
+        parameters: {
+            query?: {
+                /** @description Change sequence cursor returned as next_cursor; shows the most recently updated episodes first. */
+                before?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent episodes and live funnel verdicts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["PipelineEpisode"][];
+                        next_cursor: number | null;
+                        started: number;
+                        finished: number;
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getPipelineEpisode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Episode progress and current records */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineEpisode"];
                 };
             };
             default: components["responses"]["Error"];

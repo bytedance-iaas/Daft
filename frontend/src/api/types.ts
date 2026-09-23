@@ -89,6 +89,7 @@ export type ReportModuleSection = S['module_section'];
 export type ReportResponse = operations['getReport']['responses'][200]['content']['application/json'];
 export type ReportTablePage = operations['getReportTable']['responses'][200]['content']['application/json'];
 export type EpisodeView = S['EpisodeView'];
+export type PipelineEpisode = S['PipelineEpisode'];
 export type ResultRecord = S['result-record.schema'];
 export type Perf = S['Perf'];
 export type AdjudicationQuestion = S['AdjudicationQuestion'];

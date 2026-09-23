@@ -65,9 +65,8 @@ def test_legacy_parity_schema_order_and_call_counts(monkeypatch, tmp_path, mode)
         source = source.filter(daft.lit(False))
     elif mode == 'all_drop':
         source = _df(rows[1:3])
-    before, bs = f.run_funnel(source, cfg, None, lambda *args: [])
+    before, bs = f._run_funnel_legacy(source, cfg, None, lambda *args: [])
     (tmp_path / 'calls').write_text('')
-    cfg['pipeline']['optimizations'] = {'streaming_funnel': True, 'dedicated_executor': True}
     after, ats = f.run_funnel(source, cfg, None, lambda *args: [])
     assert str(after.schema()) == str(before.schema())
     assert _norm(after) == _norm(before)
@@ -109,13 +108,12 @@ def test_all_checks_with_real_video_and_fake_vlm(tmp_path):
     hooks.install(vlm_client)
     try:
         vlm, note = _try_build_vlm(cfg)
-        before, bs = f.run_funnel(read_lerobot_lazy(source), cfg, EmbodimentRegistry(), vlm)
+        before, bs = f._run_funnel_legacy(read_lerobot_lazy(source), cfg,
+                                          EmbodimentRegistry(), vlm)
         hooks.uninstall()
         _, entries = read_tape(str(tmp_path / 'tape.jsonl.gz'))
         hooks = TapeHooks('replay', replay_entries=entries, sticky_tags=('models',))
         hooks.install(vlm_client)
-        cfg['pipeline']['optimizations'] = {'streaming_funnel': True,
-                                           'dedicated_executor': True, 'frame_cache': True}
         after, ats = f.run_funnel(read_lerobot_lazy(source), cfg, EmbodimentRegistry(), vlm)
         assert str(after.schema()) == str(before.schema())
         assert _norm(after) == _norm(before)

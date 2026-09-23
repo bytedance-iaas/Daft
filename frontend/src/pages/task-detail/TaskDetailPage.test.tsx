@@ -42,6 +42,16 @@ describe('任务详情 (07 §4.2)', () => {
     for (const t of ['50', '41', '7', '2', '10', '82%', '含待裁决 10 条']) expect(summary).toHaveTextContent(t);
   });
 
+  it('shows episode pipeline results and opens a completed episode immediately', async () => {
+    const { user } = renderApp(`/tasks/${MAIN}`);
+    const card = await screen.findByTestId('pipeline-episodes');
+    expect(await within(card).findByRole('button', { name: 'ep 49' })).toBeInTheDocument();
+    await user.click(within(card).getByRole('button', { name: 'ep 49' }));
+    const detail = await screen.findByTestId('pipeline-episode-detail');
+    expect(detail).toHaveTextContent('漏斗保留');
+    expect(detail).toHaveTextContent('task_success');
+  });
+
   it('重试 shows the subtask its answer carries at once, without waiting for the next poll (07 §4.2)', async () => {
     // Every refetch of the task is held: the banner can only come from the answer of the action.
     let release = () => {};
@@ -168,6 +178,33 @@ describe('任务详情 (07 §4.2)', () => {
 });
 
 describe('SSE and the polling fallback (03 §5, F3.2 ②)', () => {
+  it('shows actual inflight counts, new batch arrivals and per-episode timings from SSE', async () => {
+    setEventSourceFactory((url) => new FakeEventSource(url) as unknown as EventSource);
+    renderApp(`/tasks/${RUNNING}`);
+    await screen.findByRole('heading', { name: /umi_640 全量质检/ });
+    const es = FakeEventSource.last();
+    act(() => es.open());
+    const at = Date.now();
+    const pipeline = { inflight: 3, queued: 2, capacity: 8, dispatches: 4,
+      recent: [{ number: 4, count: 1, episodes: [6], at }],
+      started_at: at - 10000, finished_at: null, updated_at: at,
+      processing: { count: 2, total_s: 8, mean_s: 4, min_s: 3, max_s: 5 } };
+    act(() => es.emit('progress', { id: 'vlm', state: 'running', done: 2, total: 7, pipeline }));
+    expect(await screen.findByTestId('pipeline-activity')).toBeInTheDocument();
+    expect(screen.getByTestId('inflight-vlm')).toHaveTextContent('3条在途');
+    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('2 条待进入');
+    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('平均每条 4.00 s');
+    expect(screen.getByTestId('arrival-vlm')).toHaveTextContent('第 4 批');
+    expect(screen.getByTestId('arrival-vlm')).toHaveTextContent('ep 6');
+    expect(screen.getByTestId('pipeline-overlap')).toBeInTheDocument();
+    act(() => es.emit('progress', { id: 'vlm', state: 'running', done: 3, total: 7,
+      pipeline: { ...pipeline, inflight: 4, queued: 0, dispatches: 5,
+        recent: [...pipeline.recent, { number: 5, count: 2, episodes: [7, 8], at: at + 1 }] } }));
+    await waitFor(() => expect(screen.getByTestId('inflight-vlm')).toHaveTextContent('4条在途'));
+    expect(screen.getByTestId('arrival-vlm')).toHaveTextContent('第 5 批');
+    expect(screen.getByTestId('arrival-vlm')).toHaveTextContent('新进入 2 条');
+  });
+
   it('falls back to 5 s polling when EventSource is not available at all', async () => {
     const gets = countTaskGets(RUNNING);
     renderApp(`/tasks/${RUNNING}`);

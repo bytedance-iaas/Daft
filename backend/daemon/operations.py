@@ -51,6 +51,8 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "getReport": ("GET", "/api/v1/tasks/{id}/report"),
     "getReportTable": ("GET", "/api/v1/tasks/{id}/report/tables/{table}"),
     "getEpisode": ("GET", "/api/v1/tasks/{id}/episodes/{index}"),
+    "listPipelineEpisodes": ("GET", "/api/v1/tasks/{id}/pipeline/episodes"),
+    "getPipelineEpisode": ("GET", "/api/v1/tasks/{id}/pipeline/episodes/{index}"),
     "getPerf": ("GET", "/api/v1/tasks/{id}/perf"),
     "listAdjudication": ("GET", "/api/v1/tasks/{id}/adjudication"),
     "submitAdjudication": ("POST", "/api/v1/tasks/{id}/adjudication"),

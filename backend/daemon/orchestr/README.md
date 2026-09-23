@@ -1,11 +1,11 @@
 # 任务编排与 CLI 执行器（W5a）
 
-把任务交给 CLI 一档一档地跑：排队、执行、暂停恢复停止、崩溃恢复、四种子任务、发布到交付目录，
+把任务交给 CLI 按 episode 批次流水执行：排队、执行、暂停恢复停止、崩溃恢复、四种子任务、发布到交付目录，
 以及启动前的检查、数据集登记与核对、浏览与 episode 列表。F2.3，以及 F2.2、F2.6、F2.7 中属于编排的部分。
 
 设计依据：`docs/design/00-overview.md` §4、`01-data-model.md` §2–§3、`02-cli-and-files.md` §3–§4、`03-rest-api.md` §3、§12、
 `04-execution.md` §2–§3、§7、`06-delivery-and-report.md` §1、§4、`09-deployment.md` §2；决策 D5、D9、D20、D24–D30、D35、D37、D39–D43，
-P1、P14、P15、P17。契约：C2 `backend/curation/cli/README.md`（命令、退出码、调用顺序）、C3 进度协议、C4 `openapi.yaml`（1.5.2）、
+P1、P14、P15、P17。契约：C2 `backend/curation/cli/README.md`（命令、退出码、调用顺序）、C3 进度协议、C4 `openapi.yaml`（1.7.0）、
 C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 
 ## 文件
@@ -19,6 +19,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `service.py` | `Orchestrator`：路由调用的入口；生命周期钩子（就绪后收拾孤儿进程、启动 worker 池和清理线程；停机时系统暂停）；动作、子任务、D37 重新预检、清理交付产物、执行计划、预检 |
 | `scheduler.py` | 队列与 worker 池：`maxRunningTasks` 个槽，主流程与子任务共用，先进先出；重启后从库里重建队列 |
 | `runbase.py` | 所有运行共用的部分：意图（暂停 / 停止 / 停机）、日志、进度、按档调用 CLI（崩溃后带 `--resume` 重新拉起并点名在处理的 episode）、参数、结果版本、同步与核验、`latest` |
+| `pipeline.py` / `episode_pipeline.py` / `stage_worker.py` | 主流程漏斗：numeric、frame、VLM 各用一个持久的 `multiprocessing` worker；按并发额度逐条交接、持续补位与 SQLite 续跑；外部 CLI 保留批次兼容路径 |
 | `runs.py` | 主流程与四种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`、`ReexportRun`；建议性模块的 `advisory_<档>` 阶段（全部选中条目，任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径，F5.5） |
 | `planning.py` | 第一次运行时调 W6 的 planner 生成 `plan.json`、`run.json` |
 | `rules.py` | 纯函数：模块状态与终态规则（D35）、episode 选择、批次名、清单指纹与变化（D37）、读不到 W5b 的汇总时按清单兜底计数 |
@@ -47,9 +48,17 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   然后固化 `run_id`（在交付目录里写 `<run_id>/run.json` 占位，同名加 `-2`）、预检结果、源文件清单、模型设置（不含密钥），
   `created → queued` 入队。不马上开始时只登记数据集。批量建任务先全部校验（`details.item` 指出第几项），再逐个建；
   逐个开始失败的写进 `warnings`。
-- **执行**：一个任务的主流程按 CLI README「Daemon 的调用顺序」逐档调用：补描述 → numeric → frame → vlm（每档只看上一档的幸存者；
-  整体失败的模块门不生效，后面照跑）→ 漏斗判决 → 去重 → 画像 → 终判 → 报告 → 导出 → 同步与核验。每档都带 `--resume`，
-  完成的档记在日志本里，暂停、崩溃之后不重做。缺源文件被剔除的 episode（D40）不进计划、不进进度总数。
+- **执行**：补描述后，numeric、frame、VLM 各启动一个持久的 `multiprocessing` worker，每条 episode 完成并提交 SQLite 后即可交给下一层；空出的执行槽立即补入已就绪条目。
+  `POST /tasks` 或待启动任务的 `PATCH /tasks/{id}` 可传 `params.batch_size`（1–256 条/次派发）；不传时按并发度取 8–64 条，小数据集自动减小。
+  此值不限制每层在途并发：并发由实际 plan 决定。层间等待队列按两次派发量或下游并发度取较大值，并计入上游在途条目的有界余量。
+  numeric/frame 共用 CPU 总预算，逐条释放额度；预算为 1 时交替推进，也不持有整批锁。任务的 `limits.cpu_concurrency` 是上限，实际值见 plan 的 `value` 和 `bound_by`。
+  自定义 `CURATOR_CLI` 仍按批次调用，以保留包装脚本的执行语义。
+  实时进度的 `pipeline` 字段给出实际在途数、等待数和最近五次派发，UI 可同时观察三层重叠与新条目进入。
+  耗时汇总按每条 episode 的处理时间计算，同层共享执行的模块只计一次；排队和 CPU 准入等待不计入。
+  每档的运行区间只用于时间轴，任务总耗时仍是端到端墙钟时间。
+  每条 episode 的模块结果和下一层位置写入 `.orchestr/episodes.sqlite3`，暂停或崩溃后按 episode 恢复。
+  整体失败的模块门放行。漏斗完成后再做漏斗判决 → 去重 → 画像 → 终判 → 报告 → 导出 → 同步与核验。
+  缺源文件被剔除的 episode（D40）不进计划、不进进度总数。
   每个检查档做完就把 `checks/` 传到交付目录（随产随传），但 `_COMPLETE` 只在最后的核验通过后才写。
 - **模块与任务的状态**：模块状态看逐状态计数（有出错条目是 `completed_with_errors`，退出码 4 是 `failed`）；
   终态按 01 篇 §2.5 约束 3 与 D35：没有 `failed` 的模块、`held` 为空才是 `succeeded`。
@@ -63,7 +72,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 - **停机与重启**：SIGTERM 时不再接新活，运行中的任务与子任务转为系统暂停（`pausing`，原因「Daemon 停机」），命令收到 SIGTERM；
   超过宽限期就 SIGKILL，任务仍是 `paused`（system），不会 `failed`。启动对账把系统暂停的改回 `queued`，worker 池自己接着跑；
   用户暂停的保持暂停，用户停止的不再运行。Daemon 被直接杀掉时留下的子进程，下次就绪后按 `.orchestr/proc.json` 收拾掉。
-- **崩溃**：命令异常退出（段错误、OOM）时带 `--resume` 重新拉起，任务日志点名当时在处理的 episode；
+- **崩溃**：worker 异常退出（段错误、OOM）时重新拉起，并按 SQLite 与在途记录恢复该批次；
   同一条连续两次出现在崩溃现场，CLI 把它记为出错并跳过（P14）。没有在处理的 episode 却反复崩溃，任务 `failed`。
 - **子任务**（同一任务串行，建时就入队）：
   - `retry`：缺省重跑所有出错条目和整体失败的模块；出错的 episode 从出错那一档重跑，整体失败的模块全量重跑；

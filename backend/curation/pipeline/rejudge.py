@@ -1439,7 +1439,8 @@ def _build_rerun(cfg: dict) -> Callable:
     from ..adapters.vlm_client import timeout_for
     voter = make_endstate_voter(vcfg["endpoint"], vcfg["model"],
                                 timeout_s=timeout_for("endstate", vcfg),
-                                api_key_env=vcfg.get("api_key_env"))
+                                api_key_env=vcfg.get("api_key_env"),
+                                thinking=cfg.get("pipeline", {}).get("thinking"))
 
     def rerun(input_dir: str, episode_id: str, new_label: str) -> dict:
         # 嗅探放在这里而不是 _build_rerun 顶上:input_dir 是逐次调用才给的参数

@@ -2,8 +2,8 @@
 
 A *run* is the work a worker does for one queue entry: the main run of a task, or
 one of its subtasks (retry, resume, apply_adjudication, reexport; design doc 00
-§4.1). It drives the CLI one stage at a time (``backend/curation/cli/README.md``,
-"Daemon 的调用顺序"), keeps its place in a journal on the work directory, and
+§4.1). The main run overlaps batch commands of different funnel stages; other
+steps run in plan order. It keeps its place in a journal on the work directory, and
 leaves the task in the state the rules say.
 
 Control flow is by exception:
@@ -44,7 +44,7 @@ log = logging.getLogger("daemon.orchestr")
 
 ALL_MODULE_STATES = frozenset({"pending", "running", "succeeded", "completed_with_errors",
                                "failed", "skipped", "stale"})
-_STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note")
+_STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note", "pipeline")
 _FINAL_STAGE_STATES = ("succeeded", "completed_with_errors", "failed", "skipped")
 #: the child a run has in flight (pid = its process group), for reaping after a crash
 PROC_FILE = "proc.json"
@@ -99,10 +99,10 @@ class Run:
         self._stage_started: dict[str, float] = {}
         self._last_progress_write = 0.0
         self._lock = threading.Lock()
+        self._progress_lock = threading.RLock()
         self._intent: str | None = None
-        self._proc = None
-        self._cli_regions: tuple[str | None, str | None] = (None, None)
-        self._vlm_key_env: str | None = None
+        self._procs: dict[int, Any] = {}
+        self._pipeline_abort: threading.Event | None = None
 
     # ------------------------------------------------------------------ identity
     def journal_key(self) -> str:
@@ -122,9 +122,9 @@ class Run:
         with self._lock:
             if intent == "stop" or self._intent is None:
                 self._intent = intent
-            proc = self._proc
+            procs = list(self._procs.values())
             current = self._intent
-        if proc is not None:
+        for proc in procs:
             if current == "stop":
                 proc.interrupt()
             else:
@@ -139,29 +139,45 @@ class Run:
         intent = self.intent
         if intent is not None:
             raise Interrupt(intent)
+        if self._pipeline_abort is not None and self._pipeline_abort.is_set():
+            raise TaskFailure("pipeline_cancelled", "流水线已停止，等待上游错误处理")
+
+    def terminate_children(self) -> None:
+        with self._lock:
+            procs = list(self._procs.values())
+        for proc in procs:
+            proc.terminate()
 
     def _attach(self, proc) -> None:
         with self._lock:
-            self._proc = proc
+            self._procs[proc.pid] = proc
             intent = self._intent
-        try:                                   # who to reap if the Daemon dies meanwhile
-            write_json_atomic(self.wd.private / PROC_FILE,
-                              {"pid": proc.pid, "stage": proc.cmd.stage,
-                               "command": proc.cmd.argv[:1], "started_at": self.clock()})
-        except OSError:
-            pass
+            self._write_procs()
         if intent == "stop":
             proc.interrupt()
         elif intent is not None:
             proc.terminate()
 
-    def _detach(self) -> None:
-        with self._lock:
-            self._proc = None
+    def _write_procs(self) -> None:
+        """Call with ``_lock`` held."""
+        path = self.wd.private / PROC_FILE
+        if not self._procs:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            return
+        rows = [{"pid": p.pid, "stage": p.cmd.stage, "command": p.cmd.argv[:1],
+                 "started_at": self.clock()} for p in self._procs.values()]
         try:
-            (self.wd.private / PROC_FILE).unlink()
+            write_json_atomic(path, {**rows[0], "processes": rows})
         except OSError:
             pass
+
+    def _detach(self, proc) -> None:
+        with self._lock:
+            self._procs.pop(proc.pid, None)
+            self._write_procs()
 
     # ------------------------------------------------------------------ logs
     def log(self, stage: str, level: str, msg: str, **extra: Any) -> None:
@@ -173,7 +189,8 @@ class Run:
         self.hub.publish_log(self.task_id, stage, line["level"], line["msg"],
                              subtask_id=self.sub_id, episode_index=extra.get("episode_index"))
 
-    def _line_handler(self, stage: str) -> Callable[[str], None]:
+    def _line_handler(self, stage: str, *, progress_offset: int = 0,
+                      progress_total: int | None = None) -> Callable[[str], None]:
         def handle(raw: str) -> None:
             ev = c3.parse(raw)
             try:
@@ -186,7 +203,9 @@ class Run:
                                      subtask_id=self.sub_id,
                                      episode_index=ev.get("episode_index"))
             elif kind == "progress":
-                self.progress(stage, done=ev["done"], total=ev["total"], eta_s=ev.get("eta_s"))
+                self.progress(stage, done=progress_offset + ev["done"],
+                              total=progress_total if progress_total is not None else ev["total"],
+                              eta_s=ev.get("eta_s"))
             elif kind == "usage":
                 self.usage.add(ev)
             elif kind == "throttle":                 # a log line too: the logs page keeps it
@@ -210,7 +229,15 @@ class Run:
 
     def progress(self, stage: str, *, state: str | None = None, done: int | None = None,
                  total: int | None = None, eta_s: float | None = None, note: str | None = None,
-                 force: bool = False) -> None:
+                 force: bool = False, pipeline: dict | None = None) -> None:
+        with self._progress_lock:
+            self._progress_unlocked(stage, state=state, done=done, total=total,
+                                    eta_s=eta_s, note=note, force=force, pipeline=pipeline)
+
+    def _progress_unlocked(self, stage: str, *, state: str | None = None,
+                           done: int | None = None, total: int | None = None,
+                           eta_s: float | None = None, note: str | None = None,
+                           force: bool = False, pipeline: dict | None = None) -> None:
         entry = self.stages.get(stage)
         if entry is None:
             entry = self.stages[stage] = {"id": stage, "state": "pending", "done": 0, "total": 0,
@@ -230,6 +257,8 @@ class Run:
             entry["eta_s"] = round(float(eta_s), 1)
         if note is not None:
             entry["note"] = note
+        if pipeline is not None:
+            entry["pipeline"] = pipeline
         if stage in self._stage_started:
             entry["elapsed_s"] = round(time.monotonic() - self._stage_started[stage], 1)
         if entry.get("state") in _FINAL_STAGE_STATES:
@@ -267,20 +296,22 @@ class Run:
                                     if k in _STAGE_KEYS}, **journal_fields)
 
     # ------------------------------------------------------------------ the CLI
-    def env(self, *, need_input: bool, need_output: bool, need_vlm: bool) -> dict:
+    def _cli_environment(self, *, need_input: bool, need_output: bool, need_vlm: bool):
         try:
-            cli = cli_environment(self.orch.svc, self.task, need_input=need_input,
-                                  need_output=need_output, need_vlm=need_vlm)
+            return cli_environment(self.orch.svc, self.task, need_input=need_input,
+                                   need_output=need_output, need_vlm=need_vlm)
         except Unavailable as err:
             raise TaskFailure(err.code, err.message_zh) from None
-        self._cli_regions = (cli.input_region, cli.output_region)
-        self._vlm_key_env = cli.vlm_api_key_env
-        return dict(cli.env)
+
+    def env(self, *, need_input: bool, need_output: bool, need_vlm: bool) -> dict:
+        return dict(self._cli_environment(need_input=need_input, need_output=need_output,
+                                          need_vlm=need_vlm).env)
 
     def cli(self, stage: str, argv: list[str], *, need_input: bool = True,
             need_output: bool = False, need_vlm: bool = False, crash_retry: bool = False,
             inflight_modules: Iterable[str] = (), extra_env: dict | None = None,
-            timeout_s: float | None = None, episodes: int = 0) -> CliOutcome:
+            timeout_s: float | None = None, episodes: int = 0,
+            progress_offset: int = 0, progress_total: int | None = None) -> CliOutcome:
         """Run one command of ``stage``; relaunch it with ``--resume`` after a crash.
 
         A command killed by a native crash (or the OOM killer) is started again with
@@ -292,23 +323,32 @@ class Run:
         argv = list(argv)
         while True:
             self.check_intent()
-            env = self.env(need_input=need_input, need_output=need_output, need_vlm=need_vlm)
+            cli = self._cli_environment(need_input=need_input, need_output=need_output,
+                                        need_vlm=need_vlm)
+            env = dict(cli.env)
             if extra_env:
                 env.update(extra_env)
             full = list(argv)
-            in_region, out_region = self._cli_regions
-            if need_input and in_region:
-                full += ["--input-region", in_region]
-            if need_output and out_region:
-                full += ["--output-region", out_region]
-            if need_vlm and self._vlm_key_env:
-                full += ["--vlm-api-key-env", self._vlm_key_env]
+            if need_input and cli.input_region:
+                full += ["--input-region", cli.input_region]
+            if need_output and cli.output_region:
+                full += ["--output-region", cli.output_region]
+            if need_vlm and cli.vlm_api_key_env:
+                full += ["--vlm-api-key-env", cli.vlm_api_key_env]
             cmd = CliCommand(full, env=env, stage=stage, cwd=str(self.wd.root),
                              timeout_s=timeout_s)
             self.log(stage, "debug", f"run: {cmd.describe()}")
-            outcome = self.orch.executor.run(cmd, on_line=self._line_handler(stage),
-                                             on_start=self._attach)
-            self._detach()
+            attached = []
+            def on_start(proc):
+                self._attach(proc)
+                attached.append(proc)
+            try:
+                outcome = self.orch.executor.run(cmd, on_line=self._line_handler(
+                    stage, progress_offset=progress_offset, progress_total=progress_total),
+                                                 on_start=on_start)
+            finally:
+                for proc in attached:
+                    self._detach(proc)
             self.usage.flush()
             asked = outcome.requested is not None and self.intent is not None
             if asked and outcome.status in ("terminated", "interrupted", "killed", "crashed"):

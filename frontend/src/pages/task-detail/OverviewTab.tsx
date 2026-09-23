@@ -16,6 +16,8 @@ import { subtaskName } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
 import { isTerminalState, stageLabel, stagePercent } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
+import { PipelineEpisodesCard } from './PipelineEpisodesCard';
+import { PipelineActivity } from './PipelineActivity';
 
 function Stat({ label, value, foot }: { label: string; value: string | number; foot?: string }) {
   return (
@@ -78,13 +80,16 @@ function ReportSummary({ task }: { task: Task }) {
 
 function StagesCard({ task }: { task: Task }) {
   const stages = task.progress.stages;
+  const funnel = stages.filter((s) => ['numeric', 'frame', 'vlm'].includes(s.id));
+  const showPipeline = funnel.some((s) => s.pipeline);
   return (
     <Card title={zh.taskDetail.stages}>
       {!stages.length ? (
         <Typography.Text type="secondary">{zh.taskDetail.noStages}</Typography.Text>
       ) : (
         <div data-testid="stages">
-          {stages.map((s) => {
+          {showPipeline ? <PipelineActivity task={task} stages={funnel} /> : null}
+          {stages.filter((s) => !showPipeline || !funnel.includes(s)).map((s) => {
             const status = s.state === 'failed' ? 'error' : s.state === 'completed_with_errors' ? 'warning' : s.state === 'succeeded' ? 'success' : 'normal';
             return (
               <div key={s.id} style={{ marginBottom: 12 }} data-testid={`stage-${s.id}`}>
@@ -224,10 +229,17 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
     },
     { title: zh.taskDetail.colTotal, dataIndex: 'episodes_total', width: 100, render: (_: unknown, m) => (m.selected ? m.episodes_total : '—') },
     {
-      title: zh.taskDetail.colElapsed,
+      title: zh.taskDetail.processingElapsed,
       dataIndex: 'elapsed_s',
-      width: 110,
-      render: (_: unknown, m) => <span className="nowrap">{m.elapsed_s !== null && m.elapsed_s !== undefined ? zh.time.duration(m.elapsed_s) : '—'}</span>,
+      width: 150,
+      render: (_: unknown, m) => {
+        const stage = reg.data?.modules.find((x) => x.id === m.id)?.stage;
+        const mean = task.progress.stages.find((s) => s.id === stage)?.pipeline?.processing?.mean_s;
+        if (stage && ['numeric', 'frame', 'vlm'].includes(stage)) {
+          return <span className="nowrap">{mean != null ? zh.taskDetail.perEpisode(mean.toFixed(2)) : '—'}</span>;
+        }
+        return <span className="nowrap">{m.elapsed_s != null ? zh.taskDetail.wholeStage(zh.time.duration(m.elapsed_s)) : '—'}</span>;
+      },
     },
     {
       title: zh.taskDetail.colSummary,
@@ -447,6 +459,7 @@ export function OverviewTab({ task, subtasks, timeline }: { task: Task; subtasks
   return (
     <div className="card-gap">
       <ReportSummary task={task} />
+      {task.started_at ? <PipelineEpisodesCard task={task} /> : null}
       <StagesCard task={task} />
       <TokensCard task={task} subtasks={subtasks} />
       <ModulesCard task={task} plan={plan.data} digest={digest} />

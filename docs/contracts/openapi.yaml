@@ -73,6 +73,11 @@ info:
     value in `TaskCreate.modules[].params`; `GET /uploads/{upload_id}` reads it back. Creating a
     task that selects a module needing `eef_input` preflights that module against the dataset with
     the uploaded file; the task's preflight snapshot carries that entry.
+    1.7.0 (2026-09-22): running tasks expose per-episode funnel progress and immediate
+    machine verdicts through `/tasks/{id}/pipeline/episodes` and its single-episode reader.
+
+    1.7.1 (2026-09-22): `TaskParams.batch_size` lets API clients set the maximum number of
+    episodes handed from one funnel layer to the next per batch.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1177,6 +1182,54 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/EpisodeView"}
         default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/pipeline/episodes:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    get:
+      tags: [report]
+      operationId: listPipelineEpisodes
+      summary: Recent per-episode funnel progress, available while the task runs
+      parameters:
+        - name: before
+          in: query
+          description: Change sequence cursor returned as next_cursor; shows the most recently updated episodes first.
+          schema: {type: integer, minimum: 0}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+      responses:
+        "200":
+          description: Recent episodes and live funnel verdicts
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, next_cursor, started, finished]
+                properties:
+                  items: {type: array, items: {$ref: "#/components/schemas/PipelineEpisode"}}
+                  next_cursor: {type: [integer, "null"], minimum: 0}
+                  started: {type: integer, minimum: 0}
+                  finished: {type: integer, minimum: 0}
+        default: {$ref: "#/components/responses/Error"}
+  /tasks/{id}/pipeline/episodes/{index}:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+      - name: index
+        in: path
+        required: true
+        schema: {type: integer, minimum: 0}
+    get:
+      tags: [report]
+      operationId: getPipelineEpisode
+      summary: Immediate funnel result and module records of one episode
+      responses:
+        "200":
+          description: Episode progress and current records
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PipelineEpisode"}
+        default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/perf:
     parameters:
       - $ref: "#/components/parameters/PathId"
@@ -2164,6 +2217,7 @@ components:
       properties:
         start_now: {type: boolean, default: true}
         export: {type: boolean, default: true}
+        batch_size: {type: integer, minimum: 1, maximum: 256, description: "Maximum episodes per funnel dispatch. Persistent workers hand off completed episodes immediately and refill up to the plan concurrency, independently of this size. External CLI wrappers retain batch handoff. If omitted, derived from parallelism (8–64) and reduced for small selections."}
         vlm_retry: {type: integer, minimum: 0, maximum: 5, default: 3}
         vlm_hedge: {type: boolean, default: true}
         vlm_timeouts_s:
@@ -2263,6 +2317,43 @@ components:
         elapsed_s: {type: [number, "null"]}
         eta_s: {type: [number, "null"]}
         note: {type: string, description: "e.g. why total dropped from 50 to 49"}
+        pipeline: {$ref: "#/components/schemas/PipelineActivity"}
+    PipelineActivity:
+      type: object
+      additionalProperties: false
+      required: [inflight, queued, capacity, dispatches, recent, started_at, finished_at, updated_at]
+      description: Current invocation of the persistent funnel. Inflight counts admitted episodes awaiting durable completion, including worker setup. Dispatches are layer-local arrivals, not a barrier shared across layers.
+      properties:
+        inflight: {type: integer, minimum: 0}
+        queued: {type: integer, minimum: 0}
+        capacity: {type: integer, minimum: 1}
+        dispatches: {type: integer, minimum: 0}
+        started_at: {type: [integer, "null"], description: Epoch milliseconds}
+        finished_at: {type: [integer, "null"], description: Epoch milliseconds}
+        updated_at: {type: integer, description: Epoch milliseconds of this snapshot}
+        processing:
+          type: object
+          additionalProperties: false
+          required: [count, total_s, mean_s, min_s, max_s]
+          description: Per-episode processing durations; excludes dispatch and CPU admission waits. Shared module execution is counted once per episode in this layer.
+          properties:
+            count: {type: integer, minimum: 0}
+            total_s: {type: number, minimum: 0}
+            mean_s: {type: [number, "null"]}
+            min_s: {type: [number, "null"]}
+            max_s: {type: [number, "null"]}
+        recent:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            additionalProperties: false
+            required: [number, count, episodes, at]
+            properties:
+              number: {type: integer, minimum: 1}
+              count: {type: integer, minimum: 1}
+              episodes: {type: array, maxItems: 16, items: {type: integer, minimum: 0}, description: First 16 episode indices of this dispatch}
+              at: {type: integer, description: Epoch milliseconds of dispatch}
     ModuleState:
       type: object
       additionalProperties: false
@@ -2458,6 +2549,29 @@ components:
         attributed: {type: array, items: {$ref: "#/components/schemas/UsageRow"}}
 
     # ---------- report
+    PipelineEpisode:
+      type: object
+      additionalProperties: false
+      required: [episode_index, last_stage, next_stage, reason, verdict, verdict_reason]
+      properties:
+        episode_index: {type: integer, minimum: 0}
+        last_stage: {enum: [numeric, frame, vlm]}
+        next_stage: {enum: [frame, vlm, done]}
+        reason: {type: [string, "null"]}
+        verdict: {type: [string, "null"], enum: [keep, drop, held, null]}
+        verdict_reason: {type: [string, "null"]}
+        processing_s: {type: [number, "null"], description: Sum of completed layer processing times for this episode; excludes queue and CPU admission waits}
+        stage_processing_s:
+          type: object
+          additionalProperties: false
+          properties:
+            numeric: {type: number, minimum: 0}
+            frame: {type: number, minimum: 0}
+            vlm: {type: number, minimum: 0}
+        modules:
+          type: object
+          description: Present on the single-episode endpoint
+          additionalProperties: {$ref: "./cli/result-record.schema.json"}
     EpisodeView:
       type: object
       additionalProperties: false

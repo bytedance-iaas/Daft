@@ -1,15 +1,15 @@
 """A single-consumer v1 funnel using the unchanged per-episode check bodies."""
 from __future__ import annotations
 
+import asyncio
 import json
 
 from .config import KNOWN_CHECKS, enabled
-from .execution import _to_thread
 
 _INTERNAL = '_curation_execution'
 
 
-def _build_funnel_chain(df, cfg, registry, vlm_completion, executor_key=None, cache_key=None):
+def _build_funnel_chain(df, cfg, registry, vlm_completion, cache_key=None):
     import daft
     from daft import col
     from daft.functions import to_struct
@@ -117,7 +117,7 @@ def _build_funnel_chain(df, cfg, registry, vlm_completion, executor_key=None, ca
     @daft.func(return_dtype=daft.DataType.struct(result_columns))
     async def evaluate(row):
         async with f._episode_gate(concurrency):
-            return await _to_thread(executor_key, execute, row)
+            return await asyncio.to_thread(execute, row)
 
     chain = df.with_column(_INTERNAL, evaluate(to_struct(*[col(c) for c in df.column_names])))
     return chain, columns, deps is not None and deps.arb_deps is not None
@@ -131,7 +131,7 @@ def _materialize(rows, columns):
         for name, dtype in columns.items()})
 
 
-def _execute_funnel(df, cfg, registry, vlm_completion, executor_key=None, *, sink=None,
+def _execute_funnel(df, cfg, registry, vlm_completion, *, sink=None,
                     checkpoint=None, order=None, cache_key=None):
     from .funnel import arbitration_stats
     restored = []
@@ -142,7 +142,7 @@ def _execute_funnel(df, cfg, registry, vlm_completion, executor_key=None, *, sin
             from daft import col
             df = df.filter(~col('episode_id').is_in([r['row']['episode_id'] for r in restored]))
     chain, columns, has_arb = _build_funnel_chain(df, cfg, registry, vlm_completion,
-                                                executor_key, cache_key)
+                                                 cache_key)
     stats = {'input': 0, 'hard_killed': [], 'after_numeric_gates': 0,
              'survivors_for_vlm': 0}
     rows, killed = [], {'timestamp_check': [], 'kinematic_limits': [], 'video_action_sync': []}

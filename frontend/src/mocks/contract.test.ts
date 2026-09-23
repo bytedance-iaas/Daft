@@ -181,6 +181,8 @@ const calls = (): Call[] => [
   { op: 'getReportTable', method: 'GET', path: `/tasks/${T}/report/tables/visual_quality?limit=100&sort=score&order=desc` },
   { op: 'getReportTable', method: 'GET', path: `/tasks/${T}/report/tables/visual_quality?sort=nope` },
   { op: 'getEpisode', method: 'GET', path: `/tasks/${T}/episodes/29` },
+  { op: 'listPipelineEpisodes', method: 'GET', path: `/tasks/${T}/pipeline/episodes?limit=30` },
+  { op: 'getPipelineEpisode', method: 'GET', path: `/tasks/${T}/pipeline/episodes/29` },
   { op: 'getPerf', method: 'GET', path: `/tasks/${T}/perf?scope=subtask&subtask=sub_retry1` },
   { op: 'listAdjudication', method: 'GET', path: `/tasks/${T}/adjudication?status=all` },
   { op: 'listAdjudication', method: 'GET', path: `/tasks/${T}/adjudication?tab=appeals&status=all&source=task_success` },
