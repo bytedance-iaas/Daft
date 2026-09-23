@@ -169,6 +169,14 @@ Current summary:
         要在 1280 下看全所有列，得砍掉一两列 —— 留给需求方定
       · 镜像：CP 流水线仍然不会被推送自动触发，第 7 次构建在控制台手动发起（13641d566）
 
+  - 2026-09-22 晚 · EEF–视频一致性（阶段 5，DEMO 模块）立项：
+      · 设计 docs/design/12-eef-video-consistency.md 评审通过（§0.4 十项决策、§0.5 产品形态、§0.6 开工前六点均已确认）；
+        格式规范、迁移规则与五份 Schema 在 docs/design/12-eef/，F5.1 冻结时迁入 docs/contracts/eef/ 并刷新 lock
+      · 数据就绪（本机 ~/ws/ws_general/galbot/）：dataset2 = LeRobot v3.0（eef_ds2_lr3/）+ trajectory.json（七条、两路相机，
+        参考校验器通过，最大重投影差 0.013 px）+ observations_seed/（P-A 种子，synthetic_fixture）+ corruptions.json（真值）；
+        dataset1 = v2.1 十一条（单相机、十种轻重两档故障）+ trajectory.json + ground_truth/
+      · 实施由另一位 agent 按 12 篇「开工指引」在 feat/curator-v2 上直接做：第一刀 F5.1–F5.4 纯 CPU，不接 VLM，不做上传控件
+
 Main gaps:
   - F1.1 基线暂缓（需求方 2026-09-21 决定），F4.2 黄金对账之前按 tools/parity/README.md 在 Pod 里补
   - APIG：需要在 physicalai-apig 实例的监听命名空间里加 curation（需求方或实例维护者）
@@ -178,6 +186,7 @@ Main gaps:
     F4.3 待按 README 完整跑一次质检
 
 Next steps:
+  0. EEF–视频一致性 DEMO 第一刀（F5.1–F5.4）：读 docs/design/12-eef-video-consistency.md 的开工指引，先做 F5.1 契约与读取
   1. APIG 接通（physicalai-apig 监听 curation）、TOS 密钥就位后：在集群里完整跑一次质检（含人工裁决与导出），再验升级续跑
   2. 按 README 走查一次完整质检，F3.3、F4.1、F4.3 按验收置位；请需求方统一过一遍界面文案（F3.2）
   3. 真实数据的两个基线在 F4.2 黄金对账之前补

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EEF-video 1.0.0 trajectory bundle (single uploadable file)",
+  "description": "Container that packs one eef-video/1.0.0 sample per episode into a single trajectory.json. Each sample/calibration/frame object must validate against sample.schema.json, calibration.schema.json and frame.schema.json; annotations_path is the literal '#frames' and calibration_path is '#calibration' or null.",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": "eef-video/1.0.0"},
+    "container": {"const": "trajectory-bundle/1.0"},
+    "dataset": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "lerobot_codebase_version": {"type": "string", "minLength": 1},
+        "fps": {"type": "number", "exclusiveMinimum": 0},
+        "episode_count": {"type": "integer", "minimum": 1},
+        "generator": {"type": "string"}
+      },
+      "required": ["id", "lerobot_codebase_version", "fps", "episode_count"],
+      "additionalProperties": false
+    },
+    "media_uri_base": {"enum": ["lerobot_root", "bundle_file", "absolute"]},
+    "samples": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "episode_index": {"type": "integer", "minimum": 0},
+          "sample": {"type": "object"},
+          "calibration": {"anyOf": [{"type": "object"}, {"type": "null"}]},
+          "frames": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+        },
+        "required": ["episode_index", "sample", "calibration", "frames"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "container", "dataset", "media_uri_base", "samples"],
+  "additionalProperties": false
+}

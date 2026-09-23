@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EEF-video 1.0.0 observation",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "eef-video/1.0.0"
+    },
+    "sample_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "frame_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "camera_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "video_frame_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "pixel_space": {
+      "const": "media"
+    },
+    "method": {
+      "enum": [
+        "human",
+        "keypoint_model",
+        "optical_flow",
+        "vlm_localization",
+        "synthetic_fixture"
+      ]
+    },
+    "model_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input_image_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "projection_visible_to_localizer": {
+      "const": false
+    },
+    "points": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "uv_px": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/vec2"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "visibility": {
+            "enum": [
+              "visible",
+              "occluded",
+              "out_of_frame",
+              "uncertain"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "uncertainty_px": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "uv_px",
+          "visibility",
+          "confidence",
+          "uncertainty_px"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "visibility": {
+                  "const": "visible"
+                }
+              },
+              "required": [
+                "visibility"
+              ]
+            },
+            "then": {
+              "properties": {
+                "uv_px": {
+                  "$ref": "#/$defs/vec2"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "sample_id",
+    "frame_index",
+    "camera_id",
+    "video_frame_index",
+    "pixel_space",
+    "method",
+    "model_version",
+    "input_image_sha256",
+    "projection_visible_to_localizer",
+    "points"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "vec2": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    }
+  }
+}

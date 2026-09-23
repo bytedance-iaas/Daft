@@ -116,6 +116,46 @@
 - 验收：按 README 步骤可完成一次完整质检并看到报告
 - status: not_completed
 
+## 阶段 5：EEF–视频一致性（DEMO 模块，2026-09-22 立项）
+
+> 设计：`docs/design/12-eef-video-consistency.md`（§0.4 决策、§0.5 产品形态、§0.6 开工前六点已由需求方确认）。
+> 数据：`~/ws/ws_general/galbot/dataset2`（`trajectory.json` 上传件、`observations_seed/` 种子、`corruptions.json` 真值）与 `dataset1`。
+
+### F5.1 契约与读取
+- 描述：`backend/curation/extensions/eef_consistency/` 的 contracts / load / geometry / timeline / adapters；读取并校验 `trajectory.json`（`trajectory-bundle/1.0` 容器 + `eef-video/1.0.0` 三段）；逐分项能力预检；几何投影与「提供 vs 重算」自洽；L0 数值轨迹（速度、旋转增量、尖峰、高频能量）；格式与 Schema 从 `docs/design/12-eef/` 冻结进 `docs/contracts/eef/` 并刷新 lock
+- 验收：①dataset2 七条与 dataset1 十一条的 `trajectory.json` 读通，能力表正确（形态 B 全部 available）；②重算投影与提供投影之差在源量化精度内（< 0.05 px）；③真值键出现即拒绝；④几何单测与 OpenCV `projectPoints` 交叉一致；⑤契约测试与 lock 检查通过
+- status: not_completed
+
+### F5.2 独立视觉观测
+- 描述：ObservationProvider 协议与观测文件（observation Schema）；P-A provider：种子（`observations_seed/`）+ 多尺度 LK 跟踪 + 前后向校验 + 周期重定位 + 遮挡弃权；投影扰动的独立性实验
+- 验收：①provider 输入不含投影、真值、注入参数；②投影平移 30 px 时观测不变；③失跟不用插值冒充观测；④dataset2 两路相机的可见帧定位覆盖与弃权率有报告
+- status: not_completed
+
+### F5.3 CPU 指标、诊断与离线报告
+- 描述：位置、方向、局部 lag、数值轨迹、画面共同运动五项指标；迟滞分段；诊断假设（PnP 外参修正、lag、恒定朝向、轴向偏移、漂移、抖动来源）；曲线与证据；`demo` 阈值 profile（标 uncalibrated）；离线评估器读真值算命中
+- 验收：①12 篇 §13.3 受控异常矩阵逐行符合（dataset1 + dataset2，共 18 条）；②基准两条各分项 ok 且覆盖率有报告；③lag 符号按 `u_visual(t) ≈ u_declared(t + lag)`，dataset2 ep5 为 +0.333 s、dataset1 ep9/10 为 −0.200 / −0.533 s；④ep6 只在 ext1 报外参偏差，ext2 正常
+- status: not_completed
+
+### F5.4 接入 v2（advisory）
+- 描述：注册表 1.4（`eef_video_consistency` frame 档、`eef_video_review` vlm 档、`eef_input` 能力、`input_scope`、`affects_dataset_verdict`）；预检逐分项能力；`check` 分派新 runner；parts 输出（result-record，`passed=None, score=None`，分项进 detail）；aggregate 调用边界过滤；报告默认表格与三张 TableSpec；`trajectory.json` 走 CLI 参数
+- 验收：①关闭模块时黄金基线与接口快照逐位一致（parity）；②开启模块（含缺输入、异常、报错）旧 keep / drop / held 与交付清单一致；③报告里能看到逐相机分项、覆盖率与诊断；④被旧硬门拒绝的样本仍被本模块评估
+- status: not_completed
+
+### F5.5 上传控件与 Daemon 上传接口
+- 描述：`param_schema` 文件型参数（`format: upload`）；Daemon 任务输入文件上传接口（存任务 inputs 目录，返回句柄与 hash）；前端新建任务第二屏的文件项；C4 修订
+- 验收：①上传即校验，错误定位到样本 / 帧 / 字段；②文件 hash 进 input_hash，换文件重跑视为新输入；③openapi 更新并 `npm run gen:api`
+- status: not_completed
+
+### F5.6 VLM 复核
+- 描述：均匀抽查 + 候选窗口；请求包（原图、裁剪、观测与投影异色叠加、短序列）；严格输出 Schema；预算、缓存、tape 录制回放；`eef_review` 调用种类；CPU 与 VLM 冲突转人工
+- 验收：①固定 tape 下 malformed / timeout / 引用不存在帧 / 冲突分支全覆盖；②复核失败显示「未完成」，不影响旧判决；③VLM 不产生像素或厘米数值
+- status: not_completed
+
+### F5.7 验收与试用
+- 描述：冻结阈值后在独立 episode 上报误报、漏报、定位与方向误差、覆盖与弃权率；性能记录；对指定数据集开 advisory 试用
+- 验收：①独立 episode 分组验收报告；②每分钟视频的 CPU 耗时、峰值内存、VLM 请求数有记录；③回退 = 取消勾选，旧流程不受影响
+- status: not_completed
+
 ## 修订记录（2026-09-20 设计评审）
 
 > 原有条款一字未改。下面是需求方在评审中拍板的决策对各 feature 的追加与替换说明，
@@ -229,3 +269,9 @@
   （契约 C4 1.6.0 的 `VlmModel.is_default`、C5 的 `set_default_vlm_model`）。
 - **F3.2 追加**：「开始」「暂停」等操作点下去立刻切到该操作对应的状态，不等下一次轮询。
 - **F3.2 追加**：各表格列宽留余量，表头不折行；「数据集」的最近一次质检把状态放到第二行。
+
+## 修订记录（2026-09-22 EEF–视频一致性立项）
+
+- 新增阶段 5（F5.1–F5.7）：客户提出的「EEF 轨迹投影与视频一致性」需求，作为 DEMO 状态的第九个模块立项；设计见 `docs/design/12-eef-video-consistency.md`，需求方已确认 §0.4 十项决策与 §0.6 六点。
+- 产品口径：不改 LeRobot 任何字段；用户在模块详细配置里上传约定格式的 `trajectory.json`；首版 advisory，不参与 keep / drop / held。
+- 范围外：训练通用夹爪模型；人手 / 第一人称数据的 EEF 检查；移动相机的完整诊断；从视频反推轨迹。

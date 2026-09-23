@@ -9,6 +9,7 @@
 - 需求账本与进度：根目录 `feature_list.md`、`claude-progress.txt`
 - 对账工具（W0）：`tools/parity/README.md`
 - 契约：`docs/contracts/`
+- EEF–视频一致性（DEMO 模块，阶段 5）：`docs/design/12-eef-video-consistency.md`（首节是开工指引），格式规范与 Schema 在 `docs/design/12-eef/`
 
 ## 纪律
 

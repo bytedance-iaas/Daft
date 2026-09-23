@@ -1,0 +1,619 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EEF-video 1.0.0 frame",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "eef-video/1.0.0"
+    },
+    "sample_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "frame_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp_s": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source_state_index": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source_timing": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/source_timing"
+      }
+    },
+    "eef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/pose"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "gripper": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/gripper"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cameras": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/camera_frame"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "sample_id",
+    "frame_index",
+    "timestamp_s",
+    "source_state_index",
+    "source_timing",
+    "eef",
+    "gripper",
+    "cameras"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "vec2": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "vec3": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "quat": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "mat3": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "minItems": 3,
+        "maxItems": 3
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "mat4": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "minItems": 4,
+        "maxItems": 4
+      },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "size": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "assurance": {
+          "enum": [
+            "declared",
+            "model_assumed",
+            "independently_calibrated",
+            "unknown",
+            "synthetic"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "method",
+        "assurance"
+      ],
+      "additionalProperties": false
+    },
+    "anchor": {
+      "type": "object",
+      "properties": {
+        "reference_frame": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position_m": {
+          "$ref": "#/$defs/vec3"
+        },
+        "quaternion_xyzw": {
+          "$ref": "#/$defs/quat"
+        }
+      },
+      "required": [
+        "reference_frame",
+        "position_m",
+        "quaternion_xyzw"
+      ],
+      "additionalProperties": false
+    },
+    "pose": {
+      "type": "object",
+      "properties": {
+        "pose_type": {
+          "enum": [
+            "absolute",
+            "relative_to_start"
+          ]
+        },
+        "frame_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reference_frame": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position_m": {
+          "$ref": "#/$defs/vec3"
+        },
+        "quaternion_xyzw": {
+          "$ref": "#/$defs/quat"
+        },
+        "relative_to": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "frame_index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "convention": {
+                  "const": "inverse_T0_times_Tt"
+                },
+                "anchor_pose": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/anchor"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "frame_index",
+                "convention",
+                "anchor_pose"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      },
+      "required": [
+        "pose_type",
+        "frame_id",
+        "reference_frame",
+        "position_m",
+        "quaternion_xyzw",
+        "relative_to",
+        "provenance"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "pose_type": {
+                "const": "absolute"
+              }
+            },
+            "required": [
+              "pose_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "relative_to": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "pose_type": {
+                "const": "relative_to_start"
+              }
+            },
+            "required": [
+              "pose_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "relative_to": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "source_timing": {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+        },
+        "unit": {
+          "enum": [
+            "s",
+            "ms",
+            "us",
+            "ns"
+          ]
+        },
+        "clock_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "semantics": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "channel",
+        "timestamp",
+        "unit",
+        "clock_id",
+        "semantics"
+      ],
+      "additionalProperties": false
+    },
+    "projection_point": {
+      "type": "object",
+      "properties": {
+        "uv_px": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/vec2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "valid",
+            "out_of_frame",
+            "behind_camera",
+            "unknown"
+          ]
+        },
+        "in_frame": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "uv_px",
+        "depth_m",
+        "status",
+        "in_frame"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "valid"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "uv_px": {
+                "$ref": "#/$defs/vec2"
+              },
+              "in_frame": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "out_of_frame"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "uv_px": {
+                "$ref": "#/$defs/vec2"
+              },
+              "in_frame": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "behind_camera"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "uv_px": {
+                "type": "null"
+              },
+              "in_frame": {
+                "const": false
+              },
+              "depth_m": {
+                "type": "number",
+                "maximum": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "unknown"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "in_frame": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "camera_frame": {
+      "type": "object",
+      "properties": {
+        "video_frame_index": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "video_timestamp_s": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image_size_wh": {
+          "$ref": "#/$defs/size"
+        },
+        "calibration_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "T_reference_camera": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/mat4"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "H_media_from_calibration": {
+          "$ref": "#/$defs/mat3"
+        },
+        "projection": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "enum": [
+                    "provided",
+                    "recomputed"
+                  ]
+                },
+                "pixel_space": {
+                  "const": "media"
+                },
+                "points": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "$ref": "#/$defs/projection_point"
+                  }
+                }
+              },
+              "required": [
+                "source",
+                "pixel_space",
+                "points"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "video_frame_index",
+        "video_timestamp_s",
+        "image_size_wh",
+        "calibration_id",
+        "T_reference_camera",
+        "H_media_from_calibration",
+        "projection"
+      ],
+      "additionalProperties": false
+    },
+    "gripper": {
+      "type": "object",
+      "properties": {
+        "closed_fraction": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "opening_m": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      },
+      "required": [
+        "closed_fraction",
+        "opening_m",
+        "provenance"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

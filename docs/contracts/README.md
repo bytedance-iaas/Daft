@@ -61,3 +61,7 @@ schemas.validate("openapi.yaml#/components/schemas/TaskCreate", body)
 - 把 `cli/check.schema.json` 里随便一个 `minimum` 改掉再跑 `check`，应报 `cli/check.schema.json: changed since CONTRACTS.lock`、退出码 1；改回来恢复。
 - `examples/` 下每个文件的 `valid` 都能通过、`invalid` 都会被拒；测试里对应 `test_examples[...]`。
 - `modules.json` 与 `GET /api/v1/modules` 的内容一致（前端的模块清单只从这里来）。
+
+## 待冻结
+
+EEF–视频一致性模块的输入格式（`eef-video/1.0.0` 三段 + `trajectory-bundle/1.0` 单文件容器）目前在 `docs/design/12-eef/`，随 F5.1 迁入本目录 `eef/` 并刷新 `CONTRACTS.lock`（12 篇 §3、§11）。

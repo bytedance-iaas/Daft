@@ -1,0 +1,563 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EEF-video 1.0.0 sample",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "eef-video/1.0.0"
+    },
+    "sample_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "dataset": {
+          "type": "string",
+          "minLength": 1
+        },
+        "episode_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instruction": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "dataset",
+        "episode_id",
+        "instruction"
+      ],
+      "additionalProperties": false
+    },
+    "frame_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timebase": {
+      "enum": [
+        "video_pts",
+        "index_only"
+      ]
+    },
+    "annotations_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "calibration_path": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "eef_frame": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reference_frame": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "views": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/view"
+      }
+    },
+    "point_definitions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/point_definition"
+      }
+    },
+    "axis_definitions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/axis_definition"
+      }
+    },
+    "raw_pose_sequence": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "semantics": {
+              "const": "unresolved"
+            },
+            "unresolved_fields": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "path",
+            "semantics",
+            "unresolved_fields"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "sample_id",
+    "source",
+    "frame_count",
+    "timebase",
+    "annotations_path",
+    "calibration_path",
+    "eef_frame",
+    "reference_frame",
+    "views",
+    "point_definitions",
+    "axis_definitions",
+    "raw_pose_sequence",
+    "notes"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "vec3": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "size": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "assurance": {
+          "enum": [
+            "declared",
+            "model_assumed",
+            "independently_calibrated",
+            "unknown",
+            "synthetic"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "method",
+        "assurance"
+      ],
+      "additionalProperties": false
+    },
+    "point_definition": {
+      "type": "object",
+      "properties": {
+        "meaning": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frame_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "enum": [
+            "fixed",
+            "linear_gripper",
+            "external_2d"
+          ]
+        },
+        "position_eef_m": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/vec3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "position_open_eef_m": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/vec3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "position_closed_eef_m": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/vec3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      },
+      "required": [
+        "meaning",
+        "frame_id",
+        "model",
+        "position_eef_m",
+        "position_open_eef_m",
+        "position_closed_eef_m",
+        "provenance"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "model": {
+                "const": "fixed"
+              }
+            },
+            "required": [
+              "model"
+            ]
+          },
+          "then": {
+            "properties": {
+              "frame_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "position_eef_m": {
+                "$ref": "#/$defs/vec3"
+              },
+              "position_open_eef_m": {
+                "type": "null"
+              },
+              "position_closed_eef_m": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "model": {
+                "const": "linear_gripper"
+              }
+            },
+            "required": [
+              "model"
+            ]
+          },
+          "then": {
+            "properties": {
+              "frame_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "position_eef_m": {
+                "type": "null"
+              },
+              "position_open_eef_m": {
+                "$ref": "#/$defs/vec3"
+              },
+              "position_closed_eef_m": {
+                "$ref": "#/$defs/vec3"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "model": {
+                "const": "external_2d"
+              }
+            },
+            "required": [
+              "model"
+            ]
+          },
+          "then": {
+            "properties": {
+              "position_eef_m": {
+                "type": "null"
+              },
+              "position_open_eef_m": {
+                "type": "null"
+              },
+              "position_closed_eef_m": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "axis_definition": {
+      "type": "object",
+      "properties": {
+        "start_point_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "end_point_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "physical_meaning": {
+          "type": "string",
+          "minLength": 1
+        },
+        "directed": {
+          "type": "boolean"
+        },
+        "length_m": {
+          "anyOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "start_point_id",
+        "end_point_id",
+        "physical_meaning",
+        "directed",
+        "length_m"
+      ],
+      "additionalProperties": false
+    },
+    "media": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "video",
+            "image"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_size_wh": {
+          "$ref": "#/$defs/size"
+        },
+        "frame_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fps": {
+          "anyOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "clip_start_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "clip_end_s": {
+          "anyOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "uri",
+        "image_size_wh",
+        "frame_count",
+        "fps",
+        "clip_start_s",
+        "clip_end_s"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "image"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "frame_count": {
+                "const": 1
+              },
+              "fps": {
+                "type": "null"
+              },
+              "clip_start_s": {
+                "const": 0
+              },
+              "clip_end_s": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "view": {
+      "type": "object",
+      "properties": {
+        "view_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "camera",
+            "pose_visualization",
+            "image"
+          ]
+        },
+        "camera_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mount": {
+          "enum": [
+            "fixed_external",
+            "wrist",
+            "moving",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "media": {
+          "$ref": "#/$defs/media"
+        }
+      },
+      "required": [
+        "view_id",
+        "kind",
+        "camera_id",
+        "mount",
+        "media"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "camera"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "camera_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
