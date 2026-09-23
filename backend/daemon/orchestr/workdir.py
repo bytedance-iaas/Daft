@@ -12,6 +12,8 @@ neither delivered nor verified (``curation verify`` skips hidden files):
   worker pool only runs tasks that have it;
 * ``<run>.json`` - the journal of one run (``main`` or a subtask id): which stages
   are done, the result revision it builds, what it published;
+* ``episodes.sqlite3`` - per-episode funnel records and next stage for the main
+  run's bounded batch pipeline; updated after each completed episode;
 * ``<run>/`` - the episode lists handed between stages (``@file`` arguments), the
   decisions of an adjudication run;
 * ``sync.json`` - what has been uploaded to the delivery, so a sync only sends

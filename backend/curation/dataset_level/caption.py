@@ -127,7 +127,8 @@ def caption_episodes(rows: list[dict], captioner: Captioner,
 
 def make_vlm_captioner(endpoint: str, model: str, timeout_s: float | None = None,
                        api_key_env: str | None = None,
-                       max_in_flight: int = 8) -> Captioner:
+                       max_in_flight: int = 8,
+                       thinking: bool | None = None) -> Captioner:
     """openai 兼容端点 → captioner(生产用;模型/端点来自 YAML)。
 
     timeout_s=None 用分类型出厂默认(caption 60s);请求走 hedged_request
@@ -136,7 +137,7 @@ def make_vlm_captioner(endpoint: str, model: str, timeout_s: float | None = None
     ⚠️ 不许低于结构并发,否则把原本并行的打标串行化。"""
     import requests
 
-    from ..adapters.vlm_client import (DEFAULT_TIMEOUTS_S, SharedGate,
+    from ..adapters.vlm_client import (DEFAULT_TIMEOUTS_S, SharedGate, _with_thinking,
                                        _frame_to_data_uri, auth_headers,
                                        hedged_request, strip_reasoning)
 
@@ -154,8 +155,8 @@ def make_vlm_captioner(endpoint: str, model: str, timeout_s: float | None = None
             for f in frames:
                 content.append({"type": "image_url",
                                 "image_url": {"url": _frame_to_data_uri(np.asarray(f))}})
-        payload = {"model": model, "temperature": 0.0, "max_tokens": 512,
-                   "messages": [{"role": "user", "content": content}]}
+        payload = _with_thinking({"model": model, "temperature": 0.0, "max_tokens": 512,
+                   "messages": [{"role": "user", "content": content}]}, thinking)
         r = hedged_request(
             lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
             tag="caption", timeout_s=timeout_s, gate=gate)

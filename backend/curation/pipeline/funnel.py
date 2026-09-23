@@ -126,6 +126,7 @@ def build_arbitration_deps(cfg: dict, gates: dict | None = None) -> dict | None:
 
     vcfg = cfg["checks"]["task_success"]["vlm"]
     ep, model, key = vcfg["endpoint"], vcfg["model"], vcfg.get("api_key_env")
+    thinking = cfg.get("pipeline", {}).get("thinking")
     # 仲裁链的对冲闸门:一条 episode 内链是串行的 ⇒ 结构并发 = episode 并发;
     # 四个工厂共享同一个闸门(各建一闸会让补发在四类间叠加,在飞总数超结构并发)。
     # ⚠️ 必须是 SharedGate 不能是裸 threading.Semaphore:这四个闭包最终进 task_check
@@ -137,17 +138,18 @@ def build_arbitration_deps(cfg: dict, gates: dict | None = None) -> dict | None:
     t_arb = timeout_for("arbitration", vcfg)
     return {
         "question_writer": make_question_writer(ep, model, timeout_s=t_arb,
-                                                api_key_env=key, gate=arb_gate),
+                                                api_key_env=key, gate=arb_gate, thinking=thinking),
         "grounder": make_grounder(ep, model, timeout_s=t_arb,
-                                  api_key_env=key, gate=arb_gate),
+                                  api_key_env=key, gate=arb_gate, thinking=thinking),
         "judge": make_evidence_judge(ep, model, timeout_s=t_arb,
-                                     api_key_env=key, gate=arb_gate),
+                                     api_key_env=key, gate=arb_gate, thinking=thinking),
         "same_task": make_intent_comparer(ep, model, timeout_s=t_arb,
-                                          api_key_env=key, gate=arb_gate),
+                                          api_key_env=key, gate=arb_gate, thinking=thinking),
         "captioner": make_vlm_captioner(ep, model,
                                         timeout_s=timeout_for("caption", vcfg),
                                         api_key_env=key,
-                                        max_in_flight=int(gates.get("guard_caption", _epc))),
+                                        max_in_flight=int(gates.get("guard_caption", _epc)),
+                                        thinking=thinking),
         "caption_n_frames": int(cfg.get("skill_profile", {}).get("n_frames", 8)),
         "params": {
             "kill_min_lines": int(acfg.get("kill_min_lines", 2)),
@@ -176,7 +178,8 @@ def build_endstate_voter(cfg: dict, gates: dict | None = None):
     return make_endstate_voter(vcfg_t["endpoint"], vcfg_t["model"],
                                timeout_s=timeout_for("endstate", vcfg_t),
                                api_key_env=vcfg_t.get("api_key_env"),
-                               max_in_flight=cap)
+                               max_in_flight=cap,
+                               thinking=cfg.get("pipeline", {}).get("thinking"))
 
 
 # 进度显示已抽到 pipeline/progress.py(M7 在 run.py 里也要用,不该 import funnel 私有名)
@@ -818,8 +821,20 @@ def run_funnel(
     vlm_completion: Callable | None = None,       # M4c 依赖注入(生产=vLLM 端点;None=跳过)
 ) -> tuple["object", dict]:
     """输入 M1 DataFrame → 输出 (带 check_*/verdict 列的 DataFrame, 漏斗统计)。"""
+    from .frame_cache import _cache_scope
+    from .config import validate_config
+    validate_config(cfg)
+    with _cache_scope() as cache_key:
+        from .streaming import _execute_funnel
+        return _execute_funnel(df, cfg, registry, vlm_completion, cache_key=cache_key)
+
+
+def _run_funnel_legacy(df, cfg, registry, vlm_completion, cache_key=None):
     import daft
     from daft import col, lit
+    from functools import partial
+    from .frame_cache import _decode_cached
+    decode = partial(_decode_cached, cache_key) if cache_key else None
 
     stats = {"input": df.count_rows()}
     pcfg = cfg.get("pipeline", {})
@@ -932,7 +947,7 @@ def run_funnel(
         _frame_label = (" + ".join(_frame_names)
                         + ("(共用一次解码)" if len(_frame_names) > 1 else "(需解码视频)"))
         _pk_frame = _progress_init("frame", stats["after_numeric_gates"], _frame_label)
-        _frame_body = make_frame_checks(cfg, registry)
+        _frame_body = make_frame_checks(cfg, registry, decode=decode)
 
         @daft.func(return_dtype=daft.DataType.struct({
             "visual": _result_dtype(), "sync": _result_dtype(),
@@ -979,7 +994,8 @@ def run_funnel(
             # 同复核投票器:构造失败要出声,否则弃权条目静默维持人工,看不出仲裁没启动
             print(f"[curation] ⚠️ 取证仲裁链不可用({type(_e).__name__}:{_e}),"
                   "弃权条目维持进人工", flush=True)
-        deps = TaskDeps(vlm_completion=vlm_completion, cam_voter=cam_voter, arb_deps=arb_deps)
+        deps = TaskDeps(vlm_completion=vlm_completion, cam_voter=cam_voter,
+                        arb_deps=arb_deps, decode=decode)
 
         def _task_check_sync(video, task_desc, task_src, fps,
                              action, timestamps, embodiment_id, semantics_extras=""):

@@ -1,0 +1,125 @@
+import { Button, Card, Empty, Space, Spin, Table, Tag, Typography } from '@arco-design/web-react';
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { api, unwrap } from '../../api/client';
+import type { PipelineEpisode, Task } from '../../api/types';
+import { isTerminalState } from '../../lib/taskView';
+import { zh } from '../../locales/zh';
+
+const copy = zh.taskDetail.pipelineEpisodes;
+const STAGE: Record<string, string> = copy.stage;
+const VERDICT: Record<string, string> = copy.verdict;
+
+function stateLabel(row: PipelineEpisode): string {
+  if (row.reason === 'missing') return copy.missing;
+  if (row.next_stage === 'done') return VERDICT[row.verdict ?? ''] ?? copy.finished;
+  return copy.waiting(STAGE[row.next_stage] ?? row.next_stage);
+}
+
+function color(row: PipelineEpisode): string {
+  if (row.verdict === 'drop') return 'red';
+  if (row.verdict === 'held' || row.reason === 'missing') return 'orange';
+  if (row.verdict === 'keep') return 'green';
+  return 'arcoblue';
+}
+
+export function PipelineEpisodesCard({ task }: { task: Task }) {
+  const [before, setBefore] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
+  const live = !isTerminalState(task.state) || Boolean(task.active_subtask);
+  const page = useQuery({
+    queryKey: ['task', task.id, 'pipeline-episodes', before, task.state, task.result_rev,
+      Boolean(task.active_subtask)],
+    queryFn: () => unwrap(api().GET('/tasks/{id}/pipeline/episodes', {
+      params: { path: { id: task.id }, query: { before: before ?? undefined, limit: 30 } },
+    })),
+    enabled: Boolean(task.started_at),
+    refetchInterval: live && before === null ? 3000 : false,
+  });
+  const detail = useQuery({
+    queryKey: ['task', task.id, 'pipeline-episode', selected, task.state, task.result_rev,
+      Boolean(task.active_subtask)],
+    queryFn: () => unwrap(api().GET('/tasks/{id}/pipeline/episodes/{index}', {
+      params: { path: { id: task.id, index: selected! } },
+    })),
+    enabled: selected !== null,
+    refetchInterval: live && selected !== null ? 3000 : false,
+  });
+  const rows = page.data?.items ?? [];
+  const total = task.progress.stages.find((s) => s.id === 'numeric')?.total
+    ?? task.summary?.total ?? 0;
+  return (
+    <Card
+      title={copy.title}
+      data-testid="pipeline-episodes"
+      extra={<Typography.Text type="secondary">{copy.count(page.data?.finished ?? 0, total || '—')}</Typography.Text>}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0, fontSize: 12 }}>
+        {copy.note}
+      </Typography.Paragraph>
+      {page.isLoading ? <Spin /> : rows.length ? (
+        <>
+          <Table
+            rowKey="episode_index"
+            size="small"
+            pagination={false}
+            scroll={{ x: 780 }}
+            data={rows}
+            columns={[
+              { title: copy.columnEpisode, dataIndex: 'episode_index', render: (ep: number) => (
+                <Button type="text" size="mini" onClick={() => setSelected(ep)}>{copy.episode(ep)}</Button>
+              ) },
+              { title: copy.columnStage, dataIndex: 'last_stage', render: (stage: string) => STAGE[stage] ?? stage },
+              ...(['numeric', 'frame', 'vlm'] as const).map((stage) => ({
+                title: copy.processingStage[stage],
+                dataIndex: 'stage_processing_s.' + stage,
+                render: (_: unknown, row: PipelineEpisode) => row.stage_processing_s?.[stage] != null
+                  ? row.stage_processing_s[stage].toFixed(2) + ' s' : '—',
+              })),
+              { title: copy.processingTotal, dataIndex: 'processing_s', render: (seconds: number | null | undefined) =>
+                seconds != null ? seconds.toFixed(2) + ' s' : '—' },
+              { title: copy.columnResult, dataIndex: 'next_stage', render: (_: unknown, row: PipelineEpisode) => (
+                <Tag color={color(row)}>{stateLabel(row)}</Tag>
+              ) },
+            ]}
+          />
+          <Space style={{ marginTop: 10 }}>
+            {before !== null ? <Button size="mini" onClick={() => setBefore(null)}>{copy.latest}</Button> : null}
+            {page.data?.next_cursor !== null && page.data?.next_cursor !== undefined ? (
+              <Button size="mini" onClick={() => setBefore(page.data!.next_cursor!)}>{copy.earlier}</Button>
+            ) : null}
+          </Space>
+        </>
+      ) : <Empty description={copy.empty} />}
+      {selected !== null ? (
+        <Card
+          size="small"
+          title={copy.detailTitle(selected)}
+          extra={<Button type="text" size="mini" onClick={() => setSelected(null)}>{copy.collapse}</Button>}
+          style={{ marginTop: 14 }}
+          data-testid="pipeline-episode-detail"
+        >
+          {detail.isLoading ? <Spin /> : detail.data ? (
+            <>
+              <Typography.Paragraph>
+                <Tag color={color(detail.data)}>{stateLabel(detail.data)}</Tag>
+                {detail.data.verdict_reason ? ` ${detail.data.verdict_reason}` : ''}
+              </Typography.Paragraph>
+              {detail.data.processing_s != null ? <Typography.Paragraph type="secondary">
+                {copy.processingTotal}：{detail.data.processing_s.toFixed(2)} s
+              </Typography.Paragraph> : null}
+              {Object.entries(detail.data.modules ?? {}).map(([module, record]) => (
+                <div key={module} style={{ marginBottom: 10 }}>
+                  <b>{module}</b> <Tag>{record.verdict}</Tag>
+                  <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12, margin: '4px 0' }}>
+                    {JSON.stringify(record.details, null, 2)}
+                  </pre>
+                </div>
+              ))}
+            </>
+          ) : <Typography.Text type="secondary">{copy.unavailable}</Typography.Text>}
+        </Card>
+      ) : null}
+    </Card>
+  );
+}

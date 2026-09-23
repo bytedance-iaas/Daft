@@ -1156,7 +1156,38 @@ function revisionOf(t: Task, url: URL): number | Response {
   return n;
 }
 
+function pipelineMockRow(ep: number, revision: number) {
+  const view = episodeView(ep, revision);
+  const records = Object.values(view.modules);
+  const verdict = records.some((r) => r.verdict === 'fail') ? 'drop'
+    : records.some((r) => r.verdict === 'error') ? 'held' : 'keep';
+  return { episode_index: ep, last_stage: ep === 18 ? 'numeric' : 'vlm',
+    next_stage: 'done', reason: ep === 18 ? 'gate' : null, verdict,
+    verdict_reason: verdict === 'drop' ? view.reasons?.[0]?.text ?? null : null };
+}
+
 const report = [
+  http.get(`${API}/tasks/:id/pipeline/episodes`, ({ request, params }) => {
+    const t = findTask(String(params.id));
+    if (!t) return err(404, 'not_found', '任务不存在');
+    const url = new URL(request.url);
+    const before = Number(url.searchParams.get('before') ?? 1_000_000);
+    const limit = Math.min(Number(url.searchParams.get('limit') ?? 50), 100);
+    const total = t.summary?.total ?? t.progress.stages.find((s) => s.id === 'numeric')?.total ?? 0;
+    const completed = t.result_rev ? total : Math.min(total, t.progress.stages.find((s) => s.id === 'vlm')?.done ?? 0);
+    const indexes = Array.from({ length: completed }, (_, i) => i).filter((ep) => ep < before).reverse();
+    const items = indexes.slice(0, limit).map((ep) => pipelineMockRow(ep, t.result_rev || 1));
+    return HttpResponse.json({ items, next_cursor: indexes.length > limit ? items.at(-1)!.episode_index : null,
+      started: completed, finished: completed });
+  }),
+  http.get(`${API}/tasks/:id/pipeline/episodes/:index`, ({ params }) => {
+    const t = findTask(String(params.id));
+    if (!t) return err(404, 'not_found', '任务不存在');
+    const ep = Number(params.index);
+    if (!Number.isInteger(ep) || ep < 0) return err(404, 'not_found', 'episode 不存在');
+    return HttpResponse.json({ ...pipelineMockRow(ep, t.result_rev || 1),
+      modules: episodeView(ep, t.result_rev || 1).modules });
+  }),
   http.get(`${API}/tasks/:id/report`, ({ request, params }) => {
     const t = findTask(String(params.id));
     if (!t) return err(404, 'not_found', '任务不存在');

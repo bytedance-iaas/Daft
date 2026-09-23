@@ -68,6 +68,10 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/orchestr
+      - name: Opt-in execution optimizations (streaming funnel, checkpoints, frame cache)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: backend
+        run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/optimizations
       - name: Image and chart checks (W11)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend

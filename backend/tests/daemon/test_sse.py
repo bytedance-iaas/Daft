@@ -140,6 +140,19 @@ def test_payloads_always_fit_the_contract():
         hub.publish_progress("t", {"id": "vlm", "done": 1})
 
 
+def test_progress_preserves_live_pipeline_dispatch_and_inflight():
+    hub = EventHub(1)
+    activity = {"inflight": 3, "queued": 2, "capacity": 8, "dispatches": 4,
+                "recent": [{"number": 4, "count": 1, "episodes": [6], "at": 1000}],
+                "started_at": 500, "finished_at": None, "updated_at": 1000,
+                "processing": {"count": 2, "total_s": 8, "mean_s": 4, "min_s": 3, "max_s": 5}}
+    hub.publish_progress("t", {"id": "vlm", "state": "running", "done": 2, "total": 7,
+                               "pipeline": activity})
+    events = hub.buffered("t")
+    assert events[0].data["pipeline"] == activity
+    check_payloads([{"event": e.event, "data": e.data} for e in events])
+
+
 def test_the_generic_publish_gives_state_and_done_their_full_shape():
     hub = EventHub(1)
     hub.publish("t", "state", {"state": "running", "at": 5})

@@ -102,6 +102,9 @@ def test_stop_leaves_no_child_and_continue_repeats_no_finished_work(daemon, fake
     assert _children_of_run(d.run_dir(task_id)) == []
     kept = {r["episode_index"] for r in _part_lines(d.run_dir(task_id), "task_success")}
     assert kept
+    parts_before = {module: set(os.listdir(os.path.join(d.run_dir(task_id), "checks",
+                                                          module, "parts")))
+                    for module in ("timestamp_check", "visual_quality")}
 
     fake_vlm.delay_s = 0.0
     r = d.api("POST", f"/tasks/{task_id}/continue")
@@ -112,7 +115,8 @@ def test_stop_leaves_no_child_and_continue_repeats_no_finished_work(daemon, fake
     assert task["summary"]["total"] == 8 and task["summary"]["passed"] == 5
     run_dir = d.run_dir(task_id)
     for module in ("timestamp_check", "visual_quality"):     # finished stages were not re-run
-        assert os.listdir(os.path.join(run_dir, "checks", module, "parts")) == ["0001.jsonl"]
+        assert set(os.listdir(os.path.join(run_dir, "checks", module, "parts"))) == \
+            parts_before[module]
     again = {r["episode_index"] for r in _part_lines(run_dir, "task_success", "0002")}
     assert not (again & kept)
     subs = d.api("GET", f"/tasks/{task_id}/subtasks").json()["items"]

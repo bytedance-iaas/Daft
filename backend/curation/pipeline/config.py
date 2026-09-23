@@ -23,6 +23,21 @@ class ConfigError(ValueError):
 
 def validate_config(cfg: dict, origin: str = "config") -> None:
     """结构校验(load 与 --set 覆盖后都要过):配置错误不能静默跑偏。"""
+    pipeline = cfg.get("pipeline", {})
+    if not isinstance(pipeline, dict):
+        raise ConfigError("pipeline must be a mapping")
+    if "optimizations" in pipeline:
+        raise ConfigError("pipeline.optimizations has been removed; engineering optimizations run automatically")
+    if pipeline.get("thinking") is not None and type(pipeline["thinking"]) is not bool:
+        raise ConfigError("pipeline.thinking must be true/false/null")
+    if pipeline.get("thinking") is not None:
+        from .thinking import thinking_request_fields
+        model = cfg.get("checks", {}).get("task_success", {}).get("vlm", {}).get("model")
+        if model:
+            thinking_request_fields(model, pipeline["thinking"])
+    concurrency = pipeline.get("vlm_episode_concurrency", 8)
+    if type(concurrency) is not int or concurrency < 1:
+        raise ConfigError("vlm_episode_concurrency must be a positive integer")
     checks = cfg.get("checks")
     if not checks:
         raise ConfigError(f"{origin}: 缺 checks 段")

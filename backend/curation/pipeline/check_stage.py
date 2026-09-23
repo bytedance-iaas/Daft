@@ -30,6 +30,7 @@ import json
 import os
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -86,6 +87,9 @@ class StageOptions:
     task_text: object | None = None                     # tasktext.TaskText (vlm stage)
     evidence_mode: str = "off"
     verify_source: Callable[[list[int]], None] | None = None
+    pipeline_state: str | None = None
+    pipeline_next: str = "done"
+    episode_stream: object | None = None
     stage: str = field(init=False, default="")
 
     def __post_init__(self) -> None:
@@ -134,6 +138,12 @@ class StageRun:
         self.label = "check:" + "+".join(opts.modules)
         self._lock = threading.Lock()
         self.done = 0
+        if opts.pipeline_state:
+            from .episode_state import EpisodeState
+
+            self._store = EpisodeState(opts.pipeline_state)
+        else:
+            self._store = None
         #: episodes found without their source files (D40): no result line
         self.missing: dict[int, list[str]] = {}
 
@@ -166,7 +176,7 @@ class StageRun:
         eps = list(self.o.episodes)
         if not self.o.resume:
             return eps, 0, set()
-        current = {m: latest_results(self.o.run_dir, m) for m in self.o.modules}
+        current = {m: latest_results(self.o.run_dir, m, eps) for m in self.o.modules}
         done = {e for e in eps
                 if all(e in current[m] and current[m][e]["verdict"] != "error"
                        for m in self.o.modules)}
@@ -339,23 +349,28 @@ class StageRun:
         o, ctx = self.o, self.ctx
         todo, skipped, crashed = self._todo()
         total = len(o.episodes)
-        writer = PartWriter(o.run_dir, o.modules, o.part)
+        writer = PartWriter(o.run_dir, o.modules, o.part, index=self._store is None)
         inflight = Inflight(o.run_dir, o.modules, o.part)
         breaker = _Breaker() if o.stage == "vlm" else None
-        self.done = skipped
+        self.done = skipped if o.episode_stream is None else 0
         drained = False
         try:
-            for ep in sorted(crashed):
+            for ep in (sorted(crashed) if o.episode_stream is None else []):
                 log = IncidentLog()
                 log.add("crash", cause="the process died twice while working on this episode")
-                for rec in self._records(ep, {}, {m: log for m in o.modules}, 0.0).values():
+                records = self._records(ep, {}, {m: log for m in o.modules}, 0.0)
+                for rec in records.values():
                     writer.write(rec)
+                if self._store is not None:
+                    self._store.finish(o.stage, ep, records, o.pipeline_next)
                 self.done += 1
-            if crashed:
+            if crashed and o.episode_stream is None:
                 ctx.log("warn", f"{len(crashed)} episode(s) crashed the process twice; "
                                 f"recorded as errors and skipped: {sorted(crashed)}")
             ctx.progress(self.label, self.done, total)
-            if todo:
+            if o.episode_stream is not None:
+                self._drive_stream(todo, crashed, writer, inflight, breaker, total)
+            elif todo:
                 if o.verify_source is not None:
                     o.verify_source(todo)
                 source = self._source(todo)
@@ -365,16 +380,105 @@ class StageRun:
             writer.close()
             if drained:
                 inflight.clear()        # SIGINT / a crash leave it for the next --resume
-            for m in o.modules:
-                compact(o.run_dir, m)
+            if self._store is None:
+                for m in o.modules:
+                    compact(o.run_dir, m)
             if self.missing:
                 from .skipped import record
 
                 record(o.run_dir, self.missing)
                 ctx.log("warn", f"{len(self.missing)} episode(s) have missing source files and "
                                 f"are left out like v1 does: {sorted(self.missing)[:10]}")
+            if self._store is not None:
+                self._store.close()
         ctx.check_stop(f"{self.label}: {self.done}/{total} episodes done")
         return self.summary(skipped)
+
+    def _drive_stream(self, todo, crashed, writer, inflight, breaker, total) -> None:
+        """Consume admitted episodes without a batch barrier.
+
+        The parent limits admissions and CPU usage across stages. Completion is
+        published only after the result and its next destination are durable.
+        Input metadata and the check pool are reused for the entire layer.
+        """
+        o, ctx = self.o, self.ctx
+        stream = o.episode_stream
+        remaining = set(todo)
+        current = {m: latest_results(o.run_dir, m, o.episodes) for m in o.modules}
+        queue = deque()
+        admitted = []
+        pending = {}
+        source = None
+        closed = False
+        tripped = None
+        pool = cf.ThreadPoolExecutor(max_workers=max(1, o.concurrency),
+                                     thread_name_prefix="check")
+
+        def complete(ep, records):
+            if records is None:
+                self._store.missing(o.stage, ep)
+            else:
+                for rec in records.values():
+                    writer.write(rec)
+                self._store.finish(o.stage, ep, records, o.pipeline_next)
+            inflight.remove(ep)
+            self.done += 1
+            stream.completed(ep, records is not None and all(
+                r["verdict"] not in ("fail", "error") for r in records.values()))
+            ctx.progress(self.label, self.done, total, episode_index=ep)
+
+        try:
+            while pending or queue or not closed:
+                if ctx.stop_requested or tripped is not None:
+                    closed = True
+                    queue.clear()
+                if not closed and len(pending) + len(queue) < o.concurrency:
+                    incoming = stream.receive(timeout=0 if pending or queue else 0.05)
+                    if incoming is None:
+                        closed = True
+                    else:
+                        queue.extend(incoming)
+                while queue and len(pending) < o.concurrency and not ctx.stop_requested:
+                    ep = queue.popleft()
+                    admitted.append(ep)
+                    if ep in crashed:
+                        log = IncidentLog()
+                        log.add("crash", cause="the process died twice while working on this episode")
+                        complete(ep, self._records(ep, {}, {m: log for m in o.modules}, 0.0))
+                        ctx.log("warn", f"episode {ep} crashed the process twice; recorded as error")
+                        continue
+                    if ep not in remaining:
+                        records = {m: current[m][ep] for m in o.modules}
+                        complete(ep, records)
+                        continue
+                    if o.verify_source is not None:
+                        o.verify_source([ep])
+                    if source is None:
+                        source = self._source(todo)
+                    inflight.add(ep)
+                    pending[pool.submit(self._work, source, ep)] = ep
+                if not pending:
+                    if closed:
+                        break
+                    continue
+                finished, _ = cf.wait(pending, timeout=0.02, return_when=cf.FIRST_COMPLETED)
+                for fut in finished:
+                    ep = pending.pop(fut)
+                    records = fut.result()
+                    complete(ep, records)
+                    if breaker is not None and tripped is None and records is not None:
+                        try:
+                            breaker.observe(records)
+                        except BreakerTripped as exc:
+                            tripped = exc
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+            o.episodes = admitted
+        if tripped is not None:
+            from ..cli.errors import ModuleFailed
+
+            raise ModuleFailed(f"{', '.join(o.modules)}: {tripped}",
+                               {"modules": list(o.modules), "episodes_done": self.done})
 
     def _drive(self, source, todo, writer, inflight, breaker, total) -> None:
         o, ctx = self.o, self.ctx
@@ -399,12 +503,16 @@ class StageRun:
                     ep = pending.pop(fut)
                     records = fut.result()
                     if records is None:                # left out: missing source (D40)
+                        if self._store is not None:
+                            self._store.missing(o.stage, ep)
                         inflight.remove(ep)
                         self.done += 1
                         ctx.progress(self.label, self.done, total, episode_index=ep)
                         continue
                     for rec in records.values():
                         writer.write(rec)
+                    if self._store is not None:
+                        self._store.finish(o.stage, ep, records, o.pipeline_next)
                     inflight.remove(ep)
                     self.done += 1
                     rate = (time.monotonic() - started) / max(1, self.done)
@@ -431,7 +539,7 @@ class StageRun:
         judged = [e for e in o.episodes if e not in self.missing]
         out: dict = {}
         for m in o.modules:
-            cur = latest_results(o.run_dir, m)
+            cur = latest_results(o.run_dir, m, judged)
             counts = {"total": len(judged), "pass": 0, "fail": 0, "abstain": 0,
                       "scored": 0, "error": 0}
             errors = []
@@ -452,7 +560,8 @@ class StageRun:
 
     def survivors(self) -> list[int]:
         """Episodes of this call that go on to the next stage (no error, no hard fail)."""
-        cur = {m: latest_results(self.o.run_dir, m) for m in self.o.modules}
+        cur = {m: latest_results(self.o.run_dir, m, self.o.episodes)
+               for m in self.o.modules}
         out = []
         for e in self.o.episodes:
             recs = [cur[m].get(e) for m in self.o.modules]

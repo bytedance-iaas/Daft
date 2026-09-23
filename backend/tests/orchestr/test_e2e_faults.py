@@ -84,6 +84,8 @@ def test_an_errored_episode_is_held_until_a_retry_and_the_state_is_recomputed(da
     batch = d.delivery(first["run_id"])
     assert os.path.isfile(os.path.join(batch, "_COMPLETE"))
     assert not os.path.exists(os.path.join(d.delivery(), "latest"))   # not a complete success
+    parts_dir = os.path.join(rd, "checks", "task_success", "parts")
+    parts_before = set(os.listdir(parts_dir))
 
     faulty.switch.unlink()                                  # the model answers again
     r = d.api("POST", f"/tasks/{first['id']}/retry", json={})
@@ -94,8 +96,9 @@ def test_an_errored_episode_is_held_until_a_retry_and_the_state_is_recomputed(da
     assert done["summary"] == {"total": 8, "passed": 5, "rejected": 3, "held": 0, "review": 3,
                                "pass_rate": 0.625}
     assert 0 in _passed(rd, 2) and 0 not in _passed(rd, 1)  # r0001 is kept as it was
-    part2 = read_jsonl(os.path.join(rd, "checks", "task_success", "parts", "0002.jsonl"))
-    assert [r["episode_index"] for r in part2] == [0]       # only the held one ran again
+    new_parts = set(os.listdir(parts_dir)) - parts_before
+    rerun = [r for part in new_parts for r in read_jsonl(os.path.join(parts_dir, part))]
+    assert [r["episode_index"] for r in rerun] == [0]       # only the held one ran again
     assert done["delivery_stale"] is True                   # the verdicts changed: re-export
     timeline = d.api("GET", f"/tasks/{first['id']}/timeline").json()["items"]
     assert [e["revision"] for e in timeline if e["kind"] == "revision"] == [1, 2]

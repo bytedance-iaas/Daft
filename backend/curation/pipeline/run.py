@@ -454,6 +454,17 @@ def _sanitize_config_snapshot(cfg: dict) -> dict:
     import copy
     import hashlib
     ce = copy.deepcopy(cfg)
+    if isinstance(ce.get('pipeline'), dict):
+        ce['pipeline'].pop('optimizations', None)
+        thinking = ce['pipeline'].get('thinking')
+        model = ce.get('checks', {}).get('task_success', {}).get('vlm', {}).get('model')
+        if thinking is not None and model:
+            from .thinking import thinking_request_fields
+            fields = thinking_request_fields(model, thinking)
+            ce['pipeline']['thinking_effective'] = {
+                'enabled': fields['thinking']['type'] == 'enabled',
+                'reasoning_effort': fields.get('reasoning_effort'),
+            }
     for k in _SNAPSHOT_SITE_KEYS:
         ce.pop(k, None)
     sp = ce.get("skill_profile")
@@ -483,9 +494,68 @@ def run_pipeline(
     vlm_model: str | None = None,              # 直连模型(CLI --vlm-model / env)
     vlm_api_key_env: str | None = None,        # 直连密钥环境变量名
 ) -> dict:
+    from .config import apply_overrides, load_config, validate_config
+    cfg = load_config(config_path)
+    # Resolve the effective model before creating the checkpoint/run directory.
+    # Backend preset < direct CLI model < --set, matching _run_pipeline below.
+    if vlm_backend:
+        presets = cfg.get("vlm_backends") or {}
+        if vlm_backend not in presets:
+            from .config import ConfigError
+            raise ConfigError(f"--vlm-backend 未知预设 {vlm_backend!r};可用: {sorted(presets)}")
+        cfg["checks"]["task_success"]["vlm"]["model"] = presets[vlm_backend].get("model")
+    if vlm_model:
+        cfg["checks"]["task_success"]["vlm"]["model"] = vlm_model
+    elif vlm_endpoint:
+        cfg["checks"]["task_success"]["vlm"]["model"] = ""
+    cfg = apply_overrides(cfg, set_overrides or [])
+    validate_config(cfg)
+    args = (config_path, input_dir, output_dir, embodiment_id, max_episodes,
+            only_checks, skip_checks, report_only, lite, run_name, set_overrides,
+            episode_indices, vlm_backend, vlm_endpoint, vlm_model, vlm_api_key_env)
+    from pathlib import Path
+    if str(output_dir).startswith('tos://') or not Path(input_dir).is_dir():
+        return _run_pipeline(*args)
+    from .checkpoint import _identity, _open_checkpoint
+    options = dict(embodiment_id=embodiment_id, max_episodes=max_episodes,
+                   only_checks=only_checks, skip_checks=skip_checks,
+                   report_only=report_only, lite=lite,
+                   episode_indices=sorted(episode_indices) if episode_indices is not None else None,
+                   vlm_backend=vlm_backend, vlm_endpoint=vlm_endpoint,
+                   vlm_model=vlm_model, vlm_api_key_env=vlm_api_key_env)
+    journal = _open_checkpoint(output_dir, run_name, _identity(input_dir, cfg, options), None)
+    try:
+        result = _run_pipeline(*args, _checkpoint=journal)
+        journal.complete()
+        return result
+    finally:
+        journal.close()
+
+
+def _run_pipeline(
+    config_path: str | None,
+    input_dir: str,
+    output_dir: str,
+    embodiment_id: str | None = None,
+    max_episodes: int | None = None,
+    only_checks: str | None = None,
+    skip_checks: str | None = None,
+    report_only: bool = False,
+    lite: bool = False,
+    run_name: str | None = None,               # 本次跑批的子目录名(缺省现生成)
+    set_overrides: list | None = None,
+    episode_indices: set[int] | None = None,   # 只跑指定 episode(CLI --episodes)
+    vlm_backend: str | None = None,            # VLM 后端预设名(CLI --vlm-backend)
+    vlm_endpoint: str | None = None,           # 直连端点(CLI --vlm-endpoint / env)
+    vlm_model: str | None = None,              # 直连模型(CLI --vlm-model / env)
+    vlm_api_key_env: str | None = None,        # 直连密钥环境变量名
+    *, _checkpoint=None,
+) -> dict:
+    from .config import (apply_overrides as _apply_overrides, load_config as _load_config,
+                         validate_config as _validate_config)
+    _validate_config(_apply_overrides(_load_config(config_path), set_overrides or []))
     import time as _time0
     _run_t0 = _time0.time()
-    from ..dataset_level.dedup import episode_fingerprint
     from ..dataset_level.profile import instruction_grouping_available, skill_profile
     from ..export.lerobot_writer import export_lerobot_v2, export_lerobot_v3
     from ..export.report import build_report, save_report
@@ -516,7 +586,8 @@ def run_pipeline(
             "  新版每次跑批各进一个时间戳子目录,不再覆盖;请换一个新的 --output 目录\n"
             "  (老交付原样留着,报告页照常打得开)。")
     os.makedirs(delivery_dir, exist_ok=True)
-    output_dir = allocate_run_dir(delivery_dir, run_name)
+    output_dir = (_checkpoint.run_dir if _checkpoint is not None
+                  else allocate_run_dir(delivery_dir, run_name))
     print(f"[curation] 本次跑批目录: {output_dir}", flush=True)
     cfg = load_config(config_path)
     if only_checks or skip_checks:
@@ -536,6 +607,8 @@ def run_pipeline(
         from .config import apply_overrides, validate_config
         cfg = apply_overrides(cfg, set_overrides)
         validate_config(cfg, "--set 覆盖后")
+    else:
+        _validate_config(cfg)
     if not lite:
         # n_probe/帧问询并发未对齐 → 分波问询,单条耗时静默上升;开跑前一行点破
         from .config import probe_concurrency_hint
@@ -550,6 +623,12 @@ def run_pipeline(
             _v["model"] = resolve_single_model(_v["endpoint"], _v.get("api_key_env"))
             print(f"[curation] VLM 模型自动发现: {_v['model']} @ {_v['endpoint']}",
                   flush=True)
+            _validate_config(cfg)
+    from .thinking import thinking_notice
+    _model = cfg.get("checks", {}).get("task_success", {}).get("vlm", {}).get("model", "")
+    _notice = thinking_notice(_model, cfg.get("pipeline", {}).get("thinking"))
+    if _notice:
+        print(_notice, flush=True)
 
     # 延时档案清零(2026-07-28):每个 run 一份独立的 VLM 调用延时统计
     from ..adapters.vlm_client import latency_reset
@@ -703,6 +782,8 @@ def run_pipeline(
             vlm, vlm_note = None, "task_success 未启用,跳过成败判定(VLM 仍供技能画像)"
     # 任务描述分层(2026-07-08 定):成败判定需要"意图"——有标注用标注;无标注用自产
     # caption 兜底(否则 VLM 无从判断,droid 全员弃权);来源留痕进判定 detail。
+    if _checkpoint is not None:
+        _checkpoint.validate_runtime(cfg, vlm is not None, vlm_ready)
     auto_caps: dict = {}
     if vlm is not None:
         unlabeled = [r for r in rows if not (r.get("instruction") or "").strip()]
@@ -718,14 +799,24 @@ def run_pipeline(
             capper = make_vlm_captioner(vcfg0["endpoint"], vcfg0["model"],
                                         timeout_s=timeout_for("caption", vcfg0),
                                         api_key_env=vcfg0.get("api_key_env"),
-                                        max_in_flight=_cc0)
+                                        max_in_flight=_cc0,
+                                        thinking=cfg.get("pipeline", {}).get("thinking"))
             _pk_cap0 = _progress_init("precap", len(unlabeled),
                                       f"无标注补 caption({len(unlabeled)} 条,并发 {_cc0})")
-            for r, c in zip(unlabeled, caption_episodes(
+            if _checkpoint is None:
+                captions = caption_episodes(
                     unlabeled, capper,
                     n_frames=cfg.get("skill_profile", {}).get("n_frames", 8),
                     max_concurrency=_cc0,
-                    on_progress=lambda: _progress_tick(_pk_cap0))):
+                    on_progress=lambda: _progress_tick(_pk_cap0))
+            else:
+                from .checkpoint import _caption_with_checkpoint
+                captions = _caption_with_checkpoint(
+                    unlabeled, capper, _checkpoint,
+                    n_frames=cfg.get("skill_profile", {}).get("n_frames", 8),
+                    max_concurrency=_cc0,
+                    on_progress=lambda: _progress_tick(_pk_cap0))
+            for r, c in zip(unlabeled, captions):
                 if c:
                     auto_caps[r["episode_id"]] = c
     desc_of, desc_src_of = {}, {}
@@ -745,12 +836,27 @@ def run_pipeline(
     def _lookup_desc_src(episode_id: str) -> str:
         return desc_src_of.get(episode_id, "无")
 
-    df0 = read_lazy(input_dir, max_episodes=max_episodes,
-                    episode_indices=episode_indices,
+    _scan_indices = episode_indices
+    _scan_max = max_episodes
+    if _checkpoint is not None:
+        _done = {eid for kind, eid in _checkpoint.records if kind == 'episode'}
+        _todo = {int(r['episode_id'][2:]) for r in rows if r['episode_id'] not in _done}
+        if _todo:
+            _scan_indices, _scan_max = _todo, None
+    df0 = read_lazy(input_dir, max_episodes=_scan_max,
+                    episode_indices=_scan_indices,
                     embodiment_id=embodiment_id)
     df0 = df0.with_column("task_desc", _lookup_desc(_daft.col("episode_id")))
     df0 = df0.with_column("task_desc_source", _lookup_desc_src(_daft.col("episode_id")))
-    df, stats = run_funnel(df0, cfg, EmbodimentRegistry(), vlm_completion=vlm)
+    if _checkpoint is None:
+        df, stats = run_funnel(df0, cfg, EmbodimentRegistry(), vlm_completion=vlm)
+    else:
+        from .frame_cache import _cache_scope
+        from .streaming import _execute_funnel
+        with _cache_scope() as cache_key:
+            df, stats = _execute_funnel(df0, cfg, EmbodimentRegistry(), vlm,
+                                       checkpoint=_checkpoint, order=[r['episode_id'] for r in rows],
+                                       cache_key=cache_key)
     check_cols = [c for c in df.column_names if c.startswith("check_")]
     _sel_cols = list(check_cols)
     if "_sync_curves" in df.column_names:
@@ -820,12 +926,17 @@ def run_pipeline(
         per_episode[e] = {"verdict": "drop", "soft_score": None,
                           "reason": _why, "checks": _chk}
 
+    _action_hashes = {}
+    if cfg.get('dedup', {}).get('enable', True):
+        from ..dataset_level.dedup import action_hash as _action_hash
+        for _row in df.select('episode_id', 'action').iter_rows():
+            _action_hashes[_row['episode_id']] = _action_hash(_row)
+
     # ③ keep 行 → 去重(M6)→ 画像(M7)
     # 两段式精确去重(2026-07-15):第一道只哈希 action 字节(便宜);action 撞车的
     # (罕见)才进第二道验视频内容——droid 实测全员视频指纹要哈希 200GB 磨十几分钟,
     # 两段式把视频哈希压到只剩撞车组。判重条件不变:action+视频内容都同才算重复。
     # 幸存者分批重读(每批 200),算完哈希即丢数值 → 内存有界。
-    from ..dataset_level.dedup import action_hash
     keep_ids = [e for e, v in verdicts.items() if v["verdict"] == "keep"]
     dedup_on = cfg.setdefault("dedup", {}).get("enable", True)
     dedup_note = None
@@ -842,10 +953,11 @@ def run_pipeline(
                                "精确去重·动作指纹", quiet_before_s=3.0)
     for _i0 in range(0, len(keep_ids) if dedup_on else 0, 200):
         _chunk = {int(e[2:]) for e in keep_ids[_i0:_i0 + 200]}
-        for _row in read_rows(input_dir, episode_indices=_chunk,
-                              embodiment_id=embodiment_id,
-                              validate=False, skip_missing=True):
-            _ah = action_hash(_row)
+        # read_rows traverses selected episodes in dataset order, not verdict order.
+        _chunk_rows = ({'episode_id': r['episode_id']} for r in rows
+                       if int(r['episode_id'][2:]) in _chunk)
+        for _row in _chunk_rows:
+            _ah = _action_hashes[_row['episode_id']]
             _order.append(_row["episode_id"])
             if _ah in _ah_first:
                 _collide.setdefault(_ah, [_ah_first[_ah]]).append(_row["episode_id"])
@@ -866,10 +978,13 @@ def run_pipeline(
         for _ah, _eps in _collide.items():
             _idxs = {int(e[2:]) for e in _eps}
             _seen: dict = {}
-            for _row in read_rows(input_dir, episode_indices=_idxs,
-                                  embodiment_id=embodiment_id,
-                                  validate=False, skip_missing=True):
-                _fp = episode_fingerprint(_row)      # 含视频内容哈希(只对撞车组)
+            _group_rows = read_rows(input_dir, episode_indices=_idxs,
+                                    embodiment_id=embodiment_id,
+                                    validate=False, skip_missing=True)
+            from .dedup_execution import _ordered_fingerprints
+            _fingerprints = _ordered_fingerprints(
+                _group_rows, max(1, min(8, os.cpu_count() or 1)))
+            for _row, _fp in _fingerprints:
                 if _fp in _seen:
                     dedup_dropped.append({"episode_id": _row["episode_id"],
                                           "duplicate_of": _seen[_fp],
@@ -899,11 +1014,13 @@ def run_pipeline(
         captioner = make_vlm_captioner(vcfg["endpoint"], vcfg["model"],
                                        timeout_s=_timeout_for("caption", vcfg),
                                        api_key_env=vcfg.get("api_key_env"),
-                                       max_in_flight=_cap_conc)
+                                       max_in_flight=_cap_conc,
+                                       thinking=cfg.get("pipeline", {}).get("thinking"))
         # 闸门按文本调用里最大的结构并发给(守规合并 / 标注判官都从多线程调它)
         llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"],
                                timeout_s=_timeout_for("llm", vcfg),
                                api_key_env=vcfg.get("api_key_env"),
+                               thinking=cfg.get("pipeline", {}).get("thinking"),
                                max_in_flight=max(int(sp_cfg.get("llm_concurrency", 16)),
                                                  int(sp_cfg.get("audit_concurrency", 16))))
         (profile, caption_of, grouping_text_of, grouping_source_of,

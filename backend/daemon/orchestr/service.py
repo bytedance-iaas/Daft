@@ -116,6 +116,13 @@ class Orchestrator:
         self.system_pause_all()
         if not self.scheduler.wait_idle(self.cfg.shutdown_wait_s):
             n = self.executor.kill_all()
+            for job in self.scheduler.jobs():
+                if job.run is not None:
+                    with job.run._lock:
+                        children = list(job.run._procs.values())
+                    for child in children:
+                        child.kill()
+                        n += 1
             log.warning("shutdown: %d command(s) still running after %.0fs; killed", n,
                         self.cfg.shutdown_wait_s)
             self.scheduler.wait_idle(15.0)
@@ -150,14 +157,18 @@ class Orchestrator:
         for task_id in task_ids:
             path = WorkDir(self.work_root, task_id).private / PROC_FILE
             doc = read_json(path, None)
-            if not isinstance(doc, dict) or not isinstance(doc.get("pid"), int):
+            if not isinstance(doc, dict):
                 continue
-            pid = doc["pid"]
-            if _is_curation_process(pid):
-                seen += 1
-                log.warning("task %s: a %s command (pid %d) outlived the last Daemon; stopping it",
-                            task_id, doc.get("stage"), pid)
-                _stop_group(pid, self.cfg.term_grace_s)
+            processes = doc.get("processes") if isinstance(doc.get("processes"), list) else [doc]
+            for item in processes:
+                if not isinstance(item, dict) or not isinstance(item.get("pid"), int):
+                    continue
+                pid = item["pid"]
+                if _is_curation_process(pid):
+                    seen += 1
+                    log.warning("task %s: a %s command (pid %d) outlived the last Daemon; stopping it",
+                                task_id, item.get("stage"), pid)
+                    _stop_group(pid, self.cfg.term_grace_s)
             try:
                 path.unlink()
             except OSError:

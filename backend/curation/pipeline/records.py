@@ -190,14 +190,27 @@ def load_parts(run_dir: str, module: str) -> dict[int, tuple[str, dict]]:
     return out
 
 
-def latest_results(run_dir: str, module: str) -> dict[int, dict]:
+def latest_results(run_dir: str, module: str,
+                   episodes: list[int] | None = None) -> dict[int, dict]:
     """The current record of every episode of ``module`` (from the parts)."""
+    from .episode_state import EpisodeState, state_path
+
+    index = state_path(run_dir)
+    if index.is_file():
+        store = EpisodeState(index)
+        try:
+            if store.indexed(module):
+                return store.records(module, episodes)
+        finally:
+            store.close()
     parts = load_parts(run_dir, module)
     if parts:
-        return {i: rec for i, (_, rec) in parts.items()}
+        found = {i: rec for i, (_, rec) in parts.items()}
+        return found if episodes is None else {e: found[e] for e in episodes if e in found}
     # a run directory restored from the delivery may only have the compacted file
-    return {int(r["episode_index"]): r
-            for r in read_jsonl(os.path.join(module_dir(run_dir, module), RESULTS_NAME))}
+    found = {int(r["episode_index"]): r
+             for r in read_jsonl(os.path.join(module_dir(run_dir, module), RESULTS_NAME))}
+    return found if episodes is None else {e: found[e] for e in episodes if e in found}
 
 
 def parts_used(run_dir: str, module: str) -> list[str]:
@@ -207,8 +220,28 @@ def parts_used(run_dir: str, module: str) -> list[str]:
 
 def compact(run_dir: str, module: str) -> str:
     """Write ``results.jsonl``: one current record per episode, sorted by index."""
-    rows = [rec for _, (_, rec) in sorted(load_parts(run_dir, module).items())]
     path = os.path.join(module_dir(run_dir, module), RESULTS_NAME)
+    from .episode_state import EpisodeState, state_path
+
+    index = state_path(run_dir)
+    if index.is_file():
+        store = EpisodeState(index)
+        try:
+            if store.indexed(module):
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                tmp = f"{path}.tmp-{os.getpid()}-{threading.get_ident()}"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    for _, data in store.db.execute(
+                            "SELECT episode, record FROM results WHERE module=? ORDER BY episode",
+                            (module,)):
+                        fh.write(dumps_line(json.loads(data)))
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(tmp, path)
+                return path
+        finally:
+            store.close()
+    rows = [rec for _, rec in sorted(latest_results(run_dir, module).items())]
     write_text_atomic(path, "".join(dumps_line(r) for r in rows))
     return path
 
@@ -256,17 +289,30 @@ class AppendLog:
 class PartWriter:
     """The part files of one ``check`` call, one per module."""
 
-    def __init__(self, run_dir: str, modules: Iterable[str], part: str):
+    def __init__(self, run_dir: str, modules: Iterable[str], part: str, *, index: bool = True):
         self.part = part
         self._logs = {m: AppendLog(os.path.join(parts_dir(run_dir, m), f"{part}.jsonl"))
                       for m in modules}
+        self._index = None
+        if index:
+            from .episode_state import EpisodeState, state_path
+
+            path = state_path(run_dir)
+            if path.is_file():
+                self._index = EpisodeState(path)
+        self._indexed = {m for m in self._logs if self._index is not None
+                         and self._index.indexed(m)}
 
     def write(self, record: dict) -> None:
         self._logs[record["module"]].write(record)
+        if self._index is not None and record["module"] in self._indexed:
+            self._index.put_result(record)
 
     def close(self) -> None:
         for log in self._logs.values():
             log.close()
+        if self._index is not None:
+            self._index.close()
 
 
 class Inflight:

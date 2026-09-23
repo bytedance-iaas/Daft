@@ -99,13 +99,16 @@ class Line:
 class RunState:
     """The selected modules' current results, read once."""
 
-    def __init__(self, run_dir: str, modules, episodes, cfg: dict):
+    def __init__(self, run_dir: str, modules, episodes, cfg: dict,
+                 *, results: dict[str, dict[int, dict]] | None = None,
+                 autolabel: dict | None = None):
         self.run_dir, self.cfg = run_dir, cfg
         self.modules = [m.id for m in registry.MODULES if m.id in set(modules)]
         self.funnel = [m for m in self.modules if m in FUNNEL_MODULES]
         self.episodes = sorted({int(e) for e in episodes})
-        self.results = {m: latest_results(run_dir, m) for m in self.modules}
-        self.autolabel = load_autolabel(run_dir)
+        self.results = (results if results is not None else
+                        {m: latest_results(run_dir, m) for m in self.modules})
+        self.autolabel = autolabel if autolabel is not None else load_autolabel(run_dir)
 
     def soft_modules(self) -> list[str]:
         return [m for m in self.funnel

@@ -1,9 +1,10 @@
-"""The main run and the four subtasks, stage by stage (design doc 00 §4 and §4.1).
+"""The main run and the four subtasks (design doc 00 §4 and §4.1).
 
 Main run (``backend/curation/cli/README.md``, "Daemon 的调用顺序"): the plan's
-stages in order - autolabel, the funnel stages ``numeric`` -> ``frame`` -> ``vlm``
-(each reads the survivors of the one before; a module that fails as a whole
-leaves its gate open), ``verdict`` (aggregate funnel into revision N), ``dedup``
+stages in order - autolabel, then the funnel stages ``numeric`` -> ``frame`` ->
+``vlm`` on concurrent bounded batch workers (each reads the survivors of the
+one before; a module that fails as a whole leaves its gate open), ``verdict``
+(aggregate funnel into revision N), ``dedup``
 on ``keep.txt``, ``profile`` on the kept set minus duplicates, ``final``
 (aggregate final) - then ``report`` (commit.json last), ``export`` when the task
 exports, and ``verify``: the run directory is synced to ``<delivery>/<run_id>/``,
@@ -284,16 +285,33 @@ class MainRun(StageRun):
         rev = self.allocate_revision()
         stages = {s["id"]: s for s in plan["stages"]}
         survivors: dict[str, list[int]] = {}
+        funnel_stages = [s for s in plan["stages"] if s["id"] in FUNNEL]
+        from curation.pipeline.episode_state import state_path
+
+        # A pre-pipeline task may already have journaled whole stages. Finish it
+        # with its original stage boundaries; new tasks and pipeline resumes use
+        # the per-episode SQLite handoff instead.
+        pipeline = bool(funnel_stages) and (state_path(self.wd.root).is_file() or not any(
+            self.journal.done(s["id"]) for s in funnel_stages))
+        funnel_started = False
         for st in plan["stages"]:
             self.check_intent()
             sid = st["id"]
             if st.get("command") == "autolabel":
                 self.autolabel(selection)
             elif sid in FUNNEL:
-                ref = st.get("episodes", "selected")
-                source = selection if ref == "selected" else survivors.get(
-                    ref.split(":", 1)[1], [])
-                survivors[sid] = self.check_stage(st, source, fresh=True)
+                if pipeline:
+                    if not funnel_started:
+                        if not all(self.journal.done(s["id"]) for s in funnel_stages):
+                            from .pipeline import run_funnel
+
+                            run_funnel(self, funnel_stages, selection)
+                        funnel_started = True
+                else:
+                    ref = st.get("episodes", "selected")
+                    source = selection if ref == "selected" else survivors.get(
+                        ref.split(":", 1)[1], [])
+                    survivors[sid] = self.check_stage(st, source, fresh=True)
             elif sid.startswith(ADVISORY):
                 # every selected episode, never a gate (registry 1.4): nothing reads its survivors
                 self.check_stage(st, selection, fresh=True)
@@ -306,7 +324,8 @@ class MainRun(StageRun):
                 survivors["profile"] = self.check_stage(st, source, fresh=True)
             elif st.get("phase") == "final":
                 self.aggregate(sid, "final", rev, modules, selection)
-            if st.get("command") == "check" or st.get("command") == "autolabel":
+            if (st.get("command") == "check" and not (pipeline and sid in FUNNEL)) \
+                    or st.get("command") == "autolabel":
                 self.sync_quietly(sid)                 # checks/<module>/ goes up as it is done
         self.check_intent()
         self.report(rev, modules)

@@ -228,11 +228,11 @@ class SingleLlmAsk:
 
     def __init__(self, endpoint: str, model: str, timeout_s: float | None = None,
                  max_tokens: int = 8192, api_key_env: str | None = None,
-                 max_in_flight: int = 2, gate=None):
+                 max_in_flight: int = 2, gate=None, thinking: bool | None = None):
         from ..adapters import vlm_client
 
         self.url = endpoint.rstrip("/") + "/chat/completions"
-        self.model, self.max_tokens = model, max_tokens
+        self.model, self.max_tokens, self.thinking = model, max_tokens, thinking
         self.timeout_s = (vlm_client.DEFAULT_TIMEOUTS_S["llm"] if timeout_s is None
                           else timeout_s)
         self.headers = vlm_client.auth_headers(api_key_env)
@@ -244,8 +244,9 @@ class SingleLlmAsk:
 
         from ..adapters import vlm_client
 
-        payload = {"model": self.model, "temperature": 0.0, "max_tokens": self.max_tokens,
-                   "messages": [{"role": "user", "content": prompt_text}]}
+        payload = vlm_client._with_thinking(
+            {"model": self.model, "temperature": 0.0, "max_tokens": self.max_tokens,
+             "messages": [{"role": "user", "content": prompt_text}]}, self.thinking)
         if not self.gate.acquire(timeout=vlm_client.GATE_WAIT_FUSE_S):
             raise requests.exceptions.Timeout("VLM 等待并发闸门超时")
         started = time.time()

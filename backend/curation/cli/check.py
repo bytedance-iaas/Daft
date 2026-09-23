@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 from . import modparams, runctx
 from .errors import ModuleFailed, UsageError
@@ -52,6 +53,11 @@ def add_parser(sub, parents) -> None:
                    help="skill_profile: keep the taxonomy, re-file only what changed")
     p.add_argument("--survivors-out", metavar="FILE",
                    help="write the episodes that go on to the next stage, one per line")
+    p.add_argument("--pipeline-state", metavar="SQLITE",
+                   help=argparse.SUPPRESS)
+    p.add_argument("--pipeline-next", metavar="STAGE", choices=("frame", "vlm", "done"),
+                   default="done",
+                   help=argparse.SUPPRESS)
     runctx.add_vlm(p)
     runctx.add_behaviour(p)
     modparams.add_argument(p)
@@ -91,6 +97,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if args.part is not None and not (len(args.part) == 4 and args.part.isdigit()):
         raise UsageError(f"--part must be four digits such as 0003, got {args.part!r}")
     plan_stage = runctx.load_plan_stage(args.plan_stage, modules)
+    if args.pipeline_state and stage not in ("numeric", "frame", "vlm"):
+        raise UsageError("--pipeline-state is only valid for funnel stages")
     storage = runctx.open_input(ctx, args)
     available, info = runctx.dataset_episodes(ctx, storage)
     episodes, warning = runctx.resolve_episodes(args, available)
@@ -147,15 +155,25 @@ def _funnel_cpu(ctx, args, modules, run_dir, input_dir, episodes, part, plan_sta
     from ..pipeline.check_stage import StageOptions, StageRun
     from ..registry.registry import EmbodimentRegistry
 
-    if "kinematic_limits" in modules:
-        _check_embodiment(args, info)
-    cfg = runctx.stage_config(ctx, modules)
+    cache = getattr(args, "_worker_cache", None)
+    prepared = cache.get("cpu") if cache is not None else None
+    if prepared is None:
+        if "kinematic_limits" in modules:
+            _check_embodiment(args, info)
+        cfg = runctx.stage_config(ctx, modules)
+        registry = EmbodimentRegistry()
+        if cache is not None:
+            cache["cpu"] = (cfg, registry)
+    else:
+        cfg, registry = prepared
     opts = StageOptions(run_dir=run_dir, input_dir=input_dir, modules=modules,
                         episodes=episodes, part=part, cfg=cfg, resume=args.resume,
                         concurrency=runctx.cpu_workers(args, plan_stage),
                         embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
-                        verify_source=guard)
-    stage = StageRun(ctx, opts, EmbodimentRegistry())
+                        verify_source=guard, pipeline_state=args.pipeline_state,
+                        pipeline_next=args.pipeline_next,
+                        episode_stream=getattr(args, "_episode_stream", None))
+    stage = StageRun(ctx, opts, registry)
     return stage.run(), stage.survivors()
 
 
@@ -185,41 +203,65 @@ def _funnel_vlm(ctx, args, modules, run_dir, input_dir, episodes, part, plan_sta
     from ..pipeline.tasktext import TaskText
     from ..registry.registry import EmbodimentRegistry
 
-    gates = runctx.vlm_gates(args, plan_stage)
-    cfg = runctx.stage_config(ctx, modules, gates=gates, args=args)
-    _merge_strategy(ctx, plan_stage, cfg, modules)
+    cache = getattr(args, "_worker_cache", None)
+    prepared = cache.get("vlm") if cache is not None else None
+    if prepared is None:
+        gates = runctx.vlm_gates(args, plan_stage)
+        cfg = runctx.stage_config(ctx, modules, gates=gates, args=args)
+        _merge_strategy(ctx, plan_stage, cfg, modules)
+    else:
+        gates, cfg = prepared["gates"], prepared["cfg"]
     if guard is not None:
         guard([])                        # metadata and the semantics sample, read next
     instructions = {index_of(r["episode_id"]): str(r.get("instruction") or "")
                     for r in runctx.meta_rows(input_dir, episodes, args,
                                               what="check:task_success")}
-    task_text = TaskText(run_dir, instructions)
-    with runctx.VlmSession(ctx, args, cfg, "task_success", run_dir):
-        from ..adapters.vlm_client import vlm_completion_from_config
+    if prepared is None:
+        task_text = TaskText(run_dir, instructions)
+        session = runctx.VlmSession(ctx, args, cfg, "task_success", run_dir)
+        session.__enter__()
+        try:
+            from ..adapters.vlm_client import vlm_completion_from_config
 
-        vlm_completion = vlm_completion_from_config(cfg)
-        try:
-            cam_voter = funnel.build_endstate_voter(cfg, gates)
-        except Exception as e:  # noqa: BLE001 - v1: warn and judge on the score alone
-            cam_voter = None
-            ctx.log("warn", f"per-camera review unavailable ({type(e).__name__}: {e}); "
-                            "task_success judges on the score layer alone")
-        try:
-            arb_deps = funnel.build_arbitration_deps(cfg, gates)
-        except Exception as e:  # noqa: BLE001 - v1: abstentions stay with people
-            arb_deps = None
-            ctx.log("warn", f"evidence arbitration unavailable ({type(e).__name__}: {e})")
-        opts = StageOptions(run_dir=run_dir, input_dir=input_dir, modules=modules,
-                            episodes=episodes, part=part, cfg=cfg, resume=args.resume,
-                            concurrency=int(gates["episode"]),
-                            embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
-                            task_clients=TaskClients(vlm_completion, cam_voter, arb_deps),
-                            task_text=task_text,
-                            evidence_mode=str(cfg.get("pipeline", {})
-                                              .get("evidence_frames", "flagged")),
-                            verify_source=guard)
-        stage = StageRun(ctx, opts, EmbodimentRegistry())
+            vlm_completion = vlm_completion_from_config(cfg)
+            try:
+                cam_voter = funnel.build_endstate_voter(cfg, gates)
+            except Exception as e:  # noqa: BLE001 - v1: warn and judge on the score alone
+                cam_voter = None
+                ctx.log("warn", f"per-camera review unavailable ({type(e).__name__}: {e}); "
+                                "task_success judges on the score layer alone")
+            try:
+                arb_deps = funnel.build_arbitration_deps(cfg, gates)
+            except Exception as e:  # noqa: BLE001 - v1: abstentions stay with people
+                arb_deps = None
+                ctx.log("warn", f"evidence arbitration unavailable ({type(e).__name__}: {e})")
+        except BaseException:
+            session.__exit__(*sys.exc_info())
+            raise
+        clients = TaskClients(vlm_completion, cam_voter, arb_deps)
+        if cache is not None:
+            cache["vlm"] = {"gates": gates, "cfg": cfg, "task_text": task_text,
+                            "session": session, "clients": clients}
+    else:
+        task_text = prepared["task_text"]
+        task_text.instructions.update(instructions)
+        clients = prepared["clients"]
+    opts = StageOptions(run_dir=run_dir, input_dir=input_dir, modules=modules,
+                        episodes=episodes, part=part, cfg=cfg, resume=args.resume,
+                        concurrency=int(gates["episode"]),
+                        embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
+                        task_clients=clients, task_text=task_text,
+                        evidence_mode=str(cfg.get("pipeline", {})
+                                          .get("evidence_frames", "flagged")),
+                        verify_source=guard, pipeline_state=args.pipeline_state,
+                        pipeline_next=args.pipeline_next,
+                        episode_stream=getattr(args, "_episode_stream", None))
+    stage = StageRun(ctx, opts, EmbodimentRegistry())
+    try:
         payload = stage.run()
+    finally:
+        if cache is None:
+            session.__exit__(*sys.exc_info())
     return payload, stage.survivors()
 
 
@@ -273,10 +315,12 @@ def _profile(ctx, args, run_dir, input_dir, episodes, part, plan_stage, guard):
         captioner = make_vlm_captioner(v["endpoint"], v["model"],
                                        timeout_s=vlm_client.timeout_for("caption", v),
                                        api_key_env=v.get("api_key_env"),
-                                       max_in_flight=int(sp.get("caption_concurrency", 8)))
+                                       max_in_flight=int(sp.get("caption_concurrency", 8)),
+                                       thinking=cfg.get("pipeline", {}).get("thinking"))
         llm_ask = vlm_client.make_llm_ask(
             v["endpoint"], v["model"], timeout_s=vlm_client.timeout_for("llm", v),
             api_key_env=v.get("api_key_env"),
+            thinking=cfg.get("pipeline", {}).get("thinking"),
             max_in_flight=max(int(sp.get("llm_concurrency", 16)),
                               int(sp.get("audit_concurrency", 16))))
         payload = run_skill_profile(ctx, run_dir, rows, cfg, captioner, llm_ask, auto_caps,
