@@ -80,7 +80,9 @@ class Janitor:
 
     # -- lifecycle ------------------------------------------------------------------------
     def start(self) -> None:
-        if self.orch.cfg.work_retention_s <= 0 or self._thread is not None:
+        """Runs whatever the work retention: with it off (0) a round still sweeps the
+        source caches a crash left (D44), which are never worth keeping."""
+        if self._thread is not None:
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="orchestr-janitor", daemon=True)
@@ -120,13 +122,13 @@ class Janitor:
 
     def sweep(self, now: int | None = None) -> list[str]:
         """Clean what is due; returns the ids of the tasks whose directories went."""
-        retention_ms = int(self.orch.cfg.work_retention_s * 1000)
-        if retention_ms <= 0:
-            return []
         try:
             self.sweep_source_caches()
         except Exception:  # noqa: BLE001 - the work directories are swept all the same
             log.exception("janitor: source caches")
+        retention_ms = int(self.orch.cfg.work_retention_s * 1000)
+        if retention_ms <= 0:
+            return []
         now = self.orch.clock() if now is None else int(now)
         root = pathlib.Path(self.orch.work_root)
         try:

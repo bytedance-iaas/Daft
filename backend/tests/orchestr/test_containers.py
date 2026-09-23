@@ -177,3 +177,41 @@ def test_a_changed_mcap_file_stops_the_start(daemon, containers):
     assert r.status_code == 409, r.text
     assert r.json()["error"]["code"] == "source_changed"
     assert r.json()["error"]["details"]["sample_keys"] == ["episode_2.mcap"]
+
+
+# ---------------------------------------------------------------- the janitor
+
+
+def test_the_janitor_sweeps_source_caches_a_crash_left(daemon, monkeypatch):
+    """A run removes its source cache when it ends; what a crash left goes at the next
+    janitor round for a task with nothing running - even with the work-directory cleaning
+    off (CURATOR_WORK_RETENTION_DAYS=0): a dataset copy is never worth keeping."""
+    import dataclasses
+
+    d = daemon()
+    j = d.orch.janitor
+    j.stop()
+    root = pathlib.Path(d.rt.settings.source_cache_dir)
+    left = root / "task_crashed" / "mcap-0123456789abcdef" / "mini"
+    left.mkdir(parents=True)
+    (left / "episode_0.mcap").write_bytes(b"\0" * 16)
+    (root / "task_running" / "tmp").mkdir(parents=True)
+    monkeypatch.setattr(j, "_busy", lambda task_id: task_id == "task_running")
+    monkeypatch.setattr(d.orch, "cfg", dataclasses.replace(d.orch.cfg, work_retention_s=0))
+    assert j.sweep() == []
+    assert sorted(p.name for p in root.iterdir()) == ["task_running"]
+
+
+def test_the_janitor_thread_runs_without_the_work_retention():
+    import types
+
+    from daemon.orchestr.janitor import Janitor
+
+    j = Janitor(types.SimpleNamespace(cfg=types.SimpleNamespace(work_retention_s=0,
+                                                                janitor_interval_s=3600.0)))
+    j.start()
+    try:
+        assert j._thread is not None and j._thread.is_alive()
+    finally:
+        j.stop()
+        j._thread.join(timeout=5)
