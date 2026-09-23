@@ -5,6 +5,7 @@ import { getBase } from '../base';
 import { resetDb } from './db';
 import { handlers } from './handlers';
 import { sseHandlers } from './sse';
+import { SUBTASK_SIM } from './subtaskSim';
 
 /**
  * Where service workers are unavailable (embedded browsers, some private modes) the mocks are
@@ -25,6 +26,8 @@ function installFetchFallback(): void {
 
 export async function startMockWorker(): Promise<void> {
   resetDb();
+  // Subtasks (重试, 继续运行, …) run by themselves here: queued → running → finished (D46).
+  SUBTASK_SIM.enabled = true;
   const base = getBase();
   const worker = setupWorker(...handlers, ...sseHandlers);
   try {

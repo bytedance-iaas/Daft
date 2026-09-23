@@ -2,8 +2,10 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import { http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EVENTS_CONFIG, setEventSourceFactory } from '../../api/events';
-import { db } from '../../mocks/db';
+import type { Subtask } from '../../api/types';
+import { db, findTask } from '../../mocks/db';
 import { server } from '../../mocks/server';
+import { finishSubtask } from '../../mocks/subtaskSim';
 import { pick } from '../../test/arco';
 import { FakeEventSource } from '../../test/fakeEventSource';
 import { fieldErrors, requiredFieldLabels } from '../../test/forms';
@@ -55,12 +57,80 @@ describe('任务详情 (07 §4.2)', () => {
     );
     const { user } = renderApp(`/tasks/${MAIN}`);
     expect(await screen.findByRole('heading', { name: /droid 前 50 条质检/ })).toBeInTheDocument();
+    expect(screen.getByTestId('state-tag')).toHaveTextContent(/^错误$/);
     await user.click(screen.getByRole('button', { name: '更多' }));
     await user.click(await screen.findByText(/^重试（2 条）$/));
     const dialog = await screen.findByRole('dialog', { name: '重试出错的条目' });
     await user.click(within(dialog).getByRole('button', { name: '开始重试' }));
-    expect(await screen.findByText('子任务「重试」排队中，完成前不能再建子任务')).toBeInTheDocument();
+    // D46: the header says 运行中 and names the retry (the second one of this task) …
+    await waitFor(() => expect(screen.getByTestId('state-tag')).toHaveTextContent(/^运行中 · 重试 #2$/));
+    expect(await screen.findByText('子任务「重试 #2」排队中，完成前不能再建子任务')).toBeInTheDocument();
+    // … and 分档进度 is the retry's, which has not started yet.
+    expect(screen.getByTestId('stages-subtask')).toHaveTextContent('子任务 · 重试 #2');
+    expect(screen.getByText('子任务还没开始，开始后这里显示它的分档进度')).toBeInTheDocument();
     expect(gets).toBeGreaterThan(1);
+    release();
+  });
+
+  it("a subtask's SSE events move the subtask, never the task's own state or the main run's stages (D46)", async () => {
+    const t = findTask(MAIN)!;
+    const running: Subtask = {
+      id: 'sub_retry2',
+      task_id: MAIN,
+      kind: 'retry',
+      scope: { modules: ['task_success'], episodes: 'errors' },
+      state: 'queued',
+      state_reason: null,
+      progress: { stages: [{ id: 'vlm', state: 'running', done: 1, total: 2 }, ...['final', 'report', 'verify'].map((id) => ({ id, state: 'pending' as const, done: 0, total: 0 }))] },
+      created_at: Date.now(),
+      started_at: null,
+      finished_at: null,
+      result_rev: null,
+    };
+    db.subtasks.get(MAIN)!.push(running);
+    t.active_subtask = running;
+    // Once the page is up, every reload of the task is held: what it shows then comes from the
+    // events alone.
+    let hold = false;
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    server.use(
+      http.get(`*/api/v1/tasks/${MAIN}`, async () => {
+        if (hold) await held;
+      }),
+      http.get(`*/api/v1/tasks/${MAIN}/subtasks`, async () => {
+        if (hold) await held;
+      }),
+    );
+    setEventSourceFactory((url) => new FakeEventSource(url) as unknown as EventSource);
+    renderApp(`/tasks/${MAIN}`);
+    await screen.findByRole('heading', { name: /droid 前 50 条质检/ });
+    await waitFor(() => expect(screen.getByTestId('state-tag')).toHaveTextContent(/^运行中 · 重试 #2$/));
+    hold = true;
+    const es = FakeEventSource.last();
+    act(() => es.open());
+    // The snapshot on connect: the task's own state, then its subtask's.
+    act(() => {
+      es.emit('state', { state: 'completed_with_errors', at: 1 });
+      es.emit('state', { state: 'running', subtask_id: 'sub_retry2', at: 1 });
+    });
+    expect(screen.getByTestId('state-tag')).toHaveTextContent(/^运行中 · 重试 #2$/);
+    expect(screen.getByTestId('stages-subtask')).toHaveTextContent('子任务 · 重试 #2');
+    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('1 / 2');
+    expect(screen.getByTestId('stage-report_generation')).toHaveTextContent('报告生成 等待中');
+    // Its stages arrive as plain progress events while it runs: they are the subtask's.
+    act(() => es.emit('progress', { id: 'vlm', state: 'running', done: 2, total: 2 }));
+    await waitFor(() => expect(screen.getByTestId('stage-vlm')).toHaveTextContent('2 / 2'));
+    // It fails: the task keeps its own state (the parent never goes back, 01 §3) and the main
+    // run's stages were never touched.
+    finishSubtask(MAIN, 'failed');
+    act(() => {
+      es.emit('state', { state: 'failed', subtask_id: 'sub_retry2', reason: '模拟的子任务失败：当前版本原样保留', at: 2 });
+      es.emit('done', { state: 'failed', subtask_id: 'sub_retry2' });
+    });
+    await waitFor(() => expect(screen.getByTestId('state-tag')).toHaveTextContent(/^错误$/));
+    expect(screen.queryByTestId('stages-subtask')).toBeNull();
+    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('49 / 49');
     release();
   });
 

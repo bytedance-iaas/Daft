@@ -1,8 +1,10 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
 import { describe, expect, it } from 'vitest';
-import { findTask } from '../../mocks/db';
+import { EVENTS_CONFIG } from '../../api/events';
+import { db, findTask } from '../../mocks/db';
 import { server } from '../../mocks/server';
+import { finishSubtask } from '../../mocks/subtaskSim';
 import { requiredFieldLabels } from '../../test/forms';
 import { currentLocation, renderApp } from '../../test/render';
 
@@ -42,6 +44,31 @@ describe('任务列表 (07 §4.1)', () => {
     const widowx = row('widowx 回归');
     expect(within(widowx).getByTestId('progress-stage')).toHaveTextContent('VLM 档180 / 430');
     expect(within(widowx).getByTestId('progress-overall')).toHaveTextContent('总进度38%');
+  });
+
+  it('重试 shows 运行中 at once; the list polls while it runs and flips to the recomputed state when it ends (D46)', async () => {
+    EVENTS_CONFIG.pollMs = 60;
+    // Only finished tasks on this page: nothing but the subtask can keep the list polling.
+    db.tasks = db.tasks.filter((t) => ['succeeded', 'completed_with_errors'].includes(t.state));
+    try {
+      const { user } = renderApp('/tasks');
+      await screen.findByRole('link', { name: 'droid 前 50 条质检' });
+      expect(screen.queryByText('有未结束的任务，每 5 秒自动刷新')).toBeNull();
+      await user.click(within(row('droid 前 50 条质检')).getByRole('button', { name: /更多/ }));
+      await user.click(await screen.findByRole('menuitem', { name: '重试（2 条）' }));
+      const dialog = await screen.findByRole('dialog', { name: '重试出错的条目' });
+      await user.click(within(dialog).getByRole('button', { name: '开始重试' }));
+      await waitFor(() => expect(within(row('droid 前 50 条质检')).getByTestId('state-tag')).toHaveTextContent(/^运行中$/));
+      expect(within(row('droid 前 50 条质检')).getByTestId('progress-subtask')).toHaveTextContent('子任务运行中通过 41 · 拒绝 7 · 待补跑 2');
+      expect(screen.getByText('有未结束的任务，每 5 秒自动刷新')).toBeInTheDocument();
+      // The retry ends on the server: the next poll shows the recomputed state, and polling stops.
+      finishSubtask(findTask('task_01HXR2D8')!.id);
+      await waitFor(() => expect(within(row('droid 前 50 条质检')).getByTestId('state-tag')).toHaveTextContent(/^已完成$/));
+      expect(row('droid 前 50 条质检')).toHaveTextContent('通过 43 · 拒绝 7');
+      await waitFor(() => expect(screen.queryByText('有未结束的任务，每 5 秒自动刷新')).toBeNull());
+    } finally {
+      EVENTS_CONFIG.pollMs = 5000;
+    }
   });
 
   it('a task summary shows the episodes skipped for missing source files when there are any (D40)', async () => {

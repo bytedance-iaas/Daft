@@ -10,11 +10,11 @@ import type { Task } from '../../api/types';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
 import { RelTime } from '../../components/RelTime';
-import { StateTag } from '../../components/StateTag';
+import { TaskStateTag } from '../../components/StateTag';
 import { RebindKeysBanner } from '../../features/tasks/RebindKeys';
 import { TaskActionButtons } from '../../features/tasks/TaskActionButtons';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
-import { actionsFor, exportedBefore, isTerminalState, type ActionPlan } from '../../lib/taskView';
+import { actionsFor, activeSubtask, exportedBefore, isTerminalState, subtaskLabel, type ActionPlan } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 import { LogsTab } from './LogsTab';
 import { OverviewTab } from './OverviewTab';
@@ -22,7 +22,7 @@ import { RenameDialog } from './RenameDialog';
 
 /** A task is «live» while it or one of its subtasks can still change on its own. */
 export function isLive(t: Task): boolean {
-  return !isTerminalState(t.state) || Boolean(t.active_subtask);
+  return !isTerminalState(t.state) || Boolean(activeSubtask(t));
 }
 
 /** Header actions: the list's plan without 「查看」 (we are on the page already). */
@@ -75,6 +75,7 @@ export function TaskDetailPage() {
   const t = task.data;
   const subs = subtasks.data?.items ?? [];
   const exported = exportedBefore(t.progress.stages, subs);
+  const running = activeSubtask(t);
   const run = (key: Parameters<typeof actions.run>[0]) => actions.run(key, { id: t.id, name: t.name, held: t.summary?.held, deliveryUri: t.output.uri, exported });
 
   return (
@@ -85,7 +86,7 @@ export function TaskDetailPage() {
         docTitle={t.name}
         titleExtra={
           <Space size={6}>
-            <StateTag state={t.state} pauseReason={t.pause_reason} />
+            <TaskStateTag task={t} subtasks={subs} />
             {t.pending_adjudication ? (
               <Link to={`/tasks/${t.id}/adjudication`}>
                 <Tag color="arcoblue">{zh.taskList.pendingBadge(t.pending_adjudication)}</Tag>
@@ -119,9 +120,7 @@ export function TaskDetailPage() {
         {t.state_reason && (t.state === 'failed' || t.state === 'stopped' || t.state === 'completed_with_errors') ? (
           <Alert type="error" content={`${zh.taskDetail.stateReason}${t.state_reason}`} />
         ) : null}
-        {t.active_subtask ? (
-          <Alert type="info" content={zh.taskDetail.subtaskRunning(zh.taskDetail.subtaskKind[t.active_subtask.kind] ?? t.active_subtask.kind, zh.state[t.active_subtask.state])} />
-        ) : null}
+        {running ? <Alert type="info" content={zh.taskDetail.subtaskRunning(subtaskLabel(running, subs), zh.state[running.state])} /> : null}
         {t.delivery_stale ? (
           <Alert
             type="warning"

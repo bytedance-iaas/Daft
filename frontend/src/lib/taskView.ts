@@ -1,6 +1,7 @@
 // Pure helpers that turn task data into what the list and detail pages show. Unit tested.
 import type { ModuleRegistry, StageProgress, Subtask, TaskListItem, TaskState } from '../api/types';
 import { zh } from '../locales/zh';
+import { subtaskName } from './reportView';
 
 export type Preset = 'full' | 'quick' | 'custom';
 
@@ -213,6 +214,58 @@ const TERMINAL: TaskState[] = ['stopped', 'succeeded', 'completed_with_errors', 
 
 export function isTerminalState(s: TaskState): boolean {
   return TERMINAL.includes(s);
+}
+
+/**
+ * The subtask a task has under way: the full object on the detail page, only its id on a list
+ * row. One whose own state is final is a stale cache entry and counts as none.
+ */
+export function activeSubtask<T extends Subtask | string>(t: { active_subtask?: T | null }): T | null {
+  const a = t.active_subtask;
+  if (!a) return null;
+  return typeof a === 'string' || !isTerminalState(a.state) ? a : null;
+}
+
+/** 「重试 #1」 when the subtask is in the list already, else its kind alone (「重试」). */
+export function subtaskLabel(s: Subtask, subtasks: readonly Subtask[] = []): string {
+  return subtasks.some((x) => x.id === s.id) ? subtaskName(subtasks, s.id) : zh.taskDetail.subtaskKind[s.kind] ?? s.kind;
+}
+
+/** A task's state as the pages show it. */
+export interface DisplayState {
+  state: TaskState;
+  pauseReason: 'user' | 'system' | null;
+  /** The subtask the state belongs to, by name where known; null for the task's own state. */
+  subtask: string | null;
+  /** A subtask is under way (on a list row its name is not known). */
+  bySubtask: boolean;
+}
+
+/**
+ * D46: while a subtask (retry, continue, apply adjudication, re-export) is under way the task
+ * shows 「运行中」 with the subtask named where known; queued counts as running, a paused or
+ * stopping subtask shows that. Display only: the task's own state stays what the state machine
+ * says (01 §3), and once the subtask ends the recomputed state shows again.
+ */
+export function displayState(
+  t: { state: TaskState; pause_reason?: 'user' | 'system' | null; active_subtask?: Subtask | string | null },
+  subtasks: readonly Subtask[] = [],
+): DisplayState {
+  const a = activeSubtask(t);
+  if (!a) return { state: t.state, pauseReason: t.pause_reason ?? null, subtask: null, bySubtask: false };
+  if (typeof a === 'string') return { state: 'running', pauseReason: null, subtask: null, bySubtask: true };
+  const state: TaskState = a.state === 'queued' || a.state === 'running' || a.state === 'created' ? 'running' : a.state;
+  return { state, pauseReason: a.pause_reason ?? null, subtask: subtaskLabel(a, subtasks), bySubtask: true };
+}
+
+/** The stages of a progress document (a subtask's `progress` is a free object in C4: `{stages: [...]}`). */
+export function progressStages(progress: unknown): StageProgress[] {
+  const stages = progress && typeof progress === 'object' ? (progress as { stages?: unknown }).stages : undefined;
+  if (!Array.isArray(stages)) return [];
+  return stages.filter(
+    (s): s is StageProgress =>
+      Boolean(s) && typeof s === 'object' && typeof s.id === 'string' && typeof s.state === 'string' && typeof s.done === 'number' && typeof s.total === 'number',
+  );
 }
 
 export interface ActionPlan {

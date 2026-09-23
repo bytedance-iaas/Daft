@@ -14,7 +14,7 @@ import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { absoluteTime, bytes, compactNumber, percent } from '../../lib/format';
 import { subtaskName } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
-import { groupStages, isTerminalState, stageLabel } from '../../lib/taskView';
+import { activeSubtask, groupStages, isTerminalState, progressStages, stageLabel, subtaskLabel } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 function Stat({ label, value, foot }: { label: string; value: string | number; foot?: string }) {
@@ -78,14 +78,29 @@ function ReportSummary({ task }: { task: Task }) {
 
 /**
  * 分档进度 (07 §4.2): one bar per stage, 终判 + 报告 and 导出 + 交付核验 each shown as one
- * (requester item 11), with counts and time used; no time estimate (item 20).
+ * (requester item 11), with counts and time used; no time estimate (item 20). While a subtask
+ * runs, its own stages (Subtask.progress) replace the finished main run's (D46).
  */
-function StagesCard({ task }: { task: Task }) {
-  const stages = groupStages(task.progress.stages);
+function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask[] }) {
+  const active = activeSubtask(task);
+  const listed = active ? subtasks.find((s) => s.id === active.id) : undefined;
+  const raw = active ? (progressStages(listed?.progress).length ? progressStages(listed?.progress) : progressStages(active.progress)) : task.progress.stages;
+  const stages = groupStages(raw);
   return (
-    <Card title={zh.taskDetail.stages}>
+    <Card
+      title={
+        <Space>
+          {zh.taskDetail.stages}
+          {active ? (
+            <Tag size="small" color="arcoblue" data-testid="stages-subtask">
+              {zh.taskDetail.stagesOfSubtask(subtaskLabel(active, subtasks))}
+            </Tag>
+          ) : null}
+        </Space>
+      }
+    >
       {!stages.length ? (
-        <Typography.Text type="secondary">{zh.taskDetail.noStages}</Typography.Text>
+        <Typography.Text type="secondary">{active ? zh.taskDetail.subtaskNoStages : zh.taskDetail.noStages}</Typography.Text>
       ) : (
         <div data-testid="stages">
           {stages.map((s) => {
@@ -450,7 +465,7 @@ export function OverviewTab({ task, subtasks, timeline }: { task: Task; subtasks
   return (
     <div className="card-gap">
       <ReportSummary task={task} />
-      <StagesCard task={task} />
+      <StagesCard task={task} subtasks={subtasks} />
       <TokensCard task={task} subtasks={subtasks} />
       <ModulesCard task={task} plan={plan.data} digest={digest} />
       <TimelineCard task={task} entries={timeline} subtasks={subtasks} />

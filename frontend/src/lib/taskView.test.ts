@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { registry } from '../mocks/world';
-import type { StageProgress } from '../api/types';
-import { actionsFor, currentStage, exportedBefore, groupStages, mergedStageState, moduleProblems, overallPercent, presetOf, progressStageLabel, stageLabel } from './taskView';
+import type { StageProgress, Subtask } from '../api/types';
+import {
+  actionsFor,
+  activeSubtask,
+  currentStage,
+  displayState,
+  exportedBefore,
+  groupStages,
+  mergedStageState,
+  moduleProblems,
+  overallPercent,
+  presetOf,
+  progressStageLabel,
+  progressStages,
+  stageLabel,
+} from './taskView';
 
 const all = registry.modules.map((m) => m.id);
 const without = (...ids: string[]) => all.filter((id) => !ids.includes(id));
@@ -115,6 +129,38 @@ describe('merged stages (requester item 11)', () => {
     expect(overallPercent(groupStages([stage('numeric', 'succeeded', 5, 5), stage('frame', 'skipped'), stage('vlm', 'pending')]))).toBe(50);
     expect(overallPercent(groupStages(allDoneStages()))).toBe(100);
     expect(overallPercent([])).toBe(0);
+  });
+});
+
+describe('display state while a subtask runs (D46)', () => {
+  const sub = (id: string, kind: Subtask['kind'], state: Subtask['state'], extra: Partial<Subtask> = {}): Subtask => ({ id, task_id: 't', kind, scope: {}, state, created_at: 1, ...extra });
+  const retry1 = sub('s1', 'retry', 'succeeded');
+  const retry2 = sub('s2', 'retry', 'queued');
+
+  it("the task's own state when nothing runs, or when the cached subtask already ended", () => {
+    expect(displayState({ state: 'completed_with_errors', active_subtask: null })).toEqual({ state: 'completed_with_errors', pauseReason: null, subtask: null, bySubtask: false });
+    expect(displayState({ state: 'paused', pause_reason: 'system' })).toMatchObject({ state: 'paused', pauseReason: 'system', subtask: null });
+    expect(displayState({ state: 'succeeded', active_subtask: sub('s2', 'retry', 'succeeded') })).toMatchObject({ state: 'succeeded', bySubtask: false });
+    expect(activeSubtask({ active_subtask: sub('s2', 'retry', 'failed') })).toBeNull();
+  });
+
+  it('运行中 named after the subtask where known: its ordinal once listed, else its kind', () => {
+    expect(displayState({ state: 'completed_with_errors', active_subtask: retry2 }, [retry1, retry2])).toEqual({ state: 'running', pauseReason: null, subtask: '重试 #2', bySubtask: true });
+    expect(displayState({ state: 'completed_with_errors', active_subtask: retry2 })).toMatchObject({ state: 'running', subtask: '重试' });
+    expect(displayState({ state: 'stopped', active_subtask: sub('s3', 'resume', 'running') })).toMatchObject({ state: 'running', subtask: '继续运行' });
+    // A list row only carries the id.
+    expect(displayState({ state: 'succeeded', active_subtask: 's9' })).toEqual({ state: 'running', pauseReason: null, subtask: null, bySubtask: true });
+  });
+
+  it('a subtask paused by the system or being stopped shows that, still named', () => {
+    expect(displayState({ state: 'succeeded', active_subtask: sub('s4', 'reexport', 'paused', { pause_reason: 'system' }) })).toEqual({ state: 'paused', pauseReason: 'system', subtask: '重新导出', bySubtask: true });
+    expect(displayState({ state: 'succeeded', active_subtask: sub('s4', 'reexport', 'stopping') })).toMatchObject({ state: 'stopping', subtask: '重新导出' });
+  });
+
+  it('reads the stages of a subtask progress document defensively', () => {
+    expect(progressStages({ stages: [stage('vlm', 'running', 1, 2), { id: 'x' }, null] })).toEqual([stage('vlm', 'running', 1, 2)]);
+    expect(progressStages(null)).toEqual([]);
+    expect(progressStages({ stages: 'nope' })).toEqual([]);
   });
 });
 
