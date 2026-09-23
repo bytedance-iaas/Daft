@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 
@@ -215,3 +216,91 @@ def test_closed_repository_refuses_writes(tmp_path):
     repo.close()
     with pytest.raises(RuntimeError, match="closed"):
         repo.append_event(actor="a", action="b", resource="r", at=T0)
+
+
+def _key(name: str) -> P.Credential:
+    return P.Credential(id="", name=name, kind="tos", payload_enc=b"x", key_version=1,
+                        payload_meta={})
+
+
+def _task_spec(name: str) -> P.TaskCreate:
+    return P.TaskCreate(name=name, input_source="tos", input_uri="tos://b/x", output_uri="tos://b/o",
+                        delivery_key="tos://b/o", episode_selector={"mode": "all"}, params={},
+                        modules=[])
+
+
+def test_a_generated_id_that_collides_is_drawn_again(tmp_path, monkeypatch):
+    """D45: ids are 9 random letters. Whatever the repository makes (task, sub, ds, pf, cred,
+    vb, vm) is drawn again when another row has it - the insert never fails on it."""
+    from daemon.repo import sqlite as S
+
+    repo = _open(tmp_path)
+    try:
+        cred = repo.create_credential(_key("k"))
+        backend = repo.create_vlm_backend(P.VlmBackend(
+            id="", name="b", kind="ark", endpoint="https://ark.example", credential_id=None,
+            models=[P.VlmModel(id="", backend_id="", model_name="m")]), None)
+        first = repo.create_task(_task_spec("first"))
+        repo.update_task_state(first.id, {"queued"}, "running", at=T0)
+        repo.update_task_state(first.id, {"running"}, "completed_with_errors", at=T0)
+        sub = repo.create_subtask(P.Subtask(id="", task_id=first.id, kind="retry", scope={},
+                                            state="queued"))
+        ds, _ = repo.register_dataset(P.Dataset(
+            id="", name="x", source="tos", uri="tos://b/x", preflight={}, meta_fingerprint="m",
+            source_fingerprint={}, preflighted_at=T0))
+        pf = repo.put_preflight(request_hash="h", result={}, at=T0)
+        taken = {"task": first.id, "sub": sub.id, "ds": ds.id, "pf": pf, "cred": cred.id,
+                 "vb": backend.id, "vm": backend.models[0].id}
+        draws: list[str] = []
+        fresh = S.new_id
+
+        def colliding_first(prefix: str) -> str:
+            """Hands out the taken id on a prefix's first draw, a fresh one after."""
+            value = taken.pop(prefix, None) or fresh(prefix)
+            draws.append(value)
+            return value
+
+        monkeypatch.setattr(S, "new_id", colliding_first)
+        task = repo.create_task(_task_spec("second"))
+        repo.update_task_state(task.id, {"queued"}, "running", at=T0)
+        repo.update_task_state(task.id, {"running"}, "completed_with_errors", at=T0)
+        made = {
+            "task": task.id,
+            "sub": repo.create_subtask(P.Subtask(id="", task_id=task.id, kind="retry", scope={},
+                                                 state="queued")).id,
+            "ds": repo.register_dataset(P.Dataset(
+                id="", name="y", source="tos", uri="tos://b/y", preflight={},
+                meta_fingerprint="m", source_fingerprint={}, preflighted_at=T0))[0].id,
+            "pf": repo.put_preflight(request_hash="h2", result={}, at=T0),
+            "cred": repo.create_credential(_key("k2")).id,
+        }
+        b2 = repo.create_vlm_backend(P.VlmBackend(
+            id="", name="b2", kind="ark", endpoint="https://ark.example", credential_id=None,
+            models=[P.VlmModel(id="", backend_id="", model_name="m")]), None)
+        made.update(vb=b2.id, vm=b2.models[0].id)
+        assert taken == {}                                    # every prefix collided once
+        assert len(draws) == 14                               # ... and was drawn once more
+        for prefix, new in made.items():
+            assert re.fullmatch(rf"{prefix}-[a-z]{{9}}", new), (prefix, new)
+        assert repo.get_task(first.id).name == "first" and repo.get_task(task.id).name == "second"
+        assert repo.get_credential(cred.id).name == "k"
+        assert repo.get_credential(made["cred"]).name == "k2"
+    finally:
+        repo.close()
+
+
+def test_a_broken_generator_gives_up_instead_of_looping(tmp_path, monkeypatch):
+    from daemon.repo import sqlite as S
+    from daemon.util import ID_ATTEMPTS
+
+    repo = _open(tmp_path)
+    try:
+        t = repo.create_task(_task_spec("one"))
+        calls = []
+        monkeypatch.setattr(S, "new_id", lambda prefix: calls.append(prefix) or t.id)
+        with pytest.raises(RuntimeError, match="no free task id"):
+            repo.create_task(_task_spec("two"))
+        assert len(calls) == ID_ATTEMPTS
+        assert repo.list_tasks(page=1, page_size=5).total == 1          # nothing half-written
+    finally:
+        repo.close()

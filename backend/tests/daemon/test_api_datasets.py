@@ -1,6 +1,8 @@
 """Registered datasets and the overview (C4 1.1, D36, D37); every body is validated against C4."""
 from __future__ import annotations
 
+import re
+
 from curation.contracts import schemas
 from daemon.repo import protocol as P
 from daemon.transitions import change_task_state
@@ -197,6 +199,38 @@ def test_unknown_datasets_and_neighbouring_paths(client_for):
         assert_error(c.get(path), "validation_failed")        # and wants their parameters
     assert_error(c.patch("/api/v1/datasets/ds_missing", json={"name": "x"}), "not_found")
     assert_error(c.delete("/api/v1/datasets/ds_missing", headers=JSON), "not_found")
+    body = assert_error(c.get("/api/v1/datasets/ds-missingab"), "not_found")    # D45 style
+    assert body["error"]["message"] != UNKNOWN
+    for not_an_id in ("ds-missing", "ds-MISSINGAB", "ds-missingabc"):
+        assert assert_error(c.get(f"/api/v1/datasets/{not_an_id}"), "not_found")["error"][
+            "message"] == UNKNOWN
+
+
+def test_both_id_styles_are_routed(client_for):
+    """D45: new registrations get ds-<9 letters>; one made before keeps ds_<...> and its links
+    still open, update and delete it."""
+    c = client_for()
+    rt = _rt(c)
+    new = seed_dataset(rt.repo, "tos://bucket/datasets/new")
+    old = P.Dataset(id="ds_01HXR2D8QZ7N4Y0M5K3J2H1G0F", name="old", source="tos",
+                    uri="tos://bucket/datasets/old", region="cn-beijing",
+                    preflight=new.preflight, meta_fingerprint=META_DIGEST,
+                    source_fingerprint=new.source_fingerprint, preflighted_at=T0)
+    old, _ = rt.repo.register_dataset(old)
+    assert re.fullmatch(r"ds-[a-z]{9}", new.id)
+    for ds in (new, old):
+        r = c.get(f"/api/v1/datasets/{ds.id}")
+        assert r.status_code == 200, r.text
+        assert_dataset_detail(r.json())
+        assert r.json()["id"] == ds.id
+        r = c.patch(f"/api/v1/datasets/{ds.id}", json={"note": "改过"})
+        assert r.status_code == 200 and r.json()["note"] == "改过"
+    listed = c.get("/api/v1/datasets").json()["items"]
+    assert {x["id"] for x in listed} == {new.id, old.id}
+    for item in listed:
+        assert_schema("DatasetItem", item)
+    for ds in (new, old):
+        assert c.delete(f"/api/v1/datasets/{ds.id}", headers=JSON).status_code == 204
 
 
 # ---------------------------------------------------------------------------

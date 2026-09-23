@@ -1210,7 +1210,7 @@ export interface components {
         /** @enum {unknown} */
         DatasetFormat: "lerobot_v2" | "lerobot_v3" | "unsupported";
         DatasetItemFields: {
-            /** @description ds_ followed by a generated id */
+            /** @description ds- and 9 lowercase letters (D45); registrations made before 1.10.0 keep ds_ and their old id */
             id: string;
             name: string;
             /** @enum {unknown} */
@@ -1377,6 +1377,7 @@ export interface components {
          * @enum {unknown}
          */
         UploadKind: "eef_trajectory" | "eef_observation_seeds";
+        /** @description upl- and 9 lowercase letters (D45); uploads made before 1.10.0 keep upl_ and hex digits */
         UploadId: string;
         UploadIssue: {
             /** @description JSON path inside the file */

@@ -44,6 +44,16 @@ describe('fixtures match the contract', () => {
     db.tasks.forEach((t) => expectValid(S('TaskListItem'), toListItem(t)));
   });
 
+  it('ids of both styles fit the contract, look-alikes do not (D45)', () => {
+    const valid = (name: string, value: unknown) => contract.validator(S(name))(value);
+    const upload = (id: string) => valid('UploadId', id);
+    expect(['upl-kqzmrtbwe', 'upl_0123456789'].every(upload)).toBe(true);
+    expect(['upl-kqzmrtbw', 'upl-KQZMRTBWE', 'upl-kqzmrtbwex', 'upl_xyz'].some(upload)).toBe(false);
+    const dataset = (id: string) => valid('DatasetDetail', { ...db.datasets[0], id });
+    expect(['ds-kqzmrtbwe', 'ds_droid200', 'ds_01HXR2D8QZ7N4Y0M5K3J2H1G0F'].every(dataset)).toBe(true);
+    expect(['ds-kqzmrtbw', 'ds_with-dash', 'task-kqzmrtbwe'].some(dataset)).toBe(false);
+  });
+
   it('preflight results for every dataset profile and input combination', () => {
     for (const p of DATASET_PROFILES) {
       for (const opts of [{}, { vlmBackend: 'ark-prod' }, { embodiment: 'franka' }, { embodiment: 'koch' }]) {

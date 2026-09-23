@@ -1288,7 +1288,7 @@ const uploadHandlers = [
       if (!Array.isArray(doc) || !doc.length) return err(400, 'validation_failed', '种子文件应是 observation 行的 JSON 数组', { errors: [{ field: null, problem: 'expected an array' }] });
       summary = { rows: doc.length, samples: new Set((doc as { sample_id: string }[]).map((r) => r.sample_id)).size };
     }
-    const id = `upl_${(await sha256Hex(text + clock())).slice(0, 20)}`;
+    const id = nextId('upl');
     const up = { upload_id: id, handle: `upload:${id}`, kind, name, sha256: await sha256Hex(text), size_bytes: text.length, created_at: clock(), validation: { valid: true, summary, warnings: [] } };
     uploads.set(id, up);
     return HttpResponse.json(up, { status: 201 });

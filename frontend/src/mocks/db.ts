@@ -110,9 +110,20 @@ export function resetDb(now: number = Date.now()): MockDb {
   return db;
 }
 
+/**
+ * A new record id the way the Daemon makes them since D45: `<prefix>-<9 lowercase letters>`.
+ * The letters spell a counter (base 26), so the mock world stays deterministic; the seeded
+ * records keep their older `<prefix>_…` ids, as real ones do.
+ */
 export function nextId(prefix: string): string {
   db.seq += 1;
-  return `${prefix}_${db.seq.toString(36).toUpperCase().padStart(6, '0')}`;
+  let n = db.seq;
+  let letters = '';
+  for (let i = 0; i < 9; i += 1) {
+    letters = String.fromCharCode(97 + (n % 26)) + letters;
+    n = Math.floor(n / 26);
+  }
+  return `${prefix}-${letters}`;
 }
 
 export function clock(): number {

@@ -29,12 +29,15 @@ import threading
 import typing
 
 from ..repo import protocol as P
+from ..util import id_regex
 from .delivery import DeliveryError, sync_run_dir
 from .workdir import PRIVATE, WorkDir, read_json, write_json_atomic
 
 log = logging.getLogger("daemon.orchestr")
 
-_TASK_DIR = re.compile(r"^task_[0-9A-Z]{26}$")
+#: Work directories are named after their task: ``task-<9 letters>``, or ``task_<26 Crockford
+#: base32 characters>`` for tasks made before D45.
+_TASK_DIR = re.compile(rf"^{id_regex('task', r'task_[0-9A-Z]{26}')}$")
 _ALL_STATES = typing.get_args(P.TaskState)
 
 

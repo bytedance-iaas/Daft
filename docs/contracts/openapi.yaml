@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.8.0
+  version: 1.10.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -14,6 +14,9 @@ info:
     `server.publicBaseUrl` is configured, otherwise relative paths with `absolute: false`.
     Write endpoints accept only `application/json` - send the header on every write, even without
     a body - and cross-site writes are refused; there is no CORS.
+    Ids are opaque strings. Records made since 1.10.0 get `<prefix>-<9 lowercase letters>` (task,
+    sub, ds, pf, cred, vb, vm, upl; e.g. `task-kqzmrtbwe`, D45); records made before keep their
+    `<prefix>_...` id, and both work everywhere. Ids carry no time: lists sort by creation time.
 
     1.1.0 (2026-09-21): dataset registry (D36): `/datasets` now lists registered datasets and the
     TOS / cache-bucket listing moved to `/datasets/browse`; `/overview`; starting a task re-checks
@@ -73,6 +76,9 @@ info:
     value in `TaskCreate.modules[].params`; `GET /uploads/{upload_id}` reads it back. Creating a
     task that selects a module needing `eef_input` preflights that module against the dataset with
     the uploaded file; the task's preflight snapshot carries that entry.
+
+    1.10.0 (2026-09-23): new ids are `<prefix>-<9 lowercase letters>` (D45): the patterns of
+    dataset ids, `UploadId` and upload handles take both formats.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1803,7 +1809,10 @@ components:
       required: [id, name, source, uri, region, format, episode_count, robot_type, check_state, checked_at,
                  preflighted_at, created_at, last_task]
       properties:
-        id: {type: string, pattern: "^ds_", description: "ds_ followed by a generated id"}
+        id:
+          type: string
+          pattern: "^(ds-[a-z]{9}|ds_[0-9A-Za-z]+)$"
+          description: "ds- and 9 lowercase letters (D45); registrations made before 1.10.0 keep ds_ and their old id"
         name: {type: string}
         source: {enum: [tos, public, local]}
         uri: {type: string}
@@ -2041,7 +2050,8 @@ components:
       description: the x-upload-kind of a file parameter (registry 1.5)
     UploadId:
       type: string
-      pattern: "^upl_[0-9a-z]{10,40}$"
+      pattern: "^(upl-[a-z]{9}|upl_[0-9a-z]{10,40})$"
+      description: "upl- and 9 lowercase letters (D45); uploads made before 1.10.0 keep upl_ and hex digits"
     UploadIssue:
       type: object
       additionalProperties: false
@@ -2064,7 +2074,7 @@ components:
         upload_id: {$ref: "#/components/schemas/UploadId"}
         handle:
           type: string
-          pattern: "^upload:upl_[0-9a-z]{10,40}$"
+          pattern: "^upload:(upl-[a-z]{9}|upl_[0-9a-z]{10,40})$"
           description: the value of the file parameter in TaskCreate.modules[].params
         kind: {$ref: "#/components/schemas/UploadKind"}
         name: {type: string}

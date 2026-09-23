@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 
 import pytest
 
@@ -195,18 +196,38 @@ def test_a_subtask_on_a_cleaned_task_restores_first_and_says_what_is_missing(wor
 
 
 def test_directories_without_a_task_go_when_old(world):
+    """Both id styles name work directories: ``task-<9 letters>`` (D45) and, for tasks made
+    before, ``task_<26 Crockford characters>``. Look-alikes are never touched."""
     d = world
     root = pathlib.Path(d.rt.settings.work_dir)
     old, fresh = root / ("task_" + "0" * 26), root / ("task_" + "1" * 26)
-    other = root / "not-a-task"
-    for p in (old, fresh, other):
+    new_old, new_fresh = root / "task-oldoldold", root / "task-newnewnew"
+    others = [root / name for name in ("not-a-task", "task-ABCDEFGHI", "task-abcdefgh",
+                                       "task-abcdefghij", "task_" + "0" * 25)]
+    for p in (old, fresh, new_old, new_fresh, *others):
         (p / ".orchestr").mkdir(parents=True)
         (p / "plan.json").write_text("{}")
     ancient = (now_ms() - 30 * DAY) / 1000
-    for p in (old, old / ".orchestr", old / "plan.json", other, other / "plan.json"):
-        os.utime(p, (ancient, ancient))
-    assert d.orch.janitor.sweep() == [old.name]
-    assert not old.exists() and fresh.exists() and other.exists()
+    for p in (old, new_old, *others):
+        for q in (p, p / ".orchestr", p / "plan.json"):
+            os.utime(q, (ancient, ancient))
+    assert d.orch.janitor.sweep() == sorted([old.name, new_old.name])
+    assert not old.exists() and not new_old.exists()
+    assert fresh.exists() and new_fresh.exists() and all(p.exists() for p in others)
+
+
+def test_a_task_made_before_d45_is_cleaned_like_the_others(world, monkeypatch):
+    from daemon.repo import sqlite as S
+
+    d = world
+    legacy, fresh = "task_01HXR2D8QZ7N4Y0M5K3J2H1G0F", S.new_id
+    with monkeypatch.context() as m:
+        m.setattr(S, "new_id", lambda prefix: legacy if prefix == "task" else fresh(prefix))
+        task = _finished(d, ended_at=now_ms() - 10 * DAY)
+    newer = _finished(d, ended_at=now_ms() - 10 * DAY, run_id="20260901-130000")
+    assert task.id == legacy and re.fullmatch(r"task-[a-z]{9}", newer.id)
+    assert d.orch.janitor.sweep() == sorted([legacy, newer.id])
+    assert WorkDir(d.rt.settings.work_dir, legacy).cleaned_mark.is_file()
 
 
 def test_the_retention_setting(monkeypatch):

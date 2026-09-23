@@ -70,7 +70,7 @@ describe('数据集列表 (07 §4.4)', () => {
     await pick(user, '访问密钥', 'readonly-tos', drawer);
     expect(await within(drawer).findByText(/LeRobot v2 · 120 条 episode/)).toBeInTheDocument();
     await user.click(within(drawer).getByRole('button', { name: '保存' }));
-    await waitFor(() => expect(currentLocation()).toMatch(/^\/datasets\/ds_/));
+    await waitFor(() => expect(currentLocation()).toMatch(/^\/datasets\/ds-[a-z]{9}\b/));
     expect(seen[0]).toEqual({ input: { source: 'tos', uri: 'tos://pai-kit-datasets/lerobot/brand_new', region: 'cn-beijing', credential: 'readonly-tos' } });
     expect(await screen.findByText('已添加')).toBeInTheDocument();
     server.events.removeAllListeners();
