@@ -308,7 +308,7 @@ D44–D48 来自 2026-09-23 需求方的第二轮修改意见。后续设计一�
 | D45 | 新建记录的 ID 改为「前缀-9 位小写字母」（如 `task-kqzmrtbwe`），前缀照旧（task、sub、ds、pf、cred、vb、vm、upl）；已有记录保留原 ID，两种格式并存，旧链接照常可用。ID 不再按时间排序，列表一律按创建时间排，ID 只用来打破平局 |
 | D46 | 子任务（重试、继续运行、执行裁决、重新导出）运行期间，任务在界面上显示为「运行中」并注明是哪个子任务；这只是显示，状态机不变（01 §3 的「父任务状态不回退」照旧），子任务结束后显示重算后的终态 |
 | D47 | 人工裁决的入口常驻：任务一旦有结果，任务详情页头、报告页头、任务列表的「更多」里都有「人工裁决」（有待裁条目时带数量），只剩可复议条目时也能进。不加侧边栏入口，裁决仍不跨任务（D32） |
-| D48 | dataverse（`galbot` 命名空间、`galbot-dataverse-apig`）里的 v1 curation 由 curator-v2 替换：dataverse 的 release 保留原配置、只关掉 curator 组件；v2 用本仓库的 Chart 单独安装，挂在同一域名的 `/curation`；数据盘与主密钥从 `curation` 命名空间的 v2 实例迁过来，登录沿用 dataverse 与 viewer 共用的 htpasswd；迁移后旧实例下线 |
+| D48 | dataverse（`galbot` 命名空间、`galbot-dataverse-apig`）里的 v1 curation 由 curator-v2 替换：dataverse 的 release 保留原配置、只关掉 curator 组件；v2 用本仓库的 Chart 单独安装，挂在同一域名的 `/curation`；数据从 `curation` 命名空间的 v2 实例拷过来、主密钥复制过来（旧数据盘在 cn-beijing-e，galbot 的工作负载跑在只有 b / c / d 区的 VCI 上，所以不挪盘：新盘用 `ebs-essd`，停机拷约 100 MB 数据，旧盘留作回滚；2026-09-23 核对集群后需求方确认），v2 与 dataverse 其它组件一样跑 VCI，登录沿用 dataverse 与 viewer 共用的 htpasswd；验收后旧实例下线 |
 
 ### 7.1 评审中提出、需求方已确认的取值
 

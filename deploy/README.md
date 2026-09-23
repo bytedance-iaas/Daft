@@ -365,105 +365,107 @@ helm template curator deploy/charts/curator -n curator -f curator-values.yaml
 
 ## 12. 替换 dataverse 的 curation 组件（galbot，D48）
 
-dataverse（rerun 仓库 `deploy/helm/dataverse`）自带一个 v1 的 curation：StatefulSet `<dataverse release>-curation`，数据放在
-emptyDir（没有 PVC），Ingress `<dataverse release>-web` 把同一域名的 `/curation` 转给它的 7860 端口，登录用 viewer 共用的
-htpasswd（Secret `secrets.existingSecret` 里的 `web_htpasswd` 键）。D48 的做法：dataverse 的 release 保留原配置、只关掉
-curator；v2 用本 Chart 单独装进同一个命名空间，Ingress 挂到同一个 APIG、同一个域名的 `/curation`；数据盘和主密钥从
-`curation` 命名空间的 v2 实例迁过来；登录直接用 dataverse 的那张 htpasswd 表，同域一次登录两边通用。
+dataverse（rerun 仓库 `deploy/helm/dataverse`）自带一个 v1 的 curation：StatefulSet `galbot-dataverse-curation`，数据放在
+emptyDir（没有 PVC），web Ingress 把同一域名的 `/curation` 转给它的 7860 端口，登录用 viewer 共用的 htpasswd
+（Secret `dataverse-secrets` 的 `web_htpasswd` 键）。D48 的做法：dataverse 的 release 保留原配置、只关掉 curator；
+v2 用本 Chart 单独装进 galbot，Ingress 挂到同一个 APIG、同一个域名的 `/curation`；`curation` 命名空间那套 v2 的数据
+拷过来（盘不挪，原因见下），主密钥复制过来；登录直接用 dataverse 的那张 htpasswd 表，同域一次登录两边通用。
 
-下面以 dataverse release `galbot-dataverse`、命名空间 `galbot`、旧 v2 release `curator-v2`（命名空间 `curation`）为例，
-名字以集群上查到的为准。密钥只经管道在 kubectl 之间传，不打印、不落盘。
+2026-09-23 在集群上核对过的事实（名字照此写，变了以集群为准）：
 
-**0. 先看清楚（只读）**
+| 项 | 值 |
+|---|---|
+| dataverse | release `galbot-dataverse`，Chart `dataverse-0.1.7`；rerun 仓库 `deploy/helm/dataverse`（dev）按线上的值渲染与线上清单逐字一致 |
+| 关掉 curator 删掉的 | StatefulSet 与 Service `galbot-dataverse-curation`、ConfigMap `galbot-dataverse-curation-site`、web Ingress 的 `/curation` 路径；viewer、catalog、APIG 不动 |
+| APIG | 实例 `galbot-dataverse-apig`（由 dataverse Chart 创建，只监听 galbot），ingressClass `galbot-dataverse-apig`，host `galbot-dataverse-web.apig.internal`；Ingress 不需要绑定注解 |
+| 调度 | galbot 的 Pod 都跑在 VCI 上（Pod 注解 `vke.volcengine.com/burst-to-vci: enforce`、`vci.vke.volcengine.com/preferred-instance-family: vci.n3a`）；VCI 虚拟节点只在 cn-beijing-b / c / d；VCI 能挂 `ebs-essd` 块存储（catalog 就是）；VCI 的系统盘固定 40 GiB |
+| 旧 v2 | release `curator-v2`（命名空间 `curation`），数据盘 `data-curator-v2-0`（`ebs-ssd` 100Gi，**在 cn-beijing-e**，实际数据约 100 MB），主密钥 Secret `curator-v2-master-key` |
 
-```bash
-helm -n galbot list                                     # dataverse 的 release 名与 Chart 版本
-helm -n galbot get values galbot-dataverse              # secrets.existingSecret、apig.*、vci.enabled、curator.*
-kubectl -n galbot get ingress galbot-dataverse-web -o yaml | grep -E 'ingressClassName|host:|apig-instance-name|loadbalancer-id'
-kubectl -n galbot get pod -o wide                       # dataverse 的 Pod 在普通节点还是 VCI 虚拟节点上
-kubectl -n curation get pvc data-curator-v2-0 -o wide   # 要迁的盘：PV 名、存储类、容量
-kubectl get pv <pv 名> -o jsonpath='{.spec.nodeAffinity}{"\n"}'   # 块存储卷在哪个可用区
-```
+**为什么拷数据、不挪盘**：块存储盘只能挂在同一可用区的节点上。旧盘在 e 区，e 区没有 VCI 节点，能调度的普通节点只有一台，
+把盘挪过去 v2 就只能钉在那台机器上（它排水 / 维护时 v2 起不来），也和 dataverse 其它组件跑 VCI 不一致。
+数据只有约 100 MB，停机拷一遍即可，旧盘留作回滚。
 
-v2 的 Pod 要挂块存储卷，必须调度到这个可用区的普通节点上；如果 galbot 的工作负载都跑在 VCI 上，给 v2 配
-`nodeSelector` / `tolerations` 落到普通节点。
+密钥只经管道在 kubectl 之间传，不打印、不落盘。
 
-**1. 停掉旧实例，放出数据盘**
-
-```bash
-kubectl -n curation scale statefulset curator-v2 --replicas=0     # SIGTERM：运行中的任务置系统暂停，到新 Pod 上自动续跑
-kubectl -n curation wait --for=delete pod/curator-v2-0 --timeout=5m
-PV=$(kubectl -n curation get pvc data-curator-v2-0 -o jsonpath='{.spec.volumeName}')
-kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'   # 删 PVC 时盘不跟着删
-kubectl -n curation delete pvc data-curator-v2-0
-kubectl patch pv "$PV" --type json -p '[{"op":"remove","path":"/spec/claimRef"}]'   # Released → Available
-```
-
-**2. 在 galbot 里把盘认领回来，复制主密钥**
-
-```bash
-cat <<YAML | kubectl -n galbot apply -f -
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: data-curator-v2-0          # 与 StatefulSet 模板同名，Pod 起来直接用它
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: <旧 PVC 的存储类>
-  resources: {requests: {storage: <旧 PVC 的容量>}}
-  volumeName: $PV
-YAML
-kubectl -n galbot get pvc data-curator-v2-0             # Bound
-kubectl -n curation get secret <主密钥 Secret> -o json \
-  | jq '{apiVersion, kind, type, data, metadata: {name: .metadata.name}}' \
-  | kubectl -n galbot apply -f -                         # 只经管道，不打印
-```
-
-**3. 关掉 dataverse 的 curator**（同版本 Chart、沿用原值，只改这一项；v1 的 StatefulSet、Service、站点配置和 Ingress 里
-的 `/curation` 路径一起摘掉，viewer、catalog、APIG 不动）
-
-```bash
-helm -n galbot upgrade galbot-dataverse <与已装版本相同的 dataverse Chart> --reuse-values --set curator.enabled=false
-kubectl -n galbot get statefulset,svc,ingress            # 不再有 galbot-dataverse-curation；web Ingress 没有 /curation 了
-```
-
-**4. 装 v2**（`galbot-values.yaml`，只写和缺省不同的部分）
+**1. galbot 的 values**（`galbot-values.yaml`，只写和缺省不同的部分）
 
 ```yaml
 image: {repository: iaas-us-cn-beijing.cr.volces.com/physicalai/robot_curator, tag: "<提交号>"}
 server:
   basePath: /curation
-  publicBaseUrl: https://<dataverse 的域名>
-  tosEndpoint: tos-cn-beijing.ivolces.com
+  publicBaseUrl: https://<dataverse 的公网域名>
+  tosEndpoint: tos-cn-beijing.ivolces.com          # VCI 在 VPC 内，走内网端点
 auth:
   mode: htpasswd
-  htpasswdSecret: <dataverse 的 secrets.existingSecret>
+  htpasswdSecret: dataverse-secrets
   htpasswdKey: web_htpasswd
-masterKey: {existingSecret: <复制过来的主密钥 Secret>}
+masterKey: {existingSecret: curator-v2-master-key}
 persistence:
-  data: {storageClass: <旧 PVC 的存储类>, size: <旧 PVC 的容量>}   # 与认领的 PVC 一致，StatefulSet 直接复用 data-curator-v2-0
+  data: {storageClass: ebs-essd, size: 100Gi}
+  scratch: {type: pvc, storageClass: ebs-essd, size: 200Gi}   # VCI 系统盘只有 40 GiB，导出的临时文件放块存储
+podAnnotations:
+  vke.volcengine.com/burst-to-vci: enforce
+  vci.vke.volcengine.com/preferred-instance-family: vci.n3a
+resources:                                          # 与 dataverse 里 v1 的 curation 相同
+  requests: {cpu: "16", memory: 128Gi}
+  limits: {cpu: "32", memory: 256Gi}
+publicDatasets: {bucket: ai-infra, region: cn-beijing}
+pipelineConfigOverride:
+  checks: {task_success: {vlm: {timeouts_s: {caption: 180}}}}
 ingress:
-  enabled: true
-  className: <dataverse web Ingress 的 ingressClassName>
-  annotations:
-    ingress.vke.volcengine.com/apig-instance-name: <照 dataverse web Ingress 抄>
-    ingress.vke.volcengine.com/loadbalancer-id: <照 dataverse web Ingress 抄>
-  hosts: [{host: <dataverse 的域名>}]
+  enabled: false                                    # 第 5 步再打开，免得和 dataverse 的 /curation 同时存在
+  className: galbot-dataverse-apig
+  hosts: [{host: galbot-dataverse-web.apig.internal}]
 ```
+
+**2. 复制主密钥，装 v2（维护模式：Pod 只挂盘、不起 Daemon）**
 
 ```bash
-helm -n galbot install curator-v2 deploy/charts/curator -f galbot-values.yaml
-kubectl -n galbot rollout status statefulset/curator-v2 --timeout=10m
-kubectl -n galbot get ingress curator-v2                 # ADDRESS 有值
+kubectl -n curation get secret curator-v2-master-key -o json \
+  | jq '{apiVersion, kind, type, data, metadata: {name: .metadata.name}}' \
+  | kubectl -n galbot apply -f -                                     # 只经管道，不打印
+helm -n galbot install curator-v2 deploy/charts/curator -f galbot-values.yaml --set maintenance.enabled=true
+kubectl -n galbot get pod curator-v2-0 -o wide                       # Running，节点是 vci-node1-*
+kubectl -n galbot get pvc                                            # data-curator-v2-0 等 Bound
 ```
 
-**5. 验收**
+**3. 旧实例进维护模式，拷数据**
+
+```bash
+helm -n curation upgrade curator-v2 deploy/charts/curator --reuse-values --set maintenance.enabled=true
+# SIGTERM：运行中的任务置系统暂停，到新实例上自动续跑；新 Pod 只挂盘，库文件没人打开
+kubectl -n curation rollout status statefulset/curator-v2 --timeout=10m
+kubectl -n curation exec curator-v2-0 -- tar -C /data -cf - --exclude=./lost+found . \
+  | kubectl -n galbot exec -i curator-v2-0 -- tar -C /data -xf -
+for ns in curation galbot; do                                        # 两边逐个文件比哈希
+  kubectl -n $ns exec curator-v2-0 -- sh -c 'cd /data && find . -type f ! -path "./lost+found/*" | sort | xargs sha256sum | sha256sum'
+done
+```
+
+**4. 关掉 dataverse 的 curator**（同一 Chart、沿用原值，只改这一项）
+
+```bash
+helm -n galbot upgrade galbot-dataverse ~/ws/rerun/deploy/helm/dataverse --reuse-values --set curator.enabled=false
+kubectl -n galbot get statefulset,svc,ingress                       # 不再有 galbot-dataverse-curation；web Ingress 没有 /curation
+```
+
+**5. 起 Daemon，打开入口**
+
+```bash
+helm -n galbot upgrade curator-v2 deploy/charts/curator -f galbot-values.yaml --set maintenance.enabled=false --set ingress.enabled=true
+kubectl -n galbot rollout status statefulset/curator-v2 --timeout=10m
+kubectl -n galbot get ingress curator-v2                             # ADDRESS 有值
+```
+
+**6. 验收**
 
 - `https://<域名>/curation/healthz` 200；`/curation/` 用 dataverse 的账号登录；viewer（`/`）和 catalog 照常。
 - 迁移前的任务、数据集、访问密钥、VLM 后端与模型都在；之前被系统暂停的任务自动续跑。
 - ReRun 里点数据集的「质检」按钮，跳到 v2 新建任务页并预填数据集；v2 数据集列表点「可视化」，ReRun 打开该数据集。
 
-**6. 下线旧实例**：`helm -n curation uninstall curator-v2`（physicalai-apig 上的 `curation-v2` 路由随之删除；数据盘已归 galbot）。
+**7. 下线旧实例**（验收通过、需求方确认之后）：`helm -n curation uninstall curator-v2`（physicalai-apig 上的
+`curation-v2` 路由随之删除）。数据盘 `data-curator-v2-0` 不随 uninstall 删除，留作回滚，确认不再需要时再手动删。
 
-**回滚**：`helm -n galbot uninstall curator-v2` → 按第 1、2 步把盘认领回 `curation` 并 `scale --replicas=1` →
-`helm -n galbot upgrade galbot-dataverse <同一 Chart> --reuse-values --set curator.enabled=true`。
+**回滚**：`helm -n galbot upgrade curator-v2 … --set ingress.enabled=false`（或 uninstall）→
+`helm -n galbot upgrade galbot-dataverse ~/ws/rerun/deploy/helm/dataverse --reuse-values --set curator.enabled=true` →
+`helm -n curation upgrade curator-v2 deploy/charts/curator --reuse-values --set maintenance.enabled=false`（旧盘上的数据原样还在）。
