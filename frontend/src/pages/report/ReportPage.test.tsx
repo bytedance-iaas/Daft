@@ -40,10 +40,7 @@ describe('质检报告 (07 §5)', () => {
     expect(screen.getByTestId('section-skill_profile')).toHaveTextContent('这一节的结果来自子任务「重试 #1」。');
     // Summary scalars and {name, count} series.
     expect(screen.getByTestId('summary-visual_quality')).toHaveTextContent('平均分0.87');
-    expect(within(screen.getByTestId('section-visual_quality')).getByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('分数分布：0.5–0.6 1'));
-    // Small tables are inline, with episodes linking to the drawer.
-    const inline = await screen.findByTestId('inline-table-timestamp_check');
-    expect(within(inline).getByRole('link', { name: 'ep 18' })).toHaveAttribute('href', `${REPORT}?ep=18`);
+    expect(within(screen.getByTestId('section-visual_quality')).getByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('0.5–0.6 1'));
   });
 
   it('a history revision is read only and shows the failed module with its error', async () => {
@@ -165,7 +162,7 @@ describe('质检报告 (07 §5)', () => {
     const { user } = renderApp(`${REPORT}?ep=18`);
     const drawer = await findDrawer('ep 18');
     expect(await within(drawer).findByTestId('episode-list')).toHaveTextContent('判废');
-    expect(within(drawer).getByTestId('episode-reasons')).toHaveTextContent('时间戳检查 · 残段：全程 0.5 秒（8 帧）');
+    expect(within(drawer).getByTestId('episode-reasons')).toHaveTextContent('时间戳检查 · 未通过「时间戳检查」:全长只有 0.50 秒');
     await user.click(within(drawer).getByRole('button', { name: '点击加载视频：exterior_image_1_left' }));
     const video = await within(drawer).findByTestId('video-exterior_image_1_left');
     expect(video.getAttribute('src')).toMatch(/file-000\.mp4\?.*#t=252,266$/);

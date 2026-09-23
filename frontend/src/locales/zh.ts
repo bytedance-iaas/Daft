@@ -725,6 +725,8 @@ export const zh = {
     error: '出错（待补跑）',
     scored: '打分',
     mean: '平均分',
+    mean_score: '平均分',
+    score_hist: '分数分布',
     out_of_order: '乱序',
     jumps: '跳变',
     fragments: '残段',

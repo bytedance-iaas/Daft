@@ -34,18 +34,22 @@ import {
   DATASET_PROFILES,
   episodePreviews,
   episodeView,
+  genericEpisodes,
+  mainEpisodes,
   mainPerf,
   mainPlan,
   mainReport,
+  mainSyncCurves,
   mainUsage,
   preflightFor,
   profileFor,
   registry,
+  sampleSummary,
   SO101_SKIPPED,
   SO101_TASK,
   tableRows,
 } from './world';
-import { cardsOf, clock, countsOf, datasetName, db, decisionsOf, executable, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
+import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
 
 // ------------------------------------------------------------------ plumbing
 
@@ -1059,17 +1063,18 @@ function genericLogs(t: Task) {
 
 function genericReport(t: Task, revision: number): Report {
   const s = t.summary ?? { total: 0, passed: 0, rejected: 0, held: 0, review: 0, pass_rate: null };
+  const cameras = profileFor(t.input.uri).cameras;
   return {
     schema_version: '1.0',
     revision,
     overview: {
-      dataset: { name: datasetName(t) },
-      run: { run_id: t.run_id },
+      dataset: { input: t.input.uri, source_digest: t.source?.digest ?? null, episode_count: s.total + (s.skipped ?? 0), cameras, fps: 30, robot_type: t.embodiment_id },
+      run: { run_dir: t.run_id, revision, modules: t.modules.filter((m) => m.selected).map((m) => m.id), adjudications_applied: 0 },
       counts: { total: s.total, passed: s.passed, rejected: s.rejected, held: s.held, review: s.review, ...(s.skipped !== undefined ? { skipped: s.skipped } : {}) },
       pass_rate: s.pass_rate,
       reject_reasons: s.rejected ? [{ module: 'timestamp_check', count: s.rejected }] : [],
       token_usage: { prompt: t.usage.prompt_tokens, completion: t.usage.completion_tokens, reasoning: t.usage.reasoning_tokens, cached: t.usage.cached_tokens, requests: t.usage.requests, requests_unknown_usage: t.usage.requests_unknown_usage },
-      duration_s: 1500,
+      duration_s: null,
     },
     modules: t.modules
       .filter((m) => m.selected)
@@ -1079,13 +1084,21 @@ function genericReport(t: Task, revision: number): Report {
           id: m.id,
           state: 'succeeded' as const,
           gate: spec.gate,
-          summary: { checked: s.total },
+          summary: sampleSummary(m.id, m.episodes_total || s.total),
           tables: spec.tables.map((tb) => ({ id: tb.id, rows: tableRows(tb.id).length, file: `tables/${tb.id}.parquet` })),
           adjudication: spec.produces_adjudication && t.pending_adjudication ? { pending: t.pending_adjudication } : null,
         };
       }),
     skipped_modules: t.modules.filter((m) => !m.selected && m.availability !== 'available').map((m) => ({ id: m.id, reason: m.unavailable_reason ?? '未运行' })),
-    integrity: { format: 'LeRobot v2', ...(t.id === SO101_TASK ? { skipped_episodes: SO101_SKIPPED } : {}) },
+    integrity: {
+      format: { kind: 'lerobot', version: 'v2', supported: true, detail: 'LeRobot v2.1' },
+      validation: [],
+      warnings: t.id === SO101_TASK ? ["3 episodes miss their parquet or a camera's video (212, 587, 901); they are left out like v1 does: not checked, in no list, listed in the report"] : [],
+      labels: { with_task: s.total, without_task: 0 },
+      profile: null,
+      robot_type: t.embodiment_id,
+      ...(t.id === SO101_TASK ? { skipped_episodes: SO101_SKIPPED } : {}),
+    },
     perf: {},
   };
 }
@@ -1144,6 +1157,72 @@ const report = [
     const total = t.summary?.total ?? 50;
     if (!Number.isInteger(ep) || ep < 0 || ep >= Math.max(total, 50)) return err(404, 'not_found', `没有 ep ${String(params.index)}`);
     return HttpResponse.json(episodeView(ep, rev));
+  }),
+  // C4 1.9.0: the report's Episode tab — the episode list and one episode's sync curves.
+  http.get(`${API}/tasks/:id/episodes`, ({ request, params }) => {
+    const t = findTask(String(params.id));
+    if (!t) return err(404, 'not_found', '任务不存在');
+    const url = new URL(request.url);
+    const rev = revisionOf(t, url);
+    if (rev instanceof Response) return rev;
+    const q = url.searchParams;
+    const list = q.get('list');
+    if (list !== null && !['passed', 'reject', 'held'].includes(list)) return err(400, 'validation_failed', `list 只能是 passed、reject、held`);
+    const review = q.get('review');
+    if (review !== null && review !== 'true' && review !== 'false') return err(400, 'validation_failed', 'review 只能是 true 或 false');
+    const limit = Number(q.get('limit') ?? 50);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) return err(400, 'validation_failed', 'limit 在 1 到 500 之间');
+    const text = (q.get('q') ?? '').trim();
+    let needle: string | null = null;
+    if (!/^(ep)?$/i.test(text)) {
+      const m = /^(?:ep)?\s*0*(\d+)$/i.exec(text);
+      if (!m) return err(400, 'validation_failed', `只能按 episode 编号搜索（数字，可以带 ep 前缀，如 12、ep12），收到的是「${text}」`);
+      needle = m[1];
+    }
+    // 待裁: cards still to decide on the current revision (pending or unsure), like the Daemon.
+    const open = new Map<number, string[]>();
+    if (rev === t.result_rev) {
+      for (const c of cardsOf(t.id, 'review')) {
+        if (c.status === 'pending' || c.status === 'unsure') open.set(c.episode_index, [...new Set(c.questions.filter((x) => !x.follow_up_of).map((x) => x.source_module))]);
+      }
+    }
+    const s = t.summary;
+    const all = t.id === MAIN_TASK ? mainEpisodes(open) : genericEpisodes(s?.total ?? 0, s?.rejected ?? 0, s?.held ?? 0, open);
+    const counts = { all: all.length, passed: 0, reject: 0, held: 0, review: 0 };
+    for (const e of all) {
+      counts[e.list] += 1;
+      if (e.review) counts.review += 1;
+    }
+    const items = all.filter((e) => (list === null || e.list === list) && (review === null || e.review === (review === 'true')) && (needle === null || String(e.episode_index).includes(needle)));
+    const scope = JSON.stringify([list, review, needle]);
+    const cur = decodeCursor<{ rev: number; last: number; scope: string }>(q.get('cursor'));
+    if (q.get('cursor') && (!cur || cur.scope !== scope)) return err(400, 'validation_failed', '游标和这次的筛选条件对不上');
+    if (cur && cur.rev !== rev) return err(409, 'result_changed', `结果版本已从 r${cur.rev} 换成 r${rev}，episode 列表请从头重新加载`);
+    const start = cur ? items.findIndex((e) => e.episode_index > cur.last) : 0;
+    const from = start < 0 ? items.length : start;
+    const chunk = items.slice(from, from + limit);
+    const more = from + chunk.length < items.length;
+    return HttpResponse.json({
+      items: chunk,
+      next_cursor: more ? encodeCursor({ rev, last: chunk[chunk.length - 1].episode_index, scope }) : null,
+      has_more: more,
+      total: items.length,
+      counts,
+      revision: rev,
+    });
+  }),
+  http.get(`${API}/tasks/:id/episodes/:index/sync-curves`, ({ request, params }) => {
+    const t = findTask(String(params.id));
+    if (!t) return err(404, 'not_found', '任务不存在');
+    const rev = revisionOf(t, new URL(request.url));
+    if (rev instanceof Response) return rev;
+    const ep = Number(params.index);
+    if (!Number.isInteger(ep) || ep < 0) return err(400, 'validation_failed', 'episode 下标不能是负数');
+    const name = `ep${String(ep).padStart(6, '0')}`;
+    if (ep === 18 && t.id === MAIN_TASK) return err(404, 'not_found', `${name} 没有走到视频-动作同步这一档（前面已被判废），没有同步曲线`, { episode_index: ep, revision: rev, reason: 'no_record' });
+    const curves = t.id === MAIN_TASK ? mainSyncCurves(ep, rev) : null;
+    if (!curves) return err(404, 'not_found', `${name} 同步正常：默认只为值得留意的条目（没对齐、有相机被标注或测不准）保存同步曲线`, { episode_index: ep, revision: rev, reason: 'no_curves' });
+    return HttpResponse.json(curves);
   }),
   http.get(`${API}/tasks/:id/perf`, ({ request, params }) => {
     const t = findTask(String(params.id));

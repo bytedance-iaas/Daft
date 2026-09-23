@@ -21,7 +21,9 @@ import type {
   ResultRecord,
   StageProgress,
   Subtask,
+  SyncCurves,
   Task,
+  TaskEpisode,
   TaskState,
   TimelineEntry,
   UsageRow,
@@ -1025,32 +1027,240 @@ function record(ep: number, module: string, gate: ResultRecord['gate'], verdict:
   };
 }
 
+// The main task's per-episode readings, shaped like the details the checks write (the Episode tab
+// renders them): ep 18 a fragment, the task_success rejects / abstentions / errors above, ep 44 a
+// copy of ep 43, four episodes with a stuck actuator, six with a sync reading worth a look.
+const STUCK = [8, 21, 34, 46];
+const SYNC_NOTE: Record<number, 'annotated' | 'no_motion' | 'suspect' | 'undecidable'> = { 12: 'annotated', 20: 'no_motion', 26: 'suspect', 35: 'undecidable', 5: 'undecidable', 41: 'undecidable' };
+const DUPLICATE_OF: Record<number, number> = { 44: 43 };
+const SKILL_GROUPS: [string, string, number[]][] = [
+  ['放置', '放入容器', [1, 10, 14, 25, 29, 35, 42, 48]],
+  ['放置', '放到台面', [2, 13, 19, 27, 37, 43]],
+  ['开合', '开抽屉', [5, 15, 30, 39]],
+  ['开合', '关门', [8, 20, 36, 41, 46]],
+  ['推拉', '推移', [0, 12, 24, 32, 49]],
+  ['推拉', '拖拽', [9, 26, 40]],
+  ['倾倒', '倾倒', [3, 16, 28, 47]],
+  ['擦拭', '擦拭', [4, 17, 34]],
+  ['旋转开关', '拧转', [22, 33]],
+  ['旋转开关', '按压', [21]],
+];
+
+/** A small deterministic generator (the mockups' rng). */
+function rng(seed: number): () => number {
+  let x = seed * 9301 + 49297;
+  return () => {
+    x = (x * 9301 + 49297) % 233280;
+    return x / 233280;
+  };
+}
+
+const round = (v: number, nd = 4) => Number(v.toFixed(nd));
+
+/** Episode duration in seconds (ep 18 is the 0.5-second fragment). */
+export function episodeDuration(ep: number): number {
+  return ep === 18 ? 0.5 : round(11 + rng(ep + 11)() * 21, 1);
+}
+
+function keptByFunnel(ep: number): boolean {
+  return ep !== 18 && !TS_REJECTS.includes(ep) && !HELD.includes(ep);
+}
+
+function timestampDetails(ep: number): Record<string, unknown> {
+  const dur = episodeDuration(ep);
+  if (ep === 18) return { n: 8, duration_s: 0.5, reason: '全长只有 0.50 秒(不足 1 秒,疑似采集中断的碎片)' };
+  return { n: Math.round(dur * 15) + 1, duration_s: dur, dt_nominal: 0.066667, max_dt: round(0.0667 + (ep % 5) * 0.001, 4), jitter_ratio: round((ep % 4) * 0.005, 4) };
+}
+
+function motionDetails(ep: number): { score: number; details: Record<string, unknown> } {
+  const r = rng(ep + 3);
+  const base = 0.74 + r() * 0.2;
+  const stuck = STUCK.includes(ep);
+  const smoothness = round(Math.min(0.99, base + 0.02));
+  const spike = round(Math.min(0.99, base + 0.06));
+  const jitter = round(base - 0.07);
+  const dur = episodeDuration(ep);
+  const head = ep % 3 === 0 ? round(0.8 + r() * 2, 2) : 0;
+  const tail = ep % 2 === 0 ? round(0.6 + r() * 1.5, 2) : 0;
+  const details: Record<string, unknown> = {
+    smoothness,
+    spike,
+    gripper_jitter: jitter,
+    actuator_saturation: null,
+    saturation_reason: '速度型指令和位置读数含义不同,值直比无意义',
+    path_efficiency: round(0.6 + r() * 0.25),
+    joint_stability: round(0.55 + r() * 0.3),
+    fluency: round(0.85 + r() * 0.14),
+    stuck: stuck ? 0 : 1,
+    stuck_strategy: 'velocity_dual_scale',
+    active_ratio: round(Math.max(0.5, 1 - (head + tail) / Math.max(dur, 1)), 4),
+    idle_head_s: head,
+    idle_tail_s: tail,
+    idle_mid_count: ep % 8 === 1 ? 1 : 0,
+    idle_mid_total_s: ep % 8 === 1 ? 1.2 : 0,
+    gripper_flips: [2 + (ep % 3)],
+    spike_isolation: round(1 + r() * 2, 2),
+  };
+  if (stuck) {
+    const start = Math.round(dur * 0.4 * 15);
+    details.stuck_joints = [{ joint: 2, axis: 'z', segment: 0, max_dead_run: 26, freeze_start_frame: start, freeze_end_frame: start + 26, envelope_start_frame: start - 4, envelope_frames: 34 }];
+  }
+  const score = round((smoothness + spike + jitter) / 3 - (stuck ? 0.05 : 0));
+  return { score, details };
+}
+
+function visualDetails(ep: number): { score: number; details: Record<string, unknown> } {
+  const per: Record<string, Record<string, number>> = {};
+  CAMERAS.forEach((cam, k) => {
+    const r = rng(ep * 3 + k + 5);
+    let s = round(Math.min(0.99, 0.8 + r() * 0.17), 4);
+    if ((ep === 20 && k === 1) || (ep === 35 && k === 2) || (ep === 47 && k === 2)) s = 0.57;
+    per[`observation.images.${cam}`] = { score: s, sharpness: round(s - 0.04 + r() * 0.08, 4), exposure: round(0.85 + r() * 0.14, 4), integrity: 1, frozen_ratio: round(r() * 0.02, 4), blur_var_median: round(80 + r() * 900, 2) };
+  });
+  const scores = Object.values(per).map((d) => d.score);
+  const worst = Object.entries(per).sort((a, b) => a[1].score - b[1].score)[0][0];
+  return {
+    score: round(scores.reduce((a, b) => a + b, 0) / scores.length),
+    details: {
+      ...per[worst],
+      per_camera: Object.fromEntries(Object.entries(per).map(([k, d]) => [k, d.score])),
+      per_camera_detail: per,
+      camera_weights: Object.fromEntries(Object.keys(per).map((k) => [k, 1])),
+      worst_camera: worst,
+      padded_channels: [],
+      camera_liveness: { live: Object.keys(per), dead_or_padded: [] },
+      params: { blur_ref_var: 100, frame_max_side: 448 },
+    },
+  };
+}
+
+type Reading = Record<string, unknown>;
+
+function reading(lag: number | null, peak: number, code: string, trusted: boolean, label: string, text: string): Reading {
+  return {
+    lag_s: lag,
+    corr_peak: peak,
+    corr_at_zero: round(peak - Math.abs(lag ?? 0) * 0.6, 2),
+    peak_ratio: trusted ? 1.8 : 1.1,
+    peak_width_s: trusted ? 0.3 : 1.4,
+    at_scan_edge: false,
+    trusted,
+    code,
+    note: text.slice(0, 60),
+    diagnosis: { cause: code === 'aligned' ? 'aligned' : code, label, text, advice: trusted ? '' : '结论以其它相机为准。' },
+  };
+}
+
+function syncDetails(ep: number): Record<string, unknown> {
+  const per: Record<string, Reading> = {};
+  CAMERAS.forEach((cam, k) => {
+    const r = rng(ep * 5 + k + 1);
+    const lag = round((r() - 0.45) * 0.14 + [0.03, 0.07, -0.01][k], 2);
+    const peak = round(0.7 + r() * 0.25, 2);
+    per[cam] = reading(lag, peak, 'aligned', true, '对齐', `画面与动作对得上:相似度最高的位置就在零点附近(${lag >= 0 ? '+' : ''}${lag.toFixed(2)}s),且结论清晰可靠(相似度 ${peak.toFixed(2)})。`);
+  });
+  const note = SYNC_NOTE[ep];
+  const out: Record<string, unknown> = { verdict: 'aligned', flagged_cameras: [], suspect_cameras: [], noisy_cameras: [], abstained_cameras: [], consensus_lag_s: null, n_cameras: 3, n_trusted: 3, reason: '3/3 路可信相机全部对齐(|lag| ≤ 0.25s)' };
+  if (note === 'annotated') {
+    per[CAMERAS[1]] = reading(0.38, 0.72, 'misaligned', true, '错位', '这一路可靠地测出画面与动作错开了 +0.38s(超出容差):错开这么多时相似度明显最高(0.72),其它错开量都明显更差。');
+    Object.assign(out, { verdict: 'annotated', flagged_cameras: [CAMERAS[1]], reason: `相机间矛盾:2 路读对齐(${CAMERAS[0]}, ${CAMERAS[2]}),1 路读滞后(${CAMERAS[1]} +0.38s) → 只标注异常路,不判废(证据不一致时不定罪)` });
+  } else if (note === 'no_motion') {
+    per[CAMERAS[1]] = reading(null, 0.08, 'no_motion', false, '无信号', '这一路几乎没有运动信号(静止段占满或画面冻结)。');
+    Object.assign(out, { verdict: 'annotated', flagged_cameras: [CAMERAS[1]], n_trusted: 2, reason: '2/3 路可信相机对齐;1 路无信号,已标注' });
+  } else if (note === 'suspect') {
+    per[CAMERAS[0]] = reading(0.41, 0.46, 'flat_peak', false, '测不准 · 画面不锐利', '这一路定位时间差的精度不够:相似程度最高的位置在 +0.41s,但附近约 1.4 秒范围内的相似程度彼此接近,不足以把误差压进容差内。');
+    Object.assign(out, { verdict: 'annotated', suspect_cameras: [CAMERAS[0]], abstained_cameras: [CAMERAS[0]], n_trusted: 2, reason: `2/3 路可信相机对齐,但另有 1 路疑似错位(${CAMERAS[0]} +0.41s)——峰形不够可信,不足以定论,已标注该路;不判废、不进人工队列` });
+  } else if (note === 'undecidable') {
+    for (const cam of CAMERAS) per[cam] = reading(0.1, 0.21, 'low_corr', false, '测不准 · 信号弱', '这一路的画面运动与机械臂动作对不上号(整体相似度只有 0.21),给不出可靠的时间差读数。');
+    Object.assign(out, { verdict: 'undecidable', abstained_cameras: [...CAMERAS], n_trusted: 0, reason: '3 路相机均未给出可信读数(测不准/无信号),同步不下结论,不影响判决' });
+  }
+  out.per_camera = per;
+  return out;
+}
+
+const COMPLETIONS: Record<string, number[]> = {
+  success: [0, 0.12, 0.35, 0.58, 0.8, 0.93, 0.97, 1],
+  failure: [0, 0.02, 0.05, 0.04, 0.08, 0.06, 0.1, 0.12],
+  uncertain: [0, 0.2, 0.31, 0.38, 0.36, 0.4, 0.38, 0.38],
+  gap: [0, 0.3, 0.72, 0.91, 0.6, 0.42, 0.3, 0.28],
+};
+
+function taskDetails(ep: number): { verdict: ResultRecord['verdict']; details: Record<string, unknown> } {
+  const text = taskText(ep);
+  const base = { task_desc: text.text, task_desc_source: text.source, task_type: 'persistent', cams: [...CAMERAS] };
+  const votes = (v: string, n = 3) => Object.fromEntries(CAMERAS.slice(0, n).map((c) => [c, v]));
+  const arb = (final: string, n: number, consensus: string) => ({ applied: final !== 'abstain', final, consensus, n_effective: n, intent: text.text, intent_source: text.source, intent_conflict: false });
+  switch (ep) {
+    case 6:
+    case 45:
+      return { verdict: 'fail', details: { ...base, verdict: 'failure', init_verdict: 'failure', review: 'no', cam_votes: votes('no'), completions: COMPLETIONS.failure, completion_final: 0.12, completion_peak: 0.12, label_check: { outcome: 'same' }, reason: '全程看不到任务进展,且各机位复核一致判未完成:两类证据相互印证,判废', rules: ['fail_candidate_no_progress', 'double_signed_kill', 'label_agrees_kill_kept'] } };
+    case 11:
+      return { verdict: 'fail', details: { ...base, verdict: 'failure', init_verdict: 'failure', review: 'no', cam_votes: votes('no'), completions: COMPLETIONS.failure, completion_final: 0.08, completion_peak: 0.08, reason: '全程看不到任务进展,且各机位复核一致判未完成:两类证据相互印证,判废', rules: ['fail_candidate_no_progress', 'double_signed_kill'] } };
+    case 23:
+      return { verdict: 'fail', details: { ...base, verdict: 'arbitration_failure', init_verdict: 'success', strong_score: false, review: 'split', cam_votes: { ...votes('no', 2), [CAMERAS[2]]: 'yes' }, completions: COMPLETIONS.uncertain, completion_final: 0.5, completion_peak: 0.55, arbitration: arb('no', 2, 'no'), reason: '取证仲裁:2 条有效取证路一致判未完成(≥2 路相互印证)', rules: ['success_candidate_weak', 'review_split_recorded', 'arbitration_kill_double_signed'] } };
+    case 38:
+      return { verdict: 'fail', details: { ...base, verdict: 'arbitration_failure', init_verdict: 'gap_violation', review: 'no', cam_votes: { ...votes('no', 2), [CAMERAS[2]]: 'unclear' }, completions: COMPLETIONS.gap, completion_final: 0.28, completion_peak: 0.91, arbitration: arb('no', 3, 'no'), reason: '取证仲裁:3 条有效取证路一致判未完成(≥2 路相互印证)', rules: ['gap_violation_monotonicity', 'arbitration_kill_double_signed'] } };
+    case 29:
+      return { verdict: 'abstain', details: { ...base, verdict: 'label_conflict_suspect', init_verdict: 'failure', review: 'no', cam_votes: votes('no'), completions: COMPLETIONS.failure, completion_final: 0.1, completion_peak: 0.1, label_check: { annotation: text.text, caption: 'pour rice into the green bowl', outcome: 'different' }, reason: `复核判未完成,但标注「${text.text}」与画面描述「pour rice into the green bowl」不是同一任务:疑似标注错,不判废,转人工核标注`, rules: ['fail_candidate_no_progress', 'kill_held_label_conflict'] } };
+    case 9:
+      return { verdict: 'abstain', details: { ...base, verdict: 'uncertain', init_verdict: 'uncertain', review: 'split', cam_votes: { ...votes('yes', 1), [CAMERAS[1]]: 'no', [CAMERAS[2]]: 'unclear' }, completions: COMPLETIONS.uncertain, completion_final: 0.38, completion_peak: 0.4, arbitration: arb('abstain', 2, 'abstain'), reason: '末态物证 0.38 在灰区(0.25~0.45),证据不足以硬判', rules: ['gray_zone_final', 'rescue_declined_review_not_done', 'arbitration_abstain'] } };
+    case 16:
+    case 47:
+      return { verdict: 'abstain', details: { ...base, verdict: 'uncertain', init_verdict: 'uncertain', review: 'abstain', cam_votes: votes('unclear'), completions: COMPLETIONS.uncertain, completion_final: 0.36, completion_peak: 0.4, reason: '末态物证 0.36 在灰区(0.25~0.45),证据不足以硬判', rules: ['gray_zone_final', 'rescue_declined_review_not_done'] } };
+    case 33:
+      return { verdict: 'abstain', details: { ...base, verdict: 'review_conflict', init_verdict: 'success', strong_score: false, review: 'split', cam_votes: { ...votes('no', 1), [CAMERAS[1]]: 'yes', [CAMERAS[2]]: 'yes' }, completions: COMPLETIONS.success, completion_final: 0.82, completion_peak: 0.9, arbitration: arb('abstain', 1, 'no'), reason: '取证仲裁只有 1 路判未完成,不足以判废:转人工', rules: ['success_candidate_weak', 'review_split_recorded', 'arbitration_kill_needs_two_lines'] } };
+    case 40:
+      return { verdict: 'abstain', details: { ...base, verdict: 'gap_violation', init_verdict: 'gap_violation', review: 'split', cam_votes: { ...votes('yes', 1), [CAMERAS[1]]: 'no', [CAMERAS[2]]: 'no' }, completions: COMPLETIONS.gap, completion_final: 0.3, completion_peak: 0.91, arbitration: arb('abstain', 2, 'abstain'), reason: '峰值 0.91 崩至末态 0.30(gap≥0.4):单调契约违约,模型抽风或真回退,不硬判', rules: ['gap_violation_monotonicity', 'abstain_kept_review_not_done', 'arbitration_abstain'] } };
+    default:
+      if (ep % 10 === 3) return { verdict: 'pass', details: { ...base, verdict: 'endstate_success', init_verdict: 'uncertain', review: 'yes', cam_votes: votes('yes'), completions: COMPLETIONS.uncertain, completion_final: 0.4, completion_peak: 0.42, reason: '打分层gray;逐机位复核判完成,救回', rules: ['gray_zone_final', 'review_rescue'] } };
+      return { verdict: 'pass', details: { ...base, verdict: 'success', init_verdict: 'success', strong_score: true, review: 'yes', cam_votes: votes('yes'), completions: COMPLETIONS.success, completion_final: 0.97, completion_peak: 1, rules: ['success_candidate_strong', 'review_confirms_success'] } };
+  }
+}
+
+function skillOf(ep: number): { family: string; subskill: string } | null {
+  const g = SKILL_GROUPS.find(([, , eps]) => eps.includes(ep));
+  return g ? { family: g[0], subskill: g[1] } : null;
+}
+
 export function episodeView(ep: number, revision: number): EpisodeView {
   const list = episodeList(ep);
+  const ts = timestampDetails(ep);
+  const motion = motionDetails(ep);
   const modules: Record<string, ResultRecord> = {
-    timestamp_check: record(ep, 'timestamp_check', 'hard', ep === 18 ? 'fail' : 'pass', null, ep === 18 ? { reason: 'fragment', duration_s: 0.5 } : { duration_s: 12 + (ep % 9) }),
-    motion_quality: record(ep, 'motion_quality', 'soft', 'scored', 0.7 + (ep % 5) * 0.05, { smoothness: 0.86, spikes: 0.9 }),
+    timestamp_check: record(ep, 'timestamp_check', 'hard', ep === 18 ? 'fail' : 'pass', null, ts),
+    motion_quality: record(ep, 'motion_quality', 'soft', 'scored', motion.score, motion.details),
   };
   if (ep !== 18) {
-    modules.visual_quality = record(ep, 'visual_quality', 'soft', 'scored', 0.8 + (ep % 4) * 0.04, { cameras: CAMERAS.length });
-    modules.video_action_sync = record(ep, 'video_action_sync', 'hard', 'pass', null, { lag_s: 0.03 });
+    const vis = visualDetails(ep);
+    modules.visual_quality = record(ep, 'visual_quality', 'soft', 'scored', vis.score, vis.details);
+    modules.video_action_sync = record(ep, 'video_action_sync', 'hard', 'pass', null, syncDetails(ep));
     if (HELD.includes(ep)) {
       modules.task_success = record(ep, 'task_success', 'hard', 'error', null, {}, { kind: 'execution', incidents: [{ step: 'arbitration', cause: 'timeout 60s', call_kind: 'arbitration', attempts: 3 }] });
-    } else if (TS_REJECTS.includes(ep)) {
-      modules.task_success = record(ep, 'task_success', 'hard', 'fail', null, { completion_end: 0.12 });
-    } else if (VERDICT_REVIEW.includes(ep)) {
-      modules.task_success = record(ep, 'task_success', 'hard', 'abstain', null, { reason: 'insufficient evidence' });
     } else {
-      modules.task_success = record(ep, 'task_success', 'hard', 'pass', null, { completion_end: 0.93 });
+      const t = taskDetails(ep);
+      modules.task_success = record(ep, 'task_success', 'hard', t.verdict, null, t.details);
     }
   }
+  if (keptByFunnel(ep)) {
+    const dup = DUPLICATE_OF[ep];
+    modules.dedup = record(ep, 'dedup', 'dedup', dup === undefined ? 'pass' : 'fail', null, dup === undefined ? {} : { duplicate_of: dup, reason: `与 ep${String(dup).padStart(6, '0')} 字节级完全重复` });
+    const skill = skillOf(ep);
+    if (skill) {
+      const text = taskText(ep);
+      const caption = LABEL_CAPTIONS[ep]?.caption ?? (text.source === '自产caption' ? text.text : text.text.toLowerCase());
+      modules.skill_profile = record(ep, 'skill_profile', 'none', 'pass', null, { ...skill, caption, grouping_text: text.text, grouping_text_source: text.source });
+    }
+  }
+  if (modules.dedup) modules.dedup.elapsed_s = null;
+  if (modules.skill_profile) modules.skill_profile.elapsed_s = null;
   const reasons: NonNullable<EpisodeView['reasons']> = [];
-  if (ep === 18) reasons.push({ module: 'timestamp_check', text: '残段：全程 0.5 秒（8 帧）' });
-  if (ep === 44) reasons.push({ module: 'dedup', text: '与 ep 43 字节级完全重复' });
-  if (TS_REJECTS.includes(ep)) reasons.push({ module: 'task_success', text: '3 路复核一致判未完成' });
+  if (ep === 18) reasons.push({ module: 'timestamp_check', kind: 'hard_gate', text: '未通过「时间戳检查」:全长只有 0.50 秒(不足 1 秒,疑似采集中断的碎片)' });
+  if (ep === 44) reasons.push({ module: 'dedup', kind: 'duplicate', text: '与 ep000043 字节级完全重复', duplicate_of: 43 });
+  if (TS_REJECTS.includes(ep)) reasons.push({ module: 'task_success', kind: 'hard_gate', text: `未通过「任务成败判定」:${String((modules.task_success?.details as Record<string, unknown>)?.reason ?? '')}` });
+  if (HELD.includes(ep)) reasons.push({ module: 'task_success', kind: 'execution_error', text: '「任务成败判定」执行出错:arbitration timeout 60s(3 次),待补跑' });
   const review: NonNullable<EpisodeView['review']> = [];
-  if (LABEL_REVIEW.includes(ep)) review.push({ module: 'skill_profile', text: '标注与画面归入不同技能族' });
-  if (VERDICT_REVIEW.includes(ep)) review.push({ module: 'task_success', text: '证据不足，弃权' });
+  if (LABEL_REVIEW.includes(ep)) review.push({ module: 'skill_profile', kind: 'label_conflict', text: '标注与画面归入不同技能族', ...(LABEL_CAPTIONS[ep] ? { priority: LABEL_CAPTIONS[ep].priority } : {}) });
+  if (VERDICT_REVIEW.includes(ep)) review.push({ module: 'task_success', kind: 'task_verdict', text: '证据不足，弃权' });
   const scope: 'delivery' | 'input' = list === 'passed' ? 'delivery' : 'input';
   return {
     episode_index: ep,
@@ -1071,15 +1281,117 @@ export function episodeView(ep: number, revision: number): EpisodeView {
   };
 }
 
+/** The modules that put an episode in its list (C4 1.9.0 TaskEpisode.reason_modules). */
+export function reasonModules(ep: number): string[] {
+  if (ep === 18) return ['timestamp_check'];
+  if (ep === 44) return ['dedup'];
+  if (TS_REJECTS.includes(ep) || HELD.includes(ep)) return ['task_success'];
+  return [];
+}
+
+/** The episodes of the main task in index order, as C4 1.9.0 `listTaskEpisodes` items. */
+export function mainEpisodes(openQuestions: Map<number, string[]>): TaskEpisode[] {
+  return Array.from({ length: 50 }, (_, ep) => ({ episode_index: ep, list: episodeList(ep), review: openQuestions.has(ep), reason_modules: reasonModules(ep), review_modules: openQuestions.get(ep) ?? [] }));
+}
+
+/** Another task's episodes: its summary's rejects first, then its held ones, the rest passed. */
+export function genericEpisodes(total: number, rejected: number, held: number, openQuestions: Map<number, string[]>): TaskEpisode[] {
+  return Array.from({ length: total }, (_, ep) => {
+    const list: TaskEpisode['list'] = ep % 17 === 3 && ep / 17 < rejected ? 'reject' : ep % 23 === 5 && ep / 23 < held ? 'held' : 'passed';
+    return { episode_index: ep, list, review: openQuestions.has(ep), reason_modules: list === 'reject' ? ['timestamp_check'] : list === 'held' ? ['task_success'] : [], review_modules: openQuestions.get(ep) ?? [] };
+  });
+}
+
+/**
+ * Sync curves of the main task (C4 1.9.0 `getEpisodeSyncCurves`): kept only for the episodes worth
+ * a look (pipeline.sync_plots = flagged), like the frame stage does; null for the others.
+ */
+export function mainSyncCurves(ep: number, revision: number): SyncCurves | null {
+  if (!(ep in SYNC_NOTE)) return null;
+  const view = episodeView(ep, revision);
+  const det = view.modules.video_action_sync?.details as { verdict: string; per_camera: Record<string, Reading> };
+  const T = episodeDuration(ep);
+  const n = Math.round(T * 15);
+  const cameras = CAMERAS.map((cam, ci) => {
+    const r = rng(ep * 7 + ci);
+    const rd = det.per_camera[cam];
+    const lag = typeof rd.lag_s === 'number' ? rd.lag_s : 0;
+    const peak = typeof rd.corr_peak === 'number' ? rd.corr_peak : 0.2;
+    const bumps = [3 + r() * 3, 9 + r() * 3, 15 + r() * 2].map((c) => c % T);
+    const t: number[] = [];
+    const speed: number[] = [];
+    const flow: number[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const x = i / 15;
+      const s = bumps.reduce((a, c) => a + Math.exp(-((x - c) ** 2) / 1.2), 0);
+      const f = bumps.reduce((a, c) => a + Math.exp(-((x - lag - c) ** 2) / 1.2), 0);
+      t.push(round(x, 3));
+      speed.push(round(s * 0.4, 6));
+      flow.push(round((f * peak + (1 - peak) * r() * 0.8) * 3, 5));
+    }
+    const lags: number[] = [];
+    const xcorr: number[] = [];
+    const wide = rd.code === 'flat_peak' ? 0.5 : 0.18;
+    for (let j = 0; j <= 60; j += 1) {
+      const s = -2 + (j / 60) * 4;
+      lags.push(round(s, 3));
+      xcorr.push(round(Math.max(0, Math.min(1, peak * Math.exp(-((s - lag) ** 2) / wide) + 0.12 * Math.cos(s * 3 + ci))), 4));
+    }
+    const hasLag = typeof rd.lag_s === 'number';
+    const at = hasLag ? xcorr[Math.round(((lag + 2) / 4) * 60)] : null;
+    return { camera: cam, t, flow, speed, lags, xcorr, lag_s: hasLag ? lag : null, corr_peak: peak, code: String(rd.code), trusted: Boolean(rd.trusted), peak: hasLag && at !== null ? { lag_s: lag, corr: at } : null };
+  });
+  return { episode_index: ep, revision, verdict: det.verdict, consensus_lag_s: null, lag_tol_s: 0.25, window_s: 2, cameras };
+}
+
+const MAIN_CAMERA_HIST: Record<string, number[]> = {
+  exterior_image_1_left: [0, 0, 0, 0, 0, 0, 1, 7, 19, 22],
+  exterior_image_2_left: [0, 0, 0, 0, 0, 1, 2, 9, 21, 16],
+  wrist_image_left: [0, 0, 0, 0, 0, 2, 3, 10, 19, 15],
+};
+
+const series = (pairs: [string, number][]) => pairs.map(([name, count]) => ({ name, count }));
+const hist = (counts: number[]) => counts.map((count, i) => ({ name: `${(i / 10).toFixed(1)}–${((i + 1) / 10).toFixed(1)}`, count }));
+const counts = (total: number, c: Partial<Record<'pass' | 'fail' | 'abstain' | 'scored' | 'error', number>>) => ({ total, pass: 0, fail: 0, abstain: 0, scored: 0, error: 0, ...c });
+
+/**
+ * A module summary in the shape `curation report` writes (06 §6.2: the 1.0 keys plus the
+ * chart-ready aggregates), scaled to `total` episodes, for the tasks other than the main one.
+ */
+export function sampleSummary(id: string, total: number): Record<string, unknown> {
+  const n = Math.max(total, 1);
+  const part = (share: number) => Math.round(n * share);
+  switch (id) {
+    case 'timestamp_check':
+      return { counts: counts(n, { pass: n - part(0.02), fail: part(0.02) }), fail_kinds: { fragment: part(0.01), gap: part(0.01) }, fail_reasons: series([['out_of_order', 0], ['gap', part(0.01)], ['fragment', part(0.01)], ['jitter', 0]]), duration_total_s: round(n * 18.2, 1), duration_median_s: 17.9, duration_min_s: 0.6, duration_max_s: 41.2, duration_hist: series([['0–10', part(0.08)], ['10–20', part(0.52)], ['20–30', part(0.3)], ['30–40', part(0.08)], ['40–50', part(0.02)]]) };
+    case 'kinematic_limits':
+      return { counts: counts(n, { pass: n - part(0.03) - part(0.01), fail: part(0.03), abstain: part(0.01) }), violation_episodes: part(0.03), violations_by_type: series([['velocity_limit', part(0.02)], ['joint_limit', part(0.01)]]), violations_by_joint: series([['1', part(0.01)], ['3', part(0.02)], ['5', part(0.01)]]), limits_profile: 'so101', abstain_reason_counts: series([['单位疑似错配', part(0.01)]]) };
+    case 'motion_quality':
+      return { counts: counts(n, { scored: n }), mean_score: 0.82, score_hist: hist([0, 0, 0, 0, part(0.02), part(0.05), part(0.13), part(0.3), part(0.32), n - part(0.02) - part(0.05) - part(0.13) - part(0.3) - part(0.32)]), subscores: [{ name: 'smoothness', mean: 0.84, n, na: 0, in_total: true }, { name: 'spike', mean: 0.88, n, na: 0, in_total: true }, { name: 'gripper_jitter', mean: 0.79, n, na: 0, in_total: true }, { name: 'actuator_saturation', mean: 0.74, n, na: 0, in_total: true }, { name: 'path_efficiency', mean: 0.69, n, na: 0, in_total: false }, { name: 'joint_stability', mean: 0.63, n, na: 0, in_total: false }], stuck_episodes: part(0.04), idle_episodes: series([['head', part(0.3)], ['mid', part(0.1)], ['tail', part(0.35)]]), active_ratio_mean: 0.86 };
+    case 'visual_quality':
+      return { counts: counts(n, { scored: n }), mean_score: 0.88, score_hist: hist([0, 0, 0, 0, 0, part(0.02), part(0.05), part(0.18), part(0.4), n - part(0.02) - part(0.05) - part(0.18) - part(0.4)]), cameras: [{ camera: 'front', n, mean: 0.9, low: part(0.01), placeholder: 0, hist: [0, 0, 0, 0, 0, part(0.01), part(0.04), part(0.15), part(0.4), n - part(0.01) - part(0.04) - part(0.15) - part(0.4)], weight: 1 }, { camera: 'wrist', n, mean: 0.86, low: part(0.02), placeholder: 0, hist: [0, 0, 0, 0, 0, part(0.02), part(0.06), part(0.2), part(0.4), n - part(0.02) - part(0.06) - part(0.2) - part(0.4)], weight: 1 }], low_camera_readings: part(0.03), placeholder_readings: 0, blur_ref_var: 100, frame_max_side: 448 };
+    case 'video_action_sync':
+      return { counts: counts(n, { pass: n - part(0.01), fail: part(0.01) }), verdicts: series([['aligned', n - part(0.01) - part(0.04) - part(0.02) - part(0.03)], ['annotated', part(0.04)], ['suspect', part(0.02)], ['undecidable', part(0.03)], ['misaligned', part(0.01)]]), flagged_camera_readings: part(0.05), lag_tol_s: 0.25, cameras: [{ camera: 'front', readings: n, n: part(0.95), median_lag_s: 0.04, iqr_s: 0.06, n_flagged: part(0.03), n_suspect: part(0.01), n_noisy: 0, n_abstained: part(0.02) }, { camera: 'wrist', readings: n, n: part(0.93), median_lag_s: 0.02, iqr_s: 0.05, n_flagged: part(0.02), n_suspect: part(0.01), n_noisy: part(0.01), n_abstained: part(0.03) }], sync_advice: '全库逐相机中位滞后均在容差内(|median| ≤ 0.25s),未见系统性错位', negative_lag_episodes: 0 };
+    case 'task_success':
+      return { counts: counts(n, { pass: n - part(0.04) - part(0.03), fail: part(0.04), abstain: part(0.03) }), arbitration: { triggered: part(0.06), adopted_success: part(0.02), adopted_failure: part(0.01), abstained: part(0.03), skipped: 0 }, abstain_reasons: { '末态物证在灰区,证据不足以硬判': part(0.03) }, abstain_reason_counts: series([['末态物证 … 在灰区', part(0.03)]]), judgements: series([['success', n - part(0.1)], ['endstate_success', part(0.03)], ['failure', part(0.04)], ['uncertain', part(0.03)]]), abstain_by_judgement: series([['uncertain', part(0.03)]]), text_sources: series([['原始标注', part(0.8)], ['自产caption', n - part(0.8)]]), layers: series([['probe', n], ['endstate', part(0.9)], ['label_guard', part(0.02)], ['arbitration', part(0.06)]]) };
+    case 'dedup':
+      return { counts: counts(n, { pass: n - part(0.01), fail: part(0.01) }), collision_groups: part(0.01), removed: part(0.01), group_sizes: series([['2', part(0.01)]]) };
+    case 'skill_profile':
+      return { counts: counts(n, { pass: n }), families: 3, subskills: 5, undersampled: ['擦拭'], family_distribution: series([['抓取搬运', part(0.6)], ['开合', part(0.35)], ['擦拭', n - part(0.6) - part(0.35)]]), family_tree: [{ name: '抓取搬运', count: part(0.6), pct: 60, undersampled: false, subskills: series([['放置', part(0.4)], ['堆叠', part(0.2)]]) }, { name: '开合', count: part(0.35), pct: 35, undersampled: false, subskills: series([['开抽屉', part(0.2)], ['关门', part(0.15)]]) }, { name: '擦拭', count: n - part(0.6) - part(0.35), pct: 5, undersampled: true, subskills: series([['擦拭', n - part(0.6) - part(0.35)]]) }], label_disagreements: part(0.02), disagreement_high: part(0.01), disagreement_review: part(0.01), unstable: 0, grouping_sources: series([['原始标注', part(0.8)], ['自产caption', n - part(0.8)]]) };
+    default:
+      return { counts: counts(n, { pass: n }) };
+  }
+}
+
 export function mainReport(revision: 1 | 2): Report {
   const failedProfile = revision === 1;
   return {
     schema_version: '1.0',
     revision,
     overview: {
-      dataset: { name: 'droid_100', format: 'LeRobot v3', episodes: 100 },
-      run: { run_id: '20260920-130514', episodes: '前 50 条（ep 0–49）' },
-      counts: failedProfile ? { total: 50, passed: 0, rejected: 7, held: 43, review: 10 } : { total: 50, passed: 41, rejected: 7, held: 2, review: 10 },
+      dataset: { input: 'tos://pai-kit-datasets/lerobot/droid_100', source_digest: DIGEST2, episode_count: 100, cameras: CAMERAS, fps: 15, robot_type: null },
+      run: { run_dir: '20260920-130514', revision, modules: ['timestamp_check', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile'], adjudications_applied: 0 },
+      counts: failedProfile ? { total: 50, passed: 0, rejected: 7, held: 43, review: 10, skipped: 0 } : { total: 50, passed: 41, rejected: 7, held: 2, review: 10, skipped: 0 },
       pass_rate: failedProfile ? 0 : 0.82,
       reject_reasons: [
         { module: 'task_success', count: 5 },
@@ -1087,46 +1399,102 @@ export function mainReport(revision: 1 | 2): Report {
         { module: 'dedup', count: 1 },
       ],
       token_usage: { prompt: 2_010_000, completion: 67_500, reasoning: 42_900, cached: 931_800, requests: 886, requests_unknown_usage: 41 },
-      duration_s: failedProfile ? 1016 : 1428,
+      // The CLI cannot know the wall time of the runs (07 §5: the page derives it from the timeline).
+      duration_s: null,
     },
     modules: [
-      { id: 'timestamp_check', state: 'succeeded', gate: 'hard', summary: { checked: 50, failed: 1, out_of_order: 0, jumps: 0, fragments: 1, min_duration_s: 1.0 }, tables: [{ id: 'timestamp_check', rows: 1, file: 'tables/timestamp_check.parquet' }], adjudication: null },
-      { id: 'motion_quality', state: 'succeeded', gate: 'soft', summary: { mean: 0.84, smoothness: 0.86, spikes: 0.9, gripper_jitter: 0.77, path_efficiency: 0.71, stuck_episodes: 4 }, tables: [{ id: 'motion_quality', rows: 50, file: 'tables/motion_quality.parquet' }], adjudication: null },
+      {
+        id: 'timestamp_check',
+        state: 'succeeded',
+        gate: 'hard',
+        summary: {
+          counts: counts(50, { pass: 49, fail: 1 }),
+          fail_kinds: { fragment: 1 },
+          fail_reasons: series([['out_of_order', 0], ['gap', 0], ['fragment', 1], ['jitter', 0]]),
+          duration_total_s: 1047.3,
+          duration_median_s: 21.4,
+          duration_min_s: 0.5,
+          duration_max_s: 31.9,
+          duration_hist: series([['0–5', 1], ['5–10', 0], ['10–15', 9], ['15–20', 12], ['20–25', 14], ['25–30', 10], ['30–35', 4]]),
+        },
+        tables: [{ id: 'timestamp_check', rows: 50, file: 'tables/timestamp_check.parquet' }],
+        adjudication: null,
+      },
+      {
+        id: 'motion_quality',
+        state: 'succeeded',
+        gate: 'soft',
+        summary: {
+          counts: counts(50, { scored: 50 }),
+          mean_score: 0.84,
+          score_hist: hist([0, 0, 0, 0, 0, 1, 4, 14, 19, 12]),
+          subscores: [
+            { name: 'smoothness', mean: 0.86, n: 50, na: 0, in_total: true },
+            { name: 'spike', mean: 0.9, n: 50, na: 0, in_total: true },
+            { name: 'gripper_jitter', mean: 0.77, n: 50, na: 0, in_total: true },
+            { name: 'actuator_saturation', mean: null, n: 0, na: 50, in_total: true, na_reason: '速度型指令和位置读数含义不同,值直比无意义' },
+            { name: 'path_efficiency', mean: 0.71, n: 50, na: 0, in_total: false },
+            { name: 'joint_stability', mean: 0.68, n: 50, na: 0, in_total: false },
+            { name: 'fluency', mean: 0.92, n: 50, na: 0, in_total: false },
+          ],
+          stuck_episodes: 4,
+          idle_episodes: series([['head', 17], ['mid', 7], ['tail', 25]]),
+          active_ratio_mean: 0.9,
+        },
+        tables: [{ id: 'motion_quality', rows: 50, file: 'tables/motion_quality.parquet' }],
+        adjudication: null,
+      },
       {
         id: 'visual_quality',
         state: 'succeeded',
         gate: 'soft',
         summary: {
-          mean: 0.87,
-          checked: 49,
+          counts: counts(49, { scored: 49 }),
+          mean_score: 0.87,
+          score_hist: hist([0, 0, 0, 0, 0, 1, 2, 9, 21, 16]),
+          cameras: CAMERAS.map((camera, k) => ({ camera, n: 49, mean: [0.89, 0.86, 0.85][k], low: [0, 1, 2][k], placeholder: 0, hist: MAIN_CAMERA_HIST[camera], weight: 1 })),
           low_camera_readings: 3,
-          score_distribution: [
-            { name: '0.5–0.6', count: 1 },
-            { name: '0.6–0.7', count: 2 },
-            { name: '0.7–0.8', count: 9 },
-            { name: '0.8–0.9', count: 21 },
-            { name: '0.9–1.0', count: 16 },
-          ],
+          placeholder_readings: 0,
+          blur_ref_var: 100,
+          frame_max_side: 448,
         },
         tables: [{ id: 'visual_quality', rows: 147, file: 'tables/visual_quality.parquet' }],
         adjudication: null,
       },
-      { id: 'video_action_sync', state: 'succeeded', gate: 'hard', summary: { misaligned: 0, flagged: 2, suspect: 1, undetermined: 3, aligned: 43, flagged_cameras: 2 }, tables: [{ id: 'video_action_sync', rows: 147, file: 'tables/video_action_sync.parquet' }], adjudication: null },
+      {
+        id: 'video_action_sync',
+        state: 'succeeded',
+        gate: 'hard',
+        summary: {
+          counts: counts(49, { pass: 49 }),
+          verdicts: series([['aligned', 43], ['annotated', 2], ['suspect', 1], ['undecidable', 3], ['misaligned', 0]]),
+          flagged_camera_readings: 2,
+          lag_tol_s: 0.25,
+          cameras: [
+            { camera: CAMERAS[0], readings: 49, n: 46, median_lag_s: 0.03, iqr_s: 0.05, n_flagged: 0, n_suspect: 1, n_noisy: 0, n_abstained: 4 },
+            { camera: CAMERAS[1], readings: 49, n: 44, median_lag_s: 0.07, iqr_s: 0.09, n_flagged: 2, n_suspect: 0, n_noisy: 0, n_abstained: 3 },
+            { camera: CAMERAS[2], readings: 49, n: 46, median_lag_s: -0.01, iqr_s: 0.04, n_flagged: 0, n_suspect: 0, n_noisy: 0, n_abstained: 3 },
+          ],
+          sync_advice: '全库逐相机中位滞后均在容差内(|median| ≤ 0.25s),未见系统性错位;另有 1 条存在疑似错位但证据不足的相机(最多的是 exterior_image_1_left,1 条)——不判废也不进人工队列,但做逐帧对齐敏感的训练时建议对该路降权',
+          negative_lag_episodes: 0,
+        },
+        tables: [{ id: 'video_action_sync', rows: 147, file: 'tables/video_action_sync.parquet' }],
+        adjudication: null,
+      },
       {
         id: 'task_success',
         state: 'completed_with_errors',
         gate: 'hard',
         summary: {
-          checked: 49,
-          pass: 36,
-          fail: 5,
-          abstain: 6,
-          error: 2,
-          abstain_reasons: [
-            { name: '打分层拿不准', count: 3 },
-            { name: '复核分歧', count: 2 },
-            { name: '护栏拦下', count: 1 },
-          ],
+          counts: counts(49, { pass: 36, fail: 5, abstain: 6, error: 2 }),
+          arbitration: { triggered: 7, adopted_success: 0, adopted_failure: 2, abstained: 3, skipped: 2 },
+          abstain_reasons: { '末态物证 0.38 在灰区(0.25~0.45),证据不足以硬判': 3, '取证仲裁只有 1 路判未完成,不足以判废:转人工': 1, '峰值 0.91 崩至末态 0.30(gap≥0.4):单调契约违约': 1, '复核判未完成,但标注与画面描述不是同一任务': 1 },
+          abstain_reason_counts: series([['末态物证 … 在灰区', 3], ['取证仲裁只有 … 路判未完成', 1], ['峰值 … 崩至末态 …', 1], ['复核判未完成', 1]]),
+          error_steps: series([['arbitration', 2]]),
+          judgements: series([['success', 30], ['endstate_success', 6], ['failure', 3], ['arbitration_failure', 2], ['uncertain', 3], ['gap_violation', 1], ['review_conflict', 1], ['label_conflict_suspect', 1]]),
+          abstain_by_judgement: series([['uncertain', 3], ['gap_violation', 1], ['review_conflict', 1], ['label_conflict_suspect', 1]]),
+          text_sources: series([['原始标注', 26], ['自产caption', 21]]),
+          layers: series([['probe', 47], ['endstate', 47], ['label_guard', 3], ['arbitration', 5]]),
         },
         tables: [{ id: 'task_success', rows: 49, file: 'tables/task_success.parquet' }],
         // 6 abstentions to decide; its 5 rejects may be appealed (not pending, D42).
@@ -1137,30 +1505,35 @@ export function mainReport(revision: 1 | 2): Report {
         id: 'dedup',
         state: 'succeeded',
         gate: 'dedup',
-        summary: { checked: 42, groups: 1, removed: 1 },
-        tables: [{ id: 'dedup_groups', rows: 2, file: 'tables/dedup_groups.parquet' }],
+        summary: { counts: counts(42, { pass: 41, fail: 1 }), collision_groups: 1, removed: 1, group_sizes: series([['2', 1]]) },
+        tables: [{ id: 'dedup_groups', rows: 1, file: 'tables/dedup_groups.parquet' }],
         adjudication: { pending: 0, appealable: 1 },
       },
       failedProfile
-        ? { id: 'skill_profile', state: 'failed', gate: 'none', summary: {}, tables: [], adjudication: null, error: 'skill_profile: 429 QuotaExceeded x20, circuit open, exit 4' }
+        ? { id: 'skill_profile', state: 'failed', gate: 'none', summary: { counts: counts(0, {}) }, tables: [], adjudication: null, error: 'skill_profile: 429 QuotaExceeded x20, circuit open, exit 4' }
         : {
             id: 'skill_profile',
             state: 'succeeded',
             gate: 'none',
             summary: {
-              covered: 41,
+              counts: counts(41, { pass: 41 }),
               families: 6,
               subskills: 10,
-              divergences: 5,
-              unstable: 2,
-              family_distribution: [
-                { name: '放置', count: 14 },
-                { name: '倾倒', count: 8 },
-                { name: '开合', count: 7 },
-                { name: '推拉', count: 6 },
-                { name: '擦拭', count: 3 },
-                { name: '旋转开关', count: 3 },
+              undersampled: ['擦拭', '旋转开关'],
+              family_distribution: series([['放置', 14], ['开合', 9], ['推拉', 8], ['倾倒', 4], ['擦拭', 3], ['旋转开关', 3]]),
+              family_tree: [
+                { name: '放置', count: 14, pct: 34.15, undersampled: false, subskills: series([['放入容器', 8], ['放到台面', 6]]) },
+                { name: '开合', count: 9, pct: 21.95, undersampled: false, subskills: series([['关门', 5], ['开抽屉', 4]]) },
+                { name: '推拉', count: 8, pct: 19.51, undersampled: false, subskills: series([['推移', 5], ['拖拽', 3]]) },
+                { name: '倾倒', count: 4, pct: 9.76, undersampled: false, subskills: series([['倾倒', 4]]) },
+                { name: '擦拭', count: 3, pct: 7.32, undersampled: true, subskills: series([['擦拭', 3]]) },
+                { name: '旋转开关', count: 3, pct: 7.32, undersampled: true, subskills: series([['拧转', 2], ['按压', 1]]) },
               ],
+              label_disagreements: 5,
+              disagreement_high: 3,
+              disagreement_review: 2,
+              unstable: 2,
+              grouping_sources: series([['原始标注', 24], ['自产caption', 17]]),
             },
             tables: [{ id: 'skill_assignment', rows: 41, file: 'tables/skill_assignment.parquet' }],
             adjudication: { pending: 5 },
@@ -1169,16 +1542,15 @@ export function mainReport(revision: 1 | 2): Report {
     ],
     skipped_modules: [{ id: 'kinematic_limits', reason: '预检没读到机器人型号（robot_type 为 unknown），创建任务时选择跳过；其余模块照常' }],
     integrity: {
-      format: 'LeRobot v3（结构校验通过）',
-      episodes: '数据集 100 条，本次前 50 条（ep 0–49）',
-      cameras: CAMERAS.join('、'),
-      fps: 15,
-      robot_type: null,
-      semantics_profile: 'droid_100：动作是归一化的末端速度 + 夹爪，状态是末端绝对位姿',
+      format: { kind: 'lerobot', version: 'v3', supported: true, detail: 'LeRobot v3.0, 100 episodes, 3 cameras' },
+      validation: [],
+      warnings: [],
       labels: { with_task: 28, without_task: 22 },
-      missing_fields: [],
+      profile: { matched: 'droid_100', by: 'repo_id' },
+      robot_type: null,
+      skipped_episodes: [],
     },
-    perf: { vlm_wall_s: 900 },
+    perf: { vlm_requests: 886, vlm_wall_s: 900, effective_concurrency: 19.2, redone_after_interruption: 3 },
   };
 }
 
