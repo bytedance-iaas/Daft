@@ -151,15 +151,74 @@ describe('任务详情 (07 §4.2)', () => {
     expect(within(table).getByText('预检未读到机器人型号，创建时选择跳过')).toBeInTheDocument();
   });
 
-  it('timeline links each result version to its report; tokens show no money (D12)', async () => {
-    renderApp(`/tasks/${MAIN}`);
+  it('the timeline runs horizontally, every node with its title, time and details; each result version opens its report', async () => {
+    const { user } = renderApp(`/tasks/${MAIN}`);
     const tl = await screen.findByTestId('timeline');
-    expect(within(tl).getByRole('link', { name: '查看 r0001 报告' })).toHaveAttribute('href', `/tasks/${MAIN}/report?rev=1`);
-    expect(within(tl).getByText('当前版本')).toBeInTheDocument();
-    expect(within(tl).getByText('系统暂停')).toBeInTheDocument();
-    const tokens = screen.getByTestId('token-totals');
+    // One row of nodes (requester item 21), in order.
+    const nodes = [...tl.querySelectorAll('.htl-track > .htl-node')];
+    expect(nodes.map((n) => n.querySelector('.htl-title')?.textContent)).toEqual([
+      '创建',
+      '开始',
+      '系统暂停',
+      '自动恢复',
+      '主流程结束',
+      '结果版本',
+      '子任务 · 重试 #1',
+      '重试 #1 结束',
+      '结果版本',
+    ]);
+    for (const n of nodes) expect(n.querySelector('.htl-time')?.textContent).toMatch(/前$/);
+    // The revision nodes carry their report link, the current one its tag, on the node itself.
+    const [r1, r2] = nodes.filter((n) => n.getAttribute('data-kind') === 'revision') as HTMLElement[];
+    expect(within(r1).getByRole('link', { name: '查看 r0001 报告' })).toHaveAttribute('href', `/tasks/${MAIN}/report?rev=1`);
+    expect(within(r1).queryByText('当前版本')).toBeNull();
+    expect(within(r2).getByRole('link', { name: '查看 r0002 报告' })).toHaveAttribute('href', `/tasks/${MAIN}/report?rev=2`);
+    expect(within(r2).getByText('当前版本')).toBeInTheDocument();
+    // The text shows clamped on the node, in full in a popover.
+    const pause = nodes[2] as HTMLElement;
+    const text = pause.querySelector('.htl-text') as HTMLElement;
+    expect(text).toHaveTextContent('Daemon 升级（v2.0.3 → v2.0.4），VLM 档停在 21 / 49 条');
+    await user.hover(text);
+    expect(await screen.findByText('Daemon 升级（v2.0.3 → v2.0.4），VLM 档停在 21 / 49 条。不是用户操作，不需要处理。', { selector: '.htl-popover' })).toBeInTheDocument();
+  });
+
+  it('分档进度 and Token 消耗 sit side by side; Token 明细 by module or by subtask with a 合计 row, and no money (D12)', async () => {
+    const { user } = renderApp(`/tasks/${MAIN}`);
+    const tokens = await screen.findByTestId('token-totals');
     expect(tokens).toHaveTextContent('2.01M');
     expect(tokens).not.toHaveTextContent('¥');
+    const pair = screen.getByTestId('stages').closest('.grid-2') as HTMLElement;
+    expect(pair).not.toBeNull();
+    expect(within(pair).getByTestId('token-totals')).toBeInTheDocument();
+    // 明细 is open, by module first (requester item 13).
+    const table = await screen.findByTestId('token-table');
+    const rows = () => [...table.querySelectorAll('tbody tr')].map((r) => [...r.querySelectorAll('td')].map((c) => c.textContent));
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect([...table.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual(['模块', '请求', '输入', '输出', '思维链', '缓存命中']);
+    expect(rows()).toEqual([
+      ['任务成败判定', '786', '1.54M', '49.5K', '32.7K', '728K'],
+      ['技能画像', '100', '466K', '18K', '10.2K', '203.8K'],
+    ]);
+    const total = () => [...table.querySelectorAll('tfoot td, .arco-table-tfoot td')].map((c) => c.textContent);
+    expect(total()).toEqual(['合计', '886', '2.01M', '67.5K', '42.9K', '931.8K']);
+    await user.click(within(pair).getByText('按子任务'));
+    await waitFor(() => expect(rows().map((r) => r[0])).toEqual(['主流程', '重试 #1']));
+    expect([...table.querySelectorAll('thead th')][0]).toHaveTextContent('主流程 / 子任务');
+    expect(total()).toEqual(['合计', '886', '2.01M', '67.5K', '42.9K', '931.8K']);
+    // The help text is inside the fold, which closes.
+    const fold = table.closest('.arco-collapse-item') as HTMLElement;
+    expect(within(fold).getByText(/^重试花掉的也算在合计里/)).toBeInTheDocument();
+    await user.click(within(fold).getByText('明细'));
+    await waitFor(() => expect(fold).not.toHaveClass('arco-collapse-item-active'));
+  });
+
+  it('no second report link and no gray notes next to the card titles (requester items 10, 21)', async () => {
+    renderApp(`/tasks/${MAIN}`);
+    await screen.findByTestId('report-summary');
+    expect(screen.queryByText('查看详细报告')).toBeNull();
+    for (const note of ['只统计用量，不换算金额', '主流程、子任务、系统暂停都记在这里', '个模块参与本次质检', '任务配置与执行计划，只读', 'planner 生成，只读', '启动后只能改名称和备注']) {
+      expect(document.body).not.toHaveTextContent(note);
+    }
   });
 
   it('改名称和备注 validates the name and PATCHes with If-Match', async () => {
@@ -218,8 +277,9 @@ describe('任务详情 (07 §4.2)', () => {
     const tags = await within(timeline).findAllByTestId('relabel-rerun-tag');
     // The apply_adjudication subtask's start and end; the re-export after it has no such tag.
     expect(tags.map((t) => t.textContent)).toEqual(['改标重判：首轮完整流程', '改标重判：首轮完整流程']);
-    expect(tags[0].closest('.arco-timeline-item')).toHaveTextContent('执行裁决：应用 12 条裁决');
-    expect(within(timeline).getByText('重新导出：只处理变动的 episode。').closest('.arco-timeline-item')).not.toHaveTextContent('改标重判');
+    expect(tags[0].closest('.htl-node')).toHaveTextContent('执行裁决：应用 12 条裁决');
+    expect(tags[0].closest('.htl-node')).toHaveTextContent('子任务 · 执行裁决 #1');
+    expect(within(timeline).getByText('重新导出：只处理变动的 episode。').closest('.htl-node')).not.toHaveTextContent('改标重判');
   });
 
   it('a finished task whose access key was deleted offers 重新绑定访问密钥 (rebind-credentials)', async () => {
