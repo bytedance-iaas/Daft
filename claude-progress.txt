@@ -285,9 +285,13 @@ Main gaps:
     结论与种子模式一致；只有模板时预检 available、check 出结果；tests/eef/test_template.py 8 条；契约 92 条；前端 261 条。
     合回 feat/curator-v2 时注意：另一位 agent 的暂存改动也动了 CONTRACTS.lock 与 openapi.yaml，合并后重跑 export-modules + lock
   - EEF F5.7 试用：待需求方指定数据集与 VLM 后端
+  - EEF F5.10 准确率：本机没有 VLM 密钥，需要需求方提供可调用的后端（或在集群上跑评估）
   - F1.1 基线暂缓；F3.2 / F3.3 / F4.3 待走查
 
 Next steps:
+  0. EEF 改判（D49，F5.9–F5.12，2026-09-23 需求方在 dataset2 上看了带复核的报告后定）：两个模块合并为一个参与判决的模块，
+     先 CPU 后模型，判过 / 判废 / 转人工（口径见设计 12 附录 C.9）。顺序：F5.10 请求包改版（准确率要真实 VLM，本机没有密钥，
+     需求方提供后在 dataset2 / dataset3 上量）→ F5.9 合并与判决 → F5.11 裁决线 → F5.12 Episode 明细展示
   1. 需求方手动触发 CP 流水线出镜像（提交号见本次会话）；CI 看最新一次推送
   2. F6.6：按 deploy/README.md §12 在 galbot 部署（拷数据、关 dataverse curator、装 v2、验收），验收里顺带验 F6.2 真视频同步播放、
      F6.3 ReRun「可视化」与「质检」深链、F6.5 TOS 上的 mcap / lance（如有数据）
