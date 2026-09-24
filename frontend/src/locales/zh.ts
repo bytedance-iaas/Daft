@@ -226,8 +226,8 @@ export const zh = {
     },
     robot_type_unknown: (a: { robot_type?: unknown }) =>
       a.robot_type
-        ? `info.json 里的机器人型号 ${String(a.robot_type)} 认不出，请补充型号，或跳过该模块`
-        : '未读到机器人型号（数据集没有声明 robot_type），请补充型号，或跳过该模块',
+        ? `info.json 里的机器人型号 ${String(a.robot_type)} 认不出，请补充型号`
+        : '未读到机器人型号（数据集没有声明 robot_type），请补充型号',
     vlm_backend_missing: () => '还没选 VLM 后端，在「模型配置」里选一个',
     vlm_backend_none: () => '没有可用的 VLM 后端：在「系统和资源配置」里添加一个并验证通过',
     trajectory_missing: () => '需要上传约定格式的 trajectory.json（勾选后在第二屏上传）',
@@ -245,7 +245,6 @@ export const zh = {
 
   taskList: {
     title: '质检任务',
-    desc: '对机器人演示数据集跑自动质检，产出可直接训练的交付数据集与质检报告。',
     newTask: '新建任务',
     searchPlaceholder: '搜索任务名称或 ID',
     allStates: '全部状态',
@@ -1697,7 +1696,6 @@ export const zh = {
     clearDefaultModel: '取消默认',
     defaultModelSet: (name: string) => `新建任务默认用「${name}」`,
     defaultModelCleared: '已取消默认模型，新建任务时再选',
-    defaultModelNote: '新建任务默认选中它；同一时间只能有一个默认模型，改了这里，之前的就不再是默认。',
     modelAdded: '已添加，最小请求调通了',
     modelSource: { listed: '从接口拉取', manual: '手填' } as Record<string, string>,
     modelColName: '模型',
@@ -1709,7 +1707,7 @@ export const zh = {
     modelSaved: '已保存模型设置',
     modelRemoved: '已移除模型',
     customEffortNote: '自定义端点不一定认识思考强度这个字段，默认不传；选了才会带上。',
-    unknownLevelsNote: '认不出推理接入点背后是哪个模型，思考强度列出全部 7 档，实际生效的档位以服务端映射为准。',
+    unknownLevelsNote: '思考强度列出全部 7 档，实际生效的档位以服务端映射为准。',
     deleteBackendTitle: (name: string) => `删除 VLM 后端「${name}」`,
     deleteBackendContent: '连同它的模型和 API Key 一起删除，不能恢复。被未结束的任务使用时不能删。',
     deleteAgainKey: '删除后这些任务的报告和视频会读不了，需要在任务详情里重新绑定一个访问密钥。',

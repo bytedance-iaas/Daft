@@ -233,7 +233,6 @@ function Models({ backend }: { backend: VlmBackend }) {
           },
         ]}
       />
-      <div className="field-note">{zh.credentials.defaultModelNote}</div>
       {backend.kind === 'custom' ? <div className="field-note">{zh.credentials.customEffortNote}</div> : null}
       {unknownLevels ? <div className="field-note">{zh.credentials.unknownLevelsNote}</div> : null}
     </div>

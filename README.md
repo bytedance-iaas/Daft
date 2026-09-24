@@ -9,7 +9,7 @@ v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中
 mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原格式交付本版本未做），见 [06 篇 §1.1](docs/design/06-delivery-and-report.md)。
 
 - 设计：[docs/design/](docs/design/)（12 篇，入口 [00-overview.md](docs/design/00-overview.md)，§7 是全部冻结决策）
-- 需求账本与进度：[feature_list.md](feature_list.md)、[claude-progress.txt](claude-progress.txt)
+- 需求账本与进度：根目录的 `feature_list.md`、`claude-progress.txt`，只在开发机本地，不入库
 - v1 的使用文档与发布说明：[docs/v1/](docs/v1/)
 
 ## 目录

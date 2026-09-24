@@ -27,6 +27,10 @@ data/
 # Claude Code local state (worktrees of background agents)
 .claude/worktrees/
 
+# The requirement ledger and the progress notes stay local, never pushed (requester, 2026-09-24)
+/feature_list.md
+/claude-progress.txt
+
 # v1 intermediates (from robot-curation/.gitignore)
 .pip_install.log
 smoke_out/

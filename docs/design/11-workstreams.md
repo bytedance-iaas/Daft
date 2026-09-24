@@ -147,8 +147,8 @@ v1 的测试留在包内的 `backend/curation/tests/`。并行 agent 不改公�
 
 | 文件 | 位置 | 作用 |
 |---|---|---|
-| `feature_list.md` | 仓库根 | 需求账本：feature 列表、验收标准、完成状态。**需求描述与验收标准一经确定不得改写**，只更新状态位 |
-| `claude-progress.txt` | 仓库根 | 当前进度、阻塞点、下一步。`TaskStatus` 只能是 `completed` / `not_completed` |
+| `feature_list.md` | 仓库根（只在本地，不入库，2026-09-24 起） | 需求账本：feature 列表、验收标准、完成状态。**需求描述与验收标准一经确定不得改写**，只更新状态位 |
+| `claude-progress.txt` | 仓库根（只在本地，不入库，2026-09-24 起） | 当前进度、阻塞点、下一步。`TaskStatus` 只能是 `completed` / `not_completed` |
 | git | — | 每个 feature 一个完成点 commit，可回滚可追溯 |
 
 每个 feature 的固定流程：定义 → 实现 → 测试验证 → 更新 README → commit。

@@ -226,7 +226,6 @@ export function TaskListPage() {
       <PageHeader
         crumbs={[{ label: zh.taskList.title }]}
         title={zh.taskList.title}
-        description={zh.taskList.desc}
         extra={
           <Button type="primary" icon={<IconPlus />} onClick={() => navigate('/tasks/new')}>
             {zh.taskList.newTask}

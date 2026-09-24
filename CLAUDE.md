@@ -6,7 +6,7 @@
 ## 先读什么
 
 - 设计：`docs/design/00-overview.md`（入口，§7 是全部冻结决策）、`11-workstreams.md`（工作包与接口冻结顺序）
-- 需求账本与进度：根目录 `feature_list.md`、`claude-progress.txt`
+- 需求账本与进度：根目录 `feature_list.md`、`claude-progress.txt`——只在本地保存，不入库（已在 `.gitignore`，2026-09-24 需求方要求），照常读写、别提交
 - 对账工具（W0）：`tools/parity/README.md`
 - 契约：`docs/contracts/`
 - EEF–视频一致性（DEMO 模块，阶段 5）：`docs/design/12-eef-video-consistency.md`（首节是开工指引），格式规范与 Schema 在 `docs/contracts/eef/`（F5.1 冻结），模块代码在 `backend/curation/extensions/eef_consistency/`
