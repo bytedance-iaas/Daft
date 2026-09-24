@@ -1450,6 +1450,11 @@ def rerun_task_success(cfg: dict, video: dict, new_label: str, vlm, voter,
     """
     from ..core.checks.task_success import endstate_review, task_success
 
+    if getattr(vlm, "media_input", None) == "video":
+        from .video_task import judge_video_episode
+
+        return judge_video_episode(cfg, video, new_label, vlm, voter, task_src="人工改标")
+
     if decode is None:
         from ..adapters.decode import decode_window as decode
     pcfg = cfg.get("pipeline", {})
@@ -1485,15 +1490,12 @@ def _build_rerun(cfg: dict) -> Callable:
     rerun(input_dir, episode_id, new_label) -> {"passed","verdict","detail"}
     """
     from ..adapters.decode import decode_window
-    from ..adapters.vlm_client import make_endstate_voter, vlm_completion_from_config
+    from ..adapters.vlm_client import vlm_completion_from_config
+    from .funnel import build_endstate_voter
 
     vcfg = cfg["checks"]["task_success"]["vlm"]
     vlm = vlm_completion_from_config(cfg)
-    from ..adapters.vlm_client import timeout_for
-    voter = make_endstate_voter(vcfg["endpoint"], vcfg["model"],
-                                timeout_s=timeout_for("endstate", vcfg),
-                                api_key_env=vcfg.get("api_key_env"),
-                                thinking=cfg.get("pipeline", {}).get("thinking"))
+    voter = build_endstate_voter(cfg)
 
     def rerun(input_dir: str, episode_id: str, new_label: str) -> dict:
         # 嗅探放在这里而不是 _build_rerun 顶上:input_dir 是逐次调用才给的参数

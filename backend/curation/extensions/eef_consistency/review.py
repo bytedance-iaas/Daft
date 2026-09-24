@@ -1,5 +1,8 @@
 """VLM review of EEF-video consistency (design doc 12 §10, F5.6; request package D-E14, F5.10).
 
+Production requests attach continuous RAW/MARKED videos (design doc 13). The sparse crops
+described below are retained as report evidence and for historical injected-client tests.
+
 The model classifies, it never measures. For each camera of an episode the runner picks up to N
 uniform windows and up to N CPU candidate windows (suspect position / orientation segments of the
 EEF module, merged per sub-item; windows past the budget are dropped and the episode says
@@ -16,7 +19,7 @@ no measured value (px, mm, cm, degrees); a failing answer gets one repair reques
 is ``failed``. ``votes`` turns an answer into per-sub-item votes (uncertain / not observable do not
 vote); the episode verdict that weighs them against the CPU is the runner's (design 12 C.9).
 
-Answers are cached by the bytes sent (image hashes, frame ids, the text, prompt and Schema version,
+Answers are cached by the bytes sent (video/image hashes, frame ids, the text, prompt and Schema version,
 model, preprocessing), so a rerun or ``--resume`` asks nothing it already asked.
 """
 from __future__ import annotations
@@ -89,6 +92,7 @@ class Request:
     images: list[dict]                 # {"role", "frame_index", "jpeg": bytes}
     frame_ids: list[int]
     key: str
+    videos: list = dataclasses.field(default_factory=list)
 
 
 # ----------------------------------------------------------------------------------- windows
@@ -401,6 +405,59 @@ def build_request(sample, window: Window, frames: dict[int, np.ndarray], observe
     text = build_prompt(sample, window, ids, marks)
     key = cache_key(text, images, model)
     return Request(window, text, images, ids, key)
+
+
+def attach_videos(req: Request, sample, observed: dict, media_root: str, *, options=None) -> Request:
+    """Attach continuous RAW/MARKED videos for the selected window, retaining stills for reports."""
+    import cv2
+
+    from ...adapters.video_input import encode_rendered_video
+    from . import runner
+
+    opts = options or {}
+    camera = sample.cameras[req.window.camera_id]
+    fps = float(camera.media.get("fps") or 0)
+    if not np.isfinite(fps) or fps <= 0:
+        raise ValueError("EEF video review requires the camera's frame rate")
+    mapping = {int(v): i for i, v in enumerate(camera.video_frame_index) if v >= 0}
+    lo = int(camera.video_frame_index[min(req.frame_ids)])
+    hi = int(camera.video_frame_index[max(req.frame_ids)])
+    marks = marks_for(sample, req.window, observed)
+
+    def rendered(marked):
+        for fr in runner._frames(sample, req.window.camera_id, media_root):
+            if fr.index < lo:
+                continue
+            if fr.index > hi:
+                break
+            bgr = fr.bgr()
+            k = min(1.0, int(opts.get("max_side", 720)) / max(bgr.shape[:2]))
+            if k < 1:
+                bgr = cv2.resize(bgr, (int(bgr.shape[1] * k), int(bgr.shape[0] * k)))
+            f = mapping.get(fr.index)
+            if marked and f is not None:
+                bgr = _overlay(bgr, marks, f, k)
+            label = f"frame {f}" if f is not None else f"media frame {fr.index} (no trajectory sample)"
+            bgr = _label(bgr, f"{label} {'MARKED' if marked else 'RAW'}")
+            yield fr.pts_s, cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    limit = int(opts.get("max_bytes", 32 * 1024 * 1024))
+    for role, marked in (("RAW", False), ("MARKED", True)):
+        clip = encode_rendered_video(f"{req.window.camera_id} {role}", rendered(marked),
+                                     fps=fps, end_s=(hi + 1) / fps, max_bytes=limit)
+        req.videos.append(clip)
+        limit -= clip.byte_size
+    lines = req.text.splitlines()
+    lines[2] = ("Videos: RAW is the continuous unmarked camera view; find P there yourself first. "
+                "MARKED is the same continuous window with the RED circle P and RED direction A "
+                "from the recorded trajectory and, when available, the GREEN tracker cross P. "
+                "Frame ids are printed in both videos. Cite only the allowed Frames listed above. "
+                "A frame without a trajectory sample has no geometric overlay.")
+    req.text = "\n".join(lines)
+    req.key = hashlib.sha256(json.dumps({"base": req.key, "protocol": "eef-video-review/1",
+        "text": req.text, "fps": float(opts.get("fps", 5)),
+        "videos": [c.metadata() for c in req.videos]}, sort_keys=True).encode()).hexdigest()
+    return req
 
 
 def write_evidence(req: Request, directory: str, run_dir: str) -> list[str]:

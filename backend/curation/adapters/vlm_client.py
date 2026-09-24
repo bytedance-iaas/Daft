@@ -2,7 +2,7 @@
 
 ★ 换模型硬需求(用户 2026-07-02):模型名/端点只出现在 pipeline YAML 的 vlm: 一处,
 本模块从配置构造客户端,core/checks/task_success.py 对模型零感知。
-prompt 设计借 OpenGVL:单帧提问完成度(VOC 的打乱在 core 层做,这里只管"一帧一问")。
+prompt 设计借 OpenGVL:单帧提问完成度(core 按时间顺序传入探针,这里独立提问并保序返回)。
 """
 from __future__ import annotations
 
@@ -698,7 +698,7 @@ def make_vlm_completion(
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,   # 逐帧问询的并发度;1=串行
     thinking: bool | None = None,
 ):
-    """构造批式 vlm(reference, shuffled_frames, instruction) -> list[float](注入给 task_success)。
+    """构造批式 vlm(reference, probe_frames, instruction) -> list[float](注入给 task_success)。
 
     context 给出 → v4 few-shot 协议(单会话多图,忠实 openGVL);否则 → v3 锚定单查询。
     上下文在构造期绑定 → 注入接口不变,core/funnel 零改动。
@@ -724,7 +724,7 @@ def make_vlm_completion(
     def _img(frame: np.ndarray) -> dict:
         return {"type": "image_url", "image_url": {"url": _frame_to_data_uri(frame)}}
 
-    def vlm_v3(reference, shuffled_frames, instruction) -> list[float]:
+    def vlm_v3(reference, probe_frames, instruction) -> list[float]:
         text = ANCHORED_PROMPT.format(
             instruction=instruction or "the robot manipulation task")
         ref_img = _img(reference)                     # 参考帧编码一次,各请求复用
@@ -733,9 +733,9 @@ def make_vlm_completion(
             ans = _post([{"type": "text", "text": text}, ref_img, _img(f)])
             return parse_completion(strip_reasoning(ans))
 
-        return _map_concurrent(ask, shuffled_frames, max_concurrency)   # 保序
+        return _map_concurrent(ask, probe_frames, max_concurrency)   # 保序
 
-    def vlm_v5(reference, shuffled_frames, instruction) -> list[float]:
+    def vlm_v5(reference, probe_frames, instruction) -> list[float]:
         ctx_frames, ctx_rates = context
         head = [{"type": "text", "text": FEWSHOT_SYSTEM.format(
             instruction=instruction or "the robot manipulation task")},
@@ -754,7 +754,7 @@ def make_vlm_completion(
             content.append(_img(f))
             return parse_completion(strip_reasoning(_post(content)))
 
-        return _map_concurrent(ask, shuffled_frames, max_concurrency)   # 保序
+        return _map_concurrent(ask, probe_frames, max_concurrency)   # 保序
 
     return vlm_v5 if context is not None else vlm_v3
 
@@ -841,8 +841,8 @@ def make_multiview_completion(
 ):
     """多视角联合打分工厂。**帧 = [(相机名, 图), ...]**(同一时刻各相机,标签随数据走)。
 
-    注入接口不变:vlm(reference, shuffled_frames, instruction) -> list[float],
-    只是 reference 与 shuffled_frames 的元素都是 [(name, img), ...]。
+    注入接口不变:vlm(reference, probe_frames, instruction) -> list[float],
+    只是 reference 与 probe_frames 的元素都是 [(name, img), ...]。
     单相机数据集 = 单元素列表,自动退化为"单视角带标签"提问,零分支。
     请求走 hedged_request(超时对冲);闸门容量 = max_concurrency(同上一工厂)。
     """
@@ -864,7 +864,7 @@ def make_multiview_completion(
     def _img(frame) -> dict:
         return {"type": "image_url", "image_url": {"url": _frame_to_data_uri(frame)}}
 
-    def vlm_joint(reference, shuffled_frames, instruction, task_type: str = "persistent") -> list[float]:
+    def vlm_joint(reference, probe_frames, instruction, task_type: str = "persistent") -> list[float]:
         names = [n for n, _ in reference]
         letters = [chr(ord("A") + i) for i in range(len(names))]
         camlist = ", ".join(f"image {i+1} = camera {letters[i]} ({n})"
@@ -881,7 +881,7 @@ def make_multiview_completion(
                       [_img(f) for _, f in mvframe]
             return parse_completion(strip_reasoning(_post(content)))
 
-        return _map_concurrent(ask, shuffled_frames, max_concurrency)   # 保序
+        return _map_concurrent(ask, probe_frames, max_concurrency)   # 保序
 
     return vlm_joint
 
@@ -979,19 +979,23 @@ def make_endstate_voter(endpoint: str, model: str,
 
 
 def vlm_completion_from_config(cfg: dict):
-    """pipeline YAML 的 checks.task_success.vlm 段 → 注入函数(模型只在配置一处)。
+    """Production scorer: continuous multi-camera video -> structured assessment.
 
-    v7.2 起返回**多视角联合**打分器(帧 = [(相机名, 图), ...],funnel 按此组装;
-    单相机数据集自动退化,零分支)。单视角 make_vlm_completion 保留给探针/考卷。"""
+    Frame factories above remain available for historical evaluations only.
+    An unsupported video endpoint fails explicitly; it never falls back to images.
+    """
+    from .video_vlm import make_video_assessor
+
     vlm = cfg["checks"]["task_success"].get("vlm") or {}
     if not vlm.get("endpoint"):
         raise ValueError("配置 checks.task_success.vlm.endpoint 缺失")
-    return make_multiview_completion(vlm["endpoint"], vlm["model"],
+    return make_video_assessor(vlm["endpoint"], vlm["model"],
                                      api_key_env=vlm.get("api_key_env"),
                                      thinking=cfg.get("pipeline", {}).get("thinking"),
                                      timeout_s=timeout_for("probe", vlm),
-                                     max_concurrency=int(vlm.get("max_concurrency",
-                                                                 DEFAULT_MAX_CONCURRENCY)))
+                                     fps=float((vlm.get("video") or {}).get("fps", 5)),
+                                     max_in_flight=int(vlm.get("max_concurrency",
+                                                               DEFAULT_MAX_CONCURRENCY)))
 
 
 # ══ 取证仲裁链的提示词与工厂(2026-08-13 定稿)═══════════════════════════════

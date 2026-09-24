@@ -685,7 +685,7 @@ def _reprofile_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="curation reprofile",
         description="在已有的技能体系里,按当前归类方针对交付的全部轨迹重新分配归属"
-                    "(归类文本标注优先:有原始标注用标注,没有才用已生成的 caption)。"
+                    "(归类文本描述优先:有可用 caption 用描述,否则退回原始标注)。"
                     "不重新生成 caption、不重新归纳体系、不改交付数据集、不碰成败"
                     "判定;连跑两次,第二次报 0 条变化。\n"
                     "与 rejudge 的区别一句话:rejudge 只重排被人工裁决的那几条"

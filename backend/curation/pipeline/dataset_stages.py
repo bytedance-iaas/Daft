@@ -111,6 +111,11 @@ def run_autolabel(ctx, run_dir: str, rows: list[dict], captioner: Callable, *,
     unlabeled = [r for r in rows if not (r.get("instruction") or "").strip()]
     wanted = [index_of(r["episode_id"]) for r in unlabeled]
     existing = load_autolabel_lines(run_dir) if resume else {}
+    video_mode = getattr(captioner, "media_input", None) == "video"
+    from ..dataset_level.caption import VIDEO_CAPTION_PROTOCOL
+    if video_mode:
+        existing = {i: line for i, line in existing.items()
+                    if line.get("media_protocol") == VIDEO_CAPTION_PROTOCOL}
     todo = [r for r in unlabeled
             if not (resume and index_of(r["episode_id"]) in existing
                     and existing[index_of(r["episode_id"])]["status"] != "error")]
@@ -124,7 +129,10 @@ def run_autolabel(ctx, run_dir: str, rows: list[dict], captioner: Callable, *,
 
     def on_done(row, result):
         caption, incidents = result
-        log.write(autolabel_line(index_of(row["episode_id"]), caption, incidents))
+        line = autolabel_line(index_of(row["episode_id"]), caption, incidents)
+        if video_mode:
+            line["media_protocol"] = VIDEO_CAPTION_PROTOCOL
+        log.write(line)
 
     try:
         with installed_decode_watch():
@@ -395,6 +403,11 @@ def run_skill_profile(ctx, run_dir: str, rows: list[dict], cfg: dict, captioner:
     llm_log = IncidentLog()
     ask = wrap_call(llm_ask, llm_log, step="llm", call_kind="llm")
     previous = load_profile(run_dir) if incremental else None
+    from ..dataset_level.caption import VIDEO_CAPTION_PROTOCOL
+    video_mode = getattr(captioner, "media_input", None) == "video"
+    if previous is not None and video_mode and previous["profile"].get("media_protocol") != VIDEO_CAPTION_PROTOCOL:
+        previous = None
+        ctx.log("info", "skill_profile: rebuilding the historical image profile from continuous videos")
     if incremental and previous is None:
         ctx.log("info", "--incremental: no previous skill profile; profiling in full")
     try:
@@ -419,6 +432,8 @@ def run_skill_profile(ctx, run_dir: str, rows: list[dict], cfg: dict, captioner:
                            {"incidents": llm_log.items()[:5]}) from None
     from ..dataset_level.profile import skill_assignment_rows
 
+    if video_mode:
+        profile["media_protocol"] = VIDEO_CAPTION_PROTOCOL
     _write_profile_outputs(run_dir, profile, caption_of, gtext_of, gsrc_of, label_audit)
     flagged = _audit_ids(label_audit)
     filed = {r["episode_id"]: r for r in skill_assignment_rows(profile, caption_of,

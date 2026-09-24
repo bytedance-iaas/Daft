@@ -97,6 +97,10 @@ def answer_view(payload: dict) -> dict:
                     url = image.get("url") if isinstance(image, dict) else image
                     parts.append({"type": "image_url",
                                   "image_url": {"url": "pixels:" + _pixel_size(url)}})
+                elif part.get("type") == "video_url":
+                    # Duration/camera labels are in the text; encoded bytes can vary
+                    # across FFmpeg versions and must not change synthetic answers.
+                    parts.append({"type": "video_url", "video_url": {"fps": part["video_url"].get("fps")}})
             content = parts
         messages.append({"role": msg.get("role"), "content": content})
     return {"seed": SEED, "messages": messages}
@@ -117,6 +121,22 @@ class FakeVlm:
     def answer(self, payload: dict) -> str:
         text = _texts(payload)
         n = int(self.answer_key(payload).split(":")[1][:8], 16)
+        if "Assess the robot manipulation task from the supplied continuous videos" in text:
+            camera = re.search(r"Camera: (.+?)\. Same episode", text).group(1)
+            start = float(re.search(r"episode time ([\d.]+)s", text).group(1))
+            end = float(re.search(r"episode window ends at ([\d.]+)s", text).group(1))
+            # Whole-second short clips are ambiguous; longer/fractional clips
+            # exercise the primary/review disagreement and video arbitration.
+            visible = end >= 6 or abs(end - round(end)) > 0.01
+            review = "Independently review ONLY this camera" in text
+            arbitration = "Re-examine the action and object trajectory" in text
+            verdict = ("success" if review or arbitration else "failure") if visible else "uncertain"
+            return json.dumps({"verdict": verdict, "task_type": "persistent",
+                               "completion": 0.9 if verdict == "success" else 0.2,
+                               "reason": "synthetic video observation",
+                               "evidence": [{"camera": camera, "start_s": start,
+                                             "end_s": min(end, start + 0.5),
+                                             "observation": "synthetic object trajectory"}]})
         if "Build a TWO-LEVEL skill taxonomy" in text:
             caps = _bullets_after(text, "CAPTIONS:")
             return json.dumps({"families": [{

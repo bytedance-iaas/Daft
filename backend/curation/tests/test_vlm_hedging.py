@@ -377,7 +377,7 @@ def test_timeouts_site_config_override(monkeypatch):
         captured.update(kw)
         return lambda *a, **k: []
 
-    monkeypatch.setattr(vc, "make_multiview_completion", fake_factory)
+    monkeypatch.setattr("curation.adapters.video_vlm.make_video_assessor", fake_factory)
     cfg = {"checks": {"task_success": {"vlm": {
         "endpoint": "http://198.51.100.7:8000/v1", "model": "m",
         "timeouts_s": {"probe": 33}}}}}

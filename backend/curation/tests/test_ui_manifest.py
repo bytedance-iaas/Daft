@@ -588,7 +588,7 @@ def test_latency_kind_notes_explain_all_five_call_types():
     for tag, label in CALL_KIND_LABELS.items():
         assert f"**{label}**" in LATENCY_KIND_NOTE, label
         assert CALL_KIND_NOTES[tag] in LATENCY_KIND_NOTE, tag   # 同一份文案,不是抄一遍
-    assert "次数最多" in LATENCY_KIND_NOTE              # 打分次数为何最多
+    assert "每条一次主判请求" in LATENCY_KIND_NOTE      # 视频原生后打分每条一次(设计 13)
     assert "只对没通过一审的数据跑" not in LATENCY_KIND_NOTE   # 错误事实不许回潮
     for impl_tag in ("probe", "endstate", "caption", "llm", "arbitration"):
         assert impl_tag not in LATENCY_KIND_NOTE, impl_tag

@@ -261,10 +261,10 @@ def test_profile_reads_keep_without_dedup():
 def test_estimates_follow_v1_call_graph():
     pf = X.preflight(10, cameras=("a", "b", "c"))
     p = plan(["task_success"], preflight=pf)
-    assert p["estimates"]["vlm_requests"] == 10 * (8 + 2 * 3)       # probes + two questions per camera
+    assert p["estimates"]["vlm_requests"] == 10 * (1 + 3)           # video assessment + per-camera review
     assert p["estimates"]["wall_clock_s"] > 0
     p = plan(["task_success", "skill_profile"], preflight=X.preflight(10, without_task=4))
-    assert p["estimates"]["vlm_requests"] == 4 + 10 * 14 + 6         # autolabel, judge, profile captions
+    assert p["estimates"]["vlm_requests"] == 4 + 10 * 4 + 6          # autolabel, video judge/review, profile
     p = plan(["example_grasp", "example_table"], registry=X.REGISTRY, preflight=X.preflight(10))
     assert p["estimates"]["vlm_requests"] == 10                      # merged: one request per episode
     p = plan(["example_grasp", "example_table"], registry=X.REGISTRY, preflight=X.preflight(10),

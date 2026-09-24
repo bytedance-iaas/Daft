@@ -89,7 +89,12 @@ class _Stub(BaseHTTPRequestHandler):
         texts = " ".join(c.get("text", "") for c in body["messages"][0]["content"]
                          if c["type"] == "text")
         m = _re.search(r"exactly (\d+) comma", texts)
-        if m:
+        if any(c["type"] == "video_url" for c in body["messages"][0]["content"]):
+            answer = {"verdict": "success", "task_type": "persistent", "completion": 0.9,
+                      "reason": "visible goal", "evidence": [{"camera": "cam", "start_s": 0.0,
+                      "end_s": 0.5, "observation": "object at destination"}]}
+            resp = {"choices": [{"message": {"content": json.dumps(answer)}}]}
+        elif m:
             k = int(m.group(1))
             resp = {"choices": [{"message": {"content": ", ".join(str((i + 1) * 10) for i in range(k))}}]}
         else:
@@ -148,23 +153,26 @@ def test_from_config_single_source_of_truth(stub_server):
     单相机数据集即单元素列表(自动退化,零分支)。"""
     cfg = {"checks": {"task_success": {"vlm": {"endpoint": stub_server, "model": "m-x"}}}}
     vlm = vlm_completion_from_config(cfg)
-    marks = [30, 60]
-    out = vlm([("cam", _mark_frame(0))], [[("cam", _mark_frame(m))] for m in marks], "t")
-    assert out == pytest.approx([m / 100 for m in marks], abs=0.02)
+    from curation.adapters.video_input import VideoClip
+    out = vlm([VideoClip("cam", "data:video/mp4;base64,YWJj", "abc", 0, 1, 10, 3)], "t")
+    assert out["verdict"] == "success" and out["completion"] == 0.9
     assert _Stub.seen[-1]["body"]["model"] == "m-x"
     # 联合 prompt 必须带相机标签(模型据此知道哪张图是哪路)
-    txt = _Stub.seen[-1]["body"]["messages"][0]["content"][0]["text"]
-    assert "camera A (cam)" in txt
+    content = _Stub.seen[-1]["body"]["messages"][0]["content"]
+    assert any(c["type"] == "video_url" for c in content)
+    assert any("Camera: cam" in c.get("text", "") for c in content)
 
 
-def test_from_config_reads_max_concurrency(stub_server):
+def test_from_config_reads_max_concurrency(stub_server, monkeypatch):
     """并发度可从 YAML 配置(上 Ray 后要按 worker 数调小,不能写死)。"""
     cfg = {"checks": {"task_success": {"vlm": {
         "endpoint": stub_server, "model": "m-x", "max_concurrency": 1}}}}   # 1=串行
-    vlm = vlm_completion_from_config(cfg)
-    marks = [10, 20, 30]
-    out = vlm([("cam", _mark_frame(0))], [[("cam", _mark_frame(m))] for m in marks], "t")
-    assert out == pytest.approx([m / 100 for m in marks], abs=0.02)   # 串行也必须对
+    from curation.adapters import vlm_client
+    capacities = []
+    gate = vlm_client.SharedGate
+    monkeypatch.setattr(vlm_client, "SharedGate", lambda n: capacities.append(n) or gate(n))
+    assert vlm_completion_from_config(cfg).media_input == "video"
+    assert capacities == [1]
 
 
 @pytest.mark.parametrize("concurrency", [1, 4, 8])

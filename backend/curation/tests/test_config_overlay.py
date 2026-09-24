@@ -47,7 +47,7 @@ def test_nested_partial_override(tmp_path):
     v = cfg["checks"]["task_success"]["vlm"]
     assert v["endpoint"] == "http://10.0.0.9:8000/v1"      # 改的生效
     assert v["model"]                                       # 没改的保留出厂值
-    assert cfg["checks"]["task_success"]["params"]["n_probe"] == 8
+    assert v["video"]["fps"] == 5                         # 视频配置沿用出厂值
 
 
 def test_scalar_and_threshold_override(tmp_path):

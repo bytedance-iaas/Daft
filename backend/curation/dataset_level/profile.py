@@ -9,10 +9,10 @@ import numpy as np
 
 #: details/skill_assignment.csv 的列(英文小写下划线,与 kinematic_details.csv 等一致)。
 #: ⚠️ 前四列是客户直读的契约(pandas 脚本按名取列):只许在尾部加列,不许改名/删列。
-#: 2026-08-16 标注优先方针补两列:grouping_text=归类实际用的文本(标注优先,
-#: instruction.strip() or caption),grouping_text_source=该文本的来源
+#: grouping_text=归类实际用的文本(2026-09-24 起视频描述优先，标注兜底),
+#: grouping_text_source=该文本的来源
 #: (原始标注 / 自产caption / 无,与 task_desc_source 同词表)。caption 列语义不变:
-#: 仍是自产 VLM caption——它不再是归类输入,但还是分歧检出的一端,照旧陈列。
+#: 仍是自产 VLM caption，也是分歧检出的一端。
 SKILL_ASSIGNMENT_COLUMNS = ["episode_id", "family", "subskill", "caption",
                             "grouping_text", "grouping_text_source"]
 

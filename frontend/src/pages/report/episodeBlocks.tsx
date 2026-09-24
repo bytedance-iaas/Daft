@@ -310,6 +310,8 @@ function TaskBlock({ record }: BlockProps) {
   const trail = taskTrail(d, record.verdict);
   const T = E().task;
   const completions = Array.isArray(d.completions) ? d.completions.map((v) => num(v)) : [];
+  const videoEvidence = Array.isArray(d.video_evidence)
+    ? d.video_evidence.filter((v): v is Details => !!v && typeof v === 'object') : [];
   const source = str(d.task_desc_source);
   return (
     <>
@@ -326,6 +328,17 @@ function TaskBlock({ record }: BlockProps) {
         ))}
       </div>
       <Reason text={str(d.reason)} tone={record.verdict === 'fail' ? 'bad' : record.verdict === 'abstain' ? 'warn' : undefined} />
+      {d.input_mode === 'video' ? (
+        <div className="episode-sub">
+          <div className="section-sub">{T.videoAssessment}{num(d.video_completion) !== null ? T.videoCompletion(fmt((num(d.video_completion) ?? 0) * 100)) : ''}</div>
+          {videoEvidence.map((e, i) => (
+            <div key={i} className="episode-line">
+              <Tag size="small">{T.videoEvidence(str(e.camera) ?? '', fmt(num(e.start_s)), fmt(num(e.end_s)))}</Tag>
+              <span>{str(e.observation)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {source || str(d.task_type) ? (
         <div className="muted">
           {[source ? T.intent(zh.sections.task.sourceNames[source] ?? source) : '', str(d.task_type) ? T.taskType[str(d.task_type)!] ?? str(d.task_type) : ''].filter(Boolean).join(' · ')}

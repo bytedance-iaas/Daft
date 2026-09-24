@@ -194,7 +194,14 @@ class StageRun:
         if not self.o.resume:
             return eps, 0, set()
         current = {m: latest_results(self.o.run_dir, m, eps) for m in self.o.modules}
-        stale = self.o.stale or {}
+        stale = {m: set(ids) for m, ids in (self.o.stale or {}).items()}
+        clients = self.o.task_clients
+        if "task_success" in current and clients is not None and getattr(clients.vlm_completion, "media_input", None) == "video":
+            from ..adapters.video_vlm import PROTOCOL
+
+            stale.setdefault("task_success", set()).update(
+                e for e, rec in current["task_success"].items()
+                if (rec.get("details") or {}).get("protocol") != PROTOCOL)
         done = {e for e in eps
                 if all(e in current[m] and current[m][e]["verdict"] != "error" and e not in stale.get(m, ())
                        for m in self.o.modules)}

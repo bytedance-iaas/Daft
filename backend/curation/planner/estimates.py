@@ -17,8 +17,8 @@ DEDUP_S_PER_EPISODE = 0.02    # action hashes; video hashes only for collisions
 AGGREGATE_S = 1.0
 
 #: v1's call graph per episode (04 §4.1) for the two existing VLM modules.
-TASK_SUCCESS_PROBES = 8       # checks.task_success.params.n_probe
-ENDSTATE_PER_CAMERA = 2       # "done?" and "failed?" are separate questions
+TASK_SUCCESS_PROBES = 1       # one multi-camera video assessment
+ENDSTATE_PER_CAMERA = 1       # one independent video review per camera
 MAX_ENDSTATE_CAMS = 4         # pipeline.max_endstate_cams
 CAPTIONS_PER_EPISODE = 1
 
@@ -87,7 +87,7 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
                     uncounted.append(module)
     notes.append(f"rough estimate: every selected episode is assumed to pass the hard gates; "
                  f"{VLM_LATENCY_S:g} s per request at {GATE_UTILISATION:.0%} gate use "
-                 "(v1, 2026-09-07)")
+                 "(image-request baseline from v1, 2026-09-07; video latency is not calibrated)")
     if any(s["id"] == "vlm" and "task_success" in s.get("modules", ()) for s in stages):
         notes.append("task_success arbitration and label-guard calls depend on the data "
                      "and are not counted")

@@ -254,17 +254,12 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
     order guarantee; ``curation check`` passes one that captions episode by episode so
     a failed call is charged to its episode (D33). None = ``caption_episodes`` itself.
 
-    2026-08-16 从 run_pipeline 抽出:归类输入从"全员 caption"改成**标注优先**,
-    这个输入选择必须能被单测钉死(埋在千行函数里只能靠 e2e 撞运气)。
+    2026-09-24:生产 caption 直接读取连续视频，归类优先采用视频描述。
     captioner / llm_ask 注入式(与 M4c 同哲学),测试不需要任何端点。
     返回 (profile, caption_of, grouping_text_of, grouping_source_of, label_audit)。
 
-    归类文本 = instruction.strip() or caption(2026-08-16 用户定,**权宜之计**):
-    droid-200-new 分歧队列 29 条人工复核,26 条是我方 caption 错、客户原始标注对
-    (90%,如 "Open the airfryer" 被写成"放咖啡胶囊")。有标注按标注归类,无标注才
-    用自产 caption。**caption 照旧全员生成**:它仍是标注-画面分歧检出的一端,只是
-    不再当归类输入;等 caption 准确率上去后回退点就在下面 grouping_text_and_source
-    那一处。
+    归类文本 = 可观察的 caption，否则 instruction。描述仍与原始标注做分歧审计，
+    归类输入和来源的唯一落点是 grouping_text_and_source。
     """
     from ..dataset_level.audit import GARBAGE_REASON as AUDIT_GARBAGE
     from ..dataset_level.audit import audit_labels
@@ -296,7 +291,7 @@ def _skill_profile_stage(keep_rows: list, cfg: dict, captioner, llm_ask,
                             precomputed=auto_caps,
                             on_progress=lambda: _progress_tick(_pk_cap),
                             max_concurrency=_cap_conc)
-    # 归类文本(标注优先)与来源:体系归纳/自查合并/分配/补漏四个环节从这里起
+    # 归类文本(视频描述优先)与来源:体系归纳/自查合并/分配/补漏四个环节从这里起
     # 全部吃 gtexts,不再吃 caps;来源留痕进 CSV 的 grouping_text_source。
     gtexts, gsrcs = [], []
     for r, c in zip(keep_rows, caps):
@@ -601,11 +596,6 @@ def _run_pipeline(
     else:
         _validate_config(cfg)
     if not lite:
-        # n_probe/帧问询并发未对齐 → 分波问询,单条耗时静默上升;开跑前一行点破
-        from .config import probe_concurrency_hint
-        _hint = probe_concurrency_hint(cfg)
-        if _hint:
-            print(_hint, flush=True)
         # 模型自动发现(2026-07-28 同事反馈):只给 --vlm-endpoint 时,单模型服务
         # (自托管 vLLM 常态)从 GET /models 自取;多模型服务(方舟)报错列候选
         _v = cfg.get("checks", {}).get("task_success", {}).get("vlm", {})
@@ -821,7 +811,8 @@ def _run_pipeline(
             capper = make_vlm_captioner(vcfg0["endpoint"], vcfg0["model"],
                                         timeout_s=timeout_for("caption", vcfg0),
                                         api_key_env=vcfg0.get("api_key_env"),
-                                        max_in_flight=_cc0)
+                                        max_in_flight=_cc0, video_options=vcfg0.get("video"),
+                                        thinking=cfg.get("pipeline", {}).get("thinking"))
             _pk_cap0 = _progress_init("precap", len(unlabeled),
                                       f"无标注补 caption({len(unlabeled)} 条,并发 {_cc0})")
             if _checkpoint is None:
@@ -840,6 +831,10 @@ def _run_pipeline(
             for r, c in zip(unlabeled, captions):
                 if c:
                     auto_caps[r["episode_id"]] = c
+            if getattr(capper, "media_input", None) == "video":
+                from ..dataset_level.caption import VideoCaptionCache
+
+                auto_caps = VideoCaptionCache(auto_caps)
     desc_of, desc_src_of = {}, {}
     for r in rows:
         text, src = judge_text_and_source(r.get("instruction"),
@@ -1035,7 +1030,8 @@ def _run_pipeline(
         captioner = make_vlm_captioner(vcfg["endpoint"], vcfg["model"],
                                        timeout_s=_timeout_for("caption", vcfg),
                                        api_key_env=vcfg.get("api_key_env"),
-                                       max_in_flight=_cap_conc)
+                                       max_in_flight=_cap_conc, video_options=vcfg.get("video"),
+                                       thinking=cfg.get("pipeline", {}).get("thinking"))
         # 闸门按文本调用里最大的结构并发给(守规合并 / 标注判官都从多线程调它)
         llm_ask = make_llm_ask(vcfg["endpoint"], vcfg["model"],
                                timeout_s=_timeout_for("llm", vcfg),

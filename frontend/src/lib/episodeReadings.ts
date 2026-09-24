@@ -245,7 +245,12 @@ export function taskTrail(d: Details, verdict: string): TrailStep[] {
     steps.push({ layer: T.layers.label_guard, text: T.notReached, reached: false });
   }
   const arb = d.arbitration && typeof d.arbitration === 'object' ? (d.arbitration as Details) : null;
-  if (arb) {
+  const videoArb = d.video_arbitration && typeof d.video_arbitration === 'object' ? d.video_arbitration as Details : null;
+  if (videoArb) {
+    const final = str(videoArb.verdict) ?? 'uncertain';
+    steps.push({ layer: T.layers.arbitration, text: str(videoArb.reason) ?? str(videoArb.error) ?? T.init[final] ?? final,
+      reached: true, tone: final === 'success' ? 'good' : final === 'failure' ? 'bad' : 'warn' });
+  } else if (arb) {
     const final = String(arb.final ?? arb.consensus ?? 'abstain');
     steps.push({ layer: T.layers.arbitration, text: T.arbitration(num(arb.n_effective) ?? 0, T.consensus[final] ?? final), reached: true, tone: final === 'yes' ? 'good' : final === 'no' ? 'bad' : 'warn' });
   } else {

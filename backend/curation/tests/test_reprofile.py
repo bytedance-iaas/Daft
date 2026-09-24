@@ -79,13 +79,30 @@ def _read_csv(p):
         return {r["episode_id"]: r for r in csv.DictReader(f)}
 
 
+def _set_caption(root, text):
+    """Update the saved description; a blank removes the old CSV fallback too."""
+    path = root / "details" / "captions.json"
+    caps = json.loads(path.read_text())
+    caps["ep000002"] = text
+    path.write_text(json.dumps(caps))
+    if not text:
+        path = root / "details" / "skill_assignment.csv"
+        rows = _read_csv(path)
+        rows["ep000002"]["caption"] = ""
+        with path.open("w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=list(rows["ep000002"]))
+            writer.writeheader()
+            writer.writerows(rows.values())
+
+
 def test_reprofile_moves_mislabeled_episode_and_keeps_verdicts(tmp_path):
     """核心闭环:错格子的条目按标注搬回正确格子;成败判定逐字节不变;报数正确。"""
     d = _write_delivery(tmp_path)
+    _set_caption(d, WIPE_CAP)
     before = json.loads((d / "passed.json").read_text(encoding="utf-8"))
     s = run_reprofile(str(d))
     assert s["total"] == 3 and s["n_changed"] == 1
-    assert s["n_caption_to_label"] == 1                # 从 caption 归改成按标注归
+    assert s["n_caption_to_label"] == 0                # 按更新后的描述重新归类
     assert s["n_unassigned"] == 0 and s["n_label_missing_kept"] == 0
     assert s["changed"][0]["episode_id"] == "ep000002"
     assert s["changed"][0]["new_family"] == "wiping"
@@ -104,9 +121,9 @@ def test_reprofile_moves_mislabeled_episode_and_keeps_verdicts(tmp_path):
 
     by = _read_csv(d / "details" / "skill_assignment.csv")
     assert by["ep000002"]["family"] == "wiping"
-    assert by["ep000002"]["grouping_text"] == WIPE_LABEL
-    assert by["ep000002"]["grouping_text_source"] == "原始标注"
-    assert by["ep000002"]["caption"] == WRONG_CAP      # caption 列语义不变,照旧陈列
+    assert by["ep000002"]["grouping_text"] == WIPE_CAP
+    assert by["ep000002"]["grouping_text_source"] == "自产caption"
+    assert by["ep000002"]["caption"] == WIPE_CAP
     assert by["ep000001"]["grouping_text_source"] == "自产caption"
     assert os.path.exists(d / "details" / "reprofile_results.json")
 
@@ -136,12 +153,14 @@ def test_reprofile_never_recaptions_or_reinduces(tmp_path, monkeypatch):
     monkeypatch.setattr(C, "caption_episodes", boom)
     monkeypatch.setattr(C, "make_vlm_captioner", boom)
     d = _write_delivery(tmp_path)
+    _set_caption(d, WIPE_CAP)
     assert run_reprofile(str(d))["n_changed"] == 1
 
 
 def test_reprofile_unmatched_label_stays_unassigned_without_llm(tmp_path):
     """诚实弃权:标注归不进体系、又没配 LLM → 留「未归类」并如实报数,绝不硬猜。"""
     d = _write_delivery(tmp_path)
+    _set_caption(d, "")
     det = d / "details"
     td = json.loads((det / "task_details.json").read_text(encoding="utf-8"))
     td["episodes"]["ep000002"]["instruction"] = "Open the airfryer"   # 体系里没有的动作
@@ -156,6 +175,7 @@ def test_reprofile_unmatched_label_stays_unassigned_without_llm(tmp_path):
 def test_reprofile_unmatched_label_repaired_once_with_llm(tmp_path):
     """配了 LLM:归不进去的才问一次补漏(只允许指认既有类),问完各归其位。"""
     d = _write_delivery(tmp_path)
+    _set_caption(d, "")
     det = d / "details"
     td = json.loads((det / "task_details.json").read_text(encoding="utf-8"))
     td["episodes"]["ep000002"]["instruction"] = "Open the airfryer"
@@ -200,6 +220,7 @@ def test_reprofile_prefers_parquet_instruction_with_source_screening(tmp_path):
     (把我们自己补写的 caption 当客户标注用,正是这次方针要纠正的错误)。"""
     daft = pytest.importorskip("daft")
     d = _write_delivery(tmp_path)
+    _set_caption(d, "")
     os.remove(d / "details" / "task_details.json")     # 逼它只认 parquet
     daft.from_pydict({
         "episode_id": ["ep000001", "ep000002", "ep000003"],

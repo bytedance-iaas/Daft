@@ -44,10 +44,15 @@ def make_asker(vlm: dict, timeout_s: float, gate):
     url = str(vlm["endpoint"]).rstrip("/") + "/chat/completions"
     headers = vlm_client.auth_headers(vlm.get("api_key_env"))
     model = str(vlm["model"])
+    video_options = dict(vlm.get("video") or {})
 
     def ask(req, history):
-        content = [{"type": "text", "text": req.text}] + [
-            {"type": "image_url", "image_url": {"url": R.data_url(i["jpeg"])}} for i in req.images]
+        from ..adapters.video_input import video_content
+
+        if not req.videos:
+            raise R.ReviewCallError("video_missing", "EEF review requires continuous videos")
+        content = [{"type": "text", "text": req.text}] + video_content(
+            req.videos, fps=float(video_options.get("fps", 5)))
         payload = {"model": model, "temperature": 0.0, "max_tokens": MAX_TOKENS,
                    "messages": [{"role": "user", "content": content}, *history]}
         try:
@@ -59,6 +64,8 @@ def make_asker(vlm: dict, timeout_s: float, gate):
         except Exception as e:  # noqa: BLE001 - every failure is a window without an answer
             raise R.ReviewCallError(_code(e), f"{type(e).__name__}: {e}"[:300]) from None
 
+    ask.media_input = "video"
+    ask.video_options = video_options
     return ask
 
 
@@ -131,8 +138,20 @@ def review_episode(sample, base: dict, *, run_dir: str, media_root: str, ask, ca
                             "failure": {"code": "frames_unreadable", "message": "no frame of the window decoded"}})
                 continue
             req = R.build_request(sample, w, frames, observed, model=model)
+            if getattr(ask, "media_input", None) == "video":
+                try:
+                    R.attach_videos(req, sample, observed, media_root,
+                                    options=getattr(ask, "video_options", {}))
+                except Exception as exc:
+                    out.append({**w.as_dict(), "status": R.FAILED, "attempts": 0, "cache_hit": False,
+                                "failure": {"code": "video_unreadable", "message": str(exc)[:300]}})
+                    continue
             got = R.ask_window(req, ask, cache)
             row = {**w.as_dict(), **got, "request_key": req.key}
+            if req.videos:
+                row["input_mode"] = "video"
+                row["video_inputs"] = [clip.metadata() for clip in req.videos]
+                req.videos.clear()   # reports retain still evidence, not every video's Base64
             where = os.path.join(out_dir, "evidence", ep, cid)
             if requests is not None:
                 requests[req.key] = (req, where)

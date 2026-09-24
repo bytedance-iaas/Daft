@@ -1,5 +1,7 @@
 """对着**现有技能体系**做纯文本再分配(2026-08-16 标注优先方针的两条闭环共用)。
 
+2026-09-24 默认改为视频描述优先，原始标注兜底；历史背景如下。
+
 背景:droid-200-new 分歧队列 29 条人工复核,26 条是我方 caption 错、客户原始标注对
 (90%)——归类输入从"全员 caption"改为"标注优先"(instruction.strip() or caption)。
 老交付是按旧策略跑的,人工裁决后也要能把单条重新归类,于是需要这一层:
@@ -27,17 +29,17 @@ SRC_NONE = "无"
 
 
 def grouping_text_and_source(instruction, caption) -> tuple[str, str]:
-    """标注优先方针的唯一口径:归类文本 = instruction.strip() or caption。
+    """Video-description first: caption, falling back to the annotation if unavailable.
 
     集中成一个函数是为了 run / rejudge / reprofile 三处不各写一遍三元表达式——
     口径一旦分叉,画像与 CSV 会安静地说两种话。
     """
     ins = str(instruction or "").strip()
     cap = str(caption or "").strip()
+    if cap and not cap.lower().startswith("unclear"):
+        return cap, SRC_CAPTION
     if ins:
         return ins, SRC_LABEL
-    if cap:
-        return cap, SRC_CAPTION
     return "", SRC_NONE
 
 

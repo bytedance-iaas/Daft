@@ -10,6 +10,7 @@
     "status": {"enum": ["ok", "unclear", "error"]},
     "caption": {"type": ["string", "null"]},
     "source": {"const": "自产caption"},
+    "media_protocol": {"const": "video-caption/1"},
     "error": {"oneOf": [{"type": "null"}, {"$ref": "common.schema.json#/$defs/execution_error"}]}
   },
   "allOf": [

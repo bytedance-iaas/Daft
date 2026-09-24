@@ -53,6 +53,11 @@ def build_task_trace(episode_id: str, passed, detail: dict, *,
             rec[out] = v
     if detail.get("rules"):
         rec["rules"] = list(detail["rules"])
+    if detail.get("input_mode") == "video":
+        for key in ("input_mode", "protocol", "video_inputs", "video_completion",
+                    "video_assessment", "video_reviews", "video_arbitration", "video_evidence"):
+            if key in detail:
+                rec[key] = detail[key]
     for key in ("task_type", "task_type_source"):        # 方案 2:类型与来源随痕迹走
         if detail.get(key):
             rec[key] = str(detail[key])

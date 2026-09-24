@@ -42,7 +42,10 @@ export function TaskDetailPage() {
   const location = useLocation();
   const actions = useTaskActions();
   const [live, setLive] = useState(true);
-  const mode = useTaskEvents(id, live);
+  // The event stream stays subscribed even for a terminal task: a subtask started elsewhere
+  // (another tab, the CLI, an agent) must flip the page back to live (D46). Polling stays gated
+  // by `live` — the stream itself is just an idle connection with heartbeats for a finished task.
+  const mode = useTaskEvents(id, Boolean(id));
   const task = useTask(id, pollInterval(mode, live));
   const [tab, setTab] = useState(location.hash === '#logs' ? 'logs' : 'overview');
   const [rename, setRename] = useState(false);

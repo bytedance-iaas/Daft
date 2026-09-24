@@ -44,6 +44,16 @@ def validate_config(cfg: dict, origin: str = "config") -> None:
             raise ConfigError(f"{origin}: {name}.weight 不能为负")
     if "verdict" not in cfg or "soft_threshold" not in cfg["verdict"]:
         raise ConfigError(f"{origin}: 缺 verdict.soft_threshold")
+    video = ((checks.get("task_success") or {}).get("vlm") or {}).get("video")
+    if video is not None:
+        if not isinstance(video, dict):
+            raise ConfigError("checks.task_success.vlm.video must be a mapping")
+        fps = video.get("fps", 5)
+        if isinstance(fps, bool) or not isinstance(fps, (int, float)) or not 0.2 <= fps <= 5:
+            raise ConfigError("video.fps must be between 0.2 and 5")
+        for key, minimum in (("max_side", 2), ("max_bytes", 1)):
+            if key in video and (type(video[key]) is not int or video[key] < minimum):
+                raise ConfigError(f"video.{key} must be an integer >= {minimum}")
 
 
 def _deep_merge(base: dict, over: dict) -> dict:

@@ -45,7 +45,7 @@ def test_the_server_answers_a_re_encoded_request_alike():
     assert len({FakeVlm.answer_key(_payload(u)) for u in urls}) == 1
 
 
-def test_a_run_with_other_jpeg_bytes_reaches_the_same_verdicts(vlm_stage, tmp_path,
+def test_video_run_does_not_encode_sparse_jpeg_inputs(vlm_stage, tmp_path,
                                                               monkeypatch):
     """The VLM stage with every frame encoded at another JPEG quality: the requests
     carry other bytes, the records are the reference's."""
@@ -64,7 +64,10 @@ def test_a_run_with_other_jpeg_bytes_reaches_the_same_verdicts(vlm_stage, tmp_pa
                   "--run-dir", rd, "--episodes", vlm_stage["episodes"],
                   "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
     assert res.rc == 0, res.doc
-    assert encoded                                        # the frames were re-encoded
+    assert not encoded                                    # video-native model inputs
+    assert any(c["type"] == "video_url" for call in vlm.calls
+               for m in call["payload"].get("messages", []) if isinstance(m.get("content"), list)
+               for c in m["content"])
     got = results(rd, "task_success")
     assert {e: comparable(r) for e, r in got.items()} == \
         {e: comparable(r) for e, r in vlm_stage["reference"].items()}
@@ -80,4 +83,4 @@ def test_the_mini_dataset_walks_every_task_success_path(vlm_stage):
                    6: ("pass", "arbitration_success"), 7: ("abstain", "uncertain")}
     captions = {ln["episode_index"]: ln["caption"] for ln in
                 read_jsonl(f"{vlm_stage['reference_dir']}/autolabel/captions.jsonl")}
-    assert set(captions) == {4, 6} and ANNOTATION not in captions.values()
+    assert set(captions) == {4, 6} and any(c != ANNOTATION for c in captions.values())

@@ -343,15 +343,20 @@ def _profile(ctx, args, run_dir, src, episodes, part, plan_stage, guard):
     got = {index_of(r["episode_id"]) for r in rows}
     missing = leave_out_missing_source(ctx, run_dir, src.input_dir,
                                        [e for e in episodes if e not in got])
-    auto_caps = {f"ep{i:06d}": c
-                 for i, c in precomputed_captions(load_autolabel(run_dir)).items()}
+    from ..dataset_level.caption import VIDEO_CAPTION_PROTOCOL, VideoCaptionCache
+    auto_lines = load_autolabel(run_dir)
+    auto_caps = VideoCaptionCache({f"ep{i:06d}": c
+                 for i, c in precomputed_captions(auto_lines).items()
+                 if auto_lines[i].get("media_protocol") == VIDEO_CAPTION_PROTOCOL})
     sp = cfg.get("skill_profile") or {}
     with runctx.VlmSession(ctx, args, cfg, "skill_profile", run_dir):
         v = cfg["checks"]["task_success"]["vlm"]
         captioner = make_vlm_captioner(v["endpoint"], v["model"],
                                        timeout_s=vlm_client.timeout_for("caption", v),
                                        api_key_env=v.get("api_key_env"),
-                                       max_in_flight=int(sp.get("caption_concurrency", 8)))
+                                       max_in_flight=int(sp.get("caption_concurrency", 8)),
+                                       video_options=v.get("video"),
+                                       thinking=cfg.get("pipeline", {}).get("thinking"))
         llm_ask = vlm_client.make_llm_ask(
             v["endpoint"], v["model"], timeout_s=vlm_client.timeout_for("llm", v),
             api_key_env=v.get("api_key_env"),

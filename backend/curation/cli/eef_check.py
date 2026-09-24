@@ -134,7 +134,9 @@ class EefJudge:
         self.model = str(self.vlm["model"])
         self.review_config = hashlib.sha256(json.dumps(
             {"windows": self.per_camera, "frames": self.per_window, "model": self.model, "prompt": R.PROMPT_VERSION,
-             "schema": R.ANSWER_SCHEMA, "preprocess": R.PREPROCESS}, sort_keys=True).encode()).hexdigest()
+             "schema": R.ANSWER_SCHEMA, "preprocess": R.PREPROCESS,
+             "video_protocol": "eef-video-review/1", "video": self.vlm.get("video") or {}},
+            sort_keys=True).encode()).hexdigest()
         self.ask = eef_review.make_asker(self.vlm, self.timeout_s, SharedGate(max(1, int(self.gates.get("arbitration", 1)))))
         self.cache = R.Cache(os.path.join(self.out_dir, "cache"))
         self.ctx.log("info", f"{MODULE}: trajectory.json sha256 {self.result.sha256[:12]}, "

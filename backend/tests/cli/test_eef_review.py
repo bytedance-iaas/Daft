@@ -165,6 +165,13 @@ def test_every_branch_under_a_recorded_tape_and_its_offline_replay(cli, taped, m
 
     # the tape replays offline into a fresh run directory: the same records
     _, entries = T.read_tape(taped["tape"])
+    video_requests = [e["request"]["body"]["messages"][0]["content"] for e in entries
+                      if e.get("request", {}).get("body")
+                      and "You review ONE point P" in json.dumps(e["request"]["body"])]
+    assert video_requests
+    for content in video_requests:
+        assert sum(c["type"] == "video_url" for c in content) == 2  # RAW + MARKED
+        assert not any(c["type"] == "image_url" for c in content)
     fresh = str(taped["tmp"] / "replay")
     hooks = _hooks("replay", replay_entries=entries)
     try:

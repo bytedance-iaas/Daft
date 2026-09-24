@@ -20,7 +20,8 @@ from .pipeline import run
 LABEL = "stack the cups"
 ORIGINAL = "pick up the red block and place it in the bin"
 ARBITRATION = ("You are preparing a verification checklist", "locate two things",
-               "You are verifying whether a robot manipulation task succeeded")
+               "You are verifying whether a robot manipulation task succeeded",
+               "Re-examine the action and object trajectory")
 BOOKKEEPING = ("task_desc", "task_desc_source", "relabel_rerun")
 
 
@@ -110,7 +111,7 @@ def test_v1_relabels_send_v1s_requests_and_reach_v1s_verdict(vlm_stage, tmp_path
         assert not any(p in c["text"] for c in v2.calls for p in ARBITRATION)
         assert rec["passed"] == ref["passed"]
         details = {k: v for k, v in rec["details"].items() if k not in BOOKKEEPING}
-        assert details == json.loads(ref["detail"])
+        assert details == {k: v for k, v in json.loads(ref["detail"]).items() if k not in BOOKKEEPING}
         assert (rec["details"]["task_desc"], rec["details"]["task_desc_source"],
                 rec["details"]["relabel_rerun"]) == (LABEL, "人工改标", "v1")
 

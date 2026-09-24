@@ -1,12 +1,6 @@
-"""标注优先归类(2026-08-16 方针)钉子:归类输入 = instruction.strip() or caption。
+"""视频描述优先归类（2026-09-24）；标注分歧审计独立保留。
 
-防的事故(droid-200-new 实测,用户拍板改方针的直接证据):分歧队列 29 条人工复核,
-26 条是我方 caption 错、客户原始标注对(90%)——"Open the airfryer" 被 caption 写成
-放咖啡胶囊、"Wipe the table" 被写成折毛巾,再按 caption 归类,26 条全躺错格子。
-这组测试钉死:①有标注的条目归类输入必须是**标注**(把输入改回 caption 就红);
-②无标注的条目归类输入是 caption;③caption 照旧全员生成并陈列;④换了归类输入
-**不许削弱分歧检出**(护栏:分歧队列是人工裁决的入口,少报一条 = 一条错 caption
-永远没人看见)。
+有无标注都优先用 caption 归类；描述与标注冲突仍必须进入审计队列。
 """
 from __future__ import annotations
 
@@ -75,28 +69,24 @@ def _run_stage(judge="pair"):
     return out, seen
 
 
-def test_labeled_episode_grouped_by_instruction_not_caption():
-    """①+③ 核心钉子:有标注 → 体系归纳与分配吃的是**标注**;caption 只陈列。
-
-    判据是归纳 prompt 的原文:标注在场、错 caption 不在场——把归类输入改回
-    caps(旧写法)这条立刻红(prompt 里会出现 fold、丢掉 wipe)。
-    """
+def test_labeled_episode_grouped_by_video_caption():
+    """归纳和分配使用视频描述，原始标注留作独立审计。"""
     (profile, caption_of, gt_of, gs_of, _), seen = _run_stage()
     induce = [p for p in seen if "Build a TWO-LEVEL skill taxonomy" in p]
     assert len(induce) == 1
-    assert WIPE_LABEL in induce[0]                 # 标注是归类输入
+    assert WIPE_LABEL not in induce[0]             # 视频理解优先
     assert CUP_CAP in induce[0]                    # 无标注条目用 caption
-    assert WRONG_CAP not in induce[0]              # 错 caption 不再当归类输入
-    # 分配结果:ep0 按标注进 wiping(不是 caption 指向的 folding)
-    assert profile["families"]["wiping"]["subskills"]["wipe-surface"][
+    assert WRONG_CAP in induce[0]                  # caption 分歧另走审计
+    # 分配结果:ep0 进入视频描述对应的 folding，分歧另走审计。
+    assert profile["families"]["folding"]["subskills"]["fold-cloth"][
         "episodes"] == ["ep0"]
     assert profile["families"]["grasping"]["subskills"]["pick-up"][
         "episodes"] == ["ep1"]
     # caption 照旧全员生成并记录(它还是分歧检出的一端)
     assert caption_of == {"ep0": WRONG_CAP, "ep1": CUP_CAP}
     # 归类文本与来源留痕(进 CSV 的两新列)
-    assert gt_of == {"ep0": WIPE_LABEL, "ep1": CUP_CAP}
-    assert gs_of == {"ep0": "原始标注", "ep1": "自产caption"}
+    assert gt_of == {"ep0": WRONG_CAP, "ep1": CUP_CAP}
+    assert gs_of == {"ep0": "自产caption", "ep1": "自产caption"}
 
 
 def test_divergent_caption_still_enters_audit_queue():

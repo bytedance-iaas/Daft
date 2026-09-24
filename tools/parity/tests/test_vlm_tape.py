@@ -46,6 +46,18 @@ def test_model_parameters_are_part_of_the_hash():
         T.canonical_request(_payload(reasoning_effort="low"))[1]
 
 
+def test_video_bytes_and_sampling_rate_are_part_of_hash_without_base64_in_tape():
+    payload = _payload()
+    payload["messages"][0]["content"][1] = {
+        "type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{PNG_A}", "fps": 5}}
+    canon, digest = T.canonical_request(payload)
+    video = canon["body"]["messages"][0]["content"][1]["video_url"]
+    assert video["url"]["mime"] == "video/mp4"
+    assert "base64" not in json.dumps(canon)
+    payload["messages"][0]["content"][1]["video_url"]["fps"] = 1
+    assert T.canonical_request(payload)[1] != digest
+
+
 def _entry(kind, digest, status=200, body="ok", seq=1, exc=None):
     e = {"seq": seq, "kind": kind, "hash": digest, "tag": "probe", "request": {}}
     if exc:

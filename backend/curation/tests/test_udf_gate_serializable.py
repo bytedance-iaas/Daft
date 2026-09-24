@@ -61,6 +61,10 @@ def test_each_vlm_factory_product_cloudpicklable():
         "captioner": make_vlm_captioner(_EP, _MODEL),
         "llm_ask": make_llm_ask(_EP, _MODEL),
     }
+    from curation.adapters.vlm_client import vlm_completion_from_config
+    from curation.pipeline.funnel import build_endstate_voter
+    products["video_scorer"] = vlm_completion_from_config(_arb_cfg())
+    products["video_reviewer"] = build_endstate_voter(_arb_cfg())
     for name, fn in products.items():
         try:
             daft_pickle.dumps(fn)

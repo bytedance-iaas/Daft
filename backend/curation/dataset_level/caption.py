@@ -1,4 +1,4 @@
-"""M7 第一步:VLM 逐条 caption(整条管线唯一"看视频"的环节)。
+"""M7 第一步:VLM 直接读取连续视频，逐条生成 caption。
 
 captioner 注入式(与 M4c 同哲学:模型只在 YAML 一处;测试注入假函数)。
 下游(taxonomy/audit/profile)只处理这些句子,不再碰视频。
@@ -48,9 +48,15 @@ CAPTION_PROMPT = (
     "answer exactly: unclear\n"
     "Answer ONLY the phrase.")
 
-# captioner(groups: list[tuple[相机名, list[np.ndarray]]]) -> str
-# 每组 = 一路相机的时序帧;单相机数据集 = 单元素列表(自动退化,零分支)
-Captioner = Callable[[list], str]
+# Production captioner accepts video pointers or prepared VideoClips;
+# explicitly injected historical clients may still accept image groups.
+Captioner = Callable[[list | dict], str]
+
+VIDEO_CAPTION_PROTOCOL = "video-caption/1"
+
+
+class VideoCaptionCache(dict):
+    """Captions known to have been produced by the current video protocol."""
 
 
 def cam_sections_text(groups: list) -> str:
@@ -70,7 +76,9 @@ def caption_episodes(rows: list[dict], captioner: Captioner,
                      on_progress=None,
                      max_concurrency: int = 1,
                      max_cams: int = 4) -> list[str]:
-    """每条 episode:解码→均匀 n_frames 帧→captioner→一句话。失败条给空串(不崩批)。
+    """每条 episode:连续视频裁片→captioner→一句话。失败条给空串(不崩批)。
+
+    n_frames/max_side 仅供显式注入的历史图片客户端；生产用 vlm.video 预处理配置。
 
     precomputed: {episode_id: caption} 缓存(漏斗前为无标注条目生成过的,不重复调用)。
     on_progress: 每条(含命中缓存的)完成后调用一次,无参。给调用方报进度用——
@@ -89,8 +97,13 @@ def caption_episodes(rows: list[dict], captioner: Captioner,
 
     def _one(r: dict) -> str:
         try:
-            if precomputed and r.get("episode_id") in precomputed:
+            if (precomputed and r.get("episode_id") in precomputed
+                    and (getattr(captioner, "media_input", None) != "video"
+                         or isinstance(precomputed, VideoCaptionCache))):
                 return precomputed[r["episode_id"]]
+            if getattr(captioner, "media_input", None) == "video":
+                cap = str(captioner({cam: r["video"][cam] for cam in sorted(r["video"])[:max_cams]})).strip().strip('."')
+                return "" if cap.lower().startswith("unclear") else cap
             groups = []
             for cam in sorted(r["video"])[:max_cams]:
                 v = r["video"][cam]
@@ -127,8 +140,9 @@ def caption_episodes(rows: list[dict], captioner: Captioner,
 
 def make_vlm_captioner(endpoint: str, model: str, timeout_s: float | None = None,
                        api_key_env: str | None = None,
-                       max_in_flight: int = 8) -> Captioner:
-    """openai 兼容端点 → captioner(生产用;模型/端点来自 YAML)。
+                       max_in_flight: int = 8, video_options: dict | None = None,
+                       thinking: bool | None = None) -> Captioner:
+    """Video-capable Chat endpoint -> captioner(list[VideoClip]).
 
     timeout_s=None 用分类型出厂默认(caption 60s);请求走 hedged_request
     (超时对冲,语义见 vlm_client)。max_in_flight = 对冲闸门容量,应传
@@ -136,8 +150,9 @@ def make_vlm_captioner(endpoint: str, model: str, timeout_s: float | None = None
     ⚠️ 不许低于结构并发,否则把原本并行的打标串行化。"""
     import requests
 
-    from ..adapters.vlm_client import (DEFAULT_TIMEOUTS_S, SharedGate,
-                                       _frame_to_data_uri, auth_headers,
+    from ..adapters.video_input import video_content
+    from ..adapters.vlm_client import (DEFAULT_TIMEOUTS_S, SharedGate, _with_thinking,
+                                       auth_headers,
                                        hedged_request, strip_reasoning)
 
     url = endpoint.rstrip("/") + "/chat/completions"
@@ -147,19 +162,25 @@ def make_vlm_captioner(endpoint: str, model: str, timeout_s: float | None = None
     # cloudpickle(2026-08-18 完整质检生产回归的同族坑)
     gate = SharedGate(max_in_flight)
 
-    def captioner(groups: list) -> str:
-        text = CAPTION_PROMPT.format(cam_sections=cam_sections_text(groups))
-        content = [{"type": "text", "text": text}]
-        for _name, frames in groups:
-            for f in frames:
-                content.append({"type": "image_url",
-                                "image_url": {"url": _frame_to_data_uri(np.asarray(f))}})
-        payload = {"model": model, "temperature": 0.0, "max_tokens": 512,
-                   "messages": [{"role": "user", "content": content}]}
+    opts = dict(video_options or {})
+
+    def captioner(clips) -> str:
+        if isinstance(clips, dict):
+            from ..adapters.video_input import prepare_videos
+
+            clips = prepare_videos(clips, max_side=int(opts.get("max_side", 720)),
+                                   max_bytes=int(opts.get("max_bytes", 32 * 1024 * 1024)),
+                                   fps=float(opts.get("fps", 5)))
+        text = CAPTION_PROMPT.format(cam_sections="Watch the supplied continuous videos.\n")
+        content = [{"type": "text", "text": text}] + video_content(clips, fps=float(opts.get("fps", 5)))
+        payload = _with_thinking({"model": model, "temperature": 0.0, "max_tokens": 2048,
+                   "messages": [{"role": "user", "content": content}]}, thinking)
         r = hedged_request(
             lambda hard: requests.post(url, json=payload, headers=headers, timeout=hard),
             tag="caption", timeout_s=timeout_s, gate=gate)
         r.raise_for_status()
         return strip_reasoning(r.json()["choices"][0]["message"]["content"])
 
+    captioner.media_input = "video"
+    captioner.video_options = opts
     return captioner

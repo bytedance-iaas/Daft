@@ -30,8 +30,8 @@ def _progress_frames(n: int = 40, final: float = 1.0, dip_at: float | None = Non
     return [np.full((32, 32, 3), int(p * 255), dtype=np.uint8) for p in prog]
 
 
-def _fake_vlm(reference, shuffled, instruction):
-    return [float(f.mean() / 255.0) for f in shuffled]
+def _fake_vlm(reference, probes, instruction):
+    return [float(f.mean() / 255.0) for f in probes]
 
 
 def _noisy_vlm(seed: int = 0):
@@ -115,7 +115,7 @@ def test_probe0_forced_zero_with_trace():
     归 0 后 peak 由假的 1.0 变成真实的 0.7,标签从契约违约回到灰区;原值留在 raw。"""
     seq = [1.0, 0.0, 0.3, 0.3, 0.7, 0.5, 0.3, 0.2]
 
-    def vlm(ref, fs, i):                     # 按打乱后的帧序号回对应分数
+    def vlm(ref, fs, i):                     # 按帧序号回对应分数
         return [seq[int(round(f.mean()))] for f in fs]
     frames = [np.full((8, 8, 3), k, dtype=np.uint8) for k in range(8)]
     r = task_success(frames, "t", vlm)
@@ -152,16 +152,26 @@ def test_vlm_exception_is_undecidable():
     assert r.passed is None and "失败" in r.detail["reason"]
 
 
-def test_shuffle_actually_shuffles():
-    """打乱确实发生:批式假 VLM 收到的帧序列不是时序单调的。"""
+@pytest.mark.parametrize("n, expected_indices", [
+    (3, [0, 1, 2]),
+    (8, list(range(8))),
+    (40, [0, 5, 11, 16, 22, 27, 33, 39]),
+])
+def test_probes_follow_timeline_with_scores_aligned(n, expected_indices):
+    """探针含首尾并按时间传入;非单调分数也必须与原时刻对应。"""
+    frames = [np.full((8, 8, 3), k, dtype=np.uint8) for k in range(n)]
+    scores = [0.1, 0.9, 0.2, 0.7, 0.3, 0.8, 0.4, 0.6][:len(expected_indices)]
     seen = []
 
-    def spy_vlm(reference, shuffled, instruction):
-        seen.extend(float(f.mean()) for f in shuffled)
-        return [float(f.mean() / 255.0) for f in shuffled]
+    def spy_vlm(reference, probes, instruction):
+        assert reference is frames[0]
+        seen.extend(int(f.mean()) for f in probes)
+        return scores
 
-    voc_score(_progress_frames(), "t", spy_vlm)
-    assert seen != sorted(seen), "提问顺序仍是时序(未打乱)"
+    _, preds, idx = voc_score(frames, "t", spy_vlm)
+    assert seen == expected_indices
+    assert idx.tolist() == expected_indices
+    assert preds.tolist() == scores
 
 
 # ---------- 多视角帧(core 零感知) ----------
@@ -171,8 +181,8 @@ def test_core_agnostic_to_multiview_frames():
     plain = _progress_frames()
     mv = [[("camA", f), ("camB", f)] for f in plain]
 
-    def mv_fake_vlm(reference, shuffled, instruction):
-        return [float(fr[0][1].mean() / 255.0) for fr in shuffled]   # 读 camA
+    def mv_fake_vlm(reference, probes, instruction):
+        return [float(fr[0][1].mean() / 255.0) for fr in probes]   # 读 camA
 
     r = task_success(mv, "t", mv_fake_vlm)
     assert r.passed is True and r.detail["voc"] > 0.9

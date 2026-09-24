@@ -1,7 +1,7 @@
 """任务成败判定:v6.5 协议(文档中的 M4c)。语义点,VLM,GPU,漏斗垫底只跑幸存者。
 
 打分层借 OpenGVL 的思想但问法已改(2026-08-04,105 条人工真值消融定稿):
-- 抽 K 帧**打乱顺序**逐帧问 VLM"物证进度 0-1"(单帧提问,VLM 看不到时序;
+- 抽 K 个时刻**按时间顺序**逐时刻问 VLM"物证进度 0-1"(每次独立提问,VLM 看不到完整时序;
   只按物体/场景状态打分,不看机械臂动作 → 做了就留痕的任务真值曲线单调不减)。
 - VOC(Spearman(完成度, 真实时序))**不再是逐条闸门**——旧协议拿它当"疑幻觉"
   硬门,实测在真值集上拦下的 11 条全是好数据(撤手型),而 3 条真失败全拿高分
@@ -33,7 +33,7 @@ import numpy as np
 
 from ..contract import CheckResult
 
-# 批式 VLM 接口:vlm_completion(reference_frame, shuffled_frames, instruction) -> K 个完成度(0-1)
+# 批式 VLM 接口:vlm_completion(reference_frame, probe_frames, instruction) -> 按输入顺序的 K 个完成度(0-1)
 VlmCompletion = Callable[[np.ndarray, list, str], Sequence[float]]
 
 
@@ -63,22 +63,19 @@ def voc_score(
     vlm_completion: VlmCompletion,
     *,
     n_probe: int = 8,
-    shuffle_seed: int = 0,
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    """打乱抽帧 → 参考帧+打乱帧逐帧提问 → Spearman(完成度, 真实时序)。
+    """按时间顺序抽帧 → 参考帧+探针逐时刻独立提问 → Spearman(完成度, 真实时序)。
 
     返回 (voc, 按时序排列的完成度数组, 抽帧下标)。
     """
     from scipy import stats
 
     idx = _sample_indices(len(frames), n_probe)
-    order = np.random.default_rng(shuffle_seed).permutation(len(idx))  # 打乱提问顺序
-    shuffled = [frames[idx[j]] for j in order]
-    preds_shuffled = [float(p) for p in vlm_completion(frames[0], shuffled, instruction)]
-    if len(preds_shuffled) != len(idx):
-        raise ValueError(f"VLM 返回 {len(preds_shuffled)} 个数,期望 {len(idx)}")
-    preds = np.empty(len(idx), dtype=np.float64)
-    preds[order] = preds_shuffled                     # 还原真实时序
+    probes = [frames[j] for j in idx]
+    preds = np.asarray([float(p) for p in vlm_completion(frames[0], probes, instruction)],
+                       dtype=np.float64)
+    if len(preds) != len(idx):
+        raise ValueError(f"VLM 返回 {len(preds)} 个数,期望 {len(idx)}")
     if np.std(preds) < 1e-9:
         return 0.0, preds, idx                        # 全同预测:秩相关无定义,记 0
     rho, _ = stats.spearmanr(np.arange(len(idx)), preds)

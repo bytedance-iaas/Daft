@@ -187,7 +187,7 @@ def test_a_failing_model_call_is_an_error_not_an_abstention(vlm_stage, tmp_path)
     assert abstained and all(ref[e]["error"] is None for e in abstained)   # "can't tell"
 
     rd = _copy(vlm_stage, tmp_path)
-    review = "Did the robot COMPLETE the task"
+    review = "Independently review ONLY this camera"
     with FakeVlmServer(fail=lambda text, payload: 500 if review in text else None) as vlm:
         res = _vlm_check(vlm_stage, rd, vlm.url)
     assert res.rc == 0                          # an episode's error is not the command's

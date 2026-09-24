@@ -3,7 +3,7 @@
 防的是哪次事故:同一类调用在界面叫「任务判定探针」、在客户报告里叫
 「渐变问询(VOC)」——第三套中英夹杂的内部说法直接印给了客户;且解释错了
 两处事实(复核被说成"只对没通过一审的跑",实际全员运行;打分被说成"逐帧问",
-实际抽帧打乱后多视角联合问),取证仲裁整条漏了解释。
+实际抽样后按时刻多视角联合问),取证仲裁整条漏了解释。
 """
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def test_notes_pin_three_facts():
     ① 逐机位复核**全员运行**(代码注释:复核层全员运行并获得否决权;次数对账
        1194 ÷ ~200 条 ≈ 6 = 3 机位 × 2 问)——不许再写成"只对没通过一审的跑";
     ② 只有取证仲裁是**拿不准(弃权)才跑**(task_success:passed is None 才进链);
-    ③ 打分是**抽帧打乱后联合问**(多视角同一时刻一起给)——不许再写"逐帧问画面"。
+    ③ 打分是**抽帧后按时间顺序联合问**(多视角同一时刻一起给)——不许再写"逐帧问画面"。
     """
     endstate = CALL_KIND_NOTES["endstate"]
     assert "每条" in endstate, "复核是全员跑,解释里必须说清"
@@ -107,7 +107,8 @@ def test_notes_pin_three_facts():
     arb = CALL_KIND_NOTES["arbitration"]
     assert "只对" in arb and ("拿不准" in arb or "弃权" in arb)
     probe = CALL_KIND_NOTES["probe"]
-    assert "打乱" in probe and "联合" in probe
+    assert "连续视频" in probe and "联合" in probe
+    assert "打乱" not in probe
     assert "逐帧" not in probe
 
 

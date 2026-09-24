@@ -167,6 +167,41 @@ describe('任务详情 (07 §4.2)', () => {
     release();
   });
 
+  it('补跑从别处发起时，终态页面靠事件流重新回到 live，不是盲区', async () => {
+    // 终态 + 无活动子任务的页面没有轮询；一个外部（CLI / API / 另一个标签页）创建的
+    // 重试只能靠 SSE 的 state 事件被发现：页面重新拉任务、变回 live 并显示子任务档位。
+    const t = findTask(MAIN)!;
+    delete t.active_subtask;
+    const running: Subtask = {
+      id: 'sub_retry2',
+      task_id: MAIN,
+      kind: 'retry',
+      scope: { modules: ['task_success'], episodes: 'errors' },
+      state: 'running',
+      state_reason: null,
+      progress: { stages: [{ id: 'vlm', state: 'running', done: 1, total: 2 }] },
+      created_at: Date.now(),
+      started_at: Date.now(),
+      finished_at: null,
+      result_rev: null,
+    };
+    setEventSourceFactory((url) => new FakeEventSource(url) as unknown as EventSource);
+    renderApp(`/tasks/${MAIN}`);
+    await screen.findByRole('heading', { name: /droid 前 50 条质检/ });
+    expect(screen.getByTestId('state-tag')).toHaveTextContent(/^错误$/);
+    expect(screen.queryByTestId('stages-subtask')).toBeNull();
+    const es = FakeEventSource.last();
+    act(() => es.open());
+    // Meanwhile the retry appears on the server; the page only learns of it via SSE.
+    db.subtasks.get(MAIN)!.push(running);
+    t.active_subtask = running;
+    act(() => es.emit('state', { state: 'running', subtask_id: 'sub_retry2', at: 1 }));
+    await waitFor(() => expect(screen.getByTestId('state-tag')).toHaveTextContent(/^运行中 · 重试 #2$/));
+    expect(screen.getByTestId('stages-subtask')).toHaveTextContent('子任务 · 重试 #2');
+    // The page is live again: the badge is back and names the stream.
+    await waitFor(() => expect(screen.getByTestId('live-mode')).toHaveAttribute('data-mode', 'sse'));
+  });
+
   it('stage bars explain why the total dropped; module errors expand to the episodes', async () => {
     const { user } = renderApp(`/tasks/${MAIN}`);
     expect(await screen.findByTestId('stage-frame')).toHaveTextContent('数值档拦下了 1 条（ep 18，残段），所以后面的档是 49 条');

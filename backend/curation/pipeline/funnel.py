@@ -136,7 +136,12 @@ def build_arbitration_deps(cfg: dict, gates: dict | None = None) -> dict | None:
     gates = gates or {}
     arb_gate = SharedGate(int(gates.get("arbitration", _epc)))
     t_arb = timeout_for("arbitration", vcfg)
+    from ..adapters.video_vlm import make_video_assessor
     return {
+        "video_judge": make_video_assessor(ep, model, tag="arbitration", timeout_s=t_arb,
+                                            api_key_env=key, thinking=thinking,
+                                            fps=float((vcfg.get("video") or {}).get("fps", 5)),
+                                            max_in_flight=int(gates.get("arbitration", _epc))),
         "question_writer": make_question_writer(ep, model, timeout_s=t_arb,
                                                 api_key_env=key, gate=arb_gate, thinking=thinking),
         "grounder": make_grounder(ep, model, timeout_s=t_arb,
@@ -148,7 +153,8 @@ def build_arbitration_deps(cfg: dict, gates: dict | None = None) -> dict | None:
         "captioner": make_vlm_captioner(ep, model,
                                         timeout_s=timeout_for("caption", vcfg),
                                         api_key_env=key,
-                                        max_in_flight=int(gates.get("guard_caption", _epc))),
+                                        max_in_flight=int(gates.get("guard_caption", _epc)),
+                                        video_options=vcfg.get("video"), thinking=thinking),
         "caption_n_frames": int(cfg.get("skill_profile", {}).get("n_frames", 8)),
         "params": {
             "kill_min_lines": int(acfg.get("kill_min_lines", 2)),
@@ -168,16 +174,18 @@ def build_endstate_voter(cfg: dict, gates: dict | None = None):
 
     Without ``gates`` the capacity is v1's: episode concurrency x 2 (never below 2).
     """
-    from ..adapters.vlm_client import make_endstate_voter, timeout_for
+    from ..adapters.vlm_client import timeout_for
+    from ..adapters.video_vlm import make_video_assessor
 
     vcfg_t = cfg["checks"]["task_success"]["vlm"]
     # 对冲闸门容量 = 结构并发(episode 并发 × 每机位双问 2),不许更低
     _epc_es = int(cfg.get("pipeline", {}).get("vlm_episode_concurrency", 8))
     cap = int((gates or {}).get("endstate", max(2, _epc_es * 2)))
-    return make_endstate_voter(vcfg_t["endpoint"], vcfg_t["model"],
+    return make_video_assessor(vcfg_t["endpoint"], vcfg_t["model"], tag="endstate",
                                timeout_s=timeout_for("endstate", vcfg_t),
                                api_key_env=vcfg_t.get("api_key_env"),
                                max_in_flight=cap,
+                               fps=float((vcfg_t.get("video") or {}).get("fps", 5)),
                                thinking=cfg.get("pipeline", {}).get("thinking"))
 
 
@@ -694,6 +702,13 @@ def task_check_episode(cfg: dict, registry, deps: TaskDeps, video, task_desc, ta
     order; ``deps`` carries the model clients and the decoder.
     """
     from ..core.contract import CheckResult
+
+    if getattr(deps.vlm_completion, "media_input", None) == "video":
+        from .video_task import judge_video_episode
+
+        return result_to_struct(judge_video_episode(
+            cfg, video, task_desc, deps.vlm_completion, deps.cam_voter, deps.arb_deps,
+            task_src=str(task_src), hints=str(semantics_extras or "")))
 
     pcfg = cfg.get("pipeline", {})
     interval = pcfg.get("frame_sample_interval_s", 0.5)

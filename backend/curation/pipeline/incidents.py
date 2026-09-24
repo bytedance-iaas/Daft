@@ -80,6 +80,9 @@ def wrap_call(fn: Callable | None, log: IncidentLog, *, step: str,
     if fn is None:
         return None
 
+    from functools import wraps
+
+    @wraps(fn)
     def wrapped(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
@@ -105,6 +108,8 @@ def wrap_voter(voter: Callable | None, log: IncidentLog) -> Callable | None:
     with the cause the transport recorded for the failed question."""
     if voter is None:
         return None
+    if getattr(voter, "media_input", None) == "video":
+        return wrap_call(voter, log, step="endstate", call_kind="endstate")
 
     def wrapped(start_frames, end_frames, cam_label, instruction):
         from .vlm_policy import failures
@@ -125,6 +130,9 @@ def wrap_arbitration(arb_deps: dict | None, log: IncidentLog) -> dict | None:
     if arb_deps is None:
         return None
     out = dict(arb_deps)
+    if arb_deps.get("video_judge") is not None:
+        out["video_judge"] = wrap_call(arb_deps["video_judge"], log, step="arbitration",
+                                       call_kind="arbitration")
     out["question_writer"] = wrap_call(arb_deps["question_writer"], log, step="arbitration",
                                        call_kind="arbitration")
     out["grounder"] = wrap_call(arb_deps["grounder"], log, step="arbitration",

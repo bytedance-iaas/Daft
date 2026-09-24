@@ -1,4 +1,7 @@
-"""按标注优先方针重算一份交付的技能画像:`curation reprofile`(2026-08-16)。
+"""按当前描述优先方针重排一份交付的技能画像:`curation reprofile`。
+
+2026-09-24：重用已有描述，不重新读取视频；生成新视频描述使用 check skill_profile。
+以下保留该离线维护命令的历史背景。
 
 背景:droid-200-new 分歧队列 29 条人工复核,26 条是我方 caption 错、客户原始标注对
 (90%)。老交付是按旧策略("全员 caption 归类")跑的,错归的条目正躺在错误格子里;
@@ -95,7 +98,7 @@ def _load_instructions(run_dir: str) -> dict | None:
 
 def run_reprofile(run_dir: str, cfg: dict | None = None,
                   llm_ask: Callable | None = None, preview: int = 5) -> dict:
-    """一次跑批目录 → 按标注优先重算画像与 skill_assignment.csv → 摘要 dict。
+    """一次跑批目录 → 按当前描述优先规则重排已有文本 → 摘要 dict。
 
     llm_ask 注入式(测试用假函数);生产缺省 = build_llm_ask_from_cfg(cfg)。
     """
@@ -250,5 +253,5 @@ def run_reprofile(run_dir: str, cfg: dict | None = None,
         print(f"[reprofile]   …其余 {len(changed) - preview} 条见 "
               f"details/reprofile_results.json", flush=True)
     if not changed and not cols_changed:
-        print("[reprofile] 0 条变化(画像已是标注优先口径),未写任何文件", flush=True)
+        print("[reprofile] 0 条变化(画像已是当前归类口径),未写任何文件", flush=True)
     return summary

@@ -56,10 +56,10 @@ def _canonical_value(value: Any) -> Any:
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
-            if k == "image_url" and isinstance(v, dict) and "url" in v:
+            if k in ("image_url", "video_url") and isinstance(v, dict) and "url" in v:
                 v = dict(v)
                 v["url"] = _canonical_image(v["url"])
-            elif k == "image_url" and isinstance(v, str):
+            elif k in ("image_url", "video_url") and isinstance(v, str):
                 v = _canonical_image(v)
             out[k] = _canonical_value(v)
         return out

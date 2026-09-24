@@ -47,9 +47,32 @@ def test_every_step_ran_and_fits_its_contract(chain):
     assert all(s.rc == 0 for s in chain.steps.values())
 
 
+def test_incremental_profile_rebuilds_historical_image_outputs(chain, tmp_path):
+    import shutil
+    from curation.dataset_level.caption import VIDEO_CAPTION_PROTOCOL
+    from curation.pipeline.dataset_stages import load_profile
+    from .pipeline import run
+
+    rd = str(tmp_path / "video-migration")
+    shutil.copytree(chain.rd, rd)
+    path = os.path.join(rd, "checks", "skill_profile", "profile.json")
+    with open(path, encoding="utf-8") as fh:
+        profile = json.load(fh)
+    profile.pop("media_protocol", None)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(profile, fh)
+    with FakeVlmServer() as vlm:
+        res = run("check", "--modules", "skill_profile", "--input", chain.ds,
+                  "--run-dir", rd, "--episodes", "@" + os.path.join(rd, "revisions", "r0001", "keep.txt"),
+                  "--incremental", "--vlm-endpoint", vlm.url, "--vlm-model", "fake-vlm")
+        assert res.rc == 0, res.doc
+        assert vlm.count("All cameras show the SAME robot episode") > 0
+    assert load_profile(rd)["profile"]["media_protocol"] == VIDEO_CAPTION_PROTOCOL
+
+
 def test_by_default_one_model_request_at_a_time(chain):
     """No --concurrency anywhere in the chain: never two model requests in flight."""
-    assert len(chain.vlm_calls) > 100 and chain.max_in_flight == 1
+    assert len(chain.vlm_calls) > 20 and chain.max_in_flight == 1
 
 
 def test_the_funnel_takes_the_survivors_of_each_stage(chain):
