@@ -26,15 +26,29 @@ def _vlm_args(p, run_dir, url):
             "--episodes", p["episodes"], "--vlm-endpoint", url, "--vlm-model", "fake-vlm"]
 
 
-def _wait_for_first_record(run_dir: str, proc, timeout: float = 120.0) -> None:
-    part = os.path.join(run_dir, "checks", "task_success", "parts", "0001.jsonl")
+def _in_hands(module_dir: str) -> bool:
+    try:
+        with open(os.path.join(module_dir, "inflight.json"), encoding="utf-8") as fh:
+            return bool(json.load(fh)["episodes"])
+    except (FileNotFoundError, ValueError, KeyError):
+        return False
+
+
+def _wait_for_first_record(run_dir: str, proc, timeout: float = 120.0, *,
+                           in_hands: bool = False) -> None:
+    """Until the first record is on disk; with ``in_hands`` also until ``inflight.json``
+    names an episode again. Between one episode's record and the next one's start nothing
+    is in hands, so a SIGKILL landing there leaves an empty list (a CI runner hit that
+    window once, 2026-09-24)."""
+    module = os.path.join(run_dir, "checks", "task_success")
+    part = os.path.join(module, "parts", "0001.jsonl")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise AssertionError(f"the check ended early: {proc.communicate()}")
         if os.path.isfile(part):
             with open(part, encoding="utf-8") as fh:
-                if fh.read().count("\n") >= 1:
+                if fh.read().count("\n") >= 1 and (not in_hands or _in_hands(module)):
                     return
         time.sleep(0.05)
     raise AssertionError("no record written in time")
@@ -46,7 +60,7 @@ def _interrupt(p, name: str, sig: int):
     with FakeVlmServer(delay_s=0.08) as slow:
         proc = subprocess_cli(*_vlm_args(p, run_dir, slow.url))
         try:
-            _wait_for_first_record(run_dir, proc)
+            _wait_for_first_record(run_dir, proc, in_hands=sig == signal.SIGKILL)
             proc.send_signal(sig)
             out, err = proc.communicate(timeout=120)
         finally:
