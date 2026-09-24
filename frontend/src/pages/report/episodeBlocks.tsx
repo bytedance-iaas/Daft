@@ -10,6 +10,7 @@ import { qk } from '../../api/queries';
 import type { ResultRecord, SyncCurves } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
+import { EefConclusion, EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
 import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
 import { fieldLabel, readable } from '../../lib/reportView';
 import { fmt, num, signed, str } from '../../lib/sectionStats';
@@ -374,57 +375,27 @@ function SkillBlock({ record }: BlockProps) {
   return <Facts facts={facts} />;
 }
 
-function EefBlock({ record }: BlockProps) {
+/**
+ * EEF–视频一致性 (D49, F5.12): the conclusion and why, the CPU's sub-item readings per camera, every
+ * review window with the model's answer and the marked crops it was shown, and the CPU's own frames
+ * (the same block as the adjudication card).
+ */
+function EefBlock({ taskId, record }: BlockProps) {
   const d = details(record);
-  const Z = zh.sections.eef;
-  const C = E().eef.cols;
-  const cams = d.cameras && typeof d.cameras === 'object' ? Object.entries(d.cameras as Record<string, Details>) : [];
-  const st = (cam: Details, k: string) => {
-    const s = str(((cam.subitems as Details | undefined)?.[k] as Details | undefined)?.status);
-    return s ? Z.status[s] ?? s : '—';
-  };
-  const rows = cams.map(([id, cam]) => ({ key: id, camera: id, mount: str(cam.mount) ?? '—', position: st(cam, 'position_2d'), orientation: st(cam, 'orientation_2d'), temporal: st(cam, 'temporal_alignment'), motion: st(cam, 'camera_motion'), input: st(cam, 'input_consistency') }));
   const overall = str(d.overall);
-  const decision = (d.decision ?? {}) as Details;
-  const outcome = str(decision.outcome);
-  const reason = str(d.reason);
   return (
-    <>
+    <div data-testid="episode-eef">
       <Space wrap>
-        {outcome ? (
-          <Tag color={outcome === 'pass' ? 'green' : outcome === 'reject' ? 'red' : 'orange'} data-testid="eef-outcome">
-            {Z.outcome[outcome] ?? outcome}
-          </Tag>
-        ) : null}
-        <span>
-          {E().eef.overall}：{overall ? Z.overall[overall] ?? Z.overall[`${overall}s`] ?? overall : '—'}
-        </span>
+        <EefConclusion record={record} />
       </Space>
-      {reason ? <div className="episode-line">{reason}</div> : null}
-      {rows.length ? (
-        <Table
-          rowKey="key"
-          size="small"
-          pagination={false}
-          data={rows}
-          columns={[
-            { title: C.camera, dataIndex: 'camera', render: (v: string) => <span className="mono">{v}</span> },
-            { title: C.mount, dataIndex: 'mount' },
-            { title: C.position, dataIndex: 'position' },
-            { title: C.orientation, dataIndex: 'orientation' },
-            { title: C.temporal, dataIndex: 'temporal' },
-            { title: C.motion, dataIndex: 'motion' },
-            { title: C.input, dataIndex: 'input' },
-          ]}
-        />
-      ) : null}
-      {Array.isArray(d.reasons) && d.reasons.length ? (
-        <div className="episode-line">
-          <b>{E().eef.reasons}：</b>
-          {d.reasons.map(String).join('、')}
-        </div>
-      ) : null}
-    </>
+      <div className="episode-line muted">
+        {E().eef.overall}：{overall ? zh.sections.eef.overall[overall] ?? zh.sections.eef.overall[`${overall}s`] ?? overall : '—'}
+        {Array.isArray(d.reasons) && d.reasons.length ? `；${E().eef.reasons}：${d.reasons.map(String).join('、')}` : ''}
+      </div>
+      <EefCpuTable record={record} />
+      <EefWindows taskId={taskId} record={record} />
+      <EefCpuEvidence taskId={taskId} record={record} />
+    </div>
   );
 }
 

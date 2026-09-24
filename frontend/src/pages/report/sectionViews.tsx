@@ -434,16 +434,20 @@ function skillModel(s: Summary): ViewModel {
   return { stats, charts, fresh: hasAny(s, ['family_distribution', 'family_tree']) };
 }
 
-function eefModel(s: Summary): ViewModel {
+function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
   const Z = S().eef;
   const R = Z.review;
   const stats: StatSpec[] = [];
-  const outcome: [string, string, boolean][] = [
-    ['judged_pass', Z.outcome.pass, false],
-    ['judged_reject', Z.outcome.reject, true],
-    ['to_human', Z.outcome.human, true],
+  // 转人工 counts the module's records; the adjudication page asks those still in passed and not
+  // answered yet (C1 1.9) - the foot says how many, so the two numbers can be read together.
+  const pending = section.adjudication?.pending ?? 0;
+  const toHuman = num(s.to_human);
+  const outcome: [string, string, boolean, string | undefined][] = [
+    ['judged_pass', Z.outcome.pass, false, undefined],
+    ['judged_reject', Z.outcome.reject, true, section.adjudication?.appealable ? zh.report.goAppeal(section.adjudication.appealable) : undefined],
+    ['to_human', Z.outcome.human, true, toHuman ? Z.humanPending(pending, toHuman) : undefined],
   ];
-  for (const [k, label, warn] of outcome) if (num(s[k]) !== null) stats.push({ label, value: num(s[k]), tone: warn && num(s[k]) ? 'warn' : undefined });
+  for (const [k, label, warn, foot] of outcome) if (num(s[k]) !== null) stats.push({ label, value: num(s[k]), tone: warn && num(s[k]) ? 'warn' : undefined, foot });
   if (num(s.model_cpu_agreement) !== null)
     stats.push({ label: Z.agreement, value: `${Math.round(num(s.model_cpu_agreement)! * 100)}%`, foot: Z.agreementFoot(num(s.model_votes) ?? 0) });
   if (num(s.windows) !== null) stats.push({ label: R.windows, value: num(s.windows), foot: Z.windowsValue(num(s.windows_answered) ?? 0, num(s.windows_failed) ?? 0) });

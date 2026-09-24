@@ -62,9 +62,9 @@ const EEF = {
   counts: { total: 20, pass: 12, fail: 2, abstain: 5, scored: 0, error: 1 },
 };
 
-function render(id: string, summary: Record<string, unknown>) {
+function render(id: string, summary: Record<string, unknown>, extra: Partial<ReportModuleSection> = {}) {
   const View = SECTION_VIEWS[id] ?? DefaultSectionView;
-  renderWithProviders(<View taskId="t" rev={1} section={section(id, summary)} />);
+  renderWithProviders(<View taskId="t" rev={1} section={section(id, summary, extra)} />);
   return document.body;
 }
 
@@ -92,11 +92,11 @@ describe('the report sections (06 §6.2, F6.2)', () => {
   });
 
   it('EEF: the verdict figures, why people are asked and the status matrix in Chinese (D49)', async () => {
-    render('eef_video_consistency', EEF);
+    render('eef_video_consistency', EEF, { adjudication: { pending: 3, appealable: 2 } });
     const figures = screen.getByTestId('summary-eef_video_consistency');
     expect(figures).toHaveTextContent('判过12');
     expect(figures).toHaveTextContent('判废2');
-    expect(figures).toHaveTextContent('转人工5');
+    expect(figures).toHaveTextContent('转人工5人工裁决里待裁 3 条，其余已裁或已被别的检查判废');
     expect(figures).toHaveTextContent('模型与 CPU 一致率80%');
     expect(document.body).toHaveTextContent('意见冲突、模型给不出意见或判不了的，进人工裁决（阈值未校准）');
     expect(document.body).not.toHaveTextContent('待人工看');

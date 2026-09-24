@@ -521,6 +521,9 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                          f"{'（阈值未校准）' if s.get('uncalibrated') else ''}")
             why = "、".join(f"{x['name']} {x['count']}" for x in s.get("human_reasons") or []) or "无"
             lines.append(f"- 转人工的原因(条数):{why}")
+            adj = sec.get("adjudication") or {}
+            lines.append(f"- 人工裁决:待裁 {adj.get('pending', 0)} 条(转人工而仍在通过清单里、还没人裁的),"
+                         f"可复议 {adj.get('appealable', 0)} 条(只被本模块判废的)")
             sus = "、".join(f"{x['name']} {x['count']}" for x in s.get("suspect_by_subitem") or []) or "无"
             lines.append(f"- CPU 可疑分项(条数):{sus}")
             agree = s.get("model_cpu_agreement")

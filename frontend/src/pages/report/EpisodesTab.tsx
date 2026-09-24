@@ -309,6 +309,8 @@ export function EpisodesTab({ taskId, rev, readOnly, report, ep, onSelect }: { t
   else if (!v) body = <Alert type="error" content={errorMessage(view.error)} data-testid="episode-error" />;
   else {
     const origin = v.videos[0]?.origin;
+    // The EEF module's crops are shown in its block, next to the answer they belong to (F5.12).
+    const evidence = (v.evidence ?? []).filter((e) => e.module !== 'eef_video_consistency');
     body = (
       <div className="card-gap" data-testid="episode-view">
         <SummaryCard taskId={taskId} view={v} readOnly={readOnly} review={review} />
@@ -325,9 +327,9 @@ export function EpisodesTab({ taskId, rev, readOnly, report, ep, onSelect }: { t
           )}
         </Card>
         <Card title={E().evidence} size="small">
-          {v.evidence?.length ? (
+          {evidence.length ? (
             <div className="evidence-grid">
-              {v.evidence.map((e) => (
+              {evidence.map((e) => (
                 <figure key={e.path} style={{ margin: 0 }}>
                   <SignedImage task={taskId} scope="delivery" path={e.path} alt={`${moduleName(reg.data, e.module)} · ${e.path.split('/').pop() ?? ''}`} />
                   <figcaption className="muted" style={{ fontSize: 12 }}>

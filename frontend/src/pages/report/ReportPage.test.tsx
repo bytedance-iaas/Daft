@@ -1,5 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { db } from '../../mocks/db';
+import { eefRecord } from '../../mocks/eef';
 import { MAIN_TASK } from '../../mocks/world';
 import { pick } from '../../test/arco';
 import { recordRequests } from '../../test/record';
@@ -233,6 +235,27 @@ describe('质检报告 (07 §5)', () => {
     // Nothing signed for videos, nothing playing, until 同时播放.
     expect(seen.filter((r) => r.path === '/media/sign' && r.query.get('path')?.includes('videos'))).toHaveLength(0);
     expect(screen.getAllByRole('button', { name: /点击加载视频/ })).toHaveLength(3);
+  });
+
+  it('Episode 明细: the EEF block shows the conclusion, the CPU readings and every review window with its crops (F5.12)', async () => {
+    // Test fixture only: the mock world's tasks do not select the EEF module.
+    const why = '「位置」（相机 ext）CPU 判为可疑，模型多数认为一致（支持 2、反对 0）';
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefRecord(12, why) }]])]]);
+    renderApp(`${REPORT}?ep=12#episodes`);
+    const block = await screen.findByTestId('episode-module-eef_video_consistency');
+    expect(within(block).getByTestId('eef-outcome')).toHaveTextContent('转人工');
+    expect(within(block).getByTestId('eef-conclusion')).toHaveTextContent(`为什么转人工：${why}`);
+    expect(within(block).getByTestId('eef-cpu')).toHaveTextContent('可疑');
+    const cand = within(block).getByTestId('eef-window-ext-0');
+    expect(cand).toHaveTextContent('候选段 · 位置帧 120–150（3 帧）点 block_center · 方向 gripper_x');
+    expect(cand).toHaveTextContent('与 CPU 冲突：位置 CPU 可疑，模型支持');
+    expect(cand.className).toContain('conflict');
+    expect(within(block).getByTestId('eef-window-ext-1')).toHaveTextContent('模型超时');
+    await waitFor(() => expect(within(cand).getAllByAltText(/ext · aaaabbbbcccc_frame_0001[25]0\.jpg/)).toHaveLength(2));
+    expect(await within(block).findByAltText('12_ext.jpg')).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
+    // Shown in the block, not again among the episode's evidence frames.
+    expect(screen.queryAllByAltText(/^EEF–视频一致性 · /)).toHaveLength(0);
+    expect(block.textContent).not.toMatch(/[{}"]/);
   });
 
   it('Episode 明细: 「12」「ep12」「ep 12」 all find ep 12; the filter narrows the list and 上一条 / 下一条 follow it', async () => {

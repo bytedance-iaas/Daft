@@ -302,4 +302,9 @@ def test_the_report_shows_the_eef_section(chain):
     wins = pd.read_parquet(os.path.join(tdir, "eef_review_windows.parquet"))
     assert {"episode_index", "camera", "kind", "point", "status", "review_status"} <= set(wins.columns)
     md = open(os.path.join(chain["rd"], "revisions", "r0002", "report.md"), encoding="utf-8").read()
-    assert "判过" in md and "转人工的原因" in md
+    assert "判过" in md and "转人工的原因" in md and "待人工看" not in md
+    # the cards the adjudication page asks (F5.12): the ones sent to a person that are still delivered
+    review = json.load(open(os.path.join(chain["rd"], "revisions", "r0002", "review.json")))["episodes"]
+    asked = sum(1 for e in review if any(i["kind"] == "eef_consistency" for i in e["review"]))
+    assert sec["adjudication"]["pending"] == asked <= s["to_human"]
+    assert f"- 人工裁决:待裁 {asked} 条" in md

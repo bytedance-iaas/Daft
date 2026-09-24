@@ -236,10 +236,16 @@ def test_a_person_settles_what_the_module_could_not_and_the_delivery_follows(dae
                    if any(q["line"] == "eef_check" for q in c["questions"]))
     assert asked, queue
     assert first["pending_adjudication"] == queue["counts"]["pending"] >= len(asked)
+    delivered_dir = d.delivery(first["run_id"])
     for ep in asked:
         view = d.api("GET", f"/tasks/{task_id}/episodes/{ep}").json()
         rec = view["modules"][EEF]
         assert view["list"] == "passed" and rec["passed"] is None and rec["details"]["decision"]["human"]
+        # F5.12: the crops of every window, signed with scope=delivery, are in the delivery
+        crops = [p for cam in rec["details"]["review"].get("cameras", {}).values()
+                 for w in cam["windows"] for p in w.get("evidence") or []]
+        assert all(os.path.isfile(os.path.join(delivered_dir, p)) for p in crops), crops
+        assert set(crops) <= {e["path"] for e in view["evidence"] if e["module"] == EEF}
     keep, drop = asked[0], asked[-1]
     answers = [{"episode_index": drop, "line": "eef_check", "decision": "inconsistent"}]
     if keep != drop:

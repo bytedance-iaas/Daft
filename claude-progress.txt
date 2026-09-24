@@ -298,8 +298,9 @@ Next steps:
      F5.11 已落地：C1 1.9 裁决线 eef_check（「EEF 与画面核对」，一致 / 不一致 / 拿不准，计入待裁）、只被本模块判废的可复议；
      aggregate 把人的回答当作本模块的结果；C2 decisions 固定三种决定、C4 1.14.0 说明、Daemon 第 5 步迁移放开 adjudication.line；
      前端 EEF 卡片（features/eef/EefRecord.tsx：为什么转人工、CPU 分项读数、逐窗口答复与标记图）；转人工的条每个窗口都存标记图；
-     端到端：裁决 → 执行 → 新版本 → 重新导出（tests/orchestr/test_eef_tasks.py）。剩 F5.12（Episode 明细复用同一组件、报告小节措辞）
-     与 F5.10 的真实 VLM 准确率。
+     端到端：裁决 → 执行 → 新版本 → 重新导出（tests/orchestr/test_eef_tasks.py）（d57633109）。
+     F5.12 已落地：Episode 明细的 EEF 一块与裁决卡片同一组件、上方证据帧不重复；报告「转人工」注明待裁条数、「判废」注明可复议；
+     report.md 同样多一行；窗口标记图在交付目录里（端到端核对）。EEF 改判只剩 F5.10 的真实 VLM 准确率（本机没有密钥）。
      顺带修掉 F5.6 引入的问题：depends_on 里的模块 id 一律当成「一起勾选」，导致只选技能画像的任务被 Daemon 拒收、
      前端取消精确去重会连带取消技能画像（已随 F5.6 推送；集群上的版本若早于本次提交也有）
   1. 需求方手动触发 CP 流水线出镜像（提交号见本次会话）；CI 看最新一次推送

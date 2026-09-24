@@ -1360,6 +1360,7 @@ export const zh = {
       uncalibrated: '（阈值未校准）',
       outcome: { pass: '判过', reject: '判废', human: '转人工', error: '执行出错' } as Record<string, string>,
       outcomeChart: '模块结论',
+      humanPending: (pending: number, human: number) => (pending === human ? `都在人工裁决里待裁` : `人工裁决里待裁 ${pending} 条，其余已裁或已被别的检查判废`),
       humanChart: '转人工的原因',
       humanChartDesc: '一条可能有几个原因',
       humanReason: {
