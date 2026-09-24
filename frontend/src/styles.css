@@ -731,8 +731,24 @@ button.video-placeholder {
   justify-content: flex-end;
 }
 
+/* the period card's four figures on one row (fourth round), a little tighter */
 .overview-period .stat-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.overview-period .stat-cell {
+  padding: 10px 12px;
+}
+
+.overview-period .stat-cell .stat-value {
+  font-size: 20px;
+}
+
+@media (max-width: 600px) {
+  .overview-period .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .overview-period-select {
@@ -1038,4 +1054,12 @@ button.video-placeholder {
   width: 14px;
   justify-content: center;
   color: var(--c-text-3);
+}
+
+/* Table cells (操作 columns and the like): a text link that opens the cell starts where the
+   column does, not a button's padding further in (fourth round). The gap to the next one stays. */
+.arco-table-td .arco-table-cell-wrap-value > .arco-btn-text,
+.arco-table-td .arco-table-cell-wrap-value > a:first-child > .arco-btn-text,
+.arco-table-td .arco-table-cell-wrap-value > .arco-space > .arco-space-item:first-child .arco-btn-text {
+  padding-left: 0;
 }
