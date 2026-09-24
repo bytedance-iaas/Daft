@@ -26,10 +26,23 @@ def _vlm_args(p, run_dir, url):
             "--episodes", p["episodes"], "--vlm-endpoint", url, "--vlm-model", "fake-vlm"]
 
 
-def _in_hands(module_dir: str) -> bool:
+def _recorded(part: str) -> set[int]:
+    """Episodes with a line in the part (a line being written may be cut: skipped)."""
+    out = set()
+    with open(part, encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                out.add(int(json.loads(line)["episode_index"]))
+            except (ValueError, KeyError):
+                continue
+    return out
+
+
+def _in_hands(module_dir: str, recorded: set[int]) -> bool:
+    """``inflight.json`` names an episode that has no record yet."""
     try:
         with open(os.path.join(module_dir, "inflight.json"), encoding="utf-8") as fh:
-            return bool(json.load(fh)["episodes"])
+            return bool(set(json.load(fh)["episodes"]) - recorded)
     except (FileNotFoundError, ValueError, KeyError):
         return False
 
@@ -37,9 +50,10 @@ def _in_hands(module_dir: str) -> bool:
 def _wait_for_first_record(run_dir: str, proc, timeout: float = 120.0, *,
                            in_hands: bool = False) -> None:
     """Until the first record is on disk; with ``in_hands`` also until ``inflight.json``
-    names an episode again. Between one episode's record and the next one's start nothing
-    is in hands, so a SIGKILL landing there leaves an empty list (a CI runner hit that
-    window once, 2026-09-24)."""
+    names an episode that has no record yet. Between one episode's record and the next
+    one's start nothing is in hands, and between a record and its removal from the list the
+    list names a finished episode: a SIGKILL in either window has nothing to test (CI
+    runners hit both, 2026-09-24)."""
     module = os.path.join(run_dir, "checks", "task_success")
     part = os.path.join(module, "parts", "0001.jsonl")
     deadline = time.monotonic() + timeout
@@ -47,9 +61,9 @@ def _wait_for_first_record(run_dir: str, proc, timeout: float = 120.0, *,
         if proc.poll() is not None:
             raise AssertionError(f"the check ended early: {proc.communicate()}")
         if os.path.isfile(part):
-            with open(part, encoding="utf-8") as fh:
-                if fh.read().count("\n") >= 1 and (not in_hands or _in_hands(module)):
-                    return
+            recorded = _recorded(part)
+            if recorded and (not in_hands or _in_hands(module, recorded)):
+                return
         time.sleep(0.05)
     raise AssertionError("no record written in time")
 
@@ -95,20 +109,20 @@ def test_sigterm_finishes_the_episode_in_flight_then_resume_completes(vlm_stage)
 
 
 def test_sigkill_leaves_inflight_and_resume_gives_the_same_results(vlm_stage):
-    # A kill that lands between two episodes (one written and taken off, the next not yet
-    # put on) leaves nothing in the process's hands - correct, but nothing to test here:
-    # interrupt a fresh copy again (a slow CI runner hit that window once).
+    # A kill that lands between two episodes (nothing in hands), or between a record and its
+    # removal from the list (a finished episode still listed), is correct but has nothing to
+    # test here: interrupt a fresh copy again (slow CI runners hit both windows).
     for attempt in range(3):
         run_dir, rc, _out, _err = _interrupt(vlm_stage, f"kill{attempt}", signal.SIGKILL)
         assert rc == -signal.SIGKILL
         with open(os.path.join(run_dir, "checks", "task_success", "inflight.json"),
                   encoding="utf-8") as fh:
             inflight = json.load(fh)
-        if inflight["episodes"]:
+        done_before = set(latest_results(run_dir, "task_success"))  # the parts: no compaction
+        if set(inflight["episodes"]) - done_before:
             break
-    assert inflight["episodes"] and inflight["part"] == "0001"
-    done_before = set(latest_results(run_dir, "task_success"))     # the parts: no compaction
-    assert done_before and not (set(inflight["episodes"]) & done_before)
+    assert inflight["part"] == "0001"
+    assert done_before and set(inflight["episodes"]) - done_before
     assert not os.path.exists(os.path.join(run_dir, "checks", "task_success", "results.jsonl"))
     _resume(vlm_stage, run_dir)
     got = results(run_dir, "task_success")

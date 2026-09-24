@@ -283,12 +283,17 @@ def test_purge_needs_the_exact_path_and_removes_the_batch_and_latest(api, tmp_pa
     r = c.post(f"{API}/tasks/{t.id}/purge-artifacts", headers=JSON, json={"confirm_path": path})
     assert r.status_code == 202, r.text
     assert r.json() == {"path": path, "bytes": 102, "latest_removed": True}
+    # the purge runs in the background: the objects go first, the task is marked stale last
+    # (a slow CI runner read the task in between, 2026-09-24)
+    def stale() -> bool:
+        return c.get(f"{API}/tasks/{t.id}").json()["delivery_stale"] is True
+
     deadline = time.monotonic() + 10
-    while batch.exists() and time.monotonic() < deadline:
+    while (batch.exists() or not stale()) and time.monotonic() < deadline:
         time.sleep(0.05)
     assert not batch.exists() and not (batch.parent / "latest").exists()
     assert (other / "report.md").read_text() == "keep me"      # another batch is untouched
-    assert c.get(f"{API}/tasks/{t.id}").json()["delivery_stale"] is True
+    assert stale()
 
 
 def test_purge_refuses_running_tasks_and_tasks_without_a_batch(api):

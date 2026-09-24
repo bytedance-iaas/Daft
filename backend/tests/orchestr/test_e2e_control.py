@@ -28,13 +28,27 @@ def _part_lines(run_dir: str, module: str, part: str = "0001") -> list[dict]:
 
 
 def _in_vlm_stage_with_a_result(d, task_id: str):
+    """The VLM stage is running and has a result, and the stages before it are done. The
+    funnel is pipelined: the VLM stage can write its first result while the numeric and frame
+    stages still work on later episodes, and these tests are about interrupting the VLM stage
+    alone (a slow CI runner paused or stopped the frame stage too, 2026-09-24)."""
     def ready():
         task = d.get(task_id)
         stages = {s["id"]: s for s in task["progress"]["stages"]}
         if stages.get("vlm", {}).get("state") != "running":
             return False
+        if any(stages.get(sid, {}).get("state") != "succeeded" for sid in ("numeric", "frame")):
+            return False
         return len(_part_lines(d.run_dir(task_id), "task_success")) >= 1
     return ready
+
+
+def _redone(run_dir: str, module: str, before: dict[int, dict]) -> set[int]:
+    """Episodes of ``before`` (records written before the interruption) judged again in the
+    second part. The pipelined stage hands an episode it finished on again with its record as
+    it was (carried over, not judged): only a different record is finished work repeated."""
+    after = {r["episode_index"]: r for r in _part_lines(run_dir, module, "0002")}
+    return {e for e in after.keys() & before.keys() if after[e] != before[e]}
 
 
 def _children_of_run(run_dir: str) -> list[str]:
@@ -66,9 +80,8 @@ def test_pause_then_resume_gives_the_results_of_an_uninterrupted_run(daemon, fak
     paused = d.wait(task_id, ("paused",), timeout=120)
     assert paused["pause_reason"] == "user"
     assert d.orch.executor.live() == []             # the command finished its episodes and left
-    done_before = {r["episode_index"] for r in _part_lines(d.run_dir(task_id), "task_success")}
-    assert done_before and all(r["verdict"] != "error"
-                               for r in _part_lines(d.run_dir(task_id), "task_success"))
+    done_before = {r["episode_index"]: r for r in _part_lines(d.run_dir(task_id), "task_success")}
+    assert done_before and all(r["verdict"] != "error" for r in done_before.values())
     stages = {s["id"]: s["state"] for s in paused["progress"]["stages"]}
     assert stages["numeric"] == "succeeded" and stages["vlm"] != "succeeded"
     assert {m["id"]: m["state"] for m in paused["modules"]}["task_success"] != "running"
@@ -81,9 +94,8 @@ def test_pause_then_resume_gives_the_results_of_an_uninterrupted_run(daemon, fak
     assert r.status_code == 200 and r.json()["state"] in ("queued", "running"), r.text
     task = d.wait(task_id)
     assert task["state"] == "succeeded" and task["summary"] == reference["summary"]
-    # the resumed stage skipped what was done: those episodes are not in its second part
-    again = {r["episode_index"] for r in _part_lines(d.run_dir(task_id), "task_success", "0002")}
-    assert not (again & done_before)
+    # the resumed stage skipped what was done: nothing written before the pause is judged again
+    assert not _redone(d.run_dir(task_id), "task_success", done_before)
     assert _snapshot(d.run_dir(task_id)) == _snapshot(d.run_dir(reference["id"]))
     kinds = [e["kind"] for e in d.api("GET", f"/tasks/{task_id}/timeline").json()["items"]]
     assert "user_pause" in kinds and "user_resume" in kinds
@@ -100,7 +112,7 @@ def test_stop_leaves_no_child_and_continue_repeats_no_finished_work(daemon, fake
     assert stopped["state_reason"] == "用户停止"
     assert d.orch.executor.live() == []
     assert _children_of_run(d.run_dir(task_id)) == []
-    kept = {r["episode_index"] for r in _part_lines(d.run_dir(task_id), "task_success")}
+    kept = {r["episode_index"]: r for r in _part_lines(d.run_dir(task_id), "task_success")}
     assert kept
     parts_before = {module: set(os.listdir(os.path.join(d.run_dir(task_id), "checks",
                                                           module, "parts")))
@@ -117,8 +129,7 @@ def test_stop_leaves_no_child_and_continue_repeats_no_finished_work(daemon, fake
     for module in ("timestamp_check", "visual_quality"):     # finished stages were not re-run
         assert set(os.listdir(os.path.join(run_dir, "checks", module, "parts"))) == \
             parts_before[module]
-    again = {r["episode_index"] for r in _part_lines(run_dir, "task_success", "0002")}
-    assert not (again & kept)
+    assert not _redone(run_dir, "task_success", kept)
     subs = d.api("GET", f"/tasks/{task_id}/subtasks").json()["items"]
     assert [(s["kind"], s["state"]) for s in subs] == [("resume", "succeeded")]
     kinds = [e["kind"] for e in d.api("GET", f"/tasks/{task_id}/timeline").json()["items"]]
