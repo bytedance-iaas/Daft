@@ -84,7 +84,8 @@ def _module_filter(raw: str | None) -> list[str] | None:
 @router.get("/tasks")
 def list_tasks(request: Request, page: int = Query(1, ge=1), page_size: int = Query(20),
                state: str | None = None, q: str | None = None, delivery: str | None = None,
-               module: str | None = None, dataset_id: str | None = None):
+               module: str | None = None, dataset_id: str | None = None,
+               has_result: bool = False, pending_adjudication: bool = False):
     check_page_size(page_size)
     if state is not None and state not in _TASK_STATES and state != "deleted":
         raise ApiError("validation_failed", f"没有 {state} 这个任务状态",
@@ -96,7 +97,8 @@ def list_tasks(request: Request, page: int = Query(1, ge=1), page_size: int = Qu
     result = rt.repo.list_tasks(owner=owner, page=page, page_size=page_size, state=state,
                                 q=(q or "").strip() or None, delivery_key=key,
                                 dataset_id=(dataset_id or "").strip() or None, modules=modules,
-                                running_subtasks=True)
+                                running_subtasks=True, has_result=has_result,
+                                pending_adjudication=pending_adjudication)
     return {"items": [views.task_list_item(t, repo=rt.repo) for t in result.items],
             "page": result.page, "page_size": result.page_size, "total": result.total}
 

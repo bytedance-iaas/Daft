@@ -1,6 +1,6 @@
 // Turning a preflight result (C2 preflight.schema) into what the form shows: module availability,
 // Chinese reasons from reason_code (unknown codes fall back to `reason`), and preset selections.
-import type { Availability, ModuleAvailability, ModuleRegistry, ModuleSpec, PreflightResult } from '../api/types';
+import type { Availability, ModuleAvailability, ModuleRegistry, ModuleSpec, PreflightResult, VlmBackend } from '../api/types';
 import { zh } from '../locales/zh';
 
 export function reasonText(m: Pick<ModuleAvailability, 'reason' | 'reason_code' | 'reason_args'> | undefined): string {
@@ -8,6 +8,23 @@ export function reasonText(m: Pick<ModuleAvailability, 'reason' | 'reason_code' 
   const fn = m.reason_code ? zh.reason[m.reason_code] : undefined;
   if (fn) return fn((m.reason_args ?? {}) as Record<string, unknown>);
   return m.reason ?? '';
+}
+
+/**
+ * A dataset's own preflight chooses no VLM backend, so its VLM modules say vlm_backend_missing.
+ * The dataset page asks the backends instead (requester, third round): one verified backend with
+ * a model that can see is enough for 可用; without one the module has no usable backend. `null`
+ * while the backends load.
+ */
+export function withVlmBackends(
+  row: { availability: Availability; reason: string },
+  m: Pick<ModuleAvailability, 'reason_code'> | undefined,
+  backends: readonly VlmBackend[] | undefined,
+): { availability: Availability; reason: string } {
+  if (row.availability !== 'needs_input' || m?.reason_code !== 'vlm_backend_missing') return row;
+  if (!backends) return { availability: 'needs_input', reason: zh.common.loading };
+  const ready = backends.some((b) => b.verify_state === 'ok' && b.models.some((x) => x.capabilities.vision !== false));
+  return ready ? { availability: 'available', reason: '' } : { availability: 'needs_input', reason: zh.reason.vlm_backend_none({}) };
 }
 
 export function availabilityOf(result: PreflightResult | null | undefined, id: string): ModuleAvailability | undefined {

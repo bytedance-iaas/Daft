@@ -11,7 +11,11 @@ export type ChartOption = Record<string, unknown>;
  */
 export function Chart({ option, height = 220, summary }: { option: ChartOption; height?: number; summary: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  // The key only says when the data changed; the option itself goes to ECharts, because a JSON
+  // round trip drops functions (axis label formatters such as compactAxis).
   const key = JSON.stringify(option);
+  const latest = useRef(option);
+  latest.current = option;
   useEffect(() => {
     let disposed = false;
     let dispose: (() => void) | null = null;
@@ -20,7 +24,7 @@ export function Chart({ option, height = 220, summary }: { option: ChartOption; 
         const el = ref.current;
         if (disposed || !el) return;
         const chart = echarts.init(el, undefined, { renderer: 'svg' });
-        chart.setOption({ color: CHART_COLORS, textStyle: { fontFamily: 'inherit' }, ...JSON.parse(key) });
+        chart.setOption({ color: CHART_COLORS, textStyle: { fontFamily: 'inherit' }, ...latest.current });
         const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => chart.resize()) : null;
         ro?.observe(el);
         dispose = () => {
@@ -40,6 +44,16 @@ export function Chart({ option, height = 220, summary }: { option: ChartOption; 
 /** The tolerance band on charts (aligned sync lags): a pale green. */
 export const BAND_COLOR = 'rgba(0, 180, 42, 0.1)';
 
+/** Axis numbers in K / M: 0, 500K, 1M, 1.5M. */
+export function compactAxis(v: number): string {
+  const abs = Math.abs(v);
+  const trim = (x: number) => Number(x.toFixed(1)).toString();
+  if (abs >= 1e9) return `${trim(v / 1e9)}B`;
+  if (abs >= 1e6) return `${trim(v / 1e6)}M`;
+  if (abs >= 1e3) return `${trim(v / 1e3)}K`;
+  return String(v);
+}
+
 /**
  * A horizontal or vertical bar chart of {name, value} items (one series, primary colour).
  * `colors` colours bars one by one; `band` shades a range of the value axis; `valueName`
@@ -47,7 +61,7 @@ export const BAND_COLOR = 'rgba(0, 180, 42, 0.1)';
  */
 export function barOption(
   items: { name: string; value: number }[],
-  opts: { horizontal?: boolean; unit?: string; colors?: (string | undefined)[]; band?: [number, number]; valueName?: string; valueRange?: [number, number] } = {},
+  opts: { horizontal?: boolean; unit?: string; colors?: (string | undefined)[]; band?: [number, number]; valueName?: string; valueRange?: [number, number]; compactValues?: boolean } = {},
 ): ChartOption {
   const names = items.map((i) => i.name);
   const values = items.map((i, k) => (opts.colors?.[k] ? { value: i.value, itemStyle: { color: opts.colors[k] } } : i.value));
@@ -60,21 +74,25 @@ export function barOption(
     ...(counts ? { minInterval: 1 } : {}),
     ...(opts.valueRange ? { min: opts.valueRange[0], max: opts.valueRange[1] } : {}),
     ...(opts.valueName ? { name: opts.valueName, nameGap: 8 } : {}),
+    // Token-sized counts: 2M instead of 2,000,000, and a handful of ticks, not one per 500K
+    ...(opts.compactValues ? { splitNumber: 3, axisLabel: { formatter: (v: number) => compactAxis(v) } } : {}),
   };
   const band = opts.band ? { markArea: { silent: true, itemStyle: { color: BAND_COLOR }, data: [[opts.horizontal ? { xAxis: opts.band[0] } : { yAxis: opts.band[0] }, opts.horizontal ? { xAxis: opts.band[1] } : { yAxis: opts.band[1] }]] } } : {};
   return {
-    grid: { left: opts.horizontal ? 112 : 40, right: 24, top: opts.valueName && !opts.horizontal ? 28 : 16, bottom: 28, containLabel: Boolean(opts.horizontal) },
+    // containLabel sizes the margin to the axis labels themselves: a fixed left margin on top of it
+    // pushed every horizontal chart to the right and left half its width empty
+    grid: { left: 8, right: 24, top: opts.valueName && !opts.horizontal ? 28 : 12, bottom: 8, containLabel: true },
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     xAxis: opts.horizontal ? val : cat,
     yAxis: opts.horizontal ? { ...cat, inverse: true } : val,
-    series: [{ type: 'bar', data: values, barMaxWidth: 24, name: opts.unit ?? '', ...band }],
+    series: [{ type: 'bar', data: values, barMaxWidth: 28, name: opts.unit ?? '', ...band }],
   };
 }
 
 /** Several series over the same categories (per-camera histograms), side by side. */
 export function groupedBarOption(categories: string[], series: { name: string; data: number[] }[], opts: { valueName?: string } = {}): ChartOption {
   return {
-    grid: { left: 40, right: 16, top: 36, bottom: 28 },
+    grid: { left: 8, right: 16, top: 36, bottom: 8, containLabel: true },
     legend: { top: 0, type: 'scroll' },
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     xAxis: { type: 'category', data: categories, axisTick: { show: false } },

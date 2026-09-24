@@ -7,8 +7,12 @@ import { qk } from '../../api/queries';
 import type { AdjudicationCounts, AdjudicationLine, AdjudicationPage, DecisionValue } from '../../api/types';
 import { clicked, decisionKey, type LocalDecisions } from '../../lib/adjudication';
 
-/** Cards per page of the queue (cursor paging, the next page loads when the end scrolls into view). */
-export const ADJ_CONFIG = { pageSize: 20 };
+/**
+ * `pageSize`: cards per request of the cursor-paged queue. The page fetches the whole queue in
+ * the background (the server rebuilds it for every request, so the contract's maximum);
+ * `cardsPerPage` / `pageSizes`: how many cards one page of the pager shows (default 10).
+ */
+export const ADJ_CONFIG = { pageSize: 200, cardsPerPage: 10, pageSizes: [10, 20, 50] };
 
 export type AdjTab = 'review' | 'appeals';
 export type AdjStatus = 'pending' | 'decided' | 'unapplied' | 'all';

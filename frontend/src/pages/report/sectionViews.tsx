@@ -10,6 +10,7 @@ import type { ComponentType, ReactNode } from 'react';
 import type { ReportModuleSection } from '../../api/types';
 import { CHART_COLORS, Chart, barOption, chartSummary, groupedBarOption, type ChartOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
+import { StatCell } from '../../components/StatCell';
 import { percent } from '../../lib/format';
 import { fieldLabel, readable } from '../../lib/reportView';
 import { anyValue, countsOf, fmt, hasAny, num, rowsOf, seriesOf, signed, str, verdictItems, type Item, type Summary } from '../../lib/sectionStats';
@@ -45,6 +46,8 @@ interface ChartSpec {
   option?: ChartOption;
   summary?: string;
   height?: number;
+  /** Two columns of the section's chart grid (per-camera histograms need the width). */
+  wide?: boolean;
 }
 
 interface ViewModel {
@@ -63,27 +66,19 @@ const ORANGE = '#FF7D00';
 
 // -------------------------------------------------------------------------- building blocks
 
-function Stat({ label, value, foot, tone }: StatSpec) {
-  return (
-    <div className={`stat-cell${tone ? ` tone-${tone}` : ''}`}>
-      <div className="stat-label">{label}</div>
-      <div className="stat-value">{value}</div>
-      {foot ? <div className="stat-foot">{foot}</div> : null}
-    </div>
-  );
-}
+const Stat = (s: StatSpec) => <StatCell {...s} />;
 
 function chartHeight(c: ChartSpec): number {
   if (c.height) return c.height;
   const n = c.items?.length ?? 6;
-  return c.horizontal ? Math.max(140, Math.min(420, n * 30 + 44)) : 220;
+  return c.horizontal ? Math.max(96, Math.min(420, n * 26 + 40)) : 200;
 }
 
 function ChartBlock({ spec }: { spec: ChartSpec }) {
   const option = spec.option ?? barOption(spec.items ?? [], { horizontal: spec.horizontal, colors: spec.colors, band: spec.band, valueName: spec.valueName, valueRange: spec.valueRange });
   const summary = `${spec.title}：${spec.summary ?? chartSummary(spec.items ?? [])}`;
   return (
-    <div className="section-chart" data-testid={`chart-${spec.key}`}>
+    <div className={`section-chart${spec.wide ? ' wide' : ''}`} data-testid={`chart-${spec.key}`}>
       <div className="section-sub">
         {spec.title}
         {spec.desc ? <span className="muted">{spec.desc}</span> : null}
@@ -279,6 +274,7 @@ function visualModel(s: Summary): ViewModel {
       summary: withHist.map((x) => Z.cameraSummary(x.camera, fmt(x.mean), x.low)).join('；'),
       foot: withHist.map((x) => Z.cameraMean(x.camera, fmt(x.mean))).join('；'),
       height: 240,
+      wide: true,
     });
   }
   const hist = scoreHist(s);

@@ -1,7 +1,8 @@
 .pipeline-activity { margin-bottom: 20px; }
-.pipeline-layers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.pipeline-layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
 .pipeline-layer { padding: 14px; border: 1px solid var(--color-border-2); border-top: 3px solid; border-radius: 6px; background: var(--color-bg-2); min-width: 0; }
-.pipeline-layer-heading, .pipeline-counts, .pipeline-axis { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pipeline-layer-heading, .pipeline-counts, .pipeline-axis { display: flex; align-items: center; justify-content: space-between; gap: 4px 8px; flex-wrap: wrap; }
+.pipeline-counts > *, .pipeline-layer-heading > *, .pipeline-processing, .pipeline-inflight span { white-space: nowrap; }
 .pipeline-layer-heading { font-size: 13px; }
 .pipeline-inflight { display: flex; align-items: baseline; gap: 8px; padding: 12px 0 8px; }
 .pipeline-inflight strong { font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }

@@ -6,7 +6,6 @@ import { api, idempotencyKey, unwrap } from '../../api/client';
 import { errorMessage } from '../../api/errors';
 import { moduleName, qk, showSubtask, useModules, useTask } from '../../api/queries';
 import type { AdjudicationCard, AdjudicationCounts, Task } from '../../api/types';
-import { Sentinel } from '../../components/LazyVisible';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
 import { keepCard, ownQuestions, statusQuery, viewCard } from '../../lib/adjudication';
@@ -15,6 +14,7 @@ import { zh } from '../../locales/zh';
 import { AppealsTab } from './AppealsTab';
 import { ApplyDialog, type RelabelRerun } from './ApplyDialog';
 import { EpisodeCard } from './EpisodeCard';
+import { useLoadAll, usePaged } from './paging';
 import { useAdjudicationList, useDecisions, type AdjTab } from './useAdjudication';
 
 function applyBlocked(task: Task, counts: AdjudicationCounts | null): string | null {
@@ -53,20 +53,43 @@ export function AdjudicationPage() {
   const catalog = reg.data?.review_lines;
   const shown = reviewCards.filter((c) => keepCard(c, { sources, line, onlyUnsure: sq.onlyUnsure })).map((c) => viewCard(c, decisions.local, catalog));
   const appealViews = appealCards.filter((c) => keepCard(c, { sources, line: '', onlyUnsure: false })).map((c) => viewCard(c, decisions.local, catalog));
+  // ten cards a page with a pager (requester, third round): the queue is fetched whole in the background
+  useLoadAll(review);
+  useLoadAll(appeals);
+  const reviewPage = usePaged(shown, `${line}|${statusFilter}|${sources.join(',')}`, 'review-pager');
   const counts = decisions.counts ?? (tab === 'review' ? review.data?.pages[0]?.counts : appeals.data?.pages[0]?.counts) ?? review.data?.pages[0]?.counts ?? appeals.data?.pages[0]?.counts ?? null;
-  const moduleOptions = (reg.data?.modules ?? []).filter((m) => m.produces_adjudication).map((m) => ({ label: m.name_zh, value: m.id }));
+  // Each tab filters by its own source modules (third round): review items, or appealable rejects.
+  const moduleOptions = (reg.data?.modules ?? []).filter((m) => (tab === 'appeals' ? m.appealable : m.produces_adjudication)).map((m) => ({ label: m.name_zh, value: m.id }));
   // The review tab asks about episodes still in passed; appeals (applies_to reject) have their own tab.
   const typeOptions = (catalog ?? []).filter((l) => l.applies_to === 'passed').map((l) => {
     const owner = reviewCards.flatMap(ownQuestions).find((q) => q.line === l.id)?.source_module;
     return { label: owner ? zh.adjudication.typeOption(l.title_zh, moduleName(reg.data, owner)) : l.title_zh, value: l.id };
   });
 
-  const setParam = (key: string, value: string | null) => {
+  const setParam = (key: string, value: string | null, drop: string[] = []) => {
     const next = new URLSearchParams(params);
     if (!value) next.delete(key);
     else next.set(key, value);
+    for (const k of drop) next.delete(k);
     setParams(next, { replace: true });
   };
+  // Another tab has other source modules: the filter starts over.
+  const setTab = (k: AdjTab) => setParam('tab', k === 'appeals' ? 'appeals' : null, ['source']);
+  const sourceFilter = (
+    <>
+      <span>{zh.adjudication.filterSource}</span>
+      <Select
+        mode="multiple"
+        allowClear
+        style={{ minWidth: 220 }}
+        placeholder={zh.adjudication.all}
+        aria-label={zh.adjudication.filterSource}
+        value={sources}
+        onChange={(v: string[]) => setParam('source', v.join(','))}
+        options={moduleOptions}
+      />
+    </>
+  );
 
   const apply = async (relabelRerun: RelabelRerun) => {
     setApplying(true);
@@ -138,22 +161,10 @@ export function AdjudicationPage() {
           )}
         </Space>
       </div>
-      <Space wrap style={{ marginBottom: 12 }}>
-        <span>{zh.adjudication.filterSource}</span>
-        <Select
-          mode="multiple"
-          allowClear
-          style={{ minWidth: 220 }}
-          placeholder={zh.adjudication.all}
-          aria-label={zh.adjudication.filterSource}
-          value={sources}
-          onChange={(v: string[]) => setParam('source', v.join(','))}
-          options={moduleOptions}
-        />
-      </Space>
-      <Tabs activeTab={tab} onChange={(k) => setParam('tab', k === 'appeals' ? 'appeals' : null)}>
+      <Tabs activeTab={tab} onChange={(k) => setTab(k === 'appeals' ? 'appeals' : 'review')}>
         <Tabs.TabPane key="review" title={zh.adjudication.tabReview}>
           <Space wrap style={{ marginBottom: 12 }}>
+            {tab === 'review' ? sourceFilter : null}
             <span>{zh.adjudication.filterType}</span>
             <Select style={{ width: 260 }} aria-label={zh.adjudication.filterType} value={line} onChange={setLine} options={[{ label: zh.adjudication.all, value: '' }, ...typeOptions]} />
             <span>{zh.adjudication.filterStatus}</span>
@@ -176,7 +187,7 @@ export function AdjudicationPage() {
               {!reviewCards.length ? (
                 <div style={{ marginTop: 8 }} data-testid="review-empty-appeals">
                   <Typography.Text type="secondary">{zh.adjudication.emptyToAppeals}</Typography.Text>
-                  <Button type="text" size="small" onClick={() => setParam('tab', 'appeals')}>
+                  <Button type="text" size="small" onClick={() => setTab('appeals')}>
                     {zh.adjudication.toAppeals}
                   </Button>
                 </div>
@@ -184,9 +195,10 @@ export function AdjudicationPage() {
             </Card>
           ) : (
             <div className="card-gap" data-testid="cards">
-              {shown.map((v) => (
+              {reviewPage.slice.map((v) => (
                 <EpisodeCard key={v.ep} taskId={id} rev={rev} view={v} catalog={catalog} onDecide={(l, d, label) => decisions.save(v.ep, l, d, label ?? null)} />
               ))}
+              {reviewPage.pager}
             </div>
           )}
         </Tabs.TabPane>
@@ -198,21 +210,28 @@ export function AdjudicationPage() {
             catalog={catalog}
             loading={appeals.isLoading || appeals.isFetchingNextPage}
             error={appeals.error}
-            hasMore={Boolean(appeals.hasNextPage)}
-            pages={appeals.data?.pages.length ?? 0}
-            onMore={() => void appeals.fetchNextPage()}
+            resetKey={sources.join(',')}
+            filter={tab === 'appeals' ? sourceFilter : null}
             onRetry={() => void appeals.refetch()}
             onDecide={(ep, l, d, label) => decisions.save(ep, l, d, label ?? null)}
           />
         </Tabs.TabPane>
       </Tabs>
       {tab === 'review' ? (
-        <>
-          <Sentinel onVisible={() => void review.fetchNextPage()} disabled={!review.hasNextPage || review.isFetchingNextPage} version={review.data?.pages.length ?? 0} />
-          <div className="muted" style={{ textAlign: 'center', padding: 12, fontSize: 12 }} data-testid="adj-end">
-            {review.isFetchingNextPage ? <Spin size={14} /> : !review.hasNextPage && reviewCards.length ? zh.adjudication.loadedAll(reviewCards.length) : null}
-          </div>
-        </>
+        <div className="muted" style={{ textAlign: 'center', padding: 12, fontSize: 12 }} data-testid="adj-end">
+          {review.isFetchingNextPage ? (
+            <Spin size={14} />
+          ) : review.isError && reviewCards.length ? (
+            <>
+              {zh.adjudication.loadRestFailed(reviewCards.length)}
+              <Button type="text" size="mini" onClick={() => void review.fetchNextPage()}>
+                {zh.common.retry}
+              </Button>
+            </>
+          ) : !review.hasNextPage && reviewCards.length ? (
+            zh.adjudication.loadedAll(reviewCards.length)
+          ) : null}
+        </div>
       ) : null}
       <ApplyDialog taskId={id} visible={applyOpen} local={decisions.local} catalog={catalog} busy={applying} onCancel={() => setApplyOpen(false)} onOk={(r) => void apply(r)} />
     </div>

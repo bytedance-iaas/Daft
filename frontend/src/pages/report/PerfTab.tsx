@@ -6,6 +6,7 @@ import { qk } from '../../api/queries';
 import type { Perf, Subtask } from '../../api/types';
 import { CHART_COLORS, Chart, barOption, chartSummary, type ChartOption } from '../../components/Chart';
 import { PageError } from '../../components/PageError';
+import { StatCell } from '../../components/StatCell';
 import { compactNumber, percent } from '../../lib/format';
 import { callKindLabel, fieldLabel, formatValue, seconds, subtaskName, usageByCallKind } from '../../lib/reportView';
 import { stageLabel } from '../../lib/taskView';
@@ -13,15 +14,7 @@ import { zh } from '../../locales/zh';
 
 const { Row, Col } = Grid;
 
-function Stat({ label, value, foot }: { label: string; value: string; foot?: string }) {
-  return (
-    <div className="stat-cell">
-      <div className="stat-label">{label}</div>
-      <div className="stat-value">{value}</div>
-      {foot ? <div className="stat-foot">{foot}</div> : null}
-    </div>
-  );
-}
+const Stat = StatCell;
 
 function latencyOption(rows: Perf['latency']): ChartOption {
   const names = rows.map((r) => r.call_kind);

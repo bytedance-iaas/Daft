@@ -1,7 +1,7 @@
 import { AutoComplete, Button, Card, Grid, Input, Radio, Select, Space, Tag, Typography } from '@arco-design/web-react';
 import { Link } from 'react-router-dom';
 import type { BrowsedDataset, Credential, DatasetItem } from '../../api/types';
-import { RegionSelect, regionLabel } from '../../components/RegionSelect';
+import { RegionSelect } from '../../components/RegionSelect';
 import { shortTime } from '../../lib/format';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
@@ -29,20 +29,30 @@ export interface BasicSectionProps {
   sourceLocked?: boolean;
 }
 
-function credentialOptions(list: Credential[]) {
-  return list.map((c) => ({
-    label: c.verify_state === 'ok' ? c.name : zh.taskForm.credentialUnverified(c.name, zh.verify[c.verify_state]),
-    value: c.name,
-  }));
+/**
+ * The keys to choose from: verified ones first, then the rest with their state; a key whose
+ * verification failed cannot be picked. `skip` leaves out the one the fixed first entry stands
+ * for, unless it is the value.
+ */
+function credentialOptions(list: Credential[], skip?: string, value?: string) {
+  const rank = (c: Credential) => (c.verify_state === 'ok' ? 0 : c.verify_state === 'failed' ? 2 : 1);
+  return [...list]
+    .filter((c) => c.name !== skip || c.name === value)
+    .sort((a, b) => rank(a) - rank(b))
+    .map((c) => ({
+      label: c.verify_state === 'ok' ? c.name : zh.taskForm.credentialUnverified(c.name, zh.verify[c.verify_state]),
+      value: c.name,
+      disabled: c.verify_state === 'failed',
+    }));
 }
 
 /** 基本信息 (07 §3 screen 1): name, note, source, dataset, region, key, delivery directory. */
 export function BasicSection(p: BasicSectionProps) {
   const { v, set, errors } = p;
   const noKeys = p.credentials.length === 0;
-  const credSelect = (value: string, onChange: (x: string) => void, extra: { label: string; value: string }[] = [], aria = zh.taskForm.credential) => (
+  const credSelect = (value: string, onChange: (x: string) => void, extra: { label: string; value: string }[] = [], aria = zh.taskForm.credential, skip?: string) => (
     <Space direction="vertical" style={{ width: '100%' }} size={4}>
-      <Select value={value} onChange={onChange} placeholder={zh.taskForm.credentialPlaceholder} aria-label={aria} status={errors.credential && aria === zh.taskForm.credential ? 'error' : undefined} options={[...extra, ...credentialOptions(p.credentials)]} />
+      <Select value={value} onChange={onChange} placeholder={zh.taskForm.credentialPlaceholder} aria-label={aria} status={errors.credential && aria === zh.taskForm.credential ? 'error' : undefined} options={[...extra, ...credentialOptions(p.credentials, skip, value)]} />
       {noKeys ? (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {zh.taskForm.noCredential}，
@@ -221,7 +231,9 @@ export function BasicSection(p: BasicSectionProps) {
               value={v.outputRegion}
               onChange={(x) => set({ outputRegion: x })}
               allowEmpty={v.source !== 'public'}
-              emptyLabel={v.region ? zh.taskForm.sameAsDatasetWith(regionLabel(v.region)) : zh.taskForm.sameAsDataset}
+              // the dataset's own region is the fixed first entry, not listed again (requester, third round)
+              emptyLabel={zh.taskForm.sameAsDataset}
+              exclude={v.source !== 'public' ? v.region || undefined : undefined}
               ariaLabel={`${zh.taskForm.outputUri}${zh.taskForm.outputRegion}`}
             />
           </Field>
@@ -231,8 +243,10 @@ export function BasicSection(p: BasicSectionProps) {
             {credSelect(
               v.outputCredential,
               (x) => set({ outputCredential: x }, 'outputCredential'),
-              v.source !== 'public' ? [{ label: v.credential ? zh.taskForm.sameAsDatasetWith(v.credential) : zh.taskForm.sameAsDataset, value: '' }] : [],
+              // the dataset's own key is the fixed first entry, not listed again (requester, third round)
+              v.source !== 'public' ? [{ label: zh.taskForm.sameAsDataset, value: '' }] : [],
               `${zh.taskForm.outputUri}${zh.taskForm.outputCredential}`,
+              v.source !== 'public' ? v.credential || undefined : undefined,
             )}
           </Field>
         </Col>

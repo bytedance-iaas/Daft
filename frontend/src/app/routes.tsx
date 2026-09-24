@@ -14,6 +14,8 @@ const TaskFormPage = named(() => import('../pages/task-form/TaskFormPage'), 'Tas
 const TaskDetailPage = named(() => import('../pages/task-detail/TaskDetailPage'), 'TaskDetailPage');
 const ReportPage = named(() => import('../pages/report/ReportPage'), 'ReportPage');
 const AdjudicationPage = named(() => import('../pages/adjudication/AdjudicationPage'), 'AdjudicationPage');
+const ReportListPage = named(() => import('../pages/results/ResultListPage'), 'ReportListPage');
+const AdjudicationListPage = named(() => import('../pages/results/ResultListPage'), 'AdjudicationListPage');
 const KeysPage = named(() => import('../pages/keys/KeysPage'), 'KeysPage');
 const NotFoundPage = named(() => import('../pages/NotFoundPage'), 'NotFoundPage');
 
@@ -41,6 +43,8 @@ export function AppRoutes() {
         <Route path="tasks/:id" element={<TaskDetailPage />} />
         <Route path="tasks/:id/report" element={<ReportPage />} />
         <Route path="tasks/:id/adjudication" element={<AdjudicationPage />} />
+        <Route path="reports" element={<ReportListPage />} />
+        <Route path="adjudication" element={<AdjudicationListPage />} />
         <Route path="credentials" element={<KeysPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

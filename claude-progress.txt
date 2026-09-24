@@ -1,4 +1,4 @@
-Date: 2026-09-23
+Date: 2026-09-24
 TaskStatus: not_completed
 
 Task scope:
@@ -273,8 +273,24 @@ Current summary:
         经本机隧道 exec 拷 100 MB 会超时 → 改集群内直传（手册 §12 第 3 步已改）
       · 待办：公网域名只在 APIG 控制台可见，等需求方给地址做浏览器验收（登录、ReRun「质检」深链、「可视化」）；
         旧 curation 命名空间实例处于维护模式、盘保留，需求方确认后再 uninstall
+      · 需求方在 galbot 上验收通过（登录、ReRun「质检」深链、「可视化」），F6.3、F6.6 置 completed；旧实例已 helm uninstall，
+        curation 命名空间里还留着 PVC data-curator-v2-0（100Gi）与 Secret curator-v2-master-key，删不删等需求方定（不可恢复）
+  2026-09-23 夜 ~ 09-24 第三轮界面修改（F6.7 第 1–10 条、F6.8 第 11–17 条，需求方验收 galbot 后提出）：
+      · 侧栏「质检」二级导航（质检任务 / 质检报告 / 人工裁决）与两个跨任务列表页（pages/results/）；C4 1.15.0：GET /tasks 加
+        has_result、pending_adjudication（仓储 SQL 与 adjudication_backlog 共用一段待裁计数），补上 1.14.0 的变更记录；锁与前端类型重生成
+      · 分档卡片按宽度自动分列（每张至少 200 px、数字不折行）；Token 明细箭头让开标题；指标卡至少 176 px，一列放不下的数值占两列
+        （components/StatCell.tsx，四处重复的 Stat 合成一个）；报告的图按宽度分列、不留大片空白；概览 Token 纵轴 K / M、三四个刻度
+        （Chart 组件改为通过 ref 传最新 option，JSON 化会丢掉格式化函数）
+      · 新建任务：访问密钥验证通过的在前、验证失败的不能选；交付的地域 / 访问密钥第一项固定「（同数据集）」、其后去掉数据集那一项；
+        表单与步骤条满宽；底栏去掉「开始前会检查」
+      · 人工裁决：队列后台取全（每次 200 条）、卡片每页 10 张可切换（pages/adjudication/paging.tsx；修了取页的依赖漏掉页数导致第三页不取、
+        回到旧筛选落回旧页码两个问题）；来源模块筛选进两个页签；被拒复议去掉说明；详情页头「查看报告」在前且主色
+      · 数据集详情：要模型的模块看 VLM 后端判断可用性（lib/preflight.ts withVlmBackends）；模块列 240 px；概览去掉页头说明
+      · 验证：前端 lint、类型、单测、构建；本机预览 1440 / 1600 / 1920 宽逐页核对；后端 daemon 仓储与接口测试加了两条
+      · 注意：同一工作区里另一个会话在改 backend/daemon/orchestr/{episode_pipeline,runbase}.py 与两个 orchestr 测试（暂停时让已完成档的上传做完），
+        本轮提交不含这些文件
 Main gaps:
-  - 阶段 6 全部 not_completed（进行中）
+  - 阶段 6：F6.2（真视频同步播放）、F6.5（TOS 上的 mcap / lance）未在集群上核对，其余已 completed
   - 集群连不上：kubeconfig 走 socks5://localhost:1080，本机隧道没开；F6.6 部署前需要需求方打开
   - 镜像：CP 流水线推送触发仍未生效，出镜像要手动运行
   - EEF F5.8 夹爪外观模板（2026-09-23，分支 feat/eef-gripper-template，worktree ~/ws/daft-eef-template；主工作区当时有另一位 agent 的暂存改动，
@@ -307,3 +323,5 @@ Next steps:
   2. F6.6：按 deploy/README.md §12 在 galbot 部署（拷数据、关 dataverse curator、装 v2、验收），验收里顺带验 F6.2 真视频同步播放、
      F6.3 ReRun「可视化」与「质检」深链、F6.5 TOS 上的 mcap / lance（如有数据）
   3. 验收通过、需求方确认后下线 curation 命名空间的旧 v2；账本置位；设计文档同步飞书副本
+     （旧 v2 已 uninstall；剩下的 PVC 与主密钥 Secret 等需求方决定）
+  4. 第三轮界面修改（F6.7、F6.8）已推送，CP 流水线 build-data_curation-v2 出镜像后按 deploy/README.md §12 升级 galbot 的 curator-v2

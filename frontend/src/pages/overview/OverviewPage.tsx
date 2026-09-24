@@ -96,7 +96,7 @@ function RunningCard({ running }: { running: Overview['running'] }) {
 function PeriodCard({ recent, days, onDays, switching }: { recent: Overview['recent']; days: OverviewPeriod; onDays: (d: OverviewPeriod) => void; switching: boolean }) {
   const bars = recent.tokens_per_bucket.map((b) => ({ name: b.label, value: b.tokens }));
   const total = bars.reduce((a, b) => a + b.value, 0);
-  const base = barOption(bars);
+  const base = barOption(bars, { compactValues: true });
   // Token counts run to millions: size the grid to its axis labels instead of a fixed margin; with
   // 30 days or 13 weeks in a half-width card, date labels that would overlap are left out.
   const option = {
@@ -161,7 +161,6 @@ export function OverviewPage() {
     <PageHeader
       crumbs={[{ label: zh.overview.title }]}
       title={zh.overview.title}
-      description={zh.overview.desc}
       extra={
         <Button type="primary" icon={<IconPlus />} onClick={() => navigate('/tasks/new')}>
           {zh.overview.newTask}

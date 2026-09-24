@@ -323,8 +323,32 @@ describe('新建任务 · 两屏与提交', () => {
     const out = formItem('交付目录');
     expect(await within(out).findByRole('status')).toHaveTextContent('写探针通过，但留下了探针对象：探针对象 tos://pai-kit-scratch/out/.curator-probe 已写入，但没能删掉');
     expect(fieldErrors(out)).toEqual([]);
-    await pick(user, '交付目录访问密钥', /^old-ci/);
-    expect(await within(formItem('交付目录')).findByText('写不进去：访问密钥 old-ci 签名不对（SignatureDoesNotMatch）')).toBeInTheDocument();
+    await fill(user, '交付目录', 'tos://pai-kit-nosuch/out');
+    await user.tab();
+    expect(await within(formItem('交付目录')).findByText('写不进去：存储桶 pai-kit-nosuch 不存在（NoSuchBucket）')).toBeInTheDocument();
+  });
+
+  it('交付的地域和访问密钥: the fixed first entry 「（同数据集）」, then the others; a key that failed verification cannot be picked (third round)', async () => {
+    const { user } = renderApp('/tasks/new');
+    await screen.findByText('基本信息');
+    await fill(user, '数据集地址', 'tos://pai-kit-datasets/lerobot/new_set');
+    await pick(user, '访问密钥', 'readonly-tos');
+    const optionsOf = async (label: string) => {
+      await user.click(screen.getAllByRole('combobox', { name: label })[0]);
+      return waitFor(() => {
+        // the popup opened last is the last one in the document
+        const list = [...([...document.querySelectorAll('.arco-select-popup')].at(-1)?.querySelectorAll('[role="option"]') ?? [])];
+        if (!list.length) throw new Error(`no options for ${label}`);
+        return list.map((o) => [o.textContent?.trim(), o.getAttribute('aria-disabled') === 'true' || o.classList.contains('arco-select-option-disabled')]);
+      });
+    };
+    const keys = await optionsOf('交付目录访问密钥');
+    // Verified keys first, the dataset's own key only as the first entry; old-ci failed verification.
+    expect(keys).toEqual([['（同数据集）', false], ['prod-tos', false], ['partner-upload（未验证）', false], ['old-ci（验证失败）', true]]);
+    await user.keyboard('{Escape}');
+    await pick(user, '地域', '华北 2（北京） cn-beijing');
+    const regions = await optionsOf('交付目录地域');
+    expect(regions.map((r) => r[0])).toEqual(['（同数据集）', '华东 2（上海） cn-shanghai', '华南 1（广州） cn-guangzhou']);
   });
 
   it('保存为待启动 creates a created task; editing it later PATCHes with If-Match (D20)', async () => {

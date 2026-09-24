@@ -15,7 +15,11 @@ export const zh = {
     groupMain: '数据质检',
     overview: '概览',
     datasets: '数据集',
+    // 质检 and its second level (requester, third round)
+    qc: '质检',
     tasks: '质检任务',
+    reports: '质检报告',
+    adjudication: '人工裁决',
     credentials: '系统和资源配置',
     breadcrumbRoot: '数据质检平台',
     groupHelp: '帮助',
@@ -226,6 +230,7 @@ export const zh = {
         ? `info.json 里的机器人型号 ${String(a.robot_type)} 认不出，请补充型号，或跳过该模块`
         : '未读到机器人型号（数据集没有声明 robot_type），请补充型号，或跳过该模块',
     vlm_backend_missing: () => '还没选 VLM 后端，在「模型配置」里选一个',
+    vlm_backend_none: () => '没有可用的 VLM 后端：在「系统和资源配置」里添加一个并验证通过',
     trajectory_missing: () => '需要上传约定格式的 trajectory.json（勾选后在第二屏上传）',
     trajectory_invalid: () => 'trajectory.json 没有通过校验，详情见预检结果',
     eef_review_not_available: () => 'EEF–视频一致性的 VLM 复核还没有提供',
@@ -279,6 +284,18 @@ export const zh = {
     emptyFiltered: '没有符合筛选条件的任务',
     deletedAt: '删除于',
     retryCount: (n: number) => (n ? `重试（${n} 条）` : '重试'),
+  },
+
+  // 质检报告 / 人工裁决: the tasks with a result, across tasks (requester, third round)
+  results: {
+    reportsTitle: '质检报告',
+    adjudicationTitle: '人工裁决',
+    colResult: '结果',
+    colPending: '待裁决',
+    pendingOnly: '有待裁决的',
+    withResult: '全部有结果的',
+    emptyReports: '还没有出结果的任务',
+    emptyPending: '没有待裁决的任务：切到「全部有结果的」可以复议被拒的条目',
   },
 
   actions: {
@@ -466,8 +483,7 @@ export const zh = {
     outputUriBad: '交付目录要以 tos:// 开头',
     outputRegion: '地域',
     outputCredential: '访问密钥',
-    sameAsDataset: '同数据集',
-    sameAsDatasetWith: (v: string) => `同数据集（${v}）`,
+    sameAsDataset: '（同数据集）',
     probeRunning: '正在做写探针…',
     probeOk: (at: string, key: string) => `✓ 写探针通过（${at}，用 ${key} 写入一个探针对象后删除）`,
     probeFail: (msg: string) => `写不进去：${msg}`,
@@ -564,7 +580,6 @@ export const zh = {
     exportDataset: '导出交付数据集',
     clips: '预生成裁决用的视频片段',
     footerSummary: (eps: string, mods: number) => `将质检 ${eps} 条 episode，开启 ${mods} 个模块`,
-    footerChecks: (vlm: boolean) => `开始前会检查：数据集能读、交付目录能写${vlm ? '、模型能调通' : ''}`,
     next: '下一步：模块设置',
     prev: '上一步',
     saveDraft: '保存为待启动',
@@ -608,7 +623,6 @@ export const zh = {
 
   overview: {
     title: '概览',
-    desc: '正在跑的任务，以及一段时间里的质检量和 Token 消耗。',
     running: '运行情况',
     runningCount: '运行中',
     queuedCount: '排队中',
@@ -1574,13 +1588,13 @@ export const zh = {
     saved: '已保存',
     loadMore: '加载更多',
     loadedAll: (n: number) => `已加载全部 ${n} 条`,
+    loadRestFailed: (n: number) => `已加载 ${n} 条，后面的没加载出来`,
     empty: '没有符合筛选条件的条目',
     emptyAll: '这个任务没有要人工裁决的条目',
     emptyToAppeals: '被拒的条目在「被拒复议」里，觉得判错了可以复议。',
     toAppeals: '去被拒复议',
     videos: '视频',
     // appeals
-    appealsIntro: (modules: string) => `这里列出可复议模块拒掉的条目（${modules}）。看完视频，认为判错了就恢复为可用。复议是可选的，不计入「待裁」；结论同样要点「执行裁决」才生效。`,
     whyNotHere: '为什么有的被拒条目不在这里',
     whyNotHereBody: (total: number, others: number) => `本次一共拒绝 ${total} 条，另外 ${others} 条的结论不接受复议：`,
     whyNotHereRule: (modules: string) => `物理与结构硬门（时间戳、运动学、视频-动作同步）和软分拒绝是终局，复议也改变不了结论。可复议的只有：${modules}（任务成败判定、EEF–视频一致性这样的判定只收只归因于它自己的拒绝）；后端同样会拒绝别的复议。`,

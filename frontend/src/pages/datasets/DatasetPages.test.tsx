@@ -141,6 +141,23 @@ describe('数据集列表 (07 §4.4)', () => {
 });
 
 describe('数据集详情', () => {
+  it('VLM modules ask the backends: one verified model is enough for 可用 (third round)', async () => {
+    renderApp('/datasets/ds_droid200');
+    const modules = await screen.findByTestId('dataset-modules');
+    const row = (name: string) => within(modules).getByText(name).closest('tr') as HTMLElement;
+    // ark-prod is verified and has vision models: no 「还没选 VLM 后端」 on the dataset page.
+    await waitFor(() => expect(row('任务成败判定')).toHaveTextContent('可用'));
+    expect(modules).not.toHaveTextContent('还没选 VLM 后端');
+  });
+
+  it('without a verified backend the VLM modules have no usable backend', async () => {
+    db.backends = db.backends.map((b) => ({ ...b, verify_state: 'failed' as const }));
+    renderApp('/datasets/ds_droid200');
+    const modules = await screen.findByTestId('dataset-modules');
+    const row = within(modules).getByText('任务成败判定').closest('tr') as HTMLElement;
+    await waitFor(() => expect(row).toHaveTextContent('需要补充没有可用的 VLM 后端'));
+  });
+
   it('shows the preflight result, the fingerprint history and the tasks; 新建质检任务 prefills the form', async () => {
     const { user } = renderApp('/datasets/ds_droid200');
     expect(await screen.findByRole('heading', { name: /droid-200/ })).toBeInTheDocument();

@@ -676,9 +676,20 @@ export function seedTasks(now: number): Task[] {
       total: 640,
       stages: [
         stage('autolabel', 'succeeded', 640, 640, 612),
-        stage('numeric', 'succeeded', 640, 640, 5),
-        stage('frame', 'succeeded', 631, 631, 1033, { note: '数值档拦下了 9 条（时间戳异常），后面的档只处理剩下的 631 条' }),
-        stage('vlm', 'running', 410, 631, 1102, { eta_s: 1440 }),
+        // streaming funnel activity (the task page's PipelineActivity): per layer what is in flight,
+        // the latest batch handed on and the time per episode
+        stage('numeric', 'succeeded', 640, 640, 5, {
+          pipeline: { inflight: 0, queued: 0, capacity: 8, dispatches: 80, recent: [{ number: 80, count: 8, episodes: [632, 633, 634, 635, 636, 637, 638, 639], at: now - 46 * MIN }],
+            started_at: now - 49 * MIN, finished_at: now - 46 * MIN, updated_at: now - 46 * MIN, processing: { count: 640, total_s: 38.4, mean_s: 0.06, min_s: 0.02, max_s: 0.41 } },
+        }),
+        stage('frame', 'succeeded', 631, 631, 1033, { note: '数值档拦下了 9 条（时间戳异常），后面的档只处理剩下的 631 条',
+          pipeline: { inflight: 0, queued: 0, capacity: 8, dispatches: 79, recent: [{ number: 79, count: 7, episodes: [630, 631, 633, 634, 636, 638, 639], at: now - 21 * MIN }],
+            started_at: now - 48 * MIN, finished_at: now - 21 * MIN, updated_at: now - 21 * MIN, processing: { count: 631, total_s: 8203, mean_s: 13, min_s: 6.2, max_s: 31.5 } },
+        }),
+        stage('vlm', 'running', 410, 631, 1102, { eta_s: 1440,
+          pipeline: { inflight: 32, queued: 189, capacity: 32, dispatches: 52, recent: [{ number: 52, count: 8, episodes: [441, 442, 443, 444, 445, 446, 447, 448], at: now - 4000 }],
+            started_at: now - 47 * MIN, finished_at: null, updated_at: now - 4000, processing: { count: 410, total_s: 17630, mean_s: 43, min_s: 12.8, max_s: 118.6 } },
+        }),
         ...notYet('verdict', 'dedup', 'profile_vlm', 'final', 'report', 'export', 'verify'),
       ],
       modules: {

@@ -194,6 +194,37 @@ def test_task_list_filters_and_item_fields(client_for, clock):
     assert_error(c.get("/curation/api/v1/tasks", params={"delivery": "s3://x/y"}), "validation_failed")
 
 
+def test_task_list_filters_by_result_and_pending_adjudication(client_for, clock):
+    """C4 1.14: ?has_result=true for 质检报告, ?pending_adjudication=true for 人工裁决; false or
+    absent does not filter."""
+    c = client_for(base_path="/curation")
+    rt = _rt(c)
+    a = seed_task(rt.repo, "no result yet")
+    clock.advance(1)
+    b = seed_task(rt.repo, "reported")
+    _finish(rt, b.id)
+    assert rt.repo.switch_result_rev(b.id, 0, 1)
+    rt.repo.set_task_summary(b.id, {"total": 50, "passed": 50, "pending_adjudication": 0})
+    clock.advance(1)
+    d = seed_task(rt.repo, "to adjudicate")
+    _finish(rt, d.id, "completed_with_errors")
+    assert rt.repo.switch_result_rev(d.id, 0, 1)
+    rt.repo.set_task_summary(d.id, {"total": 50, "passed": 41, "review": 10,
+                                    "pending_adjudication": 6})
+
+    def ids(**params):
+        body = c.get("/curation/api/v1/tasks", params=params).json()
+        assert body["total"] == len(body["items"])
+        return [t["id"] for t in body["items"]]
+
+    assert ids() == [d.id, b.id, a.id]
+    assert ids(has_result="true") == [d.id, b.id]
+    assert ids(pending_adjudication="true") == [d.id]
+    assert ids(has_result="false", pending_adjudication="false") == [d.id, b.id, a.id]
+    assert_error(c.get("/curation/api/v1/tasks", params={"has_result": "maybe"}),
+                 "validation_failed")
+
+
 def test_running_filter_includes_tasks_whose_subtask_runs(client_for, clock):
     """D46: a retry (resume, adjudication run, re-export) that is queued or running shows its
     finished task as running, so ?state=running lists it; the item keeps the task's own state

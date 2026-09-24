@@ -9,6 +9,7 @@ import { Chart, barOption, chartSummary } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
+import { StatCell } from '../../components/StatCell';
 import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { useTaskActions } from '../../features/tasks/useTaskActions';
 import { compactNumber, percent } from '../../lib/format';
@@ -27,15 +28,7 @@ function positiveInt(v: string | null): number | null {
   return Number(v);
 }
 
-function Stat({ label, value, foot, testId }: { label: string; value: string | number; foot?: string; testId?: string }) {
-  return (
-    <div className="stat-cell" data-testid={testId}>
-      <div className="stat-label">{label}</div>
-      <div className="stat-value">{value}</div>
-      {foot ? <div className="stat-foot">{foot}</div> : null}
-    </div>
-  );
-}
+const Stat = StatCell;
 
 /** An episode number that opens the Episode tab on it (?ep=N#episodes), keeping ?rev. */
 export function EpisodeLink({ ep }: { ep: number }) {

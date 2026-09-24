@@ -854,6 +854,9 @@ const tasks = [
     const delivery = url.searchParams.get('delivery');
     const mods = (url.searchParams.get('module') ?? '').split(',').filter(Boolean);
     const datasetId = url.searchParams.get('dataset_id');
+    // C4 1.15.0: the 质检报告 and 人工裁决 lists
+    const hasResult = url.searchParams.get('has_result') === 'true';
+    const pendingOnly = url.searchParams.get('pending_adjudication') === 'true';
     // C4 1.10.0 (D46): state=running also lists finished tasks whose subtask is queued or running.
     const subtaskRuns = (t: Task) => state === 'running' && ['queued', 'running'].includes(t.active_subtask?.state ?? '');
     const items = db.tasks
@@ -862,6 +865,8 @@ const tasks = [
       .filter((t) => !delivery || t.output.uri === delivery)
       .filter((t) => mods.every((m) => t.modules.some((x) => x.id === m && x.selected)))
       .filter((t) => !datasetId || t.dataset_id === datasetId)
+      .filter((t) => !hasResult || t.result_rev >= 1)
+      .filter((t) => !pendingOnly || t.pending_adjudication > 0)
       .sort((a, b) => b.created_at - a.created_at)
       .map(toListItem);
     return HttpResponse.json(page(items, url));

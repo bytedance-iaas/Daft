@@ -17,17 +17,10 @@ import { summaryDigest } from '../../lib/summary';
 import { activeSubtask, groupStages, isTerminalState, progressStages, stageLabel, subtaskLabel } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 import { PipelineEpisodesCard } from './PipelineEpisodesCard';
+import { StatCell } from '../../components/StatCell';
 import { PipelineActivity } from './PipelineActivity';
 
-function Stat({ label, value, foot }: { label: string; value: string | number; foot?: string }) {
-  return (
-    <div className="stat-cell">
-      <div className="stat-label">{label}</div>
-      <div className="stat-value">{value}</div>
-      {foot ? <div className="stat-foot">{foot}</div> : null}
-    </div>
-  );
-}
+const Stat = StatCell;
 
 function ReportSummary({ task }: { task: Task }) {
   const s = task.summary;

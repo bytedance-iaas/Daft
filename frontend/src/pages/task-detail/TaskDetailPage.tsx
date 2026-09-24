@@ -80,6 +80,9 @@ export function TaskDetailPage() {
   const exported = exportedBefore(t.progress.stages, subs);
   const running = activeSubtask(t);
   const adjudicable = actionsFor(t).more.includes('adjudicate');
+  const plan = headerPlan(t);
+  // 查看报告 comes first and blue, then 人工裁决 (requester, third round).
+  const reportFirst = plan.primary === 'report';
   const run = (key: Parameters<typeof actions.run>[0]) => actions.run(key, { id: t.id, name: t.name, held: t.summary?.held, deliveryUri: t.output.uri, exported });
 
   return (
@@ -119,8 +122,9 @@ export function TaskDetailPage() {
         }
         extra={
           <>
+            {reportFirst ? <TaskActionButtons plan={{ primary: 'report', more: [], disabled: plan.disabled }} primaryType="primary" size="default" onAction={run} /> : null}
             {/* D47: standing once there is a result; with pending items it carries the count and
-                is the one primary button (the plan's primary steps back to secondary). */}
+                is blue too (another primary action steps back to secondary). */}
             {adjudicable ? (
               <Link to={`/tasks/${t.id}/adjudication`}>
                 <Button type={t.pending_adjudication ? 'primary' : 'secondary'} data-testid="header-adjudicate">
@@ -129,7 +133,7 @@ export function TaskDetailPage() {
               </Link>
             ) : null}
             <TaskActionButtons
-              plan={headerPlan(t)}
+              plan={reportFirst ? { ...plan, primary: null } : plan}
               held={t.summary?.held}
               exported={exported}
               primaryType={adjudicable && t.pending_adjudication ? 'secondary' : 'primary'}

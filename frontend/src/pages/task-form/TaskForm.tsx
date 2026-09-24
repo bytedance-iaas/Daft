@@ -556,14 +556,14 @@ export function TaskForm(p: TaskFormProps) {
 
   return (
     <Form layout="vertical" onSubmit={() => undefined}>
-      <div className="card-gap" style={{ maxWidth: 1180 }}>
+      <div className="card-gap">
         <div>
           <Typography.Title heading={5} style={{ margin: 0 }}>
             {title}
           </Typography.Title>
           <Typography.Text type="secondary">{zh.taskForm.desc}</Typography.Text>
         </div>
-        <Steps current={screen} style={{ maxWidth: 480 }} size="small">
+        <Steps current={screen} size="small">
           <Steps.Step title={zh.taskForm.step1} />
           <Steps.Step title={zh.taskForm.step2} />
         </Steps>
@@ -625,9 +625,6 @@ export function TaskForm(p: TaskFormProps) {
             <Button onClick={() => navigate(p.mode === 'edit' && p.editTask ? `/tasks/${p.editTask.id}` : '/tasks')}>{zh.taskForm.cancel}</Button>
           )}
           <span data-testid="footer-summary">{footer}</span>
-          <span className="muted" style={{ fontSize: 12 }}>
-            {zh.taskForm.footerChecks(vlm)}
-          </span>
         </Space>
         <Space>
           {phase && phase !== 'start' ? <span className="muted">{zh.taskForm.submitting[phase]}</span> : null}

@@ -20,6 +20,7 @@ export function RegionSelect({
   placeholder,
   allowEmpty,
   emptyLabel,
+  exclude,
   ariaLabel,
   status,
 }: {
@@ -29,10 +30,12 @@ export function RegionSelect({
   placeholder?: string;
   allowEmpty?: boolean;
   emptyLabel?: string;
+  /** Left out of the list (the empty entry stands for it), unless it is the value. */
+  exclude?: string;
   ariaLabel?: string;
   status?: 'error';
 }) {
-  const known = [...REGIONS];
+  const known = REGIONS.filter((r) => r !== exclude || r === value);
   if (value && !known.includes(value)) known.push(value);
   return (
     <Select

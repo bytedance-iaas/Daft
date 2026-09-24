@@ -19,7 +19,8 @@ const EEF = 'eef_video_consistency';
 const shownCards = (root: ParentNode = document) => [...root.querySelectorAll('[data-testid^="card-"]')].map((e) => Number(e.getAttribute('data-testid')!.slice(5)));
 
 afterEach(() => {
-  ADJ_CONFIG.pageSize = 20;
+  ADJ_CONFIG.pageSize = 200;
+  ADJ_CONFIG.cardsPerPage = 10;
 });
 
 describe('人工裁决 (07 §6, F3.3)', () => {
@@ -144,7 +145,27 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(screen.getByText('没有符合筛选条件的条目')).toBeInTheDocument();
   });
 
-  it('the queue pages with cursors as it scrolls', async () => {
+  it('each tab filters by its own source modules; another tab starts the filter over (third round)', async () => {
+    const { user } = renderApp(`${PAGE}?source=task_success`);
+    await screen.findByTestId('card-16');
+    expect(shownCards()).toEqual([29, 16, 33, 40, 47]);
+    await user.click(screen.getByRole('tab', { name: '被拒复议' }));
+    const list = await screen.findByTestId('appeals');
+    await within(list).findByTestId('card-6');
+    expect(shownCards(list)).toEqual([6, 11, 23, 38, 45, 44]);
+    // One filter on the page, the appeals tab's: the appealable modules only.
+    expect(screen.getAllByRole('combobox', { name: '来源模块' })).toHaveLength(1);
+    await user.click(screen.getByRole('combobox', { name: '来源模块' }));
+    const names = await waitFor(() => {
+      const o = screen.getAllByRole('option').map((x) => x.textContent?.trim());
+      if (!o.length) throw new Error('no options');
+      return o;
+    });
+    expect(names).toEqual(['EEF–视频一致性', '任务成败判定', '精确去重']);
+    expect(screen.queryByText(/这里列出可复议模块拒掉的条目/)).toBeNull();
+  });
+
+  it('the whole queue is fetched with cursors in the background', async () => {
     ADJ_CONFIG.pageSize = 3;
     const seen = recordRequests();
     renderApp(PAGE);
@@ -152,6 +173,26 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     const calls = seen.filter((r) => r.method === 'GET' && r.path === `/tasks/${MAIN_TASK}/adjudication`);
     expect(calls.map((c) => Boolean(c.query.get('cursor')))).toEqual([false, true, true]);
     expect(shownCards()).toHaveLength(7);
+    expect(screen.queryByTestId('review-pager')).toBeNull();
+  });
+
+  it('cards come ten a page with a pager (third round); a filter goes back to page 1', async () => {
+    ADJ_CONFIG.cardsPerPage = 3;
+    const { user } = renderApp(PAGE);
+    await screen.findByTestId('card-29');
+    expect(shownCards()).toEqual([29, 36, 22]);
+    const pager = screen.getByTestId('review-pager');
+    expect(pager).toHaveTextContent('共 7 条');
+    await user.click(within(pager).getByText('3', { selector: '.arco-pagination-item' }));
+    expect(shownCards()).toEqual([47]);
+    await user.click(within(pager).getByText('2', { selector: '.arco-pagination-item' }));
+    expect(shownCards()).toEqual([16, 33, 40]);
+    await pick(user, '问题类型', /^标注分歧/);
+    await waitFor(() => expect(shownCards()).toEqual([29, 36, 22]));
+    expect(screen.queryByTestId('review-pager')).toBeNull();
+    await pick(user, '问题类型', '全部');
+    await waitFor(() => expect(shownCards()).toEqual([29, 36, 22]));
+    expect(screen.getByTestId('review-pager')).toBeInTheDocument();
   });
 
   it('rule 2: 被拒复议 lists rejects of appealable modules as optional cards and explains the final ones (D42)', async () => {

@@ -558,12 +558,16 @@ class Repository(Protocol):
                    state: str | None = None, q: str | None = None,
                    delivery_key: str | None = None, dataset_id: str | None = None,
                    modules: list[str] | None = None,
-                   running_subtasks: bool = False) -> PagedResult[Task]:
+                   running_subtasks: bool = False, has_result: bool = False,
+                   pending_adjudication: bool = False) -> PagedResult[Task]:
         """Newest first. ``state='deleted'`` lists soft-deleted tasks; ``modules`` keeps tasks that
         selected every one of them. ``state`` is the task's own state, except that with
         ``running_subtasks`` (what ``GET /tasks`` asks for, D46) ``state='running'`` also keeps
         finished tasks whose subtask (retry, resume, adjudication run, re-export) is queued or
-        running: the console shows those as running while their own state stays terminal."""
+        running: the console shows those as running while their own state stays terminal.
+        ``has_result`` keeps tasks with a committed result (``result_rev >= 1``);
+        ``pending_adjudication`` those whose summary counts pending adjudication items, counted
+        like :meth:`adjudication_backlog`."""
 
     def update_task_fields(self, task_id: str, *, if_updated_at: int | None,
                            owner: str = DEFAULT_OWNER, **fields) -> Task:

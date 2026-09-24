@@ -739,6 +739,39 @@ def test_list_tasks_by_dataset_and_selected_modules(repo, clock):
     assert (far.items, far.total) == ([], 1)
 
 
+def test_list_tasks_with_a_result_or_pending_adjudication(repo, clock):
+    """C4 1.14: 质检报告 lists tasks with a committed result, 人工裁决 those with pending items
+    (summary.pending_adjudication, before W5 every review item, like adjudication_backlog)."""
+    fresh = repo.create_task(_spec("fresh"))
+    clock.advance(1)
+    reported = repo.create_task(_spec("reported"))
+    assert repo.switch_result_rev(reported.id, 0, 1)
+    repo.set_task_summary(reported.id, {"total": 50, "passed": 50, "pending_adjudication": 0,
+                                        "review": 3})       # W5's count wins, even when 0
+    clock.advance(1)
+    pending = repo.create_task(_spec("pending"))
+    assert repo.switch_result_rev(pending.id, 0, 1)
+    repo.set_task_summary(pending.id, {"total": 50, "passed": 41, "pending_adjudication": 4})
+    clock.advance(1)
+    old_style = repo.create_task(_spec("old style"))
+    assert repo.switch_result_rev(old_style.id, 0, 1)
+    repo.set_task_summary(old_style.id, {"total": 50, "passed": 41, "review": 2})
+    clock.advance(1)
+    odd = repo.create_task(_spec("odd"))
+    repo.set_task_summary(odd.id, {"pending_adjudication": "many"})   # not a count: none pending
+
+    def ids(**kw):
+        page = repo.list_tasks(page=1, page_size=20, **kw)
+        assert page.total == len(page.items)
+        return [t.id for t in page.items]
+
+    assert ids(has_result=True) == [old_style.id, pending.id, reported.id]
+    assert ids(pending_adjudication=True) == [old_style.id, pending.id]
+    assert ids(has_result=True, pending_adjudication=True, q="pending") == [pending.id]
+    assert ids() == [odd.id, old_style.id, pending.id, reported.id, fresh.id]
+    assert repo.adjudication_backlog() == (2, 6)                        # counted the same way
+
+
 def test_task_points_at_a_dataset_of_its_own_owner(repo):
     mine, _ = repo.register_dataset(_dataset())
     theirs, _ = repo.register_dataset(_dataset(owner=OTHER))

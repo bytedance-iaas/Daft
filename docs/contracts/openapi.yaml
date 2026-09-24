@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.14.0
+  version: 1.15.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -110,6 +110,13 @@ info:
     1.13.0 (2026-09-23): the module registry's stages take `profile_vlm` (registry 1.7): the
     skill profile runs in a VLM stage of its own after dedup instead of `post_verdict`; the plan's
     stage id for it is `profile_vlm`.
+
+    1.14.0 (2026-09-23): texts only - the review line `eef_check` (registry 1.9, D49) is named
+    among `ReviewLineId` and the decisions of `DecisionInput`.
+
+    1.15.0 (2026-09-24): `GET /tasks` takes `has_result` (tasks with a committed result: the
+    console's 质检报告 list) and `pending_adjudication` (tasks with pending adjudication items:
+    its 人工裁决 list); false or absent does not filter.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -759,6 +766,16 @@ paths:
           in: query
           description: tasks on this registered dataset
           schema: {type: string}
+        - name: has_result
+          in: query
+          description: true keeps only tasks with a committed result (result_rev >= 1, a report to read); false or absent does not filter (1.15)
+          schema: {type: boolean, default: false}
+        - name: pending_adjudication
+          in: query
+          description: >-
+            true keeps only tasks with pending adjudication items (TaskListItem.pending_adjudication
+            > 0); false or absent does not filter (1.15)
+          schema: {type: boolean, default: false}
       responses:
         "200":
           description: one page

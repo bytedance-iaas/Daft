@@ -76,8 +76,13 @@ describe('任务列表 (07 §4.1)', () => {
     const { user } = renderApp('/tasks');
     await screen.findByRole('link', { name: 'droid 前 50 条质检' });
     await user.click(within(row('so101 夜间批次')).getByRole('button', { name: /更多/ }));
-    // Nothing pending on so101, and still the entry.
-    await user.click(await screen.findByRole('menuitem', { name: '人工裁决' }));
+    // Nothing pending on so101, and still the entry (the sidebar's 人工裁决 is another one).
+    const menu = await waitFor(() => {
+      const m = [...document.querySelectorAll<HTMLElement>('.arco-dropdown-menu')].at(-1);
+      if (!m) throw new Error('no 更多 menu');
+      return m;
+    });
+    await user.click(await within(menu).findByRole('menuitem', { name: '人工裁决' }));
     await waitFor(() => expect(currentLocation()).toBe('/tasks/task_01HXPZ2K/adjudication'));
   });
 

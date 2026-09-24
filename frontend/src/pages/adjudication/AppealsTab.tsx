@@ -1,13 +1,14 @@
-import { Alert, Card, Collapse, Spin, Typography } from '@arco-design/web-react';
+import { Card, Collapse, Space, Spin, Typography } from '@arco-design/web-react';
 import { useQuery } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { api, unwrap } from '../../api/client';
 import { moduleName, qk, useModules } from '../../api/queries';
 import type { AdjudicationLine, DecisionValue } from '../../api/types';
 import { PageError } from '../../components/PageError';
-import { Sentinel } from '../../components/LazyVisible';
 import type { CardView, ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
 import { EpisodeCard } from './EpisodeCard';
+import { usePaged } from './paging';
 
 /**
  * 被拒复议 (07 §6, rule 2, D42): rejects attributed to an appealable module (registry
@@ -22,9 +23,8 @@ export function AppealsTab({
   catalog,
   loading,
   error,
-  hasMore,
-  pages,
-  onMore,
+  resetKey,
+  filter,
   onRetry,
   onDecide,
 }: {
@@ -34,13 +34,15 @@ export function AppealsTab({
   catalog: ReviewCatalog | undefined;
   loading: boolean;
   error: unknown;
-  hasMore: boolean;
-  pages: number;
-  onMore: () => void;
+  /** Other filters: back to page 1. */
+  resetKey: string;
+  /** The tab's own 来源模块 filter. */
+  filter: ReactNode;
   onRetry: () => void;
   onDecide: (ep: number, line: AdjudicationLine, d: DecisionValue, label?: string) => Promise<boolean>;
 }) {
   const reg = useModules();
+  const paged = usePaged(views, resetKey, 'appeals-pager');
   const report = useQuery({
     queryKey: qk.report(taskId, rev),
     queryFn: () => unwrap(api().GET('/tasks/{id}/report', { params: { path: { id: taskId }, query: { rev } } })),
@@ -54,7 +56,7 @@ export function AppealsTab({
   const finalCount = final.reduce((n, r) => n + r.count, 0);
   return (
     <div className="card-gap">
-      <Alert type="info" content={zh.adjudication.appealsIntro(appealableNames)} />
+      <Space wrap>{filter}</Space>
       {finalCount ? (
         <Collapse>
           <Collapse.Item name="why" header={zh.adjudication.whyNotHere}>
@@ -78,12 +80,12 @@ export function AppealsTab({
         </Card>
       ) : (
         <div className="card-gap" data-testid="appeals">
-          {views.map((v) => (
+          {paged.slice.map((v) => (
             <EpisodeCard key={v.ep} taskId={taskId} rev={rev} view={v} catalog={catalog} onDecide={(l, d, label) => onDecide(v.ep, l, d, label)} />
           ))}
+          {paged.pager}
         </div>
       )}
-      <Sentinel onVisible={onMore} disabled={!hasMore || loading} version={pages} />
     </div>
   );
 }

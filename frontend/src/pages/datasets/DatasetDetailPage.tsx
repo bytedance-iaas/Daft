@@ -3,7 +3,7 @@ import { IconDown } from '@arco-design/web-react/icon';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
-import { qk, useModules } from '../../api/queries';
+import { qk, useBackends, useModules } from '../../api/queries';
 import type { DatasetCheck, TaskRef } from '../../api/types';
 import { PageError } from '../../components/PageError';
 import { PageHeader } from '../../components/PageHeader';
@@ -13,7 +13,7 @@ import { StateTag } from '../../components/StateTag';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
 import { VisualizeButton } from '../../features/datasets/VisualizeButton';
 import { bytes, grouped } from '../../lib/format';
-import { reasonText } from '../../lib/preflight';
+import { reasonText, withVlmBackends } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import { CheckTag, FormatTag } from './DatasetListPage';
 
@@ -21,6 +21,7 @@ import { CheckTag, FormatTag } from './DatasetListPage';
 export function DatasetDetailPage() {
   const { id } = useParams();
   const reg = useModules();
+  const backends = useBackends();
   const actions = useDatasetActions();
   const q = useQuery({ queryKey: qk.dataset(id ?? ''), queryFn: () => unwrap(api().GET('/datasets/{id}', { params: { path: { id: id! } } })), enabled: Boolean(id) });
   const crumbs = [{ label: zh.datasets.title, to: '/datasets' }, { label: q.data?.name ?? id ?? '' }];
@@ -61,7 +62,8 @@ export function DatasetDetailPage() {
     : [{ label: zh.datasets.colFormat, value: reasonText(pf.modules[0]) || pf.format.detail }];
   const moduleRows = (reg.data?.modules ?? []).map((m) => {
     const a = pf.modules.find((x) => x.id === m.id);
-    return { id: m.id, name: m.name_zh, availability: pf.format.supported ? a?.availability ?? 'available' : 'unsupported', reason: reasonText(a) };
+    const row = withVlmBackends({ availability: pf.format.supported ? a?.availability ?? 'available' : 'unsupported', reason: reasonText(a) }, a, backends.data?.items);
+    return { id: m.id, name: m.name_zh, ...row };
   });
   return (
     <div>
@@ -120,7 +122,7 @@ export function DatasetDetailPage() {
             data={moduleRows}
             data-testid="dataset-modules"
             columns={[
-              { title: zh.taskDetail.colModule, dataIndex: 'name', width: 160 },
+              { title: zh.taskDetail.colModule, dataIndex: 'name', width: 240 },
               {
                 title: zh.datasets.colAvailability,
                 dataIndex: 'availability',

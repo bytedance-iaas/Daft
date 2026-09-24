@@ -87,6 +87,18 @@ _TERMINAL_SQL = "('stopped','succeeded','completed_with_errors','failed')"
 #: (finished) task: the console shows it as running meanwhile (D46).
 _SUBTASK_SHOWN_RUNNING = ("queued", "running")
 
+
+def _summary_count(key: str) -> str:
+    return (f"WHEN json_type(summary, '$.{key}')='integer'"
+            f" AND json_extract(summary, '$.{key}') >= 0"
+            f" THEN json_extract(summary, '$.{key}')")
+
+
+#: A task's pending adjudication items, from its summary the way ``views.pending_adjudication``
+#: reads it: ``pending_adjudication`` once W5 keeps it, before that every review item.
+_PENDING_SQL = (f"(CASE {_summary_count('pending_adjudication')} {_summary_count('review')}"
+                " ELSE 0 END)")
+
 #: Columns ``update_task_fields`` may touch (configuration; D20 decides which in what state).
 _TASK_EDITABLE = frozenset({
     "name", "note", "input_source", "input_uri", "input_region", "input_cred_id", "dataset_id",
@@ -1153,7 +1165,8 @@ class SqliteRepository:
                    state: str | None = None, q: str | None = None,
                    delivery_key: str | None = None, dataset_id: str | None = None,
                    modules: list[str] | None = None,
-                   running_subtasks: bool = False) -> PagedResult[Task]:
+                   running_subtasks: bool = False, has_result: bool = False,
+                   pending_adjudication: bool = False) -> PagedResult[Task]:
         page, page_size = int(page), int(page_size)
         if page < 1 or page_size < 1:
             raise ValueError("page and page_size start at 1")
@@ -1185,6 +1198,10 @@ class SqliteRepository:
                          f" AND module_id IN ({_placeholders(len(wanted))})"
                          " GROUP BY task_id HAVING COUNT(*)=?)")
             args += [*wanted, len(wanted)]
+        if has_result:
+            where.append("result_rev >= 1")
+        if pending_adjudication:
+            where.append(f"summary IS NOT NULL AND {_PENDING_SQL} > 0")
         clause = " AND ".join(where)
         offset = min((page - 1) * page_size, MAX_OFFSET)
         page_size = min(page_size, MAX_OFFSET)
@@ -1667,15 +1684,10 @@ class SqliteRepository:
         return self._read(lambda c: self._find_dataset(c, owner, source, uri, region))
 
     def adjudication_backlog(self, *, owner: str = DEFAULT_OWNER) -> tuple[int, int]:
-        def pick(key: str) -> str:
-            return (f"WHEN json_type(summary, '$.{key}')='integer'"
-                    f" AND json_extract(summary, '$.{key}') >= 0"
-                    f" THEN json_extract(summary, '$.{key}')")
-
         def op(c):
             row = c.execute(
                 "SELECT COUNT(*), COALESCE(SUM(n), 0) FROM ("
-                f" SELECT CASE {pick('pending_adjudication')} {pick('review')} ELSE 0 END AS n"
+                f" SELECT {_PENDING_SQL} AS n"
                 " FROM task WHERE owner_id=? AND deleted_at IS NULL AND summary IS NOT NULL"
                 ") WHERE n > 0", (owner,)).fetchone()
             return int(row[0]), int(row[1])

@@ -222,17 +222,18 @@ describe('任务详情 (07 §4.2)', () => {
     await waitFor(() => expect(fold).not.toHaveClass('arco-collapse-item-active'));
   });
 
-  it('the header has 人工裁决（N）, the one primary button while items are pending (D47)', async () => {
+  it('the header has 查看报告 first, then 人工裁决（N）, both blue while items are pending (D47, third round)', async () => {
     const { user } = renderApp(`/tasks/${MAIN}`);
     const adj = await screen.findByTestId('header-adjudicate');
     expect(adj).toHaveTextContent(/^人工裁决（10）$/);
     expect(adj).toHaveClass('arco-btn-primary');
-    // 查看报告 steps back so the page has one primary button.
-    expect(screen.getByRole('button', { name: '查看报告' })).not.toHaveClass('arco-btn-primary');
+    const report = screen.getByRole('button', { name: '查看报告' });
+    expect(report).toHaveClass('arco-btn-primary');
+    expect(report.compareDocumentPosition(adj) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Not repeated under 更多.
     await user.click(screen.getByRole('button', { name: '更多' }));
-    expect(await screen.findByRole('menuitem', { name: '复制为新任务' })).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: /人工裁决/ })).toBeNull();
+    const copy = await screen.findByRole('menuitem', { name: '复制为新任务' });
+    expect(within(copy.closest('.arco-dropdown-menu') as HTMLElement).queryByRole('menuitem', { name: /人工裁决/ })).toBeNull();
     await user.click(adj);
     await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN}/adjudication`));
   });
@@ -308,8 +309,11 @@ describe('任务详情 (07 §4.2)', () => {
     const { user } = renderApp(`/tasks/${RUNNING}`);
     await screen.findByRole('heading', { name: /umi_640 全量质检/ });
     // 分档进度 gives counts and time used, never an estimate (requester item 20).
-    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('410 / 631 · 用时 18 分 22 秒');
+    expect(screen.getByTestId('stage-autolabel')).toHaveTextContent('640 / 640 · 用时 10 分 12 秒');
     expect(screen.getByTestId('stages')).not.toHaveTextContent('预计');
+    // The streaming layers are drawn as the pipeline activity: in flight, queued, done.
+    expect(screen.getByTestId('stage-vlm')).toHaveTextContent('410 / 631');
+    expect(screen.getByTestId('inflight-vlm')).toHaveTextContent('32');
     // On the detail page 「查看」 makes no sense: 暂停 becomes the primary action.
     expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '更多' }));

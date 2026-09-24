@@ -3239,6 +3239,10 @@ export interface operations {
                 module?: string;
                 /** @description tasks on this registered dataset */
                 dataset_id?: string;
+                /** @description true keeps only tasks with a committed result (result_rev >= 1, a report to read); false or absent does not filter (1.15) */
+                has_result?: boolean;
+                /** @description true keeps only tasks with pending adjudication items (TaskListItem.pending_adjudication > 0); false or absent does not filter (1.15) */
+                pending_adjudication?: boolean;
             };
             header?: never;
             path?: never;
