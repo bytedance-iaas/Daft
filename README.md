@@ -31,6 +31,7 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
 | `frontend/` | 网页控制台（W10）：React 18 + TypeScript + Arco Design，按 C4 开发，接口类型由 `openapi.yaml` 生成；安装、运行、测试、构建与逐页手动验证见 [frontend/README.md](frontend/README.md) |
 | `frontend/mockups/` | 静态 HTML 预览稿（F3.1） |
 | `tools/parity/` | 对账工具与黄金基线流程（W0） |
+| `tools/eef_convert.py` | EEF 的 trajectory.json 在 LeRobot 与 mcap 两种数据集之间互转（只改每路相机的 `media`；`--check` 对着 mcap 数据集核对文件、topic、帧数与画面尺寸），用法见文件头 |
 | `deploy/` | 镜像（`deploy/Dockerfile`，多阶段：前端构建 + Daemon，构建上下文是仓库根）与 Helm Chart（`deploy/charts/curator/`）；构建、密钥、安装升级、主密钥轮换、备份恢复与部署前检查见 [deploy/README.md](deploy/README.md) |
 | `docs/design/`、`docs/contracts/` | 设计文档；冻结的契约（JSON Schema、OpenAPI、示例、锁文件，见 [docs/contracts/README.md](docs/contracts/README.md)；EEF 输入格式在 `docs/contracts/eef/`） |
 

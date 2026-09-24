@@ -203,6 +203,12 @@
     做一份 mcap 数据集，把测试里的 trajectory.json 照上面改写后，
     `../.venv/bin/python -m curation.cli preflight --input /tmp/mini_mcap --modules eef_video_consistency --vlm-backend ark --param eef_video_consistency.trajectory_json=<文件>`
     应是 `available`。写 trajectory.json 时 `frame_count` 是该 topic 的帧数，`video_frame_index` 是逐帧对应的第几条图像消息。
+    已有 LeRobot 版 trajectory.json、数据又有逐帧一一对应的 mcap 版时，用 `tools/eef_convert.py` 转，不用手改：
+    `.venv/bin/python tools/eef_convert.py to-mcap --trajectory 旧.json --out 新.json --check <mcap 数据集目录>`（在仓库根执行；
+    相机的 topic 默认是 `/observation.images.<LeRobot 视频键>`，别的写法用 `--map 相机=/topic`；`--check` 按平台的编号规则取文件名，
+    并核对每路 topic 存在、帧数等于 `frame_count`、画面尺寸等于 `image_size_wh`，有不符就逐条列出、退出码 1）；反方向是
+    `to-lerobot --dataset <LeRobot 数据集目录>`（读 `meta/` 算出视频文件与片段起止）。种子和夹爪模板不用转。
+    测试：`../.venv/bin/python -m pytest -q tests/cli/test_eef_convert.py`（迷你数据集来回转、核对报错、dataset2 的 v3 片段来回不变）。
 
 ## 回退
 
