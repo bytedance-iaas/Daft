@@ -130,8 +130,17 @@ export function AdvancedSection({ v, set, errors, vlm }: { v: FormValues; set: (
                 </Field>
               </Col>
               <Col span={6}>
+                {/* a dropdown like the other three in the row (fourth round) */}
                 <Field label={zh.taskForm.vlmHedge}>
-                  <Switch checked={v.vlmHedge} onChange={(x) => set({ vlmHedge: x })} aria-label={zh.taskForm.vlmHedge} />
+                  <Select
+                    value={v.vlmHedge ? 'on' : 'off'}
+                    aria-label={zh.taskForm.vlmHedge}
+                    onChange={(x: string) => set({ vlmHedge: x === 'on' })}
+                    options={[
+                      { label: zh.taskForm.hedgeOn, value: 'on' },
+                      { label: zh.taskForm.hedgeOff, value: 'off' },
+                    ]}
+                  />
                 </Field>
               </Col>
             </>

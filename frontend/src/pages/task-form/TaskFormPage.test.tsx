@@ -223,6 +223,9 @@ describe('新建任务 · 两屏与提交', () => {
     // screen 1 does not warn about the files screen 2 asks for
     expect(screen.getByTestId('module-eef_video_consistency')).not.toHaveTextContent('trajectory.json');
     await user.click(screen.getByRole('checkbox', { name: 'EEF–视频一致性' }));
+    // 超时对冲 is a dropdown like the rest of its row (fourth round)
+    await user.click(screen.getByText('高级设置'));
+    await pick(user, '超时对冲', '关闭');
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
     expect(s2()).not.toHaveTextContent('可选设置');
@@ -234,7 +237,10 @@ describe('新建任务 · 两屏与提交', () => {
     await user.upload(within(s2()).getByLabelText('trajectory.json', { selector: 'input[type=file]' }), new File([JSON.stringify(traj)], 'trajectory.json', { type: 'application/json' }));
     await within(s2()).findByTestId('upload-done-trajectory_json');
     await user.upload(within(s2()).getByLabelText('观测种子', { selector: 'input[type=file]' }), new File([JSON.stringify([{ sample_id: 'new_set_000000' }])], 'seeds.json', { type: 'application/json' }));
-    await within(s2()).findByTestId('upload-done-observation_seeds');
+    const seedsDone = await within(s2()).findByTestId('upload-done-observation_seeds');
+    // the result sits under the whole row, lined up with the dropdown, not beside it
+    expect(within(group).getByTestId('upload-done-observation_seeds')).toBe(seedsDone);
+    expect(seedsDone.closest('.choice-group')).toBeNull();
     // switching drops the seeds: 二选一
     await pick(user, '夹爪参考', '夹爪外观模板', s2());
     expect(item).toHaveTextContent('gripper-template/1.0');
@@ -252,6 +258,7 @@ describe('新建任务 · 两屏与提交', () => {
     const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: { id: string; params?: Record<string, unknown> }[] };
     const eef = body.modules.find((m) => m.id === 'eef_video_consistency');
     expect(Object.keys(eef?.params ?? {}).sort()).toEqual(['gripper_template', 'trajectory_json']);
+    expect(((body as unknown as { params: Record<string, unknown> }).params).vlm_hedge).toBe(false);
   });
 
   it('two uploads at once: the one finishing last does not drop the other (galbot 2026-09-24: seeds lost behind a slow trajectory.json)', async () => {
@@ -280,9 +287,14 @@ describe('新建任务 · 两屏与提交', () => {
     const seeds = [{ sample_id: 'new_set_000000', frame_index: 0 }];
     await user.upload(within(s2()).getByLabelText('观测种子', { selector: 'input[type=file]' }), new File([JSON.stringify(seeds)], 'seeds.json', { type: 'application/json' }));
     expect(await within(s2()).findByTestId('upload-done-observation_seeds')).toHaveTextContent('seeds.json');
+    // trajectory.json is still being checked: nothing can be created yet (fourth round)
+    expect(within(s2()).getByTestId('upload-button-trajectory_json')).toHaveTextContent(/^(上传中|校验中)…$/);
+    expect(screen.getByRole('button', { name: '保存为待启动' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '创建并开始' })).toBeDisabled();
     release();
     expect(await within(s2()).findByTestId('upload-done-trajectory_json')).toHaveTextContent('trajectory.json');
     expect(within(s2()).getByTestId('upload-done-observation_seeds')).toHaveTextContent('seeds.json');   // still there
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存为待启动' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
     await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
     const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: unknown[] };

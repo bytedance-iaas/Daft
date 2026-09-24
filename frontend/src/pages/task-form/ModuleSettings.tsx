@@ -1,5 +1,5 @@
 import { Button, Card, Divider, Input, InputNumber, Radio, Select, Space, Switch, Typography } from '@arco-design/web-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../../api/errors';
 import type { ModuleRegistry, PreflightResult, Upload, UploadIssue, UploadKind } from '../../api/types';
 import { uploadFile, type UploadPhase } from '../../api/uploads';
@@ -13,14 +13,23 @@ import { activeModules } from './formModel';
 /**
  * A file parameter (registry 1.5 `format: upload`): pick a file, POST /uploads validates it on
  * arrival, the handle `upload:<id>` becomes the value. A rejected file shows its located errors.
- * The button says 上传中 while the file goes out and 校验中 while the server checks it.
+ * The button says 上传中 while the file goes out and 校验中 while the server checks it; `onBusy`
+ * tells the form, which holds its submit buttons meanwhile (fourth round). The picker, the button
+ * and the result come apart so a caller can lay them out (the 夹爪参考 row).
  */
-export function UploadInput({ f, value, onChange }: { f: ParamField; value: unknown; onChange: (v: unknown) => void }) {
+function useUpload(f: ParamField, value: unknown, onChange: (v: unknown) => void, onBusy?: (busy: boolean) => void) {
   const input = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<UploadPhase | null>(null);
-  const busy = phase !== null;
   const [done, setDone] = useState<Upload | null>(null);
   const [problem, setProblem] = useState<{ message: string; errors: UploadIssue[] } | null>(null);
+  const busyRef = useRef(onBusy);
+  busyRef.current = onBusy;
+  useEffect(() => {
+    busyRef.current?.(phase !== null);
+  }, [phase]);
+  // gone mid-upload (the other choice picked, screen changed): not busy any more
+  useEffect(() => () => busyRef.current?.(false), []);
+  const busy = phase !== null;
   const has = typeof value === 'string' && value.startsWith(UPLOAD_PREFIX);
   const pick = async (file: File | undefined) => {
     if (!file) return;
@@ -42,15 +51,19 @@ export function UploadInput({ f, value, onChange }: { f: ParamField; value: unkn
       if (input.current) input.current.value = '';
     }
   };
-  return (
-    <div data-testid={`upload-${f.key}`}>
-      <input ref={input} type="file" accept={(f.accept ?? []).join(',')} style={{ display: 'none' }} aria-label={f.title} onChange={(e) => void pick(e.target.files?.[0])} />
-      <Space>
-        <Button size="small" loading={busy} onClick={() => input.current?.click()} data-testid={`upload-button-${f.key}`}>
-          {phase === 'uploading' ? zh.taskForm.uploading : phase === 'validating' ? zh.taskForm.validating : has ? zh.taskForm.uploadReplace : zh.taskForm.uploadChoose}
-        </Button>
-        {f.accept ? <span className="muted" style={{ fontSize: 12 }}>{zh.taskForm.uploadAccept(f.accept, f.maxMb)}</span> : null}
-      </Space>
+  const picker = (
+    <input ref={input} type="file" accept={(f.accept ?? []).join(',')} style={{ display: 'none' }} aria-label={f.title} onChange={(e) => void pick(e.target.files?.[0])} />
+  );
+  const button = (
+    <Space>
+      <Button size="small" loading={busy} onClick={() => input.current?.click()} data-testid={`upload-button-${f.key}`}>
+        {phase === 'uploading' ? zh.taskForm.uploading : phase === 'validating' ? zh.taskForm.validating : has ? zh.taskForm.uploadReplace : zh.taskForm.uploadChoose}
+      </Button>
+      {f.accept ? <span className="muted" style={{ fontSize: 12 }}>{zh.taskForm.uploadAccept(f.accept, f.maxMb)}</span> : null}
+    </Space>
+  );
+  const result: ReactNode = (
+    <>
       {done && value === done.handle ? (
         <div style={{ fontSize: 12, marginTop: 4 }} data-testid={`upload-done-${f.key}`}>
           {zh.taskForm.uploadDone(done.name, done.sha256)}
@@ -81,15 +94,42 @@ export function UploadInput({ f, value, onChange }: { f: ParamField; value: unkn
           ) : null}
         </div>
       ) : null}
+    </>
+  );
+  return { picker, button, result };
+}
+
+export function UploadInput({ f, value, onChange, onBusy }: { f: ParamField; value: unknown; onChange: (v: unknown) => void; onBusy?: (busy: boolean) => void }) {
+  const u = useUpload(f, value, onChange, onBusy);
+  return (
+    <div data-testid={`upload-${f.key}`}>
+      {u.picker}
+      {u.button}
+      {u.result}
     </div>
   );
 }
 
-function ParamInput({ f, value, onChange, error }: { f: ParamField; value: unknown; onChange: (v: unknown) => void; error?: string }) {
+/** The 夹爪参考 row: the choice, then the file button; the result under the whole row. */
+function ChoiceUploadRow({ choice, f, value, onChange, onBusy }: { choice: ReactNode; f: ParamField; value: unknown; onChange: (v: unknown) => void; onBusy?: (busy: boolean) => void }) {
+  const u = useUpload(f, value, onChange, onBusy);
+  return (
+    <div data-testid={`upload-${f.key}`}>
+      {u.picker}
+      <div className="choice-group">
+        {choice}
+        {u.button}
+      </div>
+      {u.result}
+    </div>
+  );
+}
+
+function ParamInput({ f, value, onChange, error, onBusy }: { f: ParamField; value: unknown; onChange: (v: unknown) => void; error?: string; onBusy?: (busy: boolean) => void }) {
   const v = value ?? f.default;
   switch (f.kind) {
     case 'upload':
-      return <UploadInput f={f} value={value} onChange={onChange} />;
+      return <UploadInput f={f} value={value} onChange={onChange} onBusy={onBusy} />;
     case 'choice':
       return f.options && f.options.length <= 4 ? (
         <Radio.Group value={v} onChange={onChange} aria-label={f.title}>
@@ -134,6 +174,7 @@ function ChoiceGroupField({
   values,
   errors,
   onChange,
+  onBusy,
 }: {
   mod: string;
   group: ChoiceGroup;
@@ -141,6 +182,7 @@ function ChoiceGroupField({
   values: Record<string, unknown>;
   errors: Errors;
   onChange: (key: string, value: unknown) => void;
+  onBusy?: (key: string, busy: boolean) => void;
 }) {
   const given = fields.find((f) => values[f.key] !== undefined && values[f.key] !== null && values[f.key] !== '');
   const [chosen, setChosen] = useState(given?.key ?? fields[0].key);
@@ -150,11 +192,19 @@ function ChoiceGroupField({
     setChosen(key);
     for (const x of fields) if (x.key !== key && values[x.key]) onChange(x.key, undefined);
   };
+  const choice = <Select value={chosen} onChange={choose} aria-label={group.title} style={{ width: 160 }} options={fields.map((x) => ({ label: x.title, value: x.key }))} />;
   return (
     <Field label={group.title} required={group.required} extra={f.description} error={error}>
-      <div className="choice-group" data-testid={`choice-${group.id}`}>
-        <Select value={chosen} onChange={choose} aria-label={group.title} style={{ width: 160 }} options={fields.map((x) => ({ label: x.title, value: x.key }))} />
-        <ParamInput key={f.key} f={f} value={values[f.key]} error={error} onChange={(x) => onChange(f.key, x)} />
+      <div data-testid={`choice-${group.id}`}>
+        {f.kind === 'upload' ? (
+          // the upload result lines up with the choice, under the whole row (fourth round)
+          <ChoiceUploadRow key={f.key} choice={choice} f={f} value={values[f.key]} onChange={(x) => onChange(f.key, x)} onBusy={(b) => onBusy?.(f.key, b)} />
+        ) : (
+          <div className="choice-group">
+            {choice}
+            <ParamInput key={f.key} f={f} value={values[f.key]} error={error} onChange={(x) => onChange(f.key, x)} />
+          </div>
+        )}
       </div>
     </Field>
   );
@@ -172,6 +222,7 @@ export function ModuleSettings({
   registry,
   preflight,
   embodimentOptions,
+  onUploadBusy,
 }: {
   v: FormValues;
   set: (patch: FormPatch) => void;
@@ -179,6 +230,8 @@ export function ModuleSettings({
   registry: ModuleRegistry | undefined;
   preflight: PreflightResult | null;
   embodimentOptions: string[];
+  /** A file of `<module>.<param>` started or stopped uploading (the form holds its submit meanwhile). */
+  onUploadBusy?: (key: string, busy: boolean) => void;
 }) {
   const specs = (registry?.modules ?? []).filter((m) => v.modules.includes(m.id));
   const active = activeModules(v);
@@ -247,10 +300,17 @@ export function ModuleSettings({
                 values={v.params[m.id] ?? {}}
                 errors={errors}
                 onChange={(key, x) => setParam(m.id, key, x)}
+                onBusy={(key, b) => onUploadBusy?.(`${m.id}.${key}`, b)}
               />
             ) : (
               <Field key={entry.field.key} label={entry.field.title} required={entry.field.required} extra={entry.field.description} error={errors[`params.${m.id}.${entry.field.key}`]}>
-                <ParamInput f={entry.field} value={v.params[m.id]?.[entry.field.key]} error={errors[`params.${m.id}.${entry.field.key}`]} onChange={(x) => setParam(m.id, entry.field.key, x)} />
+                <ParamInput
+                  f={entry.field}
+                  value={v.params[m.id]?.[entry.field.key]}
+                  error={errors[`params.${m.id}.${entry.field.key}`]}
+                  onChange={(x) => setParam(m.id, entry.field.key, x)}
+                  onBusy={(b) => onUploadBusy?.(`${m.id}.${entry.field.key}`, b)}
+                />
               </Field>
             ),
           )}

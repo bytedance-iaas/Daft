@@ -1,4 +1,4 @@
-import { Alert, Button, Form, Message, Notification, Space, Steps, Tag, Typography } from '@arco-design/web-react';
+import { Alert, Button, Form, Message, Notification, Space, Steps, Tag, Tooltip, Typography } from '@arco-design/web-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -131,6 +131,14 @@ export function TaskForm(p: TaskFormProps) {
   const [incompatNotes, setIncompatNotes] = useState<string[]>(p.incompatibilities.length ? p.incompatibilities.map((i) => i.reason) : []);
   const [taskId, setTaskId] = useState<string | null>(p.mode === 'edit' ? p.editTask?.id ?? null : null);
   const [updatedAt, setUpdatedAt] = useState<number | null>(p.mode === 'edit' ? p.editTask?.updated_at ?? null : null);
+  // Files of screen 2 still going up or being checked: nothing is created until they are done
+  // (fourth round), `<module>.<param>` -> busy.
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  const onUploadBusy = useCallback(
+    (key: string, busy: boolean) => setUploading((u) => (Boolean(u[key]) === busy ? u : { ...u, [key]: busy })),
+    [],
+  );
+  const uploadBusy = Object.values(uploading).some(Boolean);
   // Where a submit is (the buttons spin meanwhile; no text since the fourth round).
   const [phase, setPhase] = useState<'preflight' | 'register' | 'create' | 'start' | null>(null);
   const [fp, setFp] = useState<{ taskId: string; change: SourceChange | null } | null>(null);
@@ -426,6 +434,7 @@ export function TaskForm(p: TaskFormProps) {
   };
 
   const submit = async (start: boolean) => {
+    if (uploadBusy) return;
     setShown({ 1: true, 2: true });
     const e1 = validateScreen1(v, ctx);
     const e2 = validateScreen2(v, ctx);
@@ -621,7 +630,7 @@ export function TaskForm(p: TaskFormProps) {
         </div>
 
         <div style={{ display: screen === 2 ? 'block' : 'none' }} data-testid="screen-2">
-          <ModuleSettings v={v} set={set} errors={errors} registry={reg} preflight={result} embodimentOptions={embodimentOptions} />
+          <ModuleSettings v={v} set={set} errors={errors} registry={reg} preflight={result} embodimentOptions={embodimentOptions} onUploadBusy={onUploadBusy} />
         </div>
       </div>
 
@@ -642,14 +651,16 @@ export function TaskForm(p: TaskFormProps) {
               {zh.taskForm.next}
             </Button>
           ) : (
-            <>
-              <Button loading={phase !== null} onClick={() => void submit(false)}>
-                {p.mode === 'edit' ? zh.taskForm.save : zh.taskForm.saveDraft}
-              </Button>
-              <Button type="primary" loading={phase !== null} onClick={() => void submit(true)}>
-                {p.mode === 'edit' ? zh.taskForm.saveStart : zh.taskForm.createStart}
-              </Button>
-            </>
+            <Tooltip content={zh.taskForm.uploadBusy} disabled={!uploadBusy}>
+              <Space>
+                <Button loading={phase !== null} disabled={uploadBusy} onClick={() => void submit(false)}>
+                  {p.mode === 'edit' ? zh.taskForm.save : zh.taskForm.saveDraft}
+                </Button>
+                <Button type="primary" loading={phase !== null} disabled={uploadBusy} onClick={() => void submit(true)}>
+                  {p.mode === 'edit' ? zh.taskForm.saveStart : zh.taskForm.createStart}
+                </Button>
+              </Space>
+            </Tooltip>
           )}
         </Space>
       </div>
