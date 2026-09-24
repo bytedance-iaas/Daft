@@ -637,19 +637,27 @@ class Run:
             self.log(stage, "info", doc["note"])
         return doc
 
-    def sync_quietly(self, stage: str) -> None:
+    def check_stop(self) -> None:
+        """Only a stop cuts short work in hand; a pause lets it finish (it starts nothing new)."""
+        if self.intent == "stop":
+            raise Interrupt("stop")
+
+    def sync_quietly(self, stage: str, *, through_pause: bool = False) -> None:
         """What a stage produced goes to the delivery at once (00 §4.2, "随产随传").
 
         Only the main run does this: before its first publish the batch has no
         ``_COMPLETE`` that a half-synced change could contradict. A failure here costs
         nothing but time - the publish step syncs and verifies everything anyway.
+        ``through_pause``: a finished stage's upload running next to later stages (the
+        pipelined funnel) completes when a pause comes in - a paused task has its finished
+        stages delivered; only a stop cuts it short.
         """
         if not self.task.run_id:
             return
         try:
             with self.delivery() as d:
                 sync_run_dir(d, self.task.run_id, self.wd.root, self.wd.sync_state,
-                             check_stop=self.check_intent)
+                             check_stop=self.check_stop if through_pause else self.check_intent)
         except Interrupt:
             raise
         except (DeliveryError, TaskFailure, OSError) as err:

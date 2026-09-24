@@ -297,3 +297,43 @@ def test_workdir_layout(tmp_path):
     assert again.done("numeric") and again.get("revision") == 2 and not again.done("frame")
     path = write_lines(wd.episodes_file("main", "x"), [3, 1, 3])
     assert read_lines(path) == [1, 3] and read_lines(tmp_path / "missing") is None
+
+
+def test_a_pause_lets_a_finished_stages_upload_finish_and_a_stop_cuts_it(tmp_path):
+    """The pipelined funnel uploads a finished stage next to later ones: a pause coming in meanwhile
+    waits for that upload (a paused task has its finished stages delivered), a stop cuts it short."""
+    import contextlib
+    from types import SimpleNamespace
+
+    from daemon.orchestr.runbase import Run as RunBase, Interrupt
+
+    root = tmp_path / "run"
+    (root / "checks" / "timestamp_check").mkdir(parents=True)
+    for i in range(3):
+        (root / "checks" / "timestamp_check" / f"part{i}.jsonl").write_text("{}\n")
+
+    class Run:
+        check_stop, check_intent, sync_quietly = RunBase.check_stop, RunBase.check_intent, RunBase.sync_quietly
+
+        def __init__(self, intent):
+            self.intent, self._pipeline_abort, self.logs = intent, None, []
+            self.task = SimpleNamespace(run_id="r1")
+            n = len(list(tmp_path.glob("out-*")))                  # a delivery and a sync state of its own
+            self.wd = SimpleNamespace(root=root, sync_state=tmp_path / f"sync-{n}.json")
+            self.out = tmp_path / f"out-{n}"
+            self.out.mkdir()
+
+        def delivery(self):
+            return contextlib.nullcontext(D.LocalDelivery(self.out, "tos://out"))
+
+        def log(self, *args):
+            self.logs.append(args)
+
+    paused = Run("pause")
+    paused.sync_quietly("numeric", through_pause=True)
+    assert sorted(os.listdir(paused.out / "r1" / "checks" / "timestamp_check")) == [
+        "part0.jsonl", "part1.jsonl", "part2.jsonl"]
+    for run, kw in ((Run("stop"), {"through_pause": True}), (Run("pause"), {})):
+        with pytest.raises(Interrupt):
+            run.sync_quietly("numeric", **kw)
+        assert not (run.out / "r1").exists()

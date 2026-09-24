@@ -334,7 +334,8 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
                         layer.finished_at = int(time.time() * 1000)
                         _publish_activity(run, layer)
                         _finish_stage(run, layer, store)
-                        sync_jobs.append(sync_pool.submit(run.sync_quietly, layer.sid))
+                        # a pause waits for this upload (the pool is shut down with wait=True)
+                        sync_jobs.append(sync_pool.submit(run.sync_quietly, layer.sid, through_pause=True))
                         changed = True
             for layer in layers:
                 _publish_activity(run, layer)

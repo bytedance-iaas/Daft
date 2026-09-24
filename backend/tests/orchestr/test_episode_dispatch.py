@@ -42,7 +42,7 @@ class Run:
     def check_intent(self):
         pass
 
-    def sync_quietly(self, *args):
+    def sync_quietly(self, *args, **kwargs):
         pass
 
     def terminate_children(self):
