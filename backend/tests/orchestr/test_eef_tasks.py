@@ -18,7 +18,6 @@ from ..cli.test_eef_check import CAM, _entry, _truth
 from .conftest import ALL_MODULES, API, JSON, assert_schema
 
 EEF = "eef_video_consistency"
-REVIEW = "eef_video_review"
 
 
 def _bundle(*, corrupt: bool = False) -> dict:
@@ -143,24 +142,27 @@ def test_the_module_is_preflighted_with_the_uploaded_file(daemon):
     assert entry["subitems"]["position_2d"]["availability"] == "available"      # the seeds were used
 
 
-def test_the_review_comes_with_the_module_it_reviews(daemon):
+def test_the_module_needs_a_model(daemon):
+    """D49: the module reviews with a model; with the file and a model chosen it is available."""
     d = daemon()
-    alone = d.task_body(modules=[*ALL_MODULES, REVIEW], start_now=False)
-    r = d.api("POST", "/tasks", json=alone)
-    assert r.status_code == 400 and "一起勾选" in r.text, r.text
-    nofile = d.task_body(modules=[*ALL_MODULES, EEF, REVIEW], start_now=False)
-    r = d.api("POST", "/tasks", json=nofile)
-    assert r.status_code == 400 and "trajectory_json" in r.text, r.text
     traj = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
-    both = [*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"]}},
-            {"id": REVIEW, "params": {"review_windows_per_camera": 2}}]
-    created = d.create(modules=both, start_now=False)
+    mods = [*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"], "review_windows_per_camera": 2}}]
+    created = d.create(modules=mods, start_now=False)
     rows = {m["id"]: m for m in d.get(created["id"])["modules"]}
-    assert rows[REVIEW]["selected"] and rows[REVIEW]["availability"] == "available"
-    no_vlm = d.task_body(modules=[m for m in both if m not in ("task_success", "skill_profile")], start_now=False)
+    assert rows[EEF]["selected"] and rows[EEF]["availability"] == "available"
+    no_vlm = d.task_body(modules=[m for m in mods if m not in ("task_success", "skill_profile")], start_now=False)
     no_vlm.pop("vlm", None)
     r = d.api("POST", "/tasks", json=no_vlm)
     assert r.status_code == 400 and "VLM" in r.text, r.text
+
+
+def test_skill_profile_without_dedup_is_accepted(daemon):
+    """Regression (F5.6 read every module id in depends_on as "re-examines"): skill_profile lists
+    dedup only to order the stages, it never needs dedup selected."""
+    d = daemon()
+    created = d.create(modules=[m for m in ALL_MODULES if m != "dedup"], start_now=False)
+    rows = {m["id"]: m for m in d.get(created["id"])["modules"]}
+    assert rows["skill_profile"]["selected"] and not rows["dedup"]["selected"]
 
 
 @pytest.mark.slow
@@ -168,50 +170,49 @@ def test_an_eef_task_runs_end_to_end(daemon):
     d = daemon()
     traj = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
     seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows())
-    params = {"trajectory_json": traj["handle"], "observation_seeds": seeds["handle"]}
-    created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": params},
-                                {"id": REVIEW, "params": {"review_windows_per_camera": 1,
-                                                          "review_frames_per_window": 2}}], export=False)
+    params = {"trajectory_json": traj["handle"], "observation_seeds": seeds["handle"],
+              "review_windows_per_camera": 1, "review_frames_per_window": 2}
+    created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": params}], export=False)
     task = d.wait(created["id"])
     assert task["state"] in ("succeeded", "completed_with_errors"), json.dumps(task)[:2000]
-    (row,) = [m for m in task["modules"] if m["id"] == EEF]
-    assert row["state"] == "succeeded" and row["episodes_total"] == 8 and row["episodes_error"] == 0
     rd = d.run_dir(created["id"])
     uploads = json.load(open(os.path.join(rd, "inputs", "uploads.json")))
     assert set(uploads) == {traj["handle"], seeds["handle"]}
     assert all(os.path.isfile(os.path.join(rd, e["path"])) for e in uploads.values())
+    # D49: a vlm-tier gate next to task_success, on the frame stage's survivors
     plan = json.load(open(os.path.join(rd, "plan.json")))
-    (adv,) = [s for s in plan["stages"] if s["id"] == "advisory_frame"]
-    assert adv["modules"] == [EEF] and adv["episodes"] == "selected"
-    recs = [json.loads(x) for x in open(os.path.join(rd, "checks", EEF, "results.jsonl"))]
-    assert sorted(r["episode_index"] for r in recs) == list(range(8))
-    assert {r["details"]["input_file_sha256"] for r in recs if r["details"].get("input_file_sha256")} \
+    (vlm,) = [s for s in plan["stages"] if s["id"] == "vlm"]
+    assert EEF in vlm["modules"] and vlm["episodes"] == "survivors:frame" and EEF in vlm["hard_gates"]
+    assert not [s for s in plan["stages"] if s["id"].startswith("advisory_")]
+    recs = {r["episode_index"]: r for r in (json.loads(x) for x in open(os.path.join(rd, "checks", EEF,
+                                                                                      "results.jsonl")))}
+    ts = {r["episode_index"] for r in (json.loads(x) for x in open(os.path.join(rd, "checks", "task_success",
+                                                                                "results.jsonl")))}
+    assert set(recs) == ts                                   # the same survivors as task_success
+    (row,) = [m for m in task["modules"] if m["id"] == EEF]
+    assert row["state"] == "succeeded" and row["episodes_total"] == len(recs) and row["episodes_error"] == 0
+    assert {r["details"]["input_file_sha256"] for r in recs.values() if r["details"].get("input_file_sha256")} \
         == {traj["sha256"]}
-    run_id = task["run_id"]
-    delivered = d.delivery(run_id)
+    for r in recs.values():
+        assert r["passed"] is {"pass": True, "reject": False, "human": None}[r["details"]["decision"]["outcome"]]
+    usage = [json.loads(x) for x in open(os.path.join(rd, "usage.jsonl"))]
+    assert {u["call_kind"] for u in usage if u.get("module") == EEF} == {"eef_review"}
+    rev = task["result_rev"]
+    verdicts = {x["episode_index"]: x for x in (json.loads(y) for y in open(
+        os.path.join(rd, "revisions", f"r{rev:04d}", "verdicts.jsonl")))}
+    for ep, r in recs.items():                               # only its rejects move a verdict
+        if r["passed"] is False:
+            assert verdicts[ep]["verdict"] == "drop" and EEF in verdicts[ep]["hard_fails"]
+        else:
+            assert EEF not in (verdicts[ep].get("hard_fails") or [])
+    delivered = d.delivery(task["run_id"])
     assert os.path.isfile(os.path.join(delivered, "checks", EEF, "results.jsonl"))
     assert os.path.isdir(os.path.join(delivered, "inputs"))
-    # the review (F5.6): after the EEF module, on every selected episode, its own call kind
-    (row,) = [m for m in task["modules"] if m["id"] == REVIEW]
-    assert row["state"] == "succeeded" and row["episodes_total"] == 8
-    (adv,) = [s for s in plan["stages"] if s["id"] == "advisory_vlm"]
-    assert adv["modules"] == [REVIEW] and adv["episodes"] == "selected"
-    assert [s["id"] for s in plan["stages"]].index("advisory_vlm") > [s["id"] for s in plan["stages"]].index(
-        "advisory_frame")
-    revs = {r["episode_index"]: r for r in (json.loads(x) for x in open(os.path.join(rd, "checks", REVIEW,
-                                                                                   "results.jsonl")))}
-    assert sorted(revs) == list(range(8)) and revs[7]["details"]["reasons"] == ["projection_missing"]
-    assert all(revs[e]["details"]["status"] == "completed" and revs[e]["details"]["summary"]["answered"] == 1
-               for e in range(7))
-    usage = [json.loads(x) for x in open(os.path.join(rd, "usage.jsonl"))]
-    assert {u["call_kind"] for u in usage if u.get("module") == REVIEW} == {"eef_review"}
-    rev = task["result_rev"]
     rep = json.load(open(os.path.join(rd, "revisions", f"r{rev:04d}", "report.json")))
     (sec,) = [s for s in rep["modules"] if s["id"] == EEF]
-    assert sec["summary"]["assessment_mode"] == "advisory"
-    (sec,) = [s for s in rep["modules"] if s["id"] == REVIEW]
-    assert sec["summary"]["reviewed"] == 7 and sec["summary"]["not_reviewed"] == 1
+    s = sec["summary"]
+    assert s["judged_pass"] + s["judged_reject"] + s["to_human"] == len(recs)
     r = d.api("GET", f"/tasks/{created['id']}/report/tables/eef_review_windows")
-    assert r.status_code == 200 and len(r.json()["items"]) >= 7, r.text
+    assert r.status_code == 200, r.text
     r = d.api("GET", f"/tasks/{created['id']}/report")
     assert r.status_code == 200 and EEF in [s["id"] for s in r.json()["report"]["modules"]]

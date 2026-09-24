@@ -165,7 +165,7 @@ describe('新建任务 · 两屏与提交', () => {
     expect(s2()).not.toHaveTextContent('时间戳检查');
   });
 
-  it('an advisory module is opted into by hand and takes its trajectory.json as an upload (F5.5)', async () => {
+  it('the EEF module is opted into by hand, needs a model and takes its trajectory.json as an upload (F5.5, D49)', async () => {
     const seen = record();
     const { user } = renderApp('/tasks/new');
     await screen.findByText('基本信息');
@@ -176,14 +176,9 @@ describe('新建任务 · 两屏与提交', () => {
     await screen.findByText(/LeRobot v2 · 120 条 episode/);
     await user.click(screen.getByText('快速质检'));
     const eef = screen.getByRole('checkbox', { name: 'EEF–视频一致性' });
-    const review = screen.getByRole('checkbox', { name: 'EEF–视频一致性 · VLM 复核' });
-    expect(eef).not.toBeChecked();
-    expect(review).not.toBeChecked();
-    await user.click(review);                                 // ticking the review brings the module it reviews
-    expect(eef).toBeChecked();
-    await user.click(eef);                                    // and unticking that module drops the review
-    expect(review).not.toBeChecked();
-    await user.click(review);
+    expect(eef).not.toBeChecked();                            // not in any preset
+    expect(screen.queryByRole('checkbox', { name: 'EEF–视频一致性 · VLM 复核' })).toBeNull();   // folded in (D49)
+    await user.click(eef);
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
@@ -204,8 +199,7 @@ describe('新建任务 · 两屏与提交', () => {
     expect(up).toHaveLength(2);
     const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: unknown[]; vlm?: unknown };
     expect(body.modules).toContainEqual({ id: 'eef_video_consistency', params: { trajectory_json: expect.stringMatching(/^upload:upl-[a-z]{9}$/) } });
-    expect(body.modules).toContain('eef_video_review');
-    expect(body.vlm).toBeTruthy();
+    expect(body.vlm).toBeTruthy();                             // it reviews with a model
   });
 
   it('screen 2 asks for the robot type (required) or 跳过该模块', async () => {

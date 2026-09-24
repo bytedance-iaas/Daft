@@ -542,8 +542,8 @@ export function seedDatasets(now: number): DatasetDetail[] {
 export const MAIN_TASK = 'task_01HXR2D8';
 export const RUNNING_TASK = 'task_01HXR4M7';
 
-// the mock tasks select v1's eight; the advisory EEF modules cannot be selected before F5.5
-const V1_MODULES = registry.modules.filter((m) => m.affects_dataset_verdict);
+// the mock tasks select v1's eight; the EEF module (opt-in, needs a file) is not among them
+const V1_MODULES = registry.modules.filter((m) => m.affects_dataset_verdict && !(m.needs as string[]).includes('eef_input'));
 const ALL_MODULES = V1_MODULES.map((m) => m.id);
 const NON_VLM = V1_MODULES.filter((m) => !(m.needs as string[]).includes('vlm')).map((m) => m.id);
 

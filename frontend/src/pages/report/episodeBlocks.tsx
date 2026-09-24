@@ -385,14 +385,22 @@ function EefBlock({ record }: BlockProps) {
   };
   const rows = cams.map(([id, cam]) => ({ key: id, camera: id, mount: str(cam.mount) ?? '—', position: st(cam, 'position_2d'), orientation: st(cam, 'orientation_2d'), temporal: st(cam, 'temporal_alignment'), motion: st(cam, 'camera_motion'), input: st(cam, 'input_consistency') }));
   const overall = str(d.overall);
+  const decision = (d.decision ?? {}) as Details;
+  const outcome = str(decision.outcome);
+  const reason = str(d.reason);
   return (
     <>
       <Space wrap>
+        {outcome ? (
+          <Tag color={outcome === 'pass' ? 'green' : outcome === 'reject' ? 'red' : 'orange'} data-testid="eef-outcome">
+            {Z.outcome[outcome] ?? outcome}
+          </Tag>
+        ) : null}
         <span>
           {E().eef.overall}：{overall ? Z.overall[overall] ?? Z.overall[`${overall}s`] ?? overall : '—'}
         </span>
-        <span className="muted">{E().advisory}</span>
       </Space>
+      {reason ? <div className="episode-line">{reason}</div> : null}
       {rows.length ? (
         <Table
           rowKey="key"
@@ -414,31 +422,6 @@ function EefBlock({ record }: BlockProps) {
         <div className="episode-line">
           <b>{E().eef.reasons}：</b>
           {d.reasons.map(String).join('、')}
-        </div>
-      ) : null}
-    </>
-  );
-}
-
-function EefReviewBlock({ record }: BlockProps) {
-  const d = details(record);
-  const sm = (d.summary ?? {}) as Details;
-  const R = zh.sections.eef;
-  const status = str(d.status);
-  const statusText: Record<string, string> = { completed: R.review.reviewed, incomplete: R.review.incomplete, not_reviewed: R.review.not_reviewed, error: R.overall.errors };
-  return (
-    <>
-      <Space wrap>
-        <span>
-          {E().eef.status}：{status ? statusText[status] ?? status : '—'}
-        </span>
-        {d.needs_human ? <Tag color="orange">{R.review.needs_human}</Tag> : null}
-        <span className="muted">{E().advisory}</span>
-      </Space>
-      {num(sm.windows) !== null ? (
-        <div className="episode-line">
-          <b>{E().eef.windows}：</b>
-          {`${num(sm.windows)} · ${R.windowsValue(num(sm.answered) ?? 0, num(sm.failed) ?? 0)}`}
         </div>
       ) : null}
     </>
@@ -485,7 +468,6 @@ export const EPISODE_BLOCKS: Record<string, ComponentType<BlockProps>> = {
   dedup: DedupBlock,
   skill_profile: SkillBlock,
   eef_video_consistency: EefBlock,
-  eef_video_review: EefReviewBlock,
 };
 
 export function blockTitleExtra(record: ResultRecord): ReactNode {

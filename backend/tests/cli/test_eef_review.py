@@ -1,31 +1,31 @@
-"""F5.6: the EEF VLM review on the CLI under a fixed tape (design doc 12 §10, §13.4).
+"""The EEF module's verdict branches under a fixed tape (design doc 12 C.9, D49; F5.9 / F5.10).
 
-On the mini dataset with a seed on every frame the EEF module finds episode 0 ok and episodes 1-2
-suspect (episode 1 with a candidate segment). The review then runs one episode per call against the
-parity fake model, scripted per episode to cover every branch: a refuted ok (conflict), a supported
-candidate (conflict), a malformed answer fixed by the repair turn, a timeout, a frame that is not in
-the request (twice: failed), a measured value in the explanation (repaired). The calls are recorded
-on a tape and replayed offline in a fresh run directory: the records come out the same.
+On the mini dataset with a seed on every frame the CPU finds episode 0 ok, episode 1 suspect with a
+candidate segment and episode 2 suspect without one. The module then runs one episode per call against
+the parity fake model, scripted per episode: a CPU ok the model refutes (a conflict: a person), a CPU
+candidate the model confirms after a malformed answer and its repair (reject), a suspect with no model
+opinion while its windows time out, cite frames not in the request or give a measured value (a
+person), an ok the model does not contradict (pass) and an episode the file does not declare (a
+person). The calls are recorded on a tape and replayed offline in a fresh run directory: the records
+come out the same; aggregate drops the reject and nothing else.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
-import shutil
 
 import pytest
 import requests
 
-from .pipeline import results
-from .test_eef_check import CAM, EEF, _files
+from .pipeline import read_jsonl, results
+from .test_eef_check import CAM, EEF, URL, _files
 
-REVIEW = "eef_video_review"
-URL = "http://fake-vlm.test/v1"
 GOOD = {"review_status": "uncertain", "target_visible": True, "tracking_target_correct": "support",
         "position_support": "uncertain", "orientation_support": "not_observable",
         "offset_direction": "none", "offset_magnitude_class": "none",
         "evidence_frame_ids": [], "reason_codes": [], "explanation": "看不太清"}
+TIMEOUT = ("--set", "checks.task_success.vlm.timeouts_s.eef_review=5")
 
 
 def _frames(payload: dict) -> list[int]:
@@ -38,7 +38,7 @@ def _answer(payload: dict, **kw) -> str:
 
 
 class Script:
-    """Answers by call number within one review call; ``None`` falls back to a cautious answer."""
+    """Answers by call number within one call; ``None`` falls back to a cautious answer."""
 
     def __init__(self, *steps):
         self.steps = list(steps)
@@ -56,29 +56,32 @@ class Script:
         return step(payload) if callable(step) else step
 
 
+def _refute(p):
+    return _answer(p, review_status="refute", position_support="refute", offset_direction="left",
+                   offset_magnitude_class="within_finger_width")
+
+
 SCRIPTS = {
-    # uniform windows on an ok camera, refuted: a conflict each, evidence kept
-    0: lambda: Script(*[lambda p: _answer(p, review_status="refute", position_support="refute",
-                                         offset_direction="left", offset_magnitude_class="within_finger_width")] * 6),
-    # the candidate first (the model finds it fine: conflict), after a malformed answer and its repair
-    1: lambda: Script("Sure! The red circle looks fine.", lambda p: _answer(p, review_status="support",
-                                                                               position_support="support")),
-    # a timeout; a frame not in the request, twice; a measured value, then fixed
-    2: lambda: Script(requests.exceptions.ReadTimeout("fake: no answer in time"),
+    0: lambda: Script(*[_refute] * 6),                       # CPU ok, the model refutes: a person
+    1: lambda: Script("Sure! The red circle looks off.", _refute),   # candidate confirmed after a repair: reject
+    2: lambda: Script(requests.exceptions.ReadTimeout("fake: no answer in time"),   # no candidate: a person
                       lambda p: _answer(p, evidence_frame_ids=[99999]),
                       lambda p: _answer(p, evidence_frame_ids=[99998]),
                       lambda p: _answer(p, explanation="红圈偏左约 2 cm"),
                       lambda p: _answer(p, explanation="红圈偏左一指宽")),
+    3: lambda: Script(),                                      # CPU ok, the model does not object: pass
+    7: lambda: Script(),                                      # not in the file: a person
 }
+OUTCOME = {0: "human", 1: "reject", 2: "human", 3: "pass", 7: "human"}
 
 
-def _review(cli, dataset, rd, traj, episodes, *extra):
-    res = cli("check", "--modules", REVIEW, "--input", dataset, "--run-dir", rd, "--episodes", episodes,
-              "--param", f"{EEF}.trajectory_json={traj}", "--param", f"{REVIEW}.review_windows_per_camera=3",
-              "--param", f"{REVIEW}.review_frames_per_window=3", "--vlm-endpoint", URL, "--vlm-model", "fake-vlm",
-              "--retry", "0", *extra)
+def _check(cli, dataset, rd, traj, episodes, *extra):
+    res = cli("check", "--modules", EEF, "--input", dataset, "--run-dir", rd, "--episodes", episodes,
+              "--param", f"{EEF}.trajectory_json={traj}", "--param", f"{EEF}.review_windows_per_camera=3",
+              "--param", f"{EEF}.review_frames_per_window=3", "--vlm-endpoint", URL, "--vlm-model", "fake-vlm",
+              "--retry", "0", *TIMEOUT, *extra)
     assert res.rc == 0, res.doc
-    return res.doc["modules"][REVIEW]
+    return res.doc["modules"][EEF]
 
 
 def _hooks(mode, **kw):
@@ -93,29 +96,28 @@ def _hooks(mode, **kw):
 
 def _details(rd):
     out = {}
-    for e, r in results(rd, REVIEW).items():
-        d = dict(r["details"])
-        for cam in d.get("cameras", {}).values():
+    for e, r in results(rd, EEF).items():
+        d = json.loads(json.dumps(r["details"]))
+        d.pop("evidence", None)
+        d.pop("timing", None)
+        rv = d.get("review") or {}
+        rv.pop("elapsed_s", None)
+        for cam in rv.get("cameras", {}).values():
             for w in cam.get("windows", []):
                 w.pop("cache_hit", None)
-        out[e] = (r["verdict"], d)
+        for cam in d.get("cameras", {}).values():
+            cam.pop("timing", None)
+        out[e] = (r["verdict"], r["passed"], d)
     return out
 
 
 @pytest.fixture(scope="module")
-def taped(tmp_path_factory, mini_dataset):
-    """The EEF module on episodes 0-2, then the scripted reviews, recorded."""
+def taped(tmp_path_factory):
     from parity.fakevlm import FakeVlm
 
-    from curation.cli import main
-
-    tmp = tmp_path_factory.mktemp("eef-review")
-    rd, traj = str(tmp / "run"), _files(tmp, seed_every=1)
-    assert main(["check", "--modules", EEF, "--input", mini_dataset, "--run-dir", rd, "--episodes", "0-2",
-                 "--param", f"{EEF}.trajectory_json={traj}", "--json"]) == 0
-    base = str(tmp / "base")
-    shutil.copytree(rd, base)
-    return {"rd": rd, "base": base, "traj": traj, "tape": str(tmp / "tape.jsonl.gz"), "fake": FakeVlm("fake-vlm")}
+    tmp = tmp_path_factory.mktemp("eef-verdict")
+    return {"rd": str(tmp / "run"), "traj": _files(tmp, seed_every=1), "tape": str(tmp / "tape.jsonl.gz"),
+            "fake": FakeVlm("fake-vlm"), "tmp": tmp}
 
 
 def test_every_branch_under_a_recorded_tape_and_its_offline_replay(cli, taped, mini_dataset):
@@ -124,60 +126,60 @@ def test_every_branch_under_a_recorded_tape_and_its_offline_replay(cli, taped, m
     fake, rd, traj, ds = taped["fake"], taped["rd"], taped["traj"], mini_dataset
     hooks = _hooks("record", tape_out=taped["tape"], transport=fake.transport())
     try:
-        docs = {}
-        for ep in (0, 1, 2):
+        for ep in SCRIPTS:
             fake.answer = SCRIPTS[ep]()
-            docs[ep] = _review(cli, ds, rd, traj, str(ep), "--set",
-                               "checks.task_success.vlm.timeouts_s.eef_review=5")
-        fake.answer = Script()
-        docs["rest"] = _review(cli, ds, rd, traj, "3,7")
+            doc = _check(cli, ds, rd, traj, str(ep))
+            assert doc["episodes"]["error"] == 0                # a failed window is not an execution error
     finally:
         hooks.uninstall()
-    recs = results(rd, REVIEW)
-    assert sorted(recs) == [0, 1, 2, 3, 7]
-    assert all(r["passed"] is None and r["score"] is None and r["gate"] == "none" and r["verdict"] == "abstain"
-               for r in recs.values())
+    recs = results(rd, EEF)
+    assert sorted(recs) == sorted(SCRIPTS)
+    for ep, want in OUTCOME.items():
+        d = recs[ep]["details"]
+        assert d["decision"]["outcome"] == want, (ep, d["decision"])
+        assert recs[ep]["passed"] is {"pass": True, "reject": False, "human": None}[want]
     d0, d1, d2 = (recs[e]["details"] for e in (0, 1, 2))
-    # episode 0: the CPU says ok, the model refutes -> conflicts, a person looks, evidence kept
-    assert d0["status"] == "completed" and d0["needs_human"] and d0["summary"]["conflicts"] == 3
-    assert {c["subitem"] for c in d0["conflicts"]} == {"position_2d"} and d0["conflicts"][0]["cpu"] == "ok"
-    assert d0["evidence"] and all(os.path.isfile(os.path.join(rd, p)) for p in d0["evidence"])
-    # episode 1: the candidate the model finds fine is a conflict; the malformed answer was repaired
-    cand = [w for w in d1["cameras"][CAM]["windows"] if w["kind"] == "candidate"]
-    assert cand and cand[0]["conflict"] == {"subitem": "position_2d", "cpu": "suspect", "vlm": "support"}
-    assert cand[0]["attempts"] == 2 and d1["status"] == "completed" and d1["needs_human"]
-    # episode 2: a timeout and an unknown frame fail their windows; the measured value was repaired
-    w2 = d2["cameras"][CAM]["windows"]
+    assert [h["code"] for h in d0["decision"]["human"]] == ["conflict"] and d0["decision"]["human"][0]["cpu"] == "ok"
+    assert d0["review"]["conflicts"] and recs[0]["evidence"] and all(os.path.isfile(os.path.join(rd, p))
+                                                                      for p in recs[0]["evidence"])
+    cand = [w for w in d1["review"]["cameras"][CAM]["windows"] if w["kind"] == "candidate"]
+    assert cand and cand[0]["attempts"] == 2 and cand[0]["point_id"] == "block_center"
+    assert d1["decision"]["confirmed"][0]["subitem"] == "position_2d" and "位置" in d1["reason"]
+    w2 = d2["review"]["cameras"][CAM]["windows"]
     assert [w["status"] for w in w2] == ["failed", "failed", "answered"]
     assert [w.get("failure", {}).get("code") for w in w2[:2]] == ["timeout", "unknown_frame"]
     assert w2[2]["attempts"] == 2 and w2[2]["answer"]["explanation"] == "红圈偏左一指宽"
-    assert d2["status"] == "incomplete" and d2["summary"]["failed"] == 2 and not d2["needs_human"]
-    # no answer carries a measurement: classes, booleans and frame ids only
-    for d in (d0, d1, d2):
-        for w in d["cameras"][CAM]["windows"]:
-            for k, v in (w.get("answer") or {}).items():
+    assert d2["review"]["status"] == "incomplete"
+    assert [h["code"] for h in d2["decision"]["human"]] == ["no_model_opinion"]
+    assert recs[7]["details"]["decision"]["human"][0]["code"] == "not_in_file"
+    for d in (d0, d1, d2):                                    # classes, booleans and frame ids only
+        for w in d["review"]["cameras"][CAM]["windows"]:
+            for v in (w.get("answer") or {}).values():
                 assert isinstance(v, (str, bool)) or (isinstance(v, list) and all(isinstance(x, (int, str)) for x in v))
-    assert recs[3]["details"]["reasons"] == ["base_missing"] and recs[7]["details"]["reasons"] == ["projection_missing"]
-    assert docs[2]["episodes"]["error"] == 0                       # a failed window is not an execution error
     usage = [json.loads(x) for x in open(os.path.join(rd, "usage.jsonl"))]
-    assert {u["call_kind"] for u in usage if u.get("module") == REVIEW} == {"eef_review"}
+    assert {u["call_kind"] for u in usage if u.get("module") == EEF} == {"eef_review"}
 
     # the tape replays offline into a fresh run directory: the same records
     _, entries = T.read_tape(taped["tape"])
-    fresh = str(os.path.dirname(taped["rd"])) + "/replay"
-    shutil.copytree(taped["base"], fresh)
+    fresh = str(taped["tmp"] / "replay")
     hooks = _hooks("replay", replay_entries=entries)
     try:
-        for ep in ("0", "1", "2", "3,7"):
-            _review(cli, ds, fresh, traj, ep, *(["--set", "checks.task_success.vlm.timeouts_s.eef_review=5"]
-                                               if ep != "3,7" else []))
+        for ep in SCRIPTS:
+            _check(cli, ds, fresh, traj, str(ep))
     finally:
         hooks.uninstall()
-    got, want = _details(fresh), _details(rd)
-    for e in want:
-        for d in (got[e][1], want[e][1]):
-            d.pop("evidence", None)
-    assert got == want
+    assert _details(fresh) == _details(rd)
+
+
+def test_aggregate_drops_the_reject_and_nothing_else(cli, taped, mini_dataset):
+    rd = taped["rd"]
+    res = cli("aggregate", "--run-dir", rd, "--phase", "funnel", "--revision", "1", "--episodes", "0-3,7",
+              "--modules", EEF)
+    assert res.rc == 0, res.doc
+    lines = {x["episode_index"]: x for x in read_jsonl(os.path.join(rd, "revisions", "r0001", "verdicts.jsonl"))}
+    assert lines[1]["verdict"] == "drop" and lines[1]["hard_fails"] == [EEF]
+    assert lines[1]["reason"].startswith("未通过「EEF–视频一致性」:「位置」")
+    assert all(lines[e]["verdict"] == "keep" for e in (0, 2, 3, 7))
 
 
 def test_answers_are_cached_and_resume_skips_current_lines(cli, taped, mini_dataset):
@@ -191,23 +193,13 @@ def test_answers_are_cached_and_resume_skips_current_lines(cli, taped, mini_data
         return "pong"
 
     fake.answer = no_review
-    hooks = _hooks("record", tape_out=os.path.join(os.path.dirname(rd), "tape2.jsonl.gz"), transport=fake.transport())
+    hooks = _hooks("record", tape_out=str(taped["tmp"] / "tape2.jsonl.gz"), transport=fake.transport())
     try:
-        again = _review(cli, ds, rd, traj, "0")                     # a new part, every answer from the cache
-        resumed = _review(cli, ds, rd, traj, "0-2", "--resume")
+        again = _check(cli, ds, rd, traj, "0")                  # a new part, every answer from the cache
+        resumed = _check(cli, ds, rd, traj, "0-3", "--resume")
     finally:
         hooks.uninstall()
     assert again["episodes"]["abstain"] == 1
-    wins = results(rd, REVIEW)[0]["details"]["cameras"][CAM]["windows"]
+    wins = results(rd, EEF)[0]["details"]["review"]["cameras"][CAM]["windows"]
     assert all(w["cache_hit"] and w["attempts"] == 0 for w in wins)
-    assert resumed["skipped_existing"] == 3
-
-
-def test_usage_errors(cli, mini_dataset, tmp_path):
-    rd = str(tmp_path / "run")
-    res = cli("check", "--modules", REVIEW, "--input", mini_dataset, "--run-dir", rd, "--episodes", "0",
-              "--vlm-endpoint", URL, "--vlm-model", "fake-vlm")
-    assert res.rc != 0 and f"{EEF}.trajectory_json" in res.doc["error"]["message"]
-    mixed = cli("check", "--modules", f"task_success,{REVIEW}", "--input", mini_dataset, "--run-dir", rd,
-                "--episodes", "0")
-    assert mixed.rc != 0 and "call of their own" in mixed.doc["error"]["message"]
+    assert resumed["skipped_existing"] == 4

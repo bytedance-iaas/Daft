@@ -127,17 +127,14 @@ class StageRun(Run):
         raise AssertionError("unreachable")
 
     def module_param_args(self, mods: list[str]) -> list[str]:
-        """``--param`` for the advisory modules of a stage (registry 1.4) and the modules they
-        re-examine: their ``modules[].params``, upload handles replaced by the copies made at start
-        (``inputs/uploads.json``). v1's modules take their settings from the site configuration as before."""
+        """``--param`` for the modules v2 runs itself (the EEF module, D49) and the advisory modules of
+        a stage (registry 1.4): their ``modules[].params``, upload handles replaced by the copies made at
+        start (``inputs/uploads.json``). v1's modules take their settings from the site configuration."""
         rows = {m.module_id: m for m in self.repo.get_task_modules(self.task_id)}
         table = read_json(self.wd.root / "inputs" / "uploads.json", {}) or {}
         out: list[str] = []
-        # a module that re-examines another one (depends_on a module id: the EEF review) reads its file
-        wanted = list(dict.fromkeys([*mods, *(d for m in mods for d in registry.get(m).depends_on
-                                              if d in registry.ids())]))
-        for mid in wanted:
-            if registry.get(mid).affects_dataset_verdict or mid not in rows:
+        for mid in mods:
+            if mid not in rows or (registry.get(mid).affects_dataset_verdict and mid not in registry.native_ids()):
                 continue
             kinds = registry.upload_params(mid)
             for key, value in (rows[mid].params or {}).items():

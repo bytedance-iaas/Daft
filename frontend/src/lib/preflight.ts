@@ -25,42 +25,18 @@ export function needsVlm(m: ModuleSpec | undefined): boolean {
   return Boolean(m && (m.needs as string[]).includes('vlm'));
 }
 
-/** Advisory modules (registry 1.4, `affects_dataset_verdict: false`) are opted into by hand: no
- * preset and no 全选可用 turns them on (the EEF module also needs an uploaded file). */
+/** Modules opted into by hand: no preset and no 全选可用 turns them on. Advisory modules (registry 1.4,
+ * `affects_dataset_verdict: false`) and the EEF module, which needs an uploaded file and, since D49,
+ * judges episodes (it stays opt-in). */
 export function optIn(m: ModuleSpec): boolean {
-  return !m.affects_dataset_verdict;
+  return !m.affects_dataset_verdict || (m.needs as string[]).includes('eef_input');
 }
 
-/** Modules this one re-examines (registry 1.4: a `depends_on` entry may be a module id, e.g. the
- * EEF VLM review needs the EEF module's results). Ticking it ticks them; unticking them unticks it. */
-export function moduleDependencies(reg: ModuleRegistry | undefined, id: string): string[] {
-  const ids = new Set((reg?.modules ?? []).map((m) => m.id));
-  return ((reg?.modules.find((m) => m.id === id)?.depends_on ?? []) as string[]).filter((d) => ids.has(d));
-}
-
-/** The selection after ticking or unticking `id`, with module dependencies kept consistent. */
-export function toggleModule(reg: ModuleRegistry | undefined, selected: string[], id: string): string[] {
-  if (selected.includes(id)) {
-    const off = new Set([id]);
-    for (let grew = true; grew; ) {
-      grew = false;
-      for (const x of selected) {
-        if (!off.has(x) && moduleDependencies(reg, x).some((d) => off.has(d))) {
-          off.add(x);
-          grew = true;
-        }
-      }
-    }
-    return selected.filter((x) => !off.has(x));
-  }
-  const out = [...selected];
-  const add = (x: string) => {
-    if (out.includes(x)) return;
-    moduleDependencies(reg, x).forEach(add);
-    out.push(x);
-  };
-  add(id);
-  return out;
+/** The selection after ticking or unticking `id`. (F5.6 ticked the modules a module re-examined along with
+ * it, reading every module id in `depends_on` that way - which also tied 技能画像 to 精确去重, whose
+ * `dedup` entry only orders the stages; the EEF review is gone since D49 and so is the rule.) */
+export function toggleModule(selected: string[], id: string): string[] {
+  return selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
 }
 
 /** The modules a preset turns on for this preflight (07 §3: 完整 / 快速 / 自选). */

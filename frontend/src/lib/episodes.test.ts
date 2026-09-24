@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseForDisplay, selectionCount, toExpr, toggleInExpr } from './episodes';
-import { availability, moduleDependencies, optIn, presetSelection, reasonText, toggleModule } from './preflight';
+import { availability, optIn, presetSelection, reasonText, toggleModule } from './preflight';
 import { DATASET_PROFILES, preflightFor, registry } from '../mocks/world';
 
 describe('episode expressions (display only; the server validates)', () => {
@@ -56,23 +56,19 @@ describe('preflight → availability and reasons', () => {
     expect(presetSelection('quick', registry, preflightFor(mcap, {}))).toEqual(['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'dedup']);
   });
 
-  it('ticking the EEF review ticks the EEF module; unticking the EEF module unticks the review (F5.6)', () => {
-    expect(moduleDependencies(registry, 'eef_video_review')).toEqual(['eef_video_consistency']);
-    expect(moduleDependencies(registry, 'task_success')).toEqual([]);
-    const on = toggleModule(registry, ['timestamp_check'], 'eef_video_review');
-    expect(on).toEqual(['timestamp_check', 'eef_video_consistency', 'eef_video_review']);
-    expect(toggleModule(registry, on, 'eef_video_review')).toEqual(['timestamp_check', 'eef_video_consistency']);
-    expect(toggleModule(registry, on, 'eef_video_consistency')).toEqual(['timestamp_check']);
-    expect(toggleModule(registry, ['dedup'], 'dedup')).toEqual([]);
+  it('ticking a module ticks that module only: 技能画像 does not drag 精确去重 along', () => {
+    expect(toggleModule(['timestamp_check'], 'skill_profile')).toEqual(['timestamp_check', 'skill_profile']);
+    expect(toggleModule(['dedup', 'skill_profile'], 'dedup')).toEqual(['skill_profile']);
+    expect(toggleModule(['dedup'], 'dedup')).toEqual([]);
   });
 
-  it('an advisory module is opted into by hand, never by a preset (registry 1.4, F5.5)', () => {
+  it('the EEF module is opted into by hand, never by a preset (F5.5, still so after D49)', () => {
     const r = preflightFor(droid200, { vlmBackend: 'ark-prod' });
     expect(availability(r, 'eef_video_consistency')).toBe('needs_input');
     expect(reasonText(r.modules.find((m) => m.id === 'eef_video_consistency'))).toContain('trajectory.json');
     const eef = registry.modules.find((m) => m.id === 'eef_video_consistency')!;
     expect(optIn(eef)).toBe(true);
-    expect(registry.modules.filter(optIn).map((m) => m.id)).toEqual(['eef_video_consistency', 'eef_video_review']);
+    expect(registry.modules.filter(optIn).map((m) => m.id)).toEqual(['eef_video_consistency']);
     expect(presetSelection('full', registry, r)).not.toContain('eef_video_consistency');
   });
 });

@@ -13,7 +13,7 @@ from curation.planner import PlanError, build_plan, derive_gates, validate_plan
 from . import examples as X
 
 ALL = list(C1.ids())
-V1 = [m.id for m in C1.MODULES if m.affects_dataset_verdict]          # the design example's eight
+V1 = [m.id for m in C1.MODULES if m.affects_dataset_verdict and m.id not in C1.native_ids()]   # v1's eight
 VLM_MODULES = [m.id for m in C1.MODULES if "vlm" in m.needs]
 
 
@@ -70,21 +70,15 @@ def test_full_plan_matches_the_design_example():
     assert stage(p, "final")["phase"] == "final"
 
 
-def test_advisory_modules_run_on_every_selected_episode_outside_the_funnel():
-    """Registry 1.4 / design doc 12 §11.1: the EEF pair never joins a funnel stage."""
+def test_the_eef_module_is_a_vlm_gate_on_the_frame_survivors():
+    """D49 / design doc 12 D-E11: the EEF module joins the vlm stage next to task_success."""
     p = plan(preflight=X.preflight(200, without_task=88))
-    assert ids(p) == ["autolabel", "numeric", "frame", "vlm", "advisory_frame", "advisory_vlm", "verdict",
-                      "dedup", "profile_vlm", "final"]
-    assert stage(p, "frame")["modules"] == ["visual_quality", "video_action_sync"]
-    assert stage(p, "vlm")["modules"] == ["task_success"]
-    assert stage(p, "advisory_frame") == {"id": "advisory_frame", "kind": "cpu", "command": "check",
-                                          "modules": ["eef_video_consistency"], "episodes": "selected",
-                                          "concurrency": 8}
-    rev = stage(p, "advisory_vlm")
-    assert rev["modules"] == ["eef_video_review"] and rev["episodes"] == "selected"
-    assert "hard_gates" not in stage(p, "advisory_frame")
+    assert ids(p) == ["autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile_vlm", "final"]
+    vlm = stage(p, "vlm")
+    assert vlm["modules"] == ["eef_video_consistency", "task_success"] and vlm["episodes"] == "survivors:frame"
+    assert vlm["hard_gates"] == ["eef_video_consistency", "task_success"]
     only = plan(["eef_video_consistency"])
-    assert ids(only) == ["advisory_frame", "verdict", "final"]
+    assert ids(only) == ["vlm", "verdict", "final"] and stage(only, "vlm")["episodes"] == "selected"
 
 
 def test_unselected_modules_and_empty_stages_disappear():

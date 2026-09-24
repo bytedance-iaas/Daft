@@ -17,10 +17,8 @@ const section = (id: string, summary: Record<string, unknown>, extra: Partial<Re
 });
 
 const EEF = {
-  assessment_mode: 'advisory',
-  affects_dataset_verdict: false,
   uncalibrated: true,
-  threshold_profile: 'demo-v1 1.0',
+  threshold_profile: 'demo 0.2',
   candidates: 3,
   assessed: 10,
   partially_assessable: 4,
@@ -36,31 +34,32 @@ const EEF = {
   unknown_by_subitem: [{ name: 'orientation_2d', count: 6 }],
   supported_hypotheses: [{ name: 'constant_offset', count: 2 }],
   subitem_status: { position_2d: { ok: 14, suspect: 3, unknown: 2, unsupported: 0, error: 1 }, temporal_alignment: { ok: 16, suspect: 1, unknown: 2, unsupported: 0, error: 1 } },
-  counts: { total: 20, pass: 0, fail: 0, abstain: 0, scored: 0, error: 1 },
-};
-
-const EEF_REVIEW = {
-  assessment_mode: 'advisory',
-  affects_dataset_verdict: false,
-  reviewed: 12,
-  incomplete: 2,
-  not_reviewed: 5,
-  errors: 1,
-  needs_human: 3,
-  conflicts: 4,
-  tracking_suspect: 1,
+  judged_pass: 12,
+  judged_reject: 2,
+  to_human: 5,
+  outcomes: [
+    { name: 'pass', count: 12 },
+    { name: 'reject', count: 2 },
+    { name: 'human', count: 5 },
+  ],
+  human_reasons: [
+    { name: 'conflict', count: 3 },
+    { name: 'not_assessable', count: 2 },
+  ],
+  reject_subitems: [{ name: 'position_2d', count: 2 }],
+  model_cpu_agreement: 0.8,
+  model_votes: 40,
   windows: 60,
   windows_answered: 55,
   windows_failed: 5,
-  truncated_episodes: 0,
+  tracking_suspect: 1,
   vlm_requests: 70,
-  cache_hits: 8,
   review_classes: [
     { name: 'support', count: 40 },
     { name: 'refute', count: 6 },
   ],
   failure_codes: [{ name: 'timeout', count: 5 }],
-  counts: { total: 20, pass: 0, fail: 0, abstain: 0, scored: 0, error: 1 },
+  counts: { total: 20, pass: 12, fail: 2, abstain: 5, scored: 0, error: 1 },
 };
 
 function render(id: string, summary: Record<string, unknown>) {
@@ -70,16 +69,15 @@ function render(id: string, summary: Record<string, unknown>) {
 }
 
 describe('the report sections (06 §6.2, F6.2)', () => {
-  it('has a view for the eight v1 modules and the two EEF modules', () => {
+  it('has a view for the eight v1 modules and the EEF module', () => {
     expect(Object.keys(SECTION_VIEWS).sort()).toEqual(
-      ['dedup', 'eef_video_consistency', 'eef_video_review', 'kinematic_limits', 'motion_quality', 'skill_profile', 'task_success', 'timestamp_check', 'video_action_sync', 'visual_quality'].sort(),
+      ['dedup', 'eef_video_consistency', 'kinematic_limits', 'motion_quality', 'skill_profile', 'task_success', 'timestamp_check', 'video_action_sync', 'visual_quality'].sort(),
     );
   });
 
   const cases: [string, Record<string, unknown>][] = [
     ...['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile'].map((id) => [id, sampleSummary(id, 200)] as [string, Record<string, unknown>]),
     ['eef_video_consistency', EEF],
-    ['eef_video_review', EEF_REVIEW],
   ];
   it.each(cases)('%s: key figures and at least one chart, in Chinese, without JSON or raw keys', async (id, summary) => {
     const body = render(id, summary);
@@ -93,9 +91,16 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(screen.queryByTestId(`old-report-${id}`)).toBeNull();
   });
 
-  it('EEF: the advisory note, the overall chart and the status matrix in Chinese', async () => {
+  it('EEF: the verdict figures, why people are asked and the status matrix in Chinese (D49)', async () => {
     render('eef_video_consistency', EEF);
-    expect(document.body).toHaveTextContent('建议性结果，不影响判决（阈值未校准）');
+    const figures = screen.getByTestId('summary-eef_video_consistency');
+    expect(figures).toHaveTextContent('判过12');
+    expect(figures).toHaveTextContent('判废2');
+    expect(figures).toHaveTextContent('转人工5');
+    expect(figures).toHaveTextContent('模型与 CPU 一致率80%');
+    expect(document.body).toHaveTextContent('意见冲突、模型给不出意见或判不了的，进人工裁决（阈值未校准）');
+    expect(document.body).not.toHaveTextContent('待人工看');
+    expect(await within(screen.getByTestId('chart-human')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('CPU 与模型意见相反 3'));
     expect(await within(screen.getByTestId('chart-suspect')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('位置 3'));
     const matrix = screen.getByTestId('eef-matrix');
     expect(matrix).toHaveTextContent('时间对齐');

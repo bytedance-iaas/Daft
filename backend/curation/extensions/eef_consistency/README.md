@@ -1,8 +1,10 @@
 # EEF–视频一致性（DEMO 模块，阶段 5）
 
-接入 v2（F5.4）：注册表 1.4 的两个建议性模块 `eef_video_consistency`（frame 档）与 `eef_video_review`（vlm 档，F5.6 的 VLM 复核）；
-命令行的 `check` 分派在 `backend/curation/cli/eef_check.py` 与 `eef_review.py`，模块参数 `--param` 在 `backend/curation/cli/modparams.py`，
-`aggregate` 在调用边界把它滤出判决，`report` 给它一节建议性摘要。
+接入 v2（D49，F5.9）：一个参与判决的模块 `eef_video_consistency`（vlm 档、一票否决、只跑前面没被判废的条目）：每条先由 CPU 测量，
+再请模型复核（一点一轴的请求包），`decide.py` 按设计 12 附录 C.9 给出判过、判废或转人工；命令行里它和任务成败判定同在 vlm 档，
+由 `pipeline/check_stage.py` 的 `StageRun` 逐条调用 `backend/curation/cli/eef_check.py` 的 `EefJudge`（流水线模式下同样逐条交接），
+模块参数 `--param` 在 `backend/curation/cli/modparams.py`；`aggregate` 在调用边界把它作为一票否决项加进 v1 的判决配置（A 类不动）。
+（F5.4–F5.8 期间是两个建议性模块 `eef_video_consistency` / `eef_video_review`，不影响判决。）
 
 设计：[docs/design/12-eef-video-consistency.md](../../../../docs/design/12-eef-video-consistency.md)；
 输入契约：[docs/contracts/eef/](../../../../docs/contracts/eef/)（`eef-video/1.0.0` 四段 + `trajectory-bundle/1.0` 单文件容器）。
@@ -27,7 +29,8 @@
 | `diagnosis.py` | 诊断假设（只在对应分项已 suspect 时算，不改状态）：PnP 外参修正、时间偏移、恒定朝向错（三维拟合 EEF 本体系恒定旋转）、TCP 轴向偏移（一维拟合）、位姿漂移、抖动来源 |
 | `profile.py`、`profiles/demo.yaml` | 阈值 profile；`demo` 标 `calibrated: false`，每个数都注明来自哪条基准的噪声底、乘了多少倍 |
 | `runner.py` | 单 episode 的流式执行：解码 → 观测 → 测量 → 判定 → 诊断 → 产物（`observations/`、`curves/*.parquet`、`evidence/` 叠加图），输出 §11.3 的 `detail` |
-| `preflight.py` | `curation preflight` 里两个模块的条目：文件校验、逐分项能力表、按 episode 计数；没给文件报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，F5.5 起控制台第二屏上传）；复核模块跟随它复核的模块（不可用报 `eef_base_unavailable`、缺文件同样要上传），再要 VLM 后端 |
+| `decide.py` | 逐条判决（D-E12 / 附录 C.9）：模型能看的分项（位置、朝向）按分项多数意见与 CPU 比对，模型看不了的分项（时间对齐、状态运动、相机运动）CPU 可疑即转人工，文件里没有或位置到处无法评估的转人工；有确认的判废即判废，否则有转人工理由即转人工，否则判过 |
+| `preflight.py` | `curation preflight` 里的模块条目：文件校验、逐分项能力表、按 episode 计数；没给文件报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，F5.5 起控制台第二屏上传）；复核模块跟随它复核的模块（不可用报 `eef_base_unavailable`、缺文件同样要上传），再要 VLM 后端 |
 | `review.py` | VLM 复核：窗口（同分项、时间重叠的 CPU 位置 / 朝向候选段合并成候选窗口，加均匀抽查窗口，每路相机各至多 N 个、超出记 `truncated`）；**每个窗口只问一个点 P 和至多一根轴 A**（候选窗口问 CPU 偏得最厉害的点 / 轴，抽查窗口问覆盖最好的点；轴在窗口里投影不足 20 px 就换最长的一根，都不够就不问朝向）；请求包：缩小的整帧、每帧原始裁剪与标记裁剪（声明的 P 红圈、跟踪到的 P 绿十字、声明的 A 红箭头，都标名字），prompt 只给这一点一轴的定义；答复校验（`eef/review_output.schema.json` 1.1、帧号必须来自请求、解释里不许有测量值，不合格给一次修复）、按发送内容缓存、`votes` 把答复变成分项投票 |
 | `report.py` | 报告小节摘要（候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率）与三张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis`；复核小节摘要（完整 / 未完成 / 未复核、窗口、冲突、待人工、失败原因）与 `eef_review_windows` 表 |
 | `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像）、`lerobot_mapping`（按显式的 `eef-mapping/1.0` 映射从 LeRobot 列生成 `trajectory.json`，形态 B，设计 §3.3；不是平台入口） |
@@ -81,26 +84,28 @@
 7. 受控异常矩阵（F5.3 验收，约 2 分钟；在仓库根执行）：
    `PYTHONPATH=backend:tools .venv/bin/python -m eef_eval.matrix`，应打印 18 行 `PASS`、`"cells_ok": 114`
    与 4 行轻重档 `PASS`；说明见 [tools/eef_eval/README.md](../../../../tools/eef_eval/README.md)。
-8. 在 v2 命令行链路上跑（F5.4，在 `backend/` 下，约 1 分钟）：
+8. 在 v2 命令行链路上跑（D49，在 `backend/` 下；需要一个 VLM 后端，下面用方舟预设 `ark`，环境变量 `ARK_API_KEY` 里放密钥）：
 
    ```bash
    G=~/ws/ws_general/galbot/dataset2; R=/tmp/eef_cli; mkdir -p $R
    P="--param eef_video_consistency.trajectory_json=$G/trajectory.json"
-   ../.venv/bin/python -m curation.cli preflight --json --input $G/eef_ds2_lr3 --modules timestamp_check,eef_video_consistency $P > $R/preflight.json
+   ../.venv/bin/python -m curation.cli preflight --json --input $G/eef_ds2_lr3 --vlm-backend ark --modules timestamp_check,eef_video_consistency $P > $R/preflight.json
    ../.venv/bin/python -m curation.cli plan --preflight $R/preflight.json --modules timestamp_check,eef_video_consistency --episodes 0-6 --out $R/plan.json
-   ../.venv/bin/python -m curation.cli check --modules timestamp_check --input $G/eef_ds2_lr3 --run-dir $R --episodes 0-6
-   ../.venv/bin/python -m curation.cli check --modules eef_video_consistency --input $G/eef_ds2_lr3 --run-dir $R --episodes 0-6 $P
+   ../.venv/bin/python -m curation.cli check --modules timestamp_check --input $G/eef_ds2_lr3 --run-dir $R --episodes 0-6 --survivors-out $R/numeric.txt
+   ../.venv/bin/python -m curation.cli check --modules eef_video_consistency --input $G/eef_ds2_lr3 --run-dir $R --episodes @$R/numeric.txt $P --vlm-backend ark
    ../.venv/bin/python -m curation.cli aggregate --run-dir $R --phase funnel --revision 1 --episodes 0-6
    ../.venv/bin/python -m curation.cli aggregate --run-dir $R --phase final --revision 1 --episodes 0-6 --input $G/eef_ds2_lr3
    ../.venv/bin/python -m curation.cli report --run-dir $R --revision 1
    ```
 
    `preflight.json` 里 `eef_video_consistency` 是 `available`，带 `subitems` 与 `episode_counts: {available: 7}`（不给 `--param` 时是
-   `needs_input: trajectory_missing`）；`plan.json` 多一个 `advisory_frame` 阶段、`episodes: selected`；EEF 的 `check` 打印
-   「abstain 7」（建议性模块不投票）；`aggregate` 的 keep / 终判清单与不选这个模块时相同；`revisions/r0001/report.md` 里
-   「EEF–视频一致性」一节写着「建议性结果，不影响判决（阈值未校准）：候选 6 · 全部可评估 1 …」，`tables/` 下有
-   `eef_camera_metrics`、`eef_segments`、`eef_diagnosis` 三张表（ep6 只有 `27432424_left` 位置 suspect，诊断 `extrinsics_error`）。
-9. 控制台上传与 Daemon 执行（F5.5）：先跑 `../.venv/bin/python -m pytest -q tests/orchestr/test_eef_tasks.py -m "slow or not slow"`
+   `needs_input: trajectory_missing`，给了文件但不给 `--vlm-backend` 时是 `needs_input: vlm_backend_missing`）；`plan.json` 的 `vlm`
+   阶段是 `eef_video_consistency`、`episodes: survivors:numeric`、`hard_gates` 里有它；EEF 的 `check` 按条打印通过 / 判废 / 弃权
+   （弃权就是转人工），每条记录的 `details.decision` 写着结论和理由，`details.review` 是每个复核窗口（问的点与轴、模型答复）；
+   `revisions/r0001/verdicts.jsonl` 里被它判废的条目是 `drop`，理由以「未通过「EEF–视频一致性」」开头；`report.md` 的
+   「EEF–视频一致性」一节写判过 / 判废 / 转人工条数、转人工的原因、CPU 可疑分项和模型与 CPU 的一致率；`tables/` 下有
+   `eef_camera_metrics`、`eef_segments`、`eef_diagnosis`、`eef_review_windows` 四张表。没有 VLM 后端时，第 10 步的测试用假模型走同一条路。
+9. 控制台上传与 Daemon 执行（F5.5 / F5.9）：先跑 `../.venv/bin/python -m pytest -q tests/orchestr/test_eef_tasks.py -m "slow or not slow"`
    （约 45 秒，含一个真跑 CLI 的端到端任务），应全部通过。再真起 Daemon（仓库根的 `.claude/launch.json` 里的
    `curator-daemon-eef`：开发用主密钥、不鉴权、本地数据根是 `~/ws/ws_general/galbot/dataset2`），在 `backend/` 下：
 
@@ -118,29 +123,18 @@
    `max_reprojection_difference_px` 约 0.013；第二次返回 400 `validation_failed`，`details.errors` 每条带
    `field`（JSON 路径）、`sample_id`、`frame_index`、`camera_id`、`point_id`，`code: forbidden_key`。
    然后在浏览器打开 <http://localhost:8080/curation/tasks/new>：数据来源选本地路径 `eef_ds2_lr3`，「快速质检」不会勾上
-   「EEF–视频一致性」（卡片上写「需要上传约定格式的 trajectory.json」），手动勾上；第二屏的 trajectory.json 选
-   `$G/trajectory.json`（上传后显示文件名、sha256 前 12 位与摘要），观测种子选 `/tmp/seeds.jsonl`（`.jsonl` 由控制台转成 JSON 数组）；
-   先选 `/tmp/bad.json` 能看到逐条定位的错误。创建并开始后：任务的运行目录有 `inputs/uploads.json` 与两份文件副本，
-   `plan.json` 有 `advisory_frame` 阶段，报告里有「EEF–视频一致性」一节（与第 8 步的命令行结果一致），keep / 终判清单与不勾这个模块时相同。
-   直接在 `modules[].params` 里填服务器路径会被 400 拒收（Daemon 只认 `upload:` 句柄）。
-10. VLM 复核（F5.6）：`../.venv/bin/python -m pytest -q tests/eef/test_review.py tests/cli/test_eef_review.py`（约 15 秒），
-    应全部通过——后者在迷你数据集上把每个分支（CPU ok 被模型否定、候选被模型认可两种冲突、答复不是 JSON 后修复、超时、
-    引用请求里没有的帧、解释里写了「约 2 cm」）录进 tape，再在新的运行目录离线回放，记录逐项相同；缓存命中不再发请求，
-    `--resume` 跳过当前行。有 VLM 后端时在第 8 步的运行目录上接着跑（没有时可以不跑，Daemon 的端到端测试用假模型走过一遍）：
-
-    ```bash
-    ../.venv/bin/python -m curation.cli check --modules eef_video_review --input $G/eef_ds2_lr3 --run-dir $R --episodes 0-6 $P \
-      --vlm-backend ark --json | python3 -m json.tool | head -20
-    ../.venv/bin/python -m curation.cli aggregate --run-dir $R --phase funnel --revision 2 --episodes 0-6
-    ../.venv/bin/python -m curation.cli aggregate --run-dir $R --phase final --revision 2 --episodes 0-6 --input $G/eef_ds2_lr3
-    ../.venv/bin/python -m curation.cli report --run-dir $R --revision 2
-    ```
-
-    每条 episode 一行记录（`checks/eef_video_review/results.jsonl`），`details.cameras.<相机>.windows` 列出每个窗口送了哪几帧、
-    模型的分类答复或失败原因、与 CPU 是否冲突；冲突与被否定的窗口在 `checks/eef_video_review/evidence/` 下留了送给模型的标记裁剪
-    （红圈是声明投影，绿十字是独立观测）；`report.md` 的「EEF–视频一致性 · VLM 复核」一节写「建议性复核，不影响判决」，
-    `tables/eef_review_windows.parquet` 是逐窗口明细；keep / 终判清单与不跑复核时相同。控制台里勾「EEF–视频一致性 · VLM 复核」会
-    自动带上「EEF–视频一致性」，取消后者也会取消复核；第二屏多两个复核参数（每路相机的窗口数、每窗口帧数）。
+   「EEF–视频一致性」（卡片上写「需要上传约定格式的 trajectory.json」），手动勾上后模型配置出现（它要用模型复核）；第二屏的
+   trajectory.json 选 `$G/trajectory.json`（上传后显示文件名、sha256 前 12 位与摘要），观测种子选 `/tmp/seeds.jsonl`
+   （`.jsonl` 由控制台转成 JSON 数组），另有复核窗口数、每窗口帧数两项；先选 `/tmp/bad.json` 能看到逐条定位的错误。
+   创建并开始后：任务的运行目录有 `inputs/uploads.json` 与两份文件副本，`plan.json` 的 `vlm` 阶段有这个模块，报告里有
+   「EEF–视频一致性」一节；被它判废的条目进拒绝清单。直接在 `modules[].params` 里填服务器路径会被 400 拒收（Daemon 只认 `upload:` 句柄）。
+10. 判决口径与复核（F5.9 / F5.10）：`../.venv/bin/python -m pytest -q tests/eef/test_decide.py tests/eef/test_review.py tests/cli/test_eef_review.py`
+    （约 30 秒），应全部通过——第一个逐条覆盖附录 C.9 的表；第二个检查每个请求只画一点一轴、prompt 只定义画出来的东西；
+    第三个在迷你数据集上用脚本化的答复把 CPU 正常被模型否定（转人工）、候选段被模型确认（判废，先经过一次格式修复）、
+    可疑但模型没给意见（超时、引用不存在的帧、解释里写了「约 2 cm」，转人工）、模型不反对（判过）、文件里没有（转人工）
+    都走一遍，录进 tape 后在新的运行目录离线回放，记录逐项相同，`aggregate` 只判废那一条。模型对照真值的准确率用
+    `PYTHONPATH=backend:tools .venv/bin/python -m eef_eval.review_eval --dataset dataset2 --stand-in`（假模型，只查流程）
+    或带 `--endpoint/--model/--api-key-env` 的真实后端跑（见 `tools/eef_eval/README.md`）。
 11. 从 LeRobot 列生成 trajectory.json（设计 §3.3）：`../.venv/bin/python -m pytest -q tests/eef/test_mapping.py`（约 15 秒），应全部通过；再手动：
 
     ```bash
@@ -182,6 +176,5 @@
 
 ## 回退
 
-两个模块都是建议性的：回退就是新建任务时不勾选（预设与「全选可用」本来不勾）；不勾时任务计划里没有 `advisory_*` 阶段，旧流程与之前
-逐字节相同。勾了也不改 keep / drop / held 与交付清单，只在报告里多建议性小节。
-
+回退就是新建任务时不勾选这个模块（预设与「全选可用」本来就不勾）：不勾时计划里没有它，判决配置与接入前完全相同，旧流程逐字节不变。
+勾了以后它参与判决（D49）：判废的条目进拒绝清单，转人工的出裁决卡片；阈值仍是未校准的 demo。

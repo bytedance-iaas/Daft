@@ -174,10 +174,12 @@ def _summary(rev: Revision, m: str) -> dict:
         out["families"] = len([f for f in fams if f != "未归类"])
         out["subskills"] = sum(len((f.get("subskills") or {})) for f in fams.values())
         out["undersampled"] = list(prof.get("undersampled") or [])[:20]
-    if not registry.get(m).affects_dataset_verdict:        # advisory (registry 1.4, design doc 12)
+    if m in registry.native_ids():                          # the EEF module (design doc 12, D49)
         from ..extensions.eef_consistency import report as eef_report
 
-        out.update(eef_report.review_summary(res) if m == "eef_video_review" else eef_report.summary(res))
+        out.update(eef_report.summary(res))
+        out.update(eef_report.review_summary(res))
+        out.update(eef_report.verdict_summary(res))
     if m == "timestamp_check":
         why: dict[str, int] = {}
         for r in res.values():
@@ -511,30 +513,20 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                  "failed": "失败"}[sec["state"]]
         lines.append(f"### {cn}({state})")
         cnt = sec["summary"]["counts"]
-        if spec is not None and not spec.affects_dataset_verdict and sec["id"] == "eef_video_review":
+        if spec is not None and sec["id"] in registry.native_ids():
+            # the EEF module (D49): CPU first, the model second; pass / reject / a person's card
             s = sec["summary"]
-            lines.append(f"- 建议性复核，不影响判决:完整复核 {s.get('reviewed', 0)} · 未完成 {s.get('incomplete', 0)} · "
-                         f"未复核 {s.get('not_reviewed', 0)} · 出错 {cnt['error']}")
-            lines.append(f"- 窗口 {s.get('windows', 0)}(有答复 {s.get('windows_answered', 0)},"
-                         f"失败 {s.get('windows_failed', 0)});与 CPU 冲突 {s.get('conflicts', 0)} 处,"
-                         f"待人工看 {s.get('needs_human', 0)} 条;观测待核实 {s.get('tracking_suspect', 0)} 处")
-            fails = "、".join(f"{x['name']} {x['count']}" for x in s.get("failure_codes") or []) or "无"
-            lines.append(f"- 失败原因:{fails}")
-            lines.append("")
-            continue
-        if spec is not None and not spec.affects_dataset_verdict:
-            # advisory (registry 1.4): no pass / fail / abstain, never part of the verdict
-            s = sec["summary"]
-            lines.append(f"- 建议性结果，不影响判决{'（阈值未校准）' if s.get('uncalibrated') else ''}:"
-                         f"候选 {s.get('candidates', 0)} · 全部可评估 {s.get('assessed', 0)} · "
-                         f"部分可评估 {s.get('partially_assessable', 0)} · 无法评估 {s.get('not_assessable', 0)} · "
-                         f"出错 {cnt['error']}")
+            lines.append(f"- 判过 {s.get('judged_pass', 0)} · 判废 {s.get('judged_reject', 0)} · "
+                         f"转人工 {s.get('to_human', 0)} · 出错 {cnt['error']}"
+                         f"{'（阈值未校准）' if s.get('uncalibrated') else ''}")
+            why = "、".join(f"{x['name']} {x['count']}" for x in s.get("human_reasons") or []) or "无"
+            lines.append(f"- 转人工的原因(条数):{why}")
             sus = "、".join(f"{x['name']} {x['count']}" for x in s.get("suspect_by_subitem") or []) or "无"
-            lines.append(f"- 可疑分项(条数):{sus}")
-            hyp = "、".join(f"{x['name']} {x['count']}" for x in s.get("supported_hypotheses") or []) or "无"
-            lines.append(f"- 被支持的诊断假设:{hyp}")
-            if s.get("coverage_median") is not None:
-                lines.append(f"- 可比覆盖率中位数 {s['coverage_median']}(最低 {s.get('coverage_min')})")
+            lines.append(f"- CPU 可疑分项(条数):{sus}")
+            agree = s.get("model_cpu_agreement")
+            lines.append(f"- 模型复核:窗口 {s.get('windows', 0)}(有答复 {s.get('windows_answered', 0)},"
+                         f"失败 {s.get('windows_failed', 0)}),与 CPU 一致率 "
+                         f"{'—' if agree is None else agree}({s.get('model_votes', 0)} 票)")
             lines.append("")
             continue
         lines.append(f"- 通过 {cnt['pass']} · 判废 {cnt['fail']} · 弃权 {cnt['abstain']}"

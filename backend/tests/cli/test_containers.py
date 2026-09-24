@@ -76,7 +76,7 @@ def test_preflight_reads_the_format(cli, mini_mcap, mini_lance, fmt):
     for m in ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
               "video_action_sync", "task_success", "dedup", "skill_profile"):
         assert by[m]["availability"] == "available", by[m]
-    for m in ("eef_video_consistency", "eef_video_review"):
+    for m in ("eef_video_consistency",):
         assert by[m]["availability"] == "unsupported"
         assert by[m]["reason_code"] == "format_unsupported_by_module"
         assert by[m]["reason_args"] == {"format": fmt}

@@ -353,16 +353,13 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
         elif "eef_input" in spec.needs:
             from ..extensions.eef_consistency import preflight as eef_preflight
 
-            if eef_base is None:              # the review reads the module it reviews: same file
+            if eef_base is None:
                 eef_base = eef_preflight.consistency_entry(
                     modparams.with_defaults(eef_preflight.MODULE_ID,
                                             getattr(args, "module_params", {}).get(eef_preflight.MODULE_ID)),
                     episodes=[ep.index for ep in episodes], media_exists=lambda key: key in listing,
                     lerobot_root=None if "://" in uri else uri)
-            if "vlm" in spec.needs:
-                entry.update(eef_preflight.review_entry(eef_base, vlm_backend=bool(vlm_backend)))
-            else:
-                entry.update(eef_base)
+            entry.update(eef_preflight.module_entry(eef_base, vlm_backend=bool(vlm_backend)))
         elif "embodiment_profile" in spec.needs and emb_state != "ok":
             if emb_state == "unsupported":
                 who = "embodiment" if override else "robot_type"

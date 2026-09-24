@@ -53,7 +53,7 @@ def summary(results: dict) -> dict:
         profile = profile or d.get("threshold_profile")
     coverage.sort()
     series = lambda counts: [{"name": k, "count": v} for k, v in counts.items() if v]  # noqa: E731
-    return {"assessment_mode": "advisory", "affects_dataset_verdict": False, "uncalibrated": uncalibrated,
+    return {"uncalibrated": uncalibrated,
             "threshold_profile": f"{profile['name']} {profile['version']}" if profile else None,
             "candidates": overall.get("candidate", 0), "assessed": overall.get("assessed", 0),
             "partially_assessable": overall.get("partially_assessable", 0),
@@ -135,51 +135,85 @@ def table_rows(table: str, results: dict) -> list[dict]:
 
 
 def review_summary(results: dict) -> dict:
-    """The review's section (F5.6): how many episodes were reviewed completely, how many windows got
-    an answer, the conflicts with the CPU that wait for a person and the observations to verify."""
+    """The model's side of the section: how many episodes were reviewed completely, how many windows got
+    an answer and why the others did not, and how often the model agreed with the CPU."""
     status: dict[str, int] = {}
     classes: dict[str, int] = {}
     failures: dict[str, int] = {}
-    n = {"windows": 0, "answered": 0, "failed": 0, "conflicts": 0, "tracking_suspect": 0, "requests": 0,
-         "cache_hits": 0, "needs_human": 0, "truncated": 0}
+    n = {"windows": 0, "answered": 0, "failed": 0, "tracking_suspect": 0, "requests": 0, "cache_hits": 0,
+         "truncated": 0}
+    agree = votes = 0
     for rec in results.values():
         d = rec.get("details") or {}
-        st = d.get("status") or ("error" if rec.get("verdict") == "error" else "not_reviewed")
+        rv = d.get("review") or {}
+        st = rv.get("status") or ("error" if rec.get("verdict") == "error" else "not_reviewed")
         status[st] = status.get(st, 0) + 1
-        sm = d.get("summary") or {}
-        for k in ("windows", "answered", "failed", "conflicts", "tracking_suspect", "requests", "cache_hits"):
+        sm = rv.get("summary") or {}
+        for k in ("windows", "answered", "failed", "tracking_suspect", "requests", "cache_hits"):
             n[k] += int(sm.get(k) or 0)
-        n["needs_human"] += bool(d.get("needs_human"))
         n["truncated"] += bool(sm.get("truncated"))
         for k in ("support", "refute", "uncertain", "not_observable"):
             if sm.get(k):
                 classes[k] = classes.get(k, 0) + int(sm[k])
-        for cam in (d.get("cameras") or {}).values():
+        cams = d.get("cameras") or {}
+        for cid, cam in (rv.get("cameras") or {}).items():
+            cells = (cams.get(cid) or {}).get("subitems") or {}
             for w in cam.get("windows") or []:
                 code = (w.get("failure") or {}).get("code")
                 if code:
                     failures[code] = failures.get(code, 0) + 1
+                a = w.get("answer") or {}
+                for sub, key in ((C.POSITION, "position_support"), (C.ORIENTATION, "orientation_support")):
+                    said = a.get(key)
+                    cpu = C.SUSPECT if (w.get("kind") == "candidate" and w.get("subitem") == sub) \
+                        else (cells.get(sub) or {}).get("status")
+                    if said in ("support", "refute") and cpu in (C.OK, C.SUSPECT):
+                        votes += 1
+                        agree += (said == "refute") == (cpu == C.SUSPECT)
     series = lambda counts: [{"name": k, "count": v} for k, v in counts.items() if v]  # noqa: E731
-    return {"assessment_mode": "advisory", "affects_dataset_verdict": False,
-            "reviewed": status.get("completed", 0), "incomplete": status.get("incomplete", 0),
-            "not_reviewed": status.get("not_reviewed", 0), "errors": status.get("error", 0),
-            "needs_human": n["needs_human"], "conflicts": n["conflicts"], "tracking_suspect": n["tracking_suspect"],
-            "windows": n["windows"], "windows_answered": n["answered"], "windows_failed": n["failed"],
-            "truncated_episodes": n["truncated"], "vlm_requests": n["requests"], "cache_hits": n["cache_hits"],
-            "review_classes": series(classes), "failure_codes": series(failures)}
+    return {"reviewed": status.get("completed", 0), "incomplete": status.get("incomplete", 0),
+            "not_reviewed": status.get("not_reviewed", 0),
+            "tracking_suspect": n["tracking_suspect"], "windows": n["windows"], "windows_answered": n["answered"],
+            "windows_failed": n["failed"], "truncated_episodes": n["truncated"], "vlm_requests": n["requests"],
+            "cache_hits": n["cache_hits"], "model_cpu_agreement": round(agree / votes, 3) if votes else None,
+            "model_votes": votes, "review_classes": series(classes), "failure_codes": series(failures)}
+
+
+def verdict_summary(results: dict) -> dict:
+    """What the module decided (D-E12): pass / reject / to a person, why people are asked and which
+    sub-items the rejects came from."""
+    outcomes = {"pass": 0, "reject": 0, "human": 0, "error": 0}
+    human: dict[str, int] = {}
+    rejected: dict[str, int] = {}
+    for rec in results.values():
+        dec = (rec.get("details") or {}).get("decision") or {}
+        o = dec.get("outcome") or ("error" if rec.get("verdict") == "error" else None)
+        if o in outcomes:
+            outcomes[o] += 1
+        for h in dec.get("human") or []:
+            human[h["code"]] = human.get(h["code"], 0) + 1
+        for c in dec.get("confirmed") or []:
+            rejected[c.get("subitem", "")] = rejected.get(c.get("subitem", ""), 0) + 1
+    series = lambda counts: [{"name": k, "count": v} for k, v in counts.items() if v]  # noqa: E731
+    return {"judged_pass": outcomes["pass"], "judged_reject": outcomes["reject"], "to_human": outcomes["human"],
+            "outcomes": series({"pass": outcomes["pass"], "reject": outcomes["reject"], "human": outcomes["human"],
+                                "error": outcomes["error"]}),
+            "human_reasons": series(dict(sorted(human.items(), key=lambda kv: -kv[1]))),
+            "reject_subitems": series(rejected)}
 
 
 def review_rows(results: dict) -> list[dict]:
     out: list[dict] = []
     for ep, rec in sorted(results.items()):
         d = rec.get("details") or {}
-        for cid, cam in (d.get("cameras") or {}).items():
+        for cid, cam in ((d.get("review") or {}).get("cameras") or {}).items():
             for w in cam.get("windows") or []:
                 a = w.get("answer") or {}
                 c = w.get("conflict") or {}
                 seg = w.get("segment") or {}
                 out.append({"episode_index": int(ep), "camera": cid, "kind": w.get("kind"),
-                            "subitem": w.get("subitem") or "", "frames": ",".join(str(f) for f in w.get("frames") or []),
+                            "subitem": w.get("subitem") or "", "point": w.get("point_id") or "",
+                            "axis": w.get("axis_id") or "", "frames": ",".join(str(f) for f in w.get("frames") or []),
                             "start_s": _num(seg.get("start_s")), "status": w.get("status"),
                             "review_status": a.get("review_status") or "",
                             "position_support": a.get("position_support") or "",
@@ -190,8 +224,9 @@ def review_rows(results: dict) -> list[dict]:
                             "conflict": f"{c.get('subitem')}: CPU {c.get('cpu')} / VLM {c.get('vlm')}" if c else "",
                             "failure": (w.get("failure") or {}).get("code") or "",
                             "explanation": a.get("explanation") or "", "attempts": w.get("attempts")})
-        if not d.get("cameras"):
-            out.append({"episode_index": int(ep), "camera": "", "kind": "", "status": d.get("status") or "",
-                        "review_status": "", "conflict": "", "failure": ";".join(d.get("reasons") or [])})
+        if not (d.get("review") or {}).get("cameras"):
+            rv = d.get("review") or {}
+            out.append({"episode_index": int(ep), "camera": "", "kind": "", "status": rv.get("status") or "",
+                        "review_status": "", "conflict": "", "failure": ";".join(rv.get("reasons") or [])})
     return out
 

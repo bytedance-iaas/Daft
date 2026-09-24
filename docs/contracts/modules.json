@@ -1,5 +1,5 @@
 {
- "registry_version": "1.7",
+ "registry_version": "1.8",
  "stages": [
   "numeric",
   "frame",
@@ -306,20 +306,23 @@
   {
    "id": "eef_video_consistency",
    "name_zh": "EEF–视频一致性",
-   "summary_zh": "把声明的末端执行器投影与画面里独立定位的夹爪逐帧比较，报告位置、方向、时间错位、数值抖动与画面运动（DEMO，建议性，不影响判决）",
+   "summary_zh": "先由 CPU 逐帧比较声明的末端执行器投影与画面里独立定位的夹爪，再请多模态模型复核；两边一致就判过或判废，意见冲突、模型给不出意见或判不了的交人工裁决（DEMO，阈值未校准）",
    "level": "episode",
-   "gate": "none",
+   "gate": "hard",
    "needs": [
     "eef_input",
-    "video"
+    "video",
+    "vlm"
    ],
-   "stage": "frame",
-   "depends_on": [],
+   "stage": "vlm",
+   "depends_on": [
+    "frame_gates"
+   ],
    "produces_adjudication": false,
    "review_lines": [],
    "appealable": false,
-   "input_scope": "all_selected",
-   "affects_dataset_verdict": false,
+   "input_scope": "funnel",
+   "affects_dataset_verdict": true,
    "param_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -367,16 +370,12 @@
      },
      "threshold_profile": {
       "title": "阈值",
-      "description": "demo 由基准噪声底定、未校准，分项显示 ok / suspect 并标「未校准」；不判定时只出曲线与测量值",
+      "description": "demo 由基准噪声底定、未校准；模块参与判决（D49），没有阈值就判不了，所以不再提供「不判定」",
       "default": "demo",
       "oneOf": [
        {
         "const": "demo",
         "title": "demo（未校准）"
-       },
-       {
-        "const": "none",
-        "title": "不判定，只出曲线"
        }
       ]
      },
@@ -429,6 +428,22 @@
         "title": "不存"
        }
       ]
+     },
+     "review_windows_per_camera": {
+      "type": "integer",
+      "title": "每路相机的复核窗口数",
+      "description": "模型复核时，候选窗口与均匀抽查窗口各取至多这么多个",
+      "default": 3,
+      "minimum": 1,
+      "maximum": 6
+     },
+     "review_frames_per_window": {
+      "type": "integer",
+      "title": "每个窗口的帧数",
+      "description": "每个复核窗口最多送给模型的帧数",
+      "default": 6,
+      "minimum": 1,
+      "maximum": 12
      }
     }
    },
@@ -465,6 +480,19 @@
       "episode_index",
       "camera",
       "hypothesis"
+     ],
+     "default_sort": "episode_index"
+    },
+    {
+     "id": "eef_review_windows",
+     "title_zh": "复核窗口",
+     "sortable": [
+      "episode_index",
+      "camera",
+      "kind",
+      "status",
+      "review_status",
+      "conflict"
      ],
      "default_sort": "episode_index"
     }
@@ -526,65 +554,6 @@
      "sortable": [
       "episode_index",
       "verdict"
-     ],
-     "default_sort": "episode_index"
-    }
-   ],
-   "mergeable": false
-  },
-  {
-   "id": "eef_video_review",
-   "name_zh": "EEF–视频一致性 · VLM 复核",
-   "summary_zh": "对候选与抽查窗口请多模态模型复核跟踪目标与偏移方向，只做分类不做测量",
-   "level": "episode",
-   "gate": "none",
-   "needs": [
-    "eef_input",
-    "video",
-    "vlm"
-   ],
-   "stage": "vlm",
-   "depends_on": [
-    "eef_video_consistency"
-   ],
-   "produces_adjudication": false,
-   "review_lines": [],
-   "appealable": false,
-   "input_scope": "all_selected",
-   "affects_dataset_verdict": false,
-   "param_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "properties": {
-     "review_windows_per_camera": {
-      "type": "integer",
-      "title": "每路相机的复核窗口数",
-      "description": "均匀抽查与候选窗口各取至多这么多个",
-      "default": 3,
-      "minimum": 0,
-      "maximum": 6
-     },
-     "review_frames_per_window": {
-      "type": "integer",
-      "title": "每个窗口的帧数",
-      "description": "每个复核窗口最多送给模型的帧数",
-      "default": 6,
-      "minimum": 1,
-      "maximum": 12
-     }
-    }
-   },
-   "tables": [
-    {
-     "id": "eef_review_windows",
-     "title_zh": "复核窗口",
-     "sortable": [
-      "episode_index",
-      "camera",
-      "kind",
-      "status",
-      "review_status",
-      "conflict"
      ],
      "default_sort": "episode_index"
     }

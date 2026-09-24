@@ -44,7 +44,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.7"
+REGISTRY_VERSION = "1.8"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
@@ -61,7 +61,8 @@ NEEDS: frozenset[str] = frozenset({"timestamps", "action", "state", "video",
 #: What a module's input depends on. A change upstream makes the module stale.
 #: numeric_gates / frame_gates: survivors of the hard gates of that stage;
 #: funnel_verdict: the keep set after the funnel verdict.
-#: A module id (1.4) means its own results: eef_video_review re-examines eef_video_consistency.
+#: A module id (1.4) means its own results (1.4-1.7: eef_video_review re-examined eef_video_consistency;
+#: 1.8 folded it in, D49).
 DEPENDENCIES: frozenset[str] = frozenset({"numeric_gates", "frame_gates", "autolabel",
                                           "funnel_verdict", "dedup", "eef_video_consistency"})
 
@@ -201,7 +202,8 @@ def upload_params(module_id: str) -> dict[str, str]:
 
 
 def _eef_params() -> dict:
-    """design doc 12 §11.1 / §12. ``trajectory_json`` is required; ``observation_seeds`` (a person's anchors)
+    """design doc 12 §11.1 / §12, C.9 (D49: the review's two parameters joined). ``trajectory_json`` is required;
+    ``observation_seeds`` (a person's anchors)
     or ``gripper_template`` (automatic anchors, F5.8) give the tracker its anchors - one of the two per camera,
     seeds win where both exist; without either, position, orientation and time cannot be measured."""
     return {
@@ -222,10 +224,10 @@ def _eef_params() -> dict:
                             "不用逐条 episode 点种子；与「观测种子」二选一，两样都不给时只做数值轨迹与画面运动",
                 default=""),
             "threshold_profile": {
-                "title": "阈值", "description": "demo 由基准噪声底定、未校准，分项显示 ok / suspect 并标「未校准」；"
-                                                "不判定时只出曲线与测量值",
+                "title": "阈值", "description": "demo 由基准噪声底定、未校准；模块参与判决（D49），没有阈值就判不了，"
+                                                "所以不再提供「不判定」",
                 "default": "demo",
-                "oneOf": [{"const": "demo", "title": "demo（未校准）"}, {"const": "none", "title": "不判定，只出曲线"}]},
+                "oneOf": [{"const": "demo", "title": "demo（未校准）"}]},
             "camera_mounts": {
                 "title": "参与的相机", "description": "腕部相机只做位置与方向（D-E9）；移动相机不支持",
                 "default": "fixed_external_and_wrist",
@@ -244,16 +246,10 @@ def _eef_params() -> dict:
                 "default": "flagged",
                 "oneOf": [{"const": "flagged", "title": "有可疑分项的"}, {"const": "all", "title": "全部"},
                           {"const": "off", "title": "不存"}]},
-        }}
-
-
-def _eef_review_params() -> dict:
-    return {
-        "type": "object", "additionalProperties": False,
-        "properties": {
             "review_windows_per_camera": {
                 "type": "integer", "title": "每路相机的复核窗口数",
-                "description": "均匀抽查与候选窗口各取至多这么多个", "default": 3, "minimum": 0, "maximum": 6},
+                "description": "模型复核时，候选窗口与均匀抽查窗口各取至多这么多个", "default": 3, "minimum": 1,
+                "maximum": 6},
             "review_frames_per_window": {
                 "type": "integer", "title": "每个窗口的帧数", "description": "每个复核窗口最多送给模型的帧数",
                 "default": 6, "minimum": 1, "maximum": 12},
@@ -302,17 +298,19 @@ MODULES: tuple[ModuleSpec, ...] = (
                           ("episode_index", "lag_s", "corr_peak")),)),
     ModuleSpec(
         id="eef_video_consistency", name_zh="EEF–视频一致性",
-        summary_zh="把声明的末端执行器投影与画面里独立定位的夹爪逐帧比较，报告位置、方向、时间错位、"
-                   "数值抖动与画面运动（DEMO，建议性，不影响判决）",
-        level="episode", gate="none", needs=frozenset({"video", "eef_input"}), stage="frame",
-        depends_on=(), produces_adjudication=False, param_schema=_eef_params(),
+        summary_zh="先由 CPU 逐帧比较声明的末端执行器投影与画面里独立定位的夹爪，再请多模态模型复核；"
+                   "两边一致就判过或判废，意见冲突、模型给不出意见或判不了的交人工裁决（DEMO，阈值未校准）",
+        level="episode", gate="hard", needs=frozenset({"video", "vlm", "eef_input"}), stage="vlm",
+        depends_on=("frame_gates",), produces_adjudication=False, param_schema=_eef_params(),
         tables=(TableSpec("eef_camera_metrics", "逐相机分项",
                           ("episode_index", "camera", "position_median_px", "orientation_median_deg",
                            "lag_s", "coverage")),
                 TableSpec("eef_segments", "候选段", ("episode_index", "camera", "subitem", "start_s",
                                                    "duration_s")),
-                TableSpec("eef_diagnosis", "诊断假设", ("episode_index", "camera", "hypothesis"))),
-        input_scope="all_selected", affects_dataset_verdict=False),
+                TableSpec("eef_diagnosis", "诊断假设", ("episode_index", "camera", "hypothesis")),
+                TableSpec("eef_review_windows", "复核窗口", ("episode_index", "camera", "kind", "status",
+                                                          "review_status", "conflict"))),
+        input_scope="funnel", affects_dataset_verdict=True),
     ModuleSpec(
         id="task_success", name_zh="任务成败判定",
         summary_zh="由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
@@ -324,15 +322,6 @@ MODULES: tuple[ModuleSpec, ...] = (
             "为哪些条目保存判定时看过的画面"),
         tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),),
         review_lines=("task_verdict", "label"), appealable=True),
-    ModuleSpec(
-        id="eef_video_review", name_zh="EEF–视频一致性 · VLM 复核",
-        summary_zh="对候选与抽查窗口请多模态模型复核跟踪目标与偏移方向，只做分类不做测量",
-        level="episode", gate="none", needs=frozenset({"video", "vlm", "eef_input"}), stage="vlm",
-        depends_on=("eef_video_consistency",), produces_adjudication=False,
-        param_schema=_eef_review_params(),
-        tables=(TableSpec("eef_review_windows", "复核窗口", ("episode_index", "camera", "kind", "status",
-                                                          "review_status", "conflict")),),
-        input_scope="all_selected", affects_dataset_verdict=False),
     ModuleSpec(
         id="dedup", name_zh="精确去重",
         summary_zh="找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",
@@ -350,6 +339,12 @@ MODULES: tuple[ModuleSpec, ...] = (
         tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),),
         review_lines=("label",)),
 )
+
+
+def native_ids() -> tuple[str, ...]:
+    """Modules v2 runs itself, outside v1's check configuration (the EEF module, registry 1.8):
+    v1's ``apply_check_selection`` never sees them; aggregate adds their gate to the verdict config."""
+    return tuple(m.id for m in MODULES if "eef_input" in m.needs)
 
 
 def advisory_ids() -> tuple[str, ...]:

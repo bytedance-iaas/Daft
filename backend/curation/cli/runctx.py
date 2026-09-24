@@ -141,13 +141,14 @@ def stage_config(ctx: Context, modules, *, gates: dict | None = None,
     """The pipeline config for this call: exactly ``modules`` enabled (v1's ``--only``),
     the VLM settings from the arguments and the gate sizes as v1 config keys.
 
-    Advisory modules (registry 1.4) are not v1 checks and never enter v1's config: they are
-    left out here, and a call that selects nothing else runs with every v1 check off."""
+    Advisory modules (registry 1.4) and the modules v2 runs itself (``native_ids``, the EEF module)
+    are not v1 checks and never enter v1's config: they are left out here, and a call that selects
+    nothing else runs with every v1 check off. Their gate joins the verdict config in aggregate."""
     from ..contracts import modules as registry
     from ..pipeline.config import apply_check_selection, apply_overrides, validate_config
 
     cfg = copy.deepcopy(ctx.config())
-    v1 = [m for m in modules if m not in registry.advisory_ids()]
+    v1 = [m for m in modules if m not in registry.advisory_ids() and m not in registry.native_ids()]
     try:
         if v1:
             cfg = apply_check_selection(cfg, only=",".join(v1))
@@ -589,8 +590,10 @@ class VlmSession:
     """``with VlmSession(ctx, args, cfg, module): ...`` - probe the endpoint, install the
     transport policy and the usage booker for the command's lifetime."""
 
-    def __init__(self, ctx: Context, args, cfg: dict, module: str, run_dir: str):
+    def __init__(self, ctx: Context, args, cfg: dict, module: str, run_dir: str,
+                 by_tag: dict[str, str] | None = None):
         self.ctx, self.args, self.cfg, self.module, self.run_dir = ctx, args, cfg, module, run_dir
+        self.by_tag = by_tag
         self._installed = None
         self._usage_log = None
         self.booker = None
@@ -625,7 +628,7 @@ class VlmSession:
             raise UsageError("--retry must not be negative")
         self.probe()
         self._usage_log = AppendLog(os.path.join(self.run_dir, USAGE_FILE))
-        self.booker = vlm_policy.UsageBooker(self.module, str(self._vlm()["model"]),
+        self.booker = vlm_policy.UsageBooker(self.module, str(self._vlm()["model"]), by_tag=self.by_tag,
                                              emit=self.ctx.emitter.emit,
                                              persist=self._usage_log.write)
         policy = vlm_policy.TransportPolicy(

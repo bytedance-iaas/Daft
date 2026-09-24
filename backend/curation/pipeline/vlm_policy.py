@@ -373,8 +373,9 @@ class UsageBooker:
     """
 
     def __init__(self, module: str, model: str, *, emit: Callable[[dict], None] | None = None,
-                 persist: Callable[[dict], None] | None = None):
+                 persist: Callable[[dict], None] | None = None, by_tag: dict[str, str] | None = None):
         self.module, self.model = module, model
+        self.by_tag = dict(by_tag or {})       # a call kind of another module in the same session (D49: EEF)
         self._persist = persist
 
         def out(line: dict) -> None:
@@ -393,7 +394,7 @@ class UsageBooker:
             except Exception:  # noqa: BLE001 - an unreadable body has no usage
                 usage = None
         self.ledger.record(model=self.model, call_kind=str(tag or "probe"),
-                           shares={self.module: (1, 1)}, usage=usage)
+                           shares={self.by_tag.get(str(tag), self.module): (1, 1)}, usage=usage)
 
     def totals(self) -> dict:
         return self.ledger.task_totals()

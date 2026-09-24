@@ -436,18 +436,33 @@ function skillModel(s: Summary): ViewModel {
 
 function eefModel(s: Summary): ViewModel {
   const Z = S().eef;
+  const R = Z.review;
   const stats: StatSpec[] = [];
-  for (const k of ['candidates', 'assessed', 'partially_assessable', 'not_assessable', 'errors']) {
-    if (num(s[k]) !== null) stats.push({ label: Z.overall[k], value: num(s[k]), tone: k === 'candidates' && num(s[k]) ? 'warn' : undefined });
-  }
+  const outcome: [string, string, boolean][] = [
+    ['judged_pass', Z.outcome.pass, false],
+    ['judged_reject', Z.outcome.reject, true],
+    ['to_human', Z.outcome.human, true],
+  ];
+  for (const [k, label, warn] of outcome) if (num(s[k]) !== null) stats.push({ label, value: num(s[k]), tone: warn && num(s[k]) ? 'warn' : undefined });
+  if (num(s.model_cpu_agreement) !== null)
+    stats.push({ label: Z.agreement, value: `${Math.round(num(s.model_cpu_agreement)! * 100)}%`, foot: Z.agreementFoot(num(s.model_votes) ?? 0) });
+  if (num(s.windows) !== null) stats.push({ label: R.windows, value: num(s.windows), foot: Z.windowsValue(num(s.windows_answered) ?? 0, num(s.windows_failed) ?? 0) });
   if (num(s.coverage_median) !== null) stats.push({ label: Z.coverage, value: fmt(num(s.coverage_median)), foot: Z.coverageValue(fmt(num(s.coverage_median)), fmt(num(s.coverage_min))) });
-  if (num(s.cameras_measured) !== null) stats.push({ label: zh.summaryKeys.cameras_measured ?? 'cameras_measured', value: num(s.cameras_measured) });
+  for (const k of ['tracking_suspect', 'vlm_requests', 'truncated_episodes']) if (num(s[k])) stats.push({ label: zh.summaryKeys[k] ?? k, value: num(s[k]) });
   if (str(s.threshold_profile)) stats.push({ label: zh.summaryKeys.threshold_profile ?? 'threshold_profile', value: <span style={{ fontSize: 15 }}>{str(s.threshold_profile)}</span> });
   const charts: ChartSpec[] = [];
-  const overall = ['candidates', 'assessed', 'partially_assessable', 'not_assessable', 'errors'].filter((k) => num(s[k]) !== null).map((k) => ({ name: Z.overall[k], value: num(s[k])! }));
-  if (anyValue(overall)) charts.push({ key: 'overall', title: Z.overallChart, items: overall, horizontal: true });
+  const outcomes = labelled(s.outcomes, Z.outcome);
+  if (anyValue(outcomes)) charts.push({ key: 'outcomes', title: Z.outcomeChart, items: outcomes, horizontal: true });
+  const human = labelled(s.human_reasons, Z.humanReason);
+  if (anyValue(human)) charts.push({ key: 'human', title: Z.humanChart, desc: Z.humanChartDesc, items: human, horizontal: true, colors: human.map(() => ORANGE) });
   const suspect = labelled(s.suspect_by_subitem, Z.subitem);
   if (anyValue(suspect)) charts.push({ key: 'suspect', title: zh.summaryKeys.suspect_by_subitem ?? '', items: suspect, colors: suspect.map(() => ORANGE) });
+  const rejected = labelled(s.reject_subitems, Z.subitem);
+  if (anyValue(rejected)) charts.push({ key: 'rejected', title: Z.rejectChart, items: rejected });
+  const classes = labelled(s.review_classes, Z.reviewClasses);
+  if (anyValue(classes)) charts.push({ key: 'classes', title: zh.summaryKeys.review_classes ?? '', items: classes });
+  const failures = seriesOf(s.failure_codes);
+  if (anyValue(failures)) charts.push({ key: 'failures', title: zh.summaryKeys.failure_codes ?? '', items: failures, horizontal: true, colors: failures.map(() => ORANGE) });
   const hyps = seriesOf(s.supported_hypotheses);
   if (anyValue(hyps)) charts.push({ key: 'hypotheses', title: Z.hypotheses, items: hyps, horizontal: true });
   const blocks: ReactNode[] = [];
@@ -474,36 +489,11 @@ function eefModel(s: Summary): ViewModel {
   }
   const notes: ReactNode[] = [
     <span className="muted">
-      {Z.advisory}
+      {Z.verdictNote}
       {s.uncalibrated ? Z.uncalibrated : ''}
     </span>,
   ];
   return { stats, charts, blocks, notes, fresh: true };
-}
-
-function eefReviewModel(s: Summary): ViewModel {
-  const Z = S().eef;
-  const R = Z.review;
-  const stats: StatSpec[] = [];
-  const keys: [string, string][] = [
-    ['reviewed', R.reviewed],
-    ['incomplete', R.incomplete],
-    ['not_reviewed', R.not_reviewed],
-    ['errors', Z.overall.errors],
-    ['needs_human', R.needs_human],
-    ['conflicts', R.conflicts],
-  ];
-  for (const [k, label] of keys) if (num(s[k]) !== null) stats.push({ label, value: num(s[k]), tone: (k === 'needs_human' || k === 'conflicts') && num(s[k]) ? 'warn' : undefined });
-  if (num(s.windows) !== null) stats.push({ label: R.windows, value: num(s.windows), foot: Z.windowsValue(num(s.windows_answered) ?? 0, num(s.windows_failed) ?? 0) });
-  for (const k of ['tracking_suspect', 'vlm_requests', 'cache_hits', 'truncated_episodes']) if (num(s[k]) !== null) stats.push({ label: zh.summaryKeys[k] ?? k, value: num(s[k]) });
-  const charts: ChartSpec[] = [];
-  const status = keys.slice(0, 4).filter(([k]) => num(s[k]) !== null).map(([k, label]) => ({ name: label, value: num(s[k])! }));
-  if (anyValue(status)) charts.push({ key: 'status', title: zh.summaryKeys.reviewed ?? '', items: status, horizontal: true });
-  const classes = labelled(s.review_classes, Z.reviewClasses);
-  if (anyValue(classes)) charts.push({ key: 'classes', title: zh.summaryKeys.review_classes ?? '', items: classes });
-  const failures = seriesOf(s.failure_codes);
-  if (anyValue(failures)) charts.push({ key: 'failures', title: zh.summaryKeys.failure_codes ?? '', items: failures, horizontal: true, colors: failures.map(() => ORANGE) });
-  return { stats, charts, notes: [<span className="muted">{Z.advisory}</span>], fresh: true };
 }
 
 /** Any module: scalars, the verdict distribution, series and dicts of counts, the rest readable. */
@@ -556,7 +546,6 @@ export const SECTION_VIEWS: Record<string, ComponentType<SectionViewProps>> = {
   dedup: view('dedup', dedupModel),
   skill_profile: view('skill_profile', skillModel),
   eef_video_consistency: view('eef_video_consistency', eefModel),
-  eef_video_review: view('eef_video_review', eefReviewModel),
 };
 
 export const DefaultSectionView = view('default', defaultModel);

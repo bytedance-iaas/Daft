@@ -112,20 +112,12 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
 
     from ..contracts import modules as registry
 
-    if all(m in registry.advisory_ids() for m in modules) and src.container:
-        raise ModuleFailed(f"{', '.join(modules)}: EEF-video consistency reads LeRobot datasets "
+    native = [m for m in modules if m in registry.native_ids()]
+    if native and src.container:
+        raise ModuleFailed(f"{', '.join(native)}: EEF-video consistency reads LeRobot datasets "
                            f"only, not {src.kind}; preflight marks it unsupported, leave it out",
-                           {"modules": modules, "format": src.kind})
-    if all(m in registry.advisory_ids() for m in modules) and stage == "vlm":
-        from . import eef_review
-
-        payload, survivors = eef_review.run(ctx, args, modules, run_dir, storage, episodes, part, guard,
-                                            plan_stage)
-    elif all(m in registry.advisory_ids() for m in modules):
-        from . import eef_check
-
-        payload, survivors = eef_check.run(ctx, args, modules, run_dir, storage, episodes, part, guard)
-    elif stage in ("numeric", "frame"):
+                           {"modules": native, "format": src.kind})
+    if stage in ("numeric", "frame"):
         payload, survivors = _funnel_cpu(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard, info)
     elif stage == "vlm":
@@ -224,6 +216,10 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
     from ..pipeline.tasktext import TaskText
     from ..registry.registry import EmbodimentRegistry
 
+    from ..contracts import modules as registry
+
+    eef_mods = [m for m in modules if m in registry.native_ids()]     # D49: the EEF gate, next to v1's
+    has_task = "task_success" in modules
     cache = getattr(args, "_worker_cache", None)
     prepared = cache.get("vlm") if cache is not None else None
     if prepared is None:
@@ -235,15 +231,23 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
     if guard is not None:
         guard([])                        # metadata and the semantics sample, read next
     instructions: dict[int, str] = {}
-    if not src.container:                # mcap / lance: each row brings its own
+    if has_task and not src.container:   # mcap / lance: each row brings its own
         instructions = {index_of(r["episode_id"]): str(r.get("instruction") or "")
                         for r in runctx.meta_rows(src, episodes, args,
                                                   what="check:task_success")}
     if prepared is None:
         task_text = TaskText(run_dir, instructions)
-        session = runctx.VlmSession(ctx, args, cfg, "task_success", run_dir)
+        judge = None
+        if eef_mods:
+            from .eef_check import EefJudge
+
+            judge = EefJudge(ctx, args, run_dir, src.storage, cfg, gates)
+        session = runctx.VlmSession(ctx, args, cfg, "task_success" if has_task else eef_mods[0], run_dir,
+                                    by_tag={"eef_review": eef_mods[0]} if eef_mods else None)
         session.__enter__()
         try:
+            if judge is not None:
+                judge.open()
             from ..adapters.vlm_client import vlm_completion_from_config
 
             vlm_completion = vlm_completion_from_config(cfg)
@@ -264,11 +268,12 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
         clients = TaskClients(vlm_completion, cam_voter, arb_deps)
         if cache is not None:
             cache["vlm"] = {"gates": gates, "cfg": cfg, "task_text": task_text,
-                            "session": session, "clients": clients}
+                            "session": session, "clients": clients, "eef": judge}
     else:
         task_text = prepared["task_text"]
         task_text.instructions.update(instructions)
         clients = prepared["clients"]
+        judge = prepared.get("eef")
     opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
                         episodes=episodes, part=part, cfg=cfg, resume=args.resume,
                         concurrency=int(gates["episode"]),
@@ -279,6 +284,7 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
                         verify_source=guard, pipeline_state=args.pipeline_state,
                         pipeline_next=args.pipeline_next,
                         episode_stream=getattr(args, "_episode_stream", None),
+                        eef=judge, stale={judge.module: judge.stale(episodes)} if judge is not None else None,
                         **_container_options(args, src))
     stage = StageRun(ctx, opts, EmbodimentRegistry())
     try:
@@ -286,6 +292,11 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
     finally:
         if cache is None:
             session.__exit__(*sys.exc_info())
+            if judge is not None:
+                judge.close()
+    if judge is not None and judge.module in payload.get("modules", {}):
+        # the file, seeds, template, configuration and model are part of the module's input
+        payload["modules"][judge.module]["input_digest"] = judge.input_digest(list(opts.episodes))
     return payload, stage.survivors()
 
 

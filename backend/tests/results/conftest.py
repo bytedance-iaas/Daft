@@ -49,7 +49,7 @@ from ..daemon.conftest import (  # noqa: F401 - fixtures are registered by impor
 
 API = "/curation/api/v1"
 JSON = {"Content-Type": "application/json"}
-MODULES = tuple(m.id for m in registry.MODULES if m.affects_dataset_verdict)   # v1's eight: the story
+MODULES = tuple(m.id for m in registry.MODULES if m.affects_dataset_verdict and m.id not in registry.native_ids())   # v1's eight
 GATE = {m.id: m.gate for m in registry.MODULES}
 CAMERAS = ("observation.images.wrist", "observation.images.exterior_1")
 SHORT = ("wrist", "exterior_1")

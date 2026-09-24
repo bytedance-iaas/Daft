@@ -102,8 +102,13 @@ class RunState:
     def __init__(self, run_dir: str, modules, episodes, cfg: dict,
                  *, results: dict[str, dict[int, dict]] | None = None,
                  autolabel: dict | None = None):
-        self.run_dir, self.cfg = run_dir, cfg
+        self.run_dir = run_dir
         self.modules = [m.id for m in registry.MODULES if m.id in set(modules)]
+        native = [m for m in self.modules if m in registry.native_ids() and m not in cfg["checks"]]
+        if native:                     # v2's own gates join v1's verdict config here, at the call boundary
+            cfg = {**cfg, "checks": {**cfg["checks"],
+                                     **{m: {"enable": True, "gate": registry.get(m).gate} for m in native}}}
+        self.cfg = cfg
         self.funnel = [m for m in self.modules if m in FUNNEL_MODULES]
         self.episodes = sorted({int(e) for e in episodes})
         self.results = (results if results is not None else

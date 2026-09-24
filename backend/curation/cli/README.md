@@ -221,24 +221,22 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - `wait` 每 `--poll-interval` 秒（默认 5）查一次，直到任务进入终态且没有运行中的子任务；`--timeout` 到了以退出码 8 结束，当时的任务 JSON 在 `error.details.task`。
 - Daemon 连不上或回的不是 JSON：退出码 3（`daemon_unreachable`）；Daemon 回了错误（含 401、403、404、409、405 `method_not_allowed`、5xx）：退出码 7（`rejected`），REST 错误体原样放在 `error.details.rest_error`。
 
-### 建议性模块与 `--param`（registry 1.4，F5.4）
+### EEF–视频一致性与 `--param`（registry 1.4 起；D49 后参与判决）
 
 - `--param MODULE.KEY=VALUE`（`preflight`、`check`，可重复）：任务级模块参数，值按该模块的 `param_schema` 转成数字 / 布尔 / 选项并校验；
   未知模块或参数是用法错误。第一个用它的是 EEF–视频一致性：`--param eef_video_consistency.trajectory_json=PATH`。
-- 建议性模块（`affects_dataset_verdict=false`，现在是 `eef_video_consistency`）：`plan` 把它放进单独的 `advisory_<档>` 阶段、
-  `episodes: selected`（全部选中条目，含被旧硬门拒掉的）；`check` 要单独一次调用、不与漏斗模块混跑，`--survivors-out` 列出全部条目；
-  记录 `passed = score = null`，分项在 `details`；`aggregate` 在调用边界把它滤掉（`FUNNEL_MODULES`），`verdict.py` 不变；
-  `report` 给它一节建议性摘要与三张表。没给文件时 `preflight` 报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`）。
-  `check` 的每行记录带 `input_file_sha256`、`config_hash`、`seeds_sha256`，`--resume` 只跳过三者都相同的行，`input_digest` 也包含它们
-  （换文件、换种子或改参数就是新输入）；远端（TOS）数据集按需把用到的视频分段读到临时目录，调用结束删掉。
-- EEF 的 VLM 复核（`eef_video_review`，F5.6）：vlm 档的建议性模块，单独一次 `check`，读同一运行目录里 `eef_video_consistency`
-  的记录与逐帧曲线和同一个文件（`--param eef_video_consistency.trajectory_json=PATH`，Daemon 会把被复核模块的参数一起传），
-  VLM 参数与其他 VLM 模块相同（`--vlm-backend` / `--vlm-endpoint` / `--vlm-model` / `--retry` / `--hedge`），调用种类 `eef_review`，
-  超时默认 120 秒（`--set checks.task_success.vlm.timeouts_s.eef_review=S`）；答复缓存在 `checks/eef_video_review/cache/`，
-  `--resume` 只跳过文件、复核配置（窗口数、帧数、模型、prompt / Schema 版本、预处理）与被复核记录都没变的行。
-  窗口没拿到合格答复记 `failed`（episode 为 `incomplete`，不是执行出错）；整次调用失败（如 VLM 探活不过）是模块失败，判决不受影响。
-  实现在 `cli/eef_review.py`，复核逻辑在 `extensions/eef_consistency/review.py`。
-  实现在 `cli/eef_check.py`、`cli/modparams.py`，模块本身在 `extensions/eef_consistency/`（见其 README）。
+- `eef_video_consistency`（D49，registry 1.8）：vlm 档的一票否决模块，和 `task_success` 同一个 `check` 调用、同一个逐条循环
+  （`StageRun` 调 `cli/eef_check.py` 的 `EefJudge`；流水线模式下一样逐条交接），只跑前面没被判废的条目。每条先 CPU 测量，再请
+  模型复核（VLM 参数与其他 VLM 模块相同：`--vlm-backend` / `--vlm-endpoint` / `--vlm-model` / `--retry` / `--hedge`；调用种类
+  `eef_review`，用量记在这个模块名下；超时默认 120 秒，`--set checks.task_success.vlm.timeouts_s.eef_review=S`），然后按设计 12
+  附录 C.9 给出 `passed = true`（判过）、`false`（判废，理由在 `details.reason`）或 `null`（转人工）。没给文件时 `preflight` 报
+  `needs_input: trajectory_missing`，给了文件没给 VLM 后端时报 `needs_input: vlm_backend_missing`。只有它、没有 `task_success` 时
+  不读 v1 的数据行，媒体自己读（远端数据集按需分段读到临时目录，调用结束删掉）。`aggregate` 在调用边界把它作为一票否决项加进
+  v1 的判决配置（`verdict.py` 不变），不选它时配置与之前完全相同。每行记录带 `input_file_sha256`、`config_hash`、`seeds_sha256`、
+  `template_sha256`、`review_config`（窗口数、帧数、模型、prompt / Schema 版本、预处理），`--resume` 只跳过这些都没变的行，
+  `input_digest` 也包含它们。模型答复缓存在 `checks/eef_video_consistency/cache/`；窗口没拿到合格答复不是执行出错（CPU 可疑的分项
+  因此没有模型意见，转人工）；VLM 探活不过是整个调用失败（模块失败）。
+  实现在 `cli/eef_check.py`、`cli/eef_review.py`、`cli/modparams.py`，模块本身在 `extensions/eef_consistency/`（见其 README）。
 
 ### mcap 与 Lance 数据集（D44，F6.5）
 
@@ -251,7 +249,7 @@ v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_re
 | 快照记什么 | 全部 `*.mcap`（v1 按目录里有哪些文件来编号，每个文件又是一条 episode 的数据）；`meta_fingerprint` 覆盖全部 mcap 文件 | `meta/` 与三张表的全部对象（读的时候整表读）；`meta_fingerprint` 覆盖 `meta/`，没有 `meta/` 时覆盖 `meta.lance/` |
 | 交付 | `export/mcap_curated/`：v1 的 `export_mcap_curated` 原样。passed 各条的 `.mcap` 逐字节拷贝（源文件不是 `episode_<N>.mcap` 命名的改成这个名字），`index.json` 列每条的任务文本与来源；自产描述与人工改标只写进 `index.json`，文件本体不动 | `export/lance_episodes/`：Lance 原格式交付本版本未做，交的是 v1 的 `episodes_parquet/`（passed 各条的轨迹级数值，任务文本写进 `instruction` / `instruction_source`）和 `videos/`（视频指针改写到交付位置）。`index.json`、导出结果的 `note`、报告的「数据包」一节都写明这一点 |
 | 增量导出 | 没有：`--incremental` 退回全量，`full_reason` 写明原因；内容没变的文件不重新上传 | 同左（daft 每次给 parquet 分片起新名字，这一个文件每次都换） |
-| 不能用的模块 | EEF–视频一致性与它的 VLM 复核只读 LeRobot 的视频：`unsupported`，原因码 `format_unsupported_by_module` | 同左 |
+| 不能用的模块 | EEF–视频一致性只读 LeRobot 的视频：`unsupported`，原因码 `format_unsupported_by_module` | 同左 |
 
 - **数据集语义取整个任务的所选**：v1 用所选 episode 的前 100 条判定数据集语义（控制模式、单位等）。v2 的命令只读某一档的幸存者，所以读源数据的命令（`autolabel`、`check`、`aggregate --phase final`）要带 `--selection <整个任务的所选>`（语法同 `--episodes`，Daemon 自动传；不带时取 `--episodes`），判定取它的前 100 条，与 v1 一致。LeRobot 数据集不受影响（它的语义样本一直是数据集的前 100 条）。
 - **TOS 上的数据先拉到本地再读**：v1 的两个读取器只认本地目录。`tos://` 上的数据由 `SourceCache` 在本地留一份副本：mcap 先给每个文件放一个空占位（v1 按目录里的文件名编号，占位不会被读），读到哪条才下载哪条；Lance 第一次读时整表下载（读取器要整表）。设了 `CURATION_SOURCE_CACHE` 就放在它下面（`<目录>/<格式>-<地址哈希>/<数据集名>/`，同一任务后面的命令复用，Daemon 在运行结束时删掉），没设就放在这条命令自己的临时目录里、命令结束就删。每个副本按列举时的大小和 ETag 核对，对不上以退出码 6 结束（`source_changed`）；带 `--source-manifest` 时照常先核对快照。只读源桶，从不往源桶写；凭证只从 `CURATION_INPUT_TOS_*` 环境变量读。
@@ -453,7 +451,7 @@ with FakeVlmServer(port=8766) as s:
     done
     ```
 
-    应看到：预检 `kind` 分别是 `mcap`（`version: null`，`fps: null`，detail 写着时间轴取自动作 topic 的 `log_time`）和 `lance`（`version: v3`），8 条、2 路相机、`robot_type: franka`、6 条有标注；EEF 两个模块是 `unsupported`（`format_unsupported_by_module`），其余可用。
+    应看到：预检 `kind` 分别是 `mcap`（`version: null`，`fps: null`，detail 写着时间轴取自动作 topic 的 `log_time`）和 `lance`（`version: v3`），8 条、2 路相机、`robot_type: franka`、6 条有标注；EEF 模块是 `unsupported`（`format_unsupported_by_module`），其余可用。
     判决与第 3 步的 LeRobot 数据集完全相同：数值档拦下 2、5，task_success 3 pass 3 abstain，dedup 剔除 7，final 为 `passed 5, reject 3, held 0; 3 to review`。
     `report.md` 多一节「数据包(mcap)」/「数据包(lance)」：mcap 写着交付 `mcap_curated/`（5 个 .mcap，原格式逐字节）和型号、时间轴、任务文本三项体检；Lance 写着「lance 原格式交付本版本未做」。
     导出：mcap 是 `export/mcap_curated/` 下 `episode_0/1/3/4/6.mcap` 与 `index.json`（`cmp "$D/mini_mcap/episode_0.mcap" "$D/delivery_mcap/export/mcap_curated/episode_0.mcap"` 无输出），日志写「改标 2 条记入 index.json,文件本体不动」（4、6 是自产描述）；

@@ -235,3 +235,5 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **C4 1.12.0**：`DatasetFormat` 与 `GET /datasets` 的 `format` 筛选多 `mcap`、`lance`；`BrowsedDataset.format_hint` 多 `mcap`、`lance`；
   `EpisodePreview` 多一个可选的 `task_unread`（mcap 的任务文本在 `/task` topic 里、预览读不到）；这两种格式的 `cameras` 为空。前端类型已重新生成。
 - **C5**：`list_datasets` 的 `fmt` 说明加上 `mcap | lance`；SQLite 的第 4 步迁移重建 `dataset` 表，放宽 `format` 的 CHECK（01 篇 §2.8）。
+- **D49（2026-09-23，F5.9 / F5.10）**：C1 1.8——`eef_video_review` 并入 `eef_video_consistency`：vlm 档、`gate=hard`、`affects_dataset_verdict=true`、`input_scope=funnel`、needs 加 `vlm`，参数合并（复核窗口数、每窗口帧数；阈值只留 `demo`），明细表加 `eef_review_windows`；新增 `native_ids()`（v2 自己实现、不进 v1 检查配置的模块）。记录：`passed` 为判过 / 判废 / 转人工（`null`），`details.decision` 与 `details.reason` 写结论与理由，`details.review` 是复核窗口。答复 Schema `eef/review_output.schema.json` 升到 eef-review/1.1（去掉背景运动）。C4 形状不变（模块表的值变了）。
+

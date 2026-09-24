@@ -3,8 +3,8 @@
 The file is a module parameter (``trajectory_json``): a path on the command line, an upload handle in
 the console (F5.5), which the Daemon turns into a path before it calls the CLI. Without it the module
 ``needs_input`` (``input_hint.field = trajectory_json``); the console never pre-selects an advisory module,
-it is opted into and then asks for the upload. The VLM review follows the module it reviews and
-then needs a VLM backend.
+it is opted into and then asks for the upload; with a valid file it then needs a VLM backend (D49: the
+module reviews with a model).
 """
 from __future__ import annotations
 
@@ -53,22 +53,14 @@ def _unsupported(reason: str, code: str, args: dict | None = None) -> dict:
     return out
 
 
-def review_entry(base: dict, *, vlm_backend: bool) -> dict:
-    """``eef_video_review`` re-examines what ``eef_video_consistency`` found (F5.6): unusable when
-    that module is, asking for the same file when that is missing, then for a VLM backend."""
-    if base.get("availability") == C.UNSUPPORTED:
-        return _unsupported(f"the EEF-video consistency module it reviews is unavailable: {base.get('reason')}",
-                            C.EEF_BASE_UNAVAILABLE, {"base_reason_code": base.get("reason_code")})
-    if base.get("availability") == C.NEEDS_INPUT:
-        return {k: v for k, v in base.items() if k in ("availability", "reason", "reason_code", "input_hint")}
-    if not vlm_backend:
-        return {"availability": C.NEEDS_INPUT, "reason_code": C.VLM_BACKEND_MISSING,
-                "reason": "no VLM backend chosen; pick one (add one first if there is none)",
-                "input_hint": {"field": "vlm"}}
-    out = {"availability": C.AVAILABLE}
-    if base.get("episode_counts"):
-        out["episode_counts"] = base["episode_counts"]
-    return out
+def module_entry(base: dict, *, vlm_backend: bool) -> dict:
+    """The module's preflight entry (D49): the file first (``consistency_entry``), then a VLM backend -
+    the module reviews with a model and cannot run without one."""
+    if base.get("availability") != C.AVAILABLE or vlm_backend:
+        return dict(base)
+    return {**base, "availability": C.NEEDS_INPUT, "reason_code": C.VLM_BACKEND_MISSING,
+            "reason": "no VLM backend chosen; pick one (add one first if there is none)",
+            "input_hint": {"field": "vlm"}}
 
 
 def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Callable[[str], bool] | None,

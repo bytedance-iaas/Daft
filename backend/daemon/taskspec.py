@@ -222,10 +222,6 @@ def check_modules(selected: list[str], availability: dict[str, dict], *,
     """The rules of design doc 05 §4 for the modules a task will run."""
     for mid in selected:
         spec = registry.get(mid)
-        lacking = [d for d in spec.depends_on if d in registry.ids() and d not in selected]
-        if lacking:                          # registry 1.4: it re-examines that module's results
-            raise _bad(f"「{spec.name_zh}」复核的是「{'」「'.join(registry.get(d).name_zh for d in lacking)}」"
-                       "的结果，要一起勾选", "modules")
         entry = availability.get(mid, {})
         state = entry.get("availability", "available")
         if state == "unsupported":

@@ -96,6 +96,10 @@ class StageOptions:
     fetch: Callable[[list[int]], None] | None = None
     row_instructions: bool = False
     fmt: str | None = None                              # mcap | lance; None: v1's sniffing
+    #: the EEF module's per-episode judge (D49, ``cli/eef_check.EefJudge``) and, per module, the
+    #: episodes whose existing line was made from another input and must be redone on --resume
+    eef: object | None = None
+    stale: dict[str, set[int]] | None = None
     stage: str = field(init=False, default="")
 
     def __post_init__(self) -> None:
@@ -134,6 +138,13 @@ class _Breaker:
         if self.count >= self.limit:
             raise BreakerTripped(f"the first {self.count} episodes all failed with "
                                  f"{self.cause}; the module cannot run")
+
+
+class _NoRows:
+    """The row source of a vlm stage without task_success: the EEF module reads its own media."""
+
+    def get(self, ep: int) -> dict:
+        return {}
 
 
 class StageRun:
@@ -183,8 +194,9 @@ class StageRun:
         if not self.o.resume:
             return eps, 0, set()
         current = {m: latest_results(self.o.run_dir, m, eps) for m in self.o.modules}
+        stale = self.o.stale or {}
         done = {e for e in eps
-                if all(e in current[m] and current[m][e]["verdict"] != "error"
+                if all(e in current[m] and current[m][e]["verdict"] != "error" and e not in stale.get(m, ())
                        for m in self.o.modules)}
         crashes = self._stale_inflight()
         crashed = {e for e in eps if crashes.get(e, 0) >= CRASH_LIMIT and e not in done}
@@ -193,10 +205,13 @@ class StageRun:
     # ------------------------------------------------------------ per episode
     def _source(self, todo: list[int]) -> RowSource:
         """v1's data source for these episodes. It reads the dataset's first episodes to
-        resolve its semantics; when that fails no episode can be judged (exit 4)."""
+        resolve its semantics; when that fails no episode can be judged (exit 4). The EEF
+        module alone reads its own media (D49): no v1 rows then."""
         from ..cli.errors import CliError, ModuleFailed
 
         o = self.o
+        if o.stage == "vlm" and "task_success" not in o.modules:
+            return _NoRows()
         try:
             return open_row_source(o.input_dir, todo, embodiment_id=o.embodiment_id,
                                    max_episodes=o.max_episodes, selection=o.selection,
@@ -265,6 +280,20 @@ class StageRun:
         return structs
 
     def _vlm(self, ep: int, row: dict, logs) -> tuple[dict, dict]:
+        """The vlm tier: task_success (v1) and the EEF module (D49), each when selected."""
+        structs: dict[str, dict | None] = {}
+        evidence: dict[str, list] = {}
+        if "task_success" in self.o.modules:
+            s, e = self._task_success(ep, row, logs)
+            structs.update(s)
+            evidence.update(e)
+        if self.o.eef is not None:
+            s, e = self.o.eef.judge(ep, logs[self.o.eef.module])
+            structs[self.o.eef.module] = s
+            evidence[self.o.eef.module] = e
+        return structs, evidence
+
+    def _task_success(self, ep: int, row: dict, logs) -> tuple[dict, dict]:
         log = logs["task_success"]
         if self.o.row_instructions:
             # mcap / lance: the annotation comes with the row (v1's meta and data reads of

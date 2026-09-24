@@ -85,6 +85,7 @@ def _start_worker(run, layer, selection, path, next_stage):
         argv += ["--concurrency", str(layer.width)]
     else:
         argv += run.vlm_args()
+    argv += run.module_param_args(list(st["modules"]))        # the EEF module's file and settings (D49)
     cli = run._cli_environment(need_input=True, need_output=False, need_vlm=vlm)
     if cli.input_region:
         argv += ["--input-region", cli.input_region]

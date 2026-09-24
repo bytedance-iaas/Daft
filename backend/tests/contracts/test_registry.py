@@ -12,8 +12,7 @@ from curation.contracts import schemas
 
 def test_modules_in_stage_order():
     assert M.ids() == ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-                       "video_action_sync", "eef_video_consistency", "task_success", "eef_video_review",
-                       "dedup", "skill_profile")
+                       "video_action_sync", "eef_video_consistency", "task_success", "dedup", "skill_profile")
     order = [M.STAGE_ORDER.index(m.stage) for m in M.MODULES]
     assert order == sorted(order), "registry order must follow the stage order"
 
@@ -37,23 +36,24 @@ def test_v1_facts():
     assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "dedup",
                                                                     "skill_profile"}
     verdict = [m for m in M.MODULES if m.affects_dataset_verdict]
-    assert {m.id for m in verdict if "vlm" in m.needs} == {"task_success", "skill_profile"}
+    assert {m.id for m in verdict if "vlm" in m.needs} == {"eef_video_consistency", "task_success", "skill_profile"}
     assert all(m.input_scope == "funnel" for m in verdict)
     assert "autolabel" not in M.ids()
 
 
-def test_advisory_modules():
-    """Design doc 12 §11.1: the EEF pair runs on every selected episode and never touches the verdict."""
-    assert M.advisory_ids() == ("eef_video_consistency", "eef_video_review")
-    for mid in M.advisory_ids():
-        spec = M.get(mid)
-        assert spec.gate == "none" and spec.input_scope == "all_selected" and not spec.produces_adjudication
-        assert "eef_input" in spec.needs and "video" in spec.needs
-    assert M.get("eef_video_review").depends_on == ("eef_video_consistency",)
-    assert M.get("eef_video_consistency").stage == "frame" and M.get("eef_video_review").stage == "vlm"
-    assert "trajectory_json" in M.get("eef_video_consistency").param_schema["required"]
+def test_the_eef_module_takes_part_in_the_verdict():
+    """D49 / design doc 12 D-E11: one module, CPU then model, a hard gate on the funnel's survivors."""
+    assert M.advisory_ids() == () and M.native_ids() == ("eef_video_consistency",)
+    spec = M.get("eef_video_consistency")
+    assert spec.gate == "hard" and spec.stage == "vlm" and spec.input_scope == "funnel"
+    assert spec.affects_dataset_verdict and {"eef_input", "video", "vlm"} <= spec.needs
+    assert spec.depends_on == ("frame_gates",) and "eef_video_review" not in M.ids()
+    props = spec.param_schema["properties"]
+    assert "trajectory_json" in spec.param_schema["required"] and "review_windows_per_camera" in props
+    assert [o["const"] for o in props["threshold_profile"]["oneOf"]] == ["demo"]   # no "no thresholds" any more
+    assert "eef_review_windows" in [t.id for t in spec.tables]
     exported = {m["id"]: m for m in M.export()["modules"]}
-    assert exported["eef_video_consistency"]["affects_dataset_verdict"] is False
+    assert exported["eef_video_consistency"]["affects_dataset_verdict"] is True
     assert exported["timestamp_check"]["input_scope"] == "funnel"
 
 

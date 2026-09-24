@@ -73,7 +73,7 @@ export function ModuleSection({
   const usable = modules.filter((m) => state(m.id) === 'available' || state(m.id) === 'needs_input');
   const unsupported = modules.filter((m) => state(m.id) === 'unsupported');
   const toggle = (id: string) => {
-    const modules = toggleModule(registry, v.modules, id);
+    const modules = toggleModule(v.modules, id);
     set({ modules, preset: 'custom', skipped: v.skipped.filter((x) => x !== id) });
   };
   const help = v.preset === 'full' ? zh.taskForm.presetFullHelp : v.preset === 'quick' ? zh.taskForm.presetQuickHelp : zh.taskForm.presetCustomHelp;
