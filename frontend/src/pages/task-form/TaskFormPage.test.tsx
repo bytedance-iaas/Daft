@@ -51,6 +51,8 @@ describe('新建任务 · 第一屏 (07 §3)', () => {
     expect(requiredFieldLabels(s1())).toEqual(
       expect.arrayContaining(['任务名称', '数据来源', '数据集地址', '地域', '访问密钥 管理', '交付目录（质检报告与交付数据集的写入位置）', '访问密钥']),
     );
+    // nothing to sum up before the preflight knows the episodes (fourth round)
+    expect(screen.queryByTestId('footer-summary')).toBeNull();
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     const errs = fieldErrors(s1());
     expect(errs).toEqual(expect.arrayContaining(['请填写任务名称', '请填写数据集地址', '请选择访问密钥', '请填写交付目录']));
@@ -509,11 +511,19 @@ describe('v1 deep links on /tasks/new (07 §2.1)', () => {
   });
 
   it('source=public switches to the HuggingFace cache bucket', async () => {
-    renderApp('/tasks/new?source=public&dataset=libero_10');
+    const { user } = renderApp('/tasks/new?source=public&dataset=libero_10');
     await screen.findByText('基本信息');
     await waitFor(() => expect(screen.getByRole('radio', { name: 'HuggingFace 缓存桶' })).toBeChecked());
     expect(await screen.findByText(/LeRobot v2 · 379 条 episode/)).toBeInTheDocument();
     expect(screen.getByDisplayValue('不需要（匿名只读）')).toBeInTheDocument();
+    expect(screen.getByTestId('footer-summary')).toHaveTextContent('将质检 379 条 episode');
+    // the delivery region and key start blank, no 「（同数据集）」, and must be picked (fourth round)
+    const region = screen.getByRole('combobox', { name: '交付目录地域' }).closest('.arco-select') as HTMLElement;
+    const key = screen.getByRole('combobox', { name: '交付目录访问密钥' }).closest('.arco-select') as HTMLElement;
+    for (const el of [region, key]) expect(el).not.toHaveTextContent('同数据集');
+    await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
+    expect(fieldErrors(region.closest('.arco-form-item') as HTMLElement)).toEqual(['请选择地域']);
+    expect(fieldErrors(key.closest('.arco-form-item') as HTMLElement)).toEqual(['请选择访问密钥']);
   });
 
   it('several datasets → batch mode: one configuration, POST /tasks/batch (P3)', async () => {

@@ -18,6 +18,9 @@ describe('概览 (07 §4.3, D36; F6.1)', () => {
     expect(await screen.findByTestId('run-running')).toHaveTextContent('1');
     expect(screen.getByTestId('run-queued')).toHaveTextContent('1');
     expect(screen.getByTestId('run-paused')).toHaveTextContent('2');
+    // the number is the link, not the label (fourth round)
+    expect(within(screen.getByTestId('run-queued')).getByRole('link', { name: '1' })).toHaveAttribute('href', '/tasks?state=queued');
+    expect(screen.getByTestId('run-queued').closest('a')).toBeNull();
     const active = screen.getByTestId('active-tasks');
     expect(within(active).getByRole('link', { name: 'umi_640 全量质检' })).toBeInTheDocument();
     expect(active).toHaveTextContent('VLM 档 410 / 631');
@@ -100,7 +103,7 @@ describe('概览 (07 §4.3, D36; F6.1)', () => {
 
   it('the counts lead to the filtered task list', async () => {
     const { user } = renderApp('/overview');
-    await user.click(await screen.findByTestId('run-running'));
+    await user.click(within(await screen.findByTestId('run-running')).getByRole('link'));
     await waitFor(() => expect(currentLocation()).toBe('/tasks?state=running'));
   });
 });

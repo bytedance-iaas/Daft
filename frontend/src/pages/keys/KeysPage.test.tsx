@@ -25,7 +25,10 @@ describe('系统和资源配置 (07 §7)', () => {
     expect(screen.getByRole('tab', { name: 'TOS 访问密钥（4）' })).toBeInTheDocument();
     expect(row(table, 'prod-tos')).toHaveTextContent('华北 2（北京）');
     expect(row(table, 'prod-tos')).toHaveTextContent('••••7Q2D');
-    expect(row(table, 'prod-tos')).toHaveTextContent('9 个任务其中 1 个未结束');
+    expect(row(table, 'prod-tos')).toHaveTextContent('9 个任务 · 其中 1 个未结束');
+    // one line a row, and nothing said when every task is done (fourth round)
+    expect(row(table, 'readonly-tos')).toHaveTextContent('6 个任务');
+    expect(table).not.toHaveTextContent('都已结束');
     expect(row(table, 'partner-upload')).toHaveTextContent('未验证');
     expect(row(table, 'old-ci')).toHaveTextContent('验证失败');
     expect(row(table, 'old-ci')).toHaveTextContent('SignatureDoesNotMatch：Secret Access Key 不对');

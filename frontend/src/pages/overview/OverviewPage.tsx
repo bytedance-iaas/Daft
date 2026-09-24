@@ -16,19 +16,13 @@ import { OVERVIEW_PERIODS, activePageSize, readOverviewPeriod, writeOverviewPeri
 import { progressStageLabel } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
+/** A figure of the overview; with `to` the number is the link (not the label, fourth round). */
 function StatCell({ label, value, to, testId }: { label: string; value: ReactNode; to?: string; testId: string }) {
-  const body = (
-    <div className="stat-cell" style={{ cursor: to ? 'pointer' : 'default' }} data-testid={testId}>
+  return (
+    <div className="stat-cell" data-testid={testId}>
       <div className="stat-label">{label}</div>
-      <div className="stat-value">{value}</div>
+      <div className="stat-value">{to ? <Link to={to}>{value}</Link> : value}</div>
     </div>
-  );
-  return to ? (
-    <Link to={to} style={{ color: 'inherit' }}>
-      {body}
-    </Link>
-  ) : (
-    body
   );
 }
 

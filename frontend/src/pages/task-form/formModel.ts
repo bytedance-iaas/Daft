@@ -123,8 +123,9 @@ export function effectiveOutputCredential(v: FormValues): string {
   return v.outputCredential || (v.source === 'public' ? '' : v.credential);
 }
 
+/** The delivery region; blank follows the dataset's, except for the cache bucket, whose region is not the user's to write to (fourth round). */
 export function effectiveOutputRegion(v: FormValues): string {
-  return v.outputRegion || v.region;
+  return v.outputRegion || (v.source === 'public' ? '' : v.region);
 }
 
 /** Screen 1: basic and required inputs (07 §3). */

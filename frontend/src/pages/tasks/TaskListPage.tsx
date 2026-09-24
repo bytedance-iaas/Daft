@@ -8,6 +8,7 @@ import { EVENTS_CONFIG } from '../../api/events';
 import { qk, useModules } from '../../api/queries';
 import type { TaskListItem, TaskState } from '../../api/types';
 import { PageError } from '../../components/PageError';
+import { OneLine } from '../../components/OneLine';
 import { PageHeader } from '../../components/PageHeader';
 import { RelTime } from '../../components/RelTime';
 import { SearchInput } from '../../components/SearchInput';
@@ -146,43 +147,48 @@ export function TaskListPage() {
   const deletedView = state === 'deleted';
 
   // Widths (07 §4.1): every column has room for its longest value, so a state tag or a longer
-  // name scrolls the table rather than squeezing the others.
+  // name scrolls the table rather than squeezing the others. Rows take two lines at most
+  // (fourth round): the name and its id; 待裁决 and 交付待重新导出 go by the state.
   const columns: ColumnProps<TaskListItem>[] = [
     {
       title: zh.taskList.colName,
       dataIndex: 'name',
-      width: 260,
+      width: 195,
       render: (_: unknown, t) => (
-        <div style={{ minWidth: 160 }}>
-          <Link to={`/tasks/${t.id}`}>{t.name}</Link>
-          <div style={{ marginTop: 2, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {t.pending_adjudication > 0 ? (
-              <Link to={`/tasks/${t.id}/adjudication`}>
-                <Tag size="small" color="arcoblue">
-                  {zh.taskList.pendingBadge(t.pending_adjudication)}
-                </Tag>
-              </Link>
-            ) : null}
-            {t.delivery_stale ? (
-              <Tag size="small" color="orange">
-                {exportedBefore(t.progress.stages) ? zh.taskList.deliveryStale : zh.taskList.deliveryNeverExported}
-              </Tag>
-            ) : null}
-          </div>
-          <div className="muted mono">{t.id}</div>
+        <div>
+          <Link to={`/tasks/${t.id}`}>
+            <OneLine text={t.name} />
+          </Link>
+          <div className="muted mono nowrap">{t.id}</div>
         </div>
       ),
     },
     {
       title: zh.taskList.colState,
       dataIndex: 'state',
-      width: 130,
-      render: (_: unknown, t) => <TaskStateTag task={t} />,
+      width: 185,
+      render: (_: unknown, t) => (
+        <div className="state-cell">
+          <TaskStateTag task={t} />
+          {t.pending_adjudication > 0 ? (
+            <Link to={`/tasks/${t.id}/adjudication`}>
+              <Tag size="small" color="arcoblue">
+                {zh.taskList.pendingBadge(t.pending_adjudication)}
+              </Tag>
+            </Link>
+          ) : null}
+          {t.delivery_stale ? (
+            <Tag size="small" color="orange">
+              {exportedBefore(t.progress.stages) ? zh.taskList.deliveryStale : zh.taskList.deliveryNeverExported}
+            </Tag>
+          ) : null}
+        </div>
+      ),
     },
     {
       title: zh.taskList.colDataset,
       dataIndex: 'dataset',
-      width: 170,
+      width: 160,
       render: (_: unknown, t) => (
         <div>
           {t.dataset_id ? <Link to={`/datasets/${t.dataset_id}`}>{t.dataset}</Link> : t.dataset}
@@ -191,17 +197,17 @@ export function TaskListPage() {
       ),
     },
     { title: zh.taskList.colModules, dataIndex: 'modules', width: 150, render: (_: unknown, t) => <ModuleSummaryCell item={t} /> },
-    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 280, render: (_: unknown, t) => <ProgressCell t={t} /> },
+    { title: zh.taskList.colProgress, dataIndex: 'progress', width: 260, render: (_: unknown, t) => <ProgressCell t={t} /> },
     {
       title: zh.taskList.colTokens,
       dataIndex: 'usage',
-      width: 120,
+      width: 95,
       render: (_: unknown, t) => <span className="mono">{totalTokens(t.usage) ? compactNumber(totalTokens(t.usage)) : '—'}</span>,
     },
     {
       title: deletedView ? zh.taskList.deletedAt : zh.taskList.colCreated,
       dataIndex: 'created_at',
-      width: 120,
+      width: 95,
       render: (_: unknown, t) => <RelTime ms={deletedView ? t.deleted_at : t.created_at} />,
     },
     {
@@ -275,7 +281,7 @@ export function TaskListPage() {
             loading={query.isLoading}
             columns={columns}
             data={query.data?.items ?? []}
-            scroll={{ x: 1390 }}
+            scroll={{ x: 1300 }}
             noDataElement={<div className="muted" style={{ padding: 24 }}>{q || state || moduleFilter.length || datasetId ? zh.taskList.emptyFiltered : zh.taskList.empty}</div>}
             pagination={{
               current: page,

@@ -72,6 +72,17 @@ describe('任务列表 (07 §4.1)', () => {
     }
   });
 
+  it('待裁决 and 交付待重新导出 sit by the state; the name cell keeps the name and the id (fourth round)', async () => {
+    renderApp('/tasks');
+    const link = await screen.findByRole('link', { name: 'droid 前 50 条质检' });
+    const state = row('droid 前 50 条质检').querySelector('.state-cell') as HTMLElement;
+    expect(state).toHaveTextContent('待裁决 10');
+    expect(within(state).getByTestId('state-tag')).toBeInTheDocument();
+    const name = link.closest('td') as HTMLElement;
+    expect(name).not.toHaveTextContent('待裁决');
+    expect(name.querySelector('.mono')).toHaveTextContent(/^task[_-]/);
+  });
+
   it('「更多」 has 人工裁决 for every task with a result, with the count when items are pending (D47)', async () => {
     const { user } = renderApp('/tasks');
     await screen.findByRole('link', { name: 'droid 前 50 条质检' });

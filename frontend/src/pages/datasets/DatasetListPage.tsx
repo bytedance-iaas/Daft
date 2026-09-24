@@ -8,6 +8,7 @@ import { api, unwrap } from '../../api/client';
 import { qk } from '../../api/queries';
 import type { DatasetFormat, DatasetItem } from '../../api/types';
 import { PageError } from '../../components/PageError';
+import { OneLine } from '../../components/OneLine';
 import { PageHeader } from '../../components/PageHeader';
 import { RelTime } from '../../components/RelTime';
 import { SearchInput } from '../../components/SearchInput';
@@ -65,38 +66,39 @@ export function DatasetListPage() {
     if (resetPage) next.delete('page');
     setParams(next);
   };
-  // Widths (07 §3.1): the state of the last task goes under its name, so a 「运行中」 tag does
-  // not widen the column and shift the whole table.
+  // Widths (07 §3.1): every row on one line (fourth round) - a long name, address or robot type
+  // ends in an ellipsis with the whole of it in a tooltip; the columns keep fixed widths, so a
+  // narrow window scrolls the table rather than wrapping it.
   const columns: ColumnProps<DatasetItem>[] = [
-    { title: zh.datasets.colName, dataIndex: 'name', width: 160, render: (_: unknown, d) => <Link to={`/datasets/${d.id}`}>{d.name}</Link> },
-    { title: zh.datasets.colSource, dataIndex: 'source', width: 110, render: (v: string) => zh.source[v] ?? v },
-    { title: zh.datasets.colUri, dataIndex: 'uri', width: 220, render: (v: string) => <span className="mono">{v}</span> },
+    { title: zh.datasets.colName, dataIndex: 'name', width: 150, render: (_: unknown, d) => <Link to={`/datasets/${d.id}`}><OneLine text={d.name} /></Link> },
+    { title: zh.datasets.colSource, dataIndex: 'source', width: 165, render: (v: string) => <span className="nowrap">{zh.source[v] ?? v}</span> },
+    { title: zh.datasets.colUri, dataIndex: 'uri', width: 220, render: (v: string) => <OneLine text={v} mono /> },
     { title: zh.datasets.colFormat, dataIndex: 'format', width: 100, render: (_: unknown, d) => <FormatTag format={d.format} /> },
-    { title: zh.datasets.colEpisodes, dataIndex: 'episode_count', width: 100, render: (v: number | null) => grouped(v) },
-    { title: zh.datasets.colRobot, dataIndex: 'robot_type', width: 130, render: (v: string | null) => v ?? <span className="muted">{zh.common.unknown}</span> },
-    { title: zh.datasets.colCheck, dataIndex: 'check_state', width: 120, render: (_: unknown, d) => <CheckTag d={d} /> },
+    { title: zh.datasets.colEpisodes, dataIndex: 'episode_count', width: 90, render: (v: number | null) => grouped(v) },
+    { title: zh.datasets.colRobot, dataIndex: 'robot_type', width: 130, render: (v: string | null) => (v ? <OneLine text={v} /> : <span className="muted">{zh.common.unknown}</span>) },
+    { title: zh.datasets.colCheck, dataIndex: 'check_state', width: 160, render: (_: unknown, d) => <span className="nowrap"><CheckTag d={d} /></span> },
     {
       title: zh.datasets.colLastTask,
       dataIndex: 'last_task',
-      width: 170,
+      width: 210,
       render: (_: unknown, d) =>
         d.last_task ? (
-          <div>
-            <Link to={`/tasks/${d.last_task.id}`}>{d.last_task.name}</Link>
-            <div style={{ marginTop: 2 }}>
-              <StateTag state={d.last_task.state} size="small" />
-            </div>
+          <div className="one-line-with-tag">
+            <Link to={`/tasks/${d.last_task.id}`}>
+              <OneLine text={d.last_task.name} />
+            </Link>
+            <StateTag state={d.last_task.state} size="small" />
           </div>
         ) : (
           <span className="muted">—</span>
         ),
     },
-    { title: zh.datasets.colCreated, dataIndex: 'created_at', width: 100, render: (v: number) => <RelTime ms={v} /> },
+    { title: zh.datasets.colCreated, dataIndex: 'created_at', width: 90, render: (v: number) => <span className="nowrap"><RelTime ms={v} /></span> },
     {
       title: zh.datasets.colOps,
       dataIndex: 'id',
       fixed: 'right',
-      width: 260,
+      width: 250,
       // Requester item 22: 可视化 / 新建任务 / 删除; 重新检查 stays on the detail page.
       render: (_: unknown, d) => (
         <Space size={4}>
@@ -152,7 +154,7 @@ export function DatasetListPage() {
             loading={list.isLoading}
             columns={columns}
             data={list.data?.items ?? []}
-            scroll={{ x: 1470 }}
+            scroll={{ x: 1565 }}
             noDataElement={<Typography.Text type="secondary">{q || format || check ? zh.datasets.emptyFiltered : zh.datasets.empty}</Typography.Text>}
             pagination={{
               current: page,

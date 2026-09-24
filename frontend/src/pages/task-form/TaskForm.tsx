@@ -643,7 +643,8 @@ export function TaskForm(p: TaskFormProps) {
           ) : (
             <Button onClick={() => navigate(p.mode === 'edit' && p.editTask ? `/tasks/${p.editTask.id}` : '/tasks')}>{zh.taskForm.cancel}</Button>
           )}
-          <span data-testid="footer-summary">{footer}</span>
+          {/* only once the preflight knows the episodes (fourth round): no 「? 条 episode」 before */}
+          {count !== null ? <span data-testid="footer-summary">{footer}</span> : null}
         </Space>
         <Space>
           {screen === 1 ? (

@@ -1655,7 +1655,6 @@ export const zh = {
     colConcurrency: '并行度 N',
     refs: (n: number) => `${n} 个任务`,
     refsActive: (n: number) => `其中 ${n} 个未结束`,
-    refsAllDone: '都已结束',
     verify: '重新验证',
     verifyDone: (state: string) => `验证结果：${state}`,
     name: '名称',

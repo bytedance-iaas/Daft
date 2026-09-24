@@ -731,6 +731,11 @@ button.video-placeholder {
   justify-content: flex-end;
 }
 
+/* 运行情况: its three figures fill the card whatever its width (fourth round) */
+.overview-running .stat-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 /* the period card's four figures on one row (fourth round), a little tighter */
 .overview-period .stat-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1062,4 +1067,46 @@ button.video-placeholder {
 .arco-table-td .arco-table-cell-wrap-value > a:first-child > .arco-btn-text,
 .arco-table-td .arco-table-cell-wrap-value > .arco-space > .arco-space-item:first-child .arco-btn-text {
   padding-left: 0;
+}
+
+/* one line per table row (fourth round): OneLine cuts a long value with an ellipsis */
+.one-line {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* a name and its state tag side by side; the name gives way */
+.one-line-with-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.one-line-with-tag > a {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.one-line-with-tag > .nowrap {
+  flex: none;
+}
+
+/* 验证状态 on one line: the tag, then the reason cut to what fits */
+.verify-inline .verify-reason {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12px;
+}
+
+/* 任务列表 状态: the state tag, then 待裁决 / 交付待重新导出, two lines at most */
+.state-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }

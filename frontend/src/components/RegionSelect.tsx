@@ -39,7 +39,8 @@ export function RegionSelect({
   if (value && !known.includes(value)) known.push(value);
   return (
     <Select
-      value={value}
+      // without the empty entry an empty value is nothing picked yet: the placeholder shows
+      value={allowEmpty ? value : value || undefined}
       onChange={(v: string) => onChange((v ?? '').trim().toLowerCase())}
       disabled={disabled}
       placeholder={placeholder ?? zh.taskForm.regionPlaceholder}

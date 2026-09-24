@@ -52,7 +52,7 @@ export function BasicSection(p: BasicSectionProps) {
   const noKeys = p.credentials.length === 0;
   const credSelect = (value: string, onChange: (x: string) => void, extra: { label: string; value: string }[] = [], aria = zh.taskForm.credential, skip?: string) => (
     <Space direction="vertical" style={{ width: '100%' }} size={4}>
-      <Select value={value} onChange={onChange} placeholder={zh.taskForm.credentialPlaceholder} aria-label={aria} status={errors.credential && aria === zh.taskForm.credential ? 'error' : undefined} options={[...extra, ...credentialOptions(p.credentials, skip, value)]} />
+      <Select value={value || extra.some((o) => o.value === value) ? value : undefined} onChange={onChange} placeholder={zh.taskForm.credentialPlaceholder} aria-label={aria} status={errors.credential && aria === zh.taskForm.credential ? 'error' : undefined} options={[...extra, ...credentialOptions(p.credentials, skip, value)]} />
       {noKeys ? (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {zh.taskForm.noCredential}，

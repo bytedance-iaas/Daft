@@ -84,8 +84,8 @@ export function buildInitial(a: InitArgs): Init {
     const keyRegion = a.credentials.find((c) => c.name === v.credential)?.meta.region;
     v.region = registrationRegion ?? keyRegion ?? a.prefs.lastRegion ?? 'cn-beijing';
   }
-  if (v.source === 'public' && !v.outputCredential) v.outputCredential = pickDefault(keyNames, a.prefs.lastOutputCredential ?? a.prefs.lastCredential);
-  if (v.source === 'public' && !v.outputRegion) v.outputRegion = a.credentials.find((c) => c.name === v.outputCredential)?.meta.region ?? a.prefs.lastRegion ?? 'cn-beijing';
+  // A HuggingFace cache bucket dataset has no key and no region of the user's: the delivery ones
+  // are left blank to be picked (fourth round), not filled from the last task.
   if (!v.vlmBackend) {
     // C4 1.6.0: the default model, whatever was used last; without one, 07 §2.1 decides.
     const owner = a.backends.find((b) => b.models.some((m) => m.is_default));

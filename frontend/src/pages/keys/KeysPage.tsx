@@ -9,6 +9,7 @@ import { ApiError, errorMessage } from '../../api/errors';
 import { qk, useBackends, useCredentials } from '../../api/queries';
 import type { Credential, VerifyResult, VlmBackend } from '../../api/types';
 import { PageError } from '../../components/PageError';
+import { OneLine } from '../../components/OneLine';
 import { PageHeader } from '../../components/PageHeader';
 import { regionLabel } from '../../components/RegionSelect';
 import { RelTime } from '../../components/RelTime';
@@ -23,16 +24,15 @@ function verifyMessage(r: VerifyResult): void {
   else Message.warning(text);
 }
 
+/** How many tasks use the key, on one line; the unfinished ones named, nothing said when all are done (fourth round). */
 function Refs({ c }: { c: Credential }) {
   const active = c.references?.active_tasks ?? 0;
   const total = active + (c.references?.historical_tasks ?? 0);
   if (!total) return <span className="muted">—</span>;
   return (
-    <span>
+    <span className="nowrap">
       {zh.credentials.refs(total)}
-      <div className="muted" style={{ fontSize: 12 }}>
-        {active ? zh.credentials.refsActive(active) : zh.credentials.refsAllDone}
-      </div>
+      {active ? <span className="muted"> · {zh.credentials.refsActive(active)}</span> : null}
     </span>
   );
 }
@@ -141,18 +141,19 @@ export function KeysPage() {
   // Widths (07 §7): names, regions and key hints read on one line; the verify column has room
   // for the reason a verification failed.
   const keyColumns: ColumnProps<Credential>[] = [
-    { title: zh.credentials.colName, dataIndex: 'name', width: 150, render: (v: string) => <b>{v}</b> },
-    { title: zh.credentials.colRegion, dataIndex: 'meta', width: 170, render: (_: unknown, c) => regionLabel(c.meta.region) },
-    { title: zh.credentials.akid, dataIndex: 'id', width: 130, render: (_: unknown, c) => (c.meta.access_key_id_hint ? <span className="mono">••••{c.meta.access_key_id_hint}</span> : '—') },
-    { title: zh.credentials.colVerify, dataIndex: 'verify_state', width: 200, render: (_: unknown, c) => <VerifyTag state={c.verify_state} error={c.last_verify_error} /> },
-    { title: zh.credentials.colVerifiedAt, dataIndex: 'last_verified_at', width: 110, render: (v: number | null) => (v ? <RelTime ms={v} /> : <span className="muted">—</span>) },
-    { title: zh.credentials.colRefs, dataIndex: 'references', width: 150, render: (_: unknown, c) => <Refs c={c} /> },
-    { title: zh.credentials.colCreated, dataIndex: 'created_at', width: 100, render: (v: number) => <RelTime ms={v} /> },
+    // one line a row (fourth round): widths measured on the longest values
+    { title: zh.credentials.colName, dataIndex: 'name', width: 140, render: (v: string) => <b><OneLine text={v} /></b> },
+    { title: zh.credentials.colRegion, dataIndex: 'meta', width: 210, render: (_: unknown, c) => <span className="nowrap">{regionLabel(c.meta.region)}</span> },
+    { title: zh.credentials.akid, dataIndex: 'id', width: 120, render: (_: unknown, c) => (c.meta.access_key_id_hint ? <span className="mono nowrap">••••{c.meta.access_key_id_hint}</span> : '—') },
+    { title: zh.credentials.colVerify, dataIndex: 'verify_state', width: 230, render: (_: unknown, c) => <VerifyTag state={c.verify_state} error={c.last_verify_error} inline /> },
+    { title: zh.credentials.colVerifiedAt, dataIndex: 'last_verified_at', width: 100, render: (v: number | null) => (v ? <span className="nowrap"><RelTime ms={v} /></span> : <span className="muted">—</span>) },
+    { title: zh.credentials.colRefs, dataIndex: 'references', width: 190, render: (_: unknown, c) => <Refs c={c} /> },
+    { title: zh.credentials.colCreated, dataIndex: 'created_at', width: 90, render: (v: number) => <span className="nowrap"><RelTime ms={v} /></span> },
     {
       title: zh.credentials.colActions,
       dataIndex: 'updated_at',
       fixed: 'right',
-      width: 250,
+      width: 235,
       render: (_: unknown, c) => (
         <Space size={4}>
           <Button type="text" size="small" onClick={() => setKeyDrawer({ open: true, editing: c })}>
@@ -189,7 +190,7 @@ export function KeysPage() {
       ),
     },
     { title: zh.credentials.colConcurrency, dataIndex: 'max_concurrency', width: 100 },
-    { title: zh.credentials.colVerify, dataIndex: 'verify_state', width: 200, render: (_: unknown, b) => <VerifyTag state={b.verify_state} error={b.last_verify_error} /> },
+    { title: zh.credentials.colVerify, dataIndex: 'verify_state', width: 200, render: (_: unknown, b) => <VerifyTag state={b.verify_state} error={b.last_verify_error} inline /> },
     { title: zh.credentials.colVerifiedAt, dataIndex: 'last_verified_at', width: 110, render: (v: number | null) => (v ? <RelTime ms={v} /> : <span className="muted">—</span>) },
     {
       title: zh.credentials.colActions,
@@ -237,7 +238,7 @@ export function KeysPage() {
             {keys.isError && !keys.data ? (
               <PageError error={keys.error} onRetry={() => void keys.refetch()} />
             ) : (
-              <Table rowKey="id" loading={keys.isLoading} columns={keyColumns} data={keyItems} pagination={false} scroll={{ x: 1260 }} data-testid="keys-table" noDataElement={<span className="muted">{zh.credentials.noItems}</span>} />
+              <Table rowKey="id" loading={keys.isLoading} columns={keyColumns} data={keyItems} pagination={false} scroll={{ x: 1315 }} data-testid="keys-table" noDataElement={<span className="muted">{zh.credentials.noItems}</span>} />
             )}
           </Tabs.TabPane>
           <Tabs.TabPane key="vlm" title={`${zh.credentials.tabBackends}（${backendItems.length}）`}>
