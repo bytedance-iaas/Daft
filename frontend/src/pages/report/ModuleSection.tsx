@@ -10,7 +10,8 @@ import { DefaultSectionView, SECTION_VIEWS } from './sectionViews';
 export { DefaultSectionView, SECTION_VIEWS } from './sectionViews';
 export type { SectionViewProps } from './sectionViews';
 
-export const SECTION_STATE_COLOR: Record<string, string> = { succeeded: 'green', completed_with_errors: 'orange', failed: 'red' };
+// 错误 in red, like the task's state tag (fourth round)
+export const SECTION_STATE_COLOR: Record<string, string> = { succeeded: 'green', completed_with_errors: 'red', failed: 'red' };
 
 /**
  * One report section per selected module, in report.json order (07 §5, 06 §6.2): the module's

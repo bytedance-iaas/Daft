@@ -13,7 +13,7 @@ const COLORS: Record<TaskState, string> = {
   stopping: 'gray',
   stopped: 'gray',
   succeeded: 'green',
-  completed_with_errors: 'orange',
+  completed_with_errors: 'red', // 错误 in red, like 失败 (fourth round)
   failed: 'red',
 };
 

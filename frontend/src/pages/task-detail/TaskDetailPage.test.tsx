@@ -91,6 +91,7 @@ describe('任务详情 (07 §4.2)', () => {
     const { user } = renderApp(`/tasks/${MAIN}`);
     expect(await screen.findByRole('heading', { name: /droid 前 50 条质检/ })).toBeInTheDocument();
     expect(screen.getByTestId('state-tag')).toHaveTextContent(/^错误$/);
+    expect(screen.getByTestId('state-tag').querySelector('.arco-tag')).toHaveClass('arco-tag-red');   // 错误 in red (fourth round)
     await user.click(screen.getByRole('button', { name: '更多' }));
     await user.click(await screen.findByText(/^重试（2 条）$/));
     const dialog = await screen.findByRole('dialog', { name: '重试出错的条目' });
