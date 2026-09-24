@@ -105,7 +105,7 @@ function OverviewCard({ task, report, readOnly, runs, onRetryHeld }: { task: Tas
   const blocked = readOnly ? zh.report.historyDisabled : retryBlocked(task);
   const skipped = skippedOf(report).count;
   return (
-    <Card title={zh.report.overview} extra={<span className="muted">{zh.report.overviewDesc}</span>}>
+    <Card title={zh.report.overview}>
       <div className="equation" data-testid="report-equation">
         <Stat label={zh.report.input} value={c.total} testId="eq-total" />
         <span className="op">=</span>
@@ -183,7 +183,7 @@ function IntegrityCard({ task, report }: { task: Task; report: Report }) {
   const items = integrityItems(report, task);
   const skipped = skippedOf(report);
   return (
-    <Card title={zh.report.integrity} extra={<span className="muted">{zh.report.integrityDesc}</span>}>
+    <Card title={zh.report.integrity}>
       <dl className="desc-grid" data-testid="integrity">
         {items.map((it) => (
           <div key={it.key} className={`desc-item${it.full ? ' full' : ''}${it.warn ? ' warn' : ''}`}>
@@ -255,7 +255,6 @@ function ScopeCard({ report, onJump, onCollapseAll, onExpandAll }: { report: Rep
       title={zh.report.scope}
       extra={
         <Space size={8}>
-          <span className="muted">{zh.report.scopeDesc}</span>
           <Button size="small" onClick={onCollapseAll}>
             {zh.reportPage.collapseAll}
           </Button>

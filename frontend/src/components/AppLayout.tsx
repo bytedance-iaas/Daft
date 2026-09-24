@@ -22,7 +22,6 @@ const NAV: readonly NavItem[] = [
     icon: <IconList />,
     children: [
       { key: '/tasks', label: zh.nav.tasks },
-      { key: '/reports', label: zh.nav.reports },
       { key: '/adjudication', label: zh.nav.adjudication },
     ],
   },
@@ -30,9 +29,8 @@ const NAV: readonly NavItem[] = [
   { key: '/credentials', label: zh.nav.credentials, icon: <IconLock /> },
 ];
 
-/** The entry a path belongs to: a task's report and adjudication pages sit under their lists. */
+/** The entry a path belongs to: a task's adjudication page sits under 人工裁决, its report under 质检任务. */
 export function navKey(pathname: string): string {
-  if (/^\/tasks\/[^/]+\/report\/?$/.test(pathname)) return '/reports';
   if (/^\/tasks\/[^/]+\/adjudication\/?$/.test(pathname)) return '/adjudication';
   const keys = NAV.flatMap((n) => (n.children ? n.children.map((c) => c.key) : [n.key]));
   return keys.find((k) => pathname === k || pathname.startsWith(`${k}/`)) ?? '/overview';
@@ -55,8 +53,8 @@ function openDocs(): void {
 }
 
 /**
- * Header + sidebar (概览、质检 with 质检任务 / 质检报告 / 人工裁决、数据集、系统和资源配置, then
- * 帮助; doc 07 §2) around the routed page.
+ * Header + sidebar (概览、质检 with 质检任务 / 人工裁决、数据集、系统和资源配置, then 帮助;
+ * doc 07 §2) around the routed page.
  */
 export function AppLayout() {
   const { pathname } = useLocation();

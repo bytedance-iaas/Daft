@@ -123,10 +123,12 @@
    `max_reprojection_difference_px` 约 0.013；第二次返回 400 `validation_failed`，`details.errors` 每条带
    `field`（JSON 路径）、`sample_id`、`frame_index`、`camera_id`、`point_id`，`code: forbidden_key`。
    然后在浏览器打开 <http://localhost:8080/curation/tasks/new>：数据来源选本地路径 `eef_ds2_lr3`，「快速质检」不会勾上
-   「EEF–视频一致性」（卡片上写「需要上传约定格式的 trajectory.json」），手动勾上后模型配置出现（它要用模型复核）；第二屏的
-   trajectory.json 选 `$G/trajectory.json`（上传后显示文件名、sha256 前 12 位与摘要），观测种子选 `/tmp/seeds.jsonl`
-   （`.jsonl` 由控制台转成 JSON 数组），另有复核窗口数、每窗口帧数两项；先选 `/tmp/bad.json` 能看到逐条定位的错误。
-   观测种子与夹爪外观模板必须给一个：都不给时第二屏报「请上传观测种子或夹爪外观模板（二选一）」，Daemon 也拒收
+   「EEF–视频一致性」（第一屏的卡片上不再提示要上传的文件，2026-09-24 第四轮），手动勾上后模型配置出现（它要用模型复核）；第二屏的
+   trajectory.json 选 `$G/trajectory.json`（按钮先写「上传中…」、文件发完写「校验中…」，通过后显示文件名、sha256 前 12 位与摘要），
+   「夹爪参考」下拉默认是「观测种子」，选 `/tmp/seeds.jsonl`（`.jsonl` 由控制台转成 JSON 数组），另有复核窗口数、每窗口帧数两项；
+   先选 `/tmp/bad.json` 能看到逐条定位的错误。
+   观测种子与夹爪外观模板必须给一个（注册表 1.10 的 `x-choice-group`，表单里合成「夹爪参考」一项）：都不给时第二屏报
+   「请上传夹爪参考（观测种子或夹爪外观模板，二选一）」，Daemon 也拒收
    （预检 `needs_input: observation_seed_missing`）——没有它们就找不到画面里的夹爪，每一条都只能转人工。两个文件可以同时上传，
    后传完的不会把先传完的冲掉（2026-09-24 在 galbot 上遇到过：trajectory.json 大、后传完，种子的句柄丢了）。
    创建并开始后：任务的运行目录有 `inputs/uploads.json` 与两份文件副本，`plan.json` 的 `vlm` 阶段有这个模块，报告里有
@@ -188,8 +190,9 @@
     ep0 全 `ok`，ep5 两路 `temporal_alignment: suspect` 且 `time_offset` 被支持，ep6 只有 `27432424_left` 位置 suspect 且 `extrinsics_error`
     被支持；`details.jsonl` 里 `template_sha256` 有值、`seeds_sha256` 为 null，`cameras.<相机>.observation.seed_method` 为 `gripper_template`，
     `redetections` 形如 `10/147`（每 15 帧一次成功，失败的帧逐帧重试）。命令行链路上把模板当参数传（`--param eef_video_consistency.gripper_template=FILE`），
-    没有种子目录时预检仍是 `available`，notes 里写着模板的 hash 与条目数；控制台第二屏多一个「夹爪外观模板」文件项（`.json`），与「观测种子」二选一，
-    上传即校验（`POST /uploads?kind=eef_gripper_template`，返回条目数、可用条目数、相机、掩膜条目数与提示）。
+    没有种子目录时预检仍是 `available`，notes 里写着模板的 hash 与条目数；控制台第二屏的「夹爪参考」下拉换成「夹爪外观模板」（`.json`），
+    同一个按钮上传，换选项会丢掉已传的另一种（二选一）；上传即校验（`POST /uploads?kind=eef_gripper_template`，返回条目数、可用条目数、
+    相机、掩膜条目数与提示，控制台显示「N 个模板条目 · 相机 …」）。
     单测：`../.venv/bin/python -m pytest -q tests/eef/test_template.py`（合成场景 7 条 + DEMO 数据 1 条，约 15 秒）。
 
 ## 回退

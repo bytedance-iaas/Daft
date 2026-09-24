@@ -99,7 +99,7 @@ export function PerfTab({ taskId, rev, subtasks }: { taskId: string; rev: number
               </Col>
             </Row>
           </Card>
-          <Card title={zh.report.perfLatency} extra={<span className="muted">{zh.report.perfLatencyDesc}</span>}>
+          <Card title={zh.report.perfLatency}>
             {p.latency.length ? (
               <>
                 <Chart option={latencyOption(p.latency)} summary={p.latency.map((r) => `${r.call_kind} P50 ${r.p50_s} P90 ${r.p90_s} P99 ${r.p99_s}`).join('，')} height={240} />
@@ -166,7 +166,7 @@ export function PerfTab({ taskId, rev, subtasks }: { taskId: string; rev: number
               <Typography.Text type="secondary">{zh.report.perfNoData}</Typography.Text>
             )}
           </Card>
-          <Card title={zh.report.perfTokens} extra={<span className="muted">{zh.report.perfTokensDesc}</span>}>
+          <Card title={zh.report.perfTokens}>
             {tokens.length ? (
               <Table
                 rowKey="call_kind"

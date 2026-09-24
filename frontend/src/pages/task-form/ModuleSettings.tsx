@@ -2,8 +2,8 @@ import { Button, Card, Divider, Input, InputNumber, Radio, Select, Space, Switch
 import { useRef, useState } from 'react';
 import { ApiError } from '../../api/errors';
 import type { ModuleRegistry, PreflightResult, Upload, UploadIssue, UploadKind } from '../../api/types';
-import { uploadFile } from '../../api/uploads';
-import { paramFields, UPLOAD_PREFIX, type ParamField } from '../../lib/paramSchema';
+import { uploadFile, type UploadPhase } from '../../api/uploads';
+import { groupFields, paramFields, UPLOAD_PREFIX, type ChoiceGroup, type ParamField } from '../../lib/paramSchema';
 import { availabilityOf, embodimentHint, reasonText } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
@@ -13,10 +13,12 @@ import { activeModules } from './formModel';
 /**
  * A file parameter (registry 1.5 `format: upload`): pick a file, POST /uploads validates it on
  * arrival, the handle `upload:<id>` becomes the value. A rejected file shows its located errors.
+ * The button says 上传中 while the file goes out and 校验中 while the server checks it.
  */
 export function UploadInput({ f, value, onChange }: { f: ParamField; value: unknown; onChange: (v: unknown) => void }) {
   const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<UploadPhase | null>(null);
+  const busy = phase !== null;
   const [done, setDone] = useState<Upload | null>(null);
   const [problem, setProblem] = useState<{ message: string; errors: UploadIssue[] } | null>(null);
   const has = typeof value === 'string' && value.startsWith(UPLOAD_PREFIX);
@@ -27,16 +29,16 @@ export function UploadInput({ f, value, onChange }: { f: ParamField; value: unkn
       setProblem({ message: zh.taskForm.uploadTooBig(f.maxMb), errors: [] });
       return;
     }
-    setBusy(true);
+    setPhase('uploading');
     try {
-      const up = await uploadFile(file, (f.uploadKind ?? 'eef_trajectory') as UploadKind);
+      const up = await uploadFile(file, (f.uploadKind ?? 'eef_trajectory') as UploadKind, setPhase);
       setDone(up);
       onChange(up.handle);
     } catch (e) {
       const details = e instanceof ApiError ? (e.details as { errors?: UploadIssue[] } | undefined) : undefined;
       setProblem({ message: e instanceof Error ? e.message : String(e), errors: details?.errors ?? [] });
     } finally {
-      setBusy(false);
+      setPhase(null);
       if (input.current) input.current.value = '';
     }
   };
@@ -44,8 +46,8 @@ export function UploadInput({ f, value, onChange }: { f: ParamField; value: unkn
     <div data-testid={`upload-${f.key}`}>
       <input ref={input} type="file" accept={(f.accept ?? []).join(',')} style={{ display: 'none' }} aria-label={f.title} onChange={(e) => void pick(e.target.files?.[0])} />
       <Space>
-        <Button size="small" loading={busy} onClick={() => input.current?.click()}>
-          {busy ? zh.taskForm.uploading : has ? zh.taskForm.uploadReplace : zh.taskForm.uploadChoose}
+        <Button size="small" loading={busy} onClick={() => input.current?.click()} data-testid={`upload-button-${f.key}`}>
+          {phase === 'uploading' ? zh.taskForm.uploading : phase === 'validating' ? zh.taskForm.validating : has ? zh.taskForm.uploadReplace : zh.taskForm.uploadChoose}
         </Button>
         {f.accept ? <span className="muted" style={{ fontSize: 12 }}>{zh.taskForm.uploadAccept(f.accept, f.maxMb)}</span> : null}
       </Space>
@@ -121,9 +123,47 @@ function ParamInput({ f, value, onChange, error }: { f: ParamField; value: unkno
 }
 
 /**
+ * A choice group (registry 1.10 `x-choice-group`, e.g. the EEF module's 夹爪参考): which of the
+ * parameters, then that one's value. Only the chosen one keeps a value - picking the other drops
+ * it (二选一) - and the help text is the chosen one's.
+ */
+function ChoiceGroupField({
+  mod,
+  group,
+  fields,
+  values,
+  errors,
+  onChange,
+}: {
+  mod: string;
+  group: ChoiceGroup;
+  fields: ParamField[];
+  values: Record<string, unknown>;
+  errors: Errors;
+  onChange: (key: string, value: unknown) => void;
+}) {
+  const given = fields.find((f) => values[f.key] !== undefined && values[f.key] !== null && values[f.key] !== '');
+  const [chosen, setChosen] = useState(given?.key ?? fields[0].key);
+  const f = fields.find((x) => x.key === chosen) ?? fields[0];
+  const error = fields.map((x) => errors[`params.${mod}.${x.key}`]).find(Boolean);
+  const choose = (key: string) => {
+    setChosen(key);
+    for (const x of fields) if (x.key !== key && values[x.key]) onChange(x.key, undefined);
+  };
+  return (
+    <Field label={group.title} required={group.required} extra={f.description} error={error}>
+      <div className="choice-group" data-testid={`choice-${group.id}`}>
+        <Select value={chosen} onChange={choose} aria-label={group.title} style={{ width: 160 }} options={fields.map((x) => ({ label: x.title, value: x.key }))} />
+        <ParamInput key={f.key} f={f} value={values[f.key]} error={error} onChange={(x) => onChange(f.key, x)} />
+      </div>
+    </Field>
+  );
+}
+
+/**
  * Screen 2 (D38, 07 §3): only the enabled modules, what they still need first (必填, e.g. the
- * robot type, or 「跳过该模块」), then their optional parameters generated from param_schema.
- * Modules without extra settings are left out.
+ * robot type, or 「跳过该模块」), then each module's parameters generated from param_schema under
+ * its name (fourth round: no 「可选设置」 heading). Modules without extra settings are left out.
  */
 export function ModuleSettings({
   v,
@@ -192,21 +232,30 @@ export function ModuleSettings({
         </>
       ) : null}
 
-      {withParams.length ? (
-        <>
-          <Typography.Title heading={6}>{zh.taskForm.optionalTitle}</Typography.Title>
-          {withParams.map((m) => (
-            <div key={m.id} style={{ marginBottom: 12 }} data-testid={`params-${m.id}`}>
-              <b>{m.name_zh}</b>
-              {paramFields(m.param_schema).map((f) => (
-                <Field key={f.key} label={f.title} required={f.required} extra={f.description} error={errors[`params.${m.id}.${f.key}`]}>
-                  <ParamInput f={f} value={v.params[m.id]?.[f.key]} error={errors[`params.${m.id}.${f.key}`]} onChange={(x) => setParam(m.id, f.key, x)} />
-                </Field>
-              ))}
-            </div>
-          ))}
-        </>
-      ) : null}
+      {withParams.map((m) => (
+        <div key={m.id} className="module-params" data-testid={`params-${m.id}`}>
+          <Typography.Title heading={5} className="module-params-title">
+            {m.name_zh}
+          </Typography.Title>
+          {groupFields(paramFields(m.param_schema)).map((entry) =>
+            'group' in entry ? (
+              <ChoiceGroupField
+                key={entry.group.id}
+                mod={m.id}
+                group={entry.group}
+                fields={entry.fields}
+                values={v.params[m.id] ?? {}}
+                errors={errors}
+                onChange={(key, x) => setParam(m.id, key, x)}
+              />
+            ) : (
+              <Field key={entry.field.key} label={entry.field.title} required={entry.field.required} extra={entry.field.description} error={errors[`params.${m.id}.${entry.field.key}`]}>
+                <ParamInput f={entry.field} value={v.params[m.id]?.[entry.field.key]} error={errors[`params.${m.id}.${entry.field.key}`]} onChange={(x) => setParam(m.id, entry.field.key, x)} />
+              </Field>
+            ),
+          )}
+        </div>
+      ))}
 
       {/* Modules without extra settings are not listed (requester item 16); a screen with nothing
           to set says so instead of showing an empty card. */}

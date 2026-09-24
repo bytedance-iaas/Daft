@@ -78,11 +78,8 @@ export function DeleteDialog({ target, onClose, onDone }: { target: { id: string
                   <Typography.Paragraph type="warning" style={{ marginBottom: 4 }}>
                     {zh.actions.purgeDialog.intro}
                   </Typography.Paragraph>
-                  <Typography.Paragraph className="mono" copyable data-testid="delete-purge-path" style={{ marginBottom: 4 }}>
+                  <Typography.Paragraph className="mono" copyable data-testid="delete-purge-path" style={{ marginBottom: 0 }}>
                     {path}
-                  </Typography.Paragraph>
-                  <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                    {zh.actions.deleteDialog.purgeScope}
                   </Typography.Paragraph>
                 </div>
               ) : (

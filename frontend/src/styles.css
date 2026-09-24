@@ -1006,3 +1006,36 @@ button.video-placeholder {
   display: flex;
   justify-content: flex-end;
 }
+
+/* 高级设置: a switch and its text sit together (fourth round) */
+.switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* 新建任务第二屏: one block per module, its name a heading (fourth round) */
+.module-params {
+  margin-bottom: 16px;
+}
+
+.module-params .module-params-title {
+  margin: 8px 0 12px;
+}
+
+/* a choice group: which parameter, then its value (夹爪参考) */
+.choice-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* a card's refresh sign: a fixed slot at the top right, the spinner only while refetching */
+.refresh-slot {
+  display: inline-flex;
+  width: 14px;
+  justify-content: center;
+  color: var(--c-text-3);
+}

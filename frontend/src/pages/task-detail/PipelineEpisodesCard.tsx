@@ -1,5 +1,6 @@
-import { Button, Card, Empty, Space, Spin, Table, Tag, Typography } from '@arco-design/web-react';
-import { useQuery } from '@tanstack/react-query';
+import { Button, Card, Empty, Space, Table, Tag, Typography } from '@arco-design/web-react';
+import { IconLoading } from '@arco-design/web-react/icon';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
 import type { PipelineEpisode, Task } from '../../api/types';
@@ -23,6 +24,20 @@ function color(row: PipelineEpisode): string {
   return 'arcoblue';
 }
 
+/** The card's refresh sign: a spinner in a fixed slot at the top right, so nothing moves (fourth round). */
+function Refreshing({ on, testId }: { on: boolean; testId: string }) {
+  return (
+    <span className="refresh-slot" data-testid={testId} data-refreshing={on || undefined} aria-hidden>
+      {on ? <IconLoading /> : null}
+    </span>
+  );
+}
+
+/**
+ * Episode 流水线: the latest episodes through the funnel, refetched every 3 s while the task runs.
+ * A refetch (or a new key when the task's state or revision changes) keeps the rows on screen and
+ * only turns the spinner in the header: swapping the table for a spinner made the page jump.
+ */
 export function PipelineEpisodesCard({ task }: { task: Task }) {
   const [before, setBefore] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
@@ -35,6 +50,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
     })),
     enabled: Boolean(task.started_at),
     refetchInterval: live && before === null ? 3000 : false,
+    placeholderData: keepPreviousData,
   });
   const detail = useQuery({
     queryKey: ['task', task.id, 'pipeline-episode', selected, task.state, task.result_rev,
@@ -44,6 +60,8 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
     })),
     enabled: selected !== null,
     refetchInterval: live && selected !== null ? 3000 : false,
+    // the same episode keeps its record while the key moves on; another one starts empty
+    placeholderData: (previous, query) => (query?.queryKey[3] === selected ? previous : undefined),
   });
   const rows = page.data?.items ?? [];
   const total = task.progress.stages.find((s) => s.id === 'numeric')?.total
@@ -52,12 +70,17 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
     <Card
       title={copy.title}
       data-testid="pipeline-episodes"
-      extra={<Typography.Text type="secondary">{copy.count(page.data?.finished ?? 0, total || '—')}</Typography.Text>}
+      extra={
+        <Space size={8}>
+          <Typography.Text type="secondary">{copy.count(page.data?.finished ?? 0, total || '—')}</Typography.Text>
+          <Refreshing on={page.isFetching} testId="pipeline-episodes-refreshing" />
+        </Space>
+      }
     >
       <Typography.Paragraph type="secondary" style={{ marginTop: 0, fontSize: 12 }}>
         {copy.note}
       </Typography.Paragraph>
-      {page.isLoading ? <Spin /> : rows.length ? (
+      {rows.length ? (
         <>
           <Table
             rowKey="episode_index"
@@ -90,16 +113,23 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
             ) : null}
           </Space>
         </>
+      ) : page.isLoading ? (
+        <div className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>{zh.common.loading}</div>
       ) : <Empty description={copy.empty} />}
       {selected !== null ? (
         <Card
           size="small"
           title={copy.detailTitle(selected)}
-          extra={<Button type="text" size="mini" onClick={() => setSelected(null)}>{copy.collapse}</Button>}
+          extra={
+            <Space size={8}>
+              <Refreshing on={detail.isFetching} testId="pipeline-episode-refreshing" />
+              <Button type="text" size="mini" onClick={() => setSelected(null)}>{copy.collapse}</Button>
+            </Space>
+          }
           style={{ marginTop: 14 }}
           data-testid="pipeline-episode-detail"
         >
-          {detail.isLoading ? <Spin /> : detail.data ? (
+          {detail.isLoading ? <span className="muted">{zh.common.loading}</span> : detail.data ? (
             <>
               <Typography.Paragraph>
                 <Tag color={color(detail.data)}>{stateLabel(detail.data)}</Tag>

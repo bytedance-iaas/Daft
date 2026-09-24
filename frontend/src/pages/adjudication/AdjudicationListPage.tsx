@@ -16,22 +16,22 @@ import { percent } from '../../lib/format';
 import { PAGE_SIZES, readPageSize, writePageSize } from '../../lib/prefs';
 import { zh } from '../../locales/zh';
 
-type Kind = 'reports' | 'adjudication';
-
 const Z = () => zh.results;
+const PREFS_KEY = 'adjudication';
 
 /**
- * 质检报告 and 人工裁决 under 质检 in the sidebar (requester, third round): the tasks with a
- * result, across tasks (C4 1.15 `has_result`), each opening its report or its adjudication page.
- * 人工裁决 lists the tasks with pending items first (`pending_adjudication`); 全部 adds the other
- * tasks with a result, whose rejects may still be appealed (D47).
+ * 人工裁决 under 质检 in the sidebar (requester, third round): the tasks with pending adjudication
+ * items across tasks (C4 1.15 `has_result` + `pending_adjudication`), each opening its
+ * adjudication page; 全部有结果的 adds the other tasks with a result, whose rejects may still be
+ * appealed (D47). (The 质检报告 list beside it was dropped in the fourth round: the task list
+ * already opens every report.)
  */
-function ResultListPage({ kind }: { kind: Kind }) {
+export function AdjudicationListPage() {
   const [params, setParams] = useSearchParams();
   const page = Math.max(1, Number(params.get('page') ?? 1) || 1);
-  const pageSize = Number(params.get('page_size')) || readPageSize(kind);
+  const pageSize = Number(params.get('page_size')) || readPageSize(PREFS_KEY);
   const q = params.get('q') ?? '';
-  const pendingOnly = kind === 'adjudication' && params.get('show') !== 'all';
+  const pendingOnly = params.get('show') !== 'all';
 
   const query = useQuery({
     queryKey: qk.tasks({ page, pageSize, q, hasResult: true, pendingOnly }),
@@ -63,8 +63,8 @@ function ResultListPage({ kind }: { kind: Kind }) {
     setParams(next);
   };
 
-  const title = kind === 'reports' ? Z().reportsTitle : Z().adjudicationTitle;
-  const open = (t: TaskListItem) => (kind === 'reports' ? `/tasks/${t.id}/report` : `/tasks/${t.id}/adjudication`);
+  const title = Z().adjudicationTitle;
+  const open = (t: TaskListItem) => `/tasks/${t.id}/adjudication`;
   const columns: ColumnProps<TaskListItem>[] = [
     {
       title: zh.taskList.colName,
@@ -123,12 +123,12 @@ function ResultListPage({ kind }: { kind: Kind }) {
       render: (_: unknown, t) => (
         <Space size={4}>
           <Link to={`/tasks/${t.id}/report`}>
-            <Button size="small" type={kind === 'reports' ? 'primary' : 'text'}>
+            <Button size="small" type="text">
               {zh.actions.report}
             </Button>
           </Link>
           <Link to={`/tasks/${t.id}/adjudication`}>
-            <Button size="small" type={kind === 'adjudication' ? 'primary' : 'text'}>
+            <Button size="small" type="primary">
               {t.pending_adjudication ? zh.actions.adjudicateCount(t.pending_adjudication) : zh.actions.adjudicate}
             </Button>
           </Link>
@@ -136,7 +136,7 @@ function ResultListPage({ kind }: { kind: Kind }) {
       ),
     },
   ];
-  const empty = q ? zh.taskList.emptyFiltered : kind === 'reports' ? Z().emptyReports : pendingOnly ? Z().emptyPending : Z().emptyReports;
+  const empty = q ? zh.taskList.emptyFiltered : pendingOnly ? Z().emptyPending : Z().emptyResults;
 
   return (
     <div>
@@ -144,17 +144,15 @@ function ResultListPage({ kind }: { kind: Kind }) {
       <Card>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
           <SearchInput value={q} placeholder={zh.taskList.searchPlaceholder} onSearch={(v) => update({ q: v || null })} />
-          {kind === 'adjudication' ? (
-            <Radio.Group
-              type="button"
-              value={pendingOnly ? 'pending' : 'all'}
-              onChange={(v: string) => update({ show: v === 'all' ? 'all' : null })}
-              options={[
-                { label: Z().pendingOnly, value: 'pending' },
-                { label: Z().withResult, value: 'all' },
-              ]}
-            />
-          ) : null}
+          <Radio.Group
+            type="button"
+            value={pendingOnly ? 'pending' : 'all'}
+            onChange={(v: string) => update({ show: v === 'all' ? 'all' : null })}
+            options={[
+              { label: Z().pendingOnly, value: 'pending' },
+              { label: Z().withResult, value: 'all' },
+            ]}
+          />
           <div style={{ flex: 1 }} />
           <Tooltip content={zh.common.refresh}>
             <Button icon={<IconRefresh />} aria-label={zh.common.refresh} onClick={() => void query.refetch()} />
@@ -169,7 +167,7 @@ function ResultListPage({ kind }: { kind: Kind }) {
             columns={columns}
             data={query.data?.items ?? []}
             scroll={{ x: 1300 }}
-            data-testid={`${kind}-list`}
+            data-testid="adjudication-list"
             noDataElement={<div className="muted" style={{ padding: 24 }}>{empty}</div>}
             pagination={{
               current: page,
@@ -179,7 +177,7 @@ function ResultListPage({ kind }: { kind: Kind }) {
               sizeCanChange: true,
               sizeOptions: [...PAGE_SIZES],
               onChange: (p: number, size: number) => {
-                if (size !== pageSize) writePageSize(kind, size);
+                if (size !== pageSize) writePageSize(PREFS_KEY, size);
                 update({ page: String(p), page_size: String(size) }, false);
               },
             }}
@@ -188,12 +186,4 @@ function ResultListPage({ kind }: { kind: Kind }) {
       </Card>
     </div>
   );
-}
-
-export function ReportListPage() {
-  return <ResultListPage kind="reports" />;
-}
-
-export function AdjudicationListPage() {
-  return <ResultListPage kind="adjudication" />;
 }

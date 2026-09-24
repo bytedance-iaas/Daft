@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { jsonlToArray, uploadText } from './uploads';
 import { ApiError } from './errors';
 
@@ -19,5 +19,39 @@ describe('uploads (C4 1.8.0, F5.5)', () => {
     const err = await uploadText(bad, 'eef_trajectory', 'trajectory.json').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).details).toMatchObject({ errors: [{ code: 'forbidden_key', sample_id: 's0' }] });
+  });
+
+  it('says 上传中 while the file goes out and 校验中 once it is all sent (fourth round)', async () => {
+    let finish = () => {};
+    class FakeXhr {
+      upload = new EventTarget();
+      status = 0;
+      responseText = '';
+      private events = new EventTarget();
+      open() {}
+      setRequestHeader() {}
+      addEventListener(type: string, fn: EventListener) {
+        this.events.addEventListener(type, fn);
+      }
+      send() {
+        setTimeout(() => this.upload.dispatchEvent(new Event('load')), 0);
+        finish = () => {
+          this.status = 201;
+          this.responseText = JSON.stringify({ upload_id: 'upl-abcdefghi', handle: 'upload:upl-abcdefghi' });
+          this.events.dispatchEvent(new Event('load'));
+        };
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXhr);
+    try {
+      const phases: string[] = [];
+      const pending = uploadText('{}', 'eef_gripper_template', 'template.json', (p) => phases.push(p));
+      expect(phases).toEqual(['uploading']);
+      await vi.waitFor(() => expect(phases).toEqual(['uploading', 'validating']));
+      finish();
+      expect((await pending).handle).toBe('upload:upl-abcdefghi');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

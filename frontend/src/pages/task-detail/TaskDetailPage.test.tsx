@@ -54,6 +54,29 @@ describe('任务详情 (07 §4.2)', () => {
     expect(detail).toHaveTextContent('task_success');
   });
 
+  it('Episode 流水线 keeps its rows while it refreshes; the spinner turns in the header, not in the body (fourth round)', async () => {
+    let calls = 0;
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    server.use(
+      http.get(`*/api/v1/tasks/${RUNNING}/pipeline/episodes`, async () => {
+        calls += 1;
+        if (calls > 1) await held;
+      }),
+    );
+    renderApp(`/tasks/${RUNNING}`);
+    const card = await screen.findByTestId('pipeline-episodes');
+    await within(card).findAllByRole('button', { name: /^ep \d+$/ });
+    const rows = card.querySelectorAll('tbody tr').length;
+    const sign = within(card).getByTestId('pipeline-episodes-refreshing');
+    // the next poll (every 3 s) is held: the rows stay and only the header spins
+    await waitFor(() => expect(sign).toHaveAttribute('data-refreshing', 'true'), { timeout: 6000 });
+    expect(card.querySelectorAll('tbody tr')).toHaveLength(rows);
+    release();
+    await waitFor(() => expect(sign).not.toHaveAttribute('data-refreshing'));
+    expect(card.querySelectorAll('tbody tr')).toHaveLength(rows);
+  }, 20000);
+
   it('重试 shows the subtask its answer carries at once, without waiting for the next poll (07 §4.2)', async () => {
     // Every refetch of the task is held: the banner can only come from the answer of the action.
     let release = () => {};

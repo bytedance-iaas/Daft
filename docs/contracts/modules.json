@@ -1,5 +1,5 @@
 {
- "registry_version": "1.9",
+ "registry_version": "1.10",
  "stages": [
   "numeric",
   "frame",
@@ -377,8 +377,13 @@
       ],
       "x-max-mb": 64,
       "title": "观测种子",
-      "description": "P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），每行是某个样本、某路相机、某一帧里人点出的点；与「夹爪外观模板」二选一，同一路相机两样都给时以种子为准",
-      "default": ""
+      "description": "P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），每行是某个样本、某路相机、某一帧里人点出的点",
+      "default": "",
+      "x-choice-group": {
+       "id": "gripper_reference",
+       "title": "夹爪参考",
+       "required": true
+      }
      },
      "gripper_template": {
       "type": "string",
@@ -389,8 +394,13 @@
       ],
       "x-max-mb": 64,
       "title": "夹爪外观模板",
-      "description": "gripper-template/1.0：同一夹爪在各路相机里的若干小图与标好的物理点，跟踪器用它自动找锚点，不用逐条 episode 点种子；与「观测种子」二选一，两样都不给时只做数值轨迹与画面运动",
-      "default": ""
+      "description": "gripper-template/1.0：同一夹爪在各路相机里的若干小图与标好的物理点，跟踪器用它自动找锚点，不用逐条 episode 点种子",
+      "default": "",
+      "x-choice-group": {
+       "id": "gripper_reference",
+       "title": "夹爪参考",
+       "required": true
+      }
      },
      "threshold_profile": {
       "title": "阈值",

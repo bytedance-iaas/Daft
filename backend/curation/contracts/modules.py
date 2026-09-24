@@ -44,13 +44,19 @@ the CPU first, the model second, pass / reject / a person. Its person's question
 review line ``eef_check`` (1.9, F5.11): an episode it could not settle waits in passed,
 "consistent" keeps it and "inconsistent" rejects it; a reject of the module alone may be
 appealed.
+
+Choice groups (1.10, 2026-09-24): parameters that stand in for one another carry the same
+``x-choice-group`` (``{id, title, required}``). A form offers the group as one field - which of
+them, then that one's value - sends only the chosen one, and with ``required`` asks for one; the
+command line still takes any of them, or none. The EEF module's observation seeds and gripper
+template form the group 夹爪参考.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.9"
+REGISTRY_VERSION = "1.10"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
@@ -205,6 +211,11 @@ def _upload(kind: str, accept: list[str], max_mb: int, **fields) -> dict:
             "x-max-mb": max_mb, **fields}
 
 
+#: The EEF module's two ways to find the gripper in the picture (1.10): a form offers one of them
+#: and asks for it (``required``: without either, every episode goes to a person).
+GRIPPER_REFERENCE = {"id": "gripper_reference", "title": "夹爪参考", "required": True}
+
+
 def upload_params(module_id: str) -> dict[str, str]:
     """param key -> upload kind of the module's file parameters."""
     props = get(module_id).param_schema.get("properties") or {}
@@ -226,13 +237,13 @@ def _eef_params() -> dict:
             "observation_seeds": _upload(
                 "eef_observation_seeds", [".jsonl", ".json"], 64, title="观测种子",
                 description="P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），"
-                            "每行是某个样本、某路相机、某一帧里人点出的点；与「夹爪外观模板」二选一，同一路相机两样都给时以种子为准",
-                default=""),
+                            "每行是某个样本、某路相机、某一帧里人点出的点",
+                default="", **{"x-choice-group": GRIPPER_REFERENCE}),
             "gripper_template": _upload(
                 "eef_gripper_template", [".json"], 64, title="夹爪外观模板",
                 description="gripper-template/1.0：同一夹爪在各路相机里的若干小图与标好的物理点，跟踪器用它自动找锚点，"
-                            "不用逐条 episode 点种子；与「观测种子」二选一，两样都不给时只做数值轨迹与画面运动",
-                default=""),
+                            "不用逐条 episode 点种子",
+                default="", **{"x-choice-group": GRIPPER_REFERENCE}),
             "threshold_profile": {
                 "title": "阈值", "description": "demo 由基准噪声底定、未校准；模块参与判决（D49），没有阈值就判不了，"
                                                 "所以不再提供「不判定」",

@@ -131,7 +131,8 @@ export function TaskForm(p: TaskFormProps) {
   const [incompatNotes, setIncompatNotes] = useState<string[]>(p.incompatibilities.length ? p.incompatibilities.map((i) => i.reason) : []);
   const [taskId, setTaskId] = useState<string | null>(p.mode === 'edit' ? p.editTask?.id ?? null : null);
   const [updatedAt, setUpdatedAt] = useState<number | null>(p.mode === 'edit' ? p.editTask?.updated_at ?? null : null);
-  const [phase, setPhase] = useState<keyof typeof zh.taskForm.submitting | 'start' | null>(null);
+  // Where a submit is (the buttons spin meanwhile; no text since the fourth round).
+  const [phase, setPhase] = useState<'preflight' | 'register' | 'create' | 'start' | null>(null);
   const [fp, setFp] = useState<{ taskId: string; change: SourceChange | null } | null>(null);
   const [fpBusy, setFpBusy] = useState(false);
   const [outputNote, setOutputNote] = useState('');
@@ -636,7 +637,6 @@ export function TaskForm(p: TaskFormProps) {
           <span data-testid="footer-summary">{footer}</span>
         </Space>
         <Space>
-          {phase && phase !== 'start' ? <span className="muted">{zh.taskForm.submitting[phase]}</span> : null}
           {screen === 1 ? (
             <Button type="primary" onClick={next}>
               {zh.taskForm.next}

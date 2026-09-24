@@ -1470,6 +1470,13 @@ const uploadHandlers = [
         });
       }
       summary = { samples: samples.length, episodes: samples.map((s) => s.episode_index), frames: samples.reduce((n, s) => n + (s.frames?.length ?? 0), 0) };
+    } else if (kind === 'eef_gripper_template') {
+      // as the W5 Daemon summarizes a gripper-template/1.0 file (daemon/uploads.py)
+      const t = doc as { schema_version?: string; entries?: { camera_id?: string }[] };
+      if (t.schema_version !== 'gripper-template/1.0')
+        return err(400, 'validation_failed', '夹爪外观模板不合格：schema_version 应为 gripper-template/1.0', { errors: [{ field: null, problem: 'expected gripper-template/1.0', code: 'template_invalid' }] });
+      const entries = t.entries ?? [];
+      summary = { entries: entries.length, usable_entries: entries.length, cameras: [...new Set(entries.map((e) => e.camera_id).filter(Boolean))].sort() };
     } else {
       if (!Array.isArray(doc) || !doc.length) return err(400, 'validation_failed', '种子文件应是 observation 行的 JSON 数组', { errors: [{ field: null, problem: 'expected an array' }] });
       summary = { rows: doc.length, samples: new Set((doc as { sample_id: string }[]).map((r) => r.sample_id)).size };

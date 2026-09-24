@@ -7,26 +7,7 @@ import { currentLocation, renderApp } from '../../test/render';
 const rows = (kind: string) => [...screen.getByTestId(`${kind}-list`).querySelectorAll('tbody tr')].map((r) => r.querySelector('td a')?.textContent);
 const listCalls = (seen: ReturnType<typeof recordRequests>) => seen.filter((r) => r.method === 'GET' && r.path === '/tasks');
 
-describe('质检报告 / 人工裁决 lists (requester, third round)', () => {
-  it('质检报告 lists the tasks with a result (has_result), 查看报告 first and blue', async () => {
-    const seen = recordRequests();
-    const { user } = renderApp('/reports');
-    await screen.findByRole('heading', { name: '质检报告' });
-    await waitFor(() => expect(rows('reports').length).toBeGreaterThan(0));
-    expect(listCalls(seen).at(-1)?.query.get('has_result')).toBe('true');
-    expect(listCalls(seen).at(-1)?.query.get('pending_adjudication')).toBeNull();
-    const withResult = db.tasks.filter((t) => !t.deleted_at && t.result_rev >= 1).length;
-    expect(screen.getByText(`共 ${withResult} 条`)).toBeInTheDocument();
-    const first = screen.getByTestId('reports-list').querySelector('tbody tr') as HTMLElement;
-    const buttons = within(first).getAllByRole('button').map((b) => [b.textContent, b.classList.contains('arco-btn-primary')]);
-    expect(buttons).toEqual([
-      ['查看报告', true],
-      ['人工裁决（10）', false],
-    ]);
-    await user.click(within(first).getByRole('button', { name: '查看报告' }));
-    await waitFor(() => expect(currentLocation()).toBe('/tasks/task_01HXR2D8/report'));
-  });
-
+describe('人工裁决 list (requester, third round; 质检报告 list dropped in the fourth)', () => {
   it('人工裁决 lists the tasks with pending items; 全部有结果的 adds the others', async () => {
     const seen = recordRequests();
     const { user } = renderApp('/adjudication');

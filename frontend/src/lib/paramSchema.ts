@@ -2,7 +2,8 @@
 // module with parameters needs no front-end change. Supported JSON Schema shapes: oneOf/anyOf of
 // {const, title} (choices), enum, boolean, integer / number (with bounds), string, and a file
 // (`format: upload` with x-upload-kind / x-accept / x-max-mb, registry 1.5: the value is the
-// handle `upload:<id>` that POST /uploads returns).
+// handle `upload:<id>` that POST /uploads returns). Parameters that stand in for one another
+// share an `x-choice-group` (registry 1.10): the form shows them as one field.
 import { zh } from '../locales/zh';
 
 export type ParamKind = 'choice' | 'boolean' | 'integer' | 'number' | 'string' | 'upload';
@@ -12,6 +13,13 @@ export const UPLOAD_PREFIX = 'upload:';
 export interface ParamOption {
   value: string | number | boolean;
   label: string;
+}
+
+/** Parameters of one choice group (registry 1.10): `required` asks for one of them. */
+export interface ChoiceGroup {
+  id: string;
+  title: string;
+  required: boolean;
 }
 
 export interface ParamField {
@@ -30,6 +38,7 @@ export interface ParamField {
   uploadKind?: string;
   accept?: string[];
   maxMb?: number;
+  choiceGroup?: ChoiceGroup;
 }
 
 type Schema = Record<string, unknown>;
@@ -50,6 +59,12 @@ function optionsOf(prop: Schema): ParamOption[] | undefined {
     return (prop.enum as unknown[]).filter((v) => v !== null).map((v) => ({ value: v as string | number | boolean, label: String(v) }));
   }
   return undefined;
+}
+
+function groupOf(prop: Schema): ChoiceGroup | undefined {
+  const g = asObject(prop['x-choice-group']);
+  if (!g || typeof g.id !== 'string') return undefined;
+  return { id: g.id, title: typeof g.title === 'string' ? g.title : g.id, required: g.required === true };
 }
 
 function kindOf(prop: Schema, options: ParamOption[] | undefined): ParamKind {
@@ -86,6 +101,7 @@ export function paramFields(schema: unknown): ParamField[] {
       exclusiveMin: exclusive || undefined,
       maxLength: typeof prop.maxLength === 'number' ? prop.maxLength : undefined,
       pattern: typeof prop.pattern === 'string' ? prop.pattern : undefined,
+      choiceGroup: groupOf(prop),
       ...(kind === 'upload'
         ? {
             uploadKind: typeof prop['x-upload-kind'] === 'string' ? (prop['x-upload-kind'] as string) : undefined,
@@ -95,6 +111,29 @@ export function paramFields(schema: unknown): ParamField[] {
         : {}),
     };
   });
+}
+
+/** One entry per field, or one per choice group (its fields together, at the first one's place). */
+export type FieldOrGroup = { field: ParamField } | { group: ChoiceGroup; fields: ParamField[] };
+
+export function groupFields(fields: readonly ParamField[]): FieldOrGroup[] {
+  const out: FieldOrGroup[] = [];
+  const groups = new Map<string, { group: ChoiceGroup; fields: ParamField[] }>();
+  for (const f of fields) {
+    if (!f.choiceGroup) {
+      out.push({ field: f });
+      continue;
+    }
+    const known = groups.get(f.choiceGroup.id);
+    if (known) {
+      known.fields.push(f);
+      continue;
+    }
+    const entry = { group: f.choiceGroup, fields: [f] };
+    groups.set(f.choiceGroup.id, entry);
+    out.push(entry);
+  }
+  return out;
 }
 
 export function hasParams(schema: unknown): boolean {

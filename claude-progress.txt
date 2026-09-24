@@ -290,6 +290,18 @@ Current summary:
       · 注意：同一工作区里另一个会话在改 backend/daemon/orchestr/{episode_pipeline,runbase}.py 与两个 orchestr 测试（暂停时让已完成档的上传做完），
         本轮提交不含这些文件（它们随后由那个会话提交为 48cdb3212、f4c1fd9ec，镜像里都有）
       · 镜像：CP 流水线 build-data_curation-v2 第 10 次运行（提交 657a2eb8e），需求方确认构建成功
+      · 2026-09-24 按需求方要求删除 curation 命名空间里旧 v2 的 PVC data-curator-v2-0（回收策略 Delete，云盘随之释放）与主密钥 Secret
+        （先核对没有 Pod 在用、galbot 的副本逐字节一致）；curation 里旧 v2 的东西已全部清掉，回滚只剩 galbot 数据卷上的快照
+      · CI：657a2eb8e 那轮后端一条 SIGKILL 续跑用例偶发失败（强杀落在两条 episode 之间，在手清单本来就空），ee87c4ae2 改为等有 episode 在手再杀
+        （另一个会话同时提交了 425ecfcbf：落空时换拷贝重试），之后整轮 CI 全绿
+  2026-09-24 第四轮界面修改（F6.9，9 条）：
+      · 导航去掉「质检报告」列表（跨任务列表只留人工裁决，挪到 pages/adjudication/AdjudicationListPage.tsx；C4 的 has_result 仍在用）
+      · 报告与性能剖析卡片右上角的说明、新建任务的四处说明、提交阶段的文字、删除确认框的清理范围说明都去掉
+      · 高级设置三行排版；第二屏模块名升为小标题、去掉「可选设置」；C1 1.10 `x-choice-group`：观测种子与夹爪外观模板合成「夹爪参考」
+        （下拉 + 一个上传按钮，表单里必须给其一，替掉 formModel 里写死的 ONE_OF_UPLOADS）；上传改用 XMLHttpRequest，分「上传中」「校验中」；
+        mock 的上传接口按真实 Daemon 校验并概括夹爪外观模板
+      · Episode 流水线：keepPreviousData 保留表格，刷新标志在卡片右上角的固定位置（原来查询键一变整块换成转圈，页面上下跳）
+      · 第 4 条的疑问「超时对冲是不是重试」已在 07 篇写明区别（对冲压长尾延迟、重试补失败），开关保留
       · 2026-09-24 升级 galbot 的 curator-v2 到 657a2eb8e（helm 第 4 版，--reuse-values 只换 image.tag；干跑比对清单只有镜像与版本标签变化）：
         升级前没有在跑的任务；在线快照 /data/backups/curator-20260924-071802-before-657a2eb8e.db（integrity ok，库版本 4）；
         升级后库迁移到版本 5（裁决表重建），任务 7 / 子任务 5 / 数据集 5 / 密钥 3 / 后端 2 / 模型 140 与升级前一致，
@@ -329,4 +341,4 @@ Next steps:
      F6.3 ReRun「可视化」与「质检」深链、F6.5 TOS 上的 mcap / lance（如有数据）
   3. 验收通过、需求方确认后下线 curation 命名空间的旧 v2；账本置位；设计文档同步飞书副本
      （旧 v2 已 uninstall；剩下的 PVC 与主密钥 Secret 等需求方决定）
-  4. 第三轮界面修改（F6.7、F6.8）已部署到 galbot（657a2eb8e）；等需求方在浏览器里看一遍（公网域名只在 APIG 控制台可见）
+  4. 第三轮界面修改（F6.7、F6.8）已部署到 galbot（657a2eb8e）；第四轮（F6.9）已推送，要上线时需求方出镜像、我部署

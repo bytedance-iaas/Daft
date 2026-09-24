@@ -16,7 +16,7 @@ import type {
 } from '../../api/types';
 import { REGION_RE } from '../../lib/deeplink';
 import { parseForDisplay } from '../../lib/episodes';
-import { changedParams, paramFields, UPLOAD_PREFIX, validateParam } from '../../lib/paramSchema';
+import { changedParams, groupFields, paramFields, UPLOAD_PREFIX, validateParam } from '../../lib/paramSchema';
 import { availability, embodimentHint, needsVlm } from '../../lib/preflight';
 import { presetOf } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
@@ -182,14 +182,6 @@ export function validateScreen1(v: FormValues, ctx: ValidationContext): Errors {
   return e;
 }
 
-/**
- * Upload kinds a module needs one of when it has fields for all of them: the EEF module finds the
- * gripper in the video from observation seeds or a gripper template - without either every episode
- * would go to a person (galbot 2026-09-24). The Daemon refuses such a task too (preflight
- * `observation_seed_missing`).
- */
-const ONE_OF_UPLOADS: readonly (readonly string[])[] = [['eef_observation_seeds', 'eef_gripper_template']];
-
 /** Screen 2: inputs the enabled modules still need, and their parameters (D38). */
 export function validateScreen2(v: FormValues, ctx: ValidationContext): Errors {
   const e: Errors = {};
@@ -203,10 +195,16 @@ export function validateScreen2(v: FormValues, ctx: ValidationContext): Errors {
       const problem = validateParam(f, v.params[id]?.[f.key] ?? f.default);
       if (problem) e[`params.${id}.${f.key}`] = problem;
     }
-    for (const kinds of ONE_OF_UPLOADS) {
-      const group = fields.filter((f) => f.kind === 'upload' && kinds.includes(f.uploadKind ?? ''));
-      const given = group.some((f) => String(v.params[id]?.[f.key] ?? '').startsWith(UPLOAD_PREFIX));
-      if (group.length === kinds.length && !given) e[`params.${id}.${group[0].key}`] = zh.taskForm.oneOfUploads(group.map((f) => f.title));
+    // A required choice group (registry 1.10) needs one of its parameters: the EEF module finds
+    // the gripper from observation seeds or a gripper template - without either every episode
+    // would go to a person, and the Daemon refuses the task (preflight observation_seed_missing).
+    for (const entry of groupFields(fields)) {
+      if (!('group' in entry) || !entry.group.required) continue;
+      const given = entry.fields.some((f) => {
+        const x = v.params[id]?.[f.key];
+        return f.kind === 'upload' ? String(x ?? '').startsWith(UPLOAD_PREFIX) : x !== undefined && x !== null && x !== '';
+      });
+      if (!given) e[`params.${id}.${entry.fields[0].key}`] = zh.taskForm.oneOfGroup(entry.group.title, entry.fields.map((f) => f.title));
     }
   }
   return e;

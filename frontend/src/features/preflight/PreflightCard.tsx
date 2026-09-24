@@ -100,9 +100,10 @@ export function PreflightCard({ state, registry, onRerun }: { state: PreflightSt
           ) : null}
           {r.dataset && r.dataset.labels.without_task > 0 && vlmModules.length ? <Alert type="info" content={zh.taskForm.unlabeled(r.dataset.labels.without_task)} /> : null}
           {embodimentNeeded ? <Alert type="warning" content={reasonText(embodimentNeeded)} /> : null}
-          {r.dataset ? (
+          {/* only a hit is worth a line (a miss was dropped in the fourth round) */}
+          {r.dataset?.profile ? (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {r.dataset.profile ? zh.taskForm.profileHit(r.dataset.profile.matched, r.dataset.profile.by) : zh.taskForm.profileMiss}
+              {zh.taskForm.profileHit(r.dataset.profile.matched, r.dataset.profile.by)}
             </Typography.Text>
           ) : null}
           {r.warnings.length ? (
@@ -116,9 +117,6 @@ export function PreflightCard({ state, registry, onRerun }: { state: PreflightSt
               </Collapse.Item>
             </Collapse>
           ) : null}
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {zh.taskForm.greyNote}
-          </Typography.Text>
         </Space>
       ) : null}
     </Card>

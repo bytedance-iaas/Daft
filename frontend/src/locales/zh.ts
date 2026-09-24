@@ -15,10 +15,9 @@ export const zh = {
     groupMain: '数据质检',
     overview: '概览',
     datasets: '数据集',
-    // 质检 and its second level (requester, third round)
+    // 质检 and its second level (requester, third round; 质检报告 dropped in the fourth)
     qc: '质检',
     tasks: '质检任务',
-    reports: '质检报告',
     adjudication: '人工裁决',
     credentials: '系统和资源配置',
     breadcrumbRoot: '数据质检平台',
@@ -287,15 +286,14 @@ export const zh = {
     retryCount: (n: number) => (n ? `重试（${n} 条）` : '重试'),
   },
 
-  // 质检报告 / 人工裁决: the tasks with a result, across tasks (requester, third round)
+  // 人工裁决: the tasks with pending items (or any result), across tasks (requester, third round)
   results: {
-    reportsTitle: '质检报告',
     adjudicationTitle: '人工裁决',
     colResult: '结果',
     colPending: '待裁决',
     pendingOnly: '有待裁决的',
     withResult: '全部有结果的',
-    emptyReports: '还没有出结果的任务',
+    emptyResults: '还没有出结果的任务',
     emptyPending: '没有待裁决的任务：切到「全部有结果的」可以复议被拒的条目',
   },
 
@@ -346,7 +344,6 @@ export const zh = {
     deleteDialog: {
       purge: '同时清理交付产物',
       keepArtifacts: '不勾选时，TOS 上的交付产物不动；以后也可以用「清理交付产物」单独清理。',
-      purgeScope: '同一交付目录下别的任务的批次不动；latest 如果指向这个批次，会一并移除。先清理，清理开始了才删除任务记录；清理没能开始，就什么都不删。',
       noArtifacts: '这个任务还没有写过交付产物。',
       purgeFailed: (msg: string) => `交付产物没能清理，任务也没有删除：${msg}`,
       deleteFailedAfterPurge: (path: string, msg: string) => `已开始清理 ${path}，但任务记录没删掉：${msg}`,
@@ -414,7 +411,8 @@ export const zh = {
   taskForm: {
     uploadChoose: '选择文件',
     uploadReplace: '换一个文件',
-    uploading: '上传并校验中…',
+    uploading: '上传中…',
+    validating: '校验中…',
     uploadAccept: (exts: string[], maxMb?: number) => `接受 ${exts.join('、')}${maxMb ? `，不超过 ${maxMb} MiB` : ''}`,
     uploadTooBig: (maxMb: number) => `文件超过 ${maxMb} MiB`,
     uploadDone: (name: string, sha: string) => `已上传并通过校验：${name}（sha256 ${sha.slice(0, 12)}…）`,
@@ -423,6 +421,7 @@ export const zh = {
         typeof s.samples === 'number' ? `${s.samples} 个样本` : null,
         typeof s.frames === 'number' ? `${s.frames} 帧` : null,
         typeof s.rows === 'number' ? `${s.rows} 行` : null,
+        typeof s.entries === 'number' ? `${s.entries} 个模板条目` : null,
         Array.isArray(s.cameras) ? `相机 ${(s.cameras as string[]).join('、')}` : null,
         typeof s.max_reprojection_difference_px === 'number' ? `重算投影差 ≤ ${Number(s.max_reprojection_difference_px).toFixed(3)} px` : null,
       ]
@@ -431,7 +430,7 @@ export const zh = {
     uploadWarnings: (n: number) => `${n} 条警告（不影响使用）`,
     uploadBadLine: (n: number) => `第 ${n} 行不是合法的 JSON`,
     uploadReadFailed: '读取文件失败',
-    oneOfUploads: (titles: string[]) => `请上传${titles.join('或')}（二选一）：没有它们找不到画面里的夹爪，每一条都只能转人工`,
+    oneOfGroup: (group: string, titles: string[]) => `请上传${group}（${titles.join('或')}，二选一）`,
     uploadFailed: '上传失败：',
     uploadMore: (n: number) => `共 ${n} 处，前几处：`,
     uploadWhere: (e: { field?: string | null; problem?: string; sample_id?: string; frame_index?: number; camera_id?: string; point_id?: string }) =>
@@ -518,7 +517,6 @@ export const zh = {
     profileMiss: '没有命中数据集语义档案：运行时会先做动作语义判断',
     validation: '数据集的 info.json 有问题',
     otherWarnings: '其他提示（命令行原文）',
-    greyNote: '未通过预检的模块会在「质检范围」里置灰，点「详细信息」可以看到具体原因。',
     sectionEpisodes: 'Episode 选择',
     selectedCount: (n: number | string, total: number | string) => `已选 ${n} / ${total} 条`,
     episodesAll: '全部',
@@ -564,7 +562,6 @@ export const zh = {
     effort: '思考强度',
     effortDefault: '模型默认',
     effortNotSent: '不传（默认）',
-    effortDefaultHelp: '「模型默认」表示请求里不带这个字段，按模型自己的默认档走。',
     effortAllHint: '认不出这个模型的档位，列出全部 7 档，实际生效的档位以服务端映射为准。',
     effortSlowHint: '提高思考强度会明显拉长单次延迟，建议在「高级设置」里同步放宽各类调用超时。',
     effortMinimal: 'minimal（关闭思考）',
@@ -573,7 +570,6 @@ export const zh = {
     vlmRetry: '模型调用重试次数上限',
     vlmRetryOption: (n: number) => (n === 0 ? '不重试' : n === 3 ? '3 次（间隔 1s / 2s / 4s）' : `${n} 次`),
     vlmHedge: '超时对冲',
-    vlmHedgeHelp: '到时没返回就补发一次',
     timeouts: '各类调用超时（秒）',
     timeoutLabels: { probe: '打分', endstate: '复核', arbitration: '仲裁', caption: '打标', llm: '归纳' } as Record<string, string>,
     cpuLimit: 'CPU 并发上限',
@@ -591,7 +587,6 @@ export const zh = {
     cancel: '取消',
     screen2Title: '模块设置',
     needsInputTitle: '需要补充',
-    optionalTitle: '可选设置',
     nothingToSet: '开启的模块都不需要额外设置，可以直接创建。',
     skippedTitle: '已跳过',
     skipModule: '跳过该模块',
@@ -601,11 +596,6 @@ export const zh = {
     embodimentShared: (names: string) => `${names} 共用这个型号`,
     // Shown next to the buttons while submitting; the start checks show no text, only the
     // buttons' loading state (requester item 12).
-    submitting: {
-      preflight: '正在确认预检结果…',
-      register: '正在登记数据集…',
-      create: '正在创建任务…',
-    },
     created: '已保存为待启动',
     started: '任务已创建，进入队列',
     savedEdit: '已保存',
@@ -1001,7 +991,6 @@ export const zh = {
     tabPerf: '性能剖析',
     noReport: '任务还没有生成报告：主流程跑完后才有。',
     overview: '质检总览',
-    overviewDesc: '输入 = 判废 + 交付 + 待补跑，三者不重不漏',
     input: '输入',
     rejected: '判废',
     delivered: '交付',
@@ -1025,7 +1014,6 @@ export const zh = {
     skippedMissing: '缺少的文件',
     retryBusy: '任务还有未结束的子任务，等它结束后再重试',
     integrity: '数据包完整性',
-    integrityDesc: '读任何数字之前先看数据本身',
     integrityKeys: {
       format: '格式',
       episodes: 'Episode',
@@ -1046,7 +1034,6 @@ export const zh = {
     containerFindingSep: '；',
     none: '无',
     scope: '本次质检范围',
-    scopeDesc: '报告小节按下面的顺序排列，点名称跳到对应小节',
     colOrder: '顺序',
     colModule: '模块',
     colGate: '判决方式',
@@ -1123,7 +1110,6 @@ export const zh = {
       node: '节点',
     } as Record<string, string>,
     perfLatency: '五类调用的延迟',
-    perfLatencyDesc: '客户端视角：网络 + 服务端排队 + 推理；墙钟口径，不用「次数 × 均值」',
     callKind: { probe: '打分', endstate: '复核', arbitration: '取证仲裁', caption: '打标', llm: '归纳', merged: '合并请求' } as Record<string, string>,
     colCall: '调用',
     colCount: '次数',
@@ -1145,7 +1131,6 @@ export const zh = {
     redone: '因中断而重做',
     redoneFoot: '服务端可能已为丢掉的那次计费，Token 统计里没有（D26）',
     perfTokens: 'Token（按调用种类）',
-    perfTokensDesc: '实际调用账；合并请求单列一行',
     perfNoData: '这个范围没有调用记录',
   },
 

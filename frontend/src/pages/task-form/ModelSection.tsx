@@ -98,15 +98,15 @@ export function ModelSection({
           </Field>
         </Col>
       </Row>
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {zh.taskForm.effortDefaultHelp}
-      </Typography.Text>
       {slow ? <Alert type="warning" style={{ marginTop: 8 }} content={zh.taskForm.effortSlowHint} /> : null}
     </Card>
   );
 }
 
-/** 高级设置 (collapsed): only upper bounds (D31); the plan itself is not open. */
+/**
+ * 高级设置 (collapsed): only upper bounds (D31); the plan itself is not open. One row for the
+ * four limits, one for the per-call timeouts, one for the two switches (fourth round).
+ */
 export function AdvancedSection({ v, set, errors, vlm }: { v: FormValues; set: (patch: Partial<FormValues>) => void; errors: Errors; vlm: boolean }) {
   const hasError = Object.keys(errors).some((k) => k.startsWith('timeouts.') || k === 'cpuLimit' || k === 'vlmLimit');
   return (
@@ -119,7 +119,7 @@ export function AdvancedSection({ v, set, errors, vlm }: { v: FormValues; set: (
         <Row gutter={24}>
           {vlm ? (
             <>
-              <Col span={8}>
+              <Col span={6}>
                 <Field label={zh.taskForm.vlmRetry}>
                   <Select
                     value={v.vlmRetry}
@@ -129,20 +129,20 @@ export function AdvancedSection({ v, set, errors, vlm }: { v: FormValues; set: (
                   />
                 </Field>
               </Col>
-              <Col span={8}>
-                <Field label={zh.taskForm.vlmHedge} extra={zh.taskForm.vlmHedgeHelp}>
+              <Col span={6}>
+                <Field label={zh.taskForm.vlmHedge}>
                   <Switch checked={v.vlmHedge} onChange={(x) => set({ vlmHedge: x })} aria-label={zh.taskForm.vlmHedge} />
                 </Field>
               </Col>
             </>
           ) : null}
-          <Col span={8}>
+          <Col span={6}>
             <Field label={zh.taskForm.cpuLimit} error={errors.cpuLimit}>
               <InputNumber value={v.cpuLimit} min={1} precision={0} placeholder={zh.taskForm.limitPlaceholder} onChange={(x) => set({ cpuLimit: x ? Number(x) : undefined })} aria-label={zh.taskForm.cpuLimit} />
             </Field>
           </Col>
           {vlm ? (
-            <Col span={8}>
+            <Col span={6}>
               <Field label={zh.taskForm.vlmLimit} error={errors.vlmLimit}>
                 <InputNumber value={v.vlmLimit} min={1} precision={0} placeholder={zh.taskForm.limitPlaceholder} onChange={(x) => set({ vlmLimit: x ? Number(x) : undefined })} aria-label={zh.taskForm.vlmLimit} />
               </Field>
@@ -168,9 +168,15 @@ export function AdvancedSection({ v, set, errors, vlm }: { v: FormValues; set: (
             </Space>
           </Field>
         ) : null}
-        <Space size={24}>
-          <Switch checked={v.exportDataset} onChange={(x) => set({ exportDataset: x })} aria-label={zh.taskForm.exportDataset} /> {zh.taskForm.exportDataset}
-          <Switch checked={v.clips} onChange={(x) => set({ clips: x })} aria-label={zh.taskForm.clips} /> {zh.taskForm.clips}
+        <Space size={40} className="adv-switches">
+          <label className="switch-label">
+            <Switch checked={v.exportDataset} onChange={(x) => set({ exportDataset: x })} aria-label={zh.taskForm.exportDataset} />
+            {zh.taskForm.exportDataset}
+          </label>
+          <label className="switch-label">
+            <Switch checked={v.clips} onChange={(x) => set({ clips: x })} aria-label={zh.taskForm.clips} />
+            {zh.taskForm.clips}
+          </label>
         </Space>
       </Collapse.Item>
     </Collapse>

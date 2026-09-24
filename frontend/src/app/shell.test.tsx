@@ -16,29 +16,27 @@ describe('app shell', () => {
     renderApp('/');
     const nav = await screen.findByRole('navigation', { name: '数据质检' });
     const items = within(nav).getAllByRole('menuitem').map((el) => el.textContent);
-    expect(items).toEqual(['概览', '质检任务', '质检报告', '人工裁决', '数据集', '系统和资源配置', '使用文档']);
+    expect(items).toEqual(['概览', '质检任务', '人工裁决', '数据集', '系统和资源配置', '使用文档']);
     expect(within(nav).getByText('帮助')).toBeInTheDocument();
-    // 质检 holds the three, open from the start (requester, third round)
+    // 质检 holds the two, open from the start (third round; 质检报告 dropped in the fourth)
     expect(within(nav).getByText('质检')).toBeInTheDocument();
     await waitFor(() => expect(currentLocation()).toBe('/overview'));
   });
 
-  it('质检报告 and 人工裁决 light up on their lists and on a task\'s report and adjudication pages', async () => {
+  it('人工裁决 lights up on its list and on a task\'s adjudication page; a report sits under 质检任务', async () => {
     const { user } = renderApp('/tasks');
     const nav = await screen.findByRole('navigation', { name: '数据质检' });
     const selected = () => nav.querySelector('.arco-menu-item.arco-menu-selected')?.textContent;
     await waitFor(() => expect(selected()).toBe('质检任务'));
-    await user.click(within(nav).getByRole('menuitem', { name: '质检报告' }));
-    await waitFor(() => expect(currentLocation()).toBe('/reports'));
-    expect(selected()).toBe('质检报告');
-    await user.click(await screen.findByRole('link', { name: 'droid 前 50 条质检' }));
-    await waitFor(() => expect(currentLocation()).toBe('/tasks/task_01HXR2D8/report'));
-    expect(selected()).toBe('质检报告');
     await user.click(within(nav).getByRole('menuitem', { name: '人工裁决' }));
     await waitFor(() => expect(currentLocation()).toBe('/adjudication'));
+    expect(selected()).toBe('人工裁决');
     await user.click(await screen.findByRole('link', { name: 'droid 前 50 条质检' }));
     await waitFor(() => expect(currentLocation()).toBe('/tasks/task_01HXR2D8/adjudication'));
     expect(selected()).toBe('人工裁决');
+    await user.click(await screen.findByRole('button', { name: '查看质检报告' }));
+    await waitFor(() => expect(currentLocation()).toBe('/tasks/task_01HXR2D8/report'));
+    expect(selected()).toBe('质检任务');
   });
 
   it('使用文档 says it is not configured while its URL is empty, and opens it in a new tab once set', async () => {
