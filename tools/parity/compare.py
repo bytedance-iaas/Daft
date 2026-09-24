@@ -335,6 +335,22 @@ def compare_adjudicated_task(g: Side, c: Side, max_diffs: int,
     return out
 
 
+def compare_adjudicated_task_v2(g: Side, c: Side, max_diffs: int,
+                                exclude: set[int] = frozenset()) -> dict:
+    """Plan A (2026-09-24): both sides are ``run-v2`` directories, the golden one recorded
+    with ``--fake-vlm --decisions``. The re-judged records (parts after the first run's) are
+    compared exactly, bookkeeping fields included — same decisions file, so they match."""
+    g_eps = g.judged_again("task_success") - set(exclude)
+    c_eps = c.judged_again("task_success") - set(exclude)
+    gr = {i: R.comparable(r) for i, r in g.records("task_success").items() if i in g_eps}
+    cr = {i: R.comparable(r) for i, r in c.records("task_success").items() if i in c_eps}
+    out = _strict_diff(gr, cr, max_diffs)
+    out["judged_again"] = sorted(set(gr) | set(cr))
+    out["excluded_errors"] = sorted(set(exclude) & (g.judged_again("task_success")
+                                                   | c.judged_again("task_success")))
+    return out
+
+
 def compare_assignments(g: Side, c: Side, max_diffs: int) -> dict:
     """The skill assignments after the decisions (v1's ``_sync_profile``), exactly."""
     def rows(side):
@@ -509,6 +525,7 @@ def run_compare(args) -> dict:
     if args.all_strict:
         strict, verdict_only = list(STRICT_DEFAULT) + list(VERDICT_DEFAULT), []
     result: dict = {"golden": args.golden, "candidate": args.candidate, "modules": {}}
+    g_v2_adj = isinstance(g, V2Side) and g.meta.get("kind") == "v2-adjudication"
     if isinstance(g, Side) and not isinstance(g, V2Side) \
             and g.meta.get("command") == "rejudge":
         adj = g.meta.get("adjudication") or {}
@@ -517,6 +534,12 @@ def run_compare(args) -> dict:
         strict, verdict_only = [], []
         result["modules"]["task_success"] = compare_adjudicated_task(g, c, args.max_diffs,
                                                                      exclude)
+        result["modules"]["skill_profile"] = compare_assignments(g, c, args.max_diffs)
+    elif g_v2_adj:
+        # plan A: the golden is a recorded v2 adjudication (run-v2 --fake-vlm --decisions)
+        strict, verdict_only = [], []
+        result["modules"]["task_success"] = compare_adjudicated_task_v2(g, c, args.max_diffs,
+                                                                        exclude)
         result["modules"]["skill_profile"] = compare_assignments(g, c, args.max_diffs)
     for module in strict:
         result["modules"][module] = compare_strict_module(g, c, module, args.max_diffs)

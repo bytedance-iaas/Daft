@@ -1,8 +1,14 @@
 # 对账工具（W0 / F1.1）
 
-v2 重构的安全网：先用 v1 自己的代码生成「黄金基线」，之后每搬一块代码，都拿 v2 的结果和基线逐条比。
-口径见 [`docs/design/10-parity-and-migration.md`](../../docs/design/10-parity-and-migration.md) §3，
-决策见 `00-overview.md` §7 的 D15、D19、D33、D34、D44。
+v2 重构的安全网。**2026-09-24（设计 13）起基线是 v2 自录的**：设计 13 把判定协议换成连续视频，
+冻结点的 v1（图片探针）在定义上无法回答 v2 的请求，v1↔v2 逐位对账就此退役；改为
+`run-v2 --fake-vlm` 对合成数据集录一盘新黄金基线（结果 + 录制带），之后的改动回放这盘带子对答案——
+模型被钉死，任何差异都来自代码。测试见 `tests/test_v2_parity.py`。
+历史：基线原先是 v1 自己的代码生成的（D15/D19/D33/D34/D44 口径见
+[`docs/design/10-parity-and-migration.md`](../../docs/design/10-parity-and-migration.md) §3、
+`00-overview.md` §7），冻结点 `dev` 的 `eb637ba40`（D44）仍留在 git 历史里，
+`dump-v1`、`v1_manifest.json`（`manifest.py` 的 `DEFAULT_COMMIT` 是唯一出处）与 `test_dump_v1_e2e`
+继续作为工具自身与 v1 行为的离线回归存在，不再作为 v2 的对照。
 
 **冻结点**：`dev` 的 `eb637ba40`（2026-09-22，PR #155「mcap 与 lance 格式的质检」合入后的头部，D44）。
 此前是 `release_v1` 的 `45bdf9292`（D34）；两者之间只有 PR #155，它对 LeRobot 数据集的判决没有影响

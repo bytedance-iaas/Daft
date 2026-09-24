@@ -13,10 +13,13 @@
 
 ## 纪律
 
-- **算法一行不改**：A 类代码（`core/`、`registry/`、`ingest/`、`dataset_level/` 等，清单见设计 10 篇 §2）逐字搬运，只允许改 import 路径。
-  冻结点是 `dev` 的 `eb637ba40`（PR #155 mcap / lance 合入后，D44；此前是 D34 的 `release_v1@45bdf9292`），
+- **算法一致性有对账工具背书**（`core/`、`registry/`、`ingest/`、`dataset_level/` 等源自 v1 的代码，清单见设计 10 篇 §2）。
+  v1 逐字对账的冻结点是 `dev` 的 `eb637ba40`（D44；此前是 D34 的 `release_v1@45bdf9292`），
   `tools/parity/v1_manifest.json` 记着它逐文件的哈希。
-- 任何可能影响判决的改动，先用对账工具证明与 v1 一致（`python -m parity compare`）。
+  **2026-09-24（设计 13，视频原生判定）起基线改为 v2 自录**：判定协议换成连续视频后 v1 对照在定义上
+  不可行，改为 `run-v2 --fake-vlm` 录新黄金基线、后续改动回放对答案（见对账工具 README）。
+  v1 的算法冻结与历史基线仍在 git 历史里，改到遗留路径时用它对账。
+- 任何可能影响判决的改动，先跑对账工具的黄金基线回放（`PYTHONPATH=tools python -m pytest tools/parity/tests -m e2e`）。
 - 代码注释、提交信息用英文；文档、界面文案用中文。
 
 ## 目录
