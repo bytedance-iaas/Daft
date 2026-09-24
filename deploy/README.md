@@ -434,15 +434,43 @@ kubectl -n galbot get pvc                                            # data-cura
 **3. 旧实例进维护模式，拷数据**
 
 ```bash
-helm -n curation upgrade curator-v2 deploy/charts/curator --reuse-values --set maintenance.enabled=true
+helm -n curation get values curator-v2 -o yaml > curation-old-values.yaml       # 旧 release 当初给的值（不含密钥本体）
+helm -n curation upgrade curator-v2 deploy/charts/curator -f curation-old-values.yaml --set maintenance.enabled=true
 # SIGTERM：运行中的任务置系统暂停，到新实例上自动续跑；新 Pod 只挂盘，库文件没人打开
 kubectl -n curation rollout status statefulset/curator-v2 --timeout=10m
-kubectl -n curation exec curator-v2-0 -- tar -C /data -cf - --exclude=./lost+found . \
-  | kubectl -n galbot exec -i curator-v2-0 -- tar -C /data -xf -
-for ns in curation galbot; do                                        # 两边逐个文件比哈希
-  kubectl -n $ns exec curator-v2-0 -- sh -c 'cd /data && find . -type f ! -path "./lost+found/*" | sort | xargs sha256sum | sha256sum'
+```
+
+数据在集群里直传，不经 kubectl 的端口转发或 exec 管道：经本机隧道走 100 MB 会超时断掉（2026-09-23 实测，
+只到了一半）。旧 Pod 临时监听一个端口、只接受新 Pod 的 IP、发完一次就退出；新 Pod 连过去解包。
+两边的套接字必须是阻塞模式，否则 tar / gzip 读写非阻塞描述符会提前断开：
+
+```bash
+NEW=$(kubectl -n galbot get pod curator-v2-0 -o jsonpath='{.status.podIP}')
+OLD=$(kubectl -n curation get pod curator-v2-0 -o jsonpath='{.status.podIP}')
+kubectl -n curation exec curator-v2-0 -- sh -c "cat > /tmp/send.py <<'PY'
+import socket, subprocess, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0', 18734)); s.listen(4)
+while True:
+    c, (ip, _) = s.accept()
+    if ip != sys.argv[1]:
+        c.close(); continue
+    c.setblocking(True)
+    p = subprocess.run(['tar', '-C', '/data', '-czf', '-', '--exclude=./lost+found', '.'], stdout=c.fileno())
+    c.shutdown(socket.SHUT_WR); c.close(); print('sent', p.returncode, flush=True); break
+PY
+nohup timeout 1800 python3 /tmp/send.py $NEW > /tmp/send.log 2>&1 &"
+kubectl -n galbot exec curator-v2-0 -c curator -- python3 -c "
+import socket, subprocess
+c = socket.create_connection(('$OLD', 18734), timeout=60); c.setblocking(True)
+print('received', subprocess.run(['tar', '-C', '/data', '-xzf', '-'], stdin=c.fileno()).returncode)"
+for ns in curation galbot; do                                        # 两边逐个文件比哈希、比文件数
+  kubectl -n $ns exec curator-v2-0 -c curator -- sh -c 'cd /data && find . -type f ! -path "./lost+found/*" | sort | xargs sha256sum | sha256sum; find . -type f ! -path "./lost+found/*" | wc -l'
 done
 ```
+
+VCI 不执行 `fsGroup`：新块存储挂进来是 `root:root 755`，Daemon 的用户（10001）写不进去；
+第 1 步的 `volumePermissions.enabled: true` 让初始化容器先把两块盘交给 10001。
 
 **4. 关掉 dataverse 的 curator**（同一 Chart、沿用原值，只改这一项）
 

@@ -265,6 +265,14 @@ Current summary:
         profile_vlm 阶段。合并（39a9a2d04）时补了注册表 1.7 / C4 1.13.0 与锁、测试辅助代码的步骤名、拆开一条负载下偶发超时的前端测试
       · 全量回归：v1 1438、对账 70、A 类 59/0、v2 各组全过（cli 240 另跑）、前端 316 条 + lint + 类型 + 构建
       · F6.1、F6.4 置 completed；F6.2（真视频同步播放）、F6.3（ReRun 可视化）、F6.5（TOS 上的 mcap / lance）、F6.6 待集群验证
+      · F6.6 部署（2026-09-23，镜像 19305cd9c，含 F5.8）：galbot 装 curator-v2（VCI cn-beijing-b，ebs-essd 数据盘 100Gi + 临时盘 200Gi，
+        登录用 dataverse-secrets 的 web_htpasswd，主密钥从 curation 复制）；旧实例维护模式后集群内直传 /data（681 个文件、104M，
+        两边哈希 765f5065e552ce26 一致）；dataverse 升到 rev 5、curator.enabled=false（只删 curation 的三样与 /curation 路径）；
+        v2 起来后 readyz 五项全 true、未登录 401、任务 3 / 数据集 4 / 密钥 3 / 后端 2 / 模型 140 与迁移前一致；Ingress 已被 APIG 接管
+      · 部署中修了两处：VCI 不执行 fsGroup，新块存储 root:root 755 → Chart 加 volumePermissions 初始化容器（427101e21）；
+        经本机隧道 exec 拷 100 MB 会超时 → 改集群内直传（手册 §12 第 3 步已改）
+      · 待办：公网域名只在 APIG 控制台可见，等需求方给地址做浏览器验收（登录、ReRun「质检」深链、「可视化」）；
+        旧 curation 命名空间实例处于维护模式、盘保留，需求方确认后再 uninstall
 Main gaps:
   - 阶段 6 全部 not_completed（进行中）
   - 集群连不上：kubeconfig 走 socks5://localhost:1080，本机隧道没开；F6.6 部署前需要需求方打开
