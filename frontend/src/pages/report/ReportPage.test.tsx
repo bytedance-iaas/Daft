@@ -91,8 +91,9 @@ describe('质检报告 (07 §5)', () => {
     expect(within(dedup).queryByRole('link', { name: /去裁决/ })).toBeNull();
     await user.click(within(dedup).getByRole('link', { name: '可复议（1）' }));
     await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN_TASK}/adjudication?tab=appeals&source=dedup`));
-    const list = await screen.findByTestId('appeals');
-    expect(await within(list).findByTestId('card-44')).toBeInTheDocument();
+    // The adjudication page loads its route and queries first: slower CI runners need more than 1 s.
+    const list = await screen.findByTestId('appeals', {}, { timeout: 5000 });
+    expect(await within(list).findByTestId('card-44', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(within(list).queryByTestId('card-6')).toBeNull();
     expect(screen.getByRole('tab', { name: '被拒复议' })).toHaveAttribute('aria-selected', 'true');
   });
