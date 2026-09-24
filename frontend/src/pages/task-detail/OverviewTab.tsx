@@ -15,6 +15,7 @@ import { absoluteTime, bytes, compactNumber, percent } from '../../lib/format';
 import { subtaskName } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
 import { activeSubtask, groupStages, isTerminalState, progressStages, stageLabel, subtaskLabel } from '../../lib/taskView';
+import { planGateText, planMergeText, planNoteText } from '../../lib/planText';
 import { zh } from '../../locales/zh';
 import { PipelineEpisodesCard } from './PipelineEpisodesCard';
 import { StatCell } from '../../components/StatCell';
@@ -470,7 +471,7 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
             title: zh.taskDetail.planCols.concurrency,
             dataIndex: 'concurrency',
             render: (_: unknown, s: Plan['stages'][number]) =>
-              [s.concurrency ? `CPU ${s.concurrency}` : '', s.gates ? Object.entries(s.gates).map(([k, n]) => `${k} ${n}`).join(' · ') : '', s.hard_gates?.length ? zh.taskDetail.planHardGates(s.hard_gates.map((m) => moduleName(reg.data, m)).join('、')) : '', s.merge ? `merge = ${s.merge.strategy}` : '']
+              [s.concurrency ? `CPU ${s.concurrency}` : '', s.gates ? Object.entries(s.gates).map(([k, n]) => planGateText(k, n)).join(' · ') : '', s.hard_gates?.length ? zh.taskDetail.planHardGates(s.hard_gates.map((m) => moduleName(reg.data, m)).join('、')) : '', s.merge ? planMergeText(s.merge.strategy) : '']
                 .filter(Boolean)
                 .join(' · ') || '—',
           },
@@ -478,7 +479,7 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
       />
       <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
         {zh.taskDetail.planEstimate(p.estimates.vlm_requests, zh.time.duration(p.estimates.wall_clock_s))}
-        {p.estimates.notes.length ? `。${p.estimates.notes.join('；')}` : ''}
+        {p.estimates.notes.length ? `。${p.estimates.notes.map((n) => planNoteText(n, (id) => moduleName(reg.data, id))).join('；')}` : ''}
       </Typography.Paragraph>
     </div>
   );
@@ -513,7 +514,15 @@ function MoreInfo({ task }: { task: Task }) {
         header={<b>{zh.taskDetail.more}</b>}
       >
         <Typography.Title heading={6}>{zh.taskDetail.config}</Typography.Title>
-        <Descriptions column={2} data={data} style={{ marginTop: 8 }} />
+        {/* the name and its value kept apart, and the value from the next column (fourth round) */}
+        <Descriptions
+          column={2}
+          data={data}
+          style={{ marginTop: 8 }}
+          labelStyle={{ paddingRight: 24, whiteSpace: 'nowrap' }}
+          valueStyle={{ paddingRight: 40 }}
+          data-testid="task-config"
+        />
         <Typography.Title heading={6} style={{ marginTop: 16 }}>
           {zh.taskDetail.plan}
         </Typography.Title>

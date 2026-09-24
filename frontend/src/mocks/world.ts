@@ -1020,7 +1020,16 @@ export function mainPlan(): Plan {
       { id: 'profile_vlm', kind: 'vlm', command: 'check', modules: ['skill_profile'], episodes: 'keep-minus-duplicates', gates: { caption: 32, llm: 16, audit: 16 }, merge: { strategy: 'none', groups: [] } },
       { id: 'final', kind: 'aggregate', command: 'aggregate', phase: 'final' },
     ],
-    estimates: { vlm_requests: 780, wall_clock_s: 900, notes: ['现有两个 VLM 模块不参与请求合并（merge = none）'] },
+    // as backend/curation/planner/estimates.py writes them (English; the page translates)
+    estimates: {
+      vlm_requests: 780,
+      wall_clock_s: 900,
+      notes: [
+        'rough estimate: every selected episode is assumed to pass the hard gates; 22.7 s per request at 67% gate use (v1, 2026-09-07)',
+        'task_success arbitration and label-guard calls depend on the data and are not counted',
+        'skill_profile text calls (taxonomy, label audit) are per dataset and not counted',
+      ],
+    },
   };
 }
 

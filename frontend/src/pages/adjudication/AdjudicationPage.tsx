@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Message, Select, Space, Spin, Tabs, Tooltip, Typography } from '@arco-design/web-react';
+import { Button, Card, Message, Select, Space, Spin, Tabs, Tooltip, Typography } from '@arco-design/web-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -139,7 +139,6 @@ export function AdjudicationPage() {
           </>
         }
       />
-      <Alert type="info" content={zh.adjudication.ownOnly} style={{ marginBottom: 12 }} />
       <div className="adj-bar">
         <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
           <Space direction="vertical" size={2}>
@@ -182,16 +181,9 @@ export function AdjudicationPage() {
             <Spin style={{ display: 'block', margin: '48px auto' }} />
           ) : !shown.length && !review.hasNextPage ? (
             <Card>
-              <Typography.Text type="secondary">{reviewCards.length || statusFilter !== 'all' ? zh.adjudication.empty : zh.adjudication.emptyAll}</Typography.Text>
-              {/* D47: the entry stands even when nothing is pending; rejects may still be appealed. */}
-              {!reviewCards.length ? (
-                <div style={{ marginTop: 8 }} data-testid="review-empty-appeals">
-                  <Typography.Text type="secondary">{zh.adjudication.emptyToAppeals}</Typography.Text>
-                  <Button type="text" size="small" onClick={() => setTab('appeals')}>
-                    {zh.adjudication.toAppeals}
-                  </Button>
-                </div>
-              ) : null}
+              <Typography.Text type="secondary" data-testid="review-empty">
+                {reviewCards.length || statusFilter !== 'all' ? zh.adjudication.empty : zh.adjudication.emptyAll}
+              </Typography.Text>
             </Card>
           ) : (
             <div className="card-gap" data-testid="cards">

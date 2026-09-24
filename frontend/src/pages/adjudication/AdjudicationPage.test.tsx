@@ -34,7 +34,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     expect(within(card(29)).getByTestId('q-29-label')).toHaveTextContent('① 来源：技能画像 · 标注分歧');
     expect(within(card(29)).getByTestId('q-29-task_verdict')).toHaveTextContent('② 来源：任务成败判定 · 任务成败弃权');
     expect(within(card(16)).getByTestId('status-16')).toHaveTextContent('拿不准');
-    expect(screen.getByText('裁决只属于这个任务：不会带到别的任务，也不会从别的任务带过来。同一个数据集再建任务，要重新裁。')).toBeInTheDocument();
+    expect(screen.queryByText(/裁决只属于这个任务/)).toBeNull();          // no page note (fourth round)
   });
 
   it('every click is saved; 采纳新标注 turns the verdict question onto the new label', async () => {
@@ -163,6 +163,13 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     });
     expect(names).toEqual(['EEF–视频一致性', '任务成败判定', '精确去重']);
     expect(screen.queryByText(/这里列出可复议模块拒掉的条目/)).toBeNull();
+  });
+
+  it('an empty appeals tab says the same as an empty review tab (fourth round)', async () => {
+    const { user } = renderApp(`${PAGE}?tab=appeals&source=eef_video_consistency`);
+    expect(await screen.findByTestId('appeals-empty', {}, { timeout: 5000 })).toHaveTextContent(/^没有符合筛选条件的条目$/);
+    await user.click(screen.getByRole('tab', { name: '待裁决' }));
+    await screen.findByTestId('card-29');
   });
 
   it('the whole queue is fetched with cursors in the background', async () => {

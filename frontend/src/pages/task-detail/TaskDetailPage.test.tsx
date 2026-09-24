@@ -261,7 +261,7 @@ describe('任务详情 (07 §4.2)', () => {
     await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN}/adjudication`));
   });
 
-  it('人工裁决 stands without pending items; with only appealable rejects left it leads to 被拒复议 (D47)', async () => {
+  it('人工裁决 stands without pending items; the empty review tab says so without pointing elsewhere, the appeals are one tab away (D47, fourth round)', async () => {
     findTask(MAIN)!.pending_adjudication = 0;
     // The review queue is empty: everything left is an appeal.
     server.use(
@@ -277,9 +277,11 @@ describe('任务详情 (07 §4.2)', () => {
     expect(screen.getByRole('button', { name: '查看报告' })).toHaveClass('arco-btn-primary');
     await user.click(adj);
     // The adjudication page loads its route and queries first: slower CI runners need more than 1 s.
-    const hint = await screen.findByTestId('review-empty-appeals', {}, { timeout: 5000 });
-    expect(hint).toHaveTextContent('被拒的条目在「被拒复议」里，觉得判错了可以复议。');
-    await user.click(within(hint).getByRole('button', { name: '去被拒复议' }));
+    const empty = await screen.findByTestId('review-empty', {}, { timeout: 5000 });
+    expect(empty).toHaveTextContent(/^没有符合筛选条件的条目$/);      // the default filter is 待裁
+    expect(screen.queryByText(/被拒的条目在「被拒复议」里/)).toBeNull();
+    expect(screen.queryByRole('button', { name: '去被拒复议' })).toBeNull();
+    await user.click(screen.getByRole('tab', { name: '被拒复议' }));
     await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN}/adjudication?tab=appeals`));
     expect(await within(await screen.findByTestId('appeals', {}, { timeout: 5000 })).findByTestId('card-44', {}, { timeout: 5000 })).toBeInTheDocument();
   });

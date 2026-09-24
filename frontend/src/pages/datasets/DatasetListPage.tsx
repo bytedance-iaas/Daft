@@ -116,7 +116,6 @@ export function DatasetListPage() {
       <PageHeader
         crumbs={[{ label: zh.datasets.title }]}
         title={zh.datasets.title}
-        description={zh.datasets.desc}
         extra={
           <Button type="primary" icon={<IconPlus />} onClick={() => setAdding(true)}>
             {zh.datasets.add}

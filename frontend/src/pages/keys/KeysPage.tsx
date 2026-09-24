@@ -219,7 +219,6 @@ export function KeysPage() {
       <PageHeader
         crumbs={[{ label: zh.credentials.navTitle }]}
         title={zh.credentials.title}
-        description={zh.credentials.desc}
         extra={
           tab === 'keys' ? (
             <Button type="primary" icon={<IconPlus />} onClick={() => setKeyDrawer({ open: true, editing: null })}>
@@ -235,7 +234,6 @@ export function KeysPage() {
       <Card>
         <Tabs activeTab={tab} onChange={(k) => navigate({ hash: k === 'vlm' ? '#vlm' : '' })}>
           <Tabs.TabPane key="keys" title={`${zh.credentials.tabKeys}（${keyItems.length}）`}>
-            <Alert type="info" content={zh.credentials.keysIntro} style={{ marginBottom: 12 }} />
             {keys.isError && !keys.data ? (
               <PageError error={keys.error} onRetry={() => void keys.refetch()} />
             ) : (

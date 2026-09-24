@@ -76,7 +76,7 @@ export function AppealsTab({
         <Spin style={{ display: 'block', margin: '48px auto' }} />
       ) : !views.length ? (
         <Card>
-          <Typography.Text type="secondary">{zh.adjudication.appealsEmpty}</Typography.Text>
+          <Typography.Text type="secondary" data-testid="appeals-empty">{zh.adjudication.empty}</Typography.Text>
         </Card>
       ) : (
         <div className="card-gap" data-testid="appeals">

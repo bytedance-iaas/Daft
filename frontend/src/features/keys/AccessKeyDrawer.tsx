@@ -1,4 +1,4 @@
-import { Alert, Button, Drawer, Form, Input, Message, Space } from '@arco-design/web-react';
+import { Button, Drawer, Form, Input, Message, Space } from '@arco-design/web-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { api, unwrap } from '../../api/client';
@@ -113,7 +113,6 @@ export function AccessKeyDrawer({
         </Space>
       }
     >
-      <Alert type="info" content={zh.credentials.keysIntro} style={{ marginBottom: 16 }} />
       <Form form={form} layout="vertical" autoComplete="off">
         <Form.Item
           label={zh.credentials.name}
