@@ -1,50 +1,92 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "EEF-video VLM review answer (eef-review/1.0)",
-  "description": "What the model returns for one review window (design doc 12 §10.2). Classes only: no pixel, millimetre or angle values. evidence_frame_ids must be frame ids shown in the request (checked by the runner, not by this Schema).",
+  "title": "EEF-video VLM review answer (eef-review/1.1)",
+  "description": "What the model returns for one review window (design doc 12 §10.2, D-E14): one point P and at most one axis A per window. Classes only: no pixel, millimetre or angle values. evidence_frame_ids must be frame ids shown in the request (checked by the runner, not by this Schema). 1.1: background_motion_support dropped (the model cannot judge camera motion from a few crops).",
   "type": "object",
   "properties": {
     "review_status": {
-      "enum": ["support", "refute", "uncertain", "not_observable"],
-      "description": "Overall: does the declared projection (red) sit on the physical point it defines, over this window?"
+      "enum": [
+        "support",
+        "refute",
+        "uncertain",
+        "not_observable"
+      ],
+      "description": "Repeats position_support: is the red circle P on the point P it defines?"
     },
     "target_visible": {
       "type": "boolean",
       "description": "The gripper and the defined point are visible in most frames of the window"
     },
     "tracking_target_correct": {
-      "enum": ["support", "refute", "uncertain"],
-      "description": "The independent observation (green) follows the defined point, not another object"
+      "enum": [
+        "support",
+        "refute",
+        "uncertain"
+      ],
+      "description": "The independent observation (green cross P) sits on P, not on another object"
     },
     "position_support": {
-      "enum": ["support", "refute", "uncertain", "not_observable"],
-      "description": "support: the declared point is on the defined physical point; refute: it is visibly off"
+      "enum": [
+        "support",
+        "refute",
+        "uncertain",
+        "not_observable"
+      ],
+      "description": "support: the red circle P is on the defined point P; refute: it is visibly off"
     },
     "orientation_support": {
-      "enum": ["support", "refute", "uncertain", "not_observable"],
-      "description": "support: the declared axis points the way the gripper does; refute: it visibly does not"
-    },
-    "background_motion_support": {
-      "enum": ["support", "refute", "uncertain"],
-      "description": "support: the scene behind the gripper stays still (camera not shaking)"
+      "enum": [
+        "support",
+        "refute",
+        "uncertain",
+        "not_observable"
+      ],
+      "description": "support: the red arrow A points the way A of the gripper does; not_observable when no arrow is drawn"
     },
     "offset_direction": {
-      "enum": ["none", "up", "down", "left", "right", "toward_fingers", "away_from_fingers", "unclear"]
+      "enum": [
+        "none",
+        "up",
+        "down",
+        "left",
+        "right",
+        "toward_fingers",
+        "away_from_fingers",
+        "unclear"
+      ]
     },
     "offset_magnitude_class": {
-      "enum": ["none", "within_finger_width", "one_to_two_finger_widths", "over_two_finger_widths", "unclear"]
+      "enum": [
+        "none",
+        "within_finger_width",
+        "one_to_two_finger_widths",
+        "over_two_finger_widths",
+        "unclear"
+      ]
     },
     "evidence_frame_ids": {
       "type": "array",
-      "items": {"type": "integer", "minimum": 0},
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      },
       "maxItems": 12,
       "uniqueItems": true
     },
     "reason_codes": {
       "type": "array",
       "items": {
-        "enum": ["occlusion", "motion_blur", "out_of_frame", "low_resolution", "gripper_not_visible",
-                 "point_ambiguous", "wrong_target", "lighting", "other"]
+        "enum": [
+          "occlusion",
+          "motion_blur",
+          "out_of_frame",
+          "low_resolution",
+          "gripper_not_visible",
+          "point_ambiguous",
+          "wrong_target",
+          "lighting",
+          "other"
+        ]
       },
       "maxItems": 5,
       "uniqueItems": true
@@ -55,8 +97,17 @@
       "description": "Short reason in words; measured values (px, mm, cm, degrees) are refused by the runner"
     }
   },
-  "required": ["review_status", "target_visible", "tracking_target_correct", "position_support",
-               "orientation_support", "background_motion_support", "offset_direction",
-               "offset_magnitude_class", "evidence_frame_ids", "reason_codes", "explanation"],
+  "required": [
+    "review_status",
+    "target_visible",
+    "tracking_target_correct",
+    "position_support",
+    "orientation_support",
+    "offset_direction",
+    "offset_magnitude_class",
+    "evidence_frame_ids",
+    "reason_codes",
+    "explanation"
+  ],
   "additionalProperties": false
 }

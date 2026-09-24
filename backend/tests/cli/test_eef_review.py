@@ -24,7 +24,7 @@ REVIEW = "eef_video_review"
 URL = "http://fake-vlm.test/v1"
 GOOD = {"review_status": "uncertain", "target_visible": True, "tracking_target_correct": "support",
         "position_support": "uncertain", "orientation_support": "not_observable",
-        "background_motion_support": "support", "offset_direction": "none", "offset_magnitude_class": "none",
+        "offset_direction": "none", "offset_magnitude_class": "none",
         "evidence_frame_ids": [], "reason_codes": [], "explanation": "看不太清"}
 
 
@@ -45,7 +45,7 @@ class Script:
         self.n = 0
 
     def __call__(self, payload: dict) -> str:
-        if "You review whether a robot trajectory" not in json.dumps(payload):
+        if "You review ONE point P" not in json.dumps(payload):
             return "pong"
         step = self.steps[self.n] if self.n < len(self.steps) else None
         self.n += 1
@@ -187,7 +187,7 @@ def test_answers_are_cached_and_resume_skips_current_lines(cli, taped, mini_data
     fake = FakeVlm("fake-vlm")
 
     def no_review(payload):
-        assert "You review whether" not in json.dumps(payload), "answered from the cache, not asked"
+        assert "You review ONE point P" not in json.dumps(payload), "answered from the cache, not asked"
         return "pong"
 
     fake.answer = no_review

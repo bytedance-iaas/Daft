@@ -10,7 +10,7 @@ from curation.extensions.eef_consistency import contracts as C
 from curation.extensions.eef_consistency import review as R
 
 GOOD = {"review_status": "refute", "target_visible": True, "tracking_target_correct": "support",
-        "position_support": "refute", "orientation_support": "uncertain", "background_motion_support": "support",
+        "position_support": "refute", "orientation_support": "uncertain",
         "offset_direction": "left", "offset_magnitude_class": "one_to_two_finger_widths",
         "evidence_frame_ids": [10, 12], "reason_codes": [], "explanation": "红圈在夹爪左侧"}
 
@@ -131,3 +131,79 @@ def test_summary_status():
     status, s = R.summarize([ans, failed], True)
     assert status == R.INCOMPLETE and s["failed"] == 1 and s["truncated"]
     assert R.summarize([], False)[0] == R.NOT_REVIEWED
+
+
+# ----------------------------------------------------------------------------------- one point, one axis (F5.10)
+
+
+def _sample():
+    from curation.extensions.eef_consistency import load
+
+    from . import synth
+
+    r = load.load_bundle(json.dumps(synth.make_bundle([synth.make_entry(0, 45)])).encode(), check_media=False)
+    assert r.ok
+    return r.samples[0]
+
+
+def _cam_detail(cov):
+    return {"compared_points": list(cov), "observed_axes": ["finger_line"],
+            "subitems": {C.POSITION: {"points": {p: {"coverage": {"coverage": c}} for p, c in cov.items()}}}}
+
+
+def test_every_window_asks_about_one_point_and_at_most_one_axis():
+    s = _sample()
+    cam = _cam_detail({"tcp": 0.5, "finger_plus_y": 0.9, "finger_minus_y": 0.7})
+    assert R.focus(cam, s.axes) == ("finger_plus_y", "finger_line")          # best-covered point, compared axis
+    segs = [_seg("cam0", C.POSITION, 5, 20, point_id="tcp", peak=4.0),
+            _seg("cam0", C.POSITION, 8, 22, point_id="finger_minus_y", peak=9.0),
+            _seg("cam0", C.ORIENTATION, 25, 40, axis_id="finger_line", peak=12.0)]
+    detail = {"segments": segs, "cameras": {"cam0": cam}}
+    wins, _ = R.select_windows(detail, "cam0", np.ones(45, bool), 15.0, per_camera=3, frames_per_window=4,
+                               axes=s.axes)
+    pos = next(w for w in wins if w.subitem == C.POSITION)
+    ori = next(w for w in wins if w.subitem == C.ORIENTATION)
+    uni = [w for w in wins if w.kind == "uniform"]
+    assert (pos.point_id, pos.axis_id) == ("finger_minus_y", "finger_line")   # the worst of the merged points
+    assert (ori.point_id, ori.axis_id) == ("finger_minus_y", "finger_line")   # the axis and its start point
+    assert uni and all((w.point_id, w.axis_id) == ("finger_plus_y", "finger_line") for w in uni)
+    assert R.select_windows({"segments": [_seg("cam0", C.CAMERA_MOTION, 0, 30)], "cameras": {"cam0": cam}}, "cam0",
+                            np.ones(45, bool), 15.0, per_camera=2, frames_per_window=3, axes=s.axes)[0][0].kind \
+        == "uniform"                                                          # no camera-motion candidates
+
+
+def test_the_prompt_defines_only_what_is_drawn():
+    s = _sample()
+    frames = {f: np.full((480, 640, 3), 90, np.uint8) for f in (3, 6, 9)}
+    w = R.Window("cam0", "uniform", [3, 6, 9], point_id="tcp", axis_id="z")
+    obs = {"tcp": np.full((45, 2), np.nan)}
+    obs["tcp"][:] = [320.0, 240.0]
+    lengths = {a: R._axis_length(s, "cam0", a, [3, 6, 9]) for a in s.axes}
+    req = R.build_request(s, w, frames, obs, model="m")
+    longest = max(lengths, key=lengths.get)
+    assert w.axis_id == ("z" if lengths["z"] >= R.MIN_AXIS_PX else longest)    # a short arrow is replaced
+    assert "- P = tcp: finger centre" in req.text and f"- A = {w.axis_id}: from " in req.text
+    assert "eef_origin" not in req.text                                      # nothing that is not drawn
+    assert "GREEN cross labelled P" in req.text and "RED arrow labelled A" in req.text
+    assert [i["role"] for i in req.images] == ["context"] + ["raw", "marked"] * 3
+    ori = R.Window("cam0", "candidate", [3, 6], subitem=C.ORIENTATION, point_id="tcp", axis_id="z")
+    old_min = R.MIN_AXIS_PX
+    try:
+        R.MIN_AXIS_PX = 1e6                                                   # no arrow is long enough
+        R.build_request(s, ori, frames, obs, model="m")
+        assert ori.axis_id is None
+        bare = R.build_request(s, R.Window("cam0", "uniform", [3], point_id="tcp"), frames, {}, model="m")
+    finally:
+        R.MIN_AXIS_PX = old_min
+    assert "RED arrow" not in bare.text and "GREEN cross labelled" not in bare.text
+    assert "there is no arrow: answer not_observable" in bare.text
+    assert bare.key != R.build_request(s, R.Window("cam0", "uniform", [3], point_id="finger_plus_y"), frames, {},
+                                       model="m").key                          # another point is another question
+    assert "finger_minus_y" not in bare.text                                  # nothing that is not drawn
+
+
+def test_votes_ignore_uncertain_and_not_observable():
+    assert R.votes({**GOOD, "position_support": "refute", "orientation_support": "not_observable"}) == \
+        {C.POSITION: "refute"}
+    assert R.votes({**GOOD, "position_support": "uncertain", "orientation_support": "support"}) == \
+        {C.ORIENTATION: "support"}

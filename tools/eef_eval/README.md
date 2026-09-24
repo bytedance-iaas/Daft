@@ -21,6 +21,7 @@ DEMO 数据在仓库外（`$CURATOR_EEF_DEMO_DATA`，默认 `~/ws/ws_general/gal
 |---|---|
 | `.venv/bin/python -m eef_eval.observation_report` | `reports/observations.json`：F5.2 的覆盖率、弃权率、对真值的定位误差、种子图像哈希一致性、耗时，以及投影平移 30 px 的独立性实验 |
 | `.venv/bin/python -m eef_eval.acceptance [--dataset dataset3] [--jobs 4]` | `reports/acceptance.json`、`reports/acceptance.md`：F5.7 留出集验收——每条一个子进程跑冻结的 `demo` profile 和复核窗口（替身模型计请求数），之后才读真值；按故障 × 幅度给检出、误报（`ALLOWED` 之外的可疑分项）、弃权、定位误差、拟合值 vs 注入值，以及每分钟视频的 CPU / 墙钟、峰值内存、VLM 请求数 |
+| `.venv/bin/python -m eef_eval.review_eval --dataset dataset2 --endpoint URL --model M --api-key-env ARK_API_KEY` | F5.10：先跑 CPU，再按新请求包（一点一轴）问模型，调用全部录进 `reports/review_eval_<数据集>.tape.jsonl.gz`；问完才读真值，逐窗口判定红圈是否在真实的 P 上、绿十字是否跟对、箭头方向是否对（距离 ≤ 5 px / ≥ 12 px、角度 ≤ 5° / ≥ 15°，之间不计），按问题与故障类型报模型给出明确结论的比例和与真值的一致率（`reports/review_eval_<数据集>.json`、`.md`）。`--replay TAPE` 离线复算，`--stand-in` 用假模型只查流程 |
 | `.venv/bin/python -m eef_eval.matrix` | `reports/matrix.json`（逐格期望 / 实际 / 是否通过）、`reports/matrix_details.jsonl`（18 条的 detail）；`reports/run/` 是观测、曲线、证据图（不进仓库）。检测器先跑完，评估器才读真值 |
 
 ## 结果（2026-09-23）

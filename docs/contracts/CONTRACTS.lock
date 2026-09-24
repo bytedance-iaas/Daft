@@ -26,7 +26,7 @@
   "docs/contracts/eef/frame.schema.json": "sha256:97e4af86cdf2a44e0a41d7f21aaca987bf4692a82931542447ceb0b6ecd9c1d7",
   "docs/contracts/eef/gripper_template.schema.json": "sha256:bf89143a6e574840075d305423bc44bf77d7f5d666fd259f259f54b9901a1b2f",
   "docs/contracts/eef/observation.schema.json": "sha256:44194891fc2ad499cc723da848987b28f347bffd81326ba0f8329d5079e4d90a",
-  "docs/contracts/eef/review_output.schema.json": "sha256:75a972b90dd4df9f4803f5dad5398a2de5bad61e9d1430c3112f167a9bbab12c",
+  "docs/contracts/eef/review_output.schema.json": "sha256:f468a537daed089fdbb8d70facea808994fae654033b2c38786facbdd3f0a583",
   "docs/contracts/eef/sample.schema.json": "sha256:6cf2de7bb69cdb7e3f495c39ef473cc18389a2c5084a0ea57caf1f741581b20b",
   "docs/contracts/eef/trajectory_bundle.schema.json": "sha256:6ce8c5f5b6ffe1ddcab680b21a70f4a4ac4d30cff3040037c77f5ee5e2417b2e",
   "docs/contracts/modules.json": "sha256:41bc77f7fe65dec7cc30118ef6c65f506329fc543aae386829b59c704461f76d",

@@ -133,7 +133,7 @@ def review_episode(sample, base: dict, *, run_dir: str, media_root: str, ask, ca
         reviewable = shown & (vf >= 0)
         fps = float(sample.cameras[cid].media.get("fps") or 15.0)
         windows, cut = R.select_windows(bd, cid, reviewable, fps, per_camera=per_camera,
-                                        frames_per_window=frames_per_window)
+                                        frames_per_window=frames_per_window, axes=sample.axes)
         truncated |= cut
         need = {int(vf[f]): f for w in windows for f in w.frames if vf[f] >= 0}
         frames: dict[int, np.ndarray] = {}
@@ -150,7 +150,7 @@ def review_episode(sample, base: dict, *, run_dir: str, media_root: str, ask, ca
                 out.append({**w.as_dict(), "status": R.FAILED, "attempts": 0, "cache_hit": False,
                             "failure": {"code": "frames_unreadable", "message": "no frame of the window decoded"}})
                 continue
-            req = R.build_request(sample, w, frames, declared, observed, model=model)
+            req = R.build_request(sample, w, frames, observed, model=model)
             got = R.ask_window(req, ask, cache)
             row = {**w.as_dict(), **got, "request_key": req.key}
             if got["status"] == R.ANSWERED:

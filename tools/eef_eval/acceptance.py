@@ -47,7 +47,7 @@ MAGNITUDE = {"traj_drift": ("pos_peak_m", "m"), "gripper_orient": ("angle_deg", 
              "traj_jitter": ("pos_sigma_m", "m"), "video_shake": ("peak_px", "px"),
              "sync_offset": ("delta_frames", "frames"), "calib_offset": ("shift_m", "m")}
 ANSWER = {"review_status": "uncertain", "target_visible": True, "tracking_target_correct": "support",
-          "position_support": "uncertain", "orientation_support": "uncertain", "background_motion_support": "support",
+          "position_support": "uncertain", "orientation_support": "uncertain",
           "offset_direction": "unclear", "offset_magnitude_class": "unclear", "evidence_frame_ids": [],
           "reason_codes": [], "explanation": "stand-in"}
 
