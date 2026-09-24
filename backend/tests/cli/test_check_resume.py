@@ -81,11 +81,17 @@ def test_sigterm_finishes_the_episode_in_flight_then_resume_completes(vlm_stage)
 
 
 def test_sigkill_leaves_inflight_and_resume_gives_the_same_results(vlm_stage):
-    run_dir, rc, _out, _err = _interrupt(vlm_stage, "kill", signal.SIGKILL)
-    assert rc == -signal.SIGKILL
-    with open(os.path.join(run_dir, "checks", "task_success", "inflight.json"),
-              encoding="utf-8") as fh:
-        inflight = json.load(fh)
+    # A kill that lands between two episodes (one written and taken off, the next not yet
+    # put on) leaves nothing in the process's hands - correct, but nothing to test here:
+    # interrupt a fresh copy again (a slow CI runner hit that window once).
+    for attempt in range(3):
+        run_dir, rc, _out, _err = _interrupt(vlm_stage, f"kill{attempt}", signal.SIGKILL)
+        assert rc == -signal.SIGKILL
+        with open(os.path.join(run_dir, "checks", "task_success", "inflight.json"),
+                  encoding="utf-8") as fh:
+            inflight = json.load(fh)
+        if inflight["episodes"]:
+            break
     assert inflight["episodes"] and inflight["part"] == "0001"
     done_before = set(latest_results(run_dir, "task_success"))     # the parts: no compaction
     assert done_before and not (set(inflight["episodes"]) & done_before)
