@@ -749,8 +749,6 @@ function buildNewTask(req: TaskCreate): Task | Response {
   const unknown = selected.filter((id) => !registry.modules.some((m) => m.id === id));
   if (unknown.length) return err(400, 'validation_failed', `不认识的模块：${unknown.join(', ')}`);
   // registry 1.4: a module that re-examines another one needs it ticked too (the EEF review, F5.6)
-  const orphan = selected.find((id) => ((registry.modules.find((m) => m.id === id)?.depends_on ?? []) as string[]).some((d) => registry.modules.some((m) => m.id === d) && !selected.includes(d)));
-  if (orphan) return err(400, 'validation_failed', `「${registry.modules.find((m) => m.id === orphan)?.name_zh}」复核的模块要一起勾选`, { field: 'modules' });
   const unsupported = selected.filter((id) => pf.result.modules.find((m) => m.id === id)?.availability === 'unsupported');
   if (unsupported.length) return err(400, 'validation_failed', `这些模块在预检里不可用：${unsupported.join(', ')}`);
   if (selected.includes('kinematic_limits') && pf.result.modules.find((m) => m.id === 'kinematic_limits')?.availability === 'needs_input' && !req.embodiment_id) {
@@ -776,6 +774,12 @@ function buildNewTask(req: TaskCreate): Task | Response {
       if (!prop) return err(400, 'validation_failed', `模块 ${m} 没有参数 ${k}`);
       if (prop.oneOf && !prop.oneOf.some((o) => o.const === v)) return err(400, 'validation_failed', `模块 ${m} 的参数 ${k} 取值不对`);
     }
+  }
+  // like the Daemon: the EEF module without seeds or a gripper template finds no gripper in the video
+  const eef = registry.modules.find((m) => m.id === 'eef_video_consistency');
+  if (eef && selected.includes(eef.id) && !params(eef.id)?.observation_seeds && !params(eef.id)?.gripper_template) {
+    const message = `「${eef.name_zh}」需要上传观测种子或夹爪外观模板（二选一）：没有它们就找不到画面里的夹爪，每一条都只能转人工；或者不勾选这个模块`;
+    return err(400, 'validation_failed', message, { errors: [{ field: `modules.${eef.id}.params.observation_seeds`, problem: message }] });
   }
   const now = clock();
   const d = r.dataset ?? db.datasets.find((x) => datasetKey({ source: x.source, uri: x.uri, region: x.region ?? undefined }) === datasetKey(r.ref));

@@ -123,10 +123,17 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
                      "a camera that also has seeds keeps the seeds")
     if table["samples_outside_dataset"]:
         notes.append(f"{len(table['samples_outside_dataset'])} sample(s) of the file are not in this dataset")
-    if table["availability"] == C.AVAILABLE:
-        entry = {"availability": C.AVAILABLE}
-    else:
+    if table["availability"] != C.AVAILABLE:
         entry = _unsupported("no selected episode can be assessed from this trajectory.json",
                              table.get("reason_code") or C.PROJECTION_MISSING)
+    elif seeds is None and template is None:
+        # nothing finds the gripper in the video: no position, direction or time, no window to show
+        # the model - every episode would go to a person as not judgeable (galbot, 2026-09-24)
+        entry = {"availability": C.NEEDS_INPUT, "reason_code": C.OBSERVATION_SEED_MISSING,
+                 "reason": "no observation seeds and no gripper template: upload one of them (console) or pass "
+                           "--param eef_video_consistency.observation_seeds=DIR or .gripper_template=FILE",
+                 "input_hint": {"field": "observation_seeds"}}
+    else:
+        entry = {"availability": C.AVAILABLE}
     entry.update(subitems=subitems, episode_counts=counts, notes=notes)
     return entry

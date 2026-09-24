@@ -49,6 +49,7 @@ import {
   episodes as episodeSelector,
   moduleChoices,
   type Errors,
+  type FormPatch,
   type FormValues,
 } from './formModel';
 import { AdvancedSection, ModelSection } from './ModelSection';
@@ -139,11 +140,15 @@ export function TaskForm(p: TaskFormProps) {
   const probe = useDeliveryProbe();
   const keepSelection = useRef(p.keepSelection);
 
-  const set = useCallback((patch: Partial<FormValues>, touchedKey?: keyof FormValues) => {
+  const latest = useRef(v);
+  latest.current = v;
+  // A function patch is applied to the state as it is when React applies it: a value written back
+  // late (an upload that finished after another one) must not undo what changed meanwhile.
+  const set = useCallback((patch: FormPatch, touchedKey?: keyof FormValues) => {
     if (touchedKey) touched.current.add(touchedKey);
-    setV((prev) => ({ ...prev, ...patch }));
+    setV((prev) => ({ ...prev, ...(typeof patch === 'function' ? patch(prev) : patch) }));
     setServerErrors((prev) => {
-      const keys = Object.keys(patch);
+      const keys = Object.keys(typeof patch === 'function' ? patch(latest.current) : patch);
       if (!keys.some((k) => k in prev)) return prev;
       const next = { ...prev };
       for (const k of keys) delete next[k];
@@ -353,6 +358,10 @@ export function TaskForm(p: TaskFormProps) {
   };
 
   const fieldFromDetails = (e: ApiError): string | null => {
+    // a module parameter the Daemon refuses (`modules.<id>.params.<key>`): its field on screen 2
+    const located = ((e.details?.errors as { field?: unknown }[] | undefined) ?? []).map((x) => x.field);
+    const param = [e.details?.field, ...located].map((x) => /^modules\.([^.]+)\.params\.(.+)$/.exec(String(x ?? ''))).find(Boolean);
+    if (param) return `params.${param[1]}.${param[2]}`;
     const f = e.details?.field;
     if (f === 'episodes') return v.episodeMode === 'head' ? 'headN' : 'expr';
     if (f === 'embodiment_id') return 'embodiment';

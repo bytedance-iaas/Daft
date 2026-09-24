@@ -98,7 +98,9 @@ def test_uploads_made_before_d45_keep_working_and_a_taken_id_is_drawn_again(daem
         new = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
     assert re.fullmatch(r"upl-[a-z]{9}", new["upload_id"]) and not draws
     assert d.client.get(f"{API}/uploads/{legacy}").json() == old       # untouched, still readable
-    created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": old["handle"]}}],
+    seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows())
+    created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": old["handle"],
+                                                                     "observation_seeds": seeds["handle"]}}],
                        start_now=False)
     (row,) = [m for m in d.get(created["id"])["modules"] if m["id"] == EEF]
     assert row["selected"] and row["availability"] == "available"
@@ -142,11 +144,28 @@ def test_the_module_is_preflighted_with_the_uploaded_file(daemon):
     assert entry["subitems"]["position_2d"]["availability"] == "available"      # the seeds were used
 
 
+def test_the_module_needs_seeds_or_a_template(daemon):
+    """Without observation seeds or a gripper template nothing finds the gripper in the video: every
+    episode would go to a person as not judgeable, so the task is refused and names the field
+    (galbot 2026-09-24: the seeds were lost in the console, the whole run came back to people)."""
+    d = daemon()
+    traj = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
+    body = d.task_body(modules=[*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"]}}],
+                       start_now=False)
+    r = d.api("POST", "/tasks", json=body)
+    assert r.status_code == 400, r.text
+    err = r.json()["error"]
+    assert "观测种子或夹爪外观模板" in err["message"]
+    assert err["details"]["errors"][0]["field"] == f"modules.{EEF}.params.observation_seeds"
+
+
 def test_the_module_needs_a_model(daemon):
     """D49: the module reviews with a model; with the file and a model chosen it is available."""
     d = daemon()
     traj = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
-    mods = [*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"], "review_windows_per_camera": 2}}]
+    seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows())
+    mods = [*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"], "observation_seeds": seeds["handle"],
+                                                 "review_windows_per_camera": 2}}]
     created = d.create(modules=mods, start_now=False)
     rows = {m["id"]: m for m in d.get(created["id"])["modules"]}
     assert rows[EEF]["selected"] and rows[EEF]["availability"] == "available"

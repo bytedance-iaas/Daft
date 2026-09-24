@@ -135,6 +135,15 @@ def test_preflight_asks_for_the_file_then_a_model(mini_dataset, tmp_path):
     (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF, "--vlm-backend", "ark",
                    "--param", f"{EEF}.trajectory_json={traj}").doc["modules"]
     assert entry["availability"] == "available"
+    # the same file without seeds or a template next to it: nothing would find the gripper
+    alone = tmp_path / "alone" / "trajectory.json"
+    alone.parent.mkdir()
+    alone.write_text(open(traj, encoding="utf-8").read())
+    (bare,) = run("preflight", "--input", mini_dataset, "--modules", EEF, "--vlm-backend", "ark",
+                  "--param", f"{EEF}.trajectory_json={alone}").doc["modules"]
+    assert (bare["availability"], bare["reason_code"], bare["input_hint"]) == \
+        ("needs_input", "observation_seed_missing", {"field": "observation_seeds"})
+    assert bare["subitems"]["position_2d"]["availability"] == "needs_input"
     assert entry["episode_counts"] == {"available": 7, "unsupported": 1}           # episode 7 is not declared
     assert entry["subitems"]["position_2d"]["availability"] == "available"
     assert entry["subitems"]["orientation_2d"] == {"availability": "unsupported",

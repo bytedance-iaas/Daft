@@ -16,13 +16,16 @@ import type {
 } from '../../api/types';
 import { REGION_RE } from '../../lib/deeplink';
 import { parseForDisplay } from '../../lib/episodes';
-import { changedParams, paramFields, validateParam } from '../../lib/paramSchema';
+import { changedParams, paramFields, UPLOAD_PREFIX, validateParam } from '../../lib/paramSchema';
 import { availability, embodimentHint, needsVlm } from '../../lib/preflight';
 import { presetOf } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 export type Source = 'tos' | 'public' | 'local';
 export type TimeoutKey = 'probe' | 'endstate' | 'arbitration' | 'caption' | 'llm';
+
+/** A change to the form: the fields to set, or a function of the form as it is when applied. */
+export type FormPatch = Partial<FormValues> | ((prev: FormValues) => Partial<FormValues>);
 
 export interface FormValues {
   name: string;
@@ -179,6 +182,14 @@ export function validateScreen1(v: FormValues, ctx: ValidationContext): Errors {
   return e;
 }
 
+/**
+ * Upload kinds a module needs one of when it has fields for all of them: the EEF module finds the
+ * gripper in the video from observation seeds or a gripper template - without either every episode
+ * would go to a person (galbot 2026-09-24). The Daemon refuses such a task too (preflight
+ * `observation_seed_missing`).
+ */
+const ONE_OF_UPLOADS: readonly (readonly string[])[] = [['eef_observation_seeds', 'eef_gripper_template']];
+
 /** Screen 2: inputs the enabled modules still need, and their parameters (D38). */
 export function validateScreen2(v: FormValues, ctx: ValidationContext): Errors {
   const e: Errors = {};
@@ -187,9 +198,15 @@ export function validateScreen2(v: FormValues, ctx: ValidationContext): Errors {
   if (active.some((id) => embodimentHint(ctx.preflight, id)) && !v.embodiment) e.embodiment = zh.errors.requiredSelect(zh.taskForm.embodiment);
   for (const id of active) {
     const spec = ctx.registry?.modules.find((m) => m.id === id);
-    for (const f of paramFields(spec?.param_schema)) {
+    const fields = paramFields(spec?.param_schema);
+    for (const f of fields) {
       const problem = validateParam(f, v.params[id]?.[f.key] ?? f.default);
       if (problem) e[`params.${id}.${f.key}`] = problem;
+    }
+    for (const kinds of ONE_OF_UPLOADS) {
+      const group = fields.filter((f) => f.kind === 'upload' && kinds.includes(f.uploadKind ?? ''));
+      const given = group.some((f) => String(v.params[id]?.[f.key] ?? '').startsWith(UPLOAD_PREFIX));
+      if (group.length === kinds.length && !given) e[`params.${id}.${group[0].key}`] = zh.taskForm.oneOfUploads(group.map((f) => f.title));
     }
   }
   return e;

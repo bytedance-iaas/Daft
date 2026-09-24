@@ -15,7 +15,7 @@
   "docs/contracts/cli/export.schema.json": "sha256:326f12699d8e042ad5e774905a68acbe9e35c09f7a4a390e54a21745f68104a5",
   "docs/contracts/cli/final-list.schema.json": "sha256:7dcfae74a45df51bd77b701bf2ddd94952539e170b91fdbff691f661b3ad3109",
   "docs/contracts/cli/plan.schema.json": "sha256:578b9b10031fcd1ed6e8bf1df78959940943a71147680feb68f0da4997c175e3",
-  "docs/contracts/cli/preflight.schema.json": "sha256:72da00a2faa730e119db37ac8d3e49c8a8ac478f1a424eccfae3a299a7151206",
+  "docs/contracts/cli/preflight.schema.json": "sha256:42de478d05c92464e553aa3c55a02bcfd3d26fc0fb3fa081ce1ff46b4642e03a",
   "docs/contracts/cli/report-output.schema.json": "sha256:2403b5bfab1c6353a2c2b8a2aa3276bffb981f227419ae03058fd0278564e85a",
   "docs/contracts/cli/report.schema.json": "sha256:19f9414faddfa060f2afba521d8bdbcd9522e0481e65457d8a11d432e6623592",
   "docs/contracts/cli/result-record.schema.json": "sha256:5e49c58ee793f5943f53e0418c1982ee53c9a51c3e4a8606448c176575ac4dac",

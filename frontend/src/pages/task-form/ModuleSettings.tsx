@@ -7,7 +7,7 @@ import { paramFields, UPLOAD_PREFIX, type ParamField } from '../../lib/paramSche
 import { availabilityOf, embodimentHint, reasonText } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
-import type { Errors, FormValues } from './formModel';
+import type { Errors, FormPatch, FormValues } from './formModel';
 import { activeModules } from './formModel';
 
 /**
@@ -49,7 +49,7 @@ export function UploadInput({ f, value, onChange }: { f: ParamField; value: unkn
         </Button>
         {f.accept ? <span className="muted" style={{ fontSize: 12 }}>{zh.taskForm.uploadAccept(f.accept, f.maxMb)}</span> : null}
       </Space>
-      {done ? (
+      {done && value === done.handle ? (
         <div style={{ fontSize: 12, marginTop: 4 }} data-testid={`upload-done-${f.key}`}>
           {zh.taskForm.uploadDone(done.name, done.sha256)}
           <div className="muted">{zh.taskForm.uploadSummary(done.validation.summary as Record<string, unknown>)}</div>
@@ -134,7 +134,7 @@ export function ModuleSettings({
   embodimentOptions,
 }: {
   v: FormValues;
-  set: (patch: Partial<FormValues>) => void;
+  set: (patch: FormPatch) => void;
   errors: Errors;
   registry: ModuleRegistry | undefined;
   preflight: PreflightResult | null;
@@ -145,7 +145,9 @@ export function ModuleSettings({
   const needing = specs.filter((m) => active.includes(m.id) && embodimentHint(preflight, m.id));
   const withParams = specs.filter((m) => active.includes(m.id) && paramFields(m.param_schema).length);
   const skipped = specs.filter((m) => v.skipped.includes(m.id));
-  const setParam = (mod: string, key: string, value: unknown) => set({ params: { ...v.params, [mod]: { ...(v.params[mod] ?? {}), [key]: value } } });
+  // Against the form as it is then: an upload can finish after another field (or upload) changed.
+  const setParam = (mod: string, key: string, value: unknown) =>
+    set((prev) => ({ params: { ...prev.params, [mod]: { ...(prev.params[mod] ?? {}), [key]: value } } }));
   const options = embodimentOptions.length ? embodimentOptions : needing.flatMap((m) => embodimentHint(preflight, m.id)?.options ?? []);
 
   return (

@@ -252,6 +252,9 @@ def check_modules(selected: list[str], availability: dict[str, dict], *,
                     next((d for d in spec.depends_on if d in registry.ids()), mid)
                 raise _bad(f"「{registry.get(holder).name_zh}」需要上传 trajectory.json（约定格式 eef-video/1.0.0），"
                            "或者不勾选这个模块", f"modules.{holder}.params.trajectory_json")
+            elif hint.get("field") == "observation_seeds":
+                raise _bad(f"「{spec.name_zh}」需要上传观测种子或夹爪外观模板（二选一）：没有它们就找不到画面里的夹爪，"
+                           "每一条都只能转人工；或者不勾选这个模块", f"modules.{mid}.params.observation_seeds")
         if "vlm" in spec.needs and not has_vlm:
             raise _bad(f"勾选了「{spec.name_zh}」，需要选择 VLM 后端和模型", "vlm")
 

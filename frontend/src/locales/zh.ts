@@ -233,6 +233,7 @@ export const zh = {
     vlm_backend_none: () => '没有可用的 VLM 后端：在「系统和资源配置」里添加一个并验证通过',
     trajectory_missing: () => '需要上传约定格式的 trajectory.json（勾选后在第二屏上传）',
     trajectory_invalid: () => 'trajectory.json 没有通过校验，详情见预检结果',
+    observation_seed_missing: () => '还要上传观测种子或夹爪外观模板（二选一，在第二屏上传）：没有它们找不到画面里的夹爪，每一条都只能转人工',
     eef_review_not_available: () => 'EEF–视频一致性的 VLM 复核还没有提供',
     eef_base_unavailable: () => '它复核的「EEF–视频一致性」在这个数据集上用不了',
   } as Record<string, (args: Record<string, unknown>) => string>,
@@ -430,6 +431,7 @@ export const zh = {
     uploadWarnings: (n: number) => `${n} 条警告（不影响使用）`,
     uploadBadLine: (n: number) => `第 ${n} 行不是合法的 JSON`,
     uploadReadFailed: '读取文件失败',
+    oneOfUploads: (titles: string[]) => `请上传${titles.join('或')}（二选一）：没有它们找不到画面里的夹爪，每一条都只能转人工`,
     uploadFailed: '上传失败：',
     uploadMore: (n: number) => `共 ${n} 处，前几处：`,
     uploadWhere: (e: { field?: string | null; problem?: string; sample_id?: string; frame_index?: number; camera_id?: string; point_id?: string }) =>

@@ -182,7 +182,7 @@ describe('新建任务 · 两屏与提交', () => {
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
-    await waitFor(() => expect(fieldErrors(s2())).toEqual(['请填写trajectory.json']));
+    await waitFor(() => expect(fieldErrors(s2())).toEqual(['请填写trajectory.json', '请上传观测种子或夹爪外观模板（二选一）：没有它们找不到画面里的夹爪，每一条都只能转人工']));
     const input = within(s2()).getByLabelText('trajectory.json', { selector: 'input[type=file]' });
     const bad = { samples: [{ episode_index: 0, sample: { sample_id: 'new_set_000000' }, frames: [{ truth: [1, 2] }] }] };
     await user.upload(input, new File([JSON.stringify(bad)], 'trajectory.json', { type: 'application/json' }));
@@ -193,13 +193,59 @@ describe('新建任务 · 两屏与提交', () => {
     await user.upload(input, new File([JSON.stringify(good)], 'trajectory.json', { type: 'application/json' }));
     expect(await within(s2()).findByTestId('upload-done-trajectory_json')).toHaveTextContent('trajectory.json');
     expect(within(s2()).queryByTestId('upload-error-trajectory_json')).toBeNull();
+    // still no seeds and no template: nothing would find the gripper, every episode would go to a person
+    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
+    await waitFor(() => expect(fieldErrors(s2())).toEqual(['请上传观测种子或夹爪外观模板（二选一）：没有它们找不到画面里的夹爪，每一条都只能转人工']));
+    await user.upload(within(s2()).getByLabelText('观测种子', { selector: 'input[type=file]' }), new File([JSON.stringify([{ sample_id: 'new_set_000000' }])], 'seeds.json', { type: 'application/json' }));
+    expect(await within(s2()).findByTestId('upload-done-observation_seeds')).toHaveTextContent('seeds.json');
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
     await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
     const up = seen.filter((x) => x.method === 'POST' && x.path.startsWith('/uploads'));
-    expect(up).toHaveLength(2);
+    expect(up).toHaveLength(3);
     const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: unknown[]; vlm?: unknown };
-    expect(body.modules).toContainEqual({ id: 'eef_video_consistency', params: { trajectory_json: expect.stringMatching(/^upload:upl-[a-z]{9}$/) } });
+    expect(body.modules).toContainEqual({
+      id: 'eef_video_consistency',
+      params: { trajectory_json: expect.stringMatching(/^upload:upl-[a-z]{9}$/), observation_seeds: expect.stringMatching(/^upload:upl-[a-z]{9}$/) },
+    });
     expect(body.vlm).toBeTruthy();                             // it reviews with a model
+  });
+
+  it('two uploads at once: the one finishing last does not drop the other (galbot 2026-09-24: seeds lost behind a slow trajectory.json)', async () => {
+    const seen = record();
+    // trajectory.json is large and validated on arrival: it finishes after the seeds
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    server.use(
+      http.post('*/api/v1/uploads', async ({ request }) => {
+        if (new URL(request.url).searchParams.get('kind') === 'eef_trajectory') await held;
+      }),
+    );
+    const { user } = renderApp('/tasks/new');
+    await screen.findByText('基本信息');
+    await fill(user, '任务名称', 'eef two files');
+    await fill(user, '数据集地址', 'tos://pai-kit-datasets/lerobot/new_set');
+    await pick(user, '访问密钥', 'prod-tos');
+    await fill(user, '交付目录', 'tos://pai-kit-deliveries/eef-two');
+    await screen.findByText(/LeRobot v2 · 120 条 episode/);
+    await user.click(screen.getByText('快速质检'));
+    await user.click(screen.getByRole('checkbox', { name: 'EEF–视频一致性' }));
+    await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
+    await waitFor(() => expect(s2()).toBeVisible());
+    const traj = { schema_version: 'eef-video/1.0.0', samples: [0, 1].map((i) => ({ episode_index: i, sample: { sample_id: `new_set_00000${i}` }, frames: [{}, {}] })) };
+    await user.upload(within(s2()).getByLabelText('trajectory.json', { selector: 'input[type=file]' }), new File([JSON.stringify(traj)], 'trajectory.json', { type: 'application/json' }));
+    const seeds = [{ sample_id: 'new_set_000000', frame_index: 0 }];
+    await user.upload(within(s2()).getByLabelText('观测种子', { selector: 'input[type=file]' }), new File([JSON.stringify(seeds)], 'seeds.json', { type: 'application/json' }));
+    expect(await within(s2()).findByTestId('upload-done-observation_seeds')).toHaveTextContent('seeds.json');
+    release();
+    expect(await within(s2()).findByTestId('upload-done-trajectory_json')).toHaveTextContent('trajectory.json');
+    expect(within(s2()).getByTestId('upload-done-observation_seeds')).toHaveTextContent('seeds.json');   // still there
+    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
+    await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
+    const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: unknown[] };
+    expect(body.modules).toContainEqual({
+      id: 'eef_video_consistency',
+      params: { trajectory_json: expect.stringMatching(/^upload:upl-[a-z]{9}$/), observation_seeds: expect.stringMatching(/^upload:upl-[a-z]{9}$/) },
+    });
   });
 
   it('screen 2 asks for the robot type (required) or 跳过该模块', async () => {

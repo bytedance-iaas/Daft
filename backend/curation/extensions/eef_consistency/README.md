@@ -126,6 +126,9 @@
    「EEF–视频一致性」（卡片上写「需要上传约定格式的 trajectory.json」），手动勾上后模型配置出现（它要用模型复核）；第二屏的
    trajectory.json 选 `$G/trajectory.json`（上传后显示文件名、sha256 前 12 位与摘要），观测种子选 `/tmp/seeds.jsonl`
    （`.jsonl` 由控制台转成 JSON 数组），另有复核窗口数、每窗口帧数两项；先选 `/tmp/bad.json` 能看到逐条定位的错误。
+   观测种子与夹爪外观模板必须给一个：都不给时第二屏报「请上传观测种子或夹爪外观模板（二选一）」，Daemon 也拒收
+   （预检 `needs_input: observation_seed_missing`）——没有它们就找不到画面里的夹爪，每一条都只能转人工。两个文件可以同时上传，
+   后传完的不会把先传完的冲掉（2026-09-24 在 galbot 上遇到过：trajectory.json 大、后传完，种子的句柄丢了）。
    创建并开始后：任务的运行目录有 `inputs/uploads.json` 与两份文件副本，`plan.json` 的 `vlm` 阶段有这个模块，报告里有
    「EEF–视频一致性」一节；被它判废的条目进拒绝清单。直接在 `modules[].params` 里填服务器路径会被 400 拒收（Daemon 只认 `upload:` 句柄）。
 10. 判决口径与复核（F5.9 / F5.10）：`../.venv/bin/python -m pytest -q tests/eef/test_decide.py tests/eef/test_review.py tests/cli/test_eef_review.py`
