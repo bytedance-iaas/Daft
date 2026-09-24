@@ -252,11 +252,12 @@ describe('任务详情 (07 §4.2)', () => {
     expect(adj).not.toHaveClass('arco-btn-primary');
     expect(screen.getByRole('button', { name: '查看报告' })).toHaveClass('arco-btn-primary');
     await user.click(adj);
-    const hint = await screen.findByTestId('review-empty-appeals');
+    // The adjudication page loads its route and queries first: slower CI runners need more than 1 s.
+    const hint = await screen.findByTestId('review-empty-appeals', {}, { timeout: 5000 });
     expect(hint).toHaveTextContent('被拒的条目在「被拒复议」里，觉得判错了可以复议。');
     await user.click(within(hint).getByRole('button', { name: '去被拒复议' }));
     await waitFor(() => expect(currentLocation()).toBe(`/tasks/${MAIN}/adjudication?tab=appeals`));
-    expect(await within(await screen.findByTestId('appeals')).findByTestId('card-44')).toBeInTheDocument();
+    expect(await within(await screen.findByTestId('appeals', {}, { timeout: 5000 })).findByTestId('card-44', {}, { timeout: 5000 })).toBeInTheDocument();
   });
 
   it('a task without a result has no 人工裁决 in its header', async () => {
