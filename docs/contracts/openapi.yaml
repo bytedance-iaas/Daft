@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.13.0
+  version: 1.14.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -1910,7 +1910,7 @@ components:
     ReviewLineId:
       type: string
       pattern: "^[a-z][a-z0-9_]*$"
-      description: a line of the registry's review_lines; today label, task_verdict, reject_appeal
+      description: a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check
     ReviewLine:
       type: object
       additionalProperties: false
@@ -2932,7 +2932,7 @@ components:
             a follow-up the card's answer on another line opened (registry follow_ups); anything
             else is 400 validation_failed. Today: label - adopt_suggestion, custom_label,
             keep_label, unsure, discard; task_verdict - success, failure, unsure, discard;
-            reject_appeal - restore, keep_rejected, unsure
+            reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure
         new_label: {type: [string, "null"], description: "custom_label: required; adopt_suggestion: may be left out, the question's suggestion is taken"}
         note: {type: [string, "null"]}
     AdjudicationApply:

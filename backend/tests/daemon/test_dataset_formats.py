@@ -1,4 +1,5 @@
-"""mcap and lance datasets in the repository (D44, C4 1.11): the format column and step 4."""
+"""mcap and lance datasets in the repository (D44, C4 1.11): the format column and step 4; step 5
+opens the adjudication line (C1 1.9)."""
 from __future__ import annotations
 
 import json
@@ -86,3 +87,37 @@ def test_foreign_keys_are_on_again_after_the_rebuild(tmp_path):
     assert migrations.migrate(conn) == [v for v, _ in migrations.MIGRATIONS if v >= 4]
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     conn.close()
+
+
+def test_step_5_opens_the_review_line_and_keeps_every_answer(tmp_path):
+    """C1 1.9 (F5.11): the EEF module's line ``eef_check`` is stored like v1's; older answers keep
+    their ids and their subtask."""
+    path = tmp_path / "curator.db"
+    conn = sqlite3.connect(path, isolation_level=None)
+    for version, script in migrations.MIGRATIONS[:4]:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executescript(f"BEGIN;\n{script}\nPRAGMA user_version = {version};\nCOMMIT;")
+    conn.execute("INSERT INTO task (id, name, state, input_source, input_uri, output_uri,"
+                 " delivery_key, episode_selector, params, created_at, updated_at) VALUES"
+                 " ('task_1', 't', 'succeeded', 'tos', 'tos://b/x', 'tos://b/o', 'tos://b/o',"
+                 " '{\"mode\":\"all\"}', '{}', 1, 1)")
+    for line, decision in (("label", "keep_label"), ("reject_appeal", "restore")):
+        conn.execute("INSERT INTO adjudication (task_id, episode_index, line, decision, decided_by,"
+                     " decided_at) VALUES ('task_1', 3, ?, ?, 'alice', 5)", (line, decision))
+    conn.close()
+    repo = SqliteRepository(path, clock=lambda: T0)
+    try:
+        assert repo.schema_version() == migrations.LATEST_VERSION >= 5
+        rows = repo.append_adjudication([P.AdjudicationCreate(
+            task_id="task_1", episode_index=3, line="eef_check", decision="consistent", decided_by="bob")], at=T0)
+        assert rows[0].id == 3
+        latest = {a.line: (a.id, a.decision) for a in repo.latest_adjudications("task_1")}
+        assert latest == {"label": (1, "keep_label"), "reject_appeal": (2, "restore"),
+                          "eef_check": (3, "consistent")}
+        conn = sqlite3.connect(path)
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'"
+                                           " AND tbl_name='adjudication'")} >= {"idx_adj_lookup"}
+        conn.close()
+    finally:
+        repo.close()

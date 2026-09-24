@@ -181,7 +181,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - `verdicts.jsonl` 始终是检查本身的漏斗判决；`keep.txt`（dedup 与技能画像的输入）还要跟着已应用的人工裁决走：弃用的、人工判失败的移出，复议捞回的、对拒绝条目人工判成功的加入（`counts` 里的 `decided_in` / `decided_out`）。没有裁决时两者一致。
 - **dedup 只在第一个结果版本跑一次**，人工裁决之后不再跑：它的结论保持不变（被人判失败的那条原件去掉了，它的副本仍按副本拒绝），由人带回交付的条从不去重（v1 的 rejudge 同样如此）。
 - `final --revision N`：再叠加 dedup、skill_profile 和已应用的人工裁决，写 passed / reject / held（三者不相交、合起来是全部）和 review 视图。人工裁决按 v1 的优先级：「弃用」压过一切（包括 held）；人工判了任务成败就以人为准，改标后不再重判（改标时顺手给的成败结论同样采信，C1 1.3；改标的回答一变它就作废，见 adjudicate-apply）；复议只对注册表标为可复议的拒绝有效（`curation.contracts.modules.appealable`：只被 task_success 拒掉的、被 dedup 判为重复的），物理与结构的硬门和软分是终判；恢复只推翻被复议那个模块的结论——去重的复议恢复后回到 passed（技能画像给它归档，它在 task_success 上的弃权从下一版起进 review），另有模块对它执行出错的恢复后 held（P11）；「拿不准」只记录，这条留在队列里。改了标还没按新标注重判的条 held。
-- review 视图按 v1 的队列，复核种类取自注册表的目录（D42、D43）：成败弃权（`task_verdict`）只问在 passed 里、task_success 弃权、人还没下结论的条；标注分歧（`label`）只问 passed 里的条；被拒的条没有这两种问题，拒绝可复议时给一项 `reject_appeal`（去重的写明 `duplicate_of`）；held 的条什么都不问。每一项都写明注册表的 `line`。
+- review 视图按 v1 的队列，复核种类取自注册表的目录（D42、D43）：成败弃权（`task_verdict`）只问在 passed 里、task_success 弃权、人还没下结论的条；EEF 与画面核对（`eef_check`，registry 1.9）只问在 passed 里、EEF 模块转人工、人还没下结论的条；标注分歧（`label`）只问 passed 里的条；被拒的条没有这两种问题，拒绝可复议时给一项 `reject_appeal`（去重的写明 `duplicate_of`）；held 的条什么都不问。每一项都写明注册表的 `line`。
 - 缺源文件被跳过的条（D40）不进任何清单、不计入总数（`counts.skipped`）。技能画像整个模块失败（退出码 4，没写出结果）时，它本该归档的每一条都 held（「技能画像执行出错」），一条都不交付，等重试成功（D41）。
 - `--input` 给了才在 passed 里写出交付用的任务描述（原始标注要从数据集的元数据里读）。已有 `commit.json` 的版本拒绝改写。
 
@@ -192,7 +192,9 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - `decisions.json` 顶层的 `relabel_rerun`（`v1` 缺省 / `full`，D39）随每条改标记进 `applied.jsonl` 和 `labels.json`，`--json` 原样带回；之后重试这些条也按记下的口径判。
 - 改标的同时给了成败结论（判成功 / 判失败）的条不重判，以人为准（注册表 1.3 的后续问题，v1 的 `human_concluded`）；给的是「拿不准」照常重判。
 - 这种跟着改标给的结论（task_success 没有弃权的条上的成败结论）只在改标的回答仍是最新、且结论在它之后给出（按裁决 id）时算数；改标的回答一变（维持原标注、拿不准、换一段新标注），它就作废：不起作用，仍在生效的改标照常重判（`rerun_task_success` 列出），与 Daemon 的 `Queue._stands` 是同一条规则。task_success 弃权的条，成败结论是卡片自己的问题，不会这样作废。
-- 没有执行规则的复核种类（`line` 不是 `label`、`task_verdict`、`reject_appeal`）报参数错误（退出码 2）并写明是哪一种，不会跳过；对没有可复议拒绝的条目复议（被自己的硬门或软分拒掉、已弃用、根本没被拒）同样报参数错误（D42），一条也不应用。
+- `eef_check`（registry 1.9）：`consistent` / `inconsistent` / `unsure`，当作 EEF 模块在这条上的结果，不调模型、不用重跑；
+  副本在 `human-decisions/eef_checks.csv`。
+- 没有执行规则的复核种类（`line` 不是 `label`、`task_verdict`、`reject_appeal`、`eef_check`）报参数错误（退出码 2）并写明是哪一种，不会跳过；对没有可复议拒绝的条目复议（被自己的硬门或软分拒掉、已弃用、根本没被拒）同样报参数错误（D42），一条也不应用。
 
 **report**：`curation report --run-dir … --revision N [--format md,json] [--modules a,b] [--subtask-id ID] --json`
 
@@ -235,8 +237,13 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
   v1 的判决配置（`verdict.py` 不变），不选它时配置与之前完全相同。每行记录带 `input_file_sha256`、`config_hash`、`seeds_sha256`、
   `template_sha256`、`review_config`（窗口数、帧数、模型、prompt / Schema 版本、预处理），`--resume` 只跳过这些都没变的行，
   `input_digest` 也包含它们。模型答复缓存在 `checks/eef_video_consistency/cache/`；窗口没拿到合格答复不是执行出错（CPU 可疑的分项
-  因此没有模型意见，转人工）；VLM 探活不过是整个调用失败（模块失败）。
+  因此没有模型意见，转人工）；VLM 探活不过是整个调用失败（模块失败）。转人工的条把每个复核窗口的标记图都写进证据
+  （窗口的 `evidence`），裁决卡片按窗口展示；判过的条只留模型反驳或与 CPU 冲突的窗口的图。
   实现在 `cli/eef_check.py`、`cli/eef_review.py`、`cli/modparams.py`，模块本身在 `extensions/eef_consistency/`（见其 README）。
+- 转人工的条（registry 1.9 的复核种类 `eef_check`，review 项 `kind: eef_consistency`，F5.11）：留在 passed、进 review，计入待裁；
+  人判「一致」（`consistent`）当作这个模块判过，「不一致」（`inconsistent`）当作它判废（reject 的理由是
+  `人工裁决判为 EEF 与视频不一致`，`kind: human`），「拿不准」只记一笔、照旧待裁；和人工的成败结论同时存在时两条都算。
+  只被这个模块判废的条可以复议（`reject_appeal`，`source_module` 是它），恢复后回到 passed；和别的硬门一起判废的是终判。
 
 ### mcap 与 Lance 数据集（D44，F6.5）
 

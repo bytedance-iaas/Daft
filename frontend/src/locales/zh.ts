@@ -1388,6 +1388,39 @@ export const zh = {
     },
   },
 
+  /** The EEF module's record of one episode (F5.11 card, F5.12 Episode tab): conclusion, CPU, model. */
+  eefDetail: {
+    ask: '看模型复核用的标记图和视频：红圈 P 是轨迹文件声明的点，绿十字 P 是 CPU 在画面里独立找到的同一个点，红箭头 A 是声明的方向。声明和画面对得上吗？',
+    why: '为什么转人工',
+    confirmed: '判废依据',
+    unchecked: '没有检查的分项',
+    cpu: 'CPU 分项读数',
+    stateMotion: '状态运动（整条）',
+    windows: '模型逐窗口答复',
+    windowsNone: '没有复核窗口',
+    cpuEvidence: 'CPU 证据帧',
+    onCamera: (camera: string) => `（相机 ${camera}）`,
+    kind: { uniform: '均匀抽样', candidate: '候选段' } as Record<string, string>,
+    frames: (from: number, to: number, n: number) => (from === to ? `帧 ${from}` : `帧 ${from}–${to}（${n} 帧）`),
+    target: (point: string, axis: string | null) => (axis ? `点 ${point} · 方向 ${axis}` : `点 ${point}`),
+    vote: { position: '位置', orientation: '朝向', tracking: '绿十字跟对了' } as Record<string, string>,
+    offset: (direction: string, magnitude: string) => `偏移：${direction}${magnitude ? `，${magnitude}` : ''}`,
+    offsetDirection: { up: '偏上', down: '偏下', left: '偏左', right: '偏右', toward_fingers: '偏向指尖', away_from_fingers: '偏离指尖', unclear: '方向不明' } as Record<string, string>,
+    offsetMagnitude: { within_finger_width: '一指宽以内', one_to_two_finger_widths: '一到两指宽', over_two_finger_widths: '超过两指宽', unclear: '大小不明' } as Record<string, string>,
+    failed: '没有答复',
+    failure: {
+      timeout: '模型超时',
+      malformed_json: '答复不是合法 JSON',
+      schema_violation: '答复不合格式',
+      unknown_frame: '答复引用了请求里没有的帧',
+      measured_value: '答复里给了测量值',
+      frames_unreadable: '画面解码失败',
+    } as Record<string, string>,
+    conflict: (subitem: string, cpu: string, vlm: string) => `与 CPU 冲突：${subitem} CPU ${cpu}，模型${vlm}`,
+    cached: '缓存',
+    noRecord: '这一版没有 EEF 模块的记录',
+  },
+
   /** The report's Episode tab (F6.2): one episode, module by module. */
   episodeTab: {
     search: '选择 episode',
@@ -1503,7 +1536,7 @@ export const zh = {
     filterType: '问题类型',
     filterStatus: '状态',
     all: '全部',
-    lineName: { label: '标注分歧', task_verdict: '任务成败弃权', reject_appeal: '被拒复议' } as Record<string, string>,
+    lineName: { label: '标注分歧', task_verdict: '任务成败弃权', reject_appeal: '被拒复议', eef_check: 'EEF 与画面核对' } as Record<string, string>,
     typeOption: (line: string, module: string) => `${line}（${module}）`,
     statusOption: { all: '全部', pending: '待裁（含拿不准）', unsure: '拿不准', decided: '已裁', unapplied: '已裁、未执行' } as Record<string, string>,
     // cards
@@ -1549,7 +1582,7 @@ export const zh = {
     appealsIntro: (modules: string) => `这里列出可复议模块拒掉的条目（${modules}）。看完视频，认为判错了就恢复为可用。复议是可选的，不计入「待裁」；结论同样要点「执行裁决」才生效。`,
     whyNotHere: '为什么有的被拒条目不在这里',
     whyNotHereBody: (total: number, others: number) => `本次一共拒绝 ${total} 条，另外 ${others} 条的结论不接受复议：`,
-    whyNotHereRule: (modules: string) => `物理与结构硬门（时间戳、运动学、视频-动作同步）和软分拒绝是终局，复议也改变不了结论。可复议的只有：${modules}（任务成败判定只收只归因于它的拒绝）；后端同样会拒绝别的复议。`,
+    whyNotHereRule: (modules: string) => `物理与结构硬门（时间戳、运动学、视频-动作同步）和软分拒绝是终局，复议也改变不了结论。可复议的只有：${modules}（任务成败判定、EEF–视频一致性这样的判定只收只归因于它自己的拒绝）；后端同样会拒绝别的复议。`,
     finalReject: (module: string, n: number) => `${module}：${n} 条`,
     decisionText: {
       adopt_suggestion: '采纳新标注',
@@ -1561,6 +1594,8 @@ export const zh = {
       keep_rejected: '维持拒绝',
       unsure: '拿不准',
       discard: '整条弃用',
+      consistent: '一致，判过',
+      inconsistent: '不一致，判废',
     } as Record<string, string>,
     colEpisode: 'Episode',
     colText: '任务文本',

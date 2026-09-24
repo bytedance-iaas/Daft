@@ -21,7 +21,7 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
 | `backend/curation/export/` | 导出器：v1 的全量导出（A 类，原样）+ 增量重新导出（W7）。说明与手动验证见 [INCREMENTAL.md](backend/curation/export/INCREMENTAL.md) |
 | `backend/curation/planner/` | 执行计划与 VLM 请求合并框架（W6）：闸门推导、合并执行器、Token 两本账、外层重试与自适应降并发。说明与手动验证见 [其 README](backend/curation/planner/README.md) |
 | `backend/daemon/secrets/` | 密钥与资源管理（W8）：AES-GCM 加密存储与主密钥轮换、访问密钥与模型服务的校验、开始前三项检查、命令行子进程的环境、预签名；说明与手动验证见 [其 README](backend/daemon/secrets/README.md) |
-| `backend/curation/extensions/eef_consistency/` | EEF–视频一致性（阶段 5，DEMO 模块，建议性、不影响判决）：`trajectory.json` 读取与校验、几何、能力预检、L0 数值轨迹、P-A 独立观测、五项指标与诊断、离线报告；接入 v2 的 `preflight` / `plan` / `check --param` / `aggregate` / `report`；说明与手动验证见 [其 README](backend/curation/extensions/eef_consistency/README.md)，离线评估器在 `tools/eef_eval/` |
+| `backend/curation/extensions/eef_consistency/` | EEF–视频一致性（阶段 5，DEMO 模块；D49 起先 CPU 后模型，判过 / 判废 / 转人工，参与判决）：`trajectory.json` 读取与校验、几何、能力预检、L0 数值轨迹、P-A 独立观测、五项指标与诊断、离线报告；接入 v2 的 `preflight` / `plan` / `check --param` / `aggregate` / `report`；说明与手动验证见 [其 README](backend/curation/extensions/eef_consistency/README.md)，离线评估器在 `tools/eef_eval/` |
 | `backend/curation/ui/` | 已下线的 v1 界面里待移植的逻辑（鉴权、深链解析、报告数据整形），移植完成后整包删除 |
 | `backend/curation/contracts/` | C1 模块注册表与契约校验工具 |
 | `backend/daemon/` | API Daemon（W4 骨架：FastAPI、SQLite 仓储、鉴权、SSE、探针、静态资源与挂载前缀、启动对账）；用法与手动验证见 [其 README](backend/daemon/README.md) |
@@ -67,7 +67,10 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
     真起 Daemon 登记、浏览、建任务到交付见 [orchestr README](backend/daemon/orchestr/README.md) 第 11 步，界面上的格式标签与预检文案用 `npm run dev` 看模拟数据集 `warehouse_mcap`、`pusht_lance`。
 16. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
     校验上传件、看能力表、真值键拒绝与自洽警告、离线评估、受控异常矩阵、在 v2 命令行链路上跑一遍、控制台上传与 Daemon 执行（F5.5，
-    `tests/orchestr/test_eef_tasks.py`）、VLM 复核（F5.6，固定 tape 下各分支与离线回放）的逐项核对见 [其 README](backend/curation/extensions/eef_consistency/README.md)。
+    `tests/orchestr/test_eef_tasks.py`）、模型复核与判决（F5.9 / F5.10，固定 tape 下各分支与离线回放）、转人工进裁决（F5.11，
+    `tests/cli/test_eef_adjudication.py`、`tests/results/test_eef_queue.py`、`tests/orchestr/test_eef_tasks.py` 里裁决到重新导出的一条）
+    的逐项核对见 [其 README](backend/curation/extensions/eef_consistency/README.md)；界面上的 EEF 裁决卡片见前端测试
+    `src/pages/adjudication/AdjudicationPage.test.tsx` 里「an EEF question」一条。
 
 ## 跑通一次完整质检（真数据）
 

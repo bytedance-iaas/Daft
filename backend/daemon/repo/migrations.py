@@ -337,17 +337,45 @@ CREATE INDEX idx_dataset_list ON dataset(owner_id, created_at DESC, id DESC);
 CREATE INDEX idx_dataset_credential ON dataset(credential_id);
 """
 
+_ADJUDICATION_COLUMNS = ("id, owner_id, task_id, episode_index, line, decision, new_label, note, "
+                         "decided_by, decided_at, applied_in_subtask")
+
+# Step 5 (C1 1.9, F5.11): the EEF module's review line ``eef_check``. The lines are the
+# registry's (D43) and the Daemon checks every answer against that catalog before it is
+# stored, so ``line`` loses its fixed list instead of widening it once per new line; the
+# table is rebuilt as in step 4 and every row keeps its id.
+_V5 = f"""
+CREATE TABLE adjudication_v5 (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id           TEXT NOT NULL DEFAULT 'default',
+  task_id            TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+  episode_index      INTEGER NOT NULL,
+  line               TEXT NOT NULL CHECK (length(line) BETWEEN 1 AND 64),
+  decision           TEXT NOT NULL,
+  new_label          TEXT,
+  note               TEXT,
+  decided_by         TEXT NOT NULL,
+  decided_at         INTEGER NOT NULL,
+  applied_in_subtask TEXT REFERENCES subtask(id) ON DELETE SET NULL
+);
+INSERT INTO adjudication_v5 ({_ADJUDICATION_COLUMNS}) SELECT {_ADJUDICATION_COLUMNS} FROM adjudication;
+DROP TABLE adjudication;
+ALTER TABLE adjudication_v5 RENAME TO adjudication;
+CREATE INDEX idx_adj_lookup ON adjudication(task_id, line, episode_index, id);
+"""
+
 #: (version, script). Append only.
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _V1),
     (2, _V2),
     (3, _V3),
     (4, _V4),
+    (5, _V5),
 )
 
 #: steps that rebuild a table: foreign keys are off while they run (SQLite's procedure for
 #: schema changes ALTER TABLE cannot make; with them on, DROP TABLE would cascade)
-REBUILDS = frozenset({4})
+REBUILDS = frozenset({4, 5})
 
 LATEST_VERSION = MIGRATIONS[-1][0]
 

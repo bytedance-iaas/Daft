@@ -1248,7 +1248,13 @@ const report = [
     const ep = Number(params.index);
     const total = t.summary?.total ?? 50;
     if (!Number.isInteger(ep) || ep < 0 || ep >= Math.max(total, 50)) return err(404, 'not_found', `没有 ep ${String(params.index)}`);
-    return HttpResponse.json(episodeView(ep, rev));
+    const view = episodeView(ep, rev);
+    const extra = db.extraRecords.get(t.id)?.get(ep) ?? {};
+    for (const [module, rec] of Object.entries(extra)) {
+      view.modules[module] = rec;
+      view.evidence = [...(view.evidence ?? []), ...rec.evidence.map((path) => ({ module, path, kind: 'frame' as const }))];
+    }
+    return HttpResponse.json(view);
   }),
   // C4 1.9.0: the report's Episode tab — the episode list and one episode's sync curves.
   http.get(`${API}/tasks/:id/episodes`, ({ request, params }) => {

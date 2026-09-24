@@ -151,6 +151,10 @@ def test_every_branch_under_a_recorded_tape_and_its_offline_replay(cli, taped, m
     assert w2[2]["attempts"] == 2 and w2[2]["answer"]["explanation"] == "红圈偏左一指宽"
     assert d2["review"]["status"] == "incomplete"
     assert [h["code"] for h in d2["decision"]["human"]] == ["no_model_opinion"]
+    # a person's card shows every window's marked crops, whatever the model said (F5.11)
+    assert all(w["evidence"] and all(os.path.isfile(os.path.join(rd, p)) for p in w["evidence"]) for w in w2)
+    assert set(recs[2]["evidence"]) >= {p for w in w2 for p in w["evidence"]}
+    assert not any(w.get("evidence") for w in recs[3]["details"]["review"]["cameras"][CAM]["windows"])
     assert recs[7]["details"]["decision"]["human"][0]["code"] == "not_in_file"
     for d in (d0, d1, d2):                                    # classes, booleans and frame ids only
         for w in d["review"]["cameras"][CAM]["windows"]:

@@ -6,6 +6,7 @@ import { moduleName, qk, useModules } from '../../api/queries';
 import type { AdjudicationLine, Decision, DecisionValue } from '../../api/types';
 import { LazyVisible } from '../../components/LazyVisible';
 import { RelTime } from '../../components/RelTime';
+import { EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
 import { SignedImage } from '../../features/media/SignedMedia';
 import { SyncedVideos } from '../../features/media/SyncedVideos';
 import { answerOn, catalogLine, lineDecisions, lineTitle, repeats, type CardView, type EffectiveDecision, type ReviewCatalog } from '../../lib/adjudication';
@@ -16,20 +17,30 @@ export const STATUS_COLOR: Record<string, string> = { pending: 'arcoblue', optio
 type Question = CardView['questions'][number];
 type Decide = (line: AdjudicationLine, d: DecisionValue, label?: string) => Promise<boolean>;
 
-/**
- * Videos and evidence frames of one episode, loaded when the card scrolls into view (03 §7).
- * 「同时播放」 plays the cameras in sync and never starts by itself (F6.2).
- */
-function CardMedia({ taskId, ep, rev }: { taskId: string; ep: number; rev: number }) {
-  const reg = useModules();
-  const q = useQuery({
+/** The EEF module (C1 1.9): its question and its appealable rejects show its own record. */
+const EEF = 'eef_video_consistency';
+
+/** One episode of the card's revision (C4 `EpisodeView`), shared by the media and the EEF block. */
+function useEpisode(taskId: string, ep: number, rev: number) {
+  return useQuery({
     queryKey: qk.episode(taskId, ep, rev),
     queryFn: () => unwrap(api().GET('/tasks/{id}/episodes/{index}', { params: { path: { id: taskId, index: ep }, query: { rev } } })),
     retry: false,
   });
+}
+
+/**
+ * Videos and evidence frames of one episode, loaded when the card scrolls into view (03 §7).
+ * 「同时播放」 plays the cameras in sync and never starts by itself (F6.2). `skip`: modules whose
+ * evidence a question of the card shows itself.
+ */
+function CardMedia({ taskId, ep, rev, skip = [] }: { taskId: string; ep: number; rev: number; skip?: readonly string[] }) {
+  const reg = useModules();
+  const q = useEpisode(taskId, ep, rev);
   if (q.isLoading) return <Spin size={16} />;
   if (!q.data) return null;
   const v = q.data;
+  const evidence = (v.evidence ?? []).filter((e) => !skip.includes(e.module));
   const origin = v.videos[0]?.origin;
   return (
     <div data-testid={`media-${ep}`}>
@@ -43,9 +54,9 @@ function CardMedia({ taskId, ep, rev }: { taskId: string; ep: number; rev: numbe
       ) : (
         <Empty description={zh.report.videos} />
       )}
-      {v.evidence?.length ? (
+      {evidence.length ? (
         <div className="evidence-grid" style={{ marginTop: 8 }}>
-          {v.evidence.map((e) => (
+          {evidence.map((e) => (
             <SignedImage key={e.path} task={taskId} scope="delivery" path={e.path} alt={`${moduleName(reg.data, e.module)} · ${e.path.split('/').pop() ?? ''}`} />
           ))}
         </div>
@@ -224,8 +235,50 @@ function VerdictQuestion({ index, view, q, catalog, onDecide }: { index: number;
   );
 }
 
-/** 被拒复议 (D42): why it was rejected — for dedup, which episode it duplicates. */
-function AppealQuestion({ index, view, q, catalog, onDecide }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide }) {
+/** The EEF module's CPU readings, the model's windows and the marked crops, once the card is in view. */
+function EefEvidence({ taskId, ep, rev }: { taskId: string; ep: number; rev: number }) {
+  const q = useEpisode(taskId, ep, rev);
+  if (q.isLoading) return <Spin size={16} />;
+  const record = q.data?.modules?.[EEF];
+  if (!record) return <div className="muted">{zh.eefDetail.noRecord}</div>;
+  return (
+    <div data-testid={`eef-evidence-${ep}`}>
+      <EefCpuTable record={record} />
+      <EefWindows taskId={taskId} record={record} />
+      <EefCpuEvidence taskId={taskId} record={record} />
+    </div>
+  );
+}
+
+type Located = { taskId: string; rev: number };
+
+/**
+ * EEF–视频一致性 (C1 1.9, design 12 D-E13): why the module could not settle it, then what it
+ * measured and what the model said on each window next to the marked crops; 一致 keeps the
+ * episode, 不一致 rejects it.
+ */
+function EefQuestion({ index, view, q, catalog, onDecide, taskId, rev }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide } & Located) {
+  return (
+    <div className={`question${view.discarded ? ' overridden' : ''}`} data-testid={`q-${view.ep}-eef_check`}>
+      <QuestionHead index={index} q={q} catalog={catalog} />
+      <div className="episode-line warn" style={{ margin: '4px 0' }}>
+        <b>{zh.eefDetail.why}：</b>
+        {q.reason}
+      </div>
+      <div style={{ margin: '4px 0 8px' }}>{zh.eefDetail.ask}</div>
+      <LazyVisible placeholder={<div style={{ height: 80 }} />}>
+        <EefEvidence taskId={taskId} ep={view.ep} rev={rev} />
+      </LazyVisible>
+      <Space wrap style={{ marginTop: 8 }}>
+        <Choice view={view} q={q} catalog={catalog} fallback={['consistent', 'inconsistent', 'unsure']} onDecide={onDecide} />
+        <DecidedNote latest={q.latest_decision} effective={q.effective} />
+      </Space>
+    </div>
+  );
+}
+
+/** 被拒复议 (D42): why it was rejected — for dedup, which episode it duplicates; for the EEF module, its windows. */
+function AppealQuestion({ index, view, q, catalog, onDecide, taskId, rev }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide } & Located) {
   return (
     <div className="question" data-testid={`q-${view.ep}-reject_appeal`}>
       <QuestionHead index={index} q={q} catalog={catalog} />
@@ -237,6 +290,11 @@ function AppealQuestion({ index, view, q, catalog, onDecide }: { index: number; 
       <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
         {q.reason}
       </div>
+      {q.source_module === EEF ? (
+        <LazyVisible placeholder={<div style={{ height: 80 }} />}>
+          <EefEvidence taskId={taskId} ep={view.ep} rev={rev} />
+        </LazyVisible>
+      ) : null}
       <Space wrap>
         <Choice view={view} q={q} catalog={catalog} fallback={['restore', 'keep_rejected', 'unsure']} onDecide={onDecide} />
         <DecidedNote latest={q.latest_decision} effective={q.effective} />
@@ -301,8 +359,8 @@ function GenericQuestion({ index, view, q, catalog, onDecide }: { index: number;
 
 /**
  * One card per episode (07 §6): the source modules, the videos once (both episodes for a dedup
- * appeal), then every question — label, task_verdict and reject_appeal with their own views, any
- * other line from the registry catalog (D43); 「其它原因，整条弃用」 where the lines offer it.
+ * appeal), then every question — label, task_verdict, reject_appeal and eef_check with their own
+ * views, any other line from the registry catalog (D43); 「其它原因，整条弃用」 where the lines offer it.
  */
 export function EpisodeCard({
   taskId,
@@ -326,6 +384,7 @@ export function EpisodeCard({
   const duplicateOf = view.questions.find((q) => q.duplicate_of !== null && q.duplicate_of !== undefined)?.duplicate_of;
   const statusKey = view.optional && view.status === 'pending' ? 'optional' : view.status;
   const discardLine = view.discardOn ?? view.discardLine;
+  const eefShown = view.questions.some((q) => q.line === 'eef_check' || (q.line === 'reject_appeal' && q.source_module === EEF));
   return (
     <Card
       className={`adj-card ${view.status}`}
@@ -347,13 +406,18 @@ export function EpisodeCard({
       }
     >
       <LazyVisible placeholder={<div style={{ height: 120 }} />}>
-        {duplicateOf !== undefined && duplicateOf !== null ? <CompareMedia taskId={taskId} ep={view.ep} other={duplicateOf} rev={rev} /> : <CardMedia taskId={taskId} ep={view.ep} rev={rev} />}
+        {duplicateOf !== undefined && duplicateOf !== null ? (
+          <CompareMedia taskId={taskId} ep={view.ep} other={duplicateOf} rev={rev} />
+        ) : (
+          <CardMedia taskId={taskId} ep={view.ep} rev={rev} skip={eefShown ? [EEF] : []} />
+        )}
       </LazyVisible>
       {view.questions.map((q, i) => {
         const props = { index: i, view, q, catalog, onDecide: decide };
         if (q.line === 'label') return <LabelQuestion key={q.line} {...props} />;
         if (q.line === 'task_verdict') return <VerdictQuestion key={q.line} {...props} />;
-        if (q.line === 'reject_appeal') return <AppealQuestion key={q.line} {...props} />;
+        if (q.line === 'reject_appeal') return <AppealQuestion key={q.line} {...props} taskId={taskId} rev={rev} />;
+        if (q.line === 'eef_check') return <EefQuestion key={q.line} {...props} taskId={taskId} rev={rev} />;
         return <GenericQuestion key={q.line} {...props} />;
       })}
       {/* Follow-ups are shown only while the answer that opens them is in force (they lapse otherwise). */}

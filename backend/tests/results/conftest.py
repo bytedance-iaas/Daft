@@ -324,12 +324,12 @@ class World:
         return self.client.post(f"{API}/tasks/{self.task_id}/adjudication",
                                 json={"decisions": decisions}, headers={**JSON, **(headers or {})})
 
-    def revision(self, n: int, *, subtask_id: str | None = None) -> None:
+    def revision(self, n: int, *, subtask_id: str | None = None, modules: tuple = MODULES) -> None:
         rd = str(self.run_dir)
         cli("aggregate", "--run-dir", rd, "--phase", "final", "--revision", str(n),
-            "--modules", ",".join(MODULES), "--episodes", "0-8")
+            "--modules", ",".join(modules), "--episodes", "0-8")
         review_as_of_c2_1_4(self.run_dir, n)
-        argv = ["report", "--run-dir", rd, "--revision", str(n), "--modules", ",".join(MODULES)]
+        argv = ["report", "--run-dir", rd, "--revision", str(n), "--modules", ",".join(modules)]
         if subtask_id:
             argv += ["--subtask-id", subtask_id]
         cli(*argv)

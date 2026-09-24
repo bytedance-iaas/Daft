@@ -1273,7 +1273,7 @@ export interface components {
                 mergeable: boolean;
             }[];
         };
-        /** @description a line of the registry's review_lines; today label, task_verdict, reject_appeal */
+        /** @description a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check */
         ReviewLineId: string;
         ReviewLine: {
             id: components["schemas"]["ReviewLineId"];
@@ -2059,7 +2059,7 @@ export interface components {
         DecisionFields: {
             episode_index: number;
             line: components["schemas"]["ReviewLineId"];
-            /** @description one of the line's decisions in the registry, on a question the episode's card has or a follow-up the card's answer on another line opened (registry follow_ups); anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label, keep_label, unsure, discard; task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure */
+            /** @description one of the line's decisions in the registry, on a question the episode's card has or a follow-up the card's answer on another line opened (registry follow_ups); anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label, keep_label, unsure, discard; task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure */
             decision: string;
             /** @description custom_label: required; adopt_suggestion: may be left out, the question's suggestion is taken */
             new_label?: string | null;

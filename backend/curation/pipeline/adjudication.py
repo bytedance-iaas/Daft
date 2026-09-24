@@ -22,6 +22,11 @@ v1's rules survive unchanged (``pipeline/rejudge.py``), in its order:
 4. "unsure" is a legal answer: recorded, the episode stays in the queue, nothing
    changes.
 
+v2's own line (C1 1.9, F5.11): ``eef_check`` answers an episode the EEF module could not
+settle (``passed=None``, design doc 12 D-E13). "consistent" counts as the module passing
+it, "inconsistent" as the module rejecting it - the gate's result, as a human task
+verdict is task_success's; no model runs again.
+
 A task verdict on an episode task_success did not abstain on is not the card's own
 question but v1's verdict after a relabel - the registry's follow-up of the label
 line (C1 1.3 ``follow_ups``). It counts only while the label's latest answer opens
@@ -62,6 +67,7 @@ LINE_DECISIONS = {
     "label": ("adopt_suggestion", "custom_label", "keep_label", "unsure", "discard"),
     "task_verdict": ("success", "failure", "unsure", "discard"),
     "reject_appeal": ("restore", "keep_rejected", "unsure"),
+    "eef_check": ("consistent", "inconsistent", "unsure"),
 }
 #: The lines adjudicate-apply has an apply rule for, with the decisions each rule
 #: knows (the registry's review lines, C1; a test keeps them equal). A line or a
@@ -70,7 +76,7 @@ LINE_DECISIONS = {
 V1_WORDS = {"adopt_suggestion": "采纳建议改标", "custom_label": "采纳建议改标",
             "keep_label": "维持原标注", "unsure": "拿不准", "discard": "弃用该条",
             "success": "判成功", "failure": "判失败", "restore": "捞回",
-            "keep_rejected": "维持拒绝"}
+            "keep_rejected": "维持拒绝", "consistent": "一致", "inconsistent": "不一致"}
 
 
 class DecisionError(ValueError):
@@ -198,6 +204,12 @@ class Decisions:
         return d["decision"] if d is not None and d["decision"] in ("success", "failure") \
             else None
 
+    def human_eef(self, episode: int) -> str | None:
+        """``consistent`` / ``inconsistent`` when a person settled the EEF module's question."""
+        d = self.get(episode, "eef_check")
+        return d["decision"] if d is not None and d["decision"] in ("consistent", "inconsistent") \
+            else None
+
     def relabel(self, episode: int) -> str | None:
         d = self.get(episode, "label")
         if d is not None and d["decision"] in RELABEL_DECISIONS:
@@ -309,6 +321,7 @@ def write_human_copies(run_dir: str, decisions: Decisions) -> None:
         "label": ("label_decisions.csv", ["episode_id", "decision", "new_label", "note", "at"]),
         "task_verdict": ("task_verdicts.csv", ["episode_id", "verdict", "note", "at"]),
         "reject_appeal": ("reject_appeals.csv", ["episode_id", "appeal", "note", "at"]),
+        "eef_check": ("eef_checks.csv", ["episode_id", "decision", "note", "at"]),
     }
     for line, (name, fields) in tables.items():
         rows = [d for d in decisions.applied if d["line"] == line]
@@ -324,6 +337,8 @@ def write_human_copies(run_dir: str, decisions: Decisions) -> None:
             word = V1_WORDS[d["decision"]]
             if line == "label":
                 row.update(decision=word, new_label=d.get("new_label") or "")
+            elif line == "eef_check":
+                row["decision"] = word
             elif line == "task_verdict":
                 row["verdict"] = word
             else:

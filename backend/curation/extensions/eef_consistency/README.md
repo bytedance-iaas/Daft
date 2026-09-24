@@ -32,7 +32,7 @@
 | `decide.py` | 逐条判决（D-E12 / 附录 C.9）：模型能看的分项（位置、朝向）按分项多数意见与 CPU 比对，模型看不了的分项（时间对齐、状态运动、相机运动）CPU 可疑即转人工，文件里没有或位置到处无法评估的转人工；有确认的判废即判废，否则有转人工理由即转人工，否则判过 |
 | `preflight.py` | `curation preflight` 里的模块条目：文件校验、逐分项能力表、按 episode 计数；没给文件报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，F5.5 起控制台第二屏上传）；复核模块跟随它复核的模块（不可用报 `eef_base_unavailable`、缺文件同样要上传），再要 VLM 后端 |
 | `review.py` | VLM 复核：窗口（同分项、时间重叠的 CPU 位置 / 朝向候选段合并成候选窗口，加均匀抽查窗口，每路相机各至多 N 个、超出记 `truncated`）；**每个窗口只问一个点 P 和至多一根轴 A**（候选窗口问 CPU 偏得最厉害的点 / 轴，抽查窗口问覆盖最好的点；轴在窗口里投影不足 20 px 就换最长的一根，都不够就不问朝向）；请求包：缩小的整帧、每帧原始裁剪与标记裁剪（声明的 P 红圈、跟踪到的 P 绿十字、声明的 A 红箭头，都标名字），prompt 只给这一点一轴的定义；答复校验（`eef/review_output.schema.json` 1.1、帧号必须来自请求、解释里不许有测量值，不合格给一次修复）、按发送内容缓存、`votes` 把答复变成分项投票 |
-| `report.py` | 报告小节摘要（候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率）与三张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis`；复核小节摘要（完整 / 未完成 / 未复核、窗口、冲突、待人工、失败原因）与 `eef_review_windows` 表 |
+| `report.py` | 报告小节摘要：判过 / 判废 / 转人工条数、转人工的原因、判废来自哪些分项、模型与 CPU 的一致率，以及候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率、复核窗口（有答复 / 失败、冲突）；四张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis` / `eef_review_windows` |
 | `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像）、`lerobot_mapping`（按显式的 `eef-mapping/1.0` 映射从 LeRobot 列生成 `trajectory.json`，形态 B，设计 §3.3；不是平台入口） |
 | `__main__.py` | 离线命令：`validate`、`run`（`--seeds` 或 `--template`）、`export`、`template-build`、`template-check` |
 
@@ -135,7 +135,17 @@
     都走一遍，录进 tape 后在新的运行目录离线回放，记录逐项相同，`aggregate` 只判废那一条。模型对照真值的准确率用
     `PYTHONPATH=backend:tools .venv/bin/python -m eef_eval.review_eval --dataset dataset2 --stand-in`（假模型，只查流程）
     或带 `--endpoint/--model/--api-key-env` 的真实后端跑（见 `tools/eef_eval/README.md`）。
-11. 从 LeRobot 列生成 trajectory.json（设计 §3.3）：`../.venv/bin/python -m pytest -q tests/eef/test_mapping.py`（约 15 秒），应全部通过；再手动：
+    转人工的条每个复核窗口都有标记图（窗口的 `evidence`），判过的条只有模型反驳或冲突的窗口有图。
+11. 转人工进裁决（F5.11，C1 1.9 的复核种类 `eef_check`）：
+    `../.venv/bin/python -m pytest -q tests/cli/test_eef_adjudication.py tests/results/test_eef_queue.py`（约 15 秒）与
+    `../.venv/bin/python -m pytest -q tests/orchestr/test_eef_tasks.py -k settles -m "slow or not slow"`（约 30 秒），应全部通过：
+    转人工的条留在 passed、进 review 并计入待裁；判「一致」保留，判「不一致」进拒绝（理由「人工裁决判为 EEF 与视频不一致」），
+    「拿不准」照旧待裁；只被本模块判废的条能复议恢复，和别的硬门一起判废的复议被拒；执行裁决后出新结果版本、交付标为过期，
+    重新导出后交付里没有判废的那条。界面上：第 9 步的任务跑完后打开「人工裁决」，转人工的条是一张卡片，写着「来源：EEF–视频一致性 ·
+    EEF 与画面核对」、为什么转人工、CPU 分项读数（可疑的格子标橙）、模型逐窗口答复（位置 / 朝向 / 绿十字跟对了三张票、偏移、
+    模型原话、与 CPU 冲突的窗口带橙框）和每个窗口的标记图，按钮是「一致，判过」「不一致，判废」「拿不准」；视频下面不再重复这些图。
+    被本模块判废的条在「被拒复议」里同样带这一块。
+12. 从 LeRobot 列生成 trajectory.json（设计 §3.3）：`../.venv/bin/python -m pytest -q tests/eef/test_mapping.py`（约 15 秒），应全部通过；再手动：
 
     ```bash
     ../.venv/bin/python -m curation.extensions.eef_consistency export --mapping tests/eef/mappings/dataset2.yaml \
@@ -146,11 +156,11 @@
 
     第一条打印 `samples: 7`、`frames: 2009`；第二条 `report.valid: true`、七条 episode 都 `available`（投影由平台按位姿与标定重算，
     包里 `projection` 为 `null`）。把映射里的 `layout` 删掉或写成 `auto`，`export` 以退出码 2 报「eef.layout」——映射必须写明，不猜列宽。
-12. 留出集验收（F5.7，在仓库根执行，约 2 分钟）：`PYTHONPATH=backend:tools .venv/bin/python -m eef_eval.acceptance --dataset dataset3 --jobs 4`，
+13. 留出集验收（F5.7，在仓库根执行，约 2 分钟）：`PYTHONPATH=backend:tools .venv/bin/python -m eef_eval.acceptance --dataset dataset3 --jobs 4`，
     需要仓库外的 `galbot/dataset3`（构建方法见 `tools/eef_eval/README.md`）。末尾打印的汇总应为 `detected: 19`、`false_alarm_episodes: 0`；
     分组报告写在 `tools/eef_eval/reports/acceptance.md`。
 
-13. 夹爪外观模板（F5.8，锚点的第二种来源，与种子二选一）。先从 dataset2 第 0 条的种子建模板（约 20 秒），再检查重检测器，
+14. 夹爪外观模板（F5.8，锚点的第二种来源，与种子二选一）。先从 dataset2 第 0 条的种子建模板（约 20 秒），再检查重检测器，
     再用模板而不是种子跑三条 episode：
 
     ```bash
@@ -177,4 +187,4 @@
 ## 回退
 
 回退就是新建任务时不勾选这个模块（预设与「全选可用」本来就不勾）：不勾时计划里没有它，判决配置与接入前完全相同，旧流程逐字节不变。
-勾了以后它参与判决（D49）：判废的条目进拒绝清单，转人工的出裁决卡片；阈值仍是未校准的 demo。
+勾了以后它参与判决（D49）：判废的条目进拒绝清单，转人工的出裁决卡片（`eef_check`，人判后按判过 / 判废重算）；阈值仍是未校准的 demo。

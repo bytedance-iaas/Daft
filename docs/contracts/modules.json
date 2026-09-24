@@ -1,5 +1,5 @@
 {
- "registry_version": "1.8",
+ "registry_version": "1.9",
  "stages": [
   "numeric",
   "frame",
@@ -92,6 +92,28 @@
     {
      "const": "keep_rejected",
      "title": "维持拒绝"
+    },
+    {
+     "const": "unsure",
+     "title": "拿不准"
+    }
+   ],
+   "follow_ups": []
+  },
+  {
+   "id": "eef_check",
+   "review_kind": "eef_consistency",
+   "title_zh": "EEF 与画面核对",
+   "applies_to": "passed",
+   "counts_as_pending": true,
+   "decisions": [
+    {
+     "const": "consistent",
+     "title": "一致，判过"
+    },
+    {
+     "const": "inconsistent",
+     "title": "不一致，判废"
     },
     {
      "const": "unsure",
@@ -318,9 +340,11 @@
    "depends_on": [
     "frame_gates"
    ],
-   "produces_adjudication": false,
-   "review_lines": [],
-   "appealable": false,
+   "produces_adjudication": true,
+   "review_lines": [
+    "eef_check"
+   ],
+   "appealable": true,
    "input_scope": "funnel",
    "affects_dataset_verdict": true,
    "param_schema": {

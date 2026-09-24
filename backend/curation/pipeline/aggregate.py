@@ -54,6 +54,10 @@ FUNNEL_MODULES = tuple(m.id for m in registry.MODULES if m.stage in FUNNEL_STAGE
                        and m.affects_dataset_verdict)
 NAMES_CN = {**CHECK_CN, "dedup": "精确去重", "skill_profile": "技能画像",
             "autolabel": "无标注补描述"}
+#: v2's EEF gate and its person's question (C1 1.9, design doc 12 D-E13): an episode it
+#: could not settle (``passed=None``) is kept and asked; the answer is the gate's result
+EEF = "eef_video_consistency"
+EEF_HUMAN = {"consistent": "人工裁决判为一致", "inconsistent": "人工裁决判为 EEF 与视频不一致"}
 
 
 def _stage(m: str) -> str:
@@ -227,17 +231,20 @@ def appeal_target(state: RunState, ep: int, machine: Line, decisions: Decisions)
     The one admission rule (adjudicate-apply and review.json both use it): a
     funnel reject attributed to one hard gate alone - v1's
     ``is_task_success_reject``: no other hard gate, never a soft score - whose
-    module the registry marks ``appealable`` and that no human task verdict
-    settled, or dedup's byte-copy finding on an episode the funnel kept (when
-    dedup is appealable). A discarded episode has none: the discard is final.
+    module the registry marks ``appealable`` and that no person settled (a human
+    task verdict for task_success, an ``eef_check`` answer for the EEF gate), or
+    dedup's byte-copy finding on an episode the funnel kept (when dedup is
+    appealable). A discarded episode has none: the discard is final.
     """
     appealable = registry.appealable
     if decisions.discarded(ep) is not None:
         return None
     tv = decisions.human_task_verdict(ep)
     if machine.verdict == "drop":
-        if tv is None and len(machine.hard_fails) == 1 and appealable(machine.hard_fails[0]):
-            return machine.hard_fails[0]
+        if len(machine.hard_fails) == 1 and appealable(machine.hard_fails[0]):
+            gate = machine.hard_fails[0]
+            settled = decisions.human_eef(ep) if gate == EEF else tv
+            return gate if settled is None else None
         return None
     if machine.verdict == "keep" and tv != "failure" and "dedup" in state.modules \
             and appealable("dedup"):
@@ -253,24 +260,33 @@ def decide(state: RunState, ep: int, decisions: Decisions,
     machine = machine or funnel_line(state, ep)
     line, reasons, human_note = machine, [], None
     selected = set(state.modules)
-    # human task verdicts and appeals act as a module result (v1 moves the entry)
+    # human task verdicts, EEF answers and appeals act as a module result (v1 moves the entry)
     tv = decisions.human_task_verdict(ep)
     appeal = decisions.appeal(ep)
     target = appeal_target(state, ep, machine, decisions)
     ts_rec = (state.results.get("task_success") or {}).get(ep)
+    overrides: dict[str, dict] = {}
     if tv is not None and "task_success" in selected and ts_rec is not None \
             and ts_rec["verdict"] != "error":
-        override = dict(_struct(ts_rec), passed=(tv == "success"))
-        line = funnel_line(state, ep, {"task_success": override})
+        overrides["task_success"] = dict(_struct(ts_rec), passed=(tv == "success"))
         human_note = {"module": "task_success",
                       "text": "人工裁决判成功" if tv == "success"
                       else "人工裁决判失败(任务未完成)", "kind": "human"}
-    elif appeal == "restore" and target is not None and target != "dedup":
+    eef = decisions.human_eef(ep)
+    eef_rec = (state.results.get(EEF) or {}).get(ep)
+    if eef is not None and EEF in selected and eef_rec is not None and eef_rec["verdict"] != "error":
+        rec = _struct(eef_rec)
+        overrides[EEF] = {**rec, "passed": eef == "consistent",
+                          "detail": {**rec["detail"], "reason": EEF_HUMAN[eef]}}
+    if appeal == "restore" and target is not None and target != "dedup" \
+            and target not in overrides:
         # restore overturns the appealed gate only: another module that could not
         # judge the episode still holds it (P11)
         rec = (state.results.get(target) or {}).get(ep)
         if rec is not None and rec["verdict"] != "error":
-            line = funnel_line(state, ep, {target: dict(_struct(rec), passed=True)})
+            overrides[target] = dict(_struct(rec), passed=True)
+    if overrides:
+        line = funnel_line(state, ep, overrides)
     state_ = line.verdict                          # keep / drop / held
     # relabelled but not judged again with the new label yet -> held
     relabel = decisions.relabel(ep)
@@ -388,7 +404,10 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
         elif state_ == "drop" and not reasons:
             reasons = _drop_reasons(line)
             if human_note is not None and human_note["text"].startswith("人工裁决判失败"):
-                reasons = [human_note]
+                reasons = [human_note] + [r for r in reasons if r.get("module") == EEF]
+            if decisions.human_eef(ep) == "inconsistent":
+                reasons = [{"module": EEF, "kind": "human", "text": EEF_HUMAN["inconsistent"]}
+                           if r.get("module") == EEF else r for r in reasons]
         elif state_ == "held" and not reasons:
             reasons = [{"module": m, "kind": "execution_error",
                         "text": f"「{NAMES_CN.get(m, m)}」执行出错({line.error_detail.get(m, '')})"}
@@ -458,7 +477,10 @@ def _review_items(state: RunState, ep: int, line: Line, state_: str, d: Decided,
       and the report; asking whether the task succeeded is moot for a reject;
     * ``label_conflict``: skill_profile's audit (and the kill guard's holds);
     * ``reject_appeal``: a reject by one appealable module alone
-      (:func:`appeal_target`) with no appeal decided yet - "unsure" keeps it listed.
+      (:func:`appeal_target`) with no appeal decided yet - "unsure" keeps it listed;
+    * ``eef_consistency``: a delivered episode the EEF module could not settle (conflicting
+      CPU and model, no model opinion, what the model cannot see, not judgeable) and no
+      person has (C1 1.9) - "unsure" keeps it listed.
     """
     items = []
     current = "passed" if state_ == "keep" else "reject"
@@ -469,6 +491,9 @@ def _review_items(state: RunState, ep: int, line: Line, state_: str, d: Decided,
             why = f"系统内部错误(非数据问题):{why}"
         items.append({"source_module": "task_success", "kind": "task_verdict",
                       "reason": why or "未注明"})
+    if state_ == "keep" and EEF in line.undecidable and decisions.human_eef(ep) is None:
+        why = check_detail_reason(line.checks.get(EEF) or {}).removeprefix("需要人工裁决：")
+        items.append({"source_module": EEF, "kind": "eef_consistency", "reason": why or "未注明"})
     if not decisions.label_resolved(ep):
         for tier, entry in audit_entries:
             item = {"source_module": "task_success" if entry.get("guard_layer")

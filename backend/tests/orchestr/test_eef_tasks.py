@@ -1,10 +1,10 @@
-"""F5.5: input files of module parameters through the Daemon (C4 1.8.0, registry 1.5, design doc 12 §11).
+"""F5.5 / F5.9 / F5.11: the EEF module through the Daemon (C4 1.8.0, registry 1.5-1.9, design doc 12 §11).
 
-Upload validation with located errors, the task rules for the advisory EEF module (an upload handle,
-never a server path; the module is preflighted against the dataset with the uploaded file) and - in
-the slow test - a task that runs it end to end: the files are copied into the run directory, the
-advisory stage runs on every selected episode, the report has its section and the delivery its
-artifacts.
+Upload validation with located errors, the task rules for the EEF module (an upload handle, never a
+server path; the module is preflighted against the dataset with the uploaded file; it needs a model)
+and - in the slow tests - a task that runs it end to end (the files are copied into the run
+directory, it judges the frame stage's survivors next to task_success, the report has its section and
+the delivery its artifacts) and one where a person settles what it could not, through to the re-export.
 """
 from __future__ import annotations
 
@@ -216,3 +216,54 @@ def test_an_eef_task_runs_end_to_end(daemon):
     assert r.status_code == 200, r.text
     r = d.api("GET", f"/tasks/{created['id']}/report")
     assert r.status_code == 200 and EEF in [s["id"] for s in r.json()["report"]["modules"]]
+
+
+def test_a_person_settles_what_the_module_could_not_and_the_delivery_follows(daemon):
+    """F5.11: an episode the module sent to a person is a pending card; "inconsistent" rejects it and
+    "consistent" keeps it once the decisions are executed, and the re-export delivers accordingly."""
+    d = daemon()
+    traj = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
+    seeds = _upload(d, "eef_observation_seeds", "seeds.jsonl", _seed_rows())
+    params = {"trajectory_json": traj["handle"], "observation_seeds": seeds["handle"],
+              "review_windows_per_camera": 1, "review_frames_per_window": 2}
+    created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": params}])
+    task_id = created["id"]
+    first = d.wait(task_id)
+    assert first["state"] in ("succeeded", "completed_with_errors"), json.dumps(first)[:2000]
+    rd = d.run_dir(task_id)
+    queue = d.api("GET", f"/tasks/{task_id}/adjudication", params={"status": "all"}).json()
+    asked = sorted(c["episode_index"] for c in queue["items"]
+                   if any(q["line"] == "eef_check" for q in c["questions"]))
+    assert asked, queue
+    assert first["pending_adjudication"] == queue["counts"]["pending"] >= len(asked)
+    for ep in asked:
+        view = d.api("GET", f"/tasks/{task_id}/episodes/{ep}").json()
+        rec = view["modules"][EEF]
+        assert view["list"] == "passed" and rec["passed"] is None and rec["details"]["decision"]["human"]
+    keep, drop = asked[0], asked[-1]
+    answers = [{"episode_index": drop, "line": "eef_check", "decision": "inconsistent"}]
+    if keep != drop:
+        answers.append({"episode_index": keep, "line": "eef_check", "decision": "consistent"})
+    r = d.api("POST", f"/tasks/{task_id}/adjudication", json={"decisions": answers})
+    assert r.status_code == 200, r.text
+    r = d.api("POST", f"/tasks/{task_id}/adjudication/apply", json={})
+    assert r.status_code == 202, r.text
+    done = d.wait(task_id)
+    assert done["state"] == "succeeded" and done["result_rev"] == first["result_rev"] + 1, json.dumps(done)[:2000]
+    assert done["delivery_stale"] is True
+    assert d.api("GET", f"/tasks/{task_id}/episodes/{drop}").json()["reasons"] == [
+        {"module": EEF, "kind": "human", "text": "人工裁决判为 EEF 与视频不一致"}]
+    if keep != drop:
+        assert d.api("GET", f"/tasks/{task_id}/episodes/{keep}").json()["list"] == "passed"
+    cards = {c["episode_index"]: c for c in d.api("GET", f"/tasks/{task_id}/adjudication",
+                                                  params={"status": "all"}).json()["items"]}
+    assert cards[drop]["status"] == "applied"
+    with open(os.path.join(rd, "human-decisions", "eef_checks.csv"), encoding="utf-8") as fh:
+        assert f"ep{drop:06d}" in fh.read()
+    r = d.api("POST", f"/tasks/{task_id}/reexport")
+    assert r.status_code == 202, r.text
+    exported = d.wait(task_id)
+    assert exported["delivery_stale"] is False
+    with open(os.path.join(rd, "export", "manifest.json"), encoding="utf-8") as fh:
+        delivered = {e["episode_index"] for e in json.load(fh)["episodes"]}
+    assert drop not in delivered and (keep == drop or keep in delivered)

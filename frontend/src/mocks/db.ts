@@ -6,6 +6,7 @@ import type {
   Decision,
   LogLine,
   PreflightResult,
+  ResultRecord,
   ReviewLine,
   Subtask,
   Task,
@@ -58,6 +59,8 @@ export interface MockDb {
   extraReviewLines: ReviewLine[];
   /** Questions a test adds to a task's review tab: task id → episode → questions. */
   extraQuestions: Map<string, Map<number, AdjudicationCard['questions']>>;
+  /** Module records a test adds to a task's episode views: task id → episode → module → record. */
+  extraRecords: Map<string, Map<number, Record<string, ResultRecord>>>;
 }
 
 export const db: MockDb = {
@@ -75,6 +78,7 @@ export const db: MockDb = {
   seq: 1,
   extraReviewLines: [],
   extraQuestions: new Map(),
+  extraRecords: new Map(),
 };
 
 export function resetDb(now: number = Date.now()): MockDb {
@@ -97,6 +101,7 @@ export function resetDb(now: number = Date.now()): MockDb {
   db.idempotency = new Map();
   db.extraReviewLines = [];
   db.extraQuestions = new Map();
+  db.extraRecords = new Map();
   db.seq = 100;
   // Datasets know their tasks (newest first) and their last task.
   for (const d of db.datasets) {

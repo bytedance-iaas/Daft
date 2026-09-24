@@ -57,7 +57,7 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
   分位数只算成功的请求，墙钟 = 忙碌区间的并集）。stage 墙钟取自库里的分档进度，合并请求数取自实际调用账；
   外层重试次数没有落盘，`retries` 不给；`container` 是本容器的 cgroup 配额（CLI 与 Daemon 同一个容器）。
 - **裁决队列**：问题就是当前版本 `review.json` 的条目，原样读，不重新推导（C2 1.5、D42、D43）；条目带 `line` 就用它，没有就按 `kind` 查目录：`label_conflict` → 标注分歧，
-  `task_verdict` → 判成败，`reject_appeal` → 复议页签（任务成败判定的拒绝，D42 起还有去重剔除的重复项）；目录里没有的种类不问。原始标注、画面描述来自该版本的 `label_audit.json`，
+  `task_verdict` → 判成败，`eef_consistency` → EEF 与画面核对（C1 1.9，EEF 模块转人工的条），`reject_appeal` → 复议页签（任务成败判定的拒绝，D42 起还有去重剔除的重复项，C1 1.9 起还有只被 EEF 模块判废的条）；目录里没有的种类不问。裁决表的 `line` 不限定取值（第 5 步迁移），按目录校验。原始标注、画面描述来自该版本的 `label_audit.json`，
   建议的新标注就是画面描述（v1 采纳的就是它）。答过的问题在后来的版本里不再出现时，从最近一个问过它的版本取回，
   所以「已裁 / 已应用」的卡片一直在，还能改。一条 episode 一张卡片，按 episode 下标排，游标同样带结果版本。
   - 状态：任一问题「整条弃用」→ 已裁（执行后为已应用），压过一切成败结论（规则 1）；否则有「拿不准」→ `unsure`，

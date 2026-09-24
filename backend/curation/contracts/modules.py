@@ -38,13 +38,19 @@ validated ``trajectory.json`` given as a module parameter.
 
 Stage ``profile_vlm`` (1.7, 2026-09-23): the skill profile runs in a VLM stage of its own
 after dedup instead of ``post_verdict``, so its model calls get the VLM stage's gates.
+
+The EEF module (1.8, D49) is one hard gate of the VLM stage that takes part in the verdict:
+the CPU first, the model second, pass / reject / a person. Its person's question is the
+review line ``eef_check`` (1.9, F5.11): an episode it could not settle waits in passed,
+"consistent" keeps it and "inconsistent" rejects it; a reject of the module alone may be
+appealed.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.8"
+REGISTRY_VERSION = "1.9"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
@@ -137,6 +143,10 @@ REVIEW_LINES: tuple[ReviewLine, ...] = (
                 ("discard", "其它原因，整条弃用"))),
     ReviewLine("reject_appeal", "reject_appeal", "被拒复议", "reject", False,
                (("restore", "恢复为可用"), ("keep_rejected", "维持拒绝"), ("unsure", "拿不准"))),
+    # the EEF module's episodes it could not settle (design doc 12 D-E13): a person looks at
+    # the marked frames and says whether the declared end effector matches the video
+    ReviewLine("eef_check", "eef_consistency", "EEF 与画面核对", "passed", True,
+               (("consistent", "一致，判过"), ("inconsistent", "不一致，判废"), ("unsure", "拿不准"))),
 )
 
 
@@ -301,7 +311,7 @@ MODULES: tuple[ModuleSpec, ...] = (
         summary_zh="先由 CPU 逐帧比较声明的末端执行器投影与画面里独立定位的夹爪，再请多模态模型复核；"
                    "两边一致就判过或判废，意见冲突、模型给不出意见或判不了的交人工裁决（DEMO，阈值未校准）",
         level="episode", gate="hard", needs=frozenset({"video", "vlm", "eef_input"}), stage="vlm",
-        depends_on=("frame_gates",), produces_adjudication=False, param_schema=_eef_params(),
+        depends_on=("frame_gates",), produces_adjudication=True, param_schema=_eef_params(),
         tables=(TableSpec("eef_camera_metrics", "逐相机分项",
                           ("episode_index", "camera", "position_median_px", "orientation_median_deg",
                            "lag_s", "coverage")),
@@ -310,7 +320,7 @@ MODULES: tuple[ModuleSpec, ...] = (
                 TableSpec("eef_diagnosis", "诊断假设", ("episode_index", "camera", "hypothesis")),
                 TableSpec("eef_review_windows", "复核窗口", ("episode_index", "camera", "kind", "status",
                                                           "review_status", "conflict"))),
-        input_scope="funnel", affects_dataset_verdict=True),
+        review_lines=("eef_check",), appealable=True, input_scope="funnel", affects_dataset_verdict=True),
     ModuleSpec(
         id="task_success", name_zh="任务成败判定",
         summary_zh="由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",

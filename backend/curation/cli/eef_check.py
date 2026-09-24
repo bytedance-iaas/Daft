@@ -201,18 +201,21 @@ class EefJudge:
             evidence = [os.path.relpath(os.path.join(self.out_dir, e["path"]), self.run_dir).replace(os.sep, "/")
                         for e in detail.get("evidence", [])]
             t1 = time.perf_counter()
+            requests: dict = {}
             try:
                 review = eef_review.review_episode(
                     sample, {"details": detail}, run_dir=self.run_dir, media_root=self.media_root, ask=self.ask,
                     cache=self.cache, model=self.model, per_camera=self.per_camera,
-                    frames_per_window=self.per_window, out_dir=self.out_dir)
+                    frames_per_window=self.per_window, out_dir=self.out_dir, requests=requests)
             except Exception as e:  # noqa: BLE001 - no second opinion: the CPU's suspects go to a person
                 review = {"status": R.INCOMPLETE, "reasons": ["review_failed"], "cameras": {},
                           "failure": f"{type(e).__name__}: {e}"[:300]}
                 self.ctx.log("warn", f"{MODULE}: review of episode {ep} failed: {type(e).__name__}: {e}")
             review["elapsed_s"] = round(time.perf_counter() - t1, 3)
-            evidence += list(review.get("evidence") or [])
             decision = D.decide(detail, review)
+            if decision["outcome"] == D.HUMAN:          # the person's card shows every window
+                eef_review.write_card_evidence(review, requests, self.run_dir)
+            evidence += list(review.get("evidence") or [])
         detail.update(input_file_sha256=self.result.sha256, review_config=self.review_config,
                       assessment_mode="verdict", review=review or {"status": R.NOT_REVIEWED},
                       decision={k: v for k, v in decision.items() if k != "passed"}, reason=decision["reason"],

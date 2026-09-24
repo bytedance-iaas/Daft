@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { api, unwrap } from '../../api/client';
 import { isApiError } from '../../api/errors';
+import type { ResultRecord } from '../../api/types';
 import { db, decisionsOf, findTask } from '../../mocks/db';
 import { MAIN_TASK } from '../../mocks/world';
 import { pick } from '../../test/arco';
@@ -13,6 +14,55 @@ import { ADJ_CONFIG } from './useAdjudication';
 const PAGE = `/tasks/${MAIN_TASK}/adjudication`;
 const card = (ep: number) => screen.getByTestId(`card-${ep}`);
 const posts = (seen: SeenRequest[]) => seen.filter((r) => r.method === 'POST' && r.path === `/tasks/${MAIN_TASK}/adjudication`).map((r) => (r.body as { decisions: unknown[] }).decisions[0]);
+const EEF = 'eef_video_consistency';
+
+/** The EEF module's record of an episode it sent to a person: a candidate the model finds consistent, a window that timed out. */
+function eefRecord(ep: number, why: string): ResultRecord {
+  const dir = `checks/${EEF}/evidence/${String(ep).padStart(6, '0')}/ext`;
+  return {
+    episode_index: ep,
+    module: EEF,
+    verdict: 'abstain',
+    passed: null,
+    score: null,
+    gate: 'hard',
+    elapsed_s: 3.2,
+    error: null,
+    evidence: [`${dir}/aaaabbbbcccc_frame_000120.jpg`, `${dir}/aaaabbbbcccc_frame_000150.jpg`, `checks/${EEF}/overlays/${ep}_ext.jpg`],
+    details: {
+      reason: `需要人工裁决：${why}`,
+      decision: { outcome: 'human', human: [{ code: 'conflict', text: why, subitem: 'position_2d', camera_id: 'ext' }], confirmed: [], unchecked: [] },
+      cameras: { ext: { mount: 'fixed_external', subitems: { position_2d: { status: 'suspect' }, orientation_2d: { status: 'ok' }, temporal_alignment: { status: 'ok' }, camera_motion: { status: 'ok' }, input_consistency: { status: 'ok' } } } },
+      state_motion: { status: 'ok' },
+      review: {
+        status: 'incomplete',
+        cameras: {
+          ext: {
+            status: 'incomplete',
+            windows: [
+              {
+                camera_id: 'ext',
+                kind: 'candidate',
+                subitem: 'position_2d',
+                frames: [120, 135, 150],
+                point_id: 'block_center',
+                axis_id: 'gripper_x',
+                status: 'answered',
+                attempts: 1,
+                cache_hit: false,
+                answer: { review_status: 'support', target_visible: true, tracking_target_correct: 'support', position_support: 'support', orientation_support: 'not_observable', offset_direction: 'none', offset_magnitude_class: 'none', evidence_frame_ids: [135], reason_codes: [], explanation: '红圈压在夹爪指尖中间' },
+                conflict: { subitem: 'position_2d', cpu: 'suspect', vlm: 'support' },
+                evidence: [`${dir}/aaaabbbbcccc_frame_000120.jpg`, `${dir}/aaaabbbbcccc_frame_000150.jpg`],
+              },
+              { camera_id: 'ext', kind: 'uniform', frames: [300, 310, 320], point_id: 'block_center', axis_id: null, status: 'failed', attempts: 2, cache_hit: false, failure: { code: 'timeout', message: 'no answer in time' } },
+            ],
+          },
+        },
+      },
+    },
+  };
+}
+
 const shownCards = (root: ParentNode = document) => [...root.querySelectorAll('[data-testid^="card-"]')].map((e) => Number(e.getAttribute('data-testid')!.slice(5)));
 
 afterEach(() => {
@@ -168,7 +218,7 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     // dedup is appealable now: not among the final ones.
     expect(final).not.toHaveTextContent('精确去重');
     expect(final).not.toHaveTextContent('任务成败判定');
-    expect(screen.getByText(/物理与结构硬门.*和软分拒绝是终局/)).toHaveTextContent('可复议的只有：任务成败判定、精确去重');
+    expect(screen.getByText(/物理与结构硬门.*和软分拒绝是终局/)).toHaveTextContent('可复议的只有：EEF–视频一致性、任务成败判定、精确去重');
     // Buttons come from the catalog: 恢复为可用 / 维持拒绝 / 拿不准, no 整条弃用.
     const q = within(card(6)).getByTestId('q-6-reject_appeal');
     expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['恢复为可用', '维持拒绝', '拿不准']);
@@ -249,6 +299,41 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     await pick(user, '问题类型', '全部');
     expect(await screen.findByTestId('q-14-mystery_line')).toHaveTextContent('注册表里没有「mystery_line」这种复核，这一问没法作答');
     expect(within(screen.getByTestId('q-14-mystery_line')).queryByRole('radio')).toBeNull();
+  });
+
+  it('an EEF question shows why, the CPU readings and every window with its marked crops; 一致 answers eef_check (C1 1.9, F5.11)', async () => {
+    // Test fixture only: the mock world's tasks do not select the EEF module.
+    const why = '「位置」（相机 ext）CPU 判为可疑，模型多数认为一致（支持 2、反对 0）';
+    db.extraQuestions = new Map([[MAIN_TASK, new Map([[12, [{ line: 'eef_check', source_module: EEF, reason: why, latest_decision: null }]]])]]);
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { [EEF]: eefRecord(12, why) }]])]]);
+    const seen = recordRequests();
+    const { user } = renderApp(PAGE);
+    const c = await screen.findByTestId('card-12');
+    expect(screen.getByTestId('adj-counts')).toHaveTextContent('待裁 8 条');
+    const q = within(c).getByTestId('q-12-eef_check');
+    expect(q).toHaveTextContent('① 来源：EEF–视频一致性 · EEF 与画面核对');
+    expect(q).toHaveTextContent(`为什么转人工：${why}`);
+    const ev = await within(q).findByTestId('eef-evidence-12');
+    const cpu = within(ev).getByTestId('eef-cpu');
+    expect(cpu).toHaveTextContent('可疑');
+    expect(cpu).toHaveTextContent('状态运动（整条）：正常');
+    const cand = within(ev).getByTestId('eef-window-ext-0');
+    expect(cand).toHaveTextContent('候选段 · 位置');
+    expect(cand).toHaveTextContent('帧 120–150（3 帧）');
+    expect(cand).toHaveTextContent('点 block_center · 方向 gripper_x');
+    expect(cand).toHaveTextContent('位置：支持');
+    expect(cand).toHaveTextContent('与 CPU 冲突：位置 CPU 可疑，模型支持');
+    expect(cand).toHaveTextContent('「红圈压在夹爪指尖中间」');
+    await waitFor(() => expect(within(cand).getAllByAltText(/ext · .*_frame_0001[2-5]0\.jpg/)).toHaveLength(2));
+    expect(within(ev).getByTestId('eef-window-ext-1')).toHaveTextContent('模型超时');
+    // The window crops are shown once, next to their answer; the CPU's own frame separately.
+    expect(within(ev).getByText('CPU 证据帧')).toBeInTheDocument();
+    expect(within(within(c).getByTestId('media-12')).queryAllByAltText(/EEF/)).toHaveLength(0);
+    expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['一致，判过', '不一致，判废', '拿不准']);
+    expect(within(c).queryByRole('button', { name: '其它原因，整条弃用' })).toBeNull();
+    await user.click(within(q).getByText('一致，判过'));
+    await waitFor(() => expect(posts(seen)).toEqual([{ episode_index: 12, line: 'eef_check', decision: 'consistent' }]));
+    expect(within(c).getByTestId('status-12')).toHaveTextContent('已裁');
   });
 
   it('执行裁决 confirms what will be applied and which relabels are judged again, then builds the subtask once (D39)', async () => {

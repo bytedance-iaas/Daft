@@ -294,7 +294,12 @@ Next steps:
      需求方提供后在 dataset2 / dataset3 上量）→ F5.9 合并与判决 → F5.11 裁决线 → F5.12 Episode 明细展示
      进展：F5.10 请求包已改（一点一轴、标名字、Schema 1.1、评估器 review_eval.py），准确率待真实 VLM；F5.9 合并已落地：
      C1 1.8、decide.py、EefJudge 进 StageRun 的 vlm 档逐条循环（流水线模式同样逐条交接）、aggregate 在调用边界注入一票否决、
-     预检先文件后 VLM、报告小节、前端合一；待 F5.11 把「转人工」接进裁决。
+     预检先文件后 VLM、报告小节、前端合一（21ba4d582）；dataset2 上原版加六类故障的固定 tape 用例（tests/cli/test_eef_dataset2.py）补齐验收①。
+     F5.11 已落地：C1 1.9 裁决线 eef_check（「EEF 与画面核对」，一致 / 不一致 / 拿不准，计入待裁）、只被本模块判废的可复议；
+     aggregate 把人的回答当作本模块的结果；C2 decisions 固定三种决定、C4 1.14.0 说明、Daemon 第 5 步迁移放开 adjudication.line；
+     前端 EEF 卡片（features/eef/EefRecord.tsx：为什么转人工、CPU 分项读数、逐窗口答复与标记图）；转人工的条每个窗口都存标记图；
+     端到端：裁决 → 执行 → 新版本 → 重新导出（tests/orchestr/test_eef_tasks.py）。剩 F5.12（Episode 明细复用同一组件、报告小节措辞）
+     与 F5.10 的真实 VLM 准确率。
      顺带修掉 F5.6 引入的问题：depends_on 里的模块 id 一律当成「一起勾选」，导致只选技能画像的任务被 Daemon 拒收、
      前端取消精确去重会连带取消技能画像（已随 F5.6 推送；集群上的版本若早于本次提交也有）
   1. 需求方手动触发 CP 流水线出镜像（提交号见本次会话）；CI 看最新一次推送

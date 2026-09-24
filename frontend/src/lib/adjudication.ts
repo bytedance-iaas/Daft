@@ -3,8 +3,8 @@
 // of what the server sent, so a card does not jump away from under the user after each click.
 //
 // Review kinds come from the registry's review_lines catalog (D43): its titles, which decisions a
-// line offers and whether an open item counts as pending. label, task_verdict and reject_appeal
-// have dedicated views on the page; any other line is rendered from its catalog entry.
+// line offers and whether an open item counts as pending. label, task_verdict, reject_appeal and
+// eef_check have dedicated views on the page; any other line is rendered from its catalog entry.
 import type { AdjudicationCard, AdjudicationLine, AdjudicationQuestion, Decision, DecisionValue, ReviewLine } from '../api/types';
 import { zh } from '../locales/zh';
 
@@ -36,7 +36,7 @@ export type ReviewCatalog = readonly ReviewLine[];
 type FollowUpSpec = NonNullable<ReviewLine['follow_ups']>[number];
 
 /** The lines with a dedicated view on the adjudication page. */
-export const KNOWN_LINES: readonly string[] = ['label', 'task_verdict', 'reject_appeal'];
+export const KNOWN_LINES: readonly string[] = ['label', 'task_verdict', 'reject_appeal', 'eef_check'];
 
 /** The task verdict a follow-up asks when the catalog does not say (v1's optional verdict). */
 const VERDICT_FOLLOW_UP: readonly string[] = ['success', 'failure', 'unsure'];

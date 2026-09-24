@@ -828,6 +828,33 @@ button.video-placeholder {
   color: var(--c-danger);
 }
 
+/* The EEF module's record (F5.11 card, F5.12 Episode tab) */
+.eef-head {
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+
+.eef-calls {
+  margin: 2px 0 4px;
+  padding-left: 20px;
+}
+
+.eef-suspect {
+  color: var(--c-warning);
+  font-weight: 600;
+}
+
+.eef-window {
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.eef-window.conflict {
+  border-color: var(--c-warning);
+}
+
 .episode-rest summary {
   cursor: pointer;
   color: var(--c-text-3);

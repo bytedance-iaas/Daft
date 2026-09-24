@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "decisions.json - input of curation adjudicate-apply (schema 1.0)",
-  "description": "The Daemon exports this task's decisions that are not applied yet (D32: decisions never cross tasks). Lines and decisions follow v1 (design doc 06, section 5.1): label = annotation conflict from skill_profile, task_verdict = task_success abstention, reject_appeal = appeal of a reject attributed to task_success. 'discard' (drop the whole episode) wins over any task verdict; 'unsure' is recorded and changes nothing. adopt_suggestion always carries new_label here: the Daemon fills in the question's suggestion when a person left it out (C4 1.5.1). A task_verdict on an episode whose task_success did not abstain is a follow-up of its label answer (C1 follow_ups): adjudicate-apply counts it only while the label's latest decision is one of the follow-up's 'after' and the verdict came after it (by id), the same rule as the Daemon's queue; otherwise it lapses and the relabel is judged again.",
+  "description": "The Daemon exports this task's decisions that are not applied yet (D32: decisions never cross tasks). Lines and decisions follow v1 (design doc 06, section 5.1): label = annotation conflict from skill_profile, task_verdict = task_success abstention, reject_appeal = appeal of a reject attributed to an appealable module; eef_check (C1 1.9) = an episode the EEF module could not settle, 'consistent' keeps it and 'inconsistent' rejects it as the gate's result. 'discard' (drop the whole episode) wins over any task verdict; 'unsure' is recorded and changes nothing. adopt_suggestion always carries new_label here: the Daemon fills in the question's suggestion when a person left it out (C4 1.5.1). A task_verdict on an episode whose task_success did not abstain is a follow-up of its label answer (C1 follow_ups): adjudicate-apply counts it only while the label's latest decision is one of the follow-up's 'after' and the verdict came after it (by id), the same rule as the Daemon's queue; otherwise it lapses and the relabel is judged again.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "decisions"],
@@ -29,6 +29,7 @@
         {"if": {"properties": {"line": {"const": "label"}}}, "then": {"properties": {"decision": {"enum": ["adopt_suggestion", "custom_label", "keep_label", "unsure", "discard"]}}}},
         {"if": {"properties": {"line": {"const": "task_verdict"}}}, "then": {"properties": {"decision": {"enum": ["success", "failure", "unsure", "discard"]}}}},
         {"if": {"properties": {"line": {"const": "reject_appeal"}}}, "then": {"properties": {"decision": {"enum": ["restore", "keep_rejected", "unsure"]}}}},
+        {"if": {"properties": {"line": {"const": "eef_check"}}}, "then": {"properties": {"decision": {"enum": ["consistent", "inconsistent", "unsure"]}}}},
         {"if": {"properties": {"decision": {"enum": ["adopt_suggestion", "custom_label"]}}}, "then": {"properties": {"new_label": {"type": "string", "minLength": 1}}}}
       ]
     }

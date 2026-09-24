@@ -18,12 +18,13 @@ def test_lines_and_decisions_come_from_the_registry():
 
 
 def test_what_the_page_and_the_rules_derive():
-    assert C.tab_lines("review") == ("label", "task_verdict")
+    assert C.tab_lines("review") == ("label", "task_verdict", "eef_check")
     assert C.tab_lines("appeals") == ("reject_appeal",)
-    assert C.pending_lines() == ("label", "task_verdict")      # appeals never count as pending
+    assert C.pending_lines() == ("label", "task_verdict", "eef_check")   # appeals never count as pending
     assert C.relabel_lines() == ("label",)
     assert [d.id for ln in C.LINES for d in ln.decisions if d.discard] == ["discard", "discard"]
     assert [d.id for d in C.line("task_verdict").decisions if d.verdict] == ["success", "failure"]
+    assert not any(d.verdict or d.discard or d.relabel for d in C.line("eef_check").decisions)   # plain answers
     assert all(ln.decision("unsure").unsure for ln in C.LINES)
     assert C.line("label").decision("custom_label").needs_label
     assert not C.line("label").decision("adopt_suggestion").needs_label

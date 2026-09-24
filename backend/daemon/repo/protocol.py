@@ -60,7 +60,8 @@ Ledger = Literal["actual", "attributed"]
 CallKind = str
 DatasetCheckState = Literal["ok", "changed"]
 DatasetCheckTrigger = Literal["add", "recheck", "task_start", "repreflight"]
-AdjudicationLine = Literal["label", "task_verdict", "reject_appeal"]
+#: a registry review line (C1 ``review_lines``, D43): open, checked against the catalog
+AdjudicationLine = str
 InputSource = Literal["tos", "public", "local"]
 
 #: Legal task transitions (design doc 01, section 3.1). Anything else is a 409.

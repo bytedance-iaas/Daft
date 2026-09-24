@@ -77,8 +77,14 @@ def _curves(path: str, points: list[str]):
 
 
 def review_episode(sample, base: dict, *, run_dir: str, media_root: str, ask, cache, model: str,
-                   per_camera: int, frames_per_window: int, out_dir: str) -> dict:
-    """The review ``detail`` of one episode whose CPU record is ``base``."""
+                   per_camera: int, frames_per_window: int, out_dir: str,
+                   requests: dict | None = None) -> dict:
+    """The review ``detail`` of one episode whose CPU record is ``base``.
+
+    The marked crops of a window the model refuted or the CPU disagrees with are written at
+    once (the window's ``evidence``); ``requests`` (filled when given) keeps every request
+    by its key with its evidence directory, so the verdict can write the others' crops for
+    a person's card (:func:`write_card_evidence`)."""
     import numpy as np
 
     from ..extensions.eef_consistency import review as R
@@ -127,6 +133,9 @@ def review_episode(sample, base: dict, *, run_dir: str, media_root: str, ask, ca
             req = R.build_request(sample, w, frames, observed, model=model)
             got = R.ask_window(req, ask, cache)
             row = {**w.as_dict(), **got, "request_key": req.key}
+            where = os.path.join(out_dir, "evidence", ep, cid)
+            if requests is not None:
+                requests[req.key] = (req, where)
             if got["status"] == R.ANSWERED:
                 c = R.conflict(w, got["answer"], cam.get("subitems") or {})
                 if c:
@@ -134,7 +143,8 @@ def review_episode(sample, base: dict, *, run_dir: str, media_root: str, ask, ca
                     conflicts.append({"camera_id": cid, "frames": w.frames, **c})
                 if c or got["answer"]["review_status"] == "refute" \
                         or got["answer"]["tracking_target_correct"] == "refute":
-                    evidence += R.write_evidence(req, os.path.join(out_dir, "evidence", ep, cid), run_dir)
+                    row["evidence"] = R.write_evidence(req, where, run_dir)
+                    evidence += row["evidence"]
             out.append(row)
         rows += out
         cams_out[cid] = {"status": R.summarize(out, cut)[0], "windows": out}
@@ -145,3 +155,21 @@ def review_episode(sample, base: dict, *, run_dir: str, media_root: str, ask, ca
             "tracking_suspect": [dict(camera_id=r["camera_id"], frames=r["frames"]) for r in rows
                                  if r["status"] == R.ANSWERED and r["answer"]["tracking_target_correct"] == "refute"],
             "evidence": evidence}
+
+
+def write_card_evidence(review: dict, requests: dict, run_dir: str) -> list[str]:
+    """The marked crops of every window of an episode that goes to a person that has none yet
+    (design doc 12 D-E13: the card shows what the model was shown); the paths, also added to
+    each window's ``evidence`` and the review's."""
+    from ..extensions.eef_consistency import review as R
+
+    out: list[str] = []
+    for cam in (review.get("cameras") or {}).values():
+        for row in cam.get("windows") or []:
+            hit = requests.get(row.get("request_key"))
+            if hit is None or row.get("evidence"):
+                continue
+            row["evidence"] = R.write_evidence(hit[0], hit[1], run_dir)
+            out += row["evidence"]
+    review["evidence"] = list(review.get("evidence") or []) + out
+    return out

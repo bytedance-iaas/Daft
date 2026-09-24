@@ -13,12 +13,16 @@ priority}`` - with the questions a person can answer on the adjudication page fi
 """
 from __future__ import annotations
 
+from curation.contracts import modules as registry
+
 from ..errors import ApiError
 from .files import cached_json, json_safe
 from .revision import Revision
 from .videos import SOURCE_MANIFEST, episode_videos
 
-_ADJUDICABLE = ("label_conflict", "reject_appeal")
+#: the review.json kinds a person answers on the adjudication page (C1 review lines); a task
+#: verdict only where task_success abstained
+_ADJUDICABLE = tuple(ln.review_kind for ln in registry.REVIEW_LINES if ln.review_kind != "task_verdict")
 
 
 def _review_items(entry: dict | None) -> list[dict]:

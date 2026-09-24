@@ -34,7 +34,7 @@ def test_v1_facts():
     assert {m.id for m in M.by_stage("profile_vlm")} == {"skill_profile"}
     assert M.get("dedup").gate == "dedup" and M.get("skill_profile").gate == "none"
     assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "dedup",
-                                                                    "skill_profile"}
+                                                                    "skill_profile", "eef_video_consistency"}
     verdict = [m for m in M.MODULES if m.affects_dataset_verdict]
     assert {m.id for m in verdict if "vlm" in m.needs} == {"eef_video_consistency", "task_success", "skill_profile"}
     assert all(m.input_scope == "funnel" for m in verdict)
@@ -58,17 +58,22 @@ def test_the_eef_module_takes_part_in_the_verdict():
 
 
 def test_review_lines():
-    """D42 / D43: the review catalog is v1's three lines; modules name the lines they raise."""
-    assert [line.id for line in M.REVIEW_LINES] == ["label", "task_verdict", "reject_appeal"]
+    """D42 / D43: the review catalog is v1's three lines and the EEF module's (C1 1.9); modules name
+    the lines they raise."""
+    assert [line.id for line in M.REVIEW_LINES] == ["label", "task_verdict", "reject_appeal", "eef_check"]
     for line in M.REVIEW_LINES:
         assert line.decisions and len({c for c, _ in line.decisions}) == len(line.decisions)
         assert M.review_line_of_kind(line.review_kind) is line
     assert M.review_line("reject_appeal").applies_to == "reject"
     assert not M.review_line("reject_appeal").counts_as_pending     # an appeal is optional
-    assert all(M.review_line(x).counts_as_pending for x in ("label", "task_verdict"))
+    assert all(M.review_line(x).counts_as_pending for x in ("label", "task_verdict", "eef_check"))
+    eef = M.review_line("eef_check")
+    assert (eef.review_kind, eef.applies_to) == ("eef_consistency", "passed")
+    assert [c for c, _ in eef.decisions] == ["consistent", "inconsistent", "unsure"]
+    assert M.get("eef_video_consistency").review_lines == ("eef_check",)
     raised = {x for m in M.MODULES for x in m.review_lines}
     assert raised <= {line.id for line in M.REVIEW_LINES}
-    assert {m.id for m in M.MODULES if m.appealable} == {"task_success", "dedup"}
+    assert {m.id for m in M.MODULES if m.appealable} == {"task_success", "dedup", "eef_video_consistency"}
     for m in M.MODULES:
         assert m.produces_adjudication == bool(m.review_lines or m.appealable), m.id
     # v1: after adopting a new label a person may give the task verdict (no re-judge)
