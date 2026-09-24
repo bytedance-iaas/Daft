@@ -17,14 +17,14 @@ async function preflight(uri: string) {
 }
 
 describe('mcap and lance datasets in the task form (D44)', () => {
-  it('mcap: no fps in the summary, says only file summaries were read, EEF greyed out, the grid defers the task text', async () => {
+  it('mcap: no fps in the summary, says only file summaries were read, EEF asks for its file (F5.13), the grid defers the task text', async () => {
     const { user, card } = await preflight('tos://pai-kit-datasets/raw/warehouse_mcap');
     const summary = await within(card).findByText(/^mcap · 12 条 episode · 2 路相机（front \/ wrist）/);
     expect(summary.textContent).not.toContain('fps');
     expect(within(card).getByText('只读每个 mcap 文件的摘要（通道、消息数与元数据记录），未读取消息')).toBeInTheDocument();
     const eef = screen.getByTestId('module-eef_video_consistency');
-    expect(within(eef).getByRole('checkbox')).toBeDisabled();
-    expect(eef).toHaveTextContent('该模块只能读 LeRobot 数据集，不支持 mcap');
+    expect(within(eef).getByRole('checkbox')).toBeEnabled();                 // selectable; the file on screen 2
+    expect(eef).not.toHaveTextContent('不支持');
     expect(within(screen.getByTestId('module-motion_quality')).getByRole('checkbox')).toBeEnabled();
     await user.click(within(screen.getByRole('radiogroup', { name: 'Episode 选择' })).getByRole('radio', { name: '自选' }));
     const grid = await screen.findByTestId('episode-grid');
@@ -35,7 +35,7 @@ describe('mcap and lance datasets in the task form (D44)', () => {
     const { card } = await preflight('tos://pai-kit-datasets/raw/pusht_lance');
     expect(await within(card).findByText(/^Lance（LeRobot v3 元数据） · 206 条 episode · 1 路相机（image） · 10 fps/)).toBeInTheDocument();
     expect(within(card).getByText('读取 meta/ 下的 LeRobot v3 元数据，未读取 frames / videos 表')).toBeInTheDocument();
-    expect(screen.getByTestId('module-eef_video_consistency')).toHaveTextContent('该模块只能读 LeRobot 数据集，不支持 lance');
+    expect(screen.getByTestId('module-eef_video_consistency')).toHaveTextContent('该模块只能读 LeRobot 与 mcap 数据集，不支持 lance');
   });
 
   it('an rrd recording stays unsupported with the new wording', async () => {

@@ -240,4 +240,5 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **F6.7（2026-09-24）**：C4 1.15.0——`GET /tasks` 加 `has_result`（只列有结果版本的任务）与 `pending_adjudication`（只列有待裁条目的任务），给控制台的跨任务「人工裁决」列表用；不传或为 false 时不筛。C5 `list_tasks` 同名两个参数，待裁计数与 `adjudication_backlog` 同一段 SQL。顺带补上 1.14.0 缺的变更记录。
 - **F6.9（2026-09-24）**：C1 1.10——参数可以带 `x-choice-group`（`{id, title, required}`）：同组的参数互为替代，表单把它们合成一项（先选用哪个、再给值），只提交选中的那个，`required` 表示表单里必须给其一；命令行照旧可给任意几个或都不给。EEF 模块的观测种子与夹爪外观模板组成「夹爪参考」（`gripper_reference`，required），两项说明里的「二选一」字样随之去掉。
 - **2026-09-24（galbot 反馈）**：C2 预检的 `input_hint.field` 枚举加 `observation_seeds`：EEF 模块既没有观测种子也没有夹爪外观模板时，模块级为 `needs_input`（`reason_code: observation_seed_missing`），Daemon 建任务时拒收并指到 `modules.eef_video_consistency.params.observation_seeds`。此前这种情况报 `available`，跑完每条都以「位置无法评估」转人工。
+- **F5.13（2026-09-24）EEF 模块读 mcap**：`eef/sample.schema.json` 的 `media` 加可选字段 `topic`（mcap 图像 topic；有它时 `uri` 须是 `.mcap`、`kind=video`、`clip_start_s=0`、`clip_end_s=null`，帧号按 topic 的 log_time 顺序从 0 数），`eef-video/1.0.0` 不变（纯增补，现有文件照样有效）。C2 预检：mcap 数据集上 EEF 模块不再是 `format_unsupported_by_module`（只剩 Lance）。
 

@@ -372,12 +372,12 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
   const robot = opts.embodiment || p.robotType;
   const modules: PreflightResult['modules'] = registry.modules.map((m) => {
     const needs = m.needs as string[];
-    if (needs.includes('eef_input') && (p.format.kind === 'mcap' || p.format.kind === 'lance')) {
-      // like the CLI (D44): EEF-video consistency reads LeRobot videos only
+    if (needs.includes('eef_input') && p.format.kind === 'lance') {
+      // like the CLI (D44, F5.13): EEF-video consistency reads LeRobot videos and mcap image topics
       return {
         id: m.id,
         availability: 'unsupported',
-        reason: `EEF-video consistency reads LeRobot datasets only, not ${p.format.kind}`,
+        reason: `EEF-video consistency reads LeRobot and mcap datasets only, not ${p.format.kind}`,
         reason_code: 'format_unsupported_by_module',
         reason_args: { format: p.format.kind },
       };

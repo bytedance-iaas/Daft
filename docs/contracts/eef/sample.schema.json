@@ -447,6 +447,11 @@
               "type": "null"
             }
           ]
+        },
+        "topic": {
+          "type": "string",
+          "pattern": "^/.+",
+          "description": "Optional (F5.13): the view's frames are the messages of this image topic of the .mcap file uri names (an mcap dataset: one file per episode), in log_time order; video_frame_index counts them from 0. JPEG and H.264 Annex-B frames are read. Such a view is a whole topic: clip_start_s 0, clip_end_s null."
         }
       },
       "required": [
@@ -460,6 +465,29 @@
       ],
       "additionalProperties": false,
       "allOf": [
+        {
+          "if": {
+            "required": [
+              "topic"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "const": "video"
+              },
+              "uri": {
+                "pattern": "\\.mcap$"
+              },
+              "clip_start_s": {
+                "const": 0
+              },
+              "clip_end_s": {
+                "type": "null"
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {

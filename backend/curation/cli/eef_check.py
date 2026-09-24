@@ -72,7 +72,10 @@ class EefJudge:
 
     module = MODULE
 
-    def __init__(self, ctx, args, run_dir: str, storage, vcfg: dict, gates: dict):
+    def __init__(self, ctx, args, run_dir: str, source, vcfg: dict, gates: dict):
+        """``source``: the command's input (``runctx.Source``; a bare ``Storage`` reads LeRobot). An
+        mcap dataset (F5.13) is read from the directory the funnel's readers get - on TOS the source
+        cache, where the judge fetches an episode's file before reading it."""
         from ..contracts import modules as registry
         from ..extensions.eef_consistency import load, profile, runner
         from ..extensions.eef_consistency import template as TP
@@ -89,7 +92,14 @@ class EefJudge:
         traj = os.path.expanduser(params["trajectory_json"])
         if not os.path.isfile(traj):
             raise UsageError(f"{MODULE}: trajectory.json not found: {traj}")
-        media_exists = (lambda key: storage.stat(key) is not None) if storage.remote else None
+        storage = getattr(source, "storage", source)
+        self.src = source if source is not storage else None
+        self.mcap = self.src is not None and self.src.kind == "mcap"
+        if self.mcap:                                  # the episode files, from the one listing
+            listing = self.src.listing
+            media_exists = listing.__contains__
+        else:
+            media_exists = (lambda key: storage.stat(key) is not None) if storage.remote else None
         # every declared episode: a stage worker reuses the judge for the batches and the stream to come
         self.result = load.load_bundle(traj, lerobot_root=None if storage.remote else storage.root,
                                        media_exists=media_exists)
@@ -108,8 +118,8 @@ class EefJudge:
         self.template_sha = template.sha256 if template is not None else None
         self.ctx, self.run_dir, self.storage, self.params = ctx, run_dir, storage, params
         self.out_dir = module_dir(run_dir, MODULE)
-        self.scratch = tempfile.TemporaryDirectory(prefix="eef-media-") if storage.remote else None
-        self.media_root = self.scratch.name if self.scratch else storage.root
+        self.scratch = tempfile.TemporaryDirectory(prefix="eef-media-") if storage.remote and not self.mcap else None
+        self.media_root = self.src.input_dir if self.mcap else self.scratch.name if self.scratch else storage.root
         lag = float(params["lag_search_s"])
         self.cfg = runner.RunConfig(
             lerobot_root=self.media_root, seed_root=seed_dir(params), profile=profile.load(params["threshold_profile"]),
@@ -124,6 +134,12 @@ class EefJudge:
         self.per_window = int(params["review_frames_per_window"])
         self._fetch_lock = threading.Lock()
         self.model = self.review_config = self.ask = self.cache = None
+
+    def rebind(self, source) -> None:
+        """A stage worker reuses the judge for its next batch, which opened its own source: an mcap
+        dataset is read from that one (the first batch's local copy may be gone with its command)."""
+        if self.mcap and getattr(source, "kind", None) == "mcap":
+            self.src, self.media_root = source, source.input_dir
 
     def open(self) -> None:
         """Inside the VLM session: the model is known (probed or resolved)."""
@@ -180,44 +196,64 @@ class EefJudge:
         """CPU, then the model, then the verdict (design doc 12 C.9). ``None``: the CPU failed (the
         cause is on ``log``; the record is an error line, held)."""
         from ..extensions.eef_consistency import decide as D
+
+        sample = self.result.samples.get(int(ep))
+        if sample is None:
+            return self._judged(D.decide(None, None), _unsupported_detail(int(ep), "projection_missing"), None, [])
+        try:
+            return self._judge(ep, sample, log)
+        finally:
+            if self.mcap:                                 # the episode's topic videos are done with
+                from ..extensions.eef_consistency import mcap_media as MM
+                from ..extensions.eef_consistency import observations as O
+
+                for cid in sample.cameras:
+                    MM.drop(O.media_path(sample, cid, self.media_root))
+
+    def _judge(self, ep: int, sample, log) -> tuple[dict | None, list[str]]:
+        from ..extensions.eef_consistency import decide as D
         from ..extensions.eef_consistency import review as R
         from ..extensions.eef_consistency import runner
         from . import eef_review
 
-        sample = self.result.samples.get(int(ep))
         review = None
         evidence: list[str] = []
-        if sample is None:
-            detail = _unsupported_detail(int(ep), "projection_missing")
-            decision = D.decide(None, None)
-        else:
-            try:
-                if self.scratch is not None:
-                    with self._fetch_lock:
-                        _fetch_media(self.storage, sample, self.scratch.name)
-                detail, _ = runner.run_episode(sample, self.cfg)
-            except Exception as e:  # noqa: BLE001 - one episode failing never stops the call
-                log.add(MODULE, cause=f"{type(e).__name__}: {e}"[:500])
-                self.ctx.log("warn", f"{MODULE}: episode {ep} failed: {type(e).__name__}: {e}")
-                return None, []
-            evidence = [os.path.relpath(os.path.join(self.out_dir, e["path"]), self.run_dir).replace(os.sep, "/")
-                        for e in detail.get("evidence", [])]
-            t1 = time.perf_counter()
-            requests: dict = {}
-            try:
-                review = eef_review.review_episode(
-                    sample, {"details": detail}, run_dir=self.run_dir, media_root=self.media_root, ask=self.ask,
-                    cache=self.cache, model=self.model, per_camera=self.per_camera,
-                    frames_per_window=self.per_window, out_dir=self.out_dir, requests=requests)
-            except Exception as e:  # noqa: BLE001 - no second opinion: the CPU's suspects go to a person
-                review = {"status": R.INCOMPLETE, "reasons": ["review_failed"], "cameras": {},
-                          "failure": f"{type(e).__name__}: {e}"[:300]}
-                self.ctx.log("warn", f"{MODULE}: review of episode {ep} failed: {type(e).__name__}: {e}")
-            review["elapsed_s"] = round(time.perf_counter() - t1, 3)
-            decision = D.decide(detail, review)
-            if decision["outcome"] == D.HUMAN:          # the person's card shows every window
-                eef_review.write_card_evidence(review, requests, self.run_dir)
-            evidence += list(review.get("evidence") or [])
+        try:
+            if self.mcap and self.src.cache is not None:
+                with self._fetch_lock:                 # the episode's .mcap into the source cache
+                    self.src.cache.fetch(sorted({c.media["uri"] for c in sample.cameras.values()}))
+            elif self.scratch is not None:
+                with self._fetch_lock:
+                    _fetch_media(self.storage, sample, self.scratch.name)
+            detail, _ = runner.run_episode(sample, self.cfg)
+        except Exception as e:  # noqa: BLE001 - one episode failing never stops the call
+            log.add(MODULE, cause=f"{type(e).__name__}: {e}"[:500])
+            self.ctx.log("warn", f"{MODULE}: episode {ep} failed: {type(e).__name__}: {e}")
+            return None, []
+        evidence = [os.path.relpath(os.path.join(self.out_dir, e["path"]), self.run_dir).replace(os.sep, "/")
+                    for e in detail.get("evidence", [])]
+        t1 = time.perf_counter()
+        requests: dict = {}
+        try:
+            review = eef_review.review_episode(
+                sample, {"details": detail}, run_dir=self.run_dir, media_root=self.media_root, ask=self.ask,
+                cache=self.cache, model=self.model, per_camera=self.per_camera,
+                frames_per_window=self.per_window, out_dir=self.out_dir, requests=requests)
+        except Exception as e:  # noqa: BLE001 - no second opinion: the CPU's suspects go to a person
+            review = {"status": R.INCOMPLETE, "reasons": ["review_failed"], "cameras": {},
+                      "failure": f"{type(e).__name__}: {e}"[:300]}
+            self.ctx.log("warn", f"{MODULE}: review of episode {ep} failed: {type(e).__name__}: {e}")
+        review["elapsed_s"] = round(time.perf_counter() - t1, 3)
+        decision = D.decide(detail, review)
+        if decision["outcome"] == D.HUMAN:          # the person's card shows every window
+            eef_review.write_card_evidence(review, requests, self.run_dir)
+        evidence += list(review.get("evidence") or [])
+        return self._judged(decision, detail, review, evidence)
+
+    def _judged(self, decision: dict, detail: dict, review: dict | None, evidence: list[str]):
+        from ..extensions.eef_consistency import review as R
+        from . import eef_review
+
         detail.update(input_file_sha256=self.result.sha256, review_config=self.review_config,
                       assessment_mode="verdict", review=review or {"status": R.NOT_REVIEWED},
                       decision={k: v for k, v in decision.items() if k != "passed"}, reason=decision["reason"],
@@ -228,3 +264,7 @@ class EefJudge:
     def close(self) -> None:
         if self.scratch is not None:
             self.scratch.cleanup()
+        if self.mcap:
+            from ..extensions.eef_consistency import mcap_media as MM
+
+            MM.close()

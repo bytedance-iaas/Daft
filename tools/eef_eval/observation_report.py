@@ -22,15 +22,13 @@ import numpy as np
 from curation.extensions.eef_consistency import load
 from curation.extensions.eef_consistency import observations as O
 from curation.extensions.eef_consistency import tracking as T
-from curation.extensions.eef_consistency import video as V
 
 from . import truth
 
 
 def locate(sample, cam, root, seeds):
     ctx, targets = O.provider_inputs(sample, cam, media_root=root, seeds=seeds)
-    frames = V.iter_clip(ctx.media_path, clip_start_s=ctx.clip_start_s, clip_end_s=ctx.clip_end_s, fps=ctx.fps,
-                         frame_count=ctx.media_frame_count)
+    frames = O.context_frames(ctx)
     return T.SeededLKProvider().locate(frames, targets, ctx)
 
 

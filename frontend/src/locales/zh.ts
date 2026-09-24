@@ -199,7 +199,7 @@ export const zh = {
       `当前支持 LeRobot v2/v3、mcap 与 Lance（lerobot-lance-convert 0.3.0 起），检测到 ${String(a.detected ?? '未知格式')}`,
     format_disabled: (a: { format?: unknown }) =>
       `本实例关闭了 ${String(a.format ?? '')} 格式的质检（站点配置 ingest.${String(a.format ?? '')}_enabled），请联系管理员`,
-    format_unsupported_by_module: (a: { format?: unknown }) => `该模块只能读 LeRobot 数据集，不支持 ${String(a.format ?? '')}`,
+    format_unsupported_by_module: (a: { format?: unknown }) => `该模块只能读 LeRobot 与 mcap 数据集，不支持 ${String(a.format ?? '')}`,
     metadata_invalid: (a: { problem?: unknown }) => `数据集的元数据有问题：${String(a.problem ?? '')}`,
     missing_input: (a: { missing?: unknown; video_cause?: unknown }) => {
       const names: Record<string, string> = {

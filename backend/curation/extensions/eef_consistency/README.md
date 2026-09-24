@@ -19,6 +19,7 @@
 | `capability.py` | 逐分项能力预检（相机级、episode 级、数据集级）；文件里没有的 episode 报 `unsupported: projection_missing` |
 | `motion.py` | L0 数值轨迹：折叠重采样重复帧、按机器人时钟的真实 Δt、线 / 角速度、稳健尖峰、2 Hz 以上高频能量与 1 秒滚动 RMS |
 | `video.py` | 按真实 PTS 流式解码一路视图的片段：v3 拼接视频从 `clip_start_s` 起 seek，帧号从片段第一帧记 0，不留整段 |
+| `mcap_media.py` | mcap 数据集（F5.13）：`media.topic` 指定的图像 topic 按 log_time 顺序转成本地 mp4（JPEG 封装、H.264 重封装，不重编码；复用 `ingest/mcap_reader` 的做法），帧号就是消息序号；一条 episode 判完即删。`observations.media_frames` 是两种媒体共用的取帧入口 |
 | `observations.py` | 独立观测：`ObservationProvider` 协议、provider 输入白名单（只有媒体位置、点 id、种子，没有投影 / 位姿 / 标定）、种子文件读取校验、观测文件（observation Schema） |
 | `template.py` | 夹爪外观模板（`gripper-template/1.0`，F5.8）：读取与校验（Schema、PNG 小图与掩膜解码、每条目 ORB 特征）；`Redetector` 在整幅画面里按相机匹配条目（比率检验 + RANSAC 相似变换、内点下限与比例、尺度范围、歧义放弃、固定随机种子）；`rigid_member_mask` 用跟踪器的成员规则从两个锚点间的帧算夹爪掩膜；`make_entry` / `make_template` / `check` |
 | `tracking.py` | P-A provider：种子锚点 + 夹爪刚体特征簇的金字塔 LK（逐步前后向校验）；成员由前后两个锚点决定（受种子约束的 RANSAC），逐帧相似变换带种子走，远端锚点的已知误差线性校正，前后向一致才采纳；遮挡、失跟、分歧一律 `uncertain`，不插值冒充观测 |
@@ -194,6 +195,14 @@
     同一个按钮上传，换选项会丢掉已传的另一种（二选一）；上传即校验（`POST /uploads?kind=eef_gripper_template`，返回条目数、可用条目数、
     相机、掩膜条目数与提示，控制台显示「N 个模板条目 · 相机 …」）。
     单测：`../.venv/bin/python -m pytest -q tests/eef/test_template.py`（合成场景 7 条 + DEMO 数据 1 条，约 15 秒）。
+15. mcap 数据集（F5.13）：`../.venv/bin/python -m pytest -q tests/cli/test_eef_mcap.py`（约 1 分钟），应全部通过：对账工具的迷你
+    mcap 数据集与迷你 LeRobot 数据集是同一批画面，把 trajectory.json 的相机改成 `"uri": "episode_<N>.mcap", "topic":
+    "/observation.images.exterior", "clip_start_s": 0, "clip_end_s": null`，逐帧画面与 LeRobot 视频同号同图，预检 `available`，
+    `check` 的分项读数与结论和 LeRobot 版逐项相同；假 TOS 上每个 episode 的 `.mcap` 只下载一次（进漏斗的源缓存）；Lance 仍是
+    `unsupported`。手动：`cd .. && PYTHONPATH=tools .venv/bin/python -m parity make-fixture --format mcap --out /tmp/mini_mcap`
+    做一份 mcap 数据集，把测试里的 trajectory.json 照上面改写后，
+    `../.venv/bin/python -m curation.cli preflight --input /tmp/mini_mcap --modules eef_video_consistency --vlm-backend ark --param eef_video_consistency.trajectory_json=<文件>`
+    应是 `available`。写 trajectory.json 时 `frame_count` 是该 topic 的帧数，`video_frame_index` 是逐帧对应的第几条图像消息。
 
 ## 回退
 

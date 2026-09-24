@@ -752,3 +752,11 @@ eef_video_review:
   上方证据帧不再重复；报告小节的「转人工」注明其中多少条在人工裁决里待裁（`adjudication.pending`，别的检查已判废的、已裁的不在其中），
   「判废」注明可复议条数；`report.md` 同样多一行。窗口标记图随运行目录同步到交付目录，按 `scope=delivery` 签名打开。
 
+### C.10 mcap 数据集（2026-09-24，F5.13）
+
+需求方在 galbot 上确认其他模块已能读 mcap 后提出。做法：输入格式的 `media` 加可选字段 `topic`，一路相机 = 该 episode 的 `.mcap`
+文件里的一个图像 topic，帧号按 log_time 顺序从 0 数（`eef-video/1.0.0` 不变，纯增补）。读取时把该 topic 的帧转封装成本地 mp4
+（JPEG 进 mjpeg、H.264 Annex-B 重封装，不重编码，与漏斗其他模块读 mcap 用同一套 `ingest/mcap_reader` 做法），均匀时间轴，
+解码按位置编号；时间仍取 trajectory.json 的逐帧时间戳，不看消息时间。TOS 上的 mcap 从漏斗的源缓存读（`containers.SourceCache`），
+一条 episode 判完即删它的临时视频。Lance 仍不支持（它的视频是整段 mp4 存在表里，另议）。尚未做：从 mcap 的位姿 topic 自动
+生成 trajectory.json（§3.3 的映射导出器目前只读 LeRobot 列）。

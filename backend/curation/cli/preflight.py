@@ -344,9 +344,10 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
             entry.update(availability="unsupported", reason="; ".join(
                 video_reason if c == "video" else _CAP_REASON[c] for c in lacking),
                 reason_code="missing_input", reason_args=args)
-        elif "eef_input" in spec.needs and container is not None:
+        elif "eef_input" in spec.needs and container is not None and container["kind"] != "mcap":
+            # mcap cameras are image topics the module reads itself (F5.13); lance is not read yet
             entry.update(availability="unsupported",
-                         reason=f"EEF-video consistency reads LeRobot datasets only, not "
+                         reason=f"EEF-video consistency reads LeRobot and mcap datasets only, not "
                                 f"{container['kind']}",
                          reason_code="format_unsupported_by_module",
                          reason_args={"format": container["kind"]})

@@ -94,7 +94,6 @@ def _template_build(a: argparse.Namespace) -> int:
     """A gripper template from seed / clicked rows: every ``--every`` frames one entry per camera."""
     from . import observations as O
     from . import template as TP
-    from . import video as V
 
     r = load.load_bundle(a.trajectory, lerobot_root=a.lerobot_root, episodes=a.episodes)
     if not r.ok:
@@ -121,8 +120,7 @@ def _template_build(a: argparse.Namespace) -> int:
             method = TP.PROVENANCE_OF_ROW_METHOD.get(seeds.method.split("+")[0], "tool_export")
             ctx, _ = O.provider_inputs(s, cid, media_root=a.lerobot_root, seeds=None, point_ids=[])
             grabbed, segments, buf, prev_f = {}, {}, None, None
-            for fr in V.iter_clip(ctx.media_path, clip_start_s=ctx.clip_start_s, clip_end_s=ctx.clip_end_s, fps=ctx.fps,
-                                  frame_count=ctx.media_frame_count):
+            for fr in O.context_frames(ctx):
                 if fr.index in chosen:
                     grabbed[fr.index] = (fr.gray, fr.sha256())
                     if prev_f is not None and buf is not None:
@@ -183,7 +181,6 @@ def _template_check(a: argparse.Namespace) -> int:
     """The re-detector alone over the episodes' clips; with --seeds, errors against the seed rows."""
     from . import observations as O
     from . import template as TP
-    from . import video as V
 
     try:
         tmpl = TP.load_template(a.template)
@@ -203,8 +200,7 @@ def _template_check(a: argparse.Namespace) -> int:
                     ref = {f: {pid: sp.uv for pid, sp in pts.items() if sp.uv is not None}
                            for f, pts in seeds.by_media_frame.items()}
             ctx, _ = O.provider_inputs(s, cid, media_root=a.lerobot_root, seeds=None, point_ids=[])
-            frames = V.iter_clip(ctx.media_path, clip_start_s=ctx.clip_start_s, clip_end_s=ctx.clip_end_s, fps=ctx.fps,
-                                 frame_count=ctx.media_frame_count)
+            frames = O.context_frames(ctx)
             out = TP.check(tmpl, cid, frames, every=a.every, reference=ref)
             print(json.dumps({"episode_index": ep, **out}), flush=True)
     return 0

@@ -74,6 +74,13 @@ VFR 视频 `fps` 可以为空，有效时间必须来自逐帧 PTS；CFR 只有�
 
 图片 `frame_count=1`、`fps=null`、`clip_start_s=0`、`clip_end_s=null`。客户 DROID 的 65 步位姿与一张首帧图不能伪装成 65 帧视频：总记录 65 行，但图像 view 仍只有一帧。
 
+**mcap 数据集（2026-09-24 增补，F5.13，可选字段，现有文件不受影响）**：mcap 数据集没有视频文件，一路相机是该 episode 的 `.mcap`
+文件里的一个图像 topic。这时 `media` 多一个 `topic`（以 `/` 开头，如 `/observation.images.exterior`），`uri` 指向 `.mcap` 文件
+（`media_uri_base=lerobot_root` 时相对数据集根目录，即 `episode_<N>.mcap`），`kind=video`、`clip_start_s=0`、`clip_end_s=null`；
+`frame_count` 是该 topic 的帧数，`fps` 可给标称值或留空。帧号按该 topic 的消息 `log_time` 顺序从 0 数：`video_frame_index=i`
+就是第 i 条图像消息（H.264 流按解码出的第 i 帧）。读取支持 JPEG（`CompressedImage`）与 H.264 Annex-B（`CompressedVideo`），
+与漏斗其他模块读 mcap 的方式相同，不重编码；raw Image 等其它编码不支持。时间仍以逐帧 `timestamp_s` 为准，不看消息时间。
+
 ### 3.2 点与朝向
 
 点定义使用以下模型：

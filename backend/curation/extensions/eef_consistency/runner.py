@@ -75,9 +75,7 @@ class EpisodeMeasure:
 
 
 def _frames(sample: EefSample, camera_id: str, root: str):
-    m = sample.cameras[camera_id].media
-    return V.iter_clip(O.media_path(sample, camera_id, root), clip_start_s=float(m["clip_start_s"]),
-                       clip_end_s=m["clip_end_s"], fps=m["fps"], frame_count=int(m["frame_count"]))
+    return O.view_frames(sample, camera_id, root)
 
 
 def measure_camera(sample: EefSample, camera_id: str, cap: dict, cfg: RunConfig) -> CameraMeasure:

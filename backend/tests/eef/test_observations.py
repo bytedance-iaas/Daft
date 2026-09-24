@@ -65,7 +65,7 @@ def test_provider_inputs_carry_no_projection_pose_or_calibration(scene):
     ctx, targets = O.provider_inputs(scene["sample"], CAM, media_root=scene["root"], seeds=seeds)
     assert {f.name for f in dataclasses.fields(ctx)} == {
         "sample_id", "camera_id", "media_path", "image_size_wh", "media_frame_count", "fps", "clip_start_s",
-        "clip_end_s"}
+        "clip_end_s", "topic"}                                  # topic: where an mcap view's frames are (F5.13)
     assert {f.name for f in dataclasses.fields(targets)} == {"point_ids", "seeds"}
     blob = json.dumps({"ctx": dataclasses.asdict(ctx), "targets": targets.point_ids,
                        "seed_fields": [f.name for f in dataclasses.fields(seeds)]}, default=str)

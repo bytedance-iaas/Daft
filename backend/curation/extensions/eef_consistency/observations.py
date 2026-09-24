@@ -15,11 +15,13 @@ import hashlib
 import json
 import os
 import pathlib
-from typing import Iterable, Protocol
+from typing import Iterable, Iterator, Protocol
 
 import numpy as np
 
 from . import contracts as C
+from . import mcap_media as MM
+from . import video as V
 from .load import CameraStream, EefSample
 from .video import DecodedFrame
 
@@ -168,6 +170,7 @@ class ProviderContext:
     fps: float | None
     clip_start_s: float
     clip_end_s: float | None
+    topic: str | None = None           # an mcap image topic of the file at media_path (F5.13)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -212,6 +215,33 @@ def media_path(sample: EefSample, camera_id: str, media_root: str | os.PathLike)
     return str(pathlib.Path(media_root) / sample.cameras[camera_id].media["uri"])
 
 
+def media_frames(path: str, media: dict) -> Iterator[DecodedFrame]:
+    """The decoded frames of a view, numbered as ``video_frame_index`` counts them: a video file's
+    clip on its PTS timeline, or an mcap image topic's messages in log_time order (F5.13). Lazy, like
+    the decoder: nothing is read before the first frame is asked for."""
+    if media.get("topic"):
+        try:
+            local = MM.video(path, media["topic"])
+        except (MM.TopicError, OSError) as exc:
+            raise V.DecodeError(str(exc)) from exc
+        yield from V.iter_clip(local, clip_start_s=0.0, clip_end_s=None, fps=MM.RATE,
+                               frame_count=int(media["frame_count"]))
+        return
+    yield from V.iter_clip(path, clip_start_s=float(media["clip_start_s"]), clip_end_s=media["clip_end_s"],
+                           fps=media["fps"], frame_count=int(media["frame_count"]))
+
+
+def view_frames(sample: EefSample, camera_id: str, media_root: str | os.PathLike) -> Iterator[DecodedFrame]:
+    return media_frames(media_path(sample, camera_id, media_root), sample.cameras[camera_id].media)
+
+
+def context_frames(ctx: ProviderContext) -> Iterator[DecodedFrame]:
+    """The frames a provider context points at (offline tools)."""
+    return media_frames(ctx.media_path, {"topic": ctx.topic, "clip_start_s": ctx.clip_start_s,
+                                         "clip_end_s": ctx.clip_end_s, "fps": ctx.fps,
+                                         "frame_count": ctx.media_frame_count})
+
+
 def provider_inputs(sample: EefSample, camera_id: str, *, media_root: str | os.PathLike,
                     seeds: Seeds | None, point_ids: Iterable[str] | None = None) -> tuple[ProviderContext, PointTargets]:
     """The whitelist: media location and size, point ids, seeds. No projection, pose or calibration."""
@@ -219,7 +249,7 @@ def provider_inputs(sample: EefSample, camera_id: str, *, media_root: str | os.P
     m = cam.media
     ctx = ProviderContext(sample.sample_id, camera_id, media_path(sample, camera_id, media_root),
                           tuple(m["image_size_wh"]), int(m["frame_count"]), m["fps"], float(m["clip_start_s"]),
-                          m["clip_end_s"])
+                          m["clip_end_s"], m.get("topic"))
     ids = sorted(set(point_ids) if point_ids is not None else (seeds.point_ids if seeds else set()))
     return ctx, PointTargets(tuple(ids), seeds)
 

@@ -113,9 +113,9 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     from ..contracts import modules as registry
 
     native = [m for m in modules if m in registry.native_ids()]
-    if native and src.container:
-        raise ModuleFailed(f"{', '.join(native)}: EEF-video consistency reads LeRobot datasets "
-                           f"only, not {src.kind}; preflight marks it unsupported, leave it out",
+    if native and src.kind == "lance":
+        raise ModuleFailed(f"{', '.join(native)}: EEF-video consistency reads LeRobot and mcap "
+                           f"datasets only, not {src.kind}; preflight marks it unsupported, leave it out",
                            {"modules": native, "format": src.kind})
     if stage in ("numeric", "frame"):
         payload, survivors = _funnel_cpu(ctx, args, modules, run_dir, src, episodes,
@@ -241,7 +241,7 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
         if eef_mods:
             from .eef_check import EefJudge
 
-            judge = EefJudge(ctx, args, run_dir, src.storage, cfg, gates)
+            judge = EefJudge(ctx, args, run_dir, src, cfg, gates)
         session = runctx.VlmSession(ctx, args, cfg, "task_success" if has_task else eef_mods[0], run_dir,
                                     by_tag={"eef_review": eef_mods[0]} if eef_mods else None)
         session.__enter__()
@@ -274,6 +274,8 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
         task_text.instructions.update(instructions)
         clients = prepared["clients"]
         judge = prepared.get("eef")
+        if judge is not None:
+            judge.rebind(src)            # this batch's source (mcap: its local copy)
     opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
                         episodes=episodes, part=part, cfg=cfg, resume=args.resume,
                         concurrency=int(gates["episode"]),

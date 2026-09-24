@@ -256,7 +256,7 @@ v1 在 `dev` 的 PR #155 里接入了这两种格式：读取器 `ingest/mcap_re
 | 快照记什么 | 全部 `*.mcap`（v1 按目录里有哪些文件来编号，每个文件又是一条 episode 的数据）；`meta_fingerprint` 覆盖全部 mcap 文件 | `meta/` 与三张表的全部对象（读的时候整表读）；`meta_fingerprint` 覆盖 `meta/`，没有 `meta/` 时覆盖 `meta.lance/` |
 | 交付 | `export/mcap_curated/`：v1 的 `export_mcap_curated` 原样。passed 各条的 `.mcap` 逐字节拷贝（源文件不是 `episode_<N>.mcap` 命名的改成这个名字），`index.json` 列每条的任务文本与来源；自产描述与人工改标只写进 `index.json`，文件本体不动 | `export/lance_episodes/`：Lance 原格式交付本版本未做，交的是 v1 的 `episodes_parquet/`（passed 各条的轨迹级数值，任务文本写进 `instruction` / `instruction_source`）和 `videos/`（视频指针改写到交付位置）。`index.json`、导出结果的 `note`、报告的「数据包」一节都写明这一点 |
 | 增量导出 | 没有：`--incremental` 退回全量，`full_reason` 写明原因；内容没变的文件不重新上传 | 同左（daft 每次给 parquet 分片起新名字，这一个文件每次都换） |
-| 不能用的模块 | EEF–视频一致性只读 LeRobot 的视频：`unsupported`，原因码 `format_unsupported_by_module` | 同左 |
+| EEF–视频一致性 | 可用（F5.13）：trajectory.json 的相机写 `media.uri=episode_<N>.mcap` 与 `media.topic`（图像 topic），模块把该 topic 的 JPEG / H.264 帧转成本地视频读，TOS 上从源缓存读 | 不支持：`unsupported`，原因码 `format_unsupported_by_module` |
 
 - **数据集语义取整个任务的所选**：v1 用所选 episode 的前 100 条判定数据集语义（控制模式、单位等）。v2 的命令只读某一档的幸存者，所以读源数据的命令（`autolabel`、`check`、`aggregate --phase final`）要带 `--selection <整个任务的所选>`（语法同 `--episodes`，Daemon 自动传；不带时取 `--episodes`），判定取它的前 100 条，与 v1 一致。LeRobot 数据集不受影响（它的语义样本一直是数据集的前 100 条）。
 - **TOS 上的数据先拉到本地再读**：v1 的两个读取器只认本地目录。`tos://` 上的数据由 `SourceCache` 在本地留一份副本：mcap 先给每个文件放一个空占位（v1 按目录里的文件名编号，占位不会被读），读到哪条才下载哪条；Lance 第一次读时整表下载（读取器要整表）。设了 `CURATION_SOURCE_CACHE` 就放在它下面（`<目录>/<格式>-<地址哈希>/<数据集名>/`，同一任务后面的命令复用，Daemon 在运行结束时删掉），没设就放在这条命令自己的临时目录里、命令结束就删。每个副本按列举时的大小和 ETag 核对，对不上以退出码 6 结束（`source_changed`）；带 `--source-manifest` 时照常先核对快照。只读源桶，从不往源桶写；凭证只从 `CURATION_INPUT_TOS_*` 环境变量读。
@@ -458,7 +458,7 @@ with FakeVlmServer(port=8766) as s:
     done
     ```
 
-    应看到：预检 `kind` 分别是 `mcap`（`version: null`，`fps: null`，detail 写着时间轴取自动作 topic 的 `log_time`）和 `lance`（`version: v3`），8 条、2 路相机、`robot_type: franka`、6 条有标注；EEF 模块是 `unsupported`（`format_unsupported_by_module`），其余可用。
+    应看到：预检 `kind` 分别是 `mcap`（`version: null`，`fps: null`，detail 写着时间轴取自动作 topic 的 `log_time`）和 `lance`（`version: v3`），8 条、2 路相机、`robot_type: franka`、6 条有标注；EEF 模块在 mcap 上是 `needs_input: trajectory_missing`（给了 trajectory.json 就能用，F5.13），在 Lance 上是 `unsupported`（`format_unsupported_by_module`），其余可用。
     判决与第 3 步的 LeRobot 数据集完全相同：数值档拦下 2、5，task_success 3 pass 3 abstain，dedup 剔除 7，final 为 `passed 5, reject 3, held 0; 3 to review`。
     `report.md` 多一节「数据包(mcap)」/「数据包(lance)」：mcap 写着交付 `mcap_curated/`（5 个 .mcap，原格式逐字节）和型号、时间轴、任务文本三项体检；Lance 写着「lance 原格式交付本版本未做」。
     导出：mcap 是 `export/mcap_curated/` 下 `episode_0/1/3/4/6.mcap` 与 `index.json`（`cmp "$D/mini_mcap/episode_0.mcap" "$D/delivery_mcap/export/mcap_curated/episode_0.mcap"` 无输出），日志写「改标 2 条记入 index.json,文件本体不动」（4、6 是自产描述）；
