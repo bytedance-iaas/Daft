@@ -25,7 +25,7 @@ def test_known_backend_swaps_all_three_keys():
     cfg = apply_vlm_backend(_cfg(), "ark")
     v = cfg["checks"]["task_success"]["vlm"]
     assert v["endpoint"].startswith("https://ark.cn-beijing")
-    assert v["model"] == "doubao-seed-2-0-pro-260215"
+    assert v["model"] == "doubao-seed-2-1-pro-260915"
     assert v["api_key_env"] == "ARK_API_KEY"
 
 

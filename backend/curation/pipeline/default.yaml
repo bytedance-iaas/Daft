@@ -120,8 +120,12 @@ checks:
     vlm:                           # ★ 模型只在这一处配置——换模型=改这里,零代码改动
                                    #   本段同时供 M4c(成败判定/终态复核)与 M7(caption/归纳/审计)
       provider: openai             # openai 兼容端点:自托管 vLLM 与托管 MaaS(方舟)同一套协议
-      model: doubao-seed-2-0-pro-260215     # 出厂默认=豆包(2026-07-25 用户定;依据=三后端小考:
-                                            #   硬门唯一零冤杀)。自托管 Cosmos 走预设/站点文件切换。
+      model: doubao-seed-2-1-pro-260915     # 出厂默认=2.1-pro(2026-09-24 用户定;依据=umi224 实测:
+                                            #   glm-5-3-flash-260828 对 166s 双相机视频稳定 500(字节降到
+                                            #   7.2MB 依旧,4 次重试全挂,疑似其思考不可关+长视频的实现 bug);
+                                            #   2.0-pro 能跑通但输入余量 224k(ep4 单请求已用 119k);
+                                            #   2.1-pro 上下文 1024k,四连跑判决完全稳定)。自托管 Cosmos
+                                            #   走预设/站点文件切换。
       endpoint: https://ark.cn-beijing.volces.com/api/v3
       video:                      # 打分/复核/仲裁/caption 共用连续视频输入
         fps: 5                    # 本地编码与服务端共用的抽帧率（设计 13）：模型可见帧与全帧编码+服务端抽样一致，只省字节
@@ -214,7 +218,7 @@ checks:
 vlm_backends:
   ark:                             # 方舟 MaaS(豆包)——托管,零运维,任何部署都可用
     endpoint: https://ark.cn-beijing.volces.com/api/v3
-    model: doubao-seed-2-0-pro-260215
+    model: doubao-seed-2-1-pro-260915   # 与上方 checks.task_success.vlm.model 的出厂默认同款(选型依据见设计 13 末节)
     api_key_env: ARK_API_KEY
     hardware: 托管服务,硬件不可见(由服务商调度)
     service_type: 方舟 MaaS(托管服务)
