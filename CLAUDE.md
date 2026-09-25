@@ -10,6 +10,7 @@
 - 对账工具（W0）：`tools/parity/README.md`
 - 契约：`docs/contracts/`
 - EEF–视频一致性（DEMO 模块，阶段 5）：`docs/design/12-eef-video-consistency.md`（首节是开工指引），格式规范与 Schema 在 `docs/contracts/eef/`（F5.1 冻结），模块代码在 `backend/curation/extensions/eef_consistency/`
+- 数据完整性（阶段 7）：`docs/design/14-data-integrity.md`（首节是开工指引；决策 D50–D52），模块代码放 `backend/curation/extensions/integrity/`
 
 ## 纪律
 
