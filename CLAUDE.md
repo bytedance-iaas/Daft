@@ -3,7 +3,7 @@
 Curator v2 是 Physical AI Kit 的机器人数据质检平台。它读入机器人操作数据集（LeRobot v2 / v3、mcap、Lance；来源是私有 TOS、
 HuggingFace 缓存桶，或站点开放的本地挂载路径），逐条 episode 跑一串质检模块，给出通过 / 拒绝 / 待定的判决和待人工复核的清单；
 人工裁决后重判受影响的条目，生成质检报告，并把通过的数据导出成交付数据集写回 TOS。
-产品是「网页控制台 + REST API + 命令行」三件套，打成一个镜像，用 Helm Chart 部署在火山引擎 VKE 上。
+产品是「网页控制台 + REST API + 命令行」三件套，打成一个镜像，作为 rerun 仓库 dataverse Helm Chart 的一个组件部署在火山引擎 VKE 上（D53）。
 
 ## 架构
 
@@ -26,7 +26,7 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 | 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、读取器、导出器、编排壳、VLM 客户端与视频输入 |
 | 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12）、`integrity`（数据完整性，设计 14） |
 | 对账工具 | `tools/parity/` | 黄金基线的录制、回放、比对，假模型，A 类守卫 |
-| 部署 | `deploy/` | 一个镜像（Daemon + CLI + 前端产物，缺省起 Daemon）、Helm Chart（StatefulSet 单副本 + 数据盘） |
+| 部署 | `deploy/` | 一个镜像（Daemon + CLI + 前端产物，缺省起 Daemon）；Helm Chart 在 rerun 仓库 `deploy/helm/dataverse`（StatefulSet 单副本 + 数据盘，D53） |
 
 Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走子进程；暂停、停止就是给进程组发信号；CLI 也因此一直是活的一等入口
 （设计 00 §2.1）。
@@ -53,7 +53,7 @@ task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
 | `frontend/mockups/` | 静态 HTML 预览稿（只读参考） |
 | `tools/parity/` | 对账工具与黄金基线流程 |
 | `tools/eef_eval/`、`tools/eef_convert.py` | EEF 离线评估（唯一读真值的代码）；`trajectory.json` 在 LeRobot 与 mcap 孪生数据集之间互转 |
-| `deploy/` | 镜像（`deploy/Dockerfile`，构建上下文是仓库根）与 Helm Chart（`deploy/charts/curator/`），说明见 `deploy/README.md` |
+| `deploy/` | 镜像（`deploy/Dockerfile`，构建上下文是仓库根）与集群上的运维步骤（`deploy/README.md`）；Chart 本身在 rerun 仓库的 dataverse 里 |
 | `docs/design/`、`docs/contracts/`、`docs/v1/` | 设计、契约、v1 的使用文档与发布说明 |
 | `.github/` | CI：`workflows/ci.yml`、`scripts/pytest-summary.sh` |
 | `.claude/launch.json` | 本机预览配置：Daemon、前端开发服务器、静态稿 |
@@ -123,7 +123,7 @@ task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
 - 新模块放 `extensions/<模块>/`。要动哪些地方（C1 注册表、预检、`check`、planner 与 Daemon 的档、前端、测试与对账基线），照设计 12、14 的开工指引做，它们是现成的样板。
 - VLM 输入是多机位连续视频（设计 13）；出厂默认模型只在 `pipeline/default.yaml` 的 `checks.task_success.vlm.model` 一处，线上按任务选的后端和模型由 Daemon 的「VLM 后端」管理。
 
-**部署**（`deploy/README.md`）：镜像由火山 CP 流水线从分支构建，版本号是完整提交号；安装、升级（升级时运行中的任务被系统暂停）、备份与排障都在 deploy README。
+**部署**（`deploy/README.md`）：镜像由火山 CP 流水线从分支构建，版本号是完整提交号；Chart 是 rerun 仓库的 `deploy/helm/dataverse`（D53，自托管 vLLM 是同仓库里独立的 `deploy/helm/vllm`），升级质检台就是换它的 `image.curator` 再 `helm upgrade`（运行中的任务被系统暂停、新 Pod 上自动续跑）。Chart 给质检台的环境变量以设计 09 §2.1 的表为约定，改名或删设置要同时改那边的模板；安装、主密钥轮换、备份与排障都在 deploy README。
 
 ## 开发环境
 
@@ -141,7 +141,7 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 |---|---|---|
 | 内核单测 | `cd backend && ../.venv/bin/python -m pytest -q curation/tests --ignore=curation/tests/test_environment.py` | 要在 `backend/` 下跑（有一条起子进程的用例靠工作目录找包）；`test_environment` 要 GPU |
 | 契约 | `cd backend && ../.venv/bin/python -m pytest -q tests/contracts && ../.venv/bin/python -m curation.contracts check` | 契约与锁不一致就失败 |
-| v2 各工作包 | `cd backend && ../.venv/bin/python -m pytest -q tests/<目录>` | 最慢的是 `orchestr`（约 10 分钟；`-m "not slow"` 跳过真起 CLI 的用例）和 `cli`（约 6 分钟）；Chart 检查要 helm 4 |
+| v2 各工作包 | `cd backend && ../.venv/bin/python -m pytest -q tests/<目录>` | 最慢的是 `orchestr`（约 10 分钟；`-m "not slow"` 跳过真起 CLI 的用例）和 `cli`（约 6 分钟） |
 | 对账工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests` | 约一分半；`-m "not e2e"` 只跑单元部分 |
 | 前端 | `cd frontend && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build` | Vitest + jsdom，模拟数据的响应按契约校验 |
 
@@ -154,7 +154,7 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 
 | 任务 | 内容 | 时长 |
 |---|---|---|
-| `tests` | Python 3.10 下串行跑 13 套：内核单测、契约与锁、CLI、planner、Daemon、密钥、结果读取、编排、执行优化、镜像与 Chart、增量导出、EEF、对账工具；前面失败不影响后面的步骤 | 约 30 分钟 |
+| `tests` | Python 3.10 下串行跑 13 套：内核单测、契约与锁、CLI、planner、Daemon、密钥、结果读取、编排、执行优化、镜像与部署约定、增量导出、EEF、对账工具；前面失败不影响后面的步骤 | 约 30 分钟 |
 | `frontend` | Node 20 与 22 各一遍：`check:api`、`lint`、`typecheck`、`test`、`build` | 几分钟 |
 | `a-class-guard` | 原样搬来的算法文件（A 类，清单见设计 10 §2）逐个比对冻结时的哈希；有意的改动在 `tools/parity/a_class_declared.json` 登记新哈希和理由，或在 PR 描述里写 `parity-change:` | 秒级 |
 | `lerobot-loader` | 官方 lerobot（0.3.3 读 v2.1、0.6.1 读 v3.0）加载增量重导出的产物 | 几分钟 |

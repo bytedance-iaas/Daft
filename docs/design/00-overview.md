@@ -247,8 +247,7 @@ curator/
 │   └── tests/
 ├── frontend/              # React + Arco（新建）
 ├── deploy/
-│   ├── Dockerfile
-│   └── charts/curator/    # Helm Chart（新建）
+│   └── Dockerfile         # Helm Chart 在 rerun 仓库的 dataverse 里（D53）
 └── docs/design/           # 本册文档
 ```
 
@@ -258,7 +257,7 @@ D1–D15 来自两轮需求澄清，D16–D23 来自 2026-09-20 的设计评审�
 D33–D34 来自同日开工前的最后一轮核对，D35 来自 2026-09-21 的契约冻结核对，D36–D38 来自同日的静态稿评审，
 D39–D41 来自同日 W3 拆 v1 编排时核对出的三处差异，D42–D43 来自需求方对其中默认做法的答复，
 D44–D48 来自 2026-09-23 需求方的第二轮修改意见，D49 来自同日需求方对 EEF 模块的改判，
-D50–D52 来自 2026-09-24 的数据完整性立项（设计 14）。后续设计一律以此为准：
+D50–D52 来自 2026-09-24 的数据完整性立项（设计 14），D53 来自 2026-09-25 需求方对部署 Chart 的要求。后续设计一律以此为准：
 
 | # | 决策 |
 |---|---|
@@ -314,6 +313,7 @@ D50–D52 来自 2026-09-24 的数据完整性立项（设计 14）。后续设�
 | D50 | 新增「数据完整性」模块（设计 14）：新开 `integrity` 档，排在漏斗最前（数值档之前），硬门，默认勾选（进「完整」「快速」两个预设），可以取消。逐条给出通过、判废或可疑：判废只落在有问题的 episode 上（LeRobot v3 多条共用一个文件时，只波及与损坏位置重叠的条目；整个文件打不开时波及文件里的全部条目），与 D42 的结构硬门一样不可复议；可疑的留在 passed，进新裁决线「完整性存疑」，与其它落在 passed 的裁决线一样计入待裁，照 D24 先交付；因基础设施原因读不到（超时、5xx）的按 D33 记 error。逐帧解码测试是模块参数，默认关。采集协议对账与采集端校验和清单要用户额外提供，本期不做 |
 | D51 | 勾选了数据完整性时，v1 的逐条结构校验 `validate_episode_row` 不通过（NaN/Inf、时间戳非严格递增、各列帧数不一致、视频时间段越界）的条目由它判废并写明原因，不再是「读行失败 → error → held」（D24、D33 对这一类的口径随之改变）；不勾选时照旧。源文件缺失仍照 D40 跳过 |
 | D52 | 预检仍只读 metadata（D6）：新增三项——0 字节或过小的文件、mcap 录制中断（文件尾没有结束标识）、mcap 摘要区 CRC——只写进 `warnings`，不改变任何模块的可用性，也不多读样本（用的是文件列表和已经取回的摘要区字节） |
+| D53 | 部署 Chart 并入 rerun 仓库的 dataverse（`deploy/helm/dataverse` 0.2.0）：质检台是其中单副本的 StatefulSet，以后升级质检台就是升级 dataverse；本仓库删掉 `deploy/charts/curator`，只管镜像。并入时精简（09 篇 §2.1）：前缀 `/curation`、端口、探针、宽限期、运行用户写死在模板里，值只留 `enabled`、`maxRunningTasks`、`publicBaseUrl`、`publicDatasets`、`siteConfig`、`persistence`、`resources`、`maintenance`、`extraEnv`；登录用 viewer 的 `web_htpasswd`，`TOS_ENDPOINT` 由 `tos.region` 推导，主密钥是 dataverse Secret 的 `curator_master_key`，同时 dataverse 的各组件改为只挂自己要读的键，主密钥只有质检台的 Pod 读得到。自托管 vLLM 从 dataverse 拆出，成为 rerun 仓库里独立的 `vllm` Chart，和 dataverse 互不依赖（VLM 后端本来就在质检台里添加）。galbot 的独立 release（D48）并入时直接接管原数据盘 `data-curator-v2-0`，不拷数据 |
 
 ### 7.1 评审中提出、需求方已确认的取值
 

@@ -1,7 +1,7 @@
 # Curator v2 · 机器人数据质检平台
 
 Physical AI Kit 的数据质检平台（Curator）第二版。v1 是 Gradio 单体加 Python CLI，在 `release_v1` 分支上运行。
-v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中文前端，以 Helm Chart 交付，跑在 VKE 上。
+v2 把它重构成三层：原子 CLI → REST API Daemon → 火山风格的中文前端，作为 rerun 仓库 dataverse Helm Chart 的一个组件交付，跑在 VKE 上。
 **质检算法一行不改**，本期做的是骨架、契约和产品化能力。
 
 **能质检的数据格式**：LeRobot v2 / v3、mcap（一个 `.mcap` 文件一条 episode）、Lance（lerobot-lance-convert 0.3.0 起的三表布局），
@@ -33,7 +33,7 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
 | `frontend/mockups/` | 静态 HTML 预览稿（F3.1） |
 | `tools/parity/` | 对账工具与黄金基线流程（W0） |
 | `tools/eef_convert.py` | EEF 的 trajectory.json 在 LeRobot 与 mcap 两种数据集之间互转（只改每路相机的 `media`；`--check` 对着 mcap 数据集核对文件、topic、帧数与画面尺寸），用法见文件头 |
-| `deploy/` | 镜像（`deploy/Dockerfile`，多阶段：前端构建 + Daemon，构建上下文是仓库根）与 Helm Chart（`deploy/charts/curator/`）；构建、密钥、安装升级、主密钥轮换、备份恢复与部署前检查见 [deploy/README.md](deploy/README.md) |
+| `deploy/` | 镜像（`deploy/Dockerfile`，多阶段：前端构建 + Daemon，构建上下文是仓库根）；Helm Chart 在 rerun 仓库的 `deploy/helm/dataverse`（D53）。构建、密钥、安装升级、主密钥轮换、备份恢复与部署前检查见 [deploy/README.md](deploy/README.md) |
 | `docs/design/`、`docs/contracts/` | 设计文档；冻结的契约（JSON Schema、OpenAPI、示例、锁文件，见 [docs/contracts/README.md](docs/contracts/README.md)；EEF 输入格式在 `docs/contracts/eef/`） |
 
 ## 本地环境
@@ -59,7 +59,7 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
 9. **Daemon 骨架（W4）**：`cd backend && ../.venv/bin/python -m pytest -q tests/daemon`（约 40 秒），应全部通过；真起进程的 11 步手动验证见 [backend/daemon/README.md](backend/daemon/README.md)。
 10. **密钥与资源管理（W8）**：`cd backend && ../.venv/bin/python -m pytest -q tests/secrets`（约 30 秒），应全部通过；再按 [backend/daemon/secrets/README.md](backend/daemon/secrets/README.md) 的 6 步手动核对。
 11. **读结果（W5b）**：`cd backend && ../.venv/bin/python -m pytest -q tests/results`（约 30 秒），应全部通过；真起 Daemon 用 curl 逐个接口核对的步骤见 [backend/daemon/results/README.md](backend/daemon/results/README.md)。
-12. **镜像与 Chart（W11）**：`cd backend && ../.venv/bin/python -m pytest -q tests/deploy`（约 10 秒，需要本机有 `helm`）；本机没有 docker，镜像构建看 CI；集群上的安装、升级续跑与网关挂载按 [deploy/README.md](deploy/README.md) 核对。
+12. **镜像与部署约定（W11）**：`cd backend && ../.venv/bin/python -m pytest -q tests/deploy`（约 1 秒）；本机没有 docker，镜像构建看 CI；Chart 在 rerun 仓库，按 [deploy/README.md](deploy/README.md) 第 10 节 lint 与渲染；集群上的安装、升级续跑与网关挂载按第 4–6 节核对。
 13. **任务编排（W5a）**：`cd backend && ../.venv/bin/python -m pytest -q tests/orchestr -m "not slow"`（约 1.5 分钟；去掉 `-m` 跑全部约 6 分钟，含真跑 CLI 的端到端），应全部通过；再按 [backend/daemon/orchestr/README.md](backend/daemon/orchestr/README.md) 的 10 步真起 Daemon 核对。
 14. **前端（W10）**：`cd frontend && npm ci && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build`；用模拟数据看页面是 `npm run dev`，逐页核对项见 [frontend/README.md](frontend/README.md)。由真的 Daemon 托管构建产物（`/curation` 前缀、不鉴权、开发用主密钥）：用 `.claude/launch.json` 里的 `curator-daemon-dev`，浏览器打开 <http://localhost:8080/curation/>。
 15. **mcap 与 Lance（F6.5，D44）**：`cd backend && ../.venv/bin/python -m pytest -q tests/cli/test_containers.py tests/daemon/test_dataset_formats.py tests/orchestr/test_containers.py`，
@@ -79,7 +79,7 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
 上面第 1–16 步都不碰真数据和真密钥。真跑一次是这样，界面上的每一步都在
 [frontend/README.md](frontend/README.md) 的「手动验证（模拟数据）」里有对应的模拟版本：
 
-1. **起服务**：集群上按 [deploy/README.md](deploy/README.md) 第 3–4 节建 Secret、`helm install`，
+1. **起服务**：集群上按 [deploy/README.md](deploy/README.md) 第 3–4 节补主密钥、装 dataverse，
    经网关访问见第 6 节；只在本机跑就用 `.claude/launch.json` 里的 `curator-daemon-dev`，
    打开 <http://localhost:8080/curation/>。
 2. **填密钥**（只能由使用者本人在界面里填，不写进仓库、不写进 CI、不进设计文档）：
@@ -107,7 +107,7 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
 
 ## CI
 
-`.github/workflows/ci.yml`：v1 单测、契约测试与漂移锁、Daemon 测试、密钥与资源管理测试、读结果测试、任务编排测试（含真跑 CLI 的端到端）、镜像与 Chart 检查、v2 命令行测试、planner 测试、EEF 模块测试、对账工具测试（含合成数据上的端到端回放对账），各组测试互不遮挡（前一组失败，后面照跑）；A 类算法文件保护检查、镜像构建（并在镜像里起一次 Daemon 与命令行）、前端（Node 20 与 22 各跑一遍 lint、类型、测试和构建）；另有一个独立 job 用官方 LeRobot loader 检查增量重导出的产物（lerobot 0.3.3 读 v2.1，0.6.1 读 v3.0）。
+`.github/workflows/ci.yml`：v1 单测、契约测试与漂移锁、Daemon 测试、密钥与资源管理测试、读结果测试、任务编排测试（含真跑 CLI 的端到端）、镜像与部署约定检查、v2 命令行测试、planner 测试、EEF 模块测试、对账工具测试（含合成数据上的端到端回放对账），各组测试互不遮挡（前一组失败，后面照跑）；A 类算法文件保护检查、镜像构建（并在镜像里起一次 Daemon 与命令行）、前端（Node 20 与 22 各跑一遍 lint、类型、测试和构建）；另有一个独立 job 用官方 LeRobot loader 检查增量重导出的产物（lerobot 0.3.3 读 v2.1，0.6.1 读 v3.0）。
 
 ## License
 

@@ -1,140 +1,56 @@
-"""Helpers for the W11 tests: render the Helm chart without a cluster, read the Dockerfile.
+"""Helpers for the W11 tests: read the Dockerfile, and the environment the deployment gives the
+Daemon.
 
-``helm`` is looked up on ``PATH`` (or ``$CURATOR_HELM``); the chart tests skip without it.
-Every helm call runs with an empty ``KUBECONFIG`` and throwaway helm homes, so nothing can
-reach a cluster configured on the machine and no helm state is written outside a
-temporary directory.
+The Helm chart lives in the rerun repository (dataverse, D53). What it hands the Daemon is
+agreed in design doc 09 §2.1, a table of environment variables; :func:`deployment_env` reads
+that table, so the tests here check the code against the agreement without the chart.
 """
 from __future__ import annotations
 
 import ast
-import atexit
 import dataclasses
 import functools
 import json
-import os
 import pathlib
 import posixpath
 import re
 import shlex
-import shutil
-import subprocess
-import tempfile
-
-import pytest
-import yaml
 
 BACKEND = pathlib.Path(__file__).resolve().parents[2]
 REPO = BACKEND.parent
-CHART = REPO / "deploy" / "charts" / "curator"
 DOCKERFILE = REPO / "deploy" / "Dockerfile"
 ENTRYPOINT = REPO / "deploy" / "docker-entrypoint.sh"
 DOCKERIGNORE = REPO / ".dockerignore"
+DEPLOYMENT_DOC = REPO / "docs" / "design" / "09-deployment.md"
 
-_HELM_CANDIDATES = ("/opt/homebrew/bin/helm", "/usr/local/bin/helm")
+
+@dataclasses.dataclass(frozen=True)
+class EnvRow:
+    name: str
+    value: str         # the literal the chart sets, or a description ("Secret 的 `…`")
+    source: str        # where it comes from; mentions secretKeyRef for the secret ones
+
+    @property
+    def secret(self) -> bool:
+        return "secretKeyRef" in self.source
+
+    @property
+    def literal(self) -> str | None:
+        """The value when it is one backquoted literal, else None."""
+        m = re.fullmatch(r"`([^`]*)`", self.value.strip())
+        return m.group(1) if m else None
 
 
 @functools.lru_cache(maxsize=1)
-def helm_binary() -> str | None:
-    explicit = os.environ.get("CURATOR_HELM")
-    if explicit:
-        return explicit if os.access(explicit, os.X_OK) else None
-    found = shutil.which("helm")
-    if found:
-        return found
-    return next((c for c in _HELM_CANDIDATES if os.access(c, os.X_OK)), None)
-
-
-@functools.lru_cache(maxsize=1)
-def _helm_home() -> pathlib.Path:
-    home = pathlib.Path(tempfile.mkdtemp(prefix="curator-helm-"))
-    atexit.register(shutil.rmtree, home, True)
-    (home / "kubeconfig").write_text("")
-    return home
-
-
-def _helm_env() -> dict[str, str]:
-    home = _helm_home()
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("HELM_", "KUBE"))}
-    env.update({"KUBECONFIG": str(home / "kubeconfig"), "HELM_CACHE_HOME": str(home / "cache"),
-                "HELM_CONFIG_HOME": str(home / "config"), "HELM_DATA_HOME": str(home / "data")})
-    return env
-
-
-def run_helm(*args: str, values: dict | None = None) -> subprocess.CompletedProcess:
-    binary = helm_binary()
-    if binary is None:
-        pytest.skip("helm is not installed (set CURATOR_HELM to its path)")
-    cmd = [binary, *args]
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
-        yaml.safe_dump(values or {}, fh, allow_unicode=True)
-        values_file = fh.name
-    try:
-        return subprocess.run([*cmd, "-f", values_file], capture_output=True, text=True,
-                              env=_helm_env(), timeout=120)
-    finally:
-        os.unlink(values_file)
-
-
-def render(values: dict | None = None, *, release: str = "curator",
-           namespace: str = "curator") -> list[dict]:
-    """``helm template`` -> the manifests, one dict per document."""
-    proc = run_helm("template", release, str(CHART), "-n", namespace, values=values)
-    assert proc.returncode == 0, f"helm template failed:\n{proc.stderr}"
-    return [d for d in yaml.safe_load_all(proc.stdout) if d]
-
-
-def render_error(values: dict) -> str:
-    """The error of a render that must fail (the chart's own ``fail`` messages)."""
-    proc = run_helm("template", "curator", str(CHART), "-n", "curator", values=values)
-    assert proc.returncode != 0, "the chart rendered values it should refuse"
-    return proc.stderr
-
-
-def only(docs: list[dict], kind: str, name: str | None = None) -> dict:
-    found = [d for d in docs if d["kind"] == kind and (name is None or d["metadata"]["name"] == name)]
-    assert len(found) == 1, f"expected one {kind} {name or ''}, got {len(found)}"
-    return found[0]
-
-
-def kinds(docs: list[dict]) -> list[str]:
-    return sorted(d["kind"] for d in docs)
-
-
-def container(docs: list[dict]) -> dict:
-    pod = only(docs, "StatefulSet")["spec"]["template"]["spec"]
-    assert len(pod["containers"]) == 1
-    return pod["containers"][0]
-
-
-def env_entries(docs: list[dict]) -> dict[str, dict]:
-    entries = container(docs).get("env") or []
-    names = [e["name"] for e in entries]
-    assert len(names) == len(set(names)), f"duplicate env names: {names}"
-    return {e["name"]: e for e in entries}
-
-
-def plain_env(docs: list[dict]) -> dict[str, str]:
-    """The literal (non-secret) environment of the Daemon container."""
-    return {n: e["value"] for n, e in env_entries(docs).items() if "value" in e}
-
-
-def mounts(docs: list[dict]) -> dict[str, dict]:
-    return {m["name"]: m for m in container(docs).get("volumeMounts") or []}
-
-
-def pod_volumes(docs: list[dict]) -> dict[str, dict]:
-    pod = only(docs, "StatefulSet")["spec"]["template"]["spec"]
-    return {v["name"]: v for v in pod.get("volumes") or []}
-
-
-def claim_templates(docs: list[dict]) -> dict[str, dict]:
-    sts = only(docs, "StatefulSet")
-    return {t["metadata"]["name"]: t for t in sts["spec"].get("volumeClaimTemplates") or []}
-
-
-def chart_values() -> dict:
-    return yaml.safe_load((CHART / "values.yaml").read_text(encoding="utf-8"))
+def deployment_env() -> dict[str, EnvRow]:
+    """Design doc 09 §2.1: the Daemon container's environment as the dataverse chart sets it."""
+    text = DEPLOYMENT_DOC.read_text(encoding="utf-8")
+    section = text[text.index("### 2.1"):text.index("### 2.2")]
+    rows = re.findall(r"^\| `([A-Z][A-Z0-9_]+)` \| (.*?) \| (.*?) \|$", section, re.M)
+    assert rows, "design doc 09 §2.1 has no environment table"
+    names = [r[0] for r in rows]
+    assert len(names) == len(set(names)), f"duplicate rows: {names}"
+    return {name: EnvRow(name, value, source) for name, value, source in rows}
 
 
 PYPROJECT = BACKEND / "pyproject.toml"
@@ -201,28 +117,6 @@ def dummy_master_key() -> str:
     import base64
 
     return base64.b64encode(bytes(range(1, 33))).decode()
-
-
-def daemon_environ(docs: list[dict], secrets: dict[str, str] | None = None) -> dict[str, str]:
-    """The Daemon container's environment with its secret references filled in.
-
-    ``secrets`` maps ``"<secret name>/<key>"`` to a value. A reference that is not given
-    gets a test value (the master key a valid one) unless it is optional - then it stays
-    unset, as Kubernetes does with an optional key that is missing.
-    """
-    secrets = secrets or {}
-    env: dict[str, str] = {}
-    for name, entry in env_entries(docs).items():
-        if "value" in entry:
-            env[name] = str(entry["value"])
-            continue
-        ref = entry["valueFrom"]["secretKeyRef"]
-        given = secrets.get(f"{ref['name']}/{ref['key']}")
-        if given is not None:
-            env[name] = given
-        elif not ref.get("optional"):
-            env[name] = dummy_master_key() if name == "CURATOR_MASTER_KEY" else "not-a-real-secret"
-    return env
 
 
 # ---------------------------------------------------------------------------

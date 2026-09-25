@@ -30,9 +30,6 @@ jobs:
       - name: Install
         id: install
         run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
-      - uses: azure/setup-helm@v4
-        with:
-          version: v4.2.4           # the chart checks render NOTES with a client-only dry run (helm 4)
       - name: v1 unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
@@ -72,7 +69,7 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/optimizations
-      - name: Image and chart checks (W11)
+      - name: Image and deployment-contract checks (W11)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: backend
         run: bash ../.github/scripts/pytest-summary.sh -q -rfE tests/deploy

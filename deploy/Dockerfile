@@ -153,4 +153,4 @@ ENTRYPOINT ["tini", "--", "curator-entrypoint"]
 CMD ["curator-daemon"]
 # 用法: docker run -p 8080:8080 -v curator-data:/data -e CURATOR_MASTER_KEY=... <镜像>
 #       docker run --rm <镜像> curation --help
-# 主密钥、登录账号怎么给见 deploy/README.md；K8s 上用 deploy/charts/curator。
+# 主密钥、登录账号怎么给见 deploy/README.md；K8s 上用 rerun 仓库的 dataverse Chart。

@@ -23,8 +23,8 @@ import pytest
 from curation.contracts import schemas
 from daemon.settings import SECRET_ENVS, Settings
 
-from .support import (CHART, DOCKERFILE, ENTRYPOINT, PYPROJECT, REPO, assignments,
-                      chart_values, copies, daemon_strings, dockerfile, dockerignored, mini_toml,
+from .support import (DOCKERFILE, ENTRYPOINT, PYPROJECT, REPO, assignments, copies,
+                      daemon_strings, deployment_env, dockerfile, dockerignored, mini_toml,
                       pyproject, stage)
 
 WEB, RUNTIME = 0, 1
@@ -246,16 +246,17 @@ def test_runs_as_a_non_root_user_that_owns_the_volumes():
     [setup] = [r for r in runs(RUNTIME) if "useradd" in r]
     assert f"--uid {uid}" in setup and f"--gid {gid}" in setup
     assert "mkdir -p /data /scratch" in setup and "chown curator:curator /data /scratch" in setup
-    # the chart's mount points are the directories prepared here
-    values = chart_values()
-    assert values["persistence"]["data"]["mountPath"] == "/data"
-    assert values["persistence"]["scratch"]["mountPath"] == "/scratch"
+    # the deployment's mount points (design doc 09 §2.1) are the directories prepared here
+    env = deployment_env()
+    assert env["CURATOR_DATA_DIR"].literal == "/data"
+    assert env["CURATOR_SCRATCH_DIR"].literal == "/scratch"
 
 
 def test_exposes_the_daemons_port():
     [expose] = [i.args for i in stage(RUNTIME) if i.op == "EXPOSE"]
     port = {f.name: f.default for f in dataclasses.fields(Settings)}["port"]
-    assert int(expose) == port == chart_values()["server"]["port"]
+    assert int(expose) == port == 8080
+    assert "CURATOR_PORT" not in deployment_env()     # the deployment keeps the default
 
 
 def test_image_variables_are_settings_the_code_reads():
@@ -335,5 +336,4 @@ def test_dockerignore_rules_parse_like_docker():
     assert not dockerignored("docs/contracts/openapi.yaml")
     assert not dockerignored("backend/curation/pipeline/default.yaml")
     assert not dockerignored("deploy/docker-entrypoint.sh")
-    assert dockerignored("deploy/charts/curator/values.yaml")
-    assert DOCKERFILE.parent.name == "deploy" and CHART.is_dir()
+    assert DOCKERFILE.parent.name == "deploy"
