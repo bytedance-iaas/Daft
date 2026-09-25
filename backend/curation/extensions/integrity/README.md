@@ -77,7 +77,7 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
 
 5. 判决与裁决：把第 2 步的结果接着 `aggregate`（见 CLI README 第 3 步）——判废的条目在 `reject.json`，理由以「未通过「数据完整性」」开头、不出现在「被拒复议」；可疑且留在 passed 的出 `integrity_suspect` 卡片。裁决取值 `intact`（数据无误，保留）/ `broken`（确有问题，判废）/ `unsure`。
 
-6. 控制台：`npm run dev` 看模拟数据——新建任务的「质检范围」第一张卡片是「数据完整性」（默认勾选），第二屏有「逐帧解码测试」开关与耗时说明；报告里有「数据完整性」小节，Episode 明细里有它的一块（发现与检查过的文件）。
+6. 控制台：`npm run dev` 看模拟数据——新建任务的「质检范围」第一张卡片是「数据完整性」（默认勾选），第二屏有「逐帧解码测试」开关（默认关）；报告里有「数据完整性」小节，Episode 明细里有它的一块（发现与检查过的文件）。
 
 样本集：`PYTHONPATH=../tools $PY -m tests.cli.integrity_samples --out "$D/samples"` 生成 `lerobot_v2/`、`lerobot_v3/`、`mcap/` 三份损坏样本，每份的 `damage.json` 写明每条动了什么、应得什么结论；测试用的就是这几个函数。
 

@@ -155,8 +155,10 @@ describe('系统和资源配置 (07 §7)', () => {
     const { user } = renderApp('/credentials#vlm');
     const table = await screen.findByTestId('backends-table');
     await within(table).findByText('ark-prod');
+    expect(document.body).not.toHaveTextContent('保存后会试着拉一次模型列表');        // fifth round
     await user.click(within(row(table, 'ark-prod')).getByRole('button', { name: '编辑' }));
     const drawer = await findDrawer('编辑 VLM 后端');
+    expect(drawer).not.toHaveTextContent('保存后会试着拉一次模型列表');
     const models = within(drawer).getByTestId('backend-models');
     // 15 models, 10 per page.
     expect(modelRows(models)).toHaveLength(10);

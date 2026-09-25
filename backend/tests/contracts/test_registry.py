@@ -69,7 +69,7 @@ def test_the_data_integrity_module_is_the_first_gate():
     assert not spec.appealable and spec.review_lines == ("integrity_check",)
     props = spec.param_schema["properties"]
     assert list(props) == ["decode_test"] and props["decode_test"]["default"] is False
-    assert "AV1" in props["decode_test"]["description"]            # what it does and what it costs
+    assert props["decode_test"]["description"].endswith("耗时相当于把全部视频完整解码一次")   # what it does and costs
     assert "native" not in M.export()["modules"][0]                # internal, not part of C1's JSON
 
 

@@ -115,7 +115,6 @@ export function AdvancedSection({ v, set, errors, vlm }: { v: FormValues; set: (
         name="adv"
         header={<b>{zh.taskForm.sectionAdvanced}</b>}
       >
-        <Alert type="info" content={zh.taskForm.advancedNote} style={{ marginBottom: 12 }} />
         <Row gutter={24}>
           {vlm ? (
             <>

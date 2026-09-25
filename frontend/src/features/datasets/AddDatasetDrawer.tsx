@@ -143,7 +143,7 @@ export function AddDatasetDrawer({ visible, onClose }: { visible: boolean; onClo
             </Row>
           </>
         ) : (
-          <Field label={zh.taskForm.publicDataset} required error={errors.publicUri} extra={zh.taskForm.publicNote}>
+          <Field label={zh.taskForm.publicDataset} required error={errors.publicUri}>
             <Select
               value={publicUri || undefined}
               onChange={setPublicUri}

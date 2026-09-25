@@ -110,7 +110,7 @@ export function BasicSection(p: BasicSectionProps) {
       ) : v.source === 'public' ? (
         <Row gutter={24}>
           <Col span={12}>
-            <Field label={zh.taskForm.publicDataset} required error={errors.publicUri} notes={p.linkNotes.dataset} extra={zh.taskForm.publicNote}>
+            <Field label={zh.taskForm.publicDataset} required error={errors.publicUri} notes={p.linkNotes.dataset}>
               <Select
                 value={v.publicUri || undefined}
                 onChange={(x: string) => set({ publicUri: x })}

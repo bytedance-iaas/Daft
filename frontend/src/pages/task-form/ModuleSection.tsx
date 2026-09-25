@@ -9,10 +9,12 @@ const { Row, Col } = Grid;
 
 export type AvailabilityMap = Record<string, ModuleAvailability | undefined> | null;
 
-const SCREEN2_FILES = new Set(['trajectory_json', 'observation_seeds']);
+/** The EEF module's files, asked for on screen 2: the projection (trajectory.json) and the gripper reference. */
+const EEF_FILES = new Set(['trajectory_json', 'observation_seeds']);
 
 function needsInputText(a: ModuleAvailability): string {
   if (a.input_hint?.field === 'embodiment_id') return zh.taskForm.moduleNeedsEmbodiment;
+  if (EEF_FILES.has(a.input_hint?.field ?? '')) return zh.taskForm.moduleNeedsEefFiles;
   if (a.input_hint?.field === 'vlm') return zh.taskForm.moduleNeedsVlm;
   return reasonText(a);
 }
@@ -32,9 +34,8 @@ function ModuleCard({
   onToggle: () => void;
   disabled: boolean;
 }) {
-  // The files the second screen asks for anyway (trajectory.json, the gripper reference) are no
-  // warning here (fourth round).
-  const warn = a?.availability === 'needs_input' && !SCREEN2_FILES.has(a.input_hint?.field ?? '');
+  // Like the robot type, the EEF module's files are named here and given on screen 2 (fifth round).
+  const warn = a?.availability === 'needs_input';
   const cls = ['module-card', checked ? 'selected' : '', warn ? 'warn' : '', disabled ? 'disabled' : '', marked ? 'marked' : ''].filter(Boolean).join(' ');
   return (
     <div className={cls} data-testid={`module-${m.id}`}>

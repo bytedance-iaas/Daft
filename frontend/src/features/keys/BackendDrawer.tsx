@@ -1,4 +1,4 @@
-import { Alert, Button, Divider, Drawer, Form, Input, InputNumber, Message, Popconfirm, Radio, Select, Space, Table, Tag, Typography } from '@arco-design/web-react';
+import { Button, Divider, Drawer, Form, Input, InputNumber, Message, Popconfirm, Radio, Select, Space, Table, Tag, Typography } from '@arco-design/web-react';
 import { IconSearch } from '@arco-design/web-react/icon';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
@@ -332,7 +332,6 @@ export function BackendDrawer({
         </Space>
       }
     >
-      <Alert type="info" content={zh.credentials.backendsIntro} style={{ marginBottom: 16 }} />
       <Form form={form} layout="vertical" autoComplete="off" onValuesChange={(c: Partial<Values>) => c.kind && setKind(c.kind)}>
         <Form.Item label={zh.credentials.kind} field="kind" rules={[{ required: true, message: zh.errors.requiredSelect(zh.credentials.kind) }]}>
           <Radio.Group type="button" disabled={Boolean(current)}>

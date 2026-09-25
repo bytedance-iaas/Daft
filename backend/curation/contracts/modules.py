@@ -244,9 +244,7 @@ def _integrity_params() -> dict:
             "decode_test": {
                 "type": "boolean", "title": "逐帧解码测试", "default": False,
                 "description": "把每路相机从头到尾严格解码一遍，能发现文件结构完好、但画面数据已经损坏的条目，"
-                               "包括解码器自己掩盖掉的错误。耗时相当于把全部视频完整解码一次：1000 条、每条 30 秒、"
-                               "3 路 640×480 相机，H.264 约 7 分钟，AV1 约 16 分钟（8 路 CPU 并发），随条数线性增长。"
-                               "不开启时，结构检查、整读和 CRC 校验已经能发现截断、零填充和 mcap 的数据损坏。"},
+                               "包括解码器自己掩盖掉的错误。耗时相当于把全部视频完整解码一次"},
         }}
 
 
@@ -309,7 +307,7 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(
         id="data_integrity", name_zh="数据完整性",
         summary_zh="检查每条 episode 的文件是否完整、可读：文件结构、零填充、mcap 的 CRC、逐条数据的结构校验，"
-                   "可选逐帧解码；坏了的判废，可疑的交人工裁决",
+                   "可选逐帧解码",
         level="episode", gate="hard", needs=frozenset({"raw_bytes"}), stage="integrity",
         depends_on=(), produces_adjudication=True, param_schema=_integrity_params(),
         tables=(TableSpec("integrity_findings", "完整性发现",
@@ -356,8 +354,7 @@ MODULES: tuple[ModuleSpec, ...] = (
                           ("episode_index", "lag_s", "corr_peak")),)),
     ModuleSpec(
         id="eef_video_consistency", name_zh="EEF–视频一致性",
-        summary_zh="先由 CPU 逐帧比较声明的末端执行器投影与画面里独立定位的夹爪，再请多模态模型复核；"
-                   "两边一致就判过或判废，意见冲突、模型给不出意见或判不了的交人工裁决（DEMO，阈值未校准）",
+        summary_zh="比较数据集中声明的末端执行器投影与画面里独立定位的夹爪轨迹和方向是否匹配",
         level="episode", gate="hard", needs=frozenset({"video", "vlm", "eef_input"}), stage="vlm",
         depends_on=("frame_gates",), produces_adjudication=True, param_schema=_eef_params(),
         tables=(TableSpec("eef_camera_metrics", "逐相机分项",

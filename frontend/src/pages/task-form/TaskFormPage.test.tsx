@@ -72,20 +72,24 @@ describe('新建任务 · 第一屏 (07 §3)', () => {
     expect(within(motion).getByRole('checkbox', { name: '运动质量' })).toBeDisabled();
     expect(motion).toHaveTextContent('数据集缺少 observation.state 列');
     // kinematic_limits needs input (robot type) → selectable, with the screen-2 hint
-    expect(screen.getByTestId('module-kinematic_limits')).toHaveTextContent('需要补充机器人型号（下一屏填）');
+    expect(screen.getByTestId('module-kinematic_limits')).toHaveTextContent('需要补充机器人型号');
+    expect(screen.getByTestId('module-kinematic_limits')).not.toHaveTextContent('下一屏');
     // unknown reason codes fall back to the English reason (checked in lib tests); details modal:
     await user.click(within(motion).getByRole('button', { name: '详细信息' }));
     expect(await screen.findByText('运动质量：为什么不能开启')).toBeInTheDocument();
   });
 
   it('screen-1 texts: 快速质检, no note by 高级设置, 全部 for every episode (requester item 15)', async () => {
-    renderApp('/tasks/new');
+    const { user } = renderApp('/tasks/new');
     await screen.findByText('基本信息');
     expect(within(screen.getByRole('radiogroup', { name: '质检范围' })).getByRole('radio', { name: '快速质检' })).toBeInTheDocument();
     expect(within(screen.getByRole('radiogroup', { name: 'Episode 选择' })).getByRole('radio', { name: '全部' })).toBeInTheDocument();
     expect(screen.getByText('高级设置')).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent('不改也能跑');
     expect(document.body).not.toHaveTextContent('不调用模型的模块）');
+    await user.click(screen.getByText('高级设置'));
+    expect(await screen.findByRole('spinbutton', { name: 'CPU 并发上限' })).toBeVisible();
+    expect(document.body).not.toHaveTextContent('执行计划和请求合并由后端决定');       // fifth round
   });
 
   it('quick preset hides the model block; any manual change switches to 自选', async () => {
@@ -222,8 +226,12 @@ describe('新建任务 · 两屏与提交', () => {
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/eef-template');
     await screen.findByText(/LeRobot v2 · 120 条 episode/);
     await user.click(screen.getByText('快速质检'));
-    // screen 1 does not warn about the files screen 2 asks for
-    expect(screen.getByTestId('module-eef_video_consistency')).not.toHaveTextContent('trajectory.json');
+    // screen 1 names the files screen 2 asks for, like the robot type (fifth round)
+    const eefCard = screen.getByTestId('module-eef_video_consistency');
+    expect(eefCard).toHaveTextContent('⚠ 需要补充投影轨迹与夹爪参考');
+    expect(eefCard).toHaveTextContent('比较数据集中声明的末端执行器投影与画面里独立定位的夹爪轨迹和方向是否匹配');
+    expect(eefCard.className).toContain('warn');
+    expect(eefCard).not.toHaveTextContent('trajectory.json');
     await user.click(screen.getByRole('checkbox', { name: 'EEF–视频一致性' }));
     // 超时对冲 is a dropdown like the rest of its row (fourth round)
     await user.click(screen.getByText('高级设置'));
@@ -521,8 +529,10 @@ describe('v1 deep links on /tasks/new (07 §2.1)', () => {
     const region = screen.getByRole('combobox', { name: '交付目录地域' }).closest('.arco-select') as HTMLElement;
     const key = screen.getByRole('combobox', { name: '交付目录访问密钥' }).closest('.arco-select') as HTMLElement;
     for (const el of [region, key]) expect(el).not.toHaveTextContent('同数据集');
+    expect(document.body).not.toHaveTextContent('缓存桶由站点配置好');               // fifth round
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     expect(fieldErrors(region.closest('.arco-form-item') as HTMLElement)).toEqual(['请选择地域']);
+    expect(await screen.findByText('请填写必填项')).toBeInTheDocument();
     expect(fieldErrors(key.closest('.arco-form-item') as HTMLElement)).toEqual(['请选择访问密钥']);
   });
 

@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Message, Modal, Space, Table, Tabs, Tag } from '@arco-design/web-react';
+import { Button, Card, Message, Modal, Space, Table, Tabs, Tag } from '@arco-design/web-react';
 import type { ColumnProps } from '@arco-design/web-react/es/Table';
 import { IconPlus } from '@arco-design/web-react/icon';
 import { useQueryClient } from '@tanstack/react-query';
@@ -242,7 +242,6 @@ export function KeysPage() {
             )}
           </Tabs.TabPane>
           <Tabs.TabPane key="vlm" title={`${zh.credentials.tabBackends}（${backendItems.length}）`}>
-            <Alert type="info" content={zh.credentials.backendsIntro} style={{ marginBottom: 12 }} />
             {backends.isError && !backends.data ? (
               <PageError error={backends.error} onRetry={() => void backends.refetch()} />
             ) : (
