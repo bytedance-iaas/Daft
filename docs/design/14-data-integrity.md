@@ -30,7 +30,7 @@
 
 | # | 决策 |
 |---|---|
-| D50 | 新增「数据完整性」模块：新开 `integrity` 档，排在漏斗最前，硬门，默认勾选（进「完整」「快速」两个预设），可以取消。逐条给出通过、判废或可疑。判废只落在有问题的 episode 上，不可复议；可疑的留在 passed，进裁决线「完整性存疑」，不计待裁、不挡交付；基础设施原因读不到按 D33 记 error。逐帧解码测试是模块参数，默认关。采集协议与采集端校验和清单本期不做 |
+| D50 | 新增「数据完整性」模块：新开 `integrity` 档，排在漏斗最前，硬门，默认勾选（进「完整」「快速」两个预设），可以取消。逐条给出通过、判废或可疑。判废只落在有问题的 episode 上，不可复议；可疑的留在 passed，进裁决线「完整性存疑」，与其它落在 passed 的裁决线一样计入待裁，照 D24 先交付；基础设施原因读不到按 D33 记 error。逐帧解码测试是模块参数，默认关。采集协议与采集端校验和清单本期不做 |
 | D51 | 勾选了数据完整性时，`validate_episode_row` 不通过的条目由它判废并写明原因，不再走「读行失败 → error → held」；不勾选时照旧。源文件缺失照 D40 跳过 |
 | D52 | 预检新增三项（0 字节或过小的文件、mcap 录制中断、mcap 摘要区 CRC），只写进 `warnings`，不改变任何模块的可用性，也不多读样本 |
 
@@ -230,12 +230,12 @@ LeRobot 不需要这一项：缺文件由 D40 处理，帧数由 L1 对账。
 复核目录加一项（D43），`adjudicate-apply` 加一条执行规则：
 
 ```python
-ReviewLine("integrity_check", "integrity_suspect", "完整性存疑", "passed", False,
+ReviewLine("integrity_check", "integrity_suspect", "完整性存疑", "passed", True,
            (("keep", "数据无误，保留"), ("discard", "确有问题，判废"), ("unsure", "拿不准")))
 ```
 
-- `counts_as_pending = False`：不计待裁数，不挡交付（与「被拒复议」一样是可选项）；目前 `applies_to = passed` 的线都计待裁，
-  前端的待裁数、裁决页分组与 Daemon 的迁移校验要核对这一组合。
+- `counts_as_pending = True`：和其它落在 passed 的裁决线（标注分歧、任务成败弃权、EEF 与画面核对）一样计入待裁数，
+  任务停在「已完成（待裁决 N 条）」（D10）；条目照 D24 先交付，裁决不挡交付。
 - 「保留」→ 本模块的结果当作通过；「确有问题，判废」→ 当作 `passed = False`，进 reject；「拿不准」→ 保持原样。
   都照 EEF 的写法：人的回答作为本模块的结果（`aggregate` 的 overrides）。
 - 卡片内容：`reason`、全部 `findings`、涉及的文件；通用渲染即可，不需要专用视图。
@@ -312,7 +312,7 @@ mcap（JPEG）约 39 GB。
 | `pipeline/default.yaml` | `integrity:` 段（`io_concurrency`、`count_tolerance_frames`、`zero_block_bytes`、`majority_ratio`、`rate_outlier_ratio`） |
 | `planner/plan.py`、`planner/estimates.py` | 新档的并发与耗时估算 |
 | `daemon/orchestr/pipeline.py`、`runs.py`、`rules.py`、`results/live.py` | 新的一层、CPU 份额、分档进度 |
-| `adjudicate-apply` 与 Daemon 裁决迁移 | `integrity_check` 的执行规则；`applies_to=passed` + 不计待裁的组合 |
+| `adjudicate-apply` 与 Daemon 裁决迁移 | `integrity_check` 的执行规则（「保留」「判废」的含义） |
 | 前端 | 模块卡片、预设、参数表单零改动（数据驱动）；报告小节视图与 Episode 明细块（`sectionViews.tsx`、`episodeBlocks.tsx`）；原因码文案；分档进度里的新档名 |
 | 对账 | A 类文件不改；合成数据上 v1 对 v2 的对账固定模块清单、不含本模块；v2 自录黄金基线加上本模块重录 |
 
@@ -333,7 +333,7 @@ mcap（JPEG）约 39 GB。
 | mcap 没有结束标识 | 预检警告「录制中断」；质检按读出的内容判 |
 | mcap 摘要区翻转一个字节 | 预检警告；判废 `structure_invalid` |
 | mcap 数据块翻转一个字节 | 判废 `crc_mismatch` |
-| 两条的视频文件相同 | 两条都可疑 `duplicate_content`，裁决卡片出现，不计待裁 |
+| 两条的视频文件相同 | 两条都可疑 `duplicate_content`，出两张「完整性存疑」卡片，待裁数加 2，两条照常交付 |
 | mcap 某相机 topic 频率减半 | 可疑 `rate_outlier` |
 | 视频帧内比特翻转（开 L3） | 判废 `decode_failed` 或可疑 `decode_concealed`；关 L3 时不报 |
 | TOS 读超时（假存储注入） | error → held，`--resume` 后通过 |
