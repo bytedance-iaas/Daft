@@ -1,4 +1,4 @@
-import { Button, Card, Select, Space, Table, Tag, Typography } from '@arco-design/web-react';
+import { Button, Card, Select, Space, Table, Tag, Tooltip, Typography } from '@arco-design/web-react';
 import type { ColumnProps } from '@arco-design/web-react/es/Table';
 import { IconPlus } from '@arco-design/web-react/icon';
 import { useQuery } from '@tanstack/react-query';
@@ -12,7 +12,6 @@ import { OneLine } from '../../components/OneLine';
 import { PageHeader } from '../../components/PageHeader';
 import { RelTime } from '../../components/RelTime';
 import { SearchInput } from '../../components/SearchInput';
-import { StateTag } from '../../components/StateTag';
 import { AddDatasetDrawer } from '../../features/datasets/AddDatasetDrawer';
 import { useDatasetActions } from '../../features/datasets/useDatasetActions';
 import { VisualizeButton } from '../../features/datasets/VisualizeButton';
@@ -20,8 +19,16 @@ import { grouped } from '../../lib/format';
 import { PAGE_SIZES, readPageSize, writePageSize } from '../../lib/prefs';
 import { zh } from '../../locales/zh';
 
-export function CheckTag({ d }: { d: Pick<DatasetItem, 'check_state' | 'checked_at'> }) {
-  if (d.check_state === 'changed') return <Tag color="orange">{zh.checkState.changed}</Tag>;
+/** The fingerprint state; ``short`` (the list's narrow column) says 有变化 and keeps the rest for the tooltip. */
+export function CheckTag({ d, short = false }: { d: Pick<DatasetItem, 'check_state' | 'checked_at'>; short?: boolean }) {
+  if (d.check_state === 'changed')
+    return short ? (
+      <Tooltip content={zh.checkState.changed}>
+        <Tag color="orange">{zh.checkState.changedShort}</Tag>
+      </Tooltip>
+    ) : (
+      <Tag color="orange">{zh.checkState.changed}</Tag>
+    );
   if (!d.checked_at) return <Tag>{zh.checkState.unchecked}</Tag>;
   return <Tag color="green">{zh.checkState.ok}</Tag>;
 }
@@ -76,19 +83,17 @@ export function DatasetListPage() {
     { title: zh.datasets.colFormat, dataIndex: 'format', width: 100, render: (_: unknown, d) => <FormatTag format={d.format} /> },
     { title: zh.datasets.colEpisodes, dataIndex: 'episode_count', width: 90, render: (v: number | null) => grouped(v) },
     { title: zh.datasets.colRobot, dataIndex: 'robot_type', width: 130, render: (v: string | null) => (v ? <OneLine text={v} /> : <span className="muted">{zh.common.unknown}</span>) },
-    { title: zh.datasets.colCheck, dataIndex: 'check_state', width: 160, render: (_: unknown, d) => <span className="nowrap"><CheckTag d={d} /></span> },
+    { title: zh.datasets.colCheck, dataIndex: 'check_state', width: 100, render: (_: unknown, d) => <span className="nowrap"><CheckTag d={d} short /></span> },
     {
+      // the task's name links to it; its state is on the task (fifth round)
       title: zh.datasets.colLastTask,
       dataIndex: 'last_task',
-      width: 210,
+      width: 170,
       render: (_: unknown, d) =>
         d.last_task ? (
-          <div className="one-line-with-tag">
-            <Link to={`/tasks/${d.last_task.id}`}>
-              <OneLine text={d.last_task.name} />
-            </Link>
-            <StateTag state={d.last_task.state} size="small" />
-          </div>
+          <Link to={`/tasks/${d.last_task.id}`}>
+            <OneLine text={d.last_task.name} />
+          </Link>
         ) : (
           <span className="muted">—</span>
         ),

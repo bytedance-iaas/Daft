@@ -191,6 +191,7 @@ export const zh = {
   checkState: {
     ok: '一致',
     changed: '有变化，待重新预检',
+    changedShort: '有变化',
     unchecked: '未检查',
   },
 
@@ -984,7 +985,6 @@ export const zh = {
     logsFollow: '跟随最新',
     logsOlder: '加载更早的日志',
     logsEmpty: '没有日志',
-    logsNote: '日志原文来自命令行，保持英文。运行中的任务会实时追加；往上翻加载更早的日志。',
     logsNoMore: '已经是最早的日志',
     notFound: '任务不存在，可能已被删除',
     keyGone: '这个任务用的访问密钥已删除',
@@ -1123,7 +1123,7 @@ export const zh = {
       endpoint: '端点',
       model: '模型',
       reasoning_effort: '思考强度',
-      vlm_parallelism: 'VLM 并行度 N',
+      vlm_parallelism: 'VLM 并行度',
       cpu_quota: 'CPU 配额（核）',
       memory_gib: '内存配额（GiB）',
       node: '节点',
@@ -1586,7 +1586,6 @@ export const zh = {
     tabAppeals: '被拒复议',
     counts: (decided: number, pending: number, unapplied: number) => `已裁 ${decided} 条 · 待裁 ${pending} 条 · ${unapplied} 条尚未应用`,
     unappliedHint: (n: number) => `${n} 条裁决尚未应用：点「执行裁决」才会建子任务、真正改判决。`,
-    saveHint: '每点一下就保存，可以反复改。点「执行裁决」才会建子任务、真正改判决；交付数据集不会跟着自动更新。',
     apply: '执行裁决',
     applyNothing: '没有尚未应用的裁决',
     applyBusy: '任务还有未结束的子任务，等它结束后再执行裁决',

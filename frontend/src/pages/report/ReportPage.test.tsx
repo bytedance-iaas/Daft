@@ -400,6 +400,8 @@ describe('质检报告 (07 §5)', () => {
     expect(within(latency).getByText('取证仲裁 · arbitration')).toBeInTheDocument();
     expect(latency).toHaveTextContent('392');
     expect(screen.getByText('因中断而重做')).toBeInTheDocument();
+    expect(screen.getByText('VLM 并行度')).toBeInTheDocument();                  // not 「VLM 并行度 N」 (fifth round)
+    expect(screen.queryByText('VLM 并行度 N')).toBeNull();
     await user.click(screen.getByText('仅主流程'));
     await waitFor(() => expect(within(screen.getByTestId('perf-latency')).getAllByRole('row')[1]).toHaveTextContent('345'));
     await user.click(screen.getByText('子任务 · 重试 #1'));

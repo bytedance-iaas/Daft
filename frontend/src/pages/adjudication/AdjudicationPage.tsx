@@ -143,9 +143,11 @@ export function AdjudicationPage() {
         <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
           <Space direction="vertical" size={2}>
             <b data-testid="adj-counts">{counts ? zh.adjudication.counts(counts.decided, counts.pending, counts.unapplied) : '—'}</b>
-            <span className="muted" style={{ fontSize: 12 }}>
-              {counts?.unapplied ? zh.adjudication.unappliedHint(counts.unapplied) : zh.adjudication.saveHint}
-            </span>
+            {counts?.unapplied ? (
+              <span className="muted" style={{ fontSize: 12 }}>
+                {zh.adjudication.unappliedHint(counts.unapplied)}
+              </span>
+            ) : null}
           </Space>
           {blocked ? (
             <Tooltip content={blocked}>

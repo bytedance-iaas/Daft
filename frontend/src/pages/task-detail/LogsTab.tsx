@@ -1,4 +1,4 @@
-import { Button, Card, Select, Space, Switch, Typography } from '@arco-design/web-react';
+import { Button, Card, Select, Space, Switch } from '@arco-design/web-react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, unwrap } from '../../api/client';
@@ -105,9 +105,6 @@ export function LogsTab({ task, subtasks, mode, live }: { task: Task; subtasks: 
           {zh.taskDetail.logsFollow}
         </Space>
       </Space>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-        {zh.taskDetail.logsNote}
-      </Typography.Paragraph>
       {q.isError && !q.data ? (
         <PageError error={q.error} onRetry={() => void q.refetch()} />
       ) : (

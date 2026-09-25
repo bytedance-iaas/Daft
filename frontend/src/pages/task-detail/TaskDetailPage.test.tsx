@@ -315,6 +315,7 @@ describe('任务详情 (07 §4.2)', () => {
     // The adjudication page loads its route and queries first: slower CI runners need more than 1 s.
     const empty = await screen.findByTestId('review-empty', {}, { timeout: 5000 });
     expect(empty).toHaveTextContent(/^没有符合筛选条件的条目$/);      // the default filter is 待裁
+    expect(document.body).not.toHaveTextContent('每点一下就保存');         // no hint under the counts (fifth round)
     expect(screen.queryByText(/被拒的条目在「被拒复议」里/)).toBeNull();
     expect(screen.queryByRole('button', { name: '去被拒复议' })).toBeNull();
     await user.click(screen.getByRole('tab', { name: '被拒复议' }));
@@ -361,6 +362,7 @@ describe('任务详情 (07 §4.2)', () => {
     const { user } = renderApp(`/tasks/${MAIN}#logs`);
     const view = await screen.findByTestId('log-view');
     expect(await within(view).findByText(/subtask retry #1 finished \(revision 2\)/)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('日志原文来自命令行');       // no note above the log (fifth round)
     expect(within(view).queryByText(/task created; pre-start checks passed/)).toBeNull();
     await user.click(within(view).getByRole('button', { name: '加载更早的日志' }));
     expect(await within(view).findByText(/task created; pre-start checks passed/)).toBeInTheDocument();
