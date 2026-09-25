@@ -27,11 +27,12 @@ def _part_lines(run_dir: str, module: str, part: str = "0001") -> list[dict]:
     return read_jsonl(path) if os.path.isfile(path) else []
 
 
-def _in_vlm_stage_with_a_result(d, task_id: str):
-    """The VLM stage is running and has a result, and the stages before it are done. The
-    funnel is pipelined: the VLM stage can write its first result while the numeric and frame
-    stages still work on later episodes, and these tests are about interrupting the VLM stage
-    alone (a slow CI runner paused or stopped the frame stage too, 2026-09-24)."""
+def _in_vlm_stage(d, task_id: str, *, results: int = 0):
+    """The VLM stage is running with at least ``results`` records, and the stages before it
+    are done. The funnel is pipelined: the VLM stage can write its first result while the
+    numeric and frame stages still work on later episodes, and these tests are about
+    interrupting the VLM stage alone (a slow CI runner paused or stopped the frame stage too,
+    2026-09-24)."""
     def ready():
         task = d.get(task_id)
         stages = {s["id"]: s for s in task["progress"]["stages"]}
@@ -39,7 +40,7 @@ def _in_vlm_stage_with_a_result(d, task_id: str):
             return False
         if any(stages.get(sid, {}).get("state") != "succeeded" for sid in ("numeric", "frame")):
             return False
-        return len(_part_lines(d.run_dir(task_id), "task_success")) >= 1
+        return len(_part_lines(d.run_dir(task_id), "task_success")) >= results
     return ready
 
 
@@ -66,22 +67,39 @@ def _snapshot(run_dir: str) -> dict:
     return out
 
 
+#: model parallelism 2: the VLM stage judges one episode at a time (episode gate N // 2)
+ONE_AT_A_TIME = {"start_now": True, "export": True, "vlm_hedge": False,
+                 "limits": {"vlm_parallelism": 2}}
+
+
 def test_pause_then_resume_gives_the_results_of_an_uninterrupted_run(daemon, fake_vlm):
     d = daemon()
-    reference = d.wait(d.create()["id"])
+    reference = d.wait(d.create(params=ONE_AT_A_TIME)["id"])
     assert reference["state"] == "succeeded"
 
-    fake_vlm.delay_s = 0.15                         # slow enough to pause half way
-    task_id = d.create()["id"]
-    d.wait_for(_in_vlm_stage_with_a_result(d, task_id), what="the VLM stage to write a result")
-    r = d.action(task_id, "pause")
-    assert r.status_code == 200, r.text
-    assert r.json()["state"] in ("pausing", "paused")
+    # Half way by construction, not by timing: the model gives no judgement until the pause
+    # is asked for, so the one episode in flight is still being judged and the others
+    # wait their turn (the video judgement makes four calls an episode; a delay alone
+    # let a slow CI runner finish the stage before the pause landed, 2026-09-24).
+    judge = "Assess the robot manipulation task"
+    asked, hold = fake_vlm.count(judge), fake_vlm.hold(judge)
+    try:
+        task_id = d.create(params=ONE_AT_A_TIME)["id"]
+        in_vlm_stage = _in_vlm_stage(d, task_id)
+        d.wait_for(lambda: fake_vlm.count(judge) > asked and in_vlm_stage(),
+                   what="the VLM stage to ask about its first episode")
+        r = d.action(task_id, "pause")
+        assert r.status_code == 200, r.text
+        assert r.json()["state"] in ("pausing", "paused")
+    finally:
+        hold.set()                                  # the episode in flight finishes
     paused = d.wait(task_id, ("paused",), timeout=120)
     assert paused["pause_reason"] == "user"
     assert d.orch.executor.live() == []             # the command finished its episodes and left
     done_before = {r["episode_index"]: r for r in _part_lines(d.run_dir(task_id), "task_success")}
     assert done_before and all(r["verdict"] != "error" for r in done_before.values())
+    # the episodes that were waiting their turn are left for the resume
+    assert len(done_before) < len(results(d.run_dir(reference["id"]), "task_success"))
     stages = {s["id"]: s["state"] for s in paused["progress"]["stages"]}
     assert stages["numeric"] == "succeeded" and stages["vlm"] != "succeeded"
     assert {m["id"]: m["state"] for m in paused["modules"]}["task_success"] != "running"
@@ -89,7 +107,6 @@ def test_pause_then_resume_gives_the_results_of_an_uninterrupted_run(daemon, fak
     assert os.path.isfile(os.path.join(batch, "checks", "timestamp_check", "results.jsonl"))
     assert not os.path.exists(os.path.join(batch, "_COMPLETE"))
 
-    fake_vlm.delay_s = 0.0
     r = d.action(task_id, "resume")
     assert r.status_code == 200 and r.json()["state"] in ("queued", "running"), r.text
     task = d.wait(task_id)
@@ -105,7 +122,7 @@ def test_stop_leaves_no_child_and_continue_repeats_no_finished_work(daemon, fake
     d = daemon()
     fake_vlm.delay_s = 0.15
     task_id = d.create()["id"]
-    d.wait_for(_in_vlm_stage_with_a_result(d, task_id), what="the VLM stage to write a result")
+    d.wait_for(_in_vlm_stage(d, task_id, results=1), what="the VLM stage to write a result")
     r = d.action(task_id, "stop")
     assert r.status_code == 200 and r.json()["state"] in ("stopping", "stopped"), r.text
     stopped = d.wait(task_id, ("stopped",), timeout=60)

@@ -14,6 +14,9 @@ from daemon.util import now_ms
 pytestmark = pytest.mark.slow
 
 DAY = 86_400_000
+#: delivery-only files a restore leaves where they are (``RESTORE_SKIP``); the video judgement
+#: (design 13) writes no probe evidence frames, the sync curves stand in for the rule
+LEFT_THERE = ("checks", "video_action_sync", "curves")
 
 
 def test_a_cleaned_task_comes_back_for_a_reexport_and_for_its_report(daemon):
@@ -24,7 +27,7 @@ def test_a_cleaned_task_comes_back_for_a_reexport_and_for_its_report(daemon):
     task_id, rd, batch = task["id"], d.run_dir(task["id"]), d.delivery(task["run_id"])
     report = d.api("GET", f"/tasks/{task_id}/report")
     assert report.status_code == 200, report.text
-    assert os.path.isdir(os.path.join(batch, "details", "evidence"))   # left there on a restore
+    assert os.listdir(os.path.join(batch, *LEFT_THERE))           # left there on a restore
 
     later = now_ms() + 8 * DAY
     assert d.orch.janitor.sweep(now=later) == [task_id]
@@ -36,9 +39,9 @@ def test_a_cleaned_task_comes_back_for_a_reexport_and_for_its_report(daemon):
     done = d.wait(task_id)
     assert done["state"] == "succeeded" and done["delivery_stale"] is False, done
     assert os.path.isfile(os.path.join(rd, "revisions", "r0001", "commit.json"))
-    assert not os.path.exists(os.path.join(rd, "details", "evidence"))
+    assert not os.path.exists(os.path.join(rd, *LEFT_THERE))
     assert os.path.isfile(os.path.join(batch, "_COMPLETE"))
-    assert any(files for _, _, files in os.walk(os.path.join(batch, "details", "evidence")))
+    assert os.listdir(os.path.join(batch, *LEFT_THERE))
     sub = d.api("GET", f"/tasks/{task_id}/subtasks").json()["items"][-1]
     lines = d.api("GET", f"/tasks/{task_id}/logs",
                   params={"limit": 200, "subtask": sub["id"]}).json()["items"]

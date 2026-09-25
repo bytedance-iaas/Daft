@@ -1,11 +1,12 @@
 """A local OpenAI-compatible endpoint answering like ``tools/parity``'s fake model.
 
 Real HTTP on 127.0.0.1, so the CLI runs unchanged (in process or as a subprocess
-that gets signals). ``delay_s`` slows every answer down (to stop a run half way)
-and ``fail(prompt_text, payload) -> status | None`` makes chosen requests fail
-with an HTTP status. ``max_in_flight`` is the most requests it was ever
-answering at once. ``port`` (default: any free one) is for running it by hand
-(``backend/curation/cli/README.md``, manual steps).
+that gets signals). ``delay_s`` slows every answer down (to stop a run half way),
+``hold(needle)`` keeps the answers to the requests whose text contains ``needle``
+back until the event it returns is set, and ``fail(prompt_text, payload) ->
+status | None`` makes chosen requests fail with an HTTP status. ``max_in_flight``
+is the most requests it was ever answering at once. ``port`` (default: any free
+one) is for running it by hand (``backend/curation/cli/README.md``, manual steps).
 
 The answers are the parity fake's (``tools/parity/fakevlm.py``): picked from the
 request's texts and its images' pixel sizes, never their bytes, so a test gets
@@ -26,6 +27,7 @@ class FakeVlmServer:
     def __init__(self, *, delay_s: float = 0.0, fail=None, model: str = "fake-vlm",
                  port: int = 0):
         self.delay_s, self.fail, self.model, self.port = delay_s, fail, model, port
+        self._holds: list[tuple[str, threading.Event]] = []
         self.fake = FakeVlm(model)
         self.calls: list[dict] = []
         #: requests being answered right now, and the most there ever were at once
@@ -88,6 +90,9 @@ class FakeVlmServer:
                 with srv._lock:
                     srv.calls.append({"path": self.path, "text": text, "payload": payload,
                                       "headers": dict(self.headers)})
+                    gates = [gate for needle, gate in srv._holds if needle in text]
+                for gate in gates:
+                    gate.wait(timeout=120)
                 if srv.delay_s:
                     time.sleep(srv.delay_s)
                 status = srv.fail(text, payload) if srv.fail else None
@@ -125,6 +130,14 @@ class FakeVlmServer:
     def url(self) -> str:
         host, port = self._server.server_address[:2]
         return f"http://{host}:{port}/v1"
+
+    def hold(self, needle: str) -> threading.Event:
+        """Answer the requests whose text contains ``needle`` only once the returned event
+        is set (a test pauses a stage while its episode in flight is still being judged)."""
+        gate = threading.Event()
+        with self._lock:
+            self._holds.append((needle, gate))
+        return gate
 
     def count(self, needle: str) -> int:
         with self._lock:

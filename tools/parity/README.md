@@ -26,7 +26,7 @@ v2 重构的安全网。**2026-09-24（设计 13）起基线是 v2 自录的**�
 | `archive` / `fetch` | 导出结果连同 `MANIFEST.json`（逐文件 sha256）上传到 TOS / 取回并校验 |
 | `v1-manifest` | 从 git 重新生成 `v1_manifest.json`（冻结点逐文件的 blob 哈希） |
 | `v1-src` | 从 git 取出冻结点的 v1 源码树，作为本地运行 `dump-v1` 的 `--v1-src` |
-| `a-class-check` | A 类算法文件与冻结点逐个比对；有差异且 PR 描述里没有 `parity-change:` 说明就失败（CI 里跑） |
+| `a-class-check` | A 类算法文件与冻结点逐个比对；有差异、PR 描述里没有 `parity-change:` 说明、`a_class_declared.json` 也没登记就失败（CI 里跑） |
 
 所有命令都在仓库根目录、以 `PYTHONPATH=tools` 运行。
 
@@ -114,14 +114,16 @@ $python -m parity dump-v1 --out $W/rep --v1-src $V1 --replay $W/rec/vlm_tape.jso
 $python -m parity compare --golden $W/rec --candidate $W/rep --all-strict
 ```
 
-再用同一盘带子跑 v2 的命令链，和 v1 逐位对账（约半分钟）：
+v2 的命令链对它自己的黄金基线（设计 13 起；v1 的带子答不了 v2 的视频请求，约十秒）：
 
 ```bash
-# 5. v2 的原子命令，按 Daemon 的顺序，回放 v1 的录制带 → [run-v2] done; tape replay: hits=121 misses=0 unused=0
-$python -m parity run-v2 --out $W/v2 --input $W/mini --delivery $W/v2-delivery --replay $W/rec/vlm_tape.jsonl.gz
+# 5. v2 的原子命令，按 Daemon 的顺序，由假模型现答并录下全部调用：这就是黄金基线
+$python -m parity run-v2 --out $W/v2-golden --input $W/mini --delivery $W/v2-golden-delivery --fake-vlm
 
-# 6. v1 对 v2：九项逐位一致、终判清单一致、回放无缺无余 → conclusion: PASS
-$python -m parity compare --golden $W/rec --candidate $W/v2 --all-strict
+# 6. 回放这盘带子再跑一遍 → [run-v2] done; tape replay: hits=34 misses=0 unused=0
+#    与基线对账：九项逐位一致、终判清单一致、回放无缺无余 → conclusion: PASS
+$python -m parity run-v2 --out $W/v2 --input $W/mini --delivery $W/v2-delivery --replay $W/v2-golden/vlm_tape.jsonl.gz
+$python -m parity compare --golden $W/v2-golden --candidate $W/v2 --all-strict
 ```
 
 `$W/v2/parity.json` 记着每一步的命令行、退出码、`--json` 输出和录制带统计；各命令的 stderr 在 `$W/v2/logs/parity-run.log`。
@@ -131,30 +133,34 @@ $python -m parity compare --golden $W/rec --candidate $W/v2 --all-strict
 - 第 2 步的 `$W/rec/final.json` 里，`passed` 是 `[0, 1, 3, 4, 6]`，`reject` 是 `[2, 5, 7]`
   （2 是时间戳跳变，5 是残段，7 与 3 字节级重复）；`v1_views.passed_json` 里却有 7：
   这是 v1 的一个小问题，`passed.json` 没扣掉被去重剔除的条目（交付数据集里是扣掉了的）。
-  `review` 是 `[0, 3, 7]`：三条都在 task_success 上弃权。第 6 步比 review 时把 7 摘出来单列
-  （「left out of review (rejected by v1 …)」）：v1 还在问一条被它拒掉的副本成败，v2 里被拒的条目没有成败问题，只有复议（D42）。
+  `review` 是 `[0, 3, 7]`：三条都在 task_success 上弃权。
+- v2 的基线（第 5 步）终判清单相同：`$W/v2-golden/revisions/r0001/` 里 `passed` `[0, 1, 3, 4, 6]`、`reject` `[2, 5, 7]`；
+  review 里 0、3 是 task_success 弃权，7 是被去重剔除条目的复议（D42）。第 6 步比 review 时不算被拒的条目（`review: golden 2`）。
 - `$python -m parity tape-summary $W/rec/vlm_tape.jsonl.gz` 应列出 probe / endstate / arbitration / caption 各类调用，`0 failed calls`。
-- 单元测试与端到端测试：`$python -m pytest -q tools/parity/tests`（约 1 分钟；`test_v2_parity.py` 就是第 5–8 步，
-  外加「带子上少一个请求时对账必须失败」「按首轮完整流程重判的改标对不上 v1 的 rejudge」两个反例，CI 的对账工具一步里一起跑）。
+  v2 的带子（`$W/v2-golden/vlm_tape.jsonl.gz`）37 条：probe 6（每条一次视频主判）、endstate 12（逐机位复核）、
+  arbitration 6、caption 5，另有 5 次文本调用和 3 次 `/models` 探活，`0 failed calls`。
+- 单元测试与端到端测试：`$python -m pytest -q tools/parity/tests`（约一分半；`test_v2_parity.py` 就是第 5、6、8 步，
+  外加「带子上少一个请求时对账必须失败」「按首轮完整流程重判的改标离开裁决基线的带子」两个反例；
+  `test_dump_v1_e2e.py` 守着 v1 一侧的录制、回放与改答案必报；CI 的对账工具一步里一起跑）。
 
-mcap 与 Lance 的对账（D44，每种约半分钟）：同样 8 条做成两种新格式，v1（新冻结点，带 PR #155）跑一遍录带子，
-v2 的命令链回放它（`run-v2` 与 Daemon 一样给读源数据的命令带 `--selection`），标准与 LeRobot 相同：
+mcap 与 Lance 的对账（D44，每种十来秒）：同样 8 条做成两种新格式，v2 的命令链各录一盘黄金基线、再回放它
+（`run-v2` 与 Daemon 一样给读源数据的命令带 `--selection`），标准与 LeRobot 相同：
 
 ```bash
 for F in mcap lance; do
   $python -m parity make-fixture --format $F --out $W/mini-$F
-  $python -m parity dump-v1 --out $W/rec-$F --v1-src $V1 --fake-vlm -- run --input $W/mini-$F --output $W/rec-$F-out \
-    --vlm-endpoint http://fake-vlm.local/v1 --vlm-model fake-vlm
-  $python -m parity run-v2 --out $W/v2-$F --input $W/mini-$F --delivery $W/v2-$F-delivery --replay $W/rec-$F/vlm_tape.jsonl.gz
-  $python -m parity compare --golden $W/rec-$F --candidate $W/v2-$F --all-strict      # conclusion: PASS
+  $python -m parity run-v2 --out $W/v2-golden-$F --input $W/mini-$F --delivery $W/v2-golden-$F-delivery --fake-vlm
+  $python -m parity run-v2 --out $W/v2-$F --input $W/mini-$F --delivery $W/v2-$F-delivery --replay $W/v2-golden-$F/vlm_tape.jsonl.gz
+  $python -m parity compare --golden $W/v2-golden-$F --candidate $W/v2-$F --all-strict      # conclusion: PASS
 done
 ```
 
-v1 的 `final.json` 与 LeRobot 版本相同（`passed` `[0, 1, 3, 4, 6]`、`reject` `[2, 5, 7]`），回放 `misses=0 unused=0`；
+两种格式的终判清单都与 LeRobot 版本相同（`passed` `[0, 1, 3, 4, 6]`、`reject` `[2, 5, 7]`），回放 `misses=0 unused=0`；
 v2 的交付在 `$W/v2-mcap-delivery/export/mcap_curated/` 与 `$W/v2-lance-delivery/export/lance_episodes/`。
 自动化的版本是 `tools/parity/tests/test_containers_parity.py`。
 
-人工裁决的对账（D39，约半分钟）：v1 的 rejudge 在交付上执行两条改标，v2 的裁决序列回放它录下的带子：
+人工裁决的对账（D39，约半分钟）：第 7 步是 v1 的 rejudge 在交付上执行两条改标（v1 一侧工具的回归）；
+第 8 步是 v2 在第 5 步的基线上执行同样两条改标，先由假模型现答录一盘裁决基线，再回放它对账：
 
 ```bash
 # 7. v1 执行裁决：0、1 两条改标 → [dump-v1] clean: {'records': {'task_success': 2}, … 'passed': 5, 'reject': 3, 'review': 3}
@@ -164,20 +170,23 @@ printf 'episode_id,decision,new_label,note,at\nep000001,采纳建议改标,stack
 printf 'checks:\n  task_success:\n    vlm:\n      endpoint: http://fake-vlm.local/v1\n      model: fake-vlm\n' > $W/fake.yaml
 $python -m parity dump-v1 --out $W/rej --v1-src $V1 --fake-vlm -- rejudge --delivery $W/rej-delivery --input $W/mini --config $W/fake.yaml
 
-# 8. v2 的裁决序列，同样两条改标（relabel_rerun 缺省 v1），回放第 7 步的带子
-#    → [run-v2] done; tape replay: hits=26 misses=0 unused=0；compare 的结论 PASS
+# 8. v2 的裁决序列，同样两条改标（relabel_rerun 缺省 v1）：先录裁决基线，再回放它
+#    → [run-v2] done; tape replay: hits=8 misses=0 unused=0；compare 的结论 PASS
 cat > $W/decisions.json <<'EOF'
 {"schema_version": "1.0", "decisions": [
  {"id": 1, "episode_index": 1, "line": "label", "decision": "custom_label", "new_label": "stack the cups", "note": null, "decided_by": "me", "decided_at": 1790000000001},
  {"id": 2, "episode_index": 0, "line": "label", "decision": "custom_label", "new_label": "wipe the table", "note": null, "decided_by": "me", "decided_at": 1790000000002}]}
 EOF
-$python -m parity run-v2 --out $W/v2-adj --from $W/v2 --input $W/mini --decisions $W/decisions.json --replay $W/rej/vlm_tape.jsonl.gz
-$python -m parity compare --golden $W/rej --candidate $W/v2-adj --all-strict
+$python -m parity run-v2 --out $W/v2-adj-golden --from $W/v2-golden --input $W/mini --decisions $W/decisions.json --fake-vlm
+$python -m parity run-v2 --out $W/v2-adj --from $W/v2-golden --input $W/mini --decisions $W/decisions.json --replay $W/v2-adj-golden/vlm_tape.jsonl.gz
+$python -m parity compare --golden $W/v2-adj-golden --candidate $W/v2-adj --all-strict
 ```
 
 逐项核对：第 7 步的带子有 26 条（16 次打分、8 次逐机位复核、2 次技能画像归类的文本调用），没有仲裁——v1 的 rejudge 只跑两层；
-1 按新标注判成功，0 仍弃权、回到待裁决；第 8 步 `task_success 0/2 differ`、`skill_profile 0/5 differ`，终判清单一致（7 照样单列）。
-把 `decisions.json` 加上 `"relabel_rerun": "full"` 再跑第 8 步：v2 按首轮完整流程重判，发出 v1 没发过的请求，回放出现 misses，结论 FAIL。
+1 按新标注判成功，0 仍弃权、回到待裁决。第 8 步的裁决基线带子 10 条（2 次视频主判、4 次逐机位复核、2 次技能画像归类的
+文本调用、2 次探活），同样没有仲裁；compare `task_success 0/2 differ`、`skill_profile 0/5 differ`，终判清单一致。
+把 `decisions.json` 加上 `"relabel_rerun": "full"`，只重跑第 8 步的回放（第二条命令）：v2 按首轮完整流程重判，
+发出裁决基线没录过的请求，回放出现 misses，结论 FAIL。
 
 ## 在现网 Pod 里生成黄金基线
 

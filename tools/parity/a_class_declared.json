@@ -1,0 +1,30 @@
+{
+  "about": "A-class files adopted with a known difference from the freeze commit (design doc 10, section 2.1). Each entry pins the file's git blob hash and says why; the guard lets exactly that content through, and any further edit is caught again.",
+  "files": {
+    "core/checks/task_success.py": {
+      "blob": "a36e02551a2437d7ff65fd2b8bddc1117203d679",
+      "since": "6193e8370",
+      "why": "design 13 (video-native judgement): the frame-probe path, kept for old deliveries and injected tests, asks its probes in time order instead of shuffled; comments follow"
+    },
+    "dataset_level/caption.py": {
+      "blob": "631c431ca0ec46d9c4500dae3ded29d6fec24d47",
+      "since": "6193e8370",
+      "why": "design 13 (video-native judgement): captions read the continuous videos (video captioner, media_protocol=video-caption/1 cache boundary); an 'unclear' caption counts as none"
+    },
+    "dataset_level/profile.py": {
+      "blob": "5e7943db7f174d251fa9ef48dc6ec36fcfcf16a5",
+      "since": "6193e8370",
+      "why": "design 13 (video-native judgement): comment: the grouping text is the video caption first, the annotation as fallback"
+    },
+    "dataset_level/reassign.py": {
+      "blob": "1618c086552ea19bcceb83b2ad4e6379ddde8980",
+      "since": "6193e8370",
+      "why": "design 13 (video-native judgement): grouping_text_and_source puts the video caption first and falls back to the annotation (was annotation first)"
+    },
+    "vlm_call_kinds.py": {
+      "blob": "9fb6e82b2749fe0fe0d462179489dfd521461b1d",
+      "since": "6193e8370",
+      "why": "design 13 (video-native judgement): the call-kind notes describe the continuous-video requests"
+    }
+  }
+}
