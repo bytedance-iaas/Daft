@@ -63,8 +63,11 @@ def _serve(conn, argv: list[str], env: dict[str, str], cwd: str | None) -> None:
     """Spawn entry: CLI semantics with a connection in place of stdio."""
     os.setsid()
     signal.signal(signal.SIGINT, lambda *_: sys.exit(130))
+    from daemon.exec.runner import THREAD_ENV
+
     os.environ.clear()
-    os.environ.update(env)
+    # before curation (numpy, OpenCV) is imported: their thread pools read it at load time
+    os.environ.update({**THREAD_ENV, **env})
     if cwd:
         os.chdir(cwd)
     from daemon.exec.runner import CHILD_OOM_SCORE_ADJ, set_oom_score_adj

@@ -2,10 +2,10 @@
 
 | Variable | Default | Meaning |
 |---|---|---|
-| ``CURATOR_MAX_RUNNING_TASKS`` | 1 | tasks (main runs and subtasks together) running at once (P1) |
+| ``CURATOR_MAX_RUNNING_TASKS`` | 3 | tasks (main runs and subtasks together) running at once (P1) |
 | ``CURATOR_CLI`` | ``<python> -m curation.cli`` | the command line of the CLI (shell-split) |
-| ``CURATOR_SITE_CONFIG`` | ``$CURATION_CONFIG`` | planner site settings, YAML or JSON: the ``concurrency`` and ``vlm`` blocks of the site.yaml the chart writes (the CLI reads the same file through ``CURATION_CONFIG``) |
-| ``CURATOR_CPU_CORES`` | the container's CPU quota, else ``os.cpu_count()`` | cores the planner plans for |
+| ``CURATOR_SITE_CONFIG`` | ``$CURATION_CONFIG`` | planner site settings, YAML or JSON: the ``concurrency`` and ``vlm`` blocks of the site.yaml the chart writes (the CLI reads the same file through ``CURATION_CONFIG``); ``concurrency.cpu`` / ``cpuMax`` are ignored with a warning (D54) |
+| ``CURATOR_CPU_CORES`` | the container's CPU quota, else ``os.cpu_count()`` | cores of the node: all but two are CPU workers, one pool shared by every running task (P4, D54) |
 | ``CURATOR_MEMORY_ADMISSION`` | 0.8 | a frame stage waits while memory use is above this share (0 = off) |
 | ``CURATOR_TERM_GRACE_S`` / ``CURATOR_INT_GRACE_S`` | 90 / 10 | SIGTERM -> SIGKILL, SIGINT -> SIGKILL (02 §4) |
 | ``CURATOR_VERIFY_VISIBILITY_S`` | 60 | ``curation verify --visibility-timeout`` |
@@ -45,22 +45,36 @@ def _number(env: Mapping[str, str], name: str, default: float, *, minimum: float
     return value
 
 
-def container_cpu_cores() -> int | None:
-    """The cgroup v2 CPU quota (``cpu.max``), rounded down, at least 1; None when unlimited."""
+def container_cpu_cores(root: str = "/sys/fs/cgroup") -> int | None:
+    """The container's CPU quota, rounded down, at least 1; None when unlimited.
+
+    cgroup v2 ``cpu.max`` (``"<quota> <period>"``, ``max`` = unlimited), else cgroup v1
+    ``cpu/cpu.cfs_quota_us`` / ``cpu.cfs_period_us`` (``-1`` = unlimited).
+    """
+    base = pathlib.Path(root)
     try:
-        text = pathlib.Path("/sys/fs/cgroup/cpu.max").read_text().split()
-    except OSError:
-        return None
-    if len(text) != 2 or text[0] == "max":
-        return None
+        quota, period = base.joinpath("cpu.max").read_text().split()
+    except (OSError, ValueError):
+        try:
+            quota = base.joinpath("cpu", "cpu.cfs_quota_us").read_text().strip()
+            period = base.joinpath("cpu", "cpu.cfs_period_us").read_text().strip()
+        except OSError:
+            return None
     try:
-        return max(1, int(int(text[0]) / int(text[1])))
-    except (ValueError, ZeroDivisionError):
+        q, n = int(quota), int(period)
+    except ValueError:                                 # "max"
         return None
+    if q <= 0 or n <= 0:
+        return None
+    return max(1, q // n)
 
 
 def load_site_config(path: str | None) -> dict:
-    """The planner's site settings (``concurrency`` / ``vlm`` blocks); {} without a file."""
+    """The planner's site settings (``concurrency`` / ``vlm`` blocks); {} without a file.
+
+    ``concurrency.cpu`` / ``cpuMax`` of site files written before D54 are dropped with a
+    warning, never an error: an upgrade must not keep the Daemon from starting.
+    """
     if not path:
         return {}
     p = pathlib.Path(path)
@@ -79,13 +93,23 @@ def load_site_config(path: str | None) -> dict:
         raise OrchestratorConfigError(f"站点配置 {p} 不是合法的 YAML / JSON：{err}") from None
     if not isinstance(data, dict):
         raise OrchestratorConfigError(f"站点配置 {p} 的顶层应该是一个对象")
-    return {k: data[k] for k in ("concurrency", "vlm") if k in data}
+    from curation.planner.limits import RETIRED_SITE_KEYS, retired_site_keys
+
+    out = {k: data[k] for k in ("concurrency", "vlm") if k in data}
+    retired = retired_site_keys(out)
+    if retired:
+        log.warning("site config %s: %s ignored - CPU workers are the container's cores minus 2, "
+                    "shared by the running tasks; a task can only lower its own cap", p,
+                    ", ".join(retired))
+        out["concurrency"] = {k: v for k, v in out["concurrency"].items()
+                              if k not in RETIRED_SITE_KEYS}
+    return out
 
 
 @dataclass(frozen=True)
 class OrchestratorConfig:
     enabled: bool = True
-    max_running: int = 1
+    max_running: int = 3
     program: tuple[str, ...] = field(default_factory=lambda: tuple(default_program()))
     site_config: dict = field(default_factory=dict)
     cpu_cores: int | None = None
@@ -119,7 +143,7 @@ class OrchestratorConfig:
         enabled = str(env.get("CURATOR_ORCHESTRATOR", "on") or "on").strip().lower() \
             not in ("off", "0", "false", "no")
         cores = _number(env, "CURATOR_CPU_CORES", 0, minimum=0, integer=True)
-        max_running = _number(env, "CURATOR_MAX_RUNNING_TASKS", 1, minimum=1, integer=True)
+        max_running = _number(env, "CURATOR_MAX_RUNNING_TASKS", 3, minimum=1, integer=True)
         term = _number(env, "CURATOR_TERM_GRACE_S", 90.0)
         site = (str(env.get("CURATOR_SITE_CONFIG", "") or "").strip()
                 or str(env.get("CURATION_CONFIG", "") or "").strip())
@@ -137,6 +161,13 @@ class OrchestratorConfig:
             shutdown_wait_s=max(float(term) + 10.0, 30.0),
             work_retention_s=float(_number(env, "CURATOR_WORK_RETENTION_DAYS", 7.0)) * 86400.0,
         )
+
+    @property
+    def cpu_workers(self) -> int:
+        """Size of the Daemon's CPU pool: the cores the planner plans for, minus 2 (P4, D54)."""
+        from curation.planner import available_cpu_workers
+
+        return available_cpu_workers(self.cpu_cores)
 
     def with_(self, **changes: Any) -> "OrchestratorConfig":
         from dataclasses import replace

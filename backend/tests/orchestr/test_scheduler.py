@@ -99,7 +99,7 @@ def test_one_slot_first_in_first_out(pool):
         pool.record("end", run.task_id)
         return "succeeded"
 
-    c, rt = pool(behaviour)
+    c, rt = pool(behaviour, CURATOR_MAX_RUNNING_TASKS=1)
     ids = _prepared(rt, 3)
     for i in ids:
         _wait_state(rt, i, {"succeeded"})
@@ -109,6 +109,31 @@ def test_one_slot_first_in_first_out(pool):
     for what, _, _ in sorted(pool.events, key=lambda e: e[2]):
         open_ += 1 if what == "start" else -1
         assert open_ <= 1
+
+
+def test_three_run_at_once_by_default_and_the_fourth_waits(pool):
+    """P1 (D54): three slots unless CURATOR_MAX_RUNNING_TASKS says otherwise."""
+    gate = threading.Barrier(3, timeout=5)
+    release = threading.Event()
+
+    def behaviour(run):
+        pool.record("start", run.task_id)
+        if len([e for e in pool.events if e[0] == "start"]) <= 3:
+            gate.wait()                               # the first three are in here together
+            release.wait(10)
+        return "succeeded"
+
+    c, rt = pool(behaviour)
+    assert rt.orchestrator.cfg.max_running == 3
+    ids = _prepared(rt, 4)
+    for i in ids[:3]:
+        _wait_state(rt, i, {"running"})
+    time.sleep(0.3)
+    assert rt.repo.get_task(ids[3]).state == "queued"
+    release.set()
+    for i in ids:
+        _wait_state(rt, i, {"succeeded"})
+    assert [e[1] for e in pool.events if e[0] == "start"][3] == ids[3]
 
 
 def test_two_slots_run_two_at_once(pool):

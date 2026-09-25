@@ -449,7 +449,8 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
   if (plan.isLoading) return <Spin />;
   if (!plan.data) return <Typography.Text type="error">{errorMessage(plan.error)}</Typography.Text>;
   const p = plan.data;
-  const limit = (l: { value: number; bound_by: string }) => `${l.value}（${zh.taskDetail.boundBy[l.bound_by] ?? l.bound_by}）`;
+  const limit = (l: { value: number; bound_by: string }, labels: Record<string, string> = {}) =>
+    `${l.value}（${labels[l.bound_by] ?? zh.taskDetail.boundBy[l.bound_by] ?? l.bound_by}）`;
   const episodes = (ref: string | undefined) => {
     if (!ref) return '—';
     if (ref.startsWith('survivors:')) return zh.taskDetail.planSurvivors(stageLabel(ref.slice('survivors:'.length)));
@@ -457,7 +458,7 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
   };
   return (
     <div data-testid="plan">
-      <Typography.Paragraph>{zh.taskDetail.planLimits(p.vlm_parallelism, limit(p.limits.cpu_concurrency), limit(p.limits.vlm_parallelism))}</Typography.Paragraph>
+      <Typography.Paragraph>{zh.taskDetail.planLimits(p.vlm_parallelism, limit(p.limits.cpu_concurrency, zh.taskDetail.cpuBoundBy), limit(p.limits.vlm_parallelism))}</Typography.Paragraph>
       <Table
         rowKey="id"
         size="small"
@@ -471,7 +472,7 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
             title: zh.taskDetail.planCols.concurrency,
             dataIndex: 'concurrency',
             render: (_: unknown, s: Plan['stages'][number]) =>
-              [s.concurrency ? `CPU ${s.concurrency}` : '', s.gates ? Object.entries(s.gates).map(([k, n]) => planGateText(k, n)).join(' · ') : '', s.hard_gates?.length ? zh.taskDetail.planHardGates(s.hard_gates.map((m) => moduleName(reg.data, m)).join('、')) : '', s.merge ? planMergeText(s.merge.strategy) : '']
+              [s.concurrency ? zh.taskDetail.planCpu(s.concurrency) : '', s.gates ? Object.entries(s.gates).map(([k, n]) => planGateText(k, n)).join(' · ') : '', s.hard_gates?.length ? zh.taskDetail.planHardGates(s.hard_gates.map((m) => moduleName(reg.data, m)).join('、')) : '', s.merge ? planMergeText(s.merge.strategy) : '']
                 .filter(Boolean)
                 .join(' · ') || '—',
           },
@@ -504,7 +505,7 @@ function MoreInfo({ task }: { task: Task }) {
     { label: zh.taskDetail.cfgVlm, value: task.vlm ? `${task.vlm.backend} · ${task.vlm.model}` : '—' },
     { label: zh.taskDetail.cfgEffort, value: task.vlm ? task.vlm.reasoning_effort ?? zh.taskDetail.cfgEffortDefault : '—' },
     { label: zh.taskDetail.cfgRetry, value: task.vlm ? zh.taskDetail.cfgRetryValue(p.vlm_retry ?? 3, p.vlm_hedge !== false) : '—' },
-    { label: zh.taskDetail.cfgLimits, value: `CPU ${p.limits?.cpu_concurrency ?? zh.common.unlimited} · VLM ${p.limits?.vlm_parallelism ?? zh.common.unlimited}` },
+    { label: zh.taskDetail.cfgLimits, value: `CPU ${p.limits?.cpu_concurrency ?? zh.taskForm.cpuLimitPlaceholder} · VLM ${p.limits?.vlm_parallelism ?? zh.common.unlimited}` },
     { label: zh.taskDetail.cfgExport, value: `${p.export === false ? zh.taskDetail.noExport : zh.taskDetail.yesExport}${p.clips ? ` · ${zh.taskDetail.clipsOn}` : ''}` },
   ];
   return (

@@ -1,4 +1,9 @@
-"""Credit-based episode dispatch to one persistent process per funnel layer."""
+"""Credit-based episode dispatch to one persistent process per funnel layer.
+
+The CPU layers draw their episodes' slots from the Daemon's CPU pool (:mod:`.cpupool`,
+D54): the plan's concurrency is what this task may use at most, the pool decides what it
+gets while other tasks run too.
+"""
 from __future__ import annotations
 
 from collections import deque
@@ -13,6 +18,7 @@ from curation.pipeline.timing import processing_times
 from daemon.exec import CliCommand
 
 from . import resources
+from .cpupool import CpuPool
 from .runbase import TaskFailure, input_digest
 from .stage_worker import StageWorker
 from .workdir import write_lines
@@ -152,6 +158,25 @@ def _finish_stage(run, layer, store):
     run.stage_done(sid, state)
 
 
+def pooled_layers(run, stages: list[dict]) -> set[str]:
+    """Layers whose episodes in flight each hold a slot of the CPU pool: numeric and frame;
+    the data integrity layer only when it decodes every frame (L3) - without it the layer
+    waits on I/O and keeps its own width (design doc 14 §2.2)."""
+    from .pipeline import cpu_shares_for
+
+    pooled = set(cpu_shares_for(stages))
+    if any(s["id"] == "integrity" for s in stages) \
+            and run.module_params("data_integrity").get("decode_test"):
+        pooled.add("integrity")
+    return pooled
+
+
+def cpu_pool_of(run, size: int) -> CpuPool:
+    """The Daemon's pool; a run driven outside a Daemon gets one of its own."""
+    pool = getattr(getattr(run, "orch", None), "cpu_pool", None)
+    return pool if pool is not None else CpuPool(size)
+
+
 def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
     from .pipeline import cpu_shares_for, effective_batch_size
 
@@ -160,6 +185,10 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
     shares = cpu_shares_for(stages)
     cpu_budget = min((int(s.get("concurrency") or 1) for s in stages
                       if s["id"] in shares), default=1)
+    pooled = pooled_layers(run, stages)
+    pool = cpu_pool_of(run, max([cpu_budget] + [int(s.get("concurrency") or 1)
+                                                for s in stages if s["id"] in pooled]))
+    pool_key = run.cpu_key
     # a CPU layer's share of the budget; else its own concurrency (the data integrity layer,
     # I/O bound, design doc 14 §2.2), else a VLM layer's episode gate
     layers = [Layer(s, shares.get(s["id"], int(s.get("concurrency")
@@ -189,7 +218,9 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
             if dest in by_id:
                 by_id[dest].ready.append(ep)
         run.log("system", "info", f"流水线：逐条交接并持续补位，每次最多派发 {batch_size} 条；"
-                                  + "，".join(f"{l.sid} 并发 {l.width}" for l in layers))
+                                  + "，".join(f"{l.sid} 并发 {l.width}" for l in layers)
+                                  + (f"；CPU 档每条占全局 CPU 池的一个名额（共 {pool.size} 个，"
+                                     "与同时运行的任务共用）" if pooled else ""))
         for layer in layers:
             if not run.journal.done(layer.sid):
                 run.progress(layer.sid, state="pending", done=0, total=len(selection),
@@ -271,6 +302,9 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
             # Downstream gets first use of released CPU credits. Its queue drains
             # before upstream produces more, including when there is just one CPU.
             cpu_active = sum(len(l.active) for l in layers if l.sid in shares)
+            # Slots follow the episodes actually out: completions, crashes (their
+            # episodes went back to ready) and module failures all give theirs back here.
+            pool.sync(pool_key, sum(len(l.active) for l in layers if l.sid in pooled))
             for i in range(len(layers) - 1, -1, -1):
                 layer = layers[i]
                 if layer.done:
@@ -291,6 +325,8 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
                     if use is not None and use > limit:
                         capacity = 0
                 n = min(batch_size, capacity, len(layer.ready))
+                if n > 0 and layer.sid in pooled and not layer.failed:
+                    n = pool.acquire(pool_key, n)             # after memory admission
                 if n > 0:
                     if not layer.started:
                         layer.started = True
@@ -348,13 +384,17 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
         for job in sync_jobs:
             job.result()
     finally:
-        if any(layer.child is not None for layer in layers):
-            run.terminate_children()
-        for layer in layers:
-            _drain_stopping_worker(run, layer)
-            _close_worker(run, layer)
-            layer.active.clear()
-            _publish_activity(run, layer)
+        try:
+            if any(layer.child is not None for layer in layers):
+                run.terminate_children()
+            for layer in layers:
+                _drain_stopping_worker(run, layer)
+                _close_worker(run, layer)
+                layer.active.clear()
+                _publish_activity(run, layer)
+        finally:
+            # the episodes in flight were finished (pause) or abandoned (stop, crash)
+            pool.leave(pool_key)
         sync_pool.shutdown(wait=True)
         run.usage.flush()
         store.close()

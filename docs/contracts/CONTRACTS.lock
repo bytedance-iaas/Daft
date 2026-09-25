@@ -14,7 +14,7 @@
   "docs/contracts/cli/export-manifest.schema.json": "sha256:d45c6ef528e5c30b2d480d10da91e5084c9e73f7ef0935e59f252e7dc039d5f6",
   "docs/contracts/cli/export.schema.json": "sha256:326f12699d8e042ad5e774905a68acbe9e35c09f7a4a390e54a21745f68104a5",
   "docs/contracts/cli/final-list.schema.json": "sha256:db04f0c33d8b234cb62db5401f189632de18c83b6222abd3b05919260654cdd6",
-  "docs/contracts/cli/plan.schema.json": "sha256:578b9b10031fcd1ed6e8bf1df78959940943a71147680feb68f0da4997c175e3",
+  "docs/contracts/cli/plan.schema.json": "sha256:8098ee302ec3ab3fe088eaa99107ff7a560552505b64ef70128c5b6b3b74c320",
   "docs/contracts/cli/preflight.schema.json": "sha256:961dffe730fbd8ec306333ba69815176652003f1994693c26e956018009b2af0",
   "docs/contracts/cli/report-output.schema.json": "sha256:2403b5bfab1c6353a2c2b8a2aa3276bffb981f227419ae03058fd0278564e85a",
   "docs/contracts/cli/report.schema.json": "sha256:19f9414faddfa060f2afba521d8bdbcd9522e0481e65457d8a11d432e6623592",
@@ -30,7 +30,7 @@
   "docs/contracts/eef/sample.schema.json": "sha256:50dfe10cea1ec103f5a4fc20c9178cb8f294cb986fae6eb88b0e1135fa1eb564",
   "docs/contracts/eef/trajectory_bundle.schema.json": "sha256:6ce8c5f5b6ffe1ddcab680b21a70f4a4ac4d30cff3040037c77f5ee5e2417b2e",
   "docs/contracts/modules.json": "sha256:f13ddad390e23832726b231654929c61f009e3397b22840ccaf4c40863b40e3b",
-  "docs/contracts/openapi.yaml": "sha256:d95f8f3cf67ad14b928b6af16136e21ce38076f76ca404ab312d8245c4b8aefc",
+  "docs/contracts/openapi.yaml": "sha256:52ff25e7a26a1330c802ff80933343c0ad28ee7bd3d4481a9b46dcfef63ea905",
   "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:014d924766cdfe13c79a400e4c31134bb2c1e8a3830644d3644135ab1c9f5058",
   "docs/contracts/progress.schema.json": "sha256:ecb75b41143af25a34e1ae33aebca5d0dca9dd4bae61dc941b805153496d8487"
  },

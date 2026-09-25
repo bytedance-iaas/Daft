@@ -339,6 +339,16 @@ describe('任务详情 (07 §4.2)', () => {
     }
   });
 
+  it('the plan says the CPU concurrency is a cap: every core but two unless the task lowers it (D54)', async () => {
+    const { user } = renderApp(`/tasks/${MAIN}`);
+    await screen.findByTestId('report-summary');
+    await user.click(screen.getByText('更多信息'));
+    const plan = await screen.findByTestId('plan');
+    expect(plan).toHaveTextContent('CPU 并发上限 30（可用核数 − 2）');
+    expect(within(plan).getAllByText(/CPU 上限 30/)).toHaveLength(2);           // numeric and frame
+    expect(document.body).toHaveTextContent(/CPU (用满可用核|\d+) · VLM/);
+  });
+
   it('改名称和备注 validates the name and PATCHes with If-Match', async () => {
     let ifMatch = '';
     server.events.on('request:start', ({ request }) => {

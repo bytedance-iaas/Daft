@@ -146,7 +146,7 @@ export function AdvancedSection({ v, set, errors, vlm }: { v: FormValues; set: (
           ) : null}
           <Col span={6}>
             <Field label={zh.taskForm.cpuLimit} error={errors.cpuLimit}>
-              <InputNumber value={v.cpuLimit} min={1} precision={0} placeholder={zh.taskForm.limitPlaceholder} onChange={(x) => set({ cpuLimit: x ? Number(x) : undefined })} aria-label={zh.taskForm.cpuLimit} />
+              <InputNumber value={v.cpuLimit} min={1} precision={0} placeholder={zh.taskForm.cpuLimitPlaceholder} onChange={(x) => set({ cpuLimit: x ? Number(x) : undefined })} aria-label={zh.taskForm.cpuLimit} />
             </Field>
           </Col>
           {vlm ? (

@@ -1009,11 +1009,11 @@ export function mainPlan(): Plan {
   return {
     schema_version: '1.0',
     vlm_parallelism: 64,
-    limits: { cpu_concurrency: { value: 8, bound_by: 'planner' }, vlm_parallelism: { value: 64, bound_by: 'model' } },
+    limits: { cpu_concurrency: { value: 30, bound_by: 'planner' }, vlm_parallelism: { value: 64, bound_by: 'model' } },
     stages: [
       { id: 'autolabel', kind: 'vlm', command: 'autolabel', episodes: 'unlabeled', gates: { caption: 32 } },
-      { id: 'numeric', kind: 'cpu', command: 'check', concurrency: 8, modules: ['timestamp_check', 'motion_quality'], episodes: 'selected', hard_gates: ['timestamp_check'] },
-      { id: 'frame', kind: 'cpu', command: 'check', concurrency: 8, modules: ['visual_quality', 'video_action_sync'], episodes: 'survivors:numeric', hard_gates: ['video_action_sync'] },
+      { id: 'numeric', kind: 'cpu', command: 'check', concurrency: 30, modules: ['timestamp_check', 'motion_quality'], episodes: 'selected', hard_gates: ['timestamp_check'] },
+      { id: 'frame', kind: 'cpu', command: 'check', concurrency: 30, modules: ['visual_quality', 'video_action_sync'], episodes: 'survivors:numeric', hard_gates: ['video_action_sync'] },
       { id: 'vlm', kind: 'vlm', command: 'check', modules: ['task_success'], episodes: 'survivors:frame', gates: { episode: 32, probe: 64, endstate: 64, arbitration: 32, guard_caption: 32 }, merge: { strategy: 'none', groups: [] } },
       { id: 'verdict', kind: 'aggregate', command: 'aggregate', phase: 'funnel' },
       { id: 'dedup', kind: 'cpu', command: 'check', concurrency: 1, modules: ['dedup'], episodes: 'keep' },

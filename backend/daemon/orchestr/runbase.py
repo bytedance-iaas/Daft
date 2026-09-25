@@ -109,6 +109,11 @@ class Run:
         return self.sub_id or "main"
 
     @property
+    def cpu_key(self) -> tuple[str, str | None]:
+        """Who holds slots of the Daemon's CPU pool (:mod:`.cpupool`)."""
+        return (self.task_id, self.sub_id)
+
+    @property
     def log_subtask(self) -> str | None:
         return self.sub_id
 

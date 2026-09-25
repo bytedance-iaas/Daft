@@ -8,13 +8,16 @@ Callers never submit a plan (D5). What they can do is lower two numbers:
 Each number is the smallest of the bounds that apply, and the plan records
 which layer won (``plan.json`` ``limits.*.bound_by``):
 
-    cpu  = min(site default | planner default min(8, cores/4),  site max,  task cap)
+    cpu  = min(cores - 2 (at least 1),  task cap)        (P4: one worker per core, two
+                                                          cores left to the Daemon)
     N    = min(task cap, model parallelism, backend parallelism, site max,
                site default | planner default 64   (only when neither the model
                                                      nor the backend sets one))
     N    = N // running tasks                        (P1, when more than one runs)
 
-``dedup`` is not covered here: its concurrency is always 1 (doc 05, section 1).
+``cpu`` is what one task may use at most; the Daemon hands out the cores themselves from
+one pool shared by every running task (04 §2.3, D54). ``dedup`` is not covered here: its
+concurrency is always 1 (doc 05, section 1).
 """
 from __future__ import annotations
 
@@ -24,8 +27,10 @@ from typing import Any, Mapping
 
 #: Planner defaults when neither the site nor the task says anything.
 DEFAULT_VLM_PARALLELISM = 64      # v1's factory defaults are the gates of N=64 (04 §2.2)
-CPU_DEFAULT_MAX = 8               # P4: min(8, cores / 4)
-CORES_PER_CPU_WORKER = 4
+RESERVED_CORES = 2                # P4: left to the Daemon and the web console
+
+#: ``concurrency`` keys of site settings before D54: read, ignored, warned about
+RETIRED_SITE_KEYS = ("cpu", "cpuMax", "cpu_max")
 
 #: When several bounds tie, the one reported is the first in this order: the layers
 #: a user can change come first, so ``bound_by`` answers "which of my settings is in effect".
@@ -49,6 +54,23 @@ def _positive_int(name: str, value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"{name} must be a positive integer, got {value!r}")
     return value
+
+
+def available_cpu_workers(cores: int | None = None) -> int:
+    """CPU workers of the node: one per core, two cores left to the Daemon, at least 1 (P4).
+
+    ``cores`` is the container's CPU quota when there is one (the Daemon reads it);
+    ``os.cpu_count()`` otherwise.
+    """
+    return max(1, (cores or os.cpu_count() or 1) - RESERVED_CORES)
+
+
+def retired_site_keys(data: Mapping[str, Any] | None) -> list[str]:
+    """``concurrency.cpu`` / ``cpuMax`` still written in old site settings (ignored since D54)."""
+    conc = (data or {}).get("concurrency") if isinstance(data, Mapping) else None
+    if not isinstance(conc, Mapping):
+        return []
+    return [f"concurrency.{k}" for k in RETIRED_SITE_KEYS if conc.get(k) is not None]
 
 
 def _pick(candidates: list[tuple[str, int]]) -> Limit:
@@ -99,7 +121,7 @@ class SiteConfig:
 
     Shape accepted by :meth:`from_mapping` (every key optional)::
 
-        concurrency: {cpu: 8, cpuMax: 16, vlmParallelism: 64, vlmParallelismMax: 128}
+        concurrency: {vlmParallelism: 64, vlmParallelismMax: 128}
         vlm:
           merge:
             enabled: true                 # the kill switch, vlm.merge.enabled (04 §4.2)
@@ -108,10 +130,11 @@ class SiteConfig:
             max_prompt_tokens: 6000
             context_window: 128000
           gates: {probe: 64}              # per-gate tuning, stated at vlmParallelism (or 64)
+
+    The CPU side has no site knob (D54): ``concurrency.cpu`` / ``cpuMax`` of older files
+    are ignored (:func:`retired_site_keys` names them so the caller can warn).
     """
 
-    cpu_concurrency: int | None = None
-    cpu_concurrency_max: int | None = None
     vlm_parallelism: int | None = None
     vlm_parallelism_max: int | None = None
     merge_enabled: bool = True
@@ -119,8 +142,7 @@ class SiteConfig:
     merge_limits: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("cpu_concurrency", "cpu_concurrency_max", "vlm_parallelism",
-                     "vlm_parallelism_max"):
+        for name in ("vlm_parallelism", "vlm_parallelism_max"):
             _positive_int(name, getattr(self, name))
         if not isinstance(self.merge_enabled, bool):
             raise ValueError(f"vlm.merge.enabled must be true or false, got {self.merge_enabled!r}")
@@ -160,8 +182,6 @@ class SiteConfig:
             return block.get(found[0]) if found else None
 
         return cls(
-            cpu_concurrency=one(conc, "cpu"),
-            cpu_concurrency_max=one(conc, "cpuMax", "cpu_max"),
             vlm_parallelism=one(conc, "vlmParallelism", "vlm_parallelism"),
             vlm_parallelism_max=one(conc, "vlmParallelismMax", "vlm_parallelism_max"),
             merge_enabled=merge.get("enabled", True),
@@ -180,15 +200,14 @@ def coerce_site(site: SiteConfig | Mapping[str, Any] | None) -> SiteConfig:
 
 def effective_cpu_concurrency(limits: PlanLimits | Mapping | None = None,
                               site: SiteConfig | Mapping | None = None) -> Limit:
-    """CPU concurrency of the numeric and frame stages (04 §2.1, P4)."""
-    limits, site = coerce_limits(limits), coerce_site(site)
-    if site.cpu_concurrency is not None:
-        candidates = [("site", site.cpu_concurrency)]
-    else:
-        cores = limits.cpu_cores or os.cpu_count() or 1
-        candidates = [("planner", max(1, min(CPU_DEFAULT_MAX, cores // CORES_PER_CPU_WORKER)))]
-    if site.cpu_concurrency_max is not None:
-        candidates.append(("site", site.cpu_concurrency_max))
+    """The most CPU workers one task's CPU stages may use (04 §2.1, P4).
+
+    ``site`` is accepted for symmetry with :func:`effective_vlm_parallelism`; nothing in it
+    bounds the CPU side any more (D54).
+    """
+    limits = coerce_limits(limits)
+    coerce_site(site)
+    candidates = [("planner", available_cpu_workers(limits.cpu_cores))]
     if limits.cpu_concurrency is not None:
         candidates.append(("task", limits.cpu_concurrency))
     return _pick(candidates)

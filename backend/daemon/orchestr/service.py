@@ -43,6 +43,7 @@ from . import rules
 from .backfill import Restorer
 from .browse import Browser
 from .config import OrchestratorConfig
+from .cpupool import CpuPool
 from .datasets import DatasetOps, Source, format_supported
 from .delivery import DeliveryError, DeliveryLocks, forget_sync, open_delivery, read_latest
 from .janitor import Janitor
@@ -82,6 +83,7 @@ class Orchestrator:
                                              int_grace_s=self.cfg.int_grace_s)
         self.locks = DeliveryLocks()
         self.scheduler = Scheduler(self)
+        self.cpu_pool = CpuPool(self.cfg.cpu_workers)
         self.checks = StartChecks(self)
         self.datasets = DatasetOps(self)
         self.browser = Browser(self)
@@ -102,6 +104,9 @@ class Orchestrator:
         lower_daemon_oom_score()
         self.reap_orphans()
         if self.cfg.enabled:
+            log.info("CPU pool: %d worker slot(s) shared by up to %d running task(s) (cores: %s)",
+                     self.cpu_pool.size, self.cfg.max_running,
+                     self.cfg.cpu_cores or "os.cpu_count()")
             self.scheduler.start()
             self.janitor.start()
         else:

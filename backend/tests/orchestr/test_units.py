@@ -193,16 +193,17 @@ def test_what_a_restore_brings_back():
 
 def test_settings_from_the_environment(tmp_path):
     cfg = OrchestratorConfig.from_env({})
-    assert cfg.max_running == 1 and cfg.term_grace_s == 90 and cfg.int_grace_s == 10
+    assert cfg.max_running == 3 and cfg.term_grace_s == 90 and cfg.int_grace_s == 10   # P1
     assert cfg.local_delivery_root is None and cfg.enabled
     site = tmp_path / "site.yaml"
-    site.write_text("concurrency: {cpu: 2}\nvlm: {merge: {enabled: false}}\nother: 1\n")
-    cfg = OrchestratorConfig.from_env({"CURATOR_MAX_RUNNING_TASKS": "3",
+    site.write_text("concurrency: {vlmParallelism: 32}\nvlm: {merge: {enabled: false}}\nother: 1\n")
+    cfg = OrchestratorConfig.from_env({"CURATOR_MAX_RUNNING_TASKS": "5",
                                        "CURATOR_CLI": "python -m curation.cli",
                                        "CURATOR_SITE_CONFIG": str(site),
                                        "CURATOR_ORCHESTRATOR": "off"})
-    assert cfg.max_running == 3 and cfg.program == ("python", "-m", "curation.cli")
-    assert cfg.site_config == {"concurrency": {"cpu": 2}, "vlm": {"merge": {"enabled": False}}}
+    assert cfg.max_running == 5 and cfg.program == ("python", "-m", "curation.cli")
+    assert cfg.site_config == {"concurrency": {"vlmParallelism": 32},
+                               "vlm": {"merge": {"enabled": False}}}
     assert not cfg.enabled
     # the chart's site.yaml, which the CLI reads through CURATION_CONFIG
     assert OrchestratorConfig.from_env({"CURATION_CONFIG": str(site)}).site_config == \
@@ -214,6 +215,45 @@ def test_settings_from_the_environment(tmp_path):
     (tmp_path / "bad.json").write_text("[1]")
     with pytest.raises(OrchestratorConfigError):
         load_site_config(str(tmp_path / "bad.json"))
+
+
+def test_an_old_site_config_with_cpu_settings_still_starts(tmp_path, caplog):
+    """D54: concurrency.cpu / cpuMax are dropped with a warning - an upgrade must not keep the
+    Daemon from starting."""
+    site = tmp_path / "site.yaml"
+    site.write_text("concurrency: {cpu: 8, cpuMax: 16, vlmParallelism: 64}\n")
+    with caplog.at_level("WARNING", logger="daemon.orchestr"):
+        cfg = OrchestratorConfig.from_env({"CURATOR_SITE_CONFIG": str(site)})
+    assert cfg.site_config == {"concurrency": {"vlmParallelism": 64}}
+    assert "concurrency.cpu, concurrency.cpuMax ignored" in caplog.text
+
+
+def test_the_cpu_pool_is_every_core_but_two(tmp_path, monkeypatch):
+    """P4, D54: CURATOR_CPU_CORES, else the container's quota, else os.cpu_count(); minus 2."""
+    from daemon.orchestr.config import container_cpu_cores
+
+    assert OrchestratorConfig.from_env({"CURATOR_CPU_CORES": "32"}).cpu_workers == 30
+    assert OrchestratorConfig.from_env({"CURATOR_CPU_CORES": "2"}).cpu_workers == 1
+    monkeypatch.setattr("daemon.orchestr.config.container_cpu_cores", lambda: None)
+    monkeypatch.setattr("os.cpu_count", lambda: 12)
+    assert OrchestratorConfig.from_env({}).cpu_workers == 10
+    # cgroup v2, then v1; "max" / -1 = no quota
+    v2 = tmp_path / "v2"
+    v2.mkdir()
+    (v2 / "cpu.max").write_text("3200000 100000\n")
+    assert container_cpu_cores(str(v2)) == 32
+    (v2 / "cpu.max").write_text("150000 100000\n")
+    assert container_cpu_cores(str(v2)) == 1
+    (v2 / "cpu.max").write_text("max 100000\n")
+    assert container_cpu_cores(str(v2)) is None
+    v1 = tmp_path / "v1"
+    (v1 / "cpu").mkdir(parents=True)
+    (v1 / "cpu" / "cpu.cfs_quota_us").write_text("800000\n")
+    (v1 / "cpu" / "cpu.cfs_period_us").write_text("100000\n")
+    assert container_cpu_cores(str(v1)) == 8
+    (v1 / "cpu" / "cpu.cfs_quota_us").write_text("-1\n")
+    assert container_cpu_cores(str(v1)) is None
+    assert container_cpu_cores(str(tmp_path / "none")) is None
 
 
 def test_memory_admission_waits_until_memory_is_back():

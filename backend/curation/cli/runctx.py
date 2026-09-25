@@ -203,6 +203,27 @@ def vlm_gates(args, plan_stage: dict | None) -> dict:
     return derive_gates(int(args.concurrency))
 
 
+def apply_thread_limit() -> int | None:
+    """``OMP_NUM_THREADS`` for OpenCV's own thread pool as well, which does not read it.
+
+    The Daemon starts its commands with one native thread each (D54: it already runs one
+    CPU worker per core); a ``curation check`` started by hand leaves the variable unset
+    and OpenCV keeps its default. Returns the number applied, None when nothing was set.
+    """
+    try:
+        n = int(os.environ.get("OMP_NUM_THREADS", "").strip())
+    except ValueError:
+        return None
+    if n < 1:
+        return None
+    try:
+        import cv2
+    except ImportError:                                # pragma: no cover - cv2 is a dependency
+        return None
+    cv2.setNumThreads(n)
+    return n
+
+
 def cpu_workers(args, plan_stage: dict | None) -> int:
     if args.concurrency is not None:
         if args.concurrency < 1:

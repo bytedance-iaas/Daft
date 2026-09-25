@@ -75,8 +75,8 @@ curator:
   publicDatasets:               # HuggingFace 缓存桶；bucket 为空则新建页不出现这个数据来源
     bucket: ai-infra
     region: ""                  # 空 = tos.region
-  siteConfig:                   # 站点配置，原样写进 site.yaml（§3）；publicDatasets 并进来成为 public_datasets
-    concurrency: {cpu: 8, cpuMax: 16, vlmParallelism: 64, vlmParallelismMax: 128}
+  siteConfig: {}                # 站点配置，原样写进 site.yaml（§3）；publicDatasets 并进来成为 public_datasets。
+                                # 不写 concurrency：CPU 由质检台按容器配额自己分（D54），VLM 用 planner 缺省 64
   persistence:
     data:                       # /data：SQLite + 任务工作目录 + 库快照
       className: ebs-essd       # ⚠️ 必须是块存储（EBS）。NAS / TOS-FSX 这类网络盘会损坏 SQLite
@@ -87,7 +87,7 @@ curator:
       size: 500Gi
   resources:
     requests: {cpu: "16", memory: 128Gi}
-    limits:   {cpu: "32", memory: 256Gi}
+    limits:   {cpu: "32", memory: 256Gi}   # limits.cpu 就是质检台的 CPU 配额：减 2 是全部任务共用的 CPU worker 数（D54）
   extraEnv: []                  # 其余 Daemon 设置，例如 CURATOR_WORK_RETENTION_DAYS、CURATOR_REASONING_EFFORT_TABLE（直接写 JSON）
 
 vci:
@@ -118,7 +118,9 @@ dataverse 给质检台容器的环境变量如下，这张表就是 Chart 和 Da
 | `CURATOR_MASTER_KEY_VERSION` | Secret 的 `curator_master_key_version` | secretKeyRef，可缺（没有 = 第 1 版） |
 
 镜像里还固定了 `CURATOR_STATIC_DIR=/app/web`（网页控制台）和 `CURATOR_CONTRACTS_DIR=/app/docs/contracts`（契约文件），Chart 不改它们。
-Daemon 的其余设置（端口、日志、时区、SSE 心跳、工作目录保留天数、同时运行的任务数）用 Daemon 的缺省，和原来独立 Chart 给的值相同。
+Daemon 的其余设置（端口、日志、时区、SSE 心跳、工作目录保留天数、同时运行的任务数）用 Daemon 的缺省：同时运行 3 个任务，
+CPU worker 总数是容器 CPU 配额（`resources.limits.cpu`）减 2，由 Daemon 的全局 CPU 池在任务之间分（D54，04 篇 §2.1、§2.3）。
+早于 D54 的 dataverse 写进 site.yaml 的 `concurrency.cpu` / `cpuMax` 会被忽略并在日志里告警，不影响启动；VCI 上按 limits 计费。
 
 dataverse 的全部密钥在一个 Secret 里，但**每个组件只挂自己要读的键**：质检台只拿 `web_htpasswd` 和 `curator_master_key*`，
 viewer、catalog 和原生会话（面向用户的桌面）都读不到主密钥。

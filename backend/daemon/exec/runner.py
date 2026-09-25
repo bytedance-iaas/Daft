@@ -10,7 +10,8 @@ What one run looks like:
   survives: after the command exits, whatever is left of its group is killed;
 * its environment comes from the caller (W8's ``cli_environment``: keys in the
   environment, never in argv) plus ``PYTHONPATH`` so ``python -m curation.cli``
-  resolves the same package the Daemon runs;
+  resolves the same package the Daemon runs, plus one native thread per worker
+  (``THREAD_ENV``: the Daemon already starts one CPU worker per core, D54);
 * on Linux its ``oom_score_adj`` is raised (+500 by default, design doc 09 §2.1) so
   the kernel kills a child before the Daemon when the container runs out of memory;
 * ``--json`` is always passed: stdout carries exactly one JSON document (the
@@ -57,6 +58,13 @@ EXIT_STATUS = {0: "ok", 1: "internal", 2: "usage", 3: "unreachable", 4: "module_
                5: "terminated", 6: "source_changed", 7: "rejected", 8: "wait_timeout",
                130: "interrupted"}
 
+#: Native thread pools of a child: one thread each, since the Daemon already runs one CPU
+#: worker per core (D54) and 30 workers each starting a pool per core only fight over the
+#: cores. Set only where the Daemon's own environment does not (``extraEnv`` can raise
+#: them); ``curation check`` applies ``OMP_NUM_THREADS`` to OpenCV's pool as well.
+THREAD_ENV = {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
+              "NUMEXPR_NUM_THREADS": "1", "VECLIB_MAXIMUM_THREADS": "1"}
+
 _TAIL_LINES = 40
 _MAX_LINE = 64 * 1024
 
@@ -82,6 +90,11 @@ def with_pythonpath(env: dict[str, str]) -> dict[str, str]:
     if root not in parts:
         parts.insert(0, root)
     return {**env, "PYTHONPATH": os.pathsep.join(parts)}
+
+
+def child_env(env: dict[str, str]) -> dict[str, str]:
+    """The environment a CLI child starts with: ``PYTHONPATH`` and ``THREAD_ENV`` added."""
+    return {**THREAD_ENV, **with_pythonpath(env)}
 
 
 def set_oom_score_adj(pid: int | str, value: int) -> bool:
@@ -178,7 +191,7 @@ class CliProcess:
 
     def start(self) -> None:
         argv = [*self.program, *self.cmd.argv, "--json"]
-        env = with_pythonpath(dict(self.cmd.env))
+        env = child_env(dict(self.cmd.env))
         self._started = time.monotonic()
         self.proc = subprocess.Popen(argv, env=env, cwd=self.cmd.cwd, stdin=subprocess.DEVNULL,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,

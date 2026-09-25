@@ -49,6 +49,21 @@ def test_the_smallest_limit_wins(vlm_stage, tmp_path):
     assert _stage(res.doc, "vlm")["gates"]["probe"] == 8
 
 
+def test_cpu_workers_are_the_cores_but_two_and_old_site_keys_only_warn(vlm_stage, tmp_path):
+    """P4, D54: no site knob for the CPU any more; an old site file still plans, with a warning."""
+    site = tmp_path / "site.yaml"
+    site.write_text("concurrency: {cpu: 8, cpuMax: 16, vlmParallelism: 32}\n")
+    res, _ = _plan(vlm_stage, tmp_path, "--cpu-cores", "32", "--site-config", site)
+    assert res.rc == 0, res.doc
+    assert res.doc["limits"]["cpu_concurrency"] == {"value": 30, "bound_by": "planner"}
+    assert _stage(res.doc, "numeric")["concurrency"] == _stage(res.doc, "frame")["concurrency"] == 30
+    assert res.doc["vlm_parallelism"] == 32
+    assert any(e.get("level") == "warn" and "concurrency.cpu, concurrency.cpuMax ignored"
+               in e.get("msg", "") for e in res.events), res.events
+    res, _ = _plan(vlm_stage, tmp_path, "--cpu-cores", "32", "--task-cpu-concurrency", "10")
+    assert res.doc["limits"]["cpu_concurrency"] == {"value": 10, "bound_by": "task"}
+
+
 def test_bad_arguments_are_usage_errors(vlm_stage, tmp_path):
     res, _ = _plan(vlm_stage, tmp_path, "--episodes", "0-99")
     assert res.rc == 2 and "beyond" in res.doc["error"]["message"]

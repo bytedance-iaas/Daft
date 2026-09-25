@@ -26,6 +26,7 @@ read back, ``_COMPLETE`` written; only then does ``result_rev`` switch (D25) and
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 
@@ -90,8 +91,11 @@ class StageRun(Run):
         argv += self.module_param_args(mods)
         if sid == "frame":
             resources.admit_memory(self, sid)
-        outcome = self.cli(sid, argv, need_input=True, need_vlm=vlm, crash_retry=not post,
-                           inflight_modules=mods, episodes=len(episodes))
+        with self.cpu_slots(st, len(episodes)) as workers:
+            if workers is not None and sid in FUNNEL:
+                argv += ["--concurrency", str(workers)]
+            outcome = self.cli(sid, argv, need_input=True, need_vlm=vlm, crash_retry=not post,
+                               inflight_modules=mods, episodes=len(episodes))
         if outcome.ok:
             doc = outcome.doc.get("modules") or {}
             any_error = False
@@ -125,6 +129,38 @@ class StageRun(Run):
             return list(episodes)
         self.fail_on(outcome, sid)
         raise AssertionError("unreachable")
+
+    @contextlib.contextmanager
+    def cpu_slots(self, st: dict, episodes: int):
+        """A whole-stage CPU command holds a block of the Daemon's CPU pool while it runs
+        (:meth:`CpuPool.block`, D54); yields how many workers it may start, or None for a
+        stage that does not draw from the pool (VLM stages; the data integrity stage
+        without its frame-by-frame decoding, design doc 14 §2.2)."""
+        pool = getattr(self.orch, "cpu_pool", None)
+        sid = st["id"]
+        if pool is None or st.get("kind") != "cpu" or (
+                sid == "integrity" and not self.module_params("data_integrity").get("decode_test")):
+            yield None
+            return
+        want = max(1, min(int(st.get("concurrency") or 1), episodes or 1))
+
+        def waiting():
+            self.log(sid, "info", f"等其他任务让出 CPU 名额（全局 {pool.size} 个）")
+            self.progress(sid, note="等 CPU 名额", force=True)
+
+        with pool.block(self.cpu_key, want, check=self.check_intent, on_wait=waiting) as got:
+            if got < want:
+                self.log(sid, "info", f"拿到 {got} 个 CPU 名额（计划上限 {want}），与其他任务共用")
+            yield got
+
+    def module_params(self, module_id: str) -> dict:
+        """A selected module's parameters with the registry's defaults filled in; {} if not selected."""
+        from curation.cli.modparams import with_defaults
+
+        for m in self.repo.get_task_modules(self.task_id):
+            if m.module_id == module_id and m.selected:
+                return with_defaults(module_id, m.params)
+        return {}
 
     def module_param_args(self, mods: list[str]) -> list[str]:
         """``--param`` for the modules v2 runs itself (the EEF module, D49) and the advisory modules of

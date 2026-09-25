@@ -174,6 +174,41 @@ def test_pythonpath_puts_the_package_first():
     assert "/somewhere" in env["PYTHONPATH"]
 
 
+def test_children_get_one_native_thread_each_unless_the_daemon_says_otherwise():
+    """D54: the Daemon runs one CPU worker per core; each worker's native pools get one thread."""
+    from daemon.exec.runner import THREAD_ENV, child_env
+
+    env = child_env({"PATH": "/bin"})
+    assert all(env[k] == "1" for k in THREAD_ENV) and env["PATH"] == "/bin"
+    assert "PYTHONPATH" in env
+    assert child_env({"OMP_NUM_THREADS": "4"})["OMP_NUM_THREADS"] == "4"     # extraEnv wins
+
+
+def test_check_applies_omp_num_threads_to_opencv(monkeypatch):
+    import cv2
+
+    from curation.cli import runctx
+
+    calls = []
+    monkeypatch.setattr(cv2, "setNumThreads", calls.append)
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    assert runctx.apply_thread_limit() == 1 and calls == [1]
+    monkeypatch.delenv("OMP_NUM_THREADS")                # by hand: OpenCV keeps its default
+    assert runctx.apply_thread_limit() is None and calls == [1]
+    monkeypatch.setenv("OMP_NUM_THREADS", "many")
+    assert runctx.apply_thread_limit() is None
+
+
+def test_a_cli_child_really_starts_single_threaded(tmp_path):
+    """The environment reaches the child: its OpenCV pool is one thread after a check starts."""
+    ex = Executor([sys.executable, "-c",
+                   "import os, json, sys; from curation.cli import runctx; n = runctx.apply_thread_limit();"
+                   "print(json.dumps({'omp': os.environ.get('OMP_NUM_THREADS'), 'applied': n}))"])
+    out = ex.run(CliCommand([], env={"PATH": os.environ.get("PATH", "")}, stage="probe"))
+    assert out.ok, out
+    assert out.doc == {"omp": "1", "applied": 1}
+
+
 def test_parse_stdout_variants():
     assert parse_stdout("") == (None, None)
     assert parse_stdout('{"a": 1}\n') == ({"a": 1}, None)

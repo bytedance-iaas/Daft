@@ -30,7 +30,8 @@ def add_parser(sub, parents) -> None:
     p.add_argument("--unlabeled", metavar="EXPR",
                    help="episodes without a task text, when known (exact autolabel stage)")
     p.add_argument("--cpu-cores", type=int, metavar="N",
-                   help="CPU cores of the node (default: this machine's)")
+                   help="CPU cores of the node (default: this machine's); a task may use "
+                        "all of them but two")
     p.add_argument("--vlm-parallelism", type=int, metavar="N",
                    help="parallelism of the chosen model or backend")
     p.add_argument("--backend-parallelism", type=int, metavar="N",
@@ -42,14 +43,14 @@ def add_parser(sub, parents) -> None:
     p.add_argument("--running-tasks", type=int, default=1, metavar="N",
                    help="tasks running when this one starts (the VLM budget is shared)")
     p.add_argument("--site-config", metavar="FILE",
-                   help="the planner's site settings (concurrency / vlm blocks, YAML or JSON)")
+                   help="the planner's site settings (VLM parallelism and vlm blocks, YAML or JSON)")
     p.add_argument("--out", metavar="FILE", help="also write the plan here (plan.json)")
     p.set_defaults(func=run)
 
 
 def run(ctx: Context, args: argparse.Namespace) -> Result:
     from ..pipeline.records import write_json_atomic
-    from ..planner import PlanError, PlanLimits, SiteConfig, build_plan
+    from ..planner import PlanError, PlanLimits, SiteConfig, build_plan, retired_site_keys
 
     preflight = runctx.read_json(args.preflight, "--preflight")
     if not isinstance(preflight, dict) or "dataset" not in preflight:
@@ -71,6 +72,10 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
                 site = yaml.safe_load(fh) or {}
         except (OSError, yaml.YAMLError) as e:
             raise UsageError(f"--site-config {args.site_config}: {e}") from None
+        retired = retired_site_keys(site)
+        if retired:
+            ctx.log("warn", f"--site-config {args.site_config}: {', '.join(retired)} ignored; "
+                            "CPU workers follow the cores (cores - 2) and the task's cap")
     try:
         limits = PlanLimits(cpu_concurrency=args.task_cpu_concurrency,
                             vlm_parallelism=args.task_vlm_parallelism,

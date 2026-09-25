@@ -98,6 +98,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if args.part is not None and not (len(args.part) == 4 and args.part.isdigit()):
         raise UsageError(f"--part must be four digits such as 0003, got {args.part!r}")
     plan_stage = runctx.load_plan_stage(args.plan_stage, modules)
+    runctx.apply_thread_limit()
     if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm"):
         raise UsageError("--pipeline-state is only valid for funnel stages")
     src = runctx.open_source(ctx, args)

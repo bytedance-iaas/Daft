@@ -28,7 +28,7 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 | `routes/static.py`、`deeplink.py` | 前端静态资源、SPA 回退、v1 旧深链 302（解析规则搬自 v1 `ui/runner.py`） |
 | `errors.py`、`idempotency.py`、`pagination.py`、`logs.py`、`views.py`、`taskspec.py` | 统一错误体、幂等键、游标、任务日志、响应组装、任务配置校验 |
 | `operations.py` | C4 全部操作的去向；W5a 之后全部已实现，`PENDING` 为空 |
-| `exec/`、`orchestr/`、`routes/runs.py`、`routes/datasets_exec.py` | W5a：CLI 执行器（独立进程组、C3 解析、用量批写）与任务编排（运行、分档、worker 池、暂停 / 停止 / 继续、崩溃恢复、发布、数据集操作、工作目录清理与取回），说明、配置与 10 步手动验证见 [`orchestr/README.md`](orchestr/README.md) |
+| `exec/`、`orchestr/`、`routes/runs.py`、`routes/datasets_exec.py` | W5a：CLI 执行器（独立进程组、C3 解析、用量批写）与任务编排（运行、分档、worker 池、暂停 / 停止 / 继续、崩溃恢复、发布、数据集操作、工作目录清理与取回），说明、配置与 12 步手动验证见 [`orchestr/README.md`](orchestr/README.md) |
 
 ## 已实现的接口
 
@@ -74,6 +74,7 @@ W5a 的接口（跑 CLI 的操作，见 [`orchestr/README.md`](orchestr/README.m
 | `CURATOR_TZ_OFFSET` | `+08:00` | 站点所在时区的 UTC 偏移（形如 `+08:00`、`-05:30`、`Z`，按一刻钟取整），决定概览按天、周、月统计时每段从几点算起 |
 | `TOS_ENDPOINT` | 空 | W8：部署所在地域的 TOS 端点（v1 同名变量）。是内网端点（`*.ivolces.com`）时同地域的调用走内网，也原样交给 CLI |
 | `CURATOR_REASONING_EFFORT_TABLE` | 空 | W8：覆盖思考强度映射表，JSON 文件路径或 JSON 本身，写法见 [`secrets/README.md`](secrets/README.md) |
+| `CURATOR_MAX_RUNNING_TASKS`、`CURATOR_CPU_CORES` 等编排设置 | 3、容器的 CPU 配额 | 同时运行的任务数；核数减 2 是全部任务共用的 CPU 名额池（D54）。全表见 [`orchestr/README.md`](orchestr/README.md) 的「配置」 |
 
 htpasswd 和单用户都没配、也没指定 `CURATOR_AUTH_MODE` 时不做鉴权，日志里会有一条警告，只适合本机调试。
 

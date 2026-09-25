@@ -578,6 +578,8 @@ export const zh = {
     cpuLimit: 'CPU 并发上限',
     vlmLimit: 'VLM 并行度上限',
     limitPlaceholder: '不限',
+    // empty = every core of the container but two, shared with the other running tasks (D54)
+    cpuLimitPlaceholder: '用满可用核',
     exportDataset: '导出交付数据集',
     clips: '预生成裁决用的视频片段',
     footerSummary: (eps: string, mods: number) => `将质检 ${eps} 条 episode，开启 ${mods} 个模块`,
@@ -926,6 +928,10 @@ export const zh = {
     planLimits: (n: number, cpu: string, vlm: string) => `VLM 并行度 N = ${n}；CPU 并发上限 ${cpu}，VLM 并行度上限 ${vlm}`,
     planHardGates: (names: string) => `硬门：${names}`,
     boundBy: { task: '任务上限', model: '模型', backend: '后端', site: '站点', planner: '自动规划', running_tasks: '同时运行的任务数' } as Record<string, string>,
+    // the CPU side has two layers only since D54; plans made before it may still say site
+    cpuBoundBy: { task: '任务上限', planner: '可用核数 − 2' } as Record<string, string>,
+    // a stage's CPU concurrency is this task's cap: the Daemon's CPU pool decides what it gets (D54)
+    planCpu: (n: number) => `CPU 上限 ${n}`,
     planCols: { stage: '档', kind: '类型', modules: '模块', episodes: '处理哪些条目', concurrency: '并发 / 闸门' },
     planEpisodes: { selected: '选中的条目', unlabeled: '没有任务标注的条目', keep: '判决放行的条目', 'keep-minus-duplicates': '去重后的条目' } as Record<string, string>,
     planSurvivors: (stage: string) => `${stage}放行的条目`,

@@ -99,7 +99,8 @@ docker run --rm -p 8080:8080 -v curator-data:/data -e CURATOR_BASE_PATH=/curatio
 6. **挂载前缀固定是 `/curation`**，网关分流不剥前缀，dataverse 的 Ingress 已按这个写好，不用配。
 7. **和 rerun viewer 免二次登录**：dataverse 让两边共用 Secret 里的 `web_htpasswd`，realm 不改（Daemon 固定为 `Robot Data Curation`）。
 8. **资源**：dataverse 缺省 `requests 16 核 / 128Gi`、`limits 32 核 / 256Gi`（`curator.resources`），照节点的 allocatable 调；
-   跑在 VCI 上时按 limits 计费。
+   跑在 VCI 上时按 limits 计费。`limits.cpu` 就是质检台的 CPU 配额：减 2 是全部在跑任务共用的 CPU worker 数（32 → 30，D54），
+   同时运行 3 个任务，都不用在 Chart 里配。
 9. **临时盘够大**：`curator.persistence.scratch`（缺省 500Gi）除了导出时的视频临时文件，还放 TOS 上 mcap / Lance 数据集的本地副本
    （`CURATOR_SOURCE_CACHE_DIR=/scratch/source-cache`，D44）：mcap 读到哪条下载哪条，Lance 整表下载，任务跑完就删。
    按要质检的最大数据集加上导出的余量来定。副本不放数据盘：数据盘写满会让 SQLite 写不进去。
@@ -141,8 +142,7 @@ image:
   curator: iaas-us-cn-beijing.cr.volces.com/physicalai/robot_curator:<提交号>
 curator:
   publicBaseUrl: https://<对外域名>
-  siteConfig:                       # 站点配置 site.yaml，原样写入；只写和出厂默认不同的
-    concurrency: {cpu: 8, cpuMax: 16, vlmParallelism: 64, vlmParallelismMax: 128}
+  siteConfig:                       # 站点配置 site.yaml，原样写入；只写和出厂默认不同的（CPU 不写，D54）
     checks: {task_success: {vlm: {timeouts_s: {caption: 180}}}}
 vci:
   enabled: true                     # 跑在 VCI 上：Pod 注解，和给数据盘改属主的初始化容器
@@ -380,7 +380,6 @@ D48（2026-09-23）起，galbot 的 v2 是单独装的 release `curator-v2`（�
     persistence:
       data: {existingClaim: data-curator-v2-0}
     siteConfig:
-      concurrency: {cpu: 8, cpuMax: 16, vlmParallelism: 64, vlmParallelismMax: 128}
       checks: {task_success: {vlm: {timeouts_s: {caption: 180}}}}
   ```
 

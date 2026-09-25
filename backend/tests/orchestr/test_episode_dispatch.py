@@ -7,11 +7,17 @@ import pytest
 from curation.pipeline.episode_state import EpisodeState, state_path
 from daemon.exec import CliOutcome
 from daemon.orchestr import episode_pipeline as ep
+from daemon.orchestr.cpupool import CpuPool
 from daemon.orchestr.workdir import WorkDir
 
 
 class Run:
-    def __init__(self, root, batch):
+    cpu_key = ("task", None)
+
+    def __init__(self, root, batch, pool=None, params=None):
+        if pool is not None:
+            self.orch = SimpleNamespace(cpu_pool=pool)
+        self.params = params or {}
         self.wd = WorkDir(root, "task")
         self.run_key = "main"
         self.task = SimpleNamespace(params={"batch_size": batch})
@@ -57,6 +63,9 @@ class Run:
     def fail_on(self, outcome, sid):
         raise AssertionError(outcome)
 
+    def module_params(self, module_id):
+        return self.params.get(module_id, {})
+
 
 STAGES = [
     {"id": "numeric", "kind": "cpu", "concurrency": 4,
@@ -69,7 +78,7 @@ STAGES = [
 
 
 def install_workers(monkeypatch, run, *, lost_completion=False, fail_frame=False,
-                    broken_send=False):
+                    broken_send=False, on_submit=lambda sid, episodes: None):
     events, workers, attempts = [], {}, Counter()
     finished = set()
     lost = False
@@ -88,6 +97,7 @@ def install_workers(monkeypatch, run, *, lost_completion=False, fail_frame=False
 
         def submit(self, episodes):
             nonlocal disconnected
+            on_submit(self.layer.sid, episodes)
             if broken_send and self.layer.sid == "numeric" and not disconnected:
                 disconnected = True
                 raise BrokenPipeError("worker exited before dispatch")
@@ -203,3 +213,85 @@ def test_module_failure_releases_previously_rejected_episodes(tmp_path, monkeypa
         assert store.failed_stages() == {"frame": "injected module failure"}
     finally:
         store.close()
+
+
+# ---------------------------------------------------------------- the Daemon's CPU pool (D54)
+
+def cpu_in_flight(events):
+    active, peak = 0, 0
+    for kind, stage, _ in events:
+        if stage in ("numeric", "frame"):
+            active += 1 if kind == "start" else -1
+            peak = max(peak, active)
+    return peak
+
+
+def test_cpu_episodes_hold_a_slot_of_the_shared_pool(tmp_path, monkeypatch):
+    pool = CpuPool(2)
+    run = Run(tmp_path, 2, pool=pool)
+    seen = []
+    events, _ = install_workers(monkeypatch, run,
+                                on_submit=lambda sid, eps: seen.append((sid, pool.used)))
+    ep.run_episodes(run, STAGES, list(range(8)))
+    assert cpu_in_flight(events) == 2                 # the plan allows 4, the pool has 2
+    assert all(used <= 2 for sid, used in seen)
+    assert {sid for sid, _ in seen} == {"numeric", "frame", "vlm"}
+    assert pool.used == 0 and pool.peak == 2          # everything back when the run ends
+    assert run.stages == {s["id"]: "succeeded" for s in STAGES}
+
+
+def test_slots_another_task_holds_are_not_used(tmp_path, monkeypatch):
+    pool = CpuPool(3)
+    assert pool.acquire(("other", None), 2) == 2
+    run = Run(tmp_path, 2, pool=pool)
+    events, _ = install_workers(monkeypatch, run)
+    ep.run_episodes(run, STAGES, list(range(6)))
+    assert cpu_in_flight(events) == 1
+    assert pool.used == 2 and pool.held(("task", None)) == 0
+
+
+@pytest.mark.parametrize("fault", ["lost_completion", "broken_send", "fail_frame"])
+def test_crashes_and_module_failures_give_the_slots_back(tmp_path, monkeypatch, fault):
+    pool = CpuPool(2)
+    run = Run(tmp_path, 2, pool=pool)
+    install_workers(monkeypatch, run, **{fault: True})
+    ep.run_episodes(run, STAGES, [0, 1, 2, 3])
+    assert pool.used == 0
+
+
+def test_a_stop_gives_the_slots_back_after_the_workers_wound_down(tmp_path, monkeypatch):
+    pool = CpuPool(4)
+    run = Run(tmp_path, 2, pool=pool)
+    stop, held_at_close = [], []
+
+    def submitted(sid, episodes):
+        if sid == "frame":
+            stop.append(sid)                          # stop while a frame episode is out
+
+    install_workers(monkeypatch, run, on_submit=submitted)
+
+    def check_intent():
+        if stop:
+            raise KeyboardInterrupt("stop")
+
+    run.check_intent = check_intent
+    real_close = ep._close_worker
+
+    def close(run_, layer):
+        held_at_close.append(pool.held(run.cpu_key))
+        real_close(run_, layer)
+
+    monkeypatch.setattr(ep, "_close_worker", close)
+    with pytest.raises(KeyboardInterrupt):
+        ep.run_episodes(run, STAGES, list(range(8)))
+    assert held_at_close and held_at_close[0] >= 1    # held while the workers wound down
+    assert pool.used == 0
+
+
+def test_the_integrity_layer_draws_from_the_pool_only_when_it_decodes_every_frame(tmp_path):
+    stages = [{"id": "integrity", "kind": "cpu", "concurrency": 4, "modules": ["data_integrity"]},
+              *STAGES]
+    assert ep.pooled_layers(Run(tmp_path, 1), stages) == {"numeric", "frame"}
+    on = Run(tmp_path, 1, params={"data_integrity": {"decode_test": True}})
+    assert ep.pooled_layers(on, stages) == {"integrity", "numeric", "frame"}
+    assert ep.pooled_layers(on, STAGES) == {"numeric", "frame"}

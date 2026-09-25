@@ -89,6 +89,7 @@ describe('新建任务 · 第一屏 (07 §3)', () => {
     expect(document.body).not.toHaveTextContent('不调用模型的模块）');
     await user.click(screen.getByText('高级设置'));
     expect(await screen.findByRole('spinbutton', { name: 'CPU 并发上限' })).toBeVisible();
+    expect(screen.getByRole('spinbutton', { name: 'CPU 并发上限' })).toHaveAttribute('placeholder', '用满可用核');   // D54
     expect(document.body).not.toHaveTextContent('执行计划和请求合并由后端决定');       // fifth round
   });
 

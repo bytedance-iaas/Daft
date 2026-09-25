@@ -43,16 +43,16 @@ def test_full_plan_matches_the_design_example():
     p = plan(V1, preflight=X.preflight(200, without_task=88))
     assert ids(p) == ["autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile_vlm", "final"]
     assert p["vlm_parallelism"] == 64
-    assert p["limits"] == {"cpu_concurrency": {"value": 8, "bound_by": "planner"},
+    assert p["limits"] == {"cpu_concurrency": {"value": 30, "bound_by": "planner"},
                            "vlm_parallelism": {"value": 64, "bound_by": "planner"}}
     assert stage(p, "autolabel") == {"id": "autolabel", "kind": "vlm", "command": "autolabel",
                                      "episodes": "unlabeled", "gates": {"caption": 32}}
     assert stage(p, "numeric") == {
-        "id": "numeric", "kind": "cpu", "command": "check", "concurrency": 8,
+        "id": "numeric", "kind": "cpu", "command": "check", "concurrency": 30,
         "modules": ["timestamp_check", "kinematic_limits", "motion_quality"],
         "episodes": "selected", "hard_gates": ["timestamp_check", "kinematic_limits"]}
     assert stage(p, "frame") == {
-        "id": "frame", "kind": "cpu", "command": "check", "concurrency": 8,
+        "id": "frame", "kind": "cpu", "command": "check", "concurrency": 30,
         "modules": ["visual_quality", "video_action_sync"], "episodes": "survivors:numeric",
         "hard_gates": ["video_action_sync"]}
     vlm = stage(p, "vlm")
@@ -88,7 +88,7 @@ def test_the_data_integrity_module_is_the_first_gate():
     p = plan()
     integ = stage(p, "integrity")
     assert ids(p)[:3] == ["autolabel", "integrity", "numeric"] or ids(p)[:2] == ["integrity", "numeric"]
-    assert integ == {"id": "integrity", "kind": "cpu", "command": "check", "concurrency": 8,
+    assert integ == {"id": "integrity", "kind": "cpu", "command": "check", "concurrency": 30,
                      "modules": ["data_integrity"], "episodes": "selected",
                      "hard_gates": ["data_integrity"]}
     assert stage(p, "numeric")["episodes"] == "survivors:integrity"

@@ -50,21 +50,34 @@ v1 的实测数据（写在 `pipeline/default.yaml` 和 `funnel.py` 的注释里
 
 ### 2.1 CPU 档并发度
 
-目标节点 32 核 128G。Daemon 的 planner 默认值：
+> 2026-09-25 起（D54）：容器里能看到的核都可以用，原来的 `min(8, 核数/4)` 与站点的 `concurrency.cpu` / `cpuMax` 取消。
+
+目标节点 32 核 128G（dataverse 给质检台的 `limits.cpu` 缺省 32）。Daemon 的 planner 默认值：
 
 | 档 | 默认 | 说明 |
 |---|---|---|
-| 数值档 | `min(8, 核数/4)` = 8 | 纯数值检查，内存友好 |
-| 帧档 | `min(8, 核数/4)` = 8 | 全帧率解码吃内存，每个 worker 同一时刻只持有一路相机的帧，峰值约 1.5GB |
+| 数值档、帧档 | 容器 CPU 配额 − 2 = 30（至少 1） | 每个 worker 占一个核；两档流水交叠时数值档占 1/4、帧档拿其余 |
+| 留给 Daemon 与网页 | 2 核 | 不给 worker |
 | 内存护栏 | RSS 超过物理内存 80% | 暂停派发新 episode，不杀进程 |
+
+- **核数**：Daemon 读容器的 CPU 配额（cgroup v2 的 `cpu.max`，读不到再看 v1 的 `cpu.cfs_quota_us`），没有配额时用本机核数；
+  `CURATOR_CPU_CORES` 可以直接指定。直接跑 `curation plan` 时是 `os.cpu_count()`，也可以用 `--cpu-cores` 给。
+- **一个 worker 一个核**：CLI 在一个进程里用线程池并发（`--concurrency N` 个线程），OpenCV、numpy 的原生库各自还会再开一池线程。
+  30 个 worker 每个再开一池会互相抢核，所以 Daemon 起的 CLI 子进程一律单线程：环境里设 `OMP_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`
+  一类的变量（Daemon 自己的环境里设了别的值时以它为准），`curation check` 开始时把同一个数交给 OpenCV（`cv2.setNumThreads`）。
+  不经 Daemon、手动跑的命令不设这些变量，OpenCV 保持它的缺省。
+- **上限**：计划里 CPU 档的 `concurrency` 是「这个任务最多用多少」= min(可用总数, 任务上限 `params.limits.cpu_concurrency`)；
+  任务上限只能往下压。实际能同时跑几条，看 Daemon 的全局 CPU 池里还剩多少（§2.3）。
+- **数据完整性档**主要耗 I/O，宽度取计划的并发、不从 CPU 池拿名额；开了逐帧解码（L3）时它也吃 CPU，才和数值档、帧档一样每条占一个名额（设计 14 §2.2）。
 
 需求说「CPU 部分相对耗时较少，这里并行度可以默认用 1」，v1 也是串行。
 所以 **CLI 的默认就是 1**，符合 CLI 的原子/无并发纪律；Daemon 的 planner 在 32 核节点上显式传
-`--concurrency 8` —— 这正是「CLI 默认不并发，并发作为可选参数」和「Daemon 负责优化」两条要求的结合点。
-640 条 episode 的帧档，串行约 31 分钟，8 并发约 4 分钟。站点配置可以把它改回 1；
-任务也可以给一个更低的上限（`params.limits.cpu_concurrency`），planner 取两者中小的那个。
+`--concurrency 30` —— 这正是「CLI 默认不并发，并发作为可选参数」和「Daemon 负责优化」两条要求的结合点。
+640 条 episode 的帧档，串行约 31 分钟，8 并发约 4 分钟（30 并发的实测待补，F9.5）。
+任务可以给一个更低的上限（`params.limits.cpu_concurrency`），planner 取两者中小的那个。
 
-各 episode 之间没有共享状态，并发不改变任何一条的计算结果；这一点由黄金对账的逐位一致来验证。
+各 episode 之间没有共享状态，并发和线程数都不改变任何一条的计算结果；这一点由黄金对账的逐位一致来验证
+（单线程下另跑过一遍回放，逐位一致）。
 
 ### 2.2 VLM 档并发度：一个并行度 N，八把闸门
 
@@ -109,12 +122,29 @@ N = min( 任务上限 params.limits.vlm_parallelism,   ← 用户在 API / CLI /
 Daemon 用 subprocess 调 CLI，闸门是 CLI **进程内**的信号量，管不到别的进程。
 两个任务同时跑，每个都以为自己独占 N。
 
-默认做法：**同一时间只运行 1 个任务**，其余排队（v1 的界面也是「有任务在跑」时禁用开始按钮）。
-子任务和主流程一样占这个名额：任务 A 的重试和任务 B 的主流程不会同时跑。
-并发预算因此始终由 Daemon 一处说了算：后端、模型、任务、站点几层上限取交集（§2.2），再分给当前在跑的那一个。
+默认做法：**同一时间运行 3 个任务**（`CURATOR_MAX_RUNNING_TASKS`，D54；原来是 1），其余排队。
+子任务和主流程一样占这个名额：任务 A 的重试和任务 B 的主流程算两个。
 对冲补发和重试不另开口子 —— 它们在闸门之内排队，输掉的那一发在返回前一直占着闸门的名额（v1 的既有行为）。
-`maxRunningTasks` 可调；大于 1 时，planner 在任务启动那一刻把 N 按「正在运行的任务数」均分，
-运行中不再动态调整。跨进程的全局令牌桶能做得更精确，但要给 CLI 加一条到 Daemon 的反向通道，本期不做。
+
+**VLM**：planner 在任务启动那一刻把 N 按「正在运行的任务数」均分（3 个同时跑时每个约 64 / 3 = 21），运行中不再动态调整。
+跨进程的全局令牌桶能做得更精确，但要给 CLI 加一条到 Daemon 的反向通道，本期不做。
+
+**CPU：Daemon 管一个全局 CPU 池**（D54，`daemon/orchestr/cpupool.py`）。池的大小就是 §2.1 的可用 worker 总数（32 核是 30）。
+
+- 流水线（`episode_pipeline.run_episodes`）派发一条 CPU episode 之前先从池里拿一个名额，这一条做完（成功、出错、被暂停或停止）后归还。
+  挂钩点在 Daemon 的派发循环里，和每层的宽度、帧档的内存准入放在一起：帧档先过内存准入，再拿名额。CLI 进程内不用改，
+  `--concurrency` 仍按计划给，作为这一档在途条数的上限。
+- 名额跟着在途表走：派发循环每一轮按各 CPU 档实际在途的条数对一次账，子进程崩溃时它丢下的条目回到待派发，名额随之收回；
+  暂停、停止、系统暂停时，等在途的条目做完落盘、子进程收尾之后，这个任务才整体退出池子。
+- 整档执行（重试、流水线之前的旧任务）不逐条派发：开始时按块拿名额（至少 1 个，等到够它的公平份额或它要的数），
+  把拿到的数作为 `--concurrency` 传给 CLI，结束时归还。
+- **公平**：一个任务要名额没拿够，就记为「在等」。有任务在等、而且它手上的少于公平份额（池大小 ÷ 正占着或正在等的任务数）时，
+  已经达到份额的任务拿不到空出来的名额；已经多占的不收回，随它的条目做完慢慢降到份额。没人等时，一个任务可以用满整个池。
+  这样先开跑的任务占满池子之后，后开跑的任务在几条 episode 之内就能拿到自己那一份。
+- 外部 CLI 的批处理兼容路径（设了 `CURATOR_CLI` 时的 `run_batches`）不接池子，按计划的并发跑。
+
+内存与临时盘：3 个任务共用同一份内存和同一块临时盘（dataverse 缺省 500Gi）。帧档每个 worker 峰值约 1.5GB，
+帧档的内存准入兜底；TOS 上的 Lance 数据集要整表拷到临时盘，3 个大数据集同时跑时要算一下够不够。
 
 ## 3. 执行计划（Plan）
 
@@ -124,15 +154,15 @@ planner 的输出，也是 `curation plan --json` 的 schema：
 {
   "schema_version": "1.0",
   "vlm_parallelism": 64,
-  "limits": {"cpu_concurrency": {"value": 8, "bound_by": "planner"},     // 取了哪个上限、卡在哪一层（D31）
+  "limits": {"cpu_concurrency": {"value": 30, "bound_by": "planner"},    // 取了哪个上限、卡在哪一层（D31）
              "vlm_parallelism": {"value": 64, "bound_by": "model"}},
   "stages": [
     {"id": "autolabel", "kind": "vlm", "command": "autolabel",
      "episodes": "unlabeled", "gates": {"caption": 32}},
-    {"id": "numeric", "kind": "cpu", "command": "check", "concurrency": 8,
+    {"id": "numeric", "kind": "cpu", "command": "check", "concurrency": 30,
      "modules": ["timestamp_check", "kinematic_limits", "motion_quality"],
      "episodes": "selected", "hard_gates": ["timestamp_check", "kinematic_limits"]},
-    {"id": "frame", "kind": "cpu", "command": "check", "concurrency": 8,
+    {"id": "frame", "kind": "cpu", "command": "check", "concurrency": 30,
      "modules": ["visual_quality", "video_action_sync"],
      "episodes": "survivors:numeric", "hard_gates": ["video_action_sync"]},
     {"id": "vlm", "kind": "vlm", "command": "check",
@@ -350,6 +380,7 @@ CLI 默认 `--retry 0` 且不开 `--hedge`（需求：CLI 默认不重试）；D
 资源保护：
 
 - **内存**：帧档监控 RSS，超过阈值暂停派发新 episode（不是杀进程）。
+- **CPU**：所有在跑任务的 CPU 档共用 Daemon 的全局 CPU 池（§2.3），在途的 CPU episode 总数不超过核数 − 2；子进程单线程。
 - **VLM 端点**：自适应降并发放在 **CLI 进程内的 VLM 客户端**里 —— 运行中的子进程的闸门，Daemon 够不着。
   30 秒窗口内 429 或 5xx 的比例超过阈值，八把闸门按同一比例**减半**，恢复后逐步回升（加性增、乘性减），
   每次调整发一条 `kind=throttle` 事件，Daemon 记入日志和指标并告警。这条保护 v1 没有，是线上产品必须有的。
@@ -365,6 +396,7 @@ CLI 默认 `--retry 0` 且不开 `--hedge`（需求：CLI 默认不重试）；D
 | 待调项 | 本期默认 | 调优产物 |
 |---|---|---|
 | 并行度 N | 64（v1 出厂默认的等价值） | 不同后端/模型的推荐值表 |
+| VLM 跨任务全局池 | 不做，开跑时按任务数均分（§2.3） | 是否像 CPU 一样由 Daemon 统一分 |
 | 八把闸门的配比 | §2.2 的推导表 | 是否需要偏离 v1 配比 |
 | 合并粒度 | 现有模块不合并；新模块按帧策略自动合并 | 是否按 token 上限拆包的阈值；现有模块是否值得为合并改问法 |
 | 跨 episode 批大小 | 不启用 | 串扰率 vs 成本曲线 |

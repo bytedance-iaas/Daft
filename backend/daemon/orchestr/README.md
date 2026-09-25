@@ -12,12 +12,13 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 
 | 文件 | 内容 |
 |---|---|
-| `../exec/runner.py` | 执行器：每条命令一个进程组（`start_new_session`），环境来自 W8 的 `cli_environment`，子进程 `oom_score_adj` +500；stdout 只收一份 `--json` 文档，stderr 逐行交给 C3；SIGTERM（暂停，90 秒后 SIGKILL）、SIGINT（停止，10 秒后 SIGKILL）；退出码按 02 篇 §4 映射 |
+| `../exec/runner.py` | 执行器：每条命令一个进程组（`start_new_session`），环境来自 W8 的 `cli_environment`，另加单线程的 `OMP_NUM_THREADS=1` 一类变量（D54，Daemon 自己的环境里设了别的值时以它为准），子进程 `oom_score_adj` +500；stdout 只收一份 `--json` 文档，stderr 逐行交给 C3；SIGTERM（暂停，90 秒后 SIGKILL）、SIGINT（停止，10 秒后 SIGKILL）；退出码按 02 篇 §4 映射 |
 | `../exec/c3.py` | C3 行的解析与规整；不是 C3 的行（原生库的打印、Python 警告）变成 `warn` 日志，不丢也不打断 |
 | `../exec/usage.py` | token 用量按「子任务 × 模块 × 调用种类 × 模型 × 账本」累加，约 5 秒写一次库，SSE 推累计值 |
 | `config.py` | 编排的配置（环境变量，见下表） |
 | `service.py` | `Orchestrator`：路由调用的入口；生命周期钩子（就绪后收拾孤儿进程、启动 worker 池和清理线程；停机时系统暂停）；动作、子任务、D37 重新预检、清理交付产物、执行计划、预检 |
-| `scheduler.py` | 队列与 worker 池：`maxRunningTasks` 个槽，主流程与子任务共用，先进先出；重启后从库里重建队列 |
+| `scheduler.py` | 队列与 worker 池：`CURATOR_MAX_RUNNING_TASKS` 个槽（缺省 3），主流程与子任务共用，先进先出；重启后从库里重建队列 |
+| `cpupool.py` | 全局 CPU 名额池（D54）：大小是核数 − 2，所有在跑任务的 CPU 档每条在途 episode 占一个名额，整档执行（重试等）按块拿；按公平份额轮流，先开跑的任务占满了后来的也能拿到自己那一份 |
 | `runbase.py` | 所有运行共用的部分：意图（暂停 / 停止 / 停机）、日志、进度、按档调用 CLI（崩溃后带 `--resume` 重新拉起并点名在处理的 episode）、参数、结果版本、同步与核验、`latest` |
 | `pipeline.py` / `episode_pipeline.py` / `stage_worker.py` | 主流程漏斗：numeric、frame、VLM 各用一个持久的 `multiprocessing` worker；按并发额度逐条交接、持续补位与 SQLite 续跑；外部 CLI 保留批次兼容路径 |
 | `runs.py` | 主流程与四种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`、`ReexportRun`；建议性模块的 `advisory_<档>` 阶段（全部选中条目，任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径，F5.5） |
@@ -52,6 +53,8 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   `POST /tasks` 或待启动任务的 `PATCH /tasks/{id}` 可传 `params.batch_size`（1–256 条/次派发）；不传时按并发度取 8–64 条，小数据集自动减小。
   此值不限制每层在途并发：并发由实际 plan 决定。层间等待队列按两次派发量或下游并发度取较大值，并计入上游在途条目的有界余量。
   numeric/frame 共用 CPU 总预算，逐条释放额度；预算为 1 时交替推进，也不持有整批锁。任务的 `limits.cpu_concurrency` 是上限，实际值见 plan 的 `value` 和 `bound_by`。
+  plan 里 CPU 档的并发是这个任务最多用多少（核数 − 2 与任务上限取小）；派发一条 CPU episode 前还要从全局 CPU 名额池拿一个名额（帧档先过内存准入），
+  做完归还，几个任务同时跑时在途的 CPU episode 总数不超过池的大小（D54，设计 04 §2.3）。数据完整性档只在开了逐帧解码时拿名额。
   自定义 `CURATOR_CLI` 仍按批次调用，以保留包装脚本的执行语义。
   实时进度的 `pipeline` 字段给出实际在途数、等待数和最近五次派发，UI 可同时观察三层重叠与新条目进入。
   耗时汇总按每条 episode 的处理时间计算，同层共享执行的模块只计一次；排队和 CPU 准入等待不计入。
@@ -106,10 +109,10 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
-| `CURATOR_MAX_RUNNING_TASKS` | 1 | 同时运行的任务（主流程与子任务一起算，P1） |
+| `CURATOR_MAX_RUNNING_TASKS` | 3 | 同时运行的任务（主流程与子任务一起算，P1、D54） |
 | `CURATOR_CLI` | 当前解释器 `-m curation.cli` | CLI 的命令行 |
-| `CURATOR_SITE_CONFIG` | `$CURATION_CONFIG` | planner 读的站点配置（`concurrency`、`vlm` 两段），缺省就是 Chart 写的 site.yaml |
-| `CURATOR_CPU_CORES` | 容器的 CPU 配额 | planner 按多少核规划 |
+| `CURATOR_SITE_CONFIG` | `$CURATION_CONFIG` | planner 读的站点配置（`concurrency` 里的 VLM 并行度、`vlm` 段），缺省就是 Chart 写的 site.yaml；旧文件里的 `concurrency.cpu` / `cpuMax` 忽略并告警（D54） |
+| `CURATOR_CPU_CORES` | 容器的 CPU 配额（cgroup v2 / v1），没有配额时是本机核数 | 核数：减 2 是全局 CPU 名额池的大小，也是一个任务最多用的 CPU worker 数（P4、D54） |
 | `CURATOR_MEMORY_ADMISSION` | 0.8 | 内存占用高于这个比例时帧档等待（0 = 不管） |
 | `CURATOR_TERM_GRACE_S` / `CURATOR_INT_GRACE_S` | 90 / 10 | SIGTERM、SIGINT 之后多久 SIGKILL；Pod 的 `terminationGracePeriodSeconds` 要不小于 preStop + 前者 + 约 20 秒 |
 | `CURATOR_VERIFY_VISIBILITY_S` | 60 | `curation verify --visibility-timeout` |
@@ -183,12 +186,28 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
     Lance 任务的日志（`c "$B/tasks/$T/logs?stage=export"`）里有「lance 原格式交付本版本未做」。`c "$B/datasets?format=mcap"` 只列出 `mini_mcap`。
     跑完之后 `$D/data/source-cache/` 下没有任务目录（本地数据不用拉副本，读取器的临时视频目录随运行删掉；TOS 上的数据拉到这里，同样随运行删掉）。
 
+12. **CPU 名额池与同时运行的任务数（D54）**：停掉 Daemon，写一个早于 D54 的站点配置，按 4 核重启（池里 2 个名额）：
+
+    ```bash
+    printf 'concurrency: {cpu: 8, cpuMax: 16}\n' > $D/site.yaml
+    CURATOR_CPU_CORES=4 CURATOR_SITE_CONFIG=$D/site.yaml ../.venv/bin/python -m daemon --host 127.0.0.1 --port 18080 &
+    ```
+
+    Daemon 照常就绪，日志里有 `site config …: concurrency.cpu, concurrency.cpuMax ignored` 的告警和
+    `CPU pool: 2 worker slot(s) shared by up to 3 running task(s)`。按第 1、2 步连着建 4 个任务（同一个 `preflight_id` 即可），
+    趁它们在跑 `c "$B/tasks?state=running"` 是 3 个，第 4 个是 `queued`；`c $B/tasks/$T/plan` 的 `limits.cpu_concurrency` 是
+    `{"value": 2, "bound_by": "planner"}`，每个任务的日志（`c "$B/tasks/$T/logs?stage=system"`）里有「CPU 档每条占全局 CPU 池的一个名额（共 2 个，
+    与同时运行的任务共用）」。几个任务 SSE 里 numeric、frame 两层的 `pipeline.inflight` 加起来任何时候不超过 2；四个最后都 `succeeded`。
+
 ## 自动化测试
 
 ```bash
 ../.venv/bin/python -m pytest -q tests/orchestr -m "not slow"    # 约 1.5 分钟：执行器、规则、交付目录、worker 池、接口与校验
 ../.venv/bin/python -m pytest -q tests/orchestr                  # 全部，含真跑 CLI 的端到端（slow）
 ```
+
+`test_cpupool.py` 是全局 CPU 名额池本身（计数、公平份额、按块拿、并发下不超额），`test_episode_dispatch.py` 末尾几条是流水线经名额池派发
+（别的任务占着的名额不用、崩溃 / 整体失败 / 停止后全部归还），`test_e2e_more.py::test_three_tasks_share_one_cpu_pool` 真跑 4 个任务。
 
 `test_containers.py` 是 mcap / Lance（D44）：登记、核对与重新预检、浏览提示、episode 列表，慢测试里两种格式各真跑一个任务到交付，
 另有一个是 D37 在 mcap 文件变了时拦下开始。

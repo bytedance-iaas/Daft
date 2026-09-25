@@ -6,9 +6,9 @@ import copy
 import pytest
 
 from curation.pipeline import config as v1_config
-from curation.planner import (GATE_NAMES, V1_CONFIG_KEYS, PlanLimits, SiteConfig, derive_gates,
-                              effective_cpu_concurrency, effective_vlm_parallelism,
-                              v1_set_overrides)
+from curation.planner import (GATE_NAMES, V1_CONFIG_KEYS, PlanLimits, SiteConfig,
+                              available_cpu_workers, derive_gates, effective_cpu_concurrency,
+                              effective_vlm_parallelism, retired_site_keys, v1_set_overrides)
 from curation.planner.limits import DEFAULT_VLM_PARALLELISM
 
 from . import v1_source
@@ -142,31 +142,44 @@ def test_episode_override_carries_v1_coupled_gates():
     assert derive_gates(64, {"episode": 48, "endstate": 64})["endstate"] == 64
 
 
-# ---------------------------------------------------------------- CPU concurrency (P4)
+# ---------------------------------------------------------------- CPU concurrency (P4, D54)
 
-@pytest.mark.parametrize("cores,expected", [(32, 8), (64, 8), (16, 4), (4, 1), (1, 1), (3, 1)])
-def test_cpu_default_is_min_8_cores_over_4(cores, expected):
+@pytest.mark.parametrize("cores,expected", [(32, 30), (64, 62), (16, 14), (4, 2), (3, 1), (2, 1),
+                                            (1, 1)])
+def test_cpu_default_is_every_core_but_two(cores, expected):
     lim = effective_cpu_concurrency(PlanLimits(cpu_cores=cores))
     assert (lim.value, lim.bound_by) == (expected, "planner")
+    assert available_cpu_workers(cores) == expected
 
 
 def test_cpu_caps_intersect():
-    assert effective_cpu_concurrency(PlanLimits(cpu_cores=32, cpu_concurrency=3)).to_json() == \
-        {"value": 3, "bound_by": "task"}
-    # a task cap above the default cannot raise it
-    assert effective_cpu_concurrency(PlanLimits(cpu_cores=32, cpu_concurrency=12)).bound_by == "planner"
-    site = SiteConfig(cpu_concurrency=1)                  # "the site can set it back to 1"
-    assert effective_cpu_concurrency(PlanLimits(cpu_cores=32), site).to_json() == \
-        {"value": 1, "bound_by": "site"}
-    site = SiteConfig(cpu_concurrency=12, cpu_concurrency_max=10)
-    assert effective_cpu_concurrency(PlanLimits(cpu_cores=64), site).value == 10
+    assert effective_cpu_concurrency(PlanLimits(cpu_cores=32, cpu_concurrency=10)).to_json() == \
+        {"value": 10, "bound_by": "task"}
+    # a task cap above the cores cannot raise it
+    assert effective_cpu_concurrency(PlanLimits(cpu_cores=32, cpu_concurrency=64)).to_json() == \
+        {"value": 30, "bound_by": "planner"}
     # ties name the layer the user controls
-    assert effective_cpu_concurrency(PlanLimits(cpu_cores=32, cpu_concurrency=8)).bound_by == "task"
+    assert effective_cpu_concurrency(PlanLimits(cpu_cores=32, cpu_concurrency=30)).bound_by == "task"
+
+
+def test_the_site_no_longer_bounds_cpu():
+    """D54: concurrency.cpu / cpuMax of an old site.yaml are ignored (and named, to warn)."""
+    old = {"concurrency": {"cpu": 8, "cpuMax": 16, "vlmParallelism": 64}}
+    site = SiteConfig.from_mapping(old)
+    assert effective_cpu_concurrency(PlanLimits(cpu_cores=32), site).to_json() == \
+        {"value": 30, "bound_by": "planner"}
+    assert site.vlm_parallelism == 64
+    assert retired_site_keys(old) == ["concurrency.cpu", "concurrency.cpuMax"]
+    assert retired_site_keys({"concurrency": {"cpu_max": 4}}) == ["concurrency.cpu_max"]
+    assert retired_site_keys({"concurrency": {"vlmParallelism": 64}}) == []
+    assert retired_site_keys(None) == retired_site_keys({"concurrency": None}) == []
 
 
 def test_cpu_default_uses_the_machine(monkeypatch):
     monkeypatch.setattr("os.cpu_count", lambda: 12)
-    assert effective_cpu_concurrency().value == 3
+    assert effective_cpu_concurrency().value == 10
+    monkeypatch.setattr("os.cpu_count", lambda: None)
+    assert effective_cpu_concurrency().value == 1
 
 
 # ---------------------------------------------------------------- VLM parallelism (D31, P1)
@@ -204,15 +217,14 @@ def test_limits_reject_bad_values():
 
 def test_site_config_from_values_yaml_shape():
     site = SiteConfig.from_mapping({
-        "concurrency": {"cpu": 8, "cpuMax": 16, "vlmParallelism": 64, "vlmParallelismMax": 128},
+        "concurrency": {"vlmParallelism": 64, "vlmParallelismMax": 128},
         "vlm": {"merge": {"enabled": False, "max_units": 4}, "gates": {"llm": 8}}})
-    assert (site.cpu_concurrency, site.cpu_concurrency_max) == (8, 16)
     assert (site.vlm_parallelism, site.vlm_parallelism_max) == (64, 128)
     assert site.merge_enabled is False and site.merge_limits_obj().max_units == 4
     assert site.gate_overrides == {"llm": 8}
     assert SiteConfig.from_mapping(None) == SiteConfig()
     with pytest.raises(ValueError):
-        SiteConfig.from_mapping({"concurrency": {"cpuMax": 4, "cpu_max": 5}})
+        SiteConfig.from_mapping({"concurrency": {"vlmParallelism": 4, "vlm_parallelism": 5}})
     with pytest.raises(ValueError):
         SiteConfig.from_mapping({"vlm": {"merge": {"enabled": "no"}}})
     with pytest.raises(ValueError):

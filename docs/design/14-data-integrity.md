@@ -86,10 +86,10 @@ EEF 模块与本模块都置位。
 ### 2.2 新档 `integrity`
 
 - `STAGE_ORDER` 变为 `integrity → numeric → frame → vlm → post_verdict → profile_vlm`。本模块是这一档唯一的模块。
-- 它主要耗 I/O：计划里是一个 `cpu` 档，并发取计划的 CPU 并发（站点默认 8），不参与数值档、抽帧档之间的 CPU 份额划分
+- 它主要耗 I/O：计划里是一个 `cpu` 档，并发取计划的 CPU 并发（2026-09-25 起是容器 CPU 配额 − 2，D54），不参与数值档、抽帧档之间的 CPU 份额划分
   （`cpu_shares_for` 只分这两档）；流水线给每层定宽时，没有份额、也没有 VLM 闸门的层取它自己的 `concurrency`
-  （`daemon/orchestr/episode_pipeline.py`；原来会退成 1）。开了 L3 时这一档也吃 CPU，与抽帧档叠加，由计划的并发上限兜着；
-  L3 默认关，本期不再细分。
+  （`daemon/orchestr/episode_pipeline.py`；原来会退成 1）。开了 L3 时这一档也吃 CPU：它和数值档、抽帧档一样，
+  每条在途的 episode 占 Daemon 全局 CPU 池的一个名额（设计 04 §2.3）；不开 L3 时不占名额。
 - 流式漏斗（设计 13）里它是第一层：一条过了就交给数值档，不等整批。判废的条目不进后面的档（硬门，与现有漏斗同一机制）。
 - planner 的耗时估算（`planner/estimates.py`）加这一档：每条按 0.5 秒（L1 + L2，§6 的量级）÷ 并发；L3 不计入，计划的说明里写明。
 

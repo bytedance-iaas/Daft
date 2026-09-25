@@ -166,12 +166,17 @@ def test_publishing_into_one_delivery_is_serial(daemon, monkeypatch):
         assert fh.read().strip() == run_of[last]              # the last complete publish
 
 
-def test_one_task_runs_at_a_time_by_default(daemon):
+def test_three_tasks_share_one_cpu_pool(daemon, monkeypatch):
+    """P1, P4, D54: three tasks run at once by default and the fourth waits for a slot; their CPU
+    episodes share one pool of cores - 2 slots, and every slot is back when they are done."""
+    monkeypatch.setenv("CURATOR_CPU_CORES", "4")                # a pool of 2
     d = daemon()
-    ids = [d.create(modules=["timestamp_check"])["id"] for _ in range(2)]
-    second = d.get(ids[1])
-    assert second["state"] == "queued"                          # waits for the only slot
+    pool = d.orch.cpu_pool
+    assert (pool.size, d.orch.cfg.max_running) == (2, 3)
+    ids = [d.create(modules=["timestamp_check", "visual_quality"])["id"] for _ in range(4)]
     done = [d.wait(i) for i in ids]
     assert all(t["state"] == "succeeded" for t in done)
-    first, second = sorted(done, key=lambda t: t["started_at"])
-    assert second["started_at"] >= first["finished_at"]
+    assert done[3]["started_at"] >= min(t["finished_at"] for t in done[:3])
+    assert pool.used == 0 and 1 <= pool.peak <= 2               # never more than the pool
+    plan = d.api("GET", f"/tasks/{ids[0]}/plan").json()
+    assert plan["limits"]["cpu_concurrency"] == {"value": 2, "bound_by": "planner"}

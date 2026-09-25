@@ -2381,7 +2381,14 @@ components:
           type: object
           additionalProperties: false
           properties:
-            cpu_concurrency: {type: integer, minimum: 1}
+            cpu_concurrency:
+              type: integer
+              minimum: 1
+              description: >-
+                At most this many CPU workers for this task; it can only lower the default, which
+                is every core of the container but two (P4, D54). Unset: that default. The CPU
+                workers of all running tasks come out of one pool of that size in the Daemon, so
+                fewer may run at a time while other tasks run too.
             vlm_parallelism: {type: integer, minimum: 1}
     TaskCreate:
       type: object

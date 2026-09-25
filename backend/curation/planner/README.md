@@ -11,7 +11,7 @@ Daemon 与 `curation plan` 共用的纯计算库（设计 02 §3.2）：不联�
 
 | 文件 | 内容 |
 |---|---|
-| `limits.py` | 上限取交集（D31）：CPU 并发 = min(站点默认或 `min(8, 核数/4)`，站点上限，任务上限)；VLM 并行度 N = min(任务、模型、后端、站点上限，模型和后端都没配时再加站点默认或 64)，多任务同跑时按任务数均分（P1）；计划里记下是哪一层卡住的（`bound_by`） |
+| `limits.py` | 上限取交集（D31）：CPU 并发 = min(核数 − 2（至少 1），任务上限)，是一个任务最多用多少，核本身由 Daemon 的全局 CPU 池在任务之间分（P4、D54）；VLM 并行度 N = min(任务、模型、后端、站点上限，模型和后端都没配时再加站点默认或 64)，多任务同跑时按任务数均分（P1）；计划里记下是哪一层卡住的（`bound_by`） |
 | `gates.py` | 一个 N 推导八把闸门（04 §2.2）；endstate、arbitration、guard_caption 沿用 v1 在 `funnel.py` 里对 episode 闸门的耦合；站点可逐把覆盖，按 N 等比缩放；`v1_set_overrides()` 给出让 v1 代码用上这组闸门的 `--set` |
 | `plan.py` | `build_plan()`：分档、幸存者链、硬门、autolabel 条件、两个聚合档、dedup（并发恒为 1）与技能画像、合并提案、估算；输出符合 `docs/contracts/cli/plan.schema.json` |
 | `estimates.py` | 估算用的常数全部来自 v1 的实测与出厂配置，逐条注明出处 |
@@ -38,7 +38,7 @@ plan = build_plan(preflight_json, task["modules"], episode_indices,
                              model_parallelism=model.parallelism, backend_parallelism=backend.parallelism,
                              cpu_cores=容器的 CPU 配额（读不到就不传，默认 os.cpu_count()）,
                              running_tasks=启动时正在运行的任务数),
-                  SiteConfig.from_mapping(values_yaml_的_concurrency_与_vlm_段),
+                  SiteConfig.from_mapping(site_yaml_的_concurrency_与_vlm_段),   # CPU 没有站点设置（D54）
                   unlabeled_episodes=没有任务标注的条目下标（知道就传，autolabel 档的去留就是精确的）)
 ```
 
@@ -83,7 +83,7 @@ EOF
 ```
 
 核对：八档依次是 autolabel、numeric、frame、vlm、verdict、dedup、profile、final；frame 读 `survivors:numeric`，vlm 读
-`survivors:frame`；CPU 两档并发 8；dedup 并发 1；vlm 档闸门 `episode 32 / probe 64 / endstate 64 / arbitration 32 /
+`survivors:frame`；CPU 两档并发 30（32 核留 2 核）；dedup 并发 1；vlm 档闸门 `episode 32 / probe 64 / endstate 64 / arbitration 32 /
 guard_caption 32`，profile 档 `caption 32 / llm 16 / audit 16`；两个 VLM 档都是 `{"strategy": "none", "groups": []}`；
 估算 3000 次请求（autolabel 88 + 成败判定 200×(8+2×3) + 画像 112）；notes 里说明运动学极限缺型号、哪些调用没计入。
 
@@ -103,7 +103,7 @@ EOF
 ```
 
 核对：不给任何上限时 N=64（`planner`）；模型 100 → 100（`model`）；再给任务上限 16 → 16（`task`）；两个任务同跑 → 32
-（`running_tasks`）；任务上限 128 抬不高 N，仍是 64。CPU：32 核默认 8（`planner`），任务上限 2 → 2（`task`）。
+（`running_tasks`）；任务上限 128 抬不高 N，仍是 64。CPU：32 核默认 30（`planner`，留 2 核给 Daemon），任务上限 2 → 2（`task`）。
 
 **4. N=64 与 v1 出厂默认逐项对照**（v1 一侧从 `default.yaml` 和 `funnel.py` / `run.py` / `vlm_client.py` 的代码里现读）：
 

@@ -1601,6 +1601,7 @@ export interface components {
             /** @default false */
             clips?: boolean;
             limits?: {
+                /** @description At most this many CPU workers for this task; it can only lower the default, which is every core of the container but two (P4, D54). Unset: that default. The CPU workers of all running tasks come out of one pool of that size in the Daemon, so fewer may run at a time while other tasks run too. */
                 cpu_concurrency?: number;
                 vlm_parallelism?: number;
             };
@@ -2260,6 +2261,7 @@ export interface components {
             vlm_parallelism: number;
             /** @description The upper bounds the plan honoured, and where each came from. */
             limits: {
+                /** @description The most CPU workers this task may use: every core but two (planner) or the task's cap (task), whichever is lower (P4, D54). Plans made before D54 may say site. Under the Daemon, the workers of all running tasks share one pool of that many slots. */
                 cpu_concurrency: components["schemas"]["limit"];
                 vlm_parallelism: components["schemas"]["limit"];
             };

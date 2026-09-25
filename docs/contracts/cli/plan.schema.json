@@ -14,7 +14,7 @@
       "description": "The upper bounds the plan honoured, and where each came from.",
       "required": ["cpu_concurrency", "vlm_parallelism"],
       "properties": {
-        "cpu_concurrency": {"$ref": "#/$defs/limit"},
+        "cpu_concurrency": {"$ref": "#/$defs/limit", "description": "The most CPU workers this task may use: every core but two (planner) or the task's cap (task), whichever is lower (P4, D54). Plans made before D54 may say site. Under the Daemon, the workers of all running tasks share one pool of that many slots."},
         "vlm_parallelism": {"$ref": "#/$defs/limit"}
       }
     },
