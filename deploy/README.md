@@ -100,7 +100,7 @@ docker run --rm -p 8080:8080 -v curator-data:/data -e CURATOR_BASE_PATH=/curatio
 7. **和 rerun viewer 免二次登录**：dataverse 让两边共用 Secret 里的 `web_htpasswd`，realm 不改（Daemon 固定为 `Robot Data Curation`）。
 8. **资源**：dataverse 缺省 `requests 16 核 / 128Gi`、`limits 32 核 / 256Gi`（`curator.resources`），照节点的 allocatable 调；
    跑在 VCI 上时按 limits 计费。
-9. **临时盘够大**：`curator.persistence.scratch`（缺省 200Gi）除了导出时的视频临时文件，还放 TOS 上 mcap / Lance 数据集的本地副本
+9. **临时盘够大**：`curator.persistence.scratch`（缺省 500Gi）除了导出时的视频临时文件，还放 TOS 上 mcap / Lance 数据集的本地副本
    （`CURATOR_SOURCE_CACHE_DIR=/scratch/source-cache`，D44）：mcap 读到哪条下载哪条，Lance 整表下载，任务跑完就删。
    按要质检的最大数据集加上导出的余量来定。副本不放数据盘：数据盘写满会让 SQLite 写不进去。
 10. **镜像能拉到**：`image.curator` 是完整引用，tag 是提交号（第 1 节）。
@@ -264,21 +264,41 @@ kubectl -n $NS cp -c curation $POD:/data/backups/curator-<时间>.db ./curator-<
 
 快照留在数据盘上会占空间，旧的记得删（`kubectl -n $NS exec $POD -c curation -- rm /data/backups/curator-<时间>.db`）。
 
-**恢复**：停 Daemon → 把快照放回数据盘 → 起 Daemon。用 Chart 的维护模式做，Pod 里只跑 `sleep`，两块盘照挂、环境变量照旧：
+**恢复**：停 Daemon → 把快照放回数据盘 → 起 Daemon。StatefulSet 缩到 0 个副本，数据盘空出来，再照它的 Pod 模板起一个
+只挂数据盘、只跑 `sleep` 的临时 Pod 来换库（镜像、运行用户、VCI 注解都沿用；不带标签，网关不会把流量转给它）。
+**恢复期间别跑 `helm upgrade`**：它会把副本数改回 1。
 
 ```bash
-helm -n $NS upgrade $REL $RERUN/deploy/helm/dataverse -f <values 文件> --set curator.maintenance=true
-kubectl -n $NS rollout status statefulset/$STS
-kubectl -n $NS cp -c curation ./curator-<时间>.db $POD:/data/restore.db
-# 旧库连同它的 -wal / -shm 一起挪走（留着旧的 WAL 会被套到恢复的库上），再换上快照
-kubectl -n $NS exec $POD -c curation -- sh -c \
+# 数据盘的 PVC 名：接管过旧盘的实例不是 data-$POD（galbot 是 data-curator-v2-0），从 Pod 上读
+CLAIM=$(kubectl -n $NS get pod $POD -o jsonpath='{.spec.volumes[?(@.name=="data")].persistentVolumeClaim.claimName}')
+# 1. 停 Daemon（SIGTERM：运行中的任务被系统暂停），等 Pod 删掉、盘卸下来
+kubectl -n $NS scale statefulset/$STS --replicas=0
+kubectl -n $NS wait --for=delete pod/$POD --timeout=5m
+# 2. 临时 Pod：同一份模板，只跑 sleep，资源压到 2 核 8Gi，临时盘换成 emptyDir
+kubectl -n $NS get statefulset $STS -o json | jq --arg claim "$CLAIM" '{
+  apiVersion: "v1", kind: "Pod",
+  metadata: {name: "curator-restore", annotations: .spec.template.metadata.annotations},
+  spec: (.spec.template.spec
+    | .restartPolicy = "Never"
+    | .containers |= map(.args = ["sleep", "infinity"]
+        | .resources = {requests: {cpu: "2", memory: "8Gi"}, limits: {cpu: "2", memory: "8Gi"}}
+        | del(.startupProbe, .livenessProbe, .readinessProbe, .lifecycle))
+    | .volumes = ((.volumes // []) | map(select(.name != "data")))
+        + [{name: "data", persistentVolumeClaim: {claimName: $claim}}, {name: "scratch", emptyDir: {}}])}' \
+  | kubectl -n $NS apply -f -
+kubectl -n $NS wait --for=condition=Ready pod/curator-restore --timeout=10m
+# 3. 换库：旧库连同它的 -wal / -shm 一起挪走（留着旧的 WAL 会被套到恢复的库上），再换上快照
+kubectl -n $NS cp -c curation ./curator-<时间>.db curator-restore:/data/restore.db
+kubectl -n $NS exec curator-restore -c curation -- sh -c \
   'cd /data && d=replaced/$(date +%Y%m%d-%H%M%S) && mkdir -p $d && mv curator.db* $d/ && mv restore.db curator.db'
-helm -n $NS upgrade $REL $RERUN/deploy/helm/dataverse -f <values 文件> --set curator.maintenance=false
+# 4. 删掉临时 Pod，起回 Daemon
+kubectl -n $NS delete pod curator-restore --wait
+kubectl -n $NS scale statefulset/$STS --replicas=1
 kubectl -n $NS rollout status statefulset/$STS
 ```
 
 Daemon 起来后照常迁移和对账：快照那一刻在跑的任务被置为系统暂停并自动续跑（检查点在数据盘的 `runs/` 下）。
-确认无误后删掉 `/data/replaced/`。维护模式也可以用来离线查看数据库、在 Daemon 起不来时排查。
+确认无误后删掉 `/data/replaced/`。Daemon 起不来、要离线查看数据库时，同样做第 1、2 步，看完做第 4 步。
 
 ## 9. 排障
 
@@ -339,7 +359,7 @@ D48（2026-09-23）起，galbot 的 v2 是单独装的 release `curator-v2`（�
 |---|---|
 | curator-v2 | StatefulSet `curator-v2`、Ingress `curator-v2`；数据盘 `data-curator-v2-0`、临时盘 `scratch-curator-v2-0`（都是 `ebs-essd`）；主密钥 Secret `curator-v2-master-key`，只有 `masterKey` 一个键（第 1 版） |
 | galbot-dataverse | Chart `dataverse-0.1.7`，`curator.enabled=false`、`vci.enabled=true`、`apig.create=true`；`dataverse-secrets` 有 `tos_access_key`、`tos_secret_key`、`server_token_secret`、`web_htpasswd`、`ark_api_key`（最后一个 0.2.0 不再读） |
-| 新名字 | StatefulSet 与 Service `galbot-dataverse-curation`，Pod `galbot-dataverse-curation-0`；数据盘沿用 `data-curator-v2-0`，临时盘新建 `scratch-galbot-dataverse-curation-0` |
+| 新名字 | StatefulSet 与 Service `galbot-dataverse-curation`，Pod `galbot-dataverse-curation-0`；数据盘沿用 `data-curator-v2-0`，临时盘新建 `scratch-galbot-dataverse-curation-0`（500Gi，原来是 200Gi） |
 
 顺带的变化：0.2.0 让 viewer 和 catalog 只挂自己要的键，`rerun-cloud-0` 会跟着重启一次（上面四个键都在，挂载不会失败）。
 

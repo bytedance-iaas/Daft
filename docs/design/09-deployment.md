@@ -62,7 +62,8 @@ templates/ingress-apig.yaml        # 同一域名的 /curation → 上面的 Ser
 
 并入 dataverse 时做了精简（D53）：部署之间不会不同的东西写死在模板里，不再是值 —— 挂载前缀 `/curation`
 （viewer 的「质检」按钮按同源的 `/curation` 拼链接）、端口 8080、三个探针（§2.2）、宽限期 120 秒与 preStop 5 秒（§2.3）、
-运行用户 uid/gid 10001、不挂 ServiceAccount 令牌、关掉 Service 链接。剩下的值：
+运行用户 uid/gid 10001、不挂 ServiceAccount 令牌、关掉 Service 链接。质检台怎么跑（同时运行几个任务、每个任务开多少 worker）
+是质检台自己的事，Chart 不设，用 Daemon 与 planner 的缺省（04 篇）。剩下的值：
 
 ```yaml
 image:
@@ -70,7 +71,6 @@ image:
 
 curator:
   enabled: true
-  maxRunningTasks: 1            # 同时运行的任务数，其余排队，见 04 篇 §2.3
   publicBaseUrl: ""             # 生成给 Agent 的绝对链接用；为空则 links 给相对路径
   publicDatasets:               # HuggingFace 缓存桶；bucket 为空则新建页不出现这个数据来源
     bucket: ai-infra
@@ -84,11 +84,10 @@ curator:
       existingClaim: ""         # 接管一块已有的盘（从独立 release 并入时用，不拷数据）
     scratch:                    # /scratch：导出时的视频临时文件、TOS 上 mcap / Lance 数据集的本地副本；可丢
       className: ebs-essd
-      size: 200Gi
+      size: 500Gi
   resources:
     requests: {cpu: "16", memory: 128Gi}
     limits:   {cpu: "32", memory: 256Gi}
-  maintenance: false            # 维护模式：Pod 只 sleep、不起 Daemon，两块盘照挂（恢复备份等离线操作）
   extraEnv: []                  # 其余 Daemon 设置，例如 CURATOR_WORK_RETENTION_DAYS、CURATOR_REASONING_EFFORT_TABLE（直接写 JSON）
 
 vci:
@@ -97,7 +96,7 @@ vci:
 
 原来独立 Chart 里的其余可调项都去掉了：镜像三段式与拉取凭证、副本数（本来只能是 1）、单用户 basic 登录、
 Chart 自动生成的试用主密钥、只会报错的定时备份占位、自带的 Service 类型与 Ingress、日志格式与级别、时区、调度与安全上下文的
-逃生口、本地挂载路径来源。这些要么由 dataverse 统一处理，要么 Daemon 的缺省就是现网的取值，确实要改时用 `extraEnv`。
+逃生口、本地挂载路径来源、同时运行的任务数、维护模式（恢复备份改为缩容到 0 再起临时 Pod，`deploy/README.md` 第 8 节）。这些要么由 dataverse 统一处理，要么 Daemon 的缺省就是现网的取值，确实要改时用 `extraEnv`。
 
 dataverse 给质检台容器的环境变量如下，这张表就是 Chart 和 Daemon 之间的约定：改名或删掉其中一项设置，要同时改 dataverse 的模板；
 `backend/tests/deploy/test_env_contract.py` 检查表里每一项都有代码在读、Daemon 能接受这些取值。
@@ -106,7 +105,6 @@ dataverse 给质检台容器的环境变量如下，这张表就是 Chart 和 Da
 |---|---|---|
 | `CURATOR_BASE_PATH` | `/curation` | 写死（§2.4） |
 | `CURATOR_PUBLIC_BASE_URL` | `https://<对外域名>` | `curator.publicBaseUrl`，为空则不设 |
-| `CURATOR_MAX_RUNNING_TASKS` | `1` | `curator.maxRunningTasks`（缺省值） |
 | `CURATOR_DATA_DIR` | `/data` | 写死，数据盘的挂载点 |
 | `CURATOR_SCRATCH_DIR` | `/scratch` | 写死，临时盘的挂载点 |
 | `CURATION_EXPORT_SCRATCH` | `/scratch` | 写死，导出的视频临时文件 |
@@ -120,7 +118,7 @@ dataverse 给质检台容器的环境变量如下，这张表就是 Chart 和 Da
 | `CURATOR_MASTER_KEY_VERSION` | Secret 的 `curator_master_key_version` | secretKeyRef，可缺（没有 = 第 1 版） |
 
 镜像里还固定了 `CURATOR_STATIC_DIR=/app/web`（网页控制台）和 `CURATOR_CONTRACTS_DIR=/app/docs/contracts`（契约文件），Chart 不改它们。
-Daemon 的其余设置（端口、日志、时区、SSE 心跳、工作目录保留天数）用 Daemon 的缺省，和原来独立 Chart 给的值相同。
+Daemon 的其余设置（端口、日志、时区、SSE 心跳、工作目录保留天数、同时运行的任务数）用 Daemon 的缺省，和原来独立 Chart 给的值相同。
 
 dataverse 的全部密钥在一个 Secret 里，但**每个组件只挂自己要读的键**：质检台只拿 `web_htpasswd` 和 `curator_master_key*`，
 viewer、catalog 和原生会话（面向用户的桌面）都读不到主密钥。
@@ -223,5 +221,5 @@ SIGTERM 后 Daemon：停止接新任务 → 给运行中的 CLI 子进程发 SIG
 | SQLite 库 | 任务历史、密钥（密文）、裁决记录全没了。裁决在交付目录里还有一份 CSV 副本，其余没有 | 设计：每天一次，Daemon 内执行 `VACUUM INTO` 出一份一致性快照到数据卷，再上传到 TOS，保留最近 14 份；CronJob 只负责调 Daemon 的内部接口触发，不自己碰卷。Daemon 还没有这个接口，dataverse 也就没有这一项，现在按 `deploy/README.md` 第 8 节手动做 |
 | 主密钥 | 库里的密钥全部解不开，只能逐个重填 | 部署时由运维另行保管；Chart 不替用户备份它 |
 
-恢复：停 Daemon（dataverse 的 `curator.maintenance`）→ 把快照放回数据卷 → 起 Daemon（启动对账会把当时在跑的任务置为系统暂停并恢复）。
+恢复：停 Daemon（StatefulSet 缩到 0）→ 把快照放回数据卷 → 起 Daemon（启动对账会把当时在跑的任务置为系统暂停并恢复）。
 步骤见 `deploy/README.md` 第 8 节。
