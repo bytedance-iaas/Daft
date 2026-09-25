@@ -43,7 +43,7 @@ from .records import (CRASHES_NAME, Inflight, PartWriter, compact, latest_result
                       write_json_atomic)
 from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column, open_row_source
 
-FUNNEL_STAGES = ("numeric", "frame", "vlm")
+FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm")
 NUMERIC_ORDER = ("timestamp_check", "kinematic_limits", "motion_quality")
 #: P15: this many consecutive failures on one infrastructure cause at the start
 #: of a VLM stage fail the module instead of timing out episode by episode.
@@ -100,6 +100,8 @@ class StageOptions:
     #: episodes whose existing line was made from another input and must be redone on --resume
     eef: object | None = None
     stale: dict[str, set[int]] | None = None
+    #: the data integrity module's judge (design doc 14, ``extensions.integrity.IntegrityJudge``)
+    integrity: object | None = None
     stage: str = field(init=False, default="")
 
     def __post_init__(self) -> None:
@@ -219,6 +221,17 @@ class StageRun:
         o = self.o
         if o.stage == "vlm" and "task_success" not in o.modules:
             return _NoRows()
+        if o.stage == "integrity":
+            # its own rows: v1's readers without the semantics sample (design doc 14 §2.3)
+            try:
+                return o.integrity.rows(todo)
+            except Exception as e:  # noqa: BLE001 - the episode table itself cannot be read
+                from ..cli.errors import ModuleFailed
+
+                raise ModuleFailed(f"{self.label}: the dataset cannot be read: "
+                                   f"{type(e).__name__}: {e}"[:600],
+                                   {"modules": list(o.modules),
+                                    "exception": type(e).__name__}) from None
         try:
             return open_row_source(o.input_dir, todo, embodiment_id=o.embodiment_id,
                                    max_episodes=o.max_episodes, selection=o.selection,
@@ -370,11 +383,34 @@ class StageRun:
             return []
         return [f"details/evidence/{r}".replace(os.sep, "/") for r in written.get(eid, [])]
 
+    def _integrity(self, source, ep: int, t0: float, logs) -> dict[str, dict] | None:
+        """The data integrity module: its files, v1's row validation (D51), the rest."""
+        m = self.o.modules[0]
+        row = row_error = None
+        try:
+            row = source.get(ep)
+        except EpisodeMissingSource as e:          # D40 as everywhere: no result line
+            with self._lock:
+                self.missing[int(ep)] = list(e.missing)
+            return None
+        except EpisodeReadError as e:
+            row_error = e
+        try:
+            struct = self.o.integrity.judge(ep, row, row_error, logs[m])
+        except Exception as e:  # noqa: BLE001 - one episode's failure stays its own
+            struct = None
+            logs[m].add("internal", cause=f"{type(e).__name__}: {e}")
+        finally:
+            source.release(row)
+        return self._records(ep, {m: struct}, logs, time.monotonic() - t0)
+
     def _work(self, source: RowSource, ep: int) -> dict[str, dict] | None:
         """The records of one episode; None when its source files are missing (D40)."""
         t0 = time.monotonic()
         logs = {m: IncidentLog() for m in self.o.modules}
         evidence = None
+        if self.o.stage == "integrity":
+            return self._integrity(source, ep, t0, logs)
         try:
             row = source.get(ep)
         except EpisodeMissingSource as e:          # v1 leaves it out: no result line

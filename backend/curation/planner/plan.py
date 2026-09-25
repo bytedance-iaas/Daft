@@ -9,6 +9,7 @@ Stages follow v1's funnel (D18), in this order, and a stage without modules is
 left out:
 
     autolabel  captions for episodes without a task text, before the funnel
+    integrity  the data integrity module            cpu (mostly I/O), hard gate 0 (design doc 14)
     numeric    parquet-only checks                  cpu, hard gate 1
     frame      checks sharing one full-rate decode  cpu, hard gate 2
     vlm        the VLM check on the survivors       vlm gates, merge proposal
@@ -36,7 +37,7 @@ from .limits import (PlanLimits, SiteConfig, coerce_limits, coerce_site,
 from .merge import declared_frame_policy
 
 SCHEMA_VERSION = "1.0"
-FUNNEL_STAGES = ("numeric", "frame", "vlm")
+FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm")
 
 
 class PlanError(ValueError):

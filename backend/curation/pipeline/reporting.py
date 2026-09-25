@@ -174,7 +174,11 @@ def _summary(rev: Revision, m: str) -> dict:
         out["families"] = len([f for f in fams if f != "未归类"])
         out["subskills"] = sum(len((f.get("subskills") or {})) for f in fams.values())
         out["undersampled"] = list(prof.get("undersampled") or [])[:20]
-    if m in registry.native_ids():                          # the EEF module (design doc 12, D49)
+    if m == "data_integrity":                               # design doc 14 §5.1
+        from ..extensions.integrity import report as integrity_report
+
+        out.update(integrity_report.summary(res, rev.run_dir))
+    if m == "eef_video_consistency":                        # the EEF module (design doc 12, D49)
         from ..extensions.eef_consistency import report as eef_report
 
         out.update(eef_report.summary(res))
@@ -274,6 +278,10 @@ def _table_rows(rev: Revision, m: str, table: str, res: dict) -> list[dict]:
         from ..extensions.eef_consistency import report as eef_report
 
         return eef_report.table_rows(table, res)
+    if table == "integrity_findings":
+        from ..extensions.integrity import report as integrity_report
+
+        return integrity_report.table_rows(res)
     out = []
     for ep, r in sorted(res.items()):
         d = r.get("details") or {}
@@ -513,7 +521,15 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
                  "failed": "失败"}[sec["state"]]
         lines.append(f"### {cn}({state})")
         cnt = sec["summary"]["counts"]
-        if spec is not None and sec["id"] in registry.native_ids():
+        if sec["id"] == "data_integrity":
+            from ..extensions.integrity import report as integrity_report
+
+            lines += integrity_report.markdown(sec["summary"], cnt, sec.get("adjudication"))
+            if sec.get("error"):
+                lines.append(f"- ⚠️ {sec['error']}")
+            lines.append("")
+            continue
+        if spec is not None and sec["id"] == "eef_video_consistency":
             # the EEF module (D49): CPU first, the model second; pass / reject / a person's card
             s = sec["summary"]
             lines.append(f"- 判过 {s.get('judged_pass', 0)} · 判废 {s.get('judged_reject', 0)} · "

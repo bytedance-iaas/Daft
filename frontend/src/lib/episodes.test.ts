@@ -51,10 +51,10 @@ describe('preflight → availability and reasons', () => {
   it('presets follow availability', () => {
     const r = preflightFor(droid200, { vlmBackend: 'ark-prod' });
     expect(availability(r, 'motion_quality')).toBe('unsupported');
-    expect(presetSelection('full', registry, r)).toEqual(['timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile']);
-    expect(presetSelection('quick', registry, r)).toEqual(['timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'dedup']);
+    expect(presetSelection('full', registry, r)).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile']);
+    expect(presetSelection('quick', registry, r)).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'visual_quality', 'video_action_sync', 'dedup']);
     expect(presetSelection('full', registry, preflightFor(rrd, {}))).toEqual([]);
-    expect(presetSelection('quick', registry, preflightFor(mcap, {}))).toEqual(['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'dedup']);
+    expect(presetSelection('quick', registry, preflightFor(mcap, {}))).toEqual(['data_integrity', 'timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'dedup']);
   });
 
   it('ticking a module ticks that module only: 技能画像 does not drag 精确去重 along', () => {

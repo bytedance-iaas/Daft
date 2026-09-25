@@ -167,7 +167,8 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 
 **check**：`curation check --modules <一档的模块> --input … --run-dir … --episodes 表达式 [--source-manifest …] [--part NNNN] [--resume] [--plan-stage …] [--survivors-out 文件] [--incremental] [--max-episodes N] [VLM 参数] [行为开关] --json`
 
-- 一次只跑一档（D18）：`timestamp_check,kinematic_limits,motion_quality`（数值档）、`visual_quality,video_action_sync`（帧档，共用一次解码）、`task_success`（VLM 档），或 `dedup`、`skill_profile` 之一（对整个 keep 集合一次跑完）。混档是参数错误。
+- 一次只跑一档（D18）：`data_integrity`（完整性档，漏斗最前，设计 14）、`timestamp_check,kinematic_limits,motion_quality`（数值档）、`visual_quality,video_action_sync`（帧档，共用一次解码）、`task_success`（VLM 档），或 `dedup`、`skill_profile` 之一（对整个 keep 集合一次跑完）。混档是参数错误。
+- `data_integrity`（D50、D51）：文件结构、整读（mcap CRC、零填充、parquet 数据页）、v1 的逐条结构校验，`--param data_integrity.decode_test=true` 时逐帧解码；坏了判废、可疑的留给人（`integrity_check`），存储读失败算出错。数据集级发现写 `checks/data_integrity/dataset.json`。详见 [模块 README](../extensions/integrity/README.md)。
 - 每条做完立刻追加到 `checks/<module>/parts/<part>.jsonl`（整行写入并 fsync）；`--part` 不给时取比现有最大编号大一的号。结束时重写 `results.jsonl`。
 - `--survivors-out` 写出进入下一档的条（本档硬门没拦下、也没出错的），Daemon 用它当下一档的 `--episodes @文件`，与 v1 的漏斗一致。
 - **出错与弃权严格分开**（D33）：模型正常答了「看不清 / 拿不准」是 `abstain`（或 `unclear`），不是错；一次模型调用最终失败、一路机位解码失败、样本读不了、进程两次死在这条上，这条就是 `verdict = error`，`error.incidents` 写明步骤、调用类型、机位、原因和尝试次数——即使 v1 的兜底逻辑仍给出了结论（结论照旧留在 `passed` / `score` / `details` 里备查）。单条出错不影响其他条，命令仍以 0 退出；`--json` 给逐状态计数、`error_episodes` 和输入集合的指纹 `input_digest`。
@@ -493,3 +494,5 @@ with FakeVlmServer(port=8766) as s:
     应看到：LeRobot 一条 `1 file is empty or too small to be valid (1 episode: 2; videos/…/episode_000002.mp4 0 B)`；mcap 一条
     `1 episode (4) was cut off while recording (no mcap end marker); …`，原来那条「no mcap summary section」不再重复它。
     两份的模块可用性与干净数据集相同。控制台的「预检提示」与报告的「数据包完整性」把它们显示为中文。
+    再对这两份跑数据完整性模块（`$C check --modules data_integrity --input "$D/bad" --run-dir "$D/run_bad" --episodes 0-7 --json`，mcap 同理）：
+    LeRobot 的第 2 条判废 `file_empty`；mcap 的第 4 条判废「录制中断，且读不出数据」。更多损坏样本与裁决见[模块 README](../extensions/integrity/README.md)的手动验证。

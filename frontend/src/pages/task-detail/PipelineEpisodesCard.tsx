@@ -4,7 +4,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
 import type { PipelineEpisode, Task } from '../../api/types';
-import { isTerminalState } from '../../lib/taskView';
+import { FUNNEL_STAGES, isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
 const copy = zh.taskDetail.pipelineEpisodes;
@@ -64,7 +64,9 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
     placeholderData: (previous, query) => (query?.queryKey[3] === selected ? previous : undefined),
   });
   const rows = page.data?.items ?? [];
-  const total = task.progress.stages.find((s) => s.id === 'numeric')?.total
+  // the funnel's first layer sees every selected episode (data integrity when selected, else numeric)
+  const funnel = FUNNEL_STAGES.filter((id) => task.progress.stages.some((s) => s.id === id));
+  const total = task.progress.stages.find((s) => s.id === funnel[0])?.total
     ?? task.summary?.total ?? 0;
   return (
     <Card
@@ -93,11 +95,13 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
                 <Button type="text" size="mini" onClick={() => setSelected(ep)}>{copy.episode(ep)}</Button>
               ) },
               { title: copy.columnStage, dataIndex: 'last_stage', render: (stage: string) => STAGE[stage] ?? stage },
-              ...(['numeric', 'frame', 'vlm'] as const).map((stage) => ({
-                title: copy.processingStage[stage],
+              ...(funnel.length ? funnel : FUNNEL_STAGES.slice(1)).map((stage) => ({
+                title: copy.processingStage[stage] ?? stage,
                 dataIndex: 'stage_processing_s.' + stage,
-                render: (_: unknown, row: PipelineEpisode) => row.stage_processing_s?.[stage] != null
-                  ? row.stage_processing_s[stage].toFixed(2) + ' s' : '—',
+                render: (_: unknown, row: PipelineEpisode) => {
+                  const took = (row.stage_processing_s as Record<string, number | undefined> | undefined)?.[stage];
+                  return took != null ? took.toFixed(2) + ' s' : '—';
+                },
               })),
               { title: copy.processingTotal, dataIndex: 'processing_s', render: (seconds: number | null | undefined) =>
                 seconds != null ? seconds.toFixed(2) + ' s' : '—' },

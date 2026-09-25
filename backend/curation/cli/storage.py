@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .errors import UsageError, unreachable
 
@@ -28,6 +28,9 @@ class ObjectInfo:
     size: int
     etag: str | None = None              # TOS
     mtime_ns: int | None = None          # local files, in place of an ETag
+    #: TOS's CRC64-ECMA of the object (the listing gives it for free; design doc 14 §2.3).
+    #: Not part of the identity: comparisons and fingerprints stay size + ETag / mtime.
+    crc64: str | None = field(default=None, compare=False)
 
     def identity(self) -> str:
         """What says "same content version": the ETag, else the modification time."""
@@ -239,14 +242,16 @@ class TosStorage(Storage):
             {"uri": self.uri, "region": self.region, "tos_code": _tos_code(e) or None,
              "role": self.role})
 
-    def _iter(self) -> Iterator[tuple[str, int, str]]:
+    def _iter(self) -> Iterator[tuple[str, int, str, str | None]]:
         start = self.prefix + "/" if self.prefix else ""
         token = None
         while True:
             out = self._c.list_objects_type2(self.bucket, prefix=start,
                                              continuation_token=token, max_keys=_LIST_PAGE)
             for obj in getattr(out, "contents", None) or []:
-                yield obj.key, int(obj.size), str(getattr(obj, "etag", "") or "")
+                crc = getattr(obj, "hash_crc64_ecma", None)
+                yield (obj.key, int(obj.size), str(getattr(obj, "etag", "") or ""),
+                       str(crc) if crc not in (None, "") else None)
             if not getattr(out, "is_truncated", False):
                 return
             token = out.next_continuation_token
@@ -255,11 +260,11 @@ class TosStorage(Storage):
         cut = len(self.prefix) + 1 if self.prefix else 0
         out: dict[str, ObjectInfo] = {}
         try:
-            for key, size, etag in self._iter():
+            for key, size, etag, crc in self._iter():
                 rel = key[cut:]
                 if not rel or rel.endswith("/"):    # directory marker objects
                     continue
-                out[rel] = ObjectInfo(rel, size, etag=etag)
+                out[rel] = ObjectInfo(rel, size, etag=etag, crc64=crc)
         except Exception as e:  # noqa: BLE001 - SDK and network errors are many
             raise self._fail("cannot list", e) from None
         return out

@@ -37,7 +37,7 @@ from .workdir import read_json, read_lines, write_json_atomic, write_lines
 
 log = logging.getLogger("daemon.orchestr")
 
-FUNNEL = ("numeric", "frame", "vlm")
+FUNNEL = ("integrity", "numeric", "frame", "vlm")
 #: plan stages of the advisory modules (``advisory_<stage>``, registry 1.4): all selected episodes
 ADVISORY = "advisory_"
 #: the module names people read in the logs (the registry's Chinese names)

@@ -1,6 +1,6 @@
 # 14 数据完整性检查
 
-> 状态：**定稿**（2026-09-24，需求方逐条确认）。决策见 `00-overview.md` §7 的 D50–D52。
+> 状态：**定稿**（2026-09-24，需求方逐条确认）；F7.1–F7.4 已实现，§3–§8 已按实现更正。决策见 `00-overview.md` §7 的 D50–D52。
 > 来源：需求方提出预检的两处空缺——「没有通用的 CRC / 文件损坏检测」「没有按采集协议核对一次采集应有多少文件、多少路传感器流」；
 > 讨论后定为：预检保持精简，只加几项不多读数据的警告；读数据的重活放进质检里新开的「数据完整性」模块。
 > 采集协议与采集端校验和清单要用户额外提供，本期不做（§9）。
@@ -55,12 +55,14 @@
 
 | 项 | 读什么 | 警告写法（示意） |
 |---|---|---|
-| 0 字节或过小的文件 | 文件列表里的大小：`data/`、`videos/` 下的文件与 `*.mcap`；小到放不下该格式固定字节的也算（parquet 小于 12 字节、mcap 小于 45 字节、mp4 小于 512 字节——放不下 ftyp 加一个视频轨的 moov）。不用 v1 判「放不了」的 4 KiB：几帧低分辨率的合法短片就只有 3 KB | `3 files are empty or too small (episode 12: videos/.../episode_000012.mp4 0 B, ...); the data integrity module will reject their episodes` |
-| mcap 录制中断 | 读摘要区失败的文件，看最后 8 字节是不是 mcap 结束标识（远端时这段在 `RangeFile` 取回的尾部里，本地多读 8 字节） | `2 episodes (4, 9) were cut off while recording (no mcap end marker); the checks read what is there` |
-| mcap 摘要区 CRC | footer 里的 `summary_crc` 非 0 时，对摘要区到 footer `summary_offset_start` 字段为止的字节算 crc32（这些字节已经取回来了） | `1 episode (7) has a summary section that fails its CRC; the topics and counts preflight shows for it may be wrong` |
+| 0 字节或过小的文件 | 文件列表里的大小：`data/`、`videos/` 下的文件与 `*.mcap`；小到放不下该格式固定字节的也算（parquet 小于 12 字节、mcap 小于 45 字节、mp4 小于 512 字节——放不下 ftyp 加一个视频轨的 moov）。不用 v1 判「放不了」的 4 KiB：几帧低分辨率的合法短片就只有 3 KB | `2 files are empty or too small to be valid (2 episodes: 2, 5; videos/…/episode_000002.mp4 0 B, videos/…/episode_000005.mp4 300 B)` |
+| mcap 录制中断 | 读摘要区失败的文件，看最后 8 字节是不是 mcap 结束标识（远端时这段在 `RangeFile` 取回的尾部里，本地多读 8 字节） | `1 episode (4) was cut off while recording (no mcap end marker); the checks read what is there` |
+| mcap 摘要区 CRC | footer 里的 `summary_crc` 非 0 时，对摘要区到 footer `summary_offset_start` 字段为止的字节算 crc32（这些字节已经取回来了） | `1 episode (6) has a summary section that fails its CRC; the topics and counts read from it may be wrong` |
 
 改动落在 `cli/preflight.py` 的 `_fill_supported`（LeRobot）与 `cli/preflight_containers.py`、`cli/containers.py` 的
-`read_summary`（mcap：`McapSummary` 多两个字段 `truncated`、`summary_crc_ok`）。lance 的视频在表里，第一项只看 `meta/` 以外的对象大小。
+`read_summary`（mcap：`McapSummary` 多两个字段 `truncated`、`summary_crc_ok`；footer 由 `read_footer` 自己解析，mcap 库不校验
+摘要区 CRC）。lance 的视频在表里，不查第一项。原来那条「没有摘要区」的警告不再重复录制中断与空文件的条目。控制台把三条译成中文
+（`frontend/src/lib/integrity.ts` 的 `warningText`）。
 
 ## 2. 数据完整性模块（F7.2）
 
@@ -84,10 +86,12 @@ EEF 模块与本模块都置位。
 ### 2.2 新档 `integrity`
 
 - `STAGE_ORDER` 变为 `integrity → numeric → frame → vlm → post_verdict → profile_vlm`。本模块是这一档唯一的模块。
-- 它主要耗 I/O：L1、L2 用线程池（`integrity.io_concurrency`，缺省 16），不占数值档、抽帧档的 CPU 份额。开了 L3 时要 CPU：
-  `daemon/orchestr/pipeline.py` 的 `cpu_shares_for` 把它和抽帧档同样对待，从 CPU 预算里分一份。
+- 它主要耗 I/O：计划里是一个 `cpu` 档，并发取计划的 CPU 并发（站点默认 8），不参与数值档、抽帧档之间的 CPU 份额划分
+  （`cpu_shares_for` 只分这两档）；流水线给每层定宽时，没有份额、也没有 VLM 闸门的层取它自己的 `concurrency`
+  （`daemon/orchestr/episode_pipeline.py`；原来会退成 1）。开了 L3 时这一档也吃 CPU，与抽帧档叠加，由计划的并发上限兜着；
+  L3 默认关，本期不再细分。
 - 流式漏斗（设计 13）里它是第一层：一条过了就交给数值档，不等整批。判废的条目不进后面的档（硬门，与现有漏斗同一机制）。
-- planner 的耗时估算（`planner/estimates.py`）加这一档：L1 按文件数 × 每文件请求数；L2 按总字节 ÷ 带宽；L3 按帧数 ÷ 各编码的解码速度（§6）。
+- planner 的耗时估算（`planner/estimates.py`）加这一档：每条按 0.5 秒（L1 + L2，§6 的量级）÷ 并发；L3 不计入，计划的说明里写明。
 
 ### 2.3 怎么读数据
 
@@ -98,8 +102,9 @@ EEF 模块与本模块都置位。
 - **LeRobot 在 TOS 上**：L2 把每个文件流式读一遍（不落盘）；抽帧档仍按现在的方式经预签名 URL 读，所以 TOS 读流量约多一倍。
 - **LeRobot v3**：一个数据文件、一个视频文件装多条 episode。按文件做一次、结果按条分发：进程内按对象键记忆结果，同一文件加锁，
   第一条触发读取，同文件的其它条复用；判定时再按每条的时间段或行区间决定受不受影响（§4.3）。
-- **行数据**：L2 的逐条结构校验用现有 `pipeline/rows.py` 的 `RowSource.get` / `ContainerRowSource`（它们本来就调
-  `validate_episode_row`），不另写读取器。
+- **行数据**：L2 的逐条结构校验用本模块自己的读行（`extensions/integrity/rows.py`，§3.3）：v1 的同一套读取函数，不先解析数据集语义。
+- **文件结构**：与 `cli/verify.py` 查交付物是同一思路（文件头、标识、尾部元数据），但本模块要拿到帧数、行数和每帧的时间，所以在
+  `extensions/integrity/files.py`、`mp4.py` 里另写，不改 `verify`。
 
 ### 2.4 结果记录
 
@@ -124,66 +129,73 @@ EEF 模块与本模块都置位。
 
 - `passed`：有 `reject` 级发现 → `False`（`verdict = fail`）；只有 `suspect` 级 → `None`（`verdict = abstain`）；都没有 → `True`。
 - `reason` 取第一条最高级别的发现，报告与裁决卡片直接显示它。
-- `crc`：这个文件用什么校验过（`mcap_chunk`、`mcap_data` 或 `null`），报告据此统计「CRC 覆盖了多少文件」。
+- `crc`：这个文件用什么校验过（`mcap_chunk` 或 `null`），报告据此统计「CRC 覆盖了多少文件」；`files` 里另有帧数、行数，
+  v3 共用视频还有本条的时间段 `window_s`。位置确定的发现带 `span_s`（文件自己的时间轴，秒；`null` 表示到文件末尾）。
 - 数据集级的发现不写进逐条记录，写 `checks/data_integrity/dataset.json`（§3.1）。
 
 ## 3. 检查项
 
 ### 3.1 数据集级（本档第一次调用时算一次）
 
-写 `checks/data_integrity/dataset.json`（`findings` 同 §2.4 的写法，`level` 为 `dataset` 或按条的 `reject` / `suspect`）。
-续跑时发现已存在且输入指纹相同就不重算。
+写 `checks/data_integrity/dataset.json`：`findings` 是数据集级发现（`level = dataset`），`episode_findings` 是由此落到具体条目上的
+可疑项。范围是任务的选择（`--selection`），没给就是整个数据集（流水线常驻进程一批一批收条目，不能按第一批算）。
 
 | 检查 | 读什么 | 结论 |
 |---|---|---|
-| LeRobot v3 episode 表自洽：`dataset_from_index` / `dataset_to_index` 连续不重叠、合计等于 `total_frames`；各相机 `to_timestamp − from_timestamp` 与 `length / fps` 相差不超过 1 帧 | `meta/episodes/*.parquet`（预检也读） | 区间重叠、合计对不上 → 数据集级警告，涉及的条目可疑；视频时间段超出视频文件时长的判定在 L1 做 |
-| 多余文件：`data/`、`videos/` 下不被任何 episode 引用的文件 | 文件列表 | 数据集级警告 |
-| 内容相同的文件：两条 episode 的视频文件或 mcap 文件内容相同 | TOS 用列表里的 CRC64（没有就用 ETag + 大小）；本地路径用大小 + 头尾各 64 KiB 的 sha256 | 两条都可疑（`duplicate_content`）。parquet 的重复交给「精确去重」 |
-| 近乎全黑的相机（v1 的 `stats_prior_warnings`，只调用） | `meta/stats.json` | 数据集级警告 |
+| LeRobot v3 episode 表自洽：`dataset_from_index` / `dataset_to_index` 首尾相接、从 0 开始，区间长度等于 `length`；各相机 `to_timestamp − from_timestamp` 与 `length / fps` 相差不超过容差 | `meta/episodes/*.parquet`（预检也读） | 区间重叠或空缺 → 数据集级 `table_overlap`，涉及的条目可疑 `table_inconsistent`；单条长度或时间段对不上 → 可疑 `table_inconsistent` |
+| 多余文件：`data/`、`videos/` 下不被任何 episode 引用的文件 | 文件列表 | 数据集级 `orphan_files` |
+| 内容相同的文件：两条 episode 的视频文件或 mcap 文件内容相同（LeRobot v2 与 mcap；v3 的文件本来就共用） | TOS 用列表里的 CRC64；没有就用单段上传的 ETag（MD5）+ 大小；本地路径用大小 + 头尾各 64 KiB 的 sha256；都拿不到就不比 | 涉及的条目都可疑 `duplicate_content`。parquet 的重复交给「精确去重」 |
+| 近乎全黑的相机（v1 的 `stats_prior_warnings`，只调用） | `meta/stats.json` | 数据集级 `dark_camera` |
 
-### 3.2 L1 结构（每个文件读头尾，2–3 次小范围读取）
+### 3.2 L1 结构（每个文件读头尾，几次小范围读取）
 
-复用 `cli/verify.py` 的 `content_problem`（文件头全零、parquet 头尾 `PAR1` 与尾部元数据可解析、mcap 两端标识、mp4 顶层 box 找 moov），
-抽成 `cli/verify.py` 与本模块共用的函数，再补：
+mp4 的结构自己解析（`extensions/integrity/mp4.py`）：顶层 box 逐个读头，moov 整个读回，再从视频轨的样本表（`stts`、`stsz`、`stsc`、
+`stco` / `co64`）算出每一帧的解码时间、字节位置和大小。于是截断或零块落在哪个字节，就能换算成哪一秒——LeRobot v3 一个文件装多条，
+要靠它判断波及哪几条。与 PyAV 在 moov 在前、在后和 AV1 三种文件上对过帧数。
 
-| 格式 | 补的检查 | 结论 |
+| 格式 | 检查 | 结论 |
 |---|---|---|
 | 所有 | 0 字节，或小于该格式的最小字节数（§1） | 判废 `file_empty` |
-| mp4 | 顶层 box 大小之和等于文件大小（抓 moov 在前、mdat 被截断）；打开容器读头部（PyAV，不解码）拿帧数与时长 | box 越过文件末尾或没有 moov → 判废 `file_truncated`；帧数与 episode 长度相差超过 `integrity.count_tolerance_frames`（缺省 1）→ 可疑 `count_mismatch`；v3 里本条的时间段超出文件时长 → 判废 `file_truncated` |
-| parquet | 尾部元数据里的行数 | v2：与 `length` 不等 → 可疑 `count_mismatch`；v3：本条的行区间超出文件行数 → 判废 `file_truncated` |
-| mcap | 摘要区 CRC；数据块索引的偏移 + 长度不越过摘要区起点；有无结束标识 | 摘要区 CRC 不符或索引越界 → 判废 `structure_invalid`；没有结束标识 → 交给 L2 读到哪算哪，读出的内容由后面各项判 |
-| 所有 | 格式标识、尾部元数据读不出 | 判废 `structure_invalid`；文件头全零 → 判废 `zero_filled` |
+| 所有 | 文件头 4 KiB 全零 | 判废 `zero_filled` |
+| parquet | 头尾 `PAR1`、尾部元数据可解析 | 结尾没有标识 → 判废 `file_truncated`；读不出 → 判废 `structure_invalid` |
+| mp4 | 顶层 box；moov；样本表 | 没有完整的 moov → 判废 `file_truncated`（文件被截断时）或 `structure_invalid`；有帧的字节落在文件末尾之外 → 判废 `file_truncated`，时间段从第一个缺失帧起；本条（v3 是本条的时间段内）的帧数与 episode 长度相差超过 `integrity.count_tolerance_frames`（缺省 1）→ 可疑 `count_mismatch` |
+| mcap | 开头标识；footer 的摘要区 CRC；数据块索引的偏移 + 长度不越过摘要区起点；有无结束标识 | 摘要区 CRC 不符、索引越界、摘要区读不出 → 判废 `structure_invalid`；没有结束标识 → 录制中断，交给 L2 与读行判断（§3.3） |
 
 ### 3.3 L2 整读（每个字节读一遍）
 
 | 检查 | 做法 | 结论 |
 |---|---|---|
-| mcap 数据块与数据区 CRC | mcap 读取器 `validate_crcs=True` 读一遍（CRC 为 0 的块跳过，记下「未写 CRC」） | 不符 → 判废 `crc_mismatch` |
-| 中段零填充 | mp4 的 mdat、压缩过的 mcap 数据块：按 64 KiB 对齐的整块全零（`integrity.zero_block_bytes`）。压缩数据不会合法地出现这么长的零；parquet 不扫（未压缩的全零列会误报，交给读取与结构校验）；未压缩且没写 CRC 的 mcap 块也不扫（原始黑帧会误报） | 判废 `zero_filled` |
-| v1 的逐条结构校验（D51） | `RowSource.get` / `ContainerRowSource`：action 非空、二维、浮点、没有 NaN/Inf；时间戳与 action 等长且严格递增；state 帧数一致；视频文件在、时间边界合法；fps 合法 | 不过 → 判废 `row_invalid`，`message` 原样用 v1 的报错 |
-| 读不出（pyarrow、mcap 读取器报错） | 同上 | 判废 `structure_invalid` |
+| mcap 数据块与数据区 CRC | mcap 读取器 `emit_chunks=True, validate_crcs=True` 读一遍，每个写了 CRC 的块解压后比对（没写 CRC 的块跳过、计数） | 不符 → 判废 `crc_mismatch`；读不下去（zstd / lz4 解压失败、记录损坏）→ 判废 `structure_invalid` |
+| 中段零填充 | mp4 的 mdat、压缩过又没写 CRC 的 mcap 数据块：64 KiB 对齐的整块全零。压缩数据不会合法地出现这么长的零；parquet 不扫（未压缩的全零列会误报，交给读取）；写了 CRC 的 mcap 块靠 CRC | 判废 `zero_filled`（mp4 带时间段） |
+| parquet 数据页 | pyarrow 整个读一遍 | 读不出 → 判废 `structure_invalid` |
+| v1 的逐条结构校验（D51） | 本模块自己的读行（`extensions/integrity/rows.py`）：与漏斗的读行用同一套 v1 读取函数，但不先解析数据集语义——那一步要读前 100 条的数据，一条早期坏数据就会让所有条目都读不了，而且与 `validate_episode_row` 查的东西无关。查 action 非空、二维、浮点、没有 NaN/Inf；时间戳与 action 等长且严格递增；state 帧数一致；视频文件在、时间边界合法；fps 合法 | 不过 → 判废 `row_invalid`，理由原样用 v1 的报错；数据帧数与 episode 长度对不上 → 可疑 `count_mismatch` |
+| mcap 录制中断 | 没有结束标识的文件 | v1 的读取器能读出内容 → 可疑 `cut_off`；读不出 → 判废 `file_truncated` |
 
-基础设施错误（TOS 超时、5xx、签名过期重试用尽）不是结论：按 D33 记 incident，整条 `verdict = error`，待补跑。
-文件在列表里却读到 404（读取过程中被删）同理，下次运行时由 D27 / D40 处理。
+读行失败时分三种：v1 的校验不过 → `row_invalid`；文件本身已经查出判废级的问题 → 以文件的结论为准；都不是（读取器的其它异常）→
+执行出错。基础设施错误（TOS 超时、5xx、源缓存下载失败）不是结论：按 D33 记 incident，整条 `verdict = error`，待补跑；
+但同一条里别的文件已经确定判废时，判废照旧（D35 的精神）。源数据在运行中变了照 D27 结束命令（退出码 6）。
 
 ### 3.4 L3 逐帧解码（模块参数 `decode_test`，默认关）
 
-- 每路相机从头到尾解码：LeRobot 用 PyAV，打开解码器的严格错误检测（`err_detect=crccheck+bitstream+buffer+explode`，实测不增加耗时）；
-  mcap 的 JPEG 帧逐帧解码，H.264 帧按 F5.13 的办法转本地 mp4 后同样处理。只解码、不转 RGB。
-- 解码抛错 → 判废 `decode_failed`；解码器报告了被掩盖的错误（帧带 corrupt 标记或解码日志里的错误计数）但没有失败 → 可疑 `decode_concealed`；
-  解出的帧数与 episode 长度对不上 → 可疑 `count_mismatch`（L1 已判的不重复）。
+- 每路相机把本条的时间段从头到尾解码（LeRobot 直接读文件或预签名地址；mcap 读 v1 读取器转出的本地视频），只解码、不转 RGB。
+- 实测：PyAV 里给解码器设 `err_detect` 不起作用，被掩盖的错误也不会打 `corrupt` 标记；但 FFmpeg 会记错误日志，而 PyAV 默认关着日志。
+  所以本进程把 FFmpeg 日志开到 ERROR、在每次解码的线程里捕获（不落到 stderr，C3 纪律不变）。
+- `InvalidDataError` 这类数据错误 → 判废 `decode_failed`；只有错误日志、没抛异常 → 可疑 `decode_concealed`；
+  解出的帧数与 episode 长度对不上 → 可疑 `count_mismatch`（L1 已判的相机不重复）。网络、签名这类异常照抽帧档的办法重试 3 次，仍失败算执行出错。
 - 抽帧档的解码不变：它只覆盖通过数值档的条目、只认抛出的异常（D33），与 L3 不冲突。
 
 ### 3.5 与同数据集多数条目比（mcap）
 
-没有采集协议（§9）时，拿同一数据集的多数条目当参照，只用预检也在读的摘要区，不多读：
+没有采集协议（§9）时，拿同一数据集的多数条目当参照，只用摘要区（与预检读的是同一份），不多读；至少要有 3 条有摘要区的条目：
 
 - 某个 topic 在至少 `integrity.majority_ratio`（缺省 0.8）的条目里有消息，本条却没有 → 可疑 `stream_missing`；
 - 某个 topic 本条的频率（消息数 ÷ 文件时长）低于全数据集该 topic 中位数的 `integrity.rate_outlier_ratio`（缺省 0.8）→ 可疑 `rate_outlier`。
+  只比连续的流（中位消息数至少 10 条）：只写一两条的 topic（任务文本、标定）谈不上频率，时长不同就会误报。
 
-LeRobot 不需要这一项：缺文件由 D40 处理，帧数由 L1 对账。
+LeRobot 不需要这一项：缺文件由 D40 处理，帧数由 L1 / L2 对账。
 
-阈值都在 `pipeline/default.yaml` 的新段 `integrity:` 里，站点经 `pipelineConfigOverride` 覆盖；不做成任务参数。
+阈值在站点配置的 `integrity:` 段（`count_tolerance_frames`、`majority_ratio`、`rate_outlier_ratio`、`min_peers`），经
+`pipelineConfigOverride` 覆盖，缺省值在 `extensions/integrity/judge.py` 的 `DEFAULTS`；不做成任务参数。
 
 ## 4. 判决
 
@@ -196,31 +208,38 @@ LeRobot 不需要这一项：缺文件由 D40 处理，帧数由 L1 对账。
 | 可疑 | `passed = None`（`abstain`） | 进下一档，最终留在 passed，出一张「完整性存疑」裁决卡片（§4.4） |
 | 读不到（基础设施） | `verdict = error` | held、待补跑（D24、D33） |
 
-`aggregate` 对可疑的处理照 EEF 的做法（`passed=None` 的硬门 → 保留并问人），把现在写死的 EEF 改成按注册表的 `review_lines` 驱动。
+`aggregate` 对可疑的处理照 EEF 的做法（`passed=None` 的硬门 → 保留并问人）：原来按 EEF 写死的三处（人的回答当作模块结果、
+判废理由改成人的话、待裁卡片）改成一张表 `HUMAN_GATES` 驱动，EEF 与本模块共用。
 
 ### 4.2 原因码
 
 | 码 | 级别 | 档 | 中文 |
 |---|---|---|---|
 | `file_empty` | 判废 | L1 | 文件为空或过小 |
-| `file_truncated` | 判废 | L1 | 文件被截断 |
+| `file_truncated` | 判废 | L1 / L2 | 文件被截断（mcap：录制中断且读不出数据） |
 | `zero_filled` | 判废 | L1 / L2 | 文件里有成块的零填充 |
 | `structure_invalid` | 判废 | L1 / L2 | 文件结构损坏，读不出 |
 | `crc_mismatch` | 判废 | L2 | CRC 校验不符 |
 | `row_invalid` | 判废 | L2 | 数据不合规（v1 结构校验） |
 | `decode_failed` | 判废 | L3 | 视频解码失败 |
-| `count_mismatch` | 可疑 | L1 / L3 | 帧数或行数与记录的长度对不上 |
+| `count_mismatch` | 可疑 | L1 / L2 / L3 | 帧数或行数与记录的长度对不上 |
+| `cut_off` | 可疑 | L1 | 录制中断，读得到的部分完好 |
 | `duplicate_content` | 可疑 | 数据集级 | 与另一条的文件内容完全相同 |
 | `stream_missing` | 可疑 | 多数比较 | 缺一路其他条都有的 topic |
 | `rate_outlier` | 可疑 | 多数比较 | 某 topic 频率明显低于其他条 |
 | `decode_concealed` | 可疑 | L3 | 解码器掩盖了错误 |
+| `table_inconsistent` | 可疑 | 数据集级 | episode 表里本条前后不一致 |
+| `orphan_files` | 数据集级 | 数据集级 | 不属于任何 episode 的文件 |
+| `dark_camera` | 数据集级 | 数据集级 | 近乎全黑的相机（v1 的先验） |
+| `table_overlap` | 数据集级 | 数据集级 | episode 表的帧区间重叠或空缺 |
 
-前端文案进 `frontend/src/locales/zh.ts`；报告与裁决卡片显示 `reason`（中文，已带文件与相机）。
+码表在 `extensions/integrity/findings.py`；前端中文名在 `frontend/src/locales/zh.ts` 的 `integrityCodes`；
+报告与裁决卡片显示 `reason`（中文，已带文件与相机）。
 
 ### 4.3 边界
 
 - **判废只落在有问题的条目上。** LeRobot v3 共用文件的例外：moov 缺失、文件头损坏这类整个文件打不开的，文件里的条目全部判废；
-  截断、零填充这类有位置的，只判时间段或行区间与坏位置重叠的条目。mcap 与 LeRobot v2 一条一个文件，不存在这个问题。
+  截断、零填充这类有位置的，只判时间段与坏位置重叠的条目（按样本表换算，§3.2）。mcap 与 LeRobot v2 一条一个文件，不存在这个问题。
 - **源文件缺失**照 D40：不质检、不进清单、报告列出，本模块不另出结论。
 - **不勾选本模块时**，一切照旧：`validate_episode_row` 不过仍是读行失败 → error → held（D51 只在勾选时生效）。
 - **本模块整体失败**（例如全部条目都因同一个基础设施原因读不到）照 P10：它的门视为未生效，后面的档照跑，全部条目待补跑。
@@ -231,14 +250,16 @@ LeRobot 不需要这一项：缺文件由 D40 处理，帧数由 L1 对账。
 
 ```python
 ReviewLine("integrity_check", "integrity_suspect", "完整性存疑", "passed", True,
-           (("keep", "数据无误，保留"), ("discard", "确有问题，判废"), ("unsure", "拿不准")))
+           (("intact", "数据无误，保留"), ("broken", "确有问题，判废"), ("unsure", "拿不准")))
 ```
 
+- 决定的取值用 `intact` / `broken`，不用 `keep` / `discard`：`discard` 在 v1 的裁决里是「整条弃用、压过一切」的专用词（Daemon 的
+  裁决目录按它加规则），这里的意思是「本模块判废」，要与之分开。
 - `counts_as_pending = True`：和其它落在 passed 的裁决线（标注分歧、任务成败弃权、EEF 与画面核对）一样计入待裁数，
   任务停在「已完成（待裁决 N 条）」（D10）；条目照 D24 先交付，裁决不挡交付。
-- 「保留」→ 本模块的结果当作通过；「确有问题，判废」→ 当作 `passed = False`，进 reject；「拿不准」→ 保持原样。
-  都照 EEF 的写法：人的回答作为本模块的结果（`aggregate` 的 overrides）。
-- 卡片内容：`reason`、全部 `findings`、涉及的文件；通用渲染即可，不需要专用视图。
+- 「数据无误，保留」→ 本模块的结果当作通过；「确有问题，判废」→ 当作 `passed = False`，进 reject，理由「人工裁决判为数据确有问题」；
+  「拿不准」→ 保持原样、仍在待裁。人的回答写进 `human-decisions/integrity_checks.csv`（v1 的词：数据无误 / 数据确有问题 / 拿不准）。
+- 卡片内容：`reason`；裁决页对没有专用视图的线按目录通用渲染（D43），不需要专用视图。
 
 ## 5. 报告与界面
 
@@ -300,46 +321,51 @@ mcap（JPEG）约 39 GB。
 
 | 位置 | 改什么 |
 |---|---|
-| C1 `contracts/modules.py` → `modules.json` | 1.11：`Stage` 加 `integrity`、`STAGE_ORDER`；`ModuleSpec.native`；新模块与 `decode_test`；复核目录加 `integrity_check` |
-| C2 `docs/contracts/cli/` | 档名在 `plan.schema.json` 里是开放模式，不用改；本模块 `details` 的写法记进 `docs/contracts/cli/` 的说明（`details` 本身仍是开放对象）；报告 schema 的新小节；`CONTRACTS.lock` 刷新 |
-| C4 `openapi.yaml` | 模块与裁决线是数据驱动（D43），不改；但档名写成了枚举（模块的 `stage`、计划的 `stages`、进度的 `last_stage`），三处加 `integrity`，再跑 `npm run gen:api` |
-| `cli/preflight.py`、`cli/preflight_containers.py`、`cli/containers.py` | §1 三项 |
-| `cli/storage.py` | `ObjectInfo.crc64` |
-| `cli/verify.py` | 结构检查抽成共用函数 |
-| `cli/check.py`、`pipeline/check_stage.py`、`pipeline/funnel.py` | 新档的分派与逐条循环；`FUNNEL_STAGES` |
-| `extensions/integrity/`（新） | 数据集级、L1、L2、L3、多数比较、结果记录 |
-| `pipeline/aggregate.py`、`pipeline/reporting.py` | `native` 位取代写死的 EEF；可疑 → 保留并问人；报告小节 |
-| `pipeline/default.yaml` | `integrity:` 段（`io_concurrency`、`count_tolerance_frames`、`zero_block_bytes`、`majority_ratio`、`rate_outlier_ratio`） |
-| `planner/plan.py`、`planner/estimates.py` | 新档的并发与耗时估算 |
-| `daemon/orchestr/pipeline.py`、`runs.py`、`rules.py`、`results/live.py` | 新的一层、CPU 份额、分档进度 |
-| `adjudicate-apply` 与 Daemon 裁决迁移 | `integrity_check` 的执行规则（「保留」「判废」的含义） |
-| 前端 | 模块卡片、预设、参数表单零改动（数据驱动）；报告小节视图与 Episode 明细块（`sectionViews.tsx`、`episodeBlocks.tsx`）；原因码文案；分档进度里的新档名 |
-| 对账 | A 类文件不改；合成数据上 v1 对 v2 的对账固定模块清单、不含本模块；v2 自录黄金基线加上本模块重录 |
+| C1 `contracts/modules.py` → `modules.json` | 1.11：`Stage` 加 `integrity`、`STAGE_ORDER`；`ModuleSpec.native`（不进 JSON）；新模块与 `decode_test`；复核目录加 `integrity_check` |
+| C2 `docs/contracts/cli/` | `decisions.schema.json` 钉住 `integrity_check` 的三个决定；`final-list.schema.json` 的说明加 `integrity_suspect`；档名在 `plan.schema.json` 里是开放模式、`details` 是开放对象，不用改；`CONTRACTS.lock` 刷新 |
+| C4 `openapi.yaml` 1.16.0 | 档名枚举四处加 `integrity`（注册表的 `stages`、模块的 `stage`、流水线的 `last_stage` 与 `stage_processing_s`），`next_stage` 加 `numeric`；`ReviewLineId`、`DecisionInput` 的说明加 `integrity_check`；`npm run gen:api` |
+| `cli/preflight.py`、`cli/preflight_containers.py`、`cli/containers.py` | §1 三项；`read_footer` |
+| `cli/storage.py` | `ObjectInfo.crc64`（不参与相等比较与指纹） |
+| `cli/check.py`、`pipeline/check_stage.py` | 新档的分派（`_integrity`）、`--pipeline-next numeric`、`StageRun._integrity` 与自己的读行 |
+| `extensions/integrity/`（新） | `findings`（码表）、`mp4`（结构与样本表）、`files`（L1 / L2）、`rows`（读行）、`decode`（L3）、`judge`（数据集级、多数比较、逐条判定）、`report`（小节、明细表） |
+| `pipeline/aggregate.py`、`pipeline/adjudication.py` | `HUMAN_GATES` 取代写死的 EEF；新档进 `FUNNEL_STAGES`、硬门在本档即判死；`integrity_check` 的执行规则与 CSV 副本 |
+| `pipeline/reporting.py`、`pipeline/timing.py`、`export/report.py` | 报告小节、`integrity_findings` 明细表、report.md；处理耗时认新档；`CHECK_CN` 加「数据完整性」（判决行的理由用它，与 EEF 同样的做法，不是 A 类） |
+| `daemon/results/live.py` | 「Episode 流水线」实时面板只把 v1 的模块交给 v1 的 `apply_check_selection`（它不认识 v2 自有的模块、会报错；EEF 原本也有这个隐患） |
+| `planner/plan.py`、`planner/estimates.py` | 新档排在最前；耗时估算 |
+| `daemon/orchestr/episode_pipeline.py`、`runs.py`、`rules.py` | 流水线新的一层与它的宽度、漏斗档名 |
+| 前端 | 模块卡片、预设、参数表单零改动（数据驱动）；报告小节视图与 Episode 明细块（`sectionViews.tsx`、`episodeBlocks.tsx`）；原因码与档名文案；漏斗档名收成一个常量 `FUNNEL_STAGES`（`lib/taskView.ts`）；预检警告的中译 |
+| 对账 | A 类文件不改（只调用 `validate_episode_row`、`stats_prior_warnings` 与 v1 的读取函数）；对账工具的默认链不含本模块（v1 没有它，加了 v1 对 v2 就不对等），`run-v2 --modules` 可以带上它录一盘 v2 基线再回放（`tools/parity/v2run.py`、`tests/test_v2_parity.py`） |
 
 ## 8. 验收
 
-故障样本从一份干净的小数据集（LeRobot v2、v3 各一份，mcap 一份）派生，每份只注入一种故障，真值写进样本清单：
+故障样本从干净的小数据集派生（LeRobot v2：对账工具的 8 条夹具；LeRobot v3：`tests/export/v3_fixture` 的 6 条共用文件夹具；
+mcap：对账工具的 8 条 mcap 夹具），每条只注入一种故障。测试在 `backend/tests/cli/test_integrity.py`、
+`test_integrity_adjudication.py`、`test_preflight_integrity.py`：
 
-| 故障 | 期望 |
-|---|---|
-| mp4 0 字节 | 预检警告；该条判废 `file_empty` |
-| mp4 截断（moov 在尾部被截掉） | 判废 `file_truncated` |
-| mp4 截断（moov 在前，mdat 被截） | 判废 `file_truncated` |
-| mp4 mdat 中段 64 KiB 置零 | L2 判废 `zero_filled` |
-| mp4 文件头置零 | 判废 `zero_filled` |
-| v3 共用视频文件在中段截断 | 只有时间段落在截断点之后的条目判废，其余通过 |
-| parquet 尾部元数据损坏 | 判废 `structure_invalid` |
-| action 含 NaN；时间戳倒序 | 判废 `row_invalid`，原因与 v1 的报错一致；不勾选本模块时仍是 error → held |
-| mcap 没有结束标识 | 预检警告「录制中断」；质检按读出的内容判 |
-| mcap 摘要区翻转一个字节 | 预检警告；判废 `structure_invalid` |
-| mcap 数据块翻转一个字节 | 判废 `crc_mismatch` |
-| 两条的视频文件相同 | 两条都可疑 `duplicate_content`，出两张「完整性存疑」卡片，待裁数加 2，两条照常交付 |
-| mcap 某相机 topic 频率减半 | 可疑 `rate_outlier` |
-| 视频帧内比特翻转（开 L3） | 判废 `decode_failed` 或可疑 `decode_concealed`；关 L3 时不报 |
-| TOS 读超时（假存储注入） | error → held，`--resume` 后通过 |
+| 故障 | 期望 | 测试 |
+|---|---|---|
+| 干净数据集 | 全部通过；夹具里故意做的字节级复制品（3、7）两条都可疑 `duplicate_content` | `test_a_clean_dataset_passes_but_its_byte_copies` |
+| mp4 0 字节 | 预检警告；该条判废 `file_empty` | `test_empty_and_tiny_videos_are_warned_about`、`test_each_kind_of_damage_rejects_its_episode` |
+| mp4 截断（moov 在尾部被截掉） | 判废 `file_truncated` | 同上 |
+| mp4 截断（moov 在前，mdat 被截） | 判废 `file_truncated`，时间段从第一个缺失帧起 | `test_a_truncated_faststart_video_is_placed_in_time` |
+| mp4 mdat 中段 64 KiB 置零 | L2 判废 `zero_filled`，时间段落在对应的帧上 | `test_a_zeroed_block_inside_the_video_data` |
+| mp4 文件头置零 | 判废 `zero_filled` | `test_each_kind_of_damage_rejects_its_episode` |
+| parquet 结尾被截 | 判废 `file_truncated` | 同上 |
+| action 含 NaN；时间戳倒序 | 判废 `row_invalid`，理由是 v1 的原话；不勾选本模块时仍是 error | 同上、`test_without_the_module_a_bad_row_is_still_an_error` |
+| v3 共用视频文件在中段截断 | 只有时间段在截断点之后的条目（2、3）判废，其余通过 | `test_v3_clean_and_a_shared_video_cut_in_the_middle` |
+| mcap 录制中断（截在记录中间） | 预检警告「录制中断」；v1 读取器读不出 → 判废 `file_truncated` | `test_a_recording_cut_off_is_named`、`test_mcap_damage` |
+| mcap 摘要区翻转一个字节 | 预检警告；判废 `structure_invalid` | `test_a_summary_crc_failure_is_named`、`test_mcap_damage` |
+| mcap 数据块翻转一个字节 | 判废 `crc_mismatch`（压缩块解不开时 `structure_invalid`） | `test_mcap_damage`、`test_mcap_chunk_crc` |
+| mcap 某相机 topic 频率减半 | 可疑 `rate_outlier`；只写一条的 `/task` 不参与 | `test_mcap_damage` |
+| 视频里一帧的字节被打乱（开 L3） | 判废 `decode_failed`（轻微翻转被掩盖时可疑 `decode_concealed`）；关 L3 时通过；换了 `decode_test` 的 `--resume` 全部重做 | `test_the_decode_test_finds_what_the_structure_cannot` |
+| 读文件时存储返回 503（注入） | 该条 error、有 `read` incident；`--resume` 后通过 | `test_a_storage_failure_is_an_error_not_a_finding` |
 
-另外：①干净数据集上勾选本模块，判决与清单和不勾选时逐位一致（只多一个模块的通过记录）；②合成数据上 v1 对 v2 对账全过；
-③裁决「保留」「判废」重算终判正确；④在 galbot 命名空间的 Pod 里实测 §6 的两个假设（单核解码速度、TOS 带宽），把估算表换成实测值。
+另外：①干净数据集上勾选本模块，passed / reject / held 与不勾选时逐项相同，待裁清单只多出可疑条目的卡片
+（`test_on_a_clean_dataset_the_verdicts_do_not_change`）；②判废终结漏斗、不可复议，可疑进「完整性存疑」，「数据无误」「数据确有问题」
+「拿不准」照 §4.4 重算（`test_integrity_adjudication.py`）；③合成数据上的对账不受影响（默认链不含本模块），带上本模块录的 v2 基线
+回放逐位一致、三份清单与默认基线相同（`test_a_golden_with_the_data_integrity_gate_replays_exactly`）；Daemon 端到端：完整性层排在最前、
+实时面板读得到、可疑条目进裁决队列并计入待裁（`test_the_data_integrity_layer_goes_first_and_its_episodes_are_readable_live`）；
+④在 galbot 命名空间的 Pod 里实测 §6 的两个假设（单核解码速度、TOS 带宽），把估算表换成实测值（F7.5，未做）。
 
 ## 9. 本期不做
 

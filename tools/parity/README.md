@@ -129,6 +129,11 @@ $python -m parity compare --golden $W/v2-golden --candidate $W/v2 --all-strict
 `$W/v2/parity.json` 记着每一步的命令行、退出码、`--json` 输出和录制带统计；各命令的 stderr 在 `$W/v2/logs/parity-run.log`。
 `--fake-vlm` 代替 `--replay …` 时不看带子，由假模型现答，结论应同样是 PASS。
 
+数据完整性模块（设计 14）是 v2 自己的第一道门，v1 没有，所以默认链不带它（加了会让 v1 对 v2 不对等：待裁清单多出可疑条目的卡片）。
+要录一盘带它的 v2 基线，两次 `run-v2` 都加 `--modules data_integrity,timestamp_check,kinematic_limits,motion_quality,visual_quality,video_action_sync,task_success,dedup,skill_profile`：
+补描述之后多一步 `check integrity`，数值档读它的放行名单；`compare --all-strict` 仍是 PASS，本模块另用
+`compare --strict data_integrity --verdict-only task_success` 逐位比（`tests/test_v2_parity.py` 最后一条）。在干净的夹具上三份清单与默认基线相同。
+
 逐项核对：
 - 第 2 步的 `$W/rec/final.json` 里，`passed` 是 `[0, 1, 3, 4, 6]`，`reject` 是 `[2, 5, 7]`
   （2 是时间戳跳变，5 是残段，7 与 3 字节级重复）；`v1_views.passed_json` 里却有 7：

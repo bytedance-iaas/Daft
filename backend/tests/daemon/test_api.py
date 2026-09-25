@@ -349,7 +349,7 @@ def test_task_detail_fits_the_contract(client_for):
                            "reasoning_effort": None, "snapshot": snapshot}
     assert body["source"] == {"objects": 204, "bytes": 1520331122, "digest": "sha256:abc"}
     assert [m["id"] for m in body["modules"]] == list(registry.ids())
-    assert body["modules"][0]["name"] == "时间戳检查"
+    assert next(m for m in body["modules"] if m["id"] == "timestamp_check")["name"] == "时间戳检查"
     assert body["pending_adjudication"] == 4 and body["result_rev"] == 1
     assert {link["rel"]: link["url"] for link in body["links"]} == {
         "task": f"https://kit.example.com/curation/tasks/{t.id}",

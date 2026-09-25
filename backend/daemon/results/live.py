@@ -1,6 +1,7 @@
 """Read an episode as soon as the funnel writes its SQLite result."""
 from __future__ import annotations
 
+from curation.contracts import modules as registry
 from curation.pipeline.aggregate import RunState, funnel_line
 from curation.pipeline.config import apply_check_selection, load_config
 from curation.pipeline.episode_state import EpisodeState, state_path
@@ -19,9 +20,16 @@ def _context(runtime, task):
         return run_dir, None, [], None
     plan = read_json(run_dir / "plan.json", {}) or {}
     modules = [m for st in plan.get("stages") or []
-               if st.get("id") in ("numeric", "frame", "vlm")
+               if st.get("id") in ("integrity", "numeric", "frame", "vlm")
                for m in st.get("modules") or []]
-    cfg = apply_check_selection(load_config(), only=",".join(modules)) if modules else None
+    # v1's check configuration knows v1's checks only: the gates v2 runs itself (the data
+    # integrity and EEF modules) join the verdict config in RunState, at the call boundary
+    v1 = [m for m in modules if m not in registry.native_ids()]
+    cfg = apply_check_selection(load_config(), only=",".join(v1)) if v1 else None
+    if cfg is None and modules:
+        cfg = load_config()
+        for entry in cfg["checks"].values():
+            entry["enable"] = False
     return run_dir, EpisodeState(path), modules, cfg
 
 

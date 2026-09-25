@@ -38,7 +38,7 @@ describe('mount prefix (doc 07 §2.3)', () => {
 describe('unwrap and the one Error body (doc 03 §1)', () => {
   it('returns data for 2xx', async () => {
     const reg = await unwrap(api().GET('/modules'));
-    expect(reg.modules.length).toBe(9);
+    expect(reg.modules.length).toBe(10);                                                        // + data_integrity (design doc 14)
     expect(reg.modules.filter((m) => !m.affects_dataset_verdict)).toEqual([]);                  // D49: EEF judges too
   });
 

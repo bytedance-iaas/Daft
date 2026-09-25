@@ -201,3 +201,30 @@ def test_full_rerun_leaves_the_golden_tape(v2_adj_golden, mini_dataset, tmp_path
     # is exactly the signal that "full" leaves the golden's protocol.
     ts = report["modules"]["task_success"]
     assert ts["judged_again"] == [] and sorted(ts["excluded_errors"]) == [0, 1]
+
+
+def test_a_golden_with_the_data_integrity_gate_replays_exactly(v2_golden, mini_dataset, tmp_path_factory):
+    """design doc 14: v2's own first gate recorded into a golden of its own (``--modules``) and replayed;
+    on the clean fixture it changes no list: passed / reject / held equal the default golden's."""
+    modules = "data_integrity,timestamp_check,kinematic_limits,motion_quality,visual_quality," \
+              "video_action_sync,task_success,dedup,skill_profile"
+    tmp = tmp_path_factory.mktemp("integrity")
+    golden, proc, doc = run_v2(tmp, "golden", mini_dataset, "--fake-vlm", "--modules", modules)
+    assert proc.returncode == 0, proc.stderr[-4000:]
+    steps = [s["step"] for s in doc["steps"]]
+    assert steps == STEPS[:4] + ["check integrity"] + STEPS[4:]
+    out, proc, doc = run_v2(tmp, "v2", mini_dataset, "--replay", os.path.join(golden, "vlm_tape.jsonl.gz"),
+                            "--modules", modules)
+    assert proc.returncode == 0, proc.stderr[-4000:]
+    rc, report = compare(golden, out)
+    assert rc == 0 and report["conclusion"] == "pass", json.dumps(report, ensure_ascii=False)[:3000]
+    res = run_parity("compare", "--golden", golden, "--candidate", out, "--strict", "data_integrity",
+                     "--verdict-only", "task_success", "--json")
+    integ = json.loads(res.stdout)["modules"]["data_integrity"]
+    assert res.returncode == 0 and integ["status"] == "pass" and integ["mode"] == "strict", integ
+    for name in ("passed", "reject", "held"):
+        with open(os.path.join(golden, "revisions", "r0001", f"{name}.json"), encoding="utf-8") as fh:
+            mine = json.load(fh)["episodes"]
+        with open(os.path.join(v2_golden[0], "revisions", "r0001", f"{name}.json"), encoding="utf-8") as fh:
+            theirs = json.load(fh)["episodes"]
+        assert mine == theirs, name

@@ -68,16 +68,30 @@ function render(id: string, summary: Record<string, unknown>, extra: Partial<Rep
   return document.body;
 }
 
+const INTEGRITY = {
+  counts: { total: 200, pass: 195, fail: 3, abstain: 2, scored: 0, error: 0 },
+  integrity_outcomes: { pass: 195, reject: 3, suspect: 2 },
+  integrity_codes: [
+    { code: 'file_truncated', name: '文件被截断', level: 'reject', count: 2 },
+    { code: 'row_invalid', name: '数据不合规', level: 'reject', count: 1 },
+    { code: 'duplicate_content', name: '与另一条的文件完全相同', level: 'suspect', count: 2 },
+  ],
+  integrity_files: { files: 600, bytes: 3.85e9, crc_files: 0 },
+  integrity_tiers: { L1: true, L2: true, L3: false },
+  integrity_dataset: [{ code: 'orphan_files', message: 'data/ 与 videos/ 下有 1 个文件不属于任何 episode：videos/x.mp4' }],
+};
+
 describe('the report sections (06 §6.2, F6.2)', () => {
-  it('has a view for the eight v1 modules and the EEF module', () => {
+  it('has a view for the eight v1 modules, the EEF module and the data integrity module', () => {
     expect(Object.keys(SECTION_VIEWS).sort()).toEqual(
-      ['dedup', 'eef_video_consistency', 'kinematic_limits', 'motion_quality', 'skill_profile', 'task_success', 'timestamp_check', 'video_action_sync', 'visual_quality'].sort(),
+      ['data_integrity', 'dedup', 'eef_video_consistency', 'kinematic_limits', 'motion_quality', 'skill_profile', 'task_success', 'timestamp_check', 'video_action_sync', 'visual_quality'].sort(),
     );
   });
 
   const cases: [string, Record<string, unknown>][] = [
     ...['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'video_action_sync', 'task_success', 'dedup', 'skill_profile'].map((id) => [id, sampleSummary(id, 200)] as [string, Record<string, unknown>]),
     ['eef_video_consistency', EEF],
+    ['data_integrity', INTEGRITY],
   ];
   it.each(cases)('%s: key figures and at least one chart, in Chinese, without JSON or raw keys', async (id, summary) => {
     const body = render(id, summary);
@@ -105,6 +119,17 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     const matrix = screen.getByTestId('eef-matrix');
     expect(matrix).toHaveTextContent('时间对齐');
     expect(matrix).toHaveTextContent('可疑');
+  });
+
+  it('data integrity: outcomes, what was read and the findings by kind, in Chinese (design doc 14)', async () => {
+    render('data_integrity', INTEGRITY, { adjudication: { pending: 2, appealable: 0 } });
+    const figures = screen.getByTestId('summary-data_integrity');
+    expect(figures).toHaveTextContent('判废3文件损坏，不可复议');
+    expect(figures).toHaveTextContent('可疑2待人工裁决 2 条（完整性存疑）');
+    expect(figures).toHaveTextContent('读过的文件600共 3850.0 MB');
+    expect(figures).toHaveTextContent('逐帧解码测试关');
+    expect(await within(screen.getByTestId('chart-codes')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('文件被截断 2'));
+    expect(screen.getByTestId('integrity-dataset')).toHaveTextContent('不属于任何 episode 的文件：data/ 与 videos/ 下有 1 个文件不属于任何 episode');
   });
 
   it('a report from before the chart-ready aggregates: what there is, plus a short note', async () => {

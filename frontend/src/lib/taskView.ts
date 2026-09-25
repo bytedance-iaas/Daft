@@ -44,6 +44,10 @@ export function currentStage<T extends { state: string }>(stages: readonly T[]):
   return started[started.length - 1] ?? stages[0];
 }
 
+/** The funnel's stages in order (the streaming pipeline's layers); integrity is the data integrity
+ * module's, first (design doc 14). */
+export const FUNNEL_STAGES: readonly string[] = ['integrity', 'numeric', 'frame', 'vlm'];
+
 /** A stage's own name, as the CLI output, the log filter and the execution plan use it. */
 export function stageLabel(id: string): string {
   return zh.stage[id] ?? id;

@@ -120,6 +120,7 @@ export const zh = {
 
   stage: {
     autolabel: '补任务描述',
+    integrity: '完整性档',
     numeric: '数值档',
     frame: '帧档',
     vlm: 'VLM 档',
@@ -805,7 +806,7 @@ export const zh = {
     wholeStage: (elapsed: string) => `${elapsed}（整体）`,
     pipelineEpisodes: {
       title: 'Episode 流水线',
-      stage: { numeric: '数值验证', frame: '视频验证', vlm: '模型验证', done: '已完成' },
+      stage: { integrity: '完整性验证', numeric: '数值验证', frame: '视频验证', vlm: '模型验证', done: '已完成' },
       verdict: { keep: '漏斗保留', drop: '漏斗拒绝', held: '待补跑' },
       missing: '源文件缺失',
       finished: '已完成',
@@ -815,7 +816,7 @@ export const zh = {
       episode: (index: number) => `ep ${index}`,
       columnEpisode: 'Episode',
       columnStage: '最近阶段',
-      processingStage: { numeric: '数值处理', frame: '帧处理', vlm: 'VLM 处理' },
+      processingStage: { integrity: '完整性处理', numeric: '数值处理', frame: '帧处理', vlm: 'VLM 处理' } as Record<string, string>,
       processingTotal: '累计处理耗时',
       columnResult: '当前结果',
       latest: '最新',
@@ -1229,6 +1230,27 @@ export const zh = {
     nothing: '没有条目',
   },
 
+  /** 数据完整性的发现种类（design doc 14 §4.2, backend extensions/integrity/findings.CODES）. */
+  integrityCodes: {
+    file_empty: '文件为空或过小',
+    file_truncated: '文件被截断',
+    zero_filled: '成块的零填充',
+    structure_invalid: '文件结构损坏',
+    crc_mismatch: 'CRC 校验不符',
+    row_invalid: '数据不合规',
+    decode_failed: '视频解码失败',
+    count_mismatch: '帧数对不上',
+    cut_off: '录制中断',
+    duplicate_content: '与另一条完全相同',
+    stream_missing: '缺一路流',
+    rate_outlier: '频率明显偏低',
+    decode_concealed: '解码器掩盖了错误',
+    table_inconsistent: 'episode 表不一致',
+    orphan_files: '不属于任何 episode 的文件',
+    dark_camera: '近乎全黑的相机',
+    table_overlap: 'episode 表区间重叠',
+  } as Record<string, string>,
+
   /** Report sections (06 §6.2, F6.2): statistics and charts only, never a list of episodes. */
   sections: {
     counts: '判决分布',
@@ -1351,6 +1373,26 @@ export const zh = {
         '护栏：判废且任务文本来自原始标注时，比对标注和画面是不是同一件事。',
         '仲裁：打分和复核之后仍拿不准才跑；至少 2 路取证都说失败才判废。',
       ],
+    },
+    /** 数据完整性 (design doc 14 §5.1). */
+    integrity: {
+      pass: '通过',
+      reject: '判废',
+      suspect: '可疑',
+      suspectFoot: (pending: number) => `待人工裁决 ${pending} 条（完整性存疑）`,
+      rejectFoot: '文件损坏，不可复议',
+      files: '读过的文件',
+      filesFoot: (mb: string) => `共 ${mb} MB`,
+      crc: 'CRC 覆盖',
+      crcFoot: 'mcap 数据块 CRC 校验过的文件',
+      decode: '逐帧解码测试',
+      on: '开',
+      off: '关',
+      codes: '发现分布',
+      codesDesc: '按条数计；红色判废，橙色可疑',
+      dataset: '数据集级发现',
+      none: '没有发现问题',
+      note: '判废只落在文件有问题的 episode 上；可疑的留在通过清单并照常交付，同时在人工裁决「完整性存疑」里确认。',
     },
     dedup: {
       checkedFoot: '判决放行的条目',
@@ -1523,6 +1565,14 @@ export const zh = {
       taskType: { persistent: '持久任务', transient: '瞬时任务' } as Record<string, string>,
     },
     dedup: { none: '无重复', dupOf: '与', dupOfSuffix: '字节级完全重复' },
+    integrity: {
+      findings: '发现',
+      level: { reject: '判废', suspect: '可疑' } as Record<string, string>,
+      cols: { level: '级别', code: '问题', where: '文件 / 相机', message: '说明', file: '文件', camera: '相机', size: '大小', count: '帧 / 行', tiers: '检查档', crc: 'CRC' },
+      files: '检查过的文件',
+      none: '文件完整、可读',
+      tiers: (l3: boolean) => `结构检查、整读${l3 ? '、逐帧解码' : '（未做逐帧解码）'}`,
+    },
     skill: { family: '技能族', subskill: '子技能', caption: '模型描述', grouping: '分组依据', groupingSource: (s: string) => `（${s}）` },
     eef: { overall: '总体', cols: { camera: '相机', mount: '安装', position: '位置', orientation: '朝向', temporal: '时间对齐', motion: '相机运动', input: '输入一致性' }, reasons: '说明', status: '复核状态', windows: '复核窗口' },
     generic: '其它读数',
@@ -1562,7 +1612,7 @@ export const zh = {
     filterType: '问题类型',
     filterStatus: '状态',
     all: '全部',
-    lineName: { label: '标注分歧', task_verdict: '任务成败弃权', reject_appeal: '被拒复议', eef_check: 'EEF 与画面核对' } as Record<string, string>,
+    lineName: { label: '标注分歧', task_verdict: '任务成败弃权', reject_appeal: '被拒复议', eef_check: 'EEF 与画面核对', integrity_check: '完整性存疑' } as Record<string, string>,
     typeOption: (line: string, module: string) => `${line}（${module}）`,
     statusOption: { all: '全部', pending: '待裁（含拿不准）', unsure: '拿不准', decided: '已裁', unapplied: '已裁、未执行' } as Record<string, string>,
     // cards

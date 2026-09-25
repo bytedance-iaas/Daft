@@ -11,8 +11,9 @@ from curation.contracts import schemas
 
 
 def test_modules_in_stage_order():
-    assert M.ids() == ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-                       "video_action_sync", "eef_video_consistency", "task_success", "dedup", "skill_profile")
+    assert M.ids() == ("data_integrity", "timestamp_check", "kinematic_limits", "motion_quality",
+                       "visual_quality", "video_action_sync", "eef_video_consistency", "task_success",
+                       "dedup", "skill_profile")
     order = [M.STAGE_ORDER.index(m.stage) for m in M.MODULES]
     assert order == sorted(order), "registry order must follow the stage order"
 
@@ -34,7 +35,8 @@ def test_v1_facts():
     assert {m.id for m in M.by_stage("profile_vlm")} == {"skill_profile"}
     assert M.get("dedup").gate == "dedup" and M.get("skill_profile").gate == "none"
     assert {m.id for m in M.MODULES if m.produces_adjudication} == {"task_success", "dedup",
-                                                                    "skill_profile", "eef_video_consistency"}
+                                                                    "skill_profile", "eef_video_consistency",
+                                                                    "data_integrity"}
     verdict = [m for m in M.MODULES if m.affects_dataset_verdict]
     assert {m.id for m in verdict if "vlm" in m.needs} == {"eef_video_consistency", "task_success", "skill_profile"}
     assert all(m.input_scope == "funnel" for m in verdict)
@@ -43,7 +45,7 @@ def test_v1_facts():
 
 def test_the_eef_module_takes_part_in_the_verdict():
     """D49 / design doc 12 D-E11: one module, CPU then model, a hard gate on the funnel's survivors."""
-    assert M.advisory_ids() == () and M.native_ids() == ("eef_video_consistency",)
+    assert M.advisory_ids() == () and M.native_ids() == ("data_integrity", "eef_video_consistency")
     spec = M.get("eef_video_consistency")
     assert spec.gate == "hard" and spec.stage == "vlm" and spec.input_scope == "funnel"
     assert spec.affects_dataset_verdict and {"eef_input", "video", "vlm"} <= spec.needs
@@ -57,16 +59,35 @@ def test_the_eef_module_takes_part_in_the_verdict():
     assert exported["timestamp_check"]["input_scope"] == "funnel"
 
 
+def test_the_data_integrity_module_is_the_first_gate():
+    """1.11 / design doc 14, D50: a stage of its own before numeric; a hard gate v2 runs itself;
+    its rejects are final and its suspects are asked; one parameter, the decode test, off."""
+    assert M.STAGE_ORDER[0] == "integrity" and M.ids()[0] == "data_integrity"
+    spec = M.get("data_integrity")
+    assert (spec.stage, spec.gate, spec.level, spec.input_scope) == ("integrity", "hard", "episode", "funnel")
+    assert spec.native and spec.affects_dataset_verdict and spec.needs == frozenset({"raw_bytes"})
+    assert not spec.appealable and spec.review_lines == ("integrity_check",)
+    props = spec.param_schema["properties"]
+    assert list(props) == ["decode_test"] and props["decode_test"]["default"] is False
+    assert "AV1" in props["decode_test"]["description"]            # what it does and what it costs
+    assert "native" not in M.export()["modules"][0]                # internal, not part of C1's JSON
+
+
 def test_review_lines():
-    """D42 / D43: the review catalog is v1's three lines and the EEF module's (C1 1.9); modules name
-    the lines they raise."""
-    assert [line.id for line in M.REVIEW_LINES] == ["label", "task_verdict", "reject_appeal", "eef_check"]
+    """D42 / D43: the review catalog is v1's three lines, the EEF module's (C1 1.9) and the data
+    integrity module's (1.11); modules name the lines they raise."""
+    assert [line.id for line in M.REVIEW_LINES] == ["label", "task_verdict", "reject_appeal", "eef_check",
+                                                    "integrity_check"]
     for line in M.REVIEW_LINES:
         assert line.decisions and len({c for c, _ in line.decisions}) == len(line.decisions)
         assert M.review_line_of_kind(line.review_kind) is line
     assert M.review_line("reject_appeal").applies_to == "reject"
     assert not M.review_line("reject_appeal").counts_as_pending     # an appeal is optional
-    assert all(M.review_line(x).counts_as_pending for x in ("label", "task_verdict", "eef_check"))
+    assert all(M.review_line(x).counts_as_pending
+               for x in ("label", "task_verdict", "eef_check", "integrity_check"))
+    integ = M.review_line("integrity_check")
+    assert (integ.review_kind, integ.applies_to) == ("integrity_suspect", "passed")
+    assert [c for c, _ in integ.decisions] == ["intact", "broken", "unsure"]
     eef = M.review_line("eef_check")
     assert (eef.review_kind, eef.applies_to) == ("eef_consistency", "passed")
     assert [c for c, _ in eef.decisions] == ["consistent", "inconsistent", "unsure"]
@@ -86,7 +107,8 @@ def test_review_lines():
             assert set(fu.decisions) <= target and set(fu.after) <= {c for c, _ in line.decisions}
     # physical and structural gates and soft scores are final
     assert not any(M.appealable(m.id) for m in M.MODULES if m.gate in ("soft", "none")
-                   or m.id in ("timestamp_check", "kinematic_limits", "video_action_sync"))
+                   or m.id in ("timestamp_check", "kinematic_limits", "video_action_sync",
+                               "data_integrity"))
 
 
 def test_params_validate():

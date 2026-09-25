@@ -49,6 +49,9 @@ REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
 BACKEND = os.path.join(REPO, "backend")
 ALL_MODULES = ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
                "video_action_sync", "task_success", "dedup", "skill_profile")
+#: v2's own first gate (design doc 14); v1 has no such module, so the default chain leaves it out
+#: and ``--modules`` adds it to record a golden with it
+INTEGRITY = "data_integrity"
 
 
 class StepFailed(RuntimeError):
@@ -57,8 +60,10 @@ class StepFailed(RuntimeError):
 
 class Chain:
     def __init__(self, run_dir: str, dataset: str, *, delivery: str | None,
-                 vlm_endpoint: str, vlm_model: str, log_path: str):
+                 vlm_endpoint: str, vlm_model: str, log_path: str,
+                 modules: tuple[str, ...] = ALL_MODULES):
         self.run_dir, self.dataset, self.delivery = run_dir, dataset, delivery
+        self.modules = tuple(modules)
         self.vlm = ["--vlm-endpoint", vlm_endpoint, "--vlm-model", vlm_model, "--hedge",
                     "--concurrency", "64"]
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -118,7 +123,7 @@ class Chain:
         doc = self.run("preflight", "preflight", "--input", ds, "--vlm-backend", "ark")
         with open(pf, "w", encoding="utf-8") as fh:
             json.dump(doc, fh, ensure_ascii=False, indent=1)
-        self.run("plan", "plan", "--preflight", pf, "--modules", ",".join(ALL_MODULES),
+        self.run("plan", "plan", "--preflight", pf, "--modules", ",".join(self.modules),
                  "--episodes", episodes, "--out", os.path.join(rd, "plan.json"))
         self.run("snapshot", "snapshot", "--input", ds, "--episodes", episodes, "--out", sm)
         common = ["--input", ds, "--run-dir", rd, "--source-manifest", sm]
@@ -127,10 +132,16 @@ class Chain:
             # mcap / lance: the Daemon names the task's selection (their semantics sample)
             common += ["--selection", episodes]
         self.run("autolabel", "autolabel", *common, "--episodes", episodes, *self.vlm)
+        first = episodes
+        if INTEGRITY in self.modules:           # the Daemon's first funnel layer (design doc 14)
+            integ = self.stage_file("integrity")
+            self.run("check integrity", "check", "--modules", INTEGRITY, *common,
+                     "--episodes", episodes, "--survivors-out", integ)
+            first = f"@{integ}"
         num, frame = self.stage_file("numeric"), self.stage_file("frame")
         self.run("check numeric", "check", "--modules",
                  "timestamp_check,kinematic_limits,motion_quality", *common,
-                 "--episodes", episodes, "--survivors-out", num)
+                 "--episodes", first, "--survivors-out", num)
         self.run("check frame", "check", "--modules", "visual_quality,video_action_sync",
                  *common, "--episodes", f"@{num}", "--survivors-out", frame)
         self.run("check vlm", "check", "--modules", "task_success", *common,
@@ -222,6 +233,9 @@ def build_parser() -> argparse.ArgumentParser:
                       help="answer live from the built-in fake model and record a tape")
     p.add_argument("--vlm-endpoint", default="http://fake-vlm.local/v1")
     p.add_argument("--vlm-model", default="fake-vlm")
+    p.add_argument("--modules", default=",".join(ALL_MODULES),
+                   help=f"the task's modules (default: v1's eight); add {INTEGRITY} for a golden "
+                        f"with v2's data integrity gate in front")
     return p
 
 
@@ -268,9 +282,10 @@ def main(argv: list[str]) -> int:
                             transport=FakeVlm(args.vlm_model).transport(),
                             tape_meta={"label": "v2 chain"})
         mode = "record"
+    modules = tuple(m.strip() for m in args.modules.split(",") if m.strip())
     chain = Chain(args.out, args.input, delivery=args.delivery, vlm_endpoint=args.vlm_endpoint,
                   vlm_model=args.vlm_model,
-                  log_path=os.path.join(args.out, "logs", "parity-run.log"))
+                  log_path=os.path.join(args.out, "logs", "parity-run.log"), modules=modules)
     failure = None
     hooks.install(vlm_client)
     try:

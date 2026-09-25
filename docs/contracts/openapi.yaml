@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.15.0
+  version: 1.16.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -117,6 +117,11 @@ info:
     1.15.0 (2026-09-24): `GET /tasks` takes `has_result` (tasks with a committed result: the
     console's 质检报告 list) and `pending_adjudication` (tasks with pending adjudication items:
     its 人工裁决 list); false or absent does not filter.
+
+    1.16.0 (2026-09-24): the data integrity module (registry 1.11, design doc 14, D50-D52): the
+    stage enums take `integrity`, first in the funnel (the registry's stages and module stage, the
+    pipeline's `last_stage` and `stage_processing_s`; `next_stage` takes `numeric`); the review line `integrity_check`
+    (decisions intact, broken, unsure) is named among `ReviewLineId` and `DecisionInput`.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1872,7 +1877,7 @@ components:
       required: [registry_version, stages, review_lines, modules]
       properties:
         registry_version: {type: string}
-        stages: {type: array, items: {enum: [numeric, frame, vlm, post_verdict, profile_vlm]}}
+        stages: {type: array, items: {enum: [integrity, numeric, frame, vlm, post_verdict, profile_vlm]}}
         review_lines:
           type: array
           description: >-
@@ -1894,7 +1899,7 @@ components:
               level: {enum: [episode, dataset]}
               gate: {enum: [hard, soft, dedup, none]}
               needs: {type: array, items: {enum: [timestamps, action, state, video, embodiment_profile, vlm, raw_bytes, eef_input]}}
-              stage: {enum: [numeric, frame, vlm, post_verdict, profile_vlm]}
+              stage: {enum: [integrity, numeric, frame, vlm, post_verdict, profile_vlm]}
               depends_on:
                 type: array
                 items: {enum: [numeric_gates, frame_gates, autolabel, funnel_verdict, dedup, eef_video_consistency]}
@@ -1927,7 +1932,7 @@ components:
     ReviewLineId:
       type: string
       pattern: "^[a-z][a-z0-9_]*$"
-      description: a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check
+      description: a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check, integrity_check
     ReviewLine:
       type: object
       additionalProperties: false
@@ -2697,8 +2702,8 @@ components:
       required: [episode_index, last_stage, next_stage, reason, verdict, verdict_reason]
       properties:
         episode_index: {type: integer, minimum: 0}
-        last_stage: {enum: [numeric, frame, vlm]}
-        next_stage: {enum: [frame, vlm, done]}
+        last_stage: {enum: [integrity, numeric, frame, vlm]}
+        next_stage: {enum: [numeric, frame, vlm, done]}
         reason: {type: [string, "null"]}
         verdict: {type: [string, "null"], enum: [keep, drop, held, null]}
         verdict_reason: {type: [string, "null"]}
@@ -2707,6 +2712,7 @@ components:
           type: object
           additionalProperties: false
           properties:
+            integrity: {type: number, minimum: 0}
             numeric: {type: number, minimum: 0}
             frame: {type: number, minimum: 0}
             vlm: {type: number, minimum: 0}
@@ -2949,7 +2955,7 @@ components:
             a follow-up the card's answer on another line opened (registry follow_ups); anything
             else is 400 validation_failed. Today: label - adopt_suggestion, custom_label,
             keep_label, unsure, discard; task_verdict - success, failure, unsure, discard;
-            reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure
+            reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure
         new_label: {type: [string, "null"], description: "custom_label: required; adopt_suggestion: may be left out, the question's suggestion is taken"}
         note: {type: [string, "null"]}
     AdjudicationApply:

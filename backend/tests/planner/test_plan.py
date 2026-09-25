@@ -73,12 +73,28 @@ def test_full_plan_matches_the_design_example():
 def test_the_eef_module_is_a_vlm_gate_on_the_frame_survivors():
     """D49 / design doc 12 D-E11: the EEF module joins the vlm stage next to task_success."""
     p = plan(preflight=X.preflight(200, without_task=88))
-    assert ids(p) == ["autolabel", "numeric", "frame", "vlm", "verdict", "dedup", "profile_vlm", "final"]
+    assert ids(p) == ["autolabel", "integrity", "numeric", "frame", "vlm", "verdict", "dedup",
+                      "profile_vlm", "final"]
     vlm = stage(p, "vlm")
     assert vlm["modules"] == ["eef_video_consistency", "task_success"] and vlm["episodes"] == "survivors:frame"
     assert vlm["hard_gates"] == ["eef_video_consistency", "task_success"]
     only = plan(["eef_video_consistency"])
     assert ids(only) == ["vlm", "verdict", "final"] and stage(only, "vlm")["episodes"] == "selected"
+
+
+def test_the_data_integrity_module_is_the_first_gate():
+    """design doc 14 §2.2: its own stage before numeric, a CPU stage (mostly I/O) with the plan's
+    concurrency; numeric reads its survivors; without it the funnel starts at numeric as before."""
+    p = plan()
+    integ = stage(p, "integrity")
+    assert ids(p)[:3] == ["autolabel", "integrity", "numeric"] or ids(p)[:2] == ["integrity", "numeric"]
+    assert integ == {"id": "integrity", "kind": "cpu", "command": "check", "concurrency": 8,
+                     "modules": ["data_integrity"], "episodes": "selected",
+                     "hard_gates": ["data_integrity"]}
+    assert stage(p, "numeric")["episodes"] == "survivors:integrity"
+    assert any("decode_test" in n for n in p["estimates"]["notes"])
+    without = plan(V1)
+    assert "integrity" not in ids(without) and stage(without, "numeric")["episodes"] == "selected"
 
 
 def test_unselected_modules_and_empty_stages_disappear():

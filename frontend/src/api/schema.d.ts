@@ -1234,7 +1234,7 @@ export interface components {
         };
         ModuleRegistry: {
             registry_version: string;
-            stages: ("numeric" | "frame" | "vlm" | "post_verdict" | "profile_vlm")[];
+            stages: ("integrity" | "numeric" | "frame" | "vlm" | "post_verdict" | "profile_vlm")[];
             /** @description The questions a person can be asked on the adjudication page (D43). A page shows a line it has no dedicated view for from this entry: its title, the question's reason and one button per decision. */
             review_lines: components["schemas"]["ReviewLine"][];
             modules: {
@@ -1247,7 +1247,7 @@ export interface components {
                 gate: "hard" | "soft" | "dedup" | "none";
                 needs: ("timestamps" | "action" | "state" | "video" | "embodiment_profile" | "vlm" | "raw_bytes" | "eef_input")[];
                 /** @enum {unknown} */
-                stage: "numeric" | "frame" | "vlm" | "post_verdict" | "profile_vlm";
+                stage: "integrity" | "numeric" | "frame" | "vlm" | "post_verdict" | "profile_vlm";
                 /** @description a module id (registry 1.4) means that module's own results */
                 depends_on: ("numeric_gates" | "frame_gates" | "autolabel" | "funnel_verdict" | "dedup" | "eef_video_consistency")[];
                 /**
@@ -1273,7 +1273,7 @@ export interface components {
                 mergeable: boolean;
             }[];
         };
-        /** @description a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check */
+        /** @description a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check, integrity_check */
         ReviewLineId: string;
         ReviewLine: {
             id: components["schemas"]["ReviewLineId"];
@@ -1866,9 +1866,9 @@ export interface components {
         PipelineEpisode: {
             episode_index: number;
             /** @enum {unknown} */
-            last_stage: "numeric" | "frame" | "vlm";
+            last_stage: "integrity" | "numeric" | "frame" | "vlm";
             /** @enum {unknown} */
-            next_stage: "frame" | "vlm" | "done";
+            next_stage: "numeric" | "frame" | "vlm" | "done";
             reason: string | null;
             /** @enum {string|null} */
             verdict: "keep" | "drop" | "held" | null;
@@ -1876,6 +1876,7 @@ export interface components {
             /** @description Sum of completed layer processing times for this episode; excludes queue and CPU admission waits */
             processing_s?: number | null;
             stage_processing_s?: {
+                integrity?: number;
                 numeric?: number;
                 frame?: number;
                 vlm?: number;
@@ -2059,7 +2060,7 @@ export interface components {
         DecisionFields: {
             episode_index: number;
             line: components["schemas"]["ReviewLineId"];
-            /** @description one of the line's decisions in the registry, on a question the episode's card has or a follow-up the card's answer on another line opened (registry follow_ups); anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label, keep_label, unsure, discard; task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure */
+            /** @description one of the line's decisions in the registry, on a question the episode's card has or a follow-up the card's answer on another line opened (registry follow_ups); anything else is 400 validation_failed. Today: label - adopt_suggestion, custom_label, keep_label, unsure, discard; task_verdict - success, failure, unsure, discard; reject_appeal - restore, keep_rejected, unsure; eef_check - consistent, inconsistent, unsure; integrity_check - intact, broken, unsure */
             decision: string;
             /** @description custom_label: required; adopt_suggestion: may be left out, the question's suggestion is taken */
             new_label?: string | null;

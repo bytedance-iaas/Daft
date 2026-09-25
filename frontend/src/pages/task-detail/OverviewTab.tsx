@@ -14,7 +14,7 @@ import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { absoluteTime, bytes, compactNumber, percent } from '../../lib/format';
 import { subtaskName } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
-import { activeSubtask, groupStages, isTerminalState, progressStages, stageLabel, subtaskLabel } from '../../lib/taskView';
+import { FUNNEL_STAGES, activeSubtask, groupStages, isTerminalState, progressStages, stageLabel, subtaskLabel } from '../../lib/taskView';
 import { planGateText, planMergeText, planNoteText } from '../../lib/planText';
 import { zh } from '../../locales/zh';
 import { PipelineEpisodesCard } from './PipelineEpisodesCard';
@@ -68,7 +68,7 @@ function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask
   const active = activeSubtask(task);
   const listed = active ? subtasks.find((s) => s.id === active.id) : undefined;
   const raw = active ? (progressStages(listed?.progress).length ? progressStages(listed?.progress) : progressStages(active.progress)) : task.progress.stages;
-  const lanes = raw.filter((s) => ['numeric', 'frame', 'vlm'].includes(s.id));
+  const lanes = raw.filter((s) => FUNNEL_STAGES.includes(s.id));
   const showPipeline = lanes.some((s) => s.pipeline);
   const stages = groupStages(showPipeline ? raw.filter((s) => !lanes.includes(s)) : raw);
   return (
@@ -291,7 +291,7 @@ function ModulesCard({ task, plan, digest }: { task: Task; plan: Plan | undefine
       render: (_: unknown, m) => {
         const stage = reg.data?.modules.find((x) => x.id === m.id)?.stage;
         const mean = task.progress.stages.find((s) => s.id === stage)?.pipeline?.processing?.mean_s;
-        if (stage && ['numeric', 'frame', 'vlm'].includes(stage)) {
+        if (stage && FUNNEL_STAGES.includes(stage)) {
           return <span className="nowrap">{mean != null ? zh.taskDetail.perEpisode(mean.toFixed(2)) : '—'}</span>;
         }
         return <span className="nowrap">{m.elapsed_s != null ? zh.taskDetail.wholeStage(zh.time.duration(m.elapsed_s)) : '—'}</span>;

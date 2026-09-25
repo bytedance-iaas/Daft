@@ -160,7 +160,10 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
     shares = cpu_shares_for(stages)
     cpu_budget = min((int(s.get("concurrency") or 1) for s in stages
                       if s["id"] in shares), default=1)
-    layers = [Layer(s, shares.get(s["id"], int((s.get("gates") or {}).get("episode") or 1)))
+    # a CPU layer's share of the budget; else its own concurrency (the data integrity layer,
+    # I/O bound, design doc 14 §2.2), else a VLM layer's episode gate
+    layers = [Layer(s, shares.get(s["id"], int(s.get("concurrency")
+                                               or (s.get("gates") or {}).get("episode") or 1)))
               for s in stages]
     batch_size = effective_batch_size(stages, len(selection),
                                      (run.task.params or {}).get("batch_size"))

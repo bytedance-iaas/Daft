@@ -166,3 +166,31 @@ def test_persistent_worker_crash_preserves_completed_episodes(daemon, monkeypatc
     for path in Path(d.run_dir(task["id"])).glob("checks/timestamp_check/parts/*.jsonl"):
         counts.update(json.loads(line)["episode_index"] for line in path.read_text().splitlines())
     assert counts == {e: 1 for e in range(8)}
+
+
+def test_the_data_integrity_layer_goes_first_and_its_episodes_are_readable_live(daemon):
+    """design doc 14 §2.2: a task with the module (as the console selects it by default) runs it as the
+    first streaming layer, with the plan's concurrency; the live episode view reads its records next
+    to v1's (v2's own gates never enter v1's check configuration); its suspects are asked."""
+    from .conftest import ALL_MODULES
+
+    d = daemon()
+    task_id = d.create(modules=["data_integrity", *ALL_MODULES])["id"]
+    task = d.wait(task_id)
+    assert task["state"] == "succeeded", task
+    stages = [s["id"] for s in task["progress"]["stages"]]
+    assert stages.index("integrity") < stages.index("numeric")
+    [integ] = [s for s in task["progress"]["stages"] if s["id"] == "integrity"]
+    assert integ["pipeline"]["dispatches"] > 0 and integ["total"] == 8
+    page = d.api("GET", f"/tasks/{task_id}/pipeline/episodes")
+    assert page.status_code == 200, page.text
+    assert page.json()["finished"] == 8 and all(r["verdict"] for r in page.json()["items"])
+    detail = d.api("GET", f"/tasks/{task_id}/pipeline/episodes/3")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["modules"]["data_integrity"]["verdict"] == "abstain"     # the fixture's byte copy
+    assert "integrity" in detail.json()["stage_processing_s"]
+    queue = d.api("GET", f"/tasks/{task_id}/adjudication").json()
+    asked = {(card["episode_index"], q["line"]) for card in queue["items"] for q in card["questions"]}
+    assert (3, "integrity_check") in asked                                        # 7, its copy, is dedup's reject
+    assert all(line != "integrity_check" for ep, line in asked if ep != 3)
+    assert queue["counts"]["pending"] >= 1                                        # it counts as pending

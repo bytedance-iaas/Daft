@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 
 VLM_LATENCY_S = 22.7          # 2026-09-07 diagnostic: mean latency 22.6-22.8 s at N=64
 GATE_UTILISATION = 0.67       # the same run used 67 % of the probe gate
+INTEGRITY_S_PER_EPISODE = 0.5  # L1 + L2: ranged reads and one whole read (design doc 14 §6)
 NUMERIC_S_PER_EPISODE = 0.05  # parquet-only checks, seconds per episode
 FRAME_S_PER_EPISODE = 3.0     # 640 episodes took ~31 min serially (04 §2.1)
 DEDUP_S_PER_EPISODE = 0.02    # action hashes; video hashes only for collisions
@@ -46,6 +47,8 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
             autolabelled = unlabeled
             requests += unlabeled * CAPTIONS_PER_EPISODE
             seconds += _vlm_seconds(unlabeled * CAPTIONS_PER_EPISODE, gates["caption"])
+        elif sid == "integrity":
+            seconds += selected * INTEGRITY_S_PER_EPISODE / stage["concurrency"]
         elif sid == "numeric":
             seconds += selected * NUMERIC_S_PER_EPISODE / stage["concurrency"]
         elif sid == "frame":
@@ -94,6 +97,9 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
     if any(s["id"] in ("profile", "profile_vlm") and "skill_profile" in s.get("modules", ()) for s in stages):
         notes.append("skill_profile text calls (taxonomy, label audit) are per dataset "
                      "and not counted")
+    if any(s["id"] == "integrity" for s in stages):
+        notes.append("data_integrity: its decode test (decode_test), when on, is not counted - "
+                     "about one more decode of every frame")
     if uncounted:
         notes.append(f"no request model for {sorted(set(uncounted))}; not counted")
     return {"vlm_requests": int(requests), "wall_clock_s": int(round(seconds)), "notes": notes}

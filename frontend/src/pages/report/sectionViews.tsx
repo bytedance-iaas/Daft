@@ -496,6 +496,45 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
   return { stats, charts, blocks, notes, fresh: true };
 }
 
+/** 数据完整性 (design doc 14 §5.1): outcomes, what was read, the findings by kind, the dataset's own. */
+function integrityModel(s: Summary, section: ReportModuleSection): ViewModel {
+  const Z = S().integrity;
+  const o = (s.integrity_outcomes ?? {}) as Record<string, unknown>;
+  const f = (s.integrity_files ?? {}) as Record<string, unknown>;
+  const t = (s.integrity_tiers ?? {}) as Record<string, unknown>;
+  const stats: StatSpec[] = [];
+  if (num(o.pass) !== null) stats.push({ label: Z.pass, value: num(o.pass) });
+  if (num(o.reject) !== null) stats.push({ label: Z.reject, value: num(o.reject), tone: num(o.reject) ? 'bad' : undefined, foot: num(o.reject) ? Z.rejectFoot : undefined });
+  if (num(o.suspect) !== null)
+    stats.push({ label: Z.suspect, value: num(o.suspect), tone: num(o.suspect) ? 'warn' : undefined, foot: num(o.suspect) ? Z.suspectFoot(section.adjudication?.pending ?? 0) : undefined });
+  if (num(f.files) !== null) stats.push({ label: Z.files, value: num(f.files), foot: Z.filesFoot(((num(f.bytes) ?? 0) / 1e6).toFixed(1)) });
+  if (num(f.crc_files) !== null) stats.push({ label: Z.crc, value: num(f.crc_files), foot: Z.crcFoot });
+  if (Object.keys(t).length) stats.push({ label: Z.decode, value: t.L3 ? Z.on : Z.off });
+  const charts: ChartSpec[] = [];
+  const rows = rowsOf<{ code: string; name?: string; level?: string; count: number }>(s.integrity_codes) ?? [];
+  const items = rows.map((r) => ({ name: zh.integrityCodes[r.code] ?? r.name ?? r.code, value: r.count }));
+  if (anyValue(items)) charts.push({ key: 'codes', title: Z.codes, desc: Z.codesDesc, items, horizontal: true, colors: rows.map((r) => (r.level === 'reject' ? RED : ORANGE)) });
+  const dataset = rowsOf<{ code: string; message: string }>(s.integrity_dataset) ?? [];
+  const blocks: ReactNode[] = dataset.length
+    ? [
+        <>
+          <div className="section-sub">{Z.dataset}</div>
+          <ul className="section-list" data-testid="integrity-dataset">
+            {dataset.map((d, i) => (
+              <li key={i}>
+                {zh.integrityCodes[d.code] ?? d.code}：{d.message}
+              </li>
+            ))}
+          </ul>
+        </>,
+      ]
+    : [];
+  const notes: ReactNode[] = [];
+  if (!items.length && !dataset.length && Object.keys(o).length) notes.push(Z.none);
+  notes.push(<span className="muted">{Z.note}</span>);
+  return { stats, charts, blocks, notes, fresh: hasAny(s, ['integrity_outcomes']) };
+}
+
 /** Any module: scalars, the verdict distribution, series and dicts of counts, the rest readable. */
 function defaultModel(s: Summary): ViewModel {
   const { scalars, series, other } = splitSummary(s, ['counts']);
@@ -533,10 +572,11 @@ function view(id: string, model: Model, opts: { abstain?: boolean } = {}): Compo
 }
 
 /**
- * Section renderers by module id (06 §6.2): the eight v1 modules and the two EEF modules. A
- * module without an entry gets DefaultSectionView.
+ * Section renderers by module id (06 §6.2): the eight v1 modules, the EEF module and the data
+ * integrity module. A module without an entry gets DefaultSectionView.
  */
 export const SECTION_VIEWS: Record<string, ComponentType<SectionViewProps>> = {
+  data_integrity: view('data_integrity', integrityModel),
   timestamp_check: view('timestamp_check', timestampModel),
   kinematic_limits: view('kinematic_limits', kinematicsModel),
   motion_quality: view('motion_quality', motionModel),

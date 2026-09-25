@@ -25,7 +25,7 @@ from typing import Iterable
 
 from ..repo import protocol as P
 
-FUNNEL_STAGES = ("numeric", "frame", "vlm")
+FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm")
 SAMPLE_KEYS = 20
 
 

@@ -47,7 +47,7 @@ from .records import latest_results, revision_dir, write_json_atomic, write_text
 from .tasktext import TaskText, load_autolabel
 from .verdict import episode_verdict
 
-FUNNEL_STAGES = ("numeric", "frame", "vlm")
+FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm")
 #: The modules that vote on keep / drop / held. Advisory modules (registry 1.4,
 #: ``affects_dataset_verdict=False``) are filtered here, at the call boundary; verdict.py is v1's.
 FUNNEL_MODULES = tuple(m.id for m in registry.MODULES if m.stage in FUNNEL_STAGES
@@ -58,6 +58,22 @@ NAMES_CN = {**CHECK_CN, "dedup": "精确去重", "skill_profile": "技能画像"
 #: could not settle (``passed=None``) is kept and asked; the answer is the gate's result
 EEF = "eef_video_consistency"
 EEF_HUMAN = {"consistent": "人工裁决判为一致", "inconsistent": "人工裁决判为 EEF 与视频不一致"}
+#: v2's data integrity gate (C1 1.11, design doc 14 §4.4): its suspects are kept and asked
+INTEGRITY = "data_integrity"
+#: v2's own gates a person settles: module -> (review line, review.json kind, the decisions that
+#: settle it and the result each stands for, the reason each gives). The answer is the gate's
+#: result, as a human task verdict is task_success's; "unsure" settles nothing.
+HUMAN_GATES: dict[str, tuple[str, str, dict[str, bool], dict[str, str]]] = {
+    EEF: ("eef_check", "eef_consistency", {"consistent": True, "inconsistent": False}, EEF_HUMAN),
+    INTEGRITY: ("integrity_check", "integrity_suspect", {"intact": True, "broken": False},
+                {"intact": "人工裁决判为数据无误", "broken": "人工裁决判为数据确有问题"}),
+}
+
+
+def human_answer(decisions: Decisions, ep: int, gate: str) -> str | None:
+    """A person's settling answer on ``gate``'s line, if any."""
+    line, _kind, settles, _texts = HUMAN_GATES[gate]
+    return decisions.human_gate(ep, line, tuple(settles))
 
 
 def _stage(m: str) -> str:
@@ -156,7 +172,7 @@ def funnel_line(state: RunState, ep: int, overrides: dict | None = None) -> Line
                 stage_error = True
             else:
                 normal[m] = _struct(rec)
-        if stage in ("numeric", "frame"):
+        if stage in ("integrity", "numeric", "frame"):
             gates = [m for m in mods if registry.get(m).gate == "hard" and m in normal]
             fails = [m for m in gates if normal[m].get("passed") is False]
             if fails:
@@ -243,7 +259,7 @@ def appeal_target(state: RunState, ep: int, machine: Line, decisions: Decisions)
     if machine.verdict == "drop":
         if len(machine.hard_fails) == 1 and appealable(machine.hard_fails[0]):
             gate = machine.hard_fails[0]
-            settled = decisions.human_eef(ep) if gate == EEF else tv
+            settled = human_answer(decisions, ep, gate) if gate in HUMAN_GATES else tv
             return gate if settled is None else None
         return None
     if machine.verdict == "keep" and tv != "failure" and "dedup" in state.modules \
@@ -272,12 +288,14 @@ def decide(state: RunState, ep: int, decisions: Decisions,
         human_note = {"module": "task_success",
                       "text": "人工裁决判成功" if tv == "success"
                       else "人工裁决判失败(任务未完成)", "kind": "human"}
-    eef = decisions.human_eef(ep)
-    eef_rec = (state.results.get(EEF) or {}).get(ep)
-    if eef is not None and EEF in selected and eef_rec is not None and eef_rec["verdict"] != "error":
-        rec = _struct(eef_rec)
-        overrides[EEF] = {**rec, "passed": eef == "consistent",
-                          "detail": {**rec["detail"], "reason": EEF_HUMAN[eef]}}
+    for gate, (_line, _kind, settles, texts) in HUMAN_GATES.items():
+        answer = human_answer(decisions, ep, gate)
+        gate_rec = (state.results.get(gate) or {}).get(ep)
+        if answer is not None and gate in selected and gate_rec is not None \
+                and gate_rec["verdict"] != "error":
+            rec = _struct(gate_rec)
+            overrides[gate] = {**rec, "passed": settles[answer],
+                               "detail": {**rec["detail"], "reason": texts[answer]}}
     if appeal == "restore" and target is not None and target != "dedup" \
             and target not in overrides:
         # restore overturns the appealed gate only: another module that could not
@@ -404,10 +422,12 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
         elif state_ == "drop" and not reasons:
             reasons = _drop_reasons(line)
             if human_note is not None and human_note["text"].startswith("人工裁决判失败"):
-                reasons = [human_note] + [r for r in reasons if r.get("module") == EEF]
-            if decisions.human_eef(ep) == "inconsistent":
-                reasons = [{"module": EEF, "kind": "human", "text": EEF_HUMAN["inconsistent"]}
-                           if r.get("module") == EEF else r for r in reasons]
+                reasons = [human_note] + [r for r in reasons if r.get("module") in HUMAN_GATES]
+            for gate, (_line, _kind, settles, texts) in HUMAN_GATES.items():
+                answer = human_answer(decisions, ep, gate)
+                if answer is not None and settles[answer] is False:
+                    reasons = [{"module": gate, "kind": "human", "text": texts[answer]}
+                               if r.get("module") == gate else r for r in reasons]
         elif state_ == "held" and not reasons:
             reasons = [{"module": m, "kind": "execution_error",
                         "text": f"「{NAMES_CN.get(m, m)}」执行出错({line.error_detail.get(m, '')})"}
@@ -480,7 +500,9 @@ def _review_items(state: RunState, ep: int, line: Line, state_: str, d: Decided,
       (:func:`appeal_target`) with no appeal decided yet - "unsure" keeps it listed;
     * ``eef_consistency``: a delivered episode the EEF module could not settle (conflicting
       CPU and model, no model opinion, what the model cannot see, not judgeable) and no
-      person has (C1 1.9) - "unsure" keeps it listed.
+      person has (C1 1.9) - "unsure" keeps it listed;
+    * ``integrity_suspect``: a delivered episode the data integrity module suspects (C1 1.11,
+      design doc 14 §4.4), likewise.
     """
     items = []
     current = "passed" if state_ == "keep" else "reject"
@@ -491,9 +513,10 @@ def _review_items(state: RunState, ep: int, line: Line, state_: str, d: Decided,
             why = f"系统内部错误(非数据问题):{why}"
         items.append({"source_module": "task_success", "kind": "task_verdict",
                       "reason": why or "未注明"})
-    if state_ == "keep" and EEF in line.undecidable and decisions.human_eef(ep) is None:
-        why = check_detail_reason(line.checks.get(EEF) or {}).removeprefix("需要人工裁决：")
-        items.append({"source_module": EEF, "kind": "eef_consistency", "reason": why or "未注明"})
+    for gate, (_line, kind, _settles, _texts) in HUMAN_GATES.items():
+        if state_ == "keep" and gate in line.undecidable and human_answer(decisions, ep, gate) is None:
+            why = check_detail_reason(line.checks.get(gate) or {}).removeprefix("需要人工裁决：")
+            items.append({"source_module": gate, "kind": kind, "reason": why or "未注明"})
     if not decisions.label_resolved(ep):
         for tier, entry in audit_entries:
             item = {"source_module": "task_success" if entry.get("guard_layer")

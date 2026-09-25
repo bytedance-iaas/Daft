@@ -412,6 +412,58 @@ function EefBlock({ taskId, record }: BlockProps) {
   );
 }
 
+interface IntegrityFinding { level: string; code: string; message: string; file?: string; camera?: string }
+interface IntegrityFile { file: string; camera?: string; size?: number; frames?: number; rows?: number; tiers?: string[]; crc?: string | null }
+
+/** 数据完整性 (design doc 14 §5.2): the conclusion, every finding, and every file it read. */
+function IntegrityBlock({ record }: BlockProps) {
+  const d = details(record);
+  const K = E().integrity;
+  const findings = (Array.isArray(d.findings) ? d.findings : []) as IntegrityFinding[];
+  const files = (Array.isArray(d.files) ? d.files : []) as IntegrityFile[];
+  const tiers = (d.tiers ?? {}) as Record<string, boolean>;
+  const tone = record.verdict === 'fail' ? 'bad' : record.verdict === 'abstain' ? 'warn' : undefined;
+  return (
+    <div data-testid="episode-integrity">
+      {str(d.reason) ? <Reason text={str(d.reason)!.replace(/^需要人工裁决：/, '')} tone={tone} /> : <div className="muted">{K.none}</div>}
+      {findings.length ? (
+        <Table
+          rowKey={(r: IntegrityFinding) => `${r.code}-${r.file ?? ''}-${r.camera ?? ''}-${r.message}`}
+          size="small"
+          pagination={false}
+          data={findings}
+          data-testid="integrity-findings"
+          columns={[
+            { title: K.cols.level, dataIndex: 'level', width: 72, render: (v: string) => <Tag size="small" color={v === 'reject' ? 'red' : 'orange'}>{K.level[v] ?? v}</Tag> },
+            { title: K.cols.code, dataIndex: 'code', width: 150, render: (v: string) => zh.integrityCodes[v] ?? v },
+            { title: K.cols.where, dataIndex: 'file', render: (_: unknown, r: IntegrityFinding) => r.camera ?? r.file ?? '—' },
+            { title: K.cols.message, dataIndex: 'message' },
+          ]}
+        />
+      ) : null}
+      {files.length ? (
+        <>
+          <div className="episode-line muted">{K.files}（{K.tiers(Boolean(tiers.L3))}）</div>
+          <Table
+            rowKey="file"
+            size="small"
+            pagination={false}
+            data={files}
+            data-testid="integrity-files"
+            columns={[
+              { title: K.cols.file, dataIndex: 'file', render: (v: string) => <span className="mono">{v}</span> },
+              { title: K.cols.camera, dataIndex: 'camera', width: 90, render: (v?: string) => v ?? '—' },
+              { title: K.cols.size, dataIndex: 'size', width: 100, align: 'right' as const, render: (v?: number) => (v == null ? '—' : v >= 1e6 ? `${(v / 1e6).toFixed(1)} MB` : `${(v / 1e3).toFixed(1)} KB`) },
+              { title: K.cols.count, dataIndex: 'frames', width: 80, align: 'right' as const, render: (_: unknown, r: IntegrityFile) => r.frames ?? r.rows ?? '—' },
+              { title: K.cols.crc, dataIndex: 'crc', width: 70, render: (v?: string | null) => (v ? '✓' : '—') },
+            ]}
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 /** Any module: its details, labelled and readable. */
 export function GenericBlock({ record }: BlockProps) {
   const d = details(record);
@@ -443,6 +495,7 @@ function withRest(Block: ComponentType<BlockProps>, shown: readonly string[]): C
 
 /** The blocks by module id; unknown modules get GenericBlock. */
 export const EPISODE_BLOCKS: Record<string, ComponentType<BlockProps>> = {
+  data_integrity: IntegrityBlock,
   timestamp_check: withRest(TimestampBlock, ['n', 'duration_s', 'dt_nominal', 'max_dt', 'jitter_ratio', 'gap_frames', 'reason']),
   kinematic_limits: withRest(KinematicsBlock, ['violations', 'transient_violations', 'sustained_out_of_limit', 'n_violations', 'profile', 'reason']),
   motion_quality: MotionBlock,

@@ -45,6 +45,13 @@ review line ``eef_check`` (1.9, F5.11): an episode it could not settle waits in 
 "consistent" keeps it and "inconsistent" rejects it; a reject of the module alone may be
 appealed.
 
+Data integrity (1.11, design doc 14, D50-D52): a stage of its own, ``integrity``, first in the
+funnel, whose one module ``data_integrity`` checks that every episode's files are whole and
+readable - a hard gate that is selected by default and whose rejects are final; an episode it
+only suspects stays in passed and is asked on the review line ``integrity_check``. Modules v2
+runs itself (outside v1's check configuration) are marked ``native`` instead of being told
+apart by the EEF module's ``eef_input``.
+
 Choice groups (1.10, 2026-09-24): parameters that stand in for one another carry the same
 ``x-choice-group`` (``{id, title, required}``). A form offers the group as one field - which of
 them, then that one's value - sends only the chosen one, and with ``required`` asks for one; the
@@ -56,15 +63,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.10"
+REGISTRY_VERSION = "1.11"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
-Stage = Literal["numeric", "frame", "vlm", "post_verdict", "profile_vlm"]
+Stage = Literal["integrity", "numeric", "frame", "vlm", "post_verdict", "profile_vlm"]
 InputScope = Literal["funnel", "all_selected"]
 
 #: Stages in execution order (design doc 04, section 2).
-STAGE_ORDER: tuple[str, ...] = ("numeric", "frame", "vlm", "post_verdict", "profile_vlm")
+STAGE_ORDER: tuple[str, ...] = ("integrity", "numeric", "frame", "vlm", "post_verdict",
+                                "profile_vlm")
 
 #: Capabilities a dataset or task must provide (design doc 05, section 2).
 NEEDS: frozenset[str] = frozenset({"timestamps", "action", "state", "video",
@@ -153,6 +161,10 @@ REVIEW_LINES: tuple[ReviewLine, ...] = (
     # the marked frames and says whether the declared end effector matches the video
     ReviewLine("eef_check", "eef_consistency", "EEF 与画面核对", "passed", True,
                (("consistent", "一致，判过"), ("inconsistent", "不一致，判废"), ("unsure", "拿不准"))),
+    # the data integrity module's suspects (design doc 14 §4.4): a person looks at the findings
+    # and says whether the files are fine; like every line on passed episodes it counts as pending
+    ReviewLine("integrity_check", "integrity_suspect", "完整性存疑", "passed", True,
+               (("intact", "数据无误，保留"), ("broken", "确有问题，判废"), ("unsure", "拿不准"))),
 )
 
 
@@ -174,6 +186,8 @@ class ModuleSpec:
     appealable: bool = False             # a reject attributed to it may be appealed (D42)
     input_scope: InputScope = "funnel"   # all_selected: every selected episode, not the survivors
     affects_dataset_verdict: bool = True  # False: advisory, never part of keep / drop / held
+    #: v2 runs it itself, outside v1's check configuration (1.11); not part of the JSON
+    native: bool = False
 
     def to_json(self) -> dict:
         return {"id": self.id, "name_zh": self.name_zh, "summary_zh": self.summary_zh,
@@ -220,6 +234,20 @@ def upload_params(module_id: str) -> dict[str, str]:
     """param key -> upload kind of the module's file parameters."""
     props = get(module_id).param_schema.get("properties") or {}
     return {k: p["x-upload-kind"] for k, p in props.items() if p.get("format") == UPLOAD_FORMAT}
+
+
+def _integrity_params() -> dict:
+    """design doc 14 §5.3: L3 is the one choice a task makes; the thresholds are the site's."""
+    return {
+        "type": "object", "additionalProperties": False,
+        "properties": {
+            "decode_test": {
+                "type": "boolean", "title": "逐帧解码测试", "default": False,
+                "description": "把每路相机从头到尾严格解码一遍，能发现文件结构完好、但画面数据已经损坏的条目，"
+                               "包括解码器自己掩盖掉的错误。耗时相当于把全部视频完整解码一次：1000 条、每条 30 秒、"
+                               "3 路 640×480 相机，H.264 约 7 分钟，AV1 约 16 分钟（8 路 CPU 并发），随条数线性增长。"
+                               "不开启时，结构检查、整读和 CRC 校验已经能发现截断、零填充和 mcap 的数据损坏。"},
+        }}
 
 
 def _eef_params() -> dict:
@@ -279,6 +307,15 @@ def _eef_params() -> dict:
 
 MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(
+        id="data_integrity", name_zh="数据完整性",
+        summary_zh="检查每条 episode 的文件是否完整、可读：文件结构、零填充、mcap 的 CRC、逐条数据的结构校验，"
+                   "可选逐帧解码；坏了的判废，可疑的交人工裁决",
+        level="episode", gate="hard", needs=frozenset({"raw_bytes"}), stage="integrity",
+        depends_on=(), produces_adjudication=True, param_schema=_integrity_params(),
+        tables=(TableSpec("integrity_findings", "完整性发现",
+                          ("episode_index", "level", "code", "file")),),
+        review_lines=("integrity_check",), appealable=False, native=True),
+    ModuleSpec(
         id="timestamp_check", name_zh="时间戳检查",
         summary_zh="时间戳是否单调、有没有丢帧跳变、是不是短于残段阈值的碎片",
         level="episode", gate="hard", needs=frozenset({"timestamps"}), stage="numeric",
@@ -331,7 +368,8 @@ MODULES: tuple[ModuleSpec, ...] = (
                 TableSpec("eef_diagnosis", "诊断假设", ("episode_index", "camera", "hypothesis")),
                 TableSpec("eef_review_windows", "复核窗口", ("episode_index", "camera", "kind", "status",
                                                           "review_status", "conflict"))),
-        review_lines=("eef_check",), appealable=True, input_scope="funnel", affects_dataset_verdict=True),
+        review_lines=("eef_check",), appealable=True, input_scope="funnel", affects_dataset_verdict=True,
+        native=True),
     ModuleSpec(
         id="task_success", name_zh="任务成败判定",
         summary_zh="由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
@@ -363,9 +401,10 @@ MODULES: tuple[ModuleSpec, ...] = (
 
 
 def native_ids() -> tuple[str, ...]:
-    """Modules v2 runs itself, outside v1's check configuration (the EEF module, registry 1.8):
-    v1's ``apply_check_selection`` never sees them; aggregate adds their gate to the verdict config."""
-    return tuple(m.id for m in MODULES if "eef_input" in m.needs)
+    """Modules v2 runs itself, outside v1's check configuration (the EEF module since 1.8, the data
+    integrity module since 1.11): v1's ``apply_check_selection`` never sees them; aggregate adds their
+    gate to the verdict config."""
+    return tuple(m.id for m in MODULES if m.native)
 
 
 def advisory_ids() -> tuple[str, ...]:

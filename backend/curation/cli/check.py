@@ -3,7 +3,8 @@
 The most important command. One call runs the modules of **one** stage (D18):
 ``timestamp_check,kinematic_limits,motion_quality`` (numeric),
 ``visual_quality,video_action_sync`` (frame: one shared decode per camera),
-``task_success`` (vlm), or one dataset-level module, ``dedup`` or
+``task_success`` (vlm), ``data_integrity`` (integrity, first; design doc 14), or one
+dataset-level module, ``dedup`` or
 ``skill_profile`` (the whole kept set in one call). Mixing stages is a usage
 error. Advisory modules (registry 1.4: ``eef_video_consistency``) run in a call
 of their own, on every episode given, with their parameters as ``--param``.
@@ -55,7 +56,7 @@ def add_parser(sub, parents) -> None:
                    help="write the episodes that go on to the next stage, one per line")
     p.add_argument("--pipeline-state", metavar="SQLITE",
                    help=argparse.SUPPRESS)
-    p.add_argument("--pipeline-next", metavar="STAGE", choices=("frame", "vlm", "done"),
+    p.add_argument("--pipeline-next", metavar="STAGE", choices=("numeric", "frame", "vlm", "done"),
                    default="done",
                    help=argparse.SUPPRESS)
     runctx.add_vlm(p)
@@ -97,7 +98,7 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     if args.part is not None and not (len(args.part) == 4 and args.part.isdigit()):
         raise UsageError(f"--part must be four digits such as 0003, got {args.part!r}")
     plan_stage = runctx.load_plan_stage(args.plan_stage, modules)
-    if args.pipeline_state and stage not in ("numeric", "frame", "vlm"):
+    if args.pipeline_state and stage not in ("integrity", "numeric", "frame", "vlm"):
         raise UsageError("--pipeline-state is only valid for funnel stages")
     src = runctx.open_source(ctx, args)
     storage = src.storage
@@ -112,12 +113,15 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
 
     from ..contracts import modules as registry
 
-    native = [m for m in modules if m in registry.native_ids()]
-    if native and src.kind == "lance":
-        raise ModuleFailed(f"{', '.join(native)}: EEF-video consistency reads LeRobot and mcap "
+    eef = [m for m in modules if "eef_input" in registry.get(m).needs]
+    if eef and src.kind == "lance":
+        raise ModuleFailed(f"{', '.join(eef)}: EEF-video consistency reads LeRobot and mcap "
                            f"datasets only, not {src.kind}; preflight marks it unsupported, leave it out",
-                           {"modules": native, "format": src.kind})
-    if stage in ("numeric", "frame"):
+                           {"modules": eef, "format": src.kind})
+    if stage == "integrity":
+        payload, survivors = _integrity(ctx, args, modules, run_dir, src, episodes, part,
+                                        plan_stage, guard)
+    elif stage in ("numeric", "frame"):
         payload, survivors = _funnel_cpu(ctx, args, modules, run_dir, src, episodes,
                                          part, plan_stage, guard, info)
     elif stage == "vlm":
@@ -190,6 +194,45 @@ def _funnel_cpu(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
     return stage.run(), stage.survivors()
 
 
+def _integrity(ctx, args, modules, run_dir, src, episodes, part, plan_stage, guard):
+    """The data integrity module (design doc 14): v2's own gate, first in the funnel. Its
+    judge does the dataset-level work once per process (a pipeline worker keeps it)."""
+    from ..extensions.integrity import MODULE_ID, IntegrityJudge
+    from ..pipeline.check_stage import StageOptions, StageRun
+    from ..pipeline.records import latest_results
+    from ..registry.registry import EmbodimentRegistry
+
+    cache = getattr(args, "_worker_cache", None)
+    judge = cache.get("integrity") if cache is not None else None
+    if judge is None:
+        params = modparams.with_defaults(MODULE_ID, modparams.parse(getattr(args, "param", None)).get(MODULE_ID))
+        judge = IntegrityJudge(ctx, src, ctx.config(), params, run_dir,
+                               selection=runctx.selection_of(args), max_episodes=args.max_episodes)
+        if guard is not None:
+            guard([])                    # the metadata the dataset-level checks read
+        judge.open(list(episodes))
+        if cache is not None:
+            cache["integrity"] = judge
+    else:
+        judge.rebind(src)
+    stale = judge.stale(latest_results(run_dir, MODULE_ID, list(episodes)))
+    opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
+                        episodes=episodes, part=part, cfg=ctx.config(), resume=args.resume,
+                        concurrency=runctx.cpu_workers(args, plan_stage),
+                        embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
+                        verify_source=guard, pipeline_state=args.pipeline_state,
+                        pipeline_next=args.pipeline_next,
+                        episode_stream=getattr(args, "_episode_stream", None),
+                        integrity=judge, stale={MODULE_ID: stale},
+                        **_container_options(args, src))
+    stage = StageRun(ctx, opts, EmbodimentRegistry())
+    payload = stage.run()
+    if MODULE_ID in payload.get("modules", {}):
+        # decode_test and the thresholds are part of the module's input
+        payload["modules"][MODULE_ID]["input_digest"] = judge.input_digest(list(opts.episodes))
+    return payload, stage.survivors()
+
+
 def _merge_strategy(ctx, plan_stage, cfg, modules):
     """The VLM request merge strategy of this call (W6, doc 04 §4.2): the plan stage's
     proposal unless ``vlm.merge.enabled`` is off. Only modules that declare merge units
@@ -218,7 +261,7 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
 
     from ..contracts import modules as registry
 
-    eef_mods = [m for m in modules if m in registry.native_ids()]     # D49: the EEF gate, next to v1's
+    eef_mods = [m for m in modules if "eef_input" in registry.get(m).needs]   # D49: the EEF gate
     has_task = "task_success" in modules
     cache = getattr(args, "_worker_cache", None)
     prepared = cache.get("vlm") if cache is not None else None

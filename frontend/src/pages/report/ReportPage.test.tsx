@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import type { ResultRecord } from '../../api/types';
 import { describe, expect, it } from 'vitest';
 import { db } from '../../mocks/db';
 import { eefRecord } from '../../mocks/eef';
@@ -256,6 +257,36 @@ describe('质检报告 (07 §5)', () => {
     expect(await within(block).findByAltText('12_ext.jpg')).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
     // Shown in the block, not again among the episode's evidence frames.
     expect(screen.queryAllByAltText(/^EEF–视频一致性 · /)).toHaveLength(0);
+    expect(block.textContent).not.toMatch(/[{}"]/);
+  });
+
+  it('Episode 明细: the data integrity block lists every finding and every file it read (design doc 14 §5.2)', async () => {
+    const record: ResultRecord = {
+      episode_index: 12, module: 'data_integrity', verdict: 'fail', passed: false, score: null, gate: 'hard', evidence: [], elapsed_s: 0.4, error: null,
+      details: {
+        outcome: 'reject', reason: '文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失',
+        tiers: { L1: true, L2: true, L3: false },
+        findings: [
+          { level: 'reject', code: 'file_truncated', tier: 'L1', message: '文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失', file: 'videos/chunk-000/observation.images.wrist/episode_000012.mp4', camera: 'wrist', span_s: [2.667, null] },
+          { level: 'suspect', code: 'duplicate_content', tier: 'dataset', message: 'exterior 相机的视频与 ep 7 的内容完全相同', file: 'videos/chunk-000/observation.images.exterior/episode_000012.mp4', camera: 'exterior' },
+        ],
+        files: [
+          { file: 'data/chunk-000/episode_000012.parquet', size: 81234, tiers: ['L1', 'L2'], crc: null, rows: 75 },
+          { file: 'videos/chunk-000/observation.images.wrist/episode_000012.mp4', size: 1200000, tiers: ['L1'], crc: null, camera: 'wrist' },
+        ],
+      },
+    };
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { data_integrity: record }]])]]);
+    renderApp(`${REPORT}?ep=12#episodes`);
+    const block = await screen.findByTestId('episode-module-data_integrity');
+    expect(within(block).getByTestId('episode-integrity')).toHaveTextContent('文件在 1.2 MB 处被截断，第 40 帧（2.67 秒）起的数据缺失');
+    const findings = within(block).getByTestId('integrity-findings');
+    expect(findings).toHaveTextContent('判废文件被截断wrist');
+    expect(findings).toHaveTextContent('可疑与另一条完全相同exterior');
+    const files = within(block).getByTestId('integrity-files');
+    expect(files).toHaveTextContent('data/chunk-000/episode_000012.parquet');
+    expect(files).toHaveTextContent('1.2 MB');
+    expect(block).toHaveTextContent('检查过的文件（结构检查、整读（未做逐帧解码））');
     expect(block.textContent).not.toMatch(/[{}"]/);
   });
 
