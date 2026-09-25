@@ -317,7 +317,11 @@ def test_v3_dataset(cli, tmp_path):
     assert doc["dataset"]["labels"] == {"with_task": 2, "without_task": 1}
     assert doc["dataset"]["cameras"] == ["front"]
     assert _mod(doc, "kinematic_limits")["availability"] == "available"     # so101
-    assert doc["warnings"] == []
+    # the placeholders are one byte each: D52 says so, and changes no availability
+    assert doc["warnings"] == [
+        "3 files are empty or too small to be valid (3 episodes: 0, 1, 2; "
+        "data/chunk-000/file-000.parquet 1 B, data/chunk-000/file-001.parquet 1 B, "
+        "videos/observation.images.front/chunk-000/file-000.mp4 1 B)"]
 
 
 def test_v3_without_tasks_column_warns(cli, tmp_path):

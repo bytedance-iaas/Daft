@@ -55,7 +55,7 @@
 
 | 项 | 读什么 | 警告写法（示意） |
 |---|---|---|
-| 0 字节或过小的文件 | 文件列表里的大小：`data/`、`videos/` 下的文件与 `*.mcap`；mp4 小于 4 KiB 也算（v1 判「放不了」的下限） | `3 files are empty or too small (episode 12: videos/.../episode_000012.mp4 0 B, ...); the data integrity module will reject their episodes` |
+| 0 字节或过小的文件 | 文件列表里的大小：`data/`、`videos/` 下的文件与 `*.mcap`；小到放不下该格式固定字节的也算（parquet 小于 12 字节、mcap 小于 45 字节、mp4 小于 512 字节——放不下 ftyp 加一个视频轨的 moov）。不用 v1 判「放不了」的 4 KiB：几帧低分辨率的合法短片就只有 3 KB | `3 files are empty or too small (episode 12: videos/.../episode_000012.mp4 0 B, ...); the data integrity module will reject their episodes` |
 | mcap 录制中断 | 读摘要区失败的文件，看最后 8 字节是不是 mcap 结束标识（远端时这段在 `RangeFile` 取回的尾部里，本地多读 8 字节） | `2 episodes (4, 9) were cut off while recording (no mcap end marker); the checks read what is there` |
 | mcap 摘要区 CRC | footer 里的 `summary_crc` 非 0 时，对摘要区到 footer `summary_offset_start` 字段为止的字节算 crc32（这些字节已经取回来了） | `1 episode (7) has a summary section that fails its CRC; the topics and counts preflight shows for it may be wrong` |
 
@@ -148,7 +148,7 @@ EEF 模块与本模块都置位。
 
 | 格式 | 补的检查 | 结论 |
 |---|---|---|
-| 所有 | 0 字节；mp4 小于 4 KiB | 判废 `file_empty` |
+| 所有 | 0 字节，或小于该格式的最小字节数（§1） | 判废 `file_empty` |
 | mp4 | 顶层 box 大小之和等于文件大小（抓 moov 在前、mdat 被截断）；打开容器读头部（PyAV，不解码）拿帧数与时长 | box 越过文件末尾或没有 moov → 判废 `file_truncated`；帧数与 episode 长度相差超过 `integrity.count_tolerance_frames`（缺省 1）→ 可疑 `count_mismatch`；v3 里本条的时间段超出文件时长 → 判废 `file_truncated` |
 | parquet | 尾部元数据里的行数 | v2：与 `length` 不等 → 可疑 `count_mismatch`；v3：本条的行区间超出文件行数 → 判废 `file_truncated` |
 | mcap | 摘要区 CRC；数据块索引的偏移 + 长度不越过摘要区起点；有无结束标识 | 摘要区 CRC 不符或索引越界 → 判废 `structure_invalid`；没有结束标识 → 交给 L2 读到哪算哪，读出的内容由后面各项判 |

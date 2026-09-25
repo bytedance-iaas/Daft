@@ -40,6 +40,13 @@ export function warningText(w: string): string {
   if (m) return P().warnTotal(m[1], m[2]);
   m = /^episode indices are not 0\.\.(\d+)/.exec(w);
   if (m) return P().warnIndices(m[1]);
+  // D52 (design doc 14 §1): empty or too small files, mcap recordings cut off, summary CRC
+  m = /^(\d+) files? (?:is|are) empty or too small to be valid \((.*)\)$/.exec(w);
+  if (m) return P().warnEmptyFiles(m[1], m[2]);
+  m = /^(\d+) episodes? \(([^)]*)\) (?:was|were) cut off while recording/.exec(w);
+  if (m) return P().warnCutOff(m[1], m[2]);
+  m = /^(\d+) episodes? \(([^)]*)\) ha(?:s|ve) a summary section that fails its CRC/.exec(w);
+  if (m) return P().warnSummaryCrc(m[1], m[2]);
   return /[\u4e00-\u9fff]/.test(w) ? w : P().warnRaw(w);
 }
 

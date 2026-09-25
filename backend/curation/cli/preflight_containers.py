@@ -58,6 +58,10 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
+def _be(items, one: str = "is") -> str:
+    return one if len(items) == 1 else {"is": "are", "was": "were"}[one]
+
+
 def _preview(eps) -> str:
     from .episodes import preview
 
@@ -91,6 +95,24 @@ def _mcap(ctx, args, storage, listing, fmt: Format, specs, doc: dict) -> None:
     if strays:
         warnings.append(f"{_plural(len(strays), 'file')} do not follow episode_<N>.mcap and "
                         f"are not read, as in v1 ({', '.join(strays[:5])})")
+    # D52: what the listing and the summary reads show anyway, as warnings only
+    from .preflight import too_small
+
+    empty = sorted(ep for ep, key in num.items() if too_small(key, listing[key].size))
+    cut = sorted(ep for ep, key in num.items()
+                 if summaries[key].truncated and ep not in empty)
+    bad_crc = sorted(ep for ep, key in num.items() if summaries[key].summary_crc_ok is False)
+    if empty:
+        warnings.append(f"{_plural(len(empty), 'file')} {_be(empty)} empty or too small to be "
+                        f"valid ({_preview(empty)})")
+    if cut:
+        warnings.append(f"{_plural(len(cut), 'episode')} ({_preview(cut)}) {_be(cut, 'was')} cut "
+                        f"off while recording (no mcap end marker); the checks read what is there")
+    if bad_crc:
+        warnings.append(f"{_plural(len(bad_crc), 'episode')} ({_preview(bad_crc)}) "
+                        f"{'has' if len(bad_crc) == 1 else 'have'} a summary section that fails "
+                        f"its CRC; the topics and counts read from it may be wrong")
+    unindexed = [ep for ep in unindexed if ep not in set(cut) | set(empty)]
     if unindexed:
         warnings.append(f"{_plural(len(unindexed), 'episode')} ({_preview(unindexed)}) have "
                         f"no mcap summary section: preflight cannot see their topics; the "

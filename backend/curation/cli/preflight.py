@@ -23,10 +23,15 @@ Rules (F2.7, doc 05 §2-§4, D6, D34):
   eef_video_consistency.trajectory_json=PATH`` is validated against the dataset and
   the entry carries the per sub-item capability table; without the file the module
   is unsupported (the console cannot take the file before F5.5).
+* Warnings only, never a change of availability (D52, design doc 14 §1): data and video
+  files that are empty or too small to be valid (the listing), mcap recordings cut off
+  (no end marker) and mcap summary sections failing their CRC (the bytes the summary
+  read fetches anyway). Checks that read the data are the data integrity module's.
 """
 from __future__ import annotations
 
 import argparse
+import os
 
 from ..contracts import modules as registry_modules
 from . import inputs, lerobot_meta, modparams, source_manifest
@@ -274,6 +279,8 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
     for cam in meta.cameras:
         if cam not in cams_with_files and n:
             warnings.append(f"camera {lerobot_meta.short_camera(cam)} has no video files")
+    if container is None:
+        warnings += empty_files(episodes, listing)
 
     declared = info.get("total_episodes")
     if isinstance(declared, int) and declared != n:
@@ -402,6 +409,38 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
         modules.append(entry)
     doc["modules"] = modules
     doc["warnings"] = warnings
+
+
+#: below these sizes a file cannot hold its format's fixed bytes: parquet's two magics and
+#: footer length, mcap's two magics and footer record, an mp4's ftyp and a moov with one
+#: video track (a real clip of a few low-resolution frames is a few KB: no higher bound)
+MIN_VALID_BYTES = {".parquet": 12, ".mcap": 45, ".mp4": 512}
+
+
+def too_small(key: str, size: int) -> bool:
+    """An empty file, or one too small to be a valid file of its format (D52)."""
+    ext = os.path.splitext(key.lower())[1]
+    return int(size) == 0 or int(size) < MIN_VALID_BYTES.get(ext, 1)
+
+
+def empty_files(episodes, listing) -> list[str]:
+    """D52: the episodes' data and video files that are empty or too small, as one warning
+    (the listing alone; a LeRobot v3 file shared by several episodes is named once)."""
+    from .episodes import preview
+
+    bad: dict[str, list[int]] = {}
+    for ep in episodes:
+        for key in list(ep.data_keys) + list(ep.video_keys.values()):
+            obj = listing.get(key)
+            if obj is not None and too_small(key, obj.size):
+                bad.setdefault(key, []).append(ep.index)
+    if not bad:
+        return []
+    eps = sorted({e for idx in bad.values() for e in idx})
+    shown = ", ".join(f"{k} {int(listing[k].size)} B" for k in sorted(bad)[:3])
+    more = ", ..." if len(bad) > 3 else ""
+    return [f"{_plural(len(bad), 'file')} {'is' if len(bad) == 1 else 'are'} empty or too small to be valid "
+            f"({_plural(len(eps), 'episode')}: {preview(eps)}; {shown}{more})"]
 
 
 def _done(ctx: Context, doc: dict) -> Result:

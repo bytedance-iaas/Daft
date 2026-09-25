@@ -32,8 +32,10 @@ import io
 import json
 import os
 import shutil
+import struct
 import tempfile
 import threading
+import zlib
 from dataclasses import dataclass, field
 
 from .errors import SourceChanged
@@ -201,6 +203,54 @@ class McapSummary:
     start_ns: int | None = None
     end_ns: int | None = None
     error: str = ""
+    #: D52: the file does not end with the mcap magic - a recording that was cut off
+    truncated: bool = False
+    #: D52: the footer's ``summary_crc`` against the bytes it covers; None when not written
+    summary_crc_ok: bool | None = None
+
+
+MCAP_MAGIC = b"\x89MCAP0\r\n"
+#: the footer record: opcode, record length, summary_start, summary_offset_start, summary_crc
+_FOOTER_LEN = 1 + 8 + 8 + 8 + 4
+_FOOTER_OPCODE = 0x02
+
+
+@dataclass
+class McapFooter:
+    """The end of an mcap file, read without the mcap library (it does not check the CRC)."""
+
+    size: int
+    ends_with_magic: bool
+    summary_start: int | None = None                   # None: no footer record
+    summary_crc: int = 0                               # 0: not written
+    summary_crc_ok: bool | None = None
+
+
+def read_footer(stream) -> McapFooter:
+    """The footer of a seekable mcap stream and whether its summary CRC holds (D52).
+
+    The CRC covers the summary section and the footer record up to its
+    ``summary_offset_start`` field, i.e. ``[summary_start or footer start, size - 12)``;
+    a writer that skips CRCs writes 0. Only bytes a summary read fetches anyway are read."""
+    size = stream.seek(0, io.SEEK_END)
+    footer_at = size - len(MCAP_MAGIC) - _FOOTER_LEN
+    if size < len(MCAP_MAGIC) * 2 + _FOOTER_LEN:
+        return McapFooter(size, False)
+    stream.seek(size - len(MCAP_MAGIC))
+    if stream.read(len(MCAP_MAGIC)) != MCAP_MAGIC:
+        return McapFooter(size, False)
+    stream.seek(footer_at)
+    rec = stream.read(_FOOTER_LEN)
+    if len(rec) != _FOOTER_LEN or rec[0] != _FOOTER_OPCODE:
+        return McapFooter(size, True)
+    summary_start, _offsets = struct.unpack_from("<QQ", rec, 9)
+    crc = struct.unpack_from("<I", rec, 25)[0]
+    out = McapFooter(size, True, summary_start, crc)
+    start = summary_start or footer_at
+    if crc and len(MCAP_MAGIC) <= start <= footer_at:
+        stream.seek(start)
+        out.summary_crc_ok = zlib.crc32(stream.read(size - len(MCAP_MAGIC) - 4 - start)) == crc
+    return out
 
 
 def scan_summary(stream, key: str) -> McapSummary:
@@ -241,16 +291,22 @@ def read_summary(stream, key: str, *, scan: bool = False) -> McapSummary:
     from mcap.reader import make_reader
 
     try:
+        footer = read_footer(stream)
+    except Exception:  # noqa: BLE001 - a stream that cannot seek to its end: the reader says why
+        footer = McapFooter(0, True)
+    marks = {"truncated": not footer.ends_with_magic, "summary_crc_ok": footer.summary_crc_ok}
+    try:
+        stream.seek(0)
         reader = make_reader(stream)
         summary = reader.get_summary()
     except Exception as e:  # noqa: BLE001 - a truncated or foreign file
         if scan:
-            return scan_summary(stream, key)
-        return McapSummary(key, False, error=f"{type(e).__name__}: {e}"[:300])
+            return _marked(scan_summary(stream, key), marks)
+        return McapSummary(key, False, error=f"{type(e).__name__}: {e}"[:300], **marks)
     if summary is None:
         if scan:
-            return scan_summary(stream, key)
-        return McapSummary(key, False, error="the file has no summary section")
+            return _marked(scan_summary(stream, key), marks)
+        return McapSummary(key, False, error="the file has no summary section", **marks)
     st = summary.statistics
     counts = dict(st.channel_message_counts or {}) if st else None
     topics: dict[str, int | None] = {}
@@ -268,7 +324,12 @@ def read_summary(stream, key: str, *, scan: bool = False) -> McapSummary:
         pass
     return McapSummary(key, True, topics, props,
                        int(st.message_start_time) if st else None,
-                       int(st.message_end_time) if st else None)
+                       int(st.message_end_time) if st else None, **marks)
+
+
+def _marked(summary: McapSummary, marks: dict) -> McapSummary:
+    summary.truncated, summary.summary_crc_ok = marks["truncated"], marks["summary_crc_ok"]
+    return summary
 
 
 def mcap_summary(storage: Storage, key: str, size: int, *, scan: bool = False) -> McapSummary:

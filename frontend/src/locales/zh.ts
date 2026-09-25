@@ -1208,6 +1208,9 @@ export const zh = {
     warnNoVideo: (cam: string) => `相机 ${cam} 没有视频文件`,
     warnTotal: (declared: string, listed: string) => `info.json 写的是 ${declared} 条，episode 表里有 ${listed} 条`,
     warnIndices: (last: string) => `episode 编号不是 0–${last} 连续的；自选范围按表里列出的编号算`,
+    warnEmptyFiles: (n: string, what: string) => `${n} 个文件为空或小到不可能是有效文件（${what.replace(/(\d+) episodes?: /, '涉及 $1 条：')}）`,
+    warnCutOff: (n: string, eps: string) => `${n} 条的 mcap 录制中断（文件尾没有结束标识）：${eps}；质检时按读得到的内容检查`,
+    warnSummaryCrc: (n: string, eps: string) => `${n} 条的 mcap 摘要区 CRC 校验不符：${eps}；从摘要区读到的 topic 与消息数可能不准`,
     warnRaw: (text: string) => `命令行原文：${text}`,
   },
 

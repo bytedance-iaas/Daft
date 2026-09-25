@@ -61,4 +61,14 @@ describe('数据包完整性 in Chinese (F6.2)', () => {
     expect(shortDigest('sha256:0123456789abcdef')).toBe('sha256:0123…cdef');
     expect(shortDigest(null)).toBeNull();
   });
+
+  it('puts the D52 preflight warnings in Chinese', () => {
+    expect(warningText('2 files are empty or too small to be valid (2 episodes: 2, 5; a.mp4 0 B, b.mp4 300 B)'))
+      .toBe('2 个文件为空或小到不可能是有效文件（涉及 2 条：2, 5; a.mp4 0 B, b.mp4 300 B）');
+    expect(warningText('1 file is empty or too small to be valid (2)')).toBe('1 个文件为空或小到不可能是有效文件（2）');
+    expect(warningText('1 episode (4) was cut off while recording (no mcap end marker); the checks read what is there'))
+      .toBe('1 条的 mcap 录制中断（文件尾没有结束标识）：4；质检时按读得到的内容检查');
+    expect(warningText('2 episodes (6, 7) have a summary section that fails its CRC; the topics and counts read from it may be wrong'))
+      .toBe('2 条的 mcap 摘要区 CRC 校验不符：6, 7；从摘要区读到的 topic 与消息数可能不准');
+  });
 });

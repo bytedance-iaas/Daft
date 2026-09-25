@@ -143,6 +143,9 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 两个 VLM 模块：没传 `--vlm-backend` 是 `needs_input`（`input_hint.field = "vlm"`）；没有任务标注不会让它们标灰，只在 `notes` 里提示会先补描述。
 - `--modules` 只报告所选模块，没选的模块不追问。原因文案用英文，`validation` 里 v1 的报错保持中文原文。
 - 列目录时发现缺文件的条写进 `warnings`：LeRobot v2 缺数据 parquet 或某个机位视频的条照 v1 跳过（见 snapshot）；v3 的不跳过，检查时读不了、记为出错。
+- 另有三条完整性警告（D52，设计 14 §1），都不多读数据、不改变模块可用性：数据与视频文件为空或小到放不下该格式的固定字节
+  （parquet 小于 12 字节、mcap 小于 45 字节、mp4 小于 512 字节）；mcap 录制中断（文件尾没有结束标识）；mcap 摘要区的 CRC
+  不符（摘要区的字节读摘要时本来就取回了）。要读数据的检查归质检最前面的「数据完整性」模块。
 
 **plan**：`curation plan --preflight pf.json --modules a,b,… [--episodes 表达式] [--unlabeled 表达式] [--vlm-parallelism N] [--backend-parallelism N] [--task-vlm-parallelism N] [--task-cpu-concurrency N] [--cpu-cores N] [--running-tasks N] [--site-config 文件] [--out plan.json] --json`
 
@@ -476,3 +479,17 @@ with FakeVlmServer(port=8766) as s:
    ```
 
    `tests/cli` 里：`test_pipeline_chain.py` 在夹具上按上面的顺序跑完整条链并逐个校验契约；`test_check_resume.py` 是 SIGTERM / SIGKILL 后续跑；`test_errors_and_policy.py` 是出错与弃权的区分、默认不并发不重试、源数据变化；`test_aggregate.py` 是聚合与裁决的规则；`test_revision_flow.py` 是第 7 步的第二个版本与增量导出；`test_fake_model.py` 钉住假模型的答案与图片字节无关（换一种 JPEG 质量重编码，判决不变）。
+
+12. 数据完整性（设计 14）。先看预检的三条警告，数据集是第 10 步的两份夹具的副本：
+
+    ```bash
+    cp -r "$D/mini" "$D/bad" && cp -r "$D/mini_mcap" "$D/bad_mcap"
+    : > "$D/bad/videos/chunk-000/observation.images.wrist/episode_000002.mp4"       # 0 字节
+    $PY -c "import os,sys; p=sys.argv[1]; os.truncate(p, os.path.getsize(p)//2)" "$D/bad_mcap/episode_4.mcap"   # 录制中断
+    $C preflight --input "$D/bad" --json | $PY -c "import json,sys; print(json.load(sys.stdin)['warnings'])"
+    $C preflight --input "$D/bad_mcap" --json | $PY -c "import json,sys; print(json.load(sys.stdin)['warnings'])"
+    ```
+
+    应看到：LeRobot 一条 `1 file is empty or too small to be valid (1 episode: 2; videos/…/episode_000002.mp4 0 B)`；mcap 一条
+    `1 episode (4) was cut off while recording (no mcap end marker); …`，原来那条「no mcap summary section」不再重复它。
+    两份的模块可用性与干净数据集相同。控制台的「预检提示」与报告的「数据包完整性」把它们显示为中文。
