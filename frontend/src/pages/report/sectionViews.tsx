@@ -8,7 +8,7 @@
 import { Table, Typography } from '@arco-design/web-react';
 import type { ComponentType, ReactNode } from 'react';
 import type { ReportModuleSection } from '../../api/types';
-import { CHART_COLORS, Chart, barOption, chartSummary, groupedBarOption, type ChartOption } from '../../components/Chart';
+import { CHART_COLORS, Chart, LEGEND_GRID_TOP, barOption, chartSummary, groupedBarOption, type ChartOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { StatCell } from '../../components/StatCell';
 import { percent } from '../../lib/format';
@@ -46,6 +46,8 @@ interface ChartSpec {
   option?: ChartOption;
   summary?: string;
   height?: number;
+  /** Where the plot starts, to line up with a neighbour that has a legend on top. */
+  gridTop?: number;
   /** Two columns of the section's chart grid (per-camera histograms need the width). */
   wide?: boolean;
 }
@@ -75,7 +77,7 @@ function chartHeight(c: ChartSpec): number {
 }
 
 function ChartBlock({ spec }: { spec: ChartSpec }) {
-  const option = spec.option ?? barOption(spec.items ?? [], { horizontal: spec.horizontal, colors: spec.colors, band: spec.band, valueName: spec.valueName, valueRange: spec.valueRange });
+  const option = spec.option ?? barOption(spec.items ?? [], { horizontal: spec.horizontal, colors: spec.colors, band: spec.band, valueName: spec.valueName, valueRange: spec.valueRange, gridTop: spec.gridTop });
   const summary = `${spec.title}：${spec.summary ?? chartSummary(spec.items ?? [])}`;
   return (
     <div className={`section-chart${spec.wide ? ' wide' : ''}`} data-testid={`chart-${spec.key}`}>
@@ -264,6 +266,7 @@ function visualModel(s: Summary): ViewModel {
   const charts: ChartSpec[] = [];
   const bins = (seriesOf(s.score_hist) ?? Array.from({ length: 10 }, (_, i) => ({ name: `${(i / 10).toFixed(1)}–${((i + 1) / 10).toFixed(1)}`, value: 0 }))).map((b) => b.name);
   const withHist = cams.filter((x) => Array.isArray(x.hist) && x.hist.length === bins.length);
+  const camerasHeight = 240;
   if (withHist.length) {
     const series = withHist.map((x) => ({ name: x.camera, data: x.hist }));
     charts.push({
@@ -273,12 +276,14 @@ function visualModel(s: Summary): ViewModel {
       option: groupedBarOption(bins, series),
       summary: withHist.map((x) => Z.cameraSummary(x.camera, fmt(x.mean), x.low)).join('；'),
       foot: withHist.map((x) => Z.cameraMean(x.camera, fmt(x.mean))).join('；'),
-      height: 240,
+      height: camerasHeight,
       wide: true,
     });
   }
+  // Next to the per-camera chart the score histogram takes its height and its plot top (below
+  // the other's legend): both boxes, both score axes and both top grid lines on one line.
   const hist = scoreHist(s);
-  if (hist) charts.push(hist);
+  if (hist) charts.push(withHist.length ? { ...hist, height: camerasHeight, gridTop: LEGEND_GRID_TOP } : hist);
   return { stats, charts, fresh: hasAny(s, ['cameras', 'score_hist']) };
 }
 

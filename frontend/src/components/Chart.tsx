@@ -61,7 +61,7 @@ export function compactAxis(v: number): string {
  */
 export function barOption(
   items: { name: string; value: number }[],
-  opts: { horizontal?: boolean; unit?: string; colors?: (string | undefined)[]; band?: [number, number]; valueName?: string; valueRange?: [number, number]; compactValues?: boolean } = {},
+  opts: { horizontal?: boolean; unit?: string; colors?: (string | undefined)[]; band?: [number, number]; valueName?: string; valueRange?: [number, number]; compactValues?: boolean; gridTop?: number } = {},
 ): ChartOption {
   const names = items.map((i) => i.name);
   const values = items.map((i, k) => (opts.colors?.[k] ? { value: i.value, itemStyle: { color: opts.colors[k] } } : i.value));
@@ -81,7 +81,8 @@ export function barOption(
   return {
     // containLabel sizes the margin to the axis labels themselves: a fixed left margin on top of it
     // pushed every horizontal chart to the right and left half its width empty
-    grid: { left: 8, right: 24, top: opts.valueName && !opts.horizontal ? 28 : 12, bottom: 8, containLabel: true },
+    // gridTop: the plot starts where a neighbour's does (one with a legend on top)
+    grid: { left: 8, right: 24, top: opts.gridTop ?? (opts.valueName && !opts.horizontal ? 28 : 12), bottom: 8, containLabel: true },
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     xAxis: opts.horizontal ? val : cat,
     yAxis: opts.horizontal ? { ...cat, inverse: true } : val,
@@ -89,10 +90,13 @@ export function barOption(
   };
 }
 
+/** Where the plot of a chart with a legend on top starts (groupedBarOption). */
+export const LEGEND_GRID_TOP = 36;
+
 /** Several series over the same categories (per-camera histograms), side by side. */
 export function groupedBarOption(categories: string[], series: { name: string; data: number[] }[], opts: { valueName?: string } = {}): ChartOption {
   return {
-    grid: { left: 8, right: 16, top: 36, bottom: 8, containLabel: true },
+    grid: { left: 8, right: 16, top: LEGEND_GRID_TOP, bottom: 8, containLabel: true },
     legend: { top: 0, type: 'scroll' },
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     xAxis: { type: 'category', data: categories, axisTick: { show: false } },

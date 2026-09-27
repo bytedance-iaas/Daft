@@ -105,6 +105,18 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(screen.queryByTestId(`old-report-${id}`)).toBeNull();
   });
 
+  it('visual quality: the score histogram is as tall as the per-camera chart beside it', async () => {
+    render('visual_quality', sampleSummary('visual_quality', 200));
+    const heightOf = async (key: string) => (await within(screen.getByTestId(`chart-${key}`)).findByTestId('chart')).style.height;
+    expect(await heightOf('cameras')).toBe('240px');
+    expect(await heightOf('score')).toBe('240px');
+    // without per-camera rows the histogram keeps the usual height
+    const { cameras: _cameras, ...alone } = sampleSummary('visual_quality', 200);
+    render('visual_quality', alone);
+    const scores = await screen.findAllByTestId('chart-score');
+    expect((await within(scores.at(-1)!).findByTestId('chart')).style.height).toBe('200px');
+  });
+
   it('EEF: the verdict figures, why people are asked and the status matrix in Chinese (D49)', async () => {
     render('eef_video_consistency', EEF, { adjudication: { pending: 3, appealable: 2 } });
     const figures = screen.getByTestId('summary-eef_video_consistency');
