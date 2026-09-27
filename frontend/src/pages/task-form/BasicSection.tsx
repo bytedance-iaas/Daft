@@ -140,13 +140,7 @@ export function BasicSection(p: BasicSectionProps) {
               required
               error={errors.datasetUri}
               notes={p.linkNotes.dataset}
-              extra={
-                v.source === 'local'
-                  ? zh.taskForm.localPathHelp
-                  : v.datasetId
-                    ? zh.taskForm.registeredHint(p.registered.find((d) => d.id === v.datasetId)?.name ?? v.datasetUri)
-                    : undefined
-              }
+              extra={v.source === 'local' ? zh.taskForm.localPathHelp : undefined}
             >
               <AutoComplete
                 value={v.datasetUri}

@@ -59,6 +59,25 @@ describe('新建任务 · 第一屏 (07 §3)', () => {
     expect(screen.getByTestId('screen-2')).not.toBeVisible();
   });
 
+  it('a running preflight says only 正在预检… (sixth round)', async () => {
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    server.use(
+      http.post('*/api/v1/preflight', async () => {
+        await held;
+        return HttpResponse.json({ error: { code: 'unavailable', message: 'held' } }, { status: 503 });
+      }),
+    );
+    const { user } = renderApp('/tasks/new');
+    await screen.findByText('基本信息');
+    await fill(user, '数据集地址', 'tos://pai-kit-datasets/lerobot/droid-200');
+    await pick(user, '访问密钥', 'readonly-tos');
+    const card = await screen.findByTestId('preflight-card');
+    expect((await within(card).findAllByText('正在预检…')).length).toBeGreaterThan(0);
+    expect(document.body).not.toHaveTextContent('只读 metadata');
+    release();
+  });
+
   it('runs the preflight by itself and renders availability tri-state from reason_code', async () => {
     const { user } = renderApp('/tasks/new');
     await screen.findByText('基本信息');
@@ -501,8 +520,10 @@ describe('v1 deep links on /tasks/new (07 §2.1)', () => {
   it('pre-fills source, address and region; a registered dataset brings its access key', async () => {
     renderApp('/tasks/new?dataset=tos://pai-kit-datasets/lerobot/droid_100&region=cn-beijing');
     expect(await screen.findByDisplayValue('tos://pai-kit-datasets/lerobot/droid_100')).toBeInTheDocument();
-    expect(screen.getByText(/已添加的数据集「droid_100」/)).toBeInTheDocument();
     expect(await screen.findByText(/LeRobot v3 · 100 条 episode/)).toBeInTheDocument();
+    // the dataset's own key comes along, without a hint under the address (sixth round)
+    expect(chosen('访问密钥')).toContain('readonly-tos');
+    expect(document.body).not.toHaveTextContent('一并带出');
     // The dataset bucket is read-only for its key: not lent as the delivery directory, and said so.
     expect(await screen.findByText(/数据集所在的存储桶不能当交付目录/)).toBeInTheDocument();
     // Not the task name, not a delivery name (v1 likewise).

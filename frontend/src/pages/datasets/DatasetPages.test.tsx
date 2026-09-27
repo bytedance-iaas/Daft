@@ -185,6 +185,7 @@ describe('数据集详情', () => {
     await user.click(screen.getByRole('button', { name: '新建质检任务' }));
     await waitFor(() => expect(currentLocation()).toBe('/tasks/new?dataset_id=ds_droid200'));
     expect(await screen.findByDisplayValue('tos://pai-kit-datasets/lerobot/droid-200')).toBeInTheDocument();
-    expect(screen.getByText(/已添加的数据集「droid-200」/)).toBeInTheDocument();
+    // the registered dataset comes along without a hint under the address (sixth round)
+    expect(document.body).not.toHaveTextContent('一并带出');
   });
 });
