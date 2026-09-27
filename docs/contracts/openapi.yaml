@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.17.0
+  version: 1.18.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -126,6 +126,11 @@ info:
     1.17.0 (2026-09-26): a TOS access key may be the default one (`Credential.is_default`, set
     through `CredentialUpdate`): the new-task form starts with it, and there is at most one per
     owner. Deleting the key leaves none.
+
+    1.18.0 (2026-09-26): `PipelineActivity` may say when the layer was working and why it is not:
+    `busy` lists the spans during which episodes were out (at most 64; the rest of the layer's run
+    is waiting), `held_by_downstream` that it has episodes to hand out but holds them because the
+    next layer's queue is full. Both optional: snapshots written before have neither.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -2510,6 +2515,26 @@ components:
             mean_s: {type: [number, "null"]}
             min_s: {type: [number, "null"]}
             max_s: {type: [number, "null"]}
+        busy:
+          type: array
+          maxItems: 64
+          description: >-
+            Spans (epoch milliseconds) during which this layer had episodes out, oldest first; the
+            last one is open (end null) while episodes are out now. Between started_at and
+            finished_at (or now) the rest is waiting. Past 64 spans the two separated by the
+            shortest wait are merged.
+          items:
+            type: object
+            additionalProperties: false
+            required: [start, end]
+            properties:
+              start: {type: integer}
+              end: {type: [integer, "null"]}
+        held_by_downstream:
+          type: boolean
+          description: >-
+            The layer has episodes waiting to enter but hands none out because the next layer's
+            queue is full (it holds at most max(2 x batch size, that layer's width)).
         recent:
           type: array
           maxItems: 5

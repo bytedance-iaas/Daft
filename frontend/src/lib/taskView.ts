@@ -61,14 +61,17 @@ export function stagePercent(s: StageProgress | undefined): number {
 type StageState = StageProgress['state'];
 
 /**
- * Stages that progress views show as one (requester item 11): 终判 + 报告 read as 「报告生成」,
- * 导出 + 交付核验 as 「交付」. The log filter and the execution plan keep the raw stages, which
- * mirror the CLI output.
+ * Stages that progress views show as one: 终判、报告、导出、交付核验 read as 「生成报告 & 产物交付」
+ * (sixth round; requester item 11 had made them two rows). The log filter and the execution plan
+ * keep the raw stages, which mirror the CLI output.
  */
 export const STAGE_GROUPS: readonly { key: string; members: readonly string[] }[] = [
-  { key: 'report_generation', members: ['final', 'report'] },
-  { key: 'delivery', members: ['export', 'verify'] },
+  { key: 'report_delivery', members: ['final', 'report', 'export', 'verify'] },
 ];
+
+/** Stages progress views leave out: the verdict takes about a second (sixth round). The log
+ * filter and the execution plan still list it. */
+export const HIDDEN_STAGES: readonly string[] = ['verdict'];
 
 function groupOf(stageId: string) {
   return STAGE_GROUPS.find((g) => g.members.includes(stageId));
@@ -142,6 +145,7 @@ export function groupStages(stages: readonly StageProgress[]): StageView[] {
   const out: StageView[] = [];
   const merged = new Set<string>();
   for (const s of stages) {
+    if (HIDDEN_STAGES.includes(s.id)) continue;
     const g = groupOf(s.id);
     if (!g) {
       out.push(single(s));

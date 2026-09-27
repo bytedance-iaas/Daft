@@ -7,6 +7,9 @@
 .pipeline-inflight { display: flex; align-items: baseline; gap: 8px; padding: 12px 0 8px; }
 .pipeline-inflight strong { font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .pipeline-inflight span, .pipeline-counts { font-size: 12px; }
+.pipeline-inflight .pipeline-waiting { font-size: 15px; font-weight: 600; line-height: 33px; color: var(--color-text-2); }
+.pipeline-strip { display: grid; grid-template-columns: auto minmax(120px, 1fr) auto auto; align-items: center; gap: 16px; padding: 8px 14px; margin-bottom: 12px; border: 1px solid var(--color-border-2); border-radius: 6px; background: var(--color-bg-2); font-size: 13px; }
+.pipeline-strip > span { font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pipeline-arrival { margin-top: 10px; padding: 6px; border-radius: 4px; font-size: 12px; min-height: 47px; }
 .pipeline-arrival .arco-tag { margin-right: 6px; }
 .pipeline-arrival.is-new { animation: pipeline-arrival 2.5s ease-out; }
@@ -16,7 +19,10 @@
 .pipeline-axis { font-size: 12px; color: var(--color-text-3); margin-bottom: 10px; }
 .pipeline-time-row { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 12px; font-size: 12px; margin: 9px 0; }
 .pipeline-time-track { position: relative; height: 12px; border-radius: 3px; background: var(--color-fill-2); overflow: hidden; }
-.pipeline-time-bar { position: absolute; height: 100%; border-radius: 3px; opacity: .8; transition: width .3s linear; }
+/* work: the lane's colour a shade lighter, opaque so the waiting stripes underneath never show through */
+.pipeline-time-bar { position: absolute; height: 100%; border-radius: 3px; background: color-mix(in srgb, var(--lane) 80%, white); transition: width .3s linear; }
+/* waiting: the lane's colour in thin stripes, so only the solid parts read as work */
+.pipeline-time-bar.is-waiting { opacity: .55; background: repeating-linear-gradient(135deg, var(--lane) 0 2px, transparent 2px 6px); box-shadow: inset 0 0 0 1px var(--lane); }
 .pipeline-time-tick { position: absolute; height: 100%; width: 2px; background: var(--color-bg-2); border-left: 1px solid var(--color-text-2); }
 .pipeline-timeline-note { font-size: 12px; margin-top: 12px; }
 @keyframes pipeline-arrival { from { background: rgb(var(--primary-2)); } to { background: transparent; } }

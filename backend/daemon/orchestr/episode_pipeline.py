@@ -48,6 +48,10 @@ class Layer:
     processing_total_s: float = 0.0
     processing_min_s: float | None = None
     processing_max_s: float | None = None
+    # [start_ms, end_ms | None] while episodes were out (the console draws the rest as waiting)
+    busy: list = field(default_factory=list)
+    # has episodes to hand out but holds them because the next layer's queue is full
+    held_by_downstream: bool = False
 
     @property
     def sid(self):
@@ -62,9 +66,31 @@ class Layer:
         self.processing_max_s = max(self.processing_max_s, seconds) if self.processing_max_s is not None else seconds
 
 
+#: busy spans kept per layer; beyond it the two separated by the shortest wait become one
+MAX_BUSY_SPANS = 64
+
+
+def _track_busy(layer, now_ms: int) -> None:
+    """Open a busy span when episodes go out, close it when the last one is back."""
+    spans = layer.busy
+    open_span = bool(spans) and spans[-1][1] is None
+    if layer.active and not open_span:
+        spans.append([now_ms, None])
+    elif not layer.active and open_span:
+        spans[-1][1] = now_ms
+    while len(spans) > MAX_BUSY_SPANS:
+        closed = range(len(spans) - 1) if spans[-1][1] is not None else range(len(spans) - 2)
+        i = min(closed, key=lambda k: spans[k + 1][0] - spans[k][1])
+        spans[i][1] = spans[i + 1][1]
+        del spans[i + 1]
+
+
 def _publish_activity(run, layer):
+    _track_busy(layer, int(time.time() * 1000))
     snapshot = (len(layer.active), len(layer.ready), layer.dispatches,
-                layer.started_at, layer.finished_at, len(layer.timed))
+                layer.started_at, layer.finished_at, len(layer.timed),
+                len(layer.busy), bool(layer.busy) and layer.busy[-1][1] is None,
+                layer.held_by_downstream)
     if snapshot == layer.last_snapshot:
         return
     layer.last_snapshot = snapshot
@@ -77,6 +103,8 @@ def _publish_activity(run, layer):
                        "total_s": round(layer.processing_total_s, 3),
                        "mean_s": round(layer.processing_total_s / len(layer.timed), 3) if layer.timed else None,
                        "min_s": layer.processing_min_s, "max_s": layer.processing_max_s},
+        "busy": [{"start": start, "end": end} for start, end in layer.busy],
+        "held_by_downstream": layer.held_by_downstream,
     })
 
 
@@ -314,9 +342,11 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
                 capacity = layer.width - len(layer.active)
                 if layer.sid in shares:
                     capacity = min(capacity, cpu_budget - cpu_active)
+                layer.held_by_downstream = False
                 if downstream is not None:
-                    capacity = min(capacity, max(0, max(2 * batch_size, downstream.width)
-                                                 - len(downstream.ready)))
+                    room = max(0, max(2 * batch_size, downstream.width) - len(downstream.ready))
+                    layer.held_by_downstream = room == 0 and bool(layer.ready) and not layer.failed
+                    capacity = min(capacity, room)
                 if layer.sid == "frame" and not layer.failed and capacity > 0 and layer.ready:
                     # Admission must not block the event loop: completed VLM/CPU
                     # results still need draining while frame memory is scarce.
@@ -391,6 +421,7 @@ def run_episodes(run, stages: list[dict], selection: list[int]) -> None:
                 _drain_stopping_worker(run, layer)
                 _close_worker(run, layer)
                 layer.active.clear()
+                layer.held_by_downstream = False
                 _publish_activity(run, layer)
         finally:
             # the episodes in flight were finished (pause) or abandoned (stop, crash)

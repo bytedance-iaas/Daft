@@ -1691,6 +1691,13 @@ export interface components {
                 min_s: number | null;
                 max_s: number | null;
             };
+            /** @description Spans (epoch milliseconds) during which this layer had episodes out, oldest first; the last one is open (end null) while episodes are out now. Between started_at and finished_at (or now) the rest is waiting. Past 64 spans the two separated by the shortest wait are merged. */
+            busy?: {
+                start: number;
+                end: number | null;
+            }[];
+            /** @description The layer has episodes waiting to enter but hands none out because the next layer's queue is full (it holds at most max(2 x batch size, that layer's width)). */
+            held_by_downstream?: boolean;
             recent: {
                 number: number;
                 count: number;

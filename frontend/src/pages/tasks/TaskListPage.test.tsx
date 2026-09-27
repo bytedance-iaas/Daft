@@ -38,13 +38,13 @@ describe('任务列表 (07 §4.1)', () => {
     await screen.findByRole('link', { name: 'umi_640 全量质检' });
     const umi = row('umi_640 全量质检');
     expect(within(umi).getByTestId('progress-stage')).toHaveTextContent('VLM 档410 / 631');
-    // 3 of 9 stages done (报告生成 and 交付 count once each) plus 410 / 631 of the current one.
-    expect(within(umi).getByTestId('progress-overall')).toHaveTextContent('总进度41%');
+    // 4 of 8 rows done (终判 … 交付核验 count once, 判决 is left out; sixth round) plus 410 / 631 of the current one.
+    expect(within(umi).getByTestId('progress-overall')).toHaveTextContent('总进度58%');
     expect(umi).not.toHaveTextContent(/剩余|预计/);
     // A paused task keeps both lines (its bars turn gray).
     const widowx = row('widowx 回归');
     expect(within(widowx).getByTestId('progress-stage')).toHaveTextContent('VLM 档180 / 430');
-    expect(within(widowx).getByTestId('progress-overall')).toHaveTextContent('总进度38%');
+    expect(within(widowx).getByTestId('progress-overall')).toHaveTextContent('总进度49%');
   });
 
   it('重试 shows 运行中 at once; the list polls while it runs and flips to the recomputed state when it ends (D46)', async () => {

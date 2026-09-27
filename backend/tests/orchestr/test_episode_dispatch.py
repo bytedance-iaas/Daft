@@ -78,7 +78,7 @@ STAGES = [
 
 
 def install_workers(monkeypatch, run, *, lost_completion=False, fail_frame=False,
-                    broken_send=False, on_submit=lambda sid, episodes: None):
+                    broken_send=False, on_submit=lambda sid, episodes: None, slow_vlm=0):
     events, workers, attempts = [], {}, Counter()
     finished = set()
     lost = False
@@ -111,6 +111,8 @@ def install_workers(monkeypatch, run, *, lost_completion=False, fail_frame=False
             self.ticks += 1
             assert self.ticks < 2000, "dispatcher did not make progress"
             sid = self.layer.sid
+            if slow_vlm and sid == "vlm" and self.pending and self.ticks % slow_vlm:
+                return None                     # the model answers every slow_vlm-th look only
             if fail_frame and sid == "frame" and ("frame", 0) in finished:
                 return "result", {"returncode": 4}
             for e in self.pending:
@@ -180,6 +182,41 @@ def test_handoff_and_refill_do_not_wait_for_slow_episode(tmp_path, monkeypatch, 
     assert vlm[-1]["dispatches"] >= 2
     assert vlm[-1]["recent"][-1]["episodes"]
     assert run.stages == {s["id"]: "succeeded" for s in STAGES}
+
+
+def test_activity_says_when_a_layer_worked_and_when_the_next_one_held_it_back(tmp_path, monkeypatch):
+    """C4 1.18: busy spans cover every episode out; a full downstream queue is said."""
+    run = Run(tmp_path, 1)
+    install_workers(monkeypatch, run, slow_vlm=25)
+    ep.run_episodes(run, STAGES, list(range(8)))
+    for sid in ("numeric", "frame", "vlm"):
+        rows = [a for s, a in run.activity if s == sid]
+        last = rows[-1]
+        spans = [(span["start"], span["end"]) for span in last["busy"]]
+        assert spans and all(end is not None and start <= end for start, end in spans)
+        assert all(a[1] <= b[0] for a, b in zip(spans, spans[1:]))            # oldest first, apart
+        assert last["started_at"] <= spans[0][0] and spans[-1][1] <= last["finished_at"]
+        assert any(r["busy"] and r["busy"][-1]["end"] is None for r in rows if r["inflight"])
+        assert last["held_by_downstream"] is False
+    # vlm takes two at a time and the queue before it holds max(2 x 1, 2) = 2: frame waits on it
+    frame = [a for s, a in run.activity if s == "frame"]
+    assert any(r["held_by_downstream"] and r["queued"] for r in frame)
+    assert not any(a["held_by_downstream"] for s, a in run.activity if s == "vlm")
+
+
+def test_busy_spans_are_capped_by_merging_the_shortest_waits():
+    layer = ep.Layer({"id": "numeric", "modules": []}, 1)
+    for k in range(ep.MAX_BUSY_SPANS + 10):
+        layer.active = {k}
+        ep._track_busy(layer, k * 100)
+        layer.active = set()
+        ep._track_busy(layer, k * 100 + 10 + (50 if k % 2 else 0))
+    assert len(layer.busy) == ep.MAX_BUSY_SPANS
+    assert layer.busy[0][0] == 0 and layer.busy[-1][1] == (ep.MAX_BUSY_SPANS + 9) * 100 + 60
+    assert all(a[1] <= b[0] for a, b in zip(layer.busy, layer.busy[1:]))
+    layer.active = {1}
+    ep._track_busy(layer, 999_999)                  # an open span is never merged away
+    assert layer.busy[-1] == [999_999, None] and len(layer.busy) == ep.MAX_BUSY_SPANS
 
 
 def test_crash_after_commit_routes_without_repeating_work(tmp_path, monkeypatch):

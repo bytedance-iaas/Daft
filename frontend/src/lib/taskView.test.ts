@@ -63,11 +63,8 @@ describe('stages and export', () => {
 });
 
 describe('merged stages (requester item 11)', () => {
-  it('终判 + 报告 read as 报告生成, 导出 + 交付核验 as 交付; other stages keep their names', () => {
-    expect(progressStageLabel('final')).toBe('报告生成');
-    expect(progressStageLabel('report')).toBe('报告生成');
-    expect(progressStageLabel('export')).toBe('交付');
-    expect(progressStageLabel('verify')).toBe('交付');
+  it('终判、报告、导出、交付核验 read as 生成报告 & 产物交付; other stages keep their names', () => {
+    for (const id of ['final', 'report', 'export', 'verify']) expect(progressStageLabel(id)).toBe('生成报告 & 产物交付');
     expect(progressStageLabel('vlm')).toBe('VLM 档');
     expect(progressStageLabel('brand_new_stage')).toBe('brand_new_stage');
     // The raw names stay for the log filter and the execution plan.
@@ -94,13 +91,12 @@ describe('merged stages (requester item 11)', () => {
       { ...stage('report', 'succeeded', 1, 1), elapsed_s: 6 },
       stage('verify', 'skipped'),
     ]);
+    // sixth round: 终判、报告、导出、交付核验 are one row
     expect(views.map((v) => [v.key, v.label, v.members.join('+'), v.state])).toEqual([
       ['vlm', 'VLM 档', 'vlm', 'succeeded'],
-      ['report_generation', '报告生成', 'final+report', 'succeeded'],
-      ['delivery', '交付', 'export+verify', 'skipped'],
+      ['report_delivery', '生成报告 & 产物交付', 'final+export+report+verify', 'succeeded'],
     ]);
-    expect(views[1]).toMatchObject({ done: 2, total: 2, percent: 100, elapsed_s: 7 });
-    expect(views[2]).toMatchObject({ percent: 0, elapsed_s: null, note: '主流程结束时没有可交付的条目，没有导出' });
+    expect(views[1]).toMatchObject({ done: 2, total: 2, percent: 100, elapsed_s: 7, note: '主流程结束时没有可交付的条目，没有导出' });
   });
 
   it("a group's bar weighs its members the same and only moves forward", () => {
@@ -112,7 +108,10 @@ describe('merged stages (requester item 11)', () => {
     expect(at(stage('final', 'succeeded', 1, 1), stage('report', 'running', 0, 1))).toMatchObject({ state: 'running', percent: 50 });
     expect(at(stage('final', 'succeeded', 1, 1), stage('report', 'succeeded', 1, 1))).toMatchObject({ state: 'succeeded', percent: 100 });
     const delivery = groupStages([stage('export', 'succeeded', 0, 0), stage('verify', 'running', 120, 300)])[0];
-    expect(delivery).toMatchObject({ key: 'delivery', state: 'running', done: 120, total: 300, percent: 70 });
+    expect(delivery).toMatchObject({ key: 'report_delivery', state: 'running', done: 120, total: 300, percent: 70 });
+    const all = (...states: StageProgress['state'][]) => groupStages(['final', 'report', 'export', 'verify'].map((id, k) => stage(id, states[k], states[k] === 'succeeded' ? 1 : 0, 1)))[0];
+    expect(all('succeeded', 'succeeded', 'running', 'pending')).toMatchObject({ state: 'running', percent: 50 });
+    expect(all('succeeded', 'succeeded', 'succeeded', 'succeeded')).toMatchObject({ state: 'succeeded', percent: 100 });
     // A stage that failed shows how far it got.
     expect(groupStages([stage('frame', 'failed', 3, 20)])[0]).toMatchObject({ state: 'failed', percent: 15 });
   });
@@ -125,8 +124,9 @@ describe('merged stages (requester item 11)', () => {
       stage('vlm', 'running', 410, 631),
       ...['verdict', 'dedup', 'profile_vlm', 'final', 'report', 'export', 'verify'].map((id) => stage(id, 'pending')),
     ];
-    // 9 rows once 报告生成 and 交付 are merged: (3 + 0.65) / 9
-    expect(overallPercent(groupStages(running))).toBe(41);
+    // 7 rows once 终判 … 交付核验 are one and 判决 is left out (sixth round): (3 + 0.65) / 7
+    expect(overallPercent(groupStages(running))).toBe(52);
+    expect(groupStages(running).map((v) => v.key)).not.toContain('verdict');
     expect(overallPercent(groupStages([stage('numeric', 'succeeded', 5, 5), stage('frame', 'skipped'), stage('vlm', 'pending')]))).toBe(50);
     expect(overallPercent(groupStages(allDoneStages()))).toBe(100);
     expect(overallPercent([])).toBe(0);

@@ -20,7 +20,7 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 | `scheduler.py` | 队列与 worker 池：`CURATOR_MAX_RUNNING_TASKS` 个槽（缺省 3），主流程与子任务共用，先进先出；重启后从库里重建队列 |
 | `cpupool.py` | 全局 CPU 名额池（D54）：大小是核数 − 2，所有在跑任务的 CPU 档每条在途 episode 占一个名额，整档执行（重试等）按块拿；按公平份额轮流，先开跑的任务占满了后来的也能拿到自己那一份 |
 | `runbase.py` | 所有运行共用的部分：意图（暂停 / 停止 / 停机）、日志、进度、按档调用 CLI（崩溃后带 `--resume` 重新拉起并点名在处理的 episode）、参数、结果版本、同步与核验、`latest` |
-| `pipeline.py` / `episode_pipeline.py` / `stage_worker.py` | 主流程漏斗：numeric、frame、VLM 各用一个持久的 `multiprocessing` worker；按并发额度逐条交接、持续补位与 SQLite 续跑；外部 CLI 保留批次兼容路径 |
+| `pipeline.py` / `episode_pipeline.py` / `stage_worker.py` | 主流程漏斗：numeric、frame、VLM 各用一个持久的 `multiprocessing` worker；按并发额度逐条交接、持续补位与 SQLite 续跑；下游排队满（max(2 × 批大小, 下游并发)）时上游停派并在进度里标 `held_by_downstream`，每档有 episode 在途的时段记为 `busy`（最多 64 段，C4 1.18）；外部 CLI 保留批次兼容路径 |
 | `runs.py` | 主流程与四种子任务：`MainRun`、`ResumeRun`、`RetryRun`、`AdjudicationRun`、`ReexportRun`；建议性模块的 `advisory_<档>` 阶段（全部选中条目，任务参数里的上传句柄换成运行目录 `inputs/` 下的副本路径，F5.5） |
 | `planning.py` | 第一次运行时调 W6 的 planner 生成 `plan.json`、`run.json` |
 | `rules.py` | 纯函数：模块状态与终态规则（D35）、episode 选择、批次名、清单指纹与变化（D37）、读不到 W5b 的汇总时按清单兜底计数 |

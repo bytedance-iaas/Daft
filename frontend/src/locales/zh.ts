@@ -136,10 +136,9 @@ export const zh = {
     post_verdict: '判决之后',
   } as Record<string, string>,
 
-  /** Stages that progress views show as one (requester item 11): 终判 + 报告, 导出 + 交付核验. */
+  /** Stages that progress views show as one (sixth round): 终判、报告、导出、交付核验. */
   stageGroup: {
-    report_generation: '报告生成',
-    delivery: '交付',
+    report_delivery: '生成报告 & 产物交付',
   } as Record<string, string>,
 
   stageState: {
@@ -800,10 +799,13 @@ export const zh = {
       batch: (n: number) => `第 ${n} 批`,
       entered: (n: number) => `新进入 ${n} 条`,
       waiting: '等待新条目进入',
-      timeline: '三层运行时间线',
+      // sixth round: the next layer's queue is full, so this one hands nothing out
+      waitingDownstream: (layer: string) => `等待下游——${layer}`,
+      timeline: (n: number) => `${['', '一', '两', '三', '四'][n] ?? n}层运行时间线`,
       mean: (seconds: string) => `平均每条 ${seconds} s`,
       slowest: (seconds: string) => `最慢 ${seconds} s`,
-      note: '横条包含处理与等待；刻线表示最近批次进入。每层独立接收条目，批次无需同步。',
+      note: '实色为处理，斜纹为等待；刻线表示最近批次进入。每层独立接收条目，批次无需同步。',
+      noteOld: '横条包含处理与等待；刻线表示最近批次进入。每层独立接收条目，批次无需同步。',
     },
     processingElapsed: '处理耗时',
     perEpisode: (seconds: string) => `${seconds} s / 条`,
