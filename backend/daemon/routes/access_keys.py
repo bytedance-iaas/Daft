@@ -8,6 +8,9 @@
 * Secrets are sealed with the master key before they touch the database and are never in a
   response: the list shows region, endpoint, test bucket and the last four characters of the
   access key id. On update an empty secret means "unchanged".
+* One key may be the default (C4 1.17): the new-task form starts with it. ``is_default`` on
+  update moves the flag (clearing the old one in the same transaction); ``false`` clears it
+  only when this key has it.
 * Delete: 409 ``credential_in_use`` while an unfinished task uses the key; used only by
   finished tasks, it needs ``?confirm=true`` (those tasks keep their reports and can be given
   another key with ``rebind-credentials``).
@@ -168,9 +171,14 @@ async def update_access_key(request: Request, cred_id: str):
             if verification is not None:
                 rt.repo.set_credential_verification(cred.id, verification.state,
                                                     verification.at, verification.error)
+            if body.get("is_default") is True:
+                rt.repo.set_default_credential(cred.id, owner=owner)
+            elif body.get("is_default") is False and cred.is_default:
+                rt.repo.set_default_credential(None, owner=owner)
             audit(request, "credential.update", cred.id,
                   {"name": key.name, "fields": sorted(body),
-                   **({"verify_state": verification.state} if verification else {})})
+                   **({"verify_state": verification.state} if verification else {}),
+                   **({"is_default": bool(body["is_default"])} if "is_default" in body else {})})
             updated = rt.repo.get_credential(cred.id, owner=owner)
         return JSONResponse(_view(rt.repo, updated))
 

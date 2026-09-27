@@ -1146,6 +1146,8 @@ export interface components {
                 active_tasks?: number;
                 historical_tasks?: number;
             };
+            /** @description the key a new task starts with; at most one per owner. Without one the form picks as before (the only key, or the one used last). Deleting the key leaves none. */
+            is_default: boolean;
             created_at: number;
             updated_at: number;
         };
@@ -1169,6 +1171,8 @@ export interface components {
             test_bucket?: string;
             /** @description temporary credentials only; empty = none */
             session_token?: string;
+            /** @description true makes this key the default and takes the flag from any other key; false clears it when this key has it. Neither verifies the key again. */
+            is_default?: boolean;
         };
         VlmModel: {
             id: string;

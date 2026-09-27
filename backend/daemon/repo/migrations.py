@@ -34,6 +34,9 @@ Step 3 (C4 1.6) adds ``vlm_model.is_default``: the model a new task starts with.
 At most one per owner across every backend, which no index can express (the owner
 sits on the backend), so ``set_default_vlm_model`` clears and sets in one statement
 pair inside one transaction; the partial index is for finding it.
+
+Step 6 (C4 1.17) adds ``credential.is_default``: the TOS access key a new task starts
+with. At most one per owner, kept by ``set_default_credential`` the same way.
 """
 from __future__ import annotations
 
@@ -364,6 +367,12 @@ ALTER TABLE adjudication_v5 RENAME TO adjudication;
 CREATE INDEX idx_adj_lookup ON adjudication(task_id, line, episode_index, id);
 """
 
+# Step 6 (C4 1.17): the default TOS access key; one per owner, see set_default_credential.
+_V6 = """
+ALTER TABLE credential ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX idx_credential_default ON credential(owner_id) WHERE is_default = 1;
+"""
+
 #: (version, script). Append only.
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _V1),
@@ -371,6 +380,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
     (3, _V3),
     (4, _V4),
     (5, _V5),
+    (6, _V6),
 )
 
 #: steps that rebuild a table: foreign keys are off while they run (SQLite's procedure for

@@ -23,6 +23,7 @@ def credential(cred: P.Credential, refs: tuple[int, int]) -> dict:
         "verify_state": cred.verify_state, "last_verified_at": cred.last_verified_at,
         "last_verify_error": cred.last_verify_error,
         "references": {"active_tasks": int(refs[0]), "historical_tasks": int(refs[1])},
+        "is_default": bool(cred.is_default),
         "created_at": cred.created_at, "updated_at": cred.updated_at,
     }
 

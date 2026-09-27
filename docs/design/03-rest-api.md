@@ -32,7 +32,7 @@
 |---|---|---|
 | GET | `/api/v1/credentials` | 列访问密钥（永不返回密钥本体） |
 | POST | `/api/v1/credentials` | 新建，保存时只验身份（一次签名请求）；对具体存储桶的读写权限在任务开始前验（08 篇 §4） |
-| PUT / DELETE | `/api/v1/credentials/{id}` | 更新（密钥字段留空 = 不改）/ 删除（规则见 01 篇 §2.1） |
+| PUT / DELETE | `/api/v1/credentials/{id}` | 更新（密钥字段留空 = 不改；`is_default: true` 设为默认，同时拿掉别的密钥的默认，`false` 取消，都不重新验证，C4 1.17）/ 删除（规则见 01 篇 §2.1） |
 | POST | `/api/v1/credentials/{id}/verify` | 重新校验 |
 
 **VLM 后端与模型**（API Key 随后端一起提交，服务端代管，不经 `/credentials`）

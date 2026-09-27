@@ -237,6 +237,44 @@ def test_writes_accept_an_idempotency_key(secret_client, fake_tos):
     assert SK not in str(record.response) and SK not in record.response["fingerprint"]
 
 
+def test_one_key_is_the_default_a_new_task_starts_with(secret_client, fake_tos):
+    """C4 1.17: is_default moves between keys without verifying them again."""
+    c = secret_client()
+    first = add_access_key(c)
+    second = add_access_key(c, name="dev-tos")
+    assert first["is_default"] is False and second["is_default"] is False
+    calls = len(fake_tos.calls)
+
+    def put(cred, body):
+        r = c.put(f"{API}/credentials/{cred['id']}", json=body, headers=JSON)
+        assert r.status_code == 200, r.text
+        assert_schema("Credential", r.json())
+        return r.json()
+
+    def defaults():
+        return [item["name"] for item in c.get(f"{API}/credentials").json()["items"]
+                if item["is_default"]]
+
+    assert put(first, {"is_default": True})["is_default"] is True
+    assert defaults() == ["prod-tos"]
+    assert put(second, {"is_default": True})["is_default"] is True
+    assert defaults() == ["dev-tos"]
+    assert put(first, {"is_default": False})["is_default"] is False   # not the default: a no-op
+    assert defaults() == ["dev-tos"]
+    assert put(second, {"is_default": False})["is_default"] is False
+    assert defaults() == []
+    assert len(fake_tos.calls) == calls                                # no verification
+    events = runtime(c).repo.list_events(resource=second["id"]).items
+    assert events[0].action == "credential.update" and events[0].detail["is_default"] is False
+
+    put(first, {"is_default": True})
+    r = c.delete(f"{API}/credentials/{first['id']}", headers=JSON)
+    assert r.status_code == 204, r.text
+    assert defaults() == []
+    assert_error(c.put(f"{API}/credentials/{second['id']}", json={"is_default": "yes"},
+                       headers=JSON), "validation_failed")
+
+
 def test_audit_events_carry_names_not_values(secret_client):
     c = secret_client()
     cred = add_access_key(c)

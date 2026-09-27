@@ -129,6 +129,17 @@ describe('数据集列表 (07 §4.4)', () => {
     server.events.removeAllListeners();
   });
 
+  it('添加数据集 has no intro text and starts with the default access key (sixth round)', async () => {
+    db.credentials.find((c) => c.name === 'readonly-tos')!.is_default = true;
+    const { user } = renderApp('/datasets');
+    await user.click(await screen.findByRole('button', { name: '添加数据集' }));
+    const drawer = await findDrawer('添加数据集');
+    expect(drawer).not.toHaveTextContent('填好来源和地址会自动预检');
+    expect(drawer).not.toHaveTextContent('只登记一次');
+    const key = within(drawer).getByRole('combobox', { name: '访问密钥' }).closest('.arco-select') as HTMLElement;
+    expect(key).toHaveTextContent('readonly-tos');
+  });
+
   it('adding the same source + address + region again opens the existing registration', async () => {
     const { user } = renderApp('/datasets');
     await user.click(await screen.findByRole('button', { name: '添加数据集' }));

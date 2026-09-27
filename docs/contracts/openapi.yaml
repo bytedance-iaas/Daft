@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.16.0
+  version: 1.17.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -122,6 +122,10 @@ info:
     stage enums take `integrity`, first in the funnel (the registry's stages and module stage, the
     pipeline's `last_stage` and `stage_processing_s`; `next_stage` takes `numeric`); the review line `integrity_check`
     (decisions intact, broken, unsure) is named among `ReviewLineId` and `DecisionInput`.
+
+    1.17.0 (2026-09-26): a TOS access key may be the default one (`Credential.is_default`, set
+    through `CredentialUpdate`): the new-task form starts with it, and there is at most one per
+    owner. Deleting the key leaves none.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1734,7 +1738,7 @@ components:
     Credential:
       type: object
       additionalProperties: false
-      required: [id, name, kind, meta, verify_state, created_at, updated_at]
+      required: [id, name, kind, meta, verify_state, is_default, created_at, updated_at]
       properties:
         id: {type: string}
         name: {type: string}
@@ -1756,6 +1760,11 @@ components:
           properties:
             active_tasks: {type: integer, minimum: 0}
             historical_tasks: {type: integer, minimum: 0}
+        is_default:
+          type: boolean
+          description: >-
+            the key a new task starts with; at most one per owner. Without one the form picks as
+            before (the only key, or the one used last). Deleting the key leaves none.
         created_at: {type: integer}
         updated_at: {type: integer}
     CredentialCreate:
@@ -1782,6 +1791,11 @@ components:
         endpoint: {type: string}
         test_bucket: {type: string}
         session_token: {type: string, writeOnly: true, description: "temporary credentials only; empty = none"}
+        is_default:
+          type: boolean
+          description: >-
+            true makes this key the default and takes the flag from any other key; false clears it
+            when this key has it. Neither verifies the key again.
 
     # ---------- vlm
     VlmModel:

@@ -29,6 +29,8 @@ TOS 访问密钥、VLM 后端与模型、交付目录写探针、媒体预签名
   不读也不写任何对象。结果只是标记：`ok` / `failed`（附原因）/ `unverified`（没有列桶权限又没填测试用存储桶），
   验证不过照样保存（D30）。对具体存储桶的读写在任务开始前验。
 - **编辑时密钥留空 = 不修改**；换了 Access Key ID 必须同时填新的 Secret。改名不重新验证，改密钥、地域、endpoint、测试用存储桶会。
+- **默认访问密钥**（C4 1.17）：`PUT /credentials/{id}` 带 `is_default: true` 设为默认，同一事务里拿掉别的密钥的默认；
+  `false` 只在它本来是默认时取消。都不重新验证。删掉默认的那把就没有默认了。新建任务、添加数据集先选它。
 - **删除**：被未结束的任务引用 → 409 `credential_in_use` / `backend_in_use`；只被已结束的任务引用 → 同样 409，
   `details.confirm_required: true`，带 `?confirm=true` 才删（任务上的引用置空，之后用 `rebind-credentials` 重新绑定）。
 - **VLM 后端**：API Key 封存在一条独立的密钥行里（`kind` 为 `ark` / `custom_vlm`，名字 `vlm-backend/<后端 id>`，
@@ -119,6 +121,16 @@ subprocess.Popen(argv + ["--input-region", cli.input_region, "--output-region", 
    预期：201，`verify_state` 为 `failed`，`last_verify_error` 是「访问密钥「demo-tos」的 AK/SK 不对，或者已经失效（InvalidAccessKeyId）」
    （连不上公网时是「连不上 TOS（…）：检查地域、endpoint 和网络」，同样保存、同样标记失败），
    `meta` 里只有地域和 `access_key_id_hint: "0000"`。
+
+   设为默认、再取消（不重新验证，`last_verified_at` 不变）：
+
+   ```bash
+   C=$(curl -s -u demo:demo-pass localhost:18080/curation/api/v1/credentials | python3 -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["id"])')
+   curl -s -u demo:demo-pass -X PUT -H 'Content-Type: application/json' localhost:18080/curation/api/v1/credentials/$C -d '{"is_default":true}'
+   curl -s -u demo:demo-pass -X PUT -H 'Content-Type: application/json' localhost:18080/curation/api/v1/credentials/$C -d '{"is_default":false}'
+   ```
+
+   预期：两次都是 200，`is_default` 先是 `true`、后是 `false`，`verify_state` 与 `last_verified_at` 不变。
 
 4. **密钥不在任何响应、日志和库文件里**
 

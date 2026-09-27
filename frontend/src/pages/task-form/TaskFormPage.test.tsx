@@ -333,6 +333,13 @@ describe('新建任务 · 两屏与提交', () => {
     expect(screen.getByTestId('footer-summary')).toHaveTextContent('开启 7 个模块');
   });
 
+  it('a plain new task starts with the default access key too (C4 1.17)', async () => {
+    db.credentials.find((c) => c.name === 'partner-upload')!.is_default = true;
+    renderApp('/tasks/new');
+    await screen.findByText('基本信息');
+    await waitFor(() => expect(chosen('访问密钥')).toContain('partner-upload'));
+  });
+
   it('the form starts with the default model, marked in the list, and it can still be changed (C4 1.6.0)', async () => {
     const { user } = renderApp('/tasks/new?dataset=tos://pai-kit-datasets/lerobot/droid-200');
     await screen.findByText(/LeRobot v2 · 200 条 episode/);
@@ -512,6 +519,44 @@ describe('v1 deep links on /tasks/new (07 §2.1)', () => {
     await waitFor(() => expect((screen.getByLabelText('交付目录') as HTMLInputElement).value).toMatch(/^tos:\/\/team-bucket\/deliveries\/so101_pick-\d{4}$/));
   });
 
+  it('an address that is no registered dataset: one info dialog says creating the task registers it (sixth round)', async () => {
+    const { user } = renderApp('/tasks/new?url=tos://team-bucket/lerobot/so101_pick&region=cn-beijing');
+    await screen.findByDisplayValue('tos://team-bucket/lerobot/so101_pick');
+    const notice = await screen.findByTestId('unregistered-notice');
+    expect(notice).toHaveTextContent(/^该数据集尚未在质检平台注册，任务创建后会先注册该数据集$/);
+    const dialog = notice.closest('.arco-modal') as HTMLElement;
+    // information only: one button, nothing to decide
+    expect(within(dialog).getAllByRole('button').map((b) => b.textContent)).toEqual(['确定']);
+    await user.click(within(dialog).getByRole('button', { name: '确定' }));
+    await waitFor(() => expect(screen.queryByTestId('unregistered-notice')).toBeNull());
+  });
+
+  it('a registered dataset (TOS or cache bucket) gets no such dialog', async () => {
+    renderApp('/tasks/new?dataset=tos://pai-kit-datasets/lerobot/droid_100&region=cn-beijing');
+    expect(await screen.findByText(/LeRobot v3 · 100 条 episode/)).toBeInTheDocument();
+    expect(screen.queryByTestId('unregistered-notice')).toBeNull();
+    renderApp('/tasks/new?source=public&dataset=libero_10');
+    expect(await screen.findByText(/LeRobot v2 · 379 条 episode/)).toBeInTheDocument();
+    expect(screen.queryByTestId('unregistered-notice')).toBeNull();
+  });
+
+  it('the access key of a linked address is the default one (sixth round)', async () => {
+    db.credentials.find((c) => c.name === 'readonly-tos')!.is_default = true;
+    renderApp('/tasks/new?url=tos://team-bucket/lerobot/so101_pick&region=cn-beijing');
+    await screen.findByDisplayValue('tos://team-bucket/lerobot/so101_pick');
+    await waitFor(() => expect(chosen('访问密钥')).toContain('readonly-tos'));
+  });
+
+  it('with no access key added, the key of a linked address is left blank to be filled', async () => {
+    db.credentials = [];
+    const { user } = renderApp('/tasks/new?url=tos://team-bucket/lerobot/so101_pick&region=cn-beijing');
+    await screen.findByDisplayValue('tos://team-bucket/lerobot/so101_pick');
+    await user.click(within((await screen.findByTestId('unregistered-notice')).closest('.arco-modal') as HTMLElement).getByRole('button', { name: '确定' }));
+    expect(chosen('访问密钥')).not.toMatch(/tos/);
+    await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
+    await waitFor(() => expect(fieldErrors(formItem('访问密钥'))).toEqual(['请选择访问密钥']));
+  });
+
   it('every key that is present gets a persistent note (never silent)', async () => {
     renderApp('/tasks/new?dataset=gone&region=%3Cscript%3E&endpoint=%3Cimg%3E');
     expect(await screen.findByText(/链接里的数据集在本站找不到：gone/)).toBeInTheDocument();
@@ -541,6 +586,10 @@ describe('v1 deep links on /tasks/new (07 §2.1)', () => {
     const seen = record();
     const { user } = renderApp('/tasks/new?dataset=tos://pai-kit-datasets/lerobot/a_set,tos://pai-kit-datasets/lerobot/b_set&region=cn-beijing');
     expect(await screen.findByText('批量新建质检任务（2 个数据集）')).toBeInTheDocument();
+    // neither is registered: said once, then out of the way (sixth round)
+    const notice = await screen.findByTestId('unregistered-notice');
+    expect(notice).toHaveTextContent('这 2 个数据集尚未在质检平台注册，任务创建后会先注册这些数据集');
+    await user.click(within(notice.closest('.arco-modal') as HTMLElement).getByRole('button', { name: '确定' }));
     await pick(user, '访问密钥', 'readonly-tos');
     const list = await screen.findByTestId('batch-list');
     await waitFor(() => expect(within(list).getAllByText(/已识别 · 120 条/)).toHaveLength(2));

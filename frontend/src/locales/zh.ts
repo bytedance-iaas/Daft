@@ -28,6 +28,7 @@ export const zh = {
 
   common: {
     ok: '确定',
+    notice: '提示',
     cancel: '取消',
     save: '保存',
     saving: '保存中…',
@@ -451,6 +452,9 @@ export const zh = {
     titleBatch: (n: number) => `批量新建质检任务（${n} 个数据集）`,
     desc: '填好数据集与交付目录后会自动预检，按预检结果决定可以开启哪些质检模块。',
     crumbNew: '新建任务',
+    // a deep-linked address that is no registered dataset yet (sixth round; D36 registers it on creation)
+    unregisteredOne: '该数据集尚未在质检平台注册，任务创建后会先注册该数据集',
+    unregisteredMany: (n: number) => `这 ${n} 个数据集尚未在质检平台注册，任务创建后会先注册这些数据集`,
     step1: '基本配置',
     step2: '模块设置',
     sectionBasic: '基本信息',
@@ -672,7 +676,6 @@ export const zh = {
     empty: '还没有添加数据集',
     emptyFiltered: '没有符合筛选条件的数据集',
     drawerTitle: '添加数据集',
-    drawerIntro: '填好来源和地址会自动预检；通过后保存，同时记下 meta 指纹和全量文件清单指纹。同一个来源 + 地址 + 地域只登记一次。',
     name: '名称',
     nameHelp: '选填；默认取地址的最后一段',
     note: '备注',
@@ -1711,6 +1714,11 @@ export const zh = {
     refs: (n: number) => `${n} 个任务`,
     refsActive: (n: number) => `其中 ${n} 个未结束`,
     verify: '重新验证',
+    keyDefault: '默认',
+    setDefaultKey: '设为默认',
+    clearDefaultKey: '取消默认',
+    defaultKeySet: (name: string) => `新建任务默认用「${name}」`,
+    defaultKeyCleared: '已取消默认访问密钥',
     verifyDone: (state: string) => `验证结果：${state}`,
     name: '名称',
     nameHelp: '任务按名字引用，保存后不能改名。',

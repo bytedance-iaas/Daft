@@ -1,7 +1,7 @@
 // Initial values of the new-task form for each way of arriving (07 §2.1, §3): a plain new task,
 // editing a created task, 复制为新任务, 「新建质检任务」 from a dataset, or a v1 deep link.
 import type { Credential, DatasetDetail, ModuleRegistry, Task, VlmBackend } from '../../api/types';
-import type { DeepLinkPlan, PlannedDataset } from '../../lib/deeplink';
+import { canonicalTosUri, type DeepLinkPlan, type PlannedDataset, type RegisteredDataset } from '../../lib/deeplink';
 import type { Prefs } from '../../lib/prefs';
 import { zh } from '../../locales/zh';
 import { defaultValues, fromTask, type FormValues } from './formModel';
@@ -17,6 +17,8 @@ export interface InitArgs {
   credentials: Credential[];
   backends: VlmBackend[];
   prefs: Prefs;
+  /** Registered datasets, to tell whether a deep-linked address is one of them. */
+  registered?: readonly RegisteredDataset[];
 }
 
 export interface Init {
@@ -24,6 +26,8 @@ export interface Init {
   linkNotes: { dataset: string[]; region: string[] };
   batch: PlannedDataset[] | null;
   keepSelection: boolean;
+  /** Deep-linked datasets not registered yet: the page says creating the task registers them. */
+  unregistered: number;
 }
 
 /** 07 §2.1: exactly one → it; several → the one used last time; none → nothing (去添加). */
@@ -38,6 +42,7 @@ export function buildInitial(a: InitArgs): Init {
   let notes = { dataset: [] as string[], region: [] as string[] };
   let batch: PlannedDataset[] | null = null;
   let keepSelection = false;
+  let unregistered = 0;
   let registrationRegion: string | null = null;
 
   if (a.task) {
@@ -76,10 +81,16 @@ export function buildInitial(a: InitArgs): Init {
       v.datasetUri = `${plan.rootOnly}/`;
     }
     if (plan.region) v.region = plan.region;
+    // A TOS address is matched while planning; a cache-bucket one is looked up here.
+    const known = (d: PlannedDataset) =>
+      Boolean(d.datasetId) || (plan.source === 'public' && (a.registered ?? []).some((r) => r.source === 'public' && canonicalTosUri(r.uri) === canonicalTosUri(d.uri)));
+    unregistered = plan.datasets.filter((d) => !known(d)).length;
   }
 
+  // The default key (C4 1.17) unless the task or dataset brings its own; without one, 07 §2.1.
   const keyNames = a.credentials.map((c) => c.name);
-  if (v.source !== 'public' && !v.credential) v.credential = pickDefault(keyNames, a.prefs.lastCredential);
+  const defaultKey = a.credentials.find((c) => c.is_default)?.name;
+  if (v.source !== 'public' && !v.credential) v.credential = defaultKey ?? pickDefault(keyNames, a.prefs.lastCredential);
   if (!v.region && v.source !== 'public') {
     const keyRegion = a.credentials.find((c) => c.name === v.credential)?.meta.region;
     v.region = registrationRegion ?? keyRegion ?? a.prefs.lastRegion ?? 'cn-beijing';
@@ -101,5 +112,5 @@ export function buildInitial(a: InitArgs): Init {
       if (b && !v.vlmModel) v.vlmModel = pickDefault(b.models.map((m) => m.model_name), a.prefs.lastModel);
     }
   }
-  return { values: v, linkNotes: notes, batch, keepSelection };
+  return { values: v, linkNotes: notes, batch, keepSelection, unregistered };
 }

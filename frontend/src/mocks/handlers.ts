@@ -181,6 +181,7 @@ const credentials = [
       last_verified_at: null,
       last_verify_error: null,
       references: { active_tasks: 0, historical_tasks: 0 },
+      is_default: false,
       created_at: clock(),
       updated_at: clock(),
     };
@@ -191,8 +192,15 @@ const credentials = [
   http.put(`${API}/credentials/:id`, async ({ request, params }) => {
     const c = db.credentials.find((x) => x.id === params.id);
     if (!c) return err(404, 'not_found', '访问密钥不存在');
-    const b = await body<{ name?: string; access_key_id?: string; secret_access_key?: string; region?: string; endpoint?: string; test_bucket?: string }>(request, 'updateCredential');
+    const b = await body<{ name?: string; access_key_id?: string; secret_access_key?: string; region?: string; endpoint?: string; test_bucket?: string; is_default?: boolean }>(request, 'updateCredential');
     if (b.name && b.name !== c.name && db.credentials.some((x) => x.name === b.name)) return err(409, 'name_taken', `名称「${b.name}」已被占用`);
+    // C4 1.17: the flag moves over from any other key; setting it alone verifies nothing
+    if (b.is_default === true) db.credentials.forEach((x) => (x.is_default = x === c));
+    else if (b.is_default === false) c.is_default = false;
+    if (Object.keys(b).every((k) => k === 'is_default')) {
+      c.updated_at = clock();
+      return HttpResponse.json(c);
+    }
     if (b.name) c.name = b.name;
     if (b.region) c.meta.region = b.region;
     if (b.test_bucket !== undefined) c.meta.test_bucket = b.test_bucket || undefined;

@@ -1,4 +1,4 @@
-import { Alert, Button, Drawer, Form, Grid, Input, Message, Radio, Select, Space } from '@arco-design/web-react';
+import { Button, Drawer, Form, Grid, Input, Message, Radio, Select, Space } from '@arco-design/web-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -44,8 +44,9 @@ export function AddDatasetDrawer({ visible, onClose }: { visible: boolean; onClo
     setName('');
     setNote('');
     setShown(false);
+    // the default key (C4 1.17), else the only one
     const list = keys.data?.items ?? [];
-    setCredential(list.length === 1 ? list[0].name : '');
+    setCredential(list.find((c) => c.is_default)?.name ?? (list.length === 1 ? list[0].name : ''));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
@@ -110,7 +111,6 @@ export function AddDatasetDrawer({ visible, onClose }: { visible: boolean; onClo
         </Space>
       }
     >
-      <Alert type="info" content={zh.datasets.drawerIntro} style={{ marginBottom: 16 }} />
       <Form layout="vertical">
         <Field label={zh.taskForm.source} required>
           <Radio.Group type="button" value={source} onChange={setSource} aria-label={zh.taskForm.source}>

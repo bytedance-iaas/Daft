@@ -1,6 +1,6 @@
-import { Result, Spin } from '@arco-design/web-react';
+import { Modal, Result, Spin } from '@arco-design/web-react';
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { qk, useBackends, useCredentials, useModules, usePublicCatalog, useTask } from '../../api/queries';
@@ -94,10 +94,24 @@ export function TaskFormPage() {
             credentials: credentials.data?.items ?? [],
             backends: backends.data?.items ?? [],
             prefs: readPrefs(),
+            registered: registered.data?.items ?? [],
           }),
       ),
     );
   }
+
+  // A deep-linked address that is not a registered dataset yet: said once, nothing to decide
+  // (D36 registers it when the task is created; sixth round).
+  const told = useRef(false);
+  useEffect(() => {
+    if (!init?.unregistered || told.current) return;
+    told.current = true;
+    Modal.info({
+      title: zh.common.notice,
+      content: <span data-testid="unregistered-notice">{init.unregistered > 1 ? zh.taskForm.unregisteredMany(init.unregistered) : zh.taskForm.unregisteredOne}</span>,
+      okText: zh.common.ok,
+    });
+  }, [init]);
 
   const crumb = mode === 'edit' ? zh.taskForm.titleEdit : mode === 'copy' ? zh.taskForm.titleCopy : zh.taskForm.crumbNew;
   const header = <PageHeader crumbs={[{ label: zh.taskList.title, to: '/tasks' }, { label: crumb }]} title="" docTitle={crumb} />;

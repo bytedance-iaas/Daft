@@ -1086,13 +1086,15 @@ button.video-placeholder {
   min-width: 0;
 }
 
-.one-line-with-tag > a {
+.one-line-with-tag > a,
+.one-line-with-tag > b {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
 }
 
-.one-line-with-tag > .nowrap {
+.one-line-with-tag > .nowrap,
+.one-line-with-tag > .arco-tag {
   flex: none;
 }
 

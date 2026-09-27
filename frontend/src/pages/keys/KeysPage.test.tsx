@@ -17,6 +17,17 @@ const modelRows = (models: HTMLElement) => [...models.querySelectorAll('tbody tr
 
 const findCredential = (id: string) => db.credentials.find((c) => c.id === id);
 
+/** A key row's 「更多」 menu item (sixth round: 编辑, then 重新验证 / 设为默认 / 删除 under 更多). */
+async function keyAction(user: ReturnType<typeof renderApp>['user'], table: HTMLElement, name: string, item: string) {
+  await user.click(within(row(table, name)).getByRole('button', { name: /更多/ }));
+  const menu = await waitFor(() => {
+    const m = [...document.querySelectorAll<HTMLElement>('.arco-dropdown-menu')].at(-1);
+    if (!m) throw new Error('no 更多 menu');
+    return m;
+  });
+  await user.click(await within(menu).findByRole('menuitem', { name: item }));
+}
+
 describe('系统和资源配置 (07 §7)', () => {
   it('lists keys with verify states and references; secrets never appear', async () => {
     renderApp('/credentials');
@@ -78,12 +89,12 @@ describe('系统和资源配置 (07 §7)', () => {
     const { user } = renderApp('/credentials');
     const table = await screen.findByTestId('keys-table');
     await within(table).findByText('prod-tos');
-    await user.click(within(row(table, 'prod-tos')).getByRole('button', { name: '删除' }));
+    await keyAction(user, table, 'prod-tos', '删除');
     const info = await screen.findByRole('dialog', { name: '删除访问密钥「prod-tos」' });
     expect(info).toHaveTextContent('它正被 1 个未结束的任务使用，不能删除。');
     await user.click(within(info).getByRole('button', { name: '确定' }));
     expect(seen.some((r) => r.method === 'DELETE')).toBe(false);
-    await user.click(within(row(table, 'old-ci')).getByRole('button', { name: '删除' }));
+    await keyAction(user, table, 'old-ci', '删除');
     const confirm = await screen.findByRole('dialog', { name: '删除访问密钥「old-ci」' });
     expect(confirm).toHaveTextContent('它被 1 个已结束的任务引用。');
     await user.click(within(confirm).getByRole('button', { name: '删除' }));
@@ -119,7 +130,7 @@ describe('系统和资源配置 (07 §7)', () => {
     await within(table).findByText('partner-upload');
     // A task finished with this key after the list was loaded.
     findCredential('cred_partner')!.references = { active_tasks: 0, historical_tasks: 2 };
-    await user.click(within(row(table, 'partner-upload')).getByRole('button', { name: '删除' }));
+    await keyAction(user, table, 'partner-upload', '删除');
     const first = await screen.findByRole('dialog', { name: '删除访问密钥「partner-upload」' });
     expect(first).toHaveTextContent('删除后不能恢复。');
     await user.click(within(first).getByRole('button', { name: '删除' }));
@@ -129,11 +140,51 @@ describe('系统和资源配置 (07 §7)', () => {
     expect(seen.filter((r) => r.method === 'DELETE').map((r) => r.query.get('confirm'))).toEqual([null, 'true']);
   });
 
+  it('操作 is 编辑 and 更多; 更多 holds 重新验证, 设为默认 and 删除 (sixth round)', async () => {
+    const { user } = renderApp('/credentials');
+    const table = await screen.findByTestId('keys-table');
+    await within(table).findByText('prod-tos');
+    const buttons = within(row(table, 'prod-tos')).getAllByRole('button').map((b) => b.textContent?.trim());
+    expect(buttons).toEqual(['编辑', '更多']);
+    await user.click(within(row(table, 'prod-tos')).getByRole('button', { name: /更多/ }));
+    const menu = await waitFor(() => {
+      const m = [...document.querySelectorAll<HTMLElement>('.arco-dropdown-menu')].at(-1);
+      if (!m) throw new Error('no 更多 menu');
+      return m;
+    });
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['重新验证', '设为默认', '删除']);
+  });
+
+  it('设为默认 marks one key with a blue 默认 tag after its name; the flag moves over and can be taken off (sixth round)', async () => {
+    const seen = recordRequests();
+    const { user } = renderApp('/credentials');
+    const table = await screen.findByTestId('keys-table');
+    await within(table).findByText('prod-tos');
+    expect(within(table).queryByText('默认')).toBeNull();
+    await keyAction(user, table, 'readonly-tos', '设为默认');
+    expect(await screen.findByText('新建任务默认用「readonly-tos」')).toBeInTheDocument();
+    const tag = await within(row(table, 'readonly-tos')).findByText('默认');
+    expect(tag.closest('.arco-tag')).toHaveClass('arco-tag-arcoblue');
+    // after the name, in the name cell
+    expect(tag.closest('td')).toBe(within(row(table, 'readonly-tos')).getByText('readonly-tos').closest('td'));
+    const puts = () => seen.filter((r) => r.method === 'PUT');
+    expect(puts().map((r) => [r.path, r.body])).toEqual([['/credentials/cred_readonly', { is_default: true }]]);
+
+    await keyAction(user, table, 'prod-tos', '设为默认');
+    await waitFor(() => expect(within(row(table, 'prod-tos')).queryByText('默认')).not.toBeNull());
+    expect(within(row(table, 'readonly-tos')).queryByText('默认')).toBeNull();
+
+    await keyAction(user, table, 'prod-tos', '取消默认');
+    expect(await screen.findByText('已取消默认访问密钥')).toBeInTheDocument();
+    await waitFor(() => expect(within(table).queryByText('默认')).toBeNull());
+    expect(puts().at(-1)?.body).toEqual({ is_default: false });
+  });
+
   it('重新验证 shows the result with its reason', async () => {
     const { user } = renderApp('/credentials');
     const table = await screen.findByTestId('keys-table');
     await within(table).findByText('partner-upload');
-    await user.click(within(row(table, 'partner-upload')).getByRole('button', { name: '重新验证' }));
+    await keyAction(user, table, 'partner-upload', '重新验证');
     expect(await screen.findByText('验证结果：未验证（这对密钥没有列存储桶的权限，也没填测试用存储桶）')).toBeInTheDocument();
   });
 

@@ -368,7 +368,8 @@ def _credential(row) -> Credential:
         key_version=row["key_version"], payload_meta=_loads(row["payload_meta"]) or {},
         verify_state=row["verify_state"], last_verified_at=row["last_verified_at"],
         last_verify_error=row["last_verify_error"], owner_id=row["owner_id"],
-        created_at=row["created_at"], updated_at=row["updated_at"])
+        created_at=row["created_at"], updated_at=row["updated_at"],
+        is_default=bool(row["is_default"]))
 
 
 def _model(row) -> VlmModel:
@@ -668,6 +669,24 @@ class SqliteRepository:
                             " last_verify_error=? WHERE id=?", (state, at, error, cred_id))
             if cur.rowcount == 0:
                 raise NotFound(f"credential {cred_id}")
+        self._write(op)
+
+    def set_default_credential(self, cred_id: str | None, *,
+                               owner: str = DEFAULT_OWNER) -> None:
+        """The owner's one default TOS key (C4 1.17); ``None`` leaves them without one."""
+        now = self._clock()
+
+        def op(c):
+            if cred_id is not None and c.execute(
+                    "SELECT 1 FROM credential WHERE id=? AND owner_id=? AND kind='tos'",
+                    (cred_id, owner)).fetchone() is None:
+                raise NotFound(f"credential {cred_id}")
+            c.execute("UPDATE credential SET is_default=0, updated_at=MAX(?, updated_at + 1)"
+                      " WHERE is_default=1 AND owner_id=?", (now, owner))
+            if cred_id is not None:
+                c.execute("UPDATE credential SET is_default=1,"
+                          " updated_at=MAX(?, updated_at + 1) WHERE id=?", (now, cred_id))
+
         self._write(op)
 
     @staticmethod

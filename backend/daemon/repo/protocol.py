@@ -179,6 +179,7 @@ class Credential:
     owner_id: str = DEFAULT_OWNER
     created_at: int = 0
     updated_at: int = 0
+    is_default: bool = False                 # the TOS key a new task starts with (C4 1.17)
 
 
 @dataclass
@@ -456,6 +457,13 @@ class Repository(Protocol):
 
     def set_credential_verification(self, cred_id: str, state: VerifyState, at: int,
                                     error: str | None) -> None: ...
+
+    def set_default_credential(self, cred_id: str | None, *, owner: str = DEFAULT_OWNER) -> None:
+        """Make this TOS key the owner's only default; ``None`` leaves the owner without one.
+
+        Clearing and setting are one transaction, so at most one key carries the flag;
+        deleting the key takes it along (C4 1.17). Raises NotFound for a key of another
+        owner or kind."""
 
     def credential_references(self, cred_id: str) -> tuple[int, int]:
         """(tasks not in a terminal state, terminal tasks) that reference it."""

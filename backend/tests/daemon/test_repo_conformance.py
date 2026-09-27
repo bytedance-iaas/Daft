@@ -251,6 +251,39 @@ def test_credentials_below_key_version_for_rotation(repo):
 # VLM backends and models
 # ---------------------------------------------------------------------------
 
+def test_one_default_access_key_per_owner(repo):
+    """C4 1.17: the flag moves between TOS keys, stays with its owner, and goes with the key."""
+    def defaults(owner=P.DEFAULT_OWNER):
+        return [c.id for c in repo.list_credentials(owner=owner, kind="tos") if c.is_default]
+
+    first = repo.create_credential(_cred("a"))
+    second = repo.create_credential(_cred("b"))
+    theirs = repo.create_credential(_cred("a", owner=OTHER))
+    backend_key = repo.create_credential(_cred("vlm-backend/x", kind="ark"))
+    assert defaults() == [] and first.is_default is False
+
+    repo.set_default_credential(first.id)
+    assert defaults() == [first.id] and repo.get_credential(first.id).is_default
+    repo.update_credential(first.id, name="a2")                   # an edit keeps the flag
+    assert defaults() == [first.id]
+    repo.set_default_credential(second.id)                        # takes it from the other key
+    assert defaults() == [second.id]
+    repo.set_default_credential(theirs.id, owner=OTHER)           # owners do not share the flag
+    assert defaults() == [second.id] and defaults(OTHER) == [theirs.id]
+    repo.set_default_credential(None)                             # an owner may have none
+    assert defaults() == [] and defaults(OTHER) == [theirs.id]
+
+    repo.set_default_credential(first.id)
+    repo.delete_credential(first.id)
+    assert defaults() == []
+
+    for call in (lambda: repo.set_default_credential("cred_missing"),
+                 lambda: repo.set_default_credential(second.id, owner=OTHER),
+                 lambda: repo.set_default_credential(backend_key.id)):
+        with pytest.raises(P.NotFound):
+            call()
+
+
 def _backend(name="ark-prod", models=("doubao-seed-2-0-pro-260215",), owner=P.DEFAULT_OWNER):
     return P.VlmBackend(id="", name=name, kind="ark", endpoint="https://ark.example/api/v3",
                         credential_id=None, owner_id=owner,

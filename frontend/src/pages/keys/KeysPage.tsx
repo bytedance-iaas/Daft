@@ -1,6 +1,6 @@
-import { Button, Card, Message, Modal, Space, Table, Tabs, Tag } from '@arco-design/web-react';
+import { Button, Card, Dropdown, Menu, Message, Modal, Space, Table, Tabs, Tag } from '@arco-design/web-react';
 import type { ColumnProps } from '@arco-design/web-react/es/Table';
-import { IconPlus } from '@arco-design/web-react/icon';
+import { IconDown, IconPlus } from '@arco-design/web-react/icon';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -62,6 +62,17 @@ export function KeysPage() {
       Message.error(errorMessage(e));
     } finally {
       setVerifying(null);
+    }
+  };
+
+  /** One key is the default (C4 1.17): the new-task form starts with it; the flag moves over. */
+  const toggleDefault = async (c: Credential) => {
+    try {
+      await unwrap(api().PUT('/credentials/{id}', { params: { path: { id: c.id } }, body: { is_default: !c.is_default } }));
+      Message.success(c.is_default ? zh.credentials.defaultKeyCleared : zh.credentials.defaultKeySet(c.name));
+      void qc.invalidateQueries({ queryKey: qk.credentials });
+    } catch (e) {
+      Message.error(errorMessage(e));
     }
   };
 
@@ -142,7 +153,23 @@ export function KeysPage() {
   // for the reason a verification failed.
   const keyColumns: ColumnProps<Credential>[] = [
     // one line a row (fourth round): widths measured on the longest values
-    { title: zh.credentials.colName, dataIndex: 'name', width: 140, render: (v: string) => <b><OneLine text={v} /></b> },
+    {
+      title: zh.credentials.colName,
+      dataIndex: 'name',
+      width: 190,
+      render: (v: string, c) => (
+        <span className="one-line-with-tag">
+          <b>
+            <OneLine text={v} />
+          </b>
+          {c.is_default ? (
+            <Tag size="small" color="arcoblue">
+              {zh.credentials.keyDefault}
+            </Tag>
+          ) : null}
+        </span>
+      ),
+    },
     { title: zh.credentials.colRegion, dataIndex: 'meta', width: 210, render: (_: unknown, c) => <span className="nowrap">{regionLabel(c.meta.region)}</span> },
     { title: zh.credentials.akid, dataIndex: 'id', width: 120, render: (_: unknown, c) => (c.meta.access_key_id_hint ? <span className="mono nowrap">••••{c.meta.access_key_id_hint}</span> : '—') },
     { title: zh.credentials.colVerify, dataIndex: 'verify_state', width: 230, render: (_: unknown, c) => <VerifyTag state={c.verify_state} error={c.last_verify_error} inline /> },
@@ -153,18 +180,36 @@ export function KeysPage() {
       title: zh.credentials.colActions,
       dataIndex: 'updated_at',
       fixed: 'right',
-      width: 235,
+      width: 150,
+      // 编辑, the rest under 「更多」 (sixth round): 重新验证, 设为默认 (取消默认 on the default key), 删除
       render: (_: unknown, c) => (
         <Space size={4}>
           <Button type="text" size="small" onClick={() => setKeyDrawer({ open: true, editing: c })}>
             {zh.common.edit}
           </Button>
-          <Button type="text" size="small" loading={verifying === c.id} onClick={() => void verifyKey(c)}>
-            {zh.credentials.verify}
-          </Button>
-          <Button type="text" size="small" status="danger" onClick={() => deleteKey(c)}>
-            {zh.common.delete}
-          </Button>
+          <Dropdown
+            trigger="click"
+            position="br"
+            droplist={
+              <Menu
+                onClickMenuItem={(key) => {
+                  if (key === 'verify') void verifyKey(c);
+                  else if (key === 'default') void toggleDefault(c);
+                  else if (key === 'delete') deleteKey(c);
+                }}
+              >
+                <Menu.Item key="verify">{zh.credentials.verify}</Menu.Item>
+                <Menu.Item key="default">{c.is_default ? zh.credentials.clearDefaultKey : zh.credentials.setDefaultKey}</Menu.Item>
+                <Menu.Item key="delete">
+                  <span style={{ color: 'var(--c-danger)' }}>{zh.common.delete}</span>
+                </Menu.Item>
+              </Menu>
+            }
+          >
+            <Button type="text" size="small" loading={verifying === c.id}>
+              {zh.common.more} <IconDown />
+            </Button>
+          </Dropdown>
         </Space>
       ),
     },
@@ -238,7 +283,7 @@ export function KeysPage() {
             {keys.isError && !keys.data ? (
               <PageError error={keys.error} onRetry={() => void keys.refetch()} />
             ) : (
-              <Table rowKey="id" loading={keys.isLoading} columns={keyColumns} data={keyItems} pagination={false} scroll={{ x: 1315 }} data-testid="keys-table" noDataElement={<span className="muted">{zh.credentials.noItems}</span>} />
+              <Table rowKey="id" loading={keys.isLoading} columns={keyColumns} data={keyItems} pagination={false} scroll={{ x: 1280 }} data-testid="keys-table" noDataElement={<span className="muted">{zh.credentials.noItems}</span>} />
             )}
           </Tabs.TabPane>
           <Tabs.TabPane key="vlm" title={`${zh.credentials.tabBackends}（${backendItems.length}）`}>

@@ -44,6 +44,7 @@ CREATE TABLE credential (
   verify_state TEXT NOT NULL DEFAULT 'unverified',  -- 'unverified' | 'ok' | 'failed'
   last_verified_at INTEGER,               -- 最近一次连通性校验
   last_verify_error TEXT,
+  is_default   INTEGER NOT NULL DEFAULT 0,  -- 迁移第 6 步（C4 1.17）：新建任务先用的 TOS 访问密钥
   UNIQUE(owner_id, name)
 );
 ```
@@ -56,6 +57,8 @@ CREATE TABLE credential (
   一起删除 —— 用户在界面上是「加一个方舟 API Key」一步，前端不该为此编排两次调用。
 - **删除规则**：被运行中（非终态）任务引用 → 409；只被历史任务引用 → 二次确认后允许，
   任务上的外键置空（`ON DELETE SET NULL`），报告页提示「访问密钥已删除」，并允许给任务重新绑定一个。
+- **默认访问密钥**（C4 1.17）：`kind='tos'` 的行里每个用户最多一把 `is_default=1`，没有索引能表达「每个用户一行」，
+  所以由 `set_default_credential` 在一个事务里先清掉旧的再设新的；删掉那一行就没有默认了。
 - **没验证过、验证失败的都可以保存**（用户可能先填、后开通权限），列表上明确标记。
   但它不等于「能用来跑任务」：任务开始前有三项硬检查，见 03 篇 §3（D30）。
 - 详见 `08-secrets-and-auth.md`。
