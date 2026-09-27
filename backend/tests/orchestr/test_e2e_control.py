@@ -129,7 +129,11 @@ def test_stop_leaves_no_child_and_continue_repeats_no_finished_work(daemon, fake
     assert stopped["state_reason"] == "用户停止"
     assert d.orch.executor.live() == []
     assert _children_of_run(d.run_dir(task_id)) == []
-    kept = {r["episode_index"]: r for r in _part_lines(d.run_dir(task_id), "task_success")}
+    # finished work only: `check --resume` judges error results again by design, so an episode
+    # recorded as an error before the stop (seen once on a loaded CI runner, 2026-09-27) is
+    # rightly redone; like the pause test, only the other records must stay as they were
+    kept = {r["episode_index"]: r for r in _part_lines(d.run_dir(task_id), "task_success")
+            if r["verdict"] != "error"}
     assert kept
     parts_before = {module: set(os.listdir(os.path.join(d.run_dir(task_id), "checks",
                                                           module, "parts")))
