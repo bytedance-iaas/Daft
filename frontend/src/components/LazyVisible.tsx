@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 /** Renders children only once the placeholder scrolls into view (07 §9 lazy loading). */
-export function LazyVisible({ children, placeholder, rootMargin = '200px' }: { children: ReactNode; placeholder?: ReactNode; rootMargin?: string }) {
+export function LazyVisible({ children, placeholder, rootMargin = '200px', className }: { children: ReactNode; placeholder?: ReactNode; rootMargin?: string; className?: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -19,7 +19,11 @@ export function LazyVisible({ children, placeholder, rootMargin = '200px' }: { c
     io.observe(el);
     return () => io.disconnect();
   }, [visible, rootMargin]);
-  return <div ref={ref}>{visible ? children : placeholder ?? null}</div>;
+  return (
+    <div ref={ref} className={className}>
+      {visible ? children : placeholder ?? null}
+    </div>
+  );
 }
 
 /**

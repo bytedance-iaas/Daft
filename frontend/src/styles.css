@@ -809,6 +809,36 @@ button.video-placeholder {
   }
 }
 
+/* Charts side by side are equally tall (sixth round): each chart takes three rows of the section
+   grid - title, chart, note - through a subgrid, so the charts of one row share the title line,
+   the tallest chart's height and the note line. A chart alone in its row keeps its own height. */
+@supports (grid-template-rows: subgrid) {
+  .section-charts {
+    row-gap: 0;
+    margin-bottom: -16px;
+  }
+
+  .section-chart {
+    grid-row: span 3;
+    display: grid;
+    grid-template-rows: subgrid;
+    /* the column never grows with its content: a chart drawn wider before a resize shrinks back */
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0;
+    padding-bottom: 16px;
+  }
+}
+
+.section-chart-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.section-chart-body > * {
+  flex: 1 0 auto;
+}
+
 .section-sub {
   font-weight: 600;
   font-size: 13px;

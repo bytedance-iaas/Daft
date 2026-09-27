@@ -105,16 +105,17 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(screen.queryByTestId(`old-report-${id}`)).toBeNull();
   });
 
-  it('visual quality: the score histogram is as tall as the per-camera chart beside it', async () => {
+  it('every chart has its own height as a minimum and a body that grows to the row (sixth round)', async () => {
     render('visual_quality', sampleSummary('visual_quality', 200));
-    const heightOf = async (key: string) => (await within(screen.getByTestId(`chart-${key}`)).findByTestId('chart')).style.height;
-    expect(await heightOf('cameras')).toBe('240px');
-    expect(await heightOf('score')).toBe('240px');
-    // without per-camera rows the histogram keeps the usual height
-    const { cameras: _cameras, ...alone } = sampleSummary('visual_quality', 200);
-    render('visual_quality', alone);
-    const scores = await screen.findAllByTestId('chart-score');
-    expect((await within(scores.at(-1)!).findByTestId('chart')).style.height).toBe('200px');
+    const chart = async (key: string) => within(screen.getByTestId(`chart-${key}`)).findByTestId('chart');
+    // content heights; the stylesheet stretches both to the taller one when they share a row
+    expect((await chart('cameras')).style.height).toBe('240px');
+    expect((await chart('score')).style.height).toBe('200px');
+    for (const key of ['cameras', 'score']) {
+      const block = screen.getByTestId(`chart-${key}`);
+      expect([...block.children].map((c) => c.className)).toEqual(expect.arrayContaining(['section-sub', 'section-chart-body']));
+      expect((await chart(key)).parentElement).toHaveClass('section-chart-body');
+    }
   });
 
   it('EEF: the verdict figures, why people are asked and the status matrix in Chinese (D49)', async () => {

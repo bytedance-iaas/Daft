@@ -85,7 +85,8 @@ function ChartBlock({ spec }: { spec: ChartSpec }) {
         {spec.title}
         {spec.desc ? <span className="muted">{spec.desc}</span> : null}
       </div>
-      <LazyVisible placeholder={<div style={{ height: chartHeight(spec) }} />}>
+      {/* at least its own height, and as tall as the tallest chart of its row (.section-charts) */}
+      <LazyVisible className="section-chart-body" placeholder={<div style={{ height: chartHeight(spec) }} />}>
         <Chart option={option} summary={summary} height={chartHeight(spec)} />
       </LazyVisible>
       {spec.foot ? <div className="section-note muted">{spec.foot}</div> : null}
@@ -266,7 +267,6 @@ function visualModel(s: Summary): ViewModel {
   const charts: ChartSpec[] = [];
   const bins = (seriesOf(s.score_hist) ?? Array.from({ length: 10 }, (_, i) => ({ name: `${(i / 10).toFixed(1)}–${((i + 1) / 10).toFixed(1)}`, value: 0 }))).map((b) => b.name);
   const withHist = cams.filter((x) => Array.isArray(x.hist) && x.hist.length === bins.length);
-  const camerasHeight = 240;
   if (withHist.length) {
     const series = withHist.map((x) => ({ name: x.camera, data: x.hist }));
     charts.push({
@@ -276,14 +276,14 @@ function visualModel(s: Summary): ViewModel {
       option: groupedBarOption(bins, series),
       summary: withHist.map((x) => Z.cameraSummary(x.camera, fmt(x.mean), x.low)).join('；'),
       foot: withHist.map((x) => Z.cameraMean(x.camera, fmt(x.mean))).join('；'),
-      height: camerasHeight,
+      height: 240,
       wide: true,
     });
   }
-  // Next to the per-camera chart the score histogram takes its height and its plot top (below
-  // the other's legend): both boxes, both score axes and both top grid lines on one line.
+  // Next to the per-camera chart (the row makes them equally tall) the score histogram starts its
+  // plot below the other's legend: both score axes and all grid lines on one line.
   const hist = scoreHist(s);
-  if (hist) charts.push(withHist.length ? { ...hist, height: camerasHeight, gridTop: LEGEND_GRID_TOP } : hist);
+  if (hist) charts.push(withHist.length ? { ...hist, gridTop: LEGEND_GRID_TOP } : hist);
   return { stats, charts, fresh: hasAny(s, ['cameras', 'score_hist']) };
 }
 
