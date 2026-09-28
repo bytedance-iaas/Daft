@@ -1509,7 +1509,8 @@ export const zh = {
     // no gripper reference (design doc 12 §10.5, D-E15)
     opinion: {
       title: '模型意见',
-      advisory: '没有给夹爪参考：模型看整段视频（画着轨迹声明的夹爪中心红圈 P 和朝向红箭头 A），指出它认为对不上的片段。只是意见，不参与判过 / 判废。',
+      advisory: '没有给夹爪参考：模型看整段视频（画着轨迹声明的夹爪中心红圈 P、接近方向红箭头 A 和手指连线橙线 B），指出它认为对不上的片段。只是意见，不参与判过 / 判废。',
+      finger: (axis: string) => ` · 手指连线 ${axis}`,
       failed: (why: string) => `没问成：${why}`,
       skipped: '没有问',
       unseen: '模型说这一段看不清夹爪',

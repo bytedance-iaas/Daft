@@ -172,7 +172,12 @@ export function EefOpinion({ taskId, record }: { taskId: string; record: ResultR
         <div key={c.camera} className="eef-window" data-testid={`eef-opinion-${c.camera}`}>
           <Space wrap size={8}>
             <b>{c.camera}</b>
-            {c.point ? <span className="muted">{Z().target(c.point, c.axis)}</span> : null}
+            {c.point ? (
+              <span className="muted">
+                {Z().target(c.point, c.axis)}
+                {c.fingerAxis ? O.finger(c.fingerAxis) : ''}
+              </span>
+            ) : null}
             {c.status === 'skipped' ? <span className="muted">{O.skipped}</span> : null}
           </Space>
           {c.reason && c.status === 'skipped' ? <div className="episode-line muted">{c.reason}</div> : null}

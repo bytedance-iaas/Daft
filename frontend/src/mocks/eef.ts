@@ -80,6 +80,7 @@ export function eefOpinionRecord(ep: number): ResultRecord {
             status: 'answered',
             point_id: 'tcp',
             axis_id: 'z',
+            finger_axis_id: 'y',
             clips: [{ start_frame: 0, end_frame: 286, status: 'answered', attempts: 1, cache_hit: false, gripper_visible: true, summary: '前半段中心偏得明显' }],
             segments: [
               { start_frame: 180, end_frame: 230, start_s: 12.0, end_s: 15.33, aspect: 'orientation', confidence: 0.4, evidence_frames: [205], observation: '红箭头略偏向桌面', evidence: [] },

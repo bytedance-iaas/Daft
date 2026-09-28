@@ -74,7 +74,7 @@ describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
     const op = eefOpinion(eefOpinionRecord(3).details as Record<string, unknown>)!;
     expect(op).toMatchObject({ status: 'answered', flagged: true, maxConfidence: 0.85, failure: null });
     const [ext, wrist] = op.cameras;
-    expect(ext).toMatchObject({ camera: 'ext', status: 'answered', point: 'tcp', axis: 'z', summaries: ['前半段中心偏得明显'], failures: [], unseen: false });
+    expect(ext).toMatchObject({ camera: 'ext', status: 'answered', point: 'tcp', axis: 'z', fingerAxis: 'y', summaries: ['前半段中心偏得明显'], failures: [], unseen: false });
     expect(ext.segments.map((g) => [g.startFrame, g.confidence, g.evidence.length])).toEqual([[40, 0.85, 2], [180, 0.4, 0]]);
     expect(wrist).toMatchObject({ camera: 'wrist', status: 'skipped', segments: [] });
     expect(eefOpinion(eefRecord(3, 'x').details as Record<string, unknown>)).toBeNull();

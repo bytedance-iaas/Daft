@@ -275,7 +275,7 @@ describe('质检报告 (07 §5)', () => {
     expect(second).toHaveTextContent('片段 2帧 180–230（51 帧）12.0–15.3 秒朝向不对不匹配置信度 40%');
     expect(second).toHaveTextContent('证据帧 205（没存图）');
     await waitFor(() => expect(within(first).getAllByAltText(/ext · frame_0000(52|71)\.jpg/)).toHaveLength(2));
-    expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('点 tcp · 方向 z');
+    expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('点 tcp · 方向 z · 手指连线 y');
     expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('模型总结：前半段中心偏得明显');
     expect(within(op).getByTestId('eef-opinion-wrist')).toHaveTextContent('没有问');
     expect(block.textContent).not.toMatch(/[{}"]/);

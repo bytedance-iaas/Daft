@@ -189,6 +189,8 @@ export interface EefOpinionCamera {
   status: string;
   point: string | null;
   axis: string | null;
+  /** The fingers' line B (drawn orange), when drawn. */
+  fingerAxis: string | null;
   /** The model's one-line summaries, one per clip part. */
   summaries: string[];
   /** Why a part got no answer, readable. */
@@ -225,6 +227,7 @@ export function eefOpinion(details: D): EefOpinion | null {
       status: s(c.status) ?? 'failed',
       point: s(c.point_id),
       axis: s(c.axis_id),
+      fingerAxis: s(c.finger_axis_id),
       summaries: clips.map((x) => s(x.summary)).filter((x): x is string => Boolean(x)),
       failures: clips
         .filter((x) => x.status === 'failed')

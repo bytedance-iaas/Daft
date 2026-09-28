@@ -32,7 +32,7 @@
 | `runner.py` | 单 episode 的流式执行：解码 → 观测 → 测量 → 判定 → 诊断 → 产物（`observations/`、`curves/*.parquet`、`evidence/` 叠加图），输出 §11.3 的 `detail` |
 | `decide.py` | 逐条判决（D-E12 / 附录 C.9）：模型能看的分项（位置、朝向）按分项多数意见与 CPU 比对，模型看不了的分项（时间对齐、状态运动、相机运动）CPU 可疑即转人工，文件里没有或位置到处无法评估的转人工；有确认的判废即判废，否则有转人工理由即转人工，否则判过 |
 | `preflight.py` | `curation preflight` 里的模块条目：文件校验、逐分项能力表、按 episode 计数；没给文件报 `needs_input: trajectory_missing`（`input_hint.field = trajectory_json`，F5.5 起控制台第二屏上传）；复核模块跟随它复核的模块（不可用报 `eef_base_unavailable`、缺文件同样要上传），再要 VLM 后端 |
-| `opinion.py` | 没有夹爪参考时的模型意见（设计 12 §10.5，D-E15）：每路参与的相机整段视频逐帧画上声明的夹爪中心 P（红圈，默认点 `tcp`）与朝向 A（红箭头，默认轴 `z`，投影太短就换最长的轴或不画），印帧号，超过 60 秒按 60 秒切段，每段一个请求；模型列出不匹配的片段、各自的不匹配置信度与证据帧（答复 Schema `eef/opinion_output.schema.json`，帧号必须在本段内、证据帧在自己的片段里，不合格给一次修复）；证据帧存成标注整帧 JPEG；记录一律 `passed=true`（只给意见、不参与判决）；`summary()` 给报告的意见统计 |
+| `opinion.py` | 没有夹爪参考时的模型意见（设计 12 §10.5，D-E15）：每路参与的相机整段视频逐帧画上声明的夹爪中心 P（红圈，默认点 `tcp`）、接近方向 A（红箭头，默认轴 `z`，投影太短就换最长的轴或不画）与手指连线 B（橙线，`finger_line` 或 `y`，以 P 为中心向两侧画；绕接近方向的转动只有它看得出来），印帧号，超过 60 秒按 60 秒切段，每段一个请求；模型列出不匹配的片段、各自的不匹配置信度与证据帧（答复 Schema `eef/opinion_output.schema.json`，帧号必须在本段内、证据帧在自己的片段里，不合格给一次修复）；证据帧存成标注整帧 JPEG；记录一律 `passed=true`（只给意见、不参与判决）；`summary()` 给报告的意见统计 |
 | `review.py` | VLM 复核：窗口（同分项、时间重叠的 CPU 位置 / 朝向候选段合并成候选窗口，加均匀抽查窗口，每路相机各至多 N 个、超出记 `truncated`）；**每个窗口只问一个点 P 和至多一根轴 A**（候选窗口问 CPU 偏得最厉害的点 / 轴，抽查窗口问覆盖最好的点；轴在窗口里投影不足 20 px 就换最长的一根，都不够就不问朝向）；请求包：缩小的整帧、每帧原始裁剪与标记裁剪（声明的 P 红圈、跟踪到的 P 绿十字、声明的 A 红箭头，都标名字），prompt 只给这一点一轴的定义；答复校验（`eef/review_output.schema.json` 1.1、帧号必须来自请求、解释里不许有测量值，不合格给一次修复）、按发送内容缓存、`votes` 把答复变成分项投票 |
 | `report.py` | 报告小节摘要：判过 / 判废 / 转人工条数、转人工的原因、判废来自哪些分项、模型与 CPU 的一致率，以及候选、各分项可疑 / 无法评估的条数、被支持的诊断、覆盖率、复核窗口（有答复 / 失败、冲突）；四张表 `eef_camera_metrics` / `eef_segments` / `eef_diagnosis` / `eef_review_windows` |
 | `adapters/` | `unified_sample`（三文件目录 ↔ 单文件包条目）、`world_policy`（客户 World_Policy 参考样本 → 形态 C / 纯图像）、`lerobot_mapping`（按显式的 `eef-mapping/1.0` 映射从 LeRobot 列生成 `trajectory.json`，形态 B，设计 §3.3；不是平台入口） |
@@ -233,7 +233,8 @@
     PY
     ```
 
-    应看到两路相机各 287 帧；视频左上角印着帧号，夹爪附近有红圈 P 与红箭头 A（ep2 注入的是朝向故障，中段的红圈掉到夹爪下方）。
+    应看到两路相机各 287 帧；视频左上角印着帧号，夹爪附近有红圈 P、红箭头 A 与穿过两指的橙线 B（ep2 注入的是绕接近方向转 30°：
+    P、A 与 ep0 一样，只有 B 的方向不同；脚本里 `build_request` 要带上 `finger_id=OP.pick_finger_axis(s, cid, frames, "z")` 才画 B）。
     有模型时在控制台新建任务：勾 EEF，第二屏只传 `dataset2/trajectory.json`、夹爪参考留空；跑完后报告的 EEF 小节写「模型意见 7」、
     有不匹配片段的条数与置信度分布，不列判过 / 判废 / 转人工；Episode 明细里每条列出片段（帧、秒、中心 / 朝向、不匹配置信度、
     模型的话、标注证据帧）。对照 `dataset2/meta/corruptions.json`：ep0 原版应当干净，ep1–6 的片段应当落在注入的故障上。

@@ -2,7 +2,7 @@
 
 Without observation seeds or a gripper template nothing finds the gripper in the picture, so the CPU
 measures nothing. Instead every camera's whole clip is drawn with the declared gripper centre P (red
-circle) and direction A (red arrow), frame numbers printed, and sent to the model as one continuous
+circle), direction A (red arrow) and fingers' line B (orange), frame numbers printed, and sent to the model as one continuous
 video (clips longer than ``MAX_CLIP_S`` are cut into consecutive parts, one request each). The model
 lists the stretches where P is not on the gripper centre or A does not follow the gripper, each with
 the confidence that it does NOT match and its evidence frames. The opinion is advisory: the record
@@ -54,26 +54,84 @@ def pick_axis(sample, camera_id: str, frames: list[int]) -> str | None:
     return next((a for a in order if lengths[a] >= R.MIN_AXIS_PX), None)
 
 
+FINGER_AXES = ("finger_line", "y")    # the line through both fingers: a turn about the approach axis moves it
+MIN_FINGER_PX = 12.0                  # B only needs to show a direction across the gripper
+ORANGE = (0, 165, 255)
+
+
+def pick_finger_axis(sample, camera_id: str, frames: list[int], taken: str | None) -> str | None:
+    """The fingers' line (B): ``finger_line``, else ``y``, when not A already and at least MIN_FINGER_PX on
+    screen (a lower bar than A's: a turned gripper shortens it, and that turn is what B is for). A turn
+    about the approach axis leaves P and the approach arrow where they were; only this line shows it
+    (dataset2 ep2)."""
+    for a in FINGER_AXES:
+        if a != taken and a in (sample.axes or {}) and R._axis_length(sample, camera_id, a, frames) >= MIN_FINGER_PX:
+            return a
+    return None
+
+
+def _second_axis(sample, camera_id: str, axis_id: str | None):
+    """(start, end) tracks of B, drawn through the gripper: an axis that starts at the centre (``y`` from
+    ``tcp``) is mirrored to the other side, so the line crosses both fingers; None without B."""
+    from .load import declared_track
+
+    a = (sample.axes or {}).get(axis_id) if axis_id else None
+    if not a:
+        return None
+    t0, t1 = (declared_track(sample, camera_id, a[k]) for k in ("start_point_id", "end_point_id"))
+    if t0 is None or t1 is None:
+        return None
+    if a["start_point_id"] == pick_point(sample, camera_id):
+        return 2 * t0.uv - t1.uv, t1.uv
+    return t0.uv, t1.uv
+
+
+def _draw(img, marks: R.Marks, finger, f: int, scale: float):
+    """P and A as the review draws them, and the fingers' line B in orange."""
+    import cv2
+
+    out = img
+    if finger is not None:                   # under P and A
+        a, b = finger[0][f], finger[1][f]
+        if np.isfinite(a).all() and np.isfinite(b).all():
+            out = img.copy()
+            pa, pb = R._px(a, scale, (0, 0)), R._px(b, scale, (0, 0))
+            cv2.line(out, pa, pb, ORANGE, 2, cv2.LINE_AA)
+            R._tag(out, pb, "B", ORANGE)
+    return R._overlay(out, marks, f, scale)
+
+
 def clip_ranges(frames: list[int], fps: float) -> list[list[int]]:
     """Sample frames cut into consecutive parts of at most ``MAX_CLIP_S`` seconds."""
     per = max(1, int(MAX_CLIP_S * fps))
     return [frames[i:i + per] for i in range(0, len(frames), per)]
 
 
-def build_prompt(sample, camera_id: str, point_id: str, axis_id: str | None, lo: int, hi: int) -> str:
+def build_prompt(sample, camera_id: str, point_id: str, axis_id: str | None, lo: int, hi: int,
+                 finger_id: str | None = None) -> str:
     window = R.Window(camera_id=camera_id, kind="uniform", frames=[lo, hi], point_id=point_id, axis_id=axis_id)
     marks = R.Marks(None, None, (np.zeros((1, 2)), np.zeros((1, 2))) if axis_id else None)
     legend = "the RED circle labelled P is where the recorded trajectory puts the gripper centre P"
     if axis_id:
         legend += "; the RED arrow labelled A is the recorded pointing direction A of the gripper"
+    if finger_id:
+        legend += ("; the ORANGE line labelled B is the recorded line through both fingers (the direction the "
+                   "fingers open and close along)")
+    finger = ""
+    if finger_id:
+        a = sample.axes[finger_id]
+        finger = (f"\n- B = {finger_id}: from {a['start_point_id']} to {a['end_point_id']}; "
+                  f"{a.get('physical_meaning', '')}, either direction is fine")
     return "\n".join([
         "You check a recorded robot trajectory against a camera video. The video is continuous; on every frame "
         f"{legend}. The frame number is printed at the top left of every frame.",
         f"Camera {camera_id}. Frames {lo} to {hi}.",
         "Definitions:",
-        R.point_text(sample, window, marks),
+        R.point_text(sample, window, marks) + finger,
         "Watch the whole video. Find every stretch of frames where the red circle P is NOT on the gripper centre as "
-        "defined" + (", or the red arrow A does NOT follow the way the gripper points" if axis_id else "") + ". "
+        "defined" + (", or the red arrow A does NOT follow the way the gripper points" if axis_id else "") +
+        (", or the orange line B does NOT run through both fingers (the gripper is turned against it)" if finger_id
+         else "") + ". "
         "A short, momentary drift and a clearly wrong stretch are both worth reporting; give each its own confidence.",
         "Answer with ONE JSON object and nothing else, exactly these keys:",
         '{"gripper_visible": true|false, "segments": [{"start_frame": int, "end_frame": int, '
@@ -81,7 +139,8 @@ def build_prompt(sample, camera_id: str, point_id: str, axis_id: str | None, lo:
         '"observation": "what you see, one or two sentences in Chinese"}], "summary": "one sentence in Chinese"}',
         f"Frame numbers are the printed ones, between {lo} and {hi}; start_frame <= end_frame and every evidence "
         "frame lies inside its segment. confidence is how sure you are that the stretch does NOT match (1 = certainly "
-        "wrong). aspect: position = P is off the gripper centre; orientation = A does not follow the gripper; both. "
+        "wrong). aspect: position = P is off the gripper centre; orientation = A or B does not follow the gripper; "
+        "both. "
         "If everything matches, return an empty segments list. If the gripper cannot be seen, set gripper_visible "
         "to false and report nothing you cannot see.",
     ])
@@ -115,7 +174,7 @@ def repair_text(problem: dict, lo: int, hi: int) -> str:
             f"with exactly the keys asked for; frames between {lo} and {hi}, evidence frames inside their segment.")
 
 
-def _render(sample, camera_id: str, marks: R.Marks, media_root: str, lo_media: int, hi_media: int,
+def _render(sample, camera_id: str, marks: R.Marks, finger, media_root: str, lo_media: int, hi_media: int,
             mapping: dict[int, int], max_side: int):
     """(PTS, RGB) of the marked frames lo_media..hi_media, frame numbers printed."""
     import cv2
@@ -133,13 +192,14 @@ def _render(sample, camera_id: str, marks: R.Marks, media_root: str, lo_media: i
             bgr = cv2.resize(bgr, (int(bgr.shape[1] * k), int(bgr.shape[0] * k)))
         f = mapping.get(fr.index)
         if f is not None:
-            bgr = R._overlay(bgr, marks, f, k)
+            bgr = _draw(bgr, marks, finger, f, k)
         bgr = R._label(bgr, f"frame {f}" if f is not None else f"media frame {fr.index} (no trajectory sample)")
         yield fr.pts_s, cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
 def build_request(sample, camera_id: str, frames: list[int], point_id: str, axis_id: str | None, *,
-                  media_root: str, model: str, options: dict | None = None) -> R.Request:
+                  media_root: str, model: str, options: dict | None = None,
+                  finger_id: str | None = None) -> R.Request:
     """One part of a camera's clip: the prompt and the marked video; cached by what is sent."""
     from ...adapters.video_input import encode_rendered_video
 
@@ -153,9 +213,10 @@ def build_request(sample, camera_id: str, frames: list[int], point_id: str, axis
     marks = R.marks_for(sample, window, {})
     mapping = {int(v): i for i, v in enumerate(cam.video_frame_index) if v >= 0}
     lo_m, hi_m = int(cam.video_frame_index[lo]), int(cam.video_frame_index[hi])
-    text = build_prompt(sample, camera_id, point_id, axis_id, lo, hi)
-    clip = encode_rendered_video(f"{camera_id} MARKED", _render(sample, camera_id, marks, media_root, lo_m, hi_m,
-                                                                mapping, int(opts.get("max_side", 720))),
+    text = build_prompt(sample, camera_id, point_id, axis_id, lo, hi, finger_id)
+    finger = _second_axis(sample, camera_id, finger_id)
+    clip = encode_rendered_video(f"{camera_id} MARKED", _render(sample, camera_id, marks, finger, media_root, lo_m,
+                                                                hi_m, mapping, int(opts.get("max_side", 720))),
                                  fps=fps, end_s=(hi_m + 1) / fps,
                                  max_bytes=int(opts.get("max_bytes", 32 * 1024 * 1024)))
     key = hashlib.sha256(json.dumps({"protocol": PROTOCOL, "prompt": PROMPT_VERSION, "text": text, "model": model,
@@ -188,7 +249,7 @@ def ask_clip(req: R.Request, ask: Callable[[R.Request, list[dict]], str], cache:
 
 
 def write_stills(sample, camera_id: str, marks: R.Marks, wanted: set[int], *, media_root: str, directory: str,
-                 run_dir: str) -> dict[int, str]:
+                 run_dir: str, finger=None) -> dict[int, str]:
     """The marked full frames the model cited, as JPEG; paths relative to the run directory."""
     import cv2
 
@@ -208,7 +269,7 @@ def write_stills(sample, camera_id: str, marks: R.Marks, wanted: set[int], *, me
             k = min(1.0, STILL_MAX_SIDE / max(bgr.shape[:2]))
             if k < 1:
                 bgr = cv2.resize(bgr, (int(bgr.shape[1] * k), int(bgr.shape[0] * k)))
-            bgr = R._label(R._overlay(bgr, marks, f, k), f"frame {f}")
+            bgr = R._label(_draw(bgr, marks, finger, f, k), f"frame {f}")
             path = d / f"frame_{f:06d}.jpg"
             path.write_bytes(R._jpeg(bgr))
             out[f] = os.path.relpath(path, run_dir).replace(os.sep, "/")
@@ -249,12 +310,15 @@ def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
             cams[cid] = {"status": "skipped", "reason": "the gripper centre is never projected into this camera"}
             continue
         aid = pick_axis(sample, cid, frames)
+        bid = pick_finger_axis(sample, cid, frames, aid)
         fps = float(cam.media.get("fps") or 0)
-        row: dict = {"status": "answered", "point_id": pid, "axis_id": aid, "clips": [], "segments": []}
+        row: dict = {"status": "answered", "point_id": pid, "axis_id": aid, "finger_axis_id": bid, "clips": [],
+                     "segments": []}
         for part in clip_ranges(frames, fps if fps > 0 else 15.0):
             clip: dict = {"start_frame": part[0], "end_frame": part[-1]}
             try:
-                req = build_request(sample, cid, part, pid, aid, media_root=media_root, model=model, options=options)
+                req = build_request(sample, cid, part, pid, aid, media_root=media_root, model=model, options=options,
+                                    finger_id=bid)
             except Exception as e:  # noqa: BLE001 - one part that cannot be rendered does not stop the others
                 clip.update(status=R.FAILED, failure={"code": "video_unreadable", "message": str(e)[:300]})
                 row["clips"].append(clip)
@@ -284,7 +348,7 @@ def opinion_episode(sample, *, media_root: str, ask, cache: R.Cache, model: str,
             stills = write_stills(sample, cid, R.marks_for(sample, window, {}),
                                   {f for s in row["segments"] for f in s["evidence_frames"]}, media_root=media_root,
                                   directory=os.path.join(out_dir, "opinion", f"ep_{sample.episode_index:06d}", cid),
-                                  run_dir=run_dir)
+                                  run_dir=run_dir, finger=_second_axis(sample, cid, bid))
             for s in row["segments"]:
                 s["evidence"] = [stills[f] for f in s["evidence_frames"] if f in stills]
         cams[cid] = row
