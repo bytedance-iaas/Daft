@@ -1067,12 +1067,20 @@ button.video-placeholder {
 }
 
 /* 新建任务第二屏: one block per module, its name a heading (fourth round) */
+/* screen 2: a sub-card a module inside the settings card (sixth round) */
 .module-params {
   margin-bottom: 16px;
 }
 
 .module-params .module-params-title {
-  margin: 8px 0 12px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.module-params > .arco-card-body .arco-form-item:last-child {
+  margin-bottom: 0;
 }
 
 /* a choice group: which parameter, then its value (夹爪参考) */

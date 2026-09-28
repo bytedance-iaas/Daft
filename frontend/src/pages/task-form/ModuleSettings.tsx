@@ -285,11 +285,19 @@ export function ModuleSettings({
         </>
       ) : null}
 
+      {/* one sub-card a module, its name a small title (sixth round) */}
       {withParams.map((m) => (
-        <div key={m.id} className="module-params" data-testid={`params-${m.id}`}>
-          <Typography.Title heading={5} className="module-params-title">
-            {m.name_zh}
-          </Typography.Title>
+        <Card
+          key={m.id}
+          size="small"
+          className="module-params"
+          data-testid={`params-${m.id}`}
+          title={
+            <Typography.Title heading={6} className="module-params-title">
+              {m.name_zh}
+            </Typography.Title>
+          }
+        >
           {groupFields(paramFields(m.param_schema)).map((entry) =>
             'group' in entry ? (
               <ChoiceGroupField
@@ -314,7 +322,7 @@ export function ModuleSettings({
               </Field>
             ),
           )}
-        </div>
+        </Card>
       ))}
 
       {/* Modules without extra settings are not listed (requester item 16); a screen with nothing
