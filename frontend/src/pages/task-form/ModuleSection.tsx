@@ -114,7 +114,8 @@ export function ModuleSection({
         {availability ? help : zh.taskForm.waitingPreflight}
       </div>
       {errors.modules ? <div className="field-note-error" style={{ marginBottom: 8 }}>{errors.modules}</div> : null}
-      <Row gutter={[12, 12]}>
+      {/* align="stretch": the cards of one row are as tall as its tallest (sixth round) */}
+      <Row gutter={[12, 12]} align="stretch">
         {(availability ? usable : modules).map((m) => (
           <Col key={m.id} xs={24} sm={12} md={8} lg={6}>
             <ModuleCard m={m} a={availability?.[m.id]} checked={v.modules.includes(m.id)} marked={marked[m.id]} disabled={!availability} onToggle={() => toggle(m.id)} />
@@ -127,7 +128,7 @@ export function ModuleSection({
           <Typography.Text>
             {zh.taskForm.unsupportedTitle(unsupported.length)} <span className="muted">{zh.taskForm.unsupportedDesc}</span>
           </Typography.Text>
-          <Row gutter={[12, 12]} style={{ marginTop: 8 }}>
+          <Row gutter={[12, 12]} align="stretch" style={{ marginTop: 8 }}>
             {unsupported.map((m) => {
               const a = availability?.[m.id];
               return (
