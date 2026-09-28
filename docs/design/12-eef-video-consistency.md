@@ -52,6 +52,7 @@
 | D-E14 | 复核请求包改版：每个请求只画一个点（红圈与绿十字，都标点名）和至多一根轴（红色箭头，标轴名），prompt 只给这一点一轴的定义；不再问背景运动；上线前在 DEMO 数据上用真实模型对照真值统计一致率 | 是 |
 | D-E15 | （2026-09-27 需求方提出，试验）夹爪参考改为可选。观测种子与夹爪外观模板都没给时，模块不做 CPU 测量，改为「模型意见」：每路相机整段视频画上声明的夹爪中心与朝向，请模型列出它认为不匹配的片段、各自的不匹配置信度和证据帧（§10.5）。**只给意见，不参与判过 / 判废 / 转人工**，需求方先评估效果 | 是 |
 | D-E16 | （2026-09-28 需求方提出）新分项「轨迹与数据集记录」`record_consistency`（§8.7）：上传轨迹的三维末端位姿与数据集自己的记录逐帧比——有位姿列直接比，有关节角先正解再比，都有两项都比、分别报告，都没有报「不支持」。不解码视频（叠加证据图除外）、不要夹爪参考、不调模型。恒定差与记录映射声明的关系比，超出容差判可疑，推不出期望关系时只报告；随时间变化的差按分段判可疑；同时报告两条轨迹的时间差。**只报告，不参与判过 / 判废 / 转人工**（没有夹爪参考时也一样）。LeRobot 与 mcap 一期都做 | 是 |
+| D-E17 | （2026-09-28 需求方选定）数据集记录映射由预检起草、表单里确认（§8.7「映射由预检起草」）：按 LeRobot `info.json` 的分量名与 `robot_type` 起草，推断的地方逐条列出，有歧义或认不出就不起草并说明原因；确认即作为上传件提交，照旧校验。映射允许位姿 `frame_id: null`（参考点未声明，恒定差只报告）与 `reference_frame: "@upload"`（与上传轨迹同一基座）。没选「不给映射就按列名推断」：那样会悄悄放宽「列名、布局、单位由用户写明」 | 是 |
 
 ### 0.5 产品形态（需求方 2026-09-22 晚定）
 
@@ -438,8 +439,8 @@ record:
     key: observation.state.cartesian_position
     layout: xyz_rpy_xyz_extrinsic           # 同 §3.3 的枚举
     units: {position: m, angle: rad}
-    frame_id: panda_link8
-    reference_frame: robot_base
+    frame_id: panda_link8                   # null：不知道这一列是哪个点——期望关系未声明，恒定差只报告
+    reference_frame: robot_base             # "@upload"：与上传轨迹的 reference_frame 是同一个基座
   joints:                                   # LeRobot 列或 mcap topic；正解得到机器人模型的法兰帧
     key: observation.state.joint_position
     slice: [0, 7]
@@ -452,6 +453,32 @@ record:
 
   内置 `franka_panda`：改进 DH，法兰 `panda_link8`（d = 0.107 m），另带 `panda_hand`（法兰绕 z 转 −45°）与 `panda_hand_tcp`
   （hand 沿 z 0.1034 m）。dataset2 上正解与位姿列逐帧重合（0.0 mm / 0.00°）。
+
+`frame_id` 与 `reference_frame` 两个键都必须写出来（缺键是错误），值可以是上面注释里的两种特殊写法：`null` 与 `"@upload"` 是人
+明说的「不知道」「同一个」，不是省略。
+
+**映射由预检起草（D-E17）**：数据集的元数据往往已经说了一半——LeRobot `info.json` 的每列带分量名（`x, y, z, roll, pitch, yaw`、
+`joint_0…joint_6`）和 `robot_type`——缺的是单位、欧拉角约定、这一列描述的是哪个点、哪一列是实测、机器人的连杆尺寸。预检据此起草
+一份映射放进模块条目的 `drafts.record_mapping`（`document`：草稿本身；`assumptions`：推断的地方，每条一个代码加参数；`not_drafted`：
+没起草的来源和原因），第二屏把草稿和推断逐条列出来，人确认后才作为上传件提交（与自己写的映射同一条路：到货即校验、随任务冻结）。
+规则：
+
+- 只看 `observation.` 开头的列（实测）。`action.*`（指令，一般领先实测）、名字里带 `velocity` 的、`camera_extrinsics.*` 这类同名
+  分量的列都不算；有同名的指令列时记一条 `observation_not_action`。
+- 位姿：分量名依次是 `x, y, z, roll, pitch, yaw`（布局 `xyz_rpy_xyz_extrinsic`，记 `euler_extrinsic_xyz`）、`x, y, z, qx, qy, qz, qw`
+  或 `x, y, z, qw, qx, qy, qz`（记 `quaternion_order`）。分量名可以是一个更长向量里连续的一段，这时写 `slice`（记 `slice_from_names`）。
+  `frame_id: null`（记 `pose_frame_undeclared`：它的恒定差只报告；知道是哪个点就在表单里改）。
+- 关节角：`robot_type` 认得出（含 `fr3` → `franka_fr3`；含 `franka` 或 `panda` → `franka_panda`，记 `robot_from_robot_type`），
+  分量名里有连续的 7 个 `joint_N` / `jointN` / `panda_jointN`。只有这 7 个分量的专用列优先于拼进更长向量的列（记 `picked_dedicated`）。
+  正解得到的是法兰（记 `joints_tip_frame`：上传轨迹的 `eef_frame` 是这台机器人的具名帧时恒定差照常判）。
+- 单位：LeRobot 不带单位，一律按惯例取 m、rad（记 `units_by_convention`）；基座一律 `"@upload"`（记 `same_base_as_upload`）。
+- 同一来源有两列以上都合规则（`ambiguous`）、没有合规则的列（`no_named_pose_column` / `no_named_joint_column`）、没写或不认得
+  `robot_type`（`no_robot_type` / `robot_not_built_in`）时这个来源不起草；两个来源都不起草时 `document` 为 null。mcap 与 Lance 的
+  列是从 topic 合成的，暂不起草（`format_not_drafted`）。
+
+dataset2（`eef_ds2_lr3`）起草出位姿 `observation.state.cartesian_position`（参考点未声明）与关节角 `observation.state.joint_position`
+（`franka_panda`）；上传轨迹的 `eef_frame` 是 `panda_link8`，所以关节角这一路的恒定差照常判（ep2 的 30° 仍能抓到），位姿这一路
+只报告恒定差。
 
 **逐帧对齐**：`source_state_index`（数据集的行号、mcap 记录 topic 的消息序号）优先；否则两边帧数相同时按帧号；再否则按时间戳
 （LeRobot 用 `timestamp` 列；mcap 用 log_time 减去记录 topic 第一条消息的时间），记录插值：位置线性、姿态 SLERP。
@@ -895,3 +922,11 @@ mcap 一期都做。评审时的可行性实测（dataset2，内置 Franka 正�
 实现中定下的细节：时间差正值 = 数据集记录晚；一帧的滞后会把拟合常量带偏，所以记了 `time_offset` 时恒定差用补偿后的记录判；
 叠加图的帧彼此至少隔 30 帧，路径记在 `details.record.evidence`。远端 LeRobot 只取 `meta/` 与这一条的 data 文件；mcap 的记录
 topic 与视频在同一个 episode 文件里，一并进源缓存。
+
+### C.12 映射由预检起草（2026-09-28，F5.16，D-E17）
+
+需求方看了 F5.15 的表单后问：「数据集里没有么？为什么还要用户额外提供？」数据在，缺的是怎么读（单位、欧拉角约定、哪个点、哪列是
+实测、连杆尺寸）。给了两个方案：预检起草、表单确认（A），或不给映射就按列名推断兜底（B），需求方选 A。实现：`record_draft.py`
+（规则见 §8.7），CLI 预检把草稿放进 EEF 条目的 `drafts.record_mapping`（C2 预检 Schema 加 `drafts`，C4 1.20.0）；`record.py` 认
+`frame_id: null` 与 `reference_frame: "@upload"`；控制台第二屏在「数据集记录映射」下列出草稿与推断，「确认使用」把草稿作为上传件
+提交，「修改」给 JSON 编辑框，「撤销」清掉。

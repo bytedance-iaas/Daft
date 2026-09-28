@@ -11,7 +11,9 @@ never part of the verdict.
 Per source: pair the upload's frames with the record (``source_state_index`` > frame index when the
 counts match > timestamps, positions linear and rotations SLERP); take the expected relation between
 the two frames from the mapping (same ``frame_id`` -> identity, otherwise a path through ``record.frames``
-and the robot's named frames); the primary numbers are the raw residuals under that relation (mm, deg);
+and the robot's named frames; ``frame_id: null`` says the point is not known, so there is none) and the
+base (``reference_frame: "@upload"``: the upload's own); the primary numbers are the raw residuals under
+that relation (mm, deg);
 a constant fitted on the tool side is reported and, when the relation is declared, compared with it
 (``constant_mismatch``); what remains after the constant is segmented (``record_deviation``); the time
 offset between the two tracks is estimated and reported.
@@ -35,6 +37,8 @@ from . import segments as SG
 from . import timeline as TL
 
 MAPPING_VERSIONS = ("eef-mapping/1.0", "eef-mapping/1.1")
+#: ``reference_frame`` value: the record is in the upload's own base frame (design 12 §8.7, D-E17)
+UPLOAD_FRAME = "@upload"
 SOURCES = ("pose", "joints")
 LAYOUTS = ("xyz_rpy_xyz_extrinsic", "xyz_quat_xyzw", "xyz_quat_wxyz", "xyz_rotmat")
 #: demo thresholds, used when a profile has no ``record`` section (profiles/demo.yaml has them)
@@ -75,8 +79,8 @@ class SourceSpec:
     quaternion_key: str | None          # pose only, LeRobot: the quaternion in another column
     position_scale: float               # metres per unit
     angle_unit: str                     # rad | deg
-    frame_id: str                       # pose: declared; joints: the robot's tip frame
-    reference_frame: str
+    frame_id: str | None                # pose: declared, None - not known; joints: the robot's tip frame
+    reference_frame: str                # a frame name, or UPLOAD_FRAME
     robot: str | None                   # joints only
 
     def as_dict(self) -> dict:
@@ -92,9 +96,11 @@ class RecordMapping:
     frames: dict[str, tuple[str, np.ndarray]]     # declared fixed frames: name -> (parent, T_parent_name)
     sha256: str
 
-    def transform(self, a: str, b: str, robot: str | None = None) -> np.ndarray | None:
+    def transform(self, a: str | None, b: str | None, robot: str | None = None) -> np.ndarray | None:
         """``T_a_b`` (frame ``b`` in frame ``a``) through the declared frames and the robot's named frames;
-        None when nothing connects them."""
+        None when nothing connects them or either frame is not known."""
+        if a is None or b is None:
+            return None
         if a == b:
             return np.eye(4)
         edges: list[tuple[str, str, np.ndarray]] = [(p, n, T) for n, (p, T) in self.frames.items()]
@@ -148,9 +154,9 @@ def parse_mapping(doc: Any, *, sha256: str | None = None) -> RecordMapping:
         e = doc["eef"]
         sources["pose"] = _source("pose", {"key": e.get("pose_key"), "slice": e.get("slice"),
                                            "quaternion_key": e.get("quaternion_key"), "layout": e.get("layout"),
-                                           "units": e.get("units"), "frame_id": e.get("frame_id"),
-                                           "reference_frame": e.get("reference_frame"),
-                                           "pose_type": e.get("pose_type")}, "eef")
+                                           "units": e.get("units"), "reference_frame": e.get("reference_frame"),
+                                           "pose_type": e.get("pose_type"),
+                                           **({"frame_id": e["frame_id"]} if e.get("frame_id") else {})}, "eef")
     else:
         raise RecordMappingError("record mapping: record (or an exporter's eef block) is required")
     digest = sha256 or hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode()).hexdigest()
@@ -169,8 +175,9 @@ def _source(kind: str, d: Any, where: str) -> SourceSpec:
                                and 0 <= sl[0] < sl[1]):
         raise RecordMappingError(f"record mapping: {where}.slice must be [start, end) with 0 <= start < end")
     ref = d.get("reference_frame")
-    if not ref:
-        raise RecordMappingError(f"record mapping: {where}.reference_frame is required")
+    if not isinstance(ref, str) or not ref:
+        raise RecordMappingError(f"record mapping: {where}.reference_frame is required "
+                                 f"(a frame name, or {UPLOAD_FRAME!r}: the upload's own base)")
     common = dict(kind=kind, key=key, topic=topic, fields=d.get("fields") or None,
                   slice=tuple(sl) if sl else None, reference_frame=str(ref))
     if kind == "pose":
@@ -184,8 +191,9 @@ def _source(kind: str, d: Any, where: str) -> SourceSpec:
         angle = units.get("angle", "rad" if layout != "xyz_rpy_xyz_extrinsic" else None)
         if angle not in ("rad", "deg"):
             raise RecordMappingError(f"record mapping: {where}.units.angle must be rad or deg")
-        if not d.get("frame_id"):
-            raise RecordMappingError(f"record mapping: {where}.frame_id is required")
+        if "frame_id" not in d or not (d["frame_id"] is None or (isinstance(d["frame_id"], str) and d["frame_id"])):
+            raise RecordMappingError(f"record mapping: {where}.frame_id is required (null when the point it "
+                                     "describes is not known: its constant is then only reported)")
         if (d.get("pose_type") or "absolute") != "absolute":
             raise RecordMappingError(f"record mapping: {where}.pose_type must be absolute")
         qk = d.get("quaternion_key") or None
@@ -193,7 +201,7 @@ def _source(kind: str, d: Any, where: str) -> SourceSpec:
             raise RecordMappingError(f"record mapping: {where}.quaternion_key goes with key and an xyz_quat layout")
         return SourceSpec(**common, layout=layout, quaternion_key=qk,
                           position_scale=1e-3 if units["position"] == "mm" else 1.0, angle_unit=angle,
-                          frame_id=str(d["frame_id"]), robot=None)
+                          frame_id=d["frame_id"], robot=None)
     units = d.get("units")
     if units not in ("rad", "deg"):
         raise RecordMappingError(f"record mapping: {where}.units must be rad or deg")
@@ -491,11 +499,11 @@ def compare_source(sample, spec: SourceSpec, series: Series, mapping: RecordMapp
     if paired is None:
         return {**base, "status": C.UNKNOWN, "reasons": [C.CLOCK_ALIGNMENT_UNKNOWN]}
     T_rec, how = paired
-    E = mapping.transform(spec.frame_id, sample.eef_frame or "", spec.robot) if sample.eef_frame else None
+    E = mapping.transform(spec.frame_id, sample.eef_frame or None, spec.robot)
     declared = E is not None
     if mode == "absolute":
-        W = mapping.transform(sample.reference_frame or "", spec.reference_frame, spec.robot) \
-            if sample.reference_frame else None
+        W = np.eye(4) if spec.reference_frame == UPLOAD_FRAME else \
+            mapping.transform(sample.reference_frame or None, spec.reference_frame, spec.robot)
         if W is None:
             return {**base, "status": C.UNSUPPORTED, "reasons": [C.REFERENCE_FRAMES_UNRELATED],
                     "frames": {"upload": sample.reference_frame, "record": spec.reference_frame}}
@@ -575,8 +583,12 @@ def compare_internal(sample, mapping: RecordMapping, got: dict[str, Series], pro
     ps, js = mapping.sources["pose"], mapping.sources["joints"]
     if len(got["pose"].index) != len(got["joints"].index):
         return {"compared": False, "reason": "different_lengths"}
-    E = mapping.transform(js.frame_id, ps.frame_id, js.robot)
-    W = mapping.transform(ps.reference_frame, js.reference_frame, js.robot)
+
+    def base(spec: SourceSpec) -> str | None:
+        return (sample.reference_frame or None) if spec.reference_frame == UPLOAD_FRAME else spec.reference_frame
+
+    E = mapping.transform(js.frame_id, ps.frame_id, js.robot)          # None when the pose's point is not known
+    W = np.eye(4) if ps.reference_frame == js.reference_frame else mapping.transform(base(ps), base(js), js.robot)
     A = got["joints"].T if W is None else W @ got["joints"].T
     B = got["pose"].T
     ok = np.isfinite(A[:, 0, 0]) & np.isfinite(B[:, 0, 0])

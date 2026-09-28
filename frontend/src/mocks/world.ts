@@ -223,6 +223,20 @@ export interface DatasetProfile {
 
 export const DATASET_PROFILES: DatasetProfile[] = [
   {
+    // F5.16 (D-E17): a DROID-like Franka dataset (the DEMO's dataset2), its record mapping drafted from info.json
+    uri: 'tos://pai-kit-datasets/lerobot/eef_ds2_lr3',
+    source: 'tos',
+    name: 'eef_ds2_lr3',
+    format: { kind: 'lerobot', version: 'v3', supported: true, detail: 'LeRobot v3, 7 episodes, 2 cameras' },
+    episodes: 7,
+    cameras: ['exterior_1_left', 'exterior_2_left'],
+    fps: 15,
+    robotType: 'Franka',
+    withTask: 7,
+    missing: [],
+    profile: null,
+  },
+  {
     uri: 'tos://pai-kit-datasets/lerobot/droid_100',
     source: 'tos',
     name: 'droid_100',
@@ -352,6 +366,49 @@ export function profileFor(uri: string): DatasetProfile {
 }
 
 const DIGEST = 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
+
+type ParamDraft = NonNullable<PreflightResult['modules'][number]['drafts']>[string];
+
+/**
+ * The record mapping the CLI drafts from a dataset's info.json (design doc 12 §8.7, D-E17): a Franka
+ * LeRobot dataset gets the DROID-like draft (dataset2's), mcap none; the rest say why not.
+ */
+export function recordDraft(p: DatasetProfile): ParamDraft {
+  if (p.format.kind !== 'lerobot') return { document: null, assumptions: [], not_drafted: [{ code: 'format_not_drafted', args: { format: p.format.kind } }] };
+  const franka = /franka|panda/i.test(p.robotType ?? '');
+  if (!franka) {
+    return {
+      document: null,
+      assumptions: [],
+      not_drafted: [
+        { code: 'no_named_pose_column', source: 'pose' },
+        p.robotType ? { code: 'robot_not_built_in', source: 'joints', args: { robot_type: p.robotType, known: ['franka_panda', 'franka_fr3'] } } : { code: 'no_robot_type', source: 'joints' },
+      ],
+    };
+  }
+  return {
+    document: {
+      schema_version: 'eef-mapping/1.1',
+      record: {
+        pose: { key: 'observation.state.cartesian_position', layout: 'xyz_rpy_xyz_extrinsic', units: { position: 'm', angle: 'rad' }, frame_id: null, reference_frame: '@upload' },
+        joints: { key: 'observation.state.joint_position', units: 'rad', robot: 'franka_panda', reference_frame: '@upload' },
+      },
+    },
+    assumptions: [
+      { code: 'observation_not_action', source: 'pose', args: { used: 'observation.state.cartesian_position', skipped: ['action.cartesian_position', 'action.original'] } },
+      { code: 'euler_extrinsic_xyz', source: 'pose' },
+      { code: 'units_by_convention', source: 'pose', args: { position: 'm', angle: 'rad' } },
+      { code: 'pose_frame_undeclared', source: 'pose' },
+      { code: 'same_base_as_upload', source: 'pose' },
+      { code: 'robot_from_robot_type', source: 'joints', args: { robot_type: p.robotType, robot: 'franka_panda' } },
+      { code: 'picked_dedicated', source: 'joints', args: { used: 'observation.state.joint_position', others: ['observation.state'] } },
+      { code: 'units_by_convention', source: 'joints', args: { angle: 'rad' } },
+      { code: 'joints_tip_frame', source: 'joints', args: { frame: 'panda_link8', named: ['panda_link8', 'panda_hand', 'panda_hand_tcp'] } },
+      { code: 'same_base_as_upload', source: 'joints' },
+    ],
+    not_drafted: [],
+  };
+}
 const DIGEST2 = 'sha256:4be1c02d9f3ce21a7d24c8b3a90cf1e8d7a5b6c4e3f2a1b0c9d8e7f6a5b4c3d2';
 
 /** The preflight result for a dataset, given the VLM backend and robot type chosen so far. */
@@ -389,7 +446,14 @@ export function preflightFor(p: DatasetProfile, opts: { vlmBackend?: string; emb
     if (needs.includes('eef_input')) {
       // like the CLI (design doc 12): the dataset preflight cannot know the task's trajectory.json;
       // the VLM review follows the module it reviews (F5.6)
-      return { id: m.id, availability: 'needs_input', reason: 'no trajectory.json given', reason_code: 'trajectory_missing', input_hint: { field: 'trajectory_json' } };
+      return {
+        id: m.id,
+        availability: 'needs_input',
+        reason: 'no trajectory.json given',
+        reason_code: 'trajectory_missing',
+        input_hint: { field: 'trajectory_json' },
+        drafts: { record_mapping: recordDraft(p) },
+      };
     }
     if (needs.includes('state') && p.missing.includes('state')) {
       return {

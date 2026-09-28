@@ -258,6 +258,10 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
   只多读 `meta/` 与这一条的 data 文件；mcap 的记录 topic 与视频在同一个 episode 文件里，一起进源缓存。`config_hash` 含映射的
   sha256，换了映射 `--resume` 会重做。有标定的相机上，可疑来源的叠加图写在 `checks/eef_video_consistency/evidence/<ep>/record/`，
   路径另记在 `details.record.evidence`。报告的 EEF 一节多一行「轨迹与数据集记录(只报告,不参与判决)」，另有明细表 `eef_record`。
+  映射里位姿的 `frame_id` 可以写 null（不知道是哪个点：恒定差只报告），`reference_frame` 可以写 `"@upload"`（与上传轨迹同一基座）。
+- `preflight` 的 EEF 条目带 `drafts.record_mapping`（F5.16，D-E17；不给 `record_mapping` 也有）：按 LeRobot `info.json` 的分量名与
+  `robot_type` 起草的映射（`document`）、推断的地方（`assumptions`）、没起草的部分与原因（`not_drafted`）。控制台据此让人确认后作为
+  上传件提交；命令行要用就把 `document` 存成文件传给 `--param …record_mapping=`。mcap / Lance 不起草。
 
 ### mcap 与 Lance 数据集（D44，F6.5）
 

@@ -371,7 +371,7 @@ function recordSource(kind: string, raw: D): EefRecordSource {
     status,
     statusText: R().status[status] ?? status,
     where,
-    frames: s(ids.record) && s(ids.upload) ? R().frames(s(ids.record) ?? '', s(ids.upload) ?? '') : null,
+    frames: s(ids.upload) ? (s(ids.record) ? R().frames(s(ids.record) ?? '', s(ids.upload) ?? '') : R().framesUndeclared(s(ids.upload) ?? '')) : null,
     alignment: how ? [R().alignment[how] ?? how, compared !== null ? R().compared(compared, n(raw.frames_with_pose) ?? compared) : null].filter(Boolean).join('，') : null,
     reasons: reasons.map((r) => R().reason[r] ?? r),
     notes: notes.filter((x) => x !== 'time_offset').map((x) => R().note[x] ?? x),

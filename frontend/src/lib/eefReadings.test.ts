@@ -144,6 +144,9 @@ describe('eefDatasetRecord (design doc 12 §8.7, D-E16)', () => {
     expect(j.notes).toEqual(['映射没有声明两边参考点的关系：拟合出的恒定差只报告，不判']);
     expect(j.relation).toEqual([{ label: '拟合的恒定差', value: '平移 103.4 mm，转 0°', bad: false }]);
     expect([j.lag, j.residual, j.curves]).toEqual([null, [], null]);
+    // a drafted mapping (D-E17): the pose column's point is not declared
+    const drafted = eefDatasetRecord({ record: { status: 'ok', sources: { pose: { source: { kind: 'pose', key: 'p', layout: 'xyz_rpy_xyz_extrinsic', reference_frame: '@upload' }, status: 'ok', frame_ids: { upload: 'panda_link8', record: null } } } } })!;
+    expect(drafted.sources[0].frames).toBe('记录是哪个点未声明（映射写的 null）→ 上传的帧 panda_link8');
     expect(eefDatasetRecord({})).toBeNull();
   });
 

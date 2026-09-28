@@ -368,6 +368,11 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
                     episodes=[ep.index for ep in episodes], media_exists=lambda key: key in listing,
                     lerobot_root=None if "://" in uri else uri)
             entry.update(eef_preflight.module_entry(eef_base, vlm_backend=bool(vlm_backend)))
+            # design doc 12 §8.7 (D-E17): the record mapping drafted from the metadata, for a person to confirm
+            from ..extensions.eef_consistency import record_draft
+
+            entry["drafts"] = {"record_mapping": record_draft.draft(info) if container is None
+                               else record_draft.not_drafted(container["kind"])}
         elif "embodiment_profile" in spec.needs and emb_state != "ok":
             if emb_state == "unsupported":
                 who = "embodiment" if override else "robot_type"

@@ -223,7 +223,85 @@
      },
      "notes": [
       "trajectory.json sha256 e97111c9176a…: 7 of 8 episode(s) declared; the others are unsupported (projection_missing)"
-     ]
+     ],
+     "drafts": {
+      "record_mapping": {
+       "document": {
+        "schema_version": "eef-mapping/1.1",
+        "record": {
+         "pose": {
+          "key": "observation.state.cartesian_position",
+          "layout": "xyz_rpy_xyz_extrinsic",
+          "units": {
+           "position": "m",
+           "angle": "rad"
+          },
+          "frame_id": null,
+          "reference_frame": "@upload"
+         },
+         "joints": {
+          "key": "observation.state.joint_position",
+          "units": "rad",
+          "robot": "franka_panda",
+          "reference_frame": "@upload"
+         }
+        }
+       },
+       "assumptions": [
+        {
+         "code": "observation_not_action",
+         "source": "pose",
+         "args": {
+          "used": "observation.state.cartesian_position",
+          "skipped": [
+           "action.cartesian_position"
+          ]
+         }
+        },
+        {
+         "code": "euler_extrinsic_xyz",
+         "source": "pose"
+        },
+        {
+         "code": "units_by_convention",
+         "source": "pose",
+         "args": {
+          "position": "m",
+          "angle": "rad"
+         }
+        },
+        {
+         "code": "pose_frame_undeclared",
+         "source": "pose"
+        },
+        {
+         "code": "robot_from_robot_type",
+         "source": "joints",
+         "args": {
+          "robot_type": "Franka",
+          "robot": "franka_panda"
+         }
+        },
+        {
+         "code": "joints_tip_frame",
+         "source": "joints",
+         "args": {
+          "frame": "panda_link8",
+          "named": [
+           "panda_link8",
+           "panda_hand",
+           "panda_hand_tcp"
+          ]
+         }
+        },
+        {
+         "code": "same_base_as_upload",
+         "source": "joints"
+        }
+       ],
+       "not_drafted": []
+      }
+     }
     },
     {
      "id": "eef_video_review",
@@ -999,6 +1077,166 @@
    ],
    "meta_fingerprint": "sha256:6d540cc16c051b1aa5f07af381ba463e4d2a0978dc7342ea648c42fc6c7c99ce",
    "warnings": []
+  },
+  {
+   "schema_version": "1.0",
+   "format": {
+    "kind": "lerobot",
+    "version": "v2",
+    "supported": true,
+    "detail": "LeRobot v2, 200 episodes, 3 cameras"
+   },
+   "validation": [],
+   "dataset": {
+    "episode_count": 200,
+    "cameras": [
+     "exterior_1",
+     "exterior_2",
+     "wrist"
+    ],
+    "fps": 15.0,
+    "robot_type": null,
+    "total_frames": 51200,
+    "labels": {
+     "with_task": 112,
+     "without_task": 88
+    },
+    "profile": {
+     "matched": "droid",
+     "by": "robot_type"
+    }
+   },
+   "modules": [
+    {
+     "id": "eef_video_consistency",
+     "availability": "available",
+     "subitems": {
+      "position_2d": {
+       "availability": "available",
+       "reason_code": null
+      },
+      "orientation_2d": {
+       "availability": "available",
+       "reason_code": null
+      },
+      "temporal_alignment": {
+       "availability": "available",
+       "reason_code": null
+      },
+      "state_motion": {
+       "availability": "available",
+       "reason_code": null
+      },
+      "camera_motion": {
+       "availability": "available",
+       "reason_code": null
+      },
+      "input_consistency": {
+       "availability": "unsupported",
+       "reason_code": "projection_missing"
+      }
+     },
+     "episode_counts": {
+      "available": 7,
+      "unsupported": 1
+     },
+     "notes": [
+      "trajectory.json sha256 e97111c9176a…: 7 of 8 episode(s) declared; the others are unsupported (projection_missing)"
+     ],
+     "drafts": {
+      "record_mapping": {
+       "document": {
+        "schema_version": "eef-mapping/1.1",
+        "record": {
+         "pose": {
+          "key": "observation.state.cartesian_position",
+          "layout": "xyz_rpy_xyz_extrinsic",
+          "units": {
+           "position": "m",
+           "angle": "rad"
+          },
+          "frame_id": null,
+          "reference_frame": "@upload"
+         },
+         "joints": {
+          "key": "observation.state.joint_position",
+          "units": "rad",
+          "robot": "franka_panda",
+          "reference_frame": "@upload"
+         }
+        }
+       },
+       "assumptions": [
+        {
+         "code": "observation_not_action",
+         "source": "pose",
+         "args": {
+          "used": "observation.state.cartesian_position",
+          "skipped": [
+           "action.cartesian_position"
+          ]
+         }
+        },
+        {
+         "code": "euler_extrinsic_xyz",
+         "source": "pose"
+        },
+        {
+         "code": "units_by_convention",
+         "source": "pose",
+         "args": {
+          "position": "m",
+          "angle": "rad"
+         }
+        },
+        {
+         "code": "pose_frame_undeclared",
+         "source": "pose"
+        },
+        {
+         "code": "robot_from_robot_type",
+         "source": "joints",
+         "args": {
+          "robot_type": "Franka",
+          "robot": "franka_panda"
+         }
+        },
+        {
+         "code": "joints_tip_frame",
+         "source": "joints",
+         "args": {
+          "frame": "panda_link8",
+          "named": [
+           "panda_link8",
+           "panda_hand",
+           "panda_hand_tcp"
+          ]
+         }
+        },
+        {
+         "code": "same_base_as_upload",
+         "source": "joints"
+        },
+        {
+         "source": "pose",
+         "args": {}
+        }
+       ],
+       "not_drafted": []
+      }
+     }
+    },
+    {
+     "id": "eef_video_review",
+     "availability": "unsupported",
+     "reason": "the VLM review of EEF-video consistency is not part of the DEMO's first cut",
+     "reason_code": "eef_review_not_available"
+    }
+   ],
+   "meta_fingerprint": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+   "warnings": [
+    "episodes_stats.json missing; per-episode stats will be recomputed"
+   ]
   }
  ]
 }

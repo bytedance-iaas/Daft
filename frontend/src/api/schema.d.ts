@@ -2136,6 +2136,20 @@ export interface components {
             reason?: string | null;
         };
         module_id: string;
+        draft_note: {
+            code: string;
+            /** @description The part of the draft it is about (record_mapping: pose | joints) */
+            source?: string;
+            args?: Record<string, unknown>;
+        };
+        param_draft: {
+            /** @description The drafted parameter file (for record_mapping an eef-mapping/1.1 mapping); null when nothing could be drafted */
+            document: Record<string, unknown> | null;
+            /** @description What the draft infers rather than reads, each to be shown to the person confirming it */
+            assumptions: components["schemas"]["draft_note"][];
+            /** @description The parts left out, and why */
+            not_drafted: components["schemas"]["draft_note"][];
+        };
         /** @constant */
         schema_version: "1.0";
         module_availability: {
@@ -2168,6 +2182,10 @@ export interface components {
             /** @description Modules with per-episode inputs (EEF-video consistency): the selected episodes by availability */
             episode_counts?: {
                 [key: string]: number;
+            };
+            /** @description Parameters the module drafts from the dataset's metadata for a person to confirm before use, by parameter key (design doc 12 §8.7, D-E17: EEF-video consistency drafts record_mapping from a LeRobot info.json) */
+            drafts?: {
+                [key: string]: components["schemas"]["param_draft"];
             };
         } & (unknown & unknown);
         digest: string;

@@ -103,12 +103,37 @@
           "description": "Modules with per-episode inputs (EEF-video consistency): the selected episodes by availability",
           "propertyNames": {"enum": ["available", "needs_input", "unsupported"]},
           "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "drafts": {
+          "type": "object",
+          "description": "Parameters the module drafts from the dataset's metadata for a person to confirm before use, by parameter key (design doc 12 §8.7, D-E17: EEF-video consistency drafts record_mapping from a LeRobot info.json)",
+          "additionalProperties": {"$ref": "#/$defs/param_draft"}
         }
       },
       "allOf": [
         {"if": {"properties": {"availability": {"const": "unsupported"}}}, "then": {"required": ["reason", "reason_code"]}},
         {"if": {"properties": {"availability": {"const": "needs_input"}}}, "then": {"required": ["reason", "reason_code", "input_hint"]}}
       ]
+    },
+    "param_draft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document", "assumptions", "not_drafted"],
+      "properties": {
+        "document": {"type": ["object", "null"], "description": "The drafted parameter file (for record_mapping an eef-mapping/1.1 mapping); null when nothing could be drafted"},
+        "assumptions": {"type": "array", "description": "What the draft infers rather than reads, each to be shown to the person confirming it", "items": {"$ref": "#/$defs/draft_note"}},
+        "not_drafted": {"type": "array", "description": "The parts left out, and why", "items": {"$ref": "#/$defs/draft_note"}}
+      }
+    },
+    "draft_note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "source": {"type": "string", "description": "The part of the draft it is about (record_mapping: pose | joints)"},
+        "args": {"type": "object"}
+      }
     }
   }
 }

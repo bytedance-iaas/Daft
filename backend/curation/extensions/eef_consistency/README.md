@@ -30,6 +30,7 @@
 | `diagnosis.py` | 诊断假设（只在对应分项已 suspect 时算，不改状态）：PnP 外参修正、时间偏移、恒定朝向错（三维拟合 EEF 本体系恒定旋转）、TCP 轴向偏移（一维拟合）、位姿漂移、抖动来源 |
 | `profile.py`、`profiles/demo.yaml` | 阈值 profile；`demo` 标 `calibrated: false`，每个数都注明来自哪条基准的噪声底、乘了多少倍；`record` 段是记录比对的阈值 |
 | `robots.py` | 记录比对用的内置正向运动学（设计 12 §8.7）：Franka Panda / FR3 的改进 DH，链末是法兰 `panda_link8`，另有具名帧 `panda_hand`（法兰绕 z 转 −45°）与 `panda_hand_tcp`（再沿 z 0.1034 m）；dataset2 上与位姿列逐帧重合 |
+| `record_draft.py` | 记录映射的起草（设计 12 §8.7，D-E17）：按 LeRobot `info.json` 的分量名与 `robot_type` 起草位姿与关节角来源（只看 `observation.*` 的实测列，专用列优先于拼接列、拼接列写切片），逐条给出推断的地方（代码 + 参数），有歧义或认不出时不起草并说明原因；CLI 预检放进 EEF 条目的 `drafts.record_mapping` |
 | `record.py` | 轨迹与数据集记录（设计 12 §8.7，D-E16，只报告、不参与判决）：`eef-mapping/1.1` 的 `record` 块（1.0 映射的 `eef` 块就是位姿来源）；读 LeRobot 列或 mcap topic；逐帧对齐（`source_state_index` > 帧数相同按帧号 > 时间戳插值）；主指标是按声明关系算的原始残差；工具侧拟合恒定差并与声明比（`constant_mismatch`，推不出期望关系时只报告）；扣掉常量后迟滞分段（`record_deviation`）；时间差（正值 = 记录晚）；数据集内部位姿列与关节角正解互比；有标定时画叠加证据图 |
 | `runner.py` | 单 episode 的流式执行：解码 → 观测 → 测量 → 判定 → 诊断 → 产物（`observations/`、`curves/*.parquet`、`evidence/` 叠加图），输出 §11.3 的 `detail`；`attach_record` 加上 `details.record`（没有夹爪参考的意见路径也调它） |
 | `decide.py` | 逐条判决（D-E12 / 附录 C.9）：模型能看的分项（位置、朝向）按分项多数意见与 CPU 比对，模型看不了的分项（时间对齐、状态运动、相机运动）CPU 可疑即转人工，文件里没有或位置到处无法评估的转人工；有确认的判废即判废，否则有转人工理由即转人工，否则判过 |
@@ -263,7 +264,16 @@
     `checks/eef_video_consistency/evidence/000001/record/` 下每路相机 3 张叠加图（帧 84、148、266，也列在 `details.record.evidence`）：
     红圈是上传的轨迹，橙圈是关节角正解，都带前后 15 帧的拖尾。`report.md` 的 EEF 一节多一行「轨迹与数据集记录(只报告,不参与判决)…」，
     `tables/` 多一张 `eef_record`。mcap 数据集把 `key` 换成 `topic`（加 `fields`，如 `"topic": "/arm/joint_states", "fields": "position"`）。
-    控制台：第二屏「数据集记录映射」上传上面的 JSON，到货即校验，显示「比对来源 关节角、位姿列 · 机器人 franka_panda · 列 …」；
+    不想手写（F5.16，D-E17）：LeRobot 数据集的预检已经起草好一份，
+    `../.venv/bin/python -m curation.cli preflight --json --input $G/eef_ds2_lr3 --modules eef_video_consistency`
+    输出里 EEF 条目的 `drafts.record_mapping`：`document` 的位姿是 `observation.state.cartesian_position`（`frame_id: null`，参考点未声明）、
+    关节角是 `observation.state.joint_position`（`franka_panda`），基座都是 `"@upload"`；`assumptions` 逐条列出推断的地方（选实测不选指令、
+    外旋 xyz、单位 m / rad、参考点未声明、同一基座、型号对应、正解到法兰）。把 `document` 存成文件当映射传，比对结论与上面相同：关节角
+    ep1 / ep2 / ep3 照旧，位姿列 7 条一致、注明恒定差未检查（数据集内部互比也只到拟合常量为止，ep2 的 30° 在这里看不出）。mcap 数据集
+    给 `format_not_drafted`。
+    控制台：第二屏「数据集记录映射」上方是「从数据集元数据起草」一块（来源、推断的地方），「确认使用」即把草稿作为上传件提交，
+    「修改」给 JSON 编辑框（比如把位姿的 `frame_id` 填成 `panda_link8`，这一路的恒定差也会判），「撤销」清掉；也可以照旧上传上面的 JSON，
+    到货即校验，显示「比对来源 关节角、位姿列 · 机器人 franka_panda · 列 …」；
     跑完后「Episode 明细」和裁决卡片的 EEF 区块末尾是「轨迹与数据集记录」：每个来源一块（读哪一列、怎么对齐、按声明 / 扣掉恒定差后
     两组残差、声明 / 拟合 / 相差的恒定差、时间差、随时间变化的差、位置与姿态两张残差曲线），然后是数据集内部一致与否和叠加图
     （不再出现在「CPU 证据帧」里）；报告的 EEF 小节多「与数据集记录比过」「与记录不一致」等数、一张原因图和一张按来源的状态表。

@@ -3,6 +3,10 @@
 // HuggingFace 缓存桶、恢复为可用). Module names never live here: they come from GET /modules.
 
 const join = (xs: readonly string[]) => xs.join('、');
+// the arguments of a code the server sent (preflight drafts): read leniently
+type Args = Record<string, unknown>;
+const S = (v: unknown): string => (v === undefined || v === null ? '' : String(v));
+const L = (v: unknown): string => (Array.isArray(v) ? join(v.map(String)) : S(v));
 
 export const zh = {
   app: {
@@ -450,6 +454,45 @@ export const zh = {
       ]
         .filter(Boolean)
         .join(' · '),
+    // a parameter file the preflight drafted from the dataset's metadata (design doc 12 §8.7, D-E17)
+    draft: {
+      title: '从数据集元数据起草',
+      confirm: '确认使用',
+      edit: '修改',
+      cancelEdit: '取消修改',
+      undo: '撤销',
+      confirmed: '已确认草稿，随任务提交',
+      assumed: '推断的地方',
+      notDrafted: '没起草的部分',
+      noneDrafted: (why: string) => `没能从数据集元数据起草：${why}`,
+      editHint: '改好后点「确认使用」，提交的是框里的内容',
+      editLabel: '映射草稿（JSON）',
+      poseLine: (key: string, layout: string, units: string, frame: string | null) =>
+        `位姿：${key} · ${layout} · ${units} · ${frame ? `参考点 ${frame}` : '参考点未声明'}`,
+      jointsLine: (key: string, robot: string, units: string) => `关节角：${key} · ${robot} · ${units}`,
+      slice: (from: number, to: number) => `[${from}:${to}]`,
+      source: { pose: '位姿', joints: '关节角' } as Record<string, string>,
+      assumption: {
+        observation_not_action: (a: Args) => `用的是实测列 ${S(a.used)}，没用指令列 ${L(a.skipped)}（指令一般领先实测）`,
+        picked_dedicated: (a: Args) => `用 ${S(a.used)}；${L(a.others)} 里也有这些分量，没用`,
+        slice_from_names: (a: Args) => `取 ${S(a.key)} 的一段分量 ${Array.isArray(a.slice) ? `[${a.slice.join(':')}]` : ''}`,
+        euler_extrinsic_xyz: () => 'roll / pitch / yaw 按外旋 xyz 解读',
+        quaternion_order: (a: Args) => `四元数按 ${S(a.order)} 的顺序`,
+        units_by_convention: (a: Args) => `数据集没写单位，按惯例取${a.position ? `位置 ${S(a.position)}、` : ''}角度 ${S(a.angle)}`,
+        pose_frame_undeclared: () => '位姿描述的是哪个点（法兰还是指尖）没写：它和上传轨迹之间的恒定差只报告、不判；知道的话点「修改」填 frame_id',
+        same_base_as_upload: () => '数据集的记录和上传轨迹在同一个基座坐标系',
+        robot_from_robot_type: (a: Args) => `robot_type「${S(a.robot_type)}」→ 内置 ${S(a.robot)} 正解`,
+        joints_tip_frame: (a: Args) => `关节角正解得到法兰 ${S(a.frame)}：上传轨迹的 eef_frame 是 ${L(a.named)} 之一时恒定差照常判，否则只报告`,
+      } as Record<string, (a: Args) => string>,
+      why: {
+        no_named_pose_column: () => '没有带 x / y / z 与 roll / pitch / yaw（或四元数）分量名的实测位姿列',
+        no_named_joint_column: (a: Args) => `没有正好 ${S(a.joints)} 个连续关节角分量名的实测列`,
+        ambiguous: (a: Args) => `有几列都像：${L(a.candidates)}，请自己选`,
+        no_robot_type: () => '数据集没写 robot_type，算不了关节角正解',
+        robot_not_built_in: (a: Args) => `robot_type「${S(a.robot_type)}」没有内置正解（现有 ${L(a.known)}）`,
+        format_not_drafted: (a: Args) => `${S(a.format)} 数据集暂不起草，请上传映射文件`,
+      } as Record<string, (a: Args) => string>,
+    },
     titleNew: '新建质检任务',
     titleEdit: '编辑待启动任务',
     titleCopy: '复制为新任务',
@@ -1567,6 +1610,7 @@ export const zh = {
       topic: (topic: string, fields: string | null) => (fields ? `topic ${topic} · 字段 ${fields}` : `topic ${topic}`),
       robot: (robot: string) => `机器人 ${robot}`,
       frames: (record: string, upload: string) => (record === upload ? `两边都是 ${record}` : `记录的帧 ${record} → 上传的帧 ${upload}`),
+      framesUndeclared: (upload: string) => `记录是哪个点未声明（映射写的 null）→ 上传的帧 ${upload}`,
       alignment: { source_state_index: '按 source_state_index 对齐', frame_index: '按帧号对齐', timestamp: '按时间戳对齐（记录插值）' } as Record<string, string>,
       compared: (n: number, of: number) => `比了 ${n} / ${of} 帧`,
       rows: { raw: '按声明关系的差', after: '扣掉恒定差后' },

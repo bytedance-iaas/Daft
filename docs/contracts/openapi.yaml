@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.19.0
+  version: 1.20.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -131,6 +131,15 @@ info:
     `busy` lists the spans during which episodes were out (at most 64; the rest of the layer's run
     is waiting), `held_by_downstream` that it has episodes to hand out but holds them because the
     next layer's queue is full. Both optional: snapshots written before have neither.
+
+    1.19.0 (2026-09-28): the upload kind `eef_record_mapping` (registry 1.13, design doc 12 §8.7): the
+    EEF module's dataset-record mapping (`eef-mapping/1.1`), validated on arrival; its summary names
+    the sources, the robot, the columns / topics and the declared frames.
+
+    1.20.0 (2026-09-28): a module's preflight entry may carry `drafts` (C2 preflight schema): files a
+    module drafts from the dataset's metadata for a person to confirm before use, by parameter key -
+    the EEF module's `record_mapping` from a LeRobot info.json, with every assumption listed (design
+    doc 12 §8.7, D-E17). Confirming uploads the draft as an `eef_record_mapping` like any other file.
 servers:
   - url: "{base}/api/v1"
     variables:

@@ -379,3 +379,72 @@ def test_dataset2_check_lists_its_overlays_in_the_record(tmp_path):
     assert shown and {e["path"] for e in shown} <= set(r["evidence"])
     assert all((rd / e["path"]).is_file() and "/record/" in e["path"] for e in shown)
     assert r["details"]["record"]["sources"]["joints"]["status"] == "suspect"
+
+
+# ------------------------------------------------------------------------------------ drafted by the preflight (F5.16)
+
+
+def test_the_preflight_drafts_the_mapping_for_a_person_to_confirm(mini_dataset, tmp_path):
+    """Design doc 12 §8.7 (D-E17): the dataset preflight - no file given yet - carries a draft of the record
+    mapping with what it assumed; the draft, confirmed as it is, makes the sub-item available. mcap is
+    not drafted."""
+    from parity.fixtures import make_mini_mcap
+
+    (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF).doc["modules"]
+    assert entry["reason_code"] == "trajectory_missing"                           # drafted all the same
+    draft = entry["drafts"]["record_mapping"]
+    assert draft["document"]["record"] == {"joints": {"key": "observation.state", "units": "rad",
+                                                      "robot": "franka_panda", "reference_frame": "@upload"}}
+    assert {a["code"] for a in draft["assumptions"]} >= {"observation_not_action", "robot_from_robot_type",
+                                                         "units_by_convention", "joints_tip_frame"}
+    assert draft["not_drafted"] == [{"code": "no_named_pose_column", "source": "pose"}]
+    confirmed = _mapping(tmp_path, draft["document"], "draft.json")
+    (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF, "--vlm-backend", "ark",
+                   "--param", f"{EEF}.trajectory_json={_bundle(tmp_path)}",
+                   "--param", f"{EEF}.record_mapping={confirmed}").doc["modules"]
+    assert entry["subitems"]["record_consistency"]["availability"] == "available"
+    mcap = make_mini_mcap(str(tmp_path / "mini_mcap"))
+    (entry,) = run("preflight", "--input", mcap, "--modules", EEF).doc["modules"]
+    assert entry["drafts"]["record_mapping"]["not_drafted"] == [{"code": "format_not_drafted",
+                                                                 "args": {"format": "mcap"}}]
+
+
+def test_the_drafted_mapping_compares_like_a_written_one(mini_dataset, tmp_path):
+    """The mini dataset's measured joints (``observation.state``, a frame behind the commands the upload
+    was made from): the draft finds the one-frame lag; the joints' flange is the upload's own frame, so
+    the constant is checked."""
+    from curation.extensions.eef_consistency import record_draft as D
+
+    info = json.loads(open(os.path.join(mini_dataset, "meta", "info.json")).read())
+    got = _compare(_bundle(tmp_path), _mapping(tmp_path, D.draft(info)["document"]), _lerobot(mini_dataset))
+    src = got["sources"]["joints"]
+    assert src["status"] == "suspect" and src["reasons"] == ["record_deviation"] and src["relation"]["declared"]
+    assert abs(src["time_offset"]["lag_frames"] - 1.0) < 0.3
+    tcp = _compare(_bundle(tmp_path, frame="tool", tcp=TCP, name="tcp.json"),
+                   _mapping(tmp_path, D.draft(info)["document"], "d2.json"), _lerobot(mini_dataset))
+    assert "constant_unchecked" in tcp["sources"]["joints"]["notes"]      # "tool" is none of the robot's frames
+
+
+def test_dataset2_with_the_drafted_mapping():
+    """What dataset2's draft finds: the joints as with a written mapping (their flange is the upload's
+    frame); the pose columns agree, their constant only reported (the point they describe is not
+    declared, so the dataset's own two records are compared up to a fitted constant too)."""
+    from ..eef import demo_data
+
+    from curation.extensions.eef_consistency import load, profile
+    from curation.extensions.eef_consistency import record as RC
+    from curation.extensions.eef_consistency import record_draft as D
+
+    root = demo_data.require("dataset2")
+    lr = demo_data.lerobot_root("dataset2")
+    m = RC.parse_mapping(D.draft(json.loads((lr / "meta" / "info.json").read_text()))["document"])
+    r = load.load_bundle(root / "trajectory.json", check_media=False)
+    got = {ep: RC.strip(RC.compare_episode(r.samples[ep], m, RC.LeRobotRecords(lr), profile.load("demo")))
+           for ep in range(7)}
+    assert all(g["sources"]["pose"]["status"] == "ok" and "constant_unchecked" in g["sources"]["pose"]["notes"]
+               for g in got.values())
+    joints = {ep: (g["sources"]["joints"]["status"], g["sources"]["joints"]["reasons"]) for ep, g in got.items()}
+    assert joints == {0: ("ok", []), 1: ("suspect", ["constant_mismatch", "record_deviation"]),
+                      2: ("suspect", ["constant_mismatch"]), 3: ("suspect", ["record_deviation"]),
+                      4: ("ok", []), 5: ("ok", []), 6: ("ok", [])}
+    assert [ep for ep, g in got.items() if g["internal"]["consistent"] is False] == [1, 3]
