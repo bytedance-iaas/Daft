@@ -63,6 +63,41 @@ video:
 完整视频重算。EEF 的恢复判断同时比较视频协议和预处理配置。
 技能体系归纳、分配和统计仍是文本处理，无需把整批视频再次交给模型。
 
+## 逐机位画面缺陷（camera_defects，registry 1.14）
+
+逐机位复核的请求里追加一段提问，让模型在返回成败结论的同一份 JSON 里多给一个字段 `camera_check`，
+报告这路相机自己的三项画面缺陷：花屏（`glitch`）、相机抖动（`shake`）、镜头污染（`contamination`）。
+每项给 `none` / `minor` / `severe` / `unknown` 四档、若干时间段（口径同 `evidence`：episode 相对秒）
+和一句说明，污染另给 `kind`（`dirt` / `smudge` / `water` / `obstruction` / `other`）。抖动指相机本体
+晃动，腕部相机随手臂运动属正常，只报超出的抖动。
+
+- **不增加模型调用**：复核请求本来每路相机一次、无条件发出，这段提问只是让同一次回答多带一个字段。
+  请求体不变（没有新媒体），只多约 150 个输出 token。
+- **每次都问**，没有开关、界面上也不勾选：`camera_defects` 是 `task_success` 的随附模块
+  （`ModuleSpec.rides_on="task_success"`）。凡是 `task_success` 在跑，它就出结果；单独跑它是参数错误。
+- **只出结果，不影响判决**：`affects_dataset_verdict=False`，记录永远是 `passed=score=null`（`abstain`），
+  不进 keep / drop / held，不提复核问题。
+- **解析永不失败**：缺字段、档位写错、时间段越界都只记进 `problems`，三项按 `unknown` 落盘，绝不触发
+  格式修复重试，也不影响 `verdict`、`completion` 和 `evidence` 的校验。
+- **写坏了也只赔自己**：整份回答解析不了时，先按花括号配对把 `camera_check` 这一个字段整块剪掉再解析
+  五个核心字段；剪成功照常出判决，三项记 unknown 并写明原因，剪不掉才按老规矩修复重试。2026-09-28
+  真实数据上模型写出 `"times":[[2,5] [9,12]]`（漏逗号），此前会让整路复核失败、把 episode 拖成待补跑。
+- **约束解码**：三类视频调用（主判、复核、仲裁）都带 `response_format: {"type": "json_object"}`，由服务端
+  保证输出是合法 JSON，从根上消掉语法错误这一类；后端拒绝这个字段时自动降级为不带它再问（自建引擎不一定
+  支持），不因此失败。语义仍靠既有校验：引用的相机、时间窗口、档位枚举照旧检查，一次修复重试保留。
+- **整段就说整段**：覆盖窗口 95% 以上的时间区间折成 `whole` 标记、清空 `times`，控制台显示「全程」。
+  5fps 下模型的定位精度只有 0.2 秒且会四舍五入，一个 0–57 秒的区间是「一直都有」而不是定位，不该写成
+  看起来精确的数字。每项最多两个区间，取最严重的两段，本质是线索而非穷举。
+- 记录的 `details`：`protocol="camera-check/1"`、`source="task_success.video_reviews"`、`items` 是三项各一个
+  跨机位最坏档（`none` / `minor` / `severe` / `unknown`），逐机位的档位、时间段与污染种类只存一份在
+  `per_camera` 里（同一件事不说两遍），`clean_ratio` 是「已答项里判为 none 的比例」，`reason` 说明为什么是
+  unknown（成败判定没结果 / 没跑复核 / 模型没答）。报告小节按三项各一张计数图，episode 明细页一行给三项
+  最坏档、再只列报了问题的机位。
+- `--resume` 口径：`details.protocol` 不是 `camera-check/1` 的旧记录视为待补跑，会连同 `task_success`
+  一起重判；主判协议 `video-task/1` 不动。
+- 模型在 5fps / ≤720p 上可能漏掉单帧花屏、把腕部相机的正常运动当抖动、把静止遮挡物当污染——所以它只
+  作建议项，与 CPU 侧 `visual_quality`（清晰度、曝光、冻结的逐帧统计量）互补。
+
 ## EEF 复核
 
 每个复核窗口发送两段连续视频：RAW 原图和 MARKED 投影叠加图。保留原视频时间轴；叠加图按每一帧

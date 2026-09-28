@@ -69,6 +69,16 @@ def test_no_vlm_backend_means_needs_input(cli, dataset):
         assert m["reason_code"] == "vlm_backend_missing"
 
 
+def test_a_rider_is_exactly_as_available_as_its_host(cli, dataset):
+    """camera_defects (registry 1.14) runs inside task_success's requests: the console reads the
+    host's availability off it, and its own needs never decide anything here."""
+    for extra in ([], ["--vlm-backend", "ark-prod"]):
+        doc = cli("preflight", "--input", dataset, *extra).doc
+        host, rider = _mod(doc, "task_success"), _mod(doc, "camera_defects")
+        assert rider == {**host, "id": "camera_defects"}
+        assert rider["availability"] == ("needs_input" if not extra else "available")
+
+
 def test_missing_task_text_does_not_grey_out_vlm_modules(cli, dataset):
     doc = _valid(cli("preflight", "--input", dataset, "--vlm-backend", "ark-prod").doc)
     for mid in ("task_success", "skill_profile"):

@@ -79,9 +79,15 @@ def _modules(raw: str) -> tuple[list[str], str]:
         raise UsageError(f"--modules {','.join(mods)} spans stages {sorted(stages)}; "
                          f"one call runs one stage")
     stage = stages.pop()
-    advisory = [m for m in mods if m in registry.advisory_ids()]
-    if advisory and len(advisory) != len(mods):
-        raise UsageError(f"advisory module(s) {advisory} run in a call of their own (they read every "
+    for m in mods:
+        host = registry.get(m).rides_on
+        if host and host not in mods:
+            raise UsageError(f"{m} is answered inside {host}'s model requests and runs with it: "
+                             f"--modules {host} brings it along; it cannot run on its own")
+    mods = registry.with_riders(mods)                  # a host's riders always run with it
+    alone = [m for m in mods if registry.get(m).input_scope == "all_selected"]
+    if alone and len(alone) != len(mods):
+        raise UsageError(f"advisory module(s) {alone} run in a call of their own (they read every "
                          f"selected episode, not the survivors); leave them out of this call")
     if stage in ("post_verdict", "profile_vlm") and len(mods) != 1:
         raise UsageError("dedup and skill_profile run one at a time (profile reads the "

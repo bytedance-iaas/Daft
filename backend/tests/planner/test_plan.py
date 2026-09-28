@@ -56,7 +56,7 @@ def test_full_plan_matches_the_design_example():
         "modules": ["visual_quality", "video_action_sync"], "episodes": "survivors:numeric",
         "hard_gates": ["video_action_sync"]}
     vlm = stage(p, "vlm")
-    assert vlm["modules"] == ["task_success"] and vlm["episodes"] == "survivors:frame"
+    assert vlm["modules"] == ["task_success", "camera_defects"] and vlm["episodes"] == "survivors:frame"
     assert vlm["gates"] == {"episode": 32, "probe": 64, "endstate": 64, "arbitration": 32,
                             "guard_caption": 32}
     assert vlm["merge"] == {"strategy": "none", "groups": []}
@@ -76,7 +76,8 @@ def test_the_eef_module_is_a_vlm_gate_on_the_frame_survivors():
     assert ids(p) == ["autolabel", "integrity", "numeric", "frame", "vlm", "verdict", "dedup",
                       "profile_vlm", "final"]
     vlm = stage(p, "vlm")
-    assert vlm["modules"] == ["eef_video_consistency", "task_success"] and vlm["episodes"] == "survivors:frame"
+    assert vlm["modules"] == ["eef_video_consistency", "task_success", "camera_defects"] \
+        and vlm["episodes"] == "survivors:frame"
     assert vlm["hard_gates"] == ["eef_video_consistency", "task_success"]
     only = plan(["eef_video_consistency"])
     assert ids(only) == ["vlm", "verdict", "final"] and stage(only, "vlm")["episodes"] == "selected"
@@ -205,7 +206,7 @@ def test_registry_declares_no_merge_units():
 def test_example_modules_are_proposed_for_merging():
     p = plan(["task_success", "example_grasp", "example_table"], registry=X.REGISTRY)
     vlm = stage(p, "vlm")
-    assert vlm["modules"] == ["task_success", "example_grasp", "example_table"]
+    assert vlm["modules"] == ["task_success", "camera_defects", "example_grasp", "example_table"]
     assert vlm["merge"] == {"strategy": "per_episode_multi_module",
                             "groups": [{"modules": ["example_grasp", "example_table"],
                                         "frame_policy": X.FRAME_POLICY.key}]}
@@ -293,3 +294,13 @@ def test_plan_is_deterministic_and_json():
     a = plan(preflight=X.preflight(64, without_task=3))
     b = plan(preflight=X.preflight(64, without_task=3))
     assert json.dumps(a, sort_keys=False) == json.dumps(b, sort_keys=False)
+
+
+def test_a_rider_runs_with_its_host_and_never_alone():
+    """Registry 1.14: camera_defects is answered inside task_success's requests: it is in the vlm
+    stage whenever task_success is, asked for or not, costs no request, and alone it is left out."""
+    p = plan(["task_success"])
+    assert stage(p, "vlm")["modules"] == ["task_success", "camera_defects"]
+    assert plan(["task_success", "camera_defects"]) == p
+    assert stage(plan(["timestamp_check", "camera_defects"]), "numeric")["modules"] == ["timestamp_check"]
+    assert "vlm" not in ids(plan(["timestamp_check", "camera_defects"]))

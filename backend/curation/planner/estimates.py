@@ -74,6 +74,8 @@ def estimate(stages: Sequence[Mapping[str, Any]], specs: Mapping[str, Any], *,
                     requests += probes + reviews
                     seconds += _vlm_seconds(probes, gates["probe"])
                     seconds += _vlm_seconds(reviews, gates["endstate"])
+                elif getattr(specs[module], "rides_on", None):
+                    pass                              # answered inside its host's requests
                 else:
                     uncounted.append(module)
         elif sid in ("verdict", "final"):

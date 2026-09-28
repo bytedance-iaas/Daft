@@ -148,6 +148,11 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
     count = int(dataset["episode_count"])
     selected = _selected(episodes, count)
     requested = set(_requested(modules, specs))
+    # a rider (registry 1.14) is never selected on its own: whenever its host is requested it
+    # runs in the host's requests, and without the host it is left out quietly
+    requested |= {s.id for s in specs.values() if getattr(s, "rides_on", None) in requested}
+    requested -= {s.id for s in specs.values()
+                  if getattr(s, "rides_on", None) and s.rides_on not in requested}
     availability = {m["id"]: m for m in preflight.get("modules") or []}
 
     notes: list[str] = []

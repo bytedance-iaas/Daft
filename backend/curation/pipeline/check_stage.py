@@ -118,14 +118,17 @@ class BreakerTripped(Exception):
 class _Breaker:
     """P15 on the first episodes of a VLM stage (in completion order)."""
 
-    def __init__(self, limit: int = BREAKER_LIMIT):
+    def __init__(self, limit: int = BREAKER_LIMIT, watched: set[str] | None = None):
         self.limit, self.count, self.cause, self.armed = limit, 0, None, True
+        self.watched = watched            # None: every module; else only these (the verdict's)
 
     def observe(self, records: dict[str, dict]) -> None:
         if not self.armed:
             return
         causes = set()
-        for rec in records.values():
+        for module, rec in records.items():
+            if self.watched is not None and module not in self.watched:
+                continue                  # an advisory rider's record says nothing about the model
             if rec["verdict"] != "error":
                 self.armed = False
                 return
@@ -199,11 +202,15 @@ class StageRun:
         stale = {m: set(ids) for m, ids in (self.o.stale or {}).items()}
         clients = self.o.task_clients
         if "task_success" in current and clients is not None and getattr(clients.vlm_completion, "media_input", None) == "video":
-            from ..adapters.video_vlm import PROTOCOL
+            from ..adapters.video_vlm import CAMERA_CHECK_PROTOCOL, PROTOCOL
 
             stale.setdefault("task_success", set()).update(
                 e for e, rec in current["task_success"].items()
                 if (rec.get("details") or {}).get("protocol") != PROTOCOL)
+            if "camera_defects" in current:
+                stale.setdefault("camera_defects", set()).update(
+                    e for e, rec in current["camera_defects"].items()
+                    if (rec.get("details") or {}).get("protocol") != CAMERA_CHECK_PROTOCOL)
         done = {e for e in eps
                 if all(e in current[m] and current[m][e]["verdict"] != "error" and e not in stale.get(m, ())
                        for m in self.o.modules)}
@@ -307,6 +314,13 @@ class StageRun:
             s, e = self._task_success(ep, row, logs)
             structs.update(s)
             evidence.update(e)
+            if "camera_defects" in self.o.modules:
+                # the rider: read back out of the per-camera reviews, no request of its own;
+                # built here rather than in _task_success so an episode without task text
+                # or with an internal error still gets its (all-unknown) record
+                from ..extensions import camera_defects
+
+                structs["camera_defects"] = camera_defects.struct_from_task(s.get("task_success"))
         if self.o.eef is not None:
             s, e = self.o.eef.judge(ep, logs[self.o.eef.module])
             structs[self.o.eef.module] = s
@@ -441,7 +455,8 @@ class StageRun:
         total = len(o.episodes)
         writer = PartWriter(o.run_dir, o.modules, o.part, index=self._store is None)
         inflight = Inflight(o.run_dir, o.modules, o.part)
-        breaker = _Breaker() if o.stage == "vlm" else None
+        breaker = (_Breaker(watched={m for m in o.modules if registry_mod.get(m).affects_dataset_verdict})
+                   if o.stage == "vlm" else None)
         self.done = skipped if o.episode_stream is None else 0
         drained = False
         try:

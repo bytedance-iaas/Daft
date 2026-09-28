@@ -837,6 +837,18 @@ export const zh = {
     divergences: '标注分歧',
     unstable: '看法不稳',
     family_distribution: '技能分布',
+    glitch: '花屏',
+    shake: '相机抖动',
+    contamination: '镜头污染',
+    none: '无',
+    minor: '轻微',
+    severe: '严重',
+    unknown: '未知',
+    episodes_with_severe: '有严重缺陷的条目',
+    episodes_with_minor_or_worse: '有缺陷的条目',
+    cameras: '机位数',
+    cameras_unanswered: '模型未答的机位',
+    clean_ratio_mean: '判为无缺陷的比例（均值）',
   } as Record<string, string>,
 
   taskDetail: {
@@ -1643,6 +1655,17 @@ export const zh = {
 
   /** The report's Episode tab (F6.2): one episode, module by module. */
   episodeTab: {
+    cameraDefects: {
+      items: { glitch: '花屏', shake: '抖动', contamination: '镜头污染' } as Record<string, string>,
+      level: { none: '无', minor: '轻微', severe: '严重', unknown: '未知' } as Record<string, string>,
+      kind: { dirt: '脏污', smudge: '油污', water: '水渍', obstruction: '遮挡物', other: '其它' } as Record<string, string>,
+      clean: '各机位画面正常',
+      whole: '全程',
+      span: (start: string, end: string) => `${start}–${end} 秒`,
+      advisory: '建议项，不影响判决',
+      unanswered: (n: number) => `${n} 路机位模型没答`,
+      others: (n: number) => `另 ${n} 路正常`,
+    },
     search: '选择 episode',
     searchPlaceholder: '输入编号，如 12 或 ep12',
     filter: { all: '全部', passed: '通过', reject: '拒绝', held: '待补跑', review: '待裁决' } as Record<string, string>,

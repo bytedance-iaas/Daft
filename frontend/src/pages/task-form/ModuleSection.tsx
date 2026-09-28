@@ -1,7 +1,7 @@
 import { Button, Card, Checkbox, Divider, Grid, Modal, Radio, Space, Tag, Typography } from '@arco-design/web-react';
 import { useState } from 'react';
 import type { ModuleAvailability, ModuleRegistry, ModuleSpec } from '../../api/types';
-import { needsVlm, optIn, reasonText, toggleModule } from '../../lib/preflight';
+import { needsVlm, offered, optIn, reasonText, toggleModule } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import type { Errors, FormValues } from './formModel';
 
@@ -73,7 +73,7 @@ export function ModuleSection({
   marked: Record<string, string>;
 }) {
   const [details, setDetails] = useState<{ m: ModuleSpec; a: ModuleAvailability } | null>(null);
-  const modules = registry?.modules ?? [];
+  const modules = (registry?.modules ?? []).filter(offered);
   const state = (id: string) => availability?.[id]?.availability ?? (availability ? 'available' : null);
   const usable = modules.filter((m) => state(m.id) === 'available' || state(m.id) === 'needs_input');
   const unsupported = modules.filter((m) => state(m.id) === 'unsupported');

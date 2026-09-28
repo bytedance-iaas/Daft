@@ -33,7 +33,7 @@ describe('param_schema → form fields (C1, D38)', () => {
 
   it('modules without parameters produce no fields', () => {
     const without = registry.modules.filter((m) => !hasParams(m.param_schema)).map((m) => m.id);
-    expect(without).toEqual(['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'dedup', 'skill_profile']);
+    expect(without).toEqual(['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'camera_defects', 'dedup', 'skill_profile']);
   });
 
   it('supports enums, booleans, bounded numbers, strings and required fields of future modules', () => {

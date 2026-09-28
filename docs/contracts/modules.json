@@ -1,5 +1,5 @@
 {
- "registry_version": "1.13",
+ "registry_version": "1.14",
  "stages": [
   "integrity",
   "numeric",
@@ -686,6 +686,48 @@
     }
    ],
    "mergeable": false
+  },
+  {
+   "id": "camera_defects",
+   "name_zh": "镜头画面缺陷",
+   "summary_zh": "借任务成败判定的逐机位复核请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
+   "level": "episode",
+   "gate": "none",
+   "needs": [
+    "video",
+    "vlm"
+   ],
+   "stage": "vlm",
+   "depends_on": [
+    "frame_gates",
+    "autolabel"
+   ],
+   "produces_adjudication": false,
+   "review_lines": [],
+   "appealable": false,
+   "input_scope": "funnel",
+   "affects_dataset_verdict": false,
+   "param_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+   },
+   "tables": [
+    {
+     "id": "camera_defects",
+     "title_zh": "逐机位画面缺陷",
+     "sortable": [
+      "episode_index",
+      "camera",
+      "glitch",
+      "shake",
+      "contamination"
+     ],
+     "default_sort": "episode_index"
+    }
+   ],
+   "mergeable": false,
+   "rides_on": "task_success"
   },
   {
    "id": "dedup",

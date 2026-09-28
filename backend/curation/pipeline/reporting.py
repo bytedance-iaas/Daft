@@ -47,7 +47,7 @@ class Revision:
 
         self.run_dir, self.revision = run_dir, int(revision)
         self.dir = revision_dir(run_dir, revision)
-        self.modules = [m.id for m in registry.MODULES if m.id in set(modules)]
+        self.modules = registry.with_riders(modules)
         self.lists = {}
         for name in ("passed", "reject", "held", "review"):
             doc = _read(os.path.join(self.dir, f"{name}.json"))
@@ -178,6 +178,10 @@ def _summary(rev: Revision, m: str) -> dict:
         from ..extensions.integrity import report as integrity_report
 
         out.update(integrity_report.summary(res, rev.run_dir))
+    if m == "camera_defects":                               # rides on task_success (1.14)
+        from ..extensions import camera_defects
+
+        out.update(camera_defects.summary(res))
     if m == "eef_video_consistency":                        # the EEF module (design doc 12, D49)
         from ..extensions.eef_consistency import report as eef_report
 
@@ -286,6 +290,10 @@ def _table_rows(rev: Revision, m: str, table: str, res: dict) -> list[dict]:
         from ..extensions.integrity import report as integrity_report
 
         return integrity_report.table_rows(res)
+    if table == "camera_defects":
+        from ..extensions import camera_defects
+
+        return camera_defects.table_rows(res)
     out = []
     for ep, r in sorted(res.items()):
         d = r.get("details") or {}
@@ -531,6 +539,18 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines += integrity_report.markdown(sec["summary"], cnt, sec.get("adjudication"))
             if sec.get("error"):
                 lines.append(f"- ⚠️ {sec['error']}")
+            lines.append("")
+            continue
+        if spec is not None and sec["id"] == "camera_defects":
+            from ..extensions.camera_defects import LEVEL_ZH, NAME_ZH
+
+            s = sec["summary"]
+            lines.append("- 建议项,不影响判决;借逐机位复核请求顺带回答,没有新增模型调用")
+            for item, name in NAME_ZH.items():
+                c = s.get(item) or {}
+                lines.append(f"- {name}:" + " · ".join(f"{LEVEL_ZH[lv]} {c.get(lv, 0)}"
+                                                       for lv in ("severe", "minor", "none", "unknown")))
+            lines.append(f"- 未答机位 {s.get('cameras_unanswered', 0)} / {s.get('cameras', 0)} · 出错 {cnt['error']}")
             lines.append("")
             continue
         if spec is not None and sec["id"] == "eef_video_consistency":

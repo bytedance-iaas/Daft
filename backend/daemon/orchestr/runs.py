@@ -215,6 +215,7 @@ class StageRun(Run):
     # -- aggregate ------------------------------------------------------------------
     def aggregate(self, sid: str, phase: str, rev: int, modules: list[str],
                   selection: list[int]) -> dict:
+        modules = registry.with_riders(modules)
         if self.journal.done(sid):
             return self.journal.stage(sid).get("counts") or {}
         if not modules:
@@ -241,6 +242,7 @@ class StageRun(Run):
         return counts
 
     def report(self, rev: int, modules: list[str]) -> None:
+        modules = registry.with_riders(modules)
         sid = "report"
         if self.journal.done(sid):
             return

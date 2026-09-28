@@ -24,7 +24,7 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 | 命令行 `curation` | `backend/curation/cli/` | `preflight → plan → snapshot → autolabel → check（逐档）→ aggregate → report → export → verify`，另有 `adjudicate-apply` 和 REST 薄客户端 `curation task …`；Daemon 是它最大的用户 |
 | planner | `backend/curation/planner/` | 执行计划：分档、并发、八把 VLM 闸门、请求合并；`curation plan` 与 Daemon 共用 |
 | 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、读取器、导出器、编排壳、VLM 客户端与视频输入 |
-| 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12）、`integrity`（数据完整性，设计 14） |
+| 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷，随 task_success 的复核请求顺带作答，设计 13） |
 | 对账工具 | `tools/parity/` | 黄金基线的录制、回放、比对，假模型，A 类守卫 |
 | 部署 | `deploy/` | 一个镜像（Daemon + CLI + 前端产物，缺省起 Daemon）；Helm Chart 在 rerun 仓库 `deploy/helm/dataverse`（StatefulSet 单副本 + 数据盘，D53） |
 

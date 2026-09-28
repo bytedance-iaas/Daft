@@ -501,6 +501,27 @@ def test_patch_a_created_task_resolves_every_field(client_for, tmp_path):
     assert events[0].action == "task.update" and "modules" in events[0].detail["fields"]
 
 
+def test_a_rider_in_the_request_is_accepted_and_not_recorded(client_for):
+    """camera_defects (registry 1.14) runs with task_success whether or not the caller names it:
+    naming it is not an error, and it is not stored as a selected module."""
+    c = client_for()
+    rt = _rt(c)
+    _cred(rt.repo, "src")
+    rt.repo.create_vlm_backend(P.VlmBackend(
+        id="", name="ark-prod", kind="ark", endpoint="https://ark.example", credential_id=None,
+        models=[P.VlmModel(id="", backend_id="", model_name="doubao")]), None)
+    t = seed_task(rt.repo, state="created")
+    pf = _preflight(rt)
+    assert _patch(c, t.id, {"preflight_id": pf}).status_code == 200
+    r = _patch(c, t.id, {"modules": ["timestamp_check", "camera_defects", "task_success"],
+                         "vlm": {"backend": "ark-prod", "model": "doubao"}})
+    assert r.status_code == 200, r.text
+    mods = {m["id"]: m for m in r.json()["modules"]}
+    assert [m for m in mods if mods[m]["selected"]] == ["timestamp_check", "task_success"]
+    rows = {m.module_id: m for m in rt.repo.get_task_modules(t.id)}
+    assert not rows["camera_defects"].selected and rows["task_success"].selected
+
+
 @pytest.mark.parametrize("body, field, words", [
     ({"modules": ["motion_quality"]}, "modules", "不可用"),
     ({"modules": ["kinematic_limits"]}, "embodiment_id", "机器人型号"),

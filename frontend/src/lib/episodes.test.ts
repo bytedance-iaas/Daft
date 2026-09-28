@@ -69,7 +69,10 @@ describe('preflight → availability and reasons', () => {
     expect(reasonText(r.modules.find((m) => m.id === 'eef_video_consistency'))).toContain('trajectory.json');
     const eef = registry.modules.find((m) => m.id === 'eef_video_consistency')!;
     expect(optIn(eef)).toBe(true);
-    expect(registry.modules.filter(optIn).map((m) => m.id)).toEqual(['eef_video_consistency']);
+    expect(registry.modules.filter(optIn).map((m) => m.id)).toEqual(['eef_video_consistency', 'camera_defects']);
     expect(presetSelection('full', registry, r)).not.toContain('eef_video_consistency');
+    // the rider (registry 1.14) is not offered at all: it runs inside task_success
+    expect(presetSelection('full', registry, r)).not.toContain('camera_defects');
+    expect(presetSelection('full', registry, r)).toContain('task_success');
   });
 });

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.21.0
+  version: 1.22.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -146,6 +146,11 @@ info:
     registration - one S3 SigV4 presigned URL per object read or ListObjectsV2 page, on TOS's
     public S3-compatible endpoint. The caller names full object keys and listing prefixes, which
     must lie under the dataset's prefix; bucket, region and key are the registration's.
+
+    1.22.0 (2026-09-29): a module may ride on another (registry 1.14, `rides_on`): it is answered
+    inside its host's model requests, runs whenever the host runs and is never selected on its
+    own - the new-task form does not offer it, a task request naming it is accepted and the name
+    ignored, the report shows it. First one: `camera_defects` on `task_success`.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1994,6 +1999,11 @@ components:
                     sortable: {type: array, items: {type: string}}
                     default_sort: {type: string}
               mergeable: {type: boolean}
+              rides_on:
+                $ref: "#/components/schemas/ModuleId"
+                description: >-
+                  present on a module answered inside this host module's requests (1.19.0): it runs
+                  whenever the host runs, has no request of its own and cannot be selected alone
     ReviewLineId:
       type: string
       pattern: "^[a-z][a-z0-9_]*$"

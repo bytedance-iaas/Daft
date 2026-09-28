@@ -208,6 +208,31 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(document.body.textContent).not.toMatch(/[{}"]/);
   });
 
+  it('camera_defects: the rider reads in Chinese through the default view (registry 1.14)', async () => {
+    const body = render('camera_defects', {
+      counts: { total: 8, pass: 0, fail: 0, abstain: 8, scored: 0, error: 0 },
+      glitch: { none: 5, minor: 1, severe: 1, unknown: 1 },
+      shake: { none: 6, minor: 1, severe: 0, unknown: 1 },
+      contamination: { none: 7, minor: 0, severe: 0, unknown: 1 },
+      episodes_with_severe: 1,
+      episodes_with_minor_or_worse: 2,
+      cameras: 16,
+      cameras_unanswered: 2,
+      clean_ratio_mean: 0.83,
+    });
+    const charts = (await within(body).findAllByTestId('chart')).map((c) => c.getAttribute('aria-label'));
+    expect(charts).toEqual([
+      '判决分布：弃权 8',
+      '花屏：无 5，轻微 1，严重 1，未知 1',
+      '相机抖动：无 6，轻微 1，严重 0，未知 1',
+      '镜头污染：无 7，轻微 0，严重 0，未知 1',
+    ]);
+    const figures = screen.getByTestId('summary-camera_defects');
+    expect(figures).toHaveTextContent('模型未答的机位');
+    expect(figures).toHaveTextContent('判为无缺陷的比例（均值）');
+    expect(document.body.textContent).not.toMatch(/[{}"]|camera|glitch/);
+  });
+
   it('digests a section into one line for the scope table', () => {
     expect(sectionDigest(sampleSummary('video_action_sync', 100))).toBe('错位判废 1 条，已标注 6 条');
     expect(sectionDigest(sampleSummary('skill_profile', 100))).toBe('3 个技能族，标注分歧 2 条');

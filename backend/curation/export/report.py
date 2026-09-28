@@ -745,7 +745,8 @@ CHECK_CN = {"timestamp_check": "时间戳检查", "kinematic_limits": "运动学
             "motion_quality": "运动质量", "visual_quality": "视觉质量",
             "video_action_sync": "视频-动作同步", "task_success": "任务成败判定",
             "eef_video_consistency": "EEF–视频一致性",      # v2 (D49); v1 never has this check
-            "data_integrity": "数据完整性"}                 # v2 (design doc 14); nor this one
+            "data_integrity": "数据完整性",                 # v2 (design doc 14); nor this one
+            "camera_defects": "镜头画面缺陷"}               # v2 (registry 1.14); rides on task_success
 
 
 def check_detail_reason(check: dict) -> str:
