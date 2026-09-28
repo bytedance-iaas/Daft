@@ -181,9 +181,12 @@ def _summary(rev: Revision, m: str) -> dict:
     if m == "eef_video_consistency":                        # the EEF module (design doc 12, D49)
         from ..extensions.eef_consistency import report as eef_report
 
+        from ..extensions.eef_consistency import opinion as eef_opinion
+
         out.update(eef_report.summary(res))
         out.update(eef_report.review_summary(res))
         out.update(eef_report.verdict_summary(res))
+        out.update(eef_opinion.summary(res))           # no gripper reference: advisory (design doc 12 §10.5)
     if m == "timestamp_check":
         why: dict[str, int] = {}
         for r in res.values():
@@ -535,6 +538,10 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines.append(f"- 判过 {s.get('judged_pass', 0)} · 判废 {s.get('judged_reject', 0)} · "
                          f"转人工 {s.get('to_human', 0)} · 出错 {cnt['error']}"
                          f"{'（阈值未校准）' if s.get('uncalibrated') else ''}")
+            if s.get("opinion_episodes"):
+                lines.append(f"- 模型意见（没有夹爪参考，不参与判决）:问过 {s['opinion_episodes']} 条 · "
+                             f"有不匹配片段(置信度 ≥ 0.5) {s.get('opinion_flagged', 0)} 条 · "
+                             f"片段 {s.get('opinion_segments', 0)} 个 · 没问成 {s.get('opinion_failed', 0)} 条")
             why = "、".join(f"{x['name']} {x['count']}" for x in s.get("human_reasons") or []) or "无"
             lines.append(f"- 转人工的原因(条数):{why}")
             adj = sec.get("adjudication") or {}

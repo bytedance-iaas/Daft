@@ -3,14 +3,14 @@
 // it was shown. The adjudication card (F5.11) and the report's Episode tab (F5.12) both show it.
 import { Space, Table, Tag } from '@arco-design/web-react';
 import type { ResultRecord } from '../../api/types';
-import { EEF_CAMERA_SUBITEMS, eefConclusion, eefCpuEvidence, eefCpuRows, eefStateMotion, eefWindowRows, type EefWindowRow } from '../../lib/eefReadings';
+import { EEF_CAMERA_SUBITEMS, eefConclusion, eefCpuEvidence, eefCpuRows, eefOpinion, eefStateMotion, eefWindowRows, type EefWindowRow } from '../../lib/eefReadings';
 import { zh } from '../../locales/zh';
 import { SignedImage } from '../media/SignedMedia';
 
 type D = Record<string, unknown>;
 const details = (r: ResultRecord): D => (r.details && typeof r.details === 'object' ? (r.details as D) : {});
 const Z = () => zh.eefDetail;
-const OUTCOME_COLOR: Record<string, string> = { pass: 'green', reject: 'red', human: 'orange' };
+const OUTCOME_COLOR: Record<string, string> = { pass: 'green', reject: 'red', human: 'orange', opinion: 'arcoblue' };
 
 /** 判过 / 判废 / 转人工 and why: the person's reasons, the confirmed defects, what was not checked. */
 export function EefConclusion({ record, tag = true }: { record: ResultRecord; tag?: boolean }) {
@@ -150,6 +150,65 @@ export function EefCpuEvidence({ taskId, record }: { taskId: string; record: Res
           <SignedImage key={p} task={taskId} scope="delivery" path={p} alt={p.split('/').pop() ?? p} />
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * No gripper reference (design doc 12 §10.5, D-E15): the model's opinion on each camera's whole clip -
+ * the stretches it finds mismatched, the most confident first, with the marked frames it cited. It is
+ * only an opinion: the episode's verdict does not depend on it.
+ */
+export function EefOpinion({ taskId, record }: { taskId: string; record: ResultRecord }) {
+  const op = eefOpinion(details(record));
+  if (!op) return null;
+  const O = Z().opinion;
+  return (
+    <div data-testid="eef-opinion">
+      <div className="eef-head">{O.title}</div>
+      <div className="episode-line muted">{O.advisory}</div>
+      {op.failure ? <div className="episode-line warn">{O.failed(op.failure)}</div> : null}
+      {op.cameras.map((c) => (
+        <div key={c.camera} className="eef-window" data-testid={`eef-opinion-${c.camera}`}>
+          <Space wrap size={8}>
+            <b>{c.camera}</b>
+            {c.point ? <span className="muted">{Z().target(c.point, c.axis)}</span> : null}
+            {c.status === 'skipped' ? <span className="muted">{O.skipped}</span> : null}
+          </Space>
+          {c.reason && c.status === 'skipped' ? <div className="episode-line muted">{c.reason}</div> : null}
+          {c.unseen ? <div className="episode-line warn">{O.unseen}</div> : null}
+          {c.failures.map((f) => (
+            <div key={f} className="episode-line warn">
+              {f}
+            </div>
+          ))}
+          {c.status !== 'skipped' && !c.segments.length && !c.failures.length ? <div className="episode-line">{O.none}</div> : null}
+          {c.segments.map((g, i) => (
+            <div key={g.key} className="eef-opinion-segment" data-testid="eef-opinion-segment">
+              <Space wrap size={6}>
+                <b>{O.segment(i + 1)}</b>
+                <span>{Z().frames(g.startFrame, g.endFrame, g.endFrame - g.startFrame + 1)}</span>
+                {g.startS !== null && g.endS !== null ? <span className="muted">{O.seconds(g.startS, g.endS)}</span> : null}
+                <Tag size="small">{O.aspect[g.aspect] ?? g.aspect}</Tag>
+                <Tag size="small" color={g.confidence >= 0.7 ? 'red' : g.confidence >= 0.5 ? 'orange' : undefined}>
+                  {O.confidence(Math.round(g.confidence * 100))}
+                </Tag>
+              </Space>
+              {g.observation ? <div className="episode-line">「{g.observation}」</div> : null}
+              {g.evidence.length ? (
+                <div className="evidence-grid" style={{ marginTop: 6 }}>
+                  {g.evidence.map((p) => (
+                    <SignedImage key={p} task={taskId} scope="delivery" path={p} alt={`${c.camera} · ${p.split('/').pop() ?? ''}`} />
+                  ))}
+                </div>
+              ) : g.evidenceFrames.length ? (
+                <div className="episode-line muted">{O.evidenceFrames(g.evidenceFrames.join('、'))}</div>
+              ) : null}
+            </div>
+          ))}
+          {c.summaries.length ? <div className="episode-line muted">{O.summary}：{c.summaries.join('；')}</div> : null}
+        </div>
+      ))}
     </div>
   );
 }

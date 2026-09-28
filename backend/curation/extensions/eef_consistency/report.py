@@ -33,6 +33,8 @@ def summary(results: dict) -> dict:
     profile = None
     for rec in results.values():
         d = rec.get("details") or {}
+        if d.get("assessment_mode") == "vlm_opinion":     # no CPU reading (design doc 12 §10.5)
+            continue
         o = d.get("overall") or "error"
         overall[o] = overall.get(o, 0) + 1
         for k in SUBITEMS:
@@ -145,6 +147,8 @@ def review_summary(results: dict) -> dict:
     agree = votes = 0
     for rec in results.values():
         d = rec.get("details") or {}
+        if d.get("assessment_mode") == "vlm_opinion":     # asked for an opinion, not reviewed
+            continue
         rv = d.get("review") or {}
         st = rv.get("status") or ("error" if rec.get("verdict") == "error" else "not_reviewed")
         status[st] = status.get(st, 0) + 1

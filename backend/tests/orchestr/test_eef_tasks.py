@@ -144,19 +144,19 @@ def test_the_module_is_preflighted_with_the_uploaded_file(daemon):
     assert entry["subitems"]["position_2d"]["availability"] == "available"      # the seeds were used
 
 
-def test_the_module_needs_seeds_or_a_template(daemon):
-    """Without observation seeds or a gripper template nothing finds the gripper in the video: every
-    episode would go to a person as not judgeable, so the task is refused and names the field
-    (galbot 2026-09-24: the seeds were lost in the console, the whole run came back to people)."""
+def test_without_seeds_or_a_template_the_module_gives_the_models_opinion(daemon):
+    """D-E15 (design doc 12 §10.5, registry 1.12): the gripper reference is optional. Without seeds or a
+    template the task is accepted and the module is available; its preflight says the model only gives an
+    advisory opinion (until 2026-09-27 such a task was refused: every episode would have gone to a person)."""
     d = daemon()
     traj = _upload(d, "eef_trajectory", "trajectory.json", _bundle())
-    body = d.task_body(modules=[*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"]}}],
+    created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"]}}],
                        start_now=False)
-    r = d.api("POST", "/tasks", json=body)
-    assert r.status_code == 400, r.text
-    err = r.json()["error"]
-    assert "观测种子或夹爪外观模板" in err["message"]
-    assert err["details"]["errors"][0]["field"] == f"modules.{EEF}.params.observation_seeds"
+    rows = {m["id"]: m for m in d.get(created["id"])["modules"]}
+    assert rows[EEF]["selected"] and rows[EEF]["availability"] == "available"
+    snap = d.rt.repo.get_task(created["id"]).preflight
+    (entry,) = [m for m in snap["modules"] if m["id"] == EEF]
+    assert entry["availability"] == "available" and any("vlm_opinion" in n for n in entry["notes"])
 
 
 def test_the_module_needs_a_model(daemon):

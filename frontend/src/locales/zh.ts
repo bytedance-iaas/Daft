@@ -546,7 +546,7 @@ export const zh = {
     callsModel: '调用模型',
     moduleNeedsInput: '需要补充',
     moduleNeedsEmbodiment: '需要补充机器人型号',
-    moduleNeedsEefFiles: '需要补充投影轨迹与夹爪参考',
+    moduleNeedsEefFiles: '需要补充投影轨迹',
     moduleNeedsVlm: '需要选择 VLM 后端（在下方「模型配置」里选）',
     unsupportedTitle: (n: number) => `不支持的模块（${n}）`,
     unsupportedDesc: '当前数据集不具备所需数据，无法开启',
@@ -1432,8 +1432,20 @@ export const zh = {
     eef: {
       verdictNote: '先由 CPU 比对、再请模型复核：两边一致就判过或判废；意见冲突、模型给不出意见或判不了的，进人工裁决',
       uncalibrated: '（阈值未校准）',
-      outcome: { pass: '判过', reject: '判废', human: '转人工', error: '执行出错' } as Record<string, string>,
+      outcome: { pass: '判过', reject: '判废', human: '转人工', error: '执行出错', opinion: '只给意见' } as Record<string, string>,
       outcomeChart: '模块结论',
+      // no gripper reference (design doc 12 §10.5, D-E15): the model's advisory opinion
+      opinion: {
+        episodes: '模型意见',
+        episodesFoot: '没有夹爪参考，只给意见、不参与判决',
+        flagged: '有不匹配片段',
+        flaggedFoot: '不匹配置信度 ≥ 50% 的片段',
+        segments: '不匹配片段',
+        failed: '没问成',
+        confidenceChart: '不匹配片段的置信度',
+        aspectChart: '不匹配的方面',
+        aspect: { position: '中心', orientation: '朝向', both: '中心与朝向' } as Record<string, string>,
+      },
       humanPending: (pending: number, human: number) => (pending === human ? `都在人工裁决里待裁` : `人工裁决里待裁 ${pending} 条，其余已裁或已被别的检查判废`),
       humanChart: '转人工的原因',
       humanChartDesc: '一条可能有几个原因',
@@ -1494,6 +1506,21 @@ export const zh = {
     conflict: (subitem: string, cpu: string, vlm: string) => `与 CPU 冲突：${subitem} CPU ${cpu}，模型${vlm}`,
     cached: '缓存',
     noRecord: '这一版没有 EEF 模块的记录',
+    // no gripper reference (design doc 12 §10.5, D-E15)
+    opinion: {
+      title: '模型意见',
+      advisory: '没有给夹爪参考：模型看整段视频（画着轨迹声明的夹爪中心红圈 P 和朝向红箭头 A），指出它认为对不上的片段。只是意见，不参与判过 / 判废。',
+      failed: (why: string) => `没问成：${why}`,
+      skipped: '没有问',
+      unseen: '模型说这一段看不清夹爪',
+      none: '模型认为全程一致',
+      segment: (i: number) => `片段 ${i}`,
+      seconds: (from: number, to: number) => `${from.toFixed(1)}–${to.toFixed(1)} 秒`,
+      aspect: { position: '中心不对', orientation: '朝向不对', both: '中心与朝向都不对' } as Record<string, string>,
+      confidence: (pct: number) => `不匹配置信度 ${pct}%`,
+      evidenceFrames: (frames: string) => `证据帧 ${frames}（没存图）`,
+      summary: '模型总结',
+    },
   },
 
   /** The report's Episode tab (F6.2): one episode, module by module. */

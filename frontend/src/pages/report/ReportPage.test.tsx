@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { ResultRecord } from '../../api/types';
 import { describe, expect, it } from 'vitest';
 import { db } from '../../mocks/db';
-import { eefRecord } from '../../mocks/eef';
+import { eefOpinionRecord, eefRecord } from '../../mocks/eef';
 import { MAIN_TASK } from '../../mocks/world';
 import { pick } from '../../test/arco';
 import { recordRequests } from '../../test/record';
@@ -257,6 +257,27 @@ describe('质检报告 (07 §5)', () => {
     expect(await within(block).findByAltText('12_ext.jpg')).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
     // Shown in the block, not again among the episode's evidence frames.
     expect(screen.queryAllByAltText(/^EEF–视频一致性 · /)).toHaveLength(0);
+    expect(block.textContent).not.toMatch(/[{}"]/);
+  });
+
+  it('Episode 明细: without a gripper reference the EEF block shows the model\'s opinion, most confident stretch first (D-E15)', async () => {
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefOpinionRecord(12) }]])]]);
+    renderApp(`${REPORT}?ep=12#episodes`);
+    const block = await screen.findByTestId('episode-module-eef_video_consistency');
+    expect(within(block).getByTestId('eef-outcome')).toHaveTextContent('只给意见');
+    const op = within(block).getByTestId('eef-opinion');
+    expect(op).toHaveTextContent('只是意见，不参与判过 / 判废');
+    expect(within(block).queryByTestId('eef-cpu')).toBeNull();                 // no CPU reading
+    expect(within(block).queryByTestId('eef-windows')).toBeNull();
+    const [first, second] = within(op).getAllByTestId('eef-opinion-segment');
+    expect(first).toHaveTextContent('片段 1帧 40–95（56 帧）2.7–6.3 秒中心不对不匹配置信度 85%');
+    expect(first).toHaveTextContent('「红圈落在手指外侧」');
+    expect(second).toHaveTextContent('片段 2帧 180–230（51 帧）12.0–15.3 秒朝向不对不匹配置信度 40%');
+    expect(second).toHaveTextContent('证据帧 205（没存图）');
+    await waitFor(() => expect(within(first).getAllByAltText(/ext · frame_0000(52|71)\.jpg/)).toHaveLength(2));
+    expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('点 tcp · 方向 z');
+    expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('模型总结：前半段中心偏得明显');
+    expect(within(op).getByTestId('eef-opinion-wrist')).toHaveTextContent('没有问');
     expect(block.textContent).not.toMatch(/[{}"]/);
   });
 

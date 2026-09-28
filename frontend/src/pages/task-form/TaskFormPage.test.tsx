@@ -208,7 +208,8 @@ describe('新建任务 · 两屏与提交', () => {
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
-    await waitFor(() => expect(fieldErrors(s2())).toEqual(['请填写trajectory.json', '请上传夹爪参考（观测种子或夹爪外观模板，二选一）']));
+    // the gripper reference is optional (registry 1.12, D-E15): only trajectory.json is asked for
+    await waitFor(() => expect(fieldErrors(s2())).toEqual(['请填写trajectory.json']));
     const input = within(s2()).getByLabelText('trajectory.json', { selector: 'input[type=file]' });
     const bad = { samples: [{ episode_index: 0, sample: { sample_id: 'new_set_000000' }, frames: [{ truth: [1, 2] }] }] };
     await user.upload(input, new File([JSON.stringify(bad)], 'trajectory.json', { type: 'application/json' }));
@@ -219,20 +220,13 @@ describe('新建任务 · 两屏与提交', () => {
     await user.upload(input, new File([JSON.stringify(good)], 'trajectory.json', { type: 'application/json' }));
     expect(await within(s2()).findByTestId('upload-done-trajectory_json')).toHaveTextContent('trajectory.json');
     expect(within(s2()).queryByTestId('upload-error-trajectory_json')).toBeNull();
-    // still no seeds and no template: nothing would find the gripper, every episode would go to a person
-    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
-    await waitFor(() => expect(fieldErrors(s2())).toEqual(['请上传夹爪参考（观测种子或夹爪外观模板，二选一）']));
-    await user.upload(within(s2()).getByLabelText('观测种子', { selector: 'input[type=file]' }), new File([JSON.stringify([{ sample_id: 'new_set_000000' }])], 'seeds.json', { type: 'application/json' }));
-    expect(await within(s2()).findByTestId('upload-done-observation_seeds')).toHaveTextContent('seeds.json');
+    // no seeds and no template: the task is saved all the same - the model gives its opinion only (D-E15)
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
     await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
     const up = seen.filter((x) => x.method === 'POST' && x.path.startsWith('/uploads'));
-    expect(up).toHaveLength(3);
+    expect(up).toHaveLength(2);
     const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: unknown[]; vlm?: unknown };
-    expect(body.modules).toContainEqual({
-      id: 'eef_video_consistency',
-      params: { trajectory_json: expect.stringMatching(/^upload:upl-[a-z]{9}$/), observation_seeds: expect.stringMatching(/^upload:upl-[a-z]{9}$/) },
-    });
+    expect(body.modules).toContainEqual({ id: 'eef_video_consistency', params: { trajectory_json: expect.stringMatching(/^upload:upl-[a-z]{9}$/) } });
     expect(body.vlm).toBeTruthy();                             // it reviews with a model
   });
 
@@ -248,7 +242,8 @@ describe('新建任务 · 两屏与提交', () => {
     await user.click(screen.getByText('快速质检'));
     // screen 1 names the files screen 2 asks for, like the robot type (fifth round)
     const eefCard = screen.getByTestId('module-eef_video_consistency');
-    expect(eefCard).toHaveTextContent('⚠ 需要补充投影轨迹与夹爪参考');
+    expect(eefCard).toHaveTextContent('⚠ 需要补充投影轨迹');
+    expect(eefCard).not.toHaveTextContent('夹爪参考');                  // optional since D-E15
     expect(eefCard).toHaveTextContent('比较数据集中声明的末端执行器投影与画面里独立定位的夹爪轨迹和方向是否匹配');
     expect(eefCard.className).toContain('warn');
     expect(eefCard).not.toHaveTextContent('trajectory.json');
@@ -275,8 +270,9 @@ describe('新建任务 · 两屏与提交', () => {
     await pick(user, '夹爪参考', '夹爪外观模板', s2());
     expect(item).toHaveTextContent('gripper-template/1.0');
     expect(within(s2()).queryByLabelText('观测种子', { selector: 'input[type=file]' })).toBeNull();
-    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
-    await waitFor(() => expect(fieldErrors(s2())).toEqual(['请上传夹爪参考（观测种子或夹爪外观模板，二选一）']));
+    expect(within(s2()).queryByTestId('upload-done-observation_seeds')).toBeNull();
+    // optional since registry 1.12 (D-E15): no red * and no 「二选一」 demand
+    expect(requiredFieldLabels(s2())).not.toContain('夹爪参考');
     const template = { schema_version: 'gripper-template/1.0', entries: [{ camera_id: 'front' }, { camera_id: 'wrist' }, { camera_id: 'front' }] };
     await user.upload(within(s2()).getByLabelText('夹爪外观模板', { selector: 'input[type=file]' }), new File([JSON.stringify(template)], 'template.json', { type: 'application/json' }));
     const done = await within(s2()).findByTestId('upload-done-gripper_template');

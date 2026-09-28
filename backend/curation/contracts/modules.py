@@ -57,13 +57,18 @@ Choice groups (1.10, 2026-09-24): parameters that stand in for one another carry
 them, then that one's value - sends only the chosen one, and with ``required`` asks for one; the
 command line still takes any of them, or none. The EEF module's observation seeds and gripper
 template form the group 夹爪参考.
+
+The gripper reference is optional (1.12, design doc 12 §10.5, D-E15): without seeds and template
+the EEF module measures nothing with the CPU and asks the model for its opinion instead - the
+stretches of each camera's whole clip where the drawn gripper centre or direction does not match,
+with a confidence each. That opinion is advisory: the episode's record passes and nobody is asked.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.11"
+REGISTRY_VERSION = "1.12"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
@@ -225,9 +230,9 @@ def _upload(kind: str, accept: list[str], max_mb: int, **fields) -> dict:
             "x-max-mb": max_mb, **fields}
 
 
-#: The EEF module's two ways to find the gripper in the picture (1.10): a form offers one of them
-#: and asks for it (``required``: without either, every episode goes to a person).
-GRIPPER_REFERENCE = {"id": "gripper_reference", "title": "夹爪参考", "required": True}
+#: The EEF module's two ways to find the gripper in the picture (1.10): a form offers one of them.
+#: Optional since 1.12 (D-E15): without either, the model gives its opinion only (design doc 12 §10.5).
+GRIPPER_REFERENCE = {"id": "gripper_reference", "title": "夹爪参考", "required": False}
 
 
 def upload_params(module_id: str) -> dict[str, str]:
@@ -252,7 +257,8 @@ def _eef_params() -> dict:
     """design doc 12 §11.1 / §12, C.9 (D49: the review's two parameters joined). ``trajectory_json`` is required;
     ``observation_seeds`` (a person's anchors)
     or ``gripper_template`` (automatic anchors, F5.8) give the tracker its anchors - one of the two per camera,
-    seeds win where both exist; without either, position, orientation and time cannot be measured."""
+    seeds win where both exist; without either (1.12, D-E15) the CPU measures nothing and the model gives an
+    advisory opinion on each camera's whole clip (design doc 12 §10.5)."""
     return {
         "type": "object", "additionalProperties": False, "required": ["trajectory_json"],
         "properties": {
@@ -263,7 +269,8 @@ def _eef_params() -> dict:
             "observation_seeds": _upload(
                 "eef_observation_seeds", [".jsonl", ".json"], 64, title="观测种子",
                 description="P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），"
-                            "每行是某个样本、某路相机、某一帧里人点出的点",
+                            "每行是某个样本、某路相机、某一帧里人点出的点。夹爪参考可以不给：不给时只请模型看整段视频给出意见"
+                            "（哪些片段不匹配、置信度多少），不参与判决",
                 default="", **{"x-choice-group": GRIPPER_REFERENCE}),
             "gripper_template": _upload(
                 "eef_gripper_template", [".json"], 64, title="夹爪外观模板",

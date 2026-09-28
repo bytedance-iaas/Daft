@@ -127,6 +127,8 @@ class EefJudge:
             lag_search_s=(-lag, lag), interpolation_gap_factor=float(params["interpolation_gap_factor"]),
             template=template)
         self.config = runner.config_digest(self.cfg)
+        # no gripper reference (design doc 12 §10.5, D-E15): no CPU measurement, the model's advisory opinion
+        self.opinion = self.cfg.seed_root is None and template is None
         self.vlm = vcfg["checks"]["task_success"]["vlm"]
         self.timeout_s = float((self.vlm.get("timeouts_s") or {}).get(eef_review.TAG) or eef_review.DEFAULT_TIMEOUT_S)
         self.gates = gates
@@ -144,6 +146,7 @@ class EefJudge:
     def open(self) -> None:
         """Inside the VLM session: the model is known (probed or resolved)."""
         from ..adapters.vlm_client import SharedGate
+        from ..extensions.eef_consistency import opinion as OP
         from ..extensions.eef_consistency import review as R
         from . import eef_review
 
@@ -151,14 +154,17 @@ class EefJudge:
         self.review_config = hashlib.sha256(json.dumps(
             {"windows": self.per_camera, "frames": self.per_window, "model": self.model, "prompt": R.PROMPT_VERSION,
              "schema": R.ANSWER_SCHEMA, "preprocess": R.PREPROCESS,
-             "video_protocol": "eef-video-review/1", "video": self.vlm.get("video") or {}},
+             "video_protocol": "eef-video-review/1", "video": self.vlm.get("video") or {},
+             **({"opinion": [OP.PROTOCOL, OP.PROMPT_VERSION, OP.ANSWER_SCHEMA, OP.MAX_CLIP_S]} if self.opinion else {})},
             sort_keys=True).encode()).hexdigest()
         self.ask = eef_review.make_asker(self.vlm, self.timeout_s, SharedGate(max(1, int(self.gates.get("arbitration", 1)))))
         self.cache = R.Cache(os.path.join(self.out_dir, "cache"))
         self.ctx.log("info", f"{MODULE}: trajectory.json sha256 {self.result.sha256[:12]}, "
                              f"{len(self.result.samples)} episode(s) declared, profile {self.params['threshold_profile']}, "
                              f"seeds {self.cfg.seed_root or 'none'}, gripper template "
-                             f"{self.template_sha[:12] if self.template_sha else 'none'}, model {self.model}")
+                             f"{self.template_sha[:12] if self.template_sha else 'none'}, model {self.model}"
+                             + ("; no gripper reference: the model's opinion only, no verdict (design doc 12 §10.5)"
+                                if self.opinion else ""))
 
     def _seeds(self, sample_id: str) -> str | None:
         from ..extensions.eef_consistency.observations import seeds_digest
@@ -210,21 +216,54 @@ class EefJudge:
                 for cid in sample.cameras:
                     MM.drop(O.media_path(sample, cid, self.media_root))
 
+    def _fetch(self, sample) -> None:
+        if self.mcap and self.src.cache is not None:
+            with self._fetch_lock:                     # the episode's .mcap into the source cache
+                self.src.cache.fetch(sorted({c.media["uri"] for c in sample.cameras.values()}))
+        elif self.scratch is not None:
+            with self._fetch_lock:
+                _fetch_media(self.storage, sample, self.scratch.name)
+
+    def _opinion(self, ep: int, sample) -> tuple[dict, list[str]]:
+        """No gripper reference (design doc 12 §10.5, D-E15): each camera's whole clip, marked, goes to the
+        model, which lists the stretches it finds mismatched with a confidence each. Advisory: the record
+        passes whatever the model says, and a failure is recorded in the opinion, never as an error line."""
+        from ..extensions.eef_consistency import opinion as OP
+        from . import eef_review
+
+        t1 = time.perf_counter()
+        try:
+            self._fetch(sample)
+            op = OP.opinion_episode(sample, media_root=self.media_root, ask=self.ask, cache=self.cache,
+                                    model=self.model, out_dir=self.out_dir, run_dir=self.run_dir,
+                                    allowed_mounts=self.cfg.allowed_mounts,
+                                    options=getattr(self.ask, "video_options", {}))
+        except Exception as e:  # noqa: BLE001 - an opinion that could not be had changes nothing
+            op = {"protocol": OP.PROTOCOL, "prompt_version": OP.PROMPT_VERSION, "status": "failed", "cameras": {},
+                  "segments": 0, "flagged": False, "max_confidence": None, "requests": 0,
+                  "failure": f"{type(e).__name__}: {e}"[:300]}
+            self.ctx.log("warn", f"{MODULE}: the opinion on episode {ep} failed: {type(e).__name__}: {e}")
+        op["elapsed_s"] = round(time.perf_counter() - t1, 3)
+        detail = {"sample_id": sample.sample_id, "episode_index": int(ep), "assessment_mode": "vlm_opinion",
+                  "overall": "opinion", "opinion": op, "config_hash": self.config, "seeds_sha256": None,
+                  "template_sha256": None, "input_file_sha256": self.result.sha256, "review_config": self.review_config,
+                  "decision": {"outcome": "opinion", "confirmed": [], "human": [], "unchecked": []}, "reason": "",
+                  "vlm": {"model": self.model, "prompt_version": OP.PROMPT_VERSION, "answer_schema": OP.ANSWER_SCHEMA,
+                          "timeout_s": self.timeout_s, "call_kind": eef_review.TAG}}
+        return {"passed": True, "score": None, "detail": detail}, OP.evidence_paths(op)
+
     def _judge(self, ep: int, sample, log) -> tuple[dict | None, list[str]]:
         from ..extensions.eef_consistency import decide as D
         from ..extensions.eef_consistency import review as R
         from ..extensions.eef_consistency import runner
         from . import eef_review
 
+        if self.opinion:
+            return self._opinion(ep, sample)
         review = None
         evidence: list[str] = []
         try:
-            if self.mcap and self.src.cache is not None:
-                with self._fetch_lock:                 # the episode's .mcap into the source cache
-                    self.src.cache.fetch(sorted({c.media["uri"] for c in sample.cameras.values()}))
-            elif self.scratch is not None:
-                with self._fetch_lock:
-                    _fetch_media(self.storage, sample, self.scratch.name)
+            self._fetch(sample)
             detail, _ = runner.run_episode(sample, self.cfg)
         except Exception as e:  # noqa: BLE001 - one episode failing never stops the call
             log.add(MODULE, cause=f"{type(e).__name__}: {e}"[:500])

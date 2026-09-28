@@ -783,12 +783,8 @@ function buildNewTask(req: TaskCreate): Task | Response {
       if (prop.oneOf && !prop.oneOf.some((o) => o.const === v)) return err(400, 'validation_failed', `模块 ${m} 的参数 ${k} 取值不对`);
     }
   }
-  // like the Daemon: the EEF module without seeds or a gripper template finds no gripper in the video
-  const eef = registry.modules.find((m) => m.id === 'eef_video_consistency');
-  if (eef && selected.includes(eef.id) && !params(eef.id)?.observation_seeds && !params(eef.id)?.gripper_template) {
-    const message = `「${eef.name_zh}」需要上传观测种子或夹爪外观模板（二选一）：没有它们就找不到画面里的夹爪，每一条都只能转人工；或者不勾选这个模块`;
-    return err(400, 'validation_failed', message, { errors: [{ field: `modules.${eef.id}.params.observation_seeds`, problem: message }] });
-  }
+  // the EEF module without seeds or a gripper template is accepted since registry 1.12: the model gives its
+  // opinion only (design doc 12 §10.5, D-E15)
   const now = clock();
   const d = r.dataset ?? db.datasets.find((x) => datasetKey({ source: x.source, uri: x.uri, region: x.region ?? undefined }) === datasetKey(r.ref));
   const t: Task = {

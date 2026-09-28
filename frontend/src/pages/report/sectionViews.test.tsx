@@ -118,6 +118,23 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     }
   });
 
+  it('EEF without a gripper reference: the opinion figures and charts, no verdict counts (D-E15)', async () => {
+    render('eef_video_consistency', {
+      judged_pass: 0, judged_reject: 0, to_human: 0,
+      opinion_episodes: 7, opinion_flagged: 4, opinion_segments: 9, opinion_failed: 1, opinion_not_assessable: 0,
+      opinion_aspects: [{ name: 'position', count: 5 }, { name: 'orientation', count: 3 }, { name: 'both', count: 1 }],
+      opinion_confidence: [{ name: '<0.3', count: 2 }, { name: '0.3–0.5', count: 1 }, { name: '0.5–0.7', count: 3 }, { name: '0.7–0.9', count: 2 }, { name: '≥0.9', count: 1 }],
+    });
+    const figures = screen.getByTestId('summary-eef_video_consistency');
+    expect(figures).toHaveTextContent('模型意见7没有夹爪参考，只给意见、不参与判决');
+    expect(figures).toHaveTextContent('有不匹配片段4不匹配置信度 ≥ 50% 的片段');
+    expect(figures).toHaveTextContent('不匹配片段9');
+    expect(figures).toHaveTextContent('没问成1');
+    expect(figures).not.toHaveTextContent('判过');
+    expect(await within(screen.getByTestId('chart-opinion-confidence')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('0.5–0.7 3'));
+    expect(await within(screen.getByTestId('chart-opinion-aspects')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('中心 5'));
+  });
+
   it('EEF: the verdict figures, why people are asked and the status matrix in Chinese (D49)', async () => {
     render('eef_video_consistency', EEF, { adjudication: { pending: 3, appealable: 2 } });
     const figures = screen.getByTestId('summary-eef_video_consistency');

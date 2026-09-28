@@ -448,7 +448,16 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
     ['judged_reject', Z.outcome.reject, true, section.adjudication?.appealable ? zh.report.goAppeal(section.adjudication.appealable) : undefined],
     ['to_human', Z.outcome.human, true, toHuman ? Z.humanPending(pending, toHuman) : undefined],
   ];
-  for (const [k, label, warn, foot] of outcome) if (num(s[k]) !== null) stats.push({ label, value: num(s[k]), tone: warn && num(s[k]) ? 'warn' : undefined, foot });
+  // a task without a gripper reference has only the model's opinion (D-E15): no verdict counts to show
+  const opinionOnly = num(s.opinion_episodes) !== null && !outcome.some(([k]) => num(s[k]));
+  if (!opinionOnly) for (const [k, label, warn, foot] of outcome) if (num(s[k]) !== null) stats.push({ label, value: num(s[k]), tone: warn && num(s[k]) ? 'warn' : undefined, foot });
+  const O = Z.opinion;
+  if (num(s.opinion_episodes) !== null) {
+    stats.push({ label: O.episodes, value: num(s.opinion_episodes), foot: O.episodesFoot });
+    stats.push({ label: O.flagged, value: num(s.opinion_flagged) ?? 0, tone: num(s.opinion_flagged) ? 'warn' : undefined, foot: O.flaggedFoot });
+    stats.push({ label: O.segments, value: num(s.opinion_segments) ?? 0 });
+    if (num(s.opinion_failed)) stats.push({ label: O.failed, value: num(s.opinion_failed), tone: 'warn' });
+  }
   if (num(s.model_cpu_agreement) !== null)
     stats.push({ label: Z.agreement, value: `${Math.round(num(s.model_cpu_agreement)! * 100)}%`, foot: Z.agreementFoot(num(s.model_votes) ?? 0) });
   if (num(s.windows) !== null) stats.push({ label: R.windows, value: num(s.windows), foot: Z.windowsValue(num(s.windows_answered) ?? 0, num(s.windows_failed) ?? 0) });
@@ -456,6 +465,10 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
   for (const k of ['tracking_suspect', 'vlm_requests', 'truncated_episodes']) if (num(s[k])) stats.push({ label: zh.summaryKeys[k] ?? k, value: num(s[k]) });
   if (str(s.threshold_profile)) stats.push({ label: zh.summaryKeys.threshold_profile ?? 'threshold_profile', value: <span style={{ fontSize: 15 }}>{str(s.threshold_profile)}</span> });
   const charts: ChartSpec[] = [];
+  const confidence = seriesOf(s.opinion_confidence);
+  if (anyValue(confidence)) charts.push({ key: 'opinion-confidence', title: O.confidenceChart, items: confidence!, colors: confidence!.map((c) => (c.name.startsWith('<') || c.name.startsWith('0.3') ? undefined : ORANGE)) });
+  const aspects = labelled(s.opinion_aspects, O.aspect);
+  if (anyValue(aspects)) charts.push({ key: 'opinion-aspects', title: O.aspectChart, items: aspects!, horizontal: true });
   const outcomes = labelled(s.outcomes, Z.outcome);
   if (anyValue(outcomes)) charts.push({ key: 'outcomes', title: Z.outcomeChart, items: outcomes, horizontal: true });
   const human = labelled(s.human_reasons, Z.humanReason);

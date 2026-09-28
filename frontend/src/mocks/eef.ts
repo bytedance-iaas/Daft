@@ -50,3 +50,45 @@ export function eefRecord(ep: number, why: string): ResultRecord {
     },
   };
 }
+
+/** No gripper reference (design doc 12 §10.5, D-E15): the model's opinion on the episode, one stretch flagged. */
+export function eefOpinionRecord(ep: number): ResultRecord {
+  const dir = `checks/${EEF}/opinion/ep_${String(ep).padStart(6, '0')}/ext`;
+  return {
+    episode_index: ep,
+    module: EEF,
+    verdict: 'pass',
+    passed: true,
+    score: null,
+    gate: 'hard',
+    elapsed_s: 21.4,
+    error: null,
+    evidence: [`${dir}/frame_000052.jpg`, `${dir}/frame_000071.jpg`],
+    details: {
+      assessment_mode: 'vlm_opinion',
+      overall: 'opinion',
+      reason: '',
+      decision: { outcome: 'opinion', human: [], confirmed: [], unchecked: [] },
+      opinion: {
+        protocol: 'eef-opinion/1',
+        status: 'answered',
+        segments: 2,
+        flagged: true,
+        max_confidence: 0.85,
+        cameras: {
+          ext: {
+            status: 'answered',
+            point_id: 'tcp',
+            axis_id: 'z',
+            clips: [{ start_frame: 0, end_frame: 286, status: 'answered', attempts: 1, cache_hit: false, gripper_visible: true, summary: '前半段中心偏得明显' }],
+            segments: [
+              { start_frame: 180, end_frame: 230, start_s: 12.0, end_s: 15.33, aspect: 'orientation', confidence: 0.4, evidence_frames: [205], observation: '红箭头略偏向桌面', evidence: [] },
+              { start_frame: 40, end_frame: 95, start_s: 2.67, end_s: 6.33, aspect: 'position', confidence: 0.85, evidence_frames: [52, 71], observation: '红圈落在手指外侧', evidence: [`${dir}/frame_000052.jpg`, `${dir}/frame_000071.jpg`] },
+            ],
+          },
+          wrist: { status: 'skipped', reason: 'mount wrist does not take part' },
+        },
+      },
+    },
+  };
+}

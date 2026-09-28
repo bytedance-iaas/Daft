@@ -175,6 +175,14 @@ class FakeVlm:
             return CAPTIONS[n % len(CAPTIONS)]
         if "robot episode" in text and ("0 to 100" in text or "Score" in text):
             return str(n % 101)
+        if "You check a recorded robot trajectory against a camera video" in text:
+            # the EEF opinion without a gripper reference (design doc 12 §10.5): every other clip gets one
+            # stretch flagged at its start, the others none
+            lo, hi = (int(x) for x in re.search(r"Frames (\d+) to (\d+)\.", text).groups())
+            segments = [] if n % 2 == 0 else [{"start_frame": lo, "end_frame": min(hi, lo + 5), "aspect": "position",
+                                               "confidence": 0.8, "evidence_frames": [lo],
+                                               "observation": "红圈偏离夹爪中心"}]
+            return json.dumps({"gripper_visible": True, "segments": segments, "summary": "fake"})
         if "You review ONE point P" in text:
             # the EEF-video review (design doc 12 §10.2): a well-formed, cautious answer
             frames = [int(x) for x in re.findall(r"\d+", text.split("Frames ", 1)[1].split("(", 1)[0])][:1]

@@ -1,5 +1,5 @@
 {
- "registry_version": "1.11",
+ "registry_version": "1.12",
  "stages": [
   "integrity",
   "numeric",
@@ -445,12 +445,12 @@
       ],
       "x-max-mb": 64,
       "title": "观测种子",
-      "description": "P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），每行是某个样本、某路相机、某一帧里人点出的点",
+      "description": "P-A 跟踪的种子：observation 格式的行（JSONL，或这些行的 JSON 数组），每行是某个样本、某路相机、某一帧里人点出的点。夹爪参考可以不给：不给时只请模型看整段视频给出意见（哪些片段不匹配、置信度多少），不参与判决",
       "default": "",
       "x-choice-group": {
        "id": "gripper_reference",
        "title": "夹爪参考",
-       "required": true
+       "required": false
       }
      },
      "gripper_template": {
@@ -467,7 +467,7 @@
       "x-choice-group": {
        "id": "gripper_reference",
        "title": "夹爪参考",
-       "required": true
+       "required": false
       }
      },
      "threshold_profile": {

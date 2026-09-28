@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EEF-video model opinion (eef-opinion/1)",
+  "description": "What the model returns for one continuous clip of one camera when no gripper reference was given (design doc 12 §10.5, D-E15): the stretches where the red circle P is not on the gripper centre or the red arrow A does not follow the gripper's pointing direction, each with the confidence that it does NOT match and its evidence frames. An empty list means it all matches. Frame numbers are the ones printed on the video; that they lie in the clip and that evidence frames lie in their segment is checked by the runner, not by this Schema. Advisory: it never changes a verdict.",
+  "type": "object",
+  "properties": {
+    "gripper_visible": {
+      "type": "boolean",
+      "description": "The gripper can be seen in most of the clip"
+    },
+    "segments": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "properties": {
+          "start_frame": {"type": "integer", "minimum": 0},
+          "end_frame": {"type": "integer", "minimum": 0},
+          "aspect": {
+            "enum": ["position", "orientation", "both"],
+            "description": "position: P is off the gripper centre; orientation: A does not follow the gripper; both"
+          },
+          "confidence": {
+            "type": "number", "minimum": 0, "maximum": 1,
+            "description": "How sure the model is that this stretch does NOT match"
+          },
+          "evidence_frames": {
+            "type": "array", "minItems": 1, "maxItems": 5,
+            "items": {"type": "integer", "minimum": 0}
+          },
+          "observation": {"type": "string", "minLength": 1, "maxLength": 600}
+        },
+        "required": ["start_frame", "end_frame", "aspect", "confidence", "evidence_frames", "observation"],
+        "additionalProperties": false
+      }
+    },
+    "summary": {"type": "string", "maxLength": 800}
+  },
+  "required": ["gripper_visible", "segments", "summary"],
+  "additionalProperties": false
+}

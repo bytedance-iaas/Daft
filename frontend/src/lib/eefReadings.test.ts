@@ -66,3 +66,26 @@ describe('the EEF record for a person (F5.11, F5.12)', () => {
     expect(eefCpuEvidence(['checks/e/evidence/000003/wrist/k_frame_000040.jpg', 'checks/e/overlays/3.jpg'], [a, b, c])).toEqual(['checks/e/overlays/3.jpg']);
   });
 });
+
+describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
+  it('reads the opinion of each camera, the most confident stretch first; null for a judged record', async () => {
+    const { eefOpinionRecord, eefRecord } = await import('../mocks/eef');
+    const { eefOpinion } = await import('./eefReadings');
+    const op = eefOpinion(eefOpinionRecord(3).details as Record<string, unknown>)!;
+    expect(op).toMatchObject({ status: 'answered', flagged: true, maxConfidence: 0.85, failure: null });
+    const [ext, wrist] = op.cameras;
+    expect(ext).toMatchObject({ camera: 'ext', status: 'answered', point: 'tcp', axis: 'z', summaries: ['前半段中心偏得明显'], failures: [], unseen: false });
+    expect(ext.segments.map((g) => [g.startFrame, g.confidence, g.evidence.length])).toEqual([[40, 0.85, 2], [180, 0.4, 0]]);
+    expect(wrist).toMatchObject({ camera: 'wrist', status: 'skipped', segments: [] });
+    expect(eefOpinion(eefRecord(3, 'x').details as Record<string, unknown>)).toBeNull();
+  });
+
+  it('says which part of a clip got no answer and why', async () => {
+    const { eefOpinion } = await import('./eefReadings');
+    const op = eefOpinion({
+      assessment_mode: 'vlm_opinion',
+      opinion: { status: 'partial', cameras: { ext: { status: 'partial', clips: [{ start_frame: 0, end_frame: 899, status: 'answered', gripper_visible: false, summary: '看不清' }, { start_frame: 900, end_frame: 1000, status: 'failed', failure: { code: 'timeout' } }], segments: [] } } },
+    })!;
+    expect(op.cameras[0]).toMatchObject({ failures: ['帧 900–1000（101 帧）：模型超时'], unseen: true, summaries: ['看不清'] });
+  });
+});

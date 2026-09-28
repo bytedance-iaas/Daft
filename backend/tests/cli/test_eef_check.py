@@ -135,15 +135,15 @@ def test_preflight_asks_for_the_file_then_a_model(mini_dataset, tmp_path):
     (entry,) = run("preflight", "--input", mini_dataset, "--modules", EEF, "--vlm-backend", "ark",
                    "--param", f"{EEF}.trajectory_json={traj}").doc["modules"]
     assert entry["availability"] == "available"
-    # the same file without seeds or a template next to it: nothing would find the gripper
+    # the same file without seeds or a template next to it (D-E15): available, the model's opinion only
     alone = tmp_path / "alone" / "trajectory.json"
     alone.parent.mkdir()
     alone.write_text(open(traj, encoding="utf-8").read())
     (bare,) = run("preflight", "--input", mini_dataset, "--modules", EEF, "--vlm-backend", "ark",
                   "--param", f"{EEF}.trajectory_json={alone}").doc["modules"]
-    assert (bare["availability"], bare["reason_code"], bare["input_hint"]) == \
-        ("needs_input", "observation_seed_missing", {"field": "observation_seeds"})
-    assert bare["subitems"]["position_2d"]["availability"] == "needs_input"
+    assert bare["availability"] == "available" and "input_hint" not in bare
+    assert any("vlm_opinion" in n for n in bare["notes"])
+    assert bare["episode_counts"] == {"available": 7, "unsupported": 1}
     assert entry["episode_counts"] == {"available": 7, "unsupported": 1}           # episode 7 is not declared
     assert entry["subitems"]["position_2d"]["availability"] == "available"
     assert entry["subitems"]["orientation_2d"] == {"availability": "unsupported",
@@ -207,6 +207,76 @@ def test_another_file_or_other_seeds_are_another_input(cli, mini_dataset, tmp_pa
                           "--param", f"{EEF}.trajectory_json={other}", "--param", f"{EEF}.lag_search_s=0.5",
                           "--vlm-endpoint", URL, "--vlm-model", "fake-vlm-2", "--retry", "0", "--resume")
         assert other_model.rc == 0 and other_model.doc["modules"][EEF]["skipped_existing"] == 0
+
+
+def test_without_a_gripper_reference_the_model_gives_an_advisory_opinion(cli, mini_dataset, tmp_path):
+    """D-E15 (design doc 12 §10.5): no seeds, no template - no CPU reading; each camera's whole clip, marked,
+    goes to the model; its mismatched stretches come with a confidence and evidence stills; every record
+    passes and nobody is asked."""
+    from curation.extensions.eef_consistency import opinion as OP
+
+    alone = tmp_path / "alone" / "trajectory.json"
+    alone.parent.mkdir()
+    alone.write_text(open(_files(tmp_path / "src"), encoding="utf-8").read())
+    from parity.fakevlm import _texts
+
+    def asked(fake) -> list[str]:
+        seen, answer = [], fake.answer
+        fake.answer = lambda payload: (seen.append(_texts(payload)), answer(payload))[1]
+        return seen
+
+    rd = str(tmp_path / "run")
+    with fake_vlm(tmp_path) as fake:
+        texts = asked(fake)
+        doc = _check(cli, mini_dataset, rd, str(alone))
+    sent = [t for t in texts if "You check a recorded robot trajectory" in t]
+    assert doc["episodes"]["total"] == 3 and doc["episodes"]["error"] == 0
+    assert len(sent) == 3                                        # one clip per episode (one camera, < 60 s)
+    recs = results(rd, EEF)
+    assert all(r["passed"] is True and r["verdict"] == "pass" for r in recs.values())
+    for e, r in recs.items():
+        d = r["details"]
+        assert d["assessment_mode"] == "vlm_opinion" and d["decision"]["outcome"] == "opinion"
+        assert "cameras" not in d or not d.get("summary")        # no CPU reading at all
+        cam = d["opinion"]["cameras"][CAM]
+        assert cam["status"] == "answered" and cam["point_id"] == "block_center" and cam["axis_id"] is None
+        assert cam["clips"] == [dict(cam["clips"][0], start_frame=0, end_frame=len(_truth(e)) - 1)]
+        assert cam["clips"][0]["video"]["frames"] == len(_truth(e))
+    flagged = [r for r in recs.values() if r["details"]["opinion"]["flagged"]]
+    assert flagged, "the fake flags every other clip"
+    for r in flagged:
+        (seg,) = r["details"]["opinion"]["cameras"][CAM]["segments"]
+        assert seg["confidence"] == 0.8 and seg["aspect"] == "position" and seg["evidence_frames"] == [0]
+        assert seg["start_s"] == 0.0 and len(seg["evidence"]) == 1
+        assert os.path.isfile(os.path.join(rd, seg["evidence"][0])) and r["evidence"] == seg["evidence"]
+    summary = OP.summary(recs)
+    assert summary["opinion_episodes"] == 3 and summary["opinion_flagged"] == len(flagged)
+    assert summary["opinion_segments"] == len(flagged)
+    # resumed with the same inputs, nothing is asked again
+    with fake_vlm(tmp_path) as fake:
+        texts = asked(fake)
+        again = _check(cli, mini_dataset, rd, str(alone), "--resume")
+    assert again["skipped_existing"] == 3
+    assert not [t for t in texts if "You check a recorded robot trajectory" in t]
+
+
+def test_opinion_answers_are_checked_against_the_clip():
+    from curation.extensions.eef_consistency import opinion as OP
+
+    ok = {"gripper_visible": True, "summary": "x",
+          "segments": [{"start_frame": 10, "end_frame": 20, "aspect": "both", "confidence": 0.6,
+                        "evidence_frames": [12, 20], "observation": "偏了"}]}
+    assert OP.check_answer(json.dumps(ok), 0, 50) == (ok, None)
+    assert OP.check_answer("```json\n" + json.dumps(ok) + "\n```", 0, 50)[0] == ok
+    late = dict(ok, segments=[dict(ok["segments"][0], end_frame=60)])
+    assert OP.check_answer(json.dumps(late), 0, 50)[1]["code"] == "bad_frame"
+    outside = dict(ok, segments=[dict(ok["segments"][0], evidence_frames=[25])])
+    assert OP.check_answer(json.dumps(outside), 0, 50)[1]["code"] == "bad_frame"
+    sure = dict(ok, segments=[dict(ok["segments"][0], confidence=1.2)])
+    assert OP.check_answer(json.dumps(sure), 0, 50)[1]["code"] == "schema_violation"
+    assert OP.check_answer("no json", 0, 50)[1]["code"] == "malformed_json"
+    assert OP.clip_ranges(list(range(2000)), 15.0) == [list(range(900)), list(range(900, 1800)),
+                                                       list(range(1800, 2000))]
 
 
 def test_a_remote_dataset_streams_the_media_it_needs(cli, cloud, mini_dataset, tmp_path, monkeypatch):

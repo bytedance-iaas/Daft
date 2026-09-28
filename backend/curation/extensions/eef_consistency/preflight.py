@@ -97,6 +97,11 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
             if template is not None:                 # a camera with seeds keeps them
                 obs = {**template.observable_points(s.cameras), **obs}
             observable[ep] = obs
+    else:
+        # no gripper reference (D-E15): the model looks at every declared point, so an episode
+        # with a projection can be given an opinion
+        observable = {ep: {cid: set(load.declared_point_ids(s, cid)) for cid in s.cameras}
+                      for ep, s in result.samples.items()}
     mounts = MOUNTS[params.get("camera_mounts") or "fixed_external_and_wrist"]
     table = CAP.dataset_capability(result, episodes, observable=observable, allowed_mounts=mounts)
     per = table["episodes"]
@@ -116,8 +121,9 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
     if result.warnings:
         notes.append(f"{len(result.warnings)} warning(s), first: {result.warnings[0].message}")
     if seeds is None and template is None:
-        notes.append("no observation seeds and no gripper template: position, orientation and time need one of them "
-                     "(--param eef_video_consistency.observation_seeds=DIR or .gripper_template=FILE)")
+        notes.append("no observation seeds and no gripper template: the CPU measures nothing; the model gives an "
+                     "advisory opinion on each camera's whole clip (vlm_opinion, design doc 12 §10.5) and no episode "
+                     "is passed, rejected or asked on its account")
     elif template is not None:
         notes.append(f"gripper template {template.sha256[:12]}…: {len(template.entries)} entries ({template.method}); "
                      "a camera that also has seeds keeps the seeds")
@@ -126,13 +132,6 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
     if table["availability"] != C.AVAILABLE:
         entry = _unsupported("no selected episode can be assessed from this trajectory.json",
                              table.get("reason_code") or C.PROJECTION_MISSING)
-    elif seeds is None and template is None:
-        # nothing finds the gripper in the video: no position, direction or time, no window to show
-        # the model - every episode would go to a person as not judgeable (galbot, 2026-09-24)
-        entry = {"availability": C.NEEDS_INPUT, "reason_code": C.OBSERVATION_SEED_MISSING,
-                 "reason": "no observation seeds and no gripper template: upload one of them (console) or pass "
-                           "--param eef_video_consistency.observation_seeds=DIR or .gripper_template=FILE",
-                 "input_hint": {"field": "observation_seeds"}}
     else:
         entry = {"availability": C.AVAILABLE}
     entry.update(subitems=subitems, episode_counts=counts, notes=notes)

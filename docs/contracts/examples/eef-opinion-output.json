@@ -1,0 +1,68 @@
+{
+  "schema": "eef/opinion_output.schema.json",
+  "valid": [
+    {
+      "gripper_visible": true,
+      "segments": [
+        {
+          "start_frame": 40,
+          "end_frame": 95,
+          "aspect": "position",
+          "confidence": 0.85,
+          "evidence_frames": [52, 71],
+          "observation": "红圈落在手指外侧，夹爪实际在它的右下方"
+        },
+        {
+          "start_frame": 180,
+          "end_frame": 230,
+          "aspect": "orientation",
+          "confidence": 0.4,
+          "evidence_frames": [205],
+          "observation": "红箭头偏向桌面，夹爪大致朝前"
+        }
+      ],
+      "summary": "前半段位置偏得明显，后半段朝向略有出入"
+    },
+    {
+      "gripper_visible": true,
+      "segments": [],
+      "summary": "红圈始终在两指之间，红箭头沿夹爪指向"
+    }
+  ],
+  "invalid": [
+    {
+      "gripper_visible": true,
+      "segments": [
+        {
+          "start_frame": 40,
+          "end_frame": 95,
+          "aspect": "position",
+          "confidence": 1.5,
+          "evidence_frames": [52],
+          "observation": "置信度超过 1"
+        }
+      ],
+      "summary": ""
+    },
+    {
+      "gripper_visible": true,
+      "segments": [
+        {
+          "start_frame": 40,
+          "end_frame": 95,
+          "aspect": "position",
+          "confidence": 0.7,
+          "evidence_frames": [],
+          "observation": "没有证据帧"
+        }
+      ],
+      "summary": ""
+    },
+    {
+      "gripper_visible": true,
+      "segments": [],
+      "summary": "",
+      "verdict": "match"
+    }
+  ]
+}

@@ -10,7 +10,7 @@ import { qk } from '../../api/queries';
 import type { ResultRecord, SyncCurves } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
-import { EefConclusion, EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
+import { EefConclusion, EefOpinion, EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
 import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
 import { fieldLabel, readable } from '../../lib/reportView';
 import { fmt, num, signed, str } from '../../lib/sectionStats';
@@ -396,6 +396,17 @@ function SkillBlock({ record }: BlockProps) {
 function EefBlock({ taskId, record }: BlockProps) {
   const d = details(record);
   const overall = str(d.overall);
+  if (d.assessment_mode === 'vlm_opinion') {
+    // no gripper reference (design doc 12 §10.5): the model's opinion only, no CPU reading, no verdict
+    return (
+      <div data-testid="episode-eef">
+        <Space wrap>
+          <EefConclusion record={record} />
+        </Space>
+        <EefOpinion taskId={taskId} record={record} />
+      </div>
+    );
+  }
   return (
     <div data-testid="episode-eef">
       <Space wrap>
