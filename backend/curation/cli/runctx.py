@@ -15,6 +15,7 @@ import copy
 import json
 import os
 
+from ..streams import objects as stream_objects
 from .errors import CliError, InputUnreachable, ModuleFailed, UsageError
 from .framework import Context
 
@@ -315,6 +316,7 @@ class Source:
         self.format = lerobot_meta.detect_format(self.listing)
         self.kind = self.format.kind
         self.cache = None
+        self.objects = None
         self._numbering: dict[int, str] | None = None
         self.input_dir = storage.root if not storage.remote else storage.uri
         if self.kind not in containers.FORMATS:
@@ -326,8 +328,16 @@ class Source:
             raise UsageError(why, {"format": self.kind})
         ctx.on_exit(self.close)
         if self.remote and cache:
-            self.cache = containers.SourceCache(storage, self.listing, self.kind)
-            self.input_dir = self.cache.data
+            if self.kind == containers.MCAP:
+                # Streamed: the listing is the directory and every read is a ranged GET,
+                # so there is no local copy of the source at all. The reader picks the
+                # bound objects up by dataset URI (streams.objects).
+                self.objects = containers.TosObjects(storage, self.listing, log=ctx.log)
+                stream_objects.bind(self.uri, self.objects)
+                self.input_dir = self.uri
+            else:
+                self.cache = containers.SourceCache(storage, self.listing, self.kind)
+                self.input_dir = self.cache.data
 
     @property
     def container(self) -> bool:
@@ -354,7 +364,11 @@ class Source:
         return []
 
     def fetch(self, episodes) -> None:
-        """Make the source objects of ``episodes`` local (a remote mcap / lance dataset)."""
+        """Make the source objects of ``episodes`` local (a remote lance dataset).
+
+        A streamed mcap dataset has nothing to fetch - it is read where it is - so this
+        is a no-op there. The method stays because every command calls it before reading.
+        """
         if self.cache is None:
             return
         n = self.cache.fetch(self.episode_keys(episodes))
@@ -365,6 +379,10 @@ class Source:
         from ..pipeline import rows
 
         rows.cleanup(self.input_dir)
+        if self.objects is not None:
+            stream_objects.unbind(self.uri)
+            if self.objects.stats.gets:
+                self.ctx.log("info", f"source stream: {self.objects.describe()}")
         if self.cache is not None:
             self.cache.close()
 

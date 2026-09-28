@@ -45,8 +45,17 @@ def configure_ingest(cfg: dict | None) -> None:
 
 
 def input_format(input_dir: str) -> str:
-    """v1's sniffing (``pipeline/run.py``): ``lance``, ``mcap``, else ``lerobot``. A
-    ``tos://`` input is LeRobot: remote mcap / lance are read from a local copy."""
+    """v1's sniffing (``pipeline/run.py``): ``lance``, ``mcap``, else ``lerobot``.
+
+    A ``tos://`` input is LeRobot unless a streamed mcap dataset is bound to that URI -
+    a remote lance dataset is still read from a local copy, and a LeRobot one keeps its
+    own remote path. Without the bound check a streamed mcap dataset would quietly be
+    read by the LeRobot reader: wrong rows rather than an error.
+    """
+    from ..streams.objects import is_bound
+
+    if is_bound(input_dir):
+        return "mcap"
     if str(input_dir).startswith("tos://"):
         return "lerobot"
     from ..ingest.lance_reader import is_lance_dataset

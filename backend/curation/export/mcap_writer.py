@@ -13,7 +13,6 @@ schema/channel/attachment/metadata 任何我们没读懂的记录都可能在途
 from __future__ import annotations
 
 import os
-import shutil
 
 from .lerobot_writer import _refuse_nonempty
 
@@ -21,12 +20,17 @@ from .lerobot_writer import _refuse_nonempty
 INDEX_NAME = "index.json"
 
 
-def _source_files(input_dir: str) -> dict[str, str]:
-    """源目录 → {episode_id: .mcap 路径}。编号解析复用 reader 的同一套规则,
-    保证"报告里的 ep000007"和"交付里的 episode_7.mcap"指的是同一条。"""
-    from ..ingest.mcap_reader import _episode_files
+def _source_objects(input_dir: str):
+    """源 → (对象集, {episode_id: 对象名})。编号解析复用 reader 的同一套规则,
+    保证"报告里的 ep000007"和"交付里的 episode_7.mcap"指的是同一条。
 
-    return {f"ep{idx:06d}": path for idx, path in _episode_files(input_dir)}
+    对象集可以是本地目录,也可以是绑定在该 URI 上的流式数据集 —— 交付需要整份
+    字节,由它的 ``copy_to`` 提供(本地整拷,远端流式下载)。"""
+    from ..ingest.mcap_reader import _episode_entries
+    from ..streams.objects import resolve
+
+    objs = resolve(input_dir)
+    return objs, {f"ep{idx:06d}": name for idx, name in _episode_entries(objs)}
 
 
 def export_mcap_curated(delivery_dir: str, input_dir: str, keep_ids: list[str],
@@ -50,7 +54,7 @@ def export_mcap_curated(delivery_dir: str, input_dir: str, keep_ids: list[str],
     out_dir = os.path.join(delivery_dir, out_name)
     _refuse_nonempty(out_dir)
 
-    src_of = _source_files(input_dir)
+    objs, src_of = _source_objects(input_dir)
     unknown = [e for e in keep_ids if e not in src_of]
     if unknown:
         raise KeyError(f"这些 episode 在源目录里找不到对应 .mcap: {unknown[:8]}")
@@ -63,18 +67,18 @@ def export_mcap_curated(delivery_dir: str, input_dir: str, keep_ids: list[str],
     # 源名全部合 episode_N 约定 → 文件名本身就是编号,原名保留;否则交付文件
     # **重命名为 episode_<编号>.mcap**(编号从此稳定),原名记进清单的 source_file。
     from ..ingest.mcap_reader import _EPISODE_RE
-    names_canonical = all(_EPISODE_RE.search(os.path.basename(p))
-                          for p in src_of.values())
+    names_canonical = all(_EPISODE_RE.search(os.path.basename(n))
+                          for n in src_of.values())
     print(f"[curation] mcap 导出:{len(keep_ids)} 条原样字节拷贝(改标 "
           f"{len(relabels)} 条记入 index.json,文件本体不动"
           f"{'' if names_canonical else ';源文件名不合 episode_N 约定,交付按编号重命名'})",
           flush=True)
     for i, eid in enumerate(keep_ids):
-        src = src_of[eid]
-        src_name = os.path.basename(src)
+        name = src_of[eid]
+        src_name = os.path.basename(name)
         fname = (src_name if names_canonical
                  else f"episode_{int(eid.replace('ep', ''))}.mcap")
-        shutil.copyfile(src, os.path.join(out_dir, fname))   # 顺序整拷,FSX 安全
+        objs.copy_to(name, os.path.join(out_dir, fname))     # 顺序整拷,FSX 安全
         meta = episodes.get(eid) or {}
         new_text = relabels.get(eid, "")
         rec = {

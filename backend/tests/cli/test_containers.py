@@ -327,10 +327,11 @@ def test_tos_preflight_reads_metadata_only(cli, tos, mini_mcap, mini_lance, fmt)
         assert {c[2].split("/", 2)[2].split("/")[0] for c in gets} == {"meta"}
 
 
-@pytest.mark.parametrize("fmt", ["mcap", "lance"])
+@pytest.mark.parametrize("fmt", ["lance"])
 def test_tos_source_cache(cli, tos, mini_mcap, mini_lance, fmt, tmp_path, monkeypatch):
     """Each object is copied once into the task's cache and read from there by every later
-    command; the source bucket is only read."""
+    command; the source bucket is only read. (lance only: mcap is streamed, see
+    ``test_tos_mcap_is_streamed``.)"""
     tos.upload_dir(_datasets(mini_mcap, mini_lance)[fmt], "src", f"ds/{fmt}")
     uri = f"tos://src/ds/{fmt}"
     cache = tmp_path / "cache"
@@ -358,6 +359,52 @@ def test_tos_source_cache(cli, tos, mini_mcap, mini_lance, fmt, tmp_path, monkey
     assert sorted(data_gets()) == sorted(objects)          # the cache served the second one
     assert not [c for c in tos.calls if c[0] in ("put", "delete") and c[1] == "src"]
     assert os.listdir(cache) and os.listdir(tmp_path / "tmp") == []
+
+
+def test_tos_mcap_is_streamed(cli, tos, mini_mcap, tmp_path, monkeypatch):
+    """A remote mcap dataset is never copied locally: every read of an episode is a ranged
+    GET, the source cache stays empty, and the verdicts are the local run's."""
+    tos.upload_dir(mini_mcap, "src", "ds/mcap")
+    uri = "tos://src/ds/mcap"
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("CURATION_SOURCE_CACHE", str(cache))
+    run_dir = tmp_path / "run"
+    sm = str(run_dir / "source_manifest.json")
+    assert cli("snapshot", "--input", uri, "--out", sm).rc == 0
+    stages = ("timestamp_check,kinematic_limits,motion_quality", "visual_quality,video_action_sync")
+    for modules in stages:                                     # one call runs one stage
+        remote = cli("check", "--modules", modules, "--input", uri, "--run-dir", str(run_dir),
+                     "--source-manifest", sm, "--selection", EPISODES, "--episodes", EPISODES)
+        assert remote.rc == 0, remote.doc
+        local = cli("check", "--modules", modules, "--input", mini_mcap,
+                    "--run-dir", str(tmp_path / "local"), "--episodes", EPISODES)
+        assert local.rc == 0, local.doc
+        for m in modules.split(","):
+            assert remote.doc["modules"][m]["episodes"] == local.doc["modules"][m]["episodes"], m
+
+    gets = _gets(tos, "ds/mcap/")
+    assert gets and all(c[3] is not None for c in gets)        # ranged reads only, never a whole object
+    assert not (cache.exists() and os.listdir(cache))          # nothing cached for mcap
+    assert os.listdir(tmp_path / "tmp") == []
+    assert not [c for c in tos.calls if c[0] in ("put", "delete") and c[1] == "src"]
+
+
+def test_episode_clips_are_the_readers_mp4_bytes(mini_mcap):
+    """streams.clip muxes an episode's cameras in memory with the reader's own muxers and
+    timeline: the bytes equal the temporary mp4 the reader writes for the checks."""
+    from curation.ingest import mcap_reader
+    from curation.streams.clip import episode_clips
+    from curation.streams.objects import LocalDirObjects
+
+    try:
+        row = mcap_reader.read_mcap_rows(mini_mcap, max_episodes=1, validate=False)[0]
+        on_disk = {cam: open(v["path"], "rb").read() for cam, v in row["video"].items()}
+    finally:
+        mcap_reader.cleanup_video_cache(mini_mcap)
+    in_memory = episode_clips(LocalDirObjects(mini_mcap), "episode_0.mcap")
+    assert set(in_memory) == set(on_disk) == {"observation.images.wrist", "observation.images.exterior"}
+    for cam in on_disk:
+        assert in_memory[cam] == on_disk[cam] and in_memory[cam][4:8] == b"ftyp"
 
 
 def test_tos_cache_of_one_command_is_removed(cli, tos, mini_mcap, tmp_path):
@@ -428,19 +475,117 @@ def test_range_file_reads_across_blocks():
         calls.append((start, n))
         return data[start:start + n]
 
-    f = RangeFile(read_range, len(data), readahead=1000, tail=500)
+    f = RangeFile(read_range, len(data), block=1000, tail=500)
     f.seek(-10, os.SEEK_END)
     assert f.read(10) == data[-10:]               # the whole tail in one read
     f.seek(-400, os.SEEK_END)
     assert f.read(20) == data[-400:-380]          # cached
     f.seek(995)
-    assert f.read(20) == data[995:1015]           # one read from 995 on
+    assert f.read(20) == data[995:1015]           # one read, though it crosses a block
     f.seek(1000)
     assert f.read(5) == data[1000:1005]           # cached
-    assert calls == [(len(data) - 500, 500), (995, 1000)]
+    # Blocks are aligned, and stretched to cover a request that crosses a boundary,
+    # so the straddling read above is still a single ranged GET.
+    assert calls == [(len(data) - 500, 500), (0, 1015)]
     small = RangeFile(read_range, 300, tail=500)
     small.seek(0)
     assert small.read(8) == data[:8] and calls[-1] == (0, 300)   # a small file: one read
+
+
+def test_range_file_readahead_serves_the_next_chunk_from_cache():
+    """A payload-sized read fetches ``readahead`` bytes: the surplus is a cached block,
+    so the header and payload of the chunk behind it cost no GET at all."""
+    from curation.streams.rangefile import RangeFile
+
+    data = os.urandom(10 << 20)
+    calls = []
+
+    def read_range(start, n):
+        calls.append((start, n))
+        return data[start:start + n]
+
+    f = RangeFile(read_range, len(data), direct_min=1 << 19, readahead=4 << 20)
+    f.seek(100)
+    assert f.read(1 << 20) == data[100:100 + (1 << 20)]
+    assert calls == [(100, 4 << 20)]                       # one GET, stretched to the read-ahead
+    at = 100 + (1 << 20)
+    assert f.read(64) == data[at:at + 64]                  # next chunk's header: cached
+    assert f.read(1 << 20) == data[at + 64:at + 64 + (1 << 20)]   # next payload: cached
+    assert len(calls) == 1
+    f.seek(9 << 20)
+    assert f.read(1 << 20) == data[9 << 20:]               # a read past the end stops at the end
+    assert calls[-1] == (9 << 20, 1 << 20) and f.stats.direct == 2
+
+
+def test_range_file_fills_short_reads_and_reports_truncation():
+    from curation.streams.rangefile import ObjectTruncated, RangeFile
+
+    data = bytes(range(256)) * 4096
+
+    def seven_at_a_time(start, n):                         # a backend that returns short
+        return data[start:start + min(n, 7)]
+
+    f = RangeFile(seven_at_a_time, len(data), block=1000, tail=500)
+    assert f.read(1000) == data[:1000]                     # filled in, not truncated
+
+    def shrunk(start, n):                                  # the object lost its second half
+        return data[start:start + n] if start < 500_000 else b""
+
+    f = RangeFile(shrunk, len(data), block=1000, tail=500)
+    f.seek(600_000)
+    with pytest.raises(ObjectTruncated):
+        f.read(10)
+
+
+def test_range_file_retries_transport_errors(monkeypatch):
+    from curation.streams import rangefile
+    from curation.streams.rangefile import RangeFile
+
+    monkeypatch.setattr(rangefile.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def flaky(start, n):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise ConnectionError("boom")
+        return b"x" * n
+
+    f = RangeFile(flaky, 5000, block=1000, tail=500, attempts=4)
+    assert f.read(10) == b"x" * 10 and f.stats.retries == 2
+
+    def down(start, n):
+        raise ConnectionError("down")
+
+    f = RangeFile(down, 5000, block=1000, tail=500, attempts=2)
+    with pytest.raises(ConnectionError):
+        f.read(10)
+    assert f.stats.retries == 1
+
+
+def test_tos_objects_refuse_an_object_replaced_mid_read():
+    """Every ranged GET carries the object's ETag: a source replaced while it is being
+    read fails at that read with SourceChanged, not later with mixed bytes."""
+    from curation.cli.containers import TosObjects
+    from curation.cli.errors import SourceChanged
+    from curation.cli.storage import ObjectInfo
+
+    data = bytes(range(256)) * 4096
+
+    class Store:
+        uri, remote, etag = "tos://b/p", True, "v1"
+
+        def read_range_etag(self, key, start, n):
+            return data[start:start + n], self.etag
+
+    store = Store()
+    objs = TosObjects(store, {"episode_0.mcap": ObjectInfo("episode_0.mcap", len(data), etag="v1")})
+    assert objs.names() == ["episode_0.mcap"] and objs.object_uri("episode_0.mcap") == "tos://b/p/episode_0.mcap"
+    fh = objs.open("episode_0.mcap")
+    assert fh.read(10) == data[:10]
+    store.etag = "v2"
+    fh.seek(900_000)
+    with pytest.raises(SourceChanged):
+        fh.read(10)
 
 
 def test_cache_refuses_an_object_that_changed_while_read(tmp_path):

@@ -8,7 +8,10 @@ For every camera the first of these that exists wins:
    (``export/lerobot_curated/<file>``, ``scope=delivery``); skipped while an export is
    changing the dataset in place (``export/_EXPORTING``);
 3. **source_dataset** - the input dataset (``scope=input``); rejected episodes only
-   exist there.
+   exist there. For an mcap dataset, whose cameras are inside the episode file, this
+   origin is a virtual path (``stream/cameras/ep<NNNNNN>__<camera>.mp4``) that
+   ``GET /media/sign`` resolves to this Daemon's own streaming URL: the episode is
+   muxed from the source in memory on demand (:mod:`.clips`).
 
 The browser signs a path with ``GET /media/sign`` (W8) and plays it directly from TOS.
 LeRobot v3 keeps several episodes in one mp4, so those entries carry ``from_ts`` /
@@ -220,8 +223,13 @@ def source_videos(rev: Revision, episode: int) -> dict[str, Window]:
                 or {}).get("kind")
     except (FileNotFoundError, ValueError):
         kind = None
-    if kind in ("mcap", "lance"):
-        return {}            # D44: their videos sit inside the files / tables, not as mp4s
+    if kind == "mcap":       # muxed from the source on demand by this Daemon (clips.py)
+        from .clips import cameras_of
+
+        return {cam: (rel, None, None)
+                for cam, rel in cameras_of(rev.run_dir, rev.store.docs, episode).items()}
+    if kind == "lance":
+        return {}            # D44: its videos sit inside the tables, not as mp4s
     index = source_index(rev)
     return index.of(episode) if index is not None else {}
 

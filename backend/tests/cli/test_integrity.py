@@ -241,6 +241,34 @@ def test_mcap_damage(cli, mini_mcap, tmp_path):
     assert verdicts(recs)[0] == verdicts(recs)[5] == "pass"
 
 
+@pytest.fixture
+def tos(cloud, monkeypatch, tmp_path):
+    monkeypatch.setenv("CURATION_INPUT_TOS_ACCESS_KEY", "in-ak")
+    monkeypatch.setenv("CURATION_INPUT_TOS_SECRET_KEY", "in-sk")
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
+    os.makedirs(tmp_path / "tmp")
+    import tempfile
+
+    tempfile.tempdir = None
+    yield cloud
+    tempfile.tempdir = None
+
+
+def test_mcap_on_tos_is_checked_through_ranged_reads(cli, tos, mini_mcap, tmp_path):
+    """A streamed mcap dataset (no local copy): the file checks read each episode through
+    the reader's seam by ranged GETs, and the verdicts are the local run's."""
+    tos.upload_dir(mini_mcap, "src", "ds/mcap")
+    remote = str(tmp_path / "tos-run")
+    check(cli, "tos://src/ds/mcap", remote)
+    local = str(tmp_path / "local-run")
+    check(cli, mini_mcap, local)
+    assert verdicts(results(remote)) == verdicts(results(local))
+    assert results(remote)[0]["details"]["files"][0]["crc"] == "mcap_chunk"
+    assert not any(r["details"].get("read_error") for r in results(remote).values())
+    gets = [c for c in tos.calls if c[0] == "get" and c[2].startswith("ds/mcap/")]
+    assert gets and all(c[3] is not None for c in gets)          # ranged reads only, no file fetched whole
+
+
 def test_mcap_chunk_crc(tmp_path):
     """L2: an uncompressed chunk whose bytes changed fails its CRC."""
     from mcap.writer import CompressionType, Writer

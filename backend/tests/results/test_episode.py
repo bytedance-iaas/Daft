@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -159,6 +160,69 @@ def test_clip_then_delivery_then_source(world):
     (rd / "export" / "_EXPORTING").write_text("{}", encoding="utf-8")
     videos = _view(world, 4)["videos"]
     assert [v["origin"] for v in videos] == ["clip", "source_dataset"]
+
+
+def test_mcap_cameras_are_streamed_by_the_daemon(world):
+    """An mcap task's cameras have no file to sign: the episode view names them by a
+    virtual stream path, and /media/sign resolves that to this Daemon's own URL."""
+    path = world.run_dir / "preflight.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["format"]["kind"] = "mcap"
+    doc["dataset"]["cameras"] = ["wrist", "exterior_1"]
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    videos = _view(world, 3)["videos"]
+    assert videos == [
+        {"camera": "wrist", "scope": "input", "origin": "source_dataset",
+         "path": "stream/cameras/ep000003__wrist.mp4"},
+        {"camera": "exterior_1", "scope": "input", "origin": "source_dataset",
+         "path": "stream/cameras/ep000003__exterior_1.mp4"}]
+    r = world.client.get(f"{API}/media/sign", params={"task": world.task_id, "scope": "input",
+                                                      "path": videos[0]["path"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["url"].endswith(f"/api/v1/tasks/{world.task_id}/episodes/3/cameras/wrist.mp4")
+
+
+def test_clip_source_muxes_a_local_mcap_episode_in_memory(tmp_path):
+    pytest.importorskip("mcap")
+    pytest.importorskip("mcap_ros2")
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from curation.cli.storage import LocalStorage
+    from parity.fixtures import make_mini_mcap
+    from daemon.results import clips
+    from daemon.results.store import ResultStore
+
+    ds = make_mini_mcap(str(tmp_path / "mini_mcap"))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "preflight.json").write_text(json.dumps(
+        {"format": {"kind": "mcap"}, "dataset": {"cameras": ["wrist", "exterior"]}}), encoding="utf-8")
+    objects = [{"key": f"episode_{i}.mcap", "size": os.path.getsize(os.path.join(ds, f"episode_{i}.mcap")),
+                "etag": None} for i in range(8)]
+    (run_dir / "source_manifest.json").write_text(json.dumps(
+        {"input": ds, "objects": objects, "summary": {"digest": "sha256:" + "a" * 64}}), encoding="utf-8")
+
+    @contextmanager
+    def open_input(task):
+        yield LocalStorage(ds)
+
+    store = ResultStore(tmp_path, open_input=open_input)
+    src = clips.ClipSource(store, SimpleNamespace(id="t-mcap"), run_dir)
+    assert clips.cameras_of(run_dir, store.docs, 2) == {
+        "wrist": "stream/cameras/ep000002__wrist.mp4",
+        "exterior": "stream/cameras/ep000002__exterior.mp4"}
+    data = src.clip(2, "wrist")
+    assert data and data[4:8] == b"ftyp"
+    assert src.clip(2, "exterior")[4:8] == b"ftyp" and src.clip(2, "nope") is None
+    assert store.clips.get(("clips", "t-mcap", "sha256:" + "a" * 64, 2)) is not None   # one read, both cameras
+    status, body, headers = clips.slice_range(data, "bytes=0-1023")
+    assert status == 206 and len(body) == 1024 and headers["Content-Range"] == f"bytes 0-1023/{len(data)}"
+    status, body, _ = clips.slice_range(data, "bytes=-100")
+    assert status == 206 and body == data[-100:]
+    assert clips.slice_range(data, None)[0] == 200 and clips.slice_range(data, f"bytes={len(data)}-")[0] == 416
+    assert clips.parse_stream_path("stream/cameras/ep000012__cam_a.mp4") == (12, "cam_a")
+    assert clips.parse_stream_path("details/audit_clips/ep000012__cam_a.mp4") is None
 
 
 def test_v2_delivery_and_v2_source(client_for, tmp_path):

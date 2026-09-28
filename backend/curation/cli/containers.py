@@ -38,6 +38,7 @@ import threading
 import zlib
 from dataclasses import dataclass, field
 
+from ..streams.rangefile import RangeFile, RangeStats
 from .errors import SourceChanged
 from .storage import ObjectInfo, Storage, normalize_etag
 
@@ -85,19 +86,15 @@ def mcap_episodes(listing) -> dict[int, str]:
     """``{episode: key}`` by v1's rule: ``episode_<N>.mcap`` numbered by name (other files
     ignored); without any such name, the sorted files numbered 0, 1, ... by position.
 
-    The rule is v1's own function (``mcap_reader._episode_files``), run over empty stand-ins
-    named like the objects, so a remote dataset is numbered exactly as the local copy the
-    readers see."""
-    from ..ingest import mcap_reader
+    The rule itself is the pure function v1's ``_episode_files`` now delegates to, so a
+    remote dataset is numbered exactly as a local copy would be - and without the stand-in
+    files a temporary directory used to need."""
+    from ..streams.objects import number_episodes
 
     keys = mcap_keys(listing)
     if not keys:
         return {}
-    with tempfile.TemporaryDirectory(prefix="curation-mcap-names-") as tmp:
-        for k in keys:
-            open(os.path.join(tmp, k), "wb").close()
-        pairs = mcap_reader._episode_files(tmp)
-    return {int(i): os.path.basename(p) for i, p in pairs}
+    return {int(i): name for i, name in number_episodes(keys)}
 
 
 def enabled(fmt: str, cfg: dict | None) -> tuple[bool, str]:
@@ -122,74 +119,9 @@ def mapping_of(cfg: dict | None) -> dict | None:
 # ---------------------------------------------------------------- mcap summaries
 
 
-class RangeFile:
-    """A read-only, seekable file over ``read_range(start, length)``: the mcap reader reads
-    the magic at the start, then seeks to the footer and the summary section at the end,
-    so a summary costs two or three small ranged GETs instead of the whole file. Reads
-    are cached as segments; a read near the end fetches the whole tail (``tail`` bytes)
-    at once, where the summary section lives.
-
-    Deliberately not an ``io.RawIOBase``: the mcap reader wraps those in a
-    ``BufferedReader`` per record stream, whose garbage collection closes the raw file
-    under the next one."""
-
-    def __init__(self, read_range, size: int, *, readahead: int = 1 << 14,
-                 tail: int = 1 << 16):
-        self._read_range, self._size = read_range, int(size)
-        self._readahead, self._tail = int(readahead), int(tail)
-        self._pos = 0
-        self._segments: list[tuple[int, bytes]] = []
-
-    def readable(self) -> bool:
-        return True
-
-    def seekable(self) -> bool:
-        return True
-
-    def tell(self) -> int:
-        return self._pos
-
-    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
-        base = {io.SEEK_SET: 0, io.SEEK_CUR: self._pos, io.SEEK_END: self._size}[whence]
-        self._pos = max(0, base + int(offset))
-        return self._pos
-
-    def _segment(self, pos: int) -> tuple[int, bytes] | None:
-        for start, data in self._segments:
-            if start <= pos < start + len(data):
-                return start, data
-        return None
-
-    def _fetch(self, pos: int, n: int) -> tuple[int, bytes]:
-        if pos >= self._size - self._tail:            # the tail, whole (a small file: all of it)
-            start = max(0, self._size - self._tail)
-            length = self._size - start
-        else:
-            start = pos
-            length = min(self._size - start, max(n, self._readahead))
-        data = self._read_range(start, length)
-        self._segments.append((start, data))
-        return start, data
-
-    def read(self, size: int = -1) -> bytes:
-        want = max(0, self._size - self._pos)
-        if size is not None and size >= 0:
-            want = min(want, size)
-        out = bytearray()
-        while len(out) < want:
-            seg = self._segment(self._pos) or self._fetch(self._pos, want - len(out))
-            start, data = seg
-            chunk = data[self._pos - start:self._pos - start + (want - len(out))]
-            if not chunk:
-                break
-            out += chunk
-            self._pos += len(chunk)
-        return bytes(out)
-
-    def readinto(self, buf) -> int:
-        data = self.read(len(buf))
-        buf[:len(data)] = data
-        return len(data)
+# ``RangeFile`` moved to ``streams.rangefile`` (bounded cache, retries, the two read
+# shapes). It is imported at the top of this module, so importing it from here keeps
+# working for everything that already does.
 
 
 @dataclass
@@ -338,6 +270,66 @@ def mcap_summary(storage: Storage, key: str, size: int, *, scan: bool = False) -
             return read_summary(fh, key, scan=scan)
     return read_summary(RangeFile(lambda s, n: storage.read_range(key, s, n), size), key,
                         scan=scan)
+
+
+class TosObjects:
+    """An mcap dataset read straight off TOS: the listing is the directory, and each
+    episode is a :class:`~curation.streams.rangefile.RangeFile` over ranged GETs.
+
+    Implements ``streams.objects.McapObjects``. The reader is handed one of these
+    instead of a local directory, which is what removes the whole-file download (D44's
+    source cache) from the mcap path.
+
+    The listing's size and ETag are the content version: every read checks the object
+    is still the one the task started with, so a source replaced mid-run surfaces as
+    :class:`~curation.cli.errors.SourceChanged` at the read, not as corrupt output.
+    """
+
+    def __init__(self, storage: Storage, listing: dict[str, ObjectInfo], *, log=None) -> None:
+        self.storage = storage
+        self.uri = storage.uri
+        self.listing = listing
+        self.stats = RangeStats()
+        self._log = log
+
+    def names(self) -> list[str]:
+        return mcap_keys(self.listing)
+
+    def object_uri(self, name: str) -> str:
+        return f"{self.uri.rstrip('/')}/{name}"
+
+    def identity(self, name: str) -> tuple[int, str]:
+        info = self.listing[name]
+        return int(info.size), info.identity()
+
+    def open(self, name: str):
+        info = self.listing[name]
+        size, want = int(info.size), info.identity()
+
+        def read_range(start: int, length: int) -> bytes:
+            data, etag = self.storage.read_range_etag(name, start, length)
+            if etag is not None and normalize_etag(etag) != want:
+                raise SourceChanged(
+                    f"{self.object_uri(name)} 在读取过程中变了(ETag {want} → "
+                    f"{normalize_etag(etag)});请重新预检后再跑")
+            return data
+
+        return RangeFile(read_range, size, stats=self.stats, name=self.object_uri(name))
+
+    def copy_to(self, name: str, dst: str) -> int:
+        """Stream one object out whole (delivery needs every byte; ``download`` already
+        writes it in 1 MiB pieces, so nothing is held in memory)."""
+        got = self.storage.download(name, dst)
+        want = self.listing[name]
+        size = getattr(got, "size", None)
+        if size is not None and int(size) != int(want.size):
+            raise SourceChanged(
+                f"{self.object_uri(name)} 的大小与预检时不一致({want.size} → {size});"
+                "请重新预检后再跑")
+        return int(size if size is not None else os.path.getsize(dst))
+
+    def describe(self) -> str:
+        return self.stats.describe()
 
 
 def mcap_summaries(storage: Storage, listing, keys, *, workers: int = 16) -> dict[str, McapSummary]:

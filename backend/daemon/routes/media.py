@@ -1,7 +1,9 @@
 """Browser-facing TOS access with a task's keys (W8; design docs 03 §7, 08 §6; D16).
 
 * ``GET /media/sign`` - a presigned GET URL for a video or evidence frame. The browser fetches
-  it straight from TOS; the Daemon never relays the bytes. Two scopes, each with its own key
+  it straight from TOS; the Daemon never relays the bytes - except an mcap episode's cameras,
+  which have no object to sign: their virtual ``stream/cameras/...`` path resolves to this
+  Daemon's own streaming URL (:mod:`daemon.results.clips`). Two scopes, each with its own key
   and prefix: ``delivery`` = the task's run directory ``<delivery>/<run_id>/`` (output key),
   ``input`` = the task's input dataset (input key; the public cache bucket is not signed, the
   plain public URL is returned). ``path`` is relative to that prefix and checked by
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import threading
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request
 from starlette.responses import JSONResponse, Response
@@ -27,6 +30,7 @@ from starlette.responses import JSONResponse, Response
 from .. import taskspec
 from ..errors import ApiError
 from ..repo import protocol as P
+from ..results import clips
 from ..secrets import sigv4
 from ..secrets import tos as T
 from ..secrets.http import audit, bad, secrets, unavailable, write
@@ -63,6 +67,13 @@ def sign_media(request: Request, task: str = Query(...),
         rel = relative_key(path)                       # refuse a bad path before any lookup
     except BadPath as err:
         raise bad(err.message_zh, "path") from None
+    stream = clips.parse_stream_path(rel)
+    if stream is not None:
+        # An mcap camera: no object to sign - the Daemon muxes and serves it (clips.py)
+        episode, camera = stream
+        url = (f"{rt.links.base_path}/api/v1/tasks/{quote(row.id)}/episodes/{episode}"
+               f"/cameras/{quote(camera)}.mp4")
+        return JSONResponse({"url": url, "expires_at": rt.clock() + ttl * 1000}, headers=_NO_STORE)
     key = None
     try:
         if scope == "delivery":
