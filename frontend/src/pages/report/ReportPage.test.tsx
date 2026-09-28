@@ -422,6 +422,7 @@ describe('质检报告 (07 §5)', () => {
     expect(latency).toHaveTextContent('392');
     expect(screen.getByText('因中断而重做')).toBeInTheDocument();
     expect(screen.getByText('VLM 并行度')).toBeInTheDocument();                  // not 「VLM 并行度 N」 (fifth round)
+    expect(document.body).not.toHaveTextContent('延迟明细是追加式的');            // sixth round: no scope note
     expect(screen.queryByText('VLM 并行度 N')).toBeNull();
     await user.click(screen.getByText('仅主流程'));
     await waitFor(() => expect(within(screen.getByTestId('perf-latency')).getAllByRole('row')[1]).toHaveTextContent('345'));

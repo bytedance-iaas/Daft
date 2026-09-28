@@ -1125,7 +1125,6 @@ export const zh = {
     perfAll: '全部',
     perfMain: '仅主流程',
     perfSubtask: (name: string) => `子任务 · ${name}`,
-    perfScopeDesc: '延迟明细是追加式的，每行带子任务编号；默认看全部调用的合计，含重试花掉的',
     perfService: '模型服务与容器配额',
     perfServiceKeys: {
       name: '模型服务',

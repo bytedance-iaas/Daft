@@ -79,9 +79,6 @@ export function PerfTab({ taskId, rev, subtasks }: { taskId: string; rev: number
             />
           ) : null}
         </Space>
-        <Typography.Paragraph type="secondary" style={{ margin: '8px 0 0', fontSize: 12 }}>
-          {zh.report.perfScopeDesc}
-        </Typography.Paragraph>
       </Card>
       {perf.isLoading ? (
         <Spin style={{ display: 'block', margin: '48px auto' }} />
