@@ -371,7 +371,9 @@ def test_the_report_shows_the_eef_section(chain):
     assert all(set(x) == {"name", "count"} for x in s["human_reasons"])
     assert s["windows"] >= s["windows_answered"] and "model_cpu_agreement" in s
     tables = {t["id"]: t for t in sec["tables"]}
-    assert set(tables) == {"eef_camera_metrics", "eef_segments", "eef_diagnosis", "eef_review_windows"}
+    assert set(tables) == {"eef_camera_metrics", "eef_segments", "eef_diagnosis", "eef_review_windows", "eef_record"}
+    # no record mapping given (design doc 12 §8.7): nothing to report, not a row per episode saying so
+    assert tables["eef_record"]["rows"] == 0 and not any(k.startswith("record_") for k in s)
     import pandas as pd
 
     tdir = os.path.join(chain["rd"], "revisions", "r0002", "tables")

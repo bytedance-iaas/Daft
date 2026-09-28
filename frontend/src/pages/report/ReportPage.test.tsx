@@ -260,6 +260,30 @@ describe('质检报告 (07 §5)', () => {
     expect(block.textContent).not.toMatch(/[{}"]/);
   });
 
+  it('Episode 明细: the EEF block ends with the trajectory against the dataset\'s own record, reported only (D-E16)', async () => {
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefRecord(12, 'x') }]])]]);
+    renderApp(`${REPORT}?ep=12#episodes`);
+    const block = await screen.findByTestId('episode-module-eef_video_consistency');
+    const rec = within(block).getByTestId('eef-record');
+    expect(within(rec).getByTestId('eef-record-status')).toHaveTextContent('可疑');
+    expect(rec).toHaveTextContent('只报告，不参与判过 / 判废');
+    expect(within(rec).getByTestId('eef-record-pose')).toHaveTextContent('位姿列一致列 observation.state.cartesian_position · xyz_rpy_xyz_extrinsic');
+    const joints = within(rec).getByTestId('eef-record-joints');
+    expect(joints).toHaveTextContent('关节角正解可疑列 observation.state.joint_position · 机器人 franka_panda');
+    expect(joints).toHaveTextContent('两边都是 panda_link8；按帧号对齐，比了 287 / 287 帧');
+    expect(joints).toHaveTextContent('按声明关系的差中位 26.9 · P95 38.3 · 最大 40');
+    expect(joints).toHaveTextContent('与声明相差：平移 21.2 mm，转 2.7°');
+    expect(joints).toHaveTextContent('数据集记录比上传的轨迹晚 1 帧（0.067 秒）');
+    expect(joints).toHaveTextContent('随时间变化的差：帧 0–286（287 帧） · 位置，峰值 28.5 mm');
+    expect(await within(joints).findAllByTestId('chart')).toHaveLength(2);
+    expect(within(rec).getByTestId('eef-record-internal')).toHaveTextContent('数据集内部：位姿列与关节角正解对不上');
+    // the overlay frame is in the record block, once, with its colours - not among the CPU's own frames
+    expect(await within(rec).findByAltText('ext · ext_frame_000148.jpg')).toHaveAttribute('src', expect.stringContaining('X-Tos-Signature'));
+    expect(rec).toHaveTextContent('红：上传的轨迹；橙：关节角正解');
+    expect(within(block).getAllByAltText(/ext_frame_000148/)).toHaveLength(1);
+    expect(rec.textContent).not.toMatch(/[{}"]/);
+  });
+
   it('Episode 明细: without a gripper reference the EEF block shows the model\'s opinion, most confident stretch first (D-E15)', async () => {
     db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { eef_video_consistency: eefOpinionRecord(12) }]])]]);
     renderApp(`${REPORT}?ep=12#episodes`);
@@ -278,6 +302,9 @@ describe('质检报告 (07 §5)', () => {
     expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('点 tcp · 方向 z · 手指连线 y');
     expect(within(op).getByTestId('eef-opinion-ext')).toHaveTextContent('模型总结：前半段中心偏得明显');
     expect(within(op).getByTestId('eef-opinion-wrist')).toHaveTextContent('没有问');
+    // the record comparison needs no gripper reference: here no mapping was given
+    expect(within(block).getByTestId('eef-record-status')).toHaveTextContent('不支持');
+    expect(within(block).getByTestId('eef-record')).toHaveTextContent('没有给数据集记录映射');
     expect(block.textContent).not.toMatch(/[{}"]/);
   });
 

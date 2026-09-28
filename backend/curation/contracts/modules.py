@@ -62,13 +62,19 @@ The gripper reference is optional (1.12, design doc 12 §10.5, D-E15): without s
 the EEF module measures nothing with the CPU and asks the model for its opinion instead - the
 stretches of each camera's whole clip where the drawn gripper centre or direction does not match,
 with a confidence each. That opinion is advisory: the episode's record passes and nobody is asked.
+
+The record comparison (1.13, design doc 12 §8.7, D-E16): the EEF module's optional upload
+``record_mapping`` (kind ``eef_record_mapping``, ``eef-mapping/1.1``) says where the dataset keeps its
+own end-effector record - pose columns or topics, joint angles and the robot model - and the module
+compares the uploaded 3D trajectory with it frame by frame. Reported only (the table
+``eef_record``), never part of the verdict.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.12"
+REGISTRY_VERSION = "1.13"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
@@ -277,6 +283,11 @@ def _eef_params() -> dict:
                 description="gripper-template/1.0：同一夹爪在各路相机里的若干小图与标好的物理点，跟踪器用它自动找锚点，"
                             "不用逐条 episode 点种子",
                 default="", **{"x-choice-group": GRIPPER_REFERENCE}),
+            "record_mapping": _upload(
+                "eef_record_mapping", [".json"], 8, title="数据集记录映射",
+                description="eef-mapping/1.1 的 record 块：数据集自己的末端位姿列（或 mcap topic）、关节角列与机器人型号"
+                            "（DEMO 内置 Franka）、单位与坐标系。给了就把上传轨迹和数据集的记录逐帧比对，只报告、不参与判决",
+                default=""),
             "threshold_profile": {
                 "title": "阈值", "description": "demo 由基准噪声底定、未校准；模块参与判决（D49），没有阈值就判不了，"
                                                 "所以不再提供「不判定」",
@@ -371,7 +382,9 @@ MODULES: tuple[ModuleSpec, ...] = (
                                                    "duration_s")),
                 TableSpec("eef_diagnosis", "诊断假设", ("episode_index", "camera", "hypothesis")),
                 TableSpec("eef_review_windows", "复核窗口", ("episode_index", "camera", "kind", "status",
-                                                          "review_status", "conflict"))),
+                                                          "review_status", "conflict")),
+                TableSpec("eef_record", "轨迹与数据集记录", ("episode_index", "source", "status", "position_p95_mm",
+                                                          "rotation_p95_deg", "lag_frames"))),
         review_lines=("eef_check",), appealable=True, input_scope="funnel", affects_dataset_verdict=True,
         native=True),
     ModuleSpec(

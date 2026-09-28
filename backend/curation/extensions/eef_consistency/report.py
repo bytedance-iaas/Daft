@@ -109,9 +109,80 @@ def _camera_rows(ep: int, d: dict) -> list[dict]:
     return rows
 
 
+def _record(rec: dict) -> dict | None:
+    """``details.record`` of a run that was given a record mapping; None otherwise (nothing to report)."""
+    r = (rec.get("details") or {}).get("record")
+    if not r or C.RECORD_MAPPING_MISSING in (r.get("reasons") or []):
+        return None
+    return r
+
+
+def record_summary(results: dict) -> dict:
+    """design 12 §8.7 (D-E16): the upload against the dataset's own record, reported only - every episode
+    counts, opinion-only ones included (the comparison needs no gripper reference); empty when the run
+    was given no record mapping."""
+    status = {s: 0 for s in STATUSES}
+    sources: dict[str, dict[str, int]] = {}
+    reasons: dict[str, int] = {}
+    lags: list[float] = []
+    internal = 0
+    seen = 0
+    for rec in results.values():
+        r = _record(rec)
+        if r is None:
+            continue
+        seen += 1
+        if r.get("status") in status:
+            status[r["status"]] += 1
+        for k, src in (r.get("sources") or {}).items():
+            cell = sources.setdefault(k, {s: 0 for s in STATUSES})
+            if src.get("status") in cell:
+                cell[src["status"]] += 1
+            for why in src.get("reasons") or []:
+                reasons[f"{k}:{why}"] = reasons.get(f"{k}:{why}", 0) + 1
+            lag = (src.get("time_offset") or {}).get("lag_frames")
+            if lag is not None:
+                lags.append(abs(float(lag)))
+        if (r.get("internal") or {}).get("consistent") is False:
+            internal += 1
+    if not seen:
+        return {}
+    lags.sort()
+    series = lambda counts: [{"name": k, "count": v} for k, v in counts.items() if v]  # noqa: E731
+    return {"record_compared": status[C.OK] + status[C.SUSPECT], "record_suspect": status[C.SUSPECT],
+            "record_status": series(status), "record_by_source": sources,
+            "record_reasons": series(dict(sorted(reasons.items(), key=lambda kv: -kv[1]))),
+            "record_lag_median_frames": lags[len(lags) // 2] if lags else None,
+            "record_internal_inconsistent": internal}
+
+
+def record_rows(results: dict) -> list[dict]:
+    out: list[dict] = []
+    for ep, rec in sorted(results.items()):
+        r = _record(rec) or {}
+        for k, src in (r.get("sources") or {}).items():
+            res = src.get("residual") or {}
+            dev = ((src.get("relation") or {}).get("deviation")) or {}
+            out.append({"episode_index": int(ep), "source": k, "status": src.get("status"),
+                        "alignment": src.get("alignment") or "", "frames_compared": src.get("frames_compared"),
+                        "position_p95_mm": _num((res.get("position_mm") or {}).get("p95")),
+                        "rotation_p95_deg": _num((res.get("rotation_deg") or {}).get("p95")),
+                        "constant_deviation_mm": _num(dev.get("translation_norm_mm")),
+                        "constant_deviation_deg": _num(dev.get("rotation_deg")),
+                        "relation_declared": bool((src.get("relation") or {}).get("declared")),
+                        "lag_frames": _num((src.get("time_offset") or {}).get("lag_frames")),
+                        "reasons": ";".join(src.get("reasons") or [])})
+        if not r.get("sources") and r:
+            out.append({"episode_index": int(ep), "source": "", "status": r.get("status"),
+                        "reasons": ";".join(r.get("reasons") or [])})
+    return out
+
+
 def table_rows(table: str, results: dict) -> list[dict]:
     if table == "eef_review_windows":
         return review_rows(results)
+    if table == "eef_record":
+        return record_rows(results)
     out: list[dict] = []
     for ep, rec in sorted(results.items()):
         d = rec.get("details") or {}

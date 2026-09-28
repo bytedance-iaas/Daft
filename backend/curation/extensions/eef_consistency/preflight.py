@@ -63,6 +63,42 @@ def module_entry(base: dict, *, vlm_backend: bool) -> dict:
             "input_hint": {"field": "vlm"}}
 
 
+def _record_check(params: dict, root: str | None):
+    """(the capability's ``record`` - the mapping, ``{"missing": [...]}``, ``{"invalid": text, "code": ...}``,
+    None without one - and a note). A local dataset's columns (LeRobot ``meta/info.json``) or topics
+    (the first mcap file's summary) are checked; a remote one's are checked when the module runs."""
+    from . import record as RC
+
+    path = (params.get("record_mapping") or "").strip()
+    if not path:
+        return None, None
+    try:
+        mapping = RC.load_mapping(os.path.expanduser(path))
+    except (RC.RecordMappingError, OSError, ValueError) as exc:           # only the record item goes
+        code = C.ROBOT_MODEL_UNKNOWN if isinstance(exc, RC.RobotModelUnknown) else C.RECORD_MAPPING_INVALID
+        return {"invalid": str(exc), "code": code}, f"record mapping unusable: {exc}"
+    kinds = ", ".join(sorted(mapping.sources))
+    note = f"record mapping {mapping.sha256[:12]}…: {kinds}"
+    if not root or not os.path.isdir(root):
+        return mapping, note + " (columns / topics checked when the module runs)"
+    missing: list[str] = []
+    mcaps = sorted(n for n in os.listdir(root) if n.endswith(".mcap"))
+    if mcaps:
+        from mcap.reader import make_reader
+
+        with open(os.path.join(root, mcaps[0]), "rb") as fh:
+            summary = make_reader(fh).get_summary()
+        topics = {ch.topic for ch in (summary.channels.values() if summary else [])}
+        missing = [s.topic for s in mapping.sources.values() if s.topic and s.topic not in topics]
+        missing += [s.key for s in mapping.sources.values() if s.key]          # columns name no mcap topic
+    else:
+        columns = RC.LeRobotRecords(root).columns()
+        if columns is not None:
+            missing = [c for s in mapping.sources.values() for c in (s.key, s.quaternion_key) if c and c not in columns]
+            missing += [s.topic for s in mapping.sources.values() if s.topic]  # topics name no LeRobot column
+    return ({"missing": missing}, note + f"; not in the dataset: {', '.join(missing)}") if missing else (mapping, note)
+
+
 def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Callable[[str], bool] | None,
                       lerobot_root: str | None = None) -> dict:
     """The preflight entry of ``eef_video_consistency`` for the task's episodes."""
@@ -103,10 +139,11 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
         observable = {ep: {cid: set(load.declared_point_ids(s, cid)) for cid in s.cameras}
                       for ep, s in result.samples.items()}
     mounts = MOUNTS[params.get("camera_mounts") or "fixed_external_and_wrist"]
-    table = CAP.dataset_capability(result, episodes, observable=observable, allowed_mounts=mounts)
+    record, record_note = _record_check(params, lerobot_root)
+    table = CAP.dataset_capability(result, episodes, observable=observable, allowed_mounts=mounts, record=record)
     per = table["episodes"]
     subitems = {}
-    for k in CAP.CORE_SUBITEMS + (C.INPUT_CONSISTENCY,):
+    for k in CAP.CORE_SUBITEMS + (C.INPUT_CONSISTENCY, C.RECORD):
         cells = [v["subitems"][k] for v in per.values() if "subitems" in v]
         if C.AVAILABLE in cells:
             subitems[k] = {"availability": C.AVAILABLE, "reason_code": None}
@@ -127,6 +164,8 @@ def consistency_entry(params: dict, *, episodes: Iterable[int], media_exists: Ca
     elif template is not None:
         notes.append(f"gripper template {template.sha256[:12]}…: {len(template.entries)} entries ({template.method}); "
                      "a camera that also has seeds keeps the seeds")
+    if record_note:
+        notes.append(record_note)
     if table["samples_outside_dataset"]:
         notes.append(f"{len(table['samples_outside_dataset'])} sample(s) of the file are not in this dataset")
     if table["availability"] != C.AVAILABLE:

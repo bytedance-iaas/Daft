@@ -248,6 +248,16 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
   人判「一致」（`consistent`）当作这个模块判过，「不一致」（`inconsistent`）当作它判废（reject 的理由是
   `人工裁决判为 EEF 与视频不一致`，`kind: human`），「拿不准」只记一笔、照旧待裁；和人工的成败结论同时存在时两条都算。
   只被这个模块判废的条可以复议（`reject_appeal`，`source_module` 是它），恢复后回到 passed；和别的硬门一起判废的是终判。
+- `--param eef_video_consistency.record_mapping=PATH`（registry 1.13，设计 12 §8.7，F5.15，可选）：`eef-mapping/1.1` 的 `record`
+  块（JSON 或 YAML），写明数据集自己的末端位姿列 / topic、关节角列 / topic 与机器人型号（DEMO 内置 `franka_panda` / `franka_fr3`），
+  列名、布局、单位、坐标系都由人写，不猜。给了就把上传的三维轨迹与数据集的记录逐帧比，写进 `details.record`（每个来源的对齐方式、
+  两组残差、恒定差与声明的比较、时间差、分段、残差曲线；两个来源都有时另附数据集内部的互比）与 `details.summary.record_consistency`；
+  **只报告，不参与判决**，有没有这个参数每条的 `passed` 都一样，没有夹爪参考、只给模型意见时也照样比。映射不合格是用法错误；
+  预检的 `subitems.record_consistency` 报 `record_mapping_missing` / `record_mapping_invalid` / `robot_model_unknown` /
+  `record_columns_missing`（本地数据集按 `meta/info.json` 或第一个 mcap 的摘要核对列与 topic），模块级可用性不看它。远端 LeRobot
+  只多读 `meta/` 与这一条的 data 文件；mcap 的记录 topic 与视频在同一个 episode 文件里，一起进源缓存。`config_hash` 含映射的
+  sha256，换了映射 `--resume` 会重做。有标定的相机上，可疑来源的叠加图写在 `checks/eef_video_consistency/evidence/<ep>/record/`，
+  路径另记在 `details.record.evidence`。报告的 EEF 一节多一行「轨迹与数据集记录(只报告,不参与判决)」，另有明细表 `eef_record`。
 
 ### mcap 与 Lance 数据集（D44，F6.5）
 

@@ -6,7 +6,7 @@ import { moduleName, qk, useModules } from '../../api/queries';
 import type { AdjudicationLine, Decision, DecisionValue } from '../../api/types';
 import { LazyVisible } from '../../components/LazyVisible';
 import { RelTime } from '../../components/RelTime';
-import { EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
+import { EefCpuEvidence, EefCpuTable, EefDatasetRecord, EefWindows } from '../../features/eef/EefRecord';
 import { SignedImage } from '../../features/media/SignedMedia';
 import { SyncedVideos } from '../../features/media/SyncedVideos';
 import { answerOn, catalogLine, lineDecisions, lineTitle, repeats, type CardView, type EffectiveDecision, type ReviewCatalog } from '../../lib/adjudication';
@@ -235,7 +235,8 @@ function VerdictQuestion({ index, view, q, catalog, onDecide }: { index: number;
   );
 }
 
-/** The EEF module's CPU readings, the model's windows and the marked crops, once the card is in view. */
+/** The EEF module's CPU readings, the model's windows and the marked crops, once the card is in view; then the
+ * trajectory against the dataset's own record (design doc 12 §8.7), which only informs. */
 function EefEvidence({ taskId, ep, rev }: { taskId: string; ep: number; rev: number }) {
   const q = useEpisode(taskId, ep, rev);
   if (q.isLoading) return <Spin size={16} />;
@@ -246,6 +247,7 @@ function EefEvidence({ taskId, ep, rev }: { taskId: string; ep: number; rev: num
       <EefCpuTable record={record} />
       <EefWindows taskId={taskId} record={record} />
       <EefCpuEvidence taskId={taskId} record={record} />
+      <EefDatasetRecord taskId={taskId} record={record} />
     </div>
   );
 }

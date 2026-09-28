@@ -330,6 +330,11 @@ describe('人工裁决 (07 §6, F3.3)', () => {
     // The window crops are shown once, next to their answer; the CPU's own frame separately.
     expect(within(ev).getByText('CPU 证据帧')).toBeInTheDocument();
     expect(within(within(c).getByTestId('media-12')).queryAllByAltText(/EEF/)).toHaveLength(0);
+    // Last, the trajectory against the dataset's own record (design doc 12 §8.7): it only informs.
+    const rec = within(ev).getByTestId('eef-record');
+    expect(rec).toHaveTextContent('只报告，不参与判过 / 判废');
+    expect(within(rec).getByTestId('eef-record-joints')).toHaveTextContent('恒定差与映射声明的关系不符；有随时间变化的差');
+    await waitFor(() => expect(within(ev).getAllByAltText(/ext_frame_000148/)).toHaveLength(1));
     expect(within(q).getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['一致，判过', '不一致，判废', '拿不准']);
     expect(within(c).queryByRole('button', { name: '其它原因，整条弃用' })).toBeNull();
     await user.click(within(q).getByText('一致，判过'));

@@ -187,6 +187,7 @@ def _summary(rev: Revision, m: str) -> dict:
         out.update(eef_report.review_summary(res))
         out.update(eef_report.verdict_summary(res))
         out.update(eef_opinion.summary(res))           # no gripper reference: advisory (design doc 12 §10.5)
+        out.update(eef_report.record_summary(res))     # the dataset's own record: reported only (§8.7)
     if m == "timestamp_check":
         why: dict[str, int] = {}
         for r in res.values():
@@ -553,6 +554,15 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
             lines.append(f"- 模型复核:窗口 {s.get('windows', 0)}(有答复 {s.get('windows_answered', 0)},"
                          f"失败 {s.get('windows_failed', 0)}),与 CPU 一致率 "
                          f"{'—' if agree is None else agree}({s.get('model_votes', 0)} 票)")
+            if s.get("record_by_source"):                   # design doc 12 §8.7: reported only
+                names = {"pose": "位姿列", "joints": "关节角正解"}
+                parts = [f"{names.get(k, k)} 一致 {v.get('ok', 0)} · 可疑 {v.get('suspect', 0)}"
+                         for k, v in s["record_by_source"].items()]
+                lag = s.get("record_lag_median_frames")
+                lines.append(f"- 轨迹与数据集记录(只报告,不参与判决):{';'.join(parts)}"
+                             + (f";时间差中位 {lag:g} 帧" if lag is not None else "")
+                             + (f";数据集内部位姿列与关节角不一致 {s['record_internal_inconsistent']} 条"
+                                if s.get("record_internal_inconsistent") else ""))
             lines.append("")
             continue
         lines.append(f"- 通过 {cnt['pass']} · 判废 {cnt['fail']} · 弃权 {cnt['abstain']}"

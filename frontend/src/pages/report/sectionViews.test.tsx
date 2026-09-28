@@ -151,6 +151,30 @@ describe('the report sections (06 §6.2, F6.2)', () => {
     expect(matrix).toHaveTextContent('可疑');
   });
 
+  it('EEF: the trajectory against the dataset\'s own record - figures, why records differ, each source\'s statuses, reported only (D-E16)', async () => {
+    render('eef_video_consistency', {
+      ...EEF,
+      record_compared: 7,
+      record_suspect: 3,
+      record_status: [{ name: 'ok', count: 4 }, { name: 'suspect', count: 3 }],
+      record_by_source: { pose: { ok: 7, suspect: 0, unknown: 0, unsupported: 0, error: 0 }, joints: { ok: 4, suspect: 3, unknown: 0, unsupported: 0, error: 0 } },
+      record_reasons: [{ name: 'joints:constant_mismatch', count: 2 }, { name: 'joints:record_deviation', count: 2 }],
+      record_lag_median_frames: 0.01,
+      record_internal_inconsistent: 3,
+    });
+    const figures = screen.getByTestId('summary-eef_video_consistency');
+    expect(figures).toHaveTextContent('与数据集记录比过7只报告，不参与判决');
+    expect(figures).toHaveTextContent('与记录不一致3至少一个来源可疑');
+    expect(figures).toHaveTextContent('时间差（中位）0.01 帧');
+    expect(figures).toHaveTextContent('数据集内部对不上3位姿列与关节角正解不一致');
+    expect(await within(screen.getByTestId('chart-record-reasons')).findByTestId('chart')).toHaveAttribute('aria-label', expect.stringContaining('关节角正解 · 恒定差与映射声明的关系不符 2'));
+    const table = screen.getByTestId('eef-record-sources');
+    expect(table).toHaveTextContent('位姿列');
+    expect(table).toHaveTextContent('关节角正解');
+    expect(table).toHaveTextContent('可疑');
+    expect(table).not.toHaveTextContent('出错');                 // a status nobody has gets no column
+  });
+
   it('data integrity: outcomes, what was read and the findings by kind, in Chinese (design doc 14)', async () => {
     render('data_integrity', INTEGRITY, { adjudication: { pending: 2, appealable: 0 } });
     const figures = screen.getByTestId('summary-data_integrity');

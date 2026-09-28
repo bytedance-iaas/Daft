@@ -3,7 +3,19 @@
 // it was shown. The adjudication card (F5.11) and the report's Episode tab (F5.12) both show it.
 import { Space, Table, Tag } from '@arco-design/web-react';
 import type { ResultRecord } from '../../api/types';
-import { EEF_CAMERA_SUBITEMS, eefConclusion, eefCpuEvidence, eefCpuRows, eefOpinion, eefStateMotion, eefWindowRows, type EefWindowRow } from '../../lib/eefReadings';
+import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
+import {
+  EEF_CAMERA_SUBITEMS,
+  eefConclusion,
+  eefCpuEvidence,
+  eefCpuRows,
+  eefDatasetRecord,
+  eefOpinion,
+  eefStateMotion,
+  eefWindowRows,
+  type EefRecordCurves,
+  type EefWindowRow,
+} from '../../lib/eefReadings';
 import { zh } from '../../locales/zh';
 import { SignedImage } from '../media/SignedMedia';
 
@@ -138,9 +150,10 @@ export function EefWindows({ taskId, record }: { taskId: string; record: ResultR
   );
 }
 
-/** The CPU's own evidence frames: the record's evidence the windows do not show. */
+/** The CPU's own evidence frames: the record's evidence the windows and the dataset-record block do not show. */
 export function EefCpuEvidence({ taskId, record }: { taskId: string; record: ResultRecord }) {
-  const rest = eefCpuEvidence((record.evidence ?? []) as string[], eefWindowRows(details(record)));
+  const d = details(record);
+  const rest = eefCpuEvidence((record.evidence ?? []) as string[], eefWindowRows(d), eefDatasetRecord(d)?.overlays.map((o) => o.path));
   if (!rest.length) return null;
   return (
     <div>
@@ -214,6 +227,125 @@ export function EefOpinion({ taskId, record }: { taskId: string; record: ResultR
           {c.summaries.length ? <div className="episode-line muted">{O.summary}：{c.summaries.join('；')}</div> : null}
         </div>
       ))}
+    </div>
+  );
+}
+
+const RECORD_TONE: Record<string, string | undefined> = { ok: 'green', suspect: 'orange', error: 'red' };
+
+function RecordCurves({ curves }: { curves: EefRecordCurves }) {
+  const R = Z().record;
+  const line = (raw: (number | null)[], after: (number | null)[]) =>
+    lineOption(
+      [
+        { name: R.seriesRaw, data: curves.frame.map((f, k) => [f, raw[k] ?? null] as [number, number | null]), color: CHART_COLORS[0] },
+        { name: R.seriesAfter, data: curves.frame.map((f, k) => [f, after[k] ?? null] as [number, number | null]), color: CHART_COLORS[2], dashed: true },
+      ],
+      { xName: R.frameAxis },
+    );
+  return (
+    <div className="eef-record-curves">
+      <div>
+        <div className="section-sub">{R.chartPosition}</div>
+        <Chart height={150} summary={R.chartPosition} option={line(curves.position, curves.positionAfter)} />
+      </div>
+      <div>
+        <div className="section-sub">{R.chartRotation}</div>
+        <Chart height={150} summary={R.chartRotation} option={line(curves.rotation, curves.rotationAfter)} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 轨迹与数据集记录 (design doc 12 §8.7, D-E16): the uploaded trajectory against the dataset's own record,
+ * source by source - how the frames were paired, the residuals, the constant against the declared
+ * relation, the time offset, the stretches that differ and their curves - then the dataset's own two
+ * records against each other and the overlay frames. Reported only: never part of the verdict.
+ */
+export function EefDatasetRecord({ taskId, record }: { taskId: string; record: ResultRecord }) {
+  const r = eefDatasetRecord(details(record));
+  if (!r) return null;
+  const R = Z().record;
+  return (
+    <div data-testid="eef-record">
+      <div className="eef-head">
+        <Space size={8}>
+          <span>{R.title}</span>
+          <Tag size="small" color={RECORD_TONE[r.status]} data-testid="eef-record-status">
+            {r.statusText}
+          </Tag>
+        </Space>
+      </div>
+      <div className="episode-line muted">{R.advisory}</div>
+      {r.reasons.length ? (
+        <div className="episode-line">
+          {r.reasons.join('；')}
+          {r.message ? <span className="muted mono">（{r.message}）</span> : null}
+        </div>
+      ) : null}
+      {r.sources.map((src) => (
+        <div key={src.kind} className="eef-window" data-testid={`eef-record-${src.kind}`}>
+          <Space wrap size={8}>
+            <b>{src.name}</b>
+            <Tag size="small" color={RECORD_TONE[src.status]}>
+              {src.statusText}
+            </Tag>
+            {src.where ? <span className="mono muted">{src.where}</span> : null}
+          </Space>
+          {src.frames || src.alignment ? <div className="episode-line muted">{[src.frames, src.alignment].filter(Boolean).join('；')}</div> : null}
+          {src.reasons.length ? <div className={`episode-line${src.status === 'suspect' ? ' warn' : ''}`}>{src.reasons.join('；')}</div> : null}
+          {src.notes.length ? <div className="episode-line muted">{src.notes.join('；')}</div> : null}
+          {src.residual.length ? (
+            <Table
+              rowKey="key"
+              size="small"
+              pagination={false}
+              data={src.residual}
+              style={{ marginTop: 6 }}
+              columns={[
+                { title: R.cols.what, dataIndex: 'what' },
+                { title: R.cols.position, dataIndex: 'position' },
+                { title: R.cols.rotation, dataIndex: 'rotation' },
+              ]}
+            />
+          ) : null}
+          {src.relation.map((x) => (
+            <div key={x.label} className={`episode-line${x.bad ? ' warn' : ''}`}>
+              {x.label}：{x.value}
+            </div>
+          ))}
+          {src.lag ? <div className="episode-line">{src.lag}</div> : null}
+          {src.segments.length ? (
+            <div className="episode-line">
+              {R.segments}：
+              <ul className="eef-calls">
+                {src.segments.map((g) => (
+                  <li key={g}>{g}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {src.curves ? <RecordCurves curves={src.curves} /> : null}
+        </div>
+      ))}
+      {r.internal ? (
+        <div className={`episode-line${r.internal.bad ? ' warn' : ' muted'}`} data-testid="eef-record-internal">
+          {R.internal}：{r.internal.text}
+        </div>
+      ) : null}
+      {r.overlays.length ? (
+        <div>
+          <div className="eef-head">{R.overlay}</div>
+          <div className="episode-line muted">{r.legend.join('；')}</div>
+          <div className="evidence-grid">
+            {r.overlays.map((o) => (
+              <SignedImage key={o.path} task={taskId} scope="delivery" path={o.path} alt={`${o.camera} · ${o.path.split('/').pop() ?? ''}`} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {r.evidenceError ? <div className="episode-line muted">{R.evidenceError(r.evidenceError)}</div> : null}
     </div>
   );
 }

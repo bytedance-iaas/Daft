@@ -67,10 +67,11 @@ mcap 源原样交 `mcap_curated/`，Lance 源交 `episodes_parquet`（Lance 原�
     用 `python -m parity make-fixture --format mcap|lance` 做两份 8 条的数据，命令行逐条跑一遍见 [CLI README](backend/curation/cli/README.md) 手动验证第 10 步
     （判决与 LeRobot 版本相同：passed 5、reject 3；mcap 交 `mcap_curated/` 逐字节拷贝，Lance 交 `lance_episodes/`），
     真起 Daemon 登记、浏览、建任务到交付见 [orchestr README](backend/daemon/orchestr/README.md) 第 11 步，界面上的格式标签与预检文案用 `npm run dev` 看模拟数据集 `warehouse_mcap`、`pusht_lance`。
-16. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
+16. **EEF–视频一致性（F5，DEMO）**：`cd backend && ../.venv/bin/python -m pytest -q tests/eef tests/cli/test_eef_check.py tests/cli/test_eef_record.py`，应全部通过（DEMO 数据在仓库外，缺了相关用例会跳过）；
     校验上传件、看能力表、真值键拒绝与自洽警告、离线评估、受控异常矩阵、在 v2 命令行链路上跑一遍、控制台上传与 Daemon 执行（F5.5，
     `tests/orchestr/test_eef_tasks.py`）、模型复核与判决（F5.9 / F5.10，固定 tape 下各分支与离线回放）、转人工进裁决（F5.11，
-    `tests/cli/test_eef_adjudication.py`、`tests/results/test_eef_queue.py`、`tests/orchestr/test_eef_tasks.py` 里裁决到重新导出的一条）
+    `tests/cli/test_eef_adjudication.py`、`tests/results/test_eef_queue.py`、`tests/orchestr/test_eef_tasks.py` 里裁决到重新导出的一条）、
+    轨迹与数据集记录（F5.15，只报告：`tests/cli/test_eef_record.py`）
     的逐项核对见 [其 README](backend/curation/extensions/eef_consistency/README.md)；界面上的 EEF 裁决卡片见前端测试
     `src/pages/adjudication/AdjudicationPage.test.tsx` 里「an EEF question」一条。
 

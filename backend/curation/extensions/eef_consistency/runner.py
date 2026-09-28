@@ -43,6 +43,8 @@ class RunConfig:
     interpolation_gap_factor: float = 2.0
     tracker: TR.TrackerConfig = dataclasses.field(default_factory=TR.TrackerConfig)
     template: TP.GripperTemplate | None = None       # automatic anchors (F5.8); a camera with seeds keeps the seeds
+    #: the dataset's own record (design 12 §8.7, D-E16): (record.RecordMapping, reader) or None - no mapping
+    record: tuple | None = None
 
 
 @dataclasses.dataclass
@@ -195,7 +197,8 @@ def config_digest(cfg: RunConfig) -> str:
 
     return config_hash(cfg.profile, {"lag_search_s": cfg.lag_search_s, "tracker": dataclasses.asdict(cfg.tracker),
                                      "allowed_mounts": cfg.allowed_mounts, "gap_factor": cfg.interpolation_gap_factor,
-                                     "module_version": C.MODULE_VERSION})
+                                     "module_version": C.MODULE_VERSION,
+                                     "record_mapping": cfg.record[0].sha256 if cfg.record else None})
 
 
 def assess(measure: EpisodeMeasure, cfg: RunConfig) -> dict:
@@ -371,10 +374,43 @@ def write_artifacts(measure: EpisodeMeasure, detail: dict, cfg: RunConfig) -> di
     return {"evidence": evidence}
 
 
+def record_of(sample: EefSample, cfg: RunConfig) -> dict:
+    """The record comparison of one episode (design 12 §8.7), with its in-memory tracks."""
+    from . import record as RC
+
+    t0 = time.perf_counter()
+    mapping, reader = cfg.record if cfg.record else (None, None)
+    rec = RC.compare_episode(sample, mapping, reader, cfg.profile, lag_search_s=cfg.lag_search_s)
+    rec["elapsed_s"] = round(time.perf_counter() - t0, 3)
+    return rec
+
+
+def attach_record(detail: dict, sample: EefSample, cfg: RunConfig) -> list[dict]:
+    """``details.record``, its line in the summary, and its overlay evidence (paths under ``cfg.out_dir``,
+    also listed in ``details.record.evidence`` so a reader can tell them from the CPU's own frames)."""
+    from . import record as RC
+
+    rec = record_of(sample, cfg)
+    detail["record"] = to_jsonable(RC.strip(rec))
+    detail.setdefault("summary", {})[C.RECORD] = {"status": rec["status"], "cameras_assessable": None,
+                                                 "cameras": None, "suspect_cameras": []}
+    if not cfg.out_dir:
+        return []
+    try:
+        shown = RC.write_evidence(sample, rec, media_root=cfg.lerobot_root, out_dir=cfg.out_dir,
+                                  mode=cfg.evidence_mode)
+    except Exception as exc:  # noqa: BLE001 - the overlay is for viewing; the comparison stands without it
+        detail["record"]["evidence_error"] = f"{type(exc).__name__}: {exc}"[:300]
+        return []
+    detail["record"]["evidence"] = [dict(e) for e in shown]
+    return shown
+
+
 def run_episode(sample: EefSample, cfg: RunConfig) -> tuple[dict, EpisodeMeasure]:
     measure = measure_episode(sample, cfg)
     detail = assess(measure, cfg)
     t0 = time.perf_counter()
     detail["evidence"] = write_artifacts(measure, detail, cfg).get("evidence", [])
+    detail["evidence"] += attach_record(detail, sample, cfg)
     detail["timing"]["artifacts_s"] = round(time.perf_counter() - t0, 3)
     return to_jsonable(detail), measure

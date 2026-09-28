@@ -464,6 +464,15 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
   if (num(s.coverage_median) !== null) stats.push({ label: Z.coverage, value: fmt(num(s.coverage_median)), foot: Z.coverageValue(fmt(num(s.coverage_median)), fmt(num(s.coverage_min))) });
   for (const k of ['tracking_suspect', 'vlm_requests', 'truncated_episodes']) if (num(s[k])) stats.push({ label: zh.summaryKeys[k] ?? k, value: num(s[k]) });
   if (str(s.threshold_profile)) stats.push({ label: zh.summaryKeys.threshold_profile ?? 'threshold_profile', value: <span style={{ fontSize: 15 }}>{str(s.threshold_profile)}</span> });
+  // the upload against the dataset's own record (design doc 12 §8.7, D-E16): reported only
+  const RC = Z.record;
+  const RD = zh.eefDetail.record;
+  if (num(s.record_compared) !== null) {
+    stats.push({ label: RC.compared, value: num(s.record_compared), foot: RC.comparedFoot });
+    stats.push({ label: RC.suspect, value: num(s.record_suspect) ?? 0, tone: num(s.record_suspect) ? 'warn' : undefined, foot: RC.suspectFoot });
+    if (num(s.record_lag_median_frames) !== null) stats.push({ label: RC.lag, value: RC.lagValue(fmt(num(s.record_lag_median_frames))) });
+    if (num(s.record_internal_inconsistent)) stats.push({ label: RC.internal, value: num(s.record_internal_inconsistent), tone: 'warn', foot: RC.internalFoot });
+  }
   const charts: ChartSpec[] = [];
   const confidence = seriesOf(s.opinion_confidence);
   if (anyValue(confidence)) charts.push({ key: 'opinion-confidence', title: O.confidenceChart, items: confidence!, colors: confidence!.map((c) => (c.name.startsWith('<') || c.name.startsWith('0.3') ? undefined : ORANGE)) });
@@ -483,6 +492,12 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
   if (anyValue(failures)) charts.push({ key: 'failures', title: zh.summaryKeys.failure_codes ?? '', items: failures, horizontal: true, colors: failures.map(() => ORANGE) });
   const hyps = seriesOf(s.supported_hypotheses);
   if (anyValue(hyps)) charts.push({ key: 'hypotheses', title: Z.hypotheses, items: hyps, horizontal: true });
+  // "joints:constant_mismatch" -> 关节角正解 · 恒定差与映射声明的关系不符
+  const recordReasons = seriesOf(s.record_reasons, (k) => {
+    const [src, why] = k.includes(':') ? [k.slice(0, k.indexOf(':')), k.slice(k.indexOf(':') + 1)] : ['', k];
+    return [RD.source[src] ?? src, RD.reason[why] ?? why].filter(Boolean).join(' · ');
+  });
+  if (anyValue(recordReasons)) charts.push({ key: 'record-reasons', title: RC.reasonsChart, items: recordReasons, horizontal: true, colors: recordReasons.map(() => ORANGE) });
   const blocks: ReactNode[] = [];
   const matrix = s.subitem_status && typeof s.subitem_status === 'object' ? (s.subitem_status as Record<string, Record<string, number>>) : null;
   if (matrix && Object.keys(matrix).length) {
@@ -501,6 +516,27 @@ function eefModel(s: Summary, section: ReportModuleSection): ViewModel {
           data={rows}
           data-testid="eef-matrix"
           columns={[{ title: '', dataIndex: 'name' }, ...statuses.map((st) => ({ title: Z.status[st] ?? st, dataIndex: st, align: 'right' as const }))]}
+        />
+      </>,
+    );
+  }
+  const bySource = s.record_by_source && typeof s.record_by_source === 'object' ? (s.record_by_source as Record<string, Record<string, number>>) : null;
+  if (bySource && Object.keys(bySource).length) {
+    const statuses = ['ok', 'suspect', 'unknown', 'unsupported', 'error'].filter((st) => Object.values(bySource).some((row) => row?.[st]));
+    const rows = Object.entries(bySource).map(([k, row]) => ({ key: k, name: RD.source[k] ?? k, ...Object.fromEntries(statuses.map((st) => [st, row?.[st] ?? 0])) }));
+    blocks.push(
+      <>
+        <div className="section-sub">
+          {RC.bySource}
+          <span className="muted">{RC.bySourceDesc}</span>
+        </div>
+        <Table
+          rowKey="key"
+          size="small"
+          pagination={false}
+          data={rows}
+          data-testid="eef-record-sources"
+          columns={[{ title: '', dataIndex: 'name' }, ...statuses.map((st) => ({ title: RD.status[st] ?? st, dataIndex: st, align: 'right' as const }))]}
         />
       </>,
     );

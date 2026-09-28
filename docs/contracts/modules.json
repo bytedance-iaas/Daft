@@ -1,5 +1,5 @@
 {
- "registry_version": "1.12",
+ "registry_version": "1.13",
  "stages": [
   "integrity",
   "numeric",
@@ -470,6 +470,18 @@
        "required": false
       }
      },
+     "record_mapping": {
+      "type": "string",
+      "format": "upload",
+      "x-upload-kind": "eef_record_mapping",
+      "x-accept": [
+       ".json"
+      ],
+      "x-max-mb": 8,
+      "title": "数据集记录映射",
+      "description": "eef-mapping/1.1 的 record 块：数据集自己的末端位姿列（或 mcap topic）、关节角列与机器人型号（DEMO 内置 Franka）、单位与坐标系。给了就把上传轨迹和数据集的记录逐帧比对，只报告、不参与判决",
+      "default": ""
+     },
      "threshold_profile": {
       "title": "阈值",
       "description": "demo 由基准噪声底定、未校准；模块参与判决（D49），没有阈值就判不了，所以不再提供「不判定」",
@@ -595,6 +607,19 @@
       "status",
       "review_status",
       "conflict"
+     ],
+     "default_sort": "episode_index"
+    },
+    {
+     "id": "eef_record",
+     "title_zh": "轨迹与数据集记录",
+     "sortable": [
+      "episode_index",
+      "source",
+      "status",
+      "position_p95_mm",
+      "rotation_p95_deg",
+      "lag_frames"
      ],
      "default_sort": "episode_index"
     }

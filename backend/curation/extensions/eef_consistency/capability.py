@@ -115,6 +115,22 @@ def state_motion_capability(sample: EefSample) -> dict[str, Any]:
     return _cell(C.AVAILABLE)
 
 
+def record_capability(sample: EefSample, record: Any = None) -> dict[str, Any]:
+    """design 12 §8.7: the upload's 3D pose against the dataset's own record. ``record``: the record
+    mapping (anything with ``sources``), ``{"missing": [...]}`` when a preflight found its columns /
+    topics absent from the dataset, ``{"invalid": text, "code": ...}`` for an unusable mapping (the code
+    ``robot_model_unknown`` or ``record_mapping_invalid``); None - no mapping given."""
+    if record is None:
+        return _cell(C.UNSUPPORTED, C.RECORD_MAPPING_MISSING)
+    if not sample.eef_mask.any():
+        return _cell(C.UNSUPPORTED, C.UPLOAD_POSE_MISSING)
+    if isinstance(record, dict) and record.get("invalid"):
+        return _cell(C.UNSUPPORTED, record.get("code") or C.RECORD_MAPPING_INVALID, message=str(record["invalid"])[:300])
+    if isinstance(record, dict) and record.get("missing"):
+        return _cell(C.UNSUPPORTED, C.RECORD_COLUMNS_MISSING, missing=list(record["missing"]))
+    return _cell(C.AVAILABLE)
+
+
 def _best(cells: Iterable[dict]) -> dict:
     cells = list(cells)
     if not cells:                                        # no camera view at all (plain images)
@@ -124,7 +140,7 @@ def _best(cells: Iterable[dict]) -> dict:
 
 def sample_capability(sample: EefSample, *, observable: Mapping[str, Iterable[str]] | None = None,
                       vlm_backend: bool = False,
-                      allowed_mounts: Iterable[str] = DEFAULT_ALLOWED_MOUNTS) -> dict[str, Any]:
+                      allowed_mounts: Iterable[str] = DEFAULT_ALLOWED_MOUNTS, record: Any = None) -> dict[str, Any]:
     """The design 12 §5.1 table for one episode. ``observable`` maps camera id -> observed point ids."""
     cams = {}
     for cid in sample.cameras:
@@ -134,6 +150,7 @@ def sample_capability(sample: EefSample, *, observable: Mapping[str, Iterable[st
     subitems[C.STATE_MOTION] = state_motion_capability(sample)
     subitems[C.VLM_REVIEW] = _cell(C.NEEDS_INPUT, C.VLM_BACKEND_MISSING) if not vlm_backend \
         else _cell(C.UNSUPPORTED, "review_not_in_first_cut")
+    subitems[C.RECORD] = record_capability(sample, record)
     ordered = {k: subitems[k] for k in C.SUBITEMS}
     core = {k: ordered[k] for k in CORE_SUBITEMS}
     return {"module": C.MODULE_ID, "episode_index": sample.episode_index, "sample_id": sample.sample_id,
@@ -143,7 +160,7 @@ def sample_capability(sample: EefSample, *, observable: Mapping[str, Iterable[st
 def dataset_capability(result: LoadResult | None, episodes: Iterable[int], *,
                        observable: Mapping[int, Mapping[str, Iterable[str]]] | None = None,
                        vlm_backend: bool = False,
-                       allowed_mounts: Iterable[str] = DEFAULT_ALLOWED_MOUNTS) -> dict[str, Any]:
+                       allowed_mounts: Iterable[str] = DEFAULT_ALLOWED_MOUNTS, record: Any = None) -> dict[str, Any]:
     """Module-level preflight over the task's episodes (design 12 §0.5: a missing episode is
     ``unsupported: projection_missing`` for this module only)."""
     episodes = list(episodes)
@@ -160,7 +177,8 @@ def dataset_capability(result: LoadResult | None, episodes: Iterable[int], *,
             per[ep] = {"availability": C.UNSUPPORTED, "reason_code": C.PROJECTION_MISSING}
             continue
         obs = None if observable is None else observable.get(ep, {})
-        cap = sample_capability(sample, observable=obs, vlm_backend=vlm_backend, allowed_mounts=allowed_mounts)
+        cap = sample_capability(sample, observable=obs, vlm_backend=vlm_backend, allowed_mounts=allowed_mounts,
+                                record=record)
         per[ep] = {"availability": cap["availability"],
                    "subitems": {k: v["availability"] for k, v in cap["subitems"].items()},
                    "subitem_reasons": {k: v["reason_code"] for k, v in cap["subitems"].items()},

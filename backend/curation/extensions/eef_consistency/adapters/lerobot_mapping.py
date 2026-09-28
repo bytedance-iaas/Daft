@@ -12,7 +12,7 @@ the episodes table's ``from_timestamp``) are both read.
 
 Mapping (YAML or JSON)::
 
-    schema_version: eef-mapping/1.0
+    schema_version: eef-mapping/1.0                    # or 1.1: its `record` block (design 12 §8.7) is not read here
     dataset_id: galbot/dataset2                        # optional, goes to the bundle
     eef:
       pose_key: observation.state.cartesian_position   # a column; `slice: [a, b]` takes part of it
@@ -60,6 +60,8 @@ import numpy as np
 
 VERSION = "eef-video/1.0.0"
 MAPPING_VERSION = "eef-mapping/1.0"
+#: 1.1 adds the ``record`` block the platform compares the upload with (design 12 §8.7); the export ignores it
+MAPPING_VERSIONS = (MAPPING_VERSION, "eef-mapping/1.1")
 LAYOUTS = ("xyz_rpy_xyz_extrinsic", "xyz_quat_xyzw", "xyz_quat_wxyz", "xyz_rotmat")
 IDENTITY3 = np.eye(3).tolist()
 
@@ -90,8 +92,8 @@ def _need(doc: dict, dotted: str):
 
 
 def check_mapping(doc: dict) -> None:
-    if not isinstance(doc, dict) or doc.get("schema_version") != MAPPING_VERSION:
-        raise MappingError(f"mapping: schema_version must be {MAPPING_VERSION}")
+    if not isinstance(doc, dict) or doc.get("schema_version") not in MAPPING_VERSIONS:
+        raise MappingError(f"mapping: schema_version must be one of {', '.join(MAPPING_VERSIONS)}")
     _need(doc, "eef.pose_key")
     if _need(doc, "eef.layout") not in LAYOUTS:
         raise MappingError(f"mapping: eef.layout must be one of {', '.join(LAYOUTS)} (never guessed from widths)")

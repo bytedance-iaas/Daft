@@ -3,6 +3,7 @@
 // review window with its marked crops. Shared by the adjudication card (F5.11) and the report's
 // Episode tab (F5.12). Only classes, frame ids and the model's own words are shown - never raw JSON.
 import { zh } from '../locales/zh';
+import { fmt, signed } from './sectionStats';
 
 type D = Record<string, unknown>;
 const obj = (v: unknown): D => (v && typeof v === 'object' && !Array.isArray(v) ? (v as D) : {});
@@ -162,9 +163,9 @@ export function eefWindowRows(details: D): EefWindowRow[] {
   return Object.entries(cams).flatMap(([camera, raw]) => arr(obj(raw).windows).map((w, i) => windowRow(camera, obj(w), i)));
 }
 
-/** The record's evidence the windows do not show: the CPU's overlay frames. */
-export function eefCpuEvidence(evidence: readonly string[], windows: readonly EefWindowRow[]): string[] {
-  const shown = new Set(windows.flatMap((w) => w.evidence));
+/** The record's evidence the windows and the dataset-record block do not show: the CPU's overlay frames. */
+export function eefCpuEvidence(evidence: readonly string[], windows: readonly EefWindowRow[], elsewhere: readonly string[] = []): string[] {
+  const shown = new Set([...windows.flatMap((w) => w.evidence), ...elsewhere]);
   return evidence.filter((p) => !shown.has(p));
 }
 
@@ -255,4 +256,174 @@ export function eefOpinion(details: D): EefOpinion | null {
     };
   });
   return { status: s(op.status) ?? 'failed', flagged: op.flagged === true, maxConfidence: n(op.max_confidence), failure: s(op.failure), cameras };
+}
+
+// ---------------------------------------------------------------- the dataset's own record (D-E16)
+
+export interface EefRecordCurves {
+  frame: number[];
+  position: (number | null)[];
+  positionAfter: (number | null)[];
+  rotation: (number | null)[];
+  rotationAfter: (number | null)[];
+}
+
+export interface EefRecordRelation {
+  label: string;
+  value: string;
+  bad: boolean;
+}
+
+export interface EefRecordSource {
+  kind: string;
+  /** 位姿列 / 关节角正解 */
+  name: string;
+  status: string;
+  statusText: string;
+  /** Where the record is read, e.g. 「列 action · 机器人 franka_panda」. */
+  where: string;
+  /** e.g. 「记录的帧 panda_link8 → 上传的帧 tcp」 */
+  frames: string | null;
+  /** e.g. 「按帧号对齐，比了 280 / 287 帧」 */
+  alignment: string | null;
+  reasons: string[];
+  notes: string[];
+  /** 按声明关系的差 / 扣掉恒定差后: median, P95 and max of position (mm) and rotation (deg). */
+  residual: { key: string; what: string; position: string; rotation: string }[];
+  /** 声明的关系 / 拟合的恒定差 / 与声明相差. */
+  relation: EefRecordRelation[];
+  /** The time offset between the two tracks, always said when it was estimated. */
+  lag: string | null;
+  segments: string[];
+  curves: EefRecordCurves | null;
+}
+
+export interface EefDatasetRecord {
+  status: string;
+  statusText: string;
+  /** Why nothing could be compared (unsupported / error), readable. */
+  reasons: string[];
+  message: string | null;
+  sources: EefRecordSource[];
+  internal: { text: string; bad: boolean } | null;
+  overlays: { path: string; camera: string; frame: number }[];
+  /** The overlay colours, e.g. 「红：上传的轨迹」. */
+  legend: string[];
+  evidenceError: string | null;
+}
+
+const R = () => zh.eefDetail.record;
+const nums = (v: unknown): (number | null)[] => arr(v).map(n);
+
+function stat(v: unknown, digits: number): string {
+  const x = obj(v);
+  return n(x.median) === null ? '—' : R().stat(fmt(n(x.median), digits), fmt(n(x.p95), digits), fmt(n(x.max), digits));
+}
+
+function transform(v: unknown): string {
+  const x = obj(v);
+  return R().transform(fmt(n(x.translation_norm_mm), 1), fmt(n(x.rotation_deg), 2));
+}
+
+function recordSource(kind: string, raw: D): EefRecordSource {
+  const src = obj(raw.source);
+  const status = s(raw.status) ?? 'error';
+  const reasons = arr(raw.reasons).map((r) => s(r) ?? '');
+  const notes = arr(raw.notes).map((r) => s(r) ?? '');
+  const key = s(src.key);
+  const where = [
+    key ? R().column(key) : s(src.topic) ? R().topic(s(src.topic) ?? '', s(src.fields)) : null,
+    s(src.layout),
+    s(src.robot) ? R().robot(s(src.robot) ?? '') : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const ids = obj(raw.frame_ids);
+  const how = s(raw.alignment);
+  const compared = n(raw.frames_compared);
+  const rel = obj(raw.relation);
+  const relation: EefRecordRelation[] = [];
+  if (rel.declared === true && rel.expected) relation.push({ label: R().expected, value: transform(rel.expected), bad: false });
+  const shifted = Object.keys(obj(rel.fitted_after_time_offset)).length > 0;
+  if (rel.fitted) relation.push({ label: shifted ? R().fittedShifted : R().fitted, value: transform(shifted ? rel.fitted_after_time_offset : rel.fitted), bad: false });
+  if (rel.deviation) relation.push({ label: R().deviation, value: transform(rel.deviation), bad: reasons.includes('constant_mismatch') });
+  const off = obj(raw.time_offset);
+  const lagFrames = n(off.lag_frames);
+  const lag =
+    lagFrames === null
+      ? null
+      : notes.includes('time_offset')
+        ? R().lag(fmt(Math.abs(lagFrames), 2), fmt(Math.abs(n(off.lag_s) ?? 0), 3), lagFrames > 0)
+        : R().lagSmall(signed(lagFrames, 2));
+  const residual = raw.residual
+    ? [
+        { key: 'raw', what: R().rows.raw, position: stat(obj(raw.residual).position_mm, 1), rotation: stat(obj(raw.residual).rotation_deg, 2) },
+        ...(raw.residual_after_constant
+          ? [{ key: 'after', what: R().rows.after, position: stat(obj(raw.residual_after_constant).position_mm, 1), rotation: stat(obj(raw.residual_after_constant).rotation_deg, 2) }]
+          : []),
+      ]
+    : [];
+  const c = obj(raw.curves);
+  const frame = arr(c.frame).map(n).filter((f): f is number => f !== null);
+  return {
+    kind,
+    name: R().source[kind] ?? kind,
+    status,
+    statusText: R().status[status] ?? status,
+    where,
+    frames: s(ids.record) && s(ids.upload) ? R().frames(s(ids.record) ?? '', s(ids.upload) ?? '') : null,
+    alignment: how ? [R().alignment[how] ?? how, compared !== null ? R().compared(compared, n(raw.frames_with_pose) ?? compared) : null].filter(Boolean).join('，') : null,
+    reasons: reasons.map((r) => R().reason[r] ?? r),
+    notes: notes.filter((x) => x !== 'time_offset').map((x) => R().note[x] ?? x),
+    residual,
+    relation,
+    lag,
+    segments: arr(raw.segments)
+      .map(obj)
+      .map((g) => {
+        const aspect = s(g.aspect) ?? 'position';
+        const from = n(g.start_frame) ?? 0;
+        const to = n(g.end_frame) ?? 0;
+        return R().segment(Z().frames(from, to, to - from + 1), R().aspect[aspect] ?? aspect, (R().peak[aspect] ?? String)(fmt(n(g.peak), aspect === 'position' ? 1 : 2)));
+      }),
+    curves: frame.length
+      ? { frame, position: nums(c.position_mm), positionAfter: nums(c.position_after_constant_mm), rotation: nums(c.rotation_deg), rotationAfter: nums(c.rotation_after_constant_deg) }
+      : null,
+  };
+}
+
+/**
+ * The uploaded trajectory against the dataset's own record (design doc 12 §8.7, D-E16): per source (the
+ * pose columns, the joints through the robot's kinematics) how it was paired, the residuals, the constant
+ * against the declared relation, the time offset and the stretches that differ; the dataset's own two
+ * records against each other; the overlay frames. Reported only. Null for a record written before it.
+ */
+export function eefDatasetRecord(details: D): EefDatasetRecord | null {
+  if (!details.record || typeof details.record !== 'object') return null;
+  const r = obj(details.record);
+  const status = s(r.status) ?? 'error';
+  const sources = Object.entries(obj(r.sources)).map(([k, v]) => recordSource(k, obj(v)));
+  const internal = obj(r.internal);
+  const pos = obj(internal.position_mm);
+  const rot = obj(internal.rotation_deg);
+  const shown = arr(r.evidence).map(obj);
+  const legend = [...new Set(shown.flatMap((e) => Object.keys(obj(e.legend))))];
+  return {
+    status,
+    statusText: R().status[status] ?? status,
+    reasons: sources.length ? [] : arr(r.reasons).map((x) => R().reason[s(x) ?? ''] ?? s(x) ?? ''),
+    message: s(r.message),
+    sources,
+    internal:
+      internal.compared === true
+        ? { text: R().internalValue(internal.consistent === true, fmt(n(pos.p95), 1), fmt(n(rot.p95), 2)), bad: internal.consistent === false }
+        : internal.compared === false
+          ? { text: R().internalNot, bad: false }
+          : null,
+    overlays: shown
+      .filter((e) => s(e.path))
+      .map((e) => ({ path: s(e.path) ?? '', camera: s(e.camera_id) ?? '', frame: n(e.frame_index) ?? 0 })),
+    legend: legend.map((k) => R().legend[k] ?? k),
+    evidenceError: s(r.evidence_error),
+  };
 }

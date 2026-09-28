@@ -51,6 +51,7 @@
 | D-E13 | 转人工走新的裁决线「EEF–视频一致性」（计入待裁）：卡片给转人工理由、CPU 分项读数、模型逐窗口答复与标记图，人选「一致」（判过）或「不一致」（判废）；被本模块判废的条目可复议 | 是 |
 | D-E14 | 复核请求包改版：每个请求只画一个点（红圈与绿十字，都标点名）和至多一根轴（红色箭头，标轴名），prompt 只给这一点一轴的定义；不再问背景运动；上线前在 DEMO 数据上用真实模型对照真值统计一致率 | 是 |
 | D-E15 | （2026-09-27 需求方提出，试验）夹爪参考改为可选。观测种子与夹爪外观模板都没给时，模块不做 CPU 测量，改为「模型意见」：每路相机整段视频画上声明的夹爪中心与朝向，请模型列出它认为不匹配的片段、各自的不匹配置信度和证据帧（§10.5）。**只给意见，不参与判过 / 判废 / 转人工**，需求方先评估效果 | 是 |
+| D-E16 | （2026-09-28 需求方提出）新分项「轨迹与数据集记录」`record_consistency`（§8.7）：上传轨迹的三维末端位姿与数据集自己的记录逐帧比——有位姿列直接比，有关节角先正解再比，都有两项都比、分别报告，都没有报「不支持」。不解码视频（叠加证据图除外）、不要夹爪参考、不调模型。恒定差与记录映射声明的关系比，超出容差判可疑，推不出期望关系时只报告；随时间变化的差按分段判可疑；同时报告两条轨迹的时间差。**只报告，不参与判过 / 判废 / 转人工**（没有夹爪参考时也一样）。LeRobot 与 mcap 一期都做 | 是 |
 
 ### 0.5 产品形态（需求方 2026-09-22 晚定）
 
@@ -144,10 +145,10 @@
 
 ### 3.3 辅助工具：从 LeRobot 列生成文件的 `mapping.yaml`（不是平台入口）
 
-平台入口只有 §3.7 的 `trajectory.json`。为了让客户不必手写逐帧记录，配套一个离线导出工具：按映射配置从 LeRobot 列生成 `trajectory.json`；配置必须显式，**禁止靠维数猜哪几列是 EEF**。这是给客户和我们自己用的便利工具，平台运行时不读 LeRobot 之外的映射：
+平台入口只有 §3.7 的 `trajectory.json`。为了让客户不必手写逐帧记录，配套一个离线导出工具：按映射配置从 LeRobot 列生成 `trajectory.json`；配置必须显式，**禁止靠维数猜哪几列是 EEF**。这是给客户和我们自己用的便利工具；平台运行时只读映射里的 `record` 块（§8.7，D-E16：数据集自己的位姿与关节角记录在哪、怎么解读），其余部分运行时不读：
 
 ```yaml
-schema_version: eef-mapping/1.0
+schema_version: eef-mapping/1.0          # 1.1 = 1.0 加 record 块（§8.7）；导出工具两版都认，不读 record
 eef:
   pose_key: observation.state.cartesian_position     # 或 observation.state 的切片
   layout: xyz_rpy_xyz_extrinsic                      # 枚举：xyz_rpy_xyz_extrinsic | xyz_quat_xyzw | xyz_quat_wxyz | xyz_rotmat
@@ -418,6 +419,72 @@ class ObservationProvider(Protocol):
 
 固定残差向量、多机位共同偏差只能支持假设，不能单凭形态断言根因；PnP 拟合值不回写标定。
 
+### 8.7 轨迹与数据集记录（D-E16，2026-09-28）
+
+只回答「上传的轨迹和数据集自己的记录是否一致」；它和画面是否一致，仍由 §8.1–8.5 回答。不解码视频、不要夹爪参考、不调模型，
+**只报告，不参与判决**。
+
+**两边的输入**
+
+- 上传侧：逐帧三维末端位姿 `frames[].eef`（`absolute`，或 `relative_to_start`）、它的 `frame_id` / `reference_frame`、
+  `source_state_index`、时间戳。没有三维位姿（只有投影点）→ `unsupported: upload_pose_missing`。
+- 数据集侧：由**记录映射**写明，不靠猜——`eef-mapping/1.1` 的 `record` 块，作为模块参数 `record_mapping` 上传（只有 1.0 的
+  `eef` 块时，它就是位姿来源）：
+
+```yaml
+schema_version: eef-mapping/1.1
+record:
+  pose:                                     # LeRobot 列；mcap 用 topic + fields 代替 key（如 /robot0/vio/eef_pose, fields: pose）
+    key: observation.state.cartesian_position
+    layout: xyz_rpy_xyz_extrinsic           # 同 §3.3 的枚举
+    units: {position: m, angle: rad}
+    frame_id: panda_link8
+    reference_frame: robot_base
+  joints:                                   # LeRobot 列或 mcap topic；正解得到机器人模型的法兰帧
+    key: observation.state.joint_position
+    slice: [0, 7]
+    units: rad                              # rad | deg
+    robot: franka_panda                     # DEMO 内置；其他型号以后走 URDF
+    reference_frame: robot_base
+  frames:                                   # 已知的固定变换（可选），把两边的帧连起来
+    tcp: {parent: panda_link8, xyz_m: [0, 0, 0.16], rpy_deg: [0, 0, 0]}
+```
+
+  内置 `franka_panda`：改进 DH，法兰 `panda_link8`（d = 0.107 m），另带 `panda_hand`（法兰绕 z 转 −45°）与 `panda_hand_tcp`
+  （hand 沿 z 0.1034 m）。dataset2 上正解与位姿列逐帧重合（0.0 mm / 0.00°）。
+
+**逐帧对齐**：`source_state_index`（数据集的行号、mcap 记录 topic 的消息序号）优先；否则两边帧数相同时按帧号；再否则按时间戳
+（LeRobot 用 `timestamp` 列；mcap 用 log_time 减去记录 topic 第一条消息的时间），记录插值：位置线性、姿态 SLERP。
+
+**每个来源（位姿列、关节角正解）各算一遍**
+
+1. **期望关系** E（记录的帧 → 上传的帧）：两边 `frame_id` 相同 → 单位变换；不同 → 沿 `record.frames` 与机器人模型的具名帧
+   找一条路径；找不到 → 未声明。`reference_frame` 不同且 `record.frames` 没把它们连起来 → `unsupported: reference_frames_unrelated`
+   （绝对位置没法比）。上传是相对首帧的位姿时，两边都换成相对首帧再比。
+2. **主指标是按声明关系算的原始残差**（未补偿，§0.3）：`Δ(t) = (T_rec(t)·E)⁻¹ · T_up(t)`，位置 mm、姿态 °；
+   E 未声明时用下面拟合出的 Ê 代替，并注明「恒定差未检查」。
+3. **恒定差**：在工具一侧拟合常量 Ê（旋转取弦均值，平移取均值），报出平移 mm、转角 ° 与转轴。E 已声明时，Ê 与 E 之差超过容差
+   （demo：5 mm / 2°）→ 可疑 `constant_mismatch`（dataset2 ep2 的 30° 绕接近轴就在这里）；未声明时只报告。
+4. **随时间变化的差**：扣掉 Ê 后的残差做滚动中位数，按 §9.2 的迟滞分段（demo：位置 5 / 3 mm、姿态 2 / 1.5°、至少 0.5 s）
+   → 可疑 `record_deviation`。
+5. **时间差**：把由记录算出的位置在 ±`lag_search_s` 内逐 τ 平移，和上传的位置比（每个 τ 先减去中位差，恒定偏移不会被当成
+   时间差），取残差中位数最小的 τ，亚帧用抛物线细化；报 `lag_s` 与帧数，**正值表示数据集记录比上传的轨迹晚**。残差按声明的
+   对齐算，所以时间差会先表现为随速度起伏的残差；估出的时间差 ≥ 1 帧、补偿后残差降到 1/1.5 以下且不在搜索边界时，`notes`
+   记 `time_offset` 作为解释，第 3 步的恒定差也改用补偿后的记录拟合（一帧的滞后就会把拟合的常量带偏）。时间差本身总是报出。
+6. 可比帧数不足（< 30 帧或 < 30 % 的上传帧）→ `unknown: coverage_insufficient`。
+
+分项状态取两个来源里最坏的一个（suspect > unknown > ok），两个都 `unsupported` 才是 `unsupported`；两个来源都有时另附一行
+「数据集内部：位姿列与关节角正解是否一致」（只提示）。dataset2 上：位姿列 7 条全一致（trajectory.json 就是从这几列导出的），
+关节角正解 ep1、ep3 判可疑、ep2 恒定差不符、其余一致；ep4–6 是画面与标定的问题，本项看不到，符合边界。
+
+**输出**：`details.record`：`status`、`reasons`、`sources.{pose,joints}`（对齐方式、可比帧数、期望关系与是否声明、拟合常量、
+常量偏差、原始残差与扣常量后残差的中位 / P95 / 最大、分段、时间差）、`internal`、降采样到 300 点以内的残差曲线；预检能力表
+加分项 `record_consistency`（没给映射 `record_mapping_missing`、列或 topic 不存在 `record_columns_missing`、机器人型号不认识
+`robot_model_unknown`）。不进 `overall`、不进 `decide.py`。某个来源可疑且证据图没关时，在有标定的相机上挑残差最大、彼此至少
+隔 30 帧的至多 3 帧，把上传的 TCP（红）和由记录算出的 TCP（位姿列蓝、关节角正解橙，都带前后各 15 帧的轨迹）画在同一帧上，
+仅供查看——这是本项唯一解码视频的地方；这些图的路径另记在 `details.record.evidence`（相机、帧号、配色），控制台据此把它们放进
+记录比对区块，不和 CPU 证据帧混在一起。
+
 ## 9. 分项状态、分段与汇总
 
 ### 9.1 分项状态
@@ -556,6 +623,7 @@ checks/eef_video_consistency/parts/0001.jsonl     每 episode 一行（result-re
 checks/eef_video_consistency/curves/<ep>/<cam>.parquet   逐帧残差、方向差、lag、mask
 checks/eef_video_consistency/observations/<ep>/<cam>.jsonl   独立观测（observation.schema）
 checks/eef_video_review/parts/0001.jsonl          复核记录
+checks/eef_video_consistency/evidence/<ep>/record/<cam>_frame_<f>.jpg   轨迹与数据集记录的叠加图（§8.7，仅供查看）
 evidence/eef/<ep>/<cam>/…                         原图、裁剪、叠加、短片、manifest
 revisions/rXXXX/tables/eef_camera_metrics.parquet · eef_segments.parquet · eef_diagnosis.parquet
 ```
@@ -569,6 +637,11 @@ revisions/rXXXX/tables/eef_camera_metrics.parquet · eef_segments.parquet · eef
 | 各分项 suspect / unknown / unsupported 条数；可评估覆盖率分布 | 时间轴卡：残差与 lag 曲线、候选段高亮、相机切换、原图 / 叠加 / 观测切换（二期） | 逐相机分项表、候选段表、诊断表；点击进逐条抽屉（03 篇 §6） |
 
 缺失显示「无法评估」，不显示 0 像素；物理点与 assurance 等级随数值一起显示。
+
+轨迹与数据集记录（§8.7，只报告）另起一组：摘要里比过的条数、可疑条数、时间差中位、数据集内部对不上的条数，一张「与记录不一致
+的原因」图（按来源 · 原因），一张按来源的状态表；明细表 `eef_record`（每条 × 每个来源：状态、原始残差 P95、时间差帧数）。
+Episode 明细与裁决卡片在 EEF 区块末尾逐来源显示：读的是哪一列 / topic、怎么对齐、两组残差、声明 / 拟合 / 相差的恒定差、
+时间差、随时间变化的差的片段、残差曲线、数据集内部一致与否和叠加图。
 
 ### 11.5 资源与并发
 
@@ -586,6 +659,7 @@ eef_video_consistency:
   interpolation_gap_factor: 2.0
   evidence_mode: flagged
   observation_cache: true
+  record_mapping: null                             # §8.7：eef-mapping/1.1 的 record 块（上传件）；不给 → 该分项 unsupported
 eef_video_review:
   enabled: false
   uniform_windows_per_camera: 3
@@ -595,6 +669,10 @@ eef_video_review:
 ```
 
 阈值 profile 是独立文件：按物理点 / 方向、观测方法、相机分辨率、相机类型给阈值，并记录来源实验与版本；禁止按故障标签选阈值。**实验起点**（标 uncalibrated，仅供 P3 起步）：位置中位数 > 20 mm 等效或 > 2% 画宽且持续 > 30% 可见帧；方向中位数 > 10°；lag ≥ 2 帧且极小值清晰；残差高频标准差 > 5 mm；PnP ΔT > 10 mm 或 1.5°。正式值来自 §13.3 的扫描。
+
+记录比对（§8.7）的阈值在 profile 的 `record` 段，demo 起点：可比帧 ≥ 30 且 ≥ 上传有位姿帧的 30 %；扣常量后的残差先做 5 帧
+滚动中位，按位置 5 / 3 mm、姿态 2 / 1.5° 迟滞分段，至少 0.5 s、允许 0.4 s 间断；恒定差与声明相差的容差 5 mm / 2°；时间差
+≥ 1 帧且补偿后残差降到 1/1.5 以下才记 `time_offset`。这些同样标 uncalibrated。
 
 ## 13. 测试与验收
 
@@ -620,6 +698,13 @@ eef_video_review:
 | d1 ep9/10（视频滞后 3/8 帧）、d2 ep5（记录滞后 5 帧） | 时间错位 | 随速度的残差 | — | −0.200 / −0.533 s；+0.333 s | ok | ok | 时间偏移，符号正确 |
 | d2 ep6 | ext1 声明外参错 3 cm / 2° | ext1 恒定偏移，ext2 ok | — | ok | ok | ok | 外参错误（ext1），PnP 修正 ≈ 注入量 |
 | 客户 droid / LVP | 缺字段 | 精确弃权 / unsupported，无伪造通过 | | | | | — |
+
+记录比对（§8.7）另有一张小矩阵：对账工具的 mini 数据集记的是 Franka 关节角（`action`，以及晚一帧的
+`observation.state`），上传轨迹取 `action` 的正解——读 `action` 一致、读 `observation.state` 报随时间变化的差和 +1 帧时间差；
+上传是 TCP 时，映射声明了 TCP 就一致、声明错了（差 56.6 mm）报恒定差不符、没声明只报告；相对位姿按相对运动比；mcap 孪生读数
+相同；有没有映射，每条的判过 / 判废都不变。dataset2（内置 Franka 正解）：位姿列 7 条全一致；关节角正解 ep1 恒定差不符 + 随
+时间变化的差，ep2 恒定差不符（30°），ep3 随时间变化的差，其余一致；数据集内部 ep1–3 对不上；ep1 在两个外部相机上各出 3 张
+拉开的叠加图。
 
 评估器读 `evaluation/` 的真值算命中；d1 的 `boundary_padding=true` 帧与仅 3–16 s 注入的区间由评估器 mask，检测器不得读答案。补充扫描：用 dataset2 的构建脚本换种子与幅度（漂移 1/2/4 cm、lag 1/2/3/5 帧、抖动 2/4/8 mm），找每类的检出下限并写入阈值 profile 的来源。
 
@@ -798,3 +883,15 @@ eef_video_review:
 解码按位置编号；时间仍取 trajectory.json 的逐帧时间戳，不看消息时间。TOS 上的 mcap 从漏斗的源缓存读（`containers.SourceCache`），
 一条 episode 判完即删它的临时视频。Lance 仍不支持（它的视频是整段 mp4 存在表里，另议）。尚未做：从 mcap 的位姿 topic 自动
 生成 trajectory.json（§3.3 的映射导出器目前只读 LeRobot 列）。
+
+### C.11 轨迹与数据集记录（2026-09-28，F5.15，D-E16）
+
+需求方提出、评审后定：恒定差与映射声明的关系比（推不出才只报告）；只报告、不影响判决（没有夹爪参考时也一样）；LeRobot 与
+mcap 一期都做。评审时的可行性实测（dataset2，内置 Franka 正解）见 §8.7 末段：拟合恒定差若不和声明比，ep2 的 30° 会被整个
+当成「定义不同」放过；拟合还会吃掉随时间变化的差的平均部分（ep1 峰值 40 mm，拟合后最大只剩 28.6 mm），所以主指标用按声明
+关系算的原始残差。实现：`record.py`（映射、读数、对齐、比较、叠加图）、`robots.py`（内置正解），接入 `runner`（有夹爪参考的
+判决路径与只给意见的路径都跑）、预检能力表、C1 1.13 参数 `record_mapping`（上传种类 `eef_record_mapping`，C4 1.19.0；Daemon
+到货即校验，摘要给来源、机器人、列、topic 与声明的帧）、报告小节与明细表 `eef_record`、Episode 明细与裁决卡片的记录比对区块。
+实现中定下的细节：时间差正值 = 数据集记录晚；一帧的滞后会把拟合常量带偏，所以记了 `time_offset` 时恒定差用补偿后的记录判；
+叠加图的帧彼此至少隔 30 帧，路径记在 `details.record.evidence`。远端 LeRobot 只取 `meta/` 与这一条的 data 文件；mcap 的记录
+topic 与视频在同一个 episode 文件里，一并进源缓存。

@@ -159,6 +159,42 @@ def test_without_seeds_or_a_template_the_module_gives_the_models_opinion(daemon)
     assert entry["availability"] == "available" and any("vlm_opinion" in n for n in entry["notes"])
 
 
+
+def test_the_record_mapping_is_validated_on_arrival_and_preflighted(daemon, tmp_path):
+    """F5.15 (design doc 12 §8.7, D-E16): the dataset-record mapping is an upload of its own kind, checked on
+    arrival; the task's preflight says whether its columns are in the dataset. Optional: without it the
+    sub-item is unsupported and nothing else changes."""
+    from ..cli.test_eef_record import MAPPING
+    from ..cli.test_eef_record import _bundle as _posed
+
+    d = daemon()
+    up = _upload(d, "eef_record_mapping", "record.json", MAPPING)
+    assert up["validation"] == {"valid": True, "warnings": [], "summary": {
+        "sources": ["joints"], "robot": "franka_panda", "columns": ["action"], "topics": [], "declared_frames": []}}
+    wrong = json.loads(json.dumps(MAPPING))
+    wrong["record"]["joints"]["robot"] = "ur5"
+    bad = _upload(d, "eef_record_mapping", "record.json", wrong, status=400)["error"]
+    assert bad["code"] == "validation_failed" and bad["details"]["errors"][0]["code"] == "robot_model_unknown"
+    assert "franka_panda" in bad["message"]
+    del wrong["record"]["joints"]["units"]
+    wrong["record"]["joints"]["robot"] = "franka_panda"
+    bad = _upload(d, "eef_record_mapping", "record.json", wrong, status=400)["error"]
+    assert bad["details"]["errors"][0]["code"] == "record_mapping_invalid" and "units" in bad["message"]
+    traj = _upload(d, "eef_trajectory", "trajectory.json", json.loads(open(_posed(tmp_path)).read()))
+    body = d.task_body(modules=[*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"],
+                                                                     "record_mapping": traj["handle"]}}],
+                       start_now=False)
+    r = d.api("POST", "/tasks", json=body)
+    assert r.status_code == 400 and "eef_record_mapping" in r.text             # a file of the wrong kind
+    cells = {}
+    for name, params in (("without", {}), ("with", {"record_mapping": up["handle"]})):
+        created = d.create(modules=[*ALL_MODULES, {"id": EEF, "params": {"trajectory_json": traj["handle"], **params}}],
+                           start_now=False)
+        (entry,) = [m for m in d.rt.repo.get_task(created["id"]).preflight["modules"] if m["id"] == EEF]
+        cells[name] = entry["subitems"]["record_consistency"]
+    assert cells["without"] == {"availability": "unsupported", "reason_code": "record_mapping_missing"}
+    assert cells["with"]["availability"] == "available"
+
 def test_the_module_needs_a_model(daemon):
     """D49: the module reviews with a model; with the file and a model chosen it is available."""
     d = daemon()

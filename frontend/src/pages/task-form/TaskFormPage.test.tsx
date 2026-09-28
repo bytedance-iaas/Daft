@@ -279,11 +279,16 @@ describe('新建任务 · 两屏与提交', () => {
     expect(done).toHaveTextContent('template.json');
     expect(done).toHaveTextContent('3 个模板条目');
     expect(done).toHaveTextContent('相机 front、wrist');
+    // optional (registry 1.13, design doc 12 §8.7): where the dataset keeps its own end-effector record
+    expect(requiredFieldLabels(s2())).not.toContain('数据集记录映射');
+    const mapping = { schema_version: 'eef-mapping/1.1', record: { joints: { key: 'observation.state.joint_position', units: 'rad', robot: 'franka_panda', reference_frame: 'robot_base' } } };
+    await user.upload(within(s2()).getByLabelText('数据集记录映射', { selector: 'input[type=file]' }), new File([JSON.stringify(mapping)], 'record.json', { type: 'application/json' }));
+    expect(await within(s2()).findByTestId('upload-done-record_mapping')).toHaveTextContent('比对来源 关节角 · 机器人 franka_panda · 列 observation.state.joint_position');
     await user.click(screen.getByRole('button', { name: '保存为待启动' }));
     await waitFor(() => expect(currentLocation()).toMatch(/^\/tasks\/task-[a-z]{9}\b/));
     const body = seen.find((x) => x.method === 'POST' && x.path === '/tasks')?.body as { modules: { id: string; params?: Record<string, unknown> }[] };
     const eef = body.modules.find((m) => m.id === 'eef_video_consistency');
-    expect(Object.keys(eef?.params ?? {}).sort()).toEqual(['gripper_template', 'trajectory_json']);
+    expect(Object.keys(eef?.params ?? {}).sort()).toEqual(['gripper_template', 'record_mapping', 'trajectory_json']);
     expect(((body as unknown as { params: Record<string, unknown> }).params).vlm_hedge).toBe(false);
   });
 

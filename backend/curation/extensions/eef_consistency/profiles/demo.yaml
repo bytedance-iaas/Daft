@@ -55,3 +55,17 @@ diagnosis:                           # PnP, constant body rotation and axial-off
   lag_min_improvement: 1.5
   orientation_max_iqr_deg: 8.0
   drift_max_hf_share: 0.3
+record:                              # design 12 §8.7 (D-E16): the upload against the dataset's own record, 3D
+  min_frames: 30                     # paired frames, and at least this share of the upload's posed frames
+  min_fraction: 0.3
+  rolling_median_frames: 5
+  pos_on_mm: 5.0                     # dataset2 ep0 (DROID): Panda kinematics vs the pose column 0.0 mm, 0.00 deg;
+  pos_off_mm: 3.0                    # real encoders and kinematic models are worse - a few mm, a fraction of a deg -
+  rot_on_deg: 2.0                    # so the demo numbers leave room above them; not calibrated on real data
+  rot_off_deg: 1.5
+  min_duration_s: 0.5
+  max_gap_s: 0.4
+  constant_mm: 5.0                   # fitted constant vs the declared relation
+  constant_deg: 2.0
+  lag_min_frames: 1.0                # a time offset worth naming: at least a frame, residual 1.5x better
+  lag_min_improvement: 1.5

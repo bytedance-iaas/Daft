@@ -89,3 +89,70 @@ describe('eefOpinion (design doc 12 §10.5, D-E15)', () => {
     expect(op.cameras[0]).toMatchObject({ failures: ['帧 900–1000（101 帧）：模型超时'], unseen: true, summaries: ['看不清'] });
   });
 });
+
+describe('eefDatasetRecord (design doc 12 §8.7, D-E16)', () => {
+  it('reads each source: where, pairing, residuals, the constant against the declaration, the time offset, the stretches', async () => {
+    const { eefDatasetRecordOf } = await import('../mocks/eef');
+    const { eefDatasetRecord } = await import('./eefReadings');
+    const r = eefDatasetRecord({ record: eefDatasetRecordOf(1) })!;
+    expect([r.status, r.statusText, r.reasons]).toEqual(['suspect', '可疑', []]);
+    const [pose, joints] = r.sources;
+    expect(pose).toMatchObject({ kind: 'pose', name: '位姿列', statusText: '一致', where: '列 observation.state.cartesian_position · xyz_rpy_xyz_extrinsic', frames: '两边都是 panda_link8' });
+    expect(pose.lag).toBe('时间差 0.00 帧，不明显');
+    expect(joints).toMatchObject({ name: '关节角正解', statusText: '可疑', where: '列 observation.state.joint_position · 机器人 franka_panda', alignment: '按帧号对齐，比了 287 / 287 帧' });
+    expect(joints.reasons).toEqual(['恒定差与映射声明的关系不符', '有随时间变化的差']);
+    expect(joints.notes).toEqual([]);
+    expect(joints.lag).toBe('数据集记录比上传的轨迹晚 1 帧（0.067 秒）');
+    expect(joints.residual.map((x) => [x.what, x.position])).toEqual([
+      ['按声明关系的差', '中位 26.9 · P95 38.3 · 最大 40'],
+      ['扣掉恒定差后', '中位 14.8 · P95 25 · 最大 28.6'],
+    ]);
+    expect(joints.relation).toEqual([
+      { label: '声明的关系', value: '平移 0 mm，转 0°', bad: false },
+      { label: '补偿时间差后拟合的恒定差', value: '平移 21.2 mm，转 2.7°', bad: false },
+      { label: '与声明相差', value: '平移 21.2 mm，转 2.7°', bad: true },
+    ]);
+    expect(joints.segments).toEqual(['帧 0–286（287 帧） · 位置，峰值 28.5 mm', '帧 123–234（112 帧） · 姿态，峰值 6.59°']);
+    expect(joints.curves?.frame).toEqual([0, 100, 200]);
+    expect(r.internal).toEqual({ text: '位姿列与关节角正解对不上（P95 38.3 mm，7.41°）', bad: true });
+    expect(r.overlays).toEqual([{ path: 'checks/eef_video_consistency/evidence/000001/record/ext_frame_000148.jpg', camera: 'ext', frame: 148 }]);
+    expect(r.legend).toEqual(['红：上传的轨迹', '橙：关节角正解']);
+  });
+
+  it('says why nothing could be compared, reports an undeclared constant only, and is null for an older record', async () => {
+    const { eefDatasetRecord } = await import('./eefReadings');
+    const none = eefDatasetRecord({ record: { status: 'unsupported', reasons: ['record_columns_missing'], sources: {}, message: 'missing column: q' } })!;
+    expect([none.statusText, none.reasons, none.message, none.sources]).toEqual(['不支持', ['数据集里找不到映射写的列或 topic'], 'missing column: q', []]);
+    const undeclared = eefDatasetRecord({
+      record: {
+        status: 'ok',
+        sources: {
+          joints: {
+            source: { kind: 'joints', topic: '/arm/joint_states', fields: 'position', robot: 'franka_panda' },
+            status: 'ok',
+            reasons: [],
+            notes: ['constant_unchecked'],
+            frame_ids: { upload: 'tcp', record: 'panda_link8' },
+            relation: { declared: false, expected: null, fitted: { translation_norm_mm: 103.4, rotation_deg: 0 }, deviation: null },
+          },
+        },
+      },
+    })!;
+    const [j] = undeclared.sources;
+    expect(j.where).toBe('topic /arm/joint_states · 字段 position · 机器人 franka_panda');
+    expect(j.frames).toBe('记录的帧 panda_link8 → 上传的帧 tcp');
+    expect(j.notes).toEqual(['映射没有声明两边参考点的关系：拟合出的恒定差只报告，不判']);
+    expect(j.relation).toEqual([{ label: '拟合的恒定差', value: '平移 103.4 mm，转 0°', bad: false }]);
+    expect([j.lag, j.residual, j.curves]).toEqual([null, [], null]);
+    expect(eefDatasetRecord({})).toBeNull();
+  });
+
+  it('keeps the overlay frames out of the CPU evidence', async () => {
+    const { eefRecord } = await import('../mocks/eef');
+    const { eefDatasetRecord } = await import('./eefReadings');
+    const rec = eefRecord(3, 'x');
+    const d = rec.details as Record<string, unknown>;
+    const rest = eefCpuEvidence(rec.evidence as string[], eefWindowRows(d), eefDatasetRecord(d)!.overlays.map((o) => o.path));
+    expect(rest).toEqual(['checks/eef_video_consistency/overlays/3_ext.jpg']);
+  });
+});

@@ -40,28 +40,70 @@ def _unsupported_detail(episode: int, reason: str) -> dict:
 FETCH_CHUNK = 8 * 1024 * 1024
 
 
+def _fetch_key(storage, key: str, root: str) -> None:
+    """One object of a remote dataset into ``root`` (kept for the call). Streamed in ranges, written to a
+    temporary name and renamed when complete."""
+    dest = os.path.join(root, *key.split("/"))
+    if os.path.isfile(dest):
+        return
+    info = storage.stat(key)
+    if info is None:
+        raise FileNotFoundError(f"{storage.uri}/{key}")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    part = dest + ".partial"
+    with open(part, "wb") as fh:
+        done = 0
+        while done < info.size:
+            chunk = storage.read_range(key, done, min(FETCH_CHUNK, info.size - done))
+            if not chunk:
+                break
+            fh.write(chunk)
+            done += len(chunk)
+    os.replace(part, dest)
+
+
 def _fetch_media(storage, sample, root: str) -> None:
-    """A remote dataset's media for one sample into ``root`` (kept for the call: a LeRobot v3 file holds
-    many episodes). Streamed in ranges, written to a temporary name and renamed when complete."""
+    """A remote dataset's media for one sample into ``root`` (a LeRobot v3 file holds many episodes)."""
     for cam in sample.cameras.values():
-        key = cam.media["uri"]
-        dest = os.path.join(root, *key.split("/"))
-        if os.path.isfile(dest):
-            continue
-        info = storage.stat(key)
-        if info is None:
-            raise FileNotFoundError(f"{storage.uri}/{key}")
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        part = dest + ".partial"
-        with open(part, "wb") as fh:
-            done = 0
-            while done < info.size:
-                chunk = storage.read_range(key, done, min(FETCH_CHUNK, info.size - done))
-                if not chunk:
-                    break
-                fh.write(chunk)
-                done += len(chunk)
-        os.replace(part, dest)
+        _fetch_key(storage, cam.media["uri"], root)
+
+
+class _RemoteLeRobotRecords:
+    """The record of a remote LeRobot dataset (design doc 12 §8.7): ``meta/`` and the episode's data file
+    are copied into the judge's scratch directory on first use and read there like a local dataset."""
+
+    def __init__(self, storage, keys, root: str):
+        from ..extensions.eef_consistency import record as RC
+
+        self.storage, self.keys, self.root = storage, list(keys), root
+        self.local = RC.LeRobotRecords(root)
+        self._lock = threading.Lock()
+        self._meta = False
+
+    def read(self, sample, specs):
+        with self._lock:
+            if not self._meta:
+                for key in self.keys:
+                    if key.startswith("meta/") and key.endswith((".json", ".jsonl", ".parquet")):
+                        _fetch_key(self.storage, key, self.root)
+                self._meta = True
+            info = json.loads(open(os.path.join(self.root, "meta", "info.json"), encoding="utf-8").read())
+            ep = int(sample.episode_index)
+            if str(info.get("codebase_version", "")).startswith("v3"):
+                from ..extensions.eef_consistency.adapters.lerobot_mapping import LeRobot
+
+                row = LeRobot(self.root).episodes.get(ep)
+                if row is None:
+                    from ..extensions.eef_consistency.record import RecordDataError
+
+                    raise RecordDataError(f"episode {ep} is not in the dataset")
+                key = info["data_path"].format(chunk_index=int(row["data/chunk_index"]),
+                                               file_index=int(row["data/file_index"]))
+            else:
+                chunk = ep // int(info.get("chunks_size", 1000))
+                key = info["data_path"].format(episode_chunk=chunk, episode_index=ep)
+            _fetch_key(self.storage, key, self.root)
+        return self.local.read(sample, specs)
 
 
 class EefJudge:
@@ -116,6 +158,15 @@ class EefJudge:
             except (TP.TemplateError, OSError) as e:
                 raise ModuleFailed(f"{MODULE}: gripper template is invalid: {e}", {"path": tpath}) from None
         self.template_sha = template.sha256 if template is not None else None
+        self.record_mapping = None
+        rpath = (params.get("record_mapping") or "").strip()
+        if rpath:                                  # design doc 12 §8.7: the dataset's own record
+            from ..extensions.eef_consistency import record as RC
+
+            try:
+                self.record_mapping = RC.load_mapping(os.path.expanduser(rpath))
+            except (RC.RecordMappingError, OSError, ValueError) as e:
+                raise UsageError(f"{MODULE}: the record mapping is invalid: {e}") from None
         self.ctx, self.run_dir, self.storage, self.params = ctx, run_dir, storage, params
         self.out_dir = module_dir(run_dir, MODULE)
         self.scratch = tempfile.TemporaryDirectory(prefix="eef-media-") if storage.remote and not self.mcap else None
@@ -125,7 +176,7 @@ class EefJudge:
             lerobot_root=self.media_root, seed_root=seed_dir(params), profile=profile.load(params["threshold_profile"]),
             out_dir=self.out_dir, evidence_mode=params["evidence_mode"], allowed_mounts=MOUNTS[params["camera_mounts"]],
             lag_search_s=(-lag, lag), interpolation_gap_factor=float(params["interpolation_gap_factor"]),
-            template=template)
+            template=template, record=self._record())
         self.config = runner.config_digest(self.cfg)
         # no gripper reference (design doc 12 §10.5, D-E15): no CPU measurement, the model's advisory opinion
         self.opinion = self.cfg.seed_root is None and template is None
@@ -137,11 +188,28 @@ class EefJudge:
         self._fetch_lock = threading.Lock()
         self.model = self.review_config = self.ask = self.cache = None
 
+    def _record(self):
+        """(mapping, reader) of the record comparison, or None without a mapping (design doc 12 §8.7)."""
+        from ..extensions.eef_consistency import record as RC
+
+        if self.record_mapping is None:
+            return None
+        if self.mcap:
+            reader = RC.McapRecords(self.media_root, numbering=self.src.numbering())
+        elif self.storage.remote:
+            keys = self.src.listing if self.src is not None else self.storage.list()
+            reader = _RemoteLeRobotRecords(self.storage, keys, self.scratch.name)
+        else:
+            reader = RC.LeRobotRecords(self.storage.root)
+        return self.record_mapping, reader
+
     def rebind(self, source) -> None:
         """A stage worker reuses the judge for its next batch, which opened its own source: an mcap
         dataset is read from that one (the first batch's local copy may be gone with its command)."""
         if self.mcap and getattr(source, "kind", None) == "mcap":
             self.src, self.media_root = source, source.input_dir
+            self.cfg.lerobot_root = self.media_root
+            self.cfg.record = self._record()
 
     def open(self) -> None:
         """Inside the VLM session: the model is known (probed or resolved)."""
@@ -219,7 +287,10 @@ class EefJudge:
     def _fetch(self, sample) -> None:
         if self.mcap and self.src.cache is not None:
             with self._fetch_lock:                     # the episode's .mcap into the source cache
-                self.src.cache.fetch(sorted({c.media["uri"] for c in sample.cameras.values()}))
+                keys = {c.media["uri"] for c in sample.cameras.values()}
+                if self.record_mapping is not None:    # the record's topics live in the episode's file
+                    keys |= set(self.src.episode_keys([sample.episode_index]))
+                self.src.cache.fetch(sorted(keys))
         elif self.scratch is not None:
             with self._fetch_lock:
                 _fetch_media(self.storage, sample, self.scratch.name)
@@ -244,13 +315,36 @@ class EefJudge:
                   "failure": f"{type(e).__name__}: {e}"[:300]}
             self.ctx.log("warn", f"{MODULE}: the opinion on episode {ep} failed: {type(e).__name__}: {e}")
         op["elapsed_s"] = round(time.perf_counter() - t1, 3)
+        evidence = OP.evidence_paths(op)
         detail = {"sample_id": sample.sample_id, "episode_index": int(ep), "assessment_mode": "vlm_opinion",
                   "overall": "opinion", "opinion": op, "config_hash": self.config, "seeds_sha256": None,
                   "template_sha256": None, "input_file_sha256": self.result.sha256, "review_config": self.review_config,
                   "decision": {"outcome": "opinion", "confirmed": [], "human": [], "unchecked": []}, "reason": "",
                   "vlm": {"model": self.model, "prompt_version": OP.PROMPT_VERSION, "answer_schema": OP.ANSWER_SCHEMA,
                           "timeout_s": self.timeout_s, "call_kind": eef_review.TAG}}
-        return {"passed": True, "score": None, "detail": detail}, OP.evidence_paths(op)
+        evidence += self._attach_record(detail, sample)           # needs no gripper reference (§8.7)
+        return {"passed": True, "score": None, "detail": detail}, evidence
+
+    def _attach_record(self, detail: dict, sample) -> list[str]:
+        """The record comparison of an opinion-only episode: reported, its overlay evidence run-relative."""
+        from ..extensions.eef_consistency import runner
+
+        try:
+            shown = runner.attach_record(detail, sample, self.cfg)
+        except Exception as e:  # noqa: BLE001 - a report only: its failure never touches the episode
+            self.ctx.log("warn", f"{MODULE}: the record comparison of episode {sample.episode_index} failed: "
+                                 f"{type(e).__name__}: {e}")
+            return []
+        self._record_paths(detail)
+        return [self._rel(e["path"]) for e in shown]
+
+    def _rel(self, path: str) -> str:
+        """A path under the module's output as the record's evidence names it: relative to the run."""
+        return os.path.relpath(os.path.join(self.out_dir, path), self.run_dir).replace(os.sep, "/")
+
+    def _record_paths(self, detail: dict) -> None:
+        for e in (detail.get("record") or {}).get("evidence") or []:
+            e["path"] = self._rel(e["path"])
 
     def _judge(self, ep: int, sample, log) -> tuple[dict | None, list[str]]:
         from ..extensions.eef_consistency import decide as D
@@ -269,8 +363,8 @@ class EefJudge:
             log.add(MODULE, cause=f"{type(e).__name__}: {e}"[:500])
             self.ctx.log("warn", f"{MODULE}: episode {ep} failed: {type(e).__name__}: {e}")
             return None, []
-        evidence = [os.path.relpath(os.path.join(self.out_dir, e["path"]), self.run_dir).replace(os.sep, "/")
-                    for e in detail.get("evidence", [])]
+        evidence = [self._rel(e["path"]) for e in detail.get("evidence", [])]
+        self._record_paths(detail)
         t1 = time.perf_counter()
         requests: dict = {}
         try:

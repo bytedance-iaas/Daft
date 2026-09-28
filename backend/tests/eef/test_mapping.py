@@ -54,6 +54,9 @@ def test_the_mapping_must_say_what_the_columns_are():
     del cam["cameras"]["observation.images.exterior"]["calibration"]["extrinsics"]["cam2base_xyz_rpy"]
     with pytest.raises(M.MappingError, match="extrinsics needs"):
         M.check_mapping(cam)
+    # 1.1 only adds the record block (design 12 §8.7): one file serves the export and the record comparison
+    M.check_mapping({**copy.deepcopy(MINI), "schema_version": "eef-mapping/1.1", "record": {"joints": {
+        "key": "action", "units": "rad", "robot": "franka_panda", "reference_frame": "robot_base"}}})
 
 
 def test_a_v21_dataset_exports_form_b(mini, tmp_path):

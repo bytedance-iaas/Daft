@@ -34,8 +34,11 @@ STATE_MOTION = "state_motion"
 CAMERA_MOTION = "camera_motion"
 VLM_REVIEW = "vlm_review"
 INPUT_CONSISTENCY = "input_consistency"
+#: the upload's 3D trajectory against the dataset's own record (design 12 §8.7, D-E16): per episode,
+#: numeric, reported only - never part of the verdict
+RECORD = "record_consistency"
 #: Sub-items of the preflight capability table and of the per-camera assessment (design 12 §5.1).
-SUBITEMS = (POSITION, ORIENTATION, TEMPORAL, STATE_MOTION, CAMERA_MOTION, VLM_REVIEW, INPUT_CONSISTENCY)
+SUBITEMS = (POSITION, ORIENTATION, TEMPORAL, STATE_MOTION, CAMERA_MOTION, VLM_REVIEW, INPUT_CONSISTENCY, RECORD)
 #: Sub-items measured per camera (D-E4); state_motion is per episode.
 CAMERA_SUBITEMS = (POSITION, ORIENTATION, TEMPORAL, CAMERA_MOTION, INPUT_CONSISTENCY)
 
@@ -77,6 +80,17 @@ BACKGROUND_SUPPORT_INSUFFICIENT = "background_support_insufficient"
 TRACKING_UNSTABLE = "tracking_unstable"
 TOO_FEW_STATES = "too_few_states"
 EXECUTION_FAILED = "execution_failed"
+# the record comparison (design 12 §8.7, D-E16)
+RECORD_MAPPING_MISSING = "record_mapping_missing"
+RECORD_MAPPING_INVALID = "record_mapping_invalid"
+RECORD_COLUMNS_MISSING = "record_columns_missing"
+ROBOT_MODEL_UNKNOWN = "robot_model_unknown"
+UPLOAD_POSE_MISSING = "upload_pose_missing"
+REFERENCE_FRAMES_UNRELATED = "reference_frames_unrelated"
+CONSTANT_MISMATCH = "constant_mismatch"
+RECORD_DEVIATION = "record_deviation"
+CONSTANT_UNCHECKED = "constant_unchecked"
+TIME_OFFSET = "time_offset"
 
 
 @dataclasses.dataclass(frozen=True)

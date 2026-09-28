@@ -1455,7 +1455,7 @@ const uploadHandlers = [
     const kind = url.searchParams.get('kind') ?? '';
     const name = url.searchParams.get('name') ?? 'upload.json';
     const text = await request.text();
-    if (!['eef_trajectory', 'eef_observation_seeds', 'eef_gripper_template'].includes(kind)) return err(400, 'validation_failed', `不认识的上传类型 ${kind}`);
+    if (!['eef_trajectory', 'eef_observation_seeds', 'eef_gripper_template', 'eef_record_mapping'].includes(kind)) return err(400, 'validation_failed', `不认识的上传类型 ${kind}`);
     let doc: unknown;
     try {
       doc = JSON.parse(text);
@@ -1481,6 +1481,15 @@ const uploadHandlers = [
         return err(400, 'validation_failed', '夹爪外观模板不合格：schema_version 应为 gripper-template/1.0', { errors: [{ field: null, problem: 'expected gripper-template/1.0', code: 'template_invalid' }] });
       const entries = t.entries ?? [];
       summary = { entries: entries.length, usable_entries: entries.length, cameras: [...new Set(entries.map((e) => e.camera_id).filter(Boolean))].sort() };
+    } else if (kind === 'eef_record_mapping') {
+      // as the Daemon summarizes a dataset-record mapping (daemon/uploads.py, design doc 12 §8.7)
+      const m = doc as { schema_version?: string; record?: Record<string, Record<string, unknown> | undefined> };
+      const rec = m.record ?? {};
+      const sources = ['joints', 'pose'].filter((k) => rec[k]);
+      if (!['eef-mapping/1.0', 'eef-mapping/1.1'].includes(m.schema_version ?? '') || !sources.length)
+        return err(400, 'validation_failed', '数据集记录映射不合格：record mapping: record needs pose, joints or both', { errors: [{ field: null, problem: 'record needs pose, joints or both', code: 'record_mapping_invalid' }] });
+      const field = (k: string) => [...new Set(sources.map((x) => rec[x]?.[k]).filter((v): v is string => typeof v === 'string'))].sort();
+      summary = { sources, robot: typeof rec.joints?.robot === 'string' ? rec.joints.robot : null, columns: field('key'), topics: field('topic'), declared_frames: Object.keys(rec.frames ?? {}).sort() };
     } else {
       if (!Array.isArray(doc) || !doc.length) return err(400, 'validation_failed', '种子文件应是 observation 行的 JSON 数组', { errors: [{ field: null, problem: 'expected an array' }] });
       summary = { rows: doc.length, samples: new Set((doc as { sample_id: string }[]).map((r) => r.sample_id)).size };

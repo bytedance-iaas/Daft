@@ -8,7 +8,10 @@
   when a task binds the file to a dataset;
 * ``eef_observation_seeds`` - a JSON array of observation rows (C2 ``eef/observation.schema.json``);
 * ``eef_gripper_template`` - a ``gripper-template/1.0`` file (C2 ``eef/gripper_template.schema.json``), read by
-  the module's own loader: patches decoded, features counted, entries with too few features reported.
+  the module's own loader: patches decoded, features counted, entries with too few features reported;
+* ``eef_record_mapping`` - the record mapping of the EEF module's record comparison (``eef-mapping/1.1``
+  ``record``, or a 1.0 exporter mapping whose ``eef`` block is the pose record; design doc 12 §8.7), parsed by
+  the module's own parser; whether its columns / topics exist is checked when a task binds it to a dataset.
 
 An error is reported with its location (JSON path, sample, episode, frame, camera, point). Files
 live on the data volume as ``uploads/<owner key>/<upload_id>/{file, meta.json}``: no database row,
@@ -32,7 +35,7 @@ from .errors import ApiError
 from .util import ID_ATTEMPTS, id_regex, new_id
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
-KINDS = ("eef_trajectory", "eef_observation_seeds", "eef_gripper_template")
+KINDS = ("eef_trajectory", "eef_observation_seeds", "eef_gripper_template", "eef_record_mapping")
 _ID_RE = re.compile(rf"^{id_regex('upl', r'upl_[0-9a-z]{10,40}')}$")
 _MAX_ERRORS = 50
 
@@ -133,8 +136,27 @@ def validate_template(data: bytes) -> dict:
     return {"valid": True, "summary": summary, "warnings": warnings}
 
 
+def validate_record_mapping(data: bytes) -> dict:
+    """The ``validation`` of a record-mapping upload (JSON), or raises validation_failed (400)."""
+    from curation.extensions.eef_consistency import record as RC
+
+    try:
+        doc = json.loads(data.decode("utf-8"))
+        m = RC.parse_mapping(doc, sha256=hashlib.sha256(data).hexdigest())
+    except (ValueError, UnicodeDecodeError, RC.RecordMappingError) as err:
+        code = "robot_model_unknown" if isinstance(err, RC.RobotModelUnknown) else "record_mapping_invalid"
+        raise _invalid(f"数据集记录映射不合格：{err}", [{"field": None, "problem": str(err),
+                                                   "code": code, "severity": "error"}]) from None
+    src = m.sources
+    summary = {"sources": sorted(src), "robot": src["joints"].robot if "joints" in src else None,
+               "columns": sorted({c for s in src.values() for c in (s.key, s.quaternion_key) if c}),
+               "topics": sorted({s.topic for s in src.values() if s.topic}), "declared_frames": sorted(m.frames)}
+    warnings = [] if doc.get("record") else ["no record block: the exporter's eef block is the pose record"]
+    return {"valid": True, "summary": summary, "warnings": warnings}
+
+
 VALIDATORS = {"eef_trajectory": validate_trajectory, "eef_observation_seeds": validate_seeds,
-              "eef_gripper_template": validate_template}
+              "eef_gripper_template": validate_template, "eef_record_mapping": validate_record_mapping}
 
 
 class UploadStore:

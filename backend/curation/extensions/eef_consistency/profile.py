@@ -29,6 +29,8 @@ class Profile:
     camera_motion: dict
     diagnosis: dict
     sha256: str
+    #: the record comparison (design 12 §8.7); optional - record.DEFAULTS fill what a profile leaves out
+    record: dict = dataclasses.field(default_factory=dict)
 
     def summary(self) -> dict:
         return {"name": self.name, "version": self.version, "calibrated": self.calibrated, "sha256": self.sha256}
@@ -48,7 +50,7 @@ def load(name_or_path: str | None) -> Profile | None:
         raise ValueError(f"profile {path}: missing sections {missing}")
     return Profile(name=str(doc["name"]), version=str(doc["version"]), calibrated=bool(doc["calibrated"]),
                    source=str(doc["source"]), sha256=hashlib.sha256(raw).hexdigest(),
-                   **{s: dict(doc[s]) for s in SECTIONS})
+                   record=dict(doc.get("record") or {}), **{s: dict(doc[s]) for s in SECTIONS})
 
 
 def config_hash(profile: Profile | None, extra: dict) -> str:

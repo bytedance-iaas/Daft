@@ -10,7 +10,7 @@ import { qk } from '../../api/queries';
 import type { ResultRecord, SyncCurves } from '../../api/types';
 import { CHART_COLORS, Chart, lineOption } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
-import { EefConclusion, EefOpinion, EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
+import { EefConclusion, EefDatasetRecord, EefOpinion, EefCpuEvidence, EefCpuTable, EefWindows } from '../../features/eef/EefRecord';
 import { judgementName, motionFacts, motionRows, syncBadge, syncRows, taskTrail, timestampFacts, violationRows, visualRows, type CameraScoreRow, type Fact, type SyncCameraRow } from '../../lib/episodeReadings';
 import { fieldLabel, readable } from '../../lib/reportView';
 import { fmt, num, signed, str } from '../../lib/sectionStats';
@@ -391,7 +391,8 @@ function SkillBlock({ record }: BlockProps) {
 /**
  * EEF–视频一致性 (D49, F5.12): the conclusion and why, the CPU's sub-item readings per camera, every
  * review window with the model's answer and the marked crops it was shown, and the CPU's own frames
- * (the same block as the adjudication card).
+ * (the same block as the adjudication card); last, the trajectory against the dataset's own record
+ * (design doc 12 §8.7), reported only.
  */
 function EefBlock({ taskId, record }: BlockProps) {
   const d = details(record);
@@ -404,6 +405,7 @@ function EefBlock({ taskId, record }: BlockProps) {
           <EefConclusion record={record} />
         </Space>
         <EefOpinion taskId={taskId} record={record} />
+        <EefDatasetRecord taskId={taskId} record={record} />
       </div>
     );
   }
@@ -419,6 +421,7 @@ function EefBlock({ taskId, record }: BlockProps) {
       <EefCpuTable record={record} />
       <EefWindows taskId={taskId} record={record} />
       <EefCpuEvidence taskId={taskId} record={record} />
+      <EefDatasetRecord taskId={taskId} record={record} />
     </div>
   );
 }
