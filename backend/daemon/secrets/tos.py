@@ -107,6 +107,11 @@ def public_endpoint(region: str) -> str:
     return f"https://tos-{region}.volces.com"
 
 
+def s3_public_endpoint(region: str) -> str:
+    """TOS's S3-compatible public endpoint: what the ReRun viewer speaks (design doc 15 §2.4)."""
+    return f"https://tos-s3-{region}.volces.com"
+
+
 def endpoints(region: str | None, custom: str | None, deployment: str | None) -> Endpoints:
     """Where to send the Daemon's calls and what to sign browser URLs with.
 

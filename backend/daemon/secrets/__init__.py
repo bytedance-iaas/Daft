@@ -10,6 +10,8 @@
 * :mod:`.prechecks` - the three checks before a task starts (D30).
 * :mod:`.cli_env` - the environment of a CLI subprocess (02 §2, 08 §3).
 * :mod:`.presign` - browser URLs under a prefix, with the path checks of 08 §6.
+* :mod:`.sigv4` - S3 SigV4 query-string presigning for the ReRun viewer (design doc 15;
+  D55): standard library only, no I/O, no clock.
 
 The rule for all of it: a secret leaves sealed storage only into a subprocess environment
 or an outgoing request. It is never returned, logged, written into an audit event or an
