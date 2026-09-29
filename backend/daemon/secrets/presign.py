@@ -9,6 +9,10 @@ or a frame (the new-task page's episode preview, the report's episode view):
 2. short-lived: the caller passes the TTL (the API allows 60-3600 s, default 30 minutes);
 3. signed on the **public** endpoint - an internal ``*.ivolces.com`` URL is dead in a
    browser. The anonymous public cache bucket is not signed; its plain public URL is given.
+
+The ReRun viewer (``POST /datasets/{id}/sign``, design doc 15) names full object keys and
+listing prefixes instead: :func:`object_key_under` and :func:`list_prefix_under` check them
+against the dataset's prefix with the same refusals, but never rewrite them.
 """
 from __future__ import annotations
 
@@ -47,6 +51,50 @@ def relative_key(raw: str) -> str:
     if not segments:
         raise BadPath("path 没有指向任何文件")
     return "/".join(segments)
+
+
+def _check_literal(text: str, what: str) -> None:
+    """Refuse what could step out of a prefix. Unlike :func:`relative_key` nothing is
+    normalized: an object key is a literal, ``a//b`` and ``a/b`` are two objects."""
+    if "\\" in text or _CONTROL.search(text):
+        raise BadPath(f"{what} 里不能有反斜杠或控制字符")
+    if text.startswith("/"):
+        raise BadPath(f"{what} 不能以 / 开头")
+    if "//" in text:
+        raise BadPath(f"{what} 里不能有连续的 /")
+    for seg in text.split("/"):
+        decoded = unquote(seg)
+        if seg in (".", "..") or decoded in (".", "..") or "/" in decoded or "\\" in decoded:
+            raise BadPath(f"{what} 里不能有 . 或 .. 这样的段，也不能有编码过的点和斜杠")
+
+
+def _head(base: str) -> str:
+    base = str(base or "").strip("/")
+    if not base:
+        raise BadPath("数据集登记的是整个存储桶，签名范围没法限定在一个目录之内")
+    return base + "/"
+
+
+def object_key_under(key: str, base: str) -> str:
+    """A full object key a caller named, checked to lie under ``base`` (a dataset's prefix in
+    its bucket) and returned unchanged, or :class:`BadPath` (design doc 15 §2.3)."""
+    text = str(key or "")
+    _check_literal(text, "key")
+    head = _head(base)
+    if not text.startswith(head) or len(text) == len(head):
+        raise BadPath(f"key 必须是数据集目录 {head} 之下的对象")
+    return text
+
+
+def list_prefix_under(prefix: str, base: str) -> str:
+    """A listing prefix, checked to start with ``base/`` so a listing of ``lerobot/droid_100``
+    cannot reach ``lerobot/droid_100_v2/``; returned unchanged, or :class:`BadPath`."""
+    text = str(prefix or "")
+    _check_literal(text, "prefix")
+    head = _head(base)
+    if not text.startswith(head):
+        raise BadPath(f"prefix 必须以数据集目录 {head} 开头")
+    return text
 
 
 def object_under(uri: str, rel: str) -> tuple[str, str]:

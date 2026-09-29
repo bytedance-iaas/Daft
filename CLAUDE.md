@@ -80,6 +80,7 @@ task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
 | 12 | EEF–视频一致性（DEMO 模块；首节是开工指引，格式规范与 Schema 在 `docs/contracts/eef/`） |
 | 13 | 提速（`13-curation-speedup.md`，实施记录在 `13-speedup/`）；视频原生判定（`13-video-native-vlm.md`） |
 | 14 | 数据完整性（首节是开工指引；决策 D50–D52） |
+| 15 | ReRun 经 Daemon 代签的预签名地址读登记的数据集（`15-rerun-presigned-access.md`，D55；首节是开工指引，涉及 rerun 仓库） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：

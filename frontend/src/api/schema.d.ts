@@ -346,6 +346,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/datasets/{id}/sign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Presigned S3 URLs for the ReRun viewer to read a registered TOS dataset (D55)
+         * @description Design doc 15 §2. For `source: tos` registrations only (public and local ones answer
+         *     400). Each request is one read: `get` an object by its full key in the bucket, or `list`
+         *     one ListObjectsV2 page (`list-type=2`, `prefix`, optional `delimiter`,
+         *     `continuation-token`, `max-keys`). Keys and prefixes must start with the dataset's
+         *     prefix and a `/`; they are checked, never rewritten, and one bad item fails the whole
+         *     request with `details.errors[].field` = `requests.<i>.key|prefix`. The URLs are for
+         *     TOS's public S3-compatible endpoint `https://<bucket>.tos-s3-<region>.volces.com`, sign
+         *     only the `host` header (a `Range` header does not change them) and are answered with
+         *     `Cache-Control: no-store`. A key the registration no longer has: 404 with
+         *     `details.reason: credential_missing`; a key that cannot be decrypted: 500 with
+         *     `details.reason: secret_unreadable`; a key with a custom endpoint: 400.
+         */
+        post: operations["signDataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/preflight": {
         parameters: {
             query?: never;
@@ -2100,6 +2132,35 @@ export interface components {
             from_ts?: number;
             to_ts?: number;
         };
+        DatasetSignRequest: {
+            /**
+             * @description seconds
+             * @default 1800
+             */
+            ttl?: number;
+            requests: components["schemas"]["DatasetSignItem"][];
+        };
+        /** @description One read to sign: `get` - an object by its full key in the bucket (no leading `/`); `list` - one ListObjectsV2 page under `prefix`, `continuation_token` being the previous page's `NextContinuationToken`. */
+        DatasetSignItem: {
+            /** @constant */
+            op: "get";
+            key: string;
+        } | {
+            /** @constant */
+            op: "list";
+            prefix: string;
+            /** @constant */
+            delimiter?: "/";
+            continuation_token?: string;
+            /** @default 1000 */
+            max_keys?: number;
+        };
+        DatasetSignResponse: {
+            /** @description epoch milliseconds, as in SignedUrl */
+            expires_at: number;
+            /** @description one presigned URL per request, in the same order */
+            urls: string[];
+        };
         Readiness: {
             /** @enum {unknown} */
             status: "ok" | "not_ready";
@@ -3140,6 +3201,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DatasetDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    signDataset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatasetSignRequest"];
+            };
+        };
+        responses: {
+            /** @description one URL per request, in the same order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetSignResponse"];
                 };
             };
             default: components["responses"]["Error"];

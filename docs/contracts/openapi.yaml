@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.20.0
+  version: 1.21.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -140,6 +140,12 @@ info:
     module drafts from the dataset's metadata for a person to confirm before use, by parameter key -
     the EEF module's `record_mapping` from a LeRobot info.json, with every assumption listed (design
     doc 12 §8.7, D-E17). Confirming uploads the draft as an `eef_record_mapping` like any other file.
+
+    1.21.0 (2026-09-28): `POST /datasets/{id}/sign` (design doc 15, D55): the ReRun web viewer's
+    reads of a registered private TOS dataset, signed by the Daemon with the key bound to the
+    registration - one S3 SigV4 presigned URL per object read or ListObjectsV2 page, on TOS's
+    public S3-compatible endpoint. The caller names full object keys and listing prefixes, which
+    must lie under the dataset's prefix; bucket, region and key are the registration's.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -655,6 +661,37 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/DatasetDetail"}
+        default: {$ref: "#/components/responses/Error"}
+  /datasets/{id}/sign:
+    parameters:
+      - $ref: "#/components/parameters/PathId"
+    post:
+      tags: [datasets]
+      operationId: signDataset
+      summary: Presigned S3 URLs for the ReRun viewer to read a registered TOS dataset (D55)
+      description: |
+        Design doc 15 §2. For `source: tos` registrations only (public and local ones answer
+        400). Each request is one read: `get` an object by its full key in the bucket, or `list`
+        one ListObjectsV2 page (`list-type=2`, `prefix`, optional `delimiter`,
+        `continuation-token`, `max-keys`). Keys and prefixes must start with the dataset's
+        prefix and a `/`; they are checked, never rewritten, and one bad item fails the whole
+        request with `details.errors[].field` = `requests.<i>.key|prefix`. The URLs are for
+        TOS's public S3-compatible endpoint `https://<bucket>.tos-s3-<region>.volces.com`, sign
+        only the `host` header (a `Range` header does not change them) and are answered with
+        `Cache-Control: no-store`. A key the registration no longer has: 404 with
+        `details.reason: credential_missing`; a key that cannot be decrypted: 500 with
+        `details.reason: secret_unreadable`; a key with a custom endpoint: 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DatasetSignRequest"}
+      responses:
+        "200":
+          description: one URL per request, in the same order
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetSignResponse"}
         default: {$ref: "#/components/responses/Error"}
   /preflight:
     post:
@@ -3053,6 +3090,48 @@ components:
         expires_at: {type: integer}
         from_ts: {type: number, description: "v3 sources: play url#t=from,to"}
         to_ts: {type: number}
+    DatasetSignRequest:
+      type: object
+      additionalProperties: false
+      required: [requests]
+      properties:
+        ttl: {type: integer, minimum: 60, maximum: 3600, default: 1800, description: seconds}
+        requests:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: {$ref: "#/components/schemas/DatasetSignItem"}
+    DatasetSignItem:
+      description: >-
+        One read to sign: `get` - an object by its full key in the bucket (no leading `/`);
+        `list` - one ListObjectsV2 page under `prefix`, `continuation_token` being the previous
+        page's `NextContinuationToken`.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [op, key]
+          properties:
+            op: {const: get}
+            key: {type: string, minLength: 1, maxLength: 1024}
+        - type: object
+          additionalProperties: false
+          required: [op, prefix]
+          properties:
+            op: {const: list}
+            prefix: {type: string, minLength: 1, maxLength: 1024}
+            delimiter: {const: "/"}
+            continuation_token: {type: string, minLength: 1, maxLength: 4096}
+            max_keys: {type: integer, minimum: 1, maximum: 1000, default: 1000}
+    DatasetSignResponse:
+      type: object
+      additionalProperties: false
+      required: [expires_at, urls]
+      properties:
+        expires_at: {type: integer, description: "epoch milliseconds, as in SignedUrl"}
+        urls:
+          type: array
+          description: one presigned URL per request, in the same order
+          items: {type: string}
     Readiness:
       type: object
       additionalProperties: false

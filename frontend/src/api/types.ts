@@ -107,6 +107,8 @@ export type DecisionValue = DecisionInput['decision'];
 export type Decision = S['Decision'];
 export type AdjudicationPage = operations['listAdjudication']['responses'][200]['content']['application/json'];
 export type SignedUrl = S['SignedUrl'];
+export type DatasetSignRequest = S['DatasetSignRequest'];
+export type DatasetSignResponse = S['DatasetSignResponse'];
 
 export type SseState = S['SseState'];
 export type SseProgress = S['SseProgress'];

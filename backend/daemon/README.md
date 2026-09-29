@@ -40,7 +40,8 @@ FastAPI + uvicorn，单副本。这一包只搭骨架：SQLite 仓储、鉴权�
 W8 的接口（见 [`secrets/README.md`](secrets/README.md)）：`GET/POST /credentials`、`PUT/DELETE /credentials/{id}`、
 `POST /credentials/{id}/verify`、`GET/POST /vlm-backends`、`PUT/DELETE /vlm-backends/{id}`、
 `POST /vlm-backends/{id}/verify|refresh-models`、`POST /vlm-backends/{id}/models`、
-`PATCH/DELETE /vlm-backends/{id}/models/{model_id}`、`POST /deliveries/probe`、`GET /media/sign`。
+`PATCH/DELETE /vlm-backends/{id}/models/{model_id}`、`POST /deliveries/probe`、`GET /media/sign`，
+以及给 ReRun web viewer 代签的 `POST /datasets/{id}/sign`（设计 15，D55）。
 
 W5b 的接口（读已提交的结果版本，见 [`results/README.md`](results/README.md)）：`GET /tasks/{id}/report`、
 `GET /tasks/{id}/report/tables/{table}`、`GET /tasks/{id}/episodes/{index}`、`GET /tasks/{id}/perf`、
@@ -313,6 +314,19 @@ EOF
     预期：改名成功，返回整条详情；删 `droid_100` 返回 409 `dataset_in_use`，「还有 22 个未结束的任务在用这个数据集……」，
     `details.tasks` 列出其中最新的 20 条；`umi_640` 没有任务在用，删除返回 `204`，TOS 上的数据不受影响。
     不带 `Content-Type: application/json` 的写请求一律 400。
+
+    ReRun 代签（设计 15）：造数据时登记没有绑访问密钥，所以这里只看得到拒绝；签出地址的完整流程见
+    [`secrets/README.md`](secrets/README.md) 手动验证第 5 步。
+
+    ```bash
+    c -X POST -H 'Content-Type: application/json' localhost:18080/curation/api/v1/datasets/$D/sign \
+      -d '{"requests":[{"op":"get","key":"datasets/droid_100/meta/info.json"}]}'; echo
+    c -X POST -H 'Content-Type: application/json' -H 'Sec-Fetch-Site: cross-site' localhost:18080/curation/api/v1/datasets/$D/sign \
+      -d '{"requests":[{"op":"get","key":"datasets/droid_100/meta/info.json"}]}'; echo
+    ```
+
+    预期：第一条 404，`details.reason` 是 `credential_missing`，「数据集绑定的访问密钥已被删除：到质检台的「数据集」页重新添加这个数据集……」；
+    第二条 400「不接受来自其它站点的写请求」。
 
 15. **优雅停机**：`kill %1`（SIGTERM），Daemon 日志最后是 `Application shutdown complete.`；打开着的 SSE 连接会被主动结束，
     不会拖住停机。重启之后 SSE 的 epoch 加 1，旧的 `Last-Event-ID` 会收到 `reset`。

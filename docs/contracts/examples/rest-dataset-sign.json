@@ -1,0 +1,26 @@
+{
+ "schema": "openapi.yaml#/components/schemas/DatasetSignRequest",
+ "valid": [
+  {
+   "ttl": 1800,
+   "requests": [
+    {"op": "get", "key": "lerobot/droid_100/meta/info.json"},
+    {"op": "list", "prefix": "lerobot/droid_100/", "delimiter": "/"},
+    {"op": "list", "prefix": "lerobot/droid_100/", "continuation_token": "1/abc+def==", "max_keys": 500}
+   ]
+  },
+  {
+   "requests": [{"op": "get", "key": "lerobot/droid_100/videos/chunk-000/front/episode_000001.mp4"}]
+  }
+ ],
+ "invalid": [
+  {"requests": []},
+  {"ttl": 30, "requests": [{"op": "get", "key": "lerobot/droid_100/meta/info.json"}]},
+  {"requests": [{"op": "put", "key": "lerobot/droid_100/meta/info.json"}]},
+  {"requests": [{"op": "get", "key": "lerobot/droid_100/meta/info.json", "bucket": "other"}]},
+  {"requests": [{"op": "get", "prefix": "lerobot/droid_100/"}]},
+  {"requests": [{"op": "list", "prefix": "lerobot/droid_100/", "delimiter": ","}]},
+  {"requests": [{"op": "list", "prefix": "lerobot/droid_100/", "max_keys": 1001}]},
+  {"region": "cn-shanghai", "requests": [{"op": "get", "key": "lerobot/droid_100/a"}]}
+ ]
+}

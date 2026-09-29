@@ -258,7 +258,7 @@ D33–D34 来自同日开工前的最后一轮核对，D35 来自 2026-09-21 的
 D39–D41 来自同日 W3 拆 v1 编排时核对出的三处差异，D42–D43 来自需求方对其中默认做法的答复，
 D44–D48 来自 2026-09-23 需求方的第二轮修改意见，D49 来自同日需求方对 EEF 模块的改判，
 D50–D52 来自 2026-09-24 的数据完整性立项（设计 14），D53 来自 2026-09-25 需求方对部署 Chart 的要求，
-D54 来自同日需求方评审 D53 时对 CPU 资源的要求。后续设计一律以此为准：
+D54 来自同日需求方评审 D53 时对 CPU 资源的要求，D55 来自 2026-09-28 安全评审对 ReRun 去掉预置密钥的要求（设计 15）。后续设计一律以此为准：
 
 | # | 决策 |
 |---|---|
@@ -316,6 +316,7 @@ D54 来自同日需求方评审 D53 时对 CPU 资源的要求。后续设计一
 | D52 | 预检仍只读 metadata（D6）：新增三项——0 字节或过小的文件、mcap 录制中断（文件尾没有结束标识）、mcap 摘要区 CRC——只写进 `warnings`，不改变任何模块的可用性，也不多读样本（用的是文件列表和已经取回的摘要区字节） |
 | D53 | 部署 Chart 并入 rerun 仓库的 dataverse（`deploy/helm/dataverse` 0.2.0）：质检台是其中单副本的 StatefulSet，以后升级质检台就是升级 dataverse；本仓库删掉 `deploy/charts/curator`，只管镜像。并入时精简（09 篇 §2.1）：前缀 `/curation`、端口、探针、宽限期、运行用户写死在模板里，值只留 `enabled`、`publicBaseUrl`、`publicDatasets`、`siteConfig`、`persistence`、`resources`、`extraEnv`（2026-09-25 评审：去掉 `maxRunningTasks` 与维护模式，质检台怎么跑由它自己管；临时盘缺省 500Gi）；登录用 viewer 的 `web_htpasswd`，`TOS_ENDPOINT` 由 `tos.region` 推导，主密钥是 dataverse Secret 的 `curator_master_key`，同时 dataverse 的各组件改为只挂自己要读的键，主密钥只有质检台的 Pod 读得到。自托管 vLLM 从 dataverse 拆出，成为 rerun 仓库里独立的 `vllm` Chart，和 dataverse 互不依赖（VLM 后端本来就在质检台里添加）。galbot 的独立 release（D48）并入时直接接管原数据盘 `data-curator-v2-0`，不拷数据 |
 | D54 | 质检台自己管 CPU（2026-09-25，需求方评审 D53 时定；dataverse 不再设同时运行的任务数与 CPU 并发）：①同时运行的任务数缺省 3（P1）；②容器里能看到的核都可以用：CPU worker 总数 = 容器 CPU 配额 − 2（至少 1，没有配额时用本机核数），每个 worker 占一个核，Daemon 起的 CLI 子进程里 OpenMP / BLAS / OpenCV 都是单线程；站点配置删掉 `concurrency.cpu` / `cpuMax`，旧 site.yaml 里还有时忽略并告警、不拒绝启动；任务的「CPU 并发上限」保留，只能往下压（P4）；③Daemon 管一个全局 CPU 池，大小就是这个总数：所有在跑任务的 CPU 档派发一条 episode 前先拿一个名额，做完（成功、出错、被暂停或停止）归还，崩溃时按在途表收回；几个任务同时等名额时按公平份额轮流，先开跑的任务不会占满池子让后来的一直等；帧档先过内存准入再拿名额。计划里 CPU 档的并发由此变成「这个任务最多用多少」。开工时补定：整档执行（重试、流水线之前的旧任务）开始时按块拿名额、结束归还；数据完整性档只在开了逐帧解码（L3）时拿名额；外部 CLI 的批处理兼容路径（`CURATOR_CLI`）不接；VLM 仍按任务数在开跑时均分，不改全局池 |
+| D55 | ReRun 读 TOS 不再依赖部署期预置的 AK/SK（2026-09-28，安全评审；需求方要求密钥只录一次）：访问密钥只存在质检台 Daemon 的封存库里，ReRun web viewer 经 Daemon 代签的预签名地址直连 TOS（AWS SigV4 查询串签名，TOS 的公网 S3 兼容端点，只签读操作），SK 不出 Daemon、不进浏览器。分阶段实施：阶段一只覆盖质检台里登记过的私有 TOS 数据集——「可视化」链接多带数据集编号，viewer 凭编号调 `POST /datasets/{id}/sign`，签名范围由登记的数据集决定，调用方不能指定桶、密钥和地域，也出不了数据集的前缀；打开对话框、`/config.json` 里的密钥、catalog、原生会话、rrd 缓存留到后续阶段（设计 15 §7） |
 
 ### 7.1 评审中提出、需求方已确认的取值
 

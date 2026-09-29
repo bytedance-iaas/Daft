@@ -8,9 +8,17 @@
   :mod:`daemon.secrets.presign` before anything is signed. TTL 60-3600 s, default 30 minutes.
 * ``POST /deliveries/probe`` - the new-task form's check when the delivery directory loses
   focus: a real write of a probe object with the named key, deleted right after.
+* ``POST /datasets/{id}/sign`` - the ReRun web viewer's reads of a registered TOS dataset
+  (design doc 15; D55): S3 SigV4 presigned URLs on the public S3-compatible endpoint, one per
+  requested object read or listing page, with the key bound to the registration. Bucket, key
+  and region come from the registration, never from the caller; object keys and listing
+  prefixes must lie under the dataset's prefix and are checked, not rewritten. Only reads are
+  signed and the secret key never leaves the Daemon. ``dataset.viewer_sign`` is audited at
+  most once an hour per person and dataset: the viewer signs on every read.
 """
 from __future__ import annotations
 
+import threading
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
@@ -18,17 +26,30 @@ from starlette.responses import JSONResponse, Response
 
 from .. import taskspec
 from ..errors import ApiError
+from ..repo import protocol as P
+from ..secrets import sigv4
 from ..secrets import tos as T
-from ..secrets.http import bad, secrets, unavailable, write
+from ..secrets.http import audit, bad, secrets, unavailable, write
 from ..secrets.prechecks import TOS_CODES
-from ..secrets.presign import BadPath, browser_url, relative_key
+from ..secrets.presign import (
+    BadPath,
+    browser_url,
+    list_prefix_under,
+    object_key_under,
+    relative_key,
+)
 from ..secrets.scrub import Scrubber
 from ..secrets.service import Unavailable
-from .common import principal, read_json_body, runtime, validate
+from . import datasets as _datasets  # noqa: F401 - registers the ds_id path convertor
+from .common import in_thread, principal, read_json_body, runtime, validate
 
 router = APIRouter()
 
 _NO_STORE = {"Cache-Control": "no-store"}
+
+#: ``dataset.viewer_sign`` is written at most this often per person and dataset.
+VIEWER_SIGN_AUDIT_MS = 3600 * 1000
+_AUDIT_LOCK = threading.Lock()
 
 
 @router.get("/media/sign")
@@ -97,3 +118,111 @@ async def probe_delivery(request: Request):
         return JSONResponse(out)
 
     return await write(request, "probeDelivery", handler, body=body)
+
+
+# ---------------------------------------------------------------------------
+# the ReRun viewer's reads of a registered dataset (design doc 15)
+# ---------------------------------------------------------------------------
+
+def _viewer_scope(ds: P.Dataset) -> tuple[str, str]:
+    """(bucket, the dataset's prefix in it) - or why this dataset cannot be signed for."""
+    if ds.source == "public":
+        raise bad("HuggingFace 缓存桶是公开桶，ReRun 直接读，不用签名", "source")
+    if ds.source != "tos":
+        raise bad("本地路径的数据集 ReRun 读不到，没法签名", "source")
+    bucket, base = T.split_uri(ds.uri)
+    if not base:
+        raise bad("数据集登记的是整个存储桶，签名范围没法限定在一个目录之内", "uri")
+    return bucket, base
+
+
+def _checked_requests(items: list[dict], base: str) -> list[tuple[str, dict]]:
+    """(object key, query) per request, in order; every bad item is reported, none signed."""
+    out, errors = [], []
+    for i, item in enumerate(items):
+        field = "key" if item["op"] == "get" else "prefix"
+        try:
+            if item["op"] == "get":
+                out.append((object_key_under(item["key"], base), {}))
+                continue
+            query = {"list-type": "2", "max-keys": str(item.get("max_keys", 1000)),
+                     "prefix": list_prefix_under(item["prefix"], base)}
+            if "delimiter" in item:
+                query["delimiter"] = item["delimiter"]
+            if "continuation_token" in item:
+                query["continuation-token"] = item["continuation_token"]
+            out.append(("", query))
+        except BadPath as err:
+            errors.append((i, field, err.message_zh))
+    if errors:
+        i, _, first = errors[0]
+        message = f"第 {i + 1} 项：{first}"
+        if len(errors) > 1:
+            message += f"（另有 {len(errors) - 1} 项有问题）"
+        raise ApiError("validation_failed", message, details={"errors": [
+            {"field": f"requests.{i}.{field}", "problem": text} for i, field, text in errors[:20]]})
+    return out
+
+
+def _dataset_key(svc, ds: P.Dataset, owner: str) -> T.TosKey:
+    gone = ("数据集绑定的访问密钥已被删除：到质检台的「数据集」页重新添加这个数据集，"
+            "选一个能读它的访问密钥")
+    try:
+        key = svc.tos_key(ds.credential_id, owner=owner, role="input")
+    except Unavailable as err:
+        if err.code == "credential_missing":
+            raise ApiError("not_found", gone, details={"reason": err.code}) from None
+        raise unavailable(err) from None
+    if key.endpoint:
+        raise bad(f"数据集绑定的{key.label}设了自定义 endpoint，暂不支持在 ReRun 里打开",
+                  "credential")
+    return key
+
+
+def _audit_once(request: Request, rt, ds: P.Dataset, detail: dict) -> None:
+    """``dataset.viewer_sign`` once an hour per person and dataset (design doc 15 §2.6)."""
+    who, now = principal(request), rt.clock()
+    mark = (who.owner_id, who.display_name, ds.id)
+    with _AUDIT_LOCK:
+        seen = getattr(rt, "viewer_sign_seen", None)
+        if seen is None:
+            seen = rt.viewer_sign_seen = {}
+        last = seen.get(mark)
+        if last is not None and now - last < VIEWER_SIGN_AUDIT_MS:
+            return
+        if len(seen) >= 4096:                      # forget what is past the window anyway
+            for old in [m for m, at in seen.items() if now - at >= VIEWER_SIGN_AUDIT_MS]:
+                del seen[old]
+        seen[mark] = now
+    audit(request, "dataset.viewer_sign", ds.id, detail)
+
+
+@router.post("/datasets/{dataset_id:ds_id}/sign")
+async def sign_dataset(request: Request, dataset_id: str):
+    body = await read_json_body(request, required=True)
+    validate("DatasetSignRequest", body)
+    rt, owner = runtime(request), principal(request).owner_id
+    svc = secrets(request)
+    ttl = int(body.get("ttl", 1800))
+
+    def handler() -> Response:
+        ds = rt.repo.get_dataset(dataset_id, owner=owner)
+        bucket, base = _viewer_scope(ds)
+        todo = _checked_requests(body["requests"], base)
+        key = _dataset_key(svc, ds, owner)
+        region = ds.region or key.region or T.DEFAULT_REGION
+        at_ms = rt.clock() // 1000 * 1000           # SigV4 counts whole seconds
+        try:
+            urls = [sigv4.presign("GET", T.s3_public_endpoint(region), bucket, object_key, query,
+                                  access_key_id=key.access_key_id,
+                                  secret_access_key=key.secret_access_key,
+                                  session_token=key.session_token, region=region, ttl_s=ttl,
+                                  at_ms=at_ms)
+                    for object_key, query in todo]
+        except ValueError as exc:                    # local arithmetic; says nothing secret
+            raise ApiError("internal", f"签名失败：{key.scrubber()(str(exc))}") from None
+        _audit_once(request, rt, ds, {"name": ds.name, "credential": key.name})
+        return JSONResponse({"expires_at": at_ms + ttl * 1000, "urls": urls},
+                            headers=_NO_STORE)
+
+    return await in_thread(handler)

@@ -57,6 +57,7 @@
 | GET / PATCH / DELETE | `/api/v1/datasets/{id}` | 登记详情 / 改名称和备注 / 删除登记（不动 TOS；有非终态任务在用 → 409 `dataset_in_use`） |
 | POST | `/api/v1/datasets/{id}/recheck` | 重新核对指纹，只比较、不改任何任务 |
 | POST | `/api/v1/datasets/{id}/repreflight` | 重新预检，刷新预检结果和两个指纹 |
+| POST | `/api/v1/datasets/{id}/sign` | ReRun web viewer 读这个登记的数据集：用登记绑定的访问密钥逐项签 S3 预签名地址（读对象、列一页），只签数据集前缀之内的读操作（设计 15，D55，§7.1） |
 | GET | `/api/v1/datasets/browse` | 列私有 TOS 前缀下或 HuggingFace 缓存桶里的数据集，供登记时挑选。`source=tos`（需 uri + 访问密钥）或 `source=public`（匿名） |
 | GET | `/api/v1/datasets/episodes` | 分页列 episode，供新建页预览勾选；给 `dataset_id`，或来源 + 地址，见 §10 |
 | POST | `/api/v1/preflight` | 预检，同步返回，结果带 `preflight_id` |
@@ -361,6 +362,32 @@ GET /api/v1/media/sign?task=task-kqzmrtbwe&scope=delivery&path=details/clips/ep0
   v3 源是多条拼接的 mp4，返回里带 `from_ts` / `to_ts`，前端用 `#t=from,to` 片段播放。
 - 必须用**公网端点**签名。Pod 里用的内网端点对浏览器是死链（v1 注释里的实锤）。
 - TTL 默认 30 分钟。前端在 403/过期时自动重签一次再重试，不弹错。
+
+### 7.1 ReRun 读登记的数据集：`POST /api/v1/datasets/{id}/sign`
+
+控制台的「可视化」把数据集编号带给 ReRun web viewer（链接格式见设计 15 §3），viewer 每读一个对象、每列一页之前向这里要地址（D55）。
+
+```jsonc
+POST /api/v1/datasets/ds-kqzmrtbwe/sign
+{"ttl": 1800, "requests": [
+  {"op": "get",  "key": "lerobot/droid_100/meta/info.json"},
+  {"op": "list", "prefix": "lerobot/droid_100/", "delimiter": "/"}]}
+→ 200 {"expires_at": 1790000000000,
+       "urls": ["https://<桶>.tos-s3-cn-beijing.volces.com/lerobot/droid_100/meta/info.json?X-Amz-Algorithm=…", "…"]}
+```
+
+- 只签 `source = tos` 的登记；HuggingFace 缓存桶（公开桶，viewer 直接读）与本地路径返回 400。
+- 桶、地域、访问密钥都取自登记（地域缺省时用密钥的地域），请求里不能指定。
+- `key` / `prefix` 是桶内的完整键，必须以「数据集前缀 + `/`」开头（`key` 后面还要有内容），**只校验、不改写**：
+  反斜杠、控制字符、以 `/` 开头、`//`、`.` 或 `..` 段、解码后是 `.` / `..` 或含 `/` 的段一律拒绝。
+  一项不合格整个请求 400，`details.errors[].field` 是 `requests.<i>.key|prefix`。
+- 地址是 TOS 公网 S3 兼容端点（`<桶>.tos-s3-<地域>.volces.com`，与 Pod 自己走不走内网无关）上的 SigV4 查询串签名，
+  只签 `host` 头，所以同一个地址可以带不同的 `Range` 反复用；列举的查询参数与 viewer 自己发的一样，返回的 XML 不变。
+- `ttl` 60–3600 秒、缺省 1800；每次 1–100 项；响应 `Cache-Control: no-store`。
+- 绑定的密钥被删 → 404，`details.reason: credential_missing`（到「数据集」页重新添加这个数据集、选一个密钥即可恢复）；
+  解不开 → 500 `secret_unreadable`；密钥设了自定义 endpoint → 400（本期不支持）。
+- 写接口的两条防护照旧（必须 `application/json`、不接受跨站），别的网站驱动不了它；不走幂等表（没有状态变更）。
+- 审计：同一人对同一数据集一小时内第一次签名记一条 `dataset.viewer_sign`，不逐次记。
 
 ## 8. 幂等、并发与删除
 

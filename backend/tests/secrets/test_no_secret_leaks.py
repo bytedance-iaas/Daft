@@ -11,6 +11,7 @@ import logging
 
 from daemon.errors import error_body
 from daemon.logconfig import JsonFormatter
+from daemon.repo import protocol as P
 from daemon.secrets import prechecks_for_task
 
 from .conftest import API, JSON, runtime, seed_task, service
@@ -133,6 +134,15 @@ def test_no_secret_reaches_a_response_a_log_line_or_the_database(secret_client, 
     media = [call("GET", "/media/sign", params={"task": task.id, "scope": scope, "path": p})
              for scope, p in (("delivery", "details/a.mp4"), ("input", "videos/b.mp4"))]
     call("GET", "/media/sign", params={"task": task.id, "scope": "delivery", "path": "../x"})
+    ds, _ = rt.repo.register_dataset(P.Dataset(
+        id="", name="droid", source="tos", uri="tos://datasets/lerobot/droid_100",
+        region="cn-beijing", credential_id=good["id"], preflight={}, meta_fingerprint="m",
+        source_fingerprint={}, preflighted_at=0))
+    call("POST", f"/datasets/{ds.id}/sign", headers=JSON, json={"requests": [
+        {"op": "get", "key": "lerobot/droid_100/meta/info.json"},
+        {"op": "list", "prefix": "lerobot/droid_100/", "delimiter": "/"}]})
+    call("POST", f"/datasets/{ds.id}/sign", headers=JSON,
+         json={"requests": [{"op": "get", "key": "lerobot/droid_100_v2/x"}]})   # 400
 
     # -- prechecks: a precheck_failed body as W5 will return it ------------------------------
     fake_tos.pairs[AK] = "revoked-again"
@@ -167,7 +177,8 @@ def test_no_secret_reaches_a_response_a_log_line_or_the_database(secret_client, 
         for where, text in places.items():
             assert secret not in text, f"{secret!r} leaked into {where}"
         assert secret.encode() not in db_bytes, f"{secret!r} is in the database file"
-    signed = {text for what, text in call.seen if what.startswith("GET /media/sign")}
+    signed = {text for what, text in call.seen
+              if what.startswith("GET /media/sign") or what.endswith("/sign")}
     for key_id in KEY_IDS:                       # key ids: only inside presigned URLs
         for where, text in places.items():
             if text in signed:

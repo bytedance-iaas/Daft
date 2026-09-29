@@ -1,0 +1,16 @@
+{
+ "schema": "openapi.yaml#/components/schemas/DatasetSignResponse",
+ "valid": [
+  {
+   "expires_at": 1790000000000,
+   "urls": [
+    "https://bkt.tos-s3-cn-beijing.volces.com/lerobot/droid_100/meta/info.json?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKLTexample%2F20260928%2Fcn-beijing%2Fs3%2Faws4_request&X-Amz-Date=20260928T120000Z&X-Amz-Expires=1800&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000",
+    "https://bkt.tos-s3-cn-beijing.volces.com/?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKLTexample%2F20260928%2Fcn-beijing%2Fs3%2Faws4_request&X-Amz-Date=20260928T120000Z&X-Amz-Expires=1800&X-Amz-SignedHeaders=host&delimiter=%2F&list-type=2&max-keys=1000&prefix=lerobot%2Fdroid_100%2F&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000"
+   ]
+  }
+ ],
+ "invalid": [
+  {"urls": []},
+  {"expires_at": 1790000000000, "urls": [], "secret_access_key": "x"}
+ ]
+}

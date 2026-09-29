@@ -8,6 +8,8 @@ import type {
   Credential,
   DatasetCheck,
   DatasetDetail,
+  DatasetSignRequest,
+  DatasetSignResponse,
   DecisionInput,
   InputRef,
   ModuleChoice,
@@ -1435,6 +1437,37 @@ const system = [
       url: `https://${host}.tos-cn-beijing.volces.com/${key}?X-Tos-Expires=${ttl}&X-Tos-Signature=mock${signSeq}`,
       expires_at: clock() + ttl * 1000,
     });
+  }),
+  // design doc 15: the ReRun viewer's reads of a registered dataset, signed with its key
+  http.post(`${API}/datasets/:id/sign`, async ({ request, params }) => {
+    const d = db.datasets.find((x) => x.id === params.id);
+    if (!d) return err(404, 'not_found', '数据集登记不存在，可能已被删除');
+    const b = await body<DatasetSignRequest>(request, 'signDataset');
+    if (d.source === 'public') return err(400, 'validation_failed', 'HuggingFace 缓存桶是公开桶，ReRun 直接读，不用签名');
+    if (d.source !== 'tos') return err(400, 'validation_failed', '本地路径的数据集 ReRun 读不到，没法签名');
+    if (!d.credential) {
+      return err(404, 'not_found', '数据集绑定的访问密钥已被删除：到质检台的「数据集」页重新添加这个数据集，选一个能读它的访问密钥', { reason: 'credential_missing' });
+    }
+    const [bucket, ...rest] = d.uri.replace(/^tos:\/\//, '').split('/');
+    const head = `${rest.join('/').replace(/\/+$/, '')}/`;
+    const errors = b.requests.flatMap((r, i) => {
+      const [field, text] = r.op === 'get' ? ['key', r.key] : ['prefix', r.prefix];
+      const inside = text.startsWith(head) && !(r.op === 'get' && text === head);
+      const clean = !text.includes('//') && !text.split('/').some((seg) => ['.', '..'].includes(decodeURIComponent(seg)));
+      return inside && clean ? [] : [{ field: `requests.${i}.${field}`, problem: `${field} 必须在数据集目录 ${head} 之下` }];
+    });
+    if (errors.length) return err(400, 'validation_failed', `第 ${Number(errors[0].field.split('.')[1]) + 1} 项：${errors[0].problem}`, { errors });
+    const ttl = b.ttl ?? 1800;
+    const host = `${bucket}.tos-s3-${d.region ?? 'cn-beijing'}.volces.com`;
+    signSeq += 1;
+    const auth = `X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=${ttl}&X-Amz-SignedHeaders=host&X-Amz-Signature=mock${signSeq}`;
+    const urls = b.requests.map((r) =>
+      r.op === 'get'
+        ? `https://${host}/${encodeURI(r.key)}?${auth}`
+        : `https://${host}/?${auth}&list-type=2&max-keys=${r.max_keys ?? 1000}&prefix=${encodeURIComponent(r.prefix)}${r.delimiter ? '&delimiter=%2F' : ''}`,
+    );
+    const out: DatasetSignResponse = { expires_at: clock() + ttl * 1000, urls };
+    return HttpResponse.json(out, { headers: { 'Cache-Control': 'no-store' } });
   }),
   http.get('*/healthz', () => HttpResponse.json({ status: 'ok' })),
   http.get('*/readyz', () => HttpResponse.json({ status: 'ok', checks: { db_writable: true, master_key: true, workdir_writable: true, scratch_writable: true, reconciled: true } })),

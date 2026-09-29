@@ -31,6 +31,7 @@ IMPLEMENTED: dict[str, tuple[str, str]] = {
     "deleteVlmModel": ("DELETE", "/api/v1/vlm-backends/{id}/models/{model_id}"),
     "probeDelivery": ("POST", "/api/v1/deliveries/probe"),
     "signMedia": ("GET", "/api/v1/media/sign"),
+    "signDataset": ("POST", "/api/v1/datasets/{id}/sign"),          # design doc 15 (D55)
     "listTasks": ("GET", "/api/v1/tasks"),
     "getTask": ("GET", "/api/v1/tasks/{id}"),
     "updateTask": ("PATCH", "/api/v1/tasks/{id}"),

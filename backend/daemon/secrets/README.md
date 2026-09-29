@@ -19,9 +19,10 @@ TOS 访问密钥、VLM 后端与模型、交付目录写探针、媒体预签名
 | `service.py` | `SecretsService`（每个 Daemon 一个，`service_of(runtime)`）：解密、查找、给 W5 的 `VlmTarget` |
 | `prechecks.py` | 开始前的三项检查（D30） |
 | `cli_env.py` | CLI 子进程的环境变量 |
-| `presign.py` | 给浏览器的对象地址：前缀校验、公网端点签名、公共桶直给地址（`/media/sign` 与 episode 预览共用） |
+| `presign.py` | 给浏览器的对象地址：前缀校验、公网端点签名、公共桶直给地址（`/media/sign` 与 episode 预览共用）；ReRun 代签用的对象键 / 列举前缀校验（只校验、不改写） |
+| `sigv4.py` | S3 SigV4 查询串签名（标准库、不做 I/O、不读时钟）：给 ReRun web viewer 的地址，TOS 的公网 S3 兼容端点（设计 15，D55） |
 | `views.py`、`http.py` | 响应组装；路由共用的校验（不回显密钥）、幂等、审计 |
-| `../routes/access_keys.py`、`vlm.py`、`media.py` | `/credentials`、`/vlm-backends`、`/deliveries/probe`、`/media/sign` |
+| `../routes/access_keys.py`、`vlm.py`、`media.py` | `/credentials`、`/vlm-backends`、`/deliveries/probe`、`/media/sign`、`/datasets/{id}/sign` |
 
 ## 行为要点
 
@@ -42,6 +43,11 @@ TOS 访问密钥、VLM 后端与模型、交付目录写探针、媒体预签名
 - **媒体签名**：`delivery` 以任务的批次目录 `<交付目录>/<run_id>/` 为前缀（输出密钥），`input` 以输入数据集为前缀（输入密钥；
   HuggingFace 缓存桶不签名，直接给公网地址）。`path` 先归一化，含 `..`、反斜杠、控制字符、编码过的 `.` / `/` 一律拒绝。
   一律用公网端点签名，TTL 60–3600 秒，默认 30 分钟，响应带 `Cache-Control: no-store`。
+- **ReRun 代签**（`POST /datasets/{id}/sign`，设计 15，D55）：ReRun web viewer 读登记的私有 TOS 数据集时，每读一个对象、每列一页先来这里要地址。
+  桶、地域、密钥取自登记；`key` / `prefix` 是桶内完整键，必须在「数据集前缀 + `/`」之下，只校验不改写（`//`、`..`、编码过的点和斜杠、
+  以 `/` 开头一律拒绝），一项不合格整个请求 400。签的是 TOS 公网 S3 兼容端点上的 SigV4 查询串地址（只签 `host`，`Range` 不影响），
+  只签读对象与列举，不访问 TOS。公开桶、本地路径、整个桶的登记和带自定义 endpoint 的密钥都不签；密钥被删 404 `credential_missing`。
+  审计 `dataset.viewer_sign` 同一人同一数据集一小时一条。
 
 ## 给 W5 的接口
 
@@ -140,7 +146,24 @@ subprocess.Popen(argv + ["--input-region", cli.input_region, "--output-region", 
    ../.venv/bin/python -c "import pathlib,sys; print(any(b'manual-demo-secret' in p.read_bytes() for p in pathlib.Path(sys.argv[1]).glob('curator.db*')))" $D   # False
    ```
 
-5. **列不出模型时手填；思考强度为空时请求里没有这个字段**
+5. **ReRun 代签**（设计 15；要一把真实的访问密钥和一个用它登记过的私有 TOS 数据集，第 3 步那把假密钥登记不了数据集）
+
+   在控制台的「数据集」页登记好之后，取它的编号 `$DS` 和目录（`tos://<桶>/<前缀>`）：
+
+   ```bash
+   curl -s -u demo:demo-pass -X POST -H 'Content-Type: application/json' localhost:18080/curation/api/v1/datasets/$DS/sign \
+     -d '{"requests":[{"op":"get","key":"<前缀>/meta/info.json"},{"op":"list","prefix":"<前缀>/","delimiter":"/"}]}' | tee $D/sign.json
+   curl -s -o /dev/null -w '%{http_code}\n' -r 0-99 "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][0])' $D/sign.json)"
+   curl -s "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][1])' $D/sign.json)" | head -c 300; echo
+   curl -s -u demo:demo-pass -X POST -H 'Content-Type: application/json' localhost:18080/curation/api/v1/datasets/$DS/sign \
+     -d '{"requests":[{"op":"get","key":"<前缀>_v2/meta/info.json"}]}'
+   ```
+
+   预期：第一次 200，两个地址的主机都是 `<桶>.tos-s3-<地域>.volces.com`、带 `X-Amz-Signature`，响应头 `Cache-Control: no-store`，
+   里面没有 SK；带 `Range` 取对象返回 206；列举返回 `<ListBucketResult …>`；兄弟目录那一次 400「第 1 项：key 必须是数据集目录 … 之下的对象」。
+   `$D/daemon.log` 里搜不到 SK；审计事件里只有一条 `dataset.viewer_sign`（一小时内重复签不再增加）。
+
+6. **列不出模型时手填；思考强度为空时请求里没有这个字段**
 
    ```bash
    B=$(curl -s -u demo:demo-pass -X POST -H 'Content-Type: application/json' localhost:18080/curation/api/v1/vlm-backends \
@@ -158,7 +181,7 @@ subprocess.Popen(argv + ["--input-region", cli.input_region, "--output-region", 
    是 minimal / low / medium / high；`xhigh` 返回 400「……不能设为 xhigh（xhigh 在这个模型上等同于 high）」；`low` 201。
    替身终端里第一次最小调用的请求体没有 `reasoning_effort`，最后一次带 `"reasoning_effort": "low"`；终端里看不到 API Key。
 
-6. **主密钥轮换**：停掉 Daemon（Ctrl-C），执行
+7. **主密钥轮换**：停掉 Daemon（Ctrl-C），执行
 
    ```bash
    CURATOR_MASTER_KEY=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8= CURATOR_MASTER_KEY_NEXT=AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA= \
