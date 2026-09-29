@@ -63,6 +63,12 @@ class Storage:
     def read_range(self, key: str, start: int, length: int) -> bytes:
         raise NotImplementedError
 
+    def read_range_etag(self, key: str, start: int, length: int) -> tuple[bytes, str | None]:
+        """Like :meth:`read_range`, plus the whole object's content version if the backend
+        has one. Streaming a remote object checks this on every range, so an object
+        replaced mid-read is caught there rather than producing mixed bytes."""
+        return self.read_range(key, start, length), None
+
     def put_bytes(self, key: str, data: bytes) -> None:
         raise NotImplementedError
 
@@ -288,17 +294,22 @@ class TosStorage(Storage):
             raise self._fail(f"cannot read {key} from", e) from None
 
     def read_range(self, key: str, start: int, length: int) -> bytes:
+        return self.read_range_etag(key, start, length)[0]
+
+    def read_range_etag(self, key: str, start: int, length: int) -> tuple[bytes, str | None]:
         if length <= 0:
-            return b""
+            return b"", None
         try:
             out = self._c.get_object(self.bucket, self._full(key), range_start=start,
                                      range_end=start + length - 1)
-            return out.read()
+            # A ranged GET carries the whole object's ETag, so the content version comes
+            # back with the bytes - no extra HEAD per read.
+            return out.read(), getattr(out, "etag", None)
         except Exception as e:  # noqa: BLE001
             if _is_not_found(e):
                 raise ObjectMissing(key) from None
             if getattr(e, "status_code", None) == 416:     # range beyond the end
-                return b""
+                return b"", None
             raise self._fail(f"cannot read {key} from", e) from None
 
     def download(self, key: str, local_path: str, *, chunk: int = 1 << 20) -> ObjectInfo:

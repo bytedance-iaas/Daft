@@ -51,6 +51,8 @@ class ResultStore:
         self.derived = LRU(max_items=256)                       # indexes built from them
         self.tables = LRU(max_items=64, max_bytes=256 << 20)    # Arrow row groups, by bytes
         self.sources = LRU(max_items=8)                         # input dataset video indexes
+        self.clips = LRU(max_items=32, max_bytes=512 << 20)     # mcap episodes muxed to mp4, by bytes
+        self.clip_locks: dict = {}
 
     # -- directories ----------------------------------------------------------------
     def task_dir(self, task_id: str) -> Path:

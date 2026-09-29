@@ -21,6 +21,11 @@
       "since": "6193e8370",
       "why": "design 13 (video-native judgement): grouping_text_and_source puts the video caption first and falls back to the annotation (was annotation first)"
     },
+    "ingest/mcap_reader.py": {
+      "blob": "83823149b68da4fe272c6591a8daea2c9383774f",
+      "since": "jinxin_mcap_stream (mcap streamed from TOS, 2026-09-27)",
+      "why": "mcap streamed from TOS (no source cache): _effective_mapping / _scan_mcap / _payload take an optional open_fn, episode numbering delegates to streams.objects.number_episodes, the muxers accept a file-like sink; no algorithm change - streamed rows equal local rows byte for byte (tests/cli test_tos_mcap_is_streamed, test_episode_clips_are_the_readers_mp4_bytes)"
+    },
     "vlm_call_kinds.py": {
       "blob": "9fb6e82b2749fe0fe0d462179489dfd521461b1d",
       "since": "6193e8370",

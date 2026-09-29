@@ -323,25 +323,24 @@ class IntegrityJudge:
                 F.mp4_l1(blob, rep)
                 F.mp4_l2(blob, rep)
             else:
-                self._fetch(ep)                 # a remote mcap is read from its local copy
-                path = F.local_path(self.src.input_dir, ref.key)
-                F.mcap_l1(path, rep)
-                F.mcap_l2(path, rep)
+                # mcap is read where it is: a local directory, or a streamed remote
+                # dataset by ranged GETs (streams.objects, the reader's own seam)
+                from ...cli.errors import SourceChanged
+                from ...streams.objects import resolve
+
+                objs = resolve(self.src.input_dir)
+                try:
+                    F.mcap_l1(lambda: objs.open(ref.key), rep)
+                    F.mcap_l2(lambda: objs.open(ref.key), rep)
+                except SourceChanged:
+                    raise                       # D27: the command ends, exit 6
+                except Exception as e:  # noqa: BLE001 - the storage failed, not the file
+                    raise F.ReadFailure(f"{type(e).__name__}: {e}"[:300]) from e
         except F.ReadFailure as e:
             rep.read_error = str(e)
         except OSError as e:                    # a local copy that went away
             rep.read_error = f"{type(e).__name__}: {e}"[:300]
         return rep
-
-    def _fetch(self, ep: int) -> None:
-        from ...cli.errors import SourceChanged
-
-        try:
-            self.src.fetch([ep])
-        except SourceChanged:
-            raise                               # D27: the command ends, exit 6
-        except Exception as e:  # noqa: BLE001 - the download failed: the storage's, not the file's
-            raise F.ReadFailure(f"{type(e).__name__}: {e}"[:300]) from e
 
     def _file(self, ep: int, ref: FileRef) -> F.FileReport:
         if not ref.shared:

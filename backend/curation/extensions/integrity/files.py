@@ -230,13 +230,19 @@ def mp4_l2(blob: Blob, rep: FileReport) -> None:
 # ---------------------------------------------------------------- mcap
 
 
-def mcap_l1(path: str, rep: FileReport) -> None:
+def _mcap_stream(source):
+    """A seekable stream of the file: ``source`` is a local path, or a callable that opens
+    one (a streamed remote dataset's ranged reads, ``streams.objects``)."""
+    return open(source, "rb") if isinstance(source, str) else source()
+
+
+def mcap_l1(source, rep: FileReport) -> None:
     from ...cli import containers
 
     rep.tiers.append("L1")
     if _empty(rep, 45):
         return
-    with open(path, "rb") as fh:
+    with _mcap_stream(source) as fh:
         head = fh.read(4096)
         if _zero(head):
             rep.add("zero_filled", "文件开头全是零（写入没有完成或被零填充）", "L1")
@@ -267,7 +273,7 @@ def mcap_l1(path: str, rep: FileReport) -> None:
                 return
 
 
-def mcap_l2(path: str, rep: FileReport) -> None:
+def mcap_l2(source, rep: FileReport) -> None:
     """Every chunk's CRC and the data section's, when the writer wrote them."""
     from mcap.exceptions import McapError
     from mcap.records import Chunk
@@ -278,7 +284,7 @@ def mcap_l2(path: str, rep: FileReport) -> None:
     rep.tiers.append("L2")
     zero = bytes(ZERO_BLOCK)
     checked = unchecked = 0
-    with open(path, "rb") as fh:
+    with _mcap_stream(source) as fh:
         try:
             for i, rec in enumerate(StreamReader(fh, emit_chunks=True, validate_crcs=True).records):
                 if not isinstance(rec, Chunk):

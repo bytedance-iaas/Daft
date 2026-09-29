@@ -14,9 +14,11 @@ from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request
+from starlette.responses import Response
 
 from ..errors import ApiError
 from ..results import adjudication as A
+from ..results import clips as CL
 from ..results import episode as E
 from ..results import episode_list as EL
 from ..results import perf as F
@@ -114,6 +116,23 @@ def get_pipeline_episode(request: Request, task_id: str, index: int):
     rt = runtime(request)
     task = rt.repo.get_task(task_id, owner=principal(request).owner_id)
     return LIVE.episode(rt, task, index)
+
+
+@router.get("/tasks/{task_id}/episodes/{index}/cameras/{camera}.mp4")
+def get_episode_camera(request: Request, task_id: str, index: int, camera: str):
+    """One camera of an mcap episode as mp4, muxed from the source in memory; ``Range``
+    is honoured so the player can seek. 404 for anything but an mcap task's camera."""
+    _index(index)
+    rt, task, revision = _task_and_revision(request, task_id, None)
+    store = store_of(rt)
+    if not CL.is_mcap(revision.run_dir, store.docs):
+        raise ApiError("not_found", "这个任务的数据集没有由 Daemon 现封的机位视频")
+    data = CL.ClipSource(store, task, revision.run_dir).clip(index, camera)
+    if data is None:
+        raise ApiError("not_found", f"episode {index} 没有机位 {camera} 的视频")
+    status, body, headers = CL.slice_range(data, request.headers.get("range"))
+    headers["Cache-Control"] = "private, max-age=600"
+    return Response(content=body, status_code=status, headers=headers, media_type="video/mp4")
 
 
 @router.get("/tasks/{task_id}/episodes/{index}/sync-curves")

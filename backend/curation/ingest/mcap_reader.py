@@ -191,37 +191,48 @@ def cleanup_video_cache(dataset_dir: str | None = None) -> int:
     return n
 
 
-def _episode_files(dataset_dir: str, max_episodes: int | None = None,
-                   start_episode: int = 0,
-                   episode_indices: set[int] | None = None) -> list[tuple[int, str]]:
-    """目录 → [(episode 序号, .mcap 路径)],按序号升序(与 rrd 同一套规则:
-    序号取自 episode_(\\d+).mcap,不合约定退回排序后的位置序号)。"""
-    paths = sorted(glob.glob(os.path.join(dataset_dir, "*.mcap")))
-    if not paths:
+def _episode_entries(objs, max_episodes: int | None = None, start_episode: int = 0,
+                     episode_indices: set[int] | None = None) -> list[tuple[int, str]]:
+    """对象集 → [(episode 序号, 对象名)],按序号升序。
+
+    编号规则与选取逻辑的唯一出处;``_episode_files`` 是它在本地目录上的包装。
+    规则本身住在 ``streams.objects.number_episodes``(纯函数),好让远端清单不落盘
+    也能复现同一套编号。
+    """
+    from ..streams import objects as _objects
+
+    names = objs.names()
+    if not names:
         raise NotADatasetError(
-            f"'{dataset_dir}' 里没有 .mcap 文件(mcap 数据集应为一目录 N 个 episode_N.mcap)")
-    matched = [(_EPISODE_RE.search(os.path.basename(p)), p) for p in paths]
-    named = [(int(m.group(1)), p) for m, p in matched if m]
-    strays = [os.path.basename(p) for m, p in matched if not m]
-    if named:
+            f"'{objs.uri}' 里没有 .mcap 文件(mcap 数据集应为一目录 N 个 episode_N.mcap)")
+    ignored = _objects.strays(names)
+    if ignored:
         # 命名文件按名编号;混进来的杂散文件(calib.mcap 等)忽略并点名 ——
         # 2026-09-21 审查实锤:此前一个杂散文件会把全库打回位置编号,还把
         # 杂散文件当 episode 扫(必报"找不到 action topic"拖垮整批)
-        if strays:
-            import sys
-            print(f"[curation] ⚠️ 忽略 {len(strays)} 个不合 episode_N.mcap 约定的"
-                  f"文件(不当 episode 读): {strays[:5]}"
-                  f"{'…' if len(strays) > 5 else ''}", file=sys.stderr)
-        items = named
-    else:
-        items = [(i, p) for i, (_, p) in enumerate(matched)]
-    items.sort(key=lambda t: t[0])
+        import sys
+        print(f"[curation] ⚠️ 忽略 {len(ignored)} 个不合 episode_N.mcap 约定的"
+              f"文件(不当 episode 读): {ignored[:5]}"
+              f"{'…' if len(ignored) > 5 else ''}", file=sys.stderr)
+    items = _objects.number_episodes(names)
     if episode_indices is not None:
         items = [it for it in items if it[0] in episode_indices]
     items = items[start_episode:]
     if max_episodes is not None:
         items = items[:max_episodes]
     return items
+
+
+def _episode_files(dataset_dir: str, max_episodes: int | None = None,
+                   start_episode: int = 0,
+                   episode_indices: set[int] | None = None) -> list[tuple[int, str]]:
+    """目录 → [(episode 序号, .mcap 路径)],按序号升序(与 rrd 同一套规则:
+    序号取自 episode_(\\d+).mcap,不合约定退回排序后的位置序号)。"""
+    from ..streams.objects import LocalDirObjects
+
+    entries = _episode_entries(LocalDirObjects(dataset_dir), max_episodes,
+                               start_episode, episode_indices)
+    return [(idx, os.path.join(dataset_dir, name)) for idx, name in entries]
 
 
 # ---------------------------------------------------------------------------
@@ -412,17 +423,21 @@ def _umi_mapping(topics: list[str]) -> dict | None:
             "action_names": names, "profile": "umi_das"}
 
 
-def _effective_mapping(mcap_path: str, mapping: dict | None) -> dict:
+def _effective_mapping(mcap_path: str, mapping: dict | None, *, open_fn=None) -> dict:
     """定生效 mapping:显式覆盖 > 默认约定命中 > 内置 UMI 识别 > 默认(报错时列候选)。
 
     只读文件尾部 summary 的 channel 清单(KB 级),不扫消息。用户显式给了 mapping
-    就绝不自动识别 —— 指认权在人。"""
+    就绝不自动识别 —— 指认权在人。
+
+    ``open_fn``:给出时用它取字节流(远端数据集按范围读,见 ``streams.objects``);
+    不给时照旧打开本地路径。
+    """
     if mapping:
         return dict(DEFAULT_MAPPING, **mapping)
     mp = dict(DEFAULT_MAPPING)
     try:
         make_reader = _mcap_reader_mod()
-        with open(mcap_path, "rb") as f:
+        with (open_fn() if open_fn else open(mcap_path, "rb")) as f:
             summary = make_reader(f).get_summary()
         topics = sorted({ch.topic for ch in (summary.channels or {}).values()}
                         ) if summary else []
@@ -443,11 +458,13 @@ def _effective_mapping(mcap_path: str, mapping: dict | None) -> dict:
     return mp
 
 
-def _scan_mcap(mcap_path: str, mapping: dict) -> dict:
+def _scan_mcap(mcap_path: str, mapping: dict, *, open_fn=None) -> dict:
     """一次遍历一个 .mcap → 各来源的原始序列(按 log_time 纳秒键)。
 
     action/state 支持多来源(组合 mapping):逐来源各攒一条 (t, vec) 序列,
-    拼接在 _payload 里做 —— 扫描层只管"把数取出来",不做时间对齐。"""
+    拼接在 _payload 里做 —— 扫描层只管"把数取出来",不做时间对齐。
+
+    ``open_fn``:同 ``_effective_mapping``,给出时字节从它来(远端按范围读)。"""
     make_reader = _mcap_reader_mod()
     factories: dict = {}
     decoder_cache: dict = {}
@@ -462,7 +479,7 @@ def _scan_mcap(mcap_path: str, mapping: dict) -> dict:
         wanted.setdefault(s["topic"], []).append(("state", i, s["fields"]))
     out: dict = {"action": [[] for _ in act_srcs], "state": [[] for _ in st_srcs],
                  "task": [], "video": {}, "properties": {}, "seen_topics": set()}
-    with open(mcap_path, "rb") as f:
+    with (open_fn() if open_fn else open(mcap_path, "rb")) as f:
         reader = make_reader(f)
         try:
             for meta_rec in reader.iter_metadata():
@@ -506,31 +523,33 @@ def _video_path(videos_dir: str, episode_id: str, cam: str) -> str:
     return os.path.join(videos_dir, f"{episode_id}__{safe}.mp4")
 
 
-def mux_jpeg_frames(blobs: list[bytes], times_s: list[float], out_path: str,
+def mux_jpeg_frames(blobs: list[bytes], times_s: list[float], out_path,
                     fps: float) -> None:
     """JPEG 字节序列 → mjpeg-mp4 容器(**不解码不重编码**,pts 按真实相对时间填)。
 
     时基 90kHz:非整数 fps 也能整除到 1 个 tick 内。先写 .part 再 rename:
     半截文件被下游当成有效视频指针是最难查的一类事故。
+    ``out_path`` 也可以是一个可写可 seek 的 file-like(内存里封装,不落盘)。
     """
     from fractions import Fraction as _Fr
 
     import av
     import cv2
 
+    name = out_path if isinstance(out_path, str) else "<memory>"
     bad = [i for i, b in enumerate(blobs) if not bytes(b[:2]) == _JPEG_MAGIC]
     if bad:
         raise NotADatasetError(
-            f"{out_path}: 相机帧字节不是 JPEG(第 {bad[0]} 帧,前 4 字节 "
+            f"{name}: 相机帧字节不是 JPEG(第 {bad[0]} 帧,前 4 字节 "
             f"{bytes(blobs[bad[0]][:4])!r});当前只支持 JPEG 帧免转码封装,"
             "其它编码(PNG/raw)需要真转码,尚未实现")
     img0 = cv2.imdecode(np.frombuffer(blobs[0], np.uint8), cv2.IMREAD_COLOR)
     if img0 is None:
-        raise NotADatasetError(f"{out_path}: 首帧 JPEG 解码失败,数据疑似损坏")
+        raise NotADatasetError(f"{name}: 首帧 JPEG 解码失败,数据疑似损坏")
     h, w = img0.shape[:2]
     time_base = _Fr(1, 90000)
     step = int(round((1 / fps) / time_base))
-    tmp = out_path + ".part"
+    tmp = out_path + ".part" if isinstance(out_path, str) else out_path
     with av.open(tmp, "w", format="mp4") as dst:
         s = dst.add_stream("mjpeg", rate=max(1, round(fps)))
         s.width, s.height = w, h
@@ -546,10 +565,11 @@ def mux_jpeg_frames(blobs: list[bytes], times_s: list[float], out_path: str,
             pkt.pts = pkt.dts = last_pts
             pkt.duration = step
             dst.mux(pkt)
-    os.replace(tmp, out_path)
+    if isinstance(out_path, str):
+        os.replace(tmp, out_path)
 
 
-def _mux_annexb(samples: list[bytes], times_s: list[float], out_path: str,
+def _mux_annexb(samples: list[bytes], times_s: list[float], out_path,
                 fps: float) -> None:
     """H.264 Annex-B 样本序列 → mp4 容器(只换封装;做法与 rrd_reader._remux_annexb
     同款,pts 优先用真实相对时间 —— demux 出的包数与样本数一致时逐包对号,
@@ -558,7 +578,7 @@ def _mux_annexb(samples: list[bytes], times_s: list[float], out_path: str,
 
     time_base = Fraction(1, 90000)
     step = int(round((1 / fps) / time_base))
-    tmp = out_path + ".part"
+    tmp = out_path + ".part" if isinstance(out_path, str) else out_path
     with av.open(io.BytesIO(b"".join(samples)), format="h264") as src:
         in_stream = src.streams.video[0]
         with av.open(tmp, "w", format="mp4") as dst:
@@ -575,7 +595,8 @@ def _mux_annexb(samples: list[bytes], times_s: list[float], out_path: str,
                 packet.pts = packet.dts = last_pts
                 packet.duration = step
                 dst.mux(packet)
-    os.replace(tmp, out_path)
+    if isinstance(out_path, str):
+        os.replace(tmp, out_path)
 
 
 def _codec_of(fmt: str, b: bytes) -> str:
@@ -712,9 +733,9 @@ def _assemble_sources(series_list: list, t_ns: np.ndarray, what: str,
 
 
 def _payload(mcap_path: str, idx: int, mapping: dict, videos_dir: str,
-             dataset_dir: str) -> dict:
+             dataset_dir: str, *, open_fn=None) -> dict:
     """一个 .mcap → 该 episode 的全部内容(数值 + 落盘后的视频指针)。"""
-    scan = _scan_mcap(mcap_path, mapping)
+    scan = _scan_mcap(mcap_path, mapping, open_fn=open_fn)
     _require_topics(scan, mapping, dataset_dir)
     episode_id = f"ep{idx:06d}"
 
@@ -836,16 +857,21 @@ def _mapping_signature(mp: dict) -> tuple:
 
 def _read_payloads(dataset_dir: str, max_episodes: int | None, start_episode: int,
                    episode_indices: set[int] | None,
-                   mapping: dict | None) -> list[dict]:
+                   mapping: dict | None, objects=None) -> list[dict]:
+    from ..streams import objects as _objects
+
+    objs = _objects.resolve(dataset_dir, objects)
     videos_dir = _videos_dir(dataset_dir)
     # 生效 mapping 逐文件定(只读 summary,KB 级);识别结果跨文件不一致时点名 ——
     # 否则用户只会在下游撞见"action 维度跨 episode 不一致",查不到根因
     # (2026-09-21 自查:某文件缺 magnetic_encoder topic 即触发)。
     out = []
     first_sig = first_path = None
-    for idx, path in _episode_files(dataset_dir, max_episodes,
-                                    start_episode, episode_indices):
-        mp = _effective_mapping(path, mapping)
+    for idx, name in _episode_entries(objs, max_episodes,
+                                      start_episode, episode_indices):
+        path = objs.object_uri(name)
+        open_fn = (lambda n=name: objs.open(n))
+        mp = _effective_mapping(path, mapping, open_fn=open_fn)
         sig = _mapping_signature(mp)
         if first_sig is None:
             first_sig, first_path = sig, path
@@ -855,7 +881,7 @@ def _read_payloads(dataset_dir: str, max_episodes: int | None, start_episode: in
                   f"{os.path.basename(first_path)} 不一致(如缺某路来源/相机)——"
                   "同一数据集应同构,后续大概率报维度不一致;请核查该文件",
                   file=sys.stderr)
-        out.append(_payload(path, idx, mp, videos_dir, dataset_dir))
+        out.append(_payload(path, idx, mp, videos_dir, dataset_dir, open_fn=open_fn))
     return out
 
 
