@@ -126,6 +126,7 @@
     │     帧档    check --modules visual_quality,video_action_sync   ← 同进程共享一次全帧率解码
     │        └ 硬门②（视频-动作同步）
     │     VLM 档  check --modules task_success                        ← 只跑幸存者
+    │        └ 随附 camera_defects：逐机位复核的回答里顺带报花屏 / 抖动 / 镜头污染，不增加请求
     │     ★ 结果按模块分目录落盘：checks/<module>/…，所以单个模块可以被单独重跑覆盖
     │
     ├─▶ ⑤ aggregate --phase funnel

@@ -9,6 +9,8 @@ from __future__ import annotations
 import base64
 
 import cv2
+import json
+
 import numpy as np
 
 from parity.fakevlm import FakeVlm, answer_view
@@ -59,3 +61,36 @@ def test_texts_image_count_and_pixel_size_make_the_key():
                                                  "image_url": {"url": "pixels:128x96"}}
     # a text-only call (the skill taxonomy, the endpoint's "ping") keeps its text
     assert FakeVlm().answer({"messages": [{"role": "user", "content": "ping"}]}) == "pong"
+
+
+def test_the_video_review_reports_camera_defects_as_a_pure_function_of_camera_and_window():
+    """The camera_check field (design doc 13, camera_defects): given only when the prompt
+    asks for it, decided by the camera name and the window so every level, a missing item and
+    a missing report all occur over a fixture; the verdict fields are the ones without it."""
+    def payload(camera, end, ask=True):
+        text = ("Assess the robot manipulation task from the supplied continuous videos. "
+                f"Camera: {camera}. Same episode. Clip starts at episode time 0.0s; episode "
+                f"window ends at {end}s. Independently review ONLY this camera; abstain if its "
+                "view is insufficient." + (' Also report ... ONE extra field "camera_check" ...' if ask else ""))
+        return {"messages": [{"role": "user", "content": [
+            {"type": "text", "text": text},
+            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,AAAA", "fps": 5}}]}]}
+
+    fake = FakeVlm()
+    plain = json.loads(fake.answer(payload("cam_a", 6.5, ask=False)))
+    asked = json.loads(fake.answer(payload("cam_a", 6.5)))
+    assert "camera_check" not in plain
+    assert {k: v for k, v in asked.items() if k != "camera_check"} == plain
+    check = asked["camera_check"]
+    for item in ("glitch", "contamination"):
+        assert check[item]["level"] in ("none", "minor", "severe")
+        assert check[item]["times"] == ([] if check[item]["level"] == "none" else [[0.0, 0.5]])
+    assert check["contamination"]["kind"] in ("none", "dirt", "smudge", "water", "obstruction", "other")
+    assert fake.answer(payload("cam_a", 6.5)) == fake.answer(payload("cam_a", 6.5))
+    seen = set()
+    for cam in ("cam_a", "cam_b", "wrist", "front", "top"):
+        for tenths in range(60, 90):
+            out = json.loads(fake.answer(payload(cam, tenths / 10)))
+            c = out.get("camera_check")
+            seen.add("missing" if c is None else ("no-shake" if "shake" not in c else c["glitch"]["level"]))
+    assert seen == {"missing", "no-shake", "none", "minor", "severe"}

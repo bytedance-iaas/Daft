@@ -495,6 +495,76 @@ export function GenericBlock({ record }: BlockProps) {
   );
 }
 
+// camera_defects (registry 1.14): the model's own reading of this episode's picture, per camera.
+// One line for the three items, then only the cameras that reported something, so a clean episode
+// is one line and a dirty one says which camera, how bad, and when.
+const CD_ITEMS = ['glitch', 'shake', 'contamination'] as const;
+
+interface CdItem {
+  level?: string;
+  times?: [number, number][];
+  whole?: boolean;                       // the model said it lasts the whole clip
+  note?: string;
+  kind?: string;
+}
+
+interface CdCamera {
+  answered?: boolean;
+  error?: string | null;
+  glitch?: CdItem;
+  shake?: CdItem;
+  contamination?: CdItem;
+}
+
+function cdSpans(item: CdItem | undefined): string {
+  if (item?.whole) return E().cameraDefects.whole;
+  const times = Array.isArray(item?.times) ? item!.times : [];
+  return times.map((t) => E().cameraDefects.span(fmt(num(t?.[0])), fmt(num(t?.[1])))).join('、');
+}
+
+function cdPhrase(name: string, item: CdItem | undefined): string {
+  const K = E().cameraDefects;
+  const level = K.level[str(item?.level) ?? ''] ?? K.level.unknown;
+  const kind = item?.kind && item.kind !== 'none' ? `（${K.kind[item.kind] ?? item.kind}）` : '';
+  const spans = cdSpans(item);
+  // the full-width bracket already separates, so a space goes in only without a kind
+  return `${name} ${level}${kind}${spans ? `${kind ? '' : ' '}${spans}` : ''}`;
+}
+
+function CameraDefectsBlock({ record }: BlockProps) {
+  const d = details(record);
+  const K = E().cameraDefects;
+  const status = (d.items ?? {}) as Record<string, string>;
+  const perCamera = (d.per_camera ?? {}) as Record<string, CdCamera>;
+  const cams = Object.keys(perCamera);
+  const reported = cams.filter((cam) => CD_ITEMS.some((i) => {
+    const level = str(perCamera[cam][i]?.level);
+    return level === 'minor' || level === 'severe';
+  }));
+  const unanswered = cams.filter((cam) => !perCamera[cam].answered);
+  const worst = CD_ITEMS.map((i) => cdPhrase(K.items[i], { level: status[i] })).join(' · ');
+  return (
+    <div data-testid="episode-camera-defects">
+      <div className={`episode-line${CD_ITEMS.some((i) => status[i] === 'severe' || status[i] === 'minor') ? ' warn' : ''}`}>{worst}</div>
+      {reported.map((cam) => (
+        <div key={cam} className="episode-line">
+          <b>{cam}</b>
+          {'：'}
+          {CD_ITEMS.filter((i) => perCamera[cam][i]?.level === 'minor' || perCamera[cam][i]?.level === 'severe')
+            .map((i) => cdPhrase(K.items[i], perCamera[cam][i]))
+            .join(' · ')}
+        </div>
+      ))}
+      {!reported.length && !unanswered.length ? <div className="muted">{K.clean}</div> : null}
+      {unanswered.length ? <div className="episode-line muted">{K.unanswered(unanswered.length)}{str(d.reason) ? `：${str(d.reason)}` : ''}</div> : null}
+      {reported.length && cams.length > reported.length + unanswered.length ? (
+        <div className="muted">{K.others(cams.length - reported.length - unanswered.length)}</div>
+      ) : null}
+      <div className="muted">{K.advisory}</div>
+    </div>
+  );
+}
+
 function withRest(Block: ComponentType<BlockProps>, shown: readonly string[]): ComponentType<BlockProps> {
   function WithRest(props: BlockProps) {
     return (
@@ -516,6 +586,7 @@ export const EPISODE_BLOCKS: Record<string, ComponentType<BlockProps>> = {
   visual_quality: VisualBlock,
   video_action_sync: SyncBlock,
   task_success: TaskBlock,
+  camera_defects: CameraDefectsBlock,
   dedup: DedupBlock,
   skill_profile: SkillBlock,
   eef_video_consistency: EefBlock,

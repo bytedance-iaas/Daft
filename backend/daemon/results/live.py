@@ -21,7 +21,8 @@ def _context(runtime, task):
     plan = read_json(run_dir / "plan.json", {}) or {}
     modules = [m for st in plan.get("stages") or []
                if st.get("id") in ("integrity", "numeric", "frame", "vlm")
-               for m in st.get("modules") or []]
+               for m in st.get("modules") or []
+               if registry.get(m).affects_dataset_verdict]        # advisory ones do not vote (1.4)
     # v1's check configuration knows v1's checks only: the gates v2 runs itself (the data
     # integrity and EEF modules) join the verdict config in RunState, at the call boundary
     v1 = [m for m in modules if m not in registry.native_ids()]

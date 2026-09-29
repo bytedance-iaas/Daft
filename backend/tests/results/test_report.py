@@ -23,7 +23,7 @@ def test_current_report_is_the_committed_report_json_plus_links(world):
                       "skipped": 0}                  # D40: the CLI always writes it
     assert [m["id"] for m in body["report"]["modules"]] == [
         "timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-        "video_action_sync", "task_success", "dedup", "skill_profile"]
+        "video_action_sync", "task_success", "camera_defects", "dedup", "skill_profile"]
     links = {(ln["rel"], ln["url"]) for ln in body["links"]}
     tid = world.task_id
     assert ("task", f"/curation/tasks/{tid}") in links

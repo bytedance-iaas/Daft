@@ -32,6 +32,7 @@ class ModuleSpec:
 | `visual_quality` | 视觉质量 | episode | soft | `video` | frame | 硬门① | 否 |
 | `video_action_sync` | 视频-动作同步 | episode | hard | `video`,`action` | frame | 硬门① | 否 |
 | `task_success` | 任务成败判定 | episode | hard | `video`,`vlm` | vlm | 硬门②，autolabel | **是** |
+| `camera_defects` | 镜头画面缺陷 | episode | none | `video`,`vlm` | vlm | 随 `task_success` | 否（建议项） |
 | `dedup` | 精确去重 | dataset | dedup | `raw_bytes` | post_verdict | 漏斗判决 | 可复议（D42） |
 | `skill_profile` | 技能画像 | dataset | none | `video`,`vlm` | post_verdict | 漏斗判决，dedup，autolabel | **是** |
 
@@ -54,6 +55,11 @@ class ModuleSpec:
   没勾这两个模块就不跑；它没有自己的报告小节，产出体现在「数据包完整性」和任务文本的来源标注里。
   它对某条 episode 失败（调用重试用尽、或解码失败）时，这一条按执行出错处理：不再往后走，待补跑（D24、D33）。
   v1 在这种情况下给空串、让成败判定拿空任务文本照跑，v2 不这么做。
+- **`camera_defects` 是 `task_success` 的随附模块**（`rides_on="task_success"`，registry 1.14）：它的答案来自
+  `task_success` 每路相机的复核请求里多问的一个字段（设计 13「逐机位画面缺陷」），没有自己的模型调用。
+  凡 `task_success` 在跑它就出结果，用户不勾选、预检里跟随宿主的可用性、新建任务的模块界面不显示它，
+  报告里有它的小节；`affects_dataset_verdict=False`，只出结果不影响判决。单独 `--modules camera_defects`
+  是参数错误。
 - `task_success` 和 `skill_profile` 是仅有的两个 VLM 模块。它们之间能不能合并请求，见 04 篇 §4。
 
 人工复核也由注册表声明（D43，注册表 1.2）。`REVIEW_LINES` 是复核种类目录，每一种写明编号、标题、

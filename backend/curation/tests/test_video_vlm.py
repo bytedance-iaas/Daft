@@ -268,3 +268,110 @@ def test_resume_rejudges_old_frame_records_and_keeps_current_video_records(monke
         modules=["task_success"], stale={}, task_clients=SimpleNamespace(
             vlm_completion=SimpleNamespace(media_input="video"))), _stale_inflight=lambda: {})
     assert StageRun._todo(run) == ([0], 1, set())
+
+
+# ---------------------------------------------------------------- camera_check (camera_defects)
+
+def _check(**over):
+    base = {"glitch": {"level": "none", "times": [], "note": ""},
+            "shake": {"level": "minor", "times": [[0.5, 1.0]], "note": "slight jitter"},
+            "contamination": {"level": "severe", "kind": "smudge", "times": [[0, 2]], "note": "smear"}}
+    base.update(over)
+    return base
+
+
+def test_camera_check_is_optional_and_normalised():
+    from curation.adapters.video_vlm import parse_camera_check
+
+    plain = answer()
+    assert parse_assessment(json.dumps(plain), [clip()]) == plain          # absent stays absent
+    with_check = dict(answer(), camera_check=_check())
+    got = parse_assessment(json.dumps(with_check), [clip()])["camera_check"]
+    assert got["glitch"] == {"level": "none", "times": [], "note": ""}
+    assert got["shake"] == {"level": "minor", "times": [[0.5, 1.0]], "note": "slight jitter"}
+    assert got["contamination"]["level"] == "severe" and got["contamination"]["kind"] == "smudge"
+    assert got["problems"] == []
+    # malformed pieces degrade to unknown / are dropped, never raise
+    bad = parse_camera_check({"glitch": {"level": "awful", "times": [[5, 9], [1, "x"], [0, 1]]},
+                              "shake": "yes", "contamination": {"level": "minor", "kind": "mud"}}, [clip()])
+    assert bad["glitch"]["level"] == "unknown" and bad["glitch"]["times"] == [[0, 1]]
+    assert bad["shake"]["level"] == "unknown"
+    assert bad["contamination"] == {"level": "minor", "times": [], "note": "", "kind": "other"}
+    assert len(bad["problems"]) == 5          # level, two intervals, missing shake, kind
+    assert parse_camera_check("nope", [clip()])["problems"] == ["camera_check is not an object"]
+    # the five core fields are still exactly required
+    with pytest.raises(ValueError):
+        parse_assessment(json.dumps(dict(answer(), extra=1)), [clip()])
+
+
+def test_the_server_is_asked_to_constrain_the_answer_to_json(monkeypatch):
+    """Root cause of the broken answers: nothing forced the model's output to be valid JSON.
+    Every video call now sends response_format, and a backend that refuses it is asked plainly
+    from then on instead of failing."""
+    sent = mock_transport(monkeypatch, [json.dumps(answer())])
+    make_video_assessor("http://test/v1", "video-model", tag="endstate")([clip()], "pick up")
+    assert sent[0]["response_format"] == {"type": "json_object"}
+
+    class Refuses:
+        status_code = 400
+        text = '{"error": {"message": "response_format is not supported"}}'
+
+        def raise_for_status(self):
+            raise AssertionError("the 400 should have been handled before this")
+
+    replies = [Refuses(), Response(json.dumps(answer()))]
+    seen = []
+
+    def post(url, *, json, headers, timeout):
+        seen.append(copy.deepcopy(json))
+        return replies.pop(0)
+
+    monkeypatch.setattr("requests.post", post)
+    out = make_video_assessor("http://test/v1", "video-model", tag="endstate")([clip()], "pick up")
+    assert out["verdict"] == "success"
+    assert "response_format" in seen[0] and "response_format" not in seen[1]
+    assert len(seen) == 2                                  # one refusal, one plain retry
+
+
+def test_a_defect_report_with_broken_json_costs_only_itself(monkeypatch):
+    """Seen on real data: the model wrote `"times":[[2,5] [9,12]]`, a missing comma inside
+    camera_check, and the whole review used to fail with ValueError - which made the episode an
+    error. The field is cut out, the five core fields stand, and no repair is asked for."""
+    core = json.dumps(answer())[:-1]                     # drop the closing brace
+    broken = core + ', "camera_check": {"glitch": {"level": "none", "times": []}, ' \
+                    '"shake": {"level": "minor", "times": [[2, 5] [9, 12]]}}}'
+    sent = mock_transport(monkeypatch, [broken])
+    review = make_video_assessor("http://test/v1", "video-model", tag="endstate")([clip()], "pick up")
+    assert len(sent) == 1                                # the verdict was never sent back for repair
+    assert review["verdict"] == "success" and review["completion"] == 0.9
+    assert {k: v["level"] for k, v in review["camera_check"].items() if isinstance(v, dict)} == \
+        {"glitch": "unknown", "shake": "unknown", "contamination": "unknown"}
+    assert "not valid JSON" in review["camera_check"]["problems"][0]
+
+    # the field first, so the cut has to close over a member in the middle of the object
+    first = '{"camera_check": {"shake": {"times": [[2, 5] [9, 12]]}}, ' + json.dumps(answer())[1:]
+    sent = mock_transport(monkeypatch, [first])
+    review = make_video_assessor("http://test/v1", "video-model", tag="endstate")([clip()], "pick up")
+    assert len(sent) == 1 and review["verdict"] == "success"
+
+    # a core field broken is still a repair and then an error, exactly as before the rider
+    sent = mock_transport(monkeypatch, ['{"verdict": "success" "task_type": "transient"}',
+                                        '{"verdict": "success" "task_type": "transient"}'])
+    with pytest.raises(ValueError):
+        make_video_assessor("http://test/v1", "video-model", tag="endstate")([clip()], "pick up")
+    assert len(sent) == 2
+
+
+def test_endstate_review_asks_for_camera_check_without_a_repair(monkeypatch):
+    from curation.adapters.video_vlm import CAMERA_CHECK_PROMPT
+
+    reply = dict(answer(), camera_check={"glitch": "garbage"})      # malformed report, valid review
+    sent = mock_transport(monkeypatch, [json.dumps(reply)])
+    review = make_video_assessor("http://test/v1", "video-model", tag="endstate")([clip()], "pick up")
+    assert len(sent) == 1                                          # no repair round trip
+    assert review["camera_check"]["glitch"]["level"] == "unknown"
+    prompt = sent[0]["messages"][0]["content"][0]["text"]
+    assert "Independently review ONLY this camera" in prompt and CAMERA_CHECK_PROMPT.strip() in prompt
+    sent = mock_transport(monkeypatch, [json.dumps(answer())])
+    make_video_assessor("http://test/v1", "video-model")([clip()], "pick up")
+    assert "camera_check" not in sent[0]["messages"][0]["content"][0]["text"]   # the probe is untouched

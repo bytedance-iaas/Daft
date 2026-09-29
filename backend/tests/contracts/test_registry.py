@@ -13,7 +13,7 @@ from curation.contracts import schemas
 def test_modules_in_stage_order():
     assert M.ids() == ("data_integrity", "timestamp_check", "kinematic_limits", "motion_quality",
                        "visual_quality", "video_action_sync", "eef_video_consistency", "task_success",
-                       "dedup", "skill_profile")
+                       "camera_defects", "dedup", "skill_profile")
     order = [M.STAGE_ORDER.index(m.stage) for m in M.MODULES]
     assert order == sorted(order), "registry order must follow the stage order"
 
@@ -45,7 +45,7 @@ def test_v1_facts():
 
 def test_the_eef_module_takes_part_in_the_verdict():
     """D49 / design doc 12 D-E11: one module, CPU then model, a hard gate on the funnel's survivors."""
-    assert M.advisory_ids() == () and M.native_ids() == ("data_integrity", "eef_video_consistency")
+    assert M.advisory_ids() == ("camera_defects",) and M.native_ids() == ("data_integrity", "eef_video_consistency")
     spec = M.get("eef_video_consistency")
     assert spec.gate == "hard" and spec.stage == "vlm" and spec.input_scope == "funnel"
     assert spec.affects_dataset_verdict and {"eef_input", "video", "vlm"} <= spec.needs
@@ -136,3 +136,17 @@ def test_result_record_module_pattern_accepts_every_id():
     import re
 
     assert all(re.fullmatch(pattern, mid) for mid in M.ids())
+
+
+def test_camera_defects_rides_on_task_success():
+    """Registry 1.14: answered inside task_success's per-camera reviews; advisory; never selected alone."""
+    spec = M.get("camera_defects")
+    assert spec.rides_on == "task_success" and spec.stage == "vlm" and spec.gate == "none"
+    assert not spec.affects_dataset_verdict and spec.input_scope == "funnel" and not spec.produces_adjudication
+    assert M.riders_of("task_success") == ("camera_defects",) and M.riders_of("dedup") == ()
+    assert M.with_riders(["task_success", "dedup"]) == ["task_success", "camera_defects", "dedup"]
+    assert M.with_riders(["dedup"]) == ["dedup"]                     # no host, no rider
+    assert M.with_riders(["camera_defects", "task_success"]) == ["task_success", "camera_defects"]
+    exported = {m["id"]: m for m in M.export()["modules"]}
+    assert exported["camera_defects"]["rides_on"] == "task_success"
+    assert "rides_on" not in exported["task_success"]              # only set where it applies

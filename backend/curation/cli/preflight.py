@@ -412,6 +412,13 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
         if notes:
             entry["notes"] = entry.get("notes", []) + notes
         modules.append(entry)
+    # A rider (registry 1.14) is answered inside its host's requests: it is exactly as available
+    # as the host, reason and hint included, whatever its own needs would have said here.
+    by_id = {m["id"]: m for m in modules}
+    for i, entry in enumerate(modules):
+        host = registry_modules.get(entry["id"]).rides_on
+        if host and host in by_id:
+            modules[i] = {**by_id[host], "id": entry["id"]}
     doc["modules"] = modules
     doc["warnings"] = warnings
 

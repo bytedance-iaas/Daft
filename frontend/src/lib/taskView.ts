@@ -24,6 +24,7 @@ export function presetOf(selected: readonly string[], registry: ModuleRegistry |
   const vlmSelected = registry.modules.some((m) => sel.has(m.id) && isVlm(m.id));
   for (const m of registry.modules) {
     if (sel.has(m.id)) continue;
+    if (m.rides_on) continue;            // a rider (registry 1.14) runs with its host, never selected on its own
     if (vlmSelected || !isVlm(m.id)) {
       if (!optional(m.id)) return 'custom';
     }

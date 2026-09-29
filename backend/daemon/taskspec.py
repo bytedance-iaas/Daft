@@ -82,6 +82,8 @@ def module_choices(items: list) -> list[tuple[str, dict | None]]:
         if mid in seen:
             raise _bad(f"模块 {mid} 重复出现", where)
         seen.add(mid)
+        if registry.get(mid).rides_on:
+            continue                     # a rider runs with its host whether or not it is listed
         try:
             registry.validate_params(mid, params)
         except jsonschema.ValidationError as err:

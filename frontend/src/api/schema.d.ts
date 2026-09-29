@@ -1307,6 +1307,8 @@ export interface components {
                     default_sort: string;
                 }[];
                 mergeable: boolean;
+                /** @description present on a module answered inside this host module's requests (1.19.0): it runs whenever the host runs, has no request of its own and cannot be selected alone */
+                rides_on?: components["schemas"]["ModuleId"];
             }[];
         };
         /** @description a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check, integrity_check */

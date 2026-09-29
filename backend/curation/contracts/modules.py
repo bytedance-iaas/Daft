@@ -74,7 +74,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.13"
+REGISTRY_VERSION = "1.14"
 
 Level = Literal["episode", "dataset"]
 Gate = Literal["hard", "soft", "dedup", "none"]
@@ -199,18 +199,24 @@ class ModuleSpec:
     affects_dataset_verdict: bool = True  # False: advisory, never part of keep / drop / held
     #: v2 runs it itself, outside v1's check configuration (1.11); not part of the JSON
     native: bool = False
+    #: 1.14: a rider is answered inside the model requests of the module it names - it is never
+    #: selected on its own, runs whenever its host runs, and makes no request of its own
+    rides_on: str | None = None
 
     def to_json(self) -> dict:
-        return {"id": self.id, "name_zh": self.name_zh, "summary_zh": self.summary_zh,
-                "level": self.level, "gate": self.gate, "needs": sorted(self.needs),
-                "stage": self.stage, "depends_on": list(self.depends_on),
-                "produces_adjudication": self.produces_adjudication,
-                "review_lines": list(self.review_lines), "appealable": self.appealable,
-                "input_scope": self.input_scope,
-                "affects_dataset_verdict": self.affects_dataset_verdict,
-                "param_schema": self.param_schema,
-                "tables": [t.to_json() for t in self.tables],
-                "mergeable": self.merge_units is not None}
+        out = {"id": self.id, "name_zh": self.name_zh, "summary_zh": self.summary_zh,
+               "level": self.level, "gate": self.gate, "needs": sorted(self.needs),
+               "stage": self.stage, "depends_on": list(self.depends_on),
+               "produces_adjudication": self.produces_adjudication,
+               "review_lines": list(self.review_lines), "appealable": self.appealable,
+               "input_scope": self.input_scope,
+               "affects_dataset_verdict": self.affects_dataset_verdict,
+               "param_schema": self.param_schema,
+               "tables": [t.to_json() for t in self.tables],
+               "mergeable": self.merge_units is not None}
+        if self.rides_on:
+            out["rides_on"] = self.rides_on
+        return out
 
 
 def _no_params() -> dict:
@@ -399,6 +405,15 @@ MODULES: tuple[ModuleSpec, ...] = (
         tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),),
         review_lines=("task_verdict", "label"), appealable=True),
     ModuleSpec(
+        id="camera_defects", name_zh="镜头画面缺陷",
+        summary_zh="借任务成败判定的逐机位复核请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
+        level="episode", gate="none", needs=frozenset({"video", "vlm"}), stage="vlm",
+        depends_on=("frame_gates", "autolabel"), produces_adjudication=False,
+        param_schema=_no_params(),
+        tables=(TableSpec("camera_defects", "逐机位画面缺陷",
+                          ("episode_index", "camera", "glitch", "shake", "contamination")),),
+        input_scope="funnel", affects_dataset_verdict=False, rides_on="task_success"),
+    ModuleSpec(
         id="dedup", name_zh="精确去重",
         summary_zh="找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",
         level="dataset", gate="dedup", needs=frozenset({"raw_bytes"}), stage="post_verdict",
@@ -427,6 +442,24 @@ def native_ids() -> tuple[str, ...]:
 def advisory_ids() -> tuple[str, ...]:
     """Modules outside keep / drop / held (``affects_dataset_verdict=False``)."""
     return tuple(m.id for m in MODULES if not m.affects_dataset_verdict)
+
+
+def riders_of(host: str) -> tuple[str, ...]:
+    """The modules answered inside ``host``'s own requests (``rides_on``, 1.14)."""
+    return tuple(m.id for m in MODULES if m.rides_on == host)
+
+
+def with_riders(module_ids) -> list[str]:
+    """``module_ids`` plus every rider whose host is among them, in registry order.
+
+    Every list of modules a run works from goes through here - the check call, the plan,
+    the aggregate / report calls, the report itself - so a rider is never selected and
+    never forgotten: whenever its host runs, it is there.
+    """
+    chosen = set(module_ids)
+    chosen |= {m.id for m in MODULES if m.rides_on and m.rides_on in chosen}
+    return [m.id for m in MODULES if m.id in chosen]
+
 
 _BY_ID = {m.id: m for m in MODULES}
 _LINES = {line.id: line for line in REVIEW_LINES}

@@ -338,6 +338,38 @@ describe('质检报告 (07 §5)', () => {
     expect(block.textContent).not.toMatch(/[{}"]/);
   });
 
+  it('Episode 明细: the camera defects block names the camera, how bad and when, in one or two lines (registry 1.14)', async () => {
+    const cam = (level: string, times: [number, number][] = [], extra: Record<string, unknown> = {}) => ({ level, times, note: '', ...extra });
+    const record: ResultRecord = {
+      episode_index: 12, module: 'camera_defects', verdict: 'abstain', passed: null, score: null, gate: 'none', evidence: [], elapsed_s: 0.02, error: null,
+      details: {
+        protocol: 'camera-check/1', source: 'task_success.video_reviews', reason: '',
+        cams: ['robot0_sensor_camera0', 'robot1_sensor_camera0'], known: 6, clean_ratio: 0.67,
+        items: { glitch: 'none', shake: 'minor', contamination: 'minor' },
+        per_camera: {
+          robot0_sensor_camera0: { answered: true, error: null, problems: [], glitch: cam('none'), shake: cam('minor', [], { whole: true }), contamination: cam('none', [], { kind: 'none' }) },
+          robot1_sensor_camera0: {
+            answered: true, error: null, problems: [],
+            glitch: cam('none'),
+            shake: cam('minor', [[1.5, 4.5], [13.5, 15]]),
+            // the other camera says the whole clip: no span, one word
+            contamination: cam('minor', [[0, 49.7]], { kind: 'smudge' }),
+          },
+        },
+      },
+    };
+    db.extraRecords = new Map([[MAIN_TASK, new Map([[12, { camera_defects: record }]])]]);
+    renderApp(`${REPORT}?ep=12#episodes`);
+    const block = await screen.findByTestId('episode-module-camera_defects');
+    const body = within(block).getByTestId('episode-camera-defects');
+    expect(body).toHaveTextContent('花屏 无 · 抖动 轻微 · 镜头污染 轻微');
+    expect(body).toHaveTextContent('robot1_sensor_camera0：抖动 轻微 1.5–4.5 秒、13.5–15 秒 · 镜头污染 轻微（油污）0–49.7 秒');
+    expect(body).toHaveTextContent('robot0_sensor_camera0：抖动 轻微 全程');
+    expect(body).toHaveTextContent('建议项，不影响判决');
+    expect(body.textContent).not.toMatch(/[{}"]|per_camera|none|minor|camera-check/);
+    expect(body.textContent).not.toMatch(/机位数|条数|状态/);          // the old generic rendering
+  });
+
   it('Episode 明细: 「12」「ep12」「ep 12」 all find ep 12; the filter narrows the list and 上一条 / 下一条 follow it', async () => {
     const seen = recordRequests();
     const { user } = renderApp(`${REPORT}#episodes`);

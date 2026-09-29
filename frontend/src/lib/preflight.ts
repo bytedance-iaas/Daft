@@ -49,6 +49,13 @@ export function optIn(m: ModuleSpec): boolean {
   return !m.affects_dataset_verdict || (m.needs as string[]).includes('eef_input');
 }
 
+/** Modules the form offers: a rider (registry 1.14, `rides_on`) is answered inside its host's model
+ * requests and runs whenever the host runs, so there is nothing to tick - it is left off the form and
+ * appears in the report. */
+export function offered(m: ModuleSpec): boolean {
+  return !m.rides_on;
+}
+
 /** The selection after ticking or unticking `id`. (F5.6 ticked the modules a module re-examined along with
  * it, reading every module id in `depends_on` that way - which also tied 技能画像 to 精确去重, whose
  * `dedup` entry only orders the stages; the EEF review is gone since D49 and so is the rule.) */
@@ -59,7 +66,7 @@ export function toggleModule(selected: string[], id: string): string[] {
 /** The modules a preset turns on for this preflight (07 §3: 完整 / 快速 / 自选). */
 export function presetSelection(preset: 'full' | 'quick', reg: ModuleRegistry, result: PreflightResult | null | undefined): string[] {
   return reg.modules
-    .filter((m) => !optIn(m))
+    .filter((m) => offered(m) && !optIn(m))
     .filter((m) => availability(result, m.id) !== 'unsupported' && availability(result, m.id) !== null)
     .filter((m) => preset === 'full' || !needsVlm(m))
     .map((m) => m.id);

@@ -39,7 +39,7 @@ import sys
 from . import records as R
 
 STRICT_DEFAULT = ("timestamp_check", "kinematic_limits", "motion_quality",
-                  "visual_quality", "video_action_sync", "dedup")
+                  "visual_quality", "video_action_sync", "dedup", "camera_defects")
 VERDICT_DEFAULT = ("autolabel", "task_success", "skill_profile")
 
 

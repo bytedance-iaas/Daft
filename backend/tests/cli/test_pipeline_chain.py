@@ -19,7 +19,7 @@ from .fakevlm_server import FakeVlmServer
 from .pipeline import Chain, read_jsonl, results
 
 MODULES = ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
-           "video_action_sync", "task_success", "dedup", "skill_profile"]
+           "video_action_sync", "task_success", "camera_defects", "dedup", "skill_profile"]
 
 
 @pytest.fixture(scope="module")
