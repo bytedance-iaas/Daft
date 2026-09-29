@@ -189,10 +189,16 @@
 
 后面所有工作都建立在这三件事上，先花半天确认：
 
-- [ ] 预签名的 GET 对象，带 `Range: bytes=0-99`，在 S3 兼容端点上返回 206。
-- [ ] 预签名的 ListObjectsV2（带 `prefix`、`delimiter`，以及翻页的 `continuation-token`）返回 `<ListBucketResult>`。
-- [ ] 在已部署的 viewer 页面的浏览器控制台里 `fetch(地址, {headers: {Range: 'bytes=0-99'}})` 能成功，
+- [x] 预签名的 GET 对象，带 `Range: bytes=0-99`，在 S3 兼容端点上返回 206。
+- [x] 预签名的 ListObjectsV2（带 `prefix`、`delimiter`，以及翻页的 `continuation-token`）返回 `<ListBucketResult>`。
+- [x] 在已部署的 viewer 页面的浏览器控制台里 `fetch(地址, {headers: {Range: 'bytes=0-99'}})` 能成功，
       确认没有 `Authorization` 头时桶上现有的 CORS 规则仍然够用。
+
+结果（2026-09-28，桶 `curation`、cn-beijing、数据集 `datasets/so101-pick-place-v2`）：改为直接用做好的
+`POST /datasets/{id}/sign` 取地址再请求 TOS，三项全部通过——同一个地址换 `Range` 反复取都是 206；列举与翻页都返回
+`ListBucketResult`，翻页令牌里的 `+`、`/` 也签得对；改坏签名得到 403 `SignatureDoesNotMatch`。第三项在 J1 的浏览器里验：
+来源 `http://localhost:9091` 不带 `Authorization` 直连 TOS，读对象 206、列举 200，桶上 catalog 装的 CORS 规则够用。
+§6 第 1 条的备选方案不需要了。
 
 做法：拿附录 A 的函数写一个一次性脚本，在有真实密钥的机器上跑，密钥经环境变量传入，用 `curl` 验证前两项。
 catalog 的 `/catalog/presign` 已经在同一个端点上签 GET 对象，所以第一项风险低；没有先例的是第二项。
@@ -361,6 +367,14 @@ viewer 容器（rerun 仓库 `deploy/docker-compose.yml` 的 `viewer`）改映�
 `curator-daemon-dev`（`/curation` 前缀、不鉴权、8080）。在控制台里添加一把真实的访问密钥、登记一个数据集，
 从 `http://127.0.0.1:9091/curation` 进。
 
+2026-09-28 实测（没有起 viewer 容器，改用 debug 版 web viewer 的静态文件加一个 Python 标准库写的同源代理，脚本不入库；
+viewer 的 `config.json` 里**没有任何** TOS 密钥）：从控制台「可视化」进入，viewer 只经 `/sign` 取地址、直连 TOS 读完元数据并逐条载入
+episode（画面、曲线、任务文本正常），§5 的第 1–9、11 步符合期望（第 2 步在浏览器资源记录里核对：地址带签名、只签 `host`；
+第 4 步更强——根本没有部署密钥；第 5 步把 `curator_sign_ttl` 设成 60，过期后重新载入同一 episode，同一对象换了新签名照常 206；
+第 8 步用不存在的编号验）。会话恢复另有一个与本篇无关的既有问题：`App::save` 拿规范化后的 application id 与原始地址比，
+`open_at_exit` 永远打不上，web 上重启后不会自动重开任何数据集（已另开任务修）；手工把存档里的标记设为 true 后，
+带编号的条目能经代签恢复。第 10 步（缓存桶数据集）留到 J2。
+
 **J2 集群（1 人天）**
 
 两边出镜像，升级 galbot（流程见 `deploy/README.md`），按 §5 验收。
@@ -385,7 +399,7 @@ viewer 容器（rerun 仓库 `deploy/docker-compose.yml` 的 `viewer`）改映�
 
 ## 6. 风险与待定
 
-1. **TOS 认不认预签名的列举**。T0 先验证。不认的话，列举改由 Daemon 代做：新增 `POST /datasets/{id}/list`，Daemon 用 TOS SDK 列举后
+1. **TOS 认不认预签名的列举**。T0 已验证：认（2026-09-28，含翻页）。以下备选方案不再需要：不认的话，列举改由 Daemon 代做：新增 `POST /datasets/{id}/list`，Daemon 用 TOS SDK 列举后
    返回 JSON（对象键、大小、ETag、子目录、是否还有下一页），viewer 的 `list_objects`、`list_dir` 在远端模式下改调它。
    代价是 Daemon 要真的访问 TOS，viewer 多一条解析路径，估计多 1.5 人天。
 2. **CORS**。浏览器直连 TOS 要求桶上有 viewer 的 CORS 规则。现在的自助配置（`/api/ensure-cors`）用的是部署密钥，
