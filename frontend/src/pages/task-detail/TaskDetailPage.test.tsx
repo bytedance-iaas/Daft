@@ -50,6 +50,9 @@ describe('任务详情 (07 §4.2)', () => {
     const { user } = renderApp(`/tasks/${MAIN}`);
     const card = await screen.findByTestId('pipeline-episodes');
     expect(await within(card).findByRole('button', { name: 'ep 49' })).toBeInTheDocument();
+    // the header facts are parted by centred dots, not a · glyph that sat low like a full stop (sixth round)
+    expect(screen.getAllByTestId('meta-sep').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('task_01HXR2D8').closest('.arco-space')).not.toHaveTextContent('·');
     // 20 a page (sixth round, was 30)
     const page = seen.find((r) => r.path === `/tasks/${MAIN}/pipeline/episodes`);
     expect(page?.query.get('limit')).toBe('20');

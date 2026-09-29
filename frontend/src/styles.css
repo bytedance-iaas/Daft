@@ -1199,3 +1199,16 @@ button.video-placeholder {
   margin: 2px 0 0;
   padding-left: 18px;
 }
+
+/* 间隔号 between header facts (task id · 创建于 … · 备注): a dot centred on the text, whatever the font.
+   A block, so the Space (a flex row) centres it on the row rather than on a Latin x-height. The Space
+   leaves its gap before a split only, so the same gap goes after it; a wrapping Space puts 8 px under
+   every item but not under a split, so the dot gets it too or it sits 4 px low. */
+.meta-sep {
+  display: block;
+  width: 4px;
+  height: 4px;
+  margin: 0 8px 8px 0;
+  border-radius: 50%;
+  background: var(--c-text-3);
+}

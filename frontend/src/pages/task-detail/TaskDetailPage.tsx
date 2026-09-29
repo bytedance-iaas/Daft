@@ -106,7 +106,8 @@ export function TaskDetailPage() {
           </Space>
         }
         description={
-          <Space split="·" wrap>
+          // an interpunct drawn as a centred dot: the · glyph sat low beside Chinese text (sixth round)
+          <Space split={<span className="meta-sep" aria-hidden="true" data-testid="meta-sep" />} wrap>
             <span className="mono">{t.id}</span>
             <span>
               {zh.taskDetail.createdAt('')}
