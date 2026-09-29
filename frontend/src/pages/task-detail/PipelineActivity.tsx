@@ -6,6 +6,7 @@ import { zh } from '../../locales/zh';
 import './pipelineActivity.css';
 
 const copy = zh.taskDetail.pipelineActivity;
+const INTEGRITY_GREEN = '#00B42A';
 const COLORS: Record<string, string> = {
   numeric: '#6366f1', frame: '#0891b2', vlm: '#e87925',
   profile_vlm: '#a855f7', profile: '#a855f7',
@@ -123,7 +124,14 @@ function IntegrityStrip({ stage }: { stage: StageProgress }) {
   return (
     <div className="pipeline-strip" data-testid="stage-integrity">
       <b>{stageLabel(stage.id)}</b>
-      <Progress percent={stagePercent(stage)} showText={false} size="small" status={stage.state === 'failed' ? 'error' : 'normal'} />
+      {/* green (sixth round); a failed layer keeps the red error bar */}
+      <Progress
+        percent={stagePercent(stage)}
+        showText={false}
+        size="small"
+        status={stage.state === 'failed' ? 'error' : 'normal'}
+        color={stage.state === 'failed' ? undefined : INTEGRITY_GREEN}
+      />
       <span className="muted">{stage.done} / {stage.total}</span>
       {mean != null ? <span className="muted">{copy.mean(mean.toFixed(2))}</span> : null}
     </div>

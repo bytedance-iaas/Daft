@@ -34,10 +34,13 @@ function Refreshing({ on, testId }: { on: boolean; testId: string }) {
 }
 
 /**
- * Episode 流水线: the latest episodes through the funnel, refetched every 3 s while the task runs.
+ * Episode 流水线: the latest episodes through the funnel (PIPELINE_PAGE a page), refetched every 3 s while the task runs.
  * A refetch (or a new key when the task's state or revision changes) keeps the rows on screen and
  * only turns the spinner in the header: swapping the table for a spinner made the page jump.
  */
+/** Rows a page (sixth round: 20, was 30 - the page grew too long). */
+export const PIPELINE_PAGE = 20;
+
 export function PipelineEpisodesCard({ task }: { task: Task }) {
   const [before, setBefore] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
@@ -46,7 +49,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
     queryKey: ['task', task.id, 'pipeline-episodes', before, task.state, task.result_rev,
       Boolean(task.active_subtask)],
     queryFn: () => unwrap(api().GET('/tasks/{id}/pipeline/episodes', {
-      params: { path: { id: task.id }, query: { before: before ?? undefined, limit: 30 } },
+      params: { path: { id: task.id }, query: { before: before ?? undefined, limit: PIPELINE_PAGE } },
     })),
     enabled: Boolean(task.started_at),
     refetchInterval: live && before === null ? 3000 : false,

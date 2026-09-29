@@ -204,7 +204,7 @@ const calls = (): Call[] => [
   { op: 'getReportTable', method: 'GET', path: `/tasks/${T}/report/tables/visual_quality?limit=100&sort=score&order=desc` },
   { op: 'getReportTable', method: 'GET', path: `/tasks/${T}/report/tables/visual_quality?sort=nope` },
   { op: 'getEpisode', method: 'GET', path: `/tasks/${T}/episodes/29` },
-  { op: 'listPipelineEpisodes', method: 'GET', path: `/tasks/${T}/pipeline/episodes?limit=30` },
+  { op: 'listPipelineEpisodes', method: 'GET', path: `/tasks/${T}/pipeline/episodes?limit=20` },
   { op: 'getPipelineEpisode', method: 'GET', path: `/tasks/${T}/pipeline/episodes/29` },
   // C4 1.9.0: the Episode tab's list (filters, number search, paging) and one episode's sync curves
   { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${T}/episodes?limit=20` },

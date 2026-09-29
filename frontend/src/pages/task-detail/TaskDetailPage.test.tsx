@@ -9,6 +9,7 @@ import { finishSubtask } from '../../mocks/subtaskSim';
 import { pick } from '../../test/arco';
 import { FakeEventSource } from '../../test/fakeEventSource';
 import { fieldErrors, requiredFieldLabels } from '../../test/forms';
+import { recordRequests } from '../../test/record';
 import { currentLocation, renderApp } from '../../test/render';
 
 const MAIN = 'task_01HXR2D8';
@@ -45,9 +46,14 @@ describe('任务详情 (07 §4.2)', () => {
   });
 
   it('shows episode pipeline results and opens a completed episode immediately', async () => {
+    const seen = recordRequests();
     const { user } = renderApp(`/tasks/${MAIN}`);
     const card = await screen.findByTestId('pipeline-episodes');
     expect(await within(card).findByRole('button', { name: 'ep 49' })).toBeInTheDocument();
+    // 20 a page (sixth round, was 30)
+    const page = seen.find((r) => r.path === `/tasks/${MAIN}/pipeline/episodes`);
+    expect(page?.query.get('limit')).toBe('20');
+    expect(card.querySelectorAll('tbody tr').length).toBeLessThanOrEqual(20);
     await user.click(within(card).getByRole('button', { name: 'ep 49' }));
     const detail = await screen.findByTestId('pipeline-episode-detail');
     expect(detail).toHaveTextContent('漏斗保留');
@@ -393,6 +399,7 @@ describe('任务详情 (07 §4.2)', () => {
     const strip = screen.getByTestId('stage-integrity');
     expect(strip).toHaveClass('pipeline-strip');
     expect(strip).toHaveTextContent(/^完整性档640 \/ 640平均每条 2\.65 s$/);
+    expect(strip.querySelector('.arco-progress-line-inner')).toHaveStyle({ backgroundColor: '#00B42A' });   // green
     expect(screen.queryByTestId('inflight-integrity')).toBeNull();
     const timeline = screen.getByTestId('pipeline-overlap');
     expect(timeline).toHaveTextContent('三层运行时间线');
