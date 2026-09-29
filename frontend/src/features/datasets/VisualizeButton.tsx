@@ -6,8 +6,10 @@ import { zh } from '../../locales/zh';
 /**
  * 「可视化」 (requester item 22): opens the dataset in the ReRun web viewer of the same deployment,
  * in a new tab. A locally mounted dataset cannot be opened there: the button is disabled and says why.
+ * A private TOS dataset's link names the registration, so the viewer reads it with Daemon-signed
+ * URLs (design doc 15).
  */
-export function VisualizeButton({ d, type = 'text', size = 'small' }: { d: Pick<DatasetItem, 'uri' | 'region'>; type?: 'text' | 'secondary'; size?: 'small' | 'default' }) {
+export function VisualizeButton({ d, type = 'text', size = 'small' }: { d: Pick<DatasetItem, 'id' | 'source' | 'uri' | 'region'>; type?: 'text' | 'secondary'; size?: 'small' | 'default' }) {
   const url = rerunViewerUrl(d);
   if (!url) {
     return (
