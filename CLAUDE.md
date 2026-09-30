@@ -26,6 +26,7 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 | 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、读取器、导出器、编排壳、VLM 客户端与视频输入 |
 | 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷，随 task_success 的复核请求顺带作答，设计 13） |
 | 对账工具 | `tools/parity/` | 黄金基线的录制、回放、比对，假模型，A 类守卫 |
+| 回归样本工具 | `tools/regression_samples/` | 回归样本集（设计 16）的合成注入、平台结果打分（平台发现 → 检测项的对照表、precision / recall、与基线比较） |
 | 部署 | `deploy/` | 一个镜像（Daemon + CLI + 前端产物，缺省起 Daemon）；Helm Chart 在 rerun 仓库 `deploy/helm/dataverse`（StatefulSet 单副本 + 数据盘，D53） |
 
 Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走子进程；暂停、停止就是给进程组发信号；CLI 也因此一直是活的一等入口
@@ -52,6 +53,7 @@ task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
 | `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`） |
 | `frontend/mockups/` | 静态 HTML 预览稿（只读参考） |
 | `tools/parity/` | 对账工具与黄金基线流程 |
+| `tools/regression_samples/` | 回归样本集的工具：`inject.py` 合成注入，`score.py` + `finding_map.json` 给平台结果打分，`taxonomy.json` 是检测项分类（样本集在 TOS，不在仓库） |
 | `tools/eef_eval/`、`tools/eef_convert.py` | EEF 离线评估（唯一读真值的代码）；`trajectory.json` 在 LeRobot 与 mcap 孪生数据集之间互转 |
 | `deploy/` | 镜像（`deploy/Dockerfile`，构建上下文是仓库根）与集群上的运维步骤（`deploy/README.md`）；Chart 本身在 rerun 仓库的 dataverse 里 |
 | `docs/design/`、`docs/contracts/`、`docs/v1/` | 设计、契约、v1 的使用文档与发布说明 |
@@ -144,6 +146,7 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 | 契约 | `cd backend && ../.venv/bin/python -m pytest -q tests/contracts && ../.venv/bin/python -m curation.contracts check` | 契约与锁不一致就失败 |
 | v2 各工作包 | `cd backend && ../.venv/bin/python -m pytest -q tests/<目录>` | 最慢的是 `orchestr`（约 10 分钟；`-m "not slow"` 跳过真起 CLI 的用例）和 `cli`（约 6 分钟） |
 | 对账工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests` | 约一分半；`-m "not e2e"` 只跑单元部分 |
+| 回归样本工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests` | 秒级；含对照表与平台问题码、模块 id 的一致性检查——平台改了问题码或细节字段名，要同步改 `finding_map.json` |
 | 前端 | `cd frontend && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build` | Vitest + jsdom，模拟数据的响应按契约校验 |
 
 写端到端用例别靠时序：流水线下各档交叠执行，模型的快慢用假端点的 `delay_s`、`hold(needle)`、`fail` 控制，等条件满足再动作。
@@ -155,7 +158,7 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 
 | 任务 | 内容 | 时长 |
 |---|---|---|
-| `tests` | Python 3.10 下串行跑 13 套：内核单测、契约与锁、CLI、planner、Daemon、密钥、结果读取、编排、执行优化、镜像与部署约定、增量导出、EEF、对账工具；前面失败不影响后面的步骤 | 约 30 分钟 |
+| `tests` | Python 3.10 下串行跑 14 套：内核单测、契约与锁、CLI、planner、Daemon、密钥、结果读取、编排、执行优化、镜像与部署约定、增量导出、EEF、对账工具、回归样本工具；前面失败不影响后面的步骤 | 约 30 分钟 |
 | `frontend` | Node 20 与 22 各一遍：`check:api`、`lint`、`typecheck`、`test`、`build` | 几分钟 |
 | `a-class-guard` | 原样搬来的算法文件（A 类，清单见设计 10 §2）逐个比对冻结时的哈希；有意的改动在 `tools/parity/a_class_declared.json` 登记新哈希和理由，或在 PR 描述里写 `parity-change:` | 秒级 |
 | `lerobot-loader` | 官方 lerobot（0.3.3 读 v2.1、0.6.1 读 v3.0）加载增量重导出的产物 | 几分钟 |

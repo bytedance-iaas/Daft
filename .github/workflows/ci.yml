@@ -87,6 +87,11 @@ jobs:
         env:
           PYTHONPATH: tools
         run: bash .github/scripts/pytest-summary.sh -q -rfE tools/parity/tests
+      - name: Regression sample tools (scorer, and the finding map against the platform's codes)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        env:
+          PYTHONPATH: tools
+        run: bash .github/scripts/pytest-summary.sh -q -rfE tools/regression_samples/tests
 
   lerobot-loader:
     # The official LeRobot loaders read the incremental re-exports without warnings (F2.5).
