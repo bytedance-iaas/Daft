@@ -97,6 +97,19 @@ def test_a_single_timestamp_is_a_fragment(tmp_path):
     assert (row["tp"], row["fp"], row["tn"]) == (1, 0, 1)
 
 
+def test_camera_defects_levels_and_unknown(tmp_path):
+    def cd(ep, glitch, per):
+        detail = {"items": {"glitch": glitch, "shake": "none", "contamination": "none"},
+                  "per_camera": {c: {"glitch": {"level": lv}, "shake": {"level": "none"}, "contamination": {"level": "none"}} for c, lv in per.items()}}
+        return record(ep, "camera_defects", "abstain", None, json.dumps(detail))   # the detail may be a JSON string
+    exp = expectation(episode(0, problems=[("IMG-5", {"stream": "observation.images.left"})]),
+                      episode(1, problems=["IMG-5"]), episode(2, clean=["IMG-5"]))
+    recs = [cd(0, "minor", {"left": "minor", "right": "none"}), cd(1, "unknown", {"left": "unknown"}), cd(2, "none", {"left": "none"})]
+    row = run_score(tmp_path, exp, recs)["items"]["IMG-5"]
+    assert (row["tp"], row["tn"]) == (1, 1)
+    assert row["not_assessed"]["present"] == 1                 # the model did not answer: not a miss
+
+
 def test_row_invalid_is_split_by_its_message(tmp_path):
     nan = record(0, "data_integrity", "fail", False, {"findings": [{"code": "row_invalid", "message": "数据不合规：ep000000: action 含 3 个 NaN/Inf"}]})
     order = record(1, "data_integrity", "fail", False, {"findings": [{"code": "row_invalid", "message": "数据不合规：ep000001: 时间戳非严格递增(帧 3→4)"}]})
@@ -254,6 +267,14 @@ def test_map_uses_codes_the_platform_writes():
             assert f'"{c}"' in sync, (r["id"], c)
         for o in m.get("detail_outcomes", []):
             assert o.upper() in eef or o in eef, (r["id"], o)
+    vlm = _source("curation", "adapters", "video_vlm.py")
+    items_line = re.search(r"CAMERA_CHECK_ITEMS = \((.*)\)", vlm).group(1)
+    levels_line = re.search(r"CAMERA_CHECK_LEVELS = \((.*)\)", vlm).group(1)
+    for r in FMAP["rules"]:
+        cl = r["match"].get("camera_levels")
+        if cl:
+            assert f'"{cl["key"]}"' in items_line, r["id"]
+            assert all(f'"{lv}"' in levels_line for lv in cl["levels"]), r["id"]
     for kind in S.TIMESTAMP_FAIL_KINDS:
         assert kind in _source("curation", "pipeline", "report_stats.py")
     # the message patterns: every alternative is text the platform writes

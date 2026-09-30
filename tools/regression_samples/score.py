@@ -141,7 +141,13 @@ def preflight(run_dir):
 # ---------------------------------------------------------------- rules
 
 def _details(rec):
-    return rec.get("details") or rec.get("detail") or {}
+    d = rec.get("details") or rec.get("detail") or {}
+    if isinstance(d, str):                           # v1-shaped structs keep the detail as a JSON string
+        try:
+            d = json.loads(d)
+        except ValueError:
+            d = {}
+    return d if isinstance(d, dict) else {}
 
 
 def _num(v):
@@ -167,6 +173,14 @@ def timestamp_fail_kind(d):
     if "duration_s" in d and "dt_nominal" not in d:
         return "fragment"
     return "other"
+
+
+def unassessed(rule, rec):
+    """Whether the record says it could not judge the rule's items on this episode (e.g. the model did not answer)."""
+    u = rule.get("unknown_when")
+    if not u:
+        return False
+    return _dig(_details(rec), u["detail"]) in u["values"]
 
 
 def apply_rule(rule, rec):
@@ -208,6 +222,11 @@ def apply_rule(rule, rec):
     if "camera_codes" in m:
         for cam, cd in (d.get("per_camera") or {}).items():
             if isinstance(cd, dict) and cd.get("code") in m["camera_codes"] and cd.get("trusted", True):
+                hits.append(short_camera(cam))
+    if "camera_levels" in m:
+        key, levels = m["camera_levels"]["key"], m["camera_levels"]["levels"]
+        for cam, cd in (d.get("per_camera") or {}).items():
+            if isinstance(cd, dict) and isinstance(cd.get(key), dict) and cd[key].get("level") in levels:
                 hits.append(short_camera(cam))
     if "detail_outcomes" in m and d.get("outcome") in m["detail_outcomes"]:
         hits.append(None)
@@ -300,7 +319,8 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
             scored_eps += 1
             w = weight[key]
             hits = defaultdict(list)                 # item -> cameras
-            state = {}                               # module -> "ok" | "error" | None
+            state = {}                               # module -> "ok" | "error" | "unsupported" | None
+            unknown = defaultdict(set)               # module -> items it ran for but could not judge
             flagged_any = False
             for m in modules:
                 rec = recs[m].get(ep)
@@ -315,6 +335,9 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
                 state[m] = "ok"
                 for r in rules:
                     if r["module"] != m:
+                        continue
+                    if unassessed(r, rec):
+                        unknown[m].update(r["items"])
                         continue
                     h = apply_rule(r, rec)
                     if h:
@@ -353,7 +376,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
                     continue
                 s = stats[item]
                 mods = item_modules.get(item)
-                st = [state.get(m) for m in mods] if mods else []
+                st = [None if (state.get(m) == "ok" and item in unknown[m]) else state.get(m) for m in mods] if mods else []
                 for side in ("present", "absent"):
                     if not sides[side]:
                         continue
@@ -412,7 +435,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
     return {
         "schema_version": SCHEMA_VERSION,
         "set": expectation.get("set"), "set_version": expectation.get("set_version"),
-        "taxonomy_version": taxonomy.get("taxonomy_version"), "map_version": fmap.get("schema_version"),
+        "taxonomy_version": taxonomy.get("taxonomy_version"), "map_version": fmap.get("version") or fmap.get("schema_version"),
         "by_lineage": by_lineage,
         "episodes": {"expected": len(idx), "scored": scored_eps, "subsets": len(subsets), "runs": len([s for s in subsets if s in runs]),
                      "missing_runs": missing},

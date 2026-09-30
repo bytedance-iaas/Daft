@@ -1,7 +1,8 @@
 {
  "schema_version": "1.0",
+ "version": "1.1",
  "taxonomy_version": "1.0",
- "platform": "curation v2, module registry (C1) 1.13",
+ "platform": "curation v2, module registry (C1) 1.14",
  "about": "How a platform result becomes a check item (taxonomy.json). A rule reads one module's per-episode record (checks/<module>/results.jsonl) and yields the items it reports, with the camera when the record names one. An item a rule can yield is 'mapped'; the modules whose rules yield it decide whether an episode was assessed for it. Thresholds are the platform's own where it has one (visual_quality freezes at 95%, the report calls a camera reading below 0.6 low, the funnel's soft threshold is 0.5).",
  "rules": [
   {"id": "integrity.file_empty", "module": "data_integrity", "match": {"finding_codes": ["file_empty"]}, "items": ["FILE-1"]},
@@ -39,6 +40,9 @@
   {"id": "eef.human", "module": "eef_video_consistency", "match": {"detail_outcomes": ["human"]}, "items": ["MV-5"]},
   {"id": "task.failure", "module": "task_success", "match": {"passed": [false]}, "items": ["TASK-5"]},
   {"id": "task.label_conflict", "module": "task_success", "match": {"detail_verdicts": ["label_conflict_suspect"]}, "items": ["LABEL-5"]},
+  {"id": "camera_defects.glitch", "module": "camera_defects", "match": {"camera_levels": {"key": "glitch", "levels": ["minor", "severe"]}}, "unknown_when": {"detail": "items.glitch", "values": ["unknown"]}, "items": ["IMG-5"]},
+  {"id": "camera_defects.shake", "module": "camera_defects", "match": {"camera_levels": {"key": "shake", "levels": ["minor", "severe"]}}, "unknown_when": {"detail": "items.shake", "values": ["unknown"]}, "items": ["IMG-6"]},
+  {"id": "camera_defects.contamination", "module": "camera_defects", "match": {"camera_levels": {"key": "contamination", "levels": ["minor", "severe"]}}, "unknown_when": {"detail": "items.contamination", "values": ["unknown"]}, "items": ["IMG-7"]},
   {"id": "dedup.duplicate", "module": "dedup", "match": {"passed": [false]}, "items": ["SET-1"]}
  ],
  "controls": {
