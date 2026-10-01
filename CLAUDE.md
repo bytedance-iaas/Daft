@@ -83,6 +83,8 @@ task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
 | 13 | 提速（`13-curation-speedup.md`，实施记录在 `13-speedup/`）；视频原生判定（`13-video-native-vlm.md`） |
 | 14 | 数据完整性（首节是开工指引；决策 D50–D52） |
 | 15 | ReRun 经 Daemon 代签的预签名地址读登记的数据集（`15-rerun-presigned-access.md`，D55；首节是开工指引，涉及 rerun 仓库） |
+| 16 | 回归测试样本集（`16-regression-samples.md`：检测项分类表、评测集、期望值与打分；样本与真值在 TOS） |
+| 17 | 发现、策略判决与并行两块（`17-findings-and-parallel-blocks.md`，D56–D59；首节是开工指引；立项后取代下文「质检漏斗」的执行短路与硬门 / 软分判决） |
 | `review-2026-09-20.md` | 设计评审记录 |
 
 **契约**在 `docs/contracts/`（一页导读 `SUMMARY.md`）。CLI、Daemon、前端之间只通过这些文件对话，谁都不 import 对方的内部模块：
