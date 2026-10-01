@@ -3,12 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { api, unwrap } from '../../api/client';
 import { moduleName, qk, useModules } from '../../api/queries';
-import type { AdjudicationLine, DecisionValue } from '../../api/types';
+import type { AdjudicationLine, DecisionValue, ReportResponse } from '../../api/types';
 import { PageError } from '../../components/PageError';
 import type { CardView, ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
 import { EpisodeCard } from './EpisodeCard';
 import { usePaged } from './paging';
+import { isAppealable } from '../../lib/registry';
 
 /**
  * 被拒复议 (07 §6, rule 2, D42): rejects attributed to an appealable module (registry
@@ -45,10 +46,10 @@ export function AppealsTab({
   const paged = usePaged(views, resetKey, 'appeals-pager');
   const report = useQuery({
     queryKey: qk.report(taskId, rev),
-    queryFn: () => unwrap(api().GET('/tasks/{id}/report', { params: { path: { id: taskId }, query: { rev } } })),
+    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id: taskId }, query: { rev } } }))) as ReportResponse,
     enabled: rev > 0,
   });
-  const appealable = (reg.data?.modules ?? []).filter((m) => m.appealable);
+  const appealable = (reg.data?.modules ?? []).filter(isAppealable);
   const appealableNames = appealable.map((m) => m.name_zh).join('、');
   const reasons = report.data?.report.overview.reject_reasons ?? [];
   const final = reasons.filter((r) => r.count > 0 && !appealable.some((m) => m.id === r.module));

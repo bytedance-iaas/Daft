@@ -52,6 +52,7 @@ import {
   SO101_TASK,
   tableRows,
 } from './world';
+import { funnelGate, producesAdjudication } from '../lib/registry';
 import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
 import { tickSubtasks } from './subtaskSim';
 
@@ -1159,10 +1160,10 @@ function genericReport(t: Task, revision: number): Report {
         return {
           id: m.id,
           state: 'succeeded' as const,
-          gate: spec.gate,
+          gate: funnelGate(spec) as 'hard' | 'soft' | 'dedup' | 'none',
           summary: sampleSummary(m.id, m.episodes_total || s.total),
           tables: spec.tables.map((tb) => ({ id: tb.id, rows: tableRows(tb.id).length, file: `tables/${tb.id}.parquet` })),
-          adjudication: spec.produces_adjudication && t.pending_adjudication ? { pending: t.pending_adjudication } : null,
+          adjudication: producesAdjudication(spec) && t.pending_adjudication ? { pending: t.pending_adjudication } : null,
         };
       }),
     skipped_modules: t.modules.filter((m) => !m.selected && m.availability !== 'available').map((m) => ({ id: m.id, reason: m.unavailable_reason ?? '未运行' })),

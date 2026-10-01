@@ -21,6 +21,7 @@ import os
 import time
 
 from ..contracts import modules as registry
+from . import gates_v1
 from .aggregate import NAMES_CN
 from .records import (CRASHES_NAME, LATENCY_FILE, PLAN_NAME, SOURCE_MANIFEST_NAME, USAGE_FILE,
                       latest_results, module_dir, parts_used, read_jsonl, write_json_atomic,
@@ -201,7 +202,7 @@ def _summary(rev: Revision, m: str) -> dict:
                     "gap" if d.get("gap_frames") else "other")
                 why[key] = why.get(key, 0) + 1
         out["fail_kinds"] = why
-    if res and registry.get(m).affects_dataset_verdict:
+    if res and gates_v1.votes(m):
         out.update(_chart_stats(rev, m, [res[e] for e in sorted(res)], scores))
     return out
 
@@ -361,7 +362,7 @@ def module_sections(rev: Revision) -> list[dict]:
         res = rev.results[m]
         missing = _missing(rev, m)
         errors = [e for e, r in res.items() if r["verdict"] == "error"] + missing
-        sec: dict = {"id": m, "gate": spec.gate, "summary": _summary(rev, m),
+        sec: dict = {"id": m, "gate": gates_v1.gate(m), "summary": _summary(rev, m),
                      "tables": _tables(rev, m, rev.dir), "adjudication": None}
         if not res and missing:
             sec["state"] = "failed"

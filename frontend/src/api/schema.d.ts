@@ -1268,37 +1268,70 @@ export interface components {
             api_key?: string;
             max_concurrency?: number;
         };
+        /** @description C1 2.0 (design doc 17 §2): where every module runs, what it can find and what it covers. The console takes every module, code and item name from here. */
         ModuleRegistry: {
             registry_version: string;
-            stages: ("integrity" | "numeric" | "frame" | "vlm" | "post_verdict" | "profile_vlm")[];
+            /** @description the taxonomy (C6) every code maps into */
+            taxonomy_version: string;
+            /** @description The two blocks that run side by side and never filter each other (D57); inside a block every stage gets every selected episode */
+            blocks: {
+                /** @enum {unknown} */
+                id: "cpu" | "vlm";
+                title_zh: string;
+                stages: components["schemas"]["RegistryStage"][];
+            }[];
+            /** @description every stage, the CPU block's first */
+            stages: components["schemas"]["RegistryStage"][];
+            /** @description stages that need the whole selection and start once the earlier stages of their block are done */
+            full_set_stages: components["schemas"]["RegistryStage"][];
+            /** @description blocking (rejects), review (asks a person), info (reported only), with the console's titles */
+            finding_levels: {
+                id: components["schemas"]["FindingLevel"];
+                title_zh: string;
+            }[];
+            /** @description why a module could not assess an item on an episode (design doc 17 §1.4) */
+            unassessable_reasons: {
+                id: string;
+                title_zh: string;
+            }[];
             /** @description The questions a person can be asked on the adjudication page (D43). A page shows a line it has no dedicated view for from this entry: its title, the question's reason and one button per decision. */
             review_lines: components["schemas"]["ReviewLine"][];
+            /** @description the bound taxonomy (C6, docs/contracts/taxonomy.json) without its sample-set notes */
+            taxonomy: {
+                dimensions: {
+                    id: string;
+                    name_zh: string;
+                }[];
+                items: {
+                    id: components["schemas"]["TaxonomyItemId"];
+                    dimension: string;
+                    name_zh: string;
+                    explain_zh: string;
+                    /**
+                     * @description control: a legal case that must not be reported
+                     * @enum {unknown}
+                     */
+                    kind: "defect" | "phenomenon" | "reference" | "control";
+                    /** @enum {unknown} */
+                    level: "episode" | "dataset";
+                }[];
+            };
             modules: {
                 id: components["schemas"]["ModuleId"];
                 name_zh: string;
                 summary_zh: string;
                 /** @enum {unknown} */
                 level: "episode" | "dataset";
-                /** @enum {unknown} */
-                gate: "hard" | "soft" | "dedup" | "none";
                 needs: ("timestamps" | "action" | "state" | "video" | "embodiment_profile" | "vlm" | "raw_bytes" | "eef_input")[];
                 /** @enum {unknown} */
-                stage: "integrity" | "numeric" | "frame" | "vlm" | "post_verdict" | "profile_vlm";
-                /** @description a module id (registry 1.4) means that module's own results */
-                depends_on: ("numeric_gates" | "frame_gates" | "autolabel" | "funnel_verdict" | "dedup" | "eef_video_consistency")[];
-                /**
-                 * @description funnel: the survivors of the stages before; all_selected: every selected episode (1.4)
-                 * @enum {unknown}
-                 */
-                input_scope: "funnel" | "all_selected";
-                /** @description false: an advisory module (1.4); aggregate never counts it, keep / drop / held and the delivered lists do not depend on it, and its records carry passed = score = null with the sub-item statuses in details (shown as advisory, not as an abstention) */
-                affects_dataset_verdict: boolean;
-                /** @description raises review items or its rejects may be appealed */
-                produces_adjudication: boolean;
-                /** @description the lines it raises */
-                review_lines: components["schemas"]["ReviewLineId"][];
-                /** @description a reject attributed to it may be appealed (D42) */
-                appealable: boolean;
+                block: "cpu" | "vlm";
+                stage: components["schemas"]["RegistryStage"];
+                /** @description data only: the captions autolabel writes for episodes without a task text */
+                depends_on: "autolabel"[];
+                /** @description the finding codes the module reports (design doc 17 §2.2) */
+                codes: components["schemas"]["FindingCode"][];
+                /** @description the items it assesses on an episode it can read: its codes' items plus items it only reports a reading for; a record says which of them it could not assess and why */
+                covers: components["schemas"]["TaxonomyItemId"][];
                 param_schema: Record<string, unknown>;
                 tables: {
                     id: string;
@@ -1310,6 +1343,33 @@ export interface components {
                 /** @description present on a module answered inside this host module's requests (1.19.0): it runs whenever the host runs, has no request of its own and cannot be selected alone */
                 rides_on?: components["schemas"]["ModuleId"];
             }[];
+        };
+        /**
+         * @description a stage of a block (registry 2.0); a plan's stage ids are its own (cli/plan.schema.json)
+         * @enum {unknown}
+         */
+        RegistryStage: "integrity" | "numeric" | "frame" | "dedup" | "autolabel" | "vlm" | "profile";
+        /** @enum {unknown} */
+        FindingLevel: "blocking" | "review" | "info";
+        /** @description an item of the taxonomy (C6), e.g. FILE-3, MV-5 */
+        TaxonomyItemId: string;
+        FindingCode: {
+            /** @description unique within its module */
+            code: string;
+            /** @description null only for an info-level item of the platform's own */
+            item: components["schemas"]["TaxonomyItemId"] | null;
+            name_zh: string;
+            /**
+             * @description the default; a module may grade by measure
+             * @enum {unknown}
+             */
+            severity: "high" | "medium" | "low";
+            level: components["schemas"]["FindingLevel"];
+            /** @enum {unknown} */
+            scope_kind: "episode" | "camera" | "channel" | "dataset";
+            /** @description blocking codes only: a reject it caused may be appealed (D42) */
+            appealable: boolean;
+            review_line?: components["schemas"]["ReviewLineId"];
         };
         /** @description a line of the registry's review_lines; today label, task_verdict, reject_appeal, eef_check, integrity_check */
         ReviewLineId: string;
@@ -1638,6 +1698,14 @@ export interface components {
             };
             /** @default false */
             clips?: boolean;
+            /** @description The verdict policy (design doc 17 §4, D58): which findings reject an episode, which ask a person and which are only reported. `default` gives every finding code its registry level (today's hard gates reject, today's suspects and abstentions are asked); `report_only` rejects nothing and asks nothing. Frozen at start; changing it later re-runs aggregate only. The funnel keeps judging by `default` until the policy aggregate replaces it (F12.3). */
+            policy?: {
+                /**
+                 * @default default
+                 * @enum {unknown}
+                 */
+                preset?: "default" | "report_only";
+            };
             limits?: {
                 /** @description At most this many CPU workers for this task; it can only lower the default, which is every core of the container but two (P4, D54). Unset: that default. The CPU workers of all running tasks come out of one pool of that size in the Daemon, so fewer may run at a time while other tasks run too. */
                 cpu_concurrency?: number;
@@ -1695,6 +1763,13 @@ export interface components {
         StageProgress: {
             /** @description v1: autolabel, numeric, frame, vlm, verdict, dedup, profile, final; then export, report, verify; new modules may add stages */
             id: string;
+            /**
+             * @description the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks
+             * @enum {unknown}
+             */
+            block?: "cpu" | "vlm";
+            /** @description a full-set stage: it starts once the earlier stages of its block are done (dedup, profile) */
+            full_set?: boolean;
             /** @enum {unknown} */
             state: "pending" | "running" | "succeeded" | "completed_with_errors" | "failed" | "skipped";
             done: number;
@@ -1919,6 +1994,12 @@ export interface components {
             /** @enum {string|null} */
             verdict: "keep" | "drop" | "held" | null;
             verdict_reason: string | null;
+            /** @description two-block pipelines (design doc 17 §5.5): every stage the episode takes part in, both blocks; last_stage / next_stage describe the funnel and go with it (F12.4) */
+            stages?: {
+                [key: string]: "waiting" | "running" | "done" | "error";
+            };
+            /** @description the verdict is the policy applied to the findings so far, not the final one (two-block pipelines: the final verdict is only given by aggregate) */
+            provisional?: boolean;
             /** @description Sum of completed layer processing times for this episode; excludes queue and CPU admission waits */
             processing_s?: number | null;
             stage_processing_s?: {
@@ -1976,6 +2057,10 @@ export interface components {
             reason_modules: components["schemas"]["ModuleId"][];
             /** @description the source modules of the open questions */
             review_modules: components["schemas"]["ModuleId"][];
+            /** @description findings results (C2 2.0) only - the taxonomy items of its findings, every module together */
+            items?: components["schemas"]["TaxonomyItemId"][];
+            /** @description findings results (C2 2.0) only - the levels its findings got under the task's policy */
+            levels?: components["schemas"]["FindingLevel"][];
         };
         TaskEpisodePage: {
             items: components["schemas"]["TaskEpisode"][];
@@ -2298,8 +2383,18 @@ export interface components {
             meta_fingerprint: components["schemas"]["digest"];
             warnings: string[];
         };
+        /**
+         * @description a document C2 2.0 changed, as tasks made since write it; its 1.0 form stays readable for tasks made before (D59)
+         * @constant
+         */
+        schema_version_2: "2.0";
+        limit: {
+            value: number;
+            /** @enum {unknown} */
+            bound_by: "task" | "model" | "backend" | "site" | "planner" | "running_tasks";
+        };
         module_list: components["schemas"]["module_id"][];
-        /** @description which episode set a stage consumes */
+        /** @description which episode set a stage consumes; 2.0 plans use only selected and unlabeled */
         episodes_ref: string;
         /** @description Concurrency gates of a stage. The eight named ones are v1's; a new module may declare its own, named like a module id. */
         gates: {
@@ -2322,13 +2417,8 @@ export interface components {
                 frame_policy: string;
             }[];
         };
-        limit: {
-            value: number;
-            /** @enum {unknown} */
-            bound_by: "task" | "model" | "backend" | "site" | "planner" | "running_tasks";
-        };
         stage: {
-            /** @description v1's stages are autolabel, numeric, frame, vlm, verdict, dedup, profile, final; stages of new modules follow the same pattern */
+            /** @description 1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup; autolabel, vlm, profile) and final; stages of new modules follow the same pattern */
             id: string;
             /** @enum {unknown} */
             kind: "cpu" | "vlm" | "aggregate";
@@ -2337,17 +2427,45 @@ export interface components {
             modules?: components["schemas"]["module_list"];
             episodes?: components["schemas"]["episodes_ref"];
             concurrency?: number;
+            /** @description 1.0 only: the stage's hard gates */
             hard_gates?: components["schemas"]["module_list"];
             gates?: components["schemas"]["gates"];
             merge?: components["schemas"]["merge"];
             /** @enum {unknown} */
             phase?: "funnel" | "final";
+            /**
+             * @description 2.0: the block the stage runs in
+             * @enum {unknown}
+             */
+            block?: "cpu" | "vlm";
+            /** @description 2.0: the stage before it in its block; a block's first stage has none */
+            after?: string;
+            /** @description 2.0: needs the whole selection at once (dedup, profile) */
+            full_set?: boolean;
         } & (unknown & unknown);
-        /**
-         * curation plan --json / plan.json (schema 1.0)
-         * @description The execution plan the planner derives (design doc 04, section 3). It is data: the Daemon stores it with the task, schedules by it and serves it read-only. Callers can only lower the limits it is derived from (D31).
-         */
-        "plan.schema": {
+        stage_2: {
+            /** @enum {unknown} */
+            episodes?: "selected" | "unlabeled";
+        } & unknown;
+        stage_1: unknown;
+        plan_2: {
+            schema_version: components["schemas"]["schema_version_2"];
+            /** @description the effective N the VLM gates are derived from */
+            vlm_parallelism: number;
+            /** @description The upper bounds the plan honoured, and where each came from. */
+            limits: {
+                /** @description The most CPU workers this task may use: every core but two (planner) or the task's cap (task), whichever is lower (P4, D54). Plans made before D54 may say site. Under the Daemon, the workers of all running tasks share one pool of that many slots. */
+                cpu_concurrency: components["schemas"]["limit"];
+                vlm_parallelism: components["schemas"]["limit"];
+            };
+            stages: (components["schemas"]["stage"] & components["schemas"]["stage_2"])[];
+            estimates: {
+                vlm_requests: number;
+                wall_clock_s: number;
+                notes: string[];
+            };
+        };
+        plan_1: {
             schema_version: components["schemas"]["schema_version"];
             /** @description the effective N the VLM gates are derived from */
             vlm_parallelism: number;
@@ -2357,14 +2475,24 @@ export interface components {
                 cpu_concurrency: components["schemas"]["limit"];
                 vlm_parallelism: components["schemas"]["limit"];
             };
-            stages: components["schemas"]["stage"][];
+            stages: (components["schemas"]["stage"] & components["schemas"]["stage_1"])[];
             estimates: {
                 vlm_requests: number;
                 wall_clock_s: number;
                 notes: string[];
             };
         };
+        /**
+         * curation plan --json / plan.json (schema 2.0; 1.0 still read)
+         * @description The execution plan the planner derives (design doc 04, section 3). It is data: the Daemon stores it with the task, schedules by it and serves it read-only. Callers can only lower the limits it is derived from (D31). 2.0 (design doc 17 §3.3): two blocks - every check stage names its block (cpu / vlm) and the stage before it in that block (after); full-set stages (dedup, profile) start once the earlier stages of their block are done; every stage reads the task's selection, so there are no survivors and no hard gates. 1.0 is the funnel's plan, still read for tasks made before (D59).
+         */
+        "plan.schema": {
+        } & (components["schemas"]["plan_2"] | components["schemas"]["plan_1"]);
         revision: number;
+        /** @description a code of the module's catalogue in the registry (C1 2.0) */
+        finding_code: string;
+        /** @description an item of the taxonomy (C6), e.g. FILE-3 */
+        item_id: string;
         token_usage: {
             prompt: number;
             completion: number;
@@ -2373,7 +2501,187 @@ export interface components {
             requests: number;
             requests_unknown_usage: number;
         };
-        module_section: {
+        overview_2: {
+            dataset: Record<string, unknown>;
+            run: Record<string, unknown>;
+            counts: {
+                total: number;
+                passed: number;
+                rejected: number;
+                held: number;
+                review: number;
+                /** @description episodes left out because source files are missing (D40); not part of total */
+                skipped?: number;
+            };
+            /** @description passed / total; held is neither */
+            pass_rate: number | null;
+            /** @description rejected episodes per blocking reason: a finding (module, code, item), a person or a duplicate; an episode with several blocking findings counts under each */
+            reject_reasons: {
+                module: components["schemas"]["module_id"];
+                /** @enum {unknown} */
+                kind: "finding" | "human" | "duplicate";
+                code?: components["schemas"]["finding_code"];
+                item?: components["schemas"]["item_id"] | null;
+                count: number;
+            }[];
+            token_usage: components["schemas"]["token_usage"];
+            duration_s: number | null;
+            /** @description the policy the verdicts were computed with (frozen at start; a copy is policy.json in the revision) */
+            policy: {
+                preset: string;
+                version?: string;
+            };
+            /** @description which taxonomy items this task's modules cover (design doc 17 §5.2, the coverage matrix) */
+            coverage: {
+                taxonomy_version: string;
+                covered: components["schemas"]["item_id"][];
+                not_covered: components["schemas"]["item_id"][];
+                unassessable: {
+                    item: components["schemas"]["item_id"];
+                    reason: string;
+                    count: number;
+                }[];
+            };
+            /** @description episodes with a finding of each item, every module together, split by the level the policy gave */
+            findings_by_item: {
+                item: components["schemas"]["item_id"] | null;
+                episodes: number;
+                blocking: number;
+                review: number;
+                info: number;
+            }[];
+        };
+        /** @enum {unknown} */
+        finding_level: "blocking" | "review" | "info";
+        /** @enum {unknown} */
+        severity: "high" | "medium" | "low";
+        /** @description what a finding is about; none means the whole episode. Cameras by their short name, as the expectations write them */
+        scope: {
+            camera?: string;
+            cameras?: string[];
+            channel?: string;
+            arm?: string;
+            clock?: string;
+            file?: string;
+        };
+        /** @description one problem a module found (design doc 17 §1.2). Its level is not the module's: a policy gives it in aggregate */
+        finding: {
+            code: components["schemas"]["finding_code"];
+            /** @description the item the registry maps the code to; null only for an info-level item of the platform's own */
+            item: components["schemas"]["item_id"] | null;
+            severity: components["schemas"]["severity"];
+            scope?: null | components["schemas"]["scope"];
+            /** @description [first, last] frame, counted from the episode's first, both included (P19) */
+            frames?: [
+                number,
+                number
+            ];
+            /** @description [start, end) seconds from the episode's start */
+            time_s?: [
+                number,
+                number
+            ];
+            /** @description the numbers behind the finding */
+            readings?: Record<string, unknown>;
+            /** @description one Chinese sentence with camera, position and numbers; shown as is */
+            message_zh: string;
+            /** @description evidence files, relative to the run directory */
+            evidence?: string[];
+            /**
+             * @description a dataset-level finding (checks/<module>/dataset.json): counted once per dataset
+             * @constant
+             */
+            unit?: "dataset";
+        };
+        module_section_2: {
+            id: components["schemas"]["module_id"];
+            /** @enum {unknown} */
+            state: "succeeded" | "completed_with_errors" | "failed";
+            /** @description the 1.0 keys of the module's own views stay (design doc 06 §6.2); 2.0 adds the generic statistics every section has */
+            summary: {
+                /** @description episodes the module judged (status ok) */
+                assessed_episodes: number;
+                /** @description per finding code: the episodes with it and their share of the assessed ones */
+                items: {
+                    item: components["schemas"]["item_id"] | null;
+                    code: components["schemas"]["finding_code"];
+                    level: components["schemas"]["finding_level"];
+                    episodes: number;
+                    share: number | null;
+                    by_camera?: {
+                        camera: string;
+                        episodes: number;
+                    }[];
+                }[];
+                unassessable: {
+                    reason: string;
+                    count: number;
+                    item?: components["schemas"]["item_id"];
+                }[];
+                /** @description sub-item -> histogram of its readings */
+                score_hist?: Record<string, unknown>;
+                /** @description the module's dataset-level findings (checks/<module>/dataset.json) */
+                dataset_findings?: components["schemas"]["finding"][];
+            };
+            tables: {
+                id: string;
+                rows: number;
+                /** @description tables/<id>.parquet, sorted by episode_index */
+                file: string;
+            }[];
+            adjudication: null | {
+                /** @description open questions this module raised that must be decided */
+                pending: number;
+                /** @description rejects attributed to this module a person may appeal (D42); not pending */
+                appealable?: number;
+            };
+            episodes_error?: number;
+            error?: string;
+            /** @description code / prompt hashes when the result came from a subtask (design doc 06, section 2) */
+            fingerprints?: Record<string, unknown>;
+        } & unknown;
+        skipped_modules: {
+            id: components["schemas"]["module_id"];
+            reason: string;
+        }[];
+        episode_index: number;
+        /** @description episodes left out because source files are missing (D40, as v1 does): never read, no result line, in none of the lists, not part of total */
+        skipped_episodes: {
+            episode_index: components["schemas"]["episode_index"];
+            /** @description the missing object keys, relative to the input */
+            missing: string[];
+        }[];
+        /** @description data package integrity: format, missing fields, unlabeled count, semantics profile / action semantics preflight */
+        integrity: {
+            /** @description what was not checked and why: the source manifest's list plus any found at read time */
+            skipped_episodes?: components["schemas"]["skipped_episodes"];
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description summary; the full profile is perf.json in the same revision */
+        perf: Record<string, unknown>;
+        overview_1: {
+            dataset: Record<string, unknown>;
+            run: Record<string, unknown>;
+            counts: {
+                total: number;
+                passed: number;
+                rejected: number;
+                held: number;
+                review: number;
+                /** @description episodes left out because source files are missing (D40); not part of total */
+                skipped?: number;
+            };
+            /** @description passed / total; held is neither */
+            pass_rate: number | null;
+            reject_reasons: {
+                module: components["schemas"]["module_id"];
+                count: number;
+            }[];
+            token_usage: components["schemas"]["token_usage"];
+            duration_s: number | null;
+        };
+        module_section_1: {
             id: components["schemas"]["module_id"];
             /** @enum {unknown} */
             state: "succeeded" | "completed_with_errors" | "failed";
@@ -2397,61 +2705,71 @@ export interface components {
             /** @description code / prompt hashes when the result came from a subtask (design doc 06, section 2) */
             fingerprints?: Record<string, unknown>;
         } & unknown;
-        episode_index: number;
-        /** @description episodes left out because source files are missing (D40, as v1 does): never read, no result line, in none of the lists, not part of total */
-        skipped_episodes: {
-            episode_index: components["schemas"]["episode_index"];
-            /** @description the missing object keys, relative to the input */
-            missing: string[];
-        }[];
-        /**
-         * revisions/r<NNNN>/report.json (schema 1.0)
-         * @description Report structure (design doc 06, section 6). modules[] follows the selected modules one to one, in registry order; a module that failed keeps its section with the error. URLs are not part of the file: the REST layer adds links.
-         */
-        "report.schema": {
+        report_2: {
+            schema_version: components["schemas"]["schema_version_2"];
+            revision: components["schemas"]["revision"];
+            overview: components["schemas"]["overview_2"];
+            modules: components["schemas"]["module_section_2"][];
+            skipped_modules: components["schemas"]["skipped_modules"];
+            integrity: components["schemas"]["integrity"];
+            perf: components["schemas"]["perf"];
+        };
+        report_1: {
             schema_version: components["schemas"]["schema_version"];
             revision: components["schemas"]["revision"];
-            overview: {
-                dataset: Record<string, unknown>;
-                run: Record<string, unknown>;
-                counts: {
-                    total: number;
-                    passed: number;
-                    rejected: number;
-                    held: number;
-                    review: number;
-                    /** @description episodes left out because source files are missing (D40); not part of total */
-                    skipped?: number;
-                };
-                /** @description passed / total; held is neither */
-                pass_rate: number | null;
-                reject_reasons: {
-                    module: components["schemas"]["module_id"];
-                    count: number;
-                }[];
-                token_usage: components["schemas"]["token_usage"];
-                duration_s: number | null;
-            };
-            modules: components["schemas"]["module_section"][];
-            skipped_modules: {
-                id: components["schemas"]["module_id"];
-                reason: string;
-            }[];
-            /** @description data package integrity: format, missing fields, unlabeled count, semantics profile / action semantics preflight */
-            integrity: {
-                /** @description what was not checked and why: the source manifest's list plus any found at read time */
-                skipped_episodes?: components["schemas"]["skipped_episodes"];
-            } & {
-                [key: string]: unknown;
-            };
-            /** @description summary; the full profile is perf.json in the same revision */
-            perf: Record<string, unknown>;
+            overview: components["schemas"]["overview_1"];
+            modules: components["schemas"]["module_section_1"][];
+            skipped_modules: components["schemas"]["skipped_modules"];
+            integrity: components["schemas"]["integrity"];
+            perf: components["schemas"]["perf"];
         };
         /**
-         * Per-episode check result record (schema 1.0)
-         * @description One line of checks/<module>/results.jsonl (v2) and of records/<module>.jsonl in a parity dump of v1. Frozen early by W0 because the parity tool consumes it; W2 adopts it as part of C2.
+         * revisions/r<NNNN>/report.json (schema 2.0; 1.0 still read)
+         * @description Report structure (design doc 06, section 6). modules[] follows the selected modules one to one, in registry order; a module that failed keeps its section with the error. URLs are not part of the file: the REST layer adds links. 2.0 (design doc 17 §5.1): the overview names the policy, the taxonomy coverage and the findings per item, rejects are counted per blocking finding, and every module section carries the generic per-code statistics; the gates are gone. The console tells the two apart by schema_version (D59).
          */
-        "result-record.schema": {
+        "report.schema": {
+        } & (components["schemas"]["report_2"] | components["schemas"]["report_1"]);
+        /** @description an item the module covers but could not assess on this episode */
+        unassessable: {
+            item: components["schemas"]["item_id"];
+            /** @description one of the registry's unassessable_reasons */
+            reason: string;
+            message_zh: string;
+        };
+        incident: {
+            step: string;
+            cause?: string;
+            camera?: string;
+            call_kind?: string;
+            attempts?: number;
+        };
+        execution_error: {
+            /** @constant */
+            kind: "execution";
+            incidents: components["schemas"]["incident"][];
+        };
+        record_2: {
+            episode_index: components["schemas"]["episode_index"];
+            module: components["schemas"]["module_id"];
+            /**
+             * @description error: the module could not judge this episode properly (D33); no findings, nothing assessed
+             * @enum {unknown}
+             */
+            status: "ok" | "error";
+            findings: components["schemas"]["finding"][];
+            /** @description the items it covers minus the unassessable ones: an assessed item without a finding was checked and found clean */
+            assessed: components["schemas"]["item_id"][];
+            unassessable: components["schemas"]["unassessable"][];
+            /** @description numbers that are no finding, for the report and the episode page */
+            readings: Record<string, unknown>;
+            /** @description module-specific, field names kept from v1 (parity and the episode page) */
+            details: Record<string, unknown>;
+            evidence: string[];
+            elapsed_s: number | null;
+            error: null | components["schemas"]["execution_error"];
+        } & unknown;
+        /** @description Record 1.0 (tasks made before C2 2.0, read only, D59): pass/fail/abstain/scored/error with the funnel gate. */
+        record_1: {
             episode_index: number;
             module: string;
             /**
@@ -2479,6 +2797,12 @@ export interface components {
                 }[];
             };
         } & unknown;
+        /**
+         * Per-episode check result record (schema 2.0; 1.0 still read)
+         * @description One line of checks/<module>/parts/*.jsonl (and of records/<module>.jsonl in a parity dump). 2.0 (design doc 17 §1.1, D56): the module's findings, the taxonomy items it assessed and those it could not, readings and the module's own details; no verdict, no score, no gate - whether the episode is rejected is the policy's call in aggregate. 1.0 is the funnel's record, still read for tasks made before (D59). Self-contained on purpose (no reference to common.schema.json): the parity tool validates records with this file alone; its definitions are common's, and a contract test keeps them equal.
+         */
+        "result-record.schema": {
+        } & (components["schemas"]["record_2"] | components["schemas"]["record_1"]);
     };
     responses: {
         /**

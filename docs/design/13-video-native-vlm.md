@@ -76,7 +76,9 @@ video:
 - **每次都问**，没有开关、界面上也不勾选：`camera_defects` 是 `task_success` 的随附模块
   （`ModuleSpec.rides_on="task_success"`）。凡是 `task_success` 在跑，它就出结果；单独跑它是参数错误。
 - **只出结果，不影响判决**：`affects_dataset_verdict=False`，记录永远是 `passed=score=null`（`abstain`），
-  不进 keep / drop / held，不提复核问题。
+  不进 keep / drop / held，不提复核问题。注册表 2.0（设计 17，2026-10-01）去掉了这个字段：三个细码 `glitch`（IMG-5）、
+  `shake`（IMG-6）、`contamination`（IMG-7）默认级别都是 info，效果相同；漏斗过渡期由 `pipeline/gates_v1.py` 记着它不参与判决，
+  模型没回答（unknown）在记录 2.0 里是 unassessable `model_no_answer`。
 - **解析永不失败**：缺字段、档位写错、时间段越界都只记进 `problems`，三项按 `unknown` 落盘，绝不触发
   格式修复重试，也不影响 `verdict`、`completion` 和 `evidence` 的校验。
 - **写坏了也只赔自己**：整份回答解析不了时，先按花括号配对把 `camera_check` 这一个字段整块剪掉再解析

@@ -257,3 +257,33 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   记录永远是 `abstain`（`passed=score=null`），`details` 有 `protocol=camera-check/1`、`items`（花屏 / 抖动 / 镜头污染各一个跨机位最坏档
   `none|minor|severe|unknown`）、`per_camera`（逐机位档位、时间段与污染种类）和 `clean_ratio`。C4 1.22.0——模块条目加可选字段 `rides_on`
   （`ModuleId`）：前端据此把随附模块从新建任务的模块界面里藏掉；请求里写了随附模块也不报错，只是忽略。C2、C3、C5 不变。
+
+## 十五、2.0：发现、策略判决与并行两块（2026-10-01，F12.1，设计 17，D56–D59）
+
+契约先行：这一版把注册表、C2、C3、C4 改到设计 17 的终态，代码的切换按 F12.2（发现）→ F12.3（策略判决）→ F12.4（两块并行）→ F12.5（前端）
+逐步落地，每一步都能单独上线。
+
+- **C6 分类表（新）** `taxonomy.json` + `taxonomy.schema.json`（1.1，71 项）：检测项的编号、名称、通俗解释、种类（问题 / 现象 / 读数 / 对照）、
+  逐条还是数据集级、对照项守的项。与回归样本集的分类表同一份条目（契约测试逐项比编号、名称、种类、级别、guards），平台侧的注记不在里面。
+- **C1 2.0**：模块写明 `block`（cpu / vlm）与块内的段 `stage`（`integrity`、`numeric`、`frame`、`dedup`；`autolabel`、`vlm`、`profile`），
+  `depends_on` 只剩 `autolabel`；`codes` 是细码目录（每个细码：分类表的项、缺省严重度、默认级别 blocking / review / info、review 级的裁决线、
+  blocking 级可否复议、范围种类），`covers` 是覆盖的项。去掉 `gate`、`input_scope`、`affects_dataset_verdict`、`produces_adjudication`、
+  `review_lines`、模块级 `appealable`（后三项由细码推出）。导出另带 `taxonomy_version`、`taxonomy`、`blocks`、`stages`、`full_set_stages`、
+  `finding_levels`、`unassessable_reasons`。注册表测试：每个细码的项在分类表里、对照项不是任何细码的项、覆盖是分类表编号、默认策略复刻今天的门、
+  P20 八项都有覆盖。漏斗过渡期还要的 `gate` 与「参不参与判决」由 `backend/curation/pipeline/gates_v1.py`（前端 `src/lib/registry.ts`）保留。
+- **C2 2.0**：改了六份文档——记录（`status / findings / assessed / unassessable / readings`，去掉 `verdict / passed / score / gate`）、`check`
+  （计数 `{total, ok, error}`，多按细码的 `findings`）、判决行（`blocking / review / info_count`）、四份清单（`reasons[]` 多 `code`、`item`、
+  `appealable`，`kind` 改为 `finding | human | execution_error | duplicate`，去掉 `soft_score`；复核条目多 `codes`、`items`）、报告（`policy`、
+  `coverage`、`findings_by_item`、按细码的 `reject_reasons`，模块小节去 `gate`、多通用统计）、计划（段带 `block`、`after`、`full_set`，没有
+  `hard_gates` 与幸存者集合）。**每份都写成「2.0 | 1.0」两个具名变体**：新任务写 2.0，旧任务的 1.0 照旧可读（D59），生成的前端类型
+  也是两个具名类型。其余文档形状没变，`schema_version` 仍是 1.0（只有不兼容的改动才升版本）。公共定义多 `finding`、`unassessable`、`scope`、
+  `item_id`、`finding_ref` 等。每份都补了 2.0 的合法与不合法示例，1.0 的示例保留。`result-record.schema.json` 照旧自包含（对账工具只拿这一个文件校验记录），
+  用到的公共定义抄在它自己的 `$defs` 里，契约测试保证与 `common.schema.json` 一致。
+- **C3 1.2**：进度行可选 `block`；两块计划的 stage 用注册表的段名，`post_verdict`、`profile_vlm` 随漏斗退役。
+- **C4 2.0.0**：`ModuleRegistry` 换成注册表 2.0 的形状（`FindingCode`、`RegistryStage`、`FindingLevel`、`TaxonomyItemId`）；`TaskParams.policy`
+  （`{preset: default | report_only}`，开始时冻结；F12.3 之前漏斗照旧按 default 判）；可选的 `StageProgress.block` / `full_set`、
+  `PipelineEpisode.stages` / `provisional`、`TaskEpisode.items` / `levels`。报告、计划、记录引用 C2 2.0。前端类型已重新生成；前端在 F12.5
+  之前把这些文档按 1.0 读。
+- **C5**：注记——`TaskModule.episodes_total` 在两块计划上是选中条数；`stale` 只看数据依赖（改标之后的描述），判决变了不再让模块作废。
+  策略存在任务参数里（`params.policy`），**不加列**（设计 17 原写「任务多 policy 列」，落地时简化，见设计 17 §7）。
+- **设计 17 原文的两处细化**：C2 只升改了形状的六份（原写 common 的 `schema_version` 整体升 2.0）；策略放任务参数、不加列。

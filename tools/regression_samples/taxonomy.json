@@ -49,6 +49,10 @@
    "samples": "合成（平台已有夹具）",
    "platform": "能判：`file_empty`（0 字节实测拒）。**缺了文件的条目在快照阶段被排除，最后没有判决**（注入实测，§11 第 12 条）",
    "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.file_empty",
+    "data_integrity.video_missing"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "文件缺失、0 字节、过小",
@@ -72,6 +76,10 @@
    "samples": "合成（已有夹具）",
    "platform": "能判：`file_truncated`、`zero_filled`",
    "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.file_truncated",
+    "data_integrity.zero_filled"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "视频或表格截断、零填充",
@@ -95,6 +103,12 @@
    "samples": "合成（已有夹具）",
    "platform": "能判：`structure_invalid`、`crc_mismatch`；缺结束标识记为可疑（`cut_off`）。没有摘要区、CRC 为 0 按规范放行",
    "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.structure_invalid",
+    "data_integrity.crc_mismatch",
+    "data_integrity.cut_unreadable",
+    "data_integrity.cut_off"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "mcap 结构损坏：缺结束标识、结构读不出、写了的 CRC 不符",
@@ -118,6 +132,10 @@
    "samples": "合成（已有夹具）；真实：GenRobot mcap 22 条开头缺关键帧",
    "platform": "能判，但要打开逐帧解码（缺省关）：`decode_failed`；被解码器掩盖的错误记为可疑",
    "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.decode_failed",
+    "data_integrity.decode_concealed"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "视频解码失败：文件能打开，但有帧解不出来",
@@ -142,7 +160,11 @@
    "origin": "文；具",
    "samples": "标记；合成",
    "platform": "部分：帧数对不上记为可疑，不拒绝",
-   "platform_status": "部分",
+   "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.count_mismatch",
+    "data_integrity.length_mismatch"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "帧数与声明不符、各路不等长",
@@ -169,6 +191,9 @@
    "samples": "合成",
    "platform": "能判：`row_invalid`",
    "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.values_invalid"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "数值非法：NaN、无穷、形状不对",
@@ -193,6 +218,7 @@
    "samples": "「不符」要合成；「不一」有真实的（A4 两种工位）",
    "platform": "没有",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "dataset",
    "description": "分辨率：声明与实际不符；数据集内不一",
@@ -215,7 +241,10 @@
    "origin": "具",
    "samples": "合成（第二批注入：声明的 fps、帧数与实际不符）",
    "platform": "没有：预检只查必需字段在不在",
-   "platform_status": "没有",
+   "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.metadata_invalid"
+   ],
    "kind": "defect",
    "level": "dataset",
    "description": "机器读的元数据自相矛盾，或者和实际数据不符",
@@ -239,6 +268,7 @@
    "samples": "真实",
    "platform": "实测通过：MPEG-4 Part 2、H.264、AV1 都正常解码；带触觉「图像」列的数据集（C6）正常读取",
    "platform_status": "能处理",
+   "platform_codes": [],
    "kind": "control",
    "level": "episode",
    "description": "对照：少见但合法的编码与布局",
@@ -269,11 +299,15 @@
     "astra6_v1": [],
     "pantheon": []
    },
-   "platform_status": "待测",
    "name": "索引与引用对不上",
    "description": "索引与引用对不上：episode / 帧索引、任务引用、共享文件里的起止偏移",
    "samples": "合成（第二批注入，LeRobot v3）",
    "platform": "待测",
+   "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.table_inconsistent",
+    "data_integrity.table_overlap"
+   ],
    "explain_zh": "表里的索引或引用指错了：帧号重复或跳号、episode 编号和它所在的位置对不上、任务编号指向不存在的任务；LeRobot v3 里一条 episode 在共享文件里的起止偏移写错，读出来会混进别的 episode 的数据。"
   },
   {
@@ -284,7 +318,13 @@
    "origin": "需",
    "samples": "真实：RH20T 黑帧占位、FastUMI 加米任务 ep 2604（No Signal）；合成",
    "platform": "部分：mcap 能和同数据集的多数条目比，缺 topic 记为可疑；LeRobot 缺视频文件时读取报错",
-   "platform_status": "部分",
+   "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.action_missing",
+    "data_integrity.stream_missing",
+    "data_integrity.dark_camera",
+    "visual_quality.dead_or_padded"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "传感器流缺失（整路没有）",
@@ -308,6 +348,7 @@
    "samples": "真实：G01（相机）、G04（动作流）",
    "platform": "**没有（实测）**：两条都放行。G01 只留下 `frozen_ratio 0.44` 的读数",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "传感器流中途掉线",
@@ -335,6 +376,11 @@
    "samples": "标记（A3、A4）；合成",
    "platform": "能判：间隔超过名义值 1.8 倍即拒绝。只看主时间轴。**表里少了行（视频没少）时读取器拒绝整个数据集**（注入实测，§11 第 11 条）",
    "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.rate_outlier",
+    "timestamp_check.gap",
+    "timestamp_check.jitter"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "丢帧、时间跳变",
@@ -360,6 +406,10 @@
    "samples": "合成；标记",
    "platform": "能判",
    "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.timestamps_invalid",
+    "timestamp_check.out_of_order"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "时间戳非单调、重复",
@@ -383,6 +433,10 @@
    "samples": "真实（E5 里 droid 的 ep 18）；合成",
    "platform": "能判：短于 1 s 拒绝",
    "platform_status": "能判",
+   "platform_codes": [
+    "timestamp_check.fragment",
+    "timestamp_check.single_stamp"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "残段、过短",
@@ -410,6 +464,7 @@
    "samples": "真实：G02 的右腕相机",
    "platform": "没有（实测）：没有反映",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "出帧不均匀（时间戳均匀，画面不均匀）",
@@ -432,7 +487,8 @@
    "origin": "文",
    "samples": "真实：G05、G06（都要申请）",
    "platform": "未测；照代码没有专门的检查",
-   "platform_status": "未测",
+   "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "画面剪切、缺一小段",
@@ -457,7 +513,8 @@
    "origin": "—",
    "samples": "真实：A4（要申请）",
    "platform": "未测",
-   "platform_status": "未测",
+   "platform_status": "能处理",
+   "platform_codes": [],
    "kind": "control",
    "level": "dataset",
    "description": "对照：各流各有时钟",
@@ -482,7 +539,10 @@
    "origin": "文",
    "samples": "真实：G02，另量出两条（叠 T 恤 ep 433 左相机、加米 ep 2604 右相机）",
    "platform": "**部分（实测）**：冻结占比到 95% 才扣分，整条冻结的 G02 那一路得 0 分但被平均掉；注入 3 秒 / 0.8 秒的冻结段放行（占比 39% 也不扣）",
-   "platform_status": "部分",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "visual_quality.frozen"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "画面冻结",
@@ -508,7 +568,10 @@
    "origin": "文",
    "samples": "真实：G07（要申请）",
    "platform": "**部分（实测）**：只有几乎全黑或全白（99% 以上像素削顶）才扣分。注入整条亮度 ×0.12 放行（清晰度分跌到 0.14、曝光分仍 1.0，且被三路平均掉），过曝 ×3.2 放行（分 1.0）",
-   "platform_status": "部分",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "visual_quality.exposure_low"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "过暗、过曝",
@@ -533,7 +596,10 @@
    "origin": "文",
    "samples": "标记",
    "platform": "部分：灰度标准差小于 3 的帧计入「信息死亡」",
-   "platform_status": "部分",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "visual_quality.information_death"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "低对比",
@@ -556,7 +622,10 @@
    "origin": "具",
    "samples": "合成",
    "platform": "**部分（实测）**：注入高斯模糊半径 8 的那一路清晰度 0.04，但三路平均后综合 0.68 放行；半径 2.5 的 0.78 放行。公开数据里腕部相机 0.2–0.6 是不是误报待人看（§11 第 5 条）",
-   "platform_status": "部分",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "visual_quality.sharpness_low"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "模糊、失焦",
@@ -581,7 +650,10 @@
    "origin": "需；文",
    "samples": "真实一条（G10，第二批）；合成",
    "platform": "**部分（实测）**：码流损坏 → 逐帧解码失败被拒（FILE-4 那一路）；已经编码进画面的色块 / 撕裂（12 帧或 2 帧）放行，分 1.0",
-   "platform_status": "部分",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "camera_defects.glitch"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "花屏",
@@ -605,7 +677,10 @@
    "origin": "需",
    "samples": "合成（已有一条）",
    "platform": "**部分（实测）**：注入 ±14 像素 / ±4 像素的抖动放行，分 1.0；只有 EEF–视频一致性模块能报，要上传轨迹文件",
-   "platform_status": "部分",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "camera_defects.shake"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "相机抖动",
@@ -628,7 +703,10 @@
    "origin": "需",
    "samples": "缺真实样本；合成",
    "platform": "**没有（实测）**：注入 35% / 15% 画面宽的模糊污渍放行",
-   "platform_status": "没有",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "camera_defects.contamination"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "镜头污染",
@@ -652,6 +730,7 @@
    "samples": "真实：G11；S6 的两条 DROID（第二批）",
    "platform": "**没有（实测）**：G11 放行；注入盖住 70% 画面 5 秒的方块放行，分 1.0",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "视觉遮挡",
@@ -682,6 +761,7 @@
    "samples": "真实：S2、S3 已量出读数；S1 第二批",
    "platform": "没有：平台不读深度流",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "reference",
    "level": "episode",
    "description": "Depth 空洞、噪声",
@@ -706,6 +786,7 @@
    "samples": "真实：G12",
    "platform": "实测通过",
    "platform_status": "能处理",
+   "platform_codes": [],
    "kind": "control",
    "level": "episode",
    "description": "对照：自动曝光、光照突变",
@@ -733,6 +814,7 @@
    "samples": "真实",
    "platform": "实测通过：鱼眼（A1）、超宽 1280×480（B5）",
    "platform_status": "能处理",
+   "platform_codes": [],
    "kind": "control",
    "level": "episode",
    "description": "对照：特殊画面",
@@ -758,6 +840,7 @@
    "samples": "真实：G01、G02、G11（一路掉线、冻结、被盖住，其余正常）；「换成别的条目的画面」要合成",
    "platform": "**没有（实测）**：各路相机各打各的分，没有跨相机的比较",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "多视角内容不一致：各路不是同一时刻的同一个场景。含 v0.2 的「多视角冲突」",
@@ -781,6 +864,7 @@
    "samples": "真实：S4，前视与腕部相机标反，有修正版成对，共 60 条；左右手对调要合成",
    "platform": "**没有（实测）**：标反与修正两版的结果除了机位名对调，完全相同",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "身份一致：左右手、机位的标注和画面对得上",
@@ -809,7 +893,10 @@
    "origin": "需",
    "samples": "合成；标记",
    "platform": "部分：同步检查逐路测时间差，各路不一致时只标注",
-   "platform_status": "部分",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "video_action_sync.lag_inconsistent"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "多视角时间不同步：同一事件在各路里出现的时间不一样",
@@ -833,7 +920,16 @@
    "origin": "具",
    "samples": "合成（已有）；真实（S6、C4，第二批）",
    "platform": "能判：EEF–视频一致性模块，要上传轨迹文件，只支持 LeRobot",
-   "platform_status": "能判",
+   "platform_status": "部分",
+   "platform_codes": [
+    "eef_video_consistency.inconsistent",
+    "eef_video_consistency.unsettled",
+    "eef_video_consistency.opinion_mismatch",
+    "eef_video_consistency.record_mismatch"
+   ],
+   "platform_conditions": [
+    "要上传 trajectory.json"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "相机标定、末端投影与画面不符",
@@ -857,6 +953,12 @@
    "samples": "真实：G13、G14（第二批）",
    "platform": "**部分（实测）**：注入幅度 20% 量程的锯齿被运动学极限的末端速度上限（1.87 m/s）抓到；5% 的放行（平滑度 0.54 不扣）",
    "platform_status": "部分",
+   "platform_codes": [
+    "motion_quality.smoothness_low"
+   ],
+   "platform_conditions": [
+    "数据集要有状态量"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "动作呈锯齿",
@@ -880,6 +982,12 @@
    "samples": "真实：G03",
    "platform": "**部分（实测）**：G03 定位到第 383–384 帧但孤立度不够不扣分；注入 12 倍 p95 步长的跳变被运动学极限（末端速度）抓到，4 倍的放行（运动质量 0.84）",
    "platform_status": "部分",
+   "platform_codes": [
+    "motion_quality.spike"
+   ],
+   "platform_conditions": [
+    "数据集要有状态量"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "单点大跳变",
@@ -907,6 +1015,7 @@
    "samples": "真实：量出两条（夹爪开度全程是一个值）；G09 要申请",
    "platform": "**没有（实测）**：夹爪开度全程一个值（真实两条、注入两条）都放行，`gripper_jitter` 满分",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "某个通道全程不动",
@@ -933,7 +1042,19 @@
    "origin": "具",
    "samples": "合成",
    "platform": "能判（规格库里有的本体）。实测：LeRobot 官方的 SO-101 样本 50 条里有 7 条因速度越限被拒，是不是误报要人看（§11）",
-   "platform_status": "能判",
+   "platform_status": "部分",
+   "platform_codes": [
+    "kinematic_limits.joint_limit",
+    "kinematic_limits.velocity_limit",
+    "kinematic_limits.ee_reach",
+    "kinematic_limits.ee_translation_velocity",
+    "kinematic_limits.ee_rotation_velocity",
+    "motion_quality.actuator_saturation"
+   ],
+   "platform_conditions": [
+    "数据集要有状态量",
+    "机器人型号要在规格库里"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "关节位置、速度越限",
@@ -957,6 +1078,12 @@
    "samples": "标记",
    "platform": "部分：有夹爪抖动率",
    "platform_status": "部分",
+   "platform_codes": [
+    "motion_quality.gripper_jitter"
+   ],
+   "platform_conditions": [
+    "数据集要有状态量"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "夹爪量程越界、传感器毛刺",
@@ -980,7 +1107,13 @@
    "origin": "具",
    "samples": "真实：E4",
    "platform": "能判：语义 profile 加运行期的语义预检；这一轮没跑",
-   "platform_status": "能判",
+   "platform_status": "部分",
+   "platform_codes": [
+    "motion_quality.action_semantics_undetermined"
+   ],
+   "platform_conditions": [
+    "数据集要有状态量"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "动作语义读错",
@@ -1003,7 +1136,8 @@
    "origin": "具",
    "samples": "真实：C1（仅内部）",
    "platform": "未测",
-   "platform_status": "未测",
+   "platform_status": "没有",
+   "platform_codes": [],
    "kind": "phenomenon",
    "level": "episode",
    "description": "人工接管处不连续",
@@ -1026,7 +1160,13 @@
    "origin": "具",
    "samples": "真实：B2（第二批）",
    "platform": "**有读数（实测）**：状态量从第 70 帧起沿用旧值，运动质量的 `stuck` 子项给 0 并定位到冻结段，但综合分 0.93 放行",
-   "platform_status": "有读数",
+   "platform_status": "部分",
+   "platform_codes": [
+    "motion_quality.stuck"
+   ],
+   "platform_conditions": [
+    "数据集要有状态量"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "状态失效后沿用旧值",
@@ -1050,6 +1190,7 @@
    "samples": "真实",
    "platform": "实测：运动学极限按设计整项跳过。但运动质量在两种本体上几乎恒为 0 分（§11）",
    "platform_status": "能处理",
+   "platform_codes": [],
    "kind": "control",
    "level": "dataset",
    "description": "对照：本体不在规格库、型号为空",
@@ -1073,7 +1214,12 @@
    "origin": "具",
    "samples": "合成（已有）",
    "platform": "**部分（实测）**：单路相机提前 0.6 秒，同步模块量出 −0.53 s 并标为错位，但另两路对齐 → 「证据不一致不定罪」放行；0.2 秒在容差内。所有可信相机一致偏移才拒",
-   "platform_status": "部分",
+   "platform_status": "能判",
+   "platform_codes": [
+    "video_action_sync.misaligned_all",
+    "video_action_sync.camera_misaligned",
+    "video_action_sync.suspect"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "整体时间错位",
@@ -1097,6 +1243,7 @@
    "samples": "真实：G08（要申请）",
    "platform": "没有：时间差的分辨率不够，夹爪通道也不单独测",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "小错位、只有一个通道错位",
@@ -1120,6 +1267,9 @@
    "samples": "真实：G03、G04",
    "platform": "**有读数（实测）**：同步检查把相关的相机标成「测不准」，不拒绝",
    "platform_status": "有读数",
+   "platform_codes": [
+    "video_action_sync.undecidable"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "有动作，画面里没有",
@@ -1147,6 +1297,7 @@
    "samples": "标记",
    "platform": "没有",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "画面在变，动作没有",
@@ -1177,11 +1328,12 @@
     "astra6_v1": [],
     "pantheon": []
    },
-   "platform_status": "待测",
    "name": "时间错位随时间变化",
    "description": "时间错位随时间变化：时钟漂移、中途重置",
    "samples": "合成（第二批注入）",
    "platform": "待测",
+   "platform_status": "没有",
+   "platform_codes": [],
    "explain_zh": "视频和动作的时间差不是固定的：开头对得上，越往后差得越多（时钟漂移），或者中途突然跳一下（时钟重置）。和 AV-1 的区别：AV-1 是从头到尾差同样多。"
   },
   {
@@ -1192,7 +1344,14 @@
    "origin": "需",
    "samples": "真实：C1 的逐帧模式标签、B8 的分步起止时间（都仅内部）",
    "platform": "有读数：运动质量给出开头和结尾的空闲秒数、活动占比，只报不罚",
-   "platform_status": "有读数",
+   "platform_status": "部分",
+   "platform_codes": [
+    "motion_quality.idle_opening",
+    "motion_quality.idle_closing"
+   ],
+   "platform_conditions": [
+    "数据集要有状态量"
+   ],
    "kind": "phenomenon",
    "level": "episode",
    "description": "动作起止点",
@@ -1219,6 +1378,7 @@
    "samples": "真实数据上没有这类标注。仿真里有：RoboFAC 把失败分成六类，其中一类是「漏了步骤」，还标了是哪一步",
    "platform": "没有。**暂缓**",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "步骤缺失",
@@ -1242,6 +1402,7 @@
    "samples": "没有找到带标注的数据集",
    "platform": "没有。**暂缓**",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "动作顺序",
@@ -1265,6 +1426,10 @@
    "samples": "真实：droid200 人工判定、RSS 失败子集、RH20T 评分；G1 按末帧复核",
    "platform": "能判：任务成败模块（要模型）。这一轮没跑",
    "platform_status": "能判",
+   "platform_codes": [
+    "task_success.failure",
+    "task_success.uncertain"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "任务完成度：成功、部分完成、失败、录到一半。含 v0.2 的「步骤完整性」",
@@ -1292,6 +1457,7 @@
    "samples": "真实：C5 的 0–9 评分；B8 的合格与否",
    "platform": "没有",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "完成质量：数据集自带的分步合格 / 不合格标签或 0–9 评分；有不合格的段落即为出现",
@@ -1315,6 +1481,7 @@
    "samples": "真实：G17（要申请）",
    "platform": "没有",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "多余动作：不必要的左右手交接",
@@ -1340,6 +1507,12 @@
    "samples": "唯一的例子 G15 平台读不了",
    "platform": "部分：操作流畅度",
    "platform_status": "部分",
+   "platform_codes": [
+    "motion_quality.fluency_low"
+   ],
+   "platform_conditions": [
+    "数据集要有状态量"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "动作极慢",
@@ -1365,7 +1538,8 @@
    "origin": "—",
    "samples": "真实：A3（要申请）",
    "platform": "未测",
-   "platform_status": "未测",
+   "platform_status": "能处理",
+   "platform_codes": [],
    "kind": "control",
    "level": "episode",
    "description": "对照：长时任务",
@@ -1389,7 +1563,8 @@
    "origin": "文",
    "samples": "真实：已入库的有 7 种",
    "platform": "未测",
-   "platform_status": "未测",
+   "platform_status": "没有",
+   "platform_codes": [],
    "kind": "phenomenon",
    "level": "dataset",
    "description": "任务描述的形态",
@@ -1412,7 +1587,10 @@
    "origin": "具",
    "samples": "真实：A2（原任务名 `Clothes Folding` 对重标注的指令）、C3",
    "platform": "部分：技能画像的标注分歧检出（要模型）",
-   "platform_status": "部分",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "skill_profile.descriptions_conflict"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "一条有多份描述，彼此不一致",
@@ -1435,7 +1613,11 @@
    "origin": "具",
    "samples": "真实：C5 的任务名只是 `task 1`、`task 2`；A3；C1 的 `subtask`",
    "platform": "能处理：没有标注时先由模型补一句描述",
-   "platform_status": "能处理",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "task_success.task_text_missing",
+    "skill_profile.task_text_missing"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "没有标注、只有类别名、占位没填",
@@ -1461,7 +1643,8 @@
    "origin": "文",
    "samples": "真实：B6、B8",
    "platform": "未测",
-   "platform_status": "未测",
+   "platform_status": "没有",
+   "platform_codes": [],
    "kind": "phenomenon",
    "level": "dataset",
    "description": "纯中文、中英混排、混进元数据",
@@ -1485,6 +1668,10 @@
    "samples": "合成",
    "platform": "能判：进「标注分歧」的人工复核（要模型）",
    "platform_status": "能判",
+   "platform_codes": [
+    "task_success.label_conflict_suspect",
+    "skill_profile.label_disagreement"
+   ],
    "kind": "defect",
    "level": "episode",
    "description": "标注与画面不符",
@@ -1513,6 +1700,10 @@
    "samples": "合成（已有）",
    "platform": "能判（实测）：注入的字节级副本和重编码副本都被完整性检查记为可疑 `duplicate_content`，不拒",
    "platform_status": "能判",
+   "platform_codes": [
+    "data_integrity.duplicate_content",
+    "dedup.duplicate"
+   ],
    "kind": "defect",
    "level": "dataset",
    "description": "同一数据集内的重复条目：字节相同，或只是重新编码",
@@ -1535,7 +1726,8 @@
    "origin": "—",
    "samples": "真实（第二批）",
    "platform": "未测",
-   "platform_status": "未测",
+   "platform_status": "能处理",
+   "platform_codes": [],
    "kind": "control",
    "level": "dataset",
    "description": "对照：跨数据集的同源版本",
@@ -1559,7 +1751,11 @@
    "origin": "具",
    "samples": "真实",
    "platform": "部分：技能分布（要模型）；活动占比有读数",
-   "platform_status": "部分",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "timestamp_check.duration_outlier",
+    "skill_profile.undersampled_family"
+   ],
    "kind": "reference",
    "level": "dataset",
    "description": "任务与技能分布、空转占比、长度离群",
@@ -1582,7 +1778,10 @@
    "origin": "具",
    "samples": "真实：A4（mcap，相机 topic 无共同前缀、H.265）、B8（动作列拆开存放）",
    "platform": "实测：LeRobot v2.0、v2.1、v3.0 的 22 个子集全部通过预检并读出；mcap 里 GenRobot 的三个子集读出、ABC-130k 预检拒收；Galaxea 预检拒收（§11 第 8、9 条）；Lance 第二批",
-   "platform_status": "部分",
+   "platform_status": "能判",
+   "platform_codes": [
+    "preflight"
+   ],
    "kind": "phenomenon",
    "level": "dataset",
    "description": "输入格式",
@@ -1606,6 +1805,7 @@
    "samples": "缺",
    "platform": "没有",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "dataset",
    "description": "隐私与安全（人脸、无关人员入镜）",
@@ -1632,6 +1832,7 @@
    "samples": "真实：Pantheon 第二批标注里 MolmoAct2 294 条 `sped_up_recording`（第二批）",
    "platform": "没有",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "录制的时间轴与真实时间不成比例：画面按时间戳播放比实际快或慢（跳帧、时间戳压缩）；不同流各自采样率不同不算",
@@ -1658,6 +1859,7 @@
    "samples": "真实：第二批标注 `setup_change` / `camera_adjustment`（RealOmin 4 条）",
    "platform": "没有",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "一条里相机被碰动、取下或视角未经声明地改变；有意的运镜和移动底盘不算",
@@ -1683,7 +1885,8 @@
    "origin": "具",
    "samples": "真实：第二批标注 `success_then_undone` 53 条（MolmoAct2 25、Galaxea 23、RealOmin 5）",
    "platform": "部分：任务成败只看终态，不报「曾达成」",
-   "platform_status": "部分",
+   "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "任务目标一度达成，随后又被拆散或复位，终态不满足；数据集声明的复位段不算",
@@ -1710,6 +1913,7 @@
    "samples": "真实：第二批标注 `human_intervention` / `scene_reset` 等 32 条",
    "platform": "没有",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "defect",
    "level": "episode",
    "description": "第三方（人手、他人）改变场景而没有对应的记录；数据集声明的人工接管是 ACT-7，不算这一项",
@@ -1737,7 +1941,10 @@
    "origin": "具",
    "samples": "真实：G1 194 条（228 个失误区间，发布者逐帧标注）；第二批标注 `operator_mistakes`",
    "platform": "部分：技能画像给流畅度，不定位失误",
-   "platform_status": "部分",
+   "platform_status": "有读数",
+   "platform_codes": [
+    "task_success.recovery"
+   ],
    "kind": "phenomenon",
    "level": "episode",
    "description": "操作过程中的失误及其恢复；本身不是数据缺陷，是质量信号（失败演示可能有价值），要检出并定位",
@@ -1767,6 +1974,7 @@
    "samples": "真实：S4 的标反 / 修正成对；合成注入的派生条目",
    "platform": "没有",
    "platform_status": "没有",
+   "platform_codes": [],
    "kind": "phenomenon",
    "level": "dataset",
    "description": "同一原始条目的不同版本（修正、裁剪、注入）同时在集合里；算指标时按 lineage 去重，也是去重模块的正样本",
@@ -1801,7 +2009,8 @@
    "audit": "独立审计（2026-10-01）提出的（「审」）"
   },
   "explain_zh": "每一项在说什么问题，通俗解释",
-  "guards": "对照项守的检测项：样本上这几项都应当不报"
+  "guards": "对照项守的检测项：样本上这几项都应当不报",
+  "platform_status": "平台侧的注记，不属于分类表：由模块注册表生成（coverage_from_registry.py，设计 17 §6.2）。能判 = 默认策略下判废或转人工；有读数 = 只报告或只有读数；部分 = 覆盖它的模块都有前提；没有 = 缺口；能处理 = 对照项"
  },
  "taxonomy_version": "1.1",
  "rules": [

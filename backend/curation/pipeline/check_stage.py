@@ -35,7 +35,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..contracts import modules as registry_mod
-from . import funnel
+from . import funnel, gates_v1
 from .incidents import (IncidentLog, camera_names, wrap_arbitration, wrap_call, wrap_decode,
                         wrap_voter)
 from .records import (CRASHES_NAME, Inflight, PartWriter, compact, latest_results,
@@ -455,7 +455,7 @@ class StageRun:
         total = len(o.episodes)
         writer = PartWriter(o.run_dir, o.modules, o.part, index=self._store is None)
         inflight = Inflight(o.run_dir, o.modules, o.part)
-        breaker = (_Breaker(watched={m for m in o.modules if registry_mod.get(m).affects_dataset_verdict})
+        breaker = (_Breaker(watched={m for m in o.modules if gates_v1.votes(m)})
                    if o.stage == "vlm" else None)
         self.done = skipped if o.episode_stream is None else 0
         drained = False

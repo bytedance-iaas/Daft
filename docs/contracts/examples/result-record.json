@@ -3,6 +3,163 @@
  "valid": [
   {
    "episode_index": 34,
+   "module": "video_action_sync",
+   "status": "ok",
+   "findings": [
+    {
+     "code": "misaligned_all",
+     "item": "AV-1",
+     "severity": "high",
+     "scope": null,
+     "readings": {
+      "lag_s": -0.53,
+      "corr_peak": 0.81,
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "message_zh": "全部可信相机一致提前 0.53 秒，超出容差 0.25 秒",
+     "evidence": [
+      "details/sync/ep000034.png"
+     ]
+    },
+    {
+     "code": "lag_inconsistent",
+     "item": "MV-3",
+     "severity": "medium",
+     "scope": {
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "readings": {
+      "lag_front_s": -0.53,
+      "lag_wrist_s": 0.02
+     },
+     "message_zh": "front 与 wrist 的滞后相差 0.55 秒"
+    }
+   ],
+   "assessed": [
+    "AV-1",
+    "AV-3",
+    "MV-3"
+   ],
+   "unassessable": [],
+   "readings": {
+    "per_camera": {
+     "front": {
+      "lag_s": -0.53
+     },
+     "wrist": {
+      "lag_s": 0.02
+     }
+    }
+   },
+   "details": {
+    "lag_s": -0.53,
+    "corr_peak": 0.81
+   },
+   "evidence": [
+    "details/sync/ep000034.png"
+   ],
+   "elapsed_s": 3.4,
+   "error": null
+  },
+  {
+   "episode_index": 7,
+   "module": "kinematic_limits",
+   "status": "ok",
+   "findings": [],
+   "assessed": [],
+   "unassessable": [
+    {
+     "item": "ACT-4",
+     "reason": "embodiment_not_in_library",
+     "message_zh": "机器人型号 a2d 不在规格库里，越限检查跳过"
+    }
+   ],
+   "readings": {},
+   "details": {
+    "skipped": "embodiment"
+   },
+   "evidence": [],
+   "elapsed_s": 0.1,
+   "error": null
+  },
+  {
+   "episode_index": 12,
+   "module": "visual_quality",
+   "status": "ok",
+   "findings": [
+    {
+     "code": "frozen",
+     "item": "IMG-1",
+     "severity": "high",
+     "scope": {
+      "camera": "wrist"
+     },
+     "frames": [
+      120,
+      311
+     ],
+     "time_s": [
+      8.0,
+      20.8
+     ],
+     "readings": {
+      "frozen_ratio": 0.64
+     },
+     "message_zh": "wrist 第 120–311 帧画面冻结（占 64%）"
+    }
+   ],
+   "assessed": [
+    "IMG-1",
+    "IMG-2",
+    "IMG-3",
+    "IMG-4",
+    "STRM-1"
+   ],
+   "unassessable": [],
+   "readings": {
+    "score": {
+     "wrist": 0.31
+    }
+   },
+   "details": {},
+   "evidence": [],
+   "elapsed_s": 5.2,
+   "error": null
+  },
+  {
+   "episode_index": 31,
+   "module": "task_success",
+   "status": "error",
+   "findings": [],
+   "assessed": [],
+   "unassessable": [],
+   "readings": {},
+   "details": {
+    "rules": [
+     "vlm_call_failed"
+    ]
+   },
+   "evidence": [],
+   "elapsed_s": 40.1,
+   "error": {
+    "kind": "execution",
+    "incidents": [
+     {
+      "step": "probe",
+      "cause": "timeout",
+      "attempts": 3
+     }
+    ]
+   }
+  },
+  {
+   "episode_index": 34,
    "module": "motion_quality",
    "verdict": "scored",
    "passed": null,
@@ -46,6 +203,436 @@
   }
  ],
  "invalid": [
+  {
+   "episode_index": 31,
+   "module": "task_success",
+   "status": "error",
+   "findings": [
+    {
+     "code": "misaligned_all",
+     "item": "AV-1",
+     "severity": "high",
+     "scope": null,
+     "readings": {
+      "lag_s": -0.53,
+      "corr_peak": 0.81,
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "message_zh": "全部可信相机一致提前 0.53 秒，超出容差 0.25 秒",
+     "evidence": [
+      "details/sync/ep000034.png"
+     ]
+    }
+   ],
+   "assessed": [],
+   "unassessable": [],
+   "readings": {},
+   "details": {
+    "rules": [
+     "vlm_call_failed"
+    ]
+   },
+   "evidence": [],
+   "elapsed_s": 40.1,
+   "error": {
+    "kind": "execution",
+    "incidents": [
+     {
+      "step": "probe",
+      "cause": "timeout",
+      "attempts": 3
+     }
+    ]
+   }
+  },
+  {
+   "episode_index": 34,
+   "module": "video_action_sync",
+   "status": "ok",
+   "findings": [
+    {
+     "code": "misaligned_all",
+     "item": "AV-1",
+     "severity": "high",
+     "scope": null,
+     "readings": {
+      "lag_s": -0.53,
+      "corr_peak": 0.81,
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "message_zh": "全部可信相机一致提前 0.53 秒，超出容差 0.25 秒",
+     "evidence": [
+      "details/sync/ep000034.png"
+     ]
+    },
+    {
+     "code": "lag_inconsistent",
+     "item": "MV-3",
+     "severity": "medium",
+     "scope": {
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "readings": {
+      "lag_front_s": -0.53,
+      "lag_wrist_s": 0.02
+     },
+     "message_zh": "front 与 wrist 的滞后相差 0.55 秒"
+    }
+   ],
+   "assessed": [
+    "AV-1",
+    "AV-3",
+    "MV-3"
+   ],
+   "unassessable": [],
+   "readings": {
+    "per_camera": {
+     "front": {
+      "lag_s": -0.53
+     },
+     "wrist": {
+      "lag_s": 0.02
+     }
+    }
+   },
+   "details": {
+    "lag_s": -0.53,
+    "corr_peak": 0.81
+   },
+   "evidence": [
+    "details/sync/ep000034.png"
+   ],
+   "elapsed_s": 3.4,
+   "error": {
+    "kind": "execution",
+    "incidents": [
+     {
+      "step": "probe",
+      "cause": "timeout",
+      "attempts": 3
+     }
+    ]
+   }
+  },
+  {
+   "episode_index": 34,
+   "module": "video_action_sync",
+   "status": "ok",
+   "findings": [
+    {
+     "code": "misaligned_all",
+     "item": "AV-1",
+     "severity": "high",
+     "scope": null,
+     "readings": {
+      "lag_s": -0.53,
+      "corr_peak": 0.81,
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "message_zh": "全部可信相机一致提前 0.53 秒，超出容差 0.25 秒",
+     "evidence": [
+      "details/sync/ep000034.png"
+     ]
+    },
+    {
+     "code": "lag_inconsistent",
+     "item": "MV-3",
+     "severity": "medium",
+     "scope": {
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "readings": {
+      "lag_front_s": -0.53,
+      "lag_wrist_s": 0.02
+     },
+     "message_zh": "front 与 wrist 的滞后相差 0.55 秒"
+    }
+   ],
+   "assessed": [
+    "AV-1",
+    "AV-3",
+    "MV-3"
+   ],
+   "unassessable": [],
+   "readings": {
+    "per_camera": {
+     "front": {
+      "lag_s": -0.53
+     },
+     "wrist": {
+      "lag_s": 0.02
+     }
+    }
+   },
+   "details": {
+    "lag_s": -0.53,
+    "corr_peak": 0.81
+   },
+   "evidence": [
+    "details/sync/ep000034.png"
+   ],
+   "elapsed_s": 3.4,
+   "error": null,
+   "verdict": "pass"
+  },
+  {
+   "episode_index": 34,
+   "module": "video_action_sync",
+   "status": "ok",
+   "findings": [
+    {
+     "code": "misaligned_all",
+     "item": "av-1",
+     "severity": "high",
+     "scope": null,
+     "readings": {
+      "lag_s": -0.53,
+      "corr_peak": 0.81,
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "message_zh": "全部可信相机一致提前 0.53 秒，超出容差 0.25 秒",
+     "evidence": [
+      "details/sync/ep000034.png"
+     ]
+    },
+    {
+     "code": "lag_inconsistent",
+     "item": "MV-3",
+     "severity": "medium",
+     "scope": {
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "readings": {
+      "lag_front_s": -0.53,
+      "lag_wrist_s": 0.02
+     },
+     "message_zh": "front 与 wrist 的滞后相差 0.55 秒"
+    }
+   ],
+   "assessed": [
+    "AV-1",
+    "AV-3",
+    "MV-3"
+   ],
+   "unassessable": [],
+   "readings": {
+    "per_camera": {
+     "front": {
+      "lag_s": -0.53
+     },
+     "wrist": {
+      "lag_s": 0.02
+     }
+    }
+   },
+   "details": {
+    "lag_s": -0.53,
+    "corr_peak": 0.81
+   },
+   "evidence": [
+    "details/sync/ep000034.png"
+   ],
+   "elapsed_s": 3.4,
+   "error": null
+  },
+  {
+   "episode_index": 34,
+   "module": "video_action_sync",
+   "status": "ok",
+   "findings": [
+    {
+     "code": "misaligned_all",
+     "item": "AV-1",
+     "severity": "high",
+     "scope": null,
+     "readings": {
+      "lag_s": -0.53,
+      "corr_peak": 0.81,
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "evidence": [
+      "details/sync/ep000034.png"
+     ]
+    },
+    {
+     "code": "lag_inconsistent",
+     "item": "MV-3",
+     "severity": "medium",
+     "scope": {
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "readings": {
+      "lag_front_s": -0.53,
+      "lag_wrist_s": 0.02
+     },
+     "message_zh": "front 与 wrist 的滞后相差 0.55 秒"
+    }
+   ],
+   "assessed": [
+    "AV-1",
+    "AV-3",
+    "MV-3"
+   ],
+   "unassessable": [],
+   "readings": {
+    "per_camera": {
+     "front": {
+      "lag_s": -0.53
+     },
+     "wrist": {
+      "lag_s": 0.02
+     }
+    }
+   },
+   "details": {
+    "lag_s": -0.53,
+    "corr_peak": 0.81
+   },
+   "evidence": [
+    "details/sync/ep000034.png"
+   ],
+   "elapsed_s": 3.4,
+   "error": null
+  },
+  {
+   "episode_index": 12,
+   "module": "visual_quality",
+   "status": "ok",
+   "findings": [
+    {
+     "code": "frozen",
+     "item": "IMG-1",
+     "severity": "high",
+     "scope": {
+      "camera": "wrist"
+     },
+     "frames": [
+      120
+     ],
+     "time_s": [
+      8.0,
+      20.8
+     ],
+     "readings": {
+      "frozen_ratio": 0.64
+     },
+     "message_zh": "wrist 第 120–311 帧画面冻结（占 64%）"
+    }
+   ],
+   "assessed": [
+    "IMG-1",
+    "IMG-2",
+    "IMG-3",
+    "IMG-4",
+    "STRM-1"
+   ],
+   "unassessable": [],
+   "readings": {
+    "score": {
+     "wrist": 0.31
+    }
+   },
+   "details": {},
+   "evidence": [],
+   "elapsed_s": 5.2,
+   "error": null
+  },
+  {
+   "episode_index": 34,
+   "module": "video_action_sync",
+   "status": "ok",
+   "findings": [
+    {
+     "code": "misaligned_all",
+     "item": "AV-1",
+     "severity": "high",
+     "scope": {
+      "camera": "front",
+      "region": "top"
+     },
+     "readings": {
+      "lag_s": -0.53,
+      "corr_peak": 0.81,
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "message_zh": "全部可信相机一致提前 0.53 秒，超出容差 0.25 秒",
+     "evidence": [
+      "details/sync/ep000034.png"
+     ]
+    },
+    {
+     "code": "lag_inconsistent",
+     "item": "MV-3",
+     "severity": "medium",
+     "scope": {
+      "cameras": [
+       "front",
+       "wrist"
+      ]
+     },
+     "readings": {
+      "lag_front_s": -0.53,
+      "lag_wrist_s": 0.02
+     },
+     "message_zh": "front 与 wrist 的滞后相差 0.55 秒"
+    }
+   ],
+   "assessed": [
+    "AV-1",
+    "AV-3",
+    "MV-3"
+   ],
+   "unassessable": [],
+   "readings": {
+    "per_camera": {
+     "front": {
+      "lag_s": -0.53
+     },
+     "wrist": {
+      "lag_s": 0.02
+     }
+    }
+   },
+   "details": {
+    "lag_s": -0.53,
+    "corr_peak": 0.81
+   },
+   "evidence": [
+    "details/sync/ep000034.png"
+   ],
+   "elapsed_s": 3.4,
+   "error": null
+  },
   {
    "episode_index": 31,
    "module": "task_success",

@@ -10,7 +10,19 @@
 | `inject_v3.py` | LeRobot v3 的索引与引用故障（FILE-10）：行区间、视频时间段、任务编号、帧号 |
 | `score.py` | 拿平台的运行目录对样本集的 `expectation.json` 打分：每个检测项的 TP / FP / FN / TN、precision、recall，可与基线比较 |
 | `finding_map.json` | 对照表：平台每个模块的哪种结果算报出了哪个检测项 |
-| `taxonomy.json` | 检测项分类 1.1（71 项），与样本集里的同名文件一致 |
+| `taxonomy.json` | 检测项分类 1.1（71 项），与样本集里的同名文件一致；条目同平台契约 C6（`docs/contracts/taxonomy.json`），平台侧的注记由下一行生成 |
+| `coverage_from_registry.py` | 由模块注册表（`docs/contracts/modules.json`）生成 `taxonomy.json` 的 `platform_status`、`platform_codes`、`platform_conditions`（设计 17 §6.2） |
+
+## `coverage_from_registry.py`
+
+`platform_status` 一列不再手写，跟着注册表走：默认策略下判废或转人工的项「能判」，只报告或只有读数的「有读数」，覆盖它的模块都有前提
+（本体在规格库、有状态量、上传 trajectory.json）的「部分」并写明前提，没有模块覆盖的「没有」，对照项「能处理」；预检判的 SET-4 记 `preflight`。
+`platform` 一列（样本实测看到的）照旧手写。注册表改了细码或覆盖，`tests/test_coverage.py` 会失败，重新生成：
+
+```bash
+PYTHONPATH=tools .venv/bin/python -m regression_samples.coverage_from_registry           # 改写 taxonomy.json
+PYTHONPATH=tools .venv/bin/python -m regression_samples.coverage_from_registry --check   # 不一致时退出码 1
+```
 
 ## `score.py`
 

@@ -6,8 +6,8 @@ The most important command. One call runs the modules of **one** stage (D18):
 ``task_success`` (vlm), ``data_integrity`` (integrity, first; design doc 14), or one
 dataset-level module, ``dedup`` or
 ``skill_profile`` (the whole kept set in one call). Mixing stages is a usage
-error. Advisory modules (registry 1.4: ``eef_video_consistency``) run in a call
-of their own, on every episode given, with their parameters as ``--param``.
+error. The modules v2 runs itself (``data_integrity``, ``eef_video_consistency``)
+take their parameters as ``--param``.
 Results go to ``<run-dir>/checks/<module>/parts/<part>.jsonl``, one line per
 episode as soon as it is done; the highest part wins, ``results.jsonl`` is the
 compacted view.
@@ -85,11 +85,7 @@ def _modules(raw: str) -> tuple[list[str], str]:
             raise UsageError(f"{m} is answered inside {host}'s model requests and runs with it: "
                              f"--modules {host} brings it along; it cannot run on its own")
     mods = registry.with_riders(mods)                  # a host's riders always run with it
-    alone = [m for m in mods if registry.get(m).input_scope == "all_selected"]
-    if alone and len(alone) != len(mods):
-        raise UsageError(f"advisory module(s) {alone} run in a call of their own (they read every "
-                         f"selected episode, not the survivors); leave them out of this call")
-    if stage in ("post_verdict", "profile_vlm") and len(mods) != 1:
+    if stage in registry.FULL_SET_STAGES and len(mods) != 1:
         raise UsageError("dedup and skill_profile run one at a time (profile reads the "
                          "kept set after dedup)")
     ordered = [m for m in registry.ids() if m in mods]

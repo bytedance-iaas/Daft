@@ -2,6 +2,84 @@
  "schema": "cli/final-list.schema.json",
  "valid": [
   {
+   "schema_version": "2.0",
+   "list": "reject",
+   "revision": 1,
+   "count": 2,
+   "episodes": [
+    {
+     "episode_index": 4,
+     "reasons": [
+      {
+       "module": "timestamp_check",
+       "kind": "finding",
+       "code": "gap",
+       "item": "STRM-3",
+       "appealable": false,
+       "text": "丢帧跳变：第 211 帧后断开 0.8 秒"
+      },
+      {
+       "module": "data_integrity",
+       "kind": "finding",
+       "code": "decode_failed",
+       "item": "FILE-4",
+       "appealable": false,
+       "text": "wrist 视频第 3.2 秒起解码失败"
+      },
+      {
+       "module": "task_success",
+       "kind": "execution_error",
+       "text": "「任务成败判定」执行出错（probe: timeout），不影响结论"
+      }
+     ],
+     "task_text": {
+      "text": "put the cup in the sink",
+      "source": "原始标注"
+     }
+    },
+    {
+     "episode_index": 7,
+     "reasons": [
+      {
+       "module": "dedup",
+       "kind": "duplicate",
+       "code": "duplicate",
+       "item": "SET-1",
+       "appealable": true,
+       "duplicate_of": 2,
+       "text": "与 episode 2 完全重复"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "schema_version": "2.0",
+   "list": "review",
+   "revision": 1,
+   "count": 1,
+   "episodes": [
+    {
+     "episode_index": 0,
+     "current_list": "passed",
+     "review": [
+      {
+       "source_module": "task_success",
+       "kind": "task_verdict",
+       "line": "task_verdict",
+       "codes": [
+        "uncertain"
+       ],
+       "items": [
+        "TASK-5"
+       ],
+       "reason": "模型拿不准：杯子最后是否在水槽里"
+      }
+     ]
+    }
+   ]
+  },
+  {
    "schema_version": "1.0",
    "list": "passed",
    "revision": 2,
@@ -96,6 +174,162 @@
   }
  ],
  "invalid": [
+  {
+   "schema_version": "2.0",
+   "list": "reject",
+   "revision": 1,
+   "count": 2,
+   "episodes": [
+    {
+     "episode_index": 4,
+     "reasons": [
+      {
+       "module": "timestamp_check",
+       "kind": "finding",
+       "item": "STRM-3",
+       "appealable": false,
+       "text": "丢帧跳变：第 211 帧后断开 0.8 秒"
+      },
+      {
+       "module": "data_integrity",
+       "kind": "finding",
+       "code": "decode_failed",
+       "item": "FILE-4",
+       "appealable": false,
+       "text": "wrist 视频第 3.2 秒起解码失败"
+      },
+      {
+       "module": "task_success",
+       "kind": "execution_error",
+       "text": "「任务成败判定」执行出错（probe: timeout），不影响结论"
+      }
+     ],
+     "task_text": {
+      "text": "put the cup in the sink",
+      "source": "原始标注"
+     }
+    },
+    {
+     "episode_index": 7,
+     "reasons": [
+      {
+       "module": "dedup",
+       "kind": "duplicate",
+       "code": "duplicate",
+       "item": "SET-1",
+       "appealable": true,
+       "duplicate_of": 2,
+       "text": "与 episode 2 完全重复"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "schema_version": "2.0",
+   "list": "reject",
+   "revision": 1,
+   "count": 2,
+   "episodes": [
+    {
+     "episode_index": 4,
+     "reasons": [
+      {
+       "module": "timestamp_check",
+       "kind": "finding",
+       "code": "gap",
+       "item": "STRM-3",
+       "appealable": false,
+       "text": "丢帧跳变：第 211 帧后断开 0.8 秒"
+      },
+      {
+       "module": "data_integrity",
+       "kind": "finding",
+       "code": "decode_failed",
+       "item": "FILE-4",
+       "appealable": false,
+       "text": "wrist 视频第 3.2 秒起解码失败"
+      },
+      {
+       "module": "task_success",
+       "kind": "execution_error",
+       "text": "「任务成败判定」执行出错（probe: timeout），不影响结论"
+      }
+     ],
+     "task_text": {
+      "text": "put the cup in the sink",
+      "source": "原始标注"
+     },
+     "soft_score": 0.41
+    },
+    {
+     "episode_index": 7,
+     "reasons": [
+      {
+       "module": "dedup",
+       "kind": "duplicate",
+       "code": "duplicate",
+       "item": "SET-1",
+       "appealable": true,
+       "duplicate_of": 2,
+       "text": "与 episode 2 完全重复"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "schema_version": "2.0",
+   "list": "reject",
+   "revision": 1,
+   "count": 2,
+   "episodes": [
+    {
+     "episode_index": 4,
+     "reasons": [
+      {
+       "module": "timestamp_check",
+       "kind": "hard_gate",
+       "code": "gap",
+       "item": "STRM-3",
+       "appealable": false,
+       "text": "丢帧跳变：第 211 帧后断开 0.8 秒"
+      },
+      {
+       "module": "data_integrity",
+       "kind": "finding",
+       "code": "decode_failed",
+       "item": "FILE-4",
+       "appealable": false,
+       "text": "wrist 视频第 3.2 秒起解码失败"
+      },
+      {
+       "module": "task_success",
+       "kind": "execution_error",
+       "text": "「任务成败判定」执行出错（probe: timeout），不影响结论"
+      }
+     ],
+     "task_text": {
+      "text": "put the cup in the sink",
+      "source": "原始标注"
+     }
+    },
+    {
+     "episode_index": 7,
+     "reasons": [
+      {
+       "module": "dedup",
+       "kind": "duplicate",
+       "code": "duplicate",
+       "item": "SET-1",
+       "appealable": true,
+       "duplicate_of": 2,
+       "text": "与 episode 2 完全重复"
+      }
+     ]
+    }
+   ]
+  },
   {
    "schema_version": "1.0",
    "list": "review",

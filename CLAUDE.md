@@ -32,10 +32,13 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走子进程；暂停、停止就是给进程组发信号；CLI 也因此一直是活的一等入口
 （设计 00 §2.1）。
 
-**质检漏斗**（C1 注册表，按档从前往后；前面硬门拦下的条目不进后面的档）：
+**质检漏斗**（今天的执行；前面硬门拦下的条目不进后面的档）：
 `integrity`（data_integrity）→ `numeric`（timestamp_check、kinematic_limits、motion_quality）→ `frame`（visual_quality、
 video_action_sync）→ `vlm`（eef_video_consistency、task_success）→ `post_verdict`（dedup）→ `profile_vlm`（skill_profile）。
 task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
+**注册表 2.0 已是两块**（设计 17，F12.1）：CPU 块 `integrity → numeric → frame → dedup`、VLM 块 `autolabel → vlm → profile`，模块带细码目录
+（每个细码对应分类表 C6 的一项，默认级别 blocking / review / info）与覆盖声明；漏斗的 `gate` 只剩过渡用的 `pipeline/gates_v1.py`。
+发现（F12.2）、策略判决（F12.3）、两块并行（F12.4）落地后，上面的执行短路与硬门 / 软分判决退役。
 
 **一次任务**：建任务时预检，开跑时生成并冻结执行计划 → Daemon 排队，逐档调 CLI（每档一个常驻 worker，episode 逐条交接）→
 结果落在运行目录 `runs/<task_id>/`（`checks/<模块>/`、结果版本 `revisions/rNNNN/` 里的清单与报告、`export/`）→ 同步到交付目录，
@@ -53,7 +56,7 @@ task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
 | `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`） |
 | `frontend/mockups/` | 静态 HTML 预览稿（只读参考） |
 | `tools/parity/` | 对账工具与黄金基线流程 |
-| `tools/regression_samples/` | 回归样本集的工具：`inject.py`、`inject_mcap.py`、`inject_v3.py` 合成注入，`score.py` + `finding_map.json` 给平台结果打分，`taxonomy.json` 是检测项分类（样本集在 TOS，不在仓库） |
+| `tools/regression_samples/` | 回归样本集的工具：`inject.py`、`inject_mcap.py`、`inject_v3.py` 合成注入，`score.py` + `finding_map.json` 给平台结果打分，`taxonomy.json` 是检测项分类（平台注记由 `coverage_from_registry.py` 从注册表生成；样本集在 TOS，不在仓库） |
 | `tools/eef_eval/`、`tools/eef_convert.py` | EEF 离线评估（唯一读真值的代码）；`trajectory.json` 在 LeRobot 与 mcap 孪生数据集之间互转 |
 | `deploy/` | 镜像（`deploy/Dockerfile`，构建上下文是仓库根）与集群上的运维步骤（`deploy/README.md`）；Chart 本身在 rerun 仓库的 dataverse 里 |
 | `docs/design/`、`docs/contracts/`、`docs/v1/` | 设计、契约、v1 的使用文档与发布说明 |
@@ -91,18 +94,19 @@ task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
 
 | # | 契约 | 文件 |
 |---|---|---|
-| C1 | 模块注册表：模块、档、依赖、参数 Schema、报告明细 | `backend/curation/contracts/modules.py`，导出为 `modules.json` |
+| C1 | 模块注册表：模块、块与段、细码目录与覆盖、依赖、参数 Schema、报告明细 | `backend/curation/contracts/modules.py`，导出为 `modules.json` |
 | C2 | CLI 的 `--json` 输出与命令之间交换的文件 | `cli/*.schema.json` |
 | C3 | 进度协议（stderr 上的 JSON Lines） | `progress.schema.json` |
 | C4 | REST API | `openapi.yaml` |
 | C5 | 仓储接口与状态机 | `backend/daemon/repo/protocol.py` |
+| C6 | 检测项分类表（细码与覆盖都指向它的编号） | `taxonomy.json`（Schema `taxonomy.schema.json`） |
 | 其他 | EEF 输入格式；对账录制带格式 | `eef/`、`parity/` |
 
 改契约：改文件，不兼容的改动升版本号（`registry_version` / `schema_version` / `info.version`）；在 `examples/` 补合法与不合法示例；
 `cd backend && ../.venv/bin/python -m curation.contracts export-modules`（只在改了 C1 时）再 `… lock`；改了 C4 在 `frontend/` 跑
 `npm run gen:api`。`CONTRACTS.lock` 没刷新、生成的类型没更新，CI 都会红。
 
-文档和提交里的编号：W 是工作包（设计 11），F 是需求账本条目，D、P 是冻结决策（设计 00 §7），C1–C5 是契约。
+文档和提交里的编号：W 是工作包（设计 11），F 是需求账本条目，D、P 是冻结决策（设计 00 §7），C1–C6 是契约。
 
 ## 各组件怎么开发
 
@@ -148,7 +152,7 @@ Python 3.10，本机 `.venv` 是 3.12：别用 3.11 以后才有的语法和标�
 | 契约 | `cd backend && ../.venv/bin/python -m pytest -q tests/contracts && ../.venv/bin/python -m curation.contracts check` | 契约与锁不一致就失败 |
 | v2 各工作包 | `cd backend && ../.venv/bin/python -m pytest -q tests/<目录>` | 最慢的是 `orchestr`（约 10 分钟；`-m "not slow"` 跳过真起 CLI 的用例）和 `cli`（约 6 分钟） |
 | 对账工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/parity/tests` | 约一分半；`-m "not e2e"` 只跑单元部分 |
-| 回归样本工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests` | 秒级；含对照表与平台问题码、模块 id 的一致性检查——平台改了问题码或细节字段名，要同步改 `finding_map.json` |
+| 回归样本工具 | `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests` | 秒级；含对照表与平台问题码、模块 id 的一致性检查——平台改了问题码或细节字段名，要同步改 `finding_map.json`；注册表改了细码或覆盖，要重新生成 `taxonomy.json` 的平台注记（`coverage_from_registry`） |
 | 前端 | `cd frontend && npm run check:api && npm run lint && npm run typecheck && npm test && npm run build` | Vitest + jsdom，模拟数据的响应按契约校验 |
 
 写端到端用例别靠时序：流水线下各档交叠执行，模型的快慢用假端点的 `delay_s`、`hold(needle)`、`fail` 控制，等条件满足再动作。

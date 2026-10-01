@@ -32,7 +32,7 @@ def contract_files() -> list[str]:
     root = _repo_root()
     base = schemas.contracts_dir().relative_to(root)
     files = [str(base / rel).replace("\\", "/") for rel in schemas.schema_files()]
-    files += [str(base / schemas.OPENAPI), str(base / schemas.MODULES_JSON)]
+    files += [str(base / schemas.OPENAPI), str(base / schemas.MODULES_JSON), str(base / schemas.TAXONOMY)]
     files += list(CODE_CONTRACTS)
     return sorted(files)
 

@@ -29,7 +29,7 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
-from ..contracts import modules as registry
+from . import gates_v1
 
 SCHEMA_VERSION = "1.0"
 
@@ -52,10 +52,8 @@ _PART_RE = re.compile(r"^([0-9]{4})\.jsonl$")
 # ---------------------------------------------------------------- records
 
 def gate_of(module: str) -> str:
-    try:
-        return registry.get(module).gate
-    except KeyError:
-        return "none"
+    """The 1.0 record's ``gate`` field (registry 2.0 has no gates; ``gates_v1`` keeps them)."""
+    return gates_v1.gate(module)
 
 
 def derive_verdict(passed: bool | None, score: float | None, error: dict | None) -> str:

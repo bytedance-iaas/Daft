@@ -84,17 +84,23 @@ export type Incompatibility = RepreflightResult['incompatibilities'][number];
 export type Plan = S['plan.schema'];
 export type PlanStage = S['stage'];
 
-export type Report = S['report.schema'];
-export type ReportModuleSection = S['module_section'];
-export type ReportResponse = operations['getReport']['responses'][200]['content']['application/json'];
+// C2 2.0 (design doc 17) changed the result record, the report and the plan. The console renders their 1.0 form,
+// which every task carries until the findings and the policy verdicts land (F12.2 / F12.3); the 2.0 views come
+// with F12.5, and tasks made before keep opening in the 1.0 ones (D59).
+export type Report = S['report_1'];
+export type ReportV2 = S['report_2'];
+export type ReportModuleSection = S['module_section_1'];
+type RawReportResponse = operations['getReport']['responses'][200]['content']['application/json'];
+export type ReportResponse = Omit<RawReportResponse, 'report'> & { report: Report };
 export type ReportTablePage = operations['getReportTable']['responses'][200]['content']['application/json'];
-export type EpisodeView = S['EpisodeView'];
-export type PipelineEpisode = S['PipelineEpisode'];
+export type EpisodeView = Omit<S['EpisodeView'], 'modules'> & { modules: Record<string, ResultRecord> };
+export type PipelineEpisode = Omit<S['PipelineEpisode'], 'modules'> & { modules?: Record<string, ResultRecord> };
 export type TaskEpisode = S['TaskEpisode'];
 export type TaskEpisodePage = S['TaskEpisodePage'];
 export type SyncCurves = S['SyncCurves'];
 export type SyncCurveCamera = S['SyncCurveCamera'];
-export type ResultRecord = S['result-record.schema'];
+export type ResultRecord = S['record_1'];
+export type ResultRecordV2 = S['record_2'];
 export type Perf = S['Perf'];
 export type AdjudicationQuestion = S['AdjudicationQuestion'];
 export type AdjudicationCard = S['AdjudicationCard'];

@@ -142,14 +142,16 @@ def stage_config(ctx: Context, modules, *, gates: dict | None = None,
     """The pipeline config for this call: exactly ``modules`` enabled (v1's ``--only``),
     the VLM settings from the arguments and the gate sizes as v1 config keys.
 
-    Advisory modules (registry 1.4) and the modules v2 runs itself (``native_ids``, the EEF module)
-    are not v1 checks and never enter v1's config: they are left out here, and a call that selects
-    nothing else runs with every v1 check off. Their gate joins the verdict config in aggregate."""
+    Advisory modules (``gates_v1.advisory_ids``: the camera defects) and the modules v2 runs itself
+    (``native_ids``: data integrity, EEF) are not v1 checks and never enter v1's config: they are left
+    out here, and a call that selects nothing else runs with every v1 check off. The native gates
+    join the verdict config in aggregate."""
     from ..contracts import modules as registry
+    from ..pipeline import gates_v1
     from ..pipeline.config import apply_check_selection, apply_overrides, validate_config
 
     cfg = copy.deepcopy(ctx.config())
-    v1 = [m for m in modules if m not in registry.advisory_ids() and m not in registry.native_ids()]
+    v1 = [m for m in modules if m not in gates_v1.advisory_ids() and m not in registry.native_ids()]
     try:
         if v1:
             cfg = apply_check_selection(cfg, only=",".join(v1))

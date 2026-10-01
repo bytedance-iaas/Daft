@@ -1,101 +1,105 @@
 """C1 - module registry: the one place that says what the QA modules are.
 
-The CLI, the Daemon and the frontend all read the module list, Chinese names,
-capability needs, stage, dependencies and tunable parameters from here (the
-frontend through ``GET /api/v1/modules``). Nobody hard-codes a module list.
+The CLI, the Daemon and the frontend all read the module list, Chinese names, capability needs,
+where a module runs, its finding codes and tunable parameters from here (the frontend through
+``GET /api/v1/modules``). Nobody hard-codes a module list, a code table or an item name.
 
-Two facts from v1 shape it (design doc 05, section 1):
+Registry 2.0 (design doc 17, D56-D58) describes a module by three things:
 
-* v1 has “six + two”: the six funnel checks run per episode and vote on the
-  verdict; ``dedup`` and the separate ``skill_profile`` VLM stage run afterwards
-  on the kept set only.
-  ``stage`` and ``depends_on`` carry that, so the planner can order the stages
-  and knows which results go stale when an upstream verdict changes.
-* ``autolabel`` (captioning episodes without a task text) is not a module; it
-  is a shared prerequisite of ``task_success`` and ``skill_profile``.
+* **Where it runs.** Two blocks run side by side and never filter each other (D57): the CPU block
+  (integrity -> numeric -> frame -> dedup) and the VLM block (autolabel -> vlm -> profile). Stages
+  inside a block exist to share a decode and to size their own concurrency; every stage gets every
+  selected episode. ``dedup`` and ``profile`` need the whole selection and start once the stages
+  before them in their block are done (``FULL_SET_STAGES``). ``depends_on`` is data only: the
+  captions ``autolabel`` writes for episodes without a task text.
+* **What it can find.** Every module carries its catalogue of finding codes (``codes``). A code maps
+  to one item of the taxonomy (C6, ``docs/contracts/taxonomy.json``, bound version
+  ``TAXONOMY_VERSION``) and has a default severity and a default level under the default policy:
+  ``blocking`` (today's hard gate failures), ``review`` (today's suspects, abstentions and
+  questions; it names the review line a person answers on) or ``info`` (reported only, which is
+  what the retired soft scores became, P18). A blocking code may be ``appealable`` (D42). Whether an
+  episode is rejected is no longer the module's business: a policy decides in ``aggregate``.
+* **What it covers.** ``covers`` - the items the module assesses on an episode it can read: the
+  items of its codes plus ``also_covers`` (items it only reports a reading for). A record lists
+  what it assessed and what it could not, with a reason from ``UNASSESSABLE_REASONS``, so "found
+  nothing" and "did not look" are told apart.
 
-``param_schema`` drives the second screen of the new-task form (D38), so every
-parameter carries ``title`` (the field label), ``description`` (help text) and
-``default``; a choice lists its options as ``oneOf`` of ``{const, title}``, and
-required parameters go into the object's ``required``. Adding a module with
-parameters needs no frontend change.
+``autolabel`` (captioning episodes without a task text) is not a module; it is the first stage of
+the VLM block and a data dependency of ``task_success`` and ``skill_profile``.
 
-Human review is declared here too (D42, D43). ``REVIEW_LINES`` is the catalog of
-the questions a person can be asked - line id, the list its episodes are in,
-whether an open item counts as pending, the decisions with their titles - and
-every module names the lines it raises (``review_lines``) and whether a reject
-attributed to it may be appealed (``appealable``). A new kind of review is a new
-catalog entry plus its apply rule in ``adjudicate-apply``; the REST and CLI
-contracts carry lines and decisions as open strings, and the frontend renders a
-line it has no dedicated view for from this catalog.
+``param_schema`` drives the second screen of the new-task form (D38), so every parameter carries
+``title`` (the field label), ``description`` (help text) and ``default``; a choice lists its
+options as ``oneOf`` of ``{const, title}``, and required parameters go into the object's
+``required``. Parameters that stand in for one another carry the same ``x-choice-group``
+(``{id, title, required}``): a form offers the group as one field. File parameters are
+``format: upload`` (see ``UPLOAD_FORMAT``). Adding a module with parameters needs no frontend
+change.
 
-Advisory modules (1.4, design doc 12): ``input_scope="all_selected"`` runs a module
-on every selected episode instead of the survivors of the funnel, and
-``affects_dataset_verdict=False`` keeps its results out of keep / drop / held -
-``aggregate`` never counts it and the delivered lists do not change with it. The
-EEF-video consistency pair is the first such module; it needs ``eef_input``, a
-validated ``trajectory.json`` given as a module parameter.
+Human review is declared here too (D42, D43). ``REVIEW_LINES`` is the catalogue of the questions a
+person can be asked - line id, the list its episodes are in, whether an open item counts as
+pending, the decisions with their titles. A review-level code names its line; a new kind of review
+is a new catalogue entry plus its apply rule in ``adjudicate-apply``.
 
-Stage ``profile_vlm`` (1.7, 2026-09-23): the skill profile runs in a VLM stage of its own
-after dedup instead of ``post_verdict``, so its model calls get the VLM stage's gates.
+Modules v2 runs itself, outside v1's check configuration, are ``native`` (the data integrity and
+EEF modules); a ``rides_on`` module is answered inside the model requests of the module it names
+(the camera defects ride on task_success): it is never selected on its own and runs whenever its
+host runs. Neither is part of the JSON export's semantics beyond ``rides_on``.
 
-The EEF module (1.8, D49) is one hard gate of the VLM stage that takes part in the verdict:
-the CPU first, the model second, pass / reject / a person. Its person's question is the
-review line ``eef_check`` (1.9, F5.11): an episode it could not settle waits in passed,
-"consistent" keeps it and "inconsistent" rejects it; a reject of the module alone may be
-appealed.
-
-Data integrity (1.11, design doc 14, D50-D52): a stage of its own, ``integrity``, first in the
-funnel, whose one module ``data_integrity`` checks that every episode's files are whole and
-readable - a hard gate that is selected by default and whose rejects are final; an episode it
-only suspects stays in passed and is asked on the review line ``integrity_check``. Modules v2
-runs itself (outside v1's check configuration) are marked ``native`` instead of being told
-apart by the EEF module's ``eef_input``.
-
-Choice groups (1.10, 2026-09-24): parameters that stand in for one another carry the same
-``x-choice-group`` (``{id, title, required}``). A form offers the group as one field - which of
-them, then that one's value - sends only the chosen one, and with ``required`` asks for one; the
-command line still takes any of them, or none. The EEF module's observation seeds and gripper
-template form the group 夹爪参考.
-
-The gripper reference is optional (1.12, design doc 12 §10.5, D-E15): without seeds and template
-the EEF module measures nothing with the CPU and asks the model for its opinion instead - the
-stretches of each camera's whole clip where the drawn gripper centre or direction does not match,
-with a confidence each. That opinion is advisory: the episode's record passes and nobody is asked.
-
-The record comparison (1.13, design doc 12 §8.7, D-E16): the EEF module's optional upload
-``record_mapping`` (kind ``eef_record_mapping``, ``eef-mapping/1.1``) says where the dataset keeps its
-own end-effector record - pose columns or topics, joint angles and the robot model - and the module
-compares the uploaded 3D trajectory with it frame by frame. Reported only (the table
-``eef_record``), never part of the verdict.
+History: 1.x described modules by their funnel gate (``gate``: hard veto, soft score, dedup removal
+or none), their input (``input_scope``: the funnel's survivors or every selected episode) and
+whether they voted (``affects_dataset_verdict``). 2.0 dropped all three with the funnel; the
+executor that still runs the funnel reads them from ``pipeline.gates_v1`` until F12.3 / F12.4.
 """
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "1.14"
+REGISTRY_VERSION = "2.0"
+#: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
+TAXONOMY_VERSION = "1.1"
 
 Level = Literal["episode", "dataset"]
-Gate = Literal["hard", "soft", "dedup", "none"]
-Stage = Literal["integrity", "numeric", "frame", "vlm", "post_verdict", "profile_vlm"]
-InputScope = Literal["funnel", "all_selected"]
+Block = Literal["cpu", "vlm"]
+Stage = Literal["integrity", "numeric", "frame", "dedup", "autolabel", "vlm", "profile"]
 
-#: Stages in execution order (design doc 04, section 2).
-STAGE_ORDER: tuple[str, ...] = ("integrity", "numeric", "frame", "vlm", "post_verdict",
-                                "profile_vlm")
+#: The two blocks and their stages in order (design doc 17 §3.1).
+BLOCKS: dict[str, tuple[str, ...]] = {"cpu": ("integrity", "numeric", "frame", "dedup"),
+                                      "vlm": ("autolabel", "vlm", "profile")}
+BLOCK_TITLES: dict[str, str] = {"cpu": "CPU 块", "vlm": "VLM 块"}
+#: Stages that need the whole selection: they start once their block's earlier stages are done (§3.2).
+FULL_SET_STAGES: tuple[str, ...] = ("dedup", "profile")
+#: Every stage, the CPU block's first.
+STAGES: tuple[str, ...] = BLOCKS["cpu"] + BLOCKS["vlm"]
 
 #: Capabilities a dataset or task must provide (design doc 05, section 2).
 NEEDS: frozenset[str] = frozenset({"timestamps", "action", "state", "video",
                                    "embodiment_profile", "vlm", "raw_bytes", "eef_input"})
 
-#: What a module's input depends on. A change upstream makes the module stale.
-#: numeric_gates / frame_gates: survivors of the hard gates of that stage;
-#: funnel_verdict: the keep set after the funnel verdict.
-#: A module id (1.4) means its own results (1.4-1.7: eef_video_review re-examined eef_video_consistency;
-#: 1.8 folded it in, D49).
-DEPENDENCIES: frozenset[str] = frozenset({"numeric_gates", "frame_gates", "autolabel",
-                                          "funnel_verdict", "dedup", "eef_video_consistency"})
+#: What a module's input depends on, data only (2.0): the captions of episodes without a task text.
+#: A change upstream (a relabel) makes the module's results stale.
+DEPENDENCIES: frozenset[str] = frozenset({"autolabel"})
+
+#: A finding's severity, the module's own measure (design doc 17 §1.2).
+SEVERITIES: tuple[str, ...] = ("high", "medium", "low")
+#: A finding's level under a policy (design doc 17 §4): its id and the title the console shows.
+FINDING_LEVELS: tuple[tuple[str, str], ...] = (("blocking", "判废"), ("review", "待人工复核"),
+                                               ("info", "仅报告"))
+#: What a code's findings are about, which decides how the console groups them.
+SCOPE_KINDS: tuple[str, ...] = ("episode", "camera", "channel", "dataset")
+
+#: Why a module could not assess an item on an episode (design doc 17 §1.4).
+UNASSESSABLE_REASONS: tuple[tuple[str, str], ...] = (
+    ("embodiment_not_in_library", "本体不在规格库里，或没有给机器人型号"),
+    ("no_state_columns", "数据集没有状态量"),
+    ("no_video", "没有视频"),
+    ("no_action", "没有动作"),
+    ("format_unsupported_by_module", "本模块不支持这种数据格式"),
+    ("model_no_answer", "模型没有回答这一项"),
+    ("single_description", "只有一份描述，无从比较"),
+    ("not_applicable", "对本数据集不适用"),
+)
 
 #: v1's evidence modes (``pipeline.sync_plots`` / ``pipeline.evidence_frames``).
 EVIDENCE_MODES = ("flagged", "all", "off")
@@ -180,37 +184,95 @@ REVIEW_LINES: tuple[ReviewLine, ...] = (
 
 
 @dataclass(frozen=True)
+class FindingCode:
+    """One kind of problem a module reports (design doc 17 §2.1). Unique within the module; the
+    global key is (module, code)."""
+
+    code: str
+    item: str | None                     # taxonomy item; None only for an info-level item of the platform's own
+    name_zh: str
+    severity: str                        # default severity: high / medium / low (a module may grade by measure)
+    level: str                           # level under the default policy: blocking / review / info (P18)
+    review_line: str | None = None       # review level: the REVIEW_LINES id a person answers on
+    appealable: bool = False             # blocking level: a reject it caused may be appealed (D42)
+    scope_kind: str = "episode"          # episode / camera / channel / dataset
+
+    def to_json(self) -> dict:
+        out = {"code": self.code, "item": self.item, "name_zh": self.name_zh,
+               "severity": self.severity, "level": self.level, "scope_kind": self.scope_kind,
+               "appealable": self.appealable}
+        if self.review_line:
+            out["review_line"] = self.review_line
+        return out
+
+
+def _blocking(code: str, item: str, name_zh: str, severity: str = "high", **kw) -> FindingCode:
+    return FindingCode(code, item, name_zh, severity, "blocking", **kw)
+
+
+def _review(code: str, item: str, name_zh: str, line: str, severity: str = "medium", **kw) -> FindingCode:
+    return FindingCode(code, item, name_zh, severity, "review", review_line=line, **kw)
+
+
+def _info(code: str, item: str | None, name_zh: str, severity: str = "low", **kw) -> FindingCode:
+    return FindingCode(code, item, name_zh, severity, "info", **kw)
+
+
+@dataclass(frozen=True)
 class ModuleSpec:
     id: str
     name_zh: str
     summary_zh: str
     level: Level
-    gate: Gate                           # hard veto / soft score / dedup removal / output only
     needs: frozenset[str]
-    stage: Stage
-    depends_on: tuple[str, ...]
-    produces_adjudication: bool          # contributes to the human adjudication queue
+    block: Block
+    stage: str                           # a stage of its block (BLOCKS)
+    depends_on: tuple[str, ...]          # DEPENDENCIES
+    codes: tuple[FindingCode, ...]       # the finding code catalogue (design doc 17 §2.2)
     param_schema: dict[str, Any]         # JSON Schema of task-level ``modules[].params``
     tables: tuple[TableSpec, ...] = ()
+    #: items assessed although no code names them: the module reports a reading only (§2.3)
+    also_covers: tuple[str, ...] = ()
     merge_units: Callable | None = field(default=None, compare=False)  # design doc 04 §4.2
-    review_lines: tuple[str, ...] = ()   # REVIEW_LINES ids this module raises
-    appealable: bool = False             # a reject attributed to it may be appealed (D42)
-    input_scope: InputScope = "funnel"   # all_selected: every selected episode, not the survivors
-    affects_dataset_verdict: bool = True  # False: advisory, never part of keep / drop / held
     #: v2 runs it itself, outside v1's check configuration (1.11); not part of the JSON
     native: bool = False
     #: 1.14: a rider is answered inside the model requests of the module it names - it is never
     #: selected on its own, runs whenever its host runs, and makes no request of its own
     rides_on: str | None = None
 
+    @property
+    def covers(self) -> tuple[str, ...]:
+        """The items the module assesses: its codes' items, then ``also_covers``, without repeats."""
+        return tuple(dict.fromkeys([c.item for c in self.codes if c.item] + list(self.also_covers)))
+
+    @property
+    def review_lines(self) -> tuple[str, ...]:
+        """The REVIEW_LINES its review-level codes raise, in code order."""
+        return tuple(dict.fromkeys(c.review_line for c in self.codes
+                                   if c.level == "review" and c.review_line))
+
+    @property
+    def appealable(self) -> bool:
+        """Whether some reject it causes may be appealed (D42): one of its blocking codes is."""
+        return any(c.appealable for c in self.codes)
+
+    @property
+    def produces_adjudication(self) -> bool:
+        """It raises review items or its rejects may be appealed."""
+        return bool(self.review_lines) or self.appealable
+
+    def code(self, code: str) -> FindingCode:
+        for c in self.codes:
+            if c.code == code:
+                return c
+        raise KeyError(f"module {self.id!r} has no finding code {code!r}; known: "
+                       f"{', '.join(c.code for c in self.codes)}")
+
     def to_json(self) -> dict:
         out = {"id": self.id, "name_zh": self.name_zh, "summary_zh": self.summary_zh,
-               "level": self.level, "gate": self.gate, "needs": sorted(self.needs),
+               "level": self.level, "needs": sorted(self.needs), "block": self.block,
                "stage": self.stage, "depends_on": list(self.depends_on),
-               "produces_adjudication": self.produces_adjudication,
-               "review_lines": list(self.review_lines), "appealable": self.appealable,
-               "input_scope": self.input_scope,
-               "affects_dataset_verdict": self.affects_dataset_verdict,
+               "codes": [c.to_json() for c in self.codes], "covers": list(self.covers),
                "param_schema": self.param_schema,
                "tables": [t.to_json() for t in self.tables],
                "mergeable": self.merge_units is not None}
@@ -332,44 +394,102 @@ MODULES: tuple[ModuleSpec, ...] = (
         id="data_integrity", name_zh="数据完整性",
         summary_zh="检查每条 episode 的文件是否完整、可读：文件结构、零填充、mcap 的 CRC、逐条数据的结构校验，"
                    "可选逐帧解码",
-        level="episode", gate="hard", needs=frozenset({"raw_bytes"}), stage="integrity",
-        depends_on=(), produces_adjudication=True, param_schema=_integrity_params(),
+        level="episode", needs=frozenset({"raw_bytes"}), block="cpu", stage="integrity", depends_on=(),
+        # design doc 14 §4.2's codes; v1's row_invalid is split by its cause (design doc 17 §2.2)
+        codes=(_blocking("file_empty", "FILE-1", "文件为空或过小"),
+               _blocking("video_missing", "FILE-1", "视频文件不存在"),
+               _blocking("file_truncated", "FILE-2", "文件被截断"),
+               _blocking("zero_filled", "FILE-2", "文件里有成块的零填充"),
+               _blocking("structure_invalid", "FILE-3", "文件结构损坏"),
+               _blocking("crc_mismatch", "FILE-3", "CRC 校验不符"),
+               _blocking("cut_unreadable", "FILE-3", "录制中断，读不出数据"),
+               _review("cut_off", "FILE-3", "录制中断", "integrity_check", "low"),
+               _blocking("decode_failed", "FILE-4", "视频解码失败"),
+               _review("decode_concealed", "FILE-4", "解码器掩盖了错误", "integrity_check", "low"),
+               _review("count_mismatch", "FILE-5", "帧数与记录的长度对不上", "integrity_check"),
+               _blocking("length_mismatch", "FILE-5", "数据长度与帧数对不上"),
+               _blocking("values_invalid", "FILE-6", "数值不合规（NaN、Inf、维度或类型）"),
+               _blocking("metadata_invalid", "FILE-8", "元数据不合规（帧率、时间边界）"),
+               _review("table_inconsistent", "FILE-10", "episode 表前后不一致", "integrity_check"),
+               _blocking("timestamps_invalid", "STRM-4", "时间戳不合规"),
+               _blocking("action_missing", "STRM-1", "缺少动作数据"),
+               _review("stream_missing", "STRM-1", "缺一路其他条都有的流", "integrity_check"),
+               _review("rate_outlier", "STRM-3", "某路流的频率明显偏低", "integrity_check"),
+               _review("duplicate_content", "SET-1", "与另一条的文件完全相同", "integrity_check"),
+               _info("orphan_files", None, "不属于任何 episode 的文件", scope_kind="dataset"),
+               _info("dark_camera", "STRM-1", "近乎全黑的相机", scope_kind="dataset"),
+               _info("table_overlap", "FILE-10", "episode 表的帧区间重叠或不连续", "medium",
+                     scope_kind="dataset")),
+        param_schema=_integrity_params(),
         tables=(TableSpec("integrity_findings", "完整性发现",
                           ("episode_index", "level", "code", "file")),),
-        review_lines=("integrity_check",), appealable=False, native=True),
+        native=True),
     ModuleSpec(
         id="timestamp_check", name_zh="时间戳检查",
         summary_zh="时间戳是否单调、有没有丢帧跳变、是不是短于残段阈值的碎片",
-        level="episode", gate="hard", needs=frozenset({"timestamps"}), stage="numeric",
-        depends_on=(), produces_adjudication=False, param_schema=_no_params(),
+        level="episode", needs=frozenset({"timestamps"}), block="cpu", stage="numeric", depends_on=(),
+        codes=(_blocking("gap", "STRM-3", "丢帧跳变"),
+               _blocking("jitter", "STRM-3", "采样间隔抖动", "medium"),
+               _blocking("out_of_order", "STRM-4", "时间戳倒序或重复"),
+               _blocking("fragment", "STRM-5", "残段：短于最短时长"),
+               _blocking("single_stamp", "STRM-5", "只有一个时间戳"),
+               _info("duration_outlier", "SET-3", "时长离群", scope_kind="dataset")),
+        param_schema=_no_params(),
         tables=(TableSpec("timestamp_check", "时间戳异常",
                           ("episode_index", "duration_s", "max_dt")),)),
     ModuleSpec(
         id="kinematic_limits", name_zh="运动学极限",
         summary_zh="对照机器人规格库检查关节位置与速度是否越限",
-        level="episode", gate="hard", needs=frozenset({"action", "embodiment_profile"}),
-        stage="numeric", depends_on=(), produces_adjudication=False,
+        level="episode", needs=frozenset({"action", "embodiment_profile"}), block="cpu", stage="numeric",
+        depends_on=(),
+        # the injected saw-tooth and jump samples are caught by the end-effector velocity limit today;
+        # they stay ACT-4 until motion_quality's spike detection improves (design doc 17 §2.2)
+        codes=(_blocking("joint_limit", "ACT-4", "关节位置越限", scope_kind="channel"),
+               _blocking("velocity_limit", "ACT-4", "关节速度越限", scope_kind="channel"),
+               _blocking("ee_reach", "ACT-4", "末端超出工作空间"),
+               _blocking("ee_translation_velocity", "ACT-4", "末端平移速度越限"),
+               _blocking("ee_rotation_velocity", "ACT-4", "末端转动速度越限")),
         param_schema=_no_params(),
         tables=(TableSpec("kinematic_violations", "越限明细",
                           ("episode_index", "joint", "value")),)),
     ModuleSpec(
         id="motion_quality", name_zh="运动质量",
         summary_zh="动作是否平滑、有无尖刺与执行器卡死、操作是否流畅（打分项）",
-        level="episode", gate="soft", needs=frozenset({"action", "state"}), stage="numeric",
-        depends_on=(), produces_adjudication=False, param_schema=_no_params(),
+        level="episode", needs=frozenset({"action", "state"}), block="cpu", stage="numeric", depends_on=(),
+        # the composite score is retired (P18): every sub-item reports on its own, info by default
+        codes=(_info("smoothness_low", "ACT-1", "动作不平滑", "medium"),
+               _info("spike", "ACT-2", "动作尖刺", "medium"),
+               _info("actuator_saturation", "ACT-4", "执行器饱和", "medium", scope_kind="channel"),
+               _info("gripper_jitter", "ACT-5", "夹爪抖动", "medium"),
+               _info("stuck", "ACT-8", "执行器卡死", "medium", scope_kind="channel"),
+               _info("fluency_low", "TASK-8", "操作不流畅"),
+               _info("idle_opening", "TASK-1", "开头空转"),
+               _info("idle_closing", "TASK-1", "结尾空转"),
+               _info("action_semantics_undetermined", "ACT-6", "判断不了动作的语义", "medium",
+                     scope_kind="dataset")),
+        also_covers=("SET-3",),          # the mean active share, a dataset-level reading (P20)
+        param_schema=_no_params(),
         tables=(TableSpec("motion_quality", "运动质量明细", ("episode_index", "score")),)),
     ModuleSpec(
         id="visual_quality", name_zh="视觉质量",
         summary_zh="逐机位检查清晰度、曝光与画面冻结（打分项）",
-        level="episode", gate="soft", needs=frozenset({"video"}), stage="frame",
-        depends_on=("numeric_gates",), produces_adjudication=False,
+        level="episode", needs=frozenset({"video"}), block="cpu", stage="frame", depends_on=(),
+        codes=(_info("frozen", "IMG-1", "画面冻结", "high", scope_kind="camera"),
+               _info("exposure_low", "IMG-2", "曝光不良", "medium", scope_kind="camera"),
+               _info("information_death", "IMG-3", "信息死亡帧偏多", "medium", scope_kind="camera"),
+               _info("sharpness_low", "IMG-4", "画面模糊", "medium", scope_kind="camera"),
+               _info("dead_or_padded", "STRM-1", "相机没有信号或被填充", "medium", scope_kind="camera")),
         param_schema=_no_params(),
         tables=(TableSpec("visual_quality", "逐机位打分", ("episode_index", "score", "camera")),)),
     ModuleSpec(
         id="video_action_sync", name_zh="视频-动作同步",
         summary_zh="逐机位比对画面运动与关节速度，找出画面与动作的时间错位",
-        level="episode", gate="hard", needs=frozenset({"video", "action"}), stage="frame",
-        depends_on=("numeric_gates",), produces_adjudication=False,
+        level="episode", needs=frozenset({"video", "action"}), block="cpu", stage="frame", depends_on=(),
+        codes=(_blocking("misaligned_all", "AV-1", "画面与动作错位（全部可信相机）"),
+               _info("camera_misaligned", "AV-1", "单路相机与动作错位", "medium", scope_kind="camera"),
+               _info("suspect", "AV-1", "疑似错位"),
+               _info("undecidable", "AV-3", "测不准：有动作但画面运动对不上"),
+               _info("lag_inconsistent", "MV-3", "各相机的滞后不一致", "medium")),
         param_schema=_evidence_param(
             "sync_plots", "同步曲线证据图",
             {"flagged": "有标注或未对齐的", "all": "全部", "off": "不画"},
@@ -379,8 +499,14 @@ MODULES: tuple[ModuleSpec, ...] = (
     ModuleSpec(
         id="eef_video_consistency", name_zh="EEF–视频一致性",
         summary_zh="比较数据集中声明的末端执行器投影与画面里独立定位的夹爪轨迹和方向是否匹配",
-        level="episode", gate="hard", needs=frozenset({"video", "vlm", "eef_input"}), stage="vlm",
-        depends_on=("frame_gates",), produces_adjudication=True, param_schema=_eef_params(),
+        level="episode", needs=frozenset({"video", "vlm", "eef_input"}), block="vlm", stage="vlm",
+        depends_on=(),
+        # a mixed module: its CPU measuring takes CPU-pool slots, its model review the VLM gates (§3.1)
+        codes=(_blocking("inconsistent", "MV-5", "末端投影与画面不符", appealable=True),
+               _review("unsettled", "MV-5", "末端投影与画面是否相符待人工核对", "eef_check"),
+               _info("opinion_mismatch", "MV-5", "模型意见：末端投影与画面不符"),
+               _info("record_mismatch", "MV-5", "上传轨迹与数据集的记录不符")),
+        param_schema=_eef_params(),
         tables=(TableSpec("eef_camera_metrics", "逐相机分项",
                           ("episode_index", "camera", "position_median_px", "orientation_median_deg",
                            "lag_s", "coverage")),
@@ -391,57 +517,60 @@ MODULES: tuple[ModuleSpec, ...] = (
                                                           "review_status", "conflict")),
                 TableSpec("eef_record", "轨迹与数据集记录", ("episode_index", "source", "status", "position_p95_mm",
                                                           "rotation_p95_deg", "lag_frames"))),
-        review_lines=("eef_check",), appealable=True, input_scope="funnel", affects_dataset_verdict=True,
         native=True),
     ModuleSpec(
         id="task_success", name_zh="任务成败判定",
         summary_zh="由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
-        level="episode", gate="hard", needs=frozenset({"video", "vlm"}), stage="vlm",
-        depends_on=("frame_gates", "autolabel"), produces_adjudication=True,
+        level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
+        depends_on=("autolabel",),
+        codes=(_blocking("failure", "TASK-5", "任务失败", appealable=True),
+               _review("uncertain", "TASK-5", "任务成败拿不准", "task_verdict"),
+               _info("recovery", "TASK-12", "中途失误后完成"),
+               _review("label_conflict_suspect", "LABEL-5", "标注与画面疑似不符", "label"),
+               _info("task_text_missing", "LABEL-3", "没有任务标注，用的是自产描述")),
         param_schema=_evidence_param(
             "evidence_frames", "证据帧",
             {"flagged": "拒绝与待裁决的", "all": "全部", "off": "不存"},
             "为哪些条目保存判定时看过的画面"),
-        tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),),
-        review_lines=("task_verdict", "label"), appealable=True),
+        tables=(TableSpec("task_success", "判定明细", ("episode_index", "verdict")),)),
     ModuleSpec(
         id="camera_defects", name_zh="镜头画面缺陷",
         summary_zh="借任务成败判定的逐机位复核请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
-        level="episode", gate="none", needs=frozenset({"video", "vlm"}), stage="vlm",
-        depends_on=("frame_gates", "autolabel"), produces_adjudication=False,
+        level="episode", needs=frozenset({"video", "vlm"}), block="vlm", stage="vlm",
+        depends_on=("autolabel",),
+        # minor -> low, severe -> medium
+        codes=(_info("glitch", "IMG-5", "花屏", scope_kind="camera"),
+               _info("shake", "IMG-6", "画面抖动", scope_kind="camera"),
+               _info("contamination", "IMG-7", "镜头污染或遮挡", scope_kind="camera")),
         param_schema=_no_params(),
         tables=(TableSpec("camera_defects", "逐机位画面缺陷",
                           ("episode_index", "camera", "glitch", "shake", "contamination")),),
-        input_scope="funnel", affects_dataset_verdict=False, rides_on="task_success"),
+        rides_on="task_success"),
     ModuleSpec(
         id="dedup", name_zh="精确去重",
         summary_zh="找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",
-        level="dataset", gate="dedup", needs=frozenset({"raw_bytes"}), stage="post_verdict",
-        depends_on=("funnel_verdict",), produces_adjudication=True,
+        level="dataset", needs=frozenset({"raw_bytes"}), block="cpu", stage="dedup", depends_on=(),
+        codes=(_blocking("duplicate", "SET-1", "与另一条完全重复", appealable=True),),
         param_schema=_no_params(),
-        tables=(TableSpec("dedup_groups", "重复组", ("episode_index", "duplicate_of")),),
-        appealable=True),
+        tables=(TableSpec("dedup_groups", "重复组", ("episode_index", "duplicate_of")),)),
     ModuleSpec(
         id="skill_profile", name_zh="技能画像",
         summary_zh="归纳两级技能体系并统计分布，检出标注与画面不一致的条目",
-        level="dataset", gate="none", needs=frozenset({"video", "vlm"}), stage="profile_vlm",
-        depends_on=("funnel_verdict", "dedup", "autolabel"), produces_adjudication=True,
+        level="dataset", needs=frozenset({"video", "vlm"}), block="vlm", stage="profile",
+        depends_on=("autolabel",),
+        codes=(_review("label_disagreement", "LABEL-5", "标注与画面不符", "label"),
+               _info("descriptions_conflict", "LABEL-2", "多份描述彼此不一致", "medium"),
+               _info("task_text_missing", "LABEL-3", "没有任务标注，用的是自产描述"),
+               _info("undersampled_family", "SET-3", "样本偏少的技能族", scope_kind="dataset")),
         param_schema=_no_params(),
-        tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),),
-        review_lines=("label",)),
+        tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),)),
 )
 
 
 def native_ids() -> tuple[str, ...]:
     """Modules v2 runs itself, outside v1's check configuration (the EEF module since 1.8, the data
-    integrity module since 1.11): v1's ``apply_check_selection`` never sees them; aggregate adds their
-    gate to the verdict config."""
+    integrity module since 1.11): v1's ``apply_check_selection`` never sees them."""
     return tuple(m.id for m in MODULES if m.native)
-
-
-def advisory_ids() -> tuple[str, ...]:
-    """Modules outside keep / drop / held (``affects_dataset_verdict=False``)."""
-    return tuple(m.id for m in MODULES if not m.affects_dataset_verdict)
 
 
 def riders_of(host: str) -> tuple[str, ...]:
@@ -480,6 +609,14 @@ def by_stage(stage: str) -> tuple[ModuleSpec, ...]:
     return tuple(m for m in MODULES if m.stage == stage)
 
 
+def by_block(block: str) -> tuple[ModuleSpec, ...]:
+    return tuple(m for m in MODULES if m.block == block)
+
+
+def finding_code(module_id: str, code: str) -> FindingCode:
+    return get(module_id).code(code)
+
+
 def validate_params(module_id: str, params: dict | None) -> None:
     """Raise ``jsonschema.ValidationError`` if ``params`` do not fit the module."""
     import jsonschema
@@ -511,12 +648,33 @@ def follow_up(line_id: str, decision: str, target: str) -> FollowUp | None:
 
 
 def appealable(module_id: str) -> bool:
-    """Whether a reject attributed to ``module_id`` may be appealed (D42)."""
+    """Whether a reject attributed to ``module_id`` may be appealed (D42): one of its codes is."""
     return get(module_id).appealable
+
+
+@functools.lru_cache(maxsize=1)
+def taxonomy() -> dict:
+    """The taxonomy (C6) this registry binds, ``docs/contracts/taxonomy.json``."""
+    from . import schemas
+
+    doc = schemas.load(schemas.TAXONOMY)
+    if doc.get("taxonomy_version") != TAXONOMY_VERSION:
+        raise RuntimeError(f"{schemas.TAXONOMY} is taxonomy {doc.get('taxonomy_version')}, "
+                           f"the registry binds {TAXONOMY_VERSION}")
+    return doc
 
 
 def export() -> dict:
     """The registry as JSON (``GET /api/v1/modules`` and ``docs/contracts/modules.json``)."""
-    return {"registry_version": REGISTRY_VERSION, "stages": list(STAGE_ORDER),
+    tax = taxonomy()
+    return {"registry_version": REGISTRY_VERSION, "taxonomy_version": TAXONOMY_VERSION,
+            "blocks": [{"id": b, "title_zh": BLOCK_TITLES[b], "stages": list(stages)}
+                       for b, stages in BLOCKS.items()],
+            "stages": list(STAGES), "full_set_stages": list(FULL_SET_STAGES),
+            "finding_levels": [{"id": lv, "title_zh": title} for lv, title in FINDING_LEVELS],
+            "unassessable_reasons": [{"id": r, "title_zh": title} for r, title in UNASSESSABLE_REASONS],
             "review_lines": [line.to_json() for line in REVIEW_LINES],
+            "taxonomy": {"dimensions": tax["dimensions"],
+                         "items": [{k: it[k] for k in ("id", "dimension", "name_zh", "explain_zh", "kind",
+                                                       "level")} for it in tax["items"]]},
             "modules": [m.to_json() for m in MODULES]}

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 1.22.0
+  version: 2.0.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -151,6 +151,23 @@ info:
     inside its host's model requests, runs whenever the host runs and is never selected on its
     own - the new-task form does not offer it, a task request naming it is accepted and the name
     ignored, the report shows it. First one: `camera_defects` on `task_success`.
+
+    2.0.0 (2026-10-01): findings, policy verdicts and the two parallel blocks (design doc 17,
+    D56-D59). The module registry is 2.0: a module has a `block` (cpu / vlm) and a `stage` of that
+    block (`integrity`, `numeric`, `frame`, `dedup`; `autolabel`, `vlm`, `profile` - `dedup` and
+    `profile` are the full-set stages), a catalogue of finding `codes` (each mapped to an item of
+    the taxonomy C6, with a default severity, a default level blocking / review / info, the review
+    line a review-level code raises and whether a blocking one may be appealed) and the items it
+    `covers`; `gate`, `input_scope`, `affects_dataset_verdict`, `produces_adjudication`,
+    `review_lines` and the module-level `appealable` are gone (the last three follow from the codes).
+    The registry carries the bound taxonomy (`taxonomy_version`, `taxonomy`), the `blocks`, the
+    `finding_levels` and the `unassessable_reasons`. `TaskParams.policy` names the verdict policy
+    (`default`: today's gates; `report_only`: report every finding, reject nothing; the funnel
+    keeps judging by `default` until the policy aggregate replaces it, F12.3). Optional, for the
+    two-block pipeline (F12.4): `StageProgress.block` / `full_set`, `PipelineEpisode.stages` /
+    `provisional`; for the findings (F12.3): `TaskEpisode.items` / `levels`. The report, the
+    plan and the result records follow C2 2.0, which keeps reading the 1.0 documents of tasks
+    made before (D59).
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1944,10 +1961,52 @@ components:
     ModuleRegistry:
       type: object
       additionalProperties: false
-      required: [registry_version, stages, review_lines, modules]
+      required: [registry_version, taxonomy_version, blocks, stages, full_set_stages, finding_levels,
+                 unassessable_reasons, review_lines, taxonomy, modules]
+      description: >-
+        C1 2.0 (design doc 17 §2): where every module runs, what it can find and what it covers. The
+        console takes every module, code and item name from here.
       properties:
         registry_version: {type: string}
-        stages: {type: array, items: {enum: [integrity, numeric, frame, vlm, post_verdict, profile_vlm]}}
+        taxonomy_version: {type: string, description: "the taxonomy (C6) every code maps into"}
+        blocks:
+          type: array
+          description: >-
+            The two blocks that run side by side and never filter each other (D57); inside a block every
+            stage gets every selected episode
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, title_zh, stages]
+            properties:
+              id: {enum: [cpu, vlm]}
+              title_zh: {type: string}
+              stages: {type: array, minItems: 1, items: {$ref: "#/components/schemas/RegistryStage"}}
+        stages: {type: array, items: {$ref: "#/components/schemas/RegistryStage"}, description: "every stage, the CPU block's first"}
+        full_set_stages:
+          type: array
+          items: {$ref: "#/components/schemas/RegistryStage"}
+          description: stages that need the whole selection and start once the earlier stages of their block are done
+        finding_levels:
+          type: array
+          description: blocking (rejects), review (asks a person), info (reported only), with the console's titles
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, title_zh]
+            properties:
+              id: {$ref: "#/components/schemas/FindingLevel"}
+              title_zh: {type: string}
+        unassessable_reasons:
+          type: array
+          description: why a module could not assess an item on an episode (design doc 17 §1.4)
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, title_zh]
+            properties:
+              id: {type: string, pattern: "^[a-z][a-z0-9_]*$"}
+              title_zh: {type: string}
         review_lines:
           type: array
           description: >-
@@ -1955,37 +2014,64 @@ components:
             line it has no dedicated view for from this entry: its title, the question's reason
             and one button per decision.
           items: {$ref: "#/components/schemas/ReviewLine"}
+        taxonomy:
+          type: object
+          additionalProperties: false
+          required: [dimensions, items]
+          description: the bound taxonomy (C6, docs/contracts/taxonomy.json) without its sample-set notes
+          properties:
+            dimensions:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, name_zh]
+                properties:
+                  id: {type: string}
+                  name_zh: {type: string}
+            items:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, dimension, name_zh, explain_zh, kind, level]
+                properties:
+                  id: {$ref: "#/components/schemas/TaxonomyItemId"}
+                  dimension: {type: string}
+                  name_zh: {type: string}
+                  explain_zh: {type: string}
+                  kind: {enum: [defect, phenomenon, reference, control], description: "control: a legal case that must not be reported"}
+                  level: {enum: [episode, dataset]}
         modules:
           type: array
           items:
             type: object
             additionalProperties: false
-            required: [id, name_zh, summary_zh, level, gate, needs, stage, depends_on, produces_adjudication, review_lines,
-                       appealable, input_scope, affects_dataset_verdict, param_schema, tables, mergeable]
+            required: [id, name_zh, summary_zh, level, needs, block, stage, depends_on, codes, covers,
+                       param_schema, tables, mergeable]
             properties:
               id: {$ref: "#/components/schemas/ModuleId"}
               name_zh: {type: string}
               summary_zh: {type: string}
               level: {enum: [episode, dataset]}
-              gate: {enum: [hard, soft, dedup, none]}
               needs: {type: array, items: {enum: [timestamps, action, state, video, embodiment_profile, vlm, raw_bytes, eef_input]}}
-              stage: {enum: [integrity, numeric, frame, vlm, post_verdict, profile_vlm]}
+              block: {enum: [cpu, vlm]}
+              stage: {$ref: "#/components/schemas/RegistryStage"}
               depends_on:
                 type: array
-                items: {enum: [numeric_gates, frame_gates, autolabel, funnel_verdict, dedup, eef_video_consistency]}
-                description: "a module id (registry 1.4) means that module's own results"
-              input_scope:
-                enum: [funnel, all_selected]
-                description: "funnel: the survivors of the stages before; all_selected: every selected episode (1.4)"
-              affects_dataset_verdict:
-                type: boolean
+                items: {enum: [autolabel]}
+                description: "data only: the captions autolabel writes for episodes without a task text"
+              codes:
+                type: array
+                minItems: 1
+                description: the finding codes the module reports (design doc 17 §2.2)
+                items: {$ref: "#/components/schemas/FindingCode"}
+              covers:
+                type: array
+                items: {$ref: "#/components/schemas/TaxonomyItemId"}
                 description: >-
-                  false: an advisory module (1.4); aggregate never counts it, keep / drop / held and the delivered
-                  lists do not depend on it, and its records carry passed = score = null with the sub-item
-                  statuses in details (shown as advisory, not as an abstention)
-              produces_adjudication: {type: boolean, description: "raises review items or its rejects may be appealed"}
-              review_lines: {type: array, items: {$ref: "#/components/schemas/ReviewLineId"}, description: "the lines it raises"}
-              appealable: {type: boolean, description: "a reject attributed to it may be appealed (D42)"}
+                  the items it assesses on an episode it can read: its codes' items plus items it only
+                  reports a reading for; a record says which of them it could not assess and why
               param_schema: {type: object}
               tables:
                 type: array
@@ -2004,6 +2090,32 @@ components:
                 description: >-
                   present on a module answered inside this host module's requests (1.19.0): it runs
                   whenever the host runs, has no request of its own and cannot be selected alone
+    RegistryStage:
+      enum: [integrity, numeric, frame, dedup, autolabel, vlm, profile]
+      description: a stage of a block (registry 2.0); a plan's stage ids are its own (cli/plan.schema.json)
+    FindingLevel:
+      enum: [blocking, review, info]
+    TaxonomyItemId:
+      type: string
+      pattern: "^[A-Z]+-[0-9]+$"
+      description: an item of the taxonomy (C6), e.g. FILE-3, MV-5
+    FindingCode:
+      type: object
+      additionalProperties: false
+      required: [code, item, name_zh, severity, level, scope_kind, appealable]
+      properties:
+        code: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "unique within its module"}
+        item:
+          oneOf:
+            - $ref: "#/components/schemas/TaxonomyItemId"
+            - type: "null"
+          description: null only for an info-level item of the platform's own
+        name_zh: {type: string}
+        severity: {enum: [high, medium, low], description: "the default; a module may grade by measure"}
+        level: {$ref: "#/components/schemas/FindingLevel"}
+        scope_kind: {enum: [episode, camera, channel, dataset]}
+        appealable: {type: boolean, description: "blocking codes only: a reject it caused may be appealed (D42)"}
+        review_line: {$ref: "#/components/schemas/ReviewLineId"}
     ReviewLineId:
       type: string
       pattern: "^[a-z][a-z0-9_]*$"
@@ -2452,6 +2564,17 @@ components:
             caption: {type: number, exclusiveMinimum: 0, default: 60}
             llm: {type: number, exclusiveMinimum: 0, default: 120}
         clips: {type: boolean, default: false}
+        policy:
+          type: object
+          additionalProperties: false
+          description: >-
+            The verdict policy (design doc 17 §4, D58): which findings reject an episode, which ask a
+            person and which are only reported. `default` gives every finding code its registry level
+            (today's hard gates reject, today's suspects and abstentions are asked); `report_only`
+            rejects nothing and asks nothing. Frozen at start; changing it later re-runs aggregate
+            only. The funnel keeps judging by `default` until the policy aggregate replaces it (F12.3).
+          properties:
+            preset: {enum: [default, report_only], default: default}
         limits:
           type: object
           additionalProperties: false
@@ -2540,6 +2663,8 @@ components:
       required: [id, state, done, total]
       properties:
         id: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "v1: autolabel, numeric, frame, vlm, verdict, dedup, profile, final; then export, report, verify; new modules may add stages"}
+        block: {enum: [cpu, vlm], description: "the block the stage belongs to (two-block plans, design doc 17 §3); absent on funnel plans and on the steps after both blocks"}
+        full_set: {type: boolean, description: "a full-set stage: it starts once the earlier stages of its block are done (dedup, profile)"}
         state: {enum: [pending, running, succeeded, completed_with_errors, failed, skipped]}
         done: {type: integer, minimum: 0}
         total: {type: integer, minimum: 0}
@@ -2809,6 +2934,18 @@ components:
         reason: {type: [string, "null"]}
         verdict: {type: [string, "null"], enum: [keep, drop, held, null]}
         verdict_reason: {type: [string, "null"]}
+        stages:
+          type: object
+          description: >-
+            two-block pipelines (design doc 17 §5.5): every stage the episode takes part in, both blocks;
+            last_stage / next_stage describe the funnel and go with it (F12.4)
+          propertyNames: {pattern: "^[a-z][a-z0-9_]*$"}
+          additionalProperties: {enum: [waiting, running, done, error]}
+        provisional:
+          type: boolean
+          description: >-
+            the verdict is the policy applied to the findings so far, not the final one (two-block
+            pipelines: the final verdict is only given by aggregate)
         processing_s: {type: [number, "null"], description: Sum of completed layer processing times for this episode; excludes queue and CPU admission waits}
         stage_processing_s:
           type: object
@@ -2884,6 +3021,14 @@ components:
           type: array
           items: {$ref: "#/components/schemas/ModuleId"}
           description: the source modules of the open questions
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/TaxonomyItemId"}
+          description: findings results (C2 2.0) only - the taxonomy items of its findings, every module together
+        levels:
+          type: array
+          items: {$ref: "#/components/schemas/FindingLevel"}
+          description: findings results (C2 2.0) only - the levels its findings got under the task's policy
     TaskEpisodePage:
       type: object
       additionalProperties: false

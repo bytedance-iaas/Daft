@@ -31,6 +31,7 @@ import json
 import logging
 
 from curation.contracts import modules as registry
+from curation.pipeline import gates_v1
 
 from . import planning, resources
 from .runbase import Run, TaskFailure, input_digest
@@ -170,7 +171,7 @@ class StageRun(Run):
         table = read_json(self.wd.root / "inputs" / "uploads.json", {}) or {}
         out: list[str] = []
         for mid in mods:
-            if mid not in rows or (registry.get(mid).affects_dataset_verdict and mid not in registry.native_ids()):
+            if mid not in rows or (gates_v1.votes(mid) and mid not in registry.native_ids()):
                 continue
             kinds = registry.upload_params(mid)
             for key, value in (rows[mid].params or {}).items():

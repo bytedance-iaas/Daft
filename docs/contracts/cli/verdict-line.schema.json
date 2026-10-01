@@ -1,113 +1,261 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "verdicts.jsonl line - funnel verdict (schema 1.0)",
-  "description": "aggregate --phase funnel, one line per selected episode. Rules are v1's pipeline/verdict.py: a hard gate with passed=false drops; passed=null is only recorded as undecidable; a weighted soft score under the threshold drops. An episode that a selected module failed to judge (D24, D33) is held, unless modules that judged it normally already reject it (D35): a hard gate failed, or the soft score is under the threshold while every selected soft module scored it. Re-running the errored module cannot change such a drop, so the episode is dropped and error_modules still names the modules that failed; retries only re-run held episodes.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "episode_index",
-    "verdict",
-    "hard_fails",
-    "soft_score",
-    "undecidable",
-    "error_modules",
-    "reason"
-  ],
-  "properties": {
-    "episode_index": {
-      "$ref": "common.schema.json#/$defs/episode_index"
+  "title": "verdicts.jsonl line (schema 2.0; 1.0 still read)",
+  "description": "aggregate's verdict of one selected episode. 2.0 (design doc 17 §4.3, D58): the task's policy gives every finding a level; an episode with a blocking finding is dropped and every blocking finding is named (modules that failed on it are still listed, D35); otherwise an episode that a selected module failed to judge or has no record of is held (D24, D33, P11); otherwise it is kept, its review-level findings going to their review lines. 1.0 is the funnel's line (hard gates, soft score).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/verdict_line_2"
     },
-    "verdict": {
-      "enum": [
-        "keep",
-        "drop",
-        "held"
-      ]
-    },
-    "hard_fails": {
-      "$ref": "common.schema.json#/$defs/module_list"
-    },
-    "soft_score": {
-      "type": [
-        "number",
-        "null"
-      ]
-    },
-    "undecidable": {
-      "$ref": "common.schema.json#/$defs/module_list"
-    },
-    "error_modules": {
-      "$ref": "common.schema.json#/$defs/module_list"
-    },
-    "reason": {
-      "type": "string"
+    {
+      "$ref": "#/$defs/verdict_line_1"
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "verdict": {
-            "const": "held"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "error_modules": {
-            "minItems": 1
+  ],
+  "$defs": {
+    "verdict_line_2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "episode_index",
+        "verdict",
+        "blocking",
+        "review",
+        "info_count",
+        "error_modules",
+        "reason"
+      ],
+      "properties": {
+        "episode_index": {
+          "$ref": "common.schema.json#/$defs/episode_index"
+        },
+        "verdict": {
+          "enum": [
+            "keep",
+            "drop",
+            "held"
+          ]
+        },
+        "blocking": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/finding_ref"
           },
-          "hard_fails": {
-            "maxItems": 0
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "verdict": {
-            "const": "keep"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "hard_fails": {
-            "maxItems": 0
-          },
-          "error_modules": {
-            "maxItems": 0
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "verdict": {
-            "const": "drop"
-          }
-        }
-      },
-      "then": {
-        "anyOf": [
-          {
+          "description": "every finding the policy made blocking"
+        },
+        "review": {
+          "type": "array",
+          "description": "the findings the policy sends to a person, with the review line each is asked on",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "module",
+              "code",
+              "item",
+              "line"
+            ],
             "properties": {
-              "hard_fails": {
+              "module": {
+                "$ref": "common.schema.json#/$defs/module_id"
+              },
+              "code": {
+                "$ref": "common.schema.json#/$defs/finding_code"
+              },
+              "item": {
+                "oneOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/item_id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "line": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              }
+            }
+          }
+        },
+        "info_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "findings reported only"
+        },
+        "error_modules": {
+          "$ref": "common.schema.json#/$defs/module_list"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "held"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_modules": {
+                "minItems": 1
+              },
+              "blocking": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "keep"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "blocking": {
+                "maxItems": 0
+              },
+              "error_modules": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "drop"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "blocking": {
                 "minItems": 1
               }
             }
-          },
-          {
+          }
+        }
+      ]
+    },
+    "verdict_line_1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "episode_index",
+        "verdict",
+        "hard_fails",
+        "soft_score",
+        "undecidable",
+        "error_modules",
+        "reason"
+      ],
+      "properties": {
+        "episode_index": {
+          "$ref": "common.schema.json#/$defs/episode_index"
+        },
+        "verdict": {
+          "enum": [
+            "keep",
+            "drop",
+            "held"
+          ]
+        },
+        "hard_fails": {
+          "$ref": "common.schema.json#/$defs/module_list"
+        },
+        "soft_score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "undecidable": {
+          "$ref": "common.schema.json#/$defs/module_list"
+        },
+        "error_modules": {
+          "$ref": "common.schema.json#/$defs/module_list"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
             "properties": {
-              "soft_score": {
-                "type": "number"
+              "verdict": {
+                "const": "held"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_modules": {
+                "minItems": 1
+              },
+              "hard_fails": {
+                "maxItems": 0
               }
             }
           }
-        ]
-      }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "keep"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "hard_fails": {
+                "maxItems": 0
+              },
+              "error_modules": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "drop"
+              }
+            }
+          },
+          "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "hard_fails": {
+                    "minItems": 1
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "soft_score": {
+                    "type": "number"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "description": "Line 1.0 (tasks made before C2 2.0, read only, D59). aggregate --phase funnel, one line per selected episode. Rules are v1's pipeline/verdict.py: a hard gate with passed=false drops; passed=null is only recorded as undecidable; a weighted soft score under the threshold drops. An episode that a selected module failed to judge (D24, D33) is held, unless modules that judged it normally already reject it (D35): a hard gate failed, or the soft score is under the threshold while every selected soft module scored it. Re-running the errored module cannot change such a drop, so the episode is dropped and error_modules still names the modules that failed; retries only re-run held episodes."
     }
-  ]
+  }
 }

@@ -1,44 +1,292 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "passed.json / reject.json / held.json / review.json (schema 1.0)",
-  "description": "aggregate --phase final writes the four lists into revisions/r<NNNN>/ (design doc 06, sections 1 and 3). passed, reject and held are disjoint and together cover every episode of the task except those skipped for missing source files (D40); review is an orthogonal view: mostly passed episodes waiting for a human, plus rejects attributed to task_success that may be appealed. Dedup-removed episodes are only in reject (v1's passed.json also listed them; see design doc 10, section 3.0). Review items (v1's queues, D42): task_verdict only for task_success abstentions of episodes in passed without a human verdict - an episode already rejected (by dedup or any other module) is not asked, held episodes get no items until resolved, and other undecidable modules stay in the verdict line and the report; label_conflict from skill_profile (and task_success's guard layer); reject_appeal for every reject attributed to an appealable module (C1 appealable: task_success alone - no other hard gate, not a soft-score reject - or dedup, with duplicate_of) that has no effective appeal decision and is not discarded - an 'unsure' appeal keeps it listed. eef_consistency (C1 1.9, line eef_check) for episodes in passed the EEF module could not settle (passed null) and no person answered - an 'unsure' keeps it listed; a reject of the EEF module alone may be appealed like task_success's. integrity_suspect (C1 1.11, line integrity_check, design doc 14) likewise for episodes in passed the data integrity module suspects; its rejects are final. Appeal candidates are optional and never count as pending (C1 counts_as_pending). A restore overrides only the appealed module: an episode another module errored on goes to held until a retry succeeds. Skipped episodes are in none of the four lists; the report lists them under integrity.skipped_episodes.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "list",
-    "revision",
-    "count",
-    "episodes"
-  ],
-  "properties": {
-    "schema_version": {
-      "$ref": "common.schema.json#/$defs/schema_version"
+  "title": "passed.json / reject.json / held.json / review.json (schema 2.0; 1.0 still read)",
+  "description": "aggregate --phase final writes the four lists into revisions/r<NNNN>/ (design doc 06, sections 1 and 3). passed, reject and held are disjoint and together cover every episode of the task except those skipped for missing source files (D40); review is an orthogonal view: mostly passed episodes waiting for a human, plus rejects attributed to task_success that may be appealed. Dedup-removed episodes are only in reject (v1's passed.json also listed them; see design doc 10, section 3.0). Review items (v1's queues, D42): task_verdict only for task_success abstentions of episodes in passed without a human verdict - an episode already rejected (by dedup or any other module) is not asked, held episodes get no items until resolved, and other undecidable modules stay in the verdict line and the report; label_conflict from skill_profile (and task_success's guard layer); reject_appeal for every reject attributed to an appealable module (C1 appealable: task_success alone - no other hard gate, not a soft-score reject - or dedup, with duplicate_of) that has no effective appeal decision and is not discarded - an 'unsure' appeal keeps it listed. eef_consistency (C1 1.9, line eef_check) for episodes in passed the EEF module could not settle (passed null) and no person answered - an 'unsure' keeps it listed; a reject of the EEF module alone may be appealed like task_success's. integrity_suspect (C1 1.11, line integrity_check, design doc 14) likewise for episodes in passed the data integrity module suspects; its rejects are final. Appeal candidates are optional and never count as pending (C1 counts_as_pending). A restore overrides only the appealed module: an episode another module errored on goes to held until a retry succeeds. Skipped episodes are in none of the four lists; the report lists them under integrity.skipped_episodes. 2.0 (design doc 17 §4.3, §4.4): a reject's reasons name every blocking finding (module, code, item) instead of the first failed gate, soft scores are gone, and review items name the findings they ask about; an appeal can restore an episode only when all its blocking findings are appealable. 1.0 is still read for tasks made before (D59).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/final_list_2"
     },
-    "list": {
-      "enum": [
-        "passed",
-        "reject",
-        "held",
-        "review"
+    {
+      "$ref": "#/$defs/final_list_1"
+    }
+  ],
+  "$defs": {
+    "final_list_2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "list",
+        "revision",
+        "count",
+        "episodes"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version_2"
+        },
+        "list": {
+          "enum": [
+            "passed",
+            "reject",
+            "held",
+            "review"
+          ]
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/revision"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "episodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entry_2"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "list": {
+                "const": "review"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "episodes": {
+                "items": {
+                  "required": [
+                    "episode_index",
+                    "review",
+                    "current_list"
+                  ]
+                }
+              }
+            }
+          }
+        }
       ]
     },
-    "revision": {
-      "$ref": "common.schema.json#/$defs/revision"
+    "final_list_1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "list",
+        "revision",
+        "count",
+        "episodes"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "list": {
+          "enum": [
+            "passed",
+            "reject",
+            "held",
+            "review"
+          ]
+        },
+        "revision": {
+          "$ref": "common.schema.json#/$defs/revision"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "episodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entry_1"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "list": {
+                "const": "review"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "episodes": {
+                "items": {
+                  "required": [
+                    "episode_index",
+                    "review",
+                    "current_list"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
     },
-    "count": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "episodes": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/entry"
+    "entry_2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "episode_index"
+      ],
+      "properties": {
+        "episode_index": {
+          "$ref": "common.schema.json#/$defs/episode_index"
+        },
+        "reasons": {
+          "type": "array",
+          "description": "reject: every reason - the blocking findings (with code and item), a person's discard or failure, the duplicate; held: which module could not judge it. Modules that failed on a rejected episode are listed with kind execution_error (D35)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "module",
+              "text",
+              "kind"
+            ],
+            "properties": {
+              "module": {
+                "$ref": "common.schema.json#/$defs/module_id"
+              },
+              "text": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "finding",
+                  "human",
+                  "execution_error",
+                  "duplicate"
+                ]
+              },
+              "duplicate_of": {
+                "$ref": "common.schema.json#/$defs/episode_index"
+              },
+              "code": {
+                "$ref": "common.schema.json#/$defs/finding_code"
+              },
+              "item": {
+                "oneOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/item_id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "appealable": {
+                "type": "boolean",
+                "description": "the code may be appealed (registry 2.0, D42)"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "finding"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "code",
+                    "item"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "task_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "text",
+            "source"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "source": {
+              "$ref": "common.schema.json#/$defs/task_text_source"
+            }
+          }
+        },
+        "review": {
+          "type": "array",
+          "description": "review.json only: what a person is asked to decide - one item per review line and source module, naming the findings it asks about",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_module",
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "source_module": {
+                "$ref": "common.schema.json#/$defs/module_id"
+              },
+              "kind": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "description": "the review_kind of a registry review line (C1, D43); today task_verdict, label_conflict, reject_appeal, eef_consistency (C1 1.9), integrity_suspect (C1 1.11)"
+              },
+              "line": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "description": "the registry line id of this kind (label for label_conflict, eef_check for eef_consistency, integrity_check for integrity_suspect, otherwise the kind itself); the Daemon's adjudication line"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "string"
+              },
+              "duplicate_of": {
+                "$ref": "common.schema.json#/$defs/episode_index",
+                "description": "reject_appeal of a dedup reject: the episode this one duplicates"
+              },
+              "codes": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.schema.json#/$defs/finding_code"
+                },
+                "description": "the review-level findings (or, for reject_appeal, the appealable blocking findings) the question is about"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.schema.json#/$defs/item_id"
+                },
+                "description": "their taxonomy items"
+              }
+            }
+          }
+        },
+        "current_list": {
+          "enum": [
+            "passed",
+            "reject"
+          ],
+          "description": "review.json only"
+        }
       }
-    }
-  },
-  "$defs": {
-    "entry": {
+    },
+    "entry_1": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -149,29 +397,5 @@
         }
       }
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "list": {
-            "const": "review"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "episodes": {
-            "items": {
-              "required": [
-                "episode_index",
-                "review",
-                "current_list"
-              ]
-            }
-          }
-        }
-      }
-    }
-  ]
+  }
 }

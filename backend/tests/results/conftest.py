@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 
 from curation.contracts import modules as registry
+from curation.pipeline import gates_v1
 from daemon.repo import protocol as P
 
 from ..daemon.conftest import (  # noqa: F401 - fixtures are registered by importing them
@@ -49,8 +50,8 @@ from ..daemon.conftest import (  # noqa: F401 - fixtures are registered by impor
 
 API = "/curation/api/v1"
 JSON = {"Content-Type": "application/json"}
-MODULES = tuple(m.id for m in registry.MODULES if m.affects_dataset_verdict and m.id not in registry.native_ids())   # v1's eight
-GATE = {m.id: m.gate for m in registry.MODULES}
+MODULES = tuple(m.id for m in registry.MODULES if gates_v1.votes(m.id) and m.id not in registry.native_ids())   # v1's eight
+GATE = {m.id: gates_v1.gate(m.id) for m in registry.MODULES}
 CAMERAS = ("observation.images.wrist", "observation.images.exterior_1")
 SHORT = ("wrist", "exterior_1")
 EPISODES = range(9)

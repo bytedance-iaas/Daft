@@ -16,6 +16,7 @@ import { ApplyDialog, type RelabelRerun } from './ApplyDialog';
 import { EpisodeCard } from './EpisodeCard';
 import { useLoadAll, usePaged } from './paging';
 import { useAdjudicationList, useDecisions, type AdjTab } from './useAdjudication';
+import { isAppealable, producesAdjudication } from '../../lib/registry';
 
 function applyBlocked(task: Task, counts: AdjudicationCounts | null): string | null {
   if (!counts || counts.unapplied === 0) return zh.adjudication.applyNothing;
@@ -59,7 +60,7 @@ export function AdjudicationPage() {
   const reviewPage = usePaged(shown, `${line}|${statusFilter}|${sources.join(',')}`, 'review-pager');
   const counts = decisions.counts ?? (tab === 'review' ? review.data?.pages[0]?.counts : appeals.data?.pages[0]?.counts) ?? review.data?.pages[0]?.counts ?? appeals.data?.pages[0]?.counts ?? null;
   // Each tab filters by its own source modules (third round): review items, or appealable rejects.
-  const moduleOptions = (reg.data?.modules ?? []).filter((m) => (tab === 'appeals' ? m.appealable : m.produces_adjudication)).map((m) => ({ label: m.name_zh, value: m.id }));
+  const moduleOptions = (reg.data?.modules ?? []).filter((m) => (tab === 'appeals' ? isAppealable(m) : producesAdjudication(m))).map((m) => ({ label: m.name_zh, value: m.id }));
   // The review tab asks about episodes still in passed; appeals (applies_to reject) have their own tab.
   const typeOptions = (catalog ?? []).filter((l) => l.applies_to === 'passed').map((l) => {
     const owner = reviewCards.flatMap(ownQuestions).find((q) => q.line === l.id)?.source_module;

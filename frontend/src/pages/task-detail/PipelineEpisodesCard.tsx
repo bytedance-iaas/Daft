@@ -3,7 +3,10 @@ import { IconLoading } from '@arco-design/web-react/icon';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
+import type { operations } from '../../api/schema';
 import type { PipelineEpisode, Task } from '../../api/types';
+
+type PipelinePage = operations['listPipelineEpisodes']['responses'][200]['content']['application/json'];
 import { FUNNEL_STAGES, isTerminalState } from '../../lib/taskView';
 import { zh } from '../../locales/zh';
 
@@ -48,9 +51,9 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
   const page = useQuery({
     queryKey: ['task', task.id, 'pipeline-episodes', before, task.state, task.result_rev,
       Boolean(task.active_subtask)],
-    queryFn: () => unwrap(api().GET('/tasks/{id}/pipeline/episodes', {
+    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/pipeline/episodes', {
       params: { path: { id: task.id }, query: { before: before ?? undefined, limit: PIPELINE_PAGE } },
-    })),
+    }))) as Omit<PipelinePage, 'items'> & { items: PipelineEpisode[] },
     enabled: Boolean(task.started_at),
     refetchInterval: live && before === null ? 3000 : false,
     placeholderData: keepPreviousData,
@@ -58,9 +61,9 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
   const detail = useQuery({
     queryKey: ['task', task.id, 'pipeline-episode', selected, task.state, task.result_rev,
       Boolean(task.active_subtask)],
-    queryFn: () => unwrap(api().GET('/tasks/{id}/pipeline/episodes/{index}', {
+    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/pipeline/episodes/{index}', {
       params: { path: { id: task.id, index: selected! } },
-    })),
+    }))) as PipelineEpisode,
     enabled: selected !== null,
     refetchInterval: live && selected !== null ? 3000 : false,
     // the same episode keeps its record while the key moves on; another one starts empty

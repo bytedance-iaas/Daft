@@ -42,11 +42,11 @@ export function needsVlm(m: ModuleSpec | undefined): boolean {
   return Boolean(m && (m.needs as string[]).includes('vlm'));
 }
 
-/** Modules opted into by hand: no preset and no 全选可用 turns them on. Advisory modules (registry 1.4,
- * `affects_dataset_verdict: false`) and the EEF module, which needs an uploaded file and, since D49,
- * judges episodes (it stays opt-in). */
+/** Modules opted into by hand: no preset and no 全选可用 turns them on - the EEF module, which needs an
+ * uploaded file and, since D49, judges episodes (it stays opt-in). The advisory camera defects ride on
+ * task_success and are not offered at all (`offered`). */
 export function optIn(m: ModuleSpec): boolean {
-  return !m.affects_dataset_verdict || (m.needs as string[]).includes('eef_input');
+  return (m.needs as string[]).includes('eef_input');
 }
 
 /** Modules the form offers: a rider (registry 1.14, `rides_on`) is answered inside its host's model

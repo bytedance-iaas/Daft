@@ -12,6 +12,7 @@ import { SyncedVideos } from '../../features/media/SyncedVideos';
 import { reasonLine, recordError } from '../../lib/reportView';
 import { zh } from '../../locales/zh';
 import { BlockError, EPISODE_BLOCKS, GenericBlock, blockTitleExtra } from './episodeBlocks';
+import { isAdvisory, isAppealable, reviewLinesOf } from '../../lib/registry';
 
 export type EpisodeFilter = 'all' | 'passed' | 'reject' | 'held' | 'review';
 export const EPISODE_FILTERS: EpisodeFilter[] = ['all', 'passed', 'reject', 'held', 'review'];
@@ -158,9 +159,9 @@ function EpisodePicker({
 export function askable(reg: ModuleRegistry | undefined, item: { module: string; kind?: string }): boolean {
   const spec = reg?.modules.find((m) => m.id === item.module);
   if (!spec || !item.kind) return false;
-  if (item.kind === 'reject_appeal') return Boolean(spec.appealable);
+  if (item.kind === 'reject_appeal') return isAppealable(spec);
   const lines = (reg?.review_lines ?? []).filter((l) => l.review_kind === item.kind).map((l) => l.id);
-  return ((spec.review_lines ?? []) as string[]).some((id) => lines.includes(id));
+  return reviewLinesOf(spec).some((id) => lines.includes(id));
 }
 
 function SummaryCard({ taskId, view, readOnly, review }: { taskId: string; view: EpisodeView; readOnly: boolean; review: boolean }) {
@@ -245,7 +246,7 @@ function ModuleBlocks({ taskId, rev, view, report, onSelect }: { taskId: string;
       {ids.map((id) => {
         const record = view.modules[id];
         const Block = EPISODE_BLOCKS[id] ?? GenericBlock;
-        const advisory = reg.data?.modules.find((m) => m.id === id)?.affects_dataset_verdict === false;
+        const advisory = isAdvisory(id);
         return (
           <Card
             key={id}
@@ -292,7 +293,7 @@ export function EpisodesTab({ taskId, rev, readOnly, report, ep, onSelect }: { t
   const current = ep ?? first.data?.items[0]?.episode_index ?? null;
   const view = useQuery({
     queryKey: qk.episode(taskId, current ?? -1, rev),
-    queryFn: () => unwrap(api().GET('/tasks/{id}/episodes/{index}', { params: { path: { id: taskId, index: current! }, query: { rev } } })),
+    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/episodes/{index}', { params: { path: { id: taskId, index: current! }, query: { rev } } }))) as EpisodeView,
     enabled: current !== null,
     retry: false,
   });

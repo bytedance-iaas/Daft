@@ -42,16 +42,17 @@ from dataclasses import dataclass, field
 
 from ..contracts import modules as registry
 from ..export.report import CHECK_CN, check_detail_reason, hard_fail_reason
+from . import gates_v1
 from .adjudication import Decisions, judged_with
 from .records import latest_results, revision_dir, write_json_atomic, write_text_atomic
 from .tasktext import TaskText, load_autolabel
 from .verdict import episode_verdict
 
 FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm")
-#: The modules that vote on keep / drop / held. Advisory modules (registry 1.4,
-#: ``affects_dataset_verdict=False``) are filtered here, at the call boundary; verdict.py is v1's.
+#: The modules that vote on keep / drop / held. Advisory modules (``gates_v1.votes``) are
+#: filtered here, at the call boundary; verdict.py is v1's.
 FUNNEL_MODULES = tuple(m.id for m in registry.MODULES if m.stage in FUNNEL_STAGES
-                       and m.affects_dataset_verdict)
+                       and gates_v1.votes(m.id))
 NAMES_CN = {**CHECK_CN, "dedup": "精确去重", "skill_profile": "技能画像",
             "autolabel": "无标注补描述"}
 #: v2's EEF gate and its person's question (C1 1.9, design doc 12 D-E13): an episode it
@@ -127,7 +128,7 @@ class RunState:
         native = [m for m in self.modules if m in registry.native_ids() and m not in cfg["checks"]]
         if native:                     # v2's own gates join v1's verdict config here, at the call boundary
             cfg = {**cfg, "checks": {**cfg["checks"],
-                                     **{m: {"enable": True, "gate": registry.get(m).gate} for m in native}}}
+                                     **{m: {"enable": True, "gate": gates_v1.gate(m)} for m in native}}}
         self.cfg = cfg
         self.funnel = [m for m in self.modules if m in FUNNEL_MODULES]
         self.episodes = sorted({int(e) for e in episodes})
@@ -173,7 +174,7 @@ def funnel_line(state: RunState, ep: int, overrides: dict | None = None) -> Line
             else:
                 normal[m] = _struct(rec)
         if stage in ("integrity", "numeric", "frame"):
-            gates = [m for m in mods if registry.get(m).gate == "hard" and m in normal]
+            gates = [m for m in mods if gates_v1.gate(m) == "hard" and m in normal]
             fails = [m for m in gates if normal[m].get("passed") is False]
             if fails:
                 killed = fails[0]
@@ -477,7 +478,7 @@ def _drop_reasons(line: Line) -> list[dict]:
                         "text": f"未通过「{cn}」:{why}" if why else f"未通过「{cn}」"})
     else:
         soft = [m for m, c in line.checks.items()
-                if registry.get(m).gate == "soft" and c.get("score") is not None]
+                if gates_v1.gate(m) == "soft" and c.get("score") is not None]
         text = line.reason.split(";另有", 1)[0]
         out.append({"module": soft[0] if soft else "motion_quality", "kind": "soft_score",
                     "text": text})

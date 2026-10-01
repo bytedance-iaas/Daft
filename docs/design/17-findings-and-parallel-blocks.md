@@ -1,6 +1,7 @@
 # 17 发现、策略判决与并行两块
 
-> 状态：**定稿**（2026-10-01，需求方逐条确认了七个问题与三件待定事项）；F12.1–F12.6 尚未开工。
+> 状态：**定稿**（2026-10-01，需求方逐条确认了七个问题与三件待定事项）；F12.1（契约与注册表）已落地，F12.2–F12.6 未开工。
+> F12.1 落地时的细化写在 §7 末尾。
 > 决策见 `00-overview.md` §7 的 D56–D59 与 §7.1 的 P18–P20。
 > 来源：需求方 2026-10-01 提出——漏斗的「一票否决」让模块之间耦合、误判不可挽回；用回归样本集（设计 16）打分时，
 > 被前面的档拦下的条目在后面的检测项上全是「没评估」，平台效果量不准，客户也看不到完整信息。
@@ -545,6 +546,24 @@ IMG-5 / 6 / 7 的现状今天就落后于注册表 1.14，F12.1 一并改。
 | C4 → 2.0.0 | 注册表 schema；stage 枚举；`StageProgress`、`PipelineEpisode`；任务参数 `policy`；报告与 episode 列表的新字段；`frontend` 跑 `npm run gen:api` |
 | C5 | `TaskModule.episodes_total` 的注释改为「选中条数」；`stale` 规则只看数据依赖；任务多 `policy` 列（迁移第 7 步） |
 | 对账带格式 | `tools/parity` 的规范化记录认 2.0（§8.1） |
+
+**F12.1 落地时的细化**（2026-10-01）：
+
+- **C2 只升改了形状的六份**（记录、check、判决行、四份清单、报告、计划），每份写成「2.0 | 1.0」两个具名变体（`record_2` / `record_1` 等）：
+  新任务写 2.0，旧任务的 1.0 照旧可读（D59），生成的前端类型也是两个具名类型。其余文档形状没变，`schema_version` 仍是 1.0，
+  `common.schema.json` 新增 `schema_version_2`（"2.0"）与发现相关的公共定义（记录的 schema 照旧自包含，对账工具单拿它校验，定义抄一份、测试保证一致）。
+  原写「common 的 schema_version 整体升 2.0」不做：
+  只有不兼容的改动才升版本，没变的文档升版本只会让十几个产出方和读取方白改。
+- **策略放在任务参数里**（`TaskParams.policy`，C5 的 `Task.params`），不加列、不迁移数据库；效果与原写的「任务多 policy 列」相同。
+- **过渡期的 gate**：漏斗在 F12.3 / F12.4 之前照旧执行，它要的 `gate`（hard / soft / dedup / none）与「参不参与判决」从注册表挪到
+  `backend/curation/pipeline/gates_v1.py`（前端 `src/lib/registry.ts` 的 `funnelGate`、`isAdvisory`），不是契约，随最后一个使用方删除。
+  可复议、产生裁决、裁决线由细码推出（后端是 `ModuleSpec` 的属性，前端是 `src/lib/registry.ts` 的函数）。planner 把注册表的
+  `dedup`、`profile` 段排成漏斗的 `dedup`、`profile_vlm` 档；`input_scope = all_selected` 的分支（1.8 起已无模块使用）删除。
+- **前端在 F12.5 之前把 C2 文档按 1.0 读**（`src/api/types.ts` 的 `Report`、`ReportModuleSection`、`ResultRecord`、`EpisodeView`）；
+  新建任务页的门标签照过渡期的 gate 显示。
+- **分类表的平台注记**：`tools/regression_samples/coverage_from_registry.py` 生成 `platform_status`（能判 / 有读数 / 部分 / 没有 / 能处理）、
+  `platform_codes`、`platform_conditions`（覆盖它的模块都要的前提：本体在规格库、有状态量、上传 trajectory.json）；预检判的 SET-4 记 `preflight`。
+  测试要求仓库里的分类表与注册表一致。
 
 设计文档要改的条款：00 §4 数据流图与 D18 / P10 / D35 / D42 / D49 / D50 的注记；02 §3.5、§3.6；04 §2（分档改两块）；05 §1、§6、§7；
 06 §3、§6；07 §4.2、§5；13 的「逐机位画面缺陷」里 `affects_dataset_verdict` 的说法；14 §4 的三种结论改为发现；16 §8.4 加 2.0 的读法；

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from curation.contracts import modules as registry
+from curation.pipeline import gates_v1
 from curation.pipeline.aggregate import RunState, funnel_line
 from curation.pipeline.config import apply_check_selection, load_config
 from curation.pipeline.episode_state import EpisodeState, state_path
@@ -22,7 +23,7 @@ def _context(runtime, task):
     modules = [m for st in plan.get("stages") or []
                if st.get("id") in ("integrity", "numeric", "frame", "vlm")
                for m in st.get("modules") or []
-               if registry.get(m).affects_dataset_verdict]        # advisory ones do not vote (1.4)
+               if gates_v1.votes(m)]                             # advisory ones do not vote
     # v1's check configuration knows v1's checks only: the gates v2 runs itself (the data
     # integrity and EEF modules) join the verdict config in RunState, at the call boundary
     v1 = [m for m in modules if m not in registry.native_ids()]

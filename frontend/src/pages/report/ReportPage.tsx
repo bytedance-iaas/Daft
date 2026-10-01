@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { moduleById, moduleName, qk, useModules, useTask } from '../../api/queries';
-import type { Report, ReportModuleSection, Subtask, Task } from '../../api/types';
+import type { Report, ReportModuleSection, ReportResponse, Subtask, Task } from '../../api/types';
 import { Chart, barOption, chartSummary } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { PageError } from '../../components/PageError';
@@ -22,6 +22,7 @@ import { zh } from '../../locales/zh';
 import { EpisodesTab } from './EpisodesTab';
 import { ModuleSection, SECTION_STATE_COLOR } from './ModuleSection';
 import { PerfTab } from './PerfTab';
+import { funnelGate } from '../../lib/registry';
 
 function positiveInt(v: string | null): number | null {
   if (!v || !/^\d+$/.test(v)) return null;
@@ -248,7 +249,10 @@ function ScopeCard({ report, onJump, onCollapseAll, onExpandAll }: { report: Rep
       note: s.state === 'failed' ? s.error ?? '' : summaryDigest(s.summary as Record<string, unknown>),
       failed: s.state === 'failed',
     })),
-    ...report.skipped_modules.map((s) => ({ key: `skip-${s.id}`, order: null, id: s.id, gate: moduleById(reg.data, s.id)?.gate ?? '', state: 'skipped', note: s.reason, failed: false })),
+    ...report.skipped_modules.map((s) => {
+      const spec = moduleById(reg.data, s.id);
+      return { key: `skip-${s.id}`, order: null, id: s.id, gate: spec ? funnelGate(spec) : '', state: 'skipped', note: s.reason, failed: false };
+    }),
   ];
   return (
     <Card
@@ -397,7 +401,7 @@ export function ReportPage() {
   const tab = hashTab ?? (ep !== null ? 'episodes' : 'report');
   const report = useQuery({
     queryKey: qk.report(id, rev),
-    queryFn: () => unwrap(api().GET('/tasks/{id}/report', { params: { path: { id }, query: { rev } } })),
+    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id }, query: { rev } } }))) as ReportResponse,
     enabled: Boolean(t) && rev > 0,
     placeholderData: keepPreviousData,
     retry: false,

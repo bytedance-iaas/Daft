@@ -35,11 +35,53 @@ def test_examples(path: pathlib.Path):
         assert schemas.errors(ex["schema"], inst), f"invalid[{i}] accepted"
 
 
+#: the documents C2 2.0 changed (design doc 17 §7): written as 2.0, still read as 1.0 (D59)
+CHANGED_IN_2_0 = ("cli/result-record.schema.json", "cli/check.schema.json", "cli/verdict-line.schema.json",
+                  "cli/final-list.schema.json", "cli/report.schema.json", "cli/plan.schema.json")
+
+
+def _is_2_0(rel: str, inst: dict) -> bool:
+    if "schema_version" in inst:
+        return inst["schema_version"] == "2.0"
+    return "status" in inst if rel.endswith("result-record.schema.json") else "blocking" in inst
+
+
 def test_schema_versions_are_pinned():
-    """A breaking change must bump schema_version; today every CLI contract is 1.0."""
+    """A breaking change bumps schema_version. C2 2.0 changed six documents: they take 2.0 and 1.0;
+    every other CLI document is unchanged and stays 1.0."""
     for rel in schemas.schema_files():
-        doc = json.dumps(schemas.load(rel))
-        assert '"schema_version"' not in doc or "1.0" in doc, rel
+        if not rel.startswith("cli/") or rel == "cli/common.schema.json":
+            continue
+        doc = schemas.load(rel)
+        version = (doc.get("properties") or {}).get("schema_version")
+        if rel in CHANGED_IN_2_0:
+            assert "(schema 2.0; 1.0 still read)" in doc["title"], rel
+            assert version in (None, {"$ref": "common.schema.json#/$defs/schema_version_2"}), rel
+        else:
+            assert "2.0" not in doc.get("title", ""), rel
+            assert version is None or json.dumps(version) in ('{"$ref": "common.schema.json#/$defs/schema_version"}',
+                                                             '{"const": "1.0"}'), rel
+
+
+def test_the_result_record_stands_alone():
+    """The parity tool validates records with this one file (no registry), so it refers to nothing outside
+    itself; the definitions it carries are common's."""
+    text = (schemas.contracts_dir() / "cli" / "result-record.schema.json").read_text(encoding="utf-8")
+    assert "common.schema.json#" not in text
+    own = schemas.load("cli/result-record.schema.json")["$defs"]
+    shared = schemas.load("cli/common.schema.json")["$defs"]
+    for name, definition in own.items():
+        if name in shared:
+            assert definition == shared[name], name
+
+
+@pytest.mark.parametrize("rel", CHANGED_IN_2_0)
+def test_changed_documents_have_examples_of_both_versions(rel):
+    ex = json.loads((schemas.contracts_dir() / "examples" / f"{rel[4:-12]}.json").read_text(encoding="utf-8"))
+    assert ex["schema"] == rel
+    versions = {_is_2_0(rel, inst) for inst in ex["valid"]}
+    assert versions == {True, False}, "2.0 and 1.0 (D59) are both valid"
+    assert any(_is_2_0(rel, inst) for inst in ex["invalid"]), "and 2.0 has invalid examples too"
 
 
 def test_parity_records_match_the_result_record_contract():

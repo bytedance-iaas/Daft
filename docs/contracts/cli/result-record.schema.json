@@ -1,149 +1,499 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Per-episode check result record (schema 1.0)",
-  "description": "One line of checks/<module>/results.jsonl (v2) and of records/<module>.jsonl in a parity dump of v1. Frozen early by W0 because the parity tool consumes it; W2 adopts it as part of C2.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "episode_index",
-    "module",
-    "verdict",
-    "passed",
-    "score",
-    "gate",
-    "details",
-    "evidence",
-    "elapsed_s",
-    "error"
+  "title": "Per-episode check result record (schema 2.0; 1.0 still read)",
+  "description": "One line of checks/<module>/parts/*.jsonl (and of records/<module>.jsonl in a parity dump). 2.0 (design doc 17 §1.1, D56): the module's findings, the taxonomy items it assessed and those it could not, readings and the module's own details; no verdict, no score, no gate - whether the episode is rejected is the policy's call in aggregate. 1.0 is the funnel's record, still read for tasks made before (D59). Self-contained on purpose (no reference to common.schema.json): the parity tool validates records with this file alone; its definitions are common's, and a contract test keeps them equal.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/record_2"
+    },
+    {
+      "$ref": "#/$defs/record_1"
+    }
   ],
-  "properties": {
-    "episode_index": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "module": {
-      "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*$"
-    },
-    "verdict": {
-      "description": "pass/fail: hard gate passed=True/False; abstain: passed=null and no score; scored: soft module with a score (never votes); error: the module could not judge this episode properly (D33).",
-      "enum": [
-        "pass",
-        "fail",
-        "abstain",
-        "scored",
-        "error"
-      ]
-    },
-    "passed": {
-      "type": [
-        "boolean",
-        "null"
-      ]
-    },
-    "score": {
-      "type": [
-        "number",
-        "null"
-      ]
-    },
-    "gate": {
-      "enum": [
-        "hard",
-        "soft",
-        "dedup",
-        "none"
-      ]
-    },
-    "details": {
+  "$defs": {
+    "record_2": {
       "type": "object",
-      "description": "Module-specific, field names kept from v1."
-    },
-    "evidence": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "elapsed_s": {
-      "type": [
-        "number",
-        "null"
+      "additionalProperties": false,
+      "required": [
+        "episode_index",
+        "module",
+        "status",
+        "findings",
+        "assessed",
+        "unassessable",
+        "readings",
+        "details",
+        "evidence",
+        "elapsed_s",
+        "error"
       ],
-      "minimum": 0
-    },
-    "error": {
-      "oneOf": [
-        {
-          "type": "null"
+      "properties": {
+        "episode_index": {
+          "$ref": "#/$defs/episode_index"
         },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "incidents"
+        "module": {
+          "$ref": "#/$defs/module_id"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "error"
           ],
-          "properties": {
-            "kind": {
-              "const": "execution"
+          "description": "error: the module could not judge this episode properly (D33); no findings, nothing assessed"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "assessed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item_id"
+          },
+          "uniqueItems": true,
+          "description": "the items it covers minus the unassessable ones: an assessed item without a finding was checked and found clean"
+        },
+        "unassessable": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/unassessable"
+          }
+        },
+        "readings": {
+          "type": "object",
+          "description": "numbers that are no finding, for the report and the episode page"
+        },
+        "details": {
+          "type": "object",
+          "description": "module-specific, field names kept from v1 (parity and the episode page)"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "elapsed_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "error": {
+          "oneOf": [
+            {
+              "type": "null"
             },
-            "incidents": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "object",
-                "required": [
-                  "step"
-                ],
-                "properties": {
-                  "step": {
-                    "type": "string"
-                  },
-                  "cause": {
-                    "type": "string"
-                  },
-                  "camera": {
-                    "type": "string"
-                  },
-                  "call_kind": {
-                    "type": "string"
-                  },
-                  "attempts": {
-                    "type": "integer",
-                    "minimum": 0
-                  }
-                }
+            {
+              "$ref": "#/$defs/execution_error"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "error"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error": {
+                "type": "object"
+              },
+              "findings": {
+                "maxItems": 0
+              },
+              "assessed": {
+                "maxItems": 0
+              },
+              "unassessable": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "error": {
+                "type": "null"
               }
             }
           }
         }
       ]
-    }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "verdict": {
-            "const": "error"
+    },
+    "record_1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "episode_index",
+        "module",
+        "verdict",
+        "passed",
+        "score",
+        "gate",
+        "details",
+        "evidence",
+        "elapsed_s",
+        "error"
+      ],
+      "properties": {
+        "episode_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "module": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "verdict": {
+          "description": "pass/fail: hard gate passed=True/False; abstain: passed=null and no score; scored: soft module with a score (never votes); error: the module could not judge this episode properly (D33).",
+          "enum": [
+            "pass",
+            "fail",
+            "abstain",
+            "scored",
+            "error"
+          ]
+        },
+        "passed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "gate": {
+          "enum": [
+            "hard",
+            "soft",
+            "dedup",
+            "none"
+          ]
+        },
+        "details": {
+          "type": "object",
+          "description": "Module-specific, field names kept from v1."
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
           }
+        },
+        "elapsed_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "error": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "incidents"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "execution"
+                },
+                "incidents": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "step"
+                    ],
+                    "properties": {
+                      "step": {
+                        "type": "string"
+                      },
+                      "cause": {
+                        "type": "string"
+                      },
+                      "camera": {
+                        "type": "string"
+                      },
+                      "call_kind": {
+                        "type": "string"
+                      },
+                      "attempts": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
         }
       },
-      "then": {
-        "properties": {
-          "error": {
-            "type": "object"
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "error"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error": {
+                "type": "object"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "error": {
+                "type": "null"
+              }
+            }
           }
         }
-      },
-      "else": {
-        "properties": {
-          "error": {
-            "type": "null"
+      ],
+      "description": "Record 1.0 (tasks made before C2 2.0, read only, D59): pass/fail/abstain/scored/error with the funnel gate."
+    },
+    "episode_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "module_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "item_id": {
+      "type": "string",
+      "pattern": "^[A-Z]+-[0-9]+$",
+      "description": "an item of the taxonomy (C6), e.g. FILE-3"
+    },
+    "finding_code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "a code of the module's catalogue in the registry (C1 2.0)"
+    },
+    "severity": {
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "what a finding is about; none means the whole episode. Cameras by their short name, as the expectations write them",
+      "properties": {
+        "camera": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cameras": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clock": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "item",
+        "severity",
+        "message_zh"
+      ],
+      "description": "one problem a module found (design doc 17 §1.2). Its level is not the module's: a policy gives it in aggregate",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/finding_code"
+        },
+        "item": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/item_id"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the item the registry maps the code to; null only for an info-level item of the platform's own"
+        },
+        "severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "scope": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/scope"
+            }
+          ]
+        },
+        "frames": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "description": "[first, last] frame, counted from the episode's first, both included (P19)"
+        },
+        "time_s": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "description": "[start, end) seconds from the episode's start"
+        },
+        "readings": {
+          "type": "object",
+          "description": "the numbers behind the finding"
+        },
+        "message_zh": {
+          "type": "string",
+          "minLength": 1,
+          "description": "one Chinese sentence with camera, position and numbers; shown as is"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "evidence files, relative to the run directory"
+        },
+        "unit": {
+          "const": "dataset",
+          "description": "a dataset-level finding (checks/<module>/dataset.json): counted once per dataset"
+        }
+      }
+    },
+    "unassessable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "reason",
+        "message_zh"
+      ],
+      "description": "an item the module covers but could not assess on this episode",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/item_id"
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "one of the registry's unassessable_reasons"
+        },
+        "message_zh": {
+          "type": "string"
+        }
+      }
+    },
+    "incident": {
+      "type": "object",
+      "required": [
+        "step"
+      ],
+      "properties": {
+        "step": {
+          "type": "string"
+        },
+        "cause": {
+          "type": "string"
+        },
+        "camera": {
+          "type": "string"
+        },
+        "call_kind": {
+          "type": "string"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "execution_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "incidents"
+      ],
+      "properties": {
+        "kind": {
+          "const": "execution"
+        },
+        "incidents": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/incident"
           }
         }
       }
     }
-  ]
+  }
 }

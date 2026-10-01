@@ -4,6 +4,7 @@ import type { ModuleAvailability, ModuleRegistry, ModuleSpec } from '../../api/t
 import { needsVlm, offered, optIn, reasonText, toggleModule } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import type { Errors, FormValues } from './formModel';
+import { funnelGate } from '../../lib/registry';
 
 const { Row, Col } = Grid;
 
@@ -42,7 +43,7 @@ function ModuleCard({
       <Checkbox checked={checked} disabled={disabled} onChange={onToggle} aria-label={m.name_zh}>
         <b>{m.name_zh}</b>
       </Checkbox>{' '}
-      <Tag size="small">{zh.gate[m.gate]}</Tag> {needsVlm(m) ? <Tag size="small" color="purple">{zh.taskForm.callsModel}</Tag> : null}
+      <Tag size="small">{zh.gate[funnelGate(m)]}</Tag> {needsVlm(m) ? <Tag size="small" color="purple">{zh.taskForm.callsModel}</Tag> : null}
       <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
         {m.summary_zh}
       </div>
@@ -137,7 +138,7 @@ export function ModuleSection({
                     <Checkbox checked={false} disabled aria-label={m.name_zh}>
                       <b>{m.name_zh}</b>
                     </Checkbox>{' '}
-                    <Tag size="small">{zh.gate[m.gate]}</Tag>
+                    <Tag size="small">{zh.gate[funnelGate(m)]}</Tag>
                     <div style={{ fontSize: 12, marginTop: 4 }}>
                       <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{reasonText(a)}</span>
                       <Button type="text" size="mini" style={{ padding: 0 }} onClick={() => a && setDetails({ m, a })}>

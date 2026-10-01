@@ -1,76 +1,271 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "curation plan --json / plan.json (schema 1.0)",
-  "description": "The execution plan the planner derives (design doc 04, section 3). It is data: the Daemon stores it with the task, schedules by it and serves it read-only. Callers can only lower the limits it is derived from (D31).",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "vlm_parallelism", "limits", "stages", "estimates"],
-  "properties": {
-    "schema_version": {"$ref": "common.schema.json#/$defs/schema_version"},
-    "vlm_parallelism": {"type": "integer", "minimum": 1, "description": "the effective N the VLM gates are derived from"},
-    "limits": {
+  "title": "curation plan --json / plan.json (schema 2.0; 1.0 still read)",
+  "description": "The execution plan the planner derives (design doc 04, section 3). It is data: the Daemon stores it with the task, schedules by it and serves it read-only. Callers can only lower the limits it is derived from (D31). 2.0 (design doc 17 §3.3): two blocks - every check stage names its block (cpu / vlm) and the stage before it in that block (after); full-set stages (dedup, profile) start once the earlier stages of their block are done; every stage reads the task's selection, so there are no survivors and no hard gates. 1.0 is the funnel's plan, still read for tasks made before (D59).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/plan_2"
+    },
+    {
+      "$ref": "#/$defs/plan_1"
+    }
+  ],
+  "$defs": {
+    "plan_2": {
       "type": "object",
       "additionalProperties": false,
-      "description": "The upper bounds the plan honoured, and where each came from.",
-      "required": ["cpu_concurrency", "vlm_parallelism"],
+      "required": [
+        "schema_version",
+        "vlm_parallelism",
+        "limits",
+        "stages",
+        "estimates"
+      ],
       "properties": {
-        "cpu_concurrency": {"$ref": "#/$defs/limit", "description": "The most CPU workers this task may use: every core but two (planner) or the task's cap (task), whichever is lower (P4, D54). Plans made before D54 may say site. Under the Daemon, the workers of all running tasks share one pool of that many slots."},
-        "vlm_parallelism": {"$ref": "#/$defs/limit"}
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version_2"
+        },
+        "vlm_parallelism": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "the effective N the VLM gates are derived from"
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The upper bounds the plan honoured, and where each came from.",
+          "required": [
+            "cpu_concurrency",
+            "vlm_parallelism"
+          ],
+          "properties": {
+            "cpu_concurrency": {
+              "$ref": "#/$defs/limit",
+              "description": "The most CPU workers this task may use: every core but two (planner) or the task's cap (task), whichever is lower (P4, D54). Plans made before D54 may say site. Under the Daemon, the workers of all running tasks share one pool of that many slots."
+            },
+            "vlm_parallelism": {
+              "$ref": "#/$defs/limit"
+            }
+          }
+        },
+        "stages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/stage"
+              },
+              {
+                "$ref": "#/$defs/stage_2"
+              }
+            ]
+          }
+        },
+        "estimates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "vlm_requests",
+            "wall_clock_s",
+            "notes"
+          ],
+          "properties": {
+            "vlm_requests": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "wall_clock_s": {
+              "type": "number",
+              "minimum": 0
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
       }
     },
-    "stages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/stage"}},
-    "estimates": {
+    "plan_1": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["vlm_requests", "wall_clock_s", "notes"],
+      "required": [
+        "schema_version",
+        "vlm_parallelism",
+        "limits",
+        "stages",
+        "estimates"
+      ],
       "properties": {
-        "vlm_requests": {"type": "integer", "minimum": 0},
-        "wall_clock_s": {"type": "number", "minimum": 0},
-        "notes": {"type": "array", "items": {"type": "string"}}
+        "schema_version": {
+          "$ref": "common.schema.json#/$defs/schema_version"
+        },
+        "vlm_parallelism": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "the effective N the VLM gates are derived from"
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The upper bounds the plan honoured, and where each came from.",
+          "required": [
+            "cpu_concurrency",
+            "vlm_parallelism"
+          ],
+          "properties": {
+            "cpu_concurrency": {
+              "$ref": "#/$defs/limit",
+              "description": "The most CPU workers this task may use: every core but two (planner) or the task's cap (task), whichever is lower (P4, D54). Plans made before D54 may say site. Under the Daemon, the workers of all running tasks share one pool of that many slots."
+            },
+            "vlm_parallelism": {
+              "$ref": "#/$defs/limit"
+            }
+          }
+        },
+        "stages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/stage"
+              },
+              {
+                "$ref": "#/$defs/stage_1"
+              }
+            ]
+          }
+        },
+        "estimates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "vlm_requests",
+            "wall_clock_s",
+            "notes"
+          ],
+          "properties": {
+            "vlm_requests": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "wall_clock_s": {
+              "type": "number",
+              "minimum": 0
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
       }
-    }
-  },
-  "$defs": {
+    },
     "limit": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["value", "bound_by"],
+      "required": [
+        "value",
+        "bound_by"
+      ],
       "properties": {
-        "value": {"type": "integer", "minimum": 1},
-        "bound_by": {"enum": ["task", "model", "backend", "site", "planner", "running_tasks"]}
+        "value": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "bound_by": {
+          "enum": [
+            "task",
+            "model",
+            "backend",
+            "site",
+            "planner",
+            "running_tasks"
+          ]
+        }
       }
     },
     "gates": {
       "type": "object",
       "description": "Concurrency gates of a stage. The eight named ones are v1's; a new module may declare its own, named like a module id.",
-      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
-      "additionalProperties": {"type": "integer", "minimum": 1},
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      },
       "properties": {
-        "episode": {"type": "integer", "minimum": 1},
-        "probe": {"type": "integer", "minimum": 1},
-        "endstate": {"type": "integer", "minimum": 1},
-        "arbitration": {"type": "integer", "minimum": 1},
-        "guard_caption": {"type": "integer", "minimum": 1},
-        "caption": {"type": "integer", "minimum": 1},
-        "llm": {"type": "integer", "minimum": 1},
-        "audit": {"type": "integer", "minimum": 1}
+        "episode": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "probe": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "endstate": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "arbitration": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "guard_caption": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "caption": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "llm": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "audit": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "merge": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["strategy", "groups"],
+      "required": [
+        "strategy",
+        "groups"
+      ],
       "properties": {
-        "strategy": {"enum": ["none", "per_episode_multi_module"]},
+        "strategy": {
+          "enum": [
+            "none",
+            "per_episode_multi_module"
+          ]
+        },
         "groups": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["modules", "frame_policy"],
+            "required": [
+              "modules",
+              "frame_policy"
+            ],
             "properties": {
-              "modules": {"$ref": "common.schema.json#/$defs/module_list"},
-              "frame_policy": {"type": "string"}
+              "modules": {
+                "$ref": "common.schema.json#/$defs/module_list"
+              },
+              "frame_policy": {
+                "type": "string"
+              }
             }
           }
         }
@@ -79,28 +274,172 @@
     "episodes_ref": {
       "type": "string",
       "pattern": "^(selected|unlabeled|keep|keep-minus-duplicates|survivors:[a-z_]+)$",
-      "description": "which episode set a stage consumes"
+      "description": "which episode set a stage consumes; 2.0 plans use only selected and unlabeled"
     },
     "stage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind"],
+      "required": [
+        "id",
+        "kind"
+      ],
       "properties": {
-        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "v1's stages are autolabel, numeric, frame, vlm, verdict, dedup, profile, final; stages of new modules follow the same pattern"},
-        "kind": {"enum": ["cpu", "vlm", "aggregate"]},
-        "command": {"enum": ["autolabel", "check", "aggregate"]},
-        "modules": {"$ref": "common.schema.json#/$defs/module_list"},
-        "episodes": {"$ref": "#/$defs/episodes_ref"},
-        "concurrency": {"type": "integer", "minimum": 1},
-        "hard_gates": {"$ref": "common.schema.json#/$defs/module_list"},
-        "gates": {"$ref": "#/$defs/gates"},
-        "merge": {"$ref": "#/$defs/merge"},
-        "phase": {"enum": ["funnel", "final"]}
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "1.0: autolabel, integrity, numeric, frame, vlm, verdict, dedup, profile_vlm, final; 2.0: the registry's stages (integrity, numeric, frame, dedup; autolabel, vlm, profile) and final; stages of new modules follow the same pattern"
+        },
+        "kind": {
+          "enum": [
+            "cpu",
+            "vlm",
+            "aggregate"
+          ]
+        },
+        "command": {
+          "enum": [
+            "autolabel",
+            "check",
+            "aggregate"
+          ]
+        },
+        "modules": {
+          "$ref": "common.schema.json#/$defs/module_list"
+        },
+        "episodes": {
+          "$ref": "#/$defs/episodes_ref"
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "hard_gates": {
+          "$ref": "common.schema.json#/$defs/module_list",
+          "description": "1.0 only: the stage's hard gates"
+        },
+        "gates": {
+          "$ref": "#/$defs/gates"
+        },
+        "merge": {
+          "$ref": "#/$defs/merge"
+        },
+        "phase": {
+          "enum": [
+            "funnel",
+            "final"
+          ]
+        },
+        "block": {
+          "enum": [
+            "cpu",
+            "vlm"
+          ],
+          "description": "2.0: the block the stage runs in"
+        },
+        "after": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "2.0: the stage before it in its block; a block's first stage has none"
+        },
+        "full_set": {
+          "type": "boolean",
+          "description": "2.0: needs the whole selection at once (dedup, profile)"
+        }
       },
       "allOf": [
-        {"if": {"properties": {"kind": {"const": "aggregate"}}}, "then": {"required": ["phase"]}},
-        {"if": {"properties": {"kind": {"enum": ["cpu", "vlm"]}}, "required": ["kind"]}, "then": {"required": ["episodes"]}}
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "aggregate"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "phase"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "cpu",
+                  "vlm"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "episodes"
+            ]
+          }
+        }
       ]
+    },
+    "stage_2": {
+      "not": {
+        "required": [
+          "hard_gates"
+        ]
+      },
+      "properties": {
+        "episodes": {
+          "enum": [
+            "selected",
+            "unlabeled"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "cpu",
+                  "vlm"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "block"
+            ]
+          }
+        }
+      ]
+    },
+    "stage_1": {
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "block"
+            ]
+          },
+          {
+            "required": [
+              "after"
+            ]
+          },
+          {
+            "required": [
+              "full_set"
+            ]
+          }
+        ]
+      }
     }
   }
 }

@@ -1,6 +1,6 @@
 """``check --modules eef_video_consistency`` - the EEF-video consistency module (design doc 12, D49).
 
-A vlm-tier hard gate on the funnel's survivors (``input_scope=funnel``). For every episode: the CPU
+A vlm-tier hard gate on the funnel's survivors. For every episode: the CPU
 measures (``runner.run_episode``: sub-item statuses, coverage, segments, diagnosis; observations, curves
 and evidence under ``checks/eef_video_consistency/``), the model reviews the windows (``eef_review``,
 one point and at most one axis per request) and ``decide.py`` gives the verdict (appendix C.9): ``pass``

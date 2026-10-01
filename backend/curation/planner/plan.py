@@ -6,7 +6,8 @@ The plan is data. The Daemon generates it, stores it with the task
 can only lower the limits it is derived from (D31).
 
 Stages follow v1's funnel (D18), in this order, and a stage without modules is
-left out:
+left out (until F12.4 plans the two blocks of registry 2.0, design doc 17 §3; the registry's
+``dedup`` and ``profile`` stages are planned as the post-verdict ``dedup`` and ``profile_vlm``):
 
     autolabel  captions for episodes without a task text, before the funnel
     integrity  the data integrity module            cpu (mostly I/O), hard gate 0 (design doc 14)
@@ -30,6 +31,7 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping, Sequence
 
 from ..contracts import modules as registry_mod
+from ..pipeline import gates_v1
 from .estimates import estimate
 from .gates import derive_gates, stage_gates
 from .limits import (PlanLimits, SiteConfig, coerce_limits, coerce_site,
@@ -50,7 +52,7 @@ def _registry(registry: Iterable[Any] | None) -> dict[str, Any]:
     for spec in specs:
         if spec.id in by_id:
             raise PlanError(f"module {spec.id!r} is registered twice")
-        if spec.stage not in registry_mod.STAGE_ORDER:
+        if spec.stage not in registry_mod.STAGES:
             raise PlanError(f"module {spec.id!r} has unknown stage {spec.stage!r}")
         by_id[spec.id] = spec
     return by_id
@@ -176,15 +178,14 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
 
     stages: list[dict[str, Any]] = []
     unlabeled = _unlabeled(dataset, selected, count, unlabeled_episodes, notes)
-    if unlabeled and any(s.stage not in ("post_verdict", "profile_vlm") and "autolabel" in s.depends_on for s in chosen):
+    if unlabeled and any(s.stage not in registry_mod.FULL_SET_STAGES and "autolabel" in s.depends_on
+                         for s in chosen):
         stages.append({"id": "autolabel", "kind": "vlm", "command": "autolabel",
                        "episodes": "unlabeled", "gates": stage_gates("autolabel", gates)})
 
     previous = None
-    advisory = [s for s in chosen if s.input_scope == "all_selected"]
-    funnel = [s for s in chosen if s.input_scope != "all_selected"]
     for stage_id in FUNNEL_STAGES:
-        members = [s for s in funnel if s.stage == stage_id]
+        members = [s for s in chosen if s.stage == stage_id]
         if not members:
             continue
         kind = "vlm" if any("vlm" in s.needs for s in members) else "cpu"
@@ -193,7 +194,7 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
             stage["concurrency"] = cpu.value
         stage["modules"] = [s.id for s in members]
         stage["episodes"] = f"survivors:{previous}" if previous else "selected"
-        hard = [s.id for s in members if s.gate == "hard"]
+        hard = [s.id for s in members if gates_v1.gate(s) == "hard"]
         if hard:
             stage["hard_gates"] = hard
         if kind == "vlm":
@@ -201,25 +202,10 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
             stage["merge"] = _merge_proposal(members, site, notes)
         stages.append(stage)
         previous = stage_id
-    # advisory modules (registry 1.4): every selected episode, never a gate, outside the verdict
-    for stage_id in FUNNEL_STAGES:
-        members = [s for s in advisory if s.stage == stage_id]
-        if not members:
-            continue
-        kind = "vlm" if any("vlm" in s.needs for s in members) else "cpu"
-        stage = {"id": f"advisory_{stage_id}", "kind": kind, "command": "check",
-                 "modules": [s.id for s in members], "episodes": "selected"}
-        if kind == "cpu":
-            stage["concurrency"] = cpu.value
-        else:
-            stage["gates"] = stage_gates("vlm", gates)
-            stage["merge"] = _merge_proposal(members, site, notes)
-        stages.append(stage)
     stages.append({"id": "verdict", "kind": "aggregate", "command": "aggregate", "phase": "funnel"})
 
-    post = [s for s in chosen if s.stage == "post_verdict"]
-    profile = [s for s in chosen if s.stage == "profile_vlm"]
-    dedup = [s for s in post if s.gate == "dedup"]
+    dedup = [s for s in chosen if s.stage == "dedup"]
+    profile = [s for s in chosen if s.stage == "profile"]
     if dedup:
         stages.append({"id": "dedup", "kind": "cpu", "command": "check", "concurrency": 1,
                        "modules": [s.id for s in dedup], "episodes": "keep"})

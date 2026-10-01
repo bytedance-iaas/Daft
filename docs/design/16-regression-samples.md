@@ -588,6 +588,11 @@ G07 旁边的 673 和 G07 一样暗；G06 的邻居也有大量重复帧。对�
 
 ### 8.4 打分：对照表与 `score.py`
 
+> 2026-10-01（设计 17 §6）：平台改为直接报发现（记录 2.0：细码 + 分类表的项 + assessed / unassessable）之后，`score.py` 2.0 直接读发现的 `item`，
+> 不再需要规则表；`finding_map.json` 只为旧格式的运行目录（基线 `1b30fb224`）保留，两种格式由脚本自动识别（F12.6）。
+> 分类表成为平台契约 C6（`docs/contracts/taxonomy.json`），本目录 `taxonomy.json` 的 `platform_status` 一列改由注册表生成
+> （`python -m regression_samples.coverage_from_registry`，另出 `platform_codes`、`platform_conditions`，F12.1 起），不再手写。
+
 平台按「模块 + 原因码」出结果，期望按检测项写，中间隔着一张对照表。`tools/regression_samples/`（入库，CI 跑它的测试）：
 
 - `finding_map.json`（1.3，对应注册表 1.14、分类表 1.1）：41 条规则，每条读一个模块的逐条记录（`checks/<模块>/results.jsonl`），说它报出了哪个检测项、在哪路相机。

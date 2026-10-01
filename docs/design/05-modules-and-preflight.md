@@ -2,6 +2,18 @@
 
 ## 1. 模块注册表
 
+> **注册表 2.0（2026-10-01，设计 17，D56–D58，F12.1 已落地）**：模块不再按漏斗的「门」描述，改成三件事——
+> **在哪跑**：`block`（`cpu` / `vlm`）与块内的段 `stage`（CPU 块 `integrity → numeric → frame → dedup`，VLM 块
+> `autolabel → vlm → profile`；`dedup`、`profile` 是全量步骤），两块并行、互不过滤，`depends_on` 只剩数据依赖
+> `autolabel`；**能报什么**：`codes`，每个细码对应分类表（C6，`docs/contracts/taxonomy.json` 1.1）的一项，带缺省严重度、
+> 默认策略下的级别（blocking / review / info，P18）、review 级的裁决线、blocking 级可否复议；**覆盖什么**：`covers`
+> （细码的项，加只给读数的项 `also_covers`）。去掉了 `gate`、`input_scope`、`affects_dataset_verdict`、`produces_adjudication`、
+> `review_lines`、模块级 `appealable`——后三项由细码推出（代码里仍是 `ModuleSpec` 的属性）。导出的 JSON 另带
+> `blocks`、`taxonomy`、`finding_levels`、`unassessable_reasons`。细码目录见设计 17 §2.2。
+> 过渡期：两块执行（F12.4）与策略判决（F12.3）落地之前，漏斗仍按 1.x 的门判决，所需的 `gate` 与「是否参与判决」
+> 由 `backend/curation/pipeline/gates_v1.py`（前端 `src/lib/registry.ts`）保留，随最后一个使用方删除。
+> 下文是 1.x 的写法，保留作对照；块、段、细码与覆盖以本节为准。
+
 八个模块，**一期数量不变**。注册表是单一事实源：CLI、Daemon、前端三方的模块清单、
 中文名、能力要求、所属的档全部从它生成（前端经 `GET /api/v1/modules` 拿到），不允许任何一方硬编码。
 
@@ -217,19 +229,22 @@ v1 还有一个名字相近的东西：`ingest/semantics_preflight.py`。数据�
 本期不实现新模块，但框架要让「加一个模块」是件小事。清单：
 
 1. 在 `core/checks/` 加纯函数实现（不 import daft、不碰 I/O）。
-2. 在注册表加一行 `ModuleSpec`。有参数的，`param_schema` 里每个参数带 `title`（表单上的字段名）、`description`、
-   `default`，可选值写成 `oneOf` 的 `{const, title}`，必填的列进 `required` —— 新建任务的第二屏按它生成表单（D38）。
-3. 在 `pipeline/verdict.py` 声明它如何参与判决（hard/soft/none + 权重）。
+2. 在注册表加一行 `ModuleSpec`（注册表 2.0，设计 17 §2.4）：块与段、细码目录（每个细码对应的分类表项、缺省严重度、
+   默认级别、review 级的裁决线、blocking 级可否复议）、覆盖。有参数的，`param_schema` 里每个参数带 `title`（表单上的字段名）、
+   `description`、`default`，可选值写成 `oneOf` 的 `{const, title}`，必填的列进 `required` —— 新建任务的第二屏按它生成表单（D38）。
+   判定线也是参数（有缺省值），不写在评估工具里。
+3. 壳把算法结果写成记录 2.0（发现、assessed、unassessable、读数，设计 17 §1）。拒不拒由策略表在 `aggregate` 定，
+   不再在 `pipeline/verdict.py` 声明 hard / soft 与权重（F12.3 起）。
 4. 如果是 VLM 模块，且形态是「抽 N 帧、问一次」：`merge_units` 放一个 `DeclaredMergeUnits`（`backend/curation/planner/merge.py`）——
    声明 `frame_policy`、`call_kind`、`units_per_episode`，并按 `(episode_index, context)` 给出这一条的提问单元
    （每个单元带 `prompt_part` 和 `parser`）。planner 读帧策略提出分组，`check` 进程逐条调用它拿单元，
    帧策略相同的模块会被自动合进同一个请求（见 04 篇 §4.2）。多步证据链式的模块不用声明，按自己的方式调用。
    新模块的调用种类用自己的名字（形如模块 id，C3 1.1），不必借 v1 的五种。
 5. 报告小节渲染器：给一个默认表格渲染器兜底，需要定制才写。
-   要人工复核的，在 `review_lines` 里写它产生哪几种；是新的种类就往复核目录加一项（标题、条目所在的清单、
+   要人工复核的，在 review 级细码上写它的裁决线；是新的种类就往复核目录加一项（标题、条目所在的清单、
    是否算待裁、判断和按钮名），再在 `adjudicate-apply` 里加这种判断的执行规则。裁决页对没有专用视图的种类
    按目录通用渲染（标题 + 理由 + 每个判断一个按钮），契约不用改（D43）。
-6. 前端：零改动 —— 模块清单、中文名、标灰原因全部来自 API。
+6. 前端：零改动 —— 模块清单、中文名、细码名、检测项名、标灰原因全部来自 API。
 
 **第 6 条是这次重构的核心收益之一**：v1 里加一个模块要同时改 Gradio 页面，
 v2 里前端对模块是数据驱动的。

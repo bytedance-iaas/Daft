@@ -4,6 +4,55 @@
   {
    "episode_index": 0,
    "verdict": "keep",
+   "blocking": [],
+   "review": [
+    {
+     "module": "task_success",
+     "code": "uncertain",
+     "item": "TASK-5",
+     "line": "task_verdict"
+    }
+   ],
+   "info_count": 3,
+   "error_modules": [],
+   "reason": "通过；任务成败拿不准，待人工裁决"
+  },
+  {
+   "episode_index": 4,
+   "verdict": "drop",
+   "blocking": [
+    {
+     "module": "timestamp_check",
+     "code": "gap",
+     "item": "STRM-3"
+    },
+    {
+     "module": "data_integrity",
+     "code": "decode_failed",
+     "item": "FILE-4"
+    }
+   ],
+   "review": [],
+   "info_count": 1,
+   "error_modules": [
+    "task_success"
+   ],
+   "reason": "丢帧跳变；视频解码失败；另有「任务成败判定」执行出错，不影响结论"
+  },
+  {
+   "episode_index": 9,
+   "verdict": "held",
+   "blocking": [],
+   "review": [],
+   "info_count": 0,
+   "error_modules": [
+    "video_action_sync"
+   ],
+   "reason": "「视频-动作同步」执行出错，待补跑"
+  },
+  {
+   "episode_index": 0,
+   "verdict": "keep",
    "hard_fails": [],
    "soft_score": 0.99,
    "undecidable": [
@@ -60,6 +109,69 @@
   }
  ],
  "invalid": [
+  {
+   "episode_index": 4,
+   "verdict": "drop",
+   "blocking": [],
+   "review": [],
+   "info_count": 1,
+   "error_modules": [
+    "task_success"
+   ],
+   "reason": "丢帧跳变；视频解码失败；另有「任务成败判定」执行出错，不影响结论"
+  },
+  {
+   "episode_index": 9,
+   "verdict": "held",
+   "blocking": [
+    {
+     "module": "timestamp_check",
+     "code": "gap",
+     "item": "STRM-3"
+    }
+   ],
+   "review": [],
+   "info_count": 0,
+   "error_modules": [
+    "video_action_sync"
+   ],
+   "reason": "「视频-动作同步」执行出错，待补跑"
+  },
+  {
+   "episode_index": 0,
+   "verdict": "keep",
+   "blocking": [],
+   "review": [
+    {
+     "module": "task_success",
+     "code": "uncertain",
+     "item": "TASK-5",
+     "line": "task_verdict"
+    }
+   ],
+   "info_count": 3,
+   "error_modules": [
+    "task_success"
+   ],
+   "reason": "通过；任务成败拿不准，待人工裁决"
+  },
+  {
+   "episode_index": 0,
+   "verdict": "keep",
+   "blocking": [],
+   "review": [
+    {
+     "module": "task_success",
+     "code": "uncertain",
+     "item": "TASK-5",
+     "line": "task_verdict"
+    }
+   ],
+   "info_count": 3,
+   "error_modules": [],
+   "reason": "通过；任务成败拿不准，待人工裁决",
+   "hard_fails": []
+  },
   {
    "episode_index": 31,
    "verdict": "held",

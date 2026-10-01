@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Progress protocol - one stderr line under --json (schema 1.0)",
+  "title": "Progress protocol - one stderr line under --json (C3 1.2; lines carry no version)",
   "description": "C3, the only runtime coupling between the CLI and the Daemon (design doc 02, section 5). With --json, stdout carries only the final result and stderr carries one JSON object per line. progress lines are cumulative (done/total so far); usage lines are increments for the requests they cover, and the Daemon adds them up per (subtask, module, call_kind, model, ledger) before writing the token_usage table (design doc 01, section 2.6). The SSE stream the Daemon sends to browsers carries cumulative totals instead.",
   "type": "object",
   "required": [
@@ -31,7 +31,11 @@
     },
     "stage": {
       "type": "string",
-      "description": "e.g. autolabel, check:visual_quality, aggregate:funnel"
+      "description": "e.g. autolabel, check:visual_quality, aggregate:funnel. 1.2 (design doc 17 §5.5): the stages of a two-block plan are the registry's - integrity, numeric, frame, dedup; autolabel, vlm, profile - and post_verdict / profile_vlm retire with the funnel"
+    },
+    "block": {
+      "enum": ["cpu", "vlm"],
+      "description": "1.2: the block of a two-block plan the line comes from (design doc 17 §3); absent on funnel plans"
     }
   },
   "oneOf": [

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
 import { moduleName, qk, useModules } from '../../api/queries';
-import type { AdjudicationLine, Decision, DecisionValue } from '../../api/types';
+import type { AdjudicationLine, Decision, DecisionValue, EpisodeView } from '../../api/types';
 import { LazyVisible } from '../../components/LazyVisible';
 import { RelTime } from '../../components/RelTime';
 import { EefCpuEvidence, EefCpuTable, EefDatasetRecord, EefWindows } from '../../features/eef/EefRecord';
@@ -24,7 +24,7 @@ const EEF = 'eef_video_consistency';
 function useEpisode(taskId: string, ep: number, rev: number) {
   return useQuery({
     queryKey: qk.episode(taskId, ep, rev),
-    queryFn: () => unwrap(api().GET('/tasks/{id}/episodes/{index}', { params: { path: { id: taskId, index: ep }, query: { rev } } })),
+    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/episodes/{index}', { params: { path: { id: taskId, index: ep }, query: { rev } } }))) as EpisodeView,
     retry: false,
   });
 }

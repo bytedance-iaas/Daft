@@ -7,6 +7,9 @@
 * C3 - progress protocol on stderr: ``docs/contracts/progress.schema.json``.
 * C4 - REST API: ``docs/contracts/openapi.yaml``.
 * C5 - persistence: ``daemon.repo.protocol`` (the Daemon package).
+* C6 - taxonomy of check items: ``docs/contracts/taxonomy.json`` (its schema
+  ``taxonomy.schema.json``); the registry binds one version and maps every
+  finding code to one of its items.
 
 Changing any of them goes through review: update the file, bump its version,
 refresh ``docs/contracts/CONTRACTS.lock`` (``python -m curation.contracts lock``)

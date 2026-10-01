@@ -15,10 +15,11 @@ from curation.contracts import modules as registry
 from .repo import protocol as P
 from .repo.extras import dataset_format
 
-_STAGE_KEYS = ("id", "state", "done", "total", "elapsed_s", "eta_s", "note", "pipeline")
+_STAGE_KEYS = ("id", "block", "full_set", "state", "done", "total", "elapsed_s", "eta_s", "note",
+               "pipeline")
 _SUMMARY_KEYS = ("total", "passed", "rejected", "held", "review", "pass_rate")
 _PARAM_KEYS = ("start_now", "export", "batch_size", "vlm_retry", "vlm_hedge",
-               "vlm_timeouts_s", "clips", "limits")
+               "vlm_timeouts_s", "clips", "policy", "limits")
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens",
                "requests", "requests_unknown_usage")
 _MODULE_ORDER = {mid: i for i, mid in enumerate(registry.ids())}

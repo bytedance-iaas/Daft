@@ -1,8 +1,67 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Shared definitions for the CLI contracts (schema 1.0)",
+  "title": "Shared definitions for the CLI contracts (schema 1.0 and 2.0)",
+  "description": "C2 2.0 (design doc 17) changed six documents: the result record, check, the verdict line, the final lists, the report and the plan. They are written as 2.0 by tasks made since and still read as 1.0 for tasks made before (D59). Every other document is unchanged and stays 1.0.",
   "$defs": {
     "schema_version": {"const": "1.0"},
+    "schema_version_2": {"const": "2.0", "description": "a document C2 2.0 changed, as tasks made since write it; its 1.0 form stays readable for tasks made before (D59)"},
+    "item_id": {"type": "string", "pattern": "^[A-Z]+-[0-9]+$", "description": "an item of the taxonomy (C6), e.g. FILE-3"},
+    "finding_code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "a code of the module's catalogue in the registry (C1 2.0)"},
+    "finding_level": {"enum": ["blocking", "review", "info"]},
+    "severity": {"enum": ["high", "medium", "low"]},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "what a finding is about; none means the whole episode. Cameras by their short name, as the expectations write them",
+      "properties": {
+        "camera": {"type": "string", "minLength": 1},
+        "cameras": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "channel": {"type": "string", "minLength": 1},
+        "arm": {"type": "string", "minLength": 1},
+        "clock": {"type": "string", "minLength": 1},
+        "file": {"type": "string", "minLength": 1}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "item", "severity", "message_zh"],
+      "description": "one problem a module found (design doc 17 §1.2). Its level is not the module's: a policy gives it in aggregate",
+      "properties": {
+        "code": {"$ref": "#/$defs/finding_code"},
+        "item": {"oneOf": [{"$ref": "#/$defs/item_id"}, {"type": "null"}], "description": "the item the registry maps the code to; null only for an info-level item of the platform's own"},
+        "severity": {"$ref": "#/$defs/severity"},
+        "scope": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/scope"}]},
+        "frames": {"type": "array", "prefixItems": [{"type": "integer", "minimum": 0}, {"type": "integer", "minimum": 0}], "items": false, "minItems": 2, "description": "[first, last] frame, counted from the episode's first, both included (P19)"},
+        "time_s": {"type": "array", "prefixItems": [{"type": "number", "minimum": 0}, {"type": "number", "minimum": 0}], "items": false, "minItems": 2, "description": "[start, end) seconds from the episode's start"},
+        "readings": {"type": "object", "description": "the numbers behind the finding"},
+        "message_zh": {"type": "string", "minLength": 1, "description": "one Chinese sentence with camera, position and numbers; shown as is"},
+        "evidence": {"type": "array", "items": {"type": "string"}, "description": "evidence files, relative to the run directory"},
+        "unit": {"const": "dataset", "description": "a dataset-level finding (checks/<module>/dataset.json): counted once per dataset"}
+      }
+    },
+    "unassessable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item", "reason", "message_zh"],
+      "description": "an item the module covers but could not assess on this episode",
+      "properties": {
+        "item": {"$ref": "#/$defs/item_id"},
+        "reason": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "one of the registry's unassessable_reasons"},
+        "message_zh": {"type": "string"}
+      }
+    },
+    "finding_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "code", "item"],
+      "properties": {
+        "module": {"$ref": "#/$defs/module_id"},
+        "code": {"$ref": "#/$defs/finding_code"},
+        "item": {"oneOf": [{"$ref": "#/$defs/item_id"}, {"type": "null"}]}
+      }
+    },
     "episode_index": {"type": "integer", "minimum": 0},
     "episode_list": {"type": "array", "items": {"$ref": "#/$defs/episode_index"}, "uniqueItems": true},
     "skipped_episodes": {

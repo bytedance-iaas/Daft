@@ -1,7 +1,8 @@
 # camera_defects · 镜头画面缺陷（花屏 / 抖动 / 镜头污染）
 
-设计：`docs/design/13-video-native-vlm.md`「逐机位画面缺陷」。注册表：C1 1.14，
-`ModuleSpec(id="camera_defects", rides_on="task_success", affects_dataset_verdict=False)`。
+设计：`docs/design/13-video-native-vlm.md`「逐机位画面缺陷」。注册表：C1 1.14 起，
+`ModuleSpec(id="camera_defects", rides_on="task_success")`；2.0（设计 17）给它三个细码 `glitch`（IMG-5）、`shake`（IMG-6）、
+`contamination`（IMG-7），默认级别都是 info——只出结果，不影响判决（1.x 的 `affects_dataset_verdict=False`）。
 
 ## 它是什么
 

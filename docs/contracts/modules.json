@@ -1,12 +1,87 @@
 {
- "registry_version": "1.14",
+ "registry_version": "2.0",
+ "taxonomy_version": "1.1",
+ "blocks": [
+  {
+   "id": "cpu",
+   "title_zh": "CPU 块",
+   "stages": [
+    "integrity",
+    "numeric",
+    "frame",
+    "dedup"
+   ]
+  },
+  {
+   "id": "vlm",
+   "title_zh": "VLM 块",
+   "stages": [
+    "autolabel",
+    "vlm",
+    "profile"
+   ]
+  }
+ ],
  "stages": [
   "integrity",
   "numeric",
   "frame",
+  "dedup",
+  "autolabel",
   "vlm",
-  "post_verdict",
-  "profile_vlm"
+  "profile"
+ ],
+ "full_set_stages": [
+  "dedup",
+  "profile"
+ ],
+ "finding_levels": [
+  {
+   "id": "blocking",
+   "title_zh": "判废"
+  },
+  {
+   "id": "review",
+   "title_zh": "待人工复核"
+  },
+  {
+   "id": "info",
+   "title_zh": "仅报告"
+  }
+ ],
+ "unassessable_reasons": [
+  {
+   "id": "embodiment_not_in_library",
+   "title_zh": "本体不在规格库里，或没有给机器人型号"
+  },
+  {
+   "id": "no_state_columns",
+   "title_zh": "数据集没有状态量"
+  },
+  {
+   "id": "no_video",
+   "title_zh": "没有视频"
+  },
+  {
+   "id": "no_action",
+   "title_zh": "没有动作"
+  },
+  {
+   "id": "format_unsupported_by_module",
+   "title_zh": "本模块不支持这种数据格式"
+  },
+  {
+   "id": "model_no_answer",
+   "title_zh": "模型没有回答这一项"
+  },
+  {
+   "id": "single_description",
+   "title_zh": "只有一份描述，无从比较"
+  },
+  {
+   "id": "not_applicable",
+   "title_zh": "对本数据集不适用"
+  }
  ],
  "review_lines": [
   {
@@ -146,25 +221,858 @@
    "follow_ups": []
   }
  ],
+ "taxonomy": {
+  "dimensions": [
+   {
+    "id": "FILE",
+    "name_zh": "文件与结构"
+   },
+   {
+    "id": "STRM",
+    "name_zh": "传感器流与时间"
+   },
+   {
+    "id": "IMG",
+    "name_zh": "单路画面质量"
+   },
+   {
+    "id": "MV",
+    "name_zh": "多视角一致性"
+   },
+   {
+    "id": "ACT",
+    "name_zh": "动作与本体信号"
+   },
+   {
+    "id": "AV",
+    "name_zh": "动作与画面的一致性"
+   },
+   {
+    "id": "TASK",
+    "name_zh": "任务与步骤"
+   },
+   {
+    "id": "LABEL",
+    "name_zh": "标注与描述"
+   },
+   {
+    "id": "SET",
+    "name_zh": "数据集级"
+   }
+  ],
+  "items": [
+   {
+    "id": "FILE-1",
+    "dimension": "FILE",
+    "name_zh": "文件缺失、0 字节、过小",
+    "explain_zh": "该有的文件没有，或者文件是空的（0 字节）、小得装不下任何内容。比如某个相机的视频文件压根不存在。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "FILE-2",
+    "dimension": "FILE",
+    "name_zh": "视频或表格截断、零填充",
+    "explain_zh": "文件只写了一半就断了（采集时断电、拷贝中断），或者文件里有一段被 0 填满。表现是文件打不开，或读到一半报错。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "FILE-3",
+    "dimension": "FILE",
+    "name_zh": "mcap 结构损坏：缺结束标识、结构读不出、CRC 不符",
+    "explain_zh": "只针对 mcap：文件尾没有结束标识（录制没有正常收尾），必需的结构读不出来，或者文件里写了的校验码（CRC）对不上，说明内容被改坏了。没有摘要区、CRC 填 0 都是 mcap 规范允许的写法，不算问题。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "FILE-4",
+    "dimension": "FILE",
+    "name_zh": "视频解码失败",
+    "explain_zh": "文件能打开，但有帧解不出来。例：录制从两个关键帧之间开始，开头约一秒的包缺参考帧，解不出画面（GenRobot 的 22 条，从第一个关键帧起就正常）。和 FILE-2 的区别：文件结构是好的，是里面某些帧坏了或缺参考。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "FILE-5",
+    "dimension": "FILE",
+    "name_zh": "帧数与声明不符、各路不等长",
+    "explain_zh": "元数据说有 300 帧，实际视频只有 280 帧；或者几路相机、动作表的长度对不上。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "FILE-6",
+    "dimension": "FILE",
+    "name_zh": "数值非法",
+    "explain_zh": "动作 / 状态数据里出现 NaN、无穷大，或者数组形状不对（比如声明 14 维、实际 13 维）。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "FILE-7",
+    "dimension": "FILE",
+    "name_zh": "分辨率不符或不一",
+    "explain_zh": "视频实际分辨率和元数据写的不一样；或者同一个数据集里不同条目的分辨率不一样。",
+    "kind": "defect",
+    "level": "dataset"
+   },
+   {
+    "id": "FILE-8",
+    "dimension": "FILE",
+    "name_zh": "元数据自相矛盾、和实际不符",
+    "explain_zh": "机器读的元数据前后打架，或者和实际数据对不上（比如写 30 fps、实际 20 fps，写 300 帧、实际 280 帧）。描述类文字字段里的占位符（如 TODO）不在这里，归 LABEL-3。",
+    "kind": "defect",
+    "level": "dataset"
+   },
+   {
+    "id": "FILE-9",
+    "dimension": "FILE",
+    "name_zh": "对照：少见但合法的编码与布局",
+    "explain_zh": "对照项：不常见但合法的视频编码（MPEG-4、AV1）或数据布局。它们不是问题，用来检查平台会不会误报。",
+    "kind": "control",
+    "level": "episode"
+   },
+   {
+    "id": "FILE-10",
+    "dimension": "FILE",
+    "name_zh": "索引与引用对不上",
+    "explain_zh": "表里的索引或引用指错了：帧号重复或跳号、episode 编号和它所在的位置对不上、任务编号指向不存在的任务；LeRobot v3 里一条 episode 在共享文件里的起止偏移写错，读出来会混进别的 episode 的数据。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "STRM-1",
+    "dimension": "STRM",
+    "name_zh": "传感器流缺失",
+    "explain_zh": "整路数据从头到尾都没有：某个相机没有画面（整条是黑帧或 No Signal 之类的占位画面），或者某个传感器的数据整列缺失。例：RH20T 里没接相机的那几列全是黑帧；FastUMI 加米任务 2604 号的右相机整条是 No Signal。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "STRM-2",
+    "dimension": "STRM",
+    "name_zh": "传感器流中途掉线",
+    "explain_zh": "一开始有、中途断了：相机录到一半变成 No Signal 或停住，或者动作数据录到一半不再更新。例：G01 右腕相机第 217 帧起变成 No Signal。从第一帧起就没有的算 STRM-1。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "STRM-3",
+    "dimension": "STRM",
+    "name_zh": "丢帧、时间跳变",
+    "explain_zh": "相邻两帧的时间戳之间出现大空档，说明中间丢了一些帧或一段数据。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "STRM-4",
+    "dimension": "STRM",
+    "name_zh": "时间戳非单调、重复",
+    "explain_zh": "时间戳往回走，或者两帧的时间戳一样，时间线本身是乱的。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "STRM-5",
+    "dimension": "STRM",
+    "name_zh": "残段、过短",
+    "explain_zh": "条目短得不像一次完整操作，比如只有 1 帧或不到 1 秒，多半是误触录制或切分出错。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "STRM-6",
+    "dimension": "STRM",
+    "name_zh": "出帧不均匀",
+    "explain_zh": "时间戳看着是均匀的，但画面其实一会儿快一会儿慢（相机实际出帧不均匀，靠重复帧凑数）。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "STRM-7",
+    "dimension": "STRM",
+    "name_zh": "画面剪切、缺一小段",
+    "explain_zh": "视频中间少了一小段，看起来像突然快进了一下。例：G06。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "STRM-8",
+    "dimension": "STRM",
+    "name_zh": "对照：各流各有时钟",
+    "explain_zh": "对照项：不同传感器各用各的时钟、频率不同，这是正常的，不应该被当成丢帧或错位。",
+    "kind": "control",
+    "level": "dataset"
+   },
+   {
+    "id": "IMG-1",
+    "dimension": "IMG",
+    "name_zh": "画面冻结",
+    "explain_zh": "相机画面卡住不动，但机器人其实在动。要和真正静止的画面区分开：冻结时别的相机或动作数据还在变。整条都是 No Signal 之类占位画面的，主记 STRM-1，冻结只是它的表现。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-2",
+    "dimension": "IMG",
+    "name_zh": "过暗、过曝",
+    "explain_zh": "画面太黑或太亮，看不清内容。例：G07 两路腕部相机整条都很暗。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-3",
+    "dimension": "IMG",
+    "name_zh": "低对比",
+    "explain_zh": "画面灰蒙蒙、没有层次，细节糊在一起（不一定偏暗或偏亮）。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-4",
+    "dimension": "IMG",
+    "name_zh": "模糊、失焦",
+    "explain_zh": "画面糊：对焦不准或运动太快拖影，看不清物体和夹爪。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-5",
+    "dimension": "IMG",
+    "name_zh": "花屏",
+    "explain_zh": "画面出现马赛克色块、条纹、错位撕裂等损坏的样子，但文件还能播放。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-6",
+    "dimension": "IMG",
+    "name_zh": "相机抖动",
+    "explain_zh": "画面不正常地晃（相机没固定好、支架松动）。手持或装在手腕上的相机跟着操作晃动是正常的运镜，不算。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-7",
+    "dimension": "IMG",
+    "name_zh": "镜头污染",
+    "explain_zh": "镜头上有油污、水滴、灰尘，画面某一块一直糊或有斑。和遮挡不同：污渍跟着镜头走，不随场景变。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-8",
+    "dimension": "IMG",
+    "name_zh": "视觉遮挡",
+    "explain_zh": "关键区域被东西挡住，看不到操作。例：G11 右腕相机被衣物盖住一段。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-9",
+    "dimension": "IMG",
+    "name_zh": "Depth 空洞、噪声",
+    "explain_zh": "深度图里大面积没有数据（空洞）或数值乱跳（噪声）。本版只记读数（空洞占比），不判对错。",
+    "kind": "reference",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-10",
+    "dimension": "IMG",
+    "name_zh": "对照：自动曝光、光照突变",
+    "explain_zh": "对照项：相机自动调曝光、开关灯导致亮度突然变化，这是正常的，不该报。例：G12。",
+    "kind": "control",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-11",
+    "dimension": "IMG",
+    "name_zh": "对照：特殊画面",
+    "explain_zh": "对照项：鱼眼、超宽画幅等不常见但正常的画面，不该报。",
+    "kind": "control",
+    "level": "episode"
+   },
+   {
+    "id": "MV-1",
+    "dimension": "MV",
+    "name_zh": "多视角内容不一致",
+    "explain_zh": "几路相机拍的应当是同一时刻的同一场景；如果一路停了、黑了，或者拍的不是同一回事，就算不一致。那一路自己的问题（冻结、掉线、被挡住）同时记在它的 STRM / IMG 项上。例：G01、G02。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "MV-2",
+    "dimension": "MV",
+    "name_zh": "左右手、机位身份一致",
+    "explain_zh": "标签写的「左腕相机」实际拍的是右手，或者前视和腕部相机标反了、两个视频文件对调了。例：camera_swap 系列子集、FastUMI 的对调条目。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "MV-3",
+    "dimension": "MV",
+    "name_zh": "多视角时间不同步",
+    "explain_zh": "同一个事件（比如夹爪闭合）在各路相机里出现的时间应当一样；某一路早了或晚了，就是不同步。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "MV-5",
+    "dimension": "MV",
+    "name_zh": "相机标定、末端投影与画面不符",
+    "explain_zh": "用标定参数把机械臂末端的位置投到画面上，应当正好落在夹爪上；投偏了说明标定或坐标系有错。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "ACT-1",
+    "dimension": "ACT",
+    "name_zh": "动作呈锯齿",
+    "explain_zh": "动作或状态曲线来回小幅抖动，像锯齿，不像正常运动那样平滑。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "ACT-2",
+    "dimension": "ACT",
+    "name_zh": "单点大跳变",
+    "explain_zh": "某一帧的位置突然跳一大截、下一帧又回来，画面里却没有相应的动作。例：G03 左臂一帧跳了 10 cm。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "ACT-3",
+    "dimension": "ACT",
+    "name_zh": "某个通道全程不动",
+    "explain_zh": "某个通道（最常见的是夹爪开合）从头到尾只有一个值，但它本该变化：画面里夹爪明明在开合，或者任务离不开开合。只看数值恒定只是候选，合法的情形有：全程夹着东西、这只手根本没用上。例：G09。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "ACT-4",
+    "dimension": "ACT",
+    "name_zh": "关节位置、速度越限",
+    "explain_zh": "关节角度或速度超出这台机器人的物理极限（按平台的本体规格表判断）。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "ACT-5",
+    "dimension": "ACT",
+    "name_zh": "夹爪量程越界、传感器毛刺",
+    "explain_zh": "夹爪读数超出合理范围，或者偶尔冒出一个离谱的尖刺值。两件事分开查：没有尖刺不代表量程没问题，量程要对照硬件规格和单位。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "ACT-6",
+    "dimension": "ACT",
+    "name_zh": "动作语义读错",
+    "explain_zh": "动作数据的含义被读错了，比如把速度当成位置、把增量当成绝对值，后面所有判断都会跟着错。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "ACT-7",
+    "dimension": "ACT",
+    "name_zh": "人工接管处不连续",
+    "explain_zh": "策略执行中有人工接管，接管那一刻动作会突然跳一下。这是已知现象，要检出并标出位置，不算数据坏了。",
+    "kind": "phenomenon",
+    "level": "episode"
+   },
+   {
+    "id": "ACT-8",
+    "dimension": "ACT",
+    "name_zh": "状态失效后沿用旧值",
+    "explain_zh": "传感器失效后，数据一直重复最后一个值（看起来像卡住），而不是报缺失。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "ACT-9",
+    "dimension": "ACT",
+    "name_zh": "对照：本体不在规格库",
+    "explain_zh": "对照项：机器人型号不在平台的规格库里，或者型号为空。这时跳过和本体有关的检查是正常的，不应该报错。",
+    "kind": "control",
+    "level": "dataset"
+   },
+   {
+    "id": "AV-1",
+    "dimension": "AV",
+    "name_zh": "整体时间错位",
+    "explain_zh": "视频和动作数据整体差了一段时间（比如视频比动作早 0.5 秒），每个时刻都对不上。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "AV-2",
+    "dimension": "AV",
+    "name_zh": "小错位、只有一个通道错位",
+    "explain_zh": "只差一两帧，或者只有某一个通道（比如夹爪）和视频对不上。例：G08 夹爪信号比画面早约两帧。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "AV-3",
+    "dimension": "AV",
+    "name_zh": "有动作，画面里没有",
+    "explain_zh": "动作数据显示有大动作，视频里却看不到相应的运动。例：G03。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "AV-4",
+    "dimension": "AV",
+    "name_zh": "画面在变，动作没有",
+    "explain_zh": "视频里明显在动，动作数据却没有变化（比如动作记录中途停了）。例：G04 两臂位置从第 25 帧起不再变化，画面里人还在操作。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "AV-5",
+    "dimension": "AV",
+    "name_zh": "时间错位随时间变化",
+    "explain_zh": "视频和动作的时间差不是固定的：开头对得上，越往后差得越多（时钟漂移），或者中途突然跳一下（时钟重置）。和 AV-1 的区别：AV-1 是从头到尾差同样多。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-1",
+    "dimension": "TASK",
+    "name_zh": "动作起止点",
+    "explain_zh": "每个动作或步骤从哪一帧开始、到哪一帧结束。这是要检出的内容，不是错误；数据集自带分步时间的（Galaxea、RSS）就拿来对答案。",
+    "kind": "phenomenon",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-2",
+    "dimension": "TASK",
+    "name_zh": "步骤缺失",
+    "explain_zh": "任务要求的某个关键步骤没做。判断比较主观，本版暂缓，没有样本。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-3",
+    "dimension": "TASK",
+    "name_zh": "动作顺序",
+    "explain_zh": "步骤都做了，但顺序错了（比如先盖盖子再往里放东西）。本版暂缓，没有样本。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-5",
+    "dimension": "TASK",
+    "name_zh": "任务完成度",
+    "explain_zh": "任务最后有没有完成：成功、部分完成、失败，还是录到一半就停了。中途失误后又完成的算成功，失误记在 TASK-12；人工接管后完成的也算成功，接管记在 ACT-7。例：droid200 的人工成败判定、RSS 挑战赛的失败子集。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-6",
+    "dimension": "TASK",
+    "name_zh": "完成质量不合格",
+    "explain_zh": "任务算是做完了，但做得不好：数据集自带的「不合格」标签或低评分。例：Galaxea 分步里标了 unqualified 的段。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-7",
+    "dimension": "TASK",
+    "name_zh": "多余动作",
+    "explain_zh": "做了不必要的动作，比如本可以直接放下，却先在两只手之间交接一次。例：G17。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-8",
+    "dimension": "TASK",
+    "name_zh": "动作极慢",
+    "explain_zh": "动作慢得不正常，或者长时间发呆不动（空转），把数据拖长了。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-9",
+    "dimension": "TASK",
+    "name_zh": "对照：长时任务",
+    "explain_zh": "对照项：本来就很长的任务（几分钟），长本身不是问题，不应该被当成异常。",
+    "kind": "control",
+    "level": "episode"
+   },
+   {
+    "id": "LABEL-1",
+    "dimension": "LABEL",
+    "name_zh": "任务描述的形态",
+    "explain_zh": "任务描述写成了什么形式：一句话指令、分步说明，还是只有一个类别名。要能识别，本身不一定是问题。",
+    "kind": "phenomenon",
+    "level": "dataset"
+   },
+   {
+    "id": "LABEL-2",
+    "dimension": "LABEL",
+    "name_zh": "一条有多份描述，彼此不一致",
+    "explain_zh": "同一条数据有好几份描述（比如总指令和子任务），说的却不是一回事。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "LABEL-3",
+    "dimension": "LABEL",
+    "name_zh": "没有标注、只有类别名、占位没填",
+    "explain_zh": "任务描述是空的、只有一个类别名（如 task 1），或者描述类字段里填的是占位符。例：droid200 里有 94 条没有指令；RSS 挑战赛数据的 subtask 列全是 TODO。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "LABEL-4",
+    "dimension": "LABEL",
+    "name_zh": "纯中文、中英混排、混进元数据",
+    "explain_zh": "描述是纯中文、中英混写，或者把质量标签等元数据混进了描述里。平台要能正确处理，本身不一定是问题。例：Galaxea。",
+    "kind": "phenomenon",
+    "level": "dataset"
+   },
+   {
+    "id": "LABEL-5",
+    "dimension": "LABEL",
+    "name_zh": "标注与画面不符",
+    "explain_zh": "描述说的和视频里做的不是一回事。例：指令让叠裤子，视频里叠的是 T 恤。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "SET-1",
+    "dimension": "SET",
+    "name_zh": "同一数据集内的重复条目",
+    "explain_zh": "同一个数据集里有两条其实是同一段录像（字节完全相同，或者只是重新编码过），被重复计入了。",
+    "kind": "defect",
+    "level": "dataset"
+   },
+   {
+    "id": "SET-2",
+    "dimension": "SET",
+    "name_zh": "对照：跨数据集的同源版本",
+    "explain_zh": "对照项：同一段录像在不同数据集里各有一个版本（发布版和修正版、不同格式或编码的转换），这是合法的，单个数据集内不该报成重复。",
+    "kind": "control",
+    "level": "dataset"
+   },
+   {
+    "id": "SET-3",
+    "dimension": "SET",
+    "name_zh": "任务与技能分布、空转占比、长度离群",
+    "explain_zh": "整个数据集层面的统计：各任务占比是否失衡、空转时间占多少、有没有长得或短得离谱的条目。",
+    "kind": "reference",
+    "level": "dataset"
+   },
+   {
+    "id": "SET-4",
+    "dimension": "SET",
+    "name_zh": "输入格式",
+    "explain_zh": "数据集用了不常见的格式或写法（比如动作列拆成多列、mcap 的 topic 命名不标准），平台要能读进来。这是测接入能力的样本。",
+    "kind": "phenomenon",
+    "level": "dataset"
+   },
+   {
+    "id": "SET-5",
+    "dimension": "SET",
+    "name_zh": "隐私与安全",
+    "explain_zh": "画面里有人脸、无关人员或其他敏感信息。",
+    "kind": "defect",
+    "level": "dataset"
+   },
+   {
+    "id": "STRM-9",
+    "dimension": "STRM",
+    "name_zh": "时间比例错误（快进 / 慢放）",
+    "explain_zh": "按时间戳播放时，视频比真实世界快或慢，比如采集时跳了帧、时间戳却按正常间隔写。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-12",
+    "dimension": "IMG",
+    "name_zh": "相机移位、安装状态改变",
+    "explain_zh": "录制途中相机被碰歪、取下或换了角度，前后视角不一样。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-10",
+    "dimension": "TASK",
+    "name_zh": "达成后被撤销",
+    "explain_zh": "任务一度完成了，后来又被拆掉或复位，最后的状态不对。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-11",
+    "dimension": "TASK",
+    "name_zh": "未记录的外部干预、场景重置",
+    "explain_zh": "有人（或别的东西）在录制中伸手改了场景，但数据里没有记录。和 ACT-7 的区别：ACT-7 是数据集声明过的人工接管。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "TASK-12",
+    "dimension": "TASK",
+    "name_zh": "执行失误（抓取失败、掉落、碰撞、反复尝试）",
+    "explain_zh": "抓空、掉东西、碰倒、放偏、反复尝试等操作失误。它本身不算数据坏了（失败示范也有用），是要检出并标出位置的现象。例：G1 数据集逐帧标出的碰撞、滑落、抓空、放偏、朝向不对。",
+    "kind": "phenomenon",
+    "level": "episode"
+   },
+   {
+    "id": "SET-6",
+    "dimension": "SET",
+    "name_zh": "同源派生（同一原始条目的多个版本）",
+    "explain_zh": "同一段原始录像的多个版本（修正版、裁剪版、注入了故障的版本）同时在集合里；算指标时要按来源去重，别重复计数。",
+    "kind": "phenomenon",
+    "level": "dataset"
+   }
+  ]
+ },
  "modules": [
   {
    "id": "data_integrity",
    "name_zh": "数据完整性",
    "summary_zh": "检查每条 episode 的文件是否完整、可读：文件结构、零填充、mcap 的 CRC、逐条数据的结构校验，可选逐帧解码",
    "level": "episode",
-   "gate": "hard",
    "needs": [
     "raw_bytes"
    ],
+   "block": "cpu",
    "stage": "integrity",
    "depends_on": [],
-   "produces_adjudication": true,
-   "review_lines": [
-    "integrity_check"
+   "codes": [
+    {
+     "code": "file_empty",
+     "item": "FILE-1",
+     "name_zh": "文件为空或过小",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "video_missing",
+     "item": "FILE-1",
+     "name_zh": "视频文件不存在",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "file_truncated",
+     "item": "FILE-2",
+     "name_zh": "文件被截断",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "zero_filled",
+     "item": "FILE-2",
+     "name_zh": "文件里有成块的零填充",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "structure_invalid",
+     "item": "FILE-3",
+     "name_zh": "文件结构损坏",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "crc_mismatch",
+     "item": "FILE-3",
+     "name_zh": "CRC 校验不符",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "cut_unreadable",
+     "item": "FILE-3",
+     "name_zh": "录制中断，读不出数据",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "cut_off",
+     "item": "FILE-3",
+     "name_zh": "录制中断",
+     "severity": "low",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
+     "code": "decode_failed",
+     "item": "FILE-4",
+     "name_zh": "视频解码失败",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "decode_concealed",
+     "item": "FILE-4",
+     "name_zh": "解码器掩盖了错误",
+     "severity": "low",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
+     "code": "count_mismatch",
+     "item": "FILE-5",
+     "name_zh": "帧数与记录的长度对不上",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
+     "code": "length_mismatch",
+     "item": "FILE-5",
+     "name_zh": "数据长度与帧数对不上",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "values_invalid",
+     "item": "FILE-6",
+     "name_zh": "数值不合规（NaN、Inf、维度或类型）",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "metadata_invalid",
+     "item": "FILE-8",
+     "name_zh": "元数据不合规（帧率、时间边界）",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "table_inconsistent",
+     "item": "FILE-10",
+     "name_zh": "episode 表前后不一致",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
+     "code": "timestamps_invalid",
+     "item": "STRM-4",
+     "name_zh": "时间戳不合规",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "action_missing",
+     "item": "STRM-1",
+     "name_zh": "缺少动作数据",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "stream_missing",
+     "item": "STRM-1",
+     "name_zh": "缺一路其他条都有的流",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
+     "code": "rate_outlier",
+     "item": "STRM-3",
+     "name_zh": "某路流的频率明显偏低",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
+     "code": "duplicate_content",
+     "item": "SET-1",
+     "name_zh": "与另一条的文件完全相同",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "integrity_check"
+    },
+    {
+     "code": "orphan_files",
+     "item": null,
+     "name_zh": "不属于任何 episode 的文件",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "dataset",
+     "appealable": false
+    },
+    {
+     "code": "dark_camera",
+     "item": "STRM-1",
+     "name_zh": "近乎全黑的相机",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "dataset",
+     "appealable": false
+    },
+    {
+     "code": "table_overlap",
+     "item": "FILE-10",
+     "name_zh": "episode 表的帧区间重叠或不连续",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "dataset",
+     "appealable": false
+    }
    ],
-   "appealable": false,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": true,
+   "covers": [
+    "FILE-1",
+    "FILE-2",
+    "FILE-3",
+    "FILE-4",
+    "FILE-5",
+    "FILE-6",
+    "FILE-8",
+    "FILE-10",
+    "STRM-4",
+    "STRM-1",
+    "STRM-3",
+    "SET-1"
+   ],
    "param_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -197,17 +1105,74 @@
    "name_zh": "时间戳检查",
    "summary_zh": "时间戳是否单调、有没有丢帧跳变、是不是短于残段阈值的碎片",
    "level": "episode",
-   "gate": "hard",
    "needs": [
     "timestamps"
    ],
+   "block": "cpu",
    "stage": "numeric",
    "depends_on": [],
-   "produces_adjudication": false,
-   "review_lines": [],
-   "appealable": false,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": true,
+   "codes": [
+    {
+     "code": "gap",
+     "item": "STRM-3",
+     "name_zh": "丢帧跳变",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "jitter",
+     "item": "STRM-3",
+     "name_zh": "采样间隔抖动",
+     "severity": "medium",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "out_of_order",
+     "item": "STRM-4",
+     "name_zh": "时间戳倒序或重复",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "fragment",
+     "item": "STRM-5",
+     "name_zh": "残段：短于最短时长",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "single_stamp",
+     "item": "STRM-5",
+     "name_zh": "只有一个时间戳",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "duration_outlier",
+     "item": "SET-3",
+     "name_zh": "时长离群",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "dataset",
+     "appealable": false
+    }
+   ],
+   "covers": [
+    "STRM-3",
+    "STRM-4",
+    "STRM-5",
+    "SET-3"
+   ],
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -232,18 +1197,63 @@
    "name_zh": "运动学极限",
    "summary_zh": "对照机器人规格库检查关节位置与速度是否越限",
    "level": "episode",
-   "gate": "hard",
    "needs": [
     "action",
     "embodiment_profile"
    ],
+   "block": "cpu",
    "stage": "numeric",
    "depends_on": [],
-   "produces_adjudication": false,
-   "review_lines": [],
-   "appealable": false,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": true,
+   "codes": [
+    {
+     "code": "joint_limit",
+     "item": "ACT-4",
+     "name_zh": "关节位置越限",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "channel",
+     "appealable": false
+    },
+    {
+     "code": "velocity_limit",
+     "item": "ACT-4",
+     "name_zh": "关节速度越限",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "channel",
+     "appealable": false
+    },
+    {
+     "code": "ee_reach",
+     "item": "ACT-4",
+     "name_zh": "末端超出工作空间",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "ee_translation_velocity",
+     "item": "ACT-4",
+     "name_zh": "末端平移速度越限",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "ee_rotation_velocity",
+     "item": "ACT-4",
+     "name_zh": "末端转动速度越限",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    }
+   ],
+   "covers": [
+    "ACT-4"
+   ],
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -268,18 +1278,107 @@
    "name_zh": "运动质量",
    "summary_zh": "动作是否平滑、有无尖刺与执行器卡死、操作是否流畅（打分项）",
    "level": "episode",
-   "gate": "soft",
    "needs": [
     "action",
     "state"
    ],
+   "block": "cpu",
    "stage": "numeric",
    "depends_on": [],
-   "produces_adjudication": false,
-   "review_lines": [],
-   "appealable": false,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": true,
+   "codes": [
+    {
+     "code": "smoothness_low",
+     "item": "ACT-1",
+     "name_zh": "动作不平滑",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "spike",
+     "item": "ACT-2",
+     "name_zh": "动作尖刺",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "actuator_saturation",
+     "item": "ACT-4",
+     "name_zh": "执行器饱和",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "channel",
+     "appealable": false
+    },
+    {
+     "code": "gripper_jitter",
+     "item": "ACT-5",
+     "name_zh": "夹爪抖动",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "stuck",
+     "item": "ACT-8",
+     "name_zh": "执行器卡死",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "channel",
+     "appealable": false
+    },
+    {
+     "code": "fluency_low",
+     "item": "TASK-8",
+     "name_zh": "操作不流畅",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "idle_opening",
+     "item": "TASK-1",
+     "name_zh": "开头空转",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "idle_closing",
+     "item": "TASK-1",
+     "name_zh": "结尾空转",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "action_semantics_undetermined",
+     "item": "ACT-6",
+     "name_zh": "判断不了动作的语义",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "dataset",
+     "appealable": false
+    }
+   ],
+   "covers": [
+    "ACT-1",
+    "ACT-2",
+    "ACT-4",
+    "ACT-5",
+    "ACT-8",
+    "TASK-8",
+    "TASK-1",
+    "ACT-6",
+    "SET-3"
+   ],
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -303,19 +1402,66 @@
    "name_zh": "视觉质量",
    "summary_zh": "逐机位检查清晰度、曝光与画面冻结（打分项）",
    "level": "episode",
-   "gate": "soft",
    "needs": [
     "video"
    ],
+   "block": "cpu",
    "stage": "frame",
-   "depends_on": [
-    "numeric_gates"
+   "depends_on": [],
+   "codes": [
+    {
+     "code": "frozen",
+     "item": "IMG-1",
+     "name_zh": "画面冻结",
+     "severity": "high",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "exposure_low",
+     "item": "IMG-2",
+     "name_zh": "曝光不良",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "information_death",
+     "item": "IMG-3",
+     "name_zh": "信息死亡帧偏多",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "sharpness_low",
+     "item": "IMG-4",
+     "name_zh": "画面模糊",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "dead_or_padded",
+     "item": "STRM-1",
+     "name_zh": "相机没有信号或被填充",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    }
    ],
-   "produces_adjudication": false,
-   "review_lines": [],
-   "appealable": false,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": true,
+   "covers": [
+    "IMG-1",
+    "IMG-2",
+    "IMG-3",
+    "IMG-4",
+    "STRM-1"
+   ],
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -340,20 +1486,65 @@
    "name_zh": "视频-动作同步",
    "summary_zh": "逐机位比对画面运动与关节速度，找出画面与动作的时间错位",
    "level": "episode",
-   "gate": "hard",
    "needs": [
     "action",
     "video"
    ],
+   "block": "cpu",
    "stage": "frame",
-   "depends_on": [
-    "numeric_gates"
+   "depends_on": [],
+   "codes": [
+    {
+     "code": "misaligned_all",
+     "item": "AV-1",
+     "name_zh": "画面与动作错位（全部可信相机）",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "camera_misaligned",
+     "item": "AV-1",
+     "name_zh": "单路相机与动作错位",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "suspect",
+     "item": "AV-1",
+     "name_zh": "疑似错位",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "undecidable",
+     "item": "AV-3",
+     "name_zh": "测不准：有动作但画面运动对不上",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "lag_inconsistent",
+     "item": "MV-3",
+     "name_zh": "各相机的滞后不一致",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    }
    ],
-   "produces_adjudication": false,
-   "review_lines": [],
-   "appealable": false,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": true,
+   "covers": [
+    "AV-1",
+    "AV-3",
+    "MV-3"
+   ],
    "param_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -398,23 +1589,56 @@
    "name_zh": "EEF–视频一致性",
    "summary_zh": "比较数据集中声明的末端执行器投影与画面里独立定位的夹爪轨迹和方向是否匹配",
    "level": "episode",
-   "gate": "hard",
    "needs": [
     "eef_input",
     "video",
     "vlm"
    ],
+   "block": "vlm",
    "stage": "vlm",
-   "depends_on": [
-    "frame_gates"
+   "depends_on": [],
+   "codes": [
+    {
+     "code": "inconsistent",
+     "item": "MV-5",
+     "name_zh": "末端投影与画面不符",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": true
+    },
+    {
+     "code": "unsettled",
+     "item": "MV-5",
+     "name_zh": "末端投影与画面是否相符待人工核对",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "eef_check"
+    },
+    {
+     "code": "opinion_mismatch",
+     "item": "MV-5",
+     "name_zh": "模型意见：末端投影与画面不符",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "record_mismatch",
+     "item": "MV-5",
+     "name_zh": "上传轨迹与数据集的记录不符",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    }
    ],
-   "produces_adjudication": true,
-   "review_lines": [
-    "eef_check"
+   "covers": [
+    "MV-5"
    ],
-   "appealable": true,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": true,
    "param_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -631,24 +1855,70 @@
    "name_zh": "任务成败判定",
    "summary_zh": "由多模态模型看画面判断任务是否完成，拿不准的交给人工裁决",
    "level": "episode",
-   "gate": "hard",
    "needs": [
     "video",
     "vlm"
    ],
+   "block": "vlm",
    "stage": "vlm",
    "depends_on": [
-    "frame_gates",
     "autolabel"
    ],
-   "produces_adjudication": true,
-   "review_lines": [
-    "task_verdict",
-    "label"
+   "codes": [
+    {
+     "code": "failure",
+     "item": "TASK-5",
+     "name_zh": "任务失败",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": true
+    },
+    {
+     "code": "uncertain",
+     "item": "TASK-5",
+     "name_zh": "任务成败拿不准",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "task_verdict"
+    },
+    {
+     "code": "recovery",
+     "item": "TASK-12",
+     "name_zh": "中途失误后完成",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "label_conflict_suspect",
+     "item": "LABEL-5",
+     "name_zh": "标注与画面疑似不符",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "label"
+    },
+    {
+     "code": "task_text_missing",
+     "item": "LABEL-3",
+     "name_zh": "没有任务标注，用的是自产描述",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    }
    ],
-   "appealable": true,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": true,
+   "covers": [
+    "TASK-5",
+    "TASK-12",
+    "LABEL-5",
+    "LABEL-3"
+   ],
    "param_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -692,21 +1962,49 @@
    "name_zh": "镜头画面缺陷",
    "summary_zh": "借任务成败判定的逐机位复核请求，由模型顺带报告花屏、抖动与镜头污染；只出结果，不影响判决",
    "level": "episode",
-   "gate": "none",
    "needs": [
     "video",
     "vlm"
    ],
+   "block": "vlm",
    "stage": "vlm",
    "depends_on": [
-    "frame_gates",
     "autolabel"
    ],
-   "produces_adjudication": false,
-   "review_lines": [],
-   "appealable": false,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": false,
+   "codes": [
+    {
+     "code": "glitch",
+     "item": "IMG-5",
+     "name_zh": "花屏",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "shake",
+     "item": "IMG-6",
+     "name_zh": "画面抖动",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    },
+    {
+     "code": "contamination",
+     "item": "IMG-7",
+     "name_zh": "镜头污染或遮挡",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "camera",
+     "appealable": false
+    }
+   ],
+   "covers": [
+    "IMG-5",
+    "IMG-6",
+    "IMG-7"
+   ],
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -734,19 +2032,26 @@
    "name_zh": "精确去重",
    "summary_zh": "找出动作与视频字节级完全相同的条目，只留遍历顺序里的第一条",
    "level": "dataset",
-   "gate": "dedup",
    "needs": [
     "raw_bytes"
    ],
-   "stage": "post_verdict",
-   "depends_on": [
-    "funnel_verdict"
+   "block": "cpu",
+   "stage": "dedup",
+   "depends_on": [],
+   "codes": [
+    {
+     "code": "duplicate",
+     "item": "SET-1",
+     "name_zh": "与另一条完全重复",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": true
+    }
    ],
-   "produces_adjudication": true,
-   "review_lines": [],
-   "appealable": true,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": true,
+   "covers": [
+    "SET-1"
+   ],
    "param_schema": {
     "type": "object",
     "properties": {},
@@ -770,24 +2075,60 @@
    "name_zh": "技能画像",
    "summary_zh": "归纳两级技能体系并统计分布，检出标注与画面不一致的条目",
    "level": "dataset",
-   "gate": "none",
    "needs": [
     "video",
     "vlm"
    ],
-   "stage": "profile_vlm",
+   "block": "vlm",
+   "stage": "profile",
    "depends_on": [
-    "funnel_verdict",
-    "dedup",
     "autolabel"
    ],
-   "produces_adjudication": true,
-   "review_lines": [
-    "label"
+   "codes": [
+    {
+     "code": "label_disagreement",
+     "item": "LABEL-5",
+     "name_zh": "标注与画面不符",
+     "severity": "medium",
+     "level": "review",
+     "scope_kind": "episode",
+     "appealable": false,
+     "review_line": "label"
+    },
+    {
+     "code": "descriptions_conflict",
+     "item": "LABEL-2",
+     "name_zh": "多份描述彼此不一致",
+     "severity": "medium",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "task_text_missing",
+     "item": "LABEL-3",
+     "name_zh": "没有任务标注，用的是自产描述",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "episode",
+     "appealable": false
+    },
+    {
+     "code": "undersampled_family",
+     "item": "SET-3",
+     "name_zh": "样本偏少的技能族",
+     "severity": "low",
+     "level": "info",
+     "scope_kind": "dataset",
+     "appealable": false
+    }
    ],
-   "appealable": false,
-   "input_scope": "funnel",
-   "affects_dataset_verdict": true,
+   "covers": [
+    "LABEL-5",
+    "LABEL-2",
+    "LABEL-3",
+    "SET-3"
+   ],
    "param_schema": {
     "type": "object",
     "properties": {},

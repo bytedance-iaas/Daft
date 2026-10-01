@@ -88,6 +88,12 @@ v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/inf
 
 ## 3. 判决聚合
 
+> **策略判决（2026-10-01，设计 17 §4，D58，F12.3 实现；契约 C2 2.0 已定稿）**：模块只出发现，拒不拒由策略表在 `aggregate` 时算。
+> 默认策略复刻下文的硬门（P18）：今天硬门判废的细码 blocking，可疑 / 弃权 / 转人工 / 标注分歧 review，其余 info，**软分拒绝消失**；
+> 拒绝理由列出全部 blocking 发现；held 的口径同 D35；复议按发现（全部 blocking 发现都可复议才能恢复）；去重组的 canonical 由
+> aggregate 选「未因别的原因被拒的第一条」；画像给全集与交付集两份分布。下文是漏斗判决的写法，F12.3 之前照旧生效，
+> 旧任务按它只读打开（D59）。
+
 规则原样搬运 v1 `pipeline/verdict.py`，分两步，对应 `aggregate` 的两个阶段：
 
 **漏斗判决**（六项检查 → keep / drop）：
@@ -305,6 +311,11 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
 （那种重判一百次也一样）。v2 里这类条目不再算弃权，而是 `error`、待补跑（§3），「重试」补跑的正是它们（03 篇 §3.2）。
 
 ## 6. 报告结构
+
+> **报告 2.0（2026-10-01，设计 17 §5.1，C2 2.0 已定稿，F12.3 起产出）**：`overview` 多 `policy`（预设名）、`coverage`（本次覆盖的分类表
+> 项、未覆盖的项、评估不了的项与原因计数）、`findings_by_item`（每项的条数与按级别的拆分），`reject_reasons` 按细码与检测项计；
+> 模块小节去掉 `gate`，`summary` 多通用统计 `assessed_episodes`、`items`（每个细码的条数、占比、可选按相机）、`unassessable`、
+> `score_hist`、`dataset_findings`，1.0 的汇总键照留。前端按 `schema_version` 分流（D59）。下面是 1.0 的结构。
 
 ```jsonc
 // report.json

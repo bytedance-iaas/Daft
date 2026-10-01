@@ -8,12 +8,13 @@ import pytest
 
 from curation.contracts import modules as C1
 from curation.contracts import schemas
+from curation.pipeline import gates_v1
 from curation.planner import PlanError, build_plan, derive_gates, validate_plan
 
 from . import examples as X
 
 ALL = list(C1.ids())
-V1 = [m.id for m in C1.MODULES if m.affects_dataset_verdict and m.id not in C1.native_ids()]   # v1's eight
+V1 = [m.id for m in C1.MODULES if gates_v1.votes(m.id) and m.id not in C1.native_ids()]   # v1's eight
 VLM_MODULES = [m.id for m in C1.MODULES if "vlm" in m.needs]
 
 

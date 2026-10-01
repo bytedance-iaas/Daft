@@ -46,6 +46,9 @@ TaskState = Literal["created", "queued", "running", "pausing", "paused", "stoppi
 TERMINAL_STATES: frozenset[str] = frozenset({"stopped", "succeeded", "completed_with_errors",
                                              "failed"})
 PauseReason = Literal["user", "system"]
+#: ``stale``: a data dependency of the module changed after it ran (registry 2.0 ``depends_on``: the
+#: captions, after a relabel). Since registry 2.0 a changed verdict makes no module stale: dedup and
+#: the skill profile work on the whole selection (design doc 17 §3.2).
 ModuleRunState = Literal["pending", "running", "succeeded", "completed_with_errors", "failed",
                          "skipped", "stale"]
 Availability = Literal["available", "needs_input", "unsupported"]
@@ -270,7 +273,7 @@ class Task:
     output_uri: str
     delivery_key: str                        # normalized delivery directory; publishing is serial per key
     episode_selector: dict
-    params: dict
+    params: dict                             # C4 TaskParams, the verdict policy among them (``policy``)
     note: str | None = None
     state_reason: str | None = None
     pause_reason: PauseReason | None = None
@@ -332,6 +335,8 @@ class TaskModule:
     unavailable_reason: str | None = None
     error: str | None = None
     input_digest: str | None = None          # the episode set this result was computed on
+    #: the episodes it ran on: the task's selection on two-block plans (design doc 17 §3), the
+    #: survivors it was given on the funnel plans of tasks made before
     episodes_total: int = 0
     episodes_error: int = 0
     params: dict | None = None
