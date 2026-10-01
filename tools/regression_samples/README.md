@@ -49,7 +49,8 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
   `fastumi`（动作空间故障与标注互换），或用逗号列出故障名。
 - `--episodes`：基底条目，应当是量过没问题的；每条只用一次（够多的话）。
 - 输出目录里的 `injection.json` 是真值：每条的故障、档位、范围（哪路相机 / 哪个通道、帧区间）、参数、基底条目与 lineage。
-  复制类故障（`duplicate`）的条目继承被复制条目的故障。
+  复制类故障（`duplicate`）的条目继承被复制条目的故障，`base_episode` 与 `lineage` 也记被复制条目的根；抽到但没用上的基底记在
+  `slot_base_episode`。
 - 需要 PyAV（带 libsvtav1 / libx264 / mpeg4 编码器）与 Pillow；`garble` 故障要能 import 平台包里的 `curation.extensions.integrity.mp4`
   （`PYTHONPATH=backend`），否则跳过。
 

@@ -9,8 +9,10 @@ says which items each episode should (present) or should not (absent) show. Per 
     FP = expected absent, reported       TN = expected absent, not reported
 
 An episode whose mapped modules did not run on it (funnel short circuit, module not selected) is ``not_assessed``;
-one whose mapped modules all failed to execute is ``error``; neither counts in precision or recall. Items without a
-rule are ``no_check`` - the platform's gaps. A camera-scoped expectation only matches a finding on the same camera.
+one whose mapped modules all failed to execute is ``error``; neither counts in precision or recall, but both stay in
+the denominator of ``recall_end_to_end``. Items without a rule are ``no_check`` - the platform's gaps. A
+camera-scoped expectation only matches a finding on the same camera. A dataset-level item (taxonomy level
+``dataset``, or an entry with ``unit: subset``) counts once per subset, not once per episode it is repeated on.
 
     PYTHONPATH=tools python -m regression_samples.score --expectation <set>/expectation.json \\
         --runs-root <runs> --runs-map <runs>/runs.json --out score.json --markdown score.md \\
@@ -31,10 +33,12 @@ from collections import Counter, defaultdict
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 TIMESTAMP_FAIL_KINDS = ("out_of_order", "gap", "fragment", "jitter")
 #: preflight availabilities under which a module never runs on the subset
 UNAVAILABLE = ("unsupported", "needs_input", "unavailable")
+#: streams a scope may name that are not cameras
+NON_CAMERA_STREAMS = ("action", "timestamp", "observation.state")
 
 
 class InputError(Exception):
@@ -48,20 +52,18 @@ def short_camera(name) -> str:
 
 
 def scope_cameras(scope):
-    """The cameras an expectation entry is about, or None when it is about the whole episode."""
+    """The cameras an expectation entry is about, or None when it is about the whole episode.
+
+    A scope is a dict ({"stream": ...} / {"streams": [...]}); clean entries of schema 1.0 carry it as text,
+    "k=v k=v" with lists written "streams=a,b"."""
     if not scope:
         return None
-    if isinstance(scope, str):                       # clean entries carry "k=v k=v"
-        parsed = dict(p.split("=", 1) for p in scope.split() if "=" in p)
-        scope = parsed
-    cams = []
-    if isinstance(scope.get("streams"), list):
-        cams = [s for s in scope["streams"]]
-    elif scope.get("stream"):
-        cams = [scope["stream"]]
-    elif scope.get("camera"):
-        cams = [scope["camera"]]
-    cams = [short_camera(c) for c in cams if str(c) not in ("action", "timestamp", "observation.state")]
+    if isinstance(scope, str):
+        scope = dict(p.split("=", 1) for p in scope.split() if "=" in p)
+    cams = scope.get("streams") or scope.get("stream") or scope.get("camera") or []
+    if isinstance(cams, str):
+        cams = cams.split(",")
+    cams = [short_camera(c) for c in cams if c and str(c) not in NON_CAMERA_STREAMS]
     return frozenset(cams) or None
 
 
@@ -237,18 +239,26 @@ def apply_rule(rule, rec):
 
 # ---------------------------------------------------------------- scoring
 
-def expectation_index(exp):
-    """(dataset, episode) -> {item: {"present": [scopes], "absent": [scopes]}}, plus lineage and verdict."""
+def expectation_index(exp, taxonomy=None):
+    """(dataset, episode) -> {item: {"present": [scopes], "absent": [scopes], "unit": "episode" | "subset"}}, plus per-episode
+    facts: lineage, verdict, the items it was checked on, whether it carries an episode-level defect."""
+    level = {i["id"]: i.get("level") for i in (taxonomy or {}).get("items", [])}
     idx, meta = {}, {}
     for e in exp["episodes"]:
         key = (e["dataset"], int(e["episode_index"]))
-        items = defaultdict(lambda: {"present": [], "absent": []})
+        items = defaultdict(lambda: {"present": [], "absent": [], "unit": "episode"})
+        has_defect = False
         for group, side in (("problems", "present"), ("phenomena", "present"), ("clean", "absent")):
             for entry in e.get(group) or []:
-                items[entry["item"]][side].append(scope_cameras(entry.get("scope")))
+                it = items[entry["item"]]
+                it[side].append(scope_cameras(entry.get("scope")))
+                if entry.get("unit") == "subset" or level.get(entry["item"]) == "dataset":
+                    it["unit"] = "subset"
+                if group == "problems" and (entry.get("level") or level.get(entry["item"]) or "episode") == "episode":
+                    has_defect = True
         idx[key] = dict(items)
         meta[key] = {"episode_id": e.get("episode_id") or f"{key[0]}:{key[1]}", "lineage": e.get("lineage") or f"{key[0]}:{key[1]}",
-                     "verdict": e.get("verdict")}
+                     "verdict": e.get("verdict"), "checked": set(e.get("checked_items") or []) or set(items), "has_defect": has_defect}
     return idx, meta
 
 
@@ -270,9 +280,25 @@ def _ratio(a, b):
     return round(a / b, 4) if b else None
 
 
+#: how the per-episode cells of a subset-level item reduce to the subset's one cell, strongest first
+_SUBSET_ORDER = {"present": ("tp", "fn", "error", "not_assessed", "no_check"), "absent": ("fp", "tn", "error", "not_assessed", "no_check")}
+
+
+def _count(s, side, cell, w, unsupported=False, flagged_any=False):
+    s[side] += w
+    if cell in ("no_check", "not_assessed", "error"):
+        s[f"{cell}_{side}"] += w
+        if cell == "not_assessed" and unsupported:
+            s[f"unsupported_{side}"] += w
+        return
+    s[cell] += w
+    if side == "present" and flagged_any:
+        s["flagged_any"] += w
+
+
 def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
     """runs: {subset: run_dir}. Returns the score document."""
-    idx, meta = expectation_index(expectation)
+    idx, meta = expectation_index(expectation, taxonomy)
     items_meta = {i["id"]: i for i in taxonomy["items"]}
     rules = fmap["rules"]
     for r in rules:
@@ -287,13 +313,24 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
     controls = (fmap.get("controls") or {}).get("items") or {}
     ingestion_items = set((fmap.get("ingestion") or {}).get("items") or [])
 
+    # weights: an episode counts 1 / (episodes of its lineage that carry the same item on the same side), so versions of one
+    # recording are one piece of evidence for an item; the episode level weighs by the lineage's size
+    carriers = Counter()
+    for key, items in idx.items():
+        for item, sides in items.items():
+            for side in ("present", "absent"):
+                if sides[side]:
+                    carriers[(meta[key]["lineage"], item, side)] += 1
     lineage_size = Counter(m["lineage"] for m in meta.values())
-    weight = {k: (1.0 / lineage_size[m["lineage"]] if by_lineage else 1.0) for k, m in meta.items()}
+
+    def weight(key, item, side):
+        return 1.0 / carriers[(meta[key]["lineage"], item, side)] if by_lineage else 1.0
 
     subsets = sorted({k[0] for k in idx})
     missing = [s for s in subsets if s not in runs]
     stats = defaultdict(lambda: Counter())
     samples = defaultdict(lambda: defaultdict(list))
+    units = defaultdict(set)
     episode_level = Counter()
     ep_samples = defaultdict(list)
     control_stats = defaultdict(Counter)
@@ -303,6 +340,10 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
     unmapped_codes = Counter()
     mapped_codes = {c for r in rules for c in r["match"].get("finding_codes", [])}
     scored_eps = 0
+
+    def sample(item, cell, ep_id):
+        if cell in ("fp", "fn") and len(samples[item][cell]) < sample_cap:
+            samples[item][cell].append(ep_id)
 
     for subset in subsets:
         if subset not in runs:
@@ -314,14 +355,13 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
         keys = sorted(k for k in idx if k[0] == subset)
         if any(ingestion_items & set(idx[k]) for k in keys):
             ingestion[subset] = {"handled": bool(supported), "preflight_supported": supported}
+        subset_cells = defaultdict(list)            # (item, side) -> [(cell, unsupported, flagged_any, episode_id)]
         for key in keys:
             ep = key[1]
             scored_eps += 1
-            w = weight[key]
             hits = defaultdict(list)                 # item -> cameras
             state = {}                               # module -> "ok" | "error" | "unsupported" | None
             unknown = defaultdict(set)               # module -> items it ran for but could not judge
-            flagged_any = False
             for m in modules:
                 rec = recs[m].get(ep)
                 if rec is None:
@@ -351,15 +391,23 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
             v = verdicts.get(ep) or {}
             dropped = v.get("verdict") == "drop"
             flagged_any = dropped or any(hits.values())
-            # episode level
+            # episode level: a drop of an episode clean on its checked items is a false alarm only when a module that
+            # judges one of those items caused it; a drop for something nobody checked is unknown, not wrong
             ev = meta[key]["verdict"]
+            w_ep = 1.0 / lineage_size[meta[key]["lineage"]] if by_lineage else 1.0
             if ev in ("defective", "clean_on_checked_items") and v:
                 if v.get("verdict") == "held":
-                    episode_level["held_" + ("defective" if ev == "defective" else "clean")] += w
+                    episode_level["held_" + ("defective" if ev == "defective" else "clean")] += w_ep
                 else:
-                    cell = {("defective", True): "tp", ("defective", False): "fn",
-                            ("clean_on_checked_items", True): "fp", ("clean_on_checked_items", False): "tn"}[(ev, dropped)]
-                    episode_level[cell] += w
+                    if ev == "defective":
+                        cell = "tp" if dropped else "fn"
+                    elif not dropped:
+                        cell = "tn"
+                    else:
+                        by = set(v.get("hard_fails") or []) or {m for m in modules if (recs[m].get(ep) or {}).get("verdict") == "scored"}
+                        relevant = set().union(*[item_modules.get(i, set()) for i in meta[key]["checked"]])
+                        cell = "fp" if by & relevant else "dropped_outside_checked"
+                    episode_level[cell] += w_ep
                     if cell in ("fp", "fn") and len(ep_samples[cell]) < sample_cap:
                         ep_samples[cell].append(meta[key]["episode_id"])
             # items
@@ -367,43 +415,47 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
                 if item in controls and sides["present"]:
                     c = controls[item]
                     bad = [i for i in c.get("not_items", []) if hits.get(i)]
-                    failed = bool(bad) or (c.get("not_drop") and dropped)
-                    control_stats[item]["fail" if failed else "pass"] += w
+                    # an episode that is expected to be dropped for a defect of its own may be dropped: the control is
+                    # about its guarded items
+                    failed = bool(bad) or bool(c.get("not_drop") and dropped and not meta[key]["has_defect"])
+                    control_stats[item]["fail" if failed else "pass"] += weight(key, item, "present")
                     if failed and len(control_fail[item]) < sample_cap:
                         control_fail[item].append(meta[key]["episode_id"])
                     continue
                 if item in ingestion_items:
                     continue
-                s = stats[item]
                 mods = item_modules.get(item)
                 st = [None if (state.get(m) == "ok" and item in unknown[m]) else state.get(m) for m in mods] if mods else []
                 for side in ("present", "absent"):
                     if not sides[side]:
                         continue
-                    s[side] += w
+                    unsupported = False
                     if not mods:
-                        s["no_check_" + side] += w
+                        cell = "no_check"
+                    elif all(x in (None, "unsupported") for x in st):
+                        cell, unsupported = "not_assessed", all(x == "unsupported" for x in st)
+                    elif all(x in (None, "unsupported", "error") for x in st):
+                        cell = "error"
+                    else:
+                        found = hits.get(item, [])
+                        if side == "absent" and sides["present"]:
+                            # the same item is expected on another camera of the episode: only a finding on one of
+                            # the clean cameras is a false alarm (an unattributed finding belongs to the present side)
+                            found = [h for h in found if h is not None]
+                        reported = _matches(found, sides[side])
+                        cell = {("present", True): "tp", ("present", False): "fn", ("absent", True): "fp", ("absent", False): "tn"}[(side, reported)]
+                    units[item].add(sides["unit"])
+                    if sides["unit"] == "subset":
+                        subset_cells[(item, side)].append((cell, unsupported, flagged_any, meta[key]["episode_id"]))
                         continue
-                    if all(x in (None, "unsupported") for x in st):
-                        s["not_assessed_" + side] += w
-                        if all(x == "unsupported" for x in st):
-                            s["unsupported_" + side] += w
-                        continue
-                    if all(x in (None, "unsupported", "error") for x in st):
-                        s["error_" + side] += w
-                        continue
-                    found = hits.get(item, [])
-                    if side == "absent" and sides["present"]:
-                        # the same item is expected on another camera of the episode: only a finding on one of
-                        # the clean cameras is a false alarm (an unattributed finding belongs to the present side)
-                        found = [h for h in found if h is not None]
-                    reported = _matches(found, sides[side])
-                    cell = {("present", True): "tp", ("present", False): "fn", ("absent", True): "fp", ("absent", False): "tn"}[(side, reported)]
-                    s[cell] += w
-                    if side == "present" and flagged_any:
-                        s["flagged_any"] += w
-                    if cell in ("fp", "fn") and len(samples[item][cell]) < sample_cap:
-                        samples[item][cell].append(meta[key]["episode_id"])
+                    _count(stats[item], side, cell, weight(key, item, side), unsupported, flagged_any)
+                    sample(item, cell, meta[key]["episode_id"])
+        # subset-level items: one cell per subset and side, the strongest outcome among its episodes
+        for (item, side), cells in subset_cells.items():
+            kind = next(k for k in _SUBSET_ORDER[side] if any(c[0] == k for c in cells))
+            picked = [c for c in cells if c[0] == kind]
+            _count(stats[item], side, kind, 1.0, all(c[1] for c in picked), any(c[2] for c in cells))
+            sample(item, kind, f"{subset.split('/')[-1]} (subset)")
 
     items_out = {}
     for it in taxonomy["items"]:
@@ -411,6 +463,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
         s = stats.get(iid, Counter())
         mods = sorted(item_modules.get(iid, []))
         row = {"name": it["name"], "kind": it["kind"], "level": it["level"], "mapped": bool(mods), "modules": mods,
+               "unit": "/".join(sorted(units.get(iid) or {"subset" if it["level"] == "dataset" else "episode"})),
                "present": _r(s["present"]), "absent": _r(s["absent"])}
         for k in ("tp", "fn", "fp", "tn"):
             row[k] = _r(s[k])
@@ -420,6 +473,10 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
         row["precision"] = _ratio(s["tp"], s["tp"] + s["fp"])
         row["recall"] = _ratio(s["tp"], s["tp"] + s["fn"])
         row["recall_any"] = _ratio(s["flagged_any"], s["tp"] + s["fn"])
+        # end to end: every expected-present unit in the denominator, also the ones the platform did not assess, could not
+        # execute on, or has no check for
+        row["recall_end_to_end"] = _ratio(s["tp"], s["present"])
+        row["assessed_share"] = _ratio(s["tp"] + s["fn"], s["present"])
         if samples[iid]:
             row["samples"] = {k: v for k, v in samples[iid].items()}
         if iid in controls:
@@ -427,7 +484,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
             row["control"] = {"pass": _r(cs["pass"]), "fail": _r(cs["fail"]), "pass_rate": _ratio(cs["pass"], cs["pass"] + cs["fail"]),
                               "failed": control_fail.get(iid, [])}
         items_out[iid] = row
-    el = {k: _r(episode_level[k]) for k in ("tp", "fn", "fp", "tn", "held_defective", "held_clean")}
+    el = {k: _r(episode_level[k]) for k in ("tp", "fn", "fp", "tn", "held_defective", "held_clean", "dropped_outside_checked")}
     el["precision"] = _ratio(episode_level["tp"], episode_level["tp"] + episode_level["fp"])
     el["recall"] = _ratio(episode_level["tp"], episode_level["tp"] + episode_level["fn"])
     if ep_samples:
@@ -435,6 +492,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20):
     return {
         "schema_version": SCHEMA_VERSION,
         "set": expectation.get("set"), "set_version": expectation.get("set_version"),
+        "expectation_schema": expectation.get("schema_version"),
         "taxonomy_version": taxonomy.get("taxonomy_version"), "map_version": fmap.get("version") or fmap.get("schema_version"),
         "by_lineage": by_lineage,
         "episodes": {"expected": len(idx), "scored": scored_eps, "subsets": len(subsets), "runs": len([s for s in subsets if s in runs]),
@@ -488,9 +546,10 @@ def markdown(doc, regressions=None):
              + (f"; no run for: {', '.join(e['missing_runs'])}" if e["missing_runs"] else "") + (" (weighted by lineage)" if doc["by_lineage"] else "") + ".")
     el = doc["episode_level"]
     L.append(f"\n**Episode level** (platform drop vs expected defective): precision {_fmt(el['precision'])}, recall {_fmt(el['recall'])} "
-             f"(TP {el['tp']}, FP {el['fp']}, FN {el['fn']}, TN {el['tn']}; held {el['held_defective']} defective / {el['held_clean']} clean)")
-    L.append("\n| item | name | kind | present | absent | TP | FP | FN | TN | precision | recall | recall (any flag) | not assessed (module unsupported) | errors |")
-    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+             f"(TP {el['tp']}, FP {el['fp']}, FN {el['fn']}, TN {el['tn']}; held {el['held_defective']} defective / {el['held_clean']} clean; "
+             f"{el.get('dropped_outside_checked', 0)} clean episodes dropped by a module none of their checked items maps to, not counted)")
+    L.append("\n| item | name | kind | unit | present | absent | TP | FP | FN | TN | precision | recall | recall end to end | recall (any flag) | not assessed (module unsupported) | errors |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     gaps = []
     for iid, r in doc["items"].items():
         if not (r["present"] or r["absent"]) or "control" in r:
@@ -500,8 +559,8 @@ def markdown(doc, regressions=None):
             continue
         na = f"{r['not_assessed']['present'] + r['not_assessed']['absent']} ({r['not_assessed']['of_which_unsupported']})"
         er = r["error"]["present"] + r["error"]["absent"]
-        L.append(f"| {iid} | {r['name']} | {r['kind']} | {r['present']} | {r['absent']} | {r['tp']} | {r['fp']} | {r['fn']} | {r['tn']} | "
-                 f"{_fmt(r['precision'])} | {_fmt(r['recall'])} | {_fmt(r['recall_any'])} | {na} | {er} |")
+        L.append(f"| {iid} | {r['name']} | {r['kind']} | {r.get('unit', 'episode')} | {r['present']} | {r['absent']} | {r['tp']} | {r['fp']} | {r['fn']} | {r['tn']} | "
+                 f"{_fmt(r['precision'])} | {_fmt(r['recall'])} | {_fmt(r.get('recall_end_to_end'))} | {_fmt(r['recall_any'])} | {na} | {er} |")
     ctl = [(iid, r) for iid, r in doc["items"].items() if "control" in r and (r["control"]["pass"] or r["control"]["fail"])]
     if ctl:
         L.append("\n**Controls** (must not be reported)")
@@ -557,7 +616,7 @@ def main(argv=None):
     ap.add_argument("--runs-map", help="JSON {run_name: {set, subset}} (baseline/<commit>/runs.json)")
     ap.add_argument("--runs-root", help="directory holding the run directories named in --runs-map")
     ap.add_argument("--run", action="append", help="SUBSET=RUN_DIR, repeatable")
-    ap.add_argument("--by-lineage", action="store_true", help="weight each episode by 1/(episodes sharing its lineage)")
+    ap.add_argument("--by-lineage", action="store_true", help="weight each episode by 1/(episodes of its lineage that carry the same item on the same side)")
     ap.add_argument("--out", help="write the score JSON here")
     ap.add_argument("--markdown", help="write a Markdown summary here")
     ap.add_argument("--baseline", help="an earlier score JSON to compare against")

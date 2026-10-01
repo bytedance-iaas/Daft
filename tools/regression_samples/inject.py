@@ -514,7 +514,11 @@ def fault_duplicate(b, ctx, sev, rnd):
                 transcode(prev_vids[cam], vids[cam], b.codec(cam), b.fps)
             except Exception:  # noqa: BLE001  (the previous episode may carry an undecodable fault)
                 shutil.copyfile(prev_vids[cam], vids[cam])
-    return {"item": "SET-1", "scope": {"duplicate_of": prev}, "params": {"kind": "byte_copy" if sev == "obvious" else "re_encoded_copy"},
+    # the copy's content, and so its root, is the copied episode's: record that base and lineage, keep the drawn slot apart
+    src = out.records[-2]
+    return {"item": "SET-1", "scope": {"duplicate_of": prev}, "base_episode": src["base_episode"], "lineage": src["lineage"],
+            "slot_base_episode": out.records[-1]["base_episode"],
+            "params": {"kind": "byte_copy" if sev == "obvious" else "re_encoded_copy"},
             "note": f"full copy of episode {prev} (which therefore is the other half of the duplicate pair)"}
 
 

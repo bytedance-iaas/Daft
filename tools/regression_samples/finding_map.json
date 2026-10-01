@@ -1,7 +1,7 @@
 {
  "schema_version": "1.0",
- "version": "1.1",
- "taxonomy_version": "1.0",
+ "version": "1.2",
+ "taxonomy_version": "1.1",
  "platform": "curation v2, module registry (C1) 1.14",
  "about": "How a platform result becomes a check item (taxonomy.json). A rule reads one module's per-episode record (checks/<module>/results.jsonl) and yields the items it reports, with the camera when the record names one. An item a rule can yield is 'mapped'; the modules whose rules yield it decide whether an episode was assessed for it. Thresholds are the platform's own where it has one (visual_quality freezes at 95%, the report calls a camera reading below 0.6 low, the funnel's soft threshold is 0.5).",
  "rules": [
@@ -46,7 +46,7 @@
   {"id": "dedup.duplicate", "module": "dedup", "match": {"passed": [false]}, "items": ["SET-1"]}
  ],
  "controls": {
-  "about": "A control item marks a legitimate situation; the platform passes it when it reports none of not_items on the episode and, with not_drop, does not drop the episode.",
+  "about": "A control item marks a legitimate situation; the platform passes it when it reports none of not_items (the taxonomy's guards) on the episode and, with not_drop, does not drop the episode unless the episode carries an episode-level defect of its own.",
   "items": {
    "FILE-9": {"not_items": ["FILE-2", "FILE-4"], "not_drop": true},
    "STRM-8": {"not_items": ["STRM-3", "AV-1"], "not_drop": false},

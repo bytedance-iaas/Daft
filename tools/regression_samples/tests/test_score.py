@@ -22,6 +22,8 @@ SUBSET = "lerobot_v21/demo"
 
 def episode(idx, problems=(), clean=(), phenomena=(), lineage=None, verdict=None):
     def entry(item, scope=None):
+        if isinstance(item, dict):                   # a whole entry, e.g. {"item": ..., "unit": "subset"}
+            return dict(item)
         e = {"item": item}
         if scope is not None:
             e["scope"] = scope
@@ -169,14 +171,57 @@ def test_lineage_weights(tmp_path):
     assert row["tp"] == 1.5 and row["fn"] == 0.5 and row["recall"] == 0.75
 
 
+def test_lineage_weights_count_only_the_versions_that_carry_the_item(tmp_path):
+    # the original recording is clean on FILE-4, its injected copy is not: each is the only evidence of its side
+    exp = expectation(episode(0, clean=["FILE-4"], lineage="rec:1"), episode(1, problems=["FILE-4"], lineage="rec:1"))
+    row = run_score(tmp_path, exp, [record(0, "data_integrity"), decode_failed(1)], by_lineage=True)["items"]["FILE-4"]
+    assert (row["tp"], row["tn"]) == (1, 1)
+
+
 # ---------------------------------------------------------------- episode level, controls, ingestion
 
 def test_episode_level_uses_the_funnel_verdict(tmp_path):
     exp = expectation(episode(0, problems=["FILE-4"]), episode(1, clean=["FILE-4"]), episode(2, clean=["FILE-4"]))
     recs = [decode_failed(0), record(1, "data_integrity"), record(2, "data_integrity")]
-    verdicts = [{"episode_index": 0, "verdict": "drop"}, {"episode_index": 1, "verdict": "drop"}, {"episode_index": 2, "verdict": "held"}]
+    verdicts = [{"episode_index": 0, "verdict": "drop", "hard_fails": ["data_integrity"]},
+                {"episode_index": 1, "verdict": "drop", "hard_fails": ["data_integrity"]}, {"episode_index": 2, "verdict": "held"}]
     el = run_score(tmp_path, exp, recs, verdicts=verdicts)["episode_level"]
     assert (el["tp"], el["fp"], el["held_clean"]) == (1, 1, 1) and el["precision"] == 0.5
+
+
+def test_a_drop_for_an_item_nobody_checked_is_not_a_false_alarm(tmp_path):
+    exp = expectation(episode(0, clean=["FILE-4"]), episode(1, clean=["FILE-4", "ACT-4"]), episode(2, clean=["IMG-2"]))
+    recs = [record(e, "data_integrity") for e in range(3)] + [visual(2, front={"exposure": 0.9})]
+    verdicts = [{"episode_index": 0, "verdict": "drop", "hard_fails": ["kinematic_limits"]},     # nobody checked ACT-4 there
+                {"episode_index": 1, "verdict": "drop", "hard_fails": ["kinematic_limits"]},     # ACT-4 was checked clean
+                {"episode_index": 2, "verdict": "drop", "hard_fails": [], "soft_score": 0.4}]     # soft score: the scored modules
+    el = run_score(tmp_path, exp, recs, verdicts=verdicts)["episode_level"]
+    assert (el["fp"], el["dropped_outside_checked"]) == (2, 1)
+    assert el["samples"]["fp"] == ["demo:1", "demo:2"]
+
+
+def test_a_dataset_level_item_counts_once_per_subset(tmp_path):
+    exp = expectation(*[episode(i, problems=["SET-1"]) for i in range(3)], episode(3, problems=[]),
+                      *[episode(i, problems=[{"item": "LABEL-3", "unit": "subset"}]) for i in (4, 5)])
+    dup = record(1, "data_integrity", "fail", False, {"findings": [{"code": "duplicate_content", "message": "与另一条重复"}]})
+    recs = [record(0, "data_integrity"), dup, record(2, "data_integrity")]
+    items = run_score(tmp_path, exp, recs)["items"]
+    assert (items["SET-1"]["present"], items["SET-1"]["tp"], items["SET-1"]["fn"]) == (1, 1, 0)
+    assert items["SET-1"]["unit"] == "subset"
+    assert items["LABEL-3"]["present"] == 1 and items["LABEL-3"]["mapped"] is False
+
+
+def test_end_to_end_recall_keeps_what_was_not_assessed(tmp_path):
+    exp = expectation(episode(0, problems=["FILE-4"]), episode(1, problems=["FILE-4"]), episode(2, problems=["FILE-4"]))
+    recs = [decode_failed(0), record(1, "data_integrity", "error", None)]          # 2 is never run
+    row = run_score(tmp_path, exp, recs)["items"]["FILE-4"]
+    assert row["recall"] == 1.0 and row["recall_end_to_end"] == round(1 / 3, 4) and row["assessed_share"] == round(1 / 3, 4)
+
+
+def test_a_two_camera_scope_written_as_text_keeps_both_cameras():
+    assert S.scope_cameras("streams=left_camera_rgb_image,right_camera_rgb_image") == frozenset({"left_camera_rgb_image", "right_camera_rgb_image"})
+    assert S.scope_cameras({"streams": ["observation.images.front", "wrist"]}) == frozenset({"front", "wrist"})
+    assert S.scope_cameras("stream=action arm=left") is None
 
 
 def test_a_control_fails_when_its_defect_is_reported(tmp_path):
@@ -184,6 +229,19 @@ def test_a_control_fails_when_its_defect_is_reported(tmp_path):
     recs = [visual(0, left={"exposure": 0.1}), visual(1, left={})]
     row = run_score(tmp_path, exp, recs)["items"]["IMG-10"]
     assert row["control"]["pass"] == 1 and row["control"]["fail"] == 1 and row["control"]["failed"] == ["demo:0"]
+
+
+def test_a_control_with_a_defect_of_its_own_may_be_dropped(tmp_path):
+    exp = expectation(episode(0, phenomena=["IMG-10"], problems=["FILE-4"]), episode(1, phenomena=["IMG-10"]))
+    recs = [visual(0, left={}), decode_failed(0), visual(1, left={})]
+    verdicts = [{"episode_index": 0, "verdict": "drop", "hard_fails": ["data_integrity"]}, {"episode_index": 1, "verdict": "drop"}]
+    row = run_score(tmp_path, exp, recs, verdicts=verdicts)["items"]["IMG-10"]
+    assert (row["control"]["pass"], row["control"]["fail"], row["control"]["failed"]) == (1, 1, ["demo:1"])
+
+
+def test_the_map_controls_are_the_taxonomy_guards():
+    guards = {i["id"]: i["guards"] for i in TAXONOMY["items"] if i["kind"] == "control"}
+    assert guards == {k: v["not_items"] for k, v in FMAP["controls"]["items"].items()}
 
 
 def test_ingestion_follows_the_preflight(tmp_path):
