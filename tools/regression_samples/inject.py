@@ -100,12 +100,13 @@ class Out:
         self.records.append(rec)
         return ep, pq_path, vids, df
 
-    def finish(self, note):
+    def finish(self, note, dataset_fault=None):
         b = self.base
         info = json.loads(json.dumps(b.info))
         info["total_episodes"] = self.n; info["total_frames"] = self.frames; info["total_chunks"] = (self.n - 1) // b.chunk + 1
         info["total_videos"] = self.n * len(b.cams)
         info["splits"] = {"train": f"0:{self.n}"}
+        ds_rec = DATASET_FAULTS[dataset_fault](info, self) if dataset_fault else None
         json.dump(info, open(os.path.join(self.root, "meta/info.json"), "w"), indent=2)
         with open(os.path.join(self.root, "meta/episodes.jsonl"), "w") as f:
             for r in self.rows:
@@ -123,8 +124,11 @@ class Out:
         for extra in ("stats.json",):
             if os.path.exists(os.path.join(b.root, "meta", extra)):
                 shutil.copyfile(os.path.join(b.root, "meta", extra), os.path.join(self.root, "meta", extra))
-        json.dump({"schema_version": "0.1", "base": os.path.basename(b.root.rstrip("/")), "note": note, "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                   "episodes": self.records}, open(os.path.join(self.root, "injection.json"), "w"), ensure_ascii=False, indent=1)
+        doc = {"schema_version": "0.1", "base": os.path.basename(b.root.rstrip("/")), "note": note, "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+               "episodes": self.records}
+        if ds_rec:
+            doc["dataset_fault"] = ds_rec
+        json.dump(doc, open(os.path.join(self.root, "injection.json"), "w"), ensure_ascii=False, indent=1)
 
 
 # ---------------------------------------------------------------- video operations -------------------------------------------
@@ -322,6 +326,44 @@ def fault_shift_video(b, ctx, sev, rnd):
         return frames[k:] + [frames[-1]] * k  # the picture runs k frames AHEAD of the signals
     transcode(vids[cam], vids[cam] + ".tmp", b.codec(cam), b.fps, seq_fn=sf); os.replace(vids[cam] + ".tmp", vids[cam])
     return {"item": "AV-1", "scope": {"stream": cam}, "frames": [0, n - 1], "params": {"video_leads_by_frames": k, "video_leads_by_s": round(k / b.fps, 3)}}
+
+
+def drift_map(n, lag_end_frames):
+    """source frame for each output frame when the picture falls behind linearly, lag_end_frames behind at the last frame"""
+    k = lag_end_frames / max(1, n - 1)
+    return [max(0, int(round(i * (1 - k)))) for i in range(n)]
+
+
+def reset_map(n, at, lag_frames):
+    """source frame for each output frame when the picture jumps lag_frames behind at frame `at` and stays there"""
+    return list(range(at)) + [max(0, i - lag_frames) for i in range(at, n)]
+
+
+def fault_drift(b, ctx, sev, rnd):
+    """every camera's clock runs slow against the signals: the picture falls a little further behind each frame, 0.6 s / 0.2 s
+    behind by the last frame (a time offset that grows, AV-5; a constant one is AV-1)"""
+    ep, pq_path, vids, df = ctx; n = len(df)
+    lag_end = 0.6 if sev == "obvious" else 0.2
+
+    def sf(frames):
+        return [frames[j] for j in drift_map(len(frames), lag_end * b.fps)]
+    for cam in b.cams:
+        transcode(vids[cam], vids[cam] + ".tmp", b.codec(cam), b.fps, seq_fn=sf); os.replace(vids[cam] + ".tmp", vids[cam])
+    return {"item": "AV-5", "scope": {"streams": list(b.cams)}, "frames": [0, n - 1],
+            "params": {"kind": "linear drift", "video_lag_at_end_s": lag_end, "video_lag_at_end_frames": round(lag_end * b.fps, 1)}}
+
+
+def fault_clock_reset(b, ctx, sev, rnd):
+    """halfway through, every camera's timeline jumps: from the middle frame on the picture lags the signals by 0.6 s / 0.2 s (AV-5)"""
+    ep, pq_path, vids, df = ctx; n = len(df)
+    d = int(round((0.6 if sev == "obvious" else 0.2) * b.fps)); m = n // 2
+
+    def sf(frames):
+        return [frames[j] for j in reset_map(len(frames), m, d)]
+    for cam in b.cams:
+        transcode(vids[cam], vids[cam] + ".tmp", b.codec(cam), b.fps, seq_fn=sf); os.replace(vids[cam] + ".tmp", vids[cam])
+    return {"item": "AV-5", "scope": {"streams": list(b.cams)}, "frames": [m, n - 1],
+            "params": {"kind": "clock reset", "jump_at_frame": m, "video_lag_after_frames": d, "video_lag_after_s": round(d / b.fps, 3)}}
 
 
 def fault_camera_swap(b, ctx, sev, rnd):
@@ -522,12 +564,31 @@ def fault_duplicate(b, ctx, sev, rnd):
             "note": f"full copy of episode {prev} (which therefore is the other half of the duplicate pair)"}
 
 
+#: faults of the whole subset (written into meta/info.json after the episodes): FILE-8, metadata that contradicts the data
+def dataset_meta_fps(info, out):
+    was = info["fps"]
+    info["fps"] = was * 2
+    return {"fault": "meta_fps", "item": "FILE-8", "severity": "obvious",
+            "params": {"declared_fps": info["fps"], "actual_fps": was, "note": "timestamps and videos keep the real rate"}}
+
+
+def dataset_meta_totals(info, out):
+    was = {"total_episodes": info["total_episodes"], "total_frames": info["total_frames"]}
+    info["total_episodes"] += 1
+    info["total_frames"] += 37
+    return {"fault": "meta_totals", "item": "FILE-8", "severity": "borderline",
+            "params": {"declared": {"total_episodes": info["total_episodes"], "total_frames": info["total_frames"]}, "actual": was}}
+
+
+DATASET_FAULTS = {"meta_fps": dataset_meta_fps, "meta_totals": dataset_meta_totals}
+
 FAULTS = {
     "frozen": fault_frozen, "dark": fault_dark, "overexposed": fault_overexposed, "blur": fault_blur, "occlusion": fault_occlusion, "shake": fault_shake,
     "smudge": fault_smudge, "garble": fault_garble, "blocks": fault_blocks, "shift_video": fault_shift_video, "camera_swap": fault_camera_swap, "resolution": fault_resolution,
     "truncate_video": fault_truncate_video, "zero_fill": fault_zero_fill, "empty_video": fault_empty_video, "nan_action": fault_nan_action,
     "drop_rows": fault_drop_rows, "timestamps": fault_timestamps, "spike": fault_spike, "constant_channel": fault_constant_channel,
     "sawtooth": fault_sawtooth, "stale_state": fault_stale_state, "label_swap": fault_label_swap, "duplicate": fault_duplicate,
+    "drift": fault_drift, "clock_reset": fault_clock_reset,
 }
 PLANS = {
     # image / file / table faults on a small, fast base (DROID: 15 fps, 320x180, AV1)
@@ -538,6 +599,8 @@ PLANS = {
     "droid_tablegap": ["drop_rows"],
     # action-space faults where the action is an end-effector pose in metres, plus labels (FastUMI)
     "fastumi": ["spike", "sawtooth", "constant_channel", "stale_state", "label_swap", "camera_swap", "shift_video", "frozen"],
+    # a video-to-signal offset that changes over time (AV-5), in a subset of its own
+    "droid_sync": ["drift", "clock_reset"],
 }
 
 
@@ -549,10 +612,11 @@ def main():
     ap.add_argument("--severities", default="obvious,borderline")
     ap.add_argument("--controls", type=int, default=3, help="pristine copies added as controls")
     ap.add_argument("--seed", type=int, default=16)
+    ap.add_argument("--dataset-fault", choices=sorted(DATASET_FAULTS), help="a fault of the whole subset, written into meta/info.json (FILE-8)")
     a = ap.parse_args()
     b = Base(a.base)
     eps = [int(x) for x in a.episodes.split(",")]
-    faults = PLANS.get(a.plan) or a.plan.split(",")
+    faults = [] if a.plan in ("", "none") else (PLANS.get(a.plan) or a.plan.split(","))
     sevs = a.severities.split(",")
     rnd = random.Random(a.seed)
     out = Out(b, a.out)
@@ -582,7 +646,8 @@ def main():
         src = next_base()
         ctx = out.add(src, {"fault": None, "severity": None, "item": None, "note": "pristine copy of the base episode: a control inside the injected subset"})
         print(f"ep {ctx[0]:3d} <- base {src:4d}: control", flush=True)
-    out.finish(f"faults injected into clean episodes of {os.path.basename(a.base.rstrip('/'))}; plan {a.plan}; seed {a.seed}")
+    out.finish(f"faults injected into clean episodes of {os.path.basename(a.base.rstrip('/'))}; plan {a.plan}; seed {a.seed}"
+               + (f"; dataset fault {a.dataset_fault}" if a.dataset_fault else ""), a.dataset_fault)
     print("INJECT_DONE", out.n, "episodes ->", a.out)
 
 

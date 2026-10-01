@@ -6,9 +6,11 @@
 | 文件 | 做什么 |
 |---|---|
 | `inject.py` | 在干净条目上注入故障，生成新的 LeRobot v2.x 数据集和 `injection.json` |
+| `inject_mcap.py` | mcap 的结构故障（FILE-3）与合法写法：截断、数据块 CRC、摘要区 CRC；无摘要区、CRC 全 0 |
+| `inject_v3.py` | LeRobot v3 的索引与引用故障（FILE-10）：行区间、视频时间段、任务编号、帧号 |
 | `score.py` | 拿平台的运行目录对样本集的 `expectation.json` 打分：每个检测项的 TP / FP / FN / TN、precision、recall，可与基线比较 |
 | `finding_map.json` | 对照表：平台每个模块的哪种结果算报出了哪个检测项 |
-| `taxonomy.json` | 检测项分类 1.0（69 项），与样本集里的同名文件一致 |
+| `taxonomy.json` | 检测项分类 1.1（71 项），与样本集里的同名文件一致 |
 
 ## `score.py`
 
@@ -19,6 +21,9 @@
 - 相机限定的期望只和同一路相机的结果比（`wrist` 与 `observation.images.wrist`、`robot0` 与 `robot0_sensor_camera0_compressed` 算同一路）。
 - 这条 episode 上能报这一项的模块都没跑（漏斗短路、没选、预检不支持）记 `not_assessed`，都执行出错记 `error`，两者都不进 precision / recall。
 - 对照表里没有任何规则能报的项是平台的 gap，单列。control 类检测项看平台有没有误报；SET-4 看预检能不能读进来。
+- `recall` 只算评估到的；`recall_end_to_end` 把没评估、执行出错、没有规则的都留在分母里。
+- 数据集级的项（分类表 level 为 dataset，或条目标了 `unit: subset`）按子集只计一次。
+- episode 级：一条只在已检查项上干净的 episode 被拒，拒它的模块能报其中一项才算误报，否则记 `dropped_outside_checked`。
 
 ```bash
 # 运行目录名 -> 子集的映射就是基线目录里的 runs.json；也可以用 --run 子集=目录 逐个给
@@ -30,7 +35,8 @@ PYTHONPATH=tools .venv/bin/python -m regression_samples.score \
 
 CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --min-support 5`，任何一项的 precision、recall、control 通过率
 比基线掉超过 0.05（且这一项至少有 5 条计数）就以退出码 3 结束；`--require-all-runs` 让缺运行目录的子集以退出码 2 结束。
-平台 `1b30fb224` 上不用模型的 6 个模块的第一份打分在 `tos://curation-robo-anchor/baseline/1b30fb224/score/`。
+平台 `1b30fb224` 上不用模型的 6 个模块的打分在 `tos://curation-robo-anchor/baseline/1b30fb224/score/`（2026-10-01 按期望 1.1 重打；
+第一份留在 `score/archive-2026-09-30/`）。
 
 对照表要跟着平台走：平台改了问题码、细节字段名或模块 id，`tests/test_score.py` 的一致性检查会失败，同步改 `finding_map.json`。
 
@@ -74,6 +80,15 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
 | `spike`、`sawtooth`、`constant_channel`、`stale_state` | ACT-2、ACT-1、ACT-3、ACT-8 | 状态量单点跳变 12 / 4 倍 p95 步长；锯齿 20% / 5% 量程；夹爪通道全程 / 后半段恒定；状态量沿用旧值 |
 | `duplicate` | SET-1 | 字节级副本 / 重编码副本 |
 | `label_swap` | LABEL-5 | 换成另一条的任务描述（需要多任务的基底） |
+| `drift`、`clock_reset` | AV-5 | 画面越来越落后，到最后一帧落后 0.6 / 0.2 s；中段起整体落后 0.6 / 0.2 s（`--plan droid_sync`） |
+| `--dataset-fault meta_fps`、`meta_totals` | FILE-8 | `meta/info.json` 的 fps 写成两倍；总条数、总帧数多写（整个子集一处，`--plan none` 时只生成原样对照） |
+
+```bash
+# mcap 结构故障：每个基底用一次，前几个按 --plan 注入，余下的做对照
+.venv/bin/python tools/regression_samples/inject_mcap.py --out <新目录> --bases a.mcap,b.mcap,... --controls 2
+# LeRobot v3 索引故障：故障:episode[:参数]，其余条目原样留作对照
+.venv/bin/python tools/regression_samples/inject_v3.py --base <v3 数据集> --out <新目录> --plan offset:10:6,video_range:20:1.0,dangling_task:30,frame_index:40
+```
 
 ## 手动验证步骤
 
@@ -81,15 +96,17 @@ CI 里与基线比较：`--baseline <上一次的 score.json> --max-drop 0.05 --
 
 1. `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests`，全部通过。
 2. 从 `tos://curation-robo-anchor/` 取 `anchor/v1/expectation.json` 与 `baseline/1b30fb224/`（含 `runs.json`），按上面的命令打分：
-   终端不打印东西、退出码 0，`score.md` 的第一行是 `# Score: anchor v1`，写明 911 条全部打分、68 个子集都有运行目录。
+   终端不打印东西、退出码 0，`score.md` 的第一行是 `# Score: anchor v1 (taxonomy 1.1, map 1.3)`，写明 980 条全部打分、73 个子集都有运行目录。
 3. 再加 `--baseline baseline/1b30fb224/score/anchor.json` 跑一遍：退出码 0，`score.md` 末尾写「Against the baseline: no regression」。
 
 注入：
 
-1. 在有 `.venv` 的仓库根目录，用 `backend/tests/cli/integrity_samples.py` 之类的小夹具或任意 LeRobot v2.x 数据集当基底，跑上面的命令；
+1. `PYTHONPATH=tools .venv/bin/python -m pytest -q tools/regression_samples/tests/test_inject.py`：mcap 的合法写法读得回全部消息、坏的那几条
+   在规范规定的位置被识别；v3 的每种故障只改了一条 episode 的一处引用，基底不变。
+2. 在有 `.venv` 的仓库根目录，用 `backend/tests/cli/integrity_samples.py` 之类的小夹具或任意 LeRobot v2.x 数据集当基底，跑上面的命令；
    终端每行打印一条 `ep N <- base M: <故障> <档位> <检测项> <参数>`，最后 `INJECT_DONE`。
-2. 打开输出目录：`meta/info.json` 的 `total_episodes` 等于输出条数，`meta/episodes.jsonl` 每条一行，`injection.json` 的条目数相同。
-3. 用 PyAV 逐条解码输出视频：除 `garble`、`truncate_video`、`zero_fill`、`empty_video` 外，帧数都等于该条 parquet 的行数；
+3. 打开输出目录：`meta/info.json` 的 `total_episodes` 等于输出条数，`meta/episodes.jsonl` 每条一行，`injection.json` 的条目数相同。
+4. 用 PyAV 逐条解码输出视频：除 `garble`、`truncate_video`、`zero_fill`、`empty_video` 外，帧数都等于该条 parquet 的行数；
    `resolution` 那一路的宽高与 `injection.json` 里的 `actual` 一致。
-4. 把输出目录登记到质检台跑一遍数据完整性：`truncate_video`、`zero_fill`、`empty_video`（空文件）、`garble`、`nan_action`、`timestamps` 应被拒；
+5. 把输出目录登记到质检台跑一遍数据完整性：`truncate_video`、`zero_fill`、`empty_video`（空文件）、`garble`、`nan_action`、`timestamps` 应被拒；
    `duplicate` 记为可疑。
