@@ -465,6 +465,25 @@ def test_mcap_numbering_is_v1s(tmp_path):
     assert mcap_episodes({"README.md": 1}) == {}
 
 
+def test_an_episode_file_is_found_by_its_path(mini_mcap):
+    """streams.objects.join / locate: code handed a file path (the EEF module's views) reads a
+    streamed TOS dataset through the bound objects and a local one from its directory."""
+    from curation.streams import objects as SO
+
+    assert SO.join("tos://b/ds/", "episode_0.mcap") == "tos://b/ds/episode_0.mcap"
+    assert SO.join(mini_mcap, "episode_0.mcap") == os.path.join(mini_mcap, "episode_0.mcap")
+    local, name = SO.locate(os.path.join(mini_mcap, "episode_0.mcap"))
+    assert isinstance(local, SO.LocalDirObjects) and name == "episode_0.mcap"
+    with pytest.raises(FileNotFoundError):
+        SO.locate("tos://b/ds/episode_0.mcap")                  # nobody bound the dataset
+    remote = SO.LocalDirObjects(mini_mcap)                      # stands for TosObjects: any McapObjects
+    SO.bind("tos://b/ds", remote)
+    try:
+        assert SO.locate("tos://b/ds/episode_0.mcap") == (remote, "episode_0.mcap")
+    finally:
+        SO.unbind("tos://b/ds")
+
+
 def test_range_file_reads_across_blocks():
     from curation.cli.containers import RangeFile
 

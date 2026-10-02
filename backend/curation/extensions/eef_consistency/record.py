@@ -312,30 +312,33 @@ class LeRobotRecords:
 
 
 class McapRecords:
-    """Topics of a local mcap dataset: an episode's file is the one its views name (F5.13), else the
-    dataset's numbering (``episode_<N>.mcap``, or the sorted files)."""
+    """Topics of an mcap dataset: an episode's file is the one its views name (F5.13), else the
+    dataset's numbering (``episode_<N>.mcap``, or the sorted files). ``root`` is a local directory or
+    the ``tos://`` URI of a dataset the command streams; files are read through ``streams.objects``."""
 
     def __init__(self, root: str | os.PathLike, numbering: dict[int, str] | None = None):
         self.root = str(root)
         self.numbering = numbering
 
     def file(self, sample) -> str:
+        from ...streams import objects as SO
+
         for cam in sample.cameras.values():
             if cam.media.get("topic"):
-                return os.path.join(self.root, cam.media["uri"])
+                return SO.join(self.root, cam.media["uri"])
         numbering = self.numbering
         if numbering is None:
             from ...cli import containers
 
-            numbering = self.numbering = containers.mcap_episodes(
-                [n for n in os.listdir(self.root) if n.endswith(".mcap")])
+            numbering = self.numbering = containers.mcap_episodes(SO.resolve(self.root).names())
         name = numbering.get(int(sample.episode_index))
         if name is None:
             raise RecordDataError(f"episode {sample.episode_index}: no .mcap file for it in the dataset")
-        return os.path.join(self.root, name)
+        return SO.join(self.root, name)
 
     def read(self, sample, specs: Iterable[SourceSpec]) -> dict[str, Series]:
         from ...ingest import mcap_reader as MR
+        from . import mcap_media as MM
 
         specs = list(specs)
         path = self.file(sample)
@@ -346,7 +349,7 @@ class McapRecords:
         factories: dict = {}
         decoders: dict = {}
         make_reader = MR._mcap_reader_mod()
-        with open(path, "rb") as fh:
+        with MM.open_episode(path) as fh:
             for schema, channel, message in make_reader(fh).iter_messages(topics=list(by_topic), log_time_order=True):
                 decoded = MR._decode(channel, schema, message, factories, decoders)
                 for s in by_topic.get(channel.topic, []):

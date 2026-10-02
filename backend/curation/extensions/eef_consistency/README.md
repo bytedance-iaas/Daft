@@ -201,7 +201,7 @@
 15. mcap 数据集（F5.13）：`../.venv/bin/python -m pytest -q tests/cli/test_eef_mcap.py`（约 1 分钟），应全部通过：对账工具的迷你
     mcap 数据集与迷你 LeRobot 数据集是同一批画面，把 trajectory.json 的相机改成 `"uri": "episode_<N>.mcap", "topic":
     "/observation.images.exterior", "clip_start_s": 0, "clip_end_s": null`，逐帧画面与 LeRobot 视频同号同图，预检 `available`，
-    `check` 的分项读数与结论和 LeRobot 版逐项相同；假 TOS 上每个 episode 的 `.mcap` 只下载一次（进漏斗的源缓存）；Lance 仍是
+    `check` 的分项读数与结论和 LeRobot 版逐项相同；假 TOS 上与本地读数逐条相同，`.mcap` 只按区间读、不整文件下载（`streams.objects`）；Lance 仍是
     `unsupported`。手动：`cd .. && PYTHONPATH=tools .venv/bin/python -m parity make-fixture --format mcap --out /tmp/mini_mcap`
     做一份 mcap 数据集，把测试里的 trajectory.json 照上面改写后，
     `../.venv/bin/python -m curation.cli preflight --input /tmp/mini_mcap --modules eef_video_consistency --vlm-backend ark --param eef_video_consistency.trajectory_json=<文件>`

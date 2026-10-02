@@ -907,7 +907,8 @@ eef_video_review:
 需求方在 galbot 上确认其他模块已能读 mcap 后提出。做法：输入格式的 `media` 加可选字段 `topic`，一路相机 = 该 episode 的 `.mcap`
 文件里的一个图像 topic，帧号按 log_time 顺序从 0 数（`eef-video/1.0.0` 不变，纯增补）。读取时把该 topic 的帧转封装成本地 mp4
 （JPEG 进 mjpeg、H.264 Annex-B 重封装，不重编码，与漏斗其他模块读 mcap 用同一套 `ingest/mcap_reader` 做法），均匀时间轴，
-解码按位置编号；时间仍取 trajectory.json 的逐帧时间戳，不看消息时间。TOS 上的 mcap 从漏斗的源缓存读（`containers.SourceCache`），
+解码按位置编号；时间仍取 trajectory.json 的逐帧时间戳，不看消息时间。TOS 上的 mcap 与漏斗其他模块一样按区间流式读（`streams.objects`，
+2026-10-02 起；之前是源缓存，PR #159 改流式后 EEF 一度读不到 TOS 上的文件，F12.7 修复），
 一条 episode 判完即删它的临时视频。Lance 仍不支持（它的视频是整段 mp4 存在表里，另议）。尚未做：从 mcap 的位姿 topic 自动
 生成 trajectory.json（§3.3 的映射导出器目前只读 LeRobot 列）。
 
@@ -921,7 +922,7 @@ mcap 一期都做。评审时的可行性实测（dataset2，内置 Franka 正�
 到货即校验，摘要给来源、机器人、列、topic 与声明的帧）、报告小节与明细表 `eef_record`、Episode 明细与裁决卡片的记录比对区块。
 实现中定下的细节：时间差正值 = 数据集记录晚；一帧的滞后会把拟合常量带偏，所以记了 `time_offset` 时恒定差用补偿后的记录判；
 叠加图的帧彼此至少隔 30 帧，路径记在 `details.record.evidence`。远端 LeRobot 只取 `meta/` 与这一条的 data 文件；mcap 的记录
-topic 与视频在同一个 episode 文件里，一并进源缓存。
+topic 与视频在同一个 episode 文件里，一并按区间流式读。
 
 ### C.12 映射由预检起草（2026-09-28，F5.16，D-E17）
 

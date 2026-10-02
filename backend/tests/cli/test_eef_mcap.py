@@ -4,7 +4,7 @@ tools/parity's mini mcap dataset holds the same pictures as the mini LeRobot one
 per time step on ``/observation.images.<camera>`` - so a trajectory.json whose views name the episode's
 ``.mcap`` file and that topic must give what the LeRobot trajectory gives on the LeRobot dataset: the
 same frames in the same order, the same sub-item readings and the same outcomes. On a (fake) TOS the
-module reads the episode files from the funnel's source cache, one download each.
+module reads the episode files where the funnel's readers do: streamed, ranged reads only (PR #159).
 """
 from __future__ import annotations
 
@@ -163,9 +163,10 @@ def tos(cloud, monkeypatch, tmp_path):
     tempfile.tempdir = None
 
 
-def test_on_tos_the_episode_files_come_from_the_source_cache(cli, tos, mini_mcap, tmp_path, monkeypatch):
+def test_on_tos_the_episode_files_are_streamed(cli, tos, mini_mcap, tmp_path, monkeypatch):
     tos.upload_dir(mini_mcap, "src", "ds/mcap")
-    monkeypatch.setenv("CURATION_SOURCE_CACHE", str(tmp_path / "cache"))
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("CURATION_SOURCE_CACHE", str(cache))
     lr = _files(tmp_path / "lr", seed_every=1)
     mc = _as_mcap(lr, tmp_path / "mc")
     (entry,) = cli("preflight", "--input", "tos://src/ds/mcap", "--modules", EEF, "--vlm-backend", "ark",
@@ -176,6 +177,8 @@ def test_on_tos_the_episode_files_come_from_the_source_cache(cli, tos, mini_mcap
         local = _eef(mini_mcap, mc, str(tmp_path / "run-local"))
     assert remote["episodes"]["error"] == 0
     assert _readings(str(tmp_path / "run-tos")) == _readings(str(tmp_path / "run-local"))
-    whole = sorted(c[2] for c in tos.calls if c[0] == "get" and c[3] is None and c[2].startswith("ds/mcap/"))
-    assert whole == [f"ds/mcap/episode_{i}.mcap" for i in range(4)]        # each episode's file, once
+    gets = [c for c in tos.calls if c[0] == "get" and c[2].startswith("ds/mcap/")]
+    assert {f"ds/mcap/episode_{i}.mcap" for i in range(4)} <= {c[2] for c in gets}   # (and the summaries of all)
+    assert all(c[3] is not None for c in gets)                      # ranged reads: no file downloaded whole
+    assert not (cache.exists() and any(cache.iterdir()))            # and no source cache
     assert not [c for c in tos.calls if c[0] in ("put", "delete") and c[1] == "src"]

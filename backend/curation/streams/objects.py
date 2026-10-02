@@ -152,3 +152,31 @@ def resolve(dataset_dir: str, objects: McapObjects | None = None) -> McapObjects
     if objects is not None:
         return objects
     return bound(dataset_dir) or LocalDirObjects(dataset_dir)
+
+
+# ---------------------------------------------------------------- one episode file by its path
+
+def join(dataset: str, name: str) -> str:
+    """The path of one of a dataset's objects: ``<uri>/<name>`` for a ``tos://`` dataset (a
+    ``pathlib`` or ``os.path`` join would fold the scheme's ``//``), an OS path for a local one."""
+    s = str(dataset)
+    return f"{s.rstrip('/')}/{name}" if "://" in s else os.path.join(s, name)
+
+
+def locate(path: str) -> tuple[McapObjects, str]:
+    """The objects holding the episode file ``path`` and its name among them.
+
+    For code that is handed a file path rather than the dataset (the EEF module's views name
+    the episode file). An mcap episode is a top-level object of its dataset (``mcap_keys``),
+    so ``path`` is ``<dataset>/<name>``: the dataset bound under that URI, else a local
+    directory. A ``tos://`` path whose dataset nobody bound raises ``FileNotFoundError``.
+    """
+    s = str(path)
+    if "://" in s:
+        dataset, _, name = s.rpartition("/")
+        objs = bound(dataset)
+        if objs is None:
+            raise FileNotFoundError(f"{s}: its dataset is not open for reading (streams.objects.bind)")
+        return objs, name
+    dataset, name = os.path.split(os.path.abspath(s))
+    return bound(dataset) or LocalDirObjects(dataset), name

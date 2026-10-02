@@ -8,6 +8,9 @@ v1's ``ingest/mcap_reader`` helpers, the same as the funnel's modules read) on a
 ``RATE`` frames per second, so decoding numbers them by position; the message times are not needed
 here - the trajectory's own timeline and ``video_frame_index`` carry the timing.
 
+The episode file is read through ``streams.objects``: a local path, or the object's ``tos://`` URI when
+the command streams a TOS dataset (ranged reads, nothing downloaded whole).
+
 The videos of a call live in one temporary directory; :func:`drop` removes those of a file once its
 episode is judged, :func:`close` everything.
 """
@@ -40,9 +43,32 @@ def _root() -> str:
     return _dir
 
 
+def _where(path: str) -> str:
+    s = str(path)
+    return s if "://" in s else os.path.abspath(s)
+
+
 def _identity(path: str) -> tuple:
-    st = os.stat(path)
-    return os.path.abspath(path), int(st.st_size), int(st.st_mtime_ns)
+    from ...streams import objects as SO
+
+    objs, name = SO.locate(path)
+    try:
+        size, version = objs.identity(name)
+    except KeyError:                                   # not in the streamed dataset's listing
+        raise FileNotFoundError(f"{path}: no such object") from None
+    return _where(path), int(size), str(version)
+
+
+def open_episode(path: str):
+    """A seekable, read-only stream over the episode file ``path``: the local file, or ranged reads
+    of a streamed TOS dataset (``streams.objects``)."""
+    from ...streams import objects as SO
+
+    objs, name = SO.locate(path)
+    try:
+        return objs.open(name)
+    except KeyError:
+        raise FileNotFoundError(f"{path}: no such object") from None
 
 
 def read_topic(path: str, topic: str) -> list[tuple[str, bytes]]:
@@ -54,7 +80,7 @@ def read_topic(path: str, topic: str) -> list[tuple[str, bytes]]:
     decoders: dict = {}
     out: list[tuple[str, bytes]] = []
     seen = False
-    with open(path, "rb") as fh:
+    with open_episode(path) as fh:
         reader = make_reader(fh)
         for schema, channel, message in reader.iter_messages(topics=[topic], log_time_order=True):
             seen = True
@@ -111,7 +137,7 @@ def video(path: str, topic: str) -> str:
 
 def drop(path: str) -> None:
     """Forget and delete the videos made from the mcap file ``path`` (its episode is done)."""
-    where = os.path.abspath(path)
+    where = _where(path)
     with _lock:
         gone = [k for k in _videos if k[0] == where]
         files = [_videos.pop(k) for k in gone]

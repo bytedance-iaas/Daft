@@ -116,8 +116,8 @@ class EefJudge:
 
     def __init__(self, ctx, args, run_dir: str, source, vcfg: dict, gates: dict):
         """``source``: the command's input (``runctx.Source``; a bare ``Storage`` reads LeRobot). An
-        mcap dataset (F5.13) is read from the directory the funnel's readers get - on TOS the source
-        cache, where the judge fetches an episode's file before reading it."""
+        mcap dataset (F5.13) is read where the funnel's readers read it: a local directory, or on TOS
+        the dataset the source streams (``streams.objects``, ranged reads - nothing to fetch first)."""
         from ..contracts import modules as registry
         from ..extensions.eef_consistency import load, profile, runner
         from ..extensions.eef_consistency import template as TP
@@ -285,7 +285,7 @@ class EefJudge:
                     MM.drop(O.media_path(sample, cid, self.media_root))
 
     def _fetch(self, sample) -> None:
-        if self.mcap and self.src.cache is not None:
+        if self.mcap and self.src.cache is not None:   # a streamed TOS dataset has no cache: read in place
             with self._fetch_lock:                     # the episode's .mcap into the source cache
                 keys = {c.media["uri"] for c in sample.cameras.values()}
                 if self.record_mapping is not None:    # the record's topics live in the episode's file

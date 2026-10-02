@@ -212,7 +212,14 @@ class ObservationProvider(Protocol):
 
 
 def media_path(sample: EefSample, camera_id: str, media_root: str | os.PathLike) -> str:
-    return str(pathlib.Path(media_root) / sample.cameras[camera_id].media["uri"])
+    """The file a view reads: under a local root a path; under the ``tos://`` URI of a streamed mcap
+    dataset the object's URI (``mcap_media`` reads it through ``streams.objects``)."""
+    uri = sample.cameras[camera_id].media["uri"]
+    if "://" in str(media_root):
+        from ...streams import objects as SO
+
+        return SO.join(str(media_root), uri)
+    return str(pathlib.Path(media_root) / uri)
 
 
 def media_frames(path: str, media: dict) -> Iterator[DecodedFrame]:
