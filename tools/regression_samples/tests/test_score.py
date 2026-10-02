@@ -431,6 +431,15 @@ def test_not_assessed_comes_from_the_records_and_errors_from_their_status(tmp_pa
     assert row["recall"] == 1.0 and row["recall_end_to_end"] == round(1 / 3, 4)
 
 
+def test_an_item_no_module_covers_is_a_gap_in_a_run_of_findings(tmp_path):
+    exp = expectation(episode(0, problems=["MV-2", "FILE-4"]), episode(1, clean=["MV-2"]))
+    recs = [record2(0, "data_integrity", [finding("decode_failed", "FILE-4")]), record2(1, "data_integrity")]
+    items = score2(tmp_path, exp, recs)["items"]
+    assert "MV-2" not in COVERS
+    assert items["MV-2"]["mapped"] is False and (items["MV-2"]["present"], items["MV-2"]["absent"]) == (1, 1)
+    assert items["MV-2"]["recall"] is None and items["FILE-4"]["tp"] == 1
+
+
 def test_a_finding_on_one_camera_matches_that_camera(tmp_path):
     exp = expectation(episode(0, problems=[("IMG-2", {"stream": "observation.images.wrist"})], clean=[("IMG-2", {"stream": "front"})]),
                       episode(1, problems=[("IMG-2", {"stream": "front"})]))
@@ -458,6 +467,17 @@ def test_a_dataset_level_finding_of_the_report_counts_once_per_subset(tmp_path):
     row = score2(tmp_path, exp, recs, dataset_findings={"timestamp_check": [
         {"code": "duration_outlier", "item": "SET-3", "severity": "low", "message_zh": "时长离群", "unit": "dataset"}]})["items"]["SET-3"]
     assert (row["present"], row["tp"], row["fn"]) == (1, 1, 0) and row["unit"] == "subset"
+
+
+def test_a_dataset_level_finding_on_an_episode_level_item_is_not_spread_over_the_subset(tmp_path):
+    """data_integrity's table check also sums its findings up for the set; the episodes' own records say which ones."""
+    exp = expectation(episode(0, problems=["FILE-10"]), episode(1, clean=["FILE-10"]), episode(2, clean=["FILE-10"]))
+    recs = [record2(0, "data_integrity", [finding("table_inconsistent", "FILE-10")]), record2(1, "data_integrity"),
+            record2(2, "data_integrity")]
+    row = score2(tmp_path, exp, recs, dataset_findings={"data_integrity": [
+        {"code": "table_overlap", "item": "FILE-10", "severity": "medium", "message_zh": "帧区间有重叠", "unit": "dataset",
+         "readings": {"episodes": [0]}}]})["items"]["FILE-10"]
+    assert (row["tp"], row["fp"], row["tn"]) == (1, 0, 2) and row["unit"] == "episode"
 
 
 def test_the_episode_level_reads_the_final_lists(tmp_path):

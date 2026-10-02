@@ -9,7 +9,8 @@ Two record formats, told apart per run directory (a record 2.0 has ``status``):
   module ``assessed`` and the ones it found ``unassessable``, ``status: error`` when it could not judge the episode. Which
   modules cover an item is the registry's (``docs/contracts/modules.json``, ``covers``). Several modules on one item: the
   union counts in the item's metrics, and every module also gets its own (``by_module``). Dataset-level findings come
-  from the revision's report (``dataset_findings``) and count once per subset. The episode level reads the final lists.
+  from the revision's report (``dataset_findings``) and count once per subset, for the items scored per subset only: an
+  episode-level item is read from the episodes' own records. The episode level reads the final lists.
 * **1.0** (tasks made before, D59): ``finding_map.json`` turns each module's record into check items, as score 1.1 did.
 
 The map's ``controls`` and ``ingestion`` apply to both formats. Per item:
@@ -447,9 +448,6 @@ def _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals):
             intervals[item]["findings"] += 1
             if f.get("frames") or f.get("time_s"):
                 intervals[item]["with_interval"] += 1
-    for m, item, cams in dataset_hits:                     # once per subset: every episode carries the subset's finding
-        hits[item].extend(cams)
-        per_module[item][m].extend(cams)
 
     def states(mods, item):
         # judged by any module that assessed it (the union); else an error of a covering module; else not assessed
@@ -462,7 +460,7 @@ def _v2_episode(ep, recs, lists, availability, covers, dataset_hits, intervals):
     name, entry = lists.get(ep, (None, {}))
     verdict = {"reject": "drop", "held": "held", "passed": "keep"}.get(name)
     by = {r.get("module") for r in entry.get("reasons") or [] if isinstance(r, dict) and r.get("kind") != "execution_error"}
-    return {"hits": hits, "states": states, "verdict": verdict, "by": by,
+    return {"hits": hits, "dataset_hits": dataset_hits, "states": states, "verdict": verdict, "by": by,
             "per_module": {"items": per_module, "assessed": assessed, "errored": errored}}
 
 
@@ -532,7 +530,12 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
                 raise InputError(f"{run_dir} holds findings (C2 2.0): the registry (modules.json) is needed to score it")
             recs = {m: module_records(run_dir, m) for m in run_modules(run_dir)}
             lists = final_lists(run_dir)
-            dataset_hits = [(m, f["item"], finding_cameras(f)) for m, f in dataset_findings(run_dir) if f.get("item")]
+            # the subset's own findings: they count for the items scored per subset (every episode carries them, one
+            # cell per subset), never as a finding on each episode of an episode-level item
+            dataset_hits = defaultdict(list)
+            for m, f in dataset_findings(run_dir):
+                if f.get("item"):
+                    dataset_hits[f["item"]].extend(finding_cameras(f))
             mods_of = covers
         else:
             recs = {m: module_records(run_dir, m) for m in modules}
@@ -550,6 +553,7 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
             else:
                 ev = _v1_episode(ep, rules, modules, recs, verdicts, availability, mapped_codes, rule_hits, unmapped_codes)
             hits = ev["hits"]
+            subset_hits = ev.get("dataset_hits") or {}
             dropped = ev["verdict"] == "drop"
             flagged_any = dropped or any(hits.values())
             # episode level: a drop of an episode clean on its checked items is a false alarm only when a module that
@@ -598,17 +602,20 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
                         cell, unsupported = "not_assessed", all(x == "unsupported" for x in st)
                     elif all(x in (None, "unsupported", "error") for x in st):
                         cell = "error"
+                    elif sides["unit"] == "subset":
+                        cell = _cell(side, hits.get(item, []) + subset_hits.get(item, []), sides)
                     else:
                         cell = _cell(side, hits.get(item, []), sides)
                     units[item].add(sides["unit"])
                     if sides["unit"] == "subset":
-                        subset_cells[(item, side)].append((cell, unsupported, flagged_any, meta[key]["episode_id"]))
+                        subset_cells[(item, side)].append((cell, unsupported, flagged_any or any(subset_hits.values()),
+                                                           meta[key]["episode_id"]))
                         continue
                     _count(stats[item], side, cell, weight(key, item, side), unsupported, flagged_any)
                     sample(item, cell, meta[key]["episode_id"])
                     # each module on its own (runs of findings): the episodes it assessed the item on
                     pm = ev["per_module"]
-                    if pm is not None:
+                    if pm is not None and mods:
                         for m in sorted(mods):
                             if m in pm["errored"] or m not in pm["assessed"].get(item, set()):
                                 continue
