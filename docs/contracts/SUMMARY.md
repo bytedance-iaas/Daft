@@ -305,3 +305,6 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
   出错、有发现的条数；episode 状态库加 `findings` 列，打开旧库时补齐）。控制台：报告的覆盖矩阵、按检测项的判废原因、每个小节先放通用的发现统计；
   任务详情的模块统计卡与两块进度卡；Episode 明细的全部发现与两个筛选；裁决卡写明细码；新建任务表单的判决策略与「判定线（高级）」；
   `funnelGate` / `isAdvisory` 删除。
+- **F12.6（2026-10-02）**：契约不动。回归样本集的打分（`tools/regression_samples/score.py` 2.0）成了 C2 2.0 的又一个读者：记录的
+  `status`、`findings[].item` / `scope` / `frames` / `time_s`、`assessed`、`unassessable`，最终清单（`passed` / `reject` / `held` 与拒绝理由的
+  `module`），报告小节的 `dataset_findings`，以及 C1 导出（`modules.json`）的 `covers`——改这些字段要同时改打分，回归样本工具的测试会失败。

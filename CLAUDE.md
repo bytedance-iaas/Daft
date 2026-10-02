@@ -26,7 +26,7 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 | 内核 | `backend/curation/` 下的 `core/`、`registry/`、`ingest/`、`dataset_level/`、`export/`、`pipeline/`、`adapters/` | 算法（`core/` 是纯函数：不碰 I/O、不 import daft）、读取器、导出器、编排壳、VLM 客户端与视频输入 |
 | 扩展模块 | `backend/curation/extensions/` | `eef_consistency`（EEF–视频一致性，设计 12）、`integrity`（数据完整性，设计 14）、`camera_defects`（镜头画面缺陷，随 task_success 的复核请求顺带作答，设计 13） |
 | 对账工具 | `tools/parity/` | 黄金基线的录制、回放、比对，假模型，A 类守卫 |
-| 回归样本工具 | `tools/regression_samples/` | 回归样本集（设计 16）的合成注入、平台结果打分（平台发现 → 检测项的对照表、precision / recall、与基线比较） |
+| 回归样本工具 | `tools/regression_samples/` | 回归样本集（设计 16）的合成注入、平台结果打分（按检测项的 precision / recall、与基线比较） |
 | 部署 | `deploy/` | 一个镜像（Daemon + CLI + 前端产物，缺省起 Daemon）；Helm Chart 在 rerun 仓库 `deploy/helm/dataverse`（StatefulSet 单副本 + 数据盘，D53） |
 
 Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走子进程；暂停、停止就是给进程组发信号；CLI 也因此一直是活的一等入口
@@ -56,7 +56,7 @@ keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）：有 bloc
 | `frontend/` | 网页控制台（React + Arco），接口类型由 `docs/contracts/openapi.yaml` 生成（改了 C4 要跑 `npm run gen:api`） |
 | `frontend/mockups/` | 静态 HTML 预览稿（只读参考） |
 | `tools/parity/` | 对账工具与黄金基线流程 |
-| `tools/regression_samples/` | 回归样本集的工具：`inject.py`、`inject_mcap.py`、`inject_v3.py` 合成注入，`score.py` + `finding_map.json` 给平台结果打分，`taxonomy.json` 是检测项分类（平台注记由 `coverage_from_registry.py` 从注册表生成；样本集在 TOS，不在仓库） |
+| `tools/regression_samples/` | 回归样本集的工具：`inject.py`、`inject_mcap.py`、`inject_v3.py` 合成注入，`score.py` 给平台结果打分（2.0 直接读发现，`finding_map.json` 只用于旧格式的运行目录），`taxonomy.json` 是检测项分类（平台注记由 `coverage_from_registry.py` 从注册表生成；样本集在 TOS，不在仓库） |
 | `tools/eef_eval/`、`tools/eef_convert.py` | EEF 离线评估（唯一读真值的代码）；`trajectory.json` 在 LeRobot 与 mcap 孪生数据集之间互转 |
 | `deploy/` | 镜像（`deploy/Dockerfile`，构建上下文是仓库根）与集群上的运维步骤（`deploy/README.md`）；Chart 本身在 rerun 仓库的 dataverse 里 |
 | `docs/design/`、`docs/contracts/`、`docs/v1/` | 设计、契约、v1 的使用文档与发布说明 |
