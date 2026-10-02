@@ -347,3 +347,167 @@ def test_map_uses_codes_the_platform_writes():
 @pytest.mark.parametrize("item", ["FILE-4", "STRM-1", "IMG-4", "ACT-2", "AV-1", "TASK-5", "SET-1"])
 def test_core_items_are_mapped(item):
     assert any(item in r["items"] for r in FMAP["rules"])
+
+
+# ---------------------------------------------------------------- runs of findings (C2 2.0, design doc 17 §6.1)
+
+REGISTRY = json.load(open(os.path.join(REPO, "docs", "contracts", "modules.json"), encoding="utf-8"))
+COVERS = S.registry_covers(REGISTRY)
+
+
+def finding(code, item, camera=None, **extra):
+    f = {"code": code, "item": item, "severity": "high", "message_zh": code, **extra}
+    if camera:
+        f["scope"] = {"camera": camera}
+    return f
+
+
+def record2(ep, module, findings=(), unassessable=(), status="ok"):
+    """A record 2.0: it assessed every item the registry says it covers, except the unassessable ones."""
+    covers = sorted(i for i, mods in COVERS.items() if module in mods)
+    if status == "error":
+        return {"episode_index": ep, "module": module, "status": "error", "findings": [], "assessed": [], "unassessable": [],
+                "readings": {}, "details": {}, "evidence": [], "elapsed_s": 0.1, "error": {"kind": "execution", "incidents": []}}
+    un = [{"item": i, "reason": "model_no_answer", "message_zh": "没有回答"} for i in unassessable]
+    return {"episode_index": ep, "module": module, "status": "ok", "findings": list(findings),
+            "assessed": [i for i in covers if i not in unassessable], "unassessable": un, "readings": {}, "details": {},
+            "evidence": [], "elapsed_s": 0.1, "error": None}
+
+
+def write_run2(root, records, lists=None, dataset_findings=None, availability=None):
+    """A run directory of findings: parts, the final lists and a report 2.0 of revision 1."""
+    os.makedirs(root, exist_ok=True)
+    by_module = {}
+    for r in records:
+        by_module.setdefault(r["module"], []).append(r)
+    for module, recs in by_module.items():
+        d = os.path.join(root, "checks", module, "parts")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "0001.jsonl"), "w", encoding="utf-8") as fh:
+            fh.writelines(json.dumps(r) + "\n" for r in recs)
+    rev = os.path.join(root, "revisions", "r0001")
+    os.makedirs(rev, exist_ok=True)
+    for name in ("passed", "reject", "held"):
+        eps = [e for e in (lists or {}).get(name, [])]
+        with open(os.path.join(rev, f"{name}.json"), "w", encoding="utf-8") as fh:
+            json.dump({"schema_version": "2.0", "list": name, "revision": 1, "count": len(eps), "episodes": eps}, fh)
+    report = {"schema_version": "2.0", "revision": 1, "modules": [
+        {"id": m, "summary": {"dataset_findings": fs}} for m, fs in (dataset_findings or {}).items()]}
+    with open(os.path.join(rev, "report.json"), "w", encoding="utf-8") as fh:
+        json.dump(report, fh)
+    pre = {"format": {"supported": True}, "modules": [{"id": m, "availability": a} for m, a in (availability or {}).items()]}
+    with open(os.path.join(root, "preflight.json"), "w", encoding="utf-8") as fh:
+        json.dump(pre, fh)
+    return root
+
+
+def score2(tmp_path, exp, records, **kw):
+    run = write_run2(str(tmp_path / "run2"), records, **kw)
+    return S.score(exp, TAXONOMY, FMAP, {SUBSET: run}, registry=REGISTRY)
+
+
+def test_a_run_of_findings_is_scored_from_the_findings_themselves(tmp_path):
+    exp = expectation(episode(0, problems=["FILE-4"]), episode(1, problems=["FILE-4"]),
+                      episode(2, clean=["FILE-4"]), episode(3, clean=["FILE-4"]))
+    recs = [record2(0, "data_integrity", [finding("decode_failed", "FILE-4")]), record2(1, "data_integrity"),
+            record2(2, "data_integrity", [finding("decode_failed", "FILE-4")]), record2(3, "data_integrity")]
+    doc = score2(tmp_path, exp, recs)
+    row = doc["items"]["FILE-4"]
+    assert (row["tp"], row["fn"], row["fp"], row["tn"]) == (1, 1, 1, 1)
+    assert row["modules"] == ["data_integrity"] and row["mapped"] is True
+    assert doc["formats"] == {SUBSET: "2.0"} and doc["schema_version"] == "2.0"
+    assert row["by_module"]["data_integrity"]["precision"] == 0.5
+
+
+def test_not_assessed_comes_from_the_records_and_errors_from_their_status(tmp_path):
+    """An item a module could not assess is not assessed; a module that failed on the episode is an error."""
+    exp = expectation(episode(0, problems=["TASK-5"]), episode(1, problems=["TASK-5"]), episode(2, problems=["TASK-5"]))
+    recs = [record2(0, "task_success", [finding("failure", "TASK-5")]),
+            record2(1, "task_success", unassessable=["TASK-5"]),
+            record2(2, "task_success", status="error")]
+    row = score2(tmp_path, exp, recs)["items"]["TASK-5"]
+    assert (row["tp"], row["fn"]) == (1, 0)
+    assert row["not_assessed"]["present"] == 1 and row["error"]["present"] == 1
+    assert row["recall"] == 1.0 and row["recall_end_to_end"] == round(1 / 3, 4)
+
+
+def test_a_finding_on_one_camera_matches_that_camera(tmp_path):
+    exp = expectation(episode(0, problems=[("IMG-2", {"stream": "observation.images.wrist"})], clean=[("IMG-2", {"stream": "front"})]),
+                      episode(1, problems=[("IMG-2", {"stream": "front"})]))
+    recs = [record2(0, "visual_quality", [finding("exposure_low", "IMG-2", camera="wrist")]),
+            record2(1, "visual_quality", [finding("exposure_low", "IMG-2", camera="wrist")])]
+    row = score2(tmp_path, exp, recs)["items"]["IMG-2"]
+    assert (row["tp"], row["tn"], row["fn"]) == (1, 1, 1)
+
+
+def test_several_modules_on_one_item_count_as_their_union_and_each_on_its_own(tmp_path):
+    """STRM-1 is covered by data_integrity and visual_quality: either one finding it is a TP of the item."""
+    exp = expectation(episode(0, problems=["STRM-1"]), episode(1, problems=["STRM-1"]), episode(2, clean=["STRM-1"]))
+    recs = [record2(0, "data_integrity", [finding("stream_missing", "STRM-1")]), record2(0, "visual_quality"),
+            record2(1, "data_integrity"), record2(1, "visual_quality", [finding("dead_or_padded", "STRM-1", camera="front")]),
+            record2(2, "data_integrity"), record2(2, "visual_quality")]
+    row = score2(tmp_path, exp, recs)["items"]["STRM-1"]
+    assert (row["tp"], row["fn"], row["tn"]) == (2, 0, 1)
+    assert row["by_module"]["data_integrity"] == {"tp": 1, "fp": 0, "fn": 1, "tn": 1, "precision": 1.0, "recall": 0.5}
+    assert row["by_module"]["visual_quality"]["recall"] == 0.5
+
+
+def test_a_dataset_level_finding_of_the_report_counts_once_per_subset(tmp_path):
+    exp = expectation(*[episode(i, problems=["SET-3"]) for i in range(3)])
+    recs = [record2(i, "timestamp_check") for i in range(3)]
+    row = score2(tmp_path, exp, recs, dataset_findings={"timestamp_check": [
+        {"code": "duration_outlier", "item": "SET-3", "severity": "low", "message_zh": "时长离群", "unit": "dataset"}]})["items"]["SET-3"]
+    assert (row["present"], row["tp"], row["fn"]) == (1, 1, 0) and row["unit"] == "subset"
+
+
+def test_the_episode_level_reads_the_final_lists(tmp_path):
+    exp = expectation(episode(0, problems=["FILE-4"]), episode(1, clean=["FILE-4"]), episode(2, clean=["FILE-4"]),
+                      episode(3, clean=["FILE-4"]))
+    recs = [record2(e, "data_integrity", [finding("decode_failed", "FILE-4")] if e == 0 else []) for e in range(4)]
+    reason = lambda m: {"module": m, "kind": "finding", "code": "x", "item": "FILE-4", "text": "x"}  # noqa: E731
+    lists = {"reject": [{"episode_index": 0, "reasons": [reason("data_integrity")]},
+                        {"episode_index": 1, "reasons": [reason("data_integrity")]},
+                        {"episode_index": 2, "reasons": [reason("task_success")]}],
+             "held": [{"episode_index": 3, "reasons": [{"module": "dedup", "kind": "execution_error", "text": "x"}]}]}
+    el = score2(tmp_path, exp, recs, lists=lists)["episode_level"]
+    assert (el["tp"], el["fp"], el["dropped_outside_checked"], el["held_clean"]) == (1, 1, 1, 1)
+
+
+def test_intervals_are_counted_per_item(tmp_path):
+    exp = expectation(episode(0, problems=["STRM-3"]), episode(1, problems=["STRM-3"]))
+    recs = [record2(0, "timestamp_check", [finding("gap", "STRM-3", frames=[37, 38])]),
+            record2(1, "timestamp_check", [finding("gap", "STRM-3")])]
+    row = score2(tmp_path, exp, recs)["items"]["STRM-3"]
+    assert row["intervals"] == {"findings": 2, "with_interval": 1, "share": 0.5}
+
+
+def test_a_control_fails_when_a_finding_reports_its_guarded_item(tmp_path):
+    exp = expectation(episode(0, phenomena=["IMG-10"]), episode(1, phenomena=["IMG-10"]))
+    recs = [record2(0, "visual_quality", [finding("exposure_low", "IMG-2", camera="left")]), record2(1, "visual_quality")]
+    row = score2(tmp_path, exp, recs)["items"]["IMG-10"]
+    assert (row["control"]["pass"], row["control"]["fail"], row["control"]["failed"]) == (1, 1, ["demo:0"])
+
+
+def test_runs_of_both_formats_are_scored_together(tmp_path):
+    """The baseline of 1b30fb224 is 1.0, the runs after it 2.0: one score reads both, each its own way."""
+    exp = {"set": "anchor", "set_version": "v1", "episodes": [
+        {**episode(0, problems=["FILE-4"]), "dataset": "lerobot_v21/old", "episode_id": "old:0"},
+        {**episode(0, problems=["FILE-4"]), "dataset": "lerobot_v21/new", "episode_id": "new:0"}]}
+    old = write_run(str(tmp_path / "old"), [decode_failed(0)])
+    new = write_run2(str(tmp_path / "new"), [record2(0, "data_integrity", [finding("decode_failed", "FILE-4")])])
+    doc = S.score(exp, TAXONOMY, FMAP, {"lerobot_v21/old": old, "lerobot_v21/new": new}, registry=REGISTRY)
+    assert doc["formats"] == {"lerobot_v21/new": "2.0", "lerobot_v21/old": "1.0"}
+    assert doc["items"]["FILE-4"]["tp"] == 2
+
+
+def test_a_run_of_findings_needs_the_registry(tmp_path):
+    exp = expectation(episode(0, problems=["FILE-4"]))
+    run = write_run2(str(tmp_path / "run2"), [record2(0, "data_integrity")])
+    with pytest.raises(S.InputError, match="registry"):
+        S.score(exp, TAXONOMY, FMAP, {SUBSET: run})
+
+
+def test_the_registry_covers_every_taxonomy_item_it_names():
+    items = {i["id"] for i in TAXONOMY["items"]}
+    assert set(COVERS) <= items
+    assert COVERS["TASK-5"] == {"task_success"} and COVERS["STRM-1"] >= {"data_integrity", "visual_quality"}

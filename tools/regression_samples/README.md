@@ -8,8 +8,8 @@
 | `inject.py` | 在干净条目上注入故障，生成新的 LeRobot v2.x 数据集和 `injection.json` |
 | `inject_mcap.py` | mcap 的结构故障（FILE-3）与合法写法：截断、数据块 CRC、摘要区 CRC；无摘要区、CRC 全 0 |
 | `inject_v3.py` | LeRobot v3 的索引与引用故障（FILE-10）：行区间、视频时间段、任务编号、帧号 |
-| `score.py` | 拿平台的运行目录对样本集的 `expectation.json` 打分：每个检测项的 TP / FP / FN / TN、precision、recall，可与基线比较 |
-| `finding_map.json` | 对照表：平台每个模块的哪种结果算报出了哪个检测项 |
+| `score.py` | 拿平台的运行目录对样本集的 `expectation.json` 打分：每个检测项的 TP / FP / FN / TN、precision、recall，可与基线比较；2.0 直接读发现，旧运行目录照旧用对照表，自动识别 |
+| `finding_map.json` | 对照表：旧格式（C2 1.0）的运行目录里平台每个模块的哪种结果算报出了哪个检测项；对照项（controls）与预检项（ingestion）两种格式都用 |
 | `taxonomy.json` | 检测项分类 1.1（71 项），与样本集里的同名文件一致；条目同平台契约 C6（`docs/contracts/taxonomy.json`），平台侧的注记由下一行生成 |
 | `coverage_from_registry.py` | 由模块注册表（`docs/contracts/modules.json`）生成 `taxonomy.json` 的 `platform_status`、`platform_codes`、`platform_conditions`（设计 17 §6.2） |
 
@@ -26,13 +26,22 @@ PYTHONPATH=tools .venv/bin/python -m regression_samples.coverage_from_registry -
 
 ## `score.py`
 
-平台是按「模块 + 原因码」出结果的（`checks/<模块>/results.jsonl`），样本集的期望是按检测项写的。`finding_map.json` 把前者换成后者，
-`score.py` 再逐条逐项比：
+score 2.0（设计 17 §6.1）按运行目录自动识别两种格式（结果版本的 `report.json` 是 2.0、或记录带 `status` 的是新格式）：
+
+- **新格式（C2 2.0，F12.2 起的平台）**：记录自己写着检测项——`findings[].item` 与 `scope`（相机）、模块评估过的 `assessed`、评估不了的
+  `unassessable`、执行出错的 `status: error`。一项由哪些模块评估取注册表（`docs/contracts/modules.json` 的 `covers`，`--registry` 可换）。
+  这条 episode 上没有模块评估过这一项（没跑、或写明评估不了）记 `not_assessed`，评估它的模块都出错记 `error`，不再靠「模块有没有记录」推断。
+  几个模块报同一项：总指标取并集，另给每个模块自己的 precision / recall（`by_module`，看该调谁）。数据集级发现取结果版本 `report.json`
+  各小节的 `dataset_findings`，按子集只计一次；episode 级取最终清单（拒绝 / 待补跑与拒绝理由的模块）。每项还数有区间（`frames` / `time_s`）
+  的发现占比（`intervals`，P19）。
+- **旧格式（C2 1.0，基线 `1b30fb224`）**：平台按「模块 + 原因码」出结果，`finding_map.json` 把它换成检测项，与 score 1.1 完全相同。
+
+两种格式的运行目录可以一起打分（输出的 `formats` 写明每个子集是哪种）。共同的规则：
 
 - 期望 present 且平台报了 = TP，没报 = FN；期望 absent（在 `clean` 里）而平台报了 = FP，没报 = TN；没有期望的项不算。
 - 相机限定的期望只和同一路相机的结果比（`wrist` 与 `observation.images.wrist`、`robot0` 与 `robot0_sensor_camera0_compressed` 算同一路）。
 - 这条 episode 上能报这一项的模块都没跑（漏斗短路、没选、预检不支持）记 `not_assessed`，都执行出错记 `error`，两者都不进 precision / recall。
-- 对照表里没有任何规则能报的项是平台的 gap，单列。control 类检测项看平台有没有误报；SET-4 看预检能不能读进来。
+- 对照表里没有任何规则能报（新格式：注册表里没有模块覆盖）的项是平台的 gap，单列。control 类检测项看平台有没有误报；SET-4 看预检能不能读进来。
 - `recall` 只算评估到的；`recall_end_to_end` 把没评估、执行出错、没有规则的都留在分母里。
 - 数据集级的项（分类表 level 为 dataset，或条目标了 `unit: subset`）按子集只计一次。
 - episode 级：一条只在已检查项上干净的 episode 被拒，拒它的模块能报其中一项才算误报，否则记 `dropped_outside_checked`。
