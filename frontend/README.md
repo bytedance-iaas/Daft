@@ -3,10 +3,11 @@
 数据质检平台的网页控制台：React 18 + TypeScript（strict）+ Arco Design + React Router 6 + TanStack Query + Vite + ECharts。
 构建产物是一堆静态文件，由 Daemon 托管；页面上的所有数据都向 Daemon 要（D17），浏览器只在 `localStorage` 里记几项界面偏好（每页条数、上次用的访问密钥之类）。
 
-设计依据：`docs/design/07-frontend.md`（主规格）、`03-rest-api.md`，契约 `docs/contracts/openapi.yaml`（C4 2.0.0，请求和响应的形状只认它）与 `modules.json`（C1 2.0），静态稿在 `mockups/`（只读参考）。
-C2 2.0（设计 17）改了结果记录、报告和计划，契约里两种写法都有；控制台在 F12.5 之前按 1.0 读它们（`src/api/types.ts` 的 `Report`、
-`ResultRecord`、`EpisodeView`），注册表 2.0 去掉的可复议、产生裁决、复核线由 `src/lib/registry.ts` 从细码推出，新建任务页的门标签照过渡期的
-`funnelGate` 显示。
+设计依据：`docs/design/07-frontend.md`（主规格）、`03-rest-api.md`，契约 `docs/contracts/openapi.yaml`（C4 2.1.0，请求和响应的形状只认它）与 `modules.json`（C1 2.1），静态稿在 `mockups/`（只读参考）。
+C2 2.0（设计 17）改了结果记录、报告和计划，契约里两种写法都有；控制台在 F12.5 之前按 1.0 的视图显示它们（`src/api/types.ts` 的 `Report`、
+`ResultRecord`、`EpisodeView`）。F12.3 起新任务的记录与报告是 2.0，由 `src/lib/records.ts` 换成 1.0 的样子（`asLegacyRecord`、`asLegacyReport`：
+判过 / 判废 / 弃权 / 打分的推法与后端 `records.legacy_verdict` 一致，改一处要改两处）；旧任务的 1.0 原样显示。注册表 2.0 去掉的可复议、产生裁决、
+复核线由 `src/lib/registry.ts` 从细码推出，新建任务页的门标签照过渡期的 `funnelGate` 显示。
 
 ## 目录
 
