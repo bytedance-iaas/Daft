@@ -360,6 +360,9 @@
     "pantheon": [
      "camera_fault",
      "video_extended_dropout"
+    ],
+    "argus": [
+     "Camera image frozen or lost（丢失的部分）"
     ]
    },
    "explain_zh": "一开始有、中途断了：相机录到一半变成 No Signal 或停住，或者动作数据录到一半不再更新。例：G01 右腕相机第 217 帧起变成 No Signal。从第一帧起就没有的算 STRM-1。",
@@ -448,6 +451,9 @@
     "pantheon": [
      "episode_too_short",
      "truncated_episode"
+    ],
+    "argus": [
+     "Video starts or ends mid-task（只看长度的部分）"
     ]
    },
    "explain_zh": "条目短得不像一次完整操作，比如只有 1 帧或不到 1 秒，多半是误触录制或切分出错。",
@@ -554,6 +560,11 @@
     "pantheon": [
      "video_frozen_run",
      "video_duplicate_frames"
+    ],
+    "argus": [
+     "Camera image frozen or lost（冻结的部分）",
+     "Frozen camera",
+     "Duplicate adjacent frames"
     ]
    },
    "explain_zh": "相机画面卡住不动，但机器人其实在动。要和真正静止的画面区分开：冻结时别的相机或动作数据还在变。整条都是 No Signal 之类占位画面的，主记 STRM-1，冻结只是它的表现。",
@@ -582,6 +593,9 @@
     ],
     "pantheon": [
      "low-light"
+    ],
+    "argus": [
+     "Too dark or too bright to see"
     ]
    },
    "explain_zh": "画面太黑或太亮，看不清内容。例：G07 两路腕部相机整条都很暗。",
@@ -636,6 +650,10 @@
     ],
     "pantheon": [
      "localized_image_blur"
+    ],
+    "argus": [
+     "Scale or display unreadable",
+     "Limited visual detail"
     ]
    },
    "explain_zh": "画面糊：对焦不准或运动太快拖影，看不清物体和夹爪。",
@@ -734,17 +752,17 @@
    "platform_codes": [],
    "kind": "defect",
    "level": "episode",
-   "description": "视觉遮挡",
+   "description": "视觉遮挡：该看见的操作区域被物体、衣物、手挡住；没拍到是 IMG-13，脱敏模糊是 IMG-14",
    "aliases": {
     "astra6_v1": [
      "V06"
     ],
     "pantheon": [
-     "out_of_view",
-     "unintended_out_of_view",
      "camera_obstruction",
-     "privacy_mask",
-     "image_masking"
+     "view_obstruction"
+    ],
+    "argus": [
+     "Camera turned away or covered（遮住的部分）"
     ]
    },
    "explain_zh": "关键区域被东西挡住，看不到操作。例：G11 右腕相机被衣物盖住一段。",
@@ -879,6 +897,10 @@
      "camera_identity_mismatch",
      "camera_stream_swap",
      "streams-crossed"
+    ],
+    "argus": [
+     "Camera files swapped",
+     "Camera not where described"
     ]
    },
    "explain_zh": "标签写的「左腕相机」实际拍的是右手，或者前视和腕部相机标反了、两个视频文件对调了。例：camera_swap 系列子集、FastUMI 的对调条目。",
@@ -1000,6 +1022,10 @@
      "recorded_jumps",
      "gross_umi_speed",
      "recorded-jump"
+    ],
+    "argus": [
+     "Recorded pose jumps, video does not",
+     "Recorded pose jumps away and back"
     ]
    },
    "explain_zh": "某一帧的位置突然跳一大截、下一帧又回来，画面里却没有相应的动作。例：G03 左臂一帧跳了 10 cm。",
@@ -1028,6 +1054,9 @@
      "gripper_channels",
      "gripper_never_acts",
      "gripper-flat"
+    ],
+    "argus": [
+     "Recorded gripper opening never changes"
     ]
    },
    "explain_zh": "某个通道（最常见的是夹爪开合）从头到尾只有一个值，但它本该变化：画面里夹爪明明在开合，或者任务离不开开合。只看数值恒定只是候选，合法的情形有：全程夹着东西、这只手根本没用上。例：G09。",
@@ -1282,6 +1311,10 @@
      "largest_action_not_in_video",
      "state_video_mismatch",
      "motion-disagrees"
+    ],
+    "argus": [
+     "Recorded motion disagrees with video",
+     "Large action with no camera motion"
     ]
    },
    "explain_zh": "动作数据显示有大动作，视频里却看不到相应的运动。例：G03。",
@@ -1363,6 +1396,9 @@
     "pantheon": [
      "tasks[].t_s",
      "temporal_annotation_mismatch"
+    ],
+    "argus": [
+     "Video starts or ends mid-task（起止点的部分）"
     ]
    },
    "explain_zh": "每个动作或步骤从哪一帧开始、到哪一帧结束。这是要检出的内容，不是错误；数据集自带分步时间的（Galaxea、RSS）就拿来对答案。",
@@ -1442,6 +1478,9 @@
     "pantheon": [
      "completion.task_completed",
      "m:Task left unfinished"
+    ],
+    "argus": [
+     "Task left unfinished（操作失误里的结果类）"
     ]
    },
    "explain_zh": "任务最后有没有完成：成功、部分完成、失败，还是录到一半就停了。中途失误后又完成的算成功，失误记在 TASK-12；人工接管后完成的也算成功，接管记在 ACT-7。例：droid200 的人工成败判定、RSS 挑战赛的失败子集。",
@@ -1524,6 +1563,9 @@
     "pantheon": [
      "idle_stretch",
      "idle"
+    ],
+    "argus": [
+     "Long idle stretch"
     ]
    },
    "explain_zh": "动作慢得不正常，或者长时间发呆不动（空转），把数据拖长了。",
@@ -1628,6 +1670,9 @@
     "pantheon": [
      "missing_instruction",
      "missing_task_instruction"
+    ],
+    "argus": [
+     "Instruction missing"
     ]
    },
    "explain_zh": "任务描述是空的、只有一个类别名（如 task 1），或者描述类字段里填的是占位符。例：droid200 里有 94 条没有指令；RSS 挑战赛数据的 subtask 列全是 TODO。",
@@ -1684,12 +1729,18 @@
      "instruction_mismatch",
      "annotation_mismatch",
      "goal_alignment.matches_given=false"
+    ],
+    "argus": [
+     "Instruction or labels do not match footage"
     ]
    },
    "explain_zh": "描述说的和视频里做的不是一回事。例：指令让叠裤子，视频里叠的是 T 恤。",
    "origin_codes": [
     "tools"
-   ]
+   ],
+   "attributes": {
+    "relation": "指令与实际的关系（同 Argus 的 goal_alignment.relation）：narrower = 做了指令要的，还明显多做了；broader = 只做了指令要的一部分；different = 做的是另一件连贯的事（换了物体、目标）；unrelated = 画面与指令对不上（多半标错）；aligned 不报。只差做法（方向、用哪只手、步骤顺序）而终态相同的，relation 照实际记 aligned / narrower / broader，差异本身仍记一条 LABEL-5"
+   }
   },
   {
    "id": "SET-1",
@@ -1843,6 +1894,9 @@
     "pantheon": [
      "timebase.sped_up_recording",
      "sped-up"
+    ],
+    "argus": [
+     "Recording plays faster than real time"
     ]
    },
    "explain_zh": "按时间戳播放时，视频比真实世界快或慢，比如采集时跳了帧、时间戳却按正常间隔写。",
@@ -1870,9 +1924,74 @@
     "pantheon": [
      "setup_change",
      "camera_adjustment"
+    ],
+    "argus": [
+     "Setup changes mid-episode",
+     "Camera turned away or covered（转开、取下的部分）"
     ]
    },
    "explain_zh": "录制途中相机被碰歪、取下或换了角度，前后视角不一样。",
+   "origin_codes": [
+    "tools"
+   ]
+  },
+  {
+   "id": "IMG-13",
+   "dimension": "IMG",
+   "dimension_name": "单路画面质量",
+   "name": "任务物体或末端出画",
+   "origin": "具",
+   "samples": "真实：第二批标注 `out_of_view` / `unintended_out_of_view`（MolmoAct2 10 条、Galaxea 1 条，待入库）；S6 的 DROID 末端出画（第二批）",
+   "platform": "没有",
+   "platform_status": "没有",
+   "platform_codes": [],
+   "kind": "defect",
+   "level": "episode",
+   "description": "任务物体或执行末端有一段时间不在任何机位的画面里（所有相机都看不到），不是被挡住；按任务设计移出画面的不算",
+   "aliases": {
+    "pantheon": [
+     "out_of_view",
+     "unintended_out_of_view"
+    ],
+    "argus": [
+     "Task object leaves every camera"
+    ]
+   },
+   "explain_zh": "要操作的东西或夹爪有一段时间跑出了所有相机的画面，这段只有动作数据、没有画面。和 IMG-8 的区别：IMG-8 是该看见的地方被东西挡住，这一项是根本没拍到。",
+   "origin_codes": [
+    "tools"
+   ]
+  },
+  {
+   "id": "IMG-14",
+   "dimension": "IMG",
+   "dimension_name": "单路画面质量",
+   "name": "脱敏模糊遮住任务物体",
+   "origin": "具",
+   "samples": "真实：HABIT 12 条（Argus 标注，待入库）；G10 HiFi-UMI 的大块马赛克像脱敏误触发（复核片段在桶的 review/，未入库）",
+   "platform": "没有",
+   "platform_status": "没有",
+   "platform_codes": [],
+   "kind": "defect",
+   "level": "episode",
+   "description": "为隐私做的模糊、马赛克或色块盖住了任务物体或操作区域（预处理造成，attribution 记 preprocessing）；只盖住人脸、不碍操作的不算",
+   "aliases": {
+    "pantheon": [
+     "privacy_mask",
+     "privacy_mask_artifact",
+     "image_masking",
+     "image_masking_artifact",
+     "anonymization_artifact",
+     "visual_redaction",
+     "image_redaction",
+     "localized_image_blur"
+    ],
+    "argus": [
+     "Privacy blur hides task objects",
+     "Privacy blur over the scene"
+    ]
+   },
+   "explain_zh": "为保护隐私给人脸打码，结果把要操作的物体或操作区域也糊掉了，看不清操作。是预处理造成的，不是相机的问题。",
    "origin_codes": [
     "tools"
    ]
@@ -1897,6 +2016,9 @@
     "pantheon": [
      "success_then_undone",
      "undone"
+    ],
+    "argus": [
+     "Success then undone"
     ]
    },
    "explain_zh": "任务一度完成了，后来又被拆掉或复位，最后的状态不对。",
@@ -1926,6 +2048,10 @@
      "human_tampering",
      "scene_reset",
      "person-in-scene"
+    ],
+    "argus": [
+     "Person changes the scene",
+     "Another person handles same object"
     ]
    },
    "explain_zh": "有人（或别的东西）在录制中伸手改了场景，但数据里没有记录。和 ACT-7 的区别：ACT-7 是数据集声明过的人工接管。",
@@ -1953,17 +2079,81 @@
      "P04"
     ],
     "pantheon": [
-     "operator_mistakes",
-     "failed_grasp",
-     "dropped_object",
-     "knocked_object",
-     "collision"
+     "operator_mistakes"
+    ],
+    "argus": [
+     "Operator mistakes（21 种，见 subtypes）"
     ]
    },
    "explain_zh": "抓空、掉东西、碰倒、放偏、反复尝试等操作失误。它本身不算数据坏了（失败示范也有用），是要检出并标出位置的现象。例：G1 数据集逐帧标出的碰撞、滑落、抓空、放偏、朝向不对。",
    "origin_codes": [
     "tools"
-   ]
+   ],
+   "subtypes": {
+    "retry": {
+     "missed_grasp": "没抓到、抓空",
+     "slipped_grasp": "抓住后滑脱",
+     "missed_placement": "放偏、没放到位",
+     "missed_insertion": "没插进去、没对准孔位",
+     "missed_rotation": "朝向不对、没转到位",
+     "repeated_attempts": "同一步反复尝试",
+     "wasted_motion": "多余或迂回的动作",
+     "long_pause": "长时间停顿、犹豫",
+     "collision": "夹爪或手臂与物体、环境碰撞"
+    },
+    "outcome": {
+     "dropped_object": "物体掉落",
+     "knocked_object": "碰倒、碰歪别的物体",
+     "spilled_contents": "洒出",
+     "task_left_unfinished": "没做完（成败归 TASK-5）",
+     "undid_own_result": "把已完成的结果又拆掉（归 TASK-10）"
+    }
+   },
+   "subtype_aliases": {
+    "g1": {
+     "missed_grasp": "missed_grasp",
+     "slip": "slipped_grasp",
+     "off_target": "missed_placement",
+     "wrong_orientation": "missed_rotation",
+     "collision": "collision"
+    },
+    "argus": {
+     "failed_grasp": "missed_grasp",
+     "slipped_grasp": "slipped_grasp",
+     "failed_placement": "missed_placement",
+     "placement_alignment": "missed_placement",
+     "alignment_failure": "missed_placement",
+     "misalignment": "missed_placement",
+     "placement_misalignment": "missed_placement",
+     "incomplete_placement": "missed_placement",
+     "failed_insertion": "missed_insertion",
+     "failed_thread_engagement": "missed_insertion",
+     "failed_rotation": "missed_rotation",
+     "failed_turn": "missed_rotation",
+     "failed_turn_attempt": "missed_rotation",
+     "failed_reorientation": "missed_rotation",
+     "prolonged_struggle": "repeated_attempts",
+     "repeated_failed_engagement": "repeated_attempts",
+     "rework": "repeated_attempts",
+     "failed_activation": "repeated_attempts",
+     "unnecessary_motion": "wasted_motion",
+     "hesitation": "long_pause",
+     "collision": "collision",
+     "dropped_object": "dropped_object",
+     "knocked_object": "knocked_object",
+     "unintended_object_displacement": "knocked_object",
+     "spilled_contents": "spilled_contents",
+     "spill": "spilled_contents",
+     "spillage": "spilled_contents",
+     "incomplete_task": "task_left_unfinished",
+     "goal_undone": "undid_own_result",
+     "task_undone": "undid_own_result"
+    }
+   },
+   "attributes": {
+    "subtype": "失误的种类，取 subtypes 里的名字；一条里有几处失误就写几个区间，每个区间一个 subtype",
+    "recovered": "这次失误之后操作者是否恢复、接着把这一步做成：true / false / null（看不出）；恢复的时刻写 recovered_at_s"
+   }
   },
   {
    "id": "SET-6",
@@ -2010,9 +2200,11 @@
   },
   "explain_zh": "每一项在说什么问题，通俗解释",
   "guards": "对照项守的检测项：样本上这几项都应当不报",
-  "platform_status": "平台侧的注记，不属于分类表：由模块注册表生成（coverage_from_registry.py，设计 17 §6.2）。能判 = 默认策略下判废或转人工；有读数 = 只报告或只有读数；部分 = 覆盖它的模块都有前提；没有 = 缺口；能处理 = 对照项"
+  "platform_status": "平台侧的注记，不属于分类表：由模块注册表生成（coverage_from_registry.py，设计 17 §6.2）。能判 = 默认策略下判废或转人工；有读数 = 只报告或只有读数；部分 = 覆盖它的模块都有前提；没有 = 缺口；能处理 = 对照项",
+  "subtypes": "某一项下的细分种类（目前只有 TASK-12）：期望值里写在 value 或区间的 subtype 上，打分仍按检测项计",
+  "attributes": "期望值可以带的属性（TASK-12 的 subtype / recovered，LABEL-5 的 relation）：说明是哪一种，不改变该报不该报"
  },
- "taxonomy_version": "1.1",
+ "taxonomy_version": "1.2",
  "rules": [
   "编号只增不改，不复用；改名不改号",
   "同一现象用最具体的一项；有独立证据的不同问题可以多标",
@@ -2032,6 +2224,18 @@
   "viewed": "我们看了截帧判的（看了哪几帧写在 readings 里；拿不准的交给人工）"
  },
  "changelog": [
+  {
+   "version": "1.2",
+   "date": "2026-10-02",
+   "why": "读 Pantheon《Argus》（2026-10-01）之后，需求方同意设计 16 §18.6 的处理意见",
+   "changes": [
+    "新增：IMG-13 任务物体或末端出画、IMG-14 脱敏模糊遮住任务物体（共 73 项）",
+    "IMG-8 只管物理遮挡：Pantheon 的 out_of_view 归 IMG-13，脱敏类标签归 IMG-14",
+    "TASK-12 加子类词表（retry / outcome 两类 14 种，对上 G1 的 5 种与 Argus 的失误标签）与属性 subtype、recovered",
+    "LABEL-5 加属性 relation（narrower / broader / different / unrelated）",
+    "aliases 补 Argus 的问题家族名"
+   ]
+  },
   {
    "version": "1.1",
    "date": "2026-10-01",

@@ -10,7 +10,7 @@
 | `inject_v3.py` | LeRobot v3 的索引与引用故障（FILE-10）：行区间、视频时间段、任务编号、帧号 |
 | `score.py` | 拿平台的运行目录对样本集的 `expectation.json` 打分：每个检测项的 TP / FP / FN / TN、precision、recall，可与基线比较；2.0 直接读发现，旧运行目录照旧用对照表，自动识别 |
 | `finding_map.json` | 对照表：旧格式（C2 1.0）的运行目录里平台每个模块的哪种结果算报出了哪个检测项；对照项（controls）与预检项（ingestion）两种格式都用 |
-| `taxonomy.json` | 检测项分类 1.1（71 项），与样本集里的同名文件一致；条目同平台契约 C6（`docs/contracts/taxonomy.json`），平台侧的注记由下一行生成 |
+| `taxonomy.json` | 检测项分类 1.2（73 项；TASK-12 的子类、LABEL-5 的关系在 `subtypes`、`attributes`），与样本集里的同名文件一致；条目同平台契约 C6（`docs/contracts/taxonomy.json`），平台侧的注记由下一行生成 |
 | `coverage_from_registry.py` | 由模块注册表（`docs/contracts/modules.json`）生成 `taxonomy.json` 的 `platform_status`、`platform_codes`、`platform_conditions`（设计 17 §6.2） |
 
 ## `coverage_from_registry.py`

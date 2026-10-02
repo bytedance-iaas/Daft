@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "C6 - taxonomy of check items (taxonomy 1.1)",
+  "title": "C6 - taxonomy of check items (taxonomy 1.2)",
   "description": "docs/contracts/taxonomy.json (design doc 17 §1.3, D56). The items a finding can name: ids never change and are never reused; a new taxonomy version only adds items. kind control marks a legal case that must not be reported; guards lists the items it protects from false alarms.",
   "type": "object",
   "additionalProperties": false,

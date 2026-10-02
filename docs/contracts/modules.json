@@ -1,6 +1,6 @@
 {
  "registry_version": "2.1",
- "taxonomy_version": "1.1",
+ "taxonomy_version": "1.2",
  "blocks": [
   {
    "id": "cpu",
@@ -794,6 +794,22 @@
     "dimension": "IMG",
     "name_zh": "相机移位、安装状态改变",
     "explain_zh": "录制途中相机被碰歪、取下或换了角度，前后视角不一样。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-13",
+    "dimension": "IMG",
+    "name_zh": "任务物体或末端出画",
+    "explain_zh": "要操作的东西或夹爪有一段时间跑出了所有相机的画面，这段只有动作数据、没有画面。和 IMG-8 的区别：IMG-8 是该看见的地方被东西挡住，这一项是根本没拍到。",
+    "kind": "defect",
+    "level": "episode"
+   },
+   {
+    "id": "IMG-14",
+    "dimension": "IMG",
+    "name_zh": "脱敏模糊遮住任务物体",
+    "explain_zh": "为保护隐私给人脸打码，结果把要操作的物体或操作区域也糊掉了，看不清操作。是预处理造成的，不是相机的问题。",
     "kind": "defect",
     "level": "episode"
    },

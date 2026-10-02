@@ -58,7 +58,7 @@ from typing import Any, Callable, Literal
 
 REGISTRY_VERSION = "2.1"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
-TAXONOMY_VERSION = "1.1"
+TAXONOMY_VERSION = "1.2"
 
 Level = Literal["episode", "dataset"]
 Block = Literal["cpu", "vlm"]

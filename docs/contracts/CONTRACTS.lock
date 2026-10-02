@@ -1,6 +1,6 @@
 {
  "files": {
-  "backend/curation/contracts/modules.py": "sha256:950d44b6bbd871d1a202a47c03068ff0ee5efdaa3d7b667ac3625cf2327ef510",
+  "backend/curation/contracts/modules.py": "sha256:c2d3b145a22809dc9cce453a45f7f7ce064150d0317c286aba885ba681eb11f6",
   "backend/daemon/repo/protocol.py": "sha256:5a0999387b10530c8e732b4d5246f1dd53ebc9b228183092c63191fb10f6b125",
   "docs/contracts/cli/adjudicate-apply.schema.json": "sha256:d3b6addebf932f486781bae0cb5c0489d09145cd2ea9e7d11a4efe98fc196e1f",
   "docs/contracts/cli/aggregate.schema.json": "sha256:c8a7ebfc8e49106ffbf3615295b08e48b5aaaf9e5b0868bde6e43c237def8860",
@@ -30,12 +30,12 @@
   "docs/contracts/eef/review_output.schema.json": "sha256:f468a537daed089fdbb8d70facea808994fae654033b2c38786facbdd3f0a583",
   "docs/contracts/eef/sample.schema.json": "sha256:50dfe10cea1ec103f5a4fc20c9178cb8f294cb986fae6eb88b0e1135fa1eb564",
   "docs/contracts/eef/trajectory_bundle.schema.json": "sha256:6ce8c5f5b6ffe1ddcab680b21a70f4a4ac4d30cff3040037c77f5ee5e2417b2e",
-  "docs/contracts/modules.json": "sha256:9b7ae02a28220128524fa46b41446a4d9fcfb3ba7617bc3ac5ef9b5f52f988fe",
+  "docs/contracts/modules.json": "sha256:740f3ae03e6fdceff2dddcc4ab90f8e79ec4e8aff718632d862b3647db17a644",
   "docs/contracts/openapi.yaml": "sha256:9a2c4dd844df5c90e88368254a11e952da1dffb9695963cee75863d9d815448a",
   "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:014d924766cdfe13c79a400e4c31134bb2c1e8a3830644d3644135ab1c9f5058",
   "docs/contracts/progress.schema.json": "sha256:8c15bcfcab0fb4f6c3e537a7646d9bf6645facf52d296836c6295464400339e2",
-  "docs/contracts/taxonomy.json": "sha256:7c76d3262a52e2d5a058088d948fecfd47f64f3c7a83170faaf83b69246f5c0c",
-  "docs/contracts/taxonomy.schema.json": "sha256:196fcce5b8be548c1a56c0da5b73b76e893abd4ccb4021caf575b3f7ecfda4c1"
+  "docs/contracts/taxonomy.json": "sha256:b82836986e87da28151451179793d11ec21d25002123c8d4aa0aec3f43292ad3",
+  "docs/contracts/taxonomy.schema.json": "sha256:0405e89be1c56b0f74bd5b9ce4a1f0b7c5ab60063a9f27efb24d244328eb7bba"
  },
  "note": "sha256 of every frozen contract; refresh with `python -m curation.contracts lock` after a reviewed change"
 }
