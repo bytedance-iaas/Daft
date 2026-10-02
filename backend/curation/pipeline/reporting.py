@@ -599,7 +599,9 @@ def build(rev: Revision) -> tuple[dict, dict]:
         "dataset": {"input": rev.source.get("input"),
                     "source_digest": (rev.source.get("summary") or {}).get("digest"),
                     "episode_count": ds.get("episode_count"), "cameras": ds.get("cameras"),
-                    "fps": ds.get("fps"), "robot_type": ds.get("robot_type")},
+                    "fps": ds.get("fps"), "robot_type": ds.get("robot_type"),
+                    # the dataset's own indices, when they are not 0..count-1 (F12.8)
+                    **({"episode_indices": ds["episode_indices"]} if ds.get("episode_indices") else {})},
         "run": {"run_dir": os.path.basename(rev.run_dir.rstrip("/")),
                 "revision": rev.revision, "modules": rev.modules,
                 "adjudications_applied": len(rev.applied)},

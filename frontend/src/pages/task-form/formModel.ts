@@ -160,6 +160,8 @@ export function validateScreen1(v: FormValues, ctx: ValidationContext): Errors {
   if (!effectiveOutputRegion(v) && v.source !== 'tos') e.outputRegion = zh.errors.requiredSelect(zh.taskForm.outputRegion);
   if (!effectiveOutputCredential(v)) e.outputCredential = zh.errors.requiredSelect(zh.taskForm.outputCredential);
   const total = ctx.preflight?.dataset?.episode_count ?? null;
+  // the dataset's own indices when they are not 0..total-1 (a subset that keeps its source's numbers)
+  const own = ctx.preflight?.dataset?.episode_indices ?? null;
   if (v.episodeMode === 'head') {
     const n = v.headN;
     if (n === undefined || n === null || Number.isNaN(n)) e.headN = zh.errors.required(zh.taskForm.headN);
@@ -169,7 +171,12 @@ export function validateScreen1(v: FormValues, ctx: ValidationContext): Errors {
     if (!v.expr.trim()) e.expr = zh.errors.required(zh.taskForm.expr);
     else {
       const p = parseForDisplay(v.expr, null);
-      if (p.ok && total !== null && !ctx.batch && [...p.indices].some((i) => i >= total)) e.expr = zh.errors.rangeTooLarge(total);
+      if (p.ok && total !== null && !ctx.batch) {
+        const have = own ? parseForDisplay(own, null) : null;
+        if (have?.ok) {
+          if ([...p.indices].some((i) => !have.indices.has(i))) e.expr = zh.errors.notInDataset(own as string);
+        } else if ([...p.indices].some((i) => i >= total)) e.expr = zh.errors.rangeTooLarge(total);
+      }
     }
   }
   if (!v.modules.length) e.modules = zh.taskForm.noModule;

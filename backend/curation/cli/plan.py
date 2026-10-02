@@ -26,7 +26,8 @@ def add_parser(sub, parents) -> None:
                    help="the output of curation preflight --json")
     p.add_argument("--modules", required=True, metavar="IDS", help="selected modules")
     p.add_argument("--episodes", metavar="EXPR",
-                   help="selected episodes (default: all of the preflight's episode_count)")
+                   help="selected episodes, by the dataset's own indices (default: all of them: "
+                        "0..episode_count-1, or the preflight's episode_indices)")
     p.add_argument("--unlabeled", metavar="EXPR",
                    help="episodes without a task text, when known (exact autolabel stage)")
     p.add_argument("--cpu-cores", type=int, metavar="N",
@@ -50,18 +51,24 @@ def add_parser(sub, parents) -> None:
 
 def run(ctx: Context, args: argparse.Namespace) -> Result:
     from ..pipeline.records import write_json_atomic
-    from ..planner import PlanError, PlanLimits, SiteConfig, build_plan, retired_site_keys
+    from ..planner import (PlanError, PlanLimits, SiteConfig, build_plan, dataset_episodes,
+                           describe_episodes, retired_site_keys)
 
     preflight = runctx.read_json(args.preflight, "--preflight")
     if not isinstance(preflight, dict) or "dataset" not in preflight:
         raise UsageError(f"--preflight {args.preflight}: not a preflight result")
-    count = int((preflight.get("dataset") or {}).get("episode_count") or 0)
+    dataset = preflight.get("dataset") or {}
     episodes = runctx.read_episode_file(args.episodes)
-    if episodes is not None:
-        bad = [e for e in episodes if e >= count]
+    if episodes is not None and dataset:              # without a dataset block the plan says why
+        try:                                          # the dataset's own indices, not 0..count-1
+            valid = dataset_episodes(dataset)
+        except PlanError as e:
+            raise UsageError(f"--preflight {args.preflight}: {e}") from None
+        allowed = set(valid)
+        bad = sorted(e for e in episodes if e not in allowed)
         if bad:
-            raise UsageError(f"--episodes: {len(bad)} index(es) beyond the dataset's "
-                             f"{count} episodes (first {bad[0]})")
+            raise UsageError(f"--episodes: {len(bad)} index(es) not in {describe_episodes(valid)} "
+                             f"(first {bad[0]})")
     unlabeled = runctx.read_episode_file(args.unlabeled)
     site = {}
     if args.site_config:

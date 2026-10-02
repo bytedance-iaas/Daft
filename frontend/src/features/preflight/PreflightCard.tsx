@@ -76,6 +76,9 @@ export function PreflightCard({ state, registry, onRerun }: { state: PreflightSt
                       r.dataset.total_frames ? grouped(r.dataset.total_frames) : '',
                     )}
                   </div>
+                  {r.dataset.episode_indices ? (
+                    <div data-testid="preflight-indices">{zh.taskForm.preflightIndices(r.dataset.episode_indices)}</div>
+                  ) : null}
                   <div className="muted" style={{ fontSize: 12 }}>
                     {readOnlyNote(r)}
                   </div>

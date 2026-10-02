@@ -72,14 +72,41 @@ def _requested(modules: Iterable[Any], specs: Mapping[str, Any]) -> list[str]:
     return out
 
 
-def _selected(episodes: Iterable[int] | None, count: int) -> list[int]:
+def dataset_episodes(dataset: Mapping[str, Any]) -> list[int]:
+    """The dataset's episode indices, from a preflight's ``dataset`` block: ``episode_indices`` when
+    the preflight wrote it (the indices are not 0..count-1: a subset that keeps its source's numbers,
+    mcap files named ``episode_<N>.mcap``), else 0..``episode_count``-1. What every selection - all,
+    the first N, an explicit list - picks from."""
+    from ..episode_select import parse_episodes
+
+    expr = dataset.get("episode_indices")
+    if isinstance(expr, str) and expr.strip():
+        try:
+            got = parse_episodes(expr)
+        except ValueError as e:
+            raise PlanError(f"the preflight's episode_indices cannot be read: {e}") from None
+        if got:
+            return sorted(got)
+    return list(range(int(dataset.get("episode_count") or 0)))
+
+
+def describe_episodes(indices: Sequence[int], k: int = 8) -> str:
+    """``0..n-1``, or the first few indices when they are not that."""
+    xs = sorted(indices)
+    if xs == list(range(len(xs))):
+        return f"0..{len(xs) - 1}"
+    return f"the dataset's {len(xs)} episodes ({', '.join(map(str, xs[:k]))}{', ...' if len(xs) > k else ''})"
+
+
+def _selected(episodes: Iterable[int] | None, valid: Sequence[int]) -> list[int]:
     if episodes is None:
-        chosen = list(range(count))
+        chosen = list(valid)
     else:
+        allowed = set(valid)
         chosen = []
         for index in episodes:
-            if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < count:
-                raise PlanError(f"episode {index!r} is not in 0..{count - 1}")
+            if isinstance(index, bool) or not isinstance(index, int) or index not in allowed:
+                raise PlanError(f"episode {index!r} is not in {describe_episodes(valid)}")
             chosen.append(index)
         chosen = sorted(set(chosen))
     if not chosen:
@@ -147,7 +174,7 @@ def build_plan(preflight: Mapping[str, Any], modules: Iterable[Any],
     if not isinstance(dataset, Mapping):
         raise PlanError("the preflight has no dataset block")
     count = int(dataset["episode_count"])
-    selected = _selected(episodes, count)
+    selected = _selected(episodes, dataset_episodes(dataset))
     requested = set(_requested(modules, specs))
     # a rider (registry 1.14) is never selected on its own: whenever its host is requested it
     # runs in the host's requests, and without the host it is left out quietly

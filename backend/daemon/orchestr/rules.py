@@ -47,14 +47,17 @@ def terminal_state(rows: Iterable[P.TaskModule], held: int) -> str:
 
 # ---------------------------------------------------------------- episodes
 
-def selected_episodes(selector: dict, count: int) -> list[int]:
-    """The task's episodes (01 §2.3): all, the first N, or an explicit list, within range."""
+def selected_episodes(selector: dict, indices: Iterable[int]) -> list[int]:
+    """The task's episodes (01 §2.3): all, the first N, or an explicit list - picked from the
+    dataset's own ``indices`` (the preflight's ``episode_indices``, else 0..count-1)."""
+    have = sorted({int(i) for i in indices})
     mode = (selector or {}).get("mode", "all")
     if mode == "head":
-        return list(range(min(int(selector["n"]), int(count))))
+        return have[:int(selector["n"])]
     if mode == "explicit":
-        return sorted({int(i) for i in selector.get("indices") or [] if 0 <= int(i) < count})
-    return list(range(int(count)))
+        allowed = set(have)
+        return sorted({int(i) for i in selector.get("indices") or [] if int(i) in allowed})
+    return have
 
 
 def max_episodes(selector: dict) -> int | None:

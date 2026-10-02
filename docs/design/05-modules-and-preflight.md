@@ -121,6 +121,7 @@ curation preflight --input ...
    │
    ├─ ④ 读 meta：episode 数、相机、fps、robot_type、features、有/无任务标注的条数
    │     匹配数据集语义 profile（`ingest/dataset_profiles/*.yaml`，按 robot_type 等命中），回报命中了哪个
+   │     编号不是 0 … count-1 时（保留源编号的子集、按文件名编号的 mcap）另写 `episode_indices`，选择都从它里面选（F12.8）
    │
    ├─ ⑤ 逐模块算 availability（三态）
    │

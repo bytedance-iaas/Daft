@@ -564,13 +564,22 @@ class Orchestrator:
                     out.append({"field": "vlm", "module": m.module_id,
                                 "reason_code": entry.get("reason_code") or "vlm_backend_missing",
                                 "reason": f"「{name}」需要选择模型服务和模型"})
-        count = int(((preflight.get("dataset") or {}).get("episode_count")) or 0)
+        dataset = preflight.get("dataset") or {}
+        count = int(dataset.get("episode_count") or 0)
         sel = task.episode_selector or {}
         if sel.get("mode") == "explicit":
-            beyond = [i for i in sel.get("indices") or [] if int(i) >= count]
+            from curation.planner import PlanError, dataset_episodes
+
+            try:                                       # the dataset's own indices, not 0..count-1
+                have = set(dataset_episodes(dataset))
+            except PlanError:
+                have = set(range(count))
+            beyond = [i for i in sel.get("indices") or [] if int(i) not in have]
             if beyond:
+                where = (f"数据集的编号是 {dataset['episode_indices']}" if dataset.get("episode_indices")
+                         else f"数据集现在只有 {count} 条")
                 out.append({"field": "episodes", "reason_code": "episodes_out_of_range",
-                            "reason": f"自选的 episode 超出了范围：数据集现在只有 {count} 条"
+                            "reason": f"自选的 episode 超出了范围：{where}"
                                       f"（{', '.join(map(str, beyond[:5]))} 不存在）"})
         return out
 

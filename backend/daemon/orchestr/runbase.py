@@ -426,9 +426,18 @@ class Run:
         ds = self.preflight.get("dataset") or {}
         return int(ds.get("episode_count") or 0)
 
+    def episode_indices(self) -> list[int]:
+        """The dataset's own episode indices (the preflight's ``episode_indices``, else 0..count-1)."""
+        from curation.planner import PlanError, dataset_episodes
+
+        try:
+            return dataset_episodes(self.preflight.get("dataset") or {})
+        except PlanError:
+            return list(range(self.episode_count()))
+
     def selection(self) -> list[int]:
         """The task's episodes, without the ones whose source files are missing (D40)."""
-        chosen = rules.selected_episodes(self.task.episode_selector, self.episode_count())
+        chosen = rules.selected_episodes(self.task.episode_selector, self.episode_indices())
         skipped = self.skipped_episodes()
         return [e for e in chosen if e not in skipped] if skipped else chosen
 

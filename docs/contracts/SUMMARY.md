@@ -308,3 +308,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **F12.6（2026-10-02）**：契约不动。回归样本集的打分（`tools/regression_samples/score.py` 2.0）成了 C2 2.0 的又一个读者：记录的
   `status`、`findings[].item` / `scope` / `frames` / `time_s`、`assessed`、`unassessable`，最终清单（`passed` / `reject` / `held` 与拒绝理由的
   `module`），报告小节的 `dataset_findings`，以及 C1 导出（`modules.json`）的 `covers`——改这些字段要同时改打分，回归样本工具的测试会失败。
+- **F12.8（2026-10-02）**：C2 预检的数据集块多可选的 `episode_indices`——编号不是 0 … count-1 时才写（从大数据集里取出、没有重新编号的子集，
+  按文件名 `episode_<N>.mcap` 编号的 mcap），写法同 `--episodes`，`schema_version` 不变；`plan`、规划库、Daemon 的条目选择与建任务 / 重新预检的
+  校验、控制台表单都从这些编号里选。C4 的 `PreflightResponse.result` 引用 C2 的预检 Schema，随之多这个字段（openapi 本身不变，前端类型重新生成）；
+  报告 2.0 的 `overview.dataset`（开放对象）编号不连续时也带上它。

@@ -27,7 +27,8 @@
           "additionalProperties": false,
           "required": ["episode_count", "cameras", "fps", "robot_type", "total_frames", "labels", "profile"],
           "properties": {
-            "episode_count": {"type": "integer", "minimum": 0, "description": "episodes are 0 .. count-1"},
+            "episode_count": {"type": "integer", "minimum": 0, "description": "how many episodes; their indices are 0 .. count-1 unless episode_indices says otherwise"},
+            "episode_indices": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$", "description": "only when the indices are not 0 .. count-1 (a subset that keeps its source's numbers, mcap files named episode_<N>.mcap): every index, in the grammar of --episodes (5,9,12-20). Selections - the plan, the Daemon's all / first N / explicit, the console's form - pick from these"},
             "cameras": {"type": "array", "items": {"type": "string"}, "description": "short camera names: the video feature key without the observation.images. prefix"},
             "fps": {"type": ["number", "null"], "description": "null for mcap: its time axis is the action topic's log_time"},
             "robot_type": {"type": ["string", "null"]},

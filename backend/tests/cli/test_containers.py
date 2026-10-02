@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 
 import pytest
 
@@ -464,6 +465,21 @@ def test_mcap_numbering_is_v1s(tmp_path):
     assert mcap_episodes({"b.mcap": 1, "a.mcap": 1}) == {0: "a.mcap", 1: "b.mcap"}
     assert mcap_episodes({"README.md": 1}) == {}
 
+
+
+def test_mcap_files_numbered_by_name_are_selected_by_those_numbers(mini_mcap, tmp_path):
+    """F12.8: episode_<N>.mcap numbers the episodes; the preflight names them and plan picks from them."""
+    ds = tmp_path / "numbered"
+    ds.mkdir()
+    for old, new in ((0, 5), (1, 9), (2, 12), (3, 20)):
+        shutil.copyfile(os.path.join(mini_mcap, f"episode_{old}.mcap"), ds / f"episode_{new}.mcap")
+    res = run("preflight", "--input", str(ds))
+    assert res.rc == 0 and res.doc["dataset"]["episode_indices"] == "5,9,12,20", res.doc["dataset"]
+    pf = tmp_path / "preflight.json"
+    pf.write_text(json.dumps(res.doc), encoding="utf-8")
+    assert run("plan", "--preflight", str(pf), "--modules", "timestamp_check", "--episodes", "5,9").rc == 0
+    res = run("plan", "--preflight", str(pf), "--modules", "timestamp_check", "--episodes", "0")
+    assert res.rc == 2 and "not in the dataset's 4 episodes (5, 9, 12, 20)" in res.doc["error"]["message"]
 
 def test_an_episode_file_is_found_by_its_path(mini_mcap):
     """streams.objects.join / locate: code handed a file path (the EEF module's views) reads a

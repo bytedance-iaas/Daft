@@ -126,6 +126,32 @@ def test_repreflight_says_what_no_longer_fits(daemon):
     assert out["incompatibilities"][0]["reason_code"] == "episodes_out_of_range"
 
 
+
+def test_a_subset_that_keeps_its_source_numbers_is_run_by_them(daemon):
+    """F12.8: a dataset numbered 1, 3, 5 (cut out of a bigger one without renumbering). All of it runs
+    those three; an explicit list is checked against them when the task is made and again on repreflight."""
+    from ..cli.subset import keep_episodes
+
+    d = daemon()
+    keep_episodes(d.dataset, {1, 3, 5})
+    assert d.preflight()["result"]["dataset"]["episode_indices"] == "1,3,5"
+    task = d.create(modules=["timestamp_check", "visual_quality"])
+    body = d.wait(task["id"])
+    assert body["state"] == "succeeded", body
+    r = d.api("GET", f"/tasks/{task['id']}/episodes", params={"limit": 50})
+    assert r.status_code == 200, r.text
+    assert sorted(e["episode_index"] for e in r.json()["items"]) == [1, 3, 5]
+
+    r = d.api("POST", "/tasks", json=d.task_body(start_now=False, episodes={"mode": "explicit", "expr": "0,2"}))
+    assert r.status_code == 400 and "一条也没有" in r.text, r.text
+    made = d.create(start_now=False, episodes={"mode": "explicit", "expr": "3,5"})
+    keep_episodes(d.dataset, {1, 3})                             # episode 5 is gone
+    r = d.api("POST", f"/tasks/{made['id']}/repreflight")
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["compatible"] is False
+    assert out["incompatibilities"][0]["reason"] == "自选的 episode 超出了范围：数据集的编号是 1,3（5 不存在）"
+
 def test_publishing_into_one_delivery_is_serial(daemon, monkeypatch):
     from daemon.orchestr import runbase
 

@@ -430,6 +430,18 @@ def test_local_input_errors(cli, tmp_path, dataset):
     assert res.rc == 2 and "--input-region" in res.doc["error"]["message"]
 
 
+
+def test_a_subset_that_keeps_its_source_numbers_names_them(cli, dataset):
+    """F12.8: episode_indices only when the indices are not 0..count-1."""
+    from .subset import keep_episodes
+
+    assert "episode_indices" not in cli("preflight", "--input", dataset).doc["dataset"]
+    keep_episodes(dataset, {1, 3, 5})
+    doc = cli("preflight", "--input", dataset).doc
+    assert doc["dataset"]["episode_count"] == 3 and doc["dataset"]["episode_indices"] == "1,3,5"
+    assert any("episode indices are not 0..2" in w for w in doc["warnings"])
+
+
 def test_human_output(cli, dataset):
     res = cli("preflight", "--input", dataset, json_mode=False)
     assert res.rc == 0

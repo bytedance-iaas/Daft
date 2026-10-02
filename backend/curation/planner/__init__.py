@@ -25,7 +25,7 @@ from .limits import (Limit, PlanLimits, SiteConfig, available_cpu_workers,
 from .merge import (DeclaredMergeUnits, FramePolicy, MergeGroup, MergeLimits, MergeStrategy,
                     MergeUnit, NoMerge, PerEpisodeMultiModule, compose_merged_prompt,
                     merge_enabled, split_answer, strategy_for_stage, strategy_named)
-from .plan import PlanError, build_plan, validate_plan
+from .plan import PlanError, build_plan, dataset_episodes, describe_episodes, validate_plan
 from .retry import (CallFailed, Failure, RetryPolicy, RetryStats, VlmTransportError,
                     call_with_retry, classify_failure)
 from .throttle import AdaptiveThrottle, ResizableGate
@@ -41,7 +41,8 @@ __all__ = [
     "V1_CONFIG_KEYS", "VlmRequest", "VlmResponse", "VlmTransportError", "apportion",
     "available_cpu_workers",
     "build_plan", "call_with_retry", "chat_payload", "classify_failure", "compose_merged_prompt",
-    "default_verdict", "derive_gates", "effective_cpu_concurrency", "effective_vlm_parallelism",
+    "dataset_episodes", "default_verdict", "derive_gates", "describe_episodes",
+    "effective_cpu_concurrency", "effective_vlm_parallelism",
     "merge_enabled", "merge_units_for", "parse_usage", "retired_site_keys", "run_merge_consistency",
     "split_answer",
     "strategy_for_stage", "strategy_named", "usage_from_response", "v1_set_overrides",

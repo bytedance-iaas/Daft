@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseForDisplay, selectionCount, toExpr, toggleInExpr } from './episodes';
+import { ownIndices, parseForDisplay, pickedIndices, selectionCount, toExpr, toggleInExpr } from './episodes';
 import { availability, optIn, presetSelection, reasonText, toggleModule } from './preflight';
 import { DATASET_PROFILES, preflightFor, registry } from '../mocks/world';
 
@@ -23,6 +23,13 @@ describe('episode expressions (display only; the server validates)', () => {
     expect(selectionCount('head', 50, '', 200)).toBe(50);
     expect(selectionCount('head', 500, '', 200)).toBe(200);
     expect(selectionCount('explicit', undefined, '0-9,20', 200)).toBe(11);
+    // F12.8: a dataset with its own indices (5, 9, 12, 20) counts the picks among them, not within 0..3
+    const own = ownIndices('5,9,12,20');
+    expect(selectionCount('explicit', undefined, '5,9', 4)).toBe(0);
+    expect(selectionCount('explicit', undefined, '5,9', 4, own)).toBe(2);
+    expect(selectionCount('explicit', undefined, '0,9', 4, own)).toBe(1);
+    expect([...pickedIndices('9-12', 4, own).indices]).toEqual([9, 12]);
+    expect(ownIndices(null)).toBeNull();
   });
 });
 

@@ -2393,8 +2393,10 @@ export interface components {
             /** @description info.json problems, shown to the user verbatim; non-empty => supported=false */
             validation: string[];
             dataset: null | {
-                /** @description episodes are 0 .. count-1 */
+                /** @description how many episodes; their indices are 0 .. count-1 unless episode_indices says otherwise */
                 episode_count: number;
+                /** @description only when the indices are not 0 .. count-1 (a subset that keeps its source's numbers, mcap files named episode_<N>.mcap): every index, in the grammar of --episodes (5,9,12-20). Selections - the plan, the Daemon's all / first N / explicit, the console's form - pick from these */
+                episode_indices?: string;
                 /** @description short camera names: the video feature key without the observation.images. prefix */
                 cameras: string[];
                 /** @description null for mcap: its time axis is the action topic's log_time */

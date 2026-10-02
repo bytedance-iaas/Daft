@@ -22,7 +22,7 @@ import { BackendDrawer } from '../../features/keys/BackendDrawer';
 import { FingerprintDialog, asSourceChange } from '../../features/tasks/FingerprintDialog';
 import { precheckItems } from '../../features/tasks/useTaskActions';
 import { borrowedOutputUrl, publicOutputDefault, suggestDeliveryName, type PlannedDataset } from '../../lib/deeplink';
-import { selectionCount } from '../../lib/episodes';
+import { ownIndices, selectionCount } from '../../lib/episodes';
 import { monthDay } from '../../lib/format';
 import { readPrefs, writePrefs } from '../../lib/prefs';
 import { presetSelection } from '../../lib/preflight';
@@ -207,6 +207,8 @@ export function TaskForm(p: TaskFormProps) {
   const total = p.batch
     ? batchState.reduce<number | null>((min, e) => (e.result?.dataset ? (min === null ? e.result.dataset.episode_count : Math.min(min, e.result.dataset.episode_count)) : min), null)
     : result?.dataset?.episode_count ?? null;
+  // the dataset's own indices when they are not 0..total-1 (F12.8); a batch of datasets has no one list
+  const own = p.batch ? null : ownIndices(result?.dataset?.episode_indices);
 
   // Presets follow a new availability (07 §3); an edited or copied task keeps its selection once.
   const availKey = availability ? JSON.stringify(Object.values(availability).map((a) => [a?.id, a?.availability])) : '';
@@ -283,7 +285,7 @@ export function TaskForm(p: TaskFormProps) {
   const errors2 = shown[2] ? validateScreen2(v, ctx) : {};
   const errors: Errors = { ...errors1, ...errors2, ...serverErrors };
   const vlm = usesVlm(v, reg);
-  const count = selectionCount(v.episodeMode, v.headN, v.expr, total);
+  const count = selectionCount(v.episodeMode, v.headN, v.expr, total, own);
   const footer = zh.taskForm.footerSummary(count === null ? '?' : String(count), activeModules(v).length);
 
   const preview: PreviewSource | null = p.batch
@@ -623,7 +625,7 @@ export function TaskForm(p: TaskFormProps) {
             outputNote={outputNote}
           />
           {!p.batch ? <PreflightCard state={preflight} registry={reg} onRerun={preflight.rerun} /> : null}
-          <EpisodeSection v={v} set={set} errors={errors} total={total} preview={preview} />
+          <EpisodeSection v={v} set={set} errors={errors} total={total} own={own} preview={preview} />
           <ModuleSection v={v} set={set} errors={errors} registry={reg} availability={availability} marked={marked} />
           {vlm ? <ModelSection v={v} set={set} errors={errors} backends={p.backends} registry={reg} onAddBackend={() => setAddBackend(true)} /> : null}
           <AdvancedSection v={v} set={set} errors={errors} vlm={vlm} />

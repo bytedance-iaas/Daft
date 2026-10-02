@@ -36,6 +36,16 @@ describe('validation of the two screens (every required field)', () => {
     expect(validateScreen1(filled({ source: 'public', publicUri: '', credential: '', region: '' }), ctx).publicUri).toBe('请选择数据集');
   });
 
+  it('screen 1: explicit episodes of a dataset with its own indices are checked against them (F12.8)', () => {
+    // a subset that keeps its source's numbers: 23 episodes 2604-2626
+    const own = { ...droid200, dataset: { ...droid200.dataset!, episode_count: 23, episode_indices: '2604-2626' } };
+    const c = { ...ctx, preflight: own };
+    expect(validateScreen1(filled({ episodeMode: 'explicit', expr: '2604,2610-2612' }), c).expr).toBeUndefined();
+    expect(validateScreen1(filled({ episodeMode: 'explicit', expr: '3' }), c).expr).toBe('有编号不在数据集里：这个数据集的编号是 2604-2626');
+    expect(validateScreen1(filled({ episodeMode: 'head', headN: 23 }), c).headN).toBeUndefined();
+    expect(validateScreen1(filled({ episodeMode: 'head', headN: 24 }), c).headN).toBe('请输入 1 到 23 之间的整数');
+  });
+
   it('screen 2: robot type when the kinematic module is on, parameters by schema', () => {
     const v = filled({ modules: ['kinematic_limits', 'video_action_sync'] });
     expect(validateScreen2(v, ctx)).toEqual({ embodiment: '请选择机器人型号' });

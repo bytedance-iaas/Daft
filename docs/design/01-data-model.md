@@ -121,6 +121,7 @@ CREATE TABLE task (
 
   episode_selector TEXT NOT NULL,         -- JSON: {"mode":"all"} | {"mode":"head","n":50}
                                           --     | {"mode":"explicit","expr":"3,10-12","indices":[3,10,11,12]}
+                                          --   从数据集自己的编号里选：预检的 episode_indices，没有时 0 … count-1（F12.8）
   embodiment_id  TEXT,                    -- 预检读不到 robot_type 时用户补的
   vlm_model_id   TEXT REFERENCES vlm_model(id),
   vlm_reasoning_effort TEXT,              -- 任务级覆盖；NULL = 用模型配置

@@ -36,6 +36,22 @@ def parse(expr: str | None) -> set[int] | None:
         raise UsageError(f"--episodes {expr!r}: {e}") from None
 
 
+def compact(indices) -> str:
+    """The shortest expression :func:`parse` reads back as ``indices``: runs of consecutive numbers
+    as ``a-b`` (``5,9,12``, ``1-28``, ``2604-2610,3000``), none wider than the parser takes."""
+    from ..episode_select import MAX_SPAN
+
+    xs = sorted({int(i) for i in indices})
+    out, i = [], 0
+    while i < len(xs):
+        j = i
+        while j + 1 < len(xs) and xs[j + 1] == xs[j] + 1 and xs[j + 1] - xs[i] < MAX_SPAN:
+            j += 1
+        out.append(str(xs[i]) if i == j else f"{xs[i]}-{xs[j]}")
+        i = j + 1
+    return ",".join(out)
+
+
 def reconcile(requested: set[int] | None, available, what: str = "the dataset"):
     """(selected, warning) with v1's ``reconcile_episodes`` rule, in English.
 

@@ -24,6 +24,15 @@ describe('数据包完整性 in Chinese (F6.2)', () => {
     for (const i of items) expect(i.value).not.toMatch(/[{}]|"|\b(kind|supported|with_task|matched)\b/);
   });
 
+  it('the first N of a dataset with its own indices are named by those indices (F12.8)', () => {
+    const report = mainReport(2);
+    const own = { ...report, overview: { ...report.overview, dataset: { ...report.overview.dataset, episode_count: 5, episode_indices: '5,9,12-14' } } } as Report;
+    const task = { episodes: { mode: 'head', n: 3 } } as unknown as Task;
+    expect(value(integrityItems(own, task), 'episodes')).toBe('数据集 5 条，本次前 3 条（ep 5,9,12）');
+    const run = { ...own, overview: { ...own.overview, dataset: { ...own.overview.dataset, episode_indices: '2604-2626' } } } as Report;
+    expect(value(integrityItems(run, { episodes: { mode: 'head', n: 10 } } as unknown as Task), 'episodes')).toBe('数据集 5 条，本次前 10 条（ep 2604–2613）');
+  });
+
   it('says what is wrong: unsupported formats, validation problems, preflight warnings, skipped episodes', () => {
     const base = mainReport(2);
     const report: Report = {

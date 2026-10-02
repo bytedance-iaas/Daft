@@ -129,7 +129,7 @@ Daemon 内部必经 planner，把能合并的 VLM 请求合并，再用最合适
   "output": {"uri": "tos://bucket/deliveries/droid-50", "region": "cn-beijing",
              "credential": "prod-tos"},
   "preflight_id": "pf-kqzmrtbwe",
-  "episodes": {"mode": "head", "n": 50},          // all | head | explicit（"expr": "3,10-12"）
+  "episodes": {"mode": "head", "n": 50},          // all | head | explicit（"expr": "3,10-12"）；编号是数据集自己的（预检的 episode_indices，F12.8）
   "modules": ["timestamp_check", "motion_quality",
               {"id": "kinematic_limits"},
               {"id": "video_action_sync", "params": {"sync_plots": "all"}},
@@ -472,7 +472,8 @@ GET /api/v1/tasks/{id}/logs?stage=vlm&subtask=&level=warn&cursor=…&limit=200
   刷新预检结果和两个指纹，`check_state` 回到 `ok`。
 - **开始任务**（`actions/start`，或 `POST /tasks` 带 `start_now`）先核对，见 §3 第 5 步。对不上返回 409
   `source_changed`，`error.details` 是一个 `SourceChange`；前端弹框请用户确认后调 `POST /tasks/{id}/repreflight`：
-  重新预检并判断与任务配置是否相容（所选模块仍可用、自选的 episode 仍在范围内、需要补充的输入都有）。
+  重新预检并判断与任务配置是否相容（所选模块仍可用、自选的 episode 仍在数据集里、需要补充的输入都有）。
+  自选的编号按数据集自己的编号核对：预检写了 `episode_indices` 时提示写「数据集的编号是 …」，否则写「数据集现在只有 N 条」（F12.8）。
   相容就直接开始，不用再点一次；不相容则任务留在待启动，`incompatibilities` 逐项说明，前端带用户回编辑页。
 - **概览**（`GET /overview`）一次返回：待处理事项（错误的任务、待裁决、交付待导出、有变化的数据集、
   验证失败的密钥与后端）、运行情况、所选时间段的统计（Token 只算实际调用账）。概览页 2026-09-23 起只用运行情况和时间段两块（07 篇 §4.3），

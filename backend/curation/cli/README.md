@@ -143,6 +143,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 两个 VLM 模块：没传 `--vlm-backend` 是 `needs_input`（`input_hint.field = "vlm"`）；没有任务标注不会让它们标灰，只在 `notes` 里提示会先补描述。
 - `--modules` 只报告所选模块，没选的模块不追问。原因文案用英文，`validation` 里 v1 的报错保持中文原文。
 - 列目录时发现缺文件的条写进 `warnings`：LeRobot v2 缺数据 parquet 或某个机位视频的条照 v1 跳过（见 snapshot）；v3 的不跳过，检查时读不了、记为出错。
+- 编号不是 0 … count-1 时（从大数据集里取出、没有重新编号的子集；mcap 按文件名 `episode_<N>.mcap` 编号），`dataset.episode_indices` 写出全部编号，写法同 `--episodes`（如 `1,3,5`、`2604-2626`），`warnings` 里另有一句提示；编号正常的数据集没有这个字段（F12.8）。
 - 另有三条完整性警告（D52，设计 14 §1），都不多读数据、不改变模块可用性：数据与视频文件为空或小到放不下该格式的固定字节
   （parquet 小于 12 字节、mcap 小于 45 字节、mp4 小于 512 字节）；mcap 录制中断（文件尾没有结束标识）；mcap 摘要区的 CRC
   不符（摘要区的字节读摘要时本来就取回了）。要读数据的检查归质检最前面的「数据完整性」模块。
@@ -151,6 +152,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 
 - 不读数据、不联网。并行度取各层上限里最小的那个（D31），`limits.*.bound_by` 写明卡在哪一层；`--running-tasks` 大于 1 时均分。
 - 各档的闸门由并行度推导；`check` / `autolabel` 用 `--plan-stage plan.json` 取自己那一档（整份计划按模块或档名挑，单独一档的 JSON 也行）。
+- `--episodes` 不给就是数据集的全部条目；给了就要都在数据集里——按预检的 `episode_indices`，没有它时是 0 … count-1。不在的是用法错误（退出码 2），提示写明数据集有哪些编号（F12.8）。
 
 **snapshot**：`curation snapshot --input … [--episodes 表达式] --out <运行目录>/source_manifest.json --json`
 
@@ -521,3 +523,15 @@ with FakeVlmServer(port=8766) as s:
     LeRobot 是 `findings: duplicate_content 2, file_empty 1`——第 2 条 `file_empty`（默认策略下判废），3 与 7 是夹具故意放的字节级副本（转人工）；
     mcap 是 `findings: cut_unreadable 1, duplicate_content 2, stream_missing 1`——第 4 条「录制中断，且读不出数据」（判废），第 6 条缺 `/task`（转人工）。
     更多损坏样本与裁决见[模块 README](../extensions/integrity/README.md)的手动验证。
+
+13. 数据集自己的编号（F12.8）。从第 10 步的 mcap 夹具改名出一份编号不连续的数据集，再从 LeRobot 夹具删出一份「保留源编号的子集」：
+
+    ```bash
+    mkdir -p "$D/numbered" && for p in 0:5 1:9 2:12 3:20; do cp "$D/mini_mcap/episode_${p%%:*}.mcap" "$D/numbered/episode_${p##*:}.mcap"; done
+    $C preflight --input "$D/numbered" --json > "$D/numbered.pf.json" && $PY -c "import json,sys; print(json.load(open(sys.argv[1]))['dataset']['episode_indices'])" "$D/numbered.pf.json"
+    $C plan --preflight "$D/numbered.pf.json" --modules timestamp_check --episodes 5,9 --json > /dev/null && echo plan ok
+    $C plan --preflight "$D/numbered.pf.json" --modules timestamp_check --episodes 0 --json; echo "exit $?"
+    ```
+
+    应看到：`5,9,12,20`；`plan ok`；最后一条以退出码 2 结束，错误写 `--episodes: 1 index(es) not in the dataset's 4 episodes (5, 9, 12, 20) (first 0)`。
+    编号是 0 … count-1 的数据集（如 `$D/mini`），预检里没有 `episode_indices`。

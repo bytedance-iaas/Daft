@@ -11,6 +11,7 @@ import shutil
 
 from .fakevlm_server import FakeVlmServer
 from .pipeline import comparable, results, run
+from .subset import keep_episodes
 
 MODULES = ("timestamp_check,kinematic_limits,motion_quality,visual_quality,video_action_sync,"
            "task_success,dedup,skill_profile")
@@ -67,7 +68,7 @@ def test_cpu_workers_are_the_cores_but_two_and_old_site_keys_only_warn(vlm_stage
 
 def test_bad_arguments_are_usage_errors(vlm_stage, tmp_path):
     res, _ = _plan(vlm_stage, tmp_path, "--episodes", "0-99")
-    assert res.rc == 2 and "beyond" in res.doc["error"]["message"]
+    assert res.rc == 2 and "not in 0..7" in res.doc["error"]["message"]
     res = run("plan", "--preflight", os.path.join(vlm_stage["base"], "plan.json"),
               "--modules", MODULES)
     assert res.rc == 2 and "not a preflight result" in res.doc["error"]["message"]
@@ -134,3 +135,19 @@ def test_the_merge_proposal_of_the_vlm_stage(vlm_stage, tmp_path):
         res = run(*args, "--vlm-endpoint", vlm.url,
                   "--plan-stage", with_merge({"strategy": "bogus", "groups": []}))
         assert res.rc == 2 and "unknown merge strategy" in res.doc["error"]["message"]
+
+
+def test_a_subset_is_planned_by_its_own_episode_numbers(dataset, tmp_path):
+    """F12.8: a subset that keeps its source's numbers (1, 3, 5) - all of them or a part of them;
+    a number it does not have is a usage error that says which ones it has."""
+    keep_episodes(dataset, {1, 3, 5})
+    res = run("preflight", "--input", dataset)
+    assert res.rc == 0 and res.doc["dataset"]["episode_indices"] == "1,3,5"
+    pf = str(tmp_path / "preflight.json")
+    with open(pf, "w", encoding="utf-8") as fh:
+        json.dump(res.doc, fh)
+    for episodes in ((), ("--episodes", "3,5")):
+        res = run("plan", "--preflight", pf, "--modules", "timestamp_check,visual_quality", *episodes)
+        assert res.rc == 0, res.doc
+    res = run("plan", "--preflight", pf, "--modules", "timestamp_check", "--episodes", "0-2")
+    assert res.rc == 2 and "not in the dataset's 3 episodes (1, 3, 5)" in res.doc["error"]["message"]

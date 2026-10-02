@@ -319,6 +319,12 @@ def _fill_supported(doc: dict, specs, meta, listing, args, uri: str, *,
         "labels": {"with_task": with_task, "without_task": without_task},
         "profile": profile,
     }
+    if indices != list(range(n)):
+        # a subset that keeps its source's numbers, mcap files named episode_<N>.mcap: the plan, the
+        # Daemon's selection and the console's form select from these, not from 0..n-1
+        from .episodes import compact
+
+        doc["dataset"]["episode_indices"] = compact(indices)
 
     feats = info.get("features") or {}
     caps = {"timestamps": "timestamp" in feats, "action": "action" in feats,

@@ -3,7 +3,7 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { api, unwrap } from '../../api/client';
 import type { EpisodePreview } from '../../api/types';
 import { LazyVisible, Sentinel } from '../../components/LazyVisible';
-import { parseForDisplay, selectionCount, toggleInExpr } from '../../lib/episodes';
+import { parseForDisplay, pickedIndices, selectionCount, toggleInExpr } from '../../lib/episodes';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
 import type { Errors, FormValues } from './formModel';
@@ -89,16 +89,19 @@ export function EpisodeSection({
   set,
   errors,
   total,
+  own,
   preview,
 }: {
   v: FormValues;
   set: (patch: Partial<FormValues>) => void;
   errors: Errors;
   total: number | null;
+  /** the dataset's own indices when they are not 0..total-1 (F12.8) */
+  own: Set<number> | null;
   preview: PreviewSource | null;
 }) {
-  const count = selectionCount(v.episodeMode, v.headN, v.expr, total);
-  const parsed = parseForDisplay(v.expr, total);
+  const count = selectionCount(v.episodeMode, v.headN, v.expr, total, own);
+  const parsed = pickedIndices(v.expr, total, own);
   return (
     <Card
       title={zh.taskForm.sectionEpisodes}

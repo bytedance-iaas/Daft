@@ -1,7 +1,9 @@
 import { screen, within } from '@testing-library/react';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { DATASET_PROFILES, preflightFor, registry } from '../../mocks/world';
 import { fill, pick } from '../../test/arco';
-import { renderApp } from '../../test/render';
+import { renderApp, renderWithProviders } from '../../test/render';
+import { PreflightCard } from './PreflightCard';
 import { PREFLIGHT_DEBOUNCE } from './usePreflight';
 
 beforeAll(() => {
@@ -41,5 +43,25 @@ describe('mcap and lance datasets in the task form (D44)', () => {
   it('an rrd recording stays unsupported with the new wording', async () => {
     const { card } = await preflight('tos://pai-kit-datasets/raw/warehouse_rrd');
     expect(await within(card).findByText('当前支持 LeRobot v2/v3、mcap 与 Lance（lerobot-lance-convert 0.3.0 起），检测到 rrd')).toBeInTheDocument();
+  });
+});
+
+describe('a dataset with its own episode indices (F12.8)', () => {
+  it('the preflight card names them: the first N and the explicit list pick from them', async () => {
+    const base = preflightFor(DATASET_PROFILES.find((p) => p.name === 'droid-200')!, {});
+    const result = { ...base, dataset: { ...base.dataset!, episode_count: 23, episode_indices: '2604-2626' } };
+    renderWithProviders(
+      <PreflightCard state={{ status: 'ok', result, id: 'pf', expiresAt: 0, error: null, key: 'k', current: true }} registry={registry} onRerun={() => undefined} />,
+    );
+    expect(await screen.findByTestId('preflight-indices')).toHaveTextContent('episode 编号是 2604-2626（不是从 0 起连续的）');
+  });
+
+  it('a dataset numbered 0..N-1 says nothing about it', async () => {
+    const result = preflightFor(DATASET_PROFILES.find((p) => p.name === 'droid-200')!, {});
+    renderWithProviders(
+      <PreflightCard state={{ status: 'ok', result, id: 'pf', expiresAt: 0, error: null, key: 'k', current: true }} registry={registry} onRerun={() => undefined} />,
+    );
+    await screen.findByTestId('preflight-card');
+    expect(screen.queryByTestId('preflight-indices')).toBeNull();
   });
 });

@@ -40,7 +40,9 @@ HuggingFace 缓存桶匿名读，不需要输入密钥。
 对不上立即以退出码 6 结束。不传则不校验 —— 直接用 CLI 的人自己负责数据不变。
 
 episode 一律用**整数下标**表达，语法沿用 v1：`34`、`10-20`、`3,10-12`，或 `@file`（每行一个下标）。
-负数、倒序区间、跨度超过 100 万的区间直接拒绝。
+负数、倒序区间、跨度超过 100 万的区间直接拒绝。下标是数据集自己的编号：多数数据集是 0 … count-1；从大数据集里取出、
+没有重新编号的子集保留源编号，mcap 按文件名 `episode_<N>.mcap` 编号，这时预检另写 `dataset.episode_indices`（§3.1），
+「全部」「前 N 条」与自选都从这些编号里选（F12.8，2026-10-02）。
 
 **mcap / Lance 数据集**（D44）另有两处约定：
 
@@ -74,7 +76,8 @@ curation preflight --input tos://bucket/datasets/my_dataset --input-region cn-be
   },
   "validation": [],               // info.json 结构校验的错误；非空 ⇒ supported=false，原因照抄给用户
   "dataset": {
-    "episode_count": 200,         // 下标连续，0 … count-1，不再返回完整清单
+    "episode_count": 200,         // 条数；编号是 0 … count-1 时只给条数，不返回完整清单
+    // "episode_indices": "1,3,5", // 只在编号不是 0 … count-1 时出现（保留源编号的子集、按文件名编号的 mcap），写法同 --episodes（F12.8）
     "cameras": ["exterior_1", "exterior_2", "wrist"],
     "fps": 15.0,
     "robot_type": null,           // info.json 里读不到为 null
@@ -134,6 +137,8 @@ curation plan --preflight preflight.json --modules timestamp_check,visual_qualit
 ```
 
 纯计算，不碰网络。输出执行计划（分档、每档并发度与各闸门、VLM 请求合并分组）。
+`--episodes` 不给就是数据集的全部条目；给了就要都在数据集里（按预检的 `episode_indices`，没有它时是 0 … count-1），
+不在的是用法错误（退出码 2），提示写明数据集有哪些编号。
 Daemon 内部直接调用同一个 planner 库函数；CLI 形态是为了可调试、可复现。
 计划 schema 见 `04-concurrency-and-vlm-merge.md` §3。
 

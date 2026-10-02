@@ -34,9 +34,14 @@ def test_the_terminal_state_rule():
 
 
 def test_episode_selections():
-    assert rules.selected_episodes({"mode": "all"}, 4) == [0, 1, 2, 3]
-    assert rules.selected_episodes({"mode": "head", "n": 10}, 4) == [0, 1, 2, 3]
-    assert rules.selected_episodes({"mode": "explicit", "expr": "1,9", "indices": [1, 9]}, 4) == [1]
+    assert rules.selected_episodes({"mode": "all"}, range(4)) == [0, 1, 2, 3]
+    assert rules.selected_episodes({"mode": "head", "n": 10}, range(4)) == [0, 1, 2, 3]
+    assert rules.selected_episodes({"mode": "explicit", "expr": "1,9", "indices": [1, 9]}, range(4)) == [1]
+    # F12.8: a dataset with its own indices (a subset that keeps its source's numbers)
+    own = [2604, 2605, 2606, 3000]
+    assert rules.selected_episodes({"mode": "all"}, own) == own
+    assert rules.selected_episodes({"mode": "head", "n": 2}, own) == [2604, 2605]
+    assert rules.selected_episodes({"mode": "explicit", "expr": "1,3000", "indices": [1, 3000]}, own) == [3000]
     assert rules.max_episodes({"mode": "head", "n": 50}) == 50
     assert rules.max_episodes({"mode": "all"}) is None
 

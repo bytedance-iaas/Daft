@@ -167,6 +167,24 @@ def test_bad_episodes(episodes):
         build_plan(X.preflight(64), ["timestamp_check"], episodes)
 
 
+def test_a_dataset_with_its_own_indices_is_selected_by_them():
+    """F12.8: the preflight's episode_indices (a subset that keeps its source's numbers) are what all
+    and an explicit list pick from; 0..count-1 is not."""
+    from curation.planner import dataset_episodes
+
+    pf = X.preflight(5)
+    pf["dataset"]["episode_indices"] = "2604-2606,3000,3010"
+    schemas.validate("cli/preflight.schema.json", pf)
+    assert dataset_episodes(pf["dataset"]) == [2604, 2605, 2606, 3000, 3010]
+    assert dataset_episodes(X.preflight(3)["dataset"]) == [0, 1, 2]
+    plan(["timestamp_check"], preflight=pf)                                  # all of them
+    plan(["timestamp_check"], preflight=pf, episodes=[2605, 3010])
+    with pytest.raises(PlanError, match=r"episode 0 is not in the dataset's 5 episodes \(2604, 2605, 2606, 3000, 3010\)"):
+        build_plan(pf, ["timestamp_check"], [0, 2605])
+    with pytest.raises(PlanError, match=r"episode 64 is not in 0\.\.63"):
+        build_plan(X.preflight(64), ["timestamp_check"], [64])
+
+
 # ---------------------------------------------------------------- autolabel
 
 def test_autolabel_only_with_unlabeled_episodes_and_task_success():

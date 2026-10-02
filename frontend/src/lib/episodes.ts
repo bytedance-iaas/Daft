@@ -51,10 +51,24 @@ export function toggleInExpr(expr: string, index: number): string | null {
 
 export type EpisodeMode = 'all' | 'head' | 'explicit';
 
+/** The dataset's own indices: the preflight's ``episode_indices`` (written when they are not 0..total-1, F12.8). */
+export function ownIndices(expr: string | null | undefined): Set<number> | null {
+  if (!expr) return null;
+  const p = parseForDisplay(expr, null);
+  return p.ok ? p.indices : null;
+}
+
+/** What an expression picks: the indices that are the dataset's own when it has them, else those in 0..total-1. */
+export function pickedIndices(expr: string, total: number | null | undefined, own?: Set<number> | null): DisplayParse {
+  if (!own) return parseForDisplay(expr, total);
+  const p = parseForDisplay(expr, null);
+  return p.ok ? { ok: true, indices: new Set([...p.indices].filter((i) => own.has(i))) } : p;
+}
+
 /** How many episodes a selection covers, for the counter and the footer; null = unknown. */
-export function selectionCount(mode: EpisodeMode, headN: number | undefined, expr: string, total: number | null | undefined): number | null {
+export function selectionCount(mode: EpisodeMode, headN: number | undefined, expr: string, total: number | null | undefined, own?: Set<number> | null): number | null {
   if (mode === 'all') return total ?? null;
   if (mode === 'head') return headN ? (total ? Math.min(headN, total) : headN) : 0;
-  const p = parseForDisplay(expr, total);
+  const p = pickedIndices(expr, total, own);
   return p.ok ? p.indices.size : null;
 }

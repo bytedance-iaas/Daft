@@ -92,7 +92,9 @@ def module_choices(items: list) -> list[tuple[str, dict | None]]:
     return out
 
 
-def episode_selector(sel: dict, episode_count: int | None) -> dict:
+def episode_selector(sel: dict, available: list[int] | None) -> dict:
+    """The selector to store; an explicit list is checked against the dataset's own indices
+    ``available`` (the preflight's ``episode_indices``, else 0..count-1; None: no preflight)."""
     mode = sel["mode"]
     if mode == "all":
         return {"mode": "all"}
@@ -109,9 +111,9 @@ def episode_selector(sel: dict, episode_count: int | None) -> dict:
         raise _bad("episode 表达式里没有任何编号", "episodes.expr")
     if len(indices) > _MAX_EXPLICIT_EPISODES:
         raise _bad(f"一次最多指定 {_MAX_EXPLICIT_EPISODES} 条 episode", "episodes.expr")
-    if episode_count is not None:
+    if available is not None:
         try:
-            episode_select.reconcile_episodes(indices, range(episode_count))
+            episode_select.reconcile_episodes(indices, available)
         except episode_select.EpisodesOutOfRange as err:
             raise _bad(str(err), "episodes.expr") from None
     return {"mode": "explicit", "expr": expr, "indices": sorted(indices)}
@@ -207,10 +209,17 @@ def _availability(preflight: dict | None) -> dict[str, dict]:
     return {m["id"]: m for m in preflight.get("modules") or [] if isinstance(m, dict) and "id" in m}
 
 
-def _episode_count(preflight: dict | None) -> int | None:
+def _episode_indices(preflight: dict | None) -> list[int] | None:
+    """The dataset's own episode indices, or None without a usable preflight."""
+    from curation.planner import PlanError, dataset_episodes
+
     ds = preflight.get("dataset") if isinstance(preflight, dict) else None
-    count = ds.get("episode_count") if isinstance(ds, dict) else None
-    return count if isinstance(count, int) else None
+    if not isinstance(ds, dict) or not isinstance(ds.get("episode_count"), int):
+        return None
+    try:
+        return dataset_episodes(ds)
+    except PlanError:
+        return list(range(ds["episode_count"]))
 
 
 @dataclass
@@ -314,9 +323,9 @@ def resolve_config(repo: P.Repository, settings: Settings, task: P.Task, body: d
             raise ApiError("preflight_expired", details={"preflight_id": body["preflight_id"]})
         out.fields["preflight"] = preflight
     if "episodes" in body:
-        out.fields["episode_selector"] = episode_selector(body["episodes"], _episode_count(preflight))
+        out.fields["episode_selector"] = episode_selector(body["episodes"], _episode_indices(preflight))
     elif "preflight_id" in body and task.episode_selector.get("mode") == "explicit":
-        episode_selector(task.episode_selector, _episode_count(preflight))   # still in range?
+        episode_selector(task.episode_selector, _episode_indices(preflight))   # still in the dataset?
 
     if "embodiment_id" in body:
         out.fields["embodiment_id"] = body["embodiment_id"]

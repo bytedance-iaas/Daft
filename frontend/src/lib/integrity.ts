@@ -4,6 +4,7 @@
 // report / preflight); keys this page does not know are still shown, readably.
 import type { Report, Task } from '../api/types';
 import { zh } from '../locales/zh';
+import { parseForDisplay, toExpr } from './episodes';
 import { bytes } from './format';
 import { fieldLabel, readable } from './reportView';
 
@@ -59,12 +60,21 @@ function formatValue(f: unknown, validation: unknown[]): string {
   return `${name}${validation.length ? P().formatIssues : P().formatOk}`;
 }
 
+/** The first n of the dataset's own indices (``episode_indices``, when they are not 0..count-1), as ep text. */
+function headRange(dataset: Record<string, unknown>, n: number): string | undefined {
+  const own = dataset.episode_indices;
+  if (typeof own !== 'string' || !own) return undefined;
+  const p = parseForDisplay(own, null);
+  if (!p.ok) return undefined;
+  return toExpr([...p.indices].sort((x, y) => x - y).slice(0, n)).replace(/-/g, '–');
+}
+
 function episodesValue(report: Report, task: Task | undefined, dataset: Record<string, unknown>): string {
   const c = report.overview.counts;
   const count = typeof dataset.episode_count === 'number' ? dataset.episode_count : null;
   const sel = task?.episodes;
   let scope: string;
-  if (sel?.mode === 'head') scope = P().episodesHead(sel.n);
+  if (sel?.mode === 'head') scope = P().episodesHead(sel.n, headRange(dataset, sel.n));
   else if (sel?.mode === 'explicit') scope = P().episodesExplicit(sel.expr, c.total);
   else if (sel?.mode === 'all') scope = P().episodesAll(c.total);
   else scope = P().episodesChecked(c.total);
