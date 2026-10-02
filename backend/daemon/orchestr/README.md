@@ -158,8 +158,8 @@ c -X POST $B/credentials -d '{"name":"out-key","access_key_id":"AK","secret_acce
    ```
 
    201，`state` 是 `queued`。记下 `T=<id>`；`c $B/tasks/$T` 里的 `dataset_id` 说明数据集顺带登记了。
-3. **看它跑**：`curl -N -u demo:demo-pass localhost:18080/curation/events/tasks/$T` 能看到 `state`、`progress`（numeric → frame →
-   verdict → dedup → final → report → export → verify）、`log`、最后的 `done`；`c $B/tasks/$T/logs?limit=20` 是各档的日志；
+3. **看它跑**：`curl -N -u demo:demo-pass localhost:18080/curation/events/tasks/$T` 能看到 `state`、`progress`（CPU 块的 numeric → frame →
+   dedup，没有判决档；两块都做完后 final → report → export → verify）、`log`、最后的 `done`；`c $B/tasks/$T/logs?limit=20` 是各档的日志；
    `c $B/tasks/$T/plan` 是执行计划。十几秒后 `c $B/tasks/$T` 是 `succeeded`，`result_rev` 1，`summary.total` 8。
 4. **交付**：`ls $D/tos/deliveries/mini/*/` 有 `_COMPLETE`、`revisions/r0001/commit.json`、`export/`；`cat $D/tos/deliveries/mini/latest`
    是这个任务的 `run_id`。
