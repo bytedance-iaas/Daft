@@ -1,11 +1,14 @@
 # 16 回归测试样本集
 
-> 状态：**v1.1，样本集 v1 已定稿**（2026-10-01 修订后重新冻结；v1.1 只加了阶段 12 平台的实跑结果，样本集不变）。独立审计（2026-10-01）核实后的意见由需求方确认采纳，v1 按 §17 修订、
+> 状态：**v1.2，样本集 v1 已定稿**（2026-10-01 修订后重新冻结；v1.1 只加了阶段 12 平台的实跑结果，v1.2 只加了与 Pantheon Argus 的比对（§18），样本集不变）。独立审计（2026-10-01）核实后的意见由需求方确认采纳，v1 按 §17 修订、
 > G1 拿不准的 20 条由需求方定完后重新冻结；交付说明见飞书文档《质检回归样本集 v1 · 交付说明》。
 > 口径：候选数据集的元数据来自 HuggingFace 的卡片、元数据文件与文件列表。标了「实测」的结论，是把样本下载到工作区、
 > 在平台 `1b30fb224` 这一版上跑出来的；只跑了不用模型的五个模块（数据完整性含逐帧解码、时间戳、运动质量、视觉质量、视频-动作同步，
 > 规格库里有的本体加运动学极限），任务成败与技能画像没有跑（没配模型后端）。没标「实测」的平台现状是照代码和已有测试写的。
 > 阶段 12 的平台（`249e172cd`：发现、策略判决、两块并行）在两个评测集上的全量实跑与 gap 见 §3.11，同样没有跑模型。
+
+v1.2 相对 v1.1（2026-10-02，读了 Pantheon《Argus》原文、代码与看板之后）：样本集与期望不变。§18 是比对：46 类问题对我们的 71 项（2 类我们没有）、
+9 个数据集与我们的交集（237 条）、看板里的检查呈现、MV-2 那 12 条 pending 的定法、能借的代码与做法、处理意见与待办；§2、§7.6、§12.2、§13、§14、§17.5 相应更新。
 
 v1.1 相对 v1.0（2026-10-02，阶段 12，F12.6）：样本集与期望不变。§3.11 是阶段 12 平台的全量实跑与 gap：不用模型的检测逐项与基线相同，
 episode 级的差异来自软分拒绝退役与去重进 CPU 块；§8.4 加了 score 2.0 的读法；§11 加第 13 条。
@@ -134,7 +137,7 @@ tos://curation-robo-anchor/
 |---|---|---|
 | Pantheon《We Looked at the Data》（2026-09-24，中文编译见罗博脉动） | 十八类异常，每类一条配图的具体 episode | 高：逐条人工看过 |
 | Pantheon 开源的四份逐集清单（HuggingFace `sambhav-pantheon/*_pantheon_annotated`） | 四个数据集每条 episode 的标记、逐帧掩码、判定阈值 | 中：规则自动打的，原文承认有误报 |
-| Pantheon《We Looked at Everything》的标注发布包 `labels-2026-09-28`（GitHub `Pantheon-Industries-Inc/robot-data-audit`） | 九个数据集 3,546 条 episode 的逐条语义标注：成败与达成 / 撤销时刻、指令是否相符、数据问题（类别、严重度、时刻、证据文字）、操作失误、动作事件与分步、确定性检查（相机文件对调、记录跳变、夹爪通道恒定、时间比例） | 中：模型（gpt-6-astra）打的，带定位证据；确定性检查可以由我们复算；26 条 gate 用例是发布方逐帧核过的 |
+| Pantheon《We Looked at Everything》的标注发布包 `labels-2026-09-28`（GitHub `Pantheon-Industries-Inc/robot-data-audit`；流水线 Argus 于 2026-10-01 开源，GitHub `Pantheon-Industries-Inc/argus`，§18） | 九个数据集 3,546 条 episode 的逐条语义标注：成败与达成 / 撤销时刻、指令是否相符、数据问题（类别、严重度、时刻、证据文字）、操作失误、动作事件与分步、确定性检查（相机文件对调、记录跳变、夹爪通道恒定、时间比例） | 中：模型（gpt-6-astra）打的，带定位证据；确定性检查可以由我们复算；26 条 gate 用例是发布方逐帧核过的 |
 | 数据集自带的标签 | 成败、评分、分步标注、逐帧的失败区间与接管模式、发布者的更正说明 | 高 |
 | 需求方对着行业标准整理的 16 个检测项 | 要测什么 | — |
 | 在工作区里量出来的读数 | 冻结、亮度、动作步长、深度空洞等 | 高，但只在结论明确时才当期望值用 |
@@ -630,7 +633,7 @@ G07 旁边的 673 和 G07 一样暗；G06 的邻居也有大量重复帧。对�
 | 批次 | 内容 | 卡在哪 |
 |---|---|---|
 | 第二批 a | 已建成（§7.4）：FastUMI 133 条（31 个任务子集，其中 3 个与第一批合并）、RealOmin 101 条（13 个子集）；确定性检查已由我们复算 | 平台实测跑完后回写 §3 |
-| 第二批 b | MolmoAct2 的 294 条 `sped_up_recording`（按共用文件挑 2–3 个文件）、25 条达成后撤销；Galaxea 10 失败 + 23 撤销（进 `anchor-nc`）；HABIT（CC BY 4.0，v2.0，隐私模糊遮住目标物、夹爪恒定）；B7 的 G16；B2 的 G10；S1 mcap 深度；Lance；S6；E3/E4；F1–F4 | 不卡，接着做 |
+| 第二批 b | 按 §18.6 的顺序：①第二批 a 的 234 条上 Argus 标的时刻人工核（TASK-10 5、TASK-11 9、TASK-8 12、IMG-12 4、TASK-5 失败 96、LABEL-5 中高 81 处）；②MV-2 的 12 条按像素规则定（§18.4）；③MolmoAct2 的 294 条倍速（搬 Argus 的判据后是 measured；按共用文件挑 2–3 个文件）与 25 条达成后撤销；④HABIT（CC BY 4.0，v2.0；自带失误 / 接管 / 高加加速度区间，12 条脱敏模糊，场景里的人是对照）；⑤Galaxea 10 失败 + 23 撤销（进 `anchor-nc`）；其余照旧：B7 的 G16、B2 的 G10、S1 mcap 深度、Lance、S6、E3/E4、F1–F4 | 不卡；①②④要人看，等需求方定（§14） |
 | 第三批 | 已建成（§7.5）；第二轮注入：mcap 基底（GenRobot 对照）上的截断 / CRC / 半速 topic，FastUMI 基底上的动作空间故障（米制）与标注互换 | 不卡 |
 | 第四批 | 第二批标注里 `priority=other` 的条目（模型标注、无确定性检查）按类别分层抽样，人工复核后入库 | 要人看 |
 | 模型 | 任务成败、技能画像 | 需求方定：样本集定稿后跑一次全量 |
@@ -915,6 +918,12 @@ episode 级（平台 drop 对期望 defective）：precision 0.79、recall 0.097
 用法：确定性检查复算一致的直接写 measured；其余写 `auto_label` 进 `external`，抽样人工核过的转成 `human`。gate 用例（26 条，发布方逐帧核过）
 按 `article` 同级处理，仍逐条在源数据上复核。`scripts/pantheon2_candidates.py` 把 3,546 条映射成候选（`work/pantheon2/candidates.jsonl`）。
 
+2026-10-02 补：这套标注的流水线以 Argus 之名开源了（§18）。按原始标签统计：`data_issues.category` 41 种、`operator_mistakes.category` 27 种（模型可以自造标签，
+看板用 `board/tag_names.json` 归并成 25 个数据问题家族、21 种失误名）；`goal_alignment.relation` aligned 2,840 / narrower 275 / different 207 / broader 109 / unrelated 3；
+`completion.task_completed` success 2,862 / failure 322 / success_then_undone 53 / unclear 11（298 条第一视角片段没有单一结论）；确定性检查命中：相机配对 FastUMI 14，
+记录跳变 FastUMI 29、RealOmin 12，夹爪恒定 FastUMI 16、RealOmin 17，倍速 MolmoAct2 294。每条问题还带 `verified` / `verified_by`（发布方按帧核过的标 `confirmed`）、
+`counted`（是否计入看板总数）与 `family`。原文给的总数：27% 的条目至少有一个中高级问题；有指令的 8 个数据集里 20% 指令与画面不完全相符（14% 中高级）。
+
 
 ## 13. 同类工具（参照）
 
@@ -924,6 +933,7 @@ episode 级（平台 drop 对期望 defective）：precision 0.79、recall 0.097
 | [RDA](https://github.com/liesliy/rda) | 三层 13 项 | 投毒配方：整条清空、状态里 15 帧 NaN、后半段时间戳倒序、整条冻结在首帧、随机复制 5 帧追加到末尾 |
 | [score_lerobot_episodes](https://github.com/RoboticsData/score_lerobot_episodes) | 五个维度打分 | 可以比排序 |
 | [RoboMIND-dataset-utils](https://github.com/Open-X-Humanoid/RoboMIND-dataset-utils) | RoboMIND 官方的质量扫描 | B7 上现成的结论 |
+| [Argus](https://github.com/Pantheon-Industries-Inc/argus)（Pantheon，Apache-2.0；看板 [data-board](https://pantheon.inc/data-board)） | 模型稠密标注（时间轴、成败、指令相符、失误与恢复、数据问题）加 4 个确定性检查和 38 条 capture 检查；46 类问题；126 条门禁 | 倍速判据（`checks/timebase.py`）、标签自洽规则（`checks/label_consistency.py`）、每条上「检查不适用 + 原因」的呈现、提示词做法；它的标注只做交叉比（§18） |
 
 ## 14. 还要需求方定的
 
@@ -931,6 +941,12 @@ v1 定稿时已定：复核结论（A 组为平台问题，本期不修，F11.7 
 
 1. 合成注入第二轮（mcap 基底、FastUMI 米制动作空间、标注互换，每种故障补到 2 明显 + 2 临界）放进 v2 还是另做。
 2. ~~平台结果到检测项的对照表与打分脚本~~：已完成（§8.4），CI 跑它的测试；样本集上的全量评测（带模型模块）等需求方在质检台跑。
+3. **分类表 1.2**（§18.6）：新增 IMG-13「任务物体 / 末端出画」、IMG-14「脱敏模糊遮住任务物体」，TASK-12 加子类词表与「是否恢复」，LABEL-5 加指令与实际的「关系」。
+   分类表现在是契约 C6，改了要升版本、刷新锁。
+4. **MV-2 的 12 条**：Argus 的检查显示这 12 条夹爪通道全恒定，原定的「夹爪开合与通道对应」证据不存在；改按像素规则（另一只夹爪出现在哪一侧）看首末帧定（§18.4）。
+   v1 已冻结，结论进 v2。
+5. **第二批 b 的人工部分**（§7.6 ①②④）：234 条上约 200 个时刻、12 条 MV-2、HABIT 的抽样，要需求方看，或同意我们看了写 `viewed`。
+6. **HABIT 入不入 `anchor`**；三个第一视角数据集不进（§18.3）。
 
 ## 15. 工作区与复现
 
@@ -1050,9 +1066,182 @@ Astra-6 那份是「交付合同」：目录形态、三份 JSON Schema、51 项
 
 ### 17.5 还没做的
 
-- MV-2 的 12 条要更强的证据（夹爪开合与通道的对应）才能定，记为 pending，留到 v2。
+- MV-2 的 12 条要更强的证据（夹爪开合与通道的对应）才能定，记为 pending，留到 v2。**2026-10-02 补**：Argus 的检查显示这 12 条夹爪通道全恒定，那层证据不存在；改按像素规则定（§18.4）。
 - 审计列的其余空白项：STRM-9、IMG-3、IMG-12、MV-3、MV-5、ACT-6、TASK-2/3/8/10/11、LABEL-1/2、SET-3/5/6，以及对照项 FILE-9、STRM-8、IMG-11、ACT-9、TASK-9、SET-2。
 - 平台侧（F11.7）：开头缺关键帧应报成解码问题、FILE-10 的任务编号与帧号检查、FILE-8 的元数据对照、原始 topic 的时间检查、AV-5。
+
+## 18. 与 Pantheon《Argus》（2026-10-01）及其看板的比对
+
+Pantheon 2026-10-01 发表《Argus: An Open-Source Annotator for Robotics Data》（中文编译见微信《Argus：机器人数据的开源标注工具》），把 §2、§7.4、§12.2 用过的那套
+3,546 条标注（`labels-2026-09-28`）背后的流水线开源了（GitHub `Pantheon-Industries-Inc/argus`，代码 Apache-2.0，标注 CC BY 4.0），看板在 `pantheon.inc/data-board`，
+自己的数据可以在 `data.pantheon.inc/review` 上跑。标注我们已经用过（第二批 a 的 234 条按它选），新的是三样：代码（确定性检查、提示词、126 条门禁用例、看板）、
+46 类问题的整理口径、逐数据集的统计数字。本节是 2026-10-02 读原文、翻代码、进看板之后的比对，处理意见在 §18.6；需求方还没有定。
+
+### 18.1 它做什么
+
+- 输入 LeRobot v2.0 / 2.1 / 3.0、mcap、普通视频及其压缩包；三种装置（rig）：遥操作双臂、手持 UMI、人类第一视角。每个公开数据集一个适配器（`prepare/`），自己的数据走通用读取器。
+- 模型（推荐 GPT-6 Astra，换模型不改代码）看多机位网格帧：遥操作每 1.5 s 一帧、UMI 每 1 s、第一视角每 0.5 s，加首末帧；先用小模型按任务文字判断要不要高分辨率
+  （224 / 448 px），夹爪开合时刻另给接触视图。输出稠密时间轴（每步标推进 / 无效 / 空闲）、关键事件、成败与目标帧（success / success_then_undone / failure / partial / unclear）、
+  指令与实际的关系（aligned / narrower / broader / different / unrelated）、操作失误与恢复、数据问题（类别、低中高严重度、时刻、证据文字、可见的相机）。
+- 确定性检查与模型并行、不进提示词（`checks/`）：相机配对 `stream_pairing`、位姿单帧跳变而自身相机无对应 `recorded_jumps`、夹爪通道恒定 `gripper_channels`、
+  倍速录制 `timebase`，加上《We Looked at the Data》的 38 条 capture 检查（§12 对过的第一批规则，vendored 自 public-dataset-adapter，按装置各有阈值）；
+  另有 `label_consistency` 查模型标签自相矛盾（10 条规则）。
+- 规模与成本：9 个数据集 3,546 条、66.5 小时；每小时录像约 26 美元（遥操作）/ 30（UMI）/ 19（第一视角）；共 153,213 个事件，每分钟 38 个。
+  门禁 126 条（遥操作 43、手持 58、第一视角 25），其中 26 条是按帧核过的事实用例（`gate/cases.json`：1346 积木、8276 polo 衫、Prepare_tableware 32 条叉子等）；
+  当前流水线过 19/22、36/36、6/7。
+- 五模型对比（同样 193 条、同样提示与帧）：成败结论一致率 Opus 5.5 与 Astra 96%、GPT-6.1 Sol 95%、GPT-6 Sol 84%、DeepSeek v4.1 flash 73%；
+  每分钟事件数 Astra 44.3、GPT-6.1 Sol 42.6、GPT-6 Sol 23.9、Opus 5.5 17.9、DeepSeek 15.3；成本是 Astra 的 34% / 20% / 19% / 4%。
+  给一份完整的 Astra 标注做上下文学习，事件密度只多 4%–9%。
+
+### 18.2 分类表：46 类对我们的 71 项
+
+标注包里 `data_issues.category` 有 41 个原始标签、`operator_mistakes.category` 27 个（模型可以自造），看板用 `board/tag_names.json` 归并成 25 个数据问题家族和
+21 种失误显示名；`scripts/pantheon2_candidates.py` 的 `CAT_ITEM` 已把 41 个原始标签映射到我们的项。按家族对：
+
+| Argus 的家族 | 我们的项 | 说明 |
+|---|---|---|
+| 指令 / 标注与画面不符 | LABEL-5（分步时间标注错 → TASK-1） | 它多一层「关系」（aligned / narrower / broader / different / unrelated），我们是二分；严重度按对训练的影响 |
+| 录像快于真实时间 | STRM-9 | 我们 0 样本、平台没查；它有校准过的判据（§18.5） |
+| 记录的运动与画面不符；大动作无相机运动 | AV-3、AV-4 | 一致 |
+| 长时间空闲 | TASK-8 | 我们定义里已含「长时间发呆不动」 |
+| 达成后被破坏 | TASK-10 | 一致；我们 0 样本 |
+| 位姿单帧跳变、画面没有；位姿跳出又跳回 | ACT-2、ACT-5 | 一致，第二批 a 已复算 |
+| 夹爪记录恒定 | ACT-3 | 一致 |
+| 有人改变场景；他人操作同一物体 | TASK-11 | 一致；我们 0 样本 |
+| 相机文件互换；相机不在描述的位置 | MV-2 | 一致 |
+| 视频起止在任务中间 | STRM-5 / TASK-1 | 它是语义上的掐头去尾，我们 STRM-5 只看长度：部分对上 |
+| 相机被转开、遮住；中途装置改变 | IMG-12、IMG-8 | 一致 |
+| 画面冻结 / 丢失；相邻帧重复；相机冻结 | IMG-1、STRM-2 | 一致 |
+| 缺指令；过暗过亮 | LABEL-3；IMG-2 | 一致 |
+| 刻度 / 显示屏读不清；细节不足 | IMG-4、FILE-7 | 它说的是「分辨率够不够这个任务」：部分对上 |
+| **任务物体离开所有相机视野** | 没有（`CAT_ITEM` 现在归到 IMG-8） | 遮挡≠出画：东西没被挡，是没拍到；平台的查法也不同（跨机位追踪 vs 遮挡检测）。MolmoAct2 0.78%、Galaxea 0.45%；S6 的 DROID 末端出画条目正是它的样本 |
+| **脱敏模糊遮住任务物体** | 没有（SET-5 是数据集级的「有没有人脸」，IMG-8 是物理遮挡） | 预处理造成的缺陷，归因是预处理而不是采集。HABIT 3.8%（12 / 315，11 条低严重度） |
+
+21 种操作失误：我们是一项 TASK-12（现象），它分「重试类」（repeated attempts、missed grasp / placement / insertion / rotation、wasted motion、long pause、collision、
+misaligned placement）和「改变结果类」（dropped、knocked、spilled、task left unfinished、undid its own result）。其中 task left unfinished 对我们是 TASK-5、
+undid its own result 是 TASK-10、long pause 是 TASK-8、food hygiene 不在范围。G1 数据集自带的五类（滑脱、碰撞、没抓到、放偏、朝向不对）与它的
+slipped_grasp / collision / failed_grasp / failed_placement / failed_rotation 一一对应，可以统一成一套子类词表；它还记每次失误是否恢复（`recovered_at_s`）。
+
+我们有、它没有的：FILE-1 到 FILE-10 全部（文件结构、解码、索引、元数据）、STRM-3 / 4 / 6 / 7 / 8、IMG-3 / 5 / 6 / 7 / 9 / 10 / 11、MV-1 / 3 / 5、
+ACT-1 / 4 / 5 / 6 / 8 / 9、AV-1 / 2 / 5、TASK-2 / 3 / 6 / 7 / 9、LABEL-1 / 2 / 4、SET-1 到 SET-6。它随行的 38 条 capture 检查能补其中一部分（STRM-3 / 4、IMG-2 / 3、
+FILE-4 / 5 / 6、STRM-1 / 5、MV-3、ACT-1 / 5），但不在 46 类里，也没有「对照项」的概念（只有门禁里的干净用例）。
+
+严重度：它按「对训练的破坏」定低 / 中 / 高，再用「数据问题或改变结果的失误 ≥ 中、或任何高」判是不是 problem，低的只显示为 minor；
+我们是 kind（defect / phenomenon / reference / control）加平台策略（blocking / review / info）。两边等价，不换。它的 `verified_by: frames` 相当于我们的 `viewed` / `human`。
+
+### 18.3 数据集：9 个里 5 个重合，交集 237 条
+
+| 数据集 | Argus 标注 | 我们已入库 | 交集 |
+|---|---|---|---|
+| MolmoAct2（A2） | 1,284 条 / 25.1 h，34 个任务 | `anchor` 4 条 | 0 |
+| ABC-130k（A4） | 183 条 / 5.5 h，每任务 1 条 | `anchor` 4 条 | 1（episode 1：成功，一次掉落） |
+| Galaxea（B8） | 222 条 / 5.7 h，111 个采集各 2 条 | `anchor-nc` 59 条 | 2（都是干净的成功） |
+| HABIT（新） | 315 条 / 5.0 h，每任务 5 条 | — | — |
+| FastUMI（A1） | 964 条 / 4.8 h，每任务 32 条 | `anchor` 156 条 | 133（第二批 a 全部；第一批的 23 条不在它的抽样里） |
+| RealOmin（A3） | 280 条 / 5.5 h | `anchor` 119 条 | 101（第二批 a 全部；第一批的 18 条不在） |
+| Egocentric-100K、Gen-HumanEgo、OpenAoE | 112 / 79 / 107 条 | 不进：人类第一视角视频，没有机器人状态，不是平台的输入范围（同 §16 对通用来源的处理） | — |
+
+第二批 a 的 234 条上，它的判断都在 `external.pantheon_part2` 里当 `auto_label`、不进指标（v1 定稿时定的）：TASK-5 失败 96、成功 133、达成后撤销 5
+（lace_up_shoes 3、zip_clothes 2）；LABEL-5 86 处（高 55、中 26、低 5；35 处发布方按帧核过）；TASK-8 12；TASK-11 9（human_intervention 3、scene_reset 6）；
+IMG-12 4（都是 setup_change）；操作失误 19（没做完 12、反复尝试 4、放偏 / 抓空 / 多余动作各 1）。确定性检查的 ACT-2 41、ACT-3 33、MV-2 15 我们已复算成 measured。
+而 `anchor` 的 coverage 里 TASK-8 / TASK-10 / TASK-11、IMG-12、STRM-9 的 present 都是 0——这些项的样本其实已经在库里，差的是人看一眼。
+
+它公布的逐数据集占比（占该数据集标注条数；— 是没检出）：
+
+| 问题 | MolmoAct2 | ABC-130k | Galaxea | HABIT | FastUMI | RealOmin |
+|---|---|---|---|---|---|---|
+| 指令 / 标注与画面不符 | 25% | 8.2% | 26% | 7.3% | 13% | 13% |
+| 录像快于真实时间 | 11%（全量 3,536 / 32,246） | — | — | — | — | — |
+| 记录的运动与画面不符 | 0.16% | — | 0.45% | 1.6% | 6.0% | 6.8% |
+| 长时间空闲 | 1.0% | — | 0.90% | 3.5% | 0.21% | 7.1% |
+| 达成后被破坏 | 1.9% | — | 10% | — | — | 1.8% |
+| 位姿跳变、画面没有 | — | — | — | — | 3.0% | 4.3% |
+| 夹爪记录恒定 | — | — | — | — | 1.7% | 6.1% |
+| 有人改变场景 | 0.31% | — | 1.4% | — | 0.10% | 2.5% |
+| 相机文件互换 | — | — | — | — | 1.5% | 0.36% |
+| 任务物体出画 | 0.78% | — | 0.45% | — | — | — |
+| 视频起止在任务中间 | — | 0.55% | — | — | 0.21% | 0.71% |
+| 脱敏模糊遮住任务物体 | — | — | — | 3.8% | — | — |
+| 相邻帧重复 | — | 1.6% | — | 0.32% | — | — |
+| 有失误却当完美演示发布 | 5.5% | 6.6% | 3.6% | — | 0.62% | 2.1% |
+
+总体：27% 的条目至少有一个中高级问题；有指令的 8 个数据集里 20% 指令与画面不完全相符（14% 中高级）。
+
+**HABIT**（`configinc/HABIT`，CC BY 4.0，不用申请）：双臂 Franka FR3、Quest 3 遥操作，LeRobot v2.0 一条一个文件，3 路相机，状态是末端位姿加夹爪；
+自带 `task_status`、`is_error_segment`、`is_intervention_segment`、`is_high_jerk_segment`、`human_role_subtask_index`、`low_level_task_index`（人和机器人各自的分步，
+踏板打点）。每条里都有人在工作区（协作者 / 同事 / 监督者三种角色，是任务设计）。对我们的价值：ACT-7 人工接管（现在 0 样本，C1 只能内部用）、TASK-12 失误区间、
+ACT-1 高加加速度段、TASK-1 分步时间、12 条脱敏模糊；而「场景里有人」天然是 TASK-11 的对照——平台不该把它报成外部干预。
+
+### 18.4 看板里看到的
+
+看板（`board/`，静态构建）的结构：9 个数据集页签（条数、时长）；「Labels by」切到 Opus 5.5 / GPT-6 Sol / DeepSeek / GPT-6.1 Sol 的标注；按数据集的总览
+（有数据问题 / 有操作失误的条数，按家族计数，默认只算中高级：MolmoAct2 517 / 1,284 有数据问题，其中倍速 294、指令不符 259、达成后撤销 25；FastUMI 141 / 964，
+指令不符 75、运动与画面不符 58、位姿跳变 29、夹爪恒定 16、相机互换 14）；条目列表带成败徽章（success / failure / failure, partly done / success then undone）、
+问题数与一句证据，筛选后可下载 JSON Lines，单条可下 JSON（就是我们本地那份标注包）。
+
+条目详情：各机位视频带「到目标的进度」、关键事件、成败与成功判据、目标帧、执行质量评语；**Problems**（确定性检查的命中带读数，如配对相关 r = 0.711 对 0.342；
+模型报的数据问题带严重度、时刻、证据）；**Checks** 列出每条上跑过的每个检查——它自己的 3–4 个加 38 条 capture 检查（分 Structure / Grippers / Clocks / Video / Motion /
+Pipeline），每个标 fired / clear / **not applicable 并写原因**（「帧时间是 frame_index / fps 算的，数据集没带采集时钟」「没有末端位姿，关节遥操作没有正运动学」
+「夹爪单位未核实」）；再往下是物体状态变化、物体关系、场景清单、给定指令对模型自己的判断、成本 / 耗时 / token、稠密时间轴。
+
+**MV-2 的 12 条 pending 可以定了。** 12 条全在它的 964 条里：配对检查全判 crossed，读数与我们量的一致；**夹爪通道全恒定**，所以 §17.5 等的那层
+「夹爪开合与通道的对应」证据在这 12 条上不存在。它用的决定性证据是像素：左流里另一只夹爪出现在画面左侧、右流里出现在右侧，说明名字反了。
+
+| 条目（`lerobot_v21/fastumi_*`） | 本侧 左 / 右 | 对侧 左→右 / 右→左 | 夹爪恒定 | 模型（严重度） | 发布方按帧核过 |
+|---|---|---|---|---|---|
+| arrange_toothbrush:3236 | 0.18 / 0.24 | 0.79 / 0.86 | 是 | camera_identity_mismatch（高） | 否 |
+| arrange_toothbrush:3539 | 0.14 / 0.25 | 0.80 / 0.75 | 是 | 同上（高） | 否 |
+| arrange_toothbrush:3736 | 0.01 / 0.12 | 0.83 / 0.70 | 是 | 同上（高） | 是 |
+| arrange_toothbrush:3793 | 0.06 / 0.13 | 0.85 / 0.80 | 是 | 同上（高） | 是 |
+| arrange_toothbrush:3877 | 0.27 / 0.24 | 0.78 / 0.66 | 是 | 同上（高） | 是 |
+| dispose_of_desktop_debris:475 | 0.05 / 0.02 | 0.68 / 0.86 | 是 | camera_stream_swap（高） | 是 |
+| dispose_of_desktop_debris:614 | −0.14 / −0.15 | 0.77 / 0.85 | 是 | 同上（高） | 是 |
+| fold_the_jeans:2696 | 0.03 / 0.06 | 0.76 / 0.71 | 是 | camera_identity_mismatch（高） | 是 |
+| fold_the_jeans:2790 | 0.27 / 0.35 | 0.76 / 0.73 | 是 | 没报 | — |
+| fold_the_t_shirt:2711 | 0.28 / 0.23 | 0.68 / 0.70 | 是 | 同上（高） | 否 |
+| fold_the_t_shirt:2774 | 0.29 / 0.12 | 0.75 / 0.65 | 是 | 同上（中） | 是 |
+| fold_the_t_shirt:2924 | 0.10 / 0.19 | 0.55 / 0.65 | 是 | 同上（高） | 否 |
+
+做法：按像素规则看每条两路的首末帧，结论写 `viewed`（拿不准的交需求方，写 `human`）；v1 已冻结，结论进 v2（§14 第 4 条）。
+
+### 18.5 能借什么
+
+| 它的 | 用在哪 |
+|---|---|
+| `checks/timebase.py` 倍速判据：主从臂延迟 ≤ 3.4 帧（30 fps，约 113 ms），且跳 / 重复样本 ≥ 2%，且同任务相邻 3 条的中位延迟 ≤ 3.4 帧；41 条人看过的上 15 / 19 命中、0 误报 | `make_truth.py`：有 leader / follower 的数据集（MolmoAct2、ABC-130k）上 STRM-9 写 measured；平台 F11.7 加检查 |
+| `checks/label_consistency.py` 10 条规则：成功却说做的是别的任务、撤销时刻不晚于达成时刻、失败却进度到 1.0…… | `validate_set.py` 加 TASK-5 / TASK-10 / LABEL-5 之间的一致性检查 |
+| `checks/stream_pairing.py` | §12.2 已复算过（13 条一致、0 误报）；MV-2 的最后一步它也说要看像素（§18.4） |
+| 每条上每个检查「不适用 + 原因」 | 平台报告：模块没判时写清缺什么（没时钟、没本体规格、没状态量、没正运动学），打分能区分「没查」和「查了没事」。现在只有 `assessed_share` 一个数 |
+| 提示词做法：相机安装方式进提示、物体状态变化要跨机位确认（1346 腕部相机动造成的「积木翻转」误判）；指令里的物体当待核实的断言、先描述特征再命名（8276 polo 衫 vs 长裤，Prepare_tableware 叉子 vs 筷子）；按任务文字选 224 / 448 分辨率，夹爪开合时刻给接触视图，首末帧高清；v3 合并 mp4 用整数 PTS 切条目；长条目在低运动处切段 | 设计 13 的 task_success；PTS 那条与我们 FILE-10 / 开头缺关键帧是同源问题 |
+| 五模型对比 | 我们只要成败和镜头缺陷、不要稠密时间轴，便宜模型够用；F11.6 全量跑时拿 234 条的 Argus 结论做交叉比 |
+| `board/`（Apache-2.0，吃每条一个 JSON） | 可选：以后给样本集配「期望值 + 平台结果 + 证据截帧」的浏览页，改它比再写一个临时页省事 |
+
+### 18.6 处理意见与待办（2026-10-02，待需求方确认）
+
+**采信并改**
+
+1. 分类表 1.2：新增 IMG-13「任务物体 / 末端出画（所有机位都看不到）」、IMG-14「脱敏模糊遮住任务物体」（归因预处理）；TASK-12 加子类词表（G1 五类与 Argus 的 retry / outcome
+   两类统一命名）和「是否恢复」；LABEL-5 加「关系」（narrower / broader / different / unrelated）；`aliases` 补 Argus 的家族名。分类表是契约 C6：升版本、刷新锁；
+   coverage / score 对新项无样本记 unknown。
+2. 文档：本节；§2、§7.6、§12.2、§13、§14、§17.5 已改。飞书交付说明不动（样本集 v1 没变）。
+
+**补样本（第二批 b，按这个顺序）**
+
+3. 234 条上 Argus 标的时刻人工核：TASK-10 5、TASK-11 9、TASK-8 12、IMG-12 4、TASK-5 失败 96、LABEL-5 中高 81 处。每条有秒数和证据文字，复用 G1 的复核页，
+   约 200 个点；看完 auto_label 转 human，四个 0 样本的项就有了。
+4. MV-2 的 12 条按像素规则定（§18.4）。
+5. MolmoAct2 的 294 条倍速按共用视频文件挑 2–3 个文件入 `anchor`（搬了判据就是 measured，不用人看），顺带 25 条撤销。
+6. HABIT 入 `anchor`：按三种 segment 分层抽，加 12 条脱敏模糊和对照。
+7. Galaxea 23 条撤销、10 条失败入 `anchor-nc`。
+8. 工具：`make_truth.py` 搬 timebase 判据；`validate_set.py` 加标签自洽规则。
+
+**平台侧（记入 F11.7）**
+
+9. 「不适用 + 原因」逐模块逐条；task_success 的提示词三条（相机安装方式与跨机位确认、指令物体当断言、分辨率路由）；整数 PTS 切条目；STRM-9、MV-2 配对、ACT-3 恒定的确定性检查。
+
+**坚持现状**
+
+10. 不收第一视角数据集；不把 21 种失误拆成独立检测项；不用它的严重度替代 kind 加策略；Argus 标注仍只做交叉比、人看过才算真值（它自己的门禁也只过 19/22、36/36、6/7）。
 
 ## 参考
 
@@ -1065,3 +1254,5 @@ Astra-6 那份是「交付合同」：目录形态、三份 JSON Schema、51 项
 - RoboFAC：<https://arxiv.org/abs/2505.12224>
 - DROID 的标定问题：<https://github.com/droid-dataset/droid/issues/64>
 - RDA 盲测：<https://dev.to/liesliy/i-poisoned-50-episodes-of-lerobots-pusht-dataset-the-audit-tool-caught-40-with-zero-false-963>
+- Argus：原文 <https://pantheon.inc/research/argus>；中文编译 <https://mp.weixin.qq.com/s/MttdEbIP__Y_ApGp5_4ZuQ>；代码 <https://github.com/Pantheon-Industries-Inc/argus>；
+  看板 <https://pantheon.inc/data-board>；HABIT <https://huggingface.co/datasets/configinc/HABIT>
