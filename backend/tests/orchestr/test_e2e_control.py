@@ -120,8 +120,17 @@ def test_pause_then_resume_gives_the_results_of_an_uninterrupted_run(daemon, fak
 
 def test_stop_leaves_no_child_and_continue_repeats_no_finished_work(daemon, fake_vlm):
     d = daemon()
-    fake_vlm.delay_s = 0.15
-    task_id = d.create()["id"]
+    # The blocks run side by side (D57): the VLM block could be done before the CPU block on a loaded
+    # runner (CI, 2026-10-02). So the model gives no judgement until the CPU block is through, then
+    # judges one episode at a time, slowly: the stop lands while the VLM stage has results and runs.
+    judge = "Assess the robot manipulation task"
+    hold = fake_vlm.hold(judge)
+    try:
+        task_id = d.create(params=ONE_AT_A_TIME)["id"]
+        d.wait_for(_in_vlm_stage(d, task_id), what="the CPU block to finish while the VLM stage waits")
+    finally:
+        fake_vlm.delay_s = 0.15
+        hold.set()
     d.wait_for(_in_vlm_stage(d, task_id, results=1), what="the VLM stage to write a result")
     r = d.action(task_id, "stop")
     assert r.status_code == 200 and r.json()["state"] in ("stopping", "stopped"), r.text
