@@ -82,7 +82,7 @@ describe('Episode 明细 of a task of the policy verdicts (design doc 17 §5.4)'
     const { user } = renderApp(`${REPORT}?ep=6#episodes`);
     const findings = await screen.findByTestId('episode-findings');
     const blocking = within(findings).getByTestId('findings-blocking');
-    expect(blocking).toHaveTextContent('任务成败判定');
+    await waitFor(() => expect(blocking).toHaveTextContent('任务成败判定'));   // module names are the registry's
     expect(blocking).toHaveTextContent('TASK-5');
     expect(within(blocking).getByText('可复议')).toBeInTheDocument();
     expect(within(blocking).getByRole('link', { name: '去复议' })).toHaveAttribute('href', `/tasks/${FINDINGS_TASK}/adjudication?tab=appeals&source=task_success`);
@@ -126,9 +126,11 @@ describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
   it('a card per block, the full-set steps on their own row, the closing stages beside the tokens', async () => {
     renderApp(`/tasks/${FINDINGS_TASK}`);
     const cpu = await screen.findByTestId('block-cpu');
-    expect(cpu).toHaveTextContent('CPU 块');
+    // the block's title is the registry's: it shows once GET /modules is in
+    await waitFor(() => expect(cpu).toHaveTextContent('CPU 块'));
     expect(within(cpu).getByTestId('block-cpu-full-set')).toHaveTextContent('去重');
     const vlm = screen.getByTestId('block-vlm');
+    await waitFor(() => expect(vlm).toHaveTextContent('VLM 块'));
     expect(within(vlm).getByTestId('stage-autolabel')).toBeInTheDocument();
     expect(within(vlm).getByTestId('block-vlm-full-set')).toHaveTextContent('技能画像');
     expect(screen.getByText('判决与交付')).toBeInTheDocument();
@@ -142,7 +144,7 @@ describe('任务详情 of a two-block run (design doc 17 §5.3)', () => {
     expect(within(row).getByTestId('module-assessed-task_success')).toHaveTextContent('评估 48 / 选中');
     expect(row).toHaveTextContent('检出 11 条');
     expect(within(row).getByTestId('module-report-task_success')).toHaveAttribute('href', `/tasks/${FINDINGS_TASK}/report?section=task_success`);
-    await user.click(within(row).getByRole('button', { name: /展开：任务成败判定/ }));
+    await user.click(await within(row).findByRole('button', { name: /展开：任务成败判定/ }));
     expect(await within(row).findByTestId('findings-task_success')).toBeInTheDocument();
     expect(screen.getByTestId('module-stat-kinematic_limits')).toHaveTextContent('未运行');
     expect(screen.queryByTestId('modules-table')).toBeNull();
