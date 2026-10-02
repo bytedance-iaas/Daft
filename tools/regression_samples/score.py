@@ -760,7 +760,9 @@ def markdown(doc, regressions=None):
         bad = [s for s, v in doc["ingestion"].items() if not v["handled"]]
         L.append(f"\n**Ingestion** (SET-4): {len(doc['ingestion']) - len(bad)} of {len(doc['ingestion'])} subsets read" + (f"; not read: {', '.join(bad)}" if bad else ""))
     if gaps:
-        L.append("\n**No check on the platform** (expectations exist, no rule maps to them):")
+        why = {"1.0": "no rule maps to them", "2.0": "no module covers them"}
+        fmts = sorted(set((doc.get("formats") or {}).values())) or ["1.0"]
+        L.append(f"\n**No check on the platform** (expectations exist, {' / '.join(why[f] for f in fmts if f in why)}):")
         L.extend(f"- {g}" for g in gaps)
     if regressions is not None:
         L.append("\n**Against the baseline**: " + ("no regression" if not regressions else f"{len(regressions)} regression(s)"))
