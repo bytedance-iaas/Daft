@@ -97,7 +97,7 @@ def test_pause_then_resume_gives_the_results_of_an_uninterrupted_run(daemon, fak
     assert paused["pause_reason"] == "user"
     assert d.orch.executor.live() == []             # the command finished its episodes and left
     done_before = {r["episode_index"]: r for r in _part_lines(d.run_dir(task_id), "task_success")}
-    assert done_before and all(r["verdict"] != "error" for r in done_before.values())
+    assert done_before and all(r["status"] != "error" for r in done_before.values())
     # the episodes that were waiting their turn are left for the resume
     assert len(done_before) < len(results(d.run_dir(reference["id"]), "task_success"))
     stages = {s["id"]: s["state"] for s in paused["progress"]["stages"]}
@@ -133,7 +133,7 @@ def test_stop_leaves_no_child_and_continue_repeats_no_finished_work(daemon, fake
     # recorded as an error before the stop (seen once on a loaded CI runner, 2026-09-27) is
     # rightly redone; like the pause test, only the other records must stay as they were
     kept = {r["episode_index"]: r for r in _part_lines(d.run_dir(task_id), "task_success")
-            if r["verdict"] != "error"}
+            if r["status"] != "error"}
     assert kept
     parts_before = {module: set(os.listdir(os.path.join(d.run_dir(task_id), "checks",
                                                           module, "parts")))

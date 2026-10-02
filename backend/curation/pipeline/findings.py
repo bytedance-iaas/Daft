@@ -336,6 +336,14 @@ def _sub_score(out: Derived, m: str, code: str, value: Any, line: float, text: s
             time_s=time_s, readings={code.rsplit("_", 1)[0] if code.endswith("_low") else code: _r(v), **(readings or {})})
 
 
+#: readings that are 0-1 scores, per module: the report's ``score_hist`` (design doc 17 §5.1) - the retired
+#: composite score and the sub-items' own scores
+SCORE_READINGS = {
+    "motion_quality": ("score", "smoothness", "spike", "gripper_jitter", "actuator_saturation", "fluency"),
+    "visual_quality": ("score",),
+}
+
+
 @deriver("motion_quality")
 def _motion_quality(passed, score, d, p) -> Derived:
     """Every sub-item reports on its own (the composite score is retired, P18; it stays a reading): smoothness,
@@ -379,6 +387,8 @@ def _motion_quality(passed, score, d, p) -> Derived:
                 readings={"idle_s": _r(head)})
     if tail is not None and tail >= p["idle_edge_min_s"]:
         out.add(m, "idle_closing", f"动作结束后空转 {tail:.1f} 秒", readings={"idle_s": _r(tail)})
+    if head is None and tail is None:                      # no idle reading at all: the edges were not looked at
+        out.cannot("TASK-1", "not_applicable", str(d.get("reason") or "算不出开头与结尾的空转")[:200])
     # sub-items v1 could not compute: why (its own reason, else no state columns)
     no_state = d.get("stuck") is None and "stuck_reason" not in d and "stuck_strategy" not in d
     for key, item, why_key in (("smoothness", "ACT-1", None), ("spike", "ACT-2", "spike_reason"),
@@ -551,10 +561,12 @@ _ROW_INVALID = (("action 缺失或为空", "action_missing"), ("视频文件不�
 def integrity_code(f: dict) -> str | None:
     """The registry code of one of the integrity module's own findings (design doc 14 §4.2 -> 17 §2.2)."""
     code = str(f.get("code") or "")
-    msg = str((f.get("args") or {}).get("error") or f.get("message") or "")
+    err = str((f.get("args") or {}).get("error") or "")         # the reader's own words, when it gave any
+    msg = str(f.get("message") or "")
     if code == "row_invalid":
-        return next((c for needle, c in _ROW_INVALID if needle in msg), "values_invalid")
-    if code == "file_truncated" and msg.startswith("录制中断"):
+        text = err or msg
+        return next((c for needle, c in _ROW_INVALID if needle in text), "values_invalid")
+    if code == "file_truncated" and (msg.startswith("录制中断") or err.startswith("录制中断")):
         return "cut_unreadable"
     try:
         registry.finding_code("data_integrity", code)

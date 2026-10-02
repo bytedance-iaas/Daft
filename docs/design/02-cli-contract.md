@@ -202,7 +202,7 @@ curation check --modules visual_quality,video_action_sync --input tos://... --ru
 - 数据集级模块（`dedup`、`skill_profile`）不分批，一次调用吃整个 keep 集合；
   `skill_profile --incremental` 在已有技能体系上只处理变动的条目（搬 v1 的 `reassign` / `reprofile`）。
 
-> **记录 2.0（2026-10-01，设计 17 §1，D56；C2 2.0 已定稿，写法从 F12.2 起切换）**：每行改为模块对这一条的
+> **记录 2.0（2026-10-01，设计 17 §1，D56；C2 2.0 已定稿，F12.3 起 `check` 写 2.0）**：每行改为模块对这一条的
 > `status`（ok / error）、`findings`（细码 + 分类表的项 + 严重度 + 范围，可选帧 / 秒区间与读数，带一句中文 `message_zh`）、
 > `assessed` / `unassessable`（查过哪些项、哪些项查不了与原因）、`readings` 与原样保留的 `details`；`verdict / passed / score / gate`
 > 去掉——弃权、可疑、转人工都是发现，拒不拒由策略在 `aggregate` 定。`--json` 的计数改成 `{total, ok, error}` 并多出按细码的
@@ -277,11 +277,13 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 
 纯计算，秒级，**每次全量重算**。
 
-> **策略判决（2026-10-01，设计 17 §4，D58；C2 2.0 已定稿，F12.3 实现）**：判决改为「发现 → 策略表 → 级别」：有 blocking 发现
+> **策略判决（2026-10-01，设计 17 §4，D58；C2 2.0 已定稿，F12.3 已实现）**：判决改为「发现 → 策略表 → 级别」：有 blocking 发现
 > 就 drop，`reasons` 列出全部 blocking 发现；否则任一已勾选模块出错或没有记录就 held；否则 keep，review 级发现按各自的裁决线进
 > `review.json`。默认策略复刻今天的硬门（P18），软分拒绝消失；预设 `report_only` 只报不拒。`verdicts.jsonl` 2.0 每行是
 > `{episode_index, verdict, blocking, review, info_count, error_modules, reason}`；四份清单的 `reasons[]` 多 `code`、`item`，`kind` 取
-> `finding | human | execution_error | duplicate`。下文是漏斗判决（1.0）的写法。
+> `finding | human | execution_error | duplicate`。策略取 `run.json` 的 `policy`（开始时冻结），每个结果版本写一份 `policy.json`；
+> 人的结论落在它回答的发现上，复议按发现（全部 blocking 发现可复议才受理），去重组留哪条在人工决定之后选；1.0 的运行目录拒绝聚合
+> （退出码 2，D59）。细化见设计 17 §7「F12.3 落地时的细化」。下文是漏斗判决（1.0）的写法。
 
 分两个阶段，对应 v1 `run.py` 里的两段：
 

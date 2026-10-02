@@ -184,13 +184,15 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 **aggregate**：`curation aggregate --run-dir … --phase funnel|final [--revision N] [--modules a,b] [--episodes 表达式] [--input …] --json`
 
 - 纯计算、秒级、每次全量重算。模块取 `--modules`，否则取 `plan.json`；episode 取 `--episodes`，否则取有结果的全部。
-- `funnel`：六项漏斗检查 → 每条 keep / drop / held（`verdicts.jsonl`）和 `keep.txt`。硬门拦下的条不看后面的档；某档有模块出错时停在这一档：如果正常判完的模块已经判它不合格（硬门失败，或各软分都有、加权低于阈值），照样 drop，出错的模块写进原因「另有…执行出错，不影响结论」（D35）；否则 held（「待补跑」）。弃权不是错，照常 keep 并进 review。不给 `--revision` 时写到 `<run-dir>/funnel/`。
+- 判决按策略（设计 17 §4，D58）：模块只报发现，任务的策略（`run.json` 的 `policy`，开始时冻结；没有时是 `default`）给每条发现定级 blocking / review / info。有 blocking 发现即 drop，每条 blocking 发现都是理由，对它执行出错的模块写进原因「另有…执行出错，不影响结论」（D35）；否则所需模块出错或没有记录即 held（「待补跑」）；否则 keep，review 级发现进 review（弃权不是错）。`default` 就是今天的硬门，只是软分不再拒（P18）；`report_only` 一律只报告，不拒也不问。换策略只要重跑 aggregate。
+- `funnel`：漏斗各档的模块 → 每条 keep / drop / held（`verdicts.jsonl`，2.0 行：`blocking`、`review`、`info_count`、`error_modules`、`reason`）和 `keep.txt`。F12.4 之前各档仍串行：一条停在哪一档（出错、没有记录、有 blocking 发现），后面的档没有它的记录，也不算缺。不给 `--revision` 时写到 `<run-dir>/funnel/`。
 - `verdicts.jsonl` 始终是检查本身的漏斗判决；`keep.txt`（dedup 与技能画像的输入）还要跟着已应用的人工裁决走：弃用的、人工判失败的移出，复议捞回的、对拒绝条目人工判成功的加入（`counts` 里的 `decided_in` / `decided_out`）。没有裁决时两者一致。
-- **dedup 只在第一个结果版本跑一次**，人工裁决之后不再跑：它的结论保持不变（被人判失败的那条原件去掉了，它的副本仍按副本拒绝），由人带回交付的条从不去重（v1 的 rejudge 同样如此）。
-- `final --revision N`：再叠加 dedup、skill_profile 和已应用的人工裁决，写 passed / reject / held（三者不相交、合起来是全部）和 review 视图。人工裁决按 v1 的优先级：「弃用」压过一切（包括 held）；人工判了任务成败就以人为准，改标后不再重判（改标时顺手给的成败结论同样采信，C1 1.3；改标的回答一变它就作废，见 adjudicate-apply）；复议只对注册表标为可复议的拒绝有效（`curation.contracts.modules.appealable`：只被 task_success 拒掉的、被 dedup 判为重复的），物理与结构的硬门和软分是终判；恢复只推翻被复议那个模块的结论——去重的复议恢复后回到 passed（技能画像给它归档，它在 task_success 上的弃权从下一版起进 review），另有模块对它执行出错的恢复后 held（P11）；「拿不准」只记录，这条留在队列里。改了标还没按新标注重判的条 held。
+- **dedup 只在第一个结果版本跑一次**，人工裁决之后不再跑：它报的重复组保持不变，每组留哪条由 aggregate 在人工决定之后选——组内第一条没因别的原因被拒的（设计 17 §4.5：被人判失败的原件去掉了，它的副本顶上），其余成员按副本拒；由人带回交付的条从不去重。
+- `final --revision N`：再叠加 dedup、skill_profile 和已应用的人工裁决，写 passed / reject / held（三者不相交、合起来是全部）、review 视图和这一版用的策略（`policy.json`）。人工裁决按 v1 的优先级：「弃用」压过一切（包括 held）；人工判了任务成败就以人为准，改标后不再重判（改标时顺手给的成败结论同样采信，C1 1.3；改标的回答一变它就作废，见 adjudicate-apply）；人的结论落在它回答的发现上（判失败、数据确有问题、EEF 不一致是人工的 blocking 发现，不可复议）；复议按发现（D42）：这条的 blocking 发现全部可复议（注册表细码的 `appealable`：任务失败、字节级重复、EEF 不一致）且都不是人的结论才受理，别的发现是终判；恢复把这些发现降为只报告——去重的复议恢复后回到 passed（技能画像给它归档，它在 task_success 上的弃权从下一版起进 review），另有模块对它执行出错的恢复后 held（P11）；「拿不准」只记录，这条留在队列里。改了标还没按新标注重判的条 held。
 - review 视图按 v1 的队列，复核种类取自注册表的目录（D42、D43）：成败弃权（`task_verdict`）只问在 passed 里、task_success 弃权、人还没下结论的条；EEF 与画面核对（`eef_check`，registry 1.9）只问在 passed 里、EEF 模块转人工、人还没下结论的条；标注分歧（`label`）只问 passed 里的条；被拒的条没有这两种问题，拒绝可复议时给一项 `reject_appeal`（去重的写明 `duplicate_of`）；held 的条什么都不问。每一项都写明注册表的 `line`。
 - 缺源文件被跳过的条（D40）不进任何清单、不计入总数（`counts.skipped`）。技能画像整个模块失败（退出码 4，没写出结果）时，它本该归档的每一条都 held（「技能画像执行出错」），一条都不交付，等重试成功（D41）。
 - `--input` 给了才在 passed 里写出交付用的任务描述（原始标注要从数据集的元数据里读）。已有 `commit.json` 的版本拒绝改写。
+- 运行目录里是 C2 1.0 的记录（升级前建的任务）时拒绝聚合，退出码 2：旧任务只读（D59）。
 
 **adjudicate-apply**：`curation adjudicate-apply --run-dir … --decisions decisions.json --json`
 
@@ -201,7 +203,7 @@ v1 的纯文本调用（技能归纳、标注审计、判废护栏的语义比�
 - 这种跟着改标给的结论（task_success 没有弃权的条上的成败结论）只在改标的回答仍是最新、且结论在它之后给出（按裁决 id）时算数；改标的回答一变（维持原标注、拿不准、换一段新标注），它就作废：不起作用，仍在生效的改标照常重判（`rerun_task_success` 列出），与 Daemon 的 `Queue._stands` 是同一条规则。task_success 弃权的条，成败结论是卡片自己的问题，不会这样作废。
 - `eef_check`（registry 1.9）：`consistent` / `inconsistent` / `unsure`，当作 EEF 模块在这条上的结果，不调模型、不用重跑；
   副本在 `human-decisions/eef_checks.csv`。
-- 没有执行规则的复核种类（`line` 不是 `label`、`task_verdict`、`reject_appeal`、`eef_check`）报参数错误（退出码 2）并写明是哪一种，不会跳过；对没有可复议拒绝的条目复议（被自己的硬门或软分拒掉、已弃用、根本没被拒）同样报参数错误（D42），一条也不应用。
+- 没有执行规则的复核种类（`line` 不是 `label`、`task_verdict`、`reject_appeal`、`eef_check`）报参数错误（退出码 2）并写明是哪一种，不会跳过；对没有可复议拒绝的条目复议（有不可复议的发现、是人的结论、已弃用、根本没被拒）同样报参数错误（D42），一条也不应用。
 
 **report**：`curation report --run-dir … --revision N [--format md,json] [--modules a,b] [--subtask-id ID] --json`
 
@@ -367,9 +369,9 @@ with FakeVlmServer(port=8766) as s:
    $C report --run-dir "$R" --revision 1
    ```
 
-   应看到：autolabel 给 2 条（4、6）补了描述；数值档 8 条里 2 条（2 时间戳跳变、5 残段）被硬门拦下；task_success 6 条里 3 条 pass（1、4、6，都是仲裁救回的）、3 条（0、3 和 3 的字节级副本 7）abstain，`error 0`；dedup 剔除 7（与 3 重复）；final 为 `passed 5, reject 3, held 0, review 3`（0 和 3 问成败，7 是可复议的去重拒绝）。
+   应看到：autolabel 给 2 条（4、6）补了描述；数值档 `timestamp_check (part 0001): 8 episodes - ok 8, error 0; findings: gap 1, fragment 1`（2 时间戳跳变、5 残段，默认策略下 blocking，停在这一档）；task_success 6 条 `ok 6, error 0`，发现 `uncertain 3`（0、3 和 3 的字节级副本 7，进复核）与 `task_text_missing 2`（4、6 用的是自产描述，只报告）；dedup 报 `duplicate 1`（7 与 3 重复）；final 为 `passed 5, reject 3, held 0, review 3`（0 和 3 问成败，7 是可复议的去重拒绝），日志有 `policy default: 5 kept, 3 rejected, 0 held`；`$R/revisions/r0001/policy.json` 是 `{"preset": "default", ...}`。
    假模型的回答只看请求的文字、图片张数和像素尺寸，不看图片字节，所以这些数在 macOS 和 Linux 上一样（`tests/cli/test_fake_model.py`）。
-   `cat "$R/revisions/r0001/report.md"` 是中文报告，含「通过 5」和各项检查的拦截数；`tail -3 "$R/usage.jsonl"` 是按模块记的 token 用量。
+   `cat "$R/revisions/r0001/report.md"` 是中文报告，含「通过 5」、判决策略、按细码的拒绝原因，每个模块一行「评估 N 条;检出:…」；`tail -3 "$R/usage.jsonl"` 是按模块记的 token 用量。
    没给 `--concurrency`，所以整个过程中任何时刻只有一个模型请求在飞（`tests/cli/test_pipeline_chain.py` 在假模型那边量过）。
 
 4. 导出与交付核验（本地目录充当交付目录）：
@@ -429,7 +431,7 @@ with FakeVlmServer(port=8766) as s:
    $C export --run-dir "$R" --input "$D/mini" --output "$D/delivery" --revision 2 --incremental
    ```
 
-   应看到：第二版的漏斗行末尾是 `keep.txt after the human decisions: 0 in, 1 out`（3 被人工判失败，移出 `keep.txt`）；没有再跑 dedup（`ls "$R/checks/dedup/parts"` 仍只有 `0001.jsonl`），7 仍按 3 的副本拒绝；技能画像这次只归 4 条（3 移出，7 是副本不归）；第二版 `passed 4, reject 4, review 3`（0 仍待判成败；4 按 v1 的两层重判后弃权，重新问成败；7 是可复议的去重拒绝）；再跑一次 `adjudicate-apply` 显示 `applied 0 decision(s) (2 already applied)`；导出是增量的：`diff` 为 `keep 2, renumber 2, drop 1`，没有复制任何视频；`revisions/r0001/` 原样未动。
+   应看到：第二版的漏斗行末尾是 `keep.txt after the human decisions: 0 in, 1 out`（3 被人工判失败，移出 `keep.txt`）；没有再跑 dedup（`ls "$R/checks/dedup/parts"` 仍只有 `0001.jsonl`），它报的重复组 {3, 7} 不变，3 被人判失败后由副本 7 顶上（设计 17 §4.5）；技能画像这次归 5 条（3 移出，7 顶上归进来）；第二版 `passed 5, reject 3, review 3`（0 仍待判成败；4 按 v1 的两层重判后弃权，重新问成败；7 进了交付，问成败）；再跑一次 `adjudicate-apply` 显示 `applied 0 decision(s) (2 already applied)`；导出是增量的：`diff` 为 `keep 2, renumber 2, add 1, drop 1`，只复制了 7 的视频；`revisions/r0001/` 原样未动。
 
 8. `curation task …`（用测试里的桩服务代替 Daemon）。另开一个终端，在 `backend/` 下启动桩：
 
@@ -511,5 +513,7 @@ with FakeVlmServer(port=8766) as s:
     应看到：LeRobot 一条 `1 file is empty or too small to be valid (1 episode: 2; videos/…/episode_000002.mp4 0 B)`；mcap 一条
     `1 episode (4) was cut off while recording (no mcap end marker); …`，原来那条「no mcap summary section」不再重复它。
     两份的模块可用性与干净数据集相同。控制台的「预检提示」与报告的「数据包完整性」把它们显示为中文。
-    再对这两份跑数据完整性模块（`$C check --modules data_integrity --input "$D/bad" --run-dir "$D/run_bad" --episodes 0-7 --json`，mcap 同理）：
-    LeRobot 的第 2 条判废 `file_empty`；mcap 的第 4 条判废「录制中断，且读不出数据」。更多损坏样本与裁决见[模块 README](../extensions/integrity/README.md)的手动验证。
+    再对这两份跑数据完整性模块（`$C check --modules data_integrity --input "$D/bad" --run-dir "$D/run_bad" --episodes 0-7`，mcap 同理）：
+    LeRobot 是 `findings: duplicate_content 2, file_empty 1`——第 2 条 `file_empty`（默认策略下判废），3 与 7 是夹具故意放的字节级副本（转人工）；
+    mcap 是 `findings: cut_unreadable 1, duplicate_content 2, stream_missing 1`——第 4 条「录制中断，且读不出数据」（判废），第 6 条缺 `/task`（转人工）。
+    更多损坏样本与裁决见[模块 README](../extensions/integrity/README.md)的手动验证。

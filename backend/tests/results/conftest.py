@@ -1,7 +1,8 @@
 """Fixtures for the W5b tests: hand-made run directories, revisions made by the real CLI.
 
 Like ``tests/cli/test_aggregate.py``, the module records are written by hand as part
-files (the ``check`` record format); ``curation aggregate --phase final`` and
+files (the ``check`` record format, records 2.0 written from the module's answer);
+``curation aggregate --phase final`` and
 ``curation report`` then run in process - the real W3 commands, every ``--json``
 checked against C2 - so the readers are tested against the files the CLI writes.
 
@@ -62,16 +63,18 @@ CAPTION = {4: "wipe the table with the cloth", 5: "open the drawer"}
 
 def record(module: str, ep: int, verdict: str, *, score=None, details=None, evidence=(),
            incidents=None) -> dict:
-    """One C2 result record, as ``check`` writes it."""
+    """One C2 result record (2.0), as ``check`` writes it from the module's answer: ``verdict``
+    in 1.0's words (pass / fail / abstain / scored / error) says what the module answered."""
+    from curation.pipeline.records import record_v2
+
     passed = {"pass": True, "fail": False}.get(verdict)
     error = None
     if verdict == "error":
         error = {"kind": "execution",
                  "incidents": incidents or [{"step": "arbitration", "call_kind": "arbitration",
                                              "cause": "timeout 60s", "attempts": 3}]}
-    return {"episode_index": ep, "module": module, "verdict": verdict, "passed": passed,
-            "score": score, "gate": GATE[module], "details": details or {},
-            "evidence": list(evidence), "elapsed_s": 0.25, "error": error}
+    return record_v2(module, ep, passed, score, details or {}, error=error, evidence=list(evidence),
+                     elapsed_s=0.25)
 
 
 class RunDir:
@@ -153,8 +156,8 @@ def story(rd: RunDir) -> None:
             rd.put("dedup", ep, "fail", details={"duplicate_of": 0})
         else:
             rd.put("dedup", ep, "pass", details={})
-    for ep in (0, 3, 4, 5, 8):                         # what dedup kept
-        rd.put("skill_profile", ep, "pass",
+    for ep in (0, 3, 4, 5, 8):                         # what dedup kept; the audit flags 4 and 5
+        rd.put("skill_profile", ep, "abstain" if ep in (4, 5) else "pass",
                details={"family": "放置", "subskill": "放进容器", "caption": CAPTION.get(ep, TEXT[ep]),
                         "grouping_text": TEXT[ep], "grouping_text_source": "原始标注"})
     rd.write_json("checks/skill_profile/profile.json",

@@ -19,6 +19,7 @@ from curation.contracts import schemas
 from curation.extensions.integrity import files as F
 
 from . import integrity_samples as S
+from .pipeline import verdict_of
 
 MOD = "data_integrity"
 
@@ -43,7 +44,8 @@ def codes(rec: dict) -> list[tuple[str, str]]:
 
 
 def verdicts(recs: dict[int, dict]) -> dict[int, str]:
-    return {e: r["verdict"] for e, r in sorted(recs.items())}
+    """Records 2.0 in 1.0's words (pass / fail / abstain / error, ``records.legacy_verdict``)."""
+    return {e: verdict_of(r) for e, r in sorted(recs.items())}
 
 
 # ---------------------------------------------------------------- LeRobot v2
@@ -52,7 +54,8 @@ def verdicts(recs: dict[int, dict]) -> dict[int, str]:
 def test_a_clean_dataset_passes_but_its_byte_copies(cli, dataset, tmp_path):
     rd = str(tmp_path / "run")
     doc = check(cli, dataset, rd)
-    assert doc["episodes"] == {"total": 8, "pass": 6, "fail": 0, "abstain": 2, "scored": 0, "error": 0}
+    assert doc["episodes"] == {"total": 8, "ok": 8, "error": 0}
+    assert doc["findings"] == {"duplicate_content": 2}
     recs = results(rd)
     assert verdicts(recs) == {0: "pass", 1: "pass", 2: "pass", 3: "abstain", 4: "pass", 5: "pass",
                               6: "pass", 7: "abstain"}
@@ -77,7 +80,7 @@ def test_each_kind_of_damage_rejects_its_episode(cli, dataset, tmp_path):
         assert fh.read().split() == ["5", "7"]                      # rejects stop here, suspects go on
     assert verdicts(recs) == {0: "fail", 1: "fail", 2: "fail", 3: "fail", 4: "fail", 5: "pass",
                               6: "fail", 7: "abstain"}
-    first = {e: codes(r)[0] for e, r in recs.items() if r["verdict"] == "fail"}
+    first = {e: codes(r)[0] for e, r in recs.items() if verdict_of(r) == "fail"}
     assert first == {0: ("reject", "file_empty"), 1: ("reject", "file_truncated"),
                      2: ("reject", "file_truncated"), 3: ("reject", "row_invalid"),
                      4: ("reject", "zero_filled"), 6: ("reject", "row_invalid")}
@@ -160,7 +163,7 @@ def test_a_storage_failure_is_an_error_not_a_finding(cli, dataset, tmp_path, mon
     [inc] = results(rd)[2]["error"]["incidents"]
     assert inc["step"] == "read" and "503" in inc["cause"]
     again = check(cli, dataset, rd, "0-7", "--resume")
-    assert again["skipped_existing"] == 7 and results(rd)[2]["verdict"] == "pass"
+    assert again["skipped_existing"] == 7 and verdict_of(results(rd)[2]) == "pass"
 
 
 # ---------------------------------------------------------------- L3
@@ -170,7 +173,7 @@ def test_the_decode_test_finds_what_the_structure_cannot(cli, dataset, tmp_path)
     S.garble_sample(S.video(dataset, "exterior", 4), 30)
     rd = str(tmp_path / "run")
     check(cli, dataset, rd)
-    assert results(rd)[4]["verdict"] == "pass"                      # L1 and L2 see an intact file
+    assert verdict_of(results(rd)[4]) == "pass"                      # L1 and L2 see an intact file
     doc = check(cli, dataset, rd, "0-7", "--resume", "--param", f"{MOD}.decode_test=true")
     assert doc["skipped_existing"] == 0                             # another configuration: redone
     recs = results(rd)
@@ -235,7 +238,7 @@ def test_mcap_damage(cli, mini_mcap, tmp_path):
     assert codes(recs[2])[0] == ("reject", "structure_invalid") and "摘要区" in recs[2]["details"]["reason"]
     assert codes(recs[6])[0] in (("reject", "crc_mismatch"), ("reject", "structure_invalid"))
     assert codes(recs[4])[0] in (("reject", "file_truncated"), ("suspect", "cut_off"))
-    assert ("suspect", "rate_outlier") in codes(recs[1]) and recs[1]["verdict"] == "abstain"
+    assert ("suspect", "rate_outlier") in codes(recs[1]) and verdict_of(recs[1]) == "abstain"
     assert "topic /observation.images.exterior 的频率" in recs[1]["details"]["reason"]
     assert [c for c in codes(recs[1]) if c[1] == "rate_outlier"] == [("suspect", "rate_outlier")]
     assert verdicts(recs)[0] == verdicts(recs)[5] == "pass"

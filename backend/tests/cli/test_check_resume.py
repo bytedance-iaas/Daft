@@ -96,7 +96,7 @@ def test_sigterm_finishes_the_episode_in_flight_then_resume_completes(vlm_stage)
     assert json.loads(out.strip().splitlines()[-1])["error"]["code"] == "terminated"
     done = results(run_dir, "task_success")
     assert 1 <= len(done) < len(vlm_stage["reference"])
-    assert all(r["verdict"] != "error" for r in done.values())       # finished, not cut
+    assert all(r["status"] != "error" for r in done.values())       # finished, not cut
     doc = _resume(vlm_stage, run_dir)
     entry = doc["modules"]["task_success"]
     assert entry["skipped_existing"] == len(done)
@@ -165,7 +165,7 @@ def test_an_episode_that_crashed_the_process_twice_is_skipped(vlm_stage, tmp_pat
     assert second.rc == 0, second.doc
     for m in numeric:
         rec = results(run_dir, m)[3]
-        assert rec["verdict"] == "error"
+        assert rec["status"] == "error"
         assert rec["error"] == {"kind": "execution", "incidents": [
             {"step": "crash", "cause": "the process died twice while working on this episode"}]}
         assert second.doc["modules"][m]["error_episodes"] == [3]

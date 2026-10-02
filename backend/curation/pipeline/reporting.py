@@ -27,7 +27,9 @@ from .records import (CRASHES_NAME, LATENCY_FILE, PLAN_NAME, SOURCE_MANIFEST_NAM
                       is_error, latest_results, legacy_verdict, module_dir, parts_used, read_jsonl,
                       score_of, write_json_atomic, write_text_atomic)
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.0"                  # perf.json and commit.json
+#: report.json: C2 2.0 (design doc 17 §5.1) - findings per item, coverage, the policy; no gates
+REPORT_VERSION = "2.0"
 TOKEN_FIELDS = ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens")
 
 
@@ -63,6 +65,20 @@ class Revision:
         self.source = _read(os.path.join(run_dir, SOURCE_MANIFEST_NAME), {}) or {}
         self.applied = (_read(os.path.join(self.dir, "adjudications.json"), {}) or {}) \
             .get("applied") or []
+        from . import policy as policy_mod
+
+        frozen = _read(os.path.join(self.dir, policy_mod.POLICY_NAME), None)
+        #: the policy the revision's verdicts were computed with (aggregate froze it)
+        self.policy = (policy_mod.Policy.from_json(frozen) if isinstance(frozen, dict)
+                       else policy_mod.load(run_dir))
+        self.run = _read(os.path.join(run_dir, "run.json"), {}) or {}
+
+    def module_params(self, module: str) -> dict:
+        """The module's parameters as the task gave them (``run.json``; defaults are filled in later)."""
+        for m in self.run.get("modules") or []:
+            if isinstance(m, dict) and m.get("id") == module:
+                return dict(m.get("params") or {})
+        return {}
 
     def episodes(self, name: str) -> list[dict]:
         return self.lists[name]["episodes"]
@@ -204,6 +220,70 @@ def _summary(rev: Revision, m: str) -> dict:
         out["fail_kinds"] = why
     if res and gates_v1.votes(m):
         out.update(_chart_stats(rev, m, [res[e] for e in sorted(res)], scores))
+    out.update(finding_stats(rev, m))
+    return out
+
+
+def _cameras(f: dict) -> list[str]:
+    scope = f.get("scope") or {}
+    if scope.get("camera"):
+        return [str(scope["camera"])]
+    return [str(c) for c in scope.get("cameras") or []]
+
+
+def finding_stats(rev: Revision, m: str) -> dict:
+    """What every module section has (C2 report 2.0, design doc 17 §5.1): the episodes it judged, per
+    finding code the episodes with it, their share of the judged ones, its level under the revision's
+    policy and the cameras; the items it could not assess and why; its dataset-level findings; the 0-1
+    readings' distributions (``score_hist``: reading -> ten bins)."""
+    from . import findings as F
+    from . import report_stats as S
+
+    res = rev.results[m]
+    judged = {e: r for e, r in res.items() if not is_error(r)}
+    codes: dict[str, dict] = {}
+    unassessable: dict[tuple, int] = {}
+    for ep, rec in judged.items():
+        for f in rec.get("findings") or []:
+            entry = codes.setdefault(f.get("code"), {"item": f.get("item"), "code": f.get("code"),
+                                                     "level": rev.policy.level(m, f), "eps": set(),
+                                                     "cams": {}})
+            entry["eps"].add(ep)
+            for cam in _cameras(f):
+                entry["cams"].setdefault(cam, set()).add(ep)
+        for u in rec.get("unassessable") or []:
+            key = (u.get("item"), u.get("reason"))
+            unassessable[key] = unassessable.get(key, 0) + 1
+    n = len(judged)
+    # 0-1 readings by name: the composite score v1 judged on and the sub-items' scores (§5.1)
+    hist = {}
+    for name in F.SCORE_READINGS.get(m, ()):
+        vals = [(r.get("readings") or {}).get(name) for r in judged.values()]
+        vals = [v for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        if vals:
+            hist[name] = S.score_hist(vals)
+    order = {c.code: i for i, c in enumerate(registry.get(m).codes)} if m in registry.ids() else {}
+    items = []
+    for code, e in sorted(codes.items(), key=lambda kv: order.get(kv[0], 999)):
+        row = {"item": e["item"], "code": code, "level": e["level"], "episodes": len(e["eps"]),
+               "share": round(len(e["eps"]) / n, 4) if n else None}
+        if e["cams"]:
+            row["by_camera"] = [{"camera": c, "episodes": len(eps)} for c, eps in sorted(e["cams"].items())]
+        items.append(row)
+    base = module_dir(rev.run_dir, m)
+    found, readings = F.dataset_level(
+        m, res, rev.module_params(m),
+        integrity=_read(os.path.join(base, "dataset.json"), None) if m == "data_integrity" else None,
+        profile=_read(os.path.join(base, "profile.json"), None) if m == "skill_profile" else None)
+    out = {"assessed_episodes": n, "items": items,
+           "unassessable": [{"item": item, "reason": reason, "count": c}
+                            for (item, reason), c in sorted(unassessable.items(), key=lambda kv: -kv[1])]}
+    if hist:
+        out["score_hist"] = hist
+    if found:
+        out["dataset_findings"] = found
+    if readings:
+        out["dataset_readings"] = readings
     return out
 
 
@@ -231,7 +311,8 @@ def _chart_stats(rev: Revision, m: str, records: list[dict], scores: list) -> di
     elif m == "skill_profile":
         base = module_dir(rev.run_dir, "skill_profile")
         out.update(S.skill_stats(records, _read(os.path.join(base, "profile.json"), {}) or {},
-                                 _read(os.path.join(base, "label_audit.json"), {}) or {}))
+                                 _read(os.path.join(base, "label_audit.json"), {}) or {},
+                                 delivered={int(e["episode_index"]) for e in rev.episodes("passed")}))
     return out
 
 
@@ -362,7 +443,7 @@ def module_sections(rev: Revision) -> list[dict]:
         res = rev.results[m]
         missing = _missing(rev, m)
         errors = [e for e, r in res.items() if is_error(r)] + missing
-        sec: dict = {"id": m, "gate": gates_v1.gate(m), "summary": _summary(rev, m),
+        sec: dict = {"id": m, "summary": _summary(rev, m),
                      "tables": _tables(rev, m, rev.dir), "adjudication": None}
         if not res and missing:
             sec["state"] = "failed"
@@ -448,6 +529,46 @@ def container_integrity(rev: Revision) -> dict | None:
 
 # ---------------------------------------------------------------- the report
 
+def coverage(rev: Revision) -> dict:
+    """Which taxonomy items this task's modules assess (the coverage matrix, design doc 17 §5.2): the
+    covered ones, the ones nobody covers, and the episodes per item a module could not assess and why.
+    Control items are no check items and are in neither list."""
+    tax = registry.taxonomy()
+    checkable = [it["id"] for it in tax["items"] if it.get("kind") != "control"]
+    covered = {item for m in rev.modules if m in registry.ids() for item in registry.get(m).covers}
+    unassessable: dict[tuple, int] = {}
+    for m in rev.modules:
+        for rec in rev.results[m].values():
+            for u in rec.get("unassessable") or []:
+                key = (u.get("item"), u.get("reason"))
+                unassessable[key] = unassessable.get(key, 0) + 1
+    return {"taxonomy_version": registry.TAXONOMY_VERSION,
+            "covered": [i for i in checkable if i in covered],
+            "not_covered": [i for i in checkable if i not in covered],
+            "unassessable": [{"item": item, "reason": reason, "count": c}
+                             for (item, reason), c in sorted(unassessable.items(), key=lambda kv: (-kv[1], kv[0]))]}
+
+
+def findings_by_item(rev: Revision) -> list[dict]:
+    """Per taxonomy item: the episodes with a finding of it (every module together) and, among them, those
+    with a finding the revision's policy grades blocking / review / info."""
+    by: dict = {}
+    for m in rev.modules:
+        for ep, rec in rev.results[m].items():
+            if is_error(rec):
+                continue
+            for f in rec.get("findings") or []:
+                if f.get("item") is None:
+                    continue
+                entry = by.setdefault(f["item"], {"episodes": set(), "blocking": set(), "review": set(),
+                                                  "info": set()})
+                entry["episodes"].add(ep)
+                entry[rev.policy.level(m, f)].add(ep)
+    order = {it["id"]: i for i, it in enumerate(registry.taxonomy()["items"])}
+    return [{"item": item, **{k: len(v) for k, v in e.items()}}
+            for item, e in sorted(by.items(), key=lambda kv: order.get(kv[0], 999))]
+
+
 def build(rev: Revision) -> tuple[dict, dict]:
     """(report.json, perf.json)."""
     from .skipped import all_skipped, as_list
@@ -457,11 +578,11 @@ def build(rev: Revision) -> tuple[dict, dict]:
               "passed": rev.lists["passed"]["count"], "rejected": rev.lists["reject"]["count"],
               "held": rev.lists["held"]["count"], "review": rev.lists["review"]["count"],
               "skipped": len(skipped)}
-    reasons: dict[str, int] = {}
+    reasons: dict[tuple, int] = {}
     for e in rev.episodes("reject"):
-        for mod in dict.fromkeys(r["module"] for r in e.get("reasons") or []
-                                 if r.get("kind") != "execution_error"):
-            reasons[mod] = reasons.get(mod, 0) + 1
+        for key in dict.fromkeys((r["module"], r.get("kind") or "finding", r.get("code"), r.get("item"))
+                                 for r in e.get("reasons") or [] if r.get("kind") != "execution_error"):
+            reasons[key] = reasons.get(key, 0) + 1
     token_usage, usage_rows = usage_totals(rev.run_dir)
     lat = latency(rev.run_dir)
     ds = (rev.preflight.get("dataset") or {})
@@ -475,10 +596,14 @@ def build(rev: Revision) -> tuple[dict, dict]:
                 "adjudications_applied": len(rev.applied)},
         "counts": counts,
         "pass_rate": round(counts["passed"] / counts["total"], 4) if counts["total"] else None,
-        "reject_reasons": [{"module": m, "count": n}
-                           for m, n in sorted(reasons.items(), key=lambda kv: -kv[1])],
+        "reject_reasons": [{"module": m, "kind": kind, **({"code": code} if code else {}),
+                            **({"item": item} if code else {}), "count": n}
+                           for (m, kind, code, item), n in sorted(reasons.items(), key=lambda kv: -kv[1])],
         "token_usage": token_usage,
         "duration_s": None,
+        "policy": {"preset": rev.policy.preset, "version": rev.policy.to_json()["version"]},
+        "coverage": coverage(rev),
+        "findings_by_item": findings_by_item(rev),
     }
     perf = {"schema_version": SCHEMA_VERSION, "revision": rev.revision,
             "latency": lat["by_kind"], "vlm_requests": lat["requests"],
@@ -486,7 +611,7 @@ def build(rev: Revision) -> tuple[dict, dict]:
             "token_usage": token_usage, "usage_rows": usage_rows,
             "usage_note": "合并请求按比例分摊(分摊账);任务总量只算实际调用账,两本账不相加",
             "redone_after_interruption": redone_after_interruption(rev.run_dir, rev.modules)}
-    report = {"schema_version": SCHEMA_VERSION, "revision": rev.revision,
+    report = {"schema_version": REPORT_VERSION, "revision": rev.revision,
               "overview": overview, "modules": module_sections(rev),
               "skipped_modules": skipped_modules(rev),
               # what was not checked and why (D40): the manifest's list and read-time finds
@@ -516,9 +641,19 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
         lines.append(f"- 缺源文件未质检:{c['skipped']} 条(照 v1 剔除,不计入参与质检的总数,"
                      f"明细见文末「未质检的条目」)")
     if ov["reject_reasons"]:
-        lines.append("- 拒绝原因:" + ";".join(
-            f"「{NAMES_CN.get(r['module'], r['module'])}」{r['count']} 条"
+        lines.append("- 拒绝原因(一条有几条判废发现就计几次):" + ";".join(
+            f"「{NAMES_CN.get(r['module'], r['module'])}」{_code_name(r)}{r['count']} 条"
             for r in ov["reject_reasons"]))
+    pol = ov.get("policy") or {}
+    if pol:
+        from .policy import PRESET_TITLES
+
+        lines.append(f"- 判决策略:{PRESET_TITLES.get(pol.get('preset'), pol.get('preset'))}")
+    cov = ov.get("coverage") or {}
+    if cov:
+        n = len(cov.get("covered") or [])
+        total = n + len(cov.get("not_covered") or [])
+        lines.append(f"- 覆盖检测项:{n} / {total}(分类表 {cov.get('taxonomy_version')},不含对照项)")
     held = rev.episodes("held")
     if held:
         lines.append("- 待补跑(执行出错,暂不交付,等「重试」):")
@@ -533,6 +668,7 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
         state = {"succeeded": "完成", "completed_with_errors": "完成(部分出错)",
                  "failed": "失败"}[sec["state"]]
         lines.append(f"### {cn}({state})")
+        lines += _findings_lines(sec["id"], sec["summary"])
         cnt = sec["summary"]["counts"]
         if sec["id"] == "data_integrity":
             from ..extensions.integrity import report as integrity_report
@@ -596,6 +732,9 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
         if sec["id"] == "skill_profile":
             lines.append(f"- 技能族 {sec['summary']['families']} 个,"
                          f"子技能 {sec['summary']['subskills']} 个")
+            dist = sec["summary"].get("delivered_family_distribution")
+            if dist:
+                lines.append("- 交付集的技能族分布:" + "、".join(f"{x['name']} {x['count']}" for x in dist))
         if sec["id"] == "task_success":
             arb = sec["summary"].get("arbitration") or {}
             if arb.get("triggered"):
@@ -651,6 +790,38 @@ def markdown(rev: Revision, report: dict, perf: dict) -> str:
     if perf.get("redone_after_interruption"):
         lines.append(f"- 因中断而重做的 episode:{perf['redone_after_interruption']} 次")
     return "\n".join(lines) + "\n"
+
+
+_LEVEL_ZH = {"blocking": "判废", "review": "转人工", "info": "只报告"}
+
+
+def _findings_lines(module: str, s: dict) -> list[str]:
+    """A module's findings in report.md (report 2.0): the episodes it judged, per code the episodes with it
+    and its level under the policy, what it could not assess."""
+    if "assessed_episodes" not in s:
+        return []
+    found = "、".join(f"{_code_name({'module': module, **x}).lstrip('·')} {x['episodes']} 条"
+                     f"({_LEVEL_ZH.get(x['level'], x['level'])})" for x in s.get("items") or [])
+    out = [f"- 评估 {s['assessed_episodes']} 条;检出:{found or '无'}"]
+    una = s.get("unassessable") or []
+    if una:
+        out.append("- 评估不了:" + "、".join(f"{x.get('item') or ''} {x['reason']} {x['count']} 条".strip()
+                                         for x in una[:6]))
+    return out
+
+
+def _code_name(r: dict) -> str:
+    """「运动学极限」 + the code's Chinese name and item, for a reject reason of report 2.0."""
+    if r.get("kind") == "human":
+        return "(人工裁决)"
+    code = r.get("code")
+    if not code:
+        return ""
+    try:
+        name = registry.finding_code(r["module"], code).name_zh
+    except KeyError:
+        name = code
+    return f"·{name}" + (f"({r['item']})" if r.get("item") else "")
 
 
 def sha256_file(path: str) -> str:

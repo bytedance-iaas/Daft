@@ -90,6 +90,24 @@ def results(run_dir: str, module: str) -> dict[int, dict]:
             for r in read_jsonl(os.path.join(run_dir, "checks", module, "results.jsonl"))}
 
 
+def verdict_of(rec: dict) -> str:
+    """A record's verdict in 1.0's words (pass / fail / abstain / scored / error) under the default
+    policy: ``records.legacy_verdict``, the rule the console reads records 2.0 by until F12.5."""
+    from curation.pipeline.records import legacy_verdict
+
+    return legacy_verdict(rec)
+
+
+def passed_of(rec: dict) -> bool | None:
+    """1.0's ``passed`` of a record: True for pass, False for fail, else None."""
+    return {"pass": True, "fail": False}.get(verdict_of(rec))
+
+
+def codes_of(rec: dict) -> list[str]:
+    """The finding codes of a record 2.0, in its order."""
+    return [f["code"] for f in rec.get("findings") or []]
+
+
 def comparable(rec: dict) -> dict:
     return {k: v for k, v in rec.items() if k not in ("elapsed_s", "evidence")}
 

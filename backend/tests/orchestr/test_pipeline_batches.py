@@ -187,7 +187,8 @@ def test_the_data_integrity_layer_goes_first_and_its_episodes_are_readable_live(
     assert page.json()["finished"] == 8 and all(r["verdict"] for r in page.json()["items"])
     detail = d.api("GET", f"/tasks/{task_id}/pipeline/episodes/3")
     assert detail.status_code == 200, detail.text
-    assert detail.json()["modules"]["data_integrity"]["verdict"] == "abstain"     # the fixture's byte copy
+    integrity = detail.json()["modules"]["data_integrity"]                       # the fixture's byte copy
+    assert {f["code"] for f in integrity["findings"]} == {"duplicate_content"}
     assert "integrity" in detail.json()["stage_processing_s"]
     queue = d.api("GET", f"/tasks/{task_id}/adjudication").json()
     asked = {(card["episode_index"], q["line"]) for card in queue["items"] for q in card["questions"]}

@@ -1,10 +1,10 @@
-"""aggregate and adjudicate-apply on hand-made run directories (W3, doc 02 §3.6 / §3.9).
+"""aggregate and adjudicate-apply on hand-made run directories (W3, doc 02 §3.6 / §3.9, 17 §4).
 
-Each test writes the module records it needs (the ``check`` record format), runs
-the commands in process - every ``--json`` checked against its C2 schema - and
-reads the files they leave. The rules under test are v1's (``pipeline/verdict.py``,
-``rejudge``) plus D24 / D33 / D35: an execution error holds an episode back
-unless the modules that did judge it normally already reject it.
+Each test writes the module records it needs (records 2.0, the ``check`` record format), runs
+the commands in process - every ``--json`` checked against its C2 schema - and reads the files
+they leave. The rules under test are the policy verdicts of design doc 17 (D58) under the default
+policy, which is v1's gates (``pipeline/verdict.py``, ``rejudge``) without the soft-score rejects
+(P18), plus D24 / D33 / D35: a blocking finding drops an episode, else an execution error holds it.
 """
 from __future__ import annotations
 
@@ -16,19 +16,22 @@ from collections import defaultdict
 import pytest
 
 from curation.contracts import schemas
+from curation.pipeline.records import record_v2
 
 from .pipeline import read_jsonl, run
 
 ALL = ("timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
        "video_action_sync", "task_success", "dedup", "skill_profile")
-GATE = {"timestamp_check": "hard", "kinematic_limits": "hard", "motion_quality": "soft",
-        "visual_quality": "soft", "video_action_sync": "hard", "task_success": "hard",
-        "dedup": "dedup", "skill_profile": "none"}
+SCORED = ("motion_quality", "visual_quality")          # a score reading, never a reject (P18)
 TASK = "pick up the red block and place it in the bin"
 
 
 def record(module: str, ep: int, verdict: str, *, score=None, details=None,
            incidents=None) -> dict:
+    """A record 2.0 of ``module`` that a 1.0 reader would call ``verdict``: written from the same
+    answer the module gives (``records.record_v2``, the derivation ``check`` uses) - pass finds
+    nothing, fail reports the module's blocking finding, abstain its review finding (or only what it
+    could not assess), scored a score reading, error an execution error."""
     passed = {"pass": True, "fail": False}.get(verdict)
     if verdict == "scored" and score is None:
         score = 0.95
@@ -43,9 +46,12 @@ def record(module: str, ep: int, verdict: str, *, score=None, details=None,
                    "task_desc": TASK, "task_desc_source": "原始标注"}
         if verdict == "abstain":
             details["reason"] = "两层证据矛盾,进人工"
-    return {"episode_index": ep, "module": module, "verdict": verdict, "passed": passed,
-            "score": score, "gate": GATE[module], "details": details or {}, "evidence": [],
-            "elapsed_s": 0.1, "error": error}
+    return record_v2(module, ep, passed, score, details or {}, error=error, evidence=[],
+                     elapsed_s=0.1)
+
+
+def modules_of(refs: list[dict]) -> list[str]:
+    return [r["module"] for r in refs]
 
 
 class RunDir:
@@ -62,7 +68,7 @@ class RunDir:
     def good(self, *eps: int) -> RunDir:
         for ep in eps:
             for m in ALL:
-                self.put(m, ep, "scored" if GATE[m] == "soft" else "pass")
+                self.put(m, ep, "scored" if m in SCORED else "pass")
         return self
 
     def drop(self, module: str, ep: int, part: str = "0001") -> RunDir:
@@ -131,12 +137,12 @@ def apply(run_dir: str, path: str) -> dict:
 
 def test_funnel_gates_errors_and_d35(tmp_path):
     rd = RunDir(str(tmp_path / "run")).good(0, 6)
-    # 1: a hard gate fails; the later stages have no result and are not asked
+    # 1: a finding blocks; the later stages have no result and are not asked
     rd.put("timestamp_check", 1, "fail", details={"reason": "丢帧"})
     rd.put("kinematic_limits", 1, "pass").put("motion_quality", 1, "scored")
-    # 2: the frame stage's hard gate rejects while the other frame module failed to run
+    # 2: a frame module's finding blocks while the other frame module failed to run
     rd.good(2).replace("visual_quality", 2, "error").replace("video_action_sync", 2, "fail")
-    # 3: task_success failed to run, but the soft score already rejects it (D35)
+    # 3: task_success failed to run; low scores are readings and reject nothing (P18): held back
     rd.good(3).replace("task_success", 3, "error")
     rd.replace("motion_quality", 3, "scored", score=0.1)
     rd.replace("visual_quality", 3, "scored", score=0.1)
@@ -144,27 +150,35 @@ def test_funnel_gates_errors_and_d35(tmp_path):
     rd.good(4).replace("task_success", 4, "error")
     # 5: task_success never ran for it: held back as well
     rd.good(5).drop("task_success", 5)
-    # 6: the model could not tell - an abstention is a normal result, kept for review
+    # 6: the model could not tell - a review finding, kept and asked
     rd.replace("task_success", 6, "abstain")
-    # 7: a numeric module failed to run: the later stages are not consulted
+    # 7: a numeric module failed to run: the later stages never saw it and are not needed
     rd.good(7).replace("motion_quality", 7, "error")
-    rd.replace("task_success", 7, "fail")
-    lines = funnel(rd.write(), "0-7")
+    for m in ("visual_quality", "video_action_sync", "task_success"):
+        rd.drop(m, 7)
+    # 8: a blocking finding drops it wherever it is, a module that failed is named (D35, D58)
+    rd.good(8).replace("motion_quality", 8, "error").replace("task_success", 8, "fail")
+    lines = funnel(rd.write(), "0-8")
 
     assert lines[0]["verdict"] == "keep" and lines[0]["error_modules"] == []
-    assert lines[1]["verdict"] == "drop" and lines[1]["hard_fails"] == ["timestamp_check"]
+    assert lines[0]["blocking"] == [] and lines[0]["review"] == []
+    assert lines[1]["verdict"] == "drop" and lines[1]["blocking"] == [
+        {"module": "timestamp_check", "code": "gap", "item": "STRM-3"}]
     assert lines[1]["error_modules"] == []
-    assert lines[2]["verdict"] == "drop" and lines[2]["hard_fails"] == ["video_action_sync"]
+    assert lines[2]["verdict"] == "drop" and modules_of(lines[2]["blocking"]) == ["video_action_sync"]
     assert lines[2]["error_modules"] == ["visual_quality"]
-    assert "执行出错,不影响结论" in lines[2]["reason"]
-    assert lines[3]["verdict"] == "drop" and lines[3]["error_modules"] == ["task_success"]
-    assert lines[3]["soft_score"] < 0.5
+    assert "执行出错，不影响结论" in lines[2]["reason"]
+    assert lines[3]["verdict"] == "held" and lines[3]["error_modules"] == ["task_success"]
+    assert lines[3]["blocking"] == []
     for ep in (4, 5):
         assert lines[ep]["verdict"] == "held" and lines[ep]["error_modules"] == ["task_success"]
-        assert lines[ep]["hard_fails"] == [] and lines[ep]["reason"].startswith("待补跑")
+        assert lines[ep]["blocking"] == [] and lines[ep]["reason"].startswith("待补跑")
     assert "没有结果" in lines[5]["reason"]
-    assert lines[6]["verdict"] == "keep" and lines[6]["undecidable"] == ["task_success"]
+    assert lines[6]["verdict"] == "keep" and lines[6]["review"] == [
+        {"module": "task_success", "code": "uncertain", "item": "TASK-5", "line": "task_verdict"}]
     assert lines[7]["verdict"] == "held" and lines[7]["error_modules"] == ["motion_quality"]
+    assert lines[8]["verdict"] == "drop" and modules_of(lines[8]["blocking"]) == ["task_success"]
+    assert lines[8]["error_modules"] == ["motion_quality"]
     with open(os.path.join(rd.path, "revisions", "r0001", "keep.txt"), encoding="utf-8") as fh:
         assert fh.read().split() == ["0", "6"]
 
@@ -204,14 +218,15 @@ def test_final_lists_are_disjoint_and_complete(tmp_path):
     assert sorted(lists["reject"]) == [1, 4]
     assert sorted(lists["held"]) == [2, 3, 5]
     dup = lists["reject"][1]["reasons"]
-    assert dup == [{"module": "dedup", "kind": "duplicate", "text": "与 ep000000 字节级完全重复",
-                    "duplicate_of": 0}]
-    assert lists["reject"][4]["reasons"][0]["kind"] == "hard_gate"
+    assert dup == [{"module": "dedup", "kind": "duplicate", "code": "duplicate", "item": "SET-1",
+                    "appealable": True, "text": "与 ep000000 字节级完全重复", "duplicate_of": 0}]
+    gap = lists["reject"][4]["reasons"][0]
+    assert (gap["kind"], gap["code"], gap["item"], gap["appealable"]) == ("finding", "gap", "STRM-3", False)
     assert [r["module"] for r in lists["held"][2]["reasons"]] == ["dedup"]
     assert [r["module"] for r in lists["held"][3]["reasons"]] == ["skill_profile"]
     assert lists["held"][5]["reasons"][0] == {
         "module": "task_success", "kind": "execution_error",
-        "text": "「任务成败判定」执行出错(probe/probe: timeout)"}
+        "text": "「任务成败判定」执行出错（probe/probe: timeout）"}
     assert all(r["kind"] == "execution_error" for e in lists["held"].values()
                for r in e["reasons"])
 
@@ -254,7 +269,8 @@ def test_human_decisions_follow_v1s_priorities(tmp_path):
     assert sorted(after["reject"]) == [0, 3, 4]
     assert sorted(after["held"]) == [6]                   # relabelled, not judged again yet
     assert after["reject"][0]["reasons"][0]["text"].startswith("人工裁决判失败")
-    assert after["reject"][3]["reasons"][0]["kind"] == "hard_gate"   # gates are final
+    assert after["reject"][0]["reasons"][0]["kind"] == "human"
+    assert after["reject"][3]["reasons"][0]["kind"] == "finding"     # gates are final
     assert after["reject"][4]["reasons"] == [{"module": "skill_profile", "kind": "human",
                                               "text": "人工裁决弃用"}]
     assert after["held"][6]["reasons"][0]["text"] == "改标后尚未按新标注重跑任务成败判定"
@@ -302,7 +318,7 @@ def test_a_restored_appeal_is_never_held_for_dedup_or_profile(tmp_path):
     assert _keep_txt(run_dir, 1) == [0, 2]
     first = final(run_dir, "0-2")
     assert sorted(first["reject"]) == [1] and first["reject"][1]["reasons"][0]["kind"] \
-        == "hard_gate"
+        == "finding"
 
     apply(run_dir, decisions(str(tmp_path / "d.json"), (1, "reject_appeal", "restore", None)))
     counts = _funnel_phase(run_dir, 2, "0-2")
@@ -317,11 +333,12 @@ def test_a_restored_appeal_is_never_held_for_dedup_or_profile(tmp_path):
 
 
 def test_dedup_is_not_run_again_after_an_adjudication(tmp_path):
-    """The first dedup result stands; an episode a person brought in is never
-    deduplicated; a kept episode dedup has no result for still waits for it."""
+    """Dedup's groups stand; aggregate picks each group's keeper after the human decisions - the
+    first member not rejected for another reason (D58, design doc 17 §4.5): 3 judged failed by a
+    person, its copy 7 is kept in its place. An episode a person brought in is never deduplicated;
+    a kept episode dedup has no result for still waits for it."""
     from curation.pipeline import aggregate as agg
     from curation.pipeline.adjudication import Decisions
-    from curation.pipeline.config import load_config
 
     rd = RunDir(str(tmp_path / "run")).good(0, 3, 6, 7)
     rd.replace("task_success", 3, "abstain")
@@ -340,18 +357,27 @@ def test_dedup_is_not_run_again_after_an_adjudication(tmp_path):
                              (5, "reject_appeal", "restore", None)))
     assert _funnel_phase(run_dir, 1, "0,3,5,6,7") and _keep_txt(run_dir, 1) == [0, 5, 6, 7]
     lists = final(run_dir, "0,3,5,6,7")
-    assert sorted(lists["passed"]) == [0, 5]
-    assert sorted(lists["reject"]) == [3, 7]
-    assert lists["reject"][7]["reasons"][0] == {
-        "module": "dedup", "kind": "duplicate", "text": "与 ep000003 字节级完全重复",
-        "duplicate_of": 3}
-    assert lists["reject"][3]["reasons"][0]["text"] == "人工裁决判失败(任务未完成)"
+    assert sorted(lists["passed"]) == [0, 5, 7]
+    assert sorted(lists["reject"]) == [3]
+    assert lists["reject"][3]["reasons"] == [{
+        "module": "task_success", "kind": "human", "code": "failure", "item": "TASK-5",
+        "appealable": False, "text": "人工裁决判失败（任务未完成）"}]
     assert [r["module"] for r in lists["held"][6]["reasons"]] == ["dedup"]
 
-    state = agg.RunState(run_dir, list(ALL), [0, 3, 5, 6, 7], load_config(None))
+    state = agg.RunState(run_dir, list(ALL), [0, 3, 5, 6, 7])
     members, restored = agg.profile_members(state, Decisions.of(run_dir))
     assert restored == {5}
-    assert members == [0, 3, 5, 6]                  # 7 is a copy; 5 counts as none
+    assert members == [0, 3, 5, 6, 7]               # 7 keeps its group; 5 counts as none
+
+    # had 3 stayed, 7 would be its copy: rejected, appealable, left out of the profile
+    rd2 = RunDir(str(tmp_path / "run2")).good(0, 3, 7)
+    rd2.replace("dedup", 7, "fail", details={"duplicate_of": 3})
+    run2 = rd2.write()
+    lists = final(run2, "0,3,7")
+    assert sorted(lists["passed"]) == [0, 3] and sorted(lists["reject"]) == [7]
+    assert lists["reject"][7]["reasons"][0]["duplicate_of"] == 3
+    state = agg.RunState(run2, list(ALL), [0, 3, 7])
+    assert agg.profile_members(state, Decisions.of(run2)) == ([0, 3], set())
 
 
 def _kinds(lists) -> dict[int, list[tuple[str, str]]]:
@@ -365,9 +391,10 @@ def _gate_reject(rd: RunDir, ep: int, gate: str) -> RunDir:
 
 
 def test_review_kinds_follow_v1s_queues(tmp_path):
-    """D42: a task verdict is asked for delivered episodes only, and only of
-    task_success; every reject by one appealable module alone - task_success or
-    dedup - can be appealed until an appeal is decided; held episodes wait."""
+    """D42 by finding: a task verdict is asked for delivered episodes only, and only of
+    task_success; a reject whose blocking findings are all appealable - task_success's failure,
+    dedup's duplicate - can be appealed until an appeal is decided, one with a final finding
+    among them cannot; held episodes wait."""
     rd = RunDir(str(tmp_path / "run")).good(0, 1, 2, 3, 6, 7, 8, 9)
     rd.replace("task_success", 0, "abstain")                            # asked
     rd.replace("kinematic_limits", 1, "abstain")                        # not asked
@@ -375,8 +402,8 @@ def test_review_kinds_follow_v1s_queues(tmp_path):
     rd.replace("task_success", 3, "abstain")
     rd.replace("dedup", 3, "fail", details={"duplicate_of": 0})         # a copy of 0
     _gate_reject(rd, 4, "timestamp_check")                              # final
-    rd.good(5).replace("motion_quality", 5, "scored", score=0.1)
-    rd.replace("visual_quality", 5, "scored", score=0.1)               # soft: final
+    rd.good(5).replace("video_action_sync", 5, "fail")                  # final besides an
+    rd.replace("task_success", 5, "fail")                               # appealable one
     rd.replace("task_success", 6, "error")                              # held: waits
     for ep in (7, 8, 9):
         rd.replace("task_success", ep, "fail")
@@ -394,10 +421,14 @@ def test_review_kinds_follow_v1s_queues(tmp_path):
     assert lists["review"][0]["current_list"] == "passed"
     copy = lists["review"][3]
     assert copy["current_list"] == "reject"
-    assert copy["reasons"] == [{"module": "dedup", "kind": "duplicate", "duplicate_of": 0,
+    assert copy["reasons"] == [{"module": "dedup", "kind": "duplicate", "code": "duplicate",
+                                "item": "SET-1", "appealable": True, "duplicate_of": 0,
                                 "text": "与 ep000000 字节级完全重复"}]
     assert copy["review"][0]["reason"] == "与 ep000000 字节级完全重复"
-    assert lists["review"][7]["review"][0]["reason"].endswith("(复议拿不准,待定)")
+    assert copy["review"][0]["codes"] == ["duplicate"] and copy["review"][0]["duplicate_of"] == 0
+    assert [(r["module"], r["appealable"]) for r in lists["reject"][5]["reasons"]] == \
+        [("video_action_sync", False), ("task_success", True)]        # every reason, in order
+    assert lists["review"][7]["review"][0]["reason"].endswith("（复议拿不准，待定）")
 
 
 def test_a_restored_dedup_appeal_comes_back_and_its_abstention_is_asked(tmp_path):
@@ -405,7 +436,6 @@ def test_a_restored_dedup_appeal_comes_back_and_its_abstention_is_asked(tmp_path
     as restored, it is passed, and task_success's abstention on it is now a question."""
     from curation.pipeline import aggregate as agg
     from curation.pipeline.adjudication import Decisions
-    from curation.pipeline.config import load_config
 
     rd = RunDir(str(tmp_path / "run")).good(0, 3)
     rd.replace("task_success", 3, "abstain")
@@ -417,7 +447,7 @@ def test_a_restored_dedup_appeal_comes_back_and_its_abstention_is_asked(tmp_path
     assert out["profile_resync"] == [3]
     _funnel_phase(run_dir, 2, "0,3")
     assert _keep_txt(run_dir, 2) == [0, 3]
-    state = agg.RunState(run_dir, list(ALL), [0, 3], load_config(None))
+    state = agg.RunState(run_dir, list(ALL), [0, 3])
     assert agg.profile_members(state, Decisions.of(run_dir)) == ([0, 3], {3})
     after = final(run_dir, "0,3", revision=2)
     assert sorted(after["passed"]) == [0, 3]
@@ -432,8 +462,7 @@ def test_restore_overturns_the_appealed_module_only(tmp_path):
     rd.replace("task_success", 1, "fail")
     run_dir = rd.write()
     first = final(run_dir, "0,1")
-    assert [r["kind"] for r in first["reject"][1]["reasons"]] == ["hard_gate",
-                                                                 "execution_error"]
+    assert [r["kind"] for r in first["reject"][1]["reasons"]] == ["finding", "execution_error"]
     assert _kinds(first) == {1: [("reject_appeal", "task_success")]}
     apply(run_dir, decisions(str(tmp_path / "d.json"), (1, "reject_appeal", "restore", None)))
     after = final(run_dir, "0,1", revision=2)
@@ -443,15 +472,16 @@ def test_restore_overturns_the_appealed_module_only(tmp_path):
 
 
 @pytest.mark.parametrize("episode, why", [
-    (4, "a hard gate of its own"), (5, "a soft score"), (0, "not rejected"),
-    (9, "discarded"),
+    (4, "a final finding of its own"), (5, "a final finding besides an appealable one"),
+    (0, "not rejected"), (9, "discarded"), (3, "a low score rejects nothing (P18)"),
 ])
 def test_an_appeal_on_a_final_reject_is_refused(tmp_path, episode, why):
     rd = RunDir(str(tmp_path / "run")).good(0, 2, 9)
     rd.replace("task_success", 2, "fail").replace("task_success", 9, "fail")
     _gate_reject(rd, 4, "timestamp_check")
-    rd.good(5).replace("motion_quality", 5, "scored", score=0.1)
-    rd.replace("visual_quality", 5, "scored", score=0.1)
+    rd.good(5).replace("video_action_sync", 5, "fail").replace("task_success", 5, "fail")
+    rd.good(3).replace("motion_quality", 3, "scored", score=0.1)
+    rd.replace("visual_quality", 3, "scored", score=0.1)
     run_dir = rd.write()
     apply(run_dir, decisions(str(tmp_path / "d0.json"), (9, "label", "discard", None)))
     res = run("adjudicate-apply", "--run-dir", run_dir, "--decisions",
@@ -466,52 +496,58 @@ def test_an_appeal_on_a_final_reject_is_refused(tmp_path, episode, why):
 
 
 def test_what_can_be_appealed_comes_from_the_registry(tmp_path, monkeypatch):
-    """C1 ``appealable`` decides (task_success and dedup today): made appealable, a
-    video_action_sync-only reject gets an appeal item, admits an appeal and a restore
-    overturns it; nothing else in the code names the modules."""
+    """C1 2.x ``appealable`` on a finding code decides (task_success's failure and dedup's
+    duplicate here): made appealable, a reject by video_action_sync's misaligned_all gets an
+    appeal item, admits an appeal and a restore overturns it; nothing else names the codes."""
+    from dataclasses import replace
+
     from curation.contracts import modules as registry
 
-    assert [m for m in ALL if registry.appealable(m)] == ["task_success", "dedup"]
+    assert [(m, c.code) for m in ALL for c in registry.get(m).codes if c.appealable] == \
+        [("task_success", "failure"), ("dedup", "duplicate")]
     rd = _gate_reject(RunDir(str(tmp_path / "run")).good(0), 1, "video_action_sync")
     run_dir = rd.write()
     assert _kinds(final(run_dir, "0,1")) == {}
     refused = run("adjudicate-apply", "--run-dir", run_dir, "--decisions",
                   decisions(str(tmp_path / "d0.json"), (1, "reject_appeal", "restore", None)))
     assert refused.rc == 2
-    real = registry.appealable
-    monkeypatch.setattr(registry, "appealable",
-                        lambda m: m == "video_action_sync" or real(m))
+    real = registry.finding_code
+
+    def finding_code(module, code):
+        spec = real(module, code)
+        return replace(spec, appealable=True) if (module, code) == ("video_action_sync", "misaligned_all") \
+            else spec
+
+    monkeypatch.setattr(registry, "finding_code", finding_code)
     assert _kinds(final(run_dir, "0,1")) == {1: [("reject_appeal", "video_action_sync")]}
     apply(run_dir, decisions(str(tmp_path / "d1.json"), (1, "reject_appeal", "restore", None)))
     assert sorted(final(run_dir, "0,1", revision=2)["passed"]) == [0, 1]
 
 
 def test_items_name_their_registry_line_and_where_it_applies(tmp_path):
-    """Every item carries its C1 line (label for label_conflict); a dedup appeal names
-    the original; a line is only asked where it applies (label: passed episodes)."""
+    """Every item carries its C1 line (label for label_conflict) and the codes it asks about; a
+    dedup appeal names the original; a line is only asked where it applies (label: passed
+    episodes)."""
     rd = RunDir(str(tmp_path / "run")).good(0, 3)
     rd.replace("task_success", 0, "abstain")
     rd.replace("dedup", 3, "fail", details={"duplicate_of": 0})
-    run_dir = rd.write()
-    audit = {"high": [{"id": "ep000000", "reason": "标注与画面不一致"},
-                      {"id": "ep000003", "reason": "标注与画面不一致"}]}
-    os.makedirs(os.path.join(run_dir, "checks", "skill_profile"), exist_ok=True)
-    with open(os.path.join(run_dir, "checks", "skill_profile", "profile.json"), "w",
-              encoding="utf-8") as fh:
-        json.dump({"families": []}, fh)
-    with open(os.path.join(run_dir, "checks", "skill_profile", "label_audit.json"), "w",
-              encoding="utf-8") as fh:
-        json.dump(audit, fh)
+    run_dir = _label_questions(rd, 0, 3)
     lists = final(run_dir, "0,3")
     items = {e: v["review"] for e, v in lists["review"].items()}
-    assert [(i["kind"], i["line"]) for i in items[0]] == [("task_verdict", "task_verdict"),
-                                                         ("label_conflict", "label")]
+    assert [(i["kind"], i["line"], i["codes"]) for i in items[0]] == [
+        ("task_verdict", "task_verdict", ["uncertain"]),
+        ("label_conflict", "label", ["label_disagreement"])]
     assert items[3] == [{"source_module": "dedup", "kind": "reject_appeal",
-                         "line": "reject_appeal", "duplicate_of": 0,
-                         "reason": "与 ep000000 字节级完全重复"}]
+                         "line": "reject_appeal", "duplicate_of": 0, "codes": ["duplicate"],
+                         "items": ["SET-1"], "reason": "与 ep000000 字节级完全重复"}]
 
 
-def _label_questions(run_dir: str, *eps: int) -> None:
+def _label_questions(rd: RunDir, *eps: int) -> str:
+    """The run directory of ``rd`` with the label audit queueing ``eps``: skill_profile's records
+    of them carry its label finding (the audit's flag) and ``label_audit.json`` their tier."""
+    for e in eps:
+        rd.replace("skill_profile", e, "abstain")
+    run_dir = rd.write()
     audit = {"high": [{"id": f"ep{e:06d}", "reason": "标注与画面不一致"} for e in eps]}
     os.makedirs(os.path.join(run_dir, "checks", "skill_profile"), exist_ok=True)
     with open(os.path.join(run_dir, "checks", "skill_profile", "profile.json"), "w",
@@ -520,14 +556,14 @@ def _label_questions(run_dir: str, *eps: int) -> None:
     with open(os.path.join(run_dir, "checks", "skill_profile", "label_audit.json"), "w",
               encoding="utf-8") as fh:
         json.dump(audit, fh)
+    return run_dir
 
 
 def test_a_task_verdict_after_a_relabel_is_taken_instead_of_a_re_judge(tmp_path):
     """C1 1.3's follow-up (v1's relabel card): on an episode asked only about its label,
     a person who adopts a new label may also conclude the task. A success or failure is
     taken as it is and the episode is not judged again; "unsure" leaves the re-judge."""
-    run_dir = RunDir(str(tmp_path / "run")).good(0, 1, 2).write()
-    _label_questions(run_dir, 0, 1, 2)
+    run_dir = _label_questions(RunDir(str(tmp_path / "run")).good(0, 1, 2), 0, 1, 2)
     first = final(run_dir, "0-2")
     assert {e: [i["line"] for i in v["review"]] for e, v in first["review"].items()} == \
         {0: ["label"], 1: ["label"], 2: ["label"]}                  # label questions only
@@ -579,8 +615,7 @@ def test_a_follow_up_verdict_lapses_when_its_label_answer_changes(tmp_path):
     the relabel still stands, and it is judged again."""
     from curation.pipeline.adjudication import Decisions
 
-    run_dir = RunDir(str(tmp_path / "run")).good(0, 1).write()
-    _label_questions(run_dir, 0, 1)
+    run_dir = _label_questions(RunDir(str(tmp_path / "run")).good(0, 1), 0, 1)
     out = _apply_more(run_dir, str(tmp_path / "d1.json"), 1,
                       (0, "label", "custom_label", "stack the cups"),
                       (0, "task_verdict", "failure", None),
@@ -604,8 +639,7 @@ def test_a_follow_up_verdict_lapses_when_its_label_answer_changes(tmp_path):
 def test_a_resubmitted_label_needs_its_verdict_again(tmp_path):
     """A new label answer lapses the verdict given before it: the new relabel is judged
     again, unless the verdict is given once more after it."""
-    run_dir = RunDir(str(tmp_path / "run")).good(0).write()
-    _label_questions(run_dir, 0)
+    run_dir = _label_questions(RunDir(str(tmp_path / "run")).good(0), 0)
     assert _apply_more(run_dir, str(tmp_path / "d1.json"), 1,
                        (0, "label", "custom_label", "stack the cups"),
                        (0, "task_verdict", "success", None))["rerun_task_success"] == []
@@ -626,15 +660,14 @@ def test_a_verdict_on_the_cards_own_question_never_lapses(tmp_path):
     change of the label answer leaves it standing."""
     rd = RunDir(str(tmp_path / "run")).good(0)
     rd.replace("task_success", 0, "abstain")
-    run_dir = rd.write()
-    _label_questions(run_dir, 0)
+    run_dir = _label_questions(rd, 0)
     _apply_more(run_dir, str(tmp_path / "d1.json"), 1,
                 (0, "label", "custom_label", "stack the cups"),
                 (0, "task_verdict", "failure", None))
     _apply_more(run_dir, str(tmp_path / "d2.json"), 3, (0, "label", "keep_label", None))
     lists = final(run_dir, "0", revision=2)
     assert sorted(lists["reject"]) == [0]
-    assert lists["reject"][0]["reasons"][0]["text"] == "人工裁决判失败(任务未完成)"
+    assert lists["reject"][0]["reasons"][0]["text"] == "人工裁决判失败（任务未完成）"
 
 
 def test_a_line_adjudicate_apply_has_no_rule_for_is_refused(tmp_path):

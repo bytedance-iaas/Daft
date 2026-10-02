@@ -19,7 +19,7 @@ import shutil
 import numpy as np
 import pytest
 
-from .pipeline import Chain, read_jsonl, results, run
+from .pipeline import Chain, codes_of, passed_of, read_jsonl, results, run, verdict_of
 
 URL = "http://fake-vlm.test/v1"
 VLM = ("--vlm-endpoint", URL, "--vlm-model", "fake-vlm", "--retry", "0")
@@ -233,7 +233,7 @@ def test_without_a_gripper_reference_the_model_gives_an_advisory_opinion(cli, mi
     assert doc["episodes"]["total"] == 3 and doc["episodes"]["error"] == 0
     assert len(sent) == 3                                        # one clip per episode (one camera, < 60 s)
     recs = results(rd, EEF)
-    assert all(r["passed"] is True and r["verdict"] == "pass" for r in recs.values())
+    assert all(verdict_of(r) == "pass" for r in recs.values())          # an opinion rejects nothing
     for e, r in recs.items():
         d = r["details"]
         assert d["assessment_mode"] == "vlm_opinion" and d["decision"]["outcome"] == "opinion"
@@ -329,9 +329,10 @@ def test_the_frame_survivors_are_judged(chain):
     assert counts["total"] == len(survivors) and counts["error"] == 0
     for ep, r in recs.items():
         d = r["details"]
-        assert r["gate"] == "hard" and r["score"] is None and d["assessment_mode"] == "verdict"
+        assert r["status"] == "ok" and "score" not in r["readings"] and d["assessment_mode"] == "verdict"
         want = {"pass": True, "reject": False, "human": None}[d["decision"]["outcome"]]
-        assert r["passed"] is want and r["verdict"] == {True: "pass", False: "fail", None: "abstain"}[want]
+        assert passed_of(r) is want and verdict_of(r) == {True: "pass", False: "fail", None: "abstain"}[want]
+        assert codes_of(r) == {True: [], False: ["inconsistent"], None: ["unsettled"]}[want]
         if ep == 7:
             assert d["decision"]["human"][0]["code"] == "not_in_file"
             continue
@@ -343,7 +344,7 @@ def test_the_frame_survivors_are_judged(chain):
             assert "coverage_insufficient" in pos["reasons"] and d["decision"]["outcome"] == "human"
         assert d["review"]["status"] in ("completed", "incomplete", "not_reviewed")
     kept = open(os.path.join(rd, "stages", "eef.txt")).read().split()
-    assert kept == [str(e) for e in sorted(recs) if recs[e]["passed"] is not False]
+    assert kept == [str(e) for e in sorted(recs) if passed_of(recs[e]) is not False]
     for rec in recs.values():
         for path in rec["evidence"]:
             assert os.path.isfile(os.path.join(rd, path))
@@ -355,8 +356,8 @@ def test_only_its_rejects_move_the_verdict(chain):
     r1 = {x["episode_index"]: x for x in read_jsonl(os.path.join(chain["rd"], "revisions", "r0001", "verdicts.jsonl"))}
     r2 = {x["episode_index"]: x for x in read_jsonl(os.path.join(chain["rd"], "revisions", "r0002", "verdicts.jsonl"))}
     for ep in r1:
-        if ep in recs and recs[ep]["passed"] is False:
-            assert r2[ep]["verdict"] == "drop" and "EEF–视频一致性" in r2[ep]["reason"]
+        if ep in recs and passed_of(recs[ep]) is False:
+            assert r2[ep]["verdict"] == "drop" and [b["module"] for b in r2[ep]["blocking"]] == [EEF]
         else:
             assert r2[ep]["verdict"] == r1[ep]["verdict"], ep
 
@@ -367,7 +368,8 @@ def test_the_report_shows_the_eef_section(chain):
     s = sec["summary"]
     n = len(chain["survivors"])
     assert s["judged_pass"] + s["judged_reject"] + s["to_human"] == n and s["uncalibrated"]
-    assert s["threshold_profile"].startswith("demo ") and sec["gate"] == "hard"
+    assert s["threshold_profile"].startswith("demo ") and "gate" not in sec       # report 2.0
+    assert s["assessed_episodes"] == n
     assert all(set(x) == {"name", "count"} for x in s["human_reasons"])
     assert s["windows"] >= s["windows_answered"] and "model_cpu_agreement" in s
     tables = {t["id"]: t for t in sec["tables"]}

@@ -11,6 +11,7 @@ import shutil
 import pytest
 
 from curation.adapters.video_vlm import CAMERA_CHECK_PROTOCOL
+from curation.contracts import modules as registry
 
 from .fakevlm_server import FakeVlmServer
 from .pipeline import Chain, comparable, results, run
@@ -44,8 +45,9 @@ def test_every_episode_gets_a_record_with_all_three_items_without_being_asked(vl
     cam = results(ran["dir"], MOD)
     assert set(cam) == set(task) == set(vlm_stage["reference"])
     for rec in cam.values():
-        assert rec["verdict"] == "abstain" and rec["passed"] is None and rec["score"] is None
-        assert rec["error"] is None
+        # advisory: every finding it reports is info under the default policy, never a vote (P18)
+        assert rec["status"] == "ok" and rec["error"] is None and "score" not in rec["readings"]
+        assert all(registry.finding_code(MOD, f["code"]).level == "info" for f in rec["findings"])
         d = rec["details"]
         assert d["protocol"] == CAMERA_CHECK_PROTOCOL and d["source"] == "task_success.video_reviews"
         assert set(d["items"]) == set(ITEMS) and d["cams"]

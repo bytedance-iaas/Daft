@@ -136,11 +136,10 @@ def _details(rec: dict) -> dict:
 # ---------------------------------------------------------------- every module
 
 def generic(records: list[dict], scores: list[float]) -> dict:
-    """What any verdict module gets: the score distribution, why it abstained (reason
-    heads), and which step failed for the episodes that wait for a retry."""
+    """What any verdict module gets: why it abstained (reason heads) and which step failed for the
+    episodes that wait for a retry. The score distribution is the 2.0 section's ``score_hist`` (one per
+    0-1 reading, ``reporting.finding_stats``)."""
     out: dict = {}
-    if scores:
-        out["score_hist"] = score_hist(scores)
     heads = Counter(reason_head(_details(r).get("reason")) for r in records
                     if legacy_verdict(r) == "abstain")
     if heads:
@@ -444,13 +443,15 @@ def _display(entry, slug: str) -> str:
     return str((entry or {}).get("name_zh") or slug) if isinstance(entry, dict) else str(slug)
 
 
-def skill_stats(records: list[dict], profile: dict, audit: dict | None) -> dict:
+def skill_stats(records: list[dict], profile: dict, audit: dict | None,
+                delivered: set[int] | None = None) -> dict:
     """The family distribution (with each family's sub-skills), the label disagreements
     the audit found by tier, and what the grouping text came from.
 
     Counts come from the records (each episode's family and sub-skill), names from the
     profile (its Chinese names when it has them); a profile without records - older
-    runs - gives its own counts."""
+    runs - gives its own counts. ``delivered`` (the revision's ``passed``): the same
+    distribution over the delivered episodes too (design doc 17 §4.5, two distributions)."""
     fams = (profile or {}).get("families") or {}
     under = set((profile or {}).get("undersampled") or [])
     judged = [_details(r) for r in records if legacy_verdict(r) != "error"]
@@ -482,7 +483,16 @@ def skill_stats(records: list[dict], profile: dict, audit: dict | None) -> dict:
     review = len(tiers.get("mid_for_review") or [])
     sources = Counter(str(_details(r)["grouping_text_source"]) for r in records
                       if legacy_verdict(r) != "error" and _details(r).get("grouping_text_source"))
+    out_delivered = {}
+    if delivered is not None and by_family:
+        mine = Counter(str(_details(r)["family"]) for r in records
+                       if legacy_verdict(r) != "error" and _details(r).get("family")
+                       and r.get("episode_index") in delivered)
+        rows = [{"name": _display(fams.get(slug) if isinstance(fams.get(slug), dict) else {}, slug), "count": n}
+                for slug, n in mine.items()]
+        out_delivered["delivered_family_distribution"] = sorted(rows, key=lambda x: (-x["count"], x["name"]))
     return {"family_distribution": [{"name": f["name"], "count": f["count"]} for f in tree],
+            **out_delivered,
             "family_tree": tree, "label_disagreements": high + review,
             "disagreement_high": high, "disagreement_review": review,
             "unstable": len(tiers.get("low_caption_unstable") or []),

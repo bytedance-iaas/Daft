@@ -18,7 +18,7 @@ import os
 import numpy as np
 import pytest
 
-from .pipeline import results, run
+from .pipeline import passed_of, results, run
 from .test_eef_check import CAM, EEF, VLM, _entry, _files, fake_vlm
 
 MAPPING = {"schema_version": "eef-mapping/1.1",
@@ -243,7 +243,7 @@ def test_check_reports_it_and_the_verdict_does_not_move(mini_dataset, tmp_path):
         withrec = run(*common, "--run-dir", str(tmp_path / "rec"), "--param", f"{EEF}.record_mapping={mapping}")
     assert base.rc == 0 and withrec.rc == 0, withrec.doc
     a, b = results(str(tmp_path / "base"), EEF), results(str(tmp_path / "rec"), EEF)
-    assert {e: r["passed"] for e, r in a.items()} == {e: r["passed"] for e, r in b.items()}
+    assert {e: passed_of(r) for e, r in a.items()} == {e: passed_of(r) for e, r in b.items()}
     assert all(r["details"]["record"]["status"] == "unsupported" for r in a.values())          # no mapping given
     rec = {e: r["details"]["record"] for e, r in b.items()}
     assert all(r["sources"]["joints"]["status"] == "suspect" for r in rec.values())
@@ -284,7 +284,7 @@ def test_check_reports_it_and_the_verdict_does_not_move(mini_dataset, tmp_path):
                  "--param", f"{EEF}.record_mapping={_mapping(tmp_path, MAPPING, 'ok.json')}", *VLM)
     assert op.rc == 0, op.doc
     got = results(str(tmp_path / "op"), EEF)
-    assert all(r["details"]["assessment_mode"] == "vlm_opinion" and r["passed"] is True for r in got.values())
+    assert all(r["details"]["assessment_mode"] == "vlm_opinion" and passed_of(r) is True for r in got.values())
     assert all(r["details"]["record"]["status"] == "ok" for r in got.values())
 
 

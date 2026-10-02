@@ -141,7 +141,7 @@ B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"
 2. **明细表**：`c "$B/report/tables/visual_quality?sort=score&order=desc&limit=3"` —— 最高分的三行（ep8 的两路、ep7 的一路），
    `has_more: true`；带上返回的 `next_cursor`（`&cursor=...`）接着翻，一直翻到底，16 行不重不漏，ep3 那一路没有分的排在最后。
    `c "$B/report/tables/visual_quality?sort=sharpness"` 是 400，列出能排序的列；`c $B/report/tables/nope` 是 404。
-3. **单条 episode**：`c $B/episodes/2 | python3 -m json.tool` —— `list: reject`，原因「未通过「任务成败判定」:3 路复核一致判未完成」，
+3. **单条 episode**：`c $B/episodes/2 | python3 -m json.tool` —— `list: reject`，原因「任务没有完成：3 路复核一致判未完成」（`kind: finding`、`code: failure`、`item: TASK-5`、`appealable: true`），
    证据帧 `details/evidence/task_success/ep000002_0.jpg`，两路视频来自源数据集，`from_ts` 28、`to_ts` 42（v3 拼接文件里的一段）。
    `c $B/episodes/99` 是 404。
    **episode 列表**：`c "$B/episodes?limit=4"` —— ep0–3，`has_more: true`，`counts` 为 all 9、passed 5、reject 3、held 1、review 3；

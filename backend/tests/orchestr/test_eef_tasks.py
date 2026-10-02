@@ -14,6 +14,7 @@ import re
 
 import pytest
 
+from ..cli.pipeline import passed_of
 from ..cli.test_eef_check import CAM, _entry, _truth
 from .conftest import ALL_MODULES, API, JSON, assert_schema
 
@@ -253,17 +254,18 @@ def test_an_eef_task_runs_end_to_end(daemon):
     assert {r["details"]["input_file_sha256"] for r in recs.values() if r["details"].get("input_file_sha256")} \
         == {traj["sha256"]}
     for r in recs.values():
-        assert r["passed"] is {"pass": True, "reject": False, "human": None}[r["details"]["decision"]["outcome"]]
+        assert passed_of(r) is {"pass": True, "reject": False, "human": None}[r["details"]["decision"]["outcome"]]
     usage = [json.loads(x) for x in open(os.path.join(rd, "usage.jsonl"))]
     assert {u["call_kind"] for u in usage if u.get("module") == EEF} == {"eef_review"}
     rev = task["result_rev"]
     verdicts = {x["episode_index"]: x for x in (json.loads(y) for y in open(
         os.path.join(rd, "revisions", f"r{rev:04d}", "verdicts.jsonl")))}
     for ep, r in recs.items():                               # only its rejects move a verdict
-        if r["passed"] is False:
-            assert verdicts[ep]["verdict"] == "drop" and EEF in verdicts[ep]["hard_fails"]
+        blocking = [b["module"] for b in verdicts[ep]["blocking"]]
+        if passed_of(r) is False:
+            assert verdicts[ep]["verdict"] == "drop" and EEF in blocking
         else:
-            assert EEF not in (verdicts[ep].get("hard_fails") or [])
+            assert EEF not in blocking
     delivered = d.delivery(task["run_id"])
     assert os.path.isfile(os.path.join(delivered, "checks", EEF, "results.jsonl"))
     assert os.path.isdir(os.path.join(delivered, "inputs"))
@@ -299,7 +301,7 @@ def test_a_person_settles_what_the_module_could_not_and_the_delivery_follows(dae
     for ep in asked:
         view = d.api("GET", f"/tasks/{task_id}/episodes/{ep}").json()
         rec = view["modules"][EEF]
-        assert view["list"] == "passed" and rec["passed"] is None and rec["details"]["decision"]["human"]
+        assert view["list"] == "passed" and passed_of(rec) is None and rec["details"]["decision"]["human"]
         # F5.12: the crops of every window, signed with scope=delivery, are in the delivery
         crops = [p for cam in rec["details"]["review"].get("cameras", {}).values()
                  for w in cam["windows"] for p in w.get("evidence") or []]
@@ -317,7 +319,8 @@ def test_a_person_settles_what_the_module_could_not_and_the_delivery_follows(dae
     assert done["state"] == "succeeded" and done["result_rev"] == first["result_rev"] + 1, json.dumps(done)[:2000]
     assert done["delivery_stale"] is True
     assert d.api("GET", f"/tasks/{task_id}/episodes/{drop}").json()["reasons"] == [
-        {"module": EEF, "kind": "human", "text": "人工裁决判为 EEF 与视频不一致"}]
+        {"module": EEF, "kind": "human", "code": "unsettled", "item": "MV-5", "appealable": False,
+         "text": "人工裁决判为 EEF 与视频不一致"}]
     if keep != drop:
         assert d.api("GET", f"/tasks/{task_id}/episodes/{keep}").json()["list"] == "passed"
     cards = {c["episode_index"]: c for c in d.api("GET", f"/tasks/{task_id}/adjudication",

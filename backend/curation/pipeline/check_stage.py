@@ -181,9 +181,11 @@ class StageRun:
         self.label = "check:" + "+".join(opts.modules)
         self._lock = threading.Lock()
         self.done = 0
-        #: what stops an episode in the funnel (``records.passes_funnel``): the registry's default
-        #: levels until the task's policy is frozen into the run directory
-        self.funnel_policy = None
+        #: what stops an episode in the funnel (``records.passes_funnel``): a finding that blocks under
+        #: the task's policy (``run.json``; the default levels without one) - until the two blocks of F12.4
+        from .policy import load as load_policy
+
+        self.funnel_policy = load_policy(opts.run_dir)
         if opts.pipeline_state:
             from .episode_state import EpisodeState
 

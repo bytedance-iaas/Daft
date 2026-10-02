@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.0.0
+  version: 2.1.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -168,6 +168,11 @@ info:
     `provisional`; for the findings (F12.3): `TaskEpisode.items` / `levels`. The report, the
     plan and the result records follow C2 2.0, which keeps reading the 1.0 documents of tasks
     made before (D59).
+
+    2.1.0 (2026-10-01): the policy verdicts (F12.3). An `EpisodeNote` of the episode view's
+    `reasons` may carry what a C2 2.0 reason carries: the finding `code`, its taxonomy `item` and
+    whether it may be `appealable`; its `kind` is then `finding`, `human`, `execution_error` or
+    `duplicate`.
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -3093,13 +3098,17 @@ components:
       required: [module, text]
       description: >-
         one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list
-        (hard_gate, soft_score, duplicate, human, execution_error) or a review kind
+        (2.0: finding, human, execution_error, duplicate; 1.0: hard_gate, soft_score, duplicate, human, execution_error) or a
+        review kind; a 2.0 reason names its finding code, the code's taxonomy item and whether it may be appealed
       properties:
         module: {$ref: "#/components/schemas/ModuleId"}
         kind: {type: string}
         text: {type: string}
         priority: {type: string}
         duplicate_of: {type: integer, minimum: 0}
+        code: {type: string, pattern: "^[a-z][a-z0-9_]*$", description: "2.0: the finding code (registry 2.x)"}
+        item: {type: [string, "null"], description: "2.0: the taxonomy item of the code (C6), null for a code without one"}
+        appealable: {type: boolean, description: "2.0: the code may be appealed (D42)"}
     Perf:
       type: object
       additionalProperties: false

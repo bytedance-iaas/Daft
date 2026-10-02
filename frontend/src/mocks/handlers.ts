@@ -52,6 +52,7 @@ import {
   SO101_TASK,
   tableRows,
 } from './world';
+import { asLegacyRecord } from '../lib/records';
 import { funnelGate, producesAdjudication } from '../lib/registry';
 import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
 import { tickSubtasks } from './subtaskSim';
@@ -1191,7 +1192,7 @@ function revisionOf(t: Task, url: URL): number | Response {
 
 function pipelineMockRow(ep: number, revision: number) {
   const view = episodeView(ep, revision);
-  const records = Object.values(view.modules);
+  const records = Object.values(view.modules).map((r) => asLegacyRecord(r, registry));
   const verdict = records.some((r) => r.verdict === 'fail') ? 'drop'
     : records.some((r) => r.verdict === 'error') ? 'held' : 'keep';
   return { episode_index: ep, last_stage: ep === 18 ? 'numeric' : 'vlm',

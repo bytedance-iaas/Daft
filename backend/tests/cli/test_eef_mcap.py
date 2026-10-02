@@ -19,7 +19,7 @@ import pytest
 pytest.importorskip("mcap", reason="mcap is needed for the mcap format")
 pytest.importorskip("mcap_ros2", reason="mcap-ros2-support decodes the fixture's cdr")
 
-from .pipeline import results, run  # noqa: E402
+from .pipeline import results, run, verdict_of  # noqa: E402
 from .test_eef_check import CAM, EEF, VLM, _files, _truth, fake_vlm  # noqa: E402
 
 TOPIC = "/observation.images.exterior"
@@ -110,7 +110,7 @@ def _readings(rd: str) -> dict:
     out = {}
     for ep, r in results(rd, EEF).items():
         d = r["details"]
-        out[ep] = (r["verdict"], d["decision"]["outcome"],
+        out[ep] = (verdict_of(r), d["decision"]["outcome"],
                    {k: v["status"] for k, v in d["cameras"][CAM]["subitems"].items()},
                    (d.get("state_motion") or {}).get("status"))
     return out

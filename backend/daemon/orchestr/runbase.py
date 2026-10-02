@@ -758,6 +758,16 @@ class Run:
             raise TaskFailure("output_unreachable", f"{err.message_zh}：{err.cause}",
                               stage=stage) from None
 
+    def require_current_format(self) -> None:
+        """D59: a task made before C2 2.0 (its run.json has no ``c2: "2.0"``) is read only - its records and
+        lists are 1.0, which this version reads but never aggregates again."""
+        from .planning import C2_VERSION
+
+        doc = read_json(self.wd.run_json, None)
+        if isinstance(doc, dict) and doc.get("c2") != C2_VERSION:
+            raise TaskFailure("legacy_task", "这个任务由旧版本生成（结果格式 1.0），新版本只能查看、不能再运行；"
+                                             "请复制为新任务")
+
     # ------------------------------------------------------------------ run it
     def execute(self) -> str:
         """Do the work; return the task's (recomputed) terminal state for the end transition."""

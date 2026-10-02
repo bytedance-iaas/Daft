@@ -16,7 +16,7 @@ from curation.adapters import vlm_client
 from parity.fakevlm import FakeVlm
 
 from .fakevlm_server import FakeVlmServer
-from .pipeline import comparable, read_jsonl, results, run
+from .pipeline import comparable, read_jsonl, results, run, verdict_of
 
 SCORE_PROMPT = "Rate this robot episode from 0 to 100. Score:"
 ANNOTATION = "pick up the red block and place it in the bin"
@@ -76,7 +76,7 @@ def test_video_run_does_not_encode_sparse_jpeg_inputs(vlm_stage, tmp_path,
 def test_the_mini_dataset_walks_every_task_success_path(vlm_stage):
     """What the CLI tests build on (``parity.fakevlm.SEED``): abstentions, a pass that
     arbitration rescues, a plain pass, and captions other than the annotation."""
-    got = {e: (r["verdict"], r["details"].get("verdict"))
+    got = {e: (verdict_of(r), r["details"].get("verdict"))
            for e, r in vlm_stage["reference"].items()}
     assert got == {0: ("abstain", "uncertain"), 1: ("pass", "arbitration_success"),
                    3: ("abstain", "uncertain"), 4: ("pass", "arbitration_success"),

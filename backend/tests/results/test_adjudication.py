@@ -73,7 +73,7 @@ def test_the_queue_of_the_first_revision(world):
     verdict = cards[3]["questions"][0]
     assert (verdict["line"], verdict["source_module"], verdict["annotation"]) == (
         "task_verdict", "task_success", TEXT[3])
-    assert verdict["reason"] == "两层证据矛盾，进人工"
+    assert verdict["reason"] == "任务成败拿不准：两层证据矛盾，进人工"           # the finding's sentence
     # ep 8 (motion_quality could not score it) is no question for a person
     appeals = _page(world, tab="appeals", status="all")
     assert [c["episode_index"] for c in appeals["items"]] == [2, 7]

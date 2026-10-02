@@ -1,38 +1,29 @@
-"""The verdicts of a run directory: pure computation, recomputed in full (doc 02 §3.6, 06 §3).
+"""The verdicts of a run directory: pure computation, recomputed in full (doc 02 §3.6, 06 §3, 17 §4).
 
-**Funnel phase** - the six checks -> keep / drop / held per episode, v1's
-rules to the letter (``pipeline/verdict.py`` is called, never rewritten):
+**Policy verdicts** (C2 2.0, design doc 17 §4, D58). Modules only report findings; the task's policy
+(``run.json``'s ``policy``, :mod:`.policy`) grades every finding blocking / review / info and
+:mod:`.verdicts` decides each episode: a blocking finding drops it (every one of them is a reason; a module
+that failed on it is still named, D35), else a module it needs that failed or has no record holds it, else
+it is kept and its review findings go to their review lines. The default policy is today's gates (P18):
+only the soft-score rejects are gone.
 
-* stages are walked in v1's funnel order; a hard gate that failed in the
-  numeric or frame stage kills the episode there, exactly as v1's filters do
-  (``hard_fails`` = the first failing gate, no soft score, the reason from
-  ``report.hard_fail_reason``);
-* an episode that survives both is judged by ``episode_verdict`` over every
-  check it has: a hard ``passed=False`` drops, ``passed=None`` is only recorded
-  as undecidable, a weighted soft score under the threshold drops.
+**Funnel phase** - until the two blocks of F12.4 the stages still run one after another and an episode that
+stops at a stage (an error, or a finding that blocks under the policy) has no records in the later ones;
+the modules an episode needs are walked the same way (:func:`expected`). ``verdicts.jsonl`` holds the
+machine's verdicts (2.0 lines), ``keep.txt`` the episodes kept after the applied human decisions - the
+input of dedup and skill_profile.
 
-What v2 adds (D24, D33, D35): a module that could not judge the episode
-(``verdict = error``, or no result at a stage the episode reached) holds it -
-unless the modules that did judge it already reject it: a hard gate failed, or
-every selected soft module scored it and the weighted score is under the
-threshold. Then it is dropped and the failed modules are still named. An
-episode that errored does not go on to later stages (their results are not
-expected); a module that failed as a whole leaves its gate open, so the walk
-goes on.
+**Final phase** - adds dedup, skill_profile and the applied human decisions (:mod:`.adjudication`):
+a discard wins over everything; a person's answer is the conclusion of the findings it answers; an appeal
+lifts the blocking of appealable findings when every blocking finding of the episode is one (D42 by
+finding); a relabel not judged again yet holds the episode. Dedup reports its groups; here, after the human
+decisions, each group keeps its first member not rejected for another reason, and an episode a person
+brought into the delivery is never deduplicated (§4.5). Writes ``passed`` / ``reject`` / ``held``
+(disjoint, complete) and the ``review`` view (2.0) plus the frozen ``policy.json`` into
+``revisions/r<NNNN>/``.
 
-``verdicts.jsonl`` is the machine's funnel verdict. ``keep.txt`` - what dedup
-and skill_profile work on - also follows the applied human decisions (v1's
-rejudge moves entries between its lists, and its profile follows the delivered
-set): a discarded episode or one a person judged failed leaves it, a restored
-appeal (or a human "success" on a reject) joins it. Before any decision the two
-agree.
-
-**Final phase** - adds dedup, skill_profile and the applied human decisions
-(``pipeline.adjudication``), and writes ``passed`` / ``reject`` / ``held``
-(disjoint, complete) and the ``review`` view into ``revisions/r<NNNN>/``. Dedup
-runs once, on the first revision's keep set; after an adjudication its result
-stands, and an episode a person brought into the delivery is never deduplicated
-- exactly as v1's rejudge, which never deduplicates again.
+A run directory with 1.0 records was made by an earlier version (D59): it is read as it is, never
+aggregated again (:class:`LegacyRun`).
 """
 from __future__ import annotations
 
@@ -41,323 +32,248 @@ import os
 from dataclasses import dataclass, field
 
 from ..contracts import modules as registry
-from ..export.report import CHECK_CN, check_detail_reason, hard_fail_reason
-from . import gates_v1
+from . import policy as policy_mod
 from .adjudication import Decisions, judged_with
-from .records import latest_results, revision_dir, write_json_atomic, write_text_atomic
+from .records import (is_error, is_v2, latest_results, revision_dir, write_json_atomic,
+                      write_text_atomic)
 from .tasktext import TaskText, load_autolabel
-from .verdict import episode_verdict
+from .verdicts import Graded, Verdict, also_failed, judge, name_of
 
+#: the funnel's stages in order (until the two blocks of F12.4)
 FUNNEL_STAGES = ("integrity", "numeric", "frame", "vlm")
-#: The modules that vote on keep / drop / held. Advisory modules (``gates_v1.votes``) are
-#: filtered here, at the call boundary; verdict.py is v1's.
-FUNNEL_MODULES = tuple(m.id for m in registry.MODULES if m.stage in FUNNEL_STAGES
-                       and gates_v1.votes(m.id))
-NAMES_CN = {**CHECK_CN, "dedup": "精确去重", "skill_profile": "技能画像",
-            "autolabel": "无标注补描述"}
-#: v2's EEF gate and its person's question (C1 1.9, design doc 12 D-E13): an episode it
-#: could not settle (``passed=None``) is kept and asked; the answer is the gate's result
-EEF = "eef_video_consistency"
-EEF_HUMAN = {"consistent": "人工裁决判为一致", "inconsistent": "人工裁决判为 EEF 与视频不一致"}
-#: v2's data integrity gate (C1 1.11, design doc 14 §4.4): its suspects are kept and asked
-INTEGRITY = "data_integrity"
-#: v2's own gates a person settles: module -> (review line, review.json kind, the decisions that
-#: settle it and the result each stands for, the reason each gives). The answer is the gate's
-#: result, as a human task verdict is task_success's; "unsure" settles nothing.
-HUMAN_GATES: dict[str, tuple[str, str, dict[str, bool], dict[str, str]]] = {
-    EEF: ("eef_check", "eef_consistency", {"consistent": True, "inconsistent": False}, EEF_HUMAN),
-    INTEGRITY: ("integrity_check", "integrity_suspect", {"intact": True, "broken": False},
-                {"intact": "人工裁决判为数据无误", "broken": "人工裁决判为数据确有问题"}),
-}
+#: modules that need the whole selection; they run after the funnel on its kept episodes
+FULL_SET = tuple(m.id for m in registry.MODULES if m.stage in registry.FULL_SET_STAGES)
+NAMES_CN = {m.id: m.name_zh for m in registry.MODULES} | {"autolabel": "无标注补描述"}
+DEDUP = "dedup"
+PROFILE = "skill_profile"
+TASK = "task_success"
+#: the order of one episode's questions on its card (v1's, then v2's own lines as they came)
+LINE_ORDER = ("task_verdict", "eef_check", "integrity_check", "label", "reject_appeal")
 
 
-def human_answer(decisions: Decisions, ep: int, gate: str) -> str | None:
-    """A person's settling answer on ``gate``'s line, if any."""
-    line, _kind, settles, _texts = HUMAN_GATES[gate]
-    return decisions.human_gate(ep, line, tuple(settles))
-
-
-def _stage(m: str) -> str:
-    return registry.get(m).stage
-
-
-def _struct(rec: dict) -> dict:
-    return {"passed": rec.get("passed"), "score": rec.get("score"),
-            "detail": rec.get("details") or {}}
-
-
-def _cause(rec: dict | None) -> str:
-    incs = ((rec or {}).get("error") or {}).get("incidents") or []
-    if not incs:
-        return "没有结果(模块未对它执行)"
-    inc = incs[0]
-    where = inc.get("camera") or inc.get("call_kind") or ""
-    text = f"{inc.get('step')}{('/' + where) if where else ''}: {inc.get('cause', '')}"
-    return text.strip(": ") + (f" 等 {len(incs)} 处" if len(incs) > 1 else "")
+class LegacyRun(RuntimeError):
+    """The run directory holds records of C2 1.0: a task made before (D59), read only."""
 
 
 @dataclass
-class Line:
-    """One funnel verdict (``cli/verdict-line.schema.json``) plus what aggregate needs."""
-
-    episode_index: int
-    verdict: str
-    hard_fails: list = field(default_factory=list)
-    soft_score: float | None = None
-    undecidable: list = field(default_factory=list)
-    error_modules: list = field(default_factory=list)
-    reason: str = ""
-    checks: dict = field(default_factory=dict)            # normal results, by module
-    error_detail: dict = field(default_factory=dict)      # module -> cause text
-
-    def to_json(self) -> dict:
-        return {"episode_index": self.episode_index, "verdict": self.verdict,
-                "hard_fails": list(self.hard_fails), "soft_score": self.soft_score,
-                "undecidable": list(self.undecidable),
-                "error_modules": list(self.error_modules), "reason": self.reason}
-
-
 class RunState:
-    """The selected modules' current results, read once."""
+    """The selected modules' current results, read once, and the policy that grades them."""
 
-    def __init__(self, run_dir: str, modules, episodes, cfg: dict,
-                 *, results: dict[str, dict[int, dict]] | None = None,
-                 autolabel: dict | None = None):
-        self.run_dir = run_dir
-        self.modules = [m.id for m in registry.MODULES if m.id in set(modules)]
-        native = [m for m in self.modules if m in registry.native_ids() and m not in cfg["checks"]]
-        if native:                     # v2's own gates join v1's verdict config here, at the call boundary
-            cfg = {**cfg, "checks": {**cfg["checks"],
-                                     **{m: {"enable": True, "gate": gates_v1.gate(m)} for m in native}}}
-        self.cfg = cfg
-        self.funnel = [m for m in self.modules if m in FUNNEL_MODULES]
-        self.episodes = sorted({int(e) for e in episodes})
-        self.results = (results if results is not None else
-                        {m: latest_results(run_dir, m) for m in self.modules})
-        self.autolabel = autolabel if autolabel is not None else load_autolabel(run_dir)
+    run_dir: str
+    modules: list[str]
+    episodes: list[int]
+    policy: policy_mod.Policy | None = None
+    results: dict[str, dict[int, dict]] | None = None
+    autolabel: dict | None = None
 
-    def soft_modules(self) -> list[str]:
-        return [m for m in self.funnel
-                if (self.cfg["checks"].get(m) or {}).get("gate", "soft") == "soft"]
+    def __post_init__(self) -> None:
+        chosen = set(registry.with_riders(self.modules))
+        self.modules = [m.id for m in registry.MODULES if m.id in chosen]
+        self.episodes = sorted({int(e) for e in self.episodes})
+        if self.policy is None:
+            self.policy = policy_mod.load(self.run_dir)
+        if self.results is None:
+            self.results = {m: latest_results(self.run_dir, m) for m in self.modules}
+        if self.autolabel is None:
+            self.autolabel = load_autolabel(self.run_dir)
+        for m, recs in self.results.items():
+            if any(not is_v2(r) for r in recs.values()):
+                raise LegacyRun(f"{self.run_dir}: {m} has result records of C2 1.0 - a task made by an earlier "
+                                f"version is read as it is and never aggregated again (D59)")
+
+    def records(self, ep: int) -> dict[str, dict | None]:
+        return {m: self.results[m].get(ep) for m in self.modules}
 
 
-def funnel_line(state: RunState, ep: int, overrides: dict | None = None) -> Line:
-    """The funnel verdict of one episode. ``overrides``: ``{module: struct}`` in place
-    of a result (a human task verdict is a normal task_success result)."""
-    overrides = overrides or {}
-    normal: dict[str, dict] = {}
-    errors: list[str] = []
-    detail: dict[str, str] = {}
-    killed: str | None = None
+def expected(state: RunState, ep: int, recs: dict[str, dict | None]) -> list[str]:
+    """The funnel modules ``ep`` needs a judgement of: the stages in order, stopping after the first stage
+    where it stopped - a module failed on it, has no record, or a finding blocks under the policy."""
+    out: list[str] = []
     for stage in FUNNEL_STAGES:
-        mods = [m for m in state.funnel if _stage(m) == stage]
+        mods = [m for m in state.modules if registry.get(m).stage == stage and not registry.get(m).rides_on]
         if not mods:
             continue
-        stage_error = False
+        out += mods
+        stop = False
         for m in mods:
-            if m in overrides:
-                normal[m] = overrides[m]
-                continue
-            rec = state.results[m].get(ep)
-            if rec is None:
-                errors.append(m)
-                detail[m] = _cause(None)
-            elif rec["verdict"] == "error":
-                who = m
-                incs = rec["error"]["incidents"]
-                if m == "task_success" and incs and all(i.get("step") == "autolabel"
-                                                        for i in incs):
-                    who = "autolabel"
-                errors.append(who)
-                detail[who] = _cause(rec)
-                stage_error = True
-            else:
-                normal[m] = _struct(rec)
-        if stage in ("integrity", "numeric", "frame"):
-            gates = [m for m in mods if gates_v1.gate(m) == "hard" and m in normal]
-            fails = [m for m in gates if normal[m].get("passed") is False]
-            if fails:
-                killed = fails[0]
-                break
-        if stage_error:
+            rec = recs.get(m)
+            if rec is None or is_error(rec):
+                stop = True
+            elif any(state.policy.level(m, f) == "blocking" for f in rec.get("findings") or []):
+                stop = True
+        if stop:
             break
-    line = Line(ep, "keep", checks=normal, error_detail=detail)
-    if killed is not None:                       # v1: killed mid-funnel by a hard gate
-        line.verdict, line.hard_fails = "drop", [killed]
-        line.reason = hard_fail_reason([killed], {killed: normal[killed]})
-        line.error_modules = errors
-        if errors:
-            line.reason += _also_failed(errors)
-        return line
-    v = episode_verdict(normal, state.cfg)
-    line.hard_fails, line.soft_score = list(v["hard_fails"]), v["soft_score"]
-    line.undecidable = list(v["undecidable"])
-    line.error_modules = errors
-    if not errors:
-        line.verdict, line.reason = v["verdict"], v["reason"]
-        return line
-    threshold = state.cfg["verdict"]["soft_threshold"]
-    all_scored = all(m in normal and normal[m].get("score") is not None
-                     for m in state.soft_modules())
-    if v["hard_fails"]:                                   # D35: a gate already rejects it
-        line.verdict, line.reason = "drop", v["reason"] + _also_failed(errors)
-    elif all_scored and v["soft_score"] is not None and v["soft_score"] < threshold:
-        line.verdict, line.reason = "drop", v["reason"] + _also_failed(errors)
-    else:
-        line.verdict = "held"
-        line.hard_fails = []
-        line.reason = "待补跑:" + ";".join(
-            f"「{NAMES_CN.get(m, m)}」执行出错({detail.get(m, '')})" for m in errors)
-    return line
+    return out
 
 
-def _also_failed(errors: list[str]) -> str:
-    names = "、".join(f"「{NAMES_CN.get(m, m)}」" for m in errors)
-    return f";另有{names}执行出错,不影响结论"
+def _without(recs: dict[str, dict | None], module: str) -> dict[str, dict | None]:
+    return {m: r for m, r in recs.items() if m != module}
 
 
-def funnel(state: RunState) -> list[Line]:
-    return [funnel_line(state, e) for e in state.episodes]
+def machine(state: RunState, ep: int) -> Verdict:
+    """The machine's verdict of the funnel modules (no human decisions, no dedup / profile)."""
+    recs = _without(_without(state.records(ep), DEDUP), PROFILE)
+    return judge(ep, recs, expected(state, ep, recs), state.policy)
+
+
+def task_passed(rec: dict | None) -> bool | None:
+    """task_success's tri-state from its findings (the label audit's task line)."""
+    if rec is None or is_error(rec):
+        return None
+    codes = {f.get("code") for f in rec.get("findings") or []}
+    if "failure" in codes:
+        return False
+    if codes & {"uncertain", "label_conflict_suspect"}:
+        return None
+    return True
 
 
 @dataclass
 class Decided:
-    """One episode after the applied human decisions, before dedup and skill_profile."""
+    """One episode after the applied human decisions."""
 
-    machine: Line                         # the funnel verdict of the checks alone
-    line: Line                            # with a human task verdict / restored appeal
-    state: str                            # keep / drop / held
-    reasons: list = field(default_factory=list)
-    human_note: dict | None = None
-    discard: dict | None = None           # the "discard" decision, when there is one
-    #: a person brought a reject into the delivery (an appeal restore, or a "success"
-    #: verdict on a reject): v1's rejudge never deduplicates it
-    restored: bool = False
-    #: the module a person may overturn this episode's reject on (D42), if any
-    appeal_target: str | None = None
+    machine: Verdict
+    verdict: Verdict
+    discard: dict | None = None
+    restored: bool = False                       # a person brought a reject into the delivery
+    admissible: bool = False                     # its reject may be appealed (D42 by finding)
+    pending_relabel: bool = False                # relabelled, not judged with the new label yet
+
+    @property
+    def state(self) -> str:
+        if self.discard is not None:
+            return "drop"
+        if self.pending_relabel and self.verdict.verdict == "keep":
+            return "held"
+        return self.verdict.verdict
 
     @property
     def kept(self) -> bool:
-        """In ``keep.txt``: what dedup and skill_profile work on."""
-        return self.state == "keep" and self.discard is None
+        return self.state == "keep"
 
 
-def appeal_target(state: RunState, ep: int, machine: Line, decisions: Decisions) -> str | None:
-    """The module a person may overturn this episode's reject on (D42), or None.
-
-    The one admission rule (adjudicate-apply and review.json both use it): a
-    funnel reject attributed to one hard gate alone - v1's
-    ``is_task_success_reject``: no other hard gate, never a soft score - whose
-    module the registry marks ``appealable`` and that no person settled (a human
-    task verdict for task_success, an ``eef_check`` answer for the EEF gate), or
-    dedup's byte-copy finding on an episode the funnel kept (when dedup is
-    appealable). A discarded episode has none: the discard is final.
-    """
-    appealable = registry.appealable
-    if decisions.discarded(ep) is not None:
-        return None
-    tv = decisions.human_task_verdict(ep)
-    if machine.verdict == "drop":
-        if len(machine.hard_fails) == 1 and appealable(machine.hard_fails[0]):
-            gate = machine.hard_fails[0]
-            settled = human_answer(decisions, ep, gate) if gate in HUMAN_GATES else tv
-            return gate if settled is None else None
-        return None
-    if machine.verdict == "keep" and tv != "failure" and "dedup" in state.modules \
-            and appealable("dedup"):
-        rec = (state.results.get("dedup") or {}).get(ep)
-        if rec is not None and rec["verdict"] == "fail":
-            return "dedup"
-    return None
+def answers_of(decisions: Decisions, ep: int) -> dict[str, str | None]:
+    return {"task_verdict": decisions.human_task_verdict(ep),
+            "integrity_check": decisions.human_gate(ep, "integrity_check", ("intact", "broken")),
+            "eef_check": decisions.human_gate(ep, "eef_check", ("consistent", "inconsistent"))}
 
 
-def decide(state: RunState, ep: int, decisions: Decisions,
-           machine: Line | None = None) -> Decided:
-    """The human decisions on one episode, in v1's order (``pipeline/rejudge.py``)."""
-    machine = machine or funnel_line(state, ep)
-    line, reasons, human_note = machine, [], None
-    selected = set(state.modules)
-    # human task verdicts, EEF answers and appeals act as a module result (v1 moves the entry)
-    tv = decisions.human_task_verdict(ep)
-    appeal = decisions.appeal(ep)
-    target = appeal_target(state, ep, machine, decisions)
-    ts_rec = (state.results.get("task_success") or {}).get(ep)
-    overrides: dict[str, dict] = {}
-    if tv is not None and "task_success" in selected and ts_rec is not None \
-            and ts_rec["verdict"] != "error":
-        overrides["task_success"] = dict(_struct(ts_rec), passed=(tv == "success"))
-        human_note = {"module": "task_success",
-                      "text": "人工裁决判成功" if tv == "success"
-                      else "人工裁决判失败(任务未完成)", "kind": "human"}
-    for gate, (_line, _kind, settles, texts) in HUMAN_GATES.items():
-        answer = human_answer(decisions, ep, gate)
-        gate_rec = (state.results.get(gate) or {}).get(ep)
-        if answer is not None and gate in selected and gate_rec is not None \
-                and gate_rec["verdict"] != "error":
-            rec = _struct(gate_rec)
-            overrides[gate] = {**rec, "passed": settles[answer],
-                               "detail": {**rec["detail"], "reason": texts[answer]}}
-    if appeal == "restore" and target is not None and target != "dedup" \
-            and target not in overrides:
-        # restore overturns the appealed gate only: another module that could not
-        # judge the episode still holds it (P11)
-        rec = (state.results.get(target) or {}).get(ep)
-        if rec is not None and rec["verdict"] != "error":
-            overrides[target] = dict(_struct(rec), passed=True)
-    if overrides:
-        line = funnel_line(state, ep, overrides)
-    state_ = line.verdict                          # keep / drop / held
-    # relabelled but not judged again with the new label yet -> held
+def _strip_duplicate(rec: dict | None) -> dict | None:
+    """dedup's record of the member a group keeps: its duplicate finding no longer applies (§4.5)."""
+    if rec is None or is_error(rec):
+        return rec
+    return {**rec, "findings": [f for f in rec.get("findings") or [] if f.get("code") != "duplicate"]}
+
+
+def decide(state: RunState, ep: int, decisions: Decisions, *, phase: str = "final",
+           keeper: dict[int, bool] | None = None) -> Decided:
+    """``ep`` after the human decisions. ``phase``: ``funnel`` judges the funnel modules only; ``final`` adds
+    dedup (``keeper[ep]``: this member is the one its group keeps, so its duplicate finding is dropped) and
+    skill_profile. A kept episode a person did not bring in needs a judgement of both."""
+    recs = state.records(ep)
+    funnel_recs = _without(_without(recs, DEDUP), PROFILE)
+    need = expected(state, ep, funnel_recs)
+    mach = judge(ep, funnel_recs, need, state.policy)
+    answers = answers_of(decisions, ep)
+    use = dict(funnel_recs)
+    if phase == "final":
+        if DEDUP in state.modules:
+            use[DEDUP] = _strip_duplicate(recs.get(DEDUP)) if (keeper or {}).get(ep) else recs.get(DEDUP)
+        if PROFILE in state.modules:
+            use[PROFILE] = recs.get(PROFILE)
+    base = judge(ep, use, need, state.policy, answers=answers)
+    discard = decisions.discarded(ep)
+    admissible = discard is None and base.appeal_admissible()
+    appeal = decisions.appeal(ep) if admissible else None
+    verdict = judge(ep, use, need, state.policy, answers=answers, appeal=appeal)
+    restored = verdict.verdict == "keep" and (mach.verdict == "drop" or base.verdict == "drop") \
+        and (answers.get("task_verdict") == "success" or appeal == "restore")
+    if phase == "final" and verdict.verdict == "keep":
+        extra = [m for m in (DEDUP, PROFILE) if m in state.modules and not (m == DEDUP and restored)]
+        if extra:
+            verdict = judge(ep, use, need + extra, state.policy, answers=answers, appeal=appeal)
     relabel = decisions.relabel(ep)
-    if relabel and tv is None and "task_success" in selected and state_ == "keep" \
-            and ts_rec is not None and ts_rec["verdict"] != "error":
-        if not judged_with(ts_rec, relabel):
-            state_ = "held"
-            reasons.append({"module": "task_success", "kind": "execution_error",
-                            "text": "改标后尚未按新标注重跑任务成败判定"})
-    restored = (machine.verdict == "drop" and state_ == "keep"
-                and (tv == "success" or (appeal == "restore" and target is not None))) \
-        or (target == "dedup" and appeal == "restore" and state_ == "keep")
-    return Decided(machine, line, state_, reasons, human_note, decisions.discarded(ep),
-                   restored, target)
+    ts = recs.get(TASK)
+    pending = bool(relabel and answers.get("task_verdict") is None and TASK in state.modules
+                   and ts is not None and not is_error(ts) and not judged_with(ts, relabel))
+    return Decided(mach, verdict, discard, restored, admissible, pending)
 
 
-def decide_all(state: RunState, decisions: Decisions,
-               lines: list[Line] | None = None) -> dict[int, Decided]:
-    machine = {ln.episode_index: ln for ln in (lines or funnel(state))}
-    return {e: decide(state, e, decisions, machine.get(e)) for e in state.episodes}
+def dedup_groups(state: RunState) -> dict[int, list[int]]:
+    """group id -> its members in dedup's traversal order (ascending), from dedup's findings."""
+    groups: dict[int, set[int]] = {}
+    for ep, rec in (state.results.get(DEDUP) or {}).items():
+        for f in (rec or {}).get("findings") or []:
+            if f.get("code") == "duplicate":
+                gid = int((f.get("readings") or {}).get("group_id", ep))
+                groups.setdefault(gid, {gid}).add(int(ep))
+    return {g: sorted(m) for g, m in groups.items()}
 
 
-def write_funnel(out_dir: str, lines: list[Line], keep: list[int] | None = None) -> dict:
-    """``verdicts.jsonl`` (the machine's funnel verdicts) and ``keep.txt`` (``keep``: the
-    episodes kept after the human decisions; without any, the machine's keeps)."""
-    os.makedirs(out_dir, exist_ok=True)
-    verdicts = os.path.join(out_dir, "verdicts.jsonl")
-    keep_path = os.path.join(out_dir, "keep.txt")
-    if keep is None:
-        keep = [ln.episode_index for ln in lines if ln.verdict == "keep"]
-    write_text_atomic(verdicts, "".join(json.dumps(ln.to_json(), ensure_ascii=False,
-                                                   allow_nan=True) + "\n" for ln in lines))
-    write_text_atomic(keep_path, "".join(f"{e}\n" for e in sorted(keep)))
-    return {"verdicts": verdicts, "keep": keep_path}
+def decide_all(state: RunState, decisions: Decisions, *, phase: str = "final") -> dict[int, Decided]:
+    """Every episode after the human decisions; in the final phase each dedup group keeps its first member
+    not rejected for another reason (§4.5), the others stay duplicates unless a person brought them in."""
+    if phase != "final" or DEDUP not in state.modules:
+        return {e: decide(state, e, decisions, phase=phase) for e in state.episodes}
+    groups = dedup_groups(state)
+    keeper: dict[int, bool] = {}
+    if groups:
+        # every member counts, also one outside ``state.episodes`` (adjudicate-apply asks about a few)
+        alone = {e: decide(state, e, decisions, phase="funnel")
+                 for e in sorted({m for members in groups.values() for m in members})}
+        for members in groups.values():
+            first = next((m for m in members if alone[m].state != "drop"), None)
+            for m in members:
+                keeper[m] = m == first
+    return {e: decide(state, e, decisions, phase=phase, keeper=keeper) for e in state.episodes}
 
 
-# ---------------------------------------------------------------- final phase
+# ---------------------------------------------------------------- the lists
+
+def _reason(g: Graded) -> dict:
+    kind = "human" if g.human else ("duplicate" if g.module == DEDUP else "finding")
+    out = {"module": g.module, "kind": kind, "code": g.code, "item": g.item, "appealable": bool(g.appealable and not g.human),
+           "text": str(g.finding.get("message_zh") or g.code)}
+    if g.module == DEDUP:
+        dup = (g.finding.get("readings") or {}).get("duplicate_of")
+        if dup is not None:
+            out["duplicate_of"] = int(dup)
+    return out
+
+
+def _error_reasons(v: Verdict, *, rejected: bool) -> list[dict]:
+    tail = "，不影响结论" if rejected else ""
+    return [{"module": m, "kind": "execution_error",
+             "text": f"「{name_of(m)}」执行出错（{v.error_detail.get(m, '')}）{tail}"} for m in v.error_modules]
+
+
+def reasons_of(d: Decided) -> list[dict]:
+    if d.discard is not None:
+        return [{"module": PROFILE if d.discard["line"] == "label" else TASK, "kind": "human", "text": "人工裁决弃用"}]
+    v = d.verdict
+    if d.state == "drop":
+        return [_reason(g) for g in v.blocking] + _error_reasons(v, rejected=True)
+    if d.state == "held":
+        out = _error_reasons(v, rejected=False)
+        if d.pending_relabel:
+            out.append({"module": TASK, "kind": "execution_error", "text": "改标后尚未按新标注重跑任务成败判定"})
+        return out
+    return []
+
 
 def merged_label_audit(state: RunState, profile_audit: dict | None) -> dict | None:
-    """v1's review queue for label conflicts: skill_profile's audit, the kill guard's
-    holds from task_success merged in front, each entry tagged with the task line
-    (``dataset_level.audit``, exactly as ``run.py`` assembles the report)."""
+    """v1's label-conflict queue: skill_profile's audit with the kill guard's holds from task_success merged
+    in front, each entry tagged with the task line (``dataset_level.audit``)."""
     from ..dataset_level.audit import attach_task_context, guard_hold_entries, merge_guard_holds
 
     task_detail, task_of = {}, {}
-    for ep, rec in (state.results.get("task_success") or {}).items():
-        if rec["verdict"] == "error":
+    for ep, rec in (state.results.get(TASK) or {}).items():
+        if is_error(rec):
             continue
         d = rec.get("details") or {}
         eid = f"ep{int(ep):06d}"
         task_detail[eid] = d
-        task_of[eid] = {"passed": rec.get("passed"), "verdict": d.get("verdict", "")}
+        task_of[eid] = {"passed": task_passed(rec), "verdict": d.get("verdict", "")}
     audit = profile_audit if profile_audit else None
     holds = guard_hold_entries(task_detail)
     if holds:
@@ -367,184 +283,126 @@ def merged_label_audit(state: RunState, profile_audit: dict | None) -> dict | No
     return attach_task_context(audit, task_of)
 
 
-def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskText | None,
-          profile_audit: dict | None) -> dict:
-    """The four lists (``cli/final-list.schema.json``) plus the merged label audit."""
-    selected = set(state.modules)
-    passed, reject, held, review = [], [], [], []
-    machine = {e: funnel_line(state, e) for e in state.episodes}
-    decided = decide_all(state, decisions, list(machine.values()))
-    audit = merged_label_audit(state, profile_audit) if "skill_profile" in selected \
-        or "task_success" in selected else None
-    audit_items: dict[int, list] = {}
+def _audit_entries(audit: dict | None) -> dict[int, list[tuple[str, dict]]]:
+    out: dict[int, list[tuple[str, dict]]] = {}
     for tier in ("high", "mid_for_review", "low_caption_unstable"):
         for entry in (audit or {}).get(tier) or []:
             try:
                 idx = int(str(entry.get("id")).lstrip("ep"))
             except ValueError:
                 continue
-            audit_items.setdefault(idx, []).append((tier, entry))
-    dedup = state.results.get("dedup") or {}
-    profile = state.results.get("skill_profile") or {}
-
-    for ep in state.episodes:
-        d = decided[ep]
-        line, state_, human_note = d.line, d.state, d.human_note
-        reasons: list[dict] = list(d.reasons)
-        # dedup ran on the first revision's keep set; an episode a person brought in
-        # afterwards was never compared, and v1 never deduplicates it; a restored dedup
-        # appeal overturns dedup's finding (D42)
-        if state_ == "keep" and "dedup" in selected and not d.restored:
-            rec = dedup.get(ep)
-            if rec is None or rec["verdict"] == "error":
-                state_ = "held"
-                reasons.append({"module": "dedup", "kind": "execution_error",
-                                "text": f"「精确去重」执行出错({_cause(rec)})"})
-            elif rec["verdict"] == "fail":
-                dup = int((rec.get("details") or {}).get("duplicate_of", -1))
-                state_ = "drop"
-                reasons.append({"module": "dedup", "kind": "duplicate",
-                                "text": f"与 ep{dup:06d} 字节级完全重复",
-                                "duplicate_of": dup} if dup >= 0 else
-                               {"module": "dedup", "kind": "duplicate",
-                                "text": "字节级完全重复"})
-        if state_ == "keep" and "skill_profile" in selected:
-            rec = profile.get(ep)
-            if rec is None or rec["verdict"] == "error":
-                state_ = "held"
-                reasons.append({"module": "skill_profile", "kind": "execution_error",
-                                "text": f"「技能画像」执行出错({_cause(rec)})"})
-        discard = d.discard
-        if discard is not None:                    # rule 1: discard wins, even over held
-            state_ = "drop"
-            reasons = [{"module": "skill_profile" if discard["line"] == "label"
-                        else "task_success", "kind": "human",
-                        "text": "人工裁决弃用"}]
-        elif state_ == "drop" and not reasons:
-            reasons = _drop_reasons(line)
-            if human_note is not None and human_note["text"].startswith("人工裁决判失败"):
-                reasons = [human_note] + [r for r in reasons if r.get("module") in HUMAN_GATES]
-            for gate, (_line, _kind, settles, texts) in HUMAN_GATES.items():
-                answer = human_answer(decisions, ep, gate)
-                if answer is not None and settles[answer] is False:
-                    reasons = [{"module": gate, "kind": "human", "text": texts[answer]}
-                               if r.get("module") == gate else r for r in reasons]
-        elif state_ == "held" and not reasons:
-            reasons = [{"module": m, "kind": "execution_error",
-                        "text": f"「{NAMES_CN.get(m, m)}」执行出错({line.error_detail.get(m, '')})"}
-                       for m in line.error_modules]
-        entry = {"episode_index": ep}
-        if state_ in ("keep", "drop"):
-            entry["soft_score"] = line.soft_score
-        if state_ == "keep":
-            if task_text is not None:
-                tt = task_text.delivered(ep)
-                if tt is not None:
-                    entry["task_text"] = tt
-            passed.append(entry)
-        elif state_ == "drop":
-            reject.append({**entry, "reasons": reasons})
-        else:
-            held.append({**entry, "reasons": reasons})
-        if state_ in ("keep", "drop") and discard is None:     # held: nothing to ask yet
-            items = _review_items(state, ep, line, state_, d, decisions,
-                                  audit_items.get(ep) or [], reasons)
-            if items:
-                item_entry = {"episode_index": ep, "review": items,
-                              "current_list": "passed" if state_ == "keep" else "reject"}
-                if state_ == "drop":
-                    item_entry["reasons"] = reasons          # what the appeal is about
-                review.append(item_entry)
-
-    def doc(name, eps):
-        return {"schema_version": "1.0", "list": name, "revision": int(revision),
-                "count": len(eps), "episodes": eps}
-
-    return {"passed": doc("passed", passed), "reject": doc("reject", reject),
-            "held": doc("held", held), "review": doc("review", review),
-            "label_audit": audit, "funnel": [machine[e] for e in state.episodes],
-            "keep": [e for e in state.episodes if decided[e].kept]}
-
-
-def _drop_reasons(line: Line) -> list[dict]:
-    """Why the funnel rejects an episode, one entry per failed gate (or the soft score),
-    followed by the modules that failed to judge it (D35: they change nothing)."""
-    out = []
-    if line.hard_fails:
-        for m in line.hard_fails:
-            why = check_detail_reason(line.checks.get(m) or {})
-            cn = NAMES_CN.get(m, m)
-            out.append({"module": m, "kind": "hard_gate",
-                        "text": f"未通过「{cn}」:{why}" if why else f"未通过「{cn}」"})
-    else:
-        soft = [m for m, c in line.checks.items()
-                if gates_v1.gate(m) == "soft" and c.get("score") is not None]
-        text = line.reason.split(";另有", 1)[0]
-        out.append({"module": soft[0] if soft else "motion_quality", "kind": "soft_score",
-                    "text": text})
-    for m in line.error_modules:
-        out.append({"module": m, "kind": "execution_error",
-                    "text": f"「{NAMES_CN.get(m, m)}」执行出错"
-                            f"({line.error_detail.get(m, '')}),不影响结论"})
+            out.setdefault(idx, []).append((tier, entry))
     return out
 
 
-def _review_items(state: RunState, ep: int, line: Line, state_: str, d: Decided,
-                  decisions: Decisions, audit_entries: list, reasons: list) -> list[dict]:
-    """What a person is asked to decide about one episode (v1's queues, D42).
-
-    * ``task_verdict``: a delivered episode (in passed) that task_success could not
-      judge and no person has - other modules' abstentions stay in the verdict line
-      and the report; asking whether the task succeeded is moot for a reject;
-    * ``label_conflict``: skill_profile's audit (and the kill guard's holds);
-    * ``reject_appeal``: a reject by one appealable module alone
-      (:func:`appeal_target`) with no appeal decided yet - "unsure" keeps it listed;
-    * ``eef_consistency``: a delivered episode the EEF module could not settle (conflicting
-      CPU and model, no model opinion, what the model cannot see, not judgeable) and no
-      person has (C1 1.9) - "unsure" keeps it listed;
-    * ``integrity_suspect``: a delivered episode the data integrity module suspects (C1 1.11,
-      design doc 14 §4.4), likewise.
-    """
-    items = []
-    current = "passed" if state_ == "keep" else "reject"
-    if state_ == "keep" and "task_success" in line.undecidable \
-            and decisions.human_task_verdict(ep) is None:
-        why = check_detail_reason(line.checks.get("task_success") or {})
-        if (line.checks.get("task_success", {}).get("detail") or {}).get("internal_error"):
-            why = f"系统内部错误(非数据问题):{why}"
-        items.append({"source_module": "task_success", "kind": "task_verdict",
-                      "reason": why or "未注明"})
-    for gate, (_line, kind, _settles, _texts) in HUMAN_GATES.items():
-        if state_ == "keep" and gate in line.undecidable and human_answer(decisions, ep, gate) is None:
-            why = check_detail_reason(line.checks.get(gate) or {}).removeprefix("需要人工裁决：")
-            items.append({"source_module": gate, "kind": kind, "reason": why or "未注明"})
-    if not decisions.label_resolved(ep):
-        for tier, entry in audit_entries:
-            item = {"source_module": "task_success" if entry.get("guard_layer")
-                    else "skill_profile", "kind": "label_conflict",
-                    "reason": str(entry.get("reason") or tier)}
-            if entry.get("priority"):
-                item["priority"] = str(entry["priority"])
-            items.append(item)
-    if state_ == "drop" and d.appeal_target is not None and decisions.appeal(ep) is None:
-        why = next((r["text"] for r in reasons if r.get("module") == d.appeal_target),
-                   "")
+def review_items(state: RunState, ep: int, d: Decided, decisions: Decisions,
+                 audit_entries: list[tuple[str, dict]], reasons: list[dict]) -> list[dict]:
+    """What a person is asked about one episode (D42, D43): a kept episode's review findings nobody settled,
+    one item per line and module (the label line from the merged audit); an admissible reject's appeal."""
+    items: list[dict] = []
+    if d.state == "keep":
+        by_line: dict[tuple[str, str], list[Graded]] = {}
+        for g in d.verdict.review:
+            by_line.setdefault((g.line or "", g.module), []).append(g)
+        for (line, module), gs in by_line.items():
+            spec = registry.review_line(line)
+            if line == "label":
+                continue                          # from the audit entries below
+            if line == "task_verdict" and decisions.human_task_verdict(ep) is not None:
+                continue
+            reason = "；".join(dict.fromkeys(str(g.finding.get("message_zh") or g.code) for g in gs))
+            items.append({"source_module": module, "kind": spec.review_kind, "line": line,
+                          "codes": [g.code for g in gs], "items": [g.item for g in gs if g.item],
+                          "reason": reason or "未注明"})
+        label = [g for g in d.verdict.review if g.line == "label"]
+        if label and not decisions.label_resolved(ep):
+            spec = registry.review_line("label")
+            entries = audit_entries or [("", {})]
+            for tier, entry in entries:
+                src = TASK if entry.get("guard_layer") else next((g.module for g in label), PROFILE)
+                mine = [g for g in label if g.module == src] or label
+                item = {"source_module": src, "kind": spec.review_kind, "line": "label",
+                        "codes": [g.code for g in mine], "items": [g.item for g in mine if g.item],
+                        "reason": str(entry.get("reason") or tier or mine[0].finding.get("message_zh") or "标注分歧")}
+                if entry.get("priority"):
+                    item["priority"] = str(entry["priority"])
+                items.append(item)
+    if d.state == "drop" and d.discard is None and d.admissible and decisions.appeal(ep) in (None, "unsure") \
+            and not d.restored:
+        spec = registry.review_line("reject_appeal")
+        blocking = d.verdict.blocking
+        why = "；".join(dict.fromkeys(str(g.finding.get("message_zh") or g.code) for g in blocking))
         if decisions.pending(ep, "reject_appeal"):
-            why = f"{why}(复议拿不准,待定)" if why else "复议拿不准,待定"
-        item = {"source_module": d.appeal_target, "kind": "reject_appeal",
+            why = f"{why}（复议拿不准，待定）" if why else "复议拿不准，待定"
+        module = blocking[0].module if blocking else TASK
+        item = {"source_module": module, "kind": spec.review_kind, "line": spec.id,
+                "codes": [g.code for g in blocking], "items": [g.item for g in blocking if g.item],
                 "reason": why or "可复议"}
-        dup = next((r["duplicate_of"] for r in reasons if r.get("module") == d.appeal_target
-                    and "duplicate_of" in r), None)
+        dup = next((r.get("duplicate_of") for r in reasons if r.get("duplicate_of") is not None), None)
         if dup is not None:
             item["duplicate_of"] = int(dup)
         items.append(item)
-    # each item names its registry line and is only asked where that line applies (C1)
-    out = []
-    for item in items:
-        spec = registry.review_line_of_kind(item["kind"])
-        if spec.applies_to == current:
-            out.append({**item, "line": spec.id})
-    return out
+    current = "passed" if d.state == "keep" else "reject"
+    items.sort(key=lambda i: LINE_ORDER.index(i["line"]) if i["line"] in LINE_ORDER else len(LINE_ORDER))
+    return [i for i in items if registry.review_line(i["line"]).applies_to == current]
+
+
+def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskText | None,
+          profile_audit: dict | None) -> dict:
+    """The four lists (``cli/final-list.schema.json`` 2.0) plus the merged label audit."""
+    decided = decide_all(state, decisions)
+    audit = merged_label_audit(state, profile_audit) if PROFILE in state.modules or TASK in state.modules else None
+    entries = _audit_entries(audit)
+    passed, reject, held, review = [], [], [], []
+    for ep in state.episodes:
+        d = decided[ep]
+        reasons = reasons_of(d)
+        entry: dict = {"episode_index": ep}
+        if d.state == "keep":
+            tt = task_text.delivered(ep) if task_text is not None else None
+            if tt is not None:
+                entry["task_text"] = tt
+            passed.append(entry)
+        elif d.state == "drop":
+            reject.append({**entry, "reasons": reasons})
+        else:
+            held.append({**entry, "reasons": reasons})
+        if d.state in ("keep", "drop") and d.discard is None:
+            items = review_items(state, ep, d, decisions, entries.get(ep) or [], reasons)
+            if items:
+                item_entry = {"episode_index": ep, "review": items,
+                              "current_list": "passed" if d.state == "keep" else "reject"}
+                if d.state == "drop":
+                    item_entry["reasons"] = reasons
+                review.append(item_entry)
+
+    def doc(name, eps):
+        return {"schema_version": "2.0", "list": name, "revision": int(revision), "count": len(eps),
+                "episodes": eps}
+
+    # keep.txt stays the funnel phase's: the kept set after the human decisions, before dedup (the input
+    # of dedup and of the profile; the delivered set is passed.json)
+    verdicts, keep = funnel(state, decisions)
+    return {"passed": doc("passed", passed), "reject": doc("reject", reject), "held": doc("held", held),
+            "review": doc("review", review), "label_audit": audit, "verdicts": verdicts, "keep": keep,
+            "policy": state.policy}
+
+
+def funnel(state: RunState, decisions: Decisions) -> tuple[list[Verdict], list[int]]:
+    """(the machine's verdicts of the funnel modules, the episodes kept after the human decisions)."""
+    decided = {e: decide(state, e, decisions, phase="funnel") for e in state.episodes}
+    return [decided[e].machine for e in state.episodes], [e for e in state.episodes if decided[e].kept]
+
+
+def write_verdicts(out_dir: str, verdicts: list[Verdict], keep: list[int]) -> dict:
+    """``verdicts.jsonl`` (2.0 lines) and ``keep.txt``."""
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "verdicts.jsonl")
+    keep_path = os.path.join(out_dir, "keep.txt")
+    write_text_atomic(path, "".join(json.dumps(v.to_line(), ensure_ascii=False, allow_nan=True) + "\n"
+                                    for v in verdicts))
+    write_text_atomic(keep_path, "".join(f"{e}\n" for e in sorted(keep)))
+    return {"verdicts": path, "keep": keep_path}
 
 
 def write_final(rev_dir: str, result: dict) -> dict:
@@ -555,24 +413,18 @@ def write_final(rev_dir: str, result: dict) -> dict:
         write_json_atomic(path, result[name])
         files[name] = path
     write_json_atomic(os.path.join(rev_dir, "label_audit.json"), result["label_audit"] or {})
-    files.update(write_funnel(rev_dir, result["funnel"], result["keep"]))
+    pol = os.path.join(rev_dir, policy_mod.POLICY_NAME)
+    write_json_atomic(pol, result["policy"].to_json())
+    files["policy"] = pol
+    files.update(write_verdicts(rev_dir, result["verdicts"], result["keep"]))
     return files
 
 
-def revision_path(run_dir: str, revision: int) -> str:
-    return revision_dir(run_dir, revision)
-
-
 def profile_members(state: RunState, decisions: Decisions) -> tuple[list[int], set[int]]:
-    """(the episodes of ``state`` skill_profile files, the ones a person restored).
-
-    Leaves out the byte copies dedup found (its first run stands after an
-    adjudication, D9 / v1's rejudge), except an episode a person brought into
-    the delivery: v1 never deduplicates it (``_sync_profile`` files it back).
-    """
-    dedup = latest_results(state.run_dir, "dedup")
+    """(the episodes of ``state`` skill_profile files, the ones a person restored): dedup's duplicates
+    (the members a group does not keep) are left out, except one a person brought into the delivery."""
     decided = decide_all(state, decisions)
     restored = {e for e, d in decided.items() if d.restored}
-    members = [e for e in state.episodes
-               if e in restored or (dedup.get(e) or {}).get("verdict") != "fail"]
+    dups = {e for e, d in decided.items() if any(g.module == DEDUP for g in d.verdict.blocking)}
+    members = [e for e in state.episodes if e in restored or e not in dups]
     return members, restored

@@ -18,8 +18,9 @@ so running it twice changes nothing. A line without an apply rule here, or an
 appeal on an episode with no reject a person may appeal (D42), is refused
 (exit 2), never skipped. v1's priorities are applied by ``aggregate --phase
 final``: "discard" beats any task verdict, a relabel with a human task verdict
-is not re-judged, an appeal overturns only the module appealed, "unsure"
-changes nothing.
+is not re-judged, an appeal lifts the episode's blocking findings and is admitted
+only when every one of them is appealable (D42 by finding, design doc 17 §4.4),
+"unsure" changes nothing.
 """
 from __future__ import annotations
 
@@ -73,9 +74,12 @@ def _appeal_admissible(ctx: Context, run_dir: str, doc: dict):
     from ..pipeline.adjudication import Decisions
 
     modules = runctx.selected_modules(argparse.Namespace(modules=None), run_dir)
-    state = agg.RunState(run_dir, modules, eps, runctx.stage_config(ctx, modules))
+    try:
+        state = agg.RunState(run_dir, modules, eps)
+    except agg.LegacyRun as e:
+        raise UsageError(str(e)) from None
     decided = agg.decide_all(state, Decisions.of(run_dir))
-    return lambda ep: ep in decided and decided[ep].appeal_target is not None
+    return lambda ep: ep in decided and decided[ep].admissible
 
 
 def render(p: dict) -> str:

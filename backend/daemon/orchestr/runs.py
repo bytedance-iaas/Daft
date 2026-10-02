@@ -261,12 +261,19 @@ class StageRun(Run):
     def keep_of(self, rev: int) -> list[int]:
         return read_lines(self.wd.revision_dir(rev) / "keep.txt") or []
 
-    def minus_duplicates(self, episodes: list[int]) -> list[int]:
-        from curation.pipeline.records import is_error, latest_results, legacy_verdict
+    def minus_duplicates(self, episodes: list[int], modules: list[str]) -> list[int]:
+        """The kept episodes the skill profile files: dedup's copies left out the way aggregate decides them
+        after the human decisions (design doc 17 §4.5: each group keeps its first member not rejected for
+        another reason; one a person brought in is never a copy), and the ones dedup could not judge."""
+        from curation.pipeline import aggregate as agg
+        from curation.pipeline.adjudication import Decisions
+        from curation.pipeline.records import is_error, latest_results
 
-        dup = {e for e, r in latest_results(str(self.wd.root), "dedup").items()
-               if is_error(r) or legacy_verdict(r) == "fail"}
-        return [e for e in episodes if e not in dup]
+        root = str(self.wd.root)
+        state = agg.RunState(root, [m for m in modules if m != "skill_profile"], episodes)
+        members, _ = agg.profile_members(state, Decisions.of(root))
+        erred = {e for e, r in latest_results(root, "dedup").items() if is_error(r)}
+        return [e for e in members if e not in erred]
 
     # -- publishing -------------------------------------------------------------------
     def publish(self, rev: int, *, export: bool) -> None:
@@ -313,6 +320,7 @@ class MainRun(StageRun):
         self.reload()
         if self.sub_id is not None:                      # a resume, maybe days later
             self.ensure_local()
+        self.require_current_format()
         plan = planning.ensure_plan(self)
         self.plan_progress(self.stage_ids(plan))
         modules = self.plan_modules(plan)
@@ -382,6 +390,7 @@ class RetryRun(StageRun):
     def execute(self) -> str:
         self.reload()
         self.ensure_local()
+        self.require_current_format()
         plan = self.plan_doc()
         modules = self.plan_modules(plan)
         cur = int(self.task.result_rev or 0)
@@ -424,7 +433,7 @@ class RetryRun(StageRun):
             self.sync_post("dedup", post["dedup"], keep, scope, rows)
         profile_sid = "profile_vlm" if "profile_vlm" in post else "profile"
         if profile_sid in post:
-            base = self.minus_duplicates(keep) if "dedup" in post else keep
+            base = self.minus_duplicates(keep, modules) if "dedup" in post else keep
             self.sync_post(profile_sid, post[profile_sid], base, scope, rows, incremental=True)
         self.check_intent()
         self.aggregate("final", "final", rev, modules, selection)
@@ -462,6 +471,7 @@ class AdjudicationRun(StageRun):
     def execute(self) -> str:
         self.reload()
         self.ensure_local()
+        self.require_current_format()
         plan = self.plan_doc()
         modules = self.plan_modules(plan)
         stages = {s["id"]: s for s in plan["stages"]}
@@ -602,6 +612,7 @@ class ReexportRun(StageRun):
         if rev < 1:
             raise TaskFailure("no_result", "这个任务还没有结果，没什么可导出的")
         self.ensure_local()
+        self.require_current_format()
         self.plan_progress(["export", "verify"])
         with self.orch.locks.lock(self.task.delivery_key):
             with self.delivery() as d:

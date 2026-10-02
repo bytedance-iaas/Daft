@@ -16,7 +16,7 @@ import json
 import re
 
 from ..eef import demo_data
-from .pipeline import results
+from .pipeline import passed_of, results
 from .test_eef_check import EEF, URL
 from .test_eef_review import _details, _hooks
 
@@ -79,11 +79,11 @@ def test_the_original_passes_and_every_fault_is_rejected_or_goes_to_a_person(cli
     recs = results(rd, EEF)
     outcome = {ep: r["details"]["decision"]["outcome"] for ep, r in sorted(recs.items())}
     print(json.dumps({ep: [outcome[ep], recs[ep]["details"]["reason"]] for ep in outcome}, ensure_ascii=False, indent=1))
-    assert outcome[0] == "pass" and recs[0]["passed"] is True
+    assert outcome[0] == "pass" and passed_of(recs[0]) is True
     for ep in range(1, 7):
         d = recs[ep]["details"]
         assert outcome[ep] in ("reject", "human"), (ep, d["reason"])
-        assert recs[ep]["passed"] is {"reject": False, "human": None}[outcome[ep]]
+        assert passed_of(recs[ep]) is {"reject": False, "human": None}[outcome[ep]]
         for c in d["decision"]["confirmed"] + d["decision"]["human"]:
             assert f"「{NAMES[c['subitem']]}」" in c["text"], c
             if c["subitem"] != "state_motion":

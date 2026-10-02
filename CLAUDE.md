@@ -32,13 +32,14 @@ API Daemon   FastAPI 单副本：routes → orchestr / planner / exec → repo�
 Daemon 用子进程调 CLI，不在进程内 import：原生库崩溃只带走子进程；暂停、停止就是给进程组发信号；CLI 也因此一直是活的一等入口
 （设计 00 §2.1）。
 
-**质检漏斗**（今天的执行；前面硬门拦下的条目不进后面的档）：
+**质检漏斗**（今天的执行；有 blocking 发现的条目不进后面的档）：
 `integrity`（data_integrity）→ `numeric`（timestamp_check、kinematic_limits、motion_quality）→ `frame`（visual_quality、
 video_action_sync）→ `vlm`（eef_video_consistency、task_success）→ `post_verdict`（dedup）→ `profile_vlm`（skill_profile）。
 task_success 让 VLM 读多机位连续视频判定成败（设计 13）。
-**注册表 2.0 已是两块**（设计 17，F12.1）：CPU 块 `integrity → numeric → frame → dedup`、VLM 块 `autolabel → vlm → profile`，模块带细码目录
-（每个细码对应分类表 C6 的一项，默认级别 blocking / review / info）与覆盖声明；漏斗的 `gate` 只剩过渡用的 `pipeline/gates_v1.py`。
-发现（F12.2）、策略判决（F12.3）、两块并行（F12.4）落地后，上面的执行短路与硬门 / 软分判决退役。
+**判决已是策略判决**（设计 17，F12.2–F12.3）：模块只报发现（记录 2.0：细码、分类表的项、严重度、范围与区间），`aggregate` 用任务的策略
+（`run.json` 冻结；`default` 复刻今天的硬门、不再有软分拒绝，`report_only` 只报不拒）给每条发现定级 blocking / review / info 再判
+keep / drop / held（`pipeline/policy.py`、`pipeline/verdicts.py`）。**注册表 2.0 已是两块**（F12.1）：CPU 块 `integrity → numeric → frame → dedup`、
+VLM 块 `autolabel → vlm → profile`；两块并行（F12.4）落地前，执行仍是上面的漏斗，过渡用的 `gate` 在 `pipeline/gates_v1.py`。
 
 **一次任务**：建任务时预检，开跑时生成并冻结执行计划 → Daemon 排队，逐档调 CLI（每档一个常驻 worker，episode 逐条交接）→
 结果落在运行目录 `runs/<task_id>/`（`checks/<模块>/`、结果版本 `revisions/rNNNN/` 里的清单与报告、`export/`）→ 同步到交付目录，

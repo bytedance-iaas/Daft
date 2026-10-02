@@ -31,7 +31,7 @@
   "docs/contracts/eef/sample.schema.json": "sha256:50dfe10cea1ec103f5a4fc20c9178cb8f294cb986fae6eb88b0e1135fa1eb564",
   "docs/contracts/eef/trajectory_bundle.schema.json": "sha256:6ce8c5f5b6ffe1ddcab680b21a70f4a4ac4d30cff3040037c77f5ee5e2417b2e",
   "docs/contracts/modules.json": "sha256:9b7ae02a28220128524fa46b41446a4d9fcfb3ba7617bc3ac5ef9b5f52f988fe",
-  "docs/contracts/openapi.yaml": "sha256:6ce365fb83200c5b42e7b33d3a203f2df5174e7b48dbf2e8dbd786aefea00358",
+  "docs/contracts/openapi.yaml": "sha256:3dd3aeccafadbd9498855424ac6e1a2780eba6f75fa1b7ed31742c1785c3b0fd",
   "docs/contracts/parity/vlm-tape-entry.schema.json": "sha256:014d924766cdfe13c79a400e4c31134bb2c1e8a3830644d3644135ab1c9f5058",
   "docs/contracts/progress.schema.json": "sha256:8c15bcfcab0fb4f6c3e537a7646d9bf6645facf52d296836c6295464400339e2",
   "docs/contracts/taxonomy.json": "sha256:7c76d3262a52e2d5a058088d948fecfd47f64f3c7a83170faaf83b69246f5c0c",

@@ -34,19 +34,19 @@ def test_every_episode_of_the_revision(world):
         assert body["list"] == lists[ep], ep
     ep1 = _view(world, 1)          # killed in the numeric stage: no later module saw it
     assert sorted(ep1["modules"]) == ["kinematic_limits", "motion_quality", "timestamp_check"]
-    assert ep1["reasons"] == [{"module": "timestamp_check", "kind": "hard_gate",
-                               "text": "未通过「时间戳检查」:fragment"}]
+    assert ep1["reasons"] == [{"module": "timestamp_check", "kind": "finding", "code": "fragment",
+                               "item": "STRM-5", "appealable": False, "text": "fragment"}]
     ep0 = _view(world, 0)
     assert sorted(ep0["modules"]) == sorted(
         ["timestamp_check", "kinematic_limits", "motion_quality", "visual_quality",
          "video_action_sync", "task_success", "dedup", "skill_profile"])
     assert ep0["reasons"] == [] and ep0["review"] == [] and ep0["evidence"] == []
     ep6 = _view(world, 6)
-    assert ep6["modules"]["task_success"]["verdict"] == "error"
+    assert ep6["modules"]["task_success"]["status"] == "error"
     assert ep6["reasons"][0]["kind"] == "execution_error"
     ep7 = _view(world, 7)
-    assert ep7["reasons"][0] == {"module": "dedup", "kind": "duplicate",
-                                 "text": "与 ep000000 字节级完全重复", "duplicate_of": 0}
+    assert ep7["reasons"][0] == {"module": "dedup", "kind": "duplicate", "code": "duplicate", "item": "SET-1",
+                                 "appealable": True, "text": "与 ep000000 字节级完全重复", "duplicate_of": 0}
 
 
 def test_review_items_task_text_and_evidence(world):
@@ -328,7 +328,8 @@ def test_records_are_the_revision_s_parts_not_the_latest(world):
     old = _view(world, 0, rev=1)
     assert old["revision"] == 1
     assert old["modules"]["task_success"]["details"]["task_desc"] == TEXT[0]
-    assert _view(world, 3)["modules"]["task_success"]["verdict"] == "abstain"   # machine record
+    machine = _view(world, 3)["modules"]["task_success"]                         # machine record
+    assert [f["code"] for f in machine["findings"]] == ["uncertain"]
     assert _view(world, 3)["list"] == "passed"
 
 
@@ -338,8 +339,9 @@ def test_an_index_fooled_by_a_nested_key_still_finds_the_record(world):
     lines = path.read_text(encoding="utf-8").splitlines()
     tricky = record("dedup", 5, "pass", details={})
     tricky["details"] = {"pair": {"episode_index": 3}}
-    text = json.dumps({k: tricky[k] for k in ("episode_index", "module", "verdict", "passed", "score",
-                                              "gate", "evidence", "elapsed_s", "error", "details")})
+    text = json.dumps({k: tricky[k] for k in ("episode_index", "module", "status", "findings", "assessed",
+                                              "unassessable", "readings", "evidence", "elapsed_s", "error",
+                                              "details")})
     path.write_text("\n".join([ln for ln in lines if '"episode_index": 5' not in ln] + [text]) + "\n",
                     encoding="utf-8")
     store_of(world.rt).derived.clear()

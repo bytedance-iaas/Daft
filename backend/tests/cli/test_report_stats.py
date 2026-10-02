@@ -65,7 +65,7 @@ def test_generic_counts_abstentions_and_failed_steps():
     out = S.generic(records, [0.8])
     assert names(out["abstain_reason_counts"]) == {"末态物证 … 在灰区": 2}
     assert names(out["error_steps"]) == {"arbitration": 1, "decode": 1}
-    assert sum(b["count"] for b in out["score_hist"]) == 1
+    assert "score_hist" not in out          # report 2.0: one per 0-1 reading (reporting.finding_stats)
     assert S.generic([rec(0, "pass")], []) == {}
 
 

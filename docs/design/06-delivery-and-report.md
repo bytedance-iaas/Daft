@@ -315,7 +315,8 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
 > **报告 2.0（2026-10-01，设计 17 §5.1，C2 2.0 已定稿，F12.3 起产出）**：`overview` 多 `policy`（预设名）、`coverage`（本次覆盖的分类表
 > 项、未覆盖的项、评估不了的项与原因计数）、`findings_by_item`（每项的条数与按级别的拆分），`reject_reasons` 按细码与检测项计；
 > 模块小节去掉 `gate`，`summary` 多通用统计 `assessed_episodes`、`items`（每个细码的条数、占比、可选按相机）、`unassessable`、
-> `score_hist`、`dataset_findings`，1.0 的汇总键照留。前端按 `schema_version` 分流（D59）。下面是 1.0 的结构。
+> `score_hist`（2.0 改为「读数 → 十格」：运动质量的综合分与各子项分、视觉质量的综合分）、`dataset_findings`，1.0 的汇总键照留；
+> 技能画像多 `delivered_family_distribution`（交付集的分布，按 `passed` 算）。前端按 `schema_version` 分流（D59）。下面是 1.0 的结构。
 
 ```jsonc
 // report.json
@@ -392,7 +393,7 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
 
 | 模块 | 新增的汇总键（1.0 的键之外） |
 |---|---|
-| 所有参与判决的模块 | `score_hist`（有分数时：0–1 十格，`0.0–0.1` … `0.9–1.0`）；`abstain_reason_counts`（弃权原因摘要：原因文本截到第一个标点、数字换成 `…`，前 6 项 + 「其它」）；`error_steps`（出错条目停在哪一步：`probe` / `arbitration` / `decode` / `read` …） |
+| 所有参与判决的模块 | `score_hist`（有分数时：0–1 十格，`0.0–0.1` … `0.9–1.0`；报告 2.0 按读数名各一份）；`abstain_reason_counts`（弃权原因摘要：原因文本截到第一个标点、数字换成 `…`，前 6 项 + 「其它」）；`error_steps`（出错条目停在哪一步：`probe` / `arbitration` / `decode` / `read` …） |
 | 时间戳检查 | `fail_reasons`（`out_of_order` 乱序 / `gap` 跳变 / `fragment` 残段 / `jitter` 抖动，另有 `other`）；`duration_total_s`、`duration_median_s`、`duration_min_s`、`duration_max_s`；`duration_hist`（按整齐的秒数分格，最多 12 格） |
 | 运动学极限 | `violation_episodes`；`violations_by_type`、`violations_by_joint`（按类型 / 关节数条目，一条在同一类型或关节上只算一次）；`limits_profile`（用的规格档） |
 | 运动质量 | `subscores`：`[{name, mean, n, na, in_total, na_reason?}]`，平滑度、尖刺、夹爪抖动、执行器饱和计入总分，路径效率、末态稳定、流畅度只报不罚，`mean` 为 null 的是对本数据集不适用；`stuck_episodes`、`stuck_unassessable`、`stuck_na_reason`；`idle_episodes`（开头 / 中途 / 结尾有空闲的条数）；`active_ratio_mean` |
@@ -400,7 +401,7 @@ v1 已有的延迟分桶不能改口径，否则新旧不可比：
 | 视频-动作同步 | `verdicts`（`aligned` 同步正常 / `annotated` 已标注异常 / `suspect` 疑似错位 / `undecidable` 测不准 / `misaligned` 整体错位）；`flagged_camera_readings`；`lag_tol_s`；`cameras`：v1 `sync_health()` 的逐相机健康度 `[{camera, readings, n, median_lag_s, iqr_s, n_flagged, n_suspect, n_noisy, n_abstained}]`；`sync_advice`（数据集级结论，一段话）；`negative_lag_episodes`（负滞后条数） |
 | 任务成败判定 | `judgements`（判定代码分布：`success`、`recovery`、`endstate_success`、`arbitration_success`、`failure`、`arbitration_failure`、`uncertain`、`gap_violation`、`voc_tripwire`、`endstate_failure_suspect`、`endstate_unconfirmed`、`review_conflict`、`label_conflict_suspect`）；`abstain_by_judgement`；`text_sources`（`原始标注` / `自产caption` / `人工改标`）；`layers`（走到各层的条数：`probe` 打分、`endstate` 逐机位复核、`label_guard` 判废护栏、`arbitration` 取证仲裁） |
 | 精确去重 | `group_sizes`（按组大小数重复组） |
-| 技能画像 | `family_distribution`；`family_tree`：`[{name, count, pct, undersampled, subskills: [{name, count}]}]`（条数取自每条的归类，名字取画像里的中文名）；`label_disagreements`、`disagreement_high`、`disagreement_review`、`unstable`；`grouping_sources` |
+| 技能画像 | `family_distribution`；`delivered_family_distribution`（报告 2.0：交付集的分布）；`family_tree`：`[{name, count, pct, undersampled, subskills: [{name, count}]}]`（条数取自每条的归类，名字取画像里的中文名）；`label_disagreements`、`disagreement_high`、`disagreement_review`、`unstable`；`grouping_sources` |
 
 `overview.duration_s` 仍是 null：运行目录里没有主流程和子任务的墙钟记录（那是 Daemon 库里的进度），
 CLI 算不出一个诚实的耗时，页面在这种情况下不显示耗时。

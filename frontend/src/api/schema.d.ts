@@ -2115,13 +2115,19 @@ export interface components {
                 corr: number;
             };
         };
-        /** @description one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list (hard_gate, soft_score, duplicate, human, execution_error) or a review kind */
+        /** @description one line of an episode's reasons or review, shaped like C2 final-list reasons: kind is a reason kind of C2 final-list (2.0: finding, human, execution_error, duplicate; 1.0: hard_gate, soft_score, duplicate, human, execution_error) or a review kind; a 2.0 reason names its finding code, the code's taxonomy item and whether it may be appealed */
         EpisodeNote: {
             module: components["schemas"]["ModuleId"];
             kind?: string;
             text: string;
             priority?: string;
             duplicate_of?: number;
+            /** @description 2.0: the finding code (registry 2.x) */
+            code?: string;
+            /** @description 2.0: the taxonomy item of the code (C6), null for a code without one */
+            item?: string | null;
+            /** @description 2.0: the code may be appealed (D42) */
+            appealable?: boolean;
         };
         Perf: {
             revision: number;

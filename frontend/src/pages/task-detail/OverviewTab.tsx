@@ -6,7 +6,8 @@ import { Link } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { errorMessage, isApiError } from '../../api/errors';
 import { moduleName, qk, useModules } from '../../api/queries';
-import type { ModuleState, Plan, ReportResponse, Subtask, Task, TimelineEntry, UsageRow } from '../../api/types';
+import type { ModuleState, Plan, Subtask, Task, TimelineEntry, UsageRow } from '../../api/types';
+import { legacyReportResponse } from '../../lib/records';
 import { RelTime } from '../../components/RelTime';
 import { regionLabel } from '../../components/RegionSelect';
 import { MODULE_STATE_COLOR } from '../../features/tasks/ModuleSummary';
@@ -544,7 +545,7 @@ export function OverviewTab({ task, subtasks, timeline }: { task: Task; subtasks
   });
   const report = useQuery({
     queryKey: qk.report(task.id, null),
-    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id: task.id } } }))) as ReportResponse,
+    queryFn: async () => legacyReportResponse(await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id: task.id } } }))),
     enabled: task.result_rev > 0,
     retry: false,
   });

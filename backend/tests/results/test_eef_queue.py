@@ -43,7 +43,7 @@ def test_what_the_module_could_not_settle_is_a_pending_card(eef_world):
     assert [q["line"] for q in cards[4]["questions"]] == ["label", "eef_check"]
     appeals = _cards(w, tab="appeals", status="all")
     assert appeals[8]["questions"][0]["source_module"] == EEF
-    assert appeals[8]["questions"][0]["reason"].startswith("未通过「EEF–视频一致性」")
+    assert appeals[8]["questions"][0]["reason"].startswith("「位置」")       # the finding's sentence
     view = w.get("/episodes/0").json()
     assert_schema("EpisodeView", view)
     assert view["review"][0] == {"module": EEF, "kind": "eef_consistency", "text": WHY}
@@ -68,7 +68,8 @@ def test_the_answers_are_executed_and_change_the_lists(eef_world):
     w.switch(3)
     assert [w.get(f"/episodes/{ep}").json()["list"] for ep in (0, 4, 8)] == ["passed", "reject", "passed"]
     assert w.get("/episodes/4").json()["reasons"] == [
-        {"module": EEF, "kind": "human", "text": "人工裁决判为 EEF 与视频不一致"}]
+        {"module": EEF, "kind": "human", "code": "unsettled", "item": "MV-5", "appealable": False,
+         "text": "人工裁决判为 EEF 与视频不一致"}]
     cards = _cards(w, status="all")
     assert cards[0]["status"] == "applied" and cards[4]["status"] == "applied"
     assert _cards(w, tab="appeals", status="all")[8]["status"] == "applied"

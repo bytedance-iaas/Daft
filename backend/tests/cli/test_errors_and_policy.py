@@ -23,7 +23,7 @@ import requests
 from curation.pipeline.records import module_dir
 
 from .fakevlm_server import FakeVlmServer
-from .pipeline import Chain, comparable, read_jsonl, results, run
+from .pipeline import Chain, comparable, read_jsonl, results, run, verdict_of
 
 WRIST = "observation.images.wrist"
 
@@ -114,7 +114,7 @@ def test_one_attempt_per_request_unless_retry_is_given(vlm_stage, tmp_path):
     entry = res.doc["modules"]["task_success"]
     assert entry["episodes"]["error"] >= 1 and entry["error_episodes"]
     recs = results(rd, "task_success")
-    failed = [i for r in recs.values() if r["verdict"] == "error"
+    failed = [i for r in recs.values() if r["status"] == "error"
               for i in r["error"]["incidents"]]
     assert len(failed) == 2
     assert all(i["attempts"] == 1 and i["cause"] == "server_error" for i in failed), failed
@@ -183,7 +183,7 @@ def test_text_calls_are_one_request_with_v1s_body(tmp_path):
 
 def test_a_failing_model_call_is_an_error_not_an_abstention(vlm_stage, tmp_path):
     ref = vlm_stage["reference"]
-    abstained = [e for e, r in ref.items() if r["verdict"] == "abstain"]
+    abstained = [e for e, r in ref.items() if verdict_of(r) == "abstain"]
     assert abstained and all(ref[e]["error"] is None for e in abstained)   # "can't tell"
 
     rd = _copy(vlm_stage, tmp_path)
@@ -192,7 +192,7 @@ def test_a_failing_model_call_is_an_error_not_an_abstention(vlm_stage, tmp_path)
         res = _vlm_check(vlm_stage, rd, vlm.url)
     assert res.rc == 0                          # an episode's error is not the command's
     recs = results(rd, "task_success")
-    hit = sorted(e for e, r in recs.items() if r["verdict"] == "error")
+    hit = sorted(e for e, r in recs.items() if r["status"] == "error")
     assert hit and vlm.count(review) >= len(hit)
     for e in hit:
         incidents = recs[e]["error"]["incidents"]
@@ -221,7 +221,7 @@ def test_a_camera_that_does_not_decode_is_an_error(dataset, tmp_path):
     for m in ("visual_quality", "video_action_sync"):
         recs = results(rd, m)
         assert recs[0]["error"] is None
-        assert recs[1]["verdict"] == "error", (m, recs[1])
+        assert recs[1]["status"] == "error", (m, recs[1])
         incidents = recs[1]["error"]["incidents"]
         assert any(i["step"] == "decode" and i.get("camera") == "wrist" for i in incidents), \
             (m, incidents)
@@ -246,7 +246,7 @@ def test_a_failed_caption_is_an_error_down_to_the_verdict(vlm_stage, tmp_path):
     assert res.rc == 0
     recs = results(rd, "task_success")
     for e in (4, 6):
-        assert recs[e]["verdict"] == "error"
+        assert recs[e]["status"] == "error"
         assert [i["step"] for i in recs[e]["error"]["incidents"]] == ["autolabel"]
     for e in (0, 1, 3, 7):
         assert comparable(recs[e]) == comparable(vlm_stage["reference"][e])

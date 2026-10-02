@@ -105,9 +105,9 @@
 
    `preflight.json` 里 `eef_video_consistency` 是 `available`，带 `subitems` 与 `episode_counts: {available: 7}`（不给 `--param` 时是
    `needs_input: trajectory_missing`，给了文件但不给 `--vlm-backend` 时是 `needs_input: vlm_backend_missing`）；`plan.json` 的 `vlm`
-   阶段是 `eef_video_consistency`、`episodes: survivors:numeric`、`hard_gates` 里有它；EEF 的 `check` 按条打印通过 / 判废 / 弃权
-   （弃权就是转人工），每条记录的 `details.decision` 写着结论和理由，`details.review` 是每个复核窗口（问的点与轴、模型答复）；
-   `revisions/r0001/verdicts.jsonl` 里被它判废的条目是 `drop`，理由以「未通过「EEF–视频一致性」」开头；`report.md` 的
+   阶段是 `eef_video_consistency`、`episodes: survivors:numeric`、`hard_gates` 里有它；EEF 的 `check` 打印判完的条数与按细码的发现数
+   （`inconsistent` 判废、`unsettled` 转人工、`opinion_mismatch` 只报告），每条记录的 `details.decision` 写着结论和理由，`details.review` 是每个复核窗口（问的点与轴、模型答复）；
+   `revisions/r0001/verdicts.jsonl` 里被它判废的条目是 `drop`，`blocking` 列着它的 `inconsistent`，理由是那条发现的中文；`report.md` 的
    「EEF–视频一致性」一节写判过 / 判废 / 转人工条数、转人工的原因、CPU 可疑分项和模型与 CPU 的一致率；`tables/` 下有
    `eef_camera_metrics`、`eef_segments`、`eef_diagnosis`、`eef_review_windows` 四张表。没有 VLM 后端时，第 10 步的测试用假模型走同一条路。
 9. 控制台上传与 Daemon 执行（F5.5 / F5.9）：先跑 `../.venv/bin/python -m pytest -q tests/orchestr/test_eef_tasks.py -m "slow or not slow"`

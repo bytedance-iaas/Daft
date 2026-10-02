@@ -32,8 +32,8 @@ from typing import Any
 from . import gates_v1
 
 SCHEMA_VERSION = "1.0"
-#: The format ``record_from_struct`` writes (C2 result-record): 1.0 until the policy verdicts read 2.0.
-RECORD_VERSION = "1.0"
+#: The format ``record_from_struct`` writes (C2 result-record): 2.0 since the policy verdicts (F12.3).
+RECORD_VERSION = "2.0"
 
 CHECKS_DIR = "checks"
 PARTS_DIR = "parts"
@@ -174,7 +174,8 @@ def legacy_verdict(rec: dict | None) -> str | None:
     """1.0's ``verdict`` of a record of either format, for the views that still count by it
     (the report's 1.0 summary keys, the console until F12.5): a 2.0 record with a finding that
     blocks by default is ``fail``, one with a review finding ``abstain``, one with a score
-    ``scored``, else ``pass``."""
+    ``scored``; one that assessed none of the items its own per-episode codes report on, or
+    could not assess an item it rejects on, ``abstain``; else ``pass``."""
     if not isinstance(rec, dict):
         return None
     if not is_v2(rec):
@@ -189,11 +190,15 @@ def legacy_verdict(rec: dict | None) -> str | None:
     if score_of(rec) is not None:
         return "scored"
     try:
-        gate_items = {c.item for c in registry_get(rec["module"]).codes if c.level == "blocking"}
+        codes = registry_get(rec["module"]).codes
     except KeyError:
-        gate_items = set()
-    if not rec.get("assessed") or any(u.get("item") in gate_items for u in rec.get("unassessable") or []):
-        return "abstain"                     # it assessed nothing, or not what it rejects on (a draft spec, …)
+        codes = ()
+    gate_items = {c.item for c in codes if c.level == "blocking"}
+    own_items = {c.item for c in codes if c.item and c.scope_kind != "dataset"}
+    assessed = set(rec.get("assessed") or [])
+    if not (assessed & own_items if own_items else assessed) \
+            or any(u.get("item") in gate_items for u in rec.get("unassessable") or []):
+        return "abstain"                     # it assessed nothing of its own, or not what it rejects on
     return "pass"
 
 

@@ -12,6 +12,7 @@ import { SyncedVideos } from '../../features/media/SyncedVideos';
 import { reasonLine, recordError } from '../../lib/reportView';
 import { zh } from '../../locales/zh';
 import { BlockError, EPISODE_BLOCKS, GenericBlock, blockTitleExtra } from './episodeBlocks';
+import { asLegacyRecord } from '../../lib/records';
 import { isAdvisory, isAppealable, reviewLinesOf } from '../../lib/registry';
 
 export type EpisodeFilter = 'all' | 'passed' | 'reject' | 'held' | 'review';
@@ -244,7 +245,8 @@ function ModuleBlocks({ taskId, rev, view, report, onSelect }: { taskId: string;
   return (
     <>
       {ids.map((id) => {
-        const record = view.modules[id];
+        const raw = view.modules[id];
+        const record = raw ? asLegacyRecord(raw, reg.data) : undefined;
         const Block = EPISODE_BLOCKS[id] ?? GenericBlock;
         const advisory = isAdvisory(id);
         return (

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { moduleById, moduleName, qk, useModules, useTask } from '../../api/queries';
-import type { Report, ReportModuleSection, ReportResponse, Subtask, Task } from '../../api/types';
+import type { Report, ReportModuleSection, Subtask, Task } from '../../api/types';
 import { Chart, barOption, chartSummary } from '../../components/Chart';
 import { LazyVisible } from '../../components/LazyVisible';
 import { PageError } from '../../components/PageError';
@@ -22,6 +22,7 @@ import { zh } from '../../locales/zh';
 import { EpisodesTab } from './EpisodesTab';
 import { ModuleSection, SECTION_STATE_COLOR } from './ModuleSection';
 import { PerfTab } from './PerfTab';
+import { legacyReportResponse } from '../../lib/records';
 import { funnelGate } from '../../lib/registry';
 
 function positiveInt(v: string | null): number | null {
@@ -401,7 +402,7 @@ export function ReportPage() {
   const tab = hashTab ?? (ep !== null ? 'episodes' : 'report');
   const report = useQuery({
     queryKey: qk.report(id, rev),
-    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id }, query: { rev } } }))) as ReportResponse,
+    queryFn: async () => legacyReportResponse(await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id }, query: { rev } } }))),
     enabled: Boolean(t) && rev > 0,
     placeholderData: keepPreviousData,
     retry: false,

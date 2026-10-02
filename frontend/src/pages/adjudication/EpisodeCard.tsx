@@ -11,6 +11,7 @@ import { SignedImage } from '../../features/media/SignedMedia';
 import { SyncedVideos } from '../../features/media/SyncedVideos';
 import { answerOn, catalogLine, lineDecisions, lineTitle, repeats, type CardView, type EffectiveDecision, type ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
+import { asLegacyRecord } from '../../lib/records';
 
 export const STATUS_COLOR: Record<string, string> = { pending: 'arcoblue', optional: 'cyan', decided: 'green', unsure: 'orange', applied: 'gray' };
 
@@ -239,8 +240,10 @@ function VerdictQuestion({ index, view, q, catalog, onDecide }: { index: number;
  * trajectory against the dataset's own record (design doc 12 §8.7), which only informs. */
 function EefEvidence({ taskId, ep, rev }: { taskId: string; ep: number; rev: number }) {
   const q = useEpisode(taskId, ep, rev);
+  const reg = useModules();
   if (q.isLoading) return <Spin size={16} />;
-  const record = q.data?.modules?.[EEF];
+  const raw = q.data?.modules?.[EEF];
+  const record = raw ? asLegacyRecord(raw, reg.data) : undefined;
   if (!record) return <div className="muted">{zh.eefDetail.noRecord}</div>;
   return (
     <div data-testid={`eef-evidence-${ep}`}>

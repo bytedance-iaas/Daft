@@ -15,7 +15,7 @@ import shutil
 from curation.pipeline.records import latest_results, read_jsonl
 
 from .fakevlm_server import FakeVlmServer
-from .pipeline import run
+from .pipeline import passed_of, run, verdict_of
 
 LABEL = "stack the cups"
 ORIGINAL = "pick up the red block and place it in the bin"
@@ -109,7 +109,7 @@ def test_v1_relabels_send_v1s_requests_and_reach_v1s_verdict(vlm_stage, tmp_path
             ref = _v1_rerun(vlm_stage, v1.url, episode, LABEL)
         assert _posts(v2) == _posts(v1), episode                  # byte for byte
         assert not any(p in c["text"] for c in v2.calls for p in ARBITRATION)
-        assert rec["passed"] == ref["passed"]
+        assert passed_of(rec) == ref["passed"]
         details = {k: v for k, v in rec["details"].items() if k not in BOOKKEEPING}
         assert details == {k: v for k, v in json.loads(ref["detail"]).items() if k not in BOOKKEEPING}
         assert (rec["details"]["task_desc"], rec["details"]["task_desc_source"],
@@ -122,8 +122,8 @@ def test_full_relabels_run_the_first_runs_flow(vlm_stage, tmp_path):
     the full flow is the first run again - the same decision, another verdict."""
     two_layers, _ = _relabel_and_check(vlm_stage, tmp_path, "v1-same", 1, ORIGINAL, "v1")
     full, v2 = _relabel_and_check(vlm_stage, tmp_path, "full-same", 1, ORIGINAL, "full")
-    assert two_layers["verdict"] == "abstain"
-    assert full["verdict"] == "pass" and full["details"]["verdict"] == "arbitration_success"
+    assert verdict_of(two_layers) == "abstain"
+    assert verdict_of(full) == "pass" and full["details"]["verdict"] == "arbitration_success"
     assert any(p in c["text"] for c in v2.calls for p in ARBITRATION)
     first_run = vlm_stage["reference"][1]
     assert {k: v for k, v in full["details"].items() if k not in BOOKKEEPING} == \

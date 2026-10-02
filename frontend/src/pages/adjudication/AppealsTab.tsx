@@ -3,12 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { api, unwrap } from '../../api/client';
 import { moduleName, qk, useModules } from '../../api/queries';
-import type { AdjudicationLine, DecisionValue, ReportResponse } from '../../api/types';
+import type { AdjudicationLine, DecisionValue } from '../../api/types';
 import { PageError } from '../../components/PageError';
 import type { CardView, ReviewCatalog } from '../../lib/adjudication';
 import { zh } from '../../locales/zh';
 import { EpisodeCard } from './EpisodeCard';
 import { usePaged } from './paging';
+import { legacyReportResponse } from '../../lib/records';
 import { isAppealable } from '../../lib/registry';
 
 /**
@@ -46,7 +47,7 @@ export function AppealsTab({
   const paged = usePaged(views, resetKey, 'appeals-pager');
   const report = useQuery({
     queryKey: qk.report(taskId, rev),
-    queryFn: async () => (await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id: taskId }, query: { rev } } }))) as ReportResponse,
+    queryFn: async () => legacyReportResponse(await unwrap(api().GET('/tasks/{id}/report', { params: { path: { id: taskId }, query: { rev } } }))),
     enabled: rev > 0,
   });
   const appealable = (reg.data?.modules ?? []).filter(isAppealable);

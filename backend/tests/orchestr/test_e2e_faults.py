@@ -58,8 +58,8 @@ def test_an_episode_that_crashes_the_process_twice_is_named_and_skipped(daemon, 
     assert task["summary"]["held"] == 1 and task["summary"]["total"] == 8
     rd = d.run_dir(task["id"])
     rec = results(rd, "timestamp_check")[3]
-    assert rec["verdict"] == "error" and rec["error"]["incidents"][0]["step"] == "crash"
-    assert {e for e, r in results(rd, "timestamp_check").items() if r["verdict"] == "error"} == {3}
+    assert rec["status"] == "error" and rec["error"]["incidents"][0]["step"] == "crash"
+    assert {e for e, r in results(rd, "timestamp_check").items() if r["status"] == "error"} == {3}
     logs = d.api("GET", f"/tasks/{task['id']}/logs",
                  params={"stage": "numeric", "level": "warn", "limit": 50}).json()["items"]
     named = [line["msg"] for line in logs if "当时在处理 episode 3" in line["msg"]]

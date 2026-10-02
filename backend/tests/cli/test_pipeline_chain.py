@@ -77,13 +77,15 @@ def test_by_default_one_model_request_at_a_time(chain):
 
 def test_the_funnel_takes_the_survivors_of_each_stage(chain):
     s = chain.steps
-    assert s["numeric"].doc["modules"]["timestamp_check"]["episodes"]["total"] == 8
-    assert s["numeric"].doc["modules"]["timestamp_check"]["episodes"]["fail"] == 2
+    ts = s["numeric"].doc["modules"]["timestamp_check"]
+    assert ts["episodes"] == {"total": 8, "ok": 8, "error": 0}
+    assert ts["findings"] == {"gap": 1, "fragment": 1}                  # 2 and 5 stop here
     assert s["frame"].doc["modules"]["video_action_sync"]["episodes"]["total"] == 6
-    ts = s["vlm"].doc["modules"]["task_success"]["episodes"]
-    assert ts == {"total": 6, "pass": 3, "fail": 0, "abstain": 3, "scored": 0, "error": 0}
+    task = s["vlm"].doc["modules"]["task_success"]
+    assert task["episodes"] == {"total": 6, "ok": 6, "error": 0}
+    assert task["findings"] == {"uncertain": 3, "task_text_missing": 2}  # 4 and 6: captions
     assert s["autolabel"].doc["counts"] == {"total": 2, "ok": 2, "unclear": 0, "error": 0}
-    assert s["dedup"].doc["modules"]["dedup"]["episodes"]["fail"] == 1       # 7 copies 3
+    assert s["dedup"].doc["modules"]["dedup"]["findings"] == {"duplicate": 1}   # 7 copies 3
     assert s["profile_vlm"].doc["modules"]["skill_profile"]["episodes"]["total"] == 5
 
 
@@ -184,7 +186,9 @@ def test_report_follows_the_registry(chain):
     assert commit["parts"]["task_success"] == ["0001"]
     assert "report.json" in commit["files"] and "passed.json" in commit["files"]
     md = open(os.path.join(rev, "report.md"), encoding="utf-8").read()
-    assert "通过 5" in md and "「时间戳检查」2 条" in md
+    assert "通过 5" in md and "「时间戳检查」·丢帧跳变(STRM-3)1 条" in md
+    assert "- 评估 8 条;检出:丢帧跳变(STRM-3) 1 条(判废)、残段：短于最短时长(STRM-5) 1 条(判废)" in md
+    assert "判决策略:默认" in md
 
 
 def test_report_summaries_are_chart_ready(chain):
@@ -203,7 +207,8 @@ def test_report_summaries_are_chart_ready(chain):
     assert s["kinematic_limits"]["violation_episodes"] == 0
     assert s["kinematic_limits"]["limits_profile"] == "franka"
     mq = s["motion_quality"]
-    assert sum(b["count"] for b in mq["score_hist"]) == 8 and "mean_score" in mq
+    assert sum(b["count"] for b in mq["score_hist"]["score"]) == 8 and "mean_score" in mq
+    assert sum(b["count"] for b in mq["score_hist"]["smoothness"]) == 8      # 2.0: per reading
     subs = {x["name"]: x for x in mq["subscores"]}
     assert subs["smoothness"]["n"] == 8 and subs["smoothness"]["in_total"] is True
     assert subs["actuator_saturation"]["mean"] is None and subs["actuator_saturation"]["na_reason"]
@@ -222,6 +227,8 @@ def test_report_summaries_are_chart_ready(chain):
     sp = s["skill_profile"]
     assert sum(f["count"] for f in sp["family_distribution"]) == sp["counts"]["total"]
     assert sp["families"] == len([f for f in sp["family_tree"] if f["name"] != "未归类"])
+    # the delivered set's distribution next to the profiled set's (design doc 17 §4.5): 5 passed
+    assert sum(f["count"] for f in sp["delivered_family_distribution"]) == 5
 
 
 def test_a_committed_revision_is_never_rewritten(chain):

@@ -156,6 +156,8 @@ INTEG_CASES = [
     ({"level": "reject", "code": "row_invalid", "tier": "L2", "message": "数据不合规：时间戳非严格递增(帧 3→4: 1→1)"}, "timestamps_invalid"),
     ({"level": "reject", "code": "row_invalid", "tier": "L2", "message": "数据不合规：视频文件不存在: wrist → v.mp4"}, "video_missing"),
     ({"level": "reject", "code": "row_invalid", "tier": "L2", "message": "数据不合规：fps 非法: 0"}, "metadata_invalid"),
+    ({"level": "reject", "code": "file_truncated", "tier": "L2", "message": "录制中断，且读不出数据（RecordLengthLimitExceeded）",
+      "args": {"error": "RecordLengthLimitExceeded"}}, "cut_unreadable"),
 ]
 
 # (module, passed, score, details) -> expected codes; unassessable items

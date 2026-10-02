@@ -3,8 +3,10 @@ import { IconLoading } from '@arco-design/web-react/icon';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, unwrap } from '../../api/client';
+import { useModules } from '../../api/queries';
 import type { operations } from '../../api/schema';
 import type { PipelineEpisode, Task } from '../../api/types';
+import { recordVerdict } from '../../lib/records';
 
 type PipelinePage = operations['listPipelineEpisodes']['responses'][200]['content']['application/json'];
 import { FUNNEL_STAGES, isTerminalState } from '../../lib/taskView';
@@ -47,6 +49,7 @@ export const PIPELINE_PAGE = 20;
 export function PipelineEpisodesCard({ task }: { task: Task }) {
   const [before, setBefore] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const reg = useModules();
   const live = !isTerminalState(task.state) || Boolean(task.active_subtask);
   const page = useQuery({
     queryKey: ['task', task.id, 'pipeline-episodes', before, task.state, task.result_rev,
@@ -150,7 +153,7 @@ export function PipelineEpisodesCard({ task }: { task: Task }) {
               </Typography.Paragraph> : null}
               {Object.entries(detail.data.modules ?? {}).map(([module, record]) => (
                 <div key={module} style={{ marginBottom: 10 }}>
-                  <b>{module}</b> <Tag>{record.verdict}</Tag>
+                  <b>{module}</b> <Tag>{recordVerdict(record, reg.data)}</Tag>
                   <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12, margin: '4px 0' }}>
                     {JSON.stringify(record.details, null, 2)}
                   </pre>

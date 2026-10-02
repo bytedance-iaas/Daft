@@ -28,14 +28,16 @@ CAPTION = "All cameras show the SAME robot episode"
 
 
 def _reject_by_task_success(run_dir: str, episodes: set[int]) -> None:
-    """Turn the task_success records of ``episodes`` into a failure of the model."""
+    """Turn the task_success records of ``episodes`` into a failure of the model: the record
+    its answer would give, written as ``check`` writes it (records 2.0)."""
     part = os.path.join(run_dir, "checks", "task_success", "parts", "0001.jsonl")
     out = []
     for rec in read_jsonl(part):
         if rec["episode_index"] in episodes:
-            rec.update(verdict="fail", passed=False)
-            rec["details"] = dict(rec["details"], verdict="failure",
-                                  reason="复核判未完成")
+            details = dict(rec["details"], verdict="failure", reason="复核判未完成")
+            rec = records.record_v2("task_success", rec["episode_index"], False, None, details,
+                                    error=None, evidence=rec.get("evidence"),
+                                    elapsed_s=rec.get("elapsed_s"))
         out.append(json.dumps(rec, ensure_ascii=False) + "\n")
     with open(part, "w", encoding="utf-8") as fh:
         fh.writelines(out)

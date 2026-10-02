@@ -361,9 +361,12 @@ def _dedup(ctx, args, run_dir, src, episodes, part, guard):
     src.fetch(episodes)
     payload = run_dedup(ctx, run_dir, src.input_dir, episodes, part,
                         embodiment_id=args.embodiment_id)
-    from ..pipeline.records import legacy_verdict
+    from ..pipeline.policy import load as load_policy
+    from ..pipeline.records import passes_funnel
 
-    dups = {e for e, rec in _latest(run_dir, "dedup").items() if legacy_verdict(rec) == "fail"}
+    # the copies the task's policy rejects (default: every duplicate but its group's first; report_only: none)
+    policy = load_policy(run_dir)
+    dups = {e for e, rec in _latest(run_dir, "dedup").items() if not passes_funnel(rec, policy)}
     errors = set(payload["modules"]["dedup"]["error_episodes"])
     left_out = {s["episode_index"] for s in
                 payload["modules"]["dedup"].get("skipped_missing_source") or []}
@@ -441,8 +444,8 @@ def _profile_members(ctx, run_dir: str, episodes: list[int]) -> tuple[list[int],
     if not latest_results(run_dir, "dedup") and not decisions.applied:
         return list(episodes), set()
     task = [m for m in runctx.selected_modules(argparse.Namespace(modules=None), run_dir)
-            if m in agg.FUNNEL_MODULES or m == "dedup"]
-    state = agg.RunState(run_dir, task, episodes, runctx.stage_config(ctx, task))
+            if m != "skill_profile"]
+    state = agg.RunState(run_dir, task, episodes)
     members, restored = agg.profile_members(state, decisions)
     left_out = len(episodes) - len(members)
     if left_out:

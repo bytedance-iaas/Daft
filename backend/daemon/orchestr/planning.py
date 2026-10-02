@@ -77,6 +77,11 @@ def code_version() -> str:
         return "unknown"
 
 
+#: the format of the run's records, verdicts, lists and report (C2 2.0, design doc 17); a run directory
+#: whose run.json says otherwise was made by an earlier version and is read only (D59)
+C2_VERSION = "2.0"
+
+
 def write_run_json(run, plan: dict) -> None:
     """``run.json`` of the batch (06 §1-§2): what ran, on what, with which versions."""
     task = run.task
@@ -84,7 +89,13 @@ def write_run_json(run, plan: dict) -> None:
     pf = run.preflight
     modules = [{"id": m.module_id, **({"params": m.params} if m.params else {})}
                for m in run.repo.get_task_modules(run.task_id) if m.selected]
-    doc = {"schema": "curator.run/1", "task_id": task.id, "run_id": task.run_id,
+    from curation.contracts import modules as registry
+    from curation.pipeline import policy as policy_mod
+
+    doc = {"schema": "curator.run/1", "c2": C2_VERSION, "registry_version": registry.REGISTRY_VERSION,
+           # the verdict policy, frozen at start (design doc 17 §4.1): aggregate grades the findings with it
+           "policy": policy_mod.from_task_params(task.params).to_json(),
+           "task_id": task.id, "run_id": task.run_id,
            "name": task.name, "created_at": task.created_at, "started_at": task.started_at,
            "input": {"source": task.input_source, "uri": task.input_uri,
                      "region": task.input_region},

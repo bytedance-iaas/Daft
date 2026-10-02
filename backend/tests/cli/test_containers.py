@@ -26,7 +26,7 @@ from curation.contracts import schemas  # noqa: E402
 from .conftest import ENV_VARS  # noqa: E402
 from .fakes import FakeCloud  # noqa: E402
 from .fakevlm_server import FakeVlmServer  # noqa: E402
-from .pipeline import Chain, read_jsonl, results, run  # noqa: E402
+from .pipeline import Chain, read_jsonl, results, run, verdict_of  # noqa: E402
 
 EPISODES = "0-7"
 PASSED, REJECT = [0, 1, 3, 4, 6], [2, 5, 7]
@@ -202,12 +202,12 @@ def test_chain_verdicts_are_the_lerobot_fixtures(chain):
     assert _list(chain.rd, "reject") == REJECT
     assert _list(chain.rd, "held") == []
     ts = results(chain.rd, "timestamp_check")
-    assert sorted(e for e, r in ts.items() if r["verdict"] == "fail") == [2, 5]
-    assert results(chain.rd, "dedup")[7]["verdict"] == "fail"
+    assert sorted(e for e, r in ts.items() if verdict_of(r) == "fail") == [2, 5]
+    assert verdict_of(results(chain.rd, "dedup")[7]) == "fail"
     captions = {line["episode_index"] for line in
                 read_jsonl(os.path.join(chain.rd, "autolabel", "captions.jsonl"))}
     assert captions == {4, 6}
-    assert all(r["verdict"] != "error" for m in ("timestamp_check", "kinematic_limits",
+    assert all(r["status"] != "error" for m in ("timestamp_check", "kinematic_limits",
                                                   "motion_quality", "visual_quality",
                                                   "video_action_sync", "task_success")
                for r in results(chain.rd, m).values())
@@ -217,7 +217,7 @@ def test_chain_semantics_come_from_the_selection(chain):
     """Every stage attaches the semantics v1 resolves on the task's selection, however
     few survivors it reads (the frame stage reads 6 of 8)."""
     rec = results(chain.rd, "motion_quality")[0]
-    assert rec["verdict"] in ("pass", "fail", "scored", "abstain")
+    assert verdict_of(rec) in ("pass", "fail", "scored", "abstain")
     assert chain.steps["frame"].doc["modules"]["visual_quality"]["episodes"]["total"] == 6
 
 
@@ -344,7 +344,7 @@ def test_tos_source_cache(cli, tos, mini_mcap, mini_lance, fmt, tmp_path, monkey
     num = cli("check", "--modules", "timestamp_check,kinematic_limits,motion_quality", *common,
               "--episodes", EPISODES, "--survivors-out", str(run_dir / "numeric.txt"))
     assert num.rc == 0, num.doc
-    assert num.doc["modules"]["timestamp_check"]["episodes"]["fail"] == 2
+    assert num.doc["modules"]["timestamp_check"]["findings"] == {"gap": 1, "fragment": 1}
     def data_gets():                             # whole objects that are episode data
         return [c[2] for c in _gets(tos, f"ds/{fmt}/")
                 if c[3] is None and not c[2].startswith(f"ds/{fmt}/meta/")]

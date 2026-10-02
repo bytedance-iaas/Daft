@@ -186,6 +186,9 @@ Daemon 不再接新任务，让运行中的 CLI 子进程收尾当前 episode（
   `updates to statefulset spec for fields other than ... are forbidden`。扩容直接改 PVC（存储类要允许扩容）：
   `kubectl -n $NS patch pvc data-$POD -p '{"spec":{"resources":{"requests":{"storage":"200Gi"}}}}'`。
 - 改站点配置（`curator.siteConfig`、`curator.publicDatasets`）也会滚动重启 Pod，同样走系统暂停再续跑。
+- **跨过结果格式 2.0 的升级**（设计 17 的策略判决，F12.3 起）：旧版本建的任务（`run.json` 里没有 `c2: "2.0"`）新版本只能查看、不能再运行（D59）。
+  升级时还在跑或被暂停的旧任务，续跑会以 `legacy_task` 失败，失败原因写「这个任务由旧版本生成（结果格式 1.0），新版本只能查看、不能再运行；请复制为新任务」；
+  重试、执行裁决、重新导出同样不行。要么等它们跑完、裁决与导出都做完再升级，要么升级后复制为新任务重跑。
 - 节点排水（drain）、Pod 被驱逐都等同一次重启；块存储盘会跟着 Pod 挂到同一可用区的新节点上。
 - ReRun 的 Pod 和质检台互不影响：只改 `image.rerun` 时质检台不重启，反过来也一样。
 

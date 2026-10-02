@@ -14,11 +14,12 @@ v1's rules survive unchanged (``pipeline/rejudge.py``), in its order:
 2. a relabel is judged again by task_success with the new label - **unless a
    human already gave the task verdict for that episode**, which then stands and
    is recorded as human (no model re-checks a person's conclusion);
-3. an appeal is only admitted for a reject by one appealable module alone
-   (the registry's ``appealable``, D42: task_success, and dedup's byte-copy
-   finding; ``aggregate.appeal_target``); the physical and structural gates and
-   the soft score are final whatever the decision file says. "restore"
-   overturns that module only;
+3. an appeal is only admitted for a reject whose blocking findings are all
+   appealable (D42 by finding, design doc 17 §4.4: the registry's ``appealable``
+   codes - task_success's failure, dedup's duplicate, the EEF module's
+   inconsistency - and none of them a person's own conclusion;
+   ``aggregate.Decided.admissible``); any other finding is final whatever the
+   decision file says. "restore" lifts those findings;
 4. "unsure" is a legal answer: recorded, the episode stays in the queue, nothing
    changes.
 
@@ -271,8 +272,8 @@ def apply(run_dir: str, doc: dict, *, now_ms: int | None = None,
             if d["line"] == "reject_appeal" and not appeal_admissible(int(d["episode_index"])):
                 raise DecisionError(
                     f"decision {d['id']}: episode {d['episode_index']} has no reject a person "
-                    f"may appeal (a hard gate of its own, a soft score, a discarded episode "
-                    f"and an episode that is not rejected are final)")
+                    f"may appeal (a finding that is not appealable, a person's own conclusion, "
+                    f"a discarded episode and an episode that is not rejected are final)")
     stamp = int(time.time() * 1000) if now_ms is None else int(now_ms)
     # every relabel applied now carries how it is judged again (D39)
     fresh = [dict(d, relabel_rerun=mode) if d["line"] == "label"

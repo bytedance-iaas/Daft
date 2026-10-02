@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from curation.pipeline.check_stage import StageOptions, StageRun
 from curation.pipeline.episode_state import EpisodeState, state_path
+from curation.pipeline.records import record_v2
 
 
 def test_check_pool_refills_after_fast_episode_and_commits_before_notification(tmp_path):
@@ -45,11 +46,10 @@ def test_check_pool_refills_after_fast_episode_and_commits_before_notification(t
     def work(source, episode):
         if episode == 0:
             assert second_done.wait(5), "new work was blocked by the slow episode"
-        return {"timestamp_check": {"module": "timestamp_check",
-                                    "episode_index": episode, "verdict": "pass"}}
+        return {"timestamp_check": record_v2("timestamp_check", episode, True, None, {})}
 
     stage._work = work
-    assert stage.run()["modules"]["timestamp_check"]["episodes"]["pass"] == 3
+    assert stage.run()["modules"]["timestamp_check"]["episodes"] == {"total": 3, "ok": 3, "error": 0}
     assert completions == [1, 2, 0]
     assert stage.survivors() == [0, 1, 2]
 

@@ -8,7 +8,8 @@ after a complete first run:
     -> aggregate final -> report -> export --incremental -> verify
 
 all on revision 2, with revision 1 left as it was. Dedup is not run again: its
-first result stands, as in v1's rejudge.
+groups stand, and aggregate picks each group's keeper after the human decisions (design
+doc 17 §4.5) - 3 judged failed, its byte copy 7 is delivered in its place.
 """
 from __future__ import annotations
 
@@ -93,20 +94,21 @@ def test_decisions_name_what_runs_next(flow):
 
 def test_the_first_dedup_stands_and_the_profile_follows_the_decisions(flow):
     """keep.txt of revision 2 drops the episode a person judged failed; dedup is not
-    run again (7 stays the copy of 3); the profile loses 3 and never files 7."""
+    run again, its group {3, 7} stands and keeps 7 now that 3 is gone (D58); the
+    profile loses 3 and files 7."""
     with open(flow.path("revisions", "r0002", "keep.txt"), encoding="utf-8") as fh:
         assert fh.read().split() == ["0", "1", "4", "6", "7"]
     counts = flow.steps["funnel2"].doc["counts"]
     assert counts["keep"] == 6 and counts["decided_out"] == 1 and counts["decided_in"] == 0
     assert sorted(os.listdir(flow.path("checks", "dedup", "parts"))) == ["0001.jsonl"]
     profile = flow.steps["profile2"].doc["modules"]["skill_profile"]
-    assert profile["episodes"]["total"] == 4                  # 0 1 4 6: not 3, not 7
+    assert profile["episodes"]["total"] == 5                  # 0 1 4 6 7: not 3
     filed = {r["episode_index"] for r in
              read_jsonl(flow.path("checks", "skill_profile", "parts", "0002.jsonl"))}
-    assert filed == {0, 1, 4, 6}
+    assert filed == {0, 1, 4, 6, 7}
     rows = read_jsonl(flow.path("checks", "skill_profile", "assignments.jsonl"))
     assert sorted(r["episode_id"] for r in rows) == ["ep000000", "ep000001", "ep000004",
-                                                     "ep000006"]
+                                                     "ep000006", "ep000007"]
     relabelled = next(r for r in rows if r["episode_id"] == "ep000004")
     assert relabelled["grouping_text"] == NEW_LABEL
 
@@ -114,21 +116,25 @@ def test_the_first_dedup_stands_and_the_profile_follows_the_decisions(flow):
 def test_revision_2_carries_the_decisions_and_revision_1_is_untouched(flow):
     r1, r2 = flow.path("revisions", "r0001"), flow.path("revisions", "r0002")
     assert _eps(r1, "passed") == [0, 1, 3, 4, 6]
-    assert _eps(r2, "passed") == [0, 1, 4, 6]
-    assert _eps(r2, "reject") == [2, 3, 5, 7] and _eps(r2, "held") == []
-    # 3 was decided; the questions on 0 and 7 stay; v1's two layers (D39) abstain on
-    # 4's new label
+    assert _eps(r2, "passed") == [0, 1, 4, 6, 7]
+    assert _eps(r2, "reject") == [2, 3, 5] and _eps(r2, "held") == []
+    # 3 was decided; 0 is still asked, 7 - delivered in 3's place - is asked whether its
+    # task succeeded instead of whether its reject stands; v1's two layers (D39) abstain
+    # on 4's new label
     assert _eps(r2, "review") == [0, 4, 7]
+    review = {e["episode_index"]: e for e in _json(r2, "review.json")["episodes"]}
+    assert [i["line"] for i in review[7]["review"]] == ["task_verdict"]
     reject = {e["episode_index"]: e for e in _json(r2, "reject.json")["episodes"]}
-    assert reject[3]["reasons"] == [{"module": "task_success", "kind": "human",
-                                     "text": "人工裁决判失败(任务未完成)"}]
+    assert reject[3]["reasons"] == [{"module": "task_success", "kind": "human", "code": "failure",
+                                     "item": "TASK-5", "appealable": False,
+                                     "text": "人工裁决判失败（任务未完成）"}]
     passed = {e["episode_index"]: e for e in _json(r2, "passed.json")["episodes"]}
     assert passed[4]["task_text"] == {"text": NEW_LABEL, "source": "人工改标"}
     assert _json(r2, "adjudications.json") == {"applied": [1, 2]}
     commit = _json(r2, "commit.json")
     assert commit["parts"]["task_success"] == ["0001", "0002"]
     report = _json(r2, "report.json")
-    assert report["overview"]["counts"] == {"total": 8, "passed": 4, "rejected": 4,
+    assert report["overview"]["counts"] == {"total": 8, "passed": 5, "rejected": 3,
                                             "held": 0, "review": 3, "skipped": 0}
 
 
@@ -136,12 +142,12 @@ def test_the_second_export_is_incremental(flow):
     first, second = flow.first["export"].doc, flow.steps["export"].doc
     assert first["incremental"] is False and first["episodes"] == 5
     assert second["incremental"] is True and second["full_reason"] is None
-    assert second["episodes"] == 4
-    # 3 leaves; 4 (relabelled) and 6 move up one slot: renumbered, videos renamed
-    assert second["diff"] == {"keep": 2, "relabel": 0, "renumber": 2, "add": 0, "drop": 1}
-    assert second["videos_copied"] == 0 and second["videos_renamed"] == 4
+    assert second["episodes"] == 5
+    # 3 leaves; 4 (relabelled) and 6 move up one slot: renumbered, videos renamed; 7 joins
+    assert second["diff"] == {"keep": 2, "relabel": 0, "renumber": 2, "add": 1, "drop": 1}
+    assert second["videos_copied"] == 2 and second["videos_renamed"] == 4
     man = _json(flow.rd, "export", "manifest.json")
-    assert [e["episode_index"] for e in man["episodes"]] == [0, 1, 4, 6]
+    assert [e["episode_index"] for e in man["episodes"]] == [0, 1, 4, 6, 7]
     by_ep = {e["episode_index"]: e for e in man["episodes"]}
     assert by_ep[4]["task"] == {"text": NEW_LABEL, "source": "人工改标"}
     tasks = read_jsonl(flow.path("export", "lerobot_curated", "meta", "episodes.jsonl"))

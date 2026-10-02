@@ -18,7 +18,7 @@ import re
 import pytest
 import requests
 
-from .pipeline import read_jsonl, results
+from .pipeline import passed_of, read_jsonl, results, verdict_of
 from .test_eef_check import CAM, EEF, URL, _files
 
 GOOD = {"review_status": "uncertain", "target_visible": True, "tracking_target_correct": "support",
@@ -107,7 +107,7 @@ def _details(rd):
                 w.pop("cache_hit", None)
         for cam in d.get("cameras", {}).values():
             cam.pop("timing", None)
-        out[e] = (r["verdict"], r["passed"], d)
+        out[e] = (verdict_of(r), passed_of(r), d)
     return out
 
 
@@ -137,7 +137,7 @@ def test_every_branch_under_a_recorded_tape_and_its_offline_replay(cli, taped, m
     for ep, want in OUTCOME.items():
         d = recs[ep]["details"]
         assert d["decision"]["outcome"] == want, (ep, d["decision"])
-        assert recs[ep]["passed"] is {"pass": True, "reject": False, "human": None}[want]
+        assert passed_of(recs[ep]) is {"pass": True, "reject": False, "human": None}[want]
     d0, d1, d2 = (recs[e]["details"] for e in (0, 1, 2))
     assert [h["code"] for h in d0["decision"]["human"]] == ["conflict"] and d0["decision"]["human"][0]["cpu"] == "ok"
     assert d0["review"]["conflicts"] and recs[0]["evidence"] and all(os.path.isfile(os.path.join(rd, p))
@@ -188,8 +188,8 @@ def test_aggregate_drops_the_reject_and_nothing_else(cli, taped, mini_dataset):
               "--modules", EEF)
     assert res.rc == 0, res.doc
     lines = {x["episode_index"]: x for x in read_jsonl(os.path.join(rd, "revisions", "r0001", "verdicts.jsonl"))}
-    assert lines[1]["verdict"] == "drop" and lines[1]["hard_fails"] == [EEF]
-    assert lines[1]["reason"].startswith("未通过「EEF–视频一致性」:「位置」")
+    assert lines[1]["verdict"] == "drop" and [b["module"] for b in lines[1]["blocking"]] == [EEF]
+    assert lines[1]["reason"].startswith("「位置」")                     # the finding's own sentence
     assert all(lines[e]["verdict"] == "keep" for e in (0, 2, 3, 7))
 
 
@@ -210,7 +210,7 @@ def test_answers_are_cached_and_resume_skips_current_lines(cli, taped, mini_data
         resumed = _check(cli, ds, rd, traj, "0-3", "--resume")
     finally:
         hooks.uninstall()
-    assert again["episodes"]["abstain"] == 1
+    assert again["episodes"] == {"total": 1, "ok": 1, "error": 0} and again["findings"] == {"unsettled": 1}
     wins = results(rd, EEF)[0]["details"]["review"]["cameras"][CAM]["windows"]
     assert all(w["cache_hit"] and w["attempts"] == 0 for w in wins)
     assert resumed["skipped_existing"] == 4

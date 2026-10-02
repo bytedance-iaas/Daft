@@ -47,7 +47,8 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
 - **建任务**：配置校验沿用 `daemon.taskspec`（与 PATCH 同一套）；模型的思考强度按 W8 的表校验。`start_now`（缺省）时依次做
   三项检查（422 `precheck_failed`）、D37 指纹核对（409 `source_changed`，`details` 是 `SourceChange`，登记的核对历史里多一条），
   然后固化 `run_id`（在交付目录里写 `<run_id>/run.json` 占位，同名加 `-2`）、预检结果、源文件清单、模型设置（不含密钥），
-  `created → queued` 入队。不马上开始时只登记数据集。批量建任务先全部校验（`details.item` 指出第几项），再逐个建；
+  `created → queued` 入队。第一次运行时 `run.json` 还冻结结果格式 `c2: "2.0"`、注册表版本和完整的判决策略（`params.policy`，缺省
+  `default`；设计 17 §4.1），aggregate 按它判，每个结果版本另存一份 `policy.json`。不马上开始时只登记数据集。批量建任务先全部校验（`details.item` 指出第几项），再逐个建；
   逐个开始失败的写进 `warnings`。
 - **执行**：补描述后，numeric、frame、VLM 各启动一个持久的 `multiprocessing` worker，每条 episode 完成并提交 SQLite 后即可交给下一层；空出的执行槽立即补入已就绪条目。
   `POST /tasks` 或待启动任务的 `PATCH /tasks/{id}` 可传 `params.batch_size`（1–256 条/次派发）；不传时按并发度取 8–64 条，小数据集自动减小。
@@ -77,6 +78,8 @@ C5 `daemon/repo/protocol.py`（状态机只经由 `daemon.transitions`）。
   用户暂停的保持暂停，用户停止的不再运行。Daemon 被直接杀掉时留下的子进程，下次就绪后按 `.orchestr/proc.json` 收拾掉。
 - **崩溃**：worker 异常退出（段错误、OOM）时重新拉起，并按 SQLite 与在途记录恢复该批次；
   同一条连续两次出现在崩溃现场，CLI 把它记为出错并跳过（P14）。没有在处理的 episode 却反复崩溃，任务 `failed`。
+- **旧任务（D59）**：`run.json` 没有 `c2: "2.0"` 的任务由旧版本生成（结果格式 1.0），新版本只读：继续运行、重试、执行裁决、
+  重新导出一律以 `legacy_task` 失败（`TaskFailure`），原因提示复制为新任务；升级时在跑的旧任务续跑时同样失败（deploy README 第 5 节）。
 - **子任务**（同一任务串行，建时就入队）：
   - `retry`：缺省重跑所有出错条目和整体失败的模块；出错的 episode 从出错那一档重跑，整体失败的模块全量重跑；
     去重、画像的输入变了才重跑（画像走 `--incremental`）；新版本，终态按当前结果重算；不导出（交付过期）。

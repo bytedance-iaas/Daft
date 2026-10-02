@@ -1,11 +1,10 @@
 """Read an episode as soon as the funnel writes its SQLite result."""
 from __future__ import annotations
 
-from curation.contracts import modules as registry
-from curation.pipeline import gates_v1
-from curation.pipeline.aggregate import RunState, funnel_line
-from curation.pipeline.config import apply_check_selection, load_config
+from curation.pipeline import aggregate as agg
+from curation.pipeline import policy as policy_mod
 from curation.pipeline.episode_state import EpisodeState, state_path
+from curation.pipeline.records import is_v2
 from curation.pipeline.timing import processing_times
 
 from ..errors import ApiError
@@ -21,30 +20,23 @@ def _context(runtime, task):
         return run_dir, None, [], None
     plan = read_json(run_dir / "plan.json", {}) or {}
     modules = [m for st in plan.get("stages") or []
-               if st.get("id") in ("integrity", "numeric", "frame", "vlm")
-               for m in st.get("modules") or []
-               if gates_v1.votes(m)]                             # advisory ones do not vote
-    # v1's check configuration knows v1's checks only: the gates v2 runs itself (the data
-    # integrity and EEF modules) join the verdict config in RunState, at the call boundary
-    v1 = [m for m in modules if m not in registry.native_ids()]
-    cfg = apply_check_selection(load_config(), only=",".join(v1)) if v1 else None
-    if cfg is None and modules:
-        cfg = load_config()
-        for entry in cfg["checks"].values():
-            entry["enable"] = False
-    return run_dir, EpisodeState(path), modules, cfg
+               if st.get("id") in agg.FUNNEL_STAGES for m in st.get("modules") or []]
+    # the task's policy, frozen at start (design doc 17 §4.1): the verdict so far is graded with it
+    policy = policy_mod.load(str(run_dir))
+    return run_dir, EpisodeState(path, policy), modules, policy
 
 
-def _item(run_dir, store, modules, cfg, row, *, include_records=False):
+def _item(run_dir, store, modules, policy, row, *, include_records=False):
     ep = row["episode_index"]
     records = store.episode_records(ep)
     verdict = reason = None
-    if row["next_stage"] == "done" and row["reason"] != "missing" and cfg is not None:
-        state = RunState(str(run_dir), modules, [ep], cfg,
-                         results={m: ({ep: records[m]} if m in records else {})
-                                  for m in modules}, autolabel={})
-        line = funnel_line(state, ep)
-        verdict, reason = line.verdict, line.reason
+    if row["next_stage"] == "done" and row["reason"] != "missing" and policy is not None \
+            and all(is_v2(r) for r in records.values()):           # a task made before C2 2.0: no live verdict
+        state = agg.RunState(str(run_dir), modules, [ep], policy,
+                             results={m: ({ep: records[m]} if m in records else {}) for m in modules},
+                             autolabel={})
+        v = agg.machine(state, ep)
+        verdict, reason = v.verdict, v.reason()
     item = {k: v for k, v in row.items() if k != "updated_seq"}
     item.update(verdict=verdict, verdict_reason=reason)
     times = processing_times(records)
@@ -56,7 +48,7 @@ def _item(run_dir, store, modules, cfg, row, *, include_records=False):
 
 
 def page(runtime, task, *, before: int | None, limit: int) -> dict:
-    run_dir, store, modules, cfg = _context(runtime, task)
+    run_dir, store, modules, policy = _context(runtime, task)
     if store is None:
         return {"items": [], "next_cursor": None, "started": 0, "finished": 0}
     try:
@@ -64,7 +56,7 @@ def page(runtime, task, *, before: int | None, limit: int) -> dict:
         more = len(rows) > limit
         rows = rows[:limit]
         totals = store.totals()
-        return {"items": [_item(run_dir, store, modules, cfg, row) for row in rows],
+        return {"items": [_item(run_dir, store, modules, policy, row) for row in rows],
                 "next_cursor": rows[-1]["updated_seq"] if more and rows else None,
                 **totals}
     finally:
@@ -72,13 +64,13 @@ def page(runtime, task, *, before: int | None, limit: int) -> dict:
 
 
 def episode(runtime, task, index: int) -> dict:
-    run_dir, store, modules, cfg = _context(runtime, task)
+    run_dir, store, modules, policy = _context(runtime, task)
     if store is None:
         raise ApiError("not_found", "流水线尚未产生 episode 结果")
     try:
         row = store.episode(index)
         if row is None:
             raise ApiError("not_found", f"episode {index} 尚未完成任何验证阶段")
-        return _item(run_dir, store, modules, cfg, row, include_records=True)
+        return _item(run_dir, store, modules, policy, row, include_records=True)
     finally:
         store.close()

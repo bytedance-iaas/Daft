@@ -43,10 +43,12 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
 
    ```bash
    $C check --modules data_integrity --input "$D/mini" --run-dir "$D/run" --episodes 0-7 --json
-   $PY -c "import json,sys; [print(r['episode_index'], r['verdict'], r['details']['reason']) for r in map(json.loads, open(sys.argv[1]))]" "$D/run/checks/data_integrity/results.jsonl"
+   $PY -c "import json,sys; [print(r['episode_index'], r['status'], [f['code'] for f in r['findings']], r['details']['reason']) for r in map(json.loads, open(sys.argv[1]))]" "$D/run/checks/data_integrity/results.jsonl"
    ```
 
-   应看到 `pass 6, abstain 2`：3 与 7 是夹具故意做的字节级复制品，理由是「需要人工裁决：exterior 相机的视频与 ep 7 的内容完全相同（另有 1 项发现）」；`$D/run/checks/data_integrity/dataset.json` 的 `episode_findings` 只有 3 和 7。
+   应看到 `ok 8, error 0; findings: duplicate_content 2`：3 与 7 是夹具故意做的字节级复制品，各有两条 `duplicate_content`（两路相机，默认策略下转人工），
+   `details.reason` 是「需要人工裁决：exterior 相机的视频与 ep 7 的内容完全相同（另有 1 项发现）」；其余 6 条没有发现；
+   `$D/run/checks/data_integrity/dataset.json` 的 `episode_findings` 只有 3 和 7。
 
 2. 几种损坏，每条一种：
 
@@ -60,7 +62,8 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
    $C check --modules data_integrity --input "$D/bad" --run-dir "$D/run_bad" --episodes 0-7 --json
    ```
 
-   应看到 0、1、2、4 判废（`file_empty`、`file_truncated`、`file_truncated`、`zero_filled`），理由写明哪个文件、哪路相机；5、6 通过，3、7 仍是可疑。
+   应看到 `findings: duplicate_content 2, file_empty 1, file_truncated 2, zero_filled 1`：0、1、2、4 各一条判废的发现（`file_empty`、`file_truncated`、
+   `file_truncated`、`zero_filled`），`message_zh` 写明哪个文件、哪路相机；5、6 没有发现，3、7 仍是转人工的 `duplicate_content`。
 
 3. mcap：
 
@@ -71,11 +74,12 @@ PYTHONPATH=../tools $PY -m parity make-fixture --format mcap --out "$D/mini_mcap
    $C check --modules data_integrity --input "$D/bad_mcap" --run-dir "$D/run_mcap" --episodes 0-7 --json
    ```
 
-   应看到 4 判废（「录制中断，且读不出数据」），6 判废（「一个数据块的 CRC 校验不符」），干净的条目的 `details.files[0].crc` 是 `mcap_chunk`。
+   应看到 `findings: crc_mismatch 1, cut_unreadable 1, duplicate_content 2, stream_missing 1`：4 是 `cut_unreadable`（「录制中断，且读不出数据」），
+   6 是 `crc_mismatch`（「一个数据块的 CRC 校验不符」），两条都判废；干净的条目的 `details.files[0].crc` 是 `mcap_chunk`。
 
 4. 逐帧解码：在第 1 步的目录上加 `--resume --param data_integrity.decode_test=true` 再跑，`skipped_existing` 是 0（换了参数全部重做），每条 `details.tiers.L3` 为 `true`。
 
-5. 判决与裁决：把第 2 步的结果接着 `aggregate`（见 CLI README 第 3 步）——判废的条目在 `reject.json`，理由以「未通过「数据完整性」」开头、不出现在「被拒复议」；可疑且留在 passed 的出 `integrity_suspect` 卡片。裁决取值 `intact`（数据无误，保留）/ `broken`（确有问题，判废）/ `unsure`。
+5. 判决与裁决：把第 2 步的结果接着 `aggregate`（见 CLI README 第 3 步）——判废的条目在 `reject.json`，理由是发现本身的那句中文（`kind` 为 `finding`，带细码与检测项，`appealable: false`）、不出现在「被拒复议」；转人工的发现留在 passed、出 `integrity_suspect` 卡片。裁决取值 `intact`（数据无误，保留）/ `broken`（确有问题，判废：人工的 blocking 发现）/ `unsure`。
 
 6. 控制台：`npm run dev` 看模拟数据——新建任务的「质检范围」第一张卡片是「数据完整性」（默认勾选），第二屏有「逐帧解码测试」开关（默认关）；报告里有「数据完整性」小节，Episode 明细里有它的一块（发现与检查过的文件）。
 

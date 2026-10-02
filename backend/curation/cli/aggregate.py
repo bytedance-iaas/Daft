@@ -1,23 +1,21 @@
-"""``curation aggregate`` - verdicts from the module results (design doc 02 §3.6).
+"""``curation aggregate`` - verdicts from the module results (design doc 02 §3.6, 17 §4).
 
-Pure computation in seconds, recomputed in full every time:
+Pure computation in seconds, recomputed in full every time. The modules' findings are graded by the
+task's policy (``run.json``'s ``policy``, frozen at start; the default policy when there is none):
 
-* ``--phase funnel``: the six funnel checks -> ``verdicts.jsonl`` (keep / drop /
-  held per episode, v1's ``pipeline/verdict.py`` rules plus D35) and
-  ``keep.txt`` (the input of dedup and skill_profile), into
-  ``revisions/r<NNNN>/`` with ``--revision``, else into ``<run-dir>/funnel/``.
-  ``keep.txt`` follows the applied human decisions: a discarded episode or one
-  judged failed leaves it, a restored appeal joins it (``decided_in`` /
-  ``decided_out`` count them); dedup is not run again after an adjudication;
-* ``--phase final --revision N``: adds dedup, skill_profile and the applied
-  human decisions and writes ``passed`` / ``reject`` / ``held`` (disjoint and
-  complete) and the ``review`` view into ``revisions/r<NNNN>/``. A revision that
-  already has ``commit.json`` is never written again.
+* ``--phase funnel``: the funnel modules -> ``verdicts.jsonl`` (the machine's keep / drop / held per
+  episode, 2.0 lines) and ``keep.txt`` (the input of dedup and skill_profile), into
+  ``revisions/r<NNNN>/`` with ``--revision``, else into ``<run-dir>/funnel/``. ``keep.txt`` follows the
+  applied human decisions (``decided_in`` / ``decided_out`` count them);
+* ``--phase final --revision N``: adds dedup, skill_profile and the applied human decisions and writes
+  ``passed`` / ``reject`` / ``held`` (disjoint and complete) and the ``review`` view (C2 2.0) and the
+  policy it used (``policy.json``) into ``revisions/r<NNNN>/``. A revision that already has
+  ``commit.json`` is never written again.
 
-The selected modules come from ``--modules`` (else ``<run-dir>/plan.json``); the
-episodes from ``--episodes`` (else every episode any module has a result for).
-With ``--input`` the delivered task text of annotated episodes is read from the
-dataset's metadata; without it only captions and human relabels are listed.
+The selected modules come from ``--modules`` (else ``<run-dir>/plan.json``); the episodes from
+``--episodes`` (else every episode any module has a result for). With ``--input`` the delivered task text
+of annotated episodes is read from the dataset's metadata; without it only captions and human relabels are
+listed. A run directory of C2 1.0 records (a task made before, D59) is refused (exit 2).
 """
 from __future__ import annotations
 
@@ -90,22 +88,22 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
     skipped = all_skipped(run_dir)
     left_out = [e for e in episodes if e in skipped]
     episodes = [e for e in episodes if e not in skipped]
-    cfg = runctx.stage_config(ctx, modules)
-    state = agg.RunState(run_dir, modules, episodes, cfg)
+    try:
+        state = agg.RunState(run_dir, modules, episodes)
+    except agg.LegacyRun as e:
+        raise UsageError(str(e)) from None
     out_dir = (revision_dir(run_dir, args.revision) if args.revision is not None
                else os.path.join(run_dir, "funnel"))
     ctx.progress(f"aggregate:{args.phase}", 0, 1)
     if args.phase == "funnel":
         from ..pipeline.adjudication import Decisions
 
-        lines = agg.funnel(state)
-        decided = agg.decide_all(state, Decisions.of(run_dir), lines)
-        keep = [e for e, d in decided.items() if d.kept]
-        files = agg.write_funnel(out_dir, lines, keep)
-        counts = {"total": len(lines), "keep": 0, "drop": 0, "held": 0}
-        for ln in lines:
-            counts[ln.verdict] += 1
-        machine_keep = {ln.episode_index for ln in lines if ln.verdict == "keep"}
+        verdicts, keep = agg.funnel(state, Decisions.of(run_dir))
+        files = agg.write_verdicts(out_dir, verdicts, keep)
+        counts = {"total": len(verdicts), "keep": 0, "drop": 0, "held": 0}
+        for v in verdicts:
+            counts[v.verdict] += 1
+        machine_keep = {v.episode_index for v in verdicts if v.verdict == "keep"}
         counts["decided_in"] = len(set(keep) - machine_keep)
         counts["decided_out"] = len(machine_keep - set(keep))
         if counts["decided_in"] or counts["decided_out"]:
@@ -127,6 +125,8 @@ def run(ctx: Context, args: argparse.Namespace) -> Result:
         counts = {"total": len(episodes), "passed": result["passed"]["count"],
                   "reject": result["reject"]["count"], "held": result["held"]["count"],
                   "review": result["review"]["count"]}
+        ctx.log("info", f"policy {state.policy.preset}: {counts['passed']} kept, {counts['reject']} rejected, "
+                        f"{counts['held']} held")
     counts["skipped"] = len(left_out)
     ctx.progress(f"aggregate:{args.phase}", 1, 1)
     rel = {k: os.path.relpath(v, run_dir).replace(os.sep, "/") for k, v in files.items()}

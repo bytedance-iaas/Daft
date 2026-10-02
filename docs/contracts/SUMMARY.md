@@ -290,3 +290,7 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **C1 2.1（同日，F12.2）**：判定线成为模块参数——视觉质量 4 条、运动质量 7 条、时间戳 1 条、同步 1 条，缺省值取 v1 现成的判定线；都标 `x-advanced`
   （新建任务表单先不显示，API 可设）。运动学加细码 `data_invalid`（FILE-6，维度不对或有无效值时的判不通过）；技能画像去掉 `task_text_missing`
   （它的来源字段不表示缺标注，LABEL-3 只由任务成败报）。只增参数、调整两个尚无产出方的细码，C4 形状不变。
+- **F12.3（同日）**：C4 2.1.0——Episode 明细的理由（`EpisodeNote`）多可选的 `code`、`item`、`appealable`，2.0 清单里的理由原样透传；其余契约不动。
+  check 起写记录 2.0，aggregate 按任务策略判决——Daemon 在 `run.json` 冻结 `c2: "2.0"`、`registry_version` 与完整策略，
+  每个结果版本另存 `policy.json`；`run.json` 没有 `c2: "2.0"` 的旧任务不再运行（`legacy_task`），aggregate / adjudicate-apply 遇到 1.0 记录退出码 2。
+  报告 2.0 的模块小节：`score_hist` 落成「读数 → 十格」，技能画像多 `delivered_family_distribution`（交付集，按 `passed`）——都在 summary 的开放字段里。
