@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { api, unwrap } from '../../api/client';
 import { errorMessage, isApiError } from '../../api/errors';
 import { moduleName, qk, useModules } from '../../api/queries';
-import type { ModuleState, Plan, Subtask, Task, TimelineEntry, UsageRow } from '../../api/types';
+import type { ModuleState, Plan, StageProgress, Subtask, Task, TimelineEntry, UsageRow } from '../../api/types';
 import { legacyReportResponse } from '../../lib/records';
 import { RelTime } from '../../components/RelTime';
 import { regionLabel } from '../../components/RegionSelect';
@@ -15,12 +15,13 @@ import { confirmModuleRetry } from '../../features/tasks/retryModule';
 import { absoluteTime, bytes, compactNumber, percent } from '../../lib/format';
 import { subtaskName } from '../../lib/reportView';
 import { summaryDigest } from '../../lib/summary';
-import { FUNNEL_STAGES, activeSubtask, groupStages, isTerminalState, progressStages, stageLabel, subtaskLabel } from '../../lib/taskView';
+import { FUNNEL_STAGES, activeSubtask, groupStages, isTerminalState, progressStages, splitBlocks, stageLabel, subtaskLabel, type BlockStages, type StageView } from '../../lib/taskView';
 import { planGateText, planMergeText, planNoteText } from '../../lib/planText';
 import { zh } from '../../locales/zh';
 import { PipelineEpisodesCard } from './PipelineEpisodesCard';
 import { StatCell } from '../../components/StatCell';
 import { PipelineActivity } from './PipelineActivity';
+import { ErrorEpisodes, ModuleStatCards, logStageOf } from './ModuleStats';
 
 const Stat = StatCell;
 
@@ -58,17 +59,58 @@ function ReportSummary({ task }: { task: Task }) {
   );
 }
 
+/** The stages progress views show: a running subtask's own (Subtask.progress, D46), else the task's. */
+function stageSource(task: Task, subtasks: readonly Subtask[]): { active: ReturnType<typeof activeSubtask>; raw: StageProgress[] } {
+  const active = activeSubtask(task);
+  const listed = active ? subtasks.find((s) => s.id === active.id) : undefined;
+  const raw = active ? (progressStages(listed?.progress).length ? progressStages(listed?.progress) : progressStages(active.progress)) : task.progress.stages;
+  return { active, raw };
+}
+
+/** One bar of a progress view: its name and state, done / total and time used. */
+function StageRow({ s }: { s: StageView }) {
+  const status = s.state === 'failed' ? 'error' : s.state === 'completed_with_errors' ? 'warning' : s.state === 'succeeded' ? 'success' : 'normal';
+  return (
+    <div style={{ marginBottom: 12 }} data-testid={`stage-${s.key}`}>
+      <Space style={{ justifyContent: 'space-between', width: '100%' }}>
+        <span>
+          <b>{s.label}</b> <span className="muted">{zh.stageState[s.state] ?? s.state}</span>
+        </span>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {s.total ? `${s.done} / ${s.total}` : ''}
+          {s.elapsed_s !== null ? ` · ${zh.taskDetail.stageTime(zh.time.duration(s.elapsed_s))}` : ''}
+        </span>
+      </Space>
+      <Progress percent={s.percent} status={status} showText={false} size="small" />
+      {s.note ? (
+        <div className="muted" style={{ fontSize: 12 }}>
+          {s.note}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SubtaskTag({ task, subtasks }: { task: Task; subtasks: readonly Subtask[] }) {
+  const active = activeSubtask(task);
+  return active ? (
+    <Tag size="small" color="arcoblue" data-testid="stages-subtask">
+      {zh.taskDetail.stagesOfSubtask(subtaskLabel(active, subtasks))}
+    </Tag>
+  ) : null;
+}
+
 /**
  * 分档进度 (07 §4.2): one bar per stage, 终判 + 报告 and 导出 + 交付核验 each shown as one
  * (requester item 11), with counts and time used; no time estimate (item 20). While a subtask
  * runs, its own stages (Subtask.progress) replace the finished main run's (D46). When the funnel
  * stages report streaming-pipeline activity, they are drawn as one PipelineActivity chart and the
- * other stages keep their bars.
+ * other stages keep their bars. A two-block run (design doc 17 §5.3) has its blocks on cards of their
+ * own (BlockCard); this card then has the stages after them (`stages`, 判决与交付).
  */
-function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask[] }) {
-  const active = activeSubtask(task);
-  const listed = active ? subtasks.find((s) => s.id === active.id) : undefined;
-  const raw = active ? (progressStages(listed?.progress).length ? progressStages(listed?.progress) : progressStages(active.progress)) : task.progress.stages;
+function StagesCard({ task, subtasks, stages: only, title }: { task: Task; subtasks: readonly Subtask[]; stages?: StageProgress[]; title?: string }) {
+  const { active, raw: all } = stageSource(task, subtasks);
+  const raw = only ?? all;
   const lanes = raw.filter((s) => FUNNEL_STAGES.includes(s.id));
   const showPipeline = lanes.some((s) => s.pipeline);
   const stages = groupStages(showPipeline ? raw.filter((s) => !lanes.includes(s)) : raw);
@@ -76,12 +118,8 @@ function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask
     <Card
       title={
         <Space>
-          {zh.taskDetail.stages}
-          {active ? (
-            <Tag size="small" color="arcoblue" data-testid="stages-subtask">
-              {zh.taskDetail.stagesOfSubtask(subtaskLabel(active, subtasks))}
-            </Tag>
-          ) : null}
+          {title ?? zh.taskDetail.stages}
+          <SubtaskTag task={task} subtasks={subtasks} />
         </Space>
       }
     >
@@ -90,30 +128,49 @@ function StagesCard({ task, subtasks }: { task: Task; subtasks: readonly Subtask
       ) : (
         <div data-testid="stages">
           {showPipeline ? <PipelineActivity task={task} stages={lanes} /> : null}
-          {stages.map((s) => {
-            const status = s.state === 'failed' ? 'error' : s.state === 'completed_with_errors' ? 'warning' : s.state === 'succeeded' ? 'success' : 'normal';
-            return (
-              <div key={s.key} style={{ marginBottom: 12 }} data-testid={`stage-${s.key}`}>
-                <Space style={{ justifyContent: 'space-between', width: '100%' }}>
-                  <span>
-                    <b>{s.label}</b> <span className="muted">{zh.stageState[s.state] ?? s.state}</span>
-                  </span>
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    {s.total ? `${s.done} / ${s.total}` : ''}
-                    {s.elapsed_s !== null ? ` · ${zh.taskDetail.stageTime(zh.time.duration(s.elapsed_s))}` : ''}
-                  </span>
-                </Space>
-                <Progress percent={s.percent} status={status} showText={false} size="small" />
-                {s.note ? (
-                  <div className="muted" style={{ fontSize: 12 }}>
-                    {s.note}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
+          {stages.map((s) => (
+            <StageRow key={s.key} s={s} />
+          ))}
         </div>
       )}
+    </Card>
+  );
+}
+
+/**
+ * One block of a two-block run (design doc 17 §5.3): autolabel first (VLM block), the block's per-episode
+ * stages as one pipeline - a bar per stage, in flight and queued, and the block's own run timeline - and
+ * its full-set step on a row of its own.
+ */
+function BlockCard({ task, subtasks, block }: { task: Task; subtasks: readonly Subtask[]; block: BlockStages }) {
+  const reg = useModules();
+  const title = reg.data?.blocks.find((b) => b.id === block.id)?.title_zh ?? block.id;
+  return (
+    <Card
+      title={
+        <Space>
+          {title}
+          <SubtaskTag task={task} subtasks={subtasks} />
+        </Space>
+      }
+      data-testid={`block-${block.id}`}
+    >
+      {block.before.length ? (
+        <div className="block-whole" style={{ marginTop: 0 }}>
+          {groupStages(block.before).map((s) => (
+            <StageRow key={s.key} s={s} />
+          ))}
+        </div>
+      ) : null}
+      {block.chain.length ? <PipelineActivity task={task} stages={block.chain} /> : null}
+      {block.fullSet.length ? (
+        <div className="block-whole" data-testid={`block-${block.id}-full-set`}>
+          <div className="section-sub">{zh.taskDetail.blockFullSet}</div>
+          {groupStages(block.fullSet).map((s) => (
+            <StageRow key={s.key} s={s} />
+          ))}
+        </div>
+      ) : null}
     </Card>
   );
 }
@@ -229,33 +286,6 @@ function TokensCard({ task, subtasks }: { task: Task; subtasks: Subtask[] }) {
         </Collapse.Item>
       </Collapse>
     </Card>
-  );
-}
-
-/** Which log stage a module runs in: from the plan, else its registry stage. */
-function logStageOf(plan: Plan | undefined, moduleId: string, registryStage: string | undefined): string {
-  const s = plan?.stages.find((x) => x.modules?.includes(moduleId));
-  return s?.id ?? registryStage ?? '';
-}
-
-function ErrorEpisodes({ taskId, stage }: { taskId: string; stage: string }) {
-  const q = useQuery({
-    queryKey: qk.logs(taskId, { stage, level: 'error', errors: true }),
-    queryFn: () => unwrap(api().GET('/tasks/{id}/logs', { params: { path: { id: taskId }, query: { stage, level: 'error', limit: 200 } } })),
-  });
-  if (q.isLoading) return <Spin size={14} tip={zh.taskDetail.errorsLoading} />;
-  const lines = (q.data?.items ?? []).filter((l) => l.episode_index !== null && l.episode_index !== undefined);
-  const byEp = new Map<number, string>();
-  for (const l of lines) byEp.set(l.episode_index!, l.msg);
-  if (!byEp.size) return <Typography.Text type="secondary">{zh.taskDetail.errorsNone}</Typography.Text>;
-  return (
-    <ul style={{ margin: 0, paddingLeft: 18 }} data-testid="error-episodes">
-      {[...byEp.entries()].map(([ep, msg]) => (
-        <li key={ep}>
-          <b>ep {ep}</b> <span className="mono">{msg}</span>
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -467,6 +497,17 @@ function PlanView({ taskId, started }: { taskId: string; started: boolean }) {
         data={p.stages}
         columns={[
           { title: zh.taskDetail.planCols.stage, dataIndex: 'id', render: (v: string) => stageLabel(v) },
+          // a plan of the two blocks (2.0, design doc 17 §3): the block of a stage, and its full-set steps
+          ...(p.stages.some((s) => s.block)
+            ? [
+                {
+                  title: zh.taskDetail.planCols.block,
+                  dataIndex: 'block',
+                  render: (_: unknown, s: Plan['stages'][number]) =>
+                    s.block ? zh.taskDetail.planBlock(reg.data?.blocks.find((b) => b.id === s.block)?.title_zh ?? s.block, Boolean(s.full_set)) : '—',
+                },
+              ]
+            : []),
           { title: zh.taskDetail.planCols.modules, dataIndex: 'modules', render: (v?: string[]) => (v?.length ? v.map((m) => moduleName(reg.data, m)).join('、') : '—') },
           { title: zh.taskDetail.planCols.episodes, dataIndex: 'episodes', render: (v?: string) => episodes(v) },
           {
@@ -551,16 +592,32 @@ export function OverviewTab({ task, subtasks, timeline }: { task: Task; subtasks
   });
   const digest: Record<string, string> = {};
   for (const m of report.data?.report.modules ?? []) digest[m.id] = summaryDigest(m.summary);
+  const v2 = report.data?.v2 ?? null;
+  const { raw } = stageSource(task, subtasks);
+  const split = splitBlocks(raw);
+  // a task made before the findings (D59): its report is 1.0, or its stages are the funnel's
+  const legacy = Boolean(report.data && !v2) || raw.some((s) => s.id === 'verdict' || s.id === 'profile_vlm');
   return (
     <div className="card-gap">
       <ReportSummary task={task} />
       {task.started_at ? <PipelineEpisodesCard task={task} /> : null}
+      {split.blocks.length ? (
+        <div className="grid-2" data-testid="block-cards">
+          {split.blocks.map((b) => (
+            <BlockCard key={b.id} task={task} subtasks={subtasks} block={b} />
+          ))}
+        </div>
+      ) : null}
       {/* Side by side, equal height (requester item 13). */}
       <div className="grid-2">
-        <StagesCard task={task} subtasks={subtasks} />
+        {split.blocks.length ? (
+          <StagesCard task={task} subtasks={subtasks} stages={split.rest} title={zh.taskDetail.closingStages} />
+        ) : (
+          <StagesCard task={task} subtasks={subtasks} />
+        )}
         <TokensCard task={task} subtasks={subtasks} />
       </div>
-      <ModulesCard task={task} plan={plan.data} digest={digest} />
+      {legacy ? <ModulesCard task={task} plan={plan.data} digest={digest} /> : <ModuleStatCards task={task} plan={plan.data} v2={v2} />}
       <TimelineCard task={task} entries={timeline} subtasks={subtasks} />
       <MoreInfo task={task} />
       <div className="muted" style={{ fontSize: 12 }}>

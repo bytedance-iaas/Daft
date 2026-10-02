@@ -1,11 +1,11 @@
-// Result records of either C2 format (design doc 17 §1): the console's views still render a record by 1.0's
-// verdict, score and gate until the 2.0 views of F12.5, so a record 2.0 (findings) is read through the same
-// compatibility rules as the backend's `records.legacy_verdict` - a finding whose code blocks by default is a
+// Result records of either C2 format (design doc 17 §1). The findings views (F12.5, src/lib/findings.ts) read a
+// record 2.0 as it is; the modules' own views - the Episode tab's per-module blocks, the specialised report
+// sections - still render a record by 1.0's verdict and score, so a record 2.0 is read for them through the same
+// compatibility rules as the backend's `records.legacy_verdict`: a finding whose code blocks by default is a
 // fail, a review finding an abstention, a score makes it scored; none of the items its own per-episode codes
 // report on assessed, or not what the module rejects on, is an abstention too. Details are the module's own and
 // stay as they are.
-import type { ModuleRegistry, Report, ReportResponse, ResultRecord, ResultRecordV2 } from '../api/types';
-import { funnelGate } from './registry';
+import type { ModuleRegistry, Report, ReportResponse, ReportV2, ResultRecord, ResultRecordV2 } from '../api/types';
 
 export type AnyRecord = ResultRecord | ResultRecordV2;
 type Verdict = ResultRecord['verdict'];
@@ -45,14 +45,14 @@ export function recordVerdict(r: AnyRecord | null | undefined, reg: ModuleRegist
 export function asLegacyRecord(r: AnyRecord, reg: ModuleRegistry | undefined): ResultRecord {
   if (!isRecordV2(r)) return r;
   const verdict = recordVerdict(r, reg) ?? 'error';
-  const spec = reg?.modules.find((m) => m.id === r.module);
   return {
     episode_index: r.episode_index,
     module: r.module,
     verdict,
     passed: verdict === 'pass' ? true : verdict === 'fail' ? false : null,
     score: recordScore(r),
-    gate: (spec ? funnelGate(spec) : 'none') as ResultRecord['gate'],
+    // registry 2.0 has no gate: no view reads it of a record 2.0 (the findings views show the levels)
+    gate: 'none',
     details: r.details,
     evidence: r.evidence,
     elapsed_s: r.elapsed_s,
@@ -62,9 +62,10 @@ export function asLegacyRecord(r: AnyRecord, reg: ModuleRegistry | undefined): R
 
 /** The statistics report 2.0 adds to every module section (design doc 17 §5.1): the 2.0 views of F12.5 show them;
  * the 1.0 views would list them as unknown fields. */
-const V2_SUMMARY_KEYS = ['assessed_episodes', 'items', 'unassessable', 'dataset_findings', 'dataset_readings', 'delivered_family_distribution'];
+const V2_SUMMARY_KEYS = ['assessed_episodes', 'flagged_episodes', 'levels', 'items', 'unassessable', 'dataset_findings', 'dataset_readings', 'delivered_family_distribution'];
 
-/** A report of either format as the 1.0 views read it: a 2.0 section gets the funnel's gate back, its score
+/** A report of either format as the 1.0 views read it: a 2.0 section gets a placeholder gate (the 2.0 views show its
+ * block and what it can do instead), its score
  * distribution (2.0: one per 0-1 reading) is the composite score's again and the 2.0 statistics are left out,
  * and the rejects counted per finding are summed per module (an episode with findings of several codes of one
  * module counts once per code there - the 2.0 views of F12.5 show them per finding). */
@@ -86,14 +87,15 @@ export function asLegacyReport(raw: unknown): Report {
     overview: { ...r.overview, reject_reasons: [...perModule].map(([module, count]) => ({ module, count })) },
     modules: r.modules.map((s) => ({
       ...s,
-      gate: (s as { gate?: string }).gate ?? funnelGate({ id: s.id, codes: [] }),
+      gate: (s as { gate?: string }).gate ?? 'none',
       summary: legacySummary(s.summary as Record<string, unknown>),
     })) as Report['modules'],
   } as Report;
 }
 
-/** The report response with its report read as 1.0. */
+/** The report response with its report read as 1.0, and the report 2.0 itself for the findings views. */
 export function legacyReportResponse(raw: unknown): ReportResponse {
   const r = raw as ReportResponse;
-  return { ...r, report: asLegacyReport(r.report) };
+  const v2 = (r.report as { schema_version?: string }).schema_version === '2.0' ? (r.report as unknown as ReportV2) : null;
+  return { ...r, report: asLegacyReport(r.report), v2 };
 }

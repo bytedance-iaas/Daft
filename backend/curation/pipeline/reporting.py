@@ -231,10 +231,11 @@ def _cameras(f: dict) -> list[str]:
 
 
 def finding_stats(rev: Revision, m: str) -> dict:
-    """What every module section has (C2 report 2.0, design doc 17 §5.1): the episodes it judged, per
-    finding code the episodes with it, their share of the judged ones, its level under the revision's
-    policy and the cameras; the items it could not assess and why; its dataset-level findings; the 0-1
-    readings' distributions (``score_hist``: reading -> ten bins)."""
+    """What every module section has (C2 report 2.0, design doc 17 §5.1): the episodes it judged and, of
+    them, the ones with a finding (in all and per level under the revision's policy); per finding code the
+    episodes with it, their share of the judged ones, its level and the cameras; the items it could not
+    assess and why; its dataset-level findings; the 0-1 readings' distributions (``score_hist``: reading ->
+    ten bins)."""
     from . import findings as F
     from . import report_stats as S
 
@@ -242,12 +243,14 @@ def finding_stats(rev: Revision, m: str) -> dict:
     judged = {e: r for e, r in res.items() if not is_error(r)}
     codes: dict[str, dict] = {}
     unassessable: dict[tuple, int] = {}
+    levels: dict[str, set] = {"blocking": set(), "review": set(), "info": set()}
     for ep, rec in judged.items():
         for f in rec.get("findings") or []:
             entry = codes.setdefault(f.get("code"), {"item": f.get("item"), "code": f.get("code"),
                                                      "level": rev.policy.level(m, f), "eps": set(),
                                                      "cams": {}})
             entry["eps"].add(ep)
+            levels[entry["level"]].add(ep)
             for cam in _cameras(f):
                 entry["cams"].setdefault(cam, set()).add(ep)
         for u in rec.get("unassessable") or []:
@@ -274,7 +277,9 @@ def finding_stats(rev: Revision, m: str) -> dict:
         m, res, rev.module_params(m),
         integrity=_read(os.path.join(base, "dataset.json"), None) if m == "data_integrity" else None,
         profile=_read(os.path.join(base, "profile.json"), None) if m == "skill_profile" else None)
-    out = {"assessed_episodes": n, "items": items,
+    out = {"assessed_episodes": n,
+           "flagged_episodes": len(set().union(*levels.values())),
+           "levels": {lv: len(eps) for lv, eps in levels.items()}, "items": items,
            "unassessable": [{"item": item, "reason": reason, "count": c}
                             for (item, reason), c in sorted(unassessable.items(), key=lambda kv: -kv[1])]}
     if hist:
@@ -578,10 +583,15 @@ def build(rev: Revision) -> tuple[dict, dict]:
               "held": rev.lists["held"]["count"], "review": rev.lists["review"]["count"],
               "skipped": len(skipped)}
     reasons: dict[tuple, int] = {}
+    reject_items: dict = {}
     for e in rev.episodes("reject"):
+        blocking = [r for r in e.get("reasons") or [] if r.get("kind") != "execution_error"]
         for key in dict.fromkeys((r["module"], r.get("kind") or "finding", r.get("code"), r.get("item"))
-                                 for r in e.get("reasons") or [] if r.get("kind") != "execution_error"):
+                                 for r in blocking):
             reasons[key] = reasons.get(key, 0) + 1
+        # once per item: a person's discard has no code, so no item (null)
+        for item in dict.fromkeys(r.get("item") if r.get("code") else None for r in blocking):
+            reject_items[item] = reject_items.get(item, 0) + 1
     token_usage, usage_rows = usage_totals(rev.run_dir)
     lat = latency(rev.run_dir)
     ds = (rev.preflight.get("dataset") or {})
@@ -602,6 +612,8 @@ def build(rev: Revision) -> tuple[dict, dict]:
         "duration_s": None,
         "policy": {"preset": rev.policy.preset, "version": rev.policy.to_json()["version"]},
         "coverage": coverage(rev),
+        "reject_items": [{"item": item, "count": n} for item, n in
+                         sorted(reject_items.items(), key=lambda kv: (-kv[1], kv[0] is None, kv[0] or ""))],
         "findings_by_item": findings_by_item(rev),
     }
     perf = {"schema_version": SCHEMA_VERSION, "revision": rev.revision,

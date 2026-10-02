@@ -76,3 +76,33 @@ def test_failed_gate_recovery_preserves_missing_and_downstream_results(tmp_path)
         assert store.reopen_gate("frame", "vlm") == []
     finally:
         store.close()
+
+
+def test_module_counts_so_far_and_a_store_made_before_them(tmp_path):
+    """The live module cards (design doc 17 §5.3): per module the episodes judged, failed on and with a
+    finding; a store written before the findings column gets it filled on opening."""
+    import sqlite3
+
+    path = state_path(tmp_path)
+    store = EpisodeState(path)
+    try:
+        ok = {"module": "visual_quality", "status": "ok", "findings": [], "error": None}
+        found = {**ok, "findings": [{"code": "frozen", "item": "IMG-1", "severity": "low", "message_zh": "冻结"}]}
+        failed = {**ok, "status": "error", "error": {"kind": "execution", "incidents": []}}
+        for ep, rec in ((0, ok), (1, found), (2, failed), (3, found)):
+            store.finish("frame", ep, {"visual_quality": {**rec, "episode_index": ep}}, "done")
+        assert store.module_counts(["visual_quality", "task_success"]) == {
+            "visual_quality": {"judged": 3, "error": 1, "flagged": 2},
+            "task_success": {"judged": 0, "error": 0, "flagged": 0}}
+        assert store.module_counts([]) == {}
+    finally:
+        store.close()
+    db = sqlite3.connect(str(path))
+    db.execute("ALTER TABLE results DROP COLUMN findings")
+    db.commit()
+    db.close()
+    store = EpisodeState(path)
+    try:
+        assert store.module_counts(["visual_quality"])["visual_quality"] == {"judged": 3, "error": 1, "flagged": 2}
+    finally:
+        store.close()

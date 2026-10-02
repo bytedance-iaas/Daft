@@ -4,7 +4,7 @@ import type { ModuleAvailability, ModuleRegistry, ModuleSpec } from '../../api/t
 import { needsVlm, offered, optIn, reasonText, toggleModule } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import type { Errors, FormValues } from './formModel';
-import { funnelGate } from '../../lib/registry';
+import { LEVEL_TAG, moduleRole } from '../../lib/findings';
 
 const { Row, Col } = Grid;
 
@@ -20,11 +20,22 @@ function needsInputText(a: ModuleAvailability): string {
   return reasonText(a);
 }
 
+/** What a module can do to an episode under the chosen policy (its codes' default levels; nothing under 只报不拒). */
+function RoleTag({ m, policy }: { m: ModuleSpec; policy: FormValues['policy'] }) {
+  const role = moduleRole(m, policy);
+  return (
+    <Tag size="small" color={LEVEL_TAG[role]}>
+      {zh.findings.role[role]}
+    </Tag>
+  );
+}
+
 function ModuleCard({
   m,
   a,
   checked,
   marked,
+  policy,
   onToggle,
   disabled,
 }: {
@@ -32,6 +43,7 @@ function ModuleCard({
   a: ModuleAvailability | undefined;
   checked: boolean;
   marked?: string;
+  policy: FormValues['policy'];
   onToggle: () => void;
   disabled: boolean;
 }) {
@@ -43,7 +55,7 @@ function ModuleCard({
       <Checkbox checked={checked} disabled={disabled} onChange={onToggle} aria-label={m.name_zh}>
         <b>{m.name_zh}</b>
       </Checkbox>{' '}
-      <Tag size="small">{zh.gate[funnelGate(m)]}</Tag> {needsVlm(m) ? <Tag size="small" color="purple">{zh.taskForm.callsModel}</Tag> : null}
+      <RoleTag m={m} policy={policy} /> {needsVlm(m) ? <Tag size="small" color="purple">{zh.taskForm.callsModel}</Tag> : null}
       <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
         {m.summary_zh}
       </div>
@@ -119,7 +131,7 @@ export function ModuleSection({
       <Row gutter={[12, 12]} align="stretch">
         {(availability ? usable : modules).map((m) => (
           <Col key={m.id} xs={24} sm={12} md={8} lg={6}>
-            <ModuleCard m={m} a={availability?.[m.id]} checked={v.modules.includes(m.id)} marked={marked[m.id]} disabled={!availability} onToggle={() => toggle(m.id)} />
+            <ModuleCard m={m} a={availability?.[m.id]} checked={v.modules.includes(m.id)} marked={marked[m.id]} policy={v.policy} disabled={!availability} onToggle={() => toggle(m.id)} />
           </Col>
         ))}
       </Row>
@@ -138,7 +150,7 @@ export function ModuleSection({
                     <Checkbox checked={false} disabled aria-label={m.name_zh}>
                       <b>{m.name_zh}</b>
                     </Checkbox>{' '}
-                    <Tag size="small">{zh.gate[funnelGate(m)]}</Tag>
+                    <RoleTag m={m} policy={v.policy} />
                     <div style={{ fontSize: 12, marginTop: 4 }}>
                       <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{reasonText(a)}</span>
                       <Button type="text" size="mini" style={{ padding: 0 }} onClick={() => a && setDetails({ m, a })}>
@@ -152,6 +164,18 @@ export function ModuleSection({
           </Row>
         </>
       ) : null}
+      <Divider />
+      {/* the verdict policy (design doc 17 §4.1): which findings reject, which ask a person, which are only reported */}
+      <Space align="center" wrap size={12}>
+        <b>{zh.findings.policy}</b>
+        <Radio.Group type="button" value={v.policy} onChange={(x: FormValues['policy']) => set({ policy: x })} aria-label={zh.findings.policy}>
+          <Radio value="default">{zh.findings.policyName.default}</Radio>
+          <Radio value="report_only">{zh.findings.policyName.report_only}</Radio>
+        </Radio.Group>
+      </Space>
+      <div className="muted" style={{ marginTop: 6, fontSize: 12 }} data-testid="policy-hint">
+        {zh.findings.policyHint[v.policy]}
+      </div>
       <Modal visible={Boolean(details)} title={details ? zh.taskForm.detailsTitle(details.m.name_zh) : ''} onCancel={() => setDetails(null)} footer={null} unmountOnExit>
         {details ? (
           <div>

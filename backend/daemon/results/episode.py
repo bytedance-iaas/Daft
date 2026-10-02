@@ -10,6 +10,11 @@ revision saw it (C2 ``result-record``), the evidence frames the records point at
 ``review`` items are written the way ``reasons`` are - ``{module, kind, text,
 priority}`` - with the questions a person can answer on the adjudication page first
 (an abstention of another module is shown, v1 does not put it in the queue).
+
+On a findings revision (C2 2.0, design doc 17 §5.4) ``findings`` lists every finding of
+the episode with the level it has in the revision (its list entry's ``findings``: the
+task's policy after the applied human decisions), the finding itself taken from the
+module's record - a person's conclusion is a finding of its own, with its text.
 """
 from __future__ import annotations
 
@@ -110,4 +115,29 @@ def episode_view(rev: Revision, episode: int) -> dict:
     tt = _task_text(entry, records)
     if tt is not None:
         view["task_text"] = tt
+    graded = entry.get("findings")
+    if isinstance(graded, list):
+        view["findings"] = [f for f in (_finding(g, records) for g in graded if isinstance(g, dict)) if f]
     return view
+
+
+def _finding(g: dict, records: dict[str, dict]) -> dict | None:
+    """C4 ``EpisodeFinding``: a list entry's finding with the finding itself from the module's record."""
+    module, code = str(g.get("module") or ""), str(g.get("code") or "")
+    out = {"module": module, "level": g.get("level"), "appealable": bool(g.get("appealable"))}
+    if g.get("line"):
+        out["line"] = g["line"]
+    if g.get("human"):
+        try:
+            severity = registry.finding_code(module, code).severity
+        except KeyError:
+            severity = "high"
+        out.update(human=True, finding={"code": code, "item": g.get("item"), "severity": severity,
+                                        "message_zh": str(g.get("message_zh") or code)})
+        return out
+    found = (records.get(module) or {}).get("findings") or []
+    index = g.get("index")
+    if not isinstance(index, int) or not 0 <= index < len(found) or found[index].get("code") != code:
+        return None                                     # not the record this revision was judged on
+    out["finding"] = found[index]
+    return out

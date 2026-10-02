@@ -62,6 +62,8 @@ export interface FormValues {
   /** Modules skipped on screen 2 (「跳过该模块」). */
   skipped: string[];
   params: Record<string, Record<string, unknown>>;
+  /** The verdict policy's preset (C4 TaskParams.policy, design doc 17 §4.1): sent only when not the default. */
+  policy: 'default' | 'report_only';
 }
 
 export const DEFAULT_TIMEOUTS: Record<TimeoutKey, number> = { probe: 60, endstate: 60, arbitration: 60, caption: 60, llm: 120 };
@@ -97,6 +99,7 @@ export function defaultValues(): FormValues {
     embodiment: '',
     skipped: [],
     params: {},
+    policy: 'default',
   };
 }
 
@@ -256,6 +259,7 @@ export function taskParams(v: FormValues, reg: ModuleRegistry | undefined, start
     clips: v.clips,
     ...(usesVlm(v, reg) ? { vlm_retry: v.vlmRetry, vlm_hedge: v.vlmHedge, vlm_timeouts_s: { ...v.timeouts } } : {}),
     ...(Object.keys(limits).length ? { limits } : {}),
+    ...(v.policy !== 'default' ? { policy: { preset: v.policy } } : {}),
   };
 }
 
@@ -326,6 +330,7 @@ export function fromTask(t: Task, reg: ModuleRegistry | undefined): FormValues {
     exportDataset: p.export ?? true,
     clips: p.clips ?? false,
     embodiment: t.embodiment_id ?? '',
+    policy: p.policy?.preset === 'report_only' ? 'report_only' : 'default',
   };
 }
 

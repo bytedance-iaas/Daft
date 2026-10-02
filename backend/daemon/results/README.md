@@ -26,7 +26,9 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
 ## 行为要点
 
 - **即时逐条结果**：`GET /tasks/{id}/pipeline/episodes` 分页读取已完成至少一层的 episode；
-  `GET /tasks/{id}/pipeline/episodes/{index}` 读取这条的当前模块结果。漏斗完成时立即给出机器漏斗判定；
+  `GET /tasks/{id}/pipeline/episodes/{index}` 读取这条的当前模块结果。两块的运行（计划 2.0）每条给各逐条段的状态与临时判决
+  （任务策略作用在已有的发现上），第一页还带 `modules`：每个逐条段模块到目前为止判过、出错、有发现的条数（episode 状态库的
+  `findings` 列，C4 2.3.0，任务详情的模块卡在没有报告时用）；漏斗的旧任务照旧给机器漏斗判定。
   去重和画像仍需全量输入，最终通过 / 拒绝 / 待补跑以提交后的结果版本为准。
 - **读哪个版本**：缺省读 `task.result_rev`；`?rev=N` 可读 1 到 `result_rev` 之间任一已提交的版本。
   没有 `commit.json` 的版本不认；`result_rev` 之后已提交、还没切换过去的版本也不给看（D25）。
@@ -40,11 +42,16 @@ C2 `report` / `final-list` / `result-record` / `commit` / `decisions` / `source-
 - **单条 episode**：所在清单与原因、复核项（`{module, kind, text, priority}`，能在裁决页回答的排在前面）、
   判定与交付用的任务文本、该版本看到的每个模块的结果行（C2 `result-record`）、证据帧路径（签名用 `scope=delivery`）、
   各机位视频。LeRobot v3 的多条拼在一个 mp4 里，视频项带 `from_ts` / `to_ts`（取自源数据集或交付数据集的 episode 表），
-  签名接口不算时间。缺源文件被剔除的 episode（D40）返回 404，说明缺了哪些文件。
+  签名接口不算时间。缺源文件被剔除的 episode（D40）返回 404，说明缺了哪些文件。发现结果版本（C2 2.0）多 `findings`：
+  清单条目里每条发现与它在这一版的级别（C2 final-list 2.0 的 `findings`），发现本身按条目给的位置取自这一版的模块记录，
+  人的结论用它自己的一句话（C4 2.3.0 `EpisodeFinding`）。
 - **episode 列表**（F6.2）：按下标列出这一版三份清单里的全部条目，带所在清单、`reason_modules`（拒绝：判它不过的模块；
   待补跑：出错的模块）、`review`（当前版本：裁决页上待裁或拿不准的卡片；历史版本：那一版提过的问题）。
   `q` 按下标子串匹配，去掉 `ep` 前缀和前导零（`12`、`ep12`、`ep 12`、`ep000012` 都找得到 ep 12），不是编号的是 400；
   游标里是「结果版本 + 最后一条下标」，换了筛选条件是 400，版本变了是 409 `result_changed`；`total` 是筛选后的条数，`counts` 是整版的。
+  发现结果版本的条目多 `items` / `levels`（取自清单条目的 `findings`），`level`、`item` 两个筛选按它们过滤，项编号格式不对是 400；
+  漏斗的旧版本没有发现，这两个筛选一条也不留。
+- **裁决问题的细码**（C4 2.3.0）：发现结果版本 `review.json` 的复核项带 `codes` / `items`，队列的问题照样带出，裁决页按细码写明问的是什么。
 - **同步曲线**（F6.2）：读帧档留下的 `checks/video_action_sync/curves/ep<NNNNNN>.json`，互相关按正式判定的预处理重算
   （`export.sync_plots._xcorr_curve`，剔首尾静止段），只取 ±2 秒扫描窗；读数（滞后、峰值、代码、是否可信）取这一版的结果记录，
   点位按读数的横坐标在曲线上插值。每条序列最多 600 点。没勾选同步是 404 `module_not_run`，这一条没走到或出错是 `no_record`，
@@ -138,22 +145,28 @@ B=localhost:18080/curation/api/v1/tasks/$T; c() { curl -s -u demo:demo-pass "$@"
 1. **报告**：`c $B/report | python3 -m json.tool | head -40` —— `revision` 1，`counts` 为 total 9、passed 5、rejected 3、held 1、review 5；
    `links` 里有任务、报告，以及 `?source=task_success`、`?source=skill_profile` 两条裁决页链接。
    `c "$B/report?rev=2"` 是 404「没有结果版本 r2……」；`c "$B/report?rev=0"` 是 400。
+   报告是 2.0：`overview.reject_items` 是 SET-1、STRM-5、TASK-5 各 1 条；时间戳检查一节 `summary` 的 `assessed_episodes` 9、
+   `flagged_episodes` 1、`levels` 为 blocking 1、review 0、info 0。
 2. **明细表**：`c "$B/report/tables/visual_quality?sort=score&order=desc&limit=3"` —— 最高分的三行（ep8 的两路、ep7 的一路），
    `has_more: true`；带上返回的 `next_cursor`（`&cursor=...`）接着翻，一直翻到底，18 行不重不漏，ep3 那一路没有分的排在最后。
    `c "$B/report/tables/visual_quality?sort=sharpness"` 是 400，列出能排序的列；`c $B/report/tables/nope` 是 404。
 3. **单条 episode**：`c $B/episodes/2 | python3 -m json.tool` —— `list: reject`，原因「任务没有完成：3 路复核一致判未完成」（`kind: finding`、`code: failure`、`item: TASK-5`、`appealable: true`），
    证据帧 `details/evidence/task_success/ep000002_0.jpg`，两路视频来自源数据集，`from_ts` 28、`to_ts` 42（v3 拼接文件里的一段）。
+   `findings` 里是这一条的全部发现：两路相机各一条「曝光不足」（IMG-2，`info`）和任务成败判定的 `failure`（TASK-5，`blocking`，`appealable: true`）。
    `c $B/episodes/99` 是 404。
    **episode 列表**：`c "$B/episodes?limit=4"` —— ep0–3，`has_more: true`，`counts` 为 all 9、passed 5、reject 3、held 1、review 3；
    `c "$B/episodes?review=true"` 是 ep3、ep4、ep5；`c "$B/episodes?list=reject"` 是 ep1、ep2、ep7（`reason_modules` 分别是时间戳检查、
    任务成败判定、精确去重）；`c "$B/episodes?q=ep%208"` 只有 ep8；`c "$B/episodes?q=abc"` 是 400。
+   每条带 `items` / `levels`（ep1 是 `["STRM-5", "IMG-2"]` / `["blocking", "info"]`）；`c "$B/episodes?level=review"` 是 ep3、ep4、ep5，
+   `c "$B/episodes?item=TASK-5"` 是 ep2、ep3、ep5，`c "$B/episodes?item=strm-5"` 是 400。
    **同步曲线**：`c $B/episodes/3/sync-curves` 是 404 `no_curves`（手写的运行目录没有曲线文件；被时间戳判废的 ep1 也一样，
    两块并行之后每个模块都看过每一条，D57）；没有这个模块结果的条目是 404 `no_record`（自动化测试里有）；
    有曲线的条目返回逐相机的 `t` / `flow` / `speed`、`lags` / `xcorr` 和 `peak`。
 4. **性能剖析**：`c $B/perf` —— probe 4 次（1 次对冲补发）、P50 3 秒、墙钟 62 秒，arbitration 1 次失败；
    stage 占比 numeric 0.1、frame 0.3、vlm 0.6。`c "$B/perf?scope=subtask"` 是 400（要给 `subtask`）。
 5. **裁决队列**：`c "$B/adjudication?status=all"` —— 三张卡片：ep3（判成败）、ep4（标注分歧）、ep5（两个问题），
-   计数 `{"decided": 0, "pending": 3, "unapplied": 0}`；ep8（运动质量打不出分）不在里面。
+   计数 `{"decided": 0, "pending": 3, "unapplied": 0}`；ep8（运动质量打不出分）不在里面。每个问题带它问的细码与项：
+   ep3 的判成败是 `codes: ["uncertain"]`、`items: ["TASK-5"]`，ep4 的标注分歧是 `label_disagreement` / LABEL-5。
    `c "$B/adjudication?tab=appeals&status=all"` 是 ep2（任务成败判定判失败）和 ep7（与 ep0 重复，D42 起可以复议）；时间戳残段 ep1 不能复议。
 6. **提交裁决**：
 

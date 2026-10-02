@@ -122,3 +122,61 @@ def test_a_task_without_results_has_no_episode_list(world):
     task = make_task(world.repo, world.dataset, name="还没跑")
     assert_error(world.client.get(f"{API}/tasks/{task.id}/episodes"), "not_found", 404)
     assert_error(world.client.get(f"{API}/tasks/nope/episodes"), "not_found", 404)
+
+
+def test_the_items_and_levels_of_its_findings(world):
+    """A findings revision names every episode's items and levels (C4 2.3.0): its list entry's, so the
+    policy's levels after the applied human decisions; IMG-2 is every episode's underexposure (info)."""
+    by_ep = {i["episode_index"]: i for i in _page(world)["items"]}
+    assert by_ep[1]["items"] == ["STRM-5", "IMG-2"] and by_ep[1]["levels"] == ["blocking", "info"]
+    assert by_ep[5]["items"] == ["IMG-2", "TASK-5", "LABEL-5"] and by_ep[5]["levels"] == ["review", "info"]
+    assert by_ep[7]["items"] == ["IMG-2", "SET-1"] and by_ep[7]["levels"] == ["blocking", "info"]
+    assert by_ep[6]["items"] == ["IMG-2"] and by_ep[6]["levels"] == ["info"]   # held: what the others found
+    assert _eps(_page(world, level="blocking")) == [1, 2, 7]
+    assert _eps(_page(world, level="review")) == [3, 4, 5]
+    assert _eps(_page(world, level="info")) == list(range(9))
+    assert _eps(_page(world, item="TASK-5")) == [2, 3, 5]
+    assert _eps(_page(world, item="TASK-5", level="review")) == [3, 5]
+    assert _eps(_page(world, item="LABEL-5", list="passed", review="true")) == [4, 5]
+    body = _page(world, item="ACT-4")
+    assert _eps(body) == [] and body["total"] == 0 and body["counts"]["all"] == 9
+
+
+def test_the_finding_filters_bind_the_cursor_and_are_checked(world):
+    items, bodies = all_pages(lambda **q: world.get("/episodes", level="info", **q), limit=4)
+    assert [i["episode_index"] for i in items] == list(range(9)) and len(bodies) == 3
+    first = _page(world, level="info", limit=4)
+    assert_error(world.get("/episodes", cursor=first["next_cursor"], level="review"), "validation_failed", 400)
+    assert_error(world.get("/episodes", cursor=first["next_cursor"]), "validation_failed", 400)
+    plain = _page(world, limit=4)                       # a cursor without them stays valid as before
+    assert _eps(_page(world, cursor=plain["next_cursor"], limit=4)) == [4, 5, 6, 7]
+    for bad in ({"level": "fatal"}, {"item": "strm-5"}, {"item": "STRM5"}, {"item": "X" * 40}):
+        assert_error(world.get("/episodes", **bad), "validation_failed", 400)
+
+
+def test_a_person_s_answer_changes_the_levels_of_the_next_revision(world):
+    """ep 3's abstention settled as a success: no review finding left in r2; ep 2 judged a failure by a
+    person stays rejected on a blocking finding of its own."""
+    assert world.decide((3, "task_verdict", "success")).status_code == 200
+    assert world.decide((2, "reject_appeal", "keep_rejected")).status_code == 200
+    sub = world.start_subtask(at=T0 + 10 * 60_000)
+    world.apply(sub)
+    world.revision(2, subtask_id=sub.id)
+    world.finish_subtask(sub, at=T0 + 20 * 60_000)
+    world.switch(2)
+    by_ep = {i["episode_index"]: i for i in _page(world)["items"]}
+    assert by_ep[3]["items"] == ["IMG-2"] and by_ep[3]["levels"] == ["info"]
+    assert _eps(_page(world, level="review")) == [4, 5]
+    assert _eps(_page(world, rev=1, level="review")) == [3, 4, 5]            # r1 as it was
+
+
+def test_a_funnel_revision_has_no_findings_to_filter(world, monkeypatch):
+    """A task made before (C2 1.0): no items / levels, and a finding filter matches nothing."""
+    from daemon.results.revision import Revision
+
+    real = Revision.entries
+    monkeypatch.setattr(Revision, "entries", lambda self: {
+        ep: (name, {k: v for k, v in e.items() if k != "findings"}) for ep, (name, e) in real(self).items()})
+    body = _page(world)
+    assert all("items" not in i and "levels" not in i for i in body["items"])
+    assert _eps(_page(world, level="info")) == [] and _eps(_page(world, item="IMG-2")) == []

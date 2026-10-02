@@ -1212,3 +1212,117 @@ button.video-placeholder {
   border-radius: 50%;
   background: var(--c-text-3);
 }
+
+/* The coverage matrix of 本次质检范围 (design doc 17 §5.2): one row per taxonomy dimension, its items as chips. */
+.coverage {
+  margin-top: 16px;
+}
+
+.coverage-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 12px 0 0;
+}
+
+.coverage-row {
+  display: contents;
+}
+
+.coverage-row dt {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.coverage-row dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.coverage-chip {
+  font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+.coverage-chip.clickable {
+  cursor: pointer;
+}
+
+.coverage-count {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+}
+
+@media (max-width: 640px) {
+  .coverage-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* An episode's findings (Episode tab, design doc 17 §5.4): one group per level. */
+.finding-group + .finding-group {
+  margin-top: 8px;
+}
+
+.finding-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.finding-list li + li {
+  margin-top: 4px;
+}
+
+.finding-meta {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+/* 模块 of the task detail (design doc 17 §5.3): one row per module, unfolding into its findings charts. */
+.module-stat {
+  border-bottom: 1px solid var(--c-border);
+  padding: 8px 0;
+}
+
+.module-stat:last-child {
+  border-bottom: none;
+}
+
+.module-stat-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.module-stat-pad {
+  display: inline-block;
+  width: 24px;
+}
+
+.module-stat-spacer {
+  flex: 1 1 auto;
+}
+
+.module-stat-body {
+  padding: 8px 0 4px 36px;
+}
+
+@media (max-width: 640px) {
+  .module-stat-body {
+    padding-left: 0;
+  }
+}
+
+/* 分档进度 of a two-block run: a card per block, the full-set steps on a row of their own. */
+.block-whole {
+  margin-top: 12px;
+}
+
+.block-whole .section-sub {
+  margin-bottom: 4px;
+}

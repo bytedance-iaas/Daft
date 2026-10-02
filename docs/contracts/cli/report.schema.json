@@ -279,6 +279,34 @@
             }
           }
         },
+        "reject_items": {
+          "type": "array",
+          "description": "rejected episodes per taxonomy item of their blocking reasons, every module together - an episode counts once per item (the overview's reject reasons by item, F12.5); item null: a reason without a finding code (a person's discard)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "item",
+              "count"
+            ],
+            "properties": {
+              "item": {
+                "oneOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/item_id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
         "findings_by_item": {
           "type": "array",
           "description": "episodes with a finding of each item, every module together, split by the level the policy gave",
@@ -456,6 +484,35 @@
               "type": "integer",
               "minimum": 0,
               "description": "episodes the module judged (status ok)"
+            },
+            "flagged_episodes": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "of them, the episodes with at least one finding of the module (F12.5)"
+            },
+            "levels": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "blocking",
+                "review",
+                "info"
+              ],
+              "description": "the episodes with at least one finding of the module the revision's policy grades blocking / review / info (F12.5)",
+              "properties": {
+                "blocking": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "review": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "info": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
             },
             "items": {
               "type": "array",

@@ -24,6 +24,7 @@ import {
   so101Subtasks,
   so101Timeline,
 } from './world';
+import { FINDINGS_TASK, findingsEpisodes, findingsModuleCounts, findingsPipelineRow, findingsPlan, findingsReport, findingsTask, findingsView } from './findings';
 
 function expectValid(ref: string, value: unknown) {
   const v = contract.validator(ref);
@@ -82,6 +83,28 @@ describe('fixtures match the contract', () => {
       expect(summary.counts, id).toBeTruthy();
     }
     [...cardsOf(MAIN_TASK, 'review'), ...cardsOf(MAIN_TASK, 'appeals')].forEach((c) => expectValid(S('AdjudicationCard'), c));
+  });
+
+  it('the findings task (C2 2.0, C4 2.3.0): report, plan, episodes, live rows and questions', () => {
+    expectValid(S('Task'), findingsTask(Date.now()));
+    const report = findingsReport();
+    expectValid('https://curator.contracts/cli/report.schema.json', report);
+    expect(report.schema_version).toBe('2.0');
+    expectValid('https://curator.contracts/cli/plan.schema.json', findingsPlan());
+    for (let ep = 0; ep < 50; ep += 1) {
+      const view = findingsView(ep, 1);
+      expectValid(S('EpisodeView'), view);
+      expect(view.findings, `ep ${ep}`).toBeDefined();
+      expectValid(S('PipelineEpisode'), findingsPipelineRow(ep));
+    }
+    const items = findingsEpisodes(new Map([[29, ['task_success', 'skill_profile']]]));
+    expectValid(S('TaskEpisodePage'), { items, next_cursor: null, has_more: false, total: 50, counts: { all: 50, passed: 41, reject: 7, held: 2, review: 1 }, revision: 1 });
+    expect(items.find((e) => e.episode_index === 18)?.levels).toContain('blocking');
+    expect(findingsModuleCounts().every((m) => m.judged + m.error === 50)).toBe(true);
+    [...cardsOf(FINDINGS_TASK, 'review'), ...cardsOf(FINDINGS_TASK, 'appeals')].forEach((c) => {
+      expectValid(S('AdjudicationCard'), c);
+      expect(c.questions.filter((q) => !q.follow_up_of).every((q) => q.codes?.length)).toBe(true);
+    });
   });
 
   it('the so101 sample: an adjudication whose relabels were judged with the full flow (D39) and skipped episodes (D40)', () => {
@@ -226,6 +249,16 @@ const calls = (): Call[] => [
   { op: 'submitAdjudication', method: 'POST', path: `/tasks/${T}/adjudication`, body: { decisions: [{ episode_index: 18, line: 'reject_appeal', decision: 'restore' }] } },
   { op: 'applyAdjudication', method: 'POST', path: `/tasks/${T}/adjudication/apply`, body: { relabel_rerun: 'full' } },
   { op: 'signMedia', method: 'GET', path: `/media/sign?task=${T}&scope=input&path=videos/chunk-000/wrist/file-000.mp4&ttl=600` },
+  // the findings task (C2 2.0, C4 2.3.0): a report 2.0, the finding filters, an episode's findings, the live counts
+  { op: 'getReport', method: 'GET', path: `/tasks/${FINDINGS_TASK}/report` },
+  { op: 'getTaskPlan', method: 'GET', path: `/tasks/${FINDINGS_TASK}/plan` },
+  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${FINDINGS_TASK}/episodes?level=review&item=TASK-5` },
+  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${FINDINGS_TASK}/episodes?item=strm-5` },
+  { op: 'listTaskEpisodes', method: 'GET', path: `/tasks/${T}/episodes?level=blocking` },
+  { op: 'getEpisode', method: 'GET', path: `/tasks/${FINDINGS_TASK}/episodes/18` },
+  { op: 'listPipelineEpisodes', method: 'GET', path: `/tasks/${FINDINGS_TASK}/pipeline/episodes?limit=20` },
+  { op: 'getPipelineEpisode', method: 'GET', path: `/tasks/${FINDINGS_TASK}/pipeline/episodes/7` },
+  { op: 'listAdjudication', method: 'GET', path: `/tasks/${FINDINGS_TASK}/adjudication?status=all` },
 ];
 
 const createAndRepreflight = async (): Promise<Call[]> => {

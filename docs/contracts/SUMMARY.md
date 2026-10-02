@@ -297,3 +297,11 @@ W8 合并时报告的缺口，除第 8、10 条外都已写进契约（第 8 条
 - **F12.4（2026-10-01）**：C2 计划落成 2.0（`block` / `after` / `full_set`，没有 `hard_gates` 与漏斗判决档，`profile_vlm` 改名 `profile`），契约在 F12.1
   已定；C4 2.2.0——`PipelineEpisode` 的 `last_stage` / `next_stage` 改为可选（只有漏斗时代的旧任务有），两块的运行给 `stages` 与 `provisional`；
   `StageProgress` 的档名说明补上两块的档。过渡表 `pipeline/gates_v1.py` 删除。
+- **F12.5（2026-10-02）**：控制台的发现视图要的字段，都是可选的增补（旧文档照样合法，不升 `schema_version`）：
+  C2 清单 2.0 的条目多 `findings`（这一条的全部发现与它在这一版的级别——策略加已应用的人工裁决；`index` 指向模块记录里那条，人的结论带
+  `human` 与它的一句话）；C2 报告 2.0 多 `overview.reject_items`（被拒条目按检测项计，一条每项一次）与小节 `summary.flagged_episodes` /
+  `summary.levels`。C4 2.3.0——`listTaskEpisodes` 加 `level`、`item` 筛选（条目的 `items` / `levels` 由清单条目算出，F12.1 已声明）、
+  `EpisodeView.findings`（`EpisodeFinding`）、`AdjudicationQuestion.codes` / `items`、两块运行的即时结果页多 `modules`（每个逐条段模块判过、
+  出错、有发现的条数；episode 状态库加 `findings` 列，打开旧库时补齐）。控制台：报告的覆盖矩阵、按检测项的判废原因、每个小节先放通用的发现统计；
+  任务详情的模块统计卡与两块进度卡；Episode 明细的全部发现与两个筛选；裁决卡写明细码；新建任务表单的判决策略与「判定线（高级）」；
+  `funnelGate` / `isAdvisory` 删除。

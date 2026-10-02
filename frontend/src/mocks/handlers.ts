@@ -21,6 +21,7 @@ import type {
   Subtask,
   Task,
   TaskCreate,
+  TaskEpisode,
   TaskPatch,
   TaskState,
   TimelineEntry,
@@ -53,7 +54,8 @@ import {
   tableRows,
 } from './world';
 import { asLegacyRecord } from '../lib/records';
-import { funnelGate, producesAdjudication } from '../lib/registry';
+import { producesAdjudication } from '../lib/registry';
+import { FINDINGS_TASK, findingsEpisodes, findingsModuleCounts, findingsPipelineRow, findingsPlan, findingsReport, findingsView } from './findings';
 import { cardsOf, clock, countsOf, db, decisionsOf, executable, findTask, latest, nextId, openFollowUp, reviewCatalog, toListItem } from './db';
 import { tickSubtasks } from './subtaskSim';
 
@@ -1082,7 +1084,7 @@ const tasks = [
     const t = findTask(String(params.id));
     if (!t) return err(404, 'not_found', '任务不存在');
     if (!t.started_at) return err(404, 'not_found', '任务还没开始，没有执行计划');
-    return HttpResponse.json(mainPlan());
+    return HttpResponse.json(t.id === FINDINGS_TASK ? findingsPlan() : mainPlan());
   }),
   http.get(`${API}/tasks/:id/logs`, ({ request, params }) => {
     const t = findTask(String(params.id));
@@ -1161,7 +1163,7 @@ function genericReport(t: Task, revision: number): Report {
         return {
           id: m.id,
           state: 'succeeded' as const,
-          gate: funnelGate(spec) as 'hard' | 'soft' | 'dedup' | 'none',
+          gate: (spec.codes.some((c) => c.level === 'blocking') ? 'hard' : 'none') as 'hard' | 'none',
           summary: sampleSummary(m.id, m.episodes_total || s.total),
           tables: spec.tables.map((tb) => ({ id: tb.id, rows: tableRows(tb.id).length, file: `tables/${tb.id}.parquet` })),
           adjudication: producesAdjudication(spec) && t.pending_adjudication ? { pending: t.pending_adjudication } : null,
@@ -1210,6 +1212,12 @@ const report = [
     const total = t.summary?.total ?? t.progress.stages.find((s) => s.id === 'numeric')?.total ?? 0;
     const completed = t.result_rev ? total : Math.min(total, t.progress.stages.find((s) => s.id === 'vlm')?.done ?? 0);
     const indexes = Array.from({ length: completed }, (_, i) => i).filter((ep) => ep < before).reverse();
+    if (t.id === FINDINGS_TASK) {
+      // a two-block run (C4 2.2.0 / 2.3.0): per-stage states, the provisional verdict, the live module counts
+      const rows = indexes.slice(0, limit).map((ep) => findingsPipelineRow(ep));
+      return HttpResponse.json({ items: rows, next_cursor: indexes.length > limit ? rows.at(-1)!.episode_index : null,
+        started: completed, finished: completed, modules: findingsModuleCounts() });
+    }
     const items = indexes.slice(0, limit).map((ep) => pipelineMockRow(ep, t.result_rev || 1));
     return HttpResponse.json({ items, next_cursor: indexes.length > limit ? items.at(-1)!.episode_index : null,
       started: completed, finished: completed });
@@ -1219,6 +1227,7 @@ const report = [
     if (!t) return err(404, 'not_found', '任务不存在');
     const ep = Number(params.index);
     if (!Number.isInteger(ep) || ep < 0) return err(404, 'not_found', 'episode 不存在');
+    if (t.id === FINDINGS_TASK) return HttpResponse.json({ ...findingsPipelineRow(ep), modules: findingsView(ep, 1).modules });
     return HttpResponse.json({ ...pipelineMockRow(ep, t.result_rev || 1),
       modules: episodeView(ep, t.result_rev || 1).modules });
   }),
@@ -1227,7 +1236,7 @@ const report = [
     if (!t) return err(404, 'not_found', '任务不存在');
     const rev = revisionOf(t, new URL(request.url));
     if (rev instanceof Response) return rev;
-    const r = t.id === MAIN_TASK ? mainReport(rev === 1 ? 1 : 2) : genericReport(t, rev);
+    const r = t.id === MAIN_TASK ? mainReport(rev === 1 ? 1 : 2) : t.id === FINDINGS_TASK ? findingsReport() : genericReport(t, rev);
     return HttpResponse.json({ revision: rev, report: r, links: [{ rel: 'report', title: 'Open QA report', url: `/tasks/${t.id}/report?rev=${rev}`, absolute: false }] });
   }),
   http.get(`${API}/tasks/:id/report/tables/:table`, ({ request, params }) => {
@@ -1265,7 +1274,7 @@ const report = [
     const ep = Number(params.index);
     const total = t.summary?.total ?? 50;
     if (!Number.isInteger(ep) || ep < 0 || ep >= Math.max(total, 50)) return err(404, 'not_found', `没有 ep ${String(params.index)}`);
-    const view = episodeView(ep, rev);
+    const view = t.id === FINDINGS_TASK ? findingsView(ep, rev) : episodeView(ep, rev);
     const extra = db.extraRecords.get(t.id)?.get(ep) ?? {};
     for (const [module, rec] of Object.entries(extra)) {
       view.modules[module] = rec;
@@ -1287,6 +1296,11 @@ const report = [
     if (review !== null && review !== 'true' && review !== 'false') return err(400, 'validation_failed', 'review 只能是 true 或 false');
     const limit = Number(q.get('limit') ?? 50);
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) return err(400, 'validation_failed', 'limit 在 1 到 500 之间');
+    // C4 2.3.0: the findings filters (a funnel's revision has no findings: they match nothing)
+    const level = q.get('level');
+    if (level !== null && !['blocking', 'review', 'info'].includes(level)) return err(400, 'validation_failed', 'level 只能是 blocking、review、info');
+    const item = q.get('item');
+    if (item !== null && item !== '' && !/^[A-Z]+-[0-9]+$/.test(item)) return err(400, 'validation_failed', `检测项编号的格式是「字母-数字」（如 STRM-5），收到的是「${item}」`);
     const text = (q.get('q') ?? '').trim();
     let needle: string | null = null;
     if (!/^(ep)?$/i.test(text)) {
@@ -1302,14 +1316,21 @@ const report = [
       }
     }
     const s = t.summary;
-    const all = t.id === MAIN_TASK ? mainEpisodes(open) : genericEpisodes(s?.total ?? 0, s?.rejected ?? 0, s?.held ?? 0, open);
+    const all: TaskEpisode[] = t.id === MAIN_TASK ? mainEpisodes(open) : t.id === FINDINGS_TASK ? findingsEpisodes(open) : genericEpisodes(s?.total ?? 0, s?.rejected ?? 0, s?.held ?? 0, open);
     const counts = { all: all.length, passed: 0, reject: 0, held: 0, review: 0 };
     for (const e of all) {
       counts[e.list] += 1;
       if (e.review) counts.review += 1;
     }
-    const items = all.filter((e) => (list === null || e.list === list) && (review === null || e.review === (review === 'true')) && (needle === null || String(e.episode_index).includes(needle)));
-    const scope = JSON.stringify([list, review, needle]);
+    const items = all.filter(
+      (e) =>
+        (list === null || e.list === list) &&
+        (review === null || e.review === (review === 'true')) &&
+        (needle === null || String(e.episode_index).includes(needle)) &&
+        (level === null || (e.levels ?? []).includes(level as 'blocking')) &&
+        (!item || (e.items ?? []).includes(item)),
+    );
+    const scope = JSON.stringify([list, review, needle, level, item || null]);
     const cur = decodeCursor<{ rev: number; last: number; scope: string }>(q.get('cursor'));
     if (q.get('cursor') && (!cur || cur.scope !== scope)) return err(400, 'validation_failed', '游标和这次的筛选条件对不上');
     if (cur && cur.rev !== rev) return err(409, 'result_changed', `结果版本已从 r${cur.rev} 换成 r${rev}，episode 列表请从头重新加载`);
@@ -1335,7 +1356,7 @@ const report = [
     if (!Number.isInteger(ep) || ep < 0) return err(400, 'validation_failed', 'episode 下标不能是负数');
     const name = `ep${String(ep).padStart(6, '0')}`;
     if (ep === 18 && t.id === MAIN_TASK) return err(404, 'not_found', `${name} 没有走到视频-动作同步这一档（前面已被判废），没有同步曲线`, { episode_index: ep, revision: rev, reason: 'no_record' });
-    const curves = t.id === MAIN_TASK ? mainSyncCurves(ep, rev) : null;
+    const curves = t.id === MAIN_TASK || t.id === FINDINGS_TASK ? mainSyncCurves(ep, rev) : null;
     if (!curves) return err(404, 'not_found', `${name} 同步正常：默认只为值得留意的条目（没对齐、有相机被标注或测不准）保存同步曲线`, { episode_index: ep, revision: rev, reason: 'no_curves' });
     return HttpResponse.json(curves);
   }),

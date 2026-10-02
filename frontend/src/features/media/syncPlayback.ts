@@ -142,15 +142,17 @@ export class SyncController {
     this.evaluate();
   }
 
-  /** 「同时播放」: buffer every video in `ids`, align them, then play them together. */
-  start(ids: readonly string[]): void {
+  /** 「同时播放」: buffer every video in `ids`, align them, then play them together - from `at` (seconds
+   * from the episode's start: a finding's moment, design doc 17 §5.4) when given, else from where the
+   * first camera stands. */
+  start(ids: readonly string[], at?: number): void {
     this.expected = [...ids];
     for (const id of ids) this.member(id);
     this.active = true;
     this.intent = 'play';
     const lead = this.participants().find((m) => m.el && m.el.readyState >= HAVE_METADATA);
-    const at = lead ? this.rel(lead) : 0;
-    this.target = lead && at > 0.1 && at < this.length(lead) - 0.5 ? at : 0;
+    const now = lead ? this.rel(lead) : 0;
+    this.target = at !== undefined ? Math.max(0, at) : lead && now > 0.1 && now < this.length(lead) - 0.5 ? now : 0;
     for (const m of this.participants()) {
       if (!m.el) continue;
       m.el.preload = 'auto';

@@ -84,14 +84,20 @@ export type Incompatibility = RepreflightResult['incompatibilities'][number];
 export type Plan = S['plan.schema'];
 export type PlanStage = S['stage'];
 
-// C2 2.0 (design doc 17) changed the result record, the report and the plan. Until the 2.0 views of F12.5 the
-// console renders their 1.0 form: a report 2.0 is read through `asLegacyReport` and a record 2.0 through
-// `asLegacyRecord` (src/lib/records.ts); tasks made before carry 1.0 and open as they are (D59).
+// C2 2.0 (design doc 17) changed the result record, the report and the plan. The modules' own views (the
+// specialised report sections, the Episode tab's blocks) read the 1.0 keys a report 2.0 keeps, through
+// `asLegacyReport` / `asLegacyRecord` (src/lib/records.ts); the findings views (F12.5, src/lib/findings.ts)
+// read the 2.0 report as it is (`ReportResponse.v2`). Tasks made before carry 1.0 and open as they are (D59).
 export type Report = S['report_1'];
 export type ReportV2 = S['report_2'];
 export type ReportModuleSection = S['module_section_1'];
+export type ReportModuleSectionV2 = S['module_section_2'];
 type RawReportResponse = operations['getReport']['responses'][200]['content']['application/json'];
-export type ReportResponse = Omit<RawReportResponse, 'report'> & { report: Report };
+/** `report` as the 1.0 views read it; `v2` the report itself when it is one of the policy verdicts (C2 2.0). */
+export type ReportResponse = Omit<RawReportResponse, 'report'> & { report: Report; v2: ReportV2 | null };
+export type Finding = S['finding'];
+export type FindingLevel = S['FindingLevel'];
+export type EpisodeFinding = S['EpisodeFinding'];
 export type ReportTablePage = operations['getReportTable']['responses'][200]['content']['application/json'];
 export type EpisodeView = S['EpisodeView'];
 export type PipelineEpisode = S['PipelineEpisode'];

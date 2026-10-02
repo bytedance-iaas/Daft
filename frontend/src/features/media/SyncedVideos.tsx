@@ -15,11 +15,31 @@ export function videoKey(v: VideoRef): string {
  * that runs short pauses all of them (「缓冲中…」). The button turns into 「停止同步」. Give it a
  * `key` per episode: a new episode is a new group, and nothing carries over or starts by itself.
  */
-export function SyncedVideos({ task, videos, caption, extra }: { task: string; videos: readonly VideoRef[]; caption?: (v: VideoRef) => ReactNode; extra?: ReactNode }) {
+export function SyncedVideos({
+  task,
+  videos,
+  caption,
+  extra,
+  seekTo,
+}: {
+  task: string;
+  videos: readonly VideoRef[];
+  caption?: (v: VideoRef) => ReactNode;
+  extra?: ReactNode;
+  /** Play every camera from `at` seconds of the episode (a finding's moment); `n` tells one request from the next. */
+  seekTo?: { at: number; n: number } | null;
+}) {
   const [controller] = useState(() => new SyncController());
   useEffect(() => () => controller.dispose(), [controller]);
   const status = useSyncExternalStore(controller.subscribe, controller.getStatus, controller.getStatus);
   const [load, setLoad] = useState(false);
+  useEffect(() => {
+    if (!seekTo) return;
+    setLoad(true);
+    controller.start(videos.map(videoKey), seekTo.at);
+    // a new request only (n): the videos of an episode do not change under one player (a key per episode)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seekTo?.n]);
   const synced = status !== 'idle';
   const toggle = () => {
     if (controller.isActive()) {

@@ -92,7 +92,8 @@ v1 用 `passed.json` 兼作完整性标志，并靠「普通文件 → `meta/inf
 > 默认策略复刻下文的硬门（P18）：今天硬门判废的细码 blocking，可疑 / 弃权 / 转人工 / 标注分歧 review，其余 info，**软分拒绝消失**；
 > 拒绝理由列出全部 blocking 发现；held 的口径同 D35；复议按发现（全部 blocking 发现都可复议才能恢复）；去重组的 canonical 由
 > aggregate 选「未因别的原因被拒的第一条」；画像给全集与交付集两份分布。下文是漏斗判决的写法，F12.3 之前照旧生效，
-> 旧任务按它只读打开（D59）。
+> 旧任务按它只读打开（D59）。F12.5 起 `passed` / `reject` / `held` 的每条多 `findings`：这一条的全部发现与它在这一版的级别
+> （任务策略加上已应用的人工裁决；指向模块记录里那条发现的位置，人的结论带它的一句话），控制台的 Episode 明细与按级别 / 检测项筛选读它。
 
 规则原样搬运 v1 `pipeline/verdict.py`，分两步，对应 `aggregate` 的两个阶段：
 
@@ -316,7 +317,10 @@ v1 有 `rejudge --retry-abstained`：只重判因「VLM 调用/解析失败」�
 > 项、未覆盖的项、评估不了的项与原因计数）、`findings_by_item`（每项的条数与按级别的拆分），`reject_reasons` 按细码与检测项计；
 > 模块小节去掉 `gate`，`summary` 多通用统计 `assessed_episodes`、`items`（每个细码的条数、占比、可选按相机）、`unassessable`、
 > `score_hist`（2.0 改为「读数 → 十格」：运动质量的综合分与各子项分、视觉质量的综合分）、`dataset_findings`，1.0 的汇总键照留；
-> 技能画像多 `delivered_family_distribution`（交付集的分布，按 `passed` 算）。前端按 `schema_version` 分流（D59）。下面是 1.0 的结构。
+> 技能画像多 `delivered_family_distribution`（交付集的分布，按 `passed` 算）。前端按 `schema_version` 分流（D59）。
+> F12.5 再加三项（可选，C2 报告 2.0 的增补）：`overview.reject_items`（被拒条目按检测项计，一条每项只记一次；人工整条弃用没有项，记 null）、
+> 每个小节的 `summary.flagged_episodes`（评估过的条目里有发现的条数）与 `summary.levels`（有 blocking / review / info 级发现的条数）。
+> 下面是 1.0 的结构。
 
 ```jsonc
 // report.json

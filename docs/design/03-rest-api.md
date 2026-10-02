@@ -308,7 +308,9 @@ GET /api/v1/tasks/{id}/report/tables/visual_quality?cursor=...&limit=100&sort=sc
 报告按模块组织，但看一条具体的 episode 时需要横着看所有模块：
 `GET /tasks/{id}/episodes/{index}` 返回这一条的判决卡、各模块读数、证据帧和各机位视频位置，
 供报告页的「Episode 明细」页签使用（v1「轨迹」页的对应物；F6.2 起取代右侧抽屉和底部明细表，07 篇 §5）。
-报告小节只放统计和图，不列逐条明细（06 篇 §6.2）。
+报告小节只放统计和图，不列逐条明细（06 篇 §6.2）。发现结果版本（C4 2.3.0）多 `findings`：这一条的全部发现，每条是
+`EpisodeFinding`（模块、这一版的级别、review 级的复核线、可否复议、是否人的结论，`finding` 是模块记录里的那条发现原样——细码、项、
+`message_zh`、范围、区间；人的结论带它自己的一句话）。裁决队列的问题同样多 `codes` / `items`：它问的是哪几个细码、对应哪几项。
 
 「Episode 明细」页签还用到两个接口（F6.2，C4 1.9.0）：
 
@@ -328,6 +330,11 @@ GET /api/v1/tasks/{id}/episodes?rev=2&list=reject&review=true&q=ep12&cursor=…&
   （也会找到 ep 112、ep 120）；不是编号的输入返回 400。
 - 游标里是「结果版本 + 最后一条的下标」，筛选条件绑在游标上：换了筛选条件是 400，结果版本变了是 409 `result_changed`。
   `total` 是筛选后的条数，`counts` 是整个版本的条数（不受筛选影响），`limit` 1–500，缺省 50。
+- **发现**（C4 2.3.0，设计 17 §5.4，F12.5）：发现结果版本（C2 2.0）的条目多 `items`（它的发现涉及的检测项，按分类表顺序）与 `levels`
+  （这些发现在这一版的级别，blocking 在前）；两者取自清单条目的 `findings`（C2 final-list 2.0：任务策略的级别，已计入应用过的人工裁决——
+  人的结论是它自己的 blocking 发现，复议恢复的可复议发现降为 info，已了结的 review 发现不再列出，去重组留下的那条没有重复发现）。
+  `level=blocking|review|info`、`item=STRM-5` 只留下有该级别 / 该检测项发现的条目，项编号格式不对是 400；漏斗的旧结果版本没有发现，
+  这两个筛选一条也不留。
 
 ```
 GET /api/v1/tasks/{id}/episodes/{index}/sync-curves?rev=2

@@ -309,10 +309,11 @@ def test_on_a_clean_dataset_the_verdicts_do_not_change(mini_dataset, tmp_path):
     v1 = "timestamp_check,kinematic_limits,motion_quality,visual_quality,video_action_sync,task_success,dedup,skill_profile"
 
     def lists(rd: str) -> dict[str, list]:
+        # the verdicts; each entry's findings (C2 final-list 2.0) also list the module's own suspicions
         out = {}
         for name in ("passed", "reject", "held", "review"):
             with open(os.path.join(rd, "revisions", "r0001", f"{name}.json"), encoding="utf-8") as fh:
-                out[name] = json.load(fh)["episodes"]
+                out[name] = [{k: v for k, v in e.items() if k != "findings"} for e in json.load(fh)["episodes"]]
         return out
 
     with FakeVlmServer() as vlm:

@@ -6,7 +6,7 @@ const schemaOf = (id: string) => registry.modules.find((m) => m.id === id)!.para
 
 describe('param_schema → form fields (C1, D38)', () => {
   it('reads the two parameters of the frozen registry with titles and option names', () => {
-    const sync = paramFields(schemaOf('video_action_sync'));
+    const sync = paramFields(schemaOf('video_action_sync')).filter((f) => !f.advanced);
     expect(sync).toEqual([
       {
         key: 'sync_plots',
@@ -31,18 +31,27 @@ describe('param_schema → form fields (C1, D38)', () => {
     expect(defaultParams(schemaOf('task_success'))).toEqual({ evidence_frames: 'flagged' });
   });
 
-  it('the judgement lines of the findings (registry 2.1, x-advanced) stay out of the form', () => {
+  it('the judgement lines of the findings (registry 2.1, x-advanced) are fields marked advanced (F12.5)', () => {
     const lines = Object.entries((schemaOf('visual_quality') as { properties: Record<string, Record<string, unknown>> }).properties);
     expect(lines.length).toBeGreaterThan(0);
     expect(lines.every(([, p]) => p['x-advanced'] === true)).toBe(true);
-    expect(paramFields(schemaOf('visual_quality'))).toEqual([]);
-    expect(paramFields(schemaOf('video_action_sync')).map((f) => f.key)).toEqual(['sync_plots']);
-    expect(defaultParams(schemaOf('motion_quality'))).toEqual({});
+    const fields = paramFields(schemaOf('visual_quality'));
+    expect(fields.map((f) => f.key)).toEqual(lines.map(([k]) => k));
+    expect(fields.every((f) => f.advanced && (f.kind === 'number' || f.kind === 'integer') && f.default !== undefined)).toBe(true);
+    const sync = paramFields(schemaOf('video_action_sync'));
+    expect(sync.filter((f) => !f.advanced).map((f) => f.key)).toEqual(['sync_plots']);
+    expect(sync.some((f) => f.advanced)).toBe(true);
+    // a line kept at its default is never sent
+    const motion = defaultParams(schemaOf('motion_quality'));
+    expect(Object.keys(motion).length).toBeGreaterThan(0);
+    expect(changedParams(schemaOf('motion_quality'), motion)).toEqual({});
   });
 
-  it('modules without parameters produce no fields', () => {
+  it('modules without parameters produce no fields; the judgement lines count (F12.5)', () => {
     const without = registry.modules.filter((m) => !hasParams(m.param_schema)).map((m) => m.id);
-    expect(without).toEqual(['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'camera_defects', 'dedup', 'skill_profile']);
+    expect(without).toEqual(['kinematic_limits', 'camera_defects', 'dedup', 'skill_profile']);
+    const onlyLines = registry.modules.filter((m) => hasParams(m.param_schema) && paramFields(m.param_schema).every((f) => f.advanced)).map((m) => m.id);
+    expect(onlyLines).toEqual(['timestamp_check', 'motion_quality', 'visual_quality']);
   });
 
   it('supports enums, booleans, bounded numbers, strings and required fields of future modules', () => {

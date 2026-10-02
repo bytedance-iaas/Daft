@@ -15,6 +15,7 @@ import {
   presetOf,
   progressStageLabel,
   progressStages,
+  splitBlocks,
   stageLabel,
 } from './taskView';
 
@@ -59,6 +60,35 @@ describe('stages and export', () => {
 
   it('module problems: red errors, gray not run', () => {
     expect(moduleProblems({ succeeded: 5, failed: 1, completed_with_errors: 1, skipped: 2 })).toEqual({ errors: 2, notRun: 2 });
+  });
+});
+
+describe('the two blocks (design doc 17 §3, C4 2.2.0)', () => {
+  const st = (id: string, extra: Partial<StageProgress> = {}): StageProgress => ({ id, state: 'pending', done: 0, total: 8, ...extra }) as StageProgress;
+
+  it('splits a two-block run by block, CPU first, the full-set steps and autolabel apart', () => {
+    const stages = [
+      st('autolabel', { block: 'vlm' }),
+      st('vlm', { block: 'vlm' }),
+      st('profile', { block: 'vlm', full_set: true }),
+      st('integrity', { block: 'cpu' }),
+      st('numeric', { block: 'cpu' }),
+      st('frame', { block: 'cpu' }),
+      st('dedup', { block: 'cpu', full_set: true }),
+      st('final'),
+      st('report'),
+    ];
+    const { blocks, rest } = splitBlocks(stages);
+    expect(blocks.map((b) => b.id)).toEqual(['cpu', 'vlm']);
+    expect(blocks[0].chain.map((s) => s.id)).toEqual(['integrity', 'numeric', 'frame']);
+    expect(blocks[0].fullSet.map((s) => s.id)).toEqual(['dedup']);
+    expect(blocks[1].before.map((s) => s.id)).toEqual(['autolabel']);
+    expect(blocks[1].chain.map((s) => s.id)).toEqual(['vlm']);
+    expect(rest.map((s) => s.id)).toEqual(['final', 'report']);
+  });
+
+  it('a funnel run has no blocks', () => {
+    expect(splitBlocks([st('numeric'), st('verdict'), st('final')]).blocks).toEqual([]);
   });
 });
 

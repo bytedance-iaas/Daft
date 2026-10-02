@@ -4,8 +4,8 @@
 // (`format: upload` with x-upload-kind / x-accept / x-max-mb, registry 1.5: the value is the
 // handle `upload:<id>` that POST /uploads returns). Parameters that stand in for one another
 // share an `x-choice-group` (registry 1.10): the form shows them as one field. Parameters marked
-// `x-advanced` (registry 2.1: the judgement lines findings are drawn with, design doc 17 §1.3) are left
-// out of the form - they keep their defaults unless an API client sets them.
+// `x-advanced` (registry 2.1: the judgement lines findings are drawn with, design doc 17 §1.3) are fields
+// too, `advanced`: the form folds them away under the module's other settings (F12.5).
 import { zh } from '../locales/zh';
 
 export type ParamKind = 'choice' | 'boolean' | 'integer' | 'number' | 'string' | 'upload';
@@ -41,6 +41,8 @@ export interface ParamField {
   accept?: string[];
   maxMb?: number;
   choiceGroup?: ChoiceGroup;
+  /** x-advanced: a judgement line, folded away in the form */
+  advanced?: boolean;
 }
 
 type Schema = Record<string, unknown>;
@@ -85,7 +87,7 @@ export function paramFields(schema: unknown): ParamField[] {
   const props = asObject(s?.properties);
   if (!props) return [];
   const required = new Set(Array.isArray(s?.required) ? (s!.required as string[]) : []);
-  return Object.entries(props).filter(([, raw]) => asObject(raw)?.['x-advanced'] !== true).map(([key, raw]) => {
+  return Object.entries(props).map(([key, raw]) => {
     const prop = asObject(raw) ?? {};
     const options = optionsOf(prop);
     const kind = kindOf(prop, options);
@@ -104,6 +106,7 @@ export function paramFields(schema: unknown): ParamField[] {
       maxLength: typeof prop.maxLength === 'number' ? prop.maxLength : undefined,
       pattern: typeof prop.pattern === 'string' ? prop.pattern : undefined,
       choiceGroup: groupOf(prop),
+      ...(prop['x-advanced'] === true ? { advanced: true } : {}),
       ...(kind === 'upload'
         ? {
             uploadKind: typeof prop['x-upload-kind'] === 'string' ? (prop['x-upload-kind'] as string) : undefined,

@@ -80,11 +80,13 @@ def get_report_table(request: Request, task_id: str, table: str,
 def list_task_episodes(request: Request, task_id: str, rev: int | None = Query(None, ge=1),
                        list_name: Literal["passed", "reject", "held"] | None = Query(None, alias="list"),
                        review: bool | None = None, q: str | None = Query(None, max_length=64),
+                       level: Literal["blocking", "review", "info"] | None = None,
+                       item: str | None = Query(None, max_length=32),
                        cursor: str | None = None,
                        limit: int = Query(EL.DEFAULT_LIMIT, ge=1, le=EL.MAX_LIMIT)):
     rt, task, revision = _task_and_revision(request, task_id, rev)
     return EL.page(store_of(rt), rt.repo, task, revision, list_name=list_name, review=review,
-                  q=q, cursor=cursor, limit=limit)
+                  q=q, cursor=cursor, limit=limit, level=level, item=item)
 
 
 def _index(index: int) -> None:

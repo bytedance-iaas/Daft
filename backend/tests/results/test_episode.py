@@ -50,6 +50,45 @@ def test_every_episode_of_the_revision(world):
                                  "appealable": True, "text": "与 ep000000 字节级完全重复", "duplicate_of": 0}
 
 
+def test_every_finding_with_the_level_it_has(world):
+    """C4 2.3.0 ``findings``: each finding of the records with its level in the revision (the list entry's),
+    the review line it is asked on and whether it may be appealed; IMG-2 is every episode's underexposure."""
+    def rows(view):
+        return [(f["module"], f["finding"]["code"], f["finding"]["item"], f["level"], f.get("line"),
+                 f["appealable"]) for f in view["findings"]]
+
+    ep5 = _view(world, 5)
+    assert rows(ep5) == [("visual_quality", "exposure_low", "IMG-2", "info", None, False)] * 2 + [
+        ("task_success", "uncertain", "TASK-5", "review", "task_verdict", False),
+        ("skill_profile", "label_disagreement", "LABEL-5", "review", "label", False)]
+    assert ep5["findings"][2]["finding"] == ep5["modules"]["task_success"]["findings"][0]   # the record's own
+    ep7 = _view(world, 7)
+    assert rows(ep7)[-1] == ("dedup", "duplicate", "SET-1", "blocking", None, True)
+    assert ("timestamp_check", "fragment", "STRM-5", "blocking", None, False) in rows(_view(world, 1))
+    assert [f["finding"]["code"] for f in _view(world, 6)["findings"]] == ["exposure_low"] * 2   # failed: none
+
+
+def test_a_person_s_conclusion_is_a_finding_of_its_own(world):
+    """After a person judges ep 3 a failure, r2 lists it as a blocking finding of task_success, with its text;
+    the model's abstention it answered is gone."""
+    from .conftest import T0
+
+    assert world.decide((3, "task_verdict", "failure")).status_code == 200
+    sub = world.start_subtask(at=T0 + 10 * 60_000)
+    world.apply(sub)
+    world.revision(2, subtask_id=sub.id)
+    world.finish_subtask(sub, at=T0 + 20 * 60_000)
+    world.switch(2)
+    ep3 = _view(world, 3)
+    assert ep3["list"] == "reject"
+    human = [f for f in ep3["findings"] if f.get("human")]
+    assert human == [{"module": "task_success", "level": "blocking", "appealable": False, "human": True,
+                      "finding": {"code": "failure", "item": "TASK-5", "severity": "high",
+                                  "message_zh": "人工裁决判失败（任务未完成）"}}]
+    assert not any(f["finding"]["code"] == "uncertain" for f in ep3["findings"])
+    assert any(f["finding"]["code"] == "uncertain" for f in _view(world, 3, rev=1)["findings"])
+
+
 def test_review_items_task_text_and_evidence(world):
     ep5 = _view(world, 5)
     assert [(i["module"], i["kind"]) for i in ep5["review"]] == [

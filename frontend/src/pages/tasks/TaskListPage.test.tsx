@@ -126,7 +126,7 @@ describe('任务列表 (07 §4.1)', () => {
 
   it('paginates by page number with a total and keeps the page in the URL', async () => {
     const { user } = renderApp('/tasks');
-    expect(await screen.findByText('共 40 条')).toBeInTheDocument();
+    expect(await screen.findByText('共 41 条')).toBeInTheDocument();
     await user.click(screen.getByText('2', { selector: '.arco-pagination-item' }));
     await waitFor(() => expect(currentLocation()).toContain('page=2'));
     expect(await screen.findByRole('link', { name: '历史批次 11' })).toBeInTheDocument();

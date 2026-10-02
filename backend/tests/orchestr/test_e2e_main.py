@@ -61,6 +61,10 @@ def test_a_task_runs_every_stage_and_publishes_a_complete_batch(daemon):
     assert page["started"] == page["finished"] == 8
     assert all(set(r["stages"]) == {"numeric", "frame", "vlm"} and set(r["stages"].values()) == {"done"}
                and r["provisional"] for r in page["items"])
+    counts = {m["id"]: m for m in page["modules"]}            # the live module cards (C4 2.3.0)
+    assert {"timestamp_check", "visual_quality", "task_success"} <= set(counts)
+    assert counts["timestamp_check"]["judged"] + counts["timestamp_check"]["error"] == 8
+    assert all(0 <= c["flagged"] <= c["judged"] for c in counts.values())
     assert read_jsonl(os.path.join(rd, "usage.jsonl"))
 
 

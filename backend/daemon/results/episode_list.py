@@ -12,7 +12,13 @@ a time. The tab's search box and its filters are the query parameters:
   any more, the questions that revision asked;
 * ``q`` - an episode number, matched as a substring of the index: ``12``, ``ep12`` and
   ``ep 12`` all find ep 12 (and ep 112, ep 120...); leading zeros are dropped, so the
-  v1 id ``ep000012`` works too.
+  v1 id ``ep000012`` works too;
+* ``level`` / ``item`` (findings results, C2 2.0; design doc 17 §5.4) - only episodes with a
+  finding the task's policy graded at that level / with a finding of that taxonomy item.
+
+On a findings revision every episode also carries the ``items`` and ``levels`` of its
+findings, every module together, from its list entry (C2 final-list 2.0 ``findings``): the
+levels the task's policy gives them after the applied human decisions.
 
 The cursor carries the revision and the last episode returned; the filters are bound
 into it (another filter set is a 400), a cursor of another revision is 409
@@ -22,6 +28,8 @@ from __future__ import annotations
 
 import bisect
 import re
+
+from curation.contracts import modules as registry
 
 from ..errors import ApiError
 from ..pagination import CursorError, decode_cursor, encode_cursor
@@ -37,6 +45,8 @@ MAX_LIMIT = 500
 
 _NUMBER = re.compile(r"^(?:ep)?\s*0*(\d+)$", re.IGNORECASE)
 _NOTHING = re.compile(r"^(?:ep)?$", re.IGNORECASE)
+_ITEM = re.compile(r"^[A-Z]+-[0-9]+$")
+LEVELS = ("blocking", "review", "info")
 
 
 def normalize_query(q: str | None) -> str | None:
@@ -78,6 +88,34 @@ def open_questions(store: ResultStore, repo: P.Repository, task: P.Task,
     return out
 
 
+def finding_index(rev: Revision) -> dict[int, tuple[list[str], list[str]]] | None:
+    """episode -> (the taxonomy items of its findings, the levels they have), from the list entries'
+    ``findings``; None when the lists carry none (a revision of the funnel, C2 1.0)."""
+    def make():
+        entries = rev.entries()
+        if not any(isinstance(e.get("findings"), list) for _, e in entries.values()):
+            return None
+        order = {it["id"]: i for i, it in enumerate(registry.taxonomy()["items"])}
+        out: dict[int, tuple[list[str], list[str]]] = {}
+        for ep, (_, entry) in entries.items():
+            graded = [f for f in entry.get("findings") or [] if isinstance(f, dict)]
+            items = {f["item"] for f in graded if isinstance(f.get("item"), str)}
+            levels = {f.get("level") for f in graded}
+            out[ep] = (sorted(items, key=lambda i: (order.get(i, len(order)), i)),
+                       [lv for lv in LEVELS if lv in levels])
+        return out
+    return rev.store.derived.get_or_make(("finding_index", rev.key), make)
+
+
+def check_item(item: str | None) -> str | None:
+    if item is None or item == "":
+        return None
+    if not _ITEM.match(item):
+        raise ApiError("validation_failed", f"检测项编号的格式是「字母-数字」（如 STRM-5），收到的是「{item[:40]}」",
+                       details={"errors": [{"field": "item", "problem": "not a taxonomy item id"}]})
+    return item
+
+
 def reason_modules(list_name: str, entry: dict) -> list[str]:
     """The modules that put the episode where it is: the deciding modules of a reject,
     the modules that failed on a held episode, none for a passed one."""
@@ -94,10 +132,12 @@ def reason_modules(list_name: str, entry: dict) -> list[str]:
 
 def page(store: ResultStore, repo: P.Repository, task: P.Task, rev: Revision, *,
          list_name: str | None, review: bool | None, q: str | None, cursor: str | None,
-         limit: int) -> dict:
+         limit: int, level: str | None = None, item: str | None = None) -> dict:
     needle = normalize_query(q)
+    item = check_item(item)
     entries = rev.entries()
     asking = open_questions(store, repo, task, rev)
+    found = finding_index(rev)
     counts = {"all": 0, **{name: 0 for name in LISTS}, "review": 0}
     items = []
     for ep in sorted(entries):
@@ -111,10 +151,19 @@ def page(store: ResultStore, repo: P.Repository, task: P.Task, rev: Revision, *,
             continue
         if needle is not None and needle not in str(ep):
             continue
-        items.append({"episode_index": ep, "list": name, "review": ep in asking,
-                      "reason_modules": reason_modules(name, entry),
-                      "review_modules": asking.get(ep, [])})
+        its, lvs = found.get(ep, ([], [])) if found is not None else ([], [])
+        if level is not None and level not in lvs:
+            continue
+        if item is not None and item not in its:
+            continue
+        row = {"episode_index": ep, "list": name, "review": ep in asking,
+               "reason_modules": reason_modules(name, entry), "review_modules": asking.get(ep, [])}
+        if found is not None:
+            row.update(items=its, levels=lvs)
+        items.append(row)
     scope = {"task": task.id, "list": list_name, "review": review, "q": needle}
+    if level is not None or item is not None:            # cursors of 1.x filter sets stay valid
+        scope.update(level=level, item=item)
     start = 0
     if cursor:
         key = decode_cursor(cursor, CURSOR_KIND, scope=scope)

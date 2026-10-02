@@ -335,6 +335,27 @@ def review_items(state: RunState, ep: int, d: Decided, decisions: Decisions,
     return [i for i in items if registry.review_line(i["line"]).applies_to == current]
 
 
+def graded_findings(state: RunState, ep: int, d: Decided) -> list[dict]:
+    """A list entry's ``findings`` (C2 final-list 2.0, design doc 17 §5.4): every finding of the episode with
+    the level it has after the human decisions, pointing at its place in the module's record; a person's
+    conclusion is no finding of a record and carries its text."""
+    recs = state.records(ep)
+    out = []
+    for g in d.verdict.graded:
+        row: dict = {"module": g.module, "code": g.code, "item": g.item, "level": g.level}
+        if g.line:
+            row["line"] = g.line
+        found = (recs.get(g.module) or {}).get("findings") or []
+        index = next((i for i, f in enumerate(found) if f is g.finding), None)
+        if g.human or index is None:
+            row.update(human=True, message_zh=str(g.finding.get("message_zh") or g.code))
+        else:
+            row["index"] = index
+        row["appealable"] = bool(g.appealable and not g.human)
+        out.append(row)
+    return out
+
+
 def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskText | None,
           profile_audit: dict | None) -> dict:
     """The four lists (``cli/final-list.schema.json`` 2.0) plus the merged label audit."""
@@ -346,15 +367,18 @@ def final(state: RunState, revision: int, decisions: Decisions, task_text: TaskT
         d = decided[ep]
         reasons = reasons_of(d)
         entry: dict = {"episode_index": ep}
+        if d.state != "keep":
+            entry["reasons"] = reasons
+        entry["findings"] = graded_findings(state, ep, d)
         if d.state == "keep":
             tt = task_text.delivered(ep) if task_text is not None else None
             if tt is not None:
                 entry["task_text"] = tt
             passed.append(entry)
         elif d.state == "drop":
-            reject.append({**entry, "reasons": reasons})
+            reject.append(entry)
         else:
-            held.append({**entry, "reasons": reasons})
+            held.append(entry)
         if d.state in ("keep", "drop") and d.discard is None:
             items = review_items(state, ep, d, decisions, entries.get(ep) or [], reasons)
             if items:

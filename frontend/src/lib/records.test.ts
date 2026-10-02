@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import modulesJson from '../../../docs/contracts/modules.json';
 import type { ModuleRegistry, ResultRecord, ResultRecordV2 } from '../api/types';
-import { asLegacyRecord, asLegacyReport, isRecordV2, recordScore, recordVerdict } from './records';
+import { asLegacyRecord, asLegacyReport, isRecordV2, legacyReportResponse, recordScore, recordVerdict } from './records';
 
 const reg = modulesJson as unknown as ModuleRegistry;
 
@@ -14,7 +14,7 @@ function v2(module: string, over: Partial<ResultRecordV2> = {}): ResultRecordV2 
 
 const finding = (code: string, item: string) => ({ code, item, severity: 'high' as const, message_zh: code });
 
-describe('records of either format read as 1.0 (design doc 17 §1, until the 2.0 views of F12.5)', () => {
+describe('records of either format read as 1.0 (design doc 17 §1: what the modules\' own views read)', () => {
   it('tells the formats apart and finds the score among the readings', () => {
     const old = { episode_index: 1, module: 'motion_quality', verdict: 'scored', passed: null, score: 0.7, gate: 'soft', details: {}, evidence: [], elapsed_s: null, error: null } as ResultRecord;
     expect(isRecordV2(old)).toBe(false);
@@ -45,7 +45,7 @@ describe('records of either format read as 1.0 (design doc 17 §1, until the 2.0
 
   it('a record 2.0 gets 1.0 fields back and keeps its details', () => {
     const legacy = asLegacyRecord(v2('timestamp_check', { findings: [finding('gap', 'STRM-3')] }), reg);
-    expect(legacy).toMatchObject({ episode_index: 3, module: 'timestamp_check', verdict: 'fail', passed: false, score: null, gate: 'hard' });
+    expect(legacy).toMatchObject({ episode_index: 3, module: 'timestamp_check', verdict: 'fail', passed: false, score: null, gate: 'none' });   // no gate in registry 2.0
     expect(legacy.details).toEqual({ reason: 'kept as v1 wrote it' });
     expect(asLegacyRecord(v2('task_success', { findings: [finding('uncertain', 'TASK-5')] }), reg).passed).toBeNull();
   });
@@ -67,12 +67,19 @@ describe('a report 2.0 read as 1.0', () => {
     ],
   };
 
-  it('sums the rejects per module, gives the gate back and keeps the composite score distribution', () => {
+  it('sums the rejects per module, keeps the composite score distribution; no gate any more (a placeholder)', () => {
     const legacy = asLegacyReport(report);
     expect(legacy.overview.reject_reasons).toEqual([{ module: 'timestamp_check', count: 3 }, { module: 'dedup', count: 1 }]);
-    expect(legacy.modules.map((m) => m.gate)).toEqual(['soft', 'hard']);
+    expect(legacy.modules.map((m) => m.gate)).toEqual(['none', 'none']);
     expect(legacy.modules[0].summary).toEqual({ counts: {}, score_hist: [{ name: '0.9–1.0', count: 8 }] });   // 2.0 statistics left out
     expect('score_hist' in legacy.modules[1].summary).toBe(false);
+  });
+
+  it('the response keeps the report 2.0 itself for the findings views', () => {
+    const r = legacyReportResponse({ revision: 1, report, links: [] });
+    expect(r.v2).toBe(report);
+    expect(r.report.modules.map((m) => m.id)).toEqual(['motion_quality', 'timestamp_check']);
+    expect(legacyReportResponse({ revision: 1, report: { schema_version: '1.0', overview: { reject_reasons: [] }, modules: [] }, links: [] }).v2).toBeNull();
   });
 
   it('leaves a report 1.0 as it is (D59)', () => {

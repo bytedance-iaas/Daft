@@ -12,14 +12,14 @@ describe('人工裁决 list (requester, third round; 质检报告 list dropped i
     const seen = recordRequests();
     const { user } = renderApp('/adjudication');
     await screen.findByRole('heading', { name: '人工裁决' });
-    await waitFor(() => expect(rows('adjudication')).toEqual(['droid 前 50 条质检', 'droid-200 抽检']));
+    await waitFor(() => expect(rows('adjudication')).toEqual(['droid 前 50 条质检', 'droid 前 50 条质检（两块并行）', 'droid-200 抽检']));
     const last = listCalls(seen).at(-1)!;
     expect([last.query.get('has_result'), last.query.get('pending_adjudication')]).toEqual(['true', 'true']);
     const first = screen.getByTestId('adjudication-list').querySelector('tbody tr') as HTMLElement;
     expect(within(first).getByRole('button', { name: '人工裁决（10）' })).toHaveClass('arco-btn-primary');
     await user.click(screen.getByText('全部有结果的'));
     await waitFor(() => expect(currentLocation()).toBe('/adjudication?show=all'));
-    await waitFor(() => expect(rows('adjudication').length).toBeGreaterThan(2));
+    await waitFor(() => expect(rows('adjudication').length).toBeGreaterThan(3));
     expect(listCalls(seen).at(-1)?.query.get('pending_adjudication')).toBeNull();
   });
 

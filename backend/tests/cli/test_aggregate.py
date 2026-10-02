@@ -714,3 +714,38 @@ def test_a_decision_that_breaks_the_contract_is_a_usage_error(tmp_path, bad, wor
     res = run("adjudicate-apply", "--run-dir", rd, "--decisions", str(path))
     assert res.rc == 2 and words in res.doc["error"]["message"]
     assert not os.path.exists(os.path.join(rd, "adjudication", "applied.jsonl"))
+
+
+def test_every_entry_lists_its_findings_with_the_level_they_have(tmp_path):
+    """C2 final-list 2.0 ``findings`` (F12.5): every finding of the episode with its level after the applied
+    human decisions, pointing at its place in the module's record; a person's conclusion carries its text,
+    an appeal turns the appealable blocking findings to info, a settled abstention is gone, and the member a
+    dedup group keeps has no duplicate finding."""
+    rd = RunDir(str(tmp_path / "run")).good(0, 1, 2, 3, 4, 5)
+    rd.replace("timestamp_check", 1, "fail")
+    rd.replace("task_success", 2, "fail")
+    rd.replace("task_success", 3, "abstain")
+    rd.replace("task_success", 4, "abstain")
+    rd.replace("timestamp_check", 0, "fail")                   # the original of a group is rejected ...
+    rd.replace("dedup", 5, "fail", details={"duplicate_of": 0})    # ... so its copy is the one kept
+    run_dir = rd.write()
+
+    def graded(lists, ep):
+        name = next(n for n in ("passed", "reject", "held") if ep in lists[n])
+        return [(f["module"], f["code"], f["item"], f["level"], f.get("line"), f.get("index"),
+                 f.get("human", False), f["appealable"]) for f in lists[name][ep]["findings"]]
+
+    first = final(run_dir, "0-5")
+    assert graded(first, 1) == [("timestamp_check", "gap", "STRM-3", "blocking", None, 0, False, False)]
+    assert graded(first, 2) == [("task_success", "failure", "TASK-5", "blocking", None, 0, False, True)]
+    assert graded(first, 3) == [("task_success", "uncertain", "TASK-5", "review", "task_verdict", 0, False, False)]
+    assert sorted(first["passed"]) == [3, 4, 5] and graded(first, 5) == []      # the keeper: no duplicate
+    assert all(isinstance(e["findings"], list) for n in ("passed", "reject", "held") for e in first[n].values())
+
+    apply(run_dir, decisions(str(tmp_path / "d.json"), (2, "reject_appeal", "restore", None),
+                             (3, "task_verdict", "failure", None), (4, "task_verdict", "success", None)))
+    after = final(run_dir, "0-5", revision=2)
+    assert graded(after, 2) == [("task_success", "failure", "TASK-5", "info", None, 0, False, True)]
+    assert graded(after, 3) == [("task_success", "failure", "TASK-5", "blocking", None, None, True, False)]
+    assert after["reject"][3]["findings"][0]["message_zh"] == "人工裁决判失败（任务未完成）"
+    assert graded(after, 4) == []                                              # its abstention is settled

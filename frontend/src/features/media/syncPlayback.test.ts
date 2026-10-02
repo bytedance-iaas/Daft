@@ -110,6 +110,17 @@ function setup(windows: { from?: number; to?: number }[] = [{}, {}, {}]) {
 }
 
 describe('synced playback of the cameras (07 §9, F6.2)', () => {
+  it("同时播放 from a finding's moment (design doc 17 §5.4) aligns every camera there, inside its window", () => {
+    const { c, els, ids, attach, ready, rel } = setup([{ from: 28, to: 42 }, { from: 0, to: 14 }, {}]);
+    els.forEach((_, i) => attach(i));
+    ready();
+    c.start(ids, 3.5);
+    c.tick();
+    expect([0, 1, 2].map(rel)).toEqual([3.5, 3.5, 3.5]);
+    expect(els[0].currentTime).toBe(31.5);
+    expect(c.getStatus()).toBe('playing');
+  });
+
   it('never plays on its own: attaching, loading and buffering start nothing', () => {
     const { c, els, attach, ready } = setup();
     els.forEach((_, i) => attach(i));

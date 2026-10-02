@@ -283,7 +283,9 @@ curation aggregate --run-dir <dir> --phase funnel|final [--revision N] --json
 > `{episode_index, verdict, blocking, review, info_count, error_modules, reason}`；四份清单的 `reasons[]` 多 `code`、`item`，`kind` 取
 > `finding | human | execution_error | duplicate`。策略取 `run.json` 的 `policy`（开始时冻结），每个结果版本写一份 `policy.json`；
 > 人的结论落在它回答的发现上，复议按发现（全部 blocking 发现可复议才受理），去重组留哪条在人工决定之后选；1.0 的运行目录拒绝聚合
-> （退出码 2，D59）。细化见设计 17 §7「F12.3 落地时的细化」。下文是漏斗判决（1.0）的写法。
+> （退出码 2，D59）。细化见设计 17 §7「F12.3 落地时的细化」。F12.5 起 passed / reject / held 的每条多 `findings`：这一条的全部发现与它在
+> 这一版的级别（策略加已应用的人工裁决；`index` 指向模块记录里的那条，人的结论带它的一句话），控制台的 Episode 明细与按级别 / 检测项
+> 筛选读它（设计 17 §7「F12.5 落地时的细化」）。下文是漏斗判决（1.0）的写法。
 
 分两个阶段，对应 v1 `run.py` 里的两段：
 

@@ -54,7 +54,7 @@ export function usageTotals(p: number, c: number, r: number, cached: number, req
 
 export const ZERO_USAGE = usageTotals(0, 0, 0, 0, 0, 0);
 
-function stage(id: StageProgress['id'], state: StageProgress['state'], done: number, total: number, elapsed: number | null, extra: Partial<StageProgress> = {}): StageProgress {
+export function stage(id: StageProgress['id'], state: StageProgress['state'], done: number, total: number, elapsed: number | null, extra: Partial<StageProgress> = {}): StageProgress {
   return { id, state, done, total, elapsed_s: elapsed, eta_s: null, ...extra };
 }
 
@@ -613,10 +613,10 @@ export const RUNNING_TASK = 'task_01HXR4M7';
 // the mock tasks select v1's eight; the EEF module (opt-in, needs a file) and the camera defects, which ride
 // on task_success and are never selected, are not among them
 const V1_MODULES = registry.modules.filter((m) => !m.rides_on && !(m.needs as string[]).includes('eef_input'));
-const ALL_MODULES = V1_MODULES.map((m) => m.id);
+export const ALL_MODULES = V1_MODULES.map((m) => m.id);
 const NON_VLM = V1_MODULES.filter((m) => !(m.needs as string[]).includes('vlm')).map((m) => m.id);
 
-interface TaskSeed {
+export interface TaskSeed {
   id: string;
   name: string;
   state: TaskState;
@@ -644,7 +644,7 @@ interface TaskSeed {
   embodiment?: string | null;
 }
 
-function buildTask(s: TaskSeed): Task {
+export function buildTask(s: TaskSeed): Task {
   const started = s.state === 'created' ? null : s.created + 2000;
   const terminal = ['stopped', 'succeeded', 'completed_with_errors', 'failed'].includes(s.state);
   const vlm = s.vlm ?? s.selected.some((id) => (registry.modules.find((m) => m.id === id)?.needs as string[] | undefined)?.includes('vlm'));
@@ -1169,7 +1169,7 @@ export function episodeList(ep: number): EpisodeView['list'] {
   return 'passed';
 }
 
-const CAMERAS = ['exterior_image_1_left', 'exterior_image_2_left', 'wrist_image_left'];
+export const CAMERAS = ['exterior_image_1_left', 'exterior_image_2_left', 'wrist_image_left'];
 
 function record(ep: number, module: string, gate: ResultRecord['gate'], verdict: ResultRecord['verdict'], score: number | null, details: Record<string, unknown>, error: ResultRecord['error'] = null): ResultRecord {
   return {
@@ -1189,9 +1189,9 @@ function record(ep: number, module: string, gate: ResultRecord['gate'], verdict:
 // The main task's per-episode readings, shaped like the details the checks write (the Episode tab
 // renders them): ep 18 a fragment, the task_success rejects / abstentions / errors above, ep 44 a
 // copy of ep 43, four episodes with a stuck actuator, six with a sync reading worth a look.
-const STUCK = [8, 21, 34, 46];
-const SYNC_NOTE: Record<number, 'annotated' | 'no_motion' | 'suspect' | 'undecidable'> = { 12: 'annotated', 20: 'no_motion', 26: 'suspect', 35: 'undecidable', 5: 'undecidable', 41: 'undecidable' };
-const DUPLICATE_OF: Record<number, number> = { 44: 43 };
+export const STUCK = [8, 21, 34, 46];
+export const SYNC_NOTE: Record<number, 'annotated' | 'no_motion' | 'suspect' | 'undecidable'> = { 12: 'annotated', 20: 'no_motion', 26: 'suspect', 35: 'undecidable', 5: 'undecidable', 41: 'undecidable' };
+export const DUPLICATE_OF: Record<number, number> = { 44: 43 };
 const SKILL_GROUPS: [string, string, number[]][] = [
   ['放置', '放入容器', [1, 10, 14, 25, 29, 35, 42, 48]],
   ['放置', '放到台面', [2, 13, 19, 27, 37, 43]],

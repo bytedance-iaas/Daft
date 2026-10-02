@@ -87,6 +87,8 @@ class Question:
     revision: int = 0
     optional: bool = False              # an optional follow-up: never pending, never blocking
     follow_up_of: str | None = None     # the line whose answer opened it (C1 1.3 follow_ups)
+    codes: tuple[str, ...] = ()         # C2 2.0: the finding codes the question is about
+    items: tuple[str, ...] = ()         # ... and their taxonomy items
 
 
 def _str(v) -> str | None:
@@ -135,7 +137,9 @@ def questions_of(rev: Revision) -> dict[tuple[int, str], Question]:
                             and not isinstance(i.get("duplicate_of"), bool)), None)
                 q = {"source_module": str(first.get("source_module") or ""),
                      "priority": _str(first.get("priority")), "annotation": _task_text(rev, ep),
-                     "duplicate_of": dup}
+                     "duplicate_of": dup,
+                     "codes": tuple(dict.fromkeys(str(c) for i in items for c in i.get("codes") or [])),
+                     "items": tuple(dict.fromkeys(str(c) for i in items for c in i.get("items") or []))}
                 if line_id in relabel:                  # the annotation against the description
                     a = audit.get(ep) or {}
                     caption = _str(a.get("caption"))
@@ -191,6 +195,8 @@ class Card:
                        "annotation": q.annotation, "caption": q.caption,
                        "suggestion": q.suggestion, "priority": q.priority,
                        "latest_decision": decision_json(d) if d is not None else None})
+            if q.codes:                         # C2 2.0 (C4 2.3.0): what the card is rendered by
+                qs[-1].update(codes=list(q.codes), items=list(q.items))
         return {"episode_index": self.episode, "status": self.status, "questions": qs}
 
     def counts_as_pending(self) -> bool:

@@ -78,9 +78,12 @@ def page(runtime, task, *, before: int | None, limit: int) -> dict:
         more = len(rows) > limit
         rows = rows[:limit]
         totals = store.totals()
-        return {"items": [_item(run_dir, store, modules, policy, row) for row in rows],
-                "next_cursor": rows[-1]["updated_seq"] if more and rows else None,
-                **totals}
+        out = {"items": [_item(run_dir, store, modules, policy, row) for row in rows],
+               "next_cursor": rows[-1]["updated_seq"] if more and rows else None,
+               **totals}
+        if store.blocks is not None:                    # per module so far (design doc 17 §5.3)
+            out["modules"] = [{"id": m, **c} for m, c in store.module_counts(modules).items()]
+        return out
     finally:
         store.close()
 

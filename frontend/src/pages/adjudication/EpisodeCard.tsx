@@ -10,6 +10,7 @@ import { EefCpuEvidence, EefCpuTable, EefDatasetRecord, EefWindows } from '../..
 import { SignedImage } from '../../features/media/SignedMedia';
 import { SyncedVideos } from '../../features/media/SyncedVideos';
 import { answerOn, catalogLine, lineDecisions, lineTitle, repeats, type CardView, type EffectiveDecision, type ReviewCatalog } from '../../lib/adjudication';
+import { codeName, codeSpec, itemLabel } from '../../lib/findings';
 import { zh } from '../../locales/zh';
 import { asLegacyRecord } from '../../lib/records';
 
@@ -100,9 +101,23 @@ function DecidedNote({ latest, effective }: { latest: Decision | null | undefine
   return null;
 }
 
+/**
+ * A question's head: its source module and line, and on a findings revision (C4 2.3.0, design doc 17 §4.4)
+ * the findings it asks about - each code by the registry's name, with its taxonomy item.
+ */
 function QuestionHead({ index, q, catalog }: { index: number; q: Question; catalog: ReviewCatalog | undefined }) {
   const reg = useModules();
-  return <b>{zh.adjudication.questionHead(index, moduleName(reg.data, q.source_module), lineTitle(catalog, q.line))}</b>;
+  const codes = q.codes ?? [];
+  return (
+    <>
+      <b>{zh.adjudication.questionHead(index, moduleName(reg.data, q.source_module), lineTitle(catalog, q.line))}</b>
+      {codes.length ? (
+        <div className="finding-meta" data-testid="question-codes">
+          {codes.map((c) => `${codeName(reg.data, q.source_module, c)}（${itemLabel(reg.data, codeSpec(reg.data, q.source_module, c)?.item ?? null)}）`).join('、')}
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 function LabelQuestion({ index, view, q, catalog, onDecide }: { index: number; view: CardView; q: Question; catalog: ReviewCatalog | undefined; onDecide: Decide }) {

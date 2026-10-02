@@ -32,6 +32,32 @@
        "text": "「任务成败判定」执行出错（probe: timeout），不影响结论"
       }
      ],
+     "findings": [
+      {
+       "module": "timestamp_check",
+       "code": "gap",
+       "item": "STRM-3",
+       "level": "blocking",
+       "index": 0,
+       "appealable": false
+      },
+      {
+       "module": "data_integrity",
+       "code": "decode_failed",
+       "item": "FILE-4",
+       "level": "blocking",
+       "index": 1,
+       "appealable": false
+      },
+      {
+       "module": "motion_quality",
+       "code": "idle_opening",
+       "item": "TASK-1",
+       "level": "info",
+       "index": 0,
+       "appealable": false
+      }
+     ],
      "task_text": {
       "text": "put the cup in the sink",
       "source": "原始标注"
@@ -48,6 +74,33 @@
        "appealable": true,
        "duplicate_of": 2,
        "text": "与 episode 2 完全重复"
+      },
+      {
+       "module": "task_success",
+       "kind": "human",
+       "code": "failure",
+       "item": "TASK-5",
+       "appealable": false,
+       "text": "人工裁决判失败（任务未完成）"
+      }
+     ],
+     "findings": [
+      {
+       "module": "dedup",
+       "code": "duplicate",
+       "item": "SET-1",
+       "level": "blocking",
+       "index": 0,
+       "appealable": true
+      },
+      {
+       "module": "task_success",
+       "code": "failure",
+       "item": "TASK-5",
+       "level": "blocking",
+       "human": true,
+       "message_zh": "人工裁决判失败（任务未完成）",
+       "appealable": false
       }
      ]
     }
@@ -376,6 +429,102 @@
        "line": "reject_appeal",
        "reason": "与 episode 40 字节级完全重复",
        "duplicate_of": 40
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "schema_version": "2.0",
+   "list": "reject",
+   "revision": 1,
+   "count": 2,
+   "episodes": [
+    {
+     "episode_index": 4,
+     "reasons": [
+      {
+       "module": "timestamp_check",
+       "kind": "finding",
+       "code": "gap",
+       "item": "STRM-3",
+       "appealable": false,
+       "text": "丢帧跳变：第 211 帧后断开 0.8 秒"
+      },
+      {
+       "module": "data_integrity",
+       "kind": "finding",
+       "code": "decode_failed",
+       "item": "FILE-4",
+       "appealable": false,
+       "text": "wrist 视频第 3.2 秒起解码失败"
+      },
+      {
+       "module": "task_success",
+       "kind": "execution_error",
+       "text": "「任务成败判定」执行出错（probe: timeout），不影响结论"
+      }
+     ],
+     "findings": [
+      {
+       "module": "timestamp_check",
+       "code": "gap",
+       "item": "STRM-3",
+       "index": 0,
+       "appealable": false
+      },
+      {
+       "module": "data_integrity",
+       "code": "decode_failed",
+       "item": "FILE-4",
+       "level": "blocking",
+       "index": 1,
+       "appealable": false
+      },
+      {
+       "module": "motion_quality",
+       "code": "idle_opening",
+       "item": "TASK-1",
+       "level": "info",
+       "index": 0,
+       "appealable": false
+      }
+     ],
+     "task_text": {
+      "text": "put the cup in the sink",
+      "source": "原始标注"
+     }
+    },
+    {
+     "episode_index": 7,
+     "reasons": [
+      {
+       "module": "dedup",
+       "kind": "duplicate",
+       "code": "duplicate",
+       "item": "SET-1",
+       "appealable": true,
+       "duplicate_of": 2,
+       "text": "与 episode 2 完全重复"
+      }
+     ],
+     "findings": [
+      {
+       "module": "dedup",
+       "code": "duplicate",
+       "item": "SET-1",
+       "level": "blocking",
+       "index": 0,
+       "appealable": true
+      },
+      {
+       "module": "task_success",
+       "code": "failure",
+       "item": "TASK-5",
+       "level": "blocking",
+       "human": true,
+       "message_zh": "人工裁决判失败（任务未完成）",
+       "appealable": false
       }
      ]
     }

@@ -222,9 +222,12 @@ def test_a_golden_with_the_data_integrity_gate_replays_exactly(v2_golden, mini_d
                      "--verdict-only", "task_success", "--json")
     integ = json.loads(res.stdout)["modules"]["data_integrity"]
     assert res.returncode == 0 and integ["status"] == "pass" and integ["mode"] == "strict", integ
+    def verdicts(path: str) -> list[dict]:
+        # the lists' verdicts; each entry's findings (C2 final-list 2.0) also name the module's own suspicions
+        with open(path, encoding="utf-8") as fh:
+            return [{k: v for k, v in e.items() if k != "findings"} for e in json.load(fh)["episodes"]]
+
     for name in ("passed", "reject", "held"):
-        with open(os.path.join(golden, "revisions", "r0001", f"{name}.json"), encoding="utf-8") as fh:
-            mine = json.load(fh)["episodes"]
-        with open(os.path.join(v2_golden[0], "revisions", "r0001", f"{name}.json"), encoding="utf-8") as fh:
-            theirs = json.load(fh)["episodes"]
+        mine = verdicts(os.path.join(golden, "revisions", "r0001", f"{name}.json"))
+        theirs = verdicts(os.path.join(v2_golden[0], "revisions", "r0001", f"{name}.json"))
         assert mine == theirs, name

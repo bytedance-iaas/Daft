@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Curator v2 API
-  version: 2.2.0
+  version: 2.3.0
   description: |
     C4 of the frozen contracts (design doc 03). JSON in, JSON out, UTF-8.
     Every route lives under the mount prefix `{base}` (empty by default, `/curation` in
@@ -179,6 +179,16 @@ info:
     `provisional` verdict; `last_stage` / `next_stage` are a funnel run's position and only appear on
     tasks made before. `StageProgress` of a two-block run names its `block` and, for dedup and the
     skill profile, `full_set`.
+
+    2.3.0 (2026-10-02): the console's findings views (F12.5, design doc 17 §5). On a findings
+    revision every `TaskEpisode` carries the `items` and `levels` of its findings (its list
+    entry's, C2 final-list 2.0: the policy's levels after the applied human decisions) and
+    `listTaskEpisodes` filters by `level` and `item`; `EpisodeView.findings` lists every finding of
+    the episode with its level (`EpisodeFinding`); an `AdjudicationQuestion` names the finding
+    `codes` it asks about and their `items`; the live episode page of a two-block run counts per
+    module the episodes judged, failed on and with a finding (`modules`). The report (C2) adds
+    the rejects per item (`overview.reject_items`) and per module the episodes with a finding,
+    in all and per level (`summary.flagged_episodes`, `summary.levels`).
 servers:
   - url: "{base}/api/v1"
     variables:
@@ -1332,7 +1342,9 @@ paths:
         substring of the index; a leading `ep` and leading zeros are dropped, so `12`, `ep12`,
         `ep 12` and `ep000012` all find ep 12. The cursor carries the revision and is bound to
         the filters (another filter set is 400 validation_failed, another revision 409
-        result_changed). `total` counts the filtered set, `counts` the whole revision.
+        result_changed). `total` counts the filtered set, `counts` the whole revision. On a findings
+        revision (C2 2.0) `level` and `item` keep the episodes with a finding of that level / that
+        taxonomy item (2.3.0); a revision without them (the funnel's) matches none.
       parameters:
         - name: list
           in: query
@@ -1341,6 +1353,14 @@ paths:
           in: query
           description: only episodes with (true) or without (false) an open question
           schema: {type: boolean}
+        - name: level
+          in: query
+          description: only episodes with a finding of this level (findings revisions, 2.3.0)
+          schema: {$ref: "#/components/schemas/FindingLevel"}
+        - name: item
+          in: query
+          description: only episodes with a finding of this taxonomy item (findings revisions, 2.3.0); not an item id is 400
+          schema: {type: string, maxLength: 32}
         - name: q
           in: query
           description: "an episode number, optionally with the ep prefix: 12, ep12, ep 12"
@@ -1404,6 +1424,20 @@ paths:
                   next_cursor: {type: [integer, "null"], minimum: 0}
                   started: {type: integer, minimum: 0}
                   finished: {type: integer, minimum: 0}
+                  modules:
+                    type: array
+                    description: >-
+                      two-block runs (2.3.0): per per-episode module so far, the episodes it judged, the ones
+                      it failed on and, of the judged, the ones with a finding (the live module cards)
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, judged, error, flagged]
+                      properties:
+                        id: {$ref: "#/components/schemas/ModuleId"}
+                        judged: {type: integer, minimum: 0}
+                        error: {type: integer, minimum: 0}
+                        flagged: {type: integer, minimum: 0}
         default: {$ref: "#/components/responses/Error"}
   /tasks/{id}/pipeline/episodes/{index}:
     parameters:
@@ -3016,6 +3050,24 @@ components:
               path: {type: string}
               from_ts: {type: number}
               to_ts: {type: number}
+        findings:
+          type: array
+          items: {$ref: "#/components/schemas/EpisodeFinding"}
+          description: >-
+            findings revisions (C2 2.0, 2.3.0): every finding of the episode, every module, with the
+            level it has in this revision (its list entry's: the task's policy after the applied human
+            decisions)
+    EpisodeFinding:
+      type: object
+      additionalProperties: false
+      required: [module, level, appealable, finding]
+      properties:
+        module: {$ref: "#/components/schemas/ModuleId"}
+        level: {$ref: "#/components/schemas/FindingLevel"}
+        line: {$ref: "#/components/schemas/ReviewLineId", description: "review: the line it is asked on"}
+        appealable: {type: boolean, description: "a reject it causes may be appealed (D42)"}
+        human: {type: boolean, description: "a person's conclusion (adjudication), not a module's finding"}
+        finding: {$ref: "./cli/common.schema.json#/$defs/finding"}
     TaskEpisode:
       type: object
       additionalProperties: false
@@ -3035,11 +3087,11 @@ components:
         items:
           type: array
           items: {$ref: "#/components/schemas/TaxonomyItemId"}
-          description: findings results (C2 2.0) only - the taxonomy items of its findings, every module together
+          description: findings revisions (C2 2.0) only - the taxonomy items of its findings, every module together, in taxonomy order
         levels:
           type: array
           items: {$ref: "#/components/schemas/FindingLevel"}
-          description: findings results (C2 2.0) only - the levels its findings got under the task's policy
+          description: findings revisions (C2 2.0) only - the levels its findings have (the task's policy after the applied human decisions), blocking first
     TaskEpisodePage:
       type: object
       additionalProperties: false
@@ -3181,6 +3233,14 @@ components:
         suggestion: {type: [string, "null"], description: "suggested new label"}
         priority: {type: [string, "null"]}
         latest_decision: {oneOf: [{type: "null"}, {$ref: "#/components/schemas/Decision"}]}
+        codes:
+          type: array
+          items: {type: string, pattern: "^[a-z][a-z0-9_]*$"}
+          description: "findings revisions (2.3.0): the finding codes of the source module the question is about"
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/TaxonomyItemId"}
+          description: "findings revisions (2.3.0): their taxonomy items"
     AdjudicationCard:
       type: object
       additionalProperties: false

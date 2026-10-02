@@ -68,21 +68,23 @@ def test_the_queue_of_the_first_revision(world):
                      "reason": label["reason"], "duplicate_of": None, "follow_up_of": None,
                      "annotation": TEXT[4],
                      "caption": CAPTION[4], "suggestion": CAPTION[4], "priority": "参考",
-                     "latest_decision": None}
+                     "latest_decision": None, "codes": ["label_disagreement"], "items": ["LABEL-5"]}
     assert cards[5]["questions"][0]["priority"] == "重点"
     verdict = cards[3]["questions"][0]
     assert (verdict["line"], verdict["source_module"], verdict["annotation"]) == (
         "task_verdict", "task_success", TEXT[3])
     assert verdict["reason"] == "任务成败拿不准：两层证据矛盾，进人工"           # the finding's sentence
+    assert (verdict["codes"], verdict["items"]) == (["uncertain"], ["TASK-5"])   # C4 2.3.0: what it asks about
     # ep 8 (motion_quality could not score it) is no question for a person
     appeals = _page(world, tab="appeals", status="all")
     assert [c["episode_index"] for c in appeals["items"]] == [2, 7]
     q = appeals["items"][0]["questions"][0]
     assert (q["line"], q["source_module"], q["annotation"]) == ("reject_appeal", "task_success", TEXT[2])
     assert "3 路复核一致判未完成" in q["reason"]
-    assert q["duplicate_of"] is None
+    assert q["duplicate_of"] is None and (q["codes"], q["items"]) == (["failure"], ["TASK-5"])
     dup = appeals["items"][1]["questions"][0]            # D42: a duplicate can be restored
     assert (dup["line"], dup["source_module"], dup["duplicate_of"]) == ("reject_appeal", "dedup", 0)
+    assert (dup["codes"], dup["items"]) == (["duplicate"], ["SET-1"])
     assert "与 ep000000 字节级完全重复" in dup["reason"]
     assert appeals["counts"] == body["counts"]            # counts are the whole task's
 

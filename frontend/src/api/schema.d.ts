@@ -843,7 +843,9 @@ export interface paths {
          *     substring of the index; a leading `ep` and leading zeros are dropped, so `12`, `ep12`,
          *     `ep 12` and `ep000012` all find ep 12. The cursor carries the revision and is bound to
          *     the filters (another filter set is 400 validation_failed, another revision 409
-         *     result_changed). `total` counts the filtered set, `counts` the whole revision.
+         *     result_changed). `total` counts the filtered set, `counts` the whole revision. On a findings
+         *     revision (C2 2.0) `level` and `item` keep the episodes with a finding of that level / that
+         *     taxonomy item (2.3.0); a revision without them (the funnel's) matches none.
          */
         get: operations["listTaskEpisodes"];
         put?: never;
@@ -2053,6 +2055,19 @@ export interface components {
                 from_ts?: number;
                 to_ts?: number;
             }[];
+            /** @description findings revisions (C2 2.0, 2.3.0): every finding of the episode, every module, with the level it has in this revision (its list entry's: the task's policy after the applied human decisions) */
+            findings?: components["schemas"]["EpisodeFinding"][];
+        };
+        EpisodeFinding: {
+            module: components["schemas"]["ModuleId"];
+            level: components["schemas"]["FindingLevel"];
+            /** @description review: the line it is asked on */
+            line?: components["schemas"]["ReviewLineId"];
+            /** @description a reject it causes may be appealed (D42) */
+            appealable: boolean;
+            /** @description a person's conclusion (adjudication), not a module's finding */
+            human?: boolean;
+            finding: components["schemas"]["finding"];
         };
         TaskEpisode: {
             episode_index: number;
@@ -2064,9 +2079,9 @@ export interface components {
             reason_modules: components["schemas"]["ModuleId"][];
             /** @description the source modules of the open questions */
             review_modules: components["schemas"]["ModuleId"][];
-            /** @description findings results (C2 2.0) only - the taxonomy items of its findings, every module together */
+            /** @description findings revisions (C2 2.0) only - the taxonomy items of its findings, every module together, in taxonomy order */
             items?: components["schemas"]["TaxonomyItemId"][];
-            /** @description findings results (C2 2.0) only - the levels its findings got under the task's policy */
+            /** @description findings revisions (C2 2.0) only - the levels its findings have (the task's policy after the applied human decisions), blocking first */
             levels?: components["schemas"]["FindingLevel"][];
         };
         TaskEpisodePage: {
@@ -2188,6 +2203,10 @@ export interface components {
             suggestion?: string | null;
             priority?: string | null;
             latest_decision?: null | components["schemas"]["Decision"];
+            /** @description findings revisions (2.3.0): the finding codes of the source module the question is about */
+            codes?: string[];
+            /** @description findings revisions (2.3.0): their taxonomy items */
+            items?: components["schemas"]["TaxonomyItemId"][];
         };
         AdjudicationCard: {
             episode_index: number;
@@ -2555,6 +2574,11 @@ export interface components {
                     count: number;
                 }[];
             };
+            /** @description rejected episodes per taxonomy item of their blocking reasons, every module together - an episode counts once per item (the overview's reject reasons by item, F12.5); item null: a reason without a finding code (a person's discard) */
+            reject_items?: {
+                item: components["schemas"]["item_id"] | null;
+                count: number;
+            }[];
             /** @description episodes with a finding of each item, every module together, split by the level the policy gave */
             findings_by_item: {
                 item: components["schemas"]["item_id"] | null;
@@ -2614,6 +2638,14 @@ export interface components {
             summary: {
                 /** @description episodes the module judged (status ok) */
                 assessed_episodes: number;
+                /** @description of them, the episodes with at least one finding of the module (F12.5) */
+                flagged_episodes?: number;
+                /** @description the episodes with at least one finding of the module the revision's policy grades blocking / review / info (F12.5) */
+                levels?: {
+                    blocking: number;
+                    review: number;
+                    info: number;
+                };
                 /** @description per finding code: the episodes with it and their share of the assessed ones */
                 items: {
                     item: components["schemas"]["item_id"] | null;
@@ -4302,6 +4334,10 @@ export interface operations {
                 list?: "passed" | "reject" | "held";
                 /** @description only episodes with (true) or without (false) an open question */
                 review?: boolean;
+                /** @description only episodes with a finding of this level (findings revisions, 2.3.0) */
+                level?: components["schemas"]["FindingLevel"];
+                /** @description only episodes with a finding of this taxonomy item (findings revisions, 2.3.0); not an item id is 400 */
+                item?: string;
                 /** @description an episode number, optionally with the ep prefix: 12, ep12, ep 12 */
                 q?: string;
                 /** @description opaque, from next_cursor */
@@ -4381,6 +4417,13 @@ export interface operations {
                         next_cursor: number | null;
                         started: number;
                         finished: number;
+                        /** @description two-block runs (2.3.0): per per-episode module so far, the episodes it judged, the ones it failed on and, of the judged, the ones with a finding (the live module cards) */
+                        modules?: {
+                            id: components["schemas"]["ModuleId"];
+                            judged: number;
+                            error: number;
+                            flagged: number;
+                        }[];
                     };
                 };
             };

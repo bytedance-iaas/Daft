@@ -1,10 +1,10 @@
-import { Button, Card, Divider, Input, InputNumber, Radio, Select, Space, Switch, Typography } from '@arco-design/web-react';
+import { Button, Card, Collapse, Divider, Input, InputNumber, Radio, Select, Space, Switch, Typography } from '@arco-design/web-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../../api/errors';
 import type { ModuleRegistry, PreflightResult, Upload, UploadIssue, UploadKind } from '../../api/types';
 import { uploadFile, uploadText, type UploadPhase } from '../../api/uploads';
 import { paramDraft, type ParamDraftView } from '../../lib/paramDraft';
-import { groupFields, paramFields, UPLOAD_PREFIX, type ChoiceGroup, type ParamField } from '../../lib/paramSchema';
+import { groupFields, paramFields, UPLOAD_PREFIX, type ChoiceGroup, type FieldOrGroup, type ParamField } from '../../lib/paramSchema';
 import { availabilityOf, embodimentHint, reasonText } from '../../lib/preflight';
 import { zh } from '../../locales/zh';
 import { Field } from './Field';
@@ -368,6 +368,30 @@ export function ModuleSettings({
   const setParam = (mod: string, key: string, value: unknown) =>
     set((prev) => ({ params: { ...prev.params, [mod]: { ...(prev.params[mod] ?? {}), [key]: value } } }));
   const options = embodimentOptions.length ? embodimentOptions : needing.flatMap((m) => embodimentHint(preflight, m.id)?.options ?? []);
+  const renderEntry = (mod: string, entry: FieldOrGroup) =>
+    'group' in entry ? (
+      <ChoiceGroupField
+        key={entry.group.id}
+        mod={mod}
+        group={entry.group}
+        fields={entry.fields}
+        values={v.params[mod] ?? {}}
+        errors={errors}
+        onChange={(key, x) => setParam(mod, key, x)}
+        onBusy={(key, b) => onUploadBusy?.(`${mod}.${key}`, b)}
+      />
+    ) : (
+      <Field key={entry.field.key} label={entry.field.title} required={entry.field.required} extra={entry.field.description} error={errors[`params.${mod}.${entry.field.key}`]}>
+        <ParamInput
+          f={entry.field}
+          value={v.params[mod]?.[entry.field.key]}
+          error={errors[`params.${mod}.${entry.field.key}`]}
+          onChange={(x) => setParam(mod, entry.field.key, x)}
+          onBusy={(b) => onUploadBusy?.(`${mod}.${entry.field.key}`, b)}
+          draft={entry.field.kind === 'upload' ? paramDraft(preflight, mod, entry.field.key) : null}
+        />
+      </Field>
+    );
 
   return (
     <Card title={zh.taskForm.screen2Title}>
@@ -424,31 +448,15 @@ export function ModuleSettings({
             </Typography.Title>
           }
         >
-          {groupFields(paramFields(m.param_schema)).map((entry) =>
-            'group' in entry ? (
-              <ChoiceGroupField
-                key={entry.group.id}
-                mod={m.id}
-                group={entry.group}
-                fields={entry.fields}
-                values={v.params[m.id] ?? {}}
-                errors={errors}
-                onChange={(key, x) => setParam(m.id, key, x)}
-                onBusy={(key, b) => onUploadBusy?.(`${m.id}.${key}`, b)}
-              />
-            ) : (
-              <Field key={entry.field.key} label={entry.field.title} required={entry.field.required} extra={entry.field.description} error={errors[`params.${m.id}.${entry.field.key}`]}>
-                <ParamInput
-                  f={entry.field}
-                  value={v.params[m.id]?.[entry.field.key]}
-                  error={errors[`params.${m.id}.${entry.field.key}`]}
-                  onChange={(x) => setParam(m.id, entry.field.key, x)}
-                  onBusy={(b) => onUploadBusy?.(`${m.id}.${entry.field.key}`, b)}
-                  draft={entry.field.kind === 'upload' ? paramDraft(preflight, m.id, entry.field.key) : null}
-                />
-              </Field>
-            ),
-          )}
+          {groupFields(paramFields(m.param_schema).filter((f) => !f.advanced)).map((entry) => renderEntry(m.id, entry))}
+          {/* the judgement lines its findings are drawn with (registry 2.1 x-advanced, design doc 17 §1.3): folded away */}
+          {paramFields(m.param_schema).some((f) => f.advanced) ? (
+            <Collapse bordered={false} className="advanced-lines" data-testid={`advanced-${m.id}`}>
+              <Collapse.Item name="lines" header={zh.taskForm.advancedLines} extra={<span className="muted" style={{ fontSize: 12 }}>{zh.taskForm.advancedLinesHint}</span>}>
+                {groupFields(paramFields(m.param_schema).filter((f) => f.advanced)).map((entry) => renderEntry(m.id, entry))}
+              </Collapse.Item>
+            </Collapse>
+          ) : null}
         </Card>
       ))}
 

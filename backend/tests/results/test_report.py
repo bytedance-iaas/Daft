@@ -61,6 +61,21 @@ def test_module_summaries_carry_chart_ready_statistics(world):
         assert "ep0000" not in json.dumps(summary, ensure_ascii=False), m
 
 
+def test_findings_per_module_and_rejects_per_item(world):
+    """F12.5 (C2 report 2.0): per module the episodes it judged and, of them, those with a finding, in all and
+    per level; the rejects per taxonomy item, an episode once per item."""
+    report = world.get("/report").json()["report"]
+    s = {m["id"]: m["summary"] for m in report["modules"]}
+    assert (s["timestamp_check"]["assessed_episodes"], s["timestamp_check"]["flagged_episodes"]) == (9, 1)
+    assert s["timestamp_check"]["levels"] == {"blocking": 1, "review": 0, "info": 0}
+    assert s["task_success"]["flagged_episodes"] == 3          # ep 2 failure, ep 3 and 5 abstentions
+    assert s["task_success"]["levels"] == {"blocking": 1, "review": 2, "info": 0}
+    assert s["visual_quality"]["levels"] == {"blocking": 0, "review": 0, "info": 9}
+    assert s["kinematic_limits"]["flagged_episodes"] == 0
+    assert report["overview"]["reject_items"] == [{"item": "SET-1", "count": 1}, {"item": "STRM-5", "count": 1},
+                                                  {"item": "TASK-5", "count": 1}]
+
+
 def test_links_are_absolute_with_a_public_base_url(client_for, tmp_path):
     from .conftest import build_run_dir, finish_main_run, World
 

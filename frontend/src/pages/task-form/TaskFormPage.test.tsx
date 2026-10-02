@@ -185,11 +185,42 @@ describe('新建任务 · 两屏与提交', () => {
     await fill(user, '交付目录', 'tos://pai-kit-deliveries/ts-only');
     await screen.findByText(/LeRobot v2 · 120 条 episode/);
     await user.click(screen.getByRole('button', { name: '清空' }));
-    await user.click(within(screen.getByTestId('module-timestamp_check')).getByRole('checkbox'));
+    await user.click(within(screen.getByTestId('module-dedup')).getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
     await waitFor(() => expect(s2()).toBeVisible());
     expect(within(s2()).getByTestId('nothing-to-set')).toHaveTextContent('开启的模块都不需要额外设置，可以直接创建。');
-    expect(s2()).not.toHaveTextContent('时间戳检查');
+    expect(s2()).not.toHaveTextContent('精确去重');
+  });
+
+  it('a module with judgement lines only has them folded on screen 2; a changed line is sent, the rest keep their defaults (F12.5)', async () => {
+    const seen = record();
+    const { user } = renderApp('/tasks/new');
+    await screen.findByText('基本信息');
+    await fill(user, '任务名称', 'ts lines');
+    await fill(user, '数据集地址', 'tos://pai-kit-datasets/lerobot/new_set');
+    await pick(user, '访问密钥', 'prod-tos');
+    await fill(user, '交付目录', 'tos://pai-kit-deliveries/ts-lines');
+    await screen.findByText(/LeRobot v2 · 120 条 episode/);
+    await user.click(screen.getByRole('button', { name: '清空' }));
+    await user.click(within(screen.getByTestId('module-timestamp_check')).getByRole('checkbox'));
+    // the verdict policy: 只报不拒 is sent, and the module card says it only reports
+    expect(within(screen.getByTestId('module-timestamp_check')).getByText('可判废')).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: '只报不拒' }));
+    expect(within(screen.getByTestId('module-timestamp_check')).getByText('只报告')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '下一步：模块设置' }));
+    await waitFor(() => expect(s2()).toBeVisible());
+    const card = within(s2()).getByTestId('params-timestamp_check');
+    const fold = within(card).getByTestId('advanced-timestamp_check');
+    await user.click(within(fold).getByText('判定线（高级）'));
+    const input = within(fold).getAllByRole('spinbutton')[0];
+    await user.clear(input);
+    await user.type(input, '4');
+    await user.click(screen.getByRole('button', { name: '保存为待启动' }));
+    await waitFor(() => expect(seen.some((r) => r.method === 'POST' && r.path === '/tasks')).toBe(true));
+    const body = seen.find((r) => r.method === 'POST' && r.path === '/tasks')!.body as { modules: unknown[]; params: { policy?: unknown } };
+    const ts = body.modules.find((m) => typeof m === 'object' && (m as { id: string }).id === 'timestamp_check') as { params: Record<string, unknown> };
+    expect(Object.values(ts.params)).toEqual([4]);
+    expect(body.params.policy).toEqual({ preset: 'report_only' });
   });
 
   it('the EEF module is opted into by hand, needs a model and takes its trajectory.json as an upload (F5.5, D49)', async () => {
@@ -622,10 +653,13 @@ describe('v1 deep links on /tasks/new (07 §2.1)', () => {
     // information only: one button, nothing to decide
     expect(within(dialog).getAllByRole('button').map((b) => b.textContent)).toEqual(['确定']);
     await user.click(within(dialog).getByRole('button', { name: '确定' }));
-    await waitFor(() => expect(screen.queryByTestId('unregistered-notice')).toBeNull());
+    // the dialog leaves after its closing animation, slower on a loaded runner
+    await waitFor(() => expect(screen.queryByTestId('unregistered-notice')).toBeNull(), { timeout: 5000 });
   });
 
   it('a registered dataset (TOS or cache bucket) gets no such dialog', async () => {
+    // a dialog of the test before may still be closing (Modal.destroyAll animates): none may be left once it is gone
+    await waitFor(() => expect(screen.queryByTestId('unregistered-notice')).toBeNull(), { timeout: 5000 });
     renderApp('/tasks/new?dataset=tos://pai-kit-datasets/lerobot/droid_100&region=cn-beijing');
     expect(await screen.findByText(/LeRobot v3 · 100 条 episode/)).toBeInTheDocument();
     expect(screen.queryByTestId('unregistered-notice')).toBeNull();

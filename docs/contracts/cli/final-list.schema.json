@@ -209,6 +209,62 @@
             ]
           }
         },
+        "findings": {
+          "type": "array",
+          "description": "passed / reject / held (F12.5, design doc 17 §5.4): every finding of the episode, every module, with the level it has in this revision - the task's policy after the applied human decisions: a person's conclusion is a blocking finding of its own (human), an appeal turns the appealable blocking findings to info, a settled review finding is gone, so is the duplicate finding of the member its dedup group keeps. What the console lists and filters the episodes by",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "module",
+              "code",
+              "item",
+              "level"
+            ],
+            "properties": {
+              "module": {
+                "$ref": "common.schema.json#/$defs/module_id"
+              },
+              "code": {
+                "$ref": "common.schema.json#/$defs/finding_code"
+              },
+              "item": {
+                "oneOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/item_id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "level": {
+                "$ref": "common.schema.json#/$defs/finding_level"
+              },
+              "line": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "description": "review: the registry line it is asked on"
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "its position in the findings of the module's record; absent on a person's conclusion"
+              },
+              "human": {
+                "const": true,
+                "description": "a person's conclusion; message_zh is its text"
+              },
+              "message_zh": {
+                "type": "string"
+              },
+              "appealable": {
+                "type": "boolean",
+                "description": "the code may be appealed (D42)"
+              }
+            }
+          }
+        },
         "task_text": {
           "type": "object",
           "additionalProperties": false,

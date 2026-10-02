@@ -14,13 +14,18 @@ export function planMergeText(strategy: string): string {
   return T().planMerge[strategy] ?? strategy;
 }
 
-const ROUGH = /^rough estimate: every selected episode is assumed to pass the hard gates; ([\d.]+) s per request at (\d+%) gate use \(v1, ([\d-]+)\)$/;
+// a funnel's plan (1.0; the baseline's wording changed on the way), then the two blocks' (2.0, design doc 17 §3)
+const ROUGH = /^rough estimate: every selected episode is assumed to pass the hard gates; ([\d.]+) s per request at (\d+%) gate use \((?:image-request baseline from )?v1, ([\d-]+)(?:; video latency is not calibrated)?\)$/;
+const ROUGH_BLOCKS = /^rough estimate: every selected episode goes through both blocks, which run side by side; ([\d.]+) s per request at (\d+%) gate use \(image-request baseline from v1, ([\d-]+); video latency is not calibrated\)$/;
 const UNCOUNTED = /^no request model for \[(.*)\]; not counted$/;
 
 /** One estimate note in Chinese; `name` gives a module id its Chinese name. */
 export function planNoteText(note: string, name: (moduleId: string) => string): string {
   const rough = ROUGH.exec(note);
   if (rough) return T().planNoteRough(rough[1], rough[2], rough[3]);
+  const blocks = ROUGH_BLOCKS.exec(note);
+  if (blocks) return T().planNoteRoughBlocks(blocks[1], blocks[2], blocks[3]);
+  if (note === 'data_integrity: its decode test (decode_test), when on, is not counted - about one more decode of every frame') return T().planNoteDecode;
   if (note === 'task_success arbitration and label-guard calls depend on the data and are not counted') return T().planNoteTaskSuccess;
   if (note === 'skill_profile text calls (taxonomy, label audit) are per dataset and not counted') return T().planNoteSkillProfile;
   const uncounted = UNCOUNTED.exec(note);

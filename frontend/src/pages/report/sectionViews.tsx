@@ -30,7 +30,7 @@ interface StatSpec {
   tone?: 'bad' | 'warn' | 'good';
 }
 
-interface ChartSpec {
+export interface ChartSpec {
   key: string;
   title: string;
   desc?: string;
@@ -76,7 +76,7 @@ function chartHeight(c: ChartSpec): number {
   return c.horizontal ? Math.max(96, Math.min(420, n * 26 + 40)) : 200;
 }
 
-function ChartBlock({ spec }: { spec: ChartSpec }) {
+export function ChartBlock({ spec }: { spec: ChartSpec }) {
   const option = spec.option ?? barOption(spec.items ?? [], { horizontal: spec.horizontal, colors: spec.colors, band: spec.band, valueName: spec.valueName, valueRange: spec.valueRange, gridTop: spec.gridTop });
   const summary = `${spec.title}：${spec.summary ?? chartSummary(spec.items ?? [])}`;
   return (
