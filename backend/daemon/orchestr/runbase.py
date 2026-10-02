@@ -529,12 +529,12 @@ class Run:
 
     def counts_from_records(self, module: str) -> tuple[int, int]:
         """(episodes with a result, of which errors) of a funnel module, over the task's episodes."""
-        from curation.pipeline.records import latest_results
+        from curation.pipeline.records import is_error, latest_results
 
         selected = set(self.selection())
         recs = {e: r for e, r in latest_results(str(self.wd.root), module).items()
                 if e in selected}
-        return len(recs), sum(1 for r in recs.values() if r.get("verdict") == "error")
+        return len(recs), sum(1 for r in recs.values() if is_error(r))
 
     # ------------------------------------------------------------------ revisions
     def allocate_revision(self) -> int:

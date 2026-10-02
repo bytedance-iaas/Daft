@@ -31,6 +31,15 @@ describe('param_schema → form fields (C1, D38)', () => {
     expect(defaultParams(schemaOf('task_success'))).toEqual({ evidence_frames: 'flagged' });
   });
 
+  it('the judgement lines of the findings (registry 2.1, x-advanced) stay out of the form', () => {
+    const lines = Object.entries((schemaOf('visual_quality') as { properties: Record<string, Record<string, unknown>> }).properties);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.every(([, p]) => p['x-advanced'] === true)).toBe(true);
+    expect(paramFields(schemaOf('visual_quality'))).toEqual([]);
+    expect(paramFields(schemaOf('video_action_sync')).map((f) => f.key)).toEqual(['sync_plots']);
+    expect(defaultParams(schemaOf('motion_quality'))).toEqual({});
+  });
+
   it('modules without parameters produce no fields', () => {
     const without = registry.modules.filter((m) => !hasParams(m.param_schema)).map((m) => m.id);
     expect(without).toEqual(['timestamp_check', 'kinematic_limits', 'motion_quality', 'visual_quality', 'camera_defects', 'dedup', 'skill_profile']);

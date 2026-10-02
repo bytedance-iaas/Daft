@@ -186,6 +186,7 @@ def _funnel_cpu(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
     else:
         cfg, registry = prepared
     opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
+                        params=modparams.parse(getattr(args, "param", None)),
                         episodes=episodes, part=part, cfg=cfg, resume=args.resume,
                         concurrency=runctx.cpu_workers(args, plan_stage),
                         embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
@@ -220,6 +221,7 @@ def _integrity(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gua
         judge.rebind(src)
     stale = judge.stale(latest_results(run_dir, MODULE_ID, list(episodes)))
     opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
+                        params=modparams.parse(getattr(args, "param", None)),
                         episodes=episodes, part=part, cfg=ctx.config(), resume=args.resume,
                         concurrency=runctx.cpu_workers(args, plan_stage),
                         embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
@@ -323,6 +325,7 @@ def _funnel_vlm(ctx, args, modules, run_dir, src, episodes, part, plan_stage, gu
         if judge is not None:
             judge.rebind(src)            # this batch's source (mcap: its local copy)
     opts = StageOptions(run_dir=run_dir, input_dir=src.input_dir, modules=modules,
+                        params=modparams.parse(getattr(args, "param", None)),
                         episodes=episodes, part=part, cfg=cfg, resume=args.resume,
                         concurrency=int(gates["episode"]),
                         embodiment_id=args.embodiment_id, max_episodes=args.max_episodes,
@@ -358,7 +361,9 @@ def _dedup(ctx, args, run_dir, src, episodes, part, guard):
     src.fetch(episodes)
     payload = run_dedup(ctx, run_dir, src.input_dir, episodes, part,
                         embodiment_id=args.embodiment_id)
-    dups = {e for e, rec in _latest(run_dir, "dedup").items() if rec["verdict"] == "fail"}
+    from ..pipeline.records import legacy_verdict
+
+    dups = {e for e, rec in _latest(run_dir, "dedup").items() if legacy_verdict(rec) == "fail"}
     errors = set(payload["modules"]["dedup"]["error_episodes"])
     left_out = {s["episode_index"] for s in
                 payload["modules"]["dedup"].get("skipped_missing_source") or []}
@@ -450,9 +455,14 @@ def render(payload: dict) -> str:
     lines = []
     for m, entry in payload["modules"].items():
         c = entry["episodes"]
-        lines.append(f"{m} (part {entry['part']}): {c['total']} episodes - pass {c['pass']}, "
-                     f"fail {c['fail']}, abstain {c['abstain']}, scored {c['scored']}, "
-                     f"error {c['error']}")
+        if "ok" in c:                                   # C2 2.0: judged / not, and the findings
+            found = ", ".join(f"{code} {n}" for code, n in (entry.get("findings") or {}).items())
+            lines.append(f"{m} (part {entry['part']}): {c['total']} episodes - ok {c['ok']}, "
+                         f"error {c['error']}" + (f"; findings: {found}" if found else ""))
+        else:
+            lines.append(f"{m} (part {entry['part']}): {c['total']} episodes - pass {c['pass']}, "
+                         f"fail {c['fail']}, abstain {c['abstain']}, scored {c['scored']}, "
+                         f"error {c['error']}")
         if entry["error_episodes"]:
             shown = ", ".join(str(e) for e in entry["error_episodes"][:10])
             more = ", ..." if len(entry["error_episodes"]) > 10 else ""

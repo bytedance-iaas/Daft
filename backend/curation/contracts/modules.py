@@ -56,7 +56,7 @@ import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-REGISTRY_VERSION = "2.0"
+REGISTRY_VERSION = "2.1"
 #: The taxonomy (C6) this registry binds: every finding code names one of its items (design doc 17 §1.3).
 TAXONOMY_VERSION = "1.1"
 
@@ -315,6 +315,66 @@ def upload_params(module_id: str) -> dict[str, str]:
     return {k: p["x-upload-kind"] for k, p in props.items() if p.get("format") == UPLOAD_FORMAT}
 
 
+def _line(title: str, description: str, default: float, minimum: float, maximum: float) -> dict:
+    """A judgement line of a finding (registry 2.1, design doc 17 §1.3): a number with a default. ``x-advanced``:
+    the new-task form leaves it at its default (an API client may set it)."""
+    return {"type": "number", "title": title, "description": description, "default": default,
+            "minimum": minimum, "maximum": maximum, "x-advanced": True}
+
+
+def _visual_params() -> dict:
+    """The lines visual_quality's findings are drawn with (design doc 17 §2.2); the scores themselves are
+    v1's and unchanged."""
+    return {
+        "type": "object", "additionalProperties": False,
+        "properties": {
+            "frozen_ratio_min": _line("冻结判定线", "一路相机相邻采样帧（约隔 0.5 秒）几乎不变的比例达到这个值，"
+                                                     "报「画面冻结」（IMG-1）", 0.95, 0.5, 1.0),
+            "exposure_min": _line("曝光判定线", "一路相机的曝光分低于这个值，报「曝光不良」（IMG-2）", 0.6, 0.0, 1.0),
+            "sharpness_min": _line("清晰度判定线", "一路相机的清晰度分低于这个值，报「画面模糊」（IMG-4）", 0.6, 0.0, 1.0),
+            "dead_share_min": _line("信息死亡判定线", "一路相机里灰度几乎没有变化（标准差小于 3）的帧占比达到这个值，"
+                                                       "报「信息死亡帧偏多」（IMG-3）", 0.6, 0.0, 1.0),
+        }}
+
+
+def _motion_params() -> dict:
+    """The lines motion_quality's sub-items are reported with: the composite score is retired as a verdict
+    (P18), each sub-item below its line is a finding of its own."""
+    return {
+        "type": "object", "additionalProperties": False,
+        "properties": {
+            "smoothness_min": _line("平滑度判定线", "平滑度分低于这个值，报「动作不平滑」（ACT-1）", 0.5, 0.0, 1.0),
+            "spike_min": _line("尖刺判定线", "尖刺分低于这个值，报「动作尖刺」（ACT-2）", 0.5, 0.0, 1.0),
+            "gripper_jitter_min": _line("夹爪抖动判定线", "夹爪平稳分低于这个值，报「夹爪抖动」（ACT-5）", 0.5, 0.0, 1.0),
+            "saturation_min": _line("执行器饱和判定线", "执行响应分低于这个值，报「执行器饱和」（ACT-4）", 0.5, 0.0, 1.0),
+            "fluency_min": _line("流畅度判定线", "流畅度分低于这个值，报「操作不流畅」（TASK-8）", 0.5, 0.0, 1.0),
+            "severe_below": _line("严重判定线", "平滑度、尖刺分低于这个值时，发现的严重度记为高", 0.2, 0.0, 1.0),
+            "idle_edge_min_s": _line("起止空转判定线（秒）", "开头或结尾空转不短于这么多秒，报「开头空转」「结尾空转」（TASK-1）",
+                                     1.0, 0.0, 60.0),
+        }}
+
+
+def _timestamp_params() -> dict:
+    return {
+        "type": "object", "additionalProperties": False,
+        "properties": {
+            "duration_outlier_iqr": _line(
+                "时长离群判定线（四分位距倍数）", "一条的时长比全体的四分位区间再往外超出这么多倍四分位距，"
+                "在报告里报「时长离群」（SET-3，数据集级）", 3.0, 1.0, 10.0),
+        }}
+
+
+def _sync_params() -> dict:
+    out = _evidence_param(
+        "sync_plots", "同步曲线证据图",
+        {"flagged": "有标注或未对齐的", "all": "全部", "off": "不画"},
+        "为哪些条目画画面运动与关节速度的对照曲线")
+    out["properties"]["spread_tol_s"] = _line(
+        "相机滞后允许极差（秒）", "可信相机之间测得的滞后相差超过这个值，报「各相机的滞后不一致」（MV-3）；"
+                                 "判废与否不受它影响", 0.3, 0.05, 2.0)
+    return out
+
+
 def _integrity_params() -> dict:
     """design doc 14 §5.3: L3 is the one choice a task makes; the thresholds are the site's."""
     return {
@@ -434,7 +494,7 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("fragment", "STRM-5", "残段：短于最短时长"),
                _blocking("single_stamp", "STRM-5", "只有一个时间戳"),
                _info("duration_outlier", "SET-3", "时长离群", scope_kind="dataset")),
-        param_schema=_no_params(),
+        param_schema=_timestamp_params(),
         tables=(TableSpec("timestamp_check", "时间戳异常",
                           ("episode_index", "duration_s", "max_dt")),)),
     ModuleSpec(
@@ -448,7 +508,9 @@ MODULES: tuple[ModuleSpec, ...] = (
                _blocking("velocity_limit", "ACT-4", "关节速度越限", scope_kind="channel"),
                _blocking("ee_reach", "ACT-4", "末端超出工作空间"),
                _blocking("ee_translation_velocity", "ACT-4", "末端平移速度越限"),
-               _blocking("ee_rotation_velocity", "ACT-4", "末端转动速度越限")),
+               _blocking("ee_rotation_velocity", "ACT-4", "末端转动速度越限"),
+               # 2.1: a malformed action (wrong number of joints, NaN) fails the check without a violation
+               _blocking("data_invalid", "FILE-6", "动作数据无法与规格表对照（维度对不上或有无效值）")),
         param_schema=_no_params(),
         tables=(TableSpec("kinematic_violations", "越限明细",
                           ("episode_index", "joint", "value")),)),
@@ -468,7 +530,7 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("action_semantics_undetermined", "ACT-6", "判断不了动作的语义", "medium",
                      scope_kind="dataset")),
         also_covers=("SET-3",),          # the mean active share, a dataset-level reading (P20)
-        param_schema=_no_params(),
+        param_schema=_motion_params(),
         tables=(TableSpec("motion_quality", "运动质量明细", ("episode_index", "score")),)),
     ModuleSpec(
         id="visual_quality", name_zh="视觉质量",
@@ -479,7 +541,7 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("information_death", "IMG-3", "信息死亡帧偏多", "medium", scope_kind="camera"),
                _info("sharpness_low", "IMG-4", "画面模糊", "medium", scope_kind="camera"),
                _info("dead_or_padded", "STRM-1", "相机没有信号或被填充", "medium", scope_kind="camera")),
-        param_schema=_no_params(),
+        param_schema=_visual_params(),
         tables=(TableSpec("visual_quality", "逐机位打分", ("episode_index", "score", "camera")),)),
     ModuleSpec(
         id="video_action_sync", name_zh="视频-动作同步",
@@ -490,10 +552,7 @@ MODULES: tuple[ModuleSpec, ...] = (
                _info("suspect", "AV-1", "疑似错位"),
                _info("undecidable", "AV-3", "测不准：有动作但画面运动对不上"),
                _info("lag_inconsistent", "MV-3", "各相机的滞后不一致", "medium")),
-        param_schema=_evidence_param(
-            "sync_plots", "同步曲线证据图",
-            {"flagged": "有标注或未对齐的", "all": "全部", "off": "不画"},
-            "为哪些条目画画面运动与关节速度的对照曲线"),
+        param_schema=_sync_params(),
         tables=(TableSpec("video_action_sync", "逐机位同步读数",
                           ("episode_index", "lag_s", "corr_peak")),)),
     ModuleSpec(
@@ -560,7 +619,6 @@ MODULES: tuple[ModuleSpec, ...] = (
         depends_on=("autolabel",),
         codes=(_review("label_disagreement", "LABEL-5", "标注与画面不符", "label"),
                _info("descriptions_conflict", "LABEL-2", "多份描述彼此不一致", "medium"),
-               _info("task_text_missing", "LABEL-3", "没有任务标注，用的是自产描述"),
                _info("undersampled_family", "SET-3", "样本偏少的技能族", scope_kind="dataset")),
         param_schema=_no_params(),
         tables=(TableSpec("skill_assignment", "技能归属", ("episode_index", "family", "subskill")),)),

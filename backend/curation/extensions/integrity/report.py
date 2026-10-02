@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import os
 
+from ...pipeline.records import is_error, legacy_verdict
+
 from .findings import CODES
 from .judge import DATASET_FILE, MODULE_ID
 
@@ -19,7 +21,7 @@ def summary(results: dict[int, dict], run_dir: str) -> dict:
     files = bytes_read = crc_files = 0
     tiers = {"L1": False, "L2": False, "L3": False}
     for rec in results.values():
-        if rec.get("verdict") == "error":
+        if is_error(rec):
             continue
         d = rec.get("details") or {}
         if d.get("outcome") in by_outcome:
@@ -75,7 +77,7 @@ def table_rows(results: dict[int, dict]) -> list[dict]:
     for ep, rec in sorted(results.items()):
         d = rec.get("details") or {}
         for f in d.get("findings") or []:
-            out.append({"episode_index": int(ep), "verdict": rec["verdict"],
+            out.append({"episode_index": int(ep), "verdict": legacy_verdict(rec),
                         "level": str(f.get("level") or ""), "code": str(f.get("code") or ""),
                         "file": str(f.get("file") or ""), "camera": str(f.get("camera") or ""),
                         "tier": str(f.get("tier") or ""), "message": str(f.get("message") or "")})

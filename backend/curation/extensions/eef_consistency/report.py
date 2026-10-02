@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+from ...pipeline.records import is_error
+
 from . import contracts as C
 
 STATUSES = (C.OK, C.SUSPECT, C.UNKNOWN, C.UNSUPPORTED, C.ERROR)
@@ -221,7 +223,7 @@ def review_summary(results: dict) -> dict:
         if d.get("assessment_mode") == "vlm_opinion":     # asked for an opinion, not reviewed
             continue
         rv = d.get("review") or {}
-        st = rv.get("status") or ("error" if rec.get("verdict") == "error" else "not_reviewed")
+        st = rv.get("status") or ("error" if is_error(rec) else "not_reviewed")
         status[st] = status.get(st, 0) + 1
         sm = rv.get("summary") or {}
         for k in ("windows", "answered", "failed", "tracking_suspect", "requests", "cache_hits"):
@@ -262,7 +264,7 @@ def verdict_summary(results: dict) -> dict:
     rejected: dict[str, int] = {}
     for rec in results.values():
         dec = (rec.get("details") or {}).get("decision") or {}
-        o = dec.get("outcome") or ("error" if rec.get("verdict") == "error" else None)
+        o = dec.get("outcome") or ("error" if is_error(rec) else None)
         if o in outcomes:
             outcomes[o] += 1
         for h in dec.get("human") or []:

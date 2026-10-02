@@ -112,7 +112,7 @@ class Side:
                 if os.path.isdir(os.path.join(self.path, "records")) else []:
             if name.endswith(".jsonl"):
                 for idx, rec in self.records(name[:-len(".jsonl")]).items():
-                    if rec.get("verdict") == "error":
+                    if R.is_error(rec):
                         out.add(idx)
         out |= set(self.final().get("held") or [])
         return out
@@ -224,7 +224,7 @@ class V2Side(Side):
         base = os.path.join(self.path, "checks")
         for name in os.listdir(base) if os.path.isdir(base) else []:
             for idx, rec in self.records(name).items():
-                if rec.get("verdict") == "error":
+                if R.is_error(rec):
                     out.add(idx)
         out |= set(self.final().get("held") or [])
         p = os.path.join(self.path, "autolabel", "captions.jsonl")
@@ -371,7 +371,7 @@ def compare_assignments(g: Side, c: Side, max_diffs: int) -> dict:
 
 def _task_key(rec: dict):
     rules = (rec.get("details") or {}).get("rules") or []
-    return (rec.get("verdict"), tuple(rules))
+    return (R.verdict_of(rec), tuple(rules))
 
 
 def verdict_keys(side: Side, module: str) -> dict[int, object]:

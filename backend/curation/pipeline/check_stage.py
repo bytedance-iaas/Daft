@@ -38,7 +38,8 @@ from ..contracts import modules as registry_mod
 from . import funnel, gates_v1
 from .incidents import (IncidentLog, camera_names, wrap_arbitration, wrap_call, wrap_decode,
                         wrap_voter)
-from .records import (CRASHES_NAME, Inflight, PartWriter, compact, latest_results,
+from .records import (CRASHES_NAME, Inflight, PartWriter, check_counts, compact, is_error,
+                      latest_results, passes_funnel,
                       module_dir, pid_alive, read_inflight, record_from_struct,
                       write_json_atomic)
 from .rows import EpisodeMissingSource, EpisodeReadError, RowSource, column, open_row_source
@@ -55,6 +56,23 @@ CRASH_LIMIT = 2
 
 def stage_of(module: str) -> str:
     return registry_mod.get(module).stage
+
+
+def action_semantics(row: dict) -> dict:
+    """What the reader settled the action's meaning on (the semantics profile, an inference, the run-time
+    preflight - or nothing): v2 stores it nowhere else, and ACT-6's dataset-level finding is drawn from it."""
+    try:
+        extras = json.loads(column(row, "semantics_extras", "{}") or "{}")
+    except (TypeError, ValueError):
+        extras = {}
+    pre = (extras or {}).get("semantics_preflight") if isinstance(extras, dict) else None
+    out = {"source": str(column(row, "semantics_source", "") or ""),
+           "action_space": str(column(row, "action_space", "") or ""),
+           "control_mode": str(column(row, "control_mode", "") or "")}
+    if isinstance(pre, dict) and pre.get("status"):
+        out["preflight"] = str(pre["status"])
+    out["undetermined"] = out["action_space"] in ("", "unknown") or out["source"] == "preflight_unknown"
+    return out
 
 
 def input_digest(episodes) -> str:
@@ -102,6 +120,9 @@ class StageOptions:
     stale: dict[str, set[int]] | None = None
     #: the data integrity module's judge (design doc 14, ``extensions.integrity.IntegrityJudge``)
     integrity: object | None = None
+    #: the modules' parameters (``--param``, defaults filled in by the record writer): the judgement
+    #: lines a record 2.0's findings are drawn with (design doc 17 §1.3)
+    params: dict[str, dict] = field(default_factory=dict)
     stage: str = field(init=False, default="")
 
     def __post_init__(self) -> None:
@@ -129,7 +150,7 @@ class _Breaker:
         for module, rec in records.items():
             if self.watched is not None and module not in self.watched:
                 continue                  # an advisory rider's record says nothing about the model
-            if rec["verdict"] != "error":
+            if not is_error(rec):
                 self.armed = False
                 return
             for inc in rec["error"]["incidents"]:
@@ -160,10 +181,13 @@ class StageRun:
         self.label = "check:" + "+".join(opts.modules)
         self._lock = threading.Lock()
         self.done = 0
+        #: what stops an episode in the funnel (``records.passes_funnel``): the registry's default
+        #: levels until the task's policy is frozen into the run directory
+        self.funnel_policy = None
         if opts.pipeline_state:
             from .episode_state import EpisodeState
 
-            self._store = EpisodeState(opts.pipeline_state)
+            self._store = EpisodeState(opts.pipeline_state, self.funnel_policy)
         else:
             self._store = None
         #: episodes found without their source files (D40): no result line
@@ -212,7 +236,7 @@ class StageRun:
                     e for e, rec in current["camera_defects"].items()
                     if (rec.get("details") or {}).get("protocol") != CAMERA_CHECK_PROTOCOL)
         done = {e for e in eps
-                if all(e in current[m] and current[m][e]["verdict"] != "error" and e not in stale.get(m, ())
+                if all(e in current[m] and not is_error(current[m][e]) and e not in stale.get(m, ())
                        for m in self.o.modules)}
         crashes = self._stale_inflight()
         crashed = {e for e in eps if crashes.get(e, 0) >= CRASH_LIMIT and e not in done}
@@ -252,9 +276,11 @@ class StageRun:
                                 "exception": type(e).__name__}) from None
 
     def _records(self, ep: int, structs: dict[str, dict | None], logs: dict[str, IncidentLog],
-                 elapsed: float, evidence: dict[str, list] | None = None) -> dict[str, dict]:
+                 elapsed: float, evidence: dict[str, list] | None = None,
+                 contexts: dict[str, dict] | None = None) -> dict[str, dict]:
         return {m: record_from_struct(m, ep, structs.get(m), incidents=logs[m].items(),
-                                      evidence=(evidence or {}).get(m), elapsed_s=elapsed)
+                                      evidence=(evidence or {}).get(m), elapsed_s=elapsed,
+                                      params=self.o.params.get(m), context=(contexts or {}).get(m))
                 for m in self.o.modules}
 
     def _numeric(self, ep: int, row: dict, logs) -> dict:
@@ -435,9 +461,12 @@ class StageRun:
             for m in self.o.modules:
                 logs[m].add("read", cause=str(e))
             return self._records(ep, {}, logs, time.monotonic() - t0)
+        contexts = None
         try:
             if self.o.stage == "numeric":
                 structs = self._numeric(ep, row, logs)
+                if "motion_quality" in self.o.modules:
+                    contexts = {"motion_quality": {"action_semantics": action_semantics(row)}}
             elif self.o.stage == "frame":
                 structs = self._frame(ep, row, logs)
             else:
@@ -446,7 +475,7 @@ class StageRun:
             release = getattr(source, "release", None)
             if release is not None:                    # mcap: this episode's muxed videos
                 release(row)
-        return self._records(ep, structs, logs, time.monotonic() - t0, evidence)
+        return self._records(ep, structs, logs, time.monotonic() - t0, evidence, contexts)
 
     # ------------------------------------------------------------ the run
     def run(self) -> dict:
@@ -529,7 +558,7 @@ class StageRun:
             inflight.remove(ep)
             self.done += 1
             stream.completed(ep, records is not None and all(
-                r["verdict"] not in ("fail", "error") for r in records.values()))
+                passes_funnel(r, self.funnel_policy) for r in records.values()))
             ctx.progress(self.label, self.done, total, episode_index=ep)
 
         try:
@@ -643,25 +672,19 @@ class StageRun:
         digest = input_digest(o.episodes)
         judged = [e for e in o.episodes if e not in self.missing]
         out: dict = {}
+        version = "1.0"
         for m in o.modules:
-            cur = latest_results(o.run_dir, m, judged)
-            counts = {"total": len(judged), "pass": 0, "fail": 0, "abstain": 0,
-                      "scored": 0, "error": 0}
-            errors = []
-            for e in judged:
-                rec = cur.get(e)
-                verdict = rec["verdict"] if rec else "error"
-                counts[verdict] += 1
-                if verdict == "error":
-                    errors.append(e)
+            version, counts, errors, found = check_counts(latest_results(o.run_dir, m, judged), judged)
             entry = {"part": o.part, "input_digest": digest, "episodes": counts,
                      "error_episodes": errors}
+            if version != "1.0":
+                entry["findings"] = found
             if o.resume:
                 entry["skipped_existing"] = skipped
             if self.missing:
                 entry["skipped_missing_source"] = as_list(self.missing)
             out[m] = entry
-        return {"schema_version": "1.0", "modules": out}
+        return {"schema_version": version, "modules": out}
 
     def survivors(self) -> list[int]:
         """Episodes of this call that go on to the next stage (no error, no hard fail)."""
@@ -670,7 +693,7 @@ class StageRun:
         out = []
         for e in self.o.episodes:
             recs = [cur[m].get(e) for m in self.o.modules]
-            if any(r is None or r["verdict"] in ("error", "fail") for r in recs):
+            if not all(passes_funnel(r, self.funnel_policy) for r in recs):
                 continue
             out.append(e)
         return out

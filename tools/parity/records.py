@@ -227,5 +227,38 @@ def diff_values(a: Any, b: Any, path: str = "", limit: int = 50) -> list[dict]:
 VOLATILE_FIELDS = ("elapsed_s", "evidence")
 
 
+def _platform():
+    """v2's record helpers (``curation.pipeline.records``), importable from the repo's backend."""
+    import os
+    import sys
+
+    backend = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                           "backend")
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    from curation.pipeline import records as v2_records
+
+    return v2_records
+
+
+def is_v2(record: dict) -> bool:
+    """A result record 2.0 (design doc 17 §1: findings) rather than 1.0 (the tri-state)."""
+    return isinstance(record, dict) and "status" in record
+
+
+def is_error(record: dict) -> bool:
+    return (record.get("status") == "error") if is_v2(record) else record.get("verdict") == "error"
+
+
+def verdict_of(record: dict) -> str | None:
+    """1.0's ``verdict`` of a record of either format (2.0: from its findings' default levels)."""
+    return _platform().legacy_verdict(record) if is_v2(record) else record.get("verdict")
+
+
 def comparable(record: dict) -> dict:
+    """The record as compared: 2.0 either way - a 1.0 record (a v1 dump, an old run) is upgraded with the
+    findings v2 draws from the same answer, so ``details``, readings and findings compare field by field
+    (design doc 17 §8.1)."""
+    if not is_v2(record):
+        record = _platform().upgrade_record(record)
     return {k: v for k, v in record.items() if k not in VOLATILE_FIELDS}

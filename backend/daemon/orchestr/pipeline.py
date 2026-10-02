@@ -263,7 +263,7 @@ def _check_batch(run, st: dict, episodes: list[int], number: int, offset: int,
     vlm = st.get("kind") == "vlm"
     if vlm:
         argv += run.vlm_args()
-    argv += run.module_param_args(mods)                        # the EEF module's file and settings (D49)
+    argv += run.module_param_args(mods)                        # every module's parameters (registry 2.1)
     if sid == "frame":
         resources.admit_memory(run, sid)
     if os.environ.get("CURATOR_CLI"):

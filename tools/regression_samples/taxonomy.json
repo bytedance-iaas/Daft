@@ -192,7 +192,8 @@
    "platform": "能判：`row_invalid`",
    "platform_status": "能判",
    "platform_codes": [
-    "data_integrity.values_invalid"
+    "data_integrity.values_invalid",
+    "kinematic_limits.data_invalid"
    ],
    "kind": "defect",
    "level": "episode",
@@ -1615,8 +1616,7 @@
    "platform": "能处理：没有标注时先由模型补一句描述",
    "platform_status": "有读数",
    "platform_codes": [
-    "task_success.task_text_missing",
-    "skill_profile.task_text_missing"
+    "task_success.task_text_missing"
    ],
    "kind": "defect",
    "level": "episode",

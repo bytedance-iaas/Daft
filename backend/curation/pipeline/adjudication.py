@@ -54,7 +54,7 @@ import os
 import time
 from typing import Callable
 
-from .records import (ADJUDICATION_DIR, latest_results, read_jsonl, write_json_atomic,
+from .records import (ADJUDICATION_DIR, latest_results, legacy_verdict, read_jsonl, write_json_atomic,
                       write_text_atomic)
 from .tasktext import LABELS_FILE
 
@@ -112,7 +112,7 @@ def own_questions(run_dir: str) -> Callable[[int, str], bool]:
     verdict is the card's own question where task_success abstained (the task_verdict
     item); anywhere else it is v1's verdict after a relabel (C1 1.3)."""
     abstained = {e for e, r in latest_results(run_dir, "task_success").items()
-                 if r.get("verdict") == "abstain"}
+                 if legacy_verdict(r) == "abstain"}
     return lambda episode, line: line != "task_verdict" or int(episode) in abstained
 
 

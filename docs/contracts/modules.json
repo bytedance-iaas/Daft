@@ -1,5 +1,5 @@
 {
- "registry_version": "2.0",
+ "registry_version": "2.1",
  "taxonomy_version": "1.1",
  "blocks": [
   {
@@ -1175,8 +1175,18 @@
    ],
    "param_schema": {
     "type": "object",
-    "properties": {},
-    "additionalProperties": false
+    "additionalProperties": false,
+    "properties": {
+     "duration_outlier_iqr": {
+      "type": "number",
+      "title": "时长离群判定线（四分位距倍数）",
+      "description": "一条的时长比全体的四分位区间再往外超出这么多倍四分位距，在报告里报「时长离群」（SET-3，数据集级）",
+      "default": 3.0,
+      "minimum": 1.0,
+      "maximum": 10.0,
+      "x-advanced": true
+     }
+    }
    },
    "tables": [
     {
@@ -1249,10 +1259,20 @@
      "level": "blocking",
      "scope_kind": "episode",
      "appealable": false
+    },
+    {
+     "code": "data_invalid",
+     "item": "FILE-6",
+     "name_zh": "动作数据无法与规格表对照（维度对不上或有无效值）",
+     "severity": "high",
+     "level": "blocking",
+     "scope_kind": "episode",
+     "appealable": false
     }
    ],
    "covers": [
-    "ACT-4"
+    "ACT-4",
+    "FILE-6"
    ],
    "param_schema": {
     "type": "object",
@@ -1381,8 +1401,72 @@
    ],
    "param_schema": {
     "type": "object",
-    "properties": {},
-    "additionalProperties": false
+    "additionalProperties": false,
+    "properties": {
+     "smoothness_min": {
+      "type": "number",
+      "title": "平滑度判定线",
+      "description": "平滑度分低于这个值，报「动作不平滑」（ACT-1）",
+      "default": 0.5,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "x-advanced": true
+     },
+     "spike_min": {
+      "type": "number",
+      "title": "尖刺判定线",
+      "description": "尖刺分低于这个值，报「动作尖刺」（ACT-2）",
+      "default": 0.5,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "x-advanced": true
+     },
+     "gripper_jitter_min": {
+      "type": "number",
+      "title": "夹爪抖动判定线",
+      "description": "夹爪平稳分低于这个值，报「夹爪抖动」（ACT-5）",
+      "default": 0.5,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "x-advanced": true
+     },
+     "saturation_min": {
+      "type": "number",
+      "title": "执行器饱和判定线",
+      "description": "执行响应分低于这个值，报「执行器饱和」（ACT-4）",
+      "default": 0.5,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "x-advanced": true
+     },
+     "fluency_min": {
+      "type": "number",
+      "title": "流畅度判定线",
+      "description": "流畅度分低于这个值，报「操作不流畅」（TASK-8）",
+      "default": 0.5,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "x-advanced": true
+     },
+     "severe_below": {
+      "type": "number",
+      "title": "严重判定线",
+      "description": "平滑度、尖刺分低于这个值时，发现的严重度记为高",
+      "default": 0.2,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "x-advanced": true
+     },
+     "idle_edge_min_s": {
+      "type": "number",
+      "title": "起止空转判定线（秒）",
+      "description": "开头或结尾空转不短于这么多秒，报「开头空转」「结尾空转」（TASK-1）",
+      "default": 1.0,
+      "minimum": 0.0,
+      "maximum": 60.0,
+      "x-advanced": true
+     }
+    }
    },
    "tables": [
     {
@@ -1464,8 +1548,45 @@
    ],
    "param_schema": {
     "type": "object",
-    "properties": {},
-    "additionalProperties": false
+    "additionalProperties": false,
+    "properties": {
+     "frozen_ratio_min": {
+      "type": "number",
+      "title": "冻结判定线",
+      "description": "一路相机相邻采样帧（约隔 0.5 秒）几乎不变的比例达到这个值，报「画面冻结」（IMG-1）",
+      "default": 0.95,
+      "minimum": 0.5,
+      "maximum": 1.0,
+      "x-advanced": true
+     },
+     "exposure_min": {
+      "type": "number",
+      "title": "曝光判定线",
+      "description": "一路相机的曝光分低于这个值，报「曝光不良」（IMG-2）",
+      "default": 0.6,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "x-advanced": true
+     },
+     "sharpness_min": {
+      "type": "number",
+      "title": "清晰度判定线",
+      "description": "一路相机的清晰度分低于这个值，报「画面模糊」（IMG-4）",
+      "default": 0.6,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "x-advanced": true
+     },
+     "dead_share_min": {
+      "type": "number",
+      "title": "信息死亡判定线",
+      "description": "一路相机里灰度几乎没有变化（标准差小于 3）的帧占比达到这个值，报「信息死亡帧偏多」（IMG-3）",
+      "default": 0.6,
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "x-advanced": true
+     }
+    }
    },
    "tables": [
     {
@@ -1567,6 +1688,15 @@
         "title": "不画"
        }
       ]
+     },
+     "spread_tol_s": {
+      "type": "number",
+      "title": "相机滞后允许极差（秒）",
+      "description": "可信相机之间测得的滞后相差超过这个值，报「各相机的滞后不一致」（MV-3）；判废与否不受它影响",
+      "default": 0.3,
+      "minimum": 0.05,
+      "maximum": 2.0,
+      "x-advanced": true
      }
     }
    },
@@ -2105,15 +2235,6 @@
      "appealable": false
     },
     {
-     "code": "task_text_missing",
-     "item": "LABEL-3",
-     "name_zh": "没有任务标注，用的是自产描述",
-     "severity": "low",
-     "level": "info",
-     "scope_kind": "episode",
-     "appealable": false
-    },
-    {
      "code": "undersampled_family",
      "item": "SET-3",
      "name_zh": "样本偏少的技能族",
@@ -2126,7 +2247,6 @@
    "covers": [
     "LABEL-5",
     "LABEL-2",
-    "LABEL-3",
     "SET-3"
    ],
    "param_schema": {

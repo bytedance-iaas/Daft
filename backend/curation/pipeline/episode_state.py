@@ -15,8 +15,23 @@ def state_path(run_dir: str | Path) -> Path:
     return Path(run_dir) / ".orchestr" / "episodes.sqlite3"
 
 
+def index_verdict(rec: dict, policy=None) -> str:
+    """The verdict column of a record: 1.0's verdict, where ``fail`` means the funnel stops the episode
+    under ``policy`` (the task's; the registry's default levels when None) - a record of either format."""
+    from .records import is_error, legacy_verdict, passes_funnel
+
+    if is_error(rec):
+        return "error"
+    if not passes_funnel(rec, policy):
+        return "fail"
+    verdict = legacy_verdict(rec)
+    return "pass" if verdict == "fail" else verdict
+
+
 class EpisodeState:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, policy=None):
+        #: what stops an episode in the funnel (``records.passes_funnel``); the default levels when None
+        self.policy = policy
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(self.path), timeout=30)
@@ -62,7 +77,7 @@ class EpisodeState:
                 rows = self.db.execute("SELECT module, episode, record FROM results").fetchall()
                 for module, ep, record in rows:
                     self.db.execute("UPDATE results SET verdict=? WHERE module=? AND episode=?",
-                                    (json.loads(record)["verdict"], module, ep))
+                                    (index_verdict(json.loads(record), self.policy), module, ep))
 
     def close(self) -> None:
         self.db.close()
@@ -105,7 +120,7 @@ class EpisodeState:
                 self.db.executemany("INSERT OR REPLACE INTO results VALUES (?, ?, ?, ?)",
                                     ((module, ep, json.dumps(rec, ensure_ascii=False,
                                                               default=_json_default),
-                                      rec["verdict"])
+                                      index_verdict(rec, self.policy))
                                      for ep, rec in existing.items()))
                 self.db.execute("INSERT INTO indexed_modules VALUES (?)", (module,))
 
@@ -113,14 +128,14 @@ class EpisodeState:
                next_stage: str) -> None:
         from .records import _json_default
 
-        terminal = any(r["verdict"] in ("fail", "error") for r in records.values())
+        terminal = any(index_verdict(r, self.policy) in ("fail", "error") for r in records.values())
         destination = "done" if terminal or next_stage == "done" else next_stage
         reason = "gate" if terminal else None
         with self.db:
             self.db.executemany("INSERT OR REPLACE INTO results VALUES (?, ?, ?, ?)",
                                 ((module, episode, json.dumps(record, ensure_ascii=False,
                                                                default=_json_default),
-                                  record["verdict"])
+                                  index_verdict(record, self.policy))
                                  for module, record in records.items()))
             self.db.execute("INSERT OR REPLACE INTO progress VALUES (?, ?, ?, ?, ?)",
                             (episode, stage, destination, reason, self._reserve(1)))
@@ -132,7 +147,7 @@ class EpisodeState:
             self.db.execute("INSERT OR REPLACE INTO results VALUES (?, ?, ?, ?)",
                             (record["module"], int(record["episode_index"]),
                              json.dumps(record, ensure_ascii=False, default=_json_default),
-                             record["verdict"]))
+                             index_verdict(record, self.policy)))
 
     def missing(self, stage: str, episode: int) -> None:
         with self.db:

@@ -23,6 +23,8 @@ import re
 from collections import Counter
 from statistics import mean, median
 
+from .records import legacy_verdict
+
 #: score_hist: ten bins over 0-1, "0.0–0.1" ... "0.9–1.0" (1.0 falls in the last one)
 SCORE_BINS = 10
 #: a camera reading below this is "low" (the mockup's 低于 0.6 的相机读数)
@@ -140,12 +142,12 @@ def generic(records: list[dict], scores: list[float]) -> dict:
     if scores:
         out["score_hist"] = score_hist(scores)
     heads = Counter(reason_head(_details(r).get("reason")) for r in records
-                    if r.get("verdict") == "abstain")
+                    if legacy_verdict(r) == "abstain")
     if heads:
         out["abstain_reason_counts"] = top_series(heads)
     steps: Counter = Counter()
     for r in records:
-        if r.get("verdict") != "error":
+        if legacy_verdict(r) != "error":
             continue
         incidents = (r.get("error") or {}).get("incidents") if isinstance(r.get("error"), dict) else None
         names = {str(i.get("step") or "unknown") for i in incidents or [] if isinstance(i, dict)}
@@ -175,7 +177,7 @@ def timestamp_fail_kind(d: dict) -> str:
 
 
 def timestamp_stats(records: list[dict]) -> dict:
-    fails = Counter(timestamp_fail_kind(_details(r)) for r in records if r.get("verdict") == "fail")
+    fails = Counter(timestamp_fail_kind(_details(r)) for r in records if legacy_verdict(r) == "fail")
     out: dict = {"fail_reasons": series(fails, TS_FAIL_KINDS, keep_zero=True)}
     durations = [v for v in (num(_details(r).get("duration_s")) for r in records) if v is not None]
     if durations:
@@ -205,7 +207,7 @@ def kinematic_stats(records: list[dict]) -> dict:
         if d.get("profile"):
             profiles[str(d["profile"])] += 1
         v = [x for x in d.get("violations") or [] if isinstance(x, dict)]
-        if r.get("verdict") == "error" or not v:
+        if legacy_verdict(r) == "error" or not v:
             continue
         episodes += 1
         for t in {str(x.get("type") or "other") for x in v}:
@@ -232,7 +234,7 @@ MOTION_NA_REASONS = {"actuator_saturation": "saturation_reason", "spike": "spike
 
 
 def motion_stats(records: list[dict]) -> dict:
-    judged = [r for r in records if r.get("verdict") != "error"]
+    judged = [r for r in records if legacy_verdict(r) != "error"]
     subs = []
     for key, in_total in MOTION_SUBSCORES:
         vals: list[float] = []
@@ -305,7 +307,7 @@ def visual_stats(records: list[dict]) -> dict:
 
     params = None
     for r in records:
-        if r.get("verdict") == "error":
+        if legacy_verdict(r) == "error":
             continue
         d = _details(r)
         for cam, s in _camera_scores(d).items():
@@ -368,7 +370,7 @@ def sync_stats(records: list[dict], lag_tol_s: float) -> dict:
     flagged = 0
     per_episode: dict[str, dict] = {}
     for r in records:
-        if r.get("verdict") == "error":
+        if legacy_verdict(r) == "error":
             continue
         d = _details(r)
         k = sync_kind(d)
@@ -401,7 +403,7 @@ TASK_LAYERS = ("probe", "endstate", "label_guard", "arbitration")
 
 
 def task_stats(records: list[dict]) -> dict:
-    judged = [r for r in records if r.get("verdict") != "error"]
+    judged = [r for r in records if legacy_verdict(r) != "error"]
     codes: Counter = Counter()
     abstain: Counter = Counter()
     sources: Counter = Counter()
@@ -410,7 +412,7 @@ def task_stats(records: list[dict]) -> dict:
         d = _details(r)
         code = str(d.get("verdict") or "other")
         codes[code] += 1
-        if r.get("verdict") == "abstain":
+        if legacy_verdict(r) == "abstain":
             abstain[code] += 1
         if d.get("task_desc_source"):
             sources[str(d["task_desc_source"])] += 1
@@ -451,7 +453,7 @@ def skill_stats(records: list[dict], profile: dict, audit: dict | None) -> dict:
     runs - gives its own counts."""
     fams = (profile or {}).get("families") or {}
     under = set((profile or {}).get("undersampled") or [])
-    judged = [_details(r) for r in records if r.get("verdict") != "error"]
+    judged = [_details(r) for r in records if legacy_verdict(r) != "error"]
     by_family = Counter(str(d["family"]) for d in judged if d.get("family"))
     by_sub = Counter((str(d["family"]), str(d.get("subskill") or "")) for d in judged if d.get("family"))
     total = sum(by_family.values())
@@ -479,7 +481,7 @@ def skill_stats(records: list[dict], profile: dict, audit: dict | None) -> dict:
     high = len(tiers.get("high") or [])
     review = len(tiers.get("mid_for_review") or [])
     sources = Counter(str(_details(r)["grouping_text_source"]) for r in records
-                      if r.get("verdict") != "error" and _details(r).get("grouping_text_source"))
+                      if legacy_verdict(r) != "error" and _details(r).get("grouping_text_source"))
     return {"family_distribution": [{"name": f["name"], "count": f["count"]} for f in tree],
             "family_tree": tree, "label_disagreements": high + review,
             "disagreement_high": high, "disagreement_review": review,

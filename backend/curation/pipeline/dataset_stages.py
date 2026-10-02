@@ -30,7 +30,7 @@ from collections.abc import Callable
 from .check_stage import input_digest
 from .incidents import (IncidentLog, camera_names, decode_watch, installed_decode_watch,
                         wrap_call)
-from .records import (AUTOLABEL_FILE, AppendLog, PartWriter, compact, latest_results,
+from .records import (AUTOLABEL_FILE, AppendLog, PartWriter, check_counts, compact, latest_results,
                       module_dir, read_jsonl, record_from_struct, write_json_atomic,
                       write_text_atomic)
 from .rows import index_of, meta_rows
@@ -277,25 +277,19 @@ def summary(run_dir: str, modules: list[str], episodes: list[int], part: str,
     from .skipped import as_list
 
     out = {}
+    version = "1.0"
     for m in modules:
-        cur = latest_results(run_dir, m)
-        counts = {"total": len(episodes), "pass": 0, "fail": 0, "abstain": 0, "scored": 0,
-                  "error": 0}
-        errors = []
-        for e in episodes:
-            rec = cur.get(e)
-            verdict = rec["verdict"] if rec else "error"
-            counts[verdict] += 1
-            if verdict == "error":
-                errors.append(e)
+        version, counts, errors, found = check_counts(latest_results(run_dir, m), episodes)
         entry = {"part": part, "input_digest": input_digest(episodes), "episodes": counts,
                  "error_episodes": errors}
+        if version != "1.0":
+            entry["findings"] = found
         if skipped is not None:
             entry["skipped_existing"] = skipped
         if missing:
             entry["skipped_missing_source"] = as_list(missing)
         out[m] = entry
-    return {"schema_version": "1.0", "modules": out}
+    return {"schema_version": version, "modules": out}
 
 
 # ---------------------------------------------------------------- skill_profile

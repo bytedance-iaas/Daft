@@ -24,8 +24,8 @@ from ..contracts import modules as registry
 from . import gates_v1
 from .aggregate import NAMES_CN
 from .records import (CRASHES_NAME, LATENCY_FILE, PLAN_NAME, SOURCE_MANIFEST_NAME, USAGE_FILE,
-                      latest_results, module_dir, parts_used, read_jsonl, write_json_atomic,
-                      write_text_atomic)
+                      is_error, latest_results, legacy_verdict, module_dir, parts_used, read_jsonl,
+                      score_of, write_json_atomic, write_text_atomic)
 
 SCHEMA_VERSION = "1.0"
 TOKEN_FIELDS = ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens")
@@ -129,7 +129,7 @@ def redone_after_interruption(run_dir: str, modules) -> int:
 def _counts(results: dict) -> dict:
     c = {"total": len(results), "pass": 0, "fail": 0, "abstain": 0, "scored": 0, "error": 0}
     for rec in results.values():
-        c[rec["verdict"]] += 1
+        c[legacy_verdict(rec)] += 1
     return c
 
 
@@ -149,7 +149,7 @@ def _summary(rev: Revision, m: str) -> dict:
     :mod:`.report_stats` (06 §6.2) for the modules that take part in the verdict."""
     res = rev.results[m]
     out: dict = {"counts": _counts(res)}
-    scores = [r["score"] for r in res.values() if r.get("score") is not None]
+    scores = [score_of(r) for r in res.values() if score_of(r) is not None]
     if scores:
         out["mean_score"] = round(sum(scores) / len(scores), 4)
     if m == "task_success":
@@ -157,10 +157,10 @@ def _summary(rev: Revision, m: str) -> dict:
 
         out["arbitration"] = arbitration_stats(
             [{"detail": json.dumps(r.get("details") or {})} for r in res.values()
-             if r["verdict"] != "error"])
+             if not is_error(r)])
         reasons: dict[str, int] = {}
         for r in res.values():
-            if r["verdict"] == "abstain":
+            if legacy_verdict(r) == "abstain":
                 why = str((r.get("details") or {}).get("reason") or "未注明")[:80]
                 reasons[why] = reasons.get(why, 0) + 1
         out["abstain_reasons"] = dict(sorted(reasons.items(), key=lambda kv: -kv[1])[:5])
@@ -196,7 +196,7 @@ def _summary(rev: Revision, m: str) -> dict:
     if m == "timestamp_check":
         why: dict[str, int] = {}
         for r in res.values():
-            if r["verdict"] == "fail":
+            if legacy_verdict(r) == "fail":
                 d = r.get("details") or {}
                 key = "fragment" if d.get("duration_s", 99) < 1.0 else (
                     "gap" if d.get("gap_frames") else "other")
@@ -298,7 +298,7 @@ def _table_rows(rev: Revision, m: str, table: str, res: dict) -> list[dict]:
     out = []
     for ep, r in sorted(res.items()):
         d = r.get("details") or {}
-        base = {"episode_index": int(ep), "verdict": r["verdict"]}
+        base = {"episode_index": int(ep), "verdict": legacy_verdict(r)}
         if table == "timestamp_check":
             out.append({**base, "duration_s": d.get("duration_s"), "max_dt": d.get("max_dt"),
                         "reason": str(d.get("reason") or "")})
@@ -309,7 +309,7 @@ def _table_rows(rev: Revision, m: str, table: str, res: dict) -> list[dict]:
                             "frame": v.get("frame"), "value": _num(v.get("value")),
                             "limit": str(v.get("limit"))})
         elif table == "motion_quality":
-            out.append({**base, "score": r.get("score"), "fluency": _num(d.get("fluency")),
+            out.append({**base, "score": score_of(r), "fluency": _num(d.get("fluency")),
                         "active_ratio": _num(d.get("active_ratio")),
                         "stuck": bool(d.get("stuck_joints"))})
         elif table == "visual_quality":
@@ -320,7 +320,7 @@ def _table_rows(rev: Revision, m: str, table: str, res: dict) -> list[dict]:
                             "exposure": _num(cd.get("exposure")),
                             "integrity": _num(cd.get("integrity"))})
             if not d.get("per_camera_detail"):
-                out.append({**base, "camera": "", "score": r.get("score")})
+                out.append({**base, "camera": "", "score": score_of(r)})
         elif table == "video_action_sync":
             for cam, cd in (d.get("per_camera") or {}).items():
                 cd = cd if isinstance(cd, dict) else {}
@@ -336,7 +336,7 @@ def _table_rows(rev: Revision, m: str, table: str, res: dict) -> list[dict]:
                         "task_desc_source": str(d.get("task_desc_source") or ""),
                         "reason": str(d.get("reason") or "")})
         elif table == "dedup_groups":
-            if r["verdict"] == "fail":
+            if legacy_verdict(r) == "fail":
                 out.append({**base, "duplicate_of": d.get("duplicate_of")})
         elif table == "skill_assignment":
             out.append({**base, "family": str(d.get("family") or ""),
@@ -361,7 +361,7 @@ def module_sections(rev: Revision) -> list[dict]:
         spec = registry.get(m)
         res = rev.results[m]
         missing = _missing(rev, m)
-        errors = [e for e, r in res.items() if r["verdict"] == "error"] + missing
+        errors = [e for e, r in res.items() if is_error(r)] + missing
         sec: dict = {"id": m, "gate": gates_v1.gate(m), "summary": _summary(rev, m),
                      "tables": _tables(rev, m, rev.dir), "adjudication": None}
         if not res and missing:

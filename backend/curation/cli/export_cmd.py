@@ -58,12 +58,12 @@ def add_parser(sub, parents) -> None:
 def camera_health(run_dir: str, cfg: dict) -> dict | None:
     """v1's ``meta/curation_camera_health.json`` payload from the sync results."""
     from ..core.checks.video_action_sync import sync_health
-    from ..pipeline.records import latest_results
+    from ..pipeline.records import is_error, latest_results
 
     details = {}
     for ep, rec in latest_results(run_dir, "video_action_sync").items():
         d = rec.get("details") or {}
-        if rec["verdict"] != "error" and d.get("per_camera") is not None:
+        if not is_error(rec) and d.get("per_camera") is not None:
             details[f"ep{int(ep):06d}"] = d
     if not details:
         return None

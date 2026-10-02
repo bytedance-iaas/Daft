@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import math
 
+from curation.pipeline.records import is_error
+
 from ..errors import ApiError
 from .episode import skipped_episodes
 from .files import cached_json, json_safe
@@ -115,7 +117,7 @@ def sync_curves(rev: Revision, episode: int) -> dict:
     rec = rev.record(MODULE, ep)
     if rec is None:
         raise _missing(rev, ep, "no_record", f"{name} 没有走到视频-动作同步这一档（前面已被判废），没有同步曲线")
-    if rec.get("verdict") == "error":
+    if is_error(rec):
         raise _missing(rev, ep, "no_record", f"视频-动作同步在 {name} 上执行出错，没有同步曲线；补跑成功后才有")
     details = rec.get("details") if isinstance(rec.get("details"), dict) else {}
     try:

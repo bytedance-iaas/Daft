@@ -15,6 +15,7 @@ from collections import Counter
 
 from ...adapters.video_vlm import (CAMERA_CHECK_ITEMS, CAMERA_CHECK_LEVELS,
                                    CAMERA_CHECK_PROTOCOL)
+from ...pipeline.records import legacy_verdict
 
 MODULE_ID = "camera_defects"
 HOST = "task_success"
@@ -128,13 +129,13 @@ def table_rows(results: dict[int, dict]) -> list[dict]:
         d = rec.get("details") or {}
         per_camera = d.get("per_camera") or {}
         if not per_camera:
-            rows.append({"episode_index": ep, "verdict": rec.get("verdict"), "camera": "", "answered": False,
+            rows.append({"episode_index": ep, "verdict": legacy_verdict(rec), "camera": "", "answered": False,
                          **{item: UNKNOWN for item in CAMERA_CHECK_ITEMS}, "contamination_kind": "none",
                          **{f"{item}_times": "[]" for item in CAMERA_CHECK_ITEMS}, "note": d.get("reason") or ""})
             continue
         for cam in sorted(per_camera):
             e = per_camera[cam]
-            rows.append({"episode_index": ep, "verdict": rec.get("verdict"), "camera": cam,
+            rows.append({"episode_index": ep, "verdict": legacy_verdict(rec), "camera": cam,
                          "answered": bool(e.get("answered")),
                          **{item: (e.get(item) or {}).get("level", UNKNOWN) for item in CAMERA_CHECK_ITEMS},
                          "contamination_kind": (e.get("contamination") or {}).get("kind", "none"),

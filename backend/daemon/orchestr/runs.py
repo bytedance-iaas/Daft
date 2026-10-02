@@ -31,7 +31,6 @@ import json
 import logging
 
 from curation.contracts import modules as registry
-from curation.pipeline import gates_v1
 
 from . import planning, resources
 from .runbase import Run, TaskFailure, input_digest
@@ -164,14 +163,15 @@ class StageRun(Run):
         return {}
 
     def module_param_args(self, mods: list[str]) -> list[str]:
-        """``--param`` for the modules v2 runs itself (the EEF module, D49) and the advisory modules of
-        a stage (registry 1.4): their ``modules[].params``, upload handles replaced by the copies made at
-        start (``inputs/uploads.json``). v1's modules take their settings from the site configuration."""
+        """``--param`` for every module of a stage: its ``modules[].params``, upload handles replaced by
+        the copies made at start (``inputs/uploads.json``). The modules v2 runs itself read all of them;
+        the judgement lines of every module (registry 2.1, design doc 17 §1.3) draw its findings; v1's
+        own settings of v1's modules still come from the site configuration."""
         rows = {m.module_id: m for m in self.repo.get_task_modules(self.task_id)}
         table = read_json(self.wd.root / "inputs" / "uploads.json", {}) or {}
         out: list[str] = []
         for mid in mods:
-            if mid not in rows or (gates_v1.votes(mid) and mid not in registry.native_ids()):
+            if mid not in rows:
                 continue
             kinds = registry.upload_params(mid)
             for key, value in (rows[mid].params or {}).items():
@@ -262,10 +262,10 @@ class StageRun(Run):
         return read_lines(self.wd.revision_dir(rev) / "keep.txt") or []
 
     def minus_duplicates(self, episodes: list[int]) -> list[int]:
-        from curation.pipeline.records import latest_results
+        from curation.pipeline.records import is_error, latest_results, legacy_verdict
 
         dup = {e for e, r in latest_results(str(self.wd.root), "dedup").items()
-               if r.get("verdict") in ("fail", "error")}
+               if is_error(r) or legacy_verdict(r) == "fail"}
         return [e for e in episodes if e not in dup]
 
     # -- publishing -------------------------------------------------------------------

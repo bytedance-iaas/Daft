@@ -32,6 +32,8 @@ from typing import Any
 from . import gates_v1
 
 SCHEMA_VERSION = "1.0"
+#: The format ``record_from_struct`` writes (C2 result-record): 1.0 until the policy verdicts read 2.0.
+RECORD_VERSION = "1.0"
 
 CHECKS_DIR = "checks"
 PARTS_DIR = "parts"
@@ -82,11 +84,16 @@ def parse_detail(detail: Any) -> dict:
 def record_from_struct(module: str, episode_index: int, struct: dict | None, *,
                        incidents: list[dict] | None = None,
                        evidence: Iterable[str] | None = None,
-                       elapsed_s: float | None = None) -> dict:
+                       elapsed_s: float | None = None, params: dict | None = None,
+                       context: dict | None = None, version: str | None = None) -> dict:
     """A ``{passed, score, detail}`` struct (v1's check column value) -> a record.
 
     ``passed`` / ``score`` are coerced the way daft's struct column coerces them
     (bool / float64), so a numpy scalar never leaks into the JSON line.
+
+    ``version`` is the record format (``RECORD_VERSION`` when not given): 1.0 keeps the
+    tri-state and the score; 2.0 (design doc 17 §1) turns them into findings with
+    :mod:`.findings`, judged with the module's ``params`` (defaults filled in).
     """
     struct = struct or {}
     passed = struct.get("passed")
@@ -95,12 +102,149 @@ def record_from_struct(module: str, episode_index: int, struct: dict | None, *,
     score = None if score is None else float(score)
     details = parse_detail(struct.get("detail"))
     error = {"kind": "execution", "incidents": list(incidents)} if incidents else None
-    return {"episode_index": int(episode_index), "module": module,
-            "verdict": derive_verdict(passed, score, error), "passed": passed,
-            "score": score, "gate": gate_of(module), "details": details,
-            "evidence": list(evidence or []),
-            "elapsed_s": None if elapsed_s is None else round(float(elapsed_s), 3),
-            "error": error}
+    elapsed = None if elapsed_s is None else round(float(elapsed_s), 3)
+    if (version or RECORD_VERSION) == "1.0":
+        return {"episode_index": int(episode_index), "module": module,
+                "verdict": derive_verdict(passed, score, error), "passed": passed,
+                "score": score, "gate": gate_of(module), "details": details,
+                "evidence": list(evidence or []), "elapsed_s": elapsed, "error": error}
+    return record_v2(module, episode_index, passed, score, details, error=error,
+                     evidence=evidence, elapsed_s=elapsed, params=params, context=context)
+
+
+def record_v2(module: str, episode_index: int, passed: bool | None, score: float | None,
+              details: dict, *, error: dict | None = None, evidence: Iterable[str] | None = None,
+              elapsed_s: float | None = None, params: dict | None = None,
+              context: dict | None = None) -> dict:
+    """A result record 2.0 (C2 ``record_2``): ``status``, findings and coverage from the module's answer."""
+    from . import findings
+
+    base = {"episode_index": int(episode_index), "module": module, "details": details,
+            "evidence": list(evidence or []), "elapsed_s": elapsed_s}
+    if error:
+        return {**base, "status": "error", "findings": [], "assessed": [], "unassessable": [],
+                "readings": {}, "error": error}
+    got = findings.derive(module, passed, score, details, params, context)
+    return {**base, "status": "ok", "findings": got.findings,
+            "assessed": findings.assessed(module, got.unassessable),
+            "unassessable": got.unassessable, "readings": got.readings, "error": None}
+
+
+def upgrade_record(rec: dict, params: dict | None = None) -> dict:
+    """A 1.0 record as the 2.0 writer would have written it from the same answer (the parity tool
+    and the evaluation compare old runs with new ones this way; tasks are never migrated, D59)."""
+    if is_v2(rec):
+        return rec
+    return record_v2(rec["module"], rec["episode_index"], rec.get("passed"), rec.get("score"),
+                     rec.get("details") or {}, error=rec.get("error"), evidence=rec.get("evidence"),
+                     elapsed_s=rec.get("elapsed_s"), params=params)
+
+
+# ---------------------------------------------------------------- reading either format
+
+def is_v2(rec: dict | None) -> bool:
+    """A record 2.0 (findings) rather than 1.0 (tri-state)."""
+    return isinstance(rec, dict) and "status" in rec
+
+
+def is_error(rec: dict | None) -> bool:
+    """The module could not judge the episode (D33): 2.0 ``status`` error, 1.0 ``verdict`` error."""
+    if not isinstance(rec, dict):
+        return False
+    return rec.get("status") == "error" if is_v2(rec) else rec.get("verdict") == "error"
+
+
+def score_of(rec: dict | None) -> float | None:
+    """The module's score: 1.0 ``score``, 2.0 ``readings.score`` (soft scores are readings, P18)."""
+    if not isinstance(rec, dict):
+        return None
+    v = (rec.get("readings") or {}).get("score") if is_v2(rec) else rec.get("score")
+    return None if v is None or isinstance(v, bool) else float(v)
+
+
+def default_level(module: str, finding: dict) -> str:
+    """A finding's level under the default policy (its code's level in the registry)."""
+    try:
+        return registry_get(module).code(str(finding.get("code"))).level
+    except KeyError:
+        return "info"
+
+
+def legacy_verdict(rec: dict | None) -> str | None:
+    """1.0's ``verdict`` of a record of either format, for the views that still count by it
+    (the report's 1.0 summary keys, the console until F12.5): a 2.0 record with a finding that
+    blocks by default is ``fail``, one with a review finding ``abstain``, one with a score
+    ``scored``, else ``pass``."""
+    if not isinstance(rec, dict):
+        return None
+    if not is_v2(rec):
+        return rec.get("verdict")
+    if rec.get("status") == "error":
+        return "error"
+    levels = {default_level(rec["module"], f) for f in rec.get("findings") or []}
+    if "blocking" in levels:
+        return "fail"
+    if "review" in levels:
+        return "abstain"
+    if score_of(rec) is not None:
+        return "scored"
+    try:
+        gate_items = {c.item for c in registry_get(rec["module"]).codes if c.level == "blocking"}
+    except KeyError:
+        gate_items = set()
+    if not rec.get("assessed") or any(u.get("item") in gate_items for u in rec.get("unassessable") or []):
+        return "abstain"                     # it assessed nothing, or not what it rejects on (a draft spec, …)
+    return "pass"
+
+
+def passes_funnel(rec: dict | None, policy=None) -> bool:
+    """Whether the funnel lets the episode on to the next stage after this record (until the two
+    blocks of F12.4 retire the funnel): no error and nothing that blocks - 1.0: not ``fail``; 2.0: no
+    finding the task's ``policy`` (a :class:`.policy.Policy`; default levels when None) makes blocking."""
+    if rec is None or is_error(rec):
+        return False
+    if not is_v2(rec):
+        return rec.get("verdict") != "fail"
+    for f in rec.get("findings") or []:
+        level = policy.level(rec["module"], f) if policy is not None else default_level(rec["module"], f)
+        if level == "blocking":
+            return False
+    return True
+
+
+def check_counts(records: dict[int, dict], episodes: Iterable[int]) -> tuple[str, dict, list[int], dict]:
+    """``check --json`` for one module over ``episodes`` (C2 ``check``): (schema_version, the episode
+    counts, the error episodes, finding code -> episodes; empty in 1.0). An episode without a record
+    counts as an error. The format follows ``RECORD_VERSION``: 2.0 counts ok / error and the findings."""
+    errors: list[int] = []
+    if RECORD_VERSION == "1.0":
+        counts = {"total": 0, "pass": 0, "fail": 0, "abstain": 0, "scored": 0, "error": 0}
+        for e in episodes:
+            counts["total"] += 1
+            verdict = legacy_verdict(records.get(e)) or "error"
+            counts[verdict] += 1
+            if verdict == "error":
+                errors.append(e)
+        return "1.0", counts, errors, {}
+    counts = {"total": 0, "ok": 0, "error": 0}
+    found: dict[str, int] = {}
+    for e in episodes:
+        counts["total"] += 1
+        rec = records.get(e)
+        if rec is None or is_error(rec):
+            counts["error"] += 1
+            errors.append(e)
+            continue
+        counts["ok"] += 1
+        for code in {f.get("code") for f in rec.get("findings") or []}:
+            found[code] = found.get(code, 0) + 1
+    return "2.0", counts, errors, dict(sorted(found.items()))
+
+
+def registry_get(module: str):
+    from ..contracts import modules as registry
+
+    return registry.get(module)
 
 
 def dumps_line(record: dict) -> str:
