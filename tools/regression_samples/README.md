@@ -26,14 +26,15 @@ PYTHONPATH=tools .venv/bin/python -m regression_samples.coverage_from_registry -
 
 ## `score.py`
 
-score 2.0（设计 17 §6.1）按运行目录自动识别两种格式（结果版本的 `report.json` 是 2.0、或记录带 `status` 的是新格式）：
+score 2.0（设计 17 §6.1）按运行目录自动识别两种格式（结果版本的 `report.json` 是 2.0、或记录带 `status` 的是新格式；预检拒收、什么都没有的运行目录跟随同一次打分里其他运行目录的格式）：
 
 - **新格式（C2 2.0，F12.2 起的平台）**：记录自己写着检测项——`findings[].item` 与 `scope`（相机）、模块评估过的 `assessed`、评估不了的
   `unassessable`、执行出错的 `status: error`。一项由哪些模块评估取注册表（`docs/contracts/modules.json` 的 `covers`，`--registry` 可换）。
   这条 episode 上没有模块评估过这一项（没跑、或写明评估不了）记 `not_assessed`，评估它的模块都出错记 `error`，不再靠「模块有没有记录」推断。
   几个模块报同一项：总指标取并集，另给每个模块自己的 precision / recall（`by_module`，看该调谁）。数据集级发现取结果版本 `report.json`
-  各小节的 `dataset_findings`，按子集只计一次；episode 级取最终清单（拒绝 / 待补跑与拒绝理由的模块）。每项还数有区间（`frames` / `time_s`）
-  的发现占比（`intervals`，P19）。
+  各小节的 `dataset_findings`，只用于按子集计的项（见下），按子集只计一次；逐条的项只看逐条记录——完整性模块的表检查会在报告里另给一条
+  汇总的数据集级发现（`table_overlap`），它不铺到子集的每一条。episode 级取最终清单（拒绝 / 待补跑与拒绝理由的模块）。每项还数有区间
+  （`frames` / `time_s`）的发现占比（`intervals`，P19）。
 - **旧格式（C2 1.0，基线 `1b30fb224`）**：平台按「模块 + 原因码」出结果，`finding_map.json` 把它换成检测项，与 score 1.1 完全相同。
 
 两种格式的运行目录可以一起打分（输出的 `formats` 写明每个子集是哪种）。共同的规则：

@@ -520,6 +520,21 @@ def test_runs_of_both_formats_are_scored_together(tmp_path):
     assert doc["items"]["FILE-4"]["tp"] == 2
 
 
+def test_a_run_with_nothing_to_read_takes_the_format_of_the_others(tmp_path):
+    """The preflight refused one dataset (no record, no report): scored with runs of findings, its items are the
+    registry's and not assessed because no module could run - not items without a check."""
+    assert "motion_quality" in COVERS["TASK-1"] and not any("TASK-1" in r["items"] for r in FMAP["rules"])
+    exp = {"set": "anchor", "set_version": "v1", "episodes": [
+        {**episode(0, problems=["TASK-1"]), "dataset": "lerobot_v21/refused", "episode_id": "refused:0"},
+        {**episode(0, problems=["TASK-1"]), "dataset": "lerobot_v21/read", "episode_id": "read:0"}]}
+    refused = write_run(str(tmp_path / "refused"), [], supported=False, availability={"motion_quality": "unsupported"})
+    read = write_run2(str(tmp_path / "read"), [record2(0, "motion_quality")])
+    doc = S.score(exp, TAXONOMY, FMAP, {"lerobot_v21/refused": refused, "lerobot_v21/read": read}, registry=REGISTRY)
+    assert doc["formats"] == {"lerobot_v21/read": "2.0", "lerobot_v21/refused": "2.0"}
+    row = doc["items"]["TASK-1"]
+    assert row["fn"] == 1 and row["not_assessed"] == {"present": 1, "absent": 0, "of_which_unsupported": 1}
+
+
 def test_a_run_of_findings_needs_the_registry(tmp_path):
     exp = expectation(episode(0, problems=["FILE-4"]))
     run = write_run2(str(tmp_path / "run2"), [record2(0, "data_integrity")])

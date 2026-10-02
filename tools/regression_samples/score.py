@@ -3,7 +3,8 @@
 
 One run directory per subset (what ``curation check`` / the Daemon write: ``checks/<module>/``, ``revisions/rNNNN/``,
 ``preflight.json``). The expectation says which items each episode should (present) or should not (absent) show.
-Two record formats, told apart per run directory (a record 2.0 has ``status``):
+Two record formats, told apart per run directory (a record 2.0 has ``status``; a run with nothing to read, because the
+preflight refused the dataset, takes the format of the runs scored with it):
 
 * **2.0** (C2 2.0, findings): the records name the items themselves - ``findings[].item`` with its ``scope``, the items a
   module ``assessed`` and the ones it found ``unassessable``, ``status: error`` when it could not judge the episode. Which
@@ -136,8 +137,9 @@ def module_records(run_dir, module):
     return out
 
 
-def run_format(run_dir) -> str:
-    """``2.0`` for a run of findings (C2 2.0), ``1.0`` for one made before (D59): the report says it, else a record."""
+def run_format(run_dir):
+    """``2.0`` for a run of findings (C2 2.0), ``1.0`` for one made before (D59): the report says it, else a record;
+    None when there is nothing to tell it by (the preflight refused the dataset: no record, no report)."""
     reports = sorted(glob.glob(os.path.join(run_dir, "revisions", "r*", "report.json")))
     if reports:
         try:
@@ -152,7 +154,7 @@ def run_format(run_dir) -> str:
             for line in fh:
                 if line.strip():
                     return "2.0" if "status" in json.loads(line) else "1.0"
-    return "1.0"
+    return None
 
 
 def run_modules(run_dir):
@@ -518,11 +520,15 @@ def score(expectation, taxonomy, fmap, runs, by_lineage=False, sample_cap=20, re
         if cell in ("fp", "fn") and len(samples[item][cell]) < sample_cap:
             samples[item][cell].append(ep_id)
 
+    found = {s: run_format(runs[s]) for s in subsets if s in runs}
+    # a run with nothing to read takes the format of the runs scored with it: its items are judged by the same
+    # modules (the registry's, or the map's), none of which could run on it
+    nothing_to_read = "2.0" if {f for f in found.values() if f} == {"2.0"} else "1.0"
     for subset in subsets:
         if subset not in runs:
             continue
         run_dir = runs[subset]
-        fmt = run_format(run_dir)
+        fmt = found[subset] or nothing_to_read
         formats[subset] = fmt
         supported, availability = preflight(run_dir)
         if fmt == "2.0":
